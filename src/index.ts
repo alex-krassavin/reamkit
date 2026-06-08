@@ -6,12 +6,12 @@
 //
 // Typical use:
 //
-//   import { convertDocxToPdf } from 'reamjs';
+//   import { convertDocxToPdf } from 'reamkit';
 //   const pdf = convertDocxToPdf(docxBytes, { fonts: { regular: robotoBytes } });
 //
 // Advanced consumers can drive the layout engine directly via renderStyledPdf,
 // supply a hyphenator, or import the typed document model from the
-// "reamjs/document-model" subpath.
+// "reamkit/document-model" subpath.
 
 // --- Converters (the main entry points) ---
 // convertDocxToPdf / convertXlsxToPdf are async and download an open substitute

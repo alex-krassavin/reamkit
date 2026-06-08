@@ -11,7 +11,7 @@ runs unchanged in Node.js, serverless, and edge runtimes.
 ## Install
 
 ```sh
-npm install reamjs
+npm install reamkit
 ```
 
 Runtime dependencies are minimal: `fflate` (ZIP/Deflate) and `fast-xml-parser`.
@@ -24,7 +24,7 @@ same families LibreOffice substitutes) is fetched automatically based on the
 document's referenced fonts:
 
 ```ts
-import { convertDocxToPdf } from 'reamjs';
+import { convertDocxToPdf } from 'reamkit';
 
 // e.g. from an <input type="file"> or a fetch() — anything that yields bytes.
 const docx = new Uint8Array(await file.arrayBuffer());
@@ -45,7 +45,7 @@ To embed specific fonts — or to avoid the network entirely — pass the font b
 in and use the synchronous variant:
 
 ```ts
-import { convertDocxToPdfSync } from 'reamjs';
+import { convertDocxToPdfSync } from 'reamkit';
 
 const fonts = {
   regular: new Uint8Array(await fetch('/fonts/MyFont-Regular.ttf').then((r) => r.arrayBuffer())),
@@ -71,7 +71,7 @@ Both converters accept (beyond `fonts` / `fontBytes`):
 ### Hyphenation (optional)
 
 ```ts
-import { getHyphenator } from 'reamjs';
+import { getHyphenator } from 'reamkit';
 const hyphenator = await getHyphenator('en-us'); // or 'ru'
 const pdf = await convertDocxToPdf(docx, { hyphenator });
 ```
@@ -79,7 +79,7 @@ const pdf = await convertDocxToPdf(docx, { hyphenator });
 ### Advanced
 
 `renderStyledPdf` drives the layout engine directly. The typed document model is
-available from the `reamjs/document-model` subpath.
+available from the `reamkit/document-model` subpath.
 
 ## Scope
 

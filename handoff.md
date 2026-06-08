@@ -1,4 +1,4 @@
-# Ream (reamjs) — handoff
+# Ream (reamkit) — handoff
 
 ## Цель проекта
 
@@ -535,7 +535,7 @@ tests/output/
                              Attachments — source.docx); veraPDF --flavour 3a PASS
   styled.pdf                 mixed fonts/colors/sizes/alignment
 конфиги (корень)
-  package.json               name=reamjs, exports/bin, scripts (build/test/
+  package.json               name=reamkit, exports/bin, scripts (build/test/
                              lint/format/corpus), prepack=vite build
   tsconfig.json              module ESNext + moduleResolution Bundler, noEmit,
                              paths @/*→src/*, strict
@@ -550,7 +550,7 @@ tests/output/
 
 ## Пакет (npm)
 
-Имя пакета — **`reamjs`** (бренд Ream). Сборка через **Vite + `@tanstack/config`**
+Имя пакета — **`reamkit`** (бренд Ream). Сборка через **Vite + `@tanstack/config`**
 (`tanstackViteConfig`). `npm pack` проверен install-смоком: импорт (root +
 subpath) резолвится у NodeNext-потребителя, async/sync конвертеры и PDF/A
 работают.

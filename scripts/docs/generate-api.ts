@@ -6,7 +6,7 @@
 //   npm run docs:api
 //
 // The two entry points mirror the package `exports`: the root API and the typed
-// `reamjs/document-model` subpath.
+// `reamkit/document-model` subpath.
 
 import { generateReferenceDocs } from '@tanstack/config/typedoc';
 
@@ -14,7 +14,7 @@ async function main(): Promise<void> {
   await generateReferenceDocs({
     packages: [
       {
-        name: 'reamjs',
+        name: 'reamkit',
         entryPoints: ['./src/index.ts', './src/document-model/index.ts'],
         tsconfig: './tsconfig.json',
         outputDir: './docs/reference',

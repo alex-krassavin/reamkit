@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to **Ream** (`reamjs`) are documented here. The format is
+All notable changes to **Ream** (`reamkit`) are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
@@ -26,5 +26,5 @@ layout engine. Browser-first; the caller supplies fonts.
 - **Tooling** — aligned to `@tanstack/config` (Vite build, ESLint, publint +
   are-the-types-wrong); MIT-licensed; tag-triggered npm release workflow.
 
-[Unreleased]: https://github.com/alex-krassavin/reamjs/compare/v0.1.0-alpha.0...HEAD
-[0.1.0-alpha.0]: https://github.com/alex-krassavin/reamjs/releases/tag/v0.1.0-alpha.0
+[Unreleased]: https://github.com/alex-krassavin/reamkit/compare/v0.1.0-alpha.0...HEAD
+[0.1.0-alpha.0]: https://github.com/alex-krassavin/reamkit/releases/tag/v0.1.0-alpha.0

@@ -7,10 +7,10 @@ name: Release
 # version disagree, publishes with provenance, and opens a GitHub Release.
 #
 # Prereleases (a version containing a hyphen, e.g. -alpha.1) publish to a
-# non-default npm dist-tag, so a plain `npm install reamjs` never pulls one.
+# non-default npm dist-tag, so a plain `npm install reamkit` never pulls one.
 #
 # One-time setup on the npm side (not done here):
-#   - claim the `reamjs` name on npmjs.com
+#   - claim the `reamkit` name on npmjs.com
 #   - either add an `NPM_TOKEN` repo secret (automation token), or configure
 #     npm Trusted Publishing for this repo (then the token can be dropped).
 

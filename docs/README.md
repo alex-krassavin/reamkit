@@ -3,7 +3,7 @@
 ## API reference (generated)
 
 `docs/reference/` holds the Markdown API reference, generated from the public
-TypeScript surface (`src/index.ts` + the `reamjs/document-model` subpath) and its
+TypeScript surface (`src/index.ts` + the `reamkit/document-model` subpath) and its
 TSDoc comments via `@tanstack/config/typedoc` (TypeDoc + typedoc-plugin-markdown
 + frontmatter).
 
