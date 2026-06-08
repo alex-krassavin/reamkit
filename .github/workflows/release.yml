@@ -1,0 +1,76 @@
+name: Release
+
+# Tag-triggered, npm-native trusted publishing. To cut a release:
+#   1. bump "version" in package.json (e.g. 0.1.0-alpha.1)
+#   2. commit, then push a matching tag:  git tag v0.1.0-alpha.1 && git push --tags
+# CI re-runs the full gate set, refuses to publish if the tag and package.json
+# version disagree, publishes with provenance, and opens a GitHub Release.
+#
+# Prereleases (a version containing a hyphen, e.g. -alpha.1) publish to a
+# non-default npm dist-tag, so a plain `npm install reamjs` never pulls one.
+#
+# One-time setup on the npm side (not done here):
+#   - claim the `reamjs` name on npmjs.com
+#   - either add an `NPM_TOKEN` repo secret (automation token), or configure
+#     npm Trusted Publishing for this repo (then the token can be dropped).
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write # create the GitHub Release
+  id-token: write # provenance attestation (and tokenless trusted publishing)
+
+jobs:
+  publish:
+    name: publish to npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+      - run: npm ci
+
+      # Full gates before anything leaves the building.
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run build
+      - run: npm run test:build
+      - run: npm test
+
+      - name: Verify tag matches package.json version
+        if: github.event_name == 'push'
+        run: |
+          PKG="v$(node -p "require('./package.json').version")"
+          if [ "$PKG" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match package.json (${PKG})"
+            exit 1
+          fi
+
+      - name: Publish to npm (provenance)
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          case "$VERSION" in
+            *-*) TAG=$(printf '%s' "$VERSION" | sed -E 's/.*-([A-Za-z]+).*/\1/') ;;
+            *)   TAG=latest ;;
+          esac
+          echo "Publishing $VERSION to dist-tag '$TAG'"
+          npm publish --provenance --access public --tag "$TAG"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push'
+        run: |
+          PRE=""
+          case "${GITHUB_REF_NAME}" in *-*) PRE="--prerelease" ;; esac
+          gh release create "${GITHUB_REF_NAME}" --generate-notes --verify-tag $PRE
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

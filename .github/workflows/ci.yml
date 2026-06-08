@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Fast, dependency-light gates — run on every push and pull request.
+  gates:
+    name: typecheck · lint · format · build · pkg · test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run build
+      - run: npm run test:build
+      - run: npm test
+
+  # Corpus regression vs the LibreOffice "golden" render. Heavy (LibreOffice +
+  # mupdf-tools), so it is opt-in via the manual "Run workflow" button. It runs
+  # against the TRUSTED synthetic fixtures (corpus/inputs) — the fetched POI
+  # corpus is untrusted and must go through the Docker sandbox
+  # (CORPUS_SANDBOX=docker; see scripts/corpus/sandbox), which is left for a
+  # self-hosted / hardened runner.
+  corpus:
+    name: corpus regression (synthetic, vs LibreOffice)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - name: Install LibreOffice + mupdf-tools (golden render + raster/stext)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libreoffice-calc libreoffice-writer mupdf-tools
+      - name: Build the synthetic corpus
+        run: npm run corpus:build
+      - name: Run the corpus harness
+        run: npm run corpus
+      - name: Upload the regression report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corpus-report
+          path: corpus/report.md

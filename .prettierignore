@@ -1,0 +1,7 @@
+dist
+node_modules
+corpus/.work
+corpus/inputs
+tests/fixtures/fonts
+tests/output
+*.md

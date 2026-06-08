@@ -1,0 +1,18 @@
+{
+  // Project graph for type-aware ESLint (tanstackConfig sets parserOptions
+  // `project`). Unlike the build tsconfig (src only), this covers every linted
+  // file — sources, tests, scripts, and the root config files — so the
+  // type-checked rules have type information for all of them. Emits nothing.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "noEmit": true
+  },
+  "include": [
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    "scripts/**/*.ts",
+    "*.config.ts",
+    "eslint.config.js"
+  ]
+}

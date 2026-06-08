@@ -1,0 +1,90 @@
+{
+  "name": "reamjs",
+  "version": "0.1.0-alpha.0",
+  "description": "Ream — DOCX/XLSX to PDF, built from scratch on the ECMA-376 and ISO 32000 specifications (alpha; more document formats to come)",
+  "license": "MIT",
+  "author": "Alex Krassavin",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alex-krassavin/reamjs.git"
+  },
+  "homepage": "https://github.com/alex-krassavin/reamjs#readme",
+  "bugs": {
+    "url": "https://github.com/alex-krassavin/reamjs/issues"
+  },
+  "type": "module",
+  "main": "./dist/esm/index.js",
+  "types": "./dist/esm/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/esm/index.d.ts",
+      "import": "./dist/esm/index.js"
+    },
+    "./document-model": {
+      "types": "./dist/esm/document-model/index.d.ts",
+      "import": "./dist/esm/document-model/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "keywords": [
+    "docx",
+    "xlsx",
+    "pdf",
+    "ooxml",
+    "ecma-376",
+    "iso-32000",
+    "pdf/a",
+    "office",
+    "word",
+    "excel",
+    "converter"
+  ],
+  "scripts": {
+    "build": "vite build",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run build && npm run test:build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:lib": "vitest run",
+    "test:types": "tsc -p tsconfig.json --noEmit",
+    "test:eslint": "eslint .",
+    "test:build": "publint --strict && attw --pack . --profile esm-only",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\" \"scripts/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\" \"scripts/**/*.ts\"",
+    "docs:api": "tsx scripts/docs/generate-api.ts",
+    "corpus:build": "tsx scripts/corpus/build-corpus.ts",
+    "corpus:fetch": "tsx scripts/corpus/fetch-corpus.ts",
+    "corpus:sandbox:build": "docker build -t docgen-losandbox:latest scripts/corpus/sandbox/",
+    "corpus": "tsx scripts/corpus/run.ts"
+  },
+  "dependencies": {
+    "fast-xml-parser": "5.7.0",
+    "fflate": "^0.8.2"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.3",
+    "@tanstack/config": "^0.22.2",
+    "@types/node": "^22.10.0",
+    "prettier": "^3.8.3",
+    "publint": "^0.3.21",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vite": "8.0.5",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

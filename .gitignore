@@ -1,0 +1,18 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+.idea/
+tests/fixtures/*.docx
+tests/fixtures/*.pdf
+tests/output/
+corpus/.work/
+corpus/external/
+*.tgz
+
+# generated corpus inputs (corpus:build regenerates) + run-output reports
+corpus/inputs/
+corpus/report*.md
+
+# generated API reference (npm run docs:api)
+docs/reference/
