@@ -30,6 +30,56 @@ export interface EmbeddedFont {
   readonly encodeTextAsCidHex: (text: string) => string;
 }
 
+// Measurement/encoding functions derived purely from the parsed font — no
+// PdfDocument involved. The layout phase measures with these; embedTtfFont
+// reuses them so emit encodes identically (ir-design stage 3b).
+export interface FontMeasure {
+  readonly pdfWidthForGid: (gid: number) => number;
+  readonly textWidthPt: (text: string, fontSize: number) => number;
+  readonly encodeTextAsCidHex: (text: string) => string;
+}
+
+export function createFontMeasure(parsed: ParsedTtf): FontMeasure {
+  const scale = 1000 / parsed.unitsPerEm;
+  const widths: Array<number> = new Array(parsed.numGlyphs);
+  for (let i = 0; i < parsed.numGlyphs; i++) {
+    widths[i] = Math.round((parsed.advanceWidths[i] ?? 0) * scale);
+  }
+  const pdfWidthForGid = (gid: number): number => {
+    if (gid < 0 || gid >= parsed.numGlyphs) return 1000;
+    return widths[gid]!;
+  };
+  const textWidthPt = (text: string, fontSize: number): number => {
+    const shaped = shapeText(
+      text,
+      parsed.glyphForCodepoint,
+      parsed.advanceWidths,
+      parsed.ligatures,
+      parsed.kerning,
+      parsed.joiningForms,
+    );
+    let totalEm = 0;
+    for (const a of shaped.advances) totalEm += a;
+    return (totalEm * fontSize) / parsed.unitsPerEm;
+  };
+  const encodeTextAsCidHex = (text: string): string => {
+    const shaped = shapeText(
+      text,
+      parsed.glyphForCodepoint,
+      parsed.advanceWidths,
+      parsed.ligatures,
+      parsed.kerning,
+      parsed.joiningForms,
+    );
+    let out = '';
+    for (const gid of shaped.gids) {
+      out += gid.toString(16).padStart(4, '0').toUpperCase();
+    }
+    return out;
+  };
+  return { pdfWidthForGid, textWidthPt, encodeTextAsCidHex };
+}
+
 export function embedTtfFont(
   doc: PdfDocument,
   parsed: ParsedTtf,
@@ -115,47 +165,13 @@ export function embedTtfFont(
     }),
   );
 
-  const pdfWidthForGid = (gid: number): number => {
-    if (gid < 0 || gid >= parsed.numGlyphs) return 1000;
-    return widths[gid]!;
-  };
-
-  const textWidthPt = (text: string, fontSize: number): number => {
-    const shaped = shapeText(
-      text,
-      parsed.glyphForCodepoint,
-      parsed.advanceWidths,
-      parsed.ligatures,
-      parsed.kerning,
-      parsed.joiningForms,
-    );
-    let totalEm = 0;
-    for (const a of shaped.advances) totalEm += a;
-    return (totalEm * fontSize) / parsed.unitsPerEm;
-  };
-
-  const encodeTextAsCidHexFn = (text: string): string => {
-    const shaped = shapeText(
-      text,
-      parsed.glyphForCodepoint,
-      parsed.advanceWidths,
-      parsed.ligatures,
-      parsed.kerning,
-      parsed.joiningForms,
-    );
-    let out = '';
-    for (const gid of shaped.gids) {
-      out += gid.toString(16).padStart(4, '0').toUpperCase();
-    }
-    return out;
-  };
-
+  const measure = createFontMeasure(parsed);
   return {
     fontRef: type0Ref,
     parsed,
-    pdfWidthForGid,
-    textWidthPt,
-    encodeTextAsCidHex: encodeTextAsCidHexFn,
+    pdfWidthForGid: measure.pdfWidthForGid,
+    textWidthPt: measure.textWidthPt,
+    encodeTextAsCidHex: measure.encodeTextAsCidHex,
   };
 }
 

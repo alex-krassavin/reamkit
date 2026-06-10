@@ -189,7 +189,7 @@ type LossReport = readonly Loss[];
 |---|---|---|
 | 1 | ✅ Типы ядра: `Pt`, `ResourceStore`, `Loss*`, `Feature` — рядом, ничего не трогаем | tsc + тесты |
 | 2 | `FlowDoc` = нейтрализованный document-model: **✅ ЗАВЕРШЁН: 2a единицы→Pt, 2b merge-роли+colSpan, 2c images→ResourceStore (ImageResolver в parser, content-addressed дедуп), 2d native-мешки** — все подэтапы байт-в-байт | **PDF байт-в-байт** |
-| 3 | `PageDoc`: расщепить styled-renderer на `layout(FlowDoc)→PageDoc` и `pdfWriter(PageDoc)→bytes` | **PDF байт-в-байт** |
+| 3 | `PageDoc`: **3a ✅ шов** (layoutStyledDocument/emitStyledPdf + LaidOutDocument), **3b ✅ layout doc-free** (collect/measure отделены от embed: FontMeasure-фабрика, probe-семантика картинок, embed первым в emit — порядок объектов сохранён); 3c публичные типы PageDoc + вынос в модули — далее | **PDF байт-в-байт** |
 | 4 | Интерфейсы Reader/Writer/фасад; старые API — обёртки | публичный API не ломается |
 | 5 | FontProvider-цепочка (рефактор) + **local**-провайдер с fsType | новые тесты + корпус |
 | 6 | Третий адаптер: **svg-writer(PageDoc)** (превью) и/или **html-writer(FlowDoc)** | вскрытие ошибок интерфейсов, фиксация `@experimental`-схемы |

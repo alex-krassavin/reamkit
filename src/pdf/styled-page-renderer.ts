@@ -56,7 +56,6 @@ import type {
   ChartRect,
   ChartWedge,
 } from '@/pdf/chart-geometry';
-import type { EmbeddedFont } from '@/pdf/cid-font';
 import type { EmbeddedImage } from '@/pdf/image-xobject';
 import type { MathDrawItem, MathVariant, MeasureMath } from '@/pdf/math-layout';
 import type { PdfDict, PdfRef, PdfValue } from '@/pdf/objects';
@@ -65,6 +64,7 @@ import type { AttachedFile } from '@/pdf/embedded-file';
 import type { StructNode, StructType } from '@/pdf/struct-tree';
 import type { SignaturePlaceholder } from '@/pdf/signature';
 import type { ResourceId, ResourceStore } from '@/ir';
+import type { EmbeddedFont, FontMeasure } from '@/pdf/cid-font';
 import { halfPtToPt } from '@/ir';
 import { shapeText } from '@/font';
 import { resolveFamilyKey } from '@/fonts';
@@ -86,7 +86,7 @@ import {
 
 import { arcPoint, arcToBeziers } from '@/pdf/arc-to-bezier';
 import { buildChartScene } from '@/pdf/chart-geometry';
-import { embedTtfFont } from '@/pdf/cid-font';
+import { createFontMeasure, embedTtfFont } from '@/pdf/cid-font';
 import { buildSrgbIccProfile } from '@/pdf/icc-profile';
 import { embedImage } from '@/pdf/image-xobject';
 import { layoutMath, mathGlyphSegments, variantStyle } from '@/pdf/math-layout';
@@ -221,7 +221,11 @@ const encoder = new TextEncoder();
 interface FontResource {
   readonly resourceName: string;
   readonly parsed: ParsedTtf;
-  readonly embedded: EmbeddedFont;
+  // Pure measurement/encoding (no PdfDocument): layout measures with this and
+  // emit encodes with it; the PDF font objects are created in the emit phase.
+  readonly measure: FontMeasure;
+  // Glyphs collected by the usage walk — the emit phase subsets to these.
+  readonly gids: ReadonlySet<number>;
 }
 
 interface TextToken {
@@ -464,10 +468,37 @@ interface DrawCommand {
   readonly artifact?: 'pagination';
 }
 
+// The seam between the two halves of the pipeline (ir-design §6 / stage 3):
+// everything the emit phase needs from layout. `pages` is the PageDoc draft —
+// positioned DrawCommands per page; the resource maps and struct tree ride
+// along until stage 3b/3c make layout PdfDocument-free and the types public.
+interface LaidOutDocument {
+  readonly pages: ReadonlyArray<RenderedPage>;
+  readonly fontResources: Map<string, FontResource>;
+  readonly imageResources: Map<ResourceId, ImageResource>;
+  readonly structBuilder: StructTreeBuilder | undefined;
+  readonly sectionCtxs: ReadonlyArray<SectionRenderCtx>;
+  readonly pdfaProfile: PdfAProfile | undefined;
+  readonly tagged: boolean;
+}
+
 export function renderStyledPdf(
   body: ReadonlyArray<BodyElement>,
   options: StyledRenderOptions,
 ): Uint8Array {
+  const laid = layoutStyledDocument(body, options);
+  const doc = new PdfDocument();
+  return emitStyledPdf(laid, options, doc);
+}
+
+// Layout phase: body → positioned pages (DrawCommands), font/image resources,
+// logical structure. Still takes `doc` because font/image embedding currently
+// happens up-front (the layout measures with the embedded fonts) — stage 3b
+// splits collect/measure from embed and drops the parameter.
+function layoutStyledDocument(
+  body: ReadonlyArray<BodyElement>,
+  options: StyledRenderOptions,
+): LaidOutDocument {
   const sectionList = resolveSectionList(body, options);
 
   const numberedBody = applyNumbering(body, options.numbering);
@@ -476,14 +507,13 @@ export function renderStyledPdf(
     options.numbering,
   );
 
-  const doc = new PdfDocument();
   // Tagged PDF (ISO 32000-1 §14.8) — implied by PDF/A-1a. When on, paginate
   // builds a logical structure tree and emit marks body text / artifacts.
   const pdfaProfile = options.pdfA ? parsePdfAProfile(options.pdfA) : undefined;
   const tagged = options.tagged === true || (pdfaProfile?.tagged ?? false);
   const structBuilder = tagged ? new StructTreeBuilder() : undefined;
-  const fontResources = embedUsedFonts(doc, numberedBody, numberedHeadersFooters, options);
-  const imageResources = embedUsedImages(doc, numberedBody, numberedHeadersFooters, options);
+  const fontResources = collectFontResources(numberedBody, numberedHeadersFooters, options);
+  const imageResources = collectImageResources(numberedBody, numberedHeadersFooters, options);
 
   // Pre-compute per-section render context (geometry + header/footer bands).
   const sectionCtxs: Array<SectionRenderCtx> = sectionList.map((s) =>
@@ -507,20 +537,33 @@ export function renderStyledPdf(
     );
   });
 
-  const renderedPages = paginateSections(
-    blocks,
-    sectionCtxs,
-    structBuilder,
-    options.language ?? 'en-US',
-  );
+  const pages = paginateSections(blocks, sectionCtxs, structBuilder, options.language ?? 'en-US');
+
+  return { pages, fontResources, imageResources, structBuilder, sectionCtxs, pdfaProfile, tagged };
+}
+
+// Emit phase: PageDoc draft → PDF objects (content streams, page dicts,
+// catalog, PDF/A apparatus, structure tree, signature placeholder) → bytes.
+function emitStyledPdf(
+  laid: LaidOutDocument,
+  options: StyledRenderOptions,
+  doc: PdfDocument,
+): Uint8Array {
+  const { pages: renderedPages, fontResources, imageResources, structBuilder } = laid;
+  const { sectionCtxs, pdfaProfile, tagged } = laid;
+
+  // Create the font/image PDF objects first — the same object order the
+  // pre-split renderer produced (fonts, then images, then pages).
+  const embeddedFonts = embedFontResources(doc, fontResources, options);
+  const embeddedImages = embedImageResources(doc, imageResources, options);
 
   const pagesDict: PdfDict = dict({ Type: name('Pages'), Count: 0, Kids: [] });
   const pagesRef = doc.add(pagesDict);
   // First page's dict object, kept mutable so a signature widget can be added to
   // its /Annots after the catalog is assembled.
   let firstPageDict: PdfDict | undefined;
-  const fontResourceDict = buildFontResourceDict(fontResources);
-  const xobjectResourceDict = buildXObjectResourceDict(imageResources);
+  const fontResourceDict = buildFontResourceDict(fontResources, embeddedFonts);
+  const xobjectResourceDict = buildXObjectResourceDict(imageResources, embeddedImages);
   const resourcesDict = dict({
     Font: fontResourceDict,
     ...(xobjectResourceDict ? { XObject: xobjectResourceDict } : {}),
@@ -1014,7 +1057,6 @@ function layoutBodyElement(
 
 interface ImageResource {
   readonly resourceName: string;
-  readonly ref: PdfRef;
 }
 
 // 1 inch = 914400 EMU = 72 pt, so 1 pt = 12700 EMU.
@@ -1266,7 +1308,7 @@ function buildChartLayout(
   heightPt: number,
   font: FontResource,
 ): ChartLayout {
-  const measure = (text: string, sizePt: number): number => font.embedded.textWidthPt(text, sizePt);
+  const measure = (text: string, sizePt: number): number => font.measure.textWidthPt(text, sizePt);
   const scene = buildChartScene(chart, widthPt, heightPt, measure);
   if (!scene) {
     return {
@@ -1349,7 +1391,7 @@ function makeChartLabelLine(
   sizePt: number,
   colorHex: string,
 ): Line {
-  const widthPt = font.embedded.textWidthPt(text, sizePt);
+  const widthPt = font.measure.textWidthPt(text, sizePt);
   const token: TextToken = {
     kind: 'text',
     text,
@@ -1375,13 +1417,12 @@ function makeChartLabelLine(
   };
 }
 
-function embedUsedImages(
-  doc: PdfDocument,
+function collectImageResources(
   body: ReadonlyArray<BodyElement>,
   headersFooters: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
   options: StyledRenderOptions,
-): Map<string, ImageResource> {
-  const out = new Map<string, ImageResource>();
+): Map<ResourceId, ImageResource> {
+  const out = new Map<ResourceId, ImageResource>();
   if (!options.resources || options.resources.size === 0) return out;
 
   const seen = new Set<ResourceId>();
@@ -1412,17 +1453,38 @@ function embedUsedImages(
     const bytes = options.resources.get(resourceId);
     if (!bytes) continue;
     // An unsupported or corrupt image must not abort the whole document — skip
-    // it. It then has no resource, so the emit phase draws nothing for it (its
-    // layout box still reserves space). Lets a doc with one bad image render the
-    // rest, instead of throwing.
-    let embedded: EmbeddedImage;
+    // it. It then has no resource name, so nothing is drawn for it (its layout
+    // box still reserves space). The probe runs the real embed against a
+    // throwaway document so the skip semantics match the emit phase exactly
+    // (interim until image-xobject grows a prepare/add split).
     try {
-      embedded = embedImage(doc, bytes, { flattenAlpha });
+      embedImage(new PdfDocument(), bytes, { flattenAlpha });
     } catch {
       continue;
     }
     counter++;
-    out.set(resourceId, { resourceName: `Im${counter}`, ref: embedded.ref });
+    out.set(resourceId, { resourceName: `Im${counter}` });
+  }
+  return out;
+}
+
+// Emit-phase counterpart: embed the probed images in collection order.
+function embedImageResources(
+  doc: PdfDocument,
+  resources: ReadonlyMap<ResourceId, ImageResource>,
+  options: StyledRenderOptions,
+): Map<ResourceId, PdfRef> {
+  const flattenAlpha = options.pdfA ? parsePdfAProfile(options.pdfA).part === 1 : false;
+  const out = new Map<ResourceId, PdfRef>();
+  for (const [resourceId, res] of resources) {
+    const bytes = options.resources?.get(resourceId);
+    if (!bytes) continue;
+    try {
+      out.set(resourceId, embedImage(doc, bytes, { flattenAlpha }).ref);
+    } catch {
+      // unreachable: the probe already validated these bytes
+    }
+    void res;
   }
   return out;
 }
@@ -1579,8 +1641,7 @@ function lookupFont(resources: ReadonlyMap<string, FontResource>, fontKey: strin
   return resources.get(fontKey) ?? resources.values().next().value!;
 }
 
-function embedUsedFonts(
-  doc: PdfDocument,
+function collectFontResources(
   body: ReadonlyArray<BodyElement>,
   headersFooters: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
   options: StyledRenderOptions,
@@ -1679,34 +1740,59 @@ function embedUsedFonts(
     used.set(regular.variant, { parsed: regular.parsed, gids: new Set([0]) });
   }
 
-  // PDF/A-1 requires a /CIDSet; PDF/A-2/3 and non-PDF/A omit it.
-  const cidSet = options.pdfA ? parsePdfAProfile(options.pdfA).part === 1 : false;
   const out = new Map<string, FontResource>();
   let counter = 0;
   for (const [variant, info] of used) {
     counter++;
     const resourceName = `F${counter}`;
-    const embedded = embedTtfFont(doc, info.parsed, { usedGids: info.gids, cidSet });
-    out.set(variant, { resourceName, parsed: info.parsed, embedded });
+    out.set(variant, {
+      resourceName,
+      parsed: info.parsed,
+      measure: createFontMeasure(info.parsed),
+      gids: info.gids,
+    });
   }
   return out;
 }
 
-function buildFontResourceDict(resources: ReadonlyMap<string, FontResource>): PdfDict {
+// Emit-phase counterpart: create the PDF font objects (subset to the collected
+// glyphs) for every laid-out font resource, in collection order — keeping the
+// object numbering identical to the pre-split renderer.
+function embedFontResources(
+  doc: PdfDocument,
+  resources: ReadonlyMap<string, FontResource>,
+  options: StyledRenderOptions,
+): Map<string, EmbeddedFont> {
+  // PDF/A-1 requires a /CIDSet; PDF/A-2/3 and non-PDF/A omit it.
+  const cidSet = options.pdfA ? parsePdfAProfile(options.pdfA).part === 1 : false;
+  const out = new Map<string, EmbeddedFont>();
+  for (const [variant, res] of resources) {
+    out.set(variant, embedTtfFont(doc, res.parsed, { usedGids: res.gids, cidSet }));
+  }
+  return out;
+}
+
+function buildFontResourceDict(
+  resources: ReadonlyMap<string, FontResource>,
+  embedded: ReadonlyMap<string, EmbeddedFont>,
+): PdfDict {
   const entries: Record<string, PdfRef> = {};
-  for (const res of resources.values()) {
-    entries[res.resourceName] = ref(res.embedded.fontRef.id);
+  for (const [variant, res] of resources) {
+    const emb = embedded.get(variant);
+    if (emb) entries[res.resourceName] = ref(emb.fontRef.id);
   }
   return dict(entries);
 }
 
 function buildXObjectResourceDict(
-  resources: ReadonlyMap<string, ImageResource>,
+  resources: ReadonlyMap<ResourceId, ImageResource>,
+  embedded: ReadonlyMap<ResourceId, PdfRef>,
 ): PdfDict | undefined {
-  if (resources.size === 0) return undefined;
+  if (embedded.size === 0) return undefined;
   const entries: Record<string, PdfRef> = {};
-  for (const res of resources.values()) {
-    entries[res.resourceName] = ref(res.ref.id);
+  for (const [resourceId, res] of resources) {
+    const r = embedded.get(resourceId);
+    if (r) entries[res.resourceName] = ref(r.id);
   }
   return dict(entries);
 }
@@ -1863,7 +1949,7 @@ function tokenizeParagraph(
           fontResources.get(options.registry.resolveByStyle(false, false).variant)!
         );
       };
-      const measure: MeasureMath = (text, sz, v) => fontFor(v).embedded.textWidthPt(text, sz);
+      const measure: MeasureMath = (text, sz, v) => fontFor(v).measure.textWidthPt(text, sz);
       const box = layoutMath(run.math, { sizePt }, measure);
       const { variant } = options.registry.resolveByStyle(resolvedRun.bold, resolvedRun.italic);
       return {
@@ -1991,7 +2077,7 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         resolvedRun: plan.resolvedRun,
         font: plan.font,
         fontSizePt: plan.fontSizePt,
-        widthPt: plan.font.embedded.textWidthPt(t.text, plan.fontSizePt),
+        widthPt: plan.font.measure.textWidthPt(t.text, plan.fontSizePt),
         bidiLevel: 0,
       });
     }
@@ -2049,7 +2135,7 @@ function tokenizePlansBidi(
         resolvedRun: plan.resolvedRun,
         font: plan.font,
         fontSizePt: plan.fontSizePt,
-        widthPt: plan.font.embedded.textWidthPt(text, plan.fontSizePt),
+        widthPt: plan.font.measure.textWidthPt(text, plan.fontSizePt),
         bidiLevel: curLevel,
       });
     };
@@ -2177,12 +2263,12 @@ function wrap(
       pushItem({ type: 'box', width: tok.widthPt }, tok);
       continue;
     }
-    const hyphenWidth = tok.font.embedded.textWidthPt('-', tok.fontSizePt);
+    const hyphenWidth = tok.font.measure.textWidthPt('-', tok.fontSizePt);
     let prev = 0;
     for (let pi = 0; pi <= positions.length; pi++) {
       const end = pi < positions.length ? positions[pi]! : tok.text.length;
       const fragText = tok.text.substring(prev, end);
-      const fragWidth = tok.font.embedded.textWidthPt(fragText, tok.fontSizePt);
+      const fragWidth = tok.font.measure.textWidthPt(fragText, tok.fontSizePt);
       const fragTok: Token = {
         kind: 'text',
         text: fragText,
@@ -2500,7 +2586,7 @@ function measureSingleLine(
     const { variant } = options.registry.resolveByStyle(resolved.bold, resolved.italic);
     const font = fontResources.get(variant)!;
     const fontSizePt = resolved.fontSizePt;
-    total += font.embedded.textWidthPt(run.text, fontSizePt);
+    total += font.measure.textWidthPt(run.text, fontSizePt);
   }
   return total;
 }
@@ -3570,7 +3656,7 @@ function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTag
             lastColor = '000000';
           }
           out.push(`1 0 0 1 ${formatNumber(originX + it.x)} ${formatNumber(baselineY + it.y)} Tm`);
-          out.push(`<${it.font.embedded.encodeTextAsCidHex(it.text)}> Tj`);
+          out.push(`<${it.font.measure.encodeTextAsCidHex(it.text)}> Tj`);
         } else if (it.kind === 'rule') {
           if (inBT) {
             out.push('ET');
@@ -3623,7 +3709,7 @@ function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTag
       // so glyphs lay out right-to-left as our cursor advances left-to-right.
       const encodeToken = (tok: TextToken): string => {
         const text = tok.bidiLevel % 2 === 1 ? reverseByCodePoint(tok.text) : tok.text;
-        return tok.font.embedded.encodeTextAsCidHex(text);
+        return tok.font.measure.encodeTextAsCidHex(text);
       };
 
       if (extraPerSpace > 0 || hasImageToken || hasMathToken || hasRtl) {
@@ -3663,7 +3749,7 @@ function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTag
         for (const tok of line.tokens) {
           if (tok.kind !== 'text') continue; // unreachable here, but TS-narrowed
           switchFontIfNeeded(tok);
-          const hex = tok.font.embedded.encodeTextAsCidHex(tok.text);
+          const hex = tok.font.measure.encodeTextAsCidHex(tok.text);
           out.push(`<${hex}> Tj`);
         }
       }
