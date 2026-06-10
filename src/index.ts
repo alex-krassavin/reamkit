@@ -49,3 +49,58 @@ export {
   splitPatternBundle,
 } from '@/hyphenation';
 export type { Hyphenator, HyphenatorOptions, SupportedLanguage } from '@/hyphenation';
+
+// --- IR layer (@experimental — ir-design.md; may change in minor versions
+// until the schema freezes against three-plus adapters) ---
+export type {
+  Pt,
+  ResourceId,
+  Feature,
+  KnownFeature,
+  Loss,
+  LossReport,
+  LossSeverity,
+  NativeBag,
+} from '@/ir';
+export {
+  FEATURES,
+  ResourceStore,
+  ConversionLossError,
+  formatLoss,
+  pt,
+  twipsToPt,
+  halfPtToPt,
+  eighthPtToPt,
+  emuToPt,
+  pxToPt,
+  inchToPt,
+  mmToPt,
+} from '@/ir';
+export type { FlowDoc } from '@/ir/flow';
+export type {
+  DocumentReader,
+  DocumentWriter,
+  ReadOptions,
+  ReadResult,
+  WriteOptions,
+  WriteResult,
+} from '@/ir/adapters';
+export { docxReader, readDocx } from '@/readers/docx-reader';
+export { xlsxReader, readXlsx } from '@/readers/xlsx-reader';
+export { createConverter } from '@/converter/facade';
+export type {
+  Converter,
+  ConvertOptions,
+  ConvertResult,
+  CreateConverterOptions,
+} from '@/converter/facade';
+export type {
+  PageItem,
+  PageItemBase,
+  TextLineItem,
+  BorderItem,
+  FillItem,
+  ImageItem,
+  ShapeItem,
+  LaidOutPage,
+} from '@/pdf/styled-page-renderer';

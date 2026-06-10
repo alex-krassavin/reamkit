@@ -24,6 +24,7 @@ import type {
   CellBorders,
   Chart,
   ChartBlock,
+  DocumentInfo,
   HeaderFooterReference,
   HeaderFooterType,
   ImageBlock,
@@ -195,18 +196,8 @@ export interface StyledRenderOptions {
   readonly signaturePlaceholder?: SignaturePlaceholder;
 }
 
-export interface DocumentInfo {
-  readonly title?: string;
-  readonly author?: string;
-  readonly subject?: string;
-  readonly keywords?: string;
-  readonly creator?: string;
-  // Producer defaults to "Ream" if not provided.
-  readonly producer?: string;
-  // ISO 8601 dates; converted to PDF date format (D:YYYYMMDDHHmmSS).
-  readonly creationDate?: Date;
-  readonly modificationDate?: Date;
-}
+// Re-exported from the document model (moved there so FlowDoc can carry it).
+export type { DocumentInfo } from '@/document-model';
 
 const A4_WIDTH = 595;
 const A4_HEIGHT = 842;

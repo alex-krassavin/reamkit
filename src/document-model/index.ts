@@ -6,6 +6,7 @@ export type {
   BodyElement,
   CellBorders,
   CellMerge,
+  DocumentInfo,
   CellMargins,
   CellProperties,
   CellShading,

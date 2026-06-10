@@ -1,45 +1,14 @@
-import type { BodyElement, Chart, Section } from '@/document-model';
 import type { FontBytesByVariant } from '@/font';
-import type { ResourceId } from '@/ir';
 import type { FamilyKey, FetchLike } from '@/fonts';
-import type { ColorResolver } from '@/ooxml/drawingml/colors';
-import type { CoreProperties } from '@/opc';
-import type { DocumentInfo, SignatureOptions, StyledRenderOptions } from '@/pdf';
-import type { ImageResolver } from '@/ooxml/wordproc';
-import { ResourceStore } from '@/ir';
+import type { SignatureOptions, StyledRenderOptions } from '@/pdf';
 import { FontRegistry } from '@/font';
 import { fetchFontSet, resolveFamilyKey } from '@/fonts';
-import { parseChart } from '@/ooxml/drawingml/chart-parser';
-import { DEFAULT_THEME_PALETTE, makeColorResolver } from '@/ooxml/drawingml/colors';
-import { parseTheme } from '@/ooxml/drawingml/theme-parser';
-import { OpcPackage, parseCoreProperties } from '@/opc';
-import {
-  EMPTY_NUMBERING,
-  EMPTY_SECTION,
-  EMPTY_SETTINGS,
-  EMPTY_STYLE_SHEET,
-  loadEmbeddedFonts,
-  parseDocument,
-  parseHeaderFooter,
-  parseNumbering,
-  parseSections,
-  parseSettings,
-  parseStyles,
-} from '@/ooxml/wordproc';
+import { OpcPackage } from '@/opc';
+import { readDocx } from '@/readers/docx-reader';
 import { renderStyledPdf, signPdf } from '@/pdf';
 
 const STYLES_PART = 'word/styles.xml';
-const NUMBERING_PART = 'word/numbering.xml';
-const SETTINGS_PART = 'word/settings.xml';
-const CORE_PROPS_PART = 'docProps/core.xml';
 const MAIN_DOCUMENT_PART = 'word/document.xml';
-
-const REL_HEADER = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/header';
-const REL_FOOTER = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer';
-const REL_IMAGE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image';
-const REL_THEME = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme';
-const THEME_PART = 'word/theme/theme1.xml';
-const REL_CHART = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart';
 
 export interface ConvertDocxOptions extends Omit<StyledRenderOptions, 'registry' | 'styles'> {
   readonly fontBytes?: Uint8Array;
@@ -68,54 +37,8 @@ export function convertDocxToPdfSync(docx: Uint8Array, options: ConvertDocxOptio
   }
   const registry = FontRegistry.fromBytes(fonts);
 
-  const pkg = OpcPackage.open(docx);
-  const main = pkg.getMainDocument();
-  // Theme-backed colour resolver (schemeClr → hex); falls back to the built-in
-  // Office palette when there is no theme part.
-  const resolveColor = buildColorResolver(pkg);
-  // Content-addressed store for binary resources; the image resolver fills it
-  // lazily as the parsers meet drawing relationships (identical bytes dedupe).
-  const resources = new ResourceStore();
-  const resolveImage = makeImageResolver(pkg, resources);
-  const body = parseDocument(main.data, resolveColor, resolveImage);
-  const rawSections = parseSections(main.data);
-
-  const stylesData = pkg.getPart(STYLES_PART);
-  const styles = stylesData ? parseStyles(stylesData) : EMPTY_STYLE_SHEET;
-
-  const numberingData = pkg.getPart(NUMBERING_PART);
-  const numbering = numberingData ? parseNumbering(numberingData) : EMPTY_NUMBERING;
-
-  const settingsData = pkg.getPart(SETTINGS_PART);
-  const settings = settingsData ? parseSettings(settingsData) : EMPTY_SETTINGS;
-
-  // evenAndOddHeaders lives in settings.xml; replicate the flag onto every
-  // section so the renderer sees a per-section view of header bands.
-  const sections: Array<Section> =
-    rawSections.length > 0
-      ? rawSections.map((s) => ({
-          ...s,
-          properties: settings.evenAndOddHeaders
-            ? { ...s.properties, evenAndOddHeaders: true }
-            : s.properties,
-        }))
-      : [
-          {
-            properties: settings.evenAndOddHeaders
-              ? { ...EMPTY_SECTION, evenAndOddHeaders: true }
-              : EMPTY_SECTION,
-            endIndex: body.length,
-          },
-        ];
-
-  const headersFooters = loadHeadersFootersForSections(pkg, sections, resolveColor, resolveImage);
-  const charts = loadCharts(pkg, resolveColor);
-  // The document's own embedded fonts (de-obfuscated). A run whose w:ascii
-  // matches one renders with the real font instead of a substitute.
-  const embeddedFonts = loadEmbeddedFonts(pkg);
-
-  const coreData = pkg.getPart(CORE_PROPS_PART);
-  const coreProps = coreData ? parseCoreProperties(coreData) : undefined;
+  // All document-derived state now comes from the docx reader (ir-design §7).
+  const { doc: flow } = readDocx(docx);
 
   const {
     fontBytes: _ignoreA,
@@ -129,10 +52,8 @@ export function convertDocxToPdfSync(docx: Uint8Array, options: ConvertDocxOptio
   void _ignoreA;
   void _ignoreB;
   void _ignoreSig;
-  const info = mergeInfo(coreProps, callerInfo);
-  // Document language for the tagged-PDF /Lang (caller's options.language, in
-  // renderOptions, still wins by being spread last).
-  const language = detectDocxLanguage(stylesData, main.data);
+  // Caller overrides spread over the document's own metadata.
+  const info = flow.info || callerInfo ? { ...flow.info, ...callerInfo } : undefined;
   // PDF/A-3 only: optionally embed the input .docx as an associated source file.
   const attachments = [...(callerAttachments ?? [])];
   if (embedSource && options.pdfA?.startsWith('PDF/A-3')) {
@@ -144,38 +65,20 @@ export function convertDocxToPdfSync(docx: Uint8Array, options: ConvertDocxOptio
       description: 'Source Word document',
     });
   }
-  return renderStyledPdf(body, {
+  return renderStyledPdf(flow.body, {
     registry,
-    styles,
-    numbering,
-    sections,
-    headersFooters,
-    resources,
-    charts,
-    ...(embeddedFonts.size > 0 ? { embeddedFonts } : {}),
+    styles: flow.styles,
+    ...(flow.numbering ? { numbering: flow.numbering } : {}),
+    sections: flow.sections,
+    ...(flow.headersFooters ? { headersFooters: flow.headersFooters } : {}),
+    resources: flow.resources,
+    ...(flow.charts ? { charts: flow.charts } : {}),
+    ...(flow.embeddedFonts ? { embeddedFonts: flow.embeddedFonts } : {}),
     ...(info ? { info } : {}),
-    ...(language ? { language } : {}),
+    ...(flow.language ? { language: flow.language } : {}),
     ...(attachments.length > 0 ? { attachments } : {}),
     ...renderOptions,
   });
-}
-
-// Best-effort document language for the tagged-PDF catalog /Lang. The default
-// language lives in styles.xml docDefaults/rPrDefault/rPr/w:lang @w:val; fall
-// back to the first w:lang in the document body. A cheap regex (cf.
-// detectDocxFontFamily) — no need to resolve the cascade for a document hint.
-function detectDocxLanguage(
-  stylesData: Uint8Array | undefined,
-  documentData: Uint8Array,
-): string | undefined {
-  const re = /<w:lang\b[^>]*\bw:val="([^"]+)"/;
-  const decoder = new TextDecoder();
-  for (const data of [stylesData, documentData]) {
-    if (!data) continue;
-    const m = re.exec(decoder.decode(data));
-    if (m?.[1]) return m[1];
-  }
-  return undefined;
 }
 
 // Convert a .docx to PDF, downloading an open substitute font automatically
@@ -287,103 +190,4 @@ export function detectDocxFontFamily(docx: Uint8Array): string | undefined {
     return best;
   }
   return undefined;
-}
-
-// Caller-provided `info` overrides any value from the docx core properties.
-function mergeInfo(
-  core: CoreProperties | undefined,
-  caller: DocumentInfo | undefined,
-): DocumentInfo | undefined {
-  if (!core && !caller) return undefined;
-  return {
-    ...(core?.title ? { title: core.title } : {}),
-    ...(core?.creator ? { author: core.creator } : {}),
-    ...(core?.subject ? { subject: core.subject } : {}),
-    ...(core?.keywords ? { keywords: core.keywords } : {}),
-    ...(core?.created ? { creationDate: core.created } : {}),
-    ...(core?.modified ? { modificationDate: core.modified } : {}),
-    ...caller,
-  };
-}
-
-function makeImageResolver(pkg: OpcPackage, store: ResourceStore): ImageResolver {
-  // Main-part image relationships only (headers/footers historically resolved
-  // against the same map; their own rels are a TODO).
-  const byRelId = new Map<string, Uint8Array>();
-  for (const rel of pkg.getPartRelationships(MAIN_DOCUMENT_PART)) {
-    if (rel.type !== REL_IMAGE) continue;
-    const resolved = pkg.resolveRelatedPart(MAIN_DOCUMENT_PART, rel);
-    if (resolved) byRelId.set(rel.id, resolved.data);
-  }
-  const cache = new Map<string, ResourceId | undefined>();
-  return (relId) => {
-    if (cache.has(relId)) return cache.get(relId);
-    const bytes = byRelId.get(relId);
-    const id = bytes ? store.put(bytes) : undefined;
-    cache.set(relId, id);
-    return id;
-  };
-}
-
-// Resolve & parse every chart part referenced by the main document, keyed by
-// its relationship id (which ChartBlock.chartRelId points to).
-function loadCharts(pkg: OpcPackage, resolveColor: ColorResolver): ReadonlyMap<string, Chart> {
-  const out = new Map<string, Chart>();
-  for (const rel of pkg.getPartRelationships(MAIN_DOCUMENT_PART)) {
-    if (rel.type !== REL_CHART) continue;
-    const resolved = pkg.resolveRelatedPart(MAIN_DOCUMENT_PART, rel);
-    if (!resolved) continue;
-    const chart = parseChart(resolved.data, resolveColor);
-    if (chart) out.set(rel.id, chart);
-  }
-  return out;
-}
-
-// Theme colour resolver: merge the document's theme palette (if any) over the
-// built-in Office defaults, so schemeClr references resolve to the document's
-// actual accent colours and unspecified slots still have sensible values.
-function buildColorResolver(pkg: OpcPackage): ColorResolver {
-  const themeData = loadTheme(pkg);
-  if (!themeData) return makeColorResolver(DEFAULT_THEME_PALETTE);
-  const palette = new Map(DEFAULT_THEME_PALETTE);
-  for (const [slot, hex] of parseTheme(themeData)) palette.set(slot, hex);
-  return makeColorResolver(palette);
-}
-
-function loadTheme(pkg: OpcPackage): Uint8Array | undefined {
-  for (const rel of pkg.getPartRelationships(MAIN_DOCUMENT_PART)) {
-    if (rel.type !== REL_THEME) continue;
-    const resolved = pkg.resolveRelatedPart(MAIN_DOCUMENT_PART, rel);
-    if (resolved) return resolved.data;
-  }
-  return pkg.getPart(THEME_PART);
-}
-
-function loadHeadersFootersForSections(
-  pkg: OpcPackage,
-  sections: ReadonlyArray<Section>,
-  resolveColor: ColorResolver,
-  resolveImage?: ImageResolver,
-): ReadonlyMap<string, ReadonlyArray<BodyElement>> {
-  const wanted = new Set<string>();
-  for (const s of sections) {
-    for (const h of s.properties.headers) wanted.add(h.relationshipId);
-    for (const f of s.properties.footers) wanted.add(f.relationshipId);
-  }
-  if (wanted.size === 0) return new Map();
-  const rels = pkg.getPartRelationships(MAIN_DOCUMENT_PART);
-  if (rels.length === 0) return new Map();
-
-  const out = new Map<string, ReadonlyArray<BodyElement>>();
-  for (const rel of rels) {
-    if (!wanted.has(rel.id)) continue;
-    if (rel.type !== REL_HEADER && rel.type !== REL_FOOTER) continue;
-    const resolved = pkg.resolveRelatedPart(MAIN_DOCUMENT_PART, rel);
-    if (!resolved) continue;
-    out.set(rel.id, parseHeaderFooter(resolved.data, resolveColor, resolveImage));
-  }
-  // EMPTY_SECTION reference avoids "unused import" complaints in builds where
-  // the variable is otherwise unused.
-  void EMPTY_SECTION;
-  return out;
 }

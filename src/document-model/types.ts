@@ -608,3 +608,18 @@ export interface DocumentModel {
   readonly numbering?: Numbering;
   readonly section?: SectionProperties;
 }
+
+// Document metadata (PDF /Info-shaped, sourced from docProps/core.xml and/or
+// caller options). Lives in the model so FlowDoc can carry it format-neutrally.
+export interface DocumentInfo {
+  readonly title?: string;
+  readonly author?: string;
+  readonly subject?: string;
+  readonly keywords?: string;
+  readonly creator?: string;
+  // Producer defaults to "Ream" if not provided.
+  readonly producer?: string;
+  // ISO 8601 dates; converted to PDF date format (D:YYYYMMDDHHmmSS).
+  readonly creationDate?: Date;
+  readonly modificationDate?: Date;
+}

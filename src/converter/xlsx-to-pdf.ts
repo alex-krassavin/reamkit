@@ -52,6 +52,7 @@ import {
   parseXlsxStyles,
 } from '@/ooxml/spreadsheet';
 import { EMPTY_STYLE_SHEET } from '@/ooxml/wordproc';
+import { readXlsx } from '@/readers/xlsx-reader';
 import { renderStyledPdf, signPdf } from '@/pdf';
 
 const WORKBOOK_PART = 'xl/workbook.xml';
@@ -142,63 +143,8 @@ export function convertXlsxToPdfSync(xlsx: Uint8Array, options: ConvertXlsxOptio
   }
   const registry = FontRegistry.fromBytes(fonts);
 
-  const pkg = OpcPackage.open(xlsx);
-  const workbookData = pkg.getPart(WORKBOOK_PART);
-  if (!workbookData) throw new Error('Not a valid xlsx: missing xl/workbook.xml');
-  const { sheets, date1904, definedNames } = parseWorkbook(workbookData);
-  if (sheets.length === 0) throw new Error('xlsx has no sheets');
-
-  const sharedStringsData = pkg.getPart(SHARED_STRINGS_PART);
-  const sharedStrings = sharedStringsData ? parseSharedStrings(sharedStringsData) : [];
-
-  const stylesData = pkg.getPart(STYLES_PART);
-  const styles = stylesData ? parseXlsxStyles(stylesData) : EMPTY_XLSX_STYLES;
-
-  const workbookRels = pkg.getPartRelationships(WORKBOOK_PART);
-  const body: Array<BodyElement> = [];
-
-  // Page geometry comes from the first sheet's <pageSetup>/<pageMargins>.
-  // The renderer only supports one section, so subsequent sheets share the
-  // first sheet's geometry; multi-section support is M2/M4-grade work.
-  let firstSheetSection: SectionProperties | undefined;
-
-  for (let sheetIdx = 0; sheetIdx < sheets.length; sheetIdx++) {
-    const sheet = sheets[sheetIdx]!;
-    const sheetRel = workbookRels.find((r) => r.id === sheet.relationshipId);
-    if (!sheetRel) continue;
-    const resolved = pkg.resolveRelatedPart(WORKBOOK_PART, sheetRel);
-    if (!resolved) continue;
-    const worksheet = parseWorksheet(resolved.data);
-    if (sheetIdx === 0) {
-      firstSheetSection = sectionFromWorksheet(worksheet);
-    }
-
-    // Each sheet after the first starts on its own PDF page. We do NOT print the
-    // sheet name: LibreOffice Calc / Excel `--convert-to pdf` emit it nowhere in
-    // the body (nor the default header) — a synthetic title is pure extra text
-    // that diverges from the print golden. So emit an empty page-break-only
-    // paragraph (no runs ⇒ no glyphs ⇒ no text) for sheets > 0.
-    if (sheetIdx > 0) {
-      body.push({
-        kind: 'paragraph',
-        paragraph: { properties: { pageBreakBefore: true }, runs: [] },
-      });
-    }
-
-    const printArea = resolvePrintArea(definedNames, sheetIdx);
-    const titleRows = resolvePrintTitleRows(definedNames, sheetIdx);
-    const gridLines = worksheet.printOptions?.gridLines === true;
-    body.push(
-      ...worksheetToBody(worksheet, sharedStrings, styles, date1904, {
-        ...(printArea ? { printArea } : {}),
-        ...(titleRows ? { titleRows } : {}),
-        gridLines,
-      }),
-    );
-  }
-
-  const coreData = pkg.getPart(CORE_PROPS_PART);
-  const coreProps = coreData ? parseCoreProperties(coreData) : undefined;
+  // All document-derived state now comes from the xlsx reader (ir-design §7).
+  const { doc: flow } = readXlsx(xlsx);
 
   const {
     fontBytes: _ignoreA,
@@ -213,8 +159,9 @@ export function convertXlsxToPdfSync(xlsx: Uint8Array, options: ConvertXlsxOptio
   void _ignoreSig;
   void _ignoreA;
   void _ignoreB;
-  const section = sectionOverride ?? firstSheetSection;
-  const info = mergeInfo(coreProps, callerInfo);
+  const section = sectionOverride ?? flow.section;
+  // Caller overrides spread over the document's own metadata.
+  const info = flow.info || callerInfo ? { ...flow.info, ...callerInfo } : undefined;
   // PDF/A-3 only: optionally embed the input .xlsx as an associated source file.
   const attachments = [...(callerAttachments ?? [])];
   if (embedSource && options.pdfA?.startsWith('PDF/A-3')) {
@@ -226,7 +173,7 @@ export function convertXlsxToPdfSync(xlsx: Uint8Array, options: ConvertXlsxOptio
       description: 'Source Excel workbook',
     });
   }
-  return renderStyledPdf(body, {
+  return renderStyledPdf(flow.body, {
     registry,
     styles: EMPTY_STYLE_SHEET,
     ...(section ? { section } : {}),
@@ -252,7 +199,7 @@ function mergeInfo(
   };
 }
 
-function sectionFromWorksheet(worksheet: ParsedWorksheet): SectionProperties | undefined {
+export function sectionFromWorksheet(worksheet: ParsedWorksheet): SectionProperties | undefined {
   const pageSize = pageSizeFromSetup(worksheet.pageSetup);
   const margins = marginsFromXlsx(worksheet.pageMargins);
   if (!pageSize && !margins) return undefined;
@@ -299,7 +246,7 @@ const PRINT_TITLES_NAME = '_xlnm.Print_Titles';
 
 // ECMA-376 §18.2.5 — resolve the sheet-scoped _xlnm.Print_Area defined name
 // (localSheetId = the sheet's 0-based index) into a clipping range.
-function resolvePrintArea(
+export function resolvePrintArea(
   definedNames: ReadonlyArray<DefinedName>,
   sheetIdx: number,
 ): CellRange | undefined {
@@ -312,7 +259,7 @@ function resolvePrintArea(
 }
 
 // ECMA-376 §18.2.5 — _xlnm.Print_Titles → the repeated row range (0-indexed).
-function resolvePrintTitleRows(
+export function resolvePrintTitleRows(
   definedNames: ReadonlyArray<DefinedName>,
   sheetIdx: number,
 ): { readonly startRow: number; readonly endRow: number } | undefined {
@@ -404,7 +351,7 @@ interface PrintModelOptions {
   readonly titleRows?: { readonly startRow: number; readonly endRow: number };
 }
 
-function worksheetToBody(
+export function worksheetToBody(
   worksheet: ParsedWorksheet,
   sharedStrings: Array<string>,
   styles: XlsxStyles,
