@@ -2319,7 +2319,11 @@ function layoutTableBlock(
   contentWidth: number,
 ): TableBlock {
   const columnWidthsPt = computeColumnWidths(table, options, fontResources, contentWidth);
-  const mergeRoles = computeMergeRoles(table);
+  // Vertical-merge roles are resolved by the readers (CellProperties.merge);
+  // standalone cells carry no marker.
+  const mergeRoles: Array<Array<MergeRole>> = table.rows.map((r) =>
+    r.cells.map((c) => c.properties.merge ?? 'standalone'),
+  );
 
   const rows: Array<RowLayout> = [];
   const colCount = columnWidthsPt.length;
@@ -2343,7 +2347,7 @@ function layoutTableBlock(
     const nextAbove: Array<CellBorders | undefined> = [];
     let ci = 0;
     for (const cell of table.rows[r]!.cells) {
-      const span = Math.max(1, cell.properties.gridSpan ?? 1);
+      const span = Math.max(1, cell.properties.colSpan ?? 1);
       for (let k = 0; k < span; k++) nextAbove[ci + k] = cell.properties.borders;
       ci += span;
     }
@@ -2377,54 +2381,6 @@ function tableXOffset(
   return alignment === 'center' ? slack / 2 : slack;
 }
 
-// ECMA-376 §17.4.85 (vMerge).  Walk each logical column top-down and tag
-// every cell with its position in a vertical merge group:
-//   start    — vMerge="restart" with at least one following "continue"
-//   middle   — vMerge="continue" with another "continue" right after
-//   end      — vMerge="continue" terminating a group (next column slot
-//              has restart, no vMerge, or no row)
-//   standalone — anything else
-function computeMergeRoles(table: Table): Array<Array<MergeRole>> {
-  const out: Array<Array<MergeRole>> = table.rows.map((r) =>
-    new Array<MergeRole>(r.cells.length).fill('standalone'),
-  );
-
-  const colSlots = new Map<
-    number,
-    Array<{ rowIdx: number; cellIdx: number; vMerge: 'restart' | 'continue' | undefined }>
-  >();
-  for (let rowIdx = 0; rowIdx < table.rows.length; rowIdx++) {
-    const row = table.rows[rowIdx]!;
-    let colIdx = 0;
-    for (let cellIdx = 0; cellIdx < row.cells.length; cellIdx++) {
-      const cell = row.cells[cellIdx]!;
-      let arr = colSlots.get(colIdx);
-      if (!arr) {
-        arr = [];
-        colSlots.set(colIdx, arr);
-      }
-      arr.push({ rowIdx, cellIdx, vMerge: cell.properties.vMerge });
-      colIdx += Math.max(1, cell.properties.gridSpan ?? 1);
-    }
-  }
-
-  for (const slots of colSlots.values()) {
-    for (let i = 0; i < slots.length; i++) {
-      const cur = slots[i]!;
-      const next = slots[i + 1];
-      const nextIsContinue = !!next && next.vMerge === 'continue';
-      let role: MergeRole = 'standalone';
-      if (cur.vMerge === 'restart') {
-        role = nextIsContinue ? 'start' : 'standalone';
-      } else if (cur.vMerge === 'continue') {
-        role = nextIsContinue ? 'middle' : 'end';
-      }
-      out[cur.rowIdx]![cur.cellIdx] = role;
-    }
-  }
-  return out;
-}
-
 // ECMA-376 Part 1 §17.4.20 — tblLayout.
 //   "fixed"     → use tblGrid widths verbatim (scaled to tblW if set)
 //   "auto"|absent → auto-fit: column widths derived from cell content widths;
@@ -2438,7 +2394,7 @@ function computeColumnWidths(
   let colCount = table.grid.length;
   for (const row of table.rows) {
     let rowCols = 0;
-    for (const cell of row.cells) rowCols += Math.max(1, cell.properties.gridSpan ?? 1);
+    for (const cell of row.cells) rowCols += Math.max(1, cell.properties.colSpan ?? 1);
     if (rowCols > colCount) colCount = rowCols;
   }
   if (colCount === 0) return [];
@@ -2452,7 +2408,7 @@ function computeColumnWidths(
     let colIdx = 0;
     for (let i = 0; i < row.cells.length; i++) {
       const cell = row.cells[i]!;
-      const span = Math.max(1, cell.properties.gridSpan ?? 1);
+      const span = Math.max(1, cell.properties.colSpan ?? 1);
       const padLeft =
         cell.properties.margins?.left ??
         table.properties.defaultCellMargins?.left ??
@@ -2564,7 +2520,7 @@ function layoutTableRow(
   let colIdx = 0;
   for (let cellIdx = 0; cellIdx < row.cells.length; cellIdx++) {
     const cell = row.cells[cellIdx]!;
-    const span = Math.max(1, cell.properties.gridSpan ?? 1);
+    const span = Math.max(1, cell.properties.colSpan ?? 1);
     let widthPt = 0;
     for (let k = 0; k < span && colIdx + k < columnWidthsPt.length; k++) {
       widthPt += columnWidthsPt[colIdx + k]!;

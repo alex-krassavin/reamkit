@@ -326,10 +326,18 @@ export interface CellShading {
   readonly colorHex: string;
 }
 
+// Resolved position of a cell in a vertical merge group (ECMA-376 §17.4.85
+// vMerge markers are resolved by the reader): 'start' opens a group that at
+// least one cell continues, 'middle' / 'end' are continuations; undefined =
+// not merged. Continuation cells stay in their rows (they hold the column
+// slot); writers that need an HTML-style rowSpan can derive it by counting a
+// start's middle/end run downwards.
+export type CellMerge = 'start' | 'middle' | 'end';
+
 export interface CellProperties {
   readonly width?: Pt;
-  readonly gridSpan?: number;
-  readonly vMerge?: 'restart' | 'continue';
+  readonly colSpan?: number;
+  readonly merge?: CellMerge;
   readonly borders?: CellBorders;
   readonly margins?: CellMargins;
   readonly shading?: CellShading;

@@ -120,10 +120,10 @@ describe('parseTable + body ordering', () => {
     });
     const cell = tbl.rows[0]!.cells[0]!;
     expect(cell.properties.width).toBe(twipsToPt(2000));
-    expect(cell.properties.gridSpan).toBe(2);
+    expect(cell.properties.colSpan).toBe(2);
   });
 
-  it('parses vertical merge restart and continue', () => {
+  it('resolves vertical merge markers into start/end roles', () => {
     const body = parse(`
       <w:tbl>
         <w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>
@@ -136,8 +136,8 @@ describe('parseTable + body ordering', () => {
       </w:tbl>`);
 
     if (body[0]!.kind !== 'table') throw new Error('expected table');
-    expect(body[0]!.table.rows[0]!.cells[0]!.properties.vMerge).toBe('restart');
-    expect(body[0]!.table.rows[1]!.cells[0]!.properties.vMerge).toBe('continue');
+    expect(body[0]!.table.rows[0]!.cells[0]!.properties.merge).toBe('start');
+    expect(body[0]!.table.rows[1]!.cells[0]!.properties.merge).toBe('end');
   });
 
   it('supports nested tables (table inside cell)', () => {

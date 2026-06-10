@@ -564,7 +564,7 @@ function worksheetToBody(
         // visual column count of this row stays equal to colCount.
         const verticalParent = verticalMergeParent(worksheet.merges, absR, absC);
         if (verticalParent && absC === verticalParent.startColumn) {
-          cells.push(makeVerticalContinuation(verticalParent, colWindowEnd));
+          cells.push(makeVerticalContinuation(verticalParent, colWindowEnd, absR, rowWindowEnd));
         }
         // else: this column is spanned horizontally by an earlier cell in
         // this row → omit entirely so gridSpan layout works.
@@ -612,10 +612,10 @@ function worksheetToBody(
       const visibleEndCol = merge ? Math.min(merge.endColumn, colWindowEnd) : 0;
       const properties: CellProperties = {
         ...(merge && visibleEndCol > merge.startColumn
-          ? { gridSpan: visibleEndCol - merge.startColumn + 1 }
+          ? { colSpan: visibleEndCol - merge.startColumn + 1 }
           : {}),
         ...(merge && Math.min(merge.endRow, rowWindowEnd) > merge.startRow
-          ? { vMerge: 'restart' as const }
+          ? { merge: 'start' as const }
           : {}),
         ...(shading ? { shading } : {}),
         ...(borders ? { borders } : {}),
@@ -704,13 +704,19 @@ function verticalMergeParent(
   return undefined;
 }
 
-function makeVerticalContinuation(merge: MergedRange, colWindowEnd: number): TableCell {
+function makeVerticalContinuation(
+  merge: MergedRange,
+  colWindowEnd: number,
+  absR: number,
+  rowWindowEnd: number,
+): TableCell {
   const visibleEndCol = Math.min(merge.endColumn, colWindowEnd);
   const span = visibleEndCol - merge.startColumn + 1;
+  const lastVisibleRow = Math.min(merge.endRow, rowWindowEnd);
   return {
     properties: {
-      vMerge: 'continue',
-      ...(span > 1 ? { gridSpan: span } : {}),
+      merge: absR < lastVisibleRow ? ('middle' as const) : ('end' as const),
+      ...(span > 1 ? { colSpan: span } : {}),
     },
     content: [
       {

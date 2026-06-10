@@ -6,6 +6,7 @@ import type {
   BorderStyle,
   CellBorders,
   CellMargins,
+  CellMerge,
   CellProperties,
   RowProperties,
   Table,
@@ -45,11 +46,74 @@ const HEIGHT_RULES = new Set<'auto' | 'atLeast' | 'exact'>(['auto', 'atLeast', '
 export function parseTable(tbl: PoNode): Table {
   const properties = parseTableProperties(poFirstChild(tbl, 'w:tblPr'));
   const grid = parseTableGrid(poFirstChild(tbl, 'w:tblGrid'));
-  const rows: Array<TableRow> = [];
+  // Two-phase: collect rows with their raw §17.4.85 vMerge markers, then
+  // resolve the markers into CellMerge roles — the model carries the resolved
+  // semantics, not the OOXML encoding.
+  const draftRows: Array<{ properties: RowProperties; cells: Array<DraftCell> }> = [];
   for (const tr of poChildrenWith(tbl, 'w:tr')) {
-    rows.push(parseTableRow(tr));
+    draftRows.push(parseTableRow(tr));
   }
+  const roles = resolveMergeRoles(draftRows.map((r) => r.cells));
+  const rows: Array<TableRow> = draftRows.map((draft, rowIdx) => ({
+    properties: draft.properties,
+    cells: draft.cells.map((d, cellIdx) => {
+      const merge = roles[rowIdx]![cellIdx];
+      return merge ? { ...d.cell, properties: { ...d.cell.properties, merge } } : d.cell;
+    }),
+  }));
   return { properties, grid, rows };
+}
+
+interface DraftCell {
+  readonly cell: TableCell;
+  readonly vMerge?: 'restart' | 'continue';
+}
+
+// ECMA-376 §17.4.85 (vMerge). Walk each logical column top-down and tag every
+// cell with its position in a vertical merge group:
+//   start  — vMerge="restart" with at least one following "continue"
+//   middle — vMerge="continue" with another "continue" right after
+//   end    — vMerge="continue" terminating a group
+//   undefined — not merged (standalone)
+function resolveMergeRoles(
+  rows: ReadonlyArray<ReadonlyArray<DraftCell>>,
+): Array<Array<CellMerge | undefined>> {
+  const out: Array<Array<CellMerge | undefined>> = rows.map((r) =>
+    new Array<CellMerge | undefined>(r.length).fill(undefined),
+  );
+  const colSlots = new Map<
+    number,
+    Array<{ rowIdx: number; cellIdx: number; vMerge: 'restart' | 'continue' | undefined }>
+  >();
+  for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
+    const row = rows[rowIdx]!;
+    let colIdx = 0;
+    for (let cellIdx = 0; cellIdx < row.length; cellIdx++) {
+      const d = row[cellIdx]!;
+      let arr = colSlots.get(colIdx);
+      if (!arr) {
+        arr = [];
+        colSlots.set(colIdx, arr);
+      }
+      arr.push({ rowIdx, cellIdx, vMerge: d.vMerge });
+      colIdx += Math.max(1, d.cell.properties.colSpan ?? 1);
+    }
+  }
+  for (const slots of colSlots.values()) {
+    for (let i = 0; i < slots.length; i++) {
+      const cur = slots[i]!;
+      const next = slots[i + 1];
+      const nextIsContinue = !!next && next.vMerge === 'continue';
+      let role: CellMerge | undefined;
+      if (cur.vMerge === 'restart') {
+        role = nextIsContinue ? 'start' : undefined;
+      } else if (cur.vMerge === 'continue') {
+        role = nextIsContinue ? 'middle' : 'end';
+      }
+      out[cur.rowIdx]![cur.cellIdx] = role;
+    }
+  }
+  return out;
 }
 
 function parseTableProperties(tblPr: PoNode | undefined): TableProperties {
@@ -94,9 +158,9 @@ function parseTableGrid(tblGrid: PoNode | undefined): Array<Pt> {
   return cols;
 }
 
-function parseTableRow(tr: PoNode): TableRow {
+function parseTableRow(tr: PoNode): { properties: RowProperties; cells: Array<DraftCell> } {
   const properties = parseRowProperties(poFirstChild(tr, 'w:trPr'));
-  const cells: Array<TableCell> = [];
+  const cells: Array<DraftCell> = [];
   for (const tc of poChildrenWith(tr, 'w:tc')) {
     cells.push(parseTableCell(tc));
   }
@@ -123,15 +187,19 @@ function parseRowProperties(trPr: PoNode | undefined): RowProperties {
   return out;
 }
 
-function parseTableCell(tc: PoNode): TableCell {
-  const properties = parseCellProperties(poFirstChild(tc, 'w:tcPr'));
+function parseTableCell(tc: PoNode): DraftCell {
+  const { properties, vMerge } = parseCellProperties(poFirstChild(tc, 'w:tcPr'));
   const content = parseBodyElements(poChildren(tc));
-  return { properties, content };
+  return { cell: { properties, content }, ...(vMerge ? { vMerge } : {}) };
 }
 
-function parseCellProperties(tcPr: PoNode | undefined): CellProperties {
-  if (!tcPr) return {};
+function parseCellProperties(tcPr: PoNode | undefined): {
+  properties: CellProperties;
+  vMerge?: 'restart' | 'continue';
+} {
+  if (!tcPr) return { properties: {} };
   const out: Mutable<CellProperties> = {};
+  let rawVMerge: 'restart' | 'continue' | undefined;
   const tcW = poFirstChild(tcPr, 'w:tcW');
   if (tcW) {
     const w = poIntAttr(tcW, 'w');
@@ -140,13 +208,12 @@ function parseCellProperties(tcPr: PoNode | undefined): CellProperties {
   const gridSpan = poFirstChild(tcPr, 'w:gridSpan');
   if (gridSpan) {
     const v = poIntAttr(gridSpan, 'val');
-    if (v !== undefined) out.gridSpan = v;
+    if (v !== undefined) out.colSpan = v;
   }
   const vMerge = poFirstChild(tcPr, 'w:vMerge');
   if (vMerge) {
     const v = poVal(vMerge);
-    if (v === 'restart') out.vMerge = 'restart';
-    else out.vMerge = 'continue';
+    rawVMerge = v === 'restart' ? 'restart' : 'continue';
   }
   const borders = parseBorders(poFirstChild(tcPr, 'w:tcBorders'));
   if (borders) out.borders = borders;
@@ -161,7 +228,7 @@ function parseCellProperties(tcPr: PoNode | undefined): CellProperties {
       out.shading = { colorHex: fill.toUpperCase() };
     }
   }
-  return out;
+  return { properties: out, ...(rawVMerge ? { vMerge: rawVMerge } : {}) };
 }
 
 function parseBorders(node: PoNode | undefined): CellBorders | undefined {
