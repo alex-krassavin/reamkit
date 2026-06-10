@@ -64,9 +64,9 @@ import type { PathSegment, StrokeStyle, VectorPath, VectorShape } from '@/pdf/ve
 import type { AttachedFile } from '@/pdf/embedded-file';
 import type { StructNode, StructType } from '@/pdf/struct-tree';
 import type { SignaturePlaceholder } from '@/pdf/signature';
-import type { ResourceId, ResourceStore } from '@/ir';
+import type { ResourceId } from '@/ir';
 import type { EmbeddedFont, FontMeasure } from '@/pdf/cid-font';
-import { halfPtToPt } from '@/ir';
+import { ResourceStore, halfPtToPt } from '@/ir';
 import { shapeText } from '@/font';
 import { resolveFamilyKey } from '@/fonts';
 import {
@@ -497,8 +497,10 @@ type DrawCommand = PageItem; // internal alias during the stage-3 migration
 // everything the emit phase needs from layout. `pages` is the PageDoc draft —
 // positioned DrawCommands per page; the resource maps and struct tree ride
 // along until stage 3b/3c make layout PdfDocument-free and the types public.
-interface LaidOutDocument {
+export interface LaidOutDocument {
   readonly pages: ReadonlyArray<LaidOutPage>;
+  // Content-addressed binaries the items reference (images) — ir-design §6.
+  readonly resources: ResourceStore;
   readonly fontResources: Map<string, FontResource>;
   readonly imageResources: Map<ResourceId, ImageResource>;
   readonly structBuilder: StructTreeBuilder | undefined;
@@ -516,11 +518,12 @@ export function renderStyledPdf(
   return emitStyledPdf(laid, options, doc);
 }
 
-// Layout phase: body → positioned pages (DrawCommands), font/image resources,
+// Layout phase (@experimental — the FlowDoc→PageDoc transform of ir-design §7):
+// body → positioned pages (PageItems), font/image resources,
 // logical structure. Still takes `doc` because font/image embedding currently
 // happens up-front (the layout measures with the embedded fonts) — stage 3b
 // splits collect/measure from embed and drops the parameter.
-function layoutStyledDocument(
+export function layoutStyledDocument(
   body: ReadonlyArray<BodyElement>,
   options: StyledRenderOptions,
 ): LaidOutDocument {
@@ -564,7 +567,16 @@ function layoutStyledDocument(
 
   const pages = paginateSections(blocks, sectionCtxs, structBuilder, options.language ?? 'en-US');
 
-  return { pages, fontResources, imageResources, structBuilder, sectionCtxs, pdfaProfile, tagged };
+  return {
+    pages,
+    resources: options.resources ?? new ResourceStore(),
+    fontResources,
+    imageResources,
+    structBuilder,
+    sectionCtxs,
+    pdfaProfile,
+    tagged,
+  };
 }
 
 // Emit phase: PageDoc draft → PDF objects (content streams, page dicts,

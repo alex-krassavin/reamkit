@@ -115,3 +115,7 @@ export {
   NO_FONT,
 } from '@/fonts/provider';
 export type { FontProvider, FontRequest, FontAnswer } from '@/fonts/provider';
+export { svgWriter, writeSvg } from '@/writers/svg-writer';
+export type { SvgWriteOptions } from '@/writers/svg-writer';
+export { layoutStyledDocument } from '@/pdf/styled-page-renderer';
+export type { LaidOutDocument } from '@/pdf/styled-page-renderer';

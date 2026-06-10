@@ -58,3 +58,26 @@ describe('createConverter facade', () => {
     );
   });
 });
+
+describe('svg writer (stage-6 crash test)', () => {
+  it('converts docx → SVG through FlowDoc → layout → svgWriter', async () => {
+    const docx = buildDocxFromBody(`
+      <w:p><w:r><w:t>svg smoke</w:t></w:r></w:p>
+      <w:tbl>
+        <w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>
+        <w:tr><w:tc>
+          <w:tcPr><w:shd w:val="clear" w:fill="FFCC00"/></w:tcPr>
+          <w:p><w:r><w:t>cell</w:t></w:r></w:p>
+        </w:tc></w:tr>
+      </w:tbl>`);
+    const ream = createConverter();
+    const r = await ream.convert(docx, { to: 'svg', fonts: FONTS });
+    const svg = new TextDecoder().decode(r.bytes);
+    expect(svg.startsWith('<svg ')).toBe(true);
+    expect(svg).toContain('>smoke</text>'); // tokens emit per word
+    expect(svg).toContain('cell');
+    expect(svg).toContain('fill="#FFCC00"'); // table shading → <rect>
+    expect(svg).toContain('data-page="1"');
+    expect(svg).toContain('</svg>');
+  });
+});

@@ -192,7 +192,7 @@ type LossReport = readonly Loss[];
 | 3 | `PageDoc`: **3a ✅ шов**, **3b ✅ layout doc-free**, **3c ✅ PageItem-union** (DrawCommand-мешок → discriminated union TextLine/Border/Fill/Image/Shape, экспортирован с LaidOutPage/LaidOutDocument как модульный @experimental-контракт). Остаток (на этап 6, при svg-writer): Pt-брендинг координат, top-left флип, вынос в src/layout/ | **PDF байт-в-байт** |
 | 4 | ✅ Интерфейсы Reader/Writer (@experimental), FlowDoc v0, docx/xlsx-readers (конвертеры на них), createConverter-фасад (sniff+detect+strict-каркас, байты ≡ прямым вызовам), IR-слой в публичном index | публичный API не ломается |
 | 5 | ✅ FontProvider-цепочка (chainProviders + caller/embedded/remote/**local** c OS/2 fsType-гейтом), фасадная опция fontProviders (opt-in), первая живая loss 'substituted' + strict. canvas-metrics — отложен экспериментом | новые тесты + корпус |
-| 6 | Третий адаптер: **svg-writer(PageDoc)** (превью) и/или **html-writer(FlowDoc)** | вскрытие ошибок интерфейсов, фиксация `@experimental`-схемы |
+| 6 | ✅ **svg-writer(PageDoc)** — третий адаптер чисто по PageItem-контракту (text/fill/border/image-dataURL/shape-path, y-флип у writer'а, losses: math dropped); фасад to:'svg'. Краш-тест вскрыл и закрыл: LaidOutDocument не нёс ResourceStore. Остаток стабилизации (Pt-координаты, top-left в схеме, вынос в src/layout) — при заморозке @experimental | вскрытие ошибок интерфейсов ✅ |
 
 Этап 3 — самый рискованный (внутренности styled-renderer), поэтому отдельный и
 с самым строгим гейтом. Порядок 2↔3 можно обернуть.

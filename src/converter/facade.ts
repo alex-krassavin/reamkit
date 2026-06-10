@@ -14,15 +14,18 @@ import type { Loss, LossReport } from '@/ir';
 import type { FontBytesByVariant } from '@/font';
 
 import { ConversionLossError, FEATURES } from '@/ir';
+import { FontRegistry } from '@/font';
 import { chainProviders } from '@/fonts/provider';
+import { layoutStyledDocument } from '@/pdf/styled-page-renderer';
+import { writeSvg } from '@/writers/svg-writer';
 import { convertDocxToPdf } from '@/converter/docx-to-pdf';
 import { convertXlsxToPdf } from '@/converter/xlsx-to-pdf';
 import { docxReader } from '@/readers/docx-reader';
 import { xlsxReader } from '@/readers/xlsx-reader';
 
 export interface ConvertOptions extends ConvertDocxOptions {
-  /** Target format. v0 ships the PDF pipeline; more writers land at stage 6. */
-  readonly to?: 'pdf';
+  /** Target format: 'pdf' (default) or 'svg' (page-stack preview). */
+  readonly to?: 'pdf' | 'svg';
   /**
    * Strict mode (handoff v1 §5): throw ConversionLossError on the first
    * recorded loss instead of returning it in the report.
@@ -70,7 +73,6 @@ export function createConverter(opts: CreateConverterOptions = {}): Converter {
     options: ConvertOptions = {},
   ): Promise<ConvertResult> => {
     const { to = 'pdf', strict = false, fontProviders, ...rest } = options;
-    void to; // single target in v0
     const reader = detect(bytes);
     if (!reader) {
       throw new Error('Unrecognized input format (no registered reader sniffs these bytes)');
@@ -83,6 +85,30 @@ export function createConverter(opts: CreateConverterOptions = {}): Converter {
       const { fonts, loss } = await resolveFontsViaChain(fontProviders);
       if (fonts) conv = { ...rest, fonts };
       if (loss) losses.push(loss);
+    }
+    if (to === 'svg') {
+      // FlowDoc → layout → svg writer: the stage-6 pipeline, no PDF involved.
+      const fonts = conv.fonts ?? (conv.fontBytes ? { regular: conv.fontBytes } : undefined);
+      if (!fonts) {
+        throw new Error("to: 'svg' requires options.fonts/fontBytes or fontProviders");
+      }
+      const { doc: flow } = reader.read(bytes);
+      const laid = layoutStyledDocument(flow.body, {
+        registry: FontRegistry.fromBytes(fonts),
+        styles: flow.styles,
+        ...(flow.numbering ? { numbering: flow.numbering } : {}),
+        ...(flow.sections.length > 0 ? { sections: flow.sections } : {}),
+        ...(flow.section ? { section: flow.section } : {}),
+        ...(flow.headersFooters ? { headersFooters: flow.headersFooters } : {}),
+        resources: flow.resources,
+        ...(flow.charts ? { charts: flow.charts } : {}),
+        ...(flow.embeddedFonts ? { embeddedFonts: flow.embeddedFonts } : {}),
+        ...(flow.language ? { language: flow.language } : {}),
+      });
+      const svg = writeSvg(laid);
+      losses.push(...svg.losses);
+      if (strict && losses.length > 0) throw new ConversionLossError(losses[0]!);
+      return { bytes: svg.bytes, losses };
     }
     const pdf =
       reader.id === 'xlsx'
