@@ -67,34 +67,40 @@
 - Text shapers
 - Конвертеры docx/xlsx
 
-## Архитектура — модули
+## Архитектура — модули (фактическая, после реорганизации в v1)
 
-Каждый модуль маппится на конкретный раздел стандарта:
+Форматные модули поверх формат-агностичного ядра; каждый parser/writer
+маппится на раздел стандарта:
 
 ```
 src/
-  opc/              # ECMA-376 Part 2 — OPC packaging
-  ooxml/
-    wordproc/       # ECMA-376 Part 1 §17 — WordprocessingML
-    spreadsheet/    # ECMA-376 Part 1 §18 — SpreadsheetML
-    drawing/        # ECMA-376 Part 1 §20 — DrawingML
-    math/           # ECMA-376 Part 1 §22 — OfficeMathML
-    mce/            # ECMA-376 Part 3 — Markup Compatibility
-  document-model/   # Типизированная in-memory модель (Document, Section, Paragraph, Run, Table, ...)
-  style-cascade/    # §17.7 — docDefaults → styles → direct formatting
-  numbering/        # §17.9 — abstractNum, lvlOverride
-  font-engine/      # OpenType — парсинг TTF/OTF, метрики, шейпинг
-  text-shaper/      # UAX + GSUB/GPOS — Unicode → массив глифов
-  line-breaker/     # Knuth-Plass + Liang
-  layout-engine/    # Box model → strings → blocks → pages
-  pdf/
-    objects/        # ISO 32000-2 §7 — типы объектов
-    writer/         # ISO 32000-2 §7-8 — content streams, xref
-    fonts/          # §9 — Font subsetting, Type0/CIDFontType2 embedding
-    images/         # §8.9 — XObject Image, DCTDecode/FlateDecode/CCITTFaxDecode
-    graphics/       # §8.5 — path/fill/stroke
-  converter/        # Оркестратор: OOXML → document-model → layout → PDF
+  core/                  # формат-агностика
+    ir/                  # IR-ядро: Pt, ResourceStore, Loss/strict, Feature,
+                         #   FlowDoc, DocumentReader/Writer-контракты (@experimental)
+    document-model/      # типизированная модель (публичный subpath ./document-model)
+    font/                # OpenType: TTF-парсер, метрики, шейпинг, subset, registry
+    fonts/               # FontProvider-цепочка (caller/embedded/local+fsType/remote)
+    line-breaker/        # Knuth-Plass
+    hyphenation/         # Liang (en/ru, lazy)
+    bidi/                # UAX #9 (+ BD16 brackets)
+    style-cascade/       # §17.7 docDefaults → styles → direct
+    numbering/           # §17.9 abstractNum/lvlOverride → маркеры
+    drawingml/           # §20/§21 общий DrawingML: темы, цвета, chart-parser
+    opc/                 # ECMA-376 Part 2 OPC (+zip-bomb guards) + core-props
+    crypto/              # ASN.1/CMS для подписей (WebCrypto)
+    converter/           # createConverter-фасад + публичные реэкспорты конвертеров
+  word/                  # §17 WordprocessingML: все парсеры + omml-parser (§22) +
+                         #   docx-reader (bytes→FlowDoc) + docx-to-pdf
+  excel/                 # §18 SpreadsheetML: парсеры + print-model +
+                         #   xlsx-reader + xlsx-to-pdf
+  pdf/                   # ISO 32000: layout (FlowDoc→PageDoc, doc-free) +
+                         #   emit/writer, cid-font, image-xobject, PDF/A, подписи,
+                         #   tagged PDF, chart-geometry, math-layout, vector-graphics
+  svg/                   # svg-writer (PageDoc→SVG, третий адаптер)
+  index.ts               # публичное API
 ```
+
+Пайплайн: `bytes → reader → FlowDoc → layout → PageDoc(draft) → writer → bytes`.
 
 ## Этапы (milestones)
 
@@ -274,7 +280,7 @@ src/
   index.ts                   Публичный API barrel пакета (convert*, renderStyledPdf,
                              FontRegistry/parseTtf, hyphenation + типы)
   opc/                       ECMA-376 Part 2 — package + getPartRelationships + resolveRelatedPart
-  ooxml/spreadsheet/         §18 — SpreadsheetML парсеры
+  excel/         §18 — SpreadsheetML парсеры
     cell-reference.ts        A1 ↔ {row, col} (0-indexed внутри, 1-indexed снаружи)
     defined-name-ref.ts      §18.2.5 — parseAreaRef (Print_Area "Sheet!$A$1:$D$20"
                               → bounding box) + parseTitleRowRange (Print_Titles
@@ -293,7 +299,7 @@ src/
     number-format.ts         applyNumberFormat: built-in numbers (0-49) + custom code
                               parser + Excel date formats (14-22, 45-47, custom
                               date tokenizer с m=month/minute disambiguation)
-  ooxml/wordproc/            §17 — все парсеры
+  word/            §17 — все парсеры
     po-helpers.ts            preserveOrder XML walker (w:/r:/xml: namespaces)
     po-to-flat.ts            адаптер PO → non-PO для парсеров свойств
     document-parser.ts       BodyElement[] + parseSection + parseHeaderFooter
@@ -305,14 +311,14 @@ src/
     drawing-parser.ts        §20 — w:drawing → picture | wps:wsp shape; MCE
                              resolveMc/expandMcChildren (Choice>Fallback); spPr
                              (xfrm/prstGeom/custGeom/solidFill/ln), txbx/bodyPr
-  ooxml/drawingml/           §20/§21 DrawingML общее
+  core/drawingml/           §20/§21 DrawingML общее
     colors.ts                RawColor/ColorResolver, makeColorResolver, tx/bg
                              алиасы, дефолтная Office-2013-палитра
     theme-parser.ts          a:clrScheme → name→hex (srgbClr/sysClr@lastClr)
     chart-parser.ts          §21.2 — chart1.xml: chartSpace/plotArea/bar|line|
                              pieChart, c:ser cat/val КЭШ (num/strCache), title,
                              legend, barDir/grouping, цвет серии (fill или a:ln)
-  ooxml/math/                §22 OfficeMathML
+  word/ (omml-parser)                §22 OfficeMathML
     omml-parser.ts           m:oMath/oMathPara → MathNode; r/f/sSup/sSub/
                              sSubSup/sPre/rad/nary/func/limLow/limUpp/d/m/acc/
                              bar/groupChr; m:rPr стили; m:val через m: namespace
