@@ -190,7 +190,7 @@ type LossReport = readonly Loss[];
 | 1 | ✅ Типы ядра: `Pt`, `ResourceStore`, `Loss*`, `Feature` — рядом, ничего не трогаем | tsc + тесты |
 | 2 | `FlowDoc` = нейтрализованный document-model: **✅ ЗАВЕРШЁН: 2a единицы→Pt, 2b merge-роли+colSpan, 2c images→ResourceStore (ImageResolver в parser, content-addressed дедуп), 2d native-мешки** — все подэтапы байт-в-байт | **PDF байт-в-байт** |
 | 3 | `PageDoc`: **3a ✅ шов**, **3b ✅ layout doc-free**, **3c ✅ PageItem-union** (DrawCommand-мешок → discriminated union TextLine/Border/Fill/Image/Shape, экспортирован с LaidOutPage/LaidOutDocument как модульный @experimental-контракт). Остаток (на этап 6, при svg-writer): Pt-брендинг координат, top-left флип, вынос в src/layout/ | **PDF байт-в-байт** |
-| 4 | Интерфейсы Reader/Writer/фасад; старые API — обёртки | публичный API не ломается |
+| 4 | ✅ Интерфейсы Reader/Writer (@experimental), FlowDoc v0, docx/xlsx-readers (конвертеры на них), createConverter-фасад (sniff+detect+strict-каркас, байты ≡ прямым вызовам), IR-слой в публичном index | публичный API не ломается |
 | 5 | FontProvider-цепочка (рефактор) + **local**-провайдер с fsType | новые тесты + корпус |
 | 6 | Третий адаптер: **svg-writer(PageDoc)** (превью) и/или **html-writer(FlowDoc)** | вскрытие ошибок интерфейсов, фиксация `@experimental`-схемы |
 
