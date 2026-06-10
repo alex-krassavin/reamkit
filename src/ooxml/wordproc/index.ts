@@ -1,3 +1,4 @@
+export type { ImageResolver } from '@/ooxml/wordproc/document-parser';
 export { extractParagraphs } from '@/ooxml/wordproc/text-extractor';
 export {
   parseDocument,

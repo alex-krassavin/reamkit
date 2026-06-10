@@ -11,6 +11,7 @@ import type {
   BodyElement,
   HeaderFooterReference,
   HeaderFooterType,
+  InlineImage,
   PageMargins,
   PageSize,
   Paragraph,
@@ -20,7 +21,7 @@ import type {
 } from '@/document-model';
 
 import type { ColorResolver } from '@/ooxml/drawingml/colors';
-import type { Pt } from '@/ir';
+import type { Pt, ResourceId } from '@/ir';
 import type { PoNode } from '@/ooxml/wordproc/po-helpers';
 import { twipsToPt } from '@/ir';
 import { parseOMath } from '@/ooxml/math/omml-parser';
@@ -64,15 +65,20 @@ const RUN_CONTAINER_TAGS = new Set([
   'w:moveTo',
 ]);
 
+// Resolves a drawing relationship id to a content-addressed ResourceId —
+// supplied by the converter (which owns the OPC package and the ResourceStore).
+export type ImageResolver = (relId: string) => ResourceId | undefined;
+
 export function parseDocument(
   documentXml: Uint8Array,
   resolveColor: ColorResolver = defaultColorResolver,
+  resolveImage?: ImageResolver,
 ): Array<BodyElement> {
   const xml = decoder.decode(documentXml);
   const tree = parser.parse(xml) as Array<PoNode>;
   const body = poFindByPath(tree, ['w:document', 'w:body']);
   if (!body) return [];
-  return parseBodyElements(poChildren(body), resolveColor);
+  return parseBodyElements(poChildren(body), resolveColor, resolveImage);
 }
 
 const HF_TYPES = new Set<HeaderFooterType>(['default', 'first', 'even']);
@@ -210,24 +216,26 @@ function pushHeaderFooter(node: PoNode, list: Array<HeaderFooterReference>): voi
 export function parseHeaderFooter(
   xml: Uint8Array,
   resolveColor: ColorResolver = defaultColorResolver,
+  resolveImage?: ImageResolver,
 ): Array<BodyElement> {
   const tree = parser.parse(decoder.decode(xml)) as Array<PoNode>;
   const root = tree.find((n) => poIs(n, 'w:hdr') || poIs(n, 'w:ftr'));
   if (!root) return [];
-  return parseBodyElements(poChildren(root), resolveColor);
+  return parseBodyElements(poChildren(root), resolveColor, resolveImage);
 }
 
 export function parseBodyElements(
   children: ReadonlyArray<PoNode>,
   resolveColor: ColorResolver = defaultColorResolver,
+  resolveImage?: ImageResolver,
 ): Array<BodyElement> {
   const out: Array<BodyElement> = [];
   for (const child of children) {
     if (poIs(child, 'w:p')) {
-      const drawing = tryExtractDrawingFromParagraph(child, resolveColor);
-      out.push(drawing ?? { kind: 'paragraph', paragraph: parseParagraph(child) });
+      const drawing = tryExtractDrawingFromParagraph(child, resolveColor, resolveImage);
+      out.push(drawing ?? { kind: 'paragraph', paragraph: parseParagraph(child, resolveImage) });
     } else if (poIs(child, 'w:tbl')) {
-      out.push({ kind: 'table', table: parseTable(child) });
+      out.push({ kind: 'table', table: parseTable(child, resolveColor, resolveImage) });
     }
   }
   return out;
@@ -242,6 +250,7 @@ export function parseBodyElements(
 function tryExtractDrawingFromParagraph(
   p: PoNode,
   resolveColor: ColorResolver,
+  resolveImage?: ImageResolver,
 ): BodyElement | null {
   let drawing: PoNode | undefined;
   let hasText = false;
@@ -266,7 +275,7 @@ function tryExtractDrawingFromParagraph(
   // Inject parseBodyElements (bound to this resolver) so a shape's text box is
   // parsed without a module cycle.
   const parseBody = (children: ReadonlyArray<PoNode>): Array<BodyElement> =>
-    parseBodyElements(children, resolveColor);
+    parseBodyElements(children, resolveColor, resolveImage);
   const content = parseDrawing(drawing, resolveColor, parseBody);
   if (!content) return null;
 
@@ -274,10 +283,11 @@ function tryExtractDrawingFromParagraph(
   const paragraphProperties = pPrNode ? parseParagraphProperties(poElementToFlat(pPrNode)) : {};
 
   if (content.kind === 'image') {
+    const resource = resolveImage?.(content.imageId);
     return {
       kind: 'image',
       image: {
-        imageId: content.imageId,
+        ...(resource ? { resource } : {}),
         width: content.width,
         height: content.height,
         paragraphProperties,
@@ -307,7 +317,7 @@ function tryExtractDrawingFromParagraph(
   };
 }
 
-function parseParagraph(p: PoNode): Paragraph {
+function parseParagraph(p: PoNode, resolveImage?: ImageResolver): Paragraph {
   const pPr = poChildren(p).find((c) => poIs(c, 'w:pPr'));
   let properties = parseParagraphProperties(pPr ? poElementToFlat(pPr) : undefined);
   // A display equation (m:oMathPara) centres its paragraph by default
@@ -322,15 +332,15 @@ function parseParagraph(p: PoNode): Paragraph {
     properties = { ...properties, alignment };
   }
   const runs: Array<Run> = [];
-  collectRuns(p, runs);
+  collectRuns(p, runs, resolveImage);
   return { properties, runs };
 }
 
-function collectRuns(container: PoNode, out: Array<Run>): void {
+function collectRuns(container: PoNode, out: Array<Run>, resolveImage?: ImageResolver): void {
   for (const child of poChildren(container)) {
     if (poIs(child, 'w:pPr')) continue;
     if (poIs(child, 'w:r')) {
-      out.push(parseRun(child));
+      out.push(parseRun(child, resolveImage));
       continue;
     }
     // OfficeMath: an inline equation (m:oMath) or a display paragraph
@@ -347,17 +357,17 @@ function collectRuns(container: PoNode, out: Array<Run>): void {
     }
     const tag = elementTag(child);
     if (tag && RUN_CONTAINER_TAGS.has(tag)) {
-      collectRuns(child, out);
+      collectRuns(child, out, resolveImage);
     }
   }
 }
 
-function parseRun(r: PoNode): Run {
+function parseRun(r: PoNode, resolveImage?: ImageResolver): Run {
   const rPr = poChildren(r).find((c) => poIs(c, 'w:rPr'));
   const properties = parseRunProperties(rPr ? poElementToFlat(rPr) : undefined);
   let text = '';
   let pageBreak = false;
-  let inlineImage: { imageId: string; width: Pt; height: Pt } | undefined;
+  let inlineImage: InlineImage | undefined;
   for (const child of expandMcChildren(poChildren(r))) {
     if (poIs(child, 'w:rPr')) continue;
     if (poIs(child, 'w:t')) {
@@ -378,8 +388,9 @@ function parseRun(r: PoNode): Run {
       // dropped (its text is preserved). Colour is irrelevant for pictures.
       const content = parseDrawing(child, defaultColorResolver);
       if (content && content.kind === 'image') {
+        const resource = resolveImage?.(content.imageId);
         inlineImage = {
-          imageId: content.imageId,
+          ...(resource ? { resource } : {}),
           width: content.width,
           height: content.height,
         };

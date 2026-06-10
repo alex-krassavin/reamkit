@@ -8,7 +8,7 @@
 // (style-cascade) merges these into ResolvedRunProperties / ResolvedParagraphProperties
 // that the renderer consumes.
 
-import type { Pt } from '@/ir';
+import type { NativeBag, Pt, ResourceId } from '@/ir';
 
 export type Alignment = 'left' | 'right' | 'center' | 'both' | 'distribute';
 
@@ -88,7 +88,9 @@ export interface ParagraphProperties {
 // alongside (or instead of) `text` so layout can position the image as if it
 // were a glyph in the line box.
 export interface InlineImage {
-  readonly imageId: string;
+  // Content-addressed bytes in the document's ResourceStore; absent when the
+  // source relationship did not resolve (the layout box still reserves space).
+  readonly resource?: ResourceId;
   readonly width: Pt;
   readonly height: Pt;
 }
@@ -223,6 +225,7 @@ export interface MathEqArray {
 }
 
 export interface Run {
+  readonly native?: NativeBag;
   readonly text: string;
   readonly properties: RunProperties;
   // When set, the run renders this image inline in the line; `text` is ignored.
@@ -235,6 +238,7 @@ export interface Run {
 }
 
 export interface Paragraph {
+  readonly native?: NativeBag;
   readonly properties: ParagraphProperties;
   readonly runs: ReadonlyArray<Run>;
 }
@@ -376,6 +380,7 @@ export interface TableRow {
 }
 
 export interface Table {
+  readonly native?: NativeBag;
   readonly properties: TableProperties;
   readonly grid: ReadonlyArray<Pt>;
   readonly rows: ReadonlyArray<TableRow>;
@@ -384,7 +389,7 @@ export interface Table {
 // ECMA-376 Part 1 §20.4.2.8 — wp:inline picture extent. EMU = English
 // Metric Units: 914400 per inch (1 pt = 12700 EMU).
 export interface ImageBlock {
-  readonly imageId: string;
+  readonly resource?: ResourceId;
   readonly width: Pt;
   readonly height: Pt;
   readonly paragraphProperties: ParagraphProperties;

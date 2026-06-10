@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
 import { buildTinyPng } from './fixtures/build-png';
-import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/ir';
+import { ResourceStore, eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/ir';
 import { convertDocxToPdfSync } from '@/converter';
 import { parseTtf } from '@/font';
 import { OpcPackage } from '@/opc';
@@ -130,11 +130,17 @@ describe('Drawing parser', () => {
     const body = `<w:p>${drawingXml('rId20', 914400, 685800)}</w:p>`;
     const docx = buildDocxFromBody(body);
     const pkg = OpcPackage.open(docx);
-    const parsed = parseDocument(pkg.getMainDocument().data);
+    // The parser resolves drawing relationship ids through the supplied
+    // ImageResolver into content-addressed ResourceIds.
+    const store = new ResourceStore();
+    const expectedId = store.put(new Uint8Array([1, 2, 3]));
+    const parsed = parseDocument(pkg.getMainDocument().data, undefined, (relId) =>
+      relId === 'rId20' ? expectedId : undefined,
+    );
     expect(parsed).toHaveLength(1);
     expect(parsed[0]!.kind).toBe('image');
     if (parsed[0]!.kind !== 'image') throw new Error('unreachable');
-    expect(parsed[0]!.image.imageId).toBe('rId20');
+    expect(parsed[0]!.image.resource).toBe(expectedId);
     expect(parsed[0]!.image.width).toBe(emuToPt(914400));
     expect(parsed[0]!.image.height).toBe(emuToPt(685800));
   });

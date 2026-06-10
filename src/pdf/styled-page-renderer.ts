@@ -64,6 +64,7 @@ import type { PathSegment, StrokeStyle, VectorPath, VectorShape } from '@/pdf/ve
 import type { AttachedFile } from '@/pdf/embedded-file';
 import type { StructNode, StructType } from '@/pdf/struct-tree';
 import type { SignaturePlaceholder } from '@/pdf/signature';
+import type { ResourceId, ResourceStore } from '@/ir';
 import { halfPtToPt } from '@/ir';
 import { shapeText } from '@/font';
 import { resolveFamilyKey } from '@/fonts';
@@ -148,7 +149,8 @@ export interface StyledRenderOptions {
   // body[sections[N-1].endIndex..sections[N].endIndex)).
   readonly sections?: ReadonlyArray<Section>;
   readonly headersFooters?: ReadonlyMap<string, ReadonlyArray<BodyElement>>;
-  readonly images?: ReadonlyMap<string, Uint8Array>;
+  // Content-addressed binary store; image nodes reference it by ResourceId.
+  readonly resources?: ResourceStore;
   // Parsed charts keyed by relationship id (ChartBlock.chartRelId). Supplied by
   // the converter, which resolves the chart parts from the package.
   readonly charts?: ReadonlyMap<string, Chart>;
@@ -1030,7 +1032,7 @@ function layoutImageBlock(
     widthPt = contentWidth;
     heightPt = heightPt * scale;
   }
-  const res = imageResources?.get(image.imageId);
+  const res = image.resource ? imageResources?.get(image.resource) : undefined;
   const resolvedAlignment = image.paragraphProperties.alignment ?? 'left';
   return {
     kind: 'image',
@@ -1380,16 +1382,16 @@ function embedUsedImages(
   options: StyledRenderOptions,
 ): Map<string, ImageResource> {
   const out = new Map<string, ImageResource>();
-  if (!options.images || options.images.size === 0) return out;
+  if (!options.resources || options.resources.size === 0) return out;
 
-  const seen = new Set<string>();
+  const seen = new Set<ResourceId>();
   const visit = (elements: ReadonlyArray<BodyElement>) => {
     for (const el of elements) {
       if (el.kind === 'image') {
-        seen.add(el.image.imageId);
+        if (el.image.resource) seen.add(el.image.resource);
       } else if (el.kind === 'paragraph') {
         for (const run of el.paragraph.runs) {
-          if (run.inlineImage) seen.add(run.inlineImage.imageId);
+          if (run.inlineImage?.resource) seen.add(run.inlineImage.resource);
         }
       } else if (el.kind === 'table') {
         for (const row of el.table.rows) {
@@ -1406,8 +1408,8 @@ function embedUsedImages(
   // Only PDF/A-1 forbids transparency; PDF/A-2/3 keep the image soft mask.
   const flattenAlpha = options.pdfA ? parsePdfAProfile(options.pdfA).part === 1 : false;
   let counter = 0;
-  for (const imageId of seen) {
-    const bytes = options.images.get(imageId);
+  for (const resourceId of seen) {
+    const bytes = options.resources.get(resourceId);
     if (!bytes) continue;
     // An unsupported or corrupt image must not abort the whole document — skip
     // it. It then has no resource, so the emit phase draws nothing for it (its
@@ -1420,7 +1422,7 @@ function embedUsedImages(
       continue;
     }
     counter++;
-    out.set(imageId, { resourceName: `Im${counter}`, ref: embedded.ref });
+    out.set(resourceId, { resourceName: `Im${counter}`, ref: embedded.ref });
   }
   return out;
 }
@@ -1821,7 +1823,9 @@ function tokenizeParagraph(
       const widthPt = Math.min(naturalW, contentWidth);
       const scale = naturalW > 0 ? widthPt / naturalW : 1;
       const heightPt = run.inlineImage.height * scale;
-      const res = imageResources?.get(run.inlineImage.imageId);
+      const res = run.inlineImage.resource
+        ? imageResources?.get(run.inlineImage.resource)
+        : undefined;
       const resolvedRun = resolveRunProperties(
         run.properties,
         paragraph.properties,

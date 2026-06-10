@@ -1,9 +1,12 @@
 import type { BodyElement, Chart, Section } from '@/document-model';
 import type { FontBytesByVariant } from '@/font';
+import type { ResourceId } from '@/ir';
 import type { FamilyKey, FetchLike } from '@/fonts';
 import type { ColorResolver } from '@/ooxml/drawingml/colors';
 import type { CoreProperties } from '@/opc';
 import type { DocumentInfo, SignatureOptions, StyledRenderOptions } from '@/pdf';
+import type { ImageResolver } from '@/ooxml/wordproc';
+import { ResourceStore } from '@/ir';
 import { FontRegistry } from '@/font';
 import { fetchFontSet, resolveFamilyKey } from '@/fonts';
 import { parseChart } from '@/ooxml/drawingml/chart-parser';
@@ -70,7 +73,11 @@ export function convertDocxToPdfSync(docx: Uint8Array, options: ConvertDocxOptio
   // Theme-backed colour resolver (schemeClr → hex); falls back to the built-in
   // Office palette when there is no theme part.
   const resolveColor = buildColorResolver(pkg);
-  const body = parseDocument(main.data, resolveColor);
+  // Content-addressed store for binary resources; the image resolver fills it
+  // lazily as the parsers meet drawing relationships (identical bytes dedupe).
+  const resources = new ResourceStore();
+  const resolveImage = makeImageResolver(pkg, resources);
+  const body = parseDocument(main.data, resolveColor, resolveImage);
   const rawSections = parseSections(main.data);
 
   const stylesData = pkg.getPart(STYLES_PART);
@@ -101,8 +108,7 @@ export function convertDocxToPdfSync(docx: Uint8Array, options: ConvertDocxOptio
           },
         ];
 
-  const headersFooters = loadHeadersFootersForSections(pkg, sections, resolveColor);
-  const images = loadImages(pkg);
+  const headersFooters = loadHeadersFootersForSections(pkg, sections, resolveColor, resolveImage);
   const charts = loadCharts(pkg, resolveColor);
   // The document's own embedded fonts (de-obfuscated). A run whose w:ascii
   // matches one renders with the real font instead of a substitute.
@@ -144,7 +150,7 @@ export function convertDocxToPdfSync(docx: Uint8Array, options: ConvertDocxOptio
     numbering,
     sections,
     headersFooters,
-    images,
+    resources,
     charts,
     ...(embeddedFonts.size > 0 ? { embeddedFonts } : {}),
     ...(info ? { info } : {}),
@@ -300,17 +306,23 @@ function mergeInfo(
   };
 }
 
-function loadImages(pkg: OpcPackage): ReadonlyMap<string, Uint8Array> {
-  const rels = pkg.getPartRelationships(MAIN_DOCUMENT_PART);
-  if (rels.length === 0) return new Map();
-  const out = new Map<string, Uint8Array>();
-  for (const rel of rels) {
+function makeImageResolver(pkg: OpcPackage, store: ResourceStore): ImageResolver {
+  // Main-part image relationships only (headers/footers historically resolved
+  // against the same map; their own rels are a TODO).
+  const byRelId = new Map<string, Uint8Array>();
+  for (const rel of pkg.getPartRelationships(MAIN_DOCUMENT_PART)) {
     if (rel.type !== REL_IMAGE) continue;
     const resolved = pkg.resolveRelatedPart(MAIN_DOCUMENT_PART, rel);
-    if (!resolved) continue;
-    out.set(rel.id, resolved.data);
+    if (resolved) byRelId.set(rel.id, resolved.data);
   }
-  return out;
+  const cache = new Map<string, ResourceId | undefined>();
+  return (relId) => {
+    if (cache.has(relId)) return cache.get(relId);
+    const bytes = byRelId.get(relId);
+    const id = bytes ? store.put(bytes) : undefined;
+    cache.set(relId, id);
+    return id;
+  };
 }
 
 // Resolve & parse every chart part referenced by the main document, keyed by
@@ -351,6 +363,7 @@ function loadHeadersFootersForSections(
   pkg: OpcPackage,
   sections: ReadonlyArray<Section>,
   resolveColor: ColorResolver,
+  resolveImage?: ImageResolver,
 ): ReadonlyMap<string, ReadonlyArray<BodyElement>> {
   const wanted = new Set<string>();
   for (const s of sections) {
@@ -367,7 +380,7 @@ function loadHeadersFootersForSections(
     if (rel.type !== REL_HEADER && rel.type !== REL_FOOTER) continue;
     const resolved = pkg.resolveRelatedPart(MAIN_DOCUMENT_PART, rel);
     if (!resolved) continue;
-    out.set(rel.id, parseHeaderFooter(resolved.data, resolveColor));
+    out.set(rel.id, parseHeaderFooter(resolved.data, resolveColor, resolveImage));
   }
   // EMPTY_SECTION reference avoids "unused import" complaints in builds where
   // the variable is otherwise unused.
