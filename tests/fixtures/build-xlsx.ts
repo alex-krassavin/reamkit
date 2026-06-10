@@ -3,7 +3,7 @@
 
 import { zipSync } from 'fflate';
 
-import { formatCellRef } from '@/ooxml/spreadsheet';
+import { formatCellRef } from '@/excel';
 
 const encoder = new TextEncoder();
 

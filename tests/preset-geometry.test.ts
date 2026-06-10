@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { CustomGeometry } from '@/document-model';
+import type { CustomGeometry } from '@/core/document-model';
 import type { PathSegment } from '@/pdf/vector-graphics';
 import { customPaths, presetPaths } from '@/pdf/preset-geometry';
 

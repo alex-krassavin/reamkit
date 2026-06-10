@@ -6,8 +6,8 @@ import { unzipSync, zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
-import { convertDocxToPdfSync } from '@/converter';
-import { parseCoreProperties } from '@/opc';
+import { convertDocxToPdfSync } from '@/core/converter';
+import { parseCoreProperties } from '@/core/opc';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FONTS = {

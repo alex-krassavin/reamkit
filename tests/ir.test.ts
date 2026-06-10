@@ -14,7 +14,7 @@ import {
   pt,
   pxToPt,
   twipsToPt,
-} from '@/ir';
+} from '@/core/ir';
 
 describe('IR units — canonical Pt', () => {
   it('converts format-native units to points', () => {

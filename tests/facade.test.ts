@@ -4,10 +4,10 @@ import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
 import { buildXlsx } from './fixtures/build-xlsx';
-import { convertDocxToPdfSync } from '@/converter';
-import { createConverter } from '@/converter/facade';
-import { docxReader, readDocx } from '@/readers/docx-reader';
-import { xlsxReader } from '@/readers/xlsx-reader';
+import { convertDocxToPdfSync } from '@/core/converter';
+import { createConverter } from '@/core/converter/facade';
+import { docxReader, readDocx } from '@/word/docx-reader';
+import { xlsxReader } from '@/excel/xlsx-reader';
 
 const FONTS = {
   regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),

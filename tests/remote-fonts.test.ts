@@ -5,9 +5,9 @@ import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
-import type { FetchLike } from '@/fonts/remote-fonts';
-import { convertDocxToPdf } from '@/converter';
-import { clearFontCache, fetchFontSet, resolveFamilyKey } from '@/fonts/remote-fonts';
+import type { FetchLike } from '@/core/fonts/remote-fonts';
+import { convertDocxToPdf } from '@/core/converter';
+import { clearFontCache, fetchFontSet, resolveFamilyKey } from '@/core/fonts/remote-fonts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ROBOTO = new Uint8Array(readFileSync(resolve(here, 'fixtures/fonts/Roboto-Regular.ttf')));

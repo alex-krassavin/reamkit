@@ -6,12 +6,12 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
-import type { BodyElement } from '@/document-model';
-import { convertDocxToPdf } from '@/converter';
-import { FontRegistry } from '@/font';
-import { EMPTY_STYLE_SHEET } from '@/ooxml/wordproc';
+import type { BodyElement } from '@/core/document-model';
+import { convertDocxToPdf } from '@/core/converter';
+import { FontRegistry } from '@/core/font';
+import { EMPTY_STYLE_SHEET } from '@/word';
 import { renderStyledPdf, signPdf } from '@/pdf';
-import * as asn1 from '@/crypto/asn1';
+import * as asn1 from '@/core/crypto/asn1';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REGULAR = new Uint8Array(readFileSync(resolve(here, 'fixtures/fonts/Roboto-Regular.ttf')));

@@ -6,8 +6,8 @@
 
 import type { PdfDict, PdfRef, PdfValue } from '@/pdf/objects';
 import type { PdfDocument } from '@/pdf/writer';
-import { buildPkcs7Detached } from '@/crypto';
-import * as der from '@/crypto/asn1';
+import { buildPkcs7Detached } from '@/core/crypto';
+import * as der from '@/core/crypto/asn1';
 import { PdfHexString, PdfRawToken, dict, name, ref } from '@/pdf/objects';
 
 // A fixed-width /ByteRange placeholder: four 10-digit slots → overwritten in

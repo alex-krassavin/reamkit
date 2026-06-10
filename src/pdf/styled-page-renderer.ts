@@ -44,12 +44,12 @@ import type {
   TableCell,
   TableProperties,
   TableRow,
-} from '@/document-model';
-import type { FontRegistry, ParsedTtf } from '@/font';
-import type { FamilyKey } from '@/fonts';
-import type { Hyphenator } from '@/hyphenation';
-import type { Item } from '@/line-breaker';
-import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/style-cascade';
+} from '@/core/document-model';
+import type { FontRegistry, ParsedTtf } from '@/core/font';
+import type { FamilyKey } from '@/core/fonts';
+import type { Hyphenator } from '@/core/hyphenation';
+import type { Item } from '@/core/line-breaker';
+import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
 import type {
   ChartLabel,
   ChartPolygon,
@@ -64,26 +64,26 @@ import type { PathSegment, StrokeStyle, VectorPath, VectorShape } from '@/pdf/ve
 import type { AttachedFile } from '@/pdf/embedded-file';
 import type { StructNode, StructType } from '@/pdf/struct-tree';
 import type { SignaturePlaceholder } from '@/pdf/signature';
-import type { ResourceId } from '@/ir';
+import type { ResourceId } from '@/core/ir';
 import type { EmbeddedFont, FontMeasure } from '@/pdf/cid-font';
-import { ResourceStore, halfPtToPt } from '@/ir';
-import { shapeText } from '@/font';
-import { resolveFamilyKey } from '@/fonts';
+import { ResourceStore, halfPtToPt } from '@/core/ir';
+import { shapeText } from '@/core/font';
+import { resolveFamilyKey } from '@/core/fonts';
 import {
   analyzeString,
   computeBidi,
   hasBidiCharacters,
   reorderVisual,
   reverseByCodePoint,
-} from '@/bidi';
-import { breakLines } from '@/line-breaker';
-import { NumberingState } from '@/numbering';
+} from '@/core/bidi';
+import { breakLines } from '@/core/line-breaker';
+import { NumberingState } from '@/core/numbering';
 import {
   DEFAULT_RESOLVED_PARAGRAPH,
   DEFAULT_RESOLVED_RUN,
   resolveParagraphProperties,
   resolveRunProperties,
-} from '@/style-cascade';
+} from '@/core/style-cascade';
 
 import { arcPoint, arcToBeziers } from '@/pdf/arc-to-bezier';
 import { buildChartScene } from '@/pdf/chart-geometry';
@@ -197,7 +197,7 @@ export interface StyledRenderOptions {
 }
 
 // Re-exported from the document model (moved there so FlowDoc can carry it).
-export type { DocumentInfo } from '@/document-model';
+export type { DocumentInfo } from '@/core/document-model';
 
 const A4_WIDTH = 595;
 const A4_HEIGHT = 842;

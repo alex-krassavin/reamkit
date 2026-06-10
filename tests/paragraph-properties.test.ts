@@ -1,9 +1,9 @@
 import { XMLParser } from 'fast-xml-parser';
 import { describe, expect, it } from 'vitest';
 
-import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/ir';
+import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 
-import { parseParagraphProperties } from '@/ooxml/wordproc';
+import { parseParagraphProperties } from '@/word';
 
 const parser = new XMLParser({
   ignoreAttributes: false,

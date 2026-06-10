@@ -7,10 +7,10 @@
 //            ->  /Type0             (§9.7.2)  with /Encoding /Identity-H
 //                                              and /ToUnicode CMap (Annex D)
 
-import type { ParsedTtf } from '@/font';
+import type { ParsedTtf } from '@/core/font';
 import type { PdfRef } from '@/pdf/objects';
 import type { PdfDocument } from '@/pdf/writer';
-import { glyphClosure, shapeText, subsetTtf } from '@/font';
+import { glyphClosure, shapeText, subsetTtf } from '@/core/font';
 import { dict, name, ref, stream } from '@/pdf/objects';
 
 const encoder = new TextEncoder();

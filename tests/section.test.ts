@@ -5,12 +5,12 @@ import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
-import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/ir';
+import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 
-import { convertDocxToPdfSync } from '@/converter';
-import { parseTtf } from '@/font';
-import { OpcPackage } from '@/opc';
-import { parseSection, parseSections } from '@/ooxml/wordproc';
+import { convertDocxToPdfSync } from '@/core/converter';
+import { parseTtf } from '@/core/font';
+import { OpcPackage } from '@/core/opc';
+import { parseSection, parseSections } from '@/word';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FONTS = {

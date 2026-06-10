@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
 import { buildTinyPng } from './fixtures/build-png';
-import { convertDocxToPdfSync } from '@/converter';
+import { convertDocxToPdfSync } from '@/core/converter';
 import { buildSrgbIccProfile } from '@/pdf/icc-profile';
 import { buildXmpPacket } from '@/pdf/xmp';
 

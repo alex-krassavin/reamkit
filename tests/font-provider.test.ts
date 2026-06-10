@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
-import { ConversionLossError } from '@/ir';
-import { createConverter } from '@/converter/facade';
+import { ConversionLossError } from '@/core/ir';
+import { createConverter } from '@/core/converter/facade';
 import {
   NO_FONT,
   callerFontProvider,
@@ -13,7 +13,7 @@ import {
   localFontProvider,
   readOs2FsType,
   remoteFontProvider,
-} from '@/fonts/provider';
+} from '@/core/fonts/provider';
 
 const ROBOTO = new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf'));
 const ROBOTO_BOLD = new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Bold.ttf'));

@@ -3,10 +3,10 @@
 // Line breaking is greedy using real font metrics from the parsed TTF.
 // Replaced in M4 by Knuth-Plass paragraph breaking.
 
-import type { ParsedTtf } from '@/font';
+import type { ParsedTtf } from '@/core/font';
 import type { EmbeddedFont } from '@/pdf/cid-font';
 import type { PdfDict, PdfRef } from '@/pdf/objects';
-import { parseTtf } from '@/font';
+import { parseTtf } from '@/core/font';
 import { embedTtfFont } from '@/pdf/cid-font';
 import { dict, name, ref, stream } from '@/pdf/objects';
 import { PdfDocument } from '@/pdf/writer';

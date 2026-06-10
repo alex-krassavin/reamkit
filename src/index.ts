@@ -22,12 +22,12 @@ export {
   convertXlsxToPdf,
   convertDocxToPdfSync,
   convertXlsxToPdfSync,
-} from '@/converter';
-export type { ConvertDocxOptions, ConvertXlsxOptions } from '@/converter';
+} from '@/core/converter';
+export type { ConvertDocxOptions, ConvertXlsxOptions } from '@/core/converter';
 
 // --- Remote fonts (used by the auto-download path; exported for customisation) ---
-export { fetchFontSet, resolveFamilyKey } from '@/fonts';
-export type { FamilyKey, FetchFontSetOptions, FetchLike } from '@/fonts';
+export { fetchFontSet, resolveFamilyKey } from '@/core/fonts';
+export type { FamilyKey, FetchFontSetOptions, FetchLike } from '@/core/fonts';
 
 // --- Low-level layout/PDF engine (for advanced rendering pipelines) ---
 export { renderStyledPdf } from '@/pdf';
@@ -38,8 +38,8 @@ export { signPdf } from '@/pdf';
 export type { SignaturePlaceholder, SignerCredentials, SignatureOptions } from '@/pdf';
 
 // --- Fonts (needed to build the `fonts` option, plus advanced font handling) ---
-export { FontRegistry, parseTtf, subsetTtf } from '@/font';
-export type { FontBytesByVariant, FontVariant, ParsedTtf } from '@/font';
+export { FontRegistry, parseTtf, subsetTtf } from '@/core/font';
+export type { FontBytesByVariant, FontVariant, ParsedTtf } from '@/core/font';
 
 // --- Hyphenation (opt-in; pass the result via options.hyphenator) ---
 export {
@@ -47,8 +47,8 @@ export {
   createLanguageHyphenator,
   createHyphenator,
   splitPatternBundle,
-} from '@/hyphenation';
-export type { Hyphenator, HyphenatorOptions, SupportedLanguage } from '@/hyphenation';
+} from '@/core/hyphenation';
+export type { Hyphenator, HyphenatorOptions, SupportedLanguage } from '@/core/hyphenation';
 
 // --- IR layer (@experimental — ir-design.md; may change in minor versions
 // until the schema freezes against three-plus adapters) ---
@@ -61,7 +61,7 @@ export type {
   LossReport,
   LossSeverity,
   NativeBag,
-} from '@/ir';
+} from '@/core/ir';
 export {
   FEATURES,
   ResourceStore,
@@ -75,8 +75,8 @@ export {
   pxToPt,
   inchToPt,
   mmToPt,
-} from '@/ir';
-export type { FlowDoc } from '@/ir/flow';
+} from '@/core/ir';
+export type { FlowDoc } from '@/core/ir/flow';
 export type {
   DocumentReader,
   DocumentWriter,
@@ -84,16 +84,16 @@ export type {
   ReadResult,
   WriteOptions,
   WriteResult,
-} from '@/ir/adapters';
-export { docxReader, readDocx } from '@/readers/docx-reader';
-export { xlsxReader, readXlsx } from '@/readers/xlsx-reader';
-export { createConverter } from '@/converter/facade';
+} from '@/core/ir/adapters';
+export { docxReader, readDocx } from '@/word/docx-reader';
+export { xlsxReader, readXlsx } from '@/excel/xlsx-reader';
+export { createConverter } from '@/core/converter/facade';
 export type {
   Converter,
   ConvertOptions,
   ConvertResult,
   CreateConverterOptions,
-} from '@/converter/facade';
+} from '@/core/converter/facade';
 export type {
   PageItem,
   PageItemBase,
@@ -113,9 +113,9 @@ export {
   readOs2FsType,
   isEmbeddingRestricted,
   NO_FONT,
-} from '@/fonts/provider';
-export type { FontProvider, FontRequest, FontAnswer } from '@/fonts/provider';
-export { svgWriter, writeSvg } from '@/writers/svg-writer';
-export type { SvgWriteOptions } from '@/writers/svg-writer';
+} from '@/core/fonts/provider';
+export type { FontProvider, FontRequest, FontAnswer } from '@/core/fonts/provider';
+export { svgWriter, writeSvg } from '@/svg/svg-writer';
+export type { SvgWriteOptions } from '@/svg/svg-writer';
 export { layoutStyledDocument } from '@/pdf/styled-page-renderer';
 export type { LaidOutDocument } from '@/pdf/styled-page-renderer';

@@ -24,7 +24,7 @@ import type {
   MathRadical,
   MathRun,
   MathScript,
-} from '@/document-model';
+} from '@/core/document-model';
 import type { PathSegment } from '@/pdf/vector-graphics';
 
 export type MathVariant = 'regular' | 'italic' | 'bold' | 'boldItalic';

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { analyzeString, hasBidiCharacters, reorderVisual, reverseByCodePoint } from '@/bidi';
+import { analyzeString, hasBidiCharacters, reorderVisual, reverseByCodePoint } from '@/core/bidi';
 
 // Hebrew sample letters (strong R).
 const ALEF = 'א'; // א

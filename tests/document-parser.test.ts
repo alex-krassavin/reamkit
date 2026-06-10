@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody, buildRichDocx } from './fixtures/build-docx';
-import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/ir';
+import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 
-import { OpcPackage } from '@/opc';
-import { parseDocument } from '@/ooxml/wordproc';
+import { OpcPackage } from '@/core/opc';
+import { parseDocument } from '@/word';
 
 function parse(paragraphs: Parameters<typeof buildRichDocx>[0]) {
   const docx = buildRichDocx(paragraphs);

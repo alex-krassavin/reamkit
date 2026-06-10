@@ -5,7 +5,7 @@
 // lives here (and in custGeom), never at emit time. Adjust values are the raw
 // a:gd numbers (Word's preset guides are mostly thousandths-of-a-percent).
 
-import type { CustomGeometry } from '@/document-model';
+import type { CustomGeometry } from '@/core/document-model';
 import type { PathSegment, VectorPath } from '@/pdf/vector-graphics';
 import { arcToBeziers, ellipseSegments, roundRectSegments } from '@/pdf/arc-to-bezier';
 import { PathBuilder } from '@/pdf/vector-graphics';

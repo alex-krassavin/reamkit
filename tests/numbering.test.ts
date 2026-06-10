@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Numbering } from '@/document-model';
-import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/ir';
+import type { Numbering } from '@/core/document-model';
+import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 
-import { parseNumbering } from '@/ooxml/wordproc';
-import { NumberingState } from '@/numbering';
+import { parseNumbering } from '@/word';
+import { NumberingState } from '@/core/numbering';
 
 const encoder = new TextEncoder();
 

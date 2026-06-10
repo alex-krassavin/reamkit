@@ -5,7 +5,7 @@
 // to draw commands (rects/polylines/wedges via the vector layer, labels via the
 // text pass).
 
-import type { Chart, ChartSeries } from '@/document-model';
+import type { Chart, ChartSeries } from '@/core/document-model';
 
 export interface ChartRect {
   readonly x: number;

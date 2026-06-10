@@ -6,11 +6,11 @@ import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
 import { buildTinyPng } from './fixtures/build-png';
-import { ResourceStore, eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/ir';
-import { convertDocxToPdfSync } from '@/converter';
-import { parseTtf } from '@/font';
-import { OpcPackage } from '@/opc';
-import { parseDocument } from '@/ooxml/wordproc';
+import { ResourceStore, eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
+import { convertDocxToPdfSync } from '@/core/converter';
+import { parseTtf } from '@/core/font';
+import { OpcPackage } from '@/core/opc';
+import { parseDocument } from '@/word';
 import { detectImageFormat, embedImage } from '@/pdf';
 import { PdfDocument } from '@/pdf/writer';
 

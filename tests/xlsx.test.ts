@@ -6,8 +6,8 @@ import { strToU8, zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 
 import { buildXlsx } from './fixtures/build-xlsx';
-import { convertXlsxToPdfSync } from '@/converter';
-import { parseTtf } from '@/font';
+import { convertXlsxToPdfSync } from '@/core/converter';
+import { parseTtf } from '@/core/font';
 import {
   formatCellRef,
   parseAreaRef,
@@ -16,8 +16,8 @@ import {
   parseTitleRowRange,
   parseWorkbook,
   parseWorksheet,
-} from '@/ooxml/spreadsheet';
-import { OpcPackage } from '@/opc';
+} from '@/excel';
+import { OpcPackage } from '@/core/opc';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FONTS = {

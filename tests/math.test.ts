@@ -5,10 +5,10 @@ import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
-import type { MathNode } from '@/document-model';
-import { convertDocxToPdfSync } from '@/converter';
-import { OpcPackage } from '@/opc';
-import { parseDocument } from '@/ooxml/wordproc';
+import type { MathNode } from '@/core/document-model';
+import { convertDocxToPdfSync } from '@/core/converter';
+import { OpcPackage } from '@/core/opc';
+import { parseDocument } from '@/word';
 import { layoutMath } from '@/pdf/math-layout';
 
 const here = dirname(fileURLToPath(import.meta.url));

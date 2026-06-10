@@ -5,13 +5,13 @@ import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
-import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/ir';
+import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 
-import { convertDocxToPdfSync } from '@/converter';
-import { defaultColorResolver } from '@/ooxml/drawingml/colors';
-import { parseChart } from '@/ooxml/drawingml/chart-parser';
-import { OpcPackage } from '@/opc';
-import { parseDocument } from '@/ooxml/wordproc';
+import { convertDocxToPdfSync } from '@/core/converter';
+import { defaultColorResolver } from '@/core/drawingml/colors';
+import { parseChart } from '@/core/drawingml/chart-parser';
+import { OpcPackage } from '@/core/opc';
+import { parseDocument } from '@/word';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FONTS = {

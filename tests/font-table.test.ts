@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { deobfuscateEmbeddedFont, parseFontTable } from '@/ooxml/wordproc';
+import { deobfuscateEmbeddedFont, parseFontTable } from '@/word';
 
 const GUID = '{01014A78-CABC-4EF0-12AC-5CD89AEFDE01}';
 

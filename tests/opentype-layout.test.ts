@@ -4,7 +4,7 @@ import { dirname, resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { parseTtf, shapeText } from '@/font';
+import { parseTtf, shapeText } from '@/core/font';
 
 const here = dirname(fileURLToPath(import.meta.url));
 

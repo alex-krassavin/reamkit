@@ -2,7 +2,7 @@ import { zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
-import { OpcPackage } from '@/opc';
+import { OpcPackage } from '@/core/opc';
 
 describe('OpcPackage.open — zip-bomb hardening', () => {
   it('opens a normal package with the default limits', () => {

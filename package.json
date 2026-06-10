@@ -21,8 +21,8 @@
       "import": "./dist/esm/index.js"
     },
     "./document-model": {
-      "types": "./dist/esm/document-model/index.d.ts",
-      "import": "./dist/esm/document-model/index.js"
+      "types": "./dist/esm/core/document-model/index.d.ts",
+      "import": "./dist/esm/core/document-model/index.js"
     },
     "./package.json": "./package.json"
   },

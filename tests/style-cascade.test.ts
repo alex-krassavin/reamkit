@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Style, StyleSheet } from '@/document-model';
-import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/ir';
+import type { Style, StyleSheet } from '@/core/document-model';
+import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 
-import { resolveParagraphProperties, resolveRunProperties } from '@/style-cascade';
+import { resolveParagraphProperties, resolveRunProperties } from '@/core/style-cascade';
 
 function sheet(styles: Array<Style>, defaults: Partial<StyleSheet> = {}): StyleSheet {
   return {

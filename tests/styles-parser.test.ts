@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/ir';
+import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 
-import { parseStyles } from '@/ooxml/wordproc';
+import { parseStyles } from '@/word';
 
 const encoder = new TextEncoder();
 
