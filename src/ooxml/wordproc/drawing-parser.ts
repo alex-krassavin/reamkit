@@ -17,6 +17,8 @@ import type {
 } from '@/document-model';
 import type { ColorMod, ColorResolver } from '@/ooxml/drawingml/colors';
 import type { PoNode } from '@/ooxml/wordproc/po-helpers';
+import type { Pt } from '@/ir';
+import { emuToPt } from '@/ir';
 import {
   poAttr,
   poChildren,
@@ -35,8 +37,8 @@ const UNDERSTOOD_NS = new Set(['wps']);
 // Shape data without the owning paragraph's properties (attached by the caller,
 // mirroring how the image branch returns size + id and the caller adds pPr).
 export interface ShapeData {
-  readonly widthEmu: number;
-  readonly heightEmu: number;
+  readonly width: Pt;
+  readonly height: Pt;
   readonly geometry: ShapeGeometry;
   readonly fill: ShapeFill;
   readonly line?: ShapeLine;
@@ -52,8 +54,8 @@ export type DrawingContent =
   | {
       readonly kind: 'image';
       readonly imageId: string;
-      readonly widthEmu: number;
-      readonly heightEmu: number;
+      readonly width: Pt;
+      readonly height: Pt;
       // wp:docPr @descr/@title — alternate text for the tagged-PDF Figure.
       readonly altText?: string;
     }
@@ -61,8 +63,8 @@ export type DrawingContent =
   | {
       readonly kind: 'chart';
       readonly chartRelId: string;
-      readonly widthEmu: number;
-      readonly heightEmu: number;
+      readonly width: Pt;
+      readonly height: Pt;
       readonly altText?: string;
     };
 
@@ -128,7 +130,13 @@ export function parseDrawing(
     const cChart = poFindDescendant(graphicData, 'c:chart');
     const chartRelId = cChart ? poAttr(cChart, 'id') : undefined; // r:id
     if (chartRelId && extentCx !== undefined && extentCy !== undefined) {
-      return { kind: 'chart', chartRelId, widthEmu: extentCx, heightEmu: extentCy, ...alt };
+      return {
+        kind: 'chart',
+        chartRelId,
+        width: emuToPt(extentCx),
+        height: emuToPt(extentCy),
+        ...alt,
+      };
     }
     return null;
   }
@@ -137,7 +145,13 @@ export function parseDrawing(
   const blip = poFindDescendant(anchor, 'a:blip');
   const rId = blip ? poAttr(blip, 'embed') : undefined;
   if (extentCx !== undefined && extentCy !== undefined && rId) {
-    return { kind: 'image', imageId: rId, widthEmu: extentCx, heightEmu: extentCy, ...alt };
+    return {
+      kind: 'image',
+      imageId: rId,
+      width: emuToPt(extentCx),
+      height: emuToPt(extentCy),
+      ...alt,
+    };
   }
   return null;
 }
@@ -186,8 +200,8 @@ function parseWsp(
 
   if (widthEmu === undefined || heightEmu === undefined) return null;
   return {
-    widthEmu,
-    heightEmu,
+    width: emuToPt(widthEmu),
+    height: emuToPt(heightEmu),
     geometry,
     fill,
     ...(line ? { line } : {}),
@@ -217,10 +231,10 @@ function parseTextBox(wsp: PoNode, parseBody: ParseBody): ShapeTextBody | undefi
 
   return {
     content,
-    ...(lIns !== undefined ? { insetLeftEmu: lIns } : {}),
-    ...(tIns !== undefined ? { insetTopEmu: tIns } : {}),
-    ...(rIns !== undefined ? { insetRightEmu: rIns } : {}),
-    ...(bIns !== undefined ? { insetBottomEmu: bIns } : {}),
+    ...(lIns !== undefined ? { insetLeft: emuToPt(lIns) } : {}),
+    ...(tIns !== undefined ? { insetTop: emuToPt(tIns) } : {}),
+    ...(rIns !== undefined ? { insetRight: emuToPt(rIns) } : {}),
+    ...(bIns !== undefined ? { insetBottom: emuToPt(bIns) } : {}),
     ...(anchor ? { anchor } : {}),
   };
 }
@@ -372,7 +386,7 @@ function parseLine(spPr: PoNode, resolveColor: ColorResolver): ShapeLine | undef
     else if (poIs(c, 'a:prstDash')) dash = normalizeDash(poAttr(c, 'val'));
   }
   return {
-    ...(widthEmu !== undefined ? { widthEmu } : {}),
+    ...(widthEmu !== undefined ? { width: emuToPt(widthEmu) } : {}),
     ...(colorHex ? { colorHex } : {}),
     ...(dash ? { dash } : {}),
     ...(cap ? { cap } : {}),

@@ -64,6 +64,7 @@ import type { PathSegment, StrokeStyle, VectorPath, VectorShape } from '@/pdf/ve
 import type { AttachedFile } from '@/pdf/embedded-file';
 import type { StructNode, StructType } from '@/pdf/struct-tree';
 import type { SignaturePlaceholder } from '@/pdf/signature';
+import { halfPtToPt } from '@/ir';
 import { shapeText } from '@/font';
 import { resolveFamilyKey } from '@/fonts';
 import {
@@ -744,24 +745,14 @@ function resolvePageDimensions(
   options: StyledRenderOptions,
   section: SectionProperties | undefined,
 ): PageDimensions {
-  const sectionPageWidth =
-    section?.pageSize !== undefined ? section.pageSize.widthTwips * TWIP_TO_PT : undefined;
-  const sectionPageHeight =
-    section?.pageSize !== undefined ? section.pageSize.heightTwips * TWIP_TO_PT : undefined;
-  const sectionLeft =
-    section?.margins?.leftTwips !== undefined ? section.margins.leftTwips * TWIP_TO_PT : undefined;
-  const sectionRight =
-    section?.margins?.rightTwips !== undefined
-      ? section.margins.rightTwips * TWIP_TO_PT
-      : undefined;
-  const sectionTop =
-    section?.margins?.topTwips !== undefined ? section.margins.topTwips * TWIP_TO_PT : undefined;
-  const sectionBottom =
-    section?.margins?.bottomTwips !== undefined
-      ? section.margins.bottomTwips * TWIP_TO_PT
-      : undefined;
-  const headerOffsetPt = (section?.margins?.headerTwips ?? 720) * TWIP_TO_PT;
-  const footerOffsetPt = (section?.margins?.footerTwips ?? 720) * TWIP_TO_PT;
+  const sectionPageWidth = section?.pageSize !== undefined ? section.pageSize.width : undefined;
+  const sectionPageHeight = section?.pageSize !== undefined ? section.pageSize.height : undefined;
+  const sectionLeft = section?.margins?.left !== undefined ? section.margins.left : undefined;
+  const sectionRight = section?.margins?.right !== undefined ? section.margins.right : undefined;
+  const sectionTop = section?.margins?.top !== undefined ? section.margins.top : undefined;
+  const sectionBottom = section?.margins?.bottom !== undefined ? section.margins.bottom : undefined;
+  const headerOffsetPt = section?.margins?.header ?? 720 * TWIP_TO_PT;
+  const footerOffsetPt = section?.margins?.footer ?? 720 * TWIP_TO_PT;
 
   return {
     pageWidth: options.pageWidth ?? sectionPageWidth ?? A4_WIDTH,
@@ -1032,8 +1023,8 @@ function layoutImageBlock(
   imageResources: ReadonlyMap<string, ImageResource> | undefined,
   contentWidth: number,
 ): ImageBlockLaidOut {
-  let widthPt = image.widthEmu / EMU_PER_PT;
-  let heightPt = image.heightEmu / EMU_PER_PT;
+  let widthPt: number = image.width;
+  let heightPt: number = image.height;
   if (widthPt > contentWidth) {
     const scale = contentWidth / widthPt;
     widthPt = contentWidth;
@@ -1047,8 +1038,8 @@ function layoutImageBlock(
     heightPt,
     resolvedAlignment,
     resourceName: res?.resourceName ?? '',
-    spacingBeforePt: (image.paragraphProperties.spacingBeforeTwips ?? 0) * TWIP_TO_PT,
-    spacingAfterPt: (image.paragraphProperties.spacingAfterTwips ?? 0) * TWIP_TO_PT,
+    spacingBeforePt: image.paragraphProperties.spacingBefore ?? 0,
+    spacingAfterPt: image.paragraphProperties.spacingAfter ?? 0,
     ...(image.altText ? { altText: image.altText } : {}),
   };
 }
@@ -1068,8 +1059,8 @@ function layoutShapeBlock(
   contentWidth: number,
   maxHeight?: number,
 ): ShapeBlockLaidOut {
-  let widthPt = shape.widthEmu / EMU_PER_PT;
-  let heightPt = shape.heightEmu / EMU_PER_PT;
+  let widthPt: number = shape.width;
+  let heightPt: number = shape.height;
   // Clamp width to the content area like images, scaling height to keep aspect.
   if (widthPt > contentWidth && widthPt > 0) {
     const scale = contentWidth / widthPt;
@@ -1090,10 +1081,10 @@ function layoutShapeBlock(
   const pp = shape.paragraphProperties;
 
   const text = shape.text;
-  const insetLeftPt = (text?.insetLeftEmu ?? DEFAULT_INSET_LR_EMU) / EMU_PER_PT;
-  const insetRightPt = (text?.insetRightEmu ?? DEFAULT_INSET_LR_EMU) / EMU_PER_PT;
-  const insetTopPt = (text?.insetTopEmu ?? DEFAULT_INSET_TB_EMU) / EMU_PER_PT;
-  const insetBottomPt = (text?.insetBottomEmu ?? DEFAULT_INSET_TB_EMU) / EMU_PER_PT;
+  const insetLeftPt = text?.insetLeft ?? DEFAULT_INSET_LR_EMU / EMU_PER_PT;
+  const insetRightPt = text?.insetRight ?? DEFAULT_INSET_LR_EMU / EMU_PER_PT;
+  const insetTopPt = text?.insetTop ?? DEFAULT_INSET_TB_EMU / EMU_PER_PT;
+  const insetBottomPt = text?.insetBottom ?? DEFAULT_INSET_TB_EMU / EMU_PER_PT;
   const textLines: Array<Line> = [];
   let textHeightPt = 0;
   if (text && text.content.length > 0) {
@@ -1126,8 +1117,8 @@ function layoutShapeBlock(
     flipH: t?.flipH ?? false,
     flipV: t?.flipV ?? false,
     resolvedAlignment: pp.alignment ?? 'left',
-    spacingBeforePt: (pp.spacingBeforeTwips ?? 0) * TWIP_TO_PT,
-    spacingAfterPt: (pp.spacingAfterTwips ?? 0) * TWIP_TO_PT,
+    spacingBeforePt: pp.spacingBefore ?? 0,
+    spacingAfterPt: pp.spacingAfter ?? 0,
     textLines,
     textHeightPt,
     insetLeftPt,
@@ -1159,7 +1150,7 @@ function buildShapePaths(
 
 function buildStroke(line: ShapeLine | undefined): StrokeStyle | undefined {
   if (!line || line.fill === 'none') return undefined;
-  const widthPt = (line.widthEmu ?? DEFAULT_LINE_WIDTH_EMU) / EMU_PER_PT;
+  const widthPt = line.width ?? DEFAULT_LINE_WIDTH_EMU / EMU_PER_PT;
   const dash = line.dash && line.dash !== 'solid' ? dashPattern(line.dash, widthPt) : undefined;
   // DrawingML 'flat' cap is PDF butt; round/square map straight through.
   const cap: StrokeStyle['cap'] | undefined = line.cap === 'flat' ? 'butt' : line.cap;
@@ -1232,8 +1223,8 @@ function layoutChartBlock(
   contentWidth: number,
   maxHeight?: number,
 ): ChartBlockLaidOut {
-  let widthPt = block.widthEmu / EMU_PER_PT;
-  let heightPt = block.heightEmu / EMU_PER_PT;
+  let widthPt: number = block.width;
+  let heightPt: number = block.height;
   if (widthPt > contentWidth && widthPt > 0) {
     const scale = contentWidth / widthPt;
     widthPt = contentWidth;
@@ -1258,8 +1249,8 @@ function layoutChartBlock(
     heightPt,
     layout,
     resolvedAlignment: pp.alignment ?? 'left',
-    spacingBeforePt: (pp.spacingBeforeTwips ?? 0) * TWIP_TO_PT,
-    spacingAfterPt: (pp.spacingAfterTwips ?? 0) * TWIP_TO_PT,
+    spacingBeforePt: pp.spacingBefore ?? 0,
+    spacingAfterPt: pp.spacingAfter ?? 0,
     ...(altText ? { altText } : {}),
   };
 }
@@ -1361,7 +1352,11 @@ function makeChartLabelLine(
     kind: 'text',
     text,
     isSpace: false,
-    resolvedRun: { ...DEFAULT_RESOLVED_RUN, colorHex, fontSizeHalfPoints: Math.round(sizePt * 2) },
+    resolvedRun: {
+      ...DEFAULT_RESOLVED_RUN,
+      colorHex,
+      fontSizePt: halfPtToPt(Math.round(sizePt * 2)),
+    },
     font,
     fontSizePt: sizePt,
     widthPt,
@@ -1446,8 +1441,7 @@ function drawBlocksSequentially(
       const h = computeLineHeight(line, block.resolved);
       cursorY -= h;
       const indentLeft =
-        block.resolved.indentLeftTwips * TWIP_TO_PT +
-        (line.firstLine ? block.resolved.indentFirstLineTwips * TWIP_TO_PT : 0);
+        block.resolved.indentLeft + (line.firstLine ? block.resolved.indentFirstLine : 0);
       const offset = alignmentOffset(
         block.resolved.alignment,
         line.contentWidthPt,
@@ -1469,7 +1463,7 @@ function drawBlocksSequentially(
 // marker Run (e.g. "1.", "•") plus a tab to every paragraph that references
 // a list level. The level's pPr indent is applied if the paragraph has no
 // indent of its own — that pushes the body text right of the marker, while a
-// hanging indent (negative indentFirstLineTwips) places the marker itself
+// hanging indent (negative indentFirstLine) places the marker itself
 // to the left of the body indent.
 function applyNumbering(
   body: ReadonlyArray<BodyElement>,
@@ -1530,14 +1524,14 @@ function mergeIndentFromLevel(
   const out: { -readonly [K in keyof ParagraphProperties]: ParagraphProperties[K] } = {
     ...paragraphProps,
   };
-  if (out.indentLeftTwips === undefined && levelProps.indentLeftTwips !== undefined) {
-    out.indentLeftTwips = levelProps.indentLeftTwips;
+  if (out.indentLeft === undefined && levelProps.indentLeft !== undefined) {
+    out.indentLeft = levelProps.indentLeft;
   }
-  if (out.indentRightTwips === undefined && levelProps.indentRightTwips !== undefined) {
-    out.indentRightTwips = levelProps.indentRightTwips;
+  if (out.indentRight === undefined && levelProps.indentRight !== undefined) {
+    out.indentRight = levelProps.indentRight;
   }
-  if (out.indentFirstLineTwips === undefined && levelProps.indentFirstLineTwips !== undefined) {
-    out.indentFirstLineTwips = levelProps.indentFirstLineTwips;
+  if (out.indentFirstLine === undefined && levelProps.indentFirstLine !== undefined) {
+    out.indentFirstLine = levelProps.indentFirstLine;
   }
   return out;
 }
@@ -1751,8 +1745,8 @@ function layoutParagraphBlock(
     resolved,
     lines,
     heightPt,
-    spacingBeforePt: resolved.spacingBeforeTwips * TWIP_TO_PT,
-    spacingAfterPt: resolved.spacingAfterTwips * TWIP_TO_PT,
+    spacingBeforePt: resolved.spacingBefore,
+    spacingAfterPt: resolved.spacingAfter,
     ...(numbering ? { list: { numId: numbering.numId, level: numbering.ilvl } } : {}),
     ...(paragraph.runs.some((r) => r.pageBreak) ? { pageBreakAfter: true } : {}),
   };
@@ -1823,10 +1817,10 @@ function tokenizeParagraph(
   // First pass — resolve each run's style and decide image vs text.
   const plans: Array<RunPlan> = paragraph.runs.map((run) => {
     if (run.inlineImage) {
-      const naturalW = run.inlineImage.widthEmu / EMU_PER_PT;
+      const naturalW = run.inlineImage.width;
       const widthPt = Math.min(naturalW, contentWidth);
       const scale = naturalW > 0 ? widthPt / naturalW : 1;
-      const heightPt = (run.inlineImage.heightEmu / EMU_PER_PT) * scale;
+      const heightPt = run.inlineImage.height * scale;
       const res = imageResources?.get(run.inlineImage.imageId);
       const resolvedRun = resolveRunProperties(
         run.properties,
@@ -1843,7 +1837,7 @@ function tokenizeParagraph(
         run,
         resolvedRun,
         font: lookupFont(fontResources, fontKey),
-        fontSizePt: resolvedRun.fontSizeHalfPoints / 2,
+        fontSizePt: resolvedRun.fontSizePt,
         isImage: true,
         imageWidthPt: widthPt,
         imageHeightPt: heightPt,
@@ -1856,7 +1850,7 @@ function tokenizeParagraph(
         paragraph.properties,
         options.styles,
       );
-      const sizePt = resolvedRun.fontSizeHalfPoints / 2;
+      const sizePt = resolvedRun.fontSizePt;
       const fontFor = (v: MathVariant): FontResource => {
         const { bold, italic } = variantStyle(v);
         const r = options.registry.resolveByStyle(bold, italic);
@@ -1896,7 +1890,7 @@ function tokenizeParagraph(
       run,
       resolvedRun,
       font: lookupFont(fontResources, fontKey),
-      fontSizePt: resolvedRun.fontSizeHalfPoints / 2,
+      fontSizePt: resolvedRun.fontSizePt,
       isImage: false,
       imageWidthPt: 0,
       imageHeightPt: 0,
@@ -2098,9 +2092,9 @@ function paragraphMaxWidth(
   contentWidth: number,
   firstLine: boolean,
 ): number {
-  const indentLeft = p.indentLeftTwips * TWIP_TO_PT;
-  const indentRight = p.indentRightTwips * TWIP_TO_PT;
-  const firstLineExtra = firstLine ? p.indentFirstLineTwips * TWIP_TO_PT : 0;
+  const indentLeft = p.indentLeft;
+  const indentRight = p.indentRight;
+  const firstLineExtra = firstLine ? p.indentFirstLine : 0;
   return Math.max(1, contentWidth - indentLeft - indentRight - firstLineExtra);
 }
 
@@ -2288,13 +2282,17 @@ function computeLineHeight(line: Line, p: ResolvedParagraphProperties): number {
   // hold its full ascent+descent (plus a little leading).
   const mathH = (line.mathAscentPt ?? 0) + (line.mathDescentPt ?? 0);
   const mathNeed = mathH > 0 ? mathH * 1.05 : 0;
-  if (p.spacingLineRule === 'exact' && p.spacingLineTwips > 0) {
-    return Math.max(p.spacingLineTwips * TWIP_TO_PT, mathNeed);
+  if (p.spacingLineRule === 'exact' && p.spacingLine > 0) {
+    return Math.max(p.spacingLine, mathNeed);
   }
-  if (p.spacingLineRule === 'atLeast' && p.spacingLineTwips > 0) {
-    return Math.max(fontSize * 1.2, p.spacingLineTwips * TWIP_TO_PT, mathNeed);
+  if (p.spacingLineRule === 'atLeast' && p.spacingLine > 0) {
+    return Math.max(fontSize * 1.2, p.spacingLine, mathNeed);
   }
-  const multiple = p.spacingLineTwips > 0 ? p.spacingLineTwips / 240 : 1;
+  // "Multiple" spacing is defined in 240ths (240 twips = single). Recover the
+  // integer twips before dividing — historically this divided the raw int, and
+  // (twips*(1/20))/12 differs from twips/240 in the last ulp.
+  const lineTwips = Math.round(p.spacingLine * 20);
+  const multiple = lineTwips > 0 ? lineTwips / 240 : 1;
   return Math.max(fontSize * 1.2 * multiple, mathNeed);
 }
 
@@ -2456,13 +2454,13 @@ function computeColumnWidths(
       const cell = row.cells[i]!;
       const span = Math.max(1, cell.properties.gridSpan ?? 1);
       const padLeft =
-        (cell.properties.margins?.leftTwips ??
-          table.properties.defaultCellMargins?.leftTwips ??
-          DEFAULT_CELL_PADDING_TWIPS) * TWIP_TO_PT;
+        cell.properties.margins?.left ??
+        table.properties.defaultCellMargins?.left ??
+        DEFAULT_CELL_PADDING_TWIPS * TWIP_TO_PT;
       const padRight =
-        (cell.properties.margins?.rightTwips ??
-          table.properties.defaultCellMargins?.rightTwips ??
-          DEFAULT_CELL_PADDING_TWIPS) * TWIP_TO_PT;
+        cell.properties.margins?.right ??
+        table.properties.defaultCellMargins?.right ??
+        DEFAULT_CELL_PADDING_TWIPS * TWIP_TO_PT;
       let maxContent = 0;
       for (const el of cell.content) {
         if (el.kind !== 'paragraph') continue;
@@ -2496,11 +2494,19 @@ function computeColumnWidths(
   return colNaturalWidths;
 }
 
+// Recover the integer twips behind a Pt grid column. Grid ratios and sums were
+// historically computed on the raw ints; float-summing the Pt values instead
+// would drift in the last ulp and break the byte-identical gate.
+function gridColTwips(table: Table): Array<number> {
+  return table.grid.map((w) => Math.round(w * 20));
+}
+
 function gridWidthsScaled(table: Table, contentWidth: number, colCount: number): Array<number> {
-  const totalGridTwips = table.grid.reduce((s, w) => s + w, 0);
+  const gridTwips = gridColTwips(table);
+  const totalGridTwips = gridTwips.reduce((s, w) => s + w, 0);
   if (totalGridTwips > 0) {
     const target = totalTableTarget(table, contentWidth);
-    return table.grid.map((w) => (w / totalGridTwips) * target);
+    return gridTwips.map((w) => (w / totalGridTwips) * target);
   }
   const each = contentWidth / colCount;
   return new Array<number>(colCount).fill(each);
@@ -2509,16 +2515,17 @@ function gridWidthsScaled(table: Table, contentWidth: number, colCount: number):
 function totalTableTarget(table: Table, contentWidth: number): number {
   const explicit = explicitTableTargetWidth(table, contentWidth);
   if (explicit !== undefined && explicit > 0) return explicit;
-  const sum = table.grid.reduce((s, g) => s + g, 0);
+  const sum = gridColTwips(table).reduce((s, g) => s + g, 0);
   if (sum > 0) return sum * TWIP_TO_PT;
   return contentWidth;
 }
 
 function explicitTableTargetWidth(table: Table, contentWidth: number): number | undefined {
-  const w = table.properties.widthTwips;
+  const w = table.properties.widthPt;
   const type = table.properties.widthType;
-  if (w !== undefined && w > 0 && type === 'dxa') return w * TWIP_TO_PT;
-  if (w !== undefined && type === 'pct') return (w / 5000) * contentWidth;
+  if (w !== undefined && w > 0 && type === 'dxa') return w;
+  const f = table.properties.widthFraction;
+  if (f !== undefined && type === 'pct') return f * contentWidth;
   return undefined;
 }
 
@@ -2532,7 +2539,7 @@ function measureSingleLine(
     const resolved = resolveRunProperties(run.properties, paragraph.properties, options.styles);
     const { variant } = options.registry.resolveByStyle(resolved.bold, resolved.italic);
     const font = fontResources.get(variant)!;
-    const fontSizePt = resolved.fontSizeHalfPoints / 2;
+    const fontSizePt = resolved.fontSizePt;
     total += font.embedded.textWidthPt(run.text, fontSizePt);
   }
   return total;
@@ -2587,10 +2594,10 @@ function layoutTableRow(
   }
   let heightPt = 0;
   for (const c of cells) if (c.totalHeightPt > heightPt) heightPt = c.totalHeightPt;
-  if (row.properties.heightTwips && row.properties.heightRule === 'exact') {
-    heightPt = row.properties.heightTwips * TWIP_TO_PT;
-  } else if (row.properties.heightTwips && row.properties.heightRule === 'atLeast') {
-    heightPt = Math.max(heightPt, row.properties.heightTwips * TWIP_TO_PT);
+  if (row.properties.height && row.properties.heightRule === 'exact') {
+    heightPt = row.properties.height;
+  } else if (row.properties.height && row.properties.heightRule === 'atLeast') {
+    heightPt = Math.max(heightPt, row.properties.height);
   }
   return { heightPt, cells, columnXOffsets, rowIdx, rowCount };
 }
@@ -2613,12 +2620,10 @@ function layoutTableCell(
 ): CellLayout {
   const cellMar = cell.properties.margins;
   const tableMar = tableProps.defaultCellMargins;
-  const padTopPt = (cellMar?.topTwips ?? tableMar?.topTwips ?? 0) * TWIP_TO_PT;
-  const padBottomPt = (cellMar?.bottomTwips ?? tableMar?.bottomTwips ?? 0) * TWIP_TO_PT;
-  const padLeftPt =
-    (cellMar?.leftTwips ?? tableMar?.leftTwips ?? DEFAULT_CELL_PADDING_TWIPS) * TWIP_TO_PT;
-  const padRightPt =
-    (cellMar?.rightTwips ?? tableMar?.rightTwips ?? DEFAULT_CELL_PADDING_TWIPS) * TWIP_TO_PT;
+  const padTopPt = cellMar?.top ?? tableMar?.top ?? 0;
+  const padBottomPt = cellMar?.bottom ?? tableMar?.bottom ?? 0;
+  const padLeftPt = cellMar?.left ?? tableMar?.left ?? DEFAULT_CELL_PADDING_TWIPS * TWIP_TO_PT;
+  const padRightPt = cellMar?.right ?? tableMar?.right ?? DEFAULT_CELL_PADDING_TWIPS * TWIP_TO_PT;
 
   const innerWidth = Math.max(1, widthPt - padLeftPt - padRightPt);
   const lines: Array<Line> = [];
@@ -2712,11 +2717,11 @@ const BORDER_STYLE_RANK: Readonly<Record<BorderStyle, number>> = {
   none: 0,
 };
 
-// Effective weight of a border for conflict resolution: its width in eighths of a
+// Effective weight of a border for conflict resolution: its width in points
 // point (default 4 = ½pt), or 0 when absent / explicitly 'none'.
 function borderWeight(b: Border | undefined): number {
   if (!b || b.style === 'none') return 0;
-  return b.sizeEighthPt ?? 4;
+  return b.width ?? 0.5;
 }
 
 // §17.4 — the winner of a shared cell edge: the heavier border, ties broken by
@@ -2954,8 +2959,7 @@ function paginateSections(
         if (cursorY - h < ctx.marginBottom && current.length > 0) flushPage();
         cursorY -= h;
         const indentLeft =
-          block.resolved.indentLeftTwips * TWIP_TO_PT +
-          (line.firstLine ? block.resolved.indentFirstLineTwips * TWIP_TO_PT : 0);
+          block.resolved.indentLeft + (line.firstLine ? block.resolved.indentFirstLine : 0);
         const offset = alignmentOffset(
           block.resolved.alignment,
           line.contentWidthPt,
@@ -3365,7 +3369,7 @@ function emitCellBorders(
     border: CellBorders[keyof CellBorders],
   ) => {
     if (!border || border.style === 'none') return;
-    const sz = (border.sizeEighthPt ?? DEFAULT_BORDER_SIZE_EIGHTH) * EIGHTH_PT;
+    const sz = border.width ?? DEFAULT_BORDER_SIZE_EIGHTH * EIGHTH_PT;
     out.push({
       type: 'border',
       side,

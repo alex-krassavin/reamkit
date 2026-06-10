@@ -15,6 +15,8 @@ import type {
 } from '@/document-model';
 
 import type { PoNode } from '@/ooxml/wordproc/po-helpers';
+import type { Pt } from '@/ir';
+import { eighthPtToPt, twipsToPt } from '@/ir';
 import { parseBodyElements } from '@/ooxml/wordproc/document-parser';
 import {
   poAttr,
@@ -58,7 +60,10 @@ function parseTableProperties(tblPr: PoNode | undefined): TableProperties {
   if (tblW) {
     const w = poIntAttr(tblW, 'w');
     const type = poAttr(tblW, 'type');
-    if (w !== undefined) out.widthTwips = w;
+    // tblW @w is twips for type=dxa but fiftieths of a percent for type=pct
+    // (5000 = 100% of the content width) — store each in its own field.
+    if (w !== undefined && type === 'pct') out.widthFraction = w / 5000;
+    else if (w !== undefined) out.widthPt = twipsToPt(w);
     if (type && WIDTH_TYPES.has(type as 'auto' | 'dxa' | 'pct' | 'nil')) {
       out.widthType = type as 'auto' | 'dxa' | 'pct' | 'nil';
     }
@@ -79,12 +84,12 @@ function parseTableProperties(tblPr: PoNode | undefined): TableProperties {
   return out;
 }
 
-function parseTableGrid(tblGrid: PoNode | undefined): Array<number> {
+function parseTableGrid(tblGrid: PoNode | undefined): Array<Pt> {
   if (!tblGrid) return [];
-  const cols: Array<number> = [];
+  const cols: Array<Pt> = [];
   for (const gridCol of poChildrenWith(tblGrid, 'w:gridCol')) {
     const w = poIntAttr(gridCol, 'w');
-    cols.push(w ?? 0);
+    cols.push(twipsToPt(w ?? 0));
   }
   return cols;
 }
@@ -105,7 +110,7 @@ function parseRowProperties(trPr: PoNode | undefined): RowProperties {
   if (trHeight) {
     const val = poIntAttr(trHeight, 'val');
     const rule = poAttr(trHeight, 'hRule');
-    if (val !== undefined) out.heightTwips = val;
+    if (val !== undefined) out.height = twipsToPt(val);
     if (rule && HEIGHT_RULES.has(rule as 'auto' | 'atLeast' | 'exact')) {
       out.heightRule = rule as 'auto' | 'atLeast' | 'exact';
     }
@@ -130,7 +135,7 @@ function parseCellProperties(tcPr: PoNode | undefined): CellProperties {
   const tcW = poFirstChild(tcPr, 'w:tcW');
   if (tcW) {
     const w = poIntAttr(tcW, 'w');
-    if (w !== undefined) out.widthTwips = w;
+    if (w !== undefined) out.width = twipsToPt(w);
   }
   const gridSpan = poFirstChild(tcPr, 'w:gridSpan');
   if (gridSpan) {
@@ -184,7 +189,7 @@ function parseBorder(node: PoNode | undefined): Border | undefined {
   const sz = poIntAttr(node, 'sz');
   const color = poAttr(node, 'color');
   const out: Mutable<Border> = { style: val as BorderStyle };
-  if (sz !== undefined) out.sizeEighthPt = sz;
+  if (sz !== undefined) out.width = eighthPtToPt(sz);
   if (color && color !== 'auto' && /^[0-9A-Fa-f]{6}$/.test(color)) {
     out.colorHex = color.toUpperCase();
   }
@@ -198,9 +203,9 @@ function parseCellMargins(node: PoNode | undefined): CellMargins | undefined {
   const bottom = poIntAttr(poFirstChild(node, 'w:bottom'), 'w');
   const left = poIntAttr(poFirstChild(node, 'w:left') ?? poFirstChild(node, 'w:start'), 'w');
   const right = poIntAttr(poFirstChild(node, 'w:right') ?? poFirstChild(node, 'w:end'), 'w');
-  if (top !== undefined) out.topTwips = top;
-  if (bottom !== undefined) out.bottomTwips = bottom;
-  if (left !== undefined) out.leftTwips = left;
-  if (right !== undefined) out.rightTwips = right;
+  if (top !== undefined) out.top = twipsToPt(top);
+  if (bottom !== undefined) out.bottom = twipsToPt(bottom);
+  if (left !== undefined) out.left = twipsToPt(left);
+  if (right !== undefined) out.right = twipsToPt(right);
   return Object.keys(out).length > 0 ? out : undefined;
 }

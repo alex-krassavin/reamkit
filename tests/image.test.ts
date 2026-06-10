@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
 import { buildTinyPng } from './fixtures/build-png';
+import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/ir';
 import { convertDocxToPdfSync } from '@/converter';
 import { parseTtf } from '@/font';
 import { OpcPackage } from '@/opc';
@@ -134,8 +135,8 @@ describe('Drawing parser', () => {
     expect(parsed[0]!.kind).toBe('image');
     if (parsed[0]!.kind !== 'image') throw new Error('unreachable');
     expect(parsed[0]!.image.imageId).toBe('rId20');
-    expect(parsed[0]!.image.widthEmu).toBe(914400);
-    expect(parsed[0]!.image.heightEmu).toBe(685800);
+    expect(parsed[0]!.image.width).toBe(emuToPt(914400));
+    expect(parsed[0]!.image.height).toBe(emuToPt(685800));
   });
 });
 

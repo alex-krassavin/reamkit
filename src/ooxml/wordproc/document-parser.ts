@@ -20,7 +20,9 @@ import type {
 } from '@/document-model';
 
 import type { ColorResolver } from '@/ooxml/drawingml/colors';
+import type { Pt } from '@/ir';
 import type { PoNode } from '@/ooxml/wordproc/po-helpers';
+import { twipsToPt } from '@/ir';
 import { parseOMath } from '@/ooxml/math/omml-parser';
 import { defaultColorResolver } from '@/ooxml/drawingml/colors';
 import { expandMcChildren, parseDrawing } from '@/ooxml/wordproc/drawing-parser';
@@ -152,8 +154,8 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
       const orientRaw = poAttr(child, 'orient');
       if (w !== undefined && h !== undefined) {
         pageSize = {
-          widthTwips: w,
-          heightTwips: h,
+          width: twipsToPt(w),
+          height: twipsToPt(h),
           ...(orientRaw === 'portrait' || orientRaw === 'landscape'
             ? { orientation: orientRaw }
             : {}),
@@ -167,12 +169,12 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
       const header = poIntAttr(child, 'header');
       const footer = poIntAttr(child, 'footer');
       margins = {
-        topTwips: top ?? 1440,
-        rightTwips: right ?? 1440,
-        bottomTwips: bottom ?? 1440,
-        leftTwips: left ?? 1440,
-        ...(header !== undefined ? { headerTwips: header } : {}),
-        ...(footer !== undefined ? { footerTwips: footer } : {}),
+        top: twipsToPt(top ?? 1440),
+        right: twipsToPt(right ?? 1440),
+        bottom: twipsToPt(bottom ?? 1440),
+        left: twipsToPt(left ?? 1440),
+        ...(header !== undefined ? { header: twipsToPt(header) } : {}),
+        ...(footer !== undefined ? { footer: twipsToPt(footer) } : {}),
       };
     } else if (poIs(child, 'w:headerReference')) {
       pushHeaderFooter(child, headers);
@@ -276,8 +278,8 @@ function tryExtractDrawingFromParagraph(
       kind: 'image',
       image: {
         imageId: content.imageId,
-        widthEmu: content.widthEmu,
-        heightEmu: content.heightEmu,
+        width: content.width,
+        height: content.height,
         paragraphProperties,
         ...(content.altText ? { altText: content.altText } : {}),
       },
@@ -288,8 +290,8 @@ function tryExtractDrawingFromParagraph(
       kind: 'chart',
       chart: {
         chartRelId: content.chartRelId,
-        widthEmu: content.widthEmu,
-        heightEmu: content.heightEmu,
+        width: content.width,
+        height: content.height,
         paragraphProperties,
         ...(content.altText ? { altText: content.altText } : {}),
       },
@@ -355,7 +357,7 @@ function parseRun(r: PoNode): Run {
   const properties = parseRunProperties(rPr ? poElementToFlat(rPr) : undefined);
   let text = '';
   let pageBreak = false;
-  let inlineImage: { imageId: string; widthEmu: number; heightEmu: number } | undefined;
+  let inlineImage: { imageId: string; width: Pt; height: Pt } | undefined;
   for (const child of expandMcChildren(poChildren(r))) {
     if (poIs(child, 'w:rPr')) continue;
     if (poIs(child, 'w:t')) {
@@ -378,8 +380,8 @@ function parseRun(r: PoNode): Run {
       if (content && content.kind === 'image') {
         inlineImage = {
           imageId: content.imageId,
-          widthEmu: content.widthEmu,
-          heightEmu: content.heightEmu,
+          width: content.width,
+          height: content.height,
         };
       }
     }

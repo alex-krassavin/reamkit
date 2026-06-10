@@ -1,6 +1,7 @@
 // ECMA-376 Part 1 §17.3.1 — Paragraph Properties (pPr).
 
 import type { Alignment, ParagraphProperties } from '@/document-model';
+import { twipsToPt } from '@/ir';
 
 import { parseRunProperties } from '@/ooxml/wordproc/run-properties';
 import {
@@ -38,9 +39,9 @@ export function parseParagraphProperties(pPr: unknown): ParagraphProperties {
     const after = parseIntAttr(node, 'after');
     const line = parseIntAttr(node, 'line');
     const lineRule = getAttr(node, 'lineRule');
-    if (before !== undefined) out.spacingBeforeTwips = before;
-    if (after !== undefined) out.spacingAfterTwips = after;
-    if (line !== undefined) out.spacingLineTwips = line;
+    if (before !== undefined) out.spacingBefore = twipsToPt(before);
+    if (after !== undefined) out.spacingAfter = twipsToPt(after);
+    if (line !== undefined) out.spacingLine = twipsToPt(line);
     if (lineRule && LINE_RULES.has(lineRule as 'auto' | 'exact' | 'atLeast')) {
       out.spacingLineRule = lineRule as 'auto' | 'exact' | 'atLeast';
     }
@@ -52,10 +53,10 @@ export function parseParagraphProperties(pPr: unknown): ParagraphProperties {
     const right = parseIntAttr(node, 'right');
     const firstLine = parseIntAttr(node, 'firstLine');
     const hanging = parseIntAttr(node, 'hanging');
-    if (left !== undefined) out.indentLeftTwips = left;
-    if (right !== undefined) out.indentRightTwips = right;
-    if (firstLine !== undefined) out.indentFirstLineTwips = firstLine;
-    else if (hanging !== undefined) out.indentFirstLineTwips = -hanging;
+    if (left !== undefined) out.indentLeft = twipsToPt(left);
+    if (right !== undefined) out.indentRight = twipsToPt(right);
+    if (firstLine !== undefined) out.indentFirstLine = twipsToPt(firstLine);
+    else if (hanging !== undefined) out.indentFirstLine = twipsToPt(-hanging);
   }
 
   if ('w:pageBreakBefore' in el) {

@@ -37,6 +37,7 @@ import type {
   XlsxStyles,
 } from '@/ooxml/spreadsheet';
 import type { DocumentInfo, SignatureOptions, StyledRenderOptions } from '@/pdf';
+import { eighthPtToPt, halfPtToPt, twipsToPt } from '@/ir';
 import { FontRegistry } from '@/font';
 import { fetchFontSet } from '@/fonts';
 import { OpcPackage, parseCoreProperties } from '@/opc';
@@ -274,21 +275,21 @@ function pageSizeFromSetup(setup: XlsxPageSetup | undefined): PageSize | undefin
   // Only emit a PageSize when paperSize or a non-default orientation was set;
   // otherwise let the renderer apply its A4 default.
   if (setup.paperSize === undefined && setup.orientation !== 'landscape') return undefined;
-  return { widthTwips: w, heightTwips: h, orientation };
+  return { width: twipsToPt(w), height: twipsToPt(h), orientation };
 }
 
 function marginsFromXlsx(margins: XlsxPageMargins | undefined): PageMargins | undefined {
   if (!margins) return undefined;
   return {
-    topTwips: Math.round(margins.topInches * TWIPS_PER_INCH),
-    rightTwips: Math.round(margins.rightInches * TWIPS_PER_INCH),
-    bottomTwips: Math.round(margins.bottomInches * TWIPS_PER_INCH),
-    leftTwips: Math.round(margins.leftInches * TWIPS_PER_INCH),
+    top: twipsToPt(Math.round(margins.topInches * TWIPS_PER_INCH)),
+    right: twipsToPt(Math.round(margins.rightInches * TWIPS_PER_INCH)),
+    bottom: twipsToPt(Math.round(margins.bottomInches * TWIPS_PER_INCH)),
+    left: twipsToPt(Math.round(margins.leftInches * TWIPS_PER_INCH)),
     ...(margins.headerInches !== undefined
-      ? { headerTwips: Math.round(margins.headerInches * TWIPS_PER_INCH) }
+      ? { header: twipsToPt(Math.round(margins.headerInches * TWIPS_PER_INCH)) }
       : {}),
     ...(margins.footerInches !== undefined
-      ? { footerTwips: Math.round(margins.footerInches * TWIPS_PER_INCH) }
+      ? { footer: twipsToPt(Math.round(margins.footerInches * TWIPS_PER_INCH)) }
       : {}),
   };
 }
@@ -334,19 +335,19 @@ const MIN_PRINT_SCALE = 0.1;
 
 function sheetContentWidthTwips(worksheet: ParsedWorksheet): number {
   const pageSize = pageSizeFromSetup(worksheet.pageSetup);
-  const pageWidthTwips = pageSize?.widthTwips ?? DEFAULT_PAPER_TWIPS[0];
+  const pageWidthTwips = pageSize ? Math.round(pageSize.width * 20) : DEFAULT_PAPER_TWIPS[0];
   const margins = marginsFromXlsx(worksheet.pageMargins);
-  const left = margins?.leftTwips ?? TWIPS_PER_INCH;
-  const right = margins?.rightTwips ?? TWIPS_PER_INCH;
+  const left = margins ? Math.round(margins.left * 20) : TWIPS_PER_INCH;
+  const right = margins ? Math.round(margins.right * 20) : TWIPS_PER_INCH;
   return Math.max(TWIPS_PER_INCH / 2, pageWidthTwips - left - right);
 }
 
 function sheetContentHeightTwips(worksheet: ParsedWorksheet): number {
   const pageSize = pageSizeFromSetup(worksheet.pageSetup);
-  const pageHeightTwips = pageSize?.heightTwips ?? DEFAULT_PAPER_TWIPS[1];
+  const pageHeightTwips = pageSize ? Math.round(pageSize.height * 20) : DEFAULT_PAPER_TWIPS[1];
   const margins = marginsFromXlsx(worksheet.pageMargins);
-  const top = margins?.topTwips ?? TWIPS_PER_INCH;
-  const bottom = margins?.bottomTwips ?? TWIPS_PER_INCH;
+  const top = margins ? Math.round(margins.top * 20) : TWIPS_PER_INCH;
+  const bottom = margins ? Math.round(margins.bottom * 20) : TWIPS_PER_INCH;
   return Math.max(TWIPS_PER_INCH / 2, pageHeightTwips - top - bottom);
 }
 
@@ -382,8 +383,8 @@ function computePrintScale(
 // Excel's default cell font is 11pt (22 half-points); scale that when a run
 // carries no explicit size so the whole sheet shrinks uniformly.
 function scaleRunFont(props: RunProperties, scale: number): RunProperties {
-  const hp = props.fontSizeHalfPoints ?? 22;
-  return { ...props, fontSizeHalfPoints: Math.max(2, Math.round(hp * scale)) };
+  const hp = props.fontSizePt !== undefined ? Math.round(props.fontSizePt * 2) : 22;
+  return { ...props, fontSizePt: halfPtToPt(Math.max(2, Math.round(hp * scale))) };
 }
 
 // Per-sheet budget on rendered characters — a DoS guard (see use site).
@@ -462,7 +463,7 @@ function worksheetToBody(
   const colWindowEnd = colStart + colCount - 1;
 
   // Per-row height overrides keyed by LOCAL (window-relative) row index.
-  const rowHeightMap = new Map<number, RowProperties>();
+  const rowHeightMap = new Map<number, { heightTwips: number; heightRule: 'atLeast' }>();
   for (const h of worksheet.rowHeights) {
     const local = h.row - rowStart;
     if (local < 0 || local >= rowCount) continue;
@@ -635,19 +636,18 @@ function worksheetToBody(
       });
     }
     const baseRowProps = rowHeightMap.get(r);
-    const scaledRowProps =
-      scaled && baseRowProps?.heightTwips !== undefined
-        ? {
-            ...baseRowProps,
-            heightTwips: Math.max(1, Math.round(baseRowProps.heightTwips * printScale)),
-          }
-        : (baseRowProps ?? {});
+    const rowHeightTwips =
+      scaled && baseRowProps !== undefined
+        ? Math.max(1, Math.round(baseRowProps.heightTwips * printScale))
+        : baseRowProps?.heightTwips;
     const isTitleRow =
       print.titleRows !== undefined &&
       absR >= print.titleRows.startRow &&
       absR <= print.titleRows.endRow;
     const rowProps = {
-      ...scaledRowProps,
+      ...(rowHeightTwips !== undefined
+        ? { height: twipsToPt(rowHeightTwips), heightRule: 'atLeast' as const }
+        : {}),
       ...(isTitleRow ? { isHeader: true } : {}),
       ...(breakRows.has(absR) ? { pageBreakBefore: true } : {}),
     };
@@ -658,7 +658,7 @@ function worksheetToBody(
   // gridLines="1"> is set. Default ⇒ no synthetic full grid; only borders that
   // come from cell styles are drawn. With gridLines on, lay a thin grid like a
   // print preview with "Gridlines" enabled.
-  const thin: Border = { style: 'single', sizeEighthPt: 4 };
+  const thin: Border = { style: 'single', width: eighthPtToPt(4) };
   // <printOptions horizontalCentered="1"> centers the sheet within the print
   // margins.
   const centered = worksheet.printOptions?.horizontalCentered === true;
@@ -678,7 +678,7 @@ function worksheetToBody(
         : {}),
       ...(centered ? { alignment: 'center' as const } : {}),
     },
-    grid: columnWidths,
+    grid: columnWidths.map((w) => twipsToPt(w)),
     rows,
   };
 
@@ -751,7 +751,7 @@ function runPropsFromXf(xf: XlsxCellXf, styles: XlsxStyles): RunProperties {
   const props: { -readonly [K in keyof RunProperties]: RunProperties[K] } = {};
   if (font.bold) props.bold = true;
   if (font.italic) props.italic = true;
-  if (font.sizePt !== undefined) props.fontSizeHalfPoints = Math.round(font.sizePt * 2);
+  if (font.sizePt !== undefined) props.fontSizePt = halfPtToPt(Math.round(font.sizePt * 2));
   if (font.colorHex) props.colorHex = font.colorHex;
   return props;
 }
@@ -806,7 +806,7 @@ function mapBorderEdge(edge: XlsxBorderEdge | undefined): Border | undefined {
   const { style, sizeEighthPt } = mapBorderStyle(edge.style);
   return {
     style,
-    sizeEighthPt,
+    width: eighthPtToPt(sizeEighthPt),
     ...(edge.colorHex ? { colorHex: edge.colorHex } : {}),
   };
 }

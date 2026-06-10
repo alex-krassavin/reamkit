@@ -5,6 +5,8 @@ import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
+import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/ir';
+
 import { convertDocxToPdfSync } from '@/converter';
 import { defaultColorResolver } from '@/ooxml/drawingml/colors';
 import { parseChart } from '@/ooxml/drawingml/chart-parser';
@@ -157,8 +159,8 @@ describe('chart drawing parsing', () => {
     expect(parsed[0]!.kind).toBe('chart');
     if (parsed[0]!.kind !== 'chart') throw new Error('unreachable');
     expect(parsed[0]!.chart.chartRelId).toBe('rId5');
-    expect(parsed[0]!.chart.widthEmu).toBe(5486400);
-    expect(parsed[0]!.chart.heightEmu).toBe(3200400);
+    expect(parsed[0]!.chart.width).toBe(emuToPt(5486400));
+    expect(parsed[0]!.chart.height).toBe(emuToPt(3200400));
   });
 });
 

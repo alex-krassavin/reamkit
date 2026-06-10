@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody, buildRichDocx } from './fixtures/build-docx';
+import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/ir';
+
 import { OpcPackage } from '@/opc';
 import { parseDocument } from '@/ooxml/wordproc';
 
@@ -43,7 +45,7 @@ describe('parseDocument: end-to-end', () => {
           { text: 'Plain ', properties: {} },
           {
             text: 'Bold',
-            properties: { bold: true, fontSizeHalfPoints: 28, colorHex: 'FF0000' },
+            properties: { bold: true, fontSizePt: halfPtToPt(28), colorHex: 'FF0000' },
           },
           { text: ' tail', properties: {} },
         ],
@@ -63,8 +65,8 @@ describe('parseDocument: end-to-end', () => {
     expect(paragraphs(body)[0]!.properties).toEqual({
       styleId: 'Heading1',
       alignment: 'center',
-      spacingBeforeTwips: 240,
-      spacingAfterTwips: 120,
+      spacingBefore: twipsToPt(240),
+      spacingAfter: twipsToPt(120),
     });
   });
 

@@ -3,13 +3,15 @@
 // values against document defaults and style inheritance.
 
 import type { Alignment, FontFamilyMap, UnderlineStyle, VerticalAlign } from '@/document-model';
+import type { Pt } from '@/ir';
+import { halfPtToPt, twipsToPt } from '@/ir';
 
 export interface ResolvedRunProperties {
   readonly bold: boolean;
   readonly italic: boolean;
   readonly underline: UnderlineStyle;
   readonly strike: boolean;
-  readonly fontSizeHalfPoints: number;
+  readonly fontSizePt: Pt;
   readonly colorHex: string;
   readonly fontFamily: FontFamilyMap;
   readonly verticalAlign: VerticalAlign;
@@ -21,13 +23,13 @@ export interface ResolvedRunProperties {
 
 export interface ResolvedParagraphProperties {
   readonly alignment: Alignment;
-  readonly spacingBeforeTwips: number;
-  readonly spacingAfterTwips: number;
-  readonly spacingLineTwips: number;
+  readonly spacingBefore: Pt;
+  readonly spacingAfter: Pt;
+  readonly spacingLine: Pt;
   readonly spacingLineRule: 'auto' | 'exact' | 'atLeast';
-  readonly indentLeftTwips: number;
-  readonly indentRightTwips: number;
-  readonly indentFirstLineTwips: number;
+  readonly indentLeft: Pt;
+  readonly indentRight: Pt;
+  readonly indentFirstLine: Pt;
   readonly pageBreakBefore: boolean;
   readonly bidi: boolean;
   // ECMA-376 §17.3.1.20 — resolved outline level (0–8). Undefined = body text.
@@ -44,7 +46,7 @@ export const DEFAULT_RESOLVED_RUN: ResolvedRunProperties = {
   italic: false,
   underline: 'none',
   strike: false,
-  fontSizeHalfPoints: 22,
+  fontSizePt: halfPtToPt(22),
   colorHex: '000000',
   fontFamily: {},
   verticalAlign: 'baseline',
@@ -53,13 +55,13 @@ export const DEFAULT_RESOLVED_RUN: ResolvedRunProperties = {
 
 export const DEFAULT_RESOLVED_PARAGRAPH: ResolvedParagraphProperties = {
   alignment: 'left',
-  spacingBeforeTwips: 0,
-  spacingAfterTwips: 0,
-  spacingLineTwips: 240,
+  spacingBefore: twipsToPt(0),
+  spacingAfter: twipsToPt(0),
+  spacingLine: twipsToPt(240),
   spacingLineRule: 'auto',
-  indentLeftTwips: 0,
-  indentRightTwips: 0,
-  indentFirstLineTwips: 0,
+  indentLeft: twipsToPt(0),
+  indentRight: twipsToPt(0),
+  indentFirstLine: twipsToPt(0),
   pageBreakBefore: false,
   bidi: false,
 };

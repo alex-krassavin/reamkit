@@ -16,9 +16,17 @@ export function pt(value: number): Pt {
   return value as Pt;
 }
 
-/** Twentieths of a point (OOXML `dxa` / twips): 20 twips = 1 pt. */
+/**
+ * Twentieths of a point (OOXML `dxa` / twips): 20 twips = 1 pt.
+ *
+ * Deliberately `* (1/20)`, not `/ 20`: the two differ in the last ulp for ~35%
+ * of integer inputs, and the layout engine historically multiplied by a
+ * `TWIP_TO_PT = 1/20` constant — keeping the exact operator keeps the
+ * byte-identical corpus gate meaningful across the IR migration.
+ */
+const TWIP_TO_PT = 1 / 20;
 export function twipsToPt(twips: number): Pt {
-  return (twips / 20) as Pt;
+  return (twips * TWIP_TO_PT) as Pt;
 }
 
 /** Half-points (OOXML font sizes, `w:sz`): 2 half-points = 1 pt. */

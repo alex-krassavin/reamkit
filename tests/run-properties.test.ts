@@ -1,6 +1,8 @@
 import { XMLParser } from 'fast-xml-parser';
 import { describe, expect, it } from 'vitest';
 
+import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/ir';
+
 import { parseRunProperties } from '@/ooxml/wordproc';
 
 const parser = new XMLParser({
@@ -43,7 +45,7 @@ describe('parseRunProperties', () => {
     expect(parseRunProperties(rPr)).toEqual({
       italic: true,
       strike: true,
-      fontSizeHalfPoints: 28,
+      fontSizePt: halfPtToPt(28),
       colorHex: 'FF0000',
     });
   });

@@ -1,9 +1,14 @@
 // Typed in-memory model produced by OOXML parsing and consumed by layout.
 //
+// All lengths are canonical points (Pt, 1/72"); readers convert format-native
+// units (twips, half-points, EMU) at the parse boundary (ir-design.md §5).
+//
 // All "properties" objects use optional fields to allow inheritance / cascade:
 // undefined = "inherit from parent in the style chain". The cascade resolver
 // (style-cascade) merges these into ResolvedRunProperties / ResolvedParagraphProperties
 // that the renderer consumes.
+
+import type { Pt } from '@/ir';
 
 export type Alignment = 'left' | 'right' | 'center' | 'both' | 'distribute';
 
@@ -37,7 +42,7 @@ export interface RunProperties {
   readonly italic?: boolean;
   readonly underline?: UnderlineStyle;
   readonly strike?: boolean;
-  readonly fontSizeHalfPoints?: number;
+  readonly fontSizePt?: Pt;
   readonly colorHex?: string;
   readonly fontFamily?: FontFamilyMap;
   readonly verticalAlign?: VerticalAlign;
@@ -50,22 +55,22 @@ export interface RunProperties {
 }
 
 // ECMA-376 Part 1 §17.3.1 — Paragraph Properties (pPr).
-// All metric values stored in twentieths of a point (twips) as in the source.
+// All lengths in canonical Pt (converted from twips by the parser).
 //
-// indentFirstLineTwips encodes both <w:ind w:firstLine="…"/> (positive value)
+// indentFirstLine encodes both <w:ind w:firstLine="…"/> (positive value)
 // and <w:ind w:hanging="…"/> (stored as the negative twips, so a hanging
-// indent of 360 becomes indentFirstLineTwips = -360 — the first line ends up
+// indent of 360 twips becomes indentFirstLine = -18pt — the first line ends up
 // 360 twips to the left of indentLeftTwips).
 export interface ParagraphProperties {
   readonly styleId?: string;
   readonly alignment?: Alignment;
-  readonly spacingBeforeTwips?: number;
-  readonly spacingAfterTwips?: number;
-  readonly spacingLineTwips?: number;
+  readonly spacingBefore?: Pt;
+  readonly spacingAfter?: Pt;
+  readonly spacingLine?: Pt;
   readonly spacingLineRule?: 'auto' | 'exact' | 'atLeast';
-  readonly indentLeftTwips?: number;
-  readonly indentRightTwips?: number;
-  readonly indentFirstLineTwips?: number;
+  readonly indentLeft?: Pt;
+  readonly indentRight?: Pt;
+  readonly indentFirstLine?: Pt;
   readonly runProperties?: RunProperties;
   readonly numbering?: NumberingReference;
   // ECMA-376 Part 1 §17.3.1.21 — w:pageBreakBefore. When true, the paragraph
@@ -84,8 +89,8 @@ export interface ParagraphProperties {
 // were a glyph in the line box.
 export interface InlineImage {
   readonly imageId: string;
-  readonly widthEmu: number;
-  readonly heightEmu: number;
+  readonly width: Pt;
+  readonly height: Pt;
 }
 
 // ECMA-376 Part 1 §22 — OfficeMathML (OMML). A recursive math element tree.
@@ -297,7 +302,7 @@ export type BorderStyle = 'none' | 'single' | 'double' | 'thick' | 'dotted' | 'd
 
 export interface Border {
   readonly style: BorderStyle;
-  readonly sizeEighthPt?: number;
+  readonly width?: Pt;
   readonly colorHex?: string;
 }
 
@@ -311,10 +316,10 @@ export interface CellBorders {
 }
 
 export interface CellMargins {
-  readonly topTwips?: number;
-  readonly rightTwips?: number;
-  readonly bottomTwips?: number;
-  readonly leftTwips?: number;
+  readonly top?: Pt;
+  readonly right?: Pt;
+  readonly bottom?: Pt;
+  readonly left?: Pt;
 }
 
 export interface CellShading {
@@ -322,7 +327,7 @@ export interface CellShading {
 }
 
 export interface CellProperties {
-  readonly widthTwips?: number;
+  readonly width?: Pt;
   readonly gridSpan?: number;
   readonly vMerge?: 'restart' | 'continue';
   readonly borders?: CellBorders;
@@ -331,7 +336,7 @@ export interface CellProperties {
 }
 
 export interface RowProperties {
-  readonly heightTwips?: number;
+  readonly height?: Pt;
   readonly heightRule?: 'auto' | 'atLeast' | 'exact';
   readonly cantSplit?: boolean;
   readonly isHeader?: boolean;
@@ -341,7 +346,8 @@ export interface RowProperties {
 }
 
 export interface TableProperties {
-  readonly widthTwips?: number;
+  readonly widthPt?: Pt;
+  readonly widthFraction?: number; // tblW type=pct: w/5000 (1.0 = full content width)
   readonly widthType?: 'auto' | 'dxa' | 'pct' | 'nil';
   readonly layout?: 'auto' | 'fixed';
   readonly defaultCellMargins?: CellMargins;
@@ -363,7 +369,7 @@ export interface TableRow {
 
 export interface Table {
   readonly properties: TableProperties;
-  readonly grid: ReadonlyArray<number>;
+  readonly grid: ReadonlyArray<Pt>;
   readonly rows: ReadonlyArray<TableRow>;
 }
 
@@ -371,8 +377,8 @@ export interface Table {
 // Metric Units: 914400 per inch (1 pt = 12700 EMU).
 export interface ImageBlock {
   readonly imageId: string;
-  readonly widthEmu: number;
-  readonly heightEmu: number;
+  readonly width: Pt;
+  readonly height: Pt;
   readonly paragraphProperties: ParagraphProperties;
   // wp:docPr @descr/@title — alternate text for the tagged-PDF Figure (/Alt).
   readonly altText?: string;
@@ -448,7 +454,7 @@ export type ShapeDash =
 
 // §20.1.2.2.24 a:ln — outline.
 export interface ShapeLine {
-  readonly widthEmu?: number; // a:ln @w (EMU); default ~9525 (0.75pt)
+  readonly width?: Pt; // a:ln @w; default 0.75pt
   readonly colorHex?: string; // resolved 6-hex
   readonly dash?: ShapeDash; // a:prstDash @val
   readonly cap?: 'flat' | 'round' | 'square'; // a:ln @cap (flat=butt)
@@ -465,16 +471,16 @@ export interface ShapeTransform {
 // wps:txbx (w:txbxContent) + wps:bodyPr — text inside a shape.
 export interface ShapeTextBody {
   readonly content: ReadonlyArray<BodyElement>;
-  readonly insetLeftEmu?: number;
-  readonly insetTopEmu?: number;
-  readonly insetRightEmu?: number;
-  readonly insetBottomEmu?: number;
+  readonly insetLeft?: Pt;
+  readonly insetTop?: Pt;
+  readonly insetRight?: Pt;
+  readonly insetBottom?: Pt;
   readonly anchor?: 't' | 'ctr' | 'b'; // vertical anchor
 }
 
 export interface ShapeBlock {
-  readonly widthEmu: number; // wp:extent cx (fallback a:ext cx)
-  readonly heightEmu: number; // wp:extent cy
+  readonly width: Pt; // wp:extent cx (fallback a:ext cx)
+  readonly height: Pt; // wp:extent cy
   readonly geometry: ShapeGeometry;
   readonly fill: ShapeFill;
   readonly line?: ShapeLine;
@@ -522,8 +528,8 @@ export interface Chart {
 
 export interface ChartBlock {
   readonly chartRelId: string; // c:chart @r:id (resolve against the document's rels)
-  readonly widthEmu: number;
-  readonly heightEmu: number;
+  readonly width: Pt;
+  readonly height: Pt;
   readonly paragraphProperties: ParagraphProperties;
   // wp:docPr @descr/@title — alternate text for the tagged-PDF Figure (/Alt).
   readonly altText?: string;
@@ -538,18 +544,18 @@ export type BodyElement =
 
 // ECMA-376 Part 1 §17.6 — Sections.
 export interface PageSize {
-  readonly widthTwips: number;
-  readonly heightTwips: number;
+  readonly width: Pt;
+  readonly height: Pt;
   readonly orientation?: 'portrait' | 'landscape';
 }
 
 export interface PageMargins {
-  readonly topTwips: number;
-  readonly rightTwips: number;
-  readonly bottomTwips: number;
-  readonly leftTwips: number;
-  readonly headerTwips?: number;
-  readonly footerTwips?: number;
+  readonly top: Pt;
+  readonly right: Pt;
+  readonly bottom: Pt;
+  readonly left: Pt;
+  readonly header?: Pt;
+  readonly footer?: Pt;
 }
 
 export type HeaderFooterType = 'default' | 'first' | 'even';

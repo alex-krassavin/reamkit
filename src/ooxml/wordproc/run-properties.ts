@@ -1,6 +1,7 @@
 // ECMA-376 Part 1 §17.3.2 — Run Properties (rPr).
 
 import type { FontFamilyMap, RunProperties, UnderlineStyle, VerticalAlign } from '@/document-model';
+import { halfPtToPt } from '@/ir';
 
 import {
   asElement,
@@ -57,7 +58,7 @@ export function parseRunProperties(rPr: unknown): RunProperties {
 
   if ('w:sz' in el) {
     const v = parseIntAttr(el['w:sz'], 'val');
-    if (v !== undefined) out.fontSizeHalfPoints = v;
+    if (v !== undefined) out.fontSizePt = halfPtToPt(v);
   }
 
   if ('w:color' in el) {

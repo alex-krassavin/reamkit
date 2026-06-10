@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/ir';
+
 import { parseStyles } from '@/ooxml/wordproc';
 
 const encoder = new TextEncoder();
@@ -20,7 +22,7 @@ describe('parseStyles', () => {
         '<w:pPrDefault><w:pPr><w:jc w:val="both"/></w:pPr></w:pPrDefault>' +
         '</w:docDefaults>',
     );
-    expect(sheet.defaultRunProperties).toEqual({ fontSizeHalfPoints: 24 });
+    expect(sheet.defaultRunProperties).toEqual({ fontSizePt: halfPtToPt(24) });
     expect(sheet.defaultParagraphProperties).toEqual({ alignment: 'both' });
   });
 
@@ -36,7 +38,7 @@ describe('parseStyles', () => {
     expect(h1).toBeDefined();
     expect(h1!.type).toBe('paragraph');
     expect(h1!.basedOn).toBe('Normal');
-    expect(h1!.runProperties).toEqual({ bold: true, fontSizeHalfPoints: 32 });
+    expect(h1!.runProperties).toEqual({ bold: true, fontSizePt: halfPtToPt(32) });
     expect(h1!.paragraphProperties).toEqual({ alignment: 'center' });
   });
 
