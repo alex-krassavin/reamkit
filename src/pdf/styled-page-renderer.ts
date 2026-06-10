@@ -438,42 +438,76 @@ interface TableBlock {
   readonly xOffsetPt: number;
 }
 
-interface DrawCommand {
-  readonly type: 'line' | 'border' | 'image' | 'fill' | 'shape';
-  // for line
-  readonly line?: Line;
-  readonly originX?: number;
-  readonly baselineY?: number;
-  // for border / fill
-  readonly x?: number;
-  readonly y?: number;
-  readonly width?: number;
-  readonly height?: number;
-  readonly side?: 'top' | 'right' | 'bottom' | 'left';
-  readonly borderSizePt?: number;
-  readonly borderColorHex?: string;
-  // for fill
-  readonly fillColorHex?: string;
-  // for image
-  readonly imageResourceName?: string;
-  // for shape (DrawingML vector geometry)
-  readonly shape?: VectorShape;
-  // Tagged PDF (§14.8): the logical structure node this command's content
-  // belongs to. Set only on body content in tagged mode; undefined content in
-  // the line pass is treated as an artifact. Ignored when not tagging.
+// PageDoc draft items (ir-design §6, stage 3c): the positioned, layout-output
+// vocabulary a page is made of. Coordinates are PDF points in the PDF page
+// frame (y-up, bottom-left origin) for now — the top-left flip and branded Pt
+// coordinates land when the types stabilize against the svg-writer (stage 6).
+export interface PageItemBase {
+  // Tagged PDF (§14.8): the logical structure node this item's content belongs
+  // to. Set only on body content in tagged mode; undefined text in the line
+  // pass is treated as an artifact. Ignored when not tagging.
   readonly structId?: number;
-  // Tagged PDF: explicitly mark this command as a pagination artifact (running
+  // Tagged PDF: explicitly mark this item as a pagination artifact (running
   // header/footer, §14.8.2.2.2). Distinguishes header/footer text from
   // not-yet-tagged body content so it is typed /Artifact /Pagination, never a P.
   readonly artifact?: 'pagination';
 }
+
+// A laid-out line of text (tokens carry their fonts/sizes/positions).
+export interface TextLineItem extends PageItemBase {
+  readonly type: 'line';
+  readonly line: Line;
+  readonly originX: number;
+  readonly baselineY: number;
+}
+
+// One edge of a table-cell frame.
+export interface BorderItem extends PageItemBase {
+  readonly type: 'border';
+  readonly side: 'top' | 'right' | 'bottom' | 'left';
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly borderSizePt: number;
+  readonly borderColorHex: string;
+}
+
+// A filled rectangle (cell shading).
+export interface FillItem extends PageItemBase {
+  readonly type: 'fill';
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly fillColorHex: string;
+}
+
+// A placed raster image (resource name binds to the page XObject dict).
+export interface ImageItem extends PageItemBase {
+  readonly type: 'image';
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly imageResourceName: string;
+}
+
+// DrawingML vector geometry.
+export interface ShapeItem extends PageItemBase {
+  readonly type: 'shape';
+  readonly shape: VectorShape;
+}
+
+export type PageItem = TextLineItem | BorderItem | FillItem | ImageItem | ShapeItem;
+type DrawCommand = PageItem; // internal alias during the stage-3 migration
 
 // The seam between the two halves of the pipeline (ir-design §6 / stage 3):
 // everything the emit phase needs from layout. `pages` is the PageDoc draft —
 // positioned DrawCommands per page; the resource maps and struct tree ride
 // along until stage 3b/3c make layout PdfDocument-free and the types public.
 interface LaidOutDocument {
-  readonly pages: ReadonlyArray<RenderedPage>;
+  readonly pages: ReadonlyArray<LaidOutPage>;
   readonly fontResources: Map<string, FontResource>;
   readonly imageResources: Map<ResourceId, ImageResource>;
   readonly structBuilder: StructTreeBuilder | undefined;
@@ -2825,7 +2859,7 @@ function resolveCellBorders(
   return out;
 }
 
-interface RenderedPage {
+export interface LaidOutPage {
   readonly commands: Array<DrawCommand>;
   readonly width: number;
   readonly height: number;
@@ -2933,9 +2967,9 @@ function paginateSections(
   sectionCtxs: ReadonlyArray<SectionRenderCtx>,
   builder?: StructTreeBuilder,
   defaultLang = 'en-US',
-): Array<RenderedPage> {
+): Array<LaidOutPage> {
   if (sectionCtxs.length === 0) return [];
-  const pages: Array<RenderedPage> = [];
+  const pages: Array<LaidOutPage> = [];
 
   let ctx = sectionCtxs[0]!;
   let secIdx = 0;
@@ -3452,11 +3486,11 @@ interface PageTagging {
 // → its struct type (Figure) with a fresh MCID; a pagination artifact; or a bare
 // layout artifact. `body(cmd)` emits each command's own operators. In non-tagged
 // mode it just emits the bodies — byte-identical to before tagging existed.
-function emitTaggedRuns(
+function emitTaggedRuns<T extends DrawCommand>(
   out: Array<string>,
-  cmds: ReadonlyArray<DrawCommand>,
+  cmds: ReadonlyArray<T>,
   tagging: PageTagging | undefined,
-  body: (cmd: DrawCommand) => void,
+  body: (cmd: T) => void,
 ): void {
   if (!tagging) {
     for (const c of cmds) body(c);
@@ -3504,14 +3538,14 @@ function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTag
     out.push('q');
     let lastColor = '';
     for (const f of fills) {
-      const color = f.fillColorHex!;
+      const color = f.fillColorHex;
       if (color !== lastColor) {
         const [r, g, b] = hexToRgb01(color);
         out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} rg`);
         lastColor = color;
       }
       out.push(
-        `${formatNumber(f.x!)} ${formatNumber(f.y!)} ${formatNumber(f.width!)} ${formatNumber(f.height!)} re`,
+        `${formatNumber(f.x)} ${formatNumber(f.y)} ${formatNumber(f.width)} ${formatNumber(f.height)} re`,
       );
       out.push('f');
     }
@@ -3524,7 +3558,9 @@ function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTag
   // artifacts; anything else a bare artifact.
   // Drop images whose resource failed to embed (unsupported/corrupt) — they have
   // no XObject, so a `/<name> Do` would be a dangling reference.
-  const images = commands.filter((c) => c.type === 'image' && !!c.imageResourceName);
+  const images = commands.filter(
+    (c): c is ImageItem => c.type === 'image' && c.imageResourceName !== '',
+  );
   emitTaggedRuns(out, images, tagging, (img) => {
     // ISO 32000-1 §8.9.5.1 — Image XObject placement.
     // q             save graphics state
@@ -3533,7 +3569,7 @@ function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTag
     // Q             restore
     out.push('q');
     out.push(
-      `${formatNumber(img.width!)} 0 0 ${formatNumber(img.height!)} ${formatNumber(img.x!)} ${formatNumber(img.y!)} cm`,
+      `${formatNumber(img.width)} 0 0 ${formatNumber(img.height)} ${formatNumber(img.x)} ${formatNumber(img.y)} cm`,
     );
     out.push(`/${img.imageResourceName} Do`);
     out.push('Q');
@@ -3546,8 +3582,8 @@ function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTag
     let lastWidth = -1;
     let lastColor = '';
     for (const b of borders) {
-      const width = b.borderSizePt!;
-      const color = b.borderColorHex!;
+      const width = b.borderSizePt;
+      const color = b.borderColorHex;
       if (width !== lastWidth) {
         out.push(`${formatNumber(width)} w`);
         lastWidth = width;
@@ -3557,10 +3593,10 @@ function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTag
         out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(bl)} RG`);
         lastColor = color;
       }
-      const x = b.x!;
-      const y = b.y!;
-      const w = b.width!;
-      const h = b.height!;
+      const x = b.x;
+      const y = b.y;
+      const w = b.width;
+      const h = b.height;
       switch (b.side) {
         case 'top':
           out.push(`${formatNumber(x)} ${formatNumber(y + h)} m`);
@@ -3593,7 +3629,7 @@ function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTag
   // one MCID); decorative shapes fall back to a bare artifact.
   const shapes = commands.filter((c) => c.type === 'shape');
   emitTaggedRuns(out, shapes, tagging, (sh) => {
-    for (const op of emitVectorShape(sh.shape!)) out.push(op);
+    for (const op of emitVectorShape(sh.shape)) out.push(op);
   });
 
   const lines = commands.filter((c) => c.type === 'line');
@@ -3696,10 +3732,10 @@ function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTag
     // Emit one line command's glyphs/images/math. Manages BT/ET through the
     // shared `inBT` state; produces operator-for-operator the same output as
     // before tagging existed, so the non-tagged path stays byte-identical.
-    const emitOneLine = (cmd: DrawCommand) => {
-      const line = cmd.line!;
-      const originX = cmd.originX!;
-      const baselineY = cmd.baselineY!;
+    const emitOneLine = (cmd: TextLineItem) => {
+      const line = cmd.line;
+      const originX = cmd.originX;
+      const baselineY = cmd.baselineY;
       const extraPerSpace = computeJustifyExtra(line);
       const hasImageToken = line.tokens.some((t) => t.kind === 'image');
       const hasMathToken = line.tokens.some((t) => t.kind === 'math');
