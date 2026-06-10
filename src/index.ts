@@ -104,3 +104,14 @@ export type {
   ShapeItem,
   LaidOutPage,
 } from '@/pdf/styled-page-renderer';
+export {
+  chainProviders,
+  callerFontProvider,
+  embeddedDocFontProvider,
+  remoteFontProvider,
+  localFontProvider,
+  readOs2FsType,
+  isEmbeddingRestricted,
+  NO_FONT,
+} from '@/fonts/provider';
+export type { FontProvider, FontRequest, FontAnswer } from '@/fonts/provider';

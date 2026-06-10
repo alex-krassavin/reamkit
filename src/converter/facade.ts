@@ -9,9 +9,12 @@
 import type { ConvertDocxOptions } from '@/converter/docx-to-pdf';
 import type { DocumentReader } from '@/ir/adapters';
 import type { FlowDoc } from '@/ir/flow';
-import type { LossReport } from '@/ir';
+import type { FontProvider } from '@/fonts/provider';
+import type { Loss, LossReport } from '@/ir';
+import type { FontBytesByVariant } from '@/font';
 
-import { ConversionLossError } from '@/ir';
+import { ConversionLossError, FEATURES } from '@/ir';
+import { chainProviders } from '@/fonts/provider';
 import { convertDocxToPdf } from '@/converter/docx-to-pdf';
 import { convertXlsxToPdf } from '@/converter/xlsx-to-pdf';
 import { docxReader } from '@/readers/docx-reader';
@@ -25,6 +28,15 @@ export interface ConvertOptions extends ConvertDocxOptions {
    * recorded loss instead of returning it in the report.
    */
   readonly strict?: boolean;
+  /**
+   * Font resolution chain (ir-design §8). When set (and no caller `fonts`),
+   * the facade resolves the default font set through these providers — e.g.
+   * [localFontProvider(), remoteFontProvider()] — and reports a 'substituted'
+   * loss when anything below a caller/embedded answer wins. Local Font Access
+   * stays strictly opt-in via this option (it can trigger a permission
+   * prompt), which is why nothing wires it in by default.
+   */
+  readonly fontProviders?: ReadonlyArray<FontProvider>;
 }
 
 export interface ConvertResult {
@@ -57,22 +69,60 @@ export function createConverter(opts: CreateConverterOptions = {}): Converter {
     bytes: Uint8Array,
     options: ConvertOptions = {},
   ): Promise<ConvertResult> => {
-    const { to = 'pdf', strict = false, ...rest } = options;
+    const { to = 'pdf', strict = false, fontProviders, ...rest } = options;
     void to; // single target in v0
     const reader = detect(bytes);
     if (!reader) {
       throw new Error('Unrecognized input format (no registered reader sniffs these bytes)');
     }
+    const losses: Array<Loss> = [];
+    let conv = rest;
+    // Resolve the default font set through the provider chain (unless the
+    // caller supplied bytes directly — those always win).
+    if (fontProviders && fontProviders.length > 0 && !rest.fonts && !rest.fontBytes) {
+      const { fonts, loss } = await resolveFontsViaChain(fontProviders);
+      if (fonts) conv = { ...rest, fonts };
+      if (loss) losses.push(loss);
+    }
     const pdf =
       reader.id === 'xlsx'
-        ? await convertXlsxToPdf(bytes, rest)
-        : await convertDocxToPdf(bytes, rest);
-    // v0: the PDF pipeline does not record losses yet (font substitution and
-    // friends wire into LossReport with the FontProvider chain, stage 5).
-    const losses: LossReport = [];
+        ? await convertXlsxToPdf(bytes, conv)
+        : await convertDocxToPdf(bytes, conv);
     if (strict && losses.length > 0) throw new ConversionLossError(losses[0]!);
     return { bytes: pdf, losses };
   };
 
   return { readers, detect, convert };
+}
+
+// Resolve regular/bold/italic/boldItalic through the chain. v0 resolves the
+// document-default family (per-run family-aware resolution folds in when the
+// converters take providers natively). A 'remote' winner is a substitution.
+async function resolveFontsViaChain(
+  providers: ReadonlyArray<FontProvider>,
+): Promise<{ fonts?: FontBytesByVariant; loss?: Loss }> {
+  const chain = chainProviders(providers);
+  const ask = (bold: boolean, italic: boolean) => chain.resolve({ bold, italic });
+  const [regular, bold, italic, boldItalic] = await Promise.all([
+    ask(false, false),
+    ask(true, false),
+    ask(false, true),
+    ask(true, true),
+  ]);
+  if (regular.kind !== 'bytes') return {};
+  const fonts: FontBytesByVariant = {
+    regular: regular.bytes,
+    ...(bold.kind === 'bytes' ? { bold: bold.bytes } : {}),
+    ...(italic.kind === 'bytes' ? { italic: italic.bytes } : {}),
+    ...(boldItalic.kind === 'bytes' ? { boldItalic: boldItalic.bytes } : {}),
+  };
+  const loss: Loss | undefined =
+    regular.providerId === 'remote' || regular.providerId === 'local'
+      ? {
+          severity: 'substituted',
+          feature: FEATURES.fontsSubstitution,
+          detail: `document fonts rendered with ${regular.faceName} (provider: ${regular.providerId})`,
+        }
+      : undefined;
+  return { fonts, ...(loss ? { loss } : {}) };
 }
