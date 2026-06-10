@@ -188,7 +188,7 @@ type LossReport = readonly Loss[];
 | Этап | Что делаем | Гейт |
 |---|---|---|
 | 1 | ✅ Типы ядра: `Pt`, `ResourceStore`, `Loss*`, `Feature` — рядом, ничего не трогаем | tsc + тесты |
-| 2 | `FlowDoc` = нейтрализованный document-model: **2a ✅ единицы→Pt** (байт-в-байт прошёл); 2b имена (vMerge→rowSpan), 2c resources, 2d native — далее | **PDF байт-в-байт** |
+| 2 | `FlowDoc` = нейтрализованный document-model: **2a ✅ единицы→Pt**, **2b ✅ merge-роли+colSpan** (оба байт-в-байт); 2c resources (imageId→ResourceId, нужен OPC-резолвер в parser), 2d native — далее | **PDF байт-в-байт** |
 | 3 | `PageDoc`: расщепить styled-renderer на `layout(FlowDoc)→PageDoc` и `pdfWriter(PageDoc)→bytes` | **PDF байт-в-байт** |
 | 4 | Интерфейсы Reader/Writer/фасад; старые API — обёртки | публичный API не ломается |
 | 5 | FontProvider-цепочка (рефактор) + **local**-провайдер с fsType | новые тесты + корпус |
