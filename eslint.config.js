@@ -16,6 +16,7 @@ export default [
       'dist/**',
       'node_modules/**',
       'corpus/**',
+      'docs/**',
       'tests/fixtures/fonts/**',
       'tests/output/**',
     ],

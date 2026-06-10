@@ -1,0 +1,48 @@
+---
+title: Ream
+description: Convert Word (.docx) and Excel (.xlsx) to PDF in the browser, implemented from the ECMA-376 and ISO 32000 specifications.
+template: splash
+hero:
+  tagline: Convert Word (.docx) and Excel (.xlsx) to PDF — in the browser, from the ECMA-376 and ISO 32000 specifications. No LibreOffice, no headless Office, no commercial SDK. Pure TypeScript, Uint8Array in and Uint8Array out.
+  actions:
+    - text: Getting started
+      link: /reamkit/guides/getting-started/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/alex-krassavin/reamkit
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid stagger>
+  <Card title="From the spec" icon="open-book">
+    Built directly from **ECMA-376** (OOXML) and **ISO 32000 / 19005** (PDF / PDF/A) —
+    not a wrapper around LibreOffice, headless Office, or any commercial SDK. Existing
+    implementations are read as a reference, never a dependency.
+  </Card>
+  <Card title="Browser-first" icon="laptop">
+    Pure TypeScript working on `Uint8Array` in and `Uint8Array` out — zero `node:*`
+    imports on the conversion path. The same code runs unchanged in the browser, Node.js,
+    serverless and edge runtimes. You supply the fonts (or let it fetch open substitutes).
+  </Card>
+  <Card title="Word & Excel" icon="document">
+    WordprocessingML — text, styles, tables, lists, sections, headers/footers, images,
+    tracked changes. SpreadsheetML — grids, number formats, dates, and the full print
+    model. Plus DrawingML shapes, charts and OfficeMath.
+  </Card>
+  <Card title="Real typography" icon="seti:font">
+    Type0 + CIDFontType2 embedding with subsetting, Knuth–Plass line breaking, Liang
+    hyphenation, OpenType ligatures and kerning, BiDi (UAX #9) and Arabic cursive joining.
+  </Card>
+  <Card title="Compliant PDF" icon="approve-check">
+    PDF/A-1, -2 and -3 (levels a / b / u) — all formally **veraPDF-validated** — plus
+    tagged PDF (logical structure, alt text) and digital signatures (PKCS#7 detached,
+    ECDSA).
+  </Card>
+  <Card title="Alpha, and growing" icon="rocket">
+    Published as `reamkit@alpha`. The foundation is a from-scratch document toolkit —
+    more input formats are on the way.
+  </Card>
+</CardGrid>

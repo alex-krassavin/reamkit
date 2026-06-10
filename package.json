@@ -63,7 +63,6 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\" \"scripts/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\" \"scripts/**/*.ts\"",
-    "docs:api": "tsx scripts/docs/generate-api.ts",
     "corpus:build": "tsx scripts/corpus/build-corpus.ts",
     "corpus:fetch": "tsx scripts/corpus/fetch-corpus.ts",
     "corpus:sandbox:build": "docker build -t docgen-losandbox:latest scripts/corpus/sandbox/",

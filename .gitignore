@@ -14,5 +14,3 @@ corpus/external/
 corpus/inputs/
 corpus/report*.md
 
-# generated API reference (npm run docs:api)
-docs/reference/
