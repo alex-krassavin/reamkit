@@ -187,7 +187,7 @@ type LossReport = readonly Loss[];
 
 | Этап | Что делаем | Гейт |
 |---|---|---|
-| 1 | Типы ядра: `Pt`, `ResourceStore`, `Loss*`, `Feature` — рядом, ничего не трогаем | tsc + тесты |
+| 1 | ✅ Типы ядра: `Pt`, `ResourceStore`, `Loss*`, `Feature` — рядом, ничего не трогаем | tsc + тесты |
 | 2 | `FlowDoc` = нейтрализованный document-model (единицы/имена/resources); docx/xlsx-парсеры выдают его | **PDF байт-в-байт** |
 | 3 | `PageDoc`: расщепить styled-renderer на `layout(FlowDoc)→PageDoc` и `pdfWriter(PageDoc)→bytes` | **PDF байт-в-байт** |
 | 4 | Интерфейсы Reader/Writer/фасад; старые API — обёртки | публичный API не ломается |
