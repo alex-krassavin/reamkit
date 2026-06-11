@@ -15,6 +15,7 @@ import type { LaidOutDocument, LaidOutPage, TextLineItem } from '@/layout/page-d
 import type { PathSegment, VectorShape } from '@/core/vector';
 
 import { FEATURES } from '@/core/ir';
+import { toBase64 } from '@/core/bytes';
 import { paintPlan } from '@/layout/page-doc';
 
 const PAGE_GAP = 12;
@@ -176,13 +177,6 @@ function imageHref(resourceName: string, laid: LaidOutDocument): string | undefi
     return `data:${res.prepared.mimeType};base64,${toBase64(bytes)}`;
   }
   return undefined;
-}
-
-function toBase64(bytes: Uint8Array): string {
-  let bin = '';
-  for (const b of bytes) bin += String.fromCharCode(b);
-  // btoa is available in browsers/workers/Node 16+.
-  return btoa(bin);
 }
 
 function escapeXml(s: string): string {

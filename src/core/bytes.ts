@@ -1,4 +1,12 @@
-// Byte-level helpers shared by format sniffers.
+// Byte-level helpers shared by format sniffers and writers.
+
+// Base64 for data: URIs (svg + html writers). btoa is available in browsers,
+// workers and Node 16+; chunking keeps the intermediate binary string small.
+export function toBase64(bytes: Uint8Array): string {
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
 
 // Naive scan for an ASCII needle inside raw bytes — used by reader sniffs to
 // spot OPC part names (e.g. 'word/document.xml') without unzipping.
