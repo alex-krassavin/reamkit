@@ -581,26 +581,29 @@ export function layoutStyledDocument(
 
 // Emit phase: PageDoc draft → PDF objects (content streams, page dicts,
 // catalog, PDF/A apparatus, structure tree, signature placeholder) → bytes.
-function emitStyledPdf(
-  laid: LaidOutDocument,
-  options: StyledRenderOptions,
-  doc: PdfDocument,
-): Uint8Array {
-  const { pages: renderedPages, fontResources, imageResources, structBuilder } = laid;
+// The emit phase sees only the laid-out document plus these output-side
+// options — never the layout options (oop-design §4.1: the seam must not leak).
+type EmitOptions = Pick<
+  StyledRenderOptions,
+  'attachments' | 'info' | 'language' | 'signaturePlaceholder'
+>;
+
+function emitStyledPdf(laid: LaidOutDocument, options: EmitOptions, doc: PdfDocument): Uint8Array {
+  const { pages: renderedPages, structBuilder } = laid;
   const { sectionCtxs, pdfaProfile, tagged } = laid;
 
   // Create the font/image PDF objects first — the same object order the
   // pre-split renderer produced (fonts, then images, then pages).
-  const embeddedFonts = embedFontResources(doc, fontResources, options);
-  const embeddedImages = embedImageResources(doc, imageResources, options);
+  const embeddedFonts = embedFontResources(doc, laid);
+  const embeddedImages = embedImageResources(doc, laid);
 
   const pagesDict: PdfDict = dict({ Type: name('Pages'), Count: 0, Kids: [] });
   const pagesRef = doc.add(pagesDict);
   // First page's dict object, kept mutable so a signature widget can be added to
   // its /Annots after the catalog is assembled.
   let firstPageDict: PdfDict | undefined;
-  const fontResourceDict = buildFontResourceDict(fontResources, embeddedFonts);
-  const xobjectResourceDict = buildXObjectResourceDict(imageResources, embeddedImages);
+  const fontResourceDict = buildFontResourceDict(laid.fontResources, embeddedFonts);
+  const xobjectResourceDict = buildXObjectResourceDict(laid.imageResources, embeddedImages);
   const resourcesDict = dict({
     Font: fontResourceDict,
     ...(xobjectResourceDict ? { XObject: xobjectResourceDict } : {}),
@@ -698,7 +701,7 @@ function emitStyledPdf(
     const xmpRef = doc.add(
       stream(
         { Type: name('Metadata'), Subtype: name('XML') },
-        buildXmpPacket(xmpFromInfo(options.info, options.pdfA)),
+        buildXmpPacket(xmpFromInfo(options.info, pdfaProfile)),
       ),
     );
     catalogEntries['Metadata'] = ref(xmpRef.id);
@@ -759,9 +762,8 @@ const DEFAULT_PRODUCER = 'Ream';
 
 function xmpFromInfo(
   info: DocumentInfo | undefined,
-  pdfA: PdfALevel | undefined,
+  p: PdfAProfile | undefined,
 ): Parameters<typeof buildXmpPacket>[0] {
-  const p = pdfA ? parsePdfAProfile(pdfA) : undefined;
   return {
     pdfaPart: p ? (String(p.part) as '1' | '2' | '3') : '1',
     pdfaConformance: p ? (p.level.toUpperCase() as 'A' | 'B' | 'U') : 'B',
@@ -1506,15 +1508,12 @@ function collectImageResources(
 }
 
 // Emit-phase counterpart: embed the probed images in collection order.
-function embedImageResources(
-  doc: PdfDocument,
-  resources: ReadonlyMap<ResourceId, ImageResource>,
-  options: StyledRenderOptions,
-): Map<ResourceId, PdfRef> {
-  const flattenAlpha = options.pdfA ? parsePdfAProfile(options.pdfA).part === 1 : false;
+function embedImageResources(doc: PdfDocument, laid: LaidOutDocument): Map<ResourceId, PdfRef> {
+  // Only PDF/A-1 forbids transparency — the same rule layout used for probing.
+  const flattenAlpha = laid.pdfaProfile?.part === 1;
   const out = new Map<ResourceId, PdfRef>();
-  for (const [resourceId, res] of resources) {
-    const bytes = options.resources?.get(resourceId);
+  for (const [resourceId, res] of laid.imageResources) {
+    const bytes = laid.resources.get(resourceId);
     if (!bytes) continue;
     try {
       out.set(resourceId, embedImage(doc, bytes, { flattenAlpha }).ref);
@@ -1795,15 +1794,11 @@ function collectFontResources(
 // Emit-phase counterpart: create the PDF font objects (subset to the collected
 // glyphs) for every laid-out font resource, in collection order — keeping the
 // object numbering identical to the pre-split renderer.
-function embedFontResources(
-  doc: PdfDocument,
-  resources: ReadonlyMap<string, FontResource>,
-  options: StyledRenderOptions,
-): Map<string, EmbeddedFont> {
+function embedFontResources(doc: PdfDocument, laid: LaidOutDocument): Map<string, EmbeddedFont> {
   // PDF/A-1 requires a /CIDSet; PDF/A-2/3 and non-PDF/A omit it.
-  const cidSet = options.pdfA ? parsePdfAProfile(options.pdfA).part === 1 : false;
+  const cidSet = laid.pdfaProfile?.part === 1;
   const out = new Map<string, EmbeddedFont>();
-  for (const [variant, res] of resources) {
+  for (const [variant, res] of laid.fontResources) {
     out.set(variant, embedTtfFont(doc, res.parsed, { usedGids: res.gids, cidSet }));
   }
   return out;
