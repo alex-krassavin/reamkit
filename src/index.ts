@@ -40,8 +40,10 @@ export {
 } from '@/core/hyphenation';
 export type { Hyphenator, HyphenatorOptions, SupportedLanguage } from '@/core/hyphenation';
 
-// --- IR layer (@experimental — ir-design.md; may change in minor versions
-// until the schema freezes against three-plus adapters) ---
+// --- IR layer (ir-design.md). The PageDoc schema (layout/page-doc: PageItem,
+// LaidOutPage/LaidOutDocument — top-left Pt page frame) FROZE at stage 6.4.
+// The reader/writer adapter contracts and FlowDoc remain @experimental and
+// may change in minor versions. ---
 export type {
   Pt,
   ResourceId,

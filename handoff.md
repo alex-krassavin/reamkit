@@ -78,7 +78,7 @@ src/
     ir/                  # IR-ядро: Pt, ResourceStore, Loss/strict, Feature,
                          #   FlowDoc, DocumentReader/Writer-контракты (@experimental)
     document-model/      # типизированная модель (публичный subpath ./document-model)
-    font/                # OpenType: TTF-парсер, метрики, шейпинг, subset, registry
+    font/                # OpenType: TTF-парсер, метрики (measure), шейпинг, subset, registry
     fonts/               # FontProvider-цепочка (caller/embedded/local+fsType/remote)
     line-breaker/        # Knuth-Plass
     hyphenation/         # Liang (en/ru, lazy)
@@ -86,6 +86,7 @@ src/
     style-cascade/       # §17.7 docDefaults → styles → direct
     numbering/           # §17.9 abstractNum/lvlOverride → маркеры
     drawingml/           # §20/§21 общий DrawingML: темы, цвета, chart-parser
+    images/ (images.ts)  # raster-эксперты: detect/prepare (PNG-декод, JPEG/JP2-пробы)
     opc/                 # ECMA-376 Part 2 OPC (+zip-bomb guards) + core-props
     crypto/              # ASN.1/CMS для подписей (WebCrypto)
     converter/           # createConverter-фасад + публичные реэкспорты конвертеров
@@ -93,14 +94,19 @@ src/
                          #   docx-reader (bytes→FlowDoc) + docx-to-pdf
   excel/                 # §18 SpreadsheetML: парсеры + print-model +
                          #   xlsx-reader + xlsx-to-pdf
-  pdf/                   # ISO 32000: layout (FlowDoc→PageDoc, doc-free) +
-                         #   emit/writer, cid-font, image-xobject, PDF/A, подписи,
-                         #   tagged PDF, chart-geometry, math-layout, vector-graphics
-  svg/                   # svg-writer (PageDoc→SVG, третий адаптер)
+  layout/                # FlowDoc→PageDoc: page-doc (ЗАМОРОЖЕННАЯ схема, импортирует
+                         #   только core) + styled-layout (движок: Кнут-Пласс-обвязка,
+                         #   таблицы, пагинация) + math-layout, chart-geometry,
+                         #   preset-geometry, arc-to-bezier
+  pdf/                   # ISO 32000: композиция renderStyledPdf + emit/writer,
+                         #   cid-font, image-xobject (addImage), PDF/A, подписи,
+                         #   tagged PDF (struct-tree), vector-graphics
+  svg/                   # svg-writer (PageDoc→SVG, третий адаптер; импортирует
+                         #   только layout/page-doc + core)
   index.ts               # публичное API
 ```
 
-Пайплайн: `bytes → reader → FlowDoc → layout → PageDoc(draft) → writer → bytes`.
+Пайплайн: `bytes → reader → FlowDoc → layout → PageDoc → writer → bytes`.
 
 ## Этапы (milestones)
 
@@ -685,7 +691,7 @@ C1 единый разбор цветового узла DrawingML (return-first
 B4 signPdf ищет полный fixed-width плейсхолдер (decoy-attachment тест), C5 картинки колонтитулов
 резолвятся по rels СВОЕЙ части (OPC §9.3; фикстура buildDocxFromBody выросла headerImages).
 
-**Stage 6 — стабилизация IR (в процессе, шаги 1-3 ✅).** FlowDoc-трансформы в reader'ах: (1) applyNumbering →
+**Stage 6 — стабилизация IR (завершён: шаги 1-3 + заморозка 6.4 ✅).** FlowDoc-трансформы в reader'ах: (1) applyNumbering →
 core/numbering — body несёт материализованные маркеры списков, flow.numbering = round-trip сырьё, проектор его
 не шлёт; (2) segmentLevels в core/bidi — протокол UAX#9 (RLE/LRE/PDF-обёртки, U+FFFC, realIndex c -1) ушёл из
 PDF-слоя, рендерер-токенизатор = одно-вызовный клиент; (3) **вариант А**: каскад стилей в reader'ах —
@@ -693,9 +699,22 @@ resolveBodyStyles (после нумерации; параграфы/раны/я
 ResolvedParagraphProperties проносит numbering-ref (tagged L/LI) как styleId; xlsx резолвит поверх EMPTY
 (единый контракт); проектор шлёт EMPTY_STYLE_SHEET — резолв в рендерере идемпотентен (мемо-no-op), прямые
 raw-вызовы renderStyledPdf живут. v0-девиация из flow.ts закрыта. Байт-в-байт на каждом шаге, 456 тестов.
-Остаток — S6-4 заморозка PageDoc: Pt-брендинг координат, top-left флип (сменит svg-снапшоты осознанно),
-вынос layout в src/layout/, сужение LaidOutDocument (A13). Попутно в этой серии: rels-кэш OpcPackage,
-краш-фикс measureSingleLine (multi-family таблицы), мемоизация каскада, vector-model→core, декомпозиция wrap().
+**S6-4 — заморозка PageDoc (✅, 4 коммита).** (a) Top-left origin ушёл В СХЕМУ: layout пишет
+top-left/y-down координаты, svg-writer эмитит их дословно, PDF-эмиттер флипает обратно той же
+инволюцией `H−y` на эмиссии — линейная часть CTM шейпов отрицается точно (бит знака), пере-округляется
+только перенос, и байт-гейт доказал 12/12, что двойное округление ни разу не пересекло границу
+форматирования. (b) Геометрия страницы брендирована `Pt` (мелкий бренд из core/ir: читается как number,
+конструирование через pt() на точках эмиссии). (c) LaidOutDocument сужен до собственно PageDoc;
+PDF-only состояние (structBuilder/sectionCtxs/pdfaProfile/tagged) — спутник `laid.pdf` (oop-design A13,
+выполнен синхронно с заморозкой, как оговаривалось). (d) Вынос в src/layout/: page-doc.ts — замороженная
+схема, импортирует ТОЛЬКО core (ради этого prepareImage/PreparedImage → core/images,
+createFontMeasure/FontMeasure → core/font/measure); styled-layout.ts — движок; math-layout,
+chart-geometry, preset-geometry, arc-to-bezier переехали в layout/; pdf/styled-page-renderer.ts остался
+композицией renderStyledPdf + реэкспорты (исторический путь импорта жив); svg→pdf-зависимости больше нет;
+PageTagging уехал в эмиттер; алиас DrawCommand удалён. Осознанный residue (задокументирован в шапке
+движка): StructTreeBuilder + типы AttachedFile/SignaturePlaceholder импортируются из pdf/. Попутно в этой
+серии: rels-кэш OpcPackage, краш-фикс measureSingleLine (multi-family таблицы), мемоизация каскада,
+vector-model→core, декомпозиция wrap().
 
 **Мотивация.** Сейчас parser → representer прибиты друг к другу: добавление
 нового направления (например, PDF→Word) требует заново «как-то считывать,

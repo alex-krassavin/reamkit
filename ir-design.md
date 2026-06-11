@@ -110,8 +110,8 @@ PageDoc
 
 Принципы: PageItem самодостаточен (writer SVG/PNG не знает про OOXML); текст
 несёт и глифы, и исходную строку (поиск/копирование/ActualText); координаты —
-`Pt`, origin — **top-left** (как CSS/SVG; PDF-writer сам флипает в свой y-up —
-сейчас флип уже внутри рендерера).
+`Pt`, origin — **top-left** (как CSS/SVG; PDF-writer флипает в свой y-up на
+эмиссии — заморожено на стадии 6.4, схема в src/layout/page-doc).
 
 ## 7. Интерфейсы адаптеров
 
@@ -189,10 +189,10 @@ type LossReport = readonly Loss[];
 |---|---|---|
 | 1 | ✅ Типы ядра: `Pt`, `ResourceStore`, `Loss*`, `Feature` — рядом, ничего не трогаем | tsc + тесты |
 | 2 | `FlowDoc` = нейтрализованный document-model: **✅ ЗАВЕРШЁН: 2a единицы→Pt, 2b merge-роли+colSpan, 2c images→ResourceStore (ImageResolver в parser, content-addressed дедуп), 2d native-мешки** — все подэтапы байт-в-байт | **PDF байт-в-байт** |
-| 3 | `PageDoc`: **3a ✅ шов**, **3b ✅ layout doc-free**, **3c ✅ PageItem-union** (DrawCommand-мешок → discriminated union TextLine/Border/Fill/Image/Shape, экспортирован с LaidOutPage/LaidOutDocument как модульный @experimental-контракт). Остаток (на этап 6, при svg-writer): Pt-брендинг координат, top-left флип, вынос в src/layout/ | **PDF байт-в-байт** |
+| 3 | `PageDoc`: **3a ✅ шов**, **3b ✅ layout doc-free**, **3c ✅ PageItem-union** (DrawCommand-мешок → discriminated union TextLine/Border/Fill/Image/Shape, экспортирован с LaidOutPage/LaidOutDocument как модульный @experimental-контракт). Остаток (Pt-брендинг, top-left флип, вынос в src/layout/) — ✅ закрыт заморозкой 6.4 | **PDF байт-в-байт** |
 | 4 | ✅ Интерфейсы Reader/Writer (@experimental), FlowDoc v0, docx/xlsx-readers (конвертеры на них), createConverter-фасад (sniff+detect+strict-каркас, байты ≡ прямым вызовам), IR-слой в публичном index | публичный API не ломается |
 | 5 | ✅ FontProvider-цепочка (chainProviders + caller/embedded/remote/**local** c OS/2 fsType-гейтом), фасадная опция fontProviders (opt-in), первая живая loss 'substituted' + strict. canvas-metrics — отложен экспериментом | новые тесты + корпус |
-| 6 | ✅ **svg-writer(PageDoc)** — третий адаптер чисто по PageItem-контракту (text/fill/border/image-dataURL/shape-path, y-флип у writer'а, losses: math dropped); фасад to:'svg'. Краш-тест вскрыл и закрыл: LaidOutDocument не нёс ResourceStore. Остаток стабилизации (Pt-координаты, top-left в схеме, вынос в src/layout) — при заморозке @experimental | вскрытие ошибок интерфейсов ✅ |
+| 6 | ✅ **svg-writer(PageDoc)** — третий адаптер чисто по PageItem-контракту (text/fill/border/image-dataURL/shape-path, y-флип у writer'а, losses: math dropped); фасад to:'svg'. Краш-тест вскрыл и закрыл: LaidOutDocument не нёс ResourceStore. **Заморозка 6.4 ✅**: top-left origin в схеме (PDF байт-в-байт через инволюцию флипа `H−y`; линейная часть CTM — точное отрицание), Pt-брендинг геометрии, сужение LaidOutDocument (PDF-спутник `laid.pdf`: structBuilder/sectionCtxs/pdfaProfile/tagged), вынос в src/layout/ (page-doc — core-only схема; styled-layout — движок; svg-writer больше не импортирует из pdf/) | вскрытие ошибок интерфейсов ✅; PDF байт-в-байт |
 
 Этап 3 — самый рискованный (внутренности styled-renderer), поэтому отдельный и
 с самым строгим гейтом. Порядок 2↔3 можно обернуть.
