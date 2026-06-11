@@ -546,22 +546,34 @@ function assertNeverPageItem(item: never): never {
   throw new Error(`Unhandled PageItem kind: ${String((item as PageItem).type)}`);
 }
 
-export type DrawCommand = PageItem; // internal alias during the stage-3 migration
-
-// The seam between the two halves of the pipeline (ir-design §6 / stage 3):
-// everything the emit phase needs from layout. `pages` is the PageDoc draft —
-// positioned DrawCommands per page; the resource maps and struct tree ride
-// along until stage 3b/3c make layout PdfDocument-free and the types public.
+// PageDoc (ir-design §6, frozen at stage 6.4): the laid-out document a writer
+// consumes — positioned PageItems per page plus the font/image resources the
+// items reference. Format-neutral: the SVG writer renders exactly this; PDF
+// needs the PdfLayoutAux companion on top.
 export interface LaidOutDocument {
   readonly pages: ReadonlyArray<LaidOutPage>;
   // Content-addressed binaries the items reference (images) — ir-design §6.
   readonly resources: ResourceStore;
   readonly fontResources: Map<string, FontResource>;
   readonly imageResources: Map<ResourceId, ImageResource>;
+}
+
+// PDF-only companion the same layout pass produces (oop-design A13): the
+// logical-structure tree, per-section geometry (the emit fallback page), and
+// the parsed PDF/A profile. Consumed only by emitStyledPdf; the SVG writer
+// never sees it.
+export interface PdfLayoutAux {
   readonly structBuilder: StructTreeBuilder | undefined;
   readonly sectionCtxs: ReadonlyArray<SectionRenderCtx>;
   readonly pdfaProfile: PdfAProfile | undefined;
   readonly tagged: boolean;
+}
+
+// What layoutStyledDocument actually returns: the PageDoc with the PDF
+// companion riding on `pdf`. Assignable to the narrow LaidOutDocument, so
+// PageDoc-only consumers (writeSvg) take it as-is.
+export interface LaidOutPdfDocument extends LaidOutDocument {
+  readonly pdf: PdfLayoutAux;
 }
 
 export function renderStyledPdf(
@@ -573,15 +585,12 @@ export function renderStyledPdf(
   return emitStyledPdf(laid, options, doc);
 }
 
-// Layout phase (@experimental — the FlowDoc→PageDoc transform of ir-design §7):
-// body → positioned pages (PageItems), font/image resources,
-// logical structure. Still takes `doc` because font/image embedding currently
-// happens up-front (the layout measures with the embedded fonts) — stage 3b
-// splits collect/measure from embed and drops the parameter.
+// Layout phase (the FlowDoc→PageDoc transform of ir-design §7): body →
+// positioned pages (PageItems), font/image resources, logical structure.
 export function layoutStyledDocument(
   body: ReadonlyArray<BodyElement>,
   options: StyledRenderOptions,
-): LaidOutDocument {
+): LaidOutPdfDocument {
   const sectionList = resolveSectionList(body, options);
 
   const numberedBody = applyNumbering(body, options.numbering);
@@ -627,10 +636,7 @@ export function layoutStyledDocument(
     resources: options.resources ?? new ResourceStore(),
     fontResources,
     imageResources,
-    structBuilder,
-    sectionCtxs,
-    pdfaProfile,
-    tagged,
+    pdf: { structBuilder, sectionCtxs, pdfaProfile, tagged },
   };
 }
 
@@ -766,15 +772,15 @@ function refByType(
 type HfBand = 'default' | 'first' | 'even';
 
 interface HeaderFooterSet {
-  readonly default: Array<DrawCommand>;
-  readonly first: Array<DrawCommand>;
-  readonly even: Array<DrawCommand>;
+  readonly default: Array<PageItem>;
+  readonly first: Array<PageItem>;
+  readonly even: Array<PageItem>;
 }
 
 // Tag every command in a header/footer band as a pagination artifact so the
 // tagged-PDF emit keeps it out of the structure tree (§14.8.2.2.2). A no-op for
 // non-tagged output — the field is simply ignored at emit.
-function markPagination(cmds: Array<DrawCommand>): Array<DrawCommand> {
+function markPagination(cmds: Array<PageItem>): Array<PageItem> {
   return cmds.map((c) => ({ ...c, artifact: 'pagination' as const }));
 }
 
@@ -792,7 +798,7 @@ function layoutHeaderSet(
   pageHeight: number,
   headerOffsetPt: number,
 ): HeaderFooterSet {
-  const band = (type: HeaderFooterType): Array<DrawCommand> => {
+  const band = (type: HeaderFooterType): Array<PageItem> => {
     const ref = refByType(section.headers, type);
     if (!ref) return [];
     const content = headersFooters.get(ref.relationshipId);
@@ -815,7 +821,7 @@ function layoutFooterSet(
   pageHeight: number,
   footerOffsetPt: number,
 ): HeaderFooterSet {
-  const band = (type: HeaderFooterType): Array<DrawCommand> => {
+  const band = (type: HeaderFooterType): Array<PageItem> => {
     const ref = refByType(section.footers, type);
     if (!ref) return [];
     const content = headersFooters.get(ref.relationshipId);
@@ -834,7 +840,7 @@ function layoutFooterSet(
   return { default: band('default'), first: band('first'), even: band('even') };
 }
 
-function pickBand(set: HeaderFooterSet, band: HfBand): Array<DrawCommand> {
+function pickBand(set: HeaderFooterSet, band: HfBand): Array<PageItem> {
   if (band === 'first') return set.first.length > 0 ? set.first : set.default;
   if (band === 'even') return set.even.length > 0 ? set.even : set.default;
   return set.default;
@@ -1335,8 +1341,8 @@ function drawBlocksSequentially(
   startX: number,
   startY: number,
   pageHeight: number,
-): Array<DrawCommand> {
-  const out: Array<DrawCommand> = [];
+): Array<PageItem> {
+  const out: Array<PageItem> = [];
   let cursorY = startY;
   for (const block of blocks) {
     if (block.kind !== 'paragraph') continue;
@@ -2558,7 +2564,7 @@ function resolveCellBorders(
 }
 
 export interface LaidOutPage {
-  readonly commands: Array<DrawCommand>;
+  readonly commands: Array<PageItem>;
   readonly width: Pt;
   readonly height: Pt;
 }
@@ -2673,7 +2679,7 @@ function paginateSections(
   let secIdx = 0;
   let pageInSection = 0;
   let globalPageIdx = 0;
-  let current: Array<DrawCommand> = [];
+  let current: Array<PageItem> = [];
   let pendingPageBreak = false;
   let cursorY = ctx.pageHeight - ctx.marginTop;
   // Tagged PDF: the stack of open list levels (for L/LI/LBody nesting). Cleared
@@ -2975,7 +2981,7 @@ function tableCellRowSpan(
 }
 
 function emitRowChunk(
-  out: Array<DrawCommand>,
+  out: Array<PageItem>,
   row: RowLayout,
   marginLeft: number,
   cursorY: number,
@@ -3154,7 +3160,7 @@ function splitRowIntoChunks(row: RowLayout, capacity: number): Array<RowLayout> 
 // render it exactly once. Convention: every cell paints its top + left; the
 // last row paints its bottom and the last spanned column paints its right.
 function emitCellBorders(
-  out: Array<DrawCommand>,
+  out: Array<PageItem>,
   cell: CellLayout,
   cellX: number,
   cellY: number,

@@ -11,16 +11,17 @@ import type { ResourceId } from '@/core/ir';
 import type { EmbeddedFont } from '@/pdf/cid-font';
 import type { PdfDict, PdfRef, PdfValue } from '@/pdf/objects';
 import type {
-  DrawCommand,
   FontResource,
   ImageItem,
   ImageResource,
   ImageToken,
   LaidOutDocument,
   LaidOutPage,
+  LaidOutPdfDocument,
   Line,
   MathToken,
   PageDimensions,
+  PageItem,
   PageTagging,
   PdfAProfile,
   SectionRenderCtx,
@@ -51,16 +52,18 @@ type EmitOptions = Pick<
 >;
 
 export function emitStyledPdf(
-  laid: LaidOutDocument,
+  laid: LaidOutPdfDocument,
   options: EmitOptions,
   doc: PdfDocument,
 ): Uint8Array {
-  const { pages: renderedPages, structBuilder } = laid;
-  const { sectionCtxs, pdfaProfile, tagged } = laid;
+  const { pages: renderedPages } = laid;
+  // The PDF-only companion (oop-design A13): logical structure, fallback page
+  // geometry, PDF/A apparatus. The PageDoc proper stays writer-neutral.
+  const { structBuilder, sectionCtxs, pdfaProfile, tagged } = laid.pdf;
 
   // Create the font/image PDF objects first — the same object order the
   // pre-split renderer produced (fonts, then images, then pages).
-  const embeddedFonts = embedFontResources(doc, laid);
+  const embeddedFonts = embedFontResources(doc, laid, pdfaProfile);
   const embeddedImages = embedImageResources(doc, laid);
 
   const pagesDict: PdfDict = dict({ Type: name('Pages'), Count: 0, Kids: [] });
@@ -306,9 +309,13 @@ function embedImageResources(doc: PdfDocument, laid: LaidOutDocument): Map<Resou
 // Emit-phase counterpart: create the PDF font objects (subset to the collected
 // glyphs) for every laid-out font resource, in collection order — keeping the
 // object numbering identical to the pre-split renderer.
-function embedFontResources(doc: PdfDocument, laid: LaidOutDocument): Map<string, EmbeddedFont> {
+function embedFontResources(
+  doc: PdfDocument,
+  laid: LaidOutDocument,
+  pdfaProfile: PdfAProfile | undefined,
+): Map<string, EmbeddedFont> {
   // PDF/A-1 requires a /CIDSet; PDF/A-2/3 and non-PDF/A omit it.
-  const cidSet = laid.pdfaProfile?.part === 1;
+  const cidSet = pdfaProfile?.part === 1;
   const out = new Map<string, EmbeddedFont>();
   for (const [variant, res] of laid.fontResources) {
     out.set(variant, embedTtfFont(doc, res.parsed, { usedGids: res.gids, cidSet }));
@@ -346,7 +353,7 @@ function buildXObjectResourceDict(
 // → its struct type (Figure) with a fresh MCID; a pagination artifact; or a bare
 // layout artifact. `body(cmd)` emits each command's own operators. In non-tagged
 // mode it just emits the bodies — byte-identical to before tagging existed.
-function emitTaggedRuns<T extends DrawCommand>(
+function emitTaggedRuns<T extends PageItem>(
   out: Array<string>,
   cmds: ReadonlyArray<T>,
   tagging: PageTagging | undefined,
