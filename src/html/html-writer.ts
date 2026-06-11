@@ -20,18 +20,40 @@
 import type {
   BodyElement,
   Border,
+  Chart,
+  ChartBlock,
   ImageBlock,
   Paragraph,
+  ParagraphProperties,
   Run,
+  ShapeBlock,
   Table,
   TableCell,
 } from '@/core/document-model';
+import type {
+  ChartLabel,
+  ChartPolygon,
+  ChartPolyline,
+  ChartRect,
+  ChartWedge,
+} from '@/core/drawingml/chart-geometry';
+import type { StrokeStyle } from '@/core/vector';
 import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
 import type { DocumentWriter, WriteResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss, ResourceId, ResourceStore } from '@/core/ir';
 
+import { arcPoint, arcToBeziers } from '@/core/arc-to-bezier';
 import { toBase64 } from '@/core/bytes';
+import { buildChartScene } from '@/core/drawingml/chart-geometry';
+import {
+  DEFAULT_INSET_LR_PT,
+  DEFAULT_INSET_TB_PT,
+  buildShapePaths,
+  buildShapeTransform,
+  buildStroke,
+} from '@/core/drawingml/shape-render';
+import { PathBuilder, flipTransform, svgPathData } from '@/core/vector';
 import { detectImageFormat } from '@/core/images';
 import { sanitizeHref } from '@/core/links';
 import { FEATURES } from '@/core/ir';
@@ -45,7 +67,12 @@ export function writeHtml(flow: FlowDoc): WriteResult {
   const losses: Array<Loss> = [];
   const out: Array<string> = [];
   const notes = collectNoteNumbers(flow);
-  const ctx: EmitCtx = { resources: flow.resources, losses, notes };
+  const ctx: EmitCtx = {
+    resources: flow.resources,
+    losses,
+    notes,
+    ...(flow.charts ? { charts: flow.charts } : {}),
+  };
 
   const lang = flow.language ?? 'en-US';
   const title = flow.info?.title ?? 'Document';
@@ -92,6 +119,8 @@ export const htmlWriter: DocumentWriter<FlowDoc> = {
     FEATURES.lists,
     FEATURES.images,
     FEATURES.hyperlinks,
+    FEATURES.charts,
+    FEATURES.shapes,
     FEATURES.rtl,
     FEATURES.trackedChanges,
   ]),
@@ -117,6 +146,7 @@ const BASE_CSS = [
 interface EmitCtx {
   readonly resources: ResourceStore;
   readonly losses: Array<Loss>;
+  readonly charts?: ReadonlyMap<string, Chart>;
   // Note id → sequential number, assigned in reading order of references.
   readonly notes: { footnotes: ReadonlyMap<string, number>; endnotes: ReadonlyMap<string, number> };
 }
@@ -176,25 +206,187 @@ function emitBlock(out: Array<string>, el: BodyElement, ctx: EmitCtx): void {
   } else if (el.kind === 'image') {
     emitImageBlock(out, el.image, ctx);
   } else if (el.kind === 'chart') {
+    emitChartBlock(out, el.chart, ctx);
+  } else {
+    emitShapeBlock(out, el.shape, ctx);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Charts and shapes — inline SVG from the shared geometry modules
+// ---------------------------------------------------------------------------
+
+// Label placement inside the scene builder needs a text-width estimate (axis
+// gutters, legend centering). The browser renders the actual glyphs and every
+// label is emitted with its anchor + text-anchor, so a rough average-width
+// approximation only shifts gutters by a point or two.
+const approxTextWidth = (text: string, sizePt: number): number => text.length * sizePt * 0.55;
+
+const blockFigureCss = (pp: ParagraphProperties): string => {
+  const css: Array<string> = [];
+  const align = pp.alignment === 'center' || pp.alignment === 'right' ? pp.alignment : undefined;
+  if (align) css.push(`text-align:${align}`);
+  if (pp.spacingBefore !== undefined && pp.spacingBefore > 0) {
+    css.push(`margin-top:${fmt(pp.spacingBefore)}pt`);
+  }
+  if (pp.spacingAfter !== undefined && pp.spacingAfter > 0) {
+    css.push(`margin-bottom:${fmt(pp.spacingAfter)}pt`);
+  }
+  return css.length > 0 ? ` style="${css.join(';')}"` : '';
+};
+
+const svgOpen = (w: number, h: number, label: string | undefined): string =>
+  `<svg viewBox="0 0 ${fmt(w)} ${fmt(h)}" width="${fmt(w)}pt" height="${fmt(h)}pt" ` +
+  `style="max-width:100%;height:auto" overflow="visible" xmlns="http://www.w3.org/2000/svg" ` +
+  `role="img"${label ? ` aria-label="${escapeAttr(label)}"` : ''}>`;
+
+const strokeAttrs = (stroke: StrokeStyle | undefined): string => {
+  if (!stroke) return '';
+  let out = ` stroke="#${stroke.colorHex}" stroke-width="${fmt(stroke.widthPt)}"`;
+  if (stroke.dash && stroke.dash.length > 0) {
+    out += ` stroke-dasharray="${stroke.dash.map(fmt).join(' ')}"`;
+  }
+  if (stroke.cap && stroke.cap !== 'butt') out += ` stroke-linecap="${stroke.cap}"`;
+  if (stroke.join) out += ` stroke-linejoin="${stroke.join}"`;
+  return out;
+};
+
+function emitChartBlock(out: Array<string>, block: ChartBlock, ctx: EmitCtx): void {
+  const chart = ctx.charts?.get(block.chartRelId);
+  const label = block.altText ?? chart?.title;
+  const figure = `<figure${blockFigureCss(block.paragraphProperties)}>`;
+  if (!chart) {
     ctx.losses.push({
       severity: 'dropped',
       feature: FEATURES.charts,
-      detail: 'chart not rendered by the HTML writer (v0)',
+      detail: `chart part '${block.chartRelId}' not supplied`,
     });
-  } else {
-    // Shape: the geometry is out of scope, but a text box's content is real
-    // document text — emit it as a plain block.
-    ctx.losses.push({
-      severity: 'dropped',
-      feature: FEATURES.shapes,
-      detail: 'shape geometry not rendered by the HTML writer (v0)',
-    });
-    if (el.shape.text) {
-      out.push('<div>');
-      for (const child of el.shape.text.content) emitBlock(out, child, ctx);
-      out.push('</div>');
-    }
+    return;
   }
+  const w = block.width;
+  const h = block.height;
+  const scene = buildChartScene(chart, w, h, approxTextWidth);
+  if (!scene) {
+    // Same fallback as the PDF layout: a light box reserving the space.
+    ctx.losses.push({
+      severity: 'degraded',
+      feature: FEATURES.charts,
+      detail: `unsupported chart type '${chart.type}' — placeholder box`,
+    });
+    out.push(
+      figure +
+        svgOpen(w, h, label) +
+        `<rect x="0.5" y="0.5" width="${fmt(w - 1)}" height="${fmt(h - 1)}" fill="none" stroke="#D9D9D9"/>` +
+        '</svg></figure>',
+    );
+    return;
+  }
+  const svg: Array<string> = [figure, svgOpen(w, h, label)];
+  // The scene is in a y-up frame (origin bottom-left, like the PDF path);
+  // graphics flip into SVG's y-down viewport, text is emitted outside the
+  // flip so glyphs stay upright.
+  svg.push(`<g transform="matrix(1 0 0 -1 0 ${fmt(h)})">`);
+  for (const pg of scene.polygons ?? []) svg.push(polygonSvg(pg));
+  for (const r of scene.rects) svg.push(rectSvg(r));
+  for (const pl of scene.polylines) svg.push(polylineSvg(pl));
+  for (const wd of scene.wedges) svg.push(wedgeSvg(wd));
+  svg.push('</g>');
+  const anchor = { left: 'start', center: 'middle', right: 'end' } as const;
+  for (const l of scene.labels) svg.push(labelSvg(l, h, anchor[l.align]));
+  svg.push('</svg></figure>');
+  out.push(svg.join(''));
+}
+
+function rectSvg(r: ChartRect): string {
+  const fill = r.fillHex ? `#${r.fillHex}` : 'none';
+  const stroke = r.strokeHex
+    ? ` stroke="#${r.strokeHex}" stroke-width="${fmt(r.strokeWidthPt ?? 1)}"`
+    : '';
+  return `<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="${fill}"${stroke}/>`;
+}
+
+const pointsAttr = (points: ReadonlyArray<readonly [number, number]>): string =>
+  points.map(([x, y]) => `${fmt(x)},${fmt(y)}`).join(' ');
+
+function polylineSvg(p: ChartPolyline): string {
+  return `<polyline points="${pointsAttr(p.points)}" fill="none" stroke="#${p.strokeHex}" stroke-width="${fmt(p.widthPt)}"/>`;
+}
+
+function polygonSvg(p: ChartPolygon): string {
+  const stroke = p.strokeHex
+    ? ` stroke="#${p.strokeHex}" stroke-width="${fmt(p.widthPt ?? 1)}"`
+    : '';
+  return `<polygon points="${pointsAttr(p.points)}" fill="#${p.fillHex}"${stroke}/>`;
+}
+
+// Pie/doughnut wedge — the same center→arc→close path the PDF emitter draws,
+// through the same bezier decomposition.
+function wedgeSvg(w: ChartWedge): string {
+  const start = arcPoint(w.cx, w.cy, w.r, w.r, w.startRad);
+  const b = new PathBuilder()
+    .moveTo(w.cx, w.cy)
+    .lineTo(start[0], start[1])
+    .append(arcToBeziers(w.cx, w.cy, w.r, w.r, w.startRad, w.sweepRad))
+    .close();
+  const stroke = w.strokeHex ? ` stroke="#${w.strokeHex}" stroke-width="1"` : '';
+  return `<path d="${svgPathData(b.build().segments, fmt)}" fill="#${w.fillHex}"${stroke}/>`;
+}
+
+function labelSvg(l: ChartLabel, sceneH: number, anchor: 'start' | 'middle' | 'end'): string {
+  return (
+    `<text x="${fmt(l.x)}" y="${fmt(sceneH - l.y)}" font-size="${fmt(l.sizePt)}" ` +
+    `font-family="sans-serif" fill="#${l.colorHex}" text-anchor="${anchor}">${escapeText(l.text)}</text>`
+  );
+}
+
+function emitShapeBlock(out: Array<string>, shape: ShapeBlock, ctx: EmitCtx): void {
+  const w = shape.width;
+  const h = shape.height;
+  const paths = buildShapePaths(shape.geometry, w, h);
+  const fill =
+    shape.fill.kind === 'solid' && shape.fill.colorHex ? `#${shape.fill.colorHex}` : 'none';
+  const stroke = strokeAttrs(buildStroke(shape.line));
+  const t = shape.transform;
+  // Paths are y-up; the same local→page matrix the PDF layout builds (rotation
+  // about the center, flips), flipped into the y-down viewport.
+  const m = flipTransform(
+    buildShapeTransform(0, 0, w, h, t?.rotation60k ?? 0, t?.flipH ?? false, t?.flipV ?? false),
+    h,
+  );
+  const transform = ` transform="matrix(${m.map(fmt).join(' ')})"`;
+  const svg: Array<string> = [svgOpen(w, h, shape.altText)];
+  for (const path of paths) {
+    const rule = path.fillRule === 'evenodd' ? ' fill-rule="evenodd"' : '';
+    svg.push(
+      `<path d="${svgPathData(path.segments, fmt)}" fill="${fill}"${rule}${stroke}${transform}/>`,
+    );
+  }
+  svg.push('</svg>');
+
+  const figureCss = blockFigureCss(shape.paragraphProperties);
+  const text = shape.text;
+  if (!text || text.content.length === 0) {
+    out.push(`<figure${figureCss}>${svg.join('')}</figure>`);
+    return;
+  }
+  // A text box: the geometry as a positioned backdrop, the content overlaid
+  // within the bodyPr insets, anchored like the PDF path (text stays upright
+  // under rotation there too).
+  const justify =
+    text.anchor === 'ctr' ? 'center' : text.anchor === 'b' ? 'flex-end' : 'flex-start';
+  const il = text.insetLeft ?? DEFAULT_INSET_LR_PT;
+  const ir = text.insetRight ?? DEFAULT_INSET_LR_PT;
+  const it = text.insetTop ?? DEFAULT_INSET_TB_PT;
+  const ib = text.insetBottom ?? DEFAULT_INSET_TB_PT;
+  out.push(
+    `<figure${figureCss}>` +
+      `<div style="position:relative;width:${fmt(w)}pt;height:${fmt(h)}pt;max-width:100%">` +
+      `<div style="position:absolute;left:0;top:0">${svg.join('')}</div>` +
+      `<div style="position:absolute;left:${fmt(il)}pt;right:${fmt(ir)}pt;top:${fmt(it)}pt;bottom:${fmt(ib)}pt;` +
+      `display:flex;flex-direction:column;justify-content:${justify};overflow:hidden">`,
+  );
+  for (const child of text.content) emitBlock(out, child, ctx);
+  out.push('</div></div></figure>');
 }
 
 // ---------------------------------------------------------------------------

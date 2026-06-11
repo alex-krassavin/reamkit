@@ -1035,8 +1035,6 @@ function layoutImageBlock(
   };
 }
 
-
-
 function layoutShapeBlock(
   shape: ShapeBlock,
   options: StyledRenderOptions,
@@ -1116,12 +1114,8 @@ function layoutShapeBlock(
   };
 }
 
-
-
-
 // Build the `cm` matrix that places a shape's local y-up frame on the page at
 // bottom-left (pageX, pageY), rotated about its centre and optionally flipped.
-
 
 function layoutChartBlock(
   block: ChartBlock,

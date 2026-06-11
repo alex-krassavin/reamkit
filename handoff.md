@@ -797,6 +797,21 @@ deferred туда же (документированное v1-размещени
 байт-в-байт (гейт 12/12). **Корпус: ✅69 · ⚠️41 · ❌17 — +2 в ✅, ноль регрессий**
 (footnotes.docx и table_footnotes.docx → 100% TextSim; 17/26 chars → 26/26). 6 новых тестов (489).
 
+**HTML-хвост: чарты/шейпы как inline-SVG (✅, 2 коммита).** (a) Рефакторинг-переезд (zero
+behavior, гейт 12/12 на идентичном коде): arc-to-bezier, preset-geometry, chart-geometry —
+чистая математика без layout-зависимостей → core (прецедент IMP-4); buildShapePaths/buildStroke/
+buildShapeTransform из styled-layout → новый core/drawingml/shape-render; flipTransform +
+svgPathData → core/vector (общие хелперы всех эмиттеров словаря). (b) Фича: html-writer
+рендерит el.kind==='chart' через ТОТ ЖЕ buildChartScene, что PDF (y-up сцена → флип-группа
+matrix(1 0 0 -1 0 H); rects/polylines/polygons как примитивы; wedges через те же arcToBeziers;
+labels — нативный <text> ВНЕ флипа с text-anchor по якорю сцены — браузер рендерит глифы сам,
+measure-коллбэк заменён аппроксимацией ~0.55em, влияющей только на гаттеры). Шейпы: пути
+buildShapePaths + матрица flipTransform(buildShapeTransform(0,0,w,h,rot,флипы),h) — ровно та,
+что PDF пишет в PageDoc (svg-writer пишет её verbatim — конвенция совпала бесплатно); текстбоксы
+оверлеем position:absolute внутри инсетов bodyPr с anchor t/ctr/b → flex justify. Чарт без
+парта — dropped loss; неизвестный тип — degraded + рамка-плейсхолдер (как PDF). supports +=
+charts, shapes. 5 новых тестов (494). Демо: /tmp/ream-charts-demo.html.
+
 **Мотивация.** Сейчас parser → representer прибиты друг к другу: добавление
 нового направления (например, PDF→Word) требует заново «как-то считывать,
 как-то собирать». Вводим явную прослойку: входные адаптеры (parser → дерево) и

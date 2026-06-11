@@ -8,6 +8,14 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **HTML writer: charts and shapes render as inline SVG** — bar/line/pie/
+  area/scatter charts emit the same geometry scene as the PDF path (labels
+  as native `<text>` with anchors, so the browser's fonts do the rendering);
+  shape geometry (preset + custom, fills, strokes, dash patterns, rotation/
+  flips) emits as `<path>` with the exact transform matrix the PDF layout
+  computes, and text boxes overlay their content inside the body insets with
+  the source vertical anchor. Charts and shapes are no longer reported as
+  dropped losses for HTML output.
 - **Footnotes and endnotes** — `w:footnoteReference`/`w:endnoteReference`
   render superscript numbers; footnote content lands at the bottom of the
   referencing page behind Word's short separator rule (the line and its note
