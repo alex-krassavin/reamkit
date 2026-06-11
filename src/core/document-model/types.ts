@@ -248,6 +248,9 @@ export interface Run {
   // §17.11.13 w:footnoteRef / §17.11.5 w:endnoteRef — inside note content:
   // render the OWNING note's number here.
   readonly noteNumber?: true;
+  // The run is a list-item marker materialized by applyNumbering ("1.", "•").
+  // Tagged PDF wraps its glyphs in a Lbl structure element (§14.8.4.3.3).
+  readonly listMarker?: true;
   // When set, the run renders this image inline in the line; `text` is ignored.
   readonly inlineImage?: InlineImage;
   // When set, the run is an inline OfficeMath object; `text` is ignored.
@@ -621,6 +624,9 @@ export interface Chart {
   readonly showValues?: boolean; // c:dLbls/c:showVal — print each datum's value
   readonly catAxisTitle?: string; // c:catAx/c:title
   readonly valAxisTitle?: string; // c:valAx/c:title
+  // MS-ODRAWXML chartColorStyle (colorsN.xml): the cycle of series colours;
+  // overrides the built-in Office accent cycle when present.
+  readonly seriesColorCycle?: ReadonlyArray<string>;
 }
 
 export interface ChartBlock {

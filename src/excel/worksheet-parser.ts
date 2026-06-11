@@ -112,6 +112,8 @@ export interface ParsedWorksheet {
   // stored value is the <brk id="..."> following the break (kept verbatim).
   readonly rowBreaks?: ReadonlyArray<number>;
   readonly colBreaks?: ReadonlyArray<number>;
+  // §18.3.1.36 <drawing r:id> — the sheet's drawing part (charts/shapes).
+  readonly drawingRelId?: string;
 }
 
 export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
@@ -133,6 +135,11 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
   const printOptions = parsePrintOptions(wsObj);
   const rowBreaks = parseBreaks(wsObj, 'rowBreaks');
   const colBreaks = parseBreaks(wsObj, 'colBreaks');
+  const drawingNode = wsObj['drawing'];
+  const drawingRelId =
+    drawingNode && typeof drawingNode === 'object'
+      ? strAttr(drawingNode as Record<string, unknown>, 'id')
+      : undefined;
   const printModel = {
     ...(pageMargins ? { pageMargins } : {}),
     ...(pageSetup ? { pageSetup } : {}),
@@ -140,6 +147,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
     ...(printOptions ? { printOptions } : {}),
     ...(rowBreaks.length > 0 ? { rowBreaks } : {}),
     ...(colBreaks.length > 0 ? { colBreaks } : {}),
+    ...(drawingRelId !== undefined ? { drawingRelId } : {}),
   };
   const sheetData = wsObj['sheetData'];
   if (!sheetData || typeof sheetData !== 'object') {

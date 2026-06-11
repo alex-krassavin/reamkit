@@ -1,3 +1,4 @@
+import type { BodyElement } from '@/core/document-model';
 // xlsx → PDF convenience converters: font acquisition (caller-supplied or
 // auto-downloaded), optional signing, PDF/A-3 source embedding. All document
 // understanding lives in the xlsx reader and the print model.
@@ -9,7 +10,7 @@ import { FontRegistry } from '@/core/font';
 import { fetchFontSet } from '@/core/fonts';
 import { flowRenderOptions } from '@/core/converter/project';
 import { readXlsx } from '@/excel/xlsx-reader';
-import { renderStyledPdf, signPdf } from '@/pdf';
+import { renderStyledPdf, renderStyledPdfEncrypted, signPdf } from '@/pdf';
 
 export interface ConvertXlsxOptions extends Omit<StyledRenderOptions, 'registry' | 'styles'> {
   readonly fontBytes?: Uint8Array;
@@ -43,16 +44,22 @@ export async function convertXlsxToPdf(
   const renderOptions: ConvertXlsxOptions = signature
     ? { ...options, signaturePlaceholder: signature }
     : options;
-  let pdf: Uint8Array;
-  if (renderOptions.fonts ?? renderOptions.fontBytes) {
-    pdf = convertXlsxToPdfSync(xlsx, renderOptions);
-  } else {
-    const fonts = await fetchFontSet({
-      ...(options.fontFamily ? { family: options.fontFamily } : {}),
-      ...(options.fontFetch ? { fetch: options.fontFetch } : {}),
-    });
-    pdf = convertXlsxToPdfSync(xlsx, { ...renderOptions, fonts });
+  const withFonts =
+    (renderOptions.fonts ?? renderOptions.fontBytes)
+      ? renderOptions
+      : {
+          ...renderOptions,
+          fonts: await fetchFontSet({
+            ...(options.fontFamily ? { family: options.fontFamily } : {}),
+            ...(options.fontFetch ? { fetch: options.fontFetch } : {}),
+          }),
+        };
+  // §7.6: encryption needs WebCrypto — async path only.
+  if (withFonts.encrypt) {
+    const args = prepareXlsxStyledRender(xlsx, withFonts);
+    return renderStyledPdfEncrypted(args.body, args.styled);
   }
+  const pdf = convertXlsxToPdfSync(xlsx, withFonts);
   return signature ? signPdf(pdf, signature) : pdf;
 }
 
@@ -62,6 +69,15 @@ export async function convertXlsxToPdf(
  * Internal since 1.0 — see the async variant above.
  */
 export function convertXlsxToPdfSync(xlsx: Uint8Array, options: ConvertXlsxOptions): Uint8Array {
+  const args = prepareXlsxStyledRender(xlsx, options);
+  return renderStyledPdf(args.body, args.styled);
+}
+
+// The shared xlsx → styled-render arguments; see the docx twin.
+function prepareXlsxStyledRender(
+  xlsx: Uint8Array,
+  options: ConvertXlsxOptions,
+): { body: ReadonlyArray<BodyElement>; styled: StyledRenderOptions } {
   const fonts: FontBytesByVariant | undefined =
     options.fonts ?? (options.fontBytes ? { regular: options.fontBytes } : undefined);
   if (!fonts) {
@@ -99,12 +115,15 @@ export function convertXlsxToPdfSync(xlsx: Uint8Array, options: ConvertXlsxOptio
       description: 'Source Excel workbook',
     });
   }
-  return renderStyledPdf(flow.body, {
-    registry,
-    ...flowRenderOptions(flow),
-    ...(section ? { section } : {}),
-    ...(info ? { info } : {}),
-    ...(attachments.length > 0 ? { attachments } : {}),
-    ...renderOptions,
-  });
+  return {
+    body: flow.body,
+    styled: {
+      registry,
+      ...flowRenderOptions(flow),
+      ...(section ? { section } : {}),
+      ...(info ? { info } : {}),
+      ...(attachments.length > 0 ? { attachments } : {}),
+      ...renderOptions,
+    },
+  };
 }

@@ -26,6 +26,7 @@ export type { StyledRenderOptions, DocumentInfo } from '@/pdf';
 // --- Digital signatures (ISO 32000 §12.8) ---
 export { signPdf } from '@/pdf';
 export type { SignaturePlaceholder, SignerCredentials, SignatureOptions } from '@/pdf';
+export type { PdfEncryptOptions, PdfPermissions } from '@/pdf';
 
 // --- Fonts (needed to build the `fonts` option, plus advanced font handling) ---
 export { FontRegistry, parseTtf, subsetTtf } from '@/core/font';

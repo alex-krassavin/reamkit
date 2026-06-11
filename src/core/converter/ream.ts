@@ -31,7 +31,7 @@ import { fetchFontSet } from '@/core/fonts';
 import { ConversionLossError } from '@/core/ir';
 import { writeHtml } from '@/html/html-writer';
 import { layoutStyledDocument } from '@/layout/styled-layout';
-import { renderStyledPdf, signPdf } from '@/pdf';
+import { renderStyledPdf, renderStyledPdfEncrypted, signPdf } from '@/pdf';
 import { writeSvg } from '@/svg/svg-writer';
 import { resolveDocxAutoFonts } from '@/word/docx-to-pdf';
 
@@ -159,7 +159,7 @@ export class Ream {
       });
     }
 
-    let pdf = renderStyledPdf(this.flow.body, {
+    const styled = {
       registry,
       ...(registriesByFamily ? { registriesByFamily } : {}),
       ...flowRenderOptions(this.flow),
@@ -167,7 +167,12 @@ export class Ream {
       ...(attachments.length > 0 ? { attachments } : {}),
       ...(signature ? { signaturePlaceholder: signature } : {}),
       ...renderOptions,
-    });
+    };
+    // §7.6: encryption runs on this async path (WebCrypto); the plain branch
+    // stays the byte-stable sync render.
+    let pdf = styled.encrypt
+      ? await renderStyledPdfEncrypted(this.flow.body, styled)
+      : renderStyledPdf(this.flow.body, styled);
     if (signature) pdf = await signPdf(pdf, signature);
     this.enforceStrict(options, losses);
     return { bytes: pdf, losses };

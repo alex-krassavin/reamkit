@@ -235,6 +235,11 @@ export interface StructuralDiff {
   readonly refChars: number;
   readonly textSimilarity: number; // 0..1 over normalised text
   readonly medianBaselineDriftPt: number; // median |Δy| of matched leading chars
+  // Font-agnostic geometry: of the words whose TEXT matches in reading order,
+  // the share whose position agrees within GEOM_TOL_PT on both axes. Catches
+  // layout faithfulness even when a substitute font changes every advance.
+  readonly geometrySimilarity: number; // 0..1, 1 when nothing matched
+  readonly matchedWords: number;
 }
 
 // Normalise text for content comparison: collapse whitespace, drop it entirely
@@ -284,7 +289,88 @@ export function structuralDiff(
   drifts.sort((a, b) => a - b);
   const medianBaselineDriftPt = drifts.length > 0 ? drifts[Math.floor(drifts.length / 2)]! : 0;
 
-  return { ourChars, refChars, textSimilarity, medianBaselineDriftPt };
+  const geom = geometrySimilarity(ourPages, refPages);
+
+  return {
+    ourChars,
+    refChars,
+    textSimilarity,
+    medianBaselineDriftPt,
+    geometrySimilarity: geom.similarity,
+    matchedWords: geom.matched,
+  };
+}
+
+const GEOM_TOL_PT = 6;
+
+interface WordBox {
+  readonly text: string;
+  readonly x: number;
+  readonly y: number;
+  readonly page: number;
+}
+
+// Group character boxes into words: a word breaks on whitespace or a large
+// horizontal jump (column gaps, tabs).
+function wordBoxes(pages: Array<StextPage>): Array<WordBox> {
+  const out: Array<WordBox> = [];
+  pages.forEach((p, pageIdx) => {
+    let text = '';
+    let x = 0;
+    let y = 0;
+    let lastX = 0;
+    const flush = () => {
+      if (text.length > 0) out.push({ text, x, y, page: pageIdx });
+      text = '';
+    };
+    for (const c of p.chars) {
+      if (/\s/.test(c.c)) {
+        flush();
+        continue;
+      }
+      const jump = text.length > 0 && (Math.abs(c.y - y) > 2 || c.x - lastX > 18);
+      if (jump) flush();
+      if (text.length === 0) {
+        x = c.x;
+        y = c.y;
+      }
+      text += c.c;
+      lastX = c.x;
+    }
+    flush();
+  });
+  return out;
+}
+
+// Greedy in-order matching of equal word texts (a windowed LCS stand-in),
+// then the share of matches whose positions agree within tolerance.
+function geometrySimilarity(
+  ourPages: Array<StextPage>,
+  refPages: Array<StextPage>,
+): { similarity: number; matched: number } {
+  const ours = wordBoxes(ourPages);
+  const refs = wordBoxes(refPages);
+  const WINDOW = 40;
+  let i = 0;
+  let matched = 0;
+  let close = 0;
+  for (const ref of refs) {
+    const limit = Math.min(ours.length, i + WINDOW);
+    for (let j = i; j < limit; j++) {
+      if (ours[j]!.text !== ref.text) continue;
+      matched++;
+      if (
+        ours[j]!.page === ref.page &&
+        Math.abs(ours[j]!.x - ref.x) <= GEOM_TOL_PT &&
+        Math.abs(ours[j]!.y - ref.y) <= GEOM_TOL_PT
+      ) {
+        close++;
+      }
+      i = j + 1;
+      break;
+    }
+  }
+  return { similarity: matched > 0 ? close / matched : 1, matched };
 }
 
 // Distinct baseline y-positions in reading order (one per text line).

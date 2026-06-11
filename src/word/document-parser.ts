@@ -275,6 +275,11 @@ export function parseBodyElements(
       if (!drawing) pendingBookmarks = undefined;
     } else if (poIs(child, 'w:tbl')) {
       out.push({ kind: 'table', table: parseTable(child, ctx) });
+    } else if (poIs(child, 'w:sdt')) {
+      // §17.5.2 block-level structured document tag (content control): the
+      // wrapper is chrome — its sdtContent children are ordinary body flow.
+      const content = poChildren(child).find((c) => poIs(c, 'w:sdtContent'));
+      if (content) out.push(...parseBodyElements(poChildren(content), ctx));
     }
   }
   return out;

@@ -8,6 +8,7 @@
 import { XMLParser } from 'fast-xml-parser';
 
 import type { Chart, ChartDataPoint, ChartSeries, ChartType } from '@/core/document-model';
+import type { OpcPackage } from '@/core/opc';
 import type { ColorMod, ColorResolver } from '@/core/drawingml/colors';
 import type { PoNode } from '@/core/po-helpers';
 import { resolveColorNode } from '@/core/drawingml/colors';
@@ -266,3 +267,45 @@ function isGrouping(
 ): v is 'clustered' | 'stacked' | 'percentStacked' | 'standard' {
   return v === 'clustered' || v === 'stacked' || v === 'percentStacked' || v === 'standard';
 }
+
+// MS-ODRAWXML chartColorStyle (charts/colorsN.xml): the top-level colour list
+// is the series cycle (`meth="cycle"` — the common case; variations are
+// luminance tweaks for >N series and are ignored in v1).
+export function parseChartColorStyle(
+  colorsXml: Uint8Array,
+  resolveColor: ColorResolver,
+): Array<string> {
+  const tree = parser.parse(new TextDecoder().decode(colorsXml)) as Array<PoNode>;
+  const root = tree.find((n) => {
+    const tag = Object.keys(n).find((k) => k !== ':@' && k !== '#text');
+    return tag !== undefined && tag.endsWith('colorStyle');
+  });
+  if (!root) return [];
+  const out: Array<string> = [];
+  for (const child of poChildren(root)) {
+    const hex = resolveColorNode(child, resolveColor);
+    if (hex !== undefined) out.push(hex);
+  }
+  return out;
+}
+
+// The chart part's own rels may carry a chartColorStyle (colorsN.xml) — the
+// custom series-colour cycle. Shared by the docx and xlsx readers.
+export function withChartColorStyle(
+  chart: Chart,
+  pkg: OpcPackage,
+  chartPartPath: string,
+  resolveColor: ColorResolver,
+): Chart {
+  for (const rel of pkg.getPartRelationships(chartPartPath)) {
+    if (rel.type !== REL_CHART_COLOR_STYLE) continue;
+    const resolved = pkg.resolveRelatedPart(chartPartPath, rel);
+    if (!resolved) continue;
+    const cycle = parseChartColorStyle(resolved.data, resolveColor);
+    if (cycle.length > 0) return { ...chart, seriesColorCycle: cycle };
+  }
+  return chart;
+}
+
+const REL_CHART_COLOR_STYLE =
+  'http://schemas.microsoft.com/office/2011/relationships/chartColorStyle';

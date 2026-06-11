@@ -3,14 +3,15 @@
 // is deliberately deferred tech debt; see handoff v1 §1). Document-derived
 // state only; caller conversion options stay with the converter/facade.
 
-import type { BodyElement, DocumentInfo, SectionProperties } from '@/core/document-model';
+import type { BodyElement, Chart, DocumentInfo, SectionProperties } from '@/core/document-model';
+import type { ColorResolver } from '@/core/drawingml/colors';
+import type { CoreProperties, Relationship } from '@/core/opc';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
-import type { CoreProperties } from '@/core/opc';
 
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
-import { FEATURES, ResourceStore } from '@/core/ir';
-import { OpcPackage, parseCoreProperties } from '@/core/opc';
+import { FEATURES, ResourceStore, pt } from '@/core/ir';
+import { OpcPackage, isOoxmlRel, parseCoreProperties } from '@/core/opc';
 import {
   EMPTY_XLSX_STYLES,
   parseSharedStrings,
@@ -19,6 +20,10 @@ import {
   parseXlsxStyles,
 } from '@/excel';
 import { bytesInclude } from '@/core/bytes';
+import { parseChart, withChartColorStyle } from '@/core/drawingml/chart-parser';
+import { DEFAULT_THEME_PALETTE, makeColorResolver } from '@/core/drawingml/colors';
+import { parseTheme } from '@/core/drawingml/theme-parser';
+import { parseSheetDrawing } from '@/excel/sheet-drawing';
 import {
   resolvePrintArea,
   resolvePrintTitleRows,
@@ -46,6 +51,11 @@ export function readXlsx(xlsx: Uint8Array): ReadResult<FlowDoc> {
 
   const workbookRels = pkg.getPartRelationships(WORKBOOK_PART);
   const body: Array<BodyElement> = [];
+  // Charts keyed by their part path (globally unique across sheets); the
+  // theme-backed resolver mirrors the docx reader's so schemeClr references
+  // in charts resolve to the workbook's actual accents.
+  const charts = new Map<string, Chart>();
+  const resolveColor = buildXlsxColorResolver(pkg, workbookRels);
 
   // Page geometry comes from the first sheet's <pageSetup>/<pageMargins>.
   // The renderer only supports one section, so subsequent sheets share the
@@ -85,6 +95,36 @@ export function readXlsx(xlsx: Uint8Array): ReadResult<FlowDoc> {
         gridLines,
       }),
     );
+
+    // §20.5: the sheet's drawing part — chart frames render as blocks after
+    // the sheet's grid, anchor-ordered (positional overlay is out of scope).
+    if (worksheet.drawingRelId) {
+      const wsRels = pkg.getPartRelationships(resolved.path);
+      const drawingRel = wsRels.find((r) => r.id === worksheet.drawingRelId);
+      const drawing = drawingRel ? pkg.resolveRelatedPart(resolved.path, drawingRel) : undefined;
+      if (drawing) {
+        for (const ref of parseSheetDrawing(drawing.data, drawing.path, pkg, worksheet)) {
+          if (!charts.has(ref.chartPartPath)) {
+            const chartData = pkg.getPart(ref.chartPartPath);
+            const parsed = chartData ? parseChart(chartData, resolveColor) : null;
+            if (!parsed) continue;
+            charts.set(
+              ref.chartPartPath,
+              withChartColorStyle(parsed, pkg, ref.chartPartPath, resolveColor),
+            );
+          }
+          body.push({
+            kind: 'chart',
+            chart: {
+              chartRelId: ref.chartPartPath,
+              width: pt(ref.widthPt),
+              height: pt(ref.heightPt),
+              paragraphProperties: {},
+            },
+          });
+        }
+      }
+    }
   }
 
   const coreData = pkg.getPart(CORE_PROPS_PART);
@@ -101,9 +141,27 @@ export function readXlsx(xlsx: Uint8Array): ReadResult<FlowDoc> {
     ...(firstSheetSection ? { section: firstSheetSection } : {}),
     styles: EMPTY_STYLE_SHEET,
     resources: new ResourceStore(),
+    ...(charts.size > 0 ? { charts } : {}),
     ...(info ? { info } : {}),
   };
   return { doc, losses: [] };
+}
+
+// Theme palette for chart schemeClr resolution: the workbook's theme part
+// merged over the built-in Office defaults (the docx reader's pattern).
+function buildXlsxColorResolver(
+  pkg: OpcPackage,
+  workbookRels: ReadonlyArray<Relationship>,
+): ColorResolver {
+  const palette = new Map(DEFAULT_THEME_PALETTE);
+  for (const rel of workbookRels) {
+    if (!isOoxmlRel(rel.type, 'theme')) continue;
+    const resolved = pkg.resolveRelatedPart(WORKBOOK_PART, rel);
+    if (!resolved) continue;
+    for (const [slot, hex] of parseTheme(resolved.data)) palette.set(slot, hex);
+    break;
+  }
+  return makeColorResolver(palette);
 }
 
 export const xlsxReader: DocumentReader<FlowDoc> = {

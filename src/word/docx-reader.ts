@@ -27,10 +27,10 @@ import {
 } from '@/core/style-cascade';
 
 import { FEATURES, ResourceStore } from '@/core/ir';
-import { parseChart } from '@/core/drawingml/chart-parser';
+import { parseChart, withChartColorStyle } from '@/core/drawingml/chart-parser';
 import { DEFAULT_THEME_PALETTE, makeColorResolver } from '@/core/drawingml/colors';
 import { parseTheme } from '@/core/drawingml/theme-parser';
-import { OpcPackage, parseCoreProperties } from '@/core/opc';
+import { OpcPackage, isOoxmlRel, parseCoreProperties } from '@/core/opc';
 import {
   EMPTY_NUMBERING,
   EMPTY_SECTION,
@@ -53,13 +53,8 @@ const SETTINGS_PART = 'word/settings.xml';
 const CORE_PROPS_PART = 'docProps/core.xml';
 const MAIN_DOCUMENT_PART = 'word/document.xml';
 
-const REL_IMAGE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image';
 const REL_HYPERLINK =
   'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink';
-const REL_CHART = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart';
-const REL_THEME = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme';
-const REL_HEADER = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/header';
-const REL_FOOTER = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer';
 const THEME_PART = 'word/theme/theme1.xml';
 
 export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
@@ -213,7 +208,7 @@ function makeImageResolver(
   // (oop-design §8, C5: shared-resolver bug fixed).
   const byRelId = new Map<string, Uint8Array>();
   for (const rel of pkg.getPartRelationships(partName)) {
-    if (rel.type !== REL_IMAGE) continue;
+    if (!isOoxmlRel(rel.type, 'image')) continue;
     const resolved = pkg.resolveRelatedPart(partName, rel);
     if (resolved) byRelId.set(rel.id, resolved.data);
   }
@@ -260,11 +255,11 @@ function makeHyperlinkResolver(
 function loadCharts(pkg: OpcPackage, resolveColor: ColorResolver): ReadonlyMap<string, Chart> {
   const out = new Map<string, Chart>();
   for (const rel of pkg.getPartRelationships(MAIN_DOCUMENT_PART)) {
-    if (rel.type !== REL_CHART) continue;
+    if (!isOoxmlRel(rel.type, 'chart')) continue;
     const resolved = pkg.resolveRelatedPart(MAIN_DOCUMENT_PART, rel);
     if (!resolved) continue;
     const chart = parseChart(resolved.data, resolveColor);
-    if (chart) out.set(rel.id, chart);
+    if (chart) out.set(rel.id, withChartColorStyle(chart, pkg, resolved.path, resolveColor));
   }
   return out;
 }
@@ -282,7 +277,7 @@ function buildColorResolver(pkg: OpcPackage): ColorResolver {
 
 function loadTheme(pkg: OpcPackage): Uint8Array | undefined {
   for (const rel of pkg.getPartRelationships(MAIN_DOCUMENT_PART)) {
-    if (rel.type !== REL_THEME) continue;
+    if (!isOoxmlRel(rel.type, 'theme')) continue;
     const resolved = pkg.resolveRelatedPart(MAIN_DOCUMENT_PART, rel);
     if (resolved) return resolved.data;
   }
@@ -307,7 +302,7 @@ function loadHeadersFootersForSections(
   const out = new Map<string, ReadonlyArray<BodyElement>>();
   for (const rel of rels) {
     if (!wanted.has(rel.id)) continue;
-    if (rel.type !== REL_HEADER && rel.type !== REL_FOOTER) continue;
+    if (!isOoxmlRel(rel.type, 'header') && !isOoxmlRel(rel.type, 'footer')) continue;
     const resolved = pkg.resolveRelatedPart(MAIN_DOCUMENT_PART, rel);
     if (!resolved) continue;
     const hfCtx: ParseContext = {

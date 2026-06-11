@@ -81,3 +81,19 @@ describe('bookmarks + internal links (§17.13.6.2 / §17.16.22 @anchor)', () => 
     expect(pdf).not.toContain('/GoTo');
   });
 });
+
+describe('block-level structured document tags (§17.5.2)', () => {
+  it('unwraps w:sdt/w:sdtContent into ordinary body flow', () => {
+    const body =
+      '<w:sdt><w:sdtPr><w:alias w:val="x"/></w:sdtPr><w:sdtContent>' +
+      '<w:p><w:r><w:t>inside control</w:t></w:r></w:p>' +
+      '<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>' +
+      '</w:sdtContent></w:sdt>' +
+      '<w:p><w:r><w:t>after</w:t></w:r></w:p>';
+    const { doc } = readDocx(buildDocxFromBody(body));
+    expect(doc.body.length).toBe(3); // paragraph + table + paragraph
+    const first = doc.body[0]!;
+    expect(first.kind === 'paragraph' && first.paragraph.runs[0]!.text).toBe('inside control');
+    expect(doc.body[1]!.kind).toBe('table');
+  });
+});

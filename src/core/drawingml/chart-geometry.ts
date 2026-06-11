@@ -66,8 +66,9 @@ const TITLE_COLOR = '404040';
 // Office accent cycle for series without an explicit colour.
 export const SERIES_COLORS = ['4472C4', 'ED7D31', 'A5A5A5', 'FFC000', '5B9BD5', '70AD47'];
 
-export const seriesColor = (s: ChartSeries, i: number): string =>
-  s.colorHex ?? SERIES_COLORS[i % SERIES_COLORS.length]!;
+export const seriesColor = (s: ChartSeries, i: number, cycle?: ReadonlyArray<string>): string =>
+  s.colorHex ??
+  (cycle && cycle.length > 0 ? cycle[i % cycle.length]! : SERIES_COLORS[i % SERIES_COLORS.length]!);
 
 // ─── value-axis "nice numbers" (Heckbert) ──────────────────────────────────
 function niceNum(range: number, round: boolean): number {
@@ -135,6 +136,117 @@ interface FrameOpts {
   readonly formatValue?: (v: number) => string; // override tick label text (percent axis)
 }
 
+// ── shared axis chrome (C10) ─────────────────────────────────────────────────
+// These helpers deduplicate the cartesian chrome between buildFrame and
+// buildScatterScene. They PUSH into the caller's buffers — the call order in
+// each builder is the z-order of the emitted PDF operators, so callers invoke
+// them at exactly the points the inlined code used to occupy.
+
+function pushChartTitle(labels: Array<ChartLabel>, chart: Chart, wPt: number, hPt: number): void {
+  if (!chart.title) return;
+  labels.push({
+    text: chart.title,
+    x: wPt / 2,
+    y: hPt - 4 - CHART_TITLE_PT,
+    sizePt: CHART_TITLE_PT,
+    colorHex: TITLE_COLOR,
+    align: 'center',
+  });
+}
+
+function buildLegendBlock(
+  chart: Chart,
+  wPt: number,
+  hPt: number,
+  measure: MeasureText,
+): ReturnType<typeof layoutLegend> {
+  const legendEntries: Array<LegendEntry> = chart.series
+    .map((s, i) => ({ name: s.name ?? '', colorHex: seriesColor(s, i, chart.seriesColorCycle) }))
+    .filter((e) => e.name !== '');
+  return layoutLegend(legendEntries, chart.hasLegend, chart.legendPos ?? 'b', wPt, hPt, measure);
+}
+
+// Gridlines + tick labels along one axis. 'y': horizontal lines with
+// right-aligned labels in the left gutter; 'x': vertical lines with centered
+// labels under the plot.
+function pushGridTicks(
+  polylines: Array<ChartPolyline>,
+  labels: Array<ChartLabel>,
+  tickVals: ReadonlyArray<number>,
+  fmt: (v: number) => string,
+  axis: 'x' | 'y',
+  at: (v: number) => number,
+  x0: number,
+  y0: number,
+  plotW: number,
+  plotH: number,
+): void {
+  for (const v of tickVals) {
+    if (axis === 'x') {
+      const gx = at(v);
+      polylines.push({
+        points: [
+          [gx, y0],
+          [gx, y0 + plotH],
+        ],
+        strokeHex: GRID_COLOR,
+        widthPt: 0.75,
+      });
+      labels.push({
+        text: fmt(v),
+        x: gx,
+        y: y0 - CHART_LABEL_PT,
+        sizePt: CHART_LABEL_PT,
+        colorHex: LABEL_COLOR,
+        align: 'center',
+      });
+    } else {
+      const gy = at(v);
+      polylines.push({
+        points: [
+          [x0, gy],
+          [x0 + plotW, gy],
+        ],
+        strokeHex: GRID_COLOR,
+        widthPt: 0.75,
+      });
+      labels.push({
+        text: fmt(v),
+        x: x0 - 3,
+        y: gy - CHART_LABEL_PT / 3,
+        sizePt: CHART_LABEL_PT,
+        colorHex: LABEL_COLOR,
+        align: 'right',
+      });
+    }
+  }
+}
+
+function pushAxisLines(
+  polylines: Array<ChartPolyline>,
+  x0: number,
+  y0: number,
+  plotW: number,
+  plotH: number,
+): void {
+  polylines.push({
+    points: [
+      [x0, y0],
+      [x0, y0 + plotH],
+    ],
+    strokeHex: AXIS_COLOR,
+    widthPt: 1,
+  });
+  polylines.push({
+    points: [
+      [x0, y0],
+      [x0 + plotW, y0],
+    ],
+    strokeHex: AXIS_COLOR,
+    widthPt: 1,
+  });
+}
+
 function buildFrame(
   chart: Chart,
   wPt: number,
@@ -157,17 +269,7 @@ function buildFrame(
   let top = 4;
   if (chart.title) top += CHART_TITLE_PT * 1.6;
   if (chart.valAxisTitle) top += CHART_LABEL_PT * 1.4;
-  const legendEntries: Array<LegendEntry> = chart.series
-    .map((s, i) => ({ name: s.name ?? '', colorHex: seriesColor(s, i) }))
-    .filter((e) => e.name !== '');
-  const legend = layoutLegend(
-    legendEntries,
-    chart.hasLegend,
-    chart.legendPos ?? 'b',
-    wPt,
-    hPt,
-    measure,
-  );
+  const legend = buildLegendBlock(chart, wPt, hPt, measure);
   const plotRight = wPt - 4 - legend.rightWidth;
 
   const tickLabelW = Math.max(0, ...tickVals.map((v) => measure(fmtVal(v), CHART_LABEL_PT))) + 4;
@@ -183,16 +285,7 @@ function buildFrame(
     ((v - scale.min) / (scale.max - scale.min)) * (horizontal ? plotW : plotH);
   const zeroOffset = valueOffset(0);
 
-  if (chart.title) {
-    labels.push({
-      text: chart.title,
-      x: wPt / 2,
-      y: hPt - 4 - CHART_TITLE_PT,
-      sizePt: CHART_TITLE_PT,
-      colorHex: TITLE_COLOR,
-      align: 'center',
-    });
-  }
+  pushChartTitle(labels, chart, wPt, hPt);
   // Axis titles. The value-axis title is laid out horizontally above the plot
   // (a deliberate simplification — chart text is not rotated); the category-axis
   // title sits centred below the category labels.
@@ -217,45 +310,32 @@ function buildFrame(
     });
   }
 
-  for (const v of tickVals) {
-    const off = valueOffset(v);
-    if (horizontal) {
-      const gx = x0 + off;
-      polylines.push({
-        points: [
-          [gx, y0],
-          [gx, y0 + plotH],
-        ],
-        strokeHex: GRID_COLOR,
-        widthPt: 0.75,
-      });
-      labels.push({
-        text: fmtVal(v),
-        x: gx,
-        y: y0 - CHART_LABEL_PT,
-        sizePt: CHART_LABEL_PT,
-        colorHex: LABEL_COLOR,
-        align: 'center',
-      });
-    } else {
-      const gy = y0 + off;
-      polylines.push({
-        points: [
-          [x0, gy],
-          [x0 + plotW, gy],
-        ],
-        strokeHex: GRID_COLOR,
-        widthPt: 0.75,
-      });
-      labels.push({
-        text: fmtVal(v),
-        x: x0 - 3,
-        y: gy - CHART_LABEL_PT / 3,
-        sizePt: CHART_LABEL_PT,
-        colorHex: LABEL_COLOR,
-        align: 'right',
-      });
-    }
+  if (horizontal) {
+    pushGridTicks(
+      polylines,
+      labels,
+      tickVals,
+      fmtVal,
+      'x',
+      (v) => x0 + valueOffset(v),
+      x0,
+      y0,
+      plotW,
+      plotH,
+    );
+  } else {
+    pushGridTicks(
+      polylines,
+      labels,
+      tickVals,
+      fmtVal,
+      'y',
+      (v) => y0 + valueOffset(v),
+      x0,
+      y0,
+      plotW,
+      plotH,
+    );
   }
 
   const slot = (horizontal ? plotH : plotW) / nCats;
@@ -284,22 +364,7 @@ function buildFrame(
     }
   }
 
-  polylines.push({
-    points: [
-      [x0, y0],
-      [x0, y0 + plotH],
-    ],
-    strokeHex: AXIS_COLOR,
-    widthPt: 1,
-  });
-  polylines.push({
-    points: [
-      [x0, y0],
-      [x0 + plotW, y0],
-    ],
-    strokeHex: AXIS_COLOR,
-    widthPt: 1,
-  });
+  pushAxisLines(polylines, x0, y0, plotW, plotH);
   legend.emit(rects, labels);
 
   return {
@@ -392,7 +457,7 @@ export function buildBarScene(
         const o1 = f.valueOffset(top);
         const lo = Math.min(o0, o1);
         const span = Math.abs(o1 - o0);
-        const color = pointColor(series, c) ?? seriesColor(series, s);
+        const color = pointColor(series, c) ?? seriesColor(series, s, chart.seriesColorCycle);
         if (horizontal) f.rects.push({ x: f.x0 + lo, y: along, w: span, h: barW, fillHex: color });
         else f.rects.push({ x: along, y: f.y0 + lo, w: barW, h: span, fillHex: color });
         if (chart.showValues && span > CHART_LABEL_PT) {
@@ -422,7 +487,7 @@ export function buildBarScene(
     for (let s = 0; s < chart.series.length; s++) {
       const series = chart.series[s]!;
       const len = f.valueOffset(series.values[c] ?? 0) - f.zeroOffset; // signed from zero line
-      const color = pointColor(series, c) ?? seriesColor(series, s);
+      const color = pointColor(series, c) ?? seriesColor(series, s, chart.seriesColorCycle);
       const along = slotStart + s * barW;
       if (horizontal) {
         const bx = f.x0 + f.zeroOffset + Math.min(0, len);
@@ -499,7 +564,7 @@ export function buildAreaScene(
           : 1;
         return b + (series.values[c] ?? 0) / denom;
       });
-      polygons.push(areaBand(top, base, f, xAt, seriesColor(series, s)));
+      polygons.push(areaBand(top, base, f, xAt, seriesColor(series, s, chart.seriesColorCycle)));
       for (let c = 0; c < nCats; c++) cum[c] = top[c]!;
     }
   } else {
@@ -508,7 +573,7 @@ export function buildAreaScene(
     for (let s = chart.series.length - 1; s >= 0; s--) {
       const series = chart.series[s]!;
       const top = Array.from({ length: nCats }, (_, c) => series.values[c] ?? 0);
-      polygons.push(areaBand(top, base, f, xAt, seriesColor(series, s)));
+      polygons.push(areaBand(top, base, f, xAt, seriesColor(series, s, chart.seriesColorCycle)));
     }
   }
   return { rects: f.rects, polylines: f.polylines, wedges: [], labels: f.labels, polygons };
@@ -543,17 +608,7 @@ export function buildScatterScene(
 
   let top = 4;
   if (chart.title) top += CHART_TITLE_PT * 1.6;
-  const legendEntries: Array<LegendEntry> = chart.series
-    .map((s, i) => ({ name: s.name ?? '', colorHex: seriesColor(s, i) }))
-    .filter((e) => e.name !== '');
-  const legend = layoutLegend(
-    legendEntries,
-    chart.hasLegend,
-    chart.legendPos ?? 'b',
-    wPt,
-    hPt,
-    measure,
-  );
+  const legend = buildLegendBlock(chart, wPt, hPt, measure);
   const tickLabelW =
     Math.max(0, ...yTicks.map((v) => measure(formatTick(v, yScale.step), CHART_LABEL_PT))) + 4;
   const x0 = 4 + tickLabelW;
@@ -563,74 +618,36 @@ export function buildScatterScene(
   const xAt = (v: number): number => x0 + ((v - xScale.min) / (xScale.max - xScale.min)) * plotW;
   const yAt = (v: number): number => y0 + ((v - yScale.min) / (yScale.max - yScale.min)) * plotH;
 
-  if (chart.title) {
-    labels.push({
-      text: chart.title,
-      x: wPt / 2,
-      y: hPt - 4 - CHART_TITLE_PT,
-      sizePt: CHART_TITLE_PT,
-      colorHex: TITLE_COLOR,
-      align: 'center',
-    });
-  }
-  for (const v of yTicks) {
-    const gy = yAt(v);
-    polylines.push({
-      points: [
-        [x0, gy],
-        [x0 + plotW, gy],
-      ],
-      strokeHex: GRID_COLOR,
-      widthPt: 0.75,
-    });
-    labels.push({
-      text: formatTick(v, yScale.step),
-      x: x0 - 3,
-      y: gy - CHART_LABEL_PT / 3,
-      sizePt: CHART_LABEL_PT,
-      colorHex: LABEL_COLOR,
-      align: 'right',
-    });
-  }
-  for (const v of xTicks) {
-    const gx = xAt(v);
-    polylines.push({
-      points: [
-        [gx, y0],
-        [gx, y0 + plotH],
-      ],
-      strokeHex: GRID_COLOR,
-      widthPt: 0.75,
-    });
-    labels.push({
-      text: formatTick(v, xScale.step),
-      x: gx,
-      y: y0 - CHART_LABEL_PT,
-      sizePt: CHART_LABEL_PT,
-      colorHex: LABEL_COLOR,
-      align: 'center',
-    });
-  }
-  polylines.push({
-    points: [
-      [x0, y0],
-      [x0, y0 + plotH],
-    ],
-    strokeHex: AXIS_COLOR,
-    widthPt: 1,
-  });
-  polylines.push({
-    points: [
-      [x0, y0],
-      [x0 + plotW, y0],
-    ],
-    strokeHex: AXIS_COLOR,
-    widthPt: 1,
-  });
+  pushChartTitle(labels, chart, wPt, hPt);
+  pushGridTicks(
+    polylines,
+    labels,
+    yTicks,
+    (v) => formatTick(v, yScale.step),
+    'y',
+    yAt,
+    x0,
+    y0,
+    plotW,
+    plotH,
+  );
+  pushGridTicks(
+    polylines,
+    labels,
+    xTicks,
+    (v) => formatTick(v, xScale.step),
+    'x',
+    xAt,
+    x0,
+    y0,
+    plotW,
+    plotH,
+  );
+  pushAxisLines(polylines, x0, y0, plotW, plotH);
 
   for (let s = 0; s < chart.series.length; s++) {
     const series = chart.series[s]!;
-    const color = seriesColor(series, s);
+    const color = seriesColor(series, s, chart.seriesColorCycle);
     for (let i = 0; i < series.values.length; i++) {
       const px = xAt(series.xValues?.[i] ?? i);
       const py = yAt(series.values[i] ?? 0);
@@ -656,7 +673,7 @@ export function buildLineScene(
   const f = buildFrame(chart, wPt, hPt, measure, false, { dataRange: range });
   for (let s = 0; s < chart.series.length; s++) {
     const series = chart.series[s]!;
-    const color = seriesColor(series, s);
+    const color = seriesColor(series, s, chart.seriesColorCycle);
     const pts: Array<readonly [number, number]> = [];
     for (let c = 0; c < f.nCats; c++) {
       const x = f.x0 + c * f.slot + f.slot / 2;

@@ -1,10 +1,40 @@
 # Changelog
 
-All notable changes to **Ream** (`reamkit`) are documented here. The format is
-based on [Keep a Changelog](https://keepachangelog.com/), and the project
+All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
-## [1.2.0] - 2026-06-11
+## 1.3.0
+
+### Added
+
+- **Charts on xlsx sheets** — the worksheet's drawing part now loads:
+  chart frames anchored to cell ranges render after their sheet's grid,
+  sized from the anchor's column/row tracks. Custom chart colour themes
+  (`colorsN.xml`) apply to series in both Word and Excel documents.
+- **Float text wrapping** — side-wrapped anchored drawings (`wrapSquare`/
+  `tight`/`through`) now claim an exclusion area: paragraph lines beside the
+  float narrow to the wider side (Knuth-Plass re-breaks the paragraph with
+  per-line widths) and resume full width below it.
+- **Tagged lists: Lbl elements** — list-item markers ("1.", "•") get their
+  own `Lbl` structure element, so assistive technology announces the label
+  separately from the item body.
+- **PDF encryption (AES-256)** — `encrypt: { userPassword, ownerPassword?,
+  permissions? }` produces an ISO 32000-2 R6 encrypted PDF via WebCrypto
+  (async conversion path only). PDF/A and encryption are mutually exclusive
+  by standard; PDF/UA keeps the accessibility-extraction permission on.
+
+
+### Changed
+
+- **OOXML Strict (ISO 29500) packages** now load: relationship types are
+  matched by name against both the Transitional (`schemas.openxmlformats.org`)
+  and Strict (`purl.oclc.org`) namespaces.
+- **Block-level content controls** (`w:sdt`) unwrap their content into the
+  document flow instead of dropping it.
+- **Password-protected (encrypted) OOXML** files now fail with a clear message
+  identifying the file as an OLE compound file, instead of a cryptic ZIP error.
+
+## 1.2.0
 
 ### Added
 
@@ -58,7 +88,7 @@ follows [Semantic Versioning](https://semver.org/).
   with a degraded-`hyperlinks` loss; documents without links are
   byte-identical to before.
 
-## [1.1.0]
+## 1.1.0
 
 ### Added
 
@@ -82,7 +112,7 @@ follows [Semantic Versioning](https://semver.org/).
   `layoutStyledDocument(...).pdf`. The internal `DrawCommand` alias is gone —
   the schema name is `PageItem`.
 
-## [1.0.0]
+## 1.0.0
 
 The interlayer release — and the first stable major. Documents parse once
 into a format-neutral tree (**FlowDoc**) and convert to any target from
@@ -144,7 +174,7 @@ there; the public face of the library is the `Ream` class.
   `/ByteRange` — an embedded attachment could hijack the signature bytes. The
   scan now matches the full fixed-width placeholder.
 
-## [0.1.0-alpha.0]
+## 0.1.0-alpha.0
 
 First tagged alpha. DOCX/XLSX → PDF, implemented directly from the ECMA-376 and
 ISO 32000 / 19005 specifications — no third-party converter, PDF writer, or
@@ -163,7 +193,3 @@ layout engine. Browser-first; the caller supplies fonts.
   (PKCS#7 detached, ECDSA); object streams; JPEG2000.
 - **Tooling** — aligned to `@tanstack/config` (Vite build, ESLint, publint +
   are-the-types-wrong); MIT-licensed; tag-triggered npm release workflow.
-
-[Unreleased]: https://github.com/alex-krassavin/reamkit/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/alex-krassavin/reamkit/compare/v0.1.0-alpha.0...v1.0.0
-[0.1.0-alpha.0]: https://github.com/alex-krassavin/reamkit/releases/tag/v0.1.0-alpha.0

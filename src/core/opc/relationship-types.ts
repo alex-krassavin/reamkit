@@ -8,3 +8,15 @@ export const REL_CORE_PROPERTIES =
 
 export const REL_EXTENDED_PROPERTIES =
   'http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties';
+
+// ISO 29500 Strict uses purl.oclc.org relationship URIs for the same
+// relationship names Transitional spells under schemas.openxmlformats.org.
+// Compare by name against both bases.
+const OOXML_REL_BASES = [
+  'http://schemas.openxmlformats.org/officeDocument/2006/relationships/',
+  'http://purl.oclc.org/ooxml/officeDocument/relationships/',
+] as const;
+
+export function isOoxmlRel(type: string, name: string): boolean {
+  return OOXML_REL_BASES.some((base) => type === base + name);
+}

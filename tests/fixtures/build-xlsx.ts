@@ -101,6 +101,13 @@ export interface XlsxBuilderOptions {
   readonly rowBreaks?: ReadonlyArray<number>;
   readonly date1904?: boolean;
   readonly definedNames?: ReadonlyArray<XlsxDefinedNameSpec>;
+  /** Attach a chart to the FIRST sheet via a drawing part (twoCellAnchor). */
+  readonly sheetChart?: {
+    readonly chartXml: string; // full c:chartSpace markup
+    readonly colorsXml?: string; // full cs:colorStyle markup (colors1.xml)
+    /** Anchor cells; defaults to B2..H17 (≈ 6×4 inches on default tracks). */
+    readonly anchor?: { from: [number, number]; to: [number, number] };
+  };
 }
 
 function isCellSpec(v: XlsxValue | XlsxCellSpec): v is XlsxCellSpec {
@@ -288,6 +295,13 @@ ${sharedStringsList.map((str) => `  <si><t>${escapeXml(str)}</t></si>`).join('\n
     sheetOverrides +
     CONTENT_TYPES_FIXED_OVERRIDES +
     (options.stylesXml ? STYLES_TYPE_OVERRIDE : '') +
+    (options.sheetChart
+      ? '<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>' +
+        '<Override PartName="/xl/charts/chart1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>' +
+        (options.sheetChart.colorsXml
+          ? '<Override PartName="/xl/charts/colors1.xml" ContentType="application/vnd.ms-office.chartcolorstyle+xml"/>'
+          : '')
+      : '') +
     '\n</Types>';
 
   const entries: Record<string, Uint8Array> = {
@@ -297,6 +311,52 @@ ${sharedStringsList.map((str) => `  <si><t>${escapeXml(str)}</t></si>`).join('\n
     'xl/_rels/workbook.xml.rels': encoder.encode(workbookRelsXml),
     'xl/sharedStrings.xml': encoder.encode(sharedStringsXml),
   };
+  if (options.sheetChart && sheetParts.length > 0) {
+    const first = sheetParts[0]!;
+    first.xml = first.xml.replace('</worksheet>', '<drawing r:id="rId100"/></worksheet>');
+    entries[`xl/worksheets/_rels/${first.fileName}.rels`] = encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId100" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/>
+</Relationships>`,
+    );
+    const a = options.sheetChart.anchor ?? { from: [1, 1], to: [7, 16] };
+    entries['xl/drawings/drawing1.xml'] = encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <xdr:twoCellAnchor>
+    <xdr:from><xdr:col>${a.from[0]}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${a.from[1]}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>
+    <xdr:to><xdr:col>${a.to[0]}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${a.to[1]}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>
+    <xdr:graphicFrame macro="">
+      <xdr:nvGraphicFramePr><xdr:cNvPr id="2" name="Chart 1"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>
+      <xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm>
+      <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">
+        <c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rId1"/>
+      </a:graphicData></a:graphic>
+    </xdr:graphicFrame>
+    <xdr:clientData/>
+  </xdr:twoCellAnchor>
+</xdr:wsDr>`,
+    );
+    const chartRels = options.sheetChart.colorsXml
+      ? '  <Relationship Id="rId9" Type="http://schemas.microsoft.com/office/2011/relationships/chartColorStyle" Target="colors1.xml"/>\n'
+      : '';
+    entries['xl/drawings/_rels/drawing1.xml.rels'] = encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart1.xml"/>
+</Relationships>`,
+    );
+    entries['xl/charts/chart1.xml'] = encoder.encode(options.sheetChart.chartXml);
+    if (options.sheetChart.colorsXml) {
+      entries['xl/charts/_rels/chart1.xml.rels'] = encoder.encode(
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+${chartRels}</Relationships>`,
+      );
+      entries['xl/charts/colors1.xml'] = encoder.encode(options.sheetChart.colorsXml);
+    }
+  }
   for (const s of sheetParts) {
     entries[`xl/worksheets/${s.fileName}`] = encoder.encode(s.xml);
   }

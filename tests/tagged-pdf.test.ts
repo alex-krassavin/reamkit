@@ -264,6 +264,8 @@ describe('tagged PDF — structure tree (M6.1)', () => {
     expect((text.match(/\/StructElem \/S \/LI\b/g) ?? []).length).toBe(5);
     expect((text.match(/\/StructElem \/S \/LBody\b/g) ?? []).length).toBe(5);
     expect((text.match(/\/StructElem \/S \/P\b/g) ?? []).length).toBe(5);
+    // §14.8.4.3.3: every item's marker glyphs sit in their own Lbl element.
+    expect((text.match(/\/StructElem \/S \/Lbl\b/g) ?? []).length).toBe(5);
     // No stray top-level P (every list item's P is inside an LBody).
     expect(text).toContain('/StructElem /S /L ');
   });
