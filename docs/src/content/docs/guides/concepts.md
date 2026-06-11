@@ -29,6 +29,23 @@ the standard:
    CIDFontType2 font embedding **with subsetting**, image XObjects. Optionally tagged
    PDF, a PDF/A profile, or a digital signature.
 
+## The interlayer (FlowDoc)
+
+Since v0.2 the stages above are decoupled by an intermediate representation:
+readers parse a format into a **FlowDoc** (a semantic, format-neutral document
+tree — no pages or coordinates yet), the layout turns it into positioned pages,
+and writers emit a target format from there:
+
+```
+bytes → reader → FlowDoc → layout → pages → writer → bytes
+```
+
+`Ream.parse` runs a reader once and hands you the FlowDoc (`doc.flow`); every
+`doc.convert` renders from it without re-reading the source. New formats plug
+in as `DocumentReader`/`DocumentWriter` implementations (the `@experimental`
+interfaces) instead of new end-to-end converters — the SVG preview writer is
+exactly such an adapter.
+
 ## Bytes in, bytes out
 
 The public API is deliberately small and I/O-free: `Uint8Array` in, `Uint8Array` out.

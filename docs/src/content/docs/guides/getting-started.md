@@ -21,60 +21,59 @@ Runtime dependencies are minimal: `fflate` (ZIP/Deflate) and `fast-xml-parser`.
 
 ## Convert a document
 
-Give it the document bytes, get the PDF bytes back. No fonts to wire up — an open
-substitute font (Roboto for sans, Tinos for serif, Cousine for monospace — the same
-families LibreOffice substitutes) is fetched automatically based on the document's
-referenced fonts:
+Parse once into the format-neutral interlayer, then convert to any target.
+The format (docx/xlsx) is sniffed from the bytes. No fonts to wire up — an
+open substitute (Roboto for sans, Tinos for serif, Cousine for monospace —
+the same families LibreOffice substitutes) is fetched automatically based on
+the document's referenced fonts:
 
 ```ts
-import { convertDocxToPdf } from 'reamkit';
+import { Ream } from 'reamkit';
 
 // e.g. from an <input type="file"> or a fetch() — anything that yields bytes.
-const docx = new Uint8Array(await file.arrayBuffer());
+const bytes = new Uint8Array(await file.arrayBuffer());
 
-const pdf = await convertDocxToPdf(docx); // async — fetches a font if needed
+const doc = Ream.parse(bytes);          // docx or xlsx — sniffed
+const pdf = await doc.convert('pdf');   // async — fetches a font if needed
+const svg = await doc.convert('svg');   // same parse, different target
 
 // Hand the bytes to the browser: preview, download, upload, …
 const url = URL.createObjectURL(new Blob([pdf], { type: 'application/pdf' }));
 window.open(url);
 ```
 
-Excel works the same way via `convertXlsxToPdf`. The input and output are plain
-`Uint8Array`s, so wiring this to files, the network, or disk is up to you.
+## Bring your own fonts (no network)
 
-## Bring your own fonts (synchronous, no network)
-
-To embed specific fonts — or to avoid the network entirely — pass the font bytes in
-and use the synchronous variant:
+To embed specific fonts — or to avoid the network entirely — pass the font
+bytes in. `convert` then performs zero I/O:
 
 ```ts
-import { convertDocxToPdfSync } from 'reamkit';
-
 const fonts = {
   regular: new Uint8Array(await fetch('/fonts/MyFont-Regular.ttf').then((r) => r.arrayBuffer())),
   bold: new Uint8Array(await fetch('/fonts/MyFont-Bold.ttf').then((r) => r.arrayBuffer())),
 };
-const pdf = convertDocxToPdfSync(docx, { fonts });
+
+const pdf = await Ream.parse(bytes).convert('pdf', { fonts });
 ```
 
-The async `convertDocxToPdf` also accepts `fonts` (then it does no network I/O), plus
-`fontFamily` to force a substitute and `fontFetch` to inject a custom fetch.
-
-## Options
-
-Both converters accept (beyond `fonts`):
-
-- `info` — PDF `/Info` metadata (`title`, `author`, `subject`, …). Also read
-  automatically from the document's `docProps/core.xml`.
-- `pdfA: 'PDF/A-2b'` — emit an archival PDF/A file (embedded sRGB OutputIntent, XMP,
-  deterministic `/ID`, subset-tagged fonts). Levels `1b/1a/2b/2u/2a/3b/3u/3a`.
-- `hyphenator` — a Liang hyphenator for nicer justified text:
+## The document object
 
 ```ts
-import { getHyphenator } from 'reamkit';
-const hyphenator = await getHyphenator('en-us'); // or 'ru'
-const pdf = await convertDocxToPdf(docx, { hyphenator });
+const doc = Ream.parse(bytes);
+doc.format;    // 'docx' | 'xlsx'
+doc.flow;      // the parsed interlayer tree (paragraphs, tables, images, …)
+doc.losses;    // anything dropped/degraded while reading
+
+const { bytes: out, losses } = await doc.convertWithReport('pdf', { fonts });
+await doc.convert('pdf', { fonts, strict: true }); // throw on the first loss
 ```
 
-See the **API Reference** for the full surface, including `renderStyledPdf`,
-`signPdf`, and the typed document model under `reamkit/document-model`.
+One-shot helpers `convertDocxToPdf` / `convertXlsxToPdf` (+`Sync`) remain for
+single conversions — importing only one keeps the other format out of your
+bundle.
+
+## Next steps
+
+- [Examples](/reamkit/guides/examples/) — PDF/A, signatures, font providers,
+  SVG preview, recipes.
+- [Concepts](/reamkit/guides/concepts/) — the pipeline and the interlayer.

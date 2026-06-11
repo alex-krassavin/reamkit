@@ -1,6 +1,6 @@
 {
   "name": "reamkit",
-  "version": "0.1.0-alpha.0",
+  "version": "0.2.0-alpha.0",
   "description": "Ream — DOCX/XLSX to PDF, built from scratch on the ECMA-376 and ISO 32000 specifications (alpha; more document formats to come)",
   "license": "MIT",
   "author": "Alex Krassavin",

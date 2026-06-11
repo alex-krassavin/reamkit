@@ -36,6 +36,7 @@ export default defineConfig({
           label: 'Guides',
           items: [
             { label: 'Getting started', slug: 'guides/getting-started' },
+            { label: 'Examples', slug: 'guides/examples' },
             { label: 'Concepts', slug: 'guides/concepts' },
             { label: 'Scope & limitations', slug: 'guides/scope' },
           ],
