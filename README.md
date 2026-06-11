@@ -167,12 +167,6 @@ BiDi (UAX #9), tagged PDF, PDF/A-1/2/3 (a/b/u), digital signatures
 
 See `handoff.md` for the full feature matrix and known limitations.
 
-## Contact
-
-Questions, bug reports, commercial use or collaboration —
-[info@reamkit.dev](mailto:info@reamkit.dev), or open a
-[GitHub issue](https://github.com/alex-krassavin/reamkit/issues).
-
 ## License
 
 [MIT](./LICENSE) © Alex Krassavin
