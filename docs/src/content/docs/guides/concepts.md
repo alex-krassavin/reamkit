@@ -44,8 +44,9 @@ bytes → reader → FlowDoc → layout → pages → writer → bytes
 `Ream.parse` runs a reader once and hands you the FlowDoc (`doc.flow`); every
 `doc.convert` renders from it without re-reading the source. New formats plug
 in as `DocumentReader`/`DocumentWriter` implementations (the `@experimental`
-interfaces) instead of new end-to-end converters — the SVG preview writer is
-exactly such an adapter.
+interfaces) instead of new end-to-end converters — the SVG preview writer
+(consuming positioned pages) and the HTML writer (consuming the FlowDoc
+directly, no layout or fonts involved) are exactly such adapters.
 
 ## Bytes in, bytes out
 

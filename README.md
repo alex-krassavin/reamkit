@@ -33,6 +33,7 @@ const bytes = new Uint8Array(await file.arrayBuffer());
 const doc = Ream.parse(bytes);            // docx or xlsx — sniffed
 const pdf = await doc.convert('pdf');     // async — fetches a font if needed
 const svg = await doc.convert('svg');     // same parse, different target
+const html = await doc.convert('html');   // flowed HTML — needs no fonts at all
 
 // Hand the bytes to the browser: preview, download, upload, …
 const url = URL.createObjectURL(new Blob([pdf], { type: 'application/pdf' }));
@@ -147,7 +148,7 @@ automatically from the document's `docProps/core.xml`), `attachments`
 
 ### Lower-level APIs
 
-- `docxReader` / `xlsxReader`, `svgWriter` — the `@experimental` reader/writer
+- `docxReader` / `xlsxReader`, `svgWriter`, `htmlWriter` — the `@experimental` reader/writer
   interfaces of the interlayer, for building custom pipelines (and keeping
   unused formats out of your bundle); `layoutStyledDocument` produces the
   frozen page model (`PageItem` pages in a top-left `Pt` frame) they consume.
@@ -163,7 +164,7 @@ repeated titles, page breaks), DrawingML shapes and charts, OMML math,
 Type0+CIDFontType2 embedding with subsetting, Knuth-Plass line breaking,
 Liang hyphenation, OpenType ligatures/kerning + Arabic cursive joining,
 BiDi (UAX #9), tagged PDF, PDF/A-1/2/3 (a/b/u), digital signatures
-(PKCS#7/ECDSA/PAdES/RFC 3161), SVG page preview.
+(PKCS#7/ECDSA/PAdES/RFC 3161), SVG page preview, flowed HTML export.
 
 See `handoff.md` for the full feature matrix and known limitations.
 
