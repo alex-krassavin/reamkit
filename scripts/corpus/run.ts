@@ -92,6 +92,7 @@ interface Row {
   readonly status: string;
   readonly pages: string;
   readonly textSim: string;
+  readonly geom: string;
   readonly drift: string;
   readonly visual: string;
   readonly note: string;
@@ -151,6 +152,7 @@ async function main(): Promise<void> {
         status: sd.textSimilarity > 0.95 && worstVisual < 0.1 ? '✅' : '⚠️',
         pages: pageMatch ? String(ourPpms.length) : `${ourPpms.length}≠${refPpms.length}`,
         textSim: pct(sd.textSimilarity),
+        geom: pct(sd.geometrySimilarity),
         drift: sd.medianBaselineDriftPt.toFixed(1) + 'pt',
         visual: pct(worstVisual),
         note: dimNote || `${sd.ourChars}/${sd.refChars} chars`,
@@ -162,6 +164,7 @@ async function main(): Promise<void> {
         status: '❌',
         pages: '-',
         textSim: '-',
+        geom: '-',
         drift: '-',
         visual: '-',
         note: (err as Error).message.slice(0, 60),
@@ -204,11 +207,11 @@ function renderReport(rows: Array<Row>, dpi: number): string {
     `**${rows.length} docs — ✅ ${counts.ok} clean · ⚠️ ${counts.warn} divergent · ❌ ${counts.fail} failed.**`,
   );
   lines.push('');
-  lines.push('| Doc | St | Pages | TextSim | Drift | Visual | Note |');
-  lines.push('|---|---|---|---|---|---|---|');
+  lines.push('| Doc | St | Pages | TextSim | Geom | Drift | Visual | Note |');
+  lines.push('|---|---|---|---|---|---|---|---|');
   for (const r of sorted) {
     lines.push(
-      `| ${r.name} | ${r.status} | ${r.pages} | ${r.textSim} | ${r.drift} | ${r.visual} | ${r.note} |`,
+      `| ${r.name} | ${r.status} | ${r.pages} | ${r.textSim} | ${r.geom} | ${r.drift} | ${r.visual} | ${r.note} |`,
     );
   }
   return lines.join('\n');
