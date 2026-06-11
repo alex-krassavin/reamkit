@@ -24,7 +24,7 @@ import {
   resolvePrintTitleRows,
   sectionFromWorksheet,
   worksheetToBody,
-} from '@/excel/xlsx-to-pdf';
+} from '@/excel/print-model';
 
 const WORKBOOK_PART = 'xl/workbook.xml';
 const SHARED_STRINGS_PART = 'xl/sharedStrings.xml';
