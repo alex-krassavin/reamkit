@@ -6,12 +6,12 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
-import type { BodyElement } from '@/document-model';
-import { convertDocxToPdf } from '@/converter';
-import { FontRegistry } from '@/font';
-import { EMPTY_STYLE_SHEET } from '@/ooxml/wordproc';
+import type { BodyElement } from '@/core/document-model';
+import { convertDocxToPdf } from '@/core/converter';
+import { FontRegistry } from '@/core/font';
+import { EMPTY_STYLE_SHEET } from '@/core/style-cascade';
 import { renderStyledPdf, signPdf } from '@/pdf';
-import * as asn1 from '@/crypto/asn1';
+import * as asn1 from '@/core/crypto/asn1';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REGULAR = new Uint8Array(readFileSync(resolve(here, 'fixtures/fonts/Roboto-Regular.ttf')));
@@ -161,3 +161,41 @@ function messageDigestOf(cms: Uint8Array): Array<number> {
   }
   throw new Error('no messageDigest attribute');
 }
+
+describe('signPdf placeholder scan (B4)', () => {
+  it('is not fooled by a bare /ByteRange inside an embedded attachment', async () => {
+    // The attachment carries a decoy '/ByteRange [' early in the file; the
+    // scanner must match the full fixed-width placeholder instead.
+    const decoy = new TextEncoder().encode('%fake /ByteRange [0 1 2 3] /Contents <ab> end');
+    const pdf = renderStyledPdf(
+      [
+        {
+          kind: 'paragraph',
+          paragraph: { properties: {}, runs: [{ text: 'sig', properties: {} }] },
+        },
+      ],
+      {
+        registry: FontRegistry.fromBytes({ regular: REGULAR }),
+        styles: EMPTY_STYLE_SHEET,
+        pdfA: 'PDF/A-3b',
+        attachments: [
+          { name: 'decoy.pdf', bytes: decoy, mimeType: 'application/pdf', relationship: 'Source' },
+        ],
+        signaturePlaceholder: { reason: 'test' },
+      },
+    );
+    const raw = Buffer.from(pdf).toString('latin1');
+    // Decoy really does sit before the placeholder (the bug precondition).
+    expect(raw.indexOf('/ByteRange')).toBeLessThan(raw.indexOf('/ByteRange [0 0000000000'));
+    const signed = await signPdf(pdf, {
+      certificate: CERT,
+      privateKey: await importKey(),
+      signingTime: new Date('2026-01-02T03:04:05Z'),
+    });
+    const sraw = Buffer.from(signed).toString('latin1');
+    // The REAL placeholder got the real ByteRange; the decoy is untouched.
+    expect(sraw).toContain('/ByteRange [0 1 2 3]');
+    expect(sraw.match(/\/ByteRange \[0 \d+ \d+ \d+ *\]/g)!.length).toBeGreaterThanOrEqual(1);
+    expect(sraw).not.toContain('/ByteRange [0 0000000000');
+  });
+});

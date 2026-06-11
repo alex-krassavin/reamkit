@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Chart } from '@/document-model';
+import type { Chart } from '@/core/document-model';
 import {
   buildAreaScene,
   buildBarScene,

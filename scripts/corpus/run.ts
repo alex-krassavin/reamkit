@@ -25,8 +25,8 @@ import {
   structuralDiff,
   visualDiff,
 } from './lib';
-import type { FontBytesByVariant } from '@/font';
-import { convertDocxToPdf, convertDocxToPdfSync, convertXlsxToPdfSync } from '@/converter';
+import type { FontBytesByVariant } from '@/core/font';
+import { convertDocxToPdf, convertDocxToPdfSync, convertXlsxToPdfSync } from '@/core/converter';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '../..');

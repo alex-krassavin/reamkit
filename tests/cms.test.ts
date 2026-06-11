@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { buildPkcs7Detached } from '@/crypto';
-import * as asn1 from '@/crypto/asn1';
+import { buildPkcs7Detached } from '@/core/crypto';
+import * as asn1 from '@/core/crypto/asn1';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const KEY = new Uint8Array(readFileSync(resolve(here, 'fixtures/sign/signer-key.pkcs8')));

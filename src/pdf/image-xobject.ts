@@ -79,37 +79,91 @@ export interface EmbedImageOptions {
   readonly flattenAlpha?: boolean;
 }
 
+// The prepare/add split (oop-design §3.1): `prepareImage` is the pure expert —
+// decode, validate (throws on unsupported/corrupt input) and produce the
+// ready-to-emit stream bytes; `addImage` only creates the PDF objects. Layout
+// probes with `prepareImage` (no throwaway document), the emit phase replays
+// the prepared result, and other writers (SVG) reuse the mime/dimensions.
+export interface PreparedImage {
+  readonly format: ImageFormat;
+  readonly mimeType: 'image/jp2' | 'image/jpeg' | 'image/png';
+  readonly widthPx: number;
+  readonly heightPx: number;
+  // ColorSpace/BitsPerComponent are absent for JPEG 2000 (carried inside the
+  // JPX codestream).
+  readonly colorSpace?: 'DeviceGray' | 'DeviceRGB';
+  readonly bitsPerComponent?: number;
+  readonly filter: 'DCTDecode' | 'FlateDecode' | 'JPXDecode';
+  readonly data: Uint8Array;
+  // PNG alpha channel, already FlateDecode-compressed (DeviceGray, 8 bpc).
+  readonly smaskData?: Uint8Array;
+}
+
+export function prepareImage(bytes: Uint8Array, options: EmbedImageOptions = {}): PreparedImage {
+  const format = detectImageFormat(bytes);
+  if (format === 'jpeg') return prepareJpeg(bytes);
+  if (format === 'png') return preparePng(bytes, options);
+  if (format === 'jpeg2000') return prepareJpeg2000(bytes);
+  throw new Error('Unsupported image format');
+}
+
+export function addImage(doc: PdfDocument, prepared: PreparedImage): EmbeddedImage {
+  // The soft mask object precedes the color image — the order the pre-split
+  // embed produced.
+  let smaskRef: PdfRef | undefined;
+  if (prepared.smaskData) {
+    smaskRef = doc.add(
+      stream(
+        {
+          Type: name('XObject'),
+          Subtype: name('Image'),
+          Width: prepared.widthPx,
+          Height: prepared.heightPx,
+          ColorSpace: name('DeviceGray'),
+          BitsPerComponent: 8,
+          Filter: name('FlateDecode'),
+        },
+        prepared.smaskData,
+      ),
+    );
+  }
+  const entries: Record<string, unknown> = {
+    Type: name('XObject'),
+    Subtype: name('Image'),
+    Width: prepared.widthPx,
+    Height: prepared.heightPx,
+    ...(prepared.colorSpace ? { ColorSpace: name(prepared.colorSpace) } : {}),
+    ...(prepared.bitsPerComponent !== undefined
+      ? { BitsPerComponent: prepared.bitsPerComponent }
+      : {}),
+    Filter: name(prepared.filter),
+  };
+  if (smaskRef) entries['SMask'] = smaskRef;
+  const ref = doc.add(stream(entries as Parameters<typeof stream>[0], prepared.data));
+  return { ref, widthPx: prepared.widthPx, heightPx: prepared.heightPx };
+}
+
 export function embedImage(
   doc: PdfDocument,
   bytes: Uint8Array,
   options: EmbedImageOptions = {},
 ): EmbeddedImage {
-  const format = detectImageFormat(bytes);
-  if (format === 'jpeg') return embedJpeg(doc, bytes);
-  if (format === 'png') return embedPng(doc, bytes, options);
-  if (format === 'jpeg2000') return embedJpeg2000(doc, bytes);
-  throw new Error('Unsupported image format');
+  return addImage(doc, prepareImage(bytes, options));
 }
 
 // JPEG 2000 (ISO/IEC 15444) goes in verbatim via /JPXDecode — like JPEG via
 // /DCTDecode, PDF readers decode the wavelet codestream themselves, so we only
 // read the dimensions. NB /JPXDecode is permitted in PDF/A-2/3 but NOT PDF/A-1.
-function embedJpeg2000(doc: PdfDocument, bytes: Uint8Array): EmbeddedImage {
+function prepareJpeg2000(bytes: Uint8Array): PreparedImage {
   const { width, height } = readJpeg2000Info(bytes);
-  const ref = doc.add(
-    stream(
-      {
-        Type: name('XObject'),
-        Subtype: name('Image'),
-        Width: width,
-        Height: height,
-        // ColorSpace + BitsPerComponent are carried inside the JPX codestream.
-        Filter: name('JPXDecode'),
-      },
-      bytes,
-    ),
-  );
-  return { ref, widthPx: width, heightPx: height };
+  return {
+    format: 'jpeg2000',
+    mimeType: 'image/jp2',
+    widthPx: width,
+    heightPx: height,
+    filter: 'JPXDecode',
+    data: bytes,
+  };
 }
 
 function readU32(b: Uint8Array, o: number): number {
@@ -169,24 +223,18 @@ function readSiz(bytes: Uint8Array, sizOffset: number): { width: number; height:
   return { width, height };
 }
 
-function embedJpeg(doc: PdfDocument, bytes: Uint8Array): EmbeddedImage {
+function prepareJpeg(bytes: Uint8Array): PreparedImage {
   const info = readJpegInfo(bytes);
-  const colorSpace = info.numComponents === 1 ? 'DeviceGray' : 'DeviceRGB';
-  const ref = doc.add(
-    stream(
-      {
-        Type: name('XObject'),
-        Subtype: name('Image'),
-        Width: info.width,
-        Height: info.height,
-        ColorSpace: name(colorSpace),
-        BitsPerComponent: info.precision,
-        Filter: name('DCTDecode'),
-      },
-      bytes,
-    ),
-  );
-  return { ref, widthPx: info.width, heightPx: info.height };
+  return {
+    format: 'jpeg',
+    mimeType: 'image/jpeg',
+    widthPx: info.width,
+    heightPx: info.height,
+    colorSpace: info.numComponents === 1 ? 'DeviceGray' : 'DeviceRGB',
+    bitsPerComponent: info.precision,
+    filter: 'DCTDecode',
+    data: bytes,
+  };
 }
 
 interface JpegInfo {
@@ -240,50 +288,22 @@ interface DecodedPng {
   readonly smaskRaw?: Uint8Array;
 }
 
-function embedPng(
-  doc: PdfDocument,
-  bytes: Uint8Array,
-  options: EmbedImageOptions = {},
-): EmbeddedImage {
+function preparePng(bytes: Uint8Array, options: EmbedImageOptions = {}): PreparedImage {
   let decoded = decodePng(bytes);
   if (options.flattenAlpha && decoded.smaskRaw) {
     decoded = flattenAlphaOnWhite(decoded);
   }
-  const compressedColor = zlibSync(decoded.raw);
-
-  const baseDict: Record<string, ReturnType<typeof name> | number> = {
-    Type: name('XObject'),
-    Subtype: name('Image'),
-    Width: decoded.width,
-    Height: decoded.height,
-    ColorSpace: name(decoded.colorSpace),
-    BitsPerComponent: decoded.bitsPerComponent,
-    Filter: name('FlateDecode'),
+  return {
+    format: 'png',
+    mimeType: 'image/png',
+    widthPx: decoded.width,
+    heightPx: decoded.height,
+    colorSpace: decoded.colorSpace,
+    bitsPerComponent: decoded.bitsPerComponent,
+    filter: 'FlateDecode',
+    data: zlibSync(decoded.raw),
+    ...(decoded.smaskRaw ? { smaskData: zlibSync(decoded.smaskRaw) } : {}),
   };
-
-  let smaskRef: PdfRef | undefined;
-  if (decoded.smaskRaw) {
-    const compressedAlpha = zlibSync(decoded.smaskRaw);
-    smaskRef = doc.add(
-      stream(
-        {
-          Type: name('XObject'),
-          Subtype: name('Image'),
-          Width: decoded.width,
-          Height: decoded.height,
-          ColorSpace: name('DeviceGray'),
-          BitsPerComponent: 8,
-          Filter: name('FlateDecode'),
-        },
-        compressedAlpha,
-      ),
-    );
-  }
-
-  const entries = { ...baseDict } as Record<string, unknown>;
-  if (smaskRef) entries['SMask'] = smaskRef;
-  const ref = doc.add(stream(entries as Parameters<typeof stream>[0], compressedColor));
-  return { ref, widthPx: decoded.width, heightPx: decoded.height };
 }
 
 function decodePng(bytes: Uint8Array): DecodedPng {

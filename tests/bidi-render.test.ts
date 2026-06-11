@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
-import { convertDocxToPdfSync } from '@/converter';
+import { convertDocxToPdfSync } from '@/core/converter';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FONTS = {

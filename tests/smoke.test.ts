@@ -5,8 +5,8 @@ import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocx } from './fixtures/build-docx';
-import { convertDocxToPdfSync } from '@/converter';
-import { parseTtf } from '@/font';
+import { convertDocxToPdfSync } from '@/core/converter';
+import { parseTtf } from '@/core/font';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ROBOTO = new Uint8Array(readFileSync(resolve(here, 'fixtures/fonts/Roboto-Regular.ttf')));

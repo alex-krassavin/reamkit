@@ -18,19 +18,26 @@ const SRC = resolve('./src');
 function fixDeclarationExtensions(declFilePath: string, content: string): string {
   // Map the emitted .d.ts path back to its source dir to resolve specifiers.
   const sourceDir = dirname(declFilePath.replace(`${resolve('./dist')}/esm`, SRC));
-  return content.replace(
-    /(\bfrom\s*["'])(\.\.?\/[^"']+?)(["'])/g,
-    (full, pre: string, spec: string, post: string) => {
-      if (/\.[a-z]+$/i.test(spec)) return full; // already has an extension
-      const target = resolve(sourceDir, spec);
-      const isDir = existsSync(target) && statSync(target).isDirectory();
-      return `${pre}${spec}${isDir ? '/index.js' : '.js'}${post}`;
-    },
-  );
+  return content
+    .replace(
+      /(\bfrom\s*["'])(\.\.?\/[^"']+?)(["'])/g,
+      (full, pre: string, spec: string, post: string) => {
+        if (/\.[a-z]+$/i.test(spec)) return full; // already has an extension
+        const target = resolve(sourceDir, spec);
+        const isDir = existsSync(target) && statSync(target).isDirectory();
+        return `${pre}${spec}${isDir ? '/index.js' : '.js'}${post}`;
+      },
+    )
+    // A module importing its own directory's index ('@/excel' from inside
+    // excel/) emits a bare '.' (or '..') — NodeNext needs the explicit file.
+    .replace(
+      /(\bfrom\s*["'])(\.\.?)(["'])/g,
+      (_full, pre: string, spec: string, post: string) => `${pre}${spec}/index.js${post}`,
+    );
 }
 
 const tanstack = tanstackViteConfig({
-  entry: ['./src/index.ts', './src/document-model/index.ts'],
+  entry: ['./src/index.ts', './src/core/document-model/index.ts'],
   srcDir: './src',
   cjs: false,
   outDir: './dist',

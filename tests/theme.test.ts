@@ -4,8 +4,8 @@ import {
   DEFAULT_THEME_PALETTE,
   makeColorResolver,
   resolveSchemeName,
-} from '@/ooxml/drawingml/colors';
-import { parseTheme } from '@/ooxml/drawingml/theme-parser';
+} from '@/core/drawingml/colors';
+import { parseTheme } from '@/core/drawingml/theme-parser';
 
 const enc = new TextEncoder();
 

@@ -5,10 +5,12 @@ import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
-import { convertDocxToPdfSync } from '@/converter';
-import { parseTtf } from '@/font';
-import { OpcPackage } from '@/opc';
-import { parseSection, parseSections } from '@/ooxml/wordproc';
+import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
+
+import { convertDocxToPdfSync } from '@/core/converter';
+import { parseTtf } from '@/core/font';
+import { OpcPackage } from '@/core/opc';
+import { parseSection, parseSections } from '@/word';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FONTS = {
@@ -57,7 +59,7 @@ describe('parseSections (multi-section)', () => {
     expect(sections).toHaveLength(2);
     // First section ends after paragraph 2 (1-indexed body[0..2)).
     expect(sections[0]!.endIndex).toBe(2);
-    expect(sections[0]!.properties.pageSize?.widthTwips).toBe(12240);
+    expect(sections[0]!.properties.pageSize?.width).toBe(twipsToPt(12240));
     // Second section covers remaining paragraphs.
     expect(sections[1]!.endIndex).toBe(4);
     expect(sections[1]!.properties.pageSize?.orientation).toBe('landscape');
@@ -81,17 +83,17 @@ describe('parseSection', () => {
         <w:pgMar w:top="1440" w:right="1800" w:bottom="1440" w:left="1800" w:header="720" w:footer="720"/>
       </w:sectPr>`);
     expect(s.pageSize).toEqual({
-      widthTwips: 11906,
-      heightTwips: 16838,
+      width: twipsToPt(11906),
+      height: twipsToPt(16838),
       orientation: 'portrait',
     });
     expect(s.margins).toEqual({
-      topTwips: 1440,
-      rightTwips: 1800,
-      bottomTwips: 1440,
-      leftTwips: 1800,
-      headerTwips: 720,
-      footerTwips: 720,
+      top: twipsToPt(1440),
+      right: twipsToPt(1800),
+      bottom: twipsToPt(1440),
+      left: twipsToPt(1800),
+      header: twipsToPt(720),
+      footer: twipsToPt(720),
     });
   });
 

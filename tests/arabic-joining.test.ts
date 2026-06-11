@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { shapeText } from '@/font';
-import { arabicJoiningType, assignArabicForms } from '@/font/arabic-joining';
+import { shapeText } from '@/core/font';
+import { arabicJoiningType, assignArabicForms } from '@/core/font/arabic-joining';
 
 const cps = (s: string): Array<number> => [...s].map((c) => c.codePointAt(0)!);
 

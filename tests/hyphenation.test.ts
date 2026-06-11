@@ -5,9 +5,9 @@ import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
-import { convertDocxToPdfSync } from '@/converter';
-import { parseTtf } from '@/font';
-import { createHyphenator, getHyphenator } from '@/hyphenation';
+import { convertDocxToPdfSync } from '@/core/converter';
+import { parseTtf } from '@/core/font';
+import { createHyphenator, getHyphenator } from '@/core/hyphenation';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FONTS = {

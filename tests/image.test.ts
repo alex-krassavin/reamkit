@@ -6,10 +6,13 @@ import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
 import { buildTinyPng } from './fixtures/build-png';
-import { convertDocxToPdfSync } from '@/converter';
-import { parseTtf } from '@/font';
-import { OpcPackage } from '@/opc';
-import { parseDocument } from '@/ooxml/wordproc';
+import { defaultColorResolver } from '@/core/drawingml/colors';
+import { ResourceStore, eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
+import { convertDocxToPdfSync } from '@/core/converter';
+import { parseTtf } from '@/core/font';
+import { OpcPackage } from '@/core/opc';
+import { parseDocument } from '@/word';
+import { readDocx } from '@/word/docx-reader';
 import { detectImageFormat, embedImage } from '@/pdf';
 import { PdfDocument } from '@/pdf/writer';
 
@@ -129,13 +132,20 @@ describe('Drawing parser', () => {
     const body = `<w:p>${drawingXml('rId20', 914400, 685800)}</w:p>`;
     const docx = buildDocxFromBody(body);
     const pkg = OpcPackage.open(docx);
-    const parsed = parseDocument(pkg.getMainDocument().data);
+    // The parser resolves drawing relationship ids through the supplied
+    // ImageResolver into content-addressed ResourceIds.
+    const store = new ResourceStore();
+    const expectedId = store.put(new Uint8Array([1, 2, 3]));
+    const parsed = parseDocument(pkg.getMainDocument().data, {
+      resolveColor: defaultColorResolver,
+      resolveImage: (relId) => (relId === 'rId20' ? expectedId : undefined),
+    });
     expect(parsed).toHaveLength(1);
     expect(parsed[0]!.kind).toBe('image');
     if (parsed[0]!.kind !== 'image') throw new Error('unreachable');
-    expect(parsed[0]!.image.imageId).toBe('rId20');
-    expect(parsed[0]!.image.widthEmu).toBe(914400);
-    expect(parsed[0]!.image.heightEmu).toBe(685800);
+    expect(parsed[0]!.image.resource).toBe(expectedId);
+    expect(parsed[0]!.image.width).toBe(emuToPt(914400));
+    expect(parsed[0]!.image.height).toBe(emuToPt(685800));
   });
 });
 
@@ -230,5 +240,30 @@ describe('image robustness', () => {
     expect(text).not.toMatch(/\/ Do/);
     // The surrounding text still rendered (font subset embedded).
     expect(text).toMatch(/\/BaseFont \/[A-Za-z]/);
+  });
+});
+
+describe('per-part image resolution (C5)', () => {
+  it("resolves a header image through the header's own rels, not the main part's", () => {
+    // Same rId in both parts, pointing at DIFFERENT images: blue in the
+    // header's rels, red in the main document's. The header must get blue.
+    const bluePng = buildTinyPng(2, 2, [0, 0, 255, 255]);
+    const redPng = buildTinyPng(2, 2, [255, 0, 0, 255]);
+    const body =
+      '<w:p><w:r><w:t>body</w:t></w:r></w:p>' +
+      '<w:sectPr><w:headerReference w:type="default" r:id="rId10"/></w:sectPr>';
+    const docx = buildDocxFromBody(body, {
+      headerXml: `<w:p>${drawingXml('rId20', 190500, 190500)}</w:p>`,
+      headerImages: { rId20: { contentType: 'image/png', bytes: bluePng, extension: 'png' } },
+      images: { rId20: { contentType: 'image/png', bytes: redPng, extension: 'png' } },
+    });
+    const { doc } = readDocx(docx);
+    const header = [...(doc.headersFooters?.values() ?? [])][0];
+    expect(header).toBeDefined();
+    const img = header!.find((el) => el.kind === 'image');
+    expect(img).toBeDefined();
+    if (img?.kind !== 'image') throw new Error('unreachable');
+    const bytes = doc.resources.get(img.image.resource!);
+    expect(bytes && Buffer.from(bytes).equals(Buffer.from(bluePng))).toBe(true);
   });
 });

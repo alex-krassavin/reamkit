@@ -10,8 +10,8 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { FontBytesByVariant } from '@/font';
-import { convertDocxToPdfSync, convertXlsxToPdfSync } from '@/converter';
+import type { FontBytesByVariant } from '@/core/font';
+import { convertDocxToPdfSync, convertXlsxToPdfSync } from '@/core/converter';
 
 const [input, outPdf] = process.argv.slice(2);
 if (!input || !outPdf) {

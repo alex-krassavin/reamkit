@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Style, StyleSheet } from '@/document-model';
-import { resolveParagraphProperties, resolveRunProperties } from '@/style-cascade';
+import type { Style, StyleSheet } from '@/core/document-model';
+import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
+
+import { resolveParagraphProperties, resolveRunProperties } from '@/core/style-cascade';
 
 function sheet(styles: Array<Style>, defaults: Partial<StyleSheet> = {}): StyleSheet {
   return {
@@ -25,7 +27,7 @@ describe('resolveRunProperties', () => {
     const r = resolveRunProperties({}, {}, sheet([]));
     expect(r.bold).toBe(false);
     expect(r.italic).toBe(false);
-    expect(r.fontSizeHalfPoints).toBe(22);
+    expect(r.fontSizePt).toBe(halfPtToPt(22));
     expect(r.colorHex).toBe('000000');
   });
 
@@ -33,9 +35,9 @@ describe('resolveRunProperties', () => {
     const r = resolveRunProperties(
       {},
       {},
-      sheet([], { defaultRunProperties: { fontSizeHalfPoints: 28, colorHex: 'FF0000' } }),
+      sheet([], { defaultRunProperties: { fontSizePt: halfPtToPt(28), colorHex: 'FF0000' } }),
     );
-    expect(r.fontSizeHalfPoints).toBe(28);
+    expect(r.fontSizePt).toBe(halfPtToPt(28));
     expect(r.colorHex).toBe('FF0000');
   });
 
@@ -48,13 +50,13 @@ describe('resolveRunProperties', () => {
           id: 'Heading1',
           type: 'paragraph',
           isDefault: false,
-          runProperties: { fontSizeHalfPoints: 32, bold: true },
+          runProperties: { fontSizePt: halfPtToPt(32), bold: true },
           paragraphProperties: {},
         },
       ]),
     );
     expect(r.bold).toBe(true);
-    expect(r.fontSizeHalfPoints).toBe(32);
+    expect(r.fontSizePt).toBe(halfPtToPt(32));
   });
 
   it('character style overrides paragraph style', () => {
@@ -66,14 +68,14 @@ describe('resolveRunProperties', () => {
           id: 'Heading1',
           type: 'paragraph',
           isDefault: false,
-          runProperties: { bold: false, fontSizeHalfPoints: 32 },
+          runProperties: { bold: false, fontSizePt: halfPtToPt(32) },
           paragraphProperties: {},
         },
         STYLE_BOLD,
       ]),
     );
     expect(r.bold).toBe(true);
-    expect(r.fontSizeHalfPoints).toBe(32);
+    expect(r.fontSizePt).toBe(halfPtToPt(32));
   });
 
   it('direct run properties take highest priority', () => {
@@ -90,7 +92,7 @@ describe('resolveRunProperties', () => {
           id: 'Root',
           type: 'paragraph',
           isDefault: false,
-          runProperties: { fontSizeHalfPoints: 22, italic: true },
+          runProperties: { fontSizePt: halfPtToPt(22), italic: true },
           paragraphProperties: {},
         },
         {
@@ -105,7 +107,7 @@ describe('resolveRunProperties', () => {
     );
     expect(r.italic).toBe(true);
     expect(r.bold).toBe(true);
-    expect(r.fontSizeHalfPoints).toBe(22);
+    expect(r.fontSizePt).toBe(halfPtToPt(22));
   });
 
   it('breaks a cycle through basedOn without infinite loop', () => {
@@ -140,7 +142,7 @@ describe('resolveParagraphProperties', () => {
   it('returns hardcoded defaults when no style is referenced', () => {
     const p = resolveParagraphProperties({}, sheet([]));
     expect(p.alignment).toBe('left');
-    expect(p.spacingBeforeTwips).toBe(0);
+    expect(p.spacingBefore).toBe(twipsToPt(0));
   });
 
   it('direct alignment overrides paragraph style alignment', () => {

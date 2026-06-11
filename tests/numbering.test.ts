@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Numbering } from '@/document-model';
-import { parseNumbering } from '@/ooxml/wordproc';
-import { NumberingState } from '@/numbering';
+import type { Numbering } from '@/core/document-model';
+import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
+
+import { parseNumbering } from '@/word';
+import { NumberingState } from '@/core/numbering';
 
 const encoder = new TextEncoder();
 
@@ -34,8 +36,8 @@ describe('parseNumbering', () => {
     expect(level.format).toBe('decimal');
     expect(level.lvlText).toBe('%1.');
     expect(level.start).toBe(1);
-    expect(level.paragraphProperties.indentLeftTwips).toBe(720);
-    expect(level.paragraphProperties.indentFirstLineTwips).toBe(-360);
+    expect(level.paragraphProperties.indentLeft).toBe(twipsToPt(720));
+    expect(level.paragraphProperties.indentFirstLine).toBe(twipsToPt(-360));
     expect(numbering.numInstances.get('1')!.abstractNumId).toBe('0');
   });
 

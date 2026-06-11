@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { applyNumberFormat } from '@/ooxml/spreadsheet';
+import { applyNumberFormat } from '@/excel';
 
 const noCustom = new Map<number, string>();
 

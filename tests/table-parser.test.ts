@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
-import { OpcPackage } from '@/opc';
-import { parseDocument } from '@/ooxml/wordproc';
+import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
+
+import { OpcPackage } from '@/core/opc';
+import { parseDocument } from '@/word';
 
 function parse(bodyInnerXml: string) {
   const docx = buildDocxFromBody(bodyInnerXml);
@@ -39,8 +41,8 @@ describe('parseTable + body ordering', () => {
     expect(body[0]!.kind).toBe('table');
     if (body[0]!.kind !== 'table') throw new Error('unreachable');
     const tbl = body[0]!.table;
-    expect(tbl.grid).toEqual([2500, 2500]);
-    expect(tbl.properties.widthTwips).toBe(5000);
+    expect(tbl.grid).toEqual([twipsToPt(2500), twipsToPt(2500)]);
+    expect(tbl.properties.widthFraction).toBe(1); // tblW 5000 pct = 100%
     expect(tbl.properties.widthType).toBe('pct');
     expect(tbl.rows).toHaveLength(2);
     expect(tbl.rows[0]!.cells).toHaveLength(2);
@@ -107,21 +109,21 @@ describe('parseTable + body ordering', () => {
     if (body[0]!.kind !== 'table') throw new Error('expected table');
     const tbl = body[0]!.table;
     expect(tbl.properties.borders).toEqual({
-      top: { style: 'single', sizeEighthPt: 4, colorHex: '000000' },
-      bottom: { style: 'single', sizeEighthPt: 8, colorHex: 'FF0000' },
+      top: { style: 'single', width: eighthPtToPt(4), colorHex: '000000' },
+      bottom: { style: 'single', width: eighthPtToPt(8), colorHex: 'FF0000' },
     });
     expect(tbl.properties.defaultCellMargins).toEqual({
-      topTwips: 80,
-      bottomTwips: 80,
-      leftTwips: 100,
-      rightTwips: 100,
+      top: twipsToPt(80),
+      bottom: twipsToPt(80),
+      left: twipsToPt(100),
+      right: twipsToPt(100),
     });
     const cell = tbl.rows[0]!.cells[0]!;
-    expect(cell.properties.widthTwips).toBe(2000);
-    expect(cell.properties.gridSpan).toBe(2);
+    expect(cell.properties.width).toBe(twipsToPt(2000));
+    expect(cell.properties.colSpan).toBe(2);
   });
 
-  it('parses vertical merge restart and continue', () => {
+  it('resolves vertical merge markers into start/end roles', () => {
     const body = parse(`
       <w:tbl>
         <w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>
@@ -134,8 +136,8 @@ describe('parseTable + body ordering', () => {
       </w:tbl>`);
 
     if (body[0]!.kind !== 'table') throw new Error('expected table');
-    expect(body[0]!.table.rows[0]!.cells[0]!.properties.vMerge).toBe('restart');
-    expect(body[0]!.table.rows[1]!.cells[0]!.properties.vMerge).toBe('continue');
+    expect(body[0]!.table.rows[0]!.cells[0]!.properties.merge).toBe('start');
+    expect(body[0]!.table.rows[1]!.cells[0]!.properties.merge).toBe('end');
   });
 
   it('supports nested tables (table inside cell)', () => {
@@ -154,6 +156,6 @@ describe('parseTable + body ordering', () => {
     const cell = body[0]!.table.rows[0]!.cells[0]!;
     expect(cell.content[0]!.kind).toBe('table');
     if (cell.content[0]!.kind !== 'table') throw new Error('expected inner');
-    expect(cell.content[0]!.table.grid).toEqual([2000]);
+    expect(cell.content[0]!.table.grid).toEqual([twipsToPt(2000)]);
   });
 });

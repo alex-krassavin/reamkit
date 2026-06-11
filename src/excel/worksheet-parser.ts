@@ -1,0 +1,475 @@
+// ECMA-376 Part 1 §18.3.1.99 — worksheet.xml.
+// Walk sheetData/row/c, producing a flat list of cells with absolute
+// row/column addresses and resolved text values.
+
+import { XMLParser } from 'fast-xml-parser';
+
+import { parseCellRef } from '@/excel/cell-reference';
+
+type MutableMerge = {
+  -readonly [K in keyof MergedRange]: MergedRange[K];
+};
+
+const decoder = new TextDecoder('utf-8');
+
+const parser = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: '@_',
+  textNodeName: '#text',
+  parseAttributeValue: false,
+  parseTagValue: false,
+  trimValues: false,
+  // Tolerate an explicit `x:` namespace prefix (<x:worksheet>, <x:sheetData>,
+  // <x:row>, <x:c>) used by some producers — see workbook-parser.ts.
+  removeNSPrefix: true,
+});
+
+export type CellType = 'n' | 's' | 'str' | 'b' | 'd' | 'e' | 'inlineStr';
+
+export interface WorksheetCell {
+  readonly column: number;
+  readonly row: number;
+  readonly type: CellType;
+  // Raw stored value; renderer/converter looks up shared strings + formats.
+  readonly rawValue: string;
+  // For inlineStr the stored text lives in <is><t> rather than <v>.
+  readonly inlineText?: string;
+  // Index into the workbook's cellXfs (xl/styles.xml). 0 means default style.
+  readonly styleIndex?: number;
+}
+
+export interface ColumnWidth {
+  readonly min: number; // 1-indexed in OOXML, kept as-is here
+  readonly max: number;
+  readonly widthChars: number;
+}
+
+export interface MergedRange {
+  readonly startColumn: number;
+  readonly startRow: number;
+  readonly endColumn: number;
+  readonly endRow: number;
+}
+
+// ECMA-376 Part 1 §18.3.1.73 — <row ht="...">. The ht attribute is measured
+// in points (not twips); customHeight="1" means the user pinned the height
+// explicitly. Without customHeight, the height is content-driven.
+export interface RowHeight {
+  readonly row: number; // 0-indexed
+  readonly heightPt: number;
+  readonly customHeight: boolean;
+}
+
+// ECMA-376 Part 1 §18.3.1.62 — <pageMargins>. All attributes are in inches.
+export interface XlsxPageMargins {
+  readonly leftInches: number;
+  readonly rightInches: number;
+  readonly topInches: number;
+  readonly bottomInches: number;
+  readonly headerInches?: number;
+  readonly footerInches?: number;
+}
+
+// ECMA-376 Part 1 §18.3.1.63 — <pageSetup>. paperSize is a numeric id from
+// the printer paper size enumeration (1=Letter, 9=A4, ...). orientation
+// values: 'default' (effectively portrait), 'portrait', 'landscape'.
+//   scale       — print scaling percentage (10..400); default 100.
+//   fitToWidth  — number of pages wide to fit to (0 ⇒ use scale); default 1.
+//   fitToHeight — number of pages tall to fit to; default 1.
+// fitToWidth/fitToHeight only take effect when <pageSetUpPr fitToPage="1">.
+export interface XlsxPageSetup {
+  readonly paperSize?: number;
+  readonly orientation?: 'portrait' | 'landscape' | 'default';
+  readonly scale?: number;
+  readonly fitToWidth?: number;
+  readonly fitToHeight?: number;
+}
+
+// ECMA-376 Part 1 §18.3.1.70 — <printOptions>. Controls what is rendered when
+// the sheet is printed. gridLines defaults to false (Excel/Calc do NOT print
+// cell gridlines unless explicitly enabled), so a faithful print model draws
+// only the borders that come from cell styles.
+export interface XlsxPrintOptions {
+  readonly gridLines?: boolean;
+  readonly horizontalCentered?: boolean;
+  readonly verticalCentered?: boolean;
+}
+
+export interface ParsedWorksheet {
+  readonly cells: ReadonlyArray<WorksheetCell>;
+  readonly maxRow: number;
+  readonly maxColumn: number;
+  readonly columns: ReadonlyArray<ColumnWidth>;
+  readonly merges: ReadonlyArray<MergedRange>;
+  readonly rowHeights: ReadonlyArray<RowHeight>;
+  readonly pageMargins?: XlsxPageMargins;
+  readonly pageSetup?: XlsxPageSetup;
+  // ECMA-376 §18.3.1.65 — <sheetPr><pageSetUpPr fitToPage="1"/>. When set, the
+  // pageSetup fitToWidth/fitToHeight (not scale) drive print scaling.
+  readonly fitToPage?: boolean;
+  readonly printOptions?: XlsxPrintOptions;
+  // ECMA-376 §18.3.1.74/§18.3.1.14 — manual <rowBreaks>/<colBreaks>. Each
+  // stored value is the <brk id="..."> following the break (kept verbatim).
+  readonly rowBreaks?: ReadonlyArray<number>;
+  readonly colBreaks?: ReadonlyArray<number>;
+}
+
+export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
+  const xml = decoder.decode(data);
+  const tree = parser.parse(xml) as Record<string, unknown>;
+  const worksheet = tree['worksheet'];
+  const emptyExtras = () => ({
+    columns: [] as ReadonlyArray<ColumnWidth>,
+    merges: [] as ReadonlyArray<MergedRange>,
+    rowHeights: [] as ReadonlyArray<RowHeight>,
+  });
+  if (!worksheet || typeof worksheet !== 'object') {
+    return { cells: [], maxRow: -1, maxColumn: -1, ...emptyExtras() };
+  }
+  const wsObj = worksheet as Record<string, unknown>;
+  const pageMargins = parsePageMargins(wsObj);
+  const pageSetup = parsePageSetup(wsObj);
+  const fitToPage = parseFitToPage(wsObj);
+  const printOptions = parsePrintOptions(wsObj);
+  const rowBreaks = parseBreaks(wsObj, 'rowBreaks');
+  const colBreaks = parseBreaks(wsObj, 'colBreaks');
+  const printModel = {
+    ...(pageMargins ? { pageMargins } : {}),
+    ...(pageSetup ? { pageSetup } : {}),
+    ...(fitToPage ? { fitToPage } : {}),
+    ...(printOptions ? { printOptions } : {}),
+    ...(rowBreaks.length > 0 ? { rowBreaks } : {}),
+    ...(colBreaks.length > 0 ? { colBreaks } : {}),
+  };
+  const sheetData = wsObj['sheetData'];
+  if (!sheetData || typeof sheetData !== 'object') {
+    return {
+      cells: [],
+      maxRow: -1,
+      maxColumn: -1,
+      columns: parseColumns(wsObj),
+      merges: parseMerges(wsObj),
+      rowHeights: [],
+      ...printModel,
+    };
+  }
+  const rowRaw = (sheetData as Record<string, unknown>)['row'];
+  const rows = Array.isArray(rowRaw) ? rowRaw : rowRaw !== undefined ? [rowRaw] : [];
+
+  const cells: Array<WorksheetCell> = [];
+  const rowHeights: Array<RowHeight> = [];
+  let maxRow = -1;
+  let maxColumn = -1;
+
+  // ECMA-376 §18.3.1.4/§18.3.1.73 — r= is optional on <row>/<c>: an absent row
+  // index is "the previous row + 1"; an absent cell ref is "the previous cell's
+  // column + 1" in the current row. Track running positions so r-less producers
+  // (e.g. 56278.xlsx) don't render empty.
+  let currentRow = -1;
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') continue;
+    const obj = row as Record<string, unknown>;
+    const explicitRow = parseRowIndex(obj);
+    currentRow = explicitRow !== undefined ? explicitRow : currentRow + 1;
+    const height = parseRowHeight(obj, currentRow);
+    if (height) rowHeights.push(height);
+    const cellRaw = obj['c'];
+    const rowCells = Array.isArray(cellRaw) ? cellRaw : cellRaw !== undefined ? [cellRaw] : [];
+    let prevCol = -1;
+    for (const c of rowCells) {
+      const parsed = parseCell(c, currentRow, prevCol + 1);
+      if (!parsed) continue;
+      prevCol = parsed.column;
+      cells.push(parsed);
+      if (parsed.row > maxRow) maxRow = parsed.row;
+      if (parsed.column > maxColumn) maxColumn = parsed.column;
+    }
+  }
+
+  return {
+    cells,
+    maxRow,
+    maxColumn,
+    columns: parseColumns(wsObj),
+    merges: parseMerges(wsObj),
+    rowHeights,
+    ...printModel,
+  };
+}
+
+function parseRowIndex(obj: Record<string, unknown>): number | undefined {
+  const raw = strAttr(obj, 'r');
+  if (!raw) return undefined;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n - 1 : undefined;
+}
+
+function parseRowHeight(
+  obj: Record<string, unknown>,
+  rowIndex: number | undefined,
+): RowHeight | undefined {
+  if (rowIndex === undefined) return undefined;
+  const htRaw = strAttr(obj, 'ht');
+  if (htRaw === undefined) return undefined;
+  const heightPt = Number(htRaw);
+  if (!Number.isFinite(heightPt)) return undefined;
+  const customRaw = strAttr(obj, 'customHeight');
+  const customHeight = customRaw === '1' || customRaw === 'true';
+  return { row: rowIndex, heightPt, customHeight };
+}
+
+function parsePageMargins(ws: Record<string, unknown>): XlsxPageMargins | undefined {
+  const node = ws['pageMargins'];
+  if (!node || typeof node !== 'object') return undefined;
+  const obj = node as Record<string, unknown>;
+  const left = parseNumericAttr(obj, 'left');
+  const right = parseNumericAttr(obj, 'right');
+  const top = parseNumericAttr(obj, 'top');
+  const bottom = parseNumericAttr(obj, 'bottom');
+  if (left === undefined || right === undefined || top === undefined || bottom === undefined) {
+    return undefined;
+  }
+  const header = parseNumericAttr(obj, 'header');
+  const footer = parseNumericAttr(obj, 'footer');
+  return {
+    leftInches: left,
+    rightInches: right,
+    topInches: top,
+    bottomInches: bottom,
+    ...(header !== undefined ? { headerInches: header } : {}),
+    ...(footer !== undefined ? { footerInches: footer } : {}),
+  };
+}
+
+function parsePageSetup(ws: Record<string, unknown>): XlsxPageSetup | undefined {
+  const node = ws['pageSetup'];
+  if (!node || typeof node !== 'object') return undefined;
+  const obj = node as Record<string, unknown>;
+  const paperSize = parseNumericAttr(obj, 'paperSize');
+  const orientationRaw = strAttr(obj, 'orientation');
+  const orientation: XlsxPageSetup['orientation'] | undefined =
+    orientationRaw === 'portrait' || orientationRaw === 'landscape' || orientationRaw === 'default'
+      ? orientationRaw
+      : undefined;
+  const scale = parseNumericAttr(obj, 'scale');
+  const fitToWidth = parseNumericAttr(obj, 'fitToWidth');
+  const fitToHeight = parseNumericAttr(obj, 'fitToHeight');
+  if (
+    paperSize === undefined &&
+    orientation === undefined &&
+    scale === undefined &&
+    fitToWidth === undefined &&
+    fitToHeight === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    ...(paperSize !== undefined ? { paperSize: Math.round(paperSize) } : {}),
+    ...(orientation !== undefined ? { orientation } : {}),
+    ...(scale !== undefined ? { scale } : {}),
+    ...(fitToWidth !== undefined ? { fitToWidth: Math.round(fitToWidth) } : {}),
+    ...(fitToHeight !== undefined ? { fitToHeight: Math.round(fitToHeight) } : {}),
+  };
+}
+
+// ECMA-376 §18.3.1.82/§18.3.1.65 — <sheetPr><pageSetUpPr fitToPage="1"/>.
+function parseFitToPage(ws: Record<string, unknown>): boolean {
+  const sheetPr = ws['sheetPr'];
+  if (!sheetPr || typeof sheetPr !== 'object') return false;
+  const pr = (sheetPr as Record<string, unknown>)['pageSetUpPr'];
+  if (!pr || typeof pr !== 'object') return false;
+  const raw = strAttr(pr as Record<string, unknown>, 'fitToPage');
+  return raw === '1' || raw === 'true';
+}
+
+// ECMA-376 §18.3.1.70 — <printOptions gridLines horizontalCentered ...>.
+function parsePrintOptions(ws: Record<string, unknown>): XlsxPrintOptions | undefined {
+  const node = ws['printOptions'];
+  if (!node || typeof node !== 'object') return undefined;
+  const obj = node as Record<string, unknown>;
+  const flag = (key: string): boolean | undefined => {
+    const raw = strAttr(obj, key);
+    if (raw === undefined) return undefined;
+    return raw === '1' || raw === 'true';
+  };
+  const gridLines = flag('gridLines');
+  const horizontalCentered = flag('horizontalCentered');
+  const verticalCentered = flag('verticalCentered');
+  if (
+    gridLines === undefined &&
+    horizontalCentered === undefined &&
+    verticalCentered === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    ...(gridLines !== undefined ? { gridLines } : {}),
+    ...(horizontalCentered !== undefined ? { horizontalCentered } : {}),
+    ...(verticalCentered !== undefined ? { verticalCentered } : {}),
+  };
+}
+
+// ECMA-376 §18.3.1.74/§18.3.1.14 — <rowBreaks>/<colBreaks> with <brk id=".."/>.
+// Returns the (verbatim) ids of breaks; an absent id is skipped.
+function parseBreaks(ws: Record<string, unknown>, tag: 'rowBreaks' | 'colBreaks'): Array<number> {
+  const node = ws[tag];
+  if (!node || typeof node !== 'object') return [];
+  const brkRaw = (node as Record<string, unknown>)['brk'];
+  const items = Array.isArray(brkRaw) ? brkRaw : brkRaw !== undefined ? [brkRaw] : [];
+  const out: Array<number> = [];
+  for (const b of items) {
+    if (!b || typeof b !== 'object') continue;
+    const id = parseNumericAttr(b as Record<string, unknown>, 'id');
+    if (id !== undefined && Number.isInteger(id) && id >= 0) out.push(id);
+  }
+  return out;
+}
+
+function parseNumericAttr(obj: Record<string, unknown>, key: string): number | undefined {
+  const raw = strAttr(obj, key);
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function parseColumns(ws: Record<string, unknown>): Array<ColumnWidth> {
+  const colsNode = ws['cols'];
+  if (!colsNode || typeof colsNode !== 'object') return [];
+  const colsObj = colsNode as Record<string, unknown>;
+  const colRaw = colsObj['col'];
+  const items = Array.isArray(colRaw) ? colRaw : colRaw !== undefined ? [colRaw] : [];
+  const out: Array<ColumnWidth> = [];
+  for (const c of items) {
+    if (!c || typeof c !== 'object') continue;
+    const obj = c as Record<string, unknown>;
+    const min = Number(strAttr(obj, 'min'));
+    const max = Number(strAttr(obj, 'max'));
+    const width = Number(strAttr(obj, 'width'));
+    if (Number.isFinite(min) && Number.isFinite(max) && Number.isFinite(width)) {
+      out.push({ min, max, widthChars: width });
+    }
+  }
+  return out;
+}
+
+function parseMerges(ws: Record<string, unknown>): Array<MergedRange> {
+  const mergeNode = ws['mergeCells'];
+  if (!mergeNode || typeof mergeNode !== 'object') return [];
+  const mergeObj = mergeNode as Record<string, unknown>;
+  const mergeRaw = mergeObj['mergeCell'];
+  const items = Array.isArray(mergeRaw) ? mergeRaw : mergeRaw !== undefined ? [mergeRaw] : [];
+  const out: Array<MergedRange> = [];
+  for (const m of items) {
+    if (!m || typeof m !== 'object') continue;
+    const obj = m as Record<string, unknown>;
+    const ref = strAttr(obj, 'ref');
+    if (!ref) continue;
+    const colonIdx = ref.indexOf(':');
+    if (colonIdx < 0) continue;
+    try {
+      const start = parseCellRef(ref.substring(0, colonIdx));
+      const end = parseCellRef(ref.substring(colonIdx + 1));
+      const range: MutableMerge = {
+        startColumn: Math.min(start.column, end.column),
+        startRow: Math.min(start.row, end.row),
+        endColumn: Math.max(start.column, end.column),
+        endRow: Math.max(start.row, end.row),
+      };
+      out.push(range);
+    } catch {
+      // Ignore malformed merge refs.
+    }
+  }
+  return out;
+}
+
+function parseCell(c: unknown, fallbackRow: number, fallbackCol: number): WorksheetCell | null {
+  if (!c || typeof c !== 'object') return null;
+  const obj = c as Record<string, unknown>;
+  const ref = strAttr(obj, 'r');
+  // r= is optional (§18.3.1.4): without it the position is implied by order —
+  // the current row and the column after the previous cell.
+  let address: { column: number; row: number };
+  if (ref) {
+    try {
+      address = parseCellRef(ref);
+    } catch {
+      return null;
+    }
+  } else {
+    address = { column: fallbackCol, row: fallbackRow };
+  }
+  const typeStr = strAttr(obj, 't') ?? 'n';
+  const type = validateCellType(typeStr);
+  const styleStr = strAttr(obj, 's');
+  const styleIndex = styleStr !== undefined ? Number(styleStr) : undefined;
+  const v = obj['v'];
+  const rawValue = textOf(v);
+  const base = { column: address.column, row: address.row, type } as const;
+  if (type === 'inlineStr') {
+    const is = obj['is'];
+    const inlineText = inlineStringText(is);
+    return {
+      ...base,
+      rawValue: '',
+      inlineText,
+      ...(Number.isFinite(styleIndex) ? { styleIndex: styleIndex as number } : {}),
+    };
+  }
+  return {
+    ...base,
+    rawValue,
+    ...(Number.isFinite(styleIndex) ? { styleIndex: styleIndex as number } : {}),
+  };
+}
+
+function validateCellType(t: string): CellType {
+  if (
+    t === 'n' ||
+    t === 's' ||
+    t === 'str' ||
+    t === 'b' ||
+    t === 'd' ||
+    t === 'e' ||
+    t === 'inlineStr'
+  ) {
+    return t;
+  }
+  return 'n';
+}
+
+function strAttr(obj: Record<string, unknown>, key: string): string | undefined {
+  const v = obj[`@_${key}`];
+  return typeof v === 'string' ? v : undefined;
+}
+
+function textOf(node: unknown): string {
+  if (typeof node === 'string') return node;
+  if (typeof node === 'number') return String(node);
+  if (!node || typeof node !== 'object') return '';
+  const obj = node as Record<string, unknown>;
+  const inner = obj['#text'];
+  if (typeof inner === 'string') return inner;
+  if (typeof inner === 'number') return String(inner);
+  return '';
+}
+
+// ECMA-376 / Excel limit: a cell holds at most 32 767 characters. Capping is
+// spec-correct and a DoS guard against a crafted multi-MB inline string.
+const MAX_CELL_CHARS = 32_767;
+
+function inlineStringText(is: unknown): string {
+  if (!is || typeof is !== 'object') return '';
+  const obj = is as Record<string, unknown>;
+  const t = obj['t'];
+  const direct = textOf(t);
+  if (direct) return direct.length > MAX_CELL_CHARS ? direct.slice(0, MAX_CELL_CHARS) : direct;
+  const r = obj['r'];
+  if (Array.isArray(r)) {
+    const joined = r
+      .map((rr) => textOf((rr as Record<string, unknown> | undefined)?.['t']))
+      .join('');
+    return joined.length > MAX_CELL_CHARS ? joined.slice(0, MAX_CELL_CHARS) : joined;
+  }
+  return '';
+}

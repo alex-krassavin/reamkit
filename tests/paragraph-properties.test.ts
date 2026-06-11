@@ -1,7 +1,9 @@
 import { XMLParser } from 'fast-xml-parser';
 import { describe, expect, it } from 'vitest';
 
-import { parseParagraphProperties } from '@/ooxml/wordproc';
+import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
+
+import { parseParagraphProperties } from '@/word';
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -54,9 +56,9 @@ describe('parseParagraphProperties', () => {
       ),
     );
     expect(result).toEqual({
-      spacingBeforeTwips: 240,
-      spacingAfterTwips: 120,
-      spacingLineTwips: 276,
+      spacingBefore: twipsToPt(240),
+      spacingAfter: twipsToPt(120),
+      spacingLine: twipsToPt(276),
       spacingLineRule: 'auto',
     });
   });
@@ -66,16 +68,16 @@ describe('parseParagraphProperties', () => {
       parsePpr('<w:pPr><w:ind w:left="720" w:right="0" w:firstLine="360"/></w:pPr>'),
     );
     expect(result).toEqual({
-      indentLeftTwips: 720,
-      indentRightTwips: 0,
-      indentFirstLineTwips: 360,
+      indentLeft: twipsToPt(720),
+      indentRight: twipsToPt(0),
+      indentFirstLine: twipsToPt(360),
     });
   });
 
-  it('parses w:hanging as negative indentFirstLineTwips', () => {
+  it('parses w:hanging as negative indentFirstLine', () => {
     expect(
       parseParagraphProperties(parsePpr('<w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr>')),
-    ).toEqual({ indentLeftTwips: 720, indentFirstLineTwips: -360 });
+    ).toEqual({ indentLeft: twipsToPt(720), indentFirstLine: twipsToPt(-360) });
   });
 
   it('prefers w:firstLine over w:hanging when both are set', () => {
@@ -83,7 +85,7 @@ describe('parseParagraphProperties', () => {
       parseParagraphProperties(
         parsePpr('<w:pPr><w:ind w:left="720" w:firstLine="180" w:hanging="360"/></w:pPr>'),
       ),
-    ).toEqual({ indentLeftTwips: 720, indentFirstLineTwips: 180 });
+    ).toEqual({ indentLeft: twipsToPt(720), indentFirstLine: twipsToPt(180) });
   });
 
   it('parses w:numPr (numId + ilvl)', () => {

@@ -24,6 +24,7 @@ import type {
   CellBorders,
   Chart,
   ChartBlock,
+  DocumentInfo,
   HeaderFooterReference,
   HeaderFooterType,
   ImageBlock,
@@ -43,12 +44,12 @@ import type {
   TableCell,
   TableProperties,
   TableRow,
-} from '@/document-model';
-import type { FontRegistry, ParsedTtf } from '@/font';
-import type { FamilyKey } from '@/fonts';
-import type { Hyphenator } from '@/hyphenation';
-import type { Item } from '@/line-breaker';
-import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/style-cascade';
+} from '@/core/document-model';
+import type { FontRegistry, ParsedTtf } from '@/core/font';
+import type { FamilyKey } from '@/core/fonts';
+import type { Hyphenator } from '@/core/hyphenation';
+import type { Item } from '@/core/line-breaker';
+import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
 import type {
   ChartLabel,
   ChartPolygon,
@@ -56,37 +57,40 @@ import type {
   ChartRect,
   ChartWedge,
 } from '@/pdf/chart-geometry';
-import type { EmbeddedFont } from '@/pdf/cid-font';
-import type { EmbeddedImage } from '@/pdf/image-xobject';
+import type { EmbeddedImage, PreparedImage } from '@/pdf/image-xobject';
 import type { MathDrawItem, MathVariant, MeasureMath } from '@/pdf/math-layout';
 import type { PdfDict, PdfRef, PdfValue } from '@/pdf/objects';
 import type { PathSegment, StrokeStyle, VectorPath, VectorShape } from '@/pdf/vector-graphics';
 import type { AttachedFile } from '@/pdf/embedded-file';
 import type { StructNode, StructType } from '@/pdf/struct-tree';
 import type { SignaturePlaceholder } from '@/pdf/signature';
-import { shapeText } from '@/font';
-import { resolveFamilyKey } from '@/fonts';
+import type { ResourceId } from '@/core/ir';
+import type { EmbeddedFont, FontMeasure } from '@/pdf/cid-font';
+import { ResourceStore, halfPtToPt } from '@/core/ir';
+import { shapeText } from '@/core/font';
+import { resolveFamilyKey } from '@/core/fonts';
 import {
   analyzeString,
   computeBidi,
   hasBidiCharacters,
   reorderVisual,
   reverseByCodePoint,
-} from '@/bidi';
-import { breakLines } from '@/line-breaker';
-import { NumberingState } from '@/numbering';
+} from '@/core/bidi';
+import { breakLines } from '@/core/line-breaker';
+import { NumberingState } from '@/core/numbering';
 import {
   DEFAULT_RESOLVED_PARAGRAPH,
   DEFAULT_RESOLVED_RUN,
   resolveParagraphProperties,
   resolveRunProperties,
-} from '@/style-cascade';
+} from '@/core/style-cascade';
 
 import { arcPoint, arcToBeziers } from '@/pdf/arc-to-bezier';
 import { buildChartScene } from '@/pdf/chart-geometry';
-import { embedTtfFont } from '@/pdf/cid-font';
+import { createFontMeasure, embedTtfFont } from '@/pdf/cid-font';
 import { buildSrgbIccProfile } from '@/pdf/icc-profile';
-import { embedImage } from '@/pdf/image-xobject';
+import { addImage, prepareImage } from '@/pdf/image-xobject';
+import { emitStyledPdf } from '@/pdf/styled-page-emitter';
 import { layoutMath, mathGlyphSegments, variantStyle } from '@/pdf/math-layout';
 import { dict, name, ref, stream, unicodeString } from '@/pdf/objects';
 import { customPaths, presetPaths, rectPath } from '@/pdf/preset-geometry';
@@ -110,7 +114,7 @@ export type PdfALevel =
   | 'PDF/A-3u'
   | 'PDF/A-3a';
 
-interface PdfAProfile {
+export interface PdfAProfile {
   readonly part: 1 | 2 | 3;
   readonly level: 'a' | 'b' | 'u';
   readonly tagged: boolean; // level a
@@ -147,7 +151,8 @@ export interface StyledRenderOptions {
   // body[sections[N-1].endIndex..sections[N].endIndex)).
   readonly sections?: ReadonlyArray<Section>;
   readonly headersFooters?: ReadonlyMap<string, ReadonlyArray<BodyElement>>;
-  readonly images?: ReadonlyMap<string, Uint8Array>;
+  // Content-addressed binary store; image nodes reference it by ResourceId.
+  readonly resources?: ResourceStore;
   // Parsed charts keyed by relationship id (ChartBlock.chartRelId). Supplied by
   // the converter, which resolves the chart parts from the package.
   readonly charts?: ReadonlyMap<string, Chart>;
@@ -192,21 +197,11 @@ export interface StyledRenderOptions {
   readonly signaturePlaceholder?: SignaturePlaceholder;
 }
 
-export interface DocumentInfo {
-  readonly title?: string;
-  readonly author?: string;
-  readonly subject?: string;
-  readonly keywords?: string;
-  readonly creator?: string;
-  // Producer defaults to "Ream" if not provided.
-  readonly producer?: string;
-  // ISO 8601 dates; converted to PDF date format (D:YYYYMMDDHHmmSS).
-  readonly creationDate?: Date;
-  readonly modificationDate?: Date;
-}
+// Re-exported from the document model (moved there so FlowDoc can carry it).
+export type { DocumentInfo } from '@/core/document-model';
 
-const A4_WIDTH = 595;
-const A4_HEIGHT = 842;
+export const A4_WIDTH = 595;
+export const A4_HEIGHT = 842;
 const TWIP_TO_PT = 1 / 20;
 const EIGHTH_PT = 1 / 8;
 const DEFAULT_CELL_PADDING_TWIPS = 108;
@@ -215,13 +210,17 @@ void DEFAULT_BORDER_SIZE_EIGHTH;
 
 const encoder = new TextEncoder();
 
-interface FontResource {
+export interface FontResource {
   readonly resourceName: string;
   readonly parsed: ParsedTtf;
-  readonly embedded: EmbeddedFont;
+  // Pure measurement/encoding (no PdfDocument): layout measures with this and
+  // emit encodes with it; the PDF font objects are created in the emit phase.
+  readonly measure: FontMeasure;
+  // Glyphs collected by the usage walk — the emit phase subsets to these.
+  readonly gids: ReadonlySet<number>;
 }
 
-interface TextToken {
+export interface TextToken {
   readonly kind: 'text';
   readonly text: string;
   readonly isSpace: boolean;
@@ -234,7 +233,7 @@ interface TextToken {
   readonly bidiLevel: number;
 }
 
-interface ImageToken {
+export interface ImageToken {
   readonly kind: 'image';
   readonly imageResourceName: string;
   readonly widthPt: number;
@@ -271,7 +270,7 @@ type ResolvedMathItem =
 
 // An inline OfficeMath object — an atomic box straddling the baseline (its own
 // ascent/descent extend the line height).
-interface MathToken {
+export interface MathToken {
   readonly kind: 'math';
   readonly items: ReadonlyArray<ResolvedMathItem>;
   readonly widthPt: number;
@@ -281,9 +280,9 @@ interface MathToken {
   readonly bidiLevel: number;
 }
 
-type Token = TextToken | ImageToken | MathToken;
+export type Token = TextToken | ImageToken | MathToken;
 
-interface Line {
+export interface Line {
   readonly tokens: ReadonlyArray<Token>;
   readonly contentWidthPt: number;
   readonly maxFontSizePt: number;
@@ -431,40 +430,151 @@ interface TableBlock {
   readonly xOffsetPt: number;
 }
 
-interface DrawCommand {
-  readonly type: 'line' | 'border' | 'image' | 'fill' | 'shape';
-  // for line
-  readonly line?: Line;
-  readonly originX?: number;
-  readonly baselineY?: number;
-  // for border / fill
-  readonly x?: number;
-  readonly y?: number;
-  readonly width?: number;
-  readonly height?: number;
-  readonly side?: 'top' | 'right' | 'bottom' | 'left';
-  readonly borderSizePt?: number;
-  readonly borderColorHex?: string;
-  // for fill
-  readonly fillColorHex?: string;
-  // for image
-  readonly imageResourceName?: string;
-  // for shape (DrawingML vector geometry)
-  readonly shape?: VectorShape;
-  // Tagged PDF (§14.8): the logical structure node this command's content
-  // belongs to. Set only on body content in tagged mode; undefined content in
-  // the line pass is treated as an artifact. Ignored when not tagging.
+// PageDoc draft items (ir-design §6, stage 3c): the positioned, layout-output
+// vocabulary a page is made of. Coordinates are PDF points in the PDF page
+// frame (y-up, bottom-left origin) for now — the top-left flip and branded Pt
+// coordinates land when the types stabilize against the svg-writer (stage 6).
+export interface PageItemBase {
+  // Tagged PDF (§14.8): the logical structure node this item's content belongs
+  // to. Set only on body content in tagged mode; undefined text in the line
+  // pass is treated as an artifact. Ignored when not tagging.
   readonly structId?: number;
-  // Tagged PDF: explicitly mark this command as a pagination artifact (running
+  // Tagged PDF: explicitly mark this item as a pagination artifact (running
   // header/footer, §14.8.2.2.2). Distinguishes header/footer text from
   // not-yet-tagged body content so it is typed /Artifact /Pagination, never a P.
   readonly artifact?: 'pagination';
+}
+
+// A laid-out line of text (tokens carry their fonts/sizes/positions).
+export interface TextLineItem extends PageItemBase {
+  readonly type: 'line';
+  readonly line: Line;
+  readonly originX: number;
+  readonly baselineY: number;
+}
+
+// One edge of a table-cell frame.
+export interface BorderItem extends PageItemBase {
+  readonly type: 'border';
+  readonly side: 'top' | 'right' | 'bottom' | 'left';
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly borderSizePt: number;
+  readonly borderColorHex: string;
+}
+
+// A filled rectangle (cell shading).
+export interface FillItem extends PageItemBase {
+  readonly type: 'fill';
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly fillColorHex: string;
+}
+
+// A placed raster image (resource name binds to the page XObject dict).
+export interface ImageItem extends PageItemBase {
+  readonly type: 'image';
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly imageResourceName: string;
+}
+
+// DrawingML vector geometry.
+export interface ShapeItem extends PageItemBase {
+  readonly type: 'shape';
+  readonly shape: VectorShape;
+}
+
+export type PageItem = TextLineItem | BorderItem | FillItem | ImageItem | ShapeItem;
+// Canonical paint order of a laid-out page (oop-design §3.2): fills under
+// everything, then images, borders, vector shapes, finally text. ONE owner
+// for every writer (pdf emit, svg, future canvas) — and the switch is
+// exhaustive, so a new PageItem kind refuses to compile until each group
+// has a home. Order within a group is the layout's emission order.
+export interface PagePaintPlan {
+  readonly fills: ReadonlyArray<FillItem>;
+  readonly images: ReadonlyArray<ImageItem>;
+  readonly borders: ReadonlyArray<BorderItem>;
+  readonly shapes: ReadonlyArray<ShapeItem>;
+  readonly lines: ReadonlyArray<TextLineItem>;
+}
+
+export function paintPlan(commands: ReadonlyArray<PageItem>): PagePaintPlan {
+  const fills: Array<FillItem> = [];
+  const images: Array<ImageItem> = [];
+  const borders: Array<BorderItem> = [];
+  const shapes: Array<ShapeItem> = [];
+  const lines: Array<TextLineItem> = [];
+  for (const c of commands) {
+    switch (c.type) {
+      case 'fill':
+        fills.push(c);
+        break;
+      case 'image':
+        images.push(c);
+        break;
+      case 'border':
+        borders.push(c);
+        break;
+      case 'shape':
+        shapes.push(c);
+        break;
+      case 'line':
+        lines.push(c);
+        break;
+      default:
+        assertNeverPageItem(c);
+    }
+  }
+  return { fills, images, borders, shapes, lines };
+}
+
+function assertNeverPageItem(item: never): never {
+  throw new Error(`Unhandled PageItem kind: ${String((item as PageItem).type)}`);
+}
+
+export type DrawCommand = PageItem; // internal alias during the stage-3 migration
+
+// The seam between the two halves of the pipeline (ir-design §6 / stage 3):
+// everything the emit phase needs from layout. `pages` is the PageDoc draft —
+// positioned DrawCommands per page; the resource maps and struct tree ride
+// along until stage 3b/3c make layout PdfDocument-free and the types public.
+export interface LaidOutDocument {
+  readonly pages: ReadonlyArray<LaidOutPage>;
+  // Content-addressed binaries the items reference (images) — ir-design §6.
+  readonly resources: ResourceStore;
+  readonly fontResources: Map<string, FontResource>;
+  readonly imageResources: Map<ResourceId, ImageResource>;
+  readonly structBuilder: StructTreeBuilder | undefined;
+  readonly sectionCtxs: ReadonlyArray<SectionRenderCtx>;
+  readonly pdfaProfile: PdfAProfile | undefined;
+  readonly tagged: boolean;
 }
 
 export function renderStyledPdf(
   body: ReadonlyArray<BodyElement>,
   options: StyledRenderOptions,
 ): Uint8Array {
+  const laid = layoutStyledDocument(body, options);
+  const doc = new PdfDocument();
+  return emitStyledPdf(laid, options, doc);
+}
+
+// Layout phase (@experimental — the FlowDoc→PageDoc transform of ir-design §7):
+// body → positioned pages (PageItems), font/image resources,
+// logical structure. Still takes `doc` because font/image embedding currently
+// happens up-front (the layout measures with the embedded fonts) — stage 3b
+// splits collect/measure from embed and drops the parameter.
+export function layoutStyledDocument(
+  body: ReadonlyArray<BodyElement>,
+  options: StyledRenderOptions,
+): LaidOutDocument {
   const sectionList = resolveSectionList(body, options);
 
   const numberedBody = applyNumbering(body, options.numbering);
@@ -473,14 +583,13 @@ export function renderStyledPdf(
     options.numbering,
   );
 
-  const doc = new PdfDocument();
   // Tagged PDF (ISO 32000-1 §14.8) — implied by PDF/A-1a. When on, paginate
   // builds a logical structure tree and emit marks body text / artifacts.
   const pdfaProfile = options.pdfA ? parsePdfAProfile(options.pdfA) : undefined;
   const tagged = options.tagged === true || (pdfaProfile?.tagged ?? false);
   const structBuilder = tagged ? new StructTreeBuilder() : undefined;
-  const fontResources = embedUsedFonts(doc, numberedBody, numberedHeadersFooters, options);
-  const imageResources = embedUsedImages(doc, numberedBody, numberedHeadersFooters, options);
+  const fontResources = collectFontResources(numberedBody, numberedHeadersFooters, options);
+  const imageResources = collectImageResources(numberedBody, numberedHeadersFooters, options);
 
   // Pre-compute per-section render context (geometry + header/footer bands).
   const sectionCtxs: Array<SectionRenderCtx> = sectionList.map((s) =>
@@ -504,228 +613,28 @@ export function renderStyledPdf(
     );
   });
 
-  const renderedPages = paginateSections(
-    blocks,
-    sectionCtxs,
-    structBuilder,
-    options.language ?? 'en-US',
-  );
+  const pages = paginateSections(blocks, sectionCtxs, structBuilder, options.language ?? 'en-US');
 
-  const pagesDict: PdfDict = dict({ Type: name('Pages'), Count: 0, Kids: [] });
-  const pagesRef = doc.add(pagesDict);
-  // First page's dict object, kept mutable so a signature widget can be added to
-  // its /Annots after the catalog is assembled.
-  let firstPageDict: PdfDict | undefined;
-  const fontResourceDict = buildFontResourceDict(fontResources);
-  const xobjectResourceDict = buildXObjectResourceDict(imageResources);
-  const resourcesDict = dict({
-    Font: fontResourceDict,
-    ...(xobjectResourceDict ? { XObject: xobjectResourceDict } : {}),
-  });
-
-  // PDF/A: build the sRGB ICC stream once — reused by the catalog OutputIntent
-  // and, for PDF/A-2/3, the page transparency-group blend colour space.
-  let pdfaIccRef: PdfRef | undefined;
-  let transparencyGroup: PdfDict | undefined;
-  if (pdfaProfile) {
-    pdfaIccRef = doc.add(stream({ N: 3, Alternate: name('DeviceRGB') }, buildSrgbIccProfile()));
-    if (pdfaProfile.part >= 2) {
-      // PDF/A-2/3 §6.2.4.3 — a page that uses transparency (here, a soft-masked
-      // image) must carry a transparency group with a device-independent blend
-      // colour space; reuse the OutputIntent's ICCBased sRGB.
-      transparencyGroup = dict({
-        S: name('Transparency'),
-        CS: [name('ICCBased'), ref(pdfaIccRef.id)],
-      });
-    }
-  }
-
-  const pageRefs: Array<PdfRef> = [];
-  renderedPages.forEach((page, pageIndex) => {
-    let pageTagging: PageTagging | undefined;
-    if (structBuilder) {
-      const builder = structBuilder;
-      pageTagging = {
-        next: 0,
-        assigned: false,
-        record: (structId, mcid) => builder.addMcref(structId, pageIndex, mcid),
-        tagFor: (structId) => builder.node(structId).type,
-      };
-    }
-    const contentBytes = emitPageContent(page.commands, pageTagging);
-    const contentsRef = doc.add(stream({}, contentBytes));
-    const pageEntries: Record<string, PdfValue> = {
-      Type: name('Page'),
-      Parent: ref(pagesRef.id),
-      MediaBox: [0, 0, page.width, page.height],
-      Resources: resourcesDict,
-      Contents: ref(contentsRef.id),
-    };
-    if (transparencyGroup) pageEntries['Group'] = transparencyGroup;
-    if (pageTagging?.assigned) {
-      // §14.7.4.4 — this page's key into /ParentTree; §14.8.4.2 — structure tab
-      // order so AT navigates in logical, not geometric, order.
-      pageEntries['StructParents'] = pageIndex;
-      pageEntries['Tabs'] = name('S');
-    }
-    const pageDictObj = dict(pageEntries);
-    if (firstPageDict === undefined) firstPageDict = pageDictObj;
-    pageRefs.push(doc.add(pageDictObj));
-  });
-
-  if (pageRefs.length === 0) {
-    // Always emit at least one page (fallback geometry: first section's dims
-    // or A4 if no sections at all).
-    const fallback = sectionCtxs[0] ?? defaultPageCtx();
-    const contentsRef = doc.add(stream({}, new Uint8Array(0)));
-    const fallbackDict = dict({
-      Type: name('Page'),
-      Parent: ref(pagesRef.id),
-      MediaBox: [0, 0, fallback.pageWidth, fallback.pageHeight],
-      Resources: resourcesDict,
-      Contents: ref(contentsRef.id),
-      ...(transparencyGroup ? { Group: transparencyGroup } : {}),
-    });
-    firstPageDict = fallbackDict;
-    pageRefs.push(doc.add(fallbackDict));
-  }
-
-  pagesDict.set('Count', pageRefs.length);
-  pagesDict.set('Kids', pageRefs);
-
-  const catalogEntries: Record<string, PdfValue> = {
-    Type: name('Catalog'),
-    Pages: ref(pagesRef.id),
-  };
-  if (pdfaProfile) {
-    // OutputIntent with the embedded sRGB ICC profile (PDF/A §6.2.2). The same
-    // ICC stream (pdfaIccRef, built above) backs any page transparency group.
-    const outputIntentRef = doc.add(
-      dict({
-        Type: name('OutputIntent'),
-        S: name('GTS_PDFA1'),
-        OutputConditionIdentifier: 'sRGB',
-        Info: 'sRGB IEC61966-2.1',
-        DestOutputProfile: ref(pdfaIccRef!.id),
-      }),
-    );
-    catalogEntries['OutputIntents'] = [ref(outputIntentRef.id)];
-
-    // Document-level XMP metadata carrying the PDF/A identifier (§6.7).
-    const xmpRef = doc.add(
-      stream(
-        { Type: name('Metadata'), Subtype: name('XML') },
-        buildXmpPacket(xmpFromInfo(options.info, options.pdfA)),
-      ),
-    );
-    catalogEntries['Metadata'] = ref(xmpRef.id);
-  }
-  if (tagged && structBuilder) {
-    // Logical structure (§14.8): emit the tree now that every page ref exists,
-    // then point the catalog at it and mark the document as tagged.
-    const structRootRef = structBuilder.emit(doc, pageRefs);
-    catalogEntries['MarkInfo'] = dict({ Marked: true });
-    catalogEntries['StructTreeRoot'] = ref(structRootRef.id);
-    // §14.9.2 — document natural language (from the docx default, else en-US).
-    catalogEntries['Lang'] = options.language ?? 'en-US';
-    // DisplayDocTitle — AT should announce the document title, not the file name
-    // (Matterhorn 06-003 / PDF/UA). Only meaningful when a title is present.
-    if (options.info?.title) {
-      catalogEntries['ViewerPreferences'] = dict({ DisplayDocTitle: true });
-    }
-  }
-  // Associated files (§7.11 / PDF/A-3 §6.8) — allowed for plain PDF and PDF/A-3
-  // only; PDF/A-1/2 forbid arbitrary embedded files, so skip them there.
-  if (options.attachments?.length && (!pdfaProfile || pdfaProfile.part === 3)) {
-    const embedded = options.attachments.map((file) => ({
-      file,
-      ref: embedAssociatedFile(doc, file),
-    }));
-    catalogEntries['AF'] = embedded.map((e) => ref(e.ref.id));
-    // /Names /EmbeddedFiles name tree, keyed by file name (sorted → deterministic).
-    const sorted = [...embedded].sort((a, b) =>
-      a.file.name < b.file.name ? -1 : a.file.name > b.file.name ? 1 : 0,
-    );
-    const names: Array<PdfValue> = [];
-    for (const e of sorted) names.push(e.file.name, ref(e.ref.id));
-    const embeddedFilesRef = doc.add(dict({ Names: names }));
-    catalogEntries['Names'] = dict({ EmbeddedFiles: ref(embeddedFilesRef.id) });
-  }
-  // Digital signature placeholder (§12.8): an invisible /Sig widget on page 1,
-  // an /AcroForm in the catalog, and a signature dict with placeholder
-  // ByteRange/Contents that signPdf() fills. The unsigned placeholder is emitted
-  // here; the crypto happens afterwards (async) so the writer stays sync.
-  if (options.signaturePlaceholder && firstPageDict) {
-    const { fieldRef, acroForm } = addSignaturePlaceholder(
-      doc,
-      options.signaturePlaceholder,
-      pageRefs[0]!,
-    );
-    firstPageDict.set('Annots', [ref(fieldRef.id)]);
-    catalogEntries['AcroForm'] = acroForm;
-  }
-
-  const catalogRef = doc.add(dict(catalogEntries));
-  const infoRef = buildInfoDict(doc, options.info);
-  return doc.build(catalogRef, infoRef, {
-    ...(pdfaProfile ? { version: pdfaProfile.version, id: true } : {}),
-  });
-}
-
-const DEFAULT_PRODUCER = 'Ream';
-
-function xmpFromInfo(
-  info: DocumentInfo | undefined,
-  pdfA: PdfALevel | undefined,
-): Parameters<typeof buildXmpPacket>[0] {
-  const p = pdfA ? parsePdfAProfile(pdfA) : undefined;
   return {
-    pdfaPart: p ? (String(p.part) as '1' | '2' | '3') : '1',
-    pdfaConformance: p ? (p.level.toUpperCase() as 'A' | 'B' | 'U') : 'B',
-    producer: info?.producer ?? DEFAULT_PRODUCER,
-    ...(info?.title ? { title: info.title } : {}),
-    ...(info?.author ? { author: info.author } : {}),
-    ...(info?.subject ? { subject: info.subject } : {}),
-    ...(info?.keywords ? { keywords: info.keywords } : {}),
-    ...(info?.creator ? { creator: info.creator } : {}),
-    ...(info?.creationDate ? { createDate: info.creationDate } : {}),
-    ...(info?.modificationDate ? { modifyDate: info.modificationDate } : {}),
+    pages,
+    resources: options.resources ?? new ResourceStore(),
+    fontResources,
+    imageResources,
+    structBuilder,
+    sectionCtxs,
+    pdfaProfile,
+    tagged,
   };
 }
 
-function buildInfoDict(doc: PdfDocument, info: DocumentInfo | undefined): PdfRef | undefined {
-  const merged: DocumentInfo = {
-    ...info,
-    producer: info?.producer ?? DEFAULT_PRODUCER,
-  };
-  const entries: Record<string, PdfValue> = {};
-  if (merged.title) entries['Title'] = unicodeString(merged.title);
-  if (merged.author) entries['Author'] = unicodeString(merged.author);
-  if (merged.subject) entries['Subject'] = unicodeString(merged.subject);
-  if (merged.keywords) entries['Keywords'] = unicodeString(merged.keywords);
-  if (merged.creator) entries['Creator'] = unicodeString(merged.creator);
-  // Producer always emitted (defaulted above).
-  entries['Producer'] = unicodeString(merged.producer!);
-  if (merged.creationDate) entries['CreationDate'] = formatPdfDate(merged.creationDate);
-  if (merged.modificationDate) entries['ModDate'] = formatPdfDate(merged.modificationDate);
-  return doc.add(dict(entries));
-}
+// Emit phase: PageDoc draft → PDF objects (content streams, page dicts,
+// catalog, PDF/A apparatus, structure tree, signature placeholder) → bytes.
 
-// ISO 32000-1 §7.9.4 — PDF date string `D:YYYYMMDDHHmmSSOHH'mm'` where O is
-// +/-/Z. We always emit UTC ("Z") so the formatter stays deterministic and
-// the output is timezone-independent.
-function formatPdfDate(d: Date): string {
-  const pad = (n: number, w = 2) => String(n).padStart(w, '0');
-  const yyyy = pad(d.getUTCFullYear(), 4);
-  const MM = pad(d.getUTCMonth() + 1);
-  const DD = pad(d.getUTCDate());
-  const hh = pad(d.getUTCHours());
-  const mm = pad(d.getUTCMinutes());
-  const ss = pad(d.getUTCSeconds());
-  return `D:${yyyy}${MM}${DD}${hh}${mm}${ss}Z`;
-}
-
-interface PageDimensions {
+// Priority for page geometry:
+//   1. explicit value in StyledRenderOptions (test/library caller override)
+//   2. value from section properties (sectPr/pgSz/pgMar from the docx)
+//   3. A4 + 1-inch margins fallback
+export interface PageDimensions {
   readonly pageWidth: number;
   readonly pageHeight: number;
   readonly marginLeft: number;
@@ -736,32 +645,18 @@ interface PageDimensions {
   readonly footerOffsetPt: number;
 }
 
-// Priority for page geometry:
-//   1. explicit value in StyledRenderOptions (test/library caller override)
-//   2. value from section properties (sectPr/pgSz/pgMar from the docx)
-//   3. A4 + 1-inch margins fallback
 function resolvePageDimensions(
   options: StyledRenderOptions,
   section: SectionProperties | undefined,
 ): PageDimensions {
-  const sectionPageWidth =
-    section?.pageSize !== undefined ? section.pageSize.widthTwips * TWIP_TO_PT : undefined;
-  const sectionPageHeight =
-    section?.pageSize !== undefined ? section.pageSize.heightTwips * TWIP_TO_PT : undefined;
-  const sectionLeft =
-    section?.margins?.leftTwips !== undefined ? section.margins.leftTwips * TWIP_TO_PT : undefined;
-  const sectionRight =
-    section?.margins?.rightTwips !== undefined
-      ? section.margins.rightTwips * TWIP_TO_PT
-      : undefined;
-  const sectionTop =
-    section?.margins?.topTwips !== undefined ? section.margins.topTwips * TWIP_TO_PT : undefined;
-  const sectionBottom =
-    section?.margins?.bottomTwips !== undefined
-      ? section.margins.bottomTwips * TWIP_TO_PT
-      : undefined;
-  const headerOffsetPt = (section?.margins?.headerTwips ?? 720) * TWIP_TO_PT;
-  const footerOffsetPt = (section?.margins?.footerTwips ?? 720) * TWIP_TO_PT;
+  const sectionPageWidth = section?.pageSize !== undefined ? section.pageSize.width : undefined;
+  const sectionPageHeight = section?.pageSize !== undefined ? section.pageSize.height : undefined;
+  const sectionLeft = section?.margins?.left !== undefined ? section.margins.left : undefined;
+  const sectionRight = section?.margins?.right !== undefined ? section.margins.right : undefined;
+  const sectionTop = section?.margins?.top !== undefined ? section.margins.top : undefined;
+  const sectionBottom = section?.margins?.bottom !== undefined ? section.margins.bottom : undefined;
+  const headerOffsetPt = section?.margins?.header ?? 720 * TWIP_TO_PT;
+  const footerOffsetPt = section?.margins?.footer ?? 720 * TWIP_TO_PT;
 
   return {
     pageWidth: options.pageWidth ?? sectionPageWidth ?? A4_WIDTH,
@@ -775,7 +670,7 @@ function resolvePageDimensions(
   };
 }
 
-interface SectionRenderCtx {
+export interface SectionRenderCtx {
   readonly endIndex: number;
   readonly properties: SectionProperties;
   readonly pageWidth: number;
@@ -789,24 +684,6 @@ interface SectionRenderCtx {
   readonly footerSet: HeaderFooterSet;
   readonly titlePg: boolean;
   readonly evenAndOddHeaders: boolean;
-}
-
-function defaultPageCtx(): SectionRenderCtx {
-  return {
-    endIndex: 0,
-    properties: { headers: [], footers: [] },
-    pageWidth: A4_WIDTH,
-    pageHeight: A4_HEIGHT,
-    marginLeft: 72,
-    marginTop: 72,
-    marginBottom: 72,
-    contentWidth: A4_WIDTH - 144,
-    pageContentHeight: A4_HEIGHT - 144,
-    headerSet: { default: [], first: [], even: [] },
-    footerSet: { default: [], first: [], even: [] },
-    titlePg: false,
-    evenAndOddHeaders: false,
-  };
 }
 
 // Pick the final list of sections to render. Precedence:
@@ -1019,9 +896,11 @@ function layoutBodyElement(
   );
 }
 
-interface ImageResource {
+export interface ImageResource {
   readonly resourceName: string;
-  readonly ref: PdfRef;
+  // Decoded/validated at layout time (the probe); the emit phase replays it
+  // without touching the source bytes again.
+  readonly prepared: PreparedImage;
 }
 
 // 1 inch = 914400 EMU = 72 pt, so 1 pt = 12700 EMU.
@@ -1032,14 +911,14 @@ function layoutImageBlock(
   imageResources: ReadonlyMap<string, ImageResource> | undefined,
   contentWidth: number,
 ): ImageBlockLaidOut {
-  let widthPt = image.widthEmu / EMU_PER_PT;
-  let heightPt = image.heightEmu / EMU_PER_PT;
+  let widthPt: number = image.width;
+  let heightPt: number = image.height;
   if (widthPt > contentWidth) {
     const scale = contentWidth / widthPt;
     widthPt = contentWidth;
     heightPt = heightPt * scale;
   }
-  const res = imageResources?.get(image.imageId);
+  const res = image.resource ? imageResources?.get(image.resource) : undefined;
   const resolvedAlignment = image.paragraphProperties.alignment ?? 'left';
   return {
     kind: 'image',
@@ -1047,8 +926,8 @@ function layoutImageBlock(
     heightPt,
     resolvedAlignment,
     resourceName: res?.resourceName ?? '',
-    spacingBeforePt: (image.paragraphProperties.spacingBeforeTwips ?? 0) * TWIP_TO_PT,
-    spacingAfterPt: (image.paragraphProperties.spacingAfterTwips ?? 0) * TWIP_TO_PT,
+    spacingBeforePt: image.paragraphProperties.spacingBefore ?? 0,
+    spacingAfterPt: image.paragraphProperties.spacingAfter ?? 0,
     ...(image.altText ? { altText: image.altText } : {}),
   };
 }
@@ -1068,8 +947,8 @@ function layoutShapeBlock(
   contentWidth: number,
   maxHeight?: number,
 ): ShapeBlockLaidOut {
-  let widthPt = shape.widthEmu / EMU_PER_PT;
-  let heightPt = shape.heightEmu / EMU_PER_PT;
+  let widthPt: number = shape.width;
+  let heightPt: number = shape.height;
   // Clamp width to the content area like images, scaling height to keep aspect.
   if (widthPt > contentWidth && widthPt > 0) {
     const scale = contentWidth / widthPt;
@@ -1090,10 +969,10 @@ function layoutShapeBlock(
   const pp = shape.paragraphProperties;
 
   const text = shape.text;
-  const insetLeftPt = (text?.insetLeftEmu ?? DEFAULT_INSET_LR_EMU) / EMU_PER_PT;
-  const insetRightPt = (text?.insetRightEmu ?? DEFAULT_INSET_LR_EMU) / EMU_PER_PT;
-  const insetTopPt = (text?.insetTopEmu ?? DEFAULT_INSET_TB_EMU) / EMU_PER_PT;
-  const insetBottomPt = (text?.insetBottomEmu ?? DEFAULT_INSET_TB_EMU) / EMU_PER_PT;
+  const insetLeftPt = text?.insetLeft ?? DEFAULT_INSET_LR_EMU / EMU_PER_PT;
+  const insetRightPt = text?.insetRight ?? DEFAULT_INSET_LR_EMU / EMU_PER_PT;
+  const insetTopPt = text?.insetTop ?? DEFAULT_INSET_TB_EMU / EMU_PER_PT;
+  const insetBottomPt = text?.insetBottom ?? DEFAULT_INSET_TB_EMU / EMU_PER_PT;
   const textLines: Array<Line> = [];
   let textHeightPt = 0;
   if (text && text.content.length > 0) {
@@ -1126,8 +1005,8 @@ function layoutShapeBlock(
     flipH: t?.flipH ?? false,
     flipV: t?.flipV ?? false,
     resolvedAlignment: pp.alignment ?? 'left',
-    spacingBeforePt: (pp.spacingBeforeTwips ?? 0) * TWIP_TO_PT,
-    spacingAfterPt: (pp.spacingAfterTwips ?? 0) * TWIP_TO_PT,
+    spacingBeforePt: pp.spacingBefore ?? 0,
+    spacingAfterPt: pp.spacingAfter ?? 0,
     textLines,
     textHeightPt,
     insetLeftPt,
@@ -1159,7 +1038,7 @@ function buildShapePaths(
 
 function buildStroke(line: ShapeLine | undefined): StrokeStyle | undefined {
   if (!line || line.fill === 'none') return undefined;
-  const widthPt = (line.widthEmu ?? DEFAULT_LINE_WIDTH_EMU) / EMU_PER_PT;
+  const widthPt = line.width ?? DEFAULT_LINE_WIDTH_EMU / EMU_PER_PT;
   const dash = line.dash && line.dash !== 'solid' ? dashPattern(line.dash, widthPt) : undefined;
   // DrawingML 'flat' cap is PDF butt; round/square map straight through.
   const cap: StrokeStyle['cap'] | undefined = line.cap === 'flat' ? 'butt' : line.cap;
@@ -1232,8 +1111,8 @@ function layoutChartBlock(
   contentWidth: number,
   maxHeight?: number,
 ): ChartBlockLaidOut {
-  let widthPt = block.widthEmu / EMU_PER_PT;
-  let heightPt = block.heightEmu / EMU_PER_PT;
+  let widthPt: number = block.width;
+  let heightPt: number = block.height;
   if (widthPt > contentWidth && widthPt > 0) {
     const scale = contentWidth / widthPt;
     widthPt = contentWidth;
@@ -1258,8 +1137,8 @@ function layoutChartBlock(
     heightPt,
     layout,
     resolvedAlignment: pp.alignment ?? 'left',
-    spacingBeforePt: (pp.spacingBeforeTwips ?? 0) * TWIP_TO_PT,
-    spacingAfterPt: (pp.spacingAfterTwips ?? 0) * TWIP_TO_PT,
+    spacingBeforePt: pp.spacingBefore ?? 0,
+    spacingAfterPt: pp.spacingAfter ?? 0,
     ...(altText ? { altText } : {}),
   };
 }
@@ -1273,7 +1152,7 @@ function buildChartLayout(
   heightPt: number,
   font: FontResource,
 ): ChartLayout {
-  const measure = (text: string, sizePt: number): number => font.embedded.textWidthPt(text, sizePt);
+  const measure = (text: string, sizePt: number): number => font.measure.textWidthPt(text, sizePt);
   const scene = buildChartScene(chart, widthPt, heightPt, measure);
   if (!scene) {
     return {
@@ -1356,12 +1235,16 @@ function makeChartLabelLine(
   sizePt: number,
   colorHex: string,
 ): Line {
-  const widthPt = font.embedded.textWidthPt(text, sizePt);
+  const widthPt = font.measure.textWidthPt(text, sizePt);
   const token: TextToken = {
     kind: 'text',
     text,
     isSpace: false,
-    resolvedRun: { ...DEFAULT_RESOLVED_RUN, colorHex, fontSizeHalfPoints: Math.round(sizePt * 2) },
+    resolvedRun: {
+      ...DEFAULT_RESOLVED_RUN,
+      colorHex,
+      fontSizePt: halfPtToPt(Math.round(sizePt * 2)),
+    },
     font,
     fontSizePt: sizePt,
     widthPt,
@@ -1378,23 +1261,22 @@ function makeChartLabelLine(
   };
 }
 
-function embedUsedImages(
-  doc: PdfDocument,
+function collectImageResources(
   body: ReadonlyArray<BodyElement>,
   headersFooters: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
   options: StyledRenderOptions,
-): Map<string, ImageResource> {
-  const out = new Map<string, ImageResource>();
-  if (!options.images || options.images.size === 0) return out;
+): Map<ResourceId, ImageResource> {
+  const out = new Map<ResourceId, ImageResource>();
+  if (!options.resources || options.resources.size === 0) return out;
 
-  const seen = new Set<string>();
+  const seen = new Set<ResourceId>();
   const visit = (elements: ReadonlyArray<BodyElement>) => {
     for (const el of elements) {
       if (el.kind === 'image') {
-        seen.add(el.image.imageId);
+        if (el.image.resource) seen.add(el.image.resource);
       } else if (el.kind === 'paragraph') {
         for (const run of el.paragraph.runs) {
-          if (run.inlineImage) seen.add(run.inlineImage.imageId);
+          if (run.inlineImage?.resource) seen.add(run.inlineImage.resource);
         }
       } else if (el.kind === 'table') {
         for (const row of el.table.rows) {
@@ -1411,21 +1293,22 @@ function embedUsedImages(
   // Only PDF/A-1 forbids transparency; PDF/A-2/3 keep the image soft mask.
   const flattenAlpha = options.pdfA ? parsePdfAProfile(options.pdfA).part === 1 : false;
   let counter = 0;
-  for (const imageId of seen) {
-    const bytes = options.images.get(imageId);
+  for (const resourceId of seen) {
+    const bytes = options.resources.get(resourceId);
     if (!bytes) continue;
     // An unsupported or corrupt image must not abort the whole document — skip
-    // it. It then has no resource, so the emit phase draws nothing for it (its
-    // layout box still reserves space). Lets a doc with one bad image render the
-    // rest, instead of throwing.
-    let embedded: EmbeddedImage;
+    // it. It then has no resource name, so nothing is drawn for it (its layout
+    // box still reserves space). prepareImage is the pure decode/validate
+    // expert; the emit phase replays its result, so skip semantics match by
+    // construction.
+    let prepared: PreparedImage;
     try {
-      embedded = embedImage(doc, bytes, { flattenAlpha });
+      prepared = prepareImage(bytes, { flattenAlpha });
     } catch {
       continue;
     }
     counter++;
-    out.set(imageId, { resourceName: `Im${counter}`, ref: embedded.ref });
+    out.set(resourceId, { resourceName: `Im${counter}`, prepared });
   }
   return out;
 }
@@ -1446,8 +1329,7 @@ function drawBlocksSequentially(
       const h = computeLineHeight(line, block.resolved);
       cursorY -= h;
       const indentLeft =
-        block.resolved.indentLeftTwips * TWIP_TO_PT +
-        (line.firstLine ? block.resolved.indentFirstLineTwips * TWIP_TO_PT : 0);
+        block.resolved.indentLeft + (line.firstLine ? block.resolved.indentFirstLine : 0);
       const offset = alignmentOffset(
         block.resolved.alignment,
         line.contentWidthPt,
@@ -1469,7 +1351,7 @@ function drawBlocksSequentially(
 // marker Run (e.g. "1.", "•") plus a tab to every paragraph that references
 // a list level. The level's pPr indent is applied if the paragraph has no
 // indent of its own — that pushes the body text right of the marker, while a
-// hanging indent (negative indentFirstLineTwips) places the marker itself
+// hanging indent (negative indentFirstLine) places the marker itself
 // to the left of the body indent.
 function applyNumbering(
   body: ReadonlyArray<BodyElement>,
@@ -1530,14 +1412,14 @@ function mergeIndentFromLevel(
   const out: { -readonly [K in keyof ParagraphProperties]: ParagraphProperties[K] } = {
     ...paragraphProps,
   };
-  if (out.indentLeftTwips === undefined && levelProps.indentLeftTwips !== undefined) {
-    out.indentLeftTwips = levelProps.indentLeftTwips;
+  if (out.indentLeft === undefined && levelProps.indentLeft !== undefined) {
+    out.indentLeft = levelProps.indentLeft;
   }
-  if (out.indentRightTwips === undefined && levelProps.indentRightTwips !== undefined) {
-    out.indentRightTwips = levelProps.indentRightTwips;
+  if (out.indentRight === undefined && levelProps.indentRight !== undefined) {
+    out.indentRight = levelProps.indentRight;
   }
-  if (out.indentFirstLineTwips === undefined && levelProps.indentFirstLineTwips !== undefined) {
-    out.indentFirstLineTwips = levelProps.indentFirstLineTwips;
+  if (out.indentFirstLine === undefined && levelProps.indentFirstLine !== undefined) {
+    out.indentFirstLine = levelProps.indentFirstLine;
   }
   return out;
 }
@@ -1583,8 +1465,7 @@ function lookupFont(resources: ReadonlyMap<string, FontResource>, fontKey: strin
   return resources.get(fontKey) ?? resources.values().next().value!;
 }
 
-function embedUsedFonts(
-  doc: PdfDocument,
+function collectFontResources(
   body: ReadonlyArray<BodyElement>,
   headersFooters: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
   options: StyledRenderOptions,
@@ -1683,36 +1564,19 @@ function embedUsedFonts(
     used.set(regular.variant, { parsed: regular.parsed, gids: new Set([0]) });
   }
 
-  // PDF/A-1 requires a /CIDSet; PDF/A-2/3 and non-PDF/A omit it.
-  const cidSet = options.pdfA ? parsePdfAProfile(options.pdfA).part === 1 : false;
   const out = new Map<string, FontResource>();
   let counter = 0;
   for (const [variant, info] of used) {
     counter++;
     const resourceName = `F${counter}`;
-    const embedded = embedTtfFont(doc, info.parsed, { usedGids: info.gids, cidSet });
-    out.set(variant, { resourceName, parsed: info.parsed, embedded });
+    out.set(variant, {
+      resourceName,
+      parsed: info.parsed,
+      measure: createFontMeasure(info.parsed),
+      gids: info.gids,
+    });
   }
   return out;
-}
-
-function buildFontResourceDict(resources: ReadonlyMap<string, FontResource>): PdfDict {
-  const entries: Record<string, PdfRef> = {};
-  for (const res of resources.values()) {
-    entries[res.resourceName] = ref(res.embedded.fontRef.id);
-  }
-  return dict(entries);
-}
-
-function buildXObjectResourceDict(
-  resources: ReadonlyMap<string, ImageResource>,
-): PdfDict | undefined {
-  if (resources.size === 0) return undefined;
-  const entries: Record<string, PdfRef> = {};
-  for (const res of resources.values()) {
-    entries[res.resourceName] = ref(res.ref.id);
-  }
-  return dict(entries);
 }
 
 function layoutParagraphBlock(
@@ -1751,8 +1615,8 @@ function layoutParagraphBlock(
     resolved,
     lines,
     heightPt,
-    spacingBeforePt: resolved.spacingBeforeTwips * TWIP_TO_PT,
-    spacingAfterPt: resolved.spacingAfterTwips * TWIP_TO_PT,
+    spacingBeforePt: resolved.spacingBefore,
+    spacingAfterPt: resolved.spacingAfter,
     ...(numbering ? { list: { numId: numbering.numId, level: numbering.ilvl } } : {}),
     ...(paragraph.runs.some((r) => r.pageBreak) ? { pageBreakAfter: true } : {}),
   };
@@ -1823,11 +1687,13 @@ function tokenizeParagraph(
   // First pass — resolve each run's style and decide image vs text.
   const plans: Array<RunPlan> = paragraph.runs.map((run) => {
     if (run.inlineImage) {
-      const naturalW = run.inlineImage.widthEmu / EMU_PER_PT;
+      const naturalW = run.inlineImage.width;
       const widthPt = Math.min(naturalW, contentWidth);
       const scale = naturalW > 0 ? widthPt / naturalW : 1;
-      const heightPt = (run.inlineImage.heightEmu / EMU_PER_PT) * scale;
-      const res = imageResources?.get(run.inlineImage.imageId);
+      const heightPt = run.inlineImage.height * scale;
+      const res = run.inlineImage.resource
+        ? imageResources?.get(run.inlineImage.resource)
+        : undefined;
       const resolvedRun = resolveRunProperties(
         run.properties,
         paragraph.properties,
@@ -1843,7 +1709,7 @@ function tokenizeParagraph(
         run,
         resolvedRun,
         font: lookupFont(fontResources, fontKey),
-        fontSizePt: resolvedRun.fontSizeHalfPoints / 2,
+        fontSizePt: resolvedRun.fontSizePt,
         isImage: true,
         imageWidthPt: widthPt,
         imageHeightPt: heightPt,
@@ -1856,7 +1722,7 @@ function tokenizeParagraph(
         paragraph.properties,
         options.styles,
       );
-      const sizePt = resolvedRun.fontSizeHalfPoints / 2;
+      const sizePt = resolvedRun.fontSizePt;
       const fontFor = (v: MathVariant): FontResource => {
         const { bold, italic } = variantStyle(v);
         const r = options.registry.resolveByStyle(bold, italic);
@@ -1865,7 +1731,7 @@ function tokenizeParagraph(
           fontResources.get(options.registry.resolveByStyle(false, false).variant)!
         );
       };
-      const measure: MeasureMath = (text, sz, v) => fontFor(v).embedded.textWidthPt(text, sz);
+      const measure: MeasureMath = (text, sz, v) => fontFor(v).measure.textWidthPt(text, sz);
       const box = layoutMath(run.math, { sizePt }, measure);
       const { variant } = options.registry.resolveByStyle(resolvedRun.bold, resolvedRun.italic);
       return {
@@ -1896,7 +1762,7 @@ function tokenizeParagraph(
       run,
       resolvedRun,
       font: lookupFont(fontResources, fontKey),
-      fontSizePt: resolvedRun.fontSizeHalfPoints / 2,
+      fontSizePt: resolvedRun.fontSizePt,
       isImage: false,
       imageWidthPt: 0,
       imageHeightPt: 0,
@@ -1993,7 +1859,7 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         resolvedRun: plan.resolvedRun,
         font: plan.font,
         fontSizePt: plan.fontSizePt,
-        widthPt: plan.font.embedded.textWidthPt(t.text, plan.fontSizePt),
+        widthPt: plan.font.measure.textWidthPt(t.text, plan.fontSizePt),
         bidiLevel: 0,
       });
     }
@@ -2051,7 +1917,7 @@ function tokenizePlansBidi(
         resolvedRun: plan.resolvedRun,
         font: plan.font,
         fontSizePt: plan.fontSizePt,
-        widthPt: plan.font.embedded.textWidthPt(text, plan.fontSizePt),
+        widthPt: plan.font.measure.textWidthPt(text, plan.fontSizePt),
         bidiLevel: curLevel,
       });
     };
@@ -2098,9 +1964,9 @@ function paragraphMaxWidth(
   contentWidth: number,
   firstLine: boolean,
 ): number {
-  const indentLeft = p.indentLeftTwips * TWIP_TO_PT;
-  const indentRight = p.indentRightTwips * TWIP_TO_PT;
-  const firstLineExtra = firstLine ? p.indentFirstLineTwips * TWIP_TO_PT : 0;
+  const indentLeft = p.indentLeft;
+  const indentRight = p.indentRight;
+  const firstLineExtra = firstLine ? p.indentFirstLine : 0;
   return Math.max(1, contentWidth - indentLeft - indentRight - firstLineExtra);
 }
 
@@ -2179,12 +2045,12 @@ function wrap(
       pushItem({ type: 'box', width: tok.widthPt }, tok);
       continue;
     }
-    const hyphenWidth = tok.font.embedded.textWidthPt('-', tok.fontSizePt);
+    const hyphenWidth = tok.font.measure.textWidthPt('-', tok.fontSizePt);
     let prev = 0;
     for (let pi = 0; pi <= positions.length; pi++) {
       const end = pi < positions.length ? positions[pi]! : tok.text.length;
       const fragText = tok.text.substring(prev, end);
-      const fragWidth = tok.font.embedded.textWidthPt(fragText, tok.fontSizePt);
+      const fragWidth = tok.font.measure.textWidthPt(fragText, tok.fontSizePt);
       const fragTok: Token = {
         kind: 'text',
         text: fragText,
@@ -2288,13 +2154,17 @@ function computeLineHeight(line: Line, p: ResolvedParagraphProperties): number {
   // hold its full ascent+descent (plus a little leading).
   const mathH = (line.mathAscentPt ?? 0) + (line.mathDescentPt ?? 0);
   const mathNeed = mathH > 0 ? mathH * 1.05 : 0;
-  if (p.spacingLineRule === 'exact' && p.spacingLineTwips > 0) {
-    return Math.max(p.spacingLineTwips * TWIP_TO_PT, mathNeed);
+  if (p.spacingLineRule === 'exact' && p.spacingLine > 0) {
+    return Math.max(p.spacingLine, mathNeed);
   }
-  if (p.spacingLineRule === 'atLeast' && p.spacingLineTwips > 0) {
-    return Math.max(fontSize * 1.2, p.spacingLineTwips * TWIP_TO_PT, mathNeed);
+  if (p.spacingLineRule === 'atLeast' && p.spacingLine > 0) {
+    return Math.max(fontSize * 1.2, p.spacingLine, mathNeed);
   }
-  const multiple = p.spacingLineTwips > 0 ? p.spacingLineTwips / 240 : 1;
+  // "Multiple" spacing is defined in 240ths (240 twips = single). Recover the
+  // integer twips before dividing — historically this divided the raw int, and
+  // (twips*(1/20))/12 differs from twips/240 in the last ulp.
+  const lineTwips = Math.round(p.spacingLine * 20);
+  const multiple = lineTwips > 0 ? lineTwips / 240 : 1;
   return Math.max(fontSize * 1.2 * multiple, mathNeed);
 }
 
@@ -2321,7 +2191,11 @@ function layoutTableBlock(
   contentWidth: number,
 ): TableBlock {
   const columnWidthsPt = computeColumnWidths(table, options, fontResources, contentWidth);
-  const mergeRoles = computeMergeRoles(table);
+  // Vertical-merge roles are resolved by the readers (CellProperties.merge);
+  // standalone cells carry no marker.
+  const mergeRoles: Array<Array<MergeRole>> = table.rows.map((r) =>
+    r.cells.map((c) => c.properties.merge ?? 'standalone'),
+  );
 
   const rows: Array<RowLayout> = [];
   const colCount = columnWidthsPt.length;
@@ -2345,7 +2219,7 @@ function layoutTableBlock(
     const nextAbove: Array<CellBorders | undefined> = [];
     let ci = 0;
     for (const cell of table.rows[r]!.cells) {
-      const span = Math.max(1, cell.properties.gridSpan ?? 1);
+      const span = Math.max(1, cell.properties.colSpan ?? 1);
       for (let k = 0; k < span; k++) nextAbove[ci + k] = cell.properties.borders;
       ci += span;
     }
@@ -2379,54 +2253,6 @@ function tableXOffset(
   return alignment === 'center' ? slack / 2 : slack;
 }
 
-// ECMA-376 §17.4.85 (vMerge).  Walk each logical column top-down and tag
-// every cell with its position in a vertical merge group:
-//   start    — vMerge="restart" with at least one following "continue"
-//   middle   — vMerge="continue" with another "continue" right after
-//   end      — vMerge="continue" terminating a group (next column slot
-//              has restart, no vMerge, or no row)
-//   standalone — anything else
-function computeMergeRoles(table: Table): Array<Array<MergeRole>> {
-  const out: Array<Array<MergeRole>> = table.rows.map((r) =>
-    new Array<MergeRole>(r.cells.length).fill('standalone'),
-  );
-
-  const colSlots = new Map<
-    number,
-    Array<{ rowIdx: number; cellIdx: number; vMerge: 'restart' | 'continue' | undefined }>
-  >();
-  for (let rowIdx = 0; rowIdx < table.rows.length; rowIdx++) {
-    const row = table.rows[rowIdx]!;
-    let colIdx = 0;
-    for (let cellIdx = 0; cellIdx < row.cells.length; cellIdx++) {
-      const cell = row.cells[cellIdx]!;
-      let arr = colSlots.get(colIdx);
-      if (!arr) {
-        arr = [];
-        colSlots.set(colIdx, arr);
-      }
-      arr.push({ rowIdx, cellIdx, vMerge: cell.properties.vMerge });
-      colIdx += Math.max(1, cell.properties.gridSpan ?? 1);
-    }
-  }
-
-  for (const slots of colSlots.values()) {
-    for (let i = 0; i < slots.length; i++) {
-      const cur = slots[i]!;
-      const next = slots[i + 1];
-      const nextIsContinue = !!next && next.vMerge === 'continue';
-      let role: MergeRole = 'standalone';
-      if (cur.vMerge === 'restart') {
-        role = nextIsContinue ? 'start' : 'standalone';
-      } else if (cur.vMerge === 'continue') {
-        role = nextIsContinue ? 'middle' : 'end';
-      }
-      out[cur.rowIdx]![cur.cellIdx] = role;
-    }
-  }
-  return out;
-}
-
 // ECMA-376 Part 1 §17.4.20 — tblLayout.
 //   "fixed"     → use tblGrid widths verbatim (scaled to tblW if set)
 //   "auto"|absent → auto-fit: column widths derived from cell content widths;
@@ -2440,7 +2266,7 @@ function computeColumnWidths(
   let colCount = table.grid.length;
   for (const row of table.rows) {
     let rowCols = 0;
-    for (const cell of row.cells) rowCols += Math.max(1, cell.properties.gridSpan ?? 1);
+    for (const cell of row.cells) rowCols += Math.max(1, cell.properties.colSpan ?? 1);
     if (rowCols > colCount) colCount = rowCols;
   }
   if (colCount === 0) return [];
@@ -2454,15 +2280,15 @@ function computeColumnWidths(
     let colIdx = 0;
     for (let i = 0; i < row.cells.length; i++) {
       const cell = row.cells[i]!;
-      const span = Math.max(1, cell.properties.gridSpan ?? 1);
+      const span = Math.max(1, cell.properties.colSpan ?? 1);
       const padLeft =
-        (cell.properties.margins?.leftTwips ??
-          table.properties.defaultCellMargins?.leftTwips ??
-          DEFAULT_CELL_PADDING_TWIPS) * TWIP_TO_PT;
+        cell.properties.margins?.left ??
+        table.properties.defaultCellMargins?.left ??
+        DEFAULT_CELL_PADDING_TWIPS * TWIP_TO_PT;
       const padRight =
-        (cell.properties.margins?.rightTwips ??
-          table.properties.defaultCellMargins?.rightTwips ??
-          DEFAULT_CELL_PADDING_TWIPS) * TWIP_TO_PT;
+        cell.properties.margins?.right ??
+        table.properties.defaultCellMargins?.right ??
+        DEFAULT_CELL_PADDING_TWIPS * TWIP_TO_PT;
       let maxContent = 0;
       for (const el of cell.content) {
         if (el.kind !== 'paragraph') continue;
@@ -2496,11 +2322,19 @@ function computeColumnWidths(
   return colNaturalWidths;
 }
 
+// Recover the integer twips behind a Pt grid column. Grid ratios and sums were
+// historically computed on the raw ints; float-summing the Pt values instead
+// would drift in the last ulp and break the byte-identical gate.
+function gridColTwips(table: Table): Array<number> {
+  return table.grid.map((w) => Math.round(w * 20));
+}
+
 function gridWidthsScaled(table: Table, contentWidth: number, colCount: number): Array<number> {
-  const totalGridTwips = table.grid.reduce((s, w) => s + w, 0);
+  const gridTwips = gridColTwips(table);
+  const totalGridTwips = gridTwips.reduce((s, w) => s + w, 0);
   if (totalGridTwips > 0) {
     const target = totalTableTarget(table, contentWidth);
-    return table.grid.map((w) => (w / totalGridTwips) * target);
+    return gridTwips.map((w) => (w / totalGridTwips) * target);
   }
   const each = contentWidth / colCount;
   return new Array<number>(colCount).fill(each);
@@ -2509,16 +2343,17 @@ function gridWidthsScaled(table: Table, contentWidth: number, colCount: number):
 function totalTableTarget(table: Table, contentWidth: number): number {
   const explicit = explicitTableTargetWidth(table, contentWidth);
   if (explicit !== undefined && explicit > 0) return explicit;
-  const sum = table.grid.reduce((s, g) => s + g, 0);
+  const sum = gridColTwips(table).reduce((s, g) => s + g, 0);
   if (sum > 0) return sum * TWIP_TO_PT;
   return contentWidth;
 }
 
 function explicitTableTargetWidth(table: Table, contentWidth: number): number | undefined {
-  const w = table.properties.widthTwips;
+  const w = table.properties.widthPt;
   const type = table.properties.widthType;
-  if (w !== undefined && w > 0 && type === 'dxa') return w * TWIP_TO_PT;
-  if (w !== undefined && type === 'pct') return (w / 5000) * contentWidth;
+  if (w !== undefined && w > 0 && type === 'dxa') return w;
+  const f = table.properties.widthFraction;
+  if (f !== undefined && type === 'pct') return f * contentWidth;
   return undefined;
 }
 
@@ -2532,8 +2367,8 @@ function measureSingleLine(
     const resolved = resolveRunProperties(run.properties, paragraph.properties, options.styles);
     const { variant } = options.registry.resolveByStyle(resolved.bold, resolved.italic);
     const font = fontResources.get(variant)!;
-    const fontSizePt = resolved.fontSizeHalfPoints / 2;
-    total += font.embedded.textWidthPt(run.text, fontSizePt);
+    const fontSizePt = resolved.fontSizePt;
+    total += font.measure.textWidthPt(run.text, fontSizePt);
   }
   return total;
 }
@@ -2557,7 +2392,7 @@ function layoutTableRow(
   let colIdx = 0;
   for (let cellIdx = 0; cellIdx < row.cells.length; cellIdx++) {
     const cell = row.cells[cellIdx]!;
-    const span = Math.max(1, cell.properties.gridSpan ?? 1);
+    const span = Math.max(1, cell.properties.colSpan ?? 1);
     let widthPt = 0;
     for (let k = 0; k < span && colIdx + k < columnWidthsPt.length; k++) {
       widthPt += columnWidthsPt[colIdx + k]!;
@@ -2587,10 +2422,10 @@ function layoutTableRow(
   }
   let heightPt = 0;
   for (const c of cells) if (c.totalHeightPt > heightPt) heightPt = c.totalHeightPt;
-  if (row.properties.heightTwips && row.properties.heightRule === 'exact') {
-    heightPt = row.properties.heightTwips * TWIP_TO_PT;
-  } else if (row.properties.heightTwips && row.properties.heightRule === 'atLeast') {
-    heightPt = Math.max(heightPt, row.properties.heightTwips * TWIP_TO_PT);
+  if (row.properties.height && row.properties.heightRule === 'exact') {
+    heightPt = row.properties.height;
+  } else if (row.properties.height && row.properties.heightRule === 'atLeast') {
+    heightPt = Math.max(heightPt, row.properties.height);
   }
   return { heightPt, cells, columnXOffsets, rowIdx, rowCount };
 }
@@ -2613,12 +2448,10 @@ function layoutTableCell(
 ): CellLayout {
   const cellMar = cell.properties.margins;
   const tableMar = tableProps.defaultCellMargins;
-  const padTopPt = (cellMar?.topTwips ?? tableMar?.topTwips ?? 0) * TWIP_TO_PT;
-  const padBottomPt = (cellMar?.bottomTwips ?? tableMar?.bottomTwips ?? 0) * TWIP_TO_PT;
-  const padLeftPt =
-    (cellMar?.leftTwips ?? tableMar?.leftTwips ?? DEFAULT_CELL_PADDING_TWIPS) * TWIP_TO_PT;
-  const padRightPt =
-    (cellMar?.rightTwips ?? tableMar?.rightTwips ?? DEFAULT_CELL_PADDING_TWIPS) * TWIP_TO_PT;
+  const padTopPt = cellMar?.top ?? tableMar?.top ?? 0;
+  const padBottomPt = cellMar?.bottom ?? tableMar?.bottom ?? 0;
+  const padLeftPt = cellMar?.left ?? tableMar?.left ?? DEFAULT_CELL_PADDING_TWIPS * TWIP_TO_PT;
+  const padRightPt = cellMar?.right ?? tableMar?.right ?? DEFAULT_CELL_PADDING_TWIPS * TWIP_TO_PT;
 
   const innerWidth = Math.max(1, widthPt - padLeftPt - padRightPt);
   const lines: Array<Line> = [];
@@ -2712,11 +2545,11 @@ const BORDER_STYLE_RANK: Readonly<Record<BorderStyle, number>> = {
   none: 0,
 };
 
-// Effective weight of a border for conflict resolution: its width in eighths of a
+// Effective weight of a border for conflict resolution: its width in points
 // point (default 4 = ½pt), or 0 when absent / explicitly 'none'.
 function borderWeight(b: Border | undefined): number {
   if (!b || b.style === 'none') return 0;
-  return b.sizeEighthPt ?? 4;
+  return b.width ?? 0.5;
 }
 
 // §17.4 — the winner of a shared cell edge: the heavier border, ties broken by
@@ -2774,7 +2607,7 @@ function resolveCellBorders(
   return out;
 }
 
-interface RenderedPage {
+export interface LaidOutPage {
   readonly commands: Array<DrawCommand>;
   readonly width: number;
   readonly height: number;
@@ -2882,9 +2715,9 @@ function paginateSections(
   sectionCtxs: ReadonlyArray<SectionRenderCtx>,
   builder?: StructTreeBuilder,
   defaultLang = 'en-US',
-): Array<RenderedPage> {
+): Array<LaidOutPage> {
   if (sectionCtxs.length === 0) return [];
-  const pages: Array<RenderedPage> = [];
+  const pages: Array<LaidOutPage> = [];
 
   let ctx = sectionCtxs[0]!;
   let secIdx = 0;
@@ -2954,8 +2787,7 @@ function paginateSections(
         if (cursorY - h < ctx.marginBottom && current.length > 0) flushPage();
         cursorY -= h;
         const indentLeft =
-          block.resolved.indentLeftTwips * TWIP_TO_PT +
-          (line.firstLine ? block.resolved.indentFirstLineTwips * TWIP_TO_PT : 0);
+          block.resolved.indentLeft + (line.firstLine ? block.resolved.indentFirstLine : 0);
         const offset = alignmentOffset(
           block.resolved.alignment,
           line.contentWidthPt,
@@ -3365,7 +3197,7 @@ function emitCellBorders(
     border: CellBorders[keyof CellBorders],
   ) => {
     if (!border || border.style === 'none') return;
-    const sz = (border.sizeEighthPt ?? DEFAULT_BORDER_SIZE_EIGHTH) * EIGHTH_PT;
+    const sz = border.width ?? DEFAULT_BORDER_SIZE_EIGHTH * EIGHTH_PT;
     out.push({
       type: 'border',
       side,
@@ -3387,7 +3219,7 @@ function emitCellBorders(
 // MCID counter (reset per page); `assigned` records whether any tagged marked
 // content was emitted (so the page gets /StructParents); `record` ties an
 // assigned MCID back to its structure node.
-interface PageTagging {
+export interface PageTagging {
   next: number;
   assigned: boolean;
   record: (structId: number, mcid: number) => void;
@@ -3395,390 +3227,4 @@ interface PageTagging {
   // BDC tag matches the StructElem /S (§14.7.2: a heading is /H1, a cell's
   // paragraph /P, …), not a hardcoded /P.
   tagFor: (structId: number) => string;
-}
-
-// Emit a run of same-typed draw commands (the image or shape pass), opening one
-// marked-content sequence per contiguous group with the same owner: a structId
-// → its struct type (Figure) with a fresh MCID; a pagination artifact; or a bare
-// layout artifact. `body(cmd)` emits each command's own operators. In non-tagged
-// mode it just emits the bodies — byte-identical to before tagging existed.
-function emitTaggedRuns(
-  out: Array<string>,
-  cmds: ReadonlyArray<DrawCommand>,
-  tagging: PageTagging | undefined,
-  body: (cmd: DrawCommand) => void,
-): void {
-  if (!tagging) {
-    for (const c of cmds) body(c);
-    return;
-  }
-  let openKey: string | null = null;
-  const close = () => {
-    if (openKey !== null) {
-      out.push('EMC');
-      openKey = null;
-    }
-  };
-  for (const c of cmds) {
-    const key =
-      c.structId !== undefined ? `f${c.structId}` : c.artifact === 'pagination' ? 'p' : 'a';
-    if (key !== openKey) {
-      close();
-      if (c.structId !== undefined) {
-        const mcid = tagging.next++;
-        tagging.assigned = true;
-        tagging.record(c.structId, mcid);
-        out.push(`/${tagging.tagFor(c.structId)} <</MCID ${mcid}>> BDC`);
-      } else if (c.artifact === 'pagination') {
-        out.push('/Artifact <</Type /Pagination>> BDC');
-      } else {
-        out.push('/Artifact BMC');
-      }
-      openKey = key;
-    }
-    body(c);
-  }
-  close();
-}
-
-function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTagging): Uint8Array {
-  if (commands.length === 0) return new Uint8Array(0);
-  const out: Array<string> = [];
-
-  // Cell backgrounds (fills) first — they sit underneath text and borders.
-  // In tagged PDFs they are layout decoration → wrapped as an /Artifact so no
-  // page content sits outside the structure tree (PDF/A-1a §6.3.2).
-  const fills = commands.filter((c) => c.type === 'fill');
-  if (fills.length > 0) {
-    if (tagging) out.push('/Artifact BMC');
-    out.push('q');
-    let lastColor = '';
-    for (const f of fills) {
-      const color = f.fillColorHex!;
-      if (color !== lastColor) {
-        const [r, g, b] = hexToRgb01(color);
-        out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} rg`);
-        lastColor = color;
-      }
-      out.push(
-        `${formatNumber(f.x!)} ${formatNumber(f.y!)} ${formatNumber(f.width!)} ${formatNumber(f.height!)} re`,
-      );
-      out.push('f');
-    }
-    out.push('Q');
-    if (tagging) out.push('EMC');
-  }
-
-  // Block images. In tagged mode each carries its owning Figure (structId) → a
-  // /Figure marked-content sequence; header/footer images are pagination
-  // artifacts; anything else a bare artifact.
-  // Drop images whose resource failed to embed (unsupported/corrupt) — they have
-  // no XObject, so a `/<name> Do` would be a dangling reference.
-  const images = commands.filter((c) => c.type === 'image' && !!c.imageResourceName);
-  emitTaggedRuns(out, images, tagging, (img) => {
-    // ISO 32000-1 §8.9.5.1 — Image XObject placement.
-    // q             save graphics state
-    // w 0 0 h x y cm   scale unit square to (w,h) and translate to (x,y)
-    // /Im1 Do       paint the XObject
-    // Q             restore
-    out.push('q');
-    out.push(
-      `${formatNumber(img.width!)} 0 0 ${formatNumber(img.height!)} ${formatNumber(img.x!)} ${formatNumber(img.y!)} cm`,
-    );
-    out.push(`/${img.imageResourceName} Do`);
-    out.push('Q');
-  });
-
-  const borders = commands.filter((c) => c.type === 'border');
-  if (borders.length > 0) {
-    if (tagging) out.push('/Artifact BMC');
-    out.push('q');
-    let lastWidth = -1;
-    let lastColor = '';
-    for (const b of borders) {
-      const width = b.borderSizePt!;
-      const color = b.borderColorHex!;
-      if (width !== lastWidth) {
-        out.push(`${formatNumber(width)} w`);
-        lastWidth = width;
-      }
-      if (color !== lastColor) {
-        const [r, g, bl] = hexToRgb01(color);
-        out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(bl)} RG`);
-        lastColor = color;
-      }
-      const x = b.x!;
-      const y = b.y!;
-      const w = b.width!;
-      const h = b.height!;
-      switch (b.side) {
-        case 'top':
-          out.push(`${formatNumber(x)} ${formatNumber(y + h)} m`);
-          out.push(`${formatNumber(x + w)} ${formatNumber(y + h)} l`);
-          break;
-        case 'bottom':
-          out.push(`${formatNumber(x)} ${formatNumber(y)} m`);
-          out.push(`${formatNumber(x + w)} ${formatNumber(y)} l`);
-          break;
-        case 'left':
-          out.push(`${formatNumber(x)} ${formatNumber(y)} m`);
-          out.push(`${formatNumber(x)} ${formatNumber(y + h)} l`);
-          break;
-        case 'right':
-          out.push(`${formatNumber(x + w)} ${formatNumber(y)} m`);
-          out.push(`${formatNumber(x + w)} ${formatNumber(y + h)} l`);
-          break;
-      }
-      out.push('S');
-    }
-    out.push('Q');
-    if (tagging) out.push('EMC');
-  }
-
-  // Vector shapes (DrawingML §20). Each shape is a self-contained q…cm…Q block
-  // (emitVectorShape). Drawn after table fills/images/borders but before the
-  // text pass, so both body text and the shape's own text (emitted as 'line'
-  // commands) land on top of shape fills. In tagged mode a shape/chart carries
-  // its Figure structId → /Figure marked content (contiguous chart shapes share
-  // one MCID); decorative shapes fall back to a bare artifact.
-  const shapes = commands.filter((c) => c.type === 'shape');
-  emitTaggedRuns(out, shapes, tagging, (sh) => {
-    for (const op of emitVectorShape(sh.shape!)) out.push(op);
-  });
-
-  const lines = commands.filter((c) => c.type === 'line');
-  if (lines.length > 0) {
-    let inBT = false;
-    let lastFont = '';
-    let lastSize = -1;
-    let lastColor = '';
-    const switchFontIfNeeded = (tok: TextToken) => {
-      const fontKey = tok.font.resourceName;
-      if (fontKey !== lastFont || tok.fontSizePt !== lastSize) {
-        out.push(`/${fontKey} ${formatNumber(tok.fontSizePt)} Tf`);
-        lastFont = fontKey;
-        lastSize = tok.fontSizePt;
-      }
-      if (tok.resolvedRun.colorHex !== lastColor) {
-        const [r, g, b] = hexToRgb01(tok.resolvedRun.colorHex);
-        out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} rg`);
-        lastColor = tok.resolvedRun.colorHex;
-      }
-    };
-    const emitImageToken = (tok: ImageToken, x: number, baselineY: number) => {
-      // Skip an inline image whose resource failed to embed (the caller still
-      // advances x, so its box stays reserved).
-      if (!tok.imageResourceName) return;
-      // ET out of text mode, place the image XObject, then BT back in. Image
-      // bottom-left sits on the text baseline so the image hangs above the
-      // baseline like an inline glyph.
-      if (inBT) {
-        out.push('ET');
-        inBT = false;
-      }
-      out.push('q');
-      out.push(
-        `${formatNumber(tok.widthPt)} 0 0 ${formatNumber(tok.heightPt)} ${formatNumber(x)} ${formatNumber(baselineY)} cm`,
-      );
-      out.push(`/${tok.imageResourceName} Do`);
-      out.push('Q');
-      // Text state is reset by ET; force re-emit on the next text token.
-      lastFont = '';
-      lastSize = -1;
-      lastColor = '';
-    };
-    // Emit an inline math box: glyph items in text mode, rule/path items in
-    // graphics mode. All positions are box-local, offset by the box origin.
-    const emitMathToken = (tok: MathToken, originX: number, baselineY: number) => {
-      for (const it of tok.items) {
-        if (it.kind === 'glyph') {
-          if (!inBT) {
-            out.push('BT');
-            inBT = true;
-          }
-          if (it.font.resourceName !== lastFont || it.sizePt !== lastSize) {
-            out.push(`/${it.font.resourceName} ${formatNumber(it.sizePt)} Tf`);
-            lastFont = it.font.resourceName;
-            lastSize = it.sizePt;
-          }
-          if (lastColor !== '000000') {
-            out.push('0 0 0 rg');
-            lastColor = '000000';
-          }
-          out.push(`1 0 0 1 ${formatNumber(originX + it.x)} ${formatNumber(baselineY + it.y)} Tm`);
-          out.push(`<${it.font.embedded.encodeTextAsCidHex(it.text)}> Tj`);
-        } else if (it.kind === 'rule') {
-          if (inBT) {
-            out.push('ET');
-            inBT = false;
-          }
-          out.push('q');
-          out.push('0 0 0 rg');
-          out.push(
-            `${formatNumber(originX + it.x)} ${formatNumber(baselineY + it.y)} ${formatNumber(it.w)} ${formatNumber(it.h)} re`,
-          );
-          out.push('f');
-          out.push('Q');
-          lastFont = '';
-          lastSize = -1;
-          lastColor = '';
-        } else {
-          if (inBT) {
-            out.push('ET');
-            inBT = false;
-          }
-          const shape: VectorShape = {
-            paths: [{ segments: it.segments }],
-            ...(it.fill ? { fillColorHex: '000000' } : {}),
-            ...(it.strokeWidthPt !== undefined
-              ? { stroke: { colorHex: '000000', widthPt: it.strokeWidthPt } }
-              : {}),
-            transform: [1, 0, 0, 1, originX, baselineY],
-          };
-          for (const op of emitVectorShape(shape)) out.push(op);
-          lastFont = '';
-          lastSize = -1;
-          lastColor = '';
-        }
-      }
-    };
-
-    // Emit one line command's glyphs/images/math. Manages BT/ET through the
-    // shared `inBT` state; produces operator-for-operator the same output as
-    // before tagging existed, so the non-tagged path stays byte-identical.
-    const emitOneLine = (cmd: DrawCommand) => {
-      const line = cmd.line!;
-      const originX = cmd.originX!;
-      const baselineY = cmd.baselineY!;
-      const extraPerSpace = computeJustifyExtra(line);
-      const hasImageToken = line.tokens.some((t) => t.kind === 'image');
-      const hasMathToken = line.tokens.some((t) => t.kind === 'math');
-      const hasRtl = line.tokens.some((t) => t.bidiLevel % 2 === 1);
-
-      // Encode a token's text, reversing code points for RTL (odd-level) runs
-      // so glyphs lay out right-to-left as our cursor advances left-to-right.
-      const encodeToken = (tok: TextToken): string => {
-        const text = tok.bidiLevel % 2 === 1 ? reverseByCodePoint(tok.text) : tok.text;
-        return tok.font.embedded.encodeTextAsCidHex(text);
-      };
-
-      if (extraPerSpace > 0 || hasImageToken || hasMathToken || hasRtl) {
-        // Per-token absolute positioning. Required for justify (inter-word
-        // slack), inline images (text-mode exits), and BiDi (visual order
-        // differs from logical order). Tokens are emitted in visual order.
-        const order = hasRtl ? lineVisualOrder(line) : line.tokens.map((_, i) => i);
-        let x = originX;
-        for (const ti of order) {
-          const tok = line.tokens[ti]!;
-          if (tok.kind === 'image') {
-            emitImageToken(tok, x, baselineY);
-            x += tok.widthPt;
-            continue;
-          }
-          if (tok.kind === 'math') {
-            emitMathToken(tok, x, baselineY);
-            x += tok.widthPt;
-            continue;
-          }
-          if (!inBT) {
-            out.push('BT');
-            inBT = true;
-          }
-          switchFontIfNeeded(tok);
-          out.push(`1 0 0 1 ${formatNumber(x)} ${formatNumber(baselineY)} Tm`);
-          out.push(`<${encodeToken(tok)}> Tj`);
-          x += tok.widthPt;
-          if (tok.isSpace) x += extraPerSpace;
-        }
-      } else {
-        if (!inBT) {
-          out.push('BT');
-          inBT = true;
-        }
-        out.push(`1 0 0 1 ${formatNumber(originX)} ${formatNumber(baselineY)} Tm`);
-        for (const tok of line.tokens) {
-          if (tok.kind !== 'text') continue; // unreachable here, but TS-narrowed
-          switchFontIfNeeded(tok);
-          const hex = tok.font.embedded.encodeTextAsCidHex(tok.text);
-          out.push(`<${hex}> Tj`);
-        }
-      }
-    };
-
-    if (tagging) {
-      // Tagged PDF: each line is its own marked-content sequence. A body line
-      // (carrying a structId) becomes /P <</MCID n>> BDC … EMC and registers its
-      // MCID with the owning structure node; a line without a structId (header/
-      // footer text) is a pagination artifact. The BDC/EMC bracket cleanly wraps
-      // the line's own BT…ET (and any inline-image/math q…Q), which is legal —
-      // marked-content brackets nest independently of BT/ET and q/Q (§14.6.1).
-      for (const cmd of lines) {
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- inBT is toggled inside the emit* closures; the type-checker's flow analysis can't see those mutations and treats it as constant.
-        if (inBT) {
-          out.push('ET');
-          inBT = false;
-        }
-        const sid = cmd.structId;
-        if (sid !== undefined) {
-          const mcid = tagging.next++;
-          tagging.assigned = true;
-          tagging.record(sid, mcid);
-          out.push(`/${tagging.tagFor(sid)} <</MCID ${mcid}>> BDC`);
-        } else if (cmd.artifact === 'pagination') {
-          out.push('/Artifact <</Type /Pagination>> BDC');
-        } else {
-          out.push('/Artifact BMC');
-        }
-        emitOneLine(cmd);
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- emitOneLine may leave text mode open (inBT true) via a closure; flow analysis can't track it.
-        if (inBT) {
-          out.push('ET');
-          inBT = false;
-        }
-        out.push('EMC');
-      }
-    } else {
-      out.push('BT');
-      inBT = true;
-      for (const cmd of lines) emitOneLine(cmd);
-      // Ensure we exit text mode if the last line ended on an image token.
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- emitOneLine toggles inBT via a closure; flow analysis can't see it and assumes it stays true.
-      if (inBT) out.push('ET');
-    }
-  }
-
-  return encoder.encode(out.join('\n'));
-}
-
-// UAX #9 rule L2 over a line's tokens: returns token indices in visual order.
-// Each token carries a single embedding level (the tokenizer split runs at
-// level boundaries), so reordering tokens is equivalent to reordering their
-// constituent characters.
-function lineVisualOrder(line: Line): Array<number> {
-  return reorderVisual(line.tokens.map((t) => t.bidiLevel));
-}
-
-// Extra width per space token when justifying. 0 for non-justify lines or
-// the last line of a paragraph (last line stays left-aligned by convention).
-function computeJustifyExtra(line: Line): number {
-  if (line.resolved.alignment !== 'both') return 0;
-  if (line.isLastInParagraph) return 0;
-  let spaces = 0;
-  for (const tok of line.tokens) if (tok.isSpace) spaces++;
-  if (spaces === 0) return 0;
-  const extra = line.availableWidthPt - line.contentWidthPt;
-  if (extra <= 0) return 0;
-  return extra / spaces;
-}
-
-function hexToRgb01(hex: string): readonly [number, number, number] {
-  const r = parseInt(hex.slice(0, 2), 16) / 255;
-  const g = parseInt(hex.slice(2, 4), 16) / 255;
-  const b = parseInt(hex.slice(4, 6), 16) / 255;
-  return [r, g, b];
-}
-
-function formatNumber(n: number): string {
-  if (Number.isInteger(n)) return String(n);
-  return n.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
 }

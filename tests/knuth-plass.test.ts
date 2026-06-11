@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Item } from '@/line-breaker';
-import { breakLines } from '@/line-breaker';
+import type { Item } from '@/core/line-breaker';
+import { breakLines } from '@/core/line-breaker';
 
 // Build a paragraph of "word1 word2 word3 ..." with each word treated as a
 // box of fixed width and each space as glue with a sensible stretch/shrink.

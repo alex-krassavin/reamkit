@@ -5,9 +5,9 @@ import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody, buildRichDocx } from './fixtures/build-docx';
-import type { FamilyKey } from '@/fonts';
-import { convertDocxToPdfSync } from '@/converter';
-import { FontRegistry, parseTtf } from '@/font';
+import type { FamilyKey } from '@/core/fonts';
+import { convertDocxToPdfSync } from '@/core/converter';
+import { FontRegistry, parseTtf } from '@/core/font';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FONTS = {

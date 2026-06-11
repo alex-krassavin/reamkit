@@ -7,5 +7,5 @@ export type { SignaturePlaceholder, SignerCredentials, SignatureOptions } from '
 export type { AttachedFile, AFRelationship } from '@/pdf/embedded-file';
 export { embedTtfFont } from '@/pdf/cid-font';
 export type { EmbeddedFont } from '@/pdf/cid-font';
-export { embedImage, detectImageFormat } from '@/pdf/image-xobject';
-export type { EmbeddedImage, ImageFormat } from '@/pdf/image-xobject';
+export { addImage, detectImageFormat, embedImage, prepareImage } from '@/pdf/image-xobject';
+export type { EmbeddedImage, ImageFormat, PreparedImage } from '@/pdf/image-xobject';

@@ -5,11 +5,13 @@ import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
-import { convertDocxToPdfSync } from '@/converter';
-import { parseTtf } from '@/font';
-import { OpcPackage } from '@/opc';
-import { applyColorMods } from '@/ooxml/drawingml/colors';
-import { parseDocument } from '@/ooxml/wordproc';
+import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
+
+import { convertDocxToPdfSync } from '@/core/converter';
+import { parseTtf } from '@/core/font';
+import { OpcPackage } from '@/core/opc';
+import { applyColorMods } from '@/core/drawingml/colors';
+import { parseDocument } from '@/word';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FONTS = {
@@ -55,13 +57,13 @@ describe('DrawingML shape parsing', () => {
     expect(parsed[0]!.kind).toBe('shape');
     if (parsed[0]!.kind !== 'shape') throw new Error('unreachable');
     const shape = parsed[0]!.shape;
-    expect(shape.widthEmu).toBe(1828800);
-    expect(shape.heightEmu).toBe(914400);
+    expect(shape.width).toBe(emuToPt(1828800));
+    expect(shape.height).toBe(emuToPt(914400));
     expect(shape.geometry.kind).toBe('preset');
     expect(shape.geometry.preset).toBe('rect');
     expect(shape.fill).toEqual({ kind: 'solid', colorHex: '4472C4' });
     expect(shape.line?.colorHex).toBe('2F528F');
-    expect(shape.line?.widthEmu).toBe(12700);
+    expect(shape.line?.width).toBe(emuToPt(12700));
   });
 
   it('parses prstGeom adjust values', () => {
@@ -149,7 +151,7 @@ describe('shape edge cases', () => {
     const parsed = parseDocument(OpcPackage.open(docx).getMainDocument().data);
     expect(parsed[0]!.kind).toBe('shape');
     if (parsed[0]!.kind !== 'shape') throw new Error('unreachable');
-    expect(parsed[0]!.shape.widthEmu).toBe(cx);
+    expect(parsed[0]!.shape.width).toBe(emuToPt(cx));
     const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
     expect(text).toMatch(/\nh\nB\n/);
   });
@@ -305,7 +307,7 @@ describe('DrawingML shape line styling', () => {
     if (parsed[0]!.kind !== 'shape') throw new Error('unreachable');
     expect(parsed[0]!.shape.line?.dash).toBe('dash');
     expect(parsed[0]!.shape.line?.cap).toBe('round');
-    expect(parsed[0]!.shape.line?.widthEmu).toBe(25400);
+    expect(parsed[0]!.shape.line?.width).toBe(emuToPt(25400));
   });
 
   it('emits a dash array, line width and round cap', () => {
@@ -390,7 +392,7 @@ describe('text in shape (wps:txbx)', () => {
     expect(t).toBeDefined();
     expect(t!.content).toHaveLength(1);
     expect(t!.anchor).toBe('ctr');
-    expect(t!.insetLeftEmu).toBe(91440);
+    expect(t!.insetLeft).toBe(emuToPt(91440));
   });
 
   it('renders the text-box glyphs on top of the shape fill', () => {

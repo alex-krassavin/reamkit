@@ -6,8 +6,8 @@
 
 import type { PdfDict, PdfRef, PdfValue } from '@/pdf/objects';
 import type { PdfDocument } from '@/pdf/writer';
-import { buildPkcs7Detached } from '@/crypto';
-import * as der from '@/crypto/asn1';
+import { buildPkcs7Detached } from '@/core/crypto';
+import * as der from '@/core/crypto/asn1';
 import { PdfHexString, PdfRawToken, dict, name, ref } from '@/pdf/objects';
 
 // A fixed-width /ByteRange placeholder: four 10-digit slots → overwritten in
@@ -154,7 +154,10 @@ function toHex(bytes: Uint8Array): string {
 // into the reserved /Contents hole — leaving every other byte untouched.
 export async function signPdf(pdf: Uint8Array, cred: SignerCredentials): Promise<Uint8Array> {
   const out = pdf.slice();
-  const brKey = indexOfAscii(out, '/ByteRange');
+  // Match the FULL fixed-width placeholder, not a bare '/ByteRange' — an
+  // embedded file (e.g. a PDF attached via /AF) or a font stream could
+  // legitimately contain that name earlier in the file (oop-design §8, B4).
+  const brKey = indexOfAscii(out, `/ByteRange ${BYTE_RANGE_PLACEHOLDER}`);
   if (brKey < 0) throw new Error('signPdf: no /ByteRange placeholder found');
   const brOpen = indexOfAscii(out, '[', brKey);
   const brClose = indexOfAscii(out, ']', brOpen);
