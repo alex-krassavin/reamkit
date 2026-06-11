@@ -7,7 +7,7 @@ import { unzipSync } from 'fflate';
 
 import type { Relationship } from '@/core/opc/relationships';
 import { parseRelationships } from '@/core/opc/relationships';
-import { REL_OFFICE_DOCUMENT } from '@/core/opc/relationship-types';
+import { isOoxmlRel } from '@/core/opc/relationship-types';
 
 const ROOT_RELS_PATH = '_rels/.rels';
 
@@ -36,6 +36,19 @@ export class OpcPackage {
   private readonly relsCache = new Map<string, ReadonlyArray<Relationship>>();
 
   static open(buffer: Uint8Array, options: OpcOpenOptions = {}): OpcPackage {
+    // OLE CFB magic (D0 CF 11 E0): a password-protected (encrypted) OOXML
+    // container or a legacy binary .doc/.xls — either way, not a ZIP package.
+    if (
+      buffer.length >= 4 &&
+      buffer[0] === 0xd0 &&
+      buffer[1] === 0xcf &&
+      buffer[2] === 0x11 &&
+      buffer[3] === 0xe0
+    ) {
+      throw new Error(
+        'OLE compound file: a password-protected (encrypted) OOXML document or a legacy binary .doc/.xls — re-save as an unencrypted .docx/.xlsx',
+      );
+    }
     const maxArchive = options.maxArchiveBytes ?? 128 * MIB;
     const maxEntry = options.maxEntryBytes ?? 256 * MIB;
     const maxTotal = options.maxTotalBytes ?? 512 * MIB;
@@ -139,7 +152,7 @@ export class OpcPackage {
   // ECMA-376 Part 2 §11.1 — exactly one officeDocument relationship.
   getMainDocumentPath(): string {
     const candidates = this.rootRelationships.filter(
-      (r) => r.type === REL_OFFICE_DOCUMENT && r.targetMode === 'Internal',
+      (r) => isOoxmlRel(r.type, 'officeDocument') && r.targetMode === 'Internal',
     );
     if (candidates.length === 0) {
       throw new Error('OPC package has no officeDocument relationship');

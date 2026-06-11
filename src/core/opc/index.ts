@@ -7,3 +7,4 @@ export {
 } from '@/core/opc/relationship-types';
 export { parseCoreProperties } from '@/core/opc/core-properties';
 export type { CoreProperties } from '@/core/opc/core-properties';
+export { isOoxmlRel } from '@/core/opc/relationship-types';

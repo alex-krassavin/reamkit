@@ -11,7 +11,7 @@ import type { FlowDoc } from '@/core/ir/flow';
 
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
-import { OpcPackage, parseCoreProperties } from '@/core/opc';
+import { OpcPackage, isOoxmlRel, parseCoreProperties } from '@/core/opc';
 import {
   EMPTY_XLSX_STYLES,
   parseSharedStrings,
@@ -155,7 +155,7 @@ function buildXlsxColorResolver(
 ): ColorResolver {
   const palette = new Map(DEFAULT_THEME_PALETTE);
   for (const rel of workbookRels) {
-    if (rel.type !== REL_THEME) continue;
+    if (!isOoxmlRel(rel.type, 'theme')) continue;
     const resolved = pkg.resolveRelatedPart(WORKBOOK_PART, rel);
     if (!resolved) continue;
     for (const [slot, hex] of parseTheme(resolved.data)) palette.set(slot, hex);
@@ -163,8 +163,6 @@ function buildXlsxColorResolver(
   }
   return makeColorResolver(palette);
 }
-
-const REL_THEME = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme';
 
 export const xlsxReader: DocumentReader<FlowDoc> = {
   id: 'xlsx',
