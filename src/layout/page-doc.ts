@@ -37,6 +37,9 @@ export interface TextToken {
   // §17.11.14 — the token renders a footnote reference number; pagination
   // reserves the note's block at the bottom of the page it lands on.
   readonly footnoteRef?: string;
+  // §17.16.22 — internal link target: a bookmark name in this document (not
+  // a URL; resolves to a GoTo destination, never through the scheme list).
+  readonly anchor?: string;
   readonly resolvedRun: ResolvedRunProperties;
   readonly font: FontResource;
   readonly fontSizePt: number;

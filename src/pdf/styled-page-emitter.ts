@@ -102,6 +102,9 @@ export function emitStyledPdf(
   }
 
   const pageRefs: Array<PdfRef> = [];
+  // Internal-link targets actually referenced by some annotation — only these
+  // get a /Names /Dests entry (unreferenced bookmarks would be dead weight).
+  const referencedAnchors = new Set<string>();
   renderedPages.forEach((page, pageIndex) => {
     let pageTagging: PageTagging | undefined;
     if (structBuilder) {
@@ -139,8 +142,14 @@ export function emitStyledPdf(
           Rect: [l.rect[0], l.rect[1], l.rect[2], l.rect[3]],
           Border: [0, 0, 0],
           F: 4,
-          A: dict({ S: name('URI'), URI: l.href }),
+          // §12.6.4: URI action for external targets; a GoTo with a string
+          // destination (resolved via /Names /Dests) for internal ones.
+          A:
+            l.href !== undefined
+              ? dict({ S: name('URI'), URI: l.href })
+              : dict({ S: name('GoTo'), D: l.anchor ?? '' }),
         };
+        if (l.anchor !== undefined) referencedAnchors.add(l.anchor);
         if (structBuilder && l.structId !== undefined) {
           entries['StructParent'] = renderedPages.length + annotParentCount;
         }
@@ -190,6 +199,7 @@ export function emitStyledPdf(
   pagesDict.set('Count', pageRefs.length);
   pagesDict.set('Kids', pageRefs);
 
+  const namesTreeEntries: Record<string, PdfValue> = {};
   const catalogEntries: Record<string, PdfValue> = {
     Type: name('Catalog'),
     Pages: ref(pagesRef.id),
@@ -246,7 +256,32 @@ export function emitStyledPdf(
     const names: Array<PdfValue> = [];
     for (const e of sorted) names.push(e.file.name, ref(e.ref.id));
     const embeddedFilesRef = doc.add(dict({ Names: names }));
-    catalogEntries['Names'] = dict({ EmbeddedFiles: ref(embeddedFilesRef.id) });
+    namesTreeEntries['EmbeddedFiles'] = ref(embeddedFilesRef.id);
+  }
+
+  // §12.3.2.4 string destinations: /Names /Dests maps each referenced
+  // bookmark name to an explicit [page /XYZ] destination (sorted → byte
+  // determinism). Unresolvable anchors (no such bookmark) simply have no
+  // entry — viewers treat the GoTo as a no-op.
+  const bookmarkDests = laid.pdf.bookmarks;
+  const destNames = [...referencedAnchors]
+    .filter((n) => bookmarkDests.has(n))
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  if (destNames.length > 0) {
+    const names: Array<PdfValue> = [];
+    for (const destName of destNames) {
+      const pos = bookmarkDests.get(destName)!;
+      const pageRef = pageRefs[pos.pageIdx];
+      if (!pageRef) continue;
+      // /FitH: jump to the line's top, fit the page width — no null args
+      // (PdfValue has no null; /XYZ would need them).
+      names.push(destName, [ref(pageRef.id), name('FitH'), pos.yTopPt]);
+    }
+    const destsRef = doc.add(dict({ Names: names }));
+    namesTreeEntries['Dests'] = ref(destsRef.id);
+  }
+  if (Object.keys(namesTreeEntries).length > 0) {
+    catalogEntries['Names'] = dict(namesTreeEntries);
   }
   // Digital signature placeholder (§12.8): an invisible /Sig widget on page 1,
   // an /AcroForm in the catalog, and a signature dict with placeholder
@@ -436,7 +471,10 @@ function emitTaggedRuns<T extends PageItem>(
 }
 
 interface LinkRegion {
-  readonly href: string;
+  // Exactly one of the two targets: an external URL (sanitized) or the name
+  // of a bookmark in this document (GoTo destination).
+  readonly href?: string;
+  readonly anchor?: string;
   readonly rect: readonly [number, number, number, number]; // PDF y-up
   // The owning line's structure node (tagged mode) — the annotation hangs off
   // a Link element under it. Undefined for artifact lines (headers/footers).
@@ -679,29 +717,45 @@ function emitPageContent(
       const linkAscent = Math.max(lineFs, line.mathAscentPt ?? 0);
       const linkDescent = Math.max(lineFs * 0.2, line.mathDescentPt ?? 0);
       let linkHref: string | undefined;
+      let linkAnchor: string | undefined;
       let linkX0 = 0;
       let linkX1 = 0;
       const flushLink = () => {
-        if (linkHref === undefined) return;
-        const safe = sanitizeHref(linkHref);
-        if (safe !== undefined) {
+        if (linkHref === undefined && linkAnchor === undefined) return;
+        // External targets pass the scheme allowlist; an anchor is a bookmark
+        // name, not a URL — no scheme to sanitize.
+        const safe = linkHref !== undefined ? sanitizeHref(linkHref) : undefined;
+        const target =
+          safe !== undefined
+            ? { href: safe }
+            : linkAnchor !== undefined
+              ? { anchor: linkAnchor }
+              : undefined;
+        if (target) {
           links.push({
-            href: safe,
+            ...target,
             rect: [linkX0, baselineY - linkDescent, linkX1, baselineY + linkAscent],
             ...(cmd.structId !== undefined ? { structId: cmd.structId } : {}),
           });
         }
         linkHref = undefined;
+        linkAnchor = undefined;
       };
-      const trackLink = (href: string | undefined, x0: number, x1: number) => {
-        if (href !== linkHref) {
+      const trackLink = (
+        href: string | undefined,
+        anchor: string | undefined,
+        x0: number,
+        x1: number,
+      ) => {
+        if (href !== linkHref || anchor !== linkAnchor) {
           flushLink();
-          if (href !== undefined) {
+          if (href !== undefined || anchor !== undefined) {
             linkHref = href;
+            linkAnchor = anchor;
             linkX0 = x0;
           }
         }
-        if (href !== undefined) linkX1 = x1;
+        if (href !== undefined || anchor !== undefined) linkX1 = x1;
       };
       const extraPerSpace = computeJustifyExtra(line);
       const hasImageToken = line.tokens.some((t) => t.kind === 'image');
@@ -745,7 +799,7 @@ function emitPageContent(
           const tokenX0 = x;
           x += tok.widthPt;
           if (tok.isSpace) x += extraPerSpace;
-          trackLink(tok.href, tokenX0, x);
+          trackLink(tok.href, tok.anchor, tokenX0, x);
         }
         flushLink();
       } else {
@@ -760,7 +814,7 @@ function emitPageContent(
           switchFontIfNeeded(tok);
           const hex = tok.font.measure.encodeTextAsCidHex(tok.text);
           out.push(`<${hex}> Tj`);
-          trackLink(tok.href, x, x + tok.widthPt);
+          trackLink(tok.href, tok.anchor, x, x + tok.widthPt);
           x += tok.widthPt;
         }
         flushLink();

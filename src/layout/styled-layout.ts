@@ -301,6 +301,9 @@ interface ParagraphBlock {
   // Tagged PDF: when this paragraph is a list item (w:numPr), its list id and
   // nesting level (w:ilvl) so pagination can build the L/LI/LBody structure.
   readonly list?: { readonly numId: string; readonly level: number };
+  // §17.13.6.2 — bookmark names anchored to this paragraph; pagination
+  // records the first line's page + y as their GoTo destination.
+  readonly bookmarks?: ReadonlyArray<string>;
 }
 
 type MergeRole = 'standalone' | 'start' | 'middle' | 'end';
@@ -352,11 +355,19 @@ interface TableBlock {
 // logical-structure tree, per-section geometry (the emit fallback page), and
 // the parsed PDF/A profile. Consumed only by emitStyledPdf; the SVG writer
 // never sees it.
+// §17.13.6.2 — a bookmark's GoTo destination: the page (0-based) and the
+// y-up top of the anchoring paragraph's first line.
+export interface BookmarkPosition {
+  readonly pageIdx: number;
+  readonly yTopPt: number;
+}
+
 export interface PdfLayoutAux {
   readonly structBuilder: StructTreeBuilder | undefined;
   readonly sectionCtxs: ReadonlyArray<SectionRenderCtx>;
   readonly pdfaProfile: PdfAProfile | undefined;
   readonly tagged: boolean;
+  readonly bookmarks: ReadonlyMap<string, BookmarkPosition>;
 }
 
 // What layoutStyledDocument actually returns: the PageDoc with the PDF
@@ -663,12 +674,14 @@ export function layoutStyledDocument(
     }
   }
 
+  const bookmarks = new Map<string, BookmarkPosition>();
   const pages = paginateSections(
     blocks,
     sectionCtxs,
     structBuilder,
     options.language ?? 'en-US',
     notePlan,
+    bookmarks,
   );
 
   return {
@@ -676,7 +689,7 @@ export function layoutStyledDocument(
     resources: options.resources ?? new ResourceStore(),
     fontResources,
     imageResources,
-    pdf: { structBuilder, sectionCtxs, pdfaProfile, tagged },
+    pdf: { structBuilder, sectionCtxs, pdfaProfile, tagged, bookmarks },
   };
 }
 
@@ -1585,6 +1598,9 @@ function layoutParagraphBlock(
     spacingAfterPt: resolved.spacingAfter,
     ...(numbering ? { list: { numId: numbering.numId, level: numbering.ilvl } } : {}),
     ...(paragraph.runs.some((r) => r.pageBreak) ? { pageBreakAfter: true } : {}),
+    ...(paragraph.bookmarks && paragraph.bookmarks.length > 0
+      ? { bookmarks: paragraph.bookmarks }
+      : {}),
   };
 }
 
@@ -1788,6 +1804,7 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         isSpace: t.isSpace,
         ...(plan.run.href !== undefined ? { href: plan.run.href } : {}),
         ...(plan.run.footnoteRef !== undefined ? { footnoteRef: plan.run.footnoteRef } : {}),
+        ...(plan.run.anchor !== undefined ? { anchor: plan.run.anchor } : {}),
         resolvedRun: plan.resolvedRun,
         font: plan.font,
         fontSizePt: plan.fontSizePt,
@@ -1848,6 +1865,7 @@ function tokenizePlansBidi(
         isSpace: curSpace,
         ...(plan.run.href !== undefined ? { href: plan.run.href } : {}),
         ...(plan.run.footnoteRef !== undefined ? { footnoteRef: plan.run.footnoteRef } : {}),
+        ...(plan.run.anchor !== undefined ? { anchor: plan.run.anchor } : {}),
         resolvedRun: plan.resolvedRun,
         font: plan.font,
         fontSizePt: plan.fontSizePt,
@@ -2684,6 +2702,9 @@ function paginateSections(
   builder?: StructTreeBuilder,
   defaultLang = 'en-US',
   notes?: NotePlan,
+  // §17.13.6.2 — out-param: bookmark name → its destination (the page and
+  // y-up top of the anchoring paragraph's first line).
+  bookmarkPositions?: Map<string, BookmarkPosition>,
 ): Array<LaidOutPage> {
   if (sectionCtxs.length === 0) return [];
   const pages: Array<LaidOutPage> = [];
@@ -2842,6 +2863,7 @@ function paginateSections(
         const lang = dominantParagraphLang(block.lines);
         if (lang && lang !== defaultLang) builder.node(structId).lang = lang;
       }
+      let firstLineOfBlock = true;
       for (const line of block.lines) {
         const h = computeLineHeight(line, block.resolved);
         let newNotes = lineFootnotes(line);
@@ -2857,6 +2879,16 @@ function paginateSections(
           for (const x of newNotes) {
             placedNotes.add(x.id);
             pageNotes.push({ n: x.n, blocks: x.blocks, heightPt: x.heightPt });
+          }
+        }
+        if (firstLineOfBlock) {
+          firstLineOfBlock = false;
+          if (block.bookmarks && bookmarkPositions) {
+            for (const bookmarkName of block.bookmarks) {
+              if (!bookmarkPositions.has(bookmarkName)) {
+                bookmarkPositions.set(bookmarkName, { pageIdx: pages.length, yTopPt: cursorY });
+              }
+            }
           }
         }
         cursorY -= h;

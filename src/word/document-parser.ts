@@ -233,10 +233,21 @@ export function parseBodyElements(
   ctx: ParseContext = DEFAULT_PARSE_CONTEXT,
 ): Array<BodyElement> {
   const out: Array<BodyElement> = [];
+  // Body-level w:bookmarkStart (between block elements) anchors to the NEXT
+  // paragraph.
+  let pendingBookmarks: Array<string> | undefined;
   for (const child of children) {
-    if (poIs(child, 'w:p')) {
+    if (poIs(child, 'w:bookmarkStart')) {
+      const bookmarkName = poAttr(child, 'name');
+      if (bookmarkName !== undefined && bookmarkName !== '' && bookmarkName !== '_GoBack') {
+        (pendingBookmarks ??= []).push(bookmarkName);
+      }
+    } else if (poIs(child, 'w:p')) {
       const drawing = tryExtractDrawingFromParagraph(child, ctx);
-      out.push(drawing ?? { kind: 'paragraph', paragraph: parseParagraph(child, ctx) });
+      out.push(
+        drawing ?? { kind: 'paragraph', paragraph: parseParagraph(child, ctx, pendingBookmarks) },
+      );
+      if (!drawing) pendingBookmarks = undefined;
     } else if (poIs(child, 'w:tbl')) {
       out.push({ kind: 'table', table: parseTable(child, ctx) });
     }
@@ -316,7 +327,18 @@ function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): BodyEleme
   };
 }
 
-function parseParagraph(p: PoNode, ctx: ParseContext): Paragraph {
+function parseParagraph(p: PoNode, ctx: ParseContext, extraBookmarks?: Array<string>): Paragraph {
+  // §17.13.6.2 — bookmarks opening in this paragraph (plus any the caller
+  // carried over from between-paragraph positions). The hidden _GoBack
+  // edit-cursor bookmark is noise in every Word save — skipped.
+  const bookmarks: Array<string> = [...(extraBookmarks ?? [])];
+  for (const child of poChildren(p)) {
+    if (!poIs(child, 'w:bookmarkStart')) continue;
+    const bookmarkName = poAttr(child, 'name');
+    if (bookmarkName !== undefined && bookmarkName !== '' && bookmarkName !== '_GoBack') {
+      bookmarks.push(bookmarkName);
+    }
+  }
   const pPr = poChildren(p).find((c) => poIs(c, 'w:pPr'));
   let properties = parseParagraphProperties(pPr ? poElementToFlat(pPr) : undefined);
   // A display equation (m:oMathPara) centres its paragraph by default
@@ -332,7 +354,11 @@ function parseParagraph(p: PoNode, ctx: ParseContext): Paragraph {
   }
   const collected: Array<CollectedRun> = [];
   collectRuns(p, collected, ctx);
-  return { properties, runs: applyFieldFsm(collected) };
+  return {
+    properties,
+    runs: applyFieldFsm(collected),
+    ...(bookmarks.length > 0 ? { bookmarks } : {}),
+  };
 }
 
 // A parsed run plus the complex-field markers the FSM consumes (§17.16.18
@@ -428,12 +454,20 @@ function collectRuns(
   out: Array<CollectedRun>,
   ctx: ParseContext,
   href?: string,
+  anchor?: string,
 ): void {
   for (const child of poChildren(container)) {
     if (poIs(child, 'w:pPr')) continue;
     if (poIs(child, 'w:r')) {
       const parsed = parseRun(child, ctx);
-      const run = href !== undefined ? { ...parsed.run, href } : parsed.run;
+      const run =
+        href !== undefined || anchor !== undefined
+          ? {
+              ...parsed.run,
+              ...(href !== undefined ? { href } : {}),
+              ...(anchor !== undefined ? { anchor } : {}),
+            }
+          : parsed.run;
       out.push({
         run,
         ...(parsed.fldChar ? { fldChar: parsed.fldChar } : {}),
@@ -463,24 +497,30 @@ function collectRuns(
       const field = parseFieldInstr(poAttr(child, 'instr'));
       if (field) {
         const inner: Array<CollectedRun> = [];
-        collectRuns(child, inner, ctx, href);
+        collectRuns(child, inner, ctx, href, anchor);
         out.push({ run: synthesizeFieldRun(applyFieldFsm(inner), field, href) });
         continue;
       }
-      collectRuns(child, out, ctx, href);
+      collectRuns(child, out, ctx, href, anchor);
       continue;
     }
     if (tag && RUN_CONTAINER_TAGS.has(tag)) {
-      // A hyperlink container stamps its resolved external target onto every
-      // run inside (nested containers inherit the outer link). w:anchor-only
-      // links (internal bookmarks) stay plain text in v1.
+      // A hyperlink container stamps its target onto every run inside (nested
+      // containers inherit the outer link): @r:id resolves to an external URL,
+      // @w:anchor names a bookmark in this document (§17.16.22).
       let childHref = href;
+      let childAnchor = anchor;
       if (tag === 'w:hyperlink') {
         const rId = poAttr(child, 'id');
         const resolved = rId ? ctx.resolveHyperlink?.(rId) : undefined;
-        if (resolved !== undefined) childHref = resolved;
+        if (resolved !== undefined) {
+          childHref = resolved;
+        } else {
+          const bookmark = poAttr(child, 'anchor');
+          if (bookmark !== undefined && bookmark !== '') childAnchor = bookmark;
+        }
       }
-      collectRuns(child, out, ctx, childHref);
+      collectRuns(child, out, ctx, childHref, childAnchor);
     }
   }
 }

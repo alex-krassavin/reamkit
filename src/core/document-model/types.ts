@@ -240,6 +240,9 @@ export interface Run {
   // §17.11.14 w:footnoteReference / §17.11.6 w:endnoteReference — the run
   // marks a note reference; the layout assigns sequential numbers in reading
   // order and renders them superscript.
+  // §17.16.22 w:hyperlink @w:anchor — internal link target: a bookmark name
+  // in this document (never a URL — bypasses the scheme allowlist).
+  readonly anchor?: string;
   readonly footnoteRef?: string;
   readonly endnoteRef?: string;
   // §17.11.13 w:footnoteRef / §17.11.5 w:endnoteRef — inside note content:
@@ -258,6 +261,10 @@ export interface Paragraph {
   readonly native?: NativeBag;
   readonly properties: ParagraphProperties;
   readonly runs: ReadonlyArray<Run>;
+  // §17.13.6.2 w:bookmarkStart — names of bookmarks opening in (or
+  // immediately before) this paragraph. Paragraph-level v1: the destination
+  // is the paragraph's first line.
+  readonly bookmarks?: ReadonlyArray<string>;
 }
 
 // ECMA-376 Part 1 §17.9 — Numbering.

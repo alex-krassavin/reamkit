@@ -77,7 +77,10 @@ function richDocx(): Uint8Array {
     '<w:p><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>Heading</w:t></w:r></w:p>' +
     '<w:p><w:r><w:t>The file flows efficiently through the office.</w:t></w:r></w:p>' +
     '<w:p><w:r><w:t>See </w:t></w:r><w:hyperlink r:id="rId30"><w:r><w:t>the project site</w:t></w:r></w:hyperlink><w:r><w:t> for details.</w:t></w:r>' +
-    '<w:r><w:footnoteReference w:id="1"/></w:r></w:p>' +
+    '<w:r><w:footnoteReference w:id="1"/></w:r>' +
+    '<w:r><w:t> Jump to </w:t></w:r>' +
+    '<w:hyperlink w:anchor="summary"><w:r><w:t>the summary</w:t></w:r></w:hyperlink></w:p>' +
+    '<w:p><w:bookmarkStart w:id="7" w:name="summary"/><w:r><w:t>Summary paragraph.</w:t></w:r><w:bookmarkEnd w:id="7"/></w:p>' +
     tbl +
     li(0, 'First item') +
     li(1, 'Nested item') +

@@ -71,6 +71,7 @@ export function writeHtml(flow: FlowDoc): WriteResult {
     resources: flow.resources,
     losses,
     notes,
+    referencedAnchors: collectReferencedAnchors(flow.body),
     ...(flow.charts ? { charts: flow.charts } : {}),
   };
 
@@ -147,8 +148,31 @@ interface EmitCtx {
   readonly resources: ResourceStore;
   readonly losses: Array<Loss>;
   readonly charts?: ReadonlyMap<string, Chart>;
+  // Bookmark names referenced by at least one internal link — only these get
+  // id attributes (unreferenced bookmarks are dead weight).
+  readonly referencedAnchors: ReadonlySet<string>;
   // Note id → sequential number, assigned in reading order of references.
   readonly notes: { footnotes: ReadonlyMap<string, number>; endnotes: ReadonlyMap<string, number> };
+}
+
+// Anchor targets referenced by some internal link anywhere in the body.
+function collectReferencedAnchors(body: ReadonlyArray<BodyElement>): ReadonlySet<string> {
+  const out = new Set<string>();
+  const visit = (els: ReadonlyArray<BodyElement>): void => {
+    for (const el of els) {
+      if (el.kind === 'paragraph') {
+        for (const r of el.paragraph.runs) {
+          if (r.anchor !== undefined) out.add(r.anchor);
+        }
+      } else if (el.kind === 'table') {
+        for (const row of el.table.rows) for (const cell of row.cells) visit(cell.content);
+      } else if (el.kind === 'shape' && el.shape.text) {
+        visit(el.shape.text.content);
+      }
+    }
+  };
+  visit(body);
+  return out;
 }
 
 // Number the notes by the order their references appear in the body (§17.11:
@@ -401,7 +425,15 @@ function emitParagraph(out: Array<string>, p: Paragraph, ctx: EmitCtx): void {
 
   const style = paragraphCss(resolved);
   const dir = resolved.bidi ? ' dir="rtl"' : '';
-  const open = `<${tag}${dir}${style ? ` style="${style}"` : ''}>`;
+  // §17.13.6.2 — a referenced bookmark anchors here. The first name becomes
+  // the element id; additional ones ride as empty anchor spans.
+  const anchored = (p.bookmarks ?? []).filter((b) => ctx.referencedAnchors.has(b));
+  const idAttr = anchored.length > 0 ? ` id="bm-${encodeURIComponent(anchored[0]!)}"` : '';
+  const extraAnchors = anchored
+    .slice(1)
+    .map((b) => `<span id="bm-${encodeURIComponent(b)}"></span>`)
+    .join('');
+  const open = `<${tag}${dir}${idAttr}${style ? ` style="${style}"` : ''}>${extraAnchors}`;
 
   const parts: Array<string> = [];
   for (const run of p.runs) parts.push(runHtml(run, p, ctx));
@@ -467,6 +499,11 @@ function runHtml(run: Run, p: Paragraph, ctx: EmitCtx): string {
   let html = `<span${dir}${style ? ` style="${style}"` : ''}>${textHtml(run.text)}</span>`;
   if (resolved.verticalAlign === 'superscript') html = `<sup>${html}</sup>`;
   else if (resolved.verticalAlign === 'subscript') html = `<sub>${html}</sub>`;
+  if (run.href === undefined && run.anchor !== undefined) {
+    // Internal link: a #-fragment to the bookmark's id — a document-local
+    // name, not a URL, so the scheme allowlist does not apply.
+    return `<a href="#bm-${encodeURIComponent(run.anchor)}">${html}</a>`;
+  }
   if (run.href !== undefined) {
     // Untrusted input: only allowlisted schemes become clickable (core/links).
     const safe = sanitizeHref(run.href);
