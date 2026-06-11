@@ -8,6 +8,12 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Table styles** — `w:tblStyle` referenced styles now render: the base
+  layer (grid borders, default cell margins) plus `w:tblStylePr` conditional
+  regions (first/last row and column, row/column banding, corner cells) gated
+  by `w:tblLook` (modern attributes and the legacy bitmask). Resolved in the
+  reader, so PDF, SVG and HTML all pick it up; tables without a style are
+  byte-identical to before.
 - **Hyperlinks** — `w:hyperlink` external targets now become clickable: PDF
   output gets `/Link` annotations (one rect per rendered line, merged into
   each page's `/Annots`; in tagged/PDF-A mode the annotation is enclosed in a

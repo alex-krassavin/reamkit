@@ -59,7 +59,7 @@ tagged (veraPDF зелёный). Усилие: **среднее**.
 
 ---
 
-## W4 — Table styles (`w:tblStyle` + conditional formatting)
+## W4 — Table styles (`w:tblStyle` + conditional formatting) ✅ (выполнено)
 
 **Спека:** §17.7.6 (table styles в styles.xml: tblPr/tcPr/rPr/pPr на стиле),
 §17.4.62 `w:tblLook` + условные форматы (firstRow/lastRow/firstCol/lastCol/

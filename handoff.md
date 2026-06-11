@@ -755,6 +755,18 @@ http/https/mailto; javascript:/data:/file: → текст + degraded-loss — д
 (колонтитул) аннотацию не получает — структуры нет. veraPDF-фикстура несёт ссылку → формальные
 1a/2a/3a гейты покрывают всю цепочку. Доки без ссылок — байт-в-байт (гейт 12/12). 471 тест.
 
+**W4 — Table styles (✅, 1 коммит).** §17.7.6 по лекалу stage-6: трансформа `resolveTableStyles`
+(core/style-cascade/table.ts) гоняется reader'ом сразу после парса — FlowDoc-таблицы несут финальный
+chrome, writer'ы о table styles не знают. styles-parser читает базовый слой (tblPr borders+cellMar,
+tcPr shd, rPr/pPr) и условные регионы w:tblStylePr; table-parser — w:tblStyle + w:tblLook (атрибуты И
+legacy hex-битмаска: 0020 firstRow … 0400 noVBand). Порядок применения §17.7.6.6: wholeTable → банды
+колонок/строк (band size учитывается; банды стартуют после активной первой строки) → first/last col →
+first/last row → углы; basedOn-цепочка фолдится от корня; direct tblPr/tcPr всегда выигрывает
+(per-side для границ). rPr/pPr слоя стиля — fallback ПОД direct-пропсами (документированное
+v1-упрощение слота каскада; пересечение с paragraph-style за одно поле — редкое). Закрывает gap
+реального договора (#137: банды/шапки из стиля). Таблицы без tblStyle не тронуты — гейт 12/12.
+7 новых тестов (478).
+
 **Мотивация.** Сейчас parser → representer прибиты друг к другу: добавление
 нового направления (например, PDF→Word) требует заново «как-то считывать,
 как-то собирать». Вводим явную прослойку: входные адаптеры (parser → дерево) и
