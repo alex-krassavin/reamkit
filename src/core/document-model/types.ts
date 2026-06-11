@@ -233,6 +233,10 @@ export interface Run {
   // writers MUST pass it through the scheme allowlist (core/links) before
   // emitting anything clickable.
   readonly href?: string;
+  // §17.16.5.35 PAGE / §17.16.5.33 NUMPAGES — the run is a page-number field;
+  // `text` holds the source's cached result. Header/footer rendering
+  // substitutes the real number per page; body rendering keeps the cache.
+  readonly field?: 'PAGE' | 'NUMPAGES';
   // When set, the run renders this image inline in the line; `text` is ignored.
   readonly inlineImage?: InlineImage;
   // When set, the run is an inline OfficeMath object; `text` is ignored.

@@ -333,8 +333,8 @@ function defaultPageCtx(): SectionRenderCtx {
     marginBottom: 72,
     contentWidth: A4_WIDTH - 144,
     pageContentHeight: A4_HEIGHT - 144,
-    headerSet: { default: [], first: [], even: [] },
-    footerSet: { default: [], first: [], even: [] },
+    headerSet: { default: { commands: [] }, first: { commands: [] }, even: { commands: [] } },
+    footerSet: { default: { commands: [] }, first: { commands: [] }, even: { commands: [] } },
     titlePg: false,
     evenAndOddHeaders: false,
   };

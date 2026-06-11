@@ -540,10 +540,20 @@ function refByType(
 
 type HfBand = 'default' | 'first' | 'even';
 
+// One header/footer band. Static bands carry their pre-rendered commands
+// (the byte-identical fast path). A band containing PAGE/NUMPAGES fields is
+// DYNAMIC: it re-lays out per page once pagination knows both numbers
+// (§17.16.5.33/.35) — substitution changes text widths, so this is an honest
+// re-layout, not a glyph swap. w:pgNumType start offsets are not applied (v1).
+interface HfBandEntry {
+  readonly commands: Array<PageItem>;
+  readonly renderDynamic?: (pageNumber: number, totalPages: number) => Array<PageItem>;
+}
+
 interface HeaderFooterSet {
-  readonly default: Array<PageItem>;
-  readonly first: Array<PageItem>;
-  readonly even: Array<PageItem>;
+  readonly default: HfBandEntry;
+  readonly first: HfBandEntry;
+  readonly even: HfBandEntry;
 }
 
 // Tag every command in a header/footer band as a pagination artifact so the
@@ -567,15 +577,24 @@ function layoutHeaderSet(
   pageHeight: number,
   headerOffsetPt: number,
 ): HeaderFooterSet {
-  const band = (type: HeaderFooterType): Array<PageItem> => {
+  const band = (type: HeaderFooterType): HfBandEntry => {
     const ref = refByType(section.headers, type);
-    if (!ref) return [];
+    if (!ref) return { commands: [] };
     const content = headersFooters.get(ref.relationshipId);
-    if (!content) return [];
-    const blocks = laidOutBlocksFor(content, options, fontResources, contentWidth);
-    return markPagination(
-      drawBlocksSequentially(blocks, marginLeft, pageHeight - headerOffsetPt, pageHeight),
-    );
+    if (!content) return { commands: [] };
+    const render = (c: ReadonlyArray<BodyElement>): Array<PageItem> => {
+      const blocks = laidOutBlocksFor(c, options, fontResources, contentWidth);
+      return markPagination(
+        drawBlocksSequentially(blocks, marginLeft, pageHeight - headerOffsetPt, pageHeight),
+      );
+    };
+    if (contentHasPageFields(content)) {
+      return {
+        commands: [],
+        renderDynamic: (n, total) => render(substitutePageFields(content, n, total)),
+      };
+    }
+    return { commands: render(content) };
   };
   return { default: band('default'), first: band('first'), even: band('even') };
 }
@@ -590,28 +609,73 @@ function layoutFooterSet(
   pageHeight: number,
   footerOffsetPt: number,
 ): HeaderFooterSet {
-  const band = (type: HeaderFooterType): Array<PageItem> => {
+  const band = (type: HeaderFooterType): HfBandEntry => {
     const ref = refByType(section.footers, type);
-    if (!ref) return [];
+    if (!ref) return { commands: [] };
     const content = headersFooters.get(ref.relationshipId);
-    if (!content) return [];
-    const blocks = laidOutBlocksFor(content, options, fontResources, contentWidth);
-    const totalHeight = blocks.reduce(
-      (sum, b) =>
-        sum +
-        (b.kind === 'paragraph' ? b.spacingBeforePt + b.heightPt + b.spacingAfterPt : b.heightPt),
-      0,
-    );
-    return markPagination(
-      drawBlocksSequentially(blocks, marginLeft, footerOffsetPt + totalHeight, pageHeight),
-    );
+    if (!content) return { commands: [] };
+    const render = (c: ReadonlyArray<BodyElement>): Array<PageItem> => {
+      const blocks = laidOutBlocksFor(c, options, fontResources, contentWidth);
+      const totalHeight = blocks.reduce(
+        (sum, b) =>
+          sum +
+          (b.kind === 'paragraph' ? b.spacingBeforePt + b.heightPt + b.spacingAfterPt : b.heightPt),
+        0,
+      );
+      return markPagination(
+        drawBlocksSequentially(blocks, marginLeft, footerOffsetPt + totalHeight, pageHeight),
+      );
+    };
+    if (contentHasPageFields(content)) {
+      return {
+        commands: [],
+        renderDynamic: (n, total) => render(substitutePageFields(content, n, total)),
+      };
+    }
+    return { commands: render(content) };
   };
   return { default: band('default'), first: band('first'), even: band('even') };
 }
 
-function pickBand(set: HeaderFooterSet, band: HfBand): Array<PageItem> {
-  if (band === 'first') return set.first.length > 0 ? set.first : set.default;
-  if (band === 'even') return set.even.length > 0 ? set.even : set.default;
+// A band is dynamic when any of its paragraphs carries a PAGE/NUMPAGES field
+// run (bands render paragraphs only).
+function contentHasPageFields(content: ReadonlyArray<BodyElement>): boolean {
+  for (const el of content) {
+    if (el.kind === 'paragraph' && el.paragraph.runs.some((r) => r.field !== undefined)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Clone the band content with field runs' cached text replaced by the real
+// numbers for this page.
+function substitutePageFields(
+  content: ReadonlyArray<BodyElement>,
+  pageNumber: number,
+  totalPages: number,
+): ReadonlyArray<BodyElement> {
+  return content.map((el) => {
+    if (el.kind !== 'paragraph') return el;
+    if (!el.paragraph.runs.some((r) => r.field !== undefined)) return el;
+    return {
+      kind: 'paragraph',
+      paragraph: {
+        ...el.paragraph,
+        runs: el.paragraph.runs.map((r) =>
+          r.field === undefined
+            ? r
+            : { ...r, text: String(r.field === 'PAGE' ? pageNumber : totalPages) },
+        ),
+      },
+    };
+  });
+}
+
+function pickBand(set: HeaderFooterSet, band: HfBand): HfBandEntry {
+  const has = (e: HfBandEntry) => e.commands.length > 0 || e.renderDynamic !== undefined;
+  if (band === 'first') return has(set.first) ? set.first : set.default;
+  if (band === 'even') return has(set.even) ? set.even : set.default;
   return set.default;
 }
 
@@ -1241,6 +1305,12 @@ function collectFontResources(
           }
           // Skip runs that carry an inline image only (no text glyphs needed).
           if (run.inlineImage && !run.text) continue;
+          // A PAGE/NUMPAGES field renders substituted digits per page — make
+          // sure every digit is in the subset, not just the cached result.
+          if (run.field !== undefined) {
+            addRun({ text: `${run.text}0123456789`, properties: run.properties }, el.paragraph);
+            continue;
+          }
           addRun(run, el.paragraph);
         }
       } else if (el.kind === 'table') {
@@ -2444,13 +2514,38 @@ function paginateSections(
   // whenever a non-list-item block interrupts the run of list paragraphs.
   const listStack: Array<ListFrame> = [];
 
+  // Dynamic PAGE/NUMPAGES bands re-render after pagination (both numbers are
+  // known only then); each use records where its commands must be spliced.
+  const dynBands: Array<{
+    pageIdx: number;
+    pageNumber: number;
+    position: 'header' | 'footer';
+    render: (pageNumber: number, totalPages: number) => Array<PageItem>;
+  }> = [];
+
   const flushPage = (force = false) => {
     if (current.length === 0 && !force) return;
     const band = bandForPage(pageInSection, globalPageIdx, ctx.titlePg, ctx.evenAndOddHeaders);
     const header = pickBand(ctx.headerSet, band);
     const footer = pickBand(ctx.footerSet, band);
+    if (header.renderDynamic) {
+      dynBands.push({
+        pageIdx: pages.length,
+        pageNumber: globalPageIdx + 1,
+        position: 'header',
+        render: header.renderDynamic,
+      });
+    }
+    if (footer.renderDynamic) {
+      dynBands.push({
+        pageIdx: pages.length,
+        pageNumber: globalPageIdx + 1,
+        position: 'footer',
+        render: footer.renderDynamic,
+      });
+    }
     pages.push({
-      commands: [...header, ...current, ...footer],
+      commands: [...header.commands, ...current, ...footer.commands],
       width: pt(ctx.pageWidth),
       height: pt(ctx.pageHeight),
     });
@@ -2715,6 +2810,16 @@ function paginateSections(
   // header/footer bands — a header/footer-only document) must still emit one
   // page so those bands render, instead of falling back to a blank page.
   if (pages.length === 0) flushPage(true);
+
+  // Every page exists now, so PAGE and NUMPAGES both have values: render the
+  // dynamic bands and splice them where the static band would have sat
+  // (header before the body content, footer after).
+  for (const d of dynBands) {
+    const cmds = d.render(d.pageNumber, pages.length);
+    const page = pages[d.pageIdx]!;
+    if (d.position === 'header') page.commands.unshift(...cmds);
+    else page.commands.push(...cmds);
+  }
   return pages;
 }
 
