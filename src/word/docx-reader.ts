@@ -10,6 +10,8 @@ import type { FlowDoc } from '@/core/ir/flow';
 import type { ResourceId } from '@/core/ir';
 import type { CoreProperties } from '@/core/opc';
 import type { ImageResolver, ParseContext } from '@/word';
+import { bytesInclude } from '@/core/bytes';
+import { EMPTY_STYLE_SHEET } from '@/core/style-cascade';
 
 import { FEATURES, ResourceStore } from '@/core/ir';
 import { parseChart } from '@/core/drawingml/chart-parser';
@@ -20,7 +22,6 @@ import {
   EMPTY_NUMBERING,
   EMPTY_SECTION,
   EMPTY_SETTINGS,
-  EMPTY_STYLE_SHEET,
   loadEmbeddedFonts,
   parseDocument,
   parseHeaderFooter,
@@ -138,17 +139,6 @@ export const docxReader: DocumentReader<FlowDoc> = {
     bytes[0] === 0x50 && bytes[1] === 0x4b && bytesInclude(bytes, 'word/document.xml'),
   read: (bytes) => readDocx(bytes),
 };
-
-export function bytesInclude(haystack: Uint8Array, needle: string): boolean {
-  const n = new TextEncoder().encode(needle);
-  outer: for (let i = 0; i + n.length <= haystack.length; i++) {
-    for (let j = 0; j < n.length; j++) {
-      if (haystack[i + j] !== n[j]) continue outer;
-    }
-    return true;
-  }
-  return false;
-}
 
 // The document-derived half of the old converter mergeInfo: docProps/core.xml
 // mapped into DocumentInfo. The converter spreads caller overrides on top.

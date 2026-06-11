@@ -8,7 +8,7 @@ import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { CoreProperties } from '@/core/opc';
 
-import { EMPTY_STYLE_SHEET } from '@/word';
+import { EMPTY_STYLE_SHEET } from '@/core/style-cascade';
 import { FEATURES, ResourceStore } from '@/core/ir';
 import { OpcPackage, parseCoreProperties } from '@/core/opc';
 import {
@@ -18,7 +18,7 @@ import {
   parseWorksheet,
   parseXlsxStyles,
 } from '@/excel';
-import { bytesInclude } from '@/word/docx-reader';
+import { bytesInclude } from '@/core/bytes';
 import {
   resolvePrintArea,
   resolvePrintTitleRows,

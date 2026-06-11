@@ -22,13 +22,13 @@ import type {
 
 import type { ColorResolver } from '@/core/drawingml/colors';
 import type { Pt, ResourceId } from '@/core/ir';
-import type { PoNode } from '@/word/po-helpers';
+import type { PoNode } from '@/core/po-helpers';
 import { twipsToPt } from '@/core/ir';
 import { parseOMath } from '@/word/omml-parser';
 import { defaultColorResolver } from '@/core/drawingml/colors';
 import { expandMcChildren, parseDrawing } from '@/word/drawing-parser';
 import { parseParagraphProperties } from '@/word/paragraph-properties';
-import { poAttr, poChildren, poFindByPath, poIntAttr, poIs, poText } from '@/word/po-helpers';
+import { poAttr, poChildren, poFindByPath, poIntAttr, poIs, poText } from '@/core/po-helpers';
 import { poElementToFlat } from '@/word/po-to-flat';
 import { parseRunProperties } from '@/word/run-properties';
 import { parseTable } from '@/word/table-parser';

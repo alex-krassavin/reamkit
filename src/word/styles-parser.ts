@@ -8,6 +8,7 @@
 import { XMLParser } from 'fast-xml-parser';
 
 import type { Style, StyleSheet, StyleType } from '@/core/document-model';
+import { EMPTY_STYLE_SHEET } from '@/core/style-cascade';
 
 import { parseParagraphProperties } from '@/word/paragraph-properties';
 import { parseRunProperties } from '@/word/run-properties';
@@ -25,12 +26,6 @@ const parser = new XMLParser({
 });
 
 const STYLE_TYPES = new Set<StyleType>(['paragraph', 'character', 'table', 'numbering']);
-
-export const EMPTY_STYLE_SHEET: StyleSheet = {
-  defaultRunProperties: {},
-  defaultParagraphProperties: {},
-  styles: new Map(),
-};
 
 export function parseStyles(stylesXml: Uint8Array): StyleSheet {
   const xml = decoder.decode(stylesXml);

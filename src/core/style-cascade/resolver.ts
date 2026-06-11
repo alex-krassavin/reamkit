@@ -24,6 +24,14 @@ interface StyleChainResult {
   readonly pPr: ParagraphProperties;
 }
 
+// Null Object for StyleSheet — parsers fall back to it when a package has no
+// styles part, and grid-based formats (xlsx) render with it outright.
+export const EMPTY_STYLE_SHEET: StyleSheet = {
+  defaultRunProperties: {},
+  defaultParagraphProperties: {},
+  styles: new Map(),
+};
+
 export function resolveRunProperties(
   runDirect: RunProperties,
   paragraphDirect: ParagraphProperties,

@@ -10,7 +10,7 @@ export {
 } from '@/word/document-parser';
 export { parseRunProperties } from '@/word/run-properties';
 export { parseParagraphProperties } from '@/word/paragraph-properties';
-export { parseStyles, EMPTY_STYLE_SHEET } from '@/word/styles-parser';
+export { parseStyles } from '@/word/styles-parser';
 export { parseTable } from '@/word/table-parser';
 export { loadEmbeddedFonts, deobfuscateEmbeddedFont, parseFontTable } from '@/word/font-table';
 export { parseNumbering, EMPTY_NUMBERING } from '@/word/numbering-parser';

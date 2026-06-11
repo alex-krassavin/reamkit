@@ -16,10 +16,10 @@ import type {
   ShapeTransform,
 } from '@/core/document-model';
 import type { ColorMod, ColorResolver } from '@/core/drawingml/colors';
-import type { PoNode } from '@/word/po-helpers';
+import type { PoNode } from '@/core/po-helpers';
 import type { Pt } from '@/core/ir';
 import { emuToPt } from '@/core/ir';
-import { poAttr, poChildren, poFindDescendant, poIntAttr, poIs, poTag } from '@/word/po-helpers';
+import { poAttr, poChildren, poFindDescendant, poIntAttr, poIs, poTag } from '@/core/po-helpers';
 
 const WPS_URI = 'http://schemas.microsoft.com/office/word/2010/wordprocessingShape';
 const CHART_URI = 'http://schemas.openxmlformats.org/drawingml/2006/chart';

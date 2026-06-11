@@ -6,7 +6,7 @@
 // literal symbols still appear.
 
 import type { MathFraction, MathNode, MathRun } from '@/core/document-model';
-import type { PoNode } from '@/word/po-helpers';
+import type { PoNode } from '@/core/po-helpers';
 import {
   poChildren,
   poChildrenWith,
@@ -15,7 +15,7 @@ import {
   poText,
   poToggle,
   poVal,
-} from '@/word/po-helpers';
+} from '@/core/po-helpers';
 
 export function parseOMath(oMath: PoNode): MathNode {
   return { type: 'row', children: parseMathSeq(poChildren(oMath)) };

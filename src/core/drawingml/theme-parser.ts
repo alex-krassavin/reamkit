@@ -7,8 +7,8 @@
 
 import { XMLParser } from 'fast-xml-parser';
 
-import type { PoNode } from '@/word/po-helpers';
-import { poAttr, poChildren, poFindByPath, poIs, poTag } from '@/word/po-helpers';
+import type { PoNode } from '@/core/po-helpers';
+import { poAttr, poChildren, poFindByPath, poIs, poTag } from '@/core/po-helpers';
 
 const decoder = new TextDecoder('utf-8');
 

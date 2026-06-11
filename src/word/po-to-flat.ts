@@ -5,8 +5,8 @@
 // Property parsers (run-properties.ts, paragraph-properties.ts) walk that
 // shape, so we convert once and reuse them unchanged.
 
-import type { PoNode } from '@/word/po-helpers';
-import { poChildren, poTag } from '@/word/po-helpers';
+import type { PoNode } from '@/core/po-helpers';
+import { poChildren, poTag } from '@/core/po-helpers';
 
 const ATTRS_KEY = ':@';
 const TEXT_KEY = '#text';

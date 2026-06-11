@@ -15,7 +15,7 @@ import type {
   TableRow,
 } from '@/core/document-model';
 
-import type { PoNode } from '@/word/po-helpers';
+import type { PoNode } from '@/core/po-helpers';
 import type { Pt } from '@/core/ir';
 import type { ParseContext } from '@/word/document-parser';
 import { DEFAULT_PARSE_CONTEXT, parseBodyElements } from '@/word/document-parser';
@@ -28,7 +28,7 @@ import {
   poIntAttr,
   poToggle,
   poVal,
-} from '@/word/po-helpers';
+} from '@/core/po-helpers';
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 

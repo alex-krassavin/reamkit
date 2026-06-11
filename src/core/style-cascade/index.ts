@@ -1,4 +1,8 @@
-export { resolveRunProperties, resolveParagraphProperties } from '@/core/style-cascade/resolver';
+export {
+  EMPTY_STYLE_SHEET,
+  resolveParagraphProperties,
+  resolveRunProperties,
+} from '@/core/style-cascade/resolver';
 export type {
   ResolvedRunProperties,
   ResolvedParagraphProperties,

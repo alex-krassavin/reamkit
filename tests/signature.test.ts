@@ -9,7 +9,7 @@ import { buildDocxFromBody } from './fixtures/build-docx';
 import type { BodyElement } from '@/core/document-model';
 import { convertDocxToPdf } from '@/core/converter';
 import { FontRegistry } from '@/core/font';
-import { EMPTY_STYLE_SHEET } from '@/word';
+import { EMPTY_STYLE_SHEET } from '@/core/style-cascade';
 import { renderStyledPdf, signPdf } from '@/pdf';
 import * as asn1 from '@/core/crypto/asn1';
 

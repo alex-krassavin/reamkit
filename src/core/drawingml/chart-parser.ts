@@ -9,7 +9,7 @@ import { XMLParser } from 'fast-xml-parser';
 
 import type { Chart, ChartDataPoint, ChartSeries, ChartType } from '@/core/document-model';
 import type { ColorMod, ColorResolver } from '@/core/drawingml/colors';
-import type { PoNode } from '@/word/po-helpers';
+import type { PoNode } from '@/core/po-helpers';
 import {
   poAttr,
   poChildren,
@@ -20,7 +20,7 @@ import {
   poTag,
   poText,
   poVal,
-} from '@/word/po-helpers';
+} from '@/core/po-helpers';
 
 const decoder = new TextDecoder('utf-8');
 
