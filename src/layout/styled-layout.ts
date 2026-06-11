@@ -2746,6 +2746,220 @@ function listItemParagraphNode(
   };
 }
 
+// A9 (oop-design §4.3): the page-assembly state machine, extracted verbatim
+// from paginateSections. One instance assembles all pages of a document:
+// fields are the former local state, methods the former closures — the block
+// loop drives it. Push order into `current`/`pages` IS the byte order of the
+// emitted PDF, so the bodies move unchanged.
+class PageAssembler {
+  constructor(
+    readonly sectionCtxs: ReadonlyArray<SectionRenderCtx>,
+    readonly builder: StructTreeBuilder | undefined,
+    readonly notes: NotePlan | undefined,
+    readonly bookmarkPositions: Map<string, BookmarkPosition> | undefined,
+  ) {
+    this.ctx = sectionCtxs[0]!;
+    this.cursorY = this.ctx.pageHeight - this.ctx.marginTop;
+  }
+
+  readonly pages: Array<LaidOutPage> = [];
+
+  ctx: SectionRenderCtx;
+  secIdx = 0;
+  pageInSection = 0;
+  globalPageIdx = 0;
+  current: Array<PageItem> = [];
+  pendingPageBreak = false;
+  cursorY: number;
+
+  // §17.6.4 multi-column flow: content fills column after column before the
+  // page flushes. this.colStartLen marks where the this.current column's items begin in
+  // `this.current` — the single-column "page has content" guard generalizes to
+  // "this column has content" (identical when there is one column).
+  colIdx = 0;
+  colStartLen = 0;
+  colLeft = (): number => this.ctx.marginLeft + (this.ctx.columns?.[this.colIdx]?.xOffsetPt ?? 0);
+  colWidth = (): number => this.ctx.columns?.[this.colIdx]?.widthPt ?? this.ctx.contentWidth;
+  colHasContent = (): boolean => this.current.length > this.colStartLen;
+  // Overflow step: next column on this page, or a fresh page after the last.
+  advanceColumn = (): void => {
+    if (this.ctx.columns && this.colIdx + 1 < this.ctx.columns.length) {
+      this.colIdx++;
+      this.colStartLen = this.current.length;
+      this.cursorY = this.ctx.pageHeight - this.ctx.marginTop;
+    } else {
+      this.flushPage();
+    }
+  };
+
+  // §20.4.2.3 out-of-flow drawings (wrap 'none'): they render at their
+  // anchored position without moving the cursor. behindDoc sinks below the
+  // body text, everything else above it; both flush with the page.
+  floatsBehind: Array<PageItem> = [];
+  floatsFront: Array<PageItem> = [];
+  floatX = (f: FloatAnchor, widthPt: number): number => {
+    const h = f.posH;
+    if (!h) return this.colLeft();
+    const base =
+      h.relativeFrom === 'page'
+        ? 0
+        : h.relativeFrom === 'column'
+          ? this.colLeft()
+          : this.ctx.marginLeft;
+    const span =
+      h.relativeFrom === 'page'
+        ? this.ctx.pageWidth
+        : h.relativeFrom === 'column'
+          ? this.colWidth()
+          : this.ctx.contentWidth;
+    if (h.align === 'center') return base + (span - widthPt) / 2;
+    if (h.align === 'right') return base + span - widthPt;
+    return base + (h.offsetPt ?? 0);
+  };
+  // The drawing's TOP in the y-up cursor frame. paragraph/line-relative
+  // offsets hang off the anchoring paragraph's this.current position.
+  floatTopYUp = (f: FloatAnchor): number => {
+    const v = f.posV;
+    if (!v) return this.cursorY;
+    if (v.relativeFrom === 'page') return this.ctx.pageHeight - (v.offsetPt ?? 0);
+    if (v.relativeFrom === 'margin')
+      return this.ctx.pageHeight - this.ctx.marginTop - (v.offsetPt ?? 0);
+    return this.cursorY - (v.offsetPt ?? 0);
+  };
+  // Tagged PDF: the stack of open list levels (for L/LI/LBody nesting). Cleared
+  // whenever a non-list-item block interrupts the run of list paragraphs.
+  readonly listStack: Array<ListFrame> = [];
+
+  // §17.11 footnotes: this.notes reserved for the CURRENT page (greedy — a line
+  // carrying a reference pulls its note's height out of the page bottom, so
+  // the line and its note land together). `this.placedNotes` is global: a note
+  // renders once, on its first reference's page.
+  pageNotes: Array<{ n: number; blocks: ReadonlyArray<LaidOutBlock>; heightPt: number }> = [];
+  noteReserve = 0;
+  readonly placedNotes = new Set<string>();
+  // The page's usable bottom: the margin plus whatever the this.notes band has
+  // claimed so far.
+  bottomLimit = (): number => this.ctx.marginBottom + this.noteReserve;
+
+  // New (unplaced) footnotes referenced by a line's tokens, with their layout
+  // at the this.current section's width.
+  lineFootnotes = (
+    line: Line,
+  ): Array<{ id: string; n: number; blocks: ReadonlyArray<LaidOutBlock>; heightPt: number }> => {
+    if (!this.notes) return [];
+    const out: Array<{
+      id: string;
+      n: number;
+      blocks: ReadonlyArray<LaidOutBlock>;
+      heightPt: number;
+    }> = [];
+    for (const tok of line.tokens) {
+      if (tok.kind !== 'text' || tok.footnoteRef === undefined) continue;
+      const id = tok.footnoteRef;
+      if (this.placedNotes.has(id) || out.some((o) => o.id === id)) continue;
+      const laid = this.notes.layout(this.ctx, id);
+      const n = this.notes.numbers.get(id);
+      if (!laid || n === undefined) continue;
+      out.push({ id, n, blocks: laid.blocks, heightPt: laid.heightPt });
+    }
+    return out;
+  };
+
+  // The this.notes band for the flushing page: separator rule + each note's blocks
+  // stacked inside the reserved area. Tagged: each note is a Note→P element.
+  renderNotesBand = (): Array<PageItem> => {
+    if (this.pageNotes.length === 0) return [];
+    const out: Array<PageItem> = [];
+    const top = this.ctx.marginBottom + this.noteReserve; // y-up top of the reserve
+    out.push({
+      type: 'fill',
+      x: pt(this.ctx.marginLeft),
+      y: pt(this.ctx.pageHeight - (top - FOOTNOTE_RULE_GAP_ABOVE)),
+      width: pt(FOOTNOTE_RULE_WIDTH),
+      height: pt(FOOTNOTE_RULE_PT),
+      fillColorHex: '000000',
+    });
+    let cursor = top - FOOTNOTE_SEPARATOR_HEIGHT;
+    for (const note of this.pageNotes.sort((a, b) => a.n - b.n)) {
+      let structId: number | undefined;
+      if (this.builder) {
+        const noteNode = this.builder.create('Note', this.builder.root);
+        structId = this.builder.create('P', noteNode).id;
+      }
+      out.push(
+        ...drawBlocksSequentially(
+          note.blocks,
+          this.ctx.marginLeft,
+          cursor,
+          this.ctx.pageHeight,
+          structId,
+        ),
+      );
+      cursor -= note.heightPt;
+    }
+    return out;
+  };
+
+  // Dynamic PAGE/NUMPAGES bands re-render after pagination (both numbers are
+  // known only then); each use records where its commands must be spliced.
+  readonly dynBands: Array<{
+    pageIdx: number;
+    pageNumber: number;
+    position: 'header' | 'footer';
+    render: (pageNumber: number, totalPages: number) => Array<PageItem>;
+  }> = [];
+
+  flushPage = (force = false): void => {
+    if (this.current.length === 0 && !force) return;
+    const band = bandForPage(
+      this.pageInSection,
+      this.globalPageIdx,
+      this.ctx.titlePg,
+      this.ctx.evenAndOddHeaders,
+    );
+    const header = pickBand(this.ctx.headerSet, band);
+    const footer = pickBand(this.ctx.footerSet, band);
+    if (header.renderDynamic) {
+      this.dynBands.push({
+        pageIdx: this.pages.length,
+        pageNumber: this.globalPageIdx + 1,
+        position: 'header',
+        render: header.renderDynamic,
+      });
+    }
+    if (footer.renderDynamic) {
+      this.dynBands.push({
+        pageIdx: this.pages.length,
+        pageNumber: this.globalPageIdx + 1,
+        position: 'footer',
+        render: footer.renderDynamic,
+      });
+    }
+    this.pages.push({
+      commands: [
+        ...header.commands,
+        ...this.floatsBehind,
+        ...this.current,
+        ...this.floatsFront,
+        ...this.renderNotesBand(),
+        ...footer.commands,
+      ],
+      width: pt(this.ctx.pageWidth),
+      height: pt(this.ctx.pageHeight),
+    });
+    this.current = [];
+    this.floatsBehind = [];
+    this.floatsFront = [];
+    this.pageNotes = [];
+    this.noteReserve = 0;
+    this.colIdx = 0;
+    this.colStartLen = 0;
+    this.pageInSection++;
+    this.globalPageIdx++;
+    this.cursorY = this.ctx.pageHeight - this.ctx.marginTop;
+  };
+}
+
 function paginateSections(
   blocks: ReadonlyArray<LaidOutBlock>,
   sectionCtxs: ReadonlyArray<SectionRenderCtx>,
@@ -2757,210 +2971,31 @@ function paginateSections(
   bookmarkPositions?: Map<string, BookmarkPosition>,
 ): Array<LaidOutPage> {
   if (sectionCtxs.length === 0) return [];
-  const pages: Array<LaidOutPage> = [];
-
-  let ctx = sectionCtxs[0]!;
-  let secIdx = 0;
-  let pageInSection = 0;
-  let globalPageIdx = 0;
-  let current: Array<PageItem> = [];
-  let pendingPageBreak = false;
-  let cursorY = ctx.pageHeight - ctx.marginTop;
-
-  // §17.6.4 multi-column flow: content fills column after column before the
-  // page flushes. colStartLen marks where the current column's items begin in
-  // `current` — the single-column "page has content" guard generalizes to
-  // "this column has content" (identical when there is one column).
-  let colIdx = 0;
-  let colStartLen = 0;
-  const colLeft = () => ctx.marginLeft + (ctx.columns?.[colIdx]?.xOffsetPt ?? 0);
-  const colWidth = () => ctx.columns?.[colIdx]?.widthPt ?? ctx.contentWidth;
-  const colHasContent = () => current.length > colStartLen;
-  // Overflow step: next column on this page, or a fresh page after the last.
-  const advanceColumn = () => {
-    if (ctx.columns && colIdx + 1 < ctx.columns.length) {
-      colIdx++;
-      colStartLen = current.length;
-      cursorY = ctx.pageHeight - ctx.marginTop;
-    } else {
-      flushPage();
-    }
-  };
-
-  // §20.4.2.3 out-of-flow drawings (wrap 'none'): they render at their
-  // anchored position without moving the cursor. behindDoc sinks below the
-  // body text, everything else above it; both flush with the page.
-  let floatsBehind: Array<PageItem> = [];
-  let floatsFront: Array<PageItem> = [];
-  const floatX = (f: FloatAnchor, widthPt: number): number => {
-    const h = f.posH;
-    if (!h) return colLeft();
-    const base =
-      h.relativeFrom === 'page' ? 0 : h.relativeFrom === 'column' ? colLeft() : ctx.marginLeft;
-    const span =
-      h.relativeFrom === 'page'
-        ? ctx.pageWidth
-        : h.relativeFrom === 'column'
-          ? colWidth()
-          : ctx.contentWidth;
-    if (h.align === 'center') return base + (span - widthPt) / 2;
-    if (h.align === 'right') return base + span - widthPt;
-    return base + (h.offsetPt ?? 0);
-  };
-  // The drawing's TOP in the y-up cursor frame. paragraph/line-relative
-  // offsets hang off the anchoring paragraph's current position.
-  const floatTopYUp = (f: FloatAnchor): number => {
-    const v = f.posV;
-    if (!v) return cursorY;
-    if (v.relativeFrom === 'page') return ctx.pageHeight - (v.offsetPt ?? 0);
-    if (v.relativeFrom === 'margin') return ctx.pageHeight - ctx.marginTop - (v.offsetPt ?? 0);
-    return cursorY - (v.offsetPt ?? 0);
-  };
-  // Tagged PDF: the stack of open list levels (for L/LI/LBody nesting). Cleared
-  // whenever a non-list-item block interrupts the run of list paragraphs.
-  const listStack: Array<ListFrame> = [];
-
-  // §17.11 footnotes: notes reserved for the CURRENT page (greedy — a line
-  // carrying a reference pulls its note's height out of the page bottom, so
-  // the line and its note land together). `placedNotes` is global: a note
-  // renders once, on its first reference's page.
-  let pageNotes: Array<{ n: number; blocks: ReadonlyArray<LaidOutBlock>; heightPt: number }> = [];
-  let noteReserve = 0;
-  const placedNotes = new Set<string>();
-  // The page's usable bottom: the margin plus whatever the notes band has
-  // claimed so far.
-  const bottomLimit = () => ctx.marginBottom + noteReserve;
-
-  // New (unplaced) footnotes referenced by a line's tokens, with their layout
-  // at the current section's width.
-  const lineFootnotes = (
-    line: Line,
-  ): Array<{ id: string; n: number; blocks: ReadonlyArray<LaidOutBlock>; heightPt: number }> => {
-    if (!notes) return [];
-    const out: Array<{
-      id: string;
-      n: number;
-      blocks: ReadonlyArray<LaidOutBlock>;
-      heightPt: number;
-    }> = [];
-    for (const tok of line.tokens) {
-      if (tok.kind !== 'text' || tok.footnoteRef === undefined) continue;
-      const id = tok.footnoteRef;
-      if (placedNotes.has(id) || out.some((o) => o.id === id)) continue;
-      const laid = notes.layout(ctx, id);
-      const n = notes.numbers.get(id);
-      if (!laid || n === undefined) continue;
-      out.push({ id, n, blocks: laid.blocks, heightPt: laid.heightPt });
-    }
-    return out;
-  };
-
-  // The notes band for the flushing page: separator rule + each note's blocks
-  // stacked inside the reserved area. Tagged: each note is a Note→P element.
-  const renderNotesBand = (): Array<PageItem> => {
-    if (pageNotes.length === 0) return [];
-    const out: Array<PageItem> = [];
-    const top = ctx.marginBottom + noteReserve; // y-up top of the reserve
-    out.push({
-      type: 'fill',
-      x: pt(ctx.marginLeft),
-      y: pt(ctx.pageHeight - (top - FOOTNOTE_RULE_GAP_ABOVE)),
-      width: pt(FOOTNOTE_RULE_WIDTH),
-      height: pt(FOOTNOTE_RULE_PT),
-      fillColorHex: '000000',
-    });
-    let cursor = top - FOOTNOTE_SEPARATOR_HEIGHT;
-    for (const note of pageNotes.sort((a, b) => a.n - b.n)) {
-      let structId: number | undefined;
-      if (builder) {
-        const noteNode = builder.create('Note', builder.root);
-        structId = builder.create('P', noteNode).id;
-      }
-      out.push(
-        ...drawBlocksSequentially(note.blocks, ctx.marginLeft, cursor, ctx.pageHeight, structId),
-      );
-      cursor -= note.heightPt;
-    }
-    return out;
-  };
-
-  // Dynamic PAGE/NUMPAGES bands re-render after pagination (both numbers are
-  // known only then); each use records where its commands must be spliced.
-  const dynBands: Array<{
-    pageIdx: number;
-    pageNumber: number;
-    position: 'header' | 'footer';
-    render: (pageNumber: number, totalPages: number) => Array<PageItem>;
-  }> = [];
-
-  const flushPage = (force = false) => {
-    if (current.length === 0 && !force) return;
-    const band = bandForPage(pageInSection, globalPageIdx, ctx.titlePg, ctx.evenAndOddHeaders);
-    const header = pickBand(ctx.headerSet, band);
-    const footer = pickBand(ctx.footerSet, band);
-    if (header.renderDynamic) {
-      dynBands.push({
-        pageIdx: pages.length,
-        pageNumber: globalPageIdx + 1,
-        position: 'header',
-        render: header.renderDynamic,
-      });
-    }
-    if (footer.renderDynamic) {
-      dynBands.push({
-        pageIdx: pages.length,
-        pageNumber: globalPageIdx + 1,
-        position: 'footer',
-        render: footer.renderDynamic,
-      });
-    }
-    pages.push({
-      commands: [
-        ...header.commands,
-        ...floatsBehind,
-        ...current,
-        ...floatsFront,
-        ...renderNotesBand(),
-        ...footer.commands,
-      ],
-      width: pt(ctx.pageWidth),
-      height: pt(ctx.pageHeight),
-    });
-    current = [];
-    floatsBehind = [];
-    floatsFront = [];
-    pageNotes = [];
-    noteReserve = 0;
-    colIdx = 0;
-    colStartLen = 0;
-    pageInSection++;
-    globalPageIdx++;
-    cursorY = ctx.pageHeight - ctx.marginTop;
-  };
+  const asm = new PageAssembler(sectionCtxs, builder, notes, bookmarkPositions);
 
   for (let blockIdx = 0; blockIdx < blocks.length; blockIdx++) {
     // Advance to the section that owns this block. A section boundary forces
     // a page break before the next section's first block.
-    while (secIdx < sectionCtxs.length - 1 && blockIdx >= ctx.endIndex) {
-      flushPage();
-      secIdx++;
-      ctx = sectionCtxs[secIdx]!;
-      pageInSection = 0;
-      cursorY = ctx.pageHeight - ctx.marginTop;
+    while (asm.secIdx < sectionCtxs.length - 1 && blockIdx >= asm.ctx.endIndex) {
+      asm.flushPage();
+      asm.secIdx++;
+      asm.ctx = sectionCtxs[asm.secIdx]!;
+      asm.pageInSection = 0;
+      asm.cursorY = asm.ctx.pageHeight - asm.ctx.marginTop;
     }
 
     const block = blocks[blockIdx]!;
     // A forced page break (w:br w:type="page") carried by the previous block:
     // start this block on a fresh page.
-    if (pendingPageBreak) {
-      pendingPageBreak = false;
-      if (current.length > 0) flushPage();
+    if (asm.pendingPageBreak) {
+      asm.pendingPageBreak = false;
+      if (asm.current.length > 0) asm.flushPage();
     }
     // A non-list-item block ends any open list run (tagged PDF).
-    if (builder && !(block.kind === 'paragraph' && block.list)) listStack.length = 0;
+    if (builder && !(block.kind === 'paragraph' && block.list)) asm.listStack.length = 0;
     if (block.kind === 'paragraph') {
-      if (block.resolved.pageBreakBefore && current.length > 0) flushPage();
-      cursorY -= block.spacingBeforePt;
+      if (block.resolved.pageBreakBefore && asm.current.length > 0) asm.flushPage();
+      asm.cursorY -= block.spacingBeforePt;
       // Tagged PDF: a plain paragraph → one P (or heading) element; a list item
       // → an L/LI/LBody/P built on the nesting stack. Its lines all reference
       // the resulting leaf by MCID.
@@ -2982,7 +3017,7 @@ function paginateSections(
         firstLine.tokens.some((t) => !(t.kind === 'text' && t.listMarker));
       if (builder) {
         if (block.list) {
-          const nodes = listItemParagraphNode(builder, listStack, block.list, splitMarker);
+          const nodes = listItemParagraphNode(builder, asm.listStack, block.list, splitMarker);
           structId = nodes.pId;
           markerLblId = nodes.lblId;
         } else {
@@ -2996,32 +3031,35 @@ function paginateSections(
       let firstLineOfBlock = true;
       for (const line of block.lines) {
         const h = computeLineHeight(line, block.resolved);
-        let newNotes = lineFootnotes(line);
+        let newNotes = asm.lineFootnotes(line);
         const addedReserve = (sub: typeof newNotes) =>
           sub.reduce((sum, x) => sum + x.heightPt, 0) +
-          (pageNotes.length === 0 && sub.length > 0 ? FOOTNOTE_SEPARATOR_HEIGHT : 0);
-        if (cursorY - h < bottomLimit() + addedReserve(newNotes) && colHasContent()) {
-          advanceColumn();
-          newNotes = lineFootnotes(line); // reserve restarts on the fresh page
+          (asm.pageNotes.length === 0 && sub.length > 0 ? FOOTNOTE_SEPARATOR_HEIGHT : 0);
+        if (asm.cursorY - h < asm.bottomLimit() + addedReserve(newNotes) && asm.colHasContent()) {
+          asm.advanceColumn();
+          newNotes = asm.lineFootnotes(line); // reserve restarts on the fresh page
         }
         if (newNotes.length > 0) {
-          noteReserve += addedReserve(newNotes);
+          asm.noteReserve += addedReserve(newNotes);
           for (const x of newNotes) {
-            placedNotes.add(x.id);
-            pageNotes.push({ n: x.n, blocks: x.blocks, heightPt: x.heightPt });
+            asm.placedNotes.add(x.id);
+            asm.pageNotes.push({ n: x.n, blocks: x.blocks, heightPt: x.heightPt });
           }
         }
         if (firstLineOfBlock) {
           firstLineOfBlock = false;
-          if (block.bookmarks && bookmarkPositions) {
+          if (block.bookmarks && asm.bookmarkPositions) {
             for (const bookmarkName of block.bookmarks) {
-              if (!bookmarkPositions.has(bookmarkName)) {
-                bookmarkPositions.set(bookmarkName, { pageIdx: pages.length, yTopPt: cursorY });
+              if (!asm.bookmarkPositions.has(bookmarkName)) {
+                asm.bookmarkPositions.set(bookmarkName, {
+                  pageIdx: asm.pages.length,
+                  yTopPt: asm.cursorY,
+                });
               }
             }
           }
         }
-        cursorY -= h;
+        asm.cursorY -= h;
         const indentLeft =
           block.resolved.indentLeft + (line.firstLine ? block.resolved.indentFirstLine : 0);
         const offset = alignmentOffset(
@@ -3029,8 +3067,8 @@ function paginateSections(
           line.contentWidthPt,
           line.availableWidthPt,
         );
-        const baselineY = pt(ctx.pageHeight - (cursorY + lineDescent(line)));
-        const originX = colLeft() + indentLeft + offset;
+        const baselineY = pt(asm.ctx.pageHeight - (asm.cursorY + lineDescent(line)));
+        const originX = asm.colLeft() + indentLeft + offset;
         if (markerLblId !== undefined && line === firstLine) {
           // Marker glyphs → Lbl, the rest of the line → P. Both segments keep
           // the original baseline; the body segment starts where the marker's
@@ -3043,14 +3081,14 @@ function paginateSections(
             markerWidth += t.widthPt;
             k++;
           }
-          current.push({
+          asm.current.push({
             type: 'line',
             line: { ...line, tokens: line.tokens.slice(0, k), isLastInParagraph: false },
             originX: pt(originX),
             baselineY,
             structId: markerLblId,
           });
-          current.push({
+          asm.current.push({
             type: 'line',
             line: { ...line, tokens: line.tokens.slice(k) },
             originX: pt(originX + markerWidth),
@@ -3058,7 +3096,7 @@ function paginateSections(
             ...(structId !== undefined ? { structId } : {}),
           });
         } else {
-          current.push({
+          asm.current.push({
             type: 'line',
             line,
             originX: pt(originX),
@@ -3067,15 +3105,15 @@ function paginateSections(
           });
         }
       }
-      cursorY -= block.spacingAfterPt;
-      if (block.pageBreakAfter) pendingPageBreak = true;
+      asm.cursorY -= block.spacingAfterPt;
+      if (block.pageBreakAfter) asm.pendingPageBreak = true;
     } else if (block.kind === 'image') {
       const figId = builder ? createFigure(builder, block.altText, 'Image') : undefined;
       const emitImageAt = (x: number, topYUp: number, sink: Array<PageItem>) => {
         sink.push({
           type: 'image',
           x: pt(x),
-          y: pt(ctx.pageHeight - topYUp),
+          y: pt(asm.ctx.pageHeight - topYUp),
           width: pt(block.widthPt),
           height: pt(block.heightPt),
           imageResourceName: block.resourceName,
@@ -3084,19 +3122,20 @@ function paginateSections(
       };
       if (block.float?.wrap === 'none') {
         emitImageAt(
-          floatX(block.float, block.widthPt),
-          floatTopYUp(block.float),
-          block.float.behind ? floatsBehind : floatsFront,
+          asm.floatX(block.float, block.widthPt),
+          asm.floatTopYUp(block.float),
+          block.float.behind ? asm.floatsBehind : asm.floatsFront,
         );
       } else {
-        cursorY -= block.spacingBeforePt;
-        if (cursorY - block.heightPt < bottomLimit() && colHasContent()) advanceColumn();
-        cursorY -= block.heightPt;
-        emitImageAt(colLeft(), cursorY + block.heightPt, current);
-        cursorY -= block.spacingAfterPt;
+        asm.cursorY -= block.spacingBeforePt;
+        if (asm.cursorY - block.heightPt < asm.bottomLimit() && asm.colHasContent())
+          asm.advanceColumn();
+        asm.cursorY -= block.heightPt;
+        emitImageAt(asm.colLeft(), asm.cursorY + block.heightPt, asm.current);
+        asm.cursorY -= block.spacingAfterPt;
       }
     } else if (block.kind === 'shape') {
-      // Shapes are atomic — never split across pages.
+      // Shapes are atomic — never split across asm.pages.
       const figId = builder ? createFigure(builder, block.altText, 'Shape') : undefined;
       const emitShapeAt = (x: number, bottomYUp: number, sink: Array<PageItem>) => {
         const transform = flipTransform(
@@ -3109,7 +3148,7 @@ function paginateSections(
             block.flipH,
             block.flipV,
           ),
-          ctx.pageHeight,
+          asm.ctx.pageHeight,
         );
         sink.push({
           type: 'shape',
@@ -3148,7 +3187,7 @@ function paginateSections(
               type: 'line',
               line,
               originX: pt(x + block.insetLeftPt + lineOffset),
-              baselineY: pt(ctx.pageHeight - (textY + lineDescent(line))),
+              baselineY: pt(asm.ctx.pageHeight - (textY + lineDescent(line))),
               ...(figId !== undefined ? { structId: figId } : {}),
             });
           }
@@ -3156,17 +3195,18 @@ function paginateSections(
       };
       if (block.float?.wrap === 'none') {
         emitShapeAt(
-          floatX(block.float, block.widthPt),
-          floatTopYUp(block.float) - block.heightPt,
-          block.float.behind ? floatsBehind : floatsFront,
+          asm.floatX(block.float, block.widthPt),
+          asm.floatTopYUp(block.float) - block.heightPt,
+          block.float.behind ? asm.floatsBehind : asm.floatsFront,
         );
       } else {
-        cursorY -= block.spacingBeforePt;
-        if (cursorY - block.heightPt < bottomLimit() && colHasContent()) advanceColumn();
-        cursorY -= block.heightPt;
-        const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, colWidth());
-        emitShapeAt(colLeft() + offset, cursorY, current);
-        cursorY -= block.spacingAfterPt;
+        asm.cursorY -= block.spacingBeforePt;
+        if (asm.cursorY - block.heightPt < asm.bottomLimit() && asm.colHasContent())
+          asm.advanceColumn();
+        asm.cursorY -= block.heightPt;
+        const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, asm.colWidth());
+        emitShapeAt(asm.colLeft() + offset, asm.cursorY, asm.current);
+        asm.cursorY -= block.spacingAfterPt;
       }
     } else if (block.kind === 'chart') {
       // Charts are atomic. Their primitives are in a local y-up frame; the
@@ -3183,7 +3223,7 @@ function paginateSections(
               paths: s.paths,
               ...(s.fillColorHex ? { fillColorHex: s.fillColorHex } : {}),
               ...(s.stroke ? { stroke: s.stroke } : {}),
-              transform: flipTransform([1, 0, 0, 1, x, bottomYUp], ctx.pageHeight),
+              transform: flipTransform([1, 0, 0, 1, x, bottomYUp], asm.ctx.pageHeight),
             },
             ...fig,
           });
@@ -3193,24 +3233,25 @@ function paginateSections(
             type: 'line',
             line: t.line,
             originX: pt(x + t.x),
-            baselineY: pt(ctx.pageHeight - (bottomYUp + t.y)),
+            baselineY: pt(asm.ctx.pageHeight - (bottomYUp + t.y)),
             ...fig,
           });
         }
       };
       if (block.float?.wrap === 'none') {
         emitChartAt(
-          floatX(block.float, block.widthPt),
-          floatTopYUp(block.float) - block.heightPt,
-          block.float.behind ? floatsBehind : floatsFront,
+          asm.floatX(block.float, block.widthPt),
+          asm.floatTopYUp(block.float) - block.heightPt,
+          block.float.behind ? asm.floatsBehind : asm.floatsFront,
         );
       } else {
-        cursorY -= block.spacingBeforePt;
-        if (cursorY - block.heightPt < bottomLimit() && colHasContent()) advanceColumn();
-        cursorY -= block.heightPt;
-        const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, colWidth());
-        emitChartAt(colLeft() + offset, cursorY, current);
-        cursorY -= block.spacingAfterPt;
+        asm.cursorY -= block.spacingBeforePt;
+        if (asm.cursorY - block.heightPt < asm.bottomLimit() && asm.colHasContent())
+          asm.advanceColumn();
+        asm.cursorY -= block.heightPt;
+        const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, asm.colWidth());
+        emitChartAt(asm.colLeft() + offset, asm.cursorY, asm.current);
+        asm.cursorY -= block.spacingAfterPt;
       }
     } else {
       const colCount = block.rows.reduce(
@@ -3236,7 +3277,7 @@ function paginateSections(
       // holding the cell's content. The same TD/P node is reused across row
       // chunks (page splits), so its MCRs accumulate like a split paragraph.
       const tableNode = builder ? builder.create('Table', builder.root) : undefined;
-      const tableX = colLeft() + block.xOffsetPt;
+      const tableX = asm.colLeft() + block.xOffsetPt;
       for (let ri = 0; ri < block.rows.length; ri++) {
         const row = block.rows[ri]!;
         const isLeadingHeader = ri < headerRows.length;
@@ -3258,57 +3299,74 @@ function paginateSections(
           });
         }
         const chunks =
-          row.heightPt > ctx.pageContentHeight
-            ? splitRowIntoChunks(row, ctx.pageContentHeight)
+          row.heightPt > asm.ctx.pageContentHeight
+            ? splitRowIntoChunks(row, asm.ctx.pageContentHeight)
             : [row];
 
         for (let ci = 0; ci < chunks.length; ci++) {
           const chunk = chunks[ci]!;
           // A manual <rowBreaks> break (first chunk only) forces a new page even
           // when the row would fit; an overflow break starts one when it won't.
-          const forcedBreak = ci === 0 && row.breakBefore && !isLeadingHeader && current.length > 0;
-          const overflow = cursorY - chunk.heightPt < bottomLimit() && colHasContent();
+          const forcedBreak =
+            ci === 0 && row.breakBefore && !isLeadingHeader && asm.current.length > 0;
+          const overflow = asm.cursorY - chunk.heightPt < asm.bottomLimit() && asm.colHasContent();
           if (forcedBreak || overflow) {
-            if (forcedBreak) flushPage();
-            else advanceColumn();
+            if (forcedBreak) asm.flushPage();
+            else asm.advanceColumn();
             // Re-emit the header rows on the fresh page (visual repetition →
             // artifacts, no structIds), but only when the breaking row is not
             // itself a header and the row still fits beneath the repeated band.
             if (
               !isLeadingHeader &&
               headerRows.length > 0 &&
-              cursorY - headerHeightPt - chunk.heightPt >= bottomLimit()
+              asm.cursorY - headerHeightPt - chunk.heightPt >= asm.bottomLimit()
             ) {
               for (const hr of headerRows) {
-                emitRowChunk(current, hr, tableX, cursorY, ctx.pageHeight, colCount, undefined);
-                cursorY -= hr.heightPt;
+                emitRowChunk(
+                  asm.current,
+                  hr,
+                  tableX,
+                  asm.cursorY,
+                  asm.ctx.pageHeight,
+                  colCount,
+                  undefined,
+                );
+                asm.cursorY -= hr.heightPt;
               }
             }
           }
-          emitRowChunk(current, chunk, tableX, cursorY, ctx.pageHeight, colCount, cellStructIds);
-          cursorY -= chunk.heightPt;
+          emitRowChunk(
+            asm.current,
+            chunk,
+            tableX,
+            asm.cursorY,
+            asm.ctx.pageHeight,
+            colCount,
+            cellStructIds,
+          );
+          asm.cursorY -= chunk.heightPt;
         }
       }
     }
   }
 
   // Trailing content on the last in-progress page.
-  flushPage();
+  asm.flushPage();
   // A body that produced no flushable content (e.g. text lives only in the
   // header/footer bands — a header/footer-only document) must still emit one
   // page so those bands render, instead of falling back to a blank page.
-  if (pages.length === 0) flushPage(true);
+  if (asm.pages.length === 0) asm.flushPage(true);
 
   // Every page exists now, so PAGE and NUMPAGES both have values: render the
   // dynamic bands and splice them where the static band would have sat
   // (header before the body content, footer after).
-  for (const d of dynBands) {
-    const cmds = d.render(d.pageNumber, pages.length);
-    const page = pages[d.pageIdx]!;
+  for (const d of asm.dynBands) {
+    const cmds = d.render(d.pageNumber, asm.pages.length);
+    const page = asm.pages[d.pageIdx]!;
     if (d.position === 'header') page.commands.unshift(...cmds);
     else page.commands.push(...cmds);
   }
-  return pages;
+  return asm.pages;
 }
 
 // §14.8.5.2 /RowSpan — how many rows a vertical-merge origin spans. Walk down
