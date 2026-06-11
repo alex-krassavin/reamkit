@@ -86,7 +86,7 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
           },
         ];
 
-  const headersFooters = loadHeadersFootersForSections(pkg, sections, ctx);
+  const headersFooters = loadHeadersFootersForSections(pkg, sections, ctx, resources);
   const charts = loadCharts(pkg, resolveColor);
   // The document's own embedded fonts (de-obfuscated). A run whose w:ascii
   // matches one renders with the real font instead of a substitute.
@@ -154,13 +154,18 @@ function infoFromCore(core: CoreProperties | undefined): DocumentInfo | undefine
   };
 }
 
-function makeImageResolver(pkg: OpcPackage, store: ResourceStore): ImageResolver {
-  // Main-part image relationships only (headers/footers historically resolved
-  // against the same map; their own rels are a TODO).
+function makeImageResolver(
+  pkg: OpcPackage,
+  store: ResourceStore,
+  partName: string = MAIN_DOCUMENT_PART,
+): ImageResolver {
+  // Relationship ids are scoped to their OWNING part (OPC §9.3) — a header's
+  // rId must resolve against the header's own .rels, not the main document's
+  // (oop-design §8, C5: shared-resolver bug fixed).
   const byRelId = new Map<string, Uint8Array>();
-  for (const rel of pkg.getPartRelationships(MAIN_DOCUMENT_PART)) {
+  for (const rel of pkg.getPartRelationships(partName)) {
     if (rel.type !== REL_IMAGE) continue;
-    const resolved = pkg.resolveRelatedPart(MAIN_DOCUMENT_PART, rel);
+    const resolved = pkg.resolveRelatedPart(partName, rel);
     if (resolved) byRelId.set(rel.id, resolved.data);
   }
   const cache = new Map<string, ResourceId | undefined>();
@@ -211,6 +216,7 @@ function loadHeadersFootersForSections(
   pkg: OpcPackage,
   sections: ReadonlyArray<Section>,
   ctx: ParseContext,
+  store: ResourceStore,
 ): ReadonlyMap<string, ReadonlyArray<BodyElement>> {
   const wanted = new Set<string>();
   for (const s of sections) {
@@ -227,7 +233,11 @@ function loadHeadersFootersForSections(
     if (rel.type !== REL_HEADER && rel.type !== REL_FOOTER) continue;
     const resolved = pkg.resolveRelatedPart(MAIN_DOCUMENT_PART, rel);
     if (!resolved) continue;
-    out.set(rel.id, parseHeaderFooter(resolved.data, ctx));
+    const hfCtx: ParseContext = {
+      resolveColor: ctx.resolveColor,
+      resolveImage: makeImageResolver(pkg, store, resolved.path),
+    };
+    out.set(rel.id, parseHeaderFooter(resolved.data, hfCtx));
   }
   return out;
 }

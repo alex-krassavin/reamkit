@@ -68,6 +68,9 @@ export interface BuildDocxOptions {
   // Full word/theme/theme1.xml content (an <a:theme>…</a:theme> document).
   readonly themeXml?: string;
   readonly images?: Readonly<Record<string, FixtureImage>>;
+  // Images owned by the default header (word/_rels/header1.xml.rels) — for
+  // exercising per-part relationship resolution.
+  readonly headerImages?: Readonly<Record<string, FixtureImage>>;
   // Chart parts keyed by the relationship id a c:chart @r:id references. Each
   // value is a full <c:chartSpace>…</c:chartSpace> document.
   readonly charts?: Readonly<Record<string, string>>;
@@ -92,10 +95,8 @@ ${bodyInnerXml}
 </w:document>`;
 
   const imageDefaults = new Set<string>();
-  if (options.images) {
-    for (const img of Object.values(options.images)) {
-      imageDefaults.add(`<Default Extension="${img.extension}" ContentType="${img.contentType}"/>`);
-    }
+  for (const img of Object.values({ ...options.images, ...options.headerImages })) {
+    imageDefaults.add(`<Default Extension="${img.extension}" ContentType="${img.contentType}"/>`);
   }
   const headerSlots: Array<{ idx: number; xml: string; rId: string }> = [];
   const footerSlots: Array<{ idx: number; xml: string; rId: string }> = [];
@@ -167,7 +168,7 @@ ${options.settingsXml}
   for (const h of headerSlots) {
     entries[`word/header${h.idx}.xml`] = encoder.encode(
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
 ${h.xml}
 </w:hdr>`,
     );
@@ -204,6 +205,22 @@ ${f.xml}
       docRels.push(`<Relationship Id="${rId}" Type="${REL_IMAGE}" Target="${target}"/>`);
       imgIdx++;
     }
+  }
+  if (options.headerImages) {
+    const hdrRels: Array<string> = [];
+    let imgIdx = 1;
+    for (const [rId, img] of Object.entries(options.headerImages)) {
+      const target = `media/hImage${imgIdx}.${img.extension}`;
+      entries[`word/${target}`] = img.bytes;
+      hdrRels.push(`<Relationship Id="${rId}" Type="${REL_IMAGE}" Target="${target}"/>`);
+      imgIdx++;
+    }
+    entries['word/_rels/header1.xml.rels'] = encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+${hdrRels.join('\n')}
+</Relationships>`,
+    );
   }
   if (docRels.length > 0) {
     entries['word/_rels/document.xml.rels'] = encoder.encode(
