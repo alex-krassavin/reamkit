@@ -4,6 +4,7 @@
 // (§7.5.4), trailer (§7.5.5).
 
 import type { PdfValue } from '@/pdf/objects';
+import { encryptObjectGraph } from '@/pdf/encryption';
 import { PdfRef } from '@/pdf/objects';
 import { serializeIndirectObject } from '@/pdf/serialize';
 
@@ -23,6 +24,9 @@ export interface BuildOptions {
   // identifiers are a deterministic hash of the file body — no Date/random,
   // so the same input always yields the same bytes.
   readonly id?: boolean;
+  // The /Encrypt dictionary's ref (§7.6.2) — emitted in the trailer. The
+  // referenced object must be added AFTER encryptAll so it stays plaintext.
+  readonly encrypt?: PdfRef;
 }
 
 export class PdfDocument {
@@ -32,6 +36,14 @@ export class PdfDocument {
     const id = this.objects.length + 1;
     this.objects.push({ id, value });
     return new PdfRef(id);
+  }
+
+  // §7.6: encrypt every string and stream in every object added so far. The
+  // /Encrypt dictionary must be added after this pass (it stays plaintext).
+  async encryptAll(fileKey: Uint8Array): Promise<void> {
+    for (const obj of this.objects) {
+      (obj as { value: PdfValue }).value = await encryptObjectGraph(obj.value, fileKey);
+    }
   }
 
   build(root: PdfRef, info?: PdfRef, options: BuildOptions = {}): Uint8Array {
@@ -62,6 +74,9 @@ export class PdfDocument {
     push(encoder.encode(xref));
 
     const infoEntry = info ? ` /Info ${info.id} ${info.generation} R` : '';
+    const encryptEntry = options.encrypt
+      ? ` /Encrypt ${options.encrypt.id} ${options.encrypt.generation} R`
+      : '';
     let idEntry = '';
     if (options.id) {
       // Hash the body emitted so far (everything before the trailer) to derive
@@ -71,7 +86,7 @@ export class PdfDocument {
       idEntry = ` /ID [<${hashHex}> <${hashHex}>]`;
     }
     const trailer =
-      `trailer\n<</Size ${totalObjects} /Root ${root.id} ${root.generation} R${infoEntry}${idEntry}>>\n` +
+      `trailer\n<</Size ${totalObjects} /Root ${root.id} ${root.generation} R${infoEntry}${encryptEntry}${idEntry}>>\n` +
       `startxref\n${xrefOffset}\n%%EOF\n`;
     push(encoder.encode(trailer));
 

@@ -1,6 +1,7 @@
 export { renderPlainTextPdf } from '@/pdf/text-page-renderer';
 export type { TextRenderOptions, FontInput } from '@/pdf/text-page-renderer';
-export { renderStyledPdf } from '@/pdf/styled-page-renderer';
+export { renderStyledPdf, renderStyledPdfEncrypted } from '@/pdf/styled-page-renderer';
+export type { PdfEncryptOptions, PdfPermissions } from '@/pdf/encryption';
 export type { DocumentInfo, StyledRenderOptions, PdfALevel } from '@/pdf/styled-page-renderer';
 export { signPdf } from '@/pdf/signature';
 export type { SignaturePlaceholder, SignerCredentials, SignatureOptions } from '@/pdf/signature';

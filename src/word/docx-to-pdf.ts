@@ -1,3 +1,4 @@
+import type { BodyElement } from '@/core/document-model';
 import type { FontBytesByVariant } from '@/core/font';
 import type { FamilyKey, FetchLike } from '@/core/fonts';
 import type { SignatureOptions, StyledRenderOptions } from '@/pdf';
@@ -6,7 +7,7 @@ import { fetchFontSet, resolveFamilyKey } from '@/core/fonts';
 import { OpcPackage } from '@/core/opc';
 import { flowRenderOptions } from '@/core/converter/project';
 import { readDocx } from '@/word/docx-reader';
-import { renderStyledPdf, signPdf } from '@/pdf';
+import { renderStyledPdf, renderStyledPdfEncrypted, signPdf } from '@/pdf';
 
 const STYLES_PART = 'word/styles.xml';
 const MAIN_DOCUMENT_PART = 'word/document.xml';
@@ -34,6 +35,17 @@ export interface ConvertDocxOptions extends Omit<StyledRenderOptions, 'registry'
  * Internal since 1.0 — see the async variant above.
  */
 export function convertDocxToPdfSync(docx: Uint8Array, options: ConvertDocxOptions): Uint8Array {
+  const args = prepareDocxStyledRender(docx, options);
+  return renderStyledPdf(args.body, args.styled);
+}
+
+// The shared docx → styled-render arguments (fonts, FlowDoc projection, info,
+// PDF/A-3 source embedding): the sync converter renders them directly, the
+// async path may route them through the encrypting renderer.
+function prepareDocxStyledRender(
+  docx: Uint8Array,
+  options: ConvertDocxOptions,
+): { body: ReadonlyArray<BodyElement>; styled: StyledRenderOptions } {
   const fonts: FontBytesByVariant | undefined =
     options.fonts ?? (options.fontBytes ? { regular: options.fontBytes } : undefined);
   if (!fonts) {
@@ -69,13 +81,16 @@ export function convertDocxToPdfSync(docx: Uint8Array, options: ConvertDocxOptio
       description: 'Source Word document',
     });
   }
-  return renderStyledPdf(flow.body, {
-    registry,
-    ...flowRenderOptions(flow),
-    ...(info ? { info } : {}),
-    ...(attachments.length > 0 ? { attachments } : {}),
-    ...renderOptions,
-  });
+  return {
+    body: flow.body,
+    styled: {
+      registry,
+      ...flowRenderOptions(flow),
+      ...(info ? { info } : {}),
+      ...(attachments.length > 0 ? { attachments } : {}),
+      ...renderOptions,
+    },
+  };
 }
 
 // Convert a .docx to PDF, downloading an open substitute font automatically
@@ -129,11 +144,17 @@ async function buildUnsignedDocxPdf(
   docx: Uint8Array,
   options: ConvertDocxOptions,
 ): Promise<Uint8Array> {
-  if (options.fonts ?? options.fontBytes) {
-    return convertDocxToPdfSync(docx, options);
+  const withFonts =
+    (options.fonts ?? options.fontBytes)
+      ? options
+      : { ...options, ...(await resolveDocxAutoFonts(docx, options)) };
+  // §7.6: encryption needs WebCrypto, so it lives on this async path — the
+  // sync core would throw on it.
+  if (withFonts.encrypt) {
+    const args = prepareDocxStyledRender(docx, withFonts);
+    return renderStyledPdfEncrypted(args.body, args.styled);
   }
-  const auto = await resolveDocxAutoFonts(docx, options);
-  return convertDocxToPdfSync(docx, { ...options, ...auto });
+  return convertDocxToPdfSync(docx, withFonts);
 }
 
 // Substitute-font auto-download for a docx without caller fonts: detect the

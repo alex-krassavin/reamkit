@@ -73,6 +73,7 @@ import type {
 // Deliberate layout→pdf residue (see the header note).
 import type { AttachedFile } from '@/pdf/embedded-file';
 import type { SignaturePlaceholder } from '@/pdf/signature';
+import type { PdfEncryptOptions } from '@/pdf/encryption';
 import type { StructNode, StructType } from '@/pdf/struct-tree';
 
 import { ResourceStore, halfPtToPt, pt } from '@/core/ir';
@@ -195,6 +196,10 @@ export interface StyledRenderOptions {
   // catalog /Lang (§14.9.2). Defaults to "en-US". The docx converter fills this
   // from the document's default w:lang.
   readonly language?: string;
+  // §7.6 PDF encryption (AES-256, R6). Only honoured on the ASYNC conversion
+  // path (WebCrypto); mutually exclusive with pdfA (ISO 19005 forbids
+  // /Encrypt) and with signatures (v1).
+  readonly encrypt?: PdfEncryptOptions;
   // Files to embed as associated files (catalog /AF + /Names /EmbeddedFiles).
   // Only emitted for plain PDF and PDF/A-3 (PDF/A-1/2 forbid arbitrary embedded
   // files); ignored for PDF/A-1/2. The docx/xlsx converters can embed the source

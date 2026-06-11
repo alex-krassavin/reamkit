@@ -29,7 +29,9 @@ import type {
   StyledRenderOptions,
 } from '@/layout/styled-layout';
 import type { VectorShape } from '@/core/vector';
-import type { PdfDocument } from '@/pdf/writer';
+import type { BuildOptions, PdfDocument } from '@/pdf/writer';
+import type { PdfEncryptOptions } from '@/pdf/encryption';
+import { preparePdfEncryption } from '@/pdf/encryption';
 import { paintPlan } from '@/layout/page-doc';
 import { A4_HEIGHT, A4_WIDTH } from '@/layout/styled-layout';
 import { emitVectorShape } from '@/pdf/vector-graphics';
@@ -57,6 +59,35 @@ export function emitStyledPdf(
   options: EmitOptions,
   doc: PdfDocument,
 ): Uint8Array {
+  const a = assembleStyledPdf(laid, options, doc);
+  return doc.build(a.catalogRef, a.infoRef, a.buildOptions);
+}
+
+// §7.6 — the encrypted build: assemble as usual, encrypt every collected
+// object, then add the (plaintext) /Encrypt dictionary and emit with a file
+// ID. Asynchronous because WebCrypto is.
+export async function emitStyledPdfEncrypted(
+  laid: LaidOutPdfDocument,
+  options: EmitOptions,
+  doc: PdfDocument,
+  encrypt: PdfEncryptOptions,
+): Promise<Uint8Array> {
+  const a = assembleStyledPdf(laid, options, doc);
+  const prepared = await preparePdfEncryption(encrypt);
+  await doc.encryptAll(prepared.fileKey);
+  const encryptRef = doc.add(prepared.encryptDict);
+  return doc.build(a.catalogRef, a.infoRef, {
+    ...a.buildOptions,
+    id: true,
+    encrypt: encryptRef,
+  });
+}
+
+function assembleStyledPdf(
+  laid: LaidOutPdfDocument,
+  options: EmitOptions,
+  doc: PdfDocument,
+): { catalogRef: PdfRef; infoRef: PdfRef | undefined; buildOptions: BuildOptions } {
   const { pages: renderedPages } = laid;
   // The PDF-only companion (oop-design A13): logical structure, fallback page
   // geometry, PDF/A apparatus. The PageDoc proper stays writer-neutral.
@@ -311,9 +342,13 @@ export function emitStyledPdf(
 
   const catalogRef = doc.add(dict(catalogEntries));
   const infoRef = buildInfoDict(doc, docInfo);
-  return doc.build(catalogRef, infoRef, {
-    ...(pdfaProfile ? { version: pdfaProfile.version, id: true } : {}),
-  });
+  return {
+    catalogRef,
+    infoRef,
+    buildOptions: {
+      ...(pdfaProfile ? { version: pdfaProfile.version, id: true } : {}),
+    },
+  };
 }
 
 const DEFAULT_PRODUCER = 'Ream';
