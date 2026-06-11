@@ -96,7 +96,7 @@ export type {
   ImageItem,
   ShapeItem,
   LaidOutPage,
-} from '@/pdf/styled-page-renderer';
+} from '@/layout/page-doc';
 export {
   chainProviders,
   callerFontProvider,
@@ -110,5 +110,5 @@ export {
 export type { FontProvider, FontRequest, FontAnswer } from '@/core/fonts/provider';
 export { svgWriter, writeSvg } from '@/svg/svg-writer';
 export type { SvgWriteOptions } from '@/svg/svg-writer';
-export { layoutStyledDocument } from '@/pdf/styled-page-renderer';
-export type { LaidOutDocument } from '@/pdf/styled-page-renderer';
+export { layoutStyledDocument } from '@/layout/styled-layout';
+export type { LaidOutDocument } from '@/layout/page-doc';

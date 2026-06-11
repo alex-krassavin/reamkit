@@ -11,16 +11,11 @@
 
 import type { DocumentWriter, WriteResult } from '@/core/ir/adapters';
 import type { Loss } from '@/core/ir';
-import type {
-  LaidOutDocument,
-  LaidOutPage,
-  PageItem,
-  TextLineItem,
-} from '@/pdf/styled-page-renderer';
+import type { LaidOutDocument, LaidOutPage, TextLineItem } from '@/layout/page-doc';
 import type { PathSegment, VectorShape } from '@/core/vector';
 
 import { FEATURES } from '@/core/ir';
-import { paintPlan } from '@/pdf/styled-page-renderer';
+import { paintPlan } from '@/layout/page-doc';
 
 const PAGE_GAP = 12;
 

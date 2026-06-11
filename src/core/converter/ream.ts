@@ -29,7 +29,7 @@ import { flowRenderOptions } from '@/core/converter/project';
 import { FontRegistry } from '@/core/font';
 import { fetchFontSet } from '@/core/fonts';
 import { ConversionLossError } from '@/core/ir';
-import { layoutStyledDocument } from '@/pdf/styled-page-renderer';
+import { layoutStyledDocument } from '@/layout/styled-layout';
 import { renderStyledPdf, signPdf } from '@/pdf';
 import { writeSvg } from '@/svg/svg-writer';
 import { resolveDocxAutoFonts } from '@/word/docx-to-pdf';

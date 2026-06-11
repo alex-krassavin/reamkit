@@ -25,7 +25,7 @@ import type {
   MathRun,
   MathScript,
 } from '@/core/document-model';
-import type { PathSegment } from '@/pdf/vector-graphics';
+import type { PathSegment } from '@/core/vector';
 
 export type MathVariant = 'regular' | 'italic' | 'bold' | 'boldItalic';
 

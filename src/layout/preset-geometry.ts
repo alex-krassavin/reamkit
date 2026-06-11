@@ -6,9 +6,9 @@
 // a:gd numbers (Word's preset guides are mostly thousandths-of-a-percent).
 
 import type { CustomGeometry } from '@/core/document-model';
-import type { PathSegment, VectorPath } from '@/pdf/vector-graphics';
-import { arcToBeziers, ellipseSegments, roundRectSegments } from '@/pdf/arc-to-bezier';
-import { PathBuilder } from '@/pdf/vector-graphics';
+import type { PathSegment, VectorPath } from '@/core/vector';
+import { arcToBeziers, ellipseSegments, roundRectSegments } from '@/layout/arc-to-bezier';
+import { PathBuilder } from '@/core/vector';
 
 export function rectSegments(w: number, h: number): ReadonlyArray<PathSegment> {
   return new PathBuilder().moveTo(0, 0).lineTo(w, 0).lineTo(w, h).lineTo(0, h).close().build()

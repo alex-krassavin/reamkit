@@ -17,7 +17,7 @@ import { ConversionLossError, FEATURES } from '@/core/ir';
 import { FontRegistry } from '@/core/font';
 import { chainProviders } from '@/core/fonts/provider';
 import { flowRenderOptions } from '@/core/converter/project';
-import { layoutStyledDocument } from '@/pdf/styled-page-renderer';
+import { layoutStyledDocument } from '@/layout/styled-layout';
 import { writeSvg } from '@/svg/svg-writer';
 import { convertDocxToPdf } from '@/word/docx-to-pdf';
 import { convertXlsxToPdf } from '@/excel/xlsx-to-pdf';

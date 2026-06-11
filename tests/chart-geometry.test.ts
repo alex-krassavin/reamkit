@@ -9,7 +9,7 @@ import {
   buildScatterScene,
   formatTick,
   niceScale,
-} from '@/pdf/chart-geometry';
+} from '@/layout/chart-geometry';
 
 // Crude monospace-ish measure for layout tests.
 const measure = (t: string, sz: number): number => t.length * sz * 0.5;

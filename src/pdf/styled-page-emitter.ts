@@ -12,26 +12,26 @@ import type { EmbeddedFont } from '@/pdf/cid-font';
 import type { PdfDict, PdfRef, PdfValue } from '@/pdf/objects';
 import type {
   FontResource,
-  ImageItem,
   ImageResource,
   ImageToken,
   LaidOutDocument,
   LaidOutPage,
-  LaidOutPdfDocument,
   Line,
   MathToken,
-  PageDimensions,
   PageItem,
-  PageTagging,
+  TextLineItem,
+  TextToken,
+} from '@/layout/page-doc';
+import type {
+  LaidOutPdfDocument,
   PdfAProfile,
   SectionRenderCtx,
   StyledRenderOptions,
-  TextLineItem,
-  TextToken,
-} from '@/pdf/styled-page-renderer';
-import type { VectorShape } from '@/pdf/vector-graphics';
+} from '@/layout/styled-layout';
+import type { VectorShape } from '@/core/vector';
 import type { PdfDocument } from '@/pdf/writer';
-import { A4_HEIGHT, A4_WIDTH, paintPlan } from '@/pdf/styled-page-renderer';
+import { paintPlan } from '@/layout/page-doc';
+import { A4_HEIGHT, A4_WIDTH } from '@/layout/styled-layout';
 import { emitVectorShape } from '@/pdf/vector-graphics';
 import { reorderVisual, reverseByCodePoint } from '@/core/bidi';
 import { embedTtfFont } from '@/pdf/cid-font';
@@ -745,4 +745,18 @@ function hexToRgb01(hex: string): readonly [number, number, number] {
 function formatNumber(n: number): string {
   if (Number.isInteger(n)) return String(n);
   return n.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+// Per-page tagging state threaded into emitPageContent. `next` is the running
+// MCID counter (reset per page); `assigned` records whether any tagged marked
+// content was emitted (so the page gets /StructParents); `record` ties an
+// assigned MCID back to its structure node.
+export interface PageTagging {
+  next: number;
+  assigned: boolean;
+  record: (structId: number, mcid: number) => void;
+  // The marked-content tag for a structure node — its structure type, so the
+  // BDC tag matches the StructElem /S (§14.7.2: a heading is /H1, a cell's
+  // paragraph /P, …), not a hardcoded /P.
+  tagFor: (structId: number) => string;
 }
