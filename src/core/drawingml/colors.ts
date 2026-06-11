@@ -10,6 +10,14 @@
 // shade darkens toward black, tint lightens toward white. `val` is normalised to
 // 0..1 (the XML stores thousandths of a percent). alpha is parsed but ignored
 // (solid fills emit no transparency).
+// ---------------------------------------------------------------------------
+// Shared colour-node parsing (§20.1.2.3) — one owner for chart-parser and the
+// word drawing-parser, which had drifted apart as verbatim copies.
+// ---------------------------------------------------------------------------
+
+import type { PoNode } from '@/core/po-helpers';
+import { poAttr, poChildren, poIntAttr, poIs } from '@/core/po-helpers';
+
 export interface ColorMod {
   readonly kind: 'lumMod' | 'lumOff' | 'shade' | 'tint' | 'alpha';
   readonly val: number;
@@ -128,3 +136,31 @@ export function makeColorResolver(palette: ReadonlyMap<string, string>): ColorRe
 }
 
 export const defaultColorResolver: ColorResolver = makeColorResolver(DEFAULT_THEME_PALETTE);
+
+// Colour transform children under an a:srgbClr / a:schemeClr.
+export function readColorMods(colorNode: PoNode): Array<ColorMod> {
+  const mods: Array<ColorMod> = [];
+  for (const c of poChildren(colorNode)) {
+    for (const kind of ['lumMod', 'lumOff', 'shade', 'tint', 'alpha'] as const) {
+      if (poIs(c, `a:${kind}`)) {
+        const v = poIntAttr(c, 'val');
+        if (v !== undefined) mods.push({ kind, val: v / 100000 });
+      }
+    }
+  }
+  return mods;
+}
+
+// a:srgbClr / a:schemeClr node → resolved hex (with colour transforms);
+// undefined when the node is some other element, valueless, or the resolver
+// does not know the colour. Container traversal policy (stop at the first
+// colour node vs continue past unresolved ones) stays with the callers.
+export function resolveColorNode(c: PoNode, resolveColor: ColorResolver): string | undefined {
+  const isSrgb = poIs(c, 'a:srgbClr');
+  if (!isSrgb && !poIs(c, 'a:schemeClr')) return undefined;
+  const v = poAttr(c, 'val');
+  if (!v) return undefined;
+  const mods = readColorMods(c);
+  const raw = isSrgb ? { srgb: v } : { scheme: v };
+  return resolveColor(mods.length > 0 ? { ...raw, mods } : raw);
+}

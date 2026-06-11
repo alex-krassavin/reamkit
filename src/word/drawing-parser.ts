@@ -18,6 +18,7 @@ import type {
 import type { ColorMod, ColorResolver } from '@/core/drawingml/colors';
 import type { PoNode } from '@/core/po-helpers';
 import type { Pt } from '@/core/ir';
+import { resolveColorNode } from '@/core/drawingml/colors';
 import { emuToPt } from '@/core/ir';
 import { poAttr, poChildren, poFindDescendant, poIntAttr, poIs, poTag } from '@/core/po-helpers';
 
@@ -406,30 +407,6 @@ function normalizeDash(v: string | undefined): ShapeDash | undefined {
   if (v === 'lgDashDotDot') return 'lgDashDot';
   if (v === 'sysDashDot' || v === 'sysDashDotDot') return 'sysDash';
   return undefined;
-}
-
-// Colour transform children (§20.1.2.3) under an a:srgbClr / a:schemeClr.
-function readColorMods(colorNode: PoNode): Array<ColorMod> {
-  const mods: Array<ColorMod> = [];
-  for (const c of poChildren(colorNode)) {
-    for (const kind of ['lumMod', 'lumOff', 'shade', 'tint', 'alpha'] as const) {
-      if (poIs(c, `a:${kind}`)) {
-        const v = poIntAttr(c, 'val');
-        if (v !== undefined) mods.push({ kind, val: v / 100000 });
-      }
-    }
-  }
-  return mods;
-}
-
-function resolveColorNode(c: PoNode, resolveColor: ColorResolver): string | undefined {
-  const isSrgb = poIs(c, 'a:srgbClr');
-  if (!isSrgb && !poIs(c, 'a:schemeClr')) return undefined;
-  const v = poAttr(c, 'val');
-  if (!v) return undefined;
-  const mods = readColorMods(c);
-  const raw = isSrgb ? { srgb: v } : { scheme: v };
-  return resolveColor(mods.length > 0 ? { ...raw, mods } : raw);
 }
 
 // First a:srgbClr / a:schemeClr child → resolved hex (with colour transforms).

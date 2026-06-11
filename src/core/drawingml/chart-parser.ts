@@ -10,6 +10,7 @@ import { XMLParser } from 'fast-xml-parser';
 import type { Chart, ChartDataPoint, ChartSeries, ChartType } from '@/core/document-model';
 import type { ColorMod, ColorResolver } from '@/core/drawingml/colors';
 import type { PoNode } from '@/core/po-helpers';
+import { resolveColorNode } from '@/core/drawingml/colors';
 import {
   poAttr,
   poChildren,
@@ -158,28 +159,14 @@ function fillColorOf(spPr: PoNode | undefined, resolveColor: ColorResolver): str
   return lnFill ? colorFromSolidFill(lnFill, resolveColor) : undefined;
 }
 
-function colorMods(colorNode: PoNode): Array<ColorMod> {
-  const mods: Array<ColorMod> = [];
-  for (const c of poChildren(colorNode)) {
-    for (const kind of ['lumMod', 'lumOff', 'shade', 'tint', 'alpha'] as const) {
-      if (poIs(c, `a:${kind}`)) {
-        const v = poIntAttr(c, 'val');
-        if (v !== undefined) mods.push({ kind, val: v / 100000 });
-      }
-    }
-  }
-  return mods;
-}
-
 function colorFromSolidFill(solid: PoNode, resolveColor: ColorResolver): string | undefined {
   for (const c of poChildren(solid)) {
     const isSrgb = poIs(c, 'a:srgbClr');
     if (!isSrgb && !poIs(c, 'a:schemeClr')) continue;
-    const v = poAttr(c, 'val');
-    if (!v) continue;
-    const mods = colorMods(c);
-    const raw = isSrgb ? { srgb: v } : { scheme: v };
-    return resolveColor(mods.length > 0 ? { ...raw, mods } : raw);
+    if (!poAttr(c, 'val')) continue;
+    // Chart semantics: stop at the first colour node, even when the resolver
+    // does not know the colour (the word drawing-parser continues instead).
+    return resolveColorNode(c, resolveColor);
   }
   return undefined;
 }
