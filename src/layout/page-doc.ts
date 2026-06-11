@@ -40,6 +40,9 @@ export interface TextToken {
   // §17.16.22 — internal link target: a bookmark name in this document (not
   // a URL; resolves to a GoTo destination, never through the scheme list).
   readonly anchor?: string;
+  // List-item marker glyphs ("1.", "•") — tagged PDF brackets them in a Lbl
+  // element separate from the item body.
+  readonly listMarker?: true;
   readonly resolvedRun: ResolvedRunProperties;
   readonly font: FontResource;
   readonly fontSizePt: number;

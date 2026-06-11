@@ -34,6 +34,7 @@ export function applyNumbering(
     const markerRun: Run = {
       text: `${marker}\t`,
       properties: level?.runProperties ?? {},
+      listMarker: true,
     };
     const newProps: ParagraphProperties = mergeIndentFromLevel(
       p.properties,

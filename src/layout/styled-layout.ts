@@ -1843,6 +1843,7 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         ...(plan.run.href !== undefined ? { href: plan.run.href } : {}),
         ...(plan.run.footnoteRef !== undefined ? { footnoteRef: plan.run.footnoteRef } : {}),
         ...(plan.run.anchor !== undefined ? { anchor: plan.run.anchor } : {}),
+        ...(plan.run.listMarker ? { listMarker: true } : {}),
         resolvedRun: plan.resolvedRun,
         font: plan.font,
         fontSizePt: plan.fontSizePt,
@@ -1904,6 +1905,7 @@ function tokenizePlansBidi(
         ...(plan.run.href !== undefined ? { href: plan.run.href } : {}),
         ...(plan.run.footnoteRef !== undefined ? { footnoteRef: plan.run.footnoteRef } : {}),
         ...(plan.run.anchor !== undefined ? { anchor: plan.run.anchor } : {}),
+        ...(plan.run.listMarker ? { listMarker: true } : {}),
         resolvedRun: plan.resolvedRun,
         font: plan.font,
         fontSizePt: plan.fontSizePt,
@@ -2703,16 +2705,17 @@ interface ListFrame {
   lbody: StructNode | null;
 }
 
-// Resolve the structure node (a P) for a list-item paragraph, growing/shrinking
-// the open-list stack by nesting level (w:ilvl). Each item is L → LI → LBody →
-// P; a deeper level opens a nested L inside the parent item's LBody. The list
-// marker stays inside the P (no separate Lbl in this milestone). Returns the P
-// node id to stamp onto the paragraph's lines.
+// Resolve the structure nodes for a list-item paragraph, growing/shrinking
+// the open-list stack by nesting level (w:ilvl). Each item is L → LI →
+// [Lbl +] LBody → P; a deeper level opens a nested L inside the parent item's
+// LBody. `wantLbl` creates the marker's Lbl element (§14.8.4.3.3) — requested
+// only when the first line will actually split its marker tokens out.
 function listItemParagraphNode(
   builder: StructTreeBuilder,
   stack: Array<ListFrame>,
   list: { numId: string; level: number },
-): number {
+  wantLbl: boolean,
+): { pId: number; lblId?: number } {
   const lvl = list.level;
   // Close any deeper levels, or a same-level list with a different numId.
   while (stack.length > 0) {
@@ -2729,9 +2732,13 @@ function listItemParagraphNode(
     stack.push(frame);
   }
   const li = builder.create('LI', frame.listNode);
+  const lblId = wantLbl ? builder.create('Lbl', li).id : undefined;
   const lbody = builder.create('LBody', li);
   frame.lbody = lbody;
-  return builder.create('P', lbody).id;
+  return {
+    pId: builder.create('P', lbody).id,
+    ...(lblId !== undefined ? { lblId } : {}),
+  };
 }
 
 function paginateSections(
@@ -2953,10 +2960,29 @@ function paginateSections(
       // → an L/LI/LBody/P built on the nesting stack. Its lines all reference
       // the resulting leaf by MCID.
       let structId: number | undefined;
+      let markerLblId: number | undefined;
+      // §14.8.4.3.3 Lbl: the first line's leading marker tokens split into
+      // their own marked-content sequence when the geometry is simple — base
+      // LTR, left-aligned (the dominant list case). Justified/centered/RTL
+      // lines keep the marker inside the P, exactly as before.
+      const firstLine = block.lines[0];
+      const splitMarker =
+        builder !== undefined &&
+        block.list !== undefined &&
+        firstLine !== undefined &&
+        block.resolved.alignment === 'left' &&
+        block.resolved.bidi !== true &&
+        !firstLine.tokens.some((t) => t.bidiLevel % 2 === 1) &&
+        firstLine.tokens.some((t) => t.kind === 'text' && t.listMarker) &&
+        firstLine.tokens.some((t) => !(t.kind === 'text' && t.listMarker));
       if (builder) {
-        structId = block.list
-          ? listItemParagraphNode(builder, listStack, block.list)
-          : builder.create(paragraphStructType(block.resolved), builder.root).id;
+        if (block.list) {
+          const nodes = listItemParagraphNode(builder, listStack, block.list, splitMarker);
+          structId = nodes.pId;
+          markerLblId = nodes.lblId;
+        } else {
+          structId = builder.create(paragraphStructType(block.resolved), builder.root).id;
+        }
         // §14.9.2 per-element /Lang: tag a paragraph whose dominant run language
         // differs from the document default so AT switches pronunciation.
         const lang = dominantParagraphLang(block.lines);
@@ -2998,13 +3024,43 @@ function paginateSections(
           line.contentWidthPt,
           line.availableWidthPt,
         );
-        current.push({
-          type: 'line',
-          line,
-          originX: pt(colLeft() + indentLeft + offset),
-          baselineY: pt(ctx.pageHeight - (cursorY + lineDescent(line))),
-          ...(structId !== undefined ? { structId } : {}),
-        });
+        const baselineY = pt(ctx.pageHeight - (cursorY + lineDescent(line)));
+        const originX = colLeft() + indentLeft + offset;
+        if (markerLblId !== undefined && line === firstLine) {
+          // Marker glyphs → Lbl, the rest of the line → P. Both segments keep
+          // the original baseline; the body segment starts where the marker's
+          // advance ends (left-aligned guard ⇒ offset is 0 for both).
+          let k = 0;
+          let markerWidth = 0;
+          while (k < line.tokens.length) {
+            const t = line.tokens[k]!;
+            if (t.kind !== 'text' || !t.listMarker) break;
+            markerWidth += t.widthPt;
+            k++;
+          }
+          current.push({
+            type: 'line',
+            line: { ...line, tokens: line.tokens.slice(0, k), isLastInParagraph: false },
+            originX: pt(originX),
+            baselineY,
+            structId: markerLblId,
+          });
+          current.push({
+            type: 'line',
+            line: { ...line, tokens: line.tokens.slice(k) },
+            originX: pt(originX + markerWidth),
+            baselineY,
+            ...(structId !== undefined ? { structId } : {}),
+          });
+        } else {
+          current.push({
+            type: 'line',
+            line,
+            originX: pt(originX),
+            baselineY,
+            ...(structId !== undefined ? { structId } : {}),
+          });
+        }
       }
       cursorY -= block.spacingAfterPt;
       if (block.pageBreakAfter) pendingPageBreak = true;
