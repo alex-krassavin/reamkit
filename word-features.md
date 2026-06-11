@@ -8,6 +8,7 @@
 корпус-прогон в песочнице.
 
 Порядок: **W1 → W4 → W2 → W3** (по нарастанию байт-риска и layout-инвазивности).
+**ЭТАП ЗАВЕРШЁН ЦЕЛИКОМ** — все четыре под-этапа ✅; корпус после каждого байт-рискованного шага.
 
 ---
 
@@ -114,7 +115,7 @@ resolveBodyStyles).
 
 ---
 
-## W3 — Сноски (footnotes / endnotes)
+## W3 — Сноски (footnotes / endnotes) ✅ (выполнено)
 
 **Спека:** §17.11 (`footnotes.xml`/`endnotes.xml`, `w:footnoteReference`,
 сепаратор id=0/continuation id=1), tagged: Note/FENote (PDF/UA).

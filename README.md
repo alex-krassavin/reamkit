@@ -157,8 +157,9 @@ automatically from the document's `docProps/core.xml`), `attachments`
 
 ## Scope
 
-Implemented: WordprocessingML text/styles/tables/lists/multi-section
-layout/headers-footers/images/tracked changes, SpreadsheetML grids,
+Implemented: WordprocessingML text/styles/tables (incl. table styles)/lists/
+multi-section layout/headers-footers (incl. PAGE/NUMPAGES fields)/footnotes
+and endnotes/images/tracked changes, SpreadsheetML grids,
 number formats and the print model (gridlines, print area, fit-to-page,
 repeated titles, page breaks), DrawingML shapes and charts, OMML math,
 Type0+CIDFontType2 embedding with subsetting, Knuth-Plass line breaking,

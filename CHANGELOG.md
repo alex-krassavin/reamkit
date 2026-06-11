@@ -8,6 +8,12 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Footnotes and endnotes** — `w:footnoteReference`/`w:endnoteReference`
+  render superscript numbers; footnote content lands at the bottom of the
+  referencing page behind Word's short separator rule (the line and its note
+  always travel together), endnotes flow after the body. Tagged PDFs wrap
+  each note in a `Note` structure element (veraPDF-validated); the HTML
+  writer renders anchored references with a notes section and backlinks.
 - **PAGE / NUMPAGES fields** — page-number fields in headers and footers now
   render the real page number and total (both the `fldSimple` and the
   `fldChar` complex-field syntax). Bands containing fields re-lay out per
