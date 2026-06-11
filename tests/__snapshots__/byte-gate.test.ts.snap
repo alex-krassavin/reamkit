@@ -1,0 +1,25 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`byte gate: images and PDF/A emit paths > images.docx (PDF/A-1a: tagged structure tree) 1`] = `"234e69dd24d87c01840b704fd75bf826c4e40843a9895b34808256171a4bb3da"`;
+
+exports[`byte gate: images and PDF/A emit paths > images.docx (PDF/A-1b: alpha flattened) 1`] = `"0da74bbf11bd1f2801fe20fd45f54bf8ec138a25918c1dd5d4e75c3cd2a5b28a"`;
+
+exports[`byte gate: images and PDF/A emit paths > images.docx (PDF/A-2b: transparency group) 1`] = `"dd0411c3e0bfc7120851ca2fb03b127215ec0b7fac578416936536defe5a1bd8"`;
+
+exports[`byte gate: images and PDF/A emit paths > images.docx (plain: SMask kept) 1`] = `"26a7aec88b5f2ae9ecb5c0570f3452154dc96ebdca2c99f9f7a9c4b742aab1ce"`;
+
+exports[`byte gate: static fixtures > header-footer.docx 1`] = `"2500cbdf4879288023b75262e1c633e1c5a9451f79bcd64d206fe986522ccb26"`;
+
+exports[`byte gate: static fixtures > list-basic.docx 1`] = `"32fcfa92398c31c03ea8e09736a1126e1889dd3bd9a9ad2066883ad47fbb9444"`;
+
+exports[`byte gate: static fixtures > sheet-basic.xlsx 1`] = `"00d3e60313b2536af5ef238414c67f3f41cdd6de2dad10cb2e66d42fbc933163"`;
+
+exports[`byte gate: static fixtures > sheet-formats.xlsx 1`] = `"2fbbc8004c09d631865ae3b73c5de4821953f38d741d44977f15058a056e2c09"`;
+
+exports[`byte gate: static fixtures > table-basic.docx 1`] = `"f511b6168f1b433cea859122a02ef2ebed3d027776c267bb77279f6f3c29e1b7"`;
+
+exports[`byte gate: static fixtures > text-basic.docx 1`] = `"e90e61163c4a3ac1fb13b4d96ea96eb6f28fe439c24b2f7b795a3625d4f3b405"`;
+
+exports[`byte gate: static fixtures > text-justified.docx 1`] = `"ec69659453ec832eb7ff5343868206c93382937d96ca2273853776dfbdc09a5b"`;
+
+exports[`byte gate: static fixtures > text-styled.docx 1`] = `"86dfcce94d05faec25505d53f6d80f72577ee01d9a5449730f1ae4d10cc50e40"`;
