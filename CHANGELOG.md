@@ -12,6 +12,10 @@ follows [Semantic Versioning](https://semver.org/).
   chart frames anchored to cell ranges render after their sheet's grid,
   sized from the anchor's column/row tracks. Custom chart colour themes
   (`colorsN.xml`) apply to series in both Word and Excel documents.
+- **Float text wrapping** — side-wrapped anchored drawings (`wrapSquare`/
+  `tight`/`through`) now claim an exclusion area: paragraph lines beside the
+  float narrow to the wider side (Knuth-Plass re-breaks the paragraph with
+  per-line widths) and resume full width below it.
 - **Tagged lists: Lbl elements** — list-item markers ("1.", "•") get their
   own `Lbl` structure element, so assistive technology announces the label
   separately from the item body.
