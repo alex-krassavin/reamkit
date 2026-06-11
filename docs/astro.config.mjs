@@ -26,6 +26,7 @@ export default defineConfig({
           tsconfig: '../tsconfig.json',
           typeDoc: {
             skipErrorChecking: true,
+            entryFileName: 'index',
             excludeInternal: true,
           },
         }),

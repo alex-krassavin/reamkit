@@ -6,7 +6,7 @@ hero:
   tagline: Convert Word (.docx) and Excel (.xlsx) to PDF — in the browser, from the ECMA-376 and ISO 32000 specifications. No LibreOffice, no headless Office, no commercial SDK. Pure TypeScript, Uint8Array in and Uint8Array out.
   actions:
     - text: Getting started
-      link: /reamkit/guides/getting-started/
+      link: /guides/getting-started/
       icon: right-arrow
     - text: View on GitHub
       link: https://github.com/alex-krassavin/reamkit
@@ -41,8 +41,9 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
     tagged PDF (logical structure, alt text) and digital signatures (PKCS#7 detached,
     ECDSA).
   </Card>
-  <Card title="Alpha, and growing" icon="rocket">
-    Published as `reamkit@alpha`. The foundation is a from-scratch document toolkit —
-    more input formats are on the way.
+  <Card title="One parse, any target" icon="rocket">
+    `Ream.parse(bytes)` reads a document once into a format-neutral interlayer;
+    `convert('pdf')` and `convert('svg')` render from it. New formats plug in as
+    reader/writer adapters — more are on the way.
   </Card>
 </CardGrid>
