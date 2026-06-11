@@ -49,7 +49,7 @@ const encoder = new TextEncoder();
 // options — never the layout options (oop-design §4.1: the seam must not leak).
 type EmitOptions = Pick<
   StyledRenderOptions,
-  'attachments' | 'info' | 'language' | 'signaturePlaceholder'
+  'attachments' | 'info' | 'language' | 'pdfUA' | 'signaturePlaceholder'
 >;
 
 export function emitStyledPdf(
@@ -61,6 +61,12 @@ export function emitStyledPdf(
   // The PDF-only companion (oop-design A13): logical structure, fallback page
   // geometry, PDF/A apparatus. The PageDoc proper stays writer-neutral.
   const { structBuilder, sectionCtxs, pdfaProfile, tagged } = laid.pdf;
+  // PDF/UA-1 (Matterhorn 06-003/07-001): the document MUST carry a title and
+  // viewers must display it — synthesize one when the source has none.
+  const docInfo =
+    options.pdfUA && !options.info?.title
+      ? { ...options.info, title: 'Untitled document' }
+      : options.info;
 
   // Create the font/image PDF objects first — the same object order the
   // pre-split renderer produced (fonts, then images, then pages).
@@ -148,6 +154,9 @@ export function emitStyledPdf(
             l.href !== undefined
               ? dict({ S: name('URI'), URI: l.href })
               : dict({ S: name('GoTo'), D: l.anchor ?? '' }),
+          // ISO 14289-1 §7.18.5 — alternate description: the link's visible
+          // text, falling back to its target.
+          Contents: l.text !== '' ? l.text : (l.href ?? l.anchor ?? ''),
         };
         if (l.anchor !== undefined) referencedAnchors.add(l.anchor);
         if (structBuilder && l.structId !== undefined) {
@@ -217,12 +226,14 @@ export function emitStyledPdf(
       }),
     );
     catalogEntries['OutputIntents'] = [ref(outputIntentRef.id)];
-
-    // Document-level XMP metadata carrying the PDF/A identifier (§6.7).
+  }
+  if (pdfaProfile || options.pdfUA) {
+    // Document-level XMP metadata carrying the PDF/A (§6.7) and/or PDF/UA
+    // (ISO 14289-1 §5) identifiers.
     const xmpRef = doc.add(
       stream(
         { Type: name('Metadata'), Subtype: name('XML') },
-        buildXmpPacket(xmpFromInfo(options.info, pdfaProfile)),
+        buildXmpPacket(xmpFromInfo(docInfo, pdfaProfile, options.pdfUA === true)),
       ),
     );
     catalogEntries['Metadata'] = ref(xmpRef.id);
@@ -237,7 +248,7 @@ export function emitStyledPdf(
     catalogEntries['Lang'] = options.language ?? 'en-US';
     // DisplayDocTitle — AT should announce the document title, not the file name
     // (Matterhorn 06-003 / PDF/UA). Only meaningful when a title is present.
-    if (options.info?.title) {
+    if (docInfo?.title) {
       catalogEntries['ViewerPreferences'] = dict({ DisplayDocTitle: true });
     }
   }
@@ -299,7 +310,7 @@ export function emitStyledPdf(
   }
 
   const catalogRef = doc.add(dict(catalogEntries));
-  const infoRef = buildInfoDict(doc, options.info);
+  const infoRef = buildInfoDict(doc, docInfo);
   return doc.build(catalogRef, infoRef, {
     ...(pdfaProfile ? { version: pdfaProfile.version, id: true } : {}),
   });
@@ -310,10 +321,16 @@ const DEFAULT_PRODUCER = 'Ream';
 function xmpFromInfo(
   info: DocumentInfo | undefined,
   p: PdfAProfile | undefined,
+  pdfUA = false,
 ): Parameters<typeof buildXmpPacket>[0] {
   return {
-    pdfaPart: p ? (String(p.part) as '1' | '2' | '3') : '1',
-    pdfaConformance: p ? (p.level.toUpperCase() as 'A' | 'B' | 'U') : 'B',
+    ...(p
+      ? {
+          pdfaPart: String(p.part) as '1' | '2' | '3',
+          pdfaConformance: p.level.toUpperCase() as 'A' | 'B' | 'U',
+        }
+      : {}),
+    ...(pdfUA ? { pdfuaPart: '1' as const } : {}),
     producer: info?.producer ?? DEFAULT_PRODUCER,
     ...(info?.title ? { title: info.title } : {}),
     ...(info?.author ? { author: info.author } : {}),
@@ -475,6 +492,9 @@ interface LinkRegion {
   // of a bookmark in this document (GoTo destination).
   readonly href?: string;
   readonly anchor?: string;
+  // The link's visible text — the annotation's /Contents alternate
+  // description (ISO 14289-1 §7.18.5; AT reads it aloud).
+  readonly text: string;
   readonly rect: readonly [number, number, number, number]; // PDF y-up
   // The owning line's structure node (tagged mode) — the annotation hangs off
   // a Link element under it. Undefined for artifact lines (headers/footers).
@@ -718,6 +738,7 @@ function emitPageContent(
       const linkDescent = Math.max(lineFs * 0.2, line.mathDescentPt ?? 0);
       let linkHref: string | undefined;
       let linkAnchor: string | undefined;
+      let linkText = '';
       let linkX0 = 0;
       let linkX1 = 0;
       const flushLink = () => {
@@ -734,16 +755,19 @@ function emitPageContent(
         if (target) {
           links.push({
             ...target,
+            text: linkText.trim(),
             rect: [linkX0, baselineY - linkDescent, linkX1, baselineY + linkAscent],
             ...(cmd.structId !== undefined ? { structId: cmd.structId } : {}),
           });
         }
         linkHref = undefined;
         linkAnchor = undefined;
+        linkText = '';
       };
       const trackLink = (
         href: string | undefined,
         anchor: string | undefined,
+        text: string,
         x0: number,
         x1: number,
       ) => {
@@ -755,7 +779,10 @@ function emitPageContent(
             linkX0 = x0;
           }
         }
-        if (href !== undefined || anchor !== undefined) linkX1 = x1;
+        if (href !== undefined || anchor !== undefined) {
+          linkX1 = x1;
+          linkText += text;
+        }
       };
       const extraPerSpace = computeJustifyExtra(line);
       const hasImageToken = line.tokens.some((t) => t.kind === 'image');
@@ -799,7 +826,7 @@ function emitPageContent(
           const tokenX0 = x;
           x += tok.widthPt;
           if (tok.isSpace) x += extraPerSpace;
-          trackLink(tok.href, tok.anchor, tokenX0, x);
+          trackLink(tok.href, tok.anchor, tok.text, tokenX0, x);
         }
         flushLink();
       } else {
@@ -814,7 +841,7 @@ function emitPageContent(
           switchFontIfNeeded(tok);
           const hex = tok.font.measure.encodeTextAsCidHex(tok.text);
           out.push(`<${hex}> Tj`);
-          trackLink(tok.href, tok.anchor, x, x + tok.widthPt);
+          trackLink(tok.href, tok.anchor, tok.text, x, x + tok.widthPt);
           x += tok.widthPt;
         }
         flushLink();

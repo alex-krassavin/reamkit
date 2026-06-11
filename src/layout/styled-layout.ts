@@ -188,6 +188,10 @@ export interface StyledRenderOptions {
   // of page decoration. Implied by pdfA: 'PDF/A-1a'. Independent of PDF/A
   // otherwise (a plain tagged PDF is useful on its own).
   readonly tagged?: boolean;
+  // PDF/UA-1 (ISO 14289-1): implies tagged; the XMP carries pdfuaid:part=1
+  // and the document always gets a title (AT announces it). Combines freely
+  // with pdfA level-a profiles.
+  readonly pdfUA?: boolean;
   // Document natural language (BCP 47, e.g. "en-US", "ru-RU") for the tagged-PDF
   // catalog /Lang (§14.9.2). Defaults to "en-US". The docx converter fills this
   // from the document's default w:lang.
@@ -574,7 +578,8 @@ export function layoutStyledDocument(
   // Tagged PDF (ISO 32000-1 §14.8) — implied by PDF/A-1a. When on, paginate
   // builds a logical structure tree and emit marks body text / artifacts.
   const pdfaProfile = options.pdfA ? parsePdfAProfile(options.pdfA) : undefined;
-  const tagged = options.tagged === true || (pdfaProfile?.tagged ?? false);
+  const tagged =
+    options.tagged === true || options.pdfUA === true || (pdfaProfile?.tagged ?? false);
   const structBuilder = tagged ? new StructTreeBuilder() : undefined;
   const fontResources = collectFontResources(numberedBody, numberedHeadersFooters, options);
   const imageResources = collectImageResources(numberedBody, numberedHeadersFooters, options);

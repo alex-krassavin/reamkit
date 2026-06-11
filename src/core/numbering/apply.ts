@@ -39,7 +39,7 @@ export function applyNumbering(
       p.properties,
       level?.paragraphProperties,
     );
-    return { properties: newProps, runs: [markerRun, ...p.runs] };
+    return { ...p, properties: newProps, runs: [markerRun, ...p.runs] };
   };
 
   const visit = (el: BodyElement): BodyElement => {

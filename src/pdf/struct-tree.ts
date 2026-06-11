@@ -131,6 +131,8 @@ export class StructTreeBuilder {
     const dicts = new Map<number, PdfDict>();
     for (const n of order) {
       const d = dict({ Type: name('StructElem'), S: name(n.type) });
+      // ISO 14289-1 §7.9 — every Note carries a unique /ID (node ids are).
+      if (n.type === 'Note') d.set('ID', `note-${n.id}`);
       n.ref = doc.add(d);
       dicts.set(n.id, d);
     }

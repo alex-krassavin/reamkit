@@ -35,7 +35,7 @@ const VP = findVeraPdf();
 
 // Run veraPDF and return its one-line text verdict ("PASS <file> <flavour>" or
 // "FAIL …"). veraPDF exits non-zero on a validation failure, so capture stdout.
-type Flavour = '1a' | '1b' | '2a' | '2b' | '2u' | '3a' | '3b' | '3u';
+type Flavour = '1a' | '1b' | '2a' | '2b' | '2u' | '3a' | '3b' | '3u' | 'ua1';
 function validate(vp: string, pdf: Uint8Array, flavour: Flavour): string {
   const file = resolve(mkdtempSync(resolve(tmpdir(), 'vpdf-')), 'out.pdf');
   writeFileSync(file, pdf);
@@ -137,6 +137,26 @@ describe.skipIf(!VP)('veraPDF formal conformance', () => {
   it('validates a rich tagged document as PDF/A-1a (Level A)', () => {
     const pdf = convertDocxToPdfSync(richDocx(), { fonts: FONTS, pdfA: 'PDF/A-1a' });
     expect(validate(VP!, pdf, '1a')).toMatch(/^PASS/);
+  });
+
+  it('validates a rich tagged document as PDF/UA-1', () => {
+    const pdf = convertDocxToPdfSync(richDocx(), {
+      fonts: FONTS,
+      pdfUA: true,
+      info: { title: 'Rich fixture' },
+    });
+    expect(validate(VP!, pdf, 'ua1')).toMatch(/^PASS/);
+  });
+
+  it('validates PDF/A-2a + PDF/UA-1 simultaneously (one file, both standards)', () => {
+    const pdf = convertDocxToPdfSync(richDocx(), {
+      fonts: FONTS,
+      pdfA: 'PDF/A-2a',
+      pdfUA: true,
+      info: { title: 'Rich fixture' },
+    });
+    expect(validate(VP!, pdf, '2a')).toMatch(/^PASS/);
+    expect(validate(VP!, pdf, 'ua1')).toMatch(/^PASS/);
   });
 
   it('validates a translucent-image document as PDF/A-2b (transparency kept)', () => {
