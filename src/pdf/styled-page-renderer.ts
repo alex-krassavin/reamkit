@@ -431,10 +431,12 @@ interface TableBlock {
   readonly xOffsetPt: number;
 }
 
-// PageDoc draft items (ir-design §6, stage 3c): the positioned, layout-output
-// vocabulary a page is made of. Coordinates are PDF points in the PDF page
-// frame (y-up, bottom-left origin) for now — the top-left flip and branded Pt
-// coordinates land when the types stabilize against the svg-writer (stage 6).
+// PageDoc items (ir-design §6, frozen at stage 6.4): the positioned,
+// layout-output vocabulary a page is made of. Page-frame coordinates are PDF
+// points with a TOP-LEFT origin, y growing downward (like CSS/SVG); the PDF
+// emitter converts into PDF's native y-up frame at emission. Offsets measured
+// from a text baseline (math/inline-image boxes inside a Line) stay y-up —
+// that is the typographic convention, not a page-frame one.
 export interface PageItemBase {
   // Tagged PDF (§14.8): the logical structure node this item's content belongs
   // to. Set only on body content in tagged mode; undefined text in the line
@@ -451,10 +453,11 @@ export interface TextLineItem extends PageItemBase {
   readonly type: 'line';
   readonly line: Line;
   readonly originX: number;
+  // Distance from the page TOP down to the text baseline.
   readonly baselineY: number;
 }
 
-// One edge of a table-cell frame.
+// One edge of a table-cell frame; (x, y) is the cell box's top-left corner.
 export interface BorderItem extends PageItemBase {
   readonly type: 'border';
   readonly side: 'top' | 'right' | 'bottom' | 'left';
@@ -466,7 +469,7 @@ export interface BorderItem extends PageItemBase {
   readonly borderColorHex: string;
 }
 
-// A filled rectangle (cell shading).
+// A filled rectangle (cell shading); (x, y) is its top-left corner.
 export interface FillItem extends PageItemBase {
   readonly type: 'fill';
   readonly x: number;
@@ -476,7 +479,8 @@ export interface FillItem extends PageItemBase {
   readonly fillColorHex: string;
 }
 
-// A placed raster image (resource name binds to the page XObject dict).
+// A placed raster image (resource name binds to the page XObject dict);
+// (x, y) is its top-left corner.
 export interface ImageItem extends PageItemBase {
   readonly type: 'image';
   readonly x: number;
@@ -486,7 +490,8 @@ export interface ImageItem extends PageItemBase {
   readonly imageResourceName: string;
 }
 
-// DrawingML vector geometry.
+// DrawingML vector geometry. `shape.transform` maps the shape's local y-up
+// frame into the top-left page frame (see flipTransform).
 export interface ShapeItem extends PageItemBase {
   readonly type: 'shape';
   readonly shape: VectorShape;
@@ -729,6 +734,7 @@ function buildSectionContext(
     fontResources,
     contentWidth,
     dims.marginLeft,
+    dims.pageHeight,
     dims.footerOffsetPt,
   );
   return {
@@ -791,7 +797,9 @@ function layoutHeaderSet(
     const content = headersFooters.get(ref.relationshipId);
     if (!content) return [];
     const blocks = laidOutBlocksFor(content, options, fontResources, contentWidth);
-    return markPagination(drawBlocksSequentially(blocks, marginLeft, pageHeight - headerOffsetPt));
+    return markPagination(
+      drawBlocksSequentially(blocks, marginLeft, pageHeight - headerOffsetPt, pageHeight),
+    );
   };
   return { default: band('default'), first: band('first'), even: band('even') };
 }
@@ -803,6 +811,7 @@ function layoutFooterSet(
   fontResources: ReadonlyMap<string, FontResource>,
   contentWidth: number,
   marginLeft: number,
+  pageHeight: number,
   footerOffsetPt: number,
 ): HeaderFooterSet {
   const band = (type: HeaderFooterType): Array<DrawCommand> => {
@@ -817,7 +826,9 @@ function layoutFooterSet(
         (b.kind === 'paragraph' ? b.spacingBeforePt + b.heightPt + b.spacingAfterPt : b.heightPt),
       0,
     );
-    return markPagination(drawBlocksSequentially(blocks, marginLeft, footerOffsetPt + totalHeight));
+    return markPagination(
+      drawBlocksSequentially(blocks, marginLeft, footerOffsetPt + totalHeight, pageHeight),
+    );
   };
   return { default: band('default'), first: band('first'), even: band('even') };
 }
@@ -1092,6 +1103,19 @@ function buildShapeTransform(
   return [a, b, c, d, e, f];
 }
 
+// Compose the page flip with a local→page CTM built in PDF's y-up frame, so
+// the stored ShapeItem transform targets the top-left page frame the PageDoc
+// schema froze on. The flip is an involution: the PDF emitter applies the same
+// operation to recover the y-up matrix. Negating the linear part only flips
+// sign bits (exact in IEEE 754); the y-translation is the one component that
+// re-rounds.
+function flipTransform(
+  m: readonly [number, number, number, number, number, number],
+  pageHeight: number,
+): [number, number, number, number, number, number] {
+  return [m[0], -m[1], m[2], -m[3], m[4], pageHeight - m[5]];
+}
+
 function layoutChartBlock(
   block: ChartBlock,
   options: StyledRenderOptions,
@@ -1303,10 +1327,13 @@ function collectImageResources(
 
 // Sequential, non-paginated draw used for header/footer bands. Tables in
 // headers/footers are uncommon in practice and skipped here for simplicity.
+// `startY` is in the internal y-up frame the band math works in; the emitted
+// items carry top-left coordinates like everything else on a page.
 function drawBlocksSequentially(
   blocks: ReadonlyArray<LaidOutBlock>,
   startX: number,
   startY: number,
+  pageHeight: number,
 ): Array<DrawCommand> {
   const out: Array<DrawCommand> = [];
   let cursorY = startY;
@@ -1327,7 +1354,7 @@ function drawBlocksSequentially(
         type: 'line',
         line,
         originX: startX + indentLeft + offset,
-        baselineY: cursorY + lineDescent(line),
+        baselineY: pageHeight - (cursorY + lineDescent(line)),
       });
     }
     cursorY -= block.spacingAfterPt;
@@ -2719,7 +2746,7 @@ function paginateSections(
           type: 'line',
           line,
           originX: ctx.marginLeft + indentLeft + offset,
-          baselineY: cursorY + lineDescent(line),
+          baselineY: ctx.pageHeight - (cursorY + lineDescent(line)),
           ...(structId !== undefined ? { structId } : {}),
         });
       }
@@ -2733,7 +2760,7 @@ function paginateSections(
       current.push({
         type: 'image',
         x: ctx.marginLeft,
-        y: cursorY,
+        y: ctx.pageHeight - cursorY - block.heightPt,
         width: block.widthPt,
         height: block.heightPt,
         imageResourceName: block.resourceName,
@@ -2748,14 +2775,17 @@ function paginateSections(
       cursorY -= block.heightPt;
       const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, ctx.contentWidth);
       const x = ctx.marginLeft + offset;
-      const transform = buildShapeTransform(
-        x,
-        cursorY,
-        block.widthPt,
-        block.heightPt,
-        block.rotation60k,
-        block.flipH,
-        block.flipV,
+      const transform = flipTransform(
+        buildShapeTransform(
+          x,
+          cursorY,
+          block.widthPt,
+          block.heightPt,
+          block.rotation60k,
+          block.flipH,
+          block.flipV,
+        ),
+        ctx.pageHeight,
       );
       current.push({
         type: 'shape',
@@ -2794,15 +2824,16 @@ function paginateSections(
             type: 'line',
             line,
             originX: x + block.insetLeftPt + lineOffset,
-            baselineY: textY + lineDescent(line),
+            baselineY: ctx.pageHeight - (textY + lineDescent(line)),
             ...(figId !== undefined ? { structId: figId } : {}),
           });
         }
       }
       cursorY -= block.spacingAfterPt;
     } else if (block.kind === 'chart') {
-      // Charts are atomic. Their primitives are in a local y-up frame; place by
-      // translating to the chart box's page-space bottom-left (x, y). The whole
+      // Charts are atomic. Their primitives are in a local y-up frame; the
+      // stored transform translates to the chart box's bottom-left (x, y in the
+      // internal y-up cursor frame) composed with the page flip. The whole
       // chart is one Figure (alt = its title); its shapes + labels carry that id.
       const figId = builder ? createFigure(builder, block.altText, 'Chart') : undefined;
       const fig = figId !== undefined ? { structId: figId } : {};
@@ -2819,13 +2850,19 @@ function paginateSections(
             paths: s.paths,
             ...(s.fillColorHex ? { fillColorHex: s.fillColorHex } : {}),
             ...(s.stroke ? { stroke: s.stroke } : {}),
-            transform: [1, 0, 0, 1, x, y],
+            transform: flipTransform([1, 0, 0, 1, x, y], ctx.pageHeight),
           },
           ...fig,
         });
       }
       for (const t of block.layout.texts) {
-        current.push({ type: 'line', line: t.line, originX: x + t.x, baselineY: y + t.y, ...fig });
+        current.push({
+          type: 'line',
+          line: t.line,
+          originX: x + t.x,
+          baselineY: ctx.pageHeight - (y + t.y),
+          ...fig,
+        });
       }
       cursorY -= block.spacingAfterPt;
     } else {
@@ -2895,12 +2932,12 @@ function paginateSections(
               cursorY - headerHeightPt - chunk.heightPt >= ctx.marginBottom
             ) {
               for (const hr of headerRows) {
-                emitRowChunk(current, hr, tableX, cursorY, colCount, undefined);
+                emitRowChunk(current, hr, tableX, cursorY, ctx.pageHeight, colCount, undefined);
                 cursorY -= hr.heightPt;
               }
             }
           }
-          emitRowChunk(current, chunk, tableX, cursorY, colCount, cellStructIds);
+          emitRowChunk(current, chunk, tableX, cursorY, ctx.pageHeight, colCount, cellStructIds);
           cursorY -= chunk.heightPt;
         }
       }
@@ -2941,6 +2978,7 @@ function emitRowChunk(
   row: RowLayout,
   marginLeft: number,
   cursorY: number,
+  pageHeight: number,
   colCount: number,
   cellStructIds?: ReadonlyArray<number | undefined>,
 ): void {
@@ -2954,13 +2992,23 @@ function emitRowChunk(
       out.push({
         type: 'fill',
         x: cellX,
-        y: rowBottom,
+        y: pageHeight - rowBottom - row.heightPt,
         width: cell.widthPt,
         height: row.heightPt,
         fillColorHex: cell.shadingColorHex,
       });
     }
-    emitCellBorders(out, cell, cellX, rowBottom, row.heightPt, row.rowIdx, row.rowCount, colCount);
+    emitCellBorders(
+      out,
+      cell,
+      cellX,
+      rowBottom,
+      row.heightPt,
+      pageHeight,
+      row.rowIdx,
+      row.rowCount,
+      colCount,
+    );
     if (cell.mergeRole === 'middle' || cell.mergeRole === 'end') continue;
     let textY = rowTop - cell.padTopPt;
     for (const line of cell.lines) {
@@ -2975,7 +3023,7 @@ function emitRowChunk(
         type: 'line',
         line,
         originX: cellX + cell.padLeftPt + offset,
-        baselineY: textY + lineDescent(line),
+        baselineY: pageHeight - (textY + lineDescent(line)),
         ...(structId !== undefined ? { structId } : {}),
       });
     }
@@ -2987,7 +3035,7 @@ function emitRowChunk(
       for (const nt of cell.nestedTables) {
         for (const nrow of nt.rows) {
           const nestedIds = structId !== undefined ? nrow.cells.map(() => structId) : undefined;
-          emitRowChunk(out, nrow, nestedX, textY, nt.colCount, nestedIds);
+          emitRowChunk(out, nrow, nestedX, textY, pageHeight, nt.colCount, nestedIds);
           textY -= nrow.heightPt;
         }
       }
@@ -3110,6 +3158,7 @@ function emitCellBorders(
   cellX: number,
   cellY: number,
   rowHeight: number,
+  pageHeight: number,
   rowIdx: number,
   rowCount: number,
   colCount: number,
@@ -3124,7 +3173,7 @@ function emitCellBorders(
       type: 'border',
       side,
       x: cellX,
-      y: cellY,
+      y: pageHeight - cellY - rowHeight,
       width: cell.widthPt,
       height: rowHeight,
       borderSizePt: sz,

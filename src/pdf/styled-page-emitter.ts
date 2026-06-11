@@ -104,7 +104,7 @@ export function emitStyledPdf(
         tagFor: (structId) => builder.node(structId).type,
       };
     }
-    const contentBytes = emitPageContent(page.commands, pageTagging);
+    const contentBytes = emitPageContent(page, pageTagging);
     const contentsRef = doc.add(stream({}, contentBytes));
     const pageEntries: Record<string, PdfValue> = {
       Type: name('Page'),
@@ -385,8 +385,12 @@ function emitTaggedRuns<T extends DrawCommand>(
   close();
 }
 
-function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTagging): Uint8Array {
+function emitPageContent(page: LaidOutPage, tagging?: PageTagging): Uint8Array {
+  const commands = page.commands;
   if (commands.length === 0) return new Uint8Array(0);
+  // PageDoc coordinates are top-left/y-down (the frozen schema); PDF paints in
+  // a y-up bottom-left frame, so every page-frame y converts as `H - y` here.
+  const H = page.height;
   const out: Array<string> = [];
 
   // Cell backgrounds (fills) first — they sit underneath text and borders.
@@ -406,7 +410,7 @@ function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTag
         lastColor = color;
       }
       out.push(
-        `${formatNumber(f.x)} ${formatNumber(f.y)} ${formatNumber(f.width)} ${formatNumber(f.height)} re`,
+        `${formatNumber(f.x)} ${formatNumber(H - f.y - f.height)} ${formatNumber(f.width)} ${formatNumber(f.height)} re`,
       );
       out.push('f');
     }
@@ -428,7 +432,7 @@ function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTag
     // Q             restore
     out.push('q');
     out.push(
-      `${formatNumber(img.width)} 0 0 ${formatNumber(img.height)} ${formatNumber(img.x)} ${formatNumber(img.y)} cm`,
+      `${formatNumber(img.width)} 0 0 ${formatNumber(img.height)} ${formatNumber(img.x)} ${formatNumber(H - img.y - img.height)} cm`,
     );
     out.push(`/${img.imageResourceName} Do`);
     out.push('Q');
@@ -453,7 +457,7 @@ function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTag
         lastColor = color;
       }
       const x = b.x;
-      const y = b.y;
+      const y = H - b.y - b.height; // box bottom edge in PDF's y-up frame
       const w = b.width;
       const h = b.height;
       switch (b.side) {
@@ -488,7 +492,15 @@ function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTag
   // one MCID); decorative shapes fall back to a bare artifact.
   const shapes = plan.shapes;
   emitTaggedRuns(out, shapes, tagging, (sh) => {
-    for (const op of emitVectorShape(sh.shape)) out.push(op);
+    // The stored transform targets the top-left page frame; conjugating with
+    // the page flip (an involution — same operation layout applied) recovers
+    // the y-up CTM. The linear part negates exactly; only f re-rounds.
+    const t = sh.shape.transform;
+    const shape: VectorShape = {
+      ...sh.shape,
+      transform: [t[0], -t[1], t[2], -t[3], t[4], H - t[5]],
+    };
+    for (const op of emitVectorShape(shape)) out.push(op);
   });
 
   const lines = plan.lines;
@@ -594,7 +606,7 @@ function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTag
     const emitOneLine = (cmd: TextLineItem) => {
       const line = cmd.line;
       const originX = cmd.originX;
-      const baselineY = cmd.baselineY;
+      const baselineY = H - cmd.baselineY; // top-left frame → PDF y-up
       const extraPerSpace = computeJustifyExtra(line);
       const hasImageToken = line.tokens.some((t) => t.kind === 'image');
       const hasMathToken = line.tokens.some((t) => t.kind === 'math');

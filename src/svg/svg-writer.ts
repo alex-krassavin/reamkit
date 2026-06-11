@@ -1,12 +1,10 @@
 // SVG writer (ir-design §7 / stage 6): the third adapter, written purely
-// against the PageDoc draft (LaidOutDocument/PageItem) — its job is to
-// crash-test that contract before the schema freezes. It deliberately knows
-// nothing about OOXML or the PDF writer.
+// against the PageDoc schema (LaidOutDocument/PageItem). It deliberately
+// knows nothing about OOXML or the PDF writer.
 //
-// PageItem coordinates are currently in the PDF page frame (y-up, bottom-left
-// origin); SVG is y-down/top-left, so this writer flips — exactly mirroring
-// how the PDF writer owns its own frame. The flip moving INTO the schema
-// (top-left as canonical) is the planned stabilization step.
+// PageItem coordinates are top-left/y-down (the frame the schema froze on at
+// stage 6.4) — exactly SVG's own frame, so this writer emits them verbatim;
+// it is the PDF emitter that converts into PDF's y-up frame at emission.
 //
 // Pages stack vertically in one <svg>, separated by a gap — a faithful,
 // dependency-free preview of the laid-out document.
@@ -71,13 +69,13 @@ function emitPage(
   laid: LaidOutDocument,
   losses: Array<Loss>,
 ): void {
-  const H = page.height; // y-flip: svgY = H - pdfY
-  // The shared canonical paint order — one owner for every writer.
+  // The shared canonical paint order — one owner for every writer. PageItem
+  // coordinates are already top-left/y-down: SVG's native frame.
   const plan = paintPlan(page.commands);
 
   for (const f of plan.fills) {
     out.push(
-      `<rect x="${fmt(f.x)}" y="${fmt(H - f.y - f.height)}" width="${fmt(f.width)}" height="${fmt(f.height)}" fill="#${f.fillColorHex}"/>`,
+      `<rect x="${fmt(f.x)}" y="${fmt(f.y)}" width="${fmt(f.width)}" height="${fmt(f.height)}" fill="#${f.fillColorHex}"/>`,
     );
   }
 
@@ -85,14 +83,14 @@ function emitPage(
     const href = imageHref(img.imageResourceName, laid);
     if (!href) continue;
     out.push(
-      `<image x="${fmt(img.x)}" y="${fmt(H - img.y - img.height)}" width="${fmt(img.width)}" height="${fmt(img.height)}" href="${href}" preserveAspectRatio="none"/>`,
+      `<image x="${fmt(img.x)}" y="${fmt(img.y)}" width="${fmt(img.width)}" height="${fmt(img.height)}" href="${href}" preserveAspectRatio="none"/>`,
     );
   }
 
   for (const b of plan.borders) {
     const x2 = b.x + b.width;
-    const yTop = H - b.y - b.height;
-    const yBottom = H - b.y;
+    const yTop = b.y;
+    const yBottom = b.y + b.height;
     const [ax, ay, bx, by] =
       b.side === 'top'
         ? [b.x, yTop, x2, yTop]
@@ -107,21 +105,16 @@ function emitPage(
   }
 
   for (const sh of plan.shapes) {
-    emitShape(out, sh.shape, H);
+    emitShape(out, sh.shape);
   }
 
   for (const t of plan.lines) {
-    emitTextLine(out, t, H, losses);
+    emitTextLine(out, t, losses);
   }
 }
 
-function emitTextLine(
-  out: Array<string>,
-  item: TextLineItem,
-  pageHeight: number,
-  losses: Array<Loss>,
-): void {
-  const y = pageHeight - item.baselineY;
+function emitTextLine(out: Array<string>, item: TextLineItem, losses: Array<Loss>): void {
+  const y = item.baselineY;
   let x = item.originX;
   for (const tok of item.line.tokens) {
     if (tok.kind === 'image') {
@@ -146,11 +139,11 @@ function emitTextLine(
   }
 }
 
-function emitShape(out: Array<string>, shape: VectorShape, pageHeight: number): void {
+function emitShape(out: Array<string>, shape: VectorShape): void {
   const [a, b, c, d, e, f] = shape.transform;
-  // PDF CTM maps local → page (y-up). Compose with the page flip so the SVG
-  // group lands where the PDF painted: svg = flip ∘ ctm.
-  const transform = `matrix(${fmt(a)} ${fmt(-b)} ${fmt(-c)} ${fmt(d)} ${fmt(e)} ${fmt(pageHeight - f)})`;
+  // The stored CTM maps the shape's local y-up frame straight into the
+  // top-left page frame — SVG's matrix() convention verbatim.
+  const transform = `matrix(${fmt(a)} ${fmt(b)} ${fmt(c)} ${fmt(d)} ${fmt(e)} ${fmt(f)})`;
   const fill = shape.fillColorHex ? `#${shape.fillColorHex}` : 'none';
   const stroke = shape.stroke
     ? ` stroke="#${shape.stroke.colorHex}" stroke-width="${fmt(shape.stroke.widthPt)}"`
@@ -162,17 +155,15 @@ function emitShape(out: Array<string>, shape: VectorShape, pageHeight: number): 
   }
 }
 
-// Local path coordinates are y-up; the group transform's negative b/c terms
-// flip them. Emit the raw coordinates.
+// Local path coordinates are y-up; the transform (page flip composed in by
+// layout) maps them into the y-down page frame. Emit the raw coordinates.
 function pathData(segments: ReadonlyArray<PathSegment>): string {
   const parts: Array<string> = [];
   for (const s of segments) {
-    if (s.op === 'move') parts.push(`M ${fmt(s.x)} ${fmt(-s.y)}`);
-    else if (s.op === 'line') parts.push(`L ${fmt(s.x)} ${fmt(-s.y)}`);
+    if (s.op === 'move') parts.push(`M ${fmt(s.x)} ${fmt(s.y)}`);
+    else if (s.op === 'line') parts.push(`L ${fmt(s.x)} ${fmt(s.y)}`);
     else if (s.op === 'cubic')
-      parts.push(
-        `C ${fmt(s.x1)} ${fmt(-s.y1)} ${fmt(s.x2)} ${fmt(-s.y2)} ${fmt(s.x)} ${fmt(-s.y)}`,
-      );
+      parts.push(`C ${fmt(s.x1)} ${fmt(s.y1)} ${fmt(s.x2)} ${fmt(s.y2)} ${fmt(s.x)} ${fmt(s.y)}`);
     else parts.push('Z');
   }
   return parts.join(' ');
