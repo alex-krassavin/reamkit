@@ -3,8 +3,9 @@ title: Scope & limitations
 description: What Ream implements today, and where the edges are.
 ---
 
-Ream is an **alpha**. The conversion core is broad and spec-driven, but it is still
-maturing — this page is an honest map of what works and what doesn't yet.
+The conversion core is broad and spec-driven, but ECMA-376 is vast and Ream does
+not implement all of it — this page is an honest map of what works and what
+doesn't yet.
 
 ## Implemented
 
