@@ -17,10 +17,9 @@ import type {
 
 import type { PoNode } from '@/word/po-helpers';
 import type { Pt } from '@/core/ir';
-import type { ColorResolver } from '@/core/drawingml/colors';
-import type { ImageResolver } from '@/word/document-parser';
+import type { ParseContext } from '@/word/document-parser';
+import { DEFAULT_PARSE_CONTEXT, parseBodyElements } from '@/word/document-parser';
 import { eighthPtToPt, twipsToPt } from '@/core/ir';
-import { parseBodyElements } from '@/word/document-parser';
 import {
   poAttr,
   poChildren,
@@ -45,11 +44,7 @@ const BORDER_STYLES = new Set<BorderStyle>([
 const WIDTH_TYPES = new Set<'auto' | 'dxa' | 'pct' | 'nil'>(['auto', 'dxa', 'pct', 'nil']);
 const HEIGHT_RULES = new Set<'auto' | 'atLeast' | 'exact'>(['auto', 'atLeast', 'exact']);
 
-export function parseTable(
-  tbl: PoNode,
-  resolveColor?: ColorResolver,
-  resolveImage?: ImageResolver,
-): Table {
+export function parseTable(tbl: PoNode, ctx: ParseContext = DEFAULT_PARSE_CONTEXT): Table {
   const properties = parseTableProperties(poFirstChild(tbl, 'w:tblPr'));
   const grid = parseTableGrid(poFirstChild(tbl, 'w:tblGrid'));
   // Two-phase: collect rows with their raw §17.4.85 vMerge markers, then
@@ -57,7 +52,7 @@ export function parseTable(
   // semantics, not the OOXML encoding.
   const draftRows: Array<{ properties: RowProperties; cells: Array<DraftCell> }> = [];
   for (const tr of poChildrenWith(tbl, 'w:tr')) {
-    draftRows.push(parseTableRow(tr, resolveColor, resolveImage));
+    draftRows.push(parseTableRow(tr, ctx));
   }
   const roles = resolveMergeRoles(draftRows.map((r) => r.cells));
   const rows: Array<TableRow> = draftRows.map((draft, rowIdx) => ({
@@ -166,13 +161,12 @@ function parseTableGrid(tblGrid: PoNode | undefined): Array<Pt> {
 
 function parseTableRow(
   tr: PoNode,
-  resolveColor?: ColorResolver,
-  resolveImage?: ImageResolver,
+  ctx: ParseContext,
 ): { properties: RowProperties; cells: Array<DraftCell> } {
   const properties = parseRowProperties(poFirstChild(tr, 'w:trPr'));
   const cells: Array<DraftCell> = [];
   for (const tc of poChildrenWith(tr, 'w:tc')) {
-    cells.push(parseTableCell(tc, resolveColor, resolveImage));
+    cells.push(parseTableCell(tc, ctx));
   }
   return { properties, cells };
 }
@@ -197,13 +191,9 @@ function parseRowProperties(trPr: PoNode | undefined): RowProperties {
   return out;
 }
 
-function parseTableCell(
-  tc: PoNode,
-  resolveColor?: ColorResolver,
-  resolveImage?: ImageResolver,
-): DraftCell {
+function parseTableCell(tc: PoNode, ctx: ParseContext): DraftCell {
   const { properties, vMerge } = parseCellProperties(poFirstChild(tc, 'w:tcPr'));
-  const content = parseBodyElements(poChildren(tc), resolveColor, resolveImage);
+  const content = parseBodyElements(poChildren(tc), ctx);
   return { cell: { properties, content }, ...(vMerge ? { vMerge } : {}) };
 }
 

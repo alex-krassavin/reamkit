@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
 import { buildTinyPng } from './fixtures/build-png';
+import { defaultColorResolver } from '@/core/drawingml/colors';
 import { ResourceStore, eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 import { convertDocxToPdfSync } from '@/core/converter';
 import { parseTtf } from '@/core/font';
@@ -134,9 +135,10 @@ describe('Drawing parser', () => {
     // ImageResolver into content-addressed ResourceIds.
     const store = new ResourceStore();
     const expectedId = store.put(new Uint8Array([1, 2, 3]));
-    const parsed = parseDocument(pkg.getMainDocument().data, undefined, (relId) =>
-      relId === 'rId20' ? expectedId : undefined,
-    );
+    const parsed = parseDocument(pkg.getMainDocument().data, {
+      resolveColor: defaultColorResolver,
+      resolveImage: (relId) => (relId === 'rId20' ? expectedId : undefined),
+    });
     expect(parsed).toHaveLength(1);
     expect(parsed[0]!.kind).toBe('image');
     if (parsed[0]!.kind !== 'image') throw new Error('unreachable');

@@ -62,16 +62,24 @@ const RUN_CONTAINER_TAGS = new Set([
 // supplied by the converter (which owns the OPC package and the ResourceStore).
 export type ImageResolver = (relId: string) => ResourceId | undefined;
 
+// Document-wide resolvers every nested parser needs — one context object
+// instead of threading a parameter pair through ten signatures (oop-design §8).
+export interface ParseContext {
+  readonly resolveColor: ColorResolver;
+  readonly resolveImage?: ImageResolver;
+}
+
+export const DEFAULT_PARSE_CONTEXT: ParseContext = { resolveColor: defaultColorResolver };
+
 export function parseDocument(
   documentXml: Uint8Array,
-  resolveColor: ColorResolver = defaultColorResolver,
-  resolveImage?: ImageResolver,
+  ctx: ParseContext = DEFAULT_PARSE_CONTEXT,
 ): Array<BodyElement> {
   const xml = decoder.decode(documentXml);
   const tree = parser.parse(xml) as Array<PoNode>;
   const body = poFindByPath(tree, ['w:document', 'w:body']);
   if (!body) return [];
-  return parseBodyElements(poChildren(body), resolveColor, resolveImage);
+  return parseBodyElements(poChildren(body), ctx);
 }
 
 const HF_TYPES = new Set<HeaderFooterType>(['default', 'first', 'even']);
@@ -208,27 +216,25 @@ function pushHeaderFooter(node: PoNode, list: Array<HeaderFooterReference>): voi
 // and its children are the same body-element shape as the main document.
 export function parseHeaderFooter(
   xml: Uint8Array,
-  resolveColor: ColorResolver = defaultColorResolver,
-  resolveImage?: ImageResolver,
+  ctx: ParseContext = DEFAULT_PARSE_CONTEXT,
 ): Array<BodyElement> {
   const tree = parser.parse(decoder.decode(xml)) as Array<PoNode>;
   const root = tree.find((n) => poIs(n, 'w:hdr') || poIs(n, 'w:ftr'));
   if (!root) return [];
-  return parseBodyElements(poChildren(root), resolveColor, resolveImage);
+  return parseBodyElements(poChildren(root), ctx);
 }
 
 export function parseBodyElements(
   children: ReadonlyArray<PoNode>,
-  resolveColor: ColorResolver = defaultColorResolver,
-  resolveImage?: ImageResolver,
+  ctx: ParseContext = DEFAULT_PARSE_CONTEXT,
 ): Array<BodyElement> {
   const out: Array<BodyElement> = [];
   for (const child of children) {
     if (poIs(child, 'w:p')) {
-      const drawing = tryExtractDrawingFromParagraph(child, resolveColor, resolveImage);
-      out.push(drawing ?? { kind: 'paragraph', paragraph: parseParagraph(child, resolveImage) });
+      const drawing = tryExtractDrawingFromParagraph(child, ctx);
+      out.push(drawing ?? { kind: 'paragraph', paragraph: parseParagraph(child, ctx) });
     } else if (poIs(child, 'w:tbl')) {
-      out.push({ kind: 'table', table: parseTable(child, resolveColor, resolveImage) });
+      out.push({ kind: 'table', table: parseTable(child, ctx) });
     }
   }
   return out;
@@ -240,11 +246,7 @@ export function parseBodyElements(
 // for a wps:wsp shape. Mixed text+drawing paragraphs keep a picture on the run
 // via Run.inlineImage (shapes in mixed runs are dropped in M5) and are emitted
 // as paragraphs by parseBodyElements.
-function tryExtractDrawingFromParagraph(
-  p: PoNode,
-  resolveColor: ColorResolver,
-  resolveImage?: ImageResolver,
-): BodyElement | null {
+function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): BodyElement | null {
   let drawing: PoNode | undefined;
   let hasText = false;
   for (const child of poChildren(p)) {
@@ -265,18 +267,18 @@ function tryExtractDrawingFromParagraph(
   }
   if (!drawing || hasText) return null;
 
-  // Inject parseBodyElements (bound to this resolver) so a shape's text box is
+  // Inject parseBodyElements (bound to this context) so a shape's text box is
   // parsed without a module cycle.
   const parseBody = (children: ReadonlyArray<PoNode>): Array<BodyElement> =>
-    parseBodyElements(children, resolveColor, resolveImage);
-  const content = parseDrawing(drawing, resolveColor, parseBody);
+    parseBodyElements(children, ctx);
+  const content = parseDrawing(drawing, ctx.resolveColor, parseBody);
   if (!content) return null;
 
   const pPrNode = poChildren(p).find((c) => poIs(c, 'w:pPr'));
   const paragraphProperties = pPrNode ? parseParagraphProperties(poElementToFlat(pPrNode)) : {};
 
   if (content.kind === 'image') {
-    const resource = resolveImage?.(content.imageId);
+    const resource = ctx.resolveImage?.(content.imageId);
     return {
       kind: 'image',
       image: {
@@ -310,7 +312,7 @@ function tryExtractDrawingFromParagraph(
   };
 }
 
-function parseParagraph(p: PoNode, resolveImage?: ImageResolver): Paragraph {
+function parseParagraph(p: PoNode, ctx: ParseContext): Paragraph {
   const pPr = poChildren(p).find((c) => poIs(c, 'w:pPr'));
   let properties = parseParagraphProperties(pPr ? poElementToFlat(pPr) : undefined);
   // A display equation (m:oMathPara) centres its paragraph by default
@@ -325,15 +327,15 @@ function parseParagraph(p: PoNode, resolveImage?: ImageResolver): Paragraph {
     properties = { ...properties, alignment };
   }
   const runs: Array<Run> = [];
-  collectRuns(p, runs, resolveImage);
+  collectRuns(p, runs, ctx);
   return { properties, runs };
 }
 
-function collectRuns(container: PoNode, out: Array<Run>, resolveImage?: ImageResolver): void {
+function collectRuns(container: PoNode, out: Array<Run>, ctx: ParseContext): void {
   for (const child of poChildren(container)) {
     if (poIs(child, 'w:pPr')) continue;
     if (poIs(child, 'w:r')) {
-      out.push(parseRun(child, resolveImage));
+      out.push(parseRun(child, ctx));
       continue;
     }
     // OfficeMath: an inline equation (m:oMath) or a display paragraph
@@ -350,12 +352,12 @@ function collectRuns(container: PoNode, out: Array<Run>, resolveImage?: ImageRes
     }
     const tag = elementTag(child);
     if (tag && RUN_CONTAINER_TAGS.has(tag)) {
-      collectRuns(child, out, resolveImage);
+      collectRuns(child, out, ctx);
     }
   }
 }
 
-function parseRun(r: PoNode, resolveImage?: ImageResolver): Run {
+function parseRun(r: PoNode, ctx: ParseContext): Run {
   const rPr = poChildren(r).find((c) => poIs(c, 'w:rPr'));
   const properties = parseRunProperties(rPr ? poElementToFlat(rPr) : undefined);
   let text = '';
@@ -378,10 +380,12 @@ function parseRun(r: PoNode, resolveImage?: ImageResolver): Run {
       text += '­';
     } else if (poIs(child, 'w:drawing')) {
       // Only pictures render inline in M5; a wps shape in a mixed run is
-      // dropped (its text is preserved). Colour is irrelevant for pictures.
+      // dropped (its text is preserved). Colour is irrelevant for pictures,
+      // so this deliberately does NOT take ctx.resolveColor (byte-parity with
+      // the pre-context code; revisit if inline shapes ever render).
       const content = parseDrawing(child, defaultColorResolver);
       if (content && content.kind === 'image') {
-        const resource = resolveImage?.(content.imageId);
+        const resource = ctx.resolveImage?.(content.imageId);
         inlineImage = {
           ...(resource ? { resource } : {}),
           width: content.width,

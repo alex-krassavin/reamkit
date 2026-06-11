@@ -9,7 +9,7 @@ import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { ResourceId } from '@/core/ir';
 import type { CoreProperties } from '@/core/opc';
-import type { ImageResolver } from '@/word';
+import type { ImageResolver, ParseContext } from '@/word';
 
 import { FEATURES, ResourceStore } from '@/core/ir';
 import { parseChart } from '@/core/drawingml/chart-parser';
@@ -53,7 +53,8 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
   // lazily as the parsers meet drawing relationships (identical bytes dedupe).
   const resources = new ResourceStore();
   const resolveImage = makeImageResolver(pkg, resources);
-  const body = parseDocument(main.data, resolveColor, resolveImage);
+  const ctx: ParseContext = { resolveColor, resolveImage };
+  const body = parseDocument(main.data, ctx);
   const rawSections = parseSections(main.data);
 
   const stylesData = pkg.getPart(STYLES_PART);
@@ -84,7 +85,7 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
           },
         ];
 
-  const headersFooters = loadHeadersFootersForSections(pkg, sections, resolveColor, resolveImage);
+  const headersFooters = loadHeadersFootersForSections(pkg, sections, ctx);
   const charts = loadCharts(pkg, resolveColor);
   // The document's own embedded fonts (de-obfuscated). A run whose w:ascii
   // matches one renders with the real font instead of a substitute.
@@ -219,8 +220,7 @@ function loadTheme(pkg: OpcPackage): Uint8Array | undefined {
 function loadHeadersFootersForSections(
   pkg: OpcPackage,
   sections: ReadonlyArray<Section>,
-  resolveColor: ColorResolver,
-  resolveImage?: ImageResolver,
+  ctx: ParseContext,
 ): ReadonlyMap<string, ReadonlyArray<BodyElement>> {
   const wanted = new Set<string>();
   for (const s of sections) {
@@ -237,7 +237,7 @@ function loadHeadersFootersForSections(
     if (rel.type !== REL_HEADER && rel.type !== REL_FOOTER) continue;
     const resolved = pkg.resolveRelatedPart(MAIN_DOCUMENT_PART, rel);
     if (!resolved) continue;
-    out.set(rel.id, parseHeaderFooter(resolved.data, resolveColor, resolveImage));
+    out.set(rel.id, parseHeaderFooter(resolved.data, ctx));
   }
   return out;
 }

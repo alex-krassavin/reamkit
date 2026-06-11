@@ -1,4 +1,4 @@
-export type { ImageResolver } from '@/word/document-parser';
+export type { ImageResolver, ParseContext } from '@/word/document-parser';
 export { extractParagraphs } from '@/word/text-extractor';
 export {
   parseDocument,
