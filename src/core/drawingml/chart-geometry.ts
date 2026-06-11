@@ -136,6 +136,117 @@ interface FrameOpts {
   readonly formatValue?: (v: number) => string; // override tick label text (percent axis)
 }
 
+// ── shared axis chrome (C10) ─────────────────────────────────────────────────
+// These helpers deduplicate the cartesian chrome between buildFrame and
+// buildScatterScene. They PUSH into the caller's buffers — the call order in
+// each builder is the z-order of the emitted PDF operators, so callers invoke
+// them at exactly the points the inlined code used to occupy.
+
+function pushChartTitle(labels: Array<ChartLabel>, chart: Chart, wPt: number, hPt: number): void {
+  if (!chart.title) return;
+  labels.push({
+    text: chart.title,
+    x: wPt / 2,
+    y: hPt - 4 - CHART_TITLE_PT,
+    sizePt: CHART_TITLE_PT,
+    colorHex: TITLE_COLOR,
+    align: 'center',
+  });
+}
+
+function buildLegendBlock(
+  chart: Chart,
+  wPt: number,
+  hPt: number,
+  measure: MeasureText,
+): ReturnType<typeof layoutLegend> {
+  const legendEntries: Array<LegendEntry> = chart.series
+    .map((s, i) => ({ name: s.name ?? '', colorHex: seriesColor(s, i, chart.seriesColorCycle) }))
+    .filter((e) => e.name !== '');
+  return layoutLegend(legendEntries, chart.hasLegend, chart.legendPos ?? 'b', wPt, hPt, measure);
+}
+
+// Gridlines + tick labels along one axis. 'y': horizontal lines with
+// right-aligned labels in the left gutter; 'x': vertical lines with centered
+// labels under the plot.
+function pushGridTicks(
+  polylines: Array<ChartPolyline>,
+  labels: Array<ChartLabel>,
+  tickVals: ReadonlyArray<number>,
+  fmt: (v: number) => string,
+  axis: 'x' | 'y',
+  at: (v: number) => number,
+  x0: number,
+  y0: number,
+  plotW: number,
+  plotH: number,
+): void {
+  for (const v of tickVals) {
+    if (axis === 'x') {
+      const gx = at(v);
+      polylines.push({
+        points: [
+          [gx, y0],
+          [gx, y0 + plotH],
+        ],
+        strokeHex: GRID_COLOR,
+        widthPt: 0.75,
+      });
+      labels.push({
+        text: fmt(v),
+        x: gx,
+        y: y0 - CHART_LABEL_PT,
+        sizePt: CHART_LABEL_PT,
+        colorHex: LABEL_COLOR,
+        align: 'center',
+      });
+    } else {
+      const gy = at(v);
+      polylines.push({
+        points: [
+          [x0, gy],
+          [x0 + plotW, gy],
+        ],
+        strokeHex: GRID_COLOR,
+        widthPt: 0.75,
+      });
+      labels.push({
+        text: fmt(v),
+        x: x0 - 3,
+        y: gy - CHART_LABEL_PT / 3,
+        sizePt: CHART_LABEL_PT,
+        colorHex: LABEL_COLOR,
+        align: 'right',
+      });
+    }
+  }
+}
+
+function pushAxisLines(
+  polylines: Array<ChartPolyline>,
+  x0: number,
+  y0: number,
+  plotW: number,
+  plotH: number,
+): void {
+  polylines.push({
+    points: [
+      [x0, y0],
+      [x0, y0 + plotH],
+    ],
+    strokeHex: AXIS_COLOR,
+    widthPt: 1,
+  });
+  polylines.push({
+    points: [
+      [x0, y0],
+      [x0 + plotW, y0],
+    ],
+    strokeHex: AXIS_COLOR,
+    widthPt: 1,
+  });
+}
+
 function buildFrame(
   chart: Chart,
   wPt: number,
@@ -158,17 +269,7 @@ function buildFrame(
   let top = 4;
   if (chart.title) top += CHART_TITLE_PT * 1.6;
   if (chart.valAxisTitle) top += CHART_LABEL_PT * 1.4;
-  const legendEntries: Array<LegendEntry> = chart.series
-    .map((s, i) => ({ name: s.name ?? '', colorHex: seriesColor(s, i, chart.seriesColorCycle) }))
-    .filter((e) => e.name !== '');
-  const legend = layoutLegend(
-    legendEntries,
-    chart.hasLegend,
-    chart.legendPos ?? 'b',
-    wPt,
-    hPt,
-    measure,
-  );
+  const legend = buildLegendBlock(chart, wPt, hPt, measure);
   const plotRight = wPt - 4 - legend.rightWidth;
 
   const tickLabelW = Math.max(0, ...tickVals.map((v) => measure(fmtVal(v), CHART_LABEL_PT))) + 4;
@@ -184,16 +285,7 @@ function buildFrame(
     ((v - scale.min) / (scale.max - scale.min)) * (horizontal ? plotW : plotH);
   const zeroOffset = valueOffset(0);
 
-  if (chart.title) {
-    labels.push({
-      text: chart.title,
-      x: wPt / 2,
-      y: hPt - 4 - CHART_TITLE_PT,
-      sizePt: CHART_TITLE_PT,
-      colorHex: TITLE_COLOR,
-      align: 'center',
-    });
-  }
+  pushChartTitle(labels, chart, wPt, hPt);
   // Axis titles. The value-axis title is laid out horizontally above the plot
   // (a deliberate simplification — chart text is not rotated); the category-axis
   // title sits centred below the category labels.
@@ -218,45 +310,32 @@ function buildFrame(
     });
   }
 
-  for (const v of tickVals) {
-    const off = valueOffset(v);
-    if (horizontal) {
-      const gx = x0 + off;
-      polylines.push({
-        points: [
-          [gx, y0],
-          [gx, y0 + plotH],
-        ],
-        strokeHex: GRID_COLOR,
-        widthPt: 0.75,
-      });
-      labels.push({
-        text: fmtVal(v),
-        x: gx,
-        y: y0 - CHART_LABEL_PT,
-        sizePt: CHART_LABEL_PT,
-        colorHex: LABEL_COLOR,
-        align: 'center',
-      });
-    } else {
-      const gy = y0 + off;
-      polylines.push({
-        points: [
-          [x0, gy],
-          [x0 + plotW, gy],
-        ],
-        strokeHex: GRID_COLOR,
-        widthPt: 0.75,
-      });
-      labels.push({
-        text: fmtVal(v),
-        x: x0 - 3,
-        y: gy - CHART_LABEL_PT / 3,
-        sizePt: CHART_LABEL_PT,
-        colorHex: LABEL_COLOR,
-        align: 'right',
-      });
-    }
+  if (horizontal) {
+    pushGridTicks(
+      polylines,
+      labels,
+      tickVals,
+      fmtVal,
+      'x',
+      (v) => x0 + valueOffset(v),
+      x0,
+      y0,
+      plotW,
+      plotH,
+    );
+  } else {
+    pushGridTicks(
+      polylines,
+      labels,
+      tickVals,
+      fmtVal,
+      'y',
+      (v) => y0 + valueOffset(v),
+      x0,
+      y0,
+      plotW,
+      plotH,
+    );
   }
 
   const slot = (horizontal ? plotH : plotW) / nCats;
@@ -285,22 +364,7 @@ function buildFrame(
     }
   }
 
-  polylines.push({
-    points: [
-      [x0, y0],
-      [x0, y0 + plotH],
-    ],
-    strokeHex: AXIS_COLOR,
-    widthPt: 1,
-  });
-  polylines.push({
-    points: [
-      [x0, y0],
-      [x0 + plotW, y0],
-    ],
-    strokeHex: AXIS_COLOR,
-    widthPt: 1,
-  });
+  pushAxisLines(polylines, x0, y0, plotW, plotH);
   legend.emit(rects, labels);
 
   return {
@@ -544,17 +608,7 @@ export function buildScatterScene(
 
   let top = 4;
   if (chart.title) top += CHART_TITLE_PT * 1.6;
-  const legendEntries: Array<LegendEntry> = chart.series
-    .map((s, i) => ({ name: s.name ?? '', colorHex: seriesColor(s, i, chart.seriesColorCycle) }))
-    .filter((e) => e.name !== '');
-  const legend = layoutLegend(
-    legendEntries,
-    chart.hasLegend,
-    chart.legendPos ?? 'b',
-    wPt,
-    hPt,
-    measure,
-  );
+  const legend = buildLegendBlock(chart, wPt, hPt, measure);
   const tickLabelW =
     Math.max(0, ...yTicks.map((v) => measure(formatTick(v, yScale.step), CHART_LABEL_PT))) + 4;
   const x0 = 4 + tickLabelW;
@@ -564,70 +618,32 @@ export function buildScatterScene(
   const xAt = (v: number): number => x0 + ((v - xScale.min) / (xScale.max - xScale.min)) * plotW;
   const yAt = (v: number): number => y0 + ((v - yScale.min) / (yScale.max - yScale.min)) * plotH;
 
-  if (chart.title) {
-    labels.push({
-      text: chart.title,
-      x: wPt / 2,
-      y: hPt - 4 - CHART_TITLE_PT,
-      sizePt: CHART_TITLE_PT,
-      colorHex: TITLE_COLOR,
-      align: 'center',
-    });
-  }
-  for (const v of yTicks) {
-    const gy = yAt(v);
-    polylines.push({
-      points: [
-        [x0, gy],
-        [x0 + plotW, gy],
-      ],
-      strokeHex: GRID_COLOR,
-      widthPt: 0.75,
-    });
-    labels.push({
-      text: formatTick(v, yScale.step),
-      x: x0 - 3,
-      y: gy - CHART_LABEL_PT / 3,
-      sizePt: CHART_LABEL_PT,
-      colorHex: LABEL_COLOR,
-      align: 'right',
-    });
-  }
-  for (const v of xTicks) {
-    const gx = xAt(v);
-    polylines.push({
-      points: [
-        [gx, y0],
-        [gx, y0 + plotH],
-      ],
-      strokeHex: GRID_COLOR,
-      widthPt: 0.75,
-    });
-    labels.push({
-      text: formatTick(v, xScale.step),
-      x: gx,
-      y: y0 - CHART_LABEL_PT,
-      sizePt: CHART_LABEL_PT,
-      colorHex: LABEL_COLOR,
-      align: 'center',
-    });
-  }
-  polylines.push({
-    points: [
-      [x0, y0],
-      [x0, y0 + plotH],
-    ],
-    strokeHex: AXIS_COLOR,
-    widthPt: 1,
-  });
-  polylines.push({
-    points: [
-      [x0, y0],
-      [x0 + plotW, y0],
-    ],
-    strokeHex: AXIS_COLOR,
-    widthPt: 1,
-  });
+  pushChartTitle(labels, chart, wPt, hPt);
+  pushGridTicks(
+    polylines,
+    labels,
+    yTicks,
+    (v) => formatTick(v, yScale.step),
+    'y',
+    yAt,
+    x0,
+    y0,
+    plotW,
+    plotH,
+  );
+  pushGridTicks(
+    polylines,
+    labels,
+    xTicks,
+    (v) => formatTick(v, xScale.step),
+    'x',
+    xAt,
+    x0,
+    y0,
+    plotW,
+    plotH,
+  );
+  pushAxisLines(polylines, x0, y0, plotW, plotH);
 
   for (let s = 0; s < chart.series.length; s++) {
     const series = chart.series[s]!;

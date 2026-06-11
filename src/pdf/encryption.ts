@@ -204,11 +204,7 @@ export async function decryptBytes(fileKey: Uint8Array, data: Uint8Array): Promi
   const iv = data.slice(0, 16);
   const k = await subtle.importKey('raw', fileKey as BufferSource, 'AES-CBC', false, ['decrypt']);
   return new Uint8Array(
-    await subtle.decrypt(
-      { name: 'AES-CBC', iv: iv as BufferSource },
-      k,
-      data.slice(16),
-    ),
+    await subtle.decrypt({ name: 'AES-CBC', iv: iv as BufferSource }, k, data.slice(16)),
   );
 }
 
