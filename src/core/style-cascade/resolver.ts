@@ -32,7 +32,38 @@ export const EMPTY_STYLE_SHEET: StyleSheet = {
   styles: new Map(),
 };
 
+// The renderer resolves the same (run, paragraph) pair in several phases
+// (font collection, tokenization, table measuring) — memoize by identity.
+// Model objects are readonly and rebuilt per parse, and the outer key is the
+// sheet itself, so entries can never leak across documents (oop-design §4.2).
+const runCascadeCache = new WeakMap<
+  StyleSheet,
+  WeakMap<RunProperties, WeakMap<ParagraphProperties, ResolvedRunProperties>>
+>();
+
 export function resolveRunProperties(
+  runDirect: RunProperties,
+  paragraphDirect: ParagraphProperties,
+  sheet: StyleSheet,
+): ResolvedRunProperties {
+  let bySheet = runCascadeCache.get(sheet);
+  if (!bySheet) {
+    bySheet = new WeakMap();
+    runCascadeCache.set(sheet, bySheet);
+  }
+  let byRun = bySheet.get(runDirect);
+  if (!byRun) {
+    byRun = new WeakMap();
+    bySheet.set(runDirect, byRun);
+  }
+  const hit = byRun.get(paragraphDirect);
+  if (hit) return hit;
+  const resolved = computeRunProperties(runDirect, paragraphDirect, sheet);
+  byRun.set(paragraphDirect, resolved);
+  return resolved;
+}
+
+function computeRunProperties(
   runDirect: RunProperties,
   paragraphDirect: ParagraphProperties,
   sheet: StyleSheet,
