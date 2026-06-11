@@ -12,10 +12,19 @@ doesn't yet.
 **WordprocessingML (§17)**
 - Text, runs and the full style cascade (`docDefaults` → styles → direct formatting).
 - Tables — auto / fixed layout, §17.4 border-conflict resolution, cell shading,
-  vertical merge and grid span, nested tables.
+  vertical merge and grid span, nested tables, **table styles** (`w:tblStyle` with
+  conditional formats: banding, first/last row/column).
 - Lists and numbering (`abstractNum`, level overrides), multi-level.
-- Sections — per-section page size and orientation, headers and footers.
-- Inline and floating images (PNG / JPEG / JPEG2000).
+- Sections — per-section page size and orientation, headers and footers,
+  **multi-column layout** (`w:cols`).
+- **Hyperlinks** — external (clickable PDF annotations + HTML `<a>`, scheme-allowlisted)
+  and internal: bookmarks become named destinations / `#`-anchors.
+- **Fields** — `PAGE` / `NUMPAGES` render real page numbers in headers and footers.
+- **Footnotes and endnotes** — notes at the bottom of the referencing page behind
+  Word's separator rule; endnotes after the body.
+- Inline and floating images (PNG / JPEG / JPEG2000); floating drawings
+  (`wp:anchor`, wrap-none incl. `behindDoc` — watermarks, stamps, text boxes)
+  render at their anchored position outside the text flow.
 - Tracked changes (`w:ins` / `w:del`).
 
 **SpreadsheetML (§18)**
@@ -37,8 +46,11 @@ doesn't yet.
 
 **PDF / compliance**
 - PDF/A-1, -2, -3 at levels a / b / u — all formally **veraPDF-validated**.
+- **PDF/UA-1** (ISO 14289-1) — veraPDF-validated, alone or combined with PDF/A-2a
+  in a single file.
 - Tagged PDF — logical structure tree, headings, tables, lists, figures with alt text,
-  `/Lang`, pagination artifacts.
+  links with alternate descriptions, footnote `Note` elements, `/Lang`, pagination
+  artifacts.
 - Digital signatures — PKCS#7 detached, ECDSA; object streams; JPEG2000 images.
 
 ## Not yet

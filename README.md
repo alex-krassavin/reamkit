@@ -85,7 +85,9 @@ are always used first — glyph-exact, no substitution.
 ### Archival PDF/A + embedded source
 
 The whole PDF/A family is supported (1a/1b, 2a/2b/2u, 3a/3b/3u —
-veraPDF-validated). PDF/A-3 can carry the source document inside the PDF:
+veraPDF-validated), plus accessible **PDF/UA-1** (`pdfUA: true`, also
+veraPDF-validated and combinable with PDF/A in one file). PDF/A-3 can carry
+the source document inside the PDF:
 
 ```ts
 const { bytes: pdfa, losses } = await doc.convertWithReport('pdf', {
@@ -158,8 +160,9 @@ automatically from the document's `docProps/core.xml`), `attachments`
 ## Scope
 
 Implemented: WordprocessingML text/styles/tables (incl. table styles)/lists/
-multi-section layout/headers-footers (incl. PAGE/NUMPAGES fields)/footnotes
-and endnotes/images/tracked changes, SpreadsheetML grids,
+multi-section and multi-column layout/headers-footers (incl. PAGE/NUMPAGES
+fields)/footnotes and endnotes/hyperlinks and bookmarks/floating drawings/
+images/tracked changes, SpreadsheetML grids,
 number formats and the print model (gridlines, print area, fit-to-page,
 repeated titles, page breaks), DrawingML shapes and charts, OMML math,
 Type0+CIDFontType2 embedding with subsetting, Knuth-Plass line breaking,
