@@ -59,6 +59,17 @@ const { bytes: pdfa, losses } = await doc.convertWithReport('pdf', {
 `'PDF/A-1a'` / `'PDF/A-2a'` / `'PDF/A-3a'` additionally emit the tagged
 logical structure (headings, tables, lists, figure alt text).
 
+## Accessible PDF/UA-1
+
+`pdfUA: true` produces ISO 14289-1-conformant output — tagged structure,
+alternate descriptions on links, an always-announced document title. It
+combines with PDF/A in a single file (both veraPDF-validated):
+
+```ts
+const accessible = await doc.convert('pdf', { fonts, pdfUA: true });
+const archival = await doc.convert('pdf', { fonts, pdfA: 'PDF/A-2a', pdfUA: true });
+```
+
 ## Digital signature
 
 PKCS#7 detached (ISO 32000 §12.8) via WebCrypto — RSA or ECDSA:

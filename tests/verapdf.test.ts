@@ -35,7 +35,7 @@ const VP = findVeraPdf();
 
 // Run veraPDF and return its one-line text verdict ("PASS <file> <flavour>" or
 // "FAIL …"). veraPDF exits non-zero on a validation failure, so capture stdout.
-type Flavour = '1a' | '1b' | '2a' | '2b' | '2u' | '3a' | '3b' | '3u';
+type Flavour = '1a' | '1b' | '2a' | '2b' | '2u' | '3a' | '3b' | '3u' | 'ua1';
 function validate(vp: string, pdf: Uint8Array, flavour: Flavour): string {
   const file = resolve(mkdtempSync(resolve(tmpdir(), 'vpdf-')), 'out.pdf');
   writeFileSync(file, pdf);
@@ -76,12 +76,20 @@ function richDocx(): Uint8Array {
   const body =
     '<w:p><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>Heading</w:t></w:r></w:p>' +
     '<w:p><w:r><w:t>The file flows efficiently through the office.</w:t></w:r></w:p>' +
+    '<w:p><w:r><w:t>See </w:t></w:r><w:hyperlink r:id="rId30"><w:r><w:t>the project site</w:t></w:r></w:hyperlink><w:r><w:t> for details.</w:t></w:r>' +
+    '<w:r><w:footnoteReference w:id="1"/></w:r>' +
+    '<w:r><w:t> Jump to </w:t></w:r>' +
+    '<w:hyperlink w:anchor="summary"><w:r><w:t>the summary</w:t></w:r></w:hyperlink></w:p>' +
+    '<w:p><w:bookmarkStart w:id="7" w:name="summary"/><w:r><w:t>Summary paragraph.</w:t></w:r><w:bookmarkEnd w:id="7"/></w:p>' +
     tbl +
     li(0, 'First item') +
     li(1, 'Nested item') +
     pic;
   return buildDocxFromBody(body, {
     numberingXml,
+    hyperlinks: { rId30: 'https://reamkit.dev' },
+    footnotesXml:
+      '<w:footnote w:id="1"><w:p><w:r><w:footnoteRef/></w:r><w:r><w:t> A footnote, flowing efficiently.</w:t></w:r></w:p></w:footnote>',
     images: {
       rId20: {
         contentType: 'image/png' as const,
@@ -129,6 +137,26 @@ describe.skipIf(!VP)('veraPDF formal conformance', () => {
   it('validates a rich tagged document as PDF/A-1a (Level A)', () => {
     const pdf = convertDocxToPdfSync(richDocx(), { fonts: FONTS, pdfA: 'PDF/A-1a' });
     expect(validate(VP!, pdf, '1a')).toMatch(/^PASS/);
+  });
+
+  it('validates a rich tagged document as PDF/UA-1', () => {
+    const pdf = convertDocxToPdfSync(richDocx(), {
+      fonts: FONTS,
+      pdfUA: true,
+      info: { title: 'Rich fixture' },
+    });
+    expect(validate(VP!, pdf, 'ua1')).toMatch(/^PASS/);
+  });
+
+  it('validates PDF/A-2a + PDF/UA-1 simultaneously (one file, both standards)', () => {
+    const pdf = convertDocxToPdfSync(richDocx(), {
+      fonts: FONTS,
+      pdfA: 'PDF/A-2a',
+      pdfUA: true,
+      info: { title: 'Rich fixture' },
+    });
+    expect(validate(VP!, pdf, '2a')).toMatch(/^PASS/);
+    expect(validate(VP!, pdf, 'ua1')).toMatch(/^PASS/);
   });
 
   it('validates a translucent-image document as PDF/A-2b (transparency kept)', () => {

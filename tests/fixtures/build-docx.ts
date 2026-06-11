@@ -16,6 +16,13 @@ const CONTENT_TYPES_HEADER = `<?xml version="1.0" encoding="UTF-8" standalone="y
 
 const NUMBERING_TYPE_OVERRIDE =
   '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>';
+const STYLES_TYPE_OVERRIDE =
+  '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>';
+const FOOTNOTES_TYPE_OVERRIDE =
+  '<Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/>';
+const ENDNOTES_TYPE_OVERRIDE =
+  '<Override PartName="/word/endnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml"/>';
+
 const SETTINGS_TYPE_OVERRIDE =
   '<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>';
 const THEME_TYPE_OVERRIDE =
@@ -54,6 +61,12 @@ export interface FixtureImage {
 
 export interface BuildDocxOptions {
   readonly numberingXml?: string;
+  /** Inner XML of word/styles.xml (the <w:style>/<w:docDefaults> elements). */
+  readonly stylesXml?: string;
+  /** Inner XML of word/footnotes.xml (the <w:footnote> elements). */
+  readonly footnotesXml?: string;
+  /** Inner XML of word/endnotes.xml (the <w:endnote> elements). */
+  readonly endnotesXml?: string;
   // Default header/footer (legacy fields, rId10 / rId11).
   readonly headerXml?: string;
   readonly footerXml?: string;
@@ -74,6 +87,8 @@ export interface BuildDocxOptions {
   // Chart parts keyed by the relationship id a c:chart @r:id references. Each
   // value is a full <c:chartSpace>…</c:chartSpace> document.
   readonly charts?: Readonly<Record<string, string>>;
+  /** External hyperlink rels for document.xml: rId → URL (TargetMode External). */
+  readonly hyperlinks?: Readonly<Record<string, string>>;
 }
 
 export function buildDocx(paragraphs: ReadonlyArray<string>): Uint8Array {
@@ -122,6 +137,9 @@ ${bodyInnerXml}
     CONTENT_TYPES_HEADER +
     [...imageDefaults].join('') +
     (options.numberingXml ? NUMBERING_TYPE_OVERRIDE : '') +
+    (options.stylesXml ? STYLES_TYPE_OVERRIDE : '') +
+    (options.footnotesXml ? FOOTNOTES_TYPE_OVERRIDE : '') +
+    (options.endnotesXml ? ENDNOTES_TYPE_OVERRIDE : '') +
     (options.settingsXml ? SETTINGS_TYPE_OVERRIDE : '') +
     (options.themeXml ? THEME_TYPE_OVERRIDE : '') +
     headerSlots.map((s) => headerOverride(s.idx)).join('') +
@@ -134,6 +152,32 @@ ${bodyInnerXml}
     '_rels/.rels': encoder.encode(ROOT_RELS),
     'word/document.xml': encoder.encode(documentXml),
   };
+
+  if (options.stylesXml) {
+    entries['word/styles.xml'] = encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+${options.stylesXml}
+</w:styles>`,
+    );
+  }
+
+  if (options.footnotesXml) {
+    entries['word/footnotes.xml'] = encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+${options.footnotesXml}
+</w:footnotes>`,
+    );
+  }
+  if (options.endnotesXml) {
+    entries['word/endnotes.xml'] = encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:endnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+${options.endnotesXml}
+</w:endnotes>`,
+    );
+  }
 
   if (options.numberingXml) {
     entries['word/numbering.xml'] = encoder.encode(
@@ -196,6 +240,13 @@ ${f.xml}
     docRels.push(
       `<Relationship Id="${c.rId}" Type="${REL_CHART}" Target="charts/chart${c.idx}.xml"/>`,
     );
+  }
+  if (options.hyperlinks) {
+    for (const [rId, url] of Object.entries(options.hyperlinks)) {
+      docRels.push(
+        `<Relationship Id="${rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${url.replaceAll('&', '&amp;')}" TargetMode="External"/>`,
+      );
+    }
   }
   if (options.images) {
     let imgIdx = 1;

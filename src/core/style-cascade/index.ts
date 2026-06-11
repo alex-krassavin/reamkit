@@ -10,3 +10,4 @@ export type {
   ResolvedParagraphProperties,
 } from '@/core/style-cascade/types';
 export { DEFAULT_RESOLVED_RUN, DEFAULT_RESOLVED_PARAGRAPH } from '@/core/style-cascade/types';
+export { resolveTableStyles } from '@/core/style-cascade/table';

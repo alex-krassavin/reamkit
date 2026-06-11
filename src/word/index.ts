@@ -1,4 +1,4 @@
-export type { ImageResolver, ParseContext } from '@/word/document-parser';
+export type { HyperlinkResolver, ImageResolver, ParseContext } from '@/word/document-parser';
 export { extractParagraphs } from '@/word/text-extractor';
 export {
   parseDocument,
@@ -6,6 +6,7 @@ export {
   parseSection,
   parseSections,
   parseHeaderFooter,
+  parseNotes,
   EMPTY_SECTION,
 } from '@/word/document-parser';
 export { parseRunProperties } from '@/word/run-properties';

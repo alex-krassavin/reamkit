@@ -228,6 +228,26 @@ export interface Run {
   readonly native?: NativeBag;
   readonly text: string;
   readonly properties: RunProperties;
+  // ECMA-376 §17.16.22 — the run sits inside a w:hyperlink whose r:id resolved
+  // to an external target. The URL is stored as written in the rels part;
+  // writers MUST pass it through the scheme allowlist (core/links) before
+  // emitting anything clickable.
+  readonly href?: string;
+  // §17.16.5.35 PAGE / §17.16.5.33 NUMPAGES — the run is a page-number field;
+  // `text` holds the source's cached result. Header/footer rendering
+  // substitutes the real number per page; body rendering keeps the cache.
+  readonly field?: 'PAGE' | 'NUMPAGES';
+  // §17.11.14 w:footnoteReference / §17.11.6 w:endnoteReference — the run
+  // marks a note reference; the layout assigns sequential numbers in reading
+  // order and renders them superscript.
+  // §17.16.22 w:hyperlink @w:anchor — internal link target: a bookmark name
+  // in this document (never a URL — bypasses the scheme allowlist).
+  readonly anchor?: string;
+  readonly footnoteRef?: string;
+  readonly endnoteRef?: string;
+  // §17.11.13 w:footnoteRef / §17.11.5 w:endnoteRef — inside note content:
+  // render the OWNING note's number here.
+  readonly noteNumber?: true;
   // When set, the run renders this image inline in the line; `text` is ignored.
   readonly inlineImage?: InlineImage;
   // When set, the run is an inline OfficeMath object; `text` is ignored.
@@ -241,6 +261,10 @@ export interface Paragraph {
   readonly native?: NativeBag;
   readonly properties: ParagraphProperties;
   readonly runs: ReadonlyArray<Run>;
+  // §17.13.6.2 w:bookmarkStart — names of bookmarks opening in (or
+  // immediately before) this paragraph. Paragraph-level v1: the destination
+  // is the paragraph's first line.
+  readonly bookmarks?: ReadonlyArray<string>;
 }
 
 // ECMA-376 Part 1 §17.9 — Numbering.
@@ -285,6 +309,40 @@ export interface Numbering {
 // ECMA-376 Part 1 §17.7 — Styles.
 export type StyleType = 'paragraph' | 'character' | 'table' | 'numbering';
 
+// §17.7.6 — one table-style formatting layer: the style's own base layer
+// (w:style/tblPr + tcPr + rPr + pPr) or one conditional override
+// (w:tblStylePr). Borders come from tblBorders (table layer) or tcBorders
+// (region layer) — whichever the layer carries.
+export interface TableStyleLayer {
+  readonly borders?: CellBorders;
+  readonly cellMargins?: CellMargins;
+  readonly shading?: CellShading;
+  readonly runProperties?: RunProperties;
+  readonly paragraphProperties?: ParagraphProperties;
+}
+
+// §17.7.6.3 w:tblStylePr @w:type — the table regions a conditional layer
+// targets.
+export type TableStyleConditionType =
+  | 'wholeTable'
+  | 'band1Vert'
+  | 'band2Vert'
+  | 'band1Horz'
+  | 'band2Horz'
+  | 'firstCol'
+  | 'lastCol'
+  | 'firstRow'
+  | 'lastRow'
+  | 'nwCell'
+  | 'neCell'
+  | 'swCell'
+  | 'seCell';
+
+export interface TableStyleCondition {
+  readonly type: TableStyleConditionType;
+  readonly layer: TableStyleLayer;
+}
+
 export interface Style {
   readonly id: string;
   readonly type: StyleType;
@@ -292,6 +350,12 @@ export interface Style {
   readonly isDefault: boolean;
   readonly runProperties: RunProperties;
   readonly paragraphProperties: ParagraphProperties;
+  // Table styles only (§17.7.6): the base layer and conditional overrides.
+  readonly tableLayer?: TableStyleLayer;
+  readonly tableConditions?: ReadonlyArray<TableStyleCondition>;
+  // w:tblPr/w:tblStyleRowBandSize / ColBandSize (default 1).
+  readonly rowBandSize?: number;
+  readonly colBandSize?: number;
 }
 
 export interface StyleSheet {
@@ -357,7 +421,23 @@ export interface RowProperties {
   readonly pageBreakBefore?: boolean;
 }
 
+// §17.4.62 w:tblLook — which of the table style's conditional formats apply.
+// Modern files carry explicit attributes; legacy files a hex bitmask (both
+// parsed). Band flags are negative ("no band") per the spec.
+export interface TableLook {
+  readonly firstRow?: boolean;
+  readonly lastRow?: boolean;
+  readonly firstColumn?: boolean;
+  readonly lastColumn?: boolean;
+  readonly noHBand?: boolean;
+  readonly noVBand?: boolean;
+}
+
 export interface TableProperties {
+  // §17.7.6 — raw reference to a table style (resolved by the reader's
+  // resolveTableStyles transform; round-trip material afterwards).
+  readonly styleId?: string;
+  readonly look?: TableLook;
   readonly widthPt?: Pt;
   readonly widthFraction?: number; // tblW type=pct: w/5000 (1.0 = full content width)
   readonly widthType?: 'auto' | 'dxa' | 'pct' | 'nil';
@@ -389,6 +469,8 @@ export interface Table {
 // ECMA-376 Part 1 §20.4.2.8 — wp:inline picture extent. EMU = English
 // Metric Units: 914400 per inch (1 pt = 12700 EMU).
 export interface ImageBlock {
+  // §20.4.2.3 — present when the drawing is anchored (floating).
+  readonly float?: FloatAnchor;
   readonly resource?: ResourceId;
   readonly width: Pt;
   readonly height: Pt;
@@ -492,6 +574,8 @@ export interface ShapeTextBody {
 }
 
 export interface ShapeBlock {
+  // §20.4.2.3 — present when the drawing is anchored (floating).
+  readonly float?: FloatAnchor;
   readonly width: Pt; // wp:extent cx (fallback a:ext cx)
   readonly height: Pt; // wp:extent cy
   readonly geometry: ShapeGeometry;
@@ -540,6 +624,8 @@ export interface Chart {
 }
 
 export interface ChartBlock {
+  // §20.4.2.3 — present when the drawing is anchored (floating).
+  readonly float?: FloatAnchor;
   readonly chartRelId: string; // c:chart @r:id (resolve against the document's rels)
   readonly width: Pt;
   readonly height: Pt;
@@ -590,6 +676,33 @@ export interface SectionProperties {
   // (document-wide, not per-section). When true even-numbered pages use the
   // `even` header/footer references.
   readonly evenAndOddHeaders?: boolean;
+  // §17.6.4 w:cols — multi-column section layout.
+  readonly columns?: SectionColumns;
+}
+
+// §20.4.2.3 wp:anchor — a floating drawing's placement. v1 honours
+// out-of-flow placement for wrap 'none' (incl. behindDoc); the side-wrapping
+// modes (square/tight/through) and topAndBottom stay in flow as blocks.
+export interface FloatAnchor {
+  readonly wrap: 'none' | 'square' | 'tight' | 'through' | 'topAndBottom';
+  readonly behind?: boolean; // wp:anchor @behindDoc
+  readonly posH?: {
+    readonly relativeFrom: 'margin' | 'page' | 'column';
+    readonly offsetPt?: Pt; // wp:posOffset
+    readonly align?: 'left' | 'center' | 'right'; // wp:align
+  };
+  readonly posV?: {
+    readonly relativeFrom: 'margin' | 'page' | 'paragraph' | 'line';
+    readonly offsetPt?: Pt;
+  };
+}
+
+// §17.6.4 — column definitions: equal-width count + gutter, or explicit
+// per-column widths/gutters (w:col children).
+export interface SectionColumns {
+  readonly count: number;
+  readonly spacePt: number;
+  readonly explicit?: ReadonlyArray<{ readonly widthPt: number; readonly spacePt: number }>;
 }
 
 // A document can contain multiple sections (ECMA-376 §17.6.17). Each section's

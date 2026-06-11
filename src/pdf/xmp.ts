@@ -15,6 +15,8 @@ export interface XmpInput {
   // PDF/A identifier: part 1 (ISO 19005-1) / 2 / 3; conformance level
   // 'A' (tagged) / 'B' (visual) / 'U' (Unicode — parts 2/3 only).
   readonly pdfaPart?: '1' | '2' | '3';
+  // PDF/UA identification (ISO 14289-1) — pdfuaid:part.
+  readonly pdfuaPart?: '1';
   readonly pdfaConformance?: 'A' | 'B' | 'U';
 }
 
@@ -46,6 +48,42 @@ export function buildXmpPacket(input: XmpInput): Uint8Array {
       `        <pdfaid:conformance>${input.pdfaConformance ?? 'B'}</pdfaid:conformance>`,
       `      </rdf:Description>`,
     );
+  }
+  // PDF/UA identification (ISO 14289-1 §5).
+  if (input.pdfuaPart) {
+    props.push(
+      `      <rdf:Description rdf:about="" xmlns:pdfuaid="http://www.aiim.org/pdfua/ns/id/">`,
+      `        <pdfuaid:part>${input.pdfuaPart}</pdfuaid:part>`,
+      `      </rdf:Description>`,
+    );
+    // PDF/A treats pdfuaid as a non-predefined schema: when both identifiers
+    // share the packet, declare it via the PDF/A extension-schema mechanism
+    // (ISO 19005-2 §6.6.2.3.1; boilerplate from ISO 14289-1 §5 / TechNote 0009).
+    if (input.pdfaPart) {
+      props.push(
+        `      <rdf:Description rdf:about="" xmlns:pdfaExtension="http://www.aiim.org/pdfa/ns/extension/" xmlns:pdfaSchema="http://www.aiim.org/pdfa/ns/schema#" xmlns:pdfaProperty="http://www.aiim.org/pdfa/ns/property#">`,
+        `        <pdfaExtension:schemas>`,
+        `          <rdf:Bag>`,
+        `            <rdf:li rdf:parseType="Resource">`,
+        `              <pdfaSchema:namespaceURI>http://www.aiim.org/pdfua/ns/id/</pdfaSchema:namespaceURI>`,
+        `              <pdfaSchema:prefix>pdfuaid</pdfaSchema:prefix>`,
+        `              <pdfaSchema:schema>PDF/UA identification schema</pdfaSchema:schema>`,
+        `              <pdfaSchema:property>`,
+        `                <rdf:Seq>`,
+        `                  <rdf:li rdf:parseType="Resource">`,
+        `                    <pdfaProperty:category>internal</pdfaProperty:category>`,
+        `                    <pdfaProperty:description>PDF/UA version identifier</pdfaProperty:description>`,
+        `                    <pdfaProperty:name>part</pdfaProperty:name>`,
+        `                    <pdfaProperty:valueType>Integer</pdfaProperty:valueType>`,
+        `                  </rdf:li>`,
+        `                </rdf:Seq>`,
+        `              </pdfaSchema:property>`,
+        `            </rdf:li>`,
+        `          </rdf:Bag>`,
+        `        </pdfaExtension:schemas>`,
+        `      </rdf:Description>`,
+      );
+    }
   }
 
   // Dublin Core.

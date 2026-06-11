@@ -18,6 +18,7 @@ export const FEATURES = {
   headersFooters: 'headersFooters',
   images: 'images',
   imagesJp2: 'images.jp2',
+  hyperlinks: 'hyperlinks',
   shapes: 'shapes',
   charts: 'charts',
   math: 'math',

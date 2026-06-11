@@ -17,6 +17,7 @@ import type {
   Paragraph,
   Run,
   Section,
+  SectionColumns,
   SectionProperties,
 } from '@/core/document-model';
 
@@ -61,12 +62,16 @@ const RUN_CONTAINER_TAGS = new Set([
 // Resolves a drawing relationship id to a content-addressed ResourceId —
 // supplied by the converter (which owns the OPC package and the ResourceStore).
 export type ImageResolver = (relId: string) => ResourceId | undefined;
+export type HyperlinkResolver = (relId: string) => string | undefined;
 
 // Document-wide resolvers every nested parser needs — one context object
 // instead of threading a parameter pair through ten signatures (oop-design §8).
 export interface ParseContext {
   readonly resolveColor: ColorResolver;
   readonly resolveImage?: ImageResolver;
+  // §17.16.22 w:hyperlink r:id → external target URL from the owning part's
+  // rels (TargetMode="External" only). Absent ⇒ links unwrap to plain text.
+  readonly resolveHyperlink?: HyperlinkResolver;
 }
 
 export const DEFAULT_PARSE_CONTEXT: ParseContext = { resolveColor: defaultColorResolver };
@@ -151,6 +156,7 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
   let pageSize: PageSize | undefined;
   let margins: PageMargins | undefined;
   let titlePg = false;
+  let columns: SectionColumns | undefined;
   const headers: Array<HeaderFooterReference> = [];
   const footers: Array<HeaderFooterReference> = [];
 
@@ -190,6 +196,8 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
     } else if (poIs(child, 'w:titlePg')) {
       const val = poAttr(child, 'val');
       titlePg = val === undefined || val === '' || (val !== '0' && val !== 'false');
+    } else if (poIs(child, 'w:cols')) {
+      columns = parseColumns(child);
     }
   }
 
@@ -199,6 +207,27 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
     headers,
     footers,
     ...(titlePg ? { titlePg: true } : {}),
+    ...(columns ? { columns } : {}),
+  };
+}
+
+// §17.6.4 w:cols: @w:num equal-width columns separated by @w:space, OR
+// explicit w:col children each with their own width/trailing space.
+function parseColumns(cols: PoNode): SectionColumns | undefined {
+  const explicit: Array<{ widthPt: number; spacePt: number }> = [];
+  for (const col of poChildren(cols)) {
+    if (!poIs(col, 'w:col')) continue;
+    const w = poIntAttr(col, 'w');
+    if (w === undefined) continue;
+    explicit.push({ widthPt: twipsToPt(w), spacePt: twipsToPt(poIntAttr(col, 'space') ?? 0) });
+  }
+  const num = poIntAttr(cols, 'num');
+  const count = explicit.length > 0 ? explicit.length : (num ?? 1);
+  if (count <= 1) return undefined;
+  return {
+    count,
+    spacePt: twipsToPt(poIntAttr(cols, 'space') ?? 720),
+    ...(explicit.length > 0 ? { explicit } : {}),
   };
 }
 
@@ -229,10 +258,21 @@ export function parseBodyElements(
   ctx: ParseContext = DEFAULT_PARSE_CONTEXT,
 ): Array<BodyElement> {
   const out: Array<BodyElement> = [];
+  // Body-level w:bookmarkStart (between block elements) anchors to the NEXT
+  // paragraph.
+  let pendingBookmarks: Array<string> | undefined;
   for (const child of children) {
-    if (poIs(child, 'w:p')) {
+    if (poIs(child, 'w:bookmarkStart')) {
+      const bookmarkName = poAttr(child, 'name');
+      if (bookmarkName !== undefined && bookmarkName !== '' && bookmarkName !== '_GoBack') {
+        (pendingBookmarks ??= []).push(bookmarkName);
+      }
+    } else if (poIs(child, 'w:p')) {
       const drawing = tryExtractDrawingFromParagraph(child, ctx);
-      out.push(drawing ?? { kind: 'paragraph', paragraph: parseParagraph(child, ctx) });
+      out.push(
+        drawing ?? { kind: 'paragraph', paragraph: parseParagraph(child, ctx, pendingBookmarks) },
+      );
+      if (!drawing) pendingBookmarks = undefined;
     } else if (poIs(child, 'w:tbl')) {
       out.push({ kind: 'table', table: parseTable(child, ctx) });
     }
@@ -287,6 +327,7 @@ function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): BodyEleme
         height: content.height,
         paragraphProperties,
         ...(content.altText ? { altText: content.altText } : {}),
+        ...(content.float ? { float: content.float } : {}),
       },
     };
   }
@@ -299,6 +340,7 @@ function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): BodyEleme
         height: content.height,
         paragraphProperties,
         ...(content.altText ? { altText: content.altText } : {}),
+        ...(content.float ? { float: content.float } : {}),
       },
     };
   }
@@ -308,11 +350,23 @@ function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): BodyEleme
       ...content.data,
       paragraphProperties,
       ...(content.altText ? { altText: content.altText } : {}),
+      ...(content.float ? { float: content.float } : {}),
     },
   };
 }
 
-function parseParagraph(p: PoNode, ctx: ParseContext): Paragraph {
+function parseParagraph(p: PoNode, ctx: ParseContext, extraBookmarks?: Array<string>): Paragraph {
+  // §17.13.6.2 — bookmarks opening in this paragraph (plus any the caller
+  // carried over from between-paragraph positions). The hidden _GoBack
+  // edit-cursor bookmark is noise in every Word save — skipped.
+  const bookmarks: Array<string> = [...(extraBookmarks ?? [])];
+  for (const child of poChildren(p)) {
+    if (!poIs(child, 'w:bookmarkStart')) continue;
+    const bookmarkName = poAttr(child, 'name');
+    if (bookmarkName !== undefined && bookmarkName !== '' && bookmarkName !== '_GoBack') {
+      bookmarks.push(bookmarkName);
+    }
+  }
   const pPr = poChildren(p).find((c) => poIs(c, 'w:pPr'));
   let properties = parseParagraphProperties(pPr ? poElementToFlat(pPr) : undefined);
   // A display equation (m:oMathPara) centres its paragraph by default
@@ -326,45 +380,218 @@ function parseParagraph(p: PoNode, ctx: ParseContext): Paragraph {
     const alignment = jcVal === 'left' ? 'left' : jcVal === 'right' ? 'right' : 'center';
     properties = { ...properties, alignment };
   }
-  const runs: Array<Run> = [];
-  collectRuns(p, runs, ctx);
-  return { properties, runs };
+  const collected: Array<CollectedRun> = [];
+  collectRuns(p, collected, ctx);
+  return {
+    properties,
+    runs: applyFieldFsm(collected),
+    ...(bookmarks.length > 0 ? { bookmarks } : {}),
+  };
 }
 
-function collectRuns(container: PoNode, out: Array<Run>, ctx: ParseContext): void {
+// A parsed run plus the complex-field markers the FSM consumes (§17.16.18
+// w:fldChar / w:instrText). Internal to run collection.
+interface CollectedRun {
+  readonly run: Run;
+  readonly fldChar?: 'begin' | 'separate' | 'end';
+  readonly instrText?: string;
+}
+
+// §17.16.5.35 PAGE / §17.16.5.33 NUMPAGES: the instruction's first keyword;
+// switches (\* MERGEFORMAT …) are ignored. Anything else stays a cached
+// result (REF, TOC, DATE, … render their stored text exactly as before).
+function parseFieldInstr(instr: string | undefined): 'PAGE' | 'NUMPAGES' | undefined {
+  if (!instr) return undefined;
+  const m = /^\s*([A-Za-z]+)/.exec(instr);
+  const kw = m?.[1]?.toUpperCase();
+  return kw === 'PAGE' ? 'PAGE' : kw === 'NUMPAGES' ? 'NUMPAGES' : undefined;
+}
+
+// Fold a recognized field's cached-result runs into ONE field run: the cached
+// text concatenated (the per-page substitution replaces it wholesale), the
+// first result run's formatting, any hyperlink carried along.
+function synthesizeFieldRun(
+  result: ReadonlyArray<Run>,
+  field: 'PAGE' | 'NUMPAGES',
+  href?: string,
+): Run {
+  const first = result[0];
+  const linked = href ?? result.find((r) => r.href !== undefined)?.href;
+  return {
+    text: result.map((r) => r.text).join(''),
+    properties: first?.properties ?? {},
+    field,
+    ...(linked !== undefined ? { href: linked } : {}),
+  };
+}
+
+// §17.16.18 complex fields: begin → instrText* → separate → cached result →
+// end, spread across sibling runs. Recognized PAGE/NUMPAGES collapse to one
+// field run; everything else keeps its cached result exactly as before (the
+// zero-glyph marker runs were never rendered, so dropping them is inert).
+function applyFieldFsm(collected: ReadonlyArray<CollectedRun>): Array<Run> {
+  const out: Array<Run> = [];
+  let st: { phase: 'instr' | 'result'; instr: string; result: Array<Run>; depth: number } | null =
+    null;
+  for (const c of collected) {
+    if (c.fldChar === 'begin') {
+      if (st) {
+        if (st.phase === 'instr') st.depth++;
+        else {
+          // A new field opening inside a result: flush what we have and track
+          // the new one (nested result fields are rare; keep it simple).
+          out.push(...st.result);
+          st = { phase: 'instr', instr: '', result: [], depth: 0 };
+        }
+      } else {
+        st = { phase: 'instr', instr: '', result: [], depth: 0 };
+      }
+      continue;
+    }
+    if (!st) {
+      out.push(c.run);
+      continue;
+    }
+    if (c.fldChar === 'separate') {
+      if (st.depth === 0) st.phase = 'result';
+      continue;
+    }
+    if (c.fldChar === 'end') {
+      if (st.depth > 0) {
+        st.depth--;
+        continue;
+      }
+      const field = parseFieldInstr(st.instr);
+      if (field) out.push(synthesizeFieldRun(st.result, field));
+      else out.push(...st.result);
+      st = null;
+      continue;
+    }
+    if (st.phase === 'instr') {
+      if (c.instrText !== undefined) st.instr += c.instrText;
+      continue;
+    }
+    st.result.push(c.run);
+  }
+  if (st) out.push(...st.result); // unterminated field: keep the visible part
+  return out;
+}
+
+function collectRuns(
+  container: PoNode,
+  out: Array<CollectedRun>,
+  ctx: ParseContext,
+  href?: string,
+  anchor?: string,
+): void {
   for (const child of poChildren(container)) {
     if (poIs(child, 'w:pPr')) continue;
     if (poIs(child, 'w:r')) {
-      out.push(parseRun(child, ctx));
+      const parsed = parseRun(child, ctx);
+      const run =
+        href !== undefined || anchor !== undefined
+          ? {
+              ...parsed.run,
+              ...(href !== undefined ? { href } : {}),
+              ...(anchor !== undefined ? { anchor } : {}),
+            }
+          : parsed.run;
+      out.push({
+        run,
+        ...(parsed.fldChar ? { fldChar: parsed.fldChar } : {}),
+        ...(parsed.instrText !== undefined ? { instrText: parsed.instrText } : {}),
+      });
       continue;
     }
     // OfficeMath: an inline equation (m:oMath) or a display paragraph
     // (m:oMathPara, holding one or more m:oMath) → math runs.
     if (poIs(child, 'm:oMath')) {
-      out.push({ text: '', properties: {}, math: parseOMath(child) });
+      out.push({ run: { text: '', properties: {}, math: parseOMath(child) } });
       continue;
     }
     if (poIs(child, 'm:oMathPara')) {
       for (const om of poChildren(child)) {
-        if (poIs(om, 'm:oMath')) out.push({ text: '', properties: {}, math: parseOMath(om) });
+        if (poIs(om, 'm:oMath')) {
+          out.push({ run: { text: '', properties: {}, math: parseOMath(om) } });
+        }
       }
       continue;
     }
     const tag = elementTag(child);
+    if (tag === 'w:fldSimple') {
+      // §17.16.19 — the instruction is an attribute, the children are the
+      // cached result. PAGE/NUMPAGES collapse to one field run; anything else
+      // keeps its cached runs (the old unwrap behavior).
+      const field = parseFieldInstr(poAttr(child, 'instr'));
+      if (field) {
+        const inner: Array<CollectedRun> = [];
+        collectRuns(child, inner, ctx, href, anchor);
+        out.push({ run: synthesizeFieldRun(applyFieldFsm(inner), field, href) });
+        continue;
+      }
+      collectRuns(child, out, ctx, href, anchor);
+      continue;
+    }
     if (tag && RUN_CONTAINER_TAGS.has(tag)) {
-      collectRuns(child, out, ctx);
+      // A hyperlink container stamps its target onto every run inside (nested
+      // containers inherit the outer link): @r:id resolves to an external URL,
+      // @w:anchor names a bookmark in this document (§17.16.22).
+      let childHref = href;
+      let childAnchor = anchor;
+      if (tag === 'w:hyperlink') {
+        const rId = poAttr(child, 'id');
+        const resolved = rId ? ctx.resolveHyperlink?.(rId) : undefined;
+        if (resolved !== undefined) {
+          childHref = resolved;
+        } else {
+          const bookmark = poAttr(child, 'anchor');
+          if (bookmark !== undefined && bookmark !== '') childAnchor = bookmark;
+        }
+      }
+      collectRuns(child, out, ctx, childHref, childAnchor);
     }
   }
 }
 
-function parseRun(r: PoNode, ctx: ParseContext): Run {
+function parseRun(
+  r: PoNode,
+  ctx: ParseContext,
+): { run: Run; fldChar?: 'begin' | 'separate' | 'end'; instrText?: string } {
   const rPr = poChildren(r).find((c) => poIs(c, 'w:rPr'));
   const properties = parseRunProperties(rPr ? poElementToFlat(rPr) : undefined);
   let text = '';
   let pageBreak = false;
   let inlineImage: InlineImage | undefined;
+  let fldChar: 'begin' | 'separate' | 'end' | undefined;
+  let instrText: string | undefined;
+  let footnoteRef: string | undefined;
+  let endnoteRef: string | undefined;
+  let noteNumber = false;
   for (const child of expandMcChildren(poChildren(r))) {
     if (poIs(child, 'w:rPr')) continue;
+    if (poIs(child, 'w:fldChar')) {
+      const t = poAttr(child, 'fldCharType');
+      if (t === 'begin' || t === 'separate' || t === 'end') fldChar = t;
+      continue;
+    }
+    if (poIs(child, 'w:instrText')) {
+      instrText = (instrText ?? '') + poText(child);
+      continue;
+    }
+    if (poIs(child, 'w:footnoteReference')) {
+      const id = poAttr(child, 'id');
+      if (id !== undefined) footnoteRef = id;
+      continue;
+    }
+    if (poIs(child, 'w:endnoteReference')) {
+      const id = poAttr(child, 'id');
+      if (id !== undefined) endnoteRef = id;
+      continue;
+    }
+    if (poIs(child, 'w:footnoteRef') || poIs(child, 'w:endnoteRef')) {
+      noteNumber = true;
+      continue;
+    }
     if (poIs(child, 'w:t')) {
       text += poText(child);
     } else if (poIs(child, 'w:tab')) {
@@ -395,10 +622,17 @@ function parseRun(r: PoNode, ctx: ParseContext): Run {
     }
   }
   return {
-    text,
-    properties,
-    ...(inlineImage ? { inlineImage } : {}),
-    ...(pageBreak ? { pageBreak: true } : {}),
+    run: {
+      text,
+      properties,
+      ...(inlineImage ? { inlineImage } : {}),
+      ...(pageBreak ? { pageBreak: true } : {}),
+      ...(footnoteRef !== undefined ? { footnoteRef } : {}),
+      ...(endnoteRef !== undefined ? { endnoteRef } : {}),
+      ...(noteNumber ? { noteNumber: true } : {}),
+    },
+    ...(fldChar ? { fldChar } : {}),
+    ...(instrText !== undefined ? { instrText } : {}),
   };
 }
 
@@ -407,4 +641,29 @@ function elementTag(node: PoNode): string | undefined {
     if (key !== ':@' && key !== '#text') return key;
   }
   return undefined;
+}
+
+// §17.11 — footnotes.xml / endnotes.xml. Returns content by id; the
+// separator / continuationSeparator / continuationNotice stubs (negative ids
+// or an explicit w:type) are skipped — the layout draws its own separator.
+export function parseNotes(
+  notesXml: Uint8Array,
+  rootTag: 'w:footnotes' | 'w:endnotes',
+  noteTag: 'w:footnote' | 'w:endnote',
+  ctx: ParseContext = DEFAULT_PARSE_CONTEXT,
+): Map<string, Array<BodyElement>> {
+  const xml = decoder.decode(notesXml);
+  const tree = parser.parse(xml) as Array<PoNode>;
+  const root = poFindByPath(tree, [rootTag]);
+  const out = new Map<string, Array<BodyElement>>();
+  if (!root) return out;
+  for (const note of poChildren(root)) {
+    if (!poIs(note, noteTag)) continue;
+    const type = poAttr(note, 'type');
+    if (type !== undefined && type !== 'normal') continue;
+    const id = poAttr(note, 'id');
+    if (id === undefined) continue;
+    out.set(id, parseBodyElements(poChildren(note), ctx));
+  }
+  return out;
 }

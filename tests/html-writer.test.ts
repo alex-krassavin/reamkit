@@ -122,6 +122,30 @@ describe('html writer (FlowDoc adapter)', () => {
     expect(html).not.toContain('a <b>');
   });
 
+  it('emits hyperlinks as <a> with a scheme allowlist', async () => {
+    const docx = buildDocxFromBody(
+      '<w:p>' +
+        '<w:hyperlink r:id="rId30"><w:r><w:t>safe link</w:t></w:r></w:hyperlink>' +
+        '<w:hyperlink r:id="rId31"><w:r><w:t>evil link</w:t></w:r></w:hyperlink>' +
+        '<w:hyperlink w:anchor="bm1"><w:r><w:t>internal</w:t></w:r></w:hyperlink>' +
+        '</w:p>',
+      {
+        hyperlinks: {
+          rId30: 'https://reamkit.dev/?a=1&b=2',
+          rId31: 'javascript:alert(1)',
+        },
+      },
+    );
+    const { bytes, losses } = await Ream.parse(docx).convertWithReport('html');
+    const html = decode(bytes);
+    expect(html).toContain('<a href="https://reamkit.dev/?a=1&amp;b=2">');
+    expect(html).toContain('safe link');
+    expect(html).toContain('evil link'); // the text survives, the link does not
+    expect(html).not.toContain('javascript:');
+    expect(html).toContain('internal'); // anchor-only hyperlink → plain text
+    expect(losses.some((l) => l.feature === 'hyperlinks' && l.severity === 'degraded')).toBe(true);
+  });
+
   it('converts through the createConverter facade', async () => {
     const conv = createConverter();
     const { bytes, losses } = await conv.convert(
@@ -152,5 +176,115 @@ describe('html writer (FlowDoc adapter)', () => {
     expect(html).toContain('raw tree');
     expect(html).toContain('font-weight:700');
     expect(html).toContain('text-align:right');
+  });
+
+  // ── charts and shapes as inline SVG ──────────────────────────────────────
+
+  const C_NS =
+    'xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" ' +
+    'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"';
+
+  const chartDrawing = (rId: string): string => `<w:p><w:r><w:drawing>
+    <wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+      <wp:extent cx="5486400" cy="3200400"/>
+      <wp:docPr id="1" name="Chart 1"/>
+      <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+        <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">
+          <c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"
+                   xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+                   r:id="${rId}"/>
+        </a:graphicData>
+      </a:graphic>
+    </wp:inline>
+  </w:drawing></w:r></w:p>`;
+
+  const BAR_CHART = `<c:chartSpace ${C_NS}>
+    <c:chart>
+      <c:title><c:tx><c:rich><a:bodyPr/><a:p><a:r><a:t>Quarterly Sales</a:t></a:r></a:p></c:rich></c:tx></c:title>
+      <c:plotArea><c:barChart>
+        <c:barDir val="col"/><c:grouping val="clustered"/>
+        <c:ser><c:idx val="0"/><c:order val="0"/>
+          <c:spPr><a:solidFill><a:srgbClr val="4472C4"/></a:solidFill></c:spPr>
+          <c:cat><c:strRef><c:strCache><c:ptCount val="2"/><c:pt idx="0"><c:v>Q1</c:v></c:pt><c:pt idx="1"><c:v>Q2</c:v></c:pt></c:strCache></c:strRef></c:cat>
+          <c:val><c:numRef><c:numCache><c:ptCount val="2"/><c:pt idx="0"><c:v>10</c:v></c:pt><c:pt idx="1"><c:v>20</c:v></c:pt></c:numCache></c:numRef></c:val>
+        </c:ser>
+      </c:barChart></c:plotArea>
+    </c:chart>
+  </c:chartSpace>`;
+
+  const PIE_CHART = `<c:chartSpace ${C_NS}>
+    <c:chart><c:plotArea><c:pieChart>
+      <c:ser><c:idx val="0"/><c:order val="0"/>
+        <c:cat><c:strRef><c:strCache><c:ptCount val="2"/><c:pt idx="0"><c:v>A</c:v></c:pt><c:pt idx="1"><c:v>B</c:v></c:pt></c:strCache></c:strRef></c:cat>
+        <c:val><c:numRef><c:numCache><c:ptCount val="2"/><c:pt idx="0"><c:v>3</c:v></c:pt><c:pt idx="1"><c:v>1</c:v></c:pt></c:numCache></c:numRef></c:val>
+      </c:ser>
+    </c:pieChart></c:plotArea></c:chart>
+  </c:chartSpace>`;
+
+  const shapeDrawing = (spPrInner: string, body = ''): string => `<w:p><w:r><w:drawing>
+    <wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+      <wp:extent cx="1828800" cy="914400"/>
+      <wp:docPr id="2" name="Shape 1"/>
+      <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+        <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+          <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+            <wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/></a:xfrm>${spPrInner}</wps:spPr>
+            ${body}<wps:bodyPr/>
+          </wps:wsp>
+        </a:graphicData>
+      </a:graphic>
+    </wp:inline>
+  </w:drawing></w:r></w:p>`;
+
+  it('renders a bar chart as inline SVG with anchored labels', async () => {
+    const docx = buildDocxFromBody(chartDrawing('rId5'), { charts: { rId5: BAR_CHART } });
+    const html = decode(await Ream.parse(docx).convert('html'));
+    expect(html).toContain('<svg viewBox="0 0 432 252"'); // 5486400/3200400 EMU
+    expect(html).toContain('aria-label="Quarterly Sales"');
+    expect(html).toContain('fill="#4472C4"'); // series bars
+    expect(html).toMatch(/<rect [^>]*fill="#4472C4"/);
+    expect(html).toContain('>Q1</text>'); // category label, browser-rendered
+    expect(html).toContain('text-anchor');
+    // The graphics flip wrapper (y-up scene → y-down viewport).
+    expect(html).toContain('<g transform="matrix(1 0 0 -1 0 252)">');
+  });
+
+  it('renders pie wedges as bezier paths', async () => {
+    const docx = buildDocxFromBody(chartDrawing('rId6'), { charts: { rId6: PIE_CHART } });
+    const html = decode(await Ream.parse(docx).convert('html'));
+    expect(html).toMatch(/<path d="M [^"]*C [^"]*Z" fill="#/); // center→arc→close
+  });
+
+  it('a chart without its part is a dropped loss', async () => {
+    const docx = buildDocxFromBody(chartDrawing('rId9'));
+    const flow = Ream.parse(docx).flow;
+    const { losses, bytes } = writeHtml(flow);
+    expect(losses.some((l) => l.feature === 'charts' && l.severity === 'dropped')).toBe(true);
+    expect(decode(bytes)).not.toContain('<svg');
+  });
+
+  it('renders shape geometry with fill, stroke and rotation', async () => {
+    const spPr =
+      '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>' +
+      '<a:solidFill><a:srgbClr val="4472C4"/></a:solidFill>' +
+      '<a:ln w="12700"><a:solidFill><a:srgbClr val="2F528F"/></a:solidFill></a:ln>';
+    const html = decode(await Ream.parse(buildDocxFromBody(shapeDrawing(spPr))).convert('html'));
+    expect(html).toContain('<svg viewBox="0 0 144 72"');
+    expect(html).toMatch(/<path d="M [^"]*Z" fill="#4472C4"[^>]*stroke="#2F528F" stroke-width="1"/);
+    expect(html).toContain('transform="matrix(');
+  });
+
+  it('overlays text-box content inside the shape with its anchor', async () => {
+    const spPr = '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>';
+    const body =
+      '<wps:txbx><w:txbxContent><w:p><w:r><w:t>boxed text</w:t></w:r></w:p></w:txbxContent></wps:txbx>';
+    const withAnchor = shapeDrawing(spPr, body).replace(
+      '<wps:bodyPr/>',
+      '<wps:bodyPr anchor="ctr"/>',
+    );
+    const html = decode(await Ream.parse(buildDocxFromBody(withAnchor)).convert('html'));
+    expect(html).toContain('position:relative;width:144pt;height:72pt');
+    expect(html).toContain('justify-content:center');
+    expect(html).toContain('boxed text');
   });
 });

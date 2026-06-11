@@ -37,6 +37,9 @@ export interface FlowDoc {
   // transform (stage 6); render projections must not re-apply it.
   readonly numbering?: Numbering;
   readonly headersFooters?: ReadonlyMap<string, ReadonlyArray<BodyElement>>;
+  /** §17.11 footnotes/endnotes content by id (separator stubs excluded). */
+  readonly footnotes?: ReadonlyMap<string, ReadonlyArray<BodyElement>>;
+  readonly endnotes?: ReadonlyMap<string, ReadonlyArray<BodyElement>>;
   /** Parsed charts keyed by relationship id (ChartBlock.chartRelId). */
   readonly charts?: ReadonlyMap<string, Chart>;
   /** Content-addressed binary resources (images). */

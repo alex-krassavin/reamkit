@@ -743,6 +743,102 @@ gridSpan+vMerge, рамки/заливка/паддинги), блочные и 
 шрифтов), фасад `to:'html'`, экспорты `htmlWriter`/`writeHtml`; toBase64 → core/bytes (теперь общий у svg
 и html). 9 новых тестов (465).
 
+**W1 — Гиперссылки (✅, 3 коммита; план этапа 7 — word-features.md).** `w:hyperlink` больше не теряется:
+(a) parse — `Run.href` из rels ВЛАДЕЮЩЕЙ части (TargetMode=External; per-part резолвер, урок C5),
+anchor-only ссылки остаются текстом; (b) HTML — `<a href>` через **allowlist схем** (core/links:
+http/https/mailto; javascript:/data:/file: → текст + degraded-loss — документ недоверенный вход);
+(c) PDF — токены несут href (опциональное поле замороженной схемы), эмиттер группирует смежные
+токены строки в кликабельные rect'ы (метрики строки: ascent=кегль/math, descent=0.2·fs) и кладёт
+/Link+/URI в /Annots страницы (/F 4 — Print, требование PDF/A §6.3.3); подписной виджет вливается
+в существующий /Annots; (d) tagged — Link StructElem под P строки + /OBJR-ребёнок + скалярный
+/StructParent в ParentTree (ключи над page-индексами; Matterhorn 28-011); ссылка в artifact-строке
+(колонтитул) аннотацию не получает — структуры нет. veraPDF-фикстура несёт ссылку → формальные
+1a/2a/3a гейты покрывают всю цепочку. Доки без ссылок — байт-в-байт (гейт 12/12). 471 тест.
+
+**W4 — Table styles (✅, 1 коммит).** §17.7.6 по лекалу stage-6: трансформа `resolveTableStyles`
+(core/style-cascade/table.ts) гоняется reader'ом сразу после парса — FlowDoc-таблицы несут финальный
+chrome, writer'ы о table styles не знают. styles-parser читает базовый слой (tblPr borders+cellMar,
+tcPr shd, rPr/pPr) и условные регионы w:tblStylePr; table-parser — w:tblStyle + w:tblLook (атрибуты И
+legacy hex-битмаска: 0020 firstRow … 0400 noVBand). Порядок применения §17.7.6.6: wholeTable → банды
+колонок/строк (band size учитывается; банды стартуют после активной первой строки) → first/last col →
+first/last row → углы; basedOn-цепочка фолдится от корня; direct tblPr/tcPr всегда выигрывает
+(per-side для границ). rPr/pPr слоя стиля — fallback ПОД direct-пропсами (документированное
+v1-упрощение слота каскада; пересечение с paragraph-style за одно поле — редкое). Закрывает gap
+реального договора (#137: банды/шапки из стиля). Таблицы без tblStyle не тронуты — гейт 12/12.
+7 новых тестов (478).
+
+**W2 — Поля PAGE/NUMPAGES (✅, 1 коммит + корпус-контроль).** Парсер распознаёт оба синтаксиса
+(§17.16.19 fldSimple и §17.16.18 fldChar-автомат begin→instrText→separate→end): распознанное поле
+схлопывается в ОДИН Run c field='PAGE'|'NUMPAGES' (текст = кэш источника); нераспознанные инструкции
+(REF/TOC/DATE…) сохраняют кэш как раньше (нулевые маркер-раны никогда не давали глифов — их дроп
+инертен). Band c полем становится DYNAMIC: пагинация записывает использование, и когда все страницы
+собраны (оба числа известны), band пере-layout'ится на страницу с подстановкой (честный re-layout —
+ширины цифр меняют строку) и вклеивается на место статического. Статические band'ы — старый путь
+байт-в-байт; шрифты field-ранов сабсетят все 10 цифр, не только кэш; поля в body остаются кэшем
+(у потока нет страничного контекста); w:pgNumType start — вне v1. **Корпус (sandbox):
+✅67 · ⚠️43 · ❌17 — статусы идентичны бейзлайну, ноль регрессий**; bug57031 (19 стр. с номерами)
+TextSim 88.8→89.0 — номера настоящие. 5 новых тестов (483).
+
+**W3 — Сноски (✅, 2 коммита + корпус; ЭТАП 7 ЗАВЕРШЁН ЦЕЛИКОМ).** §17.11: (a) parse —
+`Run.footnoteRef/endnoteRef` (w:footnoteReference/w:endnoteReference), `Run.noteNumber`
+(w:footnoteRef-плейсхолдер своего номера); parseNotes читает footnotes.xml/endnotes.xml
+(separator-заглушки исключены) с per-part резолверами; контент сносок проходит те же
+FlowDoc-трансформы, что body (table styles + numbering + каскад). (b) HTML — superscript-якоря
+`<sup><a href="#fn-N">`, секция нот `<ol>` с обратными ссылками; внутренние #-якоря мимо
+allowlist'а. (c) Layout — assignNoteNumbers нумерует ссылки в порядке чтения (каждый вид — свой
+счётчик) и переписывает ран в superscript-цифру; контент ноты layout'ится на ширину секции
+(кэш per-section); пагинация резервирует ЖАДНО: строка с новой ссылкой вытягивает высоту ноты
+(+однократный сепаратор — короткая 2-дюймовая линейка Word) из низа страницы — строка и нота
+всегда едут вместе; все остальные bottom-проверки уважают резерв. Endnotes — потоком после body;
+сноски, на которые ссылаются ТОЛЬКО из таблиц/shape-text (per-line greedy их не видит), —
+deferred туда же (документированное v1-размещение; именно это починило table_footnotes).
+(d) Tagged — Note→P StructElem на ноту; veraPDF-фикстура несёт сноску → формальные 1a/2a/3a
+гейты покрывают; цифры ссылок и контент нот в сабсетах шрифтов/картинок. Доки без сносок —
+байт-в-байт (гейт 12/12). **Корпус: ✅69 · ⚠️41 · ❌17 — +2 в ✅, ноль регрессий**
+(footnotes.docx и table_footnotes.docx → 100% TextSim; 17/26 chars → 26/26). 6 новых тестов (489).
+
+**HTML-хвост: чарты/шейпы как inline-SVG (✅, 2 коммита).** (a) Рефакторинг-переезд (zero
+behavior, гейт 12/12 на идентичном коде): arc-to-bezier, preset-geometry, chart-geometry —
+чистая математика без layout-зависимостей → core (прецедент IMP-4); buildShapePaths/buildStroke/
+buildShapeTransform из styled-layout → новый core/drawingml/shape-render; flipTransform +
+svgPathData → core/vector (общие хелперы всех эмиттеров словаря). (b) Фича: html-writer
+рендерит el.kind==='chart' через ТОТ ЖЕ buildChartScene, что PDF (y-up сцена → флип-группа
+matrix(1 0 0 -1 0 H); rects/polylines/polygons как примитивы; wedges через те же arcToBeziers;
+labels — нативный <text> ВНЕ флипа с text-anchor по якорю сцены — браузер рендерит глифы сам,
+measure-коллбэк заменён аппроксимацией ~0.55em, влияющей только на гаттеры). Шейпы: пути
+buildShapePaths + матрица flipTransform(buildShapeTransform(0,0,w,h,rot,флипы),h) — ровно та,
+что PDF пишет в PageDoc (svg-writer пишет её verbatim — конвенция совпала бесплатно); текстбоксы
+оверлеем position:absolute внутри инсетов bodyPr с anchor t/ctr/b → flex justify. Чарт без
+парта — dropped loss; неизвестный тип — degraded + рамка-плейсхолдер (как PDF). supports +=
+charts, shapes. 5 новых тестов (494). Демо: /tmp/ream-charts-demo.html.
+
+**W5 — корзина «по запросу» (✅ 4 коммита, по нарастанию layout-риска: закладки → PDF/UA →
+колонки → floats).** (a) W5a Закладки: parseParagraph собирает w:bookmarkStart (плюс body-level
+переносом к следующему параграфу; _GoBack отфильтрован), w:hyperlink@anchor → Run.anchor (не URL
+— мимо allowlist'а по построению); пагинация пишет позицию (pageIdx + y-up top первой строки);
+эмиттер ведёт anchor-регионы рядом с href, аннотация /GoTo c СТРОКОВЫМ dest через /Names /Dests
+(сортировано; /FitH top; ТОЛЬКО referenced-имена — нессылочные закладки не весят ничего); tagged
+— тот же Link+OBJR путь; HTML id + #-фрагменты (encodeURIComponent). (b) W5b PDF/UA-1:
+options.pdfUA ⇒ tagged; XMP несёт pdfuaid:part=1 (и pdfaExtension-декларацию схемы при
+комбинации с PDF/A — ISO 19005-2 §6.6.2.3.1); эмпирический ua1-прогон veraPDF выявил ровно один
+пробел — /Contents на Link-аннотациях (§7.18.5) — трекер теперь аккумулирует видимый текст
+ссылки; Note получили /ID (§7.9); title синтезируется при отсутствии. Гейты: ua1 PASS отдельно И
+«PDF/A-2a + UA-1 один файл» оба PASS. Попутный фикс: applyNumbering терял paragraph.bookmarks
+(не-spread копия). (c) W5c Колонки: w:cols → SectionColumns; buildColumnGeometry (равные/явные);
+пагинация: ЕДИНСТВЕННОЕ обобщение «page has content» → «column has content» (colStartLen), все
+bottom-переполнения шагают advanceColumn() (следующая колонка | flushPage), принудительные
+разрывы/смены секций — настоящий flush; блоки лейаутятся на ширину ПЕРВОЙ колонки
+(документированная v1-деградация для неравных); сноски/HF полной ширины. Корпус: побайтно
+идентичный отчёт (в POI нет живых multi-column доков). (d) W5d Floats: wp:anchor
+positionH/V/wrap/behindDoc → FloatAnchor на Image/Shape/ChartBlock (standalone-параграфы;
+anchored в текстовых параграфах остаётся inline-путём); пагинация: три эмиттера
+параметризованы (позиция, sink); wrap none рендерится в floatX/floatTopYUp позиции БЕЗ движения
+курсора (текст течёт как без них), behindDoc → слой под body-текстом, остальное — поверх;
+square/tight/topAndBottom остаются потоком до exclusion-прямоугольников в wrap() (v2). Корпус
+после floats: ✅69 · ⚠️41 · ❌17 — ноль регрессий; shapes-with-text Visual 7.6→7.5% (большинство
+POI-анкеров — в текстовых параграфах/square → вне v1-скоупа). Итого: 513 тестов (+24 за W5),
+байт-гейт 12/12 на каждом шаге.
+
 **Мотивация.** Сейчас parser → representer прибиты друг к другу: добавление
 нового направления (например, PDF→Word) требует заново «как-то считывать,
 как-то собирать». Вводим явную прослойку: входные адаптеры (parser → дерево) и

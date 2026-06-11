@@ -8,6 +8,7 @@
 import type {
   BodyElement,
   CustomPathCmd,
+  FloatAnchor,
   ShapeDash,
   ShapeFill,
   ShapeGeometry,
@@ -20,7 +21,15 @@ import type { PoNode } from '@/core/po-helpers';
 import type { Pt } from '@/core/ir';
 import { resolveColorNode } from '@/core/drawingml/colors';
 import { emuToPt } from '@/core/ir';
-import { poAttr, poChildren, poFindDescendant, poIntAttr, poIs, poTag } from '@/core/po-helpers';
+import {
+  poAttr,
+  poChildren,
+  poFindDescendant,
+  poIntAttr,
+  poIs,
+  poTag,
+  poText,
+} from '@/core/po-helpers';
 
 const WPS_URI = 'http://schemas.microsoft.com/office/word/2010/wordprocessingShape';
 const CHART_URI = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
@@ -52,15 +61,68 @@ export type DrawingContent =
       readonly height: Pt;
       // wp:docPr @descr/@title — alternate text for the tagged-PDF Figure.
       readonly altText?: string;
+      readonly float?: FloatAnchor;
     }
-  | { readonly kind: 'shape'; readonly data: ShapeData; readonly altText?: string }
+  | {
+      readonly kind: 'shape';
+      readonly data: ShapeData;
+      readonly altText?: string;
+      readonly float?: FloatAnchor;
+    }
   | {
       readonly kind: 'chart';
       readonly chartRelId: string;
       readonly width: Pt;
       readonly height: Pt;
       readonly altText?: string;
+      readonly float?: FloatAnchor;
     };
+
+// §20.4.2.3 — the anchor's placement: position children + wrap mode.
+function parseFloatAnchor(anchor: PoNode): FloatAnchor | undefined {
+  if (!poIs(anchor, 'wp:anchor')) return undefined;
+  const behindRaw = poAttr(anchor, 'behindDoc');
+  const behind = behindRaw === '1' || behindRaw === 'true';
+  let wrap: FloatAnchor['wrap'] = 'none';
+  for (const child of poChildren(anchor)) {
+    if (poIs(child, 'wp:wrapSquare')) wrap = 'square';
+    else if (poIs(child, 'wp:wrapTight')) wrap = 'tight';
+    else if (poIs(child, 'wp:wrapThrough')) wrap = 'through';
+    else if (poIs(child, 'wp:wrapTopAndBottom')) wrap = 'topAndBottom';
+  }
+  const posH = parseAnchorPos(anchor, 'wp:positionH', ['margin', 'page', 'column']);
+  const posV = parseAnchorPos(anchor, 'wp:positionV', ['margin', 'page', 'paragraph', 'line']);
+  return {
+    wrap,
+    ...(behind ? { behind: true } : {}),
+    ...(posH ? { posH: posH as NonNullable<FloatAnchor['posH']> } : {}),
+    ...(posV ? { posV: posV as NonNullable<FloatAnchor['posV']> } : {}),
+  };
+}
+
+const ANCHOR_ALIGNS = new Set(['left', 'center', 'right']);
+
+function parseAnchorPos(
+  anchor: PoNode,
+  tag: 'wp:positionH' | 'wp:positionV',
+  allowed: ReadonlyArray<string>,
+): { relativeFrom: string; offsetPt?: number; align?: string } | undefined {
+  const pos = poChildren(anchor).find((c) => poIs(c, tag));
+  if (!pos) return undefined;
+  const relRaw = poAttr(pos, 'relativeFrom') ?? 'margin';
+  // Unsupported bases (character, inside/outsideMargin…) degrade to the
+  // nearest supported one.
+  const relativeFrom = allowed.includes(relRaw) ? relRaw : allowed[0]!;
+  const offsetNode = poChildren(pos).find((c) => poIs(c, 'wp:posOffset'));
+  const offsetRaw = offsetNode ? Number(poText(offsetNode).trim()) : NaN;
+  const alignNode = poChildren(pos).find((c) => poIs(c, 'wp:align'));
+  const alignRaw = alignNode ? poText(alignNode).trim() : '';
+  return {
+    relativeFrom,
+    ...(Number.isFinite(offsetRaw) ? { offsetPt: emuToPt(offsetRaw) } : {}),
+    ...(tag === 'wp:positionH' && ANCHOR_ALIGNS.has(alignRaw) ? { align: alignRaw } : {}),
+  };
+}
 
 // ECMA-376 Part 3 — resolve <mc:AlternateContent> to the children of the first
 // <mc:Choice> whose Requires lists only namespaces we understand, else the
@@ -110,7 +172,11 @@ export function parseDrawing(
   const descr = docPr ? poAttr(docPr, 'descr') : undefined;
   const title = docPr ? poAttr(docPr, 'title') : undefined;
   const altText = (descr ?? title)?.trim() || undefined;
-  const alt = altText ? { altText } : {};
+  const float = parseFloatAnchor(anchor);
+  const alt = {
+    ...(altText ? { altText } : {}),
+    ...(float ? { float } : {}),
+  };
 
   const graphicData = poFindDescendant(anchor, 'a:graphicData');
   const uri = graphicData ? poAttr(graphicData, 'uri') : undefined;

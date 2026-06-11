@@ -7,7 +7,7 @@
 
 import type { CustomGeometry } from '@/core/document-model';
 import type { PathSegment, VectorPath } from '@/core/vector';
-import { arcToBeziers, ellipseSegments, roundRectSegments } from '@/layout/arc-to-bezier';
+import { arcToBeziers, ellipseSegments, roundRectSegments } from '@/core/arc-to-bezier';
 import { PathBuilder } from '@/core/vector';
 
 export function rectSegments(w: number, h: number): ReadonlyArray<PathSegment> {

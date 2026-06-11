@@ -25,18 +25,18 @@ import type {
   Chart,
   ChartBlock,
   DocumentInfo,
+  FloatAnchor,
   HeaderFooterReference,
   HeaderFooterType,
   ImageBlock,
   MathNode,
   Numbering,
   Paragraph,
+  Run,
   Section,
+  SectionColumns,
   SectionProperties,
   ShapeBlock,
-  ShapeDash,
-  ShapeGeometry,
-  ShapeLine,
   StyleSheet,
   Table,
   TableCell,
@@ -57,7 +57,7 @@ import type {
   ChartPolyline,
   ChartRect,
   ChartWedge,
-} from '@/layout/chart-geometry';
+} from '@/core/drawingml/chart-geometry';
 import type { MathDrawItem, MathVariant, MeasureMath } from '@/layout/math-layout';
 import type {
   FontResource,
@@ -88,11 +88,18 @@ import {
   resolveParagraphProperties,
   resolveRunProperties,
 } from '@/core/style-cascade';
-import { PathBuilder } from '@/core/vector';
-import { arcPoint, arcToBeziers } from '@/layout/arc-to-bezier';
-import { buildChartScene } from '@/layout/chart-geometry';
+import { PathBuilder, flipTransform } from '@/core/vector';
+import { arcPoint, arcToBeziers } from '@/core/arc-to-bezier';
+import { buildChartScene } from '@/core/drawingml/chart-geometry';
 import { layoutMath, mathGlyphSegments, variantStyle } from '@/layout/math-layout';
-import { customPaths, presetPaths, rectPath } from '@/layout/preset-geometry';
+import { rectPath } from '@/core/drawingml/preset-geometry';
+import {
+  DEFAULT_INSET_LR_PT,
+  DEFAULT_INSET_TB_PT,
+  buildShapePaths,
+  buildShapeTransform,
+  buildStroke,
+} from '@/core/drawingml/shape-render';
 import { StructTreeBuilder } from '@/pdf/struct-tree';
 
 // PDF/A profiles: part 1 (ISO 19005-1, PDF 1.4) / 2 (ISO 19005-2) / 3
@@ -145,6 +152,10 @@ export interface StyledRenderOptions {
   // body[sections[N-1].endIndex..sections[N].endIndex)).
   readonly sections?: ReadonlyArray<Section>;
   readonly headersFooters?: ReadonlyMap<string, ReadonlyArray<BodyElement>>;
+  // §17.11 notes content by id. Footnotes render in a reserved band at the
+  // bottom of the referencing page; endnotes flow after the body.
+  readonly footnotes?: ReadonlyMap<string, ReadonlyArray<BodyElement>>;
+  readonly endnotes?: ReadonlyMap<string, ReadonlyArray<BodyElement>>;
   // Content-addressed binary store; image nodes reference it by ResourceId.
   readonly resources?: ResourceStore;
   // Parsed charts keyed by relationship id (ChartBlock.chartRelId). Supplied by
@@ -176,6 +187,10 @@ export interface StyledRenderOptions {
   // of page decoration. Implied by pdfA: 'PDF/A-1a'. Independent of PDF/A
   // otherwise (a plain tagged PDF is useful on its own).
   readonly tagged?: boolean;
+  // PDF/UA-1 (ISO 14289-1): implies tagged; the XMP carries pdfuaid:part=1
+  // and the document always gets a title (AT announces it). Combines freely
+  // with pdfA level-a profiles.
+  readonly pdfUA?: boolean;
   // Document natural language (BCP 47, e.g. "en-US", "ru-RU") for the tagged-PDF
   // catalog /Lang (§14.9.2). Defaults to "en-US". The docx converter fills this
   // from the document's default w:lang.
@@ -228,6 +243,7 @@ interface ChartLayout {
 }
 interface ChartBlockLaidOut {
   readonly kind: 'chart';
+  readonly float?: FloatAnchor;
   readonly widthPt: number;
   readonly heightPt: number;
   readonly layout: ChartLayout;
@@ -239,6 +255,7 @@ interface ChartBlockLaidOut {
 
 interface ImageBlockLaidOut {
   readonly kind: 'image';
+  readonly float?: FloatAnchor;
   readonly widthPt: number;
   readonly heightPt: number;
   readonly resolvedAlignment: 'left' | 'center' | 'right' | 'both' | 'distribute';
@@ -254,6 +271,7 @@ interface ImageBlockLaidOut {
 // shape's page position is known.
 interface ShapeBlockLaidOut {
   readonly kind: 'shape';
+  readonly float?: FloatAnchor;
   readonly widthPt: number;
   readonly heightPt: number;
   readonly paths: ReadonlyArray<VectorPath>;
@@ -289,6 +307,9 @@ interface ParagraphBlock {
   // Tagged PDF: when this paragraph is a list item (w:numPr), its list id and
   // nesting level (w:ilvl) so pagination can build the L/LI/LBody structure.
   readonly list?: { readonly numId: string; readonly level: number };
+  // §17.13.6.2 — bookmark names anchored to this paragraph; pagination
+  // records the first line's page + y as their GoTo destination.
+  readonly bookmarks?: ReadonlyArray<string>;
 }
 
 type MergeRole = 'standalone' | 'start' | 'middle' | 'end';
@@ -340,11 +361,19 @@ interface TableBlock {
 // logical-structure tree, per-section geometry (the emit fallback page), and
 // the parsed PDF/A profile. Consumed only by emitStyledPdf; the SVG writer
 // never sees it.
+// §17.13.6.2 — a bookmark's GoTo destination: the page (0-based) and the
+// y-up top of the anchoring paragraph's first line.
+export interface BookmarkPosition {
+  readonly pageIdx: number;
+  readonly yTopPt: number;
+}
+
 export interface PdfLayoutAux {
   readonly structBuilder: StructTreeBuilder | undefined;
   readonly sectionCtxs: ReadonlyArray<SectionRenderCtx>;
   readonly pdfaProfile: PdfAProfile | undefined;
   readonly tagged: boolean;
+  readonly bookmarks: ReadonlyMap<string, BookmarkPosition>;
 }
 
 // What layoutStyledDocument actually returns: the PageDoc with the PDF
@@ -352,6 +381,185 @@ export interface PdfLayoutAux {
 // PageDoc-only consumers (writeSvg) take it as-is.
 export interface LaidOutPdfDocument extends LaidOutDocument {
   readonly pdf: PdfLayoutAux;
+}
+
+// §17.11 footnote machinery: the separator rule above the notes band and the
+// space it occupies (rule + breathing room), in points.
+const FOOTNOTE_RULE_PT = 0.75;
+const FOOTNOTE_RULE_GAP_ABOVE = 4;
+const FOOTNOTE_SEPARATOR_HEIGHT = 10;
+const FOOTNOTE_RULE_WIDTH = 144; // Word's ~2" short separator
+
+// Assign sequential numbers to note references in reading order (§17.11:
+// footnotes and endnotes each keep their own counter) and rewrite each
+// reference run to render its number superscript. Returns copies — direct
+// renderStyledPdf callers own their trees.
+function assignNoteNumbers(body: ReadonlyArray<BodyElement>): {
+  body: ReadonlyArray<BodyElement>;
+  footnotes: ReadonlyMap<string, number>;
+  endnotes: ReadonlyMap<string, number>;
+  // Footnote ids whose references sit OUTSIDE top-level paragraphs (table
+  // cells, shape text): greedy bottom-of-page placement only tracks paragraph
+  // lines, so these notes flow after the body instead (documented v1).
+  deferredFootnotes: ReadonlyArray<string>;
+} {
+  const footnotes = new Map<string, number>();
+  const endnotes = new Map<string, number>();
+  const paragraphFootnotes = new Set<string>();
+
+  const numberRun = (run: Run, n: number): Run => ({
+    ...run,
+    text: String(n),
+    properties: { ...run.properties, verticalAlign: 'superscript' },
+  });
+
+  const mapParagraph = (paragraph: Paragraph): Paragraph => {
+    if (!paragraph.runs.some((r) => r.footnoteRef !== undefined || r.endnoteRef !== undefined)) {
+      return paragraph;
+    }
+    return {
+      ...paragraph,
+      runs: paragraph.runs.map((run) => {
+        if (run.footnoteRef !== undefined) {
+          let n = footnotes.get(run.footnoteRef);
+          if (n === undefined) {
+            n = footnotes.size + 1;
+            footnotes.set(run.footnoteRef, n);
+          }
+          return numberRun(run, n);
+        }
+        if (run.endnoteRef !== undefined) {
+          let n = endnotes.get(run.endnoteRef);
+          if (n === undefined) {
+            n = endnotes.size + 1;
+            endnotes.set(run.endnoteRef, n);
+          }
+          return numberRun(run, n);
+        }
+        return run;
+      }),
+    };
+  };
+
+  const mapElement = (el: BodyElement, topLevel: boolean): BodyElement => {
+    if (el.kind === 'paragraph') {
+      if (topLevel) {
+        for (const r of el.paragraph.runs) {
+          if (r.footnoteRef !== undefined) paragraphFootnotes.add(r.footnoteRef);
+        }
+      }
+      return { kind: 'paragraph', paragraph: mapParagraph(el.paragraph) };
+    }
+    if (el.kind === 'table') {
+      return {
+        kind: 'table',
+        table: {
+          ...el.table,
+          rows: el.table.rows.map((row) => ({
+            ...row,
+            cells: row.cells.map((cell) => ({
+              ...cell,
+              content: cell.content.map((c) => mapElement(c, false)),
+            })),
+          })),
+        },
+      };
+    }
+    if (el.kind === 'shape' && el.shape.text) {
+      return {
+        kind: 'shape',
+        shape: {
+          ...el.shape,
+          text: {
+            ...el.shape.text,
+            content: el.shape.text.content.map((c) => mapElement(c, false)),
+          },
+        },
+      };
+    }
+    return el;
+  };
+
+  // Cheap pre-check: most documents carry no notes at all.
+  const hasRefs = (els: ReadonlyArray<BodyElement>): boolean =>
+    els.some((el) => {
+      if (el.kind === 'paragraph') {
+        return el.paragraph.runs.some(
+          (r) => r.footnoteRef !== undefined || r.endnoteRef !== undefined,
+        );
+      }
+      if (el.kind === 'table') {
+        return el.table.rows.some((row) => row.cells.some((c) => hasRefs(c.content)));
+      }
+      if (el.kind === 'shape' && el.shape.text) return hasRefs(el.shape.text.content);
+      return false;
+    });
+  if (!hasRefs(body)) {
+    return { body, footnotes, endnotes, deferredFootnotes: [] };
+  }
+
+  const mapped = body.map((el) => mapElement(el, true));
+  const deferredFootnotes = [...footnotes.keys()].filter((id) => !paragraphFootnotes.has(id));
+  return { body: mapped, footnotes, endnotes, deferredFootnotes };
+}
+
+// Replace the note's own-number placeholder (w:footnoteRef) with the number,
+// or prepend it when the source omitted the placeholder.
+function substituteNoteNumber(
+  content: ReadonlyArray<BodyElement>,
+  n: number,
+): ReadonlyArray<BodyElement> {
+  const hasPlaceholder = content.some(
+    (el) => el.kind === 'paragraph' && el.paragraph.runs.some((r) => r.noteNumber),
+  );
+  const out = content.map((el) => {
+    if (el.kind !== 'paragraph') return el;
+    if (!el.paragraph.runs.some((r) => r.noteNumber)) return el;
+    return {
+      kind: 'paragraph' as const,
+      paragraph: {
+        ...el.paragraph,
+        runs: el.paragraph.runs.map((r) =>
+          r.noteNumber
+            ? {
+                ...r,
+                text: String(n),
+                properties: { ...r.properties, verticalAlign: 'superscript' as const },
+              }
+            : r,
+        ),
+      },
+    };
+  });
+  if (hasPlaceholder || out.length === 0) return out;
+  const first = out[0]!;
+  if (first.kind !== 'paragraph') return out;
+  return [
+    {
+      kind: 'paragraph',
+      paragraph: {
+        ...first.paragraph,
+        runs: [
+          {
+            text: `${n} `,
+            properties: { verticalAlign: 'superscript' as const },
+          },
+          ...first.paragraph.runs,
+        ],
+      },
+    },
+    ...out.slice(1),
+  ];
+}
+
+// What pagination needs to place footnotes: per-id content, numbers, and a
+// per-section lazily-cached layout of each note at that section's width.
+interface NotePlan {
+  readonly numbers: ReadonlyMap<string, number>;
+  readonly layout: (
+    ctx: SectionRenderCtx,
+    id: string,
+  ) => { blocks: ReadonlyArray<LaidOutBlock>; heightPt: number } | undefined;
 }
 
 // Layout phase (the FlowDoc→PageDoc transform of ir-design §7): body →
@@ -362,7 +570,8 @@ export function layoutStyledDocument(
 ): LaidOutPdfDocument {
   const sectionList = resolveSectionList(body, options);
 
-  const numberedBody = applyNumbering(body, options.numbering);
+  const noteAssigned = assignNoteNumbers(applyNumbering(body, options.numbering));
+  const numberedBody = noteAssigned.body;
   const numberedHeadersFooters = applyNumberingToHeadersFooters(
     options.headersFooters,
     options.numbering,
@@ -371,7 +580,8 @@ export function layoutStyledDocument(
   // Tagged PDF (ISO 32000-1 §14.8) — implied by PDF/A-1a. When on, paginate
   // builds a logical structure tree and emit marks body text / artifacts.
   const pdfaProfile = options.pdfA ? parsePdfAProfile(options.pdfA) : undefined;
-  const tagged = options.tagged === true || (pdfaProfile?.tagged ?? false);
+  const tagged =
+    options.tagged === true || options.pdfUA === true || (pdfaProfile?.tagged ?? false);
   const structBuilder = tagged ? new StructTreeBuilder() : undefined;
   const fontResources = collectFontResources(numberedBody, numberedHeadersFooters, options);
   const imageResources = collectImageResources(numberedBody, numberedHeadersFooters, options);
@@ -393,19 +603,100 @@ export function layoutStyledDocument(
       options,
       fontResources,
       imageResources,
-      ctx.contentWidth,
+      ctx.columns ? ctx.columns[0]!.widthPt : ctx.contentWidth,
       ctx.pageContentHeight,
     );
   });
 
-  const pages = paginateSections(blocks, sectionCtxs, structBuilder, options.language ?? 'en-US');
+  // Footnote plan: per-section lazily-cached layout of each note's content at
+  // that section's width (notes referenced only from tables/shape text flow
+  // after the body instead — see assignNoteNumbers).
+  const noteBlockCache = new Map<SectionRenderCtx, Map<string, ReturnType<NotePlan['layout']>>>();
+  const notePlan: NotePlan | undefined =
+    options.footnotes && noteAssigned.footnotes.size > 0
+      ? {
+          numbers: noteAssigned.footnotes,
+          layout: (sectionCtx, id) => {
+            let byId = noteBlockCache.get(sectionCtx);
+            if (!byId) {
+              byId = new Map();
+              noteBlockCache.set(sectionCtx, byId);
+            }
+            if (byId.has(id)) return byId.get(id);
+            const content = options.footnotes?.get(id);
+            const n = noteAssigned.footnotes.get(id);
+            let laid: ReturnType<NotePlan['layout']> = undefined;
+            if (content && n !== undefined && !noteAssigned.deferredFootnotes.includes(id)) {
+              const noteBlocks = substituteNoteNumber(content, n).map((el) =>
+                layoutBodyElement(
+                  el,
+                  options,
+                  fontResources,
+                  imageResources,
+                  sectionCtx.contentWidth,
+                  sectionCtx.pageContentHeight,
+                ),
+              );
+              const heightPt = noteBlocks.reduce(
+                (sum, b) =>
+                  sum +
+                  (b.kind === 'paragraph' ? b.spacingBeforePt + b.heightPt + b.spacingAfterPt : 0),
+                0,
+              );
+              laid = { blocks: noteBlocks, heightPt };
+            }
+            byId.set(id, laid);
+            return laid;
+          },
+        }
+      : undefined;
+
+  // Endnotes (and footnotes whose references the greedy pass cannot track)
+  // flow after the body at the LAST section's width.
+  const lastCtx = sectionCtxs[sectionCtxs.length - 1];
+  if (lastCtx) {
+    const tailNotes: Array<{ content: ReadonlyArray<BodyElement>; n: number }> = [];
+    for (const id of noteAssigned.deferredFootnotes) {
+      const content = options.footnotes?.get(id);
+      const n = noteAssigned.footnotes.get(id);
+      if (content && n !== undefined) tailNotes.push({ content, n });
+    }
+    for (const [id, n] of noteAssigned.endnotes) {
+      const content = options.endnotes?.get(id);
+      if (content) tailNotes.push({ content, n });
+    }
+    for (const note of tailNotes.sort((a, b) => a.n - b.n)) {
+      for (const el of substituteNoteNumber(note.content, note.n)) {
+        blocks.push(
+          layoutBodyElement(
+            el,
+            options,
+            fontResources,
+            imageResources,
+            lastCtx.contentWidth,
+            lastCtx.pageContentHeight,
+          ),
+        );
+      }
+    }
+  }
+
+  const bookmarks = new Map<string, BookmarkPosition>();
+  const pages = paginateSections(
+    blocks,
+    sectionCtxs,
+    structBuilder,
+    options.language ?? 'en-US',
+    notePlan,
+    bookmarks,
+  );
 
   return {
     pages,
     resources: options.resources ?? new ResourceStore(),
     fontResources,
     imageResources,
-    pdf: { structBuilder, sectionCtxs, pdfaProfile, tagged },
+    pdf: { structBuilder, sectionCtxs, pdfaProfile, tagged, bookmarks },
   };
 }
 
@@ -462,6 +753,11 @@ export interface SectionRenderCtx {
   readonly marginBottom: number;
   readonly contentWidth: number;
   readonly pageContentHeight: number;
+  // §17.6.4 multi-column sections: per-column x-offset (from marginLeft) and
+  // width. Absent for single-column sections. Body blocks are laid out at the
+  // FIRST column's width (explicit unequal widths degrade to flowing without
+  // re-wrap); headers/footers and footnotes keep the full content width.
+  readonly columns?: ReadonlyArray<{ readonly xOffsetPt: number; readonly widthPt: number }>;
   readonly headerSet: HeaderFooterSet;
   readonly footerSet: HeaderFooterSet;
   readonly titlePg: boolean;
@@ -513,6 +809,7 @@ function buildSectionContext(
     dims.pageHeight,
     dims.footerOffsetPt,
   );
+  const columns = buildColumnGeometry(section.properties.columns, contentWidth);
   return {
     endIndex: section.endIndex,
     properties: section.properties,
@@ -523,11 +820,36 @@ function buildSectionContext(
     marginBottom: dims.marginBottom,
     contentWidth,
     pageContentHeight: dims.pageHeight - dims.marginTop - dims.marginBottom,
+    ...(columns ? { columns } : {}),
     headerSet,
     footerSet,
     titlePg: section.properties.titlePg === true,
     evenAndOddHeaders: section.properties.evenAndOddHeaders === true,
   };
+}
+
+// §17.6.4: explicit w:col list as given; otherwise equal widths separated by
+// the shared gutter.
+function buildColumnGeometry(
+  cols: SectionColumns | undefined,
+  contentWidth: number,
+): Array<{ xOffsetPt: number; widthPt: number }> | undefined {
+  if (!cols || cols.count <= 1) return undefined;
+  const out: Array<{ xOffsetPt: number; widthPt: number }> = [];
+  if (cols.explicit && cols.explicit.length > 1) {
+    let x = 0;
+    for (const c of cols.explicit) {
+      out.push({ xOffsetPt: x, widthPt: c.widthPt });
+      x += c.widthPt + c.spacePt;
+    }
+    return out;
+  }
+  const width = (contentWidth - cols.spacePt * (cols.count - 1)) / cols.count;
+  if (width <= 0) return undefined;
+  for (let i = 0; i < cols.count; i++) {
+    out.push({ xOffsetPt: i * (width + cols.spacePt), widthPt: width });
+  }
+  return out;
 }
 
 function refByType(
@@ -540,10 +862,20 @@ function refByType(
 
 type HfBand = 'default' | 'first' | 'even';
 
+// One header/footer band. Static bands carry their pre-rendered commands
+// (the byte-identical fast path). A band containing PAGE/NUMPAGES fields is
+// DYNAMIC: it re-lays out per page once pagination knows both numbers
+// (§17.16.5.33/.35) — substitution changes text widths, so this is an honest
+// re-layout, not a glyph swap. w:pgNumType start offsets are not applied (v1).
+interface HfBandEntry {
+  readonly commands: Array<PageItem>;
+  readonly renderDynamic?: (pageNumber: number, totalPages: number) => Array<PageItem>;
+}
+
 interface HeaderFooterSet {
-  readonly default: Array<PageItem>;
-  readonly first: Array<PageItem>;
-  readonly even: Array<PageItem>;
+  readonly default: HfBandEntry;
+  readonly first: HfBandEntry;
+  readonly even: HfBandEntry;
 }
 
 // Tag every command in a header/footer band as a pagination artifact so the
@@ -567,15 +899,24 @@ function layoutHeaderSet(
   pageHeight: number,
   headerOffsetPt: number,
 ): HeaderFooterSet {
-  const band = (type: HeaderFooterType): Array<PageItem> => {
+  const band = (type: HeaderFooterType): HfBandEntry => {
     const ref = refByType(section.headers, type);
-    if (!ref) return [];
+    if (!ref) return { commands: [] };
     const content = headersFooters.get(ref.relationshipId);
-    if (!content) return [];
-    const blocks = laidOutBlocksFor(content, options, fontResources, contentWidth);
-    return markPagination(
-      drawBlocksSequentially(blocks, marginLeft, pageHeight - headerOffsetPt, pageHeight),
-    );
+    if (!content) return { commands: [] };
+    const render = (c: ReadonlyArray<BodyElement>): Array<PageItem> => {
+      const blocks = laidOutBlocksFor(c, options, fontResources, contentWidth);
+      return markPagination(
+        drawBlocksSequentially(blocks, marginLeft, pageHeight - headerOffsetPt, pageHeight),
+      );
+    };
+    if (contentHasPageFields(content)) {
+      return {
+        commands: [],
+        renderDynamic: (n, total) => render(substitutePageFields(content, n, total)),
+      };
+    }
+    return { commands: render(content) };
   };
   return { default: band('default'), first: band('first'), even: band('even') };
 }
@@ -590,28 +931,73 @@ function layoutFooterSet(
   pageHeight: number,
   footerOffsetPt: number,
 ): HeaderFooterSet {
-  const band = (type: HeaderFooterType): Array<PageItem> => {
+  const band = (type: HeaderFooterType): HfBandEntry => {
     const ref = refByType(section.footers, type);
-    if (!ref) return [];
+    if (!ref) return { commands: [] };
     const content = headersFooters.get(ref.relationshipId);
-    if (!content) return [];
-    const blocks = laidOutBlocksFor(content, options, fontResources, contentWidth);
-    const totalHeight = blocks.reduce(
-      (sum, b) =>
-        sum +
-        (b.kind === 'paragraph' ? b.spacingBeforePt + b.heightPt + b.spacingAfterPt : b.heightPt),
-      0,
-    );
-    return markPagination(
-      drawBlocksSequentially(blocks, marginLeft, footerOffsetPt + totalHeight, pageHeight),
-    );
+    if (!content) return { commands: [] };
+    const render = (c: ReadonlyArray<BodyElement>): Array<PageItem> => {
+      const blocks = laidOutBlocksFor(c, options, fontResources, contentWidth);
+      const totalHeight = blocks.reduce(
+        (sum, b) =>
+          sum +
+          (b.kind === 'paragraph' ? b.spacingBeforePt + b.heightPt + b.spacingAfterPt : b.heightPt),
+        0,
+      );
+      return markPagination(
+        drawBlocksSequentially(blocks, marginLeft, footerOffsetPt + totalHeight, pageHeight),
+      );
+    };
+    if (contentHasPageFields(content)) {
+      return {
+        commands: [],
+        renderDynamic: (n, total) => render(substitutePageFields(content, n, total)),
+      };
+    }
+    return { commands: render(content) };
   };
   return { default: band('default'), first: band('first'), even: band('even') };
 }
 
-function pickBand(set: HeaderFooterSet, band: HfBand): Array<PageItem> {
-  if (band === 'first') return set.first.length > 0 ? set.first : set.default;
-  if (band === 'even') return set.even.length > 0 ? set.even : set.default;
+// A band is dynamic when any of its paragraphs carries a PAGE/NUMPAGES field
+// run (bands render paragraphs only).
+function contentHasPageFields(content: ReadonlyArray<BodyElement>): boolean {
+  for (const el of content) {
+    if (el.kind === 'paragraph' && el.paragraph.runs.some((r) => r.field !== undefined)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Clone the band content with field runs' cached text replaced by the real
+// numbers for this page.
+function substitutePageFields(
+  content: ReadonlyArray<BodyElement>,
+  pageNumber: number,
+  totalPages: number,
+): ReadonlyArray<BodyElement> {
+  return content.map((el) => {
+    if (el.kind !== 'paragraph') return el;
+    if (!el.paragraph.runs.some((r) => r.field !== undefined)) return el;
+    return {
+      kind: 'paragraph',
+      paragraph: {
+        ...el.paragraph,
+        runs: el.paragraph.runs.map((r) =>
+          r.field === undefined
+            ? r
+            : { ...r, text: String(r.field === 'PAGE' ? pageNumber : totalPages) },
+        ),
+      },
+    };
+  });
+}
+
+function pickBand(set: HeaderFooterSet, band: HfBand): HfBandEntry {
+  const has = (e: HfBandEntry) => e.commands.length > 0 || e.renderDynamic !== undefined;
+  if (band === 'first') return has(set.first) ? set.first : set.default;
+  if (band === 'even') return has(set.even) ? set.even : set.default;
   return set.default;
 }
 
@@ -671,9 +1057,6 @@ function layoutBodyElement(
   );
 }
 
-// 1 inch = 914400 EMU = 72 pt, so 1 pt = 12700 EMU.
-const EMU_PER_PT = 12700;
-
 function layoutImageBlock(
   image: ImageBlock,
   imageResources: ReadonlyMap<string, ImageResource> | undefined,
@@ -697,15 +1080,9 @@ function layoutImageBlock(
     spacingBeforePt: image.paragraphProperties.spacingBefore ?? 0,
     spacingAfterPt: image.paragraphProperties.spacingAfter ?? 0,
     ...(image.altText ? { altText: image.altText } : {}),
+    ...(image.float ? { float: image.float } : {}),
   };
 }
-
-// a:ln default width when @w is absent (9525 EMU = 0.75pt).
-const DEFAULT_LINE_WIDTH_EMU = 9525;
-
-// Word's default text-box insets (§20.1.2.1) — 0.1" L/R, 0.05" T/B in EMU.
-const DEFAULT_INSET_LR_EMU = 91440;
-const DEFAULT_INSET_TB_EMU = 45720;
 
 function layoutShapeBlock(
   shape: ShapeBlock,
@@ -737,10 +1114,10 @@ function layoutShapeBlock(
   const pp = shape.paragraphProperties;
 
   const text = shape.text;
-  const insetLeftPt = text?.insetLeft ?? DEFAULT_INSET_LR_EMU / EMU_PER_PT;
-  const insetRightPt = text?.insetRight ?? DEFAULT_INSET_LR_EMU / EMU_PER_PT;
-  const insetTopPt = text?.insetTop ?? DEFAULT_INSET_TB_EMU / EMU_PER_PT;
-  const insetBottomPt = text?.insetBottom ?? DEFAULT_INSET_TB_EMU / EMU_PER_PT;
+  const insetLeftPt = text?.insetLeft ?? DEFAULT_INSET_LR_PT;
+  const insetRightPt = text?.insetRight ?? DEFAULT_INSET_LR_PT;
+  const insetTopPt = text?.insetTop ?? DEFAULT_INSET_TB_PT;
+  const insetBottomPt = text?.insetBottom ?? DEFAULT_INSET_TB_PT;
   const textLines: Array<Line> = [];
   let textHeightPt = 0;
   if (text && text.content.length > 0) {
@@ -783,107 +1160,12 @@ function layoutShapeBlock(
     insetBottomPt,
     anchor: text?.anchor ?? 't',
     ...(shape.altText ? { altText: shape.altText } : {}),
+    ...(shape.float ? { float: shape.float } : {}),
   };
-}
-
-function buildShapePaths(
-  geometry: ShapeGeometry,
-  widthPt: number,
-  heightPt: number,
-): Array<VectorPath> {
-  if (geometry.kind === 'preset') {
-    const paths = presetPaths(
-      geometry.preset ?? 'rect',
-      widthPt,
-      heightPt,
-      geometry.adjust ?? new Map(),
-    );
-    return paths ?? [rectPath(widthPt, heightPt)];
-  }
-  if (geometry.custom) return customPaths(geometry.custom, widthPt, heightPt);
-  return [rectPath(widthPt, heightPt)];
-}
-
-function buildStroke(line: ShapeLine | undefined): StrokeStyle | undefined {
-  if (!line || line.fill === 'none') return undefined;
-  const widthPt = line.width ?? DEFAULT_LINE_WIDTH_EMU / EMU_PER_PT;
-  const dash = line.dash && line.dash !== 'solid' ? dashPattern(line.dash, widthPt) : undefined;
-  // DrawingML 'flat' cap is PDF butt; round/square map straight through.
-  const cap: StrokeStyle['cap'] | undefined = line.cap === 'flat' ? 'butt' : line.cap;
-  return {
-    colorHex: line.colorHex ?? '000000',
-    widthPt,
-    ...(dash ? { dash } : {}),
-    ...(cap ? { cap } : {}),
-  };
-}
-
-// Dash patterns expressed in multiples of the line width (a common rendering
-// convention), in points. 'solid' has no pattern.
-function dashPattern(dash: ShapeDash, w: number): Array<number> | undefined {
-  const u = Math.max(w, 0.1);
-  switch (dash) {
-    case 'solid':
-      return undefined;
-    case 'dot':
-      return [u, 2 * u];
-    case 'dash':
-      return [4 * u, 3 * u];
-    case 'dashDot':
-      return [4 * u, 3 * u, u, 3 * u];
-    case 'lgDash':
-      return [8 * u, 3 * u];
-    case 'lgDashDot':
-      return [8 * u, 3 * u, u, 3 * u];
-    case 'sysDash':
-      return [3 * u, u];
-    case 'sysDot':
-      return [u, u];
-  }
 }
 
 // Build the `cm` matrix that places a shape's local y-up frame on the page at
 // bottom-left (pageX, pageY), rotated about its centre and optionally flipped.
-// DrawingML rot is clockwise in y-down space ⇒ a negative angle in PDF y-up.
-function buildShapeTransform(
-  pageX: number,
-  pageY: number,
-  widthPt: number,
-  heightPt: number,
-  rotation60k: number,
-  flipH: boolean,
-  flipV: boolean,
-): [number, number, number, number, number, number] {
-  const theta = (-rotation60k / 60000) * (Math.PI / 180);
-  const sx = flipH ? -1 : 1;
-  const sy = flipV ? -1 : 1;
-  const cos = Math.cos(theta);
-  const sin = Math.sin(theta);
-  const a = sx * cos;
-  const b = sx * sin;
-  const c = -sy * sin;
-  const d = sy * cos;
-  const cxL = widthPt / 2;
-  const cyL = heightPt / 2;
-  const centerX = pageX + cxL;
-  const centerY = pageY + cyL;
-  const e = centerX - (a * cxL + c * cyL);
-  const f = centerY - (b * cxL + d * cyL);
-  return [a, b, c, d, e, f];
-}
-
-// Compose the page flip with a local→page CTM built in PDF's y-up frame, so
-// the stored ShapeItem transform targets the top-left page frame the PageDoc
-// schema froze on. The flip is an involution: the PDF emitter applies the same
-// operation to recover the y-up matrix. Negating the linear part only flips
-// sign bits (exact in IEEE 754); the y-translation is the one component that
-// re-rounds.
-function flipTransform(
-  m: readonly [number, number, number, number, number, number],
-  pageHeight: number,
-): [number, number, number, number, number, number] {
-  return [m[0], -m[1], m[2], -m[3], m[4], pageHeight - m[5]];
-}
 
 function layoutChartBlock(
   block: ChartBlock,
@@ -921,6 +1203,7 @@ function layoutChartBlock(
     spacingBeforePt: pp.spacingBefore ?? 0,
     spacingAfterPt: pp.spacingAfter ?? 0,
     ...(altText ? { altText } : {}),
+    ...(block.float ? { float: block.float } : {}),
   };
 }
 
@@ -1070,6 +1353,8 @@ function collectImageResources(
   };
   visit(body);
   for (const hf of headersFooters.values()) visit(hf);
+  for (const note of options.footnotes?.values() ?? []) visit(note);
+  for (const note of options.endnotes?.values() ?? []) visit(note);
 
   // Only PDF/A-1 forbids transparency; PDF/A-2/3 keep the image soft mask.
   const flattenAlpha = options.pdfA ? parsePdfAProfile(options.pdfA).part === 1 : false;
@@ -1103,6 +1388,9 @@ function drawBlocksSequentially(
   startX: number,
   startY: number,
   pageHeight: number,
+  // Tagged PDF: stamp every emitted line with this structure node (used by
+  // the footnote band; header/footer bands stay artifact-marked instead).
+  structId?: number,
 ): Array<PageItem> {
   const out: Array<PageItem> = [];
   let cursorY = startY;
@@ -1124,6 +1412,7 @@ function drawBlocksSequentially(
         line,
         originX: pt(startX + indentLeft + offset),
         baselineY: pt(pageHeight - (cursorY + lineDescent(line))),
+        ...(structId !== undefined ? { structId } : {}),
       });
     }
     cursorY -= block.spacingAfterPt;
@@ -1241,6 +1530,18 @@ function collectFontResources(
           }
           // Skip runs that carry an inline image only (no text glyphs needed).
           if (run.inlineImage && !run.text) continue;
+          // A PAGE/NUMPAGES field renders substituted digits per page — make
+          // sure every digit is in the subset, not just the cached result.
+          if (run.field !== undefined) {
+            addRun({ text: `${run.text}0123456789`, properties: run.properties }, el.paragraph);
+            continue;
+          }
+          // Note references and the note's own-number placeholder render
+          // substituted numbers — subset every digit for their fonts too.
+          if (run.footnoteRef !== undefined || run.endnoteRef !== undefined || run.noteNumber) {
+            addRun({ text: `${run.text}0123456789 `, properties: run.properties }, el.paragraph);
+            continue;
+          }
           addRun(run, el.paragraph);
         }
       } else if (el.kind === 'table') {
@@ -1272,6 +1573,8 @@ function collectFontResources(
   };
   visit(body);
   for (const hf of headersFooters.values()) visit(hf);
+  for (const note of options.footnotes?.values() ?? []) visit(note);
+  for (const note of options.endnotes?.values() ?? []) visit(note);
 
   if (used.size === 0) {
     const regular = options.registry.resolveByStyle(false, false);
@@ -1333,6 +1636,9 @@ function layoutParagraphBlock(
     spacingAfterPt: resolved.spacingAfter,
     ...(numbering ? { list: { numId: numbering.numId, level: numbering.ilvl } } : {}),
     ...(paragraph.runs.some((r) => r.pageBreak) ? { pageBreakAfter: true } : {}),
+    ...(paragraph.bookmarks && paragraph.bookmarks.length > 0
+      ? { bookmarks: paragraph.bookmarks }
+      : {}),
   };
 }
 
@@ -1534,6 +1840,9 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         kind: 'text',
         text: t.text,
         isSpace: t.isSpace,
+        ...(plan.run.href !== undefined ? { href: plan.run.href } : {}),
+        ...(plan.run.footnoteRef !== undefined ? { footnoteRef: plan.run.footnoteRef } : {}),
+        ...(plan.run.anchor !== undefined ? { anchor: plan.run.anchor } : {}),
         resolvedRun: plan.resolvedRun,
         font: plan.font,
         fontSizePt: plan.fontSizePt,
@@ -1592,6 +1901,9 @@ function tokenizePlansBidi(
         kind: 'text',
         text,
         isSpace: curSpace,
+        ...(plan.run.href !== undefined ? { href: plan.run.href } : {}),
+        ...(plan.run.footnoteRef !== undefined ? { footnoteRef: plan.run.footnoteRef } : {}),
+        ...(plan.run.anchor !== undefined ? { anchor: plan.run.anchor } : {}),
         resolvedRun: plan.resolvedRun,
         font: plan.font,
         fontSizePt: plan.fontSizePt,
@@ -2427,6 +2739,10 @@ function paginateSections(
   sectionCtxs: ReadonlyArray<SectionRenderCtx>,
   builder?: StructTreeBuilder,
   defaultLang = 'en-US',
+  notes?: NotePlan,
+  // §17.13.6.2 — out-param: bookmark name → its destination (the page and
+  // y-up top of the anchoring paragraph's first line).
+  bookmarkPositions?: Map<string, BookmarkPosition>,
 ): Array<LaidOutPage> {
   if (sectionCtxs.length === 0) return [];
   const pages: Array<LaidOutPage> = [];
@@ -2438,21 +2754,173 @@ function paginateSections(
   let current: Array<PageItem> = [];
   let pendingPageBreak = false;
   let cursorY = ctx.pageHeight - ctx.marginTop;
+
+  // §17.6.4 multi-column flow: content fills column after column before the
+  // page flushes. colStartLen marks where the current column's items begin in
+  // `current` — the single-column "page has content" guard generalizes to
+  // "this column has content" (identical when there is one column).
+  let colIdx = 0;
+  let colStartLen = 0;
+  const colLeft = () => ctx.marginLeft + (ctx.columns?.[colIdx]?.xOffsetPt ?? 0);
+  const colWidth = () => ctx.columns?.[colIdx]?.widthPt ?? ctx.contentWidth;
+  const colHasContent = () => current.length > colStartLen;
+  // Overflow step: next column on this page, or a fresh page after the last.
+  const advanceColumn = () => {
+    if (ctx.columns && colIdx + 1 < ctx.columns.length) {
+      colIdx++;
+      colStartLen = current.length;
+      cursorY = ctx.pageHeight - ctx.marginTop;
+    } else {
+      flushPage();
+    }
+  };
+
+  // §20.4.2.3 out-of-flow drawings (wrap 'none'): they render at their
+  // anchored position without moving the cursor. behindDoc sinks below the
+  // body text, everything else above it; both flush with the page.
+  let floatsBehind: Array<PageItem> = [];
+  let floatsFront: Array<PageItem> = [];
+  const floatX = (f: FloatAnchor, widthPt: number): number => {
+    const h = f.posH;
+    if (!h) return colLeft();
+    const base =
+      h.relativeFrom === 'page' ? 0 : h.relativeFrom === 'column' ? colLeft() : ctx.marginLeft;
+    const span =
+      h.relativeFrom === 'page'
+        ? ctx.pageWidth
+        : h.relativeFrom === 'column'
+          ? colWidth()
+          : ctx.contentWidth;
+    if (h.align === 'center') return base + (span - widthPt) / 2;
+    if (h.align === 'right') return base + span - widthPt;
+    return base + (h.offsetPt ?? 0);
+  };
+  // The drawing's TOP in the y-up cursor frame. paragraph/line-relative
+  // offsets hang off the anchoring paragraph's current position.
+  const floatTopYUp = (f: FloatAnchor): number => {
+    const v = f.posV;
+    if (!v) return cursorY;
+    if (v.relativeFrom === 'page') return ctx.pageHeight - (v.offsetPt ?? 0);
+    if (v.relativeFrom === 'margin') return ctx.pageHeight - ctx.marginTop - (v.offsetPt ?? 0);
+    return cursorY - (v.offsetPt ?? 0);
+  };
   // Tagged PDF: the stack of open list levels (for L/LI/LBody nesting). Cleared
   // whenever a non-list-item block interrupts the run of list paragraphs.
   const listStack: Array<ListFrame> = [];
+
+  // §17.11 footnotes: notes reserved for the CURRENT page (greedy — a line
+  // carrying a reference pulls its note's height out of the page bottom, so
+  // the line and its note land together). `placedNotes` is global: a note
+  // renders once, on its first reference's page.
+  let pageNotes: Array<{ n: number; blocks: ReadonlyArray<LaidOutBlock>; heightPt: number }> = [];
+  let noteReserve = 0;
+  const placedNotes = new Set<string>();
+  // The page's usable bottom: the margin plus whatever the notes band has
+  // claimed so far.
+  const bottomLimit = () => ctx.marginBottom + noteReserve;
+
+  // New (unplaced) footnotes referenced by a line's tokens, with their layout
+  // at the current section's width.
+  const lineFootnotes = (
+    line: Line,
+  ): Array<{ id: string; n: number; blocks: ReadonlyArray<LaidOutBlock>; heightPt: number }> => {
+    if (!notes) return [];
+    const out: Array<{
+      id: string;
+      n: number;
+      blocks: ReadonlyArray<LaidOutBlock>;
+      heightPt: number;
+    }> = [];
+    for (const tok of line.tokens) {
+      if (tok.kind !== 'text' || tok.footnoteRef === undefined) continue;
+      const id = tok.footnoteRef;
+      if (placedNotes.has(id) || out.some((o) => o.id === id)) continue;
+      const laid = notes.layout(ctx, id);
+      const n = notes.numbers.get(id);
+      if (!laid || n === undefined) continue;
+      out.push({ id, n, blocks: laid.blocks, heightPt: laid.heightPt });
+    }
+    return out;
+  };
+
+  // The notes band for the flushing page: separator rule + each note's blocks
+  // stacked inside the reserved area. Tagged: each note is a Note→P element.
+  const renderNotesBand = (): Array<PageItem> => {
+    if (pageNotes.length === 0) return [];
+    const out: Array<PageItem> = [];
+    const top = ctx.marginBottom + noteReserve; // y-up top of the reserve
+    out.push({
+      type: 'fill',
+      x: pt(ctx.marginLeft),
+      y: pt(ctx.pageHeight - (top - FOOTNOTE_RULE_GAP_ABOVE)),
+      width: pt(FOOTNOTE_RULE_WIDTH),
+      height: pt(FOOTNOTE_RULE_PT),
+      fillColorHex: '000000',
+    });
+    let cursor = top - FOOTNOTE_SEPARATOR_HEIGHT;
+    for (const note of pageNotes.sort((a, b) => a.n - b.n)) {
+      let structId: number | undefined;
+      if (builder) {
+        const noteNode = builder.create('Note', builder.root);
+        structId = builder.create('P', noteNode).id;
+      }
+      out.push(
+        ...drawBlocksSequentially(note.blocks, ctx.marginLeft, cursor, ctx.pageHeight, structId),
+      );
+      cursor -= note.heightPt;
+    }
+    return out;
+  };
+
+  // Dynamic PAGE/NUMPAGES bands re-render after pagination (both numbers are
+  // known only then); each use records where its commands must be spliced.
+  const dynBands: Array<{
+    pageIdx: number;
+    pageNumber: number;
+    position: 'header' | 'footer';
+    render: (pageNumber: number, totalPages: number) => Array<PageItem>;
+  }> = [];
 
   const flushPage = (force = false) => {
     if (current.length === 0 && !force) return;
     const band = bandForPage(pageInSection, globalPageIdx, ctx.titlePg, ctx.evenAndOddHeaders);
     const header = pickBand(ctx.headerSet, band);
     const footer = pickBand(ctx.footerSet, band);
+    if (header.renderDynamic) {
+      dynBands.push({
+        pageIdx: pages.length,
+        pageNumber: globalPageIdx + 1,
+        position: 'header',
+        render: header.renderDynamic,
+      });
+    }
+    if (footer.renderDynamic) {
+      dynBands.push({
+        pageIdx: pages.length,
+        pageNumber: globalPageIdx + 1,
+        position: 'footer',
+        render: footer.renderDynamic,
+      });
+    }
     pages.push({
-      commands: [...header, ...current, ...footer],
+      commands: [
+        ...header.commands,
+        ...floatsBehind,
+        ...current,
+        ...floatsFront,
+        ...renderNotesBand(),
+        ...footer.commands,
+      ],
       width: pt(ctx.pageWidth),
       height: pt(ctx.pageHeight),
     });
     current = [];
+    floatsBehind = [];
+    floatsFront = [];
+    pageNotes = [];
+    noteReserve = 0;
+    colIdx = 0;
+    colStartLen = 0;
     pageInSection++;
     globalPageIdx++;
     cursorY = ctx.pageHeight - ctx.marginTop;
@@ -2494,9 +2962,34 @@ function paginateSections(
         const lang = dominantParagraphLang(block.lines);
         if (lang && lang !== defaultLang) builder.node(structId).lang = lang;
       }
+      let firstLineOfBlock = true;
       for (const line of block.lines) {
         const h = computeLineHeight(line, block.resolved);
-        if (cursorY - h < ctx.marginBottom && current.length > 0) flushPage();
+        let newNotes = lineFootnotes(line);
+        const addedReserve = (sub: typeof newNotes) =>
+          sub.reduce((sum, x) => sum + x.heightPt, 0) +
+          (pageNotes.length === 0 && sub.length > 0 ? FOOTNOTE_SEPARATOR_HEIGHT : 0);
+        if (cursorY - h < bottomLimit() + addedReserve(newNotes) && colHasContent()) {
+          advanceColumn();
+          newNotes = lineFootnotes(line); // reserve restarts on the fresh page
+        }
+        if (newNotes.length > 0) {
+          noteReserve += addedReserve(newNotes);
+          for (const x of newNotes) {
+            placedNotes.add(x.id);
+            pageNotes.push({ n: x.n, blocks: x.blocks, heightPt: x.heightPt });
+          }
+        }
+        if (firstLineOfBlock) {
+          firstLineOfBlock = false;
+          if (block.bookmarks && bookmarkPositions) {
+            for (const bookmarkName of block.bookmarks) {
+              if (!bookmarkPositions.has(bookmarkName)) {
+                bookmarkPositions.set(bookmarkName, { pageIdx: pages.length, yTopPt: cursorY });
+              }
+            }
+          }
+        }
         cursorY -= h;
         const indentLeft =
           block.resolved.indentLeft + (line.firstLine ? block.resolved.indentFirstLine : 0);
@@ -2508,7 +3001,7 @@ function paginateSections(
         current.push({
           type: 'line',
           line,
-          originX: pt(ctx.marginLeft + indentLeft + offset),
+          originX: pt(colLeft() + indentLeft + offset),
           baselineY: pt(ctx.pageHeight - (cursorY + lineDescent(line))),
           ...(structId !== undefined ? { structId } : {}),
         });
@@ -2517,82 +3010,103 @@ function paginateSections(
       if (block.pageBreakAfter) pendingPageBreak = true;
     } else if (block.kind === 'image') {
       const figId = builder ? createFigure(builder, block.altText, 'Image') : undefined;
-      cursorY -= block.spacingBeforePt;
-      if (cursorY - block.heightPt < ctx.marginBottom && current.length > 0) flushPage();
-      cursorY -= block.heightPt;
-      current.push({
-        type: 'image',
-        x: pt(ctx.marginLeft),
-        y: pt(ctx.pageHeight - cursorY - block.heightPt),
-        width: pt(block.widthPt),
-        height: pt(block.heightPt),
-        imageResourceName: block.resourceName,
-        ...(figId !== undefined ? { structId: figId } : {}),
-      });
-      cursorY -= block.spacingAfterPt;
+      const emitImageAt = (x: number, topYUp: number, sink: Array<PageItem>) => {
+        sink.push({
+          type: 'image',
+          x: pt(x),
+          y: pt(ctx.pageHeight - topYUp),
+          width: pt(block.widthPt),
+          height: pt(block.heightPt),
+          imageResourceName: block.resourceName,
+          ...(figId !== undefined ? { structId: figId } : {}),
+        });
+      };
+      if (block.float?.wrap === 'none') {
+        emitImageAt(
+          floatX(block.float, block.widthPt),
+          floatTopYUp(block.float),
+          block.float.behind ? floatsBehind : floatsFront,
+        );
+      } else {
+        cursorY -= block.spacingBeforePt;
+        if (cursorY - block.heightPt < bottomLimit() && colHasContent()) advanceColumn();
+        cursorY -= block.heightPt;
+        emitImageAt(colLeft(), cursorY + block.heightPt, current);
+        cursorY -= block.spacingAfterPt;
+      }
     } else if (block.kind === 'shape') {
       // Shapes are atomic — never split across pages.
       const figId = builder ? createFigure(builder, block.altText, 'Shape') : undefined;
-      cursorY -= block.spacingBeforePt;
-      if (cursorY - block.heightPt < ctx.marginBottom && current.length > 0) flushPage();
-      cursorY -= block.heightPt;
-      const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, ctx.contentWidth);
-      const x = ctx.marginLeft + offset;
-      const transform = flipTransform(
-        buildShapeTransform(
-          x,
-          cursorY,
-          block.widthPt,
-          block.heightPt,
-          block.rotation60k,
-          block.flipH,
-          block.flipV,
-        ),
-        ctx.pageHeight,
-      );
-      current.push({
-        type: 'shape',
-        shape: {
-          paths: block.paths,
-          ...(block.fillColorHex ? { fillColorHex: block.fillColorHex } : {}),
-          ...(block.stroke ? { stroke: block.stroke } : {}),
-          transform,
-        },
-        ...(figId !== undefined ? { structId: figId } : {}),
-      });
-      // Shape text: laid out axis-aligned, anchored vertically within the inset
-      // rect, emitted as ordinary line commands so it rides the text pass on
-      // top of the fill. (Rotated text boxes keep upright text in M5.)
-      if (block.textLines.length > 0) {
-        const shapeBottom = cursorY;
-        const shapeTop = cursorY + block.heightPt;
-        const innerWidth = Math.max(1, block.widthPt - block.insetLeftPt - block.insetRightPt);
-        let textY: number;
-        if (block.anchor === 'b') {
-          textY = shapeBottom + block.insetBottomPt + block.textHeightPt;
-        } else if (block.anchor === 'ctr') {
-          textY = shapeBottom + (block.heightPt + block.textHeightPt) / 2;
-        } else {
-          textY = shapeTop - block.insetTopPt;
+      const emitShapeAt = (x: number, bottomYUp: number, sink: Array<PageItem>) => {
+        const transform = flipTransform(
+          buildShapeTransform(
+            x,
+            bottomYUp,
+            block.widthPt,
+            block.heightPt,
+            block.rotation60k,
+            block.flipH,
+            block.flipV,
+          ),
+          ctx.pageHeight,
+        );
+        sink.push({
+          type: 'shape',
+          shape: {
+            paths: block.paths,
+            ...(block.fillColorHex ? { fillColorHex: block.fillColorHex } : {}),
+            ...(block.stroke ? { stroke: block.stroke } : {}),
+            transform,
+          },
+          ...(figId !== undefined ? { structId: figId } : {}),
+        });
+        // Shape text: laid out axis-aligned, anchored vertically within the
+        // inset rect, emitted as ordinary line commands so it rides the text
+        // pass on top of the fill. (Rotated text boxes keep upright text.)
+        if (block.textLines.length > 0) {
+          const shapeBottom = bottomYUp;
+          const shapeTop = bottomYUp + block.heightPt;
+          const innerWidth = Math.max(1, block.widthPt - block.insetLeftPt - block.insetRightPt);
+          let textY: number;
+          if (block.anchor === 'b') {
+            textY = shapeBottom + block.insetBottomPt + block.textHeightPt;
+          } else if (block.anchor === 'ctr') {
+            textY = shapeBottom + (block.heightPt + block.textHeightPt) / 2;
+          } else {
+            textY = shapeTop - block.insetTopPt;
+          }
+          for (const line of block.textLines) {
+            const h = computeLineHeight(line, line.resolved);
+            textY -= h;
+            const lineOffset = alignmentOffset(
+              line.resolved.alignment,
+              line.contentWidthPt,
+              innerWidth,
+            );
+            sink.push({
+              type: 'line',
+              line,
+              originX: pt(x + block.insetLeftPt + lineOffset),
+              baselineY: pt(ctx.pageHeight - (textY + lineDescent(line))),
+              ...(figId !== undefined ? { structId: figId } : {}),
+            });
+          }
         }
-        for (const line of block.textLines) {
-          const h = computeLineHeight(line, line.resolved);
-          textY -= h;
-          const lineOffset = alignmentOffset(
-            line.resolved.alignment,
-            line.contentWidthPt,
-            innerWidth,
-          );
-          current.push({
-            type: 'line',
-            line,
-            originX: pt(x + block.insetLeftPt + lineOffset),
-            baselineY: pt(ctx.pageHeight - (textY + lineDescent(line))),
-            ...(figId !== undefined ? { structId: figId } : {}),
-          });
-        }
+      };
+      if (block.float?.wrap === 'none') {
+        emitShapeAt(
+          floatX(block.float, block.widthPt),
+          floatTopYUp(block.float) - block.heightPt,
+          block.float.behind ? floatsBehind : floatsFront,
+        );
+      } else {
+        cursorY -= block.spacingBeforePt;
+        if (cursorY - block.heightPt < bottomLimit() && colHasContent()) advanceColumn();
+        cursorY -= block.heightPt;
+        const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, colWidth());
+        emitShapeAt(colLeft() + offset, cursorY, current);
+        cursorY -= block.spacingAfterPt;
       }
-      cursorY -= block.spacingAfterPt;
     } else if (block.kind === 'chart') {
       // Charts are atomic. Their primitives are in a local y-up frame; the
       // stored transform translates to the chart box's bottom-left (x, y in the
@@ -2600,34 +3114,43 @@ function paginateSections(
       // chart is one Figure (alt = its title); its shapes + labels carry that id.
       const figId = builder ? createFigure(builder, block.altText, 'Chart') : undefined;
       const fig = figId !== undefined ? { structId: figId } : {};
-      cursorY -= block.spacingBeforePt;
-      if (cursorY - block.heightPt < ctx.marginBottom && current.length > 0) flushPage();
-      cursorY -= block.heightPt;
-      const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, ctx.contentWidth);
-      const x = ctx.marginLeft + offset;
-      const y = cursorY;
-      for (const s of block.layout.shapes) {
-        current.push({
-          type: 'shape',
-          shape: {
-            paths: s.paths,
-            ...(s.fillColorHex ? { fillColorHex: s.fillColorHex } : {}),
-            ...(s.stroke ? { stroke: s.stroke } : {}),
-            transform: flipTransform([1, 0, 0, 1, x, y], ctx.pageHeight),
-          },
-          ...fig,
-        });
+      const emitChartAt = (x: number, bottomYUp: number, sink: Array<PageItem>) => {
+        for (const s of block.layout.shapes) {
+          sink.push({
+            type: 'shape',
+            shape: {
+              paths: s.paths,
+              ...(s.fillColorHex ? { fillColorHex: s.fillColorHex } : {}),
+              ...(s.stroke ? { stroke: s.stroke } : {}),
+              transform: flipTransform([1, 0, 0, 1, x, bottomYUp], ctx.pageHeight),
+            },
+            ...fig,
+          });
+        }
+        for (const t of block.layout.texts) {
+          sink.push({
+            type: 'line',
+            line: t.line,
+            originX: pt(x + t.x),
+            baselineY: pt(ctx.pageHeight - (bottomYUp + t.y)),
+            ...fig,
+          });
+        }
+      };
+      if (block.float?.wrap === 'none') {
+        emitChartAt(
+          floatX(block.float, block.widthPt),
+          floatTopYUp(block.float) - block.heightPt,
+          block.float.behind ? floatsBehind : floatsFront,
+        );
+      } else {
+        cursorY -= block.spacingBeforePt;
+        if (cursorY - block.heightPt < bottomLimit() && colHasContent()) advanceColumn();
+        cursorY -= block.heightPt;
+        const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, colWidth());
+        emitChartAt(colLeft() + offset, cursorY, current);
+        cursorY -= block.spacingAfterPt;
       }
-      for (const t of block.layout.texts) {
-        current.push({
-          type: 'line',
-          line: t.line,
-          originX: pt(x + t.x),
-          baselineY: pt(ctx.pageHeight - (y + t.y)),
-          ...fig,
-        });
-      }
-      cursorY -= block.spacingAfterPt;
     } else {
       const colCount = block.rows.reduce(
         (max, r) =>
@@ -2652,7 +3175,7 @@ function paginateSections(
       // holding the cell's content. The same TD/P node is reused across row
       // chunks (page splits), so its MCRs accumulate like a split paragraph.
       const tableNode = builder ? builder.create('Table', builder.root) : undefined;
-      const tableX = ctx.marginLeft + block.xOffsetPt;
+      const tableX = colLeft() + block.xOffsetPt;
       for (let ri = 0; ri < block.rows.length; ri++) {
         const row = block.rows[ri]!;
         const isLeadingHeader = ri < headerRows.length;
@@ -2683,16 +3206,17 @@ function paginateSections(
           // A manual <rowBreaks> break (first chunk only) forces a new page even
           // when the row would fit; an overflow break starts one when it won't.
           const forcedBreak = ci === 0 && row.breakBefore && !isLeadingHeader && current.length > 0;
-          const overflow = cursorY - chunk.heightPt < ctx.marginBottom && current.length > 0;
+          const overflow = cursorY - chunk.heightPt < bottomLimit() && colHasContent();
           if (forcedBreak || overflow) {
-            flushPage();
+            if (forcedBreak) flushPage();
+            else advanceColumn();
             // Re-emit the header rows on the fresh page (visual repetition →
             // artifacts, no structIds), but only when the breaking row is not
             // itself a header and the row still fits beneath the repeated band.
             if (
               !isLeadingHeader &&
               headerRows.length > 0 &&
-              cursorY - headerHeightPt - chunk.heightPt >= ctx.marginBottom
+              cursorY - headerHeightPt - chunk.heightPt >= bottomLimit()
             ) {
               for (const hr of headerRows) {
                 emitRowChunk(current, hr, tableX, cursorY, ctx.pageHeight, colCount, undefined);
@@ -2713,6 +3237,16 @@ function paginateSections(
   // header/footer bands — a header/footer-only document) must still emit one
   // page so those bands render, instead of falling back to a blank page.
   if (pages.length === 0) flushPage(true);
+
+  // Every page exists now, so PAGE and NUMPAGES both have values: render the
+  // dynamic bands and splice them where the static band would have sat
+  // (header before the body content, footer after).
+  for (const d of dynBands) {
+    const cmds = d.render(d.pageNumber, pages.length);
+    const page = pages[d.pageIdx]!;
+    if (d.position === 'header') page.commands.unshift(...cmds);
+    else page.commands.push(...cmds);
+  }
   return pages;
 }
 

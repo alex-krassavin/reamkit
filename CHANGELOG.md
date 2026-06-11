@@ -4,7 +4,59 @@ All notable changes to **Ream** (`reamkit`) are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.2.0] - 2026-06-11
+
+### Added
+
+- **Bookmarks and internal links** — `w:bookmarkStart` + `w:hyperlink
+  @anchor` become real GoTo links: PDF annotations with named destinations
+  (`/Names /Dests`, only referenced names), tagged `Link` structure, HTML
+  `id` anchors with `#`-fragment links.
+- **PDF/UA-1** — `pdfUA: true` produces ISO 14289-1-conformant output
+  (veraPDF-validated, alone and combined with PDF/A-2a in one file): tagged
+  structure, `pdfuaid` XMP identification, alternate descriptions on link
+  annotations, unique IDs on footnote Note elements, an always-present
+  document title.
+- **Multi-column sections** — `w:cols` lays content out column by column
+  (equal-width with a shared gutter, or explicit per-column widths);
+  headers, footers and footnotes keep the full page width.
+- **Floating drawings** — `wp:anchor` placement: wrap-none drawings
+  (watermarks, stamps, text boxes; including `behindDoc`) render at their
+  anchored page/margin/paragraph-relative position without disturbing the
+  text flow. Side-wrapping modes stay in flow (v1).
+- **HTML writer: charts and shapes render as inline SVG** — bar/line/pie/
+  area/scatter charts emit the same geometry scene as the PDF path (labels
+  as native `<text>` with anchors, so the browser's fonts do the rendering);
+  shape geometry (preset + custom, fills, strokes, dash patterns, rotation/
+  flips) emits as `<path>` with the exact transform matrix the PDF layout
+  computes, and text boxes overlay their content inside the body insets with
+  the source vertical anchor. Charts and shapes are no longer reported as
+  dropped losses for HTML output.
+- **Footnotes and endnotes** — `w:footnoteReference`/`w:endnoteReference`
+  render superscript numbers; footnote content lands at the bottom of the
+  referencing page behind Word's short separator rule (the line and its note
+  always travel together), endnotes flow after the body. Tagged PDFs wrap
+  each note in a `Note` structure element (veraPDF-validated); the HTML
+  writer renders anchored references with a notes section and backlinks.
+- **PAGE / NUMPAGES fields** — page-number fields in headers and footers now
+  render the real page number and total (both the `fldSimple` and the
+  `fldChar` complex-field syntax). Bands containing fields re-lay out per
+  page after pagination; other field instructions keep their cached result
+  exactly as before, and documents without fields are byte-identical.
+- **Table styles** — `w:tblStyle` referenced styles now render: the base
+  layer (grid borders, default cell margins) plus `w:tblStylePr` conditional
+  regions (first/last row and column, row/column banding, corner cells) gated
+  by `w:tblLook` (modern attributes and the legacy bitmask). Resolved in the
+  reader, so PDF, SVG and HTML all pick it up; tables without a style are
+  byte-identical to before.
+- **Hyperlinks** — `w:hyperlink` external targets now become clickable: PDF
+  output gets `/Link` annotations (one rect per rendered line, merged into
+  each page's `/Annots`; in tagged/PDF-A mode the annotation is enclosed in a
+  `Link` structure element with `OBJR` + `/StructParent`, veraPDF-validated),
+  and HTML output wraps the text in `<a href>`. Targets pass a scheme
+  allowlist (`http`/`https`/`mailto`) — anything else renders as plain text
+  with a degraded-`hyperlinks` loss; documents without links are
+  byte-identical to before.
 
 ## [1.1.0]
 

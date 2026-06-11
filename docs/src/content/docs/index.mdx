@@ -22,37 +22,39 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 
 <CardGrid stagger>
   <Card title="From the spec" icon="open-book">
-    Built directly from **ECMA-376** (OOXML) and **ISO 32000 / 19005** (PDF / PDF/A) —
-    not a wrapper around LibreOffice, headless Office, or any commercial SDK. Existing
-    implementations are read as a reference, never a dependency.
+    Built directly from **ECMA-376** (OOXML) and **ISO 32000 / 19005** (PDF / PDF/A) — not a wrapper
+    around LibreOffice, headless Office, or any commercial SDK. Existing implementations are read as
+    a reference, never a dependency.
   </Card>
   <Card title="Browser-first" icon="laptop">
-    Pure TypeScript working on `Uint8Array` in and `Uint8Array` out — zero `node:*`
-    imports on the conversion path. The same code runs unchanged in the browser, Node.js,
-    serverless and edge runtimes. You supply the fonts (or let it fetch open substitutes).
+    Pure TypeScript working on `Uint8Array` in and `Uint8Array` out — zero `node:*` imports on the
+    conversion path. The same code runs unchanged in the browser, Node.js, serverless and edge
+    runtimes. You supply the fonts (or let it fetch open substitutes).
   </Card>
   <Card title="Word & Excel" icon="document">
-    WordprocessingML — text, styles, tables, lists, sections, headers/footers, images,
-    tracked changes. SpreadsheetML — grids, number formats, dates, and the full print
+    WordprocessingML — text, styles, tables (incl. table styles), lists, multi-column sections,
+    headers/footers with real page numbers, footnotes, hyperlinks and bookmarks, images and floating
+    drawings, tracked changes. SpreadsheetML — grids, number formats, dates, and the full print
     model. Plus DrawingML shapes, charts and OfficeMath.
   </Card>
   <Card title="Real typography" icon="seti:font">
-    Type0 + CIDFontType2 embedding with subsetting, Knuth–Plass line breaking, Liang
-    hyphenation, OpenType ligatures and kerning, BiDi (UAX #9) and Arabic cursive joining.
+    Type0 + CIDFontType2 embedding with subsetting, Knuth–Plass line breaking, Liang hyphenation,
+    OpenType ligatures and kerning, BiDi (UAX #9) and Arabic cursive joining.
   </Card>
   <Card title="Compliant PDF" icon="approve-check">
-    PDF/A-1, -2 and -3 (levels a / b / u) — all formally **veraPDF-validated** — plus
-    tagged PDF (logical structure, alt text) and digital signatures (PKCS#7 detached,
-    ECDSA).
+    PDF/A-1, -2 and -3 (levels a / b / u) and **PDF/UA-1** — all formally **veraPDF-validated** —
+    plus tagged PDF (logical structure, alt text) and digital signatures (PKCS#7 detached, ECDSA).
   </Card>
   <Card title="One parse, any target" icon="rocket">
-    `Ream.parse(bytes)` reads a document once into a format-neutral interlayer;
-    `convert('pdf')`, `convert('svg')` and `convert('html')` render from it. New
-    formats plug in as reader/writer adapters — more are on the way.
+    `Ream.parse(bytes)` reads a document once into a format-neutral interlayer; `convert('pdf')`,
+    `convert('svg')` and `convert('html')` render from it. New formats plug in as reader/writer
+    adapters — more are on the way.
   </Card>
 </CardGrid>
 
 <p style="text-align: center; margin-top: 3rem;">
   Questions, bug reports or collaboration —
-  <a href="mailto:info@reamkit.dev"><strong>info@reamkit.dev</strong></a>
+  <a href="mailto:info@reamkit.dev">
+    <strong>info@reamkit.dev</strong>
+  </a>
 </p>

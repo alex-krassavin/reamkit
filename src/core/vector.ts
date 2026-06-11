@@ -1,7 +1,8 @@
 // Format-agnostic vector model (paths, strokes, shapes) — the shared
-// vocabulary of every writer. The PDF operator emission lives in
-// pdf/vector-graphics; SVG path emission lives in the svg writer
-// (oop-design §8, C9 — this move cut the svg→pdf model dependency).
+// vocabulary of every writer, plus the path-data/flip helpers every emitter
+// of that vocabulary needs. The PDF operator emission lives in
+// pdf/vector-graphics (oop-design §8, C9 — this move cut the svg→pdf model
+// dependency).
 
 export type PathSegment =
   | { readonly op: 'move'; readonly x: number; readonly y: number } // m
@@ -82,3 +83,32 @@ export class PathBuilder {
 // Emit the content-stream operators for one shape as a list of lines. Fully
 // self-contained inside its own q…Q so stroke/dash/colour state never leaks
 // into a neighbouring pass.
+
+// Compose the page flip with a local→page CTM built in the y-up frame, so the
+// stored transform targets the top-left frame the PageDoc schema froze on.
+// The flip is an involution: the PDF emitter applies the same operation to
+// recover the y-up matrix. Negating the linear part only flips sign bits
+// (exact in IEEE 754); the y-translation is the one component that re-rounds.
+export function flipTransform(
+  m: readonly [number, number, number, number, number, number],
+  pageHeight: number,
+): [number, number, number, number, number, number] {
+  return [m[0], -m[1], m[2], -m[3], m[4], pageHeight - m[5]];
+}
+
+// SVG path data from segments, raw coordinates (the caller's transform maps
+// the local frame into the target one).
+export function svgPathData(
+  segments: ReadonlyArray<PathSegment>,
+  fmt: (n: number) => string,
+): string {
+  const parts: Array<string> = [];
+  for (const s of segments) {
+    if (s.op === 'move') parts.push(`M ${fmt(s.x)} ${fmt(s.y)}`);
+    else if (s.op === 'line') parts.push(`L ${fmt(s.x)} ${fmt(s.y)}`);
+    else if (s.op === 'cubic')
+      parts.push(`C ${fmt(s.x1)} ${fmt(s.y1)} ${fmt(s.x2)} ${fmt(s.y2)} ${fmt(s.x)} ${fmt(s.y)}`);
+    else parts.push('Z');
+  }
+  return parts.join(' ');
+}
