@@ -4,6 +4,7 @@ import type { SignatureOptions, StyledRenderOptions } from '@/pdf';
 import { FontRegistry } from '@/core/font';
 import { fetchFontSet, resolveFamilyKey } from '@/core/fonts';
 import { OpcPackage } from '@/core/opc';
+import { flowRenderOptions } from '@/core/converter/project';
 import { readDocx } from '@/word/docx-reader';
 import { renderStyledPdf, signPdf } from '@/pdf';
 
@@ -67,15 +68,8 @@ export function convertDocxToPdfSync(docx: Uint8Array, options: ConvertDocxOptio
   }
   return renderStyledPdf(flow.body, {
     registry,
-    styles: flow.styles,
-    ...(flow.numbering ? { numbering: flow.numbering } : {}),
-    sections: flow.sections,
-    ...(flow.headersFooters ? { headersFooters: flow.headersFooters } : {}),
-    resources: flow.resources,
-    ...(flow.charts ? { charts: flow.charts } : {}),
-    ...(flow.embeddedFonts ? { embeddedFonts: flow.embeddedFonts } : {}),
+    ...flowRenderOptions(flow),
     ...(info ? { info } : {}),
-    ...(flow.language ? { language: flow.language } : {}),
     ...(attachments.length > 0 ? { attachments } : {}),
     ...renderOptions,
   });
@@ -128,6 +122,21 @@ async function buildUnsignedDocxPdf(
   if (options.fonts ?? options.fontBytes) {
     return convertDocxToPdfSync(docx, options);
   }
+  const auto = await resolveDocxAutoFonts(docx, options);
+  return convertDocxToPdfSync(docx, { ...options, ...auto });
+}
+
+// Substitute-font auto-download for a docx without caller fonts: detect the
+// families used, fetch an open set per family (single-family documents take
+// the simple path). Shared by the converter and the Ream facade — both work
+// from the same source bytes.
+export async function resolveDocxAutoFonts(
+  docx: Uint8Array,
+  options: { readonly fontFamily?: string; readonly fontFetch?: FetchLike } = {},
+): Promise<{
+  fonts: FontBytesByVariant;
+  registriesByFamily?: Map<FamilyKey, FontRegistry>;
+}> {
   const fetchOpt = options.fontFetch ? { fetch: options.fontFetch } : {};
   const keys = options.fontFamily
     ? new Set<FamilyKey>([resolveFamilyKey(options.fontFamily)])
@@ -136,8 +145,7 @@ async function buildUnsignedDocxPdf(
   // Single family (e.g. an all-sans document) → simple one-family path.
   if (keys.size <= 1) {
     const family = keys.values().next().value;
-    const fonts = await fetchFontSet({ ...(family ? { family } : {}), ...fetchOpt });
-    return convertDocxToPdfSync(docx, { ...options, fonts });
+    return { fonts: await fetchFontSet({ ...(family ? { family } : {}), ...fetchOpt }) };
   }
 
   // Multiple families → fetch a substitute set for each, resolve per run.
@@ -148,7 +156,7 @@ async function buildUnsignedDocxPdf(
     registriesByFamily.set(key, FontRegistry.fromBytes(bytes));
     if (key === 'roboto' || !baseBytes) baseBytes = bytes;
   }
-  return convertDocxToPdfSync(docx, { ...options, fonts: baseBytes!, registriesByFamily });
+  return { fonts: baseBytes!, registriesByFamily };
 }
 
 // Best-effort detection of the document's primary font family, used to choose

@@ -8,6 +8,7 @@ import type { SignatureOptions, StyledRenderOptions } from '@/pdf';
 import { FontRegistry } from '@/core/font';
 import { fetchFontSet } from '@/core/fonts';
 import { EMPTY_STYLE_SHEET } from '@/core/style-cascade';
+import { flowRenderOptions } from '@/core/converter/project';
 import { readXlsx } from '@/excel/xlsx-reader';
 import { renderStyledPdf, signPdf } from '@/pdf';
 
@@ -93,7 +94,7 @@ export function convertXlsxToPdfSync(xlsx: Uint8Array, options: ConvertXlsxOptio
   }
   return renderStyledPdf(flow.body, {
     registry,
-    styles: EMPTY_STYLE_SHEET,
+    ...flowRenderOptions(flow),
     ...(section ? { section } : {}),
     ...(info ? { info } : {}),
     ...(attachments.length > 0 ? { attachments } : {}),

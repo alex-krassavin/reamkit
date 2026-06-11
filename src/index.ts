@@ -87,6 +87,9 @@ export type {
 } from '@/core/ir/adapters';
 export { docxReader, readDocx } from '@/word/docx-reader';
 export { xlsxReader, readXlsx } from '@/excel/xlsx-reader';
+// The object face: parse once into the FlowDoc interlayer, convert many.
+export { Ream } from '@/core/converter/ream';
+export type { ReamConvertOptions, ReamParseOptions, ReamTarget } from '@/core/converter/ream';
 export { createConverter } from '@/core/converter/facade';
 export type {
   Converter,

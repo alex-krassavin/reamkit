@@ -16,6 +16,7 @@ import type { FontBytesByVariant } from '@/core/font';
 import { ConversionLossError, FEATURES } from '@/core/ir';
 import { FontRegistry } from '@/core/font';
 import { chainProviders } from '@/core/fonts/provider';
+import { flowRenderOptions } from '@/core/converter/project';
 import { layoutStyledDocument } from '@/pdf/styled-page-renderer';
 import { writeSvg } from '@/svg/svg-writer';
 import { convertDocxToPdf } from '@/word/docx-to-pdf';
@@ -60,7 +61,7 @@ export interface CreateConverterOptions {
   readonly readers?: ReadonlyArray<DocumentReader<FlowDoc>>;
 }
 
-const DEFAULT_READERS: ReadonlyArray<DocumentReader<FlowDoc>> = [docxReader, xlsxReader];
+export const DEFAULT_READERS: ReadonlyArray<DocumentReader<FlowDoc>> = [docxReader, xlsxReader];
 
 export function createConverter(opts: CreateConverterOptions = {}): Converter {
   const readers = opts.readers ?? DEFAULT_READERS;
@@ -95,15 +96,7 @@ export function createConverter(opts: CreateConverterOptions = {}): Converter {
       const { doc: flow } = reader.read(bytes);
       const laid = layoutStyledDocument(flow.body, {
         registry: FontRegistry.fromBytes(fonts),
-        styles: flow.styles,
-        ...(flow.numbering ? { numbering: flow.numbering } : {}),
-        ...(flow.sections.length > 0 ? { sections: flow.sections } : {}),
-        ...(flow.section ? { section: flow.section } : {}),
-        ...(flow.headersFooters ? { headersFooters: flow.headersFooters } : {}),
-        resources: flow.resources,
-        ...(flow.charts ? { charts: flow.charts } : {}),
-        ...(flow.embeddedFonts ? { embeddedFonts: flow.embeddedFonts } : {}),
-        ...(flow.language ? { language: flow.language } : {}),
+        ...flowRenderOptions(flow),
       });
       const svg = writeSvg(laid);
       losses.push(...svg.losses);
@@ -124,7 +117,7 @@ export function createConverter(opts: CreateConverterOptions = {}): Converter {
 // Resolve regular/bold/italic/boldItalic through the chain. v0 resolves the
 // document-default family (per-run family-aware resolution folds in when the
 // converters take providers natively). A 'remote' winner is a substitution.
-async function resolveFontsViaChain(
+export async function resolveFontsViaChain(
   providers: ReadonlyArray<FontProvider>,
 ): Promise<{ fonts?: FontBytesByVariant; loss?: Loss }> {
   const chain = chainProviders(providers);
