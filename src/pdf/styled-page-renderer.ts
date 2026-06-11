@@ -2365,8 +2365,17 @@ function measureSingleLine(
   let total = 0;
   for (const run of paragraph.runs) {
     const resolved = resolveRunProperties(run.properties, paragraph.properties, options.styles);
-    const { variant } = options.registry.resolveByStyle(resolved.bold, resolved.italic);
-    const font = fontResources.get(variant)!;
+    // The same resolution every other phase uses (embedded → per-family →
+    // base registry). The old direct registry lookup keyed fontResources by
+    // bare variant — with registriesByFamily/embeddedFonts those keys do not
+    // exist, so table auto-layout measured with the wrong font or crashed.
+    const { fontKey } = runFontKeyAndParsed(
+      options,
+      resolved.fontFamily.ascii,
+      resolved.bold,
+      resolved.italic,
+    );
+    const font = lookupFont(fontResources, fontKey);
     const fontSizePt = resolved.fontSizePt;
     total += font.measure.textWidthPt(run.text, fontSizePt);
   }
