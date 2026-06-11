@@ -17,6 +17,11 @@ export default defineConfig({
           label: 'GitHub',
           href: 'https://github.com/alex-krassavin/reamkit',
         },
+        {
+          icon: 'email',
+          label: 'info@reamkit.dev',
+          href: 'mailto:info@reamkit.dev',
+        },
       ],
       plugins: [
         // Generates the API Reference under src/content/docs/api/ from the typed public
