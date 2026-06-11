@@ -184,21 +184,16 @@ function pathData(segments: ReadonlyArray<PathSegment>): string {
 
 function imageHref(resourceName: string, laid: LaidOutDocument): string | undefined {
   if (!resourceName) return undefined;
-  // resourceName (ImN) → ResourceId → bytes from the content-addressed store.
+  // resourceName (ImN) → ResourceId → bytes from the content-addressed store;
+  // the mime comes from the layout-time prepare (the image expert) instead of
+  // re-sniffing the bytes here.
   for (const [resourceId, res] of laid.imageResources) {
     if (res.resourceName !== resourceName) continue;
     const bytes = laid.resources.get(resourceId);
     if (!bytes) return undefined;
-    const mime = sniffImageMime(bytes);
-    return `data:${mime};base64,${toBase64(bytes)}`;
+    return `data:${res.prepared.mimeType};base64,${toBase64(bytes)}`;
   }
   return undefined;
-}
-
-function sniffImageMime(bytes: Uint8Array): string {
-  if (bytes[0] === 0x89 && bytes[1] === 0x50) return 'image/png';
-  if (bytes[0] === 0xff && bytes[1] === 0xd8) return 'image/jpeg';
-  return 'application/octet-stream';
 }
 
 function toBase64(bytes: Uint8Array): string {

@@ -57,7 +57,7 @@ import type {
   ChartRect,
   ChartWedge,
 } from '@/pdf/chart-geometry';
-import type { EmbeddedImage } from '@/pdf/image-xobject';
+import type { EmbeddedImage, PreparedImage } from '@/pdf/image-xobject';
 import type { MathDrawItem, MathVariant, MeasureMath } from '@/pdf/math-layout';
 import type { PdfDict, PdfRef, PdfValue } from '@/pdf/objects';
 import type { PathSegment, StrokeStyle, VectorPath, VectorShape } from '@/pdf/vector-graphics';
@@ -89,7 +89,7 @@ import { arcPoint, arcToBeziers } from '@/pdf/arc-to-bezier';
 import { buildChartScene } from '@/pdf/chart-geometry';
 import { createFontMeasure, embedTtfFont } from '@/pdf/cid-font';
 import { buildSrgbIccProfile } from '@/pdf/icc-profile';
-import { embedImage } from '@/pdf/image-xobject';
+import { addImage, prepareImage } from '@/pdf/image-xobject';
 import { layoutMath, mathGlyphSegments, variantStyle } from '@/pdf/math-layout';
 import { dict, name, ref, stream, unicodeString } from '@/pdf/objects';
 import { customPaths, presetPaths, rectPath } from '@/pdf/preset-geometry';
@@ -1096,6 +1096,9 @@ function layoutBodyElement(
 
 interface ImageResource {
   readonly resourceName: string;
+  // Decoded/validated at layout time (the probe); the emit phase replays it
+  // without touching the source bytes again.
+  readonly prepared: PreparedImage;
 }
 
 // 1 inch = 914400 EMU = 72 pt, so 1 pt = 12700 EMU.
@@ -1493,34 +1496,26 @@ function collectImageResources(
     if (!bytes) continue;
     // An unsupported or corrupt image must not abort the whole document — skip
     // it. It then has no resource name, so nothing is drawn for it (its layout
-    // box still reserves space). The probe runs the real embed against a
-    // throwaway document so the skip semantics match the emit phase exactly
-    // (interim until image-xobject grows a prepare/add split).
+    // box still reserves space). prepareImage is the pure decode/validate
+    // expert; the emit phase replays its result, so skip semantics match by
+    // construction.
+    let prepared: PreparedImage;
     try {
-      embedImage(new PdfDocument(), bytes, { flattenAlpha });
+      prepared = prepareImage(bytes, { flattenAlpha });
     } catch {
       continue;
     }
     counter++;
-    out.set(resourceId, { resourceName: `Im${counter}` });
+    out.set(resourceId, { resourceName: `Im${counter}`, prepared });
   }
   return out;
 }
 
 // Emit-phase counterpart: embed the probed images in collection order.
 function embedImageResources(doc: PdfDocument, laid: LaidOutDocument): Map<ResourceId, PdfRef> {
-  // Only PDF/A-1 forbids transparency — the same rule layout used for probing.
-  const flattenAlpha = laid.pdfaProfile?.part === 1;
   const out = new Map<ResourceId, PdfRef>();
   for (const [resourceId, res] of laid.imageResources) {
-    const bytes = laid.resources.get(resourceId);
-    if (!bytes) continue;
-    try {
-      out.set(resourceId, embedImage(doc, bytes, { flattenAlpha }).ref);
-    } catch {
-      // unreachable: the probe already validated these bytes
-    }
-    void res;
+    out.set(resourceId, addImage(doc, res.prepared).ref);
   }
   return out;
 }
