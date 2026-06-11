@@ -6,10 +6,11 @@
 // conversion options (fonts, PDF/A profile, signature, …) are deliberately
 // NOT part of the tree — they parameterize transforms, not the document.
 //
-// v0 deviation from the target design, recorded on purpose: runs/paragraphs
-// still carry cascade-able properties plus a StyleSheet, instead of fully
-// resolved properties (the cascade currently runs inside layout). Folding the
-// resolve into readers is part of stabilizing the schema (stage 6).
+// Stage 6 (closing the v0 deviation): `body` carries FINAL effective
+// properties — readers materialize list markers (applyNumbering) and resolve
+// the style cascade (resolveBodyStyles) while building the tree. `styles` and
+// `numbering` remain as raw round-trip material; render projections must not
+// re-apply them (resolving over the empty sheet is the identity).
 
 import type {
   BodyElement,

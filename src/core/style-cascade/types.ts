@@ -5,6 +5,7 @@
 import type {
   Alignment,
   FontFamilyMap,
+  NumberingReference,
   UnderlineStyle,
   VerticalAlign,
 } from '@/core/document-model';
@@ -43,6 +44,9 @@ export interface ResolvedParagraphProperties {
   // The paragraph's style id (e.g. "Heading2"), carried through for heading
   // detection when a style lacks an explicit outline level.
   readonly styleId?: string;
+  // §17.9 list reference, carried through for tagged-PDF list structure
+  // (L/LI nesting) — markers themselves are materialized by applyNumbering.
+  readonly numbering?: NumberingReference;
 }
 
 // Word's empty document defaults (used when docDefaults is absent).

@@ -11,7 +11,13 @@
 // Higher priority overrides lower; an `undefined` field at the higher tier
 // inherits from the lower one.
 
-import type { ParagraphProperties, RunProperties, StyleSheet } from '@/core/document-model';
+import type {
+  BodyElement,
+  Paragraph,
+  ParagraphProperties,
+  RunProperties,
+  StyleSheet,
+} from '@/core/document-model';
 
 import type {
   ResolvedParagraphProperties,
@@ -138,6 +144,7 @@ function mergePar(
   // (exactOptionalPropertyTypes).
   const outlineLevel = override.outlineLevel ?? base.outlineLevel;
   const styleId = override.styleId ?? base.styleId;
+  const numbering = override.numbering ?? base.numbering;
   return {
     alignment: override.alignment ?? base.alignment,
     spacingBefore: override.spacingBefore ?? base.spacingBefore,
@@ -151,6 +158,7 @@ function mergePar(
     bidi: override.bidi ?? base.bidi,
     ...(outlineLevel !== undefined ? { outlineLevel } : {}),
     ...(styleId !== undefined ? { styleId } : {}),
+    ...(numbering !== undefined ? { numbering } : {}),
   };
 }
 
@@ -171,5 +179,69 @@ function copyDefined<T extends object>(base: T, override: T): T {
     const v = override[key];
     if (v !== undefined) out[key] = v;
   }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// FlowDoc transform (ir-design stage 6, variant A): resolve the cascade for an
+// entire body so the tree carries final effective properties. Readers run this
+// after numbering; writers and the layout see resolved values. Resolving again
+// over EMPTY_STYLE_SHEET is the identity (defaults are fully overwritten and
+// style chains are empty), which keeps direct raw-body callers working.
+// ---------------------------------------------------------------------------
+
+export function resolveBodyStyles(
+  body: ReadonlyArray<BodyElement>,
+  sheet: StyleSheet,
+): Array<BodyElement> {
+  const visitParagraph = (p: Paragraph): Paragraph => ({
+    ...p,
+    properties: resolveParagraphProperties(p.properties, sheet),
+    // Run resolution sees the RAW paragraph properties (its styleId drives
+    // the paragraph-style rPr layer) — same order the renderer used.
+    runs: p.runs.map((r) => ({
+      ...r,
+      properties: resolveRunProperties(r.properties, p.properties, sheet),
+    })),
+  });
+
+  const visit = (el: BodyElement): BodyElement => {
+    if (el.kind === 'paragraph') {
+      return { kind: 'paragraph', paragraph: visitParagraph(el.paragraph) };
+    }
+    if (el.kind === 'table') {
+      return {
+        kind: 'table',
+        table: {
+          ...el.table,
+          rows: el.table.rows.map((row) => ({
+            ...row,
+            cells: row.cells.map((cell) => ({ ...cell, content: cell.content.map(visit) })),
+          })),
+        },
+      };
+    }
+    if (el.kind === 'shape' && el.shape.text) {
+      return {
+        kind: 'shape',
+        shape: {
+          ...el.shape,
+          text: { ...el.shape.text, content: el.shape.text.content.map(visit) },
+        },
+      };
+    }
+    return el; // image, chart, textless shape
+  };
+
+  return body.map(visit);
+}
+
+export function resolveHeadersFootersStyles(
+  hf: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
+  sheet: StyleSheet,
+): ReadonlyMap<string, ReadonlyArray<BodyElement>> {
+  if (hf.size === 0) return hf;
+  const out = new Map<string, ReadonlyArray<BodyElement>>();
+  for (const [key, value] of hf) out.set(key, resolveBodyStyles(value, sheet));
   return out;
 }
