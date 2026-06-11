@@ -29,12 +29,13 @@ import { flowRenderOptions } from '@/core/converter/project';
 import { FontRegistry } from '@/core/font';
 import { fetchFontSet } from '@/core/fonts';
 import { ConversionLossError } from '@/core/ir';
+import { writeHtml } from '@/html/html-writer';
 import { layoutStyledDocument } from '@/layout/styled-layout';
 import { renderStyledPdf, signPdf } from '@/pdf';
 import { writeSvg } from '@/svg/svg-writer';
 import { resolveDocxAutoFonts } from '@/word/docx-to-pdf';
 
-export type ReamTarget = 'pdf' | 'svg';
+export type ReamTarget = 'pdf' | 'svg' | 'html';
 
 export interface ReamParseOptions {
   // Reader registry override — defaults to the built-in docx + xlsx readers.
@@ -102,6 +103,15 @@ export class Ream {
     options: ReamConvertOptions = {},
   ): Promise<ConvertResult> {
     const losses: Array<Loss> = [...this.losses];
+
+    if (to === 'html') {
+      // Flow medium: no layout, no fonts to embed — zero I/O.
+      const html = writeHtml(this.flow);
+      losses.push(...html.losses);
+      this.enforceStrict(options, losses);
+      return { bytes: html.bytes, losses };
+    }
+
     const { fonts, registriesByFamily } = await this.resolveFonts(options, losses);
     const registry = FontRegistry.fromBytes(fonts);
 

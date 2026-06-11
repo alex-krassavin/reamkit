@@ -112,5 +112,6 @@ export {
 export type { FontProvider, FontRequest, FontAnswer } from '@/core/fonts/provider';
 export { svgWriter, writeSvg } from '@/svg/svg-writer';
 export type { SvgWriteOptions } from '@/svg/svg-writer';
+export { htmlWriter, writeHtml } from '@/html/html-writer';
 export { layoutStyledDocument } from '@/layout/styled-layout';
 export type { LaidOutDocument } from '@/layout/page-doc';

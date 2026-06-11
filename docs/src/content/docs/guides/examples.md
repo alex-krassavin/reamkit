@@ -1,6 +1,6 @@
 ---
 title: Examples
-description: Working recipes — PDF/A, digital signatures, font providers, SVG preview, strict mode, the interlayer.
+description: Working recipes — PDF/A, digital signatures, font providers, SVG and HTML output, strict mode, the interlayer.
 ---
 
 Every snippet below is runnable as-is; they all start from document bytes
@@ -18,6 +18,7 @@ const doc = Ream.parse(bytes);
 
 const pdf = await doc.convert('pdf', { fonts });
 const svg = await doc.convert('svg', { fonts }); // page-stack preview, no PDF involved
+const html = await doc.convert('html');          // flowed HTML — no fonts, zero I/O
 ```
 
 ## Browser: file input → PDF preview

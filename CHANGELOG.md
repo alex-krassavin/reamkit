@@ -6,6 +6,18 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.0]
+
+### Added
+
+- **HTML writer** — `doc.convert('html')` renders the parsed document as a
+  single self-contained flowed HTML file (headings, run styling, tables with
+  spans/borders/shading, images as `data:` URIs, list markers, RTL). A flow
+  medium needs no pagination and no fonts, so the conversion performs zero
+  I/O; chart/shape geometry, inline math and headers/footers are reported in
+  the loss report. Also exposed as `htmlWriter`/`writeHtml` and
+  `createConverter` `to: 'html'`.
+
 ### Changed
 
 - **Page model frozen** (`@experimental` API): `PageItem` page-frame
