@@ -15,6 +15,10 @@ follows [Semantic Versioning](https://semver.org/).
 - **Tagged lists: Lbl elements** — list-item markers ("1.", "•") get their
   own `Lbl` structure element, so assistive technology announces the label
   separately from the item body.
+- **PDF encryption (AES-256)** — `encrypt: { userPassword, ownerPassword?,
+  permissions? }` produces an ISO 32000-2 R6 encrypted PDF via WebCrypto
+  (async conversion path only). PDF/A and encryption are mutually exclusive
+  by standard; PDF/UA keeps the accessibility-extraction permission on.
 
 ## [1.2.0] - 2026-06-11
 
