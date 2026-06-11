@@ -492,6 +492,53 @@ export interface ShapeItem extends PageItemBase {
 }
 
 export type PageItem = TextLineItem | BorderItem | FillItem | ImageItem | ShapeItem;
+// Canonical paint order of a laid-out page (oop-design §3.2): fills under
+// everything, then images, borders, vector shapes, finally text. ONE owner
+// for every writer (pdf emit, svg, future canvas) — and the switch is
+// exhaustive, so a new PageItem kind refuses to compile until each group
+// has a home. Order within a group is the layout's emission order.
+export interface PagePaintPlan {
+  readonly fills: ReadonlyArray<FillItem>;
+  readonly images: ReadonlyArray<ImageItem>;
+  readonly borders: ReadonlyArray<BorderItem>;
+  readonly shapes: ReadonlyArray<ShapeItem>;
+  readonly lines: ReadonlyArray<TextLineItem>;
+}
+
+export function paintPlan(commands: ReadonlyArray<PageItem>): PagePaintPlan {
+  const fills: Array<FillItem> = [];
+  const images: Array<ImageItem> = [];
+  const borders: Array<BorderItem> = [];
+  const shapes: Array<ShapeItem> = [];
+  const lines: Array<TextLineItem> = [];
+  for (const c of commands) {
+    switch (c.type) {
+      case 'fill':
+        fills.push(c);
+        break;
+      case 'image':
+        images.push(c);
+        break;
+      case 'border':
+        borders.push(c);
+        break;
+      case 'shape':
+        shapes.push(c);
+        break;
+      case 'line':
+        lines.push(c);
+        break;
+      default:
+        assertNeverPageItem(c);
+    }
+  }
+  return { fills, images, borders, shapes, lines };
+}
+
+function assertNeverPageItem(item: never): never {
+  throw new Error(`Unhandled PageItem kind: ${String((item as PageItem).type)}`);
+}
+
 export type DrawCommand = PageItem; // internal alias during the stage-3 migration
 
 // The seam between the two halves of the pipeline (ir-design §6 / stage 3):

@@ -22,6 +22,7 @@ import type {
 import type { PathSegment, VectorShape } from '@/pdf/vector-graphics';
 
 import { FEATURES } from '@/core/ir';
+import { paintPlan } from '@/pdf/styled-page-renderer';
 
 const PAGE_GAP = 12;
 
@@ -71,18 +72,16 @@ function emitPage(
   losses: Array<Loss>,
 ): void {
   const H = page.height; // y-flip: svgY = H - pdfY
-  // Paint order mirrors the PDF emit: fills → images → borders → shapes → text.
-  const byType = (t: PageItem['type']) => page.commands.filter((c) => c.type === t);
+  // The shared canonical paint order — one owner for every writer.
+  const plan = paintPlan(page.commands);
 
-  for (const f of byType('fill')) {
-    if (f.type !== 'fill') continue;
+  for (const f of plan.fills) {
     out.push(
       `<rect x="${fmt(f.x)}" y="${fmt(H - f.y - f.height)}" width="${fmt(f.width)}" height="${fmt(f.height)}" fill="#${f.fillColorHex}"/>`,
     );
   }
 
-  for (const img of byType('image')) {
-    if (img.type !== 'image') continue;
+  for (const img of plan.images) {
     const href = imageHref(img.imageResourceName, laid);
     if (!href) continue;
     out.push(
@@ -90,8 +89,7 @@ function emitPage(
     );
   }
 
-  for (const b of byType('border')) {
-    if (b.type !== 'border') continue;
+  for (const b of plan.borders) {
     const x2 = b.x + b.width;
     const yTop = H - b.y - b.height;
     const yBottom = H - b.y;
@@ -108,13 +106,11 @@ function emitPage(
     );
   }
 
-  for (const sh of byType('shape')) {
-    if (sh.type !== 'shape') continue;
+  for (const sh of plan.shapes) {
     emitShape(out, sh.shape, H);
   }
 
-  for (const t of byType('line')) {
-    if (t.type !== 'line') continue;
+  for (const t of plan.lines) {
     emitTextLine(out, t, H, losses);
   }
 }

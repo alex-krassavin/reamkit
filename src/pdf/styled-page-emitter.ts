@@ -30,9 +30,9 @@ import type {
 } from '@/pdf/styled-page-renderer';
 import type { VectorShape } from '@/pdf/vector-graphics';
 import type { PdfDocument } from '@/pdf/writer';
+import { A4_HEIGHT, A4_WIDTH, paintPlan } from '@/pdf/styled-page-renderer';
 import { emitVectorShape } from '@/pdf/vector-graphics';
 import { reorderVisual, reverseByCodePoint } from '@/core/bidi';
-import { A4_HEIGHT, A4_WIDTH } from '@/pdf/styled-page-renderer';
 import { embedTtfFont } from '@/pdf/cid-font';
 import { embedAssociatedFile } from '@/pdf/embedded-file';
 import { buildSrgbIccProfile } from '@/pdf/icc-profile';
@@ -392,7 +392,8 @@ function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTag
   // Cell backgrounds (fills) first — they sit underneath text and borders.
   // In tagged PDFs they are layout decoration → wrapped as an /Artifact so no
   // page content sits outside the structure tree (PDF/A-1a §6.3.2).
-  const fills = commands.filter((c) => c.type === 'fill');
+  const plan = paintPlan(commands);
+  const fills = plan.fills;
   if (fills.length > 0) {
     if (tagging) out.push('/Artifact BMC');
     out.push('q');
@@ -418,9 +419,7 @@ function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTag
   // artifacts; anything else a bare artifact.
   // Drop images whose resource failed to embed (unsupported/corrupt) — they have
   // no XObject, so a `/<name> Do` would be a dangling reference.
-  const images = commands.filter(
-    (c): c is ImageItem => c.type === 'image' && c.imageResourceName !== '',
-  );
+  const images = plan.images.filter((c) => c.imageResourceName !== '');
   emitTaggedRuns(out, images, tagging, (img) => {
     // ISO 32000-1 §8.9.5.1 — Image XObject placement.
     // q             save graphics state
@@ -435,7 +434,7 @@ function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTag
     out.push('Q');
   });
 
-  const borders = commands.filter((c) => c.type === 'border');
+  const borders = plan.borders;
   if (borders.length > 0) {
     if (tagging) out.push('/Artifact BMC');
     out.push('q');
@@ -487,12 +486,12 @@ function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTag
   // commands) land on top of shape fills. In tagged mode a shape/chart carries
   // its Figure structId → /Figure marked content (contiguous chart shapes share
   // one MCID); decorative shapes fall back to a bare artifact.
-  const shapes = commands.filter((c) => c.type === 'shape');
+  const shapes = plan.shapes;
   emitTaggedRuns(out, shapes, tagging, (sh) => {
     for (const op of emitVectorShape(sh.shape)) out.push(op);
   });
 
-  const lines = commands.filter((c) => c.type === 'line');
+  const lines = plan.lines;
   if (lines.length > 0) {
     let inBT = false;
     let lastFont = '';
