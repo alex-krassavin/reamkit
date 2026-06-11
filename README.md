@@ -147,9 +147,10 @@ automatically from the document's `docProps/core.xml`), `attachments`
 
 ### Lower-level APIs
 
-- `docxReader` / `xlsxReader`, `layoutStyledDocument`, `svgWriter` — the
-  `@experimental` reader/writer interfaces of the interlayer, for building
-  custom pipelines (and keeping unused formats out of your bundle).
+- `docxReader` / `xlsxReader`, `svgWriter` — the `@experimental` reader/writer
+  interfaces of the interlayer, for building custom pipelines (and keeping
+  unused formats out of your bundle); `layoutStyledDocument` produces the
+  frozen page model (`PageItem` pages in a top-left `Pt` frame) they consume.
 - `renderStyledPdf` drives the layout engine directly; the typed document
   model is on the `reamkit/document-model` subpath.
 
