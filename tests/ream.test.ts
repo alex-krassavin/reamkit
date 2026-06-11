@@ -4,7 +4,8 @@ import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
 import { buildXlsx } from './fixtures/build-xlsx';
-import { Ream, convertDocxToPdfSync, convertXlsxToPdfSync } from '@/index';
+import { Ream } from '@/index';
+import { convertDocxToPdfSync, convertXlsxToPdfSync } from '@/core/converter';
 import { ConversionLossError } from '@/core/ir';
 import { remoteFontProvider } from '@/core/fonts/provider';
 

@@ -10,11 +10,10 @@ runtimes.
 
 ## Install
 
-The package is published as `reamkit`. It is currently an **alpha**, so install the
-`alpha` dist-tag:
+The package is published as `reamkit`:
 
 ```sh
-npm install reamkit@alpha
+npm install reamkit
 ```
 
 Runtime dependencies are minimal: `fflate` (ZIP/Deflate) and `fast-xml-parser`.

@@ -1,29 +1,19 @@
 // Public API for Ream.
 //
-// The package converts Word (.docx) and Excel (.xlsx) documents to PDF,
-// implemented from the ECMA-376 and ISO 32000 specifications without wrapping
-// LibreOffice, headless Office, or any commercial SDK.
+// The package converts Word (.docx) and Excel (.xlsx) documents to PDF (and an
+// SVG page preview), implemented from the ECMA-376 and ISO 32000 specifications
+// without wrapping LibreOffice, headless Office, or any commercial SDK.
 //
 // Typical use:
 //
-//   import { convertDocxToPdf } from 'reamkit';
-//   const pdf = convertDocxToPdf(docxBytes, { fonts: { regular: robotoBytes } });
+//   import { Ream } from 'reamkit';
+//   const doc = Ream.parse(bytes);            // docx or xlsx — sniffed
+//   const pdf = await doc.convert('pdf');     // one parse, any target
 //
-// Advanced consumers can drive the layout engine directly via renderStyledPdf,
-// supply a hyphenator, or import the typed document model from the
+// Advanced consumers can build custom pipelines from the reader/writer
+// interfaces, drive the layout engine directly via renderStyledPdf, supply a
+// hyphenator, or import the typed document model from the
 // "reamkit/document-model" subpath.
-
-// --- Converters (the main entry points) ---
-// convertDocxToPdf / convertXlsxToPdf are async and download an open substitute
-// font automatically when none is supplied. The *Sync variants are synchronous
-// and require the caller to pass fonts.
-export {
-  convertDocxToPdf,
-  convertXlsxToPdf,
-  convertDocxToPdfSync,
-  convertXlsxToPdfSync,
-} from '@/core/converter';
-export type { ConvertDocxOptions, ConvertXlsxOptions } from '@/core/converter';
 
 // --- Remote fonts (used by the auto-download path; exported for customisation) ---
 export { fetchFontSet, resolveFamilyKey } from '@/core/fonts';

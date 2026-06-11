@@ -31,7 +31,7 @@ export interface ConvertDocxOptions extends Omit<StyledRenderOptions, 'registry'
 /**
  * Synchronous one-shot conversion (requires `fonts`/`fontBytes`, no network).
  *
- * @deprecated Use `Ream.parse(bytes).convert('pdf', options)`.
+ * Internal since 1.0 — see the async variant above.
  */
 export function convertDocxToPdfSync(docx: Uint8Array, options: ConvertDocxOptions): Uint8Array {
   const fonts: FontBytesByVariant | undefined =
@@ -108,8 +108,8 @@ export function detectDocxFamilyKeys(docx: Uint8Array): Set<FamilyKey> {
  * One-shot .docx → PDF (auto-downloads a substitute font set when the caller
  * supplies none; zero network with `fonts`/`fontBytes`).
  *
- * @deprecated Use `Ream.parse(bytes).convert('pdf', options)` — one parse,
- * any number of targets. Kept for 0.1.x compatibility.
+ * Internal since 1.0 — the public entry is `Ream.parse(bytes).convert('pdf')`;
+ * the createConverter facade and the test suite drive this directly.
  */
 export async function convertDocxToPdf(
   docx: Uint8Array,

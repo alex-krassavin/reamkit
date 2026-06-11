@@ -60,7 +60,7 @@ export async function convertXlsxToPdf(
 /**
  * Synchronous one-shot conversion (requires `fonts`/`fontBytes`).
  *
- * @deprecated Use `Ream.parse(bytes).convert('pdf', options)`.
+ * Internal since 1.0 — see the async variant above.
  */
 export function convertXlsxToPdfSync(xlsx: Uint8Array, options: ConvertXlsxOptions): Uint8Array {
   const fonts: FontBytesByVariant | undefined =

@@ -6,11 +6,11 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.2.0-alpha.0]
+## [1.0.0]
 
-The interlayer release: documents now parse once into a format-neutral tree
-(**FlowDoc**) and convert to any target from there — and the public face of
-the library is the new `Ream` class.
+The interlayer release — and the first stable major. Documents parse once
+into a format-neutral tree (**FlowDoc**) and convert to any target from
+there; the public face of the library is the `Ream` class.
 
 ### Added
 
@@ -47,11 +47,13 @@ the library is the new `Ream` class.
 - README and the docs site are rewritten around the `Ream` API, with an
   Examples page (PDF/A, signatures, providers, strict mode, recipes).
 
-### Deprecated
+### Removed (breaking)
 
-- The one-shot `convertDocxToPdf` / `convertXlsxToPdf` (+`Sync`) functions —
-  use `Ream.parse(bytes).convert('pdf', options)`. They keep working through
-  the 0.2.x line.
+- The one-shot `convertDocxToPdf` / `convertXlsxToPdf` (+`Sync`) functions
+  and their option types are no longer exported — use
+  `Ream.parse(bytes).convert('pdf', options)`. Custom pipelines and
+  bundle-size-sensitive consumers build on the `@experimental`
+  reader/writer interfaces instead.
 
 ### Fixed
 
@@ -86,6 +88,6 @@ layout engine. Browser-first; the caller supplies fonts.
 - **Tooling** — aligned to `@tanstack/config` (Vite build, ESLint, publint +
   are-the-types-wrong); MIT-licensed; tag-triggered npm release workflow.
 
-[Unreleased]: https://github.com/alex-krassavin/reamkit/compare/v0.2.0-alpha.0...HEAD
-[0.2.0-alpha.0]: https://github.com/alex-krassavin/reamkit/compare/v0.1.0-alpha.0...v0.2.0-alpha.0
+[Unreleased]: https://github.com/alex-krassavin/reamkit/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/alex-krassavin/reamkit/compare/v0.1.0-alpha.0...v1.0.0
 [0.1.0-alpha.0]: https://github.com/alex-krassavin/reamkit/releases/tag/v0.1.0-alpha.0
