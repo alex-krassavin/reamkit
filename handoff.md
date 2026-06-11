@@ -685,6 +685,18 @@ C1 единый разбор цветового узла DrawingML (return-first
 B4 signPdf ищет полный fixed-width плейсхолдер (decoy-attachment тест), C5 картинки колонтитулов
 резолвятся по rels СВОЕЙ части (OPC §9.3; фикстура buildDocxFromBody выросла headerImages).
 
+**Stage 6 — стабилизация IR (в процессе, шаги 1-3 ✅).** FlowDoc-трансформы в reader'ах: (1) applyNumbering →
+core/numbering — body несёт материализованные маркеры списков, flow.numbering = round-trip сырьё, проектор его
+не шлёт; (2) segmentLevels в core/bidi — протокол UAX#9 (RLE/LRE/PDF-обёртки, U+FFFC, realIndex c -1) ушёл из
+PDF-слоя, рендерер-токенизатор = одно-вызовный клиент; (3) **вариант А**: каскад стилей в reader'ах —
+resolveBodyStyles (после нумерации; параграфы/раны/ячейки/shape-text), body несёт ФИНАЛЬНЫЕ пропсы,
+ResolvedParagraphProperties проносит numbering-ref (tagged L/LI) как styleId; xlsx резолвит поверх EMPTY
+(единый контракт); проектор шлёт EMPTY_STYLE_SHEET — резолв в рендерере идемпотентен (мемо-no-op), прямые
+raw-вызовы renderStyledPdf живут. v0-девиация из flow.ts закрыта. Байт-в-байт на каждом шаге, 456 тестов.
+Остаток — S6-4 заморозка PageDoc: Pt-брендинг координат, top-left флип (сменит svg-снапшоты осознанно),
+вынос layout в src/layout/, сужение LaidOutDocument (A13). Попутно в этой серии: rels-кэш OpcPackage,
+краш-фикс measureSingleLine (multi-family таблицы), мемоизация каскада, vector-model→core, декомпозиция wrap().
+
 **Мотивация.** Сейчас parser → representer прибиты друг к другу: добавление
 нового направления (например, PDF→Word) требует заново «как-то считывать,
 как-то собирать». Вводим явную прослойку: входные адаптеры (parser → дерево) и
