@@ -44,7 +44,8 @@ import {
 export function writeHtml(flow: FlowDoc): WriteResult {
   const losses: Array<Loss> = [];
   const out: Array<string> = [];
-  const ctx: EmitCtx = { resources: flow.resources, losses };
+  const notes = collectNoteNumbers(flow);
+  const ctx: EmitCtx = { resources: flow.resources, losses, notes };
 
   const lang = flow.language ?? 'en-US';
   const title = flow.info?.title ?? 'Document';
@@ -71,6 +72,9 @@ export function writeHtml(flow: FlowDoc): WriteResult {
   }
 
   for (const el of flow.body) emitBlock(out, el, ctx);
+
+  emitNotesSection(out, flow.footnotes, ctx.notes.footnotes, 'fn', ctx);
+  emitNotesSection(out, flow.endnotes, ctx.notes.endnotes, 'en', ctx);
 
   out.push('</article>');
   out.push('</body>');
@@ -106,11 +110,62 @@ const BASE_CSS = [
   'th{text-align:inherit}',
   '.tab{display:inline-block;min-width:18pt}',
   'img{vertical-align:baseline}',
+  '.notes{margin-top:18pt;font-size:smaller}',
+  '.notes hr{margin:0 0 6pt;border:none;border-top:0.75pt solid #000;width:144pt;margin-left:0}',
 ].join('');
 
 interface EmitCtx {
   readonly resources: ResourceStore;
   readonly losses: Array<Loss>;
+  // Note id → sequential number, assigned in reading order of references.
+  readonly notes: { footnotes: ReadonlyMap<string, number>; endnotes: ReadonlyMap<string, number> };
+}
+
+// Number the notes by the order their references appear in the body (§17.11:
+// footnotes and endnotes each keep their own counter).
+function collectNoteNumbers(flow: FlowDoc): EmitCtx['notes'] {
+  const footnotes = new Map<string, number>();
+  const endnotes = new Map<string, number>();
+  const visit = (els: ReadonlyArray<BodyElement>): void => {
+    for (const el of els) {
+      if (el.kind === 'paragraph') {
+        for (const r of el.paragraph.runs) {
+          if (r.footnoteRef !== undefined && !footnotes.has(r.footnoteRef)) {
+            footnotes.set(r.footnoteRef, footnotes.size + 1);
+          }
+          if (r.endnoteRef !== undefined && !endnotes.has(r.endnoteRef)) {
+            endnotes.set(r.endnoteRef, endnotes.size + 1);
+          }
+        }
+      } else if (el.kind === 'table') {
+        for (const row of el.table.rows) for (const cell of row.cells) visit(cell.content);
+      } else if (el.kind === 'shape' && el.shape.text) {
+        visit(el.shape.text.content);
+      }
+    }
+  };
+  visit(flow.body);
+  return { footnotes, endnotes };
+}
+
+// The notes block: an <ol> whose items anchor back to their references.
+function emitNotesSection(
+  out: Array<string>,
+  content: ReadonlyMap<string, ReadonlyArray<BodyElement>> | undefined,
+  numbers: ReadonlyMap<string, number>,
+  prefix: 'fn' | 'en',
+  ctx: EmitCtx,
+): void {
+  if (!content || numbers.size === 0) return;
+  const ordered = [...numbers.entries()].sort((a, b) => a[1] - b[1]);
+  out.push('<section class="notes"><hr/><ol>');
+  for (const [id, n] of ordered) {
+    const body = content.get(id);
+    out.push(`<li id="${prefix}-${n}">`);
+    if (body) for (const el of body) emitBlock(out, el, ctx);
+    out.push(`<a href="#${prefix}ref-${n}">\u21a9</a></li>`);
+  }
+  out.push('</ol></section>');
 }
 
 function emitBlock(out: Array<string>, el: BodyElement, ctx: EmitCtx): void {
@@ -186,6 +241,18 @@ function paragraphCss(r: ResolvedParagraphProperties): string {
 // ---------------------------------------------------------------------------
 
 function runHtml(run: Run, p: Paragraph, ctx: EmitCtx): string {
+  if (run.footnoteRef !== undefined || run.endnoteRef !== undefined) {
+    const isFoot = run.footnoteRef !== undefined;
+    const n = isFoot
+      ? ctx.notes.footnotes.get(run.footnoteRef)
+      : ctx.notes.endnotes.get(run.endnoteRef!);
+    if (n === undefined) return '';
+    const prefix = isFoot ? 'fn' : 'en';
+    return `<sup><a href="#${prefix}-${n}" id="${prefix}ref-${n}">${n}</a></sup>`;
+  }
+  // Inside note content the w:footnoteRef placeholder marks the note's own
+  // number — the <ol> renders it, so the placeholder is dropped.
+  if (run.noteNumber) return '';
   if (run.math !== undefined) {
     ctx.losses.push({
       severity: 'dropped',

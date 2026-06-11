@@ -496,6 +496,9 @@ function parseRun(
   let inlineImage: InlineImage | undefined;
   let fldChar: 'begin' | 'separate' | 'end' | undefined;
   let instrText: string | undefined;
+  let footnoteRef: string | undefined;
+  let endnoteRef: string | undefined;
+  let noteNumber = false;
   for (const child of expandMcChildren(poChildren(r))) {
     if (poIs(child, 'w:rPr')) continue;
     if (poIs(child, 'w:fldChar')) {
@@ -505,6 +508,20 @@ function parseRun(
     }
     if (poIs(child, 'w:instrText')) {
       instrText = (instrText ?? '') + poText(child);
+      continue;
+    }
+    if (poIs(child, 'w:footnoteReference')) {
+      const id = poAttr(child, 'id');
+      if (id !== undefined) footnoteRef = id;
+      continue;
+    }
+    if (poIs(child, 'w:endnoteReference')) {
+      const id = poAttr(child, 'id');
+      if (id !== undefined) endnoteRef = id;
+      continue;
+    }
+    if (poIs(child, 'w:footnoteRef') || poIs(child, 'w:endnoteRef')) {
+      noteNumber = true;
       continue;
     }
     if (poIs(child, 'w:t')) {
@@ -542,6 +559,9 @@ function parseRun(
       properties,
       ...(inlineImage ? { inlineImage } : {}),
       ...(pageBreak ? { pageBreak: true } : {}),
+      ...(footnoteRef !== undefined ? { footnoteRef } : {}),
+      ...(endnoteRef !== undefined ? { endnoteRef } : {}),
+      ...(noteNumber ? { noteNumber: true } : {}),
     },
     ...(fldChar ? { fldChar } : {}),
     ...(instrText !== undefined ? { instrText } : {}),
@@ -553,4 +573,29 @@ function elementTag(node: PoNode): string | undefined {
     if (key !== ':@' && key !== '#text') return key;
   }
   return undefined;
+}
+
+// §17.11 — footnotes.xml / endnotes.xml. Returns content by id; the
+// separator / continuationSeparator / continuationNotice stubs (negative ids
+// or an explicit w:type) are skipped — the layout draws its own separator.
+export function parseNotes(
+  notesXml: Uint8Array,
+  rootTag: 'w:footnotes' | 'w:endnotes',
+  noteTag: 'w:footnote' | 'w:endnote',
+  ctx: ParseContext = DEFAULT_PARSE_CONTEXT,
+): Map<string, Array<BodyElement>> {
+  const xml = decoder.decode(notesXml);
+  const tree = parser.parse(xml) as Array<PoNode>;
+  const root = poFindByPath(tree, [rootTag]);
+  const out = new Map<string, Array<BodyElement>>();
+  if (!root) return out;
+  for (const note of poChildren(root)) {
+    if (!poIs(note, noteTag)) continue;
+    const type = poAttr(note, 'type');
+    if (type !== undefined && type !== 'normal') continue;
+    const id = poAttr(note, 'id');
+    if (id === undefined) continue;
+    out.set(id, parseBodyElements(poChildren(note), ctx));
+  }
+  return out;
 }

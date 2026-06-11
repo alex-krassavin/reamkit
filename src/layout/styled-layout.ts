@@ -145,6 +145,10 @@ export interface StyledRenderOptions {
   // body[sections[N-1].endIndex..sections[N].endIndex)).
   readonly sections?: ReadonlyArray<Section>;
   readonly headersFooters?: ReadonlyMap<string, ReadonlyArray<BodyElement>>;
+  // §17.11 notes content by id. Footnotes render in a reserved band at the
+  // bottom of the referencing page; endnotes flow after the body.
+  readonly footnotes?: ReadonlyMap<string, ReadonlyArray<BodyElement>>;
+  readonly endnotes?: ReadonlyMap<string, ReadonlyArray<BodyElement>>;
   // Content-addressed binary store; image nodes reference it by ResourceId.
   readonly resources?: ResourceStore;
   // Parsed charts keyed by relationship id (ChartBlock.chartRelId). Supplied by

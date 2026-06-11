@@ -21,6 +21,8 @@ export function flowRenderOptions(flow: FlowDoc): FlowRenderOptions {
     ...(flow.sections.length > 0 ? { sections: flow.sections } : {}),
     ...(flow.section ? { section: flow.section } : {}),
     ...(flow.headersFooters ? { headersFooters: flow.headersFooters } : {}),
+    ...(flow.footnotes ? { footnotes: flow.footnotes } : {}),
+    ...(flow.endnotes ? { endnotes: flow.endnotes } : {}),
     resources: flow.resources,
     ...(flow.charts ? { charts: flow.charts } : {}),
     ...(flow.embeddedFonts ? { embeddedFonts: flow.embeddedFonts } : {}),

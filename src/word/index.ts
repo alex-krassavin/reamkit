@@ -6,6 +6,7 @@ export {
   parseSection,
   parseSections,
   parseHeaderFooter,
+  parseNotes,
   EMPTY_SECTION,
 } from '@/word/document-parser';
 export { parseRunProperties } from '@/word/run-properties';

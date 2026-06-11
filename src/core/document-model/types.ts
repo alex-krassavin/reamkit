@@ -237,6 +237,14 @@ export interface Run {
   // `text` holds the source's cached result. Header/footer rendering
   // substitutes the real number per page; body rendering keeps the cache.
   readonly field?: 'PAGE' | 'NUMPAGES';
+  // §17.11.14 w:footnoteReference / §17.11.6 w:endnoteReference — the run
+  // marks a note reference; the layout assigns sequential numbers in reading
+  // order and renders them superscript.
+  readonly footnoteRef?: string;
+  readonly endnoteRef?: string;
+  // §17.11.13 w:footnoteRef / §17.11.5 w:endnoteRef — inside note content:
+  // render the OWNING note's number here.
+  readonly noteNumber?: true;
   // When set, the run renders this image inline in the line; `text` is ignored.
   readonly inlineImage?: InlineImage;
   // When set, the run is an inline OfficeMath object; `text` is ignored.

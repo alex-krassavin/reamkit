@@ -18,6 +18,10 @@ const NUMBERING_TYPE_OVERRIDE =
   '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>';
 const STYLES_TYPE_OVERRIDE =
   '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>';
+const FOOTNOTES_TYPE_OVERRIDE =
+  '<Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/>';
+const ENDNOTES_TYPE_OVERRIDE =
+  '<Override PartName="/word/endnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml"/>';
 
 const SETTINGS_TYPE_OVERRIDE =
   '<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>';
@@ -59,6 +63,10 @@ export interface BuildDocxOptions {
   readonly numberingXml?: string;
   /** Inner XML of word/styles.xml (the <w:style>/<w:docDefaults> elements). */
   readonly stylesXml?: string;
+  /** Inner XML of word/footnotes.xml (the <w:footnote> elements). */
+  readonly footnotesXml?: string;
+  /** Inner XML of word/endnotes.xml (the <w:endnote> elements). */
+  readonly endnotesXml?: string;
   // Default header/footer (legacy fields, rId10 / rId11).
   readonly headerXml?: string;
   readonly footerXml?: string;
@@ -130,6 +138,8 @@ ${bodyInnerXml}
     [...imageDefaults].join('') +
     (options.numberingXml ? NUMBERING_TYPE_OVERRIDE : '') +
     (options.stylesXml ? STYLES_TYPE_OVERRIDE : '') +
+    (options.footnotesXml ? FOOTNOTES_TYPE_OVERRIDE : '') +
+    (options.endnotesXml ? ENDNOTES_TYPE_OVERRIDE : '') +
     (options.settingsXml ? SETTINGS_TYPE_OVERRIDE : '') +
     (options.themeXml ? THEME_TYPE_OVERRIDE : '') +
     headerSlots.map((s) => headerOverride(s.idx)).join('') +
@@ -149,6 +159,23 @@ ${bodyInnerXml}
 <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
 ${options.stylesXml}
 </w:styles>`,
+    );
+  }
+
+  if (options.footnotesXml) {
+    entries['word/footnotes.xml'] = encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+${options.footnotesXml}
+</w:footnotes>`,
+    );
+  }
+  if (options.endnotesXml) {
+    entries['word/endnotes.xml'] = encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:endnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+${options.endnotesXml}
+</w:endnotes>`,
     );
   }
 

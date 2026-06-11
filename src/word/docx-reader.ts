@@ -4,7 +4,14 @@
 // stay with the converter/facade.
 
 import type { ColorResolver } from '@/core/drawingml/colors';
-import type { BodyElement, Chart, DocumentInfo, Section } from '@/core/document-model';
+import type {
+  BodyElement,
+  Chart,
+  DocumentInfo,
+  Numbering,
+  Section,
+  StyleSheet,
+} from '@/core/document-model';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { ResourceId } from '@/core/ir';
@@ -31,6 +38,7 @@ import {
   loadEmbeddedFonts,
   parseDocument,
   parseHeaderFooter,
+  parseNotes,
   parseNumbering,
   parseSections,
   parseSettings,
@@ -38,6 +46,8 @@ import {
 } from '@/word';
 
 const STYLES_PART = 'word/styles.xml';
+const FOOTNOTES_PART = 'word/footnotes.xml';
+const ENDNOTES_PART = 'word/endnotes.xml';
 const NUMBERING_PART = 'word/numbering.xml';
 const SETTINGS_PART = 'word/settings.xml';
 const CORE_PROPS_PART = 'docProps/core.xml';
@@ -72,6 +82,22 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
 
   const numberingData = pkg.getPart(NUMBERING_PART);
   const numbering = numberingData ? parseNumbering(numberingData) : EMPTY_NUMBERING;
+
+  // §17.11 notes: parsed with per-part resolvers (their rels own their
+  // images/links), then run through the same FlowDoc transforms as the body.
+  const noteCtx = (part: string): ParseContext => ({
+    resolveColor,
+    resolveImage: makeImageResolver(pkg, resources, part),
+    resolveHyperlink: makeHyperlinkResolver(pkg, part),
+  });
+  const footnotesData = pkg.getPart(FOOTNOTES_PART);
+  const rawFootnotes = footnotesData
+    ? parseNotes(footnotesData, 'w:footnotes', 'w:footnote', noteCtx(FOOTNOTES_PART))
+    : undefined;
+  const endnotesData = pkg.getPart(ENDNOTES_PART);
+  const rawEndnotes = endnotesData
+    ? parseNotes(endnotesData, 'w:endnotes', 'w:endnote', noteCtx(ENDNOTES_PART))
+    : undefined;
 
   const settingsData = pkg.getPart(SETTINGS_PART);
   const settings = settingsData ? parseSettings(settingsData) : EMPTY_SETTINGS;
@@ -118,6 +144,12 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
     sections,
     styles,
     numbering,
+    ...(rawFootnotes && rawFootnotes.size > 0
+      ? { footnotes: transformNotes(rawFootnotes, styles, numbering) }
+      : {}),
+    ...(rawEndnotes && rawEndnotes.size > 0
+      ? { endnotes: transformNotes(rawEndnotes, styles, numbering) }
+      : {}),
     headersFooters: resolveHeadersFootersStyles(
       applyNumberingToHeadersFooters(headersFooters, numbering),
       styles,
@@ -193,6 +225,18 @@ function makeImageResolver(
     cache.set(relId, id);
     return id;
   };
+}
+
+// Notes get the same FlowDoc transforms as the body: table styles, list
+// markers, the resolved cascade (each note numbers its own lists, like a
+// header/footer band).
+function transformNotes(
+  notes: Map<string, Array<BodyElement>>,
+  styles: StyleSheet,
+  numbering: Numbering,
+): ReadonlyMap<string, ReadonlyArray<BodyElement>> {
+  for (const content of notes.values()) resolveTableStyles(content, styles);
+  return resolveHeadersFootersStyles(applyNumberingToHeadersFooters(notes, numbering), styles);
 }
 
 // §17.16.22 + OPC §9.3: hyperlink relationship ids are scoped to their OWNING
