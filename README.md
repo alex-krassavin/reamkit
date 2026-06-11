@@ -168,8 +168,9 @@ repeated titles, page breaks), DrawingML shapes and charts, OMML math,
 Type0+CIDFontType2 embedding with subsetting, Knuth-Plass line breaking,
 Liang hyphenation, OpenType ligatures/kerning + Arabic cursive joining,
 BiDi (UAX #9), hyperlinks (PDF link annotations + HTML anchors,
-scheme-allowlisted), tagged PDF, PDF/A-1/2/3 (a/b/u), digital signatures
-(PKCS#7/ECDSA/PAdES/RFC 3161), SVG page preview, flowed HTML export.
+scheme-allowlisted), tagged PDF, PDF/A-1/2/3 (a/b/u), PDF/UA-1, AES-256
+encryption, digital signatures (PKCS#7/ECDSA/PAdES/RFC 3161), SVG page
+preview, flowed HTML export. Reads OOXML Transitional and Strict.
 
 See `handoff.md` for the full feature matrix and known limitations.
 

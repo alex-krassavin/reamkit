@@ -23,14 +23,18 @@ doesn't yet.
 - **Footnotes and endnotes** — notes at the bottom of the referencing page behind
   Word's separator rule; endnotes after the body.
 - Inline and floating images (PNG / JPEG / JPEG2000); floating drawings
-  (`wp:anchor`, wrap-none incl. `behindDoc` — watermarks, stamps, text boxes)
-  render at their anchored position outside the text flow.
+  (`wp:anchor`) render outside the text flow — wrap-none (incl. `behindDoc`)
+  for watermarks/stamps/text boxes, and side wrapping (`square`/`tight`/
+  `through`) where the body text flows around the exclusion area.
 - Tracked changes (`w:ins` / `w:del`).
+- Reads both **Transitional and Strict** (ISO 29500) packages; block-level
+  content controls (`w:sdt`) flow through.
 
 **SpreadsheetML (§18)**
 - Grids, shared strings, number formats and dates (incl. the 1904 date system).
 - The print model — gridline suppression, print area, fit-to-page scaling, repeated
   print titles, manual page breaks, horizontal/vertical centering.
+- Charts anchored to the sheet (the worksheet drawing part) render after the grid.
 
 **Graphics & math**
 - DrawingML shapes (preset and custom geometry, gradients, group shapes, theme colors).
@@ -48,9 +52,10 @@ doesn't yet.
 - PDF/A-1, -2, -3 at levels a / b / u — all formally **veraPDF-validated**.
 - **PDF/UA-1** (ISO 14289-1) — veraPDF-validated, alone or combined with PDF/A-2a
   in a single file.
-- Tagged PDF — logical structure tree, headings, tables, lists, figures with alt text,
-  links with alternate descriptions, footnote `Note` elements, `/Lang`, pagination
-  artifacts.
+- Tagged PDF — logical structure tree, headings, tables, lists (with `Lbl`
+  markers), figures with alt text, links with alternate descriptions, footnote
+  `Note` elements, `/Lang`, pagination artifacts.
+- **Encryption** — AES-256 (ISO 32000-2 R6) via WebCrypto, with permission flags.
 - Digital signatures — PKCS#7 detached, ECDSA; object streams; JPEG2000 images.
 
 ## Not yet

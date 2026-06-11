@@ -4,7 +4,7 @@ All notable changes to **Ream** (`reamkit`) are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.3.0] - 2026-06-12
 
 ### Added
 
@@ -23,6 +23,17 @@ follows [Semantic Versioning](https://semver.org/).
   permissions? }` produces an ISO 32000-2 R6 encrypted PDF via WebCrypto
   (async conversion path only). PDF/A and encryption are mutually exclusive
   by standard; PDF/UA keeps the accessibility-extraction permission on.
+
+
+### Changed
+
+- **OOXML Strict (ISO 29500) packages** now load: relationship types are
+  matched by name against both the Transitional (`schemas.openxmlformats.org`)
+  and Strict (`purl.oclc.org`) namespaces.
+- **Block-level content controls** (`w:sdt`) unwrap their content into the
+  document flow instead of dropping it.
+- **Password-protected (encrypted) OOXML** files now fail with a clear message
+  identifying the file as an OLE compound file, instead of a cryptic ZIP error.
 
 ## [1.2.0] - 2026-06-11
 
