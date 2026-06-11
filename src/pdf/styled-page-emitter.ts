@@ -34,6 +34,7 @@ import { paintPlan } from '@/layout/page-doc';
 import { A4_HEIGHT, A4_WIDTH } from '@/layout/styled-layout';
 import { emitVectorShape } from '@/pdf/vector-graphics';
 import { reorderVisual, reverseByCodePoint } from '@/core/bidi';
+import { sanitizeHref } from '@/core/links';
 import { embedTtfFont } from '@/pdf/cid-font';
 import { embedAssociatedFile } from '@/pdf/embedded-file';
 import { buildSrgbIccProfile } from '@/pdf/icc-profile';
@@ -69,8 +70,10 @@ export function emitStyledPdf(
   const pagesDict: PdfDict = dict({ Type: name('Pages'), Count: 0, Kids: [] });
   const pagesRef = doc.add(pagesDict);
   // First page's dict object, kept mutable so a signature widget can be added to
-  // its /Annots after the catalog is assembled.
+  // its /Annots after the catalog is assembled (merging with link annotations
+  // when the first page carries both).
   let firstPageDict: PdfDict | undefined;
+  let firstPageAnnots: Array<PdfValue> | undefined;
   const fontResourceDict = buildFontResourceDict(laid.fontResources, embeddedFonts);
   const xobjectResourceDict = buildXObjectResourceDict(laid.imageResources, embeddedImages);
   const resourcesDict = dict({
@@ -107,7 +110,7 @@ export function emitStyledPdf(
         tagFor: (structId) => builder.node(structId).type,
       };
     }
-    const contentBytes = emitPageContent(page, pageTagging);
+    const { content: contentBytes, links } = emitPageContent(page, pageTagging);
     const contentsRef = doc.add(stream({}, contentBytes));
     const pageEntries: Record<string, PdfValue> = {
       Type: name('Page'),
@@ -116,6 +119,25 @@ export function emitStyledPdf(
       Resources: resourcesDict,
       Contents: ref(contentsRef.id),
     };
+    if (links.length > 0) {
+      // ISO 32000-1 §12.5.6.5 Link annotation + §12.6.4.7 URI action. The
+      // schemes were allowlisted at collection time (core/links).
+      const annots: Array<PdfValue> = links.map((l) =>
+        ref(
+          doc.add(
+            dict({
+              Type: name('Annot'),
+              Subtype: name('Link'),
+              Rect: [l.rect[0], l.rect[1], l.rect[2], l.rect[3]],
+              Border: [0, 0, 0],
+              A: dict({ S: name('URI'), URI: l.href }),
+            }),
+          ).id,
+        ),
+      );
+      pageEntries['Annots'] = annots;
+      if (pageIndex === 0) firstPageAnnots = annots;
+    }
     if (transparencyGroup) pageEntries['Group'] = transparencyGroup;
     if (pageTagging?.assigned) {
       // §14.7.4.4 — this page's key into /ParentTree; §14.8.4.2 — structure tab
@@ -216,7 +238,8 @@ export function emitStyledPdf(
       options.signaturePlaceholder,
       pageRefs[0]!,
     );
-    firstPageDict.set('Annots', [ref(fieldRef.id)]);
+    if (firstPageAnnots) firstPageAnnots.push(ref(fieldRef.id));
+    else firstPageDict.set('Annots', [ref(fieldRef.id)]);
     catalogEntries['AcroForm'] = acroForm;
   }
 
@@ -392,9 +415,18 @@ function emitTaggedRuns<T extends PageItem>(
   close();
 }
 
-function emitPageContent(page: LaidOutPage, tagging?: PageTagging): Uint8Array {
+interface LinkRegion {
+  readonly href: string;
+  readonly rect: readonly [number, number, number, number]; // PDF y-up
+}
+
+function emitPageContent(
+  page: LaidOutPage,
+  tagging?: PageTagging,
+): { content: Uint8Array; links: Array<LinkRegion> } {
   const commands = page.commands;
-  if (commands.length === 0) return new Uint8Array(0);
+  const links: Array<LinkRegion> = [];
+  if (commands.length === 0) return { content: new Uint8Array(0), links };
   // PageDoc coordinates are top-left/y-down (the frozen schema); PDF paints in
   // a y-up bottom-left frame, so every page-frame y converts as `H - y` here.
   const H = page.height;
@@ -614,6 +646,39 @@ function emitPageContent(page: LaidOutPage, tagging?: PageTagging): Uint8Array {
       const line = cmd.line;
       const originX = cmd.originX;
       const baselineY = H - cmd.baselineY; // top-left frame → PDF y-up
+      // Link regions (ISO 32000-1 §12.5.6.5): contiguous tokens sharing an
+      // href become one clickable rect per line. The box mirrors the layout's
+      // line metrics (ascent: font size vs math ascent; descent: lineDescent's
+      // 0.2·fs rule). Schemes are allowlisted here (core/links); the PDF path
+      // has no loss channel, so a disallowed scheme simply stays plain text —
+      // the same fallback the HTML writer reports as a degraded loss.
+      const lineFs = line.maxFontSizePt || 12;
+      const linkAscent = Math.max(lineFs, line.mathAscentPt ?? 0);
+      const linkDescent = Math.max(lineFs * 0.2, line.mathDescentPt ?? 0);
+      let linkHref: string | undefined;
+      let linkX0 = 0;
+      let linkX1 = 0;
+      const flushLink = () => {
+        if (linkHref === undefined) return;
+        const safe = sanitizeHref(linkHref);
+        if (safe !== undefined) {
+          links.push({
+            href: safe,
+            rect: [linkX0, baselineY - linkDescent, linkX1, baselineY + linkAscent],
+          });
+        }
+        linkHref = undefined;
+      };
+      const trackLink = (href: string | undefined, x0: number, x1: number) => {
+        if (href !== linkHref) {
+          flushLink();
+          if (href !== undefined) {
+            linkHref = href;
+            linkX0 = x0;
+          }
+        }
+        if (href !== undefined) linkX1 = x1;
+      };
       const extraPerSpace = computeJustifyExtra(line);
       const hasImageToken = line.tokens.some((t) => t.kind === 'image');
       const hasMathToken = line.tokens.some((t) => t.kind === 'math');
@@ -635,11 +700,13 @@ function emitPageContent(page: LaidOutPage, tagging?: PageTagging): Uint8Array {
         for (const ti of order) {
           const tok = line.tokens[ti]!;
           if (tok.kind === 'image') {
+            flushLink();
             emitImageToken(tok, x, baselineY);
             x += tok.widthPt;
             continue;
           }
           if (tok.kind === 'math') {
+            flushLink();
             emitMathToken(tok, x, baselineY);
             x += tok.widthPt;
             continue;
@@ -651,21 +718,28 @@ function emitPageContent(page: LaidOutPage, tagging?: PageTagging): Uint8Array {
           switchFontIfNeeded(tok);
           out.push(`1 0 0 1 ${formatNumber(x)} ${formatNumber(baselineY)} Tm`);
           out.push(`<${encodeToken(tok)}> Tj`);
+          const tokenX0 = x;
           x += tok.widthPt;
           if (tok.isSpace) x += extraPerSpace;
+          trackLink(tok.href, tokenX0, x);
         }
+        flushLink();
       } else {
         if (!inBT) {
           out.push('BT');
           inBT = true;
         }
         out.push(`1 0 0 1 ${formatNumber(originX)} ${formatNumber(baselineY)} Tm`);
+        let x: number = originX;
         for (const tok of line.tokens) {
           if (tok.kind !== 'text') continue; // unreachable here, but TS-narrowed
           switchFontIfNeeded(tok);
           const hex = tok.font.measure.encodeTextAsCidHex(tok.text);
           out.push(`<${hex}> Tj`);
+          trackLink(tok.href, x, x + tok.widthPt);
+          x += tok.widthPt;
         }
+        flushLink();
       }
     };
 
@@ -711,7 +785,7 @@ function emitPageContent(page: LaidOutPage, tagging?: PageTagging): Uint8Array {
     }
   }
 
-  return encoder.encode(out.join('\n'));
+  return { content: encoder.encode(out.join('\n')), links };
 }
 
 // UAX #9 rule L2 over a line's tokens: returns token indices in visual order.

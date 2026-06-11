@@ -335,12 +335,7 @@ function parseParagraph(p: PoNode, ctx: ParseContext): Paragraph {
   return { properties, runs };
 }
 
-function collectRuns(
-  container: PoNode,
-  out: Array<Run>,
-  ctx: ParseContext,
-  href?: string,
-): void {
+function collectRuns(container: PoNode, out: Array<Run>, ctx: ParseContext, href?: string): void {
   for (const child of poChildren(container)) {
     if (poIs(child, 'w:pPr')) continue;
     if (poIs(child, 'w:r')) {

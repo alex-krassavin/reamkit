@@ -30,6 +30,10 @@ export interface TextToken {
   readonly kind: 'text';
   readonly text: string;
   readonly isSpace: boolean;
+  // External hyperlink target inherited from the source run (rels-resolved).
+  // Writers MUST sanitize the scheme (core/links) before emitting anything
+  // clickable.
+  readonly href?: string;
   readonly resolvedRun: ResolvedRunProperties;
   readonly font: FontResource;
   readonly fontSizePt: number;
