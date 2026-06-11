@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.0]
+
 ### Added
 
 - **HTML writer** — `doc.convert('html')` renders the parsed document as a
