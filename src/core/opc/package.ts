@@ -33,6 +33,8 @@ export class OpcPackage {
     private readonly rootRelationships: ReadonlyArray<Relationship>,
   ) {}
 
+  private readonly relsCache = new Map<string, ReadonlyArray<Relationship>>();
+
   static open(buffer: Uint8Array, options: OpcOpenOptions = {}): OpcPackage {
     const maxArchive = options.maxArchiveBytes ?? 128 * MIB;
     const maxEntry = options.maxEntryBytes ?? 256 * MIB;
@@ -103,15 +105,20 @@ export class OpcPackage {
   // ECMA-376 Part 2 §9.3.4 — Part relationships.
   // For a part at path "dir/name.ext" relationships live at
   // "dir/_rels/name.ext.rels". Returns [] if the rels part is absent.
-  getPartRelationships(partPath: string): Array<Relationship> {
+  getPartRelationships(partPath: string): ReadonlyArray<Relationship> {
     const normalized = normalizePath(partPath);
+    // One conversion asks for the main part's rels several times (images,
+    // headers/footers, charts, embedded fonts) — parse each .rels once.
+    const cached = this.relsCache.get(normalized);
+    if (cached) return cached;
     const slash = normalized.lastIndexOf('/');
     const dir = slash >= 0 ? normalized.substring(0, slash) : '';
     const base = slash >= 0 ? normalized.substring(slash + 1) : normalized;
     const relsPath = dir.length > 0 ? `${dir}/_rels/${base}.rels` : `_rels/${base}.rels`;
     const data = this.parts.get(relsPath);
-    if (!data) return [];
-    return parseRelationships(data);
+    const rels = data ? parseRelationships(data) : [];
+    this.relsCache.set(normalized, rels);
+    return rels;
   }
 
   // Resolve a relationship against its source part and return the related
