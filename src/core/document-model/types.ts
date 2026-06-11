@@ -621,6 +621,9 @@ export interface Chart {
   readonly showValues?: boolean; // c:dLbls/c:showVal — print each datum's value
   readonly catAxisTitle?: string; // c:catAx/c:title
   readonly valAxisTitle?: string; // c:valAx/c:title
+  // MS-ODRAWXML chartColorStyle (colorsN.xml): the cycle of series colours;
+  // overrides the built-in Office accent cycle when present.
+  readonly seriesColorCycle?: ReadonlyArray<string>;
 }
 
 export interface ChartBlock {

@@ -49,15 +49,15 @@ import { applyNumberFormat, parseAreaRef, parseTitleRowRange } from '@/excel';
 // Excel "character width" → twips. Calibri 11pt default Maximum Digit Width
 // is ~7 px ≈ 5.25 pt ≈ 105 twips. This is a coarse approximation but the
 // auto-fit pass refines column widths against the actual cell text anyway.
-const TWIPS_PER_EXCEL_CHAR = 105;
+export const TWIPS_PER_EXCEL_CHAR = 105;
 
 // Excel's default column width is 8.43 "characters" ≈ 64px ≈ 960 twips. Used for
 // columns without an explicit <col width="..">.
-const DEFAULT_COL_TWIPS = 960;
+export const DEFAULT_COL_TWIPS = 960;
 
 // Excel's default row height is ~15pt = 300 twips. Used (for the fitToHeight
 // estimate) for rows without an explicit <row ht="..">.
-const DEFAULT_ROW_TWIPS = 300;
+export const DEFAULT_ROW_TWIPS = 300;
 
 // 1 point = 20 twips (Word/Excel unit conversion).
 const TWIPS_PER_POINT = 20;

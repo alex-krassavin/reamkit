@@ -27,7 +27,7 @@ import {
 } from '@/core/style-cascade';
 
 import { FEATURES, ResourceStore } from '@/core/ir';
-import { parseChart } from '@/core/drawingml/chart-parser';
+import { parseChart, withChartColorStyle } from '@/core/drawingml/chart-parser';
 import { DEFAULT_THEME_PALETTE, makeColorResolver } from '@/core/drawingml/colors';
 import { parseTheme } from '@/core/drawingml/theme-parser';
 import { OpcPackage, parseCoreProperties } from '@/core/opc';
@@ -264,7 +264,7 @@ function loadCharts(pkg: OpcPackage, resolveColor: ColorResolver): ReadonlyMap<s
     const resolved = pkg.resolveRelatedPart(MAIN_DOCUMENT_PART, rel);
     if (!resolved) continue;
     const chart = parseChart(resolved.data, resolveColor);
-    if (chart) out.set(rel.id, chart);
+    if (chart) out.set(rel.id, withChartColorStyle(chart, pkg, resolved.path, resolveColor));
   }
   return out;
 }

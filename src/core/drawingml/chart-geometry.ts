@@ -66,8 +66,9 @@ const TITLE_COLOR = '404040';
 // Office accent cycle for series without an explicit colour.
 export const SERIES_COLORS = ['4472C4', 'ED7D31', 'A5A5A5', 'FFC000', '5B9BD5', '70AD47'];
 
-export const seriesColor = (s: ChartSeries, i: number): string =>
-  s.colorHex ?? SERIES_COLORS[i % SERIES_COLORS.length]!;
+export const seriesColor = (s: ChartSeries, i: number, cycle?: ReadonlyArray<string>): string =>
+  s.colorHex ??
+  (cycle && cycle.length > 0 ? cycle[i % cycle.length]! : SERIES_COLORS[i % SERIES_COLORS.length]!);
 
 // ─── value-axis "nice numbers" (Heckbert) ──────────────────────────────────
 function niceNum(range: number, round: boolean): number {
@@ -158,7 +159,7 @@ function buildFrame(
   if (chart.title) top += CHART_TITLE_PT * 1.6;
   if (chart.valAxisTitle) top += CHART_LABEL_PT * 1.4;
   const legendEntries: Array<LegendEntry> = chart.series
-    .map((s, i) => ({ name: s.name ?? '', colorHex: seriesColor(s, i) }))
+    .map((s, i) => ({ name: s.name ?? '', colorHex: seriesColor(s, i, chart.seriesColorCycle) }))
     .filter((e) => e.name !== '');
   const legend = layoutLegend(
     legendEntries,
@@ -392,7 +393,7 @@ export function buildBarScene(
         const o1 = f.valueOffset(top);
         const lo = Math.min(o0, o1);
         const span = Math.abs(o1 - o0);
-        const color = pointColor(series, c) ?? seriesColor(series, s);
+        const color = pointColor(series, c) ?? seriesColor(series, s, chart.seriesColorCycle);
         if (horizontal) f.rects.push({ x: f.x0 + lo, y: along, w: span, h: barW, fillHex: color });
         else f.rects.push({ x: along, y: f.y0 + lo, w: barW, h: span, fillHex: color });
         if (chart.showValues && span > CHART_LABEL_PT) {
@@ -422,7 +423,7 @@ export function buildBarScene(
     for (let s = 0; s < chart.series.length; s++) {
       const series = chart.series[s]!;
       const len = f.valueOffset(series.values[c] ?? 0) - f.zeroOffset; // signed from zero line
-      const color = pointColor(series, c) ?? seriesColor(series, s);
+      const color = pointColor(series, c) ?? seriesColor(series, s, chart.seriesColorCycle);
       const along = slotStart + s * barW;
       if (horizontal) {
         const bx = f.x0 + f.zeroOffset + Math.min(0, len);
@@ -499,7 +500,7 @@ export function buildAreaScene(
           : 1;
         return b + (series.values[c] ?? 0) / denom;
       });
-      polygons.push(areaBand(top, base, f, xAt, seriesColor(series, s)));
+      polygons.push(areaBand(top, base, f, xAt, seriesColor(series, s, chart.seriesColorCycle)));
       for (let c = 0; c < nCats; c++) cum[c] = top[c]!;
     }
   } else {
@@ -508,7 +509,7 @@ export function buildAreaScene(
     for (let s = chart.series.length - 1; s >= 0; s--) {
       const series = chart.series[s]!;
       const top = Array.from({ length: nCats }, (_, c) => series.values[c] ?? 0);
-      polygons.push(areaBand(top, base, f, xAt, seriesColor(series, s)));
+      polygons.push(areaBand(top, base, f, xAt, seriesColor(series, s, chart.seriesColorCycle)));
     }
   }
   return { rects: f.rects, polylines: f.polylines, wedges: [], labels: f.labels, polygons };
@@ -544,7 +545,7 @@ export function buildScatterScene(
   let top = 4;
   if (chart.title) top += CHART_TITLE_PT * 1.6;
   const legendEntries: Array<LegendEntry> = chart.series
-    .map((s, i) => ({ name: s.name ?? '', colorHex: seriesColor(s, i) }))
+    .map((s, i) => ({ name: s.name ?? '', colorHex: seriesColor(s, i, chart.seriesColorCycle) }))
     .filter((e) => e.name !== '');
   const legend = layoutLegend(
     legendEntries,
@@ -630,7 +631,7 @@ export function buildScatterScene(
 
   for (let s = 0; s < chart.series.length; s++) {
     const series = chart.series[s]!;
-    const color = seriesColor(series, s);
+    const color = seriesColor(series, s, chart.seriesColorCycle);
     for (let i = 0; i < series.values.length; i++) {
       const px = xAt(series.xValues?.[i] ?? i);
       const py = yAt(series.values[i] ?? 0);
@@ -656,7 +657,7 @@ export function buildLineScene(
   const f = buildFrame(chart, wPt, hPt, measure, false, { dataRange: range });
   for (let s = 0; s < chart.series.length; s++) {
     const series = chart.series[s]!;
-    const color = seriesColor(series, s);
+    const color = seriesColor(series, s, chart.seriesColorCycle);
     const pts: Array<readonly [number, number]> = [];
     for (let c = 0; c < f.nCats; c++) {
       const x = f.x0 + c * f.slot + f.slot / 2;
