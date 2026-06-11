@@ -315,6 +315,9 @@ interface ParagraphBlock {
   // §17.13.6.2 — bookmark names anchored to this paragraph; pagination
   // records the first line's page + y as their GoTo destination.
   readonly bookmarks?: ReadonlyArray<string>;
+  // The source paragraph — kept so pagination can re-wrap the block with
+  // per-line widths when it overlaps a float's exclusion area.
+  readonly source?: Paragraph;
 }
 
 type MergeRole = 'standalone' | 'start' | 'middle' | 'end';
@@ -393,6 +396,18 @@ export interface LaidOutPdfDocument extends LaidOutDocument {
 const FOOTNOTE_RULE_PT = 0.75;
 const FOOTNOTE_RULE_GAP_ABOVE = 4;
 const FOOTNOTE_SEPARATOR_HEIGHT = 10;
+
+// Float text wrapping: the gap between a side-wrapped float and the text
+// flowing beside it, and the floor below which line narrowing stops.
+const FLOAT_TEXT_GAP = 6;
+const MIN_WRAP_WIDTH = 36;
+
+// Out-of-flow floats: wrap none renders at its anchor with no text effect;
+// the side-wrapping modes additionally claim an exclusion rectangle the
+// paragraphs flow around. topAndBottom stays a plain in-flow block.
+function isOutOfFlowFloat(f: FloatAnchor | undefined): f is FloatAnchor {
+  return f !== undefined && f.wrap !== 'topAndBottom';
+}
 const FOOTNOTE_RULE_WIDTH = 144; // Word's ~2" short separator
 
 // Assign sequential numbers to note references in reading order (§17.11:
@@ -687,6 +702,11 @@ export function layoutStyledDocument(
   }
 
   const bookmarks = new Map<string, BookmarkPosition>();
+  // Float text wrapping: pagination re-wraps an overlapped paragraph with
+  // per-line widths; the closure re-runs the paragraph layout at the given
+  // column width with those widths.
+  const reflowParagraph = (paragraph: Paragraph, width: number, widths: ReadonlyArray<number>) =>
+    layoutParagraphBlock(paragraph, options, fontResources, imageResources, width, widths);
   const pages = paginateSections(
     blocks,
     sectionCtxs,
@@ -694,6 +714,7 @@ export function layoutStyledDocument(
     options.language ?? 'en-US',
     notePlan,
     bookmarks,
+    reflowParagraph,
   );
 
   return {
@@ -1607,6 +1628,8 @@ function layoutParagraphBlock(
   fontResources: ReadonlyMap<string, FontResource>,
   imageResources: ReadonlyMap<string, ImageResource> | undefined,
   contentWidth: number,
+  // Float wrapping: explicit per-line widths (overrides first/other widths).
+  lineWidths?: ReadonlyArray<number>,
 ): ParagraphBlock {
   const baseResolved = resolveParagraphProperties(paragraph.properties, options.styles);
   const baseDir = paragraphBaseDirection(paragraph, baseResolved);
@@ -1627,7 +1650,7 @@ function layoutParagraphBlock(
   );
   const firstLineWidth = paragraphMaxWidth(resolved, contentWidth, true);
   const otherWidth = paragraphMaxWidth(resolved, contentWidth, false);
-  const lines = wrap(tokens, firstLineWidth, otherWidth, resolved, options.hyphenator);
+  const lines = wrap(tokens, firstLineWidth, otherWidth, resolved, options.hyphenator, lineWidths);
 
   let heightPt = 0;
   for (const line of lines) heightPt += computeLineHeight(line, resolved);
@@ -1644,6 +1667,7 @@ function layoutParagraphBlock(
     ...(paragraph.bookmarks && paragraph.bookmarks.length > 0
       ? { bookmarks: paragraph.bookmarks }
       : {}),
+    source: paragraph,
   };
 }
 
@@ -2146,30 +2170,30 @@ function wrap(
   otherWidth: number,
   resolved: ResolvedParagraphProperties,
   hyphenator: Hyphenator | undefined,
+  // Float text wrapping: explicit per-line widths (the last reuses for the
+  // tail, the Knuth-Plass convention). Overrides first/other when given.
+  lineWidths?: ReadonlyArray<number>,
 ): Array<Line> {
   if (tokens.length === 0) return [];
 
+  const widths = lineWidths ?? [firstLineWidth, otherWidth];
   const entries = paragraphItemStream(tokens, hyphenator);
   const { breaks } = breakLines(
     entries.map((e) => e.item),
-    [firstLineWidth, otherWidth],
+    widths,
   );
 
   const lines: Array<Line> = [];
   let start = 0;
   let isFirst = true;
+  let lineIdx = 0;
   for (const breakIdx of breaks) {
-    const line = lineFromRange(
-      entries,
-      start,
-      breakIdx,
-      isFirst ? firstLineWidth : otherWidth,
-      isFirst,
-      resolved,
-    );
+    const width = lineIdx < widths.length ? widths[lineIdx]! : widths[widths.length - 1]!;
+    const line = lineFromRange(entries, start, breakIdx, width, isFirst, resolved);
     if (line) lines.push(line);
     start = breakIdx + 1;
     isFirst = false;
+    lineIdx++;
   }
 
   if (lines.length > 0) lines[lines.length - 1]!.isLastInParagraph = true;
@@ -2797,6 +2821,9 @@ class PageAssembler {
   // body text, everything else above it; both flush with the page.
   floatsBehind: Array<PageItem> = [];
   floatsFront: Array<PageItem> = [];
+  // Side-wrapping floats (wrapSquare/tight/through): rectangles the body text
+  // must flow around. Page-scoped, like the float graphics.
+  exclusions: Array<{ x0: number; x1: number; topYUp: number; bottomYUp: number }> = [];
   floatX = (f: FloatAnchor, widthPt: number): number => {
     const h = f.posH;
     if (!h) return this.colLeft();
@@ -2840,6 +2867,63 @@ class PageAssembler {
   // The page's usable bottom: the margin plus whatever the this.notes band has
   // claimed so far.
   bottomLimit = (): number => this.ctx.marginBottom + this.noteReserve;
+
+  // The first exclusion a line spanning [yTop-h, yTop] collides with in the
+  // current column (x-overlap with the column required).
+  exclusionAt = (
+    yTop: number,
+    h: number,
+  ): { x0: number; x1: number; topYUp: number; bottomYUp: number } | undefined => {
+    const cl = this.colLeft();
+    const cr = cl + this.colWidth();
+    for (const e of this.exclusions) {
+      if (yTop - h >= e.topYUp || yTop <= e.bottomYUp) continue; // no y overlap
+      if (e.x1 <= cl || e.x0 >= cr) continue; // outside this column
+      return e;
+    }
+    return undefined;
+  };
+
+  // Per-line geometry beside an exclusion: the narrowed width and the x shift.
+  // Text goes on the WIDER side of the float (one side per line, v1).
+  lineGeometryAt = (yTop: number, h: number): { width: number; xOffset: number } => {
+    const full = this.colWidth();
+    const e = this.exclusionAt(yTop, h);
+    if (!e) return { width: full, xOffset: 0 };
+    const cl = this.colLeft();
+    const leftRoom = e.x0 - FLOAT_TEXT_GAP - cl;
+    const rightRoom = cl + full - (e.x1 + FLOAT_TEXT_GAP);
+    if (rightRoom >= leftRoom) {
+      const w = Math.max(MIN_WRAP_WIDTH, rightRoom);
+      return { width: w, xOffset: full - w };
+    }
+    return { width: Math.max(MIN_WRAP_WIDTH, leftRoom), xOffset: 0 };
+  };
+
+  // Estimated per-line widths for a paragraph starting at startY: narrowed
+  // while lines (estimated at the first line's height) overlap an exclusion,
+  // then one full width Knuth-Plass reuses for the tail. Undefined when
+  // nothing overlaps — the caller keeps the original block.
+  lineWidthsFor = (
+    block: { readonly lines: ReadonlyArray<Line>; readonly resolved: ResolvedParagraphProperties },
+    startY: number,
+  ): ReadonlyArray<number> | undefined => {
+    if (this.exclusions.length === 0 || block.lines.length === 0) return undefined;
+    const h0 = computeLineHeight(block.lines[0]!, block.resolved);
+    if (h0 <= 0) return undefined;
+    const widths: Array<number> = [];
+    let narrowed = false;
+    let y = startY;
+    for (let i = 0; i < 200; i++) {
+      const g = this.lineGeometryAt(y, h0);
+      widths.push(g.width);
+      if (g.width < this.colWidth()) narrowed = true;
+      else if (i > 0) break; // first full-width line after the float ends the scan
+      y -= h0;
+      if (y < this.bottomLimit()) break;
+    }
+    return narrowed ? widths : undefined;
+  };
 
   // New (unplaced) footnotes referenced by a line's tokens, with their layout
   // at the this.current section's width.
@@ -2950,6 +3034,7 @@ class PageAssembler {
     this.current = [];
     this.floatsBehind = [];
     this.floatsFront = [];
+    this.exclusions = [];
     this.pageNotes = [];
     this.noteReserve = 0;
     this.colIdx = 0;
@@ -2969,6 +3054,12 @@ function paginateSections(
   // §17.13.6.2 — out-param: bookmark name → its destination (the page and
   // y-up top of the anchoring paragraph's first line).
   bookmarkPositions?: Map<string, BookmarkPosition>,
+  // Float text wrapping: re-runs a paragraph's layout with per-line widths.
+  reflowParagraph?: (
+    paragraph: Paragraph,
+    width: number,
+    widths: ReadonlyArray<number>,
+  ) => ParagraphBlock,
 ): Array<LaidOutPage> {
   if (sectionCtxs.length === 0) return [];
   const asm = new PageAssembler(sectionCtxs, builder, notes, bookmarkPositions);
@@ -2996,6 +3087,14 @@ function paginateSections(
     if (block.kind === 'paragraph') {
       if (block.resolved.pageBreakBefore && asm.current.length > 0) asm.flushPage();
       asm.cursorY -= block.spacingBeforePt;
+      // Float text wrapping: when the paragraph overlaps an exclusion, re-wrap
+      // it with per-line widths (the source paragraph re-lays at the column
+      // width); the line loop below adds the matching x offsets.
+      let pb = block;
+      if (reflowParagraph && pb.source && asm.exclusions.length > 0) {
+        const widths = asm.lineWidthsFor(block, asm.cursorY);
+        if (widths) pb = reflowParagraph(pb.source, asm.colWidth(), widths);
+      }
       // Tagged PDF: a plain paragraph → one P (or heading) element; a list item
       // → an L/LI/LBody/P built on the nesting stack. Its lines all reference
       // the resulting leaf by MCID.
@@ -3005,32 +3104,32 @@ function paginateSections(
       // their own marked-content sequence when the geometry is simple — base
       // LTR, left-aligned (the dominant list case). Justified/centered/RTL
       // lines keep the marker inside the P, exactly as before.
-      const firstLine = block.lines[0];
+      const firstLine = pb.lines[0];
       const splitMarker =
         builder !== undefined &&
-        block.list !== undefined &&
+        pb.list !== undefined &&
         firstLine !== undefined &&
-        block.resolved.alignment === 'left' &&
-        block.resolved.bidi !== true &&
+        pb.resolved.alignment === 'left' &&
+        pb.resolved.bidi !== true &&
         !firstLine.tokens.some((t) => t.bidiLevel % 2 === 1) &&
         firstLine.tokens.some((t) => t.kind === 'text' && t.listMarker) &&
         firstLine.tokens.some((t) => !(t.kind === 'text' && t.listMarker));
       if (builder) {
-        if (block.list) {
-          const nodes = listItemParagraphNode(builder, asm.listStack, block.list, splitMarker);
+        if (pb.list) {
+          const nodes = listItemParagraphNode(builder, asm.listStack, pb.list, splitMarker);
           structId = nodes.pId;
           markerLblId = nodes.lblId;
         } else {
-          structId = builder.create(paragraphStructType(block.resolved), builder.root).id;
+          structId = builder.create(paragraphStructType(pb.resolved), builder.root).id;
         }
         // §14.9.2 per-element /Lang: tag a paragraph whose dominant run language
         // differs from the document default so AT switches pronunciation.
-        const lang = dominantParagraphLang(block.lines);
+        const lang = dominantParagraphLang(pb.lines);
         if (lang && lang !== defaultLang) builder.node(structId).lang = lang;
       }
       let firstLineOfBlock = true;
-      for (const line of block.lines) {
-        const h = computeLineHeight(line, block.resolved);
+      for (const line of pb.lines) {
+        const h = computeLineHeight(line, pb.resolved);
         let newNotes = asm.lineFootnotes(line);
         const addedReserve = (sub: typeof newNotes) =>
           sub.reduce((sum, x) => sum + x.heightPt, 0) +
@@ -3048,8 +3147,8 @@ function paginateSections(
         }
         if (firstLineOfBlock) {
           firstLineOfBlock = false;
-          if (block.bookmarks && asm.bookmarkPositions) {
-            for (const bookmarkName of block.bookmarks) {
+          if (pb.bookmarks && asm.bookmarkPositions) {
+            for (const bookmarkName of pb.bookmarks) {
               if (!asm.bookmarkPositions.has(bookmarkName)) {
                 asm.bookmarkPositions.set(bookmarkName, {
                   pageIdx: asm.pages.length,
@@ -3061,14 +3160,16 @@ function paginateSections(
         }
         asm.cursorY -= h;
         const indentLeft =
-          block.resolved.indentLeft + (line.firstLine ? block.resolved.indentFirstLine : 0);
+          pb.resolved.indentLeft + (line.firstLine ? pb.resolved.indentFirstLine : 0);
         const offset = alignmentOffset(
-          block.resolved.alignment,
+          pb.resolved.alignment,
           line.contentWidthPt,
           line.availableWidthPt,
         );
         const baselineY = pt(asm.ctx.pageHeight - (asm.cursorY + lineDescent(line)));
-        const originX = asm.colLeft() + indentLeft + offset;
+        const exclusionShift =
+          asm.exclusions.length > 0 ? asm.lineGeometryAt(asm.cursorY + h, h).xOffset : 0;
+        const originX = asm.colLeft() + indentLeft + offset + exclusionShift;
         if (markerLblId !== undefined && line === firstLine) {
           // Marker glyphs → Lbl, the rest of the line → P. Both segments keep
           // the original baseline; the body segment starts where the marker's
@@ -3105,8 +3206,8 @@ function paginateSections(
           });
         }
       }
-      asm.cursorY -= block.spacingAfterPt;
-      if (block.pageBreakAfter) asm.pendingPageBreak = true;
+      asm.cursorY -= pb.spacingAfterPt;
+      if (pb.pageBreakAfter) asm.pendingPageBreak = true;
     } else if (block.kind === 'image') {
       const figId = builder ? createFigure(builder, block.altText, 'Image') : undefined;
       const emitImageAt = (x: number, topYUp: number, sink: Array<PageItem>) => {
@@ -3120,12 +3221,18 @@ function paginateSections(
           ...(figId !== undefined ? { structId: figId } : {}),
         });
       };
-      if (block.float?.wrap === 'none') {
-        emitImageAt(
-          asm.floatX(block.float, block.widthPt),
-          asm.floatTopYUp(block.float),
-          block.float.behind ? asm.floatsBehind : asm.floatsFront,
-        );
+      if (isOutOfFlowFloat(block.float)) {
+        const fx = asm.floatX(block.float, block.widthPt);
+        const fy = asm.floatTopYUp(block.float);
+        emitImageAt(fx, fy, block.float.behind ? asm.floatsBehind : asm.floatsFront);
+        if (block.float.wrap !== 'none') {
+          asm.exclusions.push({
+            x0: fx,
+            x1: fx + block.widthPt,
+            topYUp: fy,
+            bottomYUp: fy - block.heightPt,
+          });
+        }
       } else {
         asm.cursorY -= block.spacingBeforePt;
         if (asm.cursorY - block.heightPt < asm.bottomLimit() && asm.colHasContent())
@@ -3193,12 +3300,22 @@ function paginateSections(
           }
         }
       };
-      if (block.float?.wrap === 'none') {
+      if (isOutOfFlowFloat(block.float)) {
+        const fx = asm.floatX(block.float, block.widthPt);
+        const fy = asm.floatTopYUp(block.float);
         emitShapeAt(
-          asm.floatX(block.float, block.widthPt),
-          asm.floatTopYUp(block.float) - block.heightPt,
+          fx,
+          fy - block.heightPt,
           block.float.behind ? asm.floatsBehind : asm.floatsFront,
         );
+        if (block.float.wrap !== 'none') {
+          asm.exclusions.push({
+            x0: fx,
+            x1: fx + block.widthPt,
+            topYUp: fy,
+            bottomYUp: fy - block.heightPt,
+          });
+        }
       } else {
         asm.cursorY -= block.spacingBeforePt;
         if (asm.cursorY - block.heightPt < asm.bottomLimit() && asm.colHasContent())
@@ -3238,12 +3355,22 @@ function paginateSections(
           });
         }
       };
-      if (block.float?.wrap === 'none') {
+      if (isOutOfFlowFloat(block.float)) {
+        const fx = asm.floatX(block.float, block.widthPt);
+        const fy = asm.floatTopYUp(block.float);
         emitChartAt(
-          asm.floatX(block.float, block.widthPt),
-          asm.floatTopYUp(block.float) - block.heightPt,
+          fx,
+          fy - block.heightPt,
           block.float.behind ? asm.floatsBehind : asm.floatsFront,
         );
+        if (block.float.wrap !== 'none') {
+          asm.exclusions.push({
+            x0: fx,
+            x1: fx + block.widthPt,
+            topYUp: fy,
+            bottomYUp: fy - block.heightPt,
+          });
+        }
       } else {
         asm.cursorY -= block.spacingBeforePt;
         if (asm.cursorY - block.heightPt < asm.bottomLimit() && asm.colHasContent())
