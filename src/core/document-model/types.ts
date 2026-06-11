@@ -469,6 +469,8 @@ export interface Table {
 // ECMA-376 Part 1 §20.4.2.8 — wp:inline picture extent. EMU = English
 // Metric Units: 914400 per inch (1 pt = 12700 EMU).
 export interface ImageBlock {
+  // §20.4.2.3 — present when the drawing is anchored (floating).
+  readonly float?: FloatAnchor;
   readonly resource?: ResourceId;
   readonly width: Pt;
   readonly height: Pt;
@@ -572,6 +574,8 @@ export interface ShapeTextBody {
 }
 
 export interface ShapeBlock {
+  // §20.4.2.3 — present when the drawing is anchored (floating).
+  readonly float?: FloatAnchor;
   readonly width: Pt; // wp:extent cx (fallback a:ext cx)
   readonly height: Pt; // wp:extent cy
   readonly geometry: ShapeGeometry;
@@ -620,6 +624,8 @@ export interface Chart {
 }
 
 export interface ChartBlock {
+  // §20.4.2.3 — present when the drawing is anchored (floating).
+  readonly float?: FloatAnchor;
   readonly chartRelId: string; // c:chart @r:id (resolve against the document's rels)
   readonly width: Pt;
   readonly height: Pt;
@@ -672,6 +678,23 @@ export interface SectionProperties {
   readonly evenAndOddHeaders?: boolean;
   // §17.6.4 w:cols — multi-column section layout.
   readonly columns?: SectionColumns;
+}
+
+// §20.4.2.3 wp:anchor — a floating drawing's placement. v1 honours
+// out-of-flow placement for wrap 'none' (incl. behindDoc); the side-wrapping
+// modes (square/tight/through) and topAndBottom stay in flow as blocks.
+export interface FloatAnchor {
+  readonly wrap: 'none' | 'square' | 'tight' | 'through' | 'topAndBottom';
+  readonly behind?: boolean; // wp:anchor @behindDoc
+  readonly posH?: {
+    readonly relativeFrom: 'margin' | 'page' | 'column';
+    readonly offsetPt?: Pt; // wp:posOffset
+    readonly align?: 'left' | 'center' | 'right'; // wp:align
+  };
+  readonly posV?: {
+    readonly relativeFrom: 'margin' | 'page' | 'paragraph' | 'line';
+    readonly offsetPt?: Pt;
+  };
 }
 
 // §17.6.4 — column definitions: equal-width count + gutter, or explicit

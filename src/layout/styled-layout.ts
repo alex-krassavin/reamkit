@@ -25,6 +25,7 @@ import type {
   Chart,
   ChartBlock,
   DocumentInfo,
+  FloatAnchor,
   HeaderFooterReference,
   HeaderFooterType,
   ImageBlock,
@@ -36,9 +37,6 @@ import type {
   SectionColumns,
   SectionProperties,
   ShapeBlock,
-  ShapeDash,
-  ShapeGeometry,
-  ShapeLine,
   StyleSheet,
   Table,
   TableCell,
@@ -245,6 +243,7 @@ interface ChartLayout {
 }
 interface ChartBlockLaidOut {
   readonly kind: 'chart';
+  readonly float?: FloatAnchor;
   readonly widthPt: number;
   readonly heightPt: number;
   readonly layout: ChartLayout;
@@ -256,6 +255,7 @@ interface ChartBlockLaidOut {
 
 interface ImageBlockLaidOut {
   readonly kind: 'image';
+  readonly float?: FloatAnchor;
   readonly widthPt: number;
   readonly heightPt: number;
   readonly resolvedAlignment: 'left' | 'center' | 'right' | 'both' | 'distribute';
@@ -271,6 +271,7 @@ interface ImageBlockLaidOut {
 // shape's page position is known.
 interface ShapeBlockLaidOut {
   readonly kind: 'shape';
+  readonly float?: FloatAnchor;
   readonly widthPt: number;
   readonly heightPt: number;
   readonly paths: ReadonlyArray<VectorPath>;
@@ -1056,9 +1057,6 @@ function layoutBodyElement(
   );
 }
 
-// 1 inch = 914400 EMU = 72 pt, so 1 pt = 12700 EMU.
-const EMU_PER_PT = 12700;
-
 function layoutImageBlock(
   image: ImageBlock,
   imageResources: ReadonlyMap<string, ImageResource> | undefined,
@@ -1082,6 +1080,7 @@ function layoutImageBlock(
     spacingBeforePt: image.paragraphProperties.spacingBefore ?? 0,
     spacingAfterPt: image.paragraphProperties.spacingAfter ?? 0,
     ...(image.altText ? { altText: image.altText } : {}),
+    ...(image.float ? { float: image.float } : {}),
   };
 }
 
@@ -1161,6 +1160,7 @@ function layoutShapeBlock(
     insetBottomPt,
     anchor: text?.anchor ?? 't',
     ...(shape.altText ? { altText: shape.altText } : {}),
+    ...(shape.float ? { float: shape.float } : {}),
   };
 }
 
@@ -1203,6 +1203,7 @@ function layoutChartBlock(
     spacingBeforePt: pp.spacingBefore ?? 0,
     spacingAfterPt: pp.spacingAfter ?? 0,
     ...(altText ? { altText } : {}),
+    ...(block.float ? { float: block.float } : {}),
   };
 }
 
@@ -2773,6 +2774,36 @@ function paginateSections(
       flushPage();
     }
   };
+
+  // §20.4.2.3 out-of-flow drawings (wrap 'none'): they render at their
+  // anchored position without moving the cursor. behindDoc sinks below the
+  // body text, everything else above it; both flush with the page.
+  let floatsBehind: Array<PageItem> = [];
+  let floatsFront: Array<PageItem> = [];
+  const floatX = (f: FloatAnchor, widthPt: number): number => {
+    const h = f.posH;
+    if (!h) return colLeft();
+    const base =
+      h.relativeFrom === 'page' ? 0 : h.relativeFrom === 'column' ? colLeft() : ctx.marginLeft;
+    const span =
+      h.relativeFrom === 'page'
+        ? ctx.pageWidth
+        : h.relativeFrom === 'column'
+          ? colWidth()
+          : ctx.contentWidth;
+    if (h.align === 'center') return base + (span - widthPt) / 2;
+    if (h.align === 'right') return base + span - widthPt;
+    return base + (h.offsetPt ?? 0);
+  };
+  // The drawing's TOP in the y-up cursor frame. paragraph/line-relative
+  // offsets hang off the anchoring paragraph's current position.
+  const floatTopYUp = (f: FloatAnchor): number => {
+    const v = f.posV;
+    if (!v) return cursorY;
+    if (v.relativeFrom === 'page') return ctx.pageHeight - (v.offsetPt ?? 0);
+    if (v.relativeFrom === 'margin') return ctx.pageHeight - ctx.marginTop - (v.offsetPt ?? 0);
+    return cursorY - (v.offsetPt ?? 0);
+  };
   // Tagged PDF: the stack of open list levels (for L/LI/LBody nesting). Cleared
   // whenever a non-list-item block interrupts the run of list paragraphs.
   const listStack: Array<ListFrame> = [];
@@ -2872,11 +2903,20 @@ function paginateSections(
       });
     }
     pages.push({
-      commands: [...header.commands, ...current, ...renderNotesBand(), ...footer.commands],
+      commands: [
+        ...header.commands,
+        ...floatsBehind,
+        ...current,
+        ...floatsFront,
+        ...renderNotesBand(),
+        ...footer.commands,
+      ],
       width: pt(ctx.pageWidth),
       height: pt(ctx.pageHeight),
     });
     current = [];
+    floatsBehind = [];
+    floatsFront = [];
     pageNotes = [];
     noteReserve = 0;
     colIdx = 0;
@@ -2970,82 +3010,103 @@ function paginateSections(
       if (block.pageBreakAfter) pendingPageBreak = true;
     } else if (block.kind === 'image') {
       const figId = builder ? createFigure(builder, block.altText, 'Image') : undefined;
-      cursorY -= block.spacingBeforePt;
-      if (cursorY - block.heightPt < bottomLimit() && colHasContent()) advanceColumn();
-      cursorY -= block.heightPt;
-      current.push({
-        type: 'image',
-        x: pt(colLeft()),
-        y: pt(ctx.pageHeight - cursorY - block.heightPt),
-        width: pt(block.widthPt),
-        height: pt(block.heightPt),
-        imageResourceName: block.resourceName,
-        ...(figId !== undefined ? { structId: figId } : {}),
-      });
-      cursorY -= block.spacingAfterPt;
+      const emitImageAt = (x: number, topYUp: number, sink: Array<PageItem>) => {
+        sink.push({
+          type: 'image',
+          x: pt(x),
+          y: pt(ctx.pageHeight - topYUp),
+          width: pt(block.widthPt),
+          height: pt(block.heightPt),
+          imageResourceName: block.resourceName,
+          ...(figId !== undefined ? { structId: figId } : {}),
+        });
+      };
+      if (block.float?.wrap === 'none') {
+        emitImageAt(
+          floatX(block.float, block.widthPt),
+          floatTopYUp(block.float),
+          block.float.behind ? floatsBehind : floatsFront,
+        );
+      } else {
+        cursorY -= block.spacingBeforePt;
+        if (cursorY - block.heightPt < bottomLimit() && colHasContent()) advanceColumn();
+        cursorY -= block.heightPt;
+        emitImageAt(colLeft(), cursorY + block.heightPt, current);
+        cursorY -= block.spacingAfterPt;
+      }
     } else if (block.kind === 'shape') {
       // Shapes are atomic — never split across pages.
       const figId = builder ? createFigure(builder, block.altText, 'Shape') : undefined;
-      cursorY -= block.spacingBeforePt;
-      if (cursorY - block.heightPt < bottomLimit() && colHasContent()) advanceColumn();
-      cursorY -= block.heightPt;
-      const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, colWidth());
-      const x = colLeft() + offset;
-      const transform = flipTransform(
-        buildShapeTransform(
-          x,
-          cursorY,
-          block.widthPt,
-          block.heightPt,
-          block.rotation60k,
-          block.flipH,
-          block.flipV,
-        ),
-        ctx.pageHeight,
-      );
-      current.push({
-        type: 'shape',
-        shape: {
-          paths: block.paths,
-          ...(block.fillColorHex ? { fillColorHex: block.fillColorHex } : {}),
-          ...(block.stroke ? { stroke: block.stroke } : {}),
-          transform,
-        },
-        ...(figId !== undefined ? { structId: figId } : {}),
-      });
-      // Shape text: laid out axis-aligned, anchored vertically within the inset
-      // rect, emitted as ordinary line commands so it rides the text pass on
-      // top of the fill. (Rotated text boxes keep upright text in M5.)
-      if (block.textLines.length > 0) {
-        const shapeBottom = cursorY;
-        const shapeTop = cursorY + block.heightPt;
-        const innerWidth = Math.max(1, block.widthPt - block.insetLeftPt - block.insetRightPt);
-        let textY: number;
-        if (block.anchor === 'b') {
-          textY = shapeBottom + block.insetBottomPt + block.textHeightPt;
-        } else if (block.anchor === 'ctr') {
-          textY = shapeBottom + (block.heightPt + block.textHeightPt) / 2;
-        } else {
-          textY = shapeTop - block.insetTopPt;
+      const emitShapeAt = (x: number, bottomYUp: number, sink: Array<PageItem>) => {
+        const transform = flipTransform(
+          buildShapeTransform(
+            x,
+            bottomYUp,
+            block.widthPt,
+            block.heightPt,
+            block.rotation60k,
+            block.flipH,
+            block.flipV,
+          ),
+          ctx.pageHeight,
+        );
+        sink.push({
+          type: 'shape',
+          shape: {
+            paths: block.paths,
+            ...(block.fillColorHex ? { fillColorHex: block.fillColorHex } : {}),
+            ...(block.stroke ? { stroke: block.stroke } : {}),
+            transform,
+          },
+          ...(figId !== undefined ? { structId: figId } : {}),
+        });
+        // Shape text: laid out axis-aligned, anchored vertically within the
+        // inset rect, emitted as ordinary line commands so it rides the text
+        // pass on top of the fill. (Rotated text boxes keep upright text.)
+        if (block.textLines.length > 0) {
+          const shapeBottom = bottomYUp;
+          const shapeTop = bottomYUp + block.heightPt;
+          const innerWidth = Math.max(1, block.widthPt - block.insetLeftPt - block.insetRightPt);
+          let textY: number;
+          if (block.anchor === 'b') {
+            textY = shapeBottom + block.insetBottomPt + block.textHeightPt;
+          } else if (block.anchor === 'ctr') {
+            textY = shapeBottom + (block.heightPt + block.textHeightPt) / 2;
+          } else {
+            textY = shapeTop - block.insetTopPt;
+          }
+          for (const line of block.textLines) {
+            const h = computeLineHeight(line, line.resolved);
+            textY -= h;
+            const lineOffset = alignmentOffset(
+              line.resolved.alignment,
+              line.contentWidthPt,
+              innerWidth,
+            );
+            sink.push({
+              type: 'line',
+              line,
+              originX: pt(x + block.insetLeftPt + lineOffset),
+              baselineY: pt(ctx.pageHeight - (textY + lineDescent(line))),
+              ...(figId !== undefined ? { structId: figId } : {}),
+            });
+          }
         }
-        for (const line of block.textLines) {
-          const h = computeLineHeight(line, line.resolved);
-          textY -= h;
-          const lineOffset = alignmentOffset(
-            line.resolved.alignment,
-            line.contentWidthPt,
-            innerWidth,
-          );
-          current.push({
-            type: 'line',
-            line,
-            originX: pt(x + block.insetLeftPt + lineOffset),
-            baselineY: pt(ctx.pageHeight - (textY + lineDescent(line))),
-            ...(figId !== undefined ? { structId: figId } : {}),
-          });
-        }
+      };
+      if (block.float?.wrap === 'none') {
+        emitShapeAt(
+          floatX(block.float, block.widthPt),
+          floatTopYUp(block.float) - block.heightPt,
+          block.float.behind ? floatsBehind : floatsFront,
+        );
+      } else {
+        cursorY -= block.spacingBeforePt;
+        if (cursorY - block.heightPt < bottomLimit() && colHasContent()) advanceColumn();
+        cursorY -= block.heightPt;
+        const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, colWidth());
+        emitShapeAt(colLeft() + offset, cursorY, current);
+        cursorY -= block.spacingAfterPt;
       }
-      cursorY -= block.spacingAfterPt;
     } else if (block.kind === 'chart') {
       // Charts are atomic. Their primitives are in a local y-up frame; the
       // stored transform translates to the chart box's bottom-left (x, y in the
@@ -3053,34 +3114,43 @@ function paginateSections(
       // chart is one Figure (alt = its title); its shapes + labels carry that id.
       const figId = builder ? createFigure(builder, block.altText, 'Chart') : undefined;
       const fig = figId !== undefined ? { structId: figId } : {};
-      cursorY -= block.spacingBeforePt;
-      if (cursorY - block.heightPt < bottomLimit() && colHasContent()) advanceColumn();
-      cursorY -= block.heightPt;
-      const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, colWidth());
-      const x = colLeft() + offset;
-      const y = cursorY;
-      for (const s of block.layout.shapes) {
-        current.push({
-          type: 'shape',
-          shape: {
-            paths: s.paths,
-            ...(s.fillColorHex ? { fillColorHex: s.fillColorHex } : {}),
-            ...(s.stroke ? { stroke: s.stroke } : {}),
-            transform: flipTransform([1, 0, 0, 1, x, y], ctx.pageHeight),
-          },
-          ...fig,
-        });
+      const emitChartAt = (x: number, bottomYUp: number, sink: Array<PageItem>) => {
+        for (const s of block.layout.shapes) {
+          sink.push({
+            type: 'shape',
+            shape: {
+              paths: s.paths,
+              ...(s.fillColorHex ? { fillColorHex: s.fillColorHex } : {}),
+              ...(s.stroke ? { stroke: s.stroke } : {}),
+              transform: flipTransform([1, 0, 0, 1, x, bottomYUp], ctx.pageHeight),
+            },
+            ...fig,
+          });
+        }
+        for (const t of block.layout.texts) {
+          sink.push({
+            type: 'line',
+            line: t.line,
+            originX: pt(x + t.x),
+            baselineY: pt(ctx.pageHeight - (bottomYUp + t.y)),
+            ...fig,
+          });
+        }
+      };
+      if (block.float?.wrap === 'none') {
+        emitChartAt(
+          floatX(block.float, block.widthPt),
+          floatTopYUp(block.float) - block.heightPt,
+          block.float.behind ? floatsBehind : floatsFront,
+        );
+      } else {
+        cursorY -= block.spacingBeforePt;
+        if (cursorY - block.heightPt < bottomLimit() && colHasContent()) advanceColumn();
+        cursorY -= block.heightPt;
+        const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, colWidth());
+        emitChartAt(colLeft() + offset, cursorY, current);
+        cursorY -= block.spacingAfterPt;
       }
-      for (const t of block.layout.texts) {
-        current.push({
-          type: 'line',
-          line: t.line,
-          originX: pt(x + t.x),
-          baselineY: pt(ctx.pageHeight - (y + t.y)),
-          ...fig,
-        });
-      }
-      cursorY -= block.spacingAfterPt;
     } else {
       const colCount = block.rows.reduce(
         (max, r) =>

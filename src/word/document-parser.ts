@@ -327,6 +327,7 @@ function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): BodyEleme
         height: content.height,
         paragraphProperties,
         ...(content.altText ? { altText: content.altText } : {}),
+        ...(content.float ? { float: content.float } : {}),
       },
     };
   }
@@ -339,6 +340,7 @@ function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): BodyEleme
         height: content.height,
         paragraphProperties,
         ...(content.altText ? { altText: content.altText } : {}),
+        ...(content.float ? { float: content.float } : {}),
       },
     };
   }
@@ -348,6 +350,7 @@ function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): BodyEleme
       ...content.data,
       paragraphProperties,
       ...(content.altText ? { altText: content.altText } : {}),
+      ...(content.float ? { float: content.float } : {}),
     },
   };
 }

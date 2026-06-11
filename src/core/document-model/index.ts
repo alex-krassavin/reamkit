@@ -51,6 +51,7 @@ export type {
   RunProperties,
   RowProperties,
   Section,
+  FloatAnchor,
   SectionColumns,
   SectionProperties,
   ShapeBlock,
