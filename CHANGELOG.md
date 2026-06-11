@@ -8,6 +8,22 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Bookmarks and internal links** — `w:bookmarkStart` + `w:hyperlink
+  @anchor` become real GoTo links: PDF annotations with named destinations
+  (`/Names /Dests`, only referenced names), tagged `Link` structure, HTML
+  `id` anchors with `#`-fragment links.
+- **PDF/UA-1** — `pdfUA: true` produces ISO 14289-1-conformant output
+  (veraPDF-validated, alone and combined with PDF/A-2a in one file): tagged
+  structure, `pdfuaid` XMP identification, alternate descriptions on link
+  annotations, unique IDs on footnote Note elements, an always-present
+  document title.
+- **Multi-column sections** — `w:cols` lays content out column by column
+  (equal-width with a shared gutter, or explicit per-column widths);
+  headers, footers and footnotes keep the full page width.
+- **Floating drawings** — `wp:anchor` placement: wrap-none drawings
+  (watermarks, stamps, text boxes; including `behindDoc`) render at their
+  anchored page/margin/paragraph-relative position without disturbing the
+  text flow. Side-wrapping modes stay in flow (v1).
 - **HTML writer: charts and shapes render as inline SVG** — bar/line/pie/
   area/scatter charts emit the same geometry scene as the PDF path (labels
   as native `<text>` with anchors, so the browser's fonts do the rendering);

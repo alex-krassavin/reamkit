@@ -145,8 +145,22 @@ footnote-доки); veraPDF tagged. Усилие: **большое** (новый
 
 ---
 
-## Вне этапа (W5, по запросу)
+## Вне этапа (W5, по запросу) ✅ (выполнено, кроме хвостов)
 
-Плавающие объекты (`wp:anchor` + обтекание), многоколоночные секции
-(`w:cols`), закладки + внутренние ссылки (пара к W1), комментарии,
-`Lbl`-маркеры в tagged (intra-line MCID) → формальный PDF/UA.
+Сделано по нарастанию layout-риска:
+- **W5a Закладки + внутренние ссылки** — w:bookmarkStart (параграф-уровень) +
+  w:hyperlink@anchor → PDF /GoTo через /Names /Dests (только referenced),
+  tagged Link+OBJR, HTML id+#-фрагменты.
+- **W5b PDF/UA-1** — options.pdfUA: pdfuaid XMP (+extension schema при
+  комбинации с PDF/A), /Contents alt-текст на Link-аннотациях, /ID на Note,
+  синтез title; veraPDF ua1 PASS, включая «PDF/A-2a + UA-1 одним файлом».
+- **W5c Колонки** — w:cols (равные + явные ширины); пагинация
+  колонка→колонка→страница; сноски/колонтитулы полной ширины; без
+  балансировки последней страницы (v1).
+- **W5d Floats** — wp:anchor positionH/V + wrap; wrap none (вкл. behindDoc)
+  рендерится вне потока в своей позиции (водяные знаки, штампы); behind —
+  под текстом страницы.
+
+Хвосты (по запросу): обтекание square/tight (exclusion-прямоугольники в
+wrap()), anchored внутри текстовых параграфов (сейчас inline), w:br
+type=column, балансировка колонок, комментарии, Lbl intra-line MCID.
