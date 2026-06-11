@@ -19,7 +19,7 @@ import type {
   PageItem,
   TextLineItem,
 } from '@/pdf/styled-page-renderer';
-import type { PathSegment, VectorShape } from '@/pdf/vector-graphics';
+import type { PathSegment, VectorShape } from '@/core/vector';
 
 import { FEATURES } from '@/core/ir';
 import { paintPlan } from '@/pdf/styled-page-renderer';
