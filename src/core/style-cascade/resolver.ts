@@ -87,7 +87,32 @@ function computeRunProperties(
   return mergeRun(acc, runDirect);
 }
 
+// Paragraph-side memo, the symmetric half of runCascadeCache: keyed by the
+// direct-properties object identity. Producers that share properties objects
+// across paragraphs (the xlsx grid mapper) collapse to one resolved object
+// per distinct input instead of one per paragraph.
+const paragraphCascadeCache = new WeakMap<
+  StyleSheet,
+  WeakMap<ParagraphProperties, ResolvedParagraphProperties>
+>();
+
 export function resolveParagraphProperties(
+  paragraphDirect: ParagraphProperties,
+  sheet: StyleSheet,
+): ResolvedParagraphProperties {
+  let bySheet = paragraphCascadeCache.get(sheet);
+  if (!bySheet) {
+    bySheet = new WeakMap();
+    paragraphCascadeCache.set(sheet, bySheet);
+  }
+  const hit = bySheet.get(paragraphDirect);
+  if (hit) return hit;
+  const resolved = computeParagraphProperties(paragraphDirect, sheet);
+  bySheet.set(paragraphDirect, resolved);
+  return resolved;
+}
+
+function computeParagraphProperties(
   paragraphDirect: ParagraphProperties,
   sheet: StyleSheet,
 ): ResolvedParagraphProperties {
@@ -188,60 +213,92 @@ function copyDefined<T extends object>(base: T, override: T): T {
 // after numbering; writers and the layout see resolved values. Resolving again
 // over EMPTY_STYLE_SHEET is the identity (defaults are fully overwritten and
 // style chains are empty), which keeps direct raw-body callers working.
+//
+// The transform mutates the tree IN PLACE and returns it. Readers own the
+// freshly-parsed trees they pass in (nothing else holds a reference), and
+// rebuilding the tree immutably doubles peak memory — a real 874 KB workbook
+// with a huge grid (POI bug62181.xlsx) OOMed a 512 MB heap on the rebuild
+// version. Only the `properties` fields are overwritten; the resolved objects
+// themselves stay memo-shared via the resolveRunProperties WeakMap cache.
 // ---------------------------------------------------------------------------
+
+// Pre-seed the cascade cache with a resolved pair's fixpoint. Resolving an
+// already-resolved (run, paragraph) pair over the empty sheet is the identity
+// by value (the stage-6 contract) — registering it here makes the renderer's
+// idempotent re-resolve a cache HIT returning the very same object, instead
+// of allocating an equal copy per unique pair (on grid-shaped documents those
+// copies double the resolved-property population).
+function primeResolvedFixpoint(run: RunProperties, para: ParagraphProperties): void {
+  let bySheet = runCascadeCache.get(EMPTY_STYLE_SHEET);
+  if (!bySheet) {
+    bySheet = new WeakMap();
+    runCascadeCache.set(EMPTY_STYLE_SHEET, bySheet);
+  }
+  let byRun = bySheet.get(run);
+  if (!byRun) {
+    byRun = new WeakMap();
+    bySheet.set(run, byRun);
+  }
+  if (!byRun.has(para)) byRun.set(para, run as ResolvedRunProperties);
+}
+
+// The paragraph-side fixpoint: same idea as primeResolvedFixpoint, for the
+// renderer's re-resolve of an already-resolved paragraph over the empty sheet.
+function primeParagraphFixpoint(para: ParagraphProperties): void {
+  let bySheet = paragraphCascadeCache.get(EMPTY_STYLE_SHEET);
+  if (!bySheet) {
+    bySheet = new WeakMap();
+    paragraphCascadeCache.set(EMPTY_STYLE_SHEET, bySheet);
+  }
+  if (!bySheet.has(para)) bySheet.set(para, para as ResolvedParagraphProperties);
+}
 
 export function resolveBodyStyles(
   body: ReadonlyArray<BodyElement>,
   sheet: StyleSheet,
-): Array<BodyElement> {
-  const visitParagraph = (p: Paragraph): Paragraph => ({
-    ...p,
-    properties: resolveParagraphProperties(p.properties, sheet),
+): ReadonlyArray<BodyElement> {
+  const visitParagraph = (p: Paragraph): void => {
     // Run resolution sees the RAW paragraph properties (its styleId drives
-    // the paragraph-style rPr layer) — same order the renderer used.
-    runs: p.runs.map((r) => ({
-      ...r,
-      properties: resolveRunProperties(r.properties, p.properties, sheet),
-    })),
-  });
-
-  const visit = (el: BodyElement): BodyElement => {
-    if (el.kind === 'paragraph') {
-      return { kind: 'paragraph', paragraph: visitParagraph(el.paragraph) };
+    // the paragraph-style rPr layer) — so resolve every run first, then
+    // overwrite the paragraph's own properties. Same order the renderer used.
+    for (const r of p.runs) {
+      (r as { properties: RunProperties }).properties = resolveRunProperties(
+        r.properties,
+        p.properties,
+        sheet,
+      );
     }
-    if (el.kind === 'table') {
-      return {
-        kind: 'table',
-        table: {
-          ...el.table,
-          rows: el.table.rows.map((row) => ({
-            ...row,
-            cells: row.cells.map((cell) => ({ ...cell, content: cell.content.map(visit) })),
-          })),
-        },
-      };
-    }
-    if (el.kind === 'shape' && el.shape.text) {
-      return {
-        kind: 'shape',
-        shape: {
-          ...el.shape,
-          text: { ...el.shape.text, content: el.shape.text.content.map(visit) },
-        },
-      };
-    }
-    return el; // image, chart, textless shape
+    (p as { properties: ParagraphProperties }).properties = resolveParagraphProperties(
+      p.properties,
+      sheet,
+    );
+    primeParagraphFixpoint(p.properties);
+    for (const r of p.runs) primeResolvedFixpoint(r.properties, p.properties);
   };
 
-  return body.map(visit);
+  const visit = (el: BodyElement): void => {
+    if (el.kind === 'paragraph') {
+      visitParagraph(el.paragraph);
+    } else if (el.kind === 'table') {
+      for (const row of el.table.rows) {
+        for (const cell of row.cells) {
+          for (const child of cell.content) visit(child);
+        }
+      }
+    } else if (el.kind === 'shape' && el.shape.text) {
+      for (const child of el.shape.text.content) visit(child);
+    }
+    // image, chart, textless shape: nothing to resolve
+  };
+
+  for (const el of body) visit(el);
+  return body;
 }
 
 export function resolveHeadersFootersStyles(
   hf: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
   sheet: StyleSheet,
 ): ReadonlyMap<string, ReadonlyArray<BodyElement>> {
-  if (hf.size === 0) return hf;
-  const out = new Map<string, ReadonlyArray<BodyElement>>();
-  for (const [key, value] of hf) out.set(key, resolveBodyStyles(value, sheet));
-  return out;
+  for (const value of hf.values()) resolveBodyStyles(value, sheet);
+  return hf;
 }

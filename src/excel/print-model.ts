@@ -376,6 +376,32 @@ export function worksheetToBody(
   // the renderer. Real sheets are far under this budget; once it is exhausted
   // the remaining cells render empty.
   let textBudget = MAX_SHEET_TEXT_CHARS;
+
+  // Cells sharing a cellXf reuse the SAME properties objects — not equal
+  // copies. The style cascade memoizes by object identity, so on grid-shaped
+  // sheets the resolved-property population collapses to one per distinct xf
+  // instead of one per cell (POI bug62181: ~0.4M cells of a handful of xfs
+  // OOMed a 512 MB heap on per-cell copies).
+  const runPropsByXf = new Map<XlsxCellXf | undefined, RunProperties>();
+  const cellRunProps = (xf: XlsxCellXf | undefined): RunProperties => {
+    let props = runPropsByXf.get(xf);
+    if (props === undefined) {
+      const base = xf ? runPropsFromXf(xf, styles) : {};
+      props = scaled ? scaleRunFont(base, printScale) : base;
+      runPropsByXf.set(xf, props);
+    }
+    return props;
+  };
+  const paraPropsByAlignment = new Map<Alignment | undefined, ParagraphProperties>();
+  const cellParaProps = (alignment: Alignment | undefined): ParagraphProperties => {
+    let props = paraPropsByAlignment.get(alignment);
+    if (props === undefined) {
+      props = alignment ? { alignment } : {};
+      paraPropsByAlignment.set(alignment, props);
+    }
+    return props;
+  };
+
   const rows: Array<TableRow> = [];
   for (let r = 0; r < rowCount; r++) {
     const absR = r + rowStart;
@@ -402,8 +428,7 @@ export function worksheetToBody(
       if (text.length > textBudget) text = text.slice(0, Math.max(0, textBudget));
       textBudget -= text.length;
       const xf = ws && ws.styleIndex !== undefined ? styles.cellXfs[ws.styleIndex] : undefined;
-      const baseRunProps = xf ? runPropsFromXf(xf, styles) : {};
-      const runProps = scaled ? scaleRunFont(baseRunProps, printScale) : baseRunProps;
+      const runProps = cellRunProps(xf);
       const alignment = xf ? alignmentFromXf(xf) : undefined;
       const shading = xf ? shadingFromXf(xf, styles) : undefined;
       const borders = xf ? bordersFromXf(xf, styles) : undefined;
@@ -447,7 +472,7 @@ export function worksheetToBody(
         ...(borders ? { borders } : {}),
       };
 
-      const paragraphProps: ParagraphProperties = alignment ? { alignment } : {};
+      const paragraphProps = cellParaProps(alignment);
       cells.push({
         properties,
         content: [
