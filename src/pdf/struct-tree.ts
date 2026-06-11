@@ -39,6 +39,7 @@ export type StructType =
   | 'TD'
   | 'Caption'
   | 'Figure'
+  | 'Link'
   | 'Span';
 
 // One marked-content sequence owned by a node: MCID `mcid` on page `pageIndex`.
@@ -50,6 +51,10 @@ interface Mcref {
 export class StructNode {
   readonly children: Array<StructNode> = [];
   readonly mcrefs: Array<Mcref> = [];
+  // §14.7.4.3 object references (/OBJR kids) — e.g. a Link element pointing at
+  // its link annotation. The annotation's own /StructParent entry is recorded
+  // via addAnnotParent.
+  readonly objrs: Array<{ readonly annotRef: PdfRef; readonly pageIndex: number }> = [];
   parent: StructNode | null = null;
   ref: PdfRef | null = null;
   // Alternate text (/Alt, §14.9.4) — required on Figure for PDF/A-1a.
@@ -101,6 +106,14 @@ export class StructTreeBuilder {
     this.node(nodeId).mcrefs.push({ pageIndex, mcid });
   }
 
+  // §14.7.4.4: an annotation's /StructParent key maps DIRECTLY to its owning
+  // StructElem in the parent tree (a scalar entry, unlike the per-page MCID
+  // arrays). The emit phase allocates keys above the page indices.
+  private readonly annotParents: Array<{ readonly key: number; readonly nodeId: number }> = [];
+  addAnnotParent(key: number, nodeId: number): void {
+    this.annotParents.push({ key, nodeId });
+  }
+
   // Emit the StructTreeRoot, every StructElem, and the ParentTree; return the
   // StructTreeRoot ref for the catalog. Must run after all pages are added (so
   // `pageRefs` is complete) and after every addMcref call.
@@ -132,7 +145,12 @@ export class StructTreeBuilder {
       // /Pg = the page of this element's first content (bare-MCID resolution
       // base); leaf MCRs below always carry their own /Pg so split elements are
       // still correct.
-      const firstPage = n.mcrefs.length > 0 ? n.mcrefs[0]!.pageIndex : undefined;
+      const firstPage =
+        n.mcrefs.length > 0
+          ? n.mcrefs[0]!.pageIndex
+          : n.objrs.length > 0
+            ? n.objrs[0]!.pageIndex
+            : undefined;
       if (firstPage !== undefined) d.set('Pg', pageRefs[firstPage]!);
 
       // /K = child elements (logical order) followed by this node's own MCRs.
@@ -142,6 +160,9 @@ export class StructTreeBuilder {
       for (const c of n.children) kids.push(c.ref!);
       for (const m of n.mcrefs) {
         kids.push(dict({ Type: name('MCR'), Pg: pageRefs[m.pageIndex]!, MCID: m.mcid }));
+      }
+      for (const o of n.objrs) {
+        kids.push(dict({ Type: name('OBJR'), Pg: pageRefs[o.pageIndex]!, Obj: o.annotRef }));
       }
       if (kids.length === 1) d.set('K', kids[0]!);
       else if (kids.length > 1) d.set('K', kids);
@@ -172,14 +193,16 @@ export class StructTreeBuilder {
         arr[m.mcid] = n.ref!;
       }
     }
-    const sortedKeys = [...perPage.keys()].sort((a, b) => a - b);
-    const nums: Array<PdfValue> = [];
-    for (const k of sortedKeys) {
-      const arr = perPage.get(k)!;
+    const entries = new Map<number, PdfValue>();
+    for (const [k, arr] of perPage) {
       const dense: Array<PdfValue> = [];
       for (let i = 0; i < arr.length; i++) dense.push(arr[i] ?? PDF_NULL);
-      nums.push(k, dense);
+      entries.set(k, dense);
     }
+    for (const a of this.annotParents) entries.set(a.key, this.node(a.nodeId).ref!);
+    const sortedKeys = [...entries.keys()].sort((a, b) => a - b);
+    const nums: Array<PdfValue> = [];
+    for (const k of sortedKeys) nums.push(k, entries.get(k)!);
     const parentTreeRef = doc.add(dict({ Nums: nums }));
 
     rootDict.set('K', this.root.ref!);

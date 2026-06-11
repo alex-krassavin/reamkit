@@ -74,6 +74,9 @@ export function emitStyledPdf(
   // when the first page carries both).
   let firstPageDict: PdfDict | undefined;
   let firstPageAnnots: Array<PdfValue> | undefined;
+  // Scalar /StructParent keys for link annotations sit above the page indices
+  // (pages use 0..N-1 as their /StructParents keys).
+  let annotParentCount = 0;
   const fontResourceDict = buildFontResourceDict(laid.fontResources, embeddedFonts);
   const xobjectResourceDict = buildXObjectResourceDict(laid.imageResources, embeddedImages);
   const resourcesDict = dict({
@@ -121,22 +124,39 @@ export function emitStyledPdf(
     };
     if (links.length > 0) {
       // ISO 32000-1 §12.5.6.5 Link annotation + §12.6.4.7 URI action. The
-      // schemes were allowlisted at collection time (core/links).
-      const annots: Array<PdfValue> = links.map((l) =>
-        ref(
-          doc.add(
-            dict({
-              Type: name('Annot'),
-              Subtype: name('Link'),
-              Rect: [l.rect[0], l.rect[1], l.rect[2], l.rect[3]],
-              Border: [0, 0, 0],
-              A: dict({ S: name('URI'), URI: l.href }),
-            }),
-          ).id,
-        ),
-      );
-      pageEntries['Annots'] = annots;
-      if (pageIndex === 0) firstPageAnnots = annots;
+      // schemes were allowlisted at collection time (core/links). /F 4 sets
+      // the Print flag (PDF/A §6.3.3 requires it on every annotation). In
+      // tagged mode each annotation hangs off a Link StructElem under the
+      // owning line's node via OBJR + a scalar /StructParent entry
+      // (§14.7.4.4, Matterhorn 28-011); an artifact line's link (header/
+      // footer) gets no annotation — there is no structure to attach it to.
+      const annots: Array<PdfValue> = [];
+      for (const l of links) {
+        if (structBuilder && l.structId === undefined) continue;
+        const entries: Record<string, PdfValue> = {
+          Type: name('Annot'),
+          Subtype: name('Link'),
+          Rect: [l.rect[0], l.rect[1], l.rect[2], l.rect[3]],
+          Border: [0, 0, 0],
+          F: 4,
+          A: dict({ S: name('URI'), URI: l.href }),
+        };
+        if (structBuilder && l.structId !== undefined) {
+          entries['StructParent'] = renderedPages.length + annotParentCount;
+        }
+        const annotRef = doc.add(dict(entries));
+        if (structBuilder && l.structId !== undefined) {
+          const linkNode = structBuilder.create('Link', structBuilder.node(l.structId));
+          linkNode.objrs.push({ annotRef, pageIndex });
+          structBuilder.addAnnotParent(renderedPages.length + annotParentCount, linkNode.id);
+          annotParentCount++;
+        }
+        annots.push(ref(annotRef.id));
+      }
+      if (annots.length > 0) {
+        pageEntries['Annots'] = annots;
+        if (pageIndex === 0) firstPageAnnots = annots;
+      }
     }
     if (transparencyGroup) pageEntries['Group'] = transparencyGroup;
     if (pageTagging?.assigned) {
@@ -418,6 +438,9 @@ function emitTaggedRuns<T extends PageItem>(
 interface LinkRegion {
   readonly href: string;
   readonly rect: readonly [number, number, number, number]; // PDF y-up
+  // The owning line's structure node (tagged mode) — the annotation hangs off
+  // a Link element under it. Undefined for artifact lines (headers/footers).
+  readonly structId?: number;
 }
 
 function emitPageContent(
@@ -665,6 +688,7 @@ function emitPageContent(
           links.push({
             href: safe,
             rect: [linkX0, baselineY - linkDescent, linkX1, baselineY + linkAscent],
+            ...(cmd.structId !== undefined ? { structId: cmd.structId } : {}),
           });
         }
         linkHref = undefined;

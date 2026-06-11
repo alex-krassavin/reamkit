@@ -50,6 +50,18 @@ describe('PDF link annotations (ISO 32000 §12.5.6.5)', () => {
     expect(pdf).not.toContain('javascript:');
   });
 
+  it('tagged mode encloses the annotation in a Link StructElem (OBJR + StructParent)', async () => {
+    const docx = buildDocxFromBody(
+      '<w:p><w:hyperlink r:id="rId30"><w:r><w:t>tagged link</w:t></w:r></w:hyperlink></w:p>',
+      { hyperlinks: { rId30: 'https://reamkit.dev' } },
+    );
+    const pdf = pdfText(await Ream.parse(docx).convert('pdf', { fonts: FONTS, tagged: true }));
+    expect(pdf).toContain('/S /Link');
+    expect(pdf).toContain('/Type /OBJR');
+    expect(pdf).toContain('/StructParent ');
+    expect(pdf).toContain('/F 4');
+  });
+
   it('documents without links carry no /Annots at all', async () => {
     const docx = buildDocxFromBody('<w:p><w:r><w:t>plain</w:t></w:r></w:p>');
     const pdf = pdfText(await Ream.parse(docx).convert('pdf', { fonts: FONTS }));
