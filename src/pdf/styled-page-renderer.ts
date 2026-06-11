@@ -75,6 +75,7 @@ import {
   hasBidiCharacters,
   reorderVisual,
   reverseByCodePoint,
+  segmentLevels,
 } from '@/core/bidi';
 import { FORCED_BREAK, breakLines } from '@/core/line-breaker';
 import { NumberingState, applyNumbering, applyNumberingToHeadersFooters } from '@/core/numbering';
@@ -1539,14 +1540,6 @@ function layoutParagraphBlock(
   };
 }
 
-// Object Replacement Character — stands in for an inline image when computing
-// BiDi levels (treated as a neutral object).
-const OBJECT_REPLACEMENT = 0xfffc;
-// Explicit directional formatting codes used to honour run-level w:rtl.
-const RLE = 0x202b;
-const PDF_FMT = 0x202c;
-const LRE = 0x202a;
-
 interface RunPlan {
   readonly run: Paragraph['runs'][number];
   readonly resolvedRun: ResolvedRunProperties;
@@ -1698,45 +1691,17 @@ function tokenizeParagraph(
     return tokenizePlansLtr(plans);
   }
 
-  // Build the BiDi input. RTL runs are wrapped in RLE…PDF (LTR runs in an RTL
-  // paragraph in LRE…PDF) so run-level direction overrides neutral resolution.
-  const bidiCps: Array<number> = [];
-  // For each bidi code point, the index of the "real" code point it maps to,
-  // or -1 for inserted control characters.
-  const realIndexOfBidi: Array<number> = [];
-  let realCount = 0;
-
-  for (const plan of plans) {
-    const isObject = plan.isImage || plan.math !== undefined;
-    const wrap = plan.resolvedRun.rtl ? RLE : baseDir === 'rtl' && !isObject ? LRE : 0;
-    if (wrap) {
-      bidiCps.push(wrap);
-      realIndexOfBidi.push(-1);
-    }
-    if (isObject) {
-      bidiCps.push(OBJECT_REPLACEMENT);
-      realIndexOfBidi.push(realCount);
-      realCount++;
-    } else {
-      for (const ch of plan.run.text) {
-        bidiCps.push(ch.codePointAt(0)!);
-        realIndexOfBidi.push(realCount);
-        realCount++;
-      }
-    }
-    if (wrap) {
-      bidiCps.push(PDF_FMT);
-      realIndexOfBidi.push(-1);
-    }
-  }
-
-  const { levels } = computeBidi(bidiCps, baseDir);
-  // Project levels back onto real code points.
-  const realLevels: Array<number> = new Array(realCount).fill(baseDir === 'rtl' ? 1 : 0);
-  for (let i = 0; i < bidiCps.length; i++) {
-    const ri = realIndexOfBidi[i]!;
-    if (ri >= 0) realLevels[ri] = levels[i]!;
-  }
+  // Per-real-position embedding levels via the core/bidi segment facade —
+  // the explicit-formatting protocol (RLE/LRE/PDF wrapping, U+FFFC objects)
+  // lives there, not in the PDF layer (stage 6 / A5).
+  const realLevels = segmentLevels(
+    plans.map((plan) => ({
+      text: plan.run.text,
+      ...(plan.isImage || plan.math !== undefined ? { object: true } : {}),
+      ...(plan.resolvedRun.rtl ? { rtl: true } : {}),
+    })),
+    baseDir,
+  );
 
   return tokenizePlansBidi(plans, realLevels);
 }

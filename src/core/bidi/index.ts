@@ -57,3 +57,5 @@ export function reverseByCodePoint(text: string): string {
 export function reorderTokens(tokenLevels: ReadonlyArray<number>): Array<number> {
   return reorderVisual(tokenLevels);
 }
+export { segmentLevels } from '@/core/bidi/segments';
+export type { BidiSegment } from '@/core/bidi/segments';
