@@ -16,6 +16,7 @@ import {
   EMPTY_STYLE_SHEET,
   resolveBodyStyles,
   resolveHeadersFootersStyles,
+  resolveTableStyles,
 } from '@/core/style-cascade';
 
 import { FEATURES, ResourceStore } from '@/core/ir';
@@ -113,7 +114,7 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
     // every writer sees ready paragraphs. `numbering`/`styles` stay as raw
     // material for round-trip writers; render projections must NOT re-apply
     // them (the projector sends EMPTY_STYLE_SHEET).
-    body: resolveBodyStyles(applyNumbering(body, numbering), styles),
+    body: resolveBodyStyles(applyNumbering(resolveTableStyles(body, styles), numbering), styles),
     sections,
     styles,
     numbering,

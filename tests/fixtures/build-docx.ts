@@ -16,6 +16,9 @@ const CONTENT_TYPES_HEADER = `<?xml version="1.0" encoding="UTF-8" standalone="y
 
 const NUMBERING_TYPE_OVERRIDE =
   '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>';
+const STYLES_TYPE_OVERRIDE =
+  '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>';
+
 const SETTINGS_TYPE_OVERRIDE =
   '<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>';
 const THEME_TYPE_OVERRIDE =
@@ -54,6 +57,8 @@ export interface FixtureImage {
 
 export interface BuildDocxOptions {
   readonly numberingXml?: string;
+  /** Inner XML of word/styles.xml (the <w:style>/<w:docDefaults> elements). */
+  readonly stylesXml?: string;
   // Default header/footer (legacy fields, rId10 / rId11).
   readonly headerXml?: string;
   readonly footerXml?: string;
@@ -124,6 +129,7 @@ ${bodyInnerXml}
     CONTENT_TYPES_HEADER +
     [...imageDefaults].join('') +
     (options.numberingXml ? NUMBERING_TYPE_OVERRIDE : '') +
+    (options.stylesXml ? STYLES_TYPE_OVERRIDE : '') +
     (options.settingsXml ? SETTINGS_TYPE_OVERRIDE : '') +
     (options.themeXml ? THEME_TYPE_OVERRIDE : '') +
     headerSlots.map((s) => headerOverride(s.idx)).join('') +
@@ -136,6 +142,15 @@ ${bodyInnerXml}
     '_rels/.rels': encoder.encode(ROOT_RELS),
     'word/document.xml': encoder.encode(documentXml),
   };
+
+  if (options.stylesXml) {
+    entries['word/styles.xml'] = encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+${options.stylesXml}
+</w:styles>`,
+    );
+  }
 
   if (options.numberingXml) {
     entries['word/numbering.xml'] = encoder.encode(

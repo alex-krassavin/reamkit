@@ -11,6 +11,7 @@ import type {
   RowProperties,
   Table,
   TableCell,
+  TableLook,
   TableProperties,
   TableRow,
 } from '@/core/document-model';
@@ -121,6 +122,19 @@ function parseTableProperties(tblPr: PoNode | undefined): TableProperties {
   if (!tblPr) return {};
   const out: Mutable<TableProperties> = {};
 
+  // §17.7.6 w:tblStyle + §17.4.62 w:tblLook — raw references the reader's
+  // resolveTableStyles transform consumes (round-trip material afterwards).
+  const tblStyle = poFirstChild(tblPr, 'w:tblStyle');
+  if (tblStyle) {
+    const id = poVal(tblStyle);
+    if (id) out.styleId = id;
+  }
+  const tblLook = poFirstChild(tblPr, 'w:tblLook');
+  if (tblLook) {
+    const look = parseTableLook(tblLook);
+    if (look) out.look = look;
+  }
+
   const tblW = poFirstChild(tblPr, 'w:tblW');
   if (tblW) {
     const w = poIntAttr(tblW, 'w');
@@ -147,6 +161,35 @@ function parseTableProperties(tblPr: PoNode | undefined): TableProperties {
   if (margins) out.defaultCellMargins = margins;
 
   return out;
+}
+
+// §17.4.62 — modern files carry explicit flag attributes; legacy files encode
+// the same flags in a hex @w:val bitmask (0020 firstRow, 0040 lastRow,
+// 0080 firstColumn, 0100 lastColumn, 0200 noHBand, 0400 noVBand).
+function parseTableLook(node: PoNode): TableLook | undefined {
+  const flag = (name: string, bit: number): boolean | undefined => {
+    const attr = poAttr(node, name);
+    if (attr !== undefined) return attr === '1' || attr === 'true';
+    const valRaw = poAttr(node, 'val');
+    if (valRaw === undefined) return undefined;
+    const mask = parseInt(valRaw, 16);
+    return Number.isFinite(mask) ? (mask & bit) !== 0 : undefined;
+  };
+  const firstRow = flag('firstRow', 0x0020);
+  const lastRow = flag('lastRow', 0x0040);
+  const firstColumn = flag('firstColumn', 0x0080);
+  const lastColumn = flag('lastColumn', 0x0100);
+  const noHBand = flag('noHBand', 0x0200);
+  const noVBand = flag('noVBand', 0x0400);
+  const out: TableLook = {
+    ...(firstRow !== undefined ? { firstRow } : {}),
+    ...(lastRow !== undefined ? { lastRow } : {}),
+    ...(firstColumn !== undefined ? { firstColumn } : {}),
+    ...(lastColumn !== undefined ? { lastColumn } : {}),
+    ...(noHBand !== undefined ? { noHBand } : {}),
+    ...(noVBand !== undefined ? { noVBand } : {}),
+  };
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function parseTableGrid(tblGrid: PoNode | undefined): Array<Pt> {

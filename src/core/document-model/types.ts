@@ -290,6 +290,40 @@ export interface Numbering {
 // ECMA-376 Part 1 §17.7 — Styles.
 export type StyleType = 'paragraph' | 'character' | 'table' | 'numbering';
 
+// §17.7.6 — one table-style formatting layer: the style's own base layer
+// (w:style/tblPr + tcPr + rPr + pPr) or one conditional override
+// (w:tblStylePr). Borders come from tblBorders (table layer) or tcBorders
+// (region layer) — whichever the layer carries.
+export interface TableStyleLayer {
+  readonly borders?: CellBorders;
+  readonly cellMargins?: CellMargins;
+  readonly shading?: CellShading;
+  readonly runProperties?: RunProperties;
+  readonly paragraphProperties?: ParagraphProperties;
+}
+
+// §17.7.6.3 w:tblStylePr @w:type — the table regions a conditional layer
+// targets.
+export type TableStyleConditionType =
+  | 'wholeTable'
+  | 'band1Vert'
+  | 'band2Vert'
+  | 'band1Horz'
+  | 'band2Horz'
+  | 'firstCol'
+  | 'lastCol'
+  | 'firstRow'
+  | 'lastRow'
+  | 'nwCell'
+  | 'neCell'
+  | 'swCell'
+  | 'seCell';
+
+export interface TableStyleCondition {
+  readonly type: TableStyleConditionType;
+  readonly layer: TableStyleLayer;
+}
+
 export interface Style {
   readonly id: string;
   readonly type: StyleType;
@@ -297,6 +331,12 @@ export interface Style {
   readonly isDefault: boolean;
   readonly runProperties: RunProperties;
   readonly paragraphProperties: ParagraphProperties;
+  // Table styles only (§17.7.6): the base layer and conditional overrides.
+  readonly tableLayer?: TableStyleLayer;
+  readonly tableConditions?: ReadonlyArray<TableStyleCondition>;
+  // w:tblPr/w:tblStyleRowBandSize / ColBandSize (default 1).
+  readonly rowBandSize?: number;
+  readonly colBandSize?: number;
 }
 
 export interface StyleSheet {
@@ -362,7 +402,23 @@ export interface RowProperties {
   readonly pageBreakBefore?: boolean;
 }
 
+// §17.4.62 w:tblLook — which of the table style's conditional formats apply.
+// Modern files carry explicit attributes; legacy files a hex bitmask (both
+// parsed). Band flags are negative ("no band") per the spec.
+export interface TableLook {
+  readonly firstRow?: boolean;
+  readonly lastRow?: boolean;
+  readonly firstColumn?: boolean;
+  readonly lastColumn?: boolean;
+  readonly noHBand?: boolean;
+  readonly noVBand?: boolean;
+}
+
 export interface TableProperties {
+  // §17.7.6 — raw reference to a table style (resolved by the reader's
+  // resolveTableStyles transform; round-trip material afterwards).
+  readonly styleId?: string;
+  readonly look?: TableLook;
   readonly widthPt?: Pt;
   readonly widthFraction?: number; // tblW type=pct: w/5000 (1.0 = full content width)
   readonly widthType?: 'auto' | 'dxa' | 'pct' | 'nil';
