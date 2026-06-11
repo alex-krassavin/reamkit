@@ -61,12 +61,16 @@ const RUN_CONTAINER_TAGS = new Set([
 // Resolves a drawing relationship id to a content-addressed ResourceId —
 // supplied by the converter (which owns the OPC package and the ResourceStore).
 export type ImageResolver = (relId: string) => ResourceId | undefined;
+export type HyperlinkResolver = (relId: string) => string | undefined;
 
 // Document-wide resolvers every nested parser needs — one context object
 // instead of threading a parameter pair through ten signatures (oop-design §8).
 export interface ParseContext {
   readonly resolveColor: ColorResolver;
   readonly resolveImage?: ImageResolver;
+  // §17.16.22 w:hyperlink r:id → external target URL from the owning part's
+  // rels (TargetMode="External" only). Absent ⇒ links unwrap to plain text.
+  readonly resolveHyperlink?: HyperlinkResolver;
 }
 
 export const DEFAULT_PARSE_CONTEXT: ParseContext = { resolveColor: defaultColorResolver };
@@ -331,11 +335,17 @@ function parseParagraph(p: PoNode, ctx: ParseContext): Paragraph {
   return { properties, runs };
 }
 
-function collectRuns(container: PoNode, out: Array<Run>, ctx: ParseContext): void {
+function collectRuns(
+  container: PoNode,
+  out: Array<Run>,
+  ctx: ParseContext,
+  href?: string,
+): void {
   for (const child of poChildren(container)) {
     if (poIs(child, 'w:pPr')) continue;
     if (poIs(child, 'w:r')) {
-      out.push(parseRun(child, ctx));
+      const run = parseRun(child, ctx);
+      out.push(href !== undefined ? { ...run, href } : run);
       continue;
     }
     // OfficeMath: an inline equation (m:oMath) or a display paragraph
@@ -352,7 +362,16 @@ function collectRuns(container: PoNode, out: Array<Run>, ctx: ParseContext): voi
     }
     const tag = elementTag(child);
     if (tag && RUN_CONTAINER_TAGS.has(tag)) {
-      collectRuns(child, out, ctx);
+      // A hyperlink container stamps its resolved external target onto every
+      // run inside (nested containers inherit the outer link). w:anchor-only
+      // links (internal bookmarks) stay plain text in v1.
+      let childHref = href;
+      if (tag === 'w:hyperlink') {
+        const rId = poAttr(child, 'id');
+        const resolved = rId ? ctx.resolveHyperlink?.(rId) : undefined;
+        if (resolved !== undefined) childHref = resolved;
+      }
+      collectRuns(child, out, ctx, childHref);
     }
   }
 }

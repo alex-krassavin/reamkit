@@ -228,6 +228,11 @@ export interface Run {
   readonly native?: NativeBag;
   readonly text: string;
   readonly properties: RunProperties;
+  // ECMA-376 §17.16.22 — the run sits inside a w:hyperlink whose r:id resolved
+  // to an external target. The URL is stored as written in the rels part;
+  // writers MUST pass it through the scheme allowlist (core/links) before
+  // emitting anything clickable.
+  readonly href?: string;
   // When set, the run renders this image inline in the line; `text` is ignored.
   readonly inlineImage?: InlineImage;
   // When set, the run is an inline OfficeMath object; `text` is ignored.

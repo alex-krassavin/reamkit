@@ -33,6 +33,7 @@ import type { Loss, ResourceId, ResourceStore } from '@/core/ir';
 
 import { toBase64 } from '@/core/bytes';
 import { detectImageFormat } from '@/core/images';
+import { sanitizeHref } from '@/core/links';
 import { FEATURES } from '@/core/ir';
 import {
   EMPTY_STYLE_SHEET,
@@ -86,6 +87,7 @@ export const htmlWriter: DocumentWriter<FlowDoc> = {
     FEATURES.tablesNested,
     FEATURES.lists,
     FEATURES.images,
+    FEATURES.hyperlinks,
     FEATURES.rtl,
     FEATURES.trackedChanges,
   ]),
@@ -206,6 +208,19 @@ function runHtml(run: Run, p: Paragraph, ctx: EmitCtx): string {
   let html = `<span${dir}${style ? ` style="${style}"` : ''}>${textHtml(run.text)}</span>`;
   if (resolved.verticalAlign === 'superscript') html = `<sup>${html}</sup>`;
   else if (resolved.verticalAlign === 'subscript') html = `<sub>${html}</sub>`;
+  if (run.href !== undefined) {
+    // Untrusted input: only allowlisted schemes become clickable (core/links).
+    const safe = sanitizeHref(run.href);
+    if (safe !== undefined) {
+      html = `<a href="${escapeAttr(safe)}">${html}</a>`;
+    } else {
+      ctx.losses.push({
+        severity: 'degraded',
+        feature: FEATURES.hyperlinks,
+        detail: `hyperlink target with a disallowed scheme rendered as plain text`,
+      });
+    }
+  }
   return html;
 }
 

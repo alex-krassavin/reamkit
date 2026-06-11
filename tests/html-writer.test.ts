@@ -122,6 +122,30 @@ describe('html writer (FlowDoc adapter)', () => {
     expect(html).not.toContain('a <b>');
   });
 
+  it('emits hyperlinks as <a> with a scheme allowlist', async () => {
+    const docx = buildDocxFromBody(
+      '<w:p>' +
+        '<w:hyperlink r:id="rId30"><w:r><w:t>safe link</w:t></w:r></w:hyperlink>' +
+        '<w:hyperlink r:id="rId31"><w:r><w:t>evil link</w:t></w:r></w:hyperlink>' +
+        '<w:hyperlink w:anchor="bm1"><w:r><w:t>internal</w:t></w:r></w:hyperlink>' +
+        '</w:p>',
+      {
+        hyperlinks: {
+          rId30: 'https://reamkit.dev/?a=1&b=2',
+          rId31: 'javascript:alert(1)',
+        },
+      },
+    );
+    const { bytes, losses } = await Ream.parse(docx).convertWithReport('html');
+    const html = decode(bytes);
+    expect(html).toContain('<a href="https://reamkit.dev/?a=1&amp;b=2">');
+    expect(html).toContain('safe link');
+    expect(html).toContain('evil link'); // the text survives, the link does not
+    expect(html).not.toContain('javascript:');
+    expect(html).toContain('internal'); // anchor-only hyperlink → plain text
+    expect(losses.some((l) => l.feature === 'hyperlinks' && l.severity === 'degraded')).toBe(true);
+  });
+
   it('converts through the createConverter facade', async () => {
     const conv = createConverter();
     const { bytes, losses } = await conv.convert(

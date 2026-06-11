@@ -9,7 +9,7 @@ import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { ResourceId } from '@/core/ir';
 import type { CoreProperties } from '@/core/opc';
-import type { ImageResolver, ParseContext } from '@/word';
+import type { HyperlinkResolver, ImageResolver, ParseContext } from '@/word';
 import { bytesInclude } from '@/core/bytes';
 import { applyNumbering, applyNumberingToHeadersFooters } from '@/core/numbering';
 import {
@@ -43,6 +43,8 @@ const CORE_PROPS_PART = 'docProps/core.xml';
 const MAIN_DOCUMENT_PART = 'word/document.xml';
 
 const REL_IMAGE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image';
+const REL_HYPERLINK =
+  'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink';
 const REL_CHART = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart';
 const REL_THEME = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme';
 const REL_HEADER = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/header';
@@ -59,7 +61,8 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
   // lazily as the parsers meet drawing relationships (identical bytes dedupe).
   const resources = new ResourceStore();
   const resolveImage = makeImageResolver(pkg, resources);
-  const ctx: ParseContext = { resolveColor, resolveImage };
+  const resolveHyperlink = makeHyperlinkResolver(pkg);
+  const ctx: ParseContext = { resolveColor, resolveImage, resolveHyperlink };
   const body = parseDocument(main.data, ctx);
   const rawSections = parseSections(main.data);
 
@@ -191,6 +194,22 @@ function makeImageResolver(
   };
 }
 
+// §17.16.22 + OPC §9.3: hyperlink relationship ids are scoped to their OWNING
+// part, and only TargetMode="External" targets are URLs (internal-mode
+// hyperlink rels point at parts, not the web).
+function makeHyperlinkResolver(
+  pkg: OpcPackage,
+  partName: string = MAIN_DOCUMENT_PART,
+): HyperlinkResolver {
+  const byRelId = new Map<string, string>();
+  for (const rel of pkg.getPartRelationships(partName)) {
+    if (rel.type === REL_HYPERLINK && rel.targetMode === 'External') {
+      byRelId.set(rel.id, rel.target);
+    }
+  }
+  return (relId) => byRelId.get(relId);
+}
+
 // Resolve & parse every chart part referenced by the main document, keyed by
 // its relationship id (which ChartBlock.chartRelId points to).
 function loadCharts(pkg: OpcPackage, resolveColor: ColorResolver): ReadonlyMap<string, Chart> {
@@ -249,6 +268,7 @@ function loadHeadersFootersForSections(
     const hfCtx: ParseContext = {
       resolveColor: ctx.resolveColor,
       resolveImage: makeImageResolver(pkg, store, resolved.path),
+      resolveHyperlink: makeHyperlinkResolver(pkg, resolved.path),
     };
     out.set(rel.id, parseHeaderFooter(resolved.data, hfCtx));
   }

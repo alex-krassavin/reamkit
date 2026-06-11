@@ -74,6 +74,8 @@ export interface BuildDocxOptions {
   // Chart parts keyed by the relationship id a c:chart @r:id references. Each
   // value is a full <c:chartSpace>…</c:chartSpace> document.
   readonly charts?: Readonly<Record<string, string>>;
+  /** External hyperlink rels for document.xml: rId → URL (TargetMode External). */
+  readonly hyperlinks?: Readonly<Record<string, string>>;
 }
 
 export function buildDocx(paragraphs: ReadonlyArray<string>): Uint8Array {
@@ -196,6 +198,13 @@ ${f.xml}
     docRels.push(
       `<Relationship Id="${c.rId}" Type="${REL_CHART}" Target="charts/chart${c.idx}.xml"/>`,
     );
+  }
+  if (options.hyperlinks) {
+    for (const [rId, url] of Object.entries(options.hyperlinks)) {
+      docRels.push(
+        `<Relationship Id="${rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${url.replaceAll('&', '&amp;')}" TargetMode="External"/>`,
+      );
+    }
   }
   if (options.images) {
     let imgIdx = 1;
