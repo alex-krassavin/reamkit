@@ -4,6 +4,18 @@ All notable changes to **Ream** (`reamkit`) are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Charts on xlsx sheets** — the worksheet's drawing part now loads:
+  chart frames anchored to cell ranges render after their sheet's grid,
+  sized from the anchor's column/row tracks. Custom chart colour themes
+  (`colorsN.xml`) apply to series in both Word and Excel documents.
+- **Tagged lists: Lbl elements** — list-item markers ("1.", "•") get their
+  own `Lbl` structure element, so assistive technology announces the label
+  separately from the item body.
+
 ## [1.2.0] - 2026-06-11
 
 ### Added
