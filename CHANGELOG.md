@@ -1,10 +1,9 @@
 # Changelog
 
-All notable changes to **Ream** (`reamkit`) are documented here. The format is
-based on [Keep a Changelog](https://keepachangelog.com/), and the project
+All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
-## [1.3.0] - 2026-06-12
+## 1.3.0
 
 ### Added
 
@@ -35,7 +34,7 @@ follows [Semantic Versioning](https://semver.org/).
 - **Password-protected (encrypted) OOXML** files now fail with a clear message
   identifying the file as an OLE compound file, instead of a cryptic ZIP error.
 
-## [1.2.0] - 2026-06-11
+## 1.2.0
 
 ### Added
 
@@ -89,7 +88,7 @@ follows [Semantic Versioning](https://semver.org/).
   with a degraded-`hyperlinks` loss; documents without links are
   byte-identical to before.
 
-## [1.1.0]
+## 1.1.0
 
 ### Added
 
@@ -113,7 +112,7 @@ follows [Semantic Versioning](https://semver.org/).
   `layoutStyledDocument(...).pdf`. The internal `DrawCommand` alias is gone —
   the schema name is `PageItem`.
 
-## [1.0.0]
+## 1.0.0
 
 The interlayer release — and the first stable major. Documents parse once
 into a format-neutral tree (**FlowDoc**) and convert to any target from
@@ -175,7 +174,7 @@ there; the public face of the library is the `Ream` class.
   `/ByteRange` — an embedded attachment could hijack the signature bytes. The
   scan now matches the full fixed-width placeholder.
 
-## [0.1.0-alpha.0]
+## 0.1.0-alpha.0
 
 First tagged alpha. DOCX/XLSX → PDF, implemented directly from the ECMA-376 and
 ISO 32000 / 19005 specifications — no third-party converter, PDF writer, or
@@ -194,7 +193,3 @@ layout engine. Browser-first; the caller supplies fonts.
   (PKCS#7 detached, ECDSA); object streams; JPEG2000.
 - **Tooling** — aligned to `@tanstack/config` (Vite build, ESLint, publint +
   are-the-types-wrong); MIT-licensed; tag-triggered npm release workflow.
-
-[Unreleased]: https://github.com/alex-krassavin/reamkit/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/alex-krassavin/reamkit/compare/v0.1.0-alpha.0...v1.0.0
-[0.1.0-alpha.0]: https://github.com/alex-krassavin/reamkit/releases/tag/v0.1.0-alpha.0
