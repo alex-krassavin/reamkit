@@ -672,6 +672,17 @@ prepareImage/addImage вместо двойного декода с throwaway-Pd
 задокументирован); слоевые инверсии исправлены: po-helpers→core, bytesInclude→core/bytes,
 EMPTY_STYLE_SHEET→style-cascade (правило: format→core, никогда обратно). 446 тестов, байт-в-байт на каждом шаге.
 
+**ООП/GRASP-волна 2 (выполнена).** Главное — **класс `Ream`**, объектное лицо библиотеки по запросу
+(«SomeClass.parse → convert»): `Ream.parse(bytes)` (sniff → reader → FlowDoc, один раз) →
+`.convert('pdf'|'svg', opts)` из прослойки без re-parse; `.flow` (доступ к дереву), `.format`, `.losses`,
+`.convertWithReport` (+strict). Тесты доказывают байт-эквивалентность класса прямым конвертерам (docx и xlsx).
+Фундамент: `flowRenderOptions` (B2) — единый проектор FlowDoc→опции вместо трёх разъехавшихся копий;
+`resolveDocxAutoFonts` — общий авто-фетч шрифтов (single/multi family) конвертера и класса.
+Плюс `paintPlan` (A15) — единственный владелец порядка отрисовки страницы (fills→images→borders→shapes→text)
+с exhaustive-switch по PageItem; PDF-emit и svg-writer оба на нём. README переписан на Ream-API.
+Остаток волны 2 (некритично): C1 единый разбор цвета DrawingML, A4 pickVariant (bold-баг remote),
+C5 per-part ImageResolver (баг картинок в колонтитулах, меняет байты осознанно), B4 signPdf-офсет.
+
 **Мотивация.** Сейчас parser → representer прибиты друг к другу: добавление
 нового направления (например, PDF→Word) требует заново «как-то считывать,
 как-то собирать». Вводим явную прослойку: входные адаптеры (parser → дерево) и

@@ -18,26 +18,33 @@ Runtime dependencies are minimal: `fflate` (ZIP/Deflate) and `fast-xml-parser`.
 
 ## Usage
 
-Give it the document bytes, get the PDF bytes back. No fonts to wire up — an open
+Parse once into the format-neutral interlayer, convert to any target. The
+format (docx/xlsx) is sniffed from the bytes; no fonts to wire up — an open
 substitute font (Roboto for sans, Tinos for serif, Cousine for monospace — the
 same families LibreOffice substitutes) is fetched automatically based on the
 document's referenced fonts:
 
 ```ts
-import { convertDocxToPdf } from 'reamkit';
+import { Ream } from 'reamkit';
 
 // e.g. from an <input type="file"> or a fetch() — anything that yields bytes.
-const docx = new Uint8Array(await file.arrayBuffer());
+const bytes = new Uint8Array(await file.arrayBuffer());
 
-const pdf = await convertDocxToPdf(docx); // async — fetches a font if needed
+const doc = Ream.parse(bytes);            // docx or xlsx — sniffed
+const pdf = await doc.convert('pdf');     // async — fetches a font if needed
+const svg = await doc.convert('svg');     // same parse, different target
 
 // Hand the bytes to the browser: preview, download, upload, …
 const url = URL.createObjectURL(new Blob([pdf], { type: 'application/pdf' }));
 window.open(url);
 ```
 
-Excel works the same way via `convertXlsxToPdf`. The input/output are plain
-`Uint8Array`s, so wiring this to files, the network, or disk is up to you.
+`doc.flow` exposes the parsed document tree, `doc.format` the detected format,
+and `doc.convertWithReport(...)` returns `{ bytes, losses }` (pass
+`strict: true` to throw on the first conversion loss instead). The one-shot
+functions `convertDocxToPdf` / `convertXlsxToPdf` remain for single
+conversions. Input/output are plain `Uint8Array`s, so wiring this to files,
+the network, or disk is up to you.
 
 ### Bring your own fonts (synchronous, no network)
 
