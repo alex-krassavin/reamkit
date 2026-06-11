@@ -680,8 +680,10 @@ EMPTY_STYLE_SHEET→style-cascade (правило: format→core, никогда
 `resolveDocxAutoFonts` — общий авто-фетч шрифтов (single/multi family) конвертера и класса.
 Плюс `paintPlan` (A15) — единственный владелец порядка отрисовки страницы (fills→images→borders→shapes→text)
 с exhaustive-switch по PageItem; PDF-emit и svg-writer оба на нём. README переписан на Ream-API.
-Остаток волны 2 (некритично): C1 единый разбор цвета DrawingML, A4 pickVariant (bold-баг remote),
-C5 per-part ImageResolver (баг картинок в колонтитулах, меняет байты осознанно), B4 signPdf-офсет.
+Хвост волны 2 тоже закрыт: A4 pickVariant (единый каскад начертаний + фикс boldItalic→bold у remote),
+C1 единый разбор цветового узла DrawingML (return-first семантика чартов задокументирована),
+B4 signPdf ищет полный fixed-width плейсхолдер (decoy-attachment тест), C5 картинки колонтитулов
+резолвятся по rels СВОЕЙ части (OPC §9.3; фикстура buildDocxFromBody выросла headerImages).
 
 **Мотивация.** Сейчас parser → representer прибиты друг к другу: добавление
 нового направления (например, PDF→Word) требует заново «как-то считывать,
