@@ -68,12 +68,8 @@ const { bytes: out, losses } = await doc.convertWithReport('pdf', { fonts });
 await doc.convert('pdf', { fonts, strict: true }); // throw on the first loss
 ```
 
-One-shot helpers `convertDocxToPdf` / `convertXlsxToPdf` (+`Sync`) remain for
-single conversions — importing only one keeps the other format out of your
-bundle.
-
 ## Next steps
 
-- [Examples](/reamkit/guides/examples/) — PDF/A, signatures, font providers,
+- [Examples](/guides/examples/) — PDF/A, signatures, font providers,
   SVG preview, recipes.
-- [Concepts](/reamkit/guides/concepts/) — the pipeline and the interlayer.
+- [Concepts](/guides/concepts/) — the pipeline and the interlayer.

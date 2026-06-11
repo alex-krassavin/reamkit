@@ -28,8 +28,11 @@ export interface ConvertDocxOptions extends Omit<StyledRenderOptions, 'registry'
   readonly signature?: SignatureOptions;
 }
 
-// Synchronous conversion. Requires the caller to supply `fonts`/`fontBytes`
-// (no network). Use the async `convertDocxToPdf` for automatic font download.
+/**
+ * Synchronous one-shot conversion (requires `fonts`/`fontBytes`, no network).
+ *
+ * @deprecated Use `Ream.parse(bytes).convert('pdf', options)`.
+ */
 export function convertDocxToPdfSync(docx: Uint8Array, options: ConvertDocxOptions): Uint8Array {
   const fonts: FontBytesByVariant | undefined =
     options.fonts ?? (options.fontBytes ? { regular: options.fontBytes } : undefined);
@@ -101,6 +104,13 @@ export function detectDocxFamilyKeys(docx: Uint8Array): Set<FamilyKey> {
   return keys;
 }
 
+/**
+ * One-shot .docx → PDF (auto-downloads a substitute font set when the caller
+ * supplies none; zero network with `fonts`/`fontBytes`).
+ *
+ * @deprecated Use `Ream.parse(bytes).convert('pdf', options)` — one parse,
+ * any number of targets. Kept for 0.1.x compatibility.
+ */
 export async function convertDocxToPdf(
   docx: Uint8Array,
   options: ConvertDocxOptions = {},

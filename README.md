@@ -41,10 +41,9 @@ window.open(url);
 
 `doc.flow` exposes the parsed document tree, `doc.format` the detected format,
 and `doc.convertWithReport(...)` returns `{ bytes, losses }` (pass
-`strict: true` to throw on the first conversion loss instead). The one-shot
-functions `convertDocxToPdf` / `convertXlsxToPdf` remain for single
-conversions. Input/output are plain `Uint8Array`s, so wiring this to files,
-the network, or disk is up to you.
+`strict: true` to throw on the first conversion loss instead). Input/output
+are plain `Uint8Array`s, so wiring this to files, the network, or disk is up
+to you.
 
 ### Bring your own fonts (no network)
 
@@ -148,12 +147,9 @@ automatically from the document's `docProps/core.xml`), `attachments`
 
 ### Lower-level APIs
 
-- `convertDocxToPdf` / `convertXlsxToPdf` (+`Sync`) — one-shot, per-format
-  functions; importing only one keeps the other format out of your bundle.
-- `createConverter({ readers })` — the functional facade behind `Ream`.
 - `docxReader` / `xlsxReader`, `layoutStyledDocument`, `svgWriter` — the
   `@experimental` reader/writer interfaces of the interlayer, for building
-  custom pipelines.
+  custom pipelines (and keeping unused formats out of your bundle).
 - `renderStyledPdf` drives the layout engine directly; the typed document
   model is on the `reamkit/document-model` subpath.
 

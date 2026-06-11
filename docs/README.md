@@ -2,7 +2,7 @@
 
 [Astro Starlight](https://starlight.astro.build) documentation site for **Ream**
 (`reamkit`), deployed to GitHub Pages at
-<https://alex-krassavin.github.io/reamkit/>.
+<https://reamkit.dev>.
 
 - **Guides** (`src/content/docs/guides/`) — hand-written.
 - **API Reference** — generated from the typed public surface (`../src/index.ts`

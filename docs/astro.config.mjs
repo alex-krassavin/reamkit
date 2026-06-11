@@ -3,10 +3,9 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import starlightTypeDoc, { typeDocSidebarGroup } from 'starlight-typedoc';
 
-// Served from GitHub Pages at https://alex-krassavin.github.io/reamkit/
+// Served at https://reamkit.dev (GitHub Pages + custom domain).
 export default defineConfig({
-  site: 'https://alex-krassavin.github.io',
-  base: '/reamkit',
+  site: 'https://reamkit.dev',
   integrations: [
     starlight({
       title: 'Ream',
@@ -23,7 +22,7 @@ export default defineConfig({
         // Generates the API Reference under src/content/docs/api/ from the typed public
         // surface — the root API (../src/index.ts) and the document-model subpath.
         starlightTypeDoc({
-          entryPoints: ['../src/index.ts', '../src/document-model/index.ts'],
+          entryPoints: ['../src/index.ts', '../src/core/document-model/index.ts'],
           tsconfig: '../tsconfig.json',
           typeDoc: {
             skipErrorChecking: true,

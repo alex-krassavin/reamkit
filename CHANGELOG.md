@@ -47,6 +47,12 @@ the library is the new `Ream` class.
 - README and the docs site are rewritten around the `Ream` API, with an
   Examples page (PDF/A, signatures, providers, strict mode, recipes).
 
+### Deprecated
+
+- The one-shot `convertDocxToPdf` / `convertXlsxToPdf` (+`Sync`) functions —
+  use `Ream.parse(bytes).convert('pdf', options)`. They keep working through
+  the 0.2.x line.
+
 ### Fixed
 
 - `remoteFontProvider` lost the boldItalic→bold/italic degradation: a

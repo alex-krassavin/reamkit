@@ -28,8 +28,12 @@ export interface ConvertXlsxOptions extends Omit<StyledRenderOptions, 'registry'
   readonly signature?: SignatureOptions;
 }
 
-// Convert a .xlsx to PDF, downloading an open substitute font automatically
-// when the caller does not supply one (no network when `fonts` is set).
+/**
+ * Convert a .xlsx to PDF in one shot.
+ *
+ * @deprecated Use `Ream.parse(bytes).convert('pdf', options)` — one parse,
+ * any number of targets. This function remains for 0.1.x compatibility.
+ */
 export async function convertXlsxToPdf(
   xlsx: Uint8Array,
   options: ConvertXlsxOptions = {},
@@ -53,7 +57,11 @@ export async function convertXlsxToPdf(
   return signature ? signPdf(pdf, signature) : pdf;
 }
 
-// Synchronous conversion. Requires the caller to supply `fonts`/`fontBytes`.
+/**
+ * Synchronous one-shot conversion (requires `fonts`/`fontBytes`).
+ *
+ * @deprecated Use `Ream.parse(bytes).convert('pdf', options)`.
+ */
 export function convertXlsxToPdfSync(xlsx: Uint8Array, options: ConvertXlsxOptions): Uint8Array {
   const fonts: FontBytesByVariant | undefined =
     options.fonts ?? (options.fontBytes ? { regular: options.fontBytes } : undefined);

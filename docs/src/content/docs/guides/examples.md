@@ -145,14 +145,3 @@ import { getHyphenator } from 'reamkit';
 const hyphenator = await getHyphenator('en-us'); // or 'ru'
 const pdf = await doc.convert('pdf', { fonts, hyphenator });
 ```
-
-## Per-format one-shots (smaller bundles)
-
-`Ream` is a composition root — importing it pulls both format readers. When
-bundle size matters and the format is known, use the per-format functions:
-
-```ts
-import { convertDocxToPdfSync } from 'reamkit';
-
-const pdf = convertDocxToPdfSync(docx, { fonts }); // sync, zero network
-```
