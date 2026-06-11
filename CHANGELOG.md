@@ -6,6 +6,17 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Hyperlinks** — `w:hyperlink` external targets now become clickable: PDF
+  output gets `/Link` annotations (one rect per rendered line, merged into
+  each page's `/Annots`; in tagged/PDF-A mode the annotation is enclosed in a
+  `Link` structure element with `OBJR` + `/StructParent`, veraPDF-validated),
+  and HTML output wraps the text in `<a href>`. Targets pass a scheme
+  allowlist (`http`/`https`/`mailto`) — anything else renders as plain text
+  with a degraded-`hyperlinks` loss; documents without links are
+  byte-identical to before.
+
 ## [1.1.0]
 
 ### Added

@@ -11,7 +11,7 @@
 
 ---
 
-## W1 — Гиперссылки: модель → PDF `/Link` + HTML `<a>`
+## W1 — Гиперссылки: модель → PDF `/Link` + HTML `<a>` ✅ (выполнено)
 
 **Спека:** ECMA-376 §17.16.22 (`w:hyperlink`: `r:id` → external rel c
 `TargetMode="External"`, `w:anchor` → внутренняя закладка); ISO 32000
