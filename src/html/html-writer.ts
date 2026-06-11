@@ -20,7 +20,6 @@
 import type {
   BodyElement,
   Border,
-  CellBorders,
   ImageBlock,
   Paragraph,
   Run,
@@ -218,7 +217,7 @@ function runCss(r: ResolvedRunProperties): string {
   if (r.bold) css.push('font-weight:700');
   if (r.italic) css.push('font-style:italic');
   const deco: Array<string> = [];
-  const underlined = r.underline !== undefined && r.underline !== 'none';
+  const underlined = r.underline !== 'none';
   if (underlined) deco.push('underline');
   if (r.strike) deco.push('line-through');
   if (deco.length > 0) {

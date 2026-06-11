@@ -7,7 +7,6 @@ import type { FetchLike } from '@/core/fonts';
 import type { SignatureOptions, StyledRenderOptions } from '@/pdf';
 import { FontRegistry } from '@/core/font';
 import { fetchFontSet } from '@/core/fonts';
-import { EMPTY_STYLE_SHEET } from '@/core/style-cascade';
 import { flowRenderOptions } from '@/core/converter/project';
 import { readXlsx } from '@/excel/xlsx-reader';
 import { renderStyledPdf, signPdf } from '@/pdf';
