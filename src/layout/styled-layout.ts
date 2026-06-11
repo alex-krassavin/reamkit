@@ -33,6 +33,7 @@ import type {
   Paragraph,
   Run,
   Section,
+  SectionColumns,
   SectionProperties,
   ShapeBlock,
   ShapeDash,
@@ -601,7 +602,7 @@ export function layoutStyledDocument(
       options,
       fontResources,
       imageResources,
-      ctx.contentWidth,
+      ctx.columns ? ctx.columns[0]!.widthPt : ctx.contentWidth,
       ctx.pageContentHeight,
     );
   });
@@ -751,6 +752,11 @@ export interface SectionRenderCtx {
   readonly marginBottom: number;
   readonly contentWidth: number;
   readonly pageContentHeight: number;
+  // §17.6.4 multi-column sections: per-column x-offset (from marginLeft) and
+  // width. Absent for single-column sections. Body blocks are laid out at the
+  // FIRST column's width (explicit unequal widths degrade to flowing without
+  // re-wrap); headers/footers and footnotes keep the full content width.
+  readonly columns?: ReadonlyArray<{ readonly xOffsetPt: number; readonly widthPt: number }>;
   readonly headerSet: HeaderFooterSet;
   readonly footerSet: HeaderFooterSet;
   readonly titlePg: boolean;
@@ -802,6 +808,7 @@ function buildSectionContext(
     dims.pageHeight,
     dims.footerOffsetPt,
   );
+  const columns = buildColumnGeometry(section.properties.columns, contentWidth);
   return {
     endIndex: section.endIndex,
     properties: section.properties,
@@ -812,11 +819,36 @@ function buildSectionContext(
     marginBottom: dims.marginBottom,
     contentWidth,
     pageContentHeight: dims.pageHeight - dims.marginTop - dims.marginBottom,
+    ...(columns ? { columns } : {}),
     headerSet,
     footerSet,
     titlePg: section.properties.titlePg === true,
     evenAndOddHeaders: section.properties.evenAndOddHeaders === true,
   };
+}
+
+// §17.6.4: explicit w:col list as given; otherwise equal widths separated by
+// the shared gutter.
+function buildColumnGeometry(
+  cols: SectionColumns | undefined,
+  contentWidth: number,
+): Array<{ xOffsetPt: number; widthPt: number }> | undefined {
+  if (!cols || cols.count <= 1) return undefined;
+  const out: Array<{ xOffsetPt: number; widthPt: number }> = [];
+  if (cols.explicit && cols.explicit.length > 1) {
+    let x = 0;
+    for (const c of cols.explicit) {
+      out.push({ xOffsetPt: x, widthPt: c.widthPt });
+      x += c.widthPt + c.spacePt;
+    }
+    return out;
+  }
+  const width = (contentWidth - cols.spacePt * (cols.count - 1)) / cols.count;
+  if (width <= 0) return undefined;
+  for (let i = 0; i < cols.count; i++) {
+    out.push({ xOffsetPt: i * (width + cols.spacePt), widthPt: width });
+  }
+  return out;
 }
 
 function refByType(
@@ -2721,6 +2753,26 @@ function paginateSections(
   let current: Array<PageItem> = [];
   let pendingPageBreak = false;
   let cursorY = ctx.pageHeight - ctx.marginTop;
+
+  // §17.6.4 multi-column flow: content fills column after column before the
+  // page flushes. colStartLen marks where the current column's items begin in
+  // `current` — the single-column "page has content" guard generalizes to
+  // "this column has content" (identical when there is one column).
+  let colIdx = 0;
+  let colStartLen = 0;
+  const colLeft = () => ctx.marginLeft + (ctx.columns?.[colIdx]?.xOffsetPt ?? 0);
+  const colWidth = () => ctx.columns?.[colIdx]?.widthPt ?? ctx.contentWidth;
+  const colHasContent = () => current.length > colStartLen;
+  // Overflow step: next column on this page, or a fresh page after the last.
+  const advanceColumn = () => {
+    if (ctx.columns && colIdx + 1 < ctx.columns.length) {
+      colIdx++;
+      colStartLen = current.length;
+      cursorY = ctx.pageHeight - ctx.marginTop;
+    } else {
+      flushPage();
+    }
+  };
   // Tagged PDF: the stack of open list levels (for L/LI/LBody nesting). Cleared
   // whenever a non-list-item block interrupts the run of list paragraphs.
   const listStack: Array<ListFrame> = [];
@@ -2827,6 +2879,8 @@ function paginateSections(
     current = [];
     pageNotes = [];
     noteReserve = 0;
+    colIdx = 0;
+    colStartLen = 0;
     pageInSection++;
     globalPageIdx++;
     cursorY = ctx.pageHeight - ctx.marginTop;
@@ -2875,8 +2929,8 @@ function paginateSections(
         const addedReserve = (sub: typeof newNotes) =>
           sub.reduce((sum, x) => sum + x.heightPt, 0) +
           (pageNotes.length === 0 && sub.length > 0 ? FOOTNOTE_SEPARATOR_HEIGHT : 0);
-        if (cursorY - h < bottomLimit() + addedReserve(newNotes) && current.length > 0) {
-          flushPage();
+        if (cursorY - h < bottomLimit() + addedReserve(newNotes) && colHasContent()) {
+          advanceColumn();
           newNotes = lineFootnotes(line); // reserve restarts on the fresh page
         }
         if (newNotes.length > 0) {
@@ -2907,7 +2961,7 @@ function paginateSections(
         current.push({
           type: 'line',
           line,
-          originX: pt(ctx.marginLeft + indentLeft + offset),
+          originX: pt(colLeft() + indentLeft + offset),
           baselineY: pt(ctx.pageHeight - (cursorY + lineDescent(line))),
           ...(structId !== undefined ? { structId } : {}),
         });
@@ -2917,11 +2971,11 @@ function paginateSections(
     } else if (block.kind === 'image') {
       const figId = builder ? createFigure(builder, block.altText, 'Image') : undefined;
       cursorY -= block.spacingBeforePt;
-      if (cursorY - block.heightPt < bottomLimit() && current.length > 0) flushPage();
+      if (cursorY - block.heightPt < bottomLimit() && colHasContent()) advanceColumn();
       cursorY -= block.heightPt;
       current.push({
         type: 'image',
-        x: pt(ctx.marginLeft),
+        x: pt(colLeft()),
         y: pt(ctx.pageHeight - cursorY - block.heightPt),
         width: pt(block.widthPt),
         height: pt(block.heightPt),
@@ -2933,10 +2987,10 @@ function paginateSections(
       // Shapes are atomic — never split across pages.
       const figId = builder ? createFigure(builder, block.altText, 'Shape') : undefined;
       cursorY -= block.spacingBeforePt;
-      if (cursorY - block.heightPt < bottomLimit() && current.length > 0) flushPage();
+      if (cursorY - block.heightPt < bottomLimit() && colHasContent()) advanceColumn();
       cursorY -= block.heightPt;
-      const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, ctx.contentWidth);
-      const x = ctx.marginLeft + offset;
+      const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, colWidth());
+      const x = colLeft() + offset;
       const transform = flipTransform(
         buildShapeTransform(
           x,
@@ -3000,10 +3054,10 @@ function paginateSections(
       const figId = builder ? createFigure(builder, block.altText, 'Chart') : undefined;
       const fig = figId !== undefined ? { structId: figId } : {};
       cursorY -= block.spacingBeforePt;
-      if (cursorY - block.heightPt < bottomLimit() && current.length > 0) flushPage();
+      if (cursorY - block.heightPt < bottomLimit() && colHasContent()) advanceColumn();
       cursorY -= block.heightPt;
-      const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, ctx.contentWidth);
-      const x = ctx.marginLeft + offset;
+      const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, colWidth());
+      const x = colLeft() + offset;
       const y = cursorY;
       for (const s of block.layout.shapes) {
         current.push({
@@ -3051,7 +3105,7 @@ function paginateSections(
       // holding the cell's content. The same TD/P node is reused across row
       // chunks (page splits), so its MCRs accumulate like a split paragraph.
       const tableNode = builder ? builder.create('Table', builder.root) : undefined;
-      const tableX = ctx.marginLeft + block.xOffsetPt;
+      const tableX = colLeft() + block.xOffsetPt;
       for (let ri = 0; ri < block.rows.length; ri++) {
         const row = block.rows[ri]!;
         const isLeadingHeader = ri < headerRows.length;
@@ -3082,9 +3136,10 @@ function paginateSections(
           // A manual <rowBreaks> break (first chunk only) forces a new page even
           // when the row would fit; an overflow break starts one when it won't.
           const forcedBreak = ci === 0 && row.breakBefore && !isLeadingHeader && current.length > 0;
-          const overflow = cursorY - chunk.heightPt < bottomLimit() && current.length > 0;
+          const overflow = cursorY - chunk.heightPt < bottomLimit() && colHasContent();
           if (forcedBreak || overflow) {
-            flushPage();
+            if (forcedBreak) flushPage();
+            else advanceColumn();
             // Re-emit the header rows on the fresh page (visual repetition →
             // artifacts, no structIds), but only when the breaking row is not
             // itself a header and the row still fits beneath the repeated band.

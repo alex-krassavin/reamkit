@@ -670,6 +670,16 @@ export interface SectionProperties {
   // (document-wide, not per-section). When true even-numbered pages use the
   // `even` header/footer references.
   readonly evenAndOddHeaders?: boolean;
+  // §17.6.4 w:cols — multi-column section layout.
+  readonly columns?: SectionColumns;
+}
+
+// §17.6.4 — column definitions: equal-width count + gutter, or explicit
+// per-column widths/gutters (w:col children).
+export interface SectionColumns {
+  readonly count: number;
+  readonly spacePt: number;
+  readonly explicit?: ReadonlyArray<{ readonly widthPt: number; readonly spacePt: number }>;
 }
 
 // A document can contain multiple sections (ECMA-376 §17.6.17). Each section's

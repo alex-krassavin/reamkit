@@ -17,6 +17,7 @@ import type {
   Paragraph,
   Run,
   Section,
+  SectionColumns,
   SectionProperties,
 } from '@/core/document-model';
 
@@ -155,6 +156,7 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
   let pageSize: PageSize | undefined;
   let margins: PageMargins | undefined;
   let titlePg = false;
+  let columns: SectionColumns | undefined;
   const headers: Array<HeaderFooterReference> = [];
   const footers: Array<HeaderFooterReference> = [];
 
@@ -194,6 +196,8 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
     } else if (poIs(child, 'w:titlePg')) {
       const val = poAttr(child, 'val');
       titlePg = val === undefined || val === '' || (val !== '0' && val !== 'false');
+    } else if (poIs(child, 'w:cols')) {
+      columns = parseColumns(child);
     }
   }
 
@@ -203,6 +207,27 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
     headers,
     footers,
     ...(titlePg ? { titlePg: true } : {}),
+    ...(columns ? { columns } : {}),
+  };
+}
+
+// §17.6.4 w:cols: @w:num equal-width columns separated by @w:space, OR
+// explicit w:col children each with their own width/trailing space.
+function parseColumns(cols: PoNode): SectionColumns | undefined {
+  const explicit: Array<{ widthPt: number; spacePt: number }> = [];
+  for (const col of poChildren(cols)) {
+    if (!poIs(col, 'w:col')) continue;
+    const w = poIntAttr(col, 'w');
+    if (w === undefined) continue;
+    explicit.push({ widthPt: twipsToPt(w), spacePt: twipsToPt(poIntAttr(col, 'space') ?? 0) });
+  }
+  const num = poIntAttr(cols, 'num');
+  const count = explicit.length > 0 ? explicit.length : (num ?? 1);
+  if (count <= 1) return undefined;
+  return {
+    count,
+    spacePt: twipsToPt(poIntAttr(cols, 'space') ?? 720),
+    ...(explicit.length > 0 ? { explicit } : {}),
   };
 }
 

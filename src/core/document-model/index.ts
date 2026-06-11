@@ -51,6 +51,7 @@ export type {
   RunProperties,
   RowProperties,
   Section,
+  SectionColumns,
   SectionProperties,
   ShapeBlock,
   ShapeDash,
