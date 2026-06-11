@@ -8,6 +8,11 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **PAGE / NUMPAGES fields** — page-number fields in headers and footers now
+  render the real page number and total (both the `fldSimple` and the
+  `fldChar` complex-field syntax). Bands containing fields re-lay out per
+  page after pagination; other field instructions keep their cached result
+  exactly as before, and documents without fields are byte-identical.
 - **Table styles** — `w:tblStyle` referenced styles now render: the base
   layer (grid borders, default cell margins) plus `w:tblStylePr` conditional
   regions (first/last row and column, row/column banding, corner cells) gated

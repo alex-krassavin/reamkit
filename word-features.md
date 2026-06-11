@@ -82,7 +82,7 @@ resolveBodyStyles).
 
 ---
 
-## W2 — Поля PAGE / NUMPAGES в колонтитулах
+## W2 — Поля PAGE / NUMPAGES в колонтитулах ✅ (выполнено)
 
 **Спека:** §17.16.5.35 (PAGE), §17.16.5.33 (NUMPAGES); fldSimple (§17.16.19)
 и complex fields `w:fldChar begin / w:instrText / separate / end`
