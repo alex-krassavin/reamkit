@@ -1,5 +1,7 @@
 export {
   EMPTY_STYLE_SHEET,
+  resolveBodyStyles,
+  resolveHeadersFootersStyles,
   resolveParagraphProperties,
   resolveRunProperties,
 } from '@/core/style-cascade/resolver';

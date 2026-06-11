@@ -39,7 +39,8 @@ export interface BreakResult {
 }
 
 // Tuning knobs — match TeX's defaults closely enough for our needs.
-const FORCED_BREAK = -10_000;
+// Exported: writers push the paragraph-final forced break with this value.
+export const FORCED_BREAK = -10_000;
 const FORBIDDEN_BREAK = 10_000;
 const LINE_PENALTY = 10; // α — extra demerits per line
 const FITNESS_PENALTY = 100; // γ — adjacent-line fitness mismatch

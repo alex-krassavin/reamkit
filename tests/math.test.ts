@@ -9,7 +9,7 @@ import type { MathNode } from '@/core/document-model';
 import { convertDocxToPdfSync } from '@/core/converter';
 import { OpcPackage } from '@/core/opc';
 import { parseDocument } from '@/word';
-import { layoutMath } from '@/pdf/math-layout';
+import { layoutMath } from '@/layout/math-layout';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FONTS = {

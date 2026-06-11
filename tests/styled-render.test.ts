@@ -371,6 +371,34 @@ describe('Styled rendering: rPr + pPr → PDF', () => {
     expect(text).toContain(`<${hexOf('NESTEDB')}> Tj`); // nested cell 2 (was lost)
   });
 
+  it('measures table auto-layout with per-family fonts (was: bare-variant lookup crash)', () => {
+    const reg = (b: Uint8Array): FontRegistry => FontRegistry.fromBytes({ regular: b });
+    const registriesByFamily: ReadonlyMap<FamilyKey, FontRegistry> = new Map([
+      ['roboto', reg(FONTS.regular)],
+      ['tinos', reg(FONTS.bold)],
+    ]);
+    // Auto-layout table (no explicit grid widths) forces measureSingleLine,
+    // which used to look fontResources up by bare variant and crash when the
+    // keys are per-family ('roboto:regular', …).
+    const body =
+      `<w:tbl><w:tr>` +
+      `<w:tc><w:p><w:r><w:rPr><w:rFonts w:ascii="Arial"/></w:rPr><w:t>CELLSANS</w:t></w:r></w:p></w:tc>` +
+      `<w:tc><w:p><w:r><w:rPr><w:rFonts w:ascii="Times New Roman"/></w:rPr><w:t>CELLSERIF</w:t></w:r></w:p></w:tc>` +
+      `</w:tr></w:tbl>`;
+    const pdf = convertDocxToPdfSync(buildDocxFromBody(body), {
+      fonts: { regular: FONTS.regular },
+      registriesByFamily,
+    });
+    // Pre-fix this crashed (fontResources.get('regular') is undefined when
+    // keys are per-family). Surviving + embedding BOTH family stand-ins
+    // proves each cell measured and rendered with its own family.
+    const baseFonts = new Set(
+      [...asLatin1(pdf).matchAll(/\/BaseFont \/[A-Z]{6}\+([A-Za-z-]+)/g)].map((m) => m[1]),
+    );
+    expect(baseFonts.has('Roboto-Regular')).toBe(true); // Arial → roboto
+    expect(baseFonts.has('Roboto-Bold')).toBe(true); // Times → tinos stand-in
+  });
+
   it('resolves the substitute font per run (sans / serif / mono families)', () => {
     // Distinct stand-in fonts per family (Roboto variants carry distinct
     // BaseFont names) so we can prove each run picked its OWN family by w:ascii.

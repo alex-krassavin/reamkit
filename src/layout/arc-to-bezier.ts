@@ -8,8 +8,8 @@
 //
 // Shared by ellipse / roundRect presets and by custGeom's <a:arcTo>.
 
-import type { PathSegment } from '@/pdf/vector-graphics';
-import { PathBuilder } from '@/pdf/vector-graphics';
+import type { PathSegment } from '@/core/vector';
+import { PathBuilder } from '@/core/vector';
 
 // Point on an axis-aligned ellipse at angle θ (radians, CCW from +x).
 export function arcPoint(

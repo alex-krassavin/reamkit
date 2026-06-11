@@ -11,26 +11,27 @@ import type { ResourceId } from '@/core/ir';
 import type { EmbeddedFont } from '@/pdf/cid-font';
 import type { PdfDict, PdfRef, PdfValue } from '@/pdf/objects';
 import type {
-  DrawCommand,
   FontResource,
-  ImageItem,
   ImageResource,
   ImageToken,
   LaidOutDocument,
   LaidOutPage,
   Line,
   MathToken,
-  PageDimensions,
-  PageTagging,
+  PageItem,
+  TextLineItem,
+  TextToken,
+} from '@/layout/page-doc';
+import type {
+  LaidOutPdfDocument,
   PdfAProfile,
   SectionRenderCtx,
   StyledRenderOptions,
-  TextLineItem,
-  TextToken,
-} from '@/pdf/styled-page-renderer';
-import type { VectorShape } from '@/pdf/vector-graphics';
+} from '@/layout/styled-layout';
+import type { VectorShape } from '@/core/vector';
 import type { PdfDocument } from '@/pdf/writer';
-import { A4_HEIGHT, A4_WIDTH, paintPlan } from '@/pdf/styled-page-renderer';
+import { paintPlan } from '@/layout/page-doc';
+import { A4_HEIGHT, A4_WIDTH } from '@/layout/styled-layout';
 import { emitVectorShape } from '@/pdf/vector-graphics';
 import { reorderVisual, reverseByCodePoint } from '@/core/bidi';
 import { embedTtfFont } from '@/pdf/cid-font';
@@ -51,16 +52,18 @@ type EmitOptions = Pick<
 >;
 
 export function emitStyledPdf(
-  laid: LaidOutDocument,
+  laid: LaidOutPdfDocument,
   options: EmitOptions,
   doc: PdfDocument,
 ): Uint8Array {
-  const { pages: renderedPages, structBuilder } = laid;
-  const { sectionCtxs, pdfaProfile, tagged } = laid;
+  const { pages: renderedPages } = laid;
+  // The PDF-only companion (oop-design A13): logical structure, fallback page
+  // geometry, PDF/A apparatus. The PageDoc proper stays writer-neutral.
+  const { structBuilder, sectionCtxs, pdfaProfile, tagged } = laid.pdf;
 
   // Create the font/image PDF objects first — the same object order the
   // pre-split renderer produced (fonts, then images, then pages).
-  const embeddedFonts = embedFontResources(doc, laid);
+  const embeddedFonts = embedFontResources(doc, laid, pdfaProfile);
   const embeddedImages = embedImageResources(doc, laid);
 
   const pagesDict: PdfDict = dict({ Type: name('Pages'), Count: 0, Kids: [] });
@@ -104,7 +107,7 @@ export function emitStyledPdf(
         tagFor: (structId) => builder.node(structId).type,
       };
     }
-    const contentBytes = emitPageContent(page.commands, pageTagging);
+    const contentBytes = emitPageContent(page, pageTagging);
     const contentsRef = doc.add(stream({}, contentBytes));
     const pageEntries: Record<string, PdfValue> = {
       Type: name('Page'),
@@ -306,9 +309,13 @@ function embedImageResources(doc: PdfDocument, laid: LaidOutDocument): Map<Resou
 // Emit-phase counterpart: create the PDF font objects (subset to the collected
 // glyphs) for every laid-out font resource, in collection order — keeping the
 // object numbering identical to the pre-split renderer.
-function embedFontResources(doc: PdfDocument, laid: LaidOutDocument): Map<string, EmbeddedFont> {
+function embedFontResources(
+  doc: PdfDocument,
+  laid: LaidOutDocument,
+  pdfaProfile: PdfAProfile | undefined,
+): Map<string, EmbeddedFont> {
   // PDF/A-1 requires a /CIDSet; PDF/A-2/3 and non-PDF/A omit it.
-  const cidSet = laid.pdfaProfile?.part === 1;
+  const cidSet = pdfaProfile?.part === 1;
   const out = new Map<string, EmbeddedFont>();
   for (const [variant, res] of laid.fontResources) {
     out.set(variant, embedTtfFont(doc, res.parsed, { usedGids: res.gids, cidSet }));
@@ -346,7 +353,7 @@ function buildXObjectResourceDict(
 // → its struct type (Figure) with a fresh MCID; a pagination artifact; or a bare
 // layout artifact. `body(cmd)` emits each command's own operators. In non-tagged
 // mode it just emits the bodies — byte-identical to before tagging existed.
-function emitTaggedRuns<T extends DrawCommand>(
+function emitTaggedRuns<T extends PageItem>(
   out: Array<string>,
   cmds: ReadonlyArray<T>,
   tagging: PageTagging | undefined,
@@ -385,8 +392,12 @@ function emitTaggedRuns<T extends DrawCommand>(
   close();
 }
 
-function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTagging): Uint8Array {
+function emitPageContent(page: LaidOutPage, tagging?: PageTagging): Uint8Array {
+  const commands = page.commands;
   if (commands.length === 0) return new Uint8Array(0);
+  // PageDoc coordinates are top-left/y-down (the frozen schema); PDF paints in
+  // a y-up bottom-left frame, so every page-frame y converts as `H - y` here.
+  const H = page.height;
   const out: Array<string> = [];
 
   // Cell backgrounds (fills) first — they sit underneath text and borders.
@@ -406,7 +417,7 @@ function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTag
         lastColor = color;
       }
       out.push(
-        `${formatNumber(f.x)} ${formatNumber(f.y)} ${formatNumber(f.width)} ${formatNumber(f.height)} re`,
+        `${formatNumber(f.x)} ${formatNumber(H - f.y - f.height)} ${formatNumber(f.width)} ${formatNumber(f.height)} re`,
       );
       out.push('f');
     }
@@ -428,7 +439,7 @@ function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTag
     // Q             restore
     out.push('q');
     out.push(
-      `${formatNumber(img.width)} 0 0 ${formatNumber(img.height)} ${formatNumber(img.x)} ${formatNumber(img.y)} cm`,
+      `${formatNumber(img.width)} 0 0 ${formatNumber(img.height)} ${formatNumber(img.x)} ${formatNumber(H - img.y - img.height)} cm`,
     );
     out.push(`/${img.imageResourceName} Do`);
     out.push('Q');
@@ -453,7 +464,7 @@ function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTag
         lastColor = color;
       }
       const x = b.x;
-      const y = b.y;
+      const y = H - b.y - b.height; // box bottom edge in PDF's y-up frame
       const w = b.width;
       const h = b.height;
       switch (b.side) {
@@ -488,7 +499,15 @@ function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTag
   // one MCID); decorative shapes fall back to a bare artifact.
   const shapes = plan.shapes;
   emitTaggedRuns(out, shapes, tagging, (sh) => {
-    for (const op of emitVectorShape(sh.shape)) out.push(op);
+    // The stored transform targets the top-left page frame; conjugating with
+    // the page flip (an involution — same operation layout applied) recovers
+    // the y-up CTM. The linear part negates exactly; only f re-rounds.
+    const t = sh.shape.transform;
+    const shape: VectorShape = {
+      ...sh.shape,
+      transform: [t[0], -t[1], t[2], -t[3], t[4], H - t[5]],
+    };
+    for (const op of emitVectorShape(shape)) out.push(op);
   });
 
   const lines = plan.lines;
@@ -594,7 +613,7 @@ function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTag
     const emitOneLine = (cmd: TextLineItem) => {
       const line = cmd.line;
       const originX = cmd.originX;
-      const baselineY = cmd.baselineY;
+      const baselineY = H - cmd.baselineY; // top-left frame → PDF y-up
       const extraPerSpace = computeJustifyExtra(line);
       const hasImageToken = line.tokens.some((t) => t.kind === 'image');
       const hasMathToken = line.tokens.some((t) => t.kind === 'math');
@@ -612,7 +631,7 @@ function emitPageContent(commands: ReadonlyArray<DrawCommand>, tagging?: PageTag
         // slack), inline images (text-mode exits), and BiDi (visual order
         // differs from logical order). Tokens are emitted in visual order.
         const order = hasRtl ? lineVisualOrder(line) : line.tokens.map((_, i) => i);
-        let x = originX;
+        let x: number = originX;
         for (const ti of order) {
           const tok = line.tokens[ti]!;
           if (tok.kind === 'image') {
@@ -726,4 +745,18 @@ function hexToRgb01(hex: string): readonly [number, number, number] {
 function formatNumber(n: number): string {
   if (Number.isInteger(n)) return String(n);
   return n.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+// Per-page tagging state threaded into emitPageContent. `next` is the running
+// MCID counter (reset per page); `assigned` records whether any tagged marked
+// content was emitted (so the page gets /StructParents); `record` ties an
+// assigned MCID back to its structure node.
+export interface PageTagging {
+  next: number;
+  assigned: boolean;
+  record: (structId: number, mcid: number) => void;
+  // The marked-content tag for a structure node — its structure type, so the
+  // BDC tag matches the StructElem /S (§14.7.2: a heading is /H1, a cell's
+  // paragraph /P, …), not a hardcoded /P.
+  tagFor: (structId: number) => string;
 }

@@ -6,13 +6,18 @@
 
 import type { FlowDoc } from '@/core/ir/flow';
 import type { StyledRenderOptions } from '@/pdf';
+import { EMPTY_STYLE_SHEET } from '@/core/style-cascade';
 
 export type FlowRenderOptions = Omit<StyledRenderOptions, 'registry'>;
 
 export function flowRenderOptions(flow: FlowDoc): FlowRenderOptions {
   return {
-    styles: flow.styles,
-    ...(flow.numbering ? { numbering: flow.numbering } : {}),
+    // flow.body already carries materialized list markers AND resolved
+    // properties (stage-6 reader transforms) — projecting styles/numbering
+    // here would make the renderer apply them a second time. Resolving over
+    // the empty sheet is the identity, so the renderer's own cascade pass
+    // degrades to a memoized no-op.
+    styles: EMPTY_STYLE_SHEET,
     ...(flow.sections.length > 0 ? { sections: flow.sections } : {}),
     ...(flow.section ? { section: flow.section } : {}),
     ...(flow.headersFooters ? { headersFooters: flow.headersFooters } : {}),

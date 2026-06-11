@@ -1,4 +1,4 @@
-export { breakLines } from '@/core/line-breaker/knuth-plass';
+export { FORCED_BREAK, breakLines } from '@/core/line-breaker/knuth-plass';
 export type {
   Item,
   BoxItem,

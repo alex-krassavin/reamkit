@@ -11,7 +11,12 @@ import type { ResourceId } from '@/core/ir';
 import type { CoreProperties } from '@/core/opc';
 import type { ImageResolver, ParseContext } from '@/word';
 import { bytesInclude } from '@/core/bytes';
-import { EMPTY_STYLE_SHEET } from '@/core/style-cascade';
+import { applyNumbering, applyNumberingToHeadersFooters } from '@/core/numbering';
+import {
+  EMPTY_STYLE_SHEET,
+  resolveBodyStyles,
+  resolveHeadersFootersStyles,
+} from '@/core/style-cascade';
 
 import { FEATURES, ResourceStore } from '@/core/ir';
 import { parseChart } from '@/core/drawingml/chart-parser';
@@ -100,11 +105,19 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
 
   const doc: FlowDoc = {
     kind: 'flow',
-    body,
+    // Stage-6 FlowDoc transforms, in renderer order: list markers first, then
+    // the style cascade — the tree carries final effective properties, so
+    // every writer sees ready paragraphs. `numbering`/`styles` stay as raw
+    // material for round-trip writers; render projections must NOT re-apply
+    // them (the projector sends EMPTY_STYLE_SHEET).
+    body: resolveBodyStyles(applyNumbering(body, numbering), styles),
     sections,
     styles,
     numbering,
-    headersFooters,
+    headersFooters: resolveHeadersFootersStyles(
+      applyNumberingToHeadersFooters(headersFooters, numbering),
+      styles,
+    ),
     charts,
     resources,
     ...(embeddedFonts.size > 0 ? { embeddedFonts } : {}),

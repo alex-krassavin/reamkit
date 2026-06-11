@@ -6,6 +6,18 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Page model frozen** (`@experimental` API): `PageItem` page-frame
+  coordinates are now **top-left / y-down** (CSS/SVG convention) and branded
+  as `Pt`; the PDF emitter converts into PDF's y-up frame at emission. PDF
+  output is byte-identical; SVG output changes coordinates only, not
+  geometry.
+- `LaidOutDocument` narrowed to the page model proper (`pages`, `resources`,
+  `fontResources`, `imageResources`); the PDF-only state rides on
+  `layoutStyledDocument(...).pdf`. The internal `DrawCommand` alias is gone —
+  the schema name is `PageItem`.
+
 ## [1.0.0]
 
 The interlayer release — and the first stable major. Documents parse once

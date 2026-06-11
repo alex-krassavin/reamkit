@@ -31,10 +31,11 @@ the standard:
 
 ## The interlayer (FlowDoc)
 
-Since v0.2 the stages above are decoupled by an intermediate representation:
-readers parse a format into a **FlowDoc** (a semantic, format-neutral document
-tree — no pages or coordinates yet), the layout turns it into positioned pages,
-and writers emit a target format from there:
+The stages above are decoupled by an intermediate representation: readers
+parse a format into a **FlowDoc** (a semantic, format-neutral document tree —
+no pages or coordinates yet), the layout turns it into positioned pages (the
+frozen page model: `PageItem`s in a top-left, point-unit frame), and writers
+emit a target format from there:
 
 ```
 bytes → reader → FlowDoc → layout → pages → writer → bytes

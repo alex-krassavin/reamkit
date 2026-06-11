@@ -8,7 +8,7 @@ import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { CoreProperties } from '@/core/opc';
 
-import { EMPTY_STYLE_SHEET } from '@/core/style-cascade';
+import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 import { FEATURES, ResourceStore } from '@/core/ir';
 import { OpcPackage, parseCoreProperties } from '@/core/opc';
 import {
@@ -93,7 +93,10 @@ export function readXlsx(xlsx: Uint8Array): ReadResult<FlowDoc> {
 
   const doc: FlowDoc = {
     kind: 'flow',
-    body,
+    // Same stage-6 contract as docx: the body carries resolved properties.
+    // Grid cells are built with direct props only, so resolving over the
+    // empty sheet just materializes the defaults.
+    body: resolveBodyStyles(body, EMPTY_STYLE_SHEET),
     sections: [],
     ...(firstSheetSection ? { section: firstSheetSection } : {}),
     styles: EMPTY_STYLE_SHEET,

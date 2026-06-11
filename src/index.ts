@@ -40,8 +40,10 @@ export {
 } from '@/core/hyphenation';
 export type { Hyphenator, HyphenatorOptions, SupportedLanguage } from '@/core/hyphenation';
 
-// --- IR layer (@experimental — ir-design.md; may change in minor versions
-// until the schema freezes against three-plus adapters) ---
+// --- IR layer (ir-design.md). The PageDoc schema (layout/page-doc: PageItem,
+// LaidOutPage/LaidOutDocument — top-left Pt page frame) FROZE at stage 6.4.
+// The reader/writer adapter contracts and FlowDoc remain @experimental and
+// may change in minor versions. ---
 export type {
   Pt,
   ResourceId,
@@ -96,7 +98,7 @@ export type {
   ImageItem,
   ShapeItem,
   LaidOutPage,
-} from '@/pdf/styled-page-renderer';
+} from '@/layout/page-doc';
 export {
   chainProviders,
   callerFontProvider,
@@ -110,5 +112,5 @@ export {
 export type { FontProvider, FontRequest, FontAnswer } from '@/core/fonts/provider';
 export { svgWriter, writeSvg } from '@/svg/svg-writer';
 export type { SvgWriteOptions } from '@/svg/svg-writer';
-export { layoutStyledDocument } from '@/pdf/styled-page-renderer';
-export type { LaidOutDocument } from '@/pdf/styled-page-renderer';
+export { layoutStyledDocument } from '@/layout/styled-layout';
+export type { LaidOutDocument } from '@/layout/page-doc';
