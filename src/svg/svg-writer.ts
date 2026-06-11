@@ -13,6 +13,7 @@ import type { DocumentWriter, WriteResult } from '@/core/ir/adapters';
 import type { Loss } from '@/core/ir';
 import type { LaidOutDocument, LaidOutPage, TextLineItem } from '@/layout/page-doc';
 import type { PathSegment, VectorShape } from '@/core/vector';
+import { svgPathData } from '@/core/vector';
 
 import { FEATURES } from '@/core/ir';
 import { toBase64 } from '@/core/bytes';
@@ -154,15 +155,7 @@ function emitShape(out: Array<string>, shape: VectorShape): void {
 // Local path coordinates are y-up; the transform (page flip composed in by
 // layout) maps them into the y-down page frame. Emit the raw coordinates.
 function pathData(segments: ReadonlyArray<PathSegment>): string {
-  const parts: Array<string> = [];
-  for (const s of segments) {
-    if (s.op === 'move') parts.push(`M ${fmt(s.x)} ${fmt(s.y)}`);
-    else if (s.op === 'line') parts.push(`L ${fmt(s.x)} ${fmt(s.y)}`);
-    else if (s.op === 'cubic')
-      parts.push(`C ${fmt(s.x1)} ${fmt(s.y1)} ${fmt(s.x2)} ${fmt(s.y2)} ${fmt(s.x)} ${fmt(s.y)}`);
-    else parts.push('Z');
-  }
-  return parts.join(' ');
+  return svgPathData(segments, fmt);
 }
 
 function imageHref(resourceName: string, laid: LaidOutDocument): string | undefined {

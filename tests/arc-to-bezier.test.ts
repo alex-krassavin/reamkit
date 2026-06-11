@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { PathSegment } from '@/pdf/vector-graphics';
-import { arcPoint, arcToBeziers, ellipseSegments, roundRectSegments } from '@/layout/arc-to-bezier';
+import { arcPoint, arcToBeziers, ellipseSegments, roundRectSegments } from '@/core/arc-to-bezier';
 
 const cubics = (segs: ReadonlyArray<PathSegment>) => segs.filter((s) => s.op === 'cubic');
 

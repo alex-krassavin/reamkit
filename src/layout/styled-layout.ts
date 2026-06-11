@@ -58,7 +58,7 @@ import type {
   ChartPolyline,
   ChartRect,
   ChartWedge,
-} from '@/layout/chart-geometry';
+} from '@/core/drawingml/chart-geometry';
 import type { MathDrawItem, MathVariant, MeasureMath } from '@/layout/math-layout';
 import type {
   FontResource,
@@ -89,11 +89,18 @@ import {
   resolveParagraphProperties,
   resolveRunProperties,
 } from '@/core/style-cascade';
-import { PathBuilder } from '@/core/vector';
-import { arcPoint, arcToBeziers } from '@/layout/arc-to-bezier';
-import { buildChartScene } from '@/layout/chart-geometry';
+import { PathBuilder, flipTransform } from '@/core/vector';
+import { arcPoint, arcToBeziers } from '@/core/arc-to-bezier';
+import { buildChartScene } from '@/core/drawingml/chart-geometry';
 import { layoutMath, mathGlyphSegments, variantStyle } from '@/layout/math-layout';
-import { customPaths, presetPaths, rectPath } from '@/layout/preset-geometry';
+import { rectPath } from '@/core/drawingml/preset-geometry';
+import {
+  DEFAULT_INSET_LR_PT,
+  DEFAULT_INSET_TB_PT,
+  buildShapePaths,
+  buildShapeTransform,
+  buildStroke,
+} from '@/core/drawingml/shape-render';
 import { StructTreeBuilder } from '@/pdf/struct-tree';
 
 // PDF/A profiles: part 1 (ISO 19005-1, PDF 1.4) / 2 (ISO 19005-2) / 3
@@ -1028,12 +1035,7 @@ function layoutImageBlock(
   };
 }
 
-// a:ln default width when @w is absent (9525 EMU = 0.75pt).
-const DEFAULT_LINE_WIDTH_EMU = 9525;
 
-// Word's default text-box insets (§20.1.2.1) — 0.1" L/R, 0.05" T/B in EMU.
-const DEFAULT_INSET_LR_EMU = 91440;
-const DEFAULT_INSET_TB_EMU = 45720;
 
 function layoutShapeBlock(
   shape: ShapeBlock,
@@ -1065,10 +1067,10 @@ function layoutShapeBlock(
   const pp = shape.paragraphProperties;
 
   const text = shape.text;
-  const insetLeftPt = text?.insetLeft ?? DEFAULT_INSET_LR_EMU / EMU_PER_PT;
-  const insetRightPt = text?.insetRight ?? DEFAULT_INSET_LR_EMU / EMU_PER_PT;
-  const insetTopPt = text?.insetTop ?? DEFAULT_INSET_TB_EMU / EMU_PER_PT;
-  const insetBottomPt = text?.insetBottom ?? DEFAULT_INSET_TB_EMU / EMU_PER_PT;
+  const insetLeftPt = text?.insetLeft ?? DEFAULT_INSET_LR_PT;
+  const insetRightPt = text?.insetRight ?? DEFAULT_INSET_LR_PT;
+  const insetTopPt = text?.insetTop ?? DEFAULT_INSET_TB_PT;
+  const insetBottomPt = text?.insetBottom ?? DEFAULT_INSET_TB_PT;
   const textLines: Array<Line> = [];
   let textHeightPt = 0;
   if (text && text.content.length > 0) {
@@ -1114,104 +1116,12 @@ function layoutShapeBlock(
   };
 }
 
-function buildShapePaths(
-  geometry: ShapeGeometry,
-  widthPt: number,
-  heightPt: number,
-): Array<VectorPath> {
-  if (geometry.kind === 'preset') {
-    const paths = presetPaths(
-      geometry.preset ?? 'rect',
-      widthPt,
-      heightPt,
-      geometry.adjust ?? new Map(),
-    );
-    return paths ?? [rectPath(widthPt, heightPt)];
-  }
-  if (geometry.custom) return customPaths(geometry.custom, widthPt, heightPt);
-  return [rectPath(widthPt, heightPt)];
-}
 
-function buildStroke(line: ShapeLine | undefined): StrokeStyle | undefined {
-  if (!line || line.fill === 'none') return undefined;
-  const widthPt = line.width ?? DEFAULT_LINE_WIDTH_EMU / EMU_PER_PT;
-  const dash = line.dash && line.dash !== 'solid' ? dashPattern(line.dash, widthPt) : undefined;
-  // DrawingML 'flat' cap is PDF butt; round/square map straight through.
-  const cap: StrokeStyle['cap'] | undefined = line.cap === 'flat' ? 'butt' : line.cap;
-  return {
-    colorHex: line.colorHex ?? '000000',
-    widthPt,
-    ...(dash ? { dash } : {}),
-    ...(cap ? { cap } : {}),
-  };
-}
 
-// Dash patterns expressed in multiples of the line width (a common rendering
-// convention), in points. 'solid' has no pattern.
-function dashPattern(dash: ShapeDash, w: number): Array<number> | undefined {
-  const u = Math.max(w, 0.1);
-  switch (dash) {
-    case 'solid':
-      return undefined;
-    case 'dot':
-      return [u, 2 * u];
-    case 'dash':
-      return [4 * u, 3 * u];
-    case 'dashDot':
-      return [4 * u, 3 * u, u, 3 * u];
-    case 'lgDash':
-      return [8 * u, 3 * u];
-    case 'lgDashDot':
-      return [8 * u, 3 * u, u, 3 * u];
-    case 'sysDash':
-      return [3 * u, u];
-    case 'sysDot':
-      return [u, u];
-  }
-}
 
 // Build the `cm` matrix that places a shape's local y-up frame on the page at
 // bottom-left (pageX, pageY), rotated about its centre and optionally flipped.
-// DrawingML rot is clockwise in y-down space ⇒ a negative angle in PDF y-up.
-function buildShapeTransform(
-  pageX: number,
-  pageY: number,
-  widthPt: number,
-  heightPt: number,
-  rotation60k: number,
-  flipH: boolean,
-  flipV: boolean,
-): [number, number, number, number, number, number] {
-  const theta = (-rotation60k / 60000) * (Math.PI / 180);
-  const sx = flipH ? -1 : 1;
-  const sy = flipV ? -1 : 1;
-  const cos = Math.cos(theta);
-  const sin = Math.sin(theta);
-  const a = sx * cos;
-  const b = sx * sin;
-  const c = -sy * sin;
-  const d = sy * cos;
-  const cxL = widthPt / 2;
-  const cyL = heightPt / 2;
-  const centerX = pageX + cxL;
-  const centerY = pageY + cyL;
-  const e = centerX - (a * cxL + c * cyL);
-  const f = centerY - (b * cxL + d * cyL);
-  return [a, b, c, d, e, f];
-}
 
-// Compose the page flip with a local→page CTM built in PDF's y-up frame, so
-// the stored ShapeItem transform targets the top-left page frame the PageDoc
-// schema froze on. The flip is an involution: the PDF emitter applies the same
-// operation to recover the y-up matrix. Negating the linear part only flips
-// sign bits (exact in IEEE 754); the y-translation is the one component that
-// re-rounds.
-function flipTransform(
-  m: readonly [number, number, number, number, number, number],
-  pageHeight: number,
-): [number, number, number, number, number, number] {
-  return [m[0], -m[1], m[2], -m[3], m[4], pageHeight - m[5]];
-}
 
 function layoutChartBlock(
   block: ChartBlock,

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { CustomGeometry } from '@/core/document-model';
 import type { PathSegment } from '@/pdf/vector-graphics';
-import { customPaths, presetPaths } from '@/layout/preset-geometry';
+import { customPaths, presetPaths } from '@/core/drawingml/preset-geometry';
 
 const W = 100;
 const H = 60;

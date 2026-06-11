@@ -9,7 +9,7 @@ import {
   buildScatterScene,
   formatTick,
   niceScale,
-} from '@/layout/chart-geometry';
+} from '@/core/drawingml/chart-geometry';
 
 // Crude monospace-ish measure for layout tests.
 const measure = (t: string, sz: number): number => t.length * sz * 0.5;
