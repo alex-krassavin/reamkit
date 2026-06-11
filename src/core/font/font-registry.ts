@@ -7,6 +7,26 @@ import { parseTtf } from '@/core/font/ttf-parser';
 
 export type FontVariant = 'regular' | 'bold' | 'italic' | 'boldItalic';
 
+// One expert for face fallback (oop-design §8, A4): the candidate cascade a
+// missing variant degrades through. Shared by the registry and every font
+// provider — three hand-rolled copies had already drifted (the remote
+// provider lost the boldItalic→bold/italic degradation).
+export function pickVariant(
+  has: (variant: FontVariant) => boolean,
+  bold: boolean,
+  italic: boolean,
+): FontVariant | undefined {
+  const candidates: ReadonlyArray<FontVariant> =
+    bold && italic
+      ? ['boldItalic', 'bold', 'italic', 'regular']
+      : bold
+        ? ['bold', 'regular']
+        : italic
+          ? ['italic', 'regular']
+          : ['regular'];
+  return candidates.find(has);
+}
+
 export interface FontBytesByVariant {
   readonly regular: Uint8Array;
   readonly bold?: Uint8Array;
@@ -27,19 +47,10 @@ export class FontRegistry {
   }
 
   resolveByStyle(bold: boolean, italic: boolean): { variant: FontVariant; parsed: ParsedTtf } {
-    const candidates: Array<FontVariant> =
-      bold && italic
-        ? ['boldItalic', 'bold', 'italic', 'regular']
-        : bold
-          ? ['bold', 'regular']
-          : italic
-            ? ['italic', 'regular']
-            : ['regular'];
-    for (const v of candidates) {
-      const parsed = this.fonts.get(v);
-      if (parsed) return { variant: v, parsed };
-    }
-    throw new Error('FontRegistry has no regular font');
+    const variant = pickVariant((v) => this.fonts.has(v), bold, italic);
+    const parsed = variant ? this.fonts.get(variant) : undefined;
+    if (!variant || !parsed) throw new Error('FontRegistry has no regular font');
+    return { variant, parsed };
   }
 
   entries(): IterableIterator<[FontVariant, ParsedTtf]> {

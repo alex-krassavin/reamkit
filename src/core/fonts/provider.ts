@@ -12,6 +12,7 @@
 import type { FamilyKey, FetchLike } from '@/core/fonts/remote-fonts';
 import type { FontBytesByVariant, FontRegistry, FontVariant } from '@/core/font';
 
+import { pickVariant } from '@/core/font';
 import { fetchFontSet, resolveFamilyKey } from '@/core/fonts/remote-fonts';
 
 export interface FontRequest {
@@ -70,10 +71,8 @@ export function callerFontProvider(fonts: FontBytesByVariant): FontProvider {
     id: 'caller',
     resolve: (req) => {
       const v = variantFor(req);
-      const bytes =
-        fonts[v] ??
-        (v === 'boldItalic' ? (fonts.bold ?? fonts.italic) : undefined) ??
-        fonts.regular;
+      const picked = pickVariant((x) => fonts[x] !== undefined, req.bold, req.italic) ?? 'regular';
+      const bytes = fonts[picked] ?? fonts.regular;
       return Promise.resolve({
         kind: 'bytes',
         bytes,
@@ -122,8 +121,10 @@ export function remoteFontProvider(options: { readonly fetch?: FetchLike } = {})
         cache.set(family, set);
       }
       const fonts = await set;
-      const v = variantFor(req);
-      const bytes = fonts[v] ?? fonts.regular;
+      // The shared cascade restores boldItalic→bold/italic degradation here —
+      // fetchFontSet is best-effort, so a face can legitimately be missing.
+      const picked = pickVariant((x) => fonts[x] !== undefined, req.bold, req.italic) ?? 'regular';
+      const bytes = fonts[picked] ?? fonts.regular;
       return { kind: 'bytes', bytes, faceName: family, providerId: 'remote' };
     },
   };

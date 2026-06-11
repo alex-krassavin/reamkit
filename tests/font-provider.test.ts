@@ -77,6 +77,26 @@ describe('OS/2 fsType licensing gate', () => {
   });
 });
 
+describe('remoteFontProvider fallback cascade', () => {
+  it('degrades boldItalic to bold when the CDN set is partial (A4 fix)', async () => {
+    // fetchFontSet is best-effort: italic faces fail here, bold succeeds.
+    const fakeFetch = (url: string) => {
+      if (url.includes('Italic')) return Promise.resolve({ ok: false, status: 404 });
+      const bytes = url.includes('Bold') ? ROBOTO_BOLD : ROBOTO;
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        arrayBuffer: () => Promise.resolve(bytes.buffer.slice(0)),
+      });
+    };
+    const p = remoteFontProvider({ fetch: fakeFetch });
+    const a = await p.resolve({ bold: true, italic: true });
+    if (a.kind !== 'bytes') throw new Error('unreachable');
+    // Pre-fix this fell straight through to regular.
+    expect(Buffer.from(a.bytes).equals(Buffer.from(ROBOTO_BOLD))).toBe(true);
+  });
+});
+
 describe('localFontProvider', () => {
   it('answers none where Local Font Access is unavailable (Node)', async () => {
     const a = await localFontProvider().resolve({ family: 'Arial', bold: false, italic: false });
