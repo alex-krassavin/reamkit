@@ -76,7 +76,7 @@ import {
   reorderVisual,
   reverseByCodePoint,
 } from '@/core/bidi';
-import { breakLines } from '@/core/line-breaker';
+import { FORCED_BREAK, breakLines } from '@/core/line-breaker';
 import { NumberingState } from '@/core/numbering';
 import {
   DEFAULT_RESOLVED_PARAGRAPH,
@@ -1992,41 +1992,29 @@ const HYPHENATION_PENALTY = 50;
 // flagged penalty (KP may "buy" a line break here at a small cost). When
 // the chosen break lands on a hyphenation penalty, the last token of the
 // line gets a trailing "-" so the reader sees the word was hyphenated.
-function wrap(
+// One entry per Knuth–Plass item: the displayable token it came from (null
+// for glue/penalties/sentinels) and, on hyphenation penalties, the hyphen
+// width to fold onto the previous fragment when a line breaks here. Replaces
+// four parallel arrays (oop-design §4.3, A6).
+interface StreamEntry {
+  readonly item: Item;
+  readonly token: Token | null;
+  readonly hyphenWidthPt?: number;
+}
+
+// Tokens → the Knuth–Plass item stream: spaces become glue, images/math are
+// atomic boxes, text optionally splits at hyphenation points with flagged
+// penalties, and the paragraph closes with infinite glue + a forced break.
+function paragraphItemStream(
   tokens: ReadonlyArray<Token>,
-  firstLineWidth: number,
-  otherWidth: number,
-  resolved: ResolvedParagraphProperties,
   hyphenator: Hyphenator | undefined,
-): Array<Line> {
-  if (tokens.length === 0) return [];
-
-  const tokenLineSize = (t: Token): number =>
-    t.kind === 'text' ? t.fontSizePt : t.kind === 'image' ? t.heightPt : 0;
-
-  // Expanded item stream + parallel arrays for rebuilding lines.
-  const items: Array<Item> = [];
-  // fragmentTokens[i] is the displayable Token corresponding to items[i], or
-  // null for items that have no visual content (glue/penalty/sentinel).
-  const fragmentTokens: Array<Token | null> = [];
-  // hyphenAtItem[i] is true when items[i] is a hyphenation penalty — used to
-  // append a trailing hyphen to the previous fragment when a line ends here.
-  const hyphenAtItem: Array<boolean> = [];
-  // hyphenWidthAtItem[i] caches the hyphen char width for the penalty at i.
-  const hyphenWidthAtItem: Array<number> = [];
-
-  const pushItem = (item: Item, frag: Token | null, isHyphen = false, hyphenWidth = 0) => {
-    items.push(item);
-    fragmentTokens.push(frag);
-    hyphenAtItem.push(isHyphen);
-    hyphenWidthAtItem.push(hyphenWidth);
-  };
-
+): Array<StreamEntry> {
+  const entries: Array<StreamEntry> = [];
   for (const tok of tokens) {
     if (tok.isSpace || tok.kind === 'image' || tok.kind === 'math') {
       // Spaces are glue; images and math boxes are atomic (un-hyphenatable) boxes.
-      pushItem(
-        tok.isSpace
+      entries.push({
+        item: tok.isSpace
           ? {
               type: 'glue',
               width: tok.widthPt,
@@ -2034,15 +2022,15 @@ function wrap(
               shrink: tok.widthPt * 0.3,
             }
           : { type: 'box', width: tok.widthPt },
-        tok,
-      );
+        token: tok,
+      });
       continue;
     }
     // Text non-space token. Try hyphenation; if no breaks (or too short), one
     // box covers the whole word.
     const positions = hyphenator ? hyphenator.hyphenate(tok.text) : [];
     if (positions.length === 0) {
-      pushItem({ type: 'box', width: tok.widthPt }, tok);
+      entries.push({ item: { type: 'box', width: tok.widthPt }, token: tok });
       continue;
     }
     const hyphenWidth = tok.font.measure.textWidthPt('-', tok.fontSizePt);
@@ -2061,85 +2049,128 @@ function wrap(
         widthPt: fragWidth,
         bidiLevel: tok.bidiLevel,
       };
-      pushItem({ type: 'box', width: fragWidth }, fragTok);
+      entries.push({ item: { type: 'box', width: fragWidth }, token: fragTok });
       if (pi < positions.length) {
-        pushItem(
-          { type: 'penalty', width: hyphenWidth, penalty: HYPHENATION_PENALTY, flagged: true },
-          null,
-          true,
-          hyphenWidth,
-        );
+        entries.push({
+          item: {
+            type: 'penalty',
+            width: hyphenWidth,
+            penalty: HYPHENATION_PENALTY,
+            flagged: true,
+          },
+          token: null,
+          hyphenWidthPt: hyphenWidth,
+        });
       }
       prev = end;
     }
   }
 
   // Final glue + forced penalty — same convention as before.
-  pushItem({ type: 'glue', width: 0, stretch: 1e6, shrink: 0 }, null);
-  pushItem({ type: 'penalty', width: 0, penalty: -10_000, flagged: false }, null);
+  entries.push({ item: { type: 'glue', width: 0, stretch: 1e6, shrink: 0 }, token: null });
+  entries.push({
+    item: { type: 'penalty', width: 0, penalty: FORCED_BREAK, flagged: false },
+    token: null,
+  });
+  return entries;
+}
 
-  const { breaks } = breakLines(items, [firstLineWidth, otherWidth]);
+// Rebuild one Line from the chosen break range [start, breakIdx): trim
+// edge spaces/sentinels, fold the hyphen glyph when the break sits on a
+// hyphenation penalty, and aggregate the line metrics.
+function lineFromRange(
+  entries: ReadonlyArray<StreamEntry>,
+  start: number,
+  breakIdx: number,
+  availableWidthPt: number,
+  isFirst: boolean,
+  resolved: ResolvedParagraphProperties,
+): Line | null {
+  let st = start;
+  let et = breakIdx;
+  // Skip leading nulls / spaces.
+  while (st < et && (entries[st]!.token === null || entries[st]!.token?.isSpace)) st++;
+  // Trim trailing nulls / spaces.
+  while (et > st && (entries[et - 1]!.token === null || entries[et - 1]!.token?.isSpace)) et--;
+  if (st >= et) return null;
+
+  const lineTokens: Array<Token> = [];
+  for (let i = st; i < et; i++) {
+    const ft = entries[i]!.token;
+    if (ft) lineTokens.push(ft);
+  }
+
+  // If the chosen break is at a hyphenation penalty, fold the hyphen glyph
+  // onto the last text token of the line.
+  const hyphenWidth = entries[breakIdx]?.hyphenWidthPt;
+  if (hyphenWidth !== undefined) {
+    const lastIdx = lineTokens.length - 1;
+    const last = lineTokens[lastIdx];
+    if (last && last.kind === 'text') {
+      lineTokens[lastIdx] = {
+        ...last,
+        text: last.text + '-',
+        widthPt: last.widthPt + hyphenWidth,
+      };
+    }
+  }
+
+  const tokenLineSize = (t: Token): number =>
+    t.kind === 'text' ? t.fontSizePt : t.kind === 'image' ? t.heightPt : 0;
+  let contentWidth = 0;
+  let maxSize = 0;
+  let mathAscent = 0;
+  let mathDescent = 0;
+  for (const t of lineTokens) {
+    contentWidth += t.widthPt;
+    const sz = tokenLineSize(t);
+    if (sz > maxSize) maxSize = sz;
+    if (t.kind === 'math') {
+      mathAscent = Math.max(mathAscent, t.ascentPt);
+      mathDescent = Math.max(mathDescent, t.descentPt);
+    }
+  }
+  return {
+    tokens: lineTokens,
+    contentWidthPt: contentWidth,
+    maxFontSizePt: maxSize,
+    availableWidthPt,
+    firstLine: isFirst,
+    resolved,
+    isLastInParagraph: false,
+    mathAscentPt: mathAscent,
+    mathDescentPt: mathDescent,
+  };
+}
+
+function wrap(
+  tokens: ReadonlyArray<Token>,
+  firstLineWidth: number,
+  otherWidth: number,
+  resolved: ResolvedParagraphProperties,
+  hyphenator: Hyphenator | undefined,
+): Array<Line> {
+  if (tokens.length === 0) return [];
+
+  const entries = paragraphItemStream(tokens, hyphenator);
+  const { breaks } = breakLines(
+    entries.map((e) => e.item),
+    [firstLineWidth, otherWidth],
+  );
 
   const lines: Array<Line> = [];
   let start = 0;
   let isFirst = true;
   for (const breakIdx of breaks) {
-    // Tokens for this line: collect non-null fragments in [start, breakIdx).
-    let st = start;
-    let et = breakIdx;
-    // Skip leading nulls / spaces.
-    while (st < et && (fragmentTokens[st] === null || fragmentTokens[st]?.isSpace)) st++;
-    // Trim trailing nulls / spaces.
-    while (et > st && (fragmentTokens[et - 1] === null || fragmentTokens[et - 1]?.isSpace)) et--;
-
-    if (st < et) {
-      const lineTokens: Array<Token> = [];
-      for (let i = st; i < et; i++) {
-        const ft = fragmentTokens[i];
-        if (ft) lineTokens.push(ft);
-      }
-
-      // If the chosen break is at a hyphenation penalty, fold the hyphen
-      // glyph onto the last text token of the line.
-      if (hyphenAtItem[breakIdx]) {
-        const lastIdx = lineTokens.length - 1;
-        const last = lineTokens[lastIdx];
-        if (last && last.kind === 'text') {
-          const hyphenWidth = hyphenWidthAtItem[breakIdx]!;
-          lineTokens[lastIdx] = {
-            ...last,
-            text: last.text + '-',
-            widthPt: last.widthPt + hyphenWidth,
-          };
-        }
-      }
-
-      let contentWidth = 0;
-      let maxSize = 0;
-      let mathAscent = 0;
-      let mathDescent = 0;
-      for (const t of lineTokens) {
-        contentWidth += t.widthPt;
-        const sz = tokenLineSize(t);
-        if (sz > maxSize) maxSize = sz;
-        if (t.kind === 'math') {
-          mathAscent = Math.max(mathAscent, t.ascentPt);
-          mathDescent = Math.max(mathDescent, t.descentPt);
-        }
-      }
-      lines.push({
-        tokens: lineTokens,
-        contentWidthPt: contentWidth,
-        maxFontSizePt: maxSize,
-        availableWidthPt: isFirst ? firstLineWidth : otherWidth,
-        firstLine: isFirst,
-        resolved,
-        isLastInParagraph: false,
-        mathAscentPt: mathAscent,
-        mathDescentPt: mathDescent,
-      });
-    }
-
+    const line = lineFromRange(
+      entries,
+      start,
+      breakIdx,
+      isFirst ? firstLineWidth : otherWidth,
+      isFirst,
+      resolved,
+    );
+    if (line) lines.push(line);
     start = breakIdx + 1;
     isFirst = false;
   }
