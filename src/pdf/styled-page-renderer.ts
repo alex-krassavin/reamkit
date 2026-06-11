@@ -64,9 +64,9 @@ import type { PathSegment, StrokeStyle, VectorPath, VectorShape } from '@/pdf/ve
 import type { AttachedFile } from '@/pdf/embedded-file';
 import type { StructNode, StructType } from '@/pdf/struct-tree';
 import type { SignaturePlaceholder } from '@/pdf/signature';
-import type { ResourceId } from '@/core/ir';
+import type { Pt, ResourceId } from '@/core/ir';
 import type { EmbeddedFont, FontMeasure } from '@/pdf/cid-font';
-import { ResourceStore, halfPtToPt } from '@/core/ir';
+import { ResourceStore, halfPtToPt, pt } from '@/core/ir';
 import { shapeText } from '@/core/font';
 import { resolveFamilyKey } from '@/core/fonts';
 import {
@@ -432,11 +432,12 @@ interface TableBlock {
 }
 
 // PageDoc items (ir-design §6, frozen at stage 6.4): the positioned,
-// layout-output vocabulary a page is made of. Page-frame coordinates are PDF
-// points with a TOP-LEFT origin, y growing downward (like CSS/SVG); the PDF
-// emitter converts into PDF's native y-up frame at emission. Offsets measured
-// from a text baseline (math/inline-image boxes inside a Line) stay y-up —
-// that is the typographic convention, not a page-frame one.
+// layout-output vocabulary a page is made of. Page-frame geometry is branded
+// `Pt` (PostScript points) with a TOP-LEFT origin, y growing downward (like
+// CSS/SVG); the PDF emitter converts into PDF's native y-up frame at
+// emission. Offsets measured from a text baseline (math/inline-image boxes
+// inside a Line) and styling magnitudes (font/stroke sizes) stay plain
+// numbers — they are not page-frame coordinates.
 export interface PageItemBase {
   // Tagged PDF (§14.8): the logical structure node this item's content belongs
   // to. Set only on body content in tagged mode; undefined text in the line
@@ -452,19 +453,19 @@ export interface PageItemBase {
 export interface TextLineItem extends PageItemBase {
   readonly type: 'line';
   readonly line: Line;
-  readonly originX: number;
+  readonly originX: Pt;
   // Distance from the page TOP down to the text baseline.
-  readonly baselineY: number;
+  readonly baselineY: Pt;
 }
 
 // One edge of a table-cell frame; (x, y) is the cell box's top-left corner.
 export interface BorderItem extends PageItemBase {
   readonly type: 'border';
   readonly side: 'top' | 'right' | 'bottom' | 'left';
-  readonly x: number;
-  readonly y: number;
-  readonly width: number;
-  readonly height: number;
+  readonly x: Pt;
+  readonly y: Pt;
+  readonly width: Pt;
+  readonly height: Pt;
   readonly borderSizePt: number;
   readonly borderColorHex: string;
 }
@@ -472,10 +473,10 @@ export interface BorderItem extends PageItemBase {
 // A filled rectangle (cell shading); (x, y) is its top-left corner.
 export interface FillItem extends PageItemBase {
   readonly type: 'fill';
-  readonly x: number;
-  readonly y: number;
-  readonly width: number;
-  readonly height: number;
+  readonly x: Pt;
+  readonly y: Pt;
+  readonly width: Pt;
+  readonly height: Pt;
   readonly fillColorHex: string;
 }
 
@@ -483,10 +484,10 @@ export interface FillItem extends PageItemBase {
 // (x, y) is its top-left corner.
 export interface ImageItem extends PageItemBase {
   readonly type: 'image';
-  readonly x: number;
-  readonly y: number;
-  readonly width: number;
-  readonly height: number;
+  readonly x: Pt;
+  readonly y: Pt;
+  readonly width: Pt;
+  readonly height: Pt;
   readonly imageResourceName: string;
 }
 
@@ -1353,8 +1354,8 @@ function drawBlocksSequentially(
       out.push({
         type: 'line',
         line,
-        originX: startX + indentLeft + offset,
-        baselineY: pageHeight - (cursorY + lineDescent(line)),
+        originX: pt(startX + indentLeft + offset),
+        baselineY: pt(pageHeight - (cursorY + lineDescent(line))),
       });
     }
     cursorY -= block.spacingAfterPt;
@@ -2558,8 +2559,8 @@ function resolveCellBorders(
 
 export interface LaidOutPage {
   readonly commands: Array<DrawCommand>;
-  readonly width: number;
-  readonly height: number;
+  readonly width: Pt;
+  readonly height: Pt;
 }
 
 // Map a paragraph's resolved properties to a tagged-PDF structure type
@@ -2686,8 +2687,8 @@ function paginateSections(
     const footer = pickBand(ctx.footerSet, band);
     pages.push({
       commands: [...header, ...current, ...footer],
-      width: ctx.pageWidth,
-      height: ctx.pageHeight,
+      width: pt(ctx.pageWidth),
+      height: pt(ctx.pageHeight),
     });
     current = [];
     pageInSection++;
@@ -2745,8 +2746,8 @@ function paginateSections(
         current.push({
           type: 'line',
           line,
-          originX: ctx.marginLeft + indentLeft + offset,
-          baselineY: ctx.pageHeight - (cursorY + lineDescent(line)),
+          originX: pt(ctx.marginLeft + indentLeft + offset),
+          baselineY: pt(ctx.pageHeight - (cursorY + lineDescent(line))),
           ...(structId !== undefined ? { structId } : {}),
         });
       }
@@ -2759,10 +2760,10 @@ function paginateSections(
       cursorY -= block.heightPt;
       current.push({
         type: 'image',
-        x: ctx.marginLeft,
-        y: ctx.pageHeight - cursorY - block.heightPt,
-        width: block.widthPt,
-        height: block.heightPt,
+        x: pt(ctx.marginLeft),
+        y: pt(ctx.pageHeight - cursorY - block.heightPt),
+        width: pt(block.widthPt),
+        height: pt(block.heightPt),
         imageResourceName: block.resourceName,
         ...(figId !== undefined ? { structId: figId } : {}),
       });
@@ -2823,8 +2824,8 @@ function paginateSections(
           current.push({
             type: 'line',
             line,
-            originX: x + block.insetLeftPt + lineOffset,
-            baselineY: ctx.pageHeight - (textY + lineDescent(line)),
+            originX: pt(x + block.insetLeftPt + lineOffset),
+            baselineY: pt(ctx.pageHeight - (textY + lineDescent(line))),
             ...(figId !== undefined ? { structId: figId } : {}),
           });
         }
@@ -2859,8 +2860,8 @@ function paginateSections(
         current.push({
           type: 'line',
           line: t.line,
-          originX: x + t.x,
-          baselineY: ctx.pageHeight - (y + t.y),
+          originX: pt(x + t.x),
+          baselineY: pt(ctx.pageHeight - (y + t.y)),
           ...fig,
         });
       }
@@ -2991,10 +2992,10 @@ function emitRowChunk(
     if (cell.shadingColorHex && cell.mergeRole !== 'middle' && cell.mergeRole !== 'end') {
       out.push({
         type: 'fill',
-        x: cellX,
-        y: pageHeight - rowBottom - row.heightPt,
-        width: cell.widthPt,
-        height: row.heightPt,
+        x: pt(cellX),
+        y: pt(pageHeight - rowBottom - row.heightPt),
+        width: pt(cell.widthPt),
+        height: pt(row.heightPt),
         fillColorHex: cell.shadingColorHex,
       });
     }
@@ -3022,8 +3023,8 @@ function emitRowChunk(
       out.push({
         type: 'line',
         line,
-        originX: cellX + cell.padLeftPt + offset,
-        baselineY: pageHeight - (textY + lineDescent(line)),
+        originX: pt(cellX + cell.padLeftPt + offset),
+        baselineY: pt(pageHeight - (textY + lineDescent(line))),
         ...(structId !== undefined ? { structId } : {}),
       });
     }
@@ -3172,10 +3173,10 @@ function emitCellBorders(
     out.push({
       type: 'border',
       side,
-      x: cellX,
-      y: pageHeight - cellY - rowHeight,
-      width: cell.widthPt,
-      height: rowHeight,
+      x: pt(cellX),
+      y: pt(pageHeight - cellY - rowHeight),
+      width: pt(cell.widthPt),
+      height: pt(rowHeight),
       borderSizePt: sz,
       borderColorHex: border.colorHex ?? '000000',
     });

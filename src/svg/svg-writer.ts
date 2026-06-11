@@ -115,7 +115,7 @@ function emitPage(
 
 function emitTextLine(out: Array<string>, item: TextLineItem, losses: Array<Loss>): void {
   const y = item.baselineY;
-  let x = item.originX;
+  let x: number = item.originX;
   for (const tok of item.line.tokens) {
     if (tok.kind === 'image') {
       x += tok.widthPt; // inline image boxes reserve space; not rendered in v0

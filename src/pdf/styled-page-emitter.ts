@@ -624,7 +624,7 @@ function emitPageContent(page: LaidOutPage, tagging?: PageTagging): Uint8Array {
         // slack), inline images (text-mode exits), and BiDi (visual order
         // differs from logical order). Tokens are emitted in visual order.
         const order = hasRtl ? lineVisualOrder(line) : line.tokens.map((_, i) => i);
-        let x = originX;
+        let x: number = originX;
         for (const ti of order) {
           const tok = line.tokens[ti]!;
           if (tok.kind === 'image') {
