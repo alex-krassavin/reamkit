@@ -1,8 +1,38 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
+import { flowRenderOptions } from '@/core/converter/project';
 import { Ream } from '@/core/converter/ream';
+import { FontRegistry } from '@/core/font';
+import { layoutStyledDocument } from '@/layout/styled-layout';
 import { readDocx } from '@/word/docx-reader';
+
+const FONTS = {
+  regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
+  bold: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Bold.ttf')),
+};
+
+function pageText(commands: ReadonlyArray<{ type: string }>): string {
+  let out = '';
+  for (const c of commands) {
+    if (c.type !== 'line') continue;
+    const line = (c as { line: { tokens: ReadonlyArray<{ kind: string; text?: string }> } }).line;
+    for (const t of line.tokens) if (t.kind === 'text') out += t.text ?? '';
+    out += '\n';
+  }
+  return out;
+}
+
+function layoutOf(docx: Uint8Array, extra: Record<string, unknown> = {}) {
+  const flow = Ream.parse(docx).flow;
+  return layoutStyledDocument(flow.body, {
+    registry: FontRegistry.fromBytes(FONTS),
+    ...flowRenderOptions(flow),
+    ...extra,
+  });
+}
 
 const decode = (b: Uint8Array) => new TextDecoder().decode(b);
 
@@ -58,5 +88,61 @@ describe('footnotes / endnotes (§17.11)', () => {
     expect(html).toContain('<sup><a href="#en-1" id="enref-1">1</a></sup>');
     expect(html).toContain('<li id="en-1">');
     expect(html).toContain('the endnote');
+  });
+
+  it('layout: notes land at the bottom of the referencing page with a separator', () => {
+    const body =
+      BODY + '<w:p><w:pPr><w:pageBreakBefore/></w:pPr><w:r><w:t>page two</w:t></w:r></w:p>';
+    const laid = layoutOf(buildDocxFromBody(body, { footnotesXml: FOOTNOTES }));
+    expect(laid.pages.length).toBe(2);
+    const p1 = pageText(laid.pages[0]!.commands);
+    expect(p1).toContain('first note');
+    expect(p1).toContain('second note');
+    // Reference numbers render in the body text (1 then 2, reading order).
+    expect(p1).toContain('alpha1');
+    expect(p1).toContain('beta2');
+    // The separator rule: a short 0.75pt fill.
+    const sep = laid.pages[0]!.commands.find(
+      (c) => c.type === 'fill' && Math.abs((c as { width: number }).width - 144) < 0.01,
+    );
+    expect(sep).toBeDefined();
+    // Page 2 carries neither the notes nor the separator.
+    expect(pageText(laid.pages[1]!.commands)).not.toContain('first note');
+  });
+
+  it('layout: a reference near the page bottom moves to the next page WITH its note', () => {
+    const filler = Array.from(
+      { length: 12 },
+      (_, i) => `<w:p><w:r><w:t>filler line ${i}</w:t></w:r></w:p>`,
+    ).join('');
+    const refPara =
+      '<w:p><w:r><w:t>ref here</w:t></w:r><w:r><w:footnoteReference w:id="1"/></w:r></w:p>';
+    const notes =
+      '<w:footnote w:id="1"><w:p><w:r><w:footnoteRef/></w:r><w:r><w:t> tall note line one</w:t></w:r></w:p>' +
+      '<w:p><w:r><w:t>tall note line two</w:t></w:r></w:p></w:footnote>';
+    const laid = layoutOf(buildDocxFromBody(filler + refPara, { footnotesXml: notes }), {
+      pageHeight: 260,
+      marginTop: 36,
+      marginBottom: 36,
+    });
+    expect(laid.pages.length).toBeGreaterThan(1);
+    // The page holding the reference also holds the note text.
+    const refPage = laid.pages.findIndex((p) => pageText(p.commands).includes('ref here'));
+    expect(refPage).toBeGreaterThanOrEqual(0);
+    const text = pageText(laid.pages[refPage]!.commands);
+    expect(text).toContain('tall note line one');
+    expect(text).toContain('tall note line two');
+  });
+
+  it('layout: endnotes flow after the body', () => {
+    const endnotes =
+      '<w:endnote w:id="3"><w:p><w:r><w:endnoteRef/></w:r><w:r><w:t> closing remark</w:t></w:r></w:p></w:endnote>';
+    const body =
+      '<w:p><w:r><w:t>main text</w:t></w:r><w:r><w:endnoteReference w:id="3"/></w:r></w:p>';
+    const laid = layoutOf(buildDocxFromBody(body, { endnotesXml: endnotes }));
+    const text = pageText(laid.pages[laid.pages.length - 1]!.commands);
+    expect(text).toContain('main text');
+    expect(text).toContain('closing remark');
+    expect(text.indexOf('closing remark')).toBeGreaterThan(text.indexOf('main text'));
   });
 });

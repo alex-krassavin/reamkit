@@ -76,7 +76,8 @@ function richDocx(): Uint8Array {
   const body =
     '<w:p><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>Heading</w:t></w:r></w:p>' +
     '<w:p><w:r><w:t>The file flows efficiently through the office.</w:t></w:r></w:p>' +
-    '<w:p><w:r><w:t>See </w:t></w:r><w:hyperlink r:id="rId30"><w:r><w:t>the project site</w:t></w:r></w:hyperlink><w:r><w:t> for details.</w:t></w:r></w:p>' +
+    '<w:p><w:r><w:t>See </w:t></w:r><w:hyperlink r:id="rId30"><w:r><w:t>the project site</w:t></w:r></w:hyperlink><w:r><w:t> for details.</w:t></w:r>' +
+    '<w:r><w:footnoteReference w:id="1"/></w:r></w:p>' +
     tbl +
     li(0, 'First item') +
     li(1, 'Nested item') +
@@ -84,6 +85,8 @@ function richDocx(): Uint8Array {
   return buildDocxFromBody(body, {
     numberingXml,
     hyperlinks: { rId30: 'https://reamkit.dev' },
+    footnotesXml:
+      '<w:footnote w:id="1"><w:p><w:r><w:footnoteRef/></w:r><w:r><w:t> A footnote, flowing efficiently.</w:t></w:r></w:p></w:footnote>',
     images: {
       rId20: {
         contentType: 'image/png' as const,

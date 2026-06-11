@@ -40,6 +40,7 @@ export type StructType =
   | 'Caption'
   | 'Figure'
   | 'Link'
+  | 'Note'
   | 'Span';
 
 // One marked-content sequence owned by a node: MCID `mcid` on page `pageIndex`.

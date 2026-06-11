@@ -34,6 +34,9 @@ export interface TextToken {
   // Writers MUST sanitize the scheme (core/links) before emitting anything
   // clickable.
   readonly href?: string;
+  // §17.11.14 — the token renders a footnote reference number; pagination
+  // reserves the note's block at the bottom of the page it lands on.
+  readonly footnoteRef?: string;
   readonly resolvedRun: ResolvedRunProperties;
   readonly font: FontResource;
   readonly fontSizePt: number;

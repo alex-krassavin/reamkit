@@ -31,6 +31,7 @@ import type {
   MathNode,
   Numbering,
   Paragraph,
+  Run,
   Section,
   SectionProperties,
   ShapeBlock,
@@ -358,6 +359,185 @@ export interface LaidOutPdfDocument extends LaidOutDocument {
   readonly pdf: PdfLayoutAux;
 }
 
+// §17.11 footnote machinery: the separator rule above the notes band and the
+// space it occupies (rule + breathing room), in points.
+const FOOTNOTE_RULE_PT = 0.75;
+const FOOTNOTE_RULE_GAP_ABOVE = 4;
+const FOOTNOTE_SEPARATOR_HEIGHT = 10;
+const FOOTNOTE_RULE_WIDTH = 144; // Word's ~2" short separator
+
+// Assign sequential numbers to note references in reading order (§17.11:
+// footnotes and endnotes each keep their own counter) and rewrite each
+// reference run to render its number superscript. Returns copies — direct
+// renderStyledPdf callers own their trees.
+function assignNoteNumbers(body: ReadonlyArray<BodyElement>): {
+  body: ReadonlyArray<BodyElement>;
+  footnotes: ReadonlyMap<string, number>;
+  endnotes: ReadonlyMap<string, number>;
+  // Footnote ids whose references sit OUTSIDE top-level paragraphs (table
+  // cells, shape text): greedy bottom-of-page placement only tracks paragraph
+  // lines, so these notes flow after the body instead (documented v1).
+  deferredFootnotes: ReadonlyArray<string>;
+} {
+  const footnotes = new Map<string, number>();
+  const endnotes = new Map<string, number>();
+  const paragraphFootnotes = new Set<string>();
+
+  const numberRun = (run: Run, n: number): Run => ({
+    ...run,
+    text: String(n),
+    properties: { ...run.properties, verticalAlign: 'superscript' },
+  });
+
+  const mapParagraph = (paragraph: Paragraph): Paragraph => {
+    if (!paragraph.runs.some((r) => r.footnoteRef !== undefined || r.endnoteRef !== undefined)) {
+      return paragraph;
+    }
+    return {
+      ...paragraph,
+      runs: paragraph.runs.map((run) => {
+        if (run.footnoteRef !== undefined) {
+          let n = footnotes.get(run.footnoteRef);
+          if (n === undefined) {
+            n = footnotes.size + 1;
+            footnotes.set(run.footnoteRef, n);
+          }
+          return numberRun(run, n);
+        }
+        if (run.endnoteRef !== undefined) {
+          let n = endnotes.get(run.endnoteRef);
+          if (n === undefined) {
+            n = endnotes.size + 1;
+            endnotes.set(run.endnoteRef, n);
+          }
+          return numberRun(run, n);
+        }
+        return run;
+      }),
+    };
+  };
+
+  const mapElement = (el: BodyElement, topLevel: boolean): BodyElement => {
+    if (el.kind === 'paragraph') {
+      if (topLevel) {
+        for (const r of el.paragraph.runs) {
+          if (r.footnoteRef !== undefined) paragraphFootnotes.add(r.footnoteRef);
+        }
+      }
+      return { kind: 'paragraph', paragraph: mapParagraph(el.paragraph) };
+    }
+    if (el.kind === 'table') {
+      return {
+        kind: 'table',
+        table: {
+          ...el.table,
+          rows: el.table.rows.map((row) => ({
+            ...row,
+            cells: row.cells.map((cell) => ({
+              ...cell,
+              content: cell.content.map((c) => mapElement(c, false)),
+            })),
+          })),
+        },
+      };
+    }
+    if (el.kind === 'shape' && el.shape.text) {
+      return {
+        kind: 'shape',
+        shape: {
+          ...el.shape,
+          text: {
+            ...el.shape.text,
+            content: el.shape.text.content.map((c) => mapElement(c, false)),
+          },
+        },
+      };
+    }
+    return el;
+  };
+
+  // Cheap pre-check: most documents carry no notes at all.
+  const hasRefs = (els: ReadonlyArray<BodyElement>): boolean =>
+    els.some((el) => {
+      if (el.kind === 'paragraph') {
+        return el.paragraph.runs.some(
+          (r) => r.footnoteRef !== undefined || r.endnoteRef !== undefined,
+        );
+      }
+      if (el.kind === 'table') {
+        return el.table.rows.some((row) => row.cells.some((c) => hasRefs(c.content)));
+      }
+      if (el.kind === 'shape' && el.shape.text) return hasRefs(el.shape.text.content);
+      return false;
+    });
+  if (!hasRefs(body)) {
+    return { body, footnotes, endnotes, deferredFootnotes: [] };
+  }
+
+  const mapped = body.map((el) => mapElement(el, true));
+  const deferredFootnotes = [...footnotes.keys()].filter((id) => !paragraphFootnotes.has(id));
+  return { body: mapped, footnotes, endnotes, deferredFootnotes };
+}
+
+// Replace the note's own-number placeholder (w:footnoteRef) with the number,
+// or prepend it when the source omitted the placeholder.
+function substituteNoteNumber(
+  content: ReadonlyArray<BodyElement>,
+  n: number,
+): ReadonlyArray<BodyElement> {
+  const hasPlaceholder = content.some(
+    (el) => el.kind === 'paragraph' && el.paragraph.runs.some((r) => r.noteNumber),
+  );
+  const out = content.map((el) => {
+    if (el.kind !== 'paragraph') return el;
+    if (!el.paragraph.runs.some((r) => r.noteNumber)) return el;
+    return {
+      kind: 'paragraph' as const,
+      paragraph: {
+        ...el.paragraph,
+        runs: el.paragraph.runs.map((r) =>
+          r.noteNumber
+            ? {
+                ...r,
+                text: String(n),
+                properties: { ...r.properties, verticalAlign: 'superscript' as const },
+              }
+            : r,
+        ),
+      },
+    };
+  });
+  if (hasPlaceholder || out.length === 0) return out;
+  const first = out[0]!;
+  if (first.kind !== 'paragraph') return out;
+  return [
+    {
+      kind: 'paragraph',
+      paragraph: {
+        ...first.paragraph,
+        runs: [
+          {
+            text: `${n} `,
+            properties: { verticalAlign: 'superscript' as const },
+          },
+          ...first.paragraph.runs,
+        ],
+      },
+    },
+    ...out.slice(1),
+  ];
+}
+
+// What pagination needs to place footnotes: per-id content, numbers, and a
+// per-section lazily-cached layout of each note at that section's width.
+interface NotePlan {
+  readonly numbers: ReadonlyMap<string, number>;
+  readonly layout: (
+    ctx: SectionRenderCtx,
+    id: string,
+  ) => { blocks: ReadonlyArray<LaidOutBlock>; heightPt: number } | undefined;
+}
+
 // Layout phase (the FlowDoc→PageDoc transform of ir-design §7): body →
 // positioned pages (PageItems), font/image resources, logical structure.
 export function layoutStyledDocument(
@@ -366,7 +546,8 @@ export function layoutStyledDocument(
 ): LaidOutPdfDocument {
   const sectionList = resolveSectionList(body, options);
 
-  const numberedBody = applyNumbering(body, options.numbering);
+  const noteAssigned = assignNoteNumbers(applyNumbering(body, options.numbering));
+  const numberedBody = noteAssigned.body;
   const numberedHeadersFooters = applyNumberingToHeadersFooters(
     options.headersFooters,
     options.numbering,
@@ -402,7 +583,86 @@ export function layoutStyledDocument(
     );
   });
 
-  const pages = paginateSections(blocks, sectionCtxs, structBuilder, options.language ?? 'en-US');
+  // Footnote plan: per-section lazily-cached layout of each note's content at
+  // that section's width (notes referenced only from tables/shape text flow
+  // after the body instead — see assignNoteNumbers).
+  const noteBlockCache = new Map<SectionRenderCtx, Map<string, ReturnType<NotePlan['layout']>>>();
+  const notePlan: NotePlan | undefined =
+    options.footnotes && noteAssigned.footnotes.size > 0
+      ? {
+          numbers: noteAssigned.footnotes,
+          layout: (sectionCtx, id) => {
+            let byId = noteBlockCache.get(sectionCtx);
+            if (!byId) {
+              byId = new Map();
+              noteBlockCache.set(sectionCtx, byId);
+            }
+            if (byId.has(id)) return byId.get(id);
+            const content = options.footnotes?.get(id);
+            const n = noteAssigned.footnotes.get(id);
+            let laid: ReturnType<NotePlan['layout']> = undefined;
+            if (content && n !== undefined && !noteAssigned.deferredFootnotes.includes(id)) {
+              const noteBlocks = substituteNoteNumber(content, n).map((el) =>
+                layoutBodyElement(
+                  el,
+                  options,
+                  fontResources,
+                  imageResources,
+                  sectionCtx.contentWidth,
+                  sectionCtx.pageContentHeight,
+                ),
+              );
+              const heightPt = noteBlocks.reduce(
+                (sum, b) =>
+                  sum +
+                  (b.kind === 'paragraph' ? b.spacingBeforePt + b.heightPt + b.spacingAfterPt : 0),
+                0,
+              );
+              laid = { blocks: noteBlocks, heightPt };
+            }
+            byId.set(id, laid);
+            return laid;
+          },
+        }
+      : undefined;
+
+  // Endnotes (and footnotes whose references the greedy pass cannot track)
+  // flow after the body at the LAST section's width.
+  const lastCtx = sectionCtxs[sectionCtxs.length - 1];
+  if (lastCtx) {
+    const tailNotes: Array<{ content: ReadonlyArray<BodyElement>; n: number }> = [];
+    for (const id of noteAssigned.deferredFootnotes) {
+      const content = options.footnotes?.get(id);
+      const n = noteAssigned.footnotes.get(id);
+      if (content && n !== undefined) tailNotes.push({ content, n });
+    }
+    for (const [id, n] of noteAssigned.endnotes) {
+      const content = options.endnotes?.get(id);
+      if (content) tailNotes.push({ content, n });
+    }
+    for (const note of tailNotes.sort((a, b) => a.n - b.n)) {
+      for (const el of substituteNoteNumber(note.content, note.n)) {
+        blocks.push(
+          layoutBodyElement(
+            el,
+            options,
+            fontResources,
+            imageResources,
+            lastCtx.contentWidth,
+            lastCtx.pageContentHeight,
+          ),
+        );
+      }
+    }
+  }
+
+  const pages = paginateSections(
+    blocks,
+    sectionCtxs,
+    structBuilder,
+    options.language ?? 'en-US',
+    notePlan,
+  );
 
   return {
     pages,
@@ -1138,6 +1398,8 @@ function collectImageResources(
   };
   visit(body);
   for (const hf of headersFooters.values()) visit(hf);
+  for (const note of options.footnotes?.values() ?? []) visit(note);
+  for (const note of options.endnotes?.values() ?? []) visit(note);
 
   // Only PDF/A-1 forbids transparency; PDF/A-2/3 keep the image soft mask.
   const flattenAlpha = options.pdfA ? parsePdfAProfile(options.pdfA).part === 1 : false;
@@ -1171,6 +1433,9 @@ function drawBlocksSequentially(
   startX: number,
   startY: number,
   pageHeight: number,
+  // Tagged PDF: stamp every emitted line with this structure node (used by
+  // the footnote band; header/footer bands stay artifact-marked instead).
+  structId?: number,
 ): Array<PageItem> {
   const out: Array<PageItem> = [];
   let cursorY = startY;
@@ -1192,6 +1457,7 @@ function drawBlocksSequentially(
         line,
         originX: pt(startX + indentLeft + offset),
         baselineY: pt(pageHeight - (cursorY + lineDescent(line))),
+        ...(structId !== undefined ? { structId } : {}),
       });
     }
     cursorY -= block.spacingAfterPt;
@@ -1315,6 +1581,12 @@ function collectFontResources(
             addRun({ text: `${run.text}0123456789`, properties: run.properties }, el.paragraph);
             continue;
           }
+          // Note references and the note's own-number placeholder render
+          // substituted numbers — subset every digit for their fonts too.
+          if (run.footnoteRef !== undefined || run.endnoteRef !== undefined || run.noteNumber) {
+            addRun({ text: `${run.text}0123456789 `, properties: run.properties }, el.paragraph);
+            continue;
+          }
           addRun(run, el.paragraph);
         }
       } else if (el.kind === 'table') {
@@ -1346,6 +1618,8 @@ function collectFontResources(
   };
   visit(body);
   for (const hf of headersFooters.values()) visit(hf);
+  for (const note of options.footnotes?.values() ?? []) visit(note);
+  for (const note of options.endnotes?.values() ?? []) visit(note);
 
   if (used.size === 0) {
     const regular = options.registry.resolveByStyle(false, false);
@@ -1609,6 +1883,7 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         text: t.text,
         isSpace: t.isSpace,
         ...(plan.run.href !== undefined ? { href: plan.run.href } : {}),
+        ...(plan.run.footnoteRef !== undefined ? { footnoteRef: plan.run.footnoteRef } : {}),
         resolvedRun: plan.resolvedRun,
         font: plan.font,
         fontSizePt: plan.fontSizePt,
@@ -1668,6 +1943,7 @@ function tokenizePlansBidi(
         text,
         isSpace: curSpace,
         ...(plan.run.href !== undefined ? { href: plan.run.href } : {}),
+        ...(plan.run.footnoteRef !== undefined ? { footnoteRef: plan.run.footnoteRef } : {}),
         resolvedRun: plan.resolvedRun,
         font: plan.font,
         fontSizePt: plan.fontSizePt,
@@ -2503,6 +2779,7 @@ function paginateSections(
   sectionCtxs: ReadonlyArray<SectionRenderCtx>,
   builder?: StructTreeBuilder,
   defaultLang = 'en-US',
+  notes?: NotePlan,
 ): Array<LaidOutPage> {
   if (sectionCtxs.length === 0) return [];
   const pages: Array<LaidOutPage> = [];
@@ -2517,6 +2794,70 @@ function paginateSections(
   // Tagged PDF: the stack of open list levels (for L/LI/LBody nesting). Cleared
   // whenever a non-list-item block interrupts the run of list paragraphs.
   const listStack: Array<ListFrame> = [];
+
+  // §17.11 footnotes: notes reserved for the CURRENT page (greedy — a line
+  // carrying a reference pulls its note's height out of the page bottom, so
+  // the line and its note land together). `placedNotes` is global: a note
+  // renders once, on its first reference's page.
+  let pageNotes: Array<{ n: number; blocks: ReadonlyArray<LaidOutBlock>; heightPt: number }> = [];
+  let noteReserve = 0;
+  const placedNotes = new Set<string>();
+  // The page's usable bottom: the margin plus whatever the notes band has
+  // claimed so far.
+  const bottomLimit = () => ctx.marginBottom + noteReserve;
+
+  // New (unplaced) footnotes referenced by a line's tokens, with their layout
+  // at the current section's width.
+  const lineFootnotes = (
+    line: Line,
+  ): Array<{ id: string; n: number; blocks: ReadonlyArray<LaidOutBlock>; heightPt: number }> => {
+    if (!notes) return [];
+    const out: Array<{
+      id: string;
+      n: number;
+      blocks: ReadonlyArray<LaidOutBlock>;
+      heightPt: number;
+    }> = [];
+    for (const tok of line.tokens) {
+      if (tok.kind !== 'text' || tok.footnoteRef === undefined) continue;
+      const id = tok.footnoteRef;
+      if (placedNotes.has(id) || out.some((o) => o.id === id)) continue;
+      const laid = notes.layout(ctx, id);
+      const n = notes.numbers.get(id);
+      if (!laid || n === undefined) continue;
+      out.push({ id, n, blocks: laid.blocks, heightPt: laid.heightPt });
+    }
+    return out;
+  };
+
+  // The notes band for the flushing page: separator rule + each note's blocks
+  // stacked inside the reserved area. Tagged: each note is a Note→P element.
+  const renderNotesBand = (): Array<PageItem> => {
+    if (pageNotes.length === 0) return [];
+    const out: Array<PageItem> = [];
+    const top = ctx.marginBottom + noteReserve; // y-up top of the reserve
+    out.push({
+      type: 'fill',
+      x: pt(ctx.marginLeft),
+      y: pt(ctx.pageHeight - (top - FOOTNOTE_RULE_GAP_ABOVE)),
+      width: pt(FOOTNOTE_RULE_WIDTH),
+      height: pt(FOOTNOTE_RULE_PT),
+      fillColorHex: '000000',
+    });
+    let cursor = top - FOOTNOTE_SEPARATOR_HEIGHT;
+    for (const note of pageNotes.sort((a, b) => a.n - b.n)) {
+      let structId: number | undefined;
+      if (builder) {
+        const noteNode = builder.create('Note', builder.root);
+        structId = builder.create('P', noteNode).id;
+      }
+      out.push(
+        ...drawBlocksSequentially(note.blocks, ctx.marginLeft, cursor, ctx.pageHeight, structId),
+      );
+      cursor -= note.heightPt;
+    }
+    return out;
+  };
 
   // Dynamic PAGE/NUMPAGES bands re-render after pagination (both numbers are
   // known only then); each use records where its commands must be spliced.
@@ -2549,11 +2890,13 @@ function paginateSections(
       });
     }
     pages.push({
-      commands: [...header.commands, ...current, ...footer.commands],
+      commands: [...header.commands, ...current, ...renderNotesBand(), ...footer.commands],
       width: pt(ctx.pageWidth),
       height: pt(ctx.pageHeight),
     });
     current = [];
+    pageNotes = [];
+    noteReserve = 0;
     pageInSection++;
     globalPageIdx++;
     cursorY = ctx.pageHeight - ctx.marginTop;
@@ -2597,7 +2940,21 @@ function paginateSections(
       }
       for (const line of block.lines) {
         const h = computeLineHeight(line, block.resolved);
-        if (cursorY - h < ctx.marginBottom && current.length > 0) flushPage();
+        let newNotes = lineFootnotes(line);
+        const addedReserve = (sub: typeof newNotes) =>
+          sub.reduce((sum, x) => sum + x.heightPt, 0) +
+          (pageNotes.length === 0 && sub.length > 0 ? FOOTNOTE_SEPARATOR_HEIGHT : 0);
+        if (cursorY - h < bottomLimit() + addedReserve(newNotes) && current.length > 0) {
+          flushPage();
+          newNotes = lineFootnotes(line); // reserve restarts on the fresh page
+        }
+        if (newNotes.length > 0) {
+          noteReserve += addedReserve(newNotes);
+          for (const x of newNotes) {
+            placedNotes.add(x.id);
+            pageNotes.push({ n: x.n, blocks: x.blocks, heightPt: x.heightPt });
+          }
+        }
         cursorY -= h;
         const indentLeft =
           block.resolved.indentLeft + (line.firstLine ? block.resolved.indentFirstLine : 0);
@@ -2619,7 +2976,7 @@ function paginateSections(
     } else if (block.kind === 'image') {
       const figId = builder ? createFigure(builder, block.altText, 'Image') : undefined;
       cursorY -= block.spacingBeforePt;
-      if (cursorY - block.heightPt < ctx.marginBottom && current.length > 0) flushPage();
+      if (cursorY - block.heightPt < bottomLimit() && current.length > 0) flushPage();
       cursorY -= block.heightPt;
       current.push({
         type: 'image',
@@ -2635,7 +2992,7 @@ function paginateSections(
       // Shapes are atomic — never split across pages.
       const figId = builder ? createFigure(builder, block.altText, 'Shape') : undefined;
       cursorY -= block.spacingBeforePt;
-      if (cursorY - block.heightPt < ctx.marginBottom && current.length > 0) flushPage();
+      if (cursorY - block.heightPt < bottomLimit() && current.length > 0) flushPage();
       cursorY -= block.heightPt;
       const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, ctx.contentWidth);
       const x = ctx.marginLeft + offset;
@@ -2702,7 +3059,7 @@ function paginateSections(
       const figId = builder ? createFigure(builder, block.altText, 'Chart') : undefined;
       const fig = figId !== undefined ? { structId: figId } : {};
       cursorY -= block.spacingBeforePt;
-      if (cursorY - block.heightPt < ctx.marginBottom && current.length > 0) flushPage();
+      if (cursorY - block.heightPt < bottomLimit() && current.length > 0) flushPage();
       cursorY -= block.heightPt;
       const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, ctx.contentWidth);
       const x = ctx.marginLeft + offset;
@@ -2784,7 +3141,7 @@ function paginateSections(
           // A manual <rowBreaks> break (first chunk only) forces a new page even
           // when the row would fit; an overflow break starts one when it won't.
           const forcedBreak = ci === 0 && row.breakBefore && !isLeadingHeader && current.length > 0;
-          const overflow = cursorY - chunk.heightPt < ctx.marginBottom && current.length > 0;
+          const overflow = cursorY - chunk.heightPt < bottomLimit() && current.length > 0;
           if (forcedBreak || overflow) {
             flushPage();
             // Re-emit the header rows on the fresh page (visual repetition →
@@ -2793,7 +3150,7 @@ function paginateSections(
             if (
               !isLeadingHeader &&
               headerRows.length > 0 &&
-              cursorY - headerHeightPt - chunk.heightPt >= ctx.marginBottom
+              cursorY - headerHeightPt - chunk.heightPt >= bottomLimit()
             ) {
               for (const hr of headerRows) {
                 emitRowChunk(current, hr, tableX, cursorY, ctx.pageHeight, colCount, undefined);
