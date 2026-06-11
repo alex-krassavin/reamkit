@@ -17,6 +17,9 @@ const outRoot = resolve(here, '../../corpus/external');
 
 const limitArg = process.argv.indexOf('--limit');
 const LIMIT = limitArg >= 0 ? Number(process.argv[limitArg + 1]) : 60;
+// --source <id-prefix>: fetch only matching sources (e.g. `--source lo-`).
+const sourceArg = process.argv.indexOf('--source');
+const SOURCE_PREFIX = sourceArg >= 0 ? (process.argv[sourceArg + 1] ?? '') : '';
 
 interface Source {
   readonly id: string;
@@ -43,6 +46,33 @@ const SOURCES: ReadonlyArray<Source> = [
     ref: 'trunk',
     ext: /\.xlsx$/i,
     license: 'Apache-2.0',
+  },
+  // LibreOffice's OOXML regression corpora — thousands of real-world-shaped
+  // documents distilled from actual bug reports. (GovDocs1 was evaluated and
+  // rejected: it predates OOXML — a legacy .doc/.xls corpus.)
+  {
+    id: 'lo-docx-export',
+    repo: 'LibreOffice/core',
+    path: 'sw/qa/extras/ooxmlexport/data',
+    ref: 'master',
+    ext: /\.docx$/i,
+    license: 'MPL-2.0',
+  },
+  {
+    id: 'lo-docx-import',
+    repo: 'LibreOffice/core',
+    path: 'sw/qa/extras/ooxmlimport/data',
+    ref: 'master',
+    ext: /\.docx$/i,
+    license: 'MPL-2.0',
+  },
+  {
+    id: 'lo-xlsx',
+    repo: 'LibreOffice/core',
+    path: 'sc/qa/unit/data/xlsx',
+    ref: 'master',
+    ext: /\.xlsx$/i,
+    license: 'MPL-2.0',
   },
 ];
 
@@ -77,6 +107,7 @@ async function main(): Promise<void> {
   mkdirSync(outRoot, { recursive: true });
   const manifest: Array<ManifestEntry> = [];
   for (const s of SOURCES) {
+    if (SOURCE_PREFIX && !s.id.startsWith(SOURCE_PREFIX)) continue;
     const dir = resolve(outRoot, s.id);
     mkdirSync(dir, { recursive: true });
     const all = await listDir(s);
