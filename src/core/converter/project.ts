@@ -12,7 +12,9 @@ export type FlowRenderOptions = Omit<StyledRenderOptions, 'registry'>;
 export function flowRenderOptions(flow: FlowDoc): FlowRenderOptions {
   return {
     styles: flow.styles,
-    ...(flow.numbering ? { numbering: flow.numbering } : {}),
+    // flow.body already carries materialized list markers (the reader applies
+    // numbering as a FlowDoc transform) — projecting `numbering` here would
+    // make the renderer apply it a second time.
     ...(flow.sections.length > 0 ? { sections: flow.sections } : {}),
     ...(flow.section ? { section: flow.section } : {}),
     ...(flow.headersFooters ? { headersFooters: flow.headersFooters } : {}),

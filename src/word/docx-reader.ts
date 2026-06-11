@@ -11,6 +11,7 @@ import type { ResourceId } from '@/core/ir';
 import type { CoreProperties } from '@/core/opc';
 import type { ImageResolver, ParseContext } from '@/word';
 import { bytesInclude } from '@/core/bytes';
+import { applyNumbering, applyNumberingToHeadersFooters } from '@/core/numbering';
 import { EMPTY_STYLE_SHEET } from '@/core/style-cascade';
 
 import { FEATURES, ResourceStore } from '@/core/ir';
@@ -100,11 +101,14 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
 
   const doc: FlowDoc = {
     kind: 'flow',
-    body,
+    // Stage-6 FlowDoc transform: list markers are materialized here, so every
+    // writer sees ready paragraphs. `numbering` stays as raw material for
+    // round-trip writers; render projections must NOT re-apply it.
+    body: applyNumbering(body, numbering),
     sections,
     styles,
     numbering,
-    headersFooters,
+    headersFooters: applyNumberingToHeadersFooters(headersFooters, numbering),
     charts,
     resources,
     ...(embeddedFonts.size > 0 ? { embeddedFonts } : {}),
