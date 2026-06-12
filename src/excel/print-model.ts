@@ -15,8 +15,11 @@ import type {
   Border,
   BorderStyle,
   CellBorders,
+  CellDataBar,
+  CellIcon,
   CellProperties,
   CellShading,
+  CellSparkline,
   PageMargins,
   PageSize,
   ParagraphProperties,
@@ -29,6 +32,7 @@ import type {
 import type {
   CellRange,
   DefinedName,
+  ExcelTable,
   MergedRange,
   ParsedWorksheet,
   WorksheetCell,
@@ -43,8 +47,10 @@ import type {
   XlsxPageSetup,
   XlsxStyles,
 } from '@/excel';
+import type { CellConditionalFormatter, CfOverride } from '@/excel/conditional-format';
 import { eighthPtToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 import { applyNumberFormat, parseAreaRef, parseTitleRowRange } from '@/excel';
+import { buildConditionalFormatter } from '@/excel/conditional-format';
 
 // Excel "character width" → twips. Calibri 11pt default Maximum Digit Width
 // is ~7 px ≈ 5.25 pt ≈ 105 twips. This is a coarse approximation but the
@@ -228,11 +234,14 @@ interface PrintModelOptions {
   // Rows in this range are flagged isHeader so the renderer repeats them at the
   // top of each continuation page.
   readonly titleRows?: { readonly startRow: number; readonly endRow: number };
+  // E-SHEET SC2 tail (TC3) — sheet name → grid, for sparklines whose data range
+  // is sheet-qualified (Sheet2!A1:C1). Absent ⇒ same-sheet resolution only.
+  readonly sheetGrids?: ReadonlyMap<string, ParsedWorksheet>;
 }
 
 export function worksheetToBody(
   worksheet: ParsedWorksheet,
-  sharedStrings: Array<string>,
+  sharedStrings: ReadonlyArray<string>,
   styles: XlsxStyles,
   date1904: boolean,
   print: PrintModelOptions,
@@ -258,6 +267,14 @@ export function worksheetToBody(
   for (const m of worksheet.merges) {
     if (m.endRow > usedRow) usedRow = m.endRow;
     if (m.endColumn > usedCol) usedCol = m.endColumn;
+  }
+  // A sparkline host cell (E-SHEET SC2) is usually empty and just past the data;
+  // keep it in the used range so the cell that carries the mini chart survives.
+  for (const sp of worksheet.sparklines ?? []) {
+    const host = parseAreaRef(sp.sqref);
+    if (!host) continue;
+    if (host.startRow > usedRow) usedRow = host.startRow;
+    if (host.startColumn > usedCol) usedCol = host.startColumn;
   }
   if (usedRow < 0 || usedCol < 0) return []; // nothing but empty styled cells
 
@@ -402,6 +419,24 @@ export function worksheetToBody(
     return props;
   };
 
+  // §18.3.1.18 conditional formatting (E-SHEET SC1): a per-cell fill/font
+  // override evaluated from the sheet's rules. undefined when the sheet has none
+  // — the cell loop then takes the byte-identical base-format path.
+  const cfFormatter: CellConditionalFormatter | undefined = buildConditionalFormatter(
+    worksheet.conditionalFormats,
+    styles,
+    worksheet.cells,
+  );
+
+  // Sparklines (E-SHEET SC2): host-cell (absolute key) → resolved value series.
+  // Empty when the sheet has no sparklines, so the cell loop stays unchanged.
+  const sparklineByCell = buildSparklineLookup(worksheet, print);
+
+  // Excel tables (E-SHEET SC3): cell (absolute key) → banded/header fill + header
+  // text colour. Empty when the sheet has no table parts. Applied below the
+  // cell's own fill and below conditional formatting.
+  const tableFormatByCell = buildTableFormatLookup(worksheet);
+
   const rows: Array<TableRow> = [];
   for (let r = 0; r < rowCount; r++) {
     const absR = r + rowStart;
@@ -428,10 +463,34 @@ export function worksheetToBody(
       if (text.length > textBudget) text = text.slice(0, Math.max(0, textBudget));
       textBudget -= text.length;
       const xf = ws && ws.styleIndex !== undefined ? styles.cellXfs[ws.styleIndex] : undefined;
-      const runProps = cellRunProps(xf);
+      let runProps = cellRunProps(xf);
       const alignment = xf ? alignmentFromXf(xf) : undefined;
-      const shading = xf ? shadingFromXf(xf, styles) : undefined;
+      let shading = xf ? shadingFromXf(xf, styles) : undefined;
+      // A table's banded/header fill + header text colour sit below the cell's
+      // own fill (used only when the cell declares none) and below conditional
+      // formatting (E-SHEET SC3).
+      const tableFmt = tableFormatByCell.get(key(absR, absC));
+      if (!shading && tableFmt?.shading) shading = tableFmt.shading;
+      if (tableFmt?.fontColorHex) runProps = { ...runProps, colorHex: tableFmt.fontColorHex };
       const borders = xf ? bordersFromXf(xf, styles) : undefined;
+      let dataBar: CellDataBar | undefined;
+      let icon: CellIcon | undefined;
+      const sparkline = sparklineByCell.get(key(absR, absC));
+
+      // Conditional formatting (E-SHEET SC1/SC1b/SC1c): the applicable rules
+      // override the cell's fill/font and may add an in-cell data bar. Only number
+      // cells carry a comparable value; no formatter ⇒ block skipped (byte-identical).
+      if (cfFormatter && ws) {
+        const cfValue =
+          ws.type === 'n' && Number.isFinite(Number(ws.rawValue)) ? Number(ws.rawValue) : undefined;
+        const over = cfFormatter(absR, absC, cfValue);
+        if (over) {
+          if (over.fillHex) shading = { colorHex: over.fillHex };
+          if (over.dataBar) dataBar = over.dataBar;
+          if (over.icon) icon = over.icon;
+          runProps = applyCfOverride(runProps, over);
+        }
+      }
 
       // Cell overflow (Excel/Calc print model): a non-wrapping cell's text
       // overflows into EMPTY neighbours to the right (left/general alignment) but
@@ -469,6 +528,9 @@ export function worksheetToBody(
           ? { merge: 'start' as const }
           : {}),
         ...(shading ? { shading } : {}),
+        ...(dataBar ? { dataBar } : {}),
+        ...(icon ? { icon } : {}),
+        ...(sparkline ? { sparkline } : {}),
         ...(borders ? { borders } : {}),
       };
 
@@ -580,7 +642,7 @@ function makeVerticalContinuation(
 
 function resolveCellText(
   cell: WorksheetCell,
-  sharedStrings: Array<string>,
+  sharedStrings: ReadonlyArray<string>,
   styles: XlsxStyles,
   date1904: boolean,
 ): string {
@@ -611,6 +673,17 @@ function runPropsFromXf(xf: XlsxCellXf, styles: XlsxStyles): RunProperties {
   if (font.sizePt !== undefined) props.fontSizePt = halfPtToPt(Math.round(font.sizePt * 2));
   if (font.colorHex) props.colorHex = font.colorHex;
   return props;
+}
+
+// A conditional-format override applied over the base run props (CF wins for
+// the properties it sets — font colour, bold, italic). Size is left untouched.
+function applyCfOverride(base: RunProperties, o: CfOverride): RunProperties {
+  return {
+    ...base,
+    ...(o.fontColorHex ? { colorHex: o.fontColorHex } : {}),
+    ...(o.bold !== undefined ? { bold: o.bold } : {}),
+    ...(o.italic !== undefined ? { italic: o.italic } : {}),
+  };
 }
 
 function alignmentFromXf(xf: XlsxCellXf): Alignment | undefined {
@@ -697,6 +770,119 @@ function mapBorderStyle(style: XlsxBorderStyleName): { style: BorderStyle; sizeE
 
 function key(row: number, col: number): string {
   return `${row},${col}`;
+}
+
+// E-SHEET SC2 — resolve the sheet's sparklines to a host-cell → value-series map.
+// The data range is resolved on THIS sheet (parseAreaRef drops any sheet
+// qualifier); cross-sheet series are a documented v1 limitation. Empty map when
+// the sheet has no sparklines, so the cell loop is untouched for everyone else.
+function buildSparklineLookup(
+  worksheet: ParsedWorksheet,
+  print: PrintModelOptions,
+): Map<string, CellSparkline> {
+  const out = new Map<string, CellSparkline>();
+  for (const sp of worksheet.sparklines ?? []) {
+    const host = parseAreaRef(sp.sqref);
+    const area = parseAreaRef(sp.dataRange);
+    if (!host || !area) continue;
+    const grid = resolveSeriesGrid(sp.dataRange, worksheet, print.sheetGrids);
+    const values = collectSeriesValues(grid.cells, area);
+    if (values.length === 0 || values.every((v) => v === null)) continue;
+    out.set(key(host.startRow, host.startColumn), {
+      kind: sp.kind,
+      values,
+      ...(sp.colorHex ? { colorHex: sp.colorHex } : {}),
+    });
+  }
+  return out;
+}
+
+// A sheet-qualified data range (Sheet2!A1:C1, or 'My Sheet'!…) resolves against
+// the named sheet's grid; an unqualified range (or an unknown sheet) stays on
+// the current sheet (E-SHEET SC2 tail TC3).
+function resolveSeriesGrid(
+  dataRange: string,
+  current: ParsedWorksheet,
+  sheetGrids: ReadonlyMap<string, ParsedWorksheet> | undefined,
+): ParsedWorksheet {
+  if (!sheetGrids) return current;
+  const firstToken = dataRange.split(',')[0] ?? dataRange;
+  const bang = firstToken.lastIndexOf('!');
+  if (bang < 0) return current;
+  let name = firstToken.slice(0, bang).trim();
+  if (name.startsWith("'") && name.endsWith("'")) name = name.slice(1, -1).replace(/''/g, "'");
+  return sheetGrids.get(name) ?? current;
+}
+
+// The numeric series inside an area, in reading order (row-major). Blanks and
+// non-numeric cells are kept as gaps (null) so x-positions stay aligned. A range
+// far larger than any real sparkline (e.g. a whole column) falls back to the
+// compact populated series rather than enumerating millions of gaps.
+const MAX_SPARKLINE_POINTS = 1000;
+
+function collectSeriesValues(
+  cells: ReadonlyArray<WorksheetCell>,
+  area: CellRange,
+): Array<number | null> {
+  const byKey = new Map<string, number>();
+  for (const c of cells) {
+    if (c.row < area.startRow || c.row > area.endRow) continue;
+    if (c.column < area.startColumn || c.column > area.endColumn) continue;
+    if (c.type !== 'n') continue;
+    const v = Number(c.rawValue);
+    if (Number.isFinite(v)) byKey.set(key(c.row, c.column), v);
+  }
+  const cellCount = (area.endRow - area.startRow + 1) * (area.endColumn - area.startColumn + 1);
+  if (cellCount > MAX_SPARKLINE_POINTS) {
+    const pts = [...byKey.entries()].map(([k, v]) => {
+      const [r, col] = k.split(',').map(Number) as [number, number];
+      return { r, col, v };
+    });
+    pts.sort((a, b) => a.r - b.r || a.col - b.col);
+    return pts.map((p) => p.v);
+  }
+  const out: Array<number | null> = [];
+  for (let r = area.startRow; r <= area.endRow; r++) {
+    for (let col = area.startColumn; col <= area.endColumn; col++) {
+      out.push(byKey.get(key(r, col)) ?? null);
+    }
+  }
+  return out;
+}
+
+// E-SHEET SC3 — a table cell's resolved fill + (for header cells) font colour.
+interface TableCellFormat {
+  readonly shading?: CellShading;
+  readonly fontColorHex?: string;
+}
+
+// Cell (absolute key) → table format for header rows and banded data rows. The
+// header rows take the table's header fill + text colour (white on a Medium/Dark
+// accent); with showRowStripes, the 2nd/4th/… data row takes the band colour
+// (band1 stays unfilled, like Excel). Bounded by real table sizes.
+function buildTableFormatLookup(worksheet: ParsedWorksheet): Map<string, TableCellFormat> {
+  const out = new Map<string, TableCellFormat>();
+  for (const t of worksheet.tables ?? []) {
+    const { ref } = t;
+    const firstDataRow = ref.startRow + t.headerRowCount;
+    for (let r = ref.startRow; r <= ref.endRow; r++) {
+      let colorHex: string | undefined;
+      let fontColorHex: string | undefined;
+      if (r < firstDataRow) {
+        colorHex = t.headerHex;
+        fontColorHex = t.headerTextHex;
+      } else if (t.showRowStripes && t.bandHex) {
+        colorHex = (r - firstDataRow) % 2 === 1 ? t.bandHex : undefined;
+      }
+      if (!colorHex && !fontColorHex) continue;
+      const fmt: TableCellFormat = {
+        ...(colorHex ? { shading: { colorHex } } : {}),
+        ...(fontColorHex ? { fontColorHex } : {}),
+      };
+      for (let c = ref.startColumn; c <= ref.endColumn; c++) out.set(key(r, c), fmt);
+    }
+  }
+  return out;
 }
 
 // A cell "has content" (blocks overflow / counts toward the used range) when it

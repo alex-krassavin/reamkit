@@ -397,6 +397,42 @@ export interface CellShading {
   readonly colorHex: string;
 }
 
+// A conditional-format data bar: a horizontal bar of width `fraction` (0..1 of
+// the cell), painted over the shading and under the text (E-SHEET SC1c). It
+// starts at `startFraction` from the cell's left (default 0); a mixed-sign range
+// puts the axis inside the cell so negative bars run left of it (tail TC4).
+export interface CellDataBar {
+  readonly fraction: number;
+  readonly colorHex: string;
+  readonly startFraction?: number;
+}
+
+// A conditional-format icon: a small glyph at the cell's left, chosen by the
+// value's bucket (E-SHEET SC1c). Format-neutral — the xlsx layer maps Excel's
+// named icon families (3TrafficLights, 3Arrows, …) onto these shapes + colours.
+export type CellIconShape =
+  | 'circle'
+  | 'square'
+  | 'diamond'
+  | 'triangleUp'
+  | 'triangleDown'
+  | 'triangleRight';
+export interface CellIcon {
+  readonly shape: CellIconShape;
+  readonly colorHex: string;
+}
+
+// A sparkline: a mini chart filling the cell, plotting `values` (E-SHEET SC2).
+// Format-neutral — the xlsx layer resolves the data range to a value sequence;
+// the layout renders line / column / win-loss geometry sized to the cell.
+export interface CellSparkline {
+  readonly kind: 'line' | 'column' | 'winLoss';
+  // A blank/non-numeric cell in the range is a gap (null) so x-positions stay
+  // aligned: a line breaks across it, a column/win-loss skips its slot.
+  readonly values: ReadonlyArray<number | null>;
+  readonly colorHex?: string;
+}
+
 // Resolved position of a cell in a vertical merge group (ECMA-376 §17.4.85
 // vMerge markers are resolved by the reader): 'start' opens a group that at
 // least one cell continues, 'middle' / 'end' are continuations; undefined =
@@ -412,6 +448,9 @@ export interface CellProperties {
   readonly borders?: CellBorders;
   readonly margins?: CellMargins;
   readonly shading?: CellShading;
+  readonly dataBar?: CellDataBar;
+  readonly icon?: CellIcon;
+  readonly sparkline?: CellSparkline;
 }
 
 export interface RowProperties {

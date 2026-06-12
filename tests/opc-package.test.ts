@@ -3,6 +3,32 @@ import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
 import { OpcPackage } from '@/core/opc';
+import { parseRelationships } from '@/core/opc/relationships';
+
+const REL_NS = 'http://schemas.openxmlformats.org/package/2006/relationships';
+
+describe('parseRelationships — namespace prefix (corpus: 58760.xlsx)', () => {
+  it('parses relationships whose elements carry a namespace prefix', () => {
+    const xml =
+      `<ns0:Relationships xmlns:ns0="${REL_NS}">` +
+      '<ns0:Relationship Id="rId1" Type="http://x/worksheet" Target="sheet1.xml"/>' +
+      '<ns0:Relationship Id="rId2" Type="http://x/styles" Target="styles.xml" TargetMode="Internal"/>' +
+      '</ns0:Relationships>';
+    const rels = parseRelationships(new TextEncoder().encode(xml));
+    expect(rels.map((r) => r.id)).toEqual(['rId1', 'rId2']);
+    expect(rels[0]).toEqual({
+      id: 'rId1',
+      type: 'http://x/worksheet',
+      target: 'sheet1.xml',
+      targetMode: 'Internal',
+    });
+  });
+
+  it('still parses the default (unprefixed) form', () => {
+    const xml = `<Relationships xmlns="${REL_NS}"><Relationship Id="rId1" Type="http://x/t" Target="a.xml"/></Relationships>`;
+    expect(parseRelationships(new TextEncoder().encode(xml))).toHaveLength(1);
+  });
+});
 
 describe('OpcPackage.open — zip-bomb hardening', () => {
   it('opens a normal package with the default limits', () => {

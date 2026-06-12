@@ -7,17 +7,20 @@
 // The async boundary lives HERE (font fetching); readers/writers stay sync.
 
 import type { ConvertDocxOptions } from '@/word/docx-to-pdf';
-import type { DocumentReader } from '@/core/ir/adapters';
+import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
+import type { SheetDoc } from '@/core/ir/sheet';
 import type { FontProvider } from '@/core/fonts/provider';
 import type { Loss, LossReport } from '@/core/ir';
 import type { FontBytesByVariant } from '@/core/font';
 
 import { ConversionLossError, FEATURES } from '@/core/ir';
+import { projectSheetDoc } from '@/excel/sheet-to-flow';
 import { FontRegistry } from '@/core/font';
 import { chainProviders } from '@/core/fonts/provider';
 import { flowRenderOptions } from '@/core/converter/project';
 import { writeDocx } from '@/word/docx-writer';
+import { writeXlsx } from '@/excel/xlsx-writer';
 import { writeHtml } from '@/html/html-writer';
 import { layoutStyledDocument } from '@/layout/styled-layout';
 import { writeSvg } from '@/svg/svg-writer';
@@ -27,8 +30,11 @@ import { docxReader } from '@/word/docx-reader';
 import { xlsxReader } from '@/excel/xlsx-reader';
 
 export interface ConvertOptions extends ConvertDocxOptions {
-  /** Target: 'pdf' (default), 'svg' (page-stack preview), 'html' or 'docx' (flowed). */
-  readonly to?: 'pdf' | 'svg' | 'html' | 'docx';
+  /**
+   * Target: 'pdf' (default), 'svg' (page-stack preview), 'html'/'docx' (flowed),
+   * or 'xlsx' (the native grid writer — spreadsheet input only).
+   */
+  readonly to?: 'pdf' | 'svg' | 'html' | 'docx' | 'xlsx';
   /**
    * Strict mode (handoff v1 §5): throw ConversionLossError on the first
    * recorded loss instead of returning it in the report.
@@ -50,25 +56,39 @@ export interface ConvertResult {
   readonly losses: LossReport;
 }
 
+// A reader yields one of the source IR trees; the render path is FlowDoc, so a
+// SheetDoc is projected to a FlowDoc at the boundary (E-SHEET SB1). The
+// discriminant `kind` selects the projection — FlowDoc passes through.
+export type SourceDoc = FlowDoc | SheetDoc;
+
+export function toFlowDoc(doc: SourceDoc): FlowDoc {
+  return doc.kind === 'sheet' ? projectSheetDoc(doc) : doc;
+}
+
+function readToFlow(reader: DocumentReader<SourceDoc>, bytes: Uint8Array): ReadResult<FlowDoc> {
+  const { doc, losses } = reader.read(bytes);
+  return { doc: toFlowDoc(doc), losses };
+}
+
 export interface Converter {
   /** The registered readers, in sniffing order. */
-  readonly readers: ReadonlyArray<DocumentReader<FlowDoc>>;
+  readonly readers: ReadonlyArray<DocumentReader<SourceDoc>>;
   /** Detect the input format by reader sniffing; undefined when unknown. */
-  detect: (bytes: Uint8Array) => DocumentReader<FlowDoc> | undefined;
+  detect: (bytes: Uint8Array) => DocumentReader<SourceDoc> | undefined;
   convert: (bytes: Uint8Array, options?: ConvertOptions) => Promise<ConvertResult>;
 }
 
 export interface CreateConverterOptions {
   /** Override / extend the reader registry (defaults to docx + xlsx). */
-  readonly readers?: ReadonlyArray<DocumentReader<FlowDoc>>;
+  readonly readers?: ReadonlyArray<DocumentReader<SourceDoc>>;
 }
 
-export const DEFAULT_READERS: ReadonlyArray<DocumentReader<FlowDoc>> = [docxReader, xlsxReader];
+export const DEFAULT_READERS: ReadonlyArray<DocumentReader<SourceDoc>> = [docxReader, xlsxReader];
 
 export function createConverter(opts: CreateConverterOptions = {}): Converter {
   const readers = opts.readers ?? DEFAULT_READERS;
 
-  const detect = (bytes: Uint8Array): DocumentReader<FlowDoc> | undefined =>
+  const detect = (bytes: Uint8Array): DocumentReader<SourceDoc> | undefined =>
     readers.find((r) => r.sniff(bytes));
 
   const convert = async (
@@ -83,7 +103,7 @@ export function createConverter(opts: CreateConverterOptions = {}): Converter {
     const losses: Array<Loss> = [];
     if (to === 'docx') {
       // FlowDoc → docx writer directly: re-serialization, zero I/O.
-      const { doc: flow, losses: readLosses } = reader.read(bytes);
+      const { doc: flow, losses: readLosses } = readToFlow(reader, bytes);
       losses.push(...readLosses);
       const out = writeDocx(flow);
       losses.push(...out.losses);
@@ -93,12 +113,26 @@ export function createConverter(opts: CreateConverterOptions = {}): Converter {
 
     if (to === 'html') {
       // FlowDoc → html writer directly: no layout and no fonts — zero I/O.
-      const { doc: flow, losses: readLosses } = reader.read(bytes);
+      const { doc: flow, losses: readLosses } = readToFlow(reader, bytes);
       losses.push(...readLosses);
       const html = writeHtml(flow);
       losses.push(...html.losses);
       if (strict && losses.length > 0) throw new ConversionLossError(losses[0]!);
       return { bytes: html.bytes, losses };
+    }
+
+    if (to === 'xlsx') {
+      // SheetDoc → xlsx writer directly (E-SHEET SD1): the writer needs the
+      // native grid, so a flow source (docx) cannot target xlsx. Zero I/O.
+      const { doc, losses: readLosses } = reader.read(bytes);
+      losses.push(...readLosses);
+      if (doc.kind !== 'sheet') {
+        throw new Error("to: 'xlsx' requires a spreadsheet input; a flow document has no grid");
+      }
+      const out = writeXlsx(doc);
+      losses.push(...out.losses);
+      if (strict && losses.length > 0) throw new ConversionLossError(losses[0]!);
+      return { bytes: out.bytes, losses };
     }
     let conv = rest;
     // Resolve the default font set through the provider chain (unless the
@@ -114,7 +148,7 @@ export function createConverter(opts: CreateConverterOptions = {}): Converter {
       if (!fonts) {
         throw new Error("to: 'svg' requires options.fonts/fontBytes or fontProviders");
       }
-      const { doc: flow } = reader.read(bytes);
+      const { doc: flow } = readToFlow(reader, bytes);
       const laid = layoutStyledDocument(flow.body, {
         registry: FontRegistry.fromBytes(fonts),
         ...flowRenderOptions(flow),

@@ -3,6 +3,37 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.5.0
+
+### Added
+
+- **Excel conditional formatting** — `cellIs` rules become per-cell highlights
+  (dxf fill/font), `colorScale` a 2- or 3-stop gradient interpolated across the
+  range's value extent, `dataBar` an in-cell bar (with a zero axis so a range
+  spanning negatives draws them the other way, in red), and `iconSet` a per-cell
+  glyph chosen by value bucket — traffic lights, arrows, flags, signs and the
+  grey families. Rendered in PDF and HTML.
+- **Sparklines** — the per-cell line / column / win-loss mini charts from the
+  worksheet `extLst` render as vector graphics inside their host cell, including
+  data ranges on another sheet and blank cells kept as gaps.
+- **Excel tables** (`xl/tables`) — banded rows and a styled header row, with the
+  header / band colours and white header text resolved from the named table
+  style (`TableStyleMedium2`, …) against the workbook theme accents.
+- **xlsx output (`convert('xlsx')`)** — Ream now writes SpreadsheetML as well as
+  reading it. Unlike the docx writer it consumes the native grid tree, so the
+  round-trip is lossless on the grid surface: cells, shared strings, the full
+  style table, merges, the print model (margins, page setup, fit-to-page, print
+  options, breaks), conditional formatting, sparklines and tables all survive a
+  read → write → read loop byte-stably. Across the real-world xlsx corpus every
+  readable workbook round-trips to a full grid-content identity; embedded charts
+  are reported as losses, not yet written.
+
+### Fixed
+
+- Workbooks whose relationship parts (`.rels`) put the OPC namespace on a prefix
+  (`<ns0:Relationship>`) instead of the default now read correctly — previously
+  the relationships parsed to nothing, so such a file resolved to zero sheets.
+
 ## 1.4.0
 
 ### Added

@@ -16,31 +16,33 @@
 // It keeps the source bytes for the two source-touching features only:
 // substitute-font auto-detection (docx) and PDF/A-3 `embedSource`.
 
-import type { ConvertResult } from '@/core/converter/facade';
+import type { ConvertResult, SourceDoc } from '@/core/converter/facade';
 import type { FontBytesByVariant } from '@/core/font';
 import type { FetchLike } from '@/core/fonts';
 import type { FontProvider } from '@/core/fonts/provider';
 import type { Loss } from '@/core/ir';
 import type { DocumentReader } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
+import type { SheetDoc } from '@/core/ir/sheet';
 import type { SignatureOptions, StyledRenderOptions } from '@/pdf';
-import { DEFAULT_READERS, resolveFontsViaChain } from '@/core/converter/facade';
+import { DEFAULT_READERS, resolveFontsViaChain, toFlowDoc } from '@/core/converter/facade';
 import { flowRenderOptions } from '@/core/converter/project';
 import { FontRegistry } from '@/core/font';
 import { fetchFontSet } from '@/core/fonts';
 import { ConversionLossError } from '@/core/ir';
 import { writeDocx } from '@/word/docx-writer';
+import { writeXlsx } from '@/excel/xlsx-writer';
 import { writeHtml } from '@/html/html-writer';
 import { layoutStyledDocument } from '@/layout/styled-layout';
 import { renderStyledPdf, renderStyledPdfEncrypted, signPdf } from '@/pdf';
 import { writeSvg } from '@/svg/svg-writer';
 import { resolveDocxAutoFonts } from '@/word/docx-to-pdf';
 
-export type ReamTarget = 'pdf' | 'svg' | 'html' | 'docx';
+export type ReamTarget = 'pdf' | 'svg' | 'html' | 'docx' | 'xlsx';
 
 export interface ReamParseOptions {
   // Reader registry override — defaults to the built-in docx + xlsx readers.
-  readonly readers?: ReadonlyArray<DocumentReader>;
+  readonly readers?: ReadonlyArray<DocumentReader<SourceDoc>>;
 }
 
 export interface ReamConvertOptions extends Omit<StyledRenderOptions, 'registry' | 'styles'> {
@@ -71,6 +73,9 @@ export class Ream {
   private constructor(
     // The interlayer itself — the parsed, format-neutral document tree.
     readonly flow: FlowDoc,
+    // The native SpreadsheetML tree when the source is a spreadsheet (xlsx);
+    // the FlowDoc above is its projection through the print model.
+    readonly sheet: SheetDoc | undefined,
     // Losses recorded while reading the source.
     readonly losses: ReadonlyArray<Loss>,
     private readonly source: Uint8Array,
@@ -87,7 +92,10 @@ export class Ream {
       );
     }
     const { doc, losses } = reader.read(bytes);
-    return new Ream(doc, losses, bytes, reader.id);
+    // The reader's native tree — a SheetDoc for spreadsheets — is projected to
+    // the FlowDoc the render path consumes; the SheetDoc is kept for inspection.
+    const sheet = doc.kind === 'sheet' ? doc : undefined;
+    return new Ream(toFlowDoc(doc), sheet, losses, bytes, reader.id);
   }
 
   // Source format id ('docx', 'xlsx', …).
@@ -121,6 +129,18 @@ export class Ream {
       losses.push(...docx.losses);
       this.enforceStrict(options, losses);
       return { bytes: docx.bytes, losses };
+    }
+
+    if (to === 'xlsx') {
+      // The native grid medium (E-SHEET SD1): the writer consumes the SheetDoc
+      // directly — a docx (no grid) cannot be written to xlsx. Zero I/O.
+      if (!this.sheet) {
+        throw new Error("convert('xlsx') requires a spreadsheet source; this document has no grid");
+      }
+      const xlsx = writeXlsx(this.sheet);
+      losses.push(...xlsx.losses);
+      this.enforceStrict(options, losses);
+      return { bytes: xlsx.bytes, losses };
     }
 
     const { fonts, registriesByFamily } = await this.resolveFonts(options, losses);

@@ -6,7 +6,7 @@
 
 import { XMLParser } from 'fast-xml-parser';
 import type { OpcPackage } from '@/core/opc';
-import type { ParsedWorksheet } from '@/excel/worksheet-parser';
+import type { ParsedWorksheet } from '@/core/spreadsheet-model';
 
 import { emuToPt } from '@/core/ir';
 import { DEFAULT_COL_TWIPS, DEFAULT_ROW_TWIPS, TWIPS_PER_EXCEL_CHAR } from '@/excel/print-model';

@@ -10,10 +10,14 @@ doesn't yet.
 ## Implemented
 
 **Output** — `convert('pdf')`, `convert('svg')` (a page-stack preview),
-`convert('html')` (flowed, needs no fonts) and `convert('docx')` (write
-WordprocessingML back out — for normalization, sanitization or in-browser
-editing, and as a docx → docx round-trip). The docx round-trip is semantic, not
-byte-exact; footnotes, charts and OfficeMath are not yet written.
+`convert('html')` (flowed, needs no fonts), `convert('docx')` (write
+WordprocessingML back out) and `convert('xlsx')` (write SpreadsheetML back out —
+spreadsheet input only). The writers are for normalization, sanitization,
+in-browser editing, and round-tripping. The docx round-trip is semantic, not
+byte-exact (footnotes, charts and OfficeMath are not yet written). The xlsx
+round-trip preserves the whole grid surface — cells, styles, merges, the print
+model, conditional formatting, sparklines and tables — and is byte-stable across
+a read↔write loop; embedded charts are the one piece not yet written.
 
 **WordprocessingML (§17)**
 - Text, runs and the full style cascade (`docDefaults` → styles → direct formatting).
@@ -42,6 +46,14 @@ byte-exact; footnotes, charts and OfficeMath are not yet written.
 - Grids, shared strings, number formats and dates (incl. the 1904 date system).
 - The print model — gridline suppression, print area, fit-to-page scaling, repeated
   print titles, manual page breaks, horizontal/vertical centering.
+- **Conditional formatting** — `cellIs` (compare-to-constant highlights),
+  `colorScale` (2/3-stop gradients), `dataBar` (in-cell bars, with a zero axis
+  so negative values run the other way) and `iconSet` (traffic lights, arrows,
+  flags, …). The cross-cell rules resolve against the range's value extent.
+- **Sparklines** — per-cell line / column / win-loss mini charts, including
+  cross-sheet data ranges and blank-cell gaps.
+- **Excel tables** (`xl/tables`) — banded rows and a styled header row, the
+  colours resolved from the named table style against the workbook theme.
 - Charts anchored to the sheet (the worksheet drawing part) render after the grid.
 
 **Graphics & math**

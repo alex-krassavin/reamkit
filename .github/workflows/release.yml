@@ -1,32 +1,61 @@
 name: Release
 
-# Tag-triggered, npm-native trusted publishing. To cut a release:
-#   1. bump "version" in package.json (e.g. 0.1.0-alpha.1)
-#   2. commit, then push a matching tag:  git tag v0.1.0-alpha.1 && git push --tags
-# CI re-runs the full gate set, refuses to publish if the tag and package.json
-# version disagree, publishes with provenance, and opens a GitHub Release.
+# Two ways to cut a release:
 #
-# Prereleases (a version containing a hyphen, e.g. -alpha.1) publish to a
+#  A) Automated (recommended) — GitHub → Actions → "Release" → "Run workflow":
+#     pick a bump (patch / minor / major / prerelease) or an exact version. CI
+#     runs the full gate set, bumps "version" in package.json, commits, creates
+#     the matching tag, publishes to npm with provenance, then pushes the commit
+#     and tag and opens a GitHub Release. Nothing to do locally.
+#
+#  B) Manual — bump "version" in package.json yourself, commit, then push a
+#     matching tag:  git tag v1.5.0 && git push --follow-tags
+#     CI re-runs the gates, refuses to publish if the tag and package.json
+#     version disagree, then publishes and opens the Release.
+#
+# Prereleases (a version with a hyphen, e.g. 1.5.0-alpha.1) publish to a
 # non-default npm dist-tag, so a plain `npm install reamkit` never pulls one.
+# The "prerelease" dispatch option uses the `alpha` pre-id; use "custom" for a
+# different one (e.g. 2.0.0-beta.1 → the `beta` dist-tag).
 #
-# One-time setup on the npm side (not done here):
-#   - claim the `reamkit` name on npmjs.com
-#   - either add an `NPM_TOKEN` repo secret (automation token), or configure
-#     npm Trusted Publishing for this repo (then the token can be dropped).
+# One-time npm setup (not done here): claim `reamkit` on npmjs.com, and either
+# add an `NPM_TOKEN` repo secret or configure npm Trusted Publishing for this
+# repo (then NODE_AUTH_TOKEN can be dropped).
 
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump (or "custom" to type an exact version below)'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - prerelease
+          - custom
+        default: minor
+        required: true
+      custom_version:
+        description: 'Exact version when bump = custom (e.g. 1.5.0, 2.0.0-beta.1)'
+        type: string
+        required: false
 
 permissions:
-  contents: write # create the GitHub Release
+  contents: write # push the bump commit + tag, create the GitHub Release
   id-token: write # provenance attestation (and tokenless trusted publishing)
 
+# Never run two releases at once; never cancel one mid-publish.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
-  publish:
-    name: publish to npm
+  release:
+    name: release to npm
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,7 +66,7 @@ jobs:
           cache: npm
       - run: npm ci
 
-      # Full gates before anything leaves the building.
+      # Full gates before anything is tagged, published, or pushed.
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run format:check
@@ -45,20 +74,59 @@ jobs:
       - run: npm run test:build
       - run: npm test
 
-      - name: Verify tag matches package.json version
+      # A) Dispatch path: bump package.json + lockfile, commit and tag — all
+      # LOCAL. The push happens only after a successful publish, so a failed
+      # publish never leaves a dangling tag behind.
+      - name: Bump version and tag (manual dispatch)
+        id: bump
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          # Bump the version in place (--no-git-tag-version, so it never trips
+          # on a stray build artifact); commit and tag explicitly, staging only
+          # the two files we changed.
+          case "${{ inputs.bump }}" in
+            prerelease)
+              npm version prerelease --preid=alpha --no-git-tag-version ;;
+            custom)
+              if [ -z "${{ inputs.custom_version }}" ]; then
+                echo "::error::bump = custom requires the custom_version input"; exit 1
+              fi
+              npm version "${{ inputs.custom_version }}" --no-git-tag-version ;;
+            *)
+              npm version "${{ inputs.bump }}" --no-git-tag-version ;;
+          esac
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v$VERSION"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          git commit -m "release: $VERSION"
+          git tag -a "$TAG" -m "Ream $VERSION"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      # B) Tag-push path: the version is already set; just verify it matches.
+      - name: Verify tag matches package.json (tag push)
+        id: pushtag
         if: github.event_name == 'push'
         run: |
+          set -euo pipefail
           PKG="v$(node -p "require('./package.json').version")"
           if [ "$PKG" != "${GITHUB_REF_NAME}" ]; then
-            echo "::error::tag ${GITHUB_REF_NAME} does not match package.json (${PKG})"
-            exit 1
+            echo "::error::tag ${GITHUB_REF_NAME} does not match package.json ($PKG)"; exit 1
           fi
+          echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve release tag
+        id: rel
+        run: echo "tag=${{ steps.bump.outputs.tag || steps.pushtag.outputs.tag }}" >> "$GITHUB_OUTPUT"
 
       - name: Publish to npm (provenance)
         run: |
+          set -euo pipefail
           VERSION=$(node -p "require('./package.json').version")
           case "$VERSION" in
-            *-*) TAG=$(printf '%s' "$VERSION" | sed -E 's/.*-([A-Za-z]+).*/\1/') ;;
+            *-*) TAG=$(printf '%s' "$VERSION" | sed -E 's/^[0-9.]+-([A-Za-z]+).*/\1/; t; s/.*/next/') ;;
             *)   TAG=latest ;;
           esac
           echo "Publishing $VERSION to dist-tag '$TAG'"
@@ -66,11 +134,20 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Create GitHub Release
-        if: github.event_name == 'push'
+      # Publish succeeded — now make it public: push the bump commit and tag
+      # (dispatch only; the tag-push path already pushed them).
+      - name: Push the release commit and tag (manual dispatch)
+        if: github.event_name == 'workflow_dispatch'
         run: |
+          set -euo pipefail
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git push origin "${{ steps.bump.outputs.tag }}"
+
+      - name: Create GitHub Release
+        run: |
+          set -euo pipefail
           PRE=""
-          case "${GITHUB_REF_NAME}" in *-*) PRE="--prerelease" ;; esac
-          gh release create "${GITHUB_REF_NAME}" --generate-notes --verify-tag $PRE
+          case "${{ steps.rel.outputs.tag }}" in *-*) PRE="--prerelease" ;; esac
+          gh release create "${{ steps.rel.outputs.tag }}" --generate-notes --verify-tag $PRE
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

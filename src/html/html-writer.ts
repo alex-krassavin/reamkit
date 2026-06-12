@@ -20,6 +20,8 @@
 import type {
   BodyElement,
   Border,
+  CellIcon,
+  CellSparkline,
   Chart,
   ChartBlock,
   ImageBlock,
@@ -42,6 +44,7 @@ import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/
 import type { DocumentWriter, WriteResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss, ResourceId, ResourceStore } from '@/core/ir';
+import { buildSparkline } from '@/core/drawingml/sparkline-geometry';
 
 import { arcPoint, arcToBeziers } from '@/core/arc-to-bezier';
 import { toBase64 } from '@/core/bytes';
@@ -671,6 +674,19 @@ function emitCell(
   pushBorder(css, 'left', c?.left ?? (pos.firstCol ? t?.left : t?.insideV));
   pushBorder(css, 'right', c?.right ?? (pos.lastCol ? t?.right : t?.insideV));
   if (cell.properties.shading) css.push(`background-color:#${cell.properties.shading.colorHex}`);
+  // Conditional-format data bar (E-SHEET SC1c): a gradient stop paints the bar
+  // over the background colour and under the cell text. startFraction offsets it
+  // for axis (mixed-sign) bars (tail TC4).
+  if (cell.properties.dataBar) {
+    const db = cell.properties.dataBar;
+    const clamp = (n: number): number => Math.max(0, Math.min(1, n));
+    const start = (clamp(db.startFraction ?? 0) * 100).toFixed(2);
+    const end = (clamp((db.startFraction ?? 0) + db.fraction) * 100).toFixed(2);
+    const c = db.colorHex;
+    css.push(
+      `background-image:linear-gradient(to right,transparent ${start}%,#${c} ${start}%,#${c} ${end}%,transparent ${end}%)`,
+    );
+  }
   const margins = cell.properties.margins ?? table.properties.defaultCellMargins;
   // Word's default cell padding (108 twips = 5.4pt left/right) keeps text off
   // the rules even when the document does not specify margins.
@@ -681,8 +697,57 @@ function emitCell(
   css.push(`padding:${fmt(padTop)}pt ${fmt(padRight)}pt ${fmt(padBottom)}pt ${fmt(padLeft)}pt`);
 
   out.push(`<${tag}${attrs.length > 0 ? ` ${attrs.join(' ')}` : ''} style="${css.join(';')}">`);
+  // Conditional-format icon (E-SHEET SC1c): an inline glyph before the value.
+  if (cell.properties.icon) out.push(cellIconSvg(cell.properties.icon));
+  // Sparkline (E-SHEET SC2): a mini inline-SVG chart in the cell.
+  if (cell.properties.sparkline) out.push(cellSparklineSvg(cell.properties.sparkline));
   for (const child of cell.content) emitBlock(out, child, ctx);
   out.push(`</${tag}>`);
+}
+
+// A mini inline-SVG sparkline, reusing the same geometry the PDF layout draws.
+// The geometry is y-up; an SVG flip group puts it into SVG's y-down frame.
+function cellSparklineSvg(sp: CellSparkline): string {
+  const W = 56;
+  const H = 16;
+  if (sp.values.length === 0) return '';
+  const prims = buildSparkline(sp.kind, sp.values, W, H, sp.colorHex);
+  const fmt = (n: number): string => (Math.round(n * 100) / 100).toString();
+  const parts: Array<string> = [];
+  for (const prim of prims) {
+    const d = prim.paths.map((p) => svgPathData(p.segments, fmt)).join(' ');
+    parts.push(
+      prim.stroke
+        ? `<path d="${d}" fill="none" stroke="#${prim.stroke.colorHex}" stroke-width="${prim.stroke.widthPt}"/>`
+        : `<path d="${d}" fill="#${prim.fillColorHex ?? '376092'}"/>`,
+    );
+  }
+  return (
+    `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="vertical-align:middle">` +
+    `<g transform="translate(0,${H}) scale(1,-1)">${parts.join('')}</g></svg>`
+  );
+}
+
+// A small inline-SVG glyph for a conditional-format icon, matching the PDF
+// vector shapes (circle / square / triangle) drawn in styled-layout.
+function cellIconSvg(icon: CellIcon): string {
+  const fill = `#${icon.colorHex}`;
+  const body =
+    icon.shape === 'square'
+      ? `<rect x="1" y="1" width="8" height="8"/>`
+      : icon.shape === 'diamond'
+        ? `<polygon points="5,1 9,5 5,9 1,5"/>`
+        : icon.shape === 'triangleUp'
+          ? `<polygon points="5,1 9,9 1,9"/>`
+          : icon.shape === 'triangleDown'
+            ? `<polygon points="1,1 9,1 5,9"/>`
+            : icon.shape === 'triangleRight'
+              ? `<polygon points="9,5 1,1 1,9"/>`
+              : `<circle cx="5" cy="5" r="4"/>`;
+  return (
+    `<svg width="10" height="10" viewBox="0 0 10 10" fill="${fill}" ` +
+    `style="vertical-align:middle;margin-right:3px">${body}</svg>`
+  );
 }
 
 function pushBorder(css: Array<string>, side: string, border: Border | undefined): void {

@@ -14,6 +14,20 @@
 
 import { XMLParser } from 'fast-xml-parser';
 
+import type {
+  Dxf,
+  XlsxBorder,
+  XlsxBorderEdge,
+  XlsxBorderStyleName,
+  XlsxCellAlignment,
+  XlsxCellXf,
+  XlsxFill,
+  XlsxFont,
+  XlsxHorizontalAlign,
+  XlsxStyles,
+  XlsxVerticalAlign,
+} from '@/core/spreadsheet-model';
+
 const decoder = new TextDecoder('utf-8');
 
 const parser = new XMLParser({
@@ -28,86 +42,8 @@ const parser = new XMLParser({
   removeNSPrefix: true,
 });
 
-export interface XlsxFont {
-  readonly sizePt?: number;
-  readonly bold?: boolean;
-  readonly italic?: boolean;
-  readonly underline?: boolean;
-  readonly colorHex?: string;
-  readonly name?: string;
-}
-
-export interface XlsxFill {
-  readonly patternType?: string;
-  readonly fgColorHex?: string;
-  readonly bgColorHex?: string;
-}
-
-export type XlsxBorderStyleName =
-  | 'none'
-  | 'thin'
-  | 'medium'
-  | 'thick'
-  | 'hair'
-  | 'dashed'
-  | 'dotted'
-  | 'double'
-  | 'mediumDashed'
-  | 'dashDot'
-  | 'mediumDashDot'
-  | 'dashDotDot'
-  | 'mediumDashDotDot'
-  | 'slantDashDot';
-
-export interface XlsxBorderEdge {
-  readonly style?: XlsxBorderStyleName;
-  readonly colorHex?: string;
-}
-
-export interface XlsxBorder {
-  readonly top?: XlsxBorderEdge;
-  readonly right?: XlsxBorderEdge;
-  readonly bottom?: XlsxBorderEdge;
-  readonly left?: XlsxBorderEdge;
-}
-
-export type XlsxHorizontalAlign =
-  | 'left'
-  | 'center'
-  | 'right'
-  | 'fill'
-  | 'justify'
-  | 'centerContinuous'
-  | 'distributed';
-
-export type XlsxVerticalAlign = 'top' | 'center' | 'bottom' | 'justify' | 'distributed';
-
-export interface XlsxCellAlignment {
-  readonly horizontal?: XlsxHorizontalAlign;
-  readonly vertical?: XlsxVerticalAlign;
-  readonly wrapText?: boolean;
-}
-
-export interface XlsxCellXf {
-  readonly numFmtId: number;
-  readonly fontId: number;
-  readonly fillId: number;
-  readonly borderId: number;
-  readonly applyNumberFormat?: boolean;
-  readonly applyFont?: boolean;
-  readonly applyFill?: boolean;
-  readonly applyBorder?: boolean;
-  readonly applyAlignment?: boolean;
-  readonly alignment?: XlsxCellAlignment;
-}
-
-export interface XlsxStyles {
-  readonly numFmts: ReadonlyMap<number, string>;
-  readonly fonts: ReadonlyArray<XlsxFont>;
-  readonly fills: ReadonlyArray<XlsxFill>;
-  readonly borders: ReadonlyArray<XlsxBorder>;
-  readonly cellXfs: ReadonlyArray<XlsxCellXf>;
-}
+// The font/fill/border/xf/styles model types now live in
+// @/core/spreadsheet-model; this parser imports them above and produces them.
 
 export const EMPTY_XLSX_STYLES: XlsxStyles = {
   numFmts: new Map(),
@@ -123,13 +59,54 @@ export function parseXlsxStyles(data: Uint8Array): XlsxStyles {
   const root = asObject(tree['styleSheet']);
   if (!root) return EMPTY_XLSX_STYLES;
 
+  const dxfs = parseDxfs(root);
   return {
     numFmts: parseNumFmts(root),
     fonts: parseFonts(root),
     fills: parseFills(root),
     borders: parseBorders(root),
     cellXfs: parseCellXfs(root),
+    ...(dxfs.length > 0 ? { dxfs } : {}),
   };
+}
+
+// §18.8.10 <dxfs> — differential formats a conditional-format rule applies on
+// match. We read the font (bold/italic/color) and fill (solid highlight); a dxf
+// fill's solid colour conventionally rides <bgColor> (Excel quirk).
+function parseDxfs(root: Record<string, unknown>): Array<Dxf> {
+  const node = asObject(root['dxfs']);
+  if (!node) return [];
+  const out: Array<Dxf> = [];
+  for (const item of asArray(node['dxf'])) {
+    const obj = asObject(item);
+    if (!obj) {
+      out.push({});
+      continue;
+    }
+    const dxf: Mutable<Dxf> = {};
+    const fontObj = asObject(obj['font']);
+    if (fontObj) {
+      const font: Mutable<XlsxFont> = {};
+      if (hasChild(fontObj, 'b')) font.bold = childToggle(fontObj, 'b');
+      if (hasChild(fontObj, 'i')) font.italic = childToggle(fontObj, 'i');
+      const colorHex = colorOf(asObject(fontObj['color']));
+      if (colorHex) font.colorHex = colorHex;
+      if (Object.keys(font).length > 0) dxf.font = font;
+    }
+    const pf = asObject(asObject(obj['fill'])?.['patternFill']);
+    if (pf) {
+      const fill: Mutable<XlsxFill> = {};
+      const pt = strAttr(pf, 'patternType');
+      if (pt) fill.patternType = pt;
+      const fg = colorOf(asObject(pf['fgColor']));
+      const bg = colorOf(asObject(pf['bgColor']));
+      if (fg) fill.fgColorHex = fg;
+      if (bg) fill.bgColorHex = bg;
+      if (Object.keys(fill).length > 0) dxf.fill = fill;
+    }
+    out.push(dxf);
+  }
+  return out;
 }
 
 const VALID_BORDER_STYLES: ReadonlySet<XlsxBorderStyleName> = new Set([

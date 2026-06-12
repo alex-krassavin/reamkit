@@ -81,6 +81,10 @@ export interface XlsxSheetSpec {
   readonly printOptions?: XlsxPrintOptionsSpec;
   readonly fitToPage?: boolean;
   readonly rowBreaks?: ReadonlyArray<number>;
+  /** Raw <conditionalFormatting> markup injected into the worksheet. */
+  readonly conditionalFormattingXml?: string;
+  /** Raw <extLst> markup injected at the end of the worksheet (x14 sparklines). */
+  readonly extLstXml?: string;
 }
 
 export interface XlsxBuilderOptions {
@@ -99,6 +103,8 @@ export interface XlsxBuilderOptions {
   readonly printOptions?: XlsxPrintOptionsSpec;
   readonly fitToPage?: boolean;
   readonly rowBreaks?: ReadonlyArray<number>;
+  readonly conditionalFormattingXml?: string;
+  readonly extLstXml?: string;
   readonly date1904?: boolean;
   readonly definedNames?: ReadonlyArray<XlsxDefinedNameSpec>;
   /** Attach a chart to the FIRST sheet via a drawing part (twoCellAnchor). */
@@ -108,6 +114,14 @@ export interface XlsxBuilderOptions {
     /** Anchor cells; defaults to B2..H17 (≈ 6×4 inches on default tracks). */
     readonly anchor?: { from: [number, number]; to: [number, number] };
   };
+  /** Attach Excel table parts to the FIRST sheet (E-SHEET SC3). */
+  readonly tables?: ReadonlyArray<{
+    readonly ref: string;
+    readonly name?: string;
+    readonly styleName?: string;
+    readonly showRowStripes?: boolean;
+    readonly headerRowCount?: number;
+  }>;
 }
 
 function isCellSpec(v: XlsxValue | XlsxCellSpec): v is XlsxCellSpec {
@@ -120,6 +134,28 @@ function escapeXml(s: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function buildTableXml(
+  id: number,
+  t: {
+    ref: string;
+    name?: string;
+    styleName?: string;
+    showRowStripes?: boolean;
+    headerRowCount?: number;
+  },
+): string {
+  const name = t.name ?? `Table${id}`;
+  const style = t.styleName ?? 'TableStyleMedium2';
+  const stripes = t.showRowStripes === false ? '0' : '1';
+  const hrc = t.headerRowCount !== undefined ? ` headerRowCount="${t.headerRowCount}"` : '';
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="${id}" name="${name}" displayName="${name}" ref="${t.ref}"${hrc} totalsRowShown="0">
+  <autoFilter ref="${t.ref}"/>
+  <tableColumns count="1"><tableColumn id="1" name="Col"/></tableColumns>
+  <tableStyleInfo name="${style}" showFirstColumn="0" showLastColumn="0" showRowStripes="${stripes}" showColumnStripes="0"/>
+</table>`;
 }
 
 export function buildXlsx(
@@ -144,6 +180,10 @@ export function buildXlsx(
             ...(options.printOptions ? { printOptions: options.printOptions } : {}),
             ...(options.fitToPage !== undefined ? { fitToPage: options.fitToPage } : {}),
             ...(options.rowBreaks ? { rowBreaks: options.rowBreaks } : {}),
+            ...(options.conditionalFormattingXml
+              ? { conditionalFormattingXml: options.conditionalFormattingXml }
+              : {}),
+            ...(options.extLstXml ? { extLstXml: options.extLstXml } : {}),
           },
         ];
 
@@ -265,9 +305,11 @@ ${sheetRows.join('\n')}
   </sheetData>
   ${printOptionsXml}
   ${mergeXml}
+  ${sheet.conditionalFormattingXml ?? ''}
   ${marginsXml}
   ${setupXml}
   ${rowBreaksXml}
+  ${sheet.extLstXml ?? ''}
 </worksheet>`;
     sheetParts.push({ fileName: `sheet${s + 1}.xml`, xml });
   }
@@ -301,6 +343,14 @@ ${sharedStringsList.map((str) => `  <si><t>${escapeXml(str)}</t></si>`).join('\n
         (options.sheetChart.colorsXml
           ? '<Override PartName="/xl/charts/colors1.xml" ContentType="application/vnd.ms-office.chartcolorstyle+xml"/>'
           : '')
+      : '') +
+    (options.tables
+      ? options.tables
+          .map(
+            (_, i) =>
+              `<Override PartName="/xl/tables/table${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"/>`,
+          )
+          .join('')
       : '') +
     '\n</Types>';
 
@@ -355,6 +405,29 @@ ${sharedStringsList.map((str) => `  <si><t>${escapeXml(str)}</t></si>`).join('\n
 ${chartRels}</Relationships>`,
       );
       entries['xl/charts/colors1.xml'] = encoder.encode(options.sheetChart.colorsXml);
+    }
+  }
+  if (options.tables && options.tables.length > 0 && sheetParts.length > 0) {
+    const first = sheetParts[0]!;
+    const parts = options.tables.map((t, i) => ({ rid: `rIdT${i + 1}`, idx: i + 1, t }));
+    const tablePartsXml = `<tableParts count="${parts.length}">${parts
+      .map((p) => `<tablePart r:id="${p.rid}"/>`)
+      .join('')}</tableParts>`;
+    first.xml = first.xml.replace('</worksheet>', `${tablePartsXml}</worksheet>`);
+    const relLines = parts
+      .map(
+        (p) =>
+          `  <Relationship Id="${p.rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/table" Target="../tables/table${p.idx}.xml"/>`,
+      )
+      .join('\n');
+    entries[`xl/worksheets/_rels/${first.fileName}.rels`] = encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+${relLines}
+</Relationships>`,
+    );
+    for (const p of parts) {
+      entries[`xl/tables/table${p.idx}.xml`] = encoder.encode(buildTableXml(p.idx, p.t));
     }
   }
   for (const s of sheetParts) {

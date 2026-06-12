@@ -3,6 +3,9 @@
 //   <Relationships xmlns="…/package/2006/relationships">
 //     <Relationship Id="…" Type="…" Target="…" TargetMode="External|Internal"/>
 //   </Relationships>
+// Some producers put the relationships namespace on a PREFIX
+// (<ns0:Relationships><ns0:Relationship/>) instead of the default; removeNSPrefix
+// makes the element lookups match regardless (corpus: 58760.xlsx read 0 sheets).
 
 import { XMLParser } from 'fast-xml-parser';
 
@@ -20,6 +23,9 @@ const parser = new XMLParser({
   attributeNamePrefix: '@_',
   parseAttributeValue: false,
   trimValues: false,
+  // Tolerate a namespace prefix on the elements (<ns0:Relationship>); the Id/
+  // Type/Target attributes themselves are always unprefixed.
+  removeNSPrefix: true,
   isArray: (tagName) => tagName === 'Relationship',
 });
 

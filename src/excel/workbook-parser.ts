@@ -4,6 +4,8 @@
 
 import { XMLParser } from 'fast-xml-parser';
 
+import type { DefinedName } from '@/core/spreadsheet-model';
+
 const decoder = new TextDecoder('utf-8');
 
 const parser = new XMLParser({
@@ -26,16 +28,8 @@ export interface SheetReference {
   readonly relationshipId: string;
 }
 
-// ECMA-376 Part 1 §18.2.5 — <definedName>. Carries built-in print settings:
-//   _xlnm.Print_Area   — the range(s) that print (e.g. "Sheet1!$A$1:$D$20")
-//   _xlnm.Print_Titles — repeated header rows/cols (e.g. "Sheet1!$1:$1")
-// localSheetId scopes a name to a single sheet (its 0-based index in `sheets`);
-// absent ⇒ workbook-global.
-export interface DefinedName {
-  readonly name: string;
-  readonly localSheetId?: number;
-  readonly value: string;
-}
+// DefinedName (the workbook's named ranges — print areas/titles ride these)
+// now lives in @/core/spreadsheet-model; imported above.
 
 export interface ParsedWorkbook {
   readonly sheets: ReadonlyArray<SheetReference>;

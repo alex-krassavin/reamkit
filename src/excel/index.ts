@@ -4,11 +4,13 @@ export { parseAreaRef, parseTitleRowRange } from '@/excel/defined-name-ref';
 export type { CellRange } from '@/excel/defined-name-ref';
 export { parseSharedStrings } from '@/excel/shared-strings-parser';
 export { parseWorkbook } from '@/excel/workbook-parser';
-export type { DefinedName, ParsedWorkbook, SheetReference } from '@/excel/workbook-parser';
+export type { ParsedWorkbook, SheetReference } from '@/excel/workbook-parser';
+export type { DefinedName } from '@/core/spreadsheet-model';
 export { parseWorksheet } from '@/excel/worksheet-parser';
 export type {
   CellType,
   ColumnWidth,
+  ExcelTable,
   MergedRange,
   ParsedWorksheet,
   RowHeight,
@@ -16,7 +18,7 @@ export type {
   XlsxPageMargins,
   XlsxPageSetup,
   XlsxPrintOptions,
-} from '@/excel/worksheet-parser';
+} from '@/core/spreadsheet-model';
 export { parseXlsxStyles, EMPTY_XLSX_STYLES } from '@/excel/styles-parser';
 export type {
   XlsxBorder,
@@ -29,5 +31,5 @@ export type {
   XlsxHorizontalAlign,
   XlsxStyles,
   XlsxVerticalAlign,
-} from '@/excel/styles-parser';
+} from '@/core/spreadsheet-model';
 export { applyNumberFormat } from '@/excel/number-format';
