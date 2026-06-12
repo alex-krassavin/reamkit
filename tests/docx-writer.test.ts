@@ -307,6 +307,50 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     expect(pkg.getPart('word/media/image2.png')).toBeUndefined();
   });
 
+  it('round-trips a header and footer through their parts', () => {
+    const body =
+      '<w:p><w:r><w:t>body</w:t></w:r></w:p>' +
+      '<w:sectPr>' +
+      '<w:headerReference w:type="default" r:id="rId10"/>' +
+      '<w:footerReference w:type="default" r:id="rId11"/>' +
+      '<w:pgSz w:w="11906" w:h="16838"/></w:sectPr>';
+    const { doc: flow } = readDocx(
+      buildDocxFromBody(body, {
+        headerXml: '<w:p><w:r><w:t>page header</w:t></w:r></w:p>',
+        footerXml: '<w:p><w:r><w:t>page footer</w:t></w:r></w:p>',
+      }),
+    );
+    const { bytes } = writeDocx(flow);
+    const pkg = OpcPackage.open(bytes);
+    expect(decode(pkg.getPart('word/header1.xml'))).toContain('page header');
+    expect(decode(pkg.getPart('word/footer1.xml'))).toContain('page footer');
+
+    // Re-read resolves the parts through their relationships.
+    const { doc: again } = readDocx(bytes);
+    const sect = again.sections[0]?.properties ?? again.section;
+    const headerRel = sect?.headers.find((h) => h.type === 'default')?.relationshipId;
+    expect(headerRel).toBeDefined();
+    const headerContent = again.headersFooters?.get(headerRel!);
+    const headerText =
+      headerContent?.[0]?.kind === 'paragraph'
+        ? headerContent[0].paragraph.runs.map((r) => r.text).join('')
+        : '';
+    expect(headerText).toBe('page header');
+  });
+
+  it('round-trips multi-column geometry (w:cols) and titlePg', () => {
+    const body =
+      '<w:p><w:r><w:t>x</w:t></w:r></w:p>' +
+      '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>' +
+      '<w:cols w:num="2" w:space="708"/><w:titlePg/></w:sectPr>';
+    const { doc: flow } = readDocx(buildDocxFromBody(body));
+    const { doc: again } = readDocx(writeDocx(flow).bytes);
+    const sect = again.sections[0]?.properties ?? again.section;
+    expect(sect?.columns?.count).toBe(2);
+    expect(sect?.columns?.spacePt).toBeCloseTo(708 / 20, 1);
+    expect(sect?.titlePg).toBe(true);
+  });
+
   // An inline picture with no bytes: still a clean dropped loss to assert on.
   const IMAGE_BODY =
     '<w:p><w:r><w:drawing><wp:inline ' +

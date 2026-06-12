@@ -22,6 +22,7 @@ import type {
   ParagraphProperties,
   Run,
   RunProperties,
+  SectionColumns,
   SectionProperties,
   Table,
   TableCell,
@@ -80,18 +81,38 @@ const IMAGE_EXTENSION: Readonly<Record<string, string>> = {
   jpeg2000: 'jp2',
 };
 
-// Mutable per-document state threaded through the block/paragraph emitters:
-// the document.xml relationships accumulator (numbering, hyperlinks and images
-// share one rId space), a document-wide bookmark id counter, and the media
-// registry (content-addressed → one media part + rId per distinct resource).
+const HEADER_CONTENT_TYPE =
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml';
+const FOOTER_CONTENT_TYPE =
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml';
+const REL_HEADER = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/header';
+const REL_FOOTER = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer';
+
+// Document-global state (shared across every part): the resource store, the
+// shared word/media parts (content-addressed file dedup), a document-wide
+// bookmark and drawing id counter.
 interface WriteState {
   readonly resources: ResourceStore;
-  readonly docRels: Array<Relationship>;
   readonly mediaParts: Array<OpcPart>;
-  readonly mediaByResource: Map<ResourceId, string>;
-  relSeq: number;
+  // ResourceId → its shared media target (relative to word/, e.g.
+  // 'media/image1.png'); a resource yields one file regardless of who uses it.
+  readonly mediaFileByResource: Map<ResourceId, string>;
   bookmarkSeq: number;
   drawingSeq: number;
+}
+
+// Per-PART relationship scope (OPC §9.3 — rIds are scoped to their owning
+// part). document.xml has one; each header/footer part has its own, so a media
+// reference resolves against the right .rels.
+interface PartScope {
+  readonly rels: Array<Relationship>;
+  relSeq: number;
+  // ResourceId → the rId allocated FOR THIS PART (distinct from the shared file).
+  readonly relIdByResource: Map<ResourceId, string>;
+}
+
+function newScope(): PartScope {
+  return { rels: [], relSeq: 0, relIdByResource: new Map() };
 }
 
 export function writeDocx(flow: FlowDoc): WriteResult {
@@ -99,18 +120,30 @@ export function writeDocx(flow: FlowDoc): WriteResult {
   const body: Array<string> = [];
   const state: WriteState = {
     resources: flow.resources,
-    docRels: [],
     mediaParts: [],
-    mediaByResource: new Map(),
-    relSeq: 0,
+    mediaFileByResource: new Map(),
     bookmarkSeq: 0,
     drawingSeq: 0,
   };
+  const docScope = newScope();
+  const extraParts: Array<OpcPart> = [];
+  const extraPartRels: Array<{ sourcePart: string; relationships: Array<Relationship> }> = [];
 
-  for (const el of flow.body) emitBlock(body, el, losses, state);
+  for (const el of flow.body) emitBlock(body, el, losses, state, docScope);
 
+  // §17.10 headers/footers: emit each referenced part (with its own rel scope
+  // for images), wire a document relationship + the sectPr reference.
   const section = flow.sections[0]?.properties ?? flow.section;
-  if (section) body.push(sectPrXml(section));
+  const hfRefs = emitHeadersFooters(
+    flow,
+    section,
+    state,
+    docScope,
+    extraParts,
+    extraPartRels,
+    losses,
+  );
+  if (section) body.push(sectPrXml(section, hfRefs));
 
   const documentXml =
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
@@ -121,8 +154,7 @@ export function writeDocx(flow: FlowDoc): WriteResult {
 
   // §17.9 numbering: re-emit the raw definitions whenever a paragraph carries
   // a list reference (the markers were stripped above — re-read regenerates
-  // them). Lives at the fixed word/numbering.xml path the reader expects, with
-  // a content-type Override and a relationship from the main document.
+  // them). Lives at the fixed word/numbering.xml path the reader expects.
   const usesNumbering = flow.body.some(
     (el) => el.kind === 'paragraph' && el.paragraph.properties.numbering !== undefined,
   );
@@ -135,13 +167,20 @@ export function writeDocx(flow: FlowDoc): WriteResult {
         }
       : undefined;
   if (numberingPart) {
-    state.docRels.push({
-      id: `rId${++state.relSeq}`,
+    docScope.rels.push({
+      id: `rId${++docScope.relSeq}`,
       type: REL_NUMBERING,
       target: 'numbering.xml',
       targetMode: 'Internal',
     });
   }
+
+  const partRelationships = [
+    ...(docScope.rels.length > 0
+      ? [{ sourcePart: 'word/document.xml', relationships: docScope.rels }]
+      : []),
+    ...extraPartRels,
+  ];
 
   const bytes = buildOpcPackage({
     parts: [
@@ -151,6 +190,7 @@ export function writeDocx(flow: FlowDoc): WriteResult {
         contentType: DOC_CONTENT_TYPE,
       },
       ...(numberingPart ? [numberingPart] : []),
+      ...extraParts,
       ...state.mediaParts,
     ],
     rootRelationships: [
@@ -161,14 +201,75 @@ export function writeDocx(flow: FlowDoc): WriteResult {
         targetMode: 'Internal',
       },
     ],
-    ...(state.docRels.length > 0
-      ? {
-          partRelationships: [{ sourcePart: 'word/document.xml', relationships: state.docRels }],
-        }
-      : {}),
+    ...(partRelationships.length > 0 ? { partRelationships } : {}),
   });
 
   return { bytes, losses };
+}
+
+interface HeaderFooterRefs {
+  readonly headers: Array<{ type: string; relId: string }>;
+  readonly footers: Array<{ type: string; relId: string }>;
+}
+
+// Emit the header/footer parts the section references, returning the sectPr
+// references. Each part is parsed back at the fixed path the reader resolves
+// via the document relationship; images inside it use the part's own scope.
+function emitHeadersFooters(
+  flow: FlowDoc,
+  section: SectionProperties | undefined,
+  state: WriteState,
+  docScope: PartScope,
+  extraParts: Array<OpcPart>,
+  extraPartRels: Array<{ sourcePart: string; relationships: Array<Relationship> }>,
+  losses: Array<Loss>,
+): HeaderFooterRefs {
+  const refs: HeaderFooterRefs = { headers: [], footers: [] };
+  if (!section || !flow.headersFooters) return refs;
+
+  const emitOne = (
+    kind: 'header' | 'footer',
+    relationshipId: string,
+    type: string,
+  ): string | undefined => {
+    const content = flow.headersFooters!.get(relationshipId);
+    if (!content) return undefined;
+    const n = extraParts.filter((p) => p.path.includes(`/${kind}`)).length + 1;
+    const path = `word/${kind}${n}.xml`;
+    const root = kind === 'header' ? 'w:hdr' : 'w:ftr';
+    const scope = newScope();
+    const inner: Array<string> = [];
+    for (const el of content) emitBlock(inner, el, losses, state, scope);
+    const xml =
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      `<${root} xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"` +
+      ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+      `${inner.join('')}</${root}>`;
+    extraParts.push({
+      path,
+      data: encoder.encode(xml),
+      contentType: kind === 'header' ? HEADER_CONTENT_TYPE : FOOTER_CONTENT_TYPE,
+    });
+    if (scope.rels.length > 0) extraPartRels.push({ sourcePart: path, relationships: scope.rels });
+    const relId = `rId${++docScope.relSeq}`;
+    docScope.rels.push({
+      id: relId,
+      type: kind === 'header' ? REL_HEADER : REL_FOOTER,
+      target: `${kind}${n}.xml`,
+      targetMode: 'Internal',
+    });
+    return relId;
+  };
+
+  for (const h of section.headers) {
+    const relId = emitOne('header', h.relationshipId, h.type);
+    if (relId) refs.headers.push({ type: h.type, relId });
+  }
+  for (const f of section.footers) {
+    const relId = emitOne('footer', f.relationshipId, f.type);
+    if (relId) refs.footers.push({ type: f.type, relId });
+  }
+  return refs;
 }
 
 export const docxWriter: DocumentWriter<FlowDoc> = {
@@ -183,13 +284,14 @@ function emitBlock(
   el: BodyElement,
   losses: Array<Loss>,
   state: WriteState,
+  scope: PartScope,
 ): void {
   if (el.kind === 'paragraph') {
-    out.push(paragraphXml(el.paragraph, state));
+    out.push(paragraphXml(el.paragraph, state, scope));
     return;
   }
   if (el.kind === 'table') {
-    out.push(tableXml(el.table, losses, state));
+    out.push(tableXml(el.table, losses, state, scope));
     return;
   }
   if (el.kind === 'image') {
@@ -199,6 +301,7 @@ function emitBlock(
       el.image.height,
       el.image.altText,
       state,
+      scope,
     );
     if (drawing) {
       const pPr = pPrXml(el.image.paragraphProperties as ResolvedParagraphProperties);
@@ -226,9 +329,10 @@ function drawingXml(
   heightPt: number,
   altText: string | undefined,
   state: WriteState,
+  scope: PartScope,
 ): string {
   if (resource === undefined) return '';
-  const relId = mediaRelId(resource, state);
+  const relId = mediaRelId(resource, state, scope);
   if (relId === undefined) return '';
   const cx = Math.round(widthPt * EMU_PER_PT);
   const cy = Math.round(heightPt * EMU_PER_PT);
@@ -251,33 +355,41 @@ function drawingXml(
   );
 }
 
-// Content-addressed: a resource used twice shares one media part + rId.
-function mediaRelId(resource: ResourceId, state: WriteState): string | undefined {
-  const existing = state.mediaByResource.get(resource);
-  if (existing !== undefined) return existing;
-  const bytes = state.resources.get(resource);
-  if (!bytes) return undefined;
-  const format = detectImageFormat(bytes);
-  if (!format) return undefined;
-  const n = state.mediaParts.length + 1;
-  const path = `word/media/image${n}.${IMAGE_EXTENSION[format]}`;
-  state.mediaParts.push({ path, data: bytes, contentType: IMAGE_CONTENT_TYPE[format]! });
-  const relId = `rId${++state.relSeq}`;
-  state.docRels.push({
-    id: relId,
-    type: REL_IMAGE,
-    target: `media/image${n}.${IMAGE_EXTENSION[format]}`,
-    targetMode: 'Internal',
-  });
-  state.mediaByResource.set(resource, relId);
+// The media FILE is content-addressed and shared across parts; the rId is
+// allocated within the CURRENT part's scope (OPC §9.3).
+function mediaRelId(resource: ResourceId, state: WriteState, scope: PartScope): string | undefined {
+  // Per-part rId reuse: same resource referenced twice in one part → one rId.
+  const existingRel = scope.relIdByResource.get(resource);
+  if (existingRel !== undefined) return existingRel;
+
+  // Shared media file (content-addressed): create once per distinct resource.
+  let target = state.mediaFileByResource.get(resource);
+  if (target === undefined) {
+    const bytes = state.resources.get(resource);
+    if (!bytes) return undefined;
+    const format = detectImageFormat(bytes);
+    if (!format) return undefined;
+    const n = state.mediaParts.length + 1;
+    target = `media/image${n}.${IMAGE_EXTENSION[format]}`;
+    state.mediaParts.push({
+      path: `word/${target}`,
+      data: bytes,
+      contentType: IMAGE_CONTENT_TYPE[format]!,
+    });
+    state.mediaFileByResource.set(resource, target);
+  }
+
+  const relId = `rId${++scope.relSeq}`;
+  scope.rels.push({ id: relId, type: REL_IMAGE, target, targetMode: 'Internal' });
+  scope.relIdByResource.set(resource, relId);
   return relId;
 }
 
 // §17.4 — w:tbl: properties, the column grid, then rows. Cell content recurses
 // through emitBlock, so nested tables and per-cell paragraphs round-trip.
-function tableXml(table: Table, losses: Array<Loss>, state: WriteState): string {
+function tableXml(table: Table, losses: Array<Loss>, state: WriteState, scope: PartScope): string {
   const grid = table.grid.map((w) => `<w:gridCol w:w="${twips(w)}"/>`).join('');
-  const rows = table.rows.map((row) => rowXml(row, losses, state)).join('');
+  const rows = table.rows.map((row) => rowXml(row, losses, state, scope)).join('');
   return `<w:tbl>${tblPrXml(table.properties)}<w:tblGrid>${grid}</w:tblGrid>${rows}</w:tbl>`;
 }
 
@@ -300,7 +412,7 @@ function tblPrXml(p: TableProperties): string {
   return out.length > 0 ? `<w:tblPr>${out.join('')}</w:tblPr>` : '';
 }
 
-function rowXml(row: TableRow, losses: Array<Loss>, state: WriteState): string {
+function rowXml(row: TableRow, losses: Array<Loss>, state: WriteState, scope: PartScope): string {
   const trPr: Array<string> = [];
   if (row.properties.height !== undefined) {
     const rule = row.properties.heightRule ?? 'atLeast';
@@ -309,13 +421,18 @@ function rowXml(row: TableRow, losses: Array<Loss>, state: WriteState): string {
   if (row.properties.isHeader) trPr.push('<w:tblHeader/>');
   if (row.properties.cantSplit) trPr.push('<w:cantSplit/>');
   const trPrXml = trPr.length > 0 ? `<w:trPr>${trPr.join('')}</w:trPr>` : '';
-  const cells = row.cells.map((cell) => cellXml(cell, losses, state)).join('');
+  const cells = row.cells.map((cell) => cellXml(cell, losses, state, scope)).join('');
   return `<w:tr>${trPrXml}${cells}</w:tr>`;
 }
 
-function cellXml(cell: TableCell, losses: Array<Loss>, state: WriteState): string {
+function cellXml(
+  cell: TableCell,
+  losses: Array<Loss>,
+  state: WriteState,
+  scope: PartScope,
+): string {
   const content: Array<string> = [];
-  for (const child of cell.content) emitBlock(content, child, losses, state);
+  for (const child of cell.content) emitBlock(content, child, losses, state, scope);
   // §17.4.66 — a w:tc must contain at least one block, ending in a paragraph.
   if (content.length === 0) content.push('<w:p/>');
   return `<w:tc>${tcPrXml(cell.properties)}${content.join('')}</w:tc>`;
@@ -378,7 +495,7 @@ function cellMarginsXml(tag: 'w:tblCellMar' | 'w:tcMar', margins: CellMargins | 
   return inner ? `<${tag}>${inner}</${tag}>` : '';
 }
 
-function paragraphXml(p: Paragraph, state: WriteState): string {
+function paragraphXml(p: Paragraph, state: WriteState, scope: PartScope): string {
   // The runs the reader actually kept: list markers re-materialize from
   // numbering.xml, math runs are not written yet, and a run is visible if it
   // has text or an inline image.
@@ -398,7 +515,7 @@ function paragraphXml(p: Paragraph, state: WriteState): string {
     const run = visible[i]!;
     const key = run.href ?? run.anchor;
     if (key === undefined) {
-      inner.push(runXml(run, state));
+      inner.push(runXml(run, state, scope));
       i++;
       continue;
     }
@@ -406,9 +523,9 @@ function paragraphXml(p: Paragraph, state: WriteState): string {
     while (j < visible.length && (visible[j]!.href ?? visible[j]!.anchor) === key) j++;
     const group = visible
       .slice(i, j)
-      .map((r) => runXml(r, state))
+      .map((r) => runXml(r, state, scope))
       .join('');
-    inner.push(hyperlinkXml(run, group, state));
+    inner.push(hyperlinkXml(run, group, state, scope));
     i = j;
   }
 
@@ -426,25 +543,20 @@ function paragraphXml(p: Paragraph, state: WriteState): string {
 
 // w:hyperlink container: @r:id for an external target (allocates a rel),
 // @w:anchor for an internal bookmark reference.
-function hyperlinkXml(run: Run, inner: string, state: WriteState): string {
+function hyperlinkXml(run: Run, inner: string, _state: WriteState, scope: PartScope): string {
   if (run.href !== undefined) {
-    const id = `rId${++state.relSeq}`;
-    state.docRels.push({
-      id,
-      type: REL_HYPERLINK,
-      target: run.href,
-      targetMode: 'External',
-    });
+    const id = `rId${++scope.relSeq}`;
+    scope.rels.push({ id, type: REL_HYPERLINK, target: run.href, targetMode: 'External' });
     return `<w:hyperlink r:id="${id}">${inner}</w:hyperlink>`;
   }
   return `<w:hyperlink w:anchor="${escapeAttr(run.anchor!)}">${inner}</w:hyperlink>`;
 }
 
-function runXml(run: Run, state: WriteState): string {
+function runXml(run: Run, state: WriteState, scope: PartScope): string {
   const rPr = rPrXml(run.properties as ResolvedRunProperties);
   if (run.inlineImage !== undefined) {
     const img = run.inlineImage;
-    const drawing = drawingXml(img.resource, img.width, img.height, undefined, state);
+    const drawing = drawingXml(img.resource, img.width, img.height, undefined, state, scope);
     if (drawing) return `<w:r>${rPr}${drawing}</w:r>`;
     // Unresolved inline image with no text: nothing to emit.
     if (run.text === '') return '';
@@ -620,9 +732,16 @@ function rawRFontsXml(fonts: FontFamilyMap): string {
   return attrs.length > 0 ? `<w:rFonts ${attrs.join(' ')}/>` : '';
 }
 
-// §17.6.17 — page size and margins in twentieths of a point.
-function sectPrXml(s: SectionProperties): string {
+// §17.6.17 — the section. Header/footer references first (Word's child order),
+// then page size/margins, columns and the titlePg toggle.
+function sectPrXml(s: SectionProperties, hf: HeaderFooterRefs): string {
   const parts: Array<string> = [];
+  for (const h of hf.headers) {
+    parts.push(`<w:headerReference w:type="${h.type}" r:id="${h.relId}"/>`);
+  }
+  for (const f of hf.footers) {
+    parts.push(`<w:footerReference w:type="${f.type}" r:id="${f.relId}"/>`);
+  }
   if (s.pageSize) {
     const orient = s.pageSize.orientation === 'landscape' ? ' w:orient="landscape"' : '';
     parts.push(
@@ -638,8 +757,22 @@ function sectPrXml(s: SectionProperties): string {
         ` w:bottom="${twips(m.bottom)}" w:left="${twips(m.left)}"${header}${footer}/>`,
     );
   }
+  if (s.columns) parts.push(colsXml(s.columns));
+  if (s.titlePg) parts.push('<w:titlePg/>');
   if (parts.length === 0) return '';
   return `<w:sectPr>${parts.join('')}</w:sectPr>`;
+}
+
+// §17.6.4 w:cols: explicit per-column widths when present, else N equal columns
+// with the shared gutter.
+function colsXml(cols: SectionColumns): string {
+  if (cols.explicit && cols.explicit.length > 0) {
+    const inner = cols.explicit
+      .map((c) => `<w:col w:w="${twips(c.widthPt)}" w:space="${twips(c.spacePt)}"/>`)
+      .join('');
+    return `<w:cols w:num="${cols.explicit.length}" w:equalWidth="0">${inner}</w:cols>`;
+  }
+  return `<w:cols w:num="${cols.count}" w:space="${twips(cols.spacePt)}"/>`;
 }
 
 const twips = (pt: number): number => Math.round(pt * 20);
