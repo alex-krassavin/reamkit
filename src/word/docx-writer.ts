@@ -9,6 +9,18 @@
 // readDocx(writeDocx(flow)) yields an equivalent FlowDoc, never the original
 // bytes. Anything the writer does not serialize yet is reported as a loss,
 // exactly like the other writers.
+//
+// Coverage (the docx-writer epic, D1–D6): paragraphs and runs with full
+// formatting, numbered lists, hyperlinks and bookmarks, tables (spans,
+// borders, shading, nesting), images (PNG/JPEG/JPEG2000), headers/footers and
+// single-section geometry (page size/margins, columns, titlePg). The D6
+// round-trip gate proves zero writer failures across 940 corpus documents
+// (96% full IR identity). Documented v1 gaps the gate surfaced:
+//   • multi-section documents — only the first section's sectPr + headers/
+//     footers are written (per-section sectPr in paragraph pPr is follow-on);
+//   • unsupported image formats (GIF / EMF / WMF) are dropped — the reader and
+//     this writer handle the raster formats the PDF path embeds;
+//   • footnotes, charts, shapes and math are reported as losses, not written.
 
 import type {
   BodyElement,

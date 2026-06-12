@@ -307,6 +307,47 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     expect(pkg.getPart('word/media/image2.png')).toBeUndefined();
   });
 
+  it('round-trips a composite document (heading, list, link, bookmark, table, image)', () => {
+    const png = buildTinyPng(2, 2, [0, 0, 255, 255]);
+    const numberingXml =
+      '<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/>' +
+      '<w:lvlText w:val="%1."/></w:lvl></w:abstractNum>' +
+      '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>';
+    const body =
+      '<w:p><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:r><w:rPr><w:b/></w:rPr>' +
+      '<w:t>Title</w:t></w:r></w:p>' +
+      '<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>' +
+      '<w:r><w:t>item one</w:t></w:r></w:p>' +
+      '<w:p><w:bookmarkStart w:id="1" w:name="mark"/><w:r><w:t>See </w:t></w:r>' +
+      '<w:hyperlink r:id="rId30"><w:r><w:t>link</w:t></w:r></w:hyperlink>' +
+      '<w:bookmarkEnd w:id="1"/></w:p>' +
+      '<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>' +
+      '<w:tr><w:tc><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>';
+    const { doc: flow } = readDocx(
+      buildDocxFromBody(body, {
+        numberingXml,
+        hyperlinks: { rId30: 'https://reamkit.dev' },
+      }),
+    );
+    const { doc: again } = readDocx(writeDocx(flow).bytes);
+
+    // Heading bold + outline survive.
+    const heading = again.body[0];
+    expect(heading?.kind === 'paragraph' && heading.paragraph.runs[0]!.text).toBe('Title');
+    // List reference survives.
+    const item = again.body[1];
+    expect(item?.kind === 'paragraph' && item.paragraph.properties.numbering?.numId).toBe('1');
+    // Bookmark + hyperlink survive on the third paragraph.
+    const linkPara = again.body[2];
+    if (linkPara?.kind !== 'paragraph') throw new Error('expected paragraph');
+    expect(linkPara.paragraph.bookmarks).toContain('mark');
+    expect(linkPara.paragraph.runs.find((r) => r.text === 'link')?.href).toBe(
+      'https://reamkit.dev',
+    );
+    // Table survives.
+    expect(again.body.some((el) => el.kind === 'table')).toBe(true);
+  });
+
   it('round-trips a header and footer through their parts', () => {
     const body =
       '<w:p><w:r><w:t>body</w:t></w:r></w:p>' +
