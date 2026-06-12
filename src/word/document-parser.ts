@@ -29,7 +29,15 @@ import { parseOMath } from '@/word/omml-parser';
 import { defaultColorResolver } from '@/core/drawingml/colors';
 import { expandMcChildren, parseDrawing, parseVmlPicture } from '@/word/drawing-parser';
 import { parseParagraphProperties } from '@/word/paragraph-properties';
-import { poAttr, poChildren, poFindByPath, poIntAttr, poIs, poText } from '@/core/po-helpers';
+import {
+  poAttr,
+  poChildren,
+  poFindByPath,
+  poFindDescendant,
+  poIntAttr,
+  poIs,
+  poText,
+} from '@/core/po-helpers';
 import { poElementToFlat } from '@/word/po-to-flat';
 import { parseRunProperties } from '@/word/run-properties';
 import { parseTable } from '@/word/table-parser';
@@ -324,7 +332,11 @@ function scanForLoneDrawing(container: PoNode, acc: LoneDrawingScan): void {
         if (poIs(rc, 'w:drawing')) {
           if (!acc.drawing) acc.drawing = rc;
         } else if (poIs(rc, 'w:pict') || poIs(rc, 'w:object')) {
-          if (!acc.vml) acc.vml = rc;
+          // Only a VML node that actually bears a picture (<v:imagedata>) is a
+          // candidate — an empty frame or a bare ActiveX/OLE control object is
+          // ignored, so a paragraph that pairs a picture run with a control run
+          // still collapses on the picture.
+          if (!acc.vml && poFindDescendant(rc, 'v:imagedata') !== undefined) acc.vml = rc;
         } else if (poIs(rc, 'w:t') && poText(rc).length > 0) {
           acc.hasOther = true;
         } else if (poIs(rc, 'w:tab') || poIs(rc, 'w:br') || poIs(rc, 'w:noBreakHyphen')) {

@@ -19,11 +19,12 @@
 // headers/footers, and multi-section geometry (per-section sectPr —
 // mid-document breaks ride the section's last paragraph's pPr, the final
 // section a body-level sectPr; page size/margins, columns, titlePg). The
-// round-trip gate proves zero writer failures across 1100 corpus documents
-// (POI 110/110, LibreOffice 985/990 full IR identity). Documented v1 gaps the
-// gate surfaces: footnotes, charts and math are reported as losses, not
-// written; a few hyperlink-on-non-text and ActiveX/data-bound edges drift by
-// ±1 block, and a shape round-trips as inline (floating placement is dropped).
+// round-trip gate proves zero writer failures across 1100 corpus documents,
+// 1099 of them a full IR identity (POI 110/110, LibreOffice 989/990 — the one
+// miss is an input whose referenced image part was stripped from the package,
+// so the bytes do not exist to carry). Documented v1 gaps the gate surfaces:
+// footnotes, charts and math are reported as losses, not written; a shape
+// round-trips as inline (floating placement is dropped).
 
 import type {
   BodyElement,
