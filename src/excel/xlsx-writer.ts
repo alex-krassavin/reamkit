@@ -15,7 +15,11 @@ import type { Sheet, SheetDoc } from '@/core/ir/sheet';
 import type { Loss } from '@/core/ir';
 import type { OpcPart, Relationship } from '@/core/opc';
 import type {
+  CfRule,
+  Cfvo,
+  ConditionalFormat,
   DefinedName,
+  ParsedSparkline,
   ParsedWorksheet,
   WorksheetCell,
   XlsxBorder,
@@ -114,28 +118,15 @@ function rel(id: string, type: string, target: string): Relationship {
   return { id, type, target, targetMode: 'Internal' };
 }
 
-// Features in the SheetDoc that this v1 writer does not re-emit yet (SD3).
+// Features in the SheetDoc not yet re-emitted. Conditional formatting and
+// sparklines now write back (SD3b); table parts follow.
 function recordSheetLosses(s: Sheet, losses: Array<Loss>): void {
   const g = s.grid;
-  if (g.conditionalFormats && g.conditionalFormats.length > 0) {
-    losses.push({
-      severity: 'dropped',
-      feature: FEATURES.tables,
-      detail: `sheet "${s.name}": conditional formatting not written back (SD3)`,
-    });
-  }
-  if (g.sparklines && g.sparklines.length > 0) {
-    losses.push({
-      severity: 'dropped',
-      feature: FEATURES.charts,
-      detail: `sheet "${s.name}": sparklines not written back (SD3)`,
-    });
-  }
   if (g.tables && g.tables.length > 0) {
     losses.push({
       severity: 'dropped',
       feature: FEATURES.tables,
-      detail: `sheet "${s.name}": table parts not written back (SD3)`,
+      detail: `sheet "${s.name}": table parts not written back (SD3b tail)`,
     });
   }
 }
@@ -240,13 +231,107 @@ function worksheetXml(grid: ParsedWorksheet): string {
     colsXml +
     `<sheetData>${rowsXml}</sheetData>` +
     mergesXml +
+    conditionalFormattingXml(grid.conditionalFormats) +
     printOptionsXml(grid.printOptions) +
     pageMarginsXml(grid.pageMargins) +
     pageSetupXml(grid.pageSetup) +
     breaksXml('rowBreaks', grid.rowBreaks) +
     breaksXml('colBreaks', grid.colBreaks) +
+    sparklineExtXml(grid.sparklines) +
     '</worksheet>'
   );
+}
+
+// §18.3.1.18 <conditionalFormatting> — one per range group; rules write back per
+// type (E-SHEET SD3b). The dxfs the cellIs rules reference are emitted in
+// styles.xml; the reader re-derives the colorScale/dataBar/iconSet visuals.
+function conditionalFormattingXml(cfs: ReadonlyArray<ConditionalFormat> | undefined): string {
+  if (!cfs || cfs.length === 0) return '';
+  return cfs
+    .map((cf) => {
+      const sqref = cf.ranges.map(rangeRef).join(' ');
+      return `<conditionalFormatting sqref="${sqref}">${cf.rules.map(cfRuleXml).join('')}</conditionalFormatting>`;
+    })
+    .join('');
+}
+
+function cfRuleXml(rule: CfRule): string {
+  const p = ` priority="${rule.priority}"`;
+  switch (rule.type) {
+    case 'cellIs':
+      return (
+        `<cfRule type="cellIs"${p} operator="${rule.operator}" dxfId="${rule.dxfId}">` +
+        rule.formulas.map((f) => `<formula>${escapeText(f)}</formula>`).join('') +
+        '</cfRule>'
+      );
+    case 'colorScale':
+      return (
+        `<cfRule type="colorScale"${p}><colorScale>` +
+        rule.cfvos.map(cfvoXml).join('') +
+        rule.colorsHex.map((c) => `<color rgb="FF${c}"/>`).join('') +
+        '</colorScale></cfRule>'
+      );
+    case 'dataBar':
+      return (
+        `<cfRule type="dataBar"${p}><dataBar` +
+        (rule.minLength !== undefined ? ` minLength="${rule.minLength}"` : '') +
+        (rule.maxLength !== undefined ? ` maxLength="${rule.maxLength}"` : '') +
+        '>' +
+        rule.cfvos.map(cfvoXml).join('') +
+        `<color rgb="FF${rule.colorHex}"/></dataBar></cfRule>`
+      );
+    case 'iconSet':
+      return (
+        `<cfRule type="iconSet"${p}><iconSet iconSet="${rule.iconSet}"` +
+        (rule.reverse ? ' reverse="1"' : '') +
+        '>' +
+        rule.cfvos.map(cfvoXml).join('') +
+        '</iconSet></cfRule>'
+      );
+  }
+}
+
+function cfvoXml(cfvo: Cfvo): string {
+  return `<cfvo type="${cfvo.type}"${cfvo.val !== undefined ? ` val="${escapeAttr(cfvo.val)}"` : ''}/>`;
+}
+
+// x14 sparklines back into the worksheet extLst (E-SHEET SD3b). Our model is flat
+// (one kind/colour per sparkline), so each round-trips as its own group — the
+// reader recovers the same flat list and the writer stays a byte-stable fixpoint.
+const X14_NS = 'http://schemas.microsoft.com/office/spreadsheetml/2009/9/main';
+const XM_NS = 'http://schemas.microsoft.com/office/excel/2006/main';
+
+function sparklineExtXml(sparklines: ReadonlyArray<ParsedSparkline> | undefined): string {
+  if (!sparklines || sparklines.length === 0) return '';
+  const groups = sparklines
+    .map((sp) => {
+      const type =
+        sp.kind === 'column' ? ' type="column"' : sp.kind === 'winLoss' ? ' type="stacked"' : '';
+      const color = sp.colorHex ? `<x14:colorSeries rgb="FF${sp.colorHex}"/>` : '';
+      return (
+        `<x14:sparklineGroup${type}>${color}<x14:sparklines>` +
+        `<x14:sparkline><xm:f>${escapeText(sp.dataRange)}</xm:f>` +
+        `<xm:sqref>${escapeText(sp.sqref)}</xm:sqref></x14:sparkline>` +
+        '</x14:sparklines></x14:sparklineGroup>'
+      );
+    })
+    .join('');
+  return (
+    `<extLst><ext uri="{05C60535-1F16-4fd2-B633-F4F36F0B64E0}" xmlns:x14="${X14_NS}">` +
+    `<x14:sparklineGroups xmlns:xm="${XM_NS}">${groups}</x14:sparklineGroups></ext></extLst>`
+  );
+}
+
+// A range box → A1 reference (a single cell drops the redundant ":A1").
+function rangeRef(r: {
+  startRow: number;
+  startColumn: number;
+  endRow: number;
+  endColumn: number;
+}): string {
+  const a = cellRef(r.startRow, r.startColumn);
+  if (r.startRow === r.endRow && r.startColumn === r.endColumn) return a;
+  return `${a}:${cellRef(r.endRow, r.endColumn)}`;
 }
 
 function printOptionsXml(po: XlsxPrintOptions | undefined): string {

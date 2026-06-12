@@ -27,6 +27,13 @@ const STYLES = `
   <borders count="2"><border/><border><left style="thin"><color rgb="FF000000"/></left><bottom style="medium"/></border></borders>
   <cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/><xf numFmtId="164" fontId="1" fillId="2" borderId="1" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1"><alignment horizontal="center" wrapText="1"/></xf></cellXfs>`;
 
+const DXF_STYLES = `
+  <fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>
+  <fills count="1"><fill><patternFill patternType="none"/></fill></fills>
+  <borders count="1"><border/></borders>
+  <cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellXfs>
+  <dxfs count="1"><dxf><fill><patternFill patternType="solid"><bgColor rgb="FFFF0000"/></patternFill></fill></dxf></dxfs>`;
+
 // The grid fields the writer round-trips (CF / sparklines / tables are SD3b and
 // deliberately excluded from the identity check).
 function normGrid(g: ParsedWorksheet): unknown {
@@ -43,6 +50,8 @@ function normGrid(g: ParsedWorksheet): unknown {
     printOptions: g.printOptions,
     rowBreaks: g.rowBreaks,
     colBreaks: g.colBreaks,
+    conditionalFormats: g.conditionalFormats,
+    sparklines: g.sparklines,
   };
 }
 
@@ -184,6 +193,47 @@ const fixtures: Array<{ name: string; xlsx: Uint8Array }> = [
     xlsx: buildXlsx({ rows: [[1]], printOptions: { gridLines: true, horizontalCentered: true } }),
   },
   { name: 'row breaks (SD3a)', xlsx: buildXlsx({ rows: [[1], [2], [3]], rowBreaks: [1] }) },
+  {
+    name: 'conditional formatting cellIs (SD3b)',
+    xlsx: buildXlsx({
+      rows: [[2], [6]],
+      stylesXml: DXF_STYLES,
+      conditionalFormattingXml:
+        '<conditionalFormatting sqref="A1:A2"><cfRule type="cellIs" dxfId="0" priority="1" operator="greaterThan"><formula>5</formula></cfRule></conditionalFormatting>',
+    }),
+  },
+  {
+    name: 'conditional formatting colorScale (SD3b)',
+    xlsx: buildXlsx({
+      rows: [[1], [5], [10]],
+      conditionalFormattingXml:
+        '<conditionalFormatting sqref="A1:A3"><cfRule type="colorScale" priority="1"><colorScale><cfvo type="min"/><cfvo type="max"/><color rgb="FFFF0000"/><color rgb="FF00FF00"/></colorScale></cfRule></conditionalFormatting>',
+    }),
+  },
+  {
+    name: 'conditional formatting dataBar (SD3b)',
+    xlsx: buildXlsx({
+      rows: [[1], [10]],
+      conditionalFormattingXml:
+        '<conditionalFormatting sqref="A1:A2"><cfRule type="dataBar" priority="1"><dataBar minLength="0" maxLength="100"><cfvo type="min"/><cfvo type="max"/><color rgb="FF638EC6"/></dataBar></cfRule></conditionalFormatting>',
+    }),
+  },
+  {
+    name: 'conditional formatting iconSet (SD3b)',
+    xlsx: buildXlsx({
+      rows: [[10], [50], [90]],
+      conditionalFormattingXml:
+        '<conditionalFormatting sqref="A1:A3"><cfRule type="iconSet" priority="1"><iconSet iconSet="3TrafficLights1"><cfvo type="percent" val="0"/><cfvo type="percent" val="33"/><cfvo type="percent" val="67"/></iconSet></cfRule></conditionalFormatting>',
+    }),
+  },
+  {
+    name: 'sparkline (SD3b)',
+    xlsx: buildXlsx({
+      rows: [[1, 5, 3, 8]],
+      extLstXml:
+        '<extLst><ext uri="{05C60535-1F16-4fd2-B633-F4F36F0B64E0}"><x14:sparklineGroups><x14:sparklineGroup type="column"><x14:colorSeries rgb="FF376092"/><x14:sparklines><x14:sparkline><xm:f>Sheet1!A1:D1</xm:f><xm:sqref>E1</xm:sqref></x14:sparkline></x14:sparklines></x14:sparklineGroup></x14:sparklineGroups></ext></extLst>',
+    }),
+  },
 ];
 
 describe('xlsx roundtrip gate (E-SHEET SD2)', () => {
