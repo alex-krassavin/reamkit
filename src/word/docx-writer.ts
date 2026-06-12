@@ -18,7 +18,7 @@
 // (per-section sectPr — mid-document breaks ride the section's last
 // paragraph's pPr, the final section a body-level sectPr; page size/margins,
 // columns, titlePg). The round-trip gate proves zero writer failures across
-// 1100 corpus documents (POI 110/110, LibreOffice 977/990 full IR identity).
+// 1100 corpus documents (POI 110/110, LibreOffice 976/990 full IR identity).
 // Documented v1 gaps the gate surfaces are all non-image now: footnotes,
 // charts, shapes and math are reported as losses, not written; a handful of
 // SDT/data-bound and hyperlink-on-non-text edges drift by ±1 block.

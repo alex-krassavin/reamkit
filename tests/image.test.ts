@@ -147,6 +147,44 @@ describe('Drawing parser', () => {
     expect(parsed[0]!.image.width).toBe(emuToPt(914400));
     expect(parsed[0]!.image.height).toBe(emuToPt(685800));
   });
+
+  it('produces an image from a legacy VML picture (w:pict / v:imagedata)', () => {
+    // §14 VML: <v:imagedata r:id> binds the media; the @style box gives the
+    // size in CSS units (pt here). The reader recovers it the same as a blip.
+    const body =
+      '<w:p><w:r><w:pict xmlns:v="urn:schemas-microsoft-com:vml">' +
+      '<v:shape style="width:72pt;height:54pt" alt="a legacy picture">' +
+      '<v:imagedata r:id="rId20"/></v:shape></w:pict></w:r></w:p>';
+    const pkg = OpcPackage.open(buildDocxFromBody(body));
+    const store = new ResourceStore();
+    const expectedId = store.put(new Uint8Array([4, 5, 6]));
+    const parsed = parseDocument(pkg.getMainDocument().data, {
+      resolveColor: defaultColorResolver,
+      resolveImage: (relId) => (relId === 'rId20' ? expectedId : undefined),
+    });
+    expect(parsed).toHaveLength(1);
+    if (parsed[0]!.kind !== 'image') throw new Error('expected an image block');
+    expect(parsed[0]!.image.resource).toBe(expectedId);
+    expect(parsed[0]!.image.width).toBe(72); // 72pt verbatim
+    expect(parsed[0]!.image.height).toBe(54);
+    expect(parsed[0]!.image.altText).toBe('a legacy picture');
+  });
+
+  it('skips a dangling VML picture whose media part is absent', () => {
+    // A <v:imagedata r:id> pointing at media stripped from the package (some
+    // corpus files do this) resolves to nothing — the reader must NOT emit a
+    // phantom image; the paragraph stays plain so the round-trip is symmetric.
+    const body =
+      '<w:p><w:r><w:pict xmlns:v="urn:schemas-microsoft-com:vml">' +
+      '<v:shape style="width:72pt;height:54pt"><v:imagedata r:id="rIdMissing"/>' +
+      '</v:shape></w:pict></w:r></w:p>';
+    const pkg = OpcPackage.open(buildDocxFromBody(body));
+    const parsed = parseDocument(pkg.getMainDocument().data, {
+      resolveColor: defaultColorResolver,
+      resolveImage: () => undefined, // nothing resolves
+    });
+    expect(parsed.some((el) => el.kind === 'image')).toBe(false);
+  });
 });
 
 describe('Image rendering end-to-end', () => {

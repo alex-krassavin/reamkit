@@ -27,7 +27,7 @@ import type { PoNode } from '@/core/po-helpers';
 import { twipsToPt } from '@/core/ir';
 import { parseOMath } from '@/word/omml-parser';
 import { defaultColorResolver } from '@/core/drawingml/colors';
-import { expandMcChildren, parseDrawing } from '@/word/drawing-parser';
+import { expandMcChildren, parseDrawing, parseVmlPicture } from '@/word/drawing-parser';
 import { parseParagraphProperties } from '@/word/paragraph-properties';
 import { poAttr, poChildren, poFindByPath, poIntAttr, poIs, poText } from '@/core/po-helpers';
 import { poElementToFlat } from '@/word/po-to-flat';
@@ -293,12 +293,15 @@ export function parseBodyElements(
 // as paragraphs by parseBodyElements.
 function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): BodyElement | null {
   let drawing: PoNode | undefined;
+  let vml: PoNode | undefined;
   let hasText = false;
   for (const child of poChildren(p)) {
     if (!poIs(child, 'w:r')) continue;
     for (const runChild of expandMcChildren(poChildren(child))) {
       if (poIs(runChild, 'w:drawing')) {
         if (!drawing) drawing = runChild;
+      } else if (poIs(runChild, 'w:pict') || poIs(runChild, 'w:object')) {
+        if (!vml) vml = runChild;
       } else if (poIs(runChild, 'w:t') && poText(runChild).length > 0) {
         hasText = true;
       } else if (
@@ -310,14 +313,28 @@ function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): BodyEleme
       }
     }
   }
-  if (!drawing || hasText) return null;
+  if (hasText || (!drawing && !vml)) return null;
 
   // Inject parseBodyElements (bound to this context) so a shape's text box is
-  // parsed without a module cycle.
+  // parsed without a module cycle. A modern <w:drawing> takes precedence over a
+  // legacy <w:pict>/<w:object> VML picture (§14). Collapsing a lone picture to
+  // a standalone block here is what keeps the round-trip symmetric: the writer
+  // re-emits a block image as its own lone-drawing paragraph, which a re-read
+  // collapses again — so the FIRST read must collapse too, or paragraph counts
+  // drift by one on every standalone VML image.
+  const fromVml = drawing === undefined;
   const parseBody = (children: ReadonlyArray<PoNode>): Array<BodyElement> =>
     parseBodyElements(children, ctx);
-  const content = parseDrawing(drawing, ctx.resolveColor, parseBody);
+  const content = fromVml
+    ? parseVmlPicture(vml!)
+    : parseDrawing(drawing!, ctx.resolveColor, parseBody);
   if (!content) return null;
+  // A dangling VML <v:imagedata r:id> (referenced media absent from the
+  // package) carries nothing to render; skip it so the paragraph stays empty
+  // on both read passes rather than materialising an un-writable phantom.
+  if (fromVml && content.kind === 'image' && ctx.resolveImage?.(content.imageId) === undefined) {
+    return null;
+  }
 
   const pPrNode = poChildren(p).find((c) => poIs(c, 'w:pPr'));
   const paragraphProperties = pPrNode ? parseParagraphProperties(poElementToFlat(pPrNode)) : {};
@@ -623,6 +640,21 @@ function parseRun(
           width: content.width,
           height: content.height,
         };
+      }
+    } else if (poIs(child, 'w:pict') || poIs(child, 'w:object')) {
+      // §14 legacy VML picture (and OLE-object image previews). Modern
+      // <w:drawing> wins under MC resolution, so this fires only for pure-VML
+      // content — common in headers and older files. Unlike a DrawingML blip,
+      // a VML image is materialised only when its part actually resolves to
+      // bytes: a dangling <v:imagedata r:id> (the referenced media stripped
+      // from the package, as some corpus files have) carries nothing to render,
+      // so we skip the phantom rather than emit an empty picture.
+      const content = parseVmlPicture(child);
+      if (content && content.kind === 'image') {
+        const resource = ctx.resolveImage?.(content.imageId);
+        if (resource) {
+          inlineImage = { resource, width: content.width, height: content.height };
+        }
       }
     }
   }
