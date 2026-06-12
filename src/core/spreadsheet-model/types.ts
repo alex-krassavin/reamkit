@@ -121,9 +121,11 @@ export interface ExcelTable {
   readonly showFirstColumn: boolean;
   readonly showLastColumn: boolean;
   readonly autoFilter: boolean;
-  // Resolved fills (6-hex) — the reader derives these from the style + theme.
+  // Resolved fills + header text colour (6-hex) — the reader derives these from
+  // the named style + workbook theme (E-SHEET SC3).
   readonly headerHex?: string;
   readonly bandHex?: string;
+  readonly headerTextHex?: string;
 }
 
 // ECMA-376 Part 4 (x14 extension) — a sparkline: a mini chart drawn inside a

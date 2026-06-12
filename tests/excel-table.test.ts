@@ -100,6 +100,43 @@ const FONTS = {
   boldItalic: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-BoldItalic.ttf')),
 };
 
+describe('Excel tables — per-style accents + header text (Tail TC1)', () => {
+  const tableOf = (styleName: string) =>
+    readXlsxToSheetDoc(buildXlsx({ rows: fourByTwo, tables: [{ ref: 'A1:B4', styleName }] }))
+      .sheets[0]!.grid.tables![0]!;
+
+  it('a Medium style gives a solid accent header with white text', () => {
+    const t = tableOf('TableStyleMedium2');
+    expect(t.headerTextHex).toBe('FFFFFF');
+    expect(t.headerHex).toMatch(/^[0-9A-F]{6}$/);
+  });
+
+  it('a Light style keeps black header text (no override)', () => {
+    const t = tableOf('TableStyleLight9');
+    expect(t.headerTextHex).toBeUndefined();
+    expect(t.headerHex).toMatch(/^[0-9A-F]{6}$/);
+  });
+
+  it('different style numbers resolve to different theme accents', () => {
+    // Medium2 → accent1, Medium5 → accent4 ((N-1)%7).
+    expect(tableOf('TableStyleMedium2').headerHex).not.toBe(tableOf('TableStyleMedium5').headerHex);
+  });
+
+  it('applies the white header font colour to the projected header cells', () => {
+    const flow = Ream.parse(
+      buildXlsx({ rows: fourByTwo, tables: [{ ref: 'A1:B4', styleName: 'TableStyleMedium2' }] }),
+    ).flow;
+    const table = flow.body.find((el) => el.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('expected a table');
+    const headerBlock = table.table.rows[0]!.cells[0]!.content[0];
+    if (headerBlock?.kind !== 'paragraph') throw new Error('expected a paragraph');
+    expect(headerBlock.paragraph.runs[0]?.properties.colorHex).toBe('FFFFFF');
+    const dataBlock = table.table.rows[1]!.cells[0]!.content[0];
+    if (dataBlock?.kind !== 'paragraph') throw new Error('expected a paragraph');
+    expect(dataBlock.paragraph.runs[0]?.properties.colorHex).not.toBe('FFFFFF');
+  });
+});
+
 describe('Excel tables — render smoke (E-SHEET SC3)', () => {
   it('renders a banded table to a valid PDF', () => {
     const xlsx = buildXlsx({

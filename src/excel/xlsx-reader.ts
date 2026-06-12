@@ -61,7 +61,6 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
   const chartData = new Map<string, Chart>();
   const palette = buildThemePalette(pkg, workbookRels);
   const resolveColor = makeColorResolver(palette);
-  const accent1 = palette.get('accent1') ?? '4472C4';
 
   const sheetsOut: Array<Sheet> = [];
   for (let sheetIdx = 0; sheetIdx < sheets.length; sheetIdx++) {
@@ -109,7 +108,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
         const rel = wsRels.find((r) => r.id === rid);
         const part = rel ? pkg.resolveRelatedPart(resolved.path, rel) : undefined;
         const parsed = part ? parseTablePart(part.data) : undefined;
-        if (parsed) resolvedTables.push(resolveTableStyle(parsed, accent1));
+        if (parsed) resolvedTables.push(resolveTableStyle(parsed, palette));
       }
       if (resolvedTables.length > 0) tables = resolvedTables;
     }
@@ -153,14 +152,24 @@ function buildThemePalette(
   return palette;
 }
 
-// Resolve a table's named style to header / band fill colours. v1 maps every
-// built-in style (TableStyleLight/Medium/Dark N — the definitions live in
-// Excel, not the file) to the workbook's accent1: a 35%-lightened header and an
-// 80%-lightened band, both readable under black text. A style-less table is
-// left uncoloured. Faithful per-style accents + white header text follow.
-function resolveTableStyle(t: ExcelTable, accent1Hex: string): ExcelTable {
-  if (!t.styleName || /TableStyleNone/i.test(t.styleName)) return t;
-  return { ...t, headerHex: lighten(accent1Hex, 0.35), bandHex: lighten(accent1Hex, 0.8) };
+// Resolve a table's named built-in style to header / band fill colours against
+// the workbook theme. The definitions live in Excel (not the file), but the
+// name encodes the accent: TableStyle{Light|Medium|Dark}{N}, where the gallery
+// is 7 columns wide — column (N-1)%7 picks the accent (0 = the neutral/grey
+// column, 1..6 = accent1..6). Medium/Dark take a solid accent header with white
+// text; Light a tinted header with black text; the band is a light tint. A
+// style-less / unrecognized / TableStyleNone table is left uncoloured.
+function resolveTableStyle(t: ExcelTable, palette: ReadonlyMap<string, string>): ExcelTable {
+  const m = t.styleName ? /TableStyle(Light|Medium|Dark)(\d+)/i.exec(t.styleName) : null;
+  if (!m) return t;
+  const kind = m[1]!.toLowerCase();
+  const column = (Number(m[2]) - 1) % 7;
+  const base = column === 0 ? '7F7F7F' : (palette.get(`accent${column}`) ?? '4472C4');
+  if (kind === 'light') {
+    return { ...t, headerHex: lighten(base, 0.6), bandHex: lighten(base, 0.85) };
+  }
+  // medium / dark: a solid accent header with white text.
+  return { ...t, headerHex: base, bandHex: lighten(base, 0.8), headerTextHex: 'FFFFFF' };
 }
 
 // Lighten a 6-hex colour toward white by `amount` (0..1).
