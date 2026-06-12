@@ -19,6 +19,7 @@ import type {
   CellIcon,
   CellProperties,
   CellShading,
+  CellSparkline,
   PageMargins,
   PageSize,
   ParagraphProperties,
@@ -263,6 +264,14 @@ export function worksheetToBody(
     if (m.endRow > usedRow) usedRow = m.endRow;
     if (m.endColumn > usedCol) usedCol = m.endColumn;
   }
+  // A sparkline host cell (E-SHEET SC2) is usually empty and just past the data;
+  // keep it in the used range so the cell that carries the mini chart survives.
+  for (const sp of worksheet.sparklines ?? []) {
+    const host = parseAreaRef(sp.sqref);
+    if (!host) continue;
+    if (host.startRow > usedRow) usedRow = host.startRow;
+    if (host.startColumn > usedCol) usedCol = host.startColumn;
+  }
   if (usedRow < 0 || usedCol < 0) return []; // nothing but empty styled cells
 
   // Print area (when defined) overrides the rendered window: Excel prints only
@@ -415,6 +424,10 @@ export function worksheetToBody(
     worksheet.cells,
   );
 
+  // Sparklines (E-SHEET SC2): host-cell (absolute key) → resolved value series.
+  // Empty when the sheet has no sparklines, so the cell loop stays unchanged.
+  const sparklineByCell = buildSparklineLookup(worksheet);
+
   const rows: Array<TableRow> = [];
   for (let r = 0; r < rowCount; r++) {
     const absR = r + rowStart;
@@ -447,6 +460,7 @@ export function worksheetToBody(
       const borders = xf ? bordersFromXf(xf, styles) : undefined;
       let dataBar: CellDataBar | undefined;
       let icon: CellIcon | undefined;
+      const sparkline = sparklineByCell.get(key(absR, absC));
 
       // Conditional formatting (E-SHEET SC1/SC1b/SC1c): the applicable rules
       // override the cell's fill/font and may add an in-cell data bar. Only number
@@ -501,6 +515,7 @@ export function worksheetToBody(
         ...(shading ? { shading } : {}),
         ...(dataBar ? { dataBar } : {}),
         ...(icon ? { icon } : {}),
+        ...(sparkline ? { sparkline } : {}),
         ...(borders ? { borders } : {}),
       };
 
@@ -740,6 +755,43 @@ function mapBorderStyle(style: XlsxBorderStyleName): { style: BorderStyle; sizeE
 
 function key(row: number, col: number): string {
   return `${row},${col}`;
+}
+
+// E-SHEET SC2 — resolve the sheet's sparklines to a host-cell → value-series map.
+// The data range is resolved on THIS sheet (parseAreaRef drops any sheet
+// qualifier); cross-sheet series are a documented v1 limitation. Empty map when
+// the sheet has no sparklines, so the cell loop is untouched for everyone else.
+function buildSparklineLookup(worksheet: ParsedWorksheet): Map<string, CellSparkline> {
+  const out = new Map<string, CellSparkline>();
+  for (const sp of worksheet.sparklines ?? []) {
+    const host = parseAreaRef(sp.sqref);
+    const area = parseAreaRef(sp.dataRange);
+    if (!host || !area) continue;
+    const values = collectSeriesValues(worksheet.cells, area);
+    if (values.length === 0) continue;
+    out.set(key(host.startRow, host.startColumn), {
+      kind: sp.kind,
+      values,
+      ...(sp.colorHex ? { colorHex: sp.colorHex } : {}),
+    });
+  }
+  return out;
+}
+
+// Numeric cell values inside an area, in reading order (row-major). Non-numeric
+// and blank cells are skipped — a v1 simplification (Excel would keep the gap).
+function collectSeriesValues(cells: ReadonlyArray<WorksheetCell>, area: CellRange): Array<number> {
+  const inArea: Array<{ row: number; col: number; v: number }> = [];
+  for (const c of cells) {
+    if (c.row < area.startRow || c.row > area.endRow) continue;
+    if (c.column < area.startColumn || c.column > area.endColumn) continue;
+    if (c.type !== 'n') continue;
+    const v = Number(c.rawValue);
+    if (!Number.isFinite(v)) continue;
+    inArea.push({ row: c.row, col: c.column, v });
+  }
+  inArea.sort((a, b) => a.row - b.row || a.col - b.col);
+  return inArea.map((x) => x.v);
 }
 
 // A cell "has content" (blocks overflow / counts toward the used range) when it

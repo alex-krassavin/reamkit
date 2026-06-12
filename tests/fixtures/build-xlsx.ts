@@ -83,6 +83,8 @@ export interface XlsxSheetSpec {
   readonly rowBreaks?: ReadonlyArray<number>;
   /** Raw <conditionalFormatting> markup injected into the worksheet. */
   readonly conditionalFormattingXml?: string;
+  /** Raw <extLst> markup injected at the end of the worksheet (x14 sparklines). */
+  readonly extLstXml?: string;
 }
 
 export interface XlsxBuilderOptions {
@@ -102,6 +104,7 @@ export interface XlsxBuilderOptions {
   readonly fitToPage?: boolean;
   readonly rowBreaks?: ReadonlyArray<number>;
   readonly conditionalFormattingXml?: string;
+  readonly extLstXml?: string;
   readonly date1904?: boolean;
   readonly definedNames?: ReadonlyArray<XlsxDefinedNameSpec>;
   /** Attach a chart to the FIRST sheet via a drawing part (twoCellAnchor). */
@@ -150,6 +153,7 @@ export function buildXlsx(
             ...(options.conditionalFormattingXml
               ? { conditionalFormattingXml: options.conditionalFormattingXml }
               : {}),
+            ...(options.extLstXml ? { extLstXml: options.extLstXml } : {}),
           },
         ];
 
@@ -275,6 +279,7 @@ ${sheetRows.join('\n')}
   ${marginsXml}
   ${setupXml}
   ${rowBreaksXml}
+  ${sheet.extLstXml ?? ''}
 </worksheet>`;
     sheetParts.push({ fileName: `sheet${s + 1}.xml`, xml });
   }

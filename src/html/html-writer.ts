@@ -21,6 +21,7 @@ import type {
   BodyElement,
   Border,
   CellIcon,
+  CellSparkline,
   Chart,
   ChartBlock,
   ImageBlock,
@@ -43,6 +44,7 @@ import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/
 import type { DocumentWriter, WriteResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss, ResourceId, ResourceStore } from '@/core/ir';
+import { buildSparkline } from '@/core/drawingml/sparkline-geometry';
 
 import { arcPoint, arcToBeziers } from '@/core/arc-to-bezier';
 import { toBase64 } from '@/core/bytes';
@@ -693,8 +695,33 @@ function emitCell(
   out.push(`<${tag}${attrs.length > 0 ? ` ${attrs.join(' ')}` : ''} style="${css.join(';')}">`);
   // Conditional-format icon (E-SHEET SC1c): an inline glyph before the value.
   if (cell.properties.icon) out.push(cellIconSvg(cell.properties.icon));
+  // Sparkline (E-SHEET SC2): a mini inline-SVG chart in the cell.
+  if (cell.properties.sparkline) out.push(cellSparklineSvg(cell.properties.sparkline));
   for (const child of cell.content) emitBlock(out, child, ctx);
   out.push(`</${tag}>`);
+}
+
+// A mini inline-SVG sparkline, reusing the same geometry the PDF layout draws.
+// The geometry is y-up; an SVG flip group puts it into SVG's y-down frame.
+function cellSparklineSvg(sp: CellSparkline): string {
+  const W = 56;
+  const H = 16;
+  if (sp.values.length === 0) return '';
+  const prims = buildSparkline(sp.kind, sp.values, W, H, sp.colorHex);
+  const fmt = (n: number): string => (Math.round(n * 100) / 100).toString();
+  const parts: Array<string> = [];
+  for (const prim of prims) {
+    const d = prim.paths.map((p) => svgPathData(p.segments, fmt)).join(' ');
+    parts.push(
+      prim.stroke
+        ? `<path d="${d}" fill="none" stroke="#${prim.stroke.colorHex}" stroke-width="${prim.stroke.widthPt}"/>`
+        : `<path d="${d}" fill="#${prim.fillColorHex ?? '376092'}"/>`,
+    );
+  }
+  return (
+    `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="vertical-align:middle">` +
+    `<g transform="translate(0,${H}) scale(1,-1)">${parts.join('')}</g></svg>`
+  );
 }
 
 // A small inline-SVG glyph for a conditional-format icon, matching the PDF

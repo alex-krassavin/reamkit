@@ -24,6 +24,7 @@ import type {
   CellBorders,
   CellDataBar,
   CellIcon,
+  CellSparkline,
   Chart,
   ChartBlock,
   DocumentInfo,
@@ -92,6 +93,7 @@ import {
   resolveRunProperties,
 } from '@/core/style-cascade';
 import { PathBuilder, flipTransform } from '@/core/vector';
+import { buildSparkline } from '@/core/drawingml/sparkline-geometry';
 import { arcPoint, arcToBeziers } from '@/core/arc-to-bezier';
 import { buildChartScene } from '@/core/drawingml/chart-geometry';
 import { layoutMath, mathGlyphSegments, variantStyle } from '@/layout/math-layout';
@@ -334,6 +336,7 @@ interface CellLayout {
   readonly shadingColorHex?: string;
   readonly dataBar?: CellDataBar;
   readonly icon?: CellIcon;
+  readonly sparkline?: CellSparkline;
   readonly lines: ReadonlyArray<Line>;
   // Nested tables (a w:tbl inside this cell) rendered below the lines.
   readonly nestedTables?: ReadonlyArray<TableBlock>;
@@ -2633,6 +2636,7 @@ function layoutTableCell(
       : {}),
     ...(cell.properties.dataBar ? { dataBar: cell.properties.dataBar } : {}),
     ...(cell.properties.icon ? { icon: cell.properties.icon } : {}),
+    ...(cell.properties.sparkline ? { sparkline: cell.properties.sparkline } : {}),
     lines,
     ...(nestedTables.length > 0 ? { nestedTables } : {}),
     contentHeightPt,
@@ -3630,6 +3634,39 @@ function emitRowChunk(
             transform: flipTransform([1, 0, 0, 1, iconX, iconBottomYUp], pageHeight),
           },
         });
+      }
+    }
+    // Sparkline (E-SHEET SC2): a mini chart filling the cell's content box,
+    // painted in the shapes pass. Its local y-up frame is flipped onto the cell.
+    if (
+      cell.sparkline &&
+      cell.sparkline.values.length > 0 &&
+      cell.mergeRole !== 'middle' &&
+      cell.mergeRole !== 'end'
+    ) {
+      const inset = 1.5;
+      const sw = cell.widthPt - 2 * inset;
+      const sh = row.heightPt - 2 * inset;
+      if (sw > 0 && sh > 0) {
+        const prims = buildSparkline(
+          cell.sparkline.kind,
+          cell.sparkline.values,
+          sw,
+          sh,
+          cell.sparkline.colorHex,
+        );
+        const transform = flipTransform([1, 0, 0, 1, cellX + inset, rowBottom + inset], pageHeight);
+        for (const prim of prims) {
+          out.push({
+            type: 'shape',
+            shape: {
+              paths: prim.paths,
+              ...(prim.fillColorHex ? { fillColorHex: prim.fillColorHex } : {}),
+              ...(prim.stroke ? { stroke: prim.stroke } : {}),
+              transform,
+            },
+          });
+        }
       }
     }
     emitCellBorders(

@@ -98,6 +98,20 @@ export interface ParsedWorksheet {
   readonly drawingRelId?: string;
   // §18.3.1.18 <conditionalFormatting> — value-driven cell formats (E-SHEET SC1).
   readonly conditionalFormats?: ReadonlyArray<ConditionalFormat>;
+  // x14 extension <sparklineGroups> in extLst — per-cell mini charts (E-SHEET SC2).
+  readonly sparklines?: ReadonlyArray<ParsedSparkline>;
+}
+
+// ECMA-376 Part 4 (x14 extension) — a sparkline: a mini chart drawn inside a
+// single host cell (`sqref`) from a data range (`dataRange`, an A1 area possibly
+// sheet-qualified). The group's type maps to line / column / win-loss.
+export type SparklineKind = 'line' | 'column' | 'winLoss';
+
+export interface ParsedSparkline {
+  readonly kind: SparklineKind;
+  readonly dataRange: string;
+  readonly sqref: string;
+  readonly colorHex?: string;
 }
 
 // ECMA-376 Part 1 §18.8 — the workbook style table (xl/styles.xml). Cells

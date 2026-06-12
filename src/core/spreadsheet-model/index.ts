@@ -29,4 +29,6 @@ export type {
   CfRuleIconSet,
   CfRule,
   ConditionalFormat,
+  SparklineKind,
+  ParsedSparkline,
 } from '@/core/spreadsheet-model/types';

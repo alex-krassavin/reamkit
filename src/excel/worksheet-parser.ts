@@ -17,8 +17,10 @@ import type {
   ColumnWidth,
   ConditionalFormat,
   MergedRange,
+  ParsedSparkline,
   ParsedWorksheet,
   RowHeight,
+  SparklineKind,
   WorksheetCell,
   XlsxPageMargins,
   XlsxPageSetup,
@@ -73,6 +75,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
       ? strAttr(drawingNode as Record<string, unknown>, 'id')
       : undefined;
   const conditionalFormats = parseConditionalFormatting(wsObj);
+  const sparklines = parseSparklines(wsObj);
   const printModel = {
     ...(pageMargins ? { pageMargins } : {}),
     ...(pageSetup ? { pageSetup } : {}),
@@ -82,6 +85,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
     ...(colBreaks.length > 0 ? { colBreaks } : {}),
     ...(drawingRelId !== undefined ? { drawingRelId } : {}),
     ...(conditionalFormats.length > 0 ? { conditionalFormats } : {}),
+    ...(sparklines.length > 0 ? { sparklines } : {}),
   };
   const sheetData = wsObj['sheetData'];
   if (!sheetData || typeof sheetData !== 'object') {
@@ -529,6 +533,53 @@ function formulaText(node: unknown): string | undefined {
     if (typeof t === 'number') return String(t);
   }
   return undefined;
+}
+
+// Coerce a fast-xml-parser child (which collapses a single element to an object
+// and repeats to an array) into an array.
+function toArray(v: unknown): ReadonlyArray<unknown> {
+  return Array.isArray(v) ? v : v === undefined || v === null ? [] : [v];
+}
+
+// x14 sparklines (E-SHEET SC2). Worksheet extLst → <x14:sparklineGroups> /
+// <x14:sparklineGroup type=…> / <x14:sparkline> with <xm:f> (data range) +
+// <xm:sqref> (host cell). removeNSPrefix:true strips the x14:/xm: prefixes, so
+// the tags read plainly here. The group's <x14:colorSeries rgb=…> tints the
+// series. An absent type is a line sparkline; "stacked" is win/loss.
+function parseSparklines(ws: Record<string, unknown>): Array<ParsedSparkline> {
+  const extLst = asObjectNode(ws['extLst']);
+  if (!extLst) return [];
+  const out: Array<ParsedSparkline> = [];
+  for (const ext of toArray(extLst['ext'])) {
+    const groupsNode = asObjectNode(asObjectNode(ext)?.['sparklineGroups']);
+    if (!groupsNode) continue;
+    for (const g of toArray(groupsNode['sparklineGroup'])) {
+      const group = asObjectNode(g);
+      if (!group) continue;
+      const typeStr = strAttr(group, 'type');
+      const kind: SparklineKind =
+        typeStr === 'column' ? 'column' : typeStr === 'stacked' ? 'winLoss' : 'line';
+      const colorHex = colorRgbHex(group['colorSeries']);
+      const slNode = asObjectNode(group['sparklines']);
+      if (!slNode) continue;
+      for (const sl of toArray(slNode['sparkline'])) {
+        const spark = asObjectNode(sl);
+        if (!spark) continue;
+        const dataRange = formulaText(spark['f']);
+        const sqref = formulaText(spark['sqref']);
+        if (dataRange && sqref) {
+          out.push({ kind, dataRange, sqref, ...(colorHex ? { colorHex } : {}) });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function asObjectNode(v: unknown): Record<string, unknown> | undefined {
+  return v && typeof v === 'object' && !Array.isArray(v)
+    ? (v as Record<string, unknown>)
+    : undefined;
 }
 
 function parseCell(c: unknown, fallbackRow: number, fallbackCol: number): WorksheetCell | null {

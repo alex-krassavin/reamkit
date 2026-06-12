@@ -13,6 +13,7 @@ export type {
   CellDataBar,
   CellIcon,
   CellIconShape,
+  CellSparkline,
   Chart,
   ChartBlock,
   ChartDataPoint,

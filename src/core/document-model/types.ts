@@ -413,6 +413,15 @@ export interface CellIcon {
   readonly colorHex: string;
 }
 
+// A sparkline: a mini chart filling the cell, plotting `values` (E-SHEET SC2).
+// Format-neutral — the xlsx layer resolves the data range to a value sequence;
+// the layout renders line / column / win-loss geometry sized to the cell.
+export interface CellSparkline {
+  readonly kind: 'line' | 'column' | 'winLoss';
+  readonly values: ReadonlyArray<number>;
+  readonly colorHex?: string;
+}
+
 // Resolved position of a cell in a vertical merge group (ECMA-376 §17.4.85
 // vMerge markers are resolved by the reader): 'start' opens a group that at
 // least one cell continues, 'middle' / 'end' are continuations; undefined =
@@ -430,6 +439,7 @@ export interface CellProperties {
   readonly shading?: CellShading;
   readonly dataBar?: CellDataBar;
   readonly icon?: CellIcon;
+  readonly sparkline?: CellSparkline;
 }
 
 export interface RowProperties {
