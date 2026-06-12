@@ -1299,6 +1299,14 @@ function cellIconPath(shape: CellIcon['shape'], s: number): VectorPath {
   switch (shape) {
     case 'square':
       return rectAtPath(s * 0.12, s * 0.12, s * 0.76, s * 0.76);
+    case 'diamond':
+      return new PathBuilder()
+        .moveTo(s / 2, s * 0.92)
+        .lineTo(s * 0.92, s / 2)
+        .lineTo(s / 2, s * 0.08)
+        .lineTo(s * 0.08, s / 2)
+        .close()
+        .build();
     case 'triangleUp':
       return trianglePath([s / 2, s * 0.9], [s * 0.1, s * 0.12], [s * 0.9, s * 0.12]);
     case 'triangleDown':

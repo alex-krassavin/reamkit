@@ -731,13 +731,15 @@ function cellIconSvg(icon: CellIcon): string {
   const body =
     icon.shape === 'square'
       ? `<rect x="1" y="1" width="8" height="8"/>`
-      : icon.shape === 'triangleUp'
-        ? `<polygon points="5,1 9,9 1,9"/>`
-        : icon.shape === 'triangleDown'
-          ? `<polygon points="1,1 9,1 5,9"/>`
-          : icon.shape === 'triangleRight'
-            ? `<polygon points="9,5 1,1 1,9"/>`
-            : `<circle cx="5" cy="5" r="4"/>`;
+      : icon.shape === 'diamond'
+        ? `<polygon points="5,1 9,5 5,9 1,5"/>`
+        : icon.shape === 'triangleUp'
+          ? `<polygon points="5,1 9,9 1,9"/>`
+          : icon.shape === 'triangleDown'
+            ? `<polygon points="1,1 9,1 5,9"/>`
+            : icon.shape === 'triangleRight'
+              ? `<polygon points="9,5 1,1 1,9"/>`
+              : `<circle cx="5" cy="5" r="4"/>`;
   return (
     `<svg width="10" height="10" viewBox="0 0 10 10" fill="${fill}" ` +
     `style="vertical-align:middle;margin-right:3px">${body}</svg>`

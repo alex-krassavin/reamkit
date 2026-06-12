@@ -407,7 +407,13 @@ export interface CellDataBar {
 // A conditional-format icon: a small glyph at the cell's left, chosen by the
 // value's bucket (E-SHEET SC1c). Format-neutral — the xlsx layer maps Excel's
 // named icon families (3TrafficLights, 3Arrows, …) onto these shapes + colours.
-export type CellIconShape = 'circle' | 'square' | 'triangleUp' | 'triangleDown' | 'triangleRight';
+export type CellIconShape =
+  | 'circle'
+  | 'square'
+  | 'diamond'
+  | 'triangleUp'
+  | 'triangleDown'
+  | 'triangleRight';
 export interface CellIcon {
   readonly shape: CellIconShape;
   readonly colorHex: string;

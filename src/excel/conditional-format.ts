@@ -403,17 +403,27 @@ function iconBucket(thresholds: ReadonlyArray<number>, value: number): number {
 }
 
 // Map Excel's named icon family + bucket onto a format-neutral shape + colour.
-// `reverse` flips the bucket so the highest value takes the first icon.
+// `reverse` flips the bucket so the highest value takes the first icon. The
+// `*Gray` families are monochrome (only the direction/shape carries meaning).
 function iconToCell(setName: string, count: number, index: number, reverse: boolean): CellIcon {
   const e = reverse ? count - 1 - index : index;
-  return { shape: iconShape(setName, e, count), colorHex: iconColor(count, e) };
+  const colorHex = /Gray/i.test(setName) ? GRAY_HEX : iconColor(count, e);
+  return { shape: iconShape(setName, e, count), colorHex };
 }
+
+const GRAY_HEX = '808080';
 
 function iconShape(setName: string, e: number, count: number): CellIconShape {
   if (setName.includes('Arrows')) {
     if (e <= 0) return 'triangleDown';
     if (e >= count - 1) return 'triangleUp';
     return 'triangleRight';
+  }
+  if (setName.includes('Signs')) {
+    // 3 Signs: red diamond (low), yellow triangle (mid), green circle (high).
+    if (e <= 0) return 'diamond';
+    if (e >= count - 1) return 'circle';
+    return 'triangleUp';
   }
   if (setName.includes('Flags')) return 'square';
   return 'circle';

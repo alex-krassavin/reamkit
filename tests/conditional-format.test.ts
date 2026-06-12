@@ -331,6 +331,35 @@ describe('conditional formatting — iconSet (E-SHEET SC1c)', () => {
     expect(iconAt(flow, 1)?.colorHex).toBe('FF0000'); // value 90, reversed → red
   });
 
+  it('maps 3Signs to diamond / triangle / circle by bucket (Tail TC2)', () => {
+    const cf = `<conditionalFormatting sqref="A1:A3">${iconSet('3Signs', ['percent:0', 'percent:33', 'percent:67'])}</conditionalFormatting>`;
+    const flow = Ream.parse(
+      buildXlsx({
+        rows: [[10], [50], [90]],
+        stylesXml: PLAIN_STYLES,
+        conditionalFormattingXml: cf,
+      }),
+    ).flow;
+    expect(iconAt(flow, 0)?.shape).toBe('diamond'); // low
+    expect(iconAt(flow, 1)?.shape).toBe('triangleUp');
+    expect(iconAt(flow, 2)?.shape).toBe('circle'); // high
+  });
+
+  it('renders a *Gray family monochrome (Tail TC2)', () => {
+    const cf = `<conditionalFormatting sqref="A1:A3">${iconSet('3ArrowsGray', ['percent:0', 'percent:33', 'percent:67'])}</conditionalFormatting>`;
+    const flow = Ream.parse(
+      buildXlsx({
+        rows: [[10], [50], [90]],
+        stylesXml: PLAIN_STYLES,
+        conditionalFormattingXml: cf,
+      }),
+    ).flow;
+    // All three arrows are grey; only the direction differs.
+    expect(iconAt(flow, 0)).toEqual({ shape: 'triangleDown', colorHex: '808080' });
+    expect(iconAt(flow, 1)).toEqual({ shape: 'triangleRight', colorHex: '808080' });
+    expect(iconAt(flow, 2)).toEqual({ shape: 'triangleUp', colorHex: '808080' });
+  });
+
   it('parses an iconSet rule onto the sheet', () => {
     const cf = `<conditionalFormatting sqref="A1:A4">${iconSet('4Rating', ['percent:0', 'percent:25', 'percent:50', 'percent:75'])}</conditionalFormatting>`;
     const sheet = readXlsxToSheetDoc(
