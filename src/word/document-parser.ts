@@ -291,29 +291,68 @@ export function parseBodyElements(
 // for a wps:wsp shape. Mixed text+drawing paragraphs keep a picture on the run
 // via Run.inlineImage (shapes in mixed runs are dropped in M5) and are emitted
 // as paragraphs by parseBodyElements.
-function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): BodyElement | null {
-  let drawing: PoNode | undefined;
-  let vml: PoNode | undefined;
-  let hasText = false;
-  for (const child of poChildren(p)) {
-    if (!poIs(child, 'w:r')) continue;
-    for (const runChild of expandMcChildren(poChildren(child))) {
-      if (poIs(runChild, 'w:drawing')) {
-        if (!drawing) drawing = runChild;
-      } else if (poIs(runChild, 'w:pict') || poIs(runChild, 'w:object')) {
-        if (!vml) vml = runChild;
-      } else if (poIs(runChild, 'w:t') && poText(runChild).length > 0) {
-        hasText = true;
-      } else if (
-        poIs(runChild, 'w:tab') ||
-        poIs(runChild, 'w:br') ||
-        poIs(runChild, 'w:noBreakHyphen')
-      ) {
-        hasText = true;
+// Run wrappers a lone picture can hide inside that the writer flattens away:
+// tracked-change insals/moves (§17.13.5) and content controls / smart tags
+// (§17.5.2). A re-read of the writer's output sees the bare <w:drawing>, so to
+// keep paragraph counts stable across the round-trip these must be transparent
+// to the standalone-image collapse too. w:hyperlink and w:fldSimple are
+// deliberately excluded — the writer preserves a link / field on an inline
+// image, so such a paragraph must stay a paragraph, not collapse to a block.
+const COLLAPSE_TRANSPARENT_TAGS = new Set([
+  'w:ins',
+  'w:moveTo',
+  'w:sdt',
+  'w:sdtContent',
+  'w:smartTag',
+]);
+
+interface LoneDrawingScan {
+  drawing?: PoNode;
+  vml?: PoNode;
+  hasOther: boolean;
+}
+
+// Scan a paragraph (descending through the transparent wrappers above) for a
+// single drawing / VML picture with no sibling content. hasOther trips on real
+// text, math, fields or hyperlinks — anything the writer would keep, which
+// means the paragraph must not collapse to a standalone image block.
+function scanForLoneDrawing(container: PoNode, acc: LoneDrawingScan): void {
+  for (const child of expandMcChildren(poChildren(container))) {
+    if (poIs(child, 'w:pPr')) continue;
+    if (poIs(child, 'w:r')) {
+      for (const rc of expandMcChildren(poChildren(child))) {
+        if (poIs(rc, 'w:drawing')) {
+          if (!acc.drawing) acc.drawing = rc;
+        } else if (poIs(rc, 'w:pict') || poIs(rc, 'w:object')) {
+          if (!acc.vml) acc.vml = rc;
+        } else if (poIs(rc, 'w:t') && poText(rc).length > 0) {
+          acc.hasOther = true;
+        } else if (poIs(rc, 'w:tab') || poIs(rc, 'w:br') || poIs(rc, 'w:noBreakHyphen')) {
+          acc.hasOther = true;
+        }
       }
+      continue;
+    }
+    if (poIs(child, 'm:oMath') || poIs(child, 'm:oMathPara')) {
+      acc.hasOther = true;
+      continue;
+    }
+    const tag = elementTag(child);
+    if (tag && COLLAPSE_TRANSPARENT_TAGS.has(tag)) {
+      scanForLoneDrawing(child, acc);
+    } else if (tag && RUN_CONTAINER_TAGS.has(tag)) {
+      // A hyperlink / field wrapping the picture: keep the paragraph (the
+      // writer preserves the link or field on the inline image).
+      acc.hasOther = true;
     }
   }
-  if (hasText || (!drawing && !vml)) return null;
+}
+
+function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): BodyElement | null {
+  const scan: LoneDrawingScan = { hasOther: false };
+  scanForLoneDrawing(p, scan);
+  const { drawing, vml } = scan;
+  if (scan.hasOther || (!drawing && !vml)) return null;
 
   // Inject parseBodyElements (bound to this context) so a shape's text box is
   // parsed without a module cycle. A modern <w:drawing> takes precedence over a
@@ -327,7 +366,7 @@ function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): BodyEleme
     parseBodyElements(children, ctx);
   const content = fromVml
     ? parseVmlPicture(vml!)
-    : parseDrawing(drawing!, ctx.resolveColor, parseBody);
+    : parseDrawing(drawing, ctx.resolveColor, parseBody);
   if (!content) return null;
   // A dangling VML <v:imagedata r:id> (referenced media absent from the
   // package) carries nothing to render; skip it so the paragraph stays empty

@@ -472,6 +472,24 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     '<pic:blipFill><a:blip r:embed="rIdImg"/></pic:blipFill></pic:pic>' +
     '</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>';
 
+  it('round-trips an in-paragraph page break (w:br type=page)', () => {
+    // §17.3.3.1 — a run carrying only a page break must survive: it is emitted
+    // as <w:br w:type="page"/>, not dropped for having empty text.
+    const body =
+      '<w:p><w:r><w:t>before</w:t></w:r>' +
+      '<w:r><w:br w:type="page"/></w:r>' +
+      '<w:r><w:t>after</w:t></w:r></w:p>';
+    const { doc: flow } = readDocx(buildDocxFromBody(body));
+    const bytes = writeDocx(flow).bytes;
+    const xml = new TextDecoder().decode(OpcPackage.open(bytes).getMainDocument().data);
+    expect(xml).toContain('<w:br w:type="page"/>');
+    // The break is preserved on re-read (the run keeps its pageBreak flag).
+    const { doc: again } = readDocx(bytes);
+    const para = again.body.find((b) => b.kind === 'paragraph');
+    if (para?.kind !== 'paragraph') throw new Error('expected a paragraph');
+    expect(para.paragraph.runs.some((r) => r.pageBreak === true)).toBe(true);
+  });
+
   it('reports unwritten block kinds as losses (v0)', () => {
     const { doc: flow } = readDocx(buildDocxFromBody(IMAGE_BODY));
     const { losses } = writeDocx(flow);

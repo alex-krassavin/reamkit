@@ -170,6 +170,42 @@ describe('Drawing parser', () => {
     expect(parsed[0]!.image.altText).toBe('a legacy picture');
   });
 
+  it('collapses a lone image to a block even when wrapped in tracked-change w:ins', () => {
+    // The writer flattens tracked changes, so a re-read sees a bare <w:drawing>
+    // and collapses the paragraph to an image block. To keep the round-trip
+    // symmetric the FIRST read must collapse the same way even though the
+    // drawing hides inside <w:ins><w:r>…</w:r></w:ins>.
+    const body = `<w:p><w:ins w:id="1" w:author="A" w:date="2020-01-01T00:00:00Z">${drawingXml('rId20', 914400, 685800)}</w:ins></w:p>`;
+    const pkg = OpcPackage.open(buildDocxFromBody(body));
+    const store = new ResourceStore();
+    const expectedId = store.put(new Uint8Array([7, 8, 9]));
+    const parsed = parseDocument(pkg.getMainDocument().data, {
+      resolveColor: defaultColorResolver,
+      resolveImage: (relId) => (relId === 'rId20' ? expectedId : undefined),
+    });
+    expect(parsed).toHaveLength(1);
+    if (parsed[0]!.kind !== 'image') throw new Error('expected an image block');
+    expect(parsed[0]!.image.resource).toBe(expectedId);
+  });
+
+  it('does NOT collapse an image wrapped in a hyperlink (the link must survive)', () => {
+    // A hyperlinked image stays inline so the writer can keep its href; the
+    // paragraph must remain a paragraph, not collapse to an image block.
+    const body =
+      '<w:p><w:hyperlink r:id="rIdLink">' +
+      `${drawingXml('rId20', 914400, 685800)}</w:hyperlink></w:p>`;
+    const pkg = OpcPackage.open(buildDocxFromBody(body));
+    const store = new ResourceStore();
+    const expectedId = store.put(new Uint8Array([1, 1, 1]));
+    const parsed = parseDocument(pkg.getMainDocument().data, {
+      resolveColor: defaultColorResolver,
+      resolveImage: (relId) => (relId === 'rId20' ? expectedId : undefined),
+      resolveHyperlink: (relId) => (relId === 'rIdLink' ? 'https://example.com' : undefined),
+    });
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]!.kind).toBe('paragraph');
+  });
+
   it('skips a dangling VML picture whose media part is absent', () => {
     // A <v:imagedata r:id> pointing at media stripped from the package (some
     // corpus files do this) resolves to nothing — the reader must NOT emit a

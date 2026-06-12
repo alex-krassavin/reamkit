@@ -592,7 +592,7 @@ function paragraphXml(
     (run) =>
       !run.listMarker &&
       run.math === undefined &&
-      (run.text !== '' || run.inlineImage !== undefined),
+      (run.text !== '' || run.inlineImage !== undefined || run.pageBreak),
   );
 
   // §17.16.22 — group adjacent runs sharing a hyperlink target back into one
@@ -651,10 +651,14 @@ function runXml(run: Run, state: WriteState, scope: PartScope): string {
     const img = run.inlineImage;
     const drawing = drawingXml(img.resource, img.width, img.height, undefined, state, scope);
     if (drawing) return `<w:r>${rPr}${drawing}</w:r>`;
-    // Unresolved inline image with no text: nothing to emit.
-    if (run.text === '') return '';
+    // Unresolved inline image with no text and no break: nothing to emit.
+    if (run.text === '' && !run.pageBreak) return '';
   }
-  return `<w:r>${rPr}<w:t xml:space="preserve">${escapeXml(run.text)}</w:t></w:r>`;
+  // §17.3.3.1 — a page break is a run-level <w:br w:type="page"/>; emit it so a
+  // run that is ONLY a break (no text, no image) survives the round-trip.
+  const brk = run.pageBreak ? '<w:br w:type="page"/>' : '';
+  if (run.text === '') return brk ? `<w:r>${rPr}${brk}</w:r>` : '';
+  return `<w:r>${rPr}<w:t xml:space="preserve">${escapeXml(run.text)}</w:t>${brk}</w:r>`;
 }
 
 // §17.3.2 — run properties as a delta from the resolved defaults.
