@@ -166,6 +166,82 @@ docx-pipeline (print-model.ts). Прагматично и работает, но
 Подход как с A9 PageAssembler: дословный перенос текущего поведения за чистую
 границу СНАЧАЛА (байт-нулевой), и только потом новые Excel-фичи поверх.
 
+### Точки привязки в коде (проверено на 1.4.0)
+Текущий пайплайн (`src/excel/`):
+```
+xlsx → parseWorkbook (sheets, date1904, definedNames)
+     → parseSharedStrings + parseXlsxStyles (XlsxStyles: cellXfs/fonts/fills/borders/numFmts)
+     → parseWorksheet → ParsedWorksheet   (грид-модель: cells/columns/merges/rowHeights/
+                                            pageSetup/printOptions/breaks/drawingRelId)
+     → worksheetToBody(ws, sharedStrings, styles, …) → BodyElement[] (Table)   ← ПРОЕКЦИЯ
+     → parseSheetDrawing → chart-блоки
+     → FlowDoc { body, section, charts, info } → renderStyledPdf (общий docx-путь)
+```
+- `xlsx-reader.ts` САМ пишет в шапке: «SheetDoc deliberately deferred tech debt». Это закрытие долга.
+- `ParsedWorksheet` (`worksheet-parser.ts`) — уже почти грид-узел; не хватает workbook-обёртки
+  (несколько листов + общие sharedStrings/styles/definedNames/theme) и резолва значений.
+- `worksheetToBody` (`print-model.ts`, ~300 строк) — вся Excel-семантика: `resolveCellText`
+  (sharedStrings+numFmt), `runPropsFromXf`/`shadingFromXf`/`bordersFromXf`, merges, print-scale.
+  **Это и есть будущий SheetDoc→FlowDoc адаптер** — переносим как есть.
+- Гейт xlsx — sandbox LO TextSim/geometry (`scripts/corpus/run.ts`), similarity, НЕ байт-identity.
+
+### Архитектурное решение (принять ДО кода)
+Где живёт SheetDoc и как рендерится:
+- **A: SheetDoc → PageDoc, свой грид-layout** — замороженные панели, истинная постраничная
+  нарезка колонок, грид-пагинация. Снимает потолок рендера, но это БОЛЬШОЙ отдельный движок.
+- **B (рекомендую для v1): SheetDoc → FlowDoc-адаптер у границы.** `worksheetToBody` уже ЕСТЬ
+  этот адаптер — переносим за чистую границу без изменений, рендер байт-в-ноль. SheetDoc-узел
+  разблокирует фичи; путь рендера прежний. Вариант A — поздняя отдельная инвестиция.
+
+→ **v1 = вариант B.** Узел важнее рендера: фичи цепляются к SheetDoc, проекция их отрисовывает.
+
+### Декомпозиция (волнами; байт-гейт на каждом шаге)
+
+**Волна A — герметичная граница SheetDoc (байт-в-ноль; рефактор, ради которого всё).**
+- **SA0 — xlsx-байт-гейт.** Снапшоты PDF-байт (или FlowDoc) на N репрезентативных xlsx-фикстурах
+  (расширить OOP-0) — сеть безопасности рефактора. Без неё «байт-в-ноль» недоказуем.
+- **SA1 — типы SheetDoc в core.** `src/core/ir/sheet.ts`: `SheetDoc(kind:'sheet') = { sheets,
+  styles, definedNames, resources, charts?, info?, section? }`; `Sheet = { name, cells, columns,
+  rowHeights, merges, dims, pageSetup, printOptions, breaks, drawings }`; `Cell = { row, col,
+  type, rawValue, styleIndex, formula? }`. Решение: ячейка несёт СЫРОЕ значение + styleIndex
+  (резолв остаётся в проекции → байт-в-ноль тривиален). Только типы, без проводки.
+- **SA2 — ридер строит SheetDoc; проекция = SheetDoc→FlowDoc-адаптер.** Перенести `worksheetToBody`
+  + оркестровку (page-break между листами, чарты, section) в `sheet-to-flow.ts`, потребляющий
+  SheetDoc. `readXlsx` строит SheetDoc, затем `projectSheetDoc(sheet) → FlowDoc`; `xlsxReader`
+  пока `produces:'flow'` (адаптер внутри). **Критический шаг: байт-identity PDF на всём xlsx-корпусе.**
+
+**Волна B — SheetDoc первоклассен у границы (байт-в-ноль).**
+- **SB1 — `xlsxReader produces:'sheet'` + проекция у фасада.** `convert('pdf'|'svg'|'html')` гонит
+  `projectSheetDoc` → flow-путь. `Ream.parse(xlsx).sheet` отдаёт workbook для инспекции (как `.flow`).
+  SheetDoc становится реальным выходом ридера, FlowDoc — производный вид. (Можно слить с SA2.)
+
+**Волна C — первые Excel-фичи на SheetDoc (выплата за рефактор; были «в потолок»).**
+- **SC1 — условное форматирование.** `<conditionalFormatting>` (cellIs/expression/colorScale/
+  dataBar/iconSet) на `Sheet`; per-cell вычисление по SheetDoc; проекция кладёт fill/font/dataBar.
+  colorScale/dataBar требуют cross-cell min/max — ровно то, что грид-узел даёт, а таблица-проекция нет.
+- **SC2 — спарклайны.** `<x14:sparklineGroups>` (extLst) → мини line/column/winloss в ячейке;
+  переиспользовать геометрический слой чартов.
+- **SC3 — Excel-таблицы + автофильтр.** `table.xml`/`<tableParts>` (banded-стили, header-row) и
+  `<autoFilter>` (дропдаун-аффорданс / стилизованная таблица).
+
+**Волна D — xlsx-writer (симметрия, аналог E-DOCX; «осмысленный writer» возможен ТОЛЬКО на SheetDoc).**
+- **SD1 — OPC-скелет xlsx + workbook/worksheet writer.** SheetDoc → workbook.xml + sheetN.xml +
+  sharedStrings + styles. Таргет `convert('xlsx')`.
+- **SD2 — roundtrip-гейт** (xlsx→SheetDoc→xlsx→SheetDoc IR-идентичность) — аналог E-DOCX D6.
+- **SD3+ — хвосты паритета** (merges, форматы, write-back условного форматирования).
+
+**Волна E (опционально) — настоящий грид-layout (вариант A).** SheetDoc → PageDoc: замороженные
+панели, постраничная нарезка колонок, грид-пагинация. Только если таблица-проекция станет узким местом.
+
+### Риски
+- Байт-нулевой SA2 — главный риск; вся опасность волны сконцентрирована в нём (сеть = SA0).
+- SheetDoc-«узел vs резолв»: держим сырое значение + styleIndex, резолв в проекции — иначе SA2 не нулевой.
+- Дублирование XlsxStyles ↔ резолв: проекция остаётся единственным местом резолва стилей листа.
+
+### Рекомендованный старт
+**SA0 → SA1 → SA2** (герметичная граница). До SheetDoc ничего не разблокировано; SA2 — высокорисковый
+байт-в-ноль шаг, делать под полным корпус-контролем. Дальше SB1 (экспозиция), затем волна C (фичи).
+
 ---
 
 ## Сводка приоритетов
