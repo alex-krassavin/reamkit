@@ -45,7 +45,13 @@ a read↔write loop; embedded charts are the one piece not yet written.
 **SpreadsheetML (§18)**
 - Grids, shared strings, number formats and dates (incl. the 1904 date system).
 - The print model — gridline suppression, print area, fit-to-page scaling, repeated
-  print titles, manual page breaks, horizontal/vertical centering.
+  print titles, manual page breaks, horizontal/vertical centering, and **column-band
+  pagination**: a sheet wider than the page (and not fit-to-width) splits across
+  pages, all rows of the left columns first, then the next band ("down, then over"),
+  honouring manual column breaks — instead of being squeezed onto one page width.
+- **Frozen panes** round-trip through the writer and become sticky header rows /
+  columns in HTML output. They do not affect PDF — in Excel freezing is a view
+  setting that does not print (the printed repeat is the print titles above).
 - **Conditional formatting** — `cellIs` (compare-to-constant highlights),
   `colorScale` (2/3-stop gradients), `dataBar` (in-cell bars, with a zero axis
   so negative values run the other way) and `iconSet` — traffic lights, arrows,

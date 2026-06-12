@@ -597,6 +597,25 @@ function emitTable(out: Array<string>, table: Table, ctx: EmitCtx): void {
     });
   });
 
+  // Sticky-pane offsets for a frozen worksheet view (E-SHEET SE3). Left offsets
+  // are exact (cumulative grid column widths); top offsets sum each row's height,
+  // falling back to Excel's ~15pt default for rows without an explicit one.
+  const frozen = table.properties.frozen;
+  const leftOffsets: Array<number> = [];
+  const topOffsets: Array<number> = [];
+  if (frozen) {
+    let left = 0;
+    for (const w of table.grid) {
+      leftOffsets.push(left);
+      left += w;
+    }
+    let top = 0;
+    for (const row of table.rows) {
+      topOffsets.push(top);
+      top += row.properties.height ?? 15;
+    }
+  }
+
   for (let ri = 0; ri < table.rows.length; ri++) {
     const row = table.rows[ri]!;
     out.push('<tr>');
@@ -605,15 +624,17 @@ function emitTable(out: Array<string>, table: Table, ctx: EmitCtx): void {
       const merge = cell.properties.merge;
       // Continuation cells are covered by the start cell's rowspan.
       if (merge === 'middle' || merge === 'end') continue;
-      const rowSpan =
-        merge === 'start' ? mergeRowSpan(table, colStarts, ri, colStarts[ri]![ci]!) : 1;
+      const cs = colStarts[ri]![ci]!;
+      const rowSpan = merge === 'start' ? mergeRowSpan(table, colStarts, ri, cs) : 1;
       emitCell(out, cell, table, ctx, {
         isHeader: row.properties.isHeader === true,
         firstRow: ri === 0,
         lastRow: ri === table.rows.length - 1,
-        firstCol: colStarts[ri]![ci]! === 0,
-        lastCol: colStarts[ri]![ci]! + (cell.properties.colSpan ?? 1) >= table.grid.length,
+        firstCol: cs === 0,
+        lastCol: cs + (cell.properties.colSpan ?? 1) >= table.grid.length,
         rowSpan,
+        ...(frozen && ri < frozen.rows ? { stickyTop: topOffsets[ri]! } : {}),
+        ...(frozen && cs < frozen.cols ? { stickyLeft: leftOffsets[cs]! } : {}),
       });
     }
     out.push('</tr>');
@@ -647,6 +668,10 @@ interface CellPos {
   readonly firstCol: boolean;
   readonly lastCol: boolean;
   readonly rowSpan: number;
+  // Sticky-pane offsets (pt) for a frozen-pane sheet (E-SHEET SE3): present when
+  // this cell sits in a frozen top row / left column. undefined ⇒ scrolls.
+  readonly stickyTop?: number;
+  readonly stickyLeft?: number;
 }
 
 function emitCell(
@@ -695,6 +720,24 @@ function emitCell(
   const padBottom = margins?.bottom ?? 0;
   const padLeft = margins?.left ?? 5.4;
   css.push(`padding:${fmt(padTop)}pt ${fmt(padRight)}pt ${fmt(padBottom)}pt ${fmt(padLeft)}pt`);
+
+  // Frozen-pane stickiness (E-SHEET SE3): pin a frozen-row / frozen-column cell
+  // while the rest of the sheet scrolls. A corner cell (both) sits above a
+  // row-only or column-only sticky cell; all need an opaque background so the
+  // scrolled content does not show through.
+  if (pos.stickyTop !== undefined || pos.stickyLeft !== undefined) {
+    css.push('position:sticky');
+    if (pos.stickyTop !== undefined) css.push(`top:${fmt(pos.stickyTop)}pt`);
+    if (pos.stickyLeft !== undefined) css.push(`left:${fmt(pos.stickyLeft)}pt`);
+    const z =
+      pos.stickyTop !== undefined && pos.stickyLeft !== undefined
+        ? 3
+        : pos.stickyTop !== undefined
+          ? 2
+          : 1;
+    css.push(`z-index:${z}`);
+    if (!cell.properties.shading) css.push('background-color:#fff');
+  }
 
   out.push(`<${tag}${attrs.length > 0 ? ` ${attrs.join(' ')}` : ''} style="${css.join(';')}">`);
   // Conditional-format icon (E-SHEET SC1c): an inline glyph before the value.

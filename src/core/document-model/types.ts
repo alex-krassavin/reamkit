@@ -500,6 +500,10 @@ export interface TableProperties {
   // ECMA-376 §17.4.27 (w:jc) / xlsx <printOptions horizontalCentered>. Centers
   // or right-aligns a table narrower than the content width; absent ⇒ left.
   readonly alignment?: 'left' | 'center' | 'right';
+  // A sticky-pane hint from a frozen worksheet view (E-SHEET SE3): the first
+  // `rows` rows / `cols` columns stay pinned while the rest scrolls. Consumed
+  // only by the HTML writer (an interactive target); PDF/SVG ignore it.
+  readonly frozen?: { readonly rows: number; readonly cols: number };
 }
 
 export interface TableCell {

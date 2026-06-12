@@ -610,8 +610,14 @@ export function worksheetToBody(
     if (bands.length > 1) return bandedTables(rows, columnWidths, bands, tableProperties);
   }
 
+  // A frozen pane becomes a sticky-pane hint for the HTML writer (E-SHEET SE3).
+  // Only on the single-table path — sticky across column bands is meaningless.
+  const frozen =
+    worksheet.pane && (worksheet.pane.frozenRows > 0 || worksheet.pane.frozenCols > 0)
+      ? { rows: worksheet.pane.frozenRows, cols: worksheet.pane.frozenCols }
+      : undefined;
   const table: Table = {
-    properties: tableProperties,
+    properties: frozen ? { ...tableProperties, frozen } : tableProperties,
     grid: columnWidths.map((w) => twipsToPt(w)),
     rows,
   };
