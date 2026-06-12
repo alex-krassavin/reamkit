@@ -82,6 +82,8 @@ export interface XlsxSheetSpec {
   readonly fitToPage?: boolean;
   readonly rowBreaks?: ReadonlyArray<number>;
   readonly colBreaks?: ReadonlyArray<number>;
+  /** <sheetView><pane state="frozen"> — frozen leading rows / columns. */
+  readonly freeze?: { readonly rows?: number; readonly cols?: number };
   /** Raw <conditionalFormatting> markup injected into the worksheet. */
   readonly conditionalFormattingXml?: string;
   /** Raw <extLst> markup injected at the end of the worksheet (x14 sparklines). */
@@ -105,6 +107,7 @@ export interface XlsxBuilderOptions {
   readonly fitToPage?: boolean;
   readonly rowBreaks?: ReadonlyArray<number>;
   readonly colBreaks?: ReadonlyArray<number>;
+  readonly freeze?: { readonly rows?: number; readonly cols?: number };
   readonly conditionalFormattingXml?: string;
   readonly extLstXml?: string;
   readonly date1904?: boolean;
@@ -183,6 +186,7 @@ export function buildXlsx(
             ...(options.fitToPage !== undefined ? { fitToPage: options.fitToPage } : {}),
             ...(options.rowBreaks ? { rowBreaks: options.rowBreaks } : {}),
             ...(options.colBreaks ? { colBreaks: options.colBreaks } : {}),
+            ...(options.freeze ? { freeze: options.freeze } : {}),
             ...(options.conditionalFormattingXml
               ? { conditionalFormattingXml: options.conditionalFormattingXml }
               : {}),
@@ -305,9 +309,20 @@ export function buildXlsx(
           sheet.colBreaks.map((id) => `<brk id="${id}" max="1048575" man="1"/>`).join('') +
           '</colBreaks>'
         : '';
+    const freezeCols = sheet.freeze?.cols ?? 0;
+    const freezeRows = sheet.freeze?.rows ?? 0;
+    const sheetViewsXml =
+      freezeCols > 0 || freezeRows > 0
+        ? '<sheetViews><sheetView workbookViewId="0"><pane' +
+          (freezeCols > 0 ? ` xSplit="${freezeCols}"` : '') +
+          (freezeRows > 0 ? ` ySplit="${freezeRows}"` : '') +
+          ` state="frozen"/>` +
+          '</sheetView></sheetViews>'
+        : '';
     const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   ${sheetPrXml}
+  ${sheetViewsXml}
   ${colsXml}
   <sheetData>
 ${sheetRows.join('\n')}

@@ -23,6 +23,7 @@ import type {
   ExcelTable,
   ParsedSparkline,
   ParsedWorksheet,
+  SheetPane,
   WorksheetCell,
   XlsxBorder,
   XlsxBorderEdge,
@@ -260,6 +261,7 @@ function worksheetXml(grid: ParsedWorksheet, tableRelIds: ReadonlyArray<string> 
     `<worksheet xmlns="${MAIN_NS}" xmlns:r="${R_NS}">` +
     (grid.fitToPage ? '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>' : '') +
     dimension +
+    sheetViewsXml(grid.pane) +
     colsXml +
     `<sheetData>${rowsXml}</sheetData>` +
     mergesXml +
@@ -277,6 +279,22 @@ function worksheetXml(grid: ParsedWorksheet, tableRelIds: ReadonlyArray<string> 
     sparklineExtXml(grid.sparklines) +
     '</worksheet>'
   );
+}
+
+// §18.3.1.66 <sheetViews><sheetView><pane> — re-emit a frozen pane so the freeze
+// survives a round-trip. The reader reads only xSplit/ySplit/state; topLeftCell
+// and activePane are written for Excel's benefit but ignored on re-read.
+function sheetViewsXml(pane: SheetPane | undefined): string {
+  if (!pane || (pane.frozenRows <= 0 && pane.frozenCols <= 0)) return '';
+  const { frozenRows, frozenCols } = pane;
+  const topLeftCell = cellRef(frozenRows, frozenCols);
+  const activePane =
+    frozenRows > 0 && frozenCols > 0 ? 'bottomRight' : frozenRows > 0 ? 'bottomLeft' : 'topRight';
+  const attrs =
+    (frozenCols > 0 ? ` xSplit="${frozenCols}"` : '') +
+    (frozenRows > 0 ? ` ySplit="${frozenRows}"` : '') +
+    ` topLeftCell="${topLeftCell}" activePane="${activePane}" state="frozen"`;
+  return `<sheetViews><sheetView workbookViewId="0"><pane${attrs}/></sheetView></sheetViews>`;
 }
 
 // §18.5.1.2 xl/tables/tableN.xml. The reader keeps no column names, so generic

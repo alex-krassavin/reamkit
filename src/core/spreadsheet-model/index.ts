@@ -32,4 +32,5 @@ export type {
   SparklineKind,
   ParsedSparkline,
   ExcelTable,
+  SheetPane,
 } from '@/core/spreadsheet-model/types';
