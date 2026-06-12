@@ -3,6 +3,27 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.4.0
+
+### Added
+
+- **docx output (`convert('docx')`)** — Ream now writes WordprocessingML as
+  well as reading it. The parsed document re-serializes to a valid `.docx`:
+  runs and paragraphs with their resolved formatting, page breaks, numbered
+  lists, hyperlinks and bookmarks, tables (grid spans, borders, shading,
+  nesting), images of every embedded format, DrawingML shapes (preset and
+  custom geometry, fill, line, text), headers and footers, and multi-section
+  page geometry. Use it to normalize, sanitize or edit a document in the
+  browser and save it back, or for a docx → docx round-trip. The round-trip is
+  semantic rather than byte-exact (direct formatting in place of named styles);
+  across a 1100-document corpus every file re-writes without failure, 1099 of
+  them to a full content identity. Footnotes, charts and OfficeMath are
+  reported as losses, not yet written.
+- **Legacy VML images now render** — the reader recovers pictures stored the
+  old way (`<w:pict>` / `<w:object>` with `<v:imagedata>`): ActiveX and OLE
+  object previews, and images from documents last saved by an older Word. They
+  now appear in every output — PDF, SVG, HTML and docx.
+
 ## 1.3.0
 
 ### Added

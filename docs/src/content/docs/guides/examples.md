@@ -19,6 +19,25 @@ const doc = Ream.parse(bytes);
 const pdf = await doc.convert('pdf', { fonts });
 const svg = await doc.convert('svg', { fonts }); // page-stack preview, no PDF involved
 const html = await doc.convert('html');          // flowed HTML — no fonts, zero I/O
+const docx = await doc.convert('docx');          // WordprocessingML back out — no fonts, no layout
+```
+
+## docx → docx: normalize, sanitize, edit
+
+`convert('docx')` writes the parsed document back to a valid `.docx`. The
+round-trip is **semantic, not byte-exact** — the writer emits the resolved
+formatting as direct properties rather than named styles — so use it to
+normalize, sanitize or programmatically edit a document in the browser, not to
+preserve the original markup verbatim. Images, tables, lists, links, bookmarks,
+shapes, headers/footers and multi-section geometry round-trip; footnotes, charts
+and OfficeMath are reported as losses (see [strict mode](#strict-mode-compliance-flows)).
+
+```ts
+import { Ream } from 'reamkit';
+
+const doc = Ream.parse(bytes); // a .docx (xlsx has no docx writer)
+const out = await doc.convert('docx');
+// `out` is a fresh, valid .docx — hand it to a download, an upload, or re-parse it.
 ```
 
 ## Browser: file input → PDF preview

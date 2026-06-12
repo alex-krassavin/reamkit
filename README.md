@@ -34,6 +34,7 @@ const doc = Ream.parse(bytes);            // docx or xlsx — sniffed
 const pdf = await doc.convert('pdf');     // async — fetches a font if needed
 const svg = await doc.convert('svg');     // same parse, different target
 const html = await doc.convert('html');   // flowed HTML — needs no fonts at all
+const docx = await doc.convert('docx');   // write WordprocessingML back out
 
 // Hand the bytes to the browser: preview, download, upload, …
 const url = URL.createObjectURL(new Blob([pdf], { type: 'application/pdf' }));
@@ -150,10 +151,11 @@ automatically from the document's `docProps/core.xml`), `attachments`
 
 ### Lower-level APIs
 
-- `docxReader` / `xlsxReader`, `svgWriter`, `htmlWriter` — the `@experimental` reader/writer
-  interfaces of the interlayer, for building custom pipelines (and keeping
-  unused formats out of your bundle); `layoutStyledDocument` produces the
-  frozen page model (`PageItem` pages in a top-left `Pt` frame) they consume.
+- `docxReader` / `xlsxReader`, `svgWriter`, `htmlWriter`, `docxWriter` — the `@experimental`
+  reader/writer interfaces of the interlayer, for building custom pipelines (and
+  keeping unused formats out of your bundle); `layoutStyledDocument` produces the
+  frozen page model (`PageItem` pages in a top-left `Pt` frame) the page-based
+  writers consume (`docxWriter` works from the flow model, before layout).
 - `renderStyledPdf` drives the layout engine directly; the typed document
   model is on the `reamkit/document-model` subpath.
 
@@ -170,7 +172,8 @@ Liang hyphenation, OpenType ligatures/kerning + Arabic cursive joining,
 BiDi (UAX #9), hyperlinks (PDF link annotations + HTML anchors,
 scheme-allowlisted), tagged PDF, PDF/A-1/2/3 (a/b/u), PDF/UA-1, AES-256
 encryption, digital signatures (PKCS#7/ECDSA/PAdES/RFC 3161), SVG page
-preview, flowed HTML export. Reads OOXML Transitional and Strict.
+preview, flowed HTML export, and **docx output** (write WordprocessingML back
+out, incl. docx → docx). Reads OOXML Transitional and Strict.
 
 See `handoff.md` for the full feature matrix and known limitations.
 
