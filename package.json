@@ -1,7 +1,7 @@
 {
   "name": "reamkit",
-  "version": "1.3.0",
-  "description": "Ream — DOCX/XLSX to PDF (and SVG), built from scratch on the ECMA-376 and ISO 32000 specifications. Parse once, convert anywhere.",
+  "version": "1.4.0",
+  "description": "Ream — DOCX/XLSX to PDF, SVG, HTML and back to DOCX, built from scratch on the ECMA-376 and ISO 32000 specifications. Parse once, convert anywhere.",
   "license": "MIT",
   "author": "Alex Krassavin <info@reamkit.dev>",
   "repository": {
@@ -66,7 +66,8 @@
     "corpus:build": "tsx scripts/corpus/build-corpus.ts",
     "corpus:fetch": "tsx scripts/corpus/fetch-corpus.ts",
     "corpus:sandbox:build": "docker build -t docgen-losandbox:latest scripts/corpus/sandbox/",
-    "corpus": "tsx scripts/corpus/run.ts"
+    "corpus": "tsx scripts/corpus/run.ts",
+    "corpus:roundtrip": "tsx scripts/corpus/roundtrip.ts"
   },
   "dependencies": {
     "fast-xml-parser": "5.7.0",

@@ -9,6 +9,12 @@ doesn't yet.
 
 ## Implemented
 
+**Output** — `convert('pdf')`, `convert('svg')` (a page-stack preview),
+`convert('html')` (flowed, needs no fonts) and `convert('docx')` (write
+WordprocessingML back out — for normalization, sanitization or in-browser
+editing, and as a docx → docx round-trip). The docx round-trip is semantic, not
+byte-exact; footnotes, charts and OfficeMath are not yet written.
+
 **WordprocessingML (§17)**
 - Text, runs and the full style cascade (`docDefaults` → styles → direct formatting).
 - Tables — auto / fixed layout, §17.4 border-conflict resolution, cell shading,
@@ -22,10 +28,12 @@ doesn't yet.
 - **Fields** — `PAGE` / `NUMPAGES` render real page numbers in headers and footers.
 - **Footnotes and endnotes** — notes at the bottom of the referencing page behind
   Word's separator rule; endnotes after the body.
-- Inline and floating images (PNG / JPEG / JPEG2000); floating drawings
-  (`wp:anchor`) render outside the text flow — wrap-none (incl. `behindDoc`)
-  for watermarks/stamps/text boxes, and side wrapping (`square`/`tight`/
-  `through`) where the body text flows around the exclusion area.
+- Inline and floating images (PNG / JPEG / JPEG2000), including **legacy VML
+  pictures** (`<w:pict>` / `<w:object>` — ActiveX and OLE-object previews,
+  images from older Word); floating drawings (`wp:anchor`) render outside the
+  text flow — wrap-none (incl. `behindDoc`) for watermarks/stamps/text boxes,
+  and side wrapping (`square`/`tight`/`through`) where the body text flows
+  around the exclusion area.
 - Tracked changes (`w:ins` / `w:del`).
 - Reads both **Transitional and Strict** (ISO 29500) packages; block-level
   content controls (`w:sdt`) flow through.

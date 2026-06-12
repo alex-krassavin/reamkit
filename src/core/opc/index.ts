@@ -8,3 +8,5 @@ export {
 export { parseCoreProperties } from '@/core/opc/core-properties';
 export type { CoreProperties } from '@/core/opc/core-properties';
 export { isOoxmlRel } from '@/core/opc/relationship-types';
+export { buildOpcPackage, relsPathFor } from '@/core/opc/opc-writer';
+export type { OpcPart, OpcPartRelationships, OpcWriteOptions } from '@/core/opc/opc-writer';

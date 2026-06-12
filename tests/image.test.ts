@@ -147,6 +147,80 @@ describe('Drawing parser', () => {
     expect(parsed[0]!.image.width).toBe(emuToPt(914400));
     expect(parsed[0]!.image.height).toBe(emuToPt(685800));
   });
+
+  it('produces an image from a legacy VML picture (w:pict / v:imagedata)', () => {
+    // §14 VML: <v:imagedata r:id> binds the media; the @style box gives the
+    // size in CSS units (pt here). The reader recovers it the same as a blip.
+    const body =
+      '<w:p><w:r><w:pict xmlns:v="urn:schemas-microsoft-com:vml">' +
+      '<v:shape style="width:72pt;height:54pt" alt="a legacy picture">' +
+      '<v:imagedata r:id="rId20"/></v:shape></w:pict></w:r></w:p>';
+    const pkg = OpcPackage.open(buildDocxFromBody(body));
+    const store = new ResourceStore();
+    const expectedId = store.put(new Uint8Array([4, 5, 6]));
+    const parsed = parseDocument(pkg.getMainDocument().data, {
+      resolveColor: defaultColorResolver,
+      resolveImage: (relId) => (relId === 'rId20' ? expectedId : undefined),
+    });
+    expect(parsed).toHaveLength(1);
+    if (parsed[0]!.kind !== 'image') throw new Error('expected an image block');
+    expect(parsed[0]!.image.resource).toBe(expectedId);
+    expect(parsed[0]!.image.width).toBe(72); // 72pt verbatim
+    expect(parsed[0]!.image.height).toBe(54);
+    expect(parsed[0]!.image.altText).toBe('a legacy picture');
+  });
+
+  it('collapses a lone image to a block even when wrapped in tracked-change w:ins', () => {
+    // The writer flattens tracked changes, so a re-read sees a bare <w:drawing>
+    // and collapses the paragraph to an image block. To keep the round-trip
+    // symmetric the FIRST read must collapse the same way even though the
+    // drawing hides inside <w:ins><w:r>…</w:r></w:ins>.
+    const body = `<w:p><w:ins w:id="1" w:author="A" w:date="2020-01-01T00:00:00Z">${drawingXml('rId20', 914400, 685800)}</w:ins></w:p>`;
+    const pkg = OpcPackage.open(buildDocxFromBody(body));
+    const store = new ResourceStore();
+    const expectedId = store.put(new Uint8Array([7, 8, 9]));
+    const parsed = parseDocument(pkg.getMainDocument().data, {
+      resolveColor: defaultColorResolver,
+      resolveImage: (relId) => (relId === 'rId20' ? expectedId : undefined),
+    });
+    expect(parsed).toHaveLength(1);
+    if (parsed[0]!.kind !== 'image') throw new Error('expected an image block');
+    expect(parsed[0]!.image.resource).toBe(expectedId);
+  });
+
+  it('does NOT collapse an image wrapped in a hyperlink (the link must survive)', () => {
+    // A hyperlinked image stays inline so the writer can keep its href; the
+    // paragraph must remain a paragraph, not collapse to an image block.
+    const body =
+      '<w:p><w:hyperlink r:id="rIdLink">' +
+      `${drawingXml('rId20', 914400, 685800)}</w:hyperlink></w:p>`;
+    const pkg = OpcPackage.open(buildDocxFromBody(body));
+    const store = new ResourceStore();
+    const expectedId = store.put(new Uint8Array([1, 1, 1]));
+    const parsed = parseDocument(pkg.getMainDocument().data, {
+      resolveColor: defaultColorResolver,
+      resolveImage: (relId) => (relId === 'rId20' ? expectedId : undefined),
+      resolveHyperlink: (relId) => (relId === 'rIdLink' ? 'https://example.com' : undefined),
+    });
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]!.kind).toBe('paragraph');
+  });
+
+  it('skips a dangling VML picture whose media part is absent', () => {
+    // A <v:imagedata r:id> pointing at media stripped from the package (some
+    // corpus files do this) resolves to nothing — the reader must NOT emit a
+    // phantom image; the paragraph stays plain so the round-trip is symmetric.
+    const body =
+      '<w:p><w:r><w:pict xmlns:v="urn:schemas-microsoft-com:vml">' +
+      '<v:shape style="width:72pt;height:54pt"><v:imagedata r:id="rIdMissing"/>' +
+      '</v:shape></w:pict></w:r></w:p>';
+    const pkg = OpcPackage.open(buildDocxFromBody(body));
+    const parsed = parseDocument(pkg.getMainDocument().data, {
+      resolveColor: defaultColorResolver,
+      resolveImage: () => undefined, // nothing resolves
+    });
+    expect(parsed.some((el) => el.kind === 'image')).toBe(false);
+  });
 });
 
 describe('Image rendering end-to-end', () => {

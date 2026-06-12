@@ -17,6 +17,7 @@ import { ConversionLossError, FEATURES } from '@/core/ir';
 import { FontRegistry } from '@/core/font';
 import { chainProviders } from '@/core/fonts/provider';
 import { flowRenderOptions } from '@/core/converter/project';
+import { writeDocx } from '@/word/docx-writer';
 import { writeHtml } from '@/html/html-writer';
 import { layoutStyledDocument } from '@/layout/styled-layout';
 import { writeSvg } from '@/svg/svg-writer';
@@ -26,8 +27,8 @@ import { docxReader } from '@/word/docx-reader';
 import { xlsxReader } from '@/excel/xlsx-reader';
 
 export interface ConvertOptions extends ConvertDocxOptions {
-  /** Target: 'pdf' (default), 'svg' (page-stack preview) or 'html' (flowed). */
-  readonly to?: 'pdf' | 'svg' | 'html';
+  /** Target: 'pdf' (default), 'svg' (page-stack preview), 'html' or 'docx' (flowed). */
+  readonly to?: 'pdf' | 'svg' | 'html' | 'docx';
   /**
    * Strict mode (handoff v1 §5): throw ConversionLossError on the first
    * recorded loss instead of returning it in the report.
@@ -80,6 +81,16 @@ export function createConverter(opts: CreateConverterOptions = {}): Converter {
       throw new Error('Unrecognized input format (no registered reader sniffs these bytes)');
     }
     const losses: Array<Loss> = [];
+    if (to === 'docx') {
+      // FlowDoc → docx writer directly: re-serialization, zero I/O.
+      const { doc: flow, losses: readLosses } = reader.read(bytes);
+      losses.push(...readLosses);
+      const out = writeDocx(flow);
+      losses.push(...out.losses);
+      if (strict && losses.length > 0) throw new ConversionLossError(losses[0]!);
+      return { bytes: out.bytes, losses };
+    }
+
     if (to === 'html') {
       // FlowDoc → html writer directly: no layout and no fonts — zero I/O.
       const { doc: flow, losses: readLosses } = reader.read(bytes);

@@ -904,9 +904,41 @@ PR (деплой сайта).
 
 **Незакрытые хвосты (следующий заход):** lo-docx-import (160) и lo-xlsx (293) ещё ни разу не
 прогонялись — дешёвый источник следующей работы; из LO-⚠️ торчат LinkedTextBoxes (линкованные
-текстбоксы, 0/3767 chars) и VML-наследие. Крупное: docx-writer, PDF-reader, SheetDoc. По floats —
-v1-аппроксимации (смешанные размеры строк в обтекании, таблицы/шейпы рядом с float не сужаются,
-одна сторона на строку).
+текстбоксы, 0/3767 chars) и VML-наследие. По floats — v1-аппроксимации (смешанные размеры строк
+в обтекании, таблицы/шейпы рядом с float не сужаются, одна сторона на строку).
+
+**Крупные эпики (docx-writer, PDF-reader, SheetDoc) — план в [epics.md](epics.md).** Рекомендация:
+E-DOCX первым (среднее усилие, низкий byteRisk, замыкает bytes-in/bytes-out + roundtrip-гейт;
+главное решение — лосси-IR, вариант A = денормализованный writer); E-PDF (очень большое, новая
+COS+реконструкция подсистема) и E-SHEET (внутренний рефактор, byteRisk высокий, без user-фичи) —
+по запросу. Декомпозиция, точки привязки в коде и таблица приоритетов — в файле.
+
+**E-DOCX docx-writer — D1–D6 ✅ (текстовый writer покрывает реальный документ).** Пятый адаптер
+FlowDoc→.docx, обратный reader'у, zero-I/O как HTML. D1 детерминированный OPC-writer в core
+(`opc-writer.ts`, обратный `OpcPackage.open`, фикс. mtime). D2 каркас + таргет `'docx'`. D3
+run/paragraph форматирование как дельта от резолвленных дефолтов. D3b numbering (numPr +
+numbering.xml, стрип listMarker-ранов). D3c гиперссылки/закладки. D4 таблицы (gridSpan/vMerge/
+границы/шейдинг/вложенность). D5a картинки (media-парты + drawing, content-addressed дедуп).
+D5b колонтитулы + секции (header/footer-парты, w:cols/titlePg) с **per-part rel-скопингом**
+(WriteState глобальный media + PartScope per-part rId — урок C5 на стороне записи). D6
+roundtrip-гейт `scripts/corpus/roundtrip.ts` (`npm run corpus:roundtrip`, CORPUS_DIR=...):
+readDocx→writeDocx→readDocx + сверка IR-сигнатуры (текст body+таблицы+HF + счётчики блоков,
+HF-порядко-независимо). **Результат: 940 корпус-доков (POI 110 + LO 830 readable), НОЛЬ
+writer-падений, 96% полная IR-идентичность.** Вход reader отвергает (encrypted/zip-bomb) — не
+writer. Контракт варианта A: roundtrip семантический (IR-эквивалентность), не байтовый.
+Документированные v1-пробелы (вскрыты гейтом, в шапке docx-writer.ts): многосекционные доки
+(пишется только flow.sections[0] + её HF — следующая фича: per-section sectPr в pPr), форматы
+картинок GIF/EMF/WMF (поддержаны PNG/JPEG/JP2), сноски/чарты/шейпы/math → лоссы. 20 тестов
+docx-writer (+ композитный «всё вместе»), 549 всего.
+
+**E-DOCX D7 — многосекционность (✅).** §17.6.17: per-section sectPr — mid-doc break встраивается
+в pPr ЗАКРЫВАЮЩЕГО параграфа секции (body[endIndex-1] — носитель, который reader сохраняет;
+pPrBody без обёртки + sectPr), финальная секция — body-level child. Каждая секция эмитит свои HF
+(дедуп общих партов через hfCache: relationshipId→docScope rId). Защитно: если секция закрылась
+не на параграфе — синтетический пустой параграф-носитель. Корпус-roundtrip после D7: POI ✅103
+(Headers.docx→identical), **LO ✅795→812 (+17), ⚠️35→18 (−17)** — все multi-section доки
+замкнулись; ноль writer-падений, POI 94% / LO 98% IR-идентичность. Многосекционность снята из
+v1-пробелов. 550 тестов. **E-DOCX текстовый writer завершён (D1–D7).**
 
 **P2 — Шифрование PDF (✅).** ISO 32000-2 §7.6, ТОЛЬКО V5/R6 (AES-256): легаси-хендлеры требуют
 MD5/RC4 — их в WebCrypto нет и руками не пишем. pdf/encryption: Algorithm 2.B hash-hardening

@@ -20,7 +20,7 @@ import type { ColorMod, ColorResolver } from '@/core/drawingml/colors';
 import type { PoNode } from '@/core/po-helpers';
 import type { Pt } from '@/core/ir';
 import { resolveColorNode } from '@/core/drawingml/colors';
-import { emuToPt } from '@/core/ir';
+import { emuToPt, pt } from '@/core/ir';
 import {
   poAttr,
   poChildren,
@@ -214,6 +214,59 @@ export function parseDrawing(
     };
   }
   return null;
+}
+
+// ISO/IEC 29500-1 §14 (VML, transitional) — a legacy <w:pict>/<w:object>
+// picture. Modern files use <w:drawing> (parsed above); VML still shows up in
+// headers, OLE-object previews (@o:ole), and documents last saved by older
+// Word. A VML shape carries an <v:imagedata r:id> pointing at the media part,
+// and a CSS-like @style ("width:75.6pt;height:49.2pt") gives its box. We read
+// just enough to recover the picture: the relationship id, the size, the @alt.
+export function parseVmlPicture(node: PoNode): DrawingContent | null {
+  const imagedata = poFindDescendant(node, 'v:imagedata');
+  if (!imagedata) return null;
+  // @r:id binds the embedded picture. An external @o:href/@r:href link we do
+  // not embed, and an empty placeholder frame (a <v:shape> with no imagedata),
+  // both leave this undefined and are skipped.
+  const imageId = poAttr(imagedata, 'id');
+  if (imageId === undefined) return null;
+  // The owning shape holds the @style box and @alt text — v:shape for pictures,
+  // or a drawn primitive (v:rect/v:oval) when an image fills a shape.
+  const shape =
+    poFindDescendant(node, 'v:shape') ??
+    poFindDescendant(node, 'v:rect') ??
+    poFindDescendant(node, 'v:oval');
+  const width = vmlStyleLength(shape, 'width');
+  const height = vmlStyleLength(shape, 'height');
+  if (width === undefined || height === undefined) return null;
+  const altText =
+    (shape ? poAttr(shape, 'alt') : undefined)?.trim() ||
+    poAttr(imagedata, 'title')?.trim() || // o:title
+    undefined;
+  return { kind: 'image', imageId, width, height, ...(altText ? { altText } : {}) };
+}
+
+// A VML @style length, normalised to points. VML inherits CSS units; Word
+// emits pt, but in/px/cm/mm/pc all occur in the wild, and a bare number is a
+// pixel count (the VML default).
+const VML_UNIT_TO_PT: Readonly<Record<string, number>> = {
+  pt: 1,
+  in: 72,
+  px: 0.75,
+  cm: 72 / 2.54,
+  mm: 72 / 25.4,
+  pc: 12,
+};
+function vmlStyleLength(shape: PoNode | undefined, prop: 'width' | 'height'): Pt | undefined {
+  const style = shape ? poAttr(shape, 'style') : undefined;
+  if (style === undefined) return undefined;
+  const m = new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*(-?[0-9.]+)(pt|in|px|cm|mm|pc)?`, 'i').exec(
+    style,
+  );
+  if (!m) return undefined;
+  const value = Number.parseFloat(m[1]!);
+  if (!Number.isFinite(value) || value <= 0) return undefined;
+  return pt(value * (VML_UNIT_TO_PT[(m[2] ?? 'px').toLowerCase()] ?? 1));
 }
 
 function parseWsp(
