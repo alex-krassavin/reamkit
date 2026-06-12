@@ -67,7 +67,8 @@
     "corpus:fetch": "tsx scripts/corpus/fetch-corpus.ts",
     "corpus:sandbox:build": "docker build -t docgen-losandbox:latest scripts/corpus/sandbox/",
     "corpus": "tsx scripts/corpus/run.ts",
-    "corpus:roundtrip": "tsx scripts/corpus/roundtrip.ts"
+    "corpus:roundtrip": "tsx scripts/corpus/roundtrip.ts",
+    "corpus:roundtrip:xlsx": "tsx scripts/corpus/xlsx-roundtrip.ts"
   },
   "dependencies": {
     "fast-xml-parser": "5.7.0",
