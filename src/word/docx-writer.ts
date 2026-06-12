@@ -398,20 +398,26 @@ function emitBlock(
       scope,
     );
     if (drawing) {
-      const pPr = pPrXml(el.image.paragraphProperties as ResolvedParagraphProperties);
-      out.push(`<w:p>${pPr}<w:r>${drawing}</w:r></w:p>`);
+      // An image is emitted as a paragraph, so a closing section break rides
+      // its pPr (like a text paragraph) rather than a separate carrier — which
+      // would otherwise re-read as an extra empty paragraph.
+      out.push(
+        `<w:p>${pPrWithSect(el.image.paragraphProperties, closingSectPr)}<w:r>${drawing}</w:r></w:p>`,
+      );
     } else {
       losses.push({ severity: 'dropped', feature: FEATURES.images, detail: 'image bytes missing' });
+      if (closingSectPr) out.push(`<w:p><w:pPr>${closingSectPr}</w:pPr></w:p>`);
     }
-    if (closingSectPr) out.push(`<w:p><w:pPr>${closingSectPr}</w:pPr></w:p>`);
     return;
   }
   if (el.kind === 'shape') {
     // §20.4 — a DrawingML shape as its own paragraph (the re-read collapses it
-    // back to a ShapeBlock, so no empty carrier paragraph is left behind).
-    const pPr = pPrXml(el.shape.paragraphProperties as ResolvedParagraphProperties);
-    out.push(`<w:p>${pPr}<w:r>${shapeDrawingXml(el.shape, losses, state, scope)}</w:r></w:p>`);
-    if (closingSectPr) out.push(`<w:p><w:pPr>${closingSectPr}</w:pPr></w:p>`);
+    // back to a ShapeBlock); a closing section break rides its pPr, no carrier.
+    const drawing = shapeDrawingXml(el.shape, losses, state, scope);
+    out.push(
+      `<w:p>${pPrWithSect(el.shape.paragraphProperties, closingSectPr)}<w:r>${drawing}</w:r></w:p>`,
+    );
+    return;
     return;
   }
   if (closingSectPr) out.push(`<w:p><w:pPr>${closingSectPr}</w:pPr></w:p>`);
@@ -856,6 +862,14 @@ function pPrBody(p: ResolvedParagraphProperties): string {
 
 function pPrXml(p: ResolvedParagraphProperties): string {
   const inner = pPrBody(p);
+  return inner !== '' ? `<w:pPr>${inner}</w:pPr>` : '';
+}
+
+// A pPr with an optional mid-document section break (§17.6.17) appended — for
+// block elements that emit as a paragraph (image/shape), so a closing sectPr
+// rides their own pPr instead of a separate carrier paragraph.
+function pPrWithSect(p: ParagraphProperties, closingSectPr?: string): string {
+  const inner = pPrBody(p as ResolvedParagraphProperties) + (closingSectPr ?? '');
   return inner !== '' ? `<w:pPr>${inner}</w:pPr>` : '';
 }
 
