@@ -76,6 +76,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
       : undefined;
   const conditionalFormats = parseConditionalFormatting(wsObj);
   const sparklines = parseSparklines(wsObj);
+  const tablePartRelIds = parseTableParts(wsObj);
   const printModel = {
     ...(pageMargins ? { pageMargins } : {}),
     ...(pageSetup ? { pageSetup } : {}),
@@ -86,6 +87,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
     ...(drawingRelId !== undefined ? { drawingRelId } : {}),
     ...(conditionalFormats.length > 0 ? { conditionalFormats } : {}),
     ...(sparklines.length > 0 ? { sparklines } : {}),
+    ...(tablePartRelIds.length > 0 ? { tablePartRelIds } : {}),
   };
   const sheetData = wsObj['sheetData'];
   if (!sheetData || typeof sheetData !== 'object') {
@@ -580,6 +582,21 @@ function asObjectNode(v: unknown): Record<string, unknown> | undefined {
   return v && typeof v === 'object' && !Array.isArray(v)
     ? (v as Record<string, unknown>)
     : undefined;
+}
+
+// §18.3.1.95 <tableParts><tablePart r:id="…"/> — the relationship ids of the
+// sheet's table parts (E-SHEET SC3). removeNSPrefix turns r:id into id; the
+// reader resolves each id to an xl/tables/tableN.xml part.
+function parseTableParts(ws: Record<string, unknown>): Array<string> {
+  const node = asObjectNode(ws['tableParts']);
+  if (!node) return [];
+  const out: Array<string> = [];
+  for (const tp of toArray(node['tablePart'])) {
+    const obj = asObjectNode(tp);
+    const rid = obj ? strAttr(obj, 'id') : undefined;
+    if (rid) out.push(rid);
+  }
+  return out;
 }
 
 function parseCell(c: unknown, fallbackRow: number, fallbackCol: number): WorksheetCell | null {

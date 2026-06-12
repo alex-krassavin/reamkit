@@ -31,4 +31,5 @@ export type {
   ConditionalFormat,
   SparklineKind,
   ParsedSparkline,
+  ExcelTable,
 } from '@/core/spreadsheet-model/types';

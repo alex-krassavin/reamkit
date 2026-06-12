@@ -10,6 +10,7 @@ export { parseWorksheet } from '@/excel/worksheet-parser';
 export type {
   CellType,
   ColumnWidth,
+  ExcelTable,
   MergedRange,
   ParsedWorksheet,
   RowHeight,

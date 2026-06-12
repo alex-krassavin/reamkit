@@ -32,6 +32,7 @@ import type {
 import type {
   CellRange,
   DefinedName,
+  ExcelTable,
   MergedRange,
   ParsedWorksheet,
   WorksheetCell,
@@ -428,6 +429,10 @@ export function worksheetToBody(
   // Empty when the sheet has no sparklines, so the cell loop stays unchanged.
   const sparklineByCell = buildSparklineLookup(worksheet);
 
+  // Excel tables (E-SHEET SC3): cell (absolute key) → banded/header fill. Empty
+  // when the sheet has no table parts. Applied below the cell's own fill and CF.
+  const tableShadingByCell = buildTableShadingLookup(worksheet);
+
   const rows: Array<TableRow> = [];
   for (let r = 0; r < rowCount; r++) {
     const absR = r + rowStart;
@@ -457,6 +462,9 @@ export function worksheetToBody(
       let runProps = cellRunProps(xf);
       const alignment = xf ? alignmentFromXf(xf) : undefined;
       let shading = xf ? shadingFromXf(xf, styles) : undefined;
+      // A table's banded/header fill sits below the cell's own fill (only used
+      // when the cell declares none) and below conditional formatting (E-SHEET SC3).
+      if (!shading) shading = tableShadingByCell.get(key(absR, absC));
       const borders = xf ? bordersFromXf(xf, styles) : undefined;
       let dataBar: CellDataBar | undefined;
       let icon: CellIcon | undefined;
@@ -792,6 +800,29 @@ function collectSeriesValues(cells: ReadonlyArray<WorksheetCell>, area: CellRang
   }
   inArea.sort((a, b) => a.row - b.row || a.col - b.col);
   return inArea.map((x) => x.v);
+}
+
+// E-SHEET SC3 — cell (absolute key) → table fill for header rows and banded data
+// rows. The header rows take the table's header colour; with showRowStripes, the
+// 2nd/4th/… data row takes the band colour (band1 stays unfilled, like Excel).
+// Iterating each table's resolved range is bounded by real table sizes.
+function buildTableShadingLookup(worksheet: ParsedWorksheet): Map<string, CellShading> {
+  const out = new Map<string, CellShading>();
+  for (const t of worksheet.tables ?? []) {
+    const { ref } = t;
+    const firstDataRow = ref.startRow + t.headerRowCount;
+    for (let r = ref.startRow; r <= ref.endRow; r++) {
+      let colorHex: string | undefined;
+      if (r < firstDataRow) {
+        colorHex = t.headerHex;
+      } else if (t.showRowStripes && t.bandHex) {
+        colorHex = (r - firstDataRow) % 2 === 1 ? t.bandHex : undefined;
+      }
+      if (!colorHex) continue;
+      for (let c = ref.startColumn; c <= ref.endColumn; c++) out.set(key(r, c), { colorHex });
+    }
+  }
+  return out;
 }
 
 // A cell "has content" (blocks overflow / counts toward the used range) when it

@@ -100,6 +100,30 @@ export interface ParsedWorksheet {
   readonly conditionalFormats?: ReadonlyArray<ConditionalFormat>;
   // x14 extension <sparklineGroups> in extLst — per-cell mini charts (E-SHEET SC2).
   readonly sparklines?: ReadonlyArray<ParsedSparkline>;
+  // §18.3.1.95 <tableParts> — relationship ids of the sheet's table parts. The
+  // pure-XML parser only lists the ids; the reader resolves them (E-SHEET SC3).
+  readonly tablePartRelIds?: ReadonlyArray<string>;
+  // Resolved table parts (banded styles, header rows) — filled by the reader.
+  readonly tables?: ReadonlyArray<ExcelTable>;
+}
+
+// ECMA-376 §18.5.1.2 <table> — a structured table over a cell range with a
+// banded style. The raw parse carries the range, header rows and style flags;
+// the reader resolves the named style to header / band fill colours against the
+// workbook theme (E-SHEET SC3).
+export interface ExcelTable {
+  readonly ref: MergedRange;
+  readonly name?: string;
+  readonly styleName?: string;
+  readonly headerRowCount: number;
+  readonly showRowStripes: boolean;
+  readonly showColumnStripes: boolean;
+  readonly showFirstColumn: boolean;
+  readonly showLastColumn: boolean;
+  readonly autoFilter: boolean;
+  // Resolved fills (6-hex) — the reader derives these from the style + theme.
+  readonly headerHex?: string;
+  readonly bandHex?: string;
 }
 
 // ECMA-376 Part 4 (x14 extension) — a sparkline: a mini chart drawn inside a

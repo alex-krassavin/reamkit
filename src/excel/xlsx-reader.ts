@@ -6,11 +6,11 @@
 // converter/facade.
 
 import type { Chart, DocumentInfo } from '@/core/document-model';
-import type { ColorResolver } from '@/core/drawingml/colors';
 import type { CoreProperties, Relationship } from '@/core/opc';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Sheet, SheetChartRef, SheetDoc } from '@/core/ir/sheet';
+import type { ExcelTable } from '@/core/spreadsheet-model';
 
 import { FEATURES, ResourceStore } from '@/core/ir';
 import { OpcPackage, isOoxmlRel, parseCoreProperties } from '@/core/opc';
@@ -26,6 +26,7 @@ import { parseChart, withChartColorStyle } from '@/core/drawingml/chart-parser';
 import { DEFAULT_THEME_PALETTE, makeColorResolver } from '@/core/drawingml/colors';
 import { parseTheme } from '@/core/drawingml/theme-parser';
 import { parseSheetDrawing } from '@/excel/sheet-drawing';
+import { parseTablePart } from '@/excel/table-parser';
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
 
 const WORKBOOK_PART = 'xl/workbook.xml';
@@ -58,7 +59,9 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
   // theme-backed resolver mirrors the docx reader's so schemeClr references in
   // charts resolve to the workbook's actual accents.
   const chartData = new Map<string, Chart>();
-  const resolveColor = buildXlsxColorResolver(pkg, workbookRels);
+  const palette = buildThemePalette(pkg, workbookRels);
+  const resolveColor = makeColorResolver(palette);
+  const accent1 = palette.get('accent1') ?? '4472C4';
 
   const sheetsOut: Array<Sheet> = [];
   for (let sheetIdx = 0; sheetIdx < sheets.length; sheetIdx++) {
@@ -95,7 +98,24 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
         }
       }
     }
-    sheetsOut.push({ name: sheet.name, grid: worksheet, ...(charts.length > 0 ? { charts } : {}) });
+    // §18.5: the sheet's table parts — resolve each relationship to its
+    // tableN.xml, parse it, and resolve its named style to fill colours against
+    // the workbook accent (E-SHEET SC3). The projection applies banded shading.
+    let tables: Array<ExcelTable> | undefined;
+    if (worksheet.tablePartRelIds && worksheet.tablePartRelIds.length > 0) {
+      const wsRels = pkg.getPartRelationships(resolved.path);
+      const resolvedTables: Array<ExcelTable> = [];
+      for (const rid of worksheet.tablePartRelIds) {
+        const rel = wsRels.find((r) => r.id === rid);
+        const part = rel ? pkg.resolveRelatedPart(resolved.path, rel) : undefined;
+        const parsed = part ? parseTablePart(part.data) : undefined;
+        if (parsed) resolvedTables.push(resolveTableStyle(parsed, accent1));
+      }
+      if (resolvedTables.length > 0) tables = resolvedTables;
+    }
+
+    const grid = tables ? { ...worksheet, tables } : worksheet;
+    sheetsOut.push({ name: sheet.name, grid, ...(charts.length > 0 ? { charts } : {}) });
   }
 
   const coreData = pkg.getPart(CORE_PROPS_PART);
@@ -115,12 +135,13 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
   };
 }
 
-// Theme palette for chart schemeClr resolution: the workbook's theme part
-// merged over the built-in Office defaults (the docx reader's pattern).
-function buildXlsxColorResolver(
+// Theme palette: the workbook's theme part merged over the built-in Office
+// defaults (the docx reader's pattern). Drives both chart schemeClr resolution
+// and the table-style accent (E-SHEET SC3).
+function buildThemePalette(
   pkg: OpcPackage,
   workbookRels: ReadonlyArray<Relationship>,
-): ColorResolver {
+): Map<string, string> {
   const palette = new Map(DEFAULT_THEME_PALETTE);
   for (const rel of workbookRels) {
     if (!isOoxmlRel(rel.type, 'theme')) continue;
@@ -129,7 +150,29 @@ function buildXlsxColorResolver(
     for (const [slot, hex] of parseTheme(resolved.data)) palette.set(slot, hex);
     break;
   }
-  return makeColorResolver(palette);
+  return palette;
+}
+
+// Resolve a table's named style to header / band fill colours. v1 maps every
+// built-in style (TableStyleLight/Medium/Dark N — the definitions live in
+// Excel, not the file) to the workbook's accent1: a 35%-lightened header and an
+// 80%-lightened band, both readable under black text. A style-less table is
+// left uncoloured. Faithful per-style accents + white header text follow.
+function resolveTableStyle(t: ExcelTable, accent1Hex: string): ExcelTable {
+  if (!t.styleName || /TableStyleNone/i.test(t.styleName)) return t;
+  return { ...t, headerHex: lighten(accent1Hex, 0.35), bandHex: lighten(accent1Hex, 0.8) };
+}
+
+// Lighten a 6-hex colour toward white by `amount` (0..1).
+function lighten(hex: string, amount: number): string {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex);
+  const n = m ? parseInt(m[1]!, 16) : 0x4472c4;
+  const ch = (shift: number): number => {
+    const c = (n >> shift) & 0xff;
+    return Math.round(c + (255 - c) * amount);
+  };
+  const hx = (c: number): string => c.toString(16).padStart(2, '0').toUpperCase();
+  return `${hx(ch(16))}${hx(ch(8))}${hx(ch(0))}`;
 }
 
 export const xlsxReader: DocumentReader<SheetDoc> = {
