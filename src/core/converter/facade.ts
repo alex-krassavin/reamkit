@@ -20,6 +20,7 @@ import { FontRegistry } from '@/core/font';
 import { chainProviders } from '@/core/fonts/provider';
 import { flowRenderOptions } from '@/core/converter/project';
 import { writeDocx } from '@/word/docx-writer';
+import { writeXlsx } from '@/excel/xlsx-writer';
 import { writeHtml } from '@/html/html-writer';
 import { layoutStyledDocument } from '@/layout/styled-layout';
 import { writeSvg } from '@/svg/svg-writer';
@@ -29,8 +30,11 @@ import { docxReader } from '@/word/docx-reader';
 import { xlsxReader } from '@/excel/xlsx-reader';
 
 export interface ConvertOptions extends ConvertDocxOptions {
-  /** Target: 'pdf' (default), 'svg' (page-stack preview), 'html' or 'docx' (flowed). */
-  readonly to?: 'pdf' | 'svg' | 'html' | 'docx';
+  /**
+   * Target: 'pdf' (default), 'svg' (page-stack preview), 'html'/'docx' (flowed),
+   * or 'xlsx' (the native grid writer — spreadsheet input only).
+   */
+  readonly to?: 'pdf' | 'svg' | 'html' | 'docx' | 'xlsx';
   /**
    * Strict mode (handoff v1 §5): throw ConversionLossError on the first
    * recorded loss instead of returning it in the report.
@@ -115,6 +119,20 @@ export function createConverter(opts: CreateConverterOptions = {}): Converter {
       losses.push(...html.losses);
       if (strict && losses.length > 0) throw new ConversionLossError(losses[0]!);
       return { bytes: html.bytes, losses };
+    }
+
+    if (to === 'xlsx') {
+      // SheetDoc → xlsx writer directly (E-SHEET SD1): the writer needs the
+      // native grid, so a flow source (docx) cannot target xlsx. Zero I/O.
+      const { doc, losses: readLosses } = reader.read(bytes);
+      losses.push(...readLosses);
+      if (doc.kind !== 'sheet') {
+        throw new Error("to: 'xlsx' requires a spreadsheet input; a flow document has no grid");
+      }
+      const out = writeXlsx(doc);
+      losses.push(...out.losses);
+      if (strict && losses.length > 0) throw new ConversionLossError(losses[0]!);
+      return { bytes: out.bytes, losses };
     }
     let conv = rest;
     // Resolve the default font set through the provider chain (unless the

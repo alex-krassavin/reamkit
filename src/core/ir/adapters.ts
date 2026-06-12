@@ -39,10 +39,10 @@ export interface WriteResult {
 }
 
 export interface DocumentWriter<TDoc> {
-  /** Output format id: 'pdf', 'svg', 'html', 'docx', … */
+  /** Output format id: 'pdf', 'svg', 'html', 'docx', 'xlsx', … */
   readonly id: string;
-  /** Which tree this writer consumes. */
-  readonly consumes: 'flow' | 'page';
+  /** Which tree this writer consumes ('sheet' for the native grid writer). */
+  readonly consumes: 'flow' | 'page' | 'sheet';
   readonly supports: ReadonlySet<Feature>;
   write: (doc: TDoc, opts?: WriteOptions) => WriteResult;
 }

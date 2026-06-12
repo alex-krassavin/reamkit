@@ -31,13 +31,14 @@ import { FontRegistry } from '@/core/font';
 import { fetchFontSet } from '@/core/fonts';
 import { ConversionLossError } from '@/core/ir';
 import { writeDocx } from '@/word/docx-writer';
+import { writeXlsx } from '@/excel/xlsx-writer';
 import { writeHtml } from '@/html/html-writer';
 import { layoutStyledDocument } from '@/layout/styled-layout';
 import { renderStyledPdf, renderStyledPdfEncrypted, signPdf } from '@/pdf';
 import { writeSvg } from '@/svg/svg-writer';
 import { resolveDocxAutoFonts } from '@/word/docx-to-pdf';
 
-export type ReamTarget = 'pdf' | 'svg' | 'html' | 'docx';
+export type ReamTarget = 'pdf' | 'svg' | 'html' | 'docx' | 'xlsx';
 
 export interface ReamParseOptions {
   // Reader registry override — defaults to the built-in docx + xlsx readers.
@@ -128,6 +129,18 @@ export class Ream {
       losses.push(...docx.losses);
       this.enforceStrict(options, losses);
       return { bytes: docx.bytes, losses };
+    }
+
+    if (to === 'xlsx') {
+      // The native grid medium (E-SHEET SD1): the writer consumes the SheetDoc
+      // directly — a docx (no grid) cannot be written to xlsx. Zero I/O.
+      if (!this.sheet) {
+        throw new Error("convert('xlsx') requires a spreadsheet source; this document has no grid");
+      }
+      const xlsx = writeXlsx(this.sheet);
+      losses.push(...xlsx.losses);
+      this.enforceStrict(options, losses);
+      return { bytes: xlsx.bytes, losses };
     }
 
     const { fonts, registriesByFamily } = await this.resolveFonts(options, losses);
