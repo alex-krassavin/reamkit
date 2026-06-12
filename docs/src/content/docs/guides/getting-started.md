@@ -36,6 +36,8 @@ const doc = Ream.parse(bytes);          // docx or xlsx — sniffed
 const pdf = await doc.convert('pdf');   // async — fetches a font if needed
 const svg = await doc.convert('svg');   // same parse, different target
 const html = await doc.convert('html');  // flowed HTML — needs no fonts at all
+const docx = await doc.convert('docx');  // WordprocessingML back out
+const xlsx = await doc.convert('xlsx');  // SpreadsheetML back out (xlsx source)
 
 // Hand the bytes to the browser: preview, download, upload, …
 const url = URL.createObjectURL(new Blob([pdf], { type: 'application/pdf' }));

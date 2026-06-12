@@ -35,6 +35,7 @@ const pdf = await doc.convert('pdf');     // async — fetches a font if needed
 const svg = await doc.convert('svg');     // same parse, different target
 const html = await doc.convert('html');   // flowed HTML — needs no fonts at all
 const docx = await doc.convert('docx');   // write WordprocessingML back out
+const xlsx = await doc.convert('xlsx');   // write SpreadsheetML back (xlsx source)
 
 // Hand the bytes to the browser: preview, download, upload, …
 const url = URL.createObjectURL(new Blob([pdf], { type: 'application/pdf' }));
@@ -166,14 +167,15 @@ multi-section and multi-column layout/headers-footers (incl. PAGE/NUMPAGES
 fields)/footnotes and endnotes/hyperlinks and bookmarks/floating drawings/
 images/tracked changes, SpreadsheetML grids,
 number formats and the print model (gridlines, print area, fit-to-page,
-repeated titles, page breaks), DrawingML shapes and charts, OMML math,
-Type0+CIDFontType2 embedding with subsetting, Knuth-Plass line breaking,
-Liang hyphenation, OpenType ligatures/kerning + Arabic cursive joining,
-BiDi (UAX #9), hyperlinks (PDF link annotations + HTML anchors,
+repeated titles, page breaks), **conditional formatting** (color scales, data
+bars, icon sets), **sparklines** and **Excel tables**, DrawingML shapes and
+charts, OMML math, Type0+CIDFontType2 embedding with subsetting, Knuth-Plass
+line breaking, Liang hyphenation, OpenType ligatures/kerning + Arabic cursive
+joining, BiDi (UAX #9), hyperlinks (PDF link annotations + HTML anchors,
 scheme-allowlisted), tagged PDF, PDF/A-1/2/3 (a/b/u), PDF/UA-1, AES-256
 encryption, digital signatures (PKCS#7/ECDSA/PAdES/RFC 3161), SVG page
-preview, flowed HTML export, and **docx output** (write WordprocessingML back
-out, incl. docx → docx). Reads OOXML Transitional and Strict.
+preview, flowed HTML export, and **docx + xlsx output** (write WordprocessingML
+/ SpreadsheetML back out, incl. round-trips). Reads OOXML Transitional and Strict.
 
 See `handoff.md` for the full feature matrix and known limitations.
 

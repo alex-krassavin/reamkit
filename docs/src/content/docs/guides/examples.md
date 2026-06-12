@@ -20,6 +20,7 @@ const pdf = await doc.convert('pdf', { fonts });
 const svg = await doc.convert('svg', { fonts }); // page-stack preview, no PDF involved
 const html = await doc.convert('html');          // flowed HTML — no fonts, zero I/O
 const docx = await doc.convert('docx');          // WordprocessingML back out — no fonts, no layout
+const xlsx = await doc.convert('xlsx');          // SpreadsheetML back out — from an .xlsx source
 ```
 
 ## docx → docx: normalize, sanitize, edit
@@ -38,6 +39,23 @@ import { Ream } from 'reamkit';
 const doc = Ream.parse(bytes); // a .docx (xlsx has no docx writer)
 const out = await doc.convert('docx');
 // `out` is a fresh, valid .docx — hand it to a download, an upload, or re-parse it.
+```
+
+## xlsx → xlsx: re-emit a workbook
+
+`convert('xlsx')` writes a spreadsheet's grid back to a valid `.xlsx`. Unlike the
+docx writer it consumes the native grid tree, so the round-trip is **lossless on
+the grid surface** — cells, styles, merges, the print model, conditional
+formatting, sparklines and tables all survive a read → write → read loop
+byte-stably (embedded charts are the one piece not yet written). It requires a
+spreadsheet source; a `.docx` has no grid.
+
+```ts
+import { Ream } from 'reamkit';
+
+const doc = Ream.parse(xlsxBytes); // a .xlsx
+const out = await doc.convert('xlsx');
+// `out` is a fresh, valid .xlsx — normalize, sanitize, or re-parse it.
 ```
 
 ## Browser: file input → PDF preview
