@@ -1282,20 +1282,49 @@ function rectAtPath(x: number, y: number, w: number, h: number): VectorPath {
 // --- Conditional-format icons (E-SHEET SC1c) -------------------------------
 // A glyph drawn in the cell's left gutter (CF_ICON_GUTTER_PT wide), sized to
 // CF_ICON_SIZE_PT and vertically centred in the row. Built in a local y-up
-// [0,size]² frame; emitRowChunk composes the page-flip transform. v1 draws a
-// single filled shape per family — circle (lights/symbols), triangle (arrows),
-// square (flags); faithful glyph sets follow.
+// [0,size]² frame; emitRowChunk composes the page-flip transform. Single-glyph
+// families (lights, arrows, signs, flags, symbols) draw one prim; the meter
+// families — ratings (a bar histogram) and quarters (a clock pie) — draw several.
 const CF_ICON_SIZE_PT = 9;
 const CF_ICON_GUTTER_PT = 12;
+// The unfilled portion of a meter glyph (ratings bars / quarter pie).
+const CF_ICON_EMPTY_HEX = 'BFBFBF';
 
-function buildCellIconShape(
-  icon: CellIcon,
-  size: number,
-): { paths: ReadonlyArray<VectorPath>; fillColorHex: string } {
-  return { paths: [cellIconPath(icon.shape, size)], fillColorHex: icon.colorHex };
+type FilledIconShape =
+  | 'circle'
+  | 'square'
+  | 'diamond'
+  | 'triangleUp'
+  | 'triangleDown'
+  | 'triangleRight';
+
+function buildCellIconShape(icon: CellIcon, s: number): ReadonlyArray<ChartShapePrim> {
+  const color = icon.colorHex;
+  switch (icon.shape) {
+    case 'bars':
+      return barsIconPrims(s, color, icon.fill);
+    case 'pie':
+      return pieIconPrims(s, color, icon.fill);
+    case 'check':
+      return [{ paths: [checkPath(s)], stroke: { colorHex: color, widthPt: s * 0.16 } }];
+    case 'cross':
+      return [{ paths: crossPaths(s), stroke: { colorHex: color, widthPt: s * 0.16 } }];
+    case 'exclamation':
+      return [
+        {
+          paths: [
+            rectAtPath(s * 0.41, s * 0.34, s * 0.18, s * 0.56),
+            rectAtPath(s * 0.41, s * 0.1, s * 0.18, s * 0.16),
+          ],
+          fillColorHex: color,
+        },
+      ];
+    default:
+      return [{ paths: [cellIconPath(icon.shape, s)], fillColorHex: color }];
+  }
 }
 
-function cellIconPath(shape: CellIcon['shape'], s: number): VectorPath {
+function cellIconPath(shape: FilledIconShape, s: number): VectorPath {
   switch (shape) {
     case 'square':
       return rectAtPath(s * 0.12, s * 0.12, s * 0.76, s * 0.76);
@@ -1316,6 +1345,85 @@ function cellIconPath(shape: CellIcon['shape'], s: number): VectorPath {
     case 'circle':
       return circlePath(s / 2, s / 2, s * 0.42);
   }
+}
+
+// Ratings (4/5): `levels` ascending bars left→right, the first `filled` coloured.
+function barsIconPrims(
+  s: number,
+  color: string,
+  fill: CellIcon['fill'],
+): ReadonlyArray<ChartShapePrim> {
+  const n = Math.max(1, fill?.levels ?? 4);
+  const filled = fill?.filled ?? 0;
+  const gap = s * 0.12;
+  const bw = (s - gap * (n - 1)) / n;
+  const prims: Array<ChartShapePrim> = [];
+  for (let i = 0; i < n; i++) {
+    const h = s * (0.32 + (0.68 * (i + 1)) / n);
+    prims.push({
+      paths: [rectAtPath(i * (bw + gap), 0, bw, h)],
+      fillColorHex: i < filled ? color : CF_ICON_EMPTY_HEX,
+    });
+  }
+  return prims;
+}
+
+// Quarters (5): a clock pie — `filled` of `levels` slices coloured clockwise from
+// the top over a grey base circle (bucket 0 = empty, full = a solid disc).
+function pieIconPrims(
+  s: number,
+  color: string,
+  fill: CellIcon['fill'],
+): ReadonlyArray<ChartShapePrim> {
+  const cx = s / 2;
+  const cy = s / 2;
+  const r = s * 0.46;
+  const levels = Math.max(1, fill?.levels ?? 4);
+  const filled = Math.max(0, Math.min(levels, fill?.filled ?? 0));
+  const prims: Array<ChartShapePrim> = [
+    { paths: [circlePath(cx, cy, r)], fillColorHex: CF_ICON_EMPTY_HEX },
+  ];
+  if (filled >= levels) {
+    prims.push({ paths: [circlePath(cx, cy, r)], fillColorHex: color });
+  } else if (filled > 0) {
+    const start = Math.PI / 2; // 12 o'clock in the y-up frame
+    const sweep = -(filled / levels) * 2 * Math.PI; // clockwise
+    const [sx, sy] = arcPoint(cx, cy, r, r, start);
+    prims.push({
+      paths: [
+        new PathBuilder()
+          .moveTo(cx, cy)
+          .lineTo(sx, sy)
+          .append(arcToBeziers(cx, cy, r, r, start, sweep))
+          .close()
+          .build(),
+      ],
+      fillColorHex: color,
+    });
+  }
+  return prims;
+}
+
+// Symbols: a check mark (✓) and a cross (✗) as stroked polylines.
+function checkPath(s: number): VectorPath {
+  return new PathBuilder()
+    .moveTo(s * 0.16, s * 0.5)
+    .lineTo(s * 0.4, s * 0.26)
+    .lineTo(s * 0.84, s * 0.78)
+    .build();
+}
+
+function crossPaths(s: number): ReadonlyArray<VectorPath> {
+  return [
+    new PathBuilder()
+      .moveTo(s * 0.24, s * 0.24)
+      .lineTo(s * 0.76, s * 0.76)
+      .build(),
+    new PathBuilder()
+      .moveTo(s * 0.24, s * 0.76)
+      .lineTo(s * 0.76, s * 0.24)
+      .build(),
+  ];
 }
 
 function trianglePath(a: [number, number], b: [number, number], c: [number, number]): VectorPath {
@@ -3634,15 +3742,18 @@ function emitRowChunk(
       if (iconSize > 0) {
         const iconX = cellX + (CF_ICON_GUTTER_PT - iconSize) / 2;
         const iconBottomYUp = rowBottom + (row.heightPt - iconSize) / 2;
-        const { paths, fillColorHex } = buildCellIconShape(cell.icon, iconSize);
-        out.push({
-          type: 'shape',
-          shape: {
-            paths,
-            fillColorHex,
-            transform: flipTransform([1, 0, 0, 1, iconX, iconBottomYUp], pageHeight),
-          },
-        });
+        const iconTransform = flipTransform([1, 0, 0, 1, iconX, iconBottomYUp], pageHeight);
+        for (const prim of buildCellIconShape(cell.icon, iconSize)) {
+          out.push({
+            type: 'shape',
+            shape: {
+              paths: prim.paths,
+              ...(prim.fillColorHex ? { fillColorHex: prim.fillColorHex } : {}),
+              ...(prim.stroke ? { stroke: prim.stroke } : {}),
+              transform: iconTransform,
+            },
+          });
+        }
       }
     }
     // Sparkline (E-SHEET SC2): a mini chart filling the cell's content box,

@@ -48,8 +48,10 @@ a read↔write loop; embedded charts are the one piece not yet written.
   print titles, manual page breaks, horizontal/vertical centering.
 - **Conditional formatting** — `cellIs` (compare-to-constant highlights),
   `colorScale` (2/3-stop gradients), `dataBar` (in-cell bars, with a zero axis
-  so negative values run the other way) and `iconSet` (traffic lights, arrows,
-  flags, …). The cross-cell rules resolve against the range's value extent.
+  so negative values run the other way) and `iconSet` — traffic lights, arrows,
+  signs, symbols (check / exclamation / cross), flags, ratings (a bar meter) and
+  quarters (a clock pie). The cross-cell rules resolve against the range's value
+  extent.
 - **Sparklines** — per-cell line / column / win-loss mini charts, including
   cross-sheet data ranges and blank-cell gaps.
 - **Excel tables** (`xl/tables`) — banded rows and a styled header row, the

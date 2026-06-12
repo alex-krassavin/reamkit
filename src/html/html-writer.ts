@@ -729,25 +729,96 @@ function cellSparklineSvg(sp: CellSparkline): string {
 }
 
 // A small inline-SVG glyph for a conditional-format icon, matching the PDF
-// vector shapes (circle / square / triangle) drawn in styled-layout.
+// vector shapes drawn in styled-layout. Single-glyph families are one element;
+// the meter families (bars / pie) layer a coloured part over a grey base.
+const ICON_EMPTY_HEX = 'BFBFBF';
+
 function cellIconSvg(icon: CellIcon): string {
   const fill = `#${icon.colorHex}`;
-  const body =
-    icon.shape === 'square'
-      ? `<rect x="1" y="1" width="8" height="8"/>`
-      : icon.shape === 'diamond'
-        ? `<polygon points="5,1 9,5 5,9 1,5"/>`
-        : icon.shape === 'triangleUp'
-          ? `<polygon points="5,1 9,9 1,9"/>`
-          : icon.shape === 'triangleDown'
-            ? `<polygon points="1,1 9,1 5,9"/>`
-            : icon.shape === 'triangleRight'
-              ? `<polygon points="9,5 1,1 1,9"/>`
-              : `<circle cx="5" cy="5" r="4"/>`;
+  let body: string;
+  switch (icon.shape) {
+    case 'square':
+      body = `<rect x="1" y="1" width="8" height="8" fill="${fill}"/>`;
+      break;
+    case 'diamond':
+      body = `<polygon points="5,1 9,5 5,9 1,5" fill="${fill}"/>`;
+      break;
+    case 'triangleUp':
+      body = `<polygon points="5,1 9,9 1,9" fill="${fill}"/>`;
+      break;
+    case 'triangleDown':
+      body = `<polygon points="1,1 9,1 5,9" fill="${fill}"/>`;
+      break;
+    case 'triangleRight':
+      body = `<polygon points="9,5 1,1 1,9" fill="${fill}"/>`;
+      break;
+    case 'check':
+      body = `<polyline points="1.6,5 4,7.4 8.4,2.6" fill="none" stroke="${fill}" stroke-width="1.6"/>`;
+      break;
+    case 'cross':
+      body = `<path d="M2.4 2.4 L7.6 7.6 M2.4 7.6 L7.6 2.4" fill="none" stroke="${fill}" stroke-width="1.6"/>`;
+      break;
+    case 'exclamation':
+      body =
+        `<rect x="4.1" y="1" width="1.8" height="5.6" fill="${fill}"/>` +
+        `<rect x="4.1" y="7.4" width="1.8" height="1.6" fill="${fill}"/>`;
+      break;
+    case 'bars':
+      body = barsIconSvg(icon.fill, fill, `#${ICON_EMPTY_HEX}`);
+      break;
+    case 'pie':
+      body = pieIconSvg(icon.fill, fill, `#${ICON_EMPTY_HEX}`);
+      break;
+    case 'circle':
+      body = `<circle cx="5" cy="5" r="4" fill="${fill}"/>`;
+      break;
+  }
   return (
-    `<svg width="10" height="10" viewBox="0 0 10 10" fill="${fill}" ` +
+    `<svg width="10" height="10" viewBox="0 0 10 10" ` +
     `style="vertical-align:middle;margin-right:3px">${body}</svg>`
   );
+}
+
+const round2 = (n: number): string => (Math.round(n * 100) / 100).toString();
+
+// Ratings (4/5): `levels` ascending bars, the first `filled` coloured. y-down.
+function barsIconSvg(fill: CellIcon['fill'], color: string, empty: string): string {
+  const n = Math.max(1, fill?.levels ?? 4);
+  const filled = fill?.filled ?? 0;
+  const gap = 10 * 0.12;
+  const bw = (10 - gap * (n - 1)) / n;
+  let out = '';
+  for (let i = 0; i < n; i++) {
+    const h = 10 * (0.32 + (0.68 * (i + 1)) / n);
+    out +=
+      `<rect x="${round2(i * (bw + gap))}" y="${round2(10 - h)}" ` +
+      `width="${round2(bw)}" height="${round2(h)}" fill="${i < filled ? color : empty}"/>`;
+  }
+  return out;
+}
+
+// Quarters (5): a clock pie — `filled` of `levels` slices coloured clockwise from
+// the top over a grey base circle (bucket 0 = empty, full = a solid disc). y-down.
+function pieIconSvg(fill: CellIcon['fill'], color: string, empty: string): string {
+  const cx = 5;
+  const cy = 5;
+  const r = 4.4;
+  const levels = Math.max(1, fill?.levels ?? 4);
+  const filled = Math.max(0, Math.min(levels, fill?.filled ?? 0));
+  let out = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${empty}"/>`;
+  if (filled >= levels) {
+    out += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}"/>`;
+  } else if (filled > 0) {
+    const frac = filled / levels;
+    const ang = -Math.PI / 2 + frac * 2 * Math.PI; // y-down: clockwise from top
+    const ex = cx + r * Math.cos(ang);
+    const ey = cy + r * Math.sin(ang);
+    const large = frac > 0.5 ? 1 : 0;
+    out +=
+      `<path d="M${cx} ${cy} L${cx} ${round2(cy - r)} ` +
+      `A${r} ${r} 0 ${large} 1 ${round2(ex)} ${round2(ey)} Z" fill="${color}"/>`;
+  }
+  return out;
 }
 
 function pushBorder(css: Array<string>, side: string, border: Border | undefined): void {

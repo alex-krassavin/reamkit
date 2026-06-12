@@ -314,7 +314,7 @@ const iconSet = (name: string, cfvos: Array<string>, reverse = false): string =>
 const iconAt = (
   flow: ReturnType<typeof Ream.parse>['flow'],
   row: number,
-): { shape: string; colorHex: string } | undefined => {
+): { shape: string; colorHex: string; fill?: { filled: number; levels: number } } | undefined => {
   const table = flow.body.find((el) => el.kind === 'table');
   if (table?.kind !== 'table') throw new Error('expected a table');
   return table.table.rows[row]?.cells[0]?.properties.icon;
@@ -403,6 +403,62 @@ describe('conditional formatting — iconSet (E-SHEET SC1c)', () => {
     expect(rule.iconSet).toBe('4Rating');
     expect(rule.cfvos).toHaveLength(4);
   });
+
+  it('maps 3Symbols to cross / exclamation / check on the ramp (Tail TC5)', () => {
+    const cf = `<conditionalFormatting sqref="A1:A3">${iconSet('3Symbols', ['percent:0', 'percent:33', 'percent:67'])}</conditionalFormatting>`;
+    const flow = Ream.parse(
+      buildXlsx({
+        rows: [[10], [50], [90]],
+        stylesXml: PLAIN_STYLES,
+        conditionalFormattingXml: cf,
+      }),
+    ).flow;
+    expect(iconAt(flow, 0)).toEqual({ shape: 'cross', colorHex: 'FF0000' }); // low
+    expect(iconAt(flow, 1)).toEqual({ shape: 'exclamation', colorHex: 'FFC000' }); // mid
+    expect(iconAt(flow, 2)).toEqual({ shape: 'check', colorHex: '00B050' }); // high
+  });
+
+  it('maps 4Rating to a monochrome bars meter, filling bucket+1 of 4 (Tail TC5)', () => {
+    const cf = `<conditionalFormatting sqref="A1:A4">${iconSet('4Rating', ['percent:0', 'percent:25', 'percent:50', 'percent:75'])}</conditionalFormatting>`;
+    const flow = Ream.parse(
+      buildXlsx({
+        rows: [[1], [2], [3], [4]],
+        stylesXml: PLAIN_STYLES,
+        conditionalFormattingXml: cf,
+      }),
+    ).flow;
+    expect(iconAt(flow, 0)).toEqual({
+      shape: 'bars',
+      colorHex: '595959',
+      fill: { filled: 1, levels: 4 },
+    });
+    expect(iconAt(flow, 3)).toEqual({
+      shape: 'bars',
+      colorHex: '595959',
+      fill: { filled: 4, levels: 4 },
+    });
+  });
+
+  it('maps 5Quarters to a clock pie, filling bucket of 4 slices (Tail TC5)', () => {
+    const cf = `<conditionalFormatting sqref="A1:A5">${iconSet('5Quarters', ['percent:0', 'percent:20', 'percent:40', 'percent:60', 'percent:80'])}</conditionalFormatting>`;
+    const flow = Ream.parse(
+      buildXlsx({
+        rows: [[1], [2], [3], [4], [5]],
+        stylesXml: PLAIN_STYLES,
+        conditionalFormattingXml: cf,
+      }),
+    ).flow;
+    expect(iconAt(flow, 0)).toEqual({
+      shape: 'pie',
+      colorHex: '595959',
+      fill: { filled: 0, levels: 4 },
+    }); // empty
+    expect(iconAt(flow, 4)).toEqual({
+      shape: 'pie',
+      colorHex: '595959',
+      fill: { filled: 4, levels: 4 },
+    }); // full
+  });
 });
 
 // A sheet carrying both decorations must survive the full layout + PDF emit
@@ -431,5 +487,26 @@ describe('conditional formatting — render smoke (E-SHEET SC1c)', () => {
     const pdf = convertXlsxToPdfSync(xlsx, { fonts: FONTS });
     expect(pdf.length).toBeGreaterThan(1000);
     expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-');
+  });
+
+  it('renders the rating bars and quarter pie as inline SVG in HTML (Tail TC5)', async () => {
+    const cf =
+      `<conditionalFormatting sqref="A1:A5">${iconSet('4Rating', ['percent:0', 'percent:25', 'percent:50', 'percent:75'])}</conditionalFormatting>` +
+      `<conditionalFormatting sqref="B1:B5">${iconSet('5Quarters', ['percent:0', 'percent:20', 'percent:40', 'percent:60', 'percent:80'])}</conditionalFormatting>`;
+    const xlsx = buildXlsx({
+      rows: [
+        [1, 1],
+        [2, 2],
+        [3, 3],
+        [4, 4],
+        [5, 5],
+      ],
+      stylesXml: PLAIN_STYLES,
+      conditionalFormattingXml: cf,
+    });
+    const html = new TextDecoder().decode(await Ream.parse(xlsx).convert('html'));
+    expect(html).toContain('#595959'); // meter colour (bars + pie)
+    expect(html).toContain('#BFBFBF'); // unfilled bars / base circle
+    expect(html).toContain('A4.4 4.4 0'); // a quarter-pie arc
   });
 });

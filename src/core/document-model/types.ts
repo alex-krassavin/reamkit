@@ -416,10 +416,21 @@ export type CellIconShape =
   | 'diamond'
   | 'triangleUp'
   | 'triangleDown'
-  | 'triangleRight';
+  | 'triangleRight'
+  // Symbols families (3Symbols / 3Symbols2): a check / exclamation / cross mark.
+  | 'check'
+  | 'cross'
+  | 'exclamation'
+  // Meter families: ratings (a signal-strength bar histogram) and quarters (a
+  // clock-fill pie). Both read `fill` for how many units are coloured in.
+  | 'bars'
+  | 'pie';
 export interface CellIcon {
   readonly shape: CellIconShape;
   readonly colorHex: string;
+  // Meter glyphs (`bars` / `pie`): how many of `levels` units are filled with
+  // `colorHex`; the rest are drawn in a neutral grey. Absent for single glyphs.
+  readonly fill?: { readonly filled: number; readonly levels: number };
 }
 
 // A sparkline: a mini chart filling the cell, plotting `values` (E-SHEET SC2).
