@@ -12,6 +12,9 @@
 
 import type {
   BodyElement,
+  CellBorders,
+  CellMargins,
+  CellProperties,
   FontFamilyMap,
   Numbering,
   NumberingLevel,
@@ -20,6 +23,10 @@ import type {
   Run,
   RunProperties,
   SectionProperties,
+  Table,
+  TableCell,
+  TableProperties,
+  TableRow,
 } from '@/core/document-model';
 import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
 import type { DocumentWriter, WriteResult } from '@/core/ir/adapters';
@@ -151,21 +158,123 @@ function emitBlock(
     out.push(paragraphXml(el.paragraph, state));
     return;
   }
-  // Tables, images, charts, shapes: D4/D5 of the epic. Reported, not dropped
-  // silently.
+  if (el.kind === 'table') {
+    out.push(tableXml(el.table, losses, state));
+    return;
+  }
+  // Images, charts, shapes: D5 of the epic. Reported, not dropped silently.
   const feature =
-    el.kind === 'table'
-      ? FEATURES.tables
-      : el.kind === 'image'
-        ? FEATURES.images
-        : el.kind === 'chart'
-          ? FEATURES.charts
-          : FEATURES.shapes;
+    el.kind === 'image' ? FEATURES.images : el.kind === 'chart' ? FEATURES.charts : FEATURES.shapes;
   losses.push({
     severity: 'dropped',
     feature,
     detail: `${el.kind} not written by the docx writer (v0)`,
   });
+}
+
+// §17.4 — w:tbl: properties, the column grid, then rows. Cell content recurses
+// through emitBlock, so nested tables and per-cell paragraphs round-trip.
+function tableXml(table: Table, losses: Array<Loss>, state: WriteState): string {
+  const grid = table.grid.map((w) => `<w:gridCol w:w="${twips(w)}"/>`).join('');
+  const rows = table.rows.map((row) => rowXml(row, losses, state)).join('');
+  return `<w:tbl>${tblPrXml(table.properties)}<w:tblGrid>${grid}</w:tblGrid>${rows}</w:tbl>`;
+}
+
+function tblPrXml(p: TableProperties): string {
+  const out: Array<string> = [];
+  if (p.widthType !== undefined) {
+    const w =
+      p.widthType === 'pct'
+        ? Math.round((p.widthFraction ?? 0) * 5000)
+        : p.widthPt !== undefined
+          ? twips(p.widthPt)
+          : 0;
+    out.push(`<w:tblW w:w="${w}" w:type="${p.widthType}"/>`);
+  }
+  if (p.alignment && p.alignment !== 'left') out.push(`<w:jc w:val="${p.alignment}"/>`);
+  const borders = bordersXml('w:tblBorders', p.borders);
+  if (borders) out.push(borders);
+  const margins = cellMarginsXml('w:tblCellMar', p.defaultCellMargins);
+  if (margins) out.push(margins);
+  return out.length > 0 ? `<w:tblPr>${out.join('')}</w:tblPr>` : '';
+}
+
+function rowXml(row: TableRow, losses: Array<Loss>, state: WriteState): string {
+  const trPr: Array<string> = [];
+  if (row.properties.height !== undefined) {
+    const rule = row.properties.heightRule ?? 'atLeast';
+    trPr.push(`<w:trHeight w:val="${twips(row.properties.height)}" w:hRule="${rule}"/>`);
+  }
+  if (row.properties.isHeader) trPr.push('<w:tblHeader/>');
+  if (row.properties.cantSplit) trPr.push('<w:cantSplit/>');
+  const trPrXml = trPr.length > 0 ? `<w:trPr>${trPr.join('')}</w:trPr>` : '';
+  const cells = row.cells.map((cell) => cellXml(cell, losses, state)).join('');
+  return `<w:tr>${trPrXml}${cells}</w:tr>`;
+}
+
+function cellXml(cell: TableCell, losses: Array<Loss>, state: WriteState): string {
+  const content: Array<string> = [];
+  for (const child of cell.content) emitBlock(content, child, losses, state);
+  // §17.4.66 — a w:tc must contain at least one block, ending in a paragraph.
+  if (content.length === 0) content.push('<w:p/>');
+  return `<w:tc>${tcPrXml(cell.properties)}${content.join('')}</w:tc>`;
+}
+
+function tcPrXml(p: CellProperties): string {
+  const out: Array<string> = [];
+  if (p.width !== undefined) out.push(`<w:tcW w:w="${twips(p.width)}" w:type="dxa"/>`);
+  if (p.colSpan !== undefined && p.colSpan > 1) {
+    out.push(`<w:gridSpan w:val="${p.colSpan}"/>`);
+  }
+  if (p.merge !== undefined) {
+    // §17.4.85 — 'start' restarts a vertical merge; 'middle'/'end' continue it.
+    out.push(p.merge === 'start' ? '<w:vMerge w:val="restart"/>' : '<w:vMerge w:val="continue"/>');
+  }
+  const borders = bordersXml('w:tcBorders', p.borders);
+  if (borders) out.push(borders);
+  const margins = cellMarginsXml('w:tcMar', p.margins);
+  if (margins) out.push(margins);
+  if (p.shading) out.push(`<w:shd w:val="clear" w:color="auto" w:fill="${p.shading.colorHex}"/>`);
+  return out.length > 0 ? `<w:tcPr>${out.join('')}</w:tcPr>` : '';
+}
+
+const BORDER_SIDES: ReadonlyArray<[keyof CellBorders, string]> = [
+  ['top', 'w:top'],
+  ['left', 'w:left'],
+  ['bottom', 'w:bottom'],
+  ['right', 'w:right'],
+  ['insideH', 'w:insideH'],
+  ['insideV', 'w:insideV'],
+];
+
+function bordersXml(tag: 'w:tblBorders' | 'w:tcBorders', borders: CellBorders | undefined): string {
+  if (!borders) return '';
+  const sides = BORDER_SIDES.map(([key, el]) => {
+    const b = borders[key];
+    if (!b) return '';
+    // §17.4.x — w:sz in eighths of a point; the reader divides by 8.
+    const sz = b.width !== undefined ? ` w:sz="${Math.round(b.width * 8)}"` : '';
+    const color = b.colorHex !== undefined ? ` w:color="${b.colorHex}"` : '';
+    return `<${el} w:val="${b.style}"${sz}${color}/>`;
+  }).join('');
+  return sides ? `<${tag}>${sides}</${tag}>` : '';
+}
+
+function cellMarginsXml(tag: 'w:tblCellMar' | 'w:tcMar', margins: CellMargins | undefined): string {
+  if (!margins) return '';
+  const sides: Array<[keyof CellMargins, string]> = [
+    ['top', 'w:top'],
+    ['left', 'w:left'],
+    ['bottom', 'w:bottom'],
+    ['right', 'w:right'],
+  ];
+  const inner = sides
+    .map(([key, el]) => {
+      const v = margins[key];
+      return v !== undefined ? `<${el} w:w="${twips(v)}" w:type="dxa"/>` : '';
+    })
+    .join('');
+  return inner ? `<${tag}>${inner}</${tag}>` : '';
 }
 
 function paragraphXml(p: Paragraph, state: WriteState): string {

@@ -178,21 +178,95 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     );
   });
 
+  it('round-trips a table: grid, borders, shading, header row', () => {
+    const body =
+      '<w:tbl><w:tblPr>' +
+      '<w:tblBorders><w:top w:val="single" w:sz="8" w:color="FF0000"/>' +
+      '<w:insideH w:val="single" w:sz="4"/></w:tblBorders>' +
+      '</w:tblPr>' +
+      '<w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="3000"/></w:tblGrid>' +
+      '<w:tr><w:trPr><w:tblHeader/></w:trPr>' +
+      '<w:tc><w:tcPr><w:shd w:val="clear" w:fill="4472C4"/></w:tcPr><w:p><w:r><w:t>H1</w:t></w:r></w:p></w:tc>' +
+      '<w:tc><w:p><w:r><w:t>H2</w:t></w:r></w:p></w:tc></w:tr>' +
+      '<w:tr><w:tc><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc>' +
+      '<w:tc><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc></w:tr>' +
+      '</w:tbl>';
+    const { doc: flow } = readDocx(buildDocxFromBody(body));
+    const { doc: again } = readDocx(writeDocx(flow).bytes);
+
+    const tbl = again.body.find((el) => el.kind === 'table');
+    if (tbl?.kind !== 'table') throw new Error('expected table');
+    const t = tbl.table;
+    expect(t.grid.map((w) => Math.round(w))).toEqual([100, 150]); // 2000/3000 twips
+    expect(t.properties.borders?.top).toMatchObject({ style: 'single', colorHex: 'FF0000' });
+    expect(t.properties.borders?.top?.width).toBeCloseTo(1, 1); // sz=8 eighths
+    expect(t.rows[0]!.properties.isHeader).toBe(true);
+    expect(t.rows[0]!.cells[0]!.properties.shading?.colorHex).toBe('4472C4');
+    const cellText = (r: number, c: number) => {
+      const cell = t.rows[r]!.cells[c]!.content[0]!;
+      return cell.kind === 'paragraph' ? cell.paragraph.runs.map((x) => x.text).join('') : '';
+    };
+    expect(cellText(0, 0)).toBe('H1');
+    expect(cellText(1, 1)).toBe('b');
+  });
+
+  it('round-trips column/row spans (gridSpan + vMerge)', () => {
+    const body =
+      '<w:tbl><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>' +
+      '<w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>wide</w:t></w:r></w:p></w:tc></w:tr>' +
+      '<w:tr><w:tc><w:tcPr><w:vMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>tall</w:t></w:r></w:p></w:tc>' +
+      '<w:tc><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc></w:tr>' +
+      '<w:tr><w:tc><w:tcPr><w:vMerge w:val="continue"/></w:tcPr><w:p/></w:tc>' +
+      '<w:tc><w:p><w:r><w:t>y</w:t></w:r></w:p></w:tc></w:tr>' +
+      '</w:tbl>';
+    const { doc: flow } = readDocx(buildDocxFromBody(body));
+    const { doc: again } = readDocx(writeDocx(flow).bytes);
+    const tbl = again.body.find((el) => el.kind === 'table');
+    if (tbl?.kind !== 'table') throw new Error('expected table');
+    const t = tbl.table;
+    expect(t.rows[0]!.cells[0]!.properties.colSpan).toBe(2);
+    expect(t.rows[1]!.cells[0]!.properties.merge).toBe('start');
+    expect(t.rows[2]!.cells[0]!.properties.merge).toBe('end');
+  });
+
+  it('round-trips a nested table (table inside a cell)', () => {
+    const inner =
+      '<w:tbl><w:tblGrid><w:gridCol w:w="1000"/></w:tblGrid>' +
+      '<w:tr><w:tc><w:p><w:r><w:t>inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl>';
+    const body =
+      '<w:tbl><w:tblGrid><w:gridCol w:w="3000"/></w:tblGrid>' +
+      `<w:tr><w:tc>${inner}<w:p/></w:tc></w:tr></w:tbl>`;
+    const { doc: flow } = readDocx(buildDocxFromBody(body));
+    const { doc: again } = readDocx(writeDocx(flow).bytes);
+    const outer = again.body.find((el) => el.kind === 'table');
+    if (outer?.kind !== 'table') throw new Error('expected table');
+    const nested = outer.table.rows[0]!.cells[0]!.content.find((el) => el.kind === 'table');
+    expect(nested?.kind).toBe('table');
+    if (nested?.kind !== 'table') throw new Error('expected nested table');
+    const innerCell = nested.table.rows[0]!.cells[0]!.content[0]!;
+    expect(innerCell.kind === 'paragraph' && innerCell.paragraph.runs[0]!.text).toBe('inner');
+  });
+
+  // An inline picture: still unwritten (D5), so a clean dropped loss to assert on.
+  const IMAGE_BODY =
+    '<w:p><w:r><w:drawing><wp:inline ' +
+    'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">' +
+    '<wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Pic"/>' +
+    '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
+    '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
+    '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
+    '<pic:blipFill><a:blip r:embed="rIdImg"/></pic:blipFill></pic:pic>' +
+    '</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>';
+
   it('reports unwritten block kinds as losses (v0)', () => {
-    const tbl =
-      '<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>' +
-      '<w:tr><w:tc><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>';
-    const { doc: flow } = readDocx(buildDocxFromBody(tbl));
+    const { doc: flow } = readDocx(buildDocxFromBody(IMAGE_BODY));
     const { losses } = writeDocx(flow);
-    expect(losses.some((l) => l.feature === 'tables' && l.severity === 'dropped')).toBe(true);
+    expect(losses.some((l) => l.feature === 'images' && l.severity === 'dropped')).toBe(true);
   });
 
   it('strict mode surfaces writer losses', async () => {
-    const tbl =
-      '<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>' +
-      '<w:tr><w:tc><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc></w:tr></w:tbl>';
     await expect(
-      Ream.parse(buildDocxFromBody(tbl)).convert('docx', { strict: true }),
+      Ream.parse(buildDocxFromBody(IMAGE_BODY)).convert('docx', { strict: true }),
     ).rejects.toThrow();
   });
 });
