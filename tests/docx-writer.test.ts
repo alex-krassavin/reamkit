@@ -507,6 +507,20 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     expect(el.shape.width).toBeCloseTo(72, 1); // 914400 EMU
   });
 
+  it('round-trips an empty hyperlink (link target survives without visible content)', () => {
+    // A bookmark hyperlink whose only run is empty (e.g. a TOC page-ref field a
+    // tracked change deleted) must keep its anchor — the writer gives the link a
+    // single empty run instead of dropping it.
+    const body =
+      '<w:p><w:r><w:t>see </w:t></w:r>' +
+      '<w:hyperlink w:anchor="_Toc1"><w:r><w:t></w:t></w:r></w:hyperlink></w:p>';
+    const { doc: flow } = readDocx(buildDocxFromBody(body));
+    const { doc: again } = readDocx(writeDocx(flow).bytes);
+    const para = again.body.find((b) => b.kind === 'paragraph');
+    if (para?.kind !== 'paragraph') throw new Error('expected a paragraph');
+    expect(para.paragraph.runs.some((r) => r.anchor === '_Toc1')).toBe(true);
+  });
+
   it('round-trips an in-paragraph page break (w:br type=page)', () => {
     // §17.3.3.1 — a run carrying only a page break must survive: it is emitted
     // as <w:br w:type="page"/>, not dropped for having empty text.

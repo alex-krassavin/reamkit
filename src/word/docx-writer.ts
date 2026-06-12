@@ -748,7 +748,13 @@ function paragraphXml(
     (run) =>
       !run.listMarker &&
       run.math === undefined &&
-      (run.text !== '' || run.inlineImage !== undefined || run.pageBreak),
+      (run.text !== '' ||
+        run.inlineImage !== undefined ||
+        run.pageBreak ||
+        // An empty run that still carries a link target keeps the hyperlink
+        // alive (e.g. a TOC field whose page number a tracked change deleted).
+        run.href !== undefined ||
+        run.anchor !== undefined),
   );
 
   // §17.16.22 — group adjacent runs sharing a hyperlink target back into one
@@ -770,7 +776,10 @@ function paragraphXml(
       .slice(i, j)
       .map((r) => runXml(r, state, scope))
       .join('');
-    inner.push(hyperlinkXml(run, group, state, scope));
+    // A hyperlink whose runs are all empty still carries its target — give it a
+    // single empty run so the link survives the round-trip rather than emitting
+    // an empty <w:hyperlink/> that a re-read would discard.
+    inner.push(hyperlinkXml(run, group === '' ? '<w:r/>' : group, state, scope));
     i = j;
   }
 
