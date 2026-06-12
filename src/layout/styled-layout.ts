@@ -23,6 +23,7 @@ import type {
   BorderStyle,
   CellBorders,
   CellDataBar,
+  CellIcon,
   Chart,
   ChartBlock,
   DocumentInfo,
@@ -332,6 +333,7 @@ interface CellLayout {
   readonly borders: CellBorders;
   readonly shadingColorHex?: string;
   readonly dataBar?: CellDataBar;
+  readonly icon?: CellIcon;
   readonly lines: ReadonlyArray<Line>;
   // Nested tables (a w:tbl inside this cell) rendered below the lines.
   readonly nestedTables?: ReadonlyArray<TableBlock>;
@@ -1270,6 +1272,54 @@ function rectAtPath(x: number, y: number, w: number, h: number): VectorPath {
     .lineTo(x + w, y)
     .lineTo(x + w, y + h)
     .lineTo(x, y + h)
+    .close()
+    .build();
+}
+
+// --- Conditional-format icons (E-SHEET SC1c) -------------------------------
+// A glyph drawn in the cell's left gutter (CF_ICON_GUTTER_PT wide), sized to
+// CF_ICON_SIZE_PT and vertically centred in the row. Built in a local y-up
+// [0,size]² frame; emitRowChunk composes the page-flip transform. v1 draws a
+// single filled shape per family — circle (lights/symbols), triangle (arrows),
+// square (flags); faithful glyph sets follow.
+const CF_ICON_SIZE_PT = 9;
+const CF_ICON_GUTTER_PT = 12;
+
+function buildCellIconShape(
+  icon: CellIcon,
+  size: number,
+): { paths: ReadonlyArray<VectorPath>; fillColorHex: string } {
+  return { paths: [cellIconPath(icon.shape, size)], fillColorHex: icon.colorHex };
+}
+
+function cellIconPath(shape: CellIcon['shape'], s: number): VectorPath {
+  switch (shape) {
+    case 'square':
+      return rectAtPath(s * 0.12, s * 0.12, s * 0.76, s * 0.76);
+    case 'triangleUp':
+      return trianglePath([s / 2, s * 0.9], [s * 0.1, s * 0.12], [s * 0.9, s * 0.12]);
+    case 'triangleDown':
+      return trianglePath([s / 2, s * 0.1], [s * 0.1, s * 0.88], [s * 0.9, s * 0.88]);
+    case 'triangleRight':
+      return trianglePath([s * 0.9, s / 2], [s * 0.12, s * 0.1], [s * 0.12, s * 0.9]);
+    case 'circle':
+      return circlePath(s / 2, s / 2, s * 0.42);
+  }
+}
+
+function trianglePath(a: [number, number], b: [number, number], c: [number, number]): VectorPath {
+  return new PathBuilder().moveTo(a[0], a[1]).lineTo(b[0], b[1]).lineTo(c[0], c[1]).close().build();
+}
+
+// Four cubic Béziers approximating a circle (kappa = 4/3·(√2 − 1)).
+function circlePath(cx: number, cy: number, r: number): VectorPath {
+  const k = 0.5522847498307936 * r;
+  return new PathBuilder()
+    .moveTo(cx + r, cy)
+    .cubicTo(cx + r, cy + k, cx + k, cy + r, cx, cy + r)
+    .cubicTo(cx - k, cy + r, cx - r, cy + k, cx - r, cy)
+    .cubicTo(cx - r, cy - k, cx - k, cy - r, cx, cy - r)
+    .cubicTo(cx + k, cy - r, cx + r, cy - k, cx + r, cy)
     .close()
     .build();
 }
@@ -2513,8 +2563,11 @@ function layoutTableCell(
   const tableMar = tableProps.defaultCellMargins;
   const padTopPt = cellMar?.top ?? tableMar?.top ?? 0;
   const padBottomPt = cellMar?.bottom ?? tableMar?.bottom ?? 0;
-  const padLeftPt = cellMar?.left ?? tableMar?.left ?? DEFAULT_CELL_PADDING_TWIPS * TWIP_TO_PT;
+  const padLeftBase = cellMar?.left ?? tableMar?.left ?? DEFAULT_CELL_PADDING_TWIPS * TWIP_TO_PT;
   const padRightPt = cellMar?.right ?? tableMar?.right ?? DEFAULT_CELL_PADDING_TWIPS * TWIP_TO_PT;
+  // A conditional-format icon (E-SHEET SC1c) reserves a left gutter; the cell's
+  // text is inset past it so the glyph and the value never overlap.
+  const padLeftPt = padLeftBase + (cell.properties.icon ? CF_ICON_GUTTER_PT : 0);
 
   const innerWidth = Math.max(1, widthPt - padLeftPt - padRightPt);
   const lines: Array<Line> = [];
@@ -2579,6 +2632,7 @@ function layoutTableCell(
       ? { shadingColorHex: cell.properties.shading.colorHex }
       : {}),
     ...(cell.properties.dataBar ? { dataBar: cell.properties.dataBar } : {}),
+    ...(cell.properties.icon ? { icon: cell.properties.icon } : {}),
     lines,
     ...(nestedTables.length > 0 ? { nestedTables } : {}),
     contentHeightPt,
@@ -3556,6 +3610,25 @@ function emitRowChunk(
           width: pt(barWidth),
           height: pt(row.heightPt),
           fillColorHex: cell.dataBar.colorHex,
+        });
+      }
+    }
+    // Conditional-format icon (E-SHEET SC1c): a vector glyph in the left gutter,
+    // vertically centred in the row. Painted in the shapes pass (over fills,
+    // under text); its local y-up frame is flipped onto the page.
+    if (cell.icon && cell.mergeRole !== 'middle' && cell.mergeRole !== 'end') {
+      const iconSize = Math.min(CF_ICON_SIZE_PT, Math.max(0, row.heightPt - 1));
+      if (iconSize > 0) {
+        const iconX = cellX + (CF_ICON_GUTTER_PT - iconSize) / 2;
+        const iconBottomYUp = rowBottom + (row.heightPt - iconSize) / 2;
+        const { paths, fillColorHex } = buildCellIconShape(cell.icon, iconSize);
+        out.push({
+          type: 'shape',
+          shape: {
+            paths,
+            fillColorHex,
+            transform: flipTransform([1, 0, 0, 1, iconX, iconBottomYUp], pageHeight),
+          },
         });
       }
     }

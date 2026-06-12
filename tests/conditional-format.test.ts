@@ -1,11 +1,14 @@
 // E-SHEET SC1 — conditional formatting (cellIs). The first Excel feature the
 // flat table projection could not express: a value-driven per-cell fill/font.
 
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { buildXlsx } from './fixtures/build-xlsx';
 import { readXlsxToSheetDoc } from '@/excel/xlsx-reader';
 import { Ream } from '@/core/converter/ream';
+import { convertXlsxToPdfSync } from '@/core/converter';
 
 const STYLES_WITH_DXF = `
   <fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>
@@ -261,5 +264,115 @@ describe('conditional formatting — dataBar (E-SHEET SC1c)', () => {
     expect(rule.cfvos.map((c) => c.type)).toEqual(['min', 'max']);
     expect(rule.minLength).toBe(0);
     expect(rule.maxLength).toBe(100);
+  });
+});
+
+// E-SHEET SC1c — iconSet: a glyph per cell from a named family, chosen by the
+// value's bucket among the cfvo thresholds (the cell carries CellProperties.icon
+// { shape, colorHex }; the xlsx layer maps families → format-neutral shapes).
+const iconSet = (name: string, cfvos: Array<string>, reverse = false): string => {
+  const cfvoXml = cfvos
+    .map((s) => {
+      const [type, val] = s.split(':');
+      return `<cfvo type="${type}" val="${val}"/>`;
+    })
+    .join('');
+  return (
+    `<cfRule type="iconSet" priority="1"><iconSet iconSet="${name}"${reverse ? ' reverse="1"' : ''}>` +
+    `${cfvoXml}</iconSet></cfRule>`
+  );
+};
+
+const iconAt = (
+  flow: ReturnType<typeof Ream.parse>['flow'],
+  row: number,
+): { shape: string; colorHex: string } | undefined => {
+  const table = flow.body.find((el) => el.kind === 'table');
+  if (table?.kind !== 'table') throw new Error('expected a table');
+  return table.table.rows[row]?.cells[0]?.properties.icon;
+};
+
+describe('conditional formatting — iconSet (E-SHEET SC1c)', () => {
+  it('picks a traffic-light icon by the value bucket', () => {
+    // percent 0/33/67 over [10,90] → thresholds 10, 36.4, 63.6.
+    const cf = `<conditionalFormatting sqref="A1:A3">${iconSet('3TrafficLights1', ['percent:0', 'percent:33', 'percent:67'])}</conditionalFormatting>`;
+    const flow = Ream.parse(
+      buildXlsx({
+        rows: [[10], [50], [90]],
+        stylesXml: PLAIN_STYLES,
+        conditionalFormattingXml: cf,
+      }),
+    ).flow;
+    expect(iconAt(flow, 0)).toEqual({ shape: 'circle', colorHex: 'FF0000' }); // bucket 0
+    expect(iconAt(flow, 1)).toEqual({ shape: 'circle', colorHex: 'FFC000' }); // bucket 1
+    expect(iconAt(flow, 2)).toEqual({ shape: 'circle', colorHex: '00B050' }); // bucket 2
+  });
+
+  it('maps 3Arrows to down/right/up triangles', () => {
+    const cf = `<conditionalFormatting sqref="A1:A3">${iconSet('3Arrows', ['percent:0', 'percent:33', 'percent:67'])}</conditionalFormatting>`;
+    const flow = Ream.parse(
+      buildXlsx({
+        rows: [[10], [50], [90]],
+        stylesXml: PLAIN_STYLES,
+        conditionalFormattingXml: cf,
+      }),
+    ).flow;
+    expect(iconAt(flow, 0)?.shape).toBe('triangleDown'); // lowest bucket
+    expect(iconAt(flow, 1)?.shape).toBe('triangleRight');
+    expect(iconAt(flow, 2)?.shape).toBe('triangleUp'); // highest bucket
+  });
+
+  it('reverse flips the icon order (low value → top icon)', () => {
+    const cf = `<conditionalFormatting sqref="A1:A2">${iconSet('3TrafficLights1', ['percent:0', 'percent:33', 'percent:67'], true)}</conditionalFormatting>`;
+    const flow = Ream.parse(
+      buildXlsx({ rows: [[10], [90]], stylesXml: PLAIN_STYLES, conditionalFormattingXml: cf }),
+    ).flow;
+    expect(iconAt(flow, 0)?.colorHex).toBe('00B050'); // value 10, reversed → green
+    expect(iconAt(flow, 1)?.colorHex).toBe('FF0000'); // value 90, reversed → red
+  });
+
+  it('parses an iconSet rule onto the sheet', () => {
+    const cf = `<conditionalFormatting sqref="A1:A4">${iconSet('4Rating', ['percent:0', 'percent:25', 'percent:50', 'percent:75'])}</conditionalFormatting>`;
+    const sheet = readXlsxToSheetDoc(
+      buildXlsx({
+        rows: [[1], [2], [3], [4]],
+        stylesXml: PLAIN_STYLES,
+        conditionalFormattingXml: cf,
+      }),
+    );
+    const rule = sheet.sheets[0]!.grid.conditionalFormats![0]!.rules[0]!;
+    expect(rule.type).toBe('iconSet');
+    if (rule.type !== 'iconSet') throw new Error('unreachable');
+    expect(rule.iconSet).toBe('4Rating');
+    expect(rule.cfvos).toHaveLength(4);
+  });
+});
+
+// A sheet carrying both decorations must survive the full layout + PDF emit
+// path (the bar FillItem and the icon ShapeItem), not just reach the FlowDoc.
+const FONTS = {
+  regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
+  bold: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Bold.ttf')),
+  italic: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Italic.ttf')),
+  boldItalic: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-BoldItalic.ttf')),
+};
+
+describe('conditional formatting — render smoke (E-SHEET SC1c)', () => {
+  it('renders a sheet with a data bar and an icon set to a valid PDF', () => {
+    const cf =
+      `<conditionalFormatting sqref="A1:A3">${dataBar(2, '638EC6', { min: 0, max: 100 })}</conditionalFormatting>` +
+      `<conditionalFormatting sqref="B1:B3">${iconSet('3TrafficLights1', ['percent:0', 'percent:33', 'percent:67'])}</conditionalFormatting>`;
+    const xlsx = buildXlsx({
+      rows: [
+        [1, 10],
+        [5, 50],
+        [10, 90],
+      ],
+      stylesXml: PLAIN_STYLES,
+      conditionalFormattingXml: cf,
+    });
+    const pdf = convertXlsxToPdfSync(xlsx, { fonts: FONTS });
+    expect(pdf.length).toBeGreaterThan(1000);
+    expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-');
   });
 });

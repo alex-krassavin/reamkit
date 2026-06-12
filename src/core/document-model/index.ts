@@ -11,6 +11,8 @@ export type {
   CellProperties,
   CellShading,
   CellDataBar,
+  CellIcon,
+  CellIconShape,
   Chart,
   ChartBlock,
   ChartDataPoint,

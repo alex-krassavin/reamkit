@@ -16,6 +16,7 @@ import type {
   BorderStyle,
   CellBorders,
   CellDataBar,
+  CellIcon,
   CellProperties,
   CellShading,
   PageMargins,
@@ -445,6 +446,7 @@ export function worksheetToBody(
       let shading = xf ? shadingFromXf(xf, styles) : undefined;
       const borders = xf ? bordersFromXf(xf, styles) : undefined;
       let dataBar: CellDataBar | undefined;
+      let icon: CellIcon | undefined;
 
       // Conditional formatting (E-SHEET SC1/SC1b/SC1c): the applicable rules
       // override the cell's fill/font and may add an in-cell data bar. Only number
@@ -456,6 +458,7 @@ export function worksheetToBody(
         if (over) {
           if (over.fillHex) shading = { colorHex: over.fillHex };
           if (over.dataBar) dataBar = over.dataBar;
+          if (over.icon) icon = over.icon;
           runProps = applyCfOverride(runProps, over);
         }
       }
@@ -497,6 +500,7 @@ export function worksheetToBody(
           : {}),
         ...(shading ? { shading } : {}),
         ...(dataBar ? { dataBar } : {}),
+        ...(icon ? { icon } : {}),
         ...(borders ? { borders } : {}),
       };
 

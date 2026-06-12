@@ -11,6 +11,7 @@ import type {
   CfRuleCellIs,
   CfRuleColorScale,
   CfRuleDataBar,
+  CfRuleIconSet,
   Cfvo,
   CfvoType,
   ColumnWidth,
@@ -389,9 +390,28 @@ function parseCfRule(obj: Record<string, unknown>): CfRule | undefined {
       return parseColorScaleRule(obj, priority);
     case 'dataBar':
       return parseDataBarRule(obj, priority);
+    case 'iconSet':
+      return parseIconSetRule(obj, priority);
     default:
-      return undefined; // iconSet/etc. — skipped until SC1c (second half)
+      return undefined; // dataBar2010/etc. — skipped
   }
+}
+
+// §18.3.1.49 <iconSet iconSet="3TrafficLights1"> — N cfvo thresholds (N = 3/4/5)
+// naming the per-value buckets; `reverse` flips icon order.
+function parseIconSetRule(
+  obj: Record<string, unknown>,
+  priority: number,
+): CfRuleIconSet | undefined {
+  const is = obj['iconSet'];
+  if (!is || typeof is !== 'object') return undefined;
+  const isObj = is as Record<string, unknown>;
+  const cfvos = parseCfvos(isObj['cfvo']);
+  if (cfvos.length < 3) return undefined;
+  const iconSet = strAttr(isObj, 'iconSet') ?? '3TrafficLights1';
+  const reverseRaw = strAttr(isObj, 'reverse');
+  const reverse = reverseRaw === '1' || reverseRaw === 'true';
+  return { type: 'iconSet', priority, iconSet, cfvos, ...(reverse ? { reverse } : {}) };
 }
 
 // §18.3.1.28 <dataBar> — 2 cfvo stops (lower/upper) + a fill <color>; optional

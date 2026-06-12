@@ -404,6 +404,15 @@ export interface CellDataBar {
   readonly colorHex: string;
 }
 
+// A conditional-format icon: a small glyph at the cell's left, chosen by the
+// value's bucket (E-SHEET SC1c). Format-neutral — the xlsx layer maps Excel's
+// named icon families (3TrafficLights, 3Arrows, …) onto these shapes + colours.
+export type CellIconShape = 'circle' | 'square' | 'triangleUp' | 'triangleDown' | 'triangleRight';
+export interface CellIcon {
+  readonly shape: CellIconShape;
+  readonly colorHex: string;
+}
+
 // Resolved position of a cell in a vertical merge group (ECMA-376 §17.4.85
 // vMerge markers are resolved by the reader): 'start' opens a group that at
 // least one cell continues, 'middle' / 'end' are continuations; undefined =
@@ -420,6 +429,7 @@ export interface CellProperties {
   readonly margins?: CellMargins;
   readonly shading?: CellShading;
   readonly dataBar?: CellDataBar;
+  readonly icon?: CellIcon;
 }
 
 export interface RowProperties {

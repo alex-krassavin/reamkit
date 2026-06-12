@@ -20,6 +20,7 @@
 import type {
   BodyElement,
   Border,
+  CellIcon,
   Chart,
   ChartBlock,
   ImageBlock,
@@ -690,8 +691,30 @@ function emitCell(
   css.push(`padding:${fmt(padTop)}pt ${fmt(padRight)}pt ${fmt(padBottom)}pt ${fmt(padLeft)}pt`);
 
   out.push(`<${tag}${attrs.length > 0 ? ` ${attrs.join(' ')}` : ''} style="${css.join(';')}">`);
+  // Conditional-format icon (E-SHEET SC1c): an inline glyph before the value.
+  if (cell.properties.icon) out.push(cellIconSvg(cell.properties.icon));
   for (const child of cell.content) emitBlock(out, child, ctx);
   out.push(`</${tag}>`);
+}
+
+// A small inline-SVG glyph for a conditional-format icon, matching the PDF
+// vector shapes (circle / square / triangle) drawn in styled-layout.
+function cellIconSvg(icon: CellIcon): string {
+  const fill = `#${icon.colorHex}`;
+  const body =
+    icon.shape === 'square'
+      ? `<rect x="1" y="1" width="8" height="8"/>`
+      : icon.shape === 'triangleUp'
+        ? `<polygon points="5,1 9,9 1,9"/>`
+        : icon.shape === 'triangleDown'
+          ? `<polygon points="1,1 9,1 5,9"/>`
+          : icon.shape === 'triangleRight'
+            ? `<polygon points="9,5 1,1 1,9"/>`
+            : `<circle cx="5" cy="5" r="4"/>`;
+  return (
+    `<svg width="10" height="10" viewBox="0 0 10 10" fill="${fill}" ` +
+    `style="vertical-align:middle;margin-right:3px">${body}</svg>`
+  );
 }
 
 function pushBorder(css: Array<string>, side: string, border: Border | undefined): void {

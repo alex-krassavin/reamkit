@@ -7,10 +7,12 @@
 // value); iconSet follows. A cell's text format (fill/font) is claimed by the
 // first applicable cellIs/colorScale; a dataBar applies independently on top.
 
+import type { CellIcon, CellIconShape } from '@/core/document-model';
 import type {
   CfOperator,
   CfRuleColorScale,
   CfRuleDataBar,
+  CfRuleIconSet,
   Cfvo,
   ConditionalFormat,
   Dxf,
@@ -40,14 +42,15 @@ interface ResolvedDataBar {
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
-// A resolved per-cell override: a solid highlight fill, font tweaks, and/or an
-// in-cell data bar (fraction of the cell width 0..1 + fill colour).
+// A resolved per-cell override: a solid highlight fill, font tweaks, an in-cell
+// data bar (fraction of the cell width 0..1 + colour), and/or a leading icon.
 export interface CfOverride {
   readonly fillHex?: string;
   readonly fontColorHex?: string;
   readonly bold?: boolean;
   readonly italic?: boolean;
   readonly dataBar?: { readonly fraction: number; readonly colorHex: string };
+  readonly icon?: CellIcon;
 }
 
 export type CellConditionalFormatter = (
@@ -60,9 +63,11 @@ interface FlatRule {
   readonly ranges: ReadonlyArray<MergedRange>;
   readonly rule: ConditionalFormat['rules'][number];
   // Present (and possibly undefined, when resolution failed) for colorScale /
-  // dataBar rules: the extent-derived data computed once from the range values.
+  // dataBar / iconSet rules: the extent-derived data computed once from the
+  // range values (gradient stops, bar bounds, or icon bucket thresholds).
   readonly scale?: ResolvedColorScale | undefined;
   readonly bar?: ResolvedDataBar | undefined;
+  readonly iconThresholds?: ReadonlyArray<number> | undefined;
 }
 
 // Returns undefined when the sheet has no conditional formats (the common case)
@@ -82,6 +87,12 @@ export function buildConditionalFormatter(
         flat.push({ ranges: cf.ranges, rule, scale: resolveColorScale(rule, cf.ranges, cells) });
       } else if (rule.type === 'dataBar') {
         flat.push({ ranges: cf.ranges, rule, bar: resolveDataBar(rule, cf.ranges, cells) });
+      } else if (rule.type === 'iconSet') {
+        flat.push({
+          ranges: cf.ranges,
+          rule,
+          iconThresholds: resolveIconThresholds(rule, cf.ranges, cells),
+        });
       } else {
         flat.push({ ranges: cf.ranges, rule });
       }
@@ -97,7 +108,8 @@ export function buildConditionalFormatter(
     let textFmt: CfOverride | undefined;
     let textClaimed = false;
     let bar: CfOverride['dataBar'];
-    for (const { ranges, rule, scale, bar: resolved } of flat) {
+    let icon: CfOverride['icon'];
+    for (const { ranges, rule, scale, bar: resolved, iconThresholds } of flat) {
       if (!coversCell(ranges, row, col)) continue;
       switch (rule.type) {
         case 'cellIs':
@@ -117,10 +129,20 @@ export function buildConditionalFormatter(
             bar = { fraction: dataBarFraction(resolved, value), colorHex: resolved.colorHex };
           }
           break;
+        case 'iconSet':
+          if (!icon && iconThresholds) {
+            const bucket = iconBucket(iconThresholds, value);
+            icon = iconToCell(rule.iconSet, iconThresholds.length, bucket, rule.reverse ?? false);
+          }
+          break;
       }
     }
-    if (!bar) return textFmt;
-    return { ...(textFmt ?? {}), dataBar: bar };
+    if (!bar && !icon) return textFmt;
+    return {
+      ...(textFmt ?? {}),
+      ...(bar ? { dataBar: bar } : {}),
+      ...(icon ? { icon } : {}),
+    };
   };
 }
 
@@ -346,4 +368,66 @@ function dataBarFraction(bar: ResolvedDataBar, value: number): number {
         ? 1
         : 0;
   return bar.minLen + t * (bar.maxLen - bar.minLen);
+}
+
+// --- iconSet (E-SHEET SC1c) -------------------------------------------------
+
+// Resolve an iconSet's cfvo thresholds against the range extent (ascending).
+function resolveIconThresholds(
+  rule: CfRuleIconSet,
+  ranges: ReadonlyArray<MergedRange>,
+  cells: ReadonlyArray<WorksheetCell>,
+): Array<number> | undefined {
+  const vals = collectRangeValues(cells, ranges);
+  if (vals.length === 0) return undefined;
+  const sorted = [...vals].sort((a, b) => a - b);
+  const vmin = sorted[0]!;
+  const vmax = sorted[sorted.length - 1]!;
+  const out: Array<number> = [];
+  for (const cfvo of rule.cfvos) {
+    const t = resolveCfvo(cfvo, vmin, vmax, sorted);
+    if (t === undefined) return undefined;
+    out.push(t);
+  }
+  return out;
+}
+
+// The icon bucket for a value: how many thresholds (past the floor) it reaches.
+// thresholds[0] is the floor (bucket 0); each later threshold met bumps the bucket.
+function iconBucket(thresholds: ReadonlyArray<number>, value: number): number {
+  let idx = 0;
+  for (let i = 1; i < thresholds.length; i++) {
+    if (value >= thresholds[i]!) idx++;
+  }
+  return idx;
+}
+
+// Map Excel's named icon family + bucket onto a format-neutral shape + colour.
+// `reverse` flips the bucket so the highest value takes the first icon.
+function iconToCell(setName: string, count: number, index: number, reverse: boolean): CellIcon {
+  const e = reverse ? count - 1 - index : index;
+  return { shape: iconShape(setName, e, count), colorHex: iconColor(count, e) };
+}
+
+function iconShape(setName: string, e: number, count: number): CellIconShape {
+  if (setName.includes('Arrows')) {
+    if (e <= 0) return 'triangleDown';
+    if (e >= count - 1) return 'triangleUp';
+    return 'triangleRight';
+  }
+  if (setName.includes('Flags')) return 'square';
+  return 'circle';
+}
+
+// A red→green ramp per icon count; the approximation Ream draws for every family
+// (faithful glyph sets — signs, symbols, ratings — follow). e is the bucket.
+const ICON_RAMPS: Readonly<Record<number, ReadonlyArray<string>>> = {
+  3: ['FF0000', 'FFC000', '00B050'],
+  4: ['FF0000', 'FF8C00', 'FFC000', '00B050'],
+  5: ['FF0000', 'FF8C00', 'FFC000', '92D050', '00B050'],
+};
+
+function iconColor(count: number, e: number): string {
+  const ramp = ICON_RAMPS[count] ?? ICON_RAMPS[3]!;
+  return ramp[Math.max(0, Math.min(ramp.length - 1, e))]!;
 }

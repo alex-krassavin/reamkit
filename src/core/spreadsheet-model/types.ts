@@ -273,8 +273,18 @@ export interface CfRuleDataBar {
   readonly maxLength?: number;
 }
 
-// iconSet extends this union in SC1c (second half).
-export type CfRule = CfRuleCellIs | CfRuleColorScale | CfRuleDataBar;
+// §18.3.1.49 <cfRule type="iconSet"> — picks one glyph per cell from a named
+// icon family (3/4/5 icons) by the value's bucket among the cfvo thresholds.
+// `reverse` flips the icon order (highest value → first icon).
+export interface CfRuleIconSet {
+  readonly type: 'iconSet';
+  readonly priority: number;
+  readonly iconSet: string;
+  readonly cfvos: ReadonlyArray<Cfvo>;
+  readonly reverse?: boolean;
+}
+
+export type CfRule = CfRuleCellIs | CfRuleColorScale | CfRuleDataBar | CfRuleIconSet;
 
 // §18.3.1.18 <conditionalFormatting sqref="A1:A10 C1:C5"> — rules over ranges.
 export interface ConditionalFormat {
