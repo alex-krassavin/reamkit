@@ -19,4 +19,9 @@ export type {
   XlsxCellXf,
   XlsxStyles,
   DefinedName,
+  Dxf,
+  CfOperator,
+  CfRuleCellIs,
+  CfRule,
+  ConditionalFormat,
 } from '@/core/spreadsheet-model/types';

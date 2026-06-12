@@ -43,8 +43,10 @@ import type {
   XlsxPageSetup,
   XlsxStyles,
 } from '@/excel';
+import type { CellConditionalFormatter, CfOverride } from '@/excel/conditional-format';
 import { eighthPtToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 import { applyNumberFormat, parseAreaRef, parseTitleRowRange } from '@/excel';
+import { buildConditionalFormatter } from '@/excel/conditional-format';
 
 // Excel "character width" → twips. Calibri 11pt default Maximum Digit Width
 // is ~7 px ≈ 5.25 pt ≈ 105 twips. This is a coarse approximation but the
@@ -402,6 +404,14 @@ export function worksheetToBody(
     return props;
   };
 
+  // §18.3.1.18 conditional formatting (E-SHEET SC1): a per-cell fill/font
+  // override evaluated from the sheet's rules. undefined when the sheet has none
+  // — the cell loop then takes the byte-identical base-format path.
+  const cfFormatter: CellConditionalFormatter | undefined = buildConditionalFormatter(
+    worksheet.conditionalFormats,
+    styles,
+  );
+
   const rows: Array<TableRow> = [];
   for (let r = 0; r < rowCount; r++) {
     const absR = r + rowStart;
@@ -428,10 +438,23 @@ export function worksheetToBody(
       if (text.length > textBudget) text = text.slice(0, Math.max(0, textBudget));
       textBudget -= text.length;
       const xf = ws && ws.styleIndex !== undefined ? styles.cellXfs[ws.styleIndex] : undefined;
-      const runProps = cellRunProps(xf);
+      let runProps = cellRunProps(xf);
       const alignment = xf ? alignmentFromXf(xf) : undefined;
-      const shading = xf ? shadingFromXf(xf, styles) : undefined;
+      let shading = xf ? shadingFromXf(xf, styles) : undefined;
       const borders = xf ? bordersFromXf(xf, styles) : undefined;
+
+      // Conditional formatting (E-SHEET SC1): the highest-priority matching rule
+      // overrides the cell's fill/font. Only number cells carry a comparable
+      // value; with no formatter this whole block is skipped (byte-identical).
+      if (cfFormatter && ws) {
+        const cfValue =
+          ws.type === 'n' && Number.isFinite(Number(ws.rawValue)) ? Number(ws.rawValue) : undefined;
+        const over = cfFormatter(absR, absC, cfValue);
+        if (over) {
+          if (over.fillHex) shading = { colorHex: over.fillHex };
+          runProps = applyCfOverride(runProps, over);
+        }
+      }
 
       // Cell overflow (Excel/Calc print model): a non-wrapping cell's text
       // overflows into EMPTY neighbours to the right (left/general alignment) but
@@ -611,6 +634,17 @@ function runPropsFromXf(xf: XlsxCellXf, styles: XlsxStyles): RunProperties {
   if (font.sizePt !== undefined) props.fontSizePt = halfPtToPt(Math.round(font.sizePt * 2));
   if (font.colorHex) props.colorHex = font.colorHex;
   return props;
+}
+
+// A conditional-format override applied over the base run props (CF wins for
+// the properties it sets — font colour, bold, italic). Size is left untouched.
+function applyCfOverride(base: RunProperties, o: CfOverride): RunProperties {
+  return {
+    ...base,
+    ...(o.fontColorHex ? { colorHex: o.fontColorHex } : {}),
+    ...(o.bold !== undefined ? { bold: o.bold } : {}),
+    ...(o.italic !== undefined ? { italic: o.italic } : {}),
+  };
 }
 
 function alignmentFromXf(xf: XlsxCellXf): Alignment | undefined {

@@ -6,7 +6,10 @@ import { XMLParser } from 'fast-xml-parser';
 
 import type {
   CellType,
+  CfOperator,
+  CfRule,
   ColumnWidth,
+  ConditionalFormat,
   MergedRange,
   ParsedWorksheet,
   RowHeight,
@@ -16,6 +19,7 @@ import type {
   XlsxPrintOptions,
 } from '@/core/spreadsheet-model';
 import { parseCellRef } from '@/excel/cell-reference';
+import { parseAreaRef } from '@/excel/defined-name-ref';
 
 type MutableMerge = {
   -readonly [K in keyof MergedRange]: MergedRange[K];
@@ -62,6 +66,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
     drawingNode && typeof drawingNode === 'object'
       ? strAttr(drawingNode as Record<string, unknown>, 'id')
       : undefined;
+  const conditionalFormats = parseConditionalFormatting(wsObj);
   const printModel = {
     ...(pageMargins ? { pageMargins } : {}),
     ...(pageSetup ? { pageSetup } : {}),
@@ -70,6 +75,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
     ...(rowBreaks.length > 0 ? { rowBreaks } : {}),
     ...(colBreaks.length > 0 ? { colBreaks } : {}),
     ...(drawingRelId !== undefined ? { drawingRelId } : {}),
+    ...(conditionalFormats.length > 0 ? { conditionalFormats } : {}),
   };
   const sheetData = wsObj['sheetData'];
   if (!sheetData || typeof sheetData !== 'object') {
@@ -311,6 +317,99 @@ function parseMerges(ws: Record<string, unknown>): Array<MergedRange> {
     }
   }
   return out;
+}
+
+// §18.3.1.18 <conditionalFormatting sqref="…"> elements (one or more), each
+// owning <cfRule>s. v1 reads `cellIs` rules (other types — colorScale, dataBar,
+// iconSet — are skipped; they arrive in a follow-up).
+function parseConditionalFormatting(ws: Record<string, unknown>): Array<ConditionalFormat> {
+  const raw = ws['conditionalFormatting'];
+  const items = Array.isArray(raw) ? raw : raw !== undefined ? [raw] : [];
+  const out: Array<ConditionalFormat> = [];
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue;
+    const obj = item as Record<string, unknown>;
+    const sqref = strAttr(obj, 'sqref');
+    if (!sqref) continue;
+    const ranges = parseSqref(sqref);
+    if (ranges.length === 0) continue;
+    const ruleRaw = obj['cfRule'];
+    const ruleItems = Array.isArray(ruleRaw) ? ruleRaw : ruleRaw !== undefined ? [ruleRaw] : [];
+    const rules: Array<CfRule> = [];
+    for (const rn of ruleItems) {
+      if (!rn || typeof rn !== 'object') continue;
+      const rule = parseCfRule(rn as Record<string, unknown>);
+      if (rule) rules.push(rule);
+    }
+    if (rules.length > 0) out.push({ ranges, rules });
+  }
+  return out;
+}
+
+// sqref is whitespace-separated areas ("A1:A10 C1:C5"); each resolves to a box.
+function parseSqref(sqref: string): Array<MergedRange> {
+  const out: Array<MergedRange> = [];
+  for (const token of sqref.split(/\s+/)) {
+    if (!token) continue;
+    const r = parseAreaRef(token);
+    if (r) {
+      out.push({
+        startColumn: r.startColumn,
+        startRow: r.startRow,
+        endColumn: r.endColumn,
+        endRow: r.endRow,
+      });
+    }
+  }
+  return out;
+}
+
+const CF_OPERATORS: ReadonlySet<string> = new Set<CfOperator>([
+  'lessThan',
+  'lessThanOrEqual',
+  'equal',
+  'notEqual',
+  'greaterThanOrEqual',
+  'greaterThan',
+  'between',
+  'notBetween',
+]);
+
+function parseCfRule(obj: Record<string, unknown>): CfRule | undefined {
+  // Only `cellIs` in v1; the operator + dxfId must be present.
+  if (strAttr(obj, 'type') !== 'cellIs') return undefined;
+  const operator = strAttr(obj, 'operator');
+  if (!operator || !CF_OPERATORS.has(operator)) return undefined;
+  const dxfId = parseNumericAttr(obj, 'dxfId');
+  if (dxfId === undefined) return undefined;
+  const fRaw = obj['formula'];
+  const fItems = Array.isArray(fRaw) ? fRaw : fRaw !== undefined ? [fRaw] : [];
+  const formulas: Array<string> = [];
+  for (const f of fItems) {
+    const text = formulaText(f);
+    if (text !== undefined) formulas.push(text);
+  }
+  if (formulas.length === 0) return undefined;
+  return {
+    type: 'cellIs',
+    priority: parseNumericAttr(obj, 'priority') ?? 0,
+    operator: operator as CfOperator,
+    formulas,
+    dxfId,
+  };
+}
+
+// <formula>5</formula> — fast-xml-parser yields the string directly (text-only,
+// no attributes) or a node carrying #text.
+function formulaText(node: unknown): string | undefined {
+  if (typeof node === 'string') return node;
+  if (typeof node === 'number') return String(node);
+  if (node && typeof node === 'object') {
+    const t = (node as Record<string, unknown>)['#text'];
+    if (typeof t === 'string') return t;
+    if (typeof t === 'number') return String(t);
+  }
+  return undefined;
 }
 
 function parseCell(c: unknown, fallbackRow: number, fallbackCol: number): WorksheetCell | null {

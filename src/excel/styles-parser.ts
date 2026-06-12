@@ -15,6 +15,7 @@
 import { XMLParser } from 'fast-xml-parser';
 
 import type {
+  Dxf,
   XlsxBorder,
   XlsxBorderEdge,
   XlsxBorderStyleName,
@@ -58,13 +59,54 @@ export function parseXlsxStyles(data: Uint8Array): XlsxStyles {
   const root = asObject(tree['styleSheet']);
   if (!root) return EMPTY_XLSX_STYLES;
 
+  const dxfs = parseDxfs(root);
   return {
     numFmts: parseNumFmts(root),
     fonts: parseFonts(root),
     fills: parseFills(root),
     borders: parseBorders(root),
     cellXfs: parseCellXfs(root),
+    ...(dxfs.length > 0 ? { dxfs } : {}),
   };
+}
+
+// §18.8.10 <dxfs> — differential formats a conditional-format rule applies on
+// match. We read the font (bold/italic/color) and fill (solid highlight); a dxf
+// fill's solid colour conventionally rides <bgColor> (Excel quirk).
+function parseDxfs(root: Record<string, unknown>): Array<Dxf> {
+  const node = asObject(root['dxfs']);
+  if (!node) return [];
+  const out: Array<Dxf> = [];
+  for (const item of asArray(node['dxf'])) {
+    const obj = asObject(item);
+    if (!obj) {
+      out.push({});
+      continue;
+    }
+    const dxf: Mutable<Dxf> = {};
+    const fontObj = asObject(obj['font']);
+    if (fontObj) {
+      const font: Mutable<XlsxFont> = {};
+      if (hasChild(fontObj, 'b')) font.bold = childToggle(fontObj, 'b');
+      if (hasChild(fontObj, 'i')) font.italic = childToggle(fontObj, 'i');
+      const colorHex = colorOf(asObject(fontObj['color']));
+      if (colorHex) font.colorHex = colorHex;
+      if (Object.keys(font).length > 0) dxf.font = font;
+    }
+    const pf = asObject(asObject(obj['fill'])?.['patternFill']);
+    if (pf) {
+      const fill: Mutable<XlsxFill> = {};
+      const pt = strAttr(pf, 'patternType');
+      if (pt) fill.patternType = pt;
+      const fg = colorOf(asObject(pf['fgColor']));
+      const bg = colorOf(asObject(pf['bgColor']));
+      if (fg) fill.fgColorHex = fg;
+      if (bg) fill.bgColorHex = bg;
+      if (Object.keys(fill).length > 0) dxf.fill = fill;
+    }
+    out.push(dxf);
+  }
+  return out;
 }
 
 const VALID_BORDER_STYLES: ReadonlySet<XlsxBorderStyleName> = new Set([

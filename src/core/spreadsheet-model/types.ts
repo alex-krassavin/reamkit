@@ -96,6 +96,8 @@ export interface ParsedWorksheet {
   readonly colBreaks?: ReadonlyArray<number>;
   // §18.3.1.36 <drawing r:id> — the sheet's drawing part (charts/shapes).
   readonly drawingRelId?: string;
+  // §18.3.1.18 <conditionalFormatting> — value-driven cell formats (E-SHEET SC1).
+  readonly conditionalFormats?: ReadonlyArray<ConditionalFormat>;
 }
 
 // ECMA-376 Part 1 §18.8 — the workbook style table (xl/styles.xml). Cells
@@ -181,6 +183,15 @@ export interface XlsxStyles {
   readonly fills: ReadonlyArray<XlsxFill>;
   readonly borders: ReadonlyArray<XlsxBorder>;
   readonly cellXfs: ReadonlyArray<XlsxCellXf>;
+  // §18.8.10 <dxfs> — differential formats referenced by conditional-format
+  // rules (E-SHEET SC1); only the properties a dxf sets override the base.
+  readonly dxfs?: ReadonlyArray<Dxf>;
+}
+
+// §18.8.14 <dxf> — a differential (override) format a cfRule applies on match.
+export interface Dxf {
+  readonly font?: XlsxFont;
+  readonly fill?: XlsxFill;
 }
 
 // ECMA-376 Part 1 §18.2.5 — <definedName>. A workbook-scoped (or sheet-scoped,
@@ -190,4 +201,38 @@ export interface DefinedName {
   readonly name: string;
   readonly localSheetId?: number;
   readonly value: string;
+}
+
+// ECMA-376 Part 1 §18.3.1 — conditional formatting (E-SHEET SC1). A
+// <conditionalFormatting sqref="…"> owns one or more <cfRule>s evaluated per
+// cell in its range(s); the highest-priority matching rule wins.
+
+// §18.18.15 ST_CfvoType — comparison operator for a `cellIs` rule.
+export type CfOperator =
+  | 'lessThan'
+  | 'lessThanOrEqual'
+  | 'equal'
+  | 'notEqual'
+  | 'greaterThanOrEqual'
+  | 'greaterThan'
+  | 'between'
+  | 'notBetween';
+
+// §18.3.1.10 <cfRule type="cellIs"> — compares each cell to one constant (or
+// two, for between/notBetween); a match applies the differential format dxfId.
+export interface CfRuleCellIs {
+  readonly type: 'cellIs';
+  readonly priority: number;
+  readonly operator: CfOperator;
+  readonly formulas: ReadonlyArray<string>;
+  readonly dxfId: number;
+}
+
+// More rule types (colorScale, dataBar, iconSet) extend this union later.
+export type CfRule = CfRuleCellIs;
+
+// §18.3.1.18 <conditionalFormatting sqref="A1:A10 C1:C5"> — rules over ranges.
+export interface ConditionalFormat {
+  readonly ranges: ReadonlyArray<MergedRange>;
+  readonly rules: ReadonlyArray<CfRule>;
 }

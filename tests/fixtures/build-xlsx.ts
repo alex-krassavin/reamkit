@@ -81,6 +81,8 @@ export interface XlsxSheetSpec {
   readonly printOptions?: XlsxPrintOptionsSpec;
   readonly fitToPage?: boolean;
   readonly rowBreaks?: ReadonlyArray<number>;
+  /** Raw <conditionalFormatting> markup injected into the worksheet. */
+  readonly conditionalFormattingXml?: string;
 }
 
 export interface XlsxBuilderOptions {
@@ -99,6 +101,7 @@ export interface XlsxBuilderOptions {
   readonly printOptions?: XlsxPrintOptionsSpec;
   readonly fitToPage?: boolean;
   readonly rowBreaks?: ReadonlyArray<number>;
+  readonly conditionalFormattingXml?: string;
   readonly date1904?: boolean;
   readonly definedNames?: ReadonlyArray<XlsxDefinedNameSpec>;
   /** Attach a chart to the FIRST sheet via a drawing part (twoCellAnchor). */
@@ -144,6 +147,9 @@ export function buildXlsx(
             ...(options.printOptions ? { printOptions: options.printOptions } : {}),
             ...(options.fitToPage !== undefined ? { fitToPage: options.fitToPage } : {}),
             ...(options.rowBreaks ? { rowBreaks: options.rowBreaks } : {}),
+            ...(options.conditionalFormattingXml
+              ? { conditionalFormattingXml: options.conditionalFormattingXml }
+              : {}),
           },
         ];
 
@@ -265,6 +271,7 @@ ${sheetRows.join('\n')}
   </sheetData>
   ${printOptionsXml}
   ${mergeXml}
+  ${sheet.conditionalFormattingXml ?? ''}
   ${marginsXml}
   ${setupXml}
   ${rowBreaksXml}
