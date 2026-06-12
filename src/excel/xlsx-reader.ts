@@ -132,13 +132,15 @@ function buildXlsxColorResolver(
   return makeColorResolver(palette);
 }
 
-export const xlsxReader: DocumentReader<FlowDoc> = {
+export const xlsxReader: DocumentReader<SheetDoc> = {
   id: 'xlsx',
-  produces: 'flow',
+  // The reader's native tree is the SheetDoc; the facade/Ream project it to a
+  // FlowDoc for rendering (E-SHEET SB1).
+  produces: 'sheet',
   supports: new Set([FEATURES.text, FEATURES.tables]),
   sniff: (bytes) =>
     bytes[0] === 0x50 && bytes[1] === 0x4b && bytesInclude(bytes, 'xl/workbook.xml'),
-  read: (bytes) => readXlsx(bytes),
+  read: (bytes) => ({ doc: readXlsxToSheetDoc(bytes), losses: [] }),
 };
 
 function infoFromCore(core: CoreProperties | undefined): DocumentInfo | undefined {

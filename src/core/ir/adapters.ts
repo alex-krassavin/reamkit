@@ -20,8 +20,8 @@ export interface ReadResult<TDoc> {
 export interface DocumentReader<TDoc = FlowDoc> {
   /** Format id: 'docx', 'xlsx', 'pdf', … */
   readonly id: string;
-  /** Which tree this reader produces. */
-  readonly produces: 'flow' | 'page';
+  /** Which tree this reader produces ('sheet' projects to flow at the boundary). */
+  readonly produces: 'flow' | 'page' | 'sheet';
   /** Feature vocabulary this reader understands (capability matrix source). */
   readonly supports: ReadonlySet<Feature>;
   /** Cheap format detection (magic bytes / container markers). */

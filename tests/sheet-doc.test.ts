@@ -6,7 +6,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildXlsx } from './fixtures/build-xlsx';
+import { buildDocxFromBody } from './fixtures/build-docx';
 import { readXlsxToSheetDoc } from '@/excel/xlsx-reader';
+import { Ream } from '@/core/converter/ream';
 
 const BAR_CHART =
   '<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" ' +
@@ -63,5 +65,22 @@ describe('readXlsxToSheetDoc (E-SHEET SA1/SA2)', () => {
     expect(refs).toHaveLength(1);
     expect(refs![0]!.chartPartPath).toBe('xl/charts/chart1.xml');
     expect(refs![0]!.widthPt).toBeGreaterThan(0);
+  });
+});
+
+describe('Ream exposes the native SheetDoc (E-SHEET SB1)', () => {
+  it('parse(xlsx).sheet is the SheetDoc; .flow is its projection', () => {
+    const doc = Ream.parse(buildXlsx({ sheets: [{ name: 'Numbers', rows: [['x', 1]] }] }));
+    expect(doc.sheet?.kind).toBe('sheet');
+    expect(doc.sheet?.sheets[0]!.name).toBe('Numbers');
+    // The render interlayer is the projected FlowDoc (a table block per sheet).
+    expect(doc.flow.kind).toBe('flow');
+    expect(doc.flow.body.some((el) => el.kind === 'table')).toBe(true);
+  });
+
+  it('parse(docx).sheet is undefined (a flow source has no native sheet)', () => {
+    const doc = Ream.parse(buildDocxFromBody('<w:p><w:r><w:t>plain</w:t></w:r></w:p>'));
+    expect(doc.sheet).toBeUndefined();
+    expect(doc.flow.kind).toBe('flow');
   });
 });
