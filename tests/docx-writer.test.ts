@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
+import { buildTinyPng } from './fixtures/build-png';
 import { Ream } from '@/core/converter/ream';
 import { OpcPackage } from '@/core/opc';
 import { writeDocx } from '@/word/docx-writer';
@@ -247,7 +248,66 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     expect(innerCell.kind === 'paragraph' && innerCell.paragraph.runs[0]!.text).toBe('inner');
   });
 
-  // An inline picture: still unwritten (D5), so a clean dropped loss to assert on.
+  it('round-trips an image: media part + blip rel, dimensions and alt text', () => {
+    const png = buildTinyPng(2, 2, [255, 0, 0, 255]);
+    const drawing =
+      '<w:r><w:drawing><wp:inline ' +
+      'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">' +
+      '<wp:extent cx="914400" cy="685800"/><wp:docPr id="1" name="Pic" descr="a red square"/>' +
+      '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
+      '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
+      '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
+      '<pic:blipFill><a:blip r:embed="rId20"/></pic:blipFill>' +
+      '<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="685800"/></a:xfrm></pic:spPr>' +
+      '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>';
+    const { doc: flow } = readDocx(
+      buildDocxFromBody(`<w:p>${drawing}</w:p>`, {
+        images: { rId20: { contentType: 'image/png', bytes: png, extension: 'png' } },
+      }),
+    );
+    const { bytes, losses } = writeDocx(flow);
+    expect(losses).toHaveLength(0);
+
+    const pkg = OpcPackage.open(bytes);
+    // The media part is present and the bytes survive verbatim.
+    expect(pkg.getPart('word/media/image1.png')).toBeDefined();
+    expect([...pkg.getPart('word/media/image1.png')!]).toEqual([...png]);
+
+    const { doc: again } = readDocx(bytes);
+    const el = again.body.find((b) => b.kind === 'image');
+    if (el?.kind !== 'image') throw new Error('expected image block');
+    expect(el.image.resource).toBeDefined(); // resolved to a stored resource
+    expect(el.image.width).toBeCloseTo(72, 1); // 914400 EMU = 72pt
+    expect(el.image.height).toBeCloseTo(54, 1); // 685800 EMU
+    expect(el.image.altText).toBe('a red square');
+  });
+
+  it('deduplicates a resource used twice into one media part', () => {
+    const png = buildTinyPng(1, 1, [0, 255, 0, 255]);
+    const d = (rId: string) =>
+      `<w:r><w:drawing><wp:inline ` +
+      `xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">` +
+      `<wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="P"/>` +
+      `<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">` +
+      `<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">` +
+      `<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">` +
+      `<pic:blipFill><a:blip r:embed="${rId}"/></pic:blipFill>` +
+      `<pic:spPr/></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>`;
+    const { doc: flow } = readDocx(
+      buildDocxFromBody(`<w:p>${d('rId20')}</w:p><w:p>${d('rId21')}</w:p>`, {
+        images: {
+          rId20: { contentType: 'image/png', bytes: png, extension: 'png' },
+          rId21: { contentType: 'image/png', bytes: png, extension: 'png' },
+        },
+      }),
+    );
+    const pkg = OpcPackage.open(writeDocx(flow).bytes);
+    // Same bytes ⇒ one content-addressed resource ⇒ a single media part.
+    expect(pkg.getPart('word/media/image1.png')).toBeDefined();
+    expect(pkg.getPart('word/media/image2.png')).toBeUndefined();
+  });
+
+  // An inline picture with no bytes: still a clean dropped loss to assert on.
   const IMAGE_BODY =
     '<w:p><w:r><w:drawing><wp:inline ' +
     'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">' +

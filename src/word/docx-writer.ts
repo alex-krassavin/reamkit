@@ -31,10 +31,11 @@ import type {
 import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
 import type { DocumentWriter, WriteResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
-import type { Loss } from '@/core/ir';
-import type { Relationship } from '@/core/opc';
+import type { Loss, ResourceId, ResourceStore } from '@/core/ir';
+import type { OpcPart, Relationship } from '@/core/opc';
 
 import { FEATURES } from '@/core/ir';
+import { detectImageFormat } from '@/core/images';
 import { buildOpcPackage } from '@/core/opc';
 import {
   EMPTY_STYLE_SHEET,
@@ -62,21 +63,49 @@ const REL_NUMBERING =
   'http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering';
 const REL_HYPERLINK =
   'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink';
+const REL_IMAGE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image';
 const NUMBERING_PART = 'word/numbering.xml';
 
+// 1 pt = 12700 EMU (English Metric Units, the DrawingML coordinate).
+const EMU_PER_PT = 12700;
+
+const IMAGE_CONTENT_TYPE: Readonly<Record<string, string>> = {
+  png: 'image/png',
+  jpeg: 'image/jpeg',
+  jpeg2000: 'image/jp2',
+};
+const IMAGE_EXTENSION: Readonly<Record<string, string>> = {
+  png: 'png',
+  jpeg: 'jpeg',
+  jpeg2000: 'jp2',
+};
+
 // Mutable per-document state threaded through the block/paragraph emitters:
-// the document.xml relationships accumulator (numbering + each external
-// hyperlink share one rId space) and a document-wide bookmark id counter.
+// the document.xml relationships accumulator (numbering, hyperlinks and images
+// share one rId space), a document-wide bookmark id counter, and the media
+// registry (content-addressed → one media part + rId per distinct resource).
 interface WriteState {
+  readonly resources: ResourceStore;
   readonly docRels: Array<Relationship>;
+  readonly mediaParts: Array<OpcPart>;
+  readonly mediaByResource: Map<ResourceId, string>;
   relSeq: number;
   bookmarkSeq: number;
+  drawingSeq: number;
 }
 
 export function writeDocx(flow: FlowDoc): WriteResult {
   const losses: Array<Loss> = [];
   const body: Array<string> = [];
-  const state: WriteState = { docRels: [], relSeq: 0, bookmarkSeq: 0 };
+  const state: WriteState = {
+    resources: flow.resources,
+    docRels: [],
+    mediaParts: [],
+    mediaByResource: new Map(),
+    relSeq: 0,
+    bookmarkSeq: 0,
+    drawingSeq: 0,
+  };
 
   for (const el of flow.body) emitBlock(body, el, losses, state);
 
@@ -122,6 +151,7 @@ export function writeDocx(flow: FlowDoc): WriteResult {
         contentType: DOC_CONTENT_TYPE,
       },
       ...(numberingPart ? [numberingPart] : []),
+      ...state.mediaParts,
     ],
     rootRelationships: [
       {
@@ -162,14 +192,85 @@ function emitBlock(
     out.push(tableXml(el.table, losses, state));
     return;
   }
-  // Images, charts, shapes: D5 of the epic. Reported, not dropped silently.
-  const feature =
-    el.kind === 'image' ? FEATURES.images : el.kind === 'chart' ? FEATURES.charts : FEATURES.shapes;
+  if (el.kind === 'image') {
+    const drawing = drawingXml(
+      el.image.resource,
+      el.image.width,
+      el.image.height,
+      el.image.altText,
+      state,
+    );
+    if (drawing) {
+      const pPr = pPrXml(el.image.paragraphProperties as ResolvedParagraphProperties);
+      out.push(`<w:p>${pPr}<w:r>${drawing}</w:r></w:p>`);
+    } else {
+      losses.push({ severity: 'dropped', feature: FEATURES.images, detail: 'image bytes missing' });
+    }
+    return;
+  }
+  // Charts and shapes: not written yet. Reported, not dropped silently.
+  const feature = el.kind === 'chart' ? FEATURES.charts : FEATURES.shapes;
   losses.push({
     severity: 'dropped',
     feature,
     detail: `${el.kind} not written by the docx writer (v0)`,
   });
+}
+
+// Allocate (or reuse) a media part + image relationship for a resource, then
+// emit the w:drawing/wp:inline markup the reader round-trips. Returns '' when
+// the resource has no bytes (an unresolved image — the caller drops it).
+function drawingXml(
+  resource: ResourceId | undefined,
+  widthPt: number,
+  heightPt: number,
+  altText: string | undefined,
+  state: WriteState,
+): string {
+  if (resource === undefined) return '';
+  const relId = mediaRelId(resource, state);
+  if (relId === undefined) return '';
+  const cx = Math.round(widthPt * EMU_PER_PT);
+  const cy = Math.round(heightPt * EMU_PER_PT);
+  const id = ++state.drawingSeq;
+  const descr = altText ? ` descr="${escapeAttr(altText)}"` : '';
+  return (
+    '<w:drawing>' +
+    '<wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">' +
+    `<wp:extent cx="${cx}" cy="${cy}"/>` +
+    `<wp:docPr id="${id}" name="Image ${id}"${descr}/>` +
+    '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
+    '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
+    '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
+    `<pic:nvPicPr><pic:cNvPr id="${id}" name="Image ${id}"/><pic:cNvPicPr/></pic:nvPicPr>` +
+    `<pic:blipFill><a:blip r:embed="${relId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>` +
+    '<pic:spPr><a:xfrm><a:off x="0" y="0"/>' +
+    `<a:ext cx="${cx}" cy="${cy}"/></a:xfrm>` +
+    '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>' +
+    '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>'
+  );
+}
+
+// Content-addressed: a resource used twice shares one media part + rId.
+function mediaRelId(resource: ResourceId, state: WriteState): string | undefined {
+  const existing = state.mediaByResource.get(resource);
+  if (existing !== undefined) return existing;
+  const bytes = state.resources.get(resource);
+  if (!bytes) return undefined;
+  const format = detectImageFormat(bytes);
+  if (!format) return undefined;
+  const n = state.mediaParts.length + 1;
+  const path = `word/media/image${n}.${IMAGE_EXTENSION[format]}`;
+  state.mediaParts.push({ path, data: bytes, contentType: IMAGE_CONTENT_TYPE[format]! });
+  const relId = `rId${++state.relSeq}`;
+  state.docRels.push({
+    id: relId,
+    type: REL_IMAGE,
+    target: `media/image${n}.${IMAGE_EXTENSION[format]}`,
+    targetMode: 'Internal',
+  });
+  state.mediaByResource.set(resource, relId);
+  return relId;
 }
 
 // §17.4 — w:tbl: properties, the column grid, then rows. Cell content recurses
@@ -279,10 +380,13 @@ function cellMarginsXml(tag: 'w:tblCellMar' | 'w:tcMar', margins: CellMargins | 
 
 function paragraphXml(p: Paragraph, state: WriteState): string {
   // The runs the reader actually kept: list markers re-materialize from
-  // numbering.xml, and math/inline-image runs are not written yet.
+  // numbering.xml, math runs are not written yet, and a run is visible if it
+  // has text or an inline image.
   const visible = p.runs.filter(
     (run) =>
-      !run.listMarker && run.text !== '' && run.math === undefined && run.inlineImage === undefined,
+      !run.listMarker &&
+      run.math === undefined &&
+      (run.text !== '' || run.inlineImage !== undefined),
   );
 
   // §17.16.22 — group adjacent runs sharing a hyperlink target back into one
@@ -294,13 +398,16 @@ function paragraphXml(p: Paragraph, state: WriteState): string {
     const run = visible[i]!;
     const key = run.href ?? run.anchor;
     if (key === undefined) {
-      inner.push(runXml(run));
+      inner.push(runXml(run, state));
       i++;
       continue;
     }
     let j = i + 1;
     while (j < visible.length && (visible[j]!.href ?? visible[j]!.anchor) === key) j++;
-    const group = visible.slice(i, j).map(runXml).join('');
+    const group = visible
+      .slice(i, j)
+      .map((r) => runXml(r, state))
+      .join('');
     inner.push(hyperlinkXml(run, group, state));
     i = j;
   }
@@ -333,8 +440,15 @@ function hyperlinkXml(run: Run, inner: string, state: WriteState): string {
   return `<w:hyperlink w:anchor="${escapeAttr(run.anchor!)}">${inner}</w:hyperlink>`;
 }
 
-function runXml(run: Run): string {
+function runXml(run: Run, state: WriteState): string {
   const rPr = rPrXml(run.properties as ResolvedRunProperties);
+  if (run.inlineImage !== undefined) {
+    const img = run.inlineImage;
+    const drawing = drawingXml(img.resource, img.width, img.height, undefined, state);
+    if (drawing) return `<w:r>${rPr}${drawing}</w:r>`;
+    // Unresolved inline image with no text: nothing to emit.
+    if (run.text === '') return '';
+  }
   return `<w:r>${rPr}<w:t xml:space="preserve">${escapeXml(run.text)}</w:t></w:r>`;
 }
 
