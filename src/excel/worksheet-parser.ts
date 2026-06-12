@@ -8,6 +8,10 @@ import type {
   CellType,
   CfOperator,
   CfRule,
+  CfRuleCellIs,
+  CfRuleColorScale,
+  Cfvo,
+  CfvoType,
   ColumnWidth,
   ConditionalFormat,
   MergedRange,
@@ -320,8 +324,8 @@ function parseMerges(ws: Record<string, unknown>): Array<MergedRange> {
 }
 
 // §18.3.1.18 <conditionalFormatting sqref="…"> elements (one or more), each
-// owning <cfRule>s. v1 reads `cellIs` rules (other types — colorScale, dataBar,
-// iconSet — are skipped; they arrive in a follow-up).
+// owning <cfRule>s. Reads `cellIs` (SC1) and `colorScale` (SC1b) rules; dataBar
+// and iconSet are skipped until a follow-up.
 function parseConditionalFormatting(ws: Record<string, unknown>): Array<ConditionalFormat> {
   const raw = ws['conditionalFormatting'];
   const items = Array.isArray(raw) ? raw : raw !== undefined ? [raw] : [];
@@ -376,8 +380,18 @@ const CF_OPERATORS: ReadonlySet<string> = new Set<CfOperator>([
 ]);
 
 function parseCfRule(obj: Record<string, unknown>): CfRule | undefined {
-  // Only `cellIs` in v1; the operator + dxfId must be present.
-  if (strAttr(obj, 'type') !== 'cellIs') return undefined;
+  const priority = parseNumericAttr(obj, 'priority') ?? 0;
+  switch (strAttr(obj, 'type')) {
+    case 'cellIs':
+      return parseCellIsRule(obj, priority);
+    case 'colorScale':
+      return parseColorScaleRule(obj, priority);
+    default:
+      return undefined; // dataBar/iconSet/etc. — skipped until SC1c
+  }
+}
+
+function parseCellIsRule(obj: Record<string, unknown>, priority: number): CfRuleCellIs | undefined {
   const operator = strAttr(obj, 'operator');
   if (!operator || !CF_OPERATORS.has(operator)) return undefined;
   const dxfId = parseNumericAttr(obj, 'dxfId');
@@ -390,13 +404,68 @@ function parseCfRule(obj: Record<string, unknown>): CfRule | undefined {
     if (text !== undefined) formulas.push(text);
   }
   if (formulas.length === 0) return undefined;
-  return {
-    type: 'cellIs',
-    priority: parseNumericAttr(obj, 'priority') ?? 0,
-    operator: operator as CfOperator,
-    formulas,
-    dxfId,
-  };
+  return { type: 'cellIs', priority, operator: operator as CfOperator, formulas, dxfId };
+}
+
+const CFVO_TYPES: ReadonlySet<string> = new Set<CfvoType>([
+  'num',
+  'percent',
+  'max',
+  'min',
+  'percentile',
+  'formula',
+]);
+
+// §18.3.1.16 <colorScale> — N <cfvo> stops paired with N <color>s (N = 2 or 3).
+// A stop with an unknown type or a non-rgb colour aborts the rule (returns
+// undefined) so a scale we cannot resolve faithfully is simply not applied.
+function parseColorScaleRule(
+  obj: Record<string, unknown>,
+  priority: number,
+): CfRuleColorScale | undefined {
+  const cs = obj['colorScale'];
+  if (!cs || typeof cs !== 'object') return undefined;
+  const csObj = cs as Record<string, unknown>;
+  const cfvos = parseCfvos(csObj['cfvo']);
+  const colorsHex = parseScaleColors(csObj['color']);
+  if (cfvos.length < 2 || cfvos.length !== colorsHex.length) return undefined;
+  return { type: 'colorScale', priority, cfvos, colorsHex };
+}
+
+function parseCfvos(raw: unknown): Array<Cfvo> {
+  const items = Array.isArray(raw) ? raw : raw !== undefined ? [raw] : [];
+  const out: Array<Cfvo> = [];
+  for (const it of items) {
+    if (!it || typeof it !== 'object') continue;
+    const o = it as Record<string, unknown>;
+    const type = strAttr(o, 'type');
+    if (!type || !CFVO_TYPES.has(type)) return []; // unknown stop → drop the rule
+    const val = strAttr(o, 'val');
+    out.push(val !== undefined ? { type: type as CfvoType, val } : { type: type as CfvoType });
+  }
+  return out;
+}
+
+function parseScaleColors(raw: unknown): Array<string> {
+  const items = Array.isArray(raw) ? raw : raw !== undefined ? [raw] : [];
+  const out: Array<string> = [];
+  for (const it of items) {
+    const hex = colorRgbHex(it);
+    if (!hex) return []; // theme/indexed colour (no rgb) → drop the rule for v1
+    out.push(hex);
+  }
+  return out;
+}
+
+// <color rgb="FFF8696B"> → "F8696B" (ARGB alpha stripped, upper-cased); matches
+// styles-parser's convention. Returns undefined for theme/indexed/auto colours.
+function colorRgbHex(node: unknown): string | undefined {
+  if (!node || typeof node !== 'object') return undefined;
+  const rgb = strAttr(node as Record<string, unknown>, 'rgb');
+  if (!rgb) return undefined;
+  if (/^[0-9A-Fa-f]{8}$/.test(rgb)) return rgb.substring(2).toUpperCase();
+  if (/^[0-9A-Fa-f]{6}$/.test(rgb)) return rgb.toUpperCase();
+  return undefined;
 }
 
 // <formula>5</formula> — fast-xml-parser yields the string directly (text-only,

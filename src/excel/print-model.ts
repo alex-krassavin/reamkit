@@ -410,6 +410,7 @@ export function worksheetToBody(
   const cfFormatter: CellConditionalFormatter | undefined = buildConditionalFormatter(
     worksheet.conditionalFormats,
     styles,
+    worksheet.cells,
   );
 
   const rows: Array<TableRow> = [];

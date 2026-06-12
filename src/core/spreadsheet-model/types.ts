@@ -228,8 +228,31 @@ export interface CfRuleCellIs {
   readonly dxfId: number;
 }
 
-// More rule types (colorScale, dataBar, iconSet) extend this union later.
-export type CfRule = CfRuleCellIs;
+// §18.3.1.11 ST_CfvoType — how a <cfvo> stop's threshold is derived. `min`/`max`
+// take the range's extent; `num`/`formula` a literal; `percent`/`percentile`
+// position within the value distribution.
+export type CfvoType = 'num' | 'percent' | 'max' | 'min' | 'percentile' | 'formula';
+
+// §18.3.1.11 <cfvo> — one stop of a colorScale (or dataBar/iconSet). `val`
+// carries the number/percent/formula text; absent for `min`/`max`.
+export interface Cfvo {
+  readonly type: CfvoType;
+  readonly val?: string;
+}
+
+// §18.3.1.16 <cfRule type="colorScale"> — a 2- or 3-stop gradient. Each cfvo
+// pairs with a colour; a cell's value, positioned between the bracketing stops,
+// interpolates (in RGB) to a solid fill. Unlike cellIs it needs the range's
+// value extent, so it resolves against every covered cell, not one constant.
+export interface CfRuleColorScale {
+  readonly type: 'colorScale';
+  readonly priority: number;
+  readonly cfvos: ReadonlyArray<Cfvo>;
+  readonly colorsHex: ReadonlyArray<string>;
+}
+
+// dataBar/iconSet extend this union later.
+export type CfRule = CfRuleCellIs | CfRuleColorScale;
 
 // §18.3.1.18 <conditionalFormatting sqref="A1:A10 C1:C5"> — rules over ranges.
 export interface ConditionalFormat {

@@ -22,6 +22,9 @@ export type {
   Dxf,
   CfOperator,
   CfRuleCellIs,
+  CfvoType,
+  Cfvo,
+  CfRuleColorScale,
   CfRule,
   ConditionalFormat,
 } from '@/core/spreadsheet-model/types';
