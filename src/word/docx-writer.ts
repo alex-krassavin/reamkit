@@ -10,14 +10,14 @@
 // bytes. Anything the writer does not serialize yet is reported as a loss,
 // exactly like the other writers.
 //
-// Coverage (the docx-writer epic, D1–D6): paragraphs and runs with full
+// Coverage (the docx-writer epic, D1–D7): paragraphs and runs with full
 // formatting, numbered lists, hyperlinks and bookmarks, tables (spans,
-// borders, shading, nesting), images (PNG/JPEG/JPEG2000), headers/footers and
-// single-section geometry (page size/margins, columns, titlePg). The D6
-// round-trip gate proves zero writer failures across 940 corpus documents
-// (96% full IR identity). Documented v1 gaps the gate surfaced:
-//   • multi-section documents — only the first section's sectPr + headers/
-//     footers are written (per-section sectPr in paragraph pPr is follow-on);
+// borders, shading, nesting), images (PNG/JPEG/JPEG2000), headers/footers,
+// and multi-section geometry (per-section sectPr — mid-document breaks ride
+// the section's last paragraph's pPr, the final section a body-level sectPr;
+// page size/margins, columns, titlePg). The round-trip gate proves zero
+// writer failures across 940 corpus documents (POI 94% / LibreOffice 98% full
+// IR identity). Documented v1 gaps the gate surfaced:
 //   • unsupported image formats (GIF / EMF / WMF) are dropped — the reader and
 //     this writer handle the raster formats the PDF path embeds;
 //   • footnotes, charts, shapes and math are reported as losses, not written.
@@ -140,22 +140,42 @@ export function writeDocx(flow: FlowDoc): WriteResult {
   const docScope = newScope();
   const extraParts: Array<OpcPart> = [];
   const extraPartRels: Array<{ sourcePart: string; relationships: Array<Relationship> }> = [];
+  // Header/footer parts referenced by more than one section are emitted once
+  // (original relationship id → the document rId reused everywhere).
+  const hfCache = new Map<string, string>();
 
-  for (const el of flow.body) emitBlock(body, el, losses, state, docScope);
+  // §17.6.17 — sections. Each section's sectPr carries its own headers/footers.
+  // A mid-document section's sectPr lives in the pPr of its LAST paragraph
+  // (body[endIndex-1], the carrier the reader keeps); the final section's
+  // sectPr is a direct body child.
+  const sections =
+    flow.sections.length > 0
+      ? flow.sections
+      : flow.section
+        ? [{ properties: flow.section, endIndex: flow.body.length }]
+        : [];
+  const sectPrByClosingIndex = new Map<number, string>();
+  let finalSectPr = '';
+  sections.forEach((sec, i) => {
+    const refs = emitHeadersFooters(
+      flow,
+      sec.properties,
+      state,
+      docScope,
+      extraParts,
+      extraPartRels,
+      hfCache,
+      losses,
+    );
+    const sp = sectPrXml(sec.properties, refs);
+    if (i === sections.length - 1) finalSectPr = sp;
+    else sectPrByClosingIndex.set(sec.endIndex - 1, sp);
+  });
 
-  // §17.10 headers/footers: emit each referenced part (with its own rel scope
-  // for images), wire a document relationship + the sectPr reference.
-  const section = flow.sections[0]?.properties ?? flow.section;
-  const hfRefs = emitHeadersFooters(
-    flow,
-    section,
-    state,
-    docScope,
-    extraParts,
-    extraPartRels,
-    losses,
-  );
-  if (section) body.push(sectPrXml(section, hfRefs));
+  flow.body.forEach((el, idx) => {
+    emitBlock(body, el, losses, state, docScope, sectPrByClosingIndex.get(idx));
+  });
+  if (finalSectPr) body.push(finalSectPr);
 
   const documentXml =
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
@@ -234,6 +254,9 @@ function emitHeadersFooters(
   docScope: PartScope,
   extraParts: Array<OpcPart>,
   extraPartRels: Array<{ sourcePart: string; relationships: Array<Relationship> }>,
+  // Original relationship id → emitted document rId, so a header/footer part
+  // shared by several sections is emitted once.
+  hfCache: Map<string, string>,
   losses: Array<Loss>,
 ): HeaderFooterRefs {
   const refs: HeaderFooterRefs = { headers: [], footers: [] };
@@ -244,6 +267,8 @@ function emitHeadersFooters(
     relationshipId: string,
     type: string,
   ): string | undefined => {
+    const cached = hfCache.get(relationshipId);
+    if (cached !== undefined) return cached;
     const content = flow.headersFooters!.get(relationshipId);
     if (!content) return undefined;
     const n = extraParts.filter((p) => p.path.includes(`/${kind}`)).length + 1;
@@ -270,6 +295,7 @@ function emitHeadersFooters(
       target: `${kind}${n}.xml`,
       targetMode: 'Internal',
     });
+    hfCache.set(relationshipId, relId);
     return relId;
   };
 
@@ -297,13 +323,17 @@ function emitBlock(
   losses: Array<Loss>,
   state: WriteState,
   scope: PartScope,
+  // §17.6.17 — a mid-document section's sectPr to attach as this block's
+  // section break (it closes the section at this body element).
+  closingSectPr?: string,
 ): void {
   if (el.kind === 'paragraph') {
-    out.push(paragraphXml(el.paragraph, state, scope));
+    out.push(paragraphXml(el.paragraph, state, scope, closingSectPr));
     return;
   }
   if (el.kind === 'table') {
     out.push(tableXml(el.table, losses, state, scope));
+    if (closingSectPr) out.push(`<w:p><w:pPr>${closingSectPr}</w:pPr></w:p>`);
     return;
   }
   if (el.kind === 'image') {
@@ -321,8 +351,10 @@ function emitBlock(
     } else {
       losses.push({ severity: 'dropped', feature: FEATURES.images, detail: 'image bytes missing' });
     }
+    if (closingSectPr) out.push(`<w:p><w:pPr>${closingSectPr}</w:pPr></w:p>`);
     return;
   }
+  if (closingSectPr) out.push(`<w:p><w:pPr>${closingSectPr}</w:pPr></w:p>`);
   // Charts and shapes: not written yet. Reported, not dropped silently.
   const feature = el.kind === 'chart' ? FEATURES.charts : FEATURES.shapes;
   losses.push({
@@ -507,7 +539,12 @@ function cellMarginsXml(tag: 'w:tblCellMar' | 'w:tcMar', margins: CellMargins | 
   return inner ? `<${tag}>${inner}</${tag}>` : '';
 }
 
-function paragraphXml(p: Paragraph, state: WriteState, scope: PartScope): string {
+function paragraphXml(
+  p: Paragraph,
+  state: WriteState,
+  scope: PartScope,
+  closingSectPr?: string,
+): string {
   // The runs the reader actually kept: list markers re-materialize from
   // numbering.xml, math runs are not written yet, and a run is visible if it
   // has text or an inline image.
@@ -550,7 +587,11 @@ function paragraphXml(p: Paragraph, state: WriteState, scope: PartScope): string
     })
     .join('');
 
-  return `<w:p>${pPrXml(p.properties as ResolvedParagraphProperties)}${bookmarks}${inner.join('')}</w:p>`;
+  // §17.6.17 — a mid-document section break: its sectPr is appended inside the
+  // pPr of this (the section's last) paragraph.
+  const pPrInner = pPrBody(p.properties as ResolvedParagraphProperties) + (closingSectPr ?? '');
+  const pPr = pPrInner !== '' ? `<w:pPr>${pPrInner}</w:pPr>` : '';
+  return `<w:p>${pPr}${bookmarks}${inner.join('')}</w:p>`;
 }
 
 // w:hyperlink container: @r:id for an external target (allocates a rel),
@@ -598,8 +639,9 @@ function rPrXml(r: ResolvedRunProperties): string {
   return out.length > 0 ? `<w:rPr>${out.join('')}</w:rPr>` : '';
 }
 
-// §17.3.1 — paragraph properties as a delta from the resolved defaults.
-function pPrXml(p: ResolvedParagraphProperties): string {
+// §17.3.1 — paragraph properties as a delta from the resolved defaults, the
+// INNER content of w:pPr (no wrapper, so a section break can be appended).
+function pPrBody(p: ResolvedParagraphProperties): string {
   const out: Array<string> = [];
   if (p.numbering) {
     // §17.3.1.19 — list membership; the marker itself comes from numbering.xml.
@@ -615,7 +657,12 @@ function pPrXml(p: ResolvedParagraphProperties): string {
   const spacing = spacingXml(p);
   if (spacing) out.push(spacing);
   if (p.alignment !== DEFAULT_PARA.alignment) out.push(`<w:jc w:val="${p.alignment}"/>`);
-  return out.length > 0 ? `<w:pPr>${out.join('')}</w:pPr>` : '';
+  return out.join('');
+}
+
+function pPrXml(p: ResolvedParagraphProperties): string {
+  const inner = pPrBody(p);
+  return inner !== '' ? `<w:pPr>${inner}</w:pPr>` : '';
 }
 
 function indXml(p: ResolvedParagraphProperties): string {

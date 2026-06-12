@@ -379,6 +379,30 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     expect(headerText).toBe('page header');
   });
 
+  it('round-trips a multi-section document (per-section page geometry)', () => {
+    // Section 1 closes on its last paragraph (sectPr in pPr); section 2 is the
+    // final body-level sectPr — different page sizes prove they stay distinct.
+    const body =
+      '<w:p><w:pPr><w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr></w:pPr>' +
+      '<w:r><w:t>section one</w:t></w:r></w:p>' +
+      '<w:p><w:r><w:t>section two</w:t></w:r></w:p>' +
+      '<w:sectPr><w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/></w:sectPr>';
+    const { doc: flow } = readDocx(buildDocxFromBody(body));
+    expect(flow.sections.length).toBe(2);
+    const { doc: again } = readDocx(writeDocx(flow).bytes);
+
+    // Both sections survive with their own geometry.
+    expect(again.sections.length).toBe(2);
+    expect(again.sections[0]!.properties.pageSize?.width).toBeCloseTo(11906 / 20, 1); // portrait
+    expect(again.sections[1]!.properties.pageSize?.width).toBeCloseTo(16838 / 20, 1); // landscape
+    expect(again.sections[1]!.properties.pageSize?.orientation).toBe('landscape');
+    // No paragraph added or lost — the section break rides the carrier.
+    const texts = again.body.flatMap((el) =>
+      el.kind === 'paragraph' ? [el.paragraph.runs.map((r) => r.text).join('')] : [],
+    );
+    expect(texts).toEqual(['section one', 'section two']);
+  });
+
   it('round-trips multi-column geometry (w:cols) and titlePg', () => {
     const body =
       '<w:p><w:r><w:t>x</w:t></w:r></w:p>' +
