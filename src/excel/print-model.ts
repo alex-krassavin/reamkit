@@ -232,7 +232,7 @@ interface PrintModelOptions {
 
 export function worksheetToBody(
   worksheet: ParsedWorksheet,
-  sharedStrings: Array<string>,
+  sharedStrings: ReadonlyArray<string>,
   styles: XlsxStyles,
   date1904: boolean,
   print: PrintModelOptions,
@@ -580,7 +580,7 @@ function makeVerticalContinuation(
 
 function resolveCellText(
   cell: WorksheetCell,
-  sharedStrings: Array<string>,
+  sharedStrings: ReadonlyArray<string>,
   styles: XlsxStyles,
   date1904: boolean,
 ): string {
