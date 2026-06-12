@@ -8,9 +8,9 @@
 //   • Byte-stable: b2 === b1 — the writer is deterministic on its own output, so
 //     a faithful read→write loop is idempotent.
 //
-// Page setup / print options / breaks are now written back (SD3a); conditional
-// formats / sparklines / table parts are not (reported as losses) and stay
-// excluded here.
+// The whole grid surface now round-trips — page model (SD3a), conditional
+// formats / sparklines / table parts (SD3b). Only embedded charts (a sheet's
+// drawing) are not yet written back.
 
 import { describe, expect, it } from 'vitest';
 
@@ -34,8 +34,8 @@ const DXF_STYLES = `
   <cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellXfs>
   <dxfs count="1"><dxf><fill><patternFill patternType="solid"><bgColor rgb="FFFF0000"/></patternFill></fill></dxf></dxfs>`;
 
-// The grid fields the writer round-trips (CF / sparklines / tables are SD3b and
-// deliberately excluded from the identity check).
+// Every grid field the writer round-trips (everything but the sheet's embedded
+// charts, which the writer does not yet re-emit).
 function normGrid(g: ParsedWorksheet): unknown {
   return {
     cells: g.cells,
@@ -52,6 +52,7 @@ function normGrid(g: ParsedWorksheet): unknown {
     colBreaks: g.colBreaks,
     conditionalFormats: g.conditionalFormats,
     sparklines: g.sparklines,
+    tables: g.tables,
   };
 }
 
@@ -232,6 +233,19 @@ const fixtures: Array<{ name: string; xlsx: Uint8Array }> = [
       rows: [[1, 5, 3, 8]],
       extLstXml:
         '<extLst><ext uri="{05C60535-1F16-4fd2-B633-F4F36F0B64E0}"><x14:sparklineGroups><x14:sparklineGroup type="column"><x14:colorSeries rgb="FF376092"/><x14:sparklines><x14:sparkline><xm:f>Sheet1!A1:D1</xm:f><xm:sqref>E1</xm:sqref></x14:sparkline></x14:sparklines></x14:sparklineGroup></x14:sparklineGroups></ext></extLst>',
+    }),
+  },
+  {
+    name: 'table parts (SD3b)',
+    xlsx: buildXlsx({
+      rows: [
+        [1, 2],
+        [3, 4],
+        [5, 6],
+      ],
+      tables: [
+        { ref: 'A1:B3', name: 'Data', styleName: 'TableStyleMedium2', showRowStripes: true },
+      ],
     }),
   },
 ];

@@ -5,20 +5,22 @@
 // resolves away. Re-emits workbook / worksheets / sharedStrings / styles through
 // the core OPC writer, so the SheetDoc is a stable round-trip fixpoint (SD2).
 //
-// v1 writes cell values, shared strings, styles (numFmts/fonts/fills/borders/
-// cellXfs/dxfs), merges, column widths and row heights. Conditional formats,
-// sparklines and table parts are not yet written back (reported as losses);
-// they round-trip through the reader but are dropped on write — SD3.
+// Writes the full grid surface: cell values, shared strings, styles (numFmts/
+// fonts/fills/borders/cellXfs/dxfs), merges, column widths, row heights, the
+// page model (margins/setup/print options/breaks), conditional formatting,
+// sparklines (extLst) and table parts (SD1 + SD3a/b). Embedded charts (a sheet's
+// drawing parts) are the one piece not yet re-emitted — reported as a loss.
 
 import type { DocumentWriter, WriteResult } from '@/core/ir/adapters';
 import type { Sheet, SheetDoc } from '@/core/ir/sheet';
 import type { Loss } from '@/core/ir';
-import type { OpcPart, Relationship } from '@/core/opc';
+import type { OpcPart, OpcPartRelationships, Relationship } from '@/core/opc';
 import type {
   CfRule,
   Cfvo,
   ConditionalFormat,
   DefinedName,
+  ExcelTable,
   ParsedSparkline,
   ParsedWorksheet,
   WorksheetCell,
@@ -45,12 +47,14 @@ const REL_WORKSHEET =
 const REL_SHARED_STRINGS =
   'http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings';
 const REL_STYLES = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles';
+const REL_TABLE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/table';
 
 const CT_WORKBOOK = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml';
 const CT_WORKSHEET = 'application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml';
 const CT_SHARED_STRINGS =
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml';
 const CT_STYLES = 'application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml';
+const CT_TABLE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml';
 
 const MAIN_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
 const R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
@@ -59,15 +63,39 @@ export function writeXlsx(sheet: SheetDoc): WriteResult {
   const losses: Array<Loss> = [];
 
   const worksheetParts: Array<OpcPart> = [];
+  const tableParts: Array<OpcPart> = [];
+  const worksheetRels: Array<OpcPartRelationships> = [];
   const sheetEntries: Array<{ name: string; sheetId: number; rid: string }> = [];
   const workbookRels: Array<Relationship> = [];
+  let tableCounter = 0;
 
   sheet.sheets.forEach((s, i) => {
     const idx = i + 1;
     const rid = `rId${idx}`;
+    const wsPath = `xl/worksheets/sheet${idx}.xml`;
+
+    // §18.5 table parts (E-SHEET SD3b): one tableN.xml per table + a worksheet
+    // relationship; the worksheet's <tableParts> references them by rId.
+    const tableRelIds: Array<string> = [];
+    const wsTableRels: Array<Relationship> = [];
+    for (const t of s.grid.tables ?? []) {
+      const tid = ++tableCounter;
+      const tRid = `rIdTbl${tid}`;
+      tableRelIds.push(tRid);
+      tableParts.push({
+        path: `xl/tables/table${tid}.xml`,
+        data: encoder.encode(tableXml(t, tid)),
+        contentType: CT_TABLE,
+      });
+      wsTableRels.push(rel(tRid, REL_TABLE, `../tables/table${tid}.xml`));
+    }
+    if (wsTableRels.length > 0) {
+      worksheetRels.push({ sourcePart: wsPath, relationships: wsTableRels });
+    }
+
     worksheetParts.push({
-      path: `xl/worksheets/sheet${idx}.xml`,
-      data: encoder.encode(worksheetXml(s.grid)),
+      path: wsPath,
+      data: encoder.encode(worksheetXml(s.grid, tableRelIds)),
       contentType: CT_WORKSHEET,
     });
     workbookRels.push(rel(rid, REL_WORKSHEET, `worksheets/sheet${idx}.xml`));
@@ -89,6 +117,7 @@ export function writeXlsx(sheet: SheetDoc): WriteResult {
         contentType: CT_WORKBOOK,
       },
       ...worksheetParts,
+      ...tableParts,
       {
         path: 'xl/sharedStrings.xml',
         data: encoder.encode(sharedStringsXml(sheet.sharedStrings)),
@@ -101,7 +130,10 @@ export function writeXlsx(sheet: SheetDoc): WriteResult {
       },
     ],
     rootRelationships: [rel('rId1', REL_OFFICE_DOCUMENT, 'xl/workbook.xml')],
-    partRelationships: [{ sourcePart: 'xl/workbook.xml', relationships: workbookRels }],
+    partRelationships: [
+      { sourcePart: 'xl/workbook.xml', relationships: workbookRels },
+      ...worksheetRels,
+    ],
   });
 
   return { bytes, losses };
@@ -118,15 +150,15 @@ function rel(id: string, type: string, target: string): Relationship {
   return { id, type, target, targetMode: 'Internal' };
 }
 
-// Features in the SheetDoc not yet re-emitted. Conditional formatting and
-// sparklines now write back (SD3b); table parts follow.
+// The grid surface (cells, styles, merges, page model, CF, sparklines, tables)
+// all writes back now. Embedded charts (the sheet's drawing parts) do not yet —
+// re-emitting them would need the chart XML + drawing + media round-tripped.
 function recordSheetLosses(s: Sheet, losses: Array<Loss>): void {
-  const g = s.grid;
-  if (g.tables && g.tables.length > 0) {
+  if (s.charts && s.charts.length > 0) {
     losses.push({
       severity: 'dropped',
-      feature: FEATURES.tables,
-      detail: `sheet "${s.name}": table parts not written back (SD3b tail)`,
+      feature: FEATURES.charts,
+      detail: `sheet "${s.name}": embedded charts not written back`,
     });
   }
 }
@@ -164,7 +196,7 @@ function workbookXml(
 
 // ── worksheet.xml ──────────────────────────────────────────────────────────
 
-function worksheetXml(grid: ParsedWorksheet): string {
+function worksheetXml(grid: ParsedWorksheet, tableRelIds: ReadonlyArray<string> = []): string {
   const dimension =
     grid.maxRow >= 0 && grid.maxColumn >= 0
       ? `<dimension ref="A1:${cellRef(grid.maxRow, grid.maxColumn)}"/>`
@@ -237,8 +269,44 @@ function worksheetXml(grid: ParsedWorksheet): string {
     pageSetupXml(grid.pageSetup) +
     breaksXml('rowBreaks', grid.rowBreaks) +
     breaksXml('colBreaks', grid.colBreaks) +
+    (tableRelIds.length > 0
+      ? `<tableParts count="${tableRelIds.length}">${tableRelIds
+          .map((id) => `<tablePart r:id="${id}"/>`)
+          .join('')}</tableParts>`
+      : '') +
     sparklineExtXml(grid.sparklines) +
     '</worksheet>'
+  );
+}
+
+// §18.5.1.2 xl/tables/tableN.xml. The reader keeps no column names, so generic
+// tableColumns are synthesized (it ignores them on re-read); the resolved
+// header/band colours are NOT written — the reader re-derives them from the
+// style name + theme (E-SHEET SD3b).
+function tableXml(t: ExcelTable, id: number): string {
+  const ref = rangeRef(t.ref);
+  const name = t.name ?? `Table${id}`;
+  const ncols = t.ref.endColumn - t.ref.startColumn + 1;
+  const columns = Array.from(
+    { length: ncols },
+    (_, c) => `<tableColumn id="${c + 1}" name="Column${c + 1}"/>`,
+  ).join('');
+  const styleInfo = t.styleName
+    ? `<tableStyleInfo name="${escapeAttr(t.styleName)}" showFirstColumn="${
+        t.showFirstColumn ? 1 : 0
+      }" showLastColumn="${t.showLastColumn ? 1 : 0}" showRowStripes="${
+        t.showRowStripes ? 1 : 0
+      }" showColumnStripes="${t.showColumnStripes ? 1 : 0}"/>`
+    : '';
+  return (
+    XML_DECL +
+    `<table xmlns="${MAIN_NS}" id="${id}" name="${escapeAttr(name)}" displayName="${escapeAttr(
+      name,
+    )}" ref="${ref}"${t.headerRowCount !== 1 ? ` headerRowCount="${t.headerRowCount}"` : ''} totalsRowShown="0">` +
+    (t.autoFilter ? `<autoFilter ref="${ref}"/>` : '') +
+    `<tableColumns count="${ncols}">${columns}</tableColumns>` +
+    styleInfo +
+    '</table>'
   );
 }
 
