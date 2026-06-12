@@ -282,6 +282,51 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     expect(el.image.altText).toBe('a red square');
   });
 
+  it('round-trips non-raster image formats (GIF, EMF) by magic number, not extension', () => {
+    // The reader stores any blip bytes verbatim; the writer must recognise the
+    // format from the magic number and pick the right media extension and
+    // content type. A GIF89a header and an EMF EMR_HEADER (" EMF" at byte 40)
+    // exercise the two detection paths beyond the raster set detectImageFormat
+    // knows. The bytes need not be a full valid image — only the signature.
+    const gif = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x00]);
+    const emf = new Uint8Array(88);
+    emf.set([0x01, 0x00, 0x00, 0x00], 0); // iType = EMR_HEADER
+    emf.set([0x20, 0x45, 0x4d, 0x46], 40); // " EMF" signature
+    const drawing = (rId: string) =>
+      `<w:r><w:drawing><wp:inline ` +
+      `xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">` +
+      `<wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="P"/>` +
+      `<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">` +
+      `<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">` +
+      `<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">` +
+      `<pic:blipFill><a:blip r:embed="${rId}"/></pic:blipFill>` +
+      `<pic:spPr/></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>`;
+
+    for (const [bytes, ext, contentType] of [
+      [gif, 'gif', 'image/gif'],
+      [emf, 'emf', 'image/x-emf'],
+    ] as const) {
+      const { doc: flow } = readDocx(
+        buildDocxFromBody(`<w:p>${drawing('rId20')}</w:p>`, {
+          images: { rId20: { contentType, bytes, extension: ext } },
+        }),
+      );
+      const { bytes: written, losses } = writeDocx(flow);
+      expect(losses).toHaveLength(0);
+
+      const pkg = OpcPackage.open(written);
+      // The format-correct media part is present and the bytes survive verbatim.
+      expect(pkg.getPart(`word/media/image1.${ext}`)).toBeDefined();
+      expect([...pkg.getPart(`word/media/image1.${ext}`)!]).toEqual([...bytes]);
+
+      // The image is not lost on re-read: it round-trips to a stored resource.
+      const { doc: again } = readDocx(written);
+      const el = again.body.find((b) => b.kind === 'image');
+      if (el?.kind !== 'image') throw new Error(`expected ${ext} image block`);
+      expect(el.image.resource).toBeDefined();
+    }
+  });
+
   it('deduplicates a resource used twice into one media part', () => {
     const png = buildTinyPng(1, 1, [0, 255, 0, 255]);
     const d = (rId: string) =>

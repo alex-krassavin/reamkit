@@ -10,17 +10,18 @@
 // bytes. Anything the writer does not serialize yet is reported as a loss,
 // exactly like the other writers.
 //
-// Coverage (the docx-writer epic, D1–D7): paragraphs and runs with full
+// Coverage (the docx-writer epic, D1–D7 + T1): paragraphs and runs with full
 // formatting, numbered lists, hyperlinks and bookmarks, tables (spans,
-// borders, shading, nesting), images (PNG/JPEG/JPEG2000), headers/footers,
-// and multi-section geometry (per-section sectPr — mid-document breaks ride
-// the section's last paragraph's pPr, the final section a body-level sectPr;
-// page size/margins, columns, titlePg). The round-trip gate proves zero
-// writer failures across 940 corpus documents (POI 94% / LibreOffice 98% full
-// IR identity). Documented v1 gaps the gate surfaced:
-//   • unsupported image formats (GIF / EMF / WMF) are dropped — the reader and
-//     this writer handle the raster formats the PDF path embeds;
-//   • footnotes, charts, shapes and math are reported as losses, not written.
+// borders, shading, nesting), images of every format the package carries
+// (raster PNG/JPEG/JPEG2000/GIF/BMP/TIFF and vector EMF/WMF, plus an embedded
+// PDF picture — see mediaInfo), headers/footers, and multi-section geometry
+// (per-section sectPr — mid-document breaks ride the section's last
+// paragraph's pPr, the final section a body-level sectPr; page size/margins,
+// columns, titlePg). The round-trip gate proves zero writer failures across
+// 1100 corpus documents (POI 110/110, LibreOffice 977/990 full IR identity).
+// Documented v1 gaps the gate surfaces are all non-image now: footnotes,
+// charts, shapes and math are reported as losses, not written; a handful of
+// SDT/data-bound and hyperlink-on-non-text edges drift by ±1 block.
 
 import type {
   BodyElement,
@@ -82,16 +83,59 @@ const NUMBERING_PART = 'word/numbering.xml';
 // 1 pt = 12700 EMU (English Metric Units, the DrawingML coordinate).
 const EMU_PER_PT = 12700;
 
-const IMAGE_CONTENT_TYPE: Readonly<Record<string, string>> = {
-  png: 'image/png',
-  jpeg: 'image/jpeg',
-  jpeg2000: 'image/jp2',
+// The raster formats the PDF path embeds (detectImageFormat) → media naming.
+const RASTER_MEDIA: Readonly<Record<string, { ext: string; contentType: string }>> = {
+  png: { ext: 'png', contentType: 'image/png' },
+  jpeg: { ext: 'jpeg', contentType: 'image/jpeg' },
+  jpeg2000: { ext: 'jp2', contentType: 'image/jp2' },
 };
-const IMAGE_EXTENSION: Readonly<Record<string, string>> = {
-  png: 'png',
-  jpeg: 'jpeg',
-  jpeg2000: 'jp2',
-};
+
+// The writer round-trips a docx; it transfers image bytes verbatim, so it
+// names media files for EVERY OOXML image format — including the vector /
+// legacy ones the PDF path cannot render (GIF, BMP, TIFF, EMF, WMF). The
+// reader stores the bytes regardless of format, so this is the only place
+// format knowledge is needed on the write side.
+function mediaInfo(bytes: Uint8Array): { ext: string; contentType: string } | undefined {
+  const raster = detectImageFormat(bytes);
+  if (raster) return RASTER_MEDIA[raster];
+  const b = (i: number): number => bytes[i] ?? -1;
+  // GIF — "GIF8".
+  if (b(0) === 0x47 && b(1) === 0x49 && b(2) === 0x46 && b(3) === 0x38) {
+    return { ext: 'gif', contentType: 'image/gif' };
+  }
+  // BMP — "BM".
+  if (b(0) === 0x42 && b(1) === 0x4d) return { ext: 'bmp', contentType: 'image/bmp' };
+  // TIFF — "II*\0" (little-endian) or "MM\0*" (big-endian).
+  if ((b(0) === 0x49 && b(1) === 0x49 && b(2) === 0x2a) || (b(0) === 0x4d && b(1) === 0x4d)) {
+    return { ext: 'tiff', contentType: 'image/tiff' };
+  }
+  // EMF — EMR_HEADER record (iType=1) with the " EMF" signature at byte 40.
+  if (
+    b(0) === 0x01 &&
+    b(1) === 0 &&
+    b(2) === 0 &&
+    b(3) === 0 &&
+    b(40) === 0x20 &&
+    b(41) === 0x45 &&
+    b(42) === 0x4d &&
+    b(43) === 0x46
+  ) {
+    return { ext: 'emf', contentType: 'image/x-emf' };
+  }
+  // WMF — Aldus placeable header (D7 CD C6 9A) or a standard metafile header.
+  if (
+    (b(0) === 0xd7 && b(1) === 0xcd && b(2) === 0xc6 && b(3) === 0x9a) ||
+    (b(0) === 0x01 && b(1) === 0x00 && b(2) === 0x09 && b(3) === 0x00)
+  ) {
+    return { ext: 'wmf', contentType: 'image/x-wmf' };
+  }
+  // PDF — "%PDF". Word/LibreOffice embed a PDF as a picture (with a raster
+  // fallback for display); we carry the bytes for the round-trip.
+  if (b(0) === 0x25 && b(1) === 0x50 && b(2) === 0x44 && b(3) === 0x46) {
+    return { ext: 'pdf', contentType: 'application/pdf' };
+  }
+  return undefined;
+}
 
 const HEADER_CONTENT_TYPE =
   'application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml';
@@ -411,15 +455,11 @@ function mediaRelId(resource: ResourceId, state: WriteState, scope: PartScope): 
   if (target === undefined) {
     const bytes = state.resources.get(resource);
     if (!bytes) return undefined;
-    const format = detectImageFormat(bytes);
-    if (!format) return undefined;
+    const info = mediaInfo(bytes);
+    if (!info) return undefined;
     const n = state.mediaParts.length + 1;
-    target = `media/image${n}.${IMAGE_EXTENSION[format]}`;
-    state.mediaParts.push({
-      path: `word/${target}`,
-      data: bytes,
-      contentType: IMAGE_CONTENT_TYPE[format]!,
-    });
+    target = `media/image${n}.${info.ext}`;
+    state.mediaParts.push({ path: `word/${target}`, data: bytes, contentType: info.contentType });
     state.mediaFileByResource.set(resource, target);
   }
 
