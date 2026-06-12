@@ -10,15 +10,35 @@
 // bytes. Anything the writer does not serialize yet is reported as a loss,
 // exactly like the other writers.
 
-import type { BodyElement, Paragraph, SectionProperties } from '@/core/document-model';
+import type {
+  BodyElement,
+  FontFamilyMap,
+  Paragraph,
+  Run,
+  SectionProperties,
+} from '@/core/document-model';
+import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
 import type { DocumentWriter, WriteResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss } from '@/core/ir';
 
 import { FEATURES } from '@/core/ir';
 import { buildOpcPackage } from '@/core/opc';
+import {
+  EMPTY_STYLE_SHEET,
+  resolveParagraphProperties,
+  resolveRunProperties,
+} from '@/core/style-cascade';
 
 const encoder = new TextEncoder();
+
+// The reader stored RESOLVED properties back onto each run/paragraph (stage
+// 6). The defaults are what the same resolver yields for empty input over the
+// empty sheet — a field equal to these is implicit and is NOT serialized, so a
+// re-read materializes the same value. This delta keeps the emitted rPr/pPr
+// minimal and the round-trip an IR identity.
+const DEFAULT_RUN = resolveRunProperties({}, {}, EMPTY_STYLE_SHEET);
+const DEFAULT_PARA = resolveParagraphProperties({}, EMPTY_STYLE_SHEET);
 
 const DOC_CONTENT_TYPE =
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml';
@@ -96,12 +116,103 @@ function paragraphXml(p: Paragraph): string {
   for (const run of p.runs) {
     // The reader materialized list markers into the body (stage 6); writing
     // them back as literal text would double the marker on re-read with
-    // numbering re-applied — but v0 writes no numbering.xml, so the literal
-    // marker IS the faithful rendition.
+    // numbering re-applied — but this writer emits no numbering.xml yet, so
+    // the literal marker IS the faithful rendition (D3b lifts this).
     if (run.text === '' || run.math !== undefined || run.inlineImage !== undefined) continue;
-    runs.push(`<w:r><w:t xml:space="preserve">${escapeXml(run.text)}</w:t></w:r>`);
+    runs.push(runXml(run));
   }
-  return `<w:p>${runs.join('')}</w:p>`;
+  return `<w:p>${pPrXml(p.properties as ResolvedParagraphProperties)}${runs.join('')}</w:p>`;
+}
+
+function runXml(run: Run): string {
+  const rPr = rPrXml(run.properties as ResolvedRunProperties);
+  return `<w:r>${rPr}<w:t xml:space="preserve">${escapeXml(run.text)}</w:t></w:r>`;
+}
+
+// §17.3.2 — run properties as a delta from the resolved defaults.
+function rPrXml(r: ResolvedRunProperties): string {
+  const out: Array<string> = [];
+  if (r.bold !== DEFAULT_RUN.bold) out.push(toggle('w:b', r.bold));
+  if (r.italic !== DEFAULT_RUN.italic) out.push(toggle('w:i', r.italic));
+  if (r.strike !== DEFAULT_RUN.strike) out.push(toggle('w:strike', r.strike));
+  if (r.underline !== DEFAULT_RUN.underline) out.push(`<w:u w:val="${r.underline}"/>`);
+  const fonts = rFontsXml(r.fontFamily);
+  if (fonts) out.push(fonts);
+  if (r.fontSizePt !== DEFAULT_RUN.fontSizePt) {
+    // §17.3.2.38 w:sz — half-points.
+    out.push(`<w:sz w:val="${Math.round(r.fontSizePt * 2)}"/>`);
+  }
+  if (r.colorHex !== DEFAULT_RUN.colorHex) out.push(`<w:color w:val="${r.colorHex}"/>`);
+  if (r.verticalAlign !== DEFAULT_RUN.verticalAlign) {
+    out.push(`<w:vertAlign w:val="${r.verticalAlign}"/>`);
+  }
+  if (r.rtl !== DEFAULT_RUN.rtl) out.push(toggle('w:rtl', r.rtl));
+  if (r.lang !== undefined) out.push(`<w:lang w:val="${escapeAttr(r.lang)}"/>`);
+  return out.length > 0 ? `<w:rPr>${out.join('')}</w:rPr>` : '';
+}
+
+// §17.3.1 — paragraph properties as a delta from the resolved defaults.
+function pPrXml(p: ResolvedParagraphProperties): string {
+  const out: Array<string> = [];
+  if (p.outlineLevel !== undefined) out.push(`<w:outlineLvl w:val="${p.outlineLevel}"/>`);
+  if (p.pageBreakBefore) out.push('<w:pageBreakBefore/>');
+  if (p.bidi !== DEFAULT_PARA.bidi) out.push(toggle('w:bidi', p.bidi));
+  const ind = indXml(p);
+  if (ind) out.push(ind);
+  const spacing = spacingXml(p);
+  if (spacing) out.push(spacing);
+  if (p.alignment !== DEFAULT_PARA.alignment) out.push(`<w:jc w:val="${p.alignment}"/>`);
+  return out.length > 0 ? `<w:pPr>${out.join('')}</w:pPr>` : '';
+}
+
+function indXml(p: ResolvedParagraphProperties): string {
+  const attrs: Array<string> = [];
+  if (p.indentLeft !== DEFAULT_PARA.indentLeft) attrs.push(`w:left="${twips(p.indentLeft)}"`);
+  if (p.indentRight !== DEFAULT_PARA.indentRight) attrs.push(`w:right="${twips(p.indentRight)}"`);
+  if (p.indentFirstLine !== DEFAULT_PARA.indentFirstLine) {
+    // A negative first-line indent is a hanging indent (§17.3.1.12).
+    if (p.indentFirstLine < 0) attrs.push(`w:hanging="${twips(-p.indentFirstLine)}"`);
+    else attrs.push(`w:firstLine="${twips(p.indentFirstLine)}"`);
+  }
+  return attrs.length > 0 ? `<w:ind ${attrs.join(' ')}/>` : '';
+}
+
+function spacingXml(p: ResolvedParagraphProperties): string {
+  const attrs: Array<string> = [];
+  if (p.spacingBefore !== DEFAULT_PARA.spacingBefore) {
+    attrs.push(`w:before="${twips(p.spacingBefore)}"`);
+  }
+  if (p.spacingAfter !== DEFAULT_PARA.spacingAfter) {
+    attrs.push(`w:after="${twips(p.spacingAfter)}"`);
+  }
+  if (
+    (p.spacingLineRule !== DEFAULT_PARA.spacingLineRule ||
+      p.spacingLine !== DEFAULT_PARA.spacingLine) &&
+    p.spacingLine > 0
+  ) {
+    // §17.3.1.33: 'auto' line spacing is in 240ths (line units); exact/atLeast
+    // in twips. The reader stores spacingLine in points either way.
+    const lineVal =
+      p.spacingLineRule === 'auto' ? Math.round(p.spacingLine * 12) : twips(p.spacingLine);
+    attrs.push(`w:line="${lineVal}"`, `w:lineRule="${p.spacingLineRule}"`);
+  }
+  return attrs.length > 0 ? `<w:spacing ${attrs.join(' ')}/>` : '';
+}
+
+// §17.3.2.26 w:rFonts — only the slots that differ from the resolved default.
+function rFontsXml(fonts: FontFamilyMap): string {
+  const d = DEFAULT_RUN.fontFamily;
+  const attrs: Array<string> = [];
+  if (fonts.ascii && fonts.ascii !== d.ascii) attrs.push(`w:ascii="${escapeAttr(fonts.ascii)}"`);
+  if (fonts.hAnsi && fonts.hAnsi !== d.hAnsi) attrs.push(`w:hAnsi="${escapeAttr(fonts.hAnsi)}"`);
+  if (fonts.cs && fonts.cs !== d.cs) attrs.push(`w:cs="${escapeAttr(fonts.cs)}"`);
+  return attrs.length > 0 ? `<w:rFonts ${attrs.join(' ')}/>` : '';
+}
+
+// A boolean toggle property (§17.3.2.x): present-true is bare; present-false is
+// w:val="false" (overrides an inherited true — exact on re-read here).
+function toggle(tag: string, on: boolean): string {
+  return on ? `<${tag}/>` : `<${tag} w:val="false"/>`;
 }
 
 // §17.6.17 — page size and margins in twentieths of a point.
@@ -130,4 +241,8 @@ const twips = (pt: number): number => Math.round(pt * 20);
 
 function escapeXml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function escapeAttr(s: string): string {
+  return escapeXml(s).replace(/"/g, '&quot;');
 }
