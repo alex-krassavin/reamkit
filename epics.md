@@ -146,8 +146,17 @@ Tagged-PDF, который мы пишем, — идеальный вход дл
   `unzlibSync`), brute-force скан как recovery (битый xref / xref-stream). Подтверждено: наш писатель
   пишет КЛАССИЧЕСКИЙ xref (нет ObjStm/XRefStm) → reader читает свой же выход. Тесты: `pdf-reader-cos`
   (11, юниты грамматики), `pdf-reader-document` (4, roundtrip писатель→reader + реальный docx→pdf→read).
-- **EP2–EP5** — content-stream интерпретатор → tagged fast-path (StructTreeRoot) → эвристика → проекция
-  в FlowDoc + проводка `pdfReader` в фасад.
+- **EP2 ✓ — content-stream интерпретатор + извлечение текста.** `content.ts` `interpretContent`: КА по
+  операторам content-stream'а (q/Q/cm — CTM; BT/ET; Tf/Td/TD/Tm/T*/TL/Tc/Tw/Tz/Ts; Tj/TJ/'/"), трекинг
+  text+line матриц, эмит ОДНОГО позиционированного run'а на show-оператор (TJ-скобка склеивается в один
+  run в стартовом origin); координаты в page-space (Tm·CTM), эффективный кегль = Tfs·scale(матрицы);
+  inline-image (BI…ID…EI) скипается. `cmap.ts`: парсер `/ToUnicode` CMap (codespacerange→1/2 байта,
+  bfchar, bfrange hex+array). `font.ts`: `ContentFont` из /Font-словаря — decode через ToUnicode,
+  advance из /Widths (simple) или /W+/DW (Type0/CID). `text.ts` `extractPageText`: строит font-map из
+  /Resources/Font и гоняет интерпретатор. Honest e2e: текст ЧИТАЕТСЯ обратно из реального docx→pdf
+  (в порядке чтения — первая строка выше второй). Тесты: `pdf-reader-content` (7), `pdf-reader-text` (4).
+- **EP3–EP5** — tagged fast-path (StructTreeRoot→FlowDoc) → эвристика для нетегированных → проекция
+  в FlowDoc + проводка `pdfReader` в фасад (Ream.parse сниффит %PDF-).
 
 ---
 
