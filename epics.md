@@ -216,13 +216,72 @@ xlsx → parseWorkbook (sheets, date1904, definedNames)
   SheetDoc становится реальным выходом ридера, FlowDoc — производный вид. (Можно слить с SA2.)
 
 **Волна C — первые Excel-фичи на SheetDoc (выплата за рефактор; были «в потолок»).**
-- **SC1 — условное форматирование.** `<conditionalFormatting>` (cellIs/expression/colorScale/
-  dataBar/iconSet) на `Sheet`; per-cell вычисление по SheetDoc; проекция кладёт fill/font/dataBar.
-  colorScale/dataBar требуют cross-cell min/max — ровно то, что грид-узел даёт, а таблица-проекция нет.
-- **SC2 — спарклайны.** `<x14:sparklineGroups>` (extLst) → мини line/column/winloss в ячейке;
-  переиспользовать геометрический слой чартов.
-- **SC3 — Excel-таблицы + автофильтр.** `table.xml`/`<tableParts>` (banded-стили, header-row) и
-  `<autoFilter>` (дропдаун-аффорданс / стилизованная таблица).
+
+- **SC1 ✓ — условное форматирование (cellIs).** Готово (коммит `48d0224`). `<conditionalFormatting>`/
+  `<cfRule type="cellIs">` → dxf-оверрайд (fill/font) per-cell по SheetDoc. `conditional-format.ts`
+  (`buildConditionalFormatter`), `print-model.ts` cell-loop hook, `styles-parser.parseDxfs`.
+- **SC1b ✓ — colorScale.** Готово (коммит `6f52bb8`). 2/3-стоповый градиент: порог из экстента
+  значений диапазона (`collectRangeValues` + `resolveCfvo`: min/max/num/percent/percentile),
+  интерполяция в RGB. Ровно «cross-cell min/max», который грид-узел даёт, а таблица-проекция — нет.
+
+**Общий фундамент остатка волны C — «cell-decoration»: per-cell векторный/бар-оверлей.**
+dataBar, iconSet, sparkline и autofilter-кнопка — все суть «нарисуй графику в финальном rect ячейки».
+Этот rect известен в `emitRowChunk` (`styled-layout.ts:3534`, где сейчас рождается `FillItem` заливки:
+`cellX`/`cellWidth`/`rowHeight`). Туда добавляется (а) узкий `FillItem` для бара и (б) `ShapeItem`
+(`VectorShape`) для иконок/спарклайнов — рисуются тем же `emitVectorShape` (`pdf/vector-graphics.ts`),
+что и чарты. Слой вводит **SC1c** (первый потребитель — dataBar), переиспользуют **SC2** и **SC3**.
+Байт-в-ноль везде: поля опциональны, ячейка без декорации идёт прежним путём → снапшоты не двигаются.
+
+- **SC1c — dataBar + iconSet.** Два cfRule-типа, рисующие графику, а не заливку.
+  - *Парс* (`worksheet-parser.parseCfRule` — диспетчер по `@type`): `dataBar` (`<dataBar><cfvo min/>
+    <cfvo max/><color/></dataBar>` + minLength/maxLength/showValue/gradient), `iconSet`
+    (`<iconSet iconSet="3TrafficLights1"><cfvo/>×N`, N порогов). Модель `CfRuleDataBar`/`CfRuleIconSet`
+    в spreadsheet-model; union `CfRule` ширится.
+  - *Эвалюатор* (`conditional-format.ts`): `CfOverride` += `dataBar?{fraction,colorHex}` и
+    `icon?{set,index}`. fraction = (value−min)/(max−min) по той же `collectRangeValues`, что у colorScale;
+    icon-index — по порогам cfvo.
+  - *Рендер dataBar* (Strategy A): `CellProperties.dataBar?` → `CellLayout` → `emitRowChunk` кладёт
+    `FillItem` шириной `cellWidth×fraction` ПОВЕРХ заливки, ПОД текстом. Width FillItem уже честен
+    (`styled-page-emitter.ts:568`) → PDF без правок. HTML — linear-gradient. SVG заливку не красит → скип.
+  - *Рендер iconSet*: встроенная вектор-геометрия иконок (кружки светофора / стрелки-треугольники /
+    флаги) через `PathBuilder` → `VectorShape` у левого края ячейки + левый text-inset (cell margin),
+    чтобы текст не наезжал.
+  - *Тесты*: fraction→ширина бара; value→индекс иконки; приоритет; экстент. Опц. байт-гейт-фикстуры.
+  - *Хвост*: dataBar с осью (отриц. значения), gradient-вариант, `w:dataBar` в docx-writer — отложить.
+
+- **SC2 — спарклайны.** Мини line/column/winLoss в ячейке. Строится НА фундаменте SC1c.
+  - *Парс*: `<x14:sparklineGroups>` в worksheet `extLst` (`removeNSPrefix:true` снимает `x14:`/`xm:` —
+    `worksheet-parser.ts:43`). `parseSparklines(wsObj)` рядом с `conditionalFormats` (`:73`) →
+    `ParsedWorksheet.sparklines`; тип `ParsedSparkline{type,dataRange,sqref,colorHex?,lineWeight?}`.
+  - *Резолв значений*: data-range `<xm:f>` может быть на ДРУГОМ листе (`Sheet1!$C$1:$C$10`) → резолв в
+    `sheet-to-flow.ts` (там SheetDoc со ВСЕМИ листами), не в per-sheet `print-model`. Значения ЖИВЫЕ из
+    грида (не cache).
+  - *Геометрия*: новый `src/core/drawingml/sparkline-geometry.ts` — `buildSparkline(type,values,wPt,hPt)
+    → VectorShape[]` через `PathBuilder` (polyline для line; rects для column; +/− rects для winLoss).
+    Без осей/легенды/лейблов — этим лёгкий относительно `ChartScene`.
+  - *Размещение*: заполняет ОДНУ ячейку → cell-decoration-слой SC1c. Размер ячейки известен
+    (`columnWidths`/`rowHeightMap` — `print-model.ts:341/293`).
+  - *Тесты*: геометрия (N точек → N−1 сегментов; знак winLoss); размещение; cross-sheet-резолв диапазона.
+
+- **SC3 — Excel-таблицы + автофильтр.** `<tableParts>` → `xl/tables/tableN.xml`.
+  - *Парс/проводка*: worksheet-parser снимает `tablePart` rId'ы (как `drawingRelId`, `:68`); xlsx-reader
+    РЕЗОЛВИТ rel'ы (pkg+rels уже есть, паттерн drawing — `xlsx-reader.ts:75`) → новый
+    `src/excel/table-parser.ts` `parseTablePart` → на `ParsedWorksheet/SheetDoc`. Тип
+    `ExcelTablePart{ref,name,styleName,columns,autoFilter?,showRowStripes,showFirstColumn,...}`.
+  - *Стили*: built-in `TableStyleMedium2`&co НЕ в файле → хардкод-рецепт name→(header=accentN,
+    band2=accentN·tint0.8, border=accentN) поверх темы воркбука. Резолвер темы уже есть
+    (`buildXlsxColorResolver` — `xlsx-reader.ts:120`), переиспользовать.
+  - *Применение*: в `worksheetToBody` оверлей `CellShading` на ячейки в `table.ref` (паритет строки →
+    band1/band2; header-row → header-цвет; first/last-col-флаги) — паттерн precomputed per-cell lookup,
+    как `cfFormatter`. Бэндинг-движок docx (`style-cascade/table.ts`) концептуально переиспользуем,
+    но проще inline в cell-loop.
+  - *autoFilter*: дропдаун-кнопка в header-ячейке = маленький треугольник → iconSet-вектор-слой SC1c.
+    Опц./хвост.
+  - *Тесты*: парс table.xml; бэндинг (паритет→цвет); header-шейдинг; styleName→accent-резолв по теме.
+
+**Порядок волны C: SC1c → SC2 → SC3.** SC1c вводит cell-decoration + бар-слой; SC2 (спарклайн заполняет
+ячейку) и SC3 (autofilter-кнопка) переиспользуют его. Каждый шаг — байт-в-ноль (фичечит только файлы,
+использующие фичу); снапшоты не двигаются, как в SC1/SC1b.
 
 **Волна D — xlsx-writer (симметрия, аналог E-DOCX; «осмысленный writer» возможен ТОЛЬКО на SheetDoc).**
 - **SD1 — OPC-скелет xlsx + workbook/worksheet writer.** SheetDoc → workbook.xml + sheetN.xml +
