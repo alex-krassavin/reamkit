@@ -29,13 +29,14 @@ import { flowRenderOptions } from '@/core/converter/project';
 import { FontRegistry } from '@/core/font';
 import { fetchFontSet } from '@/core/fonts';
 import { ConversionLossError } from '@/core/ir';
+import { writeDocx } from '@/word/docx-writer';
 import { writeHtml } from '@/html/html-writer';
 import { layoutStyledDocument } from '@/layout/styled-layout';
 import { renderStyledPdf, renderStyledPdfEncrypted, signPdf } from '@/pdf';
 import { writeSvg } from '@/svg/svg-writer';
 import { resolveDocxAutoFonts } from '@/word/docx-to-pdf';
 
-export type ReamTarget = 'pdf' | 'svg' | 'html';
+export type ReamTarget = 'pdf' | 'svg' | 'html' | 'docx';
 
 export interface ReamParseOptions {
   // Reader registry override — defaults to the built-in docx + xlsx readers.
@@ -110,6 +111,16 @@ export class Ream {
       losses.push(...html.losses);
       this.enforceStrict(options, losses);
       return { bytes: html.bytes, losses };
+    }
+
+    if (to === 'docx') {
+      // Flow medium too: the writer re-serializes the interlayer — no layout,
+      // no fonts, zero I/O. Output is denormalized (resolved properties as
+      // direct formatting) but valid; see docx-writer.ts.
+      const docx = writeDocx(this.flow);
+      losses.push(...docx.losses);
+      this.enforceStrict(options, losses);
+      return { bytes: docx.bytes, losses };
     }
 
     const { fonts, registriesByFamily } = await this.resolveFonts(options, losses);
