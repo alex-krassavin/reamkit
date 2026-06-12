@@ -472,6 +472,41 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     '<pic:blipFill><a:blip r:embed="rIdImg"/></pic:blipFill></pic:pic>' +
     '</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>';
 
+  it('round-trips a DrawingML shape (preset geometry, fill, line)', () => {
+    // A lone shape paragraph: the reader collapses it to a ShapeBlock, the
+    // writer re-emits wps:wsp, and a re-read recovers the same geometry/fill —
+    // so no empty carrier paragraph drifts the block count.
+    const shape =
+      '<w:p><w:r><w:drawing>' +
+      '<wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">' +
+      '<wp:extent cx="914400" cy="457200"/><wp:docPr id="1" name="Rounded"/>' +
+      '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
+      '<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">' +
+      '<wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">' +
+      '<wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="457200"/></a:xfrm>' +
+      '<a:prstGeom prst="roundRect"><a:avLst><a:gd name="adj" fmla="val 16667"/></a:avLst></a:prstGeom>' +
+      '<a:solidFill><a:srgbClr val="4472C4"/></a:solidFill>' +
+      '<a:ln w="12700"><a:solidFill><a:srgbClr val="2F5496"/></a:solidFill></a:ln>' +
+      '</wps:spPr><wps:bodyPr/></wps:wsp>' +
+      '</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>';
+    const { doc: flow } = readDocx(buildDocxFromBody(shape));
+    const { bytes, losses } = writeDocx(flow);
+    expect(losses).toHaveLength(0); // shapes are written, not dropped
+    const xml = new TextDecoder().decode(OpcPackage.open(bytes).getMainDocument().data);
+    expect(xml).toContain('<wps:wsp');
+    expect(xml).toContain('prst="roundRect"');
+
+    const { doc: again } = readDocx(bytes);
+    const el = again.body.find((b) => b.kind === 'shape');
+    if (el?.kind !== 'shape') throw new Error('expected a shape block');
+    expect(el.shape.geometry.kind).toBe('preset');
+    expect(el.shape.geometry.preset).toBe('roundRect');
+    expect(el.shape.geometry.adjust?.get('adj')).toBe(16667);
+    expect(el.shape.fill).toEqual({ kind: 'solid', colorHex: '4472C4' });
+    expect(el.shape.line?.colorHex).toBe('2F5496');
+    expect(el.shape.width).toBeCloseTo(72, 1); // 914400 EMU
+  });
+
   it('round-trips an in-paragraph page break (w:br type=page)', () => {
     // §17.3.3.1 — a run carrying only a page break must survive: it is emitted
     // as <w:br w:type="page"/>, not dropped for having empty text.

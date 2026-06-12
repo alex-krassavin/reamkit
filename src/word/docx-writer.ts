@@ -10,18 +10,20 @@
 // bytes. Anything the writer does not serialize yet is reported as a loss,
 // exactly like the other writers.
 //
-// Coverage (the docx-writer epic, D1–D7 + T1): paragraphs and runs with full
-// formatting, numbered lists, hyperlinks and bookmarks, tables (spans,
-// borders, shading, nesting), images of every format the package carries
-// (raster PNG/JPEG/JPEG2000/GIF/BMP/TIFF and vector EMF/WMF, plus an embedded
-// PDF picture — see mediaInfo), headers/footers, and multi-section geometry
-// (per-section sectPr — mid-document breaks ride the section's last
-// paragraph's pPr, the final section a body-level sectPr; page size/margins,
-// columns, titlePg). The round-trip gate proves zero writer failures across
-// 1100 corpus documents (POI 110/110, LibreOffice 976/990 full IR identity).
-// Documented v1 gaps the gate surfaces are all non-image now: footnotes,
-// charts, shapes and math are reported as losses, not written; a handful of
-// SDT/data-bound and hyperlink-on-non-text edges drift by ±1 block.
+// Coverage (the docx-writer epic, D1–D7 + T1–T3): paragraphs and runs with
+// full formatting, page breaks, numbered lists, hyperlinks and bookmarks,
+// tables (spans, borders, shading, nesting), images of every format the
+// package carries (raster PNG/JPEG/JPEG2000/GIF/BMP/TIFF and vector EMF/WMF,
+// plus an embedded PDF picture — see mediaInfo), DrawingML shapes (preset and
+// custom geometry, fill, line, text body — see shapeDrawingXml),
+// headers/footers, and multi-section geometry (per-section sectPr —
+// mid-document breaks ride the section's last paragraph's pPr, the final
+// section a body-level sectPr; page size/margins, columns, titlePg). The
+// round-trip gate proves zero writer failures across 1100 corpus documents
+// (POI 110/110, LibreOffice 985/990 full IR identity). Documented v1 gaps the
+// gate surfaces: footnotes, charts and math are reported as losses, not
+// written; a few hyperlink-on-non-text and ActiveX/data-bound edges drift by
+// ±1 block, and a shape round-trips as inline (floating placement is dropped).
 
 import type {
   BodyElement,
@@ -37,6 +39,12 @@ import type {
   RunProperties,
   SectionColumns,
   SectionProperties,
+  ShapeBlock,
+  ShapeFill,
+  ShapeGeometry,
+  ShapeLine,
+  ShapeTextBody,
+  ShapeTransform,
   Table,
   TableCell,
   TableProperties,
@@ -398,12 +406,20 @@ function emitBlock(
     if (closingSectPr) out.push(`<w:p><w:pPr>${closingSectPr}</w:pPr></w:p>`);
     return;
   }
+  if (el.kind === 'shape') {
+    // §20.4 — a DrawingML shape as its own paragraph (the re-read collapses it
+    // back to a ShapeBlock, so no empty carrier paragraph is left behind).
+    const pPr = pPrXml(el.shape.paragraphProperties as ResolvedParagraphProperties);
+    out.push(`<w:p>${pPr}<w:r>${shapeDrawingXml(el.shape, losses, state, scope)}</w:r></w:p>`);
+    if (closingSectPr) out.push(`<w:p><w:pPr>${closingSectPr}</w:pPr></w:p>`);
+    return;
+  }
   if (closingSectPr) out.push(`<w:p><w:pPr>${closingSectPr}</w:pPr></w:p>`);
-  // Charts and shapes: not written yet. Reported, not dropped silently.
-  const feature = el.kind === 'chart' ? FEATURES.charts : FEATURES.shapes;
+  // Only charts reach here now (paragraph/table/image/shape returned above).
+  // Charts are not written yet — reported, not dropped silently.
   losses.push({
     severity: 'dropped',
-    feature,
+    feature: FEATURES.charts,
     detail: `${el.kind} not written by the docx writer (v0)`,
   });
 }
@@ -440,6 +456,140 @@ function drawingXml(
     `<a:ext cx="${cx}" cy="${cy}"/></a:xfrm>` +
     '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>' +
     '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>'
+  );
+}
+
+// §20.4 wp:inline holding a wps:wsp — the inverse of drawing-parser's parseWsp.
+// The reader collapses a lone shape paragraph to a ShapeBlock, so emitting the
+// shape (rather than dropping it and leaving an empty carrier paragraph) keeps
+// the round-trip's block structure stable. Floating placement (wp:anchor) is
+// not re-emitted yet — a shape round-trips as inline.
+const WPS_URI = 'http://schemas.microsoft.com/office/word/2010/wordprocessingShape';
+
+function shapeDrawingXml(
+  shape: ShapeBlock,
+  losses: Array<Loss>,
+  state: WriteState,
+  scope: PartScope,
+): string {
+  const cx = Math.round(shape.width * EMU_PER_PT);
+  const cy = Math.round(shape.height * EMU_PER_PT);
+  const id = ++state.drawingSeq;
+  const descr = shape.altText ? ` descr="${escapeAttr(shape.altText)}"` : '';
+  const spPr =
+    `<wps:spPr>${xfrmXml(shape.transform, cx, cy)}${geomXml(shape.geometry)}` +
+    `${fillXml(shape.fill)}${shape.line ? lineXml(shape.line) : ''}</wps:spPr>`;
+  const txbx = shape.text ? txbxXml(shape.text, losses, state, scope) : '';
+  return (
+    '<w:drawing>' +
+    '<wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">' +
+    `<wp:extent cx="${cx}" cy="${cy}"/>` +
+    `<wp:docPr id="${id}" name="Shape ${id}"${descr}/>` +
+    '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
+    `<a:graphicData uri="${WPS_URI}">` +
+    '<wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">' +
+    '<wps:cNvSpPr/>' +
+    spPr +
+    txbx +
+    bodyPrXml(shape.text) +
+    '</wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing>'
+  );
+}
+
+// §20.1.7.6 a:xfrm — rotation/flips plus the off+ext the reader uses as a size
+// fallback. Always emitted so a re-read recovers the box even without extent.
+function xfrmXml(t: ShapeTransform | undefined, cx: number, cy: number): string {
+  const rot = t?.rotation60k !== undefined ? ` rot="${t.rotation60k}"` : '';
+  const flipH = t?.flipH ? ' flipH="1"' : '';
+  const flipV = t?.flipV ? ' flipV="1"' : '';
+  return `<a:xfrm${rot}${flipH}${flipV}><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>`;
+}
+
+function geomXml(g: ShapeGeometry): string {
+  if (g.kind === 'custom' && g.custom) {
+    const cmds = g.custom.commands
+      .map((c) => {
+        switch (c.cmd) {
+          case 'move':
+            return `<a:moveTo><a:pt x="${c.x}" y="${c.y}"/></a:moveTo>`;
+          case 'line':
+            return `<a:lnTo><a:pt x="${c.x}" y="${c.y}"/></a:lnTo>`;
+          case 'cubic':
+            return (
+              '<a:cubicBezTo>' +
+              `<a:pt x="${c.x1}" y="${c.y1}"/><a:pt x="${c.x2}" y="${c.y2}"/><a:pt x="${c.x}" y="${c.y}"/>` +
+              '</a:cubicBezTo>'
+            );
+          case 'quad':
+            return `<a:quadBezTo><a:pt x="${c.x1}" y="${c.y1}"/><a:pt x="${c.x}" y="${c.y}"/></a:quadBezTo>`;
+          case 'arc':
+            return `<a:arcTo wR="${c.wR}" hR="${c.hR}" stAng="${c.stAng}" swAng="${c.swAng}"/>`;
+          case 'close':
+            return '<a:close/>';
+        }
+      })
+      .join('');
+    const { pathWidth: w, pathHeight: h } = g.custom;
+    return (
+      '<a:custGeom><a:avLst/><a:gdLst/>' +
+      `<a:rect l="0" t="0" r="${w}" b="${h}"/>` +
+      `<a:pathLst><a:path w="${w}" h="${h}">${cmds}</a:path></a:pathLst></a:custGeom>`
+    );
+  }
+  const gds =
+    g.adjust && g.adjust.size > 0
+      ? [...g.adjust].map(([n, v]) => `<a:gd name="${escapeAttr(n)}" fmla="val ${v}"/>`).join('')
+      : '';
+  return `<a:prstGeom prst="${escapeAttr(g.preset ?? 'rect')}"><a:avLst>${gds}</a:avLst></a:prstGeom>`;
+}
+
+function fillXml(f: ShapeFill): string {
+  return f.kind === 'solid' && f.colorHex
+    ? `<a:solidFill><a:srgbClr val="${f.colorHex}"/></a:solidFill>`
+    : '<a:noFill/>';
+}
+
+function lineXml(l: ShapeLine): string {
+  const w = l.width !== undefined ? ` w="${Math.round(l.width * EMU_PER_PT)}"` : '';
+  const cap =
+    l.cap === 'round'
+      ? ' cap="rnd"'
+      : l.cap === 'square'
+        ? ' cap="sq"'
+        : l.cap === 'flat'
+          ? ' cap="flat"'
+          : '';
+  const inner: Array<string> = [];
+  if (l.fill === 'none') inner.push('<a:noFill/>');
+  else if (l.colorHex) inner.push(`<a:solidFill><a:srgbClr val="${l.colorHex}"/></a:solidFill>`);
+  if (l.dash) inner.push(`<a:prstDash val="${l.dash}"/>`);
+  return `<a:ln${w}${cap}>${inner.join('')}</a:ln>`;
+}
+
+function txbxXml(
+  text: ShapeTextBody,
+  losses: Array<Loss>,
+  state: WriteState,
+  scope: PartScope,
+): string {
+  const inner: Array<string> = [];
+  for (const el of text.content) emitBlock(inner, el, losses, state, scope);
+  return `<wps:txbx><w:txbxContent>${inner.join('')}</w:txbxContent></wps:txbx>`;
+}
+
+function bodyPrXml(text: ShapeTextBody | undefined): string {
+  if (!text) return '<wps:bodyPr/>';
+  const ins = (v: number | undefined, name: string): string =>
+    v !== undefined ? ` ${name}="${Math.round(v * EMU_PER_PT)}"` : '';
+  const anchor = text.anchor ? ` anchor="${text.anchor}"` : '';
+  return (
+    '<wps:bodyPr' +
+    ins(text.insetLeft, 'lIns') +
+    ins(text.insetTop, 'tIns') +
+    ins(text.insetRight, 'rIns') +
+    ins(text.insetBottom, 'bIns') +
+    anchor +
+    '/>'
   );
 }
 
