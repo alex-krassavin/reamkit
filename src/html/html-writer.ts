@@ -674,13 +674,17 @@ function emitCell(
   pushBorder(css, 'left', c?.left ?? (pos.firstCol ? t?.left : t?.insideV));
   pushBorder(css, 'right', c?.right ?? (pos.lastCol ? t?.right : t?.insideV));
   if (cell.properties.shading) css.push(`background-color:#${cell.properties.shading.colorHex}`);
-  // Conditional-format data bar (E-SHEET SC1c): a left-anchored gradient stop
-  // paints the bar over the background colour and under the cell text.
+  // Conditional-format data bar (E-SHEET SC1c): a gradient stop paints the bar
+  // over the background colour and under the cell text. startFraction offsets it
+  // for axis (mixed-sign) bars (tail TC4).
   if (cell.properties.dataBar) {
-    const pct = (Math.max(0, Math.min(1, cell.properties.dataBar.fraction)) * 100).toFixed(2);
-    const c = cell.properties.dataBar.colorHex;
+    const db = cell.properties.dataBar;
+    const clamp = (n: number): number => Math.max(0, Math.min(1, n));
+    const start = (clamp(db.startFraction ?? 0) * 100).toFixed(2);
+    const end = (clamp((db.startFraction ?? 0) + db.fraction) * 100).toFixed(2);
+    const c = db.colorHex;
     css.push(
-      `background-image:linear-gradient(to right,#${c} 0%,#${c} ${pct}%,transparent ${pct}%)`,
+      `background-image:linear-gradient(to right,transparent ${start}%,#${c} ${start}%,#${c} ${end}%,transparent ${end}%)`,
     );
   }
   const margins = cell.properties.margins ?? table.properties.defaultCellMargins;

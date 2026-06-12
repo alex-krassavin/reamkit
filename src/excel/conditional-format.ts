@@ -31,11 +31,13 @@ interface ResolvedColorScale {
 }
 
 // A dataBar resolved against its range's extent: the lower/upper value the bar
-// scale spans, its fill colour, and the min/max bar length (0..1 of cell width).
+// scale spans, its positive/negative fill colours, and the min/max bar length
+// (0..1 of cell width).
 interface ResolvedDataBar {
   readonly lower: number;
   readonly upper: number;
   readonly colorHex: string;
+  readonly negativeColorHex: string;
   readonly minLen: number;
   readonly maxLen: number;
 }
@@ -49,7 +51,11 @@ export interface CfOverride {
   readonly fontColorHex?: string;
   readonly bold?: boolean;
   readonly italic?: boolean;
-  readonly dataBar?: { readonly fraction: number; readonly colorHex: string };
+  readonly dataBar?: {
+    readonly fraction: number;
+    readonly colorHex: string;
+    readonly startFraction?: number;
+  };
   readonly icon?: CellIcon;
 }
 
@@ -126,7 +132,7 @@ export function buildConditionalFormatter(
           break;
         case 'dataBar':
           if (!bar && resolved) {
-            bar = { fraction: dataBarFraction(resolved, value), colorHex: resolved.colorHex };
+            bar = dataBarBar(resolved, value);
           }
           break;
         case 'iconSet':
@@ -353,9 +359,30 @@ function resolveDataBar(
     lower,
     upper,
     colorHex: rule.colorHex,
+    negativeColorHex: 'FF0000', // Excel's default negative bar colour
     minLen: (rule.minLength ?? 0) / 100,
     maxLen: (rule.maxLength ?? 100) / 100,
   };
+}
+
+// The bar for a value: width (0..1 of cell) + optional start offset + colour.
+// A mixed-sign extent (lower<0<upper) puts an axis at zero inside the cell —
+// positives run right of it, negatives run left in the negative colour (tail
+// TC4). A single-sign extent fills from the left edge (the common case).
+function dataBarBar(
+  bar: ResolvedDataBar,
+  value: number,
+): { fraction: number; colorHex: string; startFraction?: number } {
+  if (bar.lower < 0 && bar.upper > 0) {
+    const axis = -bar.lower / (bar.upper - bar.lower); // zero's position in [0,1]
+    if (value >= 0) {
+      const w = (value / bar.upper) * (1 - axis);
+      return { fraction: w, colorHex: bar.colorHex, startFraction: axis };
+    }
+    const w = (Math.abs(value) / Math.abs(bar.lower)) * axis;
+    return { fraction: w, colorHex: bar.negativeColorHex, startFraction: axis - w };
+  }
+  return { fraction: dataBarFraction(bar, value), colorHex: bar.colorHex };
 }
 
 // Bar length (0..1 of cell width) for a value: its position in [lower,upper]

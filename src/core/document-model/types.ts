@@ -397,11 +397,14 @@ export interface CellShading {
   readonly colorHex: string;
 }
 
-// A conditional-format data bar: a horizontal bar filling `fraction` (0..1) of
-// the cell width, painted over the shading and under the text (E-SHEET SC1c).
+// A conditional-format data bar: a horizontal bar of width `fraction` (0..1 of
+// the cell), painted over the shading and under the text (E-SHEET SC1c). It
+// starts at `startFraction` from the cell's left (default 0); a mixed-sign range
+// puts the axis inside the cell so negative bars run left of it (tail TC4).
 export interface CellDataBar {
   readonly fraction: number;
   readonly colorHex: string;
+  readonly startFraction?: number;
 }
 
 // A conditional-format icon: a small glyph at the cell's left, chosen by the

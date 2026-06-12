@@ -203,7 +203,7 @@ const dataBar = (
 const barAt = (
   flow: ReturnType<typeof Ream.parse>['flow'],
   row: number,
-): { fraction: number; colorHex: string } | undefined => {
+): { fraction: number; colorHex: string; startFraction?: number } | undefined => {
   const table = flow.body.find((el) => el.kind === 'table');
   if (table?.kind !== 'table') throw new Error('expected a table');
   return table.table.rows[row]?.cells[0]?.properties.dataBar;
@@ -264,6 +264,34 @@ describe('conditional formatting — dataBar (E-SHEET SC1c)', () => {
     expect(rule.cfvos.map((c) => c.type)).toEqual(['min', 'max']);
     expect(rule.minLength).toBe(0);
     expect(rule.maxLength).toBe(100);
+  });
+
+  it('draws a mixed-sign data bar around a zero axis (Tail TC4)', () => {
+    // Extent [-10, 10] → the axis sits at 0.5; negatives run left in red.
+    const cf = `<conditionalFormatting sqref="A1:A3">${dataBar(1, '638EC6')}</conditionalFormatting>`;
+    const flow = Ream.parse(
+      buildXlsx({
+        rows: [[-10], [0], [10]],
+        stylesXml: PLAIN_STYLES,
+        conditionalFormattingXml: cf,
+      }),
+    ).flow;
+    const neg = barAt(flow, 0);
+    expect(neg?.colorHex).toBe('FF0000'); // negative → Excel's default red
+    expect(neg?.fraction).toBeCloseTo(0.5);
+    expect(neg?.startFraction).toBeCloseTo(0); // runs from the left up to the axis
+    const pos = barAt(flow, 2);
+    expect(pos?.colorHex).toBe('638EC6'); // positive → series colour
+    expect(pos?.fraction).toBeCloseTo(0.5);
+    expect(pos?.startFraction).toBeCloseTo(0.5); // runs from the axis to the right
+  });
+
+  it('keeps an all-positive data bar left-anchored (no axis)', () => {
+    const cf = `<conditionalFormatting sqref="A1:A2">${dataBar(1, '638EC6', { min: 0, max: 100 })}</conditionalFormatting>`;
+    const flow = Ream.parse(
+      buildXlsx({ rows: [[5], [10]], stylesXml: PLAIN_STYLES, conditionalFormattingXml: cf }),
+    ).flow;
+    expect(barAt(flow, 1)?.startFraction).toBeUndefined();
   });
 });
 

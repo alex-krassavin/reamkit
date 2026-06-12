@@ -3613,11 +3613,12 @@ function emitRowChunk(
     // Conditional-format data bar (E-SHEET SC1c): a fraction-width fill over the
     // shading, under the text. Pushed after the shading fill so it paints on top.
     if (cell.dataBar && cell.mergeRole !== 'middle' && cell.mergeRole !== 'end') {
+      const start = Math.max(0, Math.min(1, cell.dataBar.startFraction ?? 0));
       const barWidth = cell.widthPt * Math.max(0, Math.min(1, cell.dataBar.fraction));
       if (barWidth > 0) {
         out.push({
           type: 'fill',
-          x: pt(cellX),
+          x: pt(cellX + cell.widthPt * start),
           y: pt(pageHeight - rowBottom - row.heightPt),
           width: pt(barWidth),
           height: pt(row.heightPt),
