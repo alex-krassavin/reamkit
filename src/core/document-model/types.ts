@@ -424,7 +424,9 @@ export interface CellIcon {
 // the layout renders line / column / win-loss geometry sized to the cell.
 export interface CellSparkline {
   readonly kind: 'line' | 'column' | 'winLoss';
-  readonly values: ReadonlyArray<number>;
+  // A blank/non-numeric cell in the range is a gap (null) so x-positions stay
+  // aligned: a line breaks across it, a column/win-loss skips its slot.
+  readonly values: ReadonlyArray<number | null>;
   readonly colorHex?: string;
 }
 

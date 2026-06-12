@@ -81,6 +81,45 @@ describe('sparklines — projection (E-SHEET SC2)', () => {
   });
 });
 
+describe('sparklines — cross-sheet + gaps (Tail TC3)', () => {
+  it('resolves a sheet-qualified data range against the named sheet', () => {
+    // Sparkline on "Main" cell B1, data on a different sheet "Data".
+    const ext = sparklineExt([{ type: 'line', cells: [{ f: 'Data!A1:C1', sqref: 'B1' }] }]);
+    const flow = Ream.parse(
+      buildXlsx({
+        sheets: [
+          { name: 'Main', rows: [['hdr']], extLstXml: ext },
+          { name: 'Data', rows: [[7, 8, 9]] },
+        ],
+      }),
+    ).flow;
+    // Main is the first sheet → the first body table.
+    const table = flow.body.find((el) => el.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('expected a table');
+    expect(table.table.rows[0]?.cells[1]?.properties.sparkline?.values).toEqual([7, 8, 9]);
+  });
+
+  it('keeps a blank cell in the range as a gap (null)', () => {
+    const ext = sparklineExt([{ type: 'line', cells: [{ f: 'A1:D1', sqref: 'E1' }] }]);
+    const flow = Ream.parse(buildXlsx({ rows: [[1, null, 3, 4]], extLstXml: ext })).flow;
+    const table = flow.body.find((el) => el.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('expected a table');
+    expect(table.table.rows[0]?.cells[4]?.properties.sparkline?.values).toEqual([1, null, 3, 4]);
+  });
+
+  it('a line breaks across a gap (two move segments)', () => {
+    const prims = buildSparkline('line', [1, null, 3], 56, 16);
+    const segs = prims[0]!.paths[0]!.segments;
+    expect(segs.filter((s) => s.op === 'move')).toHaveLength(2); // restart after the gap
+    expect(segs.filter((s) => s.op === 'line')).toHaveLength(0);
+  });
+
+  it('a column skips a gap slot but keeps the others', () => {
+    const prims = buildSparkline('column', [5, null, 7, 9], 56, 16);
+    expect(prims[0]!.paths).toHaveLength(3); // 3 bars, the gap omitted
+  });
+});
+
 describe('sparklines — geometry (E-SHEET SC2)', () => {
   it('builds a line as one stroked polyline through every point', () => {
     const prims = buildSparkline('line', [1, 5, 3, 8], 56, 16);

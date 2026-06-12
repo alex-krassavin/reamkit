@@ -24,6 +24,10 @@ export function projectSheetDoc(sheet: SheetDoc): FlowDoc {
   // renderer supports one section, so later sheets share the first's geometry.
   let firstSheetSection: SectionProperties | undefined;
 
+  // Sheet name → grid, so a sparkline whose data range is sheet-qualified
+  // (Sheet2!A1:C1) resolves against the right sheet (E-SHEET SC2 tail TC3).
+  const sheetGrids = new Map(sheet.sheets.map((s) => [s.name, s.grid]));
+
   for (let sheetIdx = 0; sheetIdx < sheet.sheets.length; sheetIdx++) {
     const ws = sheet.sheets[sheetIdx]!;
     if (sheetIdx === 0) {
@@ -48,6 +52,7 @@ export function projectSheetDoc(sheet: SheetDoc): FlowDoc {
         ...(printArea ? { printArea } : {}),
         ...(titleRows ? { titleRows } : {}),
         gridLines,
+        sheetGrids,
       }),
     );
 

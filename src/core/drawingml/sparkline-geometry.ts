@@ -21,12 +21,12 @@ const LOSS_HEX = 'D00000';
 
 export function buildSparkline(
   kind: SparklineKind,
-  values: ReadonlyArray<number>,
+  values: ReadonlyArray<number | null>,
   width: number,
   height: number,
   colorHex?: string,
 ): Array<SparklinePrim> {
-  if (values.length === 0 || width <= 0 || height <= 0) return [];
+  if (width <= 0 || height <= 0 || values.every((v) => v === null)) return [];
   const color = colorHex ?? DEFAULT_SERIES_HEX;
   switch (kind) {
     case 'line':
@@ -39,7 +39,7 @@ export function buildSparkline(
 }
 
 function lineSpark(
-  values: ReadonlyArray<number>,
+  values: ReadonlyArray<number | null>,
   w: number,
   h: number,
   color: string,
@@ -49,13 +49,25 @@ function lineSpark(
   const { min, span } = extent(values);
   const x = (i: number): number => (n === 1 ? w / 2 : (i / (n - 1)) * w);
   const y = (v: number): number => pad + ((v - min) / span) * (h - 2 * pad);
-  const b = new PathBuilder().moveTo(x(0), y(values[0]!));
-  for (let i = 1; i < n; i++) b.lineTo(x(i), y(values[i]!));
+  const b = new PathBuilder();
+  let penDown = false;
+  for (let i = 0; i < n; i++) {
+    const v = values[i];
+    if (v === null || v === undefined) {
+      penDown = false; // a gap breaks the line
+      continue;
+    }
+    if (penDown) b.lineTo(x(i), y(v));
+    else {
+      b.moveTo(x(i), y(v));
+      penDown = true;
+    }
+  }
   return [{ paths: [b.build()], stroke: { colorHex: color, widthPt: 0.75, join: 'round' } }];
 }
 
 function columnSpark(
-  values: ReadonlyArray<number>,
+  values: ReadonlyArray<number | null>,
   w: number,
   h: number,
   color: string,
@@ -68,15 +80,17 @@ function columnSpark(
   const pad = h * 0.06;
   const paths: Array<VectorPath> = [];
   for (let i = 0; i < n; i++) {
-    const frac = (values[i]! - min) / span; // 0 at the lowest value, 1 at the highest
+    const v = values[i];
+    if (v === null || v === undefined) continue; // gap → no bar, slot preserved
+    const frac = (v - min) / span; // 0 at the lowest value, 1 at the highest
     const bh = Math.max(0.4, pad + frac * (h - pad));
     paths.push(rectPath(i * slot + off, 0, bw, bh));
   }
-  return [{ paths, fillColorHex: color }];
+  return paths.length > 0 ? [{ paths, fillColorHex: color }] : [];
 }
 
 function winLossSpark(
-  values: ReadonlyArray<number>,
+  values: ReadonlyArray<number | null>,
   w: number,
   h: number,
   color: string,
@@ -90,8 +104,8 @@ function winLossSpark(
   const wins: Array<VectorPath> = [];
   const losses: Array<VectorPath> = [];
   for (let i = 0; i < n; i++) {
-    const v = values[i]!;
-    if (v === 0) continue;
+    const v = values[i];
+    if (v === null || v === undefined || v === 0) continue;
     const x = i * slot + off;
     if (v > 0) wins.push(rectPath(x, mid, bw, barH));
     else losses.push(rectPath(x, mid - barH, bw, barH));
@@ -102,14 +116,17 @@ function winLossSpark(
   return out;
 }
 
-// Value extent with a non-zero span (a flat series renders at the baseline).
-function extent(values: ReadonlyArray<number>): { min: number; span: number } {
-  let min = values[0]!;
-  let max = values[0]!;
+// Value extent over the non-null values, with a non-zero span (a flat series
+// renders at the baseline). All-null is guarded by the caller.
+function extent(values: ReadonlyArray<number | null>): { min: number; span: number } {
+  let min = Infinity;
+  let max = -Infinity;
   for (const v of values) {
+    if (v === null) continue;
     if (v < min) min = v;
     if (v > max) max = v;
   }
+  if (min === Infinity) return { min: 0, span: 1 };
   return { min, span: max - min || 1 };
 }
 

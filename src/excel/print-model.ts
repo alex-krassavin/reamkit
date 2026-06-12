@@ -234,6 +234,9 @@ interface PrintModelOptions {
   // Rows in this range are flagged isHeader so the renderer repeats them at the
   // top of each continuation page.
   readonly titleRows?: { readonly startRow: number; readonly endRow: number };
+  // E-SHEET SC2 tail (TC3) — sheet name → grid, for sparklines whose data range
+  // is sheet-qualified (Sheet2!A1:C1). Absent ⇒ same-sheet resolution only.
+  readonly sheetGrids?: ReadonlyMap<string, ParsedWorksheet>;
 }
 
 export function worksheetToBody(
@@ -427,7 +430,7 @@ export function worksheetToBody(
 
   // Sparklines (E-SHEET SC2): host-cell (absolute key) → resolved value series.
   // Empty when the sheet has no sparklines, so the cell loop stays unchanged.
-  const sparklineByCell = buildSparklineLookup(worksheet);
+  const sparklineByCell = buildSparklineLookup(worksheet, print);
 
   // Excel tables (E-SHEET SC3): cell (absolute key) → banded/header fill + header
   // text colour. Empty when the sheet has no table parts. Applied below the
@@ -773,14 +776,18 @@ function key(row: number, col: number): string {
 // The data range is resolved on THIS sheet (parseAreaRef drops any sheet
 // qualifier); cross-sheet series are a documented v1 limitation. Empty map when
 // the sheet has no sparklines, so the cell loop is untouched for everyone else.
-function buildSparklineLookup(worksheet: ParsedWorksheet): Map<string, CellSparkline> {
+function buildSparklineLookup(
+  worksheet: ParsedWorksheet,
+  print: PrintModelOptions,
+): Map<string, CellSparkline> {
   const out = new Map<string, CellSparkline>();
   for (const sp of worksheet.sparklines ?? []) {
     const host = parseAreaRef(sp.sqref);
     const area = parseAreaRef(sp.dataRange);
     if (!host || !area) continue;
-    const values = collectSeriesValues(worksheet.cells, area);
-    if (values.length === 0) continue;
+    const grid = resolveSeriesGrid(sp.dataRange, worksheet, print.sheetGrids);
+    const values = collectSeriesValues(grid.cells, area);
+    if (values.length === 0 || values.every((v) => v === null)) continue;
     out.set(key(host.startRow, host.startColumn), {
       kind: sp.kind,
       values,
@@ -790,20 +797,57 @@ function buildSparklineLookup(worksheet: ParsedWorksheet): Map<string, CellSpark
   return out;
 }
 
-// Numeric cell values inside an area, in reading order (row-major). Non-numeric
-// and blank cells are skipped — a v1 simplification (Excel would keep the gap).
-function collectSeriesValues(cells: ReadonlyArray<WorksheetCell>, area: CellRange): Array<number> {
-  const inArea: Array<{ row: number; col: number; v: number }> = [];
+// A sheet-qualified data range (Sheet2!A1:C1, or 'My Sheet'!…) resolves against
+// the named sheet's grid; an unqualified range (or an unknown sheet) stays on
+// the current sheet (E-SHEET SC2 tail TC3).
+function resolveSeriesGrid(
+  dataRange: string,
+  current: ParsedWorksheet,
+  sheetGrids: ReadonlyMap<string, ParsedWorksheet> | undefined,
+): ParsedWorksheet {
+  if (!sheetGrids) return current;
+  const firstToken = dataRange.split(',')[0] ?? dataRange;
+  const bang = firstToken.lastIndexOf('!');
+  if (bang < 0) return current;
+  let name = firstToken.slice(0, bang).trim();
+  if (name.startsWith("'") && name.endsWith("'")) name = name.slice(1, -1).replace(/''/g, "'");
+  return sheetGrids.get(name) ?? current;
+}
+
+// The numeric series inside an area, in reading order (row-major). Blanks and
+// non-numeric cells are kept as gaps (null) so x-positions stay aligned. A range
+// far larger than any real sparkline (e.g. a whole column) falls back to the
+// compact populated series rather than enumerating millions of gaps.
+const MAX_SPARKLINE_POINTS = 1000;
+
+function collectSeriesValues(
+  cells: ReadonlyArray<WorksheetCell>,
+  area: CellRange,
+): Array<number | null> {
+  const byKey = new Map<string, number>();
   for (const c of cells) {
     if (c.row < area.startRow || c.row > area.endRow) continue;
     if (c.column < area.startColumn || c.column > area.endColumn) continue;
     if (c.type !== 'n') continue;
     const v = Number(c.rawValue);
-    if (!Number.isFinite(v)) continue;
-    inArea.push({ row: c.row, col: c.column, v });
+    if (Number.isFinite(v)) byKey.set(key(c.row, c.column), v);
   }
-  inArea.sort((a, b) => a.row - b.row || a.col - b.col);
-  return inArea.map((x) => x.v);
+  const cellCount = (area.endRow - area.startRow + 1) * (area.endColumn - area.startColumn + 1);
+  if (cellCount > MAX_SPARKLINE_POINTS) {
+    const pts = [...byKey.entries()].map(([k, v]) => {
+      const [r, col] = k.split(',').map(Number) as [number, number];
+      return { r, col, v };
+    });
+    pts.sort((a, b) => a.r - b.r || a.col - b.col);
+    return pts.map((p) => p.v);
+  }
+  const out: Array<number | null> = [];
+  for (let r = area.startRow; r <= area.endRow; r++) {
+    for (let col = area.startColumn; col <= area.endColumn; col++) {
+      out.push(byKey.get(key(r, col)) ?? null);
+    }
+  }
+  return out;
 }
 
 // E-SHEET SC3 — a table cell's resolved fill + (for header cells) font colour.
