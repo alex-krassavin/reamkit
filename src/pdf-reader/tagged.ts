@@ -1,18 +1,30 @@
 // E-PDF EP3 — tagged fast-path reconstruction. Walks the structure tree (EP3
 // struct-tree.ts), pulls each element's text from the per-page MCID → text map
 // the content interpreter produced (EP2), and rebuilds a FlowDoc: headings
-// (H1–H6 → outline level), paragraphs, and — flattened for now — the text of
-// table cells and list items. The honest inverse of the tagged PDF Ream writes.
+// (H1–H6 → outline level), paragraphs, tables (Table → TR → TH/TD), and list
+// items (each LI → its label + body text). The honest inverse of the tagged PDF
+// Ream writes.
 
 import { readStructTree } from './struct-tree';
 import { extractPageText } from './text';
-import type { BodyElement, ParagraphProperties } from '@/core/document-model';
+import type {
+  BodyElement,
+  ParagraphProperties,
+  Table,
+  TableCell,
+  TableRow,
+} from '@/core/document-model';
 import type { FlowDoc } from '@/core/ir/flow';
+import type { Pt } from '@/core/ir';
 
 import type { PdfFile } from './document';
 import type { StructNode } from './struct-tree';
-import { ResourceStore } from '@/core/ir';
+import { ResourceStore, pt } from '@/core/ir';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
+
+// Printable width assumed for a synthesized table grid (6.5" — the columns are
+// equal because the structure tree carries no widths; layout auto-fits anyway).
+const ASSUMED_CONTENT_WIDTH_PT = 468;
 
 export function reconstructTaggedPdf(file: PdfFile): FlowDoc | undefined {
   const root = readStructTree(file);
@@ -28,22 +40,71 @@ export function reconstructTaggedPdf(file: PdfFile): FlowDoc | undefined {
   });
 
   const textOf = (node: StructNode): string =>
-    node.mcids
-      .map(({ page, mcid }) => pageText[page]?.get(mcid) ?? '')
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+    squash(node.mcids.map(({ page, mcid }) => pageText[page]?.get(mcid) ?? '').join(' '));
 
-  const body: Array<BodyElement> = [];
-  const walk = (node: StructNode): void => {
-    if (node.children.length === 0) {
-      const text = textOf(node);
-      if (text.length > 0) body.push(paragraphBlock(text, headingLevel(node.type)));
+  // All text under a node, in reading order (a list item's label + body).
+  const collectText = (node: StructNode): string =>
+    squash([textOf(node), ...node.children.map(collectText)].join(' '));
+
+  function emit(node: StructNode, out: Array<BodyElement>): void {
+    if (node.type === 'Table') {
+      const table = buildTable(node);
+      if (table) out.push(table);
       return;
     }
-    for (const child of node.children) walk(child);
-  };
-  walk(root);
+    if (node.type === 'LI') {
+      const text = collectText(node);
+      if (text.length > 0) out.push(paragraphBlock(text, undefined));
+      return;
+    }
+    if (node.children.length === 0) {
+      const text = textOf(node);
+      if (text.length > 0) out.push(paragraphBlock(text, headingLevel(node.type)));
+      return;
+    }
+    for (const child of node.children) emit(child, out);
+  }
+
+  function buildTable(tableNode: StructNode): BodyElement | undefined {
+    const rows: Array<TableRow> = [];
+    const collectRows = (n: StructNode): void => {
+      for (const child of n.children) {
+        if (child.type === 'TR') rows.push(buildRow(child));
+        else if (child.type === 'THead' || child.type === 'TBody' || child.type === 'TFoot') {
+          collectRows(child);
+        }
+      }
+    };
+    collectRows(tableNode);
+    if (rows.length === 0) return undefined;
+    const numCols = Math.max(
+      1,
+      ...rows.map((r) => r.cells.reduce((s, c) => s + (c.properties.colSpan ?? 1), 0)),
+    );
+    const colWidth = pt(Math.max(1, ASSUMED_CONTENT_WIDTH_PT / numCols));
+    const grid: Array<Pt> = Array.from({ length: numCols }, () => colWidth);
+    const table: Table = { properties: {}, grid, rows };
+    return { kind: 'table', table };
+  }
+
+  function buildRow(trNode: StructNode): TableRow {
+    const cells: Array<TableCell> = [];
+    let allHeader = false;
+    for (const cell of trNode.children) {
+      if (cell.type !== 'TH' && cell.type !== 'TD') continue;
+      if (cells.length === 0) allHeader = true;
+      if (cell.type !== 'TH') allHeader = false;
+      const content: Array<BodyElement> = [];
+      for (const child of cell.children) emit(child, content);
+      if (content.length === 0) content.push(paragraphBlock(textOf(cell), undefined));
+      const colSpan = cell.colSpan ?? 1;
+      cells.push({ properties: colSpan > 1 ? { colSpan } : {}, content });
+    }
+    return { properties: allHeader && cells.length > 0 ? { isHeader: true } : {}, cells };
+  }
+
+  const body: Array<BodyElement> = [];
+  emit(root, body);
   if (body.length === 0) return undefined;
 
   return {
@@ -55,11 +116,15 @@ export function reconstructTaggedPdf(file: PdfFile): FlowDoc | undefined {
   };
 }
 
+function squash(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
 function paragraphBlock(text: string, outlineLevel: number | undefined): BodyElement {
   const properties: ParagraphProperties = outlineLevel !== undefined ? { outlineLevel } : {};
   return {
     kind: 'paragraph',
-    paragraph: { properties, runs: [{ text, properties: {} }] },
+    paragraph: { properties, runs: text.length > 0 ? [{ text, properties: {} }] : [] },
   };
 }
 

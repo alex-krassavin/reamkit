@@ -82,4 +82,40 @@ describe('tagged-PDF reconstruction (E-PDF EP3)', () => {
     });
     expect(reconstructTaggedPdf(PdfFile.parse(pdf))).toBeUndefined();
   });
+
+  it('reconstructs a table as a Table element with its cell text (EP3b)', async () => {
+    const cell = (t: string): string => `<w:tc><w:p><w:r><w:t>${t}</w:t></w:r></w:p></w:tc>`;
+    const tbl =
+      '<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr>' +
+      '<w:tblGrid><w:gridCol w:w="2400"/><w:gridCol w:w="2400"/></w:tblGrid>' +
+      `<w:tr>${cell('NameCol')}${cell('ScoreCol')}</w:tr>` +
+      `<w:tr>${cell('AlphaRow')}${cell('NinetyNine')}</w:tr></w:tbl>`;
+    const flow = await taggedFlow(tbl);
+    const table = flow.body.find((b) => b.kind === 'table');
+    expect(table).toBeDefined();
+    if (table?.kind !== 'table') throw new Error('expected a table');
+    expect(table.table.rows).toHaveLength(2);
+    expect(table.table.rows[0]!.cells).toHaveLength(2);
+    const dump = JSON.stringify(table);
+    for (const word of ['NameCol', 'ScoreCol', 'AlphaRow', 'NinetyNine']) {
+      expect(dump).toContain(word);
+    }
+  });
+
+  it('reconstructs list items as paragraphs carrying their text (EP3b)', async () => {
+    const numbering =
+      '<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/>' +
+      '<w:lvlText w:val="•"/></w:lvl></w:abstractNum>' +
+      '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>';
+    const item = (t: string): string =>
+      `<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>` +
+      `<w:r><w:t>${t}</w:t></w:r></w:p>`;
+    const docx = buildDocxFromBody(item('ItemOne') + item('ItemTwo'), { numberingXml: numbering });
+    const pdf = await Ream.parse(docx).convert('pdf', { fonts: FONTS, tagged: true });
+    const flow = reconstructTaggedPdf(PdfFile.parse(pdf));
+    if (!flow) throw new Error('reconstruction returned no FlowDoc');
+    const texts = paragraphTexts(flow);
+    expect(texts.some((t) => t.includes('ItemOne'))).toBe(true);
+    expect(texts.some((t) => t.includes('ItemTwo'))).toBe(true);
+  });
 });

@@ -20,6 +20,8 @@ export interface StructNode {
   readonly mcids: ReadonlyArray<StructMcid>; // the element's own marked content
   readonly children: ReadonlyArray<StructNode>;
   readonly alt?: string; // /Alt — alternate text (figures)
+  readonly colSpan?: number; // /A /Table /ColSpan (table cells)
+  readonly rowSpan?: number; // /A /Table /RowSpan
 }
 
 const MAX_NODES = 200_000; // DoS guard on a pathological tree
@@ -63,11 +65,14 @@ export function readStructTree(file: PdfFile): StructNode | undefined {
       }
     }
     const alt = elem.get('Alt');
+    const { colSpan, rowSpan } = readSpans(file, elem.get('A') ?? PDF_NULL);
     return {
       type: nameOf(elem.get('S')),
       mcids,
       children,
       ...(typeof alt === 'string' ? { alt } : {}),
+      ...(colSpan > 1 ? { colSpan } : {}),
+      ...(rowSpan > 1 ? { rowSpan } : {}),
     };
   };
 
@@ -89,4 +94,22 @@ function kidList(file: PdfFile, kVal: PdfValue | undefined): Array<PdfValue> {
 
 function nameOf(v: PdfValue | undefined): string {
   return v instanceof PdfName ? v.value : '';
+}
+
+// §14.8.5.7 — a table cell's /A attribute dict(s) carry /ColSpan and /RowSpan.
+function readSpans(file: PdfFile, aVal: PdfValue): { colSpan: number; rowSpan: number } {
+  let colSpan = 1;
+  let rowSpan = 1;
+  const a = file.resolve(aVal);
+  const attrs: ReadonlyArray<PdfValue> = Array.isArray(a) ? a : [a];
+  for (const entry of attrs) {
+    const d = file.resolve(entry);
+    if (d instanceof Map) {
+      const cs = d.get('ColSpan');
+      const rs = d.get('RowSpan');
+      if (typeof cs === 'number') colSpan = cs;
+      if (typeof rs === 'number') rowSpan = rs;
+    }
+  }
+  return { colSpan, rowSpan };
 }

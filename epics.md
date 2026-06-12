@@ -155,8 +155,16 @@ Tagged-PDF, который мы пишем, — идеальный вход дл
   advance из /Widths (simple) или /W+/DW (Type0/CID). `text.ts` `extractPageText`: строит font-map из
   /Resources/Font и гоняет интерпретатор. Honest e2e: текст ЧИТАЕТСЯ обратно из реального docx→pdf
   (в порядке чтения — первая строка выше второй). Тесты: `pdf-reader-content` (7), `pdf-reader-text` (4).
-- **EP3–EP5** — tagged fast-path (StructTreeRoot→FlowDoc) → эвристика для нетегированных → проекция
-  в FlowDoc + проводка `pdfReader` в фасад (Ream.parse сниффит %PDF-).
+- **EP3 ✓ — tagged fast-path (StructTreeRoot → FlowDoc).** EP3a: интерпретатор трекает marked-content
+  (BDC /MCID → push, /Artifact → none, EMC → pop; каждый run помечается mcid'ом — связь структуры с
+  текстом). `struct-tree.ts` `readStructTree`: обход /StructTreeRoot → дерево /StructElem (резолв /S, /Pg,
+  /K → вложенные элементы vs MCR/MCID + /A /ColSpan/RowSpan). `tagged.ts` `reconstructTaggedPdf`: склейка
+  дерева с per-page MCID→текст → FlowDoc-body: H1–H6 → outlineLevel, P → параграф. EP3b: Table→TR→TH/TD →
+  настоящий FlowDoc-Table (equal-width grid, colSpan, header-строки), LI → параграф (Lbl-маркер + LBody).
+  Honest e2e: docx→tagged pdf→FlowDoc восстанавливает заголовки/параграфы/порядок чтения/уровни + таблицы
+  (2×2 с текстом ячеек) + списки. undefined для нетегированного PDF. Тесты: `pdf-reader-tagged` (5).
+- **EP4–EP5** — эвристика для нетегированных PDF (глифы→строки→параграфы по координатам) → проводка
+  `pdfReader` в фасад (Ream.parse сниффит %PDF-) + losses.
 
 ---
 
