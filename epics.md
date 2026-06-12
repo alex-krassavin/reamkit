@@ -136,6 +136,19 @@ Tagged-PDF, который мы пишем, — идеальный вход дл
 проверяем на СВОИХ же выходах. Это и есть честная отправная точка эпика, а чужие
 нетегированные PDF — отдельная (большая) фаза.
 
+### Прогресс
+- **EP1 ✓ — COS-парсер.** Новая подсистема `src/pdf-reader/` (чистое дополнение, байт-в-ноль для
+  всех существующих выходов). Переиспользует объектную модель писателя (`src/pdf/objects.ts`) — парс =
+  инверсия сериализации. `lexer.ts`: токенайзер (числа/имена/строки литеральные+hex/`<<`/`>>`/`[`/`]`/
+  keyword'ы) + `readStreamBody`. `parser.ts`: `parseObject` (грамматика значений с lookahead на `N G R`)
+  + `parseIndirectObject`. `document.ts` `PdfFile`: классический `xref`+`trailer` (с цепочкой /Prev),
+  `resolve(ref)` с кэшем, дерево страниц с наследованием MediaBox/Resources, декод FlateDecode (fflate
+  `unzlibSync`), brute-force скан как recovery (битый xref / xref-stream). Подтверждено: наш писатель
+  пишет КЛАССИЧЕСКИЙ xref (нет ObjStm/XRefStm) → reader читает свой же выход. Тесты: `pdf-reader-cos`
+  (11, юниты грамматики), `pdf-reader-document` (4, roundtrip писатель→reader + реальный docx→pdf→read).
+- **EP2–EP5** — content-stream интерпретатор → tagged fast-path (StructTreeRoot) → эвристика → проекция
+  в FlowDoc + проводка `pdfReader` в фасад.
+
 ---
 
 ## E-SHEET — табличный IR-узел (стратегический: Excel первоклассен)
