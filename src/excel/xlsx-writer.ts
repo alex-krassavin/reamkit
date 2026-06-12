@@ -23,6 +23,9 @@ import type {
   XlsxCellXf,
   XlsxFill,
   XlsxFont,
+  XlsxPageMargins,
+  XlsxPageSetup,
+  XlsxPrintOptions,
   XlsxStyles,
 } from '@/core/spreadsheet-model';
 
@@ -227,15 +230,64 @@ function worksheetXml(grid: ParsedWorksheet): string {
           .join('')}</mergeCells>`
       : '';
 
+  // Worksheet child order follows the ECMA-376 §18.3.1.99 sequence so the output
+  // opens in Excel and round-trips through the reader (E-SHEET SD3a).
   return (
     XML_DECL +
     `<worksheet xmlns="${MAIN_NS}" xmlns:r="${R_NS}">` +
+    (grid.fitToPage ? '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>' : '') +
     dimension +
     colsXml +
     `<sheetData>${rowsXml}</sheetData>` +
     mergesXml +
+    printOptionsXml(grid.printOptions) +
+    pageMarginsXml(grid.pageMargins) +
+    pageSetupXml(grid.pageSetup) +
+    breaksXml('rowBreaks', grid.rowBreaks) +
+    breaksXml('colBreaks', grid.colBreaks) +
     '</worksheet>'
   );
+}
+
+function printOptionsXml(po: XlsxPrintOptions | undefined): string {
+  if (!po) return '';
+  const flag = (name: string, v: boolean | undefined): string =>
+    v !== undefined ? ` ${name}="${v ? '1' : '0'}"` : '';
+  const attrs =
+    flag('gridLines', po.gridLines) +
+    flag('horizontalCentered', po.horizontalCentered) +
+    flag('verticalCentered', po.verticalCentered);
+  return attrs ? `<printOptions${attrs}/>` : '';
+}
+
+function pageMarginsXml(m: XlsxPageMargins | undefined): string {
+  if (!m) return '';
+  return (
+    `<pageMargins left="${m.leftInches}" right="${m.rightInches}"` +
+    ` top="${m.topInches}" bottom="${m.bottomInches}"` +
+    (m.headerInches !== undefined ? ` header="${m.headerInches}"` : '') +
+    (m.footerInches !== undefined ? ` footer="${m.footerInches}"` : '') +
+    '/>'
+  );
+}
+
+function pageSetupXml(s: XlsxPageSetup | undefined): string {
+  if (!s) return '';
+  const attr = (name: string, v: number | string | undefined): string =>
+    v !== undefined ? ` ${name}="${v}"` : '';
+  const attrs =
+    attr('paperSize', s.paperSize) +
+    attr('orientation', s.orientation) +
+    attr('scale', s.scale) +
+    attr('fitToWidth', s.fitToWidth) +
+    attr('fitToHeight', s.fitToHeight);
+  return attrs ? `<pageSetup${attrs}/>` : '';
+}
+
+function breaksXml(tag: string, breaks: ReadonlyArray<number> | undefined): string {
+  if (!breaks || breaks.length === 0) return '';
+  const brks = breaks.map((id) => `<brk id="${id}" man="1"/>`).join('');
+  return `<${tag} count="${breaks.length}" manualBreakCount="${breaks.length}">${brks}</${tag}>`;
 }
 
 function cellXml(cell: WorksheetCell): string {

@@ -8,9 +8,9 @@
 //   • Byte-stable: b2 === b1 — the writer is deterministic on its own output, so
 //     a faithful read→write loop is idempotent.
 //
-// Page setup / print options / conditional formats / sparklines / table parts
-// are NOT yet written back (SD1 writes the grid core); they are excluded here
-// and arrive in SD3.
+// Page setup / print options / breaks are now written back (SD3a); conditional
+// formats / sparklines / table parts are not (reported as losses) and stay
+// excluded here.
 
 import { describe, expect, it } from 'vitest';
 
@@ -27,8 +27,8 @@ const STYLES = `
   <borders count="2"><border/><border><left style="thin"><color rgb="FF000000"/></left><bottom style="medium"/></border></borders>
   <cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/><xf numFmtId="164" fontId="1" fillId="2" borderId="1" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1"><alignment horizontal="center" wrapText="1"/></xf></cellXfs>`;
 
-// The grid fields SD1 writes back (page setup / print options / CF / sparklines
-// / tables are SD3 and deliberately excluded from the identity check).
+// The grid fields the writer round-trips (CF / sparklines / tables are SD3b and
+// deliberately excluded from the identity check).
 function normGrid(g: ParsedWorksheet): unknown {
   return {
     cells: g.cells,
@@ -37,6 +37,12 @@ function normGrid(g: ParsedWorksheet): unknown {
     columns: g.columns,
     merges: g.merges,
     rowHeights: g.rowHeights,
+    pageMargins: g.pageMargins,
+    pageSetup: g.pageSetup,
+    fitToPage: g.fitToPage,
+    printOptions: g.printOptions,
+    rowBreaks: g.rowBreaks,
+    colBreaks: g.colBreaks,
   };
 }
 
@@ -155,6 +161,29 @@ const fixtures: Array<{ name: string; xlsx: Uint8Array }> = [
       definedNames: [{ name: '_xlnm.Print_Area', localSheetId: 0, value: 'Sheet1!$A$1:$B$1' }],
     }),
   },
+  {
+    name: 'page margins (SD3a)',
+    xlsx: buildXlsx({
+      rows: [[1]],
+      pageMargins: { left: 0.5, right: 0.5, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 },
+    }),
+  },
+  {
+    name: 'page setup landscape (SD3a)',
+    xlsx: buildXlsx({
+      rows: [[1]],
+      pageSetup: { paperSize: 9, orientation: 'landscape', scale: 80 },
+    }),
+  },
+  {
+    name: 'fit to page (SD3a)',
+    xlsx: buildXlsx({ rows: [[1]], fitToPage: true, pageSetup: { fitToWidth: 1, fitToHeight: 0 } }),
+  },
+  {
+    name: 'print options (SD3a)',
+    xlsx: buildXlsx({ rows: [[1]], printOptions: { gridLines: true, horizontalCentered: true } }),
+  },
+  { name: 'row breaks (SD3a)', xlsx: buildXlsx({ rows: [[1], [2], [3]], rowBreaks: [1] }) },
 ];
 
 describe('xlsx roundtrip gate (E-SHEET SD2)', () => {
