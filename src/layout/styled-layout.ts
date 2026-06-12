@@ -22,6 +22,7 @@ import type {
   Border,
   BorderStyle,
   CellBorders,
+  CellDataBar,
   Chart,
   ChartBlock,
   DocumentInfo,
@@ -330,6 +331,7 @@ interface CellLayout {
   readonly padLeftPt: number;
   readonly borders: CellBorders;
   readonly shadingColorHex?: string;
+  readonly dataBar?: CellDataBar;
   readonly lines: ReadonlyArray<Line>;
   // Nested tables (a w:tbl inside this cell) rendered below the lines.
   readonly nestedTables?: ReadonlyArray<TableBlock>;
@@ -2576,6 +2578,7 @@ function layoutTableCell(
     ...(cell.properties.shading?.colorHex
       ? { shadingColorHex: cell.properties.shading.colorHex }
       : {}),
+    ...(cell.properties.dataBar ? { dataBar: cell.properties.dataBar } : {}),
     lines,
     ...(nestedTables.length > 0 ? { nestedTables } : {}),
     contentHeightPt,
@@ -3540,6 +3543,21 @@ function emitRowChunk(
         height: pt(row.heightPt),
         fillColorHex: cell.shadingColorHex,
       });
+    }
+    // Conditional-format data bar (E-SHEET SC1c): a fraction-width fill over the
+    // shading, under the text. Pushed after the shading fill so it paints on top.
+    if (cell.dataBar && cell.mergeRole !== 'middle' && cell.mergeRole !== 'end') {
+      const barWidth = cell.widthPt * Math.max(0, Math.min(1, cell.dataBar.fraction));
+      if (barWidth > 0) {
+        out.push({
+          type: 'fill',
+          x: pt(cellX),
+          y: pt(pageHeight - rowBottom - row.heightPt),
+          width: pt(barWidth),
+          height: pt(row.heightPt),
+          fillColorHex: cell.dataBar.colorHex,
+        });
+      }
     }
     emitCellBorders(
       out,

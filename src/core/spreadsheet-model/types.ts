@@ -229,9 +229,17 @@ export interface CfRuleCellIs {
 }
 
 // §18.3.1.11 ST_CfvoType — how a <cfvo> stop's threshold is derived. `min`/`max`
-// take the range's extent; `num`/`formula` a literal; `percent`/`percentile`
-// position within the value distribution.
-export type CfvoType = 'num' | 'percent' | 'max' | 'min' | 'percentile' | 'formula';
+// (and the dataBar `autoMin`/`autoMax`) take the range's extent; `num`/`formula`
+// a literal; `percent`/`percentile` position within the value distribution.
+export type CfvoType =
+  | 'num'
+  | 'percent'
+  | 'max'
+  | 'min'
+  | 'percentile'
+  | 'formula'
+  | 'autoMin'
+  | 'autoMax';
 
 // §18.3.1.11 <cfvo> — one stop of a colorScale (or dataBar/iconSet). `val`
 // carries the number/percent/formula text; absent for `min`/`max`.
@@ -251,8 +259,22 @@ export interface CfRuleColorScale {
   readonly colorsHex: ReadonlyArray<string>;
 }
 
-// dataBar/iconSet extend this union later.
-export type CfRule = CfRuleCellIs | CfRuleColorScale;
+// §18.3.1.28 <cfRule type="dataBar"> — an in-cell bar whose length encodes the
+// cell value within the range's extent. Two cfvo stops (lower/upper) bound the
+// scale; `colorHex` fills the bar. minLength/maxLength clamp the bar as a percent
+// (0..100) of the cell width (ECMA defaults 10/90; we default 0/100 — modern
+// solid bars span the full cell).
+export interface CfRuleDataBar {
+  readonly type: 'dataBar';
+  readonly priority: number;
+  readonly cfvos: ReadonlyArray<Cfvo>;
+  readonly colorHex: string;
+  readonly minLength?: number;
+  readonly maxLength?: number;
+}
+
+// iconSet extends this union in SC1c (second half).
+export type CfRule = CfRuleCellIs | CfRuleColorScale | CfRuleDataBar;
 
 // §18.3.1.18 <conditionalFormatting sqref="A1:A10 C1:C5"> — rules over ranges.
 export interface ConditionalFormat {

@@ -397,6 +397,13 @@ export interface CellShading {
   readonly colorHex: string;
 }
 
+// A conditional-format data bar: a horizontal bar filling `fraction` (0..1) of
+// the cell width, painted over the shading and under the text (E-SHEET SC1c).
+export interface CellDataBar {
+  readonly fraction: number;
+  readonly colorHex: string;
+}
+
 // Resolved position of a cell in a vertical merge group (ECMA-376 §17.4.85
 // vMerge markers are resolved by the reader): 'start' opens a group that at
 // least one cell continues, 'middle' / 'end' are continuations; undefined =
@@ -412,6 +419,7 @@ export interface CellProperties {
   readonly borders?: CellBorders;
   readonly margins?: CellMargins;
   readonly shading?: CellShading;
+  readonly dataBar?: CellDataBar;
 }
 
 export interface RowProperties {

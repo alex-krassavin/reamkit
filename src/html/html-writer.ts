@@ -671,6 +671,15 @@ function emitCell(
   pushBorder(css, 'left', c?.left ?? (pos.firstCol ? t?.left : t?.insideV));
   pushBorder(css, 'right', c?.right ?? (pos.lastCol ? t?.right : t?.insideV));
   if (cell.properties.shading) css.push(`background-color:#${cell.properties.shading.colorHex}`);
+  // Conditional-format data bar (E-SHEET SC1c): a left-anchored gradient stop
+  // paints the bar over the background colour and under the cell text.
+  if (cell.properties.dataBar) {
+    const pct = (Math.max(0, Math.min(1, cell.properties.dataBar.fraction)) * 100).toFixed(2);
+    const c = cell.properties.dataBar.colorHex;
+    css.push(
+      `background-image:linear-gradient(to right,#${c} 0%,#${c} ${pct}%,transparent ${pct}%)`,
+    );
+  }
   const margins = cell.properties.margins ?? table.properties.defaultCellMargins;
   // Word's default cell padding (108 twips = 5.4pt left/right) keeps text off
   // the rules even when the document does not specify margins.

@@ -10,6 +10,7 @@ import type {
   CfRule,
   CfRuleCellIs,
   CfRuleColorScale,
+  CfRuleDataBar,
   Cfvo,
   CfvoType,
   ColumnWidth,
@@ -386,9 +387,36 @@ function parseCfRule(obj: Record<string, unknown>): CfRule | undefined {
       return parseCellIsRule(obj, priority);
     case 'colorScale':
       return parseColorScaleRule(obj, priority);
+    case 'dataBar':
+      return parseDataBarRule(obj, priority);
     default:
-      return undefined; // dataBar/iconSet/etc. — skipped until SC1c
+      return undefined; // iconSet/etc. — skipped until SC1c (second half)
   }
+}
+
+// §18.3.1.28 <dataBar> — 2 cfvo stops (lower/upper) + a fill <color>; optional
+// minLength/maxLength percent bounds. Extra cfvos (axis variants) are ignored.
+function parseDataBarRule(
+  obj: Record<string, unknown>,
+  priority: number,
+): CfRuleDataBar | undefined {
+  const db = obj['dataBar'];
+  if (!db || typeof db !== 'object') return undefined;
+  const dbObj = db as Record<string, unknown>;
+  const cfvos = parseCfvos(dbObj['cfvo']);
+  if (cfvos.length < 2) return undefined;
+  const colorHex = colorRgbHex(dbObj['color']);
+  if (!colorHex) return undefined;
+  const minLength = parseNumericAttr(dbObj, 'minLength');
+  const maxLength = parseNumericAttr(dbObj, 'maxLength');
+  return {
+    type: 'dataBar',
+    priority,
+    cfvos,
+    colorHex,
+    ...(minLength !== undefined ? { minLength } : {}),
+    ...(maxLength !== undefined ? { maxLength } : {}),
+  };
 }
 
 function parseCellIsRule(obj: Record<string, unknown>, priority: number): CfRuleCellIs | undefined {
@@ -414,6 +442,8 @@ const CFVO_TYPES: ReadonlySet<string> = new Set<CfvoType>([
   'min',
   'percentile',
   'formula',
+  'autoMin',
+  'autoMax',
 ]);
 
 // §18.3.1.16 <colorScale> — N <cfvo> stops paired with N <color>s (N = 2 or 3).

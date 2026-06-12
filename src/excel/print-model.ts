@@ -15,6 +15,7 @@ import type {
   Border,
   BorderStyle,
   CellBorders,
+  CellDataBar,
   CellProperties,
   CellShading,
   PageMargins,
@@ -443,16 +444,18 @@ export function worksheetToBody(
       const alignment = xf ? alignmentFromXf(xf) : undefined;
       let shading = xf ? shadingFromXf(xf, styles) : undefined;
       const borders = xf ? bordersFromXf(xf, styles) : undefined;
+      let dataBar: CellDataBar | undefined;
 
-      // Conditional formatting (E-SHEET SC1): the highest-priority matching rule
-      // overrides the cell's fill/font. Only number cells carry a comparable
-      // value; with no formatter this whole block is skipped (byte-identical).
+      // Conditional formatting (E-SHEET SC1/SC1b/SC1c): the applicable rules
+      // override the cell's fill/font and may add an in-cell data bar. Only number
+      // cells carry a comparable value; no formatter ⇒ block skipped (byte-identical).
       if (cfFormatter && ws) {
         const cfValue =
           ws.type === 'n' && Number.isFinite(Number(ws.rawValue)) ? Number(ws.rawValue) : undefined;
         const over = cfFormatter(absR, absC, cfValue);
         if (over) {
           if (over.fillHex) shading = { colorHex: over.fillHex };
+          if (over.dataBar) dataBar = over.dataBar;
           runProps = applyCfOverride(runProps, over);
         }
       }
@@ -493,6 +496,7 @@ export function worksheetToBody(
           ? { merge: 'start' as const }
           : {}),
         ...(shading ? { shading } : {}),
+        ...(dataBar ? { dataBar } : {}),
         ...(borders ? { borders } : {}),
       };
 

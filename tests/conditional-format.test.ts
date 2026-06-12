@@ -180,3 +180,86 @@ describe('conditional formatting — colorScale (E-SHEET SC1b)', () => {
     expect(rule.colorsHex).toEqual(['FF0000', '00FF00']);
   });
 });
+
+// E-SHEET SC1c — dataBar: an in-cell bar whose length encodes the value within
+// the range extent (the cell carries CellProperties.dataBar { fraction, color }).
+const dataBar = (
+  priority: number,
+  color6: string,
+  bounds?: { min?: number; max?: number },
+): string => {
+  const lens =
+    `${bounds?.min !== undefined ? ` minLength="${bounds.min}"` : ''}` +
+    `${bounds?.max !== undefined ? ` maxLength="${bounds.max}"` : ''}`;
+  return (
+    `<cfRule type="dataBar" priority="${priority}"><dataBar${lens}>` +
+    `<cfvo type="min"/><cfvo type="max"/><color rgb="FF${color6}"/></dataBar></cfRule>`
+  );
+};
+
+const barAt = (
+  flow: ReturnType<typeof Ream.parse>['flow'],
+  row: number,
+): { fraction: number; colorHex: string } | undefined => {
+  const table = flow.body.find((el) => el.kind === 'table');
+  if (table?.kind !== 'table') throw new Error('expected a table');
+  return table.table.rows[row]?.cells[0]?.properties.dataBar;
+};
+
+describe('conditional formatting — dataBar (E-SHEET SC1c)', () => {
+  it('sets a bar fraction from the value position in the range extent', () => {
+    const cf = `<conditionalFormatting sqref="A1:A3">${dataBar(1, '638EC6', { min: 0, max: 100 })}</conditionalFormatting>`;
+    const flow = Ream.parse(
+      buildXlsx({ rows: [[0], [5], [10]], stylesXml: PLAIN_STYLES, conditionalFormattingXml: cf }),
+    ).flow;
+    expect(barAt(flow, 0)?.colorHex).toBe('638EC6');
+    expect(barAt(flow, 0)?.fraction).toBeCloseTo(0); // 0 = min → empty bar
+    expect(barAt(flow, 1)?.fraction).toBeCloseTo(0.5); // 5 = midpoint
+    expect(barAt(flow, 2)?.fraction).toBeCloseTo(1); // 10 = max → full bar
+  });
+
+  it('clamps the bar between minLength and maxLength', () => {
+    const cf = `<conditionalFormatting sqref="A1:A3">${dataBar(1, '638EC6', { min: 20, max: 80 })}</conditionalFormatting>`;
+    const flow = Ream.parse(
+      buildXlsx({ rows: [[0], [5], [10]], stylesXml: PLAIN_STYLES, conditionalFormattingXml: cf }),
+    ).flow;
+    expect(barAt(flow, 0)?.fraction).toBeCloseTo(0.2); // min value → minLength
+    expect(barAt(flow, 1)?.fraction).toBeCloseTo(0.5); // 0.2 + 0.5·0.6
+    expect(barAt(flow, 2)?.fraction).toBeCloseTo(0.8); // max value → maxLength
+  });
+
+  it('a data bar coexists with a cellIs highlight on the same cell', () => {
+    const cf =
+      '<conditionalFormatting sqref="A1:A2">' +
+      cfRule('greaterThan', 0, 5) + // cellIs >5 → red fill (dxf 0), priority 1
+      dataBar(2, '638EC6', { min: 0, max: 100 }) +
+      '</conditionalFormatting>';
+    const flow = Ream.parse(
+      buildXlsx({ rows: [[1], [10]], stylesXml: STYLES_WITH_DXF, conditionalFormattingXml: cf }),
+    ).flow;
+    const table = flow.body.find((el) => el.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('expected a table');
+    const cell = (row: number) => table.table.rows[row]?.cells[0]?.properties;
+    // A1=1: cellIs misses (no fill); bar empty.
+    expect(cell(0)?.shading).toBeUndefined();
+    expect(barAt(flow, 0)?.fraction).toBeCloseTo(0);
+    // A2=10: cellIs red fill AND a full bar — both apply.
+    expect(cell(1)?.shading?.colorHex).toBe('FF0000');
+    expect(barAt(flow, 1)?.fraction).toBeCloseTo(1);
+    expect(barAt(flow, 1)?.colorHex).toBe('638EC6');
+  });
+
+  it('parses a dataBar rule onto the sheet', () => {
+    const cf = `<conditionalFormatting sqref="A1:A3">${dataBar(1, '638EC6', { min: 0, max: 100 })}</conditionalFormatting>`;
+    const sheet = readXlsxToSheetDoc(
+      buildXlsx({ rows: [[1], [2], [3]], stylesXml: PLAIN_STYLES, conditionalFormattingXml: cf }),
+    );
+    const rule = sheet.sheets[0]!.grid.conditionalFormats![0]!.rules[0]!;
+    expect(rule.type).toBe('dataBar');
+    if (rule.type !== 'dataBar') throw new Error('unreachable');
+    expect(rule.colorHex).toBe('638EC6');
+    expect(rule.cfvos.map((c) => c.type)).toEqual(['min', 'max']);
+    expect(rule.minLength).toBe(0);
+    expect(rule.maxLength).toBe(100);
+  });
+});

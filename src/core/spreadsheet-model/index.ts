@@ -25,6 +25,7 @@ export type {
   CfvoType,
   Cfvo,
   CfRuleColorScale,
+  CfRuleDataBar,
   CfRule,
   ConditionalFormat,
 } from '@/core/spreadsheet-model/types';

@@ -10,6 +10,7 @@ export type {
   CellMargins,
   CellProperties,
   CellShading,
+  CellDataBar,
   Chart,
   ChartBlock,
   ChartDataPoint,

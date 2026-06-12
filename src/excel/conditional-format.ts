@@ -1,13 +1,16 @@
-// Conditional formatting evaluation (E-SHEET SC1/SC1b) — the first Excel feature
-// the flat table projection could not express. A sheet's <conditionalFormatting>
-// rules plus the workbook's <dxfs> become a per-cell lookup; the print model
-// overrides each cell's base fill/font with the highest-priority applicable
-// rule's format. Handles `cellIs` (compare to a constant → dxf) and `colorScale`
-// (interpolate a fill across the range's value extent); dataBar/iconSet follow.
+// Conditional formatting evaluation (E-SHEET SC1/SC1b/SC1c) — the first Excel
+// feature the flat table projection could not express. A sheet's
+// <conditionalFormatting> rules plus the workbook's <dxfs> become a per-cell
+// lookup; the print model overrides each cell's base format. Handles `cellIs`
+// (compare to a constant → dxf), `colorScale` (interpolate a fill across the
+// range's value extent), and `dataBar` (an in-cell bar whose length encodes the
+// value); iconSet follows. A cell's text format (fill/font) is claimed by the
+// first applicable cellIs/colorScale; a dataBar applies independently on top.
 
 import type {
   CfOperator,
   CfRuleColorScale,
+  CfRuleDataBar,
   Cfvo,
   ConditionalFormat,
   Dxf,
@@ -25,14 +28,26 @@ interface ResolvedColorScale {
   readonly colors: ReadonlyArray<Rgb>;
 }
 
+// A dataBar resolved against its range's extent: the lower/upper value the bar
+// scale spans, its fill colour, and the min/max bar length (0..1 of cell width).
+interface ResolvedDataBar {
+  readonly lower: number;
+  readonly upper: number;
+  readonly colorHex: string;
+  readonly minLen: number;
+  readonly maxLen: number;
+}
+
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
-// A resolved per-cell override: a solid highlight fill and/or font tweaks.
+// A resolved per-cell override: a solid highlight fill, font tweaks, and/or an
+// in-cell data bar (fraction of the cell width 0..1 + fill colour).
 export interface CfOverride {
   readonly fillHex?: string;
   readonly fontColorHex?: string;
   readonly bold?: boolean;
   readonly italic?: boolean;
+  readonly dataBar?: { readonly fraction: number; readonly colorHex: string };
 }
 
 export type CellConditionalFormatter = (
@@ -44,9 +59,10 @@ export type CellConditionalFormatter = (
 interface FlatRule {
   readonly ranges: ReadonlyArray<MergedRange>;
   readonly rule: ConditionalFormat['rules'][number];
-  // Present (and possibly undefined, when resolution failed) for colorScale
-  // rules: the thresholds + colours computed once from the range's values.
+  // Present (and possibly undefined, when resolution failed) for colorScale /
+  // dataBar rules: the extent-derived data computed once from the range values.
   readonly scale?: ResolvedColorScale | undefined;
+  readonly bar?: ResolvedDataBar | undefined;
 }
 
 // Returns undefined when the sheet has no conditional formats (the common case)
@@ -64,29 +80,47 @@ export function buildConditionalFormatter(
     for (const rule of cf.rules) {
       if (rule.type === 'colorScale') {
         flat.push({ ranges: cf.ranges, rule, scale: resolveColorScale(rule, cf.ranges, cells) });
+      } else if (rule.type === 'dataBar') {
+        flat.push({ ranges: cf.ranges, rule, bar: resolveDataBar(rule, cf.ranges, cells) });
       } else {
         flat.push({ ranges: cf.ranges, rule });
       }
     }
   }
-  // §18.3.1.10 — a lower @priority wins. Evaluate in ascending priority and take
-  // the first rule that both covers the cell and applies.
+  // §18.3.1.10 — a lower @priority wins. Evaluate in ascending priority. A cell's
+  // text format (fill/font) is claimed by the first applicable cellIs/colorScale;
+  // a dataBar fills its own slot independently, so a bar can sit over a fill.
   flat.sort((a, b) => a.rule.priority - b.rule.priority);
 
   return (row, col, value) => {
     if (value === undefined) return undefined;
-    for (const { ranges, rule, scale } of flat) {
+    let textFmt: CfOverride | undefined;
+    let textClaimed = false;
+    let bar: CfOverride['dataBar'];
+    for (const { ranges, rule, scale, bar: resolved } of flat) {
       if (!coversCell(ranges, row, col)) continue;
-      if (rule.type === 'cellIs') {
-        if (cellIsMatches(rule.operator, value, rule.formulas)) {
-          return dxfToOverride(dxfs[rule.dxfId]);
-        }
-      } else if (scale) {
-        // colorScale applies to every covered numeric cell (no predicate).
-        return { fillHex: rgbHex(colorScaleColor(scale, value)) };
+      switch (rule.type) {
+        case 'cellIs':
+          if (!textClaimed && cellIsMatches(rule.operator, value, rule.formulas)) {
+            textFmt = dxfToOverride(dxfs[rule.dxfId]);
+            textClaimed = true;
+          }
+          break;
+        case 'colorScale':
+          if (!textClaimed && scale) {
+            textFmt = { fillHex: rgbHex(colorScaleColor(scale, value)) };
+            textClaimed = true;
+          }
+          break;
+        case 'dataBar':
+          if (!bar && resolved) {
+            bar = { fraction: dataBarFraction(resolved, value), colorHex: resolved.colorHex };
+          }
+          break;
       }
     }
-    return undefined;
+    if (!bar) return textFmt;
+    return { ...(textFmt ?? {}), dataBar: bar };
   };
 }
 
@@ -207,8 +241,10 @@ function resolveCfvo(
 ): number | undefined {
   switch (cfvo.type) {
     case 'min':
+    case 'autoMin':
       return vmin;
     case 'max':
+    case 'autoMax':
       return vmax;
     case 'num':
     case 'formula': {
@@ -270,4 +306,44 @@ function rgbHex([r, g, b]: Rgb): string {
       .padStart(2, '0')
       .toUpperCase();
   return `${h(r)}${h(g)}${h(b)}`;
+}
+
+// --- dataBar (E-SHEET SC1c) -------------------------------------------------
+
+// Resolve a dataBar's lower/upper cfvo stops against the range extent and read
+// its length bounds. Returns undefined (rule becomes a no-op) when the range has
+// no numbers or a stop won't resolve. minLength/maxLength are percents; absent →
+// 0/100 (modern solid bars span the full cell; ECMA's 10/90 default is dropped).
+function resolveDataBar(
+  rule: CfRuleDataBar,
+  ranges: ReadonlyArray<MergedRange>,
+  cells: ReadonlyArray<WorksheetCell>,
+): ResolvedDataBar | undefined {
+  const vals = collectRangeValues(cells, ranges);
+  if (vals.length === 0) return undefined;
+  const sorted = [...vals].sort((a, b) => a - b);
+  const vmin = sorted[0]!;
+  const vmax = sorted[sorted.length - 1]!;
+  const lower = resolveCfvo(rule.cfvos[0]!, vmin, vmax, sorted);
+  const upper = resolveCfvo(rule.cfvos[1]!, vmin, vmax, sorted);
+  if (lower === undefined || upper === undefined) return undefined;
+  return {
+    lower,
+    upper,
+    colorHex: rule.colorHex,
+    minLen: (rule.minLength ?? 0) / 100,
+    maxLen: (rule.maxLength ?? 100) / 100,
+  };
+}
+
+// Bar length (0..1 of cell width) for a value: its position in [lower,upper]
+// scaled into [minLen,maxLen]. A degenerate extent (upper≤lower) → full at/above.
+function dataBarFraction(bar: ResolvedDataBar, value: number): number {
+  const t =
+    bar.upper > bar.lower
+      ? Math.min(1, Math.max(0, (value - bar.lower) / (bar.upper - bar.lower)))
+      : value >= bar.upper
+        ? 1
+        : 0;
+  return bar.minLen + t * (bar.maxLen - bar.minLen);
 }
