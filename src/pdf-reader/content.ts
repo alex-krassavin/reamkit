@@ -10,8 +10,8 @@
 // font falls back to Latin-1 with a half-em advance so text still surfaces.
 
 import { Lexer } from './lexer';
-import type { PdfValue } from '@/pdf/objects';
-import { PdfHexString, PdfName } from '@/pdf/objects';
+import type { PdfDict, PdfValue } from '@/pdf/objects';
+import { PDF_NULL, PdfHexString, PdfName } from '@/pdf/objects';
 
 export interface ContentFont {
   readonly bytesPerCode: 1 | 2; // simple fonts read 1 byte/code, Type0 reads 2
@@ -25,6 +25,9 @@ export interface TextRun {
   readonly y: number;
   readonly fontSizePt: number;
   readonly fontKey: string;
+  // The marked-content id of the enclosing BDC sequence (§14.6), if any — the
+  // link from this text to the structure element that owns it (E-PDF EP3).
+  readonly mcid?: number;
 }
 
 // 2D affine matrix [a b c d e f] = ⎡a b 0⎤ row-vector convention ([x y 1] · M).
@@ -92,6 +95,7 @@ export function interpretContent(
   let tm: Matrix = IDENTITY; // text matrix
   let tlm: Matrix = IDENTITY; // line matrix
   let operands: Array<PdfValue> = [];
+  const mcStack: Array<number | undefined> = []; // marked-content (MCID) nesting
 
   const num = (i: number): number => {
     const v = operands[i];
@@ -119,12 +123,14 @@ export function interpretContent(
   const emitAt = (origin: Matrix, text: string): void => {
     if (text.length === 0) return;
     const scaleY = Math.hypot(origin[2], origin[3]) || 1;
+    const mcid = mcStack.length > 0 ? mcStack[mcStack.length - 1] : undefined;
     runs.push({
       text,
       x: origin[4],
       y: origin[5],
       fontSizePt: state.fontSize * scaleY,
       fontKey: state.fontKey,
+      ...(mcid !== undefined ? { mcid } : {}),
     });
   };
 
@@ -222,8 +228,24 @@ export function interpretContent(
         tm = tlm;
         if (operands.length > 2) showString(operands[2]!);
         break;
+      case 'BDC': {
+        // `tag props BDC` — a structure content sequence (or an artifact). Push
+        // its /MCID so the runs inside it are tagged; an /Artifact has none.
+        const tag = operands[operands.length - 2];
+        const props = operands[operands.length - 1];
+        const isArtifact = tag instanceof PdfName && tag.value === 'Artifact';
+        const mcidVal = !isArtifact && props instanceof Map ? props.get('MCID') : undefined;
+        mcStack.push(typeof mcidVal === 'number' ? mcidVal : undefined);
+        break;
+      }
+      case 'BMC':
+        mcStack.push(undefined); // `tag BMC` — no properties, so no MCID
+        break;
+      case 'EMC':
+        mcStack.pop();
+        break;
       default:
-        break; // path, colour, XObject, marked-content … ignored for text
+        break; // path, colour, XObject … ignored for text
     }
   };
 
@@ -248,8 +270,7 @@ export function interpretContent(
         operands.push(readArray(lexer));
         break;
       case 'dictOpen':
-        skipDict(lexer);
-        operands.push([]); // a marked-content property dict — value ignored
+        operands.push(readDict(lexer)); // e.g. a BDC marked-content property dict
         break;
       case 'keyword':
         if (tok.value === 'BI') skipInlineImage(lexer);
@@ -303,13 +324,38 @@ function readArray(lexer: Lexer): Array<PdfValue> {
   return out;
 }
 
-function skipDict(lexer: Lexer): void {
-  let depth = 1;
+// Read a content-stream dictionary operand (assumes `<<` already consumed),
+// capturing name → value pairs up to `>>` — needed for a BDC /MCID property.
+function readDict(lexer: Lexer): PdfDict {
+  const map: PdfDict = new Map<string, PdfValue>();
   for (;;) {
-    const tok = lexer.nextToken();
-    if (tok.kind === 'eof') break;
-    if (tok.kind === 'dictOpen') depth++;
-    else if (tok.kind === 'dictClose' && --depth === 0) break;
+    const key = lexer.nextToken();
+    if (key.kind === 'dictClose' || key.kind === 'eof') break;
+    if (key.kind !== 'name') continue;
+    map.set(key.value, readValue(lexer));
+  }
+  return map;
+}
+
+function readValue(lexer: Lexer): PdfValue {
+  const tok = lexer.nextToken();
+  switch (tok.kind) {
+    case 'num':
+      return tok.value;
+    case 'name':
+      return new PdfName(tok.value);
+    case 'str':
+      return tok.value;
+    case 'hexstr':
+      return new PdfHexString(tok.bytes);
+    case 'arrayOpen':
+      return readArray(lexer);
+    case 'dictOpen':
+      return readDict(lexer);
+    case 'keyword':
+      return tok.value === 'true' ? true : tok.value === 'false' ? false : PDF_NULL;
+    default:
+      return PDF_NULL;
   }
 }
 

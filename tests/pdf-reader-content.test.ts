@@ -66,4 +66,15 @@ describe('content-stream interpreter (E-PDF EP2)', () => {
     const runs = run('BT /F1 12 Tf 0 0 Td <00480049> Tj ET', new Map([['F1', font]]));
     expect(runs[0]!.text).toBe('HI');
   });
+
+  it('tags runs with the enclosing BDC marked-content id (E-PDF EP3)', () => {
+    const runs = run('/P <</MCID 2>> BDC BT /F1 12 Tf 0 0 Td (Tagged) Tj ET EMC');
+    expect(runs[0]).toMatchObject({ text: 'Tagged', mcid: 2 });
+  });
+
+  it('leaves artifact text untagged (E-PDF EP3)', () => {
+    const runs = run('/Artifact <</Type /Pagination>> BDC BT /F1 12 Tf 0 0 Td (Footer) Tj ET EMC');
+    expect(runs[0]!.text).toBe('Footer');
+    expect(runs[0]!.mcid).toBeUndefined();
+  });
 });
