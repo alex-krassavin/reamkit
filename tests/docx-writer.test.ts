@@ -81,6 +81,42 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     expect(xml).not.toContain('<w:pPr>');
   });
 
+  it('round-trips a numbered list: numPr + numbering.xml, markers regenerated', () => {
+    const numberingXml =
+      '<w:abstractNum w:abstractNumId="0">' +
+      '<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/>' +
+      '<w:lvlText w:val="%1."/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl>' +
+      '<w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="lowerLetter"/>' +
+      '<w:lvlText w:val="%2)"/></w:lvl>' +
+      '</w:abstractNum>' +
+      '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>';
+    const li = (ilvl: number, t: string) =>
+      `<w:p><w:pPr><w:numPr><w:ilvl w:val="${ilvl}"/><w:numId w:val="1"/></w:numPr></w:pPr>` +
+      `<w:r><w:t>${t}</w:t></w:r></w:p>`;
+    const body = li(0, 'first') + li(0, 'second') + li(1, 'nested');
+    const { doc: flow } = readDocx(buildDocxFromBody(body, { numberingXml }));
+    const { bytes } = writeDocx(flow);
+
+    // The package carries numbering.xml.
+    const pkg = OpcPackage.open(bytes);
+    expect(pkg.getPart('word/numbering.xml')).toBeDefined();
+
+    const { doc: again } = readDocx(bytes);
+    const paras = again.body.flatMap((el) => (el.kind === 'paragraph' ? [el.paragraph] : []));
+    // Each paragraph keeps its list reference (numId/ilvl).
+    expect(paras[0]!.properties.numbering).toMatchObject({ numId: '1', ilvl: 0 });
+    expect(paras[2]!.properties.numbering).toMatchObject({ numId: '1', ilvl: 1 });
+    // Markers regenerate identically — and exactly once (no doubling).
+    expect(paras[0]!.runs.map((r) => r.text).join('')).toBe('1.\tfirst');
+    expect(paras[2]!.runs.map((r) => r.text).join('')).toBe('a)\tnested');
+  });
+
+  it('omits numbering.xml when the document has no lists', () => {
+    const { doc: flow } = readDocx(buildDocxFromBody('<w:p><w:r><w:t>plain</w:t></w:r></w:p>'));
+    const pkg = OpcPackage.open(writeDocx(flow).bytes);
+    expect(pkg.getPart('word/numbering.xml')).toBeUndefined();
+  });
+
   it('reports unwritten block kinds as losses (v0)', () => {
     const tbl =
       '<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>' +

@@ -13,8 +13,12 @@
 import type {
   BodyElement,
   FontFamilyMap,
+  Numbering,
+  NumberingLevel,
   Paragraph,
+  ParagraphProperties,
   Run,
+  RunProperties,
   SectionProperties,
 } from '@/core/document-model';
 import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
@@ -42,8 +46,13 @@ const DEFAULT_PARA = resolveParagraphProperties({}, EMPTY_STYLE_SHEET);
 
 const DOC_CONTENT_TYPE =
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml';
+const NUMBERING_CONTENT_TYPE =
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml';
 const REL_OFFICE_DOCUMENT =
   'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument';
+const REL_NUMBERING =
+  'http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering';
+const NUMBERING_PART = 'word/numbering.xml';
 
 export function writeDocx(flow: FlowDoc): WriteResult {
   const losses: Array<Loss> = [];
@@ -61,6 +70,22 @@ export function writeDocx(flow: FlowDoc): WriteResult {
     `<w:body>${body.join('')}</w:body>` +
     '</w:document>';
 
+  // §17.9 numbering: re-emit the raw definitions whenever a paragraph carries
+  // a list reference (the markers were stripped above — re-read regenerates
+  // them). Lives at the fixed word/numbering.xml path the reader expects, with
+  // a content-type Override and a relationship from the main document.
+  const usesNumbering = flow.body.some(
+    (el) => el.kind === 'paragraph' && el.paragraph.properties.numbering !== undefined,
+  );
+  const numberingPart =
+    usesNumbering && flow.numbering
+      ? {
+          path: NUMBERING_PART,
+          data: encoder.encode(numberingXml(flow.numbering)),
+          contentType: NUMBERING_CONTENT_TYPE,
+        }
+      : undefined;
+
   const bytes = buildOpcPackage({
     parts: [
       {
@@ -68,6 +93,7 @@ export function writeDocx(flow: FlowDoc): WriteResult {
         data: encoder.encode(documentXml),
         contentType: DOC_CONTENT_TYPE,
       },
+      ...(numberingPart ? [numberingPart] : []),
     ],
     rootRelationships: [
       {
@@ -77,6 +103,23 @@ export function writeDocx(flow: FlowDoc): WriteResult {
         targetMode: 'Internal',
       },
     ],
+    ...(numberingPart
+      ? {
+          partRelationships: [
+            {
+              sourcePart: 'word/document.xml',
+              relationships: [
+                {
+                  id: 'rId1',
+                  type: REL_NUMBERING,
+                  target: 'numbering.xml',
+                  targetMode: 'Internal' as const,
+                },
+              ],
+            },
+          ],
+        }
+      : {}),
   });
 
   return { bytes, losses };
@@ -114,10 +157,10 @@ function emitBlock(out: Array<string>, el: BodyElement, losses: Array<Loss>): vo
 function paragraphXml(p: Paragraph): string {
   const runs: Array<string> = [];
   for (const run of p.runs) {
-    // The reader materialized list markers into the body (stage 6); writing
-    // them back as literal text would double the marker on re-read with
-    // numbering re-applied — but this writer emits no numbering.xml yet, so
-    // the literal marker IS the faithful rendition (D3b lifts this).
+    // The reader materialized list markers into the body (stage 6). With
+    // numbering.xml + w:numPr written below, the marker re-materializes on
+    // re-read, so the literal marker run is dropped to avoid doubling it.
+    if (run.listMarker) continue;
     if (run.text === '' || run.math !== undefined || run.inlineImage !== undefined) continue;
     runs.push(runXml(run));
   }
@@ -154,6 +197,12 @@ function rPrXml(r: ResolvedRunProperties): string {
 // §17.3.1 — paragraph properties as a delta from the resolved defaults.
 function pPrXml(p: ResolvedParagraphProperties): string {
   const out: Array<string> = [];
+  if (p.numbering) {
+    // §17.3.1.19 — list membership; the marker itself comes from numbering.xml.
+    out.push(
+      `<w:numPr><w:ilvl w:val="${p.numbering.ilvl}"/><w:numId w:val="${escapeAttr(p.numbering.numId)}"/></w:numPr>`,
+    );
+  }
   if (p.outlineLevel !== undefined) out.push(`<w:outlineLvl w:val="${p.outlineLevel}"/>`);
   if (p.pageBreakBefore) out.push('<w:pageBreakBefore/>');
   if (p.bidi !== DEFAULT_PARA.bidi) out.push(toggle('w:bidi', p.bidi));
@@ -213,6 +262,82 @@ function rFontsXml(fonts: FontFamilyMap): string {
 // w:val="false" (overrides an inherited true — exact on re-read here).
 function toggle(tag: string, on: boolean): string {
   return on ? `<${tag}/>` : `<${tag} w:val="false"/>`;
+}
+
+// §17.9.1 numbering.xml: every abstractNum (levels with start/numFmt/lvlText
+// and the level's raw pPr/rPr), then the num instances binding numId →
+// abstractNumId. Re-emitted from the FlowDoc's raw `numbering` round-trip
+// material, so re-read regenerates identical markers.
+function numberingXml(numbering: Numbering): string {
+  const out: Array<string> = [
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+    '<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+  ];
+  for (const abstractNum of numbering.abstractNums.values()) {
+    out.push(`<w:abstractNum w:abstractNumId="${escapeAttr(abstractNum.id)}">`);
+    for (const level of [...abstractNum.levels.values()].sort((a, b) => a.ilvl - b.ilvl)) {
+      out.push(levelXml(level));
+    }
+    out.push('</w:abstractNum>');
+  }
+  for (const inst of numbering.numInstances.values()) {
+    out.push(
+      `<w:num w:numId="${escapeAttr(inst.numId)}">` +
+        `<w:abstractNumId w:val="${escapeAttr(inst.abstractNumId)}"/></w:num>`,
+    );
+  }
+  out.push('</w:numbering>');
+  return out.join('');
+}
+
+function levelXml(level: NumberingLevel): string {
+  const inner: Array<string> = [
+    `<w:start w:val="${level.start}"/>`,
+    `<w:numFmt w:val="${level.format}"/>`,
+    `<w:lvlText w:val="${escapeAttr(level.lvlText)}"/>`,
+  ];
+  const pPr = rawParaPrXml(level.paragraphProperties);
+  if (pPr) inner.push(pPr);
+  const rPr = rawRunPrXml(level.runProperties);
+  if (rPr) inner.push(rPr);
+  return `<w:lvl w:ilvl="${level.ilvl}">${inner.join('')}</w:lvl>`;
+}
+
+// A numbering level's RAW (sparse) paragraph props — present fields only,
+// no delta-against-defaults (unlike the resolved-body serializer above).
+function rawParaPrXml(p: ParagraphProperties): string {
+  const attrs: Array<string> = [];
+  if (p.indentLeft !== undefined) attrs.push(`w:left="${twips(p.indentLeft)}"`);
+  if (p.indentRight !== undefined) attrs.push(`w:right="${twips(p.indentRight)}"`);
+  if (p.indentFirstLine !== undefined) {
+    if (p.indentFirstLine < 0) attrs.push(`w:hanging="${twips(-p.indentFirstLine)}"`);
+    else attrs.push(`w:firstLine="${twips(p.indentFirstLine)}"`);
+  }
+  const ind = attrs.length > 0 ? `<w:ind ${attrs.join(' ')}/>` : '';
+  const jc = p.alignment !== undefined ? `<w:jc w:val="${p.alignment}"/>` : '';
+  return ind || jc ? `<w:pPr>${jc}${ind}</w:pPr>` : '';
+}
+
+function rawRunPrXml(r: RunProperties): string {
+  const out: Array<string> = [];
+  if (r.bold !== undefined) out.push(toggle('w:b', r.bold));
+  if (r.italic !== undefined) out.push(toggle('w:i', r.italic));
+  if (r.strike !== undefined) out.push(toggle('w:strike', r.strike));
+  if (r.underline !== undefined) out.push(`<w:u w:val="${r.underline}"/>`);
+  const fonts = r.fontFamily ? rawRFontsXml(r.fontFamily) : '';
+  if (fonts) out.push(fonts);
+  if (r.fontSizePt !== undefined) out.push(`<w:sz w:val="${Math.round(r.fontSizePt * 2)}"/>`);
+  if (r.colorHex !== undefined) out.push(`<w:color w:val="${r.colorHex}"/>`);
+  if (r.verticalAlign !== undefined) out.push(`<w:vertAlign w:val="${r.verticalAlign}"/>`);
+  return out.length > 0 ? `<w:rPr>${out.join('')}</w:rPr>` : '';
+}
+
+function rawRFontsXml(fonts: FontFamilyMap): string {
+  const attrs: Array<string> = [];
+  if (fonts.ascii) attrs.push(`w:ascii="${escapeAttr(fonts.ascii)}"`);
+  if (fonts.hAnsi) attrs.push(`w:hAnsi="${escapeAttr(fonts.hAnsi)}"`);
+  if (fonts.cs) attrs.push(`w:cs="${escapeAttr(fonts.cs)}"`);
+  return attrs.length > 0 ? `<w:rFonts ${attrs.join(' ')}/>` : '';
 }
 
 // §17.6.17 — page size and margins in twentieths of a point.
