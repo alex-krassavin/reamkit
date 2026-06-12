@@ -28,6 +28,10 @@ exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: cell-styles 1`] =
 
 exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: centering 1`] = `"1762741d140ba128f5f7a412665f0eed4c872775707e34d4fac207ef31e4c25d"`;
 
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: column-bands 1`] = `"aacc7b64b0da6408e92cefd7e2cb3cc203e2d1bb0705aa5081ba1bfa4869c587"`;
+
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: column-breaks 1`] = `"959b1cdda57ad8bd188e5af8c0e42c37bb2b560734fe83ff092bef4d76455535"`;
+
 exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: date-1904 1`] = `"847c85bd0a7564a77a1e00d3854b87cc066956803aa39ee4b686de72428c98c2"`;
 
 exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: fit-to-page 1`] = `"e08cc270c1129b6929ccdba93a4b57e9f05c5e790fa05b58597e3a9bd37ba53c"`;

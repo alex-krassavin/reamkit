@@ -81,6 +81,7 @@ export interface XlsxSheetSpec {
   readonly printOptions?: XlsxPrintOptionsSpec;
   readonly fitToPage?: boolean;
   readonly rowBreaks?: ReadonlyArray<number>;
+  readonly colBreaks?: ReadonlyArray<number>;
   /** Raw <conditionalFormatting> markup injected into the worksheet. */
   readonly conditionalFormattingXml?: string;
   /** Raw <extLst> markup injected at the end of the worksheet (x14 sparklines). */
@@ -103,6 +104,7 @@ export interface XlsxBuilderOptions {
   readonly printOptions?: XlsxPrintOptionsSpec;
   readonly fitToPage?: boolean;
   readonly rowBreaks?: ReadonlyArray<number>;
+  readonly colBreaks?: ReadonlyArray<number>;
   readonly conditionalFormattingXml?: string;
   readonly extLstXml?: string;
   readonly date1904?: boolean;
@@ -180,6 +182,7 @@ export function buildXlsx(
             ...(options.printOptions ? { printOptions: options.printOptions } : {}),
             ...(options.fitToPage !== undefined ? { fitToPage: options.fitToPage } : {}),
             ...(options.rowBreaks ? { rowBreaks: options.rowBreaks } : {}),
+            ...(options.colBreaks ? { colBreaks: options.colBreaks } : {}),
             ...(options.conditionalFormattingXml
               ? { conditionalFormattingXml: options.conditionalFormattingXml }
               : {}),
@@ -296,6 +299,12 @@ export function buildXlsx(
           sheet.rowBreaks.map((id) => `<brk id="${id}" max="16383" man="1"/>`).join('') +
           '</rowBreaks>'
         : '';
+    const colBreaksXml =
+      sheet.colBreaks && sheet.colBreaks.length > 0
+        ? `<colBreaks count="${sheet.colBreaks.length}" manualBreakCount="${sheet.colBreaks.length}">` +
+          sheet.colBreaks.map((id) => `<brk id="${id}" max="1048575" man="1"/>`).join('') +
+          '</colBreaks>'
+        : '';
     const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   ${sheetPrXml}
@@ -309,6 +318,7 @@ ${sheetRows.join('\n')}
   ${marginsXml}
   ${setupXml}
   ${rowBreaksXml}
+  ${colBreaksXml}
   ${sheet.extLstXml ?? ''}
 </worksheet>`;
     sheetParts.push({ fileName: `sheet${s + 1}.xml`, xml });
