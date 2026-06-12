@@ -117,6 +117,67 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     expect(pkg.getPart('word/numbering.xml')).toBeUndefined();
   });
 
+  it('round-trips an external hyperlink: w:hyperlink r:id + external rel', () => {
+    const body =
+      '<w:p><w:r><w:t>see </w:t></w:r>' +
+      '<w:hyperlink r:id="rId50"><w:r><w:t>the site</w:t></w:r></w:hyperlink>' +
+      '<w:r><w:t> now</w:t></w:r></w:p>';
+    const { doc: flow } = readDocx(
+      buildDocxFromBody(body, { hyperlinks: { rId50: 'https://reamkit.dev' } }),
+    );
+    const { bytes } = writeDocx(flow);
+    const { doc: again } = readDocx(bytes);
+
+    const para = again.body[0];
+    if (para?.kind !== 'paragraph') throw new Error('expected paragraph');
+    const linked = para.paragraph.runs.find((r) => r.text === 'the site');
+    expect(linked?.href).toBe('https://reamkit.dev');
+    // The surrounding runs are not linked.
+    expect(para.paragraph.runs.find((r) => r.text === 'see ')?.href).toBeUndefined();
+  });
+
+  it('round-trips an internal anchor link: w:hyperlink w:anchor (no rel)', () => {
+    const body =
+      '<w:p><w:hyperlink w:anchor="target"><w:r><w:t>jump</w:t></w:r></w:hyperlink></w:p>' +
+      '<w:p><w:bookmarkStart w:id="1" w:name="target"/><w:r><w:t>here</w:t></w:r>' +
+      '<w:bookmarkEnd w:id="1"/></w:p>';
+    const { doc: flow } = readDocx(buildDocxFromBody(body));
+    const { doc: again } = readDocx(writeDocx(flow).bytes);
+
+    const linkPara = again.body[0];
+    if (linkPara?.kind !== 'paragraph') throw new Error('expected paragraph');
+    expect(linkPara.paragraph.runs[0]!.anchor).toBe('target');
+    expect(linkPara.paragraph.runs[0]!.href).toBeUndefined();
+    // The bookmark survives onto its paragraph.
+    const targetPara = again.body[1];
+    if (targetPara?.kind !== 'paragraph') throw new Error('expected paragraph');
+    expect(targetPara.paragraph.bookmarks).toContain('target');
+  });
+
+  it('numbering and hyperlink relationships share one rId space', () => {
+    const numberingXml =
+      '<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/>' +
+      '<w:lvlText w:val="%1."/></w:lvl></w:abstractNum>' +
+      '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>';
+    const body =
+      '<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>' +
+      '<w:r><w:t>item</w:t></w:r></w:p>' +
+      '<w:p><w:hyperlink r:id="rId50"><w:r><w:t>link</w:t></w:r></w:hyperlink></w:p>';
+    const { doc: flow } = readDocx(
+      buildDocxFromBody(body, { numberingXml, hyperlinks: { rId50: 'https://x.test' } }),
+    );
+    const { doc: again } = readDocx(writeDocx(flow).bytes);
+    // Both survive — distinct rIds in document.xml.rels.
+    const linkPara = again.body[1];
+    expect(linkPara?.kind === 'paragraph' && linkPara.paragraph.runs[0]!.href).toBe(
+      'https://x.test',
+    );
+    const listPara = again.body[0];
+    expect(listPara?.kind === 'paragraph' && listPara.paragraph.properties.numbering?.numId).toBe(
+      '1',
+    );
+  });
+
   it('reports unwritten block kinds as losses (v0)', () => {
     const tbl =
       '<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>' +

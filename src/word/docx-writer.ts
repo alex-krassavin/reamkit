@@ -25,6 +25,7 @@ import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/
 import type { DocumentWriter, WriteResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss } from '@/core/ir';
+import type { Relationship } from '@/core/opc';
 
 import { FEATURES } from '@/core/ir';
 import { buildOpcPackage } from '@/core/opc';
@@ -52,13 +53,25 @@ const REL_OFFICE_DOCUMENT =
   'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument';
 const REL_NUMBERING =
   'http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering';
+const REL_HYPERLINK =
+  'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink';
 const NUMBERING_PART = 'word/numbering.xml';
+
+// Mutable per-document state threaded through the block/paragraph emitters:
+// the document.xml relationships accumulator (numbering + each external
+// hyperlink share one rId space) and a document-wide bookmark id counter.
+interface WriteState {
+  readonly docRels: Array<Relationship>;
+  relSeq: number;
+  bookmarkSeq: number;
+}
 
 export function writeDocx(flow: FlowDoc): WriteResult {
   const losses: Array<Loss> = [];
   const body: Array<string> = [];
+  const state: WriteState = { docRels: [], relSeq: 0, bookmarkSeq: 0 };
 
-  for (const el of flow.body) emitBlock(body, el, losses);
+  for (const el of flow.body) emitBlock(body, el, losses, state);
 
   const section = flow.sections[0]?.properties ?? flow.section;
   if (section) body.push(sectPrXml(section));
@@ -85,6 +98,14 @@ export function writeDocx(flow: FlowDoc): WriteResult {
           contentType: NUMBERING_CONTENT_TYPE,
         }
       : undefined;
+  if (numberingPart) {
+    state.docRels.push({
+      id: `rId${++state.relSeq}`,
+      type: REL_NUMBERING,
+      target: 'numbering.xml',
+      targetMode: 'Internal',
+    });
+  }
 
   const bytes = buildOpcPackage({
     parts: [
@@ -103,21 +124,9 @@ export function writeDocx(flow: FlowDoc): WriteResult {
         targetMode: 'Internal',
       },
     ],
-    ...(numberingPart
+    ...(state.docRels.length > 0
       ? {
-          partRelationships: [
-            {
-              sourcePart: 'word/document.xml',
-              relationships: [
-                {
-                  id: 'rId1',
-                  type: REL_NUMBERING,
-                  target: 'numbering.xml',
-                  targetMode: 'Internal' as const,
-                },
-              ],
-            },
-          ],
+          partRelationships: [{ sourcePart: 'word/document.xml', relationships: state.docRels }],
         }
       : {}),
   });
@@ -132,9 +141,14 @@ export const docxWriter: DocumentWriter<FlowDoc> = {
   write: (doc) => writeDocx(doc),
 };
 
-function emitBlock(out: Array<string>, el: BodyElement, losses: Array<Loss>): void {
+function emitBlock(
+  out: Array<string>,
+  el: BodyElement,
+  losses: Array<Loss>,
+  state: WriteState,
+): void {
   if (el.kind === 'paragraph') {
-    out.push(paragraphXml(el.paragraph));
+    out.push(paragraphXml(el.paragraph, state));
     return;
   }
   // Tables, images, charts, shapes: D4/D5 of the epic. Reported, not dropped
@@ -154,17 +168,60 @@ function emitBlock(out: Array<string>, el: BodyElement, losses: Array<Loss>): vo
   });
 }
 
-function paragraphXml(p: Paragraph): string {
-  const runs: Array<string> = [];
-  for (const run of p.runs) {
-    // The reader materialized list markers into the body (stage 6). With
-    // numbering.xml + w:numPr written below, the marker re-materializes on
-    // re-read, so the literal marker run is dropped to avoid doubling it.
-    if (run.listMarker) continue;
-    if (run.text === '' || run.math !== undefined || run.inlineImage !== undefined) continue;
-    runs.push(runXml(run));
+function paragraphXml(p: Paragraph, state: WriteState): string {
+  // The runs the reader actually kept: list markers re-materialize from
+  // numbering.xml, and math/inline-image runs are not written yet.
+  const visible = p.runs.filter(
+    (run) =>
+      !run.listMarker && run.text !== '' && run.math === undefined && run.inlineImage === undefined,
+  );
+
+  // §17.16.22 — group adjacent runs sharing a hyperlink target back into one
+  // w:hyperlink container (the reader stamped href/anchor onto every run
+  // inside it; this is the inverse).
+  const inner: Array<string> = [];
+  let i = 0;
+  while (i < visible.length) {
+    const run = visible[i]!;
+    const key = run.href ?? run.anchor;
+    if (key === undefined) {
+      inner.push(runXml(run));
+      i++;
+      continue;
+    }
+    let j = i + 1;
+    while (j < visible.length && (visible[j]!.href ?? visible[j]!.anchor) === key) j++;
+    const group = visible.slice(i, j).map(runXml).join('');
+    inner.push(hyperlinkXml(run, group, state));
+    i = j;
   }
-  return `<w:p>${pPrXml(p.properties as ResolvedParagraphProperties)}${runs.join('')}</w:p>`;
+
+  // §17.13.6.2 bookmarks: opened at the paragraph (start + end with a unique
+  // id each); the reader reads the start, the end keeps the markup valid.
+  const bookmarks = (p.bookmarks ?? [])
+    .map((name) => {
+      const id = state.bookmarkSeq++;
+      return `<w:bookmarkStart w:id="${id}" w:name="${escapeAttr(name)}"/><w:bookmarkEnd w:id="${id}"/>`;
+    })
+    .join('');
+
+  return `<w:p>${pPrXml(p.properties as ResolvedParagraphProperties)}${bookmarks}${inner.join('')}</w:p>`;
+}
+
+// w:hyperlink container: @r:id for an external target (allocates a rel),
+// @w:anchor for an internal bookmark reference.
+function hyperlinkXml(run: Run, inner: string, state: WriteState): string {
+  if (run.href !== undefined) {
+    const id = `rId${++state.relSeq}`;
+    state.docRels.push({
+      id,
+      type: REL_HYPERLINK,
+      target: run.href,
+      targetMode: 'External',
+    });
+    return `<w:hyperlink r:id="${id}">${inner}</w:hyperlink>`;
+  }
+  return `<w:hyperlink w:anchor="${escapeAttr(run.anchor!)}">${inner}</w:hyperlink>`;
 }
 
 function runXml(run: Run): string {
