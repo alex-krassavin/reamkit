@@ -1,0 +1,193 @@
+// SpreadsheetML model (ECMA-376 Part 1 §18) — the format-neutral data shapes a
+// worksheet and the workbook style table reduce to, the spreadsheet sibling of
+// document-model. The xlsx parsers (src/excel) PRODUCE these; SheetDoc
+// (core/ir/sheet) composes them; the print model projects them to a FlowDoc.
+// Cells keep their RAW stored value + a style index — resolution (shared
+// strings, number formats, the cascade) stays in the projection.
+
+// ECMA-376 §18.3.1.4 — <c t="..."> cell value type.
+export type CellType = 'n' | 's' | 'str' | 'b' | 'd' | 'e' | 'inlineStr';
+
+export interface WorksheetCell {
+  readonly column: number;
+  readonly row: number;
+  readonly type: CellType;
+  // Raw stored value; renderer/converter looks up shared strings + formats.
+  readonly rawValue: string;
+  // For inlineStr the stored text lives in <is><t> rather than <v>.
+  readonly inlineText?: string;
+  // Index into the workbook's cellXfs (xl/styles.xml). 0 means default style.
+  readonly styleIndex?: number;
+}
+
+export interface ColumnWidth {
+  readonly min: number; // 1-indexed in OOXML, kept as-is here
+  readonly max: number;
+  readonly widthChars: number;
+}
+
+export interface MergedRange {
+  readonly startColumn: number;
+  readonly startRow: number;
+  readonly endColumn: number;
+  readonly endRow: number;
+}
+
+// ECMA-376 Part 1 §18.3.1.73 — <row ht="...">. The ht attribute is measured
+// in points (not twips); customHeight="1" means the user pinned the height
+// explicitly. Without customHeight, the height is content-driven.
+export interface RowHeight {
+  readonly row: number; // 0-indexed
+  readonly heightPt: number;
+  readonly customHeight: boolean;
+}
+
+// ECMA-376 Part 1 §18.3.1.62 — <pageMargins>. All attributes are in inches.
+export interface XlsxPageMargins {
+  readonly leftInches: number;
+  readonly rightInches: number;
+  readonly topInches: number;
+  readonly bottomInches: number;
+  readonly headerInches?: number;
+  readonly footerInches?: number;
+}
+
+// ECMA-376 Part 1 §18.3.1.63 — <pageSetup>. paperSize is a numeric id from
+// the printer paper size enumeration (1=Letter, 9=A4, ...). orientation
+// values: 'default' (effectively portrait), 'portrait', 'landscape'.
+//   scale       — print scaling percentage (10..400); default 100.
+//   fitToWidth  — number of pages wide to fit to (0 ⇒ use scale); default 1.
+//   fitToHeight — number of pages tall to fit to; default 1.
+// fitToWidth/fitToHeight only take effect when <pageSetUpPr fitToPage="1">.
+export interface XlsxPageSetup {
+  readonly paperSize?: number;
+  readonly orientation?: 'portrait' | 'landscape' | 'default';
+  readonly scale?: number;
+  readonly fitToWidth?: number;
+  readonly fitToHeight?: number;
+}
+
+// ECMA-376 Part 1 §18.3.1.70 — <printOptions>. Controls what is rendered when
+// the sheet is printed. gridLines defaults to false (Excel/Calc do NOT print
+// cell gridlines unless explicitly enabled), so a faithful print model draws
+// only the borders that come from cell styles.
+export interface XlsxPrintOptions {
+  readonly gridLines?: boolean;
+  readonly horizontalCentered?: boolean;
+  readonly verticalCentered?: boolean;
+}
+
+export interface ParsedWorksheet {
+  readonly cells: ReadonlyArray<WorksheetCell>;
+  readonly maxRow: number;
+  readonly maxColumn: number;
+  readonly columns: ReadonlyArray<ColumnWidth>;
+  readonly merges: ReadonlyArray<MergedRange>;
+  readonly rowHeights: ReadonlyArray<RowHeight>;
+  readonly pageMargins?: XlsxPageMargins;
+  readonly pageSetup?: XlsxPageSetup;
+  // ECMA-376 §18.3.1.65 — <sheetPr><pageSetUpPr fitToPage="1"/>. When set, the
+  // pageSetup fitToWidth/fitToHeight (not scale) drive print scaling.
+  readonly fitToPage?: boolean;
+  readonly printOptions?: XlsxPrintOptions;
+  // ECMA-376 §18.3.1.74/§18.3.1.14 — manual <rowBreaks>/<colBreaks>. Each
+  // stored value is the <brk id="..."> following the break (kept verbatim).
+  readonly rowBreaks?: ReadonlyArray<number>;
+  readonly colBreaks?: ReadonlyArray<number>;
+  // §18.3.1.36 <drawing r:id> — the sheet's drawing part (charts/shapes).
+  readonly drawingRelId?: string;
+}
+
+// ECMA-376 Part 1 §18.8 — the workbook style table (xl/styles.xml). Cells
+// reference a cellXf by index; fonts/fills/borders/numFmts are looked up from
+// it when the cell's properties are resolved.
+
+export interface XlsxFont {
+  readonly sizePt?: number;
+  readonly bold?: boolean;
+  readonly italic?: boolean;
+  readonly underline?: boolean;
+  readonly colorHex?: string;
+  readonly name?: string;
+}
+
+export interface XlsxFill {
+  readonly patternType?: string;
+  readonly fgColorHex?: string;
+  readonly bgColorHex?: string;
+}
+
+export type XlsxBorderStyleName =
+  | 'none'
+  | 'thin'
+  | 'medium'
+  | 'thick'
+  | 'hair'
+  | 'dashed'
+  | 'dotted'
+  | 'double'
+  | 'mediumDashed'
+  | 'dashDot'
+  | 'mediumDashDot'
+  | 'dashDotDot'
+  | 'mediumDashDotDot'
+  | 'slantDashDot';
+
+export interface XlsxBorderEdge {
+  readonly style?: XlsxBorderStyleName;
+  readonly colorHex?: string;
+}
+
+export interface XlsxBorder {
+  readonly top?: XlsxBorderEdge;
+  readonly right?: XlsxBorderEdge;
+  readonly bottom?: XlsxBorderEdge;
+  readonly left?: XlsxBorderEdge;
+}
+
+export type XlsxHorizontalAlign =
+  | 'left'
+  | 'center'
+  | 'right'
+  | 'fill'
+  | 'justify'
+  | 'centerContinuous'
+  | 'distributed';
+
+export type XlsxVerticalAlign = 'top' | 'center' | 'bottom' | 'justify' | 'distributed';
+
+export interface XlsxCellAlignment {
+  readonly horizontal?: XlsxHorizontalAlign;
+  readonly vertical?: XlsxVerticalAlign;
+  readonly wrapText?: boolean;
+}
+
+export interface XlsxCellXf {
+  readonly numFmtId: number;
+  readonly fontId: number;
+  readonly fillId: number;
+  readonly borderId: number;
+  readonly applyNumberFormat?: boolean;
+  readonly applyFont?: boolean;
+  readonly applyFill?: boolean;
+  readonly applyBorder?: boolean;
+  readonly applyAlignment?: boolean;
+  readonly alignment?: XlsxCellAlignment;
+}
+
+export interface XlsxStyles {
+  readonly numFmts: ReadonlyMap<number, string>;
+  readonly fonts: ReadonlyArray<XlsxFont>;
+  readonly fills: ReadonlyArray<XlsxFill>;
+  readonly borders: ReadonlyArray<XlsxBorder>;
+  readonly cellXfs: ReadonlyArray<XlsxCellXf>;
+}
+
+// ECMA-376 Part 1 §18.2.5 — <definedName>. A workbook-scoped (or sheet-scoped,
+// via localSheetId) named range. Print areas and print titles ride these under
+// the reserved names _xlnm.Print_Area / _xlnm.Print_Titles.
+export interface DefinedName {
+  readonly name: string;
+  readonly localSheetId?: number;
+  readonly value: string;
+}

@@ -14,6 +14,19 @@
 
 import { XMLParser } from 'fast-xml-parser';
 
+import type {
+  XlsxBorder,
+  XlsxBorderEdge,
+  XlsxBorderStyleName,
+  XlsxCellAlignment,
+  XlsxCellXf,
+  XlsxFill,
+  XlsxFont,
+  XlsxHorizontalAlign,
+  XlsxStyles,
+  XlsxVerticalAlign,
+} from '@/core/spreadsheet-model';
+
 const decoder = new TextDecoder('utf-8');
 
 const parser = new XMLParser({
@@ -28,86 +41,8 @@ const parser = new XMLParser({
   removeNSPrefix: true,
 });
 
-export interface XlsxFont {
-  readonly sizePt?: number;
-  readonly bold?: boolean;
-  readonly italic?: boolean;
-  readonly underline?: boolean;
-  readonly colorHex?: string;
-  readonly name?: string;
-}
-
-export interface XlsxFill {
-  readonly patternType?: string;
-  readonly fgColorHex?: string;
-  readonly bgColorHex?: string;
-}
-
-export type XlsxBorderStyleName =
-  | 'none'
-  | 'thin'
-  | 'medium'
-  | 'thick'
-  | 'hair'
-  | 'dashed'
-  | 'dotted'
-  | 'double'
-  | 'mediumDashed'
-  | 'dashDot'
-  | 'mediumDashDot'
-  | 'dashDotDot'
-  | 'mediumDashDotDot'
-  | 'slantDashDot';
-
-export interface XlsxBorderEdge {
-  readonly style?: XlsxBorderStyleName;
-  readonly colorHex?: string;
-}
-
-export interface XlsxBorder {
-  readonly top?: XlsxBorderEdge;
-  readonly right?: XlsxBorderEdge;
-  readonly bottom?: XlsxBorderEdge;
-  readonly left?: XlsxBorderEdge;
-}
-
-export type XlsxHorizontalAlign =
-  | 'left'
-  | 'center'
-  | 'right'
-  | 'fill'
-  | 'justify'
-  | 'centerContinuous'
-  | 'distributed';
-
-export type XlsxVerticalAlign = 'top' | 'center' | 'bottom' | 'justify' | 'distributed';
-
-export interface XlsxCellAlignment {
-  readonly horizontal?: XlsxHorizontalAlign;
-  readonly vertical?: XlsxVerticalAlign;
-  readonly wrapText?: boolean;
-}
-
-export interface XlsxCellXf {
-  readonly numFmtId: number;
-  readonly fontId: number;
-  readonly fillId: number;
-  readonly borderId: number;
-  readonly applyNumberFormat?: boolean;
-  readonly applyFont?: boolean;
-  readonly applyFill?: boolean;
-  readonly applyBorder?: boolean;
-  readonly applyAlignment?: boolean;
-  readonly alignment?: XlsxCellAlignment;
-}
-
-export interface XlsxStyles {
-  readonly numFmts: ReadonlyMap<number, string>;
-  readonly fonts: ReadonlyArray<XlsxFont>;
-  readonly fills: ReadonlyArray<XlsxFill>;
-  readonly borders: ReadonlyArray<XlsxBorder>;
-  readonly cellXfs: ReadonlyArray<XlsxCellXf>;
-}
+// The font/fill/border/xf/styles model types now live in
+// @/core/spreadsheet-model; this parser imports them above and produces them.
 
 export const EMPTY_XLSX_STYLES: XlsxStyles = {
   numFmts: new Map(),

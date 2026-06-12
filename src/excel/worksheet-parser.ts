@@ -4,6 +4,17 @@
 
 import { XMLParser } from 'fast-xml-parser';
 
+import type {
+  CellType,
+  ColumnWidth,
+  MergedRange,
+  ParsedWorksheet,
+  RowHeight,
+  WorksheetCell,
+  XlsxPageMargins,
+  XlsxPageSetup,
+  XlsxPrintOptions,
+} from '@/core/spreadsheet-model';
 import { parseCellRef } from '@/excel/cell-reference';
 
 type MutableMerge = {
@@ -24,97 +35,8 @@ const parser = new XMLParser({
   removeNSPrefix: true,
 });
 
-export type CellType = 'n' | 's' | 'str' | 'b' | 'd' | 'e' | 'inlineStr';
-
-export interface WorksheetCell {
-  readonly column: number;
-  readonly row: number;
-  readonly type: CellType;
-  // Raw stored value; renderer/converter looks up shared strings + formats.
-  readonly rawValue: string;
-  // For inlineStr the stored text lives in <is><t> rather than <v>.
-  readonly inlineText?: string;
-  // Index into the workbook's cellXfs (xl/styles.xml). 0 means default style.
-  readonly styleIndex?: number;
-}
-
-export interface ColumnWidth {
-  readonly min: number; // 1-indexed in OOXML, kept as-is here
-  readonly max: number;
-  readonly widthChars: number;
-}
-
-export interface MergedRange {
-  readonly startColumn: number;
-  readonly startRow: number;
-  readonly endColumn: number;
-  readonly endRow: number;
-}
-
-// ECMA-376 Part 1 §18.3.1.73 — <row ht="...">. The ht attribute is measured
-// in points (not twips); customHeight="1" means the user pinned the height
-// explicitly. Without customHeight, the height is content-driven.
-export interface RowHeight {
-  readonly row: number; // 0-indexed
-  readonly heightPt: number;
-  readonly customHeight: boolean;
-}
-
-// ECMA-376 Part 1 §18.3.1.62 — <pageMargins>. All attributes are in inches.
-export interface XlsxPageMargins {
-  readonly leftInches: number;
-  readonly rightInches: number;
-  readonly topInches: number;
-  readonly bottomInches: number;
-  readonly headerInches?: number;
-  readonly footerInches?: number;
-}
-
-// ECMA-376 Part 1 §18.3.1.63 — <pageSetup>. paperSize is a numeric id from
-// the printer paper size enumeration (1=Letter, 9=A4, ...). orientation
-// values: 'default' (effectively portrait), 'portrait', 'landscape'.
-//   scale       — print scaling percentage (10..400); default 100.
-//   fitToWidth  — number of pages wide to fit to (0 ⇒ use scale); default 1.
-//   fitToHeight — number of pages tall to fit to; default 1.
-// fitToWidth/fitToHeight only take effect when <pageSetUpPr fitToPage="1">.
-export interface XlsxPageSetup {
-  readonly paperSize?: number;
-  readonly orientation?: 'portrait' | 'landscape' | 'default';
-  readonly scale?: number;
-  readonly fitToWidth?: number;
-  readonly fitToHeight?: number;
-}
-
-// ECMA-376 Part 1 §18.3.1.70 — <printOptions>. Controls what is rendered when
-// the sheet is printed. gridLines defaults to false (Excel/Calc do NOT print
-// cell gridlines unless explicitly enabled), so a faithful print model draws
-// only the borders that come from cell styles.
-export interface XlsxPrintOptions {
-  readonly gridLines?: boolean;
-  readonly horizontalCentered?: boolean;
-  readonly verticalCentered?: boolean;
-}
-
-export interface ParsedWorksheet {
-  readonly cells: ReadonlyArray<WorksheetCell>;
-  readonly maxRow: number;
-  readonly maxColumn: number;
-  readonly columns: ReadonlyArray<ColumnWidth>;
-  readonly merges: ReadonlyArray<MergedRange>;
-  readonly rowHeights: ReadonlyArray<RowHeight>;
-  readonly pageMargins?: XlsxPageMargins;
-  readonly pageSetup?: XlsxPageSetup;
-  // ECMA-376 §18.3.1.65 — <sheetPr><pageSetUpPr fitToPage="1"/>. When set, the
-  // pageSetup fitToWidth/fitToHeight (not scale) drive print scaling.
-  readonly fitToPage?: boolean;
-  readonly printOptions?: XlsxPrintOptions;
-  // ECMA-376 §18.3.1.74/§18.3.1.14 — manual <rowBreaks>/<colBreaks>. Each
-  // stored value is the <brk id="..."> following the break (kept verbatim).
-  readonly rowBreaks?: ReadonlyArray<number>;
-  readonly colBreaks?: ReadonlyArray<number>;
-  // §18.3.1.36 <drawing r:id> — the sheet's drawing part (charts/shapes).
-  readonly drawingRelId?: string;
-}
+// The worksheet/style model types now live in @/core/spreadsheet-model (the
+// SpreadsheetML sibling of document-model); this parser imports them above.
 
 export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
   const xml = decoder.decode(data);
