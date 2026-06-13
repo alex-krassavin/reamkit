@@ -32,7 +32,7 @@ import { Ream } from 'reamkit';
 // e.g. from an <input type="file"> or a fetch() — anything that yields bytes.
 const bytes = new Uint8Array(await file.arrayBuffer());
 
-const doc = Ream.parse(bytes);          // docx or xlsx — sniffed
+const doc = Ream.parse(bytes);          // docx, xlsx or pdf — sniffed
 const pdf = await doc.convert('pdf');   // async — fetches a font if needed
 const svg = await doc.convert('svg');   // same parse, different target
 const html = await doc.convert('html');  // flowed HTML — needs no fonts at all
@@ -62,7 +62,7 @@ const pdf = await Ream.parse(bytes).convert('pdf', { fonts });
 
 ```ts
 const doc = Ream.parse(bytes);
-doc.format;    // 'docx' | 'xlsx'
+doc.format;    // 'docx' | 'xlsx' | 'pdf'
 doc.flow;      // the parsed interlayer tree (paragraphs, tables, images, …)
 doc.losses;    // anything dropped/degraded while reading
 

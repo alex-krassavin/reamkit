@@ -163,8 +163,23 @@ Tagged-PDF, который мы пишем, — идеальный вход дл
   настоящий FlowDoc-Table (equal-width grid, colSpan, header-строки), LI → параграф (Lbl-маркер + LBody).
   Honest e2e: docx→tagged pdf→FlowDoc восстанавливает заголовки/параграфы/порядок чтения/уровни + таблицы
   (2×2 с текстом ячеек) + списки. undefined для нетегированного PDF. Тесты: `pdf-reader-tagged` (5).
-- **EP4–EP5** — эвристика для нетегированных PDF (глифы→строки→параграфы по координатам) → проводка
-  `pdfReader` в фасад (Ream.parse сниффит %PDF-) + losses.
+- **EP4 ✓ — эвристика для нетегированных PDF.** `layout.ts` `reconstructByLayout`: ран'ы по общему baseline
+  → строки (сорт по x, пробелы по зазорам с оценкой ширины half-em), строки → параграфы по вертикальному
+  зазору (> 1.5× кегля), заголовки по кеглю выше медианы. `flow-build.ts` — общие `paragraphBlock`/
+  `buildFlowDoc` (tagged.ts перевели на них). Качество = метрика, не бинарь. Тест: нетегированный docx→pdf
+  → параграфы в порядке чтения + крупная строка как заголовок.
+- **EP5 ✓ — pdfReader в фасаде.** `reader.ts` `pdfReader: DocumentReader<FlowDoc>`: sniff `%PDF-` (с
+  допуском мусора в начале), read = PdfFile.parse → tagged ?? heuristic → FlowDoc + losses (degraded для
+  нетегированного, dropped для картинок). Добавлен в `DEFAULT_READERS` (docx/xlsx/**pdf**), `SOURCE_MIME.pdf`.
+  Теперь `Ream.parse(pdf).convert('html'|'docx')` РАБОТАЕТ. Байт-в-ноль (PDF сниффится отдельно от PK-ZIP,
+  write-путь не тронут). Тесты `pdf-reader-facade`: sniff, format='pdf', text в interlayer, →html, →docx
+  (валидный, репарсится в тот же текст), losses. **E-PDF замыкает Ream в универсальный документ-движок.**
+
+**Итог E-PDF.** Новая подсистема `src/pdf-reader/` (lexer/parser/document/content/cmap/font/text/
+struct-tree/tagged/layout/flow-build/reader) — чистое дополнение, байт-в-ноль для всех существующих
+выходов. PDF → FlowDoc: объекты (EP1) → текст (EP2) → структура (tagged EP3 / эвристика EP4) → фасад (EP5).
+Не делается: извлечение картинок/вектора, xref-streams/object-streams на чтение (наш писатель их не пишет),
+шифрованные PDF на чтение. ~50 тестов, honest e2e на СВОИХ же выходах.
 
 ---
 

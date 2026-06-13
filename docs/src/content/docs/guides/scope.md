@@ -9,6 +9,15 @@ doesn't yet.
 
 ## Implemented
 
+**Input** — Ream parses **Word (`.docx`)**, **Excel (`.xlsx`)** and **PDF**,
+sniffed from the bytes. PDF input reconstructs a document tree from the page
+content: a **tagged** PDF (including the ones Ream writes) is rebuilt from its
+structure tree — headings, paragraphs, tables, list items, reading order; an
+**untagged** PDF is reconstructed heuristically from glyph positions (lines by
+baseline, paragraphs by spacing, headings by relative font size), which is
+approximate. PDF text comes back via each font's `/ToUnicode` map; images,
+vector graphics and encrypted PDFs are not read.
+
 **Output** — `convert('pdf')`, `convert('svg')` (a page-stack preview),
 `convert('html')` (flowed, needs no fonts), `convert('docx')` (write
 WordprocessingML back out) and `convert('xlsx')` (write SpreadsheetML back out —
