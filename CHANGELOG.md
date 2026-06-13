@@ -3,6 +3,32 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.6.0
+
+### Added
+
+- **PDF input.** `Ream.parse` now also reads **PDF**, reconstructing a document
+  tree from the page content. A tagged PDF — including the ones Ream writes — is
+  rebuilt from its structure tree: headings, paragraphs, tables, list items and
+  reading order. An untagged PDF is reconstructed heuristically from glyph
+  positions (lines by baseline, paragraphs by spacing, headings by relative font
+  size), which is approximate. PDF text is recovered through each font's
+  `/ToUnicode` map. The result is an ordinary document tree, so a PDF converts
+  onward like any other source — `Ream.parse(pdf).convert('html')` or
+  `convert('docx')`. Images, vector graphics and encrypted PDFs are not read and
+  are reported as losses. Ream is now a universal document engine: DOCX / XLSX /
+  PDF in, PDF / SVG / HTML / DOCX / XLSX out.
+- **Excel wide-sheet pagination.** A worksheet wider than the printable page now
+  paginates across columns — all rows of the left columns first, then the next
+  band ("down, then over") — honouring manual column breaks and repeating the
+  print titles on every band, instead of being squeezed onto one page width.
+- **Excel frozen panes** round-trip through the writer and become sticky header
+  rows / columns in HTML output. They have no effect on PDF — in Excel, freezing
+  is a view setting that does not print (the printed repeat is the print titles).
+- **Conditional-format icon sets** — the symbols (check / exclamation / cross),
+  ratings (a signal-bar meter) and quarters (a clock pie) families now draw
+  faithfully instead of as plain circles.
+
 ## 1.5.0
 
 ### Added
