@@ -1,39 +1,90 @@
-// E-PDF EP2/EP8 — page text extraction. Builds the page's font map from its
-// /Resources /Font dictionary, runs the content-stream interpreter to get the
-// positioned text runs, then tags any run whose origin falls inside a /Link
-// annotation's /Rect with that link's URI (EP8) so hyperlinks survive.
+// E-PDF EP2/EP8/EP13 — page text extraction. Interprets the page content (and,
+// recursively, the Form XObjects it paints — EP13, whose text would otherwise be
+// missed) into positioned runs, then tags any run whose origin falls inside a
+// /Link annotation's /Rect with that link's URI (EP8) so hyperlinks survive.
 
-import { interpretContent } from './content';
+import { IDENTITY, interpretContent, multiply } from './content';
 import { buildContentFont } from './font';
-import type { ContentFont, TextRun } from './content';
+import type { ContentFont, Matrix, TextRun } from './content';
+import type { PdfDict } from '@/pdf/objects';
 import type { PdfFile, PdfPage, Rectangle } from './document';
 
-import { PdfName } from '@/pdf/objects';
+import { PDF_NULL, PdfName, PdfStream } from '@/pdf/objects';
+
+const MAX_FORM_DEPTH = 8;
 
 export function extractPageText(file: PdfFile, page: PdfPage): Array<TextRun> {
-  const fonts = new Map<string, ContentFont>();
-  if (page.resources) {
-    const fontContainer = file.get(page.resources, 'Font');
-    if (fontContainer instanceof Map) {
-      for (const [fontName, fontRef] of fontContainer) {
-        const fontDict = file.resolve(fontRef);
-        if (fontDict instanceof Map) {
-          try {
-            fonts.set(fontName, buildContentFont(file, fontDict));
-          } catch {
-            // A malformed font is skipped — its text falls back to Latin-1.
-          }
-        }
-      }
-    }
-  }
-  const runs = interpretContent(file.pageContent(page), fonts).texts;
+  const runs: Array<TextRun> = [];
+  collectRuns(file, page.resources, file.pageContent(page), IDENTITY, 0, new Set(), runs);
   const links = collectLinks(file, page);
   if (links.length === 0) return runs;
   return runs.map((run) => {
     const link = links.find((l) => inRect(run.x, run.y, l.rect));
     return link ? { ...run, href: link.href } : run;
   });
+}
+
+// Interpret one content stream (a page or a Form XObject) into runs, then recurse
+// into the Form XObjects it paints — each composing its /Matrix onto the
+// placement CTM and using its own /Resources fonts.
+function collectRuns(
+  file: PdfFile,
+  resources: PdfDict | undefined,
+  content: Uint8Array,
+  baseCtm: Matrix,
+  depth: number,
+  visiting: Set<PdfStream>,
+  out: Array<TextRun>,
+): void {
+  const result = interpretContent(content, buildFonts(file, resources), baseCtm);
+  out.push(...result.texts);
+  if (depth >= MAX_FORM_DEPTH || !resources) return;
+  const xobjects = file.get(resources, 'XObject');
+  if (!(xobjects instanceof Map)) return;
+  for (const placement of result.images) {
+    const stream = file.resolve(xobjects.get(placement.name) ?? PDF_NULL);
+    if (!(stream instanceof PdfStream) || visiting.has(stream)) continue;
+    const sub = file.get(stream.dict, 'Subtype');
+    if (!(sub instanceof PdfName) || sub.value !== 'Form') continue;
+    visiting.add(stream);
+    const formRes = file.get(stream.dict, 'Resources');
+    collectRuns(
+      file,
+      formRes instanceof Map ? formRes : resources,
+      file.streamData(stream),
+      multiply(matrixOf(file, stream.dict), placement.ctm),
+      depth + 1,
+      visiting,
+      out,
+    );
+    visiting.delete(stream);
+  }
+}
+
+function buildFonts(file: PdfFile, resources: PdfDict | undefined): Map<string, ContentFont> {
+  const fonts = new Map<string, ContentFont>();
+  if (!resources) return fonts;
+  const fontContainer = file.get(resources, 'Font');
+  if (!(fontContainer instanceof Map)) return fonts;
+  for (const [fontName, fontRef] of fontContainer) {
+    const fontDict = file.resolve(fontRef);
+    if (fontDict instanceof Map) {
+      try {
+        fonts.set(fontName, buildContentFont(file, fontDict));
+      } catch {
+        // A malformed font is skipped — its text falls back to Latin-1.
+      }
+    }
+  }
+  return fonts;
+}
+
+function matrixOf(file: PdfFile, dict: PdfDict): Matrix {
+  const m = file.resolve(dict.get('Matrix') ?? PDF_NULL);
+  if (Array.isArray(m) && m.length >= 6 && m.every((v) => typeof v === 'number')) {
+    return [m[0], m[1], m[2], m[3], m[4], m[5]] as Matrix;
+  }
+  return IDENTITY;
 }
 
 interface LinkRect {
