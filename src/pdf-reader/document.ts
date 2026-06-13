@@ -9,9 +9,11 @@
 
 import { unzlibSync } from 'fflate';
 
+import { buildDecryptor } from './decrypt';
 import { Lexer } from './lexer';
 import { parseIndirectObject, parseObject } from './parser';
 import { reversePredictor } from './predictor';
+import type { Decryptor } from './decrypt';
 import type { PdfArray, PdfDict, PdfValue } from '@/pdf/objects';
 import { PDF_NULL, PdfName, PdfRef, PdfStream } from '@/pdf/objects';
 
@@ -37,6 +39,9 @@ export class PdfFile {
   private readonly cache = new Map<number, PdfValue>();
   // objStm object number → its decoded members (objNum → value), decoded once.
   private readonly objStmCache = new Map<number, Map<number, PdfValue>>();
+  // The standard security handler, when the document is encrypted (EP9).
+  private decryptor: Decryptor | undefined;
+  private encryptObjNum = -1;
 
   private constructor(
     private readonly buf: Uint8Array,
@@ -67,7 +72,22 @@ export class PdfFile {
         trailer.set('Root', scanned.root);
       }
     }
-    return new PdfFile(bytes, xref, trailer);
+    const file = new PdfFile(bytes, xref, trailer);
+    file.initEncryption();
+    return file;
+  }
+
+  // Build the decryptor from /Encrypt (§7.6). Runs before any other object is
+  // resolved, so the /Encrypt dictionary itself is read in the clear; its object
+  // is then never decrypted.
+  private initEncryption(): void {
+    const encVal = this.trailer.get('Encrypt');
+    if (encVal === undefined) return;
+    if (encVal instanceof PdfRef) this.encryptObjNum = encVal.id;
+    const enc = this.resolve(encVal);
+    if (!(enc instanceof Map)) return;
+    const id = this.trailer.get('ID');
+    this.decryptor = buildDecryptor(enc, Array.isArray(id) ? id : undefined);
   }
 
   // Resolve a stream's /Length when it is an indirect reference.
@@ -90,6 +110,12 @@ export class PdfFile {
       if (entry.offset >= 0 && entry.offset < this.buf.length) {
         const obj = parseIndirectObject(new Lexer(this.buf, entry.offset), this.lengthResolver);
         result = obj ? obj.value : PDF_NULL;
+        // Decrypt every string/stream (§7.6) — except the /Encrypt dict itself,
+        // whose strings are the keys. Compressed objects are already plaintext
+        // (their object stream was decrypted as a whole).
+        if (this.decryptor && value.id !== this.encryptObjNum) {
+          result = this.decryptor.decrypt(result, value.id, obj?.generation ?? 0);
+        }
       }
     } else {
       result = this.objectFromStream(entry.streamObj).get(value.id) ?? PDF_NULL;
@@ -108,7 +134,11 @@ export class PdfFile {
     if (!entry || entry.kind !== 'uncompressed') return out;
     const obj = parseIndirectObject(new Lexer(this.buf, entry.offset), this.lengthResolver);
     if (!obj || !(obj.value instanceof PdfStream)) return out;
-    const stream = obj.value;
+    let stream = obj.value;
+    if (this.decryptor) {
+      const dec = this.decryptor.decrypt(stream, streamObj, obj.generation);
+      if (dec instanceof PdfStream) stream = dec;
+    }
     const data = inflateStream(stream);
     const first = numOf(this.resolve(stream.dict.get('First') ?? PDF_NULL));
     for (const member of objStmHeader(
@@ -128,6 +158,12 @@ export class PdfFile {
   get catalog(): PdfDict {
     const root = this.resolve(this.trailer.get('Root') ?? PDF_NULL);
     return root instanceof Map ? root : new Map();
+  }
+
+  // The document is encrypted but no decryptor could be built (an unsupported
+  // handler, or a non-empty user password) — its content is unreadable (EP9).
+  get encryptionUnsupported(): boolean {
+    return this.trailer.get('Encrypt') !== undefined && this.decryptor === undefined;
   }
 
   // The leaf pages, in document order, each with its inherited MediaBox/Resources.

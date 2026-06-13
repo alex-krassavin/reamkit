@@ -35,6 +35,14 @@ export function readPdf(bytes: Uint8Array): ReadResult<FlowDoc> {
   const file = PdfFile.parse(bytes);
   const losses: Array<Loss> = [];
 
+  if (file.encryptionUnsupported) {
+    losses.push({
+      severity: 'dropped',
+      feature: FEATURES.text,
+      detail: 'encrypted PDF — a user password is required and was not supplied',
+    });
+  }
+
   const tagged = reconstructTaggedPdf(file);
   const reconstruction = tagged ?? reconstructByLayout(file);
   if (!tagged) {
