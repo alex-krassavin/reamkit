@@ -15,7 +15,7 @@ import { detectImageFormat, prepareImage } from '@/core/images';
 import { PdfFile } from '@/pdf-reader/document';
 import { decodePdfImage } from '@/pdf-reader/image-decode';
 import { encodePng } from '@/pdf-reader/png-encode';
-import { PdfHexString, name, stream } from '@/pdf/objects';
+import { PdfHexString, dict, name, stream } from '@/pdf/objects';
 
 const FONTS = {
   regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
@@ -139,6 +139,167 @@ describe('PDF image XObject decode (E-PDF EP6)', () => {
     const decoded = decodePdfImage(file, xobj);
     expect(decoded.ok).toBe(false);
     if (!decoded.ok) expect(decoded.detail).toMatch(/mask/i);
+  });
+});
+
+// A PDF/TIFF LZW encoder (the inverse of the reader's decoder) — 9→12-bit
+// variable-width codes, a leading clear (256) and a trailing end-of-data (257),
+// with the same `nextCode + earlyChange === 2^width` width-bump rule.
+function lzwEncode(data: Uint8Array, earlyChange = 1): Uint8Array {
+  const out: Array<number> = [];
+  let bitBuffer = 0;
+  let bitCount = 0;
+  let codeWidth = 9;
+  const writeCode = (code: number): void => {
+    bitBuffer = (bitBuffer << codeWidth) | code;
+    bitCount += codeWidth;
+    while (bitCount >= 8) {
+      bitCount -= 8;
+      out.push((bitBuffer >>> bitCount) & 0xff);
+    }
+  };
+  let dictionary = new Map<string, number>();
+  let nextCode = 258;
+  const reset = (): void => {
+    dictionary = new Map();
+    for (let i = 0; i < 256; i++) dictionary.set(String.fromCharCode(i), i);
+    nextCode = 258;
+    codeWidth = 9;
+  };
+  reset();
+  writeCode(256);
+  let w = '';
+  for (const b of data) {
+    const c = String.fromCharCode(b);
+    const wc = w + c;
+    if (dictionary.has(wc)) {
+      w = wc;
+    } else {
+      writeCode(dictionary.get(w)!);
+      if (nextCode < 4096) {
+        dictionary.set(wc, nextCode++);
+        // The decoder's table lags the encoder's by one entry, so the encoder
+        // widens one code later than the decoder's `nextCode + earlyChange`.
+        if (nextCode + earlyChange === 513) codeWidth = 10;
+        else if (nextCode + earlyChange === 1025) codeWidth = 11;
+        else if (nextCode + earlyChange === 2049) codeWidth = 12;
+      }
+      w = c;
+    }
+  }
+  if (w !== '') writeCode(dictionary.get(w)!);
+  writeCode(257);
+  if (bitCount > 0) out.push((bitBuffer << (8 - bitCount)) & 0xff);
+  return Uint8Array.from(out);
+}
+
+// Forward TIFF Predictor 2 (horizontal differencing, 8-bit) — the encoder side
+// of the reader's reversePredictor.
+function tiffPredictor2(raw: Uint8Array, width: number, colors: number): Uint8Array {
+  const rowBytes = width * colors;
+  const out = new Uint8Array(raw.length);
+  for (let off = 0; off < raw.length; off += rowBytes) {
+    for (let i = 0; i < rowBytes; i++) {
+      const left = i >= colors ? raw[off + i - colors]! : 0;
+      out[off + i] = (raw[off + i]! - left) & 0xff;
+    }
+  }
+  return out;
+}
+
+describe('PDF LZW image decode (E-PDF EP12)', () => {
+  let file: PdfFile;
+  beforeAll(async () => {
+    const pdf = await Ream.parse(buildDocxFromBody('<w:p><w:r><w:t>x</w:t></w:r></w:p>')).convert(
+      'pdf',
+      { fonts: FONTS },
+    );
+    file = PdfFile.parse(pdf);
+  });
+
+  it('decodes an LZW DeviceGray image across 9→11-bit code widths', () => {
+    const W = 64;
+    const H = 40; // 2560 varied bytes — crosses the 512 and 1024 code boundaries
+    const raw = new Uint8Array(W * H);
+    for (let i = 0; i < raw.length; i++) raw[i] = (i * 31 + (i >> 4) * 7) & 0xff;
+    const xobj = stream(
+      {
+        Width: W,
+        Height: H,
+        ColorSpace: name('DeviceGray'),
+        BitsPerComponent: 8,
+        Filter: name('LZWDecode'),
+      },
+      lzwEncode(raw),
+    );
+    const decoded = decodePdfImage(file, xobj);
+    expect(decoded.ok).toBe(true);
+    if (!decoded.ok) return;
+    expect(decoded.format).toBe('png');
+    expect([decoded.widthPx, decoded.heightPx]).toEqual([W, H]);
+    expect(unzlibSync(prepareImage(decoded.bytes).data)).toEqual(raw);
+  });
+
+  it('handles the KwKwK case (a run of repeated bytes)', () => {
+    const raw = new Uint8Array(20).fill(65); // "AAAA…" forces code === nextCode
+    const xobj = stream(
+      {
+        Width: 4,
+        Height: 5,
+        ColorSpace: name('DeviceGray'),
+        BitsPerComponent: 8,
+        Filter: name('LZWDecode'),
+      },
+      lzwEncode(raw),
+    );
+    const decoded = decodePdfImage(file, xobj);
+    expect(decoded.ok).toBe(true);
+    if (!decoded.ok) return;
+    expect(unzlibSync(prepareImage(decoded.bytes).data)).toEqual(raw);
+  });
+
+  it('reverses a TIFF Predictor 2 layered over LZW', () => {
+    const W = 6;
+    const H = 4;
+    const raw = new Uint8Array(W * H * 3);
+    for (let i = 0; i < raw.length; i++) raw[i] = (i * 5 + 3) & 0xff;
+    const xobj = stream(
+      {
+        Width: W,
+        Height: H,
+        ColorSpace: name('DeviceRGB'),
+        BitsPerComponent: 8,
+        Filter: name('LZWDecode'),
+        DecodeParms: dict({ Predictor: 2, Colors: 3, BitsPerComponent: 8, Columns: W }),
+      },
+      lzwEncode(tiffPredictor2(raw, W, 3)),
+    );
+    const decoded = decodePdfImage(file, xobj);
+    expect(decoded.ok).toBe(true);
+    if (!decoded.ok) return;
+    expect(unzlibSync(prepareImage(decoded.bytes).data)).toEqual(raw);
+  });
+
+  it('honours /EarlyChange 0', () => {
+    const W = 64;
+    const H = 24;
+    const raw = new Uint8Array(W * H);
+    for (let i = 0; i < raw.length; i++) raw[i] = (i * 13 + 5) & 0xff;
+    const xobj = stream(
+      {
+        Width: W,
+        Height: H,
+        ColorSpace: name('DeviceGray'),
+        BitsPerComponent: 8,
+        Filter: name('LZWDecode'),
+        DecodeParms: dict({ EarlyChange: 0 }),
+      },
+      lzwEncode(raw, 0),
+    );
+    const decoded = decodePdfImage(file, xobj);
+    expect(decoded.ok).toBe(true);
+    if (!decoded.ok) return;
+    expect(unzlibSync(prepareImage(decoded.bytes).data)).toEqual(raw);
   });
 });
 
