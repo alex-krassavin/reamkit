@@ -22,8 +22,8 @@
 // round-trip gate proves zero writer failures across 1100 corpus documents,
 // 1099 of them a full IR identity (POI 110/110, LibreOffice 989/990 — the one
 // miss is an input whose referenced image part was stripped from the package,
-// so the bytes do not exist to carry). Documented v1 gaps the gate surfaces:
-// footnotes, charts and math are reported as losses, not written; a shape
+// so the bytes do not exist to carry). Footnotes/endnotes write back (WT2);
+// charts and OfficeMath are reported as losses, not written; a shape
 // round-trips as inline (floating placement is dropped).
 
 import type {
@@ -88,6 +88,15 @@ const REL_HYPERLINK =
   'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink';
 const REL_IMAGE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image';
 const NUMBERING_PART = 'word/numbering.xml';
+const REL_FOOTNOTES =
+  'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes';
+const REL_ENDNOTES = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes';
+const FOOTNOTES_CONTENT_TYPE =
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml';
+const ENDNOTES_CONTENT_TYPE =
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml';
+const FOOTNOTES_PART = 'word/footnotes.xml';
+const ENDNOTES_PART = 'word/endnotes.xml';
 
 // 1 pt = 12700 EMU (English Metric Units, the DrawingML coordinate).
 const EMU_PER_PT = 12700;
@@ -172,6 +181,9 @@ interface WriteState {
 interface PartScope {
   readonly rels: Array<Relationship>;
   relSeq: number;
+  // Set while emitting a footnotes/endnotes part, so a note-number run (WT2)
+  // emits the right §17.11.13/.5 mark.
+  noteKind?: 'footnote' | 'endnote';
   // ResourceId → the rId allocated FOR THIS PART (distinct from the shared file).
   readonly relIdByResource: Map<ResourceId, string>;
 }
@@ -260,6 +272,43 @@ export function writeDocx(flow: FlowDoc): WriteResult {
     });
   }
 
+  // §17.11 footnotes / endnotes (WT2): emit the parts + a document relationship
+  // whenever the document carries note content.
+  emitNotes(
+    flow.footnotes,
+    {
+      noteKind: 'footnote',
+      partPath: FOOTNOTES_PART,
+      rootTag: 'w:footnotes',
+      noteTag: 'w:footnote',
+      contentType: FOOTNOTES_CONTENT_TYPE,
+      relType: REL_FOOTNOTES,
+      target: 'footnotes.xml',
+    },
+    state,
+    losses,
+    docScope,
+    extraParts,
+    extraPartRels,
+  );
+  emitNotes(
+    flow.endnotes,
+    {
+      noteKind: 'endnote',
+      partPath: ENDNOTES_PART,
+      rootTag: 'w:endnotes',
+      noteTag: 'w:endnote',
+      contentType: ENDNOTES_CONTENT_TYPE,
+      relType: REL_ENDNOTES,
+      target: 'endnotes.xml',
+    },
+    state,
+    losses,
+    docScope,
+    extraParts,
+    extraPartRels,
+  );
+
   const partRelationships = [
     ...(docScope.rels.length > 0
       ? [{ sourcePart: 'word/document.xml', relationships: docScope.rels }]
@@ -290,6 +339,62 @@ export function writeDocx(flow: FlowDoc): WriteResult {
   });
 
   return { bytes, losses };
+}
+
+interface NoteConfig {
+  readonly noteKind: 'footnote' | 'endnote';
+  readonly partPath: string;
+  readonly rootTag: string;
+  readonly noteTag: string;
+  readonly contentType: string;
+  readonly relType: string;
+  readonly target: string;
+}
+
+// §17.11 — emit a footnotes.xml / endnotes.xml part from the note content by id,
+// prefixed with the separator / continuationSeparator stubs Word expects (the
+// reader skips those on re-read). A note's blocks go through emitBlock with a
+// scope flagged so its number-mark run emits w:footnoteRef / w:endnoteRef.
+function emitNotes(
+  notes: ReadonlyMap<string, ReadonlyArray<BodyElement>> | undefined,
+  cfg: NoteConfig,
+  state: WriteState,
+  losses: Array<Loss>,
+  docScope: PartScope,
+  extraParts: Array<OpcPart>,
+  extraPartRels: Array<{ sourcePart: string; relationships: Array<Relationship> }>,
+): void {
+  if (!notes || notes.size === 0) return;
+  const scope = newScope();
+  scope.noteKind = cfg.noteKind;
+  const stub = (type: string, id: number, mark: string): string =>
+    `<${cfg.noteTag} w:type="${type}" w:id="${id}"><w:p><w:r>${mark}</w:r></w:p></${cfg.noteTag}>`;
+  const noteXmls: Array<string> = [];
+  for (const [id, content] of notes) {
+    const inner: Array<string> = [];
+    for (const el of content) emitBlock(inner, el, losses, state, scope);
+    noteXmls.push(
+      `<${cfg.noteTag} w:id="${escapeAttr(id)}">${inner.join('') || '<w:p/>'}</${cfg.noteTag}>`,
+    );
+  }
+  const xml =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    `<${cfg.rootTag} xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"` +
+    ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+    stub('separator', -1, '<w:separator/>') +
+    stub('continuationSeparator', 0, '<w:continuationSeparator/>') +
+    noteXmls.join('') +
+    `</${cfg.rootTag}>`;
+  extraParts.push({ path: cfg.partPath, data: encoder.encode(xml), contentType: cfg.contentType });
+  if (scope.rels.length > 0) {
+    extraPartRels.push({ sourcePart: cfg.partPath, relationships: scope.rels });
+  }
+  docScope.rels.push({
+    id: `rId${++docScope.relSeq}`,
+    type: cfg.relType,
+    target: cfg.target,
+    targetMode: 'Internal',
+  });
 }
 
 interface HeaderFooterRefs {
@@ -752,6 +857,10 @@ function paragraphXml(
       (run.text !== '' ||
         run.inlineImage !== undefined ||
         run.pageBreak ||
+        // §17.11 — a note reference / in-note number mark (WT2).
+        run.footnoteRef !== undefined ||
+        run.endnoteRef !== undefined ||
+        run.noteNumber === true ||
         // An empty run that still carries a link target keeps the hyperlink
         // alive (e.g. a TOC field whose page number a tracked change deleted).
         run.href !== undefined ||
@@ -819,6 +928,16 @@ function runXml(run: Run, state: WriteState, scope: PartScope): string {
     if (drawing) return `<w:r>${rPr}${drawing}</w:r>`;
     // Unresolved inline image with no text and no break: nothing to emit.
     if (run.text === '' && !run.pageBreak) return '';
+  }
+  // §17.11 — note references and the in-note number mark (WT2).
+  if (run.footnoteRef !== undefined) {
+    return `<w:r>${rPr}<w:footnoteReference w:id="${escapeAttr(run.footnoteRef)}"/></w:r>`;
+  }
+  if (run.endnoteRef !== undefined) {
+    return `<w:r>${rPr}<w:endnoteReference w:id="${escapeAttr(run.endnoteRef)}"/></w:r>`;
+  }
+  if (run.noteNumber) {
+    return `<w:r>${rPr}<${scope.noteKind === 'endnote' ? 'w:endnoteRef' : 'w:footnoteRef'}/></w:r>`;
   }
   // §17.3.3.1 — a page break is a run-level <w:br w:type="page"/>; emit it so a
   // run that is ONLY a break (no text, no image) survives the round-trip.
