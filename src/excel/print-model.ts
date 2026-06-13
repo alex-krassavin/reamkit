@@ -595,19 +595,30 @@ export function worksheetToBody(
 
   // E-SHEET SE1 — when an unscaled sheet is wider than the printable page (or
   // carries a manual column break), paginate across columns into bands instead of
-  // squeezing it onto one page width. Print-scaled sheets (fit-to-page / explicit
-  // <scale>) keep the uniform shrink path — fit-to-page overrides manual breaks in
-  // Excel — so their output is unchanged; so do sheets that already fit and have
-  // no manual break.
+  // squeezing it onto one page width. A fit-to-ONE-page sheet keeps the uniform
+  // shrink path (fit-to-page overrides manual breaks in Excel). But fitToWidth=N>1
+  // means "fit into N pages across" (SE-T): scale the columns, then band the
+  // SCALED widths across those N (or fewer) pages.
   const contentWidthTwips = sheetContentWidthTwips(worksheet);
   const colBreaksLocal = new Set<number>();
   for (const brk of worksheet.colBreaks ?? []) {
     const local = brk - colStart;
     if (local > 0 && local < colCount) colBreaksLocal.add(local);
   }
-  if (!scaled && colCount > 1 && (totalGridTwips > contentWidthTwips || colBreaksLocal.size > 0)) {
-    const bands = computeColumnBands(columnWidths, contentWidthTwips, colBreaksLocal);
-    if (bands.length > 1) return bandedTables(rows, columnWidths, bands, tableProperties);
+  const fitWide = worksheet.fitToPage ? (worksheet.pageSetup?.fitToWidth ?? 1) : 1;
+  // Round DOWN so the scaled columns pack into the intended page count (rounding
+  // up can spill the last column of a band onto an extra page).
+  const bandWidths = scaled
+    ? columnWidths.map((w) => Math.max(1, Math.floor(w * printScale)))
+    : columnWidths;
+  const bandTotal = bandWidths.reduce((sum, w) => sum + w, 0);
+  if (
+    colCount > 1 &&
+    (!scaled || fitWide > 1) &&
+    (bandTotal > contentWidthTwips || colBreaksLocal.size > 0)
+  ) {
+    const bands = computeColumnBands(bandWidths, contentWidthTwips, colBreaksLocal);
+    if (bands.length > 1) return bandedTables(rows, bandWidths, bands, tableProperties);
   }
 
   // A frozen pane becomes a sticky-pane hint for the HTML writer (E-SHEET SE3).
