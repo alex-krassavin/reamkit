@@ -31,6 +31,8 @@ import type {
   CellBorders,
   CellMargins,
   CellProperties,
+  Chart,
+  ChartBlock,
   FontFamilyMap,
   Numbering,
   NumberingLevel,
@@ -58,6 +60,7 @@ import type { Loss, ResourceId, ResourceStore } from '@/core/ir';
 import type { OpcPart, Relationship } from '@/core/opc';
 
 import { FEATURES } from '@/core/ir';
+import { chartSpaceXml } from '@/core/drawingml/chart-serializer';
 import { detectImageFormat } from '@/core/images';
 import { buildOpcPackage } from '@/core/opc';
 import {
@@ -97,6 +100,8 @@ const ENDNOTES_CONTENT_TYPE =
   'application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml';
 const FOOTNOTES_PART = 'word/footnotes.xml';
 const ENDNOTES_PART = 'word/endnotes.xml';
+const REL_CHART = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart';
+const CHART_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.drawingml.chart+xml';
 
 // 1 pt = 12700 EMU (English Metric Units, the DrawingML coordinate).
 const EMU_PER_PT = 12700;
@@ -173,6 +178,11 @@ interface WriteState {
   readonly mediaFileByResource: Map<ResourceId, string>;
   bookmarkSeq: number;
   drawingSeq: number;
+  // §21.2 charts (WT3): the parsed chart data by part path, plus the chart parts
+  // emitted while serializing the body, and a global chart-part counter.
+  readonly charts?: ReadonlyMap<string, Chart>;
+  readonly chartParts: Array<OpcPart>;
+  chartSeq: number;
 }
 
 // Per-PART relationship scope (OPC §9.3 — rIds are scoped to their owning
@@ -201,6 +211,9 @@ export function writeDocx(flow: FlowDoc): WriteResult {
     mediaFileByResource: new Map(),
     bookmarkSeq: 0,
     drawingSeq: 0,
+    chartParts: [],
+    chartSeq: 0,
+    ...(flow.charts ? { charts: flow.charts } : {}),
   };
   const docScope = newScope();
   const extraParts: Array<OpcPart> = [];
@@ -325,6 +338,7 @@ export function writeDocx(flow: FlowDoc): WriteResult {
       },
       ...(numberingPart ? [numberingPart] : []),
       ...extraParts,
+      ...state.chartParts,
       ...state.mediaParts,
     ],
     rootRelationships: [
@@ -524,16 +538,60 @@ function emitBlock(
       `<w:p>${pPrWithSect(el.shape.paragraphProperties, closingSectPr)}<w:r>${drawing}</w:r></w:p>`,
     );
     return;
-    return;
   }
-  if (closingSectPr) out.push(`<w:p><w:pPr>${closingSectPr}</w:pPr></w:p>`);
-  // Only charts reach here now (paragraph/table/image/shape returned above).
-  // Charts are not written yet — reported, not dropped silently.
-  losses.push({
-    severity: 'dropped',
-    feature: FEATURES.charts,
-    detail: `${el.kind} not written by the docx writer (v0)`,
+  // §21.2 — a chart block (WT3), emitted as its own paragraph like an image.
+  const chartDrawing = chartBlockXml(el.chart, state, scope, losses);
+  if (chartDrawing) {
+    out.push(
+      `<w:p>${pPrWithSect(el.chart.paragraphProperties, closingSectPr)}<w:r>${chartDrawing}</w:r></w:p>`,
+    );
+  } else if (closingSectPr) {
+    out.push(`<w:p><w:pPr>${closingSectPr}</w:pPr></w:p>`);
+  }
+}
+
+// §21.2 — a chart block as an inline w:drawing referencing a serialized chart
+// part (the shared chart-serializer, also used by the xlsx writer). Returns ''
+// when the chart data is missing (the caller already drops the block).
+function chartBlockXml(
+  chart: ChartBlock,
+  state: WriteState,
+  scope: PartScope,
+  losses: Array<Loss>,
+): string {
+  const data = state.charts?.get(chart.chartRelId);
+  if (!data) {
+    losses.push({ severity: 'dropped', feature: FEATURES.charts, detail: 'chart data missing' });
+    return '';
+  }
+  const cid = ++state.chartSeq;
+  state.chartParts.push({
+    path: `word/charts/chart${cid}.xml`,
+    data: encoder.encode(chartSpaceXml(data)),
+    contentType: CHART_CONTENT_TYPE,
   });
+  const relId = `rId${++scope.relSeq}`;
+  scope.rels.push({
+    id: relId,
+    type: REL_CHART,
+    target: `charts/chart${cid}.xml`,
+    targetMode: 'Internal',
+  });
+  const cx = Math.round(chart.width * EMU_PER_PT);
+  const cy = Math.round(chart.height * EMU_PER_PT);
+  const id = ++state.drawingSeq;
+  const descr = chart.altText ? ` descr="${escapeAttr(chart.altText)}"` : '';
+  return (
+    '<w:drawing>' +
+    '<wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">' +
+    `<wp:extent cx="${cx}" cy="${cy}"/>` +
+    `<wp:docPr id="${id}" name="Chart ${id}"${descr}/>` +
+    '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
+    '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">' +
+    '<c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"' +
+    ` xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="${relId}"/>` +
+    '</a:graphicData></a:graphic></wp:inline></w:drawing>'
+  );
 }
 
 // Allocate (or reuse) a media part + image relationship for a resource, then
