@@ -97,16 +97,26 @@ describe('DrawingML shape parsing', () => {
     expect(sum).toBeGreaterThan(0x44 + 0x72 + 0xc4); // brighter than the base
   });
 
-  it('approximates a gradient fill as the average of its stop colours', () => {
+  it('parses a gradient fill into stops + linear direction (E-PDF EP16)', () => {
     const inner = `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
       <a:gradFill><a:gsLst>
         <a:gs pos="0"><a:srgbClr val="000000"/></a:gs>
         <a:gs pos="100000"><a:srgbClr val="FFFFFF"/></a:gs>
-      </a:gsLst></a:gradFill>`;
+      </a:gsLst><a:lin ang="2700000"/></a:gradFill>`;
     const docx = buildDocxFromBody(`<w:p>${shapeRun(inner)}</w:p>`);
     const parsed = parseDocument(OpcPackage.open(docx).getMainDocument().data);
     if (parsed[0]!.kind !== 'shape') throw new Error('unreachable');
-    expect(parsed[0]!.shape.fill).toEqual({ kind: 'solid', colorHex: '808080' });
+    expect(parsed[0]!.shape.fill).toEqual({
+      kind: 'gradient',
+      gradient: {
+        kind: 'linear',
+        angle: 45, // 2700000 / 60000
+        stops: [
+          { offset: 0, colorHex: '000000' },
+          { offset: 1, colorHex: 'FFFFFF' },
+        ],
+      },
+    });
   });
 });
 

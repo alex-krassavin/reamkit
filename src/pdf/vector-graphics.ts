@@ -8,7 +8,9 @@ import type { PathSegment, StrokeStyle, VectorShape } from '@/core/vector';
 export type { PathSegment, StrokeStyle, VectorPath, VectorShape } from '@/core/vector';
 export { PathBuilder } from '@/core/vector';
 
-export function emitVectorShape(shape: VectorShape): Array<string> {
+// `patternName` (EP16b): when set, the fill is the named shading pattern from
+// the page's /Pattern resources (a gradient) rather than a solid colour.
+export function emitVectorShape(shape: VectorShape, patternName?: string): Array<string> {
   const out: Array<string> = [];
   out.push('q');
   const [a, b, c, d, e, f] = shape.transform;
@@ -25,7 +27,13 @@ export function emitVectorShape(shape: VectorShape): Array<string> {
     const [r, g, bl] = hexToRgb01(stroke.colorHex);
     out.push(`${num(r)} ${num(g)} ${num(bl)} RG`);
   }
-  if (shape.fillColorHex) {
+  // A gradient (EP16b) is a shading pattern set as the non-stroking colour;
+  // otherwise a solid colour. Either way the path is painted with the same fill
+  // operator below.
+  const usePattern = patternName !== undefined && shape.fillGradient !== undefined;
+  if (usePattern) {
+    out.push(`/Pattern cs /${patternName} scn`);
+  } else if (shape.fillColorHex) {
     const [r, g, bl] = hexToRgb01(shape.fillColorHex);
     out.push(`${num(r)} ${num(g)} ${num(bl)} rg`);
   }
@@ -37,7 +45,7 @@ export function emitVectorShape(shape: VectorShape): Array<string> {
     if (path.fillRule === 'evenodd') evenodd = true;
     for (const seg of path.segments) out.push(emitSegment(seg));
   }
-  out.push(paintOp(shape.fillColorHex !== undefined, stroke !== undefined, evenodd));
+  out.push(paintOp(usePattern || shape.fillColorHex !== undefined, stroke !== undefined, evenodd));
   out.push('Q');
   return out;
 }

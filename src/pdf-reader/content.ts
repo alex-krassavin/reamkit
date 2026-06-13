@@ -10,6 +10,7 @@
 // font falls back to Latin-1 with a half-em advance so text still surfaces.
 
 import { Lexer } from './lexer';
+import type { ShapeGradient } from '@/core/vector';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 import { PDF_NULL, PdfHexString, PdfName } from '@/pdf/objects';
 
@@ -42,8 +43,9 @@ export interface ImagePlacement {
   readonly mcid?: number;
 }
 
-// A filled path (E-PDF EP10) — segments in page space (y-up) and the fill
-// colour. Strokes, clips, shadings and gradients are not captured.
+// A painted path (E-PDF EP10/EP11) — segments in page space (y-up) carrying the
+// fill colour (when filled) and/or the stroke colour and width (when stroked).
+// Clips, shadings and gradients are not captured.
 export type PathSeg =
   | { readonly op: 'move'; readonly x: number; readonly y: number }
   | { readonly op: 'line'; readonly x: number; readonly y: number }
@@ -60,7 +62,10 @@ export type PathSeg =
 
 export interface VectorPlacement {
   readonly segs: ReadonlyArray<PathSeg>;
-  readonly fillHex: string;
+  readonly fillHex?: string; // present iff the path is filled (f / F / f* / B / b)
+  readonly gradient?: ShapeGradient; // present iff filled with a shading pattern — EP16c
+  readonly strokeHex?: string; // present iff the path is stroked (S / s / B / b) — EP11
+  readonly lineWidth?: number; // stroke width in page-space points — EP11
   readonly mcid?: number;
 }
 
@@ -109,6 +114,9 @@ interface TextState {
   leading: number; // TL
   rise: number; // Ts
   fillColor: string; // current non-stroking colour (6-hex), graphics state (EP10)
+  strokeColor: string; // current stroking colour (6-hex), graphics state (EP11)
+  lineWidth: number; // current line width in user-space units (EP11)
+  fillGradient: ShapeGradient | undefined; // current non-stroking shading pattern (EP16c)
 }
 
 function initialState(): TextState {
@@ -123,6 +131,9 @@ function initialState(): TextState {
     leading: 0,
     rise: 0,
     fillColor: '000000',
+    strokeColor: '000000',
+    lineWidth: 1, // §8.4.3.2 default line width
+    fillGradient: undefined,
   };
 }
 
@@ -130,6 +141,7 @@ export function interpretContent(
   bytes: Uint8Array,
   fonts: ReadonlyMap<string, ContentFont>,
   initialCtm: Matrix = IDENTITY,
+  shadings: ReadonlyMap<string, ShapeGradient> = new Map(),
 ): InterpretResult {
   const runs: Array<TextRun> = [];
   const images: Array<ImagePlacement> = [];
@@ -170,12 +182,23 @@ export function interpretContent(
     lineTo(x, y + h);
     path.push({ op: 'close' });
   };
-  const fillPath = (): void => {
-    if (path.length >= 2) {
+  // The line width in page space — the user-space width scaled by the CTM
+  // (§8.4.3.2); a uniform scale is the geometric mean √|det| of the matrix.
+  const ctmLineWidth = (): number => {
+    const m = state.ctm;
+    const scale = Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])) || 1;
+    return state.lineWidth * scale;
+  };
+  // Emit the current path as a painted vector (§8.5.3): filled, stroked, or both.
+  // `n` and clip operators paint nothing — they pass fill=stroke=false to clear.
+  const paintPath = (fill: boolean, stroke: boolean): void => {
+    if (path.length >= 2 && (fill || stroke)) {
       const mcid = mcStack.length > 0 ? mcStack[mcStack.length - 1] : undefined;
       vectors.push({
         segs: path,
-        fillHex: state.fillColor,
+        ...(fill ? { fillHex: state.fillColor } : {}),
+        ...(fill && state.fillGradient ? { gradient: state.fillGradient } : {}),
+        ...(stroke ? { strokeHex: state.strokeColor, lineWidth: ctmLineWidth() } : {}),
         ...(mcid !== undefined ? { mcid } : {}),
       });
     }
@@ -340,15 +363,40 @@ export function interpretContent(
         }
         break;
       }
-      // §8.6.8 non-stroking colour → the current fill colour (EP10).
+      // §8.6.8 non-stroking colour → the current fill colour (EP10); a solid
+      // colour clears any active shading pattern.
       case 'rg':
         state.fillColor = rgbHex(num(0), num(1), num(2));
+        state.fillGradient = undefined;
         break;
       case 'g':
         state.fillColor = grayHex(num(0));
+        state.fillGradient = undefined;
         break;
       case 'k':
         state.fillColor = cmykHex(num(0), num(1), num(2), num(3));
+        state.fillGradient = undefined;
+        break;
+      // §8.6.8 colour in a named space; a /Pattern name selects a shading
+      // pattern (EP16c), numeric operands are a solid colour we leave as-is.
+      case 'scn':
+      case 'sc': {
+        const last = operands[operands.length - 1];
+        state.fillGradient = last instanceof PdfName ? shadings.get(last.value) : undefined;
+        break;
+      }
+      // §8.6.8 stroking colour → the current stroke colour (EP11).
+      case 'RG':
+        state.strokeColor = rgbHex(num(0), num(1), num(2));
+        break;
+      case 'G':
+        state.strokeColor = grayHex(num(0));
+        break;
+      case 'K':
+        state.strokeColor = cmykHex(num(0), num(1), num(2), num(3));
+        break;
+      case 'w':
+        state.lineWidth = num(0); // §8.4.3.2 line width (user space)
         break;
       // §8.5.2 path construction.
       case 'm':
@@ -366,26 +414,35 @@ export function interpretContent(
       case 'h':
         path.push({ op: 'close' });
         break;
-      // §8.5.3 path painting — capture FILLS; strokes/clips are discarded.
+      // §8.5.3 path painting — capture FILLS (EP10) and STROKES (EP11). Clips
+      // (W/W*) only mark the region; the following painting operator emits.
       case 'f':
       case 'F':
       case 'f*':
+        paintPath(true, false);
+        break;
+      case 'S':
+        paintPath(false, true);
+        break;
+      case 's':
+        path.push({ op: 'close' });
+        paintPath(false, true);
+        break;
       case 'B':
       case 'B*':
-        fillPath();
+        paintPath(true, true);
         break;
       case 'b':
       case 'b*':
         path.push({ op: 'close' });
-        fillPath();
+        paintPath(true, true);
         break;
       case 'n':
-      case 'S':
-      case 's':
+        paintPath(false, false); // end the path with no paint
+        break;
       case 'W':
       case 'W*':
-        path = [];
-        break;
+        break; // intersect clip; the painting operator that follows clears the path
       default:
         break; // other graphics-state / stroking operators ignored
     }

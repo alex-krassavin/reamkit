@@ -34,6 +34,10 @@ const shapeRun = (spPrInner: string): string =>
   </w:drawing></w:r>`;
 const RECT =
   '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="C0504D"/></a:solidFill>';
+// An outline-only rectangle: no fill, a 1.5pt blue stroke.
+const STROKED =
+  '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/>' +
+  '<a:ln w="19050"><a:solidFill><a:srgbClr val="0000FF"/></a:solidFill></a:ln>';
 
 describe('filled vector paths (E-PDF EP10)', () => {
   it('captures a filled rectangle and its colour from the content stream', () => {
@@ -43,15 +47,8 @@ describe('filled vector paths (E-PDF EP10)', () => {
     );
     expect(vectors).toHaveLength(1);
     expect(vectors[0]!.fillHex).toBe('FF0000');
+    expect(vectors[0]!.strokeHex).toBeUndefined();
     expect(vectors[0]!.segs[0]).toMatchObject({ op: 'move', x: 10, y: 20 });
-  });
-
-  it('ignores a stroke-only path (no fill)', () => {
-    const { vectors } = interpretContent(
-      new TextEncoder().encode('0 0 0 RG 10 20 m 40 60 l S'),
-      NO_FONTS,
-    );
-    expect(vectors).toHaveLength(0);
   });
 
   it('lifts a filled docx shape back out of an untagged PDF', async () => {
@@ -64,5 +61,50 @@ describe('filled vector paths (E-PDF EP10)', () => {
     expect(shape.shape.fill.kind).toBe('solid');
     expect(shape.shape.fill.colorHex).toMatch(/^[0-9A-F]{6}$/);
     expect(shape.shape.geometry.kind).toBe('custom');
+  });
+});
+
+describe('stroked vector paths (E-PDF EP11)', () => {
+  it('captures a stroke-only path with its colour and CTM-scaled width', () => {
+    const { vectors } = interpretContent(
+      new TextEncoder().encode('1 0 0 RG 3 w 10 20 m 40 60 l S'),
+      NO_FONTS,
+    );
+    expect(vectors).toHaveLength(1);
+    expect(vectors[0]!.fillHex).toBeUndefined();
+    expect(vectors[0]!.strokeHex).toBe('FF0000');
+    expect(vectors[0]!.lineWidth).toBe(3);
+  });
+
+  it('captures fill and stroke together for the B operator', () => {
+    const { vectors } = interpretContent(
+      new TextEncoder().encode('0 1 0 rg 1 0 0 RG 2 w 10 20 30 40 re B'),
+      NO_FONTS,
+    );
+    expect(vectors).toHaveLength(1);
+    expect(vectors[0]!.fillHex).toBe('00FF00');
+    expect(vectors[0]!.strokeHex).toBe('FF0000');
+  });
+
+  it('scales the line width by the CTM', () => {
+    const { vectors } = interpretContent(
+      new TextEncoder().encode('2 0 0 2 0 0 cm 0 0 0 RG 1 w 10 20 m 40 60 l S'),
+      NO_FONTS,
+    );
+    expect(vectors[0]!.lineWidth).toBe(2); // 1 user-space unit × scale 2
+  });
+
+  it('lifts a stroked docx shape back out of an untagged PDF as a line', async () => {
+    const pdf = await Ream.parse(buildDocxFromBody(`<w:p>${shapeRun(STROKED)}</w:p>`)).convert(
+      'pdf',
+      { fonts: FONTS },
+    );
+    const lined = Ream.parse(pdf).flow.body.find(
+      (el) => el.kind === 'shape' && el.shape.line !== undefined,
+    );
+    expect(lined?.kind).toBe('shape');
+    if (lined?.kind !== 'shape') return;
+    expect(lined.shape.line?.colorHex).toMatch(/^[0-9A-F]{6}$/);
+    expect(lined.shape.fill.kind).toBe('none');
   });
 });

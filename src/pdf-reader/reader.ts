@@ -31,15 +31,16 @@ function sniffPdf(bytes: Uint8Array): boolean {
   return false;
 }
 
-export function readPdf(bytes: Uint8Array): ReadResult<FlowDoc> {
-  const file = PdfFile.parse(bytes);
+export function readPdf(bytes: Uint8Array, password = ''): ReadResult<FlowDoc> {
+  const file = PdfFile.parse(bytes, password);
   const losses: Array<Loss> = [];
 
   if (file.encryptionUnsupported) {
     losses.push({
       severity: 'dropped',
       feature: FEATURES.text,
-      detail: 'encrypted PDF — a user password is required and was not supplied',
+      detail:
+        'encrypted PDF — the user password was missing or incorrect, or the handler is unsupported',
     });
   }
 
@@ -55,12 +56,13 @@ export function readPdf(bytes: Uint8Array): ReadResult<FlowDoc> {
   }
   // Per-image losses from EP6 (undecodable colour spaces, dropped alpha, …).
   losses.push(...reconstruction.losses);
-  // Filled paths are lifted (EP10, untagged path); strokes, shadings, gradients
-  // and clips are not.
+  // Filled paths (EP10), stroked lines (EP11) and shading-pattern gradients
+  // (EP16c) are lifted on the untagged path; clipping paths and bare `sh`
+  // shadings are not.
   losses.push({
     severity: 'dropped',
     feature: FEATURES.images,
-    detail: 'PDF stroked / shaded vector graphics (lines, gradients, clips) are not reconstructed',
+    detail: 'PDF clipping paths and bare-shading (sh) vector regions are not reconstructed',
   });
   return { doc: reconstruction.doc, losses };
 }
@@ -70,5 +72,5 @@ export const pdfReader: DocumentReader<FlowDoc> = {
   produces: 'flow',
   supports: new Set([FEATURES.text, FEATURES.tables, FEATURES.lists, FEATURES.images]),
   sniff: sniffPdf,
-  read: (bytes) => readPdf(bytes),
+  read: (bytes, opts) => readPdf(bytes, typeof opts?.password === 'string' ? opts.password : ''),
 };

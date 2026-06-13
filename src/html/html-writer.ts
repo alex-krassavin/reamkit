@@ -55,6 +55,7 @@ import {
   buildShapePaths,
   buildShapeTransform,
   buildStroke,
+  gradientSvgDef,
 } from '@/core/drawingml/shape-render';
 import { PathBuilder, flipTransform, svgPathData } from '@/core/vector';
 import { detectImageFormat } from '@/core/images';
@@ -370,8 +371,17 @@ function emitShapeBlock(out: Array<string>, shape: ShapeBlock, ctx: EmitCtx): vo
   const w = shape.width;
   const h = shape.height;
   const paths = buildShapePaths(shape.geometry, w, h);
-  const fill =
-    shape.fill.kind === 'solid' && shape.fill.colorHex ? `#${shape.fill.colorHex}` : 'none';
+  // A gradient fill (EP16) becomes a <defs> gradient referenced by the path;
+  // each shape is its own inline <svg> so a fixed id is unique.
+  const gradDef =
+    shape.fill.kind === 'gradient' && shape.fill.gradient
+      ? gradientSvgDef('grad0', shape.fill.gradient)
+      : undefined;
+  const fill = gradDef
+    ? 'url(#grad0)'
+    : shape.fill.kind === 'solid' && shape.fill.colorHex
+      ? `#${shape.fill.colorHex}`
+      : 'none';
   const stroke = strokeAttrs(buildStroke(shape.line));
   const t = shape.transform;
   // Paths are y-up; the same local→page matrix the PDF layout builds (rotation
@@ -382,6 +392,7 @@ function emitShapeBlock(out: Array<string>, shape: ShapeBlock, ctx: EmitCtx): vo
   );
   const transform = ` transform="matrix(${m.map(fmt).join(' ')})"`;
   const svg: Array<string> = [svgOpen(w, h, shape.altText)];
+  if (gradDef) svg.push(`<defs>${gradDef}</defs>`);
   for (const path of paths) {
     const rule = path.fillRule === 'evenodd' ? ' fill-rule="evenodd"' : '';
     svg.push(

@@ -17,6 +17,7 @@ import { svgPathData } from '@/core/vector';
 
 import { FEATURES } from '@/core/ir';
 import { toBase64 } from '@/core/bytes';
+import { gradientSvgDef } from '@/core/drawingml/shape-render';
 import { paintPlan } from '@/layout/page-doc';
 
 const PAGE_GAP = 12;
@@ -38,13 +39,14 @@ export function writeSvg(laid: LaidOutDocument, opts: SvgWriteOptions = {}): Wri
     `<svg xmlns="http://www.w3.org/2000/svg" width="${fmt(width)}" height="${fmt(height)}" viewBox="0 0 ${fmt(width)} ${fmt(height)}">`,
   );
   let yOffset = 0;
+  const idc = { n: 0 }; // unique gradient-id counter across the whole document
   laid.pages.forEach((page, i) => {
     parts.push(`<g transform="translate(0 ${fmt(yOffset)})" data-page="${i + 1}">`);
     // Page background + outline so stacked pages read as pages.
     parts.push(
       `<rect x="0" y="0" width="${fmt(page.width)}" height="${fmt(page.height)}" fill="#ffffff" stroke="#cccccc"/>`,
     );
-    emitPage(parts, page, laid, losses);
+    emitPage(parts, page, laid, losses, idc);
     parts.push('</g>');
     yOffset += page.height + gap;
   });
@@ -65,6 +67,7 @@ function emitPage(
   page: LaidOutPage,
   laid: LaidOutDocument,
   losses: Array<Loss>,
+  idc: { n: number },
 ): void {
   // The shared canonical paint order — one owner for every writer. PageItem
   // coordinates are already top-left/y-down: SVG's native frame.
@@ -102,7 +105,7 @@ function emitPage(
   }
 
   for (const sh of plan.shapes) {
-    emitShape(out, sh.shape);
+    emitShape(out, sh.shape, idc);
   }
 
   for (const t of plan.lines) {
@@ -136,12 +139,19 @@ function emitTextLine(out: Array<string>, item: TextLineItem, losses: Array<Loss
   }
 }
 
-function emitShape(out: Array<string>, shape: VectorShape): void {
+function emitShape(out: Array<string>, shape: VectorShape, idc: { n: number }): void {
   const [a, b, c, d, e, f] = shape.transform;
   // The stored CTM maps the shape's local y-up frame straight into the
   // top-left page frame — SVG's matrix() convention verbatim.
   const transform = `matrix(${fmt(a)} ${fmt(b)} ${fmt(c)} ${fmt(d)} ${fmt(e)} ${fmt(f)})`;
-  const fill = shape.fillColorHex ? `#${shape.fillColorHex}` : 'none';
+  let fill: string;
+  if (shape.fillGradient) {
+    const id = `grad${idc.n++}`;
+    out.push(gradientSvgDef(id, shape.fillGradient));
+    fill = `url(#${id})`;
+  } else {
+    fill = shape.fillColorHex ? `#${shape.fillColorHex}` : 'none';
+  }
   const stroke = shape.stroke
     ? ` stroke="#${shape.stroke.colorHex}" stroke-width="${fmt(shape.stroke.widthPt)}"`
     : '';

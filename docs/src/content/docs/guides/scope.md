@@ -11,16 +11,17 @@ doesn't yet.
 
 **Input** — Ream parses **Word (`.docx`)**, **Excel (`.xlsx`)** and **PDF**,
 sniffed from the bytes. PDF input handles classic and modern compressed files
-(cross-reference streams, object streams) and encrypted files (RC4 / AES, empty
-user password). A **tagged** PDF (including the ones Ream writes) is rebuilt from
+(cross-reference streams, object streams) and encrypted files (RC4 / AES; the
+user password is passed to `Ream.parse`, defaulting to the empty permissions-only
+case). A **tagged** PDF (including the ones Ream writes) is rebuilt from
 its structure tree — headings, paragraphs, tables, list items, reading order; an
 **untagged** PDF is reconstructed heuristically from glyph positions (lines by
-baseline, paragraphs by spacing, headings by relative font size), which is
-approximate. Text comes back via each font's `/ToUnicode` map; **raster images,
-hyperlinks and filled vector shapes** are lifted back out too (JPEG verbatim,
-other images re-encoded as PNG with soft-mask alpha, `/Link` URIs re-attached to
-the text, filled paths turned into shapes). Stroked / shaded vector art (lines,
-gradients, clips) is not read.
+baseline, paragraphs by spacing, headings by relative font size, and a clean
+two-column page split at its central gutter), which is approximate. Text comes back via each font's `/ToUnicode` map; **raster images,
+hyperlinks and vector shapes** are lifted back out too (JPEG verbatim, other
+images re-encoded as PNG with soft-mask alpha, `/Link` URIs re-attached to the
+text, filled paths, stroked lines and shading-pattern gradients turned into
+shapes). Clipping paths and clip-bounded (`sh`) shadings are not read.
 
 **Output** — `convert('pdf')`, `convert('svg')` (a page-stack preview),
 `convert('html')` (flowed, needs no fonts), `convert('docx')` (write

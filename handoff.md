@@ -1,6 +1,11 @@
 # Ream (reamkit) — handoff
 
-> **Статус:** опубликовано — `reamkit@0.1.0-alpha.0` в npm (MIT, provenance, dist-tag `alpha`). Репо: github.com/alex-krassavin/reamkit. Тулинг под `@tanstack/config`. M0–M6 завершены.
+> **Историческая сводка** — снимок на `reamkit@0.1.0-alpha.0` (M0–M6). Актуальное
+> состояние и список фич — в [`CHANGELOG.md`](./CHANGELOG.md) и [`epics.md`](./epics.md).
+> Документ сохранён ради стабильных архитектурных решений, на которые ссылается код
+> как «handoff v1 §N» (sync-контракт ридеров §4, strict-режим §5, FontProvider §6, …).
+>
+> **Статус (на момент снимка):** опубликовано — `reamkit@0.1.0-alpha.0` в npm (MIT, provenance, dist-tag `alpha`). Репо: github.com/alex-krassavin/reamkit. Тулинг под `@tanstack/config`. M0–M6 завершены.
 
 ## Цель проекта
 
@@ -743,7 +748,7 @@ gridSpan+vMerge, рамки/заливка/паддинги), блочные и 
 шрифтов), фасад `to:'html'`, экспорты `htmlWriter`/`writeHtml`; toBase64 → core/bytes (теперь общий у svg
 и html). 9 новых тестов (465).
 
-**W1 — Гиперссылки (✅, 3 коммита; план этапа 7 — word-features.md).** `w:hyperlink` больше не теряется:
+**W1 — Гиперссылки (✅, 3 коммита; этап 7).** `w:hyperlink` больше не теряется:
 (a) parse — `Run.href` из rels ВЛАДЕЮЩЕЙ части (TargetMode=External; per-part резолвер, урок C5),
 anchor-only ссылки остаются текстом; (b) HTML — `<a href>` через **allowlist схем** (core/links:
 http/https/mailto; javascript:/data:/file: → текст + degraded-loss — документ недоверенный вход);

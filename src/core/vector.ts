@@ -34,10 +34,30 @@ export interface StrokeStyle {
   readonly dash?: ReadonlyArray<number>;
 }
 
+// A gradient fill — the format-agnostic vocabulary shared by the shape model
+// (DrawingML a:gradFill) and the readers (PDF axial/radial shadings, EP16). A
+// linear gradient runs along `angle` (degrees clockwise, 0 = left→right); a
+// radial gradient runs centre→edge. Stops are sorted, offset 0..1.
+export interface GradientStop {
+  readonly offset: number; // 0..1
+  readonly colorHex: string; // 6-hex, no leading '#'
+}
+
+export interface ShapeGradient {
+  readonly kind: 'linear' | 'radial';
+  readonly angle?: number; // linear only: degrees clockwise, 0 = left→right
+  readonly stops: ReadonlyArray<GradientStop>;
+}
+
 export interface VectorShape {
   readonly paths: ReadonlyArray<VectorPath>;
-  // Non-stroking fill colour (6-hex). Omitted = no fill.
+  // Non-stroking fill colour (6-hex). Omitted = no fill. When `fillGradient` is
+  // present this carries its solid approximation (writers without gradient
+  // support, e.g. the plain PDF emitter, paint this instead).
   readonly fillColorHex?: string;
+  // A gradient fill (EP16). Writers that support gradients (SVG) prefer this
+  // over `fillColorHex`.
+  readonly fillGradient?: ShapeGradient;
   // Stroke description. Omitted = no stroke.
   readonly stroke?: StrokeStyle;
   // CTM applied via `cm` (§8.3.4): maps the local frame onto the page. The

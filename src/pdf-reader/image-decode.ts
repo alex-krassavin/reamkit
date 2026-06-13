@@ -5,14 +5,16 @@
 // Everything else is decoded to raw samples and re-wrapped as PNG (png-encode).
 //
 // Colour spaces: DeviceGray/RGB/CMYK, CalGray/CalRGB, ICCBased (by /N component
-// count), Indexed (expanded against its palette). Filters: Flate, RunLength,
-// ASCII85, ASCIIHex, plus PNG/TIFF predictors on Flate. Bit depths 1/2/4/8/16.
-// An /SMask becomes the PNG alpha channel. Unsupported inputs — stencil
-// /ImageMask, Separation/DeviceN/Lab, CCITT/JBIG2 fax, LZW — return a typed
-// reason so the caller records a loss instead of emitting a broken image.
+// count), Indexed (expanded against its palette). Filters: Flate, LZW (EP12),
+// RunLength, ASCII85, ASCIIHex, CCITT Group 4 / Group 3 1-D fax (EP15), plus
+// PNG/TIFF predictors on Flate and LZW. Bit depths 1/2/4/8/16. An /SMask becomes
+// the PNG alpha channel. Unsupported inputs — stencil /ImageMask,
+// Separation/DeviceN/Lab, JBIG2 fax, CCITT Group 3 2-D — return a typed reason
+// so the caller records a loss instead of emitting a broken image.
 
 import { unzlibSync } from 'fflate';
 
+import { decodeCcitt } from './ccitt';
 import { encodePng } from './png-encode';
 import { reversePredictor } from './predictor';
 import type { PngColor } from './png-encode';
@@ -72,13 +74,14 @@ export function decodePdfImage(file: PdfFile, stream: PdfStream): DecodedImage {
       degraded: 'JPEG 2000 image — limited viewer support',
     };
   }
-  if (last === 'CCITTFaxDecode' || last === 'CCF' || last === 'JBIG2Decode') {
-    return fail('dropped', 'fax-encoded (CCITT/JBIG2) image not decoded');
+  if (last === 'JBIG2Decode') {
+    return fail('dropped', 'JBIG2-encoded image not decoded');
   }
-  if (last === 'LZWDecode' || last === 'LZW')
-    return fail('dropped', 'LZW-encoded image not decoded');
 
-  const decoded = decodeToSamples(file, stream, filters, width, height);
+  const isCcitt = last === 'CCITTFaxDecode' || last === 'CCF';
+  const decoded = isCcitt
+    ? decodeCcittImage(file, stream, filters, width, height)
+    : decodeToSamples(file, stream, filters, width, height);
   if (typeof decoded === 'string') return fail('dropped', decoded);
 
   // Fold an /SMask in as the alpha channel (PNG path only).
@@ -117,6 +120,36 @@ function decodeToSamples(
   const decodeArr = decodeArrayOf(file, d);
   const integers = unpackSamples(raw, width, height, cs.components, bpc);
   return toColor(cs, integers, width * height, bpc, decodeArr);
+}
+
+// E-PDF EP15 — decode a /CCITTFaxDecode image to DeviceGray samples (black → 0,
+// white → 255). Any filters wrapping the fax codestream are stripped first.
+function decodeCcittImage(
+  file: PdfFile,
+  stream: PdfStream,
+  filters: ReadonlyArray<string>,
+  width: number,
+  height: number,
+): RawColor | string {
+  const parms = decodeParmsOf(file, stream.dict);
+  const columns = (parms ? intOf(file.get(parms, 'Columns')) : 0) || 1728;
+  const packed = decodeCcitt(applyChainExceptLast(filters, stream.data), {
+    k: parms ? intOf(file.get(parms, 'K')) : 0,
+    columns,
+    rows: height,
+    byteAlign: parms ? boolOf(file.get(parms, 'EncodedByteAlign')) : false,
+  });
+  if (!packed) return 'CCITT fax image not decoded (Group 3 2-D or malformed)';
+  const rowBytes = (columns + 7) >> 3;
+  const samples = new Uint8Array(width * height);
+  for (let y = 0; y < height; y++) {
+    const rowOff = y * rowBytes;
+    for (let x = 0; x < width; x++) {
+      const black = x < columns ? (packed[rowOff + (x >> 3)]! >> (7 - (x & 7))) & 1 : 0;
+      samples[y * width + x] = black ? 0 : 255;
+    }
+  }
+  return { color: 'gray', samples };
 }
 
 interface ColorSpace {
@@ -351,23 +384,29 @@ function filterNames(file: PdfFile, d: PdfDict): Array<string> {
   return out;
 }
 
-// Decode every filter (the sample path never sees DCT/JPX/CCITT/LZW — those are
-// handled before this is called), then reverse any /Predictor.
+// Decode every filter (the sample path never sees DCT/JPX/CCITT — those are
+// handled before this is called), then reverse any /Predictor. Flate and LZW
+// (EP12) both carry the predictor in /DecodeParms.
 function decodeChain(
   file: PdfFile,
   stream: PdfStream,
   filters: ReadonlyArray<string>,
 ): Uint8Array | undefined {
   let data = stream.data;
-  let flate = false;
+  let mayPredict = false;
   for (const f of filters) {
     if (f === 'FlateDecode' || f === 'Fl') {
       try {
         data = unzlibSync(data);
-        flate = true;
+        mayPredict = true;
       } catch {
         return undefined;
       }
+    } else if (f === 'LZWDecode' || f === 'LZW') {
+      const dec = lzwDecode(data, lzwEarlyChange(file, stream.dict));
+      if (!dec) return undefined;
+      data = dec;
+      mayPredict = true;
     } else if (f === 'RunLengthDecode' || f === 'RL') {
       data = runLengthDecode(data);
     } else if (f === 'ASCII85Decode' || f === 'A85') {
@@ -378,7 +417,7 @@ function decodeChain(
       return undefined;
     }
   }
-  return flate ? applyPredictor(file, stream.dict, data) : data;
+  return mayPredict ? applyPredictor(file, stream.dict, data) : data;
 }
 
 function applyChainExceptLast(filters: ReadonlyArray<string>, raw: Uint8Array): Uint8Array {
@@ -391,7 +430,8 @@ function applyChainExceptLast(filters: ReadonlyArray<string>, raw: Uint8Array): 
       } catch {
         /* leave undecoded */
       }
-    } else if (f === 'RunLengthDecode' || f === 'RL') data = runLengthDecode(data);
+    } else if (f === 'LZWDecode' || f === 'LZW') data = lzwDecode(data, 1) ?? data;
+    else if (f === 'RunLengthDecode' || f === 'RL') data = runLengthDecode(data);
     else if (f === 'ASCII85Decode' || f === 'A85') data = ascii85Decode(data);
     else if (f === 'ASCIIHexDecode' || f === 'AHx') data = asciiHexDecode(data);
   }
@@ -411,6 +451,98 @@ function applyPredictor(file: PdfFile, d: PdfDict, data: Uint8Array): Uint8Array
     bitsPerComponent: intOf(file.get(parms, 'BitsPerComponent')) || 8,
     columns: intOf(file.get(parms, 'Columns')) || 1,
   });
+}
+
+// §7.4.4.2 — the PDF/TIFF variant of LZW. Variable-width codes 9→12 bits, a
+// clear-table code (256) and an end-of-data code (257); /EarlyChange (default 1)
+// widens the code one step before the table fills. The KwKwK case (a code not
+// yet in the table) repeats the previous string plus its own first byte. Output
+// is bounded by the per-image pixel guard to cap a decompression bomb.
+const MAX_LZW_OUT = MAX_PIXELS * 4;
+
+function lzwDecode(data: Uint8Array, earlyChange: number): Uint8Array | undefined {
+  let out = new Uint8Array(1 << 12); // grows by doubling
+  let outLen = 0;
+  const emit = (e: Uint8Array): boolean => {
+    if (outLen + e.length > MAX_LZW_OUT) return false;
+    if (outLen + e.length > out.length) {
+      let cap = out.length * 2;
+      while (cap < outLen + e.length) cap *= 2;
+      const grown = new Uint8Array(cap);
+      grown.set(out.subarray(0, outLen));
+      out = grown;
+    }
+    out.set(e, outLen);
+    outLen += e.length;
+    return true;
+  };
+
+  let bitBuffer = 0;
+  let bitCount = 0;
+  let pos = 0;
+  let codeLength = 9;
+  const readCode = (): number => {
+    while (bitCount < codeLength) {
+      if (pos >= data.length) return -1;
+      bitBuffer = ((bitBuffer << 8) | data[pos++]!) >>> 0;
+      bitCount += 8;
+    }
+    bitCount -= codeLength;
+    return (bitBuffer >>> bitCount) & ((1 << codeLength) - 1);
+  };
+
+  const dict = new Array<Uint8Array>(4096);
+  let nextCode = 258;
+  let prev = -1;
+  const reset = (): void => {
+    for (let i = 0; i < 256; i++) dict[i] = Uint8Array.of(i);
+    nextCode = 258;
+    codeLength = 9;
+    prev = -1;
+  };
+  reset();
+
+  for (;;) {
+    const code = readCode();
+    if (code < 0 || code === 257) break; // out of data / end-of-data
+    if (code === 256) {
+      reset();
+      continue;
+    }
+    if (prev < 0) {
+      const first = dict[code];
+      if (!first || !emit(first)) break;
+      prev = code;
+      continue;
+    }
+    const prevEntry = dict[prev]!;
+    // A known code uses its entry; an as-yet-unassigned code is KwKwK.
+    let entry = code < nextCode ? dict[code] : undefined;
+    if (!entry) {
+      entry = new Uint8Array(prevEntry.length + 1);
+      entry.set(prevEntry);
+      entry[prevEntry.length] = prevEntry[0]!;
+    }
+    if (!emit(entry)) break;
+    if (nextCode < 4096) {
+      const added = new Uint8Array(prevEntry.length + 1);
+      added.set(prevEntry);
+      added[prevEntry.length] = entry[0]!;
+      dict[nextCode++] = added;
+      if (nextCode + earlyChange === 512) codeLength = 10;
+      else if (nextCode + earlyChange === 1024) codeLength = 11;
+      else if (nextCode + earlyChange === 2048) codeLength = 12;
+    }
+    prev = code;
+  }
+  return out.subarray(0, outLen);
+}
+
+// /DecodeParms /EarlyChange — 1 (the default) or 0; absent means 1.
+function lzwEarlyChange(file: PdfFile, d: PdfDict): number {
+  const parms = decodeParmsOf(file, d);
+  const ec = parms?.get('EarlyChange');
+  return ec !== undefined && file.resolve(ec) === 0 ? 0 : 1;
 }
 
 function runLengthDecode(data: Uint8Array): Uint8Array {
@@ -480,7 +612,7 @@ function decodeParmsOf(file: PdfFile, d: PdfDict): PdfDict | undefined {
   if (Array.isArray(p)) {
     for (const e of p) {
       const r = file.resolve(e);
-      if (r instanceof Map) return r; // the predictor parms (only Flate carries them)
+      if (r instanceof Map) return r; // the predictor parms (Flate / LZW carry them)
     }
   }
   return undefined;

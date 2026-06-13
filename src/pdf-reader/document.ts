@@ -49,7 +49,7 @@ export class PdfFile {
     readonly trailer: PdfDict,
   ) {}
 
-  static parse(bytes: Uint8Array): PdfFile {
+  static parse(bytes: Uint8Array, password = ''): PdfFile {
     let xref = new Map<number, XrefEntry>();
     let trailer: PdfDict = new Map();
     try {
@@ -73,21 +73,21 @@ export class PdfFile {
       }
     }
     const file = new PdfFile(bytes, xref, trailer);
-    file.initEncryption();
+    file.initEncryption(password);
     return file;
   }
 
   // Build the decryptor from /Encrypt (§7.6). Runs before any other object is
   // resolved, so the /Encrypt dictionary itself is read in the clear; its object
   // is then never decrypted.
-  private initEncryption(): void {
+  private initEncryption(password: string): void {
     const encVal = this.trailer.get('Encrypt');
     if (encVal === undefined) return;
     if (encVal instanceof PdfRef) this.encryptObjNum = encVal.id;
     const enc = this.resolve(encVal);
     if (!(enc instanceof Map)) return;
     const id = this.trailer.get('ID');
-    this.decryptor = buildDecryptor(enc, Array.isArray(id) ? id : undefined);
+    this.decryptor = buildDecryptor(enc, Array.isArray(id) ? id : undefined, password);
   }
 
   // Resolve a stream's /Length when it is an indirect reference.
@@ -161,7 +161,7 @@ export class PdfFile {
   }
 
   // The document is encrypted but no decryptor could be built (an unsupported
-  // handler, or a non-empty user password) — its content is unreadable (EP9).
+  // handler, or a wrong/missing user password) — its content is unreadable.
   get encryptionUnsupported(): boolean {
     return this.trailer.get('Encrypt') !== undefined && this.decryptor === undefined;
   }

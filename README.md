@@ -177,7 +177,19 @@ encryption, digital signatures (PKCS#7/ECDSA/PAdES/RFC 3161), SVG page
 preview, flowed HTML export, and **docx + xlsx output** (write WordprocessingML
 / SpreadsheetML back out, incl. round-trips). Reads OOXML Transitional and Strict.
 
-See `handoff.md` for the full feature matrix and known limitations.
+**Reads PDF, too.** `Ream.parse` accepts a PDF and reconstructs a `FlowDoc` — a
+tagged PDF from its structure tree (headings, tables, lists, reading order), an
+untagged one heuristically from glyph positions (lines, paragraphs, headings,
+and a clean two-column split). It lifts back the text (via each font's
+`/ToUnicode`), raster images (JPEG verbatim; PNG/Flate/LZW/CCITT-fax decoded and
+re-encoded), `/Link` hyperlinks, form-XObject content, and filled / stroked /
+gradient vector shapes. It reads modern compressed files (cross-reference + object
+streams) and encrypted ones (RC4 / AES — the user password is passed to
+`Ream.parse(bytes, { password })`, defaulting to the permissions-only case).
+
+See [`CHANGELOG.md`](./CHANGELOG.md) for the release history; the docs
+[**Scope**](https://reamkit.dev/guides/scope/) guide has the full feature matrix
+and known limitations.
 
 ## License
 
