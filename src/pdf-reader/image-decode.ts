@@ -6,13 +6,15 @@
 //
 // Colour spaces: DeviceGray/RGB/CMYK, CalGray/CalRGB, ICCBased (by /N component
 // count), Indexed (expanded against its palette). Filters: Flate, LZW (EP12),
-// RunLength, ASCII85, ASCIIHex, plus PNG/TIFF predictors on Flate and LZW. Bit
-// depths 1/2/4/8/16. An /SMask becomes the PNG alpha channel. Unsupported inputs
-// — stencil /ImageMask, Separation/DeviceN/Lab, CCITT/JBIG2 fax — return a typed
-// reason so the caller records a loss instead of emitting a broken image.
+// RunLength, ASCII85, ASCIIHex, CCITT Group 4 / Group 3 1-D fax (EP15), plus
+// PNG/TIFF predictors on Flate and LZW. Bit depths 1/2/4/8/16. An /SMask becomes
+// the PNG alpha channel. Unsupported inputs — stencil /ImageMask,
+// Separation/DeviceN/Lab, JBIG2 fax, CCITT Group 3 2-D — return a typed reason
+// so the caller records a loss instead of emitting a broken image.
 
 import { unzlibSync } from 'fflate';
 
+import { decodeCcitt } from './ccitt';
 import { encodePng } from './png-encode';
 import { reversePredictor } from './predictor';
 import type { PngColor } from './png-encode';
@@ -72,11 +74,14 @@ export function decodePdfImage(file: PdfFile, stream: PdfStream): DecodedImage {
       degraded: 'JPEG 2000 image — limited viewer support',
     };
   }
-  if (last === 'CCITTFaxDecode' || last === 'CCF' || last === 'JBIG2Decode') {
-    return fail('dropped', 'fax-encoded (CCITT/JBIG2) image not decoded');
+  if (last === 'JBIG2Decode') {
+    return fail('dropped', 'JBIG2-encoded image not decoded');
   }
 
-  const decoded = decodeToSamples(file, stream, filters, width, height);
+  const isCcitt = last === 'CCITTFaxDecode' || last === 'CCF';
+  const decoded = isCcitt
+    ? decodeCcittImage(file, stream, filters, width, height)
+    : decodeToSamples(file, stream, filters, width, height);
   if (typeof decoded === 'string') return fail('dropped', decoded);
 
   // Fold an /SMask in as the alpha channel (PNG path only).
@@ -115,6 +120,36 @@ function decodeToSamples(
   const decodeArr = decodeArrayOf(file, d);
   const integers = unpackSamples(raw, width, height, cs.components, bpc);
   return toColor(cs, integers, width * height, bpc, decodeArr);
+}
+
+// E-PDF EP15 — decode a /CCITTFaxDecode image to DeviceGray samples (black → 0,
+// white → 255). Any filters wrapping the fax codestream are stripped first.
+function decodeCcittImage(
+  file: PdfFile,
+  stream: PdfStream,
+  filters: ReadonlyArray<string>,
+  width: number,
+  height: number,
+): RawColor | string {
+  const parms = decodeParmsOf(file, stream.dict);
+  const columns = (parms ? intOf(file.get(parms, 'Columns')) : 0) || 1728;
+  const packed = decodeCcitt(applyChainExceptLast(filters, stream.data), {
+    k: parms ? intOf(file.get(parms, 'K')) : 0,
+    columns,
+    rows: height,
+    byteAlign: parms ? boolOf(file.get(parms, 'EncodedByteAlign')) : false,
+  });
+  if (!packed) return 'CCITT fax image not decoded (Group 3 2-D or malformed)';
+  const rowBytes = (columns + 7) >> 3;
+  const samples = new Uint8Array(width * height);
+  for (let y = 0; y < height; y++) {
+    const rowOff = y * rowBytes;
+    for (let x = 0; x < width; x++) {
+      const black = x < columns ? (packed[rowOff + (x >> 3)]! >> (7 - (x & 7))) & 1 : 0;
+      samples[y * width + x] = black ? 0 : 255;
+    }
+  }
+  return { color: 'gray', samples };
 }
 
 interface ColorSpace {
