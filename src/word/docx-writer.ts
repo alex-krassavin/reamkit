@@ -22,15 +22,18 @@
 // round-trip gate proves zero writer failures across 1100 corpus documents,
 // 1099 of them a full IR identity (POI 110/110, LibreOffice 989/990 — the one
 // miss is an input whose referenced image part was stripped from the package,
-// so the bytes do not exist to carry). Documented v1 gaps the gate surfaces:
-// footnotes, charts and math are reported as losses, not written; a shape
-// round-trips as inline (floating placement is dropped).
+// so the bytes do not exist to carry). Footnotes/endnotes (WT2), charts and
+// OfficeMath (WT3) all write back; a shape round-trips as inline (floating
+// placement is dropped).
 
+import { omathXml } from './omml-serializer';
 import type {
   BodyElement,
   CellBorders,
   CellMargins,
   CellProperties,
+  Chart,
+  ChartBlock,
   FontFamilyMap,
   Numbering,
   NumberingLevel,
@@ -58,6 +61,7 @@ import type { Loss, ResourceId, ResourceStore } from '@/core/ir';
 import type { OpcPart, Relationship } from '@/core/opc';
 
 import { FEATURES } from '@/core/ir';
+import { chartSpaceXml } from '@/core/drawingml/chart-serializer';
 import { detectImageFormat } from '@/core/images';
 import { buildOpcPackage } from '@/core/opc';
 import {
@@ -88,6 +92,17 @@ const REL_HYPERLINK =
   'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink';
 const REL_IMAGE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image';
 const NUMBERING_PART = 'word/numbering.xml';
+const REL_FOOTNOTES =
+  'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes';
+const REL_ENDNOTES = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes';
+const FOOTNOTES_CONTENT_TYPE =
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml';
+const ENDNOTES_CONTENT_TYPE =
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml';
+const FOOTNOTES_PART = 'word/footnotes.xml';
+const ENDNOTES_PART = 'word/endnotes.xml';
+const REL_CHART = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart';
+const CHART_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.drawingml.chart+xml';
 
 // 1 pt = 12700 EMU (English Metric Units, the DrawingML coordinate).
 const EMU_PER_PT = 12700;
@@ -164,6 +179,11 @@ interface WriteState {
   readonly mediaFileByResource: Map<ResourceId, string>;
   bookmarkSeq: number;
   drawingSeq: number;
+  // §21.2 charts (WT3): the parsed chart data by part path, plus the chart parts
+  // emitted while serializing the body, and a global chart-part counter.
+  readonly charts?: ReadonlyMap<string, Chart>;
+  readonly chartParts: Array<OpcPart>;
+  chartSeq: number;
 }
 
 // Per-PART relationship scope (OPC §9.3 — rIds are scoped to their owning
@@ -172,6 +192,9 @@ interface WriteState {
 interface PartScope {
   readonly rels: Array<Relationship>;
   relSeq: number;
+  // Set while emitting a footnotes/endnotes part, so a note-number run (WT2)
+  // emits the right §17.11.13/.5 mark.
+  noteKind?: 'footnote' | 'endnote';
   // ResourceId → the rId allocated FOR THIS PART (distinct from the shared file).
   readonly relIdByResource: Map<ResourceId, string>;
 }
@@ -189,6 +212,9 @@ export function writeDocx(flow: FlowDoc): WriteResult {
     mediaFileByResource: new Map(),
     bookmarkSeq: 0,
     drawingSeq: 0,
+    chartParts: [],
+    chartSeq: 0,
+    ...(flow.charts ? { charts: flow.charts } : {}),
   };
   const docScope = newScope();
   const extraParts: Array<OpcPart> = [];
@@ -260,6 +286,43 @@ export function writeDocx(flow: FlowDoc): WriteResult {
     });
   }
 
+  // §17.11 footnotes / endnotes (WT2): emit the parts + a document relationship
+  // whenever the document carries note content.
+  emitNotes(
+    flow.footnotes,
+    {
+      noteKind: 'footnote',
+      partPath: FOOTNOTES_PART,
+      rootTag: 'w:footnotes',
+      noteTag: 'w:footnote',
+      contentType: FOOTNOTES_CONTENT_TYPE,
+      relType: REL_FOOTNOTES,
+      target: 'footnotes.xml',
+    },
+    state,
+    losses,
+    docScope,
+    extraParts,
+    extraPartRels,
+  );
+  emitNotes(
+    flow.endnotes,
+    {
+      noteKind: 'endnote',
+      partPath: ENDNOTES_PART,
+      rootTag: 'w:endnotes',
+      noteTag: 'w:endnote',
+      contentType: ENDNOTES_CONTENT_TYPE,
+      relType: REL_ENDNOTES,
+      target: 'endnotes.xml',
+    },
+    state,
+    losses,
+    docScope,
+    extraParts,
+    extraPartRels,
+  );
+
   const partRelationships = [
     ...(docScope.rels.length > 0
       ? [{ sourcePart: 'word/document.xml', relationships: docScope.rels }]
@@ -276,6 +339,7 @@ export function writeDocx(flow: FlowDoc): WriteResult {
       },
       ...(numberingPart ? [numberingPart] : []),
       ...extraParts,
+      ...state.chartParts,
       ...state.mediaParts,
     ],
     rootRelationships: [
@@ -290,6 +354,62 @@ export function writeDocx(flow: FlowDoc): WriteResult {
   });
 
   return { bytes, losses };
+}
+
+interface NoteConfig {
+  readonly noteKind: 'footnote' | 'endnote';
+  readonly partPath: string;
+  readonly rootTag: string;
+  readonly noteTag: string;
+  readonly contentType: string;
+  readonly relType: string;
+  readonly target: string;
+}
+
+// §17.11 — emit a footnotes.xml / endnotes.xml part from the note content by id,
+// prefixed with the separator / continuationSeparator stubs Word expects (the
+// reader skips those on re-read). A note's blocks go through emitBlock with a
+// scope flagged so its number-mark run emits w:footnoteRef / w:endnoteRef.
+function emitNotes(
+  notes: ReadonlyMap<string, ReadonlyArray<BodyElement>> | undefined,
+  cfg: NoteConfig,
+  state: WriteState,
+  losses: Array<Loss>,
+  docScope: PartScope,
+  extraParts: Array<OpcPart>,
+  extraPartRels: Array<{ sourcePart: string; relationships: Array<Relationship> }>,
+): void {
+  if (!notes || notes.size === 0) return;
+  const scope = newScope();
+  scope.noteKind = cfg.noteKind;
+  const stub = (type: string, id: number, mark: string): string =>
+    `<${cfg.noteTag} w:type="${type}" w:id="${id}"><w:p><w:r>${mark}</w:r></w:p></${cfg.noteTag}>`;
+  const noteXmls: Array<string> = [];
+  for (const [id, content] of notes) {
+    const inner: Array<string> = [];
+    for (const el of content) emitBlock(inner, el, losses, state, scope);
+    noteXmls.push(
+      `<${cfg.noteTag} w:id="${escapeAttr(id)}">${inner.join('') || '<w:p/>'}</${cfg.noteTag}>`,
+    );
+  }
+  const xml =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    `<${cfg.rootTag} xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"` +
+    ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+    stub('separator', -1, '<w:separator/>') +
+    stub('continuationSeparator', 0, '<w:continuationSeparator/>') +
+    noteXmls.join('') +
+    `</${cfg.rootTag}>`;
+  extraParts.push({ path: cfg.partPath, data: encoder.encode(xml), contentType: cfg.contentType });
+  if (scope.rels.length > 0) {
+    extraPartRels.push({ sourcePart: cfg.partPath, relationships: scope.rels });
+  }
+  docScope.rels.push({
+    id: `rId${++docScope.relSeq}`,
+    type: cfg.relType,
+    target: cfg.target,
+    targetMode: 'Internal',
+  });
 }
 
 interface HeaderFooterRefs {
@@ -419,16 +539,60 @@ function emitBlock(
       `<w:p>${pPrWithSect(el.shape.paragraphProperties, closingSectPr)}<w:r>${drawing}</w:r></w:p>`,
     );
     return;
-    return;
   }
-  if (closingSectPr) out.push(`<w:p><w:pPr>${closingSectPr}</w:pPr></w:p>`);
-  // Only charts reach here now (paragraph/table/image/shape returned above).
-  // Charts are not written yet — reported, not dropped silently.
-  losses.push({
-    severity: 'dropped',
-    feature: FEATURES.charts,
-    detail: `${el.kind} not written by the docx writer (v0)`,
+  // §21.2 — a chart block (WT3), emitted as its own paragraph like an image.
+  const chartDrawing = chartBlockXml(el.chart, state, scope, losses);
+  if (chartDrawing) {
+    out.push(
+      `<w:p>${pPrWithSect(el.chart.paragraphProperties, closingSectPr)}<w:r>${chartDrawing}</w:r></w:p>`,
+    );
+  } else if (closingSectPr) {
+    out.push(`<w:p><w:pPr>${closingSectPr}</w:pPr></w:p>`);
+  }
+}
+
+// §21.2 — a chart block as an inline w:drawing referencing a serialized chart
+// part (the shared chart-serializer, also used by the xlsx writer). Returns ''
+// when the chart data is missing (the caller already drops the block).
+function chartBlockXml(
+  chart: ChartBlock,
+  state: WriteState,
+  scope: PartScope,
+  losses: Array<Loss>,
+): string {
+  const data = state.charts?.get(chart.chartRelId);
+  if (!data) {
+    losses.push({ severity: 'dropped', feature: FEATURES.charts, detail: 'chart data missing' });
+    return '';
+  }
+  const cid = ++state.chartSeq;
+  state.chartParts.push({
+    path: `word/charts/chart${cid}.xml`,
+    data: encoder.encode(chartSpaceXml(data)),
+    contentType: CHART_CONTENT_TYPE,
   });
+  const relId = `rId${++scope.relSeq}`;
+  scope.rels.push({
+    id: relId,
+    type: REL_CHART,
+    target: `charts/chart${cid}.xml`,
+    targetMode: 'Internal',
+  });
+  const cx = Math.round(chart.width * EMU_PER_PT);
+  const cy = Math.round(chart.height * EMU_PER_PT);
+  const id = ++state.drawingSeq;
+  const descr = chart.altText ? ` descr="${escapeAttr(chart.altText)}"` : '';
+  return (
+    '<w:drawing>' +
+    '<wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">' +
+    `<wp:extent cx="${cx}" cy="${cy}"/>` +
+    `<wp:docPr id="${id}" name="Chart ${id}"${descr}/>` +
+    '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
+    '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">' +
+    '<c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"' +
+    ` xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="${relId}"/>` +
+    '</a:graphicData></a:graphic></wp:inline></w:drawing>'
+  );
 }
 
 // Allocate (or reuse) a media part + image relationship for a resource, then
@@ -748,10 +912,14 @@ function paragraphXml(
   const visible = p.runs.filter(
     (run) =>
       !run.listMarker &&
-      run.math === undefined &&
-      (run.text !== '' ||
+      (run.math !== undefined ||
+        run.text !== '' ||
         run.inlineImage !== undefined ||
         run.pageBreak ||
+        // §17.11 — a note reference / in-note number mark (WT2).
+        run.footnoteRef !== undefined ||
+        run.endnoteRef !== undefined ||
+        run.noteNumber === true ||
         // An empty run that still carries a link target keeps the hyperlink
         // alive (e.g. a TOC field whose page number a tracked change deleted).
         run.href !== undefined ||
@@ -812,6 +980,11 @@ function hyperlinkXml(run: Run, inner: string, _state: WriteState, scope: PartSc
 }
 
 function runXml(run: Run, state: WriteState, scope: PartScope): string {
+  // §22 — a math run is an <m:oMath> (the m: namespace declared here), not a
+  // w:r; its run properties do not apply (WT3).
+  if (run.math !== undefined) {
+    return `<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">${omathXml(run.math)}</m:oMath>`;
+  }
   const rPr = rPrXml(run.properties as ResolvedRunProperties);
   if (run.inlineImage !== undefined) {
     const img = run.inlineImage;
@@ -819,6 +992,16 @@ function runXml(run: Run, state: WriteState, scope: PartScope): string {
     if (drawing) return `<w:r>${rPr}${drawing}</w:r>`;
     // Unresolved inline image with no text and no break: nothing to emit.
     if (run.text === '' && !run.pageBreak) return '';
+  }
+  // §17.11 — note references and the in-note number mark (WT2).
+  if (run.footnoteRef !== undefined) {
+    return `<w:r>${rPr}<w:footnoteReference w:id="${escapeAttr(run.footnoteRef)}"/></w:r>`;
+  }
+  if (run.endnoteRef !== undefined) {
+    return `<w:r>${rPr}<w:endnoteReference w:id="${escapeAttr(run.endnoteRef)}"/></w:r>`;
+  }
+  if (run.noteNumber) {
+    return `<w:r>${rPr}<${scope.noteKind === 'endnote' ? 'w:endnoteRef' : 'w:footnoteRef'}/></w:r>`;
   }
   // §17.3.3.1 — a page break is a run-level <w:br w:type="page"/>; emit it so a
   // run that is ONLY a break (no text, no image) survives the round-trip.

@@ -1,12 +1,23 @@
 // E-PDF — shared FlowDoc construction for the two reconstruction paths (the
 // tagged fast-path EP3 and the heuristic layout path EP4). A reconstructed PDF
-// carries only a body of paragraphs/tables over the empty style sheet.
+// carries a body of paragraphs/tables/images over the empty style sheet, with
+// any lifted image bytes (EP6) in the resource store the writers embed from.
 
-import type { BodyElement, ParagraphProperties } from '@/core/document-model';
+import type { BodyElement, CustomPathCmd, ParagraphProperties } from '@/core/document-model';
 import type { FlowDoc } from '@/core/ir/flow';
+import type { Loss } from '@/core/ir';
 
-import { ResourceStore } from '@/core/ir';
+import type { PdfImage } from './images';
+import type { PdfVector } from './vector';
+import { ResourceStore, pt } from '@/core/ir';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
+
+// A reconstruction's document plus the losses incurred reading it (e.g. an
+// undecodable image colour space) — surfaced through the reader's LossReport.
+export interface Reconstruction {
+  readonly doc: FlowDoc;
+  readonly losses: ReadonlyArray<Loss>;
+}
 
 export function paragraphBlock(text: string, outlineLevel?: number): BodyElement {
   const properties: ParagraphProperties = outlineLevel !== undefined ? { outlineLevel } : {};
@@ -16,12 +27,119 @@ export function paragraphBlock(text: string, outlineLevel?: number): BodyElement
   };
 }
 
-export function buildFlowDoc(body: ReadonlyArray<BodyElement>): FlowDoc {
+// One piece of reconstructed text, carrying any hyperlink (E-PDF EP8).
+export interface TextSpan {
+  readonly text: string;
+  readonly href?: string;
+}
+
+// Build a paragraph from positioned spans, coalescing consecutive spans that
+// share an href into one run (so a link survives as its own run) and squashing
+// whitespace. With no hrefs this collapses to a single run — the same shape
+// `paragraphBlock` produces.
+export function paragraphFromRuns(
+  spans: ReadonlyArray<TextSpan>,
+  outlineLevel?: number,
+): BodyElement {
+  const merged: Array<{ text: string; href?: string }> = [];
+  for (const s of spans) {
+    const last = merged[merged.length - 1];
+    if (last && last.href === s.href) last.text += s.text;
+    else if (s.href !== undefined) merged.push({ text: s.text, href: s.href });
+    else merged.push({ text: s.text });
+  }
+  const runs = merged
+    .map((m) => ({ text: m.text.replace(/\s+/g, ' '), href: m.href }))
+    .filter((m) => m.text.length > 0);
+  // Trim the paragraph's outer whitespace.
+  if (runs.length > 0) {
+    runs[0]!.text = runs[0]!.text.replace(/^ /, '');
+    runs[runs.length - 1]!.text = runs[runs.length - 1]!.text.replace(/ $/, '');
+  }
+  const properties: ParagraphProperties = outlineLevel !== undefined ? { outlineLevel } : {};
+  return {
+    kind: 'paragraph',
+    paragraph: {
+      properties,
+      runs: runs
+        .filter((r) => r.text.length > 0)
+        .map((r) => ({ text: r.text, properties: {}, ...(r.href ? { href: r.href } : {}) })),
+    },
+  };
+}
+
+// Store the image bytes (content-addressed dedup) and build the block that
+// references them, sized in points from the placement CTM.
+export function imageBlock(image: PdfImage, resources: ResourceStore, alt?: string): BodyElement {
+  const resource = resources.put(image.bytes);
+  return {
+    kind: 'image',
+    image: {
+      resource,
+      width: pt(image.widthPt),
+      height: pt(image.heightPt),
+      paragraphProperties: {},
+      ...(alt ? { altText: alt } : {}),
+    },
+  };
+}
+
+// Collapse losses sharing a message (the same colour space dropped on many pages).
+export function dedupeLosses(losses: ReadonlyArray<Loss>): Array<Loss> {
+  const byDetail = new Map<string, Loss>();
+  for (const loss of losses) if (!byDetail.has(loss.detail)) byDetail.set(loss.detail, loss);
+  return [...byDetail.values()];
+}
+
+// A lifted filled path (EP10) as a custom-geometry shape. Page-space points
+// (y-up) become path-space (bbox-relative, y-down); the shape is sized from the
+// bounding box and placed in flow order by the caller.
+export function shapeBlock(v: PdfVector): BodyElement {
+  const w = v.maxX - v.minX;
+  const h = v.maxY - v.minY;
+  const fx = (x: number): number => x - v.minX;
+  const fy = (y: number): number => v.maxY - y; // flip to top-left origin
+  const commands: Array<CustomPathCmd> = v.segs.map((s): CustomPathCmd => {
+    switch (s.op) {
+      case 'move':
+        return { cmd: 'move', x: fx(s.x), y: fy(s.y) };
+      case 'line':
+        return { cmd: 'line', x: fx(s.x), y: fy(s.y) };
+      case 'cubic':
+        return {
+          cmd: 'cubic',
+          x1: fx(s.x1),
+          y1: fy(s.y1),
+          x2: fx(s.x2),
+          y2: fy(s.y2),
+          x: fx(s.x),
+          y: fy(s.y),
+        };
+      case 'close':
+        return { cmd: 'close' };
+    }
+  });
+  return {
+    kind: 'shape',
+    shape: {
+      width: pt(w),
+      height: pt(h),
+      geometry: { kind: 'custom', custom: { pathWidth: w, pathHeight: h, commands } },
+      fill: { kind: 'solid', colorHex: v.fillHex },
+      paragraphProperties: {},
+    },
+  };
+}
+
+export function buildFlowDoc(
+  body: ReadonlyArray<BodyElement>,
+  resources: ResourceStore = new ResourceStore(),
+): FlowDoc {
   return {
     kind: 'flow',
     body: resolveBodyStyles([...body], EMPTY_STYLE_SHEET),
     sections: [],
     styles: EMPTY_STYLE_SHEET,
-    resources: new ResourceStore(),
+    resources,
   };
 }

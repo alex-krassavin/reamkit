@@ -3,6 +3,39 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.7.0
+
+### Added
+
+- **PDF raster images.** Reading a PDF now lifts its raster images back out —
+  JPEG verbatim, everything else decoded and re-encoded as PNG (DeviceGray / RGB
+  / CMYK, Indexed, ICCBased, with soft-mask transparency) — and places them in
+  reading order, so `Ream.parse(pdf).convert('html' | 'docx')` carries the
+  pictures instead of dropping them. A tagged `/Figure` keeps its alt text.
+- **Compressed PDF input.** Reading handles modern PDFs whose cross-reference is
+  a stream (`/Type /XRef`) and whose objects are packed into object streams
+  (`/Type /ObjStm`) — previously those objects were unreachable, so
+  heavily-compressed files lost most of their content.
+- **Encrypted PDF input.** A PDF encrypted with the empty user password (the
+  common permissions-only case) is read transparently — RC4, AES-128 and AES-256
+  (R6) — with the cryptographic primitives implemented from scratch so the
+  synchronous reader needs no asynchronous WebCrypto.
+- **PDF hyperlinks** are recovered: a `/Link` annotation's URI is re-attached to
+  the text beneath its rectangle, so a parsed PDF's links survive onward to the
+  HTML `<a>` / docx hyperlink.
+- **PDF filled vector graphics** are lifted out of untagged pages as shapes —
+  filled rectangles and paths with their colour — interleaved with the text and
+  images by position. Stroked / shaded art (lines, gradients, clips) is not read.
+- **docx footnotes and endnotes** write back: a parsed note's reference and body
+  are re-emitted, completing the note round-trip.
+- **docx charts and OfficeMath** write back, so a `.docx` with an embedded chart
+  or a mathematical equation round-trips through `convert('docx')` intact.
+- **xlsx embedded charts** write back — the last piece of the spreadsheet grid
+  surface that did not survive a read → write loop.
+- **Excel fit-to-width pagination.** A sheet set to fit _N_ pages wide
+  (`fitToWidth=N`) now scales its columns and paginates them across those pages,
+  instead of being squeezed onto one page where it overflowed.
+
 ## 1.6.0
 
 ### Added

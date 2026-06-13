@@ -9,7 +9,7 @@ import type { ContentFont, TextRun } from '@/pdf-reader/content';
 import { interpretContent } from '@/pdf-reader/content';
 
 const run = (cs: string, fonts = new Map<string, ContentFont>()): Array<TextRun> =>
-  interpretContent(new TextEncoder().encode(cs), fonts);
+  interpretContent(new TextEncoder().encode(cs), fonts).texts;
 
 describe('content-stream interpreter (E-PDF EP2)', () => {
   it('extracts a positioned string from Td + Tj', () => {

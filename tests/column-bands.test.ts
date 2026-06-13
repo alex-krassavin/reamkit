@@ -93,6 +93,18 @@ describe('wide-sheet column-band pagination (E-SHEET SE1)', () => {
     expect(bandCount(xlsx)).toBe(1);
   });
 
+  it('bands a fitToWidth=2 sheet across pages on its SCALED widths (SE-T)', () => {
+    // 6×4200-twip columns scaled to fit two 9026-twip pages → ~3 columns per band.
+    const xlsx = buildXlsx({
+      rows: grid(3, 6),
+      columns: wideCols,
+      fitToPage: true,
+      pageSetup: { fitToWidth: 2, fitToHeight: 1 },
+    });
+    expect(bandCount(xlsx)).toBe(2);
+    expect(pageCount(xlsx)).toBe(2);
+  });
+
   it('honours a manual column break as a band boundary on a sheet that fits', () => {
     const xlsx = buildXlsx({
       rows: grid(3, 3),

@@ -1,40 +1,96 @@
 // E-PDF EP3 — tagged fast-path reconstruction. Walks the structure tree (EP3
 // struct-tree.ts), pulls each element's text from the per-page MCID → text map
 // the content interpreter produced (EP2), and rebuilds a FlowDoc: headings
-// (H1–H6 → outline level), paragraphs, tables (Table → TR → TH/TD), and list
-// items (each LI → its label + body text). The honest inverse of the tagged PDF
-// Ream writes.
+// (H1–H6 → outline level), paragraphs, tables (Table → TR → TH/TD), list items
+// (each LI → its label + body text), and figures (EP6 — each /Figure's MCID
+// resolves to a lifted image, carrying its /Alt). The honest inverse of the
+// tagged PDF Ream writes.
 
-import { buildFlowDoc, paragraphBlock } from './flow-build';
+import {
+  buildFlowDoc,
+  dedupeLosses,
+  imageBlock,
+  paragraphBlock,
+  paragraphFromRuns,
+} from './flow-build';
+import { collectPageImages } from './images';
 import { readStructTree } from './struct-tree';
 import { extractPageText } from './text';
 import type { BodyElement, Table, TableCell, TableRow } from '@/core/document-model';
-import type { FlowDoc } from '@/core/ir/flow';
 import type { Pt } from '@/core/ir';
 
+import type { TextRun } from './content';
 import type { PdfFile } from './document';
+import type { Reconstruction, TextSpan } from './flow-build';
+import type { PdfImage } from './images';
 import type { StructNode } from './struct-tree';
-import { pt } from '@/core/ir';
+import { ResourceStore, pt } from '@/core/ir';
 
 // Printable width assumed for a synthesized table grid (6.5" — the columns are
 // equal because the structure tree carries no widths; layout auto-fits anyway).
 const ASSUMED_CONTENT_WIDTH_PT = 468;
 
-export function reconstructTaggedPdf(file: PdfFile): FlowDoc | undefined {
+export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined {
   const root = readStructTree(file);
   if (!root) return undefined;
 
-  // Per page: MCID → its text, concatenated in show order.
-  const pageText = file.pages().map((page) => {
-    const byMcid = new Map<number, string>();
+  const pages = file.pages();
+  // Per page: MCID → its runs, in show order (runs carry any hyperlink, EP8).
+  const pageRuns = pages.map((page) => {
+    const byMcid = new Map<number, Array<TextRun>>();
     for (const run of extractPageText(file, page)) {
-      if (run.mcid !== undefined) byMcid.set(run.mcid, (byMcid.get(run.mcid) ?? '') + run.text);
+      if (run.mcid === undefined) continue;
+      const list = byMcid.get(run.mcid);
+      if (list) list.push(run);
+      else byMcid.set(run.mcid, [run]);
     }
     return byMcid;
   });
+  const runsOfMcid = (page: number, mcid: number): Array<TextRun> =>
+    pageRuns[page]?.get(mcid) ?? [];
+
+  // Per page: the lifted images, indexed by their owning MCID (a /Figure's).
+  const resources = new ResourceStore();
+  const pageImages = pages.map((page) => collectPageImages(file, page));
+  const imageLosses = dedupeLosses(pageImages.flatMap((p) => p.losses));
+  const imagesByMcid = pageImages.map((p) => {
+    const byMcid = new Map<number, Array<PdfImage>>();
+    for (const img of p.images) {
+      if (img.mcid === undefined) continue;
+      const list = byMcid.get(img.mcid);
+      if (list) list.push(img);
+      else byMcid.set(img.mcid, [img]);
+    }
+    return byMcid;
+  });
+  const emitted = new Set<PdfImage>();
+  const imagesForNode = (node: StructNode): Array<PdfImage> =>
+    node.mcids.flatMap(({ page, mcid }) => imagesByMcid[page]?.get(mcid) ?? []);
 
   const textOf = (node: StructNode): string =>
-    squash(node.mcids.map(({ page, mcid }) => pageText[page]?.get(mcid) ?? '').join(' '));
+    squash(
+      node.mcids
+        .map(({ page, mcid }) =>
+          runsOfMcid(page, mcid)
+            .map((r) => r.text)
+            .join(''),
+        )
+        .join(' '),
+    );
+
+  // The node's own runs as link-carrying spans, with a space between MCIDs.
+  const spansOf = (node: StructNode): Array<TextSpan> => {
+    const spans: Array<TextSpan> = [];
+    node.mcids.forEach(({ page, mcid }, i) => {
+      if (i > 0) spans.push({ text: ' ' });
+      for (const run of runsOfMcid(page, mcid)) {
+        spans.push(
+          run.href !== undefined ? { text: run.text, href: run.href } : { text: run.text },
+        );
+      }
+    });
+    return spans;
+  };
 
   // All text under a node, in reading order (a list item's label + body).
   const collectText = (node: StructNode): string =>
@@ -46,14 +102,22 @@ export function reconstructTaggedPdf(file: PdfFile): FlowDoc | undefined {
       if (table) out.push(table);
       return;
     }
+    if (node.type === 'Figure') {
+      for (const img of imagesForNode(node)) {
+        emitted.add(img);
+        out.push(imageBlock(img, resources, node.alt));
+      }
+      return;
+    }
     if (node.type === 'LI') {
       const text = collectText(node);
       if (text.length > 0) out.push(paragraphBlock(text, undefined));
       return;
     }
     if (node.children.length === 0) {
-      const text = textOf(node);
-      if (text.length > 0) out.push(paragraphBlock(text, headingLevel(node.type)));
+      if (textOf(node).length > 0) {
+        out.push(paragraphFromRuns(spansOf(node), headingLevel(node.type)));
+      }
       return;
     }
     for (const child of node.children) emit(child, out);
@@ -99,8 +163,19 @@ export function reconstructTaggedPdf(file: PdfFile): FlowDoc | undefined {
 
   const body: Array<BodyElement> = [];
   emit(root, body);
+
+  // Images not claimed by a /Figure (untagged figures, third-party PDFs) still
+  // belong in the document — append them in page + top-down order so nothing is
+  // silently lost.
+  const orphans: Array<{ page: number; img: PdfImage }> = [];
+  pageImages.forEach((p, page) => {
+    for (const img of p.images) if (!emitted.has(img)) orphans.push({ page, img });
+  });
+  orphans.sort((a, b) => a.page - b.page || b.img.y - a.img.y);
+  for (const { img } of orphans) body.push(imageBlock(img, resources));
+
   if (body.length === 0) return undefined;
-  return buildFlowDoc(body);
+  return { doc: buildFlowDoc(body, resources), losses: imageLosses };
 }
 
 function squash(text: string): string {

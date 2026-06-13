@@ -175,11 +175,63 @@ Tagged-PDF, который мы пишем, — идеальный вход дл
   write-путь не тронут). Тесты `pdf-reader-facade`: sniff, format='pdf', text в interlayer, →html, →docx
   (валидный, репарсится в тот же текст), losses. **E-PDF замыкает Ream в универсальный документ-движок.**
 
+- **EP6 ✓ — извлечение растровых картинок.** Интерпретатор (content.ts) теперь ловит оператор `Do` с
+  текущим CTM и mcid → `ImagePlacement`. `images.ts` `collectPageImages` резолвит имя в `/Resources
+  /XObject`, рекурсивно входит в Form-XObject'ы (композит `/Matrix`, ограничение глубины) и декодирует
+  через `image-decode.ts`: JPEG (`/DCTDecode`) и JPEG2000 (`/JPXDecode`) — passthrough; всё остальное →
+  raw-сэмплы → PNG (`png-encode.ts`, новый минимальный энкодер RFC 2083 + CRC32). Цветовые пространства
+  DeviceGray/RGB/CMYK, CalGray/RGB, ICCBased (по `/N`), Indexed (по палитре); фильтры Flate/RunLength/
+  ASCII85/ASCIIHex + PNG/TIFF-предикторы; bpc 1/2/4/8/16; `/SMask` → альфа PNG. Неподдержанное
+  (ImageMask-стенсил, Separation/DeviceN/Lab, CCITT/JBIG2, LZW) → типизированный loss. Эмиссия: tagged-путь
+  — кейс `Figure` (картинка по mcid + `/Alt`), плюс «осиротевшие» картинки в конец по позиции; heuristic-путь
+  — интерливинг картинок с абзацами по верхней кромке (`y`). `reconstruct*` теперь возвращают `{doc,
+  losses}`; reader сужает blanket-loss до «vector graphics not reconstructed». Байт-в-ноль (только чтение).
+  Тесты `pdf-reader-images`: PNG-энкодер round-trip, Flate-RGB/DCT/Indexed/ImageMask декод, honest e2e
+  docx(картинка)→pdf→parse→FlowDoc→html (tagged и untagged).
+
 **Итог E-PDF.** Новая подсистема `src/pdf-reader/` (lexer/parser/document/content/cmap/font/text/
-struct-tree/tagged/layout/flow-build/reader) — чистое дополнение, байт-в-ноль для всех существующих
-выходов. PDF → FlowDoc: объекты (EP1) → текст (EP2) → структура (tagged EP3 / эвристика EP4) → фасад (EP5).
-Не делается: извлечение картинок/вектора, xref-streams/object-streams на чтение (наш писатель их не пишет),
-шифрованные PDF на чтение. ~50 тестов, honest e2e на СВОИХ же выходах.
+struct-tree/tagged/layout/flow-build/reader/images/image-decode/png-encode) — чистое дополнение, байт-в-ноль
+для всех существующих выходов. PDF → FlowDoc: объекты (EP1) → текст (EP2) → структура (tagged EP3 /
+эвристика EP4) → фасад (EP5) → растровые картинки (EP6). ~60 тестов, honest e2e на СВОИХ же выходах.
+
+---
+
+## 1.7.0 — хвосты (грайнд «доделаем всё»)
+
+Десять опц. хвостов, каждый отдельным коммитом с полным гейтом, байт-в-ноль для писателей.
+
+**PDF-чтение (E-PDF продолжение):**
+- **EP7 ✓ — xref-streams + object-streams.** `document.ts`: `XrefEntry` (uncompressed/compressed); чтение
+  `/Type/XRef` (W-поля/Index/типы 0/1/2) и `/Type/ObjStm` (resolve type-2 декодит ObjStm + парсит член).
+  Гибридный `/XRefStm`, `/Prev`-цепочка. Brute-force тоже индексирует ObjStm + достаёт `/Catalog` изнутри.
+  Предиктор-математика вынесена в `predictor.ts` (шарится с image-decode). Раньше объекты в ObjStm были НЕ
+  читаемы → сжатые PDF теряли контент.
+- **EP8 ✓ — `/Link`-аннотации → hrefs.** `extractPageText` собирает `/Link` (`/A /URI`), тегает раны по
+  `/Rect`; `paragraphFromRuns` коалесцирует по href. Оба пути (tagged/heuristic) несут ссылки → html `<a>`/docx.
+- **EP9 ✓ — шифрованные PDF (Standard handler, пустой user-пароль).** `crypto.ts` синх-примитивы (MD5/RC4/
+  SHA-256/384/512/AES-CBC enc+dec, все по FIPS/RFC-векторам); `decrypt.ts` вывод ключа (Алг. 2 / 2.A / 2.B
+  R6) + по-объектная дешифровка (RC4/AESV2/AESV3). honest e2e: docx→AES-256-pdf→читается обратно.
+- **EP10 ✓ — залитый вектор (огранич.).** Интерпретатор ловит path (m/l/c/re/h) + fill-paint (f/B/…) + цвет
+  (rg/g/k) → залитые пути; `vector.ts` фильтрует мусор (волоски, белое, фон), `shapeBlock` → custom-geom
+  shape; heuristic-путь интерливит. Штрихи/градиенты/клипы — документированный loss.
+
+**Полнота писателей:**
+- **WT1 ✓ — xlsx embedded charts.** Шаренный `chart-serializer.ts` (инверсия chart-parser) → drawingN.xml +
+  chartN.xml. Последний кусок сетки, который не round-trip'ился.
+- **WT2 ✓ — docx сноски/endnotes.** runXml эмитит `w:footnoteReference`/`w:footnoteRef`; `emitNotes` пишет
+  footnotes.xml/endnotes.xml (+ separator-стабы).
+- **WT3 ✓ — docx чарты + OfficeMath.** Чарты через тот же chart-serializer (инлайн-drawing). `omml-serializer.ts`
+  — инверсия omml-parser для ВСЕХ MathNode (дроби/скрипты/радикалы/nary/функции/пределы/делимитеры/матрицы/
+  акценты/бары/groupChr/eqArr).
+
+**xlsx-печать:**
+- **SE-T ✓ — fitToWidth=N + бандинг.** fitToWidth=N>1 масштабирует колонки и бандит scaled-ширины на N страниц
+  (раньше — одна переразмеренная таблица). («rowSpan через банды» оказался не-баг: вертикальный merge —
+  фиксированная колонка, банды режут по колонкам.)
+
+**Итог 1.7.0.** PDF-чтение стало промышленным (сжатые/шифрованные/ссылки/картинки/залитый вектор); docx/xlsx
+round-trip — полный (сноски/чарты/math/embedded-charts). Новые модули `src/pdf-reader/{predictor,crypto,
+decrypt,vector}.ts`, `src/core/drawingml/chart-serializer.ts`, `src/word/omml-serializer.ts`. 745 тестов.
 
 ---
 

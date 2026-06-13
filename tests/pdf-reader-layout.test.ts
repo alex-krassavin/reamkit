@@ -22,7 +22,7 @@ const spaced = (text: string): string =>
 
 async function layoutFlow(body: string) {
   const pdf = await Ream.parse(buildDocxFromBody(body)).convert('pdf', { fonts: FONTS });
-  return reconstructByLayout(PdfFile.parse(pdf));
+  return reconstructByLayout(PdfFile.parse(pdf)).doc;
 }
 
 const paragraphs = (flow: { body: ReadonlyArray<{ kind: string }> }) =>

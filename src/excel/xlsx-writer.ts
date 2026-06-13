@@ -8,11 +8,11 @@
 // Writes the full grid surface: cell values, shared strings, styles (numFmts/
 // fonts/fills/borders/cellXfs/dxfs), merges, column widths, row heights, the
 // page model (margins/setup/print options/breaks), conditional formatting,
-// sparklines (extLst) and table parts (SD1 + SD3a/b). Embedded charts (a sheet's
-// drawing parts) are the one piece not yet re-emitted — reported as a loss.
+// sparklines (extLst), table parts (SD1 + SD3a/b) and embedded charts — a sheet's
+// drawing + chart parts, re-serialized from the parsed Chart model (WT1).
 
 import type { DocumentWriter, WriteResult } from '@/core/ir/adapters';
-import type { Sheet, SheetDoc } from '@/core/ir/sheet';
+import type { Sheet, SheetChartRef, SheetDoc } from '@/core/ir/sheet';
 import type { Loss } from '@/core/ir';
 import type { OpcPart, OpcPartRelationships, Relationship } from '@/core/opc';
 import type {
@@ -37,9 +37,11 @@ import type {
 } from '@/core/spreadsheet-model';
 
 import { FEATURES } from '@/core/ir';
+import { chartSpaceXml } from '@/core/drawingml/chart-serializer';
 import { buildOpcPackage } from '@/core/opc';
 
 const encoder = new TextEncoder();
+const EMU_PER_PT = 12700; // §20.1.2.1
 
 const REL_OFFICE_DOCUMENT =
   'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument';
@@ -49,6 +51,13 @@ const REL_SHARED_STRINGS =
   'http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings';
 const REL_STYLES = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles';
 const REL_TABLE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/table';
+const REL_DRAWING = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing';
+const REL_CHART = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart';
+const CT_DRAWING = 'application/vnd.openxmlformats-officedocument.drawing+xml';
+const CT_CHART = 'application/vnd.openxmlformats-officedocument.drawingml.chart+xml';
+const XDR_NS = 'http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing';
+const A_NS = 'http://schemas.openxmlformats.org/drawingml/2006/main';
+const C_NS = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
 
 const CT_WORKBOOK = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml';
 const CT_WORKSHEET = 'application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml';
@@ -65,20 +74,25 @@ export function writeXlsx(sheet: SheetDoc): WriteResult {
 
   const worksheetParts: Array<OpcPart> = [];
   const tableParts: Array<OpcPart> = [];
+  const drawingParts: Array<OpcPart> = []; // drawingN.xml + chartN.xml (WT1)
   const worksheetRels: Array<OpcPartRelationships> = [];
+  const drawingRels: Array<OpcPartRelationships> = [];
   const sheetEntries: Array<{ name: string; sheetId: number; rid: string }> = [];
   const workbookRels: Array<Relationship> = [];
   let tableCounter = 0;
+  let drawingCounter = 0;
+  let chartCounter = 0;
 
   sheet.sheets.forEach((s, i) => {
     const idx = i + 1;
     const rid = `rId${idx}`;
     const wsPath = `xl/worksheets/sheet${idx}.xml`;
 
+    const wsRels: Array<Relationship> = [];
+
     // §18.5 table parts (E-SHEET SD3b): one tableN.xml per table + a worksheet
     // relationship; the worksheet's <tableParts> references them by rId.
     const tableRelIds: Array<string> = [];
-    const wsTableRels: Array<Relationship> = [];
     for (const t of s.grid.tables ?? []) {
       const tid = ++tableCounter;
       const tRid = `rIdTbl${tid}`;
@@ -88,20 +102,29 @@ export function writeXlsx(sheet: SheetDoc): WriteResult {
         data: encoder.encode(tableXml(t, tid)),
         contentType: CT_TABLE,
       });
-      wsTableRels.push(rel(tRid, REL_TABLE, `../tables/table${tid}.xml`));
+      wsRels.push(rel(tRid, REL_TABLE, `../tables/table${tid}.xml`));
     }
-    if (wsTableRels.length > 0) {
-      worksheetRels.push({ sourcePart: wsPath, relationships: wsTableRels });
-    }
+
+    // §20.5 embedded charts (WT1): one drawingN.xml carrying the sheet's chart
+    // frames, each referencing a chartN.xml part the chart-serializer emits.
+    const drawingRelId = emitSheetCharts(s, sheet, idx, {
+      drawingParts,
+      drawingRels,
+      wsRels,
+      nextDrawing: () => ++drawingCounter,
+      nextChart: () => ++chartCounter,
+      losses,
+    });
+
+    if (wsRels.length > 0) worksheetRels.push({ sourcePart: wsPath, relationships: wsRels });
 
     worksheetParts.push({
       path: wsPath,
-      data: encoder.encode(worksheetXml(s.grid, tableRelIds)),
+      data: encoder.encode(worksheetXml(s.grid, tableRelIds, drawingRelId)),
       contentType: CT_WORKSHEET,
     });
     workbookRels.push(rel(rid, REL_WORKSHEET, `worksheets/sheet${idx}.xml`));
     sheetEntries.push({ name: s.name, sheetId: idx, rid });
-    recordSheetLosses(s, losses);
   });
 
   // Shared strings + styles come after the sheets in the relationship list.
@@ -119,6 +142,7 @@ export function writeXlsx(sheet: SheetDoc): WriteResult {
       },
       ...worksheetParts,
       ...tableParts,
+      ...drawingParts,
       {
         path: 'xl/sharedStrings.xml',
         data: encoder.encode(sharedStringsXml(sheet.sharedStrings)),
@@ -134,6 +158,7 @@ export function writeXlsx(sheet: SheetDoc): WriteResult {
     partRelationships: [
       { sourcePart: 'xl/workbook.xml', relationships: workbookRels },
       ...worksheetRels,
+      ...drawingRels,
     ],
   });
 
@@ -151,17 +176,88 @@ function rel(id: string, type: string, target: string): Relationship {
   return { id, type, target, targetMode: 'Internal' };
 }
 
-// The grid surface (cells, styles, merges, page model, CF, sparklines, tables)
-// all writes back now. Embedded charts (the sheet's drawing parts) do not yet —
-// re-emitting them would need the chart XML + drawing + media round-tripped.
-function recordSheetLosses(s: Sheet, losses: Array<Loss>): void {
-  if (s.charts && s.charts.length > 0) {
-    losses.push({
-      severity: 'dropped',
-      feature: FEATURES.charts,
-      detail: `sheet "${s.name}": embedded charts not written back`,
+// ── embedded charts (WT1) ──────────────────────────────────────────────────
+
+interface ChartEmitCtx {
+  readonly drawingParts: Array<OpcPart>;
+  readonly drawingRels: Array<OpcPartRelationships>;
+  readonly wsRels: Array<Relationship>;
+  readonly nextDrawing: () => number;
+  readonly nextChart: () => number;
+  readonly losses: Array<Loss>;
+}
+
+// Emit a sheet's chart frames: one drawingN.xml (the spreadsheetDrawing) plus a
+// chartN.xml per frame (the serialized Chart). Returns the worksheet relationship
+// id of the drawing, or undefined when the sheet has no resolvable charts.
+function emitSheetCharts(
+  s: Sheet,
+  doc: SheetDoc,
+  idx: number,
+  ctx: ChartEmitCtx,
+): string | undefined {
+  const refs = s.charts ?? [];
+  if (refs.length === 0 || !doc.chartData) return undefined;
+
+  const did = ctx.nextDrawing();
+  const drawingPath = `xl/drawings/drawing${did}.xml`;
+  const anchors: Array<string> = [];
+  const dRels: Array<Relationship> = [];
+  refs.forEach((ref, ci) => {
+    const chart = doc.chartData?.get(ref.chartPartPath);
+    if (!chart) {
+      ctx.losses.push({
+        severity: 'dropped',
+        feature: FEATURES.charts,
+        detail: `sheet "${s.name}": a chart frame had no resolved data and was dropped`,
+      });
+      return;
+    }
+    const cid = ctx.nextChart();
+    ctx.drawingParts.push({
+      path: `xl/charts/chart${cid}.xml`,
+      data: encoder.encode(chartSpaceXml(chart)),
+      contentType: CT_CHART,
     });
-  }
+    const cRel = `rIdChart${ci + 1}`;
+    dRels.push(rel(cRel, REL_CHART, `../charts/chart${cid}.xml`));
+    anchors.push(chartAnchorXml(ref, cRel, ci));
+  });
+  if (anchors.length === 0) return undefined;
+
+  ctx.drawingParts.push({
+    path: drawingPath,
+    data: encoder.encode(
+      `${XML_DECL}<xdr:wsDr xmlns:xdr="${XDR_NS}" xmlns:a="${A_NS}">${anchors.join('')}</xdr:wsDr>`,
+    ),
+    contentType: CT_DRAWING,
+  });
+  ctx.drawingRels.push({ sourcePart: drawingPath, relationships: dRels });
+  const dRid = `rIdDraw${idx}`;
+  ctx.wsRels.push(rel(dRid, REL_DRAWING, `../drawings/drawing${did}.xml`));
+  return dRid;
+}
+
+// A one-cell anchor placing one chart frame; the size comes from the parsed
+// SheetChartRef (the original two-cell anchor was already resolved to points).
+// Frames are stacked vertically so they do not overlap on re-open.
+function chartAnchorXml(ref: SheetChartRef, chartRelId: string, index: number): string {
+  const cx = Math.round(ref.widthPt * EMU_PER_PT);
+  const cy = Math.round(ref.heightPt * EMU_PER_PT);
+  return (
+    '<xdr:oneCellAnchor>' +
+    `<xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff>` +
+    `<xdr:row>${index * 16}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>` +
+    `<xdr:ext cx="${cx}" cy="${cy}"/>` +
+    '<xdr:graphicFrame macro="">' +
+    `<xdr:nvGraphicFramePr><xdr:cNvPr id="${index + 2}" name="Chart ${index + 1}"/>` +
+    '<xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>' +
+    `<xdr:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></xdr:xfrm>` +
+    `<a:graphic><a:graphicData uri="${C_NS}"><c:chart xmlns:c="${C_NS}" xmlns:r="${R_NS}" r:id="${chartRelId}"/></a:graphicData></a:graphic>` +
+    '</xdr:graphicFrame>' +
+    '<xdr:clientData/>' +
+    '</xdr:oneCellAnchor>'
+  );
 }
 
 // ── workbook.xml ───────────────────────────────────────────────────────────
@@ -197,7 +293,11 @@ function workbookXml(
 
 // ── worksheet.xml ──────────────────────────────────────────────────────────
 
-function worksheetXml(grid: ParsedWorksheet, tableRelIds: ReadonlyArray<string> = []): string {
+function worksheetXml(
+  grid: ParsedWorksheet,
+  tableRelIds: ReadonlyArray<string> = [],
+  drawingRelId?: string,
+): string {
   const dimension =
     grid.maxRow >= 0 && grid.maxColumn >= 0
       ? `<dimension ref="A1:${cellRef(grid.maxRow, grid.maxColumn)}"/>`
@@ -271,6 +371,8 @@ function worksheetXml(grid: ParsedWorksheet, tableRelIds: ReadonlyArray<string> 
     pageSetupXml(grid.pageSetup) +
     breaksXml('rowBreaks', grid.rowBreaks) +
     breaksXml('colBreaks', grid.colBreaks) +
+    // §18.3.1.99 child order: <drawing> precedes <tableParts>, both before extLst.
+    (drawingRelId ? `<drawing r:id="${drawingRelId}"/>` : '') +
     (tableRelIds.length > 0
       ? `<tableParts count="${tableRelIds.length}">${tableRelIds
           .map((id) => `<tablePart r:id="${id}"/>`)

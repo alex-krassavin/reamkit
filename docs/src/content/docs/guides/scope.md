@@ -10,23 +10,28 @@ doesn't yet.
 ## Implemented
 
 **Input** — Ream parses **Word (`.docx`)**, **Excel (`.xlsx`)** and **PDF**,
-sniffed from the bytes. PDF input reconstructs a document tree from the page
-content: a **tagged** PDF (including the ones Ream writes) is rebuilt from its
-structure tree — headings, paragraphs, tables, list items, reading order; an
+sniffed from the bytes. PDF input handles classic and modern compressed files
+(cross-reference streams, object streams) and encrypted files (RC4 / AES, empty
+user password). A **tagged** PDF (including the ones Ream writes) is rebuilt from
+its structure tree — headings, paragraphs, tables, list items, reading order; an
 **untagged** PDF is reconstructed heuristically from glyph positions (lines by
 baseline, paragraphs by spacing, headings by relative font size), which is
-approximate. PDF text comes back via each font's `/ToUnicode` map; images,
-vector graphics and encrypted PDFs are not read.
+approximate. Text comes back via each font's `/ToUnicode` map; **raster images,
+hyperlinks and filled vector shapes** are lifted back out too (JPEG verbatim,
+other images re-encoded as PNG with soft-mask alpha, `/Link` URIs re-attached to
+the text, filled paths turned into shapes). Stroked / shaded vector art (lines,
+gradients, clips) is not read.
 
 **Output** — `convert('pdf')`, `convert('svg')` (a page-stack preview),
 `convert('html')` (flowed, needs no fonts), `convert('docx')` (write
 WordprocessingML back out) and `convert('xlsx')` (write SpreadsheetML back out —
 spreadsheet input only). The writers are for normalization, sanitization,
 in-browser editing, and round-tripping. The docx round-trip is semantic, not
-byte-exact (footnotes, charts and OfficeMath are not yet written). The xlsx
-round-trip preserves the whole grid surface — cells, styles, merges, the print
-model, conditional formatting, sparklines and tables — and is byte-stable across
-a read↔write loop; embedded charts are the one piece not yet written.
+byte-exact, but complete — text, tables, images, lists, links, headers/footers,
+multi-section geometry, footnotes/endnotes, charts and OfficeMath all write
+back. The xlsx round-trip preserves the whole grid surface — cells, styles,
+merges, the print model, conditional formatting, sparklines, tables and embedded
+charts — and is byte-stable across a read↔write loop.
 
 **WordprocessingML (§17)**
 - Text, runs and the full style cascade (`docDefaults` → styles → direct formatting).
