@@ -22,10 +22,11 @@
 // round-trip gate proves zero writer failures across 1100 corpus documents,
 // 1099 of them a full IR identity (POI 110/110, LibreOffice 989/990 — the one
 // miss is an input whose referenced image part was stripped from the package,
-// so the bytes do not exist to carry). Footnotes/endnotes write back (WT2);
-// charts and OfficeMath are reported as losses, not written; a shape
-// round-trips as inline (floating placement is dropped).
+// so the bytes do not exist to carry). Footnotes/endnotes (WT2), charts and
+// OfficeMath (WT3) all write back; a shape round-trips as inline (floating
+// placement is dropped).
 
+import { omathXml } from './omml-serializer';
 import type {
   BodyElement,
   CellBorders,
@@ -911,8 +912,8 @@ function paragraphXml(
   const visible = p.runs.filter(
     (run) =>
       !run.listMarker &&
-      run.math === undefined &&
-      (run.text !== '' ||
+      (run.math !== undefined ||
+        run.text !== '' ||
         run.inlineImage !== undefined ||
         run.pageBreak ||
         // §17.11 — a note reference / in-note number mark (WT2).
@@ -979,6 +980,11 @@ function hyperlinkXml(run: Run, inner: string, _state: WriteState, scope: PartSc
 }
 
 function runXml(run: Run, state: WriteState, scope: PartScope): string {
+  // §22 — a math run is an <m:oMath> (the m: namespace declared here), not a
+  // w:r; its run properties do not apply (WT3).
+  if (run.math !== undefined) {
+    return `<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">${omathXml(run.math)}</m:oMath>`;
+  }
   const rPr = rPrXml(run.properties as ResolvedRunProperties);
   if (run.inlineImage !== undefined) {
     const img = run.inlineImage;
