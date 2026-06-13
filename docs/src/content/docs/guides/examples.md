@@ -63,11 +63,12 @@ const out = await doc.convert('xlsx');
 (cross-reference streams, object streams) or an encrypted one. A tagged PDF (the
 ones Ream writes) is rebuilt from its structure tree — headings, paragraphs,
 tables, lists in reading order; an untagged PDF is reconstructed heuristically
-from glyph positions. **Raster images, hyperlinks and filled vector shapes come
+from glyph positions. **Raster images, hyperlinks and vector shapes come
 back too** — images lifted out and sized from their placement, link annotations
-re-attached to the text, filled paths turned into shapes. The result is an
-ordinary `FlowDoc`, so it converts onward like any other source. Stroked /
-shaded vector art (lines, gradients, clips) is not read (reported as a loss).
+re-attached to the text, filled paths and stroked lines turned into shapes. The
+result is an ordinary `FlowDoc`, so it converts onward like any other source.
+Shaded vector art (gradients, shadings, clipping paths) is not read (reported as
+a loss).
 
 An encrypted PDF is opened with the **user password** passed to `Ream.parse`;
 the default empty string unlocks the common permissions-only encryption, so most

@@ -3,7 +3,13 @@
 // carries a body of paragraphs/tables/images over the empty style sheet, with
 // any lifted image bytes (EP6) in the resource store the writers embed from.
 
-import type { BodyElement, CustomPathCmd, ParagraphProperties } from '@/core/document-model';
+import type {
+  BodyElement,
+  CustomPathCmd,
+  ParagraphProperties,
+  ShapeFill,
+  ShapeLine,
+} from '@/core/document-model';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss } from '@/core/ir';
 
@@ -91,9 +97,10 @@ export function dedupeLosses(losses: ReadonlyArray<Loss>): Array<Loss> {
   return [...byDetail.values()];
 }
 
-// A lifted filled path (EP10) as a custom-geometry shape. Page-space points
-// (y-up) become path-space (bbox-relative, y-down); the shape is sized from the
-// bounding box and placed in flow order by the caller.
+// A lifted path (filled EP10 / stroked EP11) as a custom-geometry shape.
+// Page-space points (y-up) become path-space (bbox-relative, y-down); the shape
+// is sized from the bounding box (plus the stroke thickness) and placed in flow
+// order by the caller. A fill becomes a solid fill, a stroke becomes the outline.
 export function shapeBlock(v: PdfVector): BodyElement {
   const w = v.maxX - v.minX;
   const h = v.maxY - v.minY;
@@ -119,13 +126,23 @@ export function shapeBlock(v: PdfVector): BodyElement {
         return { cmd: 'close' };
     }
   });
+  // A stroked line can be geometrically flat (a horizontal rule has h≈0); give
+  // the shape box at least the stroke thickness so the line has room to draw.
+  const thick = v.strokeHex !== undefined ? Math.max(v.lineWidth ?? 0.75, 0.5) : 0;
+  const fill: ShapeFill =
+    v.fillHex !== undefined ? { kind: 'solid', colorHex: v.fillHex } : { kind: 'none' };
+  const line: ShapeLine | undefined =
+    v.strokeHex !== undefined
+      ? { width: pt(thick), colorHex: v.strokeHex, fill: 'solid' }
+      : undefined;
   return {
     kind: 'shape',
     shape: {
-      width: pt(w),
-      height: pt(h),
+      width: pt(Math.max(w, thick)),
+      height: pt(Math.max(h, thick)),
       geometry: { kind: 'custom', custom: { pathWidth: w, pathHeight: h, commands } },
-      fill: { kind: 'solid', colorHex: v.fillHex },
+      fill,
+      ...(line ? { line } : {}),
       paragraphProperties: {},
     },
   };

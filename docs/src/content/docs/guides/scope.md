@@ -18,10 +18,10 @@ its structure tree — headings, paragraphs, tables, list items, reading order; 
 **untagged** PDF is reconstructed heuristically from glyph positions (lines by
 baseline, paragraphs by spacing, headings by relative font size), which is
 approximate. Text comes back via each font's `/ToUnicode` map; **raster images,
-hyperlinks and filled vector shapes** are lifted back out too (JPEG verbatim,
-other images re-encoded as PNG with soft-mask alpha, `/Link` URIs re-attached to
-the text, filled paths turned into shapes). Stroked / shaded vector art (lines,
-gradients, clips) is not read.
+hyperlinks and vector shapes** are lifted back out too (JPEG verbatim, other
+images re-encoded as PNG with soft-mask alpha, `/Link` URIs re-attached to the
+text, filled paths and stroked lines turned into shapes). Shaded vector art
+(gradients, shadings, clipping paths) is not read.
 
 **Output** — `convert('pdf')`, `convert('svg')` (a page-stack preview),
 `convert('html')` (flowed, needs no fonts), `convert('docx')` (write
