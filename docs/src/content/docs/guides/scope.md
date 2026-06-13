@@ -16,8 +16,8 @@ user password is passed to `Ream.parse`, defaulting to the empty permissions-onl
 case). A **tagged** PDF (including the ones Ream writes) is rebuilt from
 its structure tree — headings, paragraphs, tables, list items, reading order; an
 **untagged** PDF is reconstructed heuristically from glyph positions (lines by
-baseline, paragraphs by spacing, headings by relative font size), which is
-approximate. Text comes back via each font's `/ToUnicode` map; **raster images,
+baseline, paragraphs by spacing, headings by relative font size, and a clean
+two-column page split at its central gutter), which is approximate. Text comes back via each font's `/ToUnicode` map; **raster images,
 hyperlinks and vector shapes** are lifted back out too (JPEG verbatim, other
 images re-encoded as PNG with soft-mask alpha, `/Link` URIs re-attached to the
 text, filled paths, stroked lines and shading-pattern gradients turned into

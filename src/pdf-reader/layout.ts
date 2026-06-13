@@ -1,13 +1,14 @@
 // E-PDF EP4 — heuristic reconstruction for UNTAGGED PDFs. With no structure tree
 // there is only positioned content (EP2/EP6/EP8): glyphs with an (x, y), a size
 // and any hyperlink, plus images with a page rectangle. We recover reading order
-// the way a human eye does — cluster runs sharing a baseline into lines, order a
-// line's runs left-to-right inserting spaces across gaps, group lines into
-// paragraphs by their vertical spacing, then interleave the page's images by
-// their top edge. Each run's href is carried through as a span so links survive.
-// Headings are guessed from a font size well above the document's median.
-// Untagged recovery is inherently approximate (quality is a metric, not a
-// guarantee).
+// the way a human eye does — split a clean two-column page at its central gutter
+// (EP17), then within each column cluster runs sharing a baseline into lines,
+// order a line's runs left-to-right inserting spaces across gaps, group lines
+// into paragraphs by their vertical spacing, and interleave the column's images
+// by their top edge. Each run's href is carried through as a span so links
+// survive. Headings are guessed from a font size well above the document's
+// median. Untagged recovery is inherently approximate (quality is a metric, not
+// a guarantee).
 
 import {
   buildFlowDoc,
@@ -36,37 +37,99 @@ interface Line {
 
 export function reconstructByLayout(file: PdfFile): Reconstruction {
   const pages = file.pages();
-  const pageLines = pages.map((page) =>
-    groupIntoLines(extractPageText(file, page)).filter((l) => l.text.length > 0),
-  );
-  const medianFont = median(pageLines.flat().map((l) => l.fontSize)) || 12;
+  const pageRuns = pages.map((page) => extractPageText(file, page));
+  const medianFont =
+    median(
+      pageRuns
+        .flat()
+        .map((r) => r.fontSizePt)
+        .filter((s) => s > 0),
+    ) || 12;
 
   const resources = new ResourceStore();
   const losses: Array<Loss> = [];
   const body: Array<BodyElement> = [];
   pages.forEach((page, i) => {
-    // Position-keyed blocks for this page: paragraphs at their top line, images
-    // at their top edge. One descending-y sort puts them in reading order.
-    const blocks: Array<{ top: number; el: BodyElement }> = [];
-    for (const para of groupIntoParagraphs(pageLines[i]!)) {
-      blocks.push({
-        top: para.top,
-        el: paragraphFromRuns(para.spans, headingLevel(para.fontSize, medianFont)),
-      });
+    const runs = pageRuns[i]!;
+    const [px0, , px1] = page.mediaBox;
+    // EP17 — detect a clean two-column split (a central vertical gutter no run
+    // crosses); fall back to a single column. Each column is grouped and read
+    // independently, then the left column's blocks precede the right's.
+    const gutter = detectGutter(runs, Math.abs(px1 - px0));
+    // Blocks carry a column key so the final sort reads column-by-column: left
+    // column top-to-bottom, then right column.
+    const blocks: Array<{ col: number; top: number; el: BodyElement }> = [];
+    const addColumn = (colRuns: ReadonlyArray<TextRun>, col: number): void => {
+      const lines = groupIntoLines(colRuns).filter((l) => l.text.length > 0);
+      for (const para of groupIntoParagraphs(lines)) {
+        blocks.push({
+          col,
+          top: para.top,
+          el: paragraphFromRuns(para.spans, headingLevel(para.fontSize, medianFont)),
+        });
+      }
+    };
+    if (gutter !== undefined) {
+      addColumn(
+        runs.filter((r) => r.x < gutter),
+        0,
+      );
+      addColumn(
+        runs.filter((r) => r.x >= gutter),
+        1,
+      );
+    } else {
+      addColumn(runs, 0);
     }
+    const colOf = (centerX: number): number => (gutter !== undefined && centerX >= gutter ? 1 : 0);
     const imgs = collectPageImages(file, page);
     losses.push(...imgs.losses);
     for (const img of imgs.images) {
-      blocks.push({ top: img.y + img.heightPt, el: imageBlock(img, resources) });
+      blocks.push({
+        col: colOf(img.x + img.widthPt / 2),
+        top: img.y + img.heightPt,
+        el: imageBlock(img, resources),
+      });
     }
     // Filled vector paths (EP10) interleave by their top edge, like images.
     for (const v of collectPageVectors(file, page)) {
-      blocks.push({ top: v.maxY, el: shapeBlock(v) });
+      blocks.push({ col: colOf((v.minX + v.maxX) / 2), top: v.maxY, el: shapeBlock(v) });
     }
-    blocks.sort((a, b) => b.top - a.top);
+    blocks.sort((a, b) => a.col - b.col || b.top - a.top);
     for (const block of blocks) body.push(block.el);
   });
   return { doc: buildFlowDoc(body, resources), losses: dedupeLosses(losses) };
+}
+
+// EP17 — a two-column gutter: the centre of the widest vertical whitespace band
+// that no run's horizontal extent crosses. Conservative on purpose — it fires
+// only on a genuine two-column page (a full-width line spans the centre, leaving
+// no gap there, so title/single-column pages keep their existing reading order).
+function detectGutter(runs: ReadonlyArray<TextRun>, pageWidth: number): number | undefined {
+  if (runs.length < 30 || pageWidth <= 0) return undefined;
+  const fontSize = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
+  const right = (r: TextRun): number =>
+    r.x + Math.max(1, r.text.length) * (r.fontSizePt || fontSize) * 0.5;
+  const intervals = runs.map((r): [number, number] => [r.x, right(r)]).sort((a, b) => a[0] - b[0]);
+  const minX = intervals[0]![0];
+  const maxX = Math.max(...intervals.map((iv) => iv[1]));
+  const span = maxX - minX;
+  if (span < pageWidth * 0.5) return undefined; // text doesn't span enough of the page
+  let curEnd = intervals[0]![1];
+  let gapMid = 0;
+  let gapW = 0;
+  for (const [l, r] of intervals) {
+    if (l - curEnd > gapW) {
+      gapW = l - curEnd;
+      gapMid = (curEnd + l) / 2;
+    }
+    if (r > curEnd) curEnd = r;
+  }
+  const frac = (gapMid - minX) / span;
+  if (gapW < fontSize * 3 || frac < 0.35 || frac > 0.65) return undefined; // not a central gutter
+  const left = runs.filter((r) => r.x < gapMid).length;
+  if (left < runs.length * 0.25 || left > runs.length * 0.75) return undefined; // unbalanced
+  return gapMid;
 }
 
 // Cluster runs that share a baseline (within half a line's height) into lines,
