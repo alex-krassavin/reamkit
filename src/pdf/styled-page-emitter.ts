@@ -35,6 +35,7 @@ import { preparePdfEncryption } from '@/pdf/encryption';
 import { paintPlan } from '@/layout/page-doc';
 import { A4_HEIGHT, A4_WIDTH } from '@/layout/styled-layout';
 import { emitVectorShape } from '@/pdf/vector-graphics';
+import { buildGradientPattern, shapeBbox } from '@/pdf/shading';
 import { reorderVisual, reverseByCodePoint } from '@/core/bidi';
 import { sanitizeHref } from '@/core/links';
 import { embedTtfFont } from '@/pdf/cid-font';
@@ -116,9 +117,34 @@ function assembleStyledPdf(
   let annotParentCount = 0;
   const fontResourceDict = buildFontResourceDict(laid.fontResources, embeddedFonts);
   const xobjectResourceDict = buildXObjectResourceDict(laid.imageResources, embeddedImages);
+  // EP16b — gradient-fill shapes become shading patterns. PDF/A keeps the solid
+  // fallback (a DeviceRGB shading would need OutputIntent juggling). The map is
+  // keyed by VectorShape identity, which the per-page paintPlan preserves.
+  const gradientNames = new Map<VectorShape, string>();
+  const patternEntries: Record<string, PdfValue> = {};
+  if (!pdfaProfile) {
+    for (const page of renderedPages) {
+      const ph = page.height;
+      for (const item of paintPlan(page.commands).shapes) {
+        const gradient = item.shape.fillGradient;
+        if (!gradient) continue;
+        const bbox = shapeBbox(item.shape);
+        if (!bbox) continue;
+        // The emitted CTM is the stored top-left transform conjugated with the
+        // page flip (the same matrix emitVectorShape builds); the pattern
+        // /Matrix must match it so the shading maps onto the painted path.
+        const t = item.shape.transform;
+        const ctm = [t[0], -t[1], t[2], -t[3], t[4], ph - t[5]] as const;
+        const nm = `Sh${gradientNames.size}`;
+        patternEntries[nm] = ref(buildGradientPattern(doc, gradient, bbox, ctm).id);
+        gradientNames.set(item.shape, nm);
+      }
+    }
+  }
   const resourcesDict = dict({
     Font: fontResourceDict,
     ...(xobjectResourceDict ? { XObject: xobjectResourceDict } : {}),
+    ...(Object.keys(patternEntries).length > 0 ? { Pattern: dict(patternEntries) } : {}),
   });
 
   // PDF/A: build the sRGB ICC stream once — reused by the catalog OutputIntent
@@ -153,7 +179,7 @@ function assembleStyledPdf(
         tagFor: (structId) => builder.node(structId).type,
       };
     }
-    const { content: contentBytes, links } = emitPageContent(page, pageTagging);
+    const { content: contentBytes, links } = emitPageContent(page, pageTagging, gradientNames);
     const contentsRef = doc.add(stream({}, contentBytes));
     const pageEntries: Record<string, PdfValue> = {
       Type: name('Page'),
@@ -539,6 +565,7 @@ interface LinkRegion {
 function emitPageContent(
   page: LaidOutPage,
   tagging?: PageTagging,
+  gradientNames?: ReadonlyMap<VectorShape, string>,
 ): { content: Uint8Array; links: Array<LinkRegion> } {
   const commands = page.commands;
   const links: Array<LinkRegion> = [];
@@ -655,7 +682,7 @@ function emitPageContent(
       ...sh.shape,
       transform: [t[0], -t[1], t[2], -t[3], t[4], H - t[5]],
     };
-    for (const op of emitVectorShape(shape)) out.push(op);
+    for (const op of emitVectorShape(shape, gradientNames?.get(sh.shape))) out.push(op);
   });
 
   const lines = plan.lines;

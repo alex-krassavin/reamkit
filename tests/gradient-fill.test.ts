@@ -8,8 +8,10 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
+import type { PdfDict, PdfValue } from '@/pdf/objects';
 import { Ream } from '@/core/converter/ream';
 import { OpcPackage } from '@/core/opc';
+import { PdfFile } from '@/pdf-reader/document';
 import { parseDocument } from '@/word/document-parser';
 
 const FONTS = {
@@ -72,11 +74,32 @@ describe('gradient fills (E-PDF EP16)', () => {
     ]);
   });
 
-  it('falls back to the solid average for the PDF output', async () => {
-    // 0xFF0000 + 0x0000FF averaged → (128,0,128) = 800080. The PDF emit must not
-    // throw and must paint that solid (gradients are not emitted as shadings here).
+  it('emits a gradient as a PDF axial shading pattern (E-PDF EP16b)', async () => {
     const pdf = await Ream.parse(gradientDocx()).convert('pdf', { fonts: FONTS });
-    expect(pdf.length).toBeGreaterThan(0);
-    expect(new TextDecoder('latin1').decode(pdf).startsWith('%PDF-')).toBe(true);
+    const file = PdfFile.parse(pdf);
+    const page = file.pages()[0]!;
+    const patterns = file.get(page.resources!, 'Pattern');
+    expect(patterns instanceof Map).toBe(true);
+    const pattern = file.resolve((patterns as PdfDict).get('Sh0') ?? null);
+    expect((pattern as PdfDict).get('PatternType')).toBe(2);
+    const shading = file.resolve((pattern as PdfDict).get('Shading') ?? null);
+    expect((shading as PdfDict).get('ShadingType')).toBe(2); // axial (a:lin)
+    const fn = file.resolve((shading as PdfDict).get('Function') ?? null);
+    expect((fn as PdfDict).get('C0')).toEqual([1, 0, 0]); // FF0000
+    expect((fn as PdfDict).get('C1')).toEqual([0, 0, 1]); // 0000FF
+    const content = new TextDecoder('latin1').decode(file.pageContent(page));
+    expect(content).toContain('/Pattern cs');
+    expect(content).toContain('/Sh0 scn');
+  });
+
+  it('keeps the solid fallback under PDF/A (no shading pattern)', async () => {
+    const pdf = await Ream.parse(gradientDocx()).convert('pdf', {
+      fonts: FONTS,
+      pdfA: 'PDF/A-2b',
+    });
+    const file = PdfFile.parse(pdf);
+    const page = file.pages()[0]!;
+    const patterns: PdfValue = file.get(page.resources!, 'Pattern');
+    expect(patterns instanceof Map).toBe(false); // no /Pattern resource
   });
 });
