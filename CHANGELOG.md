@@ -3,6 +3,36 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.8.0
+
+### Added
+
+- **PDF form-XObject text.** Reading a PDF now recurses into the Form XObjects a
+  page paints (a bare `/Name Do`), so text drawn inside a reusable form — which
+  page-level interpretation missed — is recovered on both the tagged and
+  heuristic paths.
+- **Encrypted PDF with a user password.** A PDF locked with a real user password
+  opens via `Ream.parse(bytes, { password })` (AES-256/R6 plus the legacy
+  RC4/AES handlers); the empty-string default still opens the common
+  permissions-only encryption.
+- **PDF stroked vector graphics.** Lines, rules, dividers and shape outlines come
+  back as line shapes carrying their stroke colour and width, alongside the
+  filled paths already lifted.
+- **LZW-encoded images.** Reading decodes `/LZWDecode` rasters — the TIFF/GIF-era
+  codec, with `/EarlyChange` and a layered PNG/TIFF predictor — so legacy and
+  scanned PDFs keep their pictures.
+- **CCITT fax images.** Reading decodes `/CCITTFaxDecode` Group 4 (and Group 3
+  one-dimensional) bilevel scans — the dominant encoding of fax-scanned PDFs —
+  with a from-scratch ITU-T T.4 / T.6 codec.
+- **Gradient fills are first-class.** A DrawingML `a:gradFill` parses into real
+  colour stops and a direction (no longer averaged to a flat colour), renders
+  faithfully to SVG, HTML and PDF (an axial/radial shading pattern), and
+  round-trips through `convert('docx')`. Reading a PDF lifts a shading-pattern
+  gradient back out into a gradient-filled shape.
+- **Two-column PDF reconstruction.** An untagged two-column page is split at its
+  central gutter and read column-by-column instead of interleaving the columns.
+  The detection is conservative, so single-column and title pages are unaffected.
+
 ## 1.7.0
 
 ### Added

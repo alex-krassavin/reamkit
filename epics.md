@@ -233,6 +233,33 @@ struct-tree/tagged/layout/flow-build/reader/images/image-decode/png-encode) — 
 round-trip — полный (сноски/чарты/math/embedded-charts). Новые модули `src/pdf-reader/{predictor,crypto,
 decrypt,vector}.ts`, `src/core/drawingml/chart-serializer.ts`, `src/word/omml-serializer.ts`. 745 тестов.
 
+## 1.8.0 — хвосты (грайнд «доделай все хвосты»)
+
+Восемь хвостов, каждый отдельным коммитом с полным гейтом, байт-в-ноль для писателей.
+
+- **EP13 ✓ — текст в Form XObject.** `extractPageText` рекурсивно входит в формы (`/Name Do`), компонуя
+  `/Matrix` и собственные шрифты формы; текст из form-wrapped тел восстанавливается на обоих путях.
+- **EP14 ✓ — шифрованный PDF с НЕпустым user-паролем.** `Ream.parse(bytes, { password })` → `decrypt.ts`
+  падит пароль (R2-4) / хэширует UTF-8 (R6) в деривацию ключа; пустая строка по-прежнему открывает
+  permissions-only.
+- **EP11 ✓ — штриховой вектор → линии.** Интерпретатор ловит RG/G/K + w + S/s/B/b; путь несёт
+  `strokeHex`/`lineWidth`; `shapeBlock` → `ShapeLine` (fill:none).
+- **EP12 ✓ — LZW-картинки.** PDF/TIFF LZW (9→12 бит, clear/EOD, KwKwK, `/EarlyChange`) в `image-decode.ts`,
+  рядом с Flate; предиктор после.
+- **EP15 ✓ — CCITT-факс.** Новый `src/pdf-reader/ccitt.ts` — T.4/T.6 с нуля (run-таблицы + 2D-моды),
+  Group 4 + Group 3 1-D → DeviceGray.
+- **EP16 ✓ — градиенты первокласснее.** Модель `ShapeGradient` (core/vector); docx-reader парсит `a:gradFill`
+  в стопы (не усреднение); SVG/HTML/PDF (axial/radial shading pattern, `src/pdf/shading.ts`) рендерят
+  достоверно; docx round-trip; чтение PDF лифтит shading-pattern обратно в градиент-заливку
+  (`src/pdf-reader/shading.ts`, /Function 2/3/0). PDF/A держит solid-fallback.
+- **EP17 ✓ — двухколоночная реконструкция.** Untagged-путь делит страницу по центральному жёлобу и читает
+  колонка-за-колонкой; консервативно (полноширинная строка пересекает центр → нет деления), без регрессий.
+
+**Итог 1.8.0.** PDF-чтение почти полное: form-текст, реальные пароли, штрихи, LZW/CCITT-картинки, градиенты
+(emit+read), двухколоночный layout. Новые модули `src/pdf/shading.ts`, `src/pdf-reader/{ccitt,shading}.ts`.
+**Всё ещё отложено (deep/низкая ценность):** JBIG2, голый `sh`-оператор (нужен clip-трекинг), tables-by-
+alignment-эвристика. `.doc`/`.xls` — OFF-LIMITS (подтверждено). 771 тест.
+
 ---
 
 ## E-SHEET — табличный IR-узел (стратегический: Excel первоклассен)
