@@ -5,22 +5,16 @@
 // items (each LI → its label + body text). The honest inverse of the tagged PDF
 // Ream writes.
 
+import { buildFlowDoc, paragraphBlock } from './flow-build';
 import { readStructTree } from './struct-tree';
 import { extractPageText } from './text';
-import type {
-  BodyElement,
-  ParagraphProperties,
-  Table,
-  TableCell,
-  TableRow,
-} from '@/core/document-model';
+import type { BodyElement, Table, TableCell, TableRow } from '@/core/document-model';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Pt } from '@/core/ir';
 
 import type { PdfFile } from './document';
 import type { StructNode } from './struct-tree';
-import { ResourceStore, pt } from '@/core/ir';
-import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
+import { pt } from '@/core/ir';
 
 // Printable width assumed for a synthesized table grid (6.5" — the columns are
 // equal because the structure tree carries no widths; layout auto-fits anyway).
@@ -106,26 +100,11 @@ export function reconstructTaggedPdf(file: PdfFile): FlowDoc | undefined {
   const body: Array<BodyElement> = [];
   emit(root, body);
   if (body.length === 0) return undefined;
-
-  return {
-    kind: 'flow',
-    body: resolveBodyStyles(body, EMPTY_STYLE_SHEET),
-    sections: [],
-    styles: EMPTY_STYLE_SHEET,
-    resources: new ResourceStore(),
-  };
+  return buildFlowDoc(body);
 }
 
 function squash(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
-}
-
-function paragraphBlock(text: string, outlineLevel: number | undefined): BodyElement {
-  const properties: ParagraphProperties = outlineLevel !== undefined ? { outlineLevel } : {};
-  return {
-    kind: 'paragraph',
-    paragraph: { properties, runs: text.length > 0 ? [{ text, properties: {} }] : [] },
-  };
 }
 
 // H1–H6 → outline level 0–5 (the FlowDoc heading representation, §17.3.1.20).
