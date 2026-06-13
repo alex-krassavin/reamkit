@@ -30,8 +30,8 @@ round-trip is **semantic, not byte-exact** — the writer emits the resolved
 formatting as direct properties rather than named styles — so use it to
 normalize, sanitize or programmatically edit a document in the browser, not to
 preserve the original markup verbatim. Images, tables, lists, links, bookmarks,
-shapes, headers/footers and multi-section geometry round-trip; footnotes, charts
-and OfficeMath are reported as losses (see [strict mode](#strict-mode-compliance-flows)).
+shapes, headers/footers, multi-section geometry, footnotes/endnotes, charts and
+OfficeMath all round-trip; floating (anchored) placement collapses to inline.
 
 ```ts
 import { Ream } from 'reamkit';
@@ -46,9 +46,8 @@ const out = await doc.convert('docx');
 `convert('xlsx')` writes a spreadsheet's grid back to a valid `.xlsx`. Unlike the
 docx writer it consumes the native grid tree, so the round-trip is **lossless on
 the grid surface** — cells, styles, merges, the print model, conditional
-formatting, sparklines and tables all survive a read → write → read loop
-byte-stably (embedded charts are the one piece not yet written). It requires a
-spreadsheet source; a `.docx` has no grid.
+formatting, sparklines, tables and embedded charts all survive a read → write →
+read loop byte-stably. It requires a spreadsheet source; a `.docx` has no grid.
 
 ```ts
 import { Ream } from 'reamkit';
@@ -60,13 +59,16 @@ const out = await doc.convert('xlsx');
 
 ## pdf → html / docx: read a PDF back
 
-`Ream.parse` also accepts a **PDF**. A tagged PDF (including the ones Ream
-writes) is rebuilt from its structure tree — headings, paragraphs, tables, lists
-in reading order; an untagged PDF is reconstructed heuristically from glyph
-positions. **Raster images come back too** — lifted out of the page, sized from
-their placement, and carried into the HTML `<img>` / docx media part. The result
-is an ordinary `FlowDoc`, so it converts onward like any other source. Vector
-graphics and encrypted PDFs are not read (reported as losses).
+`Ream.parse` also accepts a **PDF** — including a modern compressed one
+(cross-reference streams, object streams) or an encrypted one with the empty
+user password. A tagged PDF (the ones Ream writes) is rebuilt from its structure
+tree — headings, paragraphs, tables, lists in reading order; an untagged PDF is
+reconstructed heuristically from glyph positions. **Raster images, hyperlinks
+and filled vector shapes come back too** — images lifted out and sized from
+their placement, link annotations re-attached to the text, filled paths turned
+into shapes. The result is an ordinary `FlowDoc`, so it converts onward like any
+other source. Stroked / shaded vector art (lines, gradients, clips) is not read
+(reported as a loss).
 
 ```ts
 import { Ream } from 'reamkit';

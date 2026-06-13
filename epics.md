@@ -192,9 +192,46 @@ Tagged-PDF, который мы пишем, — идеальный вход дл
 **Итог E-PDF.** Новая подсистема `src/pdf-reader/` (lexer/parser/document/content/cmap/font/text/
 struct-tree/tagged/layout/flow-build/reader/images/image-decode/png-encode) — чистое дополнение, байт-в-ноль
 для всех существующих выходов. PDF → FlowDoc: объекты (EP1) → текст (EP2) → структура (tagged EP3 /
-эвристика EP4) → фасад (EP5) → растровые картинки (EP6). Не делается: ИСТИННЫЙ вектор (path/clip/shading) на
-чтение, xref-streams/object-streams на чтение (наш писатель их не пишет), шифрованные PDF на чтение. ~60
-тестов, honest e2e на СВОИХ же выходах.
+эвристика EP4) → фасад (EP5) → растровые картинки (EP6). ~60 тестов, honest e2e на СВОИХ же выходах.
+
+---
+
+## 1.7.0 — хвосты (грайнд «доделаем всё»)
+
+Десять опц. хвостов, каждый отдельным коммитом с полным гейтом, байт-в-ноль для писателей.
+
+**PDF-чтение (E-PDF продолжение):**
+- **EP7 ✓ — xref-streams + object-streams.** `document.ts`: `XrefEntry` (uncompressed/compressed); чтение
+  `/Type/XRef` (W-поля/Index/типы 0/1/2) и `/Type/ObjStm` (resolve type-2 декодит ObjStm + парсит член).
+  Гибридный `/XRefStm`, `/Prev`-цепочка. Brute-force тоже индексирует ObjStm + достаёт `/Catalog` изнутри.
+  Предиктор-математика вынесена в `predictor.ts` (шарится с image-decode). Раньше объекты в ObjStm были НЕ
+  читаемы → сжатые PDF теряли контент.
+- **EP8 ✓ — `/Link`-аннотации → hrefs.** `extractPageText` собирает `/Link` (`/A /URI`), тегает раны по
+  `/Rect`; `paragraphFromRuns` коалесцирует по href. Оба пути (tagged/heuristic) несут ссылки → html `<a>`/docx.
+- **EP9 ✓ — шифрованные PDF (Standard handler, пустой user-пароль).** `crypto.ts` синх-примитивы (MD5/RC4/
+  SHA-256/384/512/AES-CBC enc+dec, все по FIPS/RFC-векторам); `decrypt.ts` вывод ключа (Алг. 2 / 2.A / 2.B
+  R6) + по-объектная дешифровка (RC4/AESV2/AESV3). honest e2e: docx→AES-256-pdf→читается обратно.
+- **EP10 ✓ — залитый вектор (огранич.).** Интерпретатор ловит path (m/l/c/re/h) + fill-paint (f/B/…) + цвет
+  (rg/g/k) → залитые пути; `vector.ts` фильтрует мусор (волоски, белое, фон), `shapeBlock` → custom-geom
+  shape; heuristic-путь интерливит. Штрихи/градиенты/клипы — документированный loss.
+
+**Полнота писателей:**
+- **WT1 ✓ — xlsx embedded charts.** Шаренный `chart-serializer.ts` (инверсия chart-parser) → drawingN.xml +
+  chartN.xml. Последний кусок сетки, который не round-trip'ился.
+- **WT2 ✓ — docx сноски/endnotes.** runXml эмитит `w:footnoteReference`/`w:footnoteRef`; `emitNotes` пишет
+  footnotes.xml/endnotes.xml (+ separator-стабы).
+- **WT3 ✓ — docx чарты + OfficeMath.** Чарты через тот же chart-serializer (инлайн-drawing). `omml-serializer.ts`
+  — инверсия omml-parser для ВСЕХ MathNode (дроби/скрипты/радикалы/nary/функции/пределы/делимитеры/матрицы/
+  акценты/бары/groupChr/eqArr).
+
+**xlsx-печать:**
+- **SE-T ✓ — fitToWidth=N + бандинг.** fitToWidth=N>1 масштабирует колонки и бандит scaled-ширины на N страниц
+  (раньше — одна переразмеренная таблица). («rowSpan через банды» оказался не-баг: вертикальный merge —
+  фиксированная колонка, банды режут по колонкам.)
+
+**Итог 1.7.0.** PDF-чтение стало промышленным (сжатые/шифрованные/ссылки/картинки/залитый вектор); docx/xlsx
+round-trip — полный (сноски/чарты/math/embedded-charts). Новые модули `src/pdf-reader/{predictor,crypto,
+decrypt,vector}.ts`, `src/core/drawingml/chart-serializer.ts`, `src/word/omml-serializer.ts`. 745 тестов.
 
 ---
 
