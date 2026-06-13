@@ -9,6 +9,7 @@
 // that the renderer consumes.
 
 import type { NativeBag, Pt, ResourceId } from '@/core/ir';
+import type { ShapeGradient } from '@/core/vector';
 
 export type Alignment = 'left' | 'right' | 'center' | 'both' | 'distribute';
 
@@ -587,11 +588,12 @@ export interface ShapeGeometry {
   readonly custom?: CustomGeometry; // kind==='custom'
 }
 
-export type ShapeFillKind = 'none' | 'solid';
+export type ShapeFillKind = 'none' | 'solid' | 'gradient';
 
 export interface ShapeFill {
   readonly kind: ShapeFillKind;
   readonly colorHex?: string; // resolved 6-hex (kind==='solid')
+  readonly gradient?: ShapeGradient; // kind==='gradient' (a:gradFill, EP16)
 }
 
 export type ShapeDash =

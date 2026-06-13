@@ -53,7 +53,7 @@ import type { PreparedImage } from '@/core/images';
 import type { Item } from '@/core/line-breaker';
 import type { ResourceId } from '@/core/ir';
 import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
-import type { StrokeStyle, VectorPath } from '@/core/vector';
+import type { ShapeGradient, StrokeStyle, VectorPath } from '@/core/vector';
 import type {
   ChartLabel,
   ChartPolygon,
@@ -104,6 +104,7 @@ import {
   buildShapePaths,
   buildShapeTransform,
   buildStroke,
+  gradientToSolid,
 } from '@/core/drawingml/shape-render';
 import { StructTreeBuilder } from '@/pdf/struct-tree';
 
@@ -285,6 +286,7 @@ interface ShapeBlockLaidOut {
   readonly heightPt: number;
   readonly paths: ReadonlyArray<VectorPath>;
   readonly fillColorHex?: string;
+  readonly fillGradient?: ShapeGradient;
   readonly stroke?: StrokeStyle;
   readonly rotation60k: number;
   readonly flipH: boolean;
@@ -1141,7 +1143,13 @@ function layoutShapeBlock(
     heightPt = maxHeight;
   }
   const paths = buildShapePaths(shape.geometry, widthPt, heightPt);
-  const fillColorHex = shape.fill.kind === 'solid' ? shape.fill.colorHex : undefined;
+  const fillGradient = shape.fill.kind === 'gradient' ? shape.fill.gradient : undefined;
+  const fillColorHex =
+    shape.fill.kind === 'solid'
+      ? shape.fill.colorHex
+      : fillGradient
+        ? gradientToSolid(fillGradient)
+        : undefined;
   const stroke = buildStroke(shape.line);
   const t = shape.transform;
   const pp = shape.paragraphProperties;
@@ -1178,6 +1186,7 @@ function layoutShapeBlock(
     heightPt,
     paths,
     ...(fillColorHex ? { fillColorHex } : {}),
+    ...(fillGradient ? { fillGradient } : {}),
     ...(stroke ? { stroke } : {}),
     rotation60k: t?.rotation60k ?? 0,
     flipH: t?.flipH ?? false,
@@ -3439,6 +3448,7 @@ function paginateSections(
           shape: {
             paths: block.paths,
             ...(block.fillColorHex ? { fillColorHex: block.fillColorHex } : {}),
+            ...(block.fillGradient ? { fillGradient: block.fillGradient } : {}),
             ...(block.stroke ? { stroke: block.stroke } : {}),
             transform,
           },

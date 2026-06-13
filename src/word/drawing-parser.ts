@@ -19,6 +19,7 @@ import type {
 import type { ColorMod, ColorResolver } from '@/core/drawingml/colors';
 import type { PoNode } from '@/core/po-helpers';
 import type { Pt } from '@/core/ir';
+import type { GradientStop, ShapeGradient } from '@/core/vector';
 import { resolveColorNode } from '@/core/drawingml/colors';
 import { emuToPt, pt } from '@/core/ir';
 import {
@@ -469,8 +470,8 @@ function parseFill(spPr: PoNode, resolveColor: ColorResolver): ShapeFill {
       return hex ? { kind: 'solid', colorHex: hex } : { kind: 'none' };
     }
     if (poIs(child, 'a:gradFill')) {
-      const hex = colorFromGradient(child, resolveColor);
-      return hex ? { kind: 'solid', colorHex: hex } : { kind: 'none' };
+      const gradient = parseGradient(child, resolveColor);
+      return gradient ? { kind: 'gradient', gradient } : { kind: 'none' };
     }
   }
   return { kind: 'none' };
@@ -537,15 +538,13 @@ function colorFromContainer(parent: PoNode, resolveColor: ColorResolver): string
   return undefined;
 }
 
-// a:gradFill → the average of its gradient-stop colours (a solid approximation;
-// PDF axial/radial shadings are not emitted). Reads a:gsLst/a:gs colour children.
-function colorFromGradient(grad: PoNode, resolveColor: ColorResolver): string | undefined {
+// a:gradFill → a gradient fill (EP16). Reads the a:gsLst/a:gs stops (each with a
+// @pos in 1000ths of a percent and a colour child), and the direction from a:lin
+// (@ang in 60000ths of a degree, clockwise) or a:path (a radial/path gradient).
+function parseGradient(grad: PoNode, resolveColor: ColorResolver): ShapeGradient | undefined {
   const gsLst = poChildren(grad).find((c) => poIs(c, 'a:gsLst'));
   if (!gsLst) return undefined;
-  let r = 0;
-  let g = 0;
-  let b = 0;
-  let n = 0;
+  const stops: Array<GradientStop> = [];
   for (const gs of poChildren(gsLst)) {
     if (!poIs(gs, 'a:gs')) continue;
     let hex: string | undefined;
@@ -554,16 +553,19 @@ function colorFromGradient(grad: PoNode, resolveColor: ColorResolver): string | 
       if (hex) break;
     }
     if (!hex) continue;
-    const num = parseInt(hex, 16);
-    r += (num >> 16) & 255;
-    g += (num >> 8) & 255;
-    b += num & 255;
-    n++;
+    const pos = poIntAttr(gs, 'pos');
+    const offset = pos !== undefined ? clampUnit(pos / 100000) : stops.length === 0 ? 0 : 1;
+    stops.push({ offset, colorHex: hex });
   }
-  if (n === 0) return undefined;
-  const toHex = (x: number): string =>
-    Math.round(x / n)
-      .toString(16)
-      .padStart(2, '0');
-  return (toHex(r) + toHex(g) + toHex(b)).toUpperCase();
+  if (stops.length === 0) return undefined;
+  stops.sort((a, b) => a.offset - b.offset);
+  if (poChildren(grad).some((c) => poIs(c, 'a:path'))) return { kind: 'radial', stops };
+  const lin = poChildren(grad).find((c) => poIs(c, 'a:lin'));
+  const ang = lin ? poIntAttr(lin, 'ang') : undefined;
+  const angle = ang !== undefined ? (ang / 60000) % 360 : 0;
+  return { kind: 'linear', angle, stops };
+}
+
+function clampUnit(x: number): number {
+  return x < 0 ? 0 : x > 1 ? 1 : x;
 }

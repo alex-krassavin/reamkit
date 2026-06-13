@@ -55,6 +55,7 @@ import type {
   TableRow,
 } from '@/core/document-model';
 import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
+import type { ShapeGradient } from '@/core/vector';
 import type { DocumentWriter, WriteResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss, ResourceId, ResourceStore } from '@/core/ir';
@@ -715,9 +716,26 @@ function geomXml(g: ShapeGeometry): string {
 }
 
 function fillXml(f: ShapeFill): string {
-  return f.kind === 'solid' && f.colorHex
-    ? `<a:solidFill><a:srgbClr val="${f.colorHex}"/></a:solidFill>`
-    : '<a:noFill/>';
+  if (f.kind === 'solid' && f.colorHex)
+    return `<a:solidFill><a:srgbClr val="${f.colorHex}"/></a:solidFill>`;
+  if (f.kind === 'gradient' && f.gradient) return gradFillXml(f.gradient);
+  return '<a:noFill/>';
+}
+
+// A gradient fill → a:gradFill (EP16): stops as a:gs (@pos in 1000ths of a
+// percent), direction as a:lin (@ang in 60000ths of a degree) or a:path (radial).
+function gradFillXml(g: ShapeGradient): string {
+  const stops = g.stops
+    .map((s) => {
+      const pos = Math.round(Math.max(0, Math.min(1, s.offset)) * 100000);
+      return `<a:gs pos="${pos}"><a:srgbClr val="${s.colorHex}"/></a:gs>`;
+    })
+    .join('');
+  const dir =
+    g.kind === 'radial'
+      ? '<a:path path="circle"/>'
+      : `<a:lin ang="${Math.round(((((g.angle ?? 0) % 360) + 360) % 360) * 60000)}" scaled="1"/>`;
+  return `<a:gradFill><a:gsLst>${stops}</a:gsLst>${dir}</a:gradFill>`;
 }
 
 function lineXml(l: ShapeLine): string {

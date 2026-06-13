@@ -4,7 +4,7 @@
 // no pagination.
 
 import type { ShapeDash, ShapeGeometry, ShapeLine } from '@/core/document-model';
-import type { StrokeStyle, VectorPath } from '@/core/vector';
+import type { ShapeGradient, StrokeStyle, VectorPath } from '@/core/vector';
 
 import { customPaths, presetPaths, rectPath } from '@/core/drawingml/preset-geometry';
 
@@ -34,6 +34,48 @@ export function buildShapePaths(
   }
   if (geometry.custom) return customPaths(geometry.custom, widthPt, heightPt);
   return [rectPath(widthPt, heightPt)];
+}
+
+// A gradient's solid approximation: the per-channel average of its stop colours
+// (§EP16). Writers without gradient support (the plain PDF emitter) paint this.
+export function gradientToSolid(gradient: ShapeGradient): string {
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let n = 0;
+  for (const stop of gradient.stops) {
+    const num = parseInt(stop.colorHex, 16);
+    if (Number.isNaN(num)) continue;
+    r += (num >> 16) & 255;
+    g += (num >> 8) & 255;
+    b += num & 255;
+    n++;
+  }
+  if (n === 0) return '000000';
+  const hx = (x: number): string =>
+    Math.round(x / n)
+      .toString(16)
+      .padStart(2, '0');
+  return (hx(r) + hx(g) + hx(b)).toUpperCase();
+}
+
+// An SVG `<linearGradient>` / `<radialGradient>` definition for a gradient fill
+// (EP16), shared by the SVG and HTML writers. The linear vector is expressed in
+// objectBoundingBox space; the angle is negated because the shape's own path
+// transform flips y (local y-up → page y-down).
+export function gradientSvgDef(id: string, g: ShapeGradient): string {
+  const n = (x: number): string => String(Math.round(x * 1e4) / 1e4);
+  const stops = g.stops
+    .map((s) => `<stop offset="${n(s.offset)}" stop-color="#${s.colorHex}"/>`)
+    .join('');
+  if (g.kind === 'radial') return `<radialGradient id="${id}">${stops}</radialGradient>`;
+  const rad = (-(g.angle ?? 0) * Math.PI) / 180;
+  const dx = Math.cos(rad) / 2;
+  const dy = Math.sin(rad) / 2;
+  return (
+    `<linearGradient id="${id}" x1="${n(0.5 - dx)}" y1="${n(0.5 - dy)}" ` +
+    `x2="${n(0.5 + dx)}" y2="${n(0.5 + dy)}">${stops}</linearGradient>`
+  );
 }
 
 export function buildStroke(line: ShapeLine | undefined): StrokeStyle | undefined {
