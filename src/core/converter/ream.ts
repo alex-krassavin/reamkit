@@ -43,6 +43,9 @@ export type ReamTarget = 'pdf' | 'svg' | 'html' | 'docx' | 'xlsx';
 export interface ReamParseOptions {
   // Reader registry override — defaults to the built-in docx + xlsx readers.
   readonly readers?: ReadonlyArray<DocumentReader<SourceDoc>>;
+  // §7.6 — the user password for an encrypted PDF. Defaults to the empty string,
+  // which opens the common permissions-only encryption (EP14).
+  readonly password?: string;
 }
 
 export interface ReamConvertOptions extends Omit<StyledRenderOptions, 'registry' | 'styles'> {
@@ -92,7 +95,7 @@ export class Ream {
         `Unrecognized document format (readers: ${readers.map((r) => r.id).join(', ')})`,
       );
     }
-    const { doc, losses } = reader.read(bytes);
+    const { doc, losses } = reader.read(bytes, { password: options.password });
     // The reader's native tree — a SheetDoc for spreadsheets — is projected to
     // the FlowDoc the render path consumes; the SheetDoc is kept for inspection.
     const sheet = doc.kind === 'sheet' ? doc : undefined;

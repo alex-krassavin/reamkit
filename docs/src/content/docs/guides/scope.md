@@ -11,8 +11,9 @@ doesn't yet.
 
 **Input** — Ream parses **Word (`.docx`)**, **Excel (`.xlsx`)** and **PDF**,
 sniffed from the bytes. PDF input handles classic and modern compressed files
-(cross-reference streams, object streams) and encrypted files (RC4 / AES, empty
-user password). A **tagged** PDF (including the ones Ream writes) is rebuilt from
+(cross-reference streams, object streams) and encrypted files (RC4 / AES; the
+user password is passed to `Ream.parse`, defaulting to the empty permissions-only
+case). A **tagged** PDF (including the ones Ream writes) is rebuilt from
 its structure tree — headings, paragraphs, tables, list items, reading order; an
 **untagged** PDF is reconstructed heuristically from glyph positions (lines by
 baseline, paragraphs by spacing, headings by relative font size), which is

@@ -1,9 +1,10 @@
 // E-PDF EP9 — the Standard security handler (ISO 32000 §7.6.3 / ISO 32000-2
-// §7.6.4). Builds a Decryptor from the /Encrypt dictionary assuming the EMPTY
-// user password (the common "permissions-only" encryption); a document that
-// needs a real user password fails key validation and yields no decryptor
-// (reported as a loss). Supports RC4 (V1/V2), AES-128 (V4 /AESV2) and AES-256
-// (V5/R6 /AESV3), decrypting each string and stream with its per-object key.
+// §7.6.4). Builds a Decryptor from the /Encrypt dictionary using the supplied
+// user password (EP14); the empty string — the default — opens the common
+// "permissions-only" encryption. A password that fails key validation yields no
+// decryptor (reported as a loss). Supports RC4 (V1/V2), AES-128 (V4 /AESV2) and
+// AES-256 (V5/R6 /AESV3), decrypting each string and stream with its per-object
+// key.
 
 import { aesCbcDecrypt, aesCbcEncrypt, md5, rc4, sha256, sha384, sha512 } from './crypto';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
@@ -28,6 +29,7 @@ const EMPTY = new Uint8Array(0);
 export function buildDecryptor(
   encrypt: PdfDict,
   idArray: PdfValue | undefined,
+  password = '',
 ): Decryptor | undefined {
   const filter = encrypt.get('Filter');
   if (!(filter instanceof PdfName) || filter.value !== 'Standard') return undefined;
@@ -37,7 +39,7 @@ export function buildDecryptor(
   let fileKey: Uint8Array | undefined;
   let method: Method;
   if (r >= 5 || v >= 5) {
-    fileKey = deriveKeyR6(strBytes(encrypt.get('U')), strBytes(encrypt.get('UE')));
+    fileKey = deriveKeyR6(strBytes(encrypt.get('U')), strBytes(encrypt.get('UE')), password);
     method = 'aesv3';
   } else {
     const keyLen = (numOf(encrypt.get('Length')) || 40) / 8;
@@ -49,6 +51,7 @@ export function buildDecryptor(
       r,
       Math.max(5, Math.min(16, keyLen)),
       encrypt.get('EncryptMetadata') !== false,
+      password,
     );
     const m = cipherMethod(encrypt, v);
     if (m === undefined) return undefined;
@@ -61,7 +64,8 @@ export function buildDecryptor(
   };
 }
 
-// §7.6.3.3 Algorithm 2 — key from the empty user password (R2-R4).
+// §7.6.3.3 Algorithm 2 — key from the user password (R2-R4). The password is
+// padded to 32 bytes with PAD per step (a); the empty string yields PAD itself.
 function deriveKeyLegacy(
   o: Uint8Array,
   p: number,
@@ -69,22 +73,42 @@ function deriveKeyLegacy(
   r: number,
   keyLen: number,
   encryptMetadata: boolean,
+  password: string,
 ): Uint8Array {
   const tail = r >= 4 && !encryptMetadata ? Uint8Array.from([0xff, 0xff, 0xff, 0xff]) : EMPTY;
-  let hash = md5(concat(PAD, o.subarray(0, 32), p32le(p), id0, tail));
+  let hash = md5(concat(padPassword(password), o.subarray(0, 32), p32le(p), id0, tail));
   if (r >= 3) for (let i = 0; i < 50; i++) hash = md5(hash.subarray(0, keyLen));
   return hash.subarray(0, keyLen);
 }
 
-// §7.6.4.3.3 Algorithm 2.A — validate the empty user password and recover the
-// 32-byte file key from /UE (R6, AES-256).
-function deriveKeyR6(u: Uint8Array, ue: Uint8Array): Uint8Array | undefined {
+// §7.6.4.3.3 Algorithm 2.A — validate the user password and recover the 32-byte
+// file key from /UE (R6, AES-256). The password is UTF-8, truncated to 127
+// bytes; the empty string is the permissions-only case.
+function deriveKeyR6(u: Uint8Array, ue: Uint8Array, password: string): Uint8Array | undefined {
   if (u.length < 48 || ue.length < 32) return undefined;
+  const pw = passwordBytes(password);
   const validationSalt = u.subarray(32, 40);
   const keySalt = u.subarray(40, 48);
-  if (!equal(hash2B(EMPTY, validationSalt, EMPTY), u.subarray(0, 32))) return undefined; // wrong pw
-  const intermediate = hash2B(EMPTY, keySalt, EMPTY);
+  if (!equal(hash2B(pw, validationSalt, EMPTY), u.subarray(0, 32))) return undefined; // wrong pw
+  const intermediate = hash2B(pw, keySalt, EMPTY);
   return aesCbcDecrypt(intermediate, ZERO16, ue.subarray(0, 32), false);
+}
+
+// §7.6.3.3 step (a) — the password padded/truncated to exactly 32 bytes with the
+// PAD string. PDFDocEncoding is approximated by latin1 (the common ASCII case).
+function padPassword(password: string): Uint8Array {
+  const raw = strToBytes(password);
+  const out = new Uint8Array(32);
+  const n = Math.min(raw.length, 32);
+  out.set(raw.subarray(0, n), 0);
+  out.set(PAD.subarray(0, 32 - n), n);
+  return out;
+}
+
+// §7.6.4.3.3 — the R6 password is its UTF-8 bytes, truncated to 127 bytes.
+// SASLprep (§7.6.4.3.4) is omitted; ASCII passwords are unaffected.
+function passwordBytes(password: string): Uint8Array {
+  return new TextEncoder().encode(password).subarray(0, 127);
 }
 
 // §7.6.4.3.4 Algorithm 2.B — the R6 hardened hash.

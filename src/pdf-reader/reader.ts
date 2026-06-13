@@ -31,15 +31,16 @@ function sniffPdf(bytes: Uint8Array): boolean {
   return false;
 }
 
-export function readPdf(bytes: Uint8Array): ReadResult<FlowDoc> {
-  const file = PdfFile.parse(bytes);
+export function readPdf(bytes: Uint8Array, password = ''): ReadResult<FlowDoc> {
+  const file = PdfFile.parse(bytes, password);
   const losses: Array<Loss> = [];
 
   if (file.encryptionUnsupported) {
     losses.push({
       severity: 'dropped',
       feature: FEATURES.text,
-      detail: 'encrypted PDF — a user password is required and was not supplied',
+      detail:
+        'encrypted PDF — the user password was missing or incorrect, or the handler is unsupported',
     });
   }
 
@@ -70,5 +71,5 @@ export const pdfReader: DocumentReader<FlowDoc> = {
   produces: 'flow',
   supports: new Set([FEATURES.text, FEATURES.tables, FEATURES.lists, FEATURES.images]),
   sniff: sniffPdf,
-  read: (bytes) => readPdf(bytes),
+  read: (bytes, opts) => readPdf(bytes, typeof opts?.password === 'string' ? opts.password : ''),
 };
