@@ -105,6 +105,18 @@ export interface ParsedWorksheet {
   readonly tablePartRelIds?: ReadonlyArray<string>;
   // Resolved table parts (banded styles, header rows) — filled by the reader.
   readonly tables?: ReadonlyArray<ExcelTable>;
+  // ECMA-376 §18.3.1.66 <sheetView><pane state="frozen"> — frozen rows/columns.
+  // A VIEW setting with NO effect on print/PDF (printed repeats are Print_Titles);
+  // carried for round-trip fidelity and HTML sticky panes (E-SHEET SE2/SE3).
+  readonly pane?: SheetPane;
+}
+
+// A frozen pane: the count of leading rows / columns frozen in the worksheet
+// view. Derived from <pane ySplit="rows" xSplit="cols" state="frozen"> — a plain
+// "split" pane (a resizable divider, no freeze) is not captured.
+export interface SheetPane {
+  readonly frozenRows: number;
+  readonly frozenCols: number;
 }
 
 // ECMA-376 §18.5.1.2 <table> — a structured table over a cell range with a

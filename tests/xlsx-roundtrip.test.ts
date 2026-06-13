@@ -53,6 +53,7 @@ function normGrid(g: ParsedWorksheet): unknown {
     conditionalFormats: g.conditionalFormats,
     sparklines: g.sparklines,
     tables: g.tables,
+    pane: g.pane,
   };
 }
 
@@ -194,6 +195,21 @@ const fixtures: Array<{ name: string; xlsx: Uint8Array }> = [
     xlsx: buildXlsx({ rows: [[1]], printOptions: { gridLines: true, horizontalCentered: true } }),
   },
   { name: 'row breaks (SD3a)', xlsx: buildXlsx({ rows: [[1], [2], [3]], rowBreaks: [1] }) },
+  { name: 'col breaks (SE1)', xlsx: buildXlsx({ rows: [[1, 2, 3]], colBreaks: [1] }) },
+  {
+    name: 'frozen pane — rows + cols (SE2)',
+    xlsx: buildXlsx({
+      rows: [
+        [1, 2],
+        [3, 4],
+      ],
+      freeze: { rows: 1, cols: 1 },
+    }),
+  },
+  {
+    name: 'frozen pane — top row (SE2)',
+    xlsx: buildXlsx({ rows: [[1], [2]], freeze: { rows: 1 } }),
+  },
   {
     name: 'conditional formatting cellIs (SD3b)',
     xlsx: buildXlsx({

@@ -434,17 +434,34 @@ function iconBucket(thresholds: ReadonlyArray<number>, value: number): number {
 // `*Gray` families are monochrome (only the direction/shape carries meaning).
 function iconToCell(setName: string, count: number, index: number, reverse: boolean): CellIcon {
   const e = reverse ? count - 1 - index : index;
+  // Meter families are monochrome — only the amount filled carries meaning, so
+  // they bypass the red→green ramp. Ratings light bucket+1 of `count` bars; a
+  // quarter pie fills `e` of its `count-1` slices (bucket 0 = empty circle).
+  if (/Rating/i.test(setName)) {
+    return { shape: 'bars', colorHex: METER_HEX, fill: { filled: e + 1, levels: count } };
+  }
+  if (/Quarters/i.test(setName)) {
+    return { shape: 'pie', colorHex: METER_HEX, fill: { filled: e, levels: count - 1 } };
+  }
   const colorHex = /Gray/i.test(setName) ? GRAY_HEX : iconColor(count, e);
   return { shape: iconShape(setName, e, count), colorHex };
 }
 
 const GRAY_HEX = '808080';
+// Excel's rating/quarter glyphs are drawn near-black, not on the colour ramp.
+const METER_HEX = '595959';
 
 function iconShape(setName: string, e: number, count: number): CellIconShape {
   if (setName.includes('Arrows')) {
     if (e <= 0) return 'triangleDown';
     if (e >= count - 1) return 'triangleUp';
     return 'triangleRight';
+  }
+  if (setName.includes('Symbols')) {
+    // 3 Symbols: red cross (low), yellow exclamation (mid), green check (high).
+    if (e <= 0) return 'cross';
+    if (e >= count - 1) return 'check';
+    return 'exclamation';
   }
   if (setName.includes('Signs')) {
     // 3 Signs: red diamond (low), yellow triangle (mid), green circle (high).
@@ -456,8 +473,8 @@ function iconShape(setName: string, e: number, count: number): CellIconShape {
   return 'circle';
 }
 
-// A red→green ramp per icon count; the approximation Ream draws for every family
-// (faithful glyph sets — signs, symbols, ratings — follow). e is the bucket.
+// A red→green ramp per icon count, used by the shape families (lights, arrows,
+// signs, symbols, flags). The meter families above are monochrome. e is the bucket.
 const ICON_RAMPS: Readonly<Record<number, ReadonlyArray<string>>> = {
   3: ['FF0000', 'FFC000', '00B050'],
   4: ['FF0000', 'FF8C00', 'FFC000', '00B050'],

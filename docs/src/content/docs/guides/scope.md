@@ -9,6 +9,15 @@ doesn't yet.
 
 ## Implemented
 
+**Input** — Ream parses **Word (`.docx`)**, **Excel (`.xlsx`)** and **PDF**,
+sniffed from the bytes. PDF input reconstructs a document tree from the page
+content: a **tagged** PDF (including the ones Ream writes) is rebuilt from its
+structure tree — headings, paragraphs, tables, list items, reading order; an
+**untagged** PDF is reconstructed heuristically from glyph positions (lines by
+baseline, paragraphs by spacing, headings by relative font size), which is
+approximate. PDF text comes back via each font's `/ToUnicode` map; images,
+vector graphics and encrypted PDFs are not read.
+
 **Output** — `convert('pdf')`, `convert('svg')` (a page-stack preview),
 `convert('html')` (flowed, needs no fonts), `convert('docx')` (write
 WordprocessingML back out) and `convert('xlsx')` (write SpreadsheetML back out —
@@ -45,11 +54,19 @@ a read↔write loop; embedded charts are the one piece not yet written.
 **SpreadsheetML (§18)**
 - Grids, shared strings, number formats and dates (incl. the 1904 date system).
 - The print model — gridline suppression, print area, fit-to-page scaling, repeated
-  print titles, manual page breaks, horizontal/vertical centering.
+  print titles, manual page breaks, horizontal/vertical centering, and **column-band
+  pagination**: a sheet wider than the page (and not fit-to-width) splits across
+  pages, all rows of the left columns first, then the next band ("down, then over"),
+  honouring manual column breaks — instead of being squeezed onto one page width.
+- **Frozen panes** round-trip through the writer and become sticky header rows /
+  columns in HTML output. They do not affect PDF — in Excel freezing is a view
+  setting that does not print (the printed repeat is the print titles above).
 - **Conditional formatting** — `cellIs` (compare-to-constant highlights),
   `colorScale` (2/3-stop gradients), `dataBar` (in-cell bars, with a zero axis
-  so negative values run the other way) and `iconSet` (traffic lights, arrows,
-  flags, …). The cross-cell rules resolve against the range's value extent.
+  so negative values run the other way) and `iconSet` — traffic lights, arrows,
+  signs, symbols (check / exclamation / cross), flags, ratings (a bar meter) and
+  quarters (a clock pie). The cross-cell rules resolve against the range's value
+  extent.
 - **Sparklines** — per-cell line / column / win-loss mini charts, including
   cross-sheet data ranges and blank-cell gaps.
 - **Excel tables** (`xl/tables`) — banded rows and a styled header row, the

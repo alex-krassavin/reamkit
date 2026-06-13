@@ -182,6 +182,9 @@ describe('byte gate: xlsx feature surface (E-SHEET SA0)', () => {
       definedNames: [{ name: '_xlnm.Print_Titles', localSheetId: 0, value: 'Sheet1!$1:$1' }],
     }),
     'row-breaks': buildXlsx({ rows: grid(6, 3), rowBreaks: [2] }),
+    // E-SHEET SE1 — a wide unscaled sheet paginates across columns into bands.
+    'column-bands': buildXlsx({ rows: grid(4, 8), columns: [{ min: 1, max: 8, widthChars: 24 }] }),
+    'column-breaks': buildXlsx({ rows: grid(4, 4), colBreaks: [2] }),
     centering: buildXlsx({
       rows: [['centered']],
       printOptions: { horizontalCentered: true, verticalCentered: true },

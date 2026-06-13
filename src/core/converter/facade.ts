@@ -28,6 +28,7 @@ import { convertDocxToPdf } from '@/word/docx-to-pdf';
 import { convertXlsxToPdf } from '@/excel/xlsx-to-pdf';
 import { docxReader } from '@/word/docx-reader';
 import { xlsxReader } from '@/excel/xlsx-reader';
+import { pdfReader } from '@/pdf-reader/reader';
 
 export interface ConvertOptions extends ConvertDocxOptions {
   /**
@@ -83,7 +84,11 @@ export interface CreateConverterOptions {
   readonly readers?: ReadonlyArray<DocumentReader<SourceDoc>>;
 }
 
-export const DEFAULT_READERS: ReadonlyArray<DocumentReader<SourceDoc>> = [docxReader, xlsxReader];
+export const DEFAULT_READERS: ReadonlyArray<DocumentReader<SourceDoc>> = [
+  docxReader,
+  xlsxReader,
+  pdfReader,
+];
 
 export function createConverter(opts: CreateConverterOptions = {}): Converter {
   const readers = opts.readers ?? DEFAULT_READERS;

@@ -20,6 +20,7 @@ import type {
   ParsedSparkline,
   ParsedWorksheet,
   RowHeight,
+  SheetPane,
   SparklineKind,
   WorksheetCell,
   XlsxPageMargins,
@@ -69,6 +70,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
   const printOptions = parsePrintOptions(wsObj);
   const rowBreaks = parseBreaks(wsObj, 'rowBreaks');
   const colBreaks = parseBreaks(wsObj, 'colBreaks');
+  const pane = parsePane(wsObj);
   const drawingNode = wsObj['drawing'];
   const drawingRelId =
     drawingNode && typeof drawingNode === 'object'
@@ -84,6 +86,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
     ...(printOptions ? { printOptions } : {}),
     ...(rowBreaks.length > 0 ? { rowBreaks } : {}),
     ...(colBreaks.length > 0 ? { colBreaks } : {}),
+    ...(pane ? { pane } : {}),
     ...(drawingRelId !== undefined ? { drawingRelId } : {}),
     ...(conditionalFormats.length > 0 ? { conditionalFormats } : {}),
     ...(sparklines.length > 0 ? { sparklines } : {}),
@@ -255,6 +258,32 @@ function parsePrintOptions(ws: Record<string, unknown>): XlsxPrintOptions | unde
     ...(horizontalCentered !== undefined ? { horizontalCentered } : {}),
     ...(verticalCentered !== undefined ? { verticalCentered } : {}),
   };
+}
+
+// ECMA-376 §18.3.1.66 — <sheetViews><sheetView><pane>. A frozen (or frozen-split)
+// pane freezes `ySplit` leading rows and `xSplit` leading columns; a plain "split"
+// pane (a resizable divider, no freeze) is ignored. Frozen panes do not affect
+// print/PDF — they are carried for round-trip + HTML sticky panes (E-SHEET SE2).
+function parsePane(ws: Record<string, unknown>): SheetPane | undefined {
+  const views = ws['sheetViews'];
+  if (!views || typeof views !== 'object') return undefined;
+  const viewRaw = (views as Record<string, unknown>)['sheetView'];
+  const view = Array.isArray(viewRaw) ? viewRaw[0] : viewRaw;
+  if (!view || typeof view !== 'object') return undefined;
+  const paneNode = (view as Record<string, unknown>)['pane'];
+  if (!paneNode || typeof paneNode !== 'object') return undefined;
+  const pane = paneNode as Record<string, unknown>;
+  const state = strAttr(pane, 'state');
+  if (state !== 'frozen' && state !== 'frozenSplit') return undefined;
+  const count = (key: string): number => {
+    const raw = strAttr(pane, key);
+    const n = raw !== undefined ? Number(raw) : NaN;
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  };
+  const frozenCols = count('xSplit');
+  const frozenRows = count('ySplit');
+  if (frozenCols === 0 && frozenRows === 0) return undefined;
+  return { frozenRows, frozenCols };
 }
 
 // ECMA-376 §18.3.1.74/§18.3.1.14 — <rowBreaks>/<colBreaks> with <brk id=".."/>.

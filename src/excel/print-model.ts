@@ -27,6 +27,7 @@ import type {
   SectionProperties,
   Table,
   TableCell,
+  TableProperties,
   TableRow,
 } from '@/core/document-model';
 import type {
@@ -50,6 +51,7 @@ import type {
 import type { CellConditionalFormatter, CfOverride } from '@/excel/conditional-format';
 import { eighthPtToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 import { applyNumberFormat, parseAreaRef, parseTitleRowRange } from '@/excel';
+import { bandedTables, computeColumnBands } from '@/excel/column-bands';
 import { buildConditionalFormatter } from '@/excel/conditional-format';
 
 // Excel "character width" → twips. Calibri 11pt default Maximum Digit Width
@@ -575,22 +577,47 @@ export function worksheetToBody(
   // <printOptions horizontalCentered="1"> centers the sheet within the print
   // margins.
   const centered = worksheet.printOptions?.horizontalCentered === true;
+  const tableProperties: TableProperties = {
+    ...(print.gridLines
+      ? {
+          borders: {
+            top: thin,
+            bottom: thin,
+            left: thin,
+            right: thin,
+            insideH: thin,
+            insideV: thin,
+          },
+        }
+      : {}),
+    ...(centered ? { alignment: 'center' as const } : {}),
+  };
+
+  // E-SHEET SE1 — when an unscaled sheet is wider than the printable page (or
+  // carries a manual column break), paginate across columns into bands instead of
+  // squeezing it onto one page width. Print-scaled sheets (fit-to-page / explicit
+  // <scale>) keep the uniform shrink path — fit-to-page overrides manual breaks in
+  // Excel — so their output is unchanged; so do sheets that already fit and have
+  // no manual break.
+  const contentWidthTwips = sheetContentWidthTwips(worksheet);
+  const colBreaksLocal = new Set<number>();
+  for (const brk of worksheet.colBreaks ?? []) {
+    const local = brk - colStart;
+    if (local > 0 && local < colCount) colBreaksLocal.add(local);
+  }
+  if (!scaled && colCount > 1 && (totalGridTwips > contentWidthTwips || colBreaksLocal.size > 0)) {
+    const bands = computeColumnBands(columnWidths, contentWidthTwips, colBreaksLocal);
+    if (bands.length > 1) return bandedTables(rows, columnWidths, bands, tableProperties);
+  }
+
+  // A frozen pane becomes a sticky-pane hint for the HTML writer (E-SHEET SE3).
+  // Only on the single-table path — sticky across column bands is meaningless.
+  const frozen =
+    worksheet.pane && (worksheet.pane.frozenRows > 0 || worksheet.pane.frozenCols > 0)
+      ? { rows: worksheet.pane.frozenRows, cols: worksheet.pane.frozenCols }
+      : undefined;
   const table: Table = {
-    properties: {
-      ...(print.gridLines
-        ? {
-            borders: {
-              top: thin,
-              bottom: thin,
-              left: thin,
-              right: thin,
-              insideH: thin,
-              insideV: thin,
-            },
-          }
-        : {}),
-      ...(centered ? { alignment: 'center' as const } : {}),
-    },
+    properties: frozen ? { ...tableProperties, frozen } : tableProperties,
     grid: columnWidths.map((w) => twipsToPt(w)),
     rows,
   };

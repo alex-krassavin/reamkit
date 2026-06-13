@@ -416,10 +416,21 @@ export type CellIconShape =
   | 'diamond'
   | 'triangleUp'
   | 'triangleDown'
-  | 'triangleRight';
+  | 'triangleRight'
+  // Symbols families (3Symbols / 3Symbols2): a check / exclamation / cross mark.
+  | 'check'
+  | 'cross'
+  | 'exclamation'
+  // Meter families: ratings (a signal-strength bar histogram) and quarters (a
+  // clock-fill pie). Both read `fill` for how many units are coloured in.
+  | 'bars'
+  | 'pie';
 export interface CellIcon {
   readonly shape: CellIconShape;
   readonly colorHex: string;
+  // Meter glyphs (`bars` / `pie`): how many of `levels` units are filled with
+  // `colorHex`; the rest are drawn in a neutral grey. Absent for single glyphs.
+  readonly fill?: { readonly filled: number; readonly levels: number };
 }
 
 // A sparkline: a mini chart filling the cell, plotting `values` (E-SHEET SC2).
@@ -489,6 +500,10 @@ export interface TableProperties {
   // ECMA-376 §17.4.27 (w:jc) / xlsx <printOptions horizontalCentered>. Centers
   // or right-aligns a table narrower than the content width; absent ⇒ left.
   readonly alignment?: 'left' | 'center' | 'right';
+  // A sticky-pane hint from a frozen worksheet view (E-SHEET SE3): the first
+  // `rows` rows / `cols` columns stay pinned while the rest scrolls. Consumed
+  // only by the HTML writer (an interactive target); PDF/SVG ignore it.
+  readonly frozen?: { readonly rows: number; readonly cols: number };
 }
 
 export interface TableCell {
