@@ -14,6 +14,7 @@
 import { unzlibSync } from 'fflate';
 
 import { encodePng } from './png-encode';
+import { reversePredictor } from './predictor';
 import type { PngColor } from './png-encode';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 
@@ -397,77 +398,19 @@ function applyChainExceptLast(filters: ReadonlyArray<string>, raw: Uint8Array): 
   return data;
 }
 
-// §7.4.4.4 — reverse a PNG (Predictor ≥ 10) or TIFF (Predictor 2) predictor.
+// §7.4.4.4 — reverse a /Predictor from the stream's /DecodeParms (shared math
+// in predictor.ts).
 function applyPredictor(file: PdfFile, d: PdfDict, data: Uint8Array): Uint8Array {
   const parms = decodeParmsOf(file, d);
   if (!parms) return data;
   const predictor = intOf(file.get(parms, 'Predictor'));
   if (predictor < 2) return data;
-  const colors = intOf(file.get(parms, 'Colors')) || 1;
-  const bpc = intOf(file.get(parms, 'BitsPerComponent')) || 8;
-  const columns = intOf(file.get(parms, 'Columns')) || 1;
-  const bpp = Math.max(1, Math.ceil((colors * bpc) / 8));
-  const rowBytes = Math.ceil((colors * bpc * columns) / 8);
-  if (rowBytes <= 0) return data;
-
-  if (predictor === 2) {
-    // TIFF horizontal differencing (8-bit components only here).
-    if (bpc !== 8) return data;
-    const rows = Math.floor(data.length / rowBytes);
-    const out = data.slice(0, rows * rowBytes);
-    for (let r = 0; r < rows; r++) {
-      const off = r * rowBytes;
-      for (let i = bpp; i < rowBytes; i++)
-        out[off + i] = (out[off + i]! + out[off + i - bpp]!) & 0xff;
-    }
-    return out;
-  }
-
-  // PNG predictors: each row is prefixed with a filter-type byte.
-  const stride = rowBytes + 1;
-  const rows = Math.floor(data.length / stride);
-  const out = new Uint8Array(rows * rowBytes);
-  let prev = new Uint8Array(rowBytes);
-  for (let r = 0; r < rows; r++) {
-    const ft = data[r * stride]!;
-    const src = r * stride + 1;
-    const dst = r * rowBytes;
-    for (let i = 0; i < rowBytes; i++) {
-      const x = data[src + i]!;
-      const a = i >= bpp ? out[dst + i - bpp]! : 0;
-      const b = prev[i]!;
-      const c = i >= bpp ? prev[i - bpp]! : 0;
-      let v: number;
-      switch (ft) {
-        case 1:
-          v = x + a;
-          break;
-        case 2:
-          v = x + b;
-          break;
-        case 3:
-          v = x + ((a + b) >> 1);
-          break;
-        case 4:
-          v = x + paeth(a, b, c);
-          break;
-        default:
-          v = x;
-      }
-      out[dst + i] = v & 0xff;
-    }
-    prev = out.subarray(dst, dst + rowBytes);
-  }
-  return out;
-}
-
-function paeth(a: number, b: number, c: number): number {
-  const p = a + b - c;
-  const pa = Math.abs(p - a);
-  const pb = Math.abs(p - b);
-  const pc = Math.abs(p - c);
-  if (pa <= pb && pa <= pc) return a;
-  return pb <= pc ? b : c;
+  return reversePredictor(data, {
+    predictor,
+    colors: intOf(file.get(parms, 'Colors')) || 1,
+    bitsPerComponent: intOf(file.get(parms, 'BitsPerComponent')) || 8,
+    columns: intOf(file.get(parms, 'Columns')) || 1,
+  });
 }
 
 function runLengthDecode(data: Uint8Array): Uint8Array {
