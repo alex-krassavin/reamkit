@@ -1,19 +1,22 @@
-// E-PDF EP10/EP11 — lift painted vector paths off a page. Runs the content
-// interpreter for its fill (EP10) and stroke (EP11) placements and keeps the
-// ones that read as real graphics: it drops hairline/degenerate fills, invisible
-// white paint, short stroke specks, and the near-full-page background, so a
-// reconstructed document gains genuine coloured shapes and lines without the
-// dot / page-background clutter. Clips, shadings and gradients are not captured
-// (a documented loss).
+// E-PDF EP10/EP11/EP16c — lift painted vector paths off a page. Runs the content
+// interpreter for its fill (EP10), stroke (EP11) and shading-pattern (EP16c)
+// placements and keeps the ones that read as real graphics: it drops
+// hairline/degenerate fills, invisible white paint, short stroke specks, and the
+// near-full-page background, so a reconstructed document gains genuine coloured
+// shapes, lines and gradients without the dot / page-background clutter. Clips
+// and the bare `sh` operator are not captured (a documented loss).
 
-import { interpretContent } from './content';
+import { IDENTITY, interpretContent } from './content';
+import { buildShadingMap } from './shading';
 import type { ContentFont, PathSeg } from './content';
+import type { ShapeGradient } from '@/core/vector';
 
 import type { PdfFile, PdfPage } from './document';
 
 export interface PdfVector {
   readonly segs: ReadonlyArray<PathSeg>;
-  readonly fillHex?: string; // present iff a qualifying fill survived (EP10)
+  readonly fillHex?: string; // present iff a qualifying solid fill survived (EP10)
+  readonly gradient?: ShapeGradient; // present iff a shading-pattern fill survived (EP16c)
   readonly strokeHex?: string; // present iff a qualifying stroke survived (EP11)
   readonly lineWidth?: number; // stroke width in page-space points (EP11)
   readonly minX: number;
@@ -32,19 +35,21 @@ const MAX_VECTORS = 2000; // per-page DoS guard
 export function collectPageVectors(file: PdfFile, page: PdfPage): Array<PdfVector> {
   const [px0, py0, px1, py1] = page.mediaBox;
   const pageArea = Math.max(1, Math.abs((px1 - px0) * (py1 - py0)));
+  const shadings = buildShadingMap(file, page);
   const out: Array<PdfVector> = [];
-  for (const v of interpretContent(file.pageContent(page), NO_FONTS).vectors) {
+  for (const v of interpretContent(file.pageContent(page), NO_FONTS, IDENTITY, shadings).vectors) {
     if (out.length >= MAX_VECTORS) break;
     const b = bbox(v.segs);
     if (!b) continue;
     const w = b.maxX - b.minX;
     const h = b.maxY - b.minY;
     const area = w * h;
-    // A fill must be a non-white area larger than a hairline and smaller than a
-    // page background; a stroke must be a non-white line longer than a speck.
+    // A fill (solid or gradient) must be a non-white area larger than a hairline
+    // and smaller than a page background; a stroke must be a non-white line
+    // longer than a speck.
+    const solidFill = v.fillHex !== undefined && v.fillHex !== 'FFFFFF';
     const filled =
-      v.fillHex !== undefined &&
-      v.fillHex !== 'FFFFFF' &&
+      (v.gradient !== undefined || solidFill) &&
       w >= MIN_SIDE &&
       h >= MIN_SIDE &&
       area >= MIN_AREA &&
@@ -57,7 +62,13 @@ export function collectPageVectors(file: PdfFile, page: PdfPage): Array<PdfVecto
     if (!filled && !stroked) continue;
     out.push({
       segs: v.segs,
-      ...(filled ? { fillHex: v.fillHex } : {}),
+      ...(filled
+        ? v.gradient
+          ? { gradient: v.gradient }
+          : v.fillHex !== undefined
+            ? { fillHex: v.fillHex }
+            : {}
+        : {}),
       ...(stroked
         ? {
             strokeHex: v.strokeHex,

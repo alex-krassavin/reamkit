@@ -130,7 +130,11 @@ export function shapeBlock(v: PdfVector): BodyElement {
   // the shape box at least the stroke thickness so the line has room to draw.
   const thick = v.strokeHex !== undefined ? Math.max(v.lineWidth ?? 0.75, 0.5) : 0;
   const fill: ShapeFill =
-    v.fillHex !== undefined ? { kind: 'solid', colorHex: v.fillHex } : { kind: 'none' };
+    v.gradient !== undefined
+      ? { kind: 'gradient', gradient: v.gradient }
+      : v.fillHex !== undefined
+        ? { kind: 'solid', colorHex: v.fillHex }
+        : { kind: 'none' };
   const line: ShapeLine | undefined =
     v.strokeHex !== undefined
       ? { width: pt(thick), colorHex: v.strokeHex, fill: 'solid' }

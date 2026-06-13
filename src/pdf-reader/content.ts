@@ -10,6 +10,7 @@
 // font falls back to Latin-1 with a half-em advance so text still surfaces.
 
 import { Lexer } from './lexer';
+import type { ShapeGradient } from '@/core/vector';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 import { PDF_NULL, PdfHexString, PdfName } from '@/pdf/objects';
 
@@ -62,6 +63,7 @@ export type PathSeg =
 export interface VectorPlacement {
   readonly segs: ReadonlyArray<PathSeg>;
   readonly fillHex?: string; // present iff the path is filled (f / F / f* / B / b)
+  readonly gradient?: ShapeGradient; // present iff filled with a shading pattern — EP16c
   readonly strokeHex?: string; // present iff the path is stroked (S / s / B / b) — EP11
   readonly lineWidth?: number; // stroke width in page-space points — EP11
   readonly mcid?: number;
@@ -114,6 +116,7 @@ interface TextState {
   fillColor: string; // current non-stroking colour (6-hex), graphics state (EP10)
   strokeColor: string; // current stroking colour (6-hex), graphics state (EP11)
   lineWidth: number; // current line width in user-space units (EP11)
+  fillGradient: ShapeGradient | undefined; // current non-stroking shading pattern (EP16c)
 }
 
 function initialState(): TextState {
@@ -130,6 +133,7 @@ function initialState(): TextState {
     fillColor: '000000',
     strokeColor: '000000',
     lineWidth: 1, // §8.4.3.2 default line width
+    fillGradient: undefined,
   };
 }
 
@@ -137,6 +141,7 @@ export function interpretContent(
   bytes: Uint8Array,
   fonts: ReadonlyMap<string, ContentFont>,
   initialCtm: Matrix = IDENTITY,
+  shadings: ReadonlyMap<string, ShapeGradient> = new Map(),
 ): InterpretResult {
   const runs: Array<TextRun> = [];
   const images: Array<ImagePlacement> = [];
@@ -192,6 +197,7 @@ export function interpretContent(
       vectors.push({
         segs: path,
         ...(fill ? { fillHex: state.fillColor } : {}),
+        ...(fill && state.fillGradient ? { gradient: state.fillGradient } : {}),
         ...(stroke ? { strokeHex: state.strokeColor, lineWidth: ctmLineWidth() } : {}),
         ...(mcid !== undefined ? { mcid } : {}),
       });
@@ -357,16 +363,28 @@ export function interpretContent(
         }
         break;
       }
-      // §8.6.8 non-stroking colour → the current fill colour (EP10).
+      // §8.6.8 non-stroking colour → the current fill colour (EP10); a solid
+      // colour clears any active shading pattern.
       case 'rg':
         state.fillColor = rgbHex(num(0), num(1), num(2));
+        state.fillGradient = undefined;
         break;
       case 'g':
         state.fillColor = grayHex(num(0));
+        state.fillGradient = undefined;
         break;
       case 'k':
         state.fillColor = cmykHex(num(0), num(1), num(2), num(3));
+        state.fillGradient = undefined;
         break;
+      // §8.6.8 colour in a named space; a /Pattern name selects a shading
+      // pattern (EP16c), numeric operands are a solid colour we leave as-is.
+      case 'scn':
+      case 'sc': {
+        const last = operands[operands.length - 1];
+        state.fillGradient = last instanceof PdfName ? shadings.get(last.value) : undefined;
+        break;
+      }
       // §8.6.8 stroking colour → the current stroke colour (EP11).
       case 'RG':
         state.strokeColor = rgbHex(num(0), num(1), num(2));

@@ -56,13 +56,13 @@ export function readPdf(bytes: Uint8Array, password = ''): ReadResult<FlowDoc> {
   }
   // Per-image losses from EP6 (undecodable colour spaces, dropped alpha, …).
   losses.push(...reconstruction.losses);
-  // Filled paths (EP10) and stroked lines (EP11) are lifted on the untagged
-  // path; shadings, gradients and clipping paths are not.
+  // Filled paths (EP10), stroked lines (EP11) and shading-pattern gradients
+  // (EP16c) are lifted on the untagged path; clipping paths and bare `sh`
+  // shadings are not.
   losses.push({
     severity: 'dropped',
     feature: FEATURES.images,
-    detail:
-      'PDF shaded vector graphics (gradients, shadings, clipping paths) are not reconstructed',
+    detail: 'PDF clipping paths and bare-shading (sh) vector regions are not reconstructed',
   });
   return { doc: reconstruction.doc, losses };
 }

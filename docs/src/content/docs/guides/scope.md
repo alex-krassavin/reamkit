@@ -20,8 +20,8 @@ baseline, paragraphs by spacing, headings by relative font size), which is
 approximate. Text comes back via each font's `/ToUnicode` map; **raster images,
 hyperlinks and vector shapes** are lifted back out too (JPEG verbatim, other
 images re-encoded as PNG with soft-mask alpha, `/Link` URIs re-attached to the
-text, filled paths and stroked lines turned into shapes). Shaded vector art
-(gradients, shadings, clipping paths) is not read.
+text, filled paths, stroked lines and shading-pattern gradients turned into
+shapes). Clipping paths and clip-bounded (`sh`) shadings are not read.
 
 **Output** — `convert('pdf')`, `convert('svg')` (a page-stack preview),
 `convert('html')` (flowed, needs no fonts), `convert('docx')` (write

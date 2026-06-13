@@ -92,6 +92,21 @@ describe('gradient fills (E-PDF EP16)', () => {
     expect(content).toContain('/Sh0 scn');
   });
 
+  it('reads a PDF shading pattern back into a gradient fill (E-PDF EP16c)', async () => {
+    const pdf = await Ream.parse(gradientDocx()).convert('pdf', { fonts: FONTS });
+    const back = Ream.parse(pdf);
+    const shape = back.flow.body.find(
+      (el) => el.kind === 'shape' && el.shape.fill.kind === 'gradient',
+    );
+    expect(shape?.kind).toBe('shape');
+    if (shape?.kind !== 'shape') return;
+    const g = shape.shape.fill.gradient;
+    expect(g?.kind).toBe('linear');
+    const stops = g?.stops ?? [];
+    expect(stops[0]?.colorHex).toBe('FF0000');
+    expect(stops[stops.length - 1]?.colorHex).toBe('0000FF');
+  });
+
   it('keeps the solid fallback under PDF/A (no shading pattern)', async () => {
     const pdf = await Ream.parse(gradientDocx()).convert('pdf', {
       fonts: FONTS,
