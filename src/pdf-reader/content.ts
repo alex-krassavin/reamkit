@@ -42,9 +42,32 @@ export interface ImagePlacement {
   readonly mcid?: number;
 }
 
+// A filled path (E-PDF EP10) — segments in page space (y-up) and the fill
+// colour. Strokes, clips, shadings and gradients are not captured.
+export type PathSeg =
+  | { readonly op: 'move'; readonly x: number; readonly y: number }
+  | { readonly op: 'line'; readonly x: number; readonly y: number }
+  | {
+      readonly op: 'cubic';
+      readonly x1: number;
+      readonly y1: number;
+      readonly x2: number;
+      readonly y2: number;
+      readonly x: number;
+      readonly y: number;
+    }
+  | { readonly op: 'close' };
+
+export interface VectorPlacement {
+  readonly segs: ReadonlyArray<PathSeg>;
+  readonly fillHex: string;
+  readonly mcid?: number;
+}
+
 export interface InterpretResult {
   readonly texts: Array<TextRun>;
   readonly images: Array<ImagePlacement>;
+  readonly vectors: Array<VectorPlacement>;
 }
 
 // 2D affine matrix [a b c d e f] = ⎡a b 0⎤ row-vector convention ([x y 1] · M).
@@ -85,6 +108,7 @@ interface TextState {
   hScale: number; // Tz / 100
   leading: number; // TL
   rise: number; // Ts
+  fillColor: string; // current non-stroking colour (6-hex), graphics state (EP10)
 }
 
 function initialState(): TextState {
@@ -98,6 +122,7 @@ function initialState(): TextState {
     hScale: 1,
     leading: 0,
     rise: 0,
+    fillColor: '000000',
   };
 }
 
@@ -108,14 +133,54 @@ export function interpretContent(
 ): InterpretResult {
   const runs: Array<TextRun> = [];
   const images: Array<ImagePlacement> = [];
+  const vectors: Array<VectorPlacement> = []; // filled paths (EP10)
   const lexer = new Lexer(bytes);
   const stack: Array<TextState> = [];
   let state = initialState();
   state.ctm = initialCtm;
   let tm: Matrix = IDENTITY; // text matrix
   let tlm: Matrix = IDENTITY; // line matrix
+  let path: Array<PathSeg> = []; // the current path under construction (page space)
   let operands: Array<PdfValue> = [];
   const mcStack: Array<number | undefined> = []; // marked-content (MCID) nesting
+
+  // Apply the CTM to a user-space point → page space (§8.3.4).
+  const toPage = (x: number, y: number): [number, number] => [
+    x * state.ctm[0] + y * state.ctm[2] + state.ctm[4],
+    x * state.ctm[1] + y * state.ctm[3] + state.ctm[5],
+  ];
+  const moveTo = (x: number, y: number): void => {
+    const [px, py] = toPage(x, y);
+    path.push({ op: 'move', x: px, y: py });
+  };
+  const lineTo = (x: number, y: number): void => {
+    const [px, py] = toPage(x, y);
+    path.push({ op: 'line', x: px, y: py });
+  };
+  const curveTo = (a: number, b: number, c: number, d: number, e: number, f: number): void => {
+    const [x1, y1] = toPage(a, b);
+    const [x2, y2] = toPage(c, d);
+    const [x, y] = toPage(e, f);
+    path.push({ op: 'cubic', x1, y1, x2, y2, x, y });
+  };
+  const rectTo = (x: number, y: number, w: number, h: number): void => {
+    moveTo(x, y);
+    lineTo(x + w, y);
+    lineTo(x + w, y + h);
+    lineTo(x, y + h);
+    path.push({ op: 'close' });
+  };
+  const fillPath = (): void => {
+    if (path.length >= 2) {
+      const mcid = mcStack.length > 0 ? mcStack[mcStack.length - 1] : undefined;
+      vectors.push({
+        segs: path,
+        fillHex: state.fillColor,
+        ...(mcid !== undefined ? { mcid } : {}),
+      });
+    }
+    path = [];
+  };
 
   const num = (i: number): number => {
     const v = operands[i];
@@ -275,8 +340,54 @@ export function interpretContent(
         }
         break;
       }
+      // §8.6.8 non-stroking colour → the current fill colour (EP10).
+      case 'rg':
+        state.fillColor = rgbHex(num(0), num(1), num(2));
+        break;
+      case 'g':
+        state.fillColor = grayHex(num(0));
+        break;
+      case 'k':
+        state.fillColor = cmykHex(num(0), num(1), num(2), num(3));
+        break;
+      // §8.5.2 path construction.
+      case 'm':
+        moveTo(num(0), num(1));
+        break;
+      case 'l':
+        lineTo(num(0), num(1));
+        break;
+      case 'c':
+        curveTo(num(0), num(1), num(2), num(3), num(4), num(5));
+        break;
+      case 're':
+        rectTo(num(0), num(1), num(2), num(3));
+        break;
+      case 'h':
+        path.push({ op: 'close' });
+        break;
+      // §8.5.3 path painting — capture FILLS; strokes/clips are discarded.
+      case 'f':
+      case 'F':
+      case 'f*':
+      case 'B':
+      case 'B*':
+        fillPath();
+        break;
+      case 'b':
+      case 'b*':
+        path.push({ op: 'close' });
+        fillPath();
+        break;
+      case 'n':
+      case 'S':
+      case 's':
+      case 'W':
+      case 'W*':
+        path = [];
+        break;
       default:
-        break; // path, colour … ignored for text
+        break; // other graphics-state / stroking operators ignored
     }
   };
 
@@ -313,7 +424,24 @@ export function interpretContent(
         break;
     }
   }
-  return { texts: runs, images };
+  return { texts: runs, images, vectors };
+}
+
+// PDF colour operands (0..1 per channel) → a 6-hex sRGB string.
+function clamp255(v: number): number {
+  return Math.max(0, Math.min(255, Math.round(v * 255)));
+}
+function hex2(v: number): string {
+  return clamp255(v).toString(16).padStart(2, '0');
+}
+function rgbHex(r: number, g: number, b: number): string {
+  return (hex2(r) + hex2(g) + hex2(b)).toUpperCase();
+}
+function grayHex(v: number): string {
+  return rgbHex(v, v, v);
+}
+function cmykHex(c: number, m: number, y: number, k: number): string {
+  return rgbHex((1 - c) * (1 - k), (1 - m) * (1 - k), (1 - y) * (1 - k));
 }
 
 function matrixFromOperands(operands: ReadonlyArray<PdfValue>): Matrix {

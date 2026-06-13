@@ -55,11 +55,12 @@ export function readPdf(bytes: Uint8Array): ReadResult<FlowDoc> {
   }
   // Per-image losses from EP6 (undecodable colour spaces, dropped alpha, …).
   losses.push(...reconstruction.losses);
-  // Raster images are lifted; true vector graphics (paths, shadings) are not.
+  // Filled paths are lifted (EP10, untagged path); strokes, shadings, gradients
+  // and clips are not.
   losses.push({
     severity: 'dropped',
     feature: FEATURES.images,
-    detail: 'PDF vector graphics are not reconstructed',
+    detail: 'PDF stroked / shaded vector graphics (lines, gradients, clips) are not reconstructed',
   });
   return { doc: reconstruction.doc, losses };
 }

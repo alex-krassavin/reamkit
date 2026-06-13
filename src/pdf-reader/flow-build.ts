@@ -3,11 +3,12 @@
 // carries a body of paragraphs/tables/images over the empty style sheet, with
 // any lifted image bytes (EP6) in the resource store the writers embed from.
 
-import type { BodyElement, ParagraphProperties } from '@/core/document-model';
+import type { BodyElement, CustomPathCmd, ParagraphProperties } from '@/core/document-model';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss } from '@/core/ir';
 
 import type { PdfImage } from './images';
+import type { PdfVector } from './vector';
 import { ResourceStore, pt } from '@/core/ir';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 
@@ -88,6 +89,46 @@ export function dedupeLosses(losses: ReadonlyArray<Loss>): Array<Loss> {
   const byDetail = new Map<string, Loss>();
   for (const loss of losses) if (!byDetail.has(loss.detail)) byDetail.set(loss.detail, loss);
   return [...byDetail.values()];
+}
+
+// A lifted filled path (EP10) as a custom-geometry shape. Page-space points
+// (y-up) become path-space (bbox-relative, y-down); the shape is sized from the
+// bounding box and placed in flow order by the caller.
+export function shapeBlock(v: PdfVector): BodyElement {
+  const w = v.maxX - v.minX;
+  const h = v.maxY - v.minY;
+  const fx = (x: number): number => x - v.minX;
+  const fy = (y: number): number => v.maxY - y; // flip to top-left origin
+  const commands: Array<CustomPathCmd> = v.segs.map((s): CustomPathCmd => {
+    switch (s.op) {
+      case 'move':
+        return { cmd: 'move', x: fx(s.x), y: fy(s.y) };
+      case 'line':
+        return { cmd: 'line', x: fx(s.x), y: fy(s.y) };
+      case 'cubic':
+        return {
+          cmd: 'cubic',
+          x1: fx(s.x1),
+          y1: fy(s.y1),
+          x2: fx(s.x2),
+          y2: fy(s.y2),
+          x: fx(s.x),
+          y: fy(s.y),
+        };
+      case 'close':
+        return { cmd: 'close' };
+    }
+  });
+  return {
+    kind: 'shape',
+    shape: {
+      width: pt(w),
+      height: pt(h),
+      geometry: { kind: 'custom', custom: { pathWidth: w, pathHeight: h, commands } },
+      fill: { kind: 'solid', colorHex: v.fillHex },
+      paragraphProperties: {},
+    },
+  };
 }
 
 export function buildFlowDoc(

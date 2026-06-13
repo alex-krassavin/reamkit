@@ -9,9 +9,16 @@
 // Untagged recovery is inherently approximate (quality is a metric, not a
 // guarantee).
 
-import { buildFlowDoc, dedupeLosses, imageBlock, paragraphFromRuns } from './flow-build';
+import {
+  buildFlowDoc,
+  dedupeLosses,
+  imageBlock,
+  paragraphFromRuns,
+  shapeBlock,
+} from './flow-build';
 import { collectPageImages } from './images';
 import { extractPageText } from './text';
+import { collectPageVectors } from './vector';
 import type { BodyElement } from '@/core/document-model';
 import type { Loss } from '@/core/ir';
 
@@ -51,6 +58,10 @@ export function reconstructByLayout(file: PdfFile): Reconstruction {
     losses.push(...imgs.losses);
     for (const img of imgs.images) {
       blocks.push({ top: img.y + img.heightPt, el: imageBlock(img, resources) });
+    }
+    // Filled vector paths (EP10) interleave by their top edge, like images.
+    for (const v of collectPageVectors(file, page)) {
+      blocks.push({ top: v.maxY, el: shapeBlock(v) });
     }
     blocks.sort((a, b) => b.top - a.top);
     for (const block of blocks) body.push(block.el);
