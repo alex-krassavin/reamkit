@@ -26,6 +26,47 @@ export function paragraphBlock(text: string, outlineLevel?: number): BodyElement
   };
 }
 
+// One piece of reconstructed text, carrying any hyperlink (E-PDF EP8).
+export interface TextSpan {
+  readonly text: string;
+  readonly href?: string;
+}
+
+// Build a paragraph from positioned spans, coalescing consecutive spans that
+// share an href into one run (so a link survives as its own run) and squashing
+// whitespace. With no hrefs this collapses to a single run — the same shape
+// `paragraphBlock` produces.
+export function paragraphFromRuns(
+  spans: ReadonlyArray<TextSpan>,
+  outlineLevel?: number,
+): BodyElement {
+  const merged: Array<{ text: string; href?: string }> = [];
+  for (const s of spans) {
+    const last = merged[merged.length - 1];
+    if (last && last.href === s.href) last.text += s.text;
+    else if (s.href !== undefined) merged.push({ text: s.text, href: s.href });
+    else merged.push({ text: s.text });
+  }
+  const runs = merged
+    .map((m) => ({ text: m.text.replace(/\s+/g, ' '), href: m.href }))
+    .filter((m) => m.text.length > 0);
+  // Trim the paragraph's outer whitespace.
+  if (runs.length > 0) {
+    runs[0]!.text = runs[0]!.text.replace(/^ /, '');
+    runs[runs.length - 1]!.text = runs[runs.length - 1]!.text.replace(/ $/, '');
+  }
+  const properties: ParagraphProperties = outlineLevel !== undefined ? { outlineLevel } : {};
+  return {
+    kind: 'paragraph',
+    paragraph: {
+      properties,
+      runs: runs
+        .filter((r) => r.text.length > 0)
+        .map((r) => ({ text: r.text, properties: {}, ...(r.href ? { href: r.href } : {}) })),
+    },
+  };
+}
+
 // Store the image bytes (content-addressed dedup) and build the block that
 // references them, sized in points from the placement CTM.
 export function imageBlock(image: PdfImage, resources: ResourceStore, alt?: string): BodyElement {

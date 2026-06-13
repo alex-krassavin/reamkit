@@ -1,14 +1,15 @@
 // E-PDF EP4 — heuristic reconstruction for UNTAGGED PDFs. With no structure tree
-// there is only positioned content (EP2/EP6): glyphs with an (x, y) and a size,
-// and images with a page rectangle. We recover reading order the way a human eye
-// does — cluster runs sharing a baseline into lines, join a line's runs
-// left-to-right inserting spaces across gaps, group lines into paragraphs by
-// their vertical spacing, then interleave the page's images by their top edge.
+// there is only positioned content (EP2/EP6/EP8): glyphs with an (x, y), a size
+// and any hyperlink, plus images with a page rectangle. We recover reading order
+// the way a human eye does — cluster runs sharing a baseline into lines, order a
+// line's runs left-to-right inserting spaces across gaps, group lines into
+// paragraphs by their vertical spacing, then interleave the page's images by
+// their top edge. Each run's href is carried through as a span so links survive.
 // Headings are guessed from a font size well above the document's median.
 // Untagged recovery is inherently approximate (quality is a metric, not a
 // guarantee).
 
-import { buildFlowDoc, dedupeLosses, imageBlock, paragraphBlock } from './flow-build';
+import { buildFlowDoc, dedupeLosses, imageBlock, paragraphFromRuns } from './flow-build';
 import { collectPageImages } from './images';
 import { extractPageText } from './text';
 import type { BodyElement } from '@/core/document-model';
@@ -16,13 +17,14 @@ import type { Loss } from '@/core/ir';
 
 import type { TextRun } from './content';
 import type { PdfFile } from './document';
-import type { Reconstruction } from './flow-build';
+import type { Reconstruction, TextSpan } from './flow-build';
 import { ResourceStore } from '@/core/ir';
 
 interface Line {
   readonly y: number; // baseline (page space, y-up)
   readonly fontSize: number;
-  readonly text: string;
+  readonly text: string; // joined text, for emptiness/heading checks
+  readonly spans: ReadonlyArray<TextSpan>;
 }
 
 export function reconstructByLayout(file: PdfFile): Reconstruction {
@@ -42,7 +44,7 @@ export function reconstructByLayout(file: PdfFile): Reconstruction {
     for (const para of groupIntoParagraphs(pageLines[i]!)) {
       blocks.push({
         top: para.top,
-        el: paragraphBlock(para.text, headingLevel(para.fontSize, medianFont)),
+        el: paragraphFromRuns(para.spans, headingLevel(para.fontSize, medianFont)),
       });
     }
     const imgs = collectPageImages(file, page);
@@ -57,7 +59,7 @@ export function reconstructByLayout(file: PdfFile): Reconstruction {
 }
 
 // Cluster runs that share a baseline (within half a line's height) into lines,
-// top of the page first; within a line, order by x and join across gaps.
+// top of the page first; within a line, order by x and build link-aware spans.
 function groupIntoLines(runs: ReadonlyArray<TextRun>): Array<Line> {
   const sorted = [...runs].sort((a, b) => b.y - a.y || a.x - b.x);
   const clusters: Array<{ y: number; fontSize: number; runs: Array<TextRun> }> = [];
@@ -73,28 +75,40 @@ function groupIntoLines(runs: ReadonlyArray<TextRun>): Array<Line> {
   }
   return clusters.map((c) => {
     const ordered = c.runs.sort((a, b) => a.x - b.x);
-    return { y: c.y, fontSize: c.fontSize || 10, text: joinLine(ordered, c.fontSize || 10) };
+    const fontSize = c.fontSize || 10;
+    const spans = lineSpans(ordered, fontSize);
+    return {
+      y: c.y,
+      fontSize,
+      text: spans
+        .map((s) => s.text)
+        .join('')
+        .replace(/\s+/g, ' ')
+        .trim(),
+      spans,
+    };
   });
 }
 
-// Join a line's runs, inserting a space where a horizontal gap suggests one. Run
-// widths are estimated (half-em per character) since glyph metrics are not kept.
-function joinLine(runs: ReadonlyArray<TextRun>, fontSize: number): string {
-  let text = '';
+// A line's runs as spans, inserting a (link-free) space where a horizontal gap
+// suggests one. Run widths are estimated (half-em per char) — glyph metrics are
+// not kept.
+function lineSpans(runs: ReadonlyArray<TextRun>, fontSize: number): Array<TextSpan> {
+  const spans: Array<TextSpan> = [];
   let prevEnd: number | undefined;
   for (const run of runs) {
-    if (prevEnd !== undefined && run.x - prevEnd > fontSize * 0.25) text += ' ';
-    text += run.text;
+    if (prevEnd !== undefined && run.x - prevEnd > fontSize * 0.25) spans.push({ text: ' ' });
+    spans.push(run.href !== undefined ? { text: run.text, href: run.href } : { text: run.text });
     prevEnd = run.x + run.text.length * (run.fontSizePt || fontSize) * 0.5;
   }
-  return text.replace(/\s+/g, ' ').trim();
+  return spans;
 }
 
 // Group consecutive lines into paragraphs: a vertical gap well over a single
 // line's leading starts a new paragraph. `top` is the paragraph's first (highest) line.
 function groupIntoParagraphs(
   lines: ReadonlyArray<Line>,
-): Array<{ text: string; fontSize: number; top: number }> {
+): Array<{ spans: Array<TextSpan>; fontSize: number; top: number }> {
   const groups: Array<Array<Line>> = [];
   let prevY: number | undefined;
   for (const line of lines) {
@@ -104,11 +118,7 @@ function groupIntoParagraphs(
     prevY = line.y;
   }
   return groups.map((g) => ({
-    text: g
-      .map((l) => l.text)
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim(),
+    spans: g.flatMap((l, i) => (i > 0 ? [{ text: ' ' }, ...l.spans] : [...l.spans])),
     fontSize: Math.max(...g.map((l) => l.fontSize)),
     top: g[0]!.y,
   }));

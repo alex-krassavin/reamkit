@@ -28,6 +28,9 @@ export interface TextRun {
   // The marked-content id of the enclosing BDC sequence (§14.6), if any — the
   // link from this text to the structure element that owns it (E-PDF EP3).
   readonly mcid?: number;
+  // A /Link annotation whose /Rect covers this run's origin attaches its URI here
+  // (E-PDF EP8), so the reconstructed run carries the hyperlink.
+  readonly href?: string;
 }
 
 // A painted XObject (`/Name Do`, §8.8) — an image or form. The CTM maps the unit
