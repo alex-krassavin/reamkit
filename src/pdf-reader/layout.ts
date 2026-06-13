@@ -1,18 +1,23 @@
 // E-PDF EP4 — heuristic reconstruction for UNTAGGED PDFs. With no structure tree
-// there is only positioned text (EP2): glyphs with an (x, y) and a size. We
-// recover reading order the way a human eye does — cluster runs sharing a
-// baseline into lines, join a line's runs left-to-right inserting spaces across
-// gaps, then group lines into paragraphs by their vertical spacing, and guess
-// headings from a font size well above the document's median. Untagged recovery
-// is inherently approximate (quality is a metric, not a guarantee).
+// there is only positioned content (EP2/EP6): glyphs with an (x, y) and a size,
+// and images with a page rectangle. We recover reading order the way a human eye
+// does — cluster runs sharing a baseline into lines, join a line's runs
+// left-to-right inserting spaces across gaps, group lines into paragraphs by
+// their vertical spacing, then interleave the page's images by their top edge.
+// Headings are guessed from a font size well above the document's median.
+// Untagged recovery is inherently approximate (quality is a metric, not a
+// guarantee).
 
-import { buildFlowDoc, paragraphBlock } from './flow-build';
+import { buildFlowDoc, dedupeLosses, imageBlock, paragraphBlock } from './flow-build';
+import { collectPageImages } from './images';
 import { extractPageText } from './text';
 import type { BodyElement } from '@/core/document-model';
-import type { FlowDoc } from '@/core/ir/flow';
+import type { Loss } from '@/core/ir';
 
 import type { TextRun } from './content';
 import type { PdfFile } from './document';
+import type { Reconstruction } from './flow-build';
+import { ResourceStore } from '@/core/ir';
 
 interface Line {
   readonly y: number; // baseline (page space, y-up)
@@ -20,19 +25,35 @@ interface Line {
   readonly text: string;
 }
 
-export function reconstructByLayout(file: PdfFile): FlowDoc {
-  const pages = file
-    .pages()
-    .map((page) => groupIntoLines(extractPageText(file, page)).filter((l) => l.text.length > 0));
-  const medianFont = median(pages.flat().map((l) => l.fontSize)) || 12;
+export function reconstructByLayout(file: PdfFile): Reconstruction {
+  const pages = file.pages();
+  const pageLines = pages.map((page) =>
+    groupIntoLines(extractPageText(file, page)).filter((l) => l.text.length > 0),
+  );
+  const medianFont = median(pageLines.flat().map((l) => l.fontSize)) || 12;
 
+  const resources = new ResourceStore();
+  const losses: Array<Loss> = [];
   const body: Array<BodyElement> = [];
-  for (const lines of pages) {
-    for (const para of groupIntoParagraphs(lines)) {
-      body.push(paragraphBlock(para.text, headingLevel(para.fontSize, medianFont)));
+  pages.forEach((page, i) => {
+    // Position-keyed blocks for this page: paragraphs at their top line, images
+    // at their top edge. One descending-y sort puts them in reading order.
+    const blocks: Array<{ top: number; el: BodyElement }> = [];
+    for (const para of groupIntoParagraphs(pageLines[i]!)) {
+      blocks.push({
+        top: para.top,
+        el: paragraphBlock(para.text, headingLevel(para.fontSize, medianFont)),
+      });
     }
-  }
-  return buildFlowDoc(body);
+    const imgs = collectPageImages(file, page);
+    losses.push(...imgs.losses);
+    for (const img of imgs.images) {
+      blocks.push({ top: img.y + img.heightPt, el: imageBlock(img, resources) });
+    }
+    blocks.sort((a, b) => b.top - a.top);
+    for (const block of blocks) body.push(block.el);
+  });
+  return { doc: buildFlowDoc(body, resources), losses: dedupeLosses(losses) };
 }
 
 // Cluster runs that share a baseline (within half a line's height) into lines,
@@ -70,10 +91,10 @@ function joinLine(runs: ReadonlyArray<TextRun>, fontSize: number): string {
 }
 
 // Group consecutive lines into paragraphs: a vertical gap well over a single
-// line's leading starts a new paragraph.
+// line's leading starts a new paragraph. `top` is the paragraph's first (highest) line.
 function groupIntoParagraphs(
   lines: ReadonlyArray<Line>,
-): Array<{ text: string; fontSize: number }> {
+): Array<{ text: string; fontSize: number; top: number }> {
   const groups: Array<Array<Line>> = [];
   let prevY: number | undefined;
   for (const line of lines) {
@@ -89,6 +110,7 @@ function groupIntoParagraphs(
       .replace(/\s+/g, ' ')
       .trim(),
     fontSize: Math.max(...g.map((l) => l.fontSize)),
+    top: g[0]!.y,
   }));
 }
 

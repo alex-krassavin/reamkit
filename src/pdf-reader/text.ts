@@ -24,5 +24,5 @@ export function extractPageText(file: PdfFile, page: PdfPage): Array<TextRun> {
       }
     }
   }
-  return interpretContent(file.pageContent(page), fonts);
+  return interpretContent(file.pageContent(page), fonts).texts;
 }

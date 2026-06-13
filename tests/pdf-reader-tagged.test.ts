@@ -27,7 +27,7 @@ async function taggedFlow(body: string) {
   });
   const flow = reconstructTaggedPdf(PdfFile.parse(pdf));
   if (!flow) throw new Error('reconstruction returned no FlowDoc');
-  return flow;
+  return flow.doc;
 }
 
 const paragraphTexts = (flow: { body: ReadonlyArray<{ kind: string }> }): Array<string> =>
@@ -114,7 +114,7 @@ describe('tagged-PDF reconstruction (E-PDF EP3)', () => {
     const pdf = await Ream.parse(docx).convert('pdf', { fonts: FONTS, tagged: true });
     const flow = reconstructTaggedPdf(PdfFile.parse(pdf));
     if (!flow) throw new Error('reconstruction returned no FlowDoc');
-    const texts = paragraphTexts(flow);
+    const texts = paragraphTexts(flow.doc);
     expect(texts.some((t) => t.includes('ItemOne'))).toBe(true);
     expect(texts.some((t) => t.includes('ItemTwo'))).toBe(true);
   });

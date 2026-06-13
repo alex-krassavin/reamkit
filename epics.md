@@ -175,11 +175,26 @@ Tagged-PDF, который мы пишем, — идеальный вход дл
   write-путь не тронут). Тесты `pdf-reader-facade`: sniff, format='pdf', text в interlayer, →html, →docx
   (валидный, репарсится в тот же текст), losses. **E-PDF замыкает Ream в универсальный документ-движок.**
 
+- **EP6 ✓ — извлечение растровых картинок.** Интерпретатор (content.ts) теперь ловит оператор `Do` с
+  текущим CTM и mcid → `ImagePlacement`. `images.ts` `collectPageImages` резолвит имя в `/Resources
+  /XObject`, рекурсивно входит в Form-XObject'ы (композит `/Matrix`, ограничение глубины) и декодирует
+  через `image-decode.ts`: JPEG (`/DCTDecode`) и JPEG2000 (`/JPXDecode`) — passthrough; всё остальное →
+  raw-сэмплы → PNG (`png-encode.ts`, новый минимальный энкодер RFC 2083 + CRC32). Цветовые пространства
+  DeviceGray/RGB/CMYK, CalGray/RGB, ICCBased (по `/N`), Indexed (по палитре); фильтры Flate/RunLength/
+  ASCII85/ASCIIHex + PNG/TIFF-предикторы; bpc 1/2/4/8/16; `/SMask` → альфа PNG. Неподдержанное
+  (ImageMask-стенсил, Separation/DeviceN/Lab, CCITT/JBIG2, LZW) → типизированный loss. Эмиссия: tagged-путь
+  — кейс `Figure` (картинка по mcid + `/Alt`), плюс «осиротевшие» картинки в конец по позиции; heuristic-путь
+  — интерливинг картинок с абзацами по верхней кромке (`y`). `reconstruct*` теперь возвращают `{doc,
+  losses}`; reader сужает blanket-loss до «vector graphics not reconstructed». Байт-в-ноль (только чтение).
+  Тесты `pdf-reader-images`: PNG-энкодер round-trip, Flate-RGB/DCT/Indexed/ImageMask декод, honest e2e
+  docx(картинка)→pdf→parse→FlowDoc→html (tagged и untagged).
+
 **Итог E-PDF.** Новая подсистема `src/pdf-reader/` (lexer/parser/document/content/cmap/font/text/
-struct-tree/tagged/layout/flow-build/reader) — чистое дополнение, байт-в-ноль для всех существующих
-выходов. PDF → FlowDoc: объекты (EP1) → текст (EP2) → структура (tagged EP3 / эвристика EP4) → фасад (EP5).
-Не делается: извлечение картинок/вектора, xref-streams/object-streams на чтение (наш писатель их не пишет),
-шифрованные PDF на чтение. ~50 тестов, honest e2e на СВОИХ же выходах.
+struct-tree/tagged/layout/flow-build/reader/images/image-decode/png-encode) — чистое дополнение, байт-в-ноль
+для всех существующих выходов. PDF → FlowDoc: объекты (EP1) → текст (EP2) → структура (tagged EP3 /
+эвристика EP4) → фасад (EP5) → растровые картинки (EP6). Не делается: ИСТИННЫЙ вектор (path/clip/shading) на
+чтение, xref-streams/object-streams на чтение (наш писатель их не пишет), шифрованные PDF на чтение. ~60
+тестов, honest e2e на СВОИХ же выходах.
 
 ---
 

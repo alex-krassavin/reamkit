@@ -63,9 +63,10 @@ const out = await doc.convert('xlsx');
 `Ream.parse` also accepts a **PDF**. A tagged PDF (including the ones Ream
 writes) is rebuilt from its structure tree — headings, paragraphs, tables, lists
 in reading order; an untagged PDF is reconstructed heuristically from glyph
-positions. The result is an ordinary `FlowDoc`, so it converts onward like any
-other source. Images, vector graphics and encrypted PDFs are not read (reported
-as losses).
+positions. **Raster images come back too** — lifted out of the page, sized from
+their placement, and carried into the HTML `<img>` / docx media part. The result
+is an ordinary `FlowDoc`, so it converts onward like any other source. Vector
+graphics and encrypted PDFs are not read (reported as losses).
 
 ```ts
 import { Ream } from 'reamkit';
@@ -75,7 +76,7 @@ const html = await doc.convert('html'); // the PDF's text as flowed HTML
 const docx = await doc.convert('docx'); // …or an editable Word document
 
 const { bytes, losses } = await doc.convertWithReport('html');
-// losses note the untagged-heuristic degradation and the dropped images.
+// losses note the untagged-heuristic degradation and any unread vector art.
 ```
 
 ## Browser: file input → PDF preview

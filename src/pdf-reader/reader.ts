@@ -1,8 +1,8 @@
 // E-PDF EP5 — the pdfReader adapter. Implements the DocumentReader contract so
 // `Ream.parse(pdfBytes)` sniffs %PDF-, parses the objects (EP1), extracts text
 // (EP2) and reconstructs a FlowDoc — via the tagged structure tree when present
-// (EP3) or the layout heuristic otherwise (EP4). The reconstruction is text +
-// table structure only; images and vector graphics are reported as losses.
+// (EP3) or the layout heuristic otherwise (EP4). Raster images are lifted back
+// out and placed in reading order (EP6); true vector graphics are not.
 
 import { PdfFile } from './document';
 import { reconstructByLayout } from './layout';
@@ -36,7 +36,7 @@ export function readPdf(bytes: Uint8Array): ReadResult<FlowDoc> {
   const losses: Array<Loss> = [];
 
   const tagged = reconstructTaggedPdf(file);
-  const doc = tagged ?? reconstructByLayout(file);
+  const reconstruction = tagged ?? reconstructByLayout(file);
   if (!tagged) {
     losses.push({
       severity: 'degraded',
@@ -45,19 +45,21 @@ export function readPdf(bytes: Uint8Array): ReadResult<FlowDoc> {
         'untagged PDF — text and headings reconstructed heuristically from glyph positions; structure is approximate',
     });
   }
-  // Neither path lifts images or vector art back out of the page.
+  // Per-image losses from EP6 (undecodable colour spaces, dropped alpha, …).
+  losses.push(...reconstruction.losses);
+  // Raster images are lifted; true vector graphics (paths, shadings) are not.
   losses.push({
     severity: 'dropped',
     feature: FEATURES.images,
-    detail: 'PDF images and vector graphics are not reconstructed',
+    detail: 'PDF vector graphics are not reconstructed',
   });
-  return { doc, losses };
+  return { doc: reconstruction.doc, losses };
 }
 
 export const pdfReader: DocumentReader<FlowDoc> = {
   id: 'pdf',
   produces: 'flow',
-  supports: new Set([FEATURES.text, FEATURES.tables, FEATURES.lists]),
+  supports: new Set([FEATURES.text, FEATURES.tables, FEATURES.lists, FEATURES.images]),
   sniff: sniffPdf,
   read: (bytes) => readPdf(bytes),
 };

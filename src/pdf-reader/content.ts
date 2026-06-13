@@ -30,14 +30,28 @@ export interface TextRun {
   readonly mcid?: number;
 }
 
+// A painted XObject (`/Name Do`, §8.8) — an image or form. The CTM maps the unit
+// square to page space, so it carries both the placement and the size; the mcid
+// links the paint to its structure element (a /Figure, E-PDF EP6).
+export interface ImagePlacement {
+  readonly name: string; // XObject resource name (no leading slash)
+  readonly ctm: Matrix;
+  readonly mcid?: number;
+}
+
+export interface InterpretResult {
+  readonly texts: Array<TextRun>;
+  readonly images: Array<ImagePlacement>;
+}
+
 // 2D affine matrix [a b c d e f] = ⎡a b 0⎤ row-vector convention ([x y 1] · M).
 //                                  ⎢c d 0⎥
 //                                  ⎣e f 1⎦
-type Matrix = readonly [number, number, number, number, number, number];
-const IDENTITY: Matrix = [1, 0, 0, 1, 0, 0];
+export type Matrix = readonly [number, number, number, number, number, number];
+export const IDENTITY: Matrix = [1, 0, 0, 1, 0, 0];
 
 // A applied first, then B.
-function multiply(a: Matrix, b: Matrix): Matrix {
+export function multiply(a: Matrix, b: Matrix): Matrix {
   return [
     a[0] * b[0] + a[1] * b[2],
     a[0] * b[1] + a[1] * b[3],
@@ -87,11 +101,14 @@ function initialState(): TextState {
 export function interpretContent(
   bytes: Uint8Array,
   fonts: ReadonlyMap<string, ContentFont>,
-): Array<TextRun> {
+  initialCtm: Matrix = IDENTITY,
+): InterpretResult {
   const runs: Array<TextRun> = [];
+  const images: Array<ImagePlacement> = [];
   const lexer = new Lexer(bytes);
   const stack: Array<TextState> = [];
   let state = initialState();
+  state.ctm = initialCtm;
   let tm: Matrix = IDENTITY; // text matrix
   let tlm: Matrix = IDENTITY; // line matrix
   let operands: Array<PdfValue> = [];
@@ -244,8 +261,19 @@ export function interpretContent(
       case 'EMC':
         mcStack.pop();
         break;
+      case 'Do': {
+        // Paint an XObject (image or form). Record its name + the CTM (which
+        // already folds in the placement `cm`) so a later stage can resolve and
+        // size it; tag it with the enclosing structure id (a /Figure).
+        const nm = operands[0];
+        if (nm instanceof PdfName) {
+          const mcid = mcStack.length > 0 ? mcStack[mcStack.length - 1] : undefined;
+          images.push({ name: nm.value, ctm: state.ctm, ...(mcid !== undefined ? { mcid } : {}) });
+        }
+        break;
+      }
       default:
-        break; // path, colour, XObject … ignored for text
+        break; // path, colour … ignored for text
     }
   };
 
@@ -282,7 +310,7 @@ export function interpretContent(
         break;
     }
   }
-  return runs;
+  return { texts: runs, images };
 }
 
 function matrixFromOperands(operands: ReadonlyArray<PdfValue>): Matrix {
