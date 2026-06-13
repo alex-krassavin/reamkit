@@ -108,7 +108,9 @@ charts — and is byte-stable across a read↔write loop.
 - **Font measurement parity with a specific renderer.** Ream lays out correctly for the
   font you supply; pixel-exact agreement with another tool requires that tool's exact
   font metrics.
-- Assorted deep-tail OOXML features are tracked as the project grows.
+- **A few rarely-used constructs are not rendered yet** — Word comments, SmartArt
+  diagrams, and Excel pivot tables / data validation / slicers. (Content controls,
+  field results, and legacy VML/OLE picture previews _are_ handled.)
 
 ## Validation
 
