@@ -70,14 +70,6 @@ gradients turned into shapes. The result is an ordinary `FlowDoc`, so it
 converts onward like any other source. Clipping paths and clip-bounded (`sh`)
 shadings are not read (reported as a loss).
 
-An encrypted PDF is opened with the **user password** passed to `Ream.parse`;
-the default empty string unlocks the common permissions-only encryption, so most
-encrypted PDFs need no password at all:
-
-```ts
-const doc = Ream.parse(pdfBytes, { password: 'letmein' });
-```
-
 ```ts
 import { Ream } from 'reamkit';
 
@@ -87,6 +79,14 @@ const docx = await doc.convert('docx'); // …or an editable Word document
 
 const { bytes, losses } = await doc.convertWithReport('html');
 // losses note the untagged-heuristic degradation and any unread vector art.
+```
+
+An encrypted PDF is opened with the **user password** passed to `Ream.parse`;
+the default empty string unlocks the common permissions-only encryption, so most
+encrypted PDFs need no password at all:
+
+```ts
+const doc = Ream.parse(pdfBytes, { password: 'letmein' });
 ```
 
 ## Browser: file input → PDF preview
