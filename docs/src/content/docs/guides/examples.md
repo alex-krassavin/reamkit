@@ -81,12 +81,48 @@ const { bytes, losses } = await doc.convertWithReport('html');
 // losses note the untagged-heuristic degradation and any unread vector art.
 ```
 
-An encrypted PDF is opened with the **user password** passed to `Ream.parse`;
-the default empty string unlocks the common permissions-only encryption, so most
-encrypted PDFs need no password at all:
+### Encrypted PDFs
+
+A PDF locked with a **user password** is opened by passing it to `Ream.parse`.
+The empty-string default unlocks the common permissions-only encryption (where
+the owner set restrictions but no open password), so most encrypted PDFs need no
+password at all:
 
 ```ts
 const doc = Ream.parse(pdfBytes, { password: 'letmein' });
+```
+
+A **wrong or missing** password is not thrown — `Ream.parse` still succeeds, but
+the encrypted content can't be decrypted, so it's recorded as a read-time **loss**
+and the text simply doesn't come back. Inspect `doc.losses`:
+
+```ts
+const doc = Ream.parse(lockedPdf); // no/incorrect password
+doc.losses;
+// [
+//   {
+//     severity: 'dropped',
+//     feature: 'text',
+//     detail: 'encrypted PDF — the user password was missing or incorrect, or the handler is unsupported',
+//   },
+// ]
+```
+
+To make that loss fatal instead, convert in **strict** mode: the first loss
+throws a `ConversionLossError`, with the offending `Loss` on its `.loss`
+property.
+
+```ts
+import { Ream, ConversionLossError } from 'reamkit';
+
+try {
+  await Ream.parse(lockedPdf).convert('html', { strict: true });
+} catch (err) {
+  if (err instanceof ConversionLossError) {
+    err.loss.feature; // 'text'
+    err.loss.detail; // 'encrypted PDF — the user password was missing or incorrect, …'
+  }
+}
 ```
 
 ## Browser: file input → PDF preview
