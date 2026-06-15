@@ -425,3 +425,33 @@ describe('pptx deck theme (E-PPTX PX5)', () => {
     expect(shp?.fill.colorHex).toBe('4472C4'); // default Office accent1
   });
 });
+
+const bgFill = (hex: string): string =>
+  `<p:bg><p:bgPr><a:solidFill><a:srgbClr val="${hex}"/></a:solidFill></p:bgPr></p:bg>`;
+
+describe('pptx slide backgrounds (E-PPTX PX5b)', () => {
+  it('renders the slide background as a behind-everything full-slide backdrop', () => {
+    const doc = Ream.parse(buildPptx([''], { slideBg: [bgFill('112233')] }));
+    const shp = firstShape(doc);
+    expect(shp).toBeDefined();
+    expect(shp?.fill.colorHex).toBe('112233');
+    expect(shp?.float?.behind).toBe(true);
+    expect(Math.round(shp!.width)).toBe(960); // the full 16:9 deck
+    expect(Math.round(shp!.height)).toBe(540);
+  });
+
+  it('inherits the master background when the slide has none', () => {
+    const doc = Ream.parse(buildPptx([''], { layoutMaster: { masterBg: bgFill('445566') } }));
+    expect(firstShape(doc)?.fill.colorHex).toBe('445566');
+  });
+
+  it("prefers the slide's own background over the master's", () => {
+    const doc = Ream.parse(
+      buildPptx([''], {
+        slideBg: [bgFill('112233')],
+        layoutMaster: { masterBg: bgFill('445566') },
+      }),
+    );
+    expect(firstShape(doc)?.fill.colorHex).toBe('112233');
+  });
+});

@@ -9,10 +9,10 @@
 
 import { XMLParser } from 'fast-xml-parser';
 
-import type { BodyElement, Chart, SectionProperties } from '@/core/document-model';
+import type { BodyElement, Chart, SectionProperties, ShapeFill } from '@/core/document-model';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
-import type { Loss, ResourceId } from '@/core/ir';
+import type { Loss, Pt, ResourceId } from '@/core/ir';
 import type { PoNode } from '@/core/po-helpers';
 import type { Relationship } from '@/core/opc';
 import type { PlaceholderCascade } from '@/pptx/placeholder-cascade';
@@ -33,7 +33,7 @@ import { OpcPackage } from '@/core/opc';
 import { poAttr, poChildren, poIntAttr, poIs } from '@/core/po-helpers';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 import { buildPlaceholderCascade } from '@/pptx/placeholder-cascade';
-import { parseSlideShapes } from '@/pptx/slide-parser';
+import { backdropElement, parseBackgroundFill, parseSlideShapes } from '@/pptx/slide-parser';
 
 const EMU_PER_PT = 12700;
 // §19.2.1.39 sldSz default — a 4:3 deck (10" × 7.5"); real decks always declare it.
@@ -99,6 +99,8 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
   // actually emitted). The slide's text-bearing shapes are floating elements
   // placed on that page at their EMU positions.
   const slideCount = Math.max(1, slideParts.length);
+  const pageW = pt(cx / EMU_PER_PT);
+  const pageH = pt(cy / EMU_PER_PT);
   const stylesByLayout = new Map<string, SlideStyles>();
   const body: Array<BodyElement> = [];
   for (let i = 0; i < slideCount; i++) {
@@ -118,12 +120,12 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
         resolveImage: makeSlideImageResolver(pkg, part.path, resources),
         resolveChart: makeSlideChartResolver(pkg, part.path, charts, styles.colors),
       };
-      body.push(...parseSlide(part.data, ctx));
+      body.push(...parseSlide(part.data, ctx, styles.background, pageW, pageH));
     }
   }
 
   const section: SectionProperties = {
-    pageSize: { width: pt(cx / EMU_PER_PT), height: pt(cy / EMU_PER_PT) },
+    pageSize: { width: pageW, height: pageH },
     // A slide is a margin-less canvas: floating shapes position from the page
     // edge (relativeFrom:'page'), and in-flow content (a table — PX4b) sits at
     // the top-left rather than inside a default print margin.
@@ -147,15 +149,40 @@ function parseXml(data: Uint8Array): Array<PoNode> {
   return parser.parse(decoder.decode(data)) as Array<PoNode>;
 }
 
-// A slide part's bytes → its floating shapes/images. Navigates
-// p:sld/p:cSld/p:spTree and hands the shape tree to the slide parser, with the
-// per-slide context (placeholder cascade + image resolver).
-function parseSlide(data: Uint8Array, ctx: SlideContext): Array<BodyElement> {
+// A slide part's bytes → a full-slide backdrop (PX5b) followed by its floating
+// shapes/images/frames. The background is the slide's own p:bg, else the
+// inherited layout/master one.
+function parseSlide(
+  data: Uint8Array,
+  ctx: SlideContext,
+  inheritedBg: ShapeFill | undefined,
+  pageW: Pt,
+  pageH: Pt,
+): Array<BodyElement> {
   const tree = parseXml(data);
   const sld = tree.find((n) => poIs(n, 'p:sld'));
   const cSld = sld ? poChildren(sld).find((c) => poIs(c, 'p:cSld')) : undefined;
+  const colors = ctx.colors ?? defaultColorResolver;
+  const bgNode = cSld ? poChildren(cSld).find((c) => poIs(c, 'p:bg')) : undefined;
+  const bg = (bgNode ? parseBackgroundFill(bgNode, colors) : undefined) ?? inheritedBg;
   const spTree = cSld ? poChildren(cSld).find((c) => poIs(c, 'p:spTree')) : undefined;
-  return spTree ? parseSlideShapes(spTree, ctx) : [];
+
+  const out: Array<BodyElement> = [];
+  if (bg) out.push(backdropElement(bg, pageW, pageH));
+  if (spTree) out.push(...parseSlideShapes(spTree, ctx));
+  return out;
+}
+
+// A layout's or master's p:cSld/p:bg → its background fill (PX5b).
+function partBackground(
+  tree: ReadonlyArray<PoNode>,
+  root: 'p:sldLayout' | 'p:sldMaster',
+  colors: ColorResolver,
+): ShapeFill | undefined {
+  const sld = tree.find((n) => poIs(n, root));
+  const cSld = sld ? poChildren(sld).find((c) => poIs(c, 'p:cSld')) : undefined;
+  const bg = cSld ? poChildren(cSld).find((c) => poIs(c, 'p:bg')) : undefined;
+  return bg ? parseBackgroundFill(bg, colors) : undefined;
 }
 
 // An image resolver scoped to one slide: a blip relationship id (a:blip
@@ -211,6 +238,9 @@ function makeSlideChartResolver(
 interface SlideStyles {
   readonly cascade?: PlaceholderCascade;
   readonly colors: ColorResolver;
+  // The inherited background fill (layout, else master) for slides that have no
+  // p:bg of their own (PX5b).
+  readonly background?: ShapeFill;
 }
 
 function slideStylesFor(
@@ -231,12 +261,13 @@ function slideStylesFor(
     .find((r) => r.type.endsWith('/slideMaster'));
   const master = masterRel ? pkg.resolveRelatedPart(layout.path, masterRel) : undefined;
   const colors = master ? deckColorResolver(pkg, master.path) : defaultColorResolver;
-  const cascade = buildPlaceholderCascade(
-    parseXml(layout.data),
-    master ? parseXml(master.data) : undefined,
-    colors,
-  );
-  const styles: SlideStyles = { cascade, colors };
+  const layoutTree = parseXml(layout.data);
+  const masterTree = master ? parseXml(master.data) : undefined;
+  const cascade = buildPlaceholderCascade(layoutTree, masterTree, colors);
+  const background =
+    partBackground(layoutTree, 'p:sldLayout', colors) ??
+    (masterTree ? partBackground(masterTree, 'p:sldMaster', colors) : undefined);
+  const styles: SlideStyles = { cascade, colors, ...(background ? { background } : {}) };
   cache.set(layout.path, styles);
   return styles;
 }

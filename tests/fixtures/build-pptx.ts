@@ -29,6 +29,8 @@ export interface BuildPptxLayoutMaster {
   readonly txStyles?: string;
   /** Inner XML of the theme's `<a:clrScheme>` (slot colours); wires master → theme. */
   readonly theme?: string;
+  /** The master's `<p:bg>…</p:bg>` (placed in p:cSld before the spTree). */
+  readonly masterBg?: string;
 }
 
 export interface BuildPptxOptions {
@@ -41,6 +43,8 @@ export interface BuildPptxOptions {
   readonly media?: Record<string, Uint8Array>;
   /** Per-slide extra `<Relationship/>` XML appended to that slide's .rels. */
   readonly slideRels?: ReadonlyArray<string>;
+  /** Per-slide `<p:bg>…</p:bg>` (placed in p:cSld before the spTree). */
+  readonly slideBg?: ReadonlyArray<string>;
 }
 
 const NS = `xmlns:p="${P_NS}" xmlns:a="${A_NS}" xmlns:r="${R_NS}"`;
@@ -127,7 +131,7 @@ export function buildPptx(
     const slide =
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
       `<p:sld ${NS}>` +
-      `<p:cSld><p:spTree>${slides[i] ?? ''}</p:spTree></p:cSld>` +
+      `<p:cSld>${options.slideBg?.[i] ?? ''}<p:spTree>${slides[i] ?? ''}</p:spTree></p:cSld>` +
       `</p:sld>`;
     files[`ppt/slides/slide${i + 1}.xml`] = encoder.encode(slide);
     // Slide .rels: the layout link (when a layout/master is present) plus any
@@ -161,7 +165,7 @@ export function buildPptx(
     );
     files['ppt/slideMasters/slideMaster1.xml'] = encoder.encode(
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
-        `<p:sldMaster ${NS}><p:cSld><p:spTree>${lm.masterSpTree ?? ''}</p:spTree></p:cSld>` +
+        `<p:sldMaster ${NS}><p:cSld>${lm.masterBg ?? ''}<p:spTree>${lm.masterSpTree ?? ''}</p:spTree></p:cSld>` +
         `${lm.txStyles ?? ''}</p:sldMaster>`,
     );
     if (lm.theme) {

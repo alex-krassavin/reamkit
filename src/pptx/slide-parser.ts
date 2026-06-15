@@ -157,6 +157,48 @@ function parseGraphicFrame(gf: PoNode, ctx: SlideContext): BodyElement | undefin
   return undefined;
 }
 
+// p:bg → the background fill, or undefined when none/unsupported. p:bgPr carries
+// the fill directly (a:solidFill/a:gradFill — the same children parseFill reads;
+// a picture background is not yet supported); p:bgRef (a theme fill-style index)
+// is approximated by its colour child as a solid fill. Used for the slide's own
+// background and the inherited layout/master one (PX5b).
+export function parseBackgroundFill(bg: PoNode, colors: ColorResolver): ShapeFill | undefined {
+  const bgPr = poChildren(bg).find((c) => poIs(c, 'p:bgPr'));
+  if (bgPr) {
+    const fill = parseFill(bgPr, colors);
+    return fill.kind !== 'none' ? fill : undefined;
+  }
+  const bgRef = poChildren(bg).find((c) => poIs(c, 'p:bgRef'));
+  if (bgRef) {
+    for (const c of poChildren(bgRef)) {
+      const hex = resolveColorNode(c, colors);
+      if (hex) return { kind: 'solid', colorHex: hex };
+    }
+  }
+  return undefined;
+}
+
+// A full-slide backdrop element for a background fill: a rectangle covering the
+// page, anchored behind the content (PX5b).
+export function backdropElement(fill: ShapeFill, widthPt: Pt, heightPt: Pt): BodyElement {
+  return {
+    kind: 'shape',
+    shape: {
+      float: {
+        wrap: 'none',
+        behind: true,
+        posH: { relativeFrom: 'page', offsetPt: emuToPt(0) },
+        posV: { relativeFrom: 'page', offsetPt: emuToPt(0) },
+      },
+      width: widthPt,
+      height: heightPt,
+      geometry: RECT_GEOMETRY,
+      fill,
+      paragraphProperties: {},
+    },
+  };
+}
+
 // p:spPr geometry: a:prstGeom (preset) or a:custGeom (custom path), default rect.
 function parseGeometry(spPr: PoNode | undefined): ShapeGeometry {
   if (!spPr) return RECT_GEOMETRY;
