@@ -565,8 +565,17 @@ pptx сниффится отдельно (ZIP с `ppt/presentation.xml`), write-
     рендерится при видимой заливке/линии ИЛИ тексте; полностью невидимая — отбрасывается.
     Scheme-цвета пока по дефолтной Office-палитре (`defaultColorResolver`), реальная тема
     деки — PX5.
-- **PX4 — таблицы + чарты.** `p:graphicFrame` → `a:tbl` в FlowDoc-Table ИЛИ `c:chart`
-  (`chart-parser`) в floating `ChartBlock`, позиция из `a:xfrm` рамки.
+- **PX4 ✓ — таблицы + чарты** (PX4a `fc61f89`, PX4b `72b1057`). `p:graphicFrame`
+  (трансформа в `p:xfrm`, не `a:xfrm` — вынесен `boxFromXfrm`):
+  - *PX4a — чарты*: `c:chart@r:id` → resolved chart-парт через `parseChart`+
+    `withChartColorStyle` (как docx) → floating `ChartBlock`; распарсенный `Chart` в
+    `doc.charts` под глобально-уникальным ключом (`slidePath!relId`, т.к. relId scoped к
+    части), `flowRenderOptions` уже пробрасывает карту в рендер.
+  - *PX4b — таблицы*: `a:tbl` → FlowDoc-`Table` (grid из `a:gridCol@w`, `a:tr`/`a:tc`,
+    текст ячеек через общий `txBodyParagraphs`, заливка `a:tcPr/a:solidFill`). gridSpan →
+    colSpan (hMerge-продолжение дропается), vMerge → merge start/middle. У `Table` нет
+    `float` → таблица in-flow; поля слайд-секции обнулены → к верх-лево (точная позиция
+    рамки — поздний хвост).
 - **PX5 — тема + фоны + группы.** Цвето/шрифт-схема темы (`theme-parser`+ColorResolver);
   фон слайда/layout/master (`p:bg` solid/gradient/picture) как подложка-shape; `p:grpSp`
   группы (композиция `a:xfrm`/`a:chOff`/`a:chExt`).
@@ -599,7 +608,10 @@ pptx сниффится отдельно (ZIP с `ppt/presentation.xml`), write-
 - **PX3 ✓** (PX3a `84b4425`, PX3b `a8696b6`) — картинки (`p:pic` → `ImageBlock` через
   ResourceStore) + видимая геометрия/заливка/линия/градиент фигур (`p:spPr` через
   переиспользованные DrawingML-читалки). На слайдах появляются картинки и цветные фигуры.
-  788 тестов. Дальше: PX4 (таблицы + чарты через `p:graphicFrame`).
+  788 тестов.
+- **PX4 ✓** (PX4a `fc61f89`, PX4b `72b1057`) — чарты (`c:chart` → floating `ChartBlock` +
+  `doc.charts`) и таблицы (`a:tbl` → in-flow `Table`) через `p:graphicFrame`. Слайд несёт
+  диаграммы и таблицы. 794 теста. Дальше: PX5 (тема + фоны + группы `p:grpSp`).
 
 ---
 

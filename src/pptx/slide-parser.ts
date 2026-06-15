@@ -1,17 +1,13 @@
-// E-PPTX PX1/PX2 — slide shapes → positioned FlowDoc elements.
+// E-PPTX PX1–PX4 — slide shapes → positioned FlowDoc elements.
 //
 // A PresentationML slide (p:cSld/p:spTree) is a canvas of shapes. Under Route A
 // (epics.md) each shape becomes a floating element anchored at its EMU position,
-// reusing the docx drawing model: a text-bearing p:sp maps to a floating
-// ShapeBlock whose ShapeTextBody carries the paragraphs.
-//
-// PX1 handles shapes with their OWN transform and direct run formatting. PX2
-// adds the placeholder cascade: a p:sp that is a placeholder (p:ph) without its
-// own a:xfrm inherits geometry from the slide layout/master, and its text
-// inherits per-level size/colour defaults from the master's p:txStyles — so the
-// title/body/number placeholders of a real deck land in place and at size.
-// Pictures (p:pic), graphic frames (p:graphicFrame) and groups (p:grpSp) wait
-// for PX3–PX5; bullets/levels/alignment/anchor/autofit for PX6.
+// reusing the docx drawing model and DrawingML readers.
+//   * PX1/PX2 — p:sp text boxes: own a:xfrm + direct a:rPr, else the placeholder
+//     cascade (geometry + master p:txStyles) for a p:ph with no own transform.
+//   * PX3 — p:pic floating images; p:sp visible geometry/fill/stroke (p:spPr).
+//   * PX4 — p:graphicFrame: a c:chart floating ChartBlock or an a:tbl Table.
+// Groups (p:grpSp) wait for PX5; bullets/levels/alignment/anchor/autofit for PX6.
 
 import type {
   BodyElement,
