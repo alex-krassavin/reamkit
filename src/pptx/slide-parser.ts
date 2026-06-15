@@ -12,6 +12,7 @@
 // Bullets/levels/alignment/anchor/autofit + hyperlinks come in PX6.
 
 import type {
+  Alignment,
   BodyElement,
   CellMerge,
   ChartBlock,
@@ -55,7 +56,19 @@ export interface SlideContext {
   // The deck's colour resolver (master theme palette, PX5); defaults to the
   // Office palette when absent.
   readonly colors?: ColorResolver;
+  // A run hyperlink (a:hlinkClick @r:id) → its external URL (PX6).
+  readonly resolveHyperlink?: (relId: string) => string | undefined;
 }
+
+type LinkResolver = ((relId: string) => string | undefined) | undefined;
+
+const ALGN_TO_ALIGNMENT: Readonly<Record<string, Alignment>> = {
+  l: 'left',
+  ctr: 'center',
+  r: 'right',
+  just: 'both',
+  dist: 'distribute',
+};
 
 const RECT_GEOMETRY: ShapeGeometry = { kind: 'preset', preset: 'rect', adjust: new Map() };
 
@@ -145,7 +158,9 @@ function parseSp(sp: PoNode, ctx: SlideContext, transform: GroupTransform): Shap
   const box = transform(own);
 
   const txBody = poChildren(sp).find((c) => poIs(c, 'p:txBody'));
-  const text = txBody ? parseTxBody(txBody, ph, ctx.cascade, colors) : undefined;
+  const text = txBody
+    ? parseTxBody(txBody, ph, ctx.cascade, colors, ctx.resolveHyperlink)
+    : undefined;
 
   // Geometry/fill/stroke from p:spPr via the shared DrawingML readers, resolving
   // colours through the deck's theme palette (PX5).
@@ -305,24 +320,29 @@ function txBodyParagraphs(
   ph: PlaceholderRef | undefined,
   cascade: PlaceholderCascade | undefined,
   colors: ColorResolver,
+  resolveLink: LinkResolver,
 ): Array<BodyElement> {
   const content: Array<BodyElement> = [];
   for (const child of poChildren(txBody)) {
     if (!poIs(child, 'a:p')) continue;
-    content.push({ kind: 'paragraph', paragraph: parseSlideParagraph(child, ph, cascade, colors) });
+    content.push({
+      kind: 'paragraph',
+      paragraph: parseSlideParagraph(child, ph, cascade, colors, resolveLink),
+    });
   }
   return content;
 }
 
-// p:txBody → ShapeTextBody. a:bodyPr insets are carried when present; the
-// vertical anchor + autofit come in PX6.
+// p:txBody → ShapeTextBody. a:bodyPr carries the insets and the vertical anchor
+// (PX6: anchor t/ctr/b).
 function parseTxBody(
   txBody: PoNode,
   ph: PlaceholderRef | undefined,
   cascade: PlaceholderCascade | undefined,
   colors: ColorResolver,
+  resolveLink: LinkResolver,
 ): ShapeTextBody | undefined {
-  const content = txBodyParagraphs(txBody, ph, cascade, colors);
+  const content = txBodyParagraphs(txBody, ph, cascade, colors, resolveLink);
   if (content.length === 0) return undefined;
 
   const bodyPr = poChildren(txBody).find((c) => poIs(c, 'a:bodyPr'));
@@ -330,50 +350,66 @@ function parseTxBody(
   const tIns = bodyPr ? poIntAttr(bodyPr, 'tIns') : undefined;
   const rIns = bodyPr ? poIntAttr(bodyPr, 'rIns') : undefined;
   const bIns = bodyPr ? poIntAttr(bodyPr, 'bIns') : undefined;
+  const a = bodyPr ? poAttr(bodyPr, 'anchor') : undefined;
+  const anchor: ShapeTextBody['anchor'] | undefined =
+    a === 'ctr' ? 'ctr' : a === 'b' ? 'b' : a === 't' ? 't' : undefined;
   return {
     content,
     ...(lIns !== undefined ? { insetLeft: emuToPt(lIns) } : {}),
     ...(tIns !== undefined ? { insetTop: emuToPt(tIns) } : {}),
     ...(rIns !== undefined ? { insetRight: emuToPt(rIns) } : {}),
     ...(bIns !== undefined ? { insetBottom: emuToPt(bIns) } : {}),
+    ...(anchor ? { anchor } : {}),
   };
 }
 
-// a:p → Paragraph. The paragraph's outline level (a:pPr @lvl, default 0) selects
-// the placeholder's default run formatting, applied under each run's own a:rPr.
-// Runs come from a:r and a:fld (a text field whose cached a:t renders as text).
+// a:p → Paragraph. The outline level (a:pPr @lvl) selects the placeholder's
+// default run formatting; @algn sets the alignment (PX6). Runs come from a:r and
+// a:fld (a text field whose cached a:t renders as text).
 function parseSlideParagraph(
   aP: PoNode,
   ph: PlaceholderRef | undefined,
   cascade: PlaceholderCascade | undefined,
   colors: ColorResolver,
+  resolveLink: LinkResolver,
 ): Paragraph {
   const pPr = poChildren(aP).find((c) => poIs(c, 'a:pPr'));
   const level = (pPr ? poIntAttr(pPr, 'lvl') : undefined) ?? 0;
   const defaults: RunProperties = ph && cascade ? cascade.defaultsFor(ph, level) : {};
+  const algn = pPr ? poAttr(pPr, 'algn') : undefined;
+  const alignment = algn !== undefined ? ALGN_TO_ALIGNMENT[algn] : undefined;
 
   const runs: Array<Run> = [];
   for (const child of poChildren(aP)) {
     if (poIs(child, 'a:r') || poIs(child, 'a:fld')) {
-      const run = parseSlideRun(child, defaults, colors);
+      const run = parseSlideRun(child, defaults, colors, resolveLink);
       if (run) runs.push(run);
     }
   }
-  return { properties: {}, runs };
+  return { properties: { ...(alignment ? { alignment } : {}) }, runs };
 }
 
 // a:r / a:fld → Run. The placeholder defaults sit under the run's own a:rPr, so
-// direct formatting always wins.
+// direct formatting always wins. a:rPr/a:hlinkClick @r:id resolves to a run href
+// (PX6).
 function parseSlideRun(
   node: PoNode,
   defaults: RunProperties,
   colors: ColorResolver,
+  resolveLink: LinkResolver,
 ): Run | undefined {
   const t = poChildren(node).find((c) => poIs(c, 'a:t'));
   const text = t ? poText(t) : '';
   if (text.length === 0) return undefined;
   const rPr = poChildren(node).find((c) => poIs(c, 'a:rPr'));
-  return { text, properties: { ...defaults, ...rPrToRunProps(rPr, colors) } };
+  const hlink = rPr ? poChildren(rPr).find((c) => poIs(c, 'a:hlinkClick')) : undefined;
+  const linkId = hlink ? poAttr(hlink, 'id') : undefined; // r:id
+  const href = linkId !== undefined ? resolveLink?.(linkId) : undefined;
+  return {
+    text,
+    properties: { ...defaults, ...rPrToRunProps(rPr, colors) },
+    ...(href ? { href } : {}),
+  };
 }
 
 // §21.1.3 a:tbl → a FlowDoc Table: grid column widths (a:tblGrid/a:gridCol @w),
@@ -409,7 +445,7 @@ function parseTableRow(tr: PoNode, colors: ColorResolver): TableRow {
 
 function parseTableCell(tc: PoNode, colors: ColorResolver): TableCell {
   const txBody = poChildren(tc).find((c) => poIs(c, 'a:txBody'));
-  const content = txBody ? txBodyParagraphs(txBody, undefined, undefined, colors) : [];
+  const content = txBody ? txBodyParagraphs(txBody, undefined, undefined, colors, undefined) : [];
   const gridSpan = poIntAttr(tc, 'gridSpan');
   const rowSpan = poIntAttr(tc, 'rowSpan');
   // Vertical merge: the origin carries @rowSpan (→ 'start'); a continuation cell

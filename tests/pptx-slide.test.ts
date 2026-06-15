@@ -515,3 +515,52 @@ describe('pptx slide groups (E-PPTX PX5c)', () => {
     expect(Math.round(shp!.width)).toBe(72); // 1828800 * 0.5 = 914400 EMU = 72 pt
   });
 });
+
+const HLINK_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink';
+
+// A text shape at a fixed box with the given p:txBody inner XML.
+function textBodyShape(txBodyInner: string): string {
+  return (
+    `<p:sp><p:spPr><a:xfrm><a:off x="914400" y="914400"/><a:ext cx="3657600" cy="914400"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr><p:txBody>${txBodyInner}</p:txBody></p:sp>`
+  );
+}
+function firstShapeParagraph(doc: ReturnType<typeof Ream.parse>) {
+  const el = doc.flow.body.find((e) => e.kind === 'shape');
+  if (el?.kind !== 'shape') return undefined;
+  const p = el.shape.text?.content[0];
+  return p?.kind === 'paragraph' ? p.paragraph : undefined;
+}
+
+describe('pptx text depth + links (E-PPTX PX6)', () => {
+  it('reads paragraph alignment and the body vertical anchor', () => {
+    const doc = Ream.parse(
+      buildPptx([
+        textBodyShape(
+          `<a:bodyPr anchor="ctr"/><a:p><a:pPr algn="ctr"/><a:r><a:t>Centered</a:t></a:r></a:p>`,
+        ),
+      ]),
+    );
+    const el = doc.flow.body.find((e) => e.kind === 'shape');
+    expect(el?.kind === 'shape' && el.shape.text?.anchor).toBe('ctr');
+    expect(firstShapeParagraph(doc)?.properties.alignment).toBe('center');
+  });
+
+  it('resolves a run hyperlink to its external URL and renders an anchor', async () => {
+    const pptx = buildPptx(
+      [
+        textBodyShape(
+          `<a:bodyPr/><a:p><a:r><a:rPr><a:hlinkClick r:id="rId5"/></a:rPr><a:t>ClickMe</a:t></a:r></a:p>`,
+        ),
+      ],
+      {
+        slideRels: [
+          `<Relationship Id="rId5" Type="${HLINK_REL}" Target="https://example.com/" TargetMode="External"/>`,
+        ],
+      },
+    );
+    expect(firstShapeParagraph(Ream.parse(pptx))?.runs[0]?.href).toBe('https://example.com/');
+    const html = decoder.decode(await Ream.parse(pptx).convert('html'));
+    expect(html).toContain('href="https://example.com/"');
+  });
+});

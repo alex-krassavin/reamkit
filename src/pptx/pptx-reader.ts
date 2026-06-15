@@ -121,6 +121,7 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
         colors: styles.colors,
         resolveImage: makeSlideImageResolver(pkg, part.path, resources),
         resolveChart: makeSlideChartResolver(pkg, part.path, charts, styles.colors),
+        resolveHyperlink: makeHyperlinkResolver(pkg, part.path),
       };
       body.push(...parseSlide(part.data, ctx, styles.background, pageW, pageH));
     }
@@ -204,6 +205,19 @@ function makeSlideImageResolver(
     const id = resolved ? resources.put(resolved.data) : undefined;
     cache.set(relId, id);
     return id;
+  };
+}
+
+// A hyperlink resolver scoped to one slide: a run's a:hlinkClick @r:id → the
+// external target URL from the slide's .rels (PX6). Internal links (to another
+// slide) have no URL and resolve to undefined.
+function makeHyperlinkResolver(
+  pkg: OpcPackage,
+  slidePath: string,
+): (relId: string) => string | undefined {
+  return (relId) => {
+    const rel = pkg.getPartRelationships(slidePath).find((r) => r.id === relId);
+    return rel && rel.targetMode === 'External' ? rel.target : undefined;
   };
 }
 
