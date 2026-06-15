@@ -576,9 +576,17 @@ pptx сниффится отдельно (ZIP с `ppt/presentation.xml`), write-
     colSpan (hMerge-продолжение дропается), vMerge → merge start/middle. У `Table` нет
     `float` → таблица in-flow; поля слайд-секции обнулены → к верх-лево (точная позиция
     рамки — поздний хвост).
-- **PX5 — тема + фоны + группы.** Цвето/шрифт-схема темы (`theme-parser`+ColorResolver);
-  фон слайда/layout/master (`p:bg` solid/gradient/picture) как подложка-shape; `p:grpSp`
-  группы (композиция `a:xfrm`/`a:chOff`/`a:chExt`).
+- **PX5 — тема + фоны + группы.**
+  - *PX5a ✓ — тема деки* (`800be96`). Мастер-`theme` (`a:clrScheme`) → палитра над
+    Office-дефолтом → `ColorResolver` (как docx/xlsx), строится рядом с каскадом и
+    мемоизируется по layout-пути. Резолвер протянут во ВСЕ цвето-точки: fill/line фигур,
+    цвет ранов и мастер-`txStyles` (`rPrToRunProps` берёт резолвер; попутно починен
+    латентный баг — run colorHex хранился с лишним `#`), заливка ячеек, цвета чартов.
+    Фолбэк на Office-палитру, если темы нет.
+  - *PX5b — фоны* (остаток): `p:bg` слайда/layout/master (solid/gradient/picture) как
+    подложка-shape за контентом (`float.behind`).
+  - *PX5c — группы* (остаток): `p:grpSp` — композиция `a:xfrm`/`a:chOff`/`a:chExt`
+    (дочерние координаты → координаты слайда).
 - **PX6 — глубина текста + гиперссылки → релиз.** Маркеры (`a:buChar`/`a:buAutoNum`),
   уровни списка, выравнивание (`a:pPr@algn`), вертикальный якорь (`a:bodyPr@anchor`),
   автоподгонка (`a:normAutofit`/`spAutoFit`); гиперссылки (`a:hlinkClick`). Доки на
@@ -611,7 +619,10 @@ pptx сниффится отдельно (ZIP с `ppt/presentation.xml`), write-
   788 тестов.
 - **PX4 ✓** (PX4a `fc61f89`, PX4b `72b1057`) — чарты (`c:chart` → floating `ChartBlock` +
   `doc.charts`) и таблицы (`a:tbl` → in-flow `Table`) через `p:graphicFrame`. Слайд несёт
-  диаграммы и таблицы. 794 теста. Дальше: PX5 (тема + фоны + группы `p:grpSp`).
+  диаграммы и таблицы. 794 теста.
+- **PX5a ✓** (`800be96`) — тема деки: мастер-`a:clrScheme` → `ColorResolver`, протянут во
+  все цвето-точки (fill/line/раны/txStyles/ячейки/чарты). Scheme-цвета корректны. 796
+  тестов. Остаток PX5: фоны (`p:bg`) + группы (`p:grpSp`). Дальше: PX5b/PX5c, затем PX6.
 
 ---
 
