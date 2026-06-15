@@ -1,10 +1,11 @@
-// E-PPTX PX0/PX1 — PresentationML (.pptx) reader: bytes → FlowDoc. A presentation
+// E-PPTX PX0–PX2 — PresentationML (.pptx) reader: bytes → FlowDoc. A presentation
 // is a positioned canvas, which maps cleanly onto the existing IR: each slide is a
 // section at the deck's page size, and its shapes become absolutely positioned
 // floating elements (Route A, epics.md). PX0 established the seam — sniff, slide
 // size from p:sldSz, slide count from p:sldIdLst, one page per slide. PX1 fills
 // each page: a slide's text-bearing shapes (p:sp/p:txBody) become positioned
-// floating text boxes (slide-parser.ts).
+// floating text boxes. PX2 resolves placeholders against the slide's layout and
+// master (the cascade), so inherited geometry + text sizing land too.
 
 import { XMLParser } from 'fast-xml-parser';
 
@@ -14,12 +15,14 @@ import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss } from '@/core/ir';
 import type { PoNode } from '@/core/po-helpers';
 import type { Relationship } from '@/core/opc';
+import type { PlaceholderCascade } from '@/pptx/placeholder-cascade';
 
 import { bytesInclude } from '@/core/bytes';
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
 import { OpcPackage } from '@/core/opc';
 import { poAttr, poChildren, poIntAttr, poIs } from '@/core/po-helpers';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
+import { buildPlaceholderCascade } from '@/pptx/placeholder-cascade';
 import { parseSlideShapes } from '@/pptx/slide-parser';
 
 const EMU_PER_PT = 12700;
@@ -45,7 +48,7 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
 
   let cx = DEFAULT_CX;
   let cy = DEFAULT_CY;
-  const slideParts: Array<Uint8Array> = [];
+  const slideParts: Array<{ path: string; data: Uint8Array }> = [];
   if (presData) {
     const tree = parser.parse(decoder.decode(presData)) as Array<PoNode>;
     const pres = tree.find((n) => poIs(n, 'p:presentation'));
@@ -67,7 +70,7 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
       const rid = poAttr(sldId, 'r:id');
       const rel = rid !== undefined ? slideRelById.get(rid) : undefined;
       const part = rel ? pkg.resolveRelatedPart(presPath, rel) : undefined;
-      if (part) slideParts.push(part.data);
+      if (part) slideParts.push(part);
     }
   }
   if (slideParts.length === 0) {
@@ -84,6 +87,7 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
   // actually emitted). The slide's text-bearing shapes are floating elements
   // placed on that page at their EMU positions.
   const slideCount = Math.max(1, slideParts.length);
+  const cascadeByLayout = new Map<string, PlaceholderCascade | undefined>();
   const body: Array<BodyElement> = [];
   for (let i = 0; i < slideCount; i++) {
     body.push({
@@ -93,8 +97,11 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
         runs: [{ text: '​', properties: {} }],
       },
     });
-    const data = slideParts[i];
-    if (data) body.push(...parseSlide(data));
+    const part = slideParts[i];
+    if (part) {
+      const cascade = cascadeForSlide(pkg, part.path, cascadeByLayout);
+      body.push(...parseSlide(part.data, cascade));
+    }
   }
 
   const section: SectionProperties = {
@@ -113,14 +120,45 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
   return { doc, losses };
 }
 
+function parseXml(data: Uint8Array): Array<PoNode> {
+  return parser.parse(decoder.decode(data)) as Array<PoNode>;
+}
+
 // A slide part's bytes → its floating shapes. Navigates p:sld/p:cSld/p:spTree
-// and hands the shape tree to the slide parser.
-function parseSlide(data: Uint8Array): Array<BodyElement> {
-  const tree = parser.parse(decoder.decode(data)) as Array<PoNode>;
+// and hands the shape tree to the slide parser, with the placeholder cascade.
+function parseSlide(data: Uint8Array, cascade?: PlaceholderCascade): Array<BodyElement> {
+  const tree = parseXml(data);
   const sld = tree.find((n) => poIs(n, 'p:sld'));
   const cSld = sld ? poChildren(sld).find((c) => poIs(c, 'p:cSld')) : undefined;
   const spTree = cSld ? poChildren(cSld).find((c) => poIs(c, 'p:spTree')) : undefined;
-  return spTree ? parseSlideShapes(spTree) : [];
+  return spTree ? parseSlideShapes(spTree, cascade) : [];
+}
+
+// Resolve (and memoize) the placeholder cascade for a slide: its slideLayout
+// rel, then the layout's slideMaster rel. Cached by layout path — slides that
+// share a layout share the cascade. Undefined when the slide has no layout.
+function cascadeForSlide(
+  pkg: OpcPackage,
+  slidePath: string,
+  cache: Map<string, PlaceholderCascade | undefined>,
+): PlaceholderCascade | undefined {
+  const layoutRel = pkg
+    .getPartRelationships(slidePath)
+    .find((r) => r.type.endsWith('/slideLayout'));
+  const layout = layoutRel ? pkg.resolveRelatedPart(slidePath, layoutRel) : undefined;
+  if (!layout) return undefined;
+  if (cache.has(layout.path)) return cache.get(layout.path);
+
+  const masterRel = pkg
+    .getPartRelationships(layout.path)
+    .find((r) => r.type.endsWith('/slideMaster'));
+  const master = masterRel ? pkg.resolveRelatedPart(layout.path, masterRel) : undefined;
+  const cascade = buildPlaceholderCascade(
+    parseXml(layout.data),
+    master ? parseXml(master.data) : undefined,
+  );
+  cache.set(layout.path, cascade);
+  return cascade;
 }
 
 export const pptxReader: DocumentReader<FlowDoc> = {

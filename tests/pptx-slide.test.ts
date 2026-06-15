@@ -84,3 +84,83 @@ describe('pptx slide text (E-PPTX PX1)', () => {
     expect(html).toContain('BoldText');
   });
 });
+
+// A layout title placeholder carrying geometry, and master text styles. The
+// title's level-1 default is 44 pt bold.
+const LAYOUT_TITLE =
+  `<p:sp><p:nvSpPr><p:cNvPr id="2" name="Title"/><p:cNvSpPr/>` +
+  `<p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr>` +
+  `<p:spPr><a:xfrm><a:off x="838200" y="457200"/><a:ext cx="7772400" cy="1143000"/></a:xfrm></p:spPr></p:sp>`;
+const TX_STYLES =
+  `<p:txStyles>` +
+  `<p:titleStyle><a:lvl1pPr><a:defRPr sz="4400" b="1"/></a:lvl1pPr></p:titleStyle>` +
+  `<p:bodyStyle><a:lvl1pPr><a:defRPr sz="3200"/></a:lvl1pPr></p:bodyStyle>` +
+  `<p:otherStyle/></p:txStyles>`;
+
+// A slide title placeholder with NO own geometry, carrying `text` (and an
+// optional own run size that should override the master default).
+function titlePlaceholder(text: string, ownSz?: number): string {
+  const rPr = ownSz !== undefined ? `<a:rPr sz="${ownSz}"/>` : '';
+  return (
+    `<p:sp><p:nvSpPr><p:cNvPr id="2" name="Title 1"/><p:cNvSpPr/>` +
+    `<p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr>` +
+    `<p:spPr/>` +
+    `<p:txBody><a:bodyPr/><a:p><a:r>${rPr}<a:t>${text}</a:t></a:r></a:p></p:txBody></p:sp>`
+  );
+}
+
+// The first run of the first text-bearing shape in the parsed flow.
+function firstShapeRun(doc: ReturnType<typeof Ream.parse>) {
+  for (const el of doc.flow.body) {
+    if (el.kind === 'shape' && el.shape.text) {
+      for (const child of el.shape.text.content) {
+        if (child.kind === 'paragraph' && child.paragraph.runs.length > 0) {
+          return child.paragraph.runs[0];
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+describe('pptx placeholder cascade (E-PPTX PX2)', () => {
+  it('renders a placeholder that inherits its geometry from the layout', async () => {
+    const pptx = buildPptx([titlePlaceholder('Inherited Title')], {
+      layoutMaster: { layoutSpTree: LAYOUT_TITLE, txStyles: TX_STYLES },
+    });
+    // Built at all (a placeholder with no own xfrm) → the cascade supplied geometry.
+    const html = decoder.decode(await Ream.parse(pptx).convert('html'));
+    expect(html).toContain('Inherited Title');
+    // Positioned at the layout's xfrm: x = 838200 EMU = 66 pt from the left.
+    // (Multi-word text breaks into per-word runs, so match the first word.)
+    const file = PdfFile.parse(await Ream.parse(pptx).convert('pdf', { fonts: FONTS }));
+    const run = extractPageText(file, file.pages()[0]!).find((r) =>
+      r.text.replace(/\s/g, '').includes('Inherited'),
+    );
+    expect(run).toBeDefined();
+    expect(run!.x).toBeGreaterThan(60);
+    expect(run!.x).toBeLessThan(110);
+  });
+
+  it('applies the master title text size to a placeholder run', () => {
+    const pptx = buildPptx([titlePlaceholder('Sized Title')], {
+      layoutMaster: { layoutSpTree: LAYOUT_TITLE, txStyles: TX_STYLES },
+    });
+    const run = firstShapeRun(Ream.parse(pptx));
+    expect(run?.properties.fontSizePt).toBe(44); // titleStyle/lvl1pPr/defRPr sz=4400
+    expect(run?.properties.bold).toBe(true);
+  });
+
+  it("lets a run's own a:rPr override the master default size", () => {
+    const pptx = buildPptx([titlePlaceholder('Big', 6000)], {
+      layoutMaster: { layoutSpTree: LAYOUT_TITLE, txStyles: TX_STYLES },
+    });
+    expect(firstShapeRun(Ream.parse(pptx))?.properties.fontSizePt).toBe(60); // own sz wins
+  });
+
+  it('drops a placeholder with no geometry anywhere (no layout/master)', async () => {
+    const pptx = buildPptx([titlePlaceholder('Orphan')]); // no cascade to inherit from
+    const html = decoder.decode(await Ream.parse(pptx).convert('html'));
+    expect(html).not.toContain('Orphan');
+  });
+});

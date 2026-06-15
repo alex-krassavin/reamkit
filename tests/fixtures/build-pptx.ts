@@ -1,8 +1,11 @@
 // Build a minimal valid PresentationML pptx in memory for tests (E-PPTX). Emits
-// only what the reader needs: [Content_Types].xml, _rels/.rels,
-// ppt/presentation.xml (slide size + slide order) and one ppt/slides/slideN.xml
-// per slide, with the matching part relationships. Slide layouts / masters /
-// theme are omitted — the reader treats them as optional (PX2 adds them).
+// what the reader needs: [Content_Types].xml, _rels/.rels, ppt/presentation.xml
+// (slide size + slide order) and one ppt/slides/slideN.xml per slide, with the
+// matching part relationships.
+//
+// With `layoutMaster` set it additionally emits one slideLayout + slideMaster,
+// wires every slide → layout → master, and lets a slide carry placeholder
+// shapes whose geometry/text styles resolve through that cascade (PX2).
 
 import { zipSync } from 'fflate';
 
@@ -13,12 +16,27 @@ const A_NS = 'http://schemas.openxmlformats.org/drawingml/2006/main';
 const R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 const PKG_REL_NS = 'http://schemas.openxmlformats.org/package/2006/relationships';
 const SLIDE_CT = 'application/vnd.openxmlformats-officedocument.presentationml.slide+xml';
+const LAYOUT_CT = 'application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml';
+const MASTER_CT = 'application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml';
+
+export interface BuildPptxLayoutMaster {
+  /** Inner XML of the layout's `<p:spTree>` (placeholder shapes with geometry). */
+  readonly layoutSpTree?: string;
+  /** Inner XML of the master's `<p:spTree>`. */
+  readonly masterSpTree?: string;
+  /** The master's `<p:txStyles>…</p:txStyles>` block (per-level defaults). */
+  readonly txStyles?: string;
+}
 
 export interface BuildPptxOptions {
   /** Slide size in EMU (default a 16:9 deck, 13.333" × 7.5"). */
   readonly cx?: number;
   readonly cy?: number;
+  /** Emit a slideLayout + slideMaster wired to every slide (PX2 cascade). */
+  readonly layoutMaster?: BuildPptxLayoutMaster;
 }
+
+const NS = `xmlns:p="${P_NS}" xmlns:a="${A_NS}" xmlns:r="${R_NS}"`;
 
 // `slides[i]` is the inner XML of that slide's `<p:spTree>` (default empty).
 export function buildPptx(
@@ -28,6 +46,7 @@ export function buildPptx(
   const cx = options.cx ?? 12192000;
   const cy = options.cy ?? 6858000;
   const n = Math.max(1, slides.length);
+  const lm = options.layoutMaster;
 
   const contentTypes =
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
@@ -39,6 +58,10 @@ export function buildPptx(
       { length: n },
       (_, i) => `<Override PartName="/ppt/slides/slide${i + 1}.xml" ContentType="${SLIDE_CT}"/>`,
     ).join('') +
+    (lm
+      ? `<Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="${LAYOUT_CT}"/>` +
+        `<Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="${MASTER_CT}"/>`
+      : '') +
     `</Types>`;
 
   const rootRels =
@@ -49,7 +72,7 @@ export function buildPptx(
 
   const presentation =
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
-    `<p:presentation xmlns:p="${P_NS}" xmlns:r="${R_NS}">` +
+    `<p:presentation ${NS}>` +
     `<p:sldIdLst>` +
     Array.from({ length: n }, (_, i) => `<p:sldId id="${256 + i}" r:id="rId${i + 1}"/>`).join('') +
     `</p:sldIdLst>` +
@@ -75,10 +98,37 @@ export function buildPptx(
   for (let i = 0; i < n; i++) {
     const slide =
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
-      `<p:sld xmlns:p="${P_NS}" xmlns:a="${A_NS}" xmlns:r="${R_NS}">` +
+      `<p:sld ${NS}>` +
       `<p:cSld><p:spTree>${slides[i] ?? ''}</p:spTree></p:cSld>` +
       `</p:sld>`;
     files[`ppt/slides/slide${i + 1}.xml`] = encoder.encode(slide);
+    if (lm) {
+      // Every slide points at the single layout.
+      files[`ppt/slides/_rels/slide${i + 1}.xml.rels`] = encoder.encode(
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+          `<Relationships xmlns="${PKG_REL_NS}">` +
+          `<Relationship Id="rId1" Type="${R_NS}/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>` +
+          `</Relationships>`,
+      );
+    }
+  }
+
+  if (lm) {
+    files['ppt/slideLayouts/slideLayout1.xml'] = encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+        `<p:sldLayout ${NS}><p:cSld><p:spTree>${lm.layoutSpTree ?? ''}</p:spTree></p:cSld></p:sldLayout>`,
+    );
+    files['ppt/slideLayouts/_rels/slideLayout1.xml.rels'] = encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+        `<Relationships xmlns="${PKG_REL_NS}">` +
+        `<Relationship Id="rId1" Type="${R_NS}/slideMaster" Target="../slideMasters/slideMaster1.xml"/>` +
+        `</Relationships>`,
+    );
+    files['ppt/slideMasters/slideMaster1.xml'] = encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+        `<p:sldMaster ${NS}><p:cSld><p:spTree>${lm.masterSpTree ?? ''}</p:spTree></p:cSld>` +
+        `${lm.txStyles ?? ''}</p:sldMaster>`,
+    );
   }
   return zipSync(files);
 }
