@@ -9,8 +9,15 @@ doesn't yet.
 
 ## Implemented
 
-**Input** — Ream parses **Word (`.docx`)**, **Excel (`.xlsx`)** and **PDF**,
-sniffed from the bytes. PDF input handles classic and modern compressed files
+**Input** — Ream parses **Word (`.docx`)**, **Excel (`.xlsx`)**, **PowerPoint
+(`.pptx`)** and **PDF**, sniffed from the bytes. A **PowerPoint** deck becomes
+one page per slide at the deck size, its shapes read as positioned content: text
+boxes (run formatting, alignment, vertical anchor, bullets, indents),
+layout/master placeholders, pictures, shapes (geometry/fill/stroke/gradient),
+DrawingML tables, embedded charts, theme colours, slide/master backgrounds,
+grouped shapes and run hyperlinks; not read (each a graceful loss): text autofit
+shrink, picture backgrounds, picture placeholders, alpha/roman list numbering,
+SmartArt. PDF input handles classic and modern compressed files
 (cross-reference streams, object streams) and encrypted files (RC4 / AES; the
 user password is passed to `Ream.parse`, defaulting to the empty permissions-only
 case). A **tagged** PDF (including the ones Ream writes) is rebuilt from
@@ -78,6 +85,20 @@ charts — and is byte-stable across a read↔write loop.
 - **Excel tables** (`xl/tables`) — banded rows and a styled header row, the
   colours resolved from the named table style against the workbook theme.
 - Charts anchored to the sheet (the worksheet drawing part) render after the grid.
+
+**PresentationML (§19)**
+- Each slide is a page at the deck size (`p:sldSz`); shapes are floating content
+  positioned from their `a:xfrm`.
+- Text boxes (`p:sp`) — runs (size, bold/italic/underline, colour, latin font),
+  paragraph alignment, the body vertical anchor, bullets (`a:buChar` and
+  auto-numbered `a:buAutoNum`) and per-level indents.
+- **Placeholders** — title/body/number shapes inherit geometry and per-level text
+  styles from the slide layout → master (`p:txStyles`).
+- Pictures (`p:pic`), shapes with geometry/fill/stroke/gradient, DrawingML tables
+  (`a:tbl`) and embedded charts (`c:chart`).
+- **Theme** colours (`a:clrScheme`), slide/master backgrounds (`p:bg`) painted
+  behind the content, and groups (`p:grpSp`) mapped through their child transform.
+- Run hyperlinks (`a:hlinkClick`) → clickable PDF annotations / HTML `<a>`.
 
 **Graphics & math**
 - DrawingML shapes (preset and custom geometry, gradients, group shapes, theme colors).

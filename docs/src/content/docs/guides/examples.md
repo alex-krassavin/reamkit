@@ -125,6 +125,22 @@ try {
 }
 ```
 
+## pptx → pdf: render a slide deck
+
+`Ream.parse` also accepts a **PowerPoint** `.pptx`. Each slide becomes a page at
+the deck size, its shapes read as positioned content — text boxes, placeholders,
+pictures, shapes, tables, charts, theme colours, backgrounds, groups and
+hyperlinks. The result is an ordinary `FlowDoc`, so it converts onward like any
+other source:
+
+```ts
+import { Ream } from 'reamkit';
+
+const doc = Ream.parse(pptxBytes); // doc.format === 'pptx'
+const pdf = await doc.convert('pdf', { fonts }); // a page per slide
+const html = await doc.convert('html'); // …or the slides as flowed HTML
+```
+
 ## Browser: file input → PDF preview
 
 ```ts

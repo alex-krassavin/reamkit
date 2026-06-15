@@ -3,6 +3,31 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.10.0
+
+### Added
+
+- **PowerPoint (`.pptx`) input.** `Ream.parse` now reads PresentationML, so a
+  deck converts onward to PDF, SVG, HTML or DOCX like any other source. Each
+  slide becomes a page at the deck size; its shapes are read as positioned
+  content:
+  - **Text** — text boxes at their slide positions, with direct run formatting
+    (size, bold/italic/underline, colour, font) and paragraph alignment, the
+    vertical anchor, bullets (`•` and auto-numbered) and per-level indents.
+  - **Placeholders** — title/body/number placeholders inherit their geometry and
+    text styling from the slide layout and master (the PresentationML cascade).
+  - **Pictures, shapes, tables and charts** — images, shapes with their geometry/
+    fill/stroke/gradient, DrawingML tables and embedded charts all render.
+  - **Theme, backgrounds and groups** — scheme colours resolve through the deck's
+    theme; slide/master backgrounds paint behind the content; grouped shapes
+    (`p:grpSp`) map through their child→slide transform.
+  - **Hyperlinks** — a run's external link becomes a clickable PDF annotation /
+    HTML `<a>`.
+
+  Not yet read: text autofit shrink, picture/blip backgrounds, picture
+  placeholders, alpha/roman list numbering, and SmartArt — each degrades
+  gracefully rather than failing.
+
 ## 1.8.0
 
 ### Added

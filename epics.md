@@ -590,10 +590,16 @@ pptx сниффится отдельно (ZIP с `ppt/presentation.xml`), write-
   - *PX5c ✓ — группы* (`bc534c8`): `p:grpSp` — рекурсия в группы с композицией
     child→slide трансформы (off/ext + chOff/chExt); каждый shape/pic/frame мапит свой
     EMU-бокс через неё. Вложенные группы композятся.
-- **PX6 — глубина текста + гиперссылки → релиз.** Маркеры (`a:buChar`/`a:buAutoNum`),
-  уровни списка, выравнивание (`a:pPr@algn`), вертикальный якорь (`a:bodyPr@anchor`),
-  автоподгонка (`a:normAutofit`/`spAutoFit`); гиперссылки (`a:hlinkClick`). Доки на
-  сайте + CHANGELOG + эта секция; релиз.
+- **PX6 ✓ — глубина текста + гиперссылки → релиз** (PX6a `0628093`, PX6b `f757b0a`,
+  release `1.10.0`).
+  - *PX6a*: выравнивание (`a:pPr@algn`), вертикальный якорь (`a:bodyPr@anchor`),
+    гиперссылки (`a:hlinkClick@r:id` → `Run.href` через slide-rels, External).
+  - *PX6b*: буллеты — `a:buChar` (литеральный) и `a:buAutoNum` (счётчик по уровню,
+    arabic + суффикс; alpha/roman → arabic) как list-marker-ран; `a:buNone` гасит;
+    отступ по уровню (`marL`/`indent`, иначе 0.5"/уровень).
+  - *release 1.10.0*: CHANGELOG + bump + `SOURCE_MIME.pptx` + доки сайта (scope/getting-
+    started/examples) + README. Отложено (graceful loss): autofit-усадка, picture-фон,
+    picture-плейсхолдеры, alpha/roman нумерация, SmartArt.
 
 ### Риски
 - **Холст через float-якоря** — выразительно достаточно (relativeFrom:'page' = абсолют),
@@ -626,7 +632,21 @@ pptx сниффится отдельно (ZIP с `ppt/presentation.xml`), write-
 - **PX5 ✓** (PX5a `800be96`, PX5b `283a7db`, PX5c `bc534c8`) — тема деки (scheme-цвета во
   всех цвето-точках), фоны слайда/мастера (`p:bg` → подложка `behind`) и группы (`p:grpSp`
   → child→slide трансформа). Дека рендерит верные цвета, фоны и сгруппированный контент.
-  801 тест. Дальше: PX6 (глубина текста + ссылки → релиз).
+  801 тест.
+- **PX6 ✓** (PX6a `0628093`, PX6b `f757b0a`) — выравнивание/якорь/гиперссылки + буллеты/
+  отступы. Глубина текста слайда полная. 806 тестов. **Релиз 1.10.0** (CHANGELOG + bump +
+  доки сайта). **E-PPTX завершён.**
+
+**Итог E-PPTX.** `.pptx → FlowDoc → PDF/SVG/HTML/DOCX` — четвёртый вход, замыкающий
+офисную OOXML-тройку на чтение. Route A оправдался: ноль нового IR и нового рендера —
+слайд = секция, shape'ы = floating-элементы; весь конвейер layout→PDF/SVG/HTML + DrawingML
+(shape/chart/theme/table) переиспользован. Новая подсистема `src/pptx/` (pptx-reader,
+slide-parser, placeholder-cascade, sp-helpers, build-pptx-фикстура). PX0 шов → PX1 текст →
+PX2 каскад плейсхолдеров → PX3 картинки+фигуры → PX4 таблицы+чарты → PX5 тема+фоны+группы →
+PX6 глубина текста+ссылки. ~40 тестов в `tests/pptx-slide.test.ts`+`pptx-reader.test.ts`,
+honest e2e (parse → flow/HTML/PDF). Байт-в-ноль для docx/xlsx/pdf на каждом шаге (pptx —
+отдельный sniff, writer'ы не тронуты). Отложено (graceful loss): autofit-усадка, picture-
+фон/плейсхолдеры, alpha/roman нумерация, SmartArt, точная позиция таблицы по рамке.
 
 ---
 

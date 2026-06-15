@@ -30,7 +30,7 @@ import { Ream } from 'reamkit';
 // e.g. from an <input type="file"> or a fetch() — anything that yields bytes.
 const bytes = new Uint8Array(await file.arrayBuffer());
 
-const doc = Ream.parse(bytes);            // docx, xlsx or pdf — sniffed
+const doc = Ream.parse(bytes);            // docx, xlsx, pptx or pdf — sniffed
 const pdf = await doc.convert('pdf');     // async — fetches a font if needed
 const svg = await doc.convert('svg');     // same parse, different target
 const html = await doc.convert('html');   // flowed HTML — needs no fonts at all
@@ -130,7 +130,7 @@ rendering — inspect or analyze it without converting:
 
 ```ts
 const doc = Ream.parse(bytes);
-doc.format;     // 'docx' | 'xlsx' | 'pdf'
+doc.format;     // 'docx' | 'xlsx' | 'pptx' | 'pdf'
 doc.flow.body;  // paragraphs / tables / images / charts …
 doc.losses;     // read-time losses
 ```
@@ -186,6 +186,12 @@ re-encoded), `/Link` hyperlinks, form-XObject content, and filled / stroked /
 gradient vector shapes. It reads modern compressed files (cross-reference + object
 streams) and encrypted ones (RC4 / AES — the user password is passed to
 `Ream.parse(bytes, { password })`, defaulting to the permissions-only case).
+
+**Reads PowerPoint, too.** `Ream.parse` accepts a `.pptx` and turns each slide
+into a page at the deck size — text boxes (with run formatting, alignment,
+bullets and indents), layout/master placeholders, pictures, shapes, DrawingML
+tables, embedded charts, theme colours, slide backgrounds, grouped shapes and
+hyperlinks — then converts onward to PDF, SVG, HTML or DOCX like any source.
 
 See [`CHANGELOG.md`](./CHANGELOG.md) for the release history; the docs
 [**Scope**](https://reamkit.dev/guides/scope/) guide has the full feature matrix
