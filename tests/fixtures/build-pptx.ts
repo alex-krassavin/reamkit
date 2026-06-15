@@ -34,9 +34,19 @@ export interface BuildPptxOptions {
   readonly cy?: number;
   /** Emit a slideLayout + slideMaster wired to every slide (PX2 cascade). */
   readonly layoutMaster?: BuildPptxLayoutMaster;
+  /** Extra package parts (path → bytes), e.g. media images (PX3). */
+  readonly media?: Record<string, Uint8Array>;
+  /** Per-slide extra `<Relationship/>` XML appended to that slide's .rels. */
+  readonly slideRels?: ReadonlyArray<string>;
 }
 
 const NS = `xmlns:p="${P_NS}" xmlns:a="${A_NS}" xmlns:r="${R_NS}"`;
+const EXT_MIME: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+};
 
 // `slides[i]` is the inner XML of that slide's `<p:spTree>` (default empty).
 export function buildPptx(
@@ -48,11 +58,25 @@ export function buildPptx(
   const n = Math.max(1, slides.length);
   const lm = options.layoutMaster;
 
+  // Content-type Defaults for any media extensions present (png/jpg/…).
+  const mediaExts = new Set(
+    Object.keys(options.media ?? {})
+      .map((p) => p.split('.').pop()?.toLowerCase())
+      .filter((e): e is string => e !== undefined && e !== 'rels' && e !== 'xml'),
+  );
+  const mediaDefaults = [...mediaExts]
+    .map(
+      (e) =>
+        `<Default Extension="${e}" ContentType="${EXT_MIME[e] ?? 'application/octet-stream'}"/>`,
+    )
+    .join('');
+
   const contentTypes =
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
     `<Types xmlns="${PKG_REL_NS.replace('relationships', 'content-types')}">` +
     `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
     `<Default Extension="xml" ContentType="application/xml"/>` +
+    mediaDefaults +
     `<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>` +
     Array.from(
       { length: n },
@@ -102,13 +126,20 @@ export function buildPptx(
       `<p:cSld><p:spTree>${slides[i] ?? ''}</p:spTree></p:cSld>` +
       `</p:sld>`;
     files[`ppt/slides/slide${i + 1}.xml`] = encoder.encode(slide);
+    // Slide .rels: the layout link (when a layout/master is present) plus any
+    // caller-supplied extra relationships (e.g. an image rel into media).
+    const rels: Array<string> = [];
     if (lm) {
-      // Every slide points at the single layout.
+      rels.push(
+        `<Relationship Id="rIdLayout" Type="${R_NS}/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>`,
+      );
+    }
+    const extra = options.slideRels?.[i];
+    if (extra) rels.push(extra);
+    if (rels.length > 0) {
       files[`ppt/slides/_rels/slide${i + 1}.xml.rels`] = encoder.encode(
         `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
-          `<Relationships xmlns="${PKG_REL_NS}">` +
-          `<Relationship Id="rId1" Type="${R_NS}/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>` +
-          `</Relationships>`,
+          `<Relationships xmlns="${PKG_REL_NS}">${rels.join('')}</Relationships>`,
       );
     }
   }
@@ -130,5 +161,6 @@ export function buildPptx(
         `${lm.txStyles ?? ''}</p:sldMaster>`,
     );
   }
+  for (const [path, bytes] of Object.entries(options.media ?? {})) files[path] = bytes;
   return zipSync(files);
 }

@@ -12,10 +12,11 @@ import { XMLParser } from 'fast-xml-parser';
 import type { BodyElement, SectionProperties } from '@/core/document-model';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
-import type { Loss } from '@/core/ir';
+import type { Loss, ResourceId } from '@/core/ir';
 import type { PoNode } from '@/core/po-helpers';
 import type { Relationship } from '@/core/opc';
 import type { PlaceholderCascade } from '@/pptx/placeholder-cascade';
+import type { SlideContext } from '@/pptx/slide-parser';
 
 import { bytesInclude } from '@/core/bytes';
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
@@ -45,6 +46,7 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
   const pkg = OpcPackage.open(bytes);
   const presPath = pkg.getMainDocumentPath();
   const presData = pkg.getPart(presPath);
+  const resources = new ResourceStore();
 
   let cx = DEFAULT_CX;
   let cy = DEFAULT_CY;
@@ -100,7 +102,11 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
     const part = slideParts[i];
     if (part) {
       const cascade = cascadeForSlide(pkg, part.path, cascadeByLayout);
-      body.push(...parseSlide(part.data, cascade));
+      const ctx: SlideContext = {
+        ...(cascade ? { cascade } : {}),
+        resolveImage: makeSlideImageResolver(pkg, part.path, resources),
+      };
+      body.push(...parseSlide(part.data, ctx));
     }
   }
 
@@ -115,7 +121,7 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
     sections: [],
     section,
     styles: EMPTY_STYLE_SHEET,
-    resources: new ResourceStore(),
+    resources,
   };
   return { doc, losses };
 }
@@ -124,14 +130,35 @@ function parseXml(data: Uint8Array): Array<PoNode> {
   return parser.parse(decoder.decode(data)) as Array<PoNode>;
 }
 
-// A slide part's bytes → its floating shapes. Navigates p:sld/p:cSld/p:spTree
-// and hands the shape tree to the slide parser, with the placeholder cascade.
-function parseSlide(data: Uint8Array, cascade?: PlaceholderCascade): Array<BodyElement> {
+// A slide part's bytes → its floating shapes/images. Navigates
+// p:sld/p:cSld/p:spTree and hands the shape tree to the slide parser, with the
+// per-slide context (placeholder cascade + image resolver).
+function parseSlide(data: Uint8Array, ctx: SlideContext): Array<BodyElement> {
   const tree = parseXml(data);
   const sld = tree.find((n) => poIs(n, 'p:sld'));
   const cSld = sld ? poChildren(sld).find((c) => poIs(c, 'p:cSld')) : undefined;
   const spTree = cSld ? poChildren(cSld).find((c) => poIs(c, 'p:spTree')) : undefined;
-  return spTree ? parseSlideShapes(spTree, cascade) : [];
+  return spTree ? parseSlideShapes(spTree, ctx) : [];
+}
+
+// An image resolver scoped to one slide: a blip relationship id (a:blip
+// @r:embed) → the media bytes, stored (content-addressed, deduped) in the
+// document's ResourceStore. Relationship ids are scoped to their owning part,
+// so this resolves against the slide's own .rels (mirrors docx).
+function makeSlideImageResolver(
+  pkg: OpcPackage,
+  slidePath: string,
+  resources: ResourceStore,
+): (relId: string) => ResourceId | undefined {
+  const cache = new Map<string, ResourceId | undefined>();
+  return (relId) => {
+    if (cache.has(relId)) return cache.get(relId);
+    const rel = pkg.getPartRelationships(slidePath).find((r) => r.id === relId);
+    const resolved = rel ? pkg.resolveRelatedPart(slidePath, rel) : undefined;
+    const id = resolved ? resources.put(resolved.data) : undefined;
+    cache.set(relId, id);
+    return id;
+  };
 }
 
 // Resolve (and memoize) the placeholder cascade for a slide: its slideLayout

@@ -8,9 +8,13 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildPptx } from './fixtures/build-pptx';
+import { buildTinyPng } from './fixtures/build-png';
 import { Ream } from '@/core/converter/ream';
 import { PdfFile } from '@/pdf-reader/document';
 import { extractPageText } from '@/pdf-reader/text';
+
+const latin1 = new TextDecoder('latin1');
+const IMAGE_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image';
 
 const FONTS = {
   regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
@@ -162,5 +166,47 @@ describe('pptx placeholder cascade (E-PPTX PX2)', () => {
     const pptx = buildPptx([titlePlaceholder('Orphan')]); // no cascade to inherit from
     const html = decoder.decode(await Ream.parse(pptx).convert('html'));
     expect(html).not.toContain('Orphan');
+  });
+});
+
+// A slide with a single p:pic at 2in,1in sized 3in×3in, its a:blip resolving
+// through the slide rel to a 2×2 red PNG in ppt/media.
+function picDeck(): Uint8Array {
+  const pic =
+    `<p:pic><p:nvPicPr><p:cNvPr id="5" name="Picture 4" descr="a red square"/>` +
+    `<p:cNvPicPr/><p:nvPr/></p:nvPicPr>` +
+    `<p:blipFill><a:blip r:embed="rId7"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
+    `<p:spPr><a:xfrm><a:off x="1828800" y="914400"/><a:ext cx="2743200" cy="2743200"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`;
+  return buildPptx([pic], {
+    media: { 'ppt/media/image1.png': buildTinyPng(2, 2, [255, 0, 0, 255]) },
+    slideRels: [`<Relationship Id="rId7" Type="${IMAGE_REL}" Target="../media/image1.png"/>`],
+  });
+}
+
+describe('pptx slide images (E-PPTX PX3)', () => {
+  it('reads a p:pic into a positioned image with its bytes in the store', () => {
+    const doc = Ream.parse(picDeck());
+    const el = doc.flow.body.find((e) => e.kind === 'image');
+    expect(el?.kind).toBe('image');
+    if (el?.kind !== 'image') return;
+    const img = el.image;
+    // The blip resolved to a stored resource (its bytes are the PNG).
+    expect(img.resource).toBeDefined();
+    expect(doc.flow.resources.get(img.resource!)).toBeDefined();
+    // ext 2743200 EMU = 216 pt; off 1828800,914400 EMU = 144,72 pt from the page.
+    expect(Math.round(img.width)).toBe(216);
+    expect(Math.round(img.height)).toBe(216);
+    expect(img.float?.posH?.relativeFrom).toBe('page');
+    expect(Math.round(img.float?.posH?.offsetPt ?? -1)).toBe(144);
+    expect(Math.round(img.float?.posV?.offsetPt ?? -1)).toBe(72);
+    expect(img.altText).toBe('a red square'); // p:cNvPr @descr
+  });
+
+  it('embeds the slide image into the rendered PDF', async () => {
+    const pdf = await Ream.parse(picDeck()).convert('pdf', { fonts: FONTS });
+    expect(PdfFile.parse(pdf).pages().length).toBe(1);
+    // An image XObject made it into the PDF.
+    expect(latin1.decode(pdf)).toContain('/Image');
   });
 });

@@ -16,6 +16,7 @@
 import type {
   BodyElement,
   FloatAnchor,
+  ImageBlock,
   Paragraph,
   Run,
   RunProperties,
@@ -23,25 +24,39 @@ import type {
   ShapeGeometry,
   ShapeTextBody,
 } from '@/core/document-model';
+import type { ResourceId } from '@/core/ir';
 import type { PoNode } from '@/core/po-helpers';
 import type { PlaceholderCascade } from '@/pptx/placeholder-cascade';
 import type { PlaceholderRef, ShapeBoxEmu } from '@/pptx/sp-helpers';
 
 import { emuToPt } from '@/core/ir';
-import { poChildren, poIntAttr, poIs, poText } from '@/core/po-helpers';
+import { poAttr, poChildren, poIntAttr, poIs, poText } from '@/core/po-helpers';
 import { parsePh, parseXfrmBox, rPrToRunProps } from '@/pptx/sp-helpers';
+
+// Per-slide parsing context: the placeholder cascade (PX2) and an image
+// resolver that turns a slide-scoped relationship id (a:blip @r:embed) into a
+// ResourceStore id (PX3). Both are optional — a bare slide needs neither.
+export interface SlideContext {
+  readonly cascade?: PlaceholderCascade;
+  readonly resolveImage?: (relId: string) => ResourceId | undefined;
+}
 
 const RECT_GEOMETRY: ShapeGeometry = { kind: 'preset', preset: 'rect', adjust: new Map() };
 
-// Walk p:cSld/p:spTree, turning each text-bearing p:sp into a floating shape
-// BodyElement positioned on the slide. The cascade (when present) supplies
-// inherited geometry + text defaults for placeholders.
-export function parseSlideShapes(spTree: PoNode, cascade?: PlaceholderCascade): Array<BodyElement> {
+// Walk p:cSld/p:spTree, turning each text-bearing p:sp into a floating text box
+// and each p:pic into a floating image, positioned on the slide. The context
+// supplies the placeholder cascade and the image resolver.
+export function parseSlideShapes(spTree: PoNode, ctx: SlideContext = {}): Array<BodyElement> {
   const out: Array<BodyElement> = [];
   for (const child of poChildren(spTree)) {
-    if (!poIs(child, 'p:sp')) continue; // p:pic / p:graphicFrame / p:grpSp → later slices
-    const shape = parseSp(child, cascade);
-    if (shape) out.push({ kind: 'shape', shape });
+    if (poIs(child, 'p:sp')) {
+      const shape = parseSp(child, ctx);
+      if (shape) out.push({ kind: 'shape', shape });
+    } else if (poIs(child, 'p:pic')) {
+      const image = parsePic(child, ctx);
+      if (image) out.push({ kind: 'image', image });
+    }
+    // p:graphicFrame (tables/charts) / p:grpSp (groups) → later slices
   }
   return out;
 }
@@ -49,15 +64,15 @@ export function parseSlideShapes(spTree: PoNode, cascade?: PlaceholderCascade): 
 // p:sp → a floating text box. The box comes from the shape's own a:xfrm, else
 // (for a placeholder) the cascade; undefined when neither supplies geometry or
 // the shape has no text.
-function parseSp(sp: PoNode, cascade?: PlaceholderCascade): ShapeBlock | undefined {
+function parseSp(sp: PoNode, ctx: SlideContext): ShapeBlock | undefined {
   const ph = parsePh(sp);
   const spPr = poChildren(sp).find((c) => poIs(c, 'p:spPr'));
   let box: ShapeBoxEmu | undefined = parseXfrmBox(spPr);
-  if (!box && ph && cascade) box = cascade.geometryFor(ph);
+  if (!box && ph && ctx.cascade) box = ctx.cascade.geometryFor(ph);
   if (!box) return undefined;
 
   const txBody = poChildren(sp).find((c) => poIs(c, 'p:txBody'));
-  const text = txBody ? parseTxBody(txBody, ph, cascade) : undefined;
+  const text = txBody ? parseTxBody(txBody, ph, ctx.cascade) : undefined;
   if (!text) return undefined;
 
   // §20.4.2.3 — placement is page-absolute (the slide IS the page): off.x/off.y
@@ -77,6 +92,44 @@ function parseSp(sp: PoNode, cascade?: PlaceholderCascade): ShapeBlock | undefin
     text,
     paragraphProperties: {},
   };
+}
+
+// p:pic → a floating image. The bytes come from p:blipFill/a:blip @r:embed,
+// resolved against the slide's relationships (PX3a); geometry from p:spPr/a:xfrm
+// (picture placeholders that inherit it from the layout wait for a later slice).
+function parsePic(pic: PoNode, ctx: SlideContext): ImageBlock | undefined {
+  const spPr = poChildren(pic).find((c) => poIs(c, 'p:spPr'));
+  const box = parseXfrmBox(spPr);
+  if (!box) return undefined;
+
+  const blipFill = poChildren(pic).find((c) => poIs(c, 'p:blipFill'));
+  const blip = blipFill ? poChildren(blipFill).find((c) => poIs(c, 'a:blip')) : undefined;
+  const relId = blip ? poAttr(blip, 'embed') : undefined;
+  const resource = relId !== undefined ? ctx.resolveImage?.(relId) : undefined;
+
+  const altText = picAltText(pic);
+  const float: FloatAnchor = {
+    wrap: 'none',
+    posH: { relativeFrom: 'page', offsetPt: emuToPt(box.x) },
+    posV: { relativeFrom: 'page', offsetPt: emuToPt(box.y) },
+  };
+  return {
+    float,
+    ...(resource !== undefined ? { resource } : {}),
+    width: emuToPt(box.cx),
+    height: emuToPt(box.cy),
+    paragraphProperties: {},
+    ...(altText ? { altText } : {}),
+  };
+}
+
+// p:nvPicPr/p:cNvPr @descr (preferred) or @title → the picture's alternate text.
+function picAltText(pic: PoNode): string | undefined {
+  const nvPicPr = poChildren(pic).find((c) => poIs(c, 'p:nvPicPr'));
+  const cNvPr = nvPicPr ? poChildren(nvPicPr).find((c) => poIs(c, 'p:cNvPr')) : undefined;
+  const descr = cNvPr ? poAttr(cNvPr, 'descr') : undefined;
+  const title = cNvPr ? poAttr(cNvPr, 'title') : undefined;
+  return (descr ?? title)?.trim() || undefined;
 }
 
 // p:txBody → ShapeTextBody. Each a:p becomes a paragraph whose runs inherit the
