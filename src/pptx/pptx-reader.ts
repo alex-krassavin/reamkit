@@ -1,11 +1,13 @@
-// E-PPTX PX0–PX2 — PresentationML (.pptx) reader: bytes → FlowDoc. A presentation
+// E-PPTX PX0–PX5 — PresentationML (.pptx) reader: bytes → FlowDoc. A presentation
 // is a positioned canvas, which maps cleanly onto the existing IR: each slide is a
 // section at the deck's page size, and its shapes become absolutely positioned
 // floating elements (Route A, epics.md). PX0 established the seam — sniff, slide
-// size from p:sldSz, slide count from p:sldIdLst, one page per slide. PX1 fills
-// each page: a slide's text-bearing shapes (p:sp/p:txBody) become positioned
-// floating text boxes. PX2 resolves placeholders against the slide's layout and
-// master (the cascade), so inherited geometry + text sizing land too.
+// size from p:sldSz, slide count from p:sldIdLst, one page per slide; the slide's
+// shapes (slide-parser) fill each page. This module owns the part graph: it
+// resolves each slide's layout → master → theme chain into the placeholder
+// cascade (PX2), the deck colour resolver (PX5a) and the inherited background
+// (PX5b), all memoized by layout path, plus the per-slide image (PX3a) and chart
+// (PX4a) resolvers.
 
 import { XMLParser } from 'fast-xml-parser';
 

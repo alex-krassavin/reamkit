@@ -1,4 +1,4 @@
-// E-PPTX PX1–PX4 — slide shapes → positioned FlowDoc elements.
+// E-PPTX PX1–PX5 — slide shapes → positioned FlowDoc elements.
 //
 // A PresentationML slide (p:cSld/p:spTree) is a canvas of shapes. Under Route A
 // (epics.md) each shape becomes a floating element anchored at its EMU position,
@@ -7,7 +7,9 @@
 //     cascade (geometry + master p:txStyles) for a p:ph with no own transform.
 //   * PX3 — p:pic floating images; p:sp visible geometry/fill/stroke (p:spPr).
 //   * PX4 — p:graphicFrame: a c:chart floating ChartBlock or an a:tbl Table.
-// Groups (p:grpSp) wait for PX5; bullets/levels/alignment/anchor/autofit for PX6.
+//   * PX5 — colours via the deck theme resolver; p:grpSp groups (a child→slide
+//     transform). Backgrounds + theme wiring live in pptx-reader.
+// Bullets/levels/alignment/anchor/autofit + hyperlinks come in PX6.
 
 import type {
   BodyElement,

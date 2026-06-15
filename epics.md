@@ -583,10 +583,13 @@ pptx сниффится отдельно (ZIP с `ppt/presentation.xml`), write-
     цвет ранов и мастер-`txStyles` (`rPrToRunProps` берёт резолвер; попутно починен
     латентный баг — run colorHex хранился с лишним `#`), заливка ячеек, цвета чартов.
     Фолбэк на Office-палитру, если темы нет.
-  - *PX5b — фоны* (остаток): `p:bg` слайда/layout/master (solid/gradient/picture) как
-    подложка-shape за контентом (`float.behind`).
-  - *PX5c — группы* (остаток): `p:grpSp` — композиция `a:xfrm`/`a:chOff`/`a:chExt`
-    (дочерние координаты → координаты слайда).
+  - *PX5b ✓ — фоны* (`283a7db`): `p:bg` слайда (иначе layout/master) → полнослайдовый
+    rect за контентом (`float.behind`); `p:bgPr` solid/gradient (через общий `parseFill`),
+    `p:bgRef` аппроксимируется solid'ом по цвету. Унаследованный фон резолвится в
+    `slideStylesFor` рядом с каскадом/темой.
+  - *PX5c ✓ — группы* (`bc534c8`): `p:grpSp` — рекурсия в группы с композицией
+    child→slide трансформы (off/ext + chOff/chExt); каждый shape/pic/frame мапит свой
+    EMU-бокс через неё. Вложенные группы композятся.
 - **PX6 — глубина текста + гиперссылки → релиз.** Маркеры (`a:buChar`/`a:buAutoNum`),
   уровни списка, выравнивание (`a:pPr@algn`), вертикальный якорь (`a:bodyPr@anchor`),
   автоподгонка (`a:normAutofit`/`spAutoFit`); гиперссылки (`a:hlinkClick`). Доки на
@@ -620,9 +623,10 @@ pptx сниффится отдельно (ZIP с `ppt/presentation.xml`), write-
 - **PX4 ✓** (PX4a `fc61f89`, PX4b `72b1057`) — чарты (`c:chart` → floating `ChartBlock` +
   `doc.charts`) и таблицы (`a:tbl` → in-flow `Table`) через `p:graphicFrame`. Слайд несёт
   диаграммы и таблицы. 794 теста.
-- **PX5a ✓** (`800be96`) — тема деки: мастер-`a:clrScheme` → `ColorResolver`, протянут во
-  все цвето-точки (fill/line/раны/txStyles/ячейки/чарты). Scheme-цвета корректны. 796
-  тестов. Остаток PX5: фоны (`p:bg`) + группы (`p:grpSp`). Дальше: PX5b/PX5c, затем PX6.
+- **PX5 ✓** (PX5a `800be96`, PX5b `283a7db`, PX5c `bc534c8`) — тема деки (scheme-цвета во
+  всех цвето-точках), фоны слайда/мастера (`p:bg` → подложка `behind`) и группы (`p:grpSp`
+  → child→slide трансформа). Дека рендерит верные цвета, фоны и сгруппированный контент.
+  801 тест. Дальше: PX6 (глубина текста + ссылки → релиз).
 
 ---
 
