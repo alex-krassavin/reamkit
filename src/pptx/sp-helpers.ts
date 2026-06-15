@@ -44,10 +44,9 @@ export function parsePh(sp: PoNode): PlaceholderRef | undefined {
   };
 }
 
-// p:spPr/a:xfrm → the EMU box, or undefined when the shape carries no explicit
-// transform (a placeholder that inherits it from the layout/master).
-export function parseXfrmBox(spPr: PoNode | undefined): ShapeBoxEmu | undefined {
-  const xfrm = spPr ? poChildren(spPr).find((c) => poIs(c, 'a:xfrm')) : undefined;
+// An xfrm node (a:off + a:ext children) → the EMU box. Works for both a:xfrm
+// (in p:spPr) and p:xfrm (on a p:graphicFrame), whose children are identical.
+export function boxFromXfrm(xfrm: PoNode | undefined): ShapeBoxEmu | undefined {
   if (!xfrm) return undefined;
   const off = poChildren(xfrm).find((c) => poIs(c, 'a:off'));
   const ext = poChildren(xfrm).find((c) => poIs(c, 'a:ext'));
@@ -57,6 +56,12 @@ export function parseXfrmBox(spPr: PoNode | undefined): ShapeBoxEmu | undefined 
   const x = (off ? poIntAttr(off, 'x') : undefined) ?? 0;
   const y = (off ? poIntAttr(off, 'y') : undefined) ?? 0;
   return { x, y, cx, cy };
+}
+
+// p:spPr/a:xfrm → the EMU box, or undefined when the shape carries no explicit
+// transform (a placeholder that inherits it from the layout/master).
+export function parseXfrmBox(spPr: PoNode | undefined): ShapeBoxEmu | undefined {
+  return boxFromXfrm(spPr ? poChildren(spPr).find((c) => poIs(c, 'a:xfrm')) : undefined);
 }
 
 // a:rPr / a:defRPr → RunProperties. Both the direct run formatting on a slide

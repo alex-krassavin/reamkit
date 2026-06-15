@@ -15,6 +15,7 @@
 
 import type {
   BodyElement,
+  ChartBlock,
   FloatAnchor,
   ImageBlock,
   Paragraph,
@@ -32,16 +33,21 @@ import type { PlaceholderRef, ShapeBoxEmu } from '@/pptx/sp-helpers';
 
 import { defaultColorResolver } from '@/core/drawingml/colors';
 import { emuToPt } from '@/core/ir';
-import { poAttr, poChildren, poIntAttr, poIs, poText } from '@/core/po-helpers';
+import { poAttr, poChildren, poFindDescendant, poIntAttr, poIs, poText } from '@/core/po-helpers';
 import { parseCustGeom, parseFill, parseLine, parsePrstGeom } from '@/word/drawing-parser';
-import { parsePh, parseXfrmBox, rPrToRunProps } from '@/pptx/sp-helpers';
+import { boxFromXfrm, parsePh, parseXfrmBox, rPrToRunProps } from '@/pptx/sp-helpers';
 
-// Per-slide parsing context: the placeholder cascade (PX2) and an image
-// resolver that turns a slide-scoped relationship id (a:blip @r:embed) into a
-// ResourceStore id (PX3). Both are optional — a bare slide needs neither.
+const CHART_URI = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
+
+// Per-slide parsing context: the placeholder cascade (PX2), an image resolver
+// that turns a slide-scoped relationship id (a:blip @r:embed) into a
+// ResourceStore id (PX3a), and a chart resolver that parses a referenced chart
+// part (c:chart @r:id) and returns its document-unique key (PX4a). All optional
+// — a bare slide needs none.
 export interface SlideContext {
   readonly cascade?: PlaceholderCascade;
   readonly resolveImage?: (relId: string) => ResourceId | undefined;
+  readonly resolveChart?: (relId: string) => string | undefined;
 }
 
 const RECT_GEOMETRY: ShapeGeometry = { kind: 'preset', preset: 'rect', adjust: new Map() };
@@ -58,10 +64,22 @@ export function parseSlideShapes(spTree: PoNode, ctx: SlideContext = {}): Array<
     } else if (poIs(child, 'p:pic')) {
       const image = parsePic(child, ctx);
       if (image) out.push({ kind: 'image', image });
+    } else if (poIs(child, 'p:graphicFrame')) {
+      const el = parseGraphicFrame(child, ctx);
+      if (el) out.push(el);
     }
-    // p:graphicFrame (tables/charts) / p:grpSp (groups) → later slices
+    // p:grpSp (groups) → later slice
   }
   return out;
+}
+
+// A page-absolute float anchor at the shape's EMU offset (the slide is the page).
+function floatAt(box: ShapeBoxEmu): FloatAnchor {
+  return {
+    wrap: 'none',
+    posH: { relativeFrom: 'page', offsetPt: emuToPt(box.x) },
+    posV: { relativeFrom: 'page', offsetPt: emuToPt(box.y) },
+  };
 }
 
 // p:sp → a floating shape: its geometry, fill and stroke (PX3), plus a text body
@@ -87,16 +105,8 @@ function parseSp(sp: PoNode, ctx: SlideContext): ShapeBlock | undefined {
   const visibleLine = line !== undefined && line.fill !== 'none';
   if (!text && fill.kind === 'none' && !visibleLine) return undefined;
 
-  // §20.4.2.3 — placement is page-absolute (the slide IS the page): off.x/off.y
-  // from the page's top-left corner, sized by ext.
-  const float: FloatAnchor = {
-    wrap: 'none',
-    posH: { relativeFrom: 'page', offsetPt: emuToPt(box.x) },
-    posV: { relativeFrom: 'page', offsetPt: emuToPt(box.y) },
-  };
-
   return {
-    float,
+    float: floatAt(box),
     width: emuToPt(box.cx),
     height: emuToPt(box.cy),
     geometry,
@@ -105,6 +115,31 @@ function parseSp(sp: PoNode, ctx: SlideContext): ShapeBlock | undefined {
     ...(text ? { text } : {}),
     paragraphProperties: {},
   };
+}
+
+// p:graphicFrame → a floating chart (c:chart, PX4a) or table (a:tbl, PX4b). The
+// frame's transform is p:xfrm (a:off + a:ext), not the a:xfrm of a shape.
+function parseGraphicFrame(gf: PoNode, ctx: SlideContext): BodyElement | undefined {
+  const box = boxFromXfrm(poChildren(gf).find((c) => poIs(c, 'p:xfrm')));
+  if (!box) return undefined;
+  const graphicData = poFindDescendant(gf, 'a:graphicData');
+  const uri = graphicData ? poAttr(graphicData, 'uri') : undefined;
+
+  if (uri === CHART_URI) {
+    const cChart = poFindDescendant(gf, 'c:chart');
+    const relId = cChart ? poAttr(cChart, 'id') : undefined; // r:id
+    const key = relId !== undefined ? ctx.resolveChart?.(relId) : undefined;
+    if (key === undefined) return undefined;
+    const chart: ChartBlock = {
+      float: floatAt(box),
+      chartRelId: key,
+      width: emuToPt(box.cx),
+      height: emuToPt(box.cy),
+      paragraphProperties: {},
+    };
+    return { kind: 'chart', chart };
+  }
+  return undefined;
 }
 
 // p:spPr geometry: a:prstGeom (preset) or a:custGeom (custom path), default rect.
@@ -131,13 +166,8 @@ function parsePic(pic: PoNode, ctx: SlideContext): ImageBlock | undefined {
   const resource = relId !== undefined ? ctx.resolveImage?.(relId) : undefined;
 
   const altText = picAltText(pic);
-  const float: FloatAnchor = {
-    wrap: 'none',
-    posH: { relativeFrom: 'page', offsetPt: emuToPt(box.x) },
-    posV: { relativeFrom: 'page', offsetPt: emuToPt(box.y) },
-  };
   return {
-    float,
+    float: floatAt(box),
     ...(resource !== undefined ? { resource } : {}),
     width: emuToPt(box.cx),
     height: emuToPt(box.cy),

@@ -275,3 +275,52 @@ describe('pptx slide shapes (E-PPTX PX3)', () => {
     expect(PdfFile.parse(pdf).pages().length).toBe(1); // a textless filled box still makes a page
   });
 });
+
+const CHART_NS = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
+const CHART_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart';
+const BAR_CHART =
+  `<c:chartSpace xmlns:c="${CHART_NS}" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">` +
+  `<c:chart><c:plotArea><c:barChart><c:barDir val="col"/><c:ser><c:idx val="0"/>` +
+  `<c:cat><c:strRef><c:strCache><c:ptCount val="2"/>` +
+  `<c:pt idx="0"><c:v>A</c:v></c:pt><c:pt idx="1"><c:v>B</c:v></c:pt></c:strCache></c:strRef></c:cat>` +
+  `<c:val><c:numRef><c:numCache><c:ptCount val="2"/>` +
+  `<c:pt idx="0"><c:v>10</c:v></c:pt><c:pt idx="1"><c:v>20</c:v></c:pt></c:numCache></c:numRef></c:val>` +
+  `</c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>`;
+
+// A slide with a c:chart graphicFrame at 2in,1in sized 6in×3.5in, its r:id
+// resolving through the slide rel to a bar chart part.
+function chartDeck(): Uint8Array {
+  const gf =
+    `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="6" name="Chart 5"/>` +
+    `<p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>` +
+    `<p:xfrm><a:off x="1828800" y="914400"/><a:ext cx="5486400" cy="3200400"/></p:xfrm>` +
+    `<a:graphic><a:graphicData uri="${CHART_NS}">` +
+    `<c:chart xmlns:c="${CHART_NS}" r:id="rId8"/>` +
+    `</a:graphicData></a:graphic></p:graphicFrame>`;
+  return buildPptx([gf], {
+    media: { 'ppt/charts/chart1.xml': new TextEncoder().encode(BAR_CHART) },
+    slideRels: [`<Relationship Id="rId8" Type="${CHART_REL}" Target="../charts/chart1.xml"/>`],
+  });
+}
+
+describe('pptx slide charts (E-PPTX PX4)', () => {
+  it('reads a c:chart graphicFrame into a positioned ChartBlock', () => {
+    const doc = Ream.parse(chartDeck());
+    const el = doc.flow.body.find((e) => e.kind === 'chart');
+    expect(el?.kind).toBe('chart');
+    if (el?.kind !== 'chart') return;
+    const ch = el.chart;
+    // The block references a parsed chart in the document's charts map.
+    expect(doc.flow.charts?.get(ch.chartRelId)?.type).toBe('bar');
+    // ext 5486400×3200400 EMU = 432×252 pt; off 1828800,914400 = 144,72 pt.
+    expect(Math.round(ch.width)).toBe(432);
+    expect(Math.round(ch.height)).toBe(252);
+    expect(Math.round(ch.float?.posH?.offsetPt ?? -1)).toBe(144);
+    expect(Math.round(ch.float?.posV?.offsetPt ?? -1)).toBe(72);
+  });
+
+  it('renders the slide chart into the PDF', async () => {
+    const pdf = await Ream.parse(chartDeck()).convert('pdf', { fonts: FONTS });
+    expect(PdfFile.parse(pdf).pages().length).toBe(1);
+  });
+});

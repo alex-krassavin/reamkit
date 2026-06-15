@@ -9,7 +9,7 @@
 
 import { XMLParser } from 'fast-xml-parser';
 
-import type { BodyElement, SectionProperties } from '@/core/document-model';
+import type { BodyElement, Chart, SectionProperties } from '@/core/document-model';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss, ResourceId } from '@/core/ir';
@@ -19,6 +19,8 @@ import type { PlaceholderCascade } from '@/pptx/placeholder-cascade';
 import type { SlideContext } from '@/pptx/slide-parser';
 
 import { bytesInclude } from '@/core/bytes';
+import { parseChart, withChartColorStyle } from '@/core/drawingml/chart-parser';
+import { defaultColorResolver } from '@/core/drawingml/colors';
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
 import { OpcPackage } from '@/core/opc';
 import { poAttr, poChildren, poIntAttr, poIs } from '@/core/po-helpers';
@@ -47,6 +49,7 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
   const presPath = pkg.getMainDocumentPath();
   const presData = pkg.getPart(presPath);
   const resources = new ResourceStore();
+  const charts = new Map<string, Chart>();
 
   let cx = DEFAULT_CX;
   let cy = DEFAULT_CY;
@@ -105,6 +108,7 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
       const ctx: SlideContext = {
         ...(cascade ? { cascade } : {}),
         resolveImage: makeSlideImageResolver(pkg, part.path, resources),
+        resolveChart: makeSlideChartResolver(pkg, part.path, charts),
       };
       body.push(...parseSlide(part.data, ctx));
     }
@@ -122,6 +126,7 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
     section,
     styles: EMPTY_STYLE_SHEET,
     resources,
+    ...(charts.size > 0 ? { charts } : {}),
   };
   return { doc, losses };
 }
@@ -158,6 +163,32 @@ function makeSlideImageResolver(
     const id = resolved ? resources.put(resolved.data) : undefined;
     cache.set(relId, id);
     return id;
+  };
+}
+
+// A chart resolver scoped to one slide: a c:chart relationship id → the parsed
+// chart, stored in the document's charts map under a globally-unique key
+// (relationship ids are part-scoped, so two slides can reuse the same id). The
+// ChartBlock carries that key as its chartRelId. The deck's own theme arrives in
+// PX5; until then chart colours resolve through the default Office palette.
+function makeSlideChartResolver(
+  pkg: OpcPackage,
+  slidePath: string,
+  charts: Map<string, Chart>,
+): (relId: string) => string | undefined {
+  const cache = new Map<string, string | undefined>();
+  return (relId) => {
+    if (cache.has(relId)) return cache.get(relId);
+    const rel = pkg.getPartRelationships(slidePath).find((r) => r.id === relId);
+    const resolved = rel ? pkg.resolveRelatedPart(slidePath, rel) : undefined;
+    const chart = resolved ? parseChart(resolved.data, defaultColorResolver) : null;
+    let key: string | undefined;
+    if (chart && resolved) {
+      key = `${slidePath}!${relId}`;
+      charts.set(key, withChartColorStyle(chart, pkg, resolved.path, defaultColorResolver));
+    }
+    cache.set(relId, key);
+    return key;
   };
 }
 
