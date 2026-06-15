@@ -21,7 +21,7 @@ Runtime dependencies are minimal: `fflate` (ZIP/Deflate) and `fast-xml-parser`.
 ## Convert a document
 
 Parse once into the format-neutral interlayer, then convert to any target.
-The format (docx/xlsx) is sniffed from the bytes. No fonts to wire up — an
+The format (docx/xlsx/pptx/pdf) is sniffed from the bytes. No fonts to wire up — an
 open substitute (Roboto for sans, Tinos for serif, Cousine for monospace —
 the same families LibreOffice substitutes) is fetched automatically based on
 the document's referenced fonts:
@@ -32,7 +32,7 @@ import { Ream } from 'reamkit';
 // e.g. from an <input type="file"> or a fetch() — anything that yields bytes.
 const bytes = new Uint8Array(await file.arrayBuffer());
 
-const doc = Ream.parse(bytes);          // docx, xlsx or pdf — sniffed
+const doc = Ream.parse(bytes);          // docx, xlsx, pptx or pdf — sniffed
 const pdf = await doc.convert('pdf');   // async — fetches a font if needed
 const svg = await doc.convert('svg');   // same parse, different target
 const html = await doc.convert('html');  // flowed HTML — needs no fonts at all
@@ -62,7 +62,7 @@ const pdf = await Ream.parse(bytes).convert('pdf', { fonts });
 
 ```ts
 const doc = Ream.parse(bytes);
-doc.format;    // 'docx' | 'xlsx' | 'pdf'
+doc.format;    // 'docx' | 'xlsx' | 'pptx' | 'pdf'
 doc.flow;      // the parsed interlayer tree (paragraphs, tables, images, …)
 doc.losses;    // anything dropped/degraded while reading
 
