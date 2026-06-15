@@ -26,6 +26,7 @@ import type {
   TableCell,
   TableRow,
 } from '@/core/document-model';
+import type { ColorResolver } from '@/core/drawingml/colors';
 import type { Pt, ResourceId } from '@/core/ir';
 import type { PoNode } from '@/core/po-helpers';
 import type { PlaceholderCascade } from '@/pptx/placeholder-cascade';
@@ -49,6 +50,9 @@ export interface SlideContext {
   readonly cascade?: PlaceholderCascade;
   readonly resolveImage?: (relId: string) => ResourceId | undefined;
   readonly resolveChart?: (relId: string) => string | undefined;
+  // The deck's colour resolver (master theme palette, PX5); defaults to the
+  // Office palette when absent.
+  readonly colors?: ColorResolver;
 }
 
 const RECT_GEOMETRY: ShapeGeometry = { kind: 'preset', preset: 'rect', adjust: new Map() };
@@ -89,20 +93,20 @@ function floatAt(box: ShapeBoxEmu): FloatAnchor {
 // invisible (no fill, no stroke, no text).
 function parseSp(sp: PoNode, ctx: SlideContext): ShapeBlock | undefined {
   const ph = parsePh(sp);
+  const colors = ctx.colors ?? defaultColorResolver;
   const spPr = poChildren(sp).find((c) => poIs(c, 'p:spPr'));
   let box: ShapeBoxEmu | undefined = parseXfrmBox(spPr);
   if (!box && ph && ctx.cascade) box = ctx.cascade.geometryFor(ph);
   if (!box) return undefined;
 
   const txBody = poChildren(sp).find((c) => poIs(c, 'p:txBody'));
-  const text = txBody ? parseTxBody(txBody, ph, ctx.cascade) : undefined;
+  const text = txBody ? parseTxBody(txBody, ph, ctx.cascade, colors) : undefined;
 
-  // Geometry/fill/stroke from p:spPr via the shared DrawingML readers. The
-  // deck's own theme resolver arrives in PX5; until then scheme colours fall
-  // back to the default Office palette.
+  // Geometry/fill/stroke from p:spPr via the shared DrawingML readers, resolving
+  // colours through the deck's theme palette (PX5).
   const geometry = parseGeometry(spPr);
-  const fill: ShapeFill = spPr ? parseFill(spPr, defaultColorResolver) : { kind: 'none' };
-  const line = spPr ? parseLine(spPr, defaultColorResolver) : undefined;
+  const fill: ShapeFill = spPr ? parseFill(spPr, colors) : { kind: 'none' };
+  const line = spPr ? parseLine(spPr, colors) : undefined;
   const visibleLine = line !== undefined && line.fill !== 'none';
   if (!text && fill.kind === 'none' && !visibleLine) return undefined;
 
@@ -146,7 +150,9 @@ function parseGraphicFrame(gf: PoNode, ctx: SlideContext): BodyElement | undefin
     // zeroes the slide margins so it sits at the top-left). Its exact frame
     // position is a later refinement.
     const tbl = poFindDescendant(gf, 'a:tbl');
-    return tbl ? { kind: 'table', table: parseTable(tbl) } : undefined;
+    return tbl
+      ? { kind: 'table', table: parseTable(tbl, ctx.colors ?? defaultColorResolver) }
+      : undefined;
   }
   return undefined;
 }
@@ -194,30 +200,32 @@ function picAltText(pic: PoNode): string | undefined {
   return (descr ?? title)?.trim() || undefined;
 }
 
-// p:txBody → ShapeTextBody. Each a:p becomes a paragraph whose runs inherit the
-// placeholder's per-level defaults (PX2) under their own a:rPr. a:bodyPr insets
-// are carried when present; vertical anchor + autofit come in PX6.
 // a:txBody → its paragraphs as BodyElements (shared by shape text bodies and
-// table cells). Runs inherit the placeholder defaults when a cascade is given.
+// table cells). Runs inherit the placeholder defaults when a cascade is given,
+// and resolve colours through the deck's palette.
 function txBodyParagraphs(
   txBody: PoNode,
-  ph?: PlaceholderRef,
-  cascade?: PlaceholderCascade,
+  ph: PlaceholderRef | undefined,
+  cascade: PlaceholderCascade | undefined,
+  colors: ColorResolver,
 ): Array<BodyElement> {
   const content: Array<BodyElement> = [];
   for (const child of poChildren(txBody)) {
     if (!poIs(child, 'a:p')) continue;
-    content.push({ kind: 'paragraph', paragraph: parseSlideParagraph(child, ph, cascade) });
+    content.push({ kind: 'paragraph', paragraph: parseSlideParagraph(child, ph, cascade, colors) });
   }
   return content;
 }
 
+// p:txBody → ShapeTextBody. a:bodyPr insets are carried when present; the
+// vertical anchor + autofit come in PX6.
 function parseTxBody(
   txBody: PoNode,
   ph: PlaceholderRef | undefined,
-  cascade?: PlaceholderCascade,
+  cascade: PlaceholderCascade | undefined,
+  colors: ColorResolver,
 ): ShapeTextBody | undefined {
-  const content = txBodyParagraphs(txBody, ph, cascade);
+  const content = txBodyParagraphs(txBody, ph, cascade, colors);
   if (content.length === 0) return undefined;
 
   const bodyPr = poChildren(txBody).find((c) => poIs(c, 'a:bodyPr'));
@@ -240,7 +248,8 @@ function parseTxBody(
 function parseSlideParagraph(
   aP: PoNode,
   ph: PlaceholderRef | undefined,
-  cascade?: PlaceholderCascade,
+  cascade: PlaceholderCascade | undefined,
+  colors: ColorResolver,
 ): Paragraph {
   const pPr = poChildren(aP).find((c) => poIs(c, 'a:pPr'));
   const level = (pPr ? poIntAttr(pPr, 'lvl') : undefined) ?? 0;
@@ -249,7 +258,7 @@ function parseSlideParagraph(
   const runs: Array<Run> = [];
   for (const child of poChildren(aP)) {
     if (poIs(child, 'a:r') || poIs(child, 'a:fld')) {
-      const run = parseSlideRun(child, defaults);
+      const run = parseSlideRun(child, defaults, colors);
       if (run) runs.push(run);
     }
   }
@@ -258,17 +267,21 @@ function parseSlideParagraph(
 
 // a:r / a:fld → Run. The placeholder defaults sit under the run's own a:rPr, so
 // direct formatting always wins.
-function parseSlideRun(node: PoNode, defaults: RunProperties): Run | undefined {
+function parseSlideRun(
+  node: PoNode,
+  defaults: RunProperties,
+  colors: ColorResolver,
+): Run | undefined {
   const t = poChildren(node).find((c) => poIs(c, 'a:t'));
   const text = t ? poText(t) : '';
   if (text.length === 0) return undefined;
   const rPr = poChildren(node).find((c) => poIs(c, 'a:rPr'));
-  return { text, properties: { ...defaults, ...rPrToRunProps(rPr) } };
+  return { text, properties: { ...defaults, ...rPrToRunProps(rPr, colors) } };
 }
 
 // §21.1.3 a:tbl → a FlowDoc Table: grid column widths (a:tblGrid/a:gridCol @w),
 // rows (a:tr) and cells (a:tc) with their text and merge state.
-function parseTable(tbl: PoNode): Table {
+function parseTable(tbl: PoNode, colors: ColorResolver): Table {
   const grid: Array<Pt> = [];
   const tblGrid = poChildren(tbl).find((c) => poIs(c, 'a:tblGrid'));
   if (tblGrid) {
@@ -278,12 +291,12 @@ function parseTable(tbl: PoNode): Table {
   }
   const rows: Array<TableRow> = [];
   for (const tr of poChildren(tbl)) {
-    if (poIs(tr, 'a:tr')) rows.push(parseTableRow(tr));
+    if (poIs(tr, 'a:tr')) rows.push(parseTableRow(tr, colors));
   }
   return { properties: {}, grid, rows };
 }
 
-function parseTableRow(tr: PoNode): TableRow {
+function parseTableRow(tr: PoNode, colors: ColorResolver): TableRow {
   const h = poIntAttr(tr, 'h');
   const cells: Array<TableCell> = [];
   for (const tc of poChildren(tr)) {
@@ -292,14 +305,14 @@ function parseTableRow(tr: PoNode): TableRow {
     // drop them so the origin's colSpan carries the width (the FlowDoc model
     // omits placeholder cells for spanned columns).
     if (poAttr(tc, 'hMerge') === '1') continue;
-    cells.push(parseTableCell(tc));
+    cells.push(parseTableCell(tc, colors));
   }
   return { properties: { ...(h !== undefined ? { height: emuToPt(h) } : {}) }, cells };
 }
 
-function parseTableCell(tc: PoNode): TableCell {
+function parseTableCell(tc: PoNode, colors: ColorResolver): TableCell {
   const txBody = poChildren(tc).find((c) => poIs(c, 'a:txBody'));
-  const content = txBody ? txBodyParagraphs(txBody) : [];
+  const content = txBody ? txBodyParagraphs(txBody, undefined, undefined, colors) : [];
   const gridSpan = poIntAttr(tc, 'gridSpan');
   const rowSpan = poIntAttr(tc, 'rowSpan');
   // Vertical merge: the origin carries @rowSpan (→ 'start'); a continuation cell
@@ -311,7 +324,7 @@ function parseTableCell(tc: PoNode): TableCell {
         ? 'middle'
         : undefined;
   const tcPr = poChildren(tc).find((c) => poIs(c, 'a:tcPr'));
-  const shadingHex = tcPr ? cellFillHex(tcPr) : undefined;
+  const shadingHex = tcPr ? cellFillHex(tcPr, colors) : undefined;
   return {
     properties: {
       ...(gridSpan !== undefined && gridSpan > 1 ? { colSpan: gridSpan } : {}),
@@ -323,11 +336,11 @@ function parseTableCell(tc: PoNode): TableCell {
 }
 
 // a:tcPr/a:solidFill → the cell background hex (srgb or theme scheme colour).
-function cellFillHex(tcPr: PoNode): string | undefined {
+function cellFillHex(tcPr: PoNode, colors: ColorResolver): string | undefined {
   const solidFill = poChildren(tcPr).find((c) => poIs(c, 'a:solidFill'));
   if (!solidFill) return undefined;
   for (const c of poChildren(solidFill)) {
-    const hex = resolveColorNode(c, defaultColorResolver);
+    const hex = resolveColorNode(c, colors);
     if (hex) return hex;
   }
   return undefined;

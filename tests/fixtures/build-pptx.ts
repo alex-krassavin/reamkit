@@ -18,6 +18,7 @@ const PKG_REL_NS = 'http://schemas.openxmlformats.org/package/2006/relationships
 const SLIDE_CT = 'application/vnd.openxmlformats-officedocument.presentationml.slide+xml';
 const LAYOUT_CT = 'application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml';
 const MASTER_CT = 'application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml';
+const THEME_CT = 'application/vnd.openxmlformats-officedocument.theme+xml';
 
 export interface BuildPptxLayoutMaster {
   /** Inner XML of the layout's `<p:spTree>` (placeholder shapes with geometry). */
@@ -26,6 +27,8 @@ export interface BuildPptxLayoutMaster {
   readonly masterSpTree?: string;
   /** The master's `<p:txStyles>…</p:txStyles>` block (per-level defaults). */
   readonly txStyles?: string;
+  /** Inner XML of the theme's `<a:clrScheme>` (slot colours); wires master → theme. */
+  readonly theme?: string;
 }
 
 export interface BuildPptxOptions {
@@ -86,6 +89,7 @@ export function buildPptx(
       ? `<Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="${LAYOUT_CT}"/>` +
         `<Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="${MASTER_CT}"/>`
       : '') +
+    (lm?.theme ? `<Override PartName="/ppt/theme/theme1.xml" ContentType="${THEME_CT}"/>` : '') +
     `</Types>`;
 
   const rootRels =
@@ -160,6 +164,20 @@ export function buildPptx(
         `<p:sldMaster ${NS}><p:cSld><p:spTree>${lm.masterSpTree ?? ''}</p:spTree></p:cSld>` +
         `${lm.txStyles ?? ''}</p:sldMaster>`,
     );
+    if (lm.theme) {
+      files['ppt/slideMasters/_rels/slideMaster1.xml.rels'] = encoder.encode(
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+          `<Relationships xmlns="${PKG_REL_NS}">` +
+          `<Relationship Id="rId1" Type="${R_NS}/theme" Target="../theme/theme1.xml"/>` +
+          `</Relationships>`,
+      );
+      files['ppt/theme/theme1.xml'] = encoder.encode(
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+          `<a:theme xmlns:a="${A_NS}" name="deck"><a:themeElements>` +
+          `<a:clrScheme name="deck">${lm.theme}</a:clrScheme>` +
+          `</a:themeElements></a:theme>`,
+      );
+    }
   }
   for (const [path, bytes] of Object.entries(options.media ?? {})) files[path] = bytes;
   return zipSync(files);

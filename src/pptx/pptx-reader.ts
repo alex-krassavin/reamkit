@@ -18,9 +18,16 @@ import type { Relationship } from '@/core/opc';
 import type { PlaceholderCascade } from '@/pptx/placeholder-cascade';
 import type { SlideContext } from '@/pptx/slide-parser';
 
+import type { ColorResolver } from '@/core/drawingml/colors';
+
 import { bytesInclude } from '@/core/bytes';
 import { parseChart, withChartColorStyle } from '@/core/drawingml/chart-parser';
-import { defaultColorResolver } from '@/core/drawingml/colors';
+import {
+  DEFAULT_THEME_PALETTE,
+  defaultColorResolver,
+  makeColorResolver,
+} from '@/core/drawingml/colors';
+import { parseTheme } from '@/core/drawingml/theme-parser';
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
 import { OpcPackage } from '@/core/opc';
 import { poAttr, poChildren, poIntAttr, poIs } from '@/core/po-helpers';
@@ -92,7 +99,7 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
   // actually emitted). The slide's text-bearing shapes are floating elements
   // placed on that page at their EMU positions.
   const slideCount = Math.max(1, slideParts.length);
-  const cascadeByLayout = new Map<string, PlaceholderCascade | undefined>();
+  const stylesByLayout = new Map<string, SlideStyles>();
   const body: Array<BodyElement> = [];
   for (let i = 0; i < slideCount; i++) {
     body.push({
@@ -104,11 +111,12 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
     });
     const part = slideParts[i];
     if (part) {
-      const cascade = cascadeForSlide(pkg, part.path, cascadeByLayout);
+      const styles = slideStylesFor(pkg, part.path, stylesByLayout);
       const ctx: SlideContext = {
-        ...(cascade ? { cascade } : {}),
+        ...(styles.cascade ? { cascade: styles.cascade } : {}),
+        colors: styles.colors,
         resolveImage: makeSlideImageResolver(pkg, part.path, resources),
-        resolveChart: makeSlideChartResolver(pkg, part.path, charts),
+        resolveChart: makeSlideChartResolver(pkg, part.path, charts, styles.colors),
       };
       body.push(...parseSlide(part.data, ctx));
     }
@@ -173,54 +181,76 @@ function makeSlideImageResolver(
 // A chart resolver scoped to one slide: a c:chart relationship id → the parsed
 // chart, stored in the document's charts map under a globally-unique key
 // (relationship ids are part-scoped, so two slides can reuse the same id). The
-// ChartBlock carries that key as its chartRelId. The deck's own theme arrives in
-// PX5; until then chart colours resolve through the default Office palette.
+// ChartBlock carries that key as its chartRelId. Chart colours resolve through
+// the deck's theme palette (PX5).
 function makeSlideChartResolver(
   pkg: OpcPackage,
   slidePath: string,
   charts: Map<string, Chart>,
+  colors: ColorResolver,
 ): (relId: string) => string | undefined {
   const cache = new Map<string, string | undefined>();
   return (relId) => {
     if (cache.has(relId)) return cache.get(relId);
     const rel = pkg.getPartRelationships(slidePath).find((r) => r.id === relId);
     const resolved = rel ? pkg.resolveRelatedPart(slidePath, rel) : undefined;
-    const chart = resolved ? parseChart(resolved.data, defaultColorResolver) : null;
+    const chart = resolved ? parseChart(resolved.data, colors) : null;
     let key: string | undefined;
     if (chart && resolved) {
       key = `${slidePath}!${relId}`;
-      charts.set(key, withChartColorStyle(chart, pkg, resolved.path, defaultColorResolver));
+      charts.set(key, withChartColorStyle(chart, pkg, resolved.path, colors));
     }
     cache.set(relId, key);
     return key;
   };
 }
 
-// Resolve (and memoize) the placeholder cascade for a slide: its slideLayout
-// rel, then the layout's slideMaster rel. Cached by layout path — slides that
-// share a layout share the cascade. Undefined when the slide has no layout.
-function cascadeForSlide(
+// The placeholder cascade + colour resolver for a slide, derived from its
+// slideLayout → slideMaster (→ theme) chain and memoized by layout path (slides
+// that share a layout share both).
+interface SlideStyles {
+  readonly cascade?: PlaceholderCascade;
+  readonly colors: ColorResolver;
+}
+
+function slideStylesFor(
   pkg: OpcPackage,
   slidePath: string,
-  cache: Map<string, PlaceholderCascade | undefined>,
-): PlaceholderCascade | undefined {
+  cache: Map<string, SlideStyles>,
+): SlideStyles {
   const layoutRel = pkg
     .getPartRelationships(slidePath)
     .find((r) => r.type.endsWith('/slideLayout'));
   const layout = layoutRel ? pkg.resolveRelatedPart(slidePath, layoutRel) : undefined;
-  if (!layout) return undefined;
-  if (cache.has(layout.path)) return cache.get(layout.path);
+  if (!layout) return { colors: defaultColorResolver };
+  const cached = cache.get(layout.path);
+  if (cached) return cached;
 
   const masterRel = pkg
     .getPartRelationships(layout.path)
     .find((r) => r.type.endsWith('/slideMaster'));
   const master = masterRel ? pkg.resolveRelatedPart(layout.path, masterRel) : undefined;
+  const colors = master ? deckColorResolver(pkg, master.path) : defaultColorResolver;
   const cascade = buildPlaceholderCascade(
     parseXml(layout.data),
     master ? parseXml(master.data) : undefined,
+    colors,
   );
-  cache.set(layout.path, cascade);
-  return cascade;
+  const styles: SlideStyles = { cascade, colors };
+  cache.set(layout.path, styles);
+  return styles;
+}
+
+// The slide master's theme part (a:clrScheme) → a ColorResolver: the built-in
+// Office palette with the deck's scheme colours merged over it (mirrors the
+// docx/xlsx readers). The Office palette stands in when there is no theme.
+function deckColorResolver(pkg: OpcPackage, masterPath: string): ColorResolver {
+  const themeRel = pkg.getPartRelationships(masterPath).find((r) => r.type.endsWith('/theme'));
+  const theme = themeRel ? pkg.resolveRelatedPart(masterPath, themeRel) : undefined;
+  if (!theme) return defaultColorResolver;
+  const palette = new Map(DEFAULT_THEME_PALETTE);
+  for (const [slot, hex] of parseTheme(theme.data)) palette.set(slot, hex);
+  return makeColorResolver(palette);
 }
 
 export const pptxReader: DocumentReader<FlowDoc> = {

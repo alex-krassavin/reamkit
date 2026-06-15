@@ -12,6 +12,7 @@
 // transform or run formatting.
 
 import type { RunProperties } from '@/core/document-model';
+import type { ColorResolver } from '@/core/drawingml/colors';
 import type { PoNode } from '@/core/po-helpers';
 import type { PlaceholderRef, ShapeBoxEmu } from '@/pptx/sp-helpers';
 
@@ -43,11 +44,14 @@ function categoryOf(type: string | undefined): StyleCategory {
 
 export function buildPlaceholderCascade(
   layoutTree: ReadonlyArray<PoNode>,
-  masterTree?: ReadonlyArray<PoNode>,
+  masterTree: ReadonlyArray<PoNode> | undefined,
+  colors: ColorResolver,
 ): PlaceholderCascade {
   const layoutPhs = collectPlaceholders(layoutTree, 'p:sldLayout');
   const masterPhs = masterTree ? collectPlaceholders(masterTree, 'p:sldMaster') : [];
-  const txStyles = masterTree ? collectTxStyles(masterTree) : { title: [], body: [], other: [] };
+  const txStyles = masterTree
+    ? collectTxStyles(masterTree, colors)
+    : { title: [], body: [], other: [] };
 
   return {
     geometryFor(ph) {
@@ -105,26 +109,31 @@ function matchPlaceholder(
 // The master's p:txStyles → per-level default run properties for each family.
 function collectTxStyles(
   masterTree: ReadonlyArray<PoNode>,
+  colors: ColorResolver,
 ): Record<StyleCategory, Array<RunProperties>> {
   const sld = masterTree.find((n) => poIs(n, 'p:sldMaster'));
   const txStyles = sld ? poChildren(sld).find((c) => poIs(c, 'p:txStyles')) : undefined;
   return {
-    title: levelStyles(txStyles, 'p:titleStyle'),
-    body: levelStyles(txStyles, 'p:bodyStyle'),
-    other: levelStyles(txStyles, 'p:otherStyle'),
+    title: levelStyles(txStyles, 'p:titleStyle', colors),
+    body: levelStyles(txStyles, 'p:bodyStyle', colors),
+    other: levelStyles(txStyles, 'p:otherStyle', colors),
   };
 }
 
 // p:titleStyle / p:bodyStyle / p:otherStyle → the a:lvl1pPr…a:lvl9pPr default
 // run properties (a:defRPr), indexed by level (0-based).
-function levelStyles(txStyles: PoNode | undefined, tag: string): Array<RunProperties> {
+function levelStyles(
+  txStyles: PoNode | undefined,
+  tag: string,
+  colors: ColorResolver,
+): Array<RunProperties> {
   const style = txStyles ? poChildren(txStyles).find((c) => poIs(c, tag)) : undefined;
   if (!style) return [];
   const out: Array<RunProperties> = [];
   for (let lvl = 1; lvl <= 9; lvl++) {
     const lvlPr = poChildren(style).find((c) => poIs(c, `a:lvl${lvl}pPr`));
     const defRPr = lvlPr ? poChildren(lvlPr).find((c) => poIs(c, 'a:defRPr')) : undefined;
-    out.push(rPrToRunProps(defRPr));
+    out.push(rPrToRunProps(defRPr, colors));
   }
   return out;
 }

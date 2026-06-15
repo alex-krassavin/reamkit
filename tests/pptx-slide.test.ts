@@ -403,3 +403,25 @@ describe('pptx slide tables (E-PPTX PX4)', () => {
     expect(PdfFile.parse(pdf).pages().length).toBe(1);
   });
 });
+
+// A positioned shape filled with the accent1 scheme colour.
+const SCHEME_SHAPE =
+  `<p:sp><p:spPr><a:xfrm><a:off x="914400" y="914400"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+  `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+  `<a:solidFill><a:schemeClr val="accent1"/></a:solidFill></p:spPr></p:sp>`;
+
+describe('pptx deck theme (E-PPTX PX5)', () => {
+  it('resolves a scheme-colour fill through the deck theme', () => {
+    const pptx = buildPptx([SCHEME_SHAPE], {
+      layoutMaster: { theme: `<a:accent1><a:srgbClr val="FF8800"/></a:accent1>` },
+    });
+    const shp = firstShape(Ream.parse(pptx));
+    expect(shp?.fill.kind).toBe('solid');
+    expect(shp?.fill.colorHex).toBe('FF8800'); // the deck's accent1, not the default
+  });
+
+  it('falls back to the Office palette when the deck has no theme', () => {
+    const shp = firstShape(Ream.parse(buildPptx([SCHEME_SHAPE])));
+    expect(shp?.fill.colorHex).toBe('4472C4'); // default Office accent1
+  });
+});

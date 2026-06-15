@@ -6,8 +6,10 @@
 // and a p:txBody. These helpers read the pieces every layer shares.
 
 import type { RunProperties } from '@/core/document-model';
+import type { ColorResolver } from '@/core/drawingml/colors';
 import type { PoNode } from '@/core/po-helpers';
 
+import { resolveColorNode } from '@/core/drawingml/colors';
 import { pt } from '@/core/ir';
 import { poAttr, poChildren, poIntAttr, poIs } from '@/core/po-helpers';
 
@@ -69,11 +71,11 @@ export function parseXfrmBox(spPr: PoNode | undefined): ShapeBoxEmu | undefined 
 // this element, so the cascade reuses the same reader: size (sz, hundredths of a
 // point), bold/italic/underline, solid colour and the latin typeface. Scheme
 // colours and the theme font cascade come in PX5.
-export function rPrToRunProps(rPr: PoNode | undefined): RunProperties {
+export function rPrToRunProps(rPr: PoNode | undefined, colors: ColorResolver): RunProperties {
   if (!rPr) return {};
   const sz = poIntAttr(rPr, 'sz');
   const u = poAttr(rPr, 'u');
-  const colorHex = solidFillHex(rPr);
+  const colorHex = solidFillColor(rPr, colors);
   const latin = poChildren(rPr).find((c) => poIs(c, 'a:latin'));
   const typeface = latin ? poAttr(latin, 'typeface')?.trim() : undefined;
   return {
@@ -86,12 +88,14 @@ export function rPrToRunProps(rPr: PoNode | undefined): RunProperties {
   };
 }
 
-// a:solidFill/a:srgbClr @val → '#rrggbb'. Scheme colours (a:schemeClr) need the
-// theme resolver and are deferred to PX5.
-function solidFillHex(rPr: PoNode): string | undefined {
+// a:solidFill → resolved 6-hex (no '#'), via the deck's colour resolver so both
+// a:srgbClr and a:schemeClr (PX5 theme) work.
+function solidFillColor(rPr: PoNode, colors: ColorResolver): string | undefined {
   const solidFill = poChildren(rPr).find((c) => poIs(c, 'a:solidFill'));
   if (!solidFill) return undefined;
-  const srgb = poChildren(solidFill).find((c) => poIs(c, 'a:srgbClr'));
-  const val = srgb ? poAttr(srgb, 'val') : undefined;
-  return val ? `#${val}` : undefined;
+  for (const c of poChildren(solidFill)) {
+    const hex = resolveColorNode(c, colors);
+    if (hex) return hex;
+  }
+  return undefined;
 }
