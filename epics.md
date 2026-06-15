@@ -535,10 +535,15 @@ pptx сниффится отдельно (ZIP с `ppt/presentation.xml`), write-
   одна страница на слайд размером со слайд. Зарегистрирован в `DEFAULT_READERS`.
   Фикстура `tests/fixtures/build-pptx.ts` (`buildPptx(slides[], {cx,cy})`). Тесты
   `tests/pptx-reader.test.ts` (3): sniff→'pptx'; 16:9×3 → 3 страницы 960×540; 4:3 → 720×540.
-- **PX1 — текст слайда.** Обойти `p:cSld/p:spTree`; `p:sp` с `p:txBody` и `a:xfrm` →
-  floating `ShapeBlock` (geometry:rect, fill:none) с `ShapeTextBody` на позиции off/ext;
-  параграфы из `a:p`, раны из `a:r`/`a:t`, базовый `a:rPr` (кегль `sz/100`, b/i/u, цвет
-  `a:solidFill`), шрифт из `a:latin`. Первый срез с реальным контентом на странице.
+- **PX1 ✓ — текст слайда** (`d76f634`). `src/pptx/slide-parser.ts` `parseSlideShapes`:
+  обходит `p:cSld/p:spTree`; `p:sp` со СВОИМ `a:xfrm` и `p:txBody` → floating `ShapeBlock`
+  (geometry:rect, fill:none) с `ShapeTextBody` на позиции off/ext (`relativeFrom:'page'` =
+  абсолют от края слайда); параграфы из `a:p`, раны из `a:r`/`a:fld`/`a:t`, прямой `a:rPr`
+  (кегль `sz/100`, b/i/u, цвет `a:solidFill/a:srgbClr`, шрифт `a:latin`). Ридер резолвит
+  каждый `p:sldId` в часть слайда по порядку и парсит дерево на страницу слайда. Рендерит
+  существующий конвейер (текст-боди M5.7 + float-разметка W5d) без правок. Тесты
+  `tests/pptx-slide.test.ts` (4): текст в HTML; два слайда — по странице; бокс 2in×1.5in →
+  текст на нужной точке PDF (x≈144pt, у верха); жирный `a:rPr` → weighted.
 - **PX2 — плейсхолдеры (каскад slideLayout→slideMaster).** Shape без `a:xfrm`
   (плейсхолдер `p:ph` type/idx) берёт позицию/размер и list/text-стили из
   соответствующего плейсхолдера слоя и мастера (резолв слайд → layout → master по
@@ -571,7 +576,10 @@ pptx сниффится отдельно (ZIP с `ppt/presentation.xml`), write-
 
 ### Прогресс
 - **PX0 ✓** (`0726c59`) — шов: pptx → FlowDoc → PDF/SVG/HTML, одна страница на слайд
-  нужного размера. 774 теста. Дальше: PX1 (текст слайда).
+  нужного размера. 774 теста.
+- **PX1 ✓** (`d76f634`) — текст слайда: `p:sp` с собственным `a:xfrm` → floating text-box
+  на EMU-позиции; прямой `a:rPr`. Реальный контент на странице, на своих координатах.
+  778 тестов. Дальше: PX2 (плейсхолдеры через каскад layout→master).
 
 ---
 
