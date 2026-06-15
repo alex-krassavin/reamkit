@@ -323,11 +323,12 @@ function txBodyParagraphs(
   resolveLink: LinkResolver,
 ): Array<BodyElement> {
   const content: Array<BodyElement> = [];
+  const counters: Array<number> = []; // per-level a:buAutoNum counters (PX6b)
   for (const child of poChildren(txBody)) {
     if (!poIs(child, 'a:p')) continue;
     content.push({
       kind: 'paragraph',
-      paragraph: parseSlideParagraph(child, ph, cascade, colors, resolveLink),
+      paragraph: parseSlideParagraph(child, ph, cascade, colors, resolveLink, counters),
     });
   }
   return content;
@@ -364,14 +365,16 @@ function parseTxBody(
 }
 
 // a:p → Paragraph. The outline level (a:pPr @lvl) selects the placeholder's
-// default run formatting; @algn sets the alignment (PX6). Runs come from a:r and
-// a:fld (a text field whose cached a:t renders as text).
+// default run formatting; @algn sets the alignment; @marL/@indent (else a
+// per-level default) the indent; a:buChar/a:buAutoNum a materialized list marker
+// run (PX6). Runs come from a:r and a:fld (a text field's cached a:t).
 function parseSlideParagraph(
   aP: PoNode,
   ph: PlaceholderRef | undefined,
   cascade: PlaceholderCascade | undefined,
   colors: ColorResolver,
   resolveLink: LinkResolver,
+  counters: Array<number>,
 ): Paragraph {
   const pPr = poChildren(aP).find((c) => poIs(c, 'a:pPr'));
   const level = (pPr ? poIntAttr(pPr, 'lvl') : undefined) ?? 0;
@@ -380,13 +383,60 @@ function parseSlideParagraph(
   const alignment = algn !== undefined ? ALGN_TO_ALIGNMENT[algn] : undefined;
 
   const runs: Array<Run> = [];
+  const marker = bulletMarker(pPr, level, counters);
+  if (marker !== undefined) runs.push({ text: marker, properties: defaults, listMarker: true });
   for (const child of poChildren(aP)) {
     if (poIs(child, 'a:r') || poIs(child, 'a:fld')) {
       const run = parseSlideRun(child, defaults, colors, resolveLink);
       if (run) runs.push(run);
     }
   }
-  return { properties: { ...(alignment ? { alignment } : {}) }, runs };
+
+  // §21.1.2.2.7 — marL is the text's left margin, @indent the first-line/hang.
+  // Absent: indent nested levels by a default 0.5" per level (457200 EMU).
+  const marL = pPr ? poIntAttr(pPr, 'marL') : undefined;
+  const indent = pPr ? poIntAttr(pPr, 'indent') : undefined;
+  const indentLeft =
+    marL !== undefined ? emuToPt(marL) : level > 0 ? emuToPt(level * 457200) : undefined;
+  return {
+    properties: {
+      ...(alignment ? { alignment } : {}),
+      ...(indentLeft !== undefined ? { indentLeft } : {}),
+      ...(indent !== undefined ? { indentFirstLine: emuToPt(indent) } : {}),
+    },
+    runs,
+  };
+}
+
+// a:pPr bullet → the marker text to prepend (with trailing spacing), or
+// undefined for no bullet. a:buNone suppresses; a:buChar is literal; a:buAutoNum
+// advances the per-level counter and formats it (PX6b).
+function bulletMarker(
+  pPr: PoNode | undefined,
+  level: number,
+  counters: Array<number>,
+): string | undefined {
+  if (!pPr) return undefined;
+  if (poChildren(pPr).some((c) => poIs(c, 'a:buNone'))) return undefined;
+  const buChar = poChildren(pPr).find((c) => poIs(c, 'a:buChar'));
+  if (buChar) return `${poAttr(buChar, 'char') ?? '•'}  `;
+  const buAuto = poChildren(pPr).find((c) => poIs(c, 'a:buAutoNum'));
+  if (!buAuto) return undefined;
+  const type = poAttr(buAuto, 'type') ?? 'arabicPeriod';
+  const startAt = poIntAttr(buAuto, 'startAt') ?? 1;
+  const prev = counters[level];
+  const n = (prev === undefined ? startAt - 1 : prev) + 1;
+  counters[level] = n;
+  counters.length = level + 1; // deeper levels restart
+  return `${n}${autoNumSuffix(type)}  `;
+}
+
+// The trailing punctuation of an a:buAutoNum type (…Period → '.', …ParenR/Both →
+// ')', …Plain → ''). v1 numbers arabic; alpha/roman folds onto arabic.
+function autoNumSuffix(type: string): string {
+  if (type.endsWith('ParenR') || type.endsWith('ParenBoth')) return ')';
+  if (type.endsWith('Period')) return '.';
+  return '';
 }
 
 // a:r / a:fld → Run. The placeholder defaults sit under the run's own a:rPr, so

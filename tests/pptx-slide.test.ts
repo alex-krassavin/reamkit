@@ -564,3 +564,50 @@ describe('pptx text depth + links (E-PPTX PX6)', () => {
     expect(html).toContain('href="https://example.com/"');
   });
 });
+
+// An a:p with the given a:pPr inner XML and a single run.
+function para(pPrInner: string, text: string): string {
+  return `<a:p><a:pPr>${pPrInner}</a:pPr><a:r><a:t>${text}</a:t></a:r></a:p>`;
+}
+function shapeParagraphs(doc: ReturnType<typeof Ream.parse>) {
+  const el = doc.flow.body.find((e) => e.kind === 'shape');
+  return el?.kind === 'shape' ? el.shape.text?.content : undefined;
+}
+
+describe('pptx bullets + indent (E-PPTX PX6b)', () => {
+  it('materializes a buChar bullet as a leading list-marker run', () => {
+    const doc = Ream.parse(
+      buildPptx([textBodyShape(`<a:bodyPr/>${para('<a:buChar char="•"/>', 'Item')}`)]),
+    );
+    const p = firstShapeParagraph(doc);
+    expect(p?.runs[0]?.listMarker).toBe(true);
+    expect(p?.runs[0]?.text).toContain('•');
+    expect(p?.runs[1]?.text).toBe('Item');
+  });
+
+  it('numbers buAutoNum paragraphs per level', () => {
+    const body =
+      `<a:bodyPr/>` +
+      para('<a:buAutoNum type="arabicPeriod"/>', 'One') +
+      para('<a:buAutoNum type="arabicPeriod"/>', 'Two');
+    const paras = shapeParagraphs(Ream.parse(buildPptx([textBodyShape(body)])));
+    const marker = (i: number) =>
+      paras?.[i]?.kind === 'paragraph' ? paras[i].paragraph.runs[0]?.text.trim() : undefined;
+    expect(marker(0)).toBe('1.');
+    expect(marker(1)).toBe('2.');
+  });
+
+  it('suppresses a buNone bullet and indents by outline level', () => {
+    const doc = Ream.parse(
+      buildPptx([
+        textBodyShape(
+          `<a:bodyPr/><a:p><a:pPr lvl="1"><a:buNone/></a:pPr><a:r><a:t>Plain</a:t></a:r></a:p>`,
+        ),
+      ]),
+    );
+    const p = firstShapeParagraph(doc);
+    expect(p?.runs[0]?.listMarker).toBeUndefined(); // no marker
+    expect(p?.runs[0]?.text).toBe('Plain');
+    expect(Math.round(p?.properties.indentLeft ?? -1)).toBe(36); // level 1 × 0.5"
+  });
+});
