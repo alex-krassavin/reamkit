@@ -210,3 +210,68 @@ describe('pptx slide images (E-PPTX PX3)', () => {
     expect(latin1.decode(pdf)).toContain('/Image');
   });
 });
+
+// One p:sp at a fixed box with the given inner p:spPr children (geometry/fill/…).
+function shapeDeck(spPrInner: string): Uint8Array {
+  return buildPptx([
+    `<p:sp><p:spPr><a:xfrm><a:off x="914400" y="914400"/><a:ext cx="1828800" cy="914400"/></a:xfrm>` +
+      `${spPrInner}</p:spPr></p:sp>`,
+  ]);
+}
+function firstShape(doc: ReturnType<typeof Ream.parse>) {
+  const el = doc.flow.body.find((e) => e.kind === 'shape');
+  return el?.kind === 'shape' ? el.shape : undefined;
+}
+
+describe('pptx slide shapes (E-PPTX PX3)', () => {
+  it('reads solid fill, stroke and preset geometry on a textless shape', () => {
+    const shp = firstShape(
+      Ream.parse(
+        shapeDeck(
+          `<a:prstGeom prst="roundRect"><a:avLst/></a:prstGeom>` +
+            `<a:solidFill><a:srgbClr val="FF0000"/></a:solidFill>` +
+            `<a:ln w="19050"><a:solidFill><a:srgbClr val="0000FF"/></a:solidFill></a:ln>`,
+        ),
+      ),
+    );
+    expect(shp).toBeDefined(); // no text, but a visible fill keeps it
+    expect(shp?.fill.kind).toBe('solid');
+    expect(shp?.fill.colorHex).toBe('FF0000');
+    expect(shp?.geometry.preset).toBe('roundRect');
+    expect(shp?.line?.colorHex).toBe('0000FF');
+    expect(shp?.text).toBeUndefined();
+  });
+
+  it('reads a gradient fill', () => {
+    const shp = firstShape(
+      Ream.parse(
+        shapeDeck(
+          `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+            `<a:gradFill><a:gsLst>` +
+            `<a:gs pos="0"><a:srgbClr val="FF0000"/></a:gs>` +
+            `<a:gs pos="100000"><a:srgbClr val="0000FF"/></a:gs>` +
+            `</a:gsLst><a:lin ang="0"/></a:gradFill>`,
+        ),
+      ),
+    );
+    expect(shp?.fill.kind).toBe('gradient');
+    expect(shp?.fill.gradient?.stops.length).toBe(2);
+  });
+
+  it('drops an invisible shape (no fill, no stroke, no text)', () => {
+    const shp = firstShape(
+      Ream.parse(shapeDeck(`<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/>`)),
+    );
+    expect(shp).toBeUndefined();
+  });
+
+  it('renders a filled shape into the PDF', async () => {
+    const pdf = await Ream.parse(
+      shapeDeck(
+        `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+          `<a:solidFill><a:srgbClr val="00AA00"/></a:solidFill>`,
+      ),
+    ).convert('pdf', { fonts: FONTS });
+    expect(PdfFile.parse(pdf).pages().length).toBe(1); // a textless filled box still makes a page
+  });
+});

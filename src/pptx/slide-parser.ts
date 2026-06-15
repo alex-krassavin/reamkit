@@ -21,6 +21,7 @@ import type {
   Run,
   RunProperties,
   ShapeBlock,
+  ShapeFill,
   ShapeGeometry,
   ShapeTextBody,
 } from '@/core/document-model';
@@ -29,8 +30,10 @@ import type { PoNode } from '@/core/po-helpers';
 import type { PlaceholderCascade } from '@/pptx/placeholder-cascade';
 import type { PlaceholderRef, ShapeBoxEmu } from '@/pptx/sp-helpers';
 
+import { defaultColorResolver } from '@/core/drawingml/colors';
 import { emuToPt } from '@/core/ir';
 import { poAttr, poChildren, poIntAttr, poIs, poText } from '@/core/po-helpers';
+import { parseCustGeom, parseFill, parseLine, parsePrstGeom } from '@/word/drawing-parser';
 import { parsePh, parseXfrmBox, rPrToRunProps } from '@/pptx/sp-helpers';
 
 // Per-slide parsing context: the placeholder cascade (PX2) and an image
@@ -61,9 +64,10 @@ export function parseSlideShapes(spTree: PoNode, ctx: SlideContext = {}): Array<
   return out;
 }
 
-// p:sp → a floating text box. The box comes from the shape's own a:xfrm, else
-// (for a placeholder) the cascade; undefined when neither supplies geometry or
-// the shape has no text.
+// p:sp → a floating shape: its geometry, fill and stroke (PX3), plus a text body
+// (PX1/PX2). The box comes from the shape's own a:xfrm, else (for a placeholder)
+// the cascade. Undefined when there is no geometry, or the shape is entirely
+// invisible (no fill, no stroke, no text).
 function parseSp(sp: PoNode, ctx: SlideContext): ShapeBlock | undefined {
   const ph = parsePh(sp);
   const spPr = poChildren(sp).find((c) => poIs(c, 'p:spPr'));
@@ -73,7 +77,15 @@ function parseSp(sp: PoNode, ctx: SlideContext): ShapeBlock | undefined {
 
   const txBody = poChildren(sp).find((c) => poIs(c, 'p:txBody'));
   const text = txBody ? parseTxBody(txBody, ph, ctx.cascade) : undefined;
-  if (!text) return undefined;
+
+  // Geometry/fill/stroke from p:spPr via the shared DrawingML readers. The
+  // deck's own theme resolver arrives in PX5; until then scheme colours fall
+  // back to the default Office palette.
+  const geometry = parseGeometry(spPr);
+  const fill: ShapeFill = spPr ? parseFill(spPr, defaultColorResolver) : { kind: 'none' };
+  const line = spPr ? parseLine(spPr, defaultColorResolver) : undefined;
+  const visibleLine = line !== undefined && line.fill !== 'none';
+  if (!text && fill.kind === 'none' && !visibleLine) return undefined;
 
   // §20.4.2.3 — placement is page-absolute (the slide IS the page): off.x/off.y
   // from the page's top-left corner, sized by ext.
@@ -87,11 +99,22 @@ function parseSp(sp: PoNode, ctx: SlideContext): ShapeBlock | undefined {
     float,
     width: emuToPt(box.cx),
     height: emuToPt(box.cy),
-    geometry: RECT_GEOMETRY,
-    fill: { kind: 'none' },
-    text,
+    geometry,
+    fill,
+    ...(line ? { line } : {}),
+    ...(text ? { text } : {}),
     paragraphProperties: {},
   };
+}
+
+// p:spPr geometry: a:prstGeom (preset) or a:custGeom (custom path), default rect.
+function parseGeometry(spPr: PoNode | undefined): ShapeGeometry {
+  if (!spPr) return RECT_GEOMETRY;
+  const prst = poChildren(spPr).find((c) => poIs(c, 'a:prstGeom'));
+  if (prst) return parsePrstGeom(prst);
+  const cust = poChildren(spPr).find((c) => poIs(c, 'a:custGeom'));
+  if (cust) return parseCustGeom(cust);
+  return RECT_GEOMETRY;
 }
 
 // p:pic → a floating image. The bytes come from p:blipFill/a:blip @r:embed,

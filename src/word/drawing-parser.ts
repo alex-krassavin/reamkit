@@ -366,7 +366,7 @@ function parseXfrm(xfrm: PoNode): ShapeTransform {
   };
 }
 
-function parsePrstGeom(prst: PoNode): ShapeGeometry {
+export function parsePrstGeom(prst: PoNode): ShapeGeometry {
   const preset = poAttr(prst, 'prst') ?? 'rect';
   const adjust = new Map<string, number>();
   const avLst = poChildren(prst).find((c) => poIs(c, 'a:avLst'));
@@ -387,7 +387,7 @@ function parsePrstGeom(prst: PoNode): ShapeGeometry {
 // (multiple subpaths with differing w/h are a follow-up). Coordinates stay in
 // path-space; the geometry layer scales + y-flips them. Falls back to a rect
 // preset when the path is empty or has no usable size.
-function parseCustGeom(cust: PoNode): ShapeGeometry {
+export function parseCustGeom(cust: PoNode): ShapeGeometry {
   const pathLst = poChildren(cust).find((c) => poIs(c, 'a:pathLst'));
   const path = pathLst ? poChildren(pathLst).find((c) => poIs(c, 'a:path')) : undefined;
   if (!path) return { kind: 'preset', preset: 'rect', adjust: new Map() };
@@ -462,7 +462,7 @@ function pts(node: PoNode): Array<{ x: number; y: number }> {
 
 const firstPt = (node: PoNode): { x: number; y: number } | undefined => pts(node)[0];
 
-function parseFill(spPr: PoNode, resolveColor: ColorResolver): ShapeFill {
+export function parseFill(spPr: PoNode, resolveColor: ColorResolver): ShapeFill {
   for (const child of poChildren(spPr)) {
     if (poIs(child, 'a:noFill')) return { kind: 'none' };
     if (poIs(child, 'a:solidFill')) {
@@ -477,7 +477,7 @@ function parseFill(spPr: PoNode, resolveColor: ColorResolver): ShapeFill {
   return { kind: 'none' };
 }
 
-function parseLine(spPr: PoNode, resolveColor: ColorResolver): ShapeLine | undefined {
+export function parseLine(spPr: PoNode, resolveColor: ColorResolver): ShapeLine | undefined {
   const ln = poChildren(spPr).find((c) => poIs(c, 'a:ln'));
   if (!ln) return undefined;
   const widthEmu = poIntAttr(ln, 'w');
