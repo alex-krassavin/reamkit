@@ -554,10 +554,17 @@ pptx сниффится отдельно (ZIP с `ppt/presentation.xml`), write-
   читалки `p:sp` (`p:ph`, `a:xfrm`-бокс, `a:rPr`/`a:defRPr` → RunProperties) вынесены
   в `sp-helpers.ts` (без цикла); defRPr переиспользует rPr-читалку. Заголовок/тело
   встают на места и нужного размера.
-- **PX3 — картинки + геометрия shape.** `p:pic` → floating `ImageBlock` (media-парты
-  через ResourceStore, как docx). `p:sp/p:spPr` → `geometry`/`fill`/`line`/`gradient`
-  через существующий DrawingML-core (preset-geometry/colors/gradient). Видимые фигуры,
-  не только текст-боксы.
+- **PX3 ✓ — картинки + геометрия shape** (PX3a `84b4425`, PX3b `a8696b6`).
+  - *PX3a — картинки*: `p:pic` → floating `ImageBlock`; `a:blip@r:embed` резолвится по
+    rel'ам слайда в media-парт, байты в контент-адресуемый `ResourceStore` (дедуп) — тем
+    же путём, что docx-картинки. Парсер слайда теперь над `SlideContext{cascade,
+    resolveImage}`; ридер строит per-slide резолвер картинок. Alt из `p:cNvPr@descr`.
+  - *PX3b — видимые фигуры*: `p:spPr` → `a:prstGeom`/`a:custGeom` (геометрия),
+    `a:solidFill`/`a:gradFill`/`a:noFill` (заливка), `a:ln` (линия) — переиспользуя
+    DrawingML-читалки из `word/drawing-parser` (экспортированы, docx байт-в-ноль). Фигура
+    рендерится при видимой заливке/линии ИЛИ тексте; полностью невидимая — отбрасывается.
+    Scheme-цвета пока по дефолтной Office-палитре (`defaultColorResolver`), реальная тема
+    деки — PX5.
 - **PX4 — таблицы + чарты.** `p:graphicFrame` → `a:tbl` в FlowDoc-Table ИЛИ `c:chart`
   (`chart-parser`) в floating `ChartBlock`, позиция из `a:xfrm` рамки.
 - **PX5 — тема + фоны + группы.** Цвето/шрифт-схема темы (`theme-parser`+ColorResolver);
@@ -588,7 +595,11 @@ pptx сниффится отдельно (ZIP с `ppt/presentation.xml`), write-
   778 тестов.
 - **PX2 ✓** (`f737119`) — каскад плейсхолдеров: shape без своего `a:xfrm` берёт геометрию
   из layout/master и размер/цвет из мастер-`txStyles`. Реальные деки (где title/body —
-  плейсхолдеры) встают на места. 782 теста. Дальше: PX3 (картинки + геометрия/заливка shape).
+  плейсхолдеры) встают на места. 782 теста.
+- **PX3 ✓** (PX3a `84b4425`, PX3b `a8696b6`) — картинки (`p:pic` → `ImageBlock` через
+  ResourceStore) + видимая геометрия/заливка/линия/градиент фигур (`p:spPr` через
+  переиспользованные DrawingML-читалки). На слайдах появляются картинки и цветные фигуры.
+  788 тестов. Дальше: PX4 (таблицы + чарты через `p:graphicFrame`).
 
 ---
 
