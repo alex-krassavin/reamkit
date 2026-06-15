@@ -544,10 +544,16 @@ pptx сниффится отдельно (ZIP с `ppt/presentation.xml`), write-
   существующий конвейер (текст-боди M5.7 + float-разметка W5d) без правок. Тесты
   `tests/pptx-slide.test.ts` (4): текст в HTML; два слайда — по странице; бокс 2in×1.5in →
   текст на нужной точке PDF (x≈144pt, у верха); жирный `a:rPr` → weighted.
-- **PX2 — плейсхолдеры (каскад slideLayout→slideMaster).** Shape без `a:xfrm`
-  (плейсхолдер `p:ph` type/idx) берёт позицию/размер и list/text-стили из
-  соответствующего плейсхолдера слоя и мастера (резолв слайд → layout → master по
-  rel'ам). Заголовок/тело/номер слайда встают на места.
+- **PX2 ✓ — плейсхолдеры (каскад slideLayout→slideMaster)** (`f737119`).
+  `src/pptx/placeholder-cascade.ts`: shape-плейсхолдер (`p:ph`) без своего `a:xfrm`
+  наследует (а) геометрию из совпадающего прототипа layout'а, иначе мастера (матч по
+  idx → type → категории стиля, так что ctrTitle ↔ title всё равно сходятся), (б)
+  размер/цвет текста из мастер-`p:txStyles` (titleStyle/bodyStyle/otherStyle) по
+  уровню — ПОД собственным `a:rPr` рана (прямое форматирование выигрывает). Ридер
+  идёт по rel'ам слайд → layout → master, каскад мемоизирован по пути layout'а. Общие
+  читалки `p:sp` (`p:ph`, `a:xfrm`-бокс, `a:rPr`/`a:defRPr` → RunProperties) вынесены
+  в `sp-helpers.ts` (без цикла); defRPr переиспользует rPr-читалку. Заголовок/тело
+  встают на места и нужного размера.
 - **PX3 — картинки + геометрия shape.** `p:pic` → floating `ImageBlock` (media-парты
   через ResourceStore, как docx). `p:sp/p:spPr` → `geometry`/`fill`/`line`/`gradient`
   через существующий DrawingML-core (preset-geometry/colors/gradient). Видимые фигуры,
@@ -579,7 +585,10 @@ pptx сниффится отдельно (ZIP с `ppt/presentation.xml`), write-
   нужного размера. 774 теста.
 - **PX1 ✓** (`d76f634`) — текст слайда: `p:sp` с собственным `a:xfrm` → floating text-box
   на EMU-позиции; прямой `a:rPr`. Реальный контент на странице, на своих координатах.
-  778 тестов. Дальше: PX2 (плейсхолдеры через каскад layout→master).
+  778 тестов.
+- **PX2 ✓** (`f737119`) — каскад плейсхолдеров: shape без своего `a:xfrm` берёт геометрию
+  из layout/master и размер/цвет из мастер-`txStyles`. Реальные деки (где title/body —
+  плейсхолдеры) встают на места. 782 теста. Дальше: PX3 (картинки + геометрия/заливка shape).
 
 ---
 
