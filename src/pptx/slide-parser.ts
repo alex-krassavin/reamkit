@@ -57,25 +57,67 @@ export interface SlideContext {
 
 const RECT_GEOMETRY: ShapeGeometry = { kind: 'preset', preset: 'rect', adjust: new Map() };
 
-// Walk p:cSld/p:spTree, turning each text-bearing p:sp into a floating text box
-// and each p:pic into a floating image, positioned on the slide. The context
-// supplies the placeholder cascade and the image resolver.
-export function parseSlideShapes(spTree: PoNode, ctx: SlideContext = {}): Array<BodyElement> {
+// A group transform maps a child-space EMU box to slide-space EMU (PX5c): a
+// p:grpSp positions its children in its own coordinate frame (a:chOff/a:chExt),
+// which scales + offsets onto the group's slide box (a:off/a:ext).
+type GroupTransform = (box: ShapeBoxEmu) => ShapeBoxEmu;
+const IDENTITY_TRANSFORM: GroupTransform = (box) => box;
+
+// Walk a shape container (p:spTree or a p:grpSp), turning each p:sp into a
+// floating text/graphic shape, each p:pic into a floating image, each
+// p:graphicFrame into a chart/table, and recursing into nested p:grpSp groups
+// (composing their transforms). `transform` maps child-space boxes to the slide.
+export function parseSlideShapes(
+  container: PoNode,
+  ctx: SlideContext = {},
+  transform: GroupTransform = IDENTITY_TRANSFORM,
+): Array<BodyElement> {
   const out: Array<BodyElement> = [];
-  for (const child of poChildren(spTree)) {
+  for (const child of poChildren(container)) {
     if (poIs(child, 'p:sp')) {
-      const shape = parseSp(child, ctx);
+      const shape = parseSp(child, ctx, transform);
       if (shape) out.push({ kind: 'shape', shape });
     } else if (poIs(child, 'p:pic')) {
-      const image = parsePic(child, ctx);
+      const image = parsePic(child, ctx, transform);
       if (image) out.push({ kind: 'image', image });
     } else if (poIs(child, 'p:graphicFrame')) {
-      const el = parseGraphicFrame(child, ctx);
+      const el = parseGraphicFrame(child, ctx, transform);
       if (el) out.push(el);
+    } else if (poIs(child, 'p:grpSp')) {
+      out.push(...parseSlideShapes(child, ctx, composeGroupTransform(child, transform)));
     }
-    // p:grpSp (groups) → later slice
   }
   return out;
+}
+
+// p:grpSpPr/a:xfrm → a child→slide transform composed under the parent's. No (or
+// degenerate) xfrm leaves the parent transform unchanged.
+function composeGroupTransform(grpSp: PoNode, parent: GroupTransform): GroupTransform {
+  const grpSpPr = poChildren(grpSp).find((c) => poIs(c, 'p:grpSpPr'));
+  const xfrm = grpSpPr ? poChildren(grpSpPr).find((c) => poIs(c, 'a:xfrm')) : undefined;
+  if (!xfrm) return parent;
+  const off = poChildren(xfrm).find((c) => poIs(c, 'a:off'));
+  const ext = poChildren(xfrm).find((c) => poIs(c, 'a:ext'));
+  const chOff = poChildren(xfrm).find((c) => poIs(c, 'a:chOff'));
+  const chExt = poChildren(xfrm).find((c) => poIs(c, 'a:chExt'));
+  const extCx = ext ? poIntAttr(ext, 'cx') : undefined;
+  const extCy = ext ? poIntAttr(ext, 'cy') : undefined;
+  const chExtCx = chExt ? poIntAttr(chExt, 'cx') : undefined;
+  const chExtCy = chExt ? poIntAttr(chExt, 'cy') : undefined;
+  if (!extCx || !extCy || !chExtCx || !chExtCy) return parent;
+  const offX = (off ? poIntAttr(off, 'x') : undefined) ?? 0;
+  const offY = (off ? poIntAttr(off, 'y') : undefined) ?? 0;
+  const chOffX = (chOff ? poIntAttr(chOff, 'x') : undefined) ?? 0;
+  const chOffY = (chOff ? poIntAttr(chOff, 'y') : undefined) ?? 0;
+  const sx = extCx / chExtCx;
+  const sy = extCy / chExtCy;
+  return (box) =>
+    parent({
+      x: offX + (box.x - chOffX) * sx,
+      y: offY + (box.y - chOffY) * sy,
+      cx: box.cx * sx,
+      cy: box.cy * sy,
+    });
 }
 
 // A page-absolute float anchor at the shape's EMU offset (the slide is the page).
@@ -91,13 +133,14 @@ function floatAt(box: ShapeBoxEmu): FloatAnchor {
 // (PX1/PX2). The box comes from the shape's own a:xfrm, else (for a placeholder)
 // the cascade. Undefined when there is no geometry, or the shape is entirely
 // invisible (no fill, no stroke, no text).
-function parseSp(sp: PoNode, ctx: SlideContext): ShapeBlock | undefined {
+function parseSp(sp: PoNode, ctx: SlideContext, transform: GroupTransform): ShapeBlock | undefined {
   const ph = parsePh(sp);
   const colors = ctx.colors ?? defaultColorResolver;
   const spPr = poChildren(sp).find((c) => poIs(c, 'p:spPr'));
-  let box: ShapeBoxEmu | undefined = parseXfrmBox(spPr);
-  if (!box && ph && ctx.cascade) box = ctx.cascade.geometryFor(ph);
-  if (!box) return undefined;
+  let own: ShapeBoxEmu | undefined = parseXfrmBox(spPr);
+  if (!own && ph && ctx.cascade) own = ctx.cascade.geometryFor(ph);
+  if (!own) return undefined;
+  const box = transform(own);
 
   const txBody = poChildren(sp).find((c) => poIs(c, 'p:txBody'));
   const text = txBody ? parseTxBody(txBody, ph, ctx.cascade, colors) : undefined;
@@ -124,9 +167,14 @@ function parseSp(sp: PoNode, ctx: SlideContext): ShapeBlock | undefined {
 
 // p:graphicFrame → a floating chart (c:chart, PX4a) or table (a:tbl, PX4b). The
 // frame's transform is p:xfrm (a:off + a:ext), not the a:xfrm of a shape.
-function parseGraphicFrame(gf: PoNode, ctx: SlideContext): BodyElement | undefined {
-  const box = boxFromXfrm(poChildren(gf).find((c) => poIs(c, 'p:xfrm')));
-  if (!box) return undefined;
+function parseGraphicFrame(
+  gf: PoNode,
+  ctx: SlideContext,
+  transform: GroupTransform,
+): BodyElement | undefined {
+  const own = boxFromXfrm(poChildren(gf).find((c) => poIs(c, 'p:xfrm')));
+  if (!own) return undefined;
+  const box = transform(own);
   const graphicData = poFindDescendant(gf, 'a:graphicData');
   const uri = graphicData ? poAttr(graphicData, 'uri') : undefined;
 
@@ -212,10 +260,15 @@ function parseGeometry(spPr: PoNode | undefined): ShapeGeometry {
 // p:pic → a floating image. The bytes come from p:blipFill/a:blip @r:embed,
 // resolved against the slide's relationships (PX3a); geometry from p:spPr/a:xfrm
 // (picture placeholders that inherit it from the layout wait for a later slice).
-function parsePic(pic: PoNode, ctx: SlideContext): ImageBlock | undefined {
+function parsePic(
+  pic: PoNode,
+  ctx: SlideContext,
+  transform: GroupTransform,
+): ImageBlock | undefined {
   const spPr = poChildren(pic).find((c) => poIs(c, 'p:spPr'));
-  const box = parseXfrmBox(spPr);
-  if (!box) return undefined;
+  const own = parseXfrmBox(spPr);
+  if (!own) return undefined;
+  const box = transform(own);
 
   const blipFill = poChildren(pic).find((c) => poIs(c, 'p:blipFill'));
   const blip = blipFill ? poChildren(blipFill).find((c) => poIs(c, 'a:blip')) : undefined;

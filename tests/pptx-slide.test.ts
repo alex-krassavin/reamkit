@@ -455,3 +455,63 @@ describe('pptx slide backgrounds (E-PPTX PX5b)', () => {
     expect(firstShape(doc)?.fill.colorHex).toBe('112233');
   });
 });
+
+// A p:grpSp whose child shape (filled `hex`) sits at child-box (cx,cy,ex,ey),
+// inside the group transform off/ext (chOff 0, chExt = `chExt`).
+function groupDeck(opts: {
+  readonly off: [number, number];
+  readonly ext: [number, number];
+  readonly chExt: [number, number];
+  readonly child: [number, number, number, number]; // x, y, cx, cy
+  readonly hex: string;
+}): Uint8Array {
+  const [ox, oy] = opts.off;
+  const [ex, ey] = opts.ext;
+  const [chx, chy] = opts.chExt;
+  const [cx, cy, ccx, ccy] = opts.child;
+  const grp =
+    `<p:grpSp><p:grpSpPr><a:xfrm><a:off x="${ox}" y="${oy}"/><a:ext cx="${ex}" cy="${ey}"/>` +
+    `<a:chOff x="0" y="0"/><a:chExt cx="${chx}" cy="${chy}"/></a:xfrm></p:grpSpPr>` +
+    `<p:sp><p:spPr><a:xfrm><a:off x="${cx}" y="${cy}"/><a:ext cx="${ccx}" cy="${ccy}"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+    `<a:solidFill><a:srgbClr val="${opts.hex}"/></a:solidFill></p:spPr></p:sp></p:grpSp>`;
+  return buildPptx([grp]);
+}
+
+describe('pptx slide groups (E-PPTX PX5c)', () => {
+  it('offsets a grouped shape into slide coordinates', () => {
+    // chExt == ext → scale 1; the child is just shifted by the group's off.
+    const shp = firstShape(
+      Ream.parse(
+        groupDeck({
+          off: [1828800, 914400], // 144, 72 pt
+          ext: [3657600, 3657600],
+          chExt: [3657600, 3657600],
+          child: [914400, 0, 914400, 914400],
+          hex: 'FF0000',
+        }),
+      ),
+    );
+    expect(shp?.fill.colorHex).toBe('FF0000');
+    // 1828800 + 914400 = 2743200 EMU = 216 pt; y = 914400 = 72 pt; size 72 pt.
+    expect(Math.round(shp?.float?.posH?.offsetPt ?? -1)).toBe(216);
+    expect(Math.round(shp?.float?.posV?.offsetPt ?? -1)).toBe(72);
+    expect(Math.round(shp!.width)).toBe(72);
+  });
+
+  it('scales a grouped shape by the group ext / chExt ratio', () => {
+    // ext is half of chExt → scale 0.5.
+    const shp = firstShape(
+      Ream.parse(
+        groupDeck({
+          off: [0, 0],
+          ext: [1828800, 1828800],
+          chExt: [3657600, 3657600],
+          child: [0, 0, 1828800, 1828800],
+          hex: '00FF00',
+        }),
+      ),
+    );
+    expect(Math.round(shp!.width)).toBe(72); // 1828800 * 0.5 = 914400 EMU = 72 pt
+  });
+});
