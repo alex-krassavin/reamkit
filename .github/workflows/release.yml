@@ -82,9 +82,10 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         run: |
           set -euo pipefail
-          # Bump the version in place (--no-git-tag-version, so it never trips
-          # on a stray build artifact); commit and tag explicitly, staging only
-          # the two files we changed.
+          # Set the version in place (--no-git-tag-version, so it never trips on
+          # a stray build artifact). For `custom`, --allow-same-version makes it a
+          # no-op when package.json is already at the requested version (you bumped
+          # it yourself in the release PR) instead of failing "Version not changed".
           case "${{ inputs.bump }}" in
             prerelease)
               npm version prerelease --preid=alpha --no-git-tag-version ;;
@@ -92,7 +93,7 @@ jobs:
               if [ -z "${{ inputs.custom_version }}" ]; then
                 echo "::error::bump = custom requires the custom_version input"; exit 1
               fi
-              npm version "${{ inputs.custom_version }}" --no-git-tag-version ;;
+              npm version "${{ inputs.custom_version }}" --no-git-tag-version --allow-same-version ;;
             *)
               npm version "${{ inputs.bump }}" --no-git-tag-version ;;
           esac
@@ -101,7 +102,14 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json
-          git commit -m "release: $VERSION"
+          # Commit only if the version actually changed; when it was already set
+          # (a `custom` re-release of the current version) there is nothing to
+          # commit, so just tag the existing HEAD.
+          if git diff --cached --quiet; then
+            echo "Version already $VERSION — tagging the current commit."
+          else
+            git commit -m "release: $VERSION"
+          fi
           git tag -a "$TAG" -m "Ream $VERSION"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
