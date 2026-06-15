@@ -1,10 +1,19 @@
 name: Release
 
-# Release by hand:
-#   1. bump "version" in package.json (and the lockfile), commit
-#   2. push a matching tag:  git tag v1.5.0 && git push --follow-tags
-# CI re-runs the full gate set, refuses to publish if the tag and package.json
-# version disagree, publishes to npm with provenance, then opens a GitHub Release.
+# Two ways to cut a release — both use the version already in package.json
+# (bump it + the lockfile yourself, commit, and push the branch first):
+#
+#  A) Manual dispatch — GitHub → Actions → "Release" → "Run workflow". CI runs
+#     the full gate set, creates the v<version> tag for the current commit,
+#     publishes to npm with provenance, pushes the tag and opens a Release.
+#  B) Tag push —  git tag v1.5.0 && git push --follow-tags
+#     CI re-runs the gates, refuses to publish if the tag and package.json
+#     version disagree, then publishes and opens the Release.
+#
+# Either way the version is never bumped here; it comes from package.json. The
+# dispatch path tags the current commit (which must already be pushed, so the
+# provenance attestation references a public source); the tag is pushed only
+# after a successful publish, so a failed publish never leaves a dangling tag.
 #
 # Prereleases (a version with a hyphen, e.g. 1.5.0-alpha.1) publish to a
 # non-default npm dist-tag, so a plain `npm install reamkit` never pulls one.
@@ -17,9 +26,10 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
-  contents: write # create the GitHub Release
+  contents: write # push the tag + create the GitHub Release
   id-token: write # provenance attestation (and tokenless trusted publishing)
 
 # Never run two releases at once; never cancel one mid-publish.
@@ -40,7 +50,7 @@ jobs:
           cache: npm
       - run: npm ci
 
-      # Full gates before anything is published.
+      # Full gates before anything is tagged, published, or pushed.
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run format:check
@@ -48,16 +58,28 @@ jobs:
       - run: npm run test:build
       - run: npm test
 
-      # The pushed tag must match the version in package.json.
-      - name: Verify tag matches package.json
+      # The version comes from package.json. On a manual dispatch we create the
+      # matching tag locally (pushed later, after publish); on a tag push we just
+      # verify it agrees with package.json.
+      - name: Resolve release tag
         id: rel
         run: |
           set -euo pipefail
-          PKG="v$(node -p "require('./package.json').version")"
-          if [ "$PKG" != "${GITHUB_REF_NAME}" ]; then
-            echo "::error::tag ${GITHUB_REF_NAME} does not match package.json ($PKG)"; exit 1
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v$VERSION"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+              echo "::error::tag $TAG already exists — bump package.json first"; exit 1
+            fi
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "Ream $VERSION"
+          else
+            if [ "$TAG" != "${GITHUB_REF_NAME}" ]; then
+              echo "::error::tag ${GITHUB_REF_NAME} does not match package.json ($TAG)"; exit 1
+            fi
           fi
-          echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Publish to npm (provenance)
         run: |
@@ -71,6 +93,11 @@ jobs:
           npm publish --provenance --access public --tag "$TAG"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Publish succeeded — push the tag (dispatch only; a tag push already has it).
+      - name: Push the tag (manual dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        run: git push origin "${{ steps.rel.outputs.tag }}"
 
       - name: Create GitHub Release
         run: |
