@@ -15,6 +15,7 @@
 
 import type {
   BodyElement,
+  CellMerge,
   ChartBlock,
   FloatAnchor,
   ImageBlock,
@@ -25,19 +26,23 @@ import type {
   ShapeFill,
   ShapeGeometry,
   ShapeTextBody,
+  Table,
+  TableCell,
+  TableRow,
 } from '@/core/document-model';
-import type { ResourceId } from '@/core/ir';
+import type { Pt, ResourceId } from '@/core/ir';
 import type { PoNode } from '@/core/po-helpers';
 import type { PlaceholderCascade } from '@/pptx/placeholder-cascade';
 import type { PlaceholderRef, ShapeBoxEmu } from '@/pptx/sp-helpers';
 
-import { defaultColorResolver } from '@/core/drawingml/colors';
+import { defaultColorResolver, resolveColorNode } from '@/core/drawingml/colors';
 import { emuToPt } from '@/core/ir';
 import { poAttr, poChildren, poFindDescendant, poIntAttr, poIs, poText } from '@/core/po-helpers';
 import { parseCustGeom, parseFill, parseLine, parsePrstGeom } from '@/word/drawing-parser';
 import { boxFromXfrm, parsePh, parseXfrmBox, rPrToRunProps } from '@/pptx/sp-helpers';
 
 const CHART_URI = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
+const TABLE_URI = 'http://schemas.openxmlformats.org/drawingml/2006/table';
 
 // Per-slide parsing context: the placeholder cascade (PX2), an image resolver
 // that turns a slide-scoped relationship id (a:blip @r:embed) into a
@@ -139,6 +144,14 @@ function parseGraphicFrame(gf: PoNode, ctx: SlideContext): BodyElement | undefin
     };
     return { kind: 'chart', chart };
   }
+
+  if (uri === TABLE_URI) {
+    // A FlowDoc Table has no float, so a slide table flows in-block (the reader
+    // zeroes the slide margins so it sits at the top-left). Its exact frame
+    // position is a later refinement.
+    const tbl = poFindDescendant(gf, 'a:tbl');
+    return tbl ? { kind: 'table', table: parseTable(tbl) } : undefined;
+  }
   return undefined;
 }
 
@@ -188,16 +201,27 @@ function picAltText(pic: PoNode): string | undefined {
 // p:txBody → ShapeTextBody. Each a:p becomes a paragraph whose runs inherit the
 // placeholder's per-level defaults (PX2) under their own a:rPr. a:bodyPr insets
 // are carried when present; vertical anchor + autofit come in PX6.
-function parseTxBody(
+// a:txBody → its paragraphs as BodyElements (shared by shape text bodies and
+// table cells). Runs inherit the placeholder defaults when a cascade is given.
+function txBodyParagraphs(
   txBody: PoNode,
-  ph: PlaceholderRef | undefined,
+  ph?: PlaceholderRef,
   cascade?: PlaceholderCascade,
-): ShapeTextBody | undefined {
+): Array<BodyElement> {
   const content: Array<BodyElement> = [];
   for (const child of poChildren(txBody)) {
     if (!poIs(child, 'a:p')) continue;
     content.push({ kind: 'paragraph', paragraph: parseSlideParagraph(child, ph, cascade) });
   }
+  return content;
+}
+
+function parseTxBody(
+  txBody: PoNode,
+  ph: PlaceholderRef | undefined,
+  cascade?: PlaceholderCascade,
+): ShapeTextBody | undefined {
+  const content = txBodyParagraphs(txBody, ph, cascade);
   if (content.length === 0) return undefined;
 
   const bodyPr = poChildren(txBody).find((c) => poIs(c, 'a:bodyPr'));
@@ -244,4 +268,71 @@ function parseSlideRun(node: PoNode, defaults: RunProperties): Run | undefined {
   if (text.length === 0) return undefined;
   const rPr = poChildren(node).find((c) => poIs(c, 'a:rPr'));
   return { text, properties: { ...defaults, ...rPrToRunProps(rPr) } };
+}
+
+// §21.1.3 a:tbl → a FlowDoc Table: grid column widths (a:tblGrid/a:gridCol @w),
+// rows (a:tr) and cells (a:tc) with their text and merge state.
+function parseTable(tbl: PoNode): Table {
+  const grid: Array<Pt> = [];
+  const tblGrid = poChildren(tbl).find((c) => poIs(c, 'a:tblGrid'));
+  if (tblGrid) {
+    for (const col of poChildren(tblGrid)) {
+      if (poIs(col, 'a:gridCol')) grid.push(emuToPt(poIntAttr(col, 'w') ?? 0));
+    }
+  }
+  const rows: Array<TableRow> = [];
+  for (const tr of poChildren(tbl)) {
+    if (poIs(tr, 'a:tr')) rows.push(parseTableRow(tr));
+  }
+  return { properties: {}, grid, rows };
+}
+
+function parseTableRow(tr: PoNode): TableRow {
+  const h = poIntAttr(tr, 'h');
+  const cells: Array<TableCell> = [];
+  for (const tc of poChildren(tr)) {
+    if (!poIs(tc, 'a:tc')) continue;
+    // Horizontal-merge continuation cells are covered by the gridSpan origin —
+    // drop them so the origin's colSpan carries the width (the FlowDoc model
+    // omits placeholder cells for spanned columns).
+    if (poAttr(tc, 'hMerge') === '1') continue;
+    cells.push(parseTableCell(tc));
+  }
+  return { properties: { ...(h !== undefined ? { height: emuToPt(h) } : {}) }, cells };
+}
+
+function parseTableCell(tc: PoNode): TableCell {
+  const txBody = poChildren(tc).find((c) => poIs(c, 'a:txBody'));
+  const content = txBody ? txBodyParagraphs(txBody) : [];
+  const gridSpan = poIntAttr(tc, 'gridSpan');
+  const rowSpan = poIntAttr(tc, 'rowSpan');
+  // Vertical merge: the origin carries @rowSpan (→ 'start'); a continuation cell
+  // carries @vMerge="1" (→ 'middle') and is kept so the column slot stays filled.
+  const merge: CellMerge | undefined =
+    rowSpan !== undefined && rowSpan > 1
+      ? 'start'
+      : poAttr(tc, 'vMerge') === '1'
+        ? 'middle'
+        : undefined;
+  const tcPr = poChildren(tc).find((c) => poIs(c, 'a:tcPr'));
+  const shadingHex = tcPr ? cellFillHex(tcPr) : undefined;
+  return {
+    properties: {
+      ...(gridSpan !== undefined && gridSpan > 1 ? { colSpan: gridSpan } : {}),
+      ...(merge ? { merge } : {}),
+      ...(shadingHex ? { shading: { colorHex: shadingHex } } : {}),
+    },
+    content,
+  };
+}
+
+// a:tcPr/a:solidFill → the cell background hex (srgb or theme scheme colour).
+function cellFillHex(tcPr: PoNode): string | undefined {
+  const solidFill = poChildren(tcPr).find((c) => poIs(c, 'a:solidFill'));
+  if (!solidFill) return undefined;
+  for (const c of poChildren(solidFill)) {
+    const hex = resolveColorNode(c, defaultColorResolver);
+    if (hex) return hex;
+  }
+  return undefined;
 }

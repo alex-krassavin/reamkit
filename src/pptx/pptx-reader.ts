@@ -116,6 +116,10 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
 
   const section: SectionProperties = {
     pageSize: { width: pt(cx / EMU_PER_PT), height: pt(cy / EMU_PER_PT) },
+    // A slide is a margin-less canvas: floating shapes position from the page
+    // edge (relativeFrom:'page'), and in-flow content (a table — PX4b) sits at
+    // the top-left rather than inside a default print margin.
+    margins: { top: pt(0), right: pt(0), bottom: pt(0), left: pt(0) },
     headers: [],
     footers: [],
   };

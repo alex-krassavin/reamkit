@@ -324,3 +324,82 @@ describe('pptx slide charts (E-PPTX PX4)', () => {
     expect(PdfFile.parse(pdf).pages().length).toBe(1);
   });
 });
+
+const TABLE_NS = 'http://schemas.openxmlformats.org/drawingml/2006/table';
+const GRID2 = `<a:tblGrid><a:gridCol w="2743200"/><a:gridCol w="2743200"/></a:tblGrid>`;
+
+// An a:tc with text + optional attributes (gridSpan/rowSpan/vMerge/hMerge) + tcPr.
+function cell(text: string, attrs = '', tcPr = ''): string {
+  return (
+    `<a:tc${attrs ? ` ${attrs}` : ''}><a:txBody><a:bodyPr/>` +
+    `<a:p><a:r><a:t>${text}</a:t></a:r></a:p></a:txBody>${tcPr}</a:tc>`
+  );
+}
+
+// A slide carrying a table graphicFrame whose a:tbl is `tblInner` (grid + rows).
+function tableDeck(tblInner: string): Uint8Array {
+  const gf =
+    `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="7" name="Table 6"/>` +
+    `<p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>` +
+    `<p:xfrm><a:off x="914400" y="914400"/><a:ext cx="5486400" cy="1828800"/></p:xfrm>` +
+    `<a:graphic><a:graphicData uri="${TABLE_NS}"><a:tbl>${tblInner}</a:tbl>` +
+    `</a:graphicData></a:graphic></p:graphicFrame>`;
+  return buildPptx([gf]);
+}
+function firstTable(doc: ReturnType<typeof Ream.parse>) {
+  const el = doc.flow.body.find((e) => e.kind === 'table');
+  return el?.kind === 'table' ? el.table : undefined;
+}
+
+describe('pptx slide tables (E-PPTX PX4)', () => {
+  it('reads an a:tbl graphicFrame into a FlowDoc table', () => {
+    const tbl = firstTable(
+      Ream.parse(
+        tableDeck(
+          GRID2 +
+            `<a:tr h="370840">` +
+            cell(
+              'H1',
+              '',
+              `<a:tcPr><a:solidFill><a:srgbClr val="4472C4"/></a:solidFill></a:tcPr>`,
+            ) +
+            cell('H2') +
+            `</a:tr><a:tr h="370840">${cell('A1')}${cell('B1')}</a:tr>`,
+        ),
+      ),
+    );
+    expect(tbl).toBeDefined();
+    expect(tbl?.grid.length).toBe(2);
+    expect(Math.round(tbl!.grid[0]!)).toBe(216); // 2743200 EMU = 216 pt
+    expect(tbl?.rows.length).toBe(2);
+    expect(tbl?.rows[0]?.cells.length).toBe(2);
+    expect(tbl?.rows[0]?.cells[0]?.properties.shading?.colorHex).toBe('4472C4');
+  });
+
+  it('flows table cell text through to the HTML', async () => {
+    const html = decoder.decode(
+      await Ream.parse(
+        tableDeck(GRID2 + `<a:tr>${cell('CellText')}${cell('Other')}</a:tr>`),
+      ).convert('html'),
+    );
+    expect(html).toContain('CellText');
+    expect(html).toContain('Other');
+  });
+
+  it('honours gridSpan (colSpan) and drops the hMerge continuation', () => {
+    const tbl = firstTable(
+      Ream.parse(
+        tableDeck(GRID2 + `<a:tr>${cell('Wide', 'gridSpan="2"')}${cell('', 'hMerge="1"')}</a:tr>`),
+      ),
+    );
+    expect(tbl?.rows[0]?.cells.length).toBe(1); // continuation dropped
+    expect(tbl?.rows[0]?.cells[0]?.properties.colSpan).toBe(2);
+  });
+
+  it('renders a slide table into the PDF', async () => {
+    const pdf = await Ream.parse(
+      tableDeck(GRID2 + `<a:tr>${cell('X')}${cell('Y')}</a:tr>`),
+    ).convert('pdf', { fonts: FONTS });
+    expect(PdfFile.parse(pdf).pages().length).toBe(1);
+  });
+});
