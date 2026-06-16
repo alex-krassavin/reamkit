@@ -1053,7 +1053,22 @@ override + `dsp:`-walker, кладущий `dsp:spPr`/`dsp:txBody` в сущес
   стиль), структуру в PV3.
 
 ### Прогресс
-- (пусто — план)
+- **PV0 ✓ (свёрнут в PV1).** Отдельный снапшот-харнесс не понадобился: PV1 чисто
+  аддитивен (новые опц-поля + rels-дискавери, не трогает чтение ячеек/таблиц), так что
+  байт-в-ноль гарантирован конструкцией. Сеть = существующий полный прогон (xlsx-снапшоты) +
+  тест «ячейки рендерятся как раньше» + проверка на реальном `pivot_dark1.xlsx`.
+- **PV1 ✓** — парс `pivotTable1.xml` + модель. **Ключевое (подтверждено на корпусе):** pivot
+  ссылается ТОЛЬКО рельсой листа (`Type=.../pivotTable`), в самом sheet XML элемента нет → не
+  трогаем worksheet-parser, перечисляем rels в xlsx-reader. Новый `pivot-table-parser.ts`
+  (зеркало `table-parser.ts`) читает `<location ref firstHeaderRow firstDataRow firstDataCol>`
+  + `<pivotTableStyleInfo name showRowStripes showColStripes>`; тип `PivotTable` рядом с
+  `ExcelTable`; `ParsedWorksheet.pivotTables`; резолв в xlsx-reader (по `isOoxmlRel(...,
+  'pivotTable')`) → `grid.pivotTables`. Стиля/шейдинга нет (это PV2) — модель only. Выходные
+  ячейки pivot уже кешированы Excel'ем в листе → рендерятся как раньше (байт-в-ноль).
+  `build-xlsx` получил опцию `pivotTables` (мерджит rel в sheet-рельсы). Тесты: pivot в
+  модели (ref E1:I6→`{0,0,2,2}` на фикстуре, style/firstHeaderRow/stripes), ячейки рендерятся,
+  нет pivot→undefined. Проверено на реальном `pivot_dark1.xlsx` (PivotStyleDark1, E1:I6). 840
+  тестов (+3). Осталось: PV2 (стиль→цвета + shading-карта), PV3 (структура), PV4 (полиш).
 
 ---
 

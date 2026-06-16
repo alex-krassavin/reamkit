@@ -10,7 +10,7 @@ import type { CoreProperties, Relationship } from '@/core/opc';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Sheet, SheetChartRef, SheetDoc } from '@/core/ir/sheet';
-import type { ExcelTable } from '@/core/spreadsheet-model';
+import type { ExcelTable, PivotTable } from '@/core/spreadsheet-model';
 
 import { FEATURES, ResourceStore } from '@/core/ir';
 import { OpcPackage, isOoxmlRel, parseCoreProperties } from '@/core/opc';
@@ -27,6 +27,7 @@ import { DEFAULT_THEME_PALETTE, makeColorResolver } from '@/core/drawingml/color
 import { parseTheme } from '@/core/drawingml/theme-parser';
 import { parseSheetDrawing } from '@/excel/sheet-drawing';
 import { parseTablePart } from '@/excel/table-parser';
+import { parsePivotTablePart } from '@/excel/pivot-table-parser';
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
 
 const WORKBOOK_PART = 'xl/workbook.xml';
@@ -113,7 +114,26 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
       if (resolvedTables.length > 0) tables = resolvedTables;
     }
 
-    const grid = tables ? { ...worksheet, tables } : worksheet;
+    // §18.10: the sheet's pivot tables — referenced ONLY via the worksheet's
+    // relationships (there is no element in the sheet XML), so enumerate the rels
+    // by type. The output cells are already cached in the grid; PV1 just records
+    // the location + named style for PV2 to band (E-PIVOT).
+    let pivotTables: Array<PivotTable> | undefined;
+    {
+      const resolvedPivots: Array<PivotTable> = [];
+      for (const rel of pkg.getPartRelationships(resolved.path)) {
+        if (!isOoxmlRel(rel.type, 'pivotTable')) continue;
+        const part = pkg.resolveRelatedPart(resolved.path, rel);
+        const parsed = part ? parsePivotTablePart(part.data) : undefined;
+        if (parsed) resolvedPivots.push(parsed);
+      }
+      if (resolvedPivots.length > 0) pivotTables = resolvedPivots;
+    }
+
+    const grid =
+      tables || pivotTables
+        ? { ...worksheet, ...(tables ? { tables } : {}), ...(pivotTables ? { pivotTables } : {}) }
+        : worksheet;
     sheetsOut.push({ name: sheet.name, grid, ...(charts.length > 0 ? { charts } : {}) });
   }
 

@@ -6,6 +6,7 @@ import { zipSync } from 'fflate';
 import { formatCellRef } from '@/excel';
 
 const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 
 const CONTENT_TYPES_HEADER = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
@@ -127,6 +128,18 @@ export interface XlsxBuilderOptions {
     readonly showRowStripes?: boolean;
     readonly headerRowCount?: number;
   }>;
+  /** Attach pivot table parts to the FIRST sheet (E-PIVOT). Referenced via a
+   *  sheet relationship only — no element in the worksheet XML. */
+  readonly pivotTables?: ReadonlyArray<{
+    readonly ref: string;
+    readonly name?: string;
+    readonly styleName?: string;
+    readonly firstHeaderRow?: number;
+    readonly firstDataRow?: number;
+    readonly firstDataCol?: number;
+    readonly showRowStripes?: boolean;
+    readonly showColStripes?: boolean;
+  }>;
 }
 
 function isCellSpec(v: XlsxValue | XlsxCellSpec): v is XlsxCellSpec {
@@ -161,6 +174,33 @@ function buildTableXml(
   <tableColumns count="1"><tableColumn id="1" name="Col"/></tableColumns>
   <tableStyleInfo name="${style}" showFirstColumn="0" showLastColumn="0" showRowStripes="${stripes}" showColumnStripes="0"/>
 </table>`;
+}
+
+function buildPivotTableXml(
+  id: number,
+  p: {
+    ref: string;
+    name?: string;
+    styleName?: string;
+    firstHeaderRow?: number;
+    firstDataRow?: number;
+    firstDataCol?: number;
+    showRowStripes?: boolean;
+    showColStripes?: boolean;
+  },
+): string {
+  const name = p.name ?? `PivotTable${id}`;
+  const style = p.styleName ?? 'PivotStyleLight16';
+  const fhr = p.firstHeaderRow ?? 1;
+  const fdr = p.firstDataRow ?? 2;
+  const fdc = p.firstDataCol ?? 1;
+  const rowStripes = p.showRowStripes ? '1' : '0';
+  const colStripes = p.showColStripes ? '1' : '0';
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<pivotTableDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" name="${name}" cacheId="0" dataCaption="Values" outline="1" outlineData="1">
+  <location ref="${p.ref}" firstHeaderRow="${fhr}" firstDataRow="${fdr}" firstDataCol="${fdc}"/>
+  <pivotTableStyleInfo name="${style}" showRowHeaders="1" showColHeaders="1" showRowStripes="${rowStripes}" showColStripes="${colStripes}" showLastColumn="0"/>
+</pivotTableDefinition>`;
 }
 
 export function buildXlsx(
@@ -377,6 +417,14 @@ ${sharedStringsList.map((str) => `  <si><t>${escapeXml(str)}</t></si>`).join('\n
           )
           .join('')
       : '') +
+    (options.pivotTables
+      ? options.pivotTables
+          .map(
+            (_, i) =>
+              `<Override PartName="/xl/pivotTables/pivotTable${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotTable+xml"/>`,
+          )
+          .join('')
+      : '') +
     '\n</Types>';
 
   const entries: Record<string, Uint8Array> = {
@@ -453,6 +501,33 @@ ${relLines}
     );
     for (const p of parts) {
       entries[`xl/tables/table${p.idx}.xml`] = encoder.encode(buildTableXml(p.idx, p.t));
+    }
+  }
+  if (options.pivotTables && options.pivotTables.length > 0 && sheetParts.length > 0) {
+    // A pivot table is referenced ONLY by a worksheet relationship (no element
+    // in the sheet XML); merge the rel into any existing sheet rels (E-PIVOT).
+    const first = sheetParts[0]!;
+    const parts = options.pivotTables.map((p, i) => ({ rid: `rIdP${i + 1}`, idx: i + 1, p }));
+    const relLines = parts
+      .map(
+        (p) =>
+          `  <Relationship Id="${p.rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotTable" Target="../pivotTables/pivotTable${p.idx}.xml"/>`,
+      )
+      .join('\n');
+    const relsPath = `xl/worksheets/_rels/${first.fileName}.rels`;
+    const existing = entries[relsPath] ? decoder.decode(entries[relsPath]) : undefined;
+    entries[relsPath] = encoder.encode(
+      existing
+        ? existing.replace('</Relationships>', `${relLines}\n</Relationships>`)
+        : `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+${relLines}
+</Relationships>`,
+    );
+    for (const p of parts) {
+      entries[`xl/pivotTables/pivotTable${p.idx}.xml`] = encoder.encode(
+        buildPivotTableXml(p.idx, p.p),
+      );
     }
   }
   for (const s of sheetParts) {
