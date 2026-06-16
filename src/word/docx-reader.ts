@@ -39,12 +39,14 @@ import {
   EMPTY_NUMBERING,
   EMPTY_SECTION,
   EMPTY_SETTINGS,
+  applyAuthorIds,
   loadEmbeddedFonts,
   parseCommentThreads,
   parseDocument,
   parseHeaderFooter,
   parseNotes,
   parseNumbering,
+  parsePeople,
   parseSections,
   parseSettings,
   parseStyles,
@@ -55,6 +57,7 @@ const FOOTNOTES_PART = 'word/footnotes.xml';
 const ENDNOTES_PART = 'word/endnotes.xml';
 const COMMENTS_PART = 'word/comments.xml';
 const COMMENTS_EXTENDED_PART = 'word/commentsExtended.xml';
+const PEOPLE_PART = 'word/people.xml';
 const NUMBERING_PART = 'word/numbering.xml';
 const SETTINGS_PART = 'word/settings.xml';
 const CORE_PROPS_PART = 'docProps/core.xml';
@@ -112,9 +115,14 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
     : undefined;
   const commentsData = pkg.getPart(COMMENTS_PART);
   const commentsExtendedData = pkg.getPart(COMMENTS_EXTENDED_PART);
-  const rawComments = commentsData
+  const peopleData = pkg.getPart(PEOPLE_PART);
+  let rawComments = commentsData
     ? parseCommentThreads(commentsData, commentsExtendedData, noteCtx(COMMENTS_PART))
     : undefined;
+  // word/people.xml resolves each author to a presence identity (usually email).
+  if (rawComments && peopleData) {
+    rawComments = applyAuthorIds(rawComments, parsePeople(peopleData));
+  }
 
   const settingsData = pkg.getPart(SETTINGS_PART);
   const settings = settingsData ? parseSettings(settingsData) : EMPTY_SETTINGS;

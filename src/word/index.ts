@@ -11,6 +11,8 @@ export {
   parseComments,
   parseCommentThreads,
   parseCommentsExtended,
+  parsePeople,
+  applyAuthorIds,
   EMPTY_SECTION,
 } from '@/word/document-parser';
 export { parseRunProperties } from '@/word/run-properties';

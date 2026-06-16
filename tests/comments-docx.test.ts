@@ -257,3 +257,63 @@ describe('Word comment threads in docx (E-COMMENTS CM4)', () => {
     expect(reread.flow.comments?.get('1')?.parentId).toBe('0');
   });
 });
+
+// word/people.xml resolves a comment author's presence identity (usually an
+// email) — matched on the author display name and attached as Comment.authorId.
+function peopleCommentDocx(): Uint8Array {
+  const body =
+    `<w:p><w:r><w:t>Reviewed text</w:t></w:r>` + `<w:r><w:commentReference w:id="0"/></w:r></w:p>`;
+  const document =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+    `<w:document xmlns:w="${W_NS}" xmlns:r="${R_NS}"><w:body>${body}</w:body></w:document>`;
+  const comments =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+    `<w:comments xmlns:w="${W_NS}">` +
+    `<w:comment w:id="0" w:author="Alice Reviewer" w:initials="AR" w:date="2026-01-02T10:00:00Z">` +
+    `<w:p><w:r><w:t>Please clarify.</w:t></w:r></w:p>` +
+    `</w:comment></w:comments>`;
+  const people =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+    `<w15:people xmlns:w15="${W15_NS}">` +
+    `<w15:person w15:author="Alice Reviewer">` +
+    `<w15:presenceInfo w15:providerId="None" w15:userId="alice@example.com"/>` +
+    `</w15:person></w15:people>`;
+  const peopleCt = 'application/vnd.openxmlformats-officedocument.wordprocessingml.people+xml';
+
+  return zipSync({
+    '[Content_Types].xml': enc.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="${CT}">` +
+        `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+        `<Default Extension="xml" ContentType="application/xml"/>` +
+        `<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>` +
+        `<Override PartName="/word/comments.xml" ContentType="${COMMENTS_CT}"/>` +
+        `<Override PartName="/word/people.xml" ContentType="${peopleCt}"/>` +
+        `</Types>`,
+    ),
+    '_rels/.rels': enc.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="${PKG}">` +
+        `<Relationship Id="rId1" Type="${R_NS}/officeDocument" Target="word/document.xml"/></Relationships>`,
+    ),
+    'word/document.xml': enc.encode(document),
+    'word/_rels/document.xml.rels': enc.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="${PKG}">` +
+        `<Relationship Id="rId10" Type="${R_NS}/comments" Target="comments.xml"/></Relationships>`,
+    ),
+    'word/comments.xml': enc.encode(comments),
+    'word/people.xml': enc.encode(people),
+  });
+}
+
+describe('Word comment author identity from people.xml (E-COMMENTS)', () => {
+  it('resolves the author identity onto the comment', () => {
+    const c = Ream.parse(peopleCommentDocx()).flow.comments?.get('0');
+    expect(c?.author).toBe('Alice Reviewer');
+    expect(c?.authorId).toBe('alice@example.com');
+  });
+
+  it('shows the identity in the HTML comment meta', async () => {
+    const html = new TextDecoder().decode(await Ream.parse(peopleCommentDocx()).convert('html'));
+    expect(html).toContain('Alice Reviewer');
+    expect(html).toContain('alice@example.com');
+  });
+});

@@ -283,6 +283,12 @@ export interface Comment {
   /** Raw w:date timestamp (ISO 8601), as authored — not reformatted. */
   readonly date?: string;
   /**
+   * The author's resolved identity (usually an email) from word/people.xml
+   * (`w15:person` → `w15:presenceInfo/@w15:userId`), matched on the author name.
+   * Absent when the file ships no people part or the author is not listed.
+   */
+  readonly authorId?: string;
+  /**
    * Microsoft commentsExtended (w15) — the id of the comment this one replies
    * to, forming a thread. Set only when word/commentsExtended.xml links this
    * comment's paragraph to a parent (w15:paraIdParent). Top-level comments omit it.

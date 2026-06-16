@@ -268,7 +268,10 @@ function emitCommentsSection(
     const n = numbers.get(id);
     if (!c || n === undefined) return;
     out.push(`<li id="cm-${n}" class="${c.done ? 'comment resolved' : 'comment'}">`);
-    const who = [c.author, c.date].filter((s) => s !== undefined && s.length > 0).join(', ');
+    // The author, with the people.xml identity (usually email) when resolved.
+    const author =
+      c.author !== undefined ? c.author + (c.authorId ? ` <${c.authorId}>` : '') : c.authorId;
+    const who = [author, c.date].filter((s) => s !== undefined && s.length > 0).join(', ');
     const meta = [who, c.done ? 'Resolved' : undefined].filter((s) => s).join(' \u2014 ');
     if (meta) out.push(`<p class="comment-meta">${textHtml(meta)}</p>`);
     for (const el of c.content) emitBlock(out, el, ctx);

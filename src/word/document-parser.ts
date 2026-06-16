@@ -924,3 +924,40 @@ export function parseCommentThreads(
   if (!commentsExtendedXml) return comments;
   return linkCommentThreads(comments, paraIds, parseCommentsExtended(commentsExtendedXml));
 }
+
+// §people (Microsoft w15) — word/people.xml maps an author display name to a
+// presence identity (`w15:presenceInfo/@w15:userId`, usually an email). Returns
+// author → userId, used to enrich a comment's authorId. Prefix-agnostic.
+export function parsePeople(xml: Uint8Array): Map<string, string> {
+  const tree = parser.parse(decoder.decode(xml)) as Array<PoNode>;
+  const out = new Map<string, string>();
+  const root = tree.find((n) => poIsLocal(n, 'people'));
+  if (!root) return out;
+  for (const person of poChildren(root)) {
+    if (!poIsLocal(person, 'person')) continue;
+    const author = poAttrLocal(person, 'author');
+    if (author === undefined) continue;
+    let userId: string | undefined;
+    for (const child of poChildren(person)) {
+      if (!poIsLocal(child, 'presenceInfo')) continue;
+      const uid = poAttrLocal(child, 'userId');
+      if (uid !== undefined) userId = uid;
+    }
+    if (userId !== undefined) out.set(author, userId);
+  }
+  return out;
+}
+
+// Attach each comment's authorId by matching its author name against people.xml.
+export function applyAuthorIds(
+  comments: Map<string, Comment>,
+  people: Map<string, string>,
+): Map<string, Comment> {
+  if (people.size === 0) return comments;
+  const out = new Map<string, Comment>();
+  for (const [id, c] of comments) {
+    const userId = c.author !== undefined ? people.get(c.author) : undefined;
+    out.set(id, userId !== undefined ? { ...c, authorId: userId } : c);
+  }
+  return out;
+}
