@@ -124,6 +124,21 @@ describe('Word comments in docx (E-COMMENTS CM0)', () => {
     expect(pdf).toContain('/S /GoTo'); // an internal jump to the comment entry
   });
 
+  it('round-trips comments through the docx writer (CM3)', async () => {
+    const out = await Ream.parse(commentDocx()).convert('docx');
+    const reread = Ream.parse(out);
+    const c = reread.flow.comments?.get('0');
+    expect(c?.author).toBe('Alice Reviewer');
+    expect(c?.initials).toBe('AR');
+    expect(c?.date).toBe('2026-01-02T10:00:00Z');
+    const text = (c?.content ?? [])
+      .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
+      .join('');
+    expect(text).toBe('Please clarify this sentence.');
+    // the body run still anchors the comment by id on the re-read
+    expect(bodyRuns(reread).some((r) => r.commentRef === '0')).toBe(true);
+  });
+
   it('omits the comments field when the docx ships no comments part', () => {
     // The body's commentReference still tags the run (a dangling id the renderer
     // skips), but with no comments.xml there is no content map to attach.

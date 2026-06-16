@@ -1001,8 +1001,18 @@ override + `dsp:`-walker, кладущий `dsp:spPr`/`dsp:txBody` в сущес
   `/Subtype /Link` + `/S /GoTo`. 845 тестов (+1). **Сознательно отложено** (диспропорция
   риск/польза): нативные `/Text` sticky-note-аннотации (CM2b) и подсветка диапазона
   `commentRangeStart/End` (CM2c) — обе тянут PDF/A + tagged-PDF annotation-compliance (риск
-  veraPDF-гейту) ради фиделити поверх уже-читаемого рендера. Осталось: CM3 (полиш —
-  `commentsExtended`/`people.xml`/docx write-back/демо).
+  veraPDF-гейту) ради фиделити поверх уже-читаемого рендера.
+- **CM3 (частично) ✓ — docx write-back.** Комментарии теперь переживают docx→docx (был
+  пробел). Зеркало WT2 (footnotes write-back): `emitComments` пишет `word/comments.xml`
+  (`<w:comment w:id w:author w:date w:initials>` + контент через общий `emitBlock`, без
+  separator-стабов) + content-type + doc-rel; run-write-back эмитит `<w:commentReference>`
+  для ранов с `commentRef` (и они переживают `visible`-фильтр пустых ранов). Тест: docx с
+  комментом → `convert('docx')` → ре-рид → автор/инициалы/дата/текст и `commentRef` на ране
+  сохранены. Байт-в-ноль: `emitComments` только при `flow.comments`; ветка commentRef только
+  для commentRef-ранов → docx без комментов идентичны, корпус-roundtrip-гейт (D6) зелёный.
+  846 тестов (+1). **E-COMMENTS: ядро + roundtrip готовы (CM0–CM3).** Мелкие хвосты:
+  `commentsExtended.xml` (треды/ответы), `people.xml` (резолв автора), демо-артефакт; +
+  отложенные CM2b/CM2c (нативные `/Text`/подсветка).
 
 ---
 
@@ -1133,7 +1143,7 @@ override + `dsp:`-walker, кладущий `dsp:spPr`/`dsp:txBody` в сущес
 | E-PPTX  | среднее       | низкий   | pptx-вход, замыкает OOXML  | новая эра (после 1.8.0)   |
 | E-PARITY| малое→среднее | низкий¹  | визуальный паритет с Word/LO | после E-PPTX            |
 | E-SMARTART | малое→среднее | низкий | SmartArt в docx+pptx (был пробел) | ✓ закрыт (SA0–SA3) |
-| E-COMMENTS | малое→среднее | низкий | ревью-комментарии docx (был пробел) | ядро готово (CM0–CM1); хвосты CM2/CM3 |
+| E-COMMENTS | малое→среднее | низкий | ревью-комментарии docx (был пробел) | ✓ CM0–CM3 (рендер+клик+write-back); мелкие хвосты |
 | E-PIVOT | малое→среднее | низкий² | стиль сводных Excel (значения уже видны) | ✓ закрыт (PV0–PV4) |
 
 ² E-PIVOT: значения pivot уже рендерятся; риск только в том, чтобы shading не задел листы без pivot (гейт PV0).

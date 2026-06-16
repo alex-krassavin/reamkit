@@ -34,6 +34,7 @@ import type {
   CellProperties,
   Chart,
   ChartBlock,
+  Comment,
   FontFamilyMap,
   Numbering,
   NumberingLevel,
@@ -102,6 +103,10 @@ const ENDNOTES_CONTENT_TYPE =
   'application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml';
 const FOOTNOTES_PART = 'word/footnotes.xml';
 const ENDNOTES_PART = 'word/endnotes.xml';
+const REL_COMMENTS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments';
+const COMMENTS_CONTENT_TYPE =
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml';
+const COMMENTS_PART = 'word/comments.xml';
 const REL_CHART = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart';
 const CHART_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.drawingml.chart+xml';
 
@@ -323,6 +328,8 @@ export function writeDocx(flow: FlowDoc): WriteResult {
     extraParts,
     extraPartRels,
   );
+  // §17.13.4 review comments → word/comments.xml + a document relationship (CM3).
+  emitComments(flow.comments, state, losses, docScope, extraParts, extraPartRels);
 
   const partRelationships = [
     ...(docScope.rels.length > 0
@@ -409,6 +416,52 @@ function emitNotes(
     id: `rId${++docScope.relSeq}`,
     type: cfg.relType,
     target: cfg.target,
+    targetMode: 'Internal',
+  });
+}
+
+// §17.13.4 — emit word/comments.xml from the comments by id. Unlike notes a
+// comment carries author/date/initials attributes (and has no separator stubs);
+// the body's commentReference runs (emitted inline) point back by id (CM3).
+function emitComments(
+  comments: ReadonlyMap<string, Comment> | undefined,
+  state: WriteState,
+  losses: Array<Loss>,
+  docScope: PartScope,
+  extraParts: Array<OpcPart>,
+  extraPartRels: Array<{ sourcePart: string; relationships: Array<Relationship> }>,
+): void {
+  if (!comments || comments.size === 0) return;
+  const scope = newScope();
+  const commentXmls: Array<string> = [];
+  for (const [id, c] of comments) {
+    const inner: Array<string> = [];
+    for (const el of c.content) emitBlock(inner, el, losses, state, scope);
+    const attrs =
+      `w:id="${escapeAttr(id)}"` +
+      (c.author !== undefined ? ` w:author="${escapeAttr(c.author)}"` : '') +
+      (c.date !== undefined ? ` w:date="${escapeAttr(c.date)}"` : '') +
+      (c.initials !== undefined ? ` w:initials="${escapeAttr(c.initials)}"` : '');
+    commentXmls.push(`<w:comment ${attrs}>${inner.join('') || '<w:p/>'}</w:comment>`);
+  }
+  const xml =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"' +
+    ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+    commentXmls.join('') +
+    '</w:comments>';
+  extraParts.push({
+    path: COMMENTS_PART,
+    data: encoder.encode(xml),
+    contentType: COMMENTS_CONTENT_TYPE,
+  });
+  if (scope.rels.length > 0) {
+    extraPartRels.push({ sourcePart: COMMENTS_PART, relationships: scope.rels });
+  }
+  docScope.rels.push({
+    id: `rId${++docScope.relSeq}`,
+    type: REL_COMMENTS,
+    target: 'comments.xml',
     targetMode: 'Internal',
   });
 }
@@ -938,6 +991,9 @@ function paragraphXml(
         run.footnoteRef !== undefined ||
         run.endnoteRef !== undefined ||
         run.noteNumber === true ||
+        // §17.13.4.1 — a comment reference (CM3): an empty run that anchors a
+        // comment must survive the round-trip.
+        run.commentRef !== undefined ||
         // An empty run that still carries a link target keeps the hyperlink
         // alive (e.g. a TOC field whose page number a tracked change deleted).
         run.href !== undefined ||
@@ -1020,6 +1076,10 @@ function runXml(run: Run, state: WriteState, scope: PartScope): string {
   }
   if (run.noteNumber) {
     return `<w:r>${rPr}<${scope.noteKind === 'endnote' ? 'w:endnoteRef' : 'w:footnoteRef'}/></w:r>`;
+  }
+  // §17.13.4.1 — a review comment reference (CM3).
+  if (run.commentRef !== undefined) {
+    return `<w:r>${rPr}<w:commentReference w:id="${escapeAttr(run.commentRef)}"/></w:r>`;
   }
   // §17.3.3.1 — a page break is a run-level <w:br w:type="page"/>; emit it so a
   // run that is ONLY a break (no text, no image) survives the round-trip.
