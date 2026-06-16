@@ -3,15 +3,21 @@
 //
 // Word/Excel documents reference fonts by name (Calibri, Arial, Times…), most
 // of which are proprietary and can't be bundled. We map each referenced family
-// to an open metric-/style-compatible substitute hosted on a CDN and fetch the
-// raw TrueType file at runtime. Source: @expo-google-fonts packages served as
-// static .ttf via jsDelivr (full character sets — Latin, Cyrillic, Greek — in
-// a single file, parseable directly by our TTF parser).
+// to an open substitute hosted on a CDN and fetch the raw TrueType file at
+// runtime. Source: @expo-google-fonts packages served as static .ttf via
+// jsDelivr (full character sets — Latin, Cyrillic, Greek — in a single file,
+// parseable directly by our TTF parser).
 //
-// Substitutes mirror what LibreOffice does:
-//   sans  → Roboto   (Calibri / Arial / Helvetica / Segoe / Verdana / …)
-//   serif → Tinos    (Times New Roman / Georgia / Cambria / Garamond / …)
-//   mono  → Cousine  (Courier New / Consolas / Menlo / …)
+// Two tiers, mirroring LibreOffice's substitution:
+//   • Metric-compatible twins — open fonts engineered to reproduce a specific
+//     proprietary font's advance widths 1:1, so text breaks into lines at the
+//     same points and visual parity is much closer:
+//       Calibri → Carlito   Cambria → Caladea
+//       Arial   → Arimo     Times New Roman → Tinos   Courier New → Cousine
+//     (the Croscore + Carlito/Caladea set LibreOffice bundles for this purpose).
+//   • Class fallback — for families without a known twin, a reasonable style
+//     match (serif → Tinos, mono → Cousine, else → Arimo). Widths are only
+//     approximate here; the twins above are width-exact.
 //
 // fetch() is used (universal in Node 18+, browsers, and edge runtimes); a
 // custom implementation can be injected for tests / offline use.
@@ -27,24 +33,45 @@ const VARIANT_SUFFIX: Record<FontVariant, string> = {
   boldItalic: '700Bold_Italic',
 };
 
-export type FamilyKey = 'roboto' | 'tinos' | 'cousine';
+export type FamilyKey = 'arimo' | 'tinos' | 'cousine' | 'carlito' | 'caladea';
 
 interface CuratedFamily {
   readonly pkg: string; // @expo-google-fonts package name
   readonly file: string; // capitalised file prefix
+  // Newer @expo-google-fonts packages nest each variant in its own folder
+  // (`/400Regular/Carlito_400Regular.ttf`) rather than flat at the package root.
+  readonly nested?: boolean;
 }
 
 const FAMILIES: Record<FamilyKey, CuratedFamily> = {
-  roboto: { pkg: 'roboto', file: 'Roboto' },
+  arimo: { pkg: 'arimo', file: 'Arimo' },
   tinos: { pkg: 'tinos', file: 'Tinos' },
   cousine: { pkg: 'cousine', file: 'Cousine' },
+  carlito: { pkg: 'carlito', file: 'Carlito', nested: true },
+  caladea: { pkg: 'caladea', file: 'Caladea' },
 };
 
+// Metric-compatible twins: an open font engineered to reproduce the named
+// proprietary font's advance widths 1:1. Matched before the class fallback so
+// e.g. Cambria resolves to its exact twin Caladea, not the generic serif Tinos.
+const EXACT: Record<string, FamilyKey> = {
+  calibri: 'carlito',
+  cambria: 'caladea',
+  arial: 'arimo',
+  helvetica: 'arimo',
+  'liberation sans': 'arimo',
+  'times new roman': 'tinos',
+  times: 'tinos',
+  'liberation serif': 'tinos',
+  'courier new': 'cousine',
+  courier: 'cousine',
+  'liberation mono': 'cousine',
+};
+
+// Class fallback for families without an exact twin — a style match only
+// (widths approximate). Anything not serif/mono falls through to sans (Arimo).
 const SERIF = new Set([
-  'times',
-  'times new roman',
   'georgia',
-  'cambria',
   'garamond',
   'book antiqua',
   'palatino',
@@ -54,8 +81,6 @@ const SERIF = new Set([
 ]);
 
 const MONO = new Set([
-  'courier',
-  'courier new',
   'consolas',
   'monaco',
   'menlo',
@@ -64,17 +89,25 @@ const MONO = new Set([
   'monospace',
 ]);
 
-// Map a document-referenced font family to a curated open substitute.
+// Map a document-referenced font family to a curated open substitute: an exact
+// metric twin when one is known, otherwise a serif/mono/sans style fallback.
 export function resolveFamilyKey(name: string | undefined): FamilyKey {
-  if (!name) return 'roboto';
+  if (!name) return 'arimo';
   const n = name.trim().toLowerCase();
+  const exact = EXACT[n];
+  if (exact) return exact;
   if (MONO.has(n)) return 'cousine';
   if (SERIF.has(n)) return 'tinos';
-  return 'roboto';
+  return 'arimo';
 }
 
 function fontUrl(family: CuratedFamily, variant: FontVariant): string {
-  return `${CDN_BASE}/${family.pkg}/${family.file}_${VARIANT_SUFFIX[variant]}.ttf`;
+  const suffix = VARIANT_SUFFIX[variant];
+  const leaf = `${family.file}_${suffix}.ttf`;
+  // Nested packages place each variant under its own suffix-named folder.
+  return family.nested
+    ? `${CDN_BASE}/${family.pkg}/${suffix}/${leaf}`
+    : `${CDN_BASE}/${family.pkg}/${leaf}`;
 }
 
 export type FetchLike = (

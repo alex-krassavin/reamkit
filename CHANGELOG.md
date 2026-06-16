@@ -3,6 +3,33 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.11.0
+
+### Added
+
+- **Renderer-compatibility `layoutProfile`.** `convert('pdf', { layoutProfile })`
+  switches the line-height model, line breaking and default kerning to match a
+  specific renderer, for closer visual parity:
+  - `'libreoffice'` — line height from the font's hhea metrics; greedy
+    (first-fit) line breaking.
+  - `'word'` — line height from the OS/2 win metrics; greedy breaking; kerning
+    off (Microsoft Word's default).
+  - `'ream'` (the default) — Ream's own typesetter; output is unchanged.
+
+  Validated against a LibreOffice golden render, `'libreoffice'` cuts the median
+  baseline drift of flowing prose several-fold. The profile applies to DOCX/PPTX
+  text; spreadsheet geometry follows the Excel row model regardless.
+
+### Changed
+
+- **Metric-compatible font substitutes.** The auto-substitution chain now maps
+  each referenced family to an open font engineered to reproduce its advance
+  widths, so text breaks into lines where the original would: Calibri → Carlito,
+  Cambria → Caladea, Arial → Arimo (the sans default moves from Roboto to Arimo),
+  alongside the existing Times New Roman → Tinos and Courier New → Cousine. These
+  are the families LibreOffice substitutes, so a no-fonts conversion lands closer
+  to the source layout.
+
 ## 1.10.0
 
 ### Added

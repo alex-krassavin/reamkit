@@ -68,10 +68,21 @@ a `File`, a `fetch`, `fs` — is your call.
 
 PDF embeds the fonts it draws with, so a converter needs font bytes. Ream's model is
 **caller-supplies-fonts**: the synchronous API takes the TTF bytes you pass; the async
-API, as a convenience, fetches an open substitute (Roboto / Tinos / Cousine — the same
-families LibreOffice substitutes) based on the document's referenced fonts. There are
+API, as a convenience, fetches an open metric-compatible substitute (Arimo, Tinos,
+Cousine, plus Carlito/Caladea for Calibri/Cambria — the same families LibreOffice
+substitutes) based on the document's referenced fonts. There are
 no bundled fonts on the main path — the library renders faithfully with whatever font
 you give it.
+
+## Renderer parity
+
+Ream is a _correct_ typesetter — it lays out faithfully for the font it's given, not a
+clone of any one program. When you need the page to track a specific renderer instead,
+`convert('pdf', { layoutProfile })` switches the line-height model, line breaking and
+default kerning to match it: `'word'` for Microsoft Word, `'libreoffice'` for
+LibreOffice, `'ream'` (the default) for Ream's own typesetter. Combined with the
+metric-compatible substitutes above, visual parity no longer needs the other tool's
+private font metrics — only a font engineered to reproduce them and its layout rules.
 
 ## Document model
 

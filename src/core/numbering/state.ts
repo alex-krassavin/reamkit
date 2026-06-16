@@ -121,7 +121,7 @@ function toRoman(n: number): string {
 }
 
 // Word's default bullets use private-use codepoints from the Symbol font
-// (e.g. U+F0B7). With Roboto-style text fonts we have no Symbol glyph, so we
+// (e.g. U+F0B7). Our substitute text fonts have no Symbol glyph, so we
 // substitute the Unicode bullet (U+2022) which every general-purpose font
 // covers.
 function normalizeBullet(lvlText: string): string {

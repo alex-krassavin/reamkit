@@ -106,7 +106,8 @@ export function embeddedDocFontProvider(embedded: ReadonlyMap<string, FontRegist
 }
 
 /**
- * Open CDN substitutes (Roboto / Tinos / Cousine — the LibreOffice mapping).
+ * Open CDN substitutes (Arimo / Tinos / Cousine / Carlito / Caladea — the
+ * LibreOffice metric-compatible mapping).
  * Always answers; the chain reports it as a substitution.
  */
 export function remoteFontProvider(options: { readonly fetch?: FetchLike } = {}): FontProvider {

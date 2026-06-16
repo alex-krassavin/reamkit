@@ -32,20 +32,21 @@ function fakeFetch(record: Array<string>, opts: { failUrls?: RegExp } = {}): Fet
 }
 
 describe('resolveFamilyKey (font substitution)', () => {
-  it('maps serif families to Tinos', () => {
+  it('maps proprietary fonts to their metric-compatible twins', () => {
+    expect(resolveFamilyKey('Calibri')).toBe('carlito');
+    expect(resolveFamilyKey('Cambria')).toBe('caladea');
+    expect(resolveFamilyKey('Arial')).toBe('arimo');
     expect(resolveFamilyKey('Times New Roman')).toBe('tinos');
-    expect(resolveFamilyKey('Georgia')).toBe('tinos');
-    expect(resolveFamilyKey('Cambria')).toBe('tinos');
-  });
-  it('maps monospace families to Cousine', () => {
     expect(resolveFamilyKey('Courier New')).toBe('cousine');
-    expect(resolveFamilyKey('Consolas')).toBe('cousine');
   });
-  it('defaults everything else (incl. Calibri/Arial) to Roboto', () => {
-    expect(resolveFamilyKey('Calibri')).toBe('roboto');
-    expect(resolveFamilyKey('Arial')).toBe('roboto');
-    expect(resolveFamilyKey(undefined)).toBe('roboto');
-    expect(resolveFamilyKey('Totally Unknown Font')).toBe('roboto');
+  it('falls back by class for families without an exact twin', () => {
+    expect(resolveFamilyKey('Georgia')).toBe('tinos'); // generic serif
+    expect(resolveFamilyKey('Consolas')).toBe('cousine'); // generic mono
+    expect(resolveFamilyKey('Verdana')).toBe('arimo'); // generic sans
+  });
+  it('defaults unknown / unnamed families to sans (Arimo)', () => {
+    expect(resolveFamilyKey(undefined)).toBe('arimo');
+    expect(resolveFamilyKey('Totally Unknown Font')).toBe('arimo');
   });
 });
 
@@ -59,6 +60,17 @@ describe('fetchFontSet (injected fetch — no network)', () => {
     expect(urls.every((u) => u.includes('/tinos/'))).toBe(true);
     expect(urls.some((u) => u.includes('400Regular'))).toBe(true);
     expect(urls.some((u) => u.includes('700Bold'))).toBe(true);
+  });
+
+  it('builds the nested CDN path for Calibri → Carlito', async () => {
+    clearFontCache();
+    const urls: Array<string> = [];
+    const set = await fetchFontSet({ family: 'Calibri', fetch: fakeFetch(urls) });
+    expect(set.regular).toBeInstanceOf(Uint8Array);
+    // Calibri resolves to its metric twin Carlito…
+    expect(urls.every((u) => u.includes('/carlito/'))).toBe(true);
+    // …whose @expo-google-fonts package nests each variant in a suffix folder.
+    expect(urls.some((u) => u.includes('/carlito/400Regular/Carlito_400Regular.ttf'))).toBe(true);
   });
 
   it('still resolves when optional variants 404 (regular only)', async () => {

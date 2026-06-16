@@ -96,11 +96,17 @@ function prepareXlsxStyledRender(
     embedSource,
     attachments: callerAttachments,
     signature: _ignoreSig,
+    // Spreadsheet geometry (row heights / column widths) is governed by the Calc
+    // print model, not flowing-text leading — so the renderer-compat
+    // layoutProfile (E-PARITY) does not apply to xlsx; drop it. Empirically the
+    // flat row model already tracks Calc more closely than a font-metric one.
+    layoutProfile: _ignoreProfile,
     ...renderOptions
   } = options;
   void _ignoreSig;
   void _ignoreA;
   void _ignoreB;
+  void _ignoreProfile;
   const section = sectionOverride ?? flow.section;
   // Caller overrides spread over the document's own metadata.
   const info = flow.info || callerInfo ? { ...flow.info, ...callerInfo } : undefined;

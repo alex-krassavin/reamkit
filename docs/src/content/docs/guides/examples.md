@@ -227,6 +227,24 @@ const { bytes, losses } = await doc.convertWithReport('pdf', {
 Fonts embedded in the document itself (`w:embed`, including obfuscated
 `.odttf`) always win — glyph-exact, no substitution.
 
+## Renderer parity
+
+Ream is a correct typesetter: it lays out faithfully for the font you give it. For
+closer _visual parity_ with a specific renderer, pass a `layoutProfile` — it switches
+the line-height model, line breaking and default kerning to match that tool. Paired
+with the metric-compatible substitutes above (so the same glyph advances are in play),
+the page geometry tracks the target closely:
+
+```ts
+const pdf = await doc.convert('pdf', { fonts, layoutProfile: 'libreoffice' });
+// 'word' targets Microsoft Word; 'ream' (the default) is Ream's own typesetter.
+```
+
+`'libreoffice'` derives line height from the font's hhea metrics and breaks lines
+greedily (first-fit); `'word'` uses the OS/2 win metrics and turns kerning off (Word's
+default). The profile applies to flowing text (DOCX/PPTX); spreadsheet geometry follows
+Excel's row model regardless.
+
 ## Strict mode (compliance flows)
 
 Make any loss fatal instead of reported:

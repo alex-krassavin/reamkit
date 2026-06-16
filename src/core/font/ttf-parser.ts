@@ -38,8 +38,23 @@ export interface ParsedTtf {
   readonly fontBBox: readonly [number, number, number, number];
   readonly ascender: number;
   readonly descender: number;
+  // hhea line gap (font units); with ascender/descender it forms the hhea
+  // vertical triple that drives the 'libreoffice' line-height profile (E-PARITY).
+  readonly lineGap: number;
   readonly capHeight: number;
   readonly xHeight: number;
+  // E-PARITY line-height metrics. OS/2 win/typo verticals (font units) selected
+  // by layoutProfile: 'word' uses winAscent/winDescent (the GDI cell box);
+  // 'libreoffice' uses the hhea triple above, or typo* when useTypoMetrics is
+  // set. All fall back to hhea when the font has no OS/2 table.
+  readonly vmetrics: {
+    readonly typoAscent: number;
+    readonly typoDescent: number;
+    readonly typoLineGap: number;
+    readonly winAscent: number;
+    readonly winDescent: number;
+    readonly useTypoMetrics: boolean;
+  };
   readonly italicAngle: number;
   readonly stemV: number;
   readonly flags: number;
@@ -106,7 +121,7 @@ export function parseTtf(raw: Uint8Array): ParsedTtf {
   r.seek(hhea.offset + 4);
   const ascender = r.i16();
   const descender = r.i16();
-  r.skip(2);
+  const lineGap = r.i16();
   r.skip(24);
   const numberOfHMetrics = r.u16();
 
@@ -149,6 +164,13 @@ export function parseTtf(raw: Uint8Array): ParsedTtf {
   let xHeight = 0;
   let isItalic = false;
   let usWeightClass = 400;
+  // E-PARITY vertical metrics — default to the hhea triple; OS/2 overrides below.
+  let typoAscent = ascender;
+  let typoDescent = descender;
+  let typoLineGap = lineGap;
+  let winAscent = Math.abs(ascender);
+  let winDescent = Math.abs(descender);
+  let useTypoMetrics = false;
   const os2 = tables.get('OS/2');
   if (os2) {
     r.seek(os2.offset);
@@ -159,6 +181,18 @@ export function parseTtf(raw: Uint8Array): ParsedTtf {
     r.seek(os2.offset + 62);
     const fsSelection = r.u16();
     isItalic = (fsSelection & 0x01) !== 0;
+    useTypoMetrics = (fsSelection & 0x80) !== 0;
+
+    // sTypoAscender/Descender/LineGap (68/70/72) + usWinAscent/Descent (74/76)
+    // are part of OS/2 v0 (table length >= 78).
+    if (os2.length >= 78) {
+      r.seek(os2.offset + 68);
+      typoAscent = r.i16();
+      typoDescent = r.i16();
+      typoLineGap = r.i16();
+      winAscent = r.u16();
+      winDescent = r.u16();
+    }
 
     if (os2Version >= 2 && os2.length >= 90) {
       r.seek(os2.offset + 86);
@@ -192,8 +226,10 @@ export function parseTtf(raw: Uint8Array): ParsedTtf {
     fontBBox: [xMin, yMin, xMax, yMax] as const,
     ascender,
     descender,
+    lineGap,
     capHeight,
     xHeight,
+    vmetrics: { typoAscent, typoDescent, typoLineGap, winAscent, winDescent, useTypoMetrics },
     italicAngle,
     stemV,
     flags,

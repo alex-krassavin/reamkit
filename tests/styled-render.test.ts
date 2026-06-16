@@ -374,7 +374,7 @@ describe('Styled rendering: rPr + pPr → PDF', () => {
   it('measures table auto-layout with per-family fonts (was: bare-variant lookup crash)', () => {
     const reg = (b: Uint8Array): FontRegistry => FontRegistry.fromBytes({ regular: b });
     const registriesByFamily: ReadonlyMap<FamilyKey, FontRegistry> = new Map([
-      ['roboto', reg(FONTS.regular)],
+      ['arimo', reg(FONTS.regular)],
       ['tinos', reg(FONTS.bold)],
     ]);
     // Auto-layout table (no explicit grid widths) forces measureSingleLine,
@@ -395,7 +395,7 @@ describe('Styled rendering: rPr + pPr → PDF', () => {
     const baseFonts = new Set(
       [...asLatin1(pdf).matchAll(/\/BaseFont \/[A-Z]{6}\+([A-Za-z-]+)/g)].map((m) => m[1]),
     );
-    expect(baseFonts.has('Roboto-Regular')).toBe(true); // Arial → roboto
+    expect(baseFonts.has('Roboto-Regular')).toBe(true); // Arial → arimo
     expect(baseFonts.has('Roboto-Bold')).toBe(true); // Times → tinos stand-in
   });
 
@@ -404,7 +404,7 @@ describe('Styled rendering: rPr + pPr → PDF', () => {
     // BaseFont names) so we can prove each run picked its OWN family by w:ascii.
     const reg = (b: Uint8Array): FontRegistry => FontRegistry.fromBytes({ regular: b });
     const registriesByFamily: ReadonlyMap<FamilyKey, FontRegistry> = new Map([
-      ['roboto', reg(FONTS.regular)],
+      ['arimo', reg(FONTS.regular)],
       ['tinos', reg(FONTS.bold)],
       ['cousine', reg(FONTS.italic)],
     ]);
@@ -422,7 +422,7 @@ describe('Styled rendering: rPr + pPr → PDF', () => {
       [...asLatin1(pdf).matchAll(/\/BaseFont \/[A-Z]{6}\+([A-Za-z-]+)/g)].map((m) => m[1]),
     );
     // Each run resolved to its family's stand-in → three distinct fonts embedded.
-    expect(baseFonts.has('Roboto-Regular')).toBe(true); // SANS → roboto
+    expect(baseFonts.has('Roboto-Regular')).toBe(true); // SANS → arimo
     expect(baseFonts.has('Roboto-Bold')).toBe(true); // SERIF → tinos stand-in
     expect(baseFonts.has('Roboto-Italic')).toBe(true); // MONO → cousine stand-in
   });
