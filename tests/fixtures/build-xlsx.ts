@@ -139,8 +139,9 @@ export interface XlsxBuilderOptions {
     readonly firstDataCol?: number;
     readonly showRowStripes?: boolean;
     readonly showColStripes?: boolean;
-    /** <rowItems> @t per data row ('grand'/subtotal name/undefined). */
+    /** <rowItems>/<colItems> @t per data row/column ('grand'/subtotal/undefined). */
     readonly rowItemTypes?: ReadonlyArray<string | undefined>;
+    readonly colItemTypes?: ReadonlyArray<string | undefined>;
   }>;
 }
 
@@ -190,6 +191,7 @@ function buildPivotTableXml(
     showRowStripes?: boolean;
     showColStripes?: boolean;
     rowItemTypes?: ReadonlyArray<string | undefined>;
+    colItemTypes?: ReadonlyArray<string | undefined>;
   },
 ): string {
   const name = p.name ?? `PivotTable${id}`;
@@ -199,15 +201,16 @@ function buildPivotTableXml(
   const fdc = p.firstDataCol ?? 1;
   const rowStripes = p.showRowStripes ? '1' : '0';
   const colStripes = p.showColStripes ? '1' : '0';
-  const rowItems = p.rowItemTypes
-    ? `<rowItems count="${p.rowItemTypes.length}">${p.rowItemTypes
-        .map((t) => `<i${t ? ` t="${t}"` : ''}><x/></i>`)
-        .join('')}</rowItems>`
-    : '';
+  const items = (tag: string, types?: ReadonlyArray<string | undefined>): string =>
+    types
+      ? `<${tag} count="${types.length}">${types
+          .map((t) => `<i${t ? ` t="${t}"` : ''}><x/></i>`)
+          .join('')}</${tag}>`
+      : '';
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <pivotTableDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" name="${name}" cacheId="0" dataCaption="Values" outline="1" outlineData="1">
   <location ref="${p.ref}" firstHeaderRow="${fhr}" firstDataRow="${fdr}" firstDataCol="${fdc}"/>
-  ${rowItems}<pivotTableStyleInfo name="${style}" showRowHeaders="1" showColHeaders="1" showRowStripes="${rowStripes}" showColStripes="${colStripes}" showLastColumn="0"/>
+  ${items('rowItems', p.rowItemTypes)}${items('colItems', p.colItemTypes)}<pivotTableStyleInfo name="${style}" showRowHeaders="1" showColHeaders="1" showRowStripes="${rowStripes}" showColStripes="${colStripes}" showLastColumn="0"/>
 </pivotTableDefinition>`;
 }
 

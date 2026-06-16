@@ -944,6 +944,23 @@ function buildTableFormatLookup(worksheet: ParsedWorksheet): Map<string, TableCe
   for (const t of worksheet.tables ?? []) band(t.ref, t.headerRowCount, t);
   for (const p of worksheet.pivotTables ?? [])
     band(p.ref, p.firstDataRow, p, (off) => isPivotTotal(p.rowItemTypes?.[off]));
+  // Overlay grand-total / subtotal COLUMNS with the header emphasis (E-PIVOT
+  // PV4), overriding whatever the row pass banded in that column.
+  for (const p of worksheet.pivotTables ?? []) {
+    if (!p.colItemTypes || p.headerHex === undefined) continue;
+    const firstDataRow = p.ref.startRow + p.firstDataRow;
+    const firstDataCol = p.ref.startColumn + p.firstDataCol;
+    const totalFmt: TableCellFormat = {
+      shading: { colorHex: p.headerHex },
+      ...(p.headerTextHex ? { fontColorHex: p.headerTextHex } : {}),
+    };
+    for (let i = 0; i < p.colItemTypes.length; i++) {
+      if (!isPivotTotal(p.colItemTypes[i])) continue;
+      const c = firstDataCol + i;
+      if (c > p.ref.endColumn) continue;
+      for (let r = firstDataRow; r <= p.ref.endRow; r++) out.set(key(r, c), totalFmt);
+    }
+  }
   return out;
 }
 

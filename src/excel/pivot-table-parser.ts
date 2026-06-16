@@ -32,17 +32,14 @@ export function parsePivotTablePart(data: Uint8Array): PivotTable | undefined {
   const si = asObj(def['pivotTableStyleInfo']);
   const name = strAttr(def, 'name');
   const styleName = si ? strAttr(si, 'name') : undefined;
-  // <rowItems>/<i> — one item per data row (in order); @t marks total rows
-  // ('grand' = grand total, a subtotal-function name = subtotal, absent = data).
-  // The i-th type maps to data row `firstDataRow + i` (E-PIVOT PV3).
-  const rowItemsNode = asObj(def['rowItems']);
-  const rowItemTypes = rowItemsNode
-    ? toArray(rowItemsNode['i']).map((i) => {
-        const o = asObj(i);
-        return o ? strAttr(o, 't') : undefined;
-      })
-    : undefined;
-  const hasTotals = rowItemTypes?.some((t) => t !== undefined) ?? false;
+  // <rowItems>/<colItems> — one <i> per data row / column (in order); @t marks
+  // total lines ('grand' = grand total, a subtotal-function name = subtotal,
+  // absent = data). The i-th type maps to data row/col `firstData{Row,Col} + i`
+  // (E-PIVOT PV3/PV4).
+  const rowItemTypes = itemTypes(asObj(def['rowItems']));
+  const colItemTypes = itemTypes(asObj(def['colItems']));
+  const hasRowTotals = rowItemTypes?.some((t) => t !== undefined) ?? false;
+  const hasColTotals = colItemTypes?.some((t) => t !== undefined) ?? false;
   return {
     ref,
     ...(name ? { name } : {}),
@@ -52,8 +49,20 @@ export function parsePivotTablePart(data: Uint8Array): PivotTable | undefined {
     firstDataCol: (loc ? numAttr(loc, 'firstDataCol') : undefined) ?? 0,
     showRowStripes: si ? boolAttr(si, 'showRowStripes') : false,
     showColStripes: si ? boolAttr(si, 'showColStripes') : false,
-    ...(hasTotals && rowItemTypes ? { rowItemTypes } : {}),
+    ...(hasRowTotals && rowItemTypes ? { rowItemTypes } : {}),
+    ...(hasColTotals && colItemTypes ? { colItemTypes } : {}),
   };
+}
+
+// The @t of each <i> in a <rowItems>/<colItems> list, in order.
+function itemTypes(
+  node: Record<string, unknown> | undefined,
+): Array<string | undefined> | undefined {
+  if (!node) return undefined;
+  return toArray(node['i']).map((i) => {
+    const o = asObj(i);
+    return o ? strAttr(o, 't') : undefined;
+  });
 }
 
 function toArray(v: unknown): Array<unknown> {

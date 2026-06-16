@@ -157,10 +157,12 @@ export interface PivotTable {
   readonly firstDataCol: number; // first data column, offset from the range left
   readonly showRowStripes: boolean;
   readonly showColStripes: boolean;
-  // §18.10.1.74 <rowItems> item type per data row (in order): 'grand' (grand
-  // total), a subtotal-function name (subtotal), or undefined (a data row). The
-  // i-th entry maps to data row `firstDataRow + i` (E-PIVOT PV3).
+  // §18.10.1.74 <rowItems>/<colItems> item type per data row / column (in
+  // order): 'grand' (grand total), a subtotal-function name (subtotal), or
+  // undefined (a plain data line). The i-th entry maps to data row/column
+  // `firstDataRow/Col + i` (E-PIVOT PV3/PV4).
   readonly rowItemTypes?: ReadonlyArray<string | undefined>;
+  readonly colItemTypes?: ReadonlyArray<string | undefined>;
   // Resolved fills + header text colour (6-hex) — derived from the named pivot
   // style + workbook theme by the reader (E-PIVOT PV2).
   readonly headerHex?: string;

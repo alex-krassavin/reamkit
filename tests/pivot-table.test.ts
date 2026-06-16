@@ -134,3 +134,33 @@ describe('Excel pivot tables — total-row emphasis (E-PIVOT PV3)', () => {
     expect(grid[4]![0]).toBe(header); // grand total emphasised like the header
   });
 });
+
+describe('Excel pivot tables — total-column emphasis (E-PIVOT PV4)', () => {
+  it('emphasises a grand-total data column like the header', () => {
+    const flow = Ream.parse(
+      buildXlsx({
+        rows: BANDED_ROWS,
+        pivotTables: [
+          {
+            ref: 'A1:C5',
+            styleName: 'PivotStyleDark2',
+            firstDataRow: 2,
+            firstDataCol: 1, // col A is the row label; cols B,C are data
+            showRowStripes: true,
+            // 2 data columns (B,C); the last is the grand total.
+            colItemTypes: [undefined, 'grand'],
+          },
+        ],
+      }),
+    ).flow;
+    const grid = shadingGrid(flow);
+    const header = grid[0]![0];
+    // row 2 (data band1, unfilled) — but column C is the grand total:
+    expect(grid[2]![1]).toBeUndefined(); // col B, ordinary unbanded data
+    expect(grid[2]![2]).toBe(header); // col C grand total, emphasised even unbanded
+    // row 3 (data band2) — column C still overrides the band:
+    expect(grid[3]![1]).toBeDefined();
+    expect(grid[3]![1]).not.toBe(header); // col B band
+    expect(grid[3]![2]).toBe(header); // col C grand total overrides the band
+  });
+});
