@@ -40,7 +40,7 @@ import {
   EMPTY_SECTION,
   EMPTY_SETTINGS,
   loadEmbeddedFonts,
-  parseComments,
+  parseCommentThreads,
   parseDocument,
   parseHeaderFooter,
   parseNotes,
@@ -54,6 +54,7 @@ const STYLES_PART = 'word/styles.xml';
 const FOOTNOTES_PART = 'word/footnotes.xml';
 const ENDNOTES_PART = 'word/endnotes.xml';
 const COMMENTS_PART = 'word/comments.xml';
+const COMMENTS_EXTENDED_PART = 'word/commentsExtended.xml';
 const NUMBERING_PART = 'word/numbering.xml';
 const SETTINGS_PART = 'word/settings.xml';
 const CORE_PROPS_PART = 'docProps/core.xml';
@@ -110,8 +111,9 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
     ? parseNotes(endnotesData, 'w:endnotes', 'w:endnote', noteCtx(ENDNOTES_PART))
     : undefined;
   const commentsData = pkg.getPart(COMMENTS_PART);
+  const commentsExtendedData = pkg.getPart(COMMENTS_EXTENDED_PART);
   const rawComments = commentsData
-    ? parseComments(commentsData, noteCtx(COMMENTS_PART))
+    ? parseCommentThreads(commentsData, commentsExtendedData, noteCtx(COMMENTS_PART))
     : undefined;
 
   const settingsData = pkg.getPart(SETTINGS_PART);

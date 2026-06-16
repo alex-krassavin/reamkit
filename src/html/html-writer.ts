@@ -237,7 +237,8 @@ function emitNotesSection(
 }
 
 // The comments block: each referenced comment with its author/date attribution
-// and content, anchoring back to its in-text marker (E-COMMENTS CM1).
+// and content, anchoring back to its in-text marker (E-COMMENTS CM1). Replies
+// (parentId) nest under their parent and resolved threads are flagged (CM4).
 function emitCommentsSection(
   out: Array<string>,
   comments: ReadonlyMap<string, Comment> | undefined,
@@ -245,17 +246,43 @@ function emitCommentsSection(
   ctx: EmitCtx,
 ): void {
   if (!comments || numbers.size === 0) return;
-  const ordered = [...numbers.entries()].sort((a, b) => a[1] - b[1]);
-  out.push('<section class="comments"><hr/><h2>Comments</h2><ol>');
-  for (const [id, n] of ordered) {
-    const c = comments.get(id);
-    if (!c) continue;
-    out.push(`<li id="cm-${n}">`);
-    const who = [c.author, c.date].filter((s) => s !== undefined && s.length > 0).join(', ');
-    if (who) out.push(`<p class="comment-meta">${textHtml(who)}</p>`);
-    for (const el of c.content) emitBlock(out, el, ctx);
-    out.push(`<a href="#cmref-${n}">\u21a9</a></li>`);
+  // Build the reply forest over the numbered (referenced) comments only.
+  const ordered = [...numbers.entries()].sort((a, b) => a[1] - b[1]).map(([id]) => id);
+  const childrenOf = new Map<string, Array<string>>();
+  const roots: Array<string> = [];
+  for (const id of ordered) {
+    const parent = comments.get(id)?.parentId;
+    if (parent !== undefined && parent !== id && numbers.has(parent)) {
+      const kids = childrenOf.get(parent);
+      if (kids) kids.push(id);
+      else childrenOf.set(parent, [id]);
+    } else {
+      roots.push(id);
+    }
   }
+  const seen = new Set<string>();
+  const emitOne = (id: string): void => {
+    if (seen.has(id)) return; // guard against a malformed parent cycle
+    seen.add(id);
+    const c = comments.get(id);
+    const n = numbers.get(id);
+    if (!c || n === undefined) return;
+    out.push(`<li id="cm-${n}" class="${c.done ? 'comment resolved' : 'comment'}">`);
+    const who = [c.author, c.date].filter((s) => s !== undefined && s.length > 0).join(', ');
+    const meta = [who, c.done ? 'Resolved' : undefined].filter((s) => s).join(' \u2014 ');
+    if (meta) out.push(`<p class="comment-meta">${textHtml(meta)}</p>`);
+    for (const el of c.content) emitBlock(out, el, ctx);
+    out.push(`<a href="#cmref-${n}">\u21a9</a>`);
+    const kids = childrenOf.get(id);
+    if (kids && kids.length > 0) {
+      out.push('<ol class="comment-replies">');
+      for (const k of kids) emitOne(k);
+      out.push('</ol>');
+    }
+    out.push('</li>');
+  };
+  out.push('<section class="comments"><hr/><h2>Comments</h2><ol>');
+  for (const id of roots) emitOne(id);
   out.push('</ol></section>');
 }
 

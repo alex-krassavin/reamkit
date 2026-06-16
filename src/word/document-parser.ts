@@ -33,11 +33,13 @@ import { diagramTransform, noDiagramOverrideLoss, parseDiagramDrawing } from '@/
 import { parseParagraphProperties } from '@/word/paragraph-properties';
 import {
   poAttr,
+  poAttrLocal,
   poChildren,
   poFindByPath,
   poFindDescendant,
   poIntAttr,
   poIs,
+  poIsLocal,
   poText,
 } from '@/core/po-helpers';
 import { poElementToFlat } from '@/word/po-to-flat';
@@ -808,15 +810,18 @@ export function parseNotes(
 // §17.13.4 — comments.xml. Like parseNotes, but a comment carries author/date
 // attribution alongside its block content, so it returns a richer Comment
 // (parseNotes keeps content only). Comments have no separator/stub convention.
-export function parseComments(
+// Alongside the comments, capture each comment's last-paragraph w14:paraId —
+// the key Microsoft's commentsExtended (w15) threads link on (CM4).
+function parseCommentsRaw(
   commentsXml: Uint8Array,
-  ctx: ParseContext = DEFAULT_PARSE_CONTEXT,
-): Map<string, Comment> {
+  ctx: ParseContext,
+): { comments: Map<string, Comment>; paraIds: Map<string, string> } {
   const xml = decoder.decode(commentsXml);
   const tree = parser.parse(xml) as Array<PoNode>;
   const root = poFindByPath(tree, ['w:comments']);
-  const out = new Map<string, Comment>();
-  if (!root) return out;
+  const comments = new Map<string, Comment>();
+  const paraIds = new Map<string, string>();
+  if (!root) return { comments, paraIds };
   for (const c of poChildren(root)) {
     if (!poIs(c, 'w:comment')) continue;
     const id = poAttr(c, 'id');
@@ -824,12 +829,98 @@ export function parseComments(
     const author = poAttr(c, 'author');
     const initials = poAttr(c, 'initials');
     const date = poAttr(c, 'date');
-    out.set(id, {
+    comments.set(id, {
       content: parseBodyElements(poChildren(c), ctx),
       ...(author !== undefined ? { author } : {}),
       ...(initials !== undefined ? { initials } : {}),
       ...(date !== undefined ? { date } : {}),
     });
+    // The thread key is the last paragraph's paraId (Word writes it on every
+    // comment paragraph; commentsExtended references the final one).
+    let paraId: string | undefined;
+    for (const child of poChildren(c)) {
+      if (!poIs(child, 'w:p')) continue;
+      const pid = poAttrLocal(child, 'paraId');
+      if (pid !== undefined) paraId = pid;
+    }
+    if (paraId !== undefined) paraIds.set(id, paraId);
+  }
+  return { comments, paraIds };
+}
+
+export function parseComments(
+  commentsXml: Uint8Array,
+  ctx: ParseContext = DEFAULT_PARSE_CONTEXT,
+): Map<string, Comment> {
+  return parseCommentsRaw(commentsXml, ctx).comments;
+}
+
+/** A commentsExtended entry, keyed by the comment's last-paragraph w14:paraId. */
+export interface CommentExtension {
+  /** The parent comment's paraId — present when this comment is a reply. */
+  readonly paraIdParent?: string;
+  /** w15:done — the thread is resolved. */
+  readonly done: boolean;
+}
+
+// §commentsEx (Microsoft w15) — word/commentsExtended.xml. A flat list of
+// commentEx, each keyed by a comment's paraId: paraIdParent links a reply to
+// its parent, done flags a resolved thread. Prefix-agnostic (w15 by convention).
+export function parseCommentsExtended(xml: Uint8Array): Map<string, CommentExtension> {
+  const tree = parser.parse(decoder.decode(xml)) as Array<PoNode>;
+  const out = new Map<string, CommentExtension>();
+  const root = tree.find((n) => poIsLocal(n, 'commentsEx'));
+  if (!root) return out;
+  for (const ex of poChildren(root)) {
+    if (!poIsLocal(ex, 'commentEx')) continue;
+    const paraId = poAttrLocal(ex, 'paraId');
+    if (paraId === undefined) continue;
+    const paraIdParent = poAttrLocal(ex, 'paraIdParent');
+    const done = poAttrLocal(ex, 'done');
+    out.set(paraId, {
+      ...(paraIdParent !== undefined ? { paraIdParent } : {}),
+      done: done === '1' || done === 'true',
+    });
   }
   return out;
+}
+
+// Fold commentsExtended thread links onto the comments: a reply gains parentId
+// (the comment owning its paraIdParent), a resolved thread gains done.
+function linkCommentThreads(
+  comments: Map<string, Comment>,
+  paraIdByComment: Map<string, string>,
+  ext: Map<string, CommentExtension>,
+): Map<string, Comment> {
+  if (ext.size === 0) return comments;
+  const commentByParaId = new Map<string, string>();
+  for (const [id, pid] of paraIdByComment) commentByParaId.set(pid, id);
+  const out = new Map<string, Comment>();
+  for (const [id, c] of comments) {
+    const pid = paraIdByComment.get(id);
+    const e = pid !== undefined ? ext.get(pid) : undefined;
+    if (!e) {
+      out.set(id, c);
+      continue;
+    }
+    const parentId = e.paraIdParent !== undefined ? commentByParaId.get(e.paraIdParent) : undefined;
+    out.set(id, {
+      ...c,
+      ...(parentId !== undefined ? { parentId } : {}),
+      ...(e.done ? { done: true } : {}),
+    });
+  }
+  return out;
+}
+
+// Read comments with their thread metadata: comments.xml for content/attribution
+// + commentsExtended.xml (optional) for reply links and resolved flags (CM4).
+export function parseCommentThreads(
+  commentsXml: Uint8Array,
+  commentsExtendedXml: Uint8Array | undefined,
+  ctx: ParseContext = DEFAULT_PARSE_CONTEXT,
+): Map<string, Comment> {
+  const { comments, paraIds } = parseCommentsRaw(commentsXml, ctx);
+  if (!commentsExtendedXml) return comments;
+  return linkCommentThreads(comments, paraIds, parseCommentsExtended(commentsExtendedXml));
 }

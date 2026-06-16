@@ -282,6 +282,14 @@ export interface Comment {
   readonly initials?: string;
   /** Raw w:date timestamp (ISO 8601), as authored — not reformatted. */
   readonly date?: string;
+  /**
+   * Microsoft commentsExtended (w15) — the id of the comment this one replies
+   * to, forming a thread. Set only when word/commentsExtended.xml links this
+   * comment's paragraph to a parent (w15:paraIdParent). Top-level comments omit it.
+   */
+  readonly parentId?: string;
+  /** w15:done — the comment thread was marked resolved. */
+  readonly done?: boolean;
 }
 
 // ECMA-376 Part 1 §17.9 — Numbering.

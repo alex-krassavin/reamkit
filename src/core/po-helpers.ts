@@ -56,6 +56,28 @@ export function poAttr(node: PoNode | undefined, name: string): string | undefin
   return typeof v === 'string' ? v : undefined;
 }
 
+// Like poAttr but matches by LOCAL name regardless of the prefix — for vendor
+// extensions whose namespace poAttr does not special-case (e.g. w14:paraId,
+// w15:done, w15:paraIdParent).
+export function poAttrLocal(node: PoNode | undefined, name: string): string | undefined {
+  if (!node || typeof node !== 'object') return undefined;
+  const attrs = node[ATTRS_KEY];
+  if (!attrs || typeof attrs !== 'object') return undefined;
+  for (const [k, v] of Object.entries(attrs as Record<string, unknown>)) {
+    if (!k.startsWith('@_')) continue;
+    const local = k.slice(2).split(':').pop();
+    if (local === name && typeof v === 'string') return v;
+  }
+  return undefined;
+}
+
+// Like poIs but matches a tag by LOCAL name, so an element authored under any
+// prefix (w15:commentsEx, mc:commentsEx, …) still resolves.
+export function poIsLocal(node: PoNode | undefined, name: string): boolean {
+  const tag = poTag(node);
+  return tag !== undefined && (tag === name || tag.split(':').pop() === name);
+}
+
 export function poIntAttr(node: PoNode | undefined, name: string): number | undefined {
   const v = poAttr(node, name);
   if (v === undefined) return undefined;

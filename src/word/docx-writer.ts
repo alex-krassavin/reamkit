@@ -107,6 +107,14 @@ const REL_COMMENTS = 'http://schemas.openxmlformats.org/officeDocument/2006/rela
 const COMMENTS_CONTENT_TYPE =
   'application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml';
 const COMMENTS_PART = 'word/comments.xml';
+// Microsoft commentsExtended (w15) — the reply/resolved thread map (CM4).
+const REL_COMMENTS_EXTENDED =
+  'http://schemas.microsoft.com/office/2011/relationships/commentsExtended';
+const COMMENTS_EXTENDED_CONTENT_TYPE =
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml';
+const COMMENTS_EXTENDED_PART = 'word/commentsExtended.xml';
+const W14_NS = 'http://schemas.microsoft.com/office/word/2010/wordml';
+const W15_NS = 'http://schemas.microsoft.com/office/word/2012/wordml';
 const REL_CHART = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart';
 const CHART_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.drawingml.chart+xml';
 
@@ -328,8 +336,17 @@ export function writeDocx(flow: FlowDoc): WriteResult {
     extraParts,
     extraPartRels,
   );
-  // §17.13.4 review comments → word/comments.xml + a document relationship (CM3).
-  emitComments(flow.comments, state, losses, docScope, extraParts, extraPartRels);
+  // §17.13.4 review comments → word/comments.xml + a document relationship (CM3),
+  // plus commentsExtended.xml for reply threads and resolved flags (CM4).
+  const commentParaIds = emitComments(
+    flow.comments,
+    state,
+    losses,
+    docScope,
+    extraParts,
+    extraPartRels,
+  );
+  emitCommentsExtended(flow.comments, commentParaIds, docScope, extraParts);
 
   const partRelationships = [
     ...(docScope.rels.length > 0
@@ -420,9 +437,31 @@ function emitNotes(
   });
 }
 
+// A deterministic 8-hex w14:paraId for a comment id (FNV-1a). Threads link by
+// these ids, so only their internal consistency matters — not the originals.
+function paraIdFor(commentId: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < commentId.length; i++) {
+    h ^= commentId.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0 || 1).toString(16).toUpperCase().padStart(8, '0');
+}
+
+// Stamp a w14:paraId onto a single paragraph's opening tag (paragraphXml always
+// emits a bare `<w:p>`); leaves any other shape untouched.
+const PARA_OPEN = '<w:p>';
+function injectParaId(paragraphXmlString: string, paraId: string): string {
+  return paragraphXmlString.startsWith(PARA_OPEN)
+    ? `<w:p w14:paraId="${paraId}">` + paragraphXmlString.slice(PARA_OPEN.length)
+    : paragraphXmlString;
+}
+
 // §17.13.4 — emit word/comments.xml from the comments by id. Unlike notes a
 // comment carries author/date/initials attributes (and has no separator stubs);
-// the body's commentReference runs (emitted inline) point back by id (CM3).
+// the body's commentReference runs (emitted inline) point back by id (CM3). Each
+// comment's last paragraph gets a w14:paraId so commentsExtended can thread it
+// (CM4); the assigned ids are returned for emitCommentsExtended.
 function emitComments(
   comments: ReadonlyMap<string, Comment> | undefined,
   state: WriteState,
@@ -430,13 +469,28 @@ function emitComments(
   docScope: PartScope,
   extraParts: Array<OpcPart>,
   extraPartRels: Array<{ sourcePart: string; relationships: Array<Relationship> }>,
-): void {
-  if (!comments || comments.size === 0) return;
+): Map<string, string> {
+  const paraIds = new Map<string, string>();
+  if (!comments || comments.size === 0) return paraIds;
   const scope = newScope();
   const commentXmls: Array<string> = [];
   for (const [id, c] of comments) {
+    let lastParaIdx = -1;
+    for (let i = 0; i < c.content.length; i++) {
+      if (c.content[i]!.kind === 'paragraph') lastParaIdx = i;
+    }
+    const paraId = lastParaIdx >= 0 ? paraIdFor(id) : undefined;
     const inner: Array<string> = [];
-    for (const el of c.content) emitBlock(inner, el, losses, state, scope);
+    for (let i = 0; i < c.content.length; i++) {
+      if (i === lastParaIdx && paraId !== undefined) {
+        const buf: Array<string> = [];
+        emitBlock(buf, c.content[i]!, losses, state, scope);
+        inner.push(injectParaId(buf.join(''), paraId));
+      } else {
+        emitBlock(inner, c.content[i]!, losses, state, scope);
+      }
+    }
+    if (paraId !== undefined) paraIds.set(id, paraId);
     const attrs =
       `w:id="${escapeAttr(id)}"` +
       (c.author !== undefined ? ` w:author="${escapeAttr(c.author)}"` : '') +
@@ -447,7 +501,8 @@ function emitComments(
   const xml =
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
     '<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"' +
-    ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+    ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"' +
+    ` xmlns:w14="${W14_NS}">` +
     commentXmls.join('') +
     '</w:comments>';
   extraParts.push({
@@ -462,6 +517,51 @@ function emitComments(
     id: `rId${++docScope.relSeq}`,
     type: REL_COMMENTS,
     target: 'comments.xml',
+    targetMode: 'Internal',
+  });
+  return paraIds;
+}
+
+// §commentsEx (w15) — emit word/commentsExtended.xml linking replies to parents
+// (paraIdParent) and flagging resolved threads (done), keyed by the paraIds
+// emitComments stamped (CM4). Emitted only when there is thread info to carry.
+function emitCommentsExtended(
+  comments: ReadonlyMap<string, Comment> | undefined,
+  paraIds: Map<string, string>,
+  docScope: PartScope,
+  extraParts: Array<OpcPart>,
+): void {
+  if (!comments || paraIds.size === 0) return;
+  const hasThreadInfo = [...comments].some(
+    ([id, c]) =>
+      paraIds.has(id) && ((c.parentId !== undefined && paraIds.has(c.parentId)) || c.done === true),
+  );
+  if (!hasThreadInfo) return;
+  const rows: Array<string> = [];
+  for (const [id, c] of comments) {
+    const pid = paraIds.get(id);
+    if (pid === undefined) continue;
+    const parentPid = c.parentId !== undefined ? paraIds.get(c.parentId) : undefined;
+    rows.push(
+      `<w15:commentEx w15:paraId="${pid}"` +
+        (parentPid !== undefined ? ` w15:paraIdParent="${parentPid}"` : '') +
+        ` w15:done="${c.done === true ? '1' : '0'}"/>`,
+    );
+  }
+  const xml =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    `<w15:commentsEx xmlns:w15="${W15_NS}">` +
+    rows.join('') +
+    '</w15:commentsEx>';
+  extraParts.push({
+    path: COMMENTS_EXTENDED_PART,
+    data: encoder.encode(xml),
+    contentType: COMMENTS_EXTENDED_CONTENT_TYPE,
+  });
+  docScope.rels.push({
+    id: `rId${++docScope.relSeq}`,
+    type: REL_COMMENTS_EXTENDED,
+    target: 'commentsExtended.xml',
     targetMode: 'Internal',
   });
 }

@@ -629,13 +629,26 @@ function substituteNoteNumber(
 
 // A review comment's after-body entry (E-COMMENTS CM1): its content led by an
 // `[n]` marker and the author/date, mirroring how endnotes prepend their number.
-function commentTailBlocks(comment: Comment, n: number): ReadonlyArray<BodyElement> {
+// A reply (CM4) is indented by its thread depth and notes the parent it answers;
+// a resolved thread is tagged `(resolved)`. The cues stay ASCII so they render
+// in any embedded font.
+function commentTailBlocks(
+  comment: Comment,
+  n: number,
+  opts?: { parentN?: number; depth?: number; done?: boolean },
+): ReadonlyArray<BodyElement> {
   const who = [comment.author, comment.date]
     .filter((s): s is string => s !== undefined && s.length > 0)
     .join(', ');
-  const labelRun: Run = { text: who ? `[${n}] ${who}: ` : `[${n}] `, properties: {} };
+  const inReplyTo = opts?.parentN !== undefined ? ` (in reply to [${opts.parentN}])` : '';
+  const resolved = opts?.done ? ' (resolved)' : '';
+  const labelRun: Run = {
+    text: who ? `[${n}] ${who}${inReplyTo}${resolved}: ` : `[${n}]${inReplyTo}${resolved} `,
+    properties: {},
+  };
   // The entry is the destination the in-text marker jumps to (E-COMMENTS CM2).
   const bm = `comment-${n}`;
+  const indent = opts?.depth && opts.depth > 0 ? { indentLeft: pt(18 * opts.depth) } : {};
   const first = comment.content[0];
   if (first && first.kind === 'paragraph') {
     return [
@@ -643,6 +656,7 @@ function commentTailBlocks(comment: Comment, n: number): ReadonlyArray<BodyEleme
         kind: 'paragraph',
         paragraph: {
           ...first.paragraph,
+          properties: { ...first.paragraph.properties, ...indent },
           runs: [labelRun, ...first.paragraph.runs],
           bookmarks: [bm, ...(first.paragraph.bookmarks ?? [])],
         },
@@ -651,7 +665,10 @@ function commentTailBlocks(comment: Comment, n: number): ReadonlyArray<BodyEleme
     ];
   }
   return [
-    { kind: 'paragraph', paragraph: { properties: {}, runs: [labelRun], bookmarks: [bm] } },
+    {
+      kind: 'paragraph',
+      paragraph: { properties: { ...indent }, runs: [labelRun], bookmarks: [bm] },
+    },
     ...comment.content,
   ];
 }
@@ -787,13 +804,33 @@ export function layoutStyledDocument(
       }
     }
     // Review comments follow the notes (E-COMMENTS CM1): each entry led by its
-    // [n] marker and author/date, anchoring the in-text marker.
-    const commentTail = [...noteAssigned.comments]
-      .map(([id, n]) => ({ comment: options.comments?.get(id), n }))
-      .filter((e): e is { comment: Comment; n: number } => e.comment !== undefined)
+    // [n] marker and author/date, anchoring the in-text marker. Replies indent
+    // by thread depth and note their parent's number (CM4).
+    const commentNums = noteAssigned.comments;
+    const threadDepth = (id: string): number => {
+      let depth = 0;
+      const seen = new Set<string>([id]);
+      let cur = options.comments?.get(id)?.parentId;
+      while (cur !== undefined && commentNums.has(cur) && !seen.has(cur)) {
+        depth++;
+        seen.add(cur);
+        cur = options.comments?.get(cur)?.parentId;
+      }
+      return depth;
+    };
+    const commentTail = [...commentNums]
+      .map(([id, n]) => ({ id, comment: options.comments?.get(id), n }))
+      .filter((e): e is { id: string; comment: Comment; n: number } => e.comment !== undefined)
       .sort((a, b) => a.n - b.n);
-    for (const { comment, n } of commentTail) {
-      for (const el of commentTailBlocks(comment, n)) {
+    for (const { id, comment, n } of commentTail) {
+      const parentId = comment.parentId;
+      const parentN =
+        parentId !== undefined && commentNums.has(parentId) ? commentNums.get(parentId) : undefined;
+      for (const el of commentTailBlocks(comment, n, {
+        ...(parentN !== undefined ? { parentN } : {}),
+        depth: threadDepth(id),
+        ...(comment.done ? { done: true } : {}),
+      })) {
         blocks.push(
           layoutBodyElement(
             el,

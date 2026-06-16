@@ -23,6 +23,13 @@ const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 const PKG = 'http://schemas.openxmlformats.org/package/2006/relationships';
 const CT = 'http://schemas.openxmlformats.org/package/2006/content-types';
+const W14_NS = 'http://schemas.microsoft.com/office/word/2010/wordml';
+const W15_NS = 'http://schemas.microsoft.com/office/word/2012/wordml';
+const REL_COMMENTS_EXTENDED =
+  'http://schemas.microsoft.com/office/2011/relationships/commentsExtended';
+const COMMENTS_CT = 'application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml';
+const COMMENTS_EX_CT =
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml';
 
 function commentDocx(withComments = true): Uint8Array {
   const body =
@@ -149,5 +156,104 @@ describe('Word comments in docx (E-COMMENTS CM0)', () => {
         .map((r) => r.text)
         .join(''),
     ).toContain('Reviewed text');
+  });
+});
+
+// E-COMMENTS CM4 — a reply thread. Two comments (a parent and a reply) each
+// carry a w14:paraId; word/commentsExtended.xml links the reply to its parent
+// (w15:paraIdParent) and marks the parent thread resolved (w15:done="1").
+function threadedCommentDocx(): Uint8Array {
+  const body =
+    `<w:p>` +
+    `<w:commentRangeStart w:id="0"/>` +
+    `<w:r><w:t>Claim under review</w:t></w:r>` +
+    `<w:commentRangeEnd w:id="0"/>` +
+    `<w:r><w:commentReference w:id="0"/></w:r>` +
+    `<w:commentRangeStart w:id="1"/>` +
+    `<w:commentRangeEnd w:id="1"/>` +
+    `<w:r><w:commentReference w:id="1"/></w:r>` +
+    `</w:p>`;
+  const document =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+    `<w:document xmlns:w="${W_NS}" xmlns:r="${R_NS}"><w:body>${body}</w:body></w:document>`;
+  const comments =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+    `<w:comments xmlns:w="${W_NS}" xmlns:w14="${W14_NS}">` +
+    `<w:comment w:id="0" w:author="Alice Reviewer" w:initials="AR" w:date="2026-01-02T10:00:00Z">` +
+    `<w:p w14:paraId="0000AAA1"><w:r><w:t>Needs a citation</w:t></w:r></w:p>` +
+    `</w:comment>` +
+    `<w:comment w:id="1" w:author="Bob Author" w:initials="BA" w:date="2026-01-03T09:00:00Z">` +
+    `<w:p w14:paraId="0000BBB2"><w:r><w:t>Citation added now</w:t></w:r></w:p>` +
+    `</w:comment></w:comments>`;
+  const commentsExtended =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+    `<w15:commentsEx xmlns:w15="${W15_NS}">` +
+    `<w15:commentEx w15:paraId="0000AAA1" w15:done="1"/>` +
+    `<w15:commentEx w15:paraId="0000BBB2" w15:paraIdParent="0000AAA1" w15:done="0"/>` +
+    `</w15:commentsEx>`;
+
+  return zipSync({
+    '[Content_Types].xml': enc.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="${CT}">` +
+        `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+        `<Default Extension="xml" ContentType="application/xml"/>` +
+        `<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>` +
+        `<Override PartName="/word/comments.xml" ContentType="${COMMENTS_CT}"/>` +
+        `<Override PartName="/word/commentsExtended.xml" ContentType="${COMMENTS_EX_CT}"/>` +
+        `</Types>`,
+    ),
+    '_rels/.rels': enc.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="${PKG}">` +
+        `<Relationship Id="rId1" Type="${R_NS}/officeDocument" Target="word/document.xml"/></Relationships>`,
+    ),
+    'word/document.xml': enc.encode(document),
+    'word/_rels/document.xml.rels': enc.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="${PKG}">` +
+        `<Relationship Id="rId10" Type="${R_NS}/comments" Target="comments.xml"/>` +
+        `<Relationship Id="rId11" Type="${REL_COMMENTS_EXTENDED}" Target="commentsExtended.xml"/>` +
+        `</Relationships>`,
+    ),
+    'word/comments.xml': enc.encode(comments),
+    'word/commentsExtended.xml': enc.encode(commentsExtended),
+  });
+}
+
+describe('Word comment threads in docx (E-COMMENTS CM4)', () => {
+  it('threads replies and resolved flags from commentsExtended', () => {
+    const flow = Ream.parse(threadedCommentDocx()).flow;
+    const parent = flow.comments?.get('0');
+    const reply = flow.comments?.get('1');
+    expect(parent?.done).toBe(true);
+    expect(parent?.parentId).toBeUndefined();
+    expect(reply?.parentId).toBe('0');
+    expect(reply?.done).toBeFalsy();
+  });
+
+  it('nests a reply under its parent and flags the resolved thread in HTML', async () => {
+    const html = new TextDecoder().decode(await Ream.parse(threadedCommentDocx()).convert('html'));
+    expect(html).toContain('class="comment resolved"'); // parent thread is resolved
+    expect(html).toContain('Resolved');
+    expect(html).toContain('<ol class="comment-replies">'); // reply nests under the parent
+    expect(html).toContain('Citation added now'); // the reply's content
+  });
+
+  it('annotates the reply and the resolved thread in the PDF', async () => {
+    const file = PdfFile.parse(
+      await Ream.parse(threadedCommentDocx()).convert('pdf', { fonts: FONTS }),
+    );
+    const text = extractPageText(file, file.pages()[0]!)
+      .map((r) => r.text)
+      .join('')
+      .replace(/\s/g, '');
+    expect(text).toContain('(resolved)'); // parent entry marked resolved
+    expect(text).toContain('inreplyto[1]'); // reply points at its parent's marker
+  });
+
+  it('round-trips the thread (parent + resolved) through the docx writer', async () => {
+    const out = await Ream.parse(threadedCommentDocx()).convert('docx');
+    const reread = Ream.parse(out);
+    // commentsExtended is re-emitted with fresh paraIds; the semantic links survive.
+    expect(reread.flow.comments?.get('0')?.done).toBe(true);
+    expect(reread.flow.comments?.get('1')?.parentId).toBe('0');
   });
 });
