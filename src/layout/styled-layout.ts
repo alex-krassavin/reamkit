@@ -175,6 +175,11 @@ export interface StyledRenderOptions {
   // §17.13.4 review comments by id; rendered as superscript markers in text and
   // a list after the body (after endnotes), each with its author/date.
   readonly comments?: ReadonlyMap<string, Comment>;
+  // CM2b — also emit each comment as a native PDF /Text (sticky-note) annotation
+  // at its marker. Opt-in and interactive-only: suppressed under PDF/A and tagged
+  // output (where it would need annotation/appearance conformance), since the
+  // clickable marker + Comments section already carry the content there.
+  readonly commentAnnotations?: boolean;
   // Content-addressed binary store; image nodes reference it by ResourceId.
   readonly resources?: ResourceStore;
   // Parsed charts keyed by relationship id (ChartBlock.chartRelId). Supplied by
@@ -398,12 +403,20 @@ export interface BookmarkPosition {
   readonly yTopPt: number;
 }
 
+export interface CommentNote {
+  readonly author?: string;
+  readonly contents: string;
+}
+
 export interface PdfLayoutAux {
   readonly structBuilder: StructTreeBuilder | undefined;
   readonly sectionCtxs: ReadonlyArray<SectionRenderCtx>;
   readonly pdfaProfile: PdfAProfile | undefined;
   readonly tagged: boolean;
   readonly bookmarks: ReadonlyMap<string, BookmarkPosition>;
+  // CM2b — comment marker anchor (`comment-${n}`) → the note the emitter attaches
+  // as a /Text annotation. Present only when commentAnnotations was requested.
+  readonly commentNotes?: ReadonlyMap<string, CommentNote>;
 }
 
 // What layoutStyledDocument actually returns: the PageDoc with the PDF
@@ -627,6 +640,41 @@ function substituteNoteNumber(
   ];
 }
 
+// Flatten a comment's block content to one plain string (paragraphs joined by
+// newlines) — the /Text annotation's pop-up body (CM2b).
+function flattenCommentText(content: ReadonlyArray<BodyElement>): string {
+  const lines: Array<string> = [];
+  const visit = (els: ReadonlyArray<BodyElement>): void => {
+    for (const el of els) {
+      if (el.kind === 'paragraph') {
+        lines.push(el.paragraph.runs.map((r) => r.text).join(''));
+      } else if (el.kind === 'table') {
+        for (const row of el.table.rows) for (const cell of row.cells) visit(cell.content);
+      }
+    }
+  };
+  visit(content);
+  return lines.join('\n').trim();
+}
+
+// Map each numbered comment's marker anchor (`comment-${n}`) to its note payload
+// for the emitter's /Text annotations (CM2b).
+function buildCommentNotes(
+  numbers: ReadonlyMap<string, number>,
+  comments: ReadonlyMap<string, Comment>,
+): Map<string, CommentNote> {
+  const out = new Map<string, CommentNote>();
+  for (const [id, n] of numbers) {
+    const c = comments.get(id);
+    if (!c) continue;
+    out.set(`comment-${n}`, {
+      ...(c.author !== undefined ? { author: c.author } : {}),
+      contents: flattenCommentText(c.content),
+    });
+  }
+  return out;
+}
+
 // A review comment's after-body entry (E-COMMENTS CM1): its content led by an
 // `[n]` marker and the author/date, mirroring how endnotes prepend their number.
 // A reply (CM4) is indented by its thread depth and notes the parent it answers;
@@ -846,6 +894,12 @@ export function layoutStyledDocument(
   }
 
   const bookmarks = new Map<string, BookmarkPosition>();
+  // CM2b — native /Text annotations for comments (opt-in). The emitter attaches
+  // them at the marker, gated to interactive (non-PDF/A, non-tagged) output.
+  const commentNotes =
+    options.commentAnnotations && options.comments
+      ? buildCommentNotes(noteAssigned.comments, options.comments)
+      : undefined;
   // Float text wrapping: pagination re-wraps an overlapped paragraph with
   // per-line widths; the closure re-runs the paragraph layout at the given
   // column width with those widths.
@@ -866,7 +920,14 @@ export function layoutStyledDocument(
     resources: options.resources ?? new ResourceStore(),
     fontResources,
     imageResources,
-    pdf: { structBuilder, sectionCtxs, pdfaProfile, tagged, bookmarks },
+    pdf: {
+      structBuilder,
+      sectionCtxs,
+      pdfaProfile,
+      tagged,
+      bookmarks,
+      ...(commentNotes ? { commentNotes } : {}),
+    },
   };
 }
 

@@ -341,3 +341,32 @@ describe('Word comment range highlight (E-COMMENTS CM2c)', () => {
     expect(pdf).toContain('0.953 0.639 rg');
   });
 });
+
+describe('Word comment native /Text annotations (E-COMMENTS CM2b, opt-in)', () => {
+  it('attaches a sticky note carrying the comment when opted in', async () => {
+    const pdf = Buffer.from(
+      await Ream.parse(commentDocx()).convert('pdf', { fonts: FONTS, commentAnnotations: true }),
+    ).toString('latin1');
+    expect(pdf).toContain('/Subtype /Text'); // a sticky-note annotation
+    expect(pdf).toContain('/Name /Comment'); // the note icon
+    expect(pdf).toContain('Please clarify this sentence'); // the comment text in /Contents
+  });
+
+  it('emits no native annotations by default', async () => {
+    const pdf = Buffer.from(
+      await Ream.parse(commentDocx()).convert('pdf', { fonts: FONTS }),
+    ).toString('latin1');
+    expect(pdf).not.toContain('/Subtype /Text');
+  });
+
+  it('suppresses native annotations under PDF/A (archival output)', async () => {
+    const pdf = Buffer.from(
+      await Ream.parse(commentDocx()).convert('pdf', {
+        fonts: FONTS,
+        commentAnnotations: true,
+        pdfA: 'PDF/A-2b',
+      }),
+    ).toString('latin1');
+    expect(pdf).not.toContain('/Subtype /Text');
+  });
+});
