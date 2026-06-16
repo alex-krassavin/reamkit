@@ -149,7 +149,7 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
   return { doc, losses };
 }
 
-function parseXml(data: Uint8Array): Array<PoNode> {
+export function parseXml(data: Uint8Array): Array<PoNode> {
   return parser.parse(decoder.decode(data)) as Array<PoNode>;
 }
 

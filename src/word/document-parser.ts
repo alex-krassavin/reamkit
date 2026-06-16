@@ -24,10 +24,11 @@ import type {
 import type { ColorResolver } from '@/core/drawingml/colors';
 import type { Pt, ResourceId } from '@/core/ir';
 import type { PoNode } from '@/core/po-helpers';
-import { twipsToPt } from '@/core/ir';
+import { emuToPt, twipsToPt } from '@/core/ir';
 import { parseOMath } from '@/word/omml-parser';
 import { defaultColorResolver } from '@/core/drawingml/colors';
 import { expandMcChildren, parseDrawing, parseVmlPicture } from '@/word/drawing-parser';
+import { diagramTransform, parseDiagramDrawing } from '@/pptx/slide-parser';
 import { parseParagraphProperties } from '@/word/paragraph-properties';
 import {
   poAttr,
@@ -80,6 +81,10 @@ export interface ParseContext {
   // §17.16.22 w:hyperlink r:id → external target URL from the owning part's
   // rels (TargetMode="External" only). Absent ⇒ links unwrap to plain text.
   readonly resolveHyperlink?: HyperlinkResolver;
+  // SmartArt: a data relationship id (dgm:relIds @r:dm) → the diagram's
+  // pre-rendered drawing override (its dsp:spTree), or undefined when the file
+  // ships none (E-SMARTART SA2).
+  readonly resolveDiagram?: (relId: string) => PoNode | undefined;
 }
 
 export const DEFAULT_PARSE_CONTEXT: ParseContext = { resolveColor: defaultColorResolver };
@@ -276,11 +281,13 @@ export function parseBodyElements(
         (pendingBookmarks ??= []).push(bookmarkName);
       }
     } else if (poIs(child, 'w:p')) {
-      const drawing = tryExtractDrawingFromParagraph(child, ctx);
-      out.push(
-        drawing ?? { kind: 'paragraph', paragraph: parseParagraph(child, ctx, pendingBookmarks) },
-      );
-      if (!drawing) pendingBookmarks = undefined;
+      const drawings = tryExtractDrawingFromParagraph(child, ctx);
+      if (drawings) {
+        out.push(...drawings);
+      } else {
+        out.push({ kind: 'paragraph', paragraph: parseParagraph(child, ctx, pendingBookmarks) });
+        pendingBookmarks = undefined;
+      }
     } else if (poIs(child, 'w:tbl')) {
       out.push({ kind: 'table', table: parseTable(child, ctx) });
     } else if (poIs(child, 'w:sdt')) {
@@ -360,7 +367,7 @@ function scanForLoneDrawing(container: PoNode, acc: LoneDrawingScan): void {
   }
 }
 
-function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): BodyElement | null {
+function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): Array<BodyElement> | null {
   const scan: LoneDrawingScan = { hasOther: false };
   scanForLoneDrawing(p, scan);
   const { drawing, vml } = scan;
@@ -392,40 +399,66 @@ function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): BodyEleme
 
   if (content.kind === 'image') {
     const resource = ctx.resolveImage?.(content.imageId);
-    return {
-      kind: 'image',
-      image: {
-        ...(resource ? { resource } : {}),
-        width: content.width,
-        height: content.height,
-        paragraphProperties,
-        ...(content.altText ? { altText: content.altText } : {}),
-        ...(content.float ? { float: content.float } : {}),
+    return [
+      {
+        kind: 'image',
+        image: {
+          ...(resource ? { resource } : {}),
+          width: content.width,
+          height: content.height,
+          paragraphProperties,
+          ...(content.altText ? { altText: content.altText } : {}),
+          ...(content.float ? { float: content.float } : {}),
+        },
       },
-    };
+    ];
   }
   if (content.kind === 'chart') {
-    return {
-      kind: 'chart',
-      chart: {
-        chartRelId: content.chartRelId,
-        width: content.width,
-        height: content.height,
+    return [
+      {
+        kind: 'chart',
+        chart: {
+          chartRelId: content.chartRelId,
+          width: content.width,
+          height: content.height,
+          paragraphProperties,
+          ...(content.altText ? { altText: content.altText } : {}),
+          ...(content.float ? { float: content.float } : {}),
+        },
+      },
+    ];
+  }
+  if (content.kind === 'diagram') {
+    // SmartArt: resolve the drawing override and render its nodes as floating
+    // shapes anchored to the paragraph's column origin (E-SMARTART SA2). No
+    // override ⇒ keep the (empty) paragraph, byte-stable.
+    const spTree = ctx.resolveDiagram?.(content.dmRelId);
+    if (!spTree) return null;
+    const frame = { x: 0, y: 0, cx: content.widthEmu, cy: content.heightEmu };
+    const shapes = parseDiagramDrawing(
+      spTree,
+      diagramTransform(spTree, frame),
+      (box) => ({
+        wrap: 'none',
+        posH: { relativeFrom: 'column', offsetPt: emuToPt(box.x) },
+        posV: { relativeFrom: 'paragraph', offsetPt: emuToPt(box.y) },
+      }),
+      ctx.resolveColor,
+      undefined,
+    );
+    return shapes.length > 0 ? shapes.map((shape) => ({ kind: 'shape', shape })) : null;
+  }
+  return [
+    {
+      kind: 'shape',
+      shape: {
+        ...content.data,
         paragraphProperties,
         ...(content.altText ? { altText: content.altText } : {}),
         ...(content.float ? { float: content.float } : {}),
       },
-    };
-  }
-  return {
-    kind: 'shape',
-    shape: {
-      ...content.data,
-      paragraphProperties,
-      ...(content.altText ? { altText: content.altText } : {}),
-      ...(content.float ? { float: content.float } : {}),
     },
-  };
+  ];
 }
 
 function parseParagraph(p: PoNode, ctx: ParseContext, extraBookmarks?: Array<string>): Paragraph {

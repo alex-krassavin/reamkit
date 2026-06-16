@@ -17,6 +17,9 @@ import type { FlowDoc } from '@/core/ir/flow';
 import type { ResourceId } from '@/core/ir';
 import type { CoreProperties } from '@/core/opc';
 import type { HyperlinkResolver, ImageResolver, ParseContext } from '@/word';
+import type { PoNode } from '@/core/po-helpers';
+import { poFindDescendant } from '@/core/po-helpers';
+import { parseXml } from '@/pptx/pptx-reader';
 import { bytesInclude } from '@/core/bytes';
 import { applyNumbering, applyNumberingToHeadersFooters } from '@/core/numbering';
 import {
@@ -68,7 +71,12 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
   const resources = new ResourceStore();
   const resolveImage = makeImageResolver(pkg, resources);
   const resolveHyperlink = makeHyperlinkResolver(pkg);
-  const ctx: ParseContext = { resolveColor, resolveImage, resolveHyperlink };
+  const ctx: ParseContext = {
+    resolveColor,
+    resolveImage,
+    resolveHyperlink,
+    resolveDiagram: makeDiagramResolver(pkg, MAIN_DOCUMENT_PART),
+  };
   const body = parseDocument(main.data, ctx);
   const rawSections = parseSections(main.data);
 
@@ -195,6 +203,40 @@ function infoFromCore(core: CoreProperties | undefined): DocumentInfo | undefine
     ...(core.keywords ? { keywords: core.keywords } : {}),
     ...(core.created ? { creationDate: core.created } : {}),
     ...(core.modified ? { modificationDate: core.modified } : {}),
+  };
+}
+
+// SmartArt: a data relationship id (dgm:relIds @r:dm) → the diagram's
+// pre-rendered drawing override (its dsp:spTree). Follows the doc part →
+// diagrams/data#.xml → (rel type .../diagramDrawing) → diagrams/drawing#.xml.
+// Undefined when the file ships no drawing override (E-SMARTART SA2).
+function makeDiagramResolver(
+  pkg: OpcPackage,
+  partName: string,
+): (relId: string) => PoNode | undefined {
+  const cache = new Map<string, PoNode | undefined>();
+  return (relId) => {
+    if (cache.has(relId)) return cache.get(relId);
+    let spTree: PoNode | undefined;
+    const dataRel = pkg.getPartRelationships(partName).find((r) => r.id === relId);
+    const data = dataRel ? pkg.resolveRelatedPart(partName, dataRel) : undefined;
+    if (data) {
+      const drawRel = pkg
+        .getPartRelationships(data.path)
+        .find((r) => r.type.endsWith('/diagramDrawing'));
+      const draw = drawRel ? pkg.resolveRelatedPart(data.path, drawRel) : undefined;
+      if (draw) {
+        for (const root of parseXml(draw.data)) {
+          const found = poFindDescendant(root, 'dsp:spTree');
+          if (found) {
+            spTree = found;
+            break;
+          }
+        }
+      }
+    }
+    cache.set(relId, spTree);
+    return spTree;
   };
 }
 

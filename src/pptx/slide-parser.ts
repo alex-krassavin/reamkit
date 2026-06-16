@@ -233,23 +233,22 @@ function parseGraphicFrame(
     const dmRelId = relIds ? poAttr(relIds, 'dm') : undefined; // r:dm → data part
     const spTree = dmRelId !== undefined ? ctx.resolveDiagram?.(dmRelId) : undefined;
     if (!spTree) return [];
-    const childTransform = diagramTransform(spTree, box);
-    const out: Array<BodyElement> = [];
-    for (const child of poChildren(spTree)) {
-      if (poIs(child, 'dsp:sp')) {
-        const shape = parseDspSp(child, ctx, childTransform);
-        if (shape) out.push({ kind: 'shape', shape });
-      }
-    }
-    return out;
+    return parseDiagramDrawing(
+      spTree,
+      diagramTransform(spTree, box),
+      floatAt,
+      ctx.colors ?? defaultColorResolver,
+      ctx.resolveHyperlink,
+    ).map((shape) => ({ kind: 'shape', shape }));
   }
   return [];
 }
 
 // The diagram's child shapes live in the spTree's own coordinate space
-// (dsp:grpSpPr/a:xfrm chOff/chExt); map that onto the frame's slide-space box.
-// Usually the child space equals the frame, so the scale is 1.
-function diagramTransform(spTree: PoNode, frame: ShapeBoxEmu): GroupTransform {
+// (dsp:grpSpPr/a:xfrm chOff/chExt); map that onto a target box (the frame on a
+// slide, or the inline/anchored box in docx). Usually the child space equals the
+// box, so the scale is 1. Shared by pptx and docx (E-SMARTART).
+export function diagramTransform(spTree: PoNode, frame: ShapeBoxEmu): GroupTransform {
   const grpSpPr = poChildren(spTree).find((c) => poIs(c, 'dsp:grpSpPr'));
   const xfrm = grpSpPr ? poChildren(grpSpPr).find((c) => poIs(c, 'a:xfrm')) : undefined;
   const chOff = xfrm ? poChildren(xfrm).find((c) => poIs(c, 'a:chOff')) : undefined;
@@ -268,41 +267,50 @@ function diagramTransform(spTree: PoNode, frame: ShapeBoxEmu): GroupTransform {
   });
 }
 
-// A single SmartArt drawing shape (dsp:sp). Mirrors parseSp, but the dsp:
-// wrapper holds an ordinary a: spPr/txBody, so the shared DrawingML readers
-// apply unchanged. Diagrams have no placeholder cascade.
-function parseDspSp(
-  sp: PoNode,
-  ctx: SlideContext,
+// Render a SmartArt drawing override (a dsp:spTree) into floating shapes.
+// `transform` maps each shape's diagram-space box to the target space and
+// `makeFloat` anchors it: page-relative for a slide, column/paragraph-relative
+// for an inline docx diagram. The dsp: wrapper holds an ordinary a: spPr/txBody,
+// so the shared DrawingML readers apply unchanged. Shared by pptx and docx
+// (E-SMARTART); diagrams carry no placeholder cascade.
+export function parseDiagramDrawing(
+  spTree: PoNode,
   transform: GroupTransform,
-): ShapeBlock | undefined {
-  const colors = ctx.colors ?? defaultColorResolver;
-  const spPr = poChildren(sp).find((c) => poIs(c, 'dsp:spPr'));
-  const own = parseXfrmBox(spPr);
-  if (!own) return undefined;
-  const box = transform(own);
+  makeFloat: (box: ShapeBoxEmu) => FloatAnchor,
+  colors: ColorResolver,
+  resolveLink: LinkResolver,
+): Array<ShapeBlock> {
+  const out: Array<ShapeBlock> = [];
+  for (const sp of poChildren(spTree)) {
+    if (!poIs(sp, 'dsp:sp')) continue;
+    const spPr = poChildren(sp).find((c) => poIs(c, 'dsp:spPr'));
+    const own = parseXfrmBox(spPr);
+    if (!own) continue;
+    const box = transform(own);
 
-  const txBody = poChildren(sp).find((c) => poIs(c, 'dsp:txBody'));
-  const text = txBody
-    ? parseTxBody(txBody, undefined, undefined, colors, ctx.resolveHyperlink)
-    : undefined;
+    const txBody = poChildren(sp).find((c) => poIs(c, 'dsp:txBody'));
+    const text = txBody
+      ? parseTxBody(txBody, undefined, undefined, colors, resolveLink)
+      : undefined;
 
-  const geometry = parseGeometry(spPr);
-  const fill: ShapeFill = spPr ? parseFill(spPr, colors) : { kind: 'none' };
-  const line = spPr ? parseLine(spPr, colors) : undefined;
-  const visibleLine = line !== undefined && line.fill !== 'none';
-  if (!text && fill.kind === 'none' && !visibleLine) return undefined;
+    const geometry = parseGeometry(spPr);
+    const fill: ShapeFill = spPr ? parseFill(spPr, colors) : { kind: 'none' };
+    const line = spPr ? parseLine(spPr, colors) : undefined;
+    const visibleLine = line !== undefined && line.fill !== 'none';
+    if (!text && fill.kind === 'none' && !visibleLine) continue;
 
-  return {
-    float: floatAt(box),
-    width: emuToPt(box.cx),
-    height: emuToPt(box.cy),
-    geometry,
-    fill,
-    ...(line ? { line } : {}),
-    ...(text ? { text } : {}),
-    paragraphProperties: {},
-  };
+    out.push({
+      float: makeFloat(box),
+      width: emuToPt(box.cx),
+      height: emuToPt(box.cy),
+      geometry,
+      fill,
+      ...(line ? { line } : {}),
+      ...(text ? { text } : {}),
+      paragraphProperties: {},
+    });
+  }
+  return out;
 }
 
 // p:bg → the background fill, or undefined when none/unsupported. p:bgPr carries

@@ -888,8 +888,20 @@ override + `dsp:`-walker, кладущий `dsp:spPr`/`dsp:txBody` в сущес
   правок в sub-парсеры НЕ потребовалось, как и предсказано. `diagramTransform` мапит
   child-space диаграммы на бокс фрейма (как группа). Нет override → пусто (graceful). Тесты:
   узлы → floating-шейпы, позиции точно 72/288pt, текст в PDF, no-override→0 шейпов.
-  Байт-в-ноль (uri-ветка не трогает существующие пути). 826 тестов (+4). Осталось SA1
-  (текст-полнота), SA2 (docx-проводка), SA3 (цвета/loss/демо).
+  Байт-в-ноль (uri-ветка не трогает существующие пути). 826 тестов (+4). (SA1 «текст-
+  полнота» по факту вошёл в SA0 — `parseTxBody` уже даёт буллеты/уровни/выравнивание.)
+- **SA2 ✓** — docx-проводка + общий `parseDiagramDrawing`. Вынес walker из slide-parser в
+  экспортируемый `parseDiagramDrawing(spTree, transform, makeFloat, colors, resolveLink)` —
+  переиспользуют pptx (page-relative `floatAt`) и docx. docx: `DrawingContent` получил
+  `diagram`-вариант, `parseDrawing` — ветку, `ParseContext.resolveDiagram`,
+  `makeDiagramResolver` (`document.xml.rels`→`diagrams/data#.xml`→`/diagramDrawing`→
+  `drawing#.xml`); узлы — column/paragraph-relative floats (inline-кейс, основной для docx).
+  `tryExtract` теперь возвращает `BodyElement[]` (диаграмма = много шейпов; image/chart/shape
+  байт-идентичны). `parseXml` экспортирован из pptx-reader. Цикла нет (acyclic word→pptx).
+  Байт-в-ноль: новая uri-ветка не трогает существующее, no-override → абзац сохраняется.
+  829 тестов (+3 docx). Хвост: anchored-docx (page-relative) + точная inline-позиция по
+  потоку; вынос `parseDiagramDrawing` в нейтральный `core/drawingml` (сейчас acyclic
+  word→pptx). Осталось SA3 (явный loss «нет override» + scheme-цвета depth + демо).
 
 ---
 
