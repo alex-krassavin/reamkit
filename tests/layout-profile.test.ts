@@ -3,8 +3,10 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
+import { buildXlsx } from './fixtures/build-xlsx';
 import type { TextLineItem, TextToken } from '@/layout/page-doc';
 import type { LayoutProfile } from '@/layout/styled-layout';
+import { convertXlsxToPdfSync } from '@/core/converter';
 import { Ream } from '@/core/converter/ream';
 import { FontRegistry, createFontMeasure, parseTtf } from '@/core/font';
 import { flowRenderOptions } from '@/core/converter/project';
@@ -174,5 +176,23 @@ describe('layoutProfile — kerning (E-PARITY FP4)', () => {
     // 'libreoffice' keep it and agree (breaking does not move word widths).
     expect(sumWordWidth('word')).toBeGreaterThan(sumWordWidth('libreoffice'));
     expect(sumWordWidth('libreoffice')).toBeCloseTo(sumWordWidth(), 6);
+  });
+});
+
+describe('layoutProfile is a flowing-text knob — xlsx ignores it (E-PARITY FP0)', () => {
+  it('xlsx output is byte-identical with and without a layoutProfile', () => {
+    // Spreadsheet row heights follow the Calc print model, not font-metric
+    // leading, so the profile must not touch xlsx geometry. (Corpus FP0 showed
+    // a metric leading regresses Calc parity.)
+    const xlsx = buildXlsx({
+      rows: [
+        ['Name', 'Score'],
+        ['Ada', 42],
+        ['Lin', 7],
+      ],
+    });
+    const plain = convertXlsxToPdfSync(xlsx, { fonts: FONTS });
+    const profiled = convertXlsxToPdfSync(xlsx, { fonts: FONTS, layoutProfile: 'libreoffice' });
+    expect(profiled).toEqual(plain);
   });
 });

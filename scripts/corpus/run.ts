@@ -59,11 +59,18 @@ const FONTS: FontBytesByVariant = {
 // path for our trusted fixtures).
 const ISOLATE_OURS = process.env.CORPUS_ISOLATE_OURS === '1';
 // CORPUS_AUTOFONT=1 renders docx with the real async font auto-substitution
-// (sans→Roboto / serif→Tinos / mono→Cousine by the document's declared family)
+// (metric-compatible open substitutes by the document's declared family:
+// sans→Arimo, serif→Tinos, mono→Cousine, Calibri→Carlito, Cambria→Caladea)
 // instead of a fixed Roboto set — so the visual metric reflects layout fidelity
-// rather than a font mismatch. In-process only (the per-URL font cache must
-// persist across docs); ignored under CORPUS_ISOLATE_OURS.
+// rather than a font mismatch. It also matches the substitutes LibreOffice picks
+// from fonts-liberation, making the comparison apples-to-apples. In-process only
+// (the per-URL font cache must persist across docs); ignored under
+// CORPUS_ISOLATE_OURS.
 const AUTOFONT = process.env.CORPUS_AUTOFONT === '1';
+// CORPUS_PROFILE selects a renderer-compatibility layoutProfile for OUR render
+// (E-PARITY): 'libreoffice' should track the LibreOffice golden most closely,
+// 'word' targets Word. Unset = the default 'ream' typesetter.
+const PROFILE = process.env.CORPUS_PROFILE as 'ream' | 'word' | 'libreoffice' | undefined;
 const OUR_TIMEOUT_MS = 60_000;
 
 // Convert with our library, writing the PDF to `outPath`. When isolating, spawn
@@ -78,12 +85,13 @@ async function ourConvert(input: string, isXlsx: boolean, outPath: string): Prom
     return;
   }
   const bytes = new Uint8Array(readFileSync(input));
+  const profileOpt = PROFILE ? { layoutProfile: PROFILE } : {};
   const pdf =
     AUTOFONT && !isXlsx
-      ? await convertDocxToPdf(bytes)
+      ? await convertDocxToPdf(bytes, profileOpt)
       : isXlsx
-        ? convertXlsxToPdfSync(bytes, { fonts: FONTS })
-        : convertDocxToPdfSync(bytes, { fonts: FONTS });
+        ? convertXlsxToPdfSync(bytes, { fonts: FONTS, ...profileOpt })
+        : convertDocxToPdfSync(bytes, { fonts: FONTS, ...profileOpt });
   writeFileSync(outPath, pdf);
 }
 
@@ -197,7 +205,8 @@ function renderReport(rows: Array<Row>, dpi: number): string {
   lines.push(`# Corpus validation report`);
   lines.push('');
   lines.push(
-    `Reference: LibreOffice \`soffice\`. Raster DPI: ${dpi}. ` +
+    `Reference: LibreOffice \`soffice\`. Our profile: \`${PROFILE ?? 'ream'}\`` +
+      `${AUTOFONT ? ' (autofont)' : ''}. Raster DPI: ${dpi}. ` +
       `Visual = worst-page pixel mismatch ratio (lower is better). ` +
       `TextSim = LCS char similarity vs reference (higher is better). ` +
       `Drift = median baseline-y delta.`,
