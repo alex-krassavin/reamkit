@@ -20,9 +20,9 @@ Runtime dependencies are minimal: `fflate` (ZIP/Deflate) and `fast-xml-parser`.
 
 Parse once into the format-neutral interlayer, convert to any target. The
 format (docx/xlsx) is sniffed from the bytes; no fonts to wire up — an open
-substitute font (Roboto for sans, Tinos for serif, Cousine for monospace — the
-same families LibreOffice substitutes) is fetched automatically based on the
-document's referenced fonts:
+metric-compatible substitute font (Arimo for sans, Tinos for serif, Cousine for
+monospace, plus Carlito/Caladea for Calibri/Cambria — the same families LibreOffice
+substitutes) is fetched automatically based on the document's referenced fonts:
 
 ```ts
 import { Ream } from 'reamkit';
