@@ -3,6 +3,28 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.12.0
+
+### Added
+
+- **SmartArt diagrams (DOCX + PPTX).** SmartArt renders from the diagram's
+  pre-rendered DrawingML drawing (`diagrams/drawing#.xml`, `dsp:spTree`) as
+  positioned shapes — reusing the existing DrawingML shape machinery rather than
+  re-running Office's layout engine. Scheme colours resolve through the
+  document/deck theme. A file that ships no drawing fallback degrades to a
+  graceful loss (`shapes.smartArt`) instead of vanishing.
+- **Word review comments (DOCX).** `w:commentReference` is read into the
+  `FlowDoc.comments` map (author, date, initials and block content). PDF and
+  HTML render a bracketed superscript marker in the text and a "Comments"
+  section after the body; in PDF the marker is a clickable internal jump to its
+  entry. Comments also write back through `convert('docx')`, surviving a
+  read↔write round-trip.
+- **Excel pivot tables (XLSX).** A pivot's cached output grid already rendered
+  as data; on top of that Ream now applies the named pivot style
+  (`pivotTableStyleInfo`) — banded rows and a styled header — and emphasises
+  grand-total / subtotal rows and columns (parsed from `rowItems` / `colItems`).
+  The pivot is not recomputed from its cache.
+
 ## 1.11.0
 
 ### Added
