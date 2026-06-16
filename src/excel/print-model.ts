@@ -33,7 +33,6 @@ import type {
 import type {
   CellRange,
   DefinedName,
-  ExcelTable,
   MergedRange,
   ParsedWorksheet,
   WorksheetCell,
@@ -894,6 +893,12 @@ interface TableCellFormat {
   readonly fontColorHex?: string;
 }
 
+// A pivot rowItem @t that marks a total row — 'grand' (grand total) or any
+// subtotal-function name; absent / 'data' / 'blank' are ordinary data rows.
+function isPivotTotal(t: string | undefined): boolean {
+  return t !== undefined && t !== 'data' && t !== 'blank';
+}
+
 // Cell (absolute key) → table/pivot format for header rows and banded data rows.
 // The header rows take the header fill + text colour (white on a Medium/Dark
 // accent); with showRowStripes, the 2nd/4th/… data row takes the band colour
@@ -911,12 +916,18 @@ function buildTableFormatLookup(worksheet: ParsedWorksheet): Map<string, TableCe
       headerTextHex?: string;
       showRowStripes: boolean;
     },
+    // A pivot total/subtotal data row (by 0-based offset): emphasised like the
+    // header rather than striped (E-PIVOT PV3). Tables pass none.
+    isTotalRow?: (dataOffset: number) => boolean,
   ): void => {
     const firstDataRow = ref.startRow + headerRows;
     for (let r = ref.startRow; r <= ref.endRow; r++) {
       let colorHex: string | undefined;
       let fontColorHex: string | undefined;
       if (r < firstDataRow) {
+        colorHex = style.headerHex;
+        fontColorHex = style.headerTextHex;
+      } else if (isTotalRow?.(r - firstDataRow)) {
         colorHex = style.headerHex;
         fontColorHex = style.headerTextHex;
       } else if (style.showRowStripes && style.bandHex) {
@@ -931,7 +942,8 @@ function buildTableFormatLookup(worksheet: ParsedWorksheet): Map<string, TableCe
     }
   };
   for (const t of worksheet.tables ?? []) band(t.ref, t.headerRowCount, t);
-  for (const p of worksheet.pivotTables ?? []) band(p.ref, p.firstDataRow, p);
+  for (const p of worksheet.pivotTables ?? [])
+    band(p.ref, p.firstDataRow, p, (off) => isPivotTotal(p.rowItemTypes?.[off]));
   return out;
 }
 

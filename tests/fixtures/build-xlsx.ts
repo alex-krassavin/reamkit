@@ -139,6 +139,8 @@ export interface XlsxBuilderOptions {
     readonly firstDataCol?: number;
     readonly showRowStripes?: boolean;
     readonly showColStripes?: boolean;
+    /** <rowItems> @t per data row ('grand'/subtotal name/undefined). */
+    readonly rowItemTypes?: ReadonlyArray<string | undefined>;
   }>;
 }
 
@@ -187,6 +189,7 @@ function buildPivotTableXml(
     firstDataCol?: number;
     showRowStripes?: boolean;
     showColStripes?: boolean;
+    rowItemTypes?: ReadonlyArray<string | undefined>;
   },
 ): string {
   const name = p.name ?? `PivotTable${id}`;
@@ -196,10 +199,15 @@ function buildPivotTableXml(
   const fdc = p.firstDataCol ?? 1;
   const rowStripes = p.showRowStripes ? '1' : '0';
   const colStripes = p.showColStripes ? '1' : '0';
+  const rowItems = p.rowItemTypes
+    ? `<rowItems count="${p.rowItemTypes.length}">${p.rowItemTypes
+        .map((t) => `<i${t ? ` t="${t}"` : ''}><x/></i>`)
+        .join('')}</rowItems>`
+    : '';
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <pivotTableDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" name="${name}" cacheId="0" dataCaption="Values" outline="1" outlineData="1">
   <location ref="${p.ref}" firstHeaderRow="${fhr}" firstDataRow="${fdr}" firstDataCol="${fdc}"/>
-  <pivotTableStyleInfo name="${style}" showRowHeaders="1" showColHeaders="1" showRowStripes="${rowStripes}" showColStripes="${colStripes}" showLastColumn="0"/>
+  ${rowItems}<pivotTableStyleInfo name="${style}" showRowHeaders="1" showColHeaders="1" showRowStripes="${rowStripes}" showColStripes="${colStripes}" showLastColumn="0"/>
 </pivotTableDefinition>`;
 }
 

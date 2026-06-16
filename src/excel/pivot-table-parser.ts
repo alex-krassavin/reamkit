@@ -32,6 +32,17 @@ export function parsePivotTablePart(data: Uint8Array): PivotTable | undefined {
   const si = asObj(def['pivotTableStyleInfo']);
   const name = strAttr(def, 'name');
   const styleName = si ? strAttr(si, 'name') : undefined;
+  // <rowItems>/<i> — one item per data row (in order); @t marks total rows
+  // ('grand' = grand total, a subtotal-function name = subtotal, absent = data).
+  // The i-th type maps to data row `firstDataRow + i` (E-PIVOT PV3).
+  const rowItemsNode = asObj(def['rowItems']);
+  const rowItemTypes = rowItemsNode
+    ? toArray(rowItemsNode['i']).map((i) => {
+        const o = asObj(i);
+        return o ? strAttr(o, 't') : undefined;
+      })
+    : undefined;
+  const hasTotals = rowItemTypes?.some((t) => t !== undefined) ?? false;
   return {
     ref,
     ...(name ? { name } : {}),
@@ -41,7 +52,13 @@ export function parsePivotTablePart(data: Uint8Array): PivotTable | undefined {
     firstDataCol: (loc ? numAttr(loc, 'firstDataCol') : undefined) ?? 0,
     showRowStripes: si ? boolAttr(si, 'showRowStripes') : false,
     showColStripes: si ? boolAttr(si, 'showColStripes') : false,
+    ...(hasTotals && rowItemTypes ? { rowItemTypes } : {}),
   };
+}
+
+function toArray(v: unknown): Array<unknown> {
+  if (v === undefined || v === null) return [];
+  return Array.isArray(v) ? v : [v];
 }
 
 function asObj(v: unknown): Record<string, unknown> | undefined {

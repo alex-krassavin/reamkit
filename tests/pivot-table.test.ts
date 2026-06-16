@@ -108,3 +108,29 @@ describe('Excel pivot tables — banding projection (E-PIVOT PV2)', () => {
     expect(grid[3]![0]).toBeUndefined(); // no stripes
   });
 });
+
+describe('Excel pivot tables — total-row emphasis (E-PIVOT PV3)', () => {
+  it('emphasises a grand-total data row like the header', () => {
+    const flow = Ream.parse(
+      buildXlsx({
+        rows: BANDED_ROWS,
+        pivotTables: [
+          {
+            ref: 'A1:C5',
+            styleName: 'PivotStyleDark2',
+            firstDataRow: 2,
+            showRowStripes: true,
+            // 3 data rows (offsets 0,1,2); the last is the grand total.
+            rowItemTypes: [undefined, undefined, 'grand'],
+          },
+        ],
+      }),
+    ).flow;
+    const grid = shadingGrid(flow);
+    const header = grid[0]![0];
+    expect(grid[2]![0]).toBeUndefined(); // data band1, unfilled
+    expect(grid[3]![0]).toBeDefined(); // data band2, banded
+    expect(grid[3]![0]).not.toBe(header); // a band, not the header
+    expect(grid[4]![0]).toBe(header); // grand total emphasised like the header
+  });
+});
