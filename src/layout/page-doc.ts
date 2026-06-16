@@ -43,6 +43,9 @@ export interface TextToken {
   // List-item marker glyphs ("1.", "•") — tagged PDF brackets them in a Lbl
   // element separate from the item body.
   readonly listMarker?: true;
+  // The token falls inside a comment range (commentRangeRefs): the emitter
+  // fills a soft highlight behind it (E-COMMENTS CM2c).
+  readonly highlight?: true;
   readonly resolvedRun: ResolvedRunProperties;
   readonly font: FontResource;
   readonly fontSizePt: number;

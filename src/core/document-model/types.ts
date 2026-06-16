@@ -246,6 +246,13 @@ export interface Run {
   readonly anchor?: string;
   readonly footnoteRef?: string;
   readonly endnoteRef?: string;
+  // §17.13.4.1 w:commentReference — the run anchors a review comment by id; the
+  // comment's content/author live in FlowDoc.comments.
+  readonly commentRef?: string;
+  // §17.13.4.3/4 w:commentRangeStart/End — the ids of the comment ranges this
+  // run falls inside (a run may be covered by several). Renderers highlight the
+  // covered span; the marker run (commentRef) sits at the range's end.
+  readonly commentRangeRefs?: ReadonlyArray<string>;
   // §17.11.13 w:footnoteRef / §17.11.5 w:endnoteRef — inside note content:
   // render the OWNING note's number here.
   readonly noteNumber?: true;
@@ -269,6 +276,30 @@ export interface Paragraph {
   // immediately before) this paragraph. Paragraph-level v1: the destination
   // is the paragraph's first line.
   readonly bookmarks?: ReadonlyArray<string>;
+}
+
+// ECMA-376 Part 1 §17.13.4.2 w:comment — a review comment: its block content
+// plus the author/date attribution. Anchored from a run's `commentRef`.
+export interface Comment {
+  readonly content: ReadonlyArray<BodyElement>;
+  readonly author?: string;
+  readonly initials?: string;
+  /** Raw w:date timestamp (ISO 8601), as authored — not reformatted. */
+  readonly date?: string;
+  /**
+   * The author's resolved identity (usually an email) from word/people.xml
+   * (`w15:person` → `w15:presenceInfo/@w15:userId`), matched on the author name.
+   * Absent when the file ships no people part or the author is not listed.
+   */
+  readonly authorId?: string;
+  /**
+   * Microsoft commentsExtended (w15) — the id of the comment this one replies
+   * to, forming a thread. Set only when word/commentsExtended.xml links this
+   * comment's paragraph to a parent (w15:paraIdParent). Top-level comments omit it.
+   */
+  readonly parentId?: string;
+  /** w15:done — the comment thread was marked resolved. */
+  readonly done?: boolean;
 }
 
 // ECMA-376 Part 1 §17.9 — Numbering.

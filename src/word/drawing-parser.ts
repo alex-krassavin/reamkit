@@ -34,6 +34,7 @@ import {
 
 const WPS_URI = 'http://schemas.microsoft.com/office/word/2010/wordprocessingShape';
 const CHART_URI = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
+const DIAGRAM_URI = 'http://schemas.openxmlformats.org/drawingml/2006/diagram';
 
 // Namespaces whose <mc:Choice> we can render. 'wps' = wordprocessingShape.
 const UNDERSTOOD_NS = new Set(['wps']);
@@ -75,6 +76,17 @@ export type DrawingContent =
       readonly chartRelId: string;
       readonly width: Pt;
       readonly height: Pt;
+      readonly altText?: string;
+      readonly float?: FloatAnchor;
+    }
+  | {
+      // SmartArt: the data-part relationship id (dgm:relIds @r:dm) + the frame
+      // extent in EMU. The reader resolves the drawing override and renders its
+      // shapes; the diagram has no single block (E-SMARTART).
+      readonly kind: 'diagram';
+      readonly dmRelId: string;
+      readonly widthEmu: number;
+      readonly heightEmu: number;
       readonly altText?: string;
       readonly float?: FloatAnchor;
     };
@@ -198,6 +210,17 @@ export function parseDrawing(
         height: emuToPt(extentCy),
         ...alt,
       };
+    }
+    return null;
+  }
+
+  // SmartArt diagram: keep the data-part rel id; the reader resolves the drawing
+  // override and renders its shapes (E-SMARTART SA2).
+  if (graphicData && uri === DIAGRAM_URI) {
+    const relIds = poFindDescendant(graphicData, 'dgm:relIds');
+    const dmRelId = relIds ? poAttr(relIds, 'dm') : undefined; // r:dm → data part
+    if (dmRelId && extentCx !== undefined && extentCy !== undefined) {
+      return { kind: 'diagram', dmRelId, widthEmu: extentCx, heightEmu: extentCy, ...alt };
     }
     return null;
   }

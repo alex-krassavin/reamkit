@@ -9,6 +9,7 @@ import { XMLParser } from 'fast-xml-parser';
 
 import type {
   BodyElement,
+  Comment,
   HeaderFooterReference,
   HeaderFooterType,
   InlineImage,
@@ -22,20 +23,23 @@ import type {
 } from '@/core/document-model';
 
 import type { ColorResolver } from '@/core/drawingml/colors';
-import type { Pt, ResourceId } from '@/core/ir';
+import type { Loss, ResourceId } from '@/core/ir';
 import type { PoNode } from '@/core/po-helpers';
-import { twipsToPt } from '@/core/ir';
+import { emuToPt, twipsToPt } from '@/core/ir';
 import { parseOMath } from '@/word/omml-parser';
 import { defaultColorResolver } from '@/core/drawingml/colors';
 import { expandMcChildren, parseDrawing, parseVmlPicture } from '@/word/drawing-parser';
+import { diagramTransform, noDiagramOverrideLoss, parseDiagramDrawing } from '@/pptx/slide-parser';
 import { parseParagraphProperties } from '@/word/paragraph-properties';
 import {
   poAttr,
+  poAttrLocal,
   poChildren,
   poFindByPath,
   poFindDescendant,
   poIntAttr,
   poIs,
+  poIsLocal,
   poText,
 } from '@/core/po-helpers';
 import { poElementToFlat } from '@/word/po-to-flat';
@@ -80,6 +84,18 @@ export interface ParseContext {
   // §17.16.22 w:hyperlink r:id → external target URL from the owning part's
   // rels (TargetMode="External" only). Absent ⇒ links unwrap to plain text.
   readonly resolveHyperlink?: HyperlinkResolver;
+  // SmartArt: a data relationship id (dgm:relIds @r:dm) → the diagram's
+  // pre-rendered drawing override (its dsp:spTree), or undefined when the file
+  // ships none (E-SMARTART SA2).
+  readonly resolveDiagram?: (relId: string) => PoNode | undefined;
+  // Sink for graceful-degradation notices (E-SMARTART SA3): a SmartArt with no
+  // drawing override records a dropped-feature Loss rather than vanishing.
+  readonly onLoss?: (loss: Loss) => void;
+  // §17.13.4 comment ranges currently open as the body is read — a mutable set
+  // the run collector stamps onto each run (commentRangeRefs). A comment range
+  // can span paragraphs, so the state is document-level, not per-paragraph. The
+  // reference is readonly; its contents mutate during the walk (CM2c).
+  readonly openCommentRanges?: Set<string>;
 }
 
 export const DEFAULT_PARSE_CONTEXT: ParseContext = { resolveColor: defaultColorResolver };
@@ -276,11 +292,13 @@ export function parseBodyElements(
         (pendingBookmarks ??= []).push(bookmarkName);
       }
     } else if (poIs(child, 'w:p')) {
-      const drawing = tryExtractDrawingFromParagraph(child, ctx);
-      out.push(
-        drawing ?? { kind: 'paragraph', paragraph: parseParagraph(child, ctx, pendingBookmarks) },
-      );
-      if (!drawing) pendingBookmarks = undefined;
+      const drawings = tryExtractDrawingFromParagraph(child, ctx);
+      if (drawings) {
+        out.push(...drawings);
+      } else {
+        out.push({ kind: 'paragraph', paragraph: parseParagraph(child, ctx, pendingBookmarks) });
+        pendingBookmarks = undefined;
+      }
     } else if (poIs(child, 'w:tbl')) {
       out.push({ kind: 'table', table: parseTable(child, ctx) });
     } else if (poIs(child, 'w:sdt')) {
@@ -360,7 +378,7 @@ function scanForLoneDrawing(container: PoNode, acc: LoneDrawingScan): void {
   }
 }
 
-function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): BodyElement | null {
+function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): Array<BodyElement> | null {
   const scan: LoneDrawingScan = { hasOther: false };
   scanForLoneDrawing(p, scan);
   const { drawing, vml } = scan;
@@ -392,40 +410,71 @@ function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): BodyEleme
 
   if (content.kind === 'image') {
     const resource = ctx.resolveImage?.(content.imageId);
-    return {
-      kind: 'image',
-      image: {
-        ...(resource ? { resource } : {}),
-        width: content.width,
-        height: content.height,
-        paragraphProperties,
-        ...(content.altText ? { altText: content.altText } : {}),
-        ...(content.float ? { float: content.float } : {}),
+    return [
+      {
+        kind: 'image',
+        image: {
+          ...(resource ? { resource } : {}),
+          width: content.width,
+          height: content.height,
+          paragraphProperties,
+          ...(content.altText ? { altText: content.altText } : {}),
+          ...(content.float ? { float: content.float } : {}),
+        },
       },
-    };
+    ];
   }
   if (content.kind === 'chart') {
-    return {
-      kind: 'chart',
-      chart: {
-        chartRelId: content.chartRelId,
-        width: content.width,
-        height: content.height,
+    return [
+      {
+        kind: 'chart',
+        chart: {
+          chartRelId: content.chartRelId,
+          width: content.width,
+          height: content.height,
+          paragraphProperties,
+          ...(content.altText ? { altText: content.altText } : {}),
+          ...(content.float ? { float: content.float } : {}),
+        },
+      },
+    ];
+  }
+  if (content.kind === 'diagram') {
+    // SmartArt: resolve the drawing override and render its nodes as floating
+    // shapes anchored to the paragraph's column origin (E-SMARTART SA2). No
+    // override ⇒ keep the (empty) paragraph, byte-stable.
+    const spTree = ctx.resolveDiagram?.(content.dmRelId);
+    if (!spTree) {
+      // No drawing override shipped — record a graceful loss and keep the
+      // (empty) paragraph, byte-stable (SA3).
+      ctx.onLoss?.(noDiagramOverrideLoss());
+      return null;
+    }
+    const frame = { x: 0, y: 0, cx: content.widthEmu, cy: content.heightEmu };
+    const shapes = parseDiagramDrawing(
+      spTree,
+      diagramTransform(spTree, frame),
+      (box) => ({
+        wrap: 'none',
+        posH: { relativeFrom: 'column', offsetPt: emuToPt(box.x) },
+        posV: { relativeFrom: 'paragraph', offsetPt: emuToPt(box.y) },
+      }),
+      ctx.resolveColor,
+      undefined,
+    );
+    return shapes.length > 0 ? shapes.map((shape) => ({ kind: 'shape', shape })) : null;
+  }
+  return [
+    {
+      kind: 'shape',
+      shape: {
+        ...content.data,
         paragraphProperties,
         ...(content.altText ? { altText: content.altText } : {}),
         ...(content.float ? { float: content.float } : {}),
       },
-    };
-  }
-  return {
-    kind: 'shape',
-    shape: {
-      ...content.data,
-      paragraphProperties,
-      ...(content.altText ? { altText: content.altText } : {}),
-      ...(content.float ? { float: content.float } : {}),
     },
-  };
+  ];
 }
 
 function parseParagraph(p: PoNode, ctx: ParseContext, extraBookmarks?: Array<string>): Paragraph {
@@ -559,14 +608,31 @@ function collectRuns(
 ): void {
   for (const child of poChildren(container)) {
     if (poIs(child, 'w:pPr')) continue;
+    // §17.13.4.3/4 — comment range bounds (siblings of w:r). Track the open set
+    // so runs in between carry commentRangeRefs (the highlighted span).
+    if (poIs(child, 'w:commentRangeStart')) {
+      const id = poAttr(child, 'id');
+      if (id !== undefined) ctx.openCommentRanges?.add(id);
+      continue;
+    }
+    if (poIs(child, 'w:commentRangeEnd')) {
+      const id = poAttr(child, 'id');
+      if (id !== undefined) ctx.openCommentRanges?.delete(id);
+      continue;
+    }
     if (poIs(child, 'w:r')) {
       const parsed = parseRun(child, ctx);
+      const ranges =
+        ctx.openCommentRanges && ctx.openCommentRanges.size > 0
+          ? [...ctx.openCommentRanges]
+          : undefined;
       const run =
-        href !== undefined || anchor !== undefined
+        href !== undefined || anchor !== undefined || ranges !== undefined
           ? {
               ...parsed.run,
               ...(href !== undefined ? { href } : {}),
               ...(anchor !== undefined ? { anchor } : {}),
+              ...(ranges !== undefined ? { commentRangeRefs: ranges } : {}),
             }
           : parsed.run;
       out.push({
@@ -639,6 +705,7 @@ function parseRun(
   let instrText: string | undefined;
   let footnoteRef: string | undefined;
   let endnoteRef: string | undefined;
+  let commentRef: string | undefined;
   let noteNumber = false;
   for (const child of expandMcChildren(poChildren(r))) {
     if (poIs(child, 'w:rPr')) continue;
@@ -659,6 +726,11 @@ function parseRun(
     if (poIs(child, 'w:endnoteReference')) {
       const id = poAttr(child, 'id');
       if (id !== undefined) endnoteRef = id;
+      continue;
+    }
+    if (poIs(child, 'w:commentReference')) {
+      const id = poAttr(child, 'id');
+      if (id !== undefined) commentRef = id;
       continue;
     }
     if (poIs(child, 'w:footnoteRef') || poIs(child, 'w:endnoteRef')) {
@@ -717,6 +789,7 @@ function parseRun(
       ...(pageBreak ? { pageBreak: true } : {}),
       ...(footnoteRef !== undefined ? { footnoteRef } : {}),
       ...(endnoteRef !== undefined ? { endnoteRef } : {}),
+      ...(commentRef !== undefined ? { commentRef } : {}),
       ...(noteNumber ? { noteNumber: true } : {}),
     },
     ...(fldChar ? { fldChar } : {}),
@@ -752,6 +825,161 @@ export function parseNotes(
     const id = poAttr(note, 'id');
     if (id === undefined) continue;
     out.set(id, parseBodyElements(poChildren(note), ctx));
+  }
+  return out;
+}
+
+// §17.13.4 — comments.xml. Like parseNotes, but a comment carries author/date
+// attribution alongside its block content, so it returns a richer Comment
+// (parseNotes keeps content only). Comments have no separator/stub convention.
+// Alongside the comments, capture each comment's last-paragraph w14:paraId —
+// the key Microsoft's commentsExtended (w15) threads link on (CM4).
+function parseCommentsRaw(
+  commentsXml: Uint8Array,
+  ctx: ParseContext,
+): { comments: Map<string, Comment>; paraIds: Map<string, string> } {
+  const xml = decoder.decode(commentsXml);
+  const tree = parser.parse(xml) as Array<PoNode>;
+  const root = poFindByPath(tree, ['w:comments']);
+  const comments = new Map<string, Comment>();
+  const paraIds = new Map<string, string>();
+  if (!root) return { comments, paraIds };
+  for (const c of poChildren(root)) {
+    if (!poIs(c, 'w:comment')) continue;
+    const id = poAttr(c, 'id');
+    if (id === undefined) continue;
+    const author = poAttr(c, 'author');
+    const initials = poAttr(c, 'initials');
+    const date = poAttr(c, 'date');
+    comments.set(id, {
+      content: parseBodyElements(poChildren(c), ctx),
+      ...(author !== undefined ? { author } : {}),
+      ...(initials !== undefined ? { initials } : {}),
+      ...(date !== undefined ? { date } : {}),
+    });
+    // The thread key is the last paragraph's paraId (Word writes it on every
+    // comment paragraph; commentsExtended references the final one).
+    let paraId: string | undefined;
+    for (const child of poChildren(c)) {
+      if (!poIs(child, 'w:p')) continue;
+      const pid = poAttrLocal(child, 'paraId');
+      if (pid !== undefined) paraId = pid;
+    }
+    if (paraId !== undefined) paraIds.set(id, paraId);
+  }
+  return { comments, paraIds };
+}
+
+export function parseComments(
+  commentsXml: Uint8Array,
+  ctx: ParseContext = DEFAULT_PARSE_CONTEXT,
+): Map<string, Comment> {
+  return parseCommentsRaw(commentsXml, ctx).comments;
+}
+
+/** A commentsExtended entry, keyed by the comment's last-paragraph w14:paraId. */
+export interface CommentExtension {
+  /** The parent comment's paraId — present when this comment is a reply. */
+  readonly paraIdParent?: string;
+  /** w15:done — the thread is resolved. */
+  readonly done: boolean;
+}
+
+// §commentsEx (Microsoft w15) — word/commentsExtended.xml. A flat list of
+// commentEx, each keyed by a comment's paraId: paraIdParent links a reply to
+// its parent, done flags a resolved thread. Prefix-agnostic (w15 by convention).
+export function parseCommentsExtended(xml: Uint8Array): Map<string, CommentExtension> {
+  const tree = parser.parse(decoder.decode(xml)) as Array<PoNode>;
+  const out = new Map<string, CommentExtension>();
+  const root = tree.find((n) => poIsLocal(n, 'commentsEx'));
+  if (!root) return out;
+  for (const ex of poChildren(root)) {
+    if (!poIsLocal(ex, 'commentEx')) continue;
+    const paraId = poAttrLocal(ex, 'paraId');
+    if (paraId === undefined) continue;
+    const paraIdParent = poAttrLocal(ex, 'paraIdParent');
+    const done = poAttrLocal(ex, 'done');
+    out.set(paraId, {
+      ...(paraIdParent !== undefined ? { paraIdParent } : {}),
+      done: done === '1' || done === 'true',
+    });
+  }
+  return out;
+}
+
+// Fold commentsExtended thread links onto the comments: a reply gains parentId
+// (the comment owning its paraIdParent), a resolved thread gains done.
+function linkCommentThreads(
+  comments: Map<string, Comment>,
+  paraIdByComment: Map<string, string>,
+  ext: Map<string, CommentExtension>,
+): Map<string, Comment> {
+  if (ext.size === 0) return comments;
+  const commentByParaId = new Map<string, string>();
+  for (const [id, pid] of paraIdByComment) commentByParaId.set(pid, id);
+  const out = new Map<string, Comment>();
+  for (const [id, c] of comments) {
+    const pid = paraIdByComment.get(id);
+    const e = pid !== undefined ? ext.get(pid) : undefined;
+    if (!e) {
+      out.set(id, c);
+      continue;
+    }
+    const parentId = e.paraIdParent !== undefined ? commentByParaId.get(e.paraIdParent) : undefined;
+    out.set(id, {
+      ...c,
+      ...(parentId !== undefined ? { parentId } : {}),
+      ...(e.done ? { done: true } : {}),
+    });
+  }
+  return out;
+}
+
+// Read comments with their thread metadata: comments.xml for content/attribution
+// + commentsExtended.xml (optional) for reply links and resolved flags (CM4).
+export function parseCommentThreads(
+  commentsXml: Uint8Array,
+  commentsExtendedXml: Uint8Array | undefined,
+  ctx: ParseContext = DEFAULT_PARSE_CONTEXT,
+): Map<string, Comment> {
+  const { comments, paraIds } = parseCommentsRaw(commentsXml, ctx);
+  if (!commentsExtendedXml) return comments;
+  return linkCommentThreads(comments, paraIds, parseCommentsExtended(commentsExtendedXml));
+}
+
+// §people (Microsoft w15) — word/people.xml maps an author display name to a
+// presence identity (`w15:presenceInfo/@w15:userId`, usually an email). Returns
+// author → userId, used to enrich a comment's authorId. Prefix-agnostic.
+export function parsePeople(xml: Uint8Array): Map<string, string> {
+  const tree = parser.parse(decoder.decode(xml)) as Array<PoNode>;
+  const out = new Map<string, string>();
+  const root = tree.find((n) => poIsLocal(n, 'people'));
+  if (!root) return out;
+  for (const person of poChildren(root)) {
+    if (!poIsLocal(person, 'person')) continue;
+    const author = poAttrLocal(person, 'author');
+    if (author === undefined) continue;
+    let userId: string | undefined;
+    for (const child of poChildren(person)) {
+      if (!poIsLocal(child, 'presenceInfo')) continue;
+      const uid = poAttrLocal(child, 'userId');
+      if (uid !== undefined) userId = uid;
+    }
+    if (userId !== undefined) out.set(author, userId);
+  }
+  return out;
+}
+
+// Attach each comment's authorId by matching its author name against people.xml.
+export function applyAuthorIds(
+  comments: Map<string, Comment>,
+  people: Map<string, string>,
+): Map<string, Comment> {
+  if (people.size === 0) return comments;
+  const out = new Map<string, Comment>();
+  for (const [id, c] of comments) {
+    const userId = c.author !== undefined ? people.get(c.author) : undefined;
+    out.set(id, userId !== undefined ? { ...c, authorId: userId } : c);
   }
   return out;
 }

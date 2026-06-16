@@ -7,6 +7,7 @@ import type { ColorResolver } from '@/core/drawingml/colors';
 import type {
   BodyElement,
   Chart,
+  Comment,
   DocumentInfo,
   Numbering,
   Section,
@@ -14,9 +15,12 @@ import type {
 } from '@/core/document-model';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
-import type { ResourceId } from '@/core/ir';
+import type { Loss, ResourceId } from '@/core/ir';
 import type { CoreProperties } from '@/core/opc';
 import type { HyperlinkResolver, ImageResolver, ParseContext } from '@/word';
+import type { PoNode } from '@/core/po-helpers';
+import { poFindDescendant } from '@/core/po-helpers';
+import { parseXml } from '@/pptx/pptx-reader';
 import { bytesInclude } from '@/core/bytes';
 import { applyNumbering, applyNumberingToHeadersFooters } from '@/core/numbering';
 import {
@@ -35,11 +39,14 @@ import {
   EMPTY_NUMBERING,
   EMPTY_SECTION,
   EMPTY_SETTINGS,
+  applyAuthorIds,
   loadEmbeddedFonts,
+  parseCommentThreads,
   parseDocument,
   parseHeaderFooter,
   parseNotes,
   parseNumbering,
+  parsePeople,
   parseSections,
   parseSettings,
   parseStyles,
@@ -48,6 +55,9 @@ import {
 const STYLES_PART = 'word/styles.xml';
 const FOOTNOTES_PART = 'word/footnotes.xml';
 const ENDNOTES_PART = 'word/endnotes.xml';
+const COMMENTS_PART = 'word/comments.xml';
+const COMMENTS_EXTENDED_PART = 'word/commentsExtended.xml';
+const PEOPLE_PART = 'word/people.xml';
 const NUMBERING_PART = 'word/numbering.xml';
 const SETTINGS_PART = 'word/settings.xml';
 const CORE_PROPS_PART = 'docProps/core.xml';
@@ -68,7 +78,19 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
   const resources = new ResourceStore();
   const resolveImage = makeImageResolver(pkg, resources);
   const resolveHyperlink = makeHyperlinkResolver(pkg);
-  const ctx: ParseContext = { resolveColor, resolveImage, resolveHyperlink };
+  // Graceful-degradation notices recorded while parsing the body (E-SMARTART
+  // SA3: a SmartArt with no drawing override). Headers/footers and notes don't
+  // resolve diagrams, so the sink rides only on the main-body context.
+  const losses: Array<Loss> = [];
+  const ctx: ParseContext = {
+    resolveColor,
+    resolveImage,
+    resolveHyperlink,
+    resolveDiagram: makeDiagramResolver(pkg, MAIN_DOCUMENT_PART),
+    onLoss: (loss) => losses.push(loss),
+    // Tracks open comment ranges across the body so runs carry commentRangeRefs.
+    openCommentRanges: new Set<string>(),
+  };
   const body = parseDocument(main.data, ctx);
   const rawSections = parseSections(main.data);
 
@@ -93,6 +115,16 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
   const rawEndnotes = endnotesData
     ? parseNotes(endnotesData, 'w:endnotes', 'w:endnote', noteCtx(ENDNOTES_PART))
     : undefined;
+  const commentsData = pkg.getPart(COMMENTS_PART);
+  const commentsExtendedData = pkg.getPart(COMMENTS_EXTENDED_PART);
+  const peopleData = pkg.getPart(PEOPLE_PART);
+  let rawComments = commentsData
+    ? parseCommentThreads(commentsData, commentsExtendedData, noteCtx(COMMENTS_PART))
+    : undefined;
+  // word/people.xml resolves each author to a presence identity (usually email).
+  if (rawComments && peopleData) {
+    rawComments = applyAuthorIds(rawComments, parsePeople(peopleData));
+  }
 
   const settingsData = pkg.getPart(SETTINGS_PART);
   const settings = settingsData ? parseSettings(settingsData) : EMPTY_SETTINGS;
@@ -145,6 +177,9 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
     ...(rawEndnotes && rawEndnotes.size > 0
       ? { endnotes: transformNotes(rawEndnotes, styles, numbering) }
       : {}),
+    ...(rawComments && rawComments.size > 0
+      ? { comments: transformComments(rawComments, styles, numbering) }
+      : {}),
     headersFooters: resolveHeadersFootersStyles(
       applyNumberingToHeadersFooters(headersFooters, numbering),
       styles,
@@ -155,7 +190,7 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
     ...(info ? { info } : {}),
     ...(language ? { language } : {}),
   };
-  return { doc, losses: [] };
+  return { doc, losses };
 }
 
 export const docxReader: DocumentReader<FlowDoc> = {
@@ -198,6 +233,40 @@ function infoFromCore(core: CoreProperties | undefined): DocumentInfo | undefine
   };
 }
 
+// SmartArt: a data relationship id (dgm:relIds @r:dm) → the diagram's
+// pre-rendered drawing override (its dsp:spTree). Follows the doc part →
+// diagrams/data#.xml → (rel type .../diagramDrawing) → diagrams/drawing#.xml.
+// Undefined when the file ships no drawing override (E-SMARTART SA2).
+function makeDiagramResolver(
+  pkg: OpcPackage,
+  partName: string,
+): (relId: string) => PoNode | undefined {
+  const cache = new Map<string, PoNode | undefined>();
+  return (relId) => {
+    if (cache.has(relId)) return cache.get(relId);
+    let spTree: PoNode | undefined;
+    const dataRel = pkg.getPartRelationships(partName).find((r) => r.id === relId);
+    const data = dataRel ? pkg.resolveRelatedPart(partName, dataRel) : undefined;
+    if (data) {
+      const drawRel = pkg
+        .getPartRelationships(data.path)
+        .find((r) => r.type.endsWith('/diagramDrawing'));
+      const draw = drawRel ? pkg.resolveRelatedPart(data.path, drawRel) : undefined;
+      if (draw) {
+        for (const root of parseXml(draw.data)) {
+          const found = poFindDescendant(root, 'dsp:spTree');
+          if (found) {
+            spTree = found;
+            break;
+          }
+        }
+      }
+    }
+    cache.set(relId, spTree);
+    return spTree;
+  };
+}
+
 function makeImageResolver(
   pkg: OpcPackage,
   store: ResourceStore,
@@ -232,6 +301,21 @@ function transformNotes(
 ): ReadonlyMap<string, ReadonlyArray<BodyElement>> {
   for (const content of notes.values()) resolveTableStyles(content, styles);
   return resolveHeadersFootersStyles(applyNumberingToHeadersFooters(notes, numbering), styles);
+}
+
+// Comments get the same FlowDoc transforms as notes, applied to each comment's
+// content; its author/date metadata rides through unchanged (E-COMMENTS CM0).
+function transformComments(
+  comments: Map<string, Comment>,
+  styles: StyleSheet,
+  numbering: Numbering,
+): ReadonlyMap<string, Comment> {
+  const contentById = new Map<string, Array<BodyElement>>();
+  for (const [id, c] of comments) contentById.set(id, [...c.content]);
+  const transformed = transformNotes(contentById, styles, numbering);
+  const out = new Map<string, Comment>();
+  for (const [id, c] of comments) out.set(id, { ...c, content: transformed.get(id) ?? c.content });
+  return out;
 }
 
 // §17.16.22 + OPC §9.3: hyperlink relationship ids are scoped to their OWNING

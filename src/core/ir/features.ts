@@ -20,6 +20,7 @@ export const FEATURES = {
   imagesJp2: 'images.jp2',
   hyperlinks: 'hyperlinks',
   shapes: 'shapes',
+  smartArt: 'shapes.smartArt',
   charts: 'charts',
   math: 'math',
   rtl: 'rtl',

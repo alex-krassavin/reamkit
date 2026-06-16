@@ -611,3 +611,133 @@ describe('pptx bullets + indent (E-PPTX PX6b)', () => {
     expect(Math.round(p?.properties.indentLeft ?? -1)).toBe(36); // level 1 × 0.5"
   });
 });
+
+// E-SMARTART SA0 — a graphicFrame referencing a SmartArt data part (dgm:relIds
+// @r:dm) whose pre-rendered drawing override (diagrams/drawing1.xml) holds two
+// dsp:sp nodes. The reader follows slide → data1.xml → drawing1.xml and renders
+// the nodes as floating shapes positioned within the frame box.
+const DIAGRAM_DATA_REL =
+  'http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramData';
+const DIAGRAM_DRAWING_REL = 'http://schemas.microsoft.com/office/2007/relationships/diagramDrawing';
+const A_MAIN = 'http://schemas.openxmlformats.org/drawingml/2006/main';
+
+const srgbFill = (hex: string): string => `<a:solidFill><a:srgbClr val="${hex}"/></a:solidFill>`;
+// accent1 scheme fill markup — for the SA3 theme-resolution test.
+const SCHEME_ACCENT1_FILL = `<a:solidFill><a:schemeClr val="accent1"/></a:solidFill>`;
+
+function smartArtDeck(
+  opts: { readonly fillA?: string; readonly build?: Parameters<typeof buildPptx>[1] } = {},
+): Uint8Array {
+  const frame =
+    `<p:graphicFrame>` +
+    `<p:xfrm><a:off x="914400" y="914400"/><a:ext cx="5486400" cy="2743200"/></p:xfrm>` +
+    `<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram">` +
+    `<dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" ` +
+    `r:dm="rId100" r:lo="rId101" r:qs="rId102" r:cs="rId103"/>` +
+    `</a:graphicData></a:graphic></p:graphicFrame>`;
+
+  const node = (text: string, x: number, fill: string): string =>
+    `<dsp:sp><dsp:spPr>` +
+    `<a:xfrm><a:off x="${x}" y="0"/><a:ext cx="2743200" cy="1371600"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+    `${fill}` +
+    `</dsp:spPr>` +
+    `<dsp:txBody><a:bodyPr/><a:p><a:r><a:t>${text}</a:t></a:r></a:p></dsp:txBody>` +
+    `</dsp:sp>`;
+
+  const drawing =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+    `<dsp:drawing xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" xmlns:a="${A_MAIN}">` +
+    `<dsp:spTree>` +
+    node('NodeA', 0, opts.fillA ?? srgbFill('4472C4')) +
+    node('NodeB', 2743200, srgbFill('ED7D31')) +
+    `</dsp:spTree></dsp:drawing>`;
+
+  const enc = new TextEncoder();
+  const rels =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="${DIAGRAM_DRAWING_REL}" Target="drawing1.xml"/>` +
+    `</Relationships>`;
+  return buildPptx([frame], {
+    slideRels: [
+      `<Relationship Id="rId100" Type="${DIAGRAM_DATA_REL}" Target="../diagrams/data1.xml"/>`,
+    ],
+    media: {
+      'ppt/diagrams/data1.xml': enc.encode(
+        `<?xml version="1.0"?>\n<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram"/>`,
+      ),
+      'ppt/diagrams/_rels/data1.xml.rels': enc.encode(rels),
+      'ppt/diagrams/drawing1.xml': enc.encode(drawing),
+    },
+    ...opts.build,
+  });
+}
+
+function shapeTexts(doc: ReturnType<typeof Ream.parse>): Array<string> {
+  const out: Array<string> = [];
+  for (const el of doc.flow.body) {
+    if (el.kind === 'shape' && el.shape.text) {
+      const words = el.shape.text.content
+        .flatMap((c) => (c.kind === 'paragraph' ? c.paragraph.runs.map((r) => r.text) : []))
+        .join('');
+      if (words) out.push(words);
+    }
+  }
+  return out;
+}
+
+describe('SmartArt diagrams (E-SMARTART SA0)', () => {
+  it('renders the drawing-override nodes as floating shapes', () => {
+    const texts = shapeTexts(Ream.parse(smartArtDeck()));
+    expect(texts).toContain('NodeA');
+    expect(texts).toContain('NodeB');
+  });
+
+  it('positions each node within the frame box', () => {
+    const xs = Ream.parse(smartArtDeck())
+      .flow.body.filter((e) => e.kind === 'shape')
+      .map((e) => Math.round(e.shape.float?.posH?.offsetPt ?? -1))
+      .sort((a, b) => a - b);
+    // NodeA at the frame offset (914400 EMU = 72pt); NodeB at +2743200 EMU (+216pt).
+    expect(xs).toEqual([72, 288]);
+  });
+
+  it('flows the diagram text through to PDF', async () => {
+    const file = PdfFile.parse(await Ream.parse(smartArtDeck()).convert('pdf', { fonts: FONTS }));
+    const text = extractPageText(file, file.pages()[0]!)
+      .map((r) => r.text)
+      .join('')
+      .replace(/\s/g, '');
+    expect(text).toContain('NodeA');
+    expect(text).toContain('NodeB');
+  });
+
+  it('resolves a node scheme-colour fill through the deck theme (SA3)', () => {
+    // NodeA fills with accent1; the deck theme maps accent1 → FF8800. The shared
+    // ColorResolver that styles ordinary slide shapes styles diagram shapes too.
+    const deck = smartArtDeck({
+      fillA: SCHEME_ACCENT1_FILL,
+      build: { layoutMaster: { theme: `<a:accent1><a:srgbClr val="FF8800"/></a:accent1>` } },
+    });
+    // NodeA (the first diagram shape) fills with accent1, mapped to FF8800 by the
+    // deck theme — the same ColorResolver path that styles ordinary slide shapes.
+    expect(firstShape(Ream.parse(deck))?.fill.colorHex).toBe('FF8800');
+  });
+
+  it('degrades gracefully — and records a loss — when no drawing override ships', () => {
+    // Same frame, but no diagrams/* parts → resolveDiagram yields nothing.
+    const frame =
+      `<p:graphicFrame>` +
+      `<p:xfrm><a:off x="914400" y="914400"/><a:ext cx="5486400" cy="2743200"/></p:xfrm>` +
+      `<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram">` +
+      `<dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" r:dm="rId100"/>` +
+      `</a:graphicData></a:graphic></p:graphicFrame>`;
+    const doc = Ream.parse(buildPptx([frame]));
+    expect(doc.flow.body.filter((e) => e.kind === 'shape')).toHaveLength(0);
+    // SA3: the diagram is dropped explicitly, located to the slide it sat on.
+    const loss = doc.losses.find((l) => l.feature === 'shapes.smartArt');
+    expect(loss?.severity).toBe('dropped');
+    expect(loss?.where).toBe('slide 1');
+  });
+});

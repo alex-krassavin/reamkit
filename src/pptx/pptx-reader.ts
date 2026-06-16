@@ -32,7 +32,7 @@ import {
 import { parseTheme } from '@/core/drawingml/theme-parser';
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
 import { OpcPackage } from '@/core/opc';
-import { poAttr, poChildren, poIntAttr, poIs } from '@/core/po-helpers';
+import { poAttr, poChildren, poFindDescendant, poIntAttr, poIs } from '@/core/po-helpers';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 import { buildPlaceholderCascade } from '@/pptx/placeholder-cascade';
 import { backdropElement, parseBackgroundFill, parseSlideShapes } from '@/pptx/slide-parser';
@@ -122,6 +122,8 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
         resolveImage: makeSlideImageResolver(pkg, part.path, resources),
         resolveChart: makeSlideChartResolver(pkg, part.path, charts, styles.colors),
         resolveHyperlink: makeHyperlinkResolver(pkg, part.path),
+        resolveDiagram: makeSlideDiagramResolver(pkg, part.path),
+        onLoss: (loss) => losses.push(loss.where ? loss : { ...loss, where: `slide ${i + 1}` }),
       };
       body.push(...parseSlide(part.data, ctx, styles.background, pageW, pageH));
     }
@@ -148,7 +150,7 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
   return { doc, losses };
 }
 
-function parseXml(data: Uint8Array): Array<PoNode> {
+export function parseXml(data: Uint8Array): Array<PoNode> {
   return parser.parse(decoder.decode(data)) as Array<PoNode>;
 }
 
@@ -245,6 +247,40 @@ function makeSlideChartResolver(
     }
     cache.set(relId, key);
     return key;
+  };
+}
+
+// SmartArt: a data relationship id (dgm:relIds @r:dm) → the diagram's
+// pre-rendered drawing override (its dsp:spTree). Follows slide →
+// diagrams/data#.xml → (rel type .../diagramDrawing) → diagrams/drawing#.xml.
+// Undefined when the file ships no drawing override (E-SMARTART SA0).
+function makeSlideDiagramResolver(
+  pkg: OpcPackage,
+  slidePath: string,
+): (relId: string) => PoNode | undefined {
+  const cache = new Map<string, PoNode | undefined>();
+  return (relId) => {
+    if (cache.has(relId)) return cache.get(relId);
+    let spTree: PoNode | undefined;
+    const dataRel = pkg.getPartRelationships(slidePath).find((r) => r.id === relId);
+    const data = dataRel ? pkg.resolveRelatedPart(slidePath, dataRel) : undefined;
+    if (data) {
+      const drawRel = pkg
+        .getPartRelationships(data.path)
+        .find((r) => r.type.endsWith('/diagramDrawing'));
+      const draw = drawRel ? pkg.resolveRelatedPart(data.path, drawRel) : undefined;
+      if (draw) {
+        for (const root of parseXml(draw.data)) {
+          const found = poFindDescendant(root, 'dsp:spTree');
+          if (found) {
+            spTree = found;
+            break;
+          }
+        }
+      }
+    }
+    cache.set(relId, spTree);
+    return spTree;
   };
 }
 

@@ -10,7 +10,7 @@ import type { CoreProperties, Relationship } from '@/core/opc';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Sheet, SheetChartRef, SheetDoc } from '@/core/ir/sheet';
-import type { ExcelTable } from '@/core/spreadsheet-model';
+import type { ExcelTable, PivotTable } from '@/core/spreadsheet-model';
 
 import { FEATURES, ResourceStore } from '@/core/ir';
 import { OpcPackage, isOoxmlRel, parseCoreProperties } from '@/core/opc';
@@ -27,6 +27,7 @@ import { DEFAULT_THEME_PALETTE, makeColorResolver } from '@/core/drawingml/color
 import { parseTheme } from '@/core/drawingml/theme-parser';
 import { parseSheetDrawing } from '@/excel/sheet-drawing';
 import { parseTablePart } from '@/excel/table-parser';
+import { parsePivotTablePart } from '@/excel/pivot-table-parser';
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
 
 const WORKBOOK_PART = 'xl/workbook.xml';
@@ -113,7 +114,26 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
       if (resolvedTables.length > 0) tables = resolvedTables;
     }
 
-    const grid = tables ? { ...worksheet, tables } : worksheet;
+    // §18.10: the sheet's pivot tables — referenced ONLY via the worksheet's
+    // relationships (there is no element in the sheet XML), so enumerate the rels
+    // by type. The output cells are already cached in the grid; PV1 just records
+    // the location + named style for PV2 to band (E-PIVOT).
+    let pivotTables: Array<PivotTable> | undefined;
+    {
+      const resolvedPivots: Array<PivotTable> = [];
+      for (const rel of pkg.getPartRelationships(resolved.path)) {
+        if (!isOoxmlRel(rel.type, 'pivotTable')) continue;
+        const part = pkg.resolveRelatedPart(resolved.path, rel);
+        const parsed = part ? parsePivotTablePart(part.data) : undefined;
+        if (parsed) resolvedPivots.push(resolvePivotStyle(parsed, palette));
+      }
+      if (resolvedPivots.length > 0) pivotTables = resolvedPivots;
+    }
+
+    const grid =
+      tables || pivotTables
+        ? { ...worksheet, ...(tables ? { tables } : {}), ...(pivotTables ? { pivotTables } : {}) }
+        : worksheet;
     sheetsOut.push({ name: sheet.name, grid, ...(charts.length > 0 ? { charts } : {}) });
   }
 
@@ -170,6 +190,24 @@ function resolveTableStyle(t: ExcelTable, palette: ReadonlyMap<string, string>):
   }
   // medium / dark: a solid accent header with white text.
   return { ...t, headerHex: base, bandHex: lighten(base, 0.8), headerTextHex: 'FFFFFF' };
+}
+
+// Resolve a pivot's named built-in style to header / band colours. Pivot styles
+// (PivotStyle{Light|Medium|Dark}{N}) live in Excel, not the file; we approximate
+// with the same accent-column heuristic as table styles — the pivot gallery
+// differs in exact numbering, refined later (E-PIVOT PV2). A style-less /
+// unrecognized pivot is left uncoloured (it then renders as a plain grid).
+function resolvePivotStyle(p: PivotTable, palette: ReadonlyMap<string, string>): PivotTable {
+  const m = p.styleName ? /PivotStyle(Light|Medium|Dark)(\d+)/i.exec(p.styleName) : null;
+  if (!m) return p;
+  const kind = m[1]!.toLowerCase();
+  const column = (Number(m[2]) - 1) % 7;
+  const base = column === 0 ? '7F7F7F' : (palette.get(`accent${column}`) ?? '4472C4');
+  if (kind === 'light') {
+    return { ...p, headerHex: lighten(base, 0.6), bandHex: lighten(base, 0.85) };
+  }
+  // medium / dark: a solid accent header with white text.
+  return { ...p, headerHex: base, bandHex: lighten(base, 0.8), headerTextHex: 'FFFFFF' };
 }
 
 // Lighten a 6-hex colour toward white by `amount` (0..1).

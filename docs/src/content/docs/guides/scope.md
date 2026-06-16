@@ -16,8 +16,8 @@ boxes (run formatting, alignment, vertical anchor, bullets, indents),
 layout/master placeholders, pictures, shapes (geometry/fill/stroke/gradient),
 DrawingML tables, embedded charts, theme colours, slide/master backgrounds,
 grouped shapes and run hyperlinks; not read (each a graceful loss): text autofit
-shrink, picture backgrounds, picture placeholders, alpha/roman list numbering,
-SmartArt. PDF input handles classic and modern compressed files
+shrink, picture backgrounds, picture placeholders, alpha/roman list numbering.
+PDF input handles classic and modern compressed files
 (cross-reference streams, object streams) and encrypted files (RC4 / AES; the
 user password is passed to `Ream.parse`, defaulting to the empty permissions-only
 case). A **tagged** PDF (including the ones Ream writes) is rebuilt from
@@ -54,6 +54,16 @@ charts — and is byte-stable across a read↔write loop.
 - **Fields** — `PAGE` / `NUMPAGES` render real page numbers in headers and footers.
 - **Footnotes and endnotes** — notes at the bottom of the referencing page behind
   Word's separator rule; endnotes after the body.
+- **Review comments** (`w:commentReference`) — a bracketed superscript marker in the
+  text and a "Comments" section after the body with each comment's author, date and
+  content (PDF and HTML). Reply threads and resolved state come from
+  `commentsExtended.xml` (replies nest under their parent, resolved threads are
+  flagged); the commented range (`w:commentRangeStart/End`) is highlighted; author
+  identities resolve from `people.xml`. As an opt-in, comments can also be emitted as
+  native PDF sticky-note annotations (`commentAnnotations`, interactive output only).
+- **SmartArt** — rendered from the diagram's pre-rendered DrawingML drawing
+  (`diagrams/drawing#.xml`) as positioned shapes; a file with no drawing fallback
+  degrades to a graceful loss rather than an empty space.
 - Inline and floating images (PNG / JPEG / JPEG2000), including **legacy VML
   pictures** (`<w:pict>` / `<w:object>` — ActiveX and OLE-object previews,
   images from older Word); floating drawings (`wp:anchor`) render outside the
@@ -84,6 +94,10 @@ charts — and is byte-stable across a read↔write loop.
   cross-sheet data ranges and blank-cell gaps.
 - **Excel tables** (`xl/tables`) — banded rows and a styled header row, the
   colours resolved from the named table style against the workbook theme.
+- **Pivot tables** (`xl/pivotTables`) — Excel caches the pivot's output cells in the
+  sheet, so the grid renders as data; on top of that Ream applies the named pivot
+  style (`pivotTableStyleInfo`) — banded rows and a styled header — and emphasises
+  grand-total / subtotal rows. The pivot is not recomputed from its cache.
 - Charts anchored to the sheet (the worksheet drawing part) render after the grid.
 
 **PresentationML (§19)**
@@ -96,6 +110,8 @@ charts — and is byte-stable across a read↔write loop.
   styles from the slide layout → master (`p:txStyles`).
 - Pictures (`p:pic`), shapes with geometry/fill/stroke/gradient, DrawingML tables
   (`a:tbl`) and embedded charts (`c:chart`).
+- **SmartArt** — rendered from the diagram's pre-rendered DrawingML drawing
+  (`dsp:spTree`) as positioned shapes; no drawing fallback ⇒ a graceful loss.
 - **Theme** colours (`a:clrScheme`), slide/master backgrounds (`p:bg`) painted
   behind the content, and groups (`p:grpSp`) mapped through their child transform.
 - Run hyperlinks (`a:hlinkClick`) → clickable PDF annotations / HTML `<a>`.
@@ -134,9 +150,10 @@ charts — and is byte-stable across a read↔write loop.
   metric-compatible substitutes get a target tool's page geometry close — without its
   private font metrics — but _pixel-identical_ output is a non-goal: that would need the
   exact same font file and the renderer's internal glyph rounding.
-- **A few rarely-used constructs are not rendered yet** — Word comments, SmartArt
-  diagrams, and Excel pivot tables / data validation / slicers. (Content controls,
-  field results, and legacy VML/OLE picture previews _are_ handled.)
+- **A couple of rarely-used Excel constructs are not rendered yet** — data
+  validation and slicers. (Word comments, SmartArt diagrams, pivot-table styling,
+  content controls, field results, and legacy VML/OLE picture previews _are_
+  handled.)
 
 ## Validation
 

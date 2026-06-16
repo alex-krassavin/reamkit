@@ -33,7 +33,6 @@ import type {
 import type {
   CellRange,
   DefinedName,
-  ExcelTable,
   MergedRange,
   ParsedWorksheet,
   WorksheetCell,
@@ -894,23 +893,45 @@ interface TableCellFormat {
   readonly fontColorHex?: string;
 }
 
-// Cell (absolute key) → table format for header rows and banded data rows. The
-// header rows take the table's header fill + text colour (white on a Medium/Dark
+// A pivot rowItem @t that marks a total row — 'grand' (grand total) or any
+// subtotal-function name; absent / 'data' / 'blank' are ordinary data rows.
+function isPivotTotal(t: string | undefined): boolean {
+  return t !== undefined && t !== 'data' && t !== 'blank';
+}
+
+// Cell (absolute key) → table/pivot format for header rows and banded data rows.
+// The header rows take the header fill + text colour (white on a Medium/Dark
 // accent); with showRowStripes, the 2nd/4th/… data row takes the band colour
-// (band1 stays unfilled, like Excel). Bounded by real table sizes.
+// (band1 stays unfilled, like Excel). Excel tables count headers as
+// headerRowCount; pivots as firstDataRow (the offset to the first data row).
+// Bounded by real table/pivot sizes (E-SHEET SC3, E-PIVOT PV2).
 function buildTableFormatLookup(worksheet: ParsedWorksheet): Map<string, TableCellFormat> {
   const out = new Map<string, TableCellFormat>();
-  for (const t of worksheet.tables ?? []) {
-    const { ref } = t;
-    const firstDataRow = ref.startRow + t.headerRowCount;
+  const band = (
+    ref: MergedRange,
+    headerRows: number,
+    style: {
+      headerHex?: string;
+      bandHex?: string;
+      headerTextHex?: string;
+      showRowStripes: boolean;
+    },
+    // A pivot total/subtotal data row (by 0-based offset): emphasised like the
+    // header rather than striped (E-PIVOT PV3). Tables pass none.
+    isTotalRow?: (dataOffset: number) => boolean,
+  ): void => {
+    const firstDataRow = ref.startRow + headerRows;
     for (let r = ref.startRow; r <= ref.endRow; r++) {
       let colorHex: string | undefined;
       let fontColorHex: string | undefined;
       if (r < firstDataRow) {
-        colorHex = t.headerHex;
-        fontColorHex = t.headerTextHex;
-      } else if (t.showRowStripes && t.bandHex) {
-        colorHex = (r - firstDataRow) % 2 === 1 ? t.bandHex : undefined;
+        colorHex = style.headerHex;
+        fontColorHex = style.headerTextHex;
+      } else if (isTotalRow?.(r - firstDataRow)) {
+        colorHex = style.headerHex;
+        fontColorHex = style.headerTextHex;
+      } else if (style.showRowStripes && style.bandHex) {
+        colorHex = (r - firstDataRow) % 2 === 1 ? style.bandHex : undefined;
       }
       if (!colorHex && !fontColorHex) continue;
       const fmt: TableCellFormat = {
@@ -918,6 +939,26 @@ function buildTableFormatLookup(worksheet: ParsedWorksheet): Map<string, TableCe
         ...(fontColorHex ? { fontColorHex } : {}),
       };
       for (let c = ref.startColumn; c <= ref.endColumn; c++) out.set(key(r, c), fmt);
+    }
+  };
+  for (const t of worksheet.tables ?? []) band(t.ref, t.headerRowCount, t);
+  for (const p of worksheet.pivotTables ?? [])
+    band(p.ref, p.firstDataRow, p, (off) => isPivotTotal(p.rowItemTypes?.[off]));
+  // Overlay grand-total / subtotal COLUMNS with the header emphasis (E-PIVOT
+  // PV4), overriding whatever the row pass banded in that column.
+  for (const p of worksheet.pivotTables ?? []) {
+    if (!p.colItemTypes || p.headerHex === undefined) continue;
+    const firstDataRow = p.ref.startRow + p.firstDataRow;
+    const firstDataCol = p.ref.startColumn + p.firstDataCol;
+    const totalFmt: TableCellFormat = {
+      shading: { colorHex: p.headerHex },
+      ...(p.headerTextHex ? { fontColorHex: p.headerTextHex } : {}),
+    };
+    for (let i = 0; i < p.colItemTypes.length; i++) {
+      if (!isPivotTotal(p.colItemTypes[i])) continue;
+      const c = firstDataCol + i;
+      if (c > p.ref.endColumn) continue;
+      for (let r = firstDataRow; r <= p.ref.endRow; r++) out.set(key(r, c), totalFmt);
     }
   }
   return out;

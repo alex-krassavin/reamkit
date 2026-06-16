@@ -93,6 +93,10 @@ function assembleStyledPdf(
   // The PDF-only companion (oop-design A13): logical structure, fallback page
   // geometry, PDF/A apparatus. The PageDoc proper stays writer-neutral.
   const { structBuilder, sectionCtxs, pdfaProfile, tagged } = laid.pdf;
+  // CM2b — native /Text (sticky-note) annotations for comments, only for
+  // interactive output: archival (PDF/A) and tagged output forbid / would need
+  // extra conformance for them, and already carry the content via the marker.
+  const commentNotes = !pdfaProfile && !structBuilder ? laid.pdf.commentNotes : undefined;
   // PDF/UA-1 (Matterhorn 06-003/07-001): the document MUST carry a title and
   // viewers must display it — synthesize one when the source has none.
   const docInfo =
@@ -227,6 +231,24 @@ function assembleStyledPdf(
           annotParentCount++;
         }
         annots.push(ref(annotRef.id));
+        // CM2b — a native /Text sticky note at the comment marker, carrying the
+        // comment's author and text for an interactive pop-up (ISO 32000-1
+        // §12.5.6.4). Gated to non-PDF/A, non-tagged output via `commentNotes`.
+        const note = l.anchor !== undefined ? commentNotes?.get(l.anchor) : undefined;
+        if (note) {
+          const textAnnot = doc.add(
+            dict({
+              Type: name('Annot'),
+              Subtype: name('Text'),
+              Name: name('Comment'),
+              Rect: [l.rect[0], l.rect[1], l.rect[2], l.rect[3]],
+              F: 28, // Print + NoZoom + NoRotate — a fixed-size note icon
+              Contents: note.contents,
+              ...(note.author !== undefined ? { T: note.author } : {}),
+            }),
+          );
+          annots.push(ref(textAnnot.id));
+        }
       }
       if (annots.length > 0) {
         pageEntries['Annots'] = annots;
@@ -857,6 +879,35 @@ function emitPageContent(
         const text = tok.bidiLevel % 2 === 1 ? reverseByCodePoint(tok.text) : tok.text;
         return tok.font.measure.encodeTextAsCidHex(text);
       };
+
+      // Comment-range highlight (CM2c): a soft fill behind highlighted tokens.
+      // Path ops can't sit inside a text object, so close BT first; the text
+      // emit below reopens it. Gated on a highlight being present, so every line
+      // in a document with no comment ranges emits byte-identically.
+      if (line.tokens.some((t) => t.kind === 'text' && t.highlight === true)) {
+        if (inBT) {
+          out.push('ET');
+          inBT = false;
+        }
+        const hlAscent = Math.max(lineFs, line.mathAscentPt ?? 0);
+        const hlDescent = Math.max(lineFs * 0.2, line.mathDescentPt ?? 0);
+        const [hr, hg, hb] = hexToRgb01('fff3a3');
+        out.push('q');
+        out.push(`${formatNumber(hr)} ${formatNumber(hg)} ${formatNumber(hb)} rg`);
+        let hx: number = originX;
+        for (const tok of line.tokens) {
+          const w = tok.widthPt + (tok.kind === 'text' && tok.isSpace ? extraPerSpace : 0);
+          if (tok.kind === 'text' && tok.highlight === true) {
+            out.push(
+              `${formatNumber(hx)} ${formatNumber(baselineY - hlDescent)} ` +
+                `${formatNumber(w)} ${formatNumber(hlAscent + hlDescent)} re`,
+            );
+          }
+          hx += w;
+        }
+        out.push('f');
+        out.push('Q');
+      }
 
       if (extraPerSpace > 0 || hasImageToken || hasMathToken || hasRtl) {
         // Per-token absolute positioning. Required for justify (inter-word

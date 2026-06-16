@@ -105,6 +105,9 @@ export interface ParsedWorksheet {
   readonly tablePartRelIds?: ReadonlyArray<string>;
   // Resolved table parts (banded styles, header rows) — filled by the reader.
   readonly tables?: ReadonlyArray<ExcelTable>;
+  // Resolved pivot tables (E-PIVOT) — discovered via the sheet's pivotTable
+  // relationships (no element in the sheet XML), resolved by the reader.
+  readonly pivotTables?: ReadonlyArray<PivotTable>;
   // ECMA-376 §18.3.1.66 <sheetView><pane state="frozen"> — frozen rows/columns.
   // A VIEW setting with NO effect on print/PDF (printed repeats are Print_Titles);
   // carried for round-trip fidelity and HTML sticky panes (E-SHEET SE2/SE3).
@@ -135,6 +138,33 @@ export interface ExcelTable {
   readonly autoFilter: boolean;
   // Resolved fills + header text colour (6-hex) — the reader derives these from
   // the named style + workbook theme (E-SHEET SC3).
+  readonly headerHex?: string;
+  readonly bandHex?: string;
+  readonly headerTextHex?: string;
+}
+
+// ECMA-376 §18.10.1.73 <pivotTableDefinition> — a pivot table. Its OUTPUT cells
+// are already cached in the worksheet, so they render as a normal grid; this
+// carries the pivot's location and named style so the reader can band the region
+// in the pivot's own palette (E-PIVOT). The structural model (row/column fields,
+// subtotals, collapse state) is later work — only location + style here.
+export interface PivotTable {
+  readonly ref: MergedRange; // <location ref>
+  readonly name?: string;
+  readonly styleName?: string; // <pivotTableStyleInfo name>, e.g. PivotStyleDark1
+  readonly firstHeaderRow: number; // header rows from the range top (default 1)
+  readonly firstDataRow: number; // first data row, offset from the range top
+  readonly firstDataCol: number; // first data column, offset from the range left
+  readonly showRowStripes: boolean;
+  readonly showColStripes: boolean;
+  // §18.10.1.74 <rowItems>/<colItems> item type per data row / column (in
+  // order): 'grand' (grand total), a subtotal-function name (subtotal), or
+  // undefined (a plain data line). The i-th entry maps to data row/column
+  // `firstDataRow/Col + i` (E-PIVOT PV3/PV4).
+  readonly rowItemTypes?: ReadonlyArray<string | undefined>;
+  readonly colItemTypes?: ReadonlyArray<string | undefined>;
+  // Resolved fills + header text colour (6-hex) — derived from the named pivot
+  // style + workbook theme by the reader (E-PIVOT PV2).
   readonly headerHex?: string;
   readonly bandHex?: string;
   readonly headerTextHex?: string;

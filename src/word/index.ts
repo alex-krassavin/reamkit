@@ -1,4 +1,5 @@
 export type { HyperlinkResolver, ImageResolver, ParseContext } from '@/word/document-parser';
+export type { CommentExtension } from '@/word/document-parser';
 export { extractParagraphs } from '@/word/text-extractor';
 export {
   parseDocument,
@@ -7,6 +8,11 @@ export {
   parseSections,
   parseHeaderFooter,
   parseNotes,
+  parseComments,
+  parseCommentThreads,
+  parseCommentsExtended,
+  parsePeople,
+  applyAuthorIds,
   EMPTY_SECTION,
 } from '@/word/document-parser';
 export { parseRunProperties } from '@/word/run-properties';

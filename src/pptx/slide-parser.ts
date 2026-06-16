@@ -30,19 +30,20 @@ import type {
   TableRow,
 } from '@/core/document-model';
 import type { ColorResolver } from '@/core/drawingml/colors';
-import type { Pt, ResourceId } from '@/core/ir';
+import type { Loss, Pt, ResourceId } from '@/core/ir';
 import type { PoNode } from '@/core/po-helpers';
 import type { PlaceholderCascade } from '@/pptx/placeholder-cascade';
 import type { PlaceholderRef, ShapeBoxEmu } from '@/pptx/sp-helpers';
 
 import { defaultColorResolver, resolveColorNode } from '@/core/drawingml/colors';
-import { emuToPt } from '@/core/ir';
+import { FEATURES, emuToPt } from '@/core/ir';
 import { poAttr, poChildren, poFindDescendant, poIntAttr, poIs, poText } from '@/core/po-helpers';
 import { parseCustGeom, parseFill, parseLine, parsePrstGeom } from '@/word/drawing-parser';
 import { boxFromXfrm, parsePh, parseXfrmBox, rPrToRunProps } from '@/pptx/sp-helpers';
 
 const CHART_URI = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
 const TABLE_URI = 'http://schemas.openxmlformats.org/drawingml/2006/table';
+const DIAGRAM_URI = 'http://schemas.openxmlformats.org/drawingml/2006/diagram';
 
 // Per-slide parsing context: the placeholder cascade (PX2), an image resolver
 // that turns a slide-scoped relationship id (a:blip @r:embed) into a
@@ -58,6 +59,14 @@ export interface SlideContext {
   readonly colors?: ColorResolver;
   // A run hyperlink (a:hlinkClick @r:id) → its external URL (PX6).
   readonly resolveHyperlink?: (relId: string) => string | undefined;
+  // A SmartArt data relationship (dgm:relIds @r:dm) → the diagram's pre-rendered
+  // drawing override (its dsp:spTree), or undefined when the file ships no
+  // override (E-SMARTART SA0).
+  readonly resolveDiagram?: (relId: string) => PoNode | undefined;
+  // Sink for graceful-degradation notices (E-SMARTART SA3): a SmartArt that
+  // declares a diagram but ships no drawing override records a dropped-feature
+  // Loss here rather than vanishing without a trace.
+  readonly onLoss?: (loss: Loss) => void;
 }
 
 type LinkResolver = ((relId: string) => string | undefined) | undefined;
@@ -96,8 +105,7 @@ export function parseSlideShapes(
       const image = parsePic(child, ctx, transform);
       if (image) out.push({ kind: 'image', image });
     } else if (poIs(child, 'p:graphicFrame')) {
-      const el = parseGraphicFrame(child, ctx, transform);
-      if (el) out.push(el);
+      out.push(...parseGraphicFrame(child, ctx, transform));
     } else if (poIs(child, 'p:grpSp')) {
       out.push(...parseSlideShapes(child, ctx, composeGroupTransform(child, transform)));
     }
@@ -182,15 +190,17 @@ function parseSp(sp: PoNode, ctx: SlideContext, transform: GroupTransform): Shap
   };
 }
 
-// p:graphicFrame → a floating chart (c:chart, PX4a) or table (a:tbl, PX4b). The
-// frame's transform is p:xfrm (a:off + a:ext), not the a:xfrm of a shape.
+// p:graphicFrame → floating chart (c:chart, PX4a), table (a:tbl, PX4b) or a
+// SmartArt diagram's shapes (dgm, E-SMARTART SA0). Returns an array because a
+// diagram expands to many shapes; chart/table yield one element. The frame's
+// transform is p:xfrm (a:off + a:ext), not the a:xfrm of a shape.
 function parseGraphicFrame(
   gf: PoNode,
   ctx: SlideContext,
   transform: GroupTransform,
-): BodyElement | undefined {
+): Array<BodyElement> {
   const own = boxFromXfrm(poChildren(gf).find((c) => poIs(c, 'p:xfrm')));
-  if (!own) return undefined;
+  if (!own) return [];
   const box = transform(own);
   const graphicData = poFindDescendant(gf, 'a:graphicData');
   const uri = graphicData ? poAttr(graphicData, 'uri') : undefined;
@@ -199,7 +209,7 @@ function parseGraphicFrame(
     const cChart = poFindDescendant(gf, 'c:chart');
     const relId = cChart ? poAttr(cChart, 'id') : undefined; // r:id
     const key = relId !== undefined ? ctx.resolveChart?.(relId) : undefined;
-    if (key === undefined) return undefined;
+    if (key === undefined) return [];
     const chart: ChartBlock = {
       float: floatAt(box),
       chartRelId: key,
@@ -207,7 +217,7 @@ function parseGraphicFrame(
       height: emuToPt(box.cy),
       paragraphProperties: {},
     };
-    return { kind: 'chart', chart };
+    return [{ kind: 'chart', chart }];
   }
 
   if (uri === TABLE_URI) {
@@ -216,10 +226,115 @@ function parseGraphicFrame(
     // position is a later refinement.
     const tbl = poFindDescendant(gf, 'a:tbl');
     return tbl
-      ? { kind: 'table', table: parseTable(tbl, ctx.colors ?? defaultColorResolver) }
-      : undefined;
+      ? [{ kind: 'table', table: parseTable(tbl, ctx.colors ?? defaultColorResolver) }]
+      : [];
   }
-  return undefined;
+
+  // SmartArt: render the pre-rendered drawing override (dsp:spTree) as floating
+  // shapes positioned within the frame box. No override ⇒ no shapes (SA0).
+  if (uri === DIAGRAM_URI) {
+    const relIds = poFindDescendant(gf, 'dgm:relIds');
+    const dmRelId = relIds ? poAttr(relIds, 'dm') : undefined; // r:dm → data part
+    const spTree = dmRelId !== undefined ? ctx.resolveDiagram?.(dmRelId) : undefined;
+    if (!spTree) {
+      // SmartArt is declared but ships no pre-rendered drawing override; record
+      // a graceful loss instead of silently dropping the diagram (SA3).
+      if (dmRelId !== undefined) ctx.onLoss?.(noDiagramOverrideLoss());
+      return [];
+    }
+    return parseDiagramDrawing(
+      spTree,
+      diagramTransform(spTree, box),
+      floatAt,
+      ctx.colors ?? defaultColorResolver,
+      ctx.resolveHyperlink,
+    ).map((shape) => ({ kind: 'shape', shape }));
+  }
+  return [];
+}
+
+// The diagram's child shapes live in the spTree's own coordinate space
+// (dsp:grpSpPr/a:xfrm chOff/chExt); map that onto a target box (the frame on a
+// slide, or the inline/anchored box in docx). Usually the child space equals the
+// box, so the scale is 1. Shared by pptx and docx (E-SMARTART).
+export function diagramTransform(spTree: PoNode, frame: ShapeBoxEmu): GroupTransform {
+  const grpSpPr = poChildren(spTree).find((c) => poIs(c, 'dsp:grpSpPr'));
+  const xfrm = grpSpPr ? poChildren(grpSpPr).find((c) => poIs(c, 'a:xfrm')) : undefined;
+  const chOff = xfrm ? poChildren(xfrm).find((c) => poIs(c, 'a:chOff')) : undefined;
+  const chExt = xfrm ? poChildren(xfrm).find((c) => poIs(c, 'a:chExt')) : undefined;
+  const chExtCx = chExt ? poIntAttr(chExt, 'cx') : undefined;
+  const chExtCy = chExt ? poIntAttr(chExt, 'cy') : undefined;
+  const chOffX = (chOff ? poIntAttr(chOff, 'x') : undefined) ?? 0;
+  const chOffY = (chOff ? poIntAttr(chOff, 'y') : undefined) ?? 0;
+  const sx = chExtCx && chExtCx > 0 ? frame.cx / chExtCx : 1;
+  const sy = chExtCy && chExtCy > 0 ? frame.cy / chExtCy : 1;
+  return (b) => ({
+    x: frame.x + (b.x - chOffX) * sx,
+    y: frame.y + (b.y - chOffY) * sy,
+    cx: b.cx * sx,
+    cy: b.cy * sy,
+  });
+}
+
+// A SmartArt diagram that declares its data part but ships no pre-rendered
+// drawing override (older files, or a generator that omitted the fallback).
+// Ream renders the override rather than executing Office's layout engine, so
+// without it the diagram can't be drawn — this records the gap as a dropped
+// feature instead of letting it vanish. Shared by pptx and docx (E-SMARTART SA3).
+export function noDiagramOverrideLoss(where?: string): Loss {
+  return {
+    severity: 'dropped',
+    feature: FEATURES.smartArt,
+    detail:
+      'SmartArt diagram has no pre-rendered drawing override; its layout is not reconstructed',
+    ...(where ? { where } : {}),
+  };
+}
+
+// Render a SmartArt drawing override (a dsp:spTree) into floating shapes.
+// `transform` maps each shape's diagram-space box to the target space and
+// `makeFloat` anchors it: page-relative for a slide, column/paragraph-relative
+// for an inline docx diagram. The dsp: wrapper holds an ordinary a: spPr/txBody,
+// so the shared DrawingML readers apply unchanged. Shared by pptx and docx
+// (E-SMARTART); diagrams carry no placeholder cascade.
+export function parseDiagramDrawing(
+  spTree: PoNode,
+  transform: GroupTransform,
+  makeFloat: (box: ShapeBoxEmu) => FloatAnchor,
+  colors: ColorResolver,
+  resolveLink: LinkResolver,
+): Array<ShapeBlock> {
+  const out: Array<ShapeBlock> = [];
+  for (const sp of poChildren(spTree)) {
+    if (!poIs(sp, 'dsp:sp')) continue;
+    const spPr = poChildren(sp).find((c) => poIs(c, 'dsp:spPr'));
+    const own = parseXfrmBox(spPr);
+    if (!own) continue;
+    const box = transform(own);
+
+    const txBody = poChildren(sp).find((c) => poIs(c, 'dsp:txBody'));
+    const text = txBody
+      ? parseTxBody(txBody, undefined, undefined, colors, resolveLink)
+      : undefined;
+
+    const geometry = parseGeometry(spPr);
+    const fill: ShapeFill = spPr ? parseFill(spPr, colors) : { kind: 'none' };
+    const line = spPr ? parseLine(spPr, colors) : undefined;
+    const visibleLine = line !== undefined && line.fill !== 'none';
+    if (!text && fill.kind === 'none' && !visibleLine) continue;
+
+    out.push({
+      float: makeFloat(box),
+      width: emuToPt(box.cx),
+      height: emuToPt(box.cy),
+      geometry,
+      fill,
+      ...(line ? { line } : {}),
+      ...(text ? { text } : {}),
+      paragraphProperties: {},
+    });
+  }
+  return out;
 }
 
 // p:bg → the background fill, or undefined when none/unsupported. p:bgPr carries

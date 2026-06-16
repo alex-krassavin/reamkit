@@ -817,6 +817,364 @@ xlsx скоупится прочь. **E-PARITY завершён** (FP1–FP4 + F
 
 ---
 
+## E-SMARTART — SmartArt-диаграммы через DrawingML-fallback (docx + pptx)
+
+**Цель.** Рендерить SmartArt в docx и pptx через готовый drawing-override
+(`diagrams/drawing#.xml`), переиспользуя существующую шейпо-машинерию. Закрывает пункт
+«Not yet» из `scope.md` (Word comments / SmartArt / Excel pivot…). Выбран первым по
+ROI: бьёт сразу в docx И pptx, переиспользует максимум.
+
+**Усилие: малое→среднее.** Не новый рендер: `dsp:spTree` структурно = группа DrawingML-
+шейпов, которую Ream уже рисует. Стоимость — только фронт: резолв рельс до drawing-
+override + `dsp:`-walker, кладущий `dsp:spPr`/`dsp:txBody` в существующие `a:`-читалки.
+
+### Главное архитектурное решение (принято ДО кода): drawing-override, не layout-движок
+- **A (выбран): читаем готовый `diagrams/drawing#.xml`** (`dsp:drawing/dsp:spTree`) —
+  позиционированные шейпы, которые Office УЖЕ разложил. Эмитим как floating-шейпы (docx
+  `ShapeBlock` / pptx float-элемент). Ноль нового layout. Покрывает современные файлы
+  (Office 2010+ пишет fallback-override).
+- **B (отвергнут): исполнять SmartArt layout-алгоритм** (`data1.xml` + `layout1.xml`) —
+  огромный движок раскладки узлов, фактически переписать Office. Не оправдано.
+- **C (graceful): файлы без override** (старые/редкие) → loss «SmartArt без drawing
+  fallback», без падения.
+
+**Ключ по namespace (проверено):** `dsp:` — это ТОЛЬКО обёртки (`dsp:sp`/`dsp:spPr`/
+`dsp:txBody`/`dsp:spTree`/`dsp:txXfrm`). Внутри `dsp:spPr` геометрия/заливка/линия/xfrm —
+обычные `a:`-элементы (`a:prstGeom`/`a:solidFill`/`a:ln`/`a:xfrm`), т.к. тип `dsp:spPr` =
+`a:CT_ShapeProperties`. Значит `parseFill`/`parseLine`/`parsePrstGeom`/`parseXfrmBox`/
+`parseTxBody` работают над `dsp:`-узлами БЕЗ правок — нужен лишь walker, достающий обёртки.
+
+### Точки привязки (проверено на 1.11.0)
+- docx: `drawing-parser.ts:182` (`graphicData`/`uri`); ветки `WPS_URI`(185)/`CHART_URI`(190)/
+  pic-fallback(205); константы uri 35-36 → добавить `DIAGRAM_URI =
+  '…/drawingml/2006/diagram'`. `document-parser.ts:363` `tryExtractDrawingFromParagraph`
+  диспатчит `content.kind`→`BodyElement`.
+- pptx: `slide-parser.ts:195` (`parseGraphicFrame` uri); `CHART_URI`(198)/`TABLE_URI`(213)/
+  fallback-undefined(222) → добавить ветку diagram. Группо-машинерия `parseSlideShapes`(85)
+  / `composeGroupTransform`(110) / `parseSp`(151) переиспользуется для `dsp:spTree`.
+- rels: `pkg.getPartRelationships(path)` + `pkg.resolveRelatedPart(path, rel)`
+  (`opc/package.ts:121,140`); пример цепочки от не-корневой части — `docx-reader.ts:255`
+  (`loadCharts`), `pptx-reader.ts:195` (per-slide image resolver).
+- модель: shapes ПЛОСКИЕ — `BodyElement{kind:'shape', shape:ShapeBlock}` (`types.ts:699`),
+  контейнера группы нет; диаграмма = набор floating-`ShapeBlock`'ов на боксе anchor'а.
+
+### Декомпозиция (вертикальными срезами; новая uri-ветка → байт-в-ноль без SmartArt)
+- **SA0 — шов: резолв override + `dsp:spTree`→шейпы, проводка в pptx.** Резолв
+  `dgm:relIds@r:dm` → `diagrams/data#.xml` → (rel type `diagramDrawing`) → `drawing#.xml`;
+  `parseDiagramDrawing` обходит `dsp:spTree/dsp:sp`, эмитит floating-шейпы (geometry/fill/
+  line через существующие `a:`-читалки), позиции через frame→child трансформу (как группа).
+  End-to-end: pptx со SmartArt → PDF, шейпы на координатах.
+- **SA1 — текст в шейпах** (`dsp:txBody` → `ShapeTextBody` через `parseTxBody`): абзацы/
+  раны/выравнивание/цвет/буллеты.
+- **SA2 — docx-проводка** (`parseDrawing` `DIAGRAM_URI` → floating `ShapeBlock`'ы; резолв
+  через `word/document.xml.rels`). Тот же `parseDiagramDrawing`.
+- **SA3 — цвета/тема + graceful loss + демо.** scheme-цвета через ColorResolver; нет
+  override → loss; демо docx+pptx.
+
+### Риски
+- **Нет drawing-override** (старые файлы) → graceful loss, не падение; layout-движок вне
+  области.
+- **`dsp:`-обёртки vs `a:`-контент** — подтверждено: правок в sub-парсеры не нужно, только
+  walker; если где-то всплывёт `dsp:`-контент — точечно добавить префикс.
+- Байт-в-ноль: новая uri-ветка не трогает существующие пути; снапшоты docx/xlsx/pdf без
+  SmartArt не двигаются.
+
+### Прогресс
+- **SA0 ✓** — pptx-шов: drawing-override резолв + `dsp:spTree`→шейпы. `parseGraphicFrame`
+  получил ветку `DIAGRAM_URI` (теперь возвращает `BodyElement[]` — диаграмма = много
+  шейпов); `dgm:relIds@r:dm` → `makeSlideDiagramResolver` идёт slide→`diagrams/data#.xml`→
+  (rel `/diagramDrawing`)→`drawing#.xml`, парсит `dsp:spTree`. `parseDspSp` обходит `dsp:sp`,
+  кладёт `dsp:spPr`/`dsp:txBody` в существующие `a:`-читалки (geometry/fill/line/txBody) —
+  правок в sub-парсеры НЕ потребовалось, как и предсказано. `diagramTransform` мапит
+  child-space диаграммы на бокс фрейма (как группа). Нет override → пусто (graceful). Тесты:
+  узлы → floating-шейпы, позиции точно 72/288pt, текст в PDF, no-override→0 шейпов.
+  Байт-в-ноль (uri-ветка не трогает существующие пути). 826 тестов (+4). (SA1 «текст-
+  полнота» по факту вошёл в SA0 — `parseTxBody` уже даёт буллеты/уровни/выравнивание.)
+- **SA2 ✓** — docx-проводка + общий `parseDiagramDrawing`. Вынес walker из slide-parser в
+  экспортируемый `parseDiagramDrawing(spTree, transform, makeFloat, colors, resolveLink)` —
+  переиспользуют pptx (page-relative `floatAt`) и docx. docx: `DrawingContent` получил
+  `diagram`-вариант, `parseDrawing` — ветку, `ParseContext.resolveDiagram`,
+  `makeDiagramResolver` (`document.xml.rels`→`diagrams/data#.xml`→`/diagramDrawing`→
+  `drawing#.xml`); узлы — column/paragraph-relative floats (inline-кейс, основной для docx).
+  `tryExtract` теперь возвращает `BodyElement[]` (диаграмма = много шейпов; image/chart/shape
+  байт-идентичны). `parseXml` экспортирован из pptx-reader. Цикла нет (acyclic word→pptx).
+  Байт-в-ноль: новая uri-ветка не трогает существующее, no-override → абзац сохраняется.
+  829 тестов (+3 docx). Хвост: anchored-docx (page-relative) + точная inline-позиция по
+  потоку; вынос `parseDiagramDrawing` в нейтральный `core/drawingml` (сейчас acyclic
+  word→pptx).
+- **SA3 ✓** — цвета/тема + graceful loss + демо; эпик закрыт. (1) **Явный loss «нет
+  override».** Новый `Feature` `shapes.smartArt`; общая фабрика `noDiagramOverrideLoss()`
+  (slide-parser) эмитит `dropped`-лосс. Проводка через новый `SlideContext.onLoss` /
+  `ParseContext.onLoss`: pptx обогащает `where: 'slide N'`; docx-reader теперь реально
+  возвращает `losses` (был жёсткий `[]`) — sink висит на body-контексте (HF/notes
+  диаграммы не резолвят → без ложных лоссов). `shapes.smartArt` НЕ в `supports`: полный
+  SmartArt = layout-движок (вне области) — рендерим при наличии override, иначе лосс, и это
+  честная декларация возможностей. (2) **Scheme-цвета** уже резолвятся общим `ColorResolver`
+  (тот же путь, что обычные шейпы); закреплено тестами: `<a:schemeClr val="accent1"/>` в
+  override → тема `accent1`=FF8800 в pptx И docx (docx через `word/theme/theme1.xml`). (3)
+  **Демо:** docx SmartArt end-to-end → PDF (текст узлов в выводе) + HTML — впервые проверен
+  сквозной рендер docx-диаграммы (SA2 проверял только FlowDoc-модель); pptx-демо был в SA0.
+  Байт-в-ноль: лоссы — метадата, не байты; фикстуры без override-less SmartArt дают
+  `losses: []` как раньше. 832 теста (+3). Хвосты эпика — те же из SA2 (anchored-docx
+  page-relative; точная inline-позиция по потоку; вынос `parseDiagramDrawing` в нейтральный
+  `core/drawingml`).
+
+---
+
+## E-COMMENTS — рецензентские комментарии Word (docx → PDF/HTML)
+
+**Цель.** Рендерить ревью-комментарии docx (автор/дата/текст), привязанные к точке ссылки в
+теле, в PDF и HTML. Сейчас тихо отбрасываются. Следующий пункт «Not yet» из `scope.md`.
+
+**Усилие: малое→среднее.** Не новая машинерия: комментарий структурно = сноска с автором.
+Переиспользуем почти весь конвейер footnotes/endnotes (модель-карта по id, `parseNotes`,
+`transformNotes`, секция-в-конце, inline-маркер).
+
+### Главное архитектурное решение (ДО кода): FlowDoc-секция + маркер, не балунны на полях
+- **A (выбран): inline-маркер у ссылки + секция «Comments» в конце** (как endnotes), плюс
+  позже нативные PDF `/Text`-аннотации. Ноль нового layout: переиспользуем notes-рендер.
+  Верность: весь текст/автор/дата сохранены, привязка — маркером.
+- **B (отвергнут как первый срез): балуны на правом поле с выносными линиями** — требует
+  рефактора layout (резерв колонки поля + leader-lines). Вне первого среза.
+- **C (graceful): docx без `comments.xml`** → новое поле отсутствует → байт-в-ноль.
+
+### Точки привязки (проверено на 3aa7e1a)
+- модель: `flow.ts:41-42` (`footnotes`/`endnotes` карты) → добавить `comments` рядом;
+  `document-model/types.ts:247-248` (Run `footnoteRef`/`endnoteRef`) → добавить `commentRef`.
+- парсер: `document-parser.ts:695-703` (`w:footnoteReference`/`w:endnoteReference` → ref на
+  ране) → ветка `w:commentReference`; заодно ловить `w:commentRangeStart`/`End` @w:id (для
+  подсветки диапазона в CM2).
+- ридер: `docx-reader.ts:52-53` (`FOOTNOTES_PART`/`ENDNOTES_PART`) → `COMMENTS_PART =
+  'word/comments.xml'`; `:96-108` (`noteCtx` + `parseNotes`) → загрузка через comment-aware
+  парс (карта id→{author,date,initials,content}); `:155-160` (`transformNotes`-проводка в
+  FlowDoc) → добавить `comments`; `:275` `transformNotes`. Лоссы уже протянуты (SA3).
+- фича: `features.ts` → `comments: 'comments'`.
+- рендер: HTML `html-writer.ts` (notes-секция + ветка `run.footnoteRef` ~482-489) →
+  ветка `commentRef` + секция; PDF `styled-page-emitter.ts:192-229` (link-аннотации) → задел
+  для нативных `/Text`-аннотаций (CM2).
+
+### Декомпозиция (вертикальными срезами; нет comments.xml → байт-в-ноль)
+- **CM0 — модель+парс+маркер+loss.** `Run.commentRef`; парс `w:commentReference`; модель
+  `Comment{author,date,initials,content:BodyElement[]}` + карта `comments` на FlowDoc;
+  загрузка `comments.xml` (comment-aware парс — `parseNotes` теряет атрибуты, нужен свой).
+  End-to-end: комментарии в модели; без комментариев → байт-в-ноль.
+- **CM1 — рендер: inline-маркер + секция «Comments» (HTML+PDF через FlowDoc).** Маркер у
+  ссылки; список «author (date): text» в конце. Оба таргета сразу, максимум переиспользования.
+- **CM2 — нативные PDF `/Text`-аннотации + подсветка диапазона** (`styled-page-emitter`):
+  sticky-note у ссылки; подсветка `commentRangeStart..End`. Верность-срез, отложен.
+- **CM3 — полиш:** `commentsExtended.xml` (ответы/треды), `people.xml` (резолв автора),
+  docx write-back (roundtrip), демо, scope.md.
+
+### Риски
+- `parseNotes` теряет атрибуты элемента (author/date) → нужен comment-aware парс.
+- Range-маркеры (start/end) бывают несбалансированы/вложены → толерантно (id-карта, не стек).
+- Секция-в-конце меняет пагинацию — ок: новый контент только для docx С комментариями.
+
+### Прогресс
+- **CM0 ✓** — модель+парс+загрузка. `Run.commentRef` (рядом с footnoteRef/endnoteRef);
+  парс `w:commentReference` в `collectRuns`; модель `Comment{content,author,initials,date}`
+  (в `document-model/types.ts`, экспорт через barrel) + карта `comments` на FlowDoc; новый
+  `parseComments` (comment-aware — `parseNotes` теряет атрибуты) рядом с `parseNotes`; ридер:
+  `COMMENTS_PART`, загрузка через `noteCtx`, `transformComments` (те же FlowDoc-трансформы,
+  что у нот, метадата проходит насквозь). Тесты: автор/инициалы/дата/текст в `flow.comments`;
+  ран помечен `commentRef`; без `comments.xml` → `comments` отсутствует (ран сохраняет
+  dangling-ref для рендера CM1). Байт-в-ноль: новые опц-поля, docx без комментариев не
+  двигаются. 835 тестов (+3). `commentRangeStart/End` пока игнорируются (для подсветки в CM2).
+- **CM1 ✓** — рендер в обоих таргетах (HTML+PDF через FlowDoc, как endnotes — отдельное
+  поле, НЕ дописываем в body → docx-writer roundtrip не задет). HTML: `collectNoteNumbers`
+  даёт `comments`-карту (нумерация по порядку ссылок); ран `commentRef` → `<sup>[n]</sup>`
+  со ссылкой; `emitCommentsSection` — `<section class="comments">` с автором/датой/текстом.
+  PDF/layout: `assignNoteNumbers` нумерует комментарии + переписывает ран в маркер `[n]`
+  (superscript); хвост после endnotes (`commentTailBlocks` — `[n] author, date: content`);
+  `StyledRenderOptions.comments` + `flowRenderOptions` + сбор шрифтов/ресурсов по контенту.
+  Байт-в-ноль: guard `hasRefs`/size===0 не трогает доки без комментариев; ни один PDF-снапшот
+  не сдвинулся (в фикстурах комментов нет). 837 тестов (+2: HTML + PDF).
+- **CM2 ✓ — кликабельный маркер.** Маркер `[n]` в PDF стал кликабельным переходом к записи
+  комментария (internal GoTo на закладку `comment-${n}`), ПЕРЕИСПОЛЬЗУЯ проверенный link+
+  bookmark путь (W1/W5a) — PDF/A-безопасно и tagged-безопасно, паритет с HTML (там маркер уже
+  ссылка на `#cm-n`). Реализация: `commentMarkerRun` (в `assignNoteNumbers`) добавляет
+  `anchor: comment-${n}` ТОЛЬКО для рендеримых комментов (проброшен `commentIds` из
+  `options.comments` → dangling-ref без `comments.xml` получает маркер без ссылки, без битого
+  dest); `commentTailBlocks` кладёт `bookmarks: [comment-${n}]` на первый абзац записи →
+  ассемблер пагинации регистрирует dest. Байт-в-ноль: доки без комментов идентичны (anchor
+  только на маркер-ране); ни один снапшот не сдвинулся; veraPDF зелёный. Тест: PDF содержит
+  `/Subtype /Link` + `/S /GoTo`. 845 тестов (+1). **Сознательно отложено** (диспропорция
+  риск/польза): нативные `/Text` sticky-note-аннотации (CM2b) и подсветка диапазона
+  `commentRangeStart/End` (CM2c) — обе тянут PDF/A + tagged-PDF annotation-compliance (риск
+  veraPDF-гейту) ради фиделити поверх уже-читаемого рендера.
+- **CM3 (частично) ✓ — docx write-back.** Комментарии теперь переживают docx→docx (был
+  пробел). Зеркало WT2 (footnotes write-back): `emitComments` пишет `word/comments.xml`
+  (`<w:comment w:id w:author w:date w:initials>` + контент через общий `emitBlock`, без
+  separator-стабов) + content-type + doc-rel; run-write-back эмитит `<w:commentReference>`
+  для ранов с `commentRef` (и они переживают `visible`-фильтр пустых ранов). Тест: docx с
+  комментом → `convert('docx')` → ре-рид → автор/инициалы/дата/текст и `commentRef` на ране
+  сохранены. Байт-в-ноль: `emitComments` только при `flow.comments`; ветка commentRef только
+  для commentRef-ранов → docx без комментов идентичны, корпус-roundtrip-гейт (D6) зелёный.
+  846 тестов (+1). **E-COMMENTS: ядро + roundtrip готовы (CM0–CM3).** Мелкие хвосты:
+  `commentsExtended.xml` (треды/ответы), `people.xml` (резолв автора), демо-артефакт; +
+  отложенные CM2b/CM2c (нативные `/Text`/подсветка).
+
+- **CM4 ✓ — треды + resolved через `commentsExtended.xml` (Microsoft w15).** Reader: ключ
+  треда — `w14:paraId` последнего абзаца комментария; `w15:paraIdParent` связывает ответ с
+  родителем, `w15:done` — закрытый тред. `parseCommentThreads` = `parseCommentsRaw`
+  (контент + paraIds) + `parseCommentsExtended` (paraId → {paraIdParent, done}) + линкер →
+  на `FlowDoc.comments` едут `parentId`/`done`. Префикс-агностичные `poAttrLocal`/`poIsLocal`
+  в `po-helpers` (poAttr знает только w:/r:/m:/xml:, не w14/w15). Рендер: HTML вкладывает
+  ответы в `<ol class="comment-replies">` под родителем и метит resolved-тред; PDF-хвост
+  отступает ответы по глубине треда (`indentLeft = 18pt·depth`) и добавляет ASCII-подсказки
+  `(in reply to [n])` + `(resolved)` (без glyph-риска во встроенном шрифте). Writer:
+  `emitComments` штампует детерминированные `w14:paraId` (FNV-1a от id) на последний абзац +
+  объявляет `xmlns:w14`, возвращает карту paraId; `emitCommentsExtended` пишет
+  `word/commentsExtended.xml` + content-type + doc-rel — только когда есть инфо о треде. Тред
+  переживает docx→docx (paraId синтезируются заново, но `parentId`/`done` восстанавливаются).
+  Тесты: модель (parentId/done), HTML-вложенность + resolved, PDF (`(resolved)`/`in reply
+  to`), roundtrip. Байт-в-ноль: новый парт и `w14`-namespace появляются только в docx с
+  комментами → не-комментные документы идентичны; D6-roundtrip + veraPDF (8/8) зелёные.
+  **850 тестов (+4).** **E-COMMENTS закрыт (CM0–CM4).** Остались: `people.xml` (резолв
+  автора), демо-артефакт; + отложенные CM2b/CM2c.
+
+- **Хвосты закрыты (people.xml / CM2c / CM2b / демо) — E-COMMENTS закрыт ПОЛНОСТЬЮ.**
+  - **people.xml ✓** — `parsePeople` (w15:person → presenceInfo/@userId) + `applyAuthorIds`;
+    `Comment.authorId` (обычно email), показывается в HTML-метаданных коммента. Префикс-агностично,
+    docx без people-парта не затронуты.
+  - **CM2c — подсветка диапазона ✓** — `w:commentRangeStart/End` → `Run.commentRangeRefs`
+    (open-range стейт в ParseContext, диапазон может пересекать абзацы). HTML вкладывает
+    span в `<span class="comment-range">` (мягко-жёлтый); PDF-эмиттер заливает тот же цвет
+    под подсвеченными токенами через `TextToken.highlight` + gated pre-pass (ET→`re`/`f`→BT
+    только при наличии подсветки → не-комментные документы байт-в-байт идентичны). Токен
+    несёт флаг через все line-construction сайты → рендерится под justify/BiDi/пагинацией.
+    Write-back маркеров диапазона пока не делается (комменты переживают через reference).
+  - **CM2b — нативные `/Text`-аннотации ✓ (opt-in)** — опция `commentAnnotations`: layout
+    строит `commentNotes` (anchor `comment-${n}` → {author, contents}) в PdfLayoutAux,
+    эмиттер вешает `/Subtype /Text /Name /Comment /T /Contents` рядом с GoTo-ссылкой маркера.
+    Строго opt-in и только для интерактивного вывода: подавляется под PDF/A и tagged (где
+    нужна annotation/appearance-конформность), по умолчанию отсутствует → veraPDF-гейт и
+    байт-снапшоты не тронуты.
+  - **Демо ✓** — capstone-тест `reviewedDocx`: один docx со всеми фичами (resolved-родитель +
+    тред-ответ, два подсвеченных диапазона, авторы из people.xml, opt-in sticky-notes),
+    проверяет весь конвейер (модель + HTML + PDF + docx-roundtrip).
+  - Гейты на каждом слайсе зелёные: typecheck 0, lint 0 ошибок, **863 теста**, veraPDF 8/8,
+    build, байт-в-ноль. **Хвостов у E-COMMENTS нет.**
+
+---
+
+## E-PIVOT — стиль сводных таблиц Excel (xlsx → PDF/HTML)
+
+**Цель.** Применять СТИЛЬ сводной таблицы (полосатые строки/шапка по `pivotTableStyleInfo`) к
+уже-рендеримой сетке pivot; структурная осведомлённость (строки шапки/итогов).
+
+**Усилие: малое→среднее.** Значения pivot УЖЕ рендерятся (см. ниже) — нет нового движка
+раскладки, только стиль+структура.
+
+### Главное (проверено): значения pivot уже видны, отсутствует только стиль
+- `worksheet-parser.ts:95-141` читает ВСЕ ячейки `sheetData` безусловно. Excel кеширует
+  выходные ячейки pivot прямо в лист → они УЖЕ материализуются в SheetDoc и рендерятся как
+  обычная сетка. Отсутствует: стиль pivot (полосы/шапка из `pivotTableStyleInfo`) и структура
+  (какие строки — субитоги/гранд-итог).
+
+### Архитектурное решение (ДО кода): стиль поверх кешированной сетки, не пересчёт
+- **A (выбран): парсим `pivotTable1.xml` (location + styleInfo), резолвим цвета pivot-стиля,
+  кладём per-cell shading-карту на диапазон location** — ЗЕРКАЛО Excel-таблиц (SC3): карта
+  `print-model.ts:903-917` → слот `shading` на `:470-490`. Переиспользуем резолвер стиля→палитра.
+- **B (отвергнут): исполнять движок раскладки pivot из `pivotCacheRecords`** (пересчитать
+  сетку) — Excel уже закешировал ячейки; пересчёт = огромный движок, не нужен.
+- **C (graceful): нет pivot-партов / неизвестный стиль** → ячейки рендерятся «голыми» (как
+  сегодня), без падения.
+
+### Точки привязки (проверено на 3aa7e1a)
+- worksheet: `worksheet-parser.ts:81`/`:619` (`parseTableParts`) → `parsePivotTableParts` +
+  `pivotTableRelIds`; `:93` (эмит ParsedWorksheet). Ячейки на `:95-141` (безусловно — выход
+  pivot уже там).
+- модель: `spreadsheet-model/types.ts:80` (ParsedWorksheet), `:105` `tablePartRelIds`, `:107`
+  `tables` → добавить `pivotTableRelIds`/`pivotTables`; тип `PivotTable` рядом с `ExcelTable`.
+- парс-парт: новый `src/excel/pivot-table-parser.ts` (зеркало `table-parser.ts:22`
+  `parseTablePart`) — `location ref` + `pivotTableStyleInfo`(name, firstHeaderRow,
+  firstDataRow/Col, showRowStripes/showColStripes).
+- резолв стиля: `xlsx-reader.ts:104-111` (tablePartRelIds→parseTablePart→resolveTableStyle) →
+  параллель для pivot; `:162` `resolveTableStyle` (regex `TableStyle{Light|Medium|Dark}{N}`) —
+  у pivot ОТДЕЛЬНАЯ галерея `PivotStyle{Light|Medium|Dark}{N}` (иной дефолт-маппинг, сверить
+  с ECMA §18.10).
+- рендер: `print-model.ts:903-917` (tableShadingMap из `worksheet.tables`) → добавить
+  pivotShadingMap из `worksheet.pivotTables`; потребляется на `:470-490` (тот же слот `shading`).
+
+### Декомпозиция (вертикальными срезами; нет pivot-партов → байт-в-ноль)
+- **PV0 — байт-гейт.** Снапшот PDF-байт/SheetDoc на паре фикстур (`corpus/external/lo-xlsx/
+  pivot_dark1.xlsx`, `pivottable_outline_mode.xlsx`) ДО правок — рефактор не должен двигать
+  не-pivot выход. (Как E-SHEET SA0.)
+- **PV1 — парс `pivotTable1.xml` + модель.** worksheet-rels → `pivotTableRelIds`;
+  pivot-table-parser → `PivotTable{ref,name,styleName,firstHeaderRow,firstData*,showRow/Col
+  Stripes}`; проводка в ParsedWorksheet. End-to-end: pivot в SheetDoc; стиля нет → байт-в-ноль.
+- **PV2 — стиль→цвета + shading-карта.** `resolvePivotStyle` (`PivotStyle…N`→палитра);
+  pivotShadingMap на location (шапка `firstHeaderRow..`, полосы данных при `showRowStripes`);
+  в слот shading print-model. Сетка pivot рендерится полосатой.
+- **PV3 — структура: субитоги/гранд-итог + outline.** парс `rowItems`/`colItems` → пометка
+  строк-итогов (отдельная заливка); compact/outline-отступы уже в кешированных ячейках. (Глубина.)
+- **PV4 — полиш:** page/filter-поля (шапка), белый текст шапки, демо, scope.md.
+
+### Риски
+- Байт-в-ноль: pivot-shading НЕ должен трогать листы без pivot (гейт PV0).
+- Галерея pivot-стилей ≠ table-стилей (иные дефолт-цвета — сверить).
+- Структурная модель (вложенность `rowItems`) сложна → PV1/PV2 держим плоскими (только
+  стиль), структуру в PV3.
+
+### Прогресс
+- **PV0 ✓ (свёрнут в PV1).** Отдельный снапшот-харнесс не понадобился: PV1 чисто
+  аддитивен (новые опц-поля + rels-дискавери, не трогает чтение ячеек/таблиц), так что
+  байт-в-ноль гарантирован конструкцией. Сеть = существующий полный прогон (xlsx-снапшоты) +
+  тест «ячейки рендерятся как раньше» + проверка на реальном `pivot_dark1.xlsx`.
+- **PV1 ✓** — парс `pivotTable1.xml` + модель. **Ключевое (подтверждено на корпусе):** pivot
+  ссылается ТОЛЬКО рельсой листа (`Type=.../pivotTable`), в самом sheet XML элемента нет → не
+  трогаем worksheet-parser, перечисляем rels в xlsx-reader. Новый `pivot-table-parser.ts`
+  (зеркало `table-parser.ts`) читает `<location ref firstHeaderRow firstDataRow firstDataCol>`
+  + `<pivotTableStyleInfo name showRowStripes showColStripes>`; тип `PivotTable` рядом с
+  `ExcelTable`; `ParsedWorksheet.pivotTables`; резолв в xlsx-reader (по `isOoxmlRel(...,
+  'pivotTable')`) → `grid.pivotTables`. Стиля/шейдинга нет (это PV2) — модель only. Выходные
+  ячейки pivot уже кешированы Excel'ем в листе → рендерятся как раньше (байт-в-ноль).
+  `build-xlsx` получил опцию `pivotTables` (мерджит rel в sheet-рельсы). Тесты: pivot в
+  модели (ref E1:I6→`{0,0,2,2}` на фикстуре, style/firstHeaderRow/stripes), ячейки рендерятся,
+  нет pivot→undefined. Проверено на реальном `pivot_dark1.xlsx` (PivotStyleDark1, E1:I6). 840
+  тестов (+3). Осталось: PV2 (стиль→цвета + shading-карта), PV3 (структура), PV4 (полиш).
+- **PV2 ✓** — стиль→цвета + банды. `resolvePivotStyle` (xlsx-reader, зеркало
+  `resolveTableStyle`): `PivotStyle{Light|Medium|Dark}{N}` → accent-колонка `(N-1)%7` →
+  header/band-hex (medium/dark — сплошной accent + белый текст; light — тинты); шарит
+  `lighten`. Галерея pivot отличается нумерацией от таблиц — берём ту же эвристику как
+  аппроксимацию (уточнить в PV4). Рендер: `buildTableFormatLookup` (print-model) вынес общий
+  `band(ref, headerRows, style)` и зовёт его для таблиц (`headerRowCount`) И pivot
+  (`firstDataRow` как число header-строк) — тот же per-cell shading-слот, что у таблиц SC3.
+  Байт-в-ноль: рефактор `band` оставляет таблицы байт-идентичными (полный прогон без сдвигов);
+  pivot-шейдинг трогает только листы с pivot, которых в снапшотах нет. Тесты: шапка+полосы по
+  `PivotStyleDark2` (band≠header, band1 пуст), без `showRowStripes` — только шапка. Проверено
+  на реальном `pivot_dark1.xlsx`: 20 закрашенных ячеек в E1:I6 (grey `7F7F7F` от
+  PivotStyleDark1). 842 теста (+2). Осталось: PV3 (субитоги/гранд-итог + outline), PV4 (полиш
+  + scope.md).
+- **PV3 ✓** — структура: эмфаза строк-итогов. Парсер читает `<rowItems>/<i>@t` →
+  `PivotTable.rowItemTypes` (i-й тип = строка данных `firstDataRow + i`; `'grand'`/имя-функции-
+  субитога/undefined). Рендер: общий `band` получил опц-предикат `isTotalRow(dataOffset)` —
+  строки-итоги (любой `t` ≠ `data`/`blank`, через `isPivotTotal`) красятся как ШАПКА
+  (accent + белый текст), а не полосой; таблицы зовут `band` без предиката → байт-идентичны.
+  `build-xlsx` pivot-спек получил `rowItemTypes` (эмитит `<rowItems>`). Тест: гранд-итоговая
+  строка = цвет шапки (≠ полоса). Проверено на реальном `pivot_dark1.xlsx`: гранд-строка E6:I6
+  → `7F7F7F` (шапка), соседняя дата-строка — обычная полоса. Хвост: эмфаза гранд-итоговой
+  КОЛОНКИ (`colItems`) и отступы outline. Байт-в-ноль (только листы с pivot). 843 теста (+1).
+- **PV4 (частично) ✓ — доки.** `scope.md` синхронизирован под реальность (кросс-катящий, для
+  трёх фич сразу): добавлены **Pivot tables** (xlsx), **Review comments** + **SmartArt**
+  (docx), **SmartArt** (pptx); из «Not yet» убраны comments/SmartArt/pivot — остались только
+  Excel data validation / slicers; SmartArt снят из pptx-loss-списка. Закрывает и хвост
+  E-COMMENTS CM3 «scope.md», и стаределость E-SMARTART. Доки-онли (кода нет). Напоминание: на
+  сайт попадёт только после мёрджа v1→main + редеплоя (действие пользователя).
+- **PV4 ✓ — гранд-колонка; эпик закрыт.** Симметрично PV3, но для КОЛОНОК: парсер читает
+  `<colItems>` (общий хелпер `itemTypes` для row/col) → `PivotTable.colItemTypes`; рендер —
+  overlay-проход ПОСЛЕ `band` (не трогает общий хелпер → нулевой риск таблицам/строкам):
+  тотал-колонки (`isPivotTotal`) перекрываются цветом шапки поверх любой полосы. `build-xlsx`
+  pivot-спек получил `colItemTypes` (эмитит `<colItems>`). Тест: гранд-колонка = цвет шапки и
+  на небанд-строке, и поверх полосы. На реальном `pivot_dark1.xlsx`: колонка I (грандтотал) вся
+  `7F7F7F`; дата-колонка F показывает полосы (`E5E5E5`) + гранд-СТРОКУ (`7F7F7F`) — строки и
+  колонки композируются. outline-отступы уже в кешированных ячейках (бесплатно). Байт-в-ноль
+  (overlay только для pivot с тотал-колонками). 844 теста (+1). **E-PIVOT закрыт (PV0–PV4).**
+  Хвост (не блокирует): точная галерея pivot-стилей (vs аппроксимация), демо-артефакт.
+
+---
+
 ## Сводка приоритетов
 
 | Эпик    | Усилие        | byteRisk | Связь с core-миссией       | Когда                    |
@@ -826,5 +1184,10 @@ xlsx скоупится прочь. **E-PARITY завершён** (FP1–FP4 + F
 | E-PDF   | очень большое | н/д      | универсальность, не ядро   | отдельный крупный заход  |
 | E-PPTX  | среднее       | низкий   | pptx-вход, замыкает OOXML  | новая эра (после 1.8.0)   |
 | E-PARITY| малое→среднее | низкий¹  | визуальный паритет с Word/LO | после E-PPTX            |
+| E-SMARTART | малое→среднее | низкий | SmartArt в docx+pptx (был пробел) | ✓ закрыт (SA0–SA3) |
+| E-COMMENTS | малое→среднее | низкий | ревью-комментарии docx (был пробел) | ✓ закрыт ПОЛНОСТЬЮ (рендер+клик+write-back+треды/resolved+подсветка диапазона+people.xml+opt-in /Text+демо) |
+| E-PIVOT | малое→среднее | низкий² | стиль сводных Excel (значения уже видны) | ✓ закрыт (PV0–PV4) |
+
+² E-PIVOT: значения pivot уже рендерятся; риск только в том, чтобы shading не задел листы без pivot (гейт PV0).
 
 ¹ E-PARITY: FP1 (подстановка) байт-стабилен; FP2–FP4 — строго опт-ин `layoutProfile`, дефолт `'ream'` не меняется.

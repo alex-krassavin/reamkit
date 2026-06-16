@@ -27,6 +27,7 @@ import type {
   CellSparkline,
   Chart,
   ChartBlock,
+  Comment,
   DocumentInfo,
   FloatAnchor,
   HeaderFooterReference,
@@ -171,6 +172,14 @@ export interface StyledRenderOptions {
   // bottom of the referencing page; endnotes flow after the body.
   readonly footnotes?: ReadonlyMap<string, ReadonlyArray<BodyElement>>;
   readonly endnotes?: ReadonlyMap<string, ReadonlyArray<BodyElement>>;
+  // §17.13.4 review comments by id; rendered as superscript markers in text and
+  // a list after the body (after endnotes), each with its author/date.
+  readonly comments?: ReadonlyMap<string, Comment>;
+  // CM2b — also emit each comment as a native PDF /Text (sticky-note) annotation
+  // at its marker. Opt-in and interactive-only: suppressed under PDF/A and tagged
+  // output (where it would need annotation/appearance conformance), since the
+  // clickable marker + Comments section already carry the content there.
+  readonly commentAnnotations?: boolean;
   // Content-addressed binary store; image nodes reference it by ResourceId.
   readonly resources?: ResourceStore;
   // Parsed charts keyed by relationship id (ChartBlock.chartRelId). Supplied by
@@ -394,12 +403,20 @@ export interface BookmarkPosition {
   readonly yTopPt: number;
 }
 
+export interface CommentNote {
+  readonly author?: string;
+  readonly contents: string;
+}
+
 export interface PdfLayoutAux {
   readonly structBuilder: StructTreeBuilder | undefined;
   readonly sectionCtxs: ReadonlyArray<SectionRenderCtx>;
   readonly pdfaProfile: PdfAProfile | undefined;
   readonly tagged: boolean;
   readonly bookmarks: ReadonlyMap<string, BookmarkPosition>;
+  // CM2b — comment marker anchor (`comment-${n}`) → the note the emitter attaches
+  // as a /Text annotation. Present only when commentAnnotations was requested.
+  readonly commentNotes?: ReadonlyMap<string, CommentNote>;
 }
 
 // What layoutStyledDocument actually returns: the PageDoc with the PDF
@@ -432,10 +449,16 @@ const FOOTNOTE_RULE_WIDTH = 144; // Word's ~2" short separator
 // footnotes and endnotes each keep their own counter) and rewrite each
 // reference run to render its number superscript. Returns copies — direct
 // renderStyledPdf callers own their trees.
-function assignNoteNumbers(body: ReadonlyArray<BodyElement>): {
+function assignNoteNumbers(
+  body: ReadonlyArray<BodyElement>,
+  // Comment ids whose content is actually rendered (the after-body entries):
+  // their markers become clickable jumps; a dangling ref gets a marker only.
+  commentIds?: ReadonlySet<string>,
+): {
   body: ReadonlyArray<BodyElement>;
   footnotes: ReadonlyMap<string, number>;
   endnotes: ReadonlyMap<string, number>;
+  comments: ReadonlyMap<string, number>;
   // Footnote ids whose references sit OUTSIDE top-level paragraphs (table
   // cells, shape text): greedy bottom-of-page placement only tracks paragraph
   // lines, so these notes flow after the body instead (documented v1).
@@ -443,6 +466,7 @@ function assignNoteNumbers(body: ReadonlyArray<BodyElement>): {
 } {
   const footnotes = new Map<string, number>();
   const endnotes = new Map<string, number>();
+  const comments = new Map<string, number>();
   const paragraphFootnotes = new Set<string>();
 
   const numberRun = (run: Run, n: number): Run => ({
@@ -450,9 +474,26 @@ function assignNoteNumbers(body: ReadonlyArray<BodyElement>): {
     text: String(n),
     properties: { ...run.properties, verticalAlign: 'superscript' },
   });
+  // A comment marker reads `[n]` (bracketed) to read distinctly from a footnote
+  // number, and — when the comment's entry is rendered — becomes a clickable
+  // jump to it (an internal GoTo to the `comment-${n}` bookmark, reusing the
+  // link path; PDF/A- and tagged-safe). A dangling ref gets a plain marker.
+  const commentMarkerRun = (run: Run, n: number): Run => ({
+    ...run,
+    text: `[${n}]`,
+    ...(run.commentRef !== undefined && commentIds?.has(run.commentRef)
+      ? { anchor: `comment-${n}` }
+      : {}),
+    properties: { ...run.properties, verticalAlign: 'superscript' },
+  });
 
   const mapParagraph = (paragraph: Paragraph): Paragraph => {
-    if (!paragraph.runs.some((r) => r.footnoteRef !== undefined || r.endnoteRef !== undefined)) {
+    if (
+      !paragraph.runs.some(
+        (r) =>
+          r.footnoteRef !== undefined || r.endnoteRef !== undefined || r.commentRef !== undefined,
+      )
+    ) {
       return paragraph;
     }
     return {
@@ -473,6 +514,14 @@ function assignNoteNumbers(body: ReadonlyArray<BodyElement>): {
             endnotes.set(run.endnoteRef, n);
           }
           return numberRun(run, n);
+        }
+        if (run.commentRef !== undefined) {
+          let n = comments.get(run.commentRef);
+          if (n === undefined) {
+            n = comments.size + 1;
+            comments.set(run.commentRef, n);
+          }
+          return commentMarkerRun(run, n);
         }
         return run;
       }),
@@ -523,7 +572,8 @@ function assignNoteNumbers(body: ReadonlyArray<BodyElement>): {
     els.some((el) => {
       if (el.kind === 'paragraph') {
         return el.paragraph.runs.some(
-          (r) => r.footnoteRef !== undefined || r.endnoteRef !== undefined,
+          (r) =>
+            r.footnoteRef !== undefined || r.endnoteRef !== undefined || r.commentRef !== undefined,
         );
       }
       if (el.kind === 'table') {
@@ -533,12 +583,12 @@ function assignNoteNumbers(body: ReadonlyArray<BodyElement>): {
       return false;
     });
   if (!hasRefs(body)) {
-    return { body, footnotes, endnotes, deferredFootnotes: [] };
+    return { body, footnotes, endnotes, comments, deferredFootnotes: [] };
   }
 
   const mapped = body.map((el) => mapElement(el, true));
   const deferredFootnotes = [...footnotes.keys()].filter((id) => !paragraphFootnotes.has(id));
-  return { body: mapped, footnotes, endnotes, deferredFootnotes };
+  return { body: mapped, footnotes, endnotes, comments, deferredFootnotes };
 }
 
 // Replace the note's own-number placeholder (w:footnoteRef) with the number,
@@ -590,6 +640,87 @@ function substituteNoteNumber(
   ];
 }
 
+// Flatten a comment's block content to one plain string (paragraphs joined by
+// newlines) — the /Text annotation's pop-up body (CM2b).
+function flattenCommentText(content: ReadonlyArray<BodyElement>): string {
+  const lines: Array<string> = [];
+  const visit = (els: ReadonlyArray<BodyElement>): void => {
+    for (const el of els) {
+      if (el.kind === 'paragraph') {
+        lines.push(el.paragraph.runs.map((r) => r.text).join(''));
+      } else if (el.kind === 'table') {
+        for (const row of el.table.rows) for (const cell of row.cells) visit(cell.content);
+      }
+    }
+  };
+  visit(content);
+  return lines.join('\n').trim();
+}
+
+// Map each numbered comment's marker anchor (`comment-${n}`) to its note payload
+// for the emitter's /Text annotations (CM2b).
+function buildCommentNotes(
+  numbers: ReadonlyMap<string, number>,
+  comments: ReadonlyMap<string, Comment>,
+): Map<string, CommentNote> {
+  const out = new Map<string, CommentNote>();
+  for (const [id, n] of numbers) {
+    const c = comments.get(id);
+    if (!c) continue;
+    out.set(`comment-${n}`, {
+      ...(c.author !== undefined ? { author: c.author } : {}),
+      contents: flattenCommentText(c.content),
+    });
+  }
+  return out;
+}
+
+// A review comment's after-body entry (E-COMMENTS CM1): its content led by an
+// `[n]` marker and the author/date, mirroring how endnotes prepend their number.
+// A reply (CM4) is indented by its thread depth and notes the parent it answers;
+// a resolved thread is tagged `(resolved)`. The cues stay ASCII so they render
+// in any embedded font.
+function commentTailBlocks(
+  comment: Comment,
+  n: number,
+  opts?: { parentN?: number; depth?: number; done?: boolean },
+): ReadonlyArray<BodyElement> {
+  const who = [comment.author, comment.date]
+    .filter((s): s is string => s !== undefined && s.length > 0)
+    .join(', ');
+  const inReplyTo = opts?.parentN !== undefined ? ` (in reply to [${opts.parentN}])` : '';
+  const resolved = opts?.done ? ' (resolved)' : '';
+  const labelRun: Run = {
+    text: who ? `[${n}] ${who}${inReplyTo}${resolved}: ` : `[${n}]${inReplyTo}${resolved} `,
+    properties: {},
+  };
+  // The entry is the destination the in-text marker jumps to (E-COMMENTS CM2).
+  const bm = `comment-${n}`;
+  const indent = opts?.depth && opts.depth > 0 ? { indentLeft: pt(18 * opts.depth) } : {};
+  const first = comment.content[0];
+  if (first && first.kind === 'paragraph') {
+    return [
+      {
+        kind: 'paragraph',
+        paragraph: {
+          ...first.paragraph,
+          properties: { ...first.paragraph.properties, ...indent },
+          runs: [labelRun, ...first.paragraph.runs],
+          bookmarks: [bm, ...(first.paragraph.bookmarks ?? [])],
+        },
+      },
+      ...comment.content.slice(1),
+    ];
+  }
+  return [
+    {
+      kind: 'paragraph',
+      paragraph: { properties: { ...indent }, runs: [labelRun], bookmarks: [bm] },
+    },
+    ...comment.content,
+  ];
+}
+
 // What pagination needs to place footnotes: per-id content, numbers, and a
 // per-section lazily-cached layout of each note at that section's width.
 interface NotePlan {
@@ -608,7 +739,10 @@ export function layoutStyledDocument(
 ): LaidOutPdfDocument {
   const sectionList = resolveSectionList(body, options);
 
-  const noteAssigned = assignNoteNumbers(applyNumbering(body, options.numbering));
+  const noteAssigned = assignNoteNumbers(
+    applyNumbering(body, options.numbering),
+    options.comments ? new Set(options.comments.keys()) : undefined,
+  );
   const numberedBody = noteAssigned.body;
   const numberedHeadersFooters = applyNumberingToHeadersFooters(
     options.headersFooters,
@@ -717,9 +851,55 @@ export function layoutStyledDocument(
         );
       }
     }
+    // Review comments follow the notes (E-COMMENTS CM1): each entry led by its
+    // [n] marker and author/date, anchoring the in-text marker. Replies indent
+    // by thread depth and note their parent's number (CM4).
+    const commentNums = noteAssigned.comments;
+    const threadDepth = (id: string): number => {
+      let depth = 0;
+      const seen = new Set<string>([id]);
+      let cur = options.comments?.get(id)?.parentId;
+      while (cur !== undefined && commentNums.has(cur) && !seen.has(cur)) {
+        depth++;
+        seen.add(cur);
+        cur = options.comments?.get(cur)?.parentId;
+      }
+      return depth;
+    };
+    const commentTail = [...commentNums]
+      .map(([id, n]) => ({ id, comment: options.comments?.get(id), n }))
+      .filter((e): e is { id: string; comment: Comment; n: number } => e.comment !== undefined)
+      .sort((a, b) => a.n - b.n);
+    for (const { id, comment, n } of commentTail) {
+      const parentId = comment.parentId;
+      const parentN =
+        parentId !== undefined && commentNums.has(parentId) ? commentNums.get(parentId) : undefined;
+      for (const el of commentTailBlocks(comment, n, {
+        ...(parentN !== undefined ? { parentN } : {}),
+        depth: threadDepth(id),
+        ...(comment.done ? { done: true } : {}),
+      })) {
+        blocks.push(
+          layoutBodyElement(
+            el,
+            options,
+            fontResources,
+            imageResources,
+            lastCtx.contentWidth,
+            lastCtx.pageContentHeight,
+          ),
+        );
+      }
+    }
   }
 
   const bookmarks = new Map<string, BookmarkPosition>();
+  // CM2b — native /Text annotations for comments (opt-in). The emitter attaches
+  // them at the marker, gated to interactive (non-PDF/A, non-tagged) output.
+  const commentNotes =
+    options.commentAnnotations && options.comments
+      ? buildCommentNotes(noteAssigned.comments, options.comments)
+      : undefined;
   // Float text wrapping: pagination re-wraps an overlapped paragraph with
   // per-line widths; the closure re-runs the paragraph layout at the given
   // column width with those widths.
@@ -740,7 +920,14 @@ export function layoutStyledDocument(
     resources: options.resources ?? new ResourceStore(),
     fontResources,
     imageResources,
-    pdf: { structBuilder, sectionCtxs, pdfaProfile, tagged, bookmarks },
+    pdf: {
+      structBuilder,
+      sectionCtxs,
+      pdfaProfile,
+      tagged,
+      bookmarks,
+      ...(commentNotes ? { commentNotes } : {}),
+    },
   };
 }
 
@@ -1570,6 +1757,7 @@ function collectImageResources(
   for (const hf of headersFooters.values()) visit(hf);
   for (const note of options.footnotes?.values() ?? []) visit(note);
   for (const note of options.endnotes?.values() ?? []) visit(note);
+  for (const comment of options.comments?.values() ?? []) visit(comment.content);
 
   // Only PDF/A-1 forbids transparency; PDF/A-2/3 keep the image soft mask.
   const flattenAlpha = options.pdfA ? parsePdfAProfile(options.pdfA).part === 1 : false;
@@ -1790,6 +1978,7 @@ function collectFontResources(
   for (const hf of headersFooters.values()) visit(hf);
   for (const note of options.footnotes?.values() ?? []) visit(note);
   for (const note of options.endnotes?.values() ?? []) visit(note);
+  for (const comment of options.comments?.values() ?? []) visit(comment.content);
 
   if (used.size === 0) {
     const regular = options.registry.resolveByStyle(false, false);
@@ -2062,6 +2251,7 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
       });
       continue;
     }
+    const highlight = (plan.run.commentRangeRefs?.length ?? 0) > 0;
     for (const t of tokenizeText(plan.run.text)) {
       tokens.push({
         kind: 'text',
@@ -2071,6 +2261,7 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         ...(plan.run.footnoteRef !== undefined ? { footnoteRef: plan.run.footnoteRef } : {}),
         ...(plan.run.anchor !== undefined ? { anchor: plan.run.anchor } : {}),
         ...(plan.run.listMarker ? { listMarker: true } : {}),
+        ...(highlight ? { highlight: true } : {}),
         resolvedRun: plan.resolvedRun,
         font: plan.font,
         fontSizePt: plan.fontSizePt,
@@ -2133,6 +2324,7 @@ function tokenizePlansBidi(
         ...(plan.run.footnoteRef !== undefined ? { footnoteRef: plan.run.footnoteRef } : {}),
         ...(plan.run.anchor !== undefined ? { anchor: plan.run.anchor } : {}),
         ...(plan.run.listMarker ? { listMarker: true } : {}),
+        ...((plan.run.commentRangeRefs?.length ?? 0) > 0 ? { highlight: true } : {}),
         resolvedRun: plan.resolvedRun,
         font: plan.font,
         fontSizePt: plan.fontSizePt,

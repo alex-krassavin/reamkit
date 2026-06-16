@@ -23,6 +23,7 @@ export function flowRenderOptions(flow: FlowDoc): FlowRenderOptions {
     ...(flow.headersFooters ? { headersFooters: flow.headersFooters } : {}),
     ...(flow.footnotes ? { footnotes: flow.footnotes } : {}),
     ...(flow.endnotes ? { endnotes: flow.endnotes } : {}),
+    ...(flow.comments ? { comments: flow.comments } : {}),
     resources: flow.resources,
     ...(flow.charts ? { charts: flow.charts } : {}),
     ...(flow.embeddedFonts ? { embeddedFonts: flow.embeddedFonts } : {}),
