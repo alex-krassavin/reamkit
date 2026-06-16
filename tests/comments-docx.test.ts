@@ -370,3 +370,135 @@ describe('Word comment native /Text annotations (E-COMMENTS CM2b, opt-in)', () =
     expect(pdf).not.toContain('/Subtype /Text');
   });
 });
+
+// E-COMMENTS demo — one document exercising every comment feature together: a
+// resolved parent comment with a reply (thread), two highlighted ranges, author
+// identities from people.xml, and (opt-in) native sticky notes.
+function reviewedDocx(): Uint8Array {
+  const body =
+    `<w:p>` +
+    `<w:r><w:t>Review </w:t></w:r>` +
+    `<w:commentRangeStart w:id="0"/>` +
+    `<w:r><w:t>the introduction</w:t></w:r>` +
+    `<w:commentRangeEnd w:id="0"/>` +
+    `<w:r><w:commentReference w:id="0"/></w:r>` +
+    `<w:r><w:commentReference w:id="1"/></w:r>` +
+    `<w:r><w:t> and </w:t></w:r>` +
+    `<w:commentRangeStart w:id="2"/>` +
+    `<w:r><w:t>the conclusion</w:t></w:r>` +
+    `<w:commentRangeEnd w:id="2"/>` +
+    `<w:r><w:commentReference w:id="2"/></w:r>` +
+    `<w:r><w:t>.</w:t></w:r>` +
+    `</w:p>`;
+  const document =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+    `<w:document xmlns:w="${W_NS}" xmlns:r="${R_NS}"><w:body>${body}</w:body></w:document>`;
+  const comment = (id: string, author: string, initials: string, paraId: string, text: string) =>
+    `<w:comment w:id="${id}" w:author="${author}" w:initials="${initials}" w:date="2026-02-0${id}T09:00:00Z">` +
+    `<w:p w14:paraId="${paraId}"><w:r><w:t>${text}</w:t></w:r></w:p></w:comment>`;
+  const comments =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+    `<w:comments xmlns:w="${W_NS}" xmlns:w14="${W14_NS}">` +
+    comment('0', 'Alice Reviewer', 'AR', '0000AAA1', 'Add a citation here.') +
+    comment('1', 'Bob Author', 'BA', '0000BBB2', 'Done, added.') +
+    comment('2', 'Alice Reviewer', 'AR', '0000CCC3', 'Tighten this.') +
+    `</w:comments>`;
+  const commentsExtended =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+    `<w15:commentsEx xmlns:w15="${W15_NS}">` +
+    `<w15:commentEx w15:paraId="0000AAA1" w15:done="1"/>` +
+    `<w15:commentEx w15:paraId="0000BBB2" w15:paraIdParent="0000AAA1" w15:done="0"/>` +
+    `<w15:commentEx w15:paraId="0000CCC3" w15:done="0"/>` +
+    `</w15:commentsEx>`;
+  const people =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+    `<w15:people xmlns:w15="${W15_NS}">` +
+    `<w15:person w15:author="Alice Reviewer"><w15:presenceInfo w15:providerId="None" w15:userId="alice@example.com"/></w15:person>` +
+    `<w15:person w15:author="Bob Author"><w15:presenceInfo w15:providerId="None" w15:userId="bob@example.com"/></w15:person>` +
+    `</w15:people>`;
+  const peopleCt = 'application/vnd.openxmlformats-officedocument.wordprocessingml.people+xml';
+
+  return zipSync({
+    '[Content_Types].xml': enc.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="${CT}">` +
+        `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+        `<Default Extension="xml" ContentType="application/xml"/>` +
+        `<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>` +
+        `<Override PartName="/word/comments.xml" ContentType="${COMMENTS_CT}"/>` +
+        `<Override PartName="/word/commentsExtended.xml" ContentType="${COMMENTS_EX_CT}"/>` +
+        `<Override PartName="/word/people.xml" ContentType="${peopleCt}"/>` +
+        `</Types>`,
+    ),
+    '_rels/.rels': enc.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="${PKG}">` +
+        `<Relationship Id="rId1" Type="${R_NS}/officeDocument" Target="word/document.xml"/></Relationships>`,
+    ),
+    'word/document.xml': enc.encode(document),
+    'word/_rels/document.xml.rels': enc.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="${PKG}">` +
+        `<Relationship Id="rId10" Type="${R_NS}/comments" Target="comments.xml"/>` +
+        `<Relationship Id="rId11" Type="${REL_COMMENTS_EXTENDED}" Target="commentsExtended.xml"/>` +
+        `</Relationships>`,
+    ),
+    'word/comments.xml': enc.encode(comments),
+    'word/commentsExtended.xml': enc.encode(commentsExtended),
+    'word/people.xml': enc.encode(people),
+  });
+}
+
+describe('E-COMMENTS demo — a fully reviewed document', () => {
+  it('loads the whole review model (threads, resolved, identities, ranges)', () => {
+    const flow = Ream.parse(reviewedDocx()).flow;
+    const c = flow.comments;
+    expect(c?.get('0')?.done).toBe(true); // resolved parent
+    expect(c?.get('1')?.parentId).toBe('0'); // reply links to it
+    expect(c?.get('0')?.authorId).toBe('alice@example.com'); // people.xml identity
+    expect(c?.get('1')?.authorId).toBe('bob@example.com');
+    const runs = flow.body.flatMap((e) => (e.kind === 'paragraph' ? [...e.paragraph.runs] : []));
+    expect(runs.find((r) => r.text === 'the introduction')?.commentRangeRefs).toContain('0');
+    expect(runs.find((r) => r.text === 'the conclusion')?.commentRangeRefs).toContain('2');
+  });
+
+  it('renders every feature in HTML', async () => {
+    const html = new TextDecoder().decode(await Ream.parse(reviewedDocx()).convert('html'));
+    expect(html).toContain('<ol class="comment-replies">'); // nested reply
+    expect(html).toContain('class="comment resolved"'); // resolved thread
+    expect(html).toContain('<span class="comment-range">'); // highlighted span
+    expect(html).toContain('alice@example.com'); // identities
+    expect(html).toContain('bob@example.com');
+    expect(html).toContain('Add a citation here.');
+    expect(html).toContain('Done, added.');
+    expect(html).toContain('Tighten this.');
+  });
+
+  it('renders markers, reply notes, resolved tags and highlights in the PDF', async () => {
+    const bytes = await Ream.parse(reviewedDocx()).convert('pdf', { fonts: FONTS });
+    const pdf = Buffer.from(bytes).toString('latin1');
+    expect(pdf).toContain('0.953 0.639 rg'); // range highlight fill
+    expect(pdf).not.toContain('/Subtype /Text'); // no native notes by default
+    const file = PdfFile.parse(bytes);
+    const text = extractPageText(file, file.pages()[0]!)
+      .map((r) => r.text)
+      .join('')
+      .replace(/\s/g, '');
+    expect(text).toContain('[1]');
+    expect(text).toContain('[3]');
+    expect(text).toContain('(resolved)');
+    expect(text).toContain('inreplyto[1]');
+  });
+
+  it('adds native sticky notes when opted in', async () => {
+    const pdf = Buffer.from(
+      await Ream.parse(reviewedDocx()).convert('pdf', { fonts: FONTS, commentAnnotations: true }),
+    ).toString('latin1');
+    expect(pdf).toContain('/Subtype /Text');
+    expect(pdf).toContain('Add a citation here.');
+  });
+
+  it('round-trips the review through the docx writer', async () => {
+    const reread = Ream.parse(await Ream.parse(reviewedDocx()).convert('docx'));
+    expect(reread.flow.comments?.get('0')?.done).toBe(true);
+    expect(reread.flow.comments?.get('1')?.parentId).toBe('0');
+    expect(reread.flow.comments?.get('2')?.author).toBe('Alice Reviewer');
+  });
+});
