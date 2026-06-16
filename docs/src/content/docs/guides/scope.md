@@ -111,6 +111,10 @@ charts — and is byte-stable across a read↔write loop.
 - Knuth–Plass line breaking, Liang hyphenation (en / ru).
 - OpenType ligatures and kerning (GSUB/GPOS), mark positioning.
 - BiDi (UAX #9), Arabic cursive joining.
+- **Renderer-compatibility `layoutProfile`** (`'word'` / `'libreoffice'`) — matches a
+  target renderer's line-height model, line breaking and default kerning; with the
+  metric-compatible open substitutes (Carlito / Caladea / Arimo / Tinos / Cousine) this
+  tracks the target closely **without its private font metrics**.
 
 **PDF / compliance**
 - PDF/A-1, -2, -3 at levels a / b / u — all formally **veraPDF-validated**.
@@ -126,9 +130,10 @@ charts — and is byte-stable across a read↔write loop.
 
 - **Legacy `.doc` / `.xls`** (the binary OLE/CFB formats) — Ream parses only the OOXML
   ZIP+XML formats. Re-save as `.docx` / `.xlsx`.
-- **Font measurement parity with a specific renderer.** Ream lays out correctly for the
-  font you supply; pixel-exact agreement with another tool requires that tool's exact
-  font metrics.
+- **Byte-for-byte visual reproduction of another renderer.** `layoutProfile` plus the
+  metric-compatible substitutes get a target tool's page geometry close — without its
+  private font metrics — but _pixel-identical_ output is a non-goal: that would need the
+  exact same font file and the renderer's internal glyph rounding.
 - **A few rarely-used constructs are not rendered yet** — Word comments, SmartArt
   diagrams, and Excel pivot tables / data validation / slicers. (Content controls,
   field results, and legacy VML/OLE picture previews _are_ handled.)
