@@ -84,7 +84,7 @@ import { createFontMeasure, shapeText } from '@/core/font';
 import { resolveFamilyKey } from '@/core/fonts';
 import { prepareImage } from '@/core/images';
 import { analyzeString, hasBidiCharacters, segmentLevels } from '@/core/bidi';
-import { FORCED_BREAK, breakLines } from '@/core/line-breaker';
+import { FORCED_BREAK, breakLines, greedyBreakLines } from '@/core/line-breaker';
 import { applyNumbering, applyNumberingToHeadersFooters } from '@/core/numbering';
 import {
   DEFAULT_RESOLVED_PARAGRAPH,
@@ -2395,10 +2395,11 @@ function wrap(
 
   const widths = lineWidths ?? [firstLineWidth, otherWidth];
   const entries = paragraphItemStream(tokens, hyphenator);
-  const { breaks } = breakLines(
-    entries.map((e) => e.item),
-    widths,
-  );
+  const items = entries.map((e) => e.item);
+  // E-PARITY FP3: a renderer-compat profile breaks lines greedily (first-fit,
+  // like Word/LibreOffice); the default 'ream' keeps Knuth-Plass total-fit.
+  const breaks =
+    profile === 'ream' ? breakLines(items, widths).breaks : greedyBreakLines(items, widths);
 
   const lines: Array<Line> = [];
   let start = 0;

@@ -768,8 +768,19 @@ serif→Tinos и mono→Cousine уже метрик-совместимы (Crosco
   `'libreoffice'` = hhea-триплет (или typo при USE_TYPO_METRICS). Опция дотекает через
   `ConvertDocxOptions` спредом (как `pdfA`), хопов минимум (1 вызов `wrap`, 1 —
   `lineFromRange`). Байт-в-ноль на `'ream'` (снапшоты не двигаются). 811 тестов (+4:
-  дефолт==ream, формулы word/libreoffice по реальному шрифту, vmetrics). Осталось FP0
-  (parity-гейт корпуса) + FP3 (greedy-перенос) + FP4 (кернинг).
+  дефолт==ream, формулы word/libreoffice по реальному шрифту, vmetrics).
+- **FP3 ✓** — greedy-перенос под профилем. `greedyBreakLines` (новый
+  `src/core/line-breaker/greedy.ts`) — жадный first-fit: строка набивается до последнего
+  влезающего разрыва (glue после box / непрещённый penalty); сверхдлинное слово —
+  аварийный разрыв на свою строку; переполнение перед forced-разрывом отрезается по
+  последнему хорошему. `wrap` ветвится: `'ream'` → Knuth-Plass total-fit, профиль →
+  greedy (тот же формат `breaks[]`, последний — forced-sentinel; потребитель не тронут).
+  `'word'`/`'libreoffice'` рвут одинаково (leading на горизонтальные разрывы не влияет),
+  но иначе, чем `'ream'`. `FORBIDDEN_BREAK` экспортирован из knuth-plass для общей
+  фисибилити. Байт-в-ноль на `'ream'` (ветка только под профилем). 819 тестов (+8: 5 unit
+  greedy вкл. детерминированное greedy≠KP, +3 интеграции — дефолт==ream, word==libreoffice,
+  word≠ream на узкой колонке, текст сохранён). Осталось FP0 (parity-гейт корпуса) + FP4
+  (кернинг под профилем).
 
 ---
 

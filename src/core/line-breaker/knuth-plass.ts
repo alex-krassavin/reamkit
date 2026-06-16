@@ -41,7 +41,9 @@ export interface BreakResult {
 // Tuning knobs — match TeX's defaults closely enough for our needs.
 // Exported: writers push the paragraph-final forced break with this value.
 export const FORCED_BREAK = -10_000;
-const FORBIDDEN_BREAK = 10_000;
+// A penalty ≥ this forbids a break at that point. Exported for the greedy
+// breaker (greedy.ts), which shares the same feasibility convention.
+export const FORBIDDEN_BREAK = 10_000;
 const LINE_PENALTY = 10; // α — extra demerits per line
 const FITNESS_PENALTY = 100; // γ — adjacent-line fitness mismatch
 const FLAGGED_PENALTY = 100; // π — two flagged breakpoints in a row
