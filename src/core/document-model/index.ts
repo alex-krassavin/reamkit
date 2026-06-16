@@ -4,6 +4,7 @@ export type {
   Border,
   BorderStyle,
   BodyElement,
+  Comment,
   CellBorders,
   CellMerge,
   DocumentInfo,

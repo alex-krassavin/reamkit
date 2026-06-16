@@ -9,6 +9,7 @@ import { XMLParser } from 'fast-xml-parser';
 
 import type {
   BodyElement,
+  Comment,
   HeaderFooterReference,
   HeaderFooterType,
   InlineImage,
@@ -680,6 +681,7 @@ function parseRun(
   let instrText: string | undefined;
   let footnoteRef: string | undefined;
   let endnoteRef: string | undefined;
+  let commentRef: string | undefined;
   let noteNumber = false;
   for (const child of expandMcChildren(poChildren(r))) {
     if (poIs(child, 'w:rPr')) continue;
@@ -700,6 +702,11 @@ function parseRun(
     if (poIs(child, 'w:endnoteReference')) {
       const id = poAttr(child, 'id');
       if (id !== undefined) endnoteRef = id;
+      continue;
+    }
+    if (poIs(child, 'w:commentReference')) {
+      const id = poAttr(child, 'id');
+      if (id !== undefined) commentRef = id;
       continue;
     }
     if (poIs(child, 'w:footnoteRef') || poIs(child, 'w:endnoteRef')) {
@@ -758,6 +765,7 @@ function parseRun(
       ...(pageBreak ? { pageBreak: true } : {}),
       ...(footnoteRef !== undefined ? { footnoteRef } : {}),
       ...(endnoteRef !== undefined ? { endnoteRef } : {}),
+      ...(commentRef !== undefined ? { commentRef } : {}),
       ...(noteNumber ? { noteNumber: true } : {}),
     },
     ...(fldChar ? { fldChar } : {}),
@@ -793,6 +801,35 @@ export function parseNotes(
     const id = poAttr(note, 'id');
     if (id === undefined) continue;
     out.set(id, parseBodyElements(poChildren(note), ctx));
+  }
+  return out;
+}
+
+// §17.13.4 — comments.xml. Like parseNotes, but a comment carries author/date
+// attribution alongside its block content, so it returns a richer Comment
+// (parseNotes keeps content only). Comments have no separator/stub convention.
+export function parseComments(
+  commentsXml: Uint8Array,
+  ctx: ParseContext = DEFAULT_PARSE_CONTEXT,
+): Map<string, Comment> {
+  const xml = decoder.decode(commentsXml);
+  const tree = parser.parse(xml) as Array<PoNode>;
+  const root = poFindByPath(tree, ['w:comments']);
+  const out = new Map<string, Comment>();
+  if (!root) return out;
+  for (const c of poChildren(root)) {
+    if (!poIs(c, 'w:comment')) continue;
+    const id = poAttr(c, 'id');
+    if (id === undefined) continue;
+    const author = poAttr(c, 'author');
+    const initials = poAttr(c, 'initials');
+    const date = poAttr(c, 'date');
+    out.set(id, {
+      content: parseBodyElements(poChildren(c), ctx),
+      ...(author !== undefined ? { author } : {}),
+      ...(initials !== undefined ? { initials } : {}),
+      ...(date !== undefined ? { date } : {}),
+    });
   }
   return out;
 }

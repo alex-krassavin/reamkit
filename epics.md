@@ -971,7 +971,16 @@ override + `dsp:`-walker, кладущий `dsp:spPr`/`dsp:txBody` в сущес
 - Секция-в-конце меняет пагинацию — ок: новый контент только для docx С комментариями.
 
 ### Прогресс
-- (пусто — план)
+- **CM0 ✓** — модель+парс+загрузка. `Run.commentRef` (рядом с footnoteRef/endnoteRef);
+  парс `w:commentReference` в `collectRuns`; модель `Comment{content,author,initials,date}`
+  (в `document-model/types.ts`, экспорт через barrel) + карта `comments` на FlowDoc; новый
+  `parseComments` (comment-aware — `parseNotes` теряет атрибуты) рядом с `parseNotes`; ридер:
+  `COMMENTS_PART`, загрузка через `noteCtx`, `transformComments` (те же FlowDoc-трансформы,
+  что у нот, метадата проходит насквозь). Тесты: автор/инициалы/дата/текст в `flow.comments`;
+  ран помечен `commentRef`; без `comments.xml` → `comments` отсутствует (ран сохраняет
+  dangling-ref для рендера CM1). Байт-в-ноль: новые опц-поля, docx без комментариев не
+  двигаются. 835 тестов (+3). `commentRangeStart/End` пока игнорируются (для подсветки в CM2).
+  Осталось: CM1 (рендер: маркер + секция «Comments»).
 
 ---
 

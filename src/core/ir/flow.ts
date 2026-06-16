@@ -15,6 +15,7 @@
 import type {
   BodyElement,
   Chart,
+  Comment,
   DocumentInfo,
   Numbering,
   Section,
@@ -40,6 +41,8 @@ export interface FlowDoc {
   /** §17.11 footnotes/endnotes content by id (separator stubs excluded). */
   readonly footnotes?: ReadonlyMap<string, ReadonlyArray<BodyElement>>;
   readonly endnotes?: ReadonlyMap<string, ReadonlyArray<BodyElement>>;
+  /** §17.13.4 review comments by id, anchored from a run's `commentRef`. */
+  readonly comments?: ReadonlyMap<string, Comment>;
   /** Parsed charts keyed by relationship id (ChartBlock.chartRelId). */
   readonly charts?: ReadonlyMap<string, Chart>;
   /** Content-addressed binary resources (images). */

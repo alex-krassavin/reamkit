@@ -7,6 +7,7 @@ import type { ColorResolver } from '@/core/drawingml/colors';
 import type {
   BodyElement,
   Chart,
+  Comment,
   DocumentInfo,
   Numbering,
   Section,
@@ -39,6 +40,7 @@ import {
   EMPTY_SECTION,
   EMPTY_SETTINGS,
   loadEmbeddedFonts,
+  parseComments,
   parseDocument,
   parseHeaderFooter,
   parseNotes,
@@ -51,6 +53,7 @@ import {
 const STYLES_PART = 'word/styles.xml';
 const FOOTNOTES_PART = 'word/footnotes.xml';
 const ENDNOTES_PART = 'word/endnotes.xml';
+const COMMENTS_PART = 'word/comments.xml';
 const NUMBERING_PART = 'word/numbering.xml';
 const SETTINGS_PART = 'word/settings.xml';
 const CORE_PROPS_PART = 'docProps/core.xml';
@@ -106,6 +109,10 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
   const rawEndnotes = endnotesData
     ? parseNotes(endnotesData, 'w:endnotes', 'w:endnote', noteCtx(ENDNOTES_PART))
     : undefined;
+  const commentsData = pkg.getPart(COMMENTS_PART);
+  const rawComments = commentsData
+    ? parseComments(commentsData, noteCtx(COMMENTS_PART))
+    : undefined;
 
   const settingsData = pkg.getPart(SETTINGS_PART);
   const settings = settingsData ? parseSettings(settingsData) : EMPTY_SETTINGS;
@@ -157,6 +164,9 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
       : {}),
     ...(rawEndnotes && rawEndnotes.size > 0
       ? { endnotes: transformNotes(rawEndnotes, styles, numbering) }
+      : {}),
+    ...(rawComments && rawComments.size > 0
+      ? { comments: transformComments(rawComments, styles, numbering) }
       : {}),
     headersFooters: resolveHeadersFootersStyles(
       applyNumberingToHeadersFooters(headersFooters, numbering),
@@ -279,6 +289,21 @@ function transformNotes(
 ): ReadonlyMap<string, ReadonlyArray<BodyElement>> {
   for (const content of notes.values()) resolveTableStyles(content, styles);
   return resolveHeadersFootersStyles(applyNumberingToHeadersFooters(notes, numbering), styles);
+}
+
+// Comments get the same FlowDoc transforms as notes, applied to each comment's
+// content; its author/date metadata rides through unchanged (E-COMMENTS CM0).
+function transformComments(
+  comments: Map<string, Comment>,
+  styles: StyleSheet,
+  numbering: Numbering,
+): ReadonlyMap<string, Comment> {
+  const contentById = new Map<string, Array<BodyElement>>();
+  for (const [id, c] of comments) contentById.set(id, [...c.content]);
+  const transformed = transformNotes(contentById, styles, numbering);
+  const out = new Map<string, Comment>();
+  for (const [id, c] of comments) out.set(id, { ...c, content: transformed.get(id) ?? c.content });
+  return out;
 }
 
 // §17.16.22 + OPC §9.3: hyperlink relationship ids are scoped to their OWNING
