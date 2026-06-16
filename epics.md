@@ -921,6 +921,124 @@ override + `dsp:`-walker, кладущий `dsp:spPr`/`dsp:txBody` в сущес
 
 ---
 
+## E-COMMENTS — рецензентские комментарии Word (docx → PDF/HTML)
+
+**Цель.** Рендерить ревью-комментарии docx (автор/дата/текст), привязанные к точке ссылки в
+теле, в PDF и HTML. Сейчас тихо отбрасываются. Следующий пункт «Not yet» из `scope.md`.
+
+**Усилие: малое→среднее.** Не новая машинерия: комментарий структурно = сноска с автором.
+Переиспользуем почти весь конвейер footnotes/endnotes (модель-карта по id, `parseNotes`,
+`transformNotes`, секция-в-конце, inline-маркер).
+
+### Главное архитектурное решение (ДО кода): FlowDoc-секция + маркер, не балунны на полях
+- **A (выбран): inline-маркер у ссылки + секция «Comments» в конце** (как endnotes), плюс
+  позже нативные PDF `/Text`-аннотации. Ноль нового layout: переиспользуем notes-рендер.
+  Верность: весь текст/автор/дата сохранены, привязка — маркером.
+- **B (отвергнут как первый срез): балуны на правом поле с выносными линиями** — требует
+  рефактора layout (резерв колонки поля + leader-lines). Вне первого среза.
+- **C (graceful): docx без `comments.xml`** → новое поле отсутствует → байт-в-ноль.
+
+### Точки привязки (проверено на 3aa7e1a)
+- модель: `flow.ts:41-42` (`footnotes`/`endnotes` карты) → добавить `comments` рядом;
+  `document-model/types.ts:247-248` (Run `footnoteRef`/`endnoteRef`) → добавить `commentRef`.
+- парсер: `document-parser.ts:695-703` (`w:footnoteReference`/`w:endnoteReference` → ref на
+  ране) → ветка `w:commentReference`; заодно ловить `w:commentRangeStart`/`End` @w:id (для
+  подсветки диапазона в CM2).
+- ридер: `docx-reader.ts:52-53` (`FOOTNOTES_PART`/`ENDNOTES_PART`) → `COMMENTS_PART =
+  'word/comments.xml'`; `:96-108` (`noteCtx` + `parseNotes`) → загрузка через comment-aware
+  парс (карта id→{author,date,initials,content}); `:155-160` (`transformNotes`-проводка в
+  FlowDoc) → добавить `comments`; `:275` `transformNotes`. Лоссы уже протянуты (SA3).
+- фича: `features.ts` → `comments: 'comments'`.
+- рендер: HTML `html-writer.ts` (notes-секция + ветка `run.footnoteRef` ~482-489) →
+  ветка `commentRef` + секция; PDF `styled-page-emitter.ts:192-229` (link-аннотации) → задел
+  для нативных `/Text`-аннотаций (CM2).
+
+### Декомпозиция (вертикальными срезами; нет comments.xml → байт-в-ноль)
+- **CM0 — модель+парс+маркер+loss.** `Run.commentRef`; парс `w:commentReference`; модель
+  `Comment{author,date,initials,content:BodyElement[]}` + карта `comments` на FlowDoc;
+  загрузка `comments.xml` (comment-aware парс — `parseNotes` теряет атрибуты, нужен свой).
+  End-to-end: комментарии в модели; без комментариев → байт-в-ноль.
+- **CM1 — рендер: inline-маркер + секция «Comments» (HTML+PDF через FlowDoc).** Маркер у
+  ссылки; список «author (date): text» в конце. Оба таргета сразу, максимум переиспользования.
+- **CM2 — нативные PDF `/Text`-аннотации + подсветка диапазона** (`styled-page-emitter`):
+  sticky-note у ссылки; подсветка `commentRangeStart..End`. Верность-срез, отложен.
+- **CM3 — полиш:** `commentsExtended.xml` (ответы/треды), `people.xml` (резолв автора),
+  docx write-back (roundtrip), демо, scope.md.
+
+### Риски
+- `parseNotes` теряет атрибуты элемента (author/date) → нужен comment-aware парс.
+- Range-маркеры (start/end) бывают несбалансированы/вложены → толерантно (id-карта, не стек).
+- Секция-в-конце меняет пагинацию — ок: новый контент только для docx С комментариями.
+
+### Прогресс
+- (пусто — план)
+
+---
+
+## E-PIVOT — стиль сводных таблиц Excel (xlsx → PDF/HTML)
+
+**Цель.** Применять СТИЛЬ сводной таблицы (полосатые строки/шапка по `pivotTableStyleInfo`) к
+уже-рендеримой сетке pivot; структурная осведомлённость (строки шапки/итогов).
+
+**Усилие: малое→среднее.** Значения pivot УЖЕ рендерятся (см. ниже) — нет нового движка
+раскладки, только стиль+структура.
+
+### Главное (проверено): значения pivot уже видны, отсутствует только стиль
+- `worksheet-parser.ts:95-141` читает ВСЕ ячейки `sheetData` безусловно. Excel кеширует
+  выходные ячейки pivot прямо в лист → они УЖЕ материализуются в SheetDoc и рендерятся как
+  обычная сетка. Отсутствует: стиль pivot (полосы/шапка из `pivotTableStyleInfo`) и структура
+  (какие строки — субитоги/гранд-итог).
+
+### Архитектурное решение (ДО кода): стиль поверх кешированной сетки, не пересчёт
+- **A (выбран): парсим `pivotTable1.xml` (location + styleInfo), резолвим цвета pivot-стиля,
+  кладём per-cell shading-карту на диапазон location** — ЗЕРКАЛО Excel-таблиц (SC3): карта
+  `print-model.ts:903-917` → слот `shading` на `:470-490`. Переиспользуем резолвер стиля→палитра.
+- **B (отвергнут): исполнять движок раскладки pivot из `pivotCacheRecords`** (пересчитать
+  сетку) — Excel уже закешировал ячейки; пересчёт = огромный движок, не нужен.
+- **C (graceful): нет pivot-партов / неизвестный стиль** → ячейки рендерятся «голыми» (как
+  сегодня), без падения.
+
+### Точки привязки (проверено на 3aa7e1a)
+- worksheet: `worksheet-parser.ts:81`/`:619` (`parseTableParts`) → `parsePivotTableParts` +
+  `pivotTableRelIds`; `:93` (эмит ParsedWorksheet). Ячейки на `:95-141` (безусловно — выход
+  pivot уже там).
+- модель: `spreadsheet-model/types.ts:80` (ParsedWorksheet), `:105` `tablePartRelIds`, `:107`
+  `tables` → добавить `pivotTableRelIds`/`pivotTables`; тип `PivotTable` рядом с `ExcelTable`.
+- парс-парт: новый `src/excel/pivot-table-parser.ts` (зеркало `table-parser.ts:22`
+  `parseTablePart`) — `location ref` + `pivotTableStyleInfo`(name, firstHeaderRow,
+  firstDataRow/Col, showRowStripes/showColStripes).
+- резолв стиля: `xlsx-reader.ts:104-111` (tablePartRelIds→parseTablePart→resolveTableStyle) →
+  параллель для pivot; `:162` `resolveTableStyle` (regex `TableStyle{Light|Medium|Dark}{N}`) —
+  у pivot ОТДЕЛЬНАЯ галерея `PivotStyle{Light|Medium|Dark}{N}` (иной дефолт-маппинг, сверить
+  с ECMA §18.10).
+- рендер: `print-model.ts:903-917` (tableShadingMap из `worksheet.tables`) → добавить
+  pivotShadingMap из `worksheet.pivotTables`; потребляется на `:470-490` (тот же слот `shading`).
+
+### Декомпозиция (вертикальными срезами; нет pivot-партов → байт-в-ноль)
+- **PV0 — байт-гейт.** Снапшот PDF-байт/SheetDoc на паре фикстур (`corpus/external/lo-xlsx/
+  pivot_dark1.xlsx`, `pivottable_outline_mode.xlsx`) ДО правок — рефактор не должен двигать
+  не-pivot выход. (Как E-SHEET SA0.)
+- **PV1 — парс `pivotTable1.xml` + модель.** worksheet-rels → `pivotTableRelIds`;
+  pivot-table-parser → `PivotTable{ref,name,styleName,firstHeaderRow,firstData*,showRow/Col
+  Stripes}`; проводка в ParsedWorksheet. End-to-end: pivot в SheetDoc; стиля нет → байт-в-ноль.
+- **PV2 — стиль→цвета + shading-карта.** `resolvePivotStyle` (`PivotStyle…N`→палитра);
+  pivotShadingMap на location (шапка `firstHeaderRow..`, полосы данных при `showRowStripes`);
+  в слот shading print-model. Сетка pivot рендерится полосатой.
+- **PV3 — структура: субитоги/гранд-итог + outline.** парс `rowItems`/`colItems` → пометка
+  строк-итогов (отдельная заливка); compact/outline-отступы уже в кешированных ячейках. (Глубина.)
+- **PV4 — полиш:** page/filter-поля (шапка), белый текст шапки, демо, scope.md.
+
+### Риски
+- Байт-в-ноль: pivot-shading НЕ должен трогать листы без pivot (гейт PV0).
+- Галерея pivot-стилей ≠ table-стилей (иные дефолт-цвета — сверить).
+- Структурная модель (вложенность `rowItems`) сложна → PV1/PV2 держим плоскими (только
+  стиль), структуру в PV3.
+
+### Прогресс
+- (пусто — план)
+
+---
+
 ## Сводка приоритетов
 
 | Эпик    | Усилие        | byteRisk | Связь с core-миссией       | Когда                    |
@@ -931,5 +1049,9 @@ override + `dsp:`-walker, кладущий `dsp:spPr`/`dsp:txBody` в сущес
 | E-PPTX  | среднее       | низкий   | pptx-вход, замыкает OOXML  | новая эра (после 1.8.0)   |
 | E-PARITY| малое→среднее | низкий¹  | визуальный паритет с Word/LO | после E-PPTX            |
 | E-SMARTART | малое→среднее | низкий | SmartArt в docx+pptx (был пробел) | ✓ закрыт (SA0–SA3) |
+| E-COMMENTS | малое→среднее | низкий | ревью-комментарии docx (был пробел) | **текущий** |
+| E-PIVOT | малое→среднее | низкий² | стиль сводных Excel (значения уже видны) | текущий |
+
+² E-PIVOT: значения pivot уже рендерятся; риск только в том, чтобы shading не задел листы без pivot (гейт PV0).
 
 ¹ E-PARITY: FP1 (подстановка) байт-стабилен; FP2–FP4 — строго опт-ин `layoutProfile`, дефолт `'ream'` не меняется.
