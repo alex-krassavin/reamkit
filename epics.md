@@ -817,6 +817,82 @@ xlsx скоупится прочь. **E-PARITY завершён** (FP1–FP4 + F
 
 ---
 
+## E-SMARTART — SmartArt-диаграммы через DrawingML-fallback (docx + pptx)
+
+**Цель.** Рендерить SmartArt в docx и pptx через готовый drawing-override
+(`diagrams/drawing#.xml`), переиспользуя существующую шейпо-машинерию. Закрывает пункт
+«Not yet» из `scope.md` (Word comments / SmartArt / Excel pivot…). Выбран первым по
+ROI: бьёт сразу в docx И pptx, переиспользует максимум.
+
+**Усилие: малое→среднее.** Не новый рендер: `dsp:spTree` структурно = группа DrawingML-
+шейпов, которую Ream уже рисует. Стоимость — только фронт: резолв рельс до drawing-
+override + `dsp:`-walker, кладущий `dsp:spPr`/`dsp:txBody` в существующие `a:`-читалки.
+
+### Главное архитектурное решение (принято ДО кода): drawing-override, не layout-движок
+- **A (выбран): читаем готовый `diagrams/drawing#.xml`** (`dsp:drawing/dsp:spTree`) —
+  позиционированные шейпы, которые Office УЖЕ разложил. Эмитим как floating-шейпы (docx
+  `ShapeBlock` / pptx float-элемент). Ноль нового layout. Покрывает современные файлы
+  (Office 2010+ пишет fallback-override).
+- **B (отвергнут): исполнять SmartArt layout-алгоритм** (`data1.xml` + `layout1.xml`) —
+  огромный движок раскладки узлов, фактически переписать Office. Не оправдано.
+- **C (graceful): файлы без override** (старые/редкие) → loss «SmartArt без drawing
+  fallback», без падения.
+
+**Ключ по namespace (проверено):** `dsp:` — это ТОЛЬКО обёртки (`dsp:sp`/`dsp:spPr`/
+`dsp:txBody`/`dsp:spTree`/`dsp:txXfrm`). Внутри `dsp:spPr` геометрия/заливка/линия/xfrm —
+обычные `a:`-элементы (`a:prstGeom`/`a:solidFill`/`a:ln`/`a:xfrm`), т.к. тип `dsp:spPr` =
+`a:CT_ShapeProperties`. Значит `parseFill`/`parseLine`/`parsePrstGeom`/`parseXfrmBox`/
+`parseTxBody` работают над `dsp:`-узлами БЕЗ правок — нужен лишь walker, достающий обёртки.
+
+### Точки привязки (проверено на 1.11.0)
+- docx: `drawing-parser.ts:182` (`graphicData`/`uri`); ветки `WPS_URI`(185)/`CHART_URI`(190)/
+  pic-fallback(205); константы uri 35-36 → добавить `DIAGRAM_URI =
+  '…/drawingml/2006/diagram'`. `document-parser.ts:363` `tryExtractDrawingFromParagraph`
+  диспатчит `content.kind`→`BodyElement`.
+- pptx: `slide-parser.ts:195` (`parseGraphicFrame` uri); `CHART_URI`(198)/`TABLE_URI`(213)/
+  fallback-undefined(222) → добавить ветку diagram. Группо-машинерия `parseSlideShapes`(85)
+  / `composeGroupTransform`(110) / `parseSp`(151) переиспользуется для `dsp:spTree`.
+- rels: `pkg.getPartRelationships(path)` + `pkg.resolveRelatedPart(path, rel)`
+  (`opc/package.ts:121,140`); пример цепочки от не-корневой части — `docx-reader.ts:255`
+  (`loadCharts`), `pptx-reader.ts:195` (per-slide image resolver).
+- модель: shapes ПЛОСКИЕ — `BodyElement{kind:'shape', shape:ShapeBlock}` (`types.ts:699`),
+  контейнера группы нет; диаграмма = набор floating-`ShapeBlock`'ов на боксе anchor'а.
+
+### Декомпозиция (вертикальными срезами; новая uri-ветка → байт-в-ноль без SmartArt)
+- **SA0 — шов: резолв override + `dsp:spTree`→шейпы, проводка в pptx.** Резолв
+  `dgm:relIds@r:dm` → `diagrams/data#.xml` → (rel type `diagramDrawing`) → `drawing#.xml`;
+  `parseDiagramDrawing` обходит `dsp:spTree/dsp:sp`, эмитит floating-шейпы (geometry/fill/
+  line через существующие `a:`-читалки), позиции через frame→child трансформу (как группа).
+  End-to-end: pptx со SmartArt → PDF, шейпы на координатах.
+- **SA1 — текст в шейпах** (`dsp:txBody` → `ShapeTextBody` через `parseTxBody`): абзацы/
+  раны/выравнивание/цвет/буллеты.
+- **SA2 — docx-проводка** (`parseDrawing` `DIAGRAM_URI` → floating `ShapeBlock`'ы; резолв
+  через `word/document.xml.rels`). Тот же `parseDiagramDrawing`.
+- **SA3 — цвета/тема + graceful loss + демо.** scheme-цвета через ColorResolver; нет
+  override → loss; демо docx+pptx.
+
+### Риски
+- **Нет drawing-override** (старые файлы) → graceful loss, не падение; layout-движок вне
+  области.
+- **`dsp:`-обёртки vs `a:`-контент** — подтверждено: правок в sub-парсеры не нужно, только
+  walker; если где-то всплывёт `dsp:`-контент — точечно добавить префикс.
+- Байт-в-ноль: новая uri-ветка не трогает существующие пути; снапшоты docx/xlsx/pdf без
+  SmartArt не двигаются.
+
+### Прогресс
+- **SA0 ✓** — pptx-шов: drawing-override резолв + `dsp:spTree`→шейпы. `parseGraphicFrame`
+  получил ветку `DIAGRAM_URI` (теперь возвращает `BodyElement[]` — диаграмма = много
+  шейпов); `dgm:relIds@r:dm` → `makeSlideDiagramResolver` идёт slide→`diagrams/data#.xml`→
+  (rel `/diagramDrawing`)→`drawing#.xml`, парсит `dsp:spTree`. `parseDspSp` обходит `dsp:sp`,
+  кладёт `dsp:spPr`/`dsp:txBody` в существующие `a:`-читалки (geometry/fill/line/txBody) —
+  правок в sub-парсеры НЕ потребовалось, как и предсказано. `diagramTransform` мапит
+  child-space диаграммы на бокс фрейма (как группа). Нет override → пусто (graceful). Тесты:
+  узлы → floating-шейпы, позиции точно 72/288pt, текст в PDF, no-override→0 шейпов.
+  Байт-в-ноль (uri-ветка не трогает существующие пути). 826 тестов (+4). Осталось SA1
+  (текст-полнота), SA2 (docx-проводка), SA3 (цвета/loss/демо).
+
+---
+
 ## Сводка приоритетов
 
 | Эпик    | Усилие        | byteRisk | Связь с core-миссией       | Когда                    |
@@ -826,5 +902,6 @@ xlsx скоупится прочь. **E-PARITY завершён** (FP1–FP4 + F
 | E-PDF   | очень большое | н/д      | универсальность, не ядро   | отдельный крупный заход  |
 | E-PPTX  | среднее       | низкий   | pptx-вход, замыкает OOXML  | новая эра (после 1.8.0)   |
 | E-PARITY| малое→среднее | низкий¹  | визуальный паритет с Word/LO | после E-PPTX            |
+| E-SMARTART | малое→среднее | низкий | SmartArt в docx+pptx (был пробел) | текущий |
 
 ¹ E-PARITY: FP1 (подстановка) байт-стабилен; FP2–FP4 — строго опт-ин `layoutProfile`, дефолт `'ream'` не меняется.
