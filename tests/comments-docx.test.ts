@@ -116,6 +116,14 @@ describe('Word comments in docx (E-COMMENTS CM0)', () => {
     expect(text).toContain('Pleaseclarifythissentence.'); // the comment body, after the document
   });
 
+  it('makes the comment marker a clickable jump to its entry (CM2)', async () => {
+    const pdf = Buffer.from(
+      await Ream.parse(commentDocx()).convert('pdf', { fonts: FONTS }),
+    ).toString('latin1');
+    expect(pdf).toContain('/Subtype /Link'); // the marker is a link annotation
+    expect(pdf).toContain('/S /GoTo'); // an internal jump to the comment entry
+  });
+
   it('omits the comments field when the docx ships no comments part', () => {
     // The body's commentReference still tags the run (a dangling id the renderer
     // skips), but with no comments.xml there is no content map to attach.

@@ -436,7 +436,12 @@ const FOOTNOTE_RULE_WIDTH = 144; // Word's ~2" short separator
 // footnotes and endnotes each keep their own counter) and rewrite each
 // reference run to render its number superscript. Returns copies — direct
 // renderStyledPdf callers own their trees.
-function assignNoteNumbers(body: ReadonlyArray<BodyElement>): {
+function assignNoteNumbers(
+  body: ReadonlyArray<BodyElement>,
+  // Comment ids whose content is actually rendered (the after-body entries):
+  // their markers become clickable jumps; a dangling ref gets a marker only.
+  commentIds?: ReadonlySet<string>,
+): {
   body: ReadonlyArray<BodyElement>;
   footnotes: ReadonlyMap<string, number>;
   endnotes: ReadonlyMap<string, number>;
@@ -457,10 +462,15 @@ function assignNoteNumbers(body: ReadonlyArray<BodyElement>): {
     properties: { ...run.properties, verticalAlign: 'superscript' },
   });
   // A comment marker reads `[n]` (bracketed) to read distinctly from a footnote
-  // number, and links to the comment's entry in the after-body list.
+  // number, and — when the comment's entry is rendered — becomes a clickable
+  // jump to it (an internal GoTo to the `comment-${n}` bookmark, reusing the
+  // link path; PDF/A- and tagged-safe). A dangling ref gets a plain marker.
   const commentMarkerRun = (run: Run, n: number): Run => ({
     ...run,
     text: `[${n}]`,
+    ...(run.commentRef !== undefined && commentIds?.has(run.commentRef)
+      ? { anchor: `comment-${n}` }
+      : {}),
     properties: { ...run.properties, verticalAlign: 'superscript' },
   });
 
@@ -624,18 +634,24 @@ function commentTailBlocks(comment: Comment, n: number): ReadonlyArray<BodyEleme
     .filter((s): s is string => s !== undefined && s.length > 0)
     .join(', ');
   const labelRun: Run = { text: who ? `[${n}] ${who}: ` : `[${n}] `, properties: {} };
+  // The entry is the destination the in-text marker jumps to (E-COMMENTS CM2).
+  const bm = `comment-${n}`;
   const first = comment.content[0];
   if (first && first.kind === 'paragraph') {
     return [
       {
         kind: 'paragraph',
-        paragraph: { ...first.paragraph, runs: [labelRun, ...first.paragraph.runs] },
+        paragraph: {
+          ...first.paragraph,
+          runs: [labelRun, ...first.paragraph.runs],
+          bookmarks: [bm, ...(first.paragraph.bookmarks ?? [])],
+        },
       },
       ...comment.content.slice(1),
     ];
   }
   return [
-    { kind: 'paragraph', paragraph: { properties: {}, runs: [labelRun] } },
+    { kind: 'paragraph', paragraph: { properties: {}, runs: [labelRun], bookmarks: [bm] } },
     ...comment.content,
   ];
 }
@@ -658,7 +674,10 @@ export function layoutStyledDocument(
 ): LaidOutPdfDocument {
   const sectionList = resolveSectionList(body, options);
 
-  const noteAssigned = assignNoteNumbers(applyNumbering(body, options.numbering));
+  const noteAssigned = assignNoteNumbers(
+    applyNumbering(body, options.numbering),
+    options.comments ? new Set(options.comments.keys()) : undefined,
+  );
   const numberedBody = noteAssigned.body;
   const numberedHeadersFooters = applyNumberingToHeadersFooters(
     options.headersFooters,

@@ -988,8 +988,21 @@ override + `dsp:`-walker, кладущий `dsp:spPr`/`dsp:txBody` в сущес
   (superscript); хвост после endnotes (`commentTailBlocks` — `[n] author, date: content`);
   `StyledRenderOptions.comments` + `flowRenderOptions` + сбор шрифтов/ресурсов по контенту.
   Байт-в-ноль: guard `hasRefs`/size===0 не трогает доки без комментариев; ни один PDF-снапшот
-  не сдвинулся (в фикстурах комментов нет). 837 тестов (+2: HTML + PDF). Осталось: CM2
-  (нативные `/Text`-аннотации + подсветка диапазона), CM3 (полиш).
+  не сдвинулся (в фикстурах комментов нет). 837 тестов (+2: HTML + PDF).
+- **CM2 ✓ — кликабельный маркер.** Маркер `[n]` в PDF стал кликабельным переходом к записи
+  комментария (internal GoTo на закладку `comment-${n}`), ПЕРЕИСПОЛЬЗУЯ проверенный link+
+  bookmark путь (W1/W5a) — PDF/A-безопасно и tagged-безопасно, паритет с HTML (там маркер уже
+  ссылка на `#cm-n`). Реализация: `commentMarkerRun` (в `assignNoteNumbers`) добавляет
+  `anchor: comment-${n}` ТОЛЬКО для рендеримых комментов (проброшен `commentIds` из
+  `options.comments` → dangling-ref без `comments.xml` получает маркер без ссылки, без битого
+  dest); `commentTailBlocks` кладёт `bookmarks: [comment-${n}]` на первый абзац записи →
+  ассемблер пагинации регистрирует dest. Байт-в-ноль: доки без комментов идентичны (anchor
+  только на маркер-ране); ни один снапшот не сдвинулся; veraPDF зелёный. Тест: PDF содержит
+  `/Subtype /Link` + `/S /GoTo`. 845 тестов (+1). **Сознательно отложено** (диспропорция
+  риск/польза): нативные `/Text` sticky-note-аннотации (CM2b) и подсветка диапазона
+  `commentRangeStart/End` (CM2c) — обе тянут PDF/A + tagged-PDF annotation-compliance (риск
+  veraPDF-гейту) ради фиделити поверх уже-читаемого рендера. Осталось: CM3 (полиш —
+  `commentsExtended`/`people.xml`/docx write-back/демо).
 
 ---
 
