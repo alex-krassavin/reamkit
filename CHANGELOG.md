@@ -19,9 +19,13 @@ follows [Semantic Versioning](https://semver.org/).
   section after the body; in PDF the marker is a clickable internal jump to its
   entry. Reply threads and resolved state are read from `commentsExtended.xml`
   (`w15:paraIdParent` / `w15:done`): HTML nests replies under their parent and
-  flags resolved threads, and PDF indents replies and notes the parent. Comments
-  — threads and resolved flags included — write back through `convert('docx')`,
-  surviving a read↔write round-trip.
+  flags resolved threads, and PDF indents replies and notes the parent. The
+  commented range (`w:commentRangeStart/End`) is highlighted in HTML and PDF, and
+  author identities resolve from `people.xml`. An opt-in `commentAnnotations`
+  render option additionally emits each comment as a native PDF sticky-note
+  annotation (interactive output only — suppressed under PDF/A and tagged output).
+  Comments — threads and resolved flags included — write back through
+  `convert('docx')`, surviving a read↔write round-trip.
 - **Excel pivot tables (XLSX).** A pivot's cached output grid already rendered
   as data; on top of that Ream now applies the named pivot style
   (`pivotTableStyleInfo`) — banded rows and a styled header — and emphasises

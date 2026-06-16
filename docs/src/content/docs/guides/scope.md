@@ -56,7 +56,11 @@ charts — and is byte-stable across a read↔write loop.
   Word's separator rule; endnotes after the body.
 - **Review comments** (`w:commentReference`) — a bracketed superscript marker in the
   text and a "Comments" section after the body with each comment's author, date and
-  content (PDF and HTML).
+  content (PDF and HTML). Reply threads and resolved state come from
+  `commentsExtended.xml` (replies nest under their parent, resolved threads are
+  flagged); the commented range (`w:commentRangeStart/End`) is highlighted; author
+  identities resolve from `people.xml`. As an opt-in, comments can also be emitted as
+  native PDF sticky-note annotations (`commentAnnotations`, interactive output only).
 - **SmartArt** — rendered from the diagram's pre-rendered DrawingML drawing
   (`diagrams/drawing#.xml`) as positioned shapes; a file with no drawing fallback
   degrades to a graceful loss rather than an empty space.

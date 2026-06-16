@@ -1033,6 +1033,29 @@ override + `dsp:`-walker, кладущий `dsp:spPr`/`dsp:txBody` в сущес
   **850 тестов (+4).** **E-COMMENTS закрыт (CM0–CM4).** Остались: `people.xml` (резолв
   автора), демо-артефакт; + отложенные CM2b/CM2c.
 
+- **Хвосты закрыты (people.xml / CM2c / CM2b / демо) — E-COMMENTS закрыт ПОЛНОСТЬЮ.**
+  - **people.xml ✓** — `parsePeople` (w15:person → presenceInfo/@userId) + `applyAuthorIds`;
+    `Comment.authorId` (обычно email), показывается в HTML-метаданных коммента. Префикс-агностично,
+    docx без people-парта не затронуты.
+  - **CM2c — подсветка диапазона ✓** — `w:commentRangeStart/End` → `Run.commentRangeRefs`
+    (open-range стейт в ParseContext, диапазон может пересекать абзацы). HTML вкладывает
+    span в `<span class="comment-range">` (мягко-жёлтый); PDF-эмиттер заливает тот же цвет
+    под подсвеченными токенами через `TextToken.highlight` + gated pre-pass (ET→`re`/`f`→BT
+    только при наличии подсветки → не-комментные документы байт-в-байт идентичны). Токен
+    несёт флаг через все line-construction сайты → рендерится под justify/BiDi/пагинацией.
+    Write-back маркеров диапазона пока не делается (комменты переживают через reference).
+  - **CM2b — нативные `/Text`-аннотации ✓ (opt-in)** — опция `commentAnnotations`: layout
+    строит `commentNotes` (anchor `comment-${n}` → {author, contents}) в PdfLayoutAux,
+    эмиттер вешает `/Subtype /Text /Name /Comment /T /Contents` рядом с GoTo-ссылкой маркера.
+    Строго opt-in и только для интерактивного вывода: подавляется под PDF/A и tagged (где
+    нужна annotation/appearance-конформность), по умолчанию отсутствует → veraPDF-гейт и
+    байт-снапшоты не тронуты.
+  - **Демо ✓** — capstone-тест `reviewedDocx`: один docx со всеми фичами (resolved-родитель +
+    тред-ответ, два подсвеченных диапазона, авторы из people.xml, opt-in sticky-notes),
+    проверяет весь конвейер (модель + HTML + PDF + docx-roundtrip).
+  - Гейты на каждом слайсе зелёные: typecheck 0, lint 0 ошибок, **863 теста**, veraPDF 8/8,
+    build, байт-в-ноль. **Хвостов у E-COMMENTS нет.**
+
 ---
 
 ## E-PIVOT — стиль сводных таблиц Excel (xlsx → PDF/HTML)
@@ -1162,7 +1185,7 @@ override + `dsp:`-walker, кладущий `dsp:spPr`/`dsp:txBody` в сущес
 | E-PPTX  | среднее       | низкий   | pptx-вход, замыкает OOXML  | новая эра (после 1.8.0)   |
 | E-PARITY| малое→среднее | низкий¹  | визуальный паритет с Word/LO | после E-PPTX            |
 | E-SMARTART | малое→среднее | низкий | SmartArt в docx+pptx (был пробел) | ✓ закрыт (SA0–SA3) |
-| E-COMMENTS | малое→среднее | низкий | ревью-комментарии docx (был пробел) | ✓ закрыт CM0–CM4 (рендер+клик+write-back+треды/resolved); хвосты people.xml/демо |
+| E-COMMENTS | малое→среднее | низкий | ревью-комментарии docx (был пробел) | ✓ закрыт ПОЛНОСТЬЮ (рендер+клик+write-back+треды/resolved+подсветка диапазона+people.xml+opt-in /Text+демо) |
 | E-PIVOT | малое→среднее | низкий² | стиль сводных Excel (значения уже видны) | ✓ закрыт (PV0–PV4) |
 
 ² E-PIVOT: значения pivot уже рендерятся; риск только в том, чтобы shading не задел листы без pivot (гейт PV0).
