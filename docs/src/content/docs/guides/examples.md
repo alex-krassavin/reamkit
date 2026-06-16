@@ -141,6 +141,60 @@ const pdf = await doc.convert('pdf', { fonts }); // a page per slide
 const html = await doc.convert('html'); // …or the slides as flowed HTML
 ```
 
+## Word review comments
+
+Review comments (`w:commentReference`) render as a bracketed superscript marker in
+the text and a "Comments" section after the body — author, date and content, with
+reply threads nested and resolved threads flagged, the commented range highlighted,
+and author identities resolved from `people.xml`. In PDF the marker is a clickable
+jump to the entry; pass `commentAnnotations: true` to _also_ attach each comment as a
+native sticky-note annotation (interactive output only — suppressed under PDF/A and
+tagged):
+
+```ts
+import { Ream } from 'reamkit';
+
+const doc = Ream.parse(docxBytes);
+
+const pdf = await doc.convert('pdf', { fonts }); // markers + Comments section + highlights
+const sticky = await doc.convert('pdf', { fonts, commentAnnotations: true }); // …plus /Text pop-ups
+const html = await doc.convert('html'); // replies nested, resolved threads flagged
+
+doc.flow.comments?.get('0'); // { content, author?, date?, authorId?, parentId?, done? }
+```
+
+Comments — threads and resolved flags included — also write back through
+`convert('docx')`.
+
+## Excel pivot tables
+
+A pivot table's cached output renders as an ordinary grid; on top of that Ream applies
+the table's named pivot style (`pivotTableStyleInfo`) — banded rows and a styled
+header — and emphasises the grand-total / subtotal rows and columns. Nothing is
+recomputed from the cache:
+
+```ts
+import { Ream } from 'reamkit';
+
+const doc = Ream.parse(xlsxBytes);
+const pdf = await doc.convert('pdf', { fonts });
+const html = await doc.convert('html');
+```
+
+## SmartArt diagrams
+
+SmartArt (DOCX and PPTX) renders from the diagram's pre-rendered DrawingML drawing
+(`diagrams/drawing#.xml`) as positioned shapes, with scheme colours resolved through
+the document or deck theme. A diagram that ships no drawing fallback degrades to a
+graceful loss rather than an empty space — surface it with `convertWithReport`:
+
+```ts
+import { Ream } from 'reamkit';
+
+const { bytes, losses } = await Ream.parse(docxBytes).convertWithReport('pdf', { fonts });
+// a SmartArt with no drawing override → { severity: 'dropped', feature: 'shapes.smartArt', … }
+```
+
 ## Browser: file input → PDF preview
 
 ```ts
