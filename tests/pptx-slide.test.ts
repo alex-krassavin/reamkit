@@ -621,7 +621,13 @@ const DIAGRAM_DATA_REL =
 const DIAGRAM_DRAWING_REL = 'http://schemas.microsoft.com/office/2007/relationships/diagramDrawing';
 const A_MAIN = 'http://schemas.openxmlformats.org/drawingml/2006/main';
 
-function smartArtDeck(): Uint8Array {
+const srgbFill = (hex: string): string => `<a:solidFill><a:srgbClr val="${hex}"/></a:solidFill>`;
+// accent1 scheme fill markup — for the SA3 theme-resolution test.
+const SCHEME_ACCENT1_FILL = `<a:solidFill><a:schemeClr val="accent1"/></a:solidFill>`;
+
+function smartArtDeck(
+  opts: { readonly fillA?: string; readonly build?: Parameters<typeof buildPptx>[1] } = {},
+): Uint8Array {
   const frame =
     `<p:graphicFrame>` +
     `<p:xfrm><a:off x="914400" y="914400"/><a:ext cx="5486400" cy="2743200"/></p:xfrm>` +
@@ -634,7 +640,7 @@ function smartArtDeck(): Uint8Array {
     `<dsp:sp><dsp:spPr>` +
     `<a:xfrm><a:off x="${x}" y="0"/><a:ext cx="2743200" cy="1371600"/></a:xfrm>` +
     `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
-    `<a:solidFill><a:srgbClr val="${fill}"/></a:solidFill>` +
+    `${fill}` +
     `</dsp:spPr>` +
     `<dsp:txBody><a:bodyPr/><a:p><a:r><a:t>${text}</a:t></a:r></a:p></dsp:txBody>` +
     `</dsp:sp>`;
@@ -643,8 +649,8 @@ function smartArtDeck(): Uint8Array {
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
     `<dsp:drawing xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" xmlns:a="${A_MAIN}">` +
     `<dsp:spTree>` +
-    node('NodeA', 0, '4472C4') +
-    node('NodeB', 2743200, 'ED7D31') +
+    node('NodeA', 0, opts.fillA ?? srgbFill('4472C4')) +
+    node('NodeB', 2743200, srgbFill('ED7D31')) +
     `</dsp:spTree></dsp:drawing>`;
 
   const enc = new TextEncoder();
@@ -664,6 +670,7 @@ function smartArtDeck(): Uint8Array {
       'ppt/diagrams/_rels/data1.xml.rels': enc.encode(rels),
       'ppt/diagrams/drawing1.xml': enc.encode(drawing),
     },
+    ...opts.build,
   });
 }
 
@@ -706,7 +713,19 @@ describe('SmartArt diagrams (E-SMARTART SA0)', () => {
     expect(text).toContain('NodeB');
   });
 
-  it('degrades gracefully when the file ships no drawing override', () => {
+  it('resolves a node scheme-colour fill through the deck theme (SA3)', () => {
+    // NodeA fills with accent1; the deck theme maps accent1 → FF8800. The shared
+    // ColorResolver that styles ordinary slide shapes styles diagram shapes too.
+    const deck = smartArtDeck({
+      fillA: SCHEME_ACCENT1_FILL,
+      build: { layoutMaster: { theme: `<a:accent1><a:srgbClr val="FF8800"/></a:accent1>` } },
+    });
+    // NodeA (the first diagram shape) fills with accent1, mapped to FF8800 by the
+    // deck theme — the same ColorResolver path that styles ordinary slide shapes.
+    expect(firstShape(Ream.parse(deck))?.fill.colorHex).toBe('FF8800');
+  });
+
+  it('degrades gracefully — and records a loss — when no drawing override ships', () => {
     // Same frame, but no diagrams/* parts → resolveDiagram yields nothing.
     const frame =
       `<p:graphicFrame>` +
@@ -716,5 +735,9 @@ describe('SmartArt diagrams (E-SMARTART SA0)', () => {
       `</a:graphicData></a:graphic></p:graphicFrame>`;
     const doc = Ream.parse(buildPptx([frame]));
     expect(doc.flow.body.filter((e) => e.kind === 'shape')).toHaveLength(0);
+    // SA3: the diagram is dropped explicitly, located to the slide it sat on.
+    const loss = doc.losses.find((l) => l.feature === 'shapes.smartArt');
+    expect(loss?.severity).toBe('dropped');
+    expect(loss?.where).toBe('slide 1');
   });
 });

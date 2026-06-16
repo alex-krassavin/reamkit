@@ -123,6 +123,7 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
         resolveChart: makeSlideChartResolver(pkg, part.path, charts, styles.colors),
         resolveHyperlink: makeHyperlinkResolver(pkg, part.path),
         resolveDiagram: makeSlideDiagramResolver(pkg, part.path),
+        onLoss: (loss) => losses.push(loss.where ? loss : { ...loss, where: `slide ${i + 1}` }),
       };
       body.push(...parseSlide(part.data, ctx, styles.background, pageW, pageH));
     }

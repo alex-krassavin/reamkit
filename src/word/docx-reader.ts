@@ -14,7 +14,7 @@ import type {
 } from '@/core/document-model';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
-import type { ResourceId } from '@/core/ir';
+import type { Loss, ResourceId } from '@/core/ir';
 import type { CoreProperties } from '@/core/opc';
 import type { HyperlinkResolver, ImageResolver, ParseContext } from '@/word';
 import type { PoNode } from '@/core/po-helpers';
@@ -71,11 +71,16 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
   const resources = new ResourceStore();
   const resolveImage = makeImageResolver(pkg, resources);
   const resolveHyperlink = makeHyperlinkResolver(pkg);
+  // Graceful-degradation notices recorded while parsing the body (E-SMARTART
+  // SA3: a SmartArt with no drawing override). Headers/footers and notes don't
+  // resolve diagrams, so the sink rides only on the main-body context.
+  const losses: Array<Loss> = [];
   const ctx: ParseContext = {
     resolveColor,
     resolveImage,
     resolveHyperlink,
     resolveDiagram: makeDiagramResolver(pkg, MAIN_DOCUMENT_PART),
+    onLoss: (loss) => losses.push(loss),
   };
   const body = parseDocument(main.data, ctx);
   const rawSections = parseSections(main.data);
@@ -163,7 +168,7 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
     ...(info ? { info } : {}),
     ...(language ? { language } : {}),
   };
-  return { doc, losses: [] };
+  return { doc, losses };
 }
 
 export const docxReader: DocumentReader<FlowDoc> = {

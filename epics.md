@@ -901,7 +901,23 @@ override + `dsp:`-walker, кладущий `dsp:spPr`/`dsp:txBody` в сущес
   Байт-в-ноль: новая uri-ветка не трогает существующее, no-override → абзац сохраняется.
   829 тестов (+3 docx). Хвост: anchored-docx (page-relative) + точная inline-позиция по
   потоку; вынос `parseDiagramDrawing` в нейтральный `core/drawingml` (сейчас acyclic
-  word→pptx). Осталось SA3 (явный loss «нет override» + scheme-цвета depth + демо).
+  word→pptx).
+- **SA3 ✓** — цвета/тема + graceful loss + демо; эпик закрыт. (1) **Явный loss «нет
+  override».** Новый `Feature` `shapes.smartArt`; общая фабрика `noDiagramOverrideLoss()`
+  (slide-parser) эмитит `dropped`-лосс. Проводка через новый `SlideContext.onLoss` /
+  `ParseContext.onLoss`: pptx обогащает `where: 'slide N'`; docx-reader теперь реально
+  возвращает `losses` (был жёсткий `[]`) — sink висит на body-контексте (HF/notes
+  диаграммы не резолвят → без ложных лоссов). `shapes.smartArt` НЕ в `supports`: полный
+  SmartArt = layout-движок (вне области) — рендерим при наличии override, иначе лосс, и это
+  честная декларация возможностей. (2) **Scheme-цвета** уже резолвятся общим `ColorResolver`
+  (тот же путь, что обычные шейпы); закреплено тестами: `<a:schemeClr val="accent1"/>` в
+  override → тема `accent1`=FF8800 в pptx И docx (docx через `word/theme/theme1.xml`). (3)
+  **Демо:** docx SmartArt end-to-end → PDF (текст узлов в выводе) + HTML — впервые проверен
+  сквозной рендер docx-диаграммы (SA2 проверял только FlowDoc-модель); pptx-демо был в SA0.
+  Байт-в-ноль: лоссы — метадата, не байты; фикстуры без override-less SmartArt дают
+  `losses: []` как раньше. 832 теста (+3). Хвосты эпика — те же из SA2 (anchored-docx
+  page-relative; точная inline-позиция по потоку; вынос `parseDiagramDrawing` в нейтральный
+  `core/drawingml`).
 
 ---
 
@@ -914,6 +930,6 @@ override + `dsp:`-walker, кладущий `dsp:spPr`/`dsp:txBody` в сущес
 | E-PDF   | очень большое | н/д      | универсальность, не ядро   | отдельный крупный заход  |
 | E-PPTX  | среднее       | низкий   | pptx-вход, замыкает OOXML  | новая эра (после 1.8.0)   |
 | E-PARITY| малое→среднее | низкий¹  | визуальный паритет с Word/LO | после E-PPTX            |
-| E-SMARTART | малое→среднее | низкий | SmartArt в docx+pptx (был пробел) | текущий |
+| E-SMARTART | малое→среднее | низкий | SmartArt в docx+pptx (был пробел) | ✓ закрыт (SA0–SA3) |
 
 ¹ E-PARITY: FP1 (подстановка) байт-стабилен; FP2–FP4 — строго опт-ин `layoutProfile`, дефолт `'ream'` не меняется.

@@ -30,13 +30,13 @@ import type {
   TableRow,
 } from '@/core/document-model';
 import type { ColorResolver } from '@/core/drawingml/colors';
-import type { Pt, ResourceId } from '@/core/ir';
+import type { Loss, Pt, ResourceId } from '@/core/ir';
 import type { PoNode } from '@/core/po-helpers';
 import type { PlaceholderCascade } from '@/pptx/placeholder-cascade';
 import type { PlaceholderRef, ShapeBoxEmu } from '@/pptx/sp-helpers';
 
 import { defaultColorResolver, resolveColorNode } from '@/core/drawingml/colors';
-import { emuToPt } from '@/core/ir';
+import { FEATURES, emuToPt } from '@/core/ir';
 import { poAttr, poChildren, poFindDescendant, poIntAttr, poIs, poText } from '@/core/po-helpers';
 import { parseCustGeom, parseFill, parseLine, parsePrstGeom } from '@/word/drawing-parser';
 import { boxFromXfrm, parsePh, parseXfrmBox, rPrToRunProps } from '@/pptx/sp-helpers';
@@ -63,6 +63,10 @@ export interface SlideContext {
   // drawing override (its dsp:spTree), or undefined when the file ships no
   // override (E-SMARTART SA0).
   readonly resolveDiagram?: (relId: string) => PoNode | undefined;
+  // Sink for graceful-degradation notices (E-SMARTART SA3): a SmartArt that
+  // declares a diagram but ships no drawing override records a dropped-feature
+  // Loss here rather than vanishing without a trace.
+  readonly onLoss?: (loss: Loss) => void;
 }
 
 type LinkResolver = ((relId: string) => string | undefined) | undefined;
@@ -232,7 +236,12 @@ function parseGraphicFrame(
     const relIds = poFindDescendant(gf, 'dgm:relIds');
     const dmRelId = relIds ? poAttr(relIds, 'dm') : undefined; // r:dm → data part
     const spTree = dmRelId !== undefined ? ctx.resolveDiagram?.(dmRelId) : undefined;
-    if (!spTree) return [];
+    if (!spTree) {
+      // SmartArt is declared but ships no pre-rendered drawing override; record
+      // a graceful loss instead of silently dropping the diagram (SA3).
+      if (dmRelId !== undefined) ctx.onLoss?.(noDiagramOverrideLoss());
+      return [];
+    }
     return parseDiagramDrawing(
       spTree,
       diagramTransform(spTree, box),
@@ -265,6 +274,21 @@ export function diagramTransform(spTree: PoNode, frame: ShapeBoxEmu): GroupTrans
     cx: b.cx * sx,
     cy: b.cy * sy,
   });
+}
+
+// A SmartArt diagram that declares its data part but ships no pre-rendered
+// drawing override (older files, or a generator that omitted the fallback).
+// Ream renders the override rather than executing Office's layout engine, so
+// without it the diagram can't be drawn — this records the gap as a dropped
+// feature instead of letting it vanish. Shared by pptx and docx (E-SMARTART SA3).
+export function noDiagramOverrideLoss(where?: string): Loss {
+  return {
+    severity: 'dropped',
+    feature: FEATURES.smartArt,
+    detail:
+      'SmartArt diagram has no pre-rendered drawing override; its layout is not reconstructed',
+    ...(where ? { where } : {}),
+  };
 }
 
 // Render a SmartArt drawing override (a dsp:spTree) into floating shapes.

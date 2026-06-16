@@ -22,13 +22,13 @@ import type {
 } from '@/core/document-model';
 
 import type { ColorResolver } from '@/core/drawingml/colors';
-import type { Pt, ResourceId } from '@/core/ir';
+import type { Loss, ResourceId } from '@/core/ir';
 import type { PoNode } from '@/core/po-helpers';
 import { emuToPt, twipsToPt } from '@/core/ir';
 import { parseOMath } from '@/word/omml-parser';
 import { defaultColorResolver } from '@/core/drawingml/colors';
 import { expandMcChildren, parseDrawing, parseVmlPicture } from '@/word/drawing-parser';
-import { diagramTransform, parseDiagramDrawing } from '@/pptx/slide-parser';
+import { diagramTransform, noDiagramOverrideLoss, parseDiagramDrawing } from '@/pptx/slide-parser';
 import { parseParagraphProperties } from '@/word/paragraph-properties';
 import {
   poAttr,
@@ -85,6 +85,9 @@ export interface ParseContext {
   // pre-rendered drawing override (its dsp:spTree), or undefined when the file
   // ships none (E-SMARTART SA2).
   readonly resolveDiagram?: (relId: string) => PoNode | undefined;
+  // Sink for graceful-degradation notices (E-SMARTART SA3): a SmartArt with no
+  // drawing override records a dropped-feature Loss rather than vanishing.
+  readonly onLoss?: (loss: Loss) => void;
 }
 
 export const DEFAULT_PARSE_CONTEXT: ParseContext = { resolveColor: defaultColorResolver };
@@ -433,7 +436,12 @@ function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): Array<Bod
     // shapes anchored to the paragraph's column origin (E-SMARTART SA2). No
     // override ⇒ keep the (empty) paragraph, byte-stable.
     const spTree = ctx.resolveDiagram?.(content.dmRelId);
-    if (!spTree) return null;
+    if (!spTree) {
+      // No drawing override shipped — record a graceful loss and keep the
+      // (empty) paragraph, byte-stable (SA3).
+      ctx.onLoss?.(noDiagramOverrideLoss());
+      return null;
+    }
     const frame = { x: 0, y: 0, cx: content.widthEmu, cy: content.heightEmu };
     const shapes = parseDiagramDrawing(
       spTree,
