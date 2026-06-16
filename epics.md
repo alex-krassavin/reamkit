@@ -1014,6 +1014,25 @@ override + `dsp:`-walker, кладущий `dsp:spPr`/`dsp:txBody` в сущес
   `commentsExtended.xml` (треды/ответы), `people.xml` (резолв автора), демо-артефакт; +
   отложенные CM2b/CM2c (нативные `/Text`/подсветка).
 
+- **CM4 ✓ — треды + resolved через `commentsExtended.xml` (Microsoft w15).** Reader: ключ
+  треда — `w14:paraId` последнего абзаца комментария; `w15:paraIdParent` связывает ответ с
+  родителем, `w15:done` — закрытый тред. `parseCommentThreads` = `parseCommentsRaw`
+  (контент + paraIds) + `parseCommentsExtended` (paraId → {paraIdParent, done}) + линкер →
+  на `FlowDoc.comments` едут `parentId`/`done`. Префикс-агностичные `poAttrLocal`/`poIsLocal`
+  в `po-helpers` (poAttr знает только w:/r:/m:/xml:, не w14/w15). Рендер: HTML вкладывает
+  ответы в `<ol class="comment-replies">` под родителем и метит resolved-тред; PDF-хвост
+  отступает ответы по глубине треда (`indentLeft = 18pt·depth`) и добавляет ASCII-подсказки
+  `(in reply to [n])` + `(resolved)` (без glyph-риска во встроенном шрифте). Writer:
+  `emitComments` штампует детерминированные `w14:paraId` (FNV-1a от id) на последний абзац +
+  объявляет `xmlns:w14`, возвращает карту paraId; `emitCommentsExtended` пишет
+  `word/commentsExtended.xml` + content-type + doc-rel — только когда есть инфо о треде. Тред
+  переживает docx→docx (paraId синтезируются заново, но `parentId`/`done` восстанавливаются).
+  Тесты: модель (parentId/done), HTML-вложенность + resolved, PDF (`(resolved)`/`in reply
+  to`), roundtrip. Байт-в-ноль: новый парт и `w14`-namespace появляются только в docx с
+  комментами → не-комментные документы идентичны; D6-roundtrip + veraPDF (8/8) зелёные.
+  **850 тестов (+4).** **E-COMMENTS закрыт (CM0–CM4).** Остались: `people.xml` (резолв
+  автора), демо-артефакт; + отложенные CM2b/CM2c.
+
 ---
 
 ## E-PIVOT — стиль сводных таблиц Excel (xlsx → PDF/HTML)
@@ -1143,7 +1162,7 @@ override + `dsp:`-walker, кладущий `dsp:spPr`/`dsp:txBody` в сущес
 | E-PPTX  | среднее       | низкий   | pptx-вход, замыкает OOXML  | новая эра (после 1.8.0)   |
 | E-PARITY| малое→среднее | низкий¹  | визуальный паритет с Word/LO | после E-PPTX            |
 | E-SMARTART | малое→среднее | низкий | SmartArt в docx+pptx (был пробел) | ✓ закрыт (SA0–SA3) |
-| E-COMMENTS | малое→среднее | низкий | ревью-комментарии docx (был пробел) | ✓ CM0–CM3 (рендер+клик+write-back); мелкие хвосты |
+| E-COMMENTS | малое→среднее | низкий | ревью-комментарии docx (был пробел) | ✓ закрыт CM0–CM4 (рендер+клик+write-back+треды/resolved); хвосты people.xml/демо |
 | E-PIVOT | малое→среднее | низкий² | стиль сводных Excel (значения уже видны) | ✓ закрыт (PV0–PV4) |
 
 ² E-PIVOT: значения pivot уже рендерятся; риск только в том, чтобы shading не задел листы без pivot (гейт PV0).

@@ -17,8 +17,11 @@ follows [Semantic Versioning](https://semver.org/).
   `FlowDoc.comments` map (author, date, initials and block content). PDF and
   HTML render a bracketed superscript marker in the text and a "Comments"
   section after the body; in PDF the marker is a clickable internal jump to its
-  entry. Comments also write back through `convert('docx')`, surviving a
-  read↔write round-trip.
+  entry. Reply threads and resolved state are read from `commentsExtended.xml`
+  (`w15:paraIdParent` / `w15:done`): HTML nests replies under their parent and
+  flags resolved threads, and PDF indents replies and notes the parent. Comments
+  — threads and resolved flags included — write back through `convert('docx')`,
+  surviving a read↔write round-trip.
 - **Excel pivot tables (XLSX).** A pivot's cached output grid already rendered
   as data; on top of that Ream now applies the named pivot style
   (`pivotTableStyleInfo`) — banded rows and a styled header — and emphasises
