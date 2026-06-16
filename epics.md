@@ -779,8 +779,29 @@ serif→Tinos и mono→Cousine уже метрик-совместимы (Crosco
   но иначе, чем `'ream'`. `FORBIDDEN_BREAK` экспортирован из knuth-plass для общей
   фисибилити. Байт-в-ноль на `'ream'` (ветка только под профилем). 819 тестов (+8: 5 unit
   greedy вкл. детерминированное greedy≠KP, +3 интеграции — дефолт==ream, word==libreoffice,
-  word≠ream на узкой колонке, текст сохранён). Осталось FP0 (parity-гейт корпуса) + FP4
-  (кернинг под профилем).
+  word≠ream на узкой колонке, текст сохранён).
+- **FP4 ✓** — кернинг под профилем. Находка: эмиттер пишет `Tj` с `/W`-ширинами из
+  `hmtx` → GPOS-кернинг в видимый PDF НЕ попадает (ни в одном профиле), влияет только на
+  измерение (`textWidthPt` → ширины токенов → переносы). Под `'word'` строим layout-меру
+  без кернинга (`createFontMeasure(parsed, kern=false)`): Word по умолчанию не кернит, и
+  это совпадает с нашим же un-kerned рендером; `'ream'`/`'libreoffice'` кернинг сохраняют.
+  Гейт — одна строка в `collectFontResources` (`kern = profile !== 'word'`); emit-мера
+  (cid-font) кернинг и так не трогает (только gids/`/W`). Байт-в-ноль (дефолт `kern=true`).
+  821 тест (+2: мера kern on/off на реальных парах Roboto; kern-rich абзац шире под
+  `'word'`, чем `'libreoffice'`==`'ream'`). Хвост (measurement-only, маргинально): legacy
+  `kern`-таблица для шрифтов без GPOS, пер-ран `w:kern`-фиделити, видимый кернинг через
+  TJ-эмит.
+
+**Итог E-PARITY (код).** FP1–FP4 закрыты: метрик-совместимая подстановка (Carlito/Caladea/
+Arimo, ширины 1:1) + опт-ин `layoutProfile` (`'ream'`|`'word'`|`'libreoffice'`), бандлящий
+leading из метрик шрифта (FP2) + greedy-перенос (FP3) + дефолт кернинга (FP4) под выбранный
+рендер. Дефолт `'ream'` байт-в-ноль на каждом шаге (всё новое — строго под не-дефолтным
+профилем). Новое: `src/core/line-breaker/greedy.ts`, `ParsedTtf.vmetrics`,
+`createFontMeasure(kern)`, `StyledRenderOptions.layoutProfile`. ~14 тестов
+(`layout-profile`/`line-breaker-greedy`), формулы привязаны к метрикам реального шрифта.
+Осталось только **FP0** — формализовать parity-метрику корпуса (baseline-drift + совпадение
+числа страниц) в гейт; запускается с LibreOffice/Docker/mutool (вне локального окружения),
+за владельцем.
 
 ---
 

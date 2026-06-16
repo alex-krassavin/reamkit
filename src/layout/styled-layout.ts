@@ -1804,7 +1804,8 @@ function collectFontResources(
     out.set(variant, {
       resourceName,
       parsed: info.parsed,
-      measure: createFontMeasure(info.parsed),
+      // E-PARITY FP4: the 'word' profile measures kern-free (Word's default).
+      measure: createFontMeasure(info.parsed, options.layoutProfile !== 'word'),
       gids: info.gids,
     });
   }

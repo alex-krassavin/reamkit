@@ -6,7 +6,7 @@ import { buildDocxFromBody } from './fixtures/build-docx';
 import type { TextLineItem, TextToken } from '@/layout/page-doc';
 import type { LayoutProfile } from '@/layout/styled-layout';
 import { Ream } from '@/core/converter/ream';
-import { FontRegistry, parseTtf } from '@/core/font';
+import { FontRegistry, createFontMeasure, parseTtf } from '@/core/font';
 import { flowRenderOptions } from '@/core/converter/project';
 import { layoutStyledDocument } from '@/layout/styled-layout';
 
@@ -133,5 +133,46 @@ describe('layoutProfile — greedy line breaking (E-PARITY FP3)', () => {
   it('preserves every word and its order regardless of the breaker', () => {
     expect(wordsInOrder('word')).toBe(wordsInOrder('ream'));
     expect(wordsInOrder('libreoffice')).toBe(wordsInOrder('ream'));
+  });
+});
+
+// A paragraph full of classic kern pairs (A-V, W-A, T-o, Y-a, V-o, …). (FP4.)
+const kernRich = Array.from({ length: 40 }, () => 'WAVE AVATAR Tomato Yawn Active Vote Wax').join(
+  ' ',
+);
+const kernDocx = buildDocxFromBody(`<w:p><w:r><w:t>${kernRich}</w:t></w:r></w:p>`);
+
+// Total width of the word (non-space) tokens — independent of where lines break
+// (each word is measured once), so it isolates the kerning difference.
+function sumWordWidth(profile?: LayoutProfile): number {
+  const flow = Ream.parse(kernDocx).flow;
+  const laid = layoutStyledDocument(flow.body, {
+    registry: FontRegistry.fromBytes(FONTS),
+    ...flowRenderOptions(flow),
+    ...(profile ? { layoutProfile: profile } : {}),
+  });
+  let sum = 0;
+  for (const page of laid.pages) {
+    for (const c of page.commands.filter((x): x is TextLineItem => x.type === 'line')) {
+      for (const t of c.line.tokens) if (t.kind === 'text' && !t.isSpace) sum += t.widthPt;
+    }
+  }
+  return sum;
+}
+
+describe('layoutProfile — kerning (E-PARITY FP4)', () => {
+  it("'word' measures kern-free; the default keeps kerning", () => {
+    const p = parseTtf(FONTS.regular);
+    const kerned = createFontMeasure(p, true).textWidthPt('AVATAR', 100);
+    const unkerned = createFontMeasure(p, false).textWidthPt('AVATAR', 100);
+    expect(unkerned).toBeGreaterThan(kerned); // dropping the negative pair kerns widens it
+    expect(createFontMeasure(p).textWidthPt('AVATAR', 100)).toBe(kerned); // default = kerned
+  });
+
+  it("a kern-rich paragraph measures wider under 'word' than the kerned profiles", () => {
+    // 'word' drops kerning, so its word widths are larger; 'ream' and
+    // 'libreoffice' keep it and agree (breaking does not move word widths).
+    expect(sumWordWidth('word')).toBeGreaterThan(sumWordWidth('libreoffice'));
+    expect(sumWordWidth('libreoffice')).toBeCloseTo(sumWordWidth(), 6);
   });
 });

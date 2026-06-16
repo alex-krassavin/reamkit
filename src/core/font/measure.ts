@@ -13,8 +13,16 @@ export interface FontMeasure {
   readonly encodeTextAsCidHex: (text: string) => string;
 }
 
-export function createFontMeasure(parsed: ParsedTtf): FontMeasure {
+const EMPTY_KERNING = new Map<string, number>();
+
+// `kern` gates pair kerning in the measured advances (E-PARITY FP4): the default
+// keeps it; the 'word' layoutProfile turns it off, since Word leaves "Kerning
+// for fonts" off by default — and Ream's Tj output is un-kerned anyway, so a
+// kern-free measure matches what actually renders. Glyph identity (the CID hex)
+// is kern-independent, so only the measured widths change.
+export function createFontMeasure(parsed: ParsedTtf, kern = true): FontMeasure {
   const scale = 1000 / parsed.unitsPerEm;
+  const kerning = kern ? parsed.kerning : EMPTY_KERNING;
   const widths: Array<number> = new Array(parsed.numGlyphs);
   for (let i = 0; i < parsed.numGlyphs; i++) {
     widths[i] = Math.round((parsed.advanceWidths[i] ?? 0) * scale);
@@ -29,7 +37,7 @@ export function createFontMeasure(parsed: ParsedTtf): FontMeasure {
       parsed.glyphForCodepoint,
       parsed.advanceWidths,
       parsed.ligatures,
-      parsed.kerning,
+      kerning,
       parsed.joiningForms,
     );
     let totalEm = 0;
@@ -42,7 +50,7 @@ export function createFontMeasure(parsed: ParsedTtf): FontMeasure {
       parsed.glyphForCodepoint,
       parsed.advanceWidths,
       parsed.ligatures,
-      parsed.kerning,
+      kerning,
       parsed.joiningForms,
     );
     let out = '';
