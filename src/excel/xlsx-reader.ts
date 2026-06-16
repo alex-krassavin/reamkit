@@ -125,7 +125,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
         if (!isOoxmlRel(rel.type, 'pivotTable')) continue;
         const part = pkg.resolveRelatedPart(resolved.path, rel);
         const parsed = part ? parsePivotTablePart(part.data) : undefined;
-        if (parsed) resolvedPivots.push(parsed);
+        if (parsed) resolvedPivots.push(resolvePivotStyle(parsed, palette));
       }
       if (resolvedPivots.length > 0) pivotTables = resolvedPivots;
     }
@@ -190,6 +190,24 @@ function resolveTableStyle(t: ExcelTable, palette: ReadonlyMap<string, string>):
   }
   // medium / dark: a solid accent header with white text.
   return { ...t, headerHex: base, bandHex: lighten(base, 0.8), headerTextHex: 'FFFFFF' };
+}
+
+// Resolve a pivot's named built-in style to header / band colours. Pivot styles
+// (PivotStyle{Light|Medium|Dark}{N}) live in Excel, not the file; we approximate
+// with the same accent-column heuristic as table styles — the pivot gallery
+// differs in exact numbering, refined later (E-PIVOT PV2). A style-less /
+// unrecognized pivot is left uncoloured (it then renders as a plain grid).
+function resolvePivotStyle(p: PivotTable, palette: ReadonlyMap<string, string>): PivotTable {
+  const m = p.styleName ? /PivotStyle(Light|Medium|Dark)(\d+)/i.exec(p.styleName) : null;
+  if (!m) return p;
+  const kind = m[1]!.toLowerCase();
+  const column = (Number(m[2]) - 1) % 7;
+  const base = column === 0 ? '7F7F7F' : (palette.get(`accent${column}`) ?? '4472C4');
+  if (kind === 'light') {
+    return { ...p, headerHex: lighten(base, 0.6), bandHex: lighten(base, 0.85) };
+  }
+  // medium / dark: a solid accent header with white text.
+  return { ...p, headerHex: base, bandHex: lighten(base, 0.8), headerTextHex: 'FFFFFF' };
 }
 
 // Lighten a 6-hex colour toward white by `amount` (0..1).

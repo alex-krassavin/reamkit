@@ -1069,6 +1069,19 @@ override + `dsp:`-walker, кладущий `dsp:spPr`/`dsp:txBody` в сущес
   модели (ref E1:I6→`{0,0,2,2}` на фикстуре, style/firstHeaderRow/stripes), ячейки рендерятся,
   нет pivot→undefined. Проверено на реальном `pivot_dark1.xlsx` (PivotStyleDark1, E1:I6). 840
   тестов (+3). Осталось: PV2 (стиль→цвета + shading-карта), PV3 (структура), PV4 (полиш).
+- **PV2 ✓** — стиль→цвета + банды. `resolvePivotStyle` (xlsx-reader, зеркало
+  `resolveTableStyle`): `PivotStyle{Light|Medium|Dark}{N}` → accent-колонка `(N-1)%7` →
+  header/band-hex (medium/dark — сплошной accent + белый текст; light — тинты); шарит
+  `lighten`. Галерея pivot отличается нумерацией от таблиц — берём ту же эвристику как
+  аппроксимацию (уточнить в PV4). Рендер: `buildTableFormatLookup` (print-model) вынес общий
+  `band(ref, headerRows, style)` и зовёт его для таблиц (`headerRowCount`) И pivot
+  (`firstDataRow` как число header-строк) — тот же per-cell shading-слот, что у таблиц SC3.
+  Байт-в-ноль: рефактор `band` оставляет таблицы байт-идентичными (полный прогон без сдвигов);
+  pivot-шейдинг трогает только листы с pivot, которых в снапшотах нет. Тесты: шапка+полосы по
+  `PivotStyleDark2` (band≠header, band1 пуст), без `showRowStripes` — только шапка. Проверено
+  на реальном `pivot_dark1.xlsx`: 20 закрашенных ячеек в E1:I6 (grey `7F7F7F` от
+  PivotStyleDark1). 842 теста (+2). Осталось: PV3 (субитоги/гранд-итог + outline), PV4 (полиш
+  + scope.md).
 
 ---
 

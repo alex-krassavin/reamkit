@@ -54,3 +54,57 @@ describe('Excel pivot tables — parse + model (E-PIVOT PV1)', () => {
     expect(sheet.sheets[0]!.grid.pivotTables).toBeUndefined();
   });
 });
+
+// The projected sheet is one table; each cell carries its resolved shading.
+const shadingGrid = (
+  flow: ReturnType<typeof Ream.parse>['flow'],
+): Array<Array<string | undefined>> => {
+  const table = flow.body.find((el) => el.kind === 'table');
+  if (table?.kind !== 'table') throw new Error('expected a table');
+  return table.table.rows.map((row) => row.cells.map((c) => c.properties.shading?.colorHex));
+};
+
+// A pivot with two header rows (firstDataRow=2) and three data rows over A1:C5.
+const BANDED_ROWS: ReadonlyArray<ReadonlyArray<string | number>> = [
+  ['Count', 'X', 'Y'],
+  ['Hdr', 'a', 'b'],
+  ['A', 1, 2],
+  ['B', 3, 4],
+  ['C', 5, 6],
+];
+
+describe('Excel pivot tables — banding projection (E-PIVOT PV2)', () => {
+  it('shades the header rows and every second data row from the pivot style', () => {
+    const flow = Ream.parse(
+      buildXlsx({
+        rows: BANDED_ROWS,
+        pivotTables: [
+          { ref: 'A1:C5', styleName: 'PivotStyleDark2', firstDataRow: 2, showRowStripes: true },
+        ],
+      }),
+    ).flow;
+    const grid = shadingGrid(flow);
+    expect(grid[0]![0]).toBeDefined(); // header row 0
+    expect(grid[1]![0]).toBeDefined(); // header row 1 (firstDataRow=2)
+    expect(grid[2]![0]).toBeUndefined(); // 1st data row (band1) unfilled
+    expect(grid[3]![0]).toBeDefined(); // 2nd data row (band2) filled
+    expect(grid[4]![0]).toBeUndefined(); // 3rd data row (band1) unfilled
+    expect(grid[3]![0]).not.toBe(grid[0]![0]); // band colour ≠ header colour
+  });
+
+  it('shades only the header rows when showRowStripes is off', () => {
+    const flow = Ream.parse(
+      buildXlsx({
+        rows: BANDED_ROWS,
+        pivotTables: [
+          { ref: 'A1:C5', styleName: 'PivotStyleDark2', firstDataRow: 2, showRowStripes: false },
+        ],
+      }),
+    ).flow;
+    const grid = shadingGrid(flow);
+    expect(grid[0]![0]).toBeDefined(); // headers still shaded
+    expect(grid[1]![0]).toBeDefined();
+    expect(grid[2]![0]).toBeUndefined();
+    expect(grid[3]![0]).toBeUndefined(); // no stripes
+  });
+});

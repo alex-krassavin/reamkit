@@ -894,23 +894,33 @@ interface TableCellFormat {
   readonly fontColorHex?: string;
 }
 
-// Cell (absolute key) → table format for header rows and banded data rows. The
-// header rows take the table's header fill + text colour (white on a Medium/Dark
+// Cell (absolute key) → table/pivot format for header rows and banded data rows.
+// The header rows take the header fill + text colour (white on a Medium/Dark
 // accent); with showRowStripes, the 2nd/4th/… data row takes the band colour
-// (band1 stays unfilled, like Excel). Bounded by real table sizes.
+// (band1 stays unfilled, like Excel). Excel tables count headers as
+// headerRowCount; pivots as firstDataRow (the offset to the first data row).
+// Bounded by real table/pivot sizes (E-SHEET SC3, E-PIVOT PV2).
 function buildTableFormatLookup(worksheet: ParsedWorksheet): Map<string, TableCellFormat> {
   const out = new Map<string, TableCellFormat>();
-  for (const t of worksheet.tables ?? []) {
-    const { ref } = t;
-    const firstDataRow = ref.startRow + t.headerRowCount;
+  const band = (
+    ref: MergedRange,
+    headerRows: number,
+    style: {
+      headerHex?: string;
+      bandHex?: string;
+      headerTextHex?: string;
+      showRowStripes: boolean;
+    },
+  ): void => {
+    const firstDataRow = ref.startRow + headerRows;
     for (let r = ref.startRow; r <= ref.endRow; r++) {
       let colorHex: string | undefined;
       let fontColorHex: string | undefined;
       if (r < firstDataRow) {
-        colorHex = t.headerHex;
-        fontColorHex = t.headerTextHex;
-      } else if (t.showRowStripes && t.bandHex) {
-        colorHex = (r - firstDataRow) % 2 === 1 ? t.bandHex : undefined;
+        colorHex = style.headerHex;
+        fontColorHex = style.headerTextHex;
+      } else if (style.showRowStripes && style.bandHex) {
+        colorHex = (r - firstDataRow) % 2 === 1 ? style.bandHex : undefined;
       }
       if (!colorHex && !fontColorHex) continue;
       const fmt: TableCellFormat = {
@@ -919,7 +929,9 @@ function buildTableFormatLookup(worksheet: ParsedWorksheet): Map<string, TableCe
       };
       for (let c = ref.startColumn; c <= ref.endColumn; c++) out.set(key(r, c), fmt);
     }
-  }
+  };
+  for (const t of worksheet.tables ?? []) band(t.ref, t.headerRowCount, t);
+  for (const p of worksheet.pivotTables ?? []) band(p.ref, p.firstDataRow, p);
   return out;
 }
 
