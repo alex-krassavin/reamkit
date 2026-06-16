@@ -151,9 +151,7 @@ charts — and is byte-stable across a read↔write loop.
   private font metrics — but _pixel-identical_ output is a non-goal: that would need the
   exact same font file and the renderer's internal glyph rounding.
 - **A couple of rarely-used Excel constructs are not rendered yet** — data
-  validation and slicers. (Word comments, SmartArt diagrams, pivot-table styling,
-  content controls, field results, and legacy VML/OLE picture previews _are_
-  handled.)
+  validation and slicers.
 
 ## Validation
 
