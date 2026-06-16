@@ -113,6 +113,11 @@ export interface Line {
   // the baseline, so the line height/descent must grow to fit them.
   readonly mathAscentPt?: number;
   readonly mathDescentPt?: number;
+  // E-PARITY: metric-derived single-line height and descent (Pt), the max over
+  // the line's text-token fonts under a non-default layoutProfile. Absent under
+  // 'ream', where leading stays the flat 1.2×/0.2 model (byte-identical).
+  readonly metricHeightPt?: number;
+  readonly metricDescentPt?: number;
 }
 
 export interface ImageResource {

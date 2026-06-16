@@ -757,8 +757,19 @@ serif→Tinos и mono→Cousine уже метрик-совместимы (Crosco
   `/<variant>/Carlito_<variant>.ttf`); `docx-to-pdf` сид/база `'roboto'`→`'arimo'`. Все 5
   твинов — с того же `@expo-google-fonts` CDN; live-смоук: Carlito/Caladea/Arimo фетчатся
   и парсятся (`parseTtf` numGlyphs>0, все 4 варианта). Байт-в-ноль: снапшоты на
-  caller-шрифтах не двигаются. 807 тестов (+1: nested-путь Carlito). Осталось FP0
-  (parity-гейт корпуса) + FP2–FP4 (опт-ин `layoutProfile`).
+  caller-шрифтах не двигаются. 807 тестов (+1: nested-путь Carlito).
+- **FP2 ✓** — leading из метрик под опт-ин `layoutProfile`. `ttf-parser` теперь читает
+  hhea `lineGap` + OS/2 `usWin*`/`sTypo*` + бит USE_TYPO_METRICS (фолбэк на hhea, если
+  нет OS/2) в `ParsedTtf.vmetrics`. `StyledRenderOptions.layoutProfile?:
+  'ream'|'word'|'libreoffice'` (дефолт `'ream'`); `wrap`→`lineFromRange` под профилем
+  считает высоту/спуск строки из метрик токен-шрифтов (max по строке) и кладёт на `Line`
+  (`metricHeightPt`/`metricDescentPt`); `computeLineHeight`/`lineDescent` их читают,
+  иначе прежний флэт 1.2×/0.2. `'word'` = `winAscent+winDescent` (GDI-бокс);
+  `'libreoffice'` = hhea-триплет (или typo при USE_TYPO_METRICS). Опция дотекает через
+  `ConvertDocxOptions` спредом (как `pdfA`), хопов минимум (1 вызов `wrap`, 1 —
+  `lineFromRange`). Байт-в-ноль на `'ream'` (снапшоты не двигаются). 811 тестов (+4:
+  дефолт==ream, формулы word/libreoffice по реальному шрифту, vmetrics). Осталось FP0
+  (parity-гейт корпуса) + FP3 (greedy-перенос) + FP4 (кернинг).
 
 ---
 

@@ -136,8 +136,17 @@ function parsePdfAProfile(pdfA: PdfALevel): PdfAProfile {
   return { part, level, tagged: level === 'a', version: part === 1 ? '1.4' : '1.7' };
 }
 
+// E-PARITY: renderer-compatibility profile for the line-height model.
+//   'ream' (default) — Ream's flat 1.2× leading; byte-identical to before.
+//   'word' — leading from the font's OS/2 usWin metrics (the GDI cell box).
+//   'libreoffice' — leading from hhea (or OS/2 typo when USE_TYPO_METRICS is set).
+// Opt-in: a profile emulates that renderer's vertical rhythm for closer visual
+// parity. It never changes default ('ream') output.
+export type LayoutProfile = 'ream' | 'word' | 'libreoffice';
+
 export interface StyledRenderOptions {
   readonly registry: FontRegistry;
+  readonly layoutProfile?: LayoutProfile;
   // Per-run font resolution: when supplied, each text run picks the registry of
   // its declared family (sans→arimo / serif→tinos / mono→cousine via the run's
   // w:ascii) instead of always using `registry`. Absent ⇒ single-family (every
@@ -1830,7 +1839,15 @@ function layoutParagraphBlock(
   );
   const firstLineWidth = paragraphMaxWidth(resolved, contentWidth, true);
   const otherWidth = paragraphMaxWidth(resolved, contentWidth, false);
-  const lines = wrap(tokens, firstLineWidth, otherWidth, resolved, options.hyphenator, lineWidths);
+  const lines = wrap(
+    tokens,
+    firstLineWidth,
+    otherWidth,
+    resolved,
+    options.hyphenator,
+    options.layoutProfile ?? 'ream',
+    lineWidths,
+  );
 
   let heightPt = 0;
   for (const line of lines) heightPt += computeLineHeight(line, resolved);
@@ -2286,6 +2303,7 @@ function lineFromRange(
   availableWidthPt: number,
   isFirst: boolean,
   resolved: ResolvedParagraphProperties,
+  profile: LayoutProfile,
 ): Line | null {
   let st = start;
   let et = breakIdx;
@@ -2322,6 +2340,12 @@ function lineFromRange(
   let maxSize = 0;
   let mathAscent = 0;
   let mathDescent = 0;
+  // E-PARITY: under a non-default profile, derive the line's natural height and
+  // descent from the max of its text-token fonts' vertical metrics.
+  const useMetric = profile !== 'ream';
+  let metricAscent = 0;
+  let metricDescent = 0;
+  let metricLineGap = 0;
   for (const t of lineTokens) {
     contentWidth += t.widthPt;
     const sz = tokenLineSize(t);
@@ -2329,8 +2353,14 @@ function lineFromRange(
     if (t.kind === 'math') {
       mathAscent = Math.max(mathAscent, t.ascentPt);
       mathDescent = Math.max(mathDescent, t.descentPt);
+    } else if (useMetric && t.kind === 'text') {
+      const m = fontLeadingPt(t.font.parsed, t.fontSizePt, profile);
+      if (m.ascentPt > metricAscent) metricAscent = m.ascentPt;
+      if (m.descentPt > metricDescent) metricDescent = m.descentPt;
+      if (m.lineGapPt > metricLineGap) metricLineGap = m.lineGapPt;
     }
   }
+  const hasMetric = useMetric && metricAscent + metricDescent > 0;
   return {
     tokens: lineTokens,
     contentWidthPt: contentWidth,
@@ -2341,6 +2371,12 @@ function lineFromRange(
     isLastInParagraph: false,
     mathAscentPt: mathAscent,
     mathDescentPt: mathDescent,
+    ...(hasMetric
+      ? {
+          metricHeightPt: metricAscent + metricDescent + metricLineGap,
+          metricDescentPt: metricDescent,
+        }
+      : {}),
   };
 }
 
@@ -2350,6 +2386,7 @@ function wrap(
   otherWidth: number,
   resolved: ResolvedParagraphProperties,
   hyphenator: Hyphenator | undefined,
+  profile: LayoutProfile,
   // Float text wrapping: explicit per-line widths (the last reuses for the
   // tail, the Knuth-Plass convention). Overrides first/other when given.
   lineWidths?: ReadonlyArray<number>,
@@ -2369,7 +2406,7 @@ function wrap(
   let lineIdx = 0;
   for (const breakIdx of breaks) {
     const width = lineIdx < widths.length ? widths[lineIdx]! : widths[widths.length - 1]!;
-    const line = lineFromRange(entries, start, breakIdx, width, isFirst, resolved);
+    const line = lineFromRange(entries, start, breakIdx, width, isFirst, resolved, profile);
     if (line) lines.push(line);
     start = breakIdx + 1;
     isFirst = false;
@@ -2380,8 +2417,32 @@ function wrap(
   return lines;
 }
 
+// E-PARITY: a font's natural ascent/descent/line-gap (Pt) at the given size for
+// the renderer-compat profile. 'word' uses the OS/2 win metrics (the GDI cell
+// box, no external leading); 'libreoffice' uses hhea, or the OS/2 typo triple
+// when the font requests USE_TYPO_METRICS. descender/typoDescent are stored
+// negative, so the descent magnitude negates them.
+function fontLeadingPt(
+  parsed: ParsedTtf,
+  sizePt: number,
+  profile: LayoutProfile,
+): { ascentPt: number; descentPt: number; lineGapPt: number } {
+  const s = sizePt / parsed.unitsPerEm;
+  const vm = parsed.vmetrics;
+  if (profile === 'word') {
+    return { ascentPt: vm.winAscent * s, descentPt: vm.winDescent * s, lineGapPt: 0 };
+  }
+  const asc = vm.useTypoMetrics ? vm.typoAscent : parsed.ascender;
+  const desc = vm.useTypoMetrics ? vm.typoDescent : parsed.descender;
+  const gap = vm.useTypoMetrics ? vm.typoLineGap : parsed.lineGap;
+  return { ascentPt: asc * s, descentPt: -desc * s, lineGapPt: gap * s };
+}
+
 function computeLineHeight(line: Line, p: ResolvedParagraphProperties): number {
   const fontSize = line.maxFontSizePt || 12;
+  // Natural single-line height: a font-metric value under a layoutProfile
+  // (E-PARITY), else Ream's flat 1.2×. The spacing rules below scale it.
+  const natural = line.metricHeightPt ?? fontSize * 1.2;
   // A math box straddles the baseline; the line must be at least tall enough to
   // hold its full ascent+descent (plus a little leading).
   const mathH = (line.mathAscentPt ?? 0) + (line.mathDescentPt ?? 0);
@@ -2390,19 +2451,21 @@ function computeLineHeight(line: Line, p: ResolvedParagraphProperties): number {
     return Math.max(p.spacingLine, mathNeed);
   }
   if (p.spacingLineRule === 'atLeast' && p.spacingLine > 0) {
-    return Math.max(fontSize * 1.2, p.spacingLine, mathNeed);
+    return Math.max(natural, p.spacingLine, mathNeed);
   }
   // "Multiple" spacing is defined in 240ths (240 twips = single). Recover the
   // integer twips before dividing — historically this divided the raw int, and
   // (twips*(1/20))/12 differs from twips/240 in the last ulp.
   const lineTwips = Math.round(p.spacingLine * 20);
   const multiple = lineTwips > 0 ? lineTwips / 240 : 1;
-  return Math.max(fontSize * 1.2 * multiple, mathNeed);
+  return Math.max(natural * multiple, mathNeed);
 }
 
 function lineDescent(line: Line): number {
   const fs = line.maxFontSizePt || 12;
-  return Math.max(fs * 0.2, line.mathDescentPt ?? 0);
+  // Metric descent under a layoutProfile (E-PARITY), else the flat 0.2×.
+  const base = line.metricDescentPt ?? fs * 0.2;
+  return Math.max(base, line.mathDescentPt ?? 0);
 }
 
 function alignmentOffset(
