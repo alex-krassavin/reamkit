@@ -650,6 +650,118 @@ honest e2e (parse → flow/HTML/PDF). Байт-в-ноль для docx/xlsx/pdf 
 
 ---
 
+## E-PARITY — паритет с эталонным рендером (Word/LibreOffice)
+
+**Цель.** Сократить визуальное расхождение `Ream.convert('pdf')` с эталонным рендером
+до пиксель-близкого — БЕЗ доступа к чужим метрикам. Два рычага: (1) подставлять
+шрифты, инженерно повторяющие метрики оригинала (Carlito=Calibri, Caladea=Cambria,
+Arimo=Arial, Tinos=Times, Cousine=Courier) — тогда advance-ширины совпадают 1:1 и
+чужие метрики не нужны; (2) опциональный `layoutProfile` (`'word'`|`'libreoffice'`),
+переключающий модель высоты строки, алгоритм переноса и дефолт кернинга под выбранный
+рендер. Дефолт поведения НЕ меняется (byte-в-ноль).
+
+**Усилие: малое→среднее.** FP1 (подстановка) — точечная правка одной цепочки.
+FP2–FP4 (профиль) трогают ядро layout, но строго под опт-ин флагом; дефолт = текущее.
+
+### Где реально ломается parity (проверено на 1.10.0)
+Глифовые ширины берутся из `hmtx` и масштабируются стандартно (`measure.ts:16`) — тут
+расхождений нет. Дрейф даёт другое:
+
+| Источник | Сейчас | Word / LibreOffice |
+|---|---|---|
+| **Подстановка sans** | `Arial/Calibri → Roboto` (`remote-fonts.ts:73`) — НЕ метрик-совместим | Calibri→Carlito, Arial→Arimo (ширины 1:1) |
+| **Высота строки** | хардкод `fontSize*1.2` (`styled-layout.ts:2400`); `OS/2 win*`/`sTypo*` НЕ читаются | из метрик: `usWinAscent+usWinDescent` (Word) / `hhea asc+desc+gap` (LO) |
+| **Перенос строк** | Knuth-Plass total-fit (`knuth-plass.ts:94`) | оба — greedy first-fit |
+| **Кернинг** | GPOS всегда (`opentype-layout.ts:57`) | в Word по умолчанию ВЫКЛ (без `w:kern`) |
+
+serif→Tinos и mono→Cousine уже метрик-совместимы (Croscore = клоны Times/Courier);
+выбивается только sans→Roboto.
+
+### Главное архитектурное решение (принять ДО кода)
+- **Метрик-совместимая подстановка ВМЕСТО чужих метрик.** Кавеат «нужны точные метрики
+  чужого тула» снимается так: подставляем шрифт, СПРОЕКТИРОВАННЫЙ повторять те метрики
+  (Croscore/Carlito/Caladea). Advance-ширины совпадают 1:1 без эмуляции. Покрывает ~90%
+  реальных документов (Calibri/Arial/Times/Courier).
+- **Паритет сверх этого — опт-ин `layoutProfile`, НИКОГДА не дефолт.** `'ream'` (дефолт)
+  = текущее поведение, байт-в-ноль. `'word'`/`'libreoffice'` бандлят {модель leading,
+  алгоритм переноса, дефолт кернинга}. Ream остаётся КОРРЕКТНЫМ наборщиком; профиль — это
+  режим ЭМУЛЯЦИИ конкретного рендера, явный выбор вызывающего.
+- **Measurement-first.** Чужих метрик нет, но расхождение против реального вывода
+  LibreOffice измеримо корпус-харнессом (baseline-drift + pixel-mismatch). Сначала
+  формализуем метрику в гейт (FP0), потом каждый шаг ДОКАЗЫВАЕТ улучшение числом.
+
+### Точки привязки (проверено на 1.10.0)
+- `remote-fonts.ts:30,37,68` — `FamilyKey='roboto'|'tinos'|'cousine'`, `FAMILIES`,
+  `resolveFamilyKey` (sans→roboto). `FetchLike`-инъекция для тестов уже есть.
+- `ttf-parser.ts:105` hhea asc/desc парсятся (но не для leading); `:148` OS/2 читается
+  только под capHeight/xHeight/weight/italic — `usWinAscent/usWinDescent/sTypoAscender/
+  sTypoDescender/sTypoLineGap` НЕ читаются.
+- `styled-layout.ts:2383` `computeLineHeight` (флэт 1.2×), `:2403` `lineDescent` (0.2×).
+  Вызовы leading: `:1177,1607,1836`; `:1620` baselineY через `lineDescent`.
+- `knuth-plass.ts:94` `breakLines` (total-fit), `:51` `TOLERANCE_RATIO`. Glue
+  stretch/shrink — `styled-layout.ts:~2219`.
+- `opentype-layout.ts:57` `parseGposKerning` (GPOS kern), `:40` GSUB liga. Кернинг
+  применяется безусловно в shaping.
+- `scripts/corpus/run.ts`+`lib.ts` — эталон LibreOffice (`soffice --convert-to pdf`),
+  растеризация `mutool`, `structuralDiff`/`visualDiff` (baseline-drift + pixel-mismatch).
+  `CORPUS_AUTOFONT=1` гоняет remote-подстановку.
+- Опции конвертера: `ConvertDocxOptions extends Omit<StyledRenderOptions,…>` — новый
+  `layoutProfile` дотечёт до конвертеров даром (как было с `pdfA`).
+
+### Декомпозиция (опт-ин профиль; дефолт байт-в-ноль)
+- **FP0 — parity как число (гейт).** В корпус-харнессе свести divergence к одной
+  отслеживаемой метрике: медианный baseline-drift + доля документов с совпавшим числом
+  страниц. Зафиксировать текущий baseline (до FP1) в репорте/`corpus/parity-baseline.json`.
+  Инструмент проверки для FP1–FP4. Байт-в-ноль (только скрипты).
+- **FP1 — метрик-совместимая подстановка.** `remote-fonts.ts`: двухуровневый матч в
+  `resolveFamilyKey` — точное семейство → класс.
+  - *FP1a — sans→Arimo* (тот же CDN: `@expo-google-fonts/arimo`): Arial/Helvetica/Segoe/
+    Verdana → Arimo (1:1 с Arial). Уже улучшает Calibri (Arimo ближе Roboto). Расширить
+    `FamilyKey`/`FAMILIES`.
+  - *FP1b — точные модерн-Office: Carlito(=Calibri), Caladea(=Cambria).* Точный матч
+    `calibri→carlito`, `cambria→caladea`. РИСК-источник: Carlito/Caladea могут
+    отсутствовать в `@expo-google-fonts` — выбрать CDN (оба свободны, OFL); если нет —
+    фолбэк Calibri→Arimo, Cambria→Tinos (близко, не 1:1) + TODO.
+  - Байт-стабильно: snapshot-тесты используют caller-шрифты (детерминизм), не
+    remote-цепочку; проверить, что ни один snapshot не запинен на Roboto.
+- **FP2 — leading из метрик (профиль).** Расширить ttf-parser: `usWinAscent/usWinDescent`
+  + `sTypoAscender/Descender/sTypoLineGap`. Ввести `options.layoutProfile?:
+  'ream'|'word'|'libreoffice'` (дефолт `'ream'`). В `computeLineHeight`/`lineDescent` под
+  профилем считать высоту из метрик (`'word'`: winAscent+winDescent; `'libreoffice'`: hhea
+  asc+desc+lineGap), оставив auto/atLeast/exact/multiple-правила ECMA. `'ream'` = текущая
+  ветка нетронута.
+- **FP3 — greedy перенос (профиль).** Под `'word'`/`'libreoffice'` — жадный first-fit
+  рядом с Knuth-Plass, чтобы число строк/страниц совпадало с эталоном (главный каскадный
+  дрейф). `'ream'` остаётся total-fit.
+- **FP4 — кернинг под профиль.** `'word'`: гасить GPOS-кернинг без документного `w:kern`;
+  проверить чтение legacy `kern`-таблицы (шрифты без GPOS LO кернит). `'libreoffice'`:
+  кернинг как есть.
+
+### Риски
+- **Carlito/Caladea — источник шрифта** (FP1b): не на Google Fonts; нужен CDN/бандл.
+  Свободны (OFL), но требуют решения. Фолбэк на Arimo/Tinos обозначен.
+- **layoutProfile ≠ дефолт**: любой профиль трогает ядро layout; строго под флагом,
+  `'ream'` байт-в-ноль. Снапшот-гейт стережёт регресс дефолта.
+- **Greedy vs total-fit** (FP3): два пути переноса в одном модуле — риск дивергенции;
+  общий item-поток, развилка только в выборе точек разрыва.
+- **Эмуляция ≠ корректность**: профиль воспроизводит ВЫБОРЫ рендера (в т.ч. его
+  «хуже»-типографику). Документировать: `'ream'` — лучшая типографика, `'word'`/
+  `'libreoffice'` — паритет.
+
+### Прогресс
+- **FP1 ✓** — метрик-совместимая подстановка. `resolveFamilyKey` стал двухуровневым:
+  точные твины (Calibri→Carlito, Cambria→Caladea, Arial→Arimo, Times→Tinos,
+  Courier→Cousine — ширины 1:1) → классовый фолбэк (прочий serif→Tinos, mono→Cousine,
+  иначе sans→Arimo). Дефолт sans сменён Roboto→Arimo (LibreOffice-выровненный нейтрал;
+  Roboto убран из набора). `fontUrl` поддержал вложенную раскладку пакета (Carlito:
+  `/<variant>/Carlito_<variant>.ttf`); `docx-to-pdf` сид/база `'roboto'`→`'arimo'`. Все 5
+  твинов — с того же `@expo-google-fonts` CDN; live-смоук: Carlito/Caladea/Arimo фетчатся
+  и парсятся (`parseTtf` numGlyphs>0, все 4 варианта). Байт-в-ноль: снапшоты на
+  caller-шрифтах не двигаются. 807 тестов (+1: nested-путь Carlito). Осталось FP0
+  (parity-гейт корпуса) + FP2–FP4 (опт-ин `layoutProfile`).
+
+---
+
 ## Сводка приоритетов
 
 | Эпик    | Усилие        | byteRisk | Связь с core-миссией       | Когда                    |
@@ -658,3 +770,6 @@ honest e2e (parse → flow/HTML/PDF). Байт-в-ноль для docx/xlsx/pdf 
 | E-SHEET | большое       | высокий  | Excel первоклассен → ядро  | вторым (стратегический)  |
 | E-PDF   | очень большое | н/д      | универсальность, не ядро   | отдельный крупный заход  |
 | E-PPTX  | среднее       | низкий   | pptx-вход, замыкает OOXML  | новая эра (после 1.8.0)   |
+| E-PARITY| малое→среднее | низкий¹  | визуальный паритет с Word/LO | после E-PPTX            |
+
+¹ E-PARITY: FP1 (подстановка) байт-стабилен; FP2–FP4 — строго опт-ин `layoutProfile`, дефолт `'ream'` не меняется.

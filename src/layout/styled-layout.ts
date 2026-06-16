@@ -139,7 +139,7 @@ function parsePdfAProfile(pdfA: PdfALevel): PdfAProfile {
 export interface StyledRenderOptions {
   readonly registry: FontRegistry;
   // Per-run font resolution: when supplied, each text run picks the registry of
-  // its declared family (sans→roboto / serif→tinos / mono→cousine via the run's
+  // its declared family (sans→arimo / serif→tinos / mono→cousine via the run's
   // w:ascii) instead of always using `registry`. Absent ⇒ single-family (every
   // run uses `registry`), byte-identical to before. `registry` remains the
   // guaranteed fallback for math/chart/default glyphs and any missing family.

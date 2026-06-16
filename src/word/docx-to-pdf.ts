@@ -100,7 +100,7 @@ function prepareDocxStyledRender(
 // default as a fallback for unstyled runs / math / charts. The async path
 // fetches one substitute set per family so each run renders in the right one.
 export function detectDocxFamilyKeys(docx: Uint8Array): Set<FamilyKey> {
-  const keys = new Set<FamilyKey>(['roboto']);
+  const keys = new Set<FamilyKey>(['arimo']);
   let pkg: OpcPackage;
   try {
     pkg = OpcPackage.open(docx);
@@ -185,7 +185,7 @@ export async function resolveDocxAutoFonts(
   for (const key of keys) {
     const bytes = await fetchFontSet({ family: key, ...fetchOpt });
     registriesByFamily.set(key, FontRegistry.fromBytes(bytes));
-    if (key === 'roboto' || !baseBytes) baseBytes = bytes;
+    if (key === 'arimo' || !baseBytes) baseBytes = bytes;
   }
   return { fonts: baseBytes!, registriesByFamily };
 }
