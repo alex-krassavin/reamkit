@@ -249,6 +249,10 @@ export interface Run {
   // §17.13.4.1 w:commentReference — the run anchors a review comment by id; the
   // comment's content/author live in FlowDoc.comments.
   readonly commentRef?: string;
+  // §17.13.4.3/4 w:commentRangeStart/End — the ids of the comment ranges this
+  // run falls inside (a run may be covered by several). Renderers highlight the
+  // covered span; the marker run (commentRef) sits at the range's end.
+  readonly commentRangeRefs?: ReadonlyArray<string>;
   // §17.11.13 w:footnoteRef / §17.11.5 w:endnoteRef — inside note content:
   // render the OWNING note's number here.
   readonly noteNumber?: true;

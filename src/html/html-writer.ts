@@ -148,6 +148,10 @@ const BASE_CSS = [
   'img{vertical-align:baseline}',
   '.notes{margin-top:18pt;font-size:smaller}',
   '.notes hr{margin:0 0 6pt;border:none;border-top:0.75pt solid #000;width:144pt;margin-left:0}',
+  // Comment-range highlight (CM2c) + nested reply indentation (CM4).
+  '.comment-range{background:#fff3a3}',
+  '.comment-replies{margin-left:18pt}',
+  '.comments .resolved>.comment-meta::after{content:" \\2713";color:#3a7d3a}',
 ].join('');
 
 interface EmitCtx {
@@ -584,6 +588,10 @@ function runHtml(run: Run, p: Paragraph, ctx: EmitCtx): string {
   let html = `<span${dir}${style ? ` style="${style}"` : ''}>${textHtml(run.text)}</span>`;
   if (resolved.verticalAlign === 'superscript') html = `<sup>${html}</sup>`;
   else if (resolved.verticalAlign === 'subscript') html = `<sub>${html}</sub>`;
+  // §17.13.4 comment range: highlight the commented span (CM2c).
+  if (run.commentRangeRefs && run.commentRangeRefs.length > 0) {
+    html = `<span class="comment-range">${html}</span>`;
+  }
   if (run.href === undefined && run.anchor !== undefined) {
     // Internal link: a #-fragment to the bookmark's id — a document-local
     // name, not a URL, so the scheme allowlist does not apply.

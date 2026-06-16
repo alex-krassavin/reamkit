@@ -858,6 +858,35 @@ function emitPageContent(
         return tok.font.measure.encodeTextAsCidHex(text);
       };
 
+      // Comment-range highlight (CM2c): a soft fill behind highlighted tokens.
+      // Path ops can't sit inside a text object, so close BT first; the text
+      // emit below reopens it. Gated on a highlight being present, so every line
+      // in a document with no comment ranges emits byte-identically.
+      if (line.tokens.some((t) => t.kind === 'text' && t.highlight === true)) {
+        if (inBT) {
+          out.push('ET');
+          inBT = false;
+        }
+        const hlAscent = Math.max(lineFs, line.mathAscentPt ?? 0);
+        const hlDescent = Math.max(lineFs * 0.2, line.mathDescentPt ?? 0);
+        const [hr, hg, hb] = hexToRgb01('fff3a3');
+        out.push('q');
+        out.push(`${formatNumber(hr)} ${formatNumber(hg)} ${formatNumber(hb)} rg`);
+        let hx: number = originX;
+        for (const tok of line.tokens) {
+          const w = tok.widthPt + (tok.kind === 'text' && tok.isSpace ? extraPerSpace : 0);
+          if (tok.kind === 'text' && tok.highlight === true) {
+            out.push(
+              `${formatNumber(hx)} ${formatNumber(baselineY - hlDescent)} ` +
+                `${formatNumber(w)} ${formatNumber(hlAscent + hlDescent)} re`,
+            );
+          }
+          hx += w;
+        }
+        out.push('f');
+        out.push('Q');
+      }
+
       if (extraPerSpace > 0 || hasImageToken || hasMathToken || hasRtl) {
         // Per-token absolute positioning. Required for justify (inter-word
         // slack), inline images (text-mode exits), and BiDi (visual order

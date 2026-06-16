@@ -91,6 +91,11 @@ export interface ParseContext {
   // Sink for graceful-degradation notices (E-SMARTART SA3): a SmartArt with no
   // drawing override records a dropped-feature Loss rather than vanishing.
   readonly onLoss?: (loss: Loss) => void;
+  // §17.13.4 comment ranges currently open as the body is read — a mutable set
+  // the run collector stamps onto each run (commentRangeRefs). A comment range
+  // can span paragraphs, so the state is document-level, not per-paragraph. The
+  // reference is readonly; its contents mutate during the walk (CM2c).
+  readonly openCommentRanges?: Set<string>;
 }
 
 export const DEFAULT_PARSE_CONTEXT: ParseContext = { resolveColor: defaultColorResolver };
@@ -603,14 +608,31 @@ function collectRuns(
 ): void {
   for (const child of poChildren(container)) {
     if (poIs(child, 'w:pPr')) continue;
+    // §17.13.4.3/4 — comment range bounds (siblings of w:r). Track the open set
+    // so runs in between carry commentRangeRefs (the highlighted span).
+    if (poIs(child, 'w:commentRangeStart')) {
+      const id = poAttr(child, 'id');
+      if (id !== undefined) ctx.openCommentRanges?.add(id);
+      continue;
+    }
+    if (poIs(child, 'w:commentRangeEnd')) {
+      const id = poAttr(child, 'id');
+      if (id !== undefined) ctx.openCommentRanges?.delete(id);
+      continue;
+    }
     if (poIs(child, 'w:r')) {
       const parsed = parseRun(child, ctx);
+      const ranges =
+        ctx.openCommentRanges && ctx.openCommentRanges.size > 0
+          ? [...ctx.openCommentRanges]
+          : undefined;
       const run =
-        href !== undefined || anchor !== undefined
+        href !== undefined || anchor !== undefined || ranges !== undefined
           ? {
               ...parsed.run,
               ...(href !== undefined ? { href } : {}),
               ...(anchor !== undefined ? { anchor } : {}),
+              ...(ranges !== undefined ? { commentRangeRefs: ranges } : {}),
             }
           : parsed.run;
       out.push({

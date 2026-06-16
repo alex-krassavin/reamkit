@@ -2190,6 +2190,7 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
       });
       continue;
     }
+    const highlight = (plan.run.commentRangeRefs?.length ?? 0) > 0;
     for (const t of tokenizeText(plan.run.text)) {
       tokens.push({
         kind: 'text',
@@ -2199,6 +2200,7 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         ...(plan.run.footnoteRef !== undefined ? { footnoteRef: plan.run.footnoteRef } : {}),
         ...(plan.run.anchor !== undefined ? { anchor: plan.run.anchor } : {}),
         ...(plan.run.listMarker ? { listMarker: true } : {}),
+        ...(highlight ? { highlight: true } : {}),
         resolvedRun: plan.resolvedRun,
         font: plan.font,
         fontSizePt: plan.fontSizePt,
@@ -2261,6 +2263,7 @@ function tokenizePlansBidi(
         ...(plan.run.footnoteRef !== undefined ? { footnoteRef: plan.run.footnoteRef } : {}),
         ...(plan.run.anchor !== undefined ? { anchor: plan.run.anchor } : {}),
         ...(plan.run.listMarker ? { listMarker: true } : {}),
+        ...((plan.run.commentRangeRefs?.length ?? 0) > 0 ? { highlight: true } : {}),
         resolvedRun: plan.resolvedRun,
         font: plan.font,
         fontSizePt: plan.fontSizePt,

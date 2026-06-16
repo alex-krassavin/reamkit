@@ -88,6 +88,8 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
     resolveHyperlink,
     resolveDiagram: makeDiagramResolver(pkg, MAIN_DOCUMENT_PART),
     onLoss: (loss) => losses.push(loss),
+    // Tracks open comment ranges across the body so runs carry commentRangeRefs.
+    openCommentRanges: new Set<string>(),
   };
   const body = parseDocument(main.data, ctx);
   const rawSections = parseSections(main.data);

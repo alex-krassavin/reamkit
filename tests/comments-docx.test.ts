@@ -317,3 +317,27 @@ describe('Word comment author identity from people.xml (E-COMMENTS)', () => {
     expect(html).toContain('alice@example.com');
   });
 });
+
+describe('Word comment range highlight (E-COMMENTS CM2c)', () => {
+  it('tags runs inside a commentRangeStart/End span with the comment id', () => {
+    // commentDocx() wraps "Reviewed text" in commentRangeStart/End w:id="0".
+    const runs = Ream.parse(commentDocx()).flow.body.flatMap((e) =>
+      e.kind === 'paragraph' ? [...e.paragraph.runs] : [],
+    );
+    const reviewed = runs.find((r) => r.text.includes('Reviewed'));
+    expect(reviewed?.commentRangeRefs).toContain('0');
+  });
+
+  it('highlights the commented span in HTML', async () => {
+    const html = new TextDecoder().decode(await Ream.parse(commentDocx()).convert('html'));
+    expect(html).toContain('<span class="comment-range">');
+  });
+
+  it('fills the highlight behind the commented span in the PDF', async () => {
+    const pdf = Buffer.from(
+      await Ream.parse(commentDocx()).convert('pdf', { fonts: FONTS }),
+    ).toString('latin1');
+    // #fff3a3 → the soft-yellow fill colour the emitter paints behind the span.
+    expect(pdf).toContain('0.953 0.639 rg');
+  });
+});
