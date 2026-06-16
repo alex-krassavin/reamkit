@@ -980,7 +980,16 @@ override + `dsp:`-walker, кладущий `dsp:spPr`/`dsp:txBody` в сущес
   ран помечен `commentRef`; без `comments.xml` → `comments` отсутствует (ран сохраняет
   dangling-ref для рендера CM1). Байт-в-ноль: новые опц-поля, docx без комментариев не
   двигаются. 835 тестов (+3). `commentRangeStart/End` пока игнорируются (для подсветки в CM2).
-  Осталось: CM1 (рендер: маркер + секция «Comments»).
+- **CM1 ✓** — рендер в обоих таргетах (HTML+PDF через FlowDoc, как endnotes — отдельное
+  поле, НЕ дописываем в body → docx-writer roundtrip не задет). HTML: `collectNoteNumbers`
+  даёт `comments`-карту (нумерация по порядку ссылок); ран `commentRef` → `<sup>[n]</sup>`
+  со ссылкой; `emitCommentsSection` — `<section class="comments">` с автором/датой/текстом.
+  PDF/layout: `assignNoteNumbers` нумерует комментарии + переписывает ран в маркер `[n]`
+  (superscript); хвост после endnotes (`commentTailBlocks` — `[n] author, date: content`);
+  `StyledRenderOptions.comments` + `flowRenderOptions` + сбор шрифтов/ресурсов по контенту.
+  Байт-в-ноль: guard `hasRefs`/size===0 не трогает доки без комментариев; ни один PDF-снапшот
+  не сдвинулся (в фикстурах комментов нет). 837 тестов (+2: HTML + PDF). Осталось: CM2
+  (нативные `/Text`-аннотации + подсветка диапазона), CM3 (полиш).
 
 ---
 

@@ -27,6 +27,7 @@ import type {
   CellSparkline,
   Chart,
   ChartBlock,
+  Comment,
   DocumentInfo,
   FloatAnchor,
   HeaderFooterReference,
@@ -171,6 +172,9 @@ export interface StyledRenderOptions {
   // bottom of the referencing page; endnotes flow after the body.
   readonly footnotes?: ReadonlyMap<string, ReadonlyArray<BodyElement>>;
   readonly endnotes?: ReadonlyMap<string, ReadonlyArray<BodyElement>>;
+  // §17.13.4 review comments by id; rendered as superscript markers in text and
+  // a list after the body (after endnotes), each with its author/date.
+  readonly comments?: ReadonlyMap<string, Comment>;
   // Content-addressed binary store; image nodes reference it by ResourceId.
   readonly resources?: ResourceStore;
   // Parsed charts keyed by relationship id (ChartBlock.chartRelId). Supplied by
@@ -436,6 +440,7 @@ function assignNoteNumbers(body: ReadonlyArray<BodyElement>): {
   body: ReadonlyArray<BodyElement>;
   footnotes: ReadonlyMap<string, number>;
   endnotes: ReadonlyMap<string, number>;
+  comments: ReadonlyMap<string, number>;
   // Footnote ids whose references sit OUTSIDE top-level paragraphs (table
   // cells, shape text): greedy bottom-of-page placement only tracks paragraph
   // lines, so these notes flow after the body instead (documented v1).
@@ -443,6 +448,7 @@ function assignNoteNumbers(body: ReadonlyArray<BodyElement>): {
 } {
   const footnotes = new Map<string, number>();
   const endnotes = new Map<string, number>();
+  const comments = new Map<string, number>();
   const paragraphFootnotes = new Set<string>();
 
   const numberRun = (run: Run, n: number): Run => ({
@@ -450,9 +456,21 @@ function assignNoteNumbers(body: ReadonlyArray<BodyElement>): {
     text: String(n),
     properties: { ...run.properties, verticalAlign: 'superscript' },
   });
+  // A comment marker reads `[n]` (bracketed) to read distinctly from a footnote
+  // number, and links to the comment's entry in the after-body list.
+  const commentMarkerRun = (run: Run, n: number): Run => ({
+    ...run,
+    text: `[${n}]`,
+    properties: { ...run.properties, verticalAlign: 'superscript' },
+  });
 
   const mapParagraph = (paragraph: Paragraph): Paragraph => {
-    if (!paragraph.runs.some((r) => r.footnoteRef !== undefined || r.endnoteRef !== undefined)) {
+    if (
+      !paragraph.runs.some(
+        (r) =>
+          r.footnoteRef !== undefined || r.endnoteRef !== undefined || r.commentRef !== undefined,
+      )
+    ) {
       return paragraph;
     }
     return {
@@ -473,6 +491,14 @@ function assignNoteNumbers(body: ReadonlyArray<BodyElement>): {
             endnotes.set(run.endnoteRef, n);
           }
           return numberRun(run, n);
+        }
+        if (run.commentRef !== undefined) {
+          let n = comments.get(run.commentRef);
+          if (n === undefined) {
+            n = comments.size + 1;
+            comments.set(run.commentRef, n);
+          }
+          return commentMarkerRun(run, n);
         }
         return run;
       }),
@@ -523,7 +549,8 @@ function assignNoteNumbers(body: ReadonlyArray<BodyElement>): {
     els.some((el) => {
       if (el.kind === 'paragraph') {
         return el.paragraph.runs.some(
-          (r) => r.footnoteRef !== undefined || r.endnoteRef !== undefined,
+          (r) =>
+            r.footnoteRef !== undefined || r.endnoteRef !== undefined || r.commentRef !== undefined,
         );
       }
       if (el.kind === 'table') {
@@ -533,12 +560,12 @@ function assignNoteNumbers(body: ReadonlyArray<BodyElement>): {
       return false;
     });
   if (!hasRefs(body)) {
-    return { body, footnotes, endnotes, deferredFootnotes: [] };
+    return { body, footnotes, endnotes, comments, deferredFootnotes: [] };
   }
 
   const mapped = body.map((el) => mapElement(el, true));
   const deferredFootnotes = [...footnotes.keys()].filter((id) => !paragraphFootnotes.has(id));
-  return { body: mapped, footnotes, endnotes, deferredFootnotes };
+  return { body: mapped, footnotes, endnotes, comments, deferredFootnotes };
 }
 
 // Replace the note's own-number placeholder (w:footnoteRef) with the number,
@@ -587,6 +614,29 @@ function substituteNoteNumber(
       },
     },
     ...out.slice(1),
+  ];
+}
+
+// A review comment's after-body entry (E-COMMENTS CM1): its content led by an
+// `[n]` marker and the author/date, mirroring how endnotes prepend their number.
+function commentTailBlocks(comment: Comment, n: number): ReadonlyArray<BodyElement> {
+  const who = [comment.author, comment.date]
+    .filter((s): s is string => s !== undefined && s.length > 0)
+    .join(', ');
+  const labelRun: Run = { text: who ? `[${n}] ${who}: ` : `[${n}] `, properties: {} };
+  const first = comment.content[0];
+  if (first && first.kind === 'paragraph') {
+    return [
+      {
+        kind: 'paragraph',
+        paragraph: { ...first.paragraph, runs: [labelRun, ...first.paragraph.runs] },
+      },
+      ...comment.content.slice(1),
+    ];
+  }
+  return [
+    { kind: 'paragraph', paragraph: { properties: {}, runs: [labelRun] } },
+    ...comment.content,
   ];
 }
 
@@ -705,6 +755,26 @@ export function layoutStyledDocument(
     }
     for (const note of tailNotes.sort((a, b) => a.n - b.n)) {
       for (const el of substituteNoteNumber(note.content, note.n)) {
+        blocks.push(
+          layoutBodyElement(
+            el,
+            options,
+            fontResources,
+            imageResources,
+            lastCtx.contentWidth,
+            lastCtx.pageContentHeight,
+          ),
+        );
+      }
+    }
+    // Review comments follow the notes (E-COMMENTS CM1): each entry led by its
+    // [n] marker and author/date, anchoring the in-text marker.
+    const commentTail = [...noteAssigned.comments]
+      .map(([id, n]) => ({ comment: options.comments?.get(id), n }))
+      .filter((e): e is { comment: Comment; n: number } => e.comment !== undefined)
+      .sort((a, b) => a.n - b.n);
+    for (const { comment, n } of commentTail) {
+      for (const el of commentTailBlocks(comment, n)) {
         blocks.push(
           layoutBodyElement(
             el,
@@ -1570,6 +1640,7 @@ function collectImageResources(
   for (const hf of headersFooters.values()) visit(hf);
   for (const note of options.footnotes?.values() ?? []) visit(note);
   for (const note of options.endnotes?.values() ?? []) visit(note);
+  for (const comment of options.comments?.values() ?? []) visit(comment.content);
 
   // Only PDF/A-1 forbids transparency; PDF/A-2/3 keep the image soft mask.
   const flattenAlpha = options.pdfA ? parsePdfAProfile(options.pdfA).part === 1 : false;
@@ -1790,6 +1861,7 @@ function collectFontResources(
   for (const hf of headersFooters.values()) visit(hf);
   for (const note of options.footnotes?.values() ?? []) visit(note);
   for (const note of options.endnotes?.values() ?? []) visit(note);
+  for (const comment of options.comments?.values() ?? []) visit(comment.content);
 
   if (used.size === 0) {
     const regular = options.registry.resolveByStyle(false, false);

@@ -24,6 +24,7 @@ import type {
   CellSparkline,
   Chart,
   ChartBlock,
+  Comment,
   ImageBlock,
   Paragraph,
   ParagraphProperties,
@@ -107,6 +108,7 @@ export function writeHtml(flow: FlowDoc): WriteResult {
 
   emitNotesSection(out, flow.footnotes, ctx.notes.footnotes, 'fn', ctx);
   emitNotesSection(out, flow.endnotes, ctx.notes.endnotes, 'en', ctx);
+  emitCommentsSection(out, flow.comments, ctx.notes.comments, ctx);
 
   out.push('</article>');
   out.push('</body>');
@@ -155,8 +157,12 @@ interface EmitCtx {
   // Bookmark names referenced by at least one internal link — only these get
   // id attributes (unreferenced bookmarks are dead weight).
   readonly referencedAnchors: ReadonlySet<string>;
-  // Note id → sequential number, assigned in reading order of references.
-  readonly notes: { footnotes: ReadonlyMap<string, number>; endnotes: ReadonlyMap<string, number> };
+  // Note/comment id → sequential number, assigned in reading order of references.
+  readonly notes: {
+    footnotes: ReadonlyMap<string, number>;
+    endnotes: ReadonlyMap<string, number>;
+    comments: ReadonlyMap<string, number>;
+  };
 }
 
 // Anchor targets referenced by some internal link anywhere in the body.
@@ -184,6 +190,7 @@ function collectReferencedAnchors(body: ReadonlyArray<BodyElement>): ReadonlySet
 function collectNoteNumbers(flow: FlowDoc): EmitCtx['notes'] {
   const footnotes = new Map<string, number>();
   const endnotes = new Map<string, number>();
+  const comments = new Map<string, number>();
   const visit = (els: ReadonlyArray<BodyElement>): void => {
     for (const el of els) {
       if (el.kind === 'paragraph') {
@@ -194,6 +201,9 @@ function collectNoteNumbers(flow: FlowDoc): EmitCtx['notes'] {
           if (r.endnoteRef !== undefined && !endnotes.has(r.endnoteRef)) {
             endnotes.set(r.endnoteRef, endnotes.size + 1);
           }
+          if (r.commentRef !== undefined && !comments.has(r.commentRef)) {
+            comments.set(r.commentRef, comments.size + 1);
+          }
         }
       } else if (el.kind === 'table') {
         for (const row of el.table.rows) for (const cell of row.cells) visit(cell.content);
@@ -203,7 +213,7 @@ function collectNoteNumbers(flow: FlowDoc): EmitCtx['notes'] {
     }
   };
   visit(flow.body);
-  return { footnotes, endnotes };
+  return { footnotes, endnotes, comments };
 }
 
 // The notes block: an <ol> whose items anchor back to their references.
@@ -222,6 +232,29 @@ function emitNotesSection(
     out.push(`<li id="${prefix}-${n}">`);
     if (body) for (const el of body) emitBlock(out, el, ctx);
     out.push(`<a href="#${prefix}ref-${n}">\u21a9</a></li>`);
+  }
+  out.push('</ol></section>');
+}
+
+// The comments block: each referenced comment with its author/date attribution
+// and content, anchoring back to its in-text marker (E-COMMENTS CM1).
+function emitCommentsSection(
+  out: Array<string>,
+  comments: ReadonlyMap<string, Comment> | undefined,
+  numbers: ReadonlyMap<string, number>,
+  ctx: EmitCtx,
+): void {
+  if (!comments || numbers.size === 0) return;
+  const ordered = [...numbers.entries()].sort((a, b) => a[1] - b[1]);
+  out.push('<section class="comments"><hr/><h2>Comments</h2><ol>');
+  for (const [id, n] of ordered) {
+    const c = comments.get(id);
+    if (!c) continue;
+    out.push(`<li id="cm-${n}">`);
+    const who = [c.author, c.date].filter((s) => s !== undefined && s.length > 0).join(', ');
+    if (who) out.push(`<p class="comment-meta">${textHtml(who)}</p>`);
+    for (const el of c.content) emitBlock(out, el, ctx);
+    out.push(`<a href="#cmref-${n}">\u21a9</a></li>`);
   }
   out.push('</ol></section>');
 }
@@ -487,6 +520,14 @@ function runHtml(run: Run, p: Paragraph, ctx: EmitCtx): string {
     if (n === undefined) return '';
     const prefix = isFoot ? 'fn' : 'en';
     return `<sup><a href="#${prefix}-${n}" id="${prefix}ref-${n}">${n}</a></sup>`;
+  }
+  // §17.13.4.1 comment reference: a bracketed superscript marker linking to the
+  // comment's entry in the end section. A dangling id (no comments part) → no
+  // marker.
+  if (run.commentRef !== undefined) {
+    const n = ctx.notes.comments.get(run.commentRef);
+    if (n === undefined) return '';
+    return `<sup class="comment-ref"><a href="#cm-${n}" id="cmref-${n}">[${n}]</a></sup>`;
   }
   // Inside note content the w:footnoteRef placeholder marks the note's own
   // number — the <ol> renders it, so the placeholder is dropped.

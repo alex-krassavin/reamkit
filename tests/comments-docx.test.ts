@@ -3,11 +3,20 @@
 // The reader loads it into FlowDoc.comments and tags the anchoring run with
 // commentRef. Rendering (inline marker + "Comments" section) lands in CM1.
 
+import { readFileSync } from 'node:fs';
+
 import { zipSync } from 'fflate';
 
 import { describe, expect, it } from 'vitest';
 
 import { Ream } from '@/core/converter/ream';
+import { PdfFile } from '@/pdf-reader/document';
+import { extractPageText } from '@/pdf-reader/text';
+
+const FONTS = {
+  regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
+  bold: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Bold.ttf')),
+};
 
 const enc = new TextEncoder();
 const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
@@ -82,6 +91,29 @@ describe('Word comments in docx (E-COMMENTS CM0)', () => {
     const runs = bodyRuns(Ream.parse(commentDocx()));
     expect(runs.some((r) => r.commentRef === '0')).toBe(true);
     expect(runs.map((r) => r.text).join('')).toContain('Reviewed text');
+  });
+
+  it('renders an inline marker and a Comments section in HTML (CM1)', async () => {
+    const html = new TextDecoder().decode(await Ream.parse(commentDocx()).convert('html'));
+    // The in-text marker links to the comment's entry in the end section.
+    expect(html).toContain('id="cmref-1"');
+    expect(html).toContain('href="#cm-1"');
+    expect(html).toContain('[1]');
+    // The Comments section carries the author and the comment text.
+    expect(html).toContain('<section class="comments">');
+    expect(html).toContain('Alice Reviewer');
+    expect(html).toContain('Please clarify this sentence.');
+  });
+
+  it('renders the marker and a comment entry in the PDF (CM1)', async () => {
+    const file = PdfFile.parse(await Ream.parse(commentDocx()).convert('pdf', { fonts: FONTS }));
+    const text = extractPageText(file, file.pages()[0]!)
+      .map((r) => r.text)
+      .join('')
+      .replace(/\s/g, '');
+    expect(text).toContain('[1]'); // the in-text marker
+    expect(text).toContain('AliceReviewer'); // the comment entry's attribution
+    expect(text).toContain('Pleaseclarifythissentence.'); // the comment body, after the document
   });
 
   it('omits the comments field when the docx ships no comments part', () => {
