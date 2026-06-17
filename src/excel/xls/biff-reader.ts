@@ -6,10 +6,10 @@
 // BOF…EOF). We read the workbook globals (sheet directory, shared-string table,
 // date system) and each sheet's cell records into WorksheetCells.
 //
-// Scope: cell VALUES and structure (sheets, merges, column widths, the shared
-// strings). Cell styling (fonts/fills/borders/number formats via the XF table)
-// is not read yet — the grid renders with default formatting, a documented
-// graceful loss, exactly as the OOXML path started before its styles wave.
+// Scope: cell values + structure (sheets, merges, column widths, shared strings)
+// AND cell styling — fonts, fills, borders, number formats and alignment, read
+// from the FONT/FORMAT/PALETTE/XF records (biff-styles) into the same XlsxStyles
+// model the OOXML path uses. Embedded charts/drawings are not read yet.
 
 import type { Sheet, SheetDoc } from '@/core/ir/sheet';
 import type {
@@ -19,8 +19,8 @@ import type {
   WorksheetCell,
 } from '@/core/spreadsheet-model';
 
-import { EMPTY_XLSX_STYLES } from '@/excel/styles-parser';
 import { ResourceStore } from '@/core/ir';
+import { parseBiffStyles } from '@/excel/xls/biff-styles';
 import { openCfb } from '@/core/ole/cfb';
 
 // Record type numbers (MS-XLS §2.3).
@@ -110,7 +110,7 @@ export function readXlsToSheetDoc(xls: Uint8Array): SheetDoc {
   return {
     kind: 'sheet',
     sheets,
-    styles: EMPTY_XLSX_STYLES,
+    styles: parseBiffStyles(globals),
     sharedStrings,
     definedNames: [],
     date1904,
@@ -167,39 +167,47 @@ function readSheet(wb: Uint8Array, view: DataView, start: number): ParsedWorkshe
     const d = rec.data;
     switch (rec.type) {
       case REC.NUMBER:
-        add(numCell(readU16(d, 0), readU16(d, 2), String(readF64(d, 6))));
+        add(numCell(readU16(d, 0), readU16(d, 2), readU16(d, 4), String(readF64(d, 6))));
         break;
       case REC.RK:
-        add(numCell(readU16(d, 0), readU16(d, 2), String(decodeRk(readU32(d, 6)))));
+        add(numCell(readU16(d, 0), readU16(d, 2), readU16(d, 4), String(decodeRk(readU32(d, 6)))));
         break;
       case REC.MULRK: {
         const row = readU16(d, 0);
         const colFirst = readU16(d, 2);
         const count = Math.floor((d.length - 6) / 6);
         for (let k = 0; k < count; k++) {
+          const ixfe = readU16(d, 4 + k * 6);
           const rk = readU32(d, 4 + k * 6 + 2);
-          add(numCell(row, colFirst + k, String(decodeRk(rk))));
+          add(numCell(row, colFirst + k, ixfe, String(decodeRk(rk))));
         }
         break;
       }
       case REC.LABELSST: {
         const isst = readU32(d, 6);
-        add({ column: readU16(d, 2), row: readU16(d, 0), type: 's', rawValue: String(isst) });
+        add({
+          column: readU16(d, 2),
+          row: readU16(d, 0),
+          type: 's',
+          rawValue: String(isst),
+          styleIndex: readU16(d, 4),
+        });
         break;
       }
       case REC.LABEL:
       case REC.RSTRING:
-        add(strCell(readU16(d, 0), readU16(d, 2), readXlString(d, 6)));
+        add(strCell(readU16(d, 0), readU16(d, 2), readU16(d, 4), readXlString(d, 6)));
         break;
       case REC.BOOLERR: {
         const row = readU16(d, 0);
         const col = readU16(d, 2);
+        const styleIndex = readU16(d, 4);
         const val = d[6] ?? 0;
         const isErr = (d[7] ?? 0) !== 0;
         add(
           isErr
-            ? { column: col, row, type: 'e', rawValue: errorText(val) }
-            : { column: col, row, type: 'b', rawValue: val ? '1' : '0' },
+            ? { column: col, row, type: 'e', rawValue: errorText(val), styleIndex }
+            : { column: col, row, type: 'b', rawValue: val ? '1' : '0', styleIndex },
         );
         break;
       }
@@ -235,12 +243,12 @@ function readSheet(wb: Uint8Array, view: DataView, start: number): ParsedWorkshe
   return { cells, maxRow, maxColumn, columns, merges, rowHeights: [] };
 }
 
-function numCell(row: number, column: number, rawValue: string): WorksheetCell {
-  return { column, row, type: 'n', rawValue };
+function numCell(row: number, column: number, style: number, rawValue: string): WorksheetCell {
+  return { column, row, type: 'n', rawValue, styleIndex: style };
 }
 
-function strCell(row: number, column: number, text: string): WorksheetCell {
-  return { column, row, type: 'inlineStr', rawValue: '', inlineText: text };
+function strCell(row: number, column: number, style: number, text: string): WorksheetCell {
+  return { column, row, type: 'inlineStr', rawValue: '', inlineText: text, styleIndex: style };
 }
 
 // §2.4.127 FORMULA — the cached result. When the last two bytes are 0xFFFF the
@@ -249,18 +257,22 @@ function strCell(row: number, column: number, text: string): WorksheetCell {
 function formulaCell(d: Uint8Array, next: BiffRecord | undefined): WorksheetCell | undefined {
   const row = readU16(d, 0);
   const col = readU16(d, 2);
+  const style = readU16(d, 4);
   if (d.length >= 14 && readU16(d, 12) === 0xffff) {
     const kind = d[6] ?? 0;
     if (kind === 0) {
       // String result — text lives in the next STRING record.
       const text = next && next.type === REC.STRING ? readXlString(next.data, 0) : '';
-      return strCell(row, col, text);
+      return strCell(row, col, style, text);
     }
-    if (kind === 1) return { column: col, row, type: 'b', rawValue: d[8] ? '1' : '0' };
-    if (kind === 2) return { column: col, row, type: 'e', rawValue: errorText(d[8] ?? 0) };
+    if (kind === 1)
+      return { column: col, row, type: 'b', rawValue: d[8] ? '1' : '0', styleIndex: style };
+    if (kind === 2) {
+      return { column: col, row, type: 'e', rawValue: errorText(d[8] ?? 0), styleIndex: style };
+    }
     return undefined; // 3 = blank string → no cell
   }
-  return numCell(row, col, String(readF64(d, 6)));
+  return numCell(row, col, style, String(readF64(d, 6)));
 }
 
 // §2.5.198.5 RkNumber — a packed 30-bit number: bit0 ×100, bit1 integer-vs-IEEE.

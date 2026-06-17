@@ -78,10 +78,11 @@ charts — and is byte-stable across a read↔write loop.
 - Grids, shared strings, number formats and dates (incl. the 1904 date system).
 - **Legacy `.xls`** (BIFF8, Excel 97–2003) — the binary `Workbook` stream inside the
   OLE2/CFB container is read into the same grid model, so an old `.xls` renders to
-  PDF/SVG/HTML and even re-writes to `.xlsx`. Cell values and structure (sheets,
-  shared strings, merges, column widths, the 1904 flag) are read; cell styling
-  (fonts/fills/borders/number formats from the XF table) and embedded charts/
-  drawings are not yet, so the grid renders with default formatting.
+  PDF/SVG/HTML and even re-writes to `.xlsx`. Cell values, structure (sheets, shared
+  strings, merges, column widths, the 1904 flag) **and styling** — fonts, fills,
+  borders, number formats and alignment from the FONT/FORMAT/XF records, with colours
+  resolved through the BIFF colour palette — are read. Embedded charts and drawing
+  objects are not yet.
 - The print model — gridline suppression, print area, fit-to-page scaling, repeated
   print titles, manual page breaks, horizontal/vertical centering, and **column-band
   pagination**: a sheet wider than the page (and not fit-to-width) splits across

@@ -26,14 +26,9 @@ function looksLikeXls(bytes: Uint8Array): boolean {
 }
 
 // What the BIFF8 reader does not surface yet — reported so a caller's loss report
-// is honest about the gap (the grid content itself is read).
+// is honest about the gap. Cell content AND styling (fonts/fills/borders/number
+// formats/alignment) are read; embedded drawings are not.
 const XLS_LOSSES: ReadonlyArray<Loss> = [
-  {
-    severity: 'degraded',
-    feature: FEATURES.cellFormatting,
-    detail:
-      'legacy .xls cell styling (fonts, fills, borders, number formats) is not read; the grid renders with default formatting',
-  },
   {
     severity: 'dropped',
     feature: FEATURES.charts,

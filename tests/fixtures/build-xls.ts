@@ -17,18 +17,18 @@ export function rec(type: number, data: Uint8Array): Uint8Array {
   return out;
 }
 
-function cellHead(row: number, col: number): Uint8Array {
+function cellHead(row: number, col: number, ixfe = 0): Uint8Array {
   const d = new Uint8Array(6);
   const v = new DataView(d.buffer);
   v.setUint16(0, row, true);
   v.setUint16(2, col, true);
-  v.setUint16(4, 0, true); // ixfe (default style)
+  v.setUint16(4, ixfe, true); // ixfe (XF / style index)
   return d;
 }
 
-export function numberRec(row: number, col: number, value: number): Uint8Array {
+export function numberRec(row: number, col: number, value: number, ixfe = 0): Uint8Array {
   const d = new Uint8Array(14);
-  d.set(cellHead(row, col), 0);
+  d.set(cellHead(row, col, ixfe), 0);
   new DataView(d.buffer).setFloat64(6, value, true);
   return rec(0x0203, d);
 }
@@ -53,11 +53,109 @@ export function mulRkRec(row: number, colFirst: number, ints: ReadonlyArray<numb
   return rec(0x00bd, d);
 }
 
-export function labelSstRec(row: number, col: number, isst: number): Uint8Array {
+export function labelSstRec(row: number, col: number, isst: number, ixfe = 0): Uint8Array {
   const d = new Uint8Array(10);
-  d.set(cellHead(row, col), 0);
+  d.set(cellHead(row, col, ixfe), 0);
   new DataView(d.buffer).setUint32(6, isst, true);
   return rec(0x00fd, d);
+}
+
+// FONT record (0x0031). bold via weight (700); italic/underline via flags.
+export function fontRec(opts: {
+  sizePt?: number;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  colorIndex?: number;
+  name?: string;
+}): Uint8Array {
+  const nm = ascii(opts.name ?? 'Arial');
+  const d = new Uint8Array(14 + 2 + nm.length);
+  const v = new DataView(d.buffer);
+  v.setUint16(0, Math.round((opts.sizePt ?? 10) * 20), true); // height in twips
+  v.setUint16(2, opts.italic ? 0x0002 : 0, true); // grbit
+  v.setUint16(4, opts.colorIndex ?? 0x7fff, true); // icv (0x7FFF = auto)
+  v.setUint16(6, opts.bold ? 700 : 400, true); // bls
+  d[10] = opts.underline ? 1 : 0; // uls
+  d[14] = opts.name ? opts.name.length : 4; // cch
+  d[15] = 0; // compressed
+  d.set(nm, 16);
+  return rec(0x0031, d);
+}
+
+// FORMAT record (0x041E) — a custom number-format code at index `ifmt`.
+export function formatRec(ifmt: number, code: string): Uint8Array {
+  const c = ascii(code);
+  const d = new Uint8Array(2 + 3 + c.length);
+  const v = new DataView(d.buffer);
+  v.setUint16(0, ifmt, true);
+  v.setUint16(2, code.length, true);
+  d[4] = 0; // compressed
+  d.set(c, 5);
+  return rec(0x041e, d);
+}
+
+export interface XfBorder {
+  readonly style: number; // dg line style 0..13
+  readonly colorIndex?: number;
+}
+
+// XF record (0x00E0, 20-byte BIFF8 cell XF) — references a font + number format,
+// with an inline fill (pattern fls + fg/bg palette indices) and per-edge borders.
+export function xfRec(opts: {
+  fontId?: number;
+  numFmtId?: number;
+  halign?: number;
+  valign?: number;
+  wrap?: boolean;
+  rotation?: number;
+  indent?: number;
+  fill?: { pattern: number; fg?: number; bg?: number };
+  left?: XfBorder;
+  right?: XfBorder;
+  top?: XfBorder;
+  bottom?: XfBorder;
+}): Uint8Array {
+  const d = new Uint8Array(20);
+  const v = new DataView(d.buffer);
+  v.setUint16(0, opts.fontId ?? 0, true);
+  v.setUint16(2, opts.numFmtId ?? 0, true);
+  v.setUint16(4, 0, true); // attrs (cell XF)
+  d[6] = (opts.halign ?? 0) | (opts.wrap ? 0x08 : 0) | ((opts.valign ?? 2) << 4);
+  d[7] = opts.rotation ?? 0;
+  d[8] = opts.indent ?? 0;
+  const brd1 =
+    (opts.left?.style ?? 0) |
+    ((opts.right?.style ?? 0) << 4) |
+    ((opts.top?.style ?? 0) << 8) |
+    ((opts.bottom?.style ?? 0) << 12);
+  v.setUint16(10, brd1, true);
+  const brd2 =
+    ((opts.left?.colorIndex ?? 0) & 0x7f) |
+    (((opts.right?.colorIndex ?? 0) & 0x7f) << 7) |
+    (((opts.top?.colorIndex ?? 0) & 0x7f) << 16) |
+    (((opts.bottom?.colorIndex ?? 0) & 0x7f) << 23);
+  v.setUint32(12, brd2 >>> 0, true);
+  const f = opts.fill;
+  const brd3 = f
+    ? ((f.fg ?? 0) & 0x7f) | (((f.bg ?? 0) & 0x7f) << 7) | ((f.pattern & 0x3f) << 26)
+    : 0;
+  v.setUint32(16, brd3 >>> 0, true);
+  return rec(0x00e0, d);
+}
+
+// PALETTE record (0x0092) — override colours from index 8; each is R,G,B,0.
+export function paletteRec(colors: ReadonlyArray<[number, number, number]>): Uint8Array {
+  const d = new Uint8Array(2 + colors.length * 4);
+  const v = new DataView(d.buffer);
+  v.setUint16(0, colors.length, true);
+  colors.forEach(([r, g, b], i) => {
+    const o = 2 + i * 4;
+    d[o] = r;
+    d[o + 1] = g;
+    d[o + 2] = b;
+  });
+  return rec(0x0092, d);
 }
 
 export function boolRec(row: number, col: number, value: boolean): Uint8Array {
@@ -169,6 +267,7 @@ export function buildXls(opts: {
   readonly sheets: ReadonlyArray<XlsSheetInput>;
   readonly sst?: ReadonlyArray<string>;
   readonly date1904?: boolean;
+  readonly styleRecords?: ReadonlyArray<Uint8Array>;
 }): Uint8Array {
   return buildCfb([{ name: 'Workbook', data: buildWorkbookStream(opts) }]);
 }
@@ -177,10 +276,13 @@ export function buildWorkbookStream(opts: {
   readonly sheets: ReadonlyArray<XlsSheetInput>;
   readonly sst?: ReadonlyArray<string>;
   readonly date1904?: boolean;
+  // FONT/FORMAT/XF/PALETTE records (already wrapped) injected into the globals.
+  readonly styleRecords?: ReadonlyArray<Uint8Array>;
 }): Uint8Array {
   // BoundSheet8 data is kept patchable; lbPlyPos is filled in once sheet sizes
   // are known. Records are wrapped (length-prefixed) only AFTER patching, since
-  // rec() copies the data.
+  // rec() copies the data. The EOF and the (pre-wrapped) style records bracket
+  // the unwrapped globals records.
   const boundData = opts.sheets.map((s) => boundSheetData(s.name));
   const globalRecs: Array<{ type: number; data: Uint8Array }> = [
     { type: 0x0809, data: bofData(0x0005) },
@@ -190,9 +292,12 @@ export function buildWorkbookStream(opts: {
   }
   for (const bd of boundData) globalRecs.push({ type: 0x0085, data: bd });
   if (opts.sst && opts.sst.length > 0) globalRecs.push({ type: 0x00fc, data: sstData(opts.sst) });
-  globalRecs.push({ type: 0x000a, data: new Uint8Array(0) });
 
-  const globalsLen = globalRecs.reduce((n, r) => n + 4 + r.data.length, 0);
+  const styleRecords = opts.styleRecords ?? [];
+  const styleLen = styleRecords.reduce((n, r) => n + r.length, 0);
+  const eof = rec(0x000a, new Uint8Array(0));
+  const globalsLen = globalRecs.reduce((n, r) => n + 4 + r.data.length, 0) + styleLen + eof.length;
+
   const sheetStreams = opts.sheets.map((s) =>
     concat([rec(0x0809, bofData(0x0010)), ...s.records, rec(0x000a, new Uint8Array(0))]),
   );
@@ -205,7 +310,11 @@ export function buildWorkbookStream(opts: {
     off += sheetStreams[i]!.length;
   }
 
-  const globalsBytes = concat(globalRecs.map((r) => rec(r.type, r.data)));
+  const globalsBytes = concat([
+    ...globalRecs.map((r) => rec(r.type, r.data)),
+    ...styleRecords,
+    eof,
+  ]);
   return concat([globalsBytes, ...sheetStreams]);
 }
 
