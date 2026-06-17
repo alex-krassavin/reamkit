@@ -19,6 +19,7 @@ import type {
   CfRule,
   Cfvo,
   ConditionalFormat,
+  DataValidation,
   DefinedName,
   ExcelTable,
   ParsedSparkline,
@@ -366,6 +367,7 @@ function worksheetXml(
     `<sheetData>${rowsXml}</sheetData>` +
     mergesXml +
     conditionalFormattingXml(grid.conditionalFormats) +
+    dataValidationsXml(grid.dataValidations) +
     printOptionsXml(grid.printOptions) +
     pageMarginsXml(grid.pageMargins) +
     pageSetupXml(grid.pageSetup) +
@@ -481,6 +483,37 @@ function cfRuleXml(rule: CfRule): string {
 
 function cfvoXml(cfvo: Cfvo): string {
   return `<cfvo type="${cfvo.type}"${cfvo.val !== undefined ? ` val="${escapeAttr(cfvo.val)}"` : ''}/>`;
+}
+
+// §18.3.1.32 <dataValidations> — per-range input constraints written back so the
+// SheetDoc stays a byte-stable fixpoint (E-SHEET SV1). Every field round-trips;
+// `showDropDown` keeps ECMA's inverted sense (the attr is "1" to HIDE the in-cell
+// dropdown). Sits between <conditionalFormatting> and <printOptions> per
+// §18.3.1.99 child order.
+function dataValidationsXml(dvs: ReadonlyArray<DataValidation> | undefined): string {
+  if (!dvs || dvs.length === 0) return '';
+  return `<dataValidations count="${dvs.length}">${dvs.map(dataValidationXml).join('')}</dataValidations>`;
+}
+
+function dataValidationXml(dv: DataValidation): string {
+  const sqref = dv.ranges.map(rangeRef).join(' ');
+  const attrs =
+    (dv.type !== 'none' ? ` type="${dv.type}"` : '') +
+    (dv.operator !== undefined ? ` operator="${escapeAttr(dv.operator)}"` : '') +
+    (dv.allowBlank ? ' allowBlank="1"' : '') +
+    (dv.showDropDown ? ' showDropDown="1"' : '') +
+    (dv.showInputMessage ? ' showInputMessage="1"' : '') +
+    (dv.showErrorMessage ? ' showErrorMessage="1"' : '') +
+    (dv.errorStyle !== undefined ? ` errorStyle="${escapeAttr(dv.errorStyle)}"` : '') +
+    (dv.promptTitle !== undefined ? ` promptTitle="${escapeAttr(dv.promptTitle)}"` : '') +
+    (dv.prompt !== undefined ? ` prompt="${escapeAttr(dv.prompt)}"` : '') +
+    (dv.errorTitle !== undefined ? ` errorTitle="${escapeAttr(dv.errorTitle)}"` : '') +
+    (dv.error !== undefined ? ` error="${escapeAttr(dv.error)}"` : '') +
+    ` sqref="${sqref}"`;
+  const children =
+    (dv.formula1 !== undefined ? `<formula1>${escapeText(dv.formula1)}</formula1>` : '') +
+    (dv.formula2 !== undefined ? `<formula2>${escapeText(dv.formula2)}</formula2>` : '');
+  return `<dataValidation${attrs}>${children}</dataValidation>`;
 }
 
 // x14 sparklines back into the worksheet extLst (E-SHEET SD3b). Our model is flat

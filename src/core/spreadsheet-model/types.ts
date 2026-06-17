@@ -98,6 +98,9 @@ export interface ParsedWorksheet {
   readonly drawingRelId?: string;
   // §18.3.1.18 <conditionalFormatting> — value-driven cell formats (E-SHEET SC1).
   readonly conditionalFormats?: ReadonlyArray<ConditionalFormat>;
+  // §18.3.1.32 <dataValidations> — per-range input constraints (E-SHEET SV1). A
+  // `list` validation paints an in-cell dropdown affordance; all types round-trip.
+  readonly dataValidations?: ReadonlyArray<DataValidation>;
   // x14 extension <sparklineGroups> in extLst — per-cell mini charts (E-SHEET SC2).
   readonly sparklines?: ReadonlyArray<ParsedSparkline>;
   // §18.3.1.95 <tableParts> — relationship ids of the sheet's table parts. The
@@ -372,4 +375,40 @@ export type CfRule = CfRuleCellIs | CfRuleColorScale | CfRuleDataBar | CfRuleIco
 export interface ConditionalFormat {
   readonly ranges: ReadonlyArray<MergedRange>;
   readonly rules: ReadonlyArray<CfRule>;
+}
+
+// §18.18.18 ST_DataValidationType — the constraint a <dataValidation> enforces.
+// Only `list` has a visual signature (the in-cell dropdown); the rest carry
+// through for round-trip fidelity and for surfacing the input/error prompts.
+export type DataValidationType =
+  | 'none'
+  | 'whole'
+  | 'decimal'
+  | 'list'
+  | 'date'
+  | 'time'
+  | 'textLength'
+  | 'custom';
+
+// §18.3.1.33 <dataValidation> — an input constraint over one or more ranges
+// (sqref) (E-SHEET SV1). The visually-meaningful part is `type` (a `list` cell
+// shows a dropdown); the formulas + prompts ride through so the validation
+// survives a read→write round-trip. `showDropDown` keeps ECMA's INVERTED sense:
+// the attribute is "1" to HIDE the in-cell dropdown, so a list validation shows
+// one when the flag is absent/false.
+export interface DataValidation {
+  readonly type: DataValidationType;
+  readonly ranges: ReadonlyArray<MergedRange>;
+  readonly operator?: string;
+  readonly allowBlank?: boolean;
+  readonly showDropDown?: boolean;
+  readonly showInputMessage?: boolean;
+  readonly showErrorMessage?: boolean;
+  readonly errorStyle?: string;
+  readonly formula1?: string;
+  readonly formula2?: string;
+  readonly promptTitle?: string;
+  readonly prompt?: string;
+  readonly errorTitle?: string;
+  readonly error?: string;
 }

@@ -22,6 +22,29 @@ export interface SheetChartRef {
   readonly heightPt: number;
 }
 
+// A slicer panel (xl/slicers + xl/slicerCaches, E-SHEET SV2) resolved against
+// its source so the projection can render it as a captioned button box after the
+// grid (mirroring how chart frames render after it). Items + selection resolve
+// for native-table slicers (the cache's tableSlicerCache → the table column's
+// distinct values, with the autofilter giving selection); an OLAP/pivot slicer
+// the cache cannot resolve inline degrades to a caption-only box (no items).
+export interface SheetSlicerItem {
+  readonly label: string;
+  readonly selected: boolean;
+}
+
+export interface SheetSlicer {
+  readonly caption: string;
+  readonly columnCount: number;
+  readonly items: ReadonlyArray<SheetSlicerItem>;
+  // Resolved fills + header text colour from the slicer style name + workbook
+  // theme (the same accent heuristic as tables/pivots). Absent ⇒ a plain box.
+  readonly headerHex?: string;
+  readonly selectedHex?: string;
+  readonly headerTextHex?: string;
+  readonly selectedTextHex?: string;
+}
+
 export interface Sheet {
   readonly name: string;
   // The grid + per-sheet geometry exactly as parsed: cells, columns, rows,
@@ -29,6 +52,8 @@ export interface Sheet {
   readonly grid: ParsedWorksheet;
   // Chart frames on this sheet, anchor-ordered (resolved data in chartData).
   readonly charts?: ReadonlyArray<SheetChartRef>;
+  // Slicer panels on this sheet (E-SHEET SV2), rendered after the grid + charts.
+  readonly slicers?: ReadonlyArray<SheetSlicer>;
 }
 
 export interface SheetDoc {

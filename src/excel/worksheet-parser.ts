@@ -16,6 +16,8 @@ import type {
   CfvoType,
   ColumnWidth,
   ConditionalFormat,
+  DataValidation,
+  DataValidationType,
   MergedRange,
   ParsedSparkline,
   ParsedWorksheet,
@@ -77,6 +79,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
       ? strAttr(drawingNode as Record<string, unknown>, 'id')
       : undefined;
   const conditionalFormats = parseConditionalFormatting(wsObj);
+  const dataValidations = parseDataValidations(wsObj);
   const sparklines = parseSparklines(wsObj);
   const tablePartRelIds = parseTableParts(wsObj);
   const printModel = {
@@ -89,6 +92,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
     ...(pane ? { pane } : {}),
     ...(drawingRelId !== undefined ? { drawingRelId } : {}),
     ...(conditionalFormats.length > 0 ? { conditionalFormats } : {}),
+    ...(dataValidations.length > 0 ? { dataValidations } : {}),
     ...(sparklines.length > 0 ? { sparklines } : {}),
     ...(tablePartRelIds.length > 0 ? { tablePartRelIds } : {}),
   };
@@ -385,6 +389,69 @@ function parseConditionalFormatting(ws: Record<string, unknown>): Array<Conditio
     if (rules.length > 0) out.push({ ranges, rules });
   }
   return out;
+}
+
+const DV_TYPES: ReadonlySet<string> = new Set<DataValidationType>([
+  'none',
+  'whole',
+  'decimal',
+  'list',
+  'date',
+  'time',
+  'textLength',
+  'custom',
+]);
+
+// §18.3.1.32 <dataValidations> / §18.3.1.33 <dataValidation> — per-range input
+// constraints (E-SHEET SV1). Reads the main-namespace validations: the visual
+// signal is `type="list"` (an in-cell dropdown), but every field rides through
+// for a faithful read→write round-trip. x14 (cross-sheet list source)
+// validations carried in <extLst> are a documented v1 omission.
+function parseDataValidations(ws: Record<string, unknown>): Array<DataValidation> {
+  const node = asObjectNode(ws['dataValidations']);
+  if (!node) return [];
+  const out: Array<DataValidation> = [];
+  for (const dv of toArray(node['dataValidation'])) {
+    const obj = asObjectNode(dv);
+    if (!obj) continue;
+    const sqref = strAttr(obj, 'sqref');
+    if (!sqref) continue;
+    const ranges = parseSqref(sqref);
+    if (ranges.length === 0) continue;
+    const typeRaw = strAttr(obj, 'type');
+    const type: DataValidationType =
+      typeRaw && DV_TYPES.has(typeRaw) ? (typeRaw as DataValidationType) : 'none';
+    const operator = strAttr(obj, 'operator');
+    const errorStyle = strAttr(obj, 'errorStyle');
+    const formula1 = formulaText(obj['formula1']);
+    const formula2 = formulaText(obj['formula2']);
+    const promptTitle = strAttr(obj, 'promptTitle');
+    const prompt = strAttr(obj, 'prompt');
+    const errorTitle = strAttr(obj, 'errorTitle');
+    const error = strAttr(obj, 'error');
+    out.push({
+      type,
+      ranges,
+      ...(operator !== undefined ? { operator } : {}),
+      ...(boolAttr(obj, 'allowBlank') ? { allowBlank: true } : {}),
+      ...(boolAttr(obj, 'showDropDown') ? { showDropDown: true } : {}),
+      ...(boolAttr(obj, 'showInputMessage') ? { showInputMessage: true } : {}),
+      ...(boolAttr(obj, 'showErrorMessage') ? { showErrorMessage: true } : {}),
+      ...(errorStyle !== undefined ? { errorStyle } : {}),
+      ...(formula1 !== undefined ? { formula1 } : {}),
+      ...(formula2 !== undefined ? { formula2 } : {}),
+      ...(promptTitle !== undefined ? { promptTitle } : {}),
+      ...(prompt !== undefined ? { prompt } : {}),
+      ...(errorTitle !== undefined ? { errorTitle } : {}),
+      ...(error !== undefined ? { error } : {}),
+    });
+  }
+  return out;
+}
+
+function boolAttr(obj: Record<string, unknown>, key: string): boolean {
+  const raw = strAttr(obj, key);
+  return raw === '1' || raw === 'true';
 }
 
 // sqref is whitespace-separated areas ("A1:A10 C1:C5"); each resolves to a box.

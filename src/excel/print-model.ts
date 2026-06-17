@@ -32,6 +32,7 @@ import type {
 } from '@/core/document-model';
 import type {
   CellRange,
+  DataValidation,
   DefinedName,
   MergedRange,
   ParsedWorksheet,
@@ -48,7 +49,8 @@ import type {
   XlsxStyles,
 } from '@/excel';
 import type { CellConditionalFormatter, CfOverride } from '@/excel/conditional-format';
-import { eighthPtToPt, halfPtToPt, twipsToPt } from '@/core/ir';
+import type { SheetSlicer } from '@/core/ir/sheet';
+import { eighthPtToPt, halfPtToPt, pt, twipsToPt } from '@/core/ir';
 import { applyNumberFormat, parseAreaRef, parseTitleRowRange } from '@/excel';
 import { bandedTables, computeColumnBands } from '@/excel/column-bands';
 import { buildConditionalFormatter } from '@/excel/conditional-format';
@@ -438,6 +440,11 @@ export function worksheetToBody(
   // cell's own fill and below conditional formatting.
   const tableFormatByCell = buildTableFormatLookup(worksheet);
 
+  // §18.3.1.33 data-validation `list` cells (E-SHEET SV1): the ranges whose cells
+  // should paint an in-cell dropdown affordance. Empty (the dropdown block is
+  // then skipped, byte-identical) unless the sheet has a shown list validation.
+  const dropdownRanges = listDropdownRanges(worksheet.dataValidations);
+
   const rows: Array<TableRow> = [];
   for (let r = 0; r < rowCount; r++) {
     const absR = r + rowStart;
@@ -518,6 +525,9 @@ export function worksheetToBody(
         }
       }
 
+      // A data-validation `list` cell paints a dropdown affordance (E-SHEET SV1).
+      const dropdown = dropdownRanges.length > 0 && rangesCover(dropdownRanges, absR, absC);
+
       // Clamp a merge's horizontal span to the in-window columns so a merge
       // straddling the print-area edge cannot exceed the grid.
       const visibleEndCol = merge ? Math.min(merge.endColumn, colWindowEnd) : 0;
@@ -533,6 +543,7 @@ export function worksheetToBody(
         ...(icon ? { icon } : {}),
         ...(sparkline ? { sparkline } : {}),
         ...(borders ? { borders } : {}),
+        ...(dropdown ? { dropdown: true } : {}),
       };
 
       const paragraphProps = cellParaProps(alignment);
@@ -677,7 +688,7 @@ function makeVerticalContinuation(
   };
 }
 
-function resolveCellText(
+export function resolveCellText(
   cell: WorksheetCell,
   sharedStrings: ReadonlyArray<string>,
   styles: XlsxStyles,
@@ -807,6 +818,30 @@ function mapBorderStyle(style: XlsxBorderStyleName): { style: BorderStyle; sizeE
 
 function key(row: number, col: number): string {
   return `${row},${col}`;
+}
+
+// §18.3.1.33 — the ranges of `list` data validations that should show an in-cell
+// dropdown. ECMA's showDropDown is INVERTED ("1" HIDES the dropdown), so a list
+// validation contributes its ranges unless the flag is set (E-SHEET SV1).
+function listDropdownRanges(
+  dvs: ReadonlyArray<DataValidation> | undefined,
+): ReadonlyArray<MergedRange> {
+  if (!dvs || dvs.length === 0) return [];
+  const out: Array<MergedRange> = [];
+  for (const dv of dvs) {
+    if (dv.type !== 'list' || dv.showDropDown) continue;
+    out.push(...dv.ranges);
+  }
+  return out;
+}
+
+function rangesCover(ranges: ReadonlyArray<MergedRange>, row: number, col: number): boolean {
+  for (const r of ranges) {
+    if (row >= r.startRow && row <= r.endRow && col >= r.startColumn && col <= r.endColumn) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // E-SHEET SC2 — resolve the sheet's sparklines to a host-cell → value-series map.
@@ -968,4 +1003,77 @@ function buildTableFormatLookup(worksheet: ParsedWorksheet): Map<string, TableCe
 // carries a value or inline text — empty styled cells do not.
 function cellHasContent(cell: WorksheetCell | undefined): boolean {
   return !!cell && (cell.rawValue !== '' || cell.inlineText !== undefined);
+}
+
+// E-SHEET SV2 — a slicer panel projected as a styled mini-table emitted after the
+// grid (like chart frames). A caption header spans the button columns; each item
+// is a button cell — the slicer accent fill + white text when selected, a light
+// band when not. The thin box + inside rules read as the slicer's button grid.
+const SLICER_WIDTH_PT = 108; // ≈ 1.5in, Excel's default slicer width
+const SLICER_ROW_PT = 16;
+const SLICER_UNSELECTED_HEX = 'F2F2F2';
+
+export function slicerTable(slicer: SheetSlicer): Table {
+  const cols = Math.max(1, slicer.columnCount);
+  const colWidthPt = SLICER_WIDTH_PT / cols;
+  const thin: Border = { style: 'single', width: eighthPtToPt(4) };
+  const rowProps = { height: pt(SLICER_ROW_PT), heightRule: 'atLeast' as const };
+  const rows: Array<TableRow> = [];
+
+  // Caption header spanning all columns.
+  rows.push({
+    properties: rowProps,
+    cells: [
+      {
+        properties: {
+          ...(cols > 1 ? { colSpan: cols } : {}),
+          ...(slicer.headerHex ? { shading: { colorHex: slicer.headerHex } } : {}),
+        },
+        content: [
+          slicerParagraph(slicer.caption, {
+            bold: true,
+            ...(slicer.headerTextHex ? { colorHex: slicer.headerTextHex } : {}),
+          }),
+        ],
+      },
+    ],
+  });
+
+  // Button rows: items chunked across `cols` columns; the last row is padded with
+  // empty cells so every row keeps the column count.
+  for (let i = 0; i < slicer.items.length; i += cols) {
+    const cells: Array<TableCell> = [];
+    for (let c = 0; c < cols; c++) {
+      const item = slicer.items[i + c];
+      if (!item) {
+        cells.push({ properties: {}, content: [slicerParagraph('', {})] });
+        continue;
+      }
+      const fill = item.selected ? slicer.selectedHex : SLICER_UNSELECTED_HEX;
+      const textHex = item.selected ? slicer.selectedTextHex : undefined;
+      cells.push({
+        properties: fill ? { shading: { colorHex: fill } } : {},
+        content: [slicerParagraph(item.label, textHex ? { colorHex: textHex } : {})],
+      });
+    }
+    rows.push({ properties: rowProps, cells });
+  }
+
+  return {
+    properties: {
+      borders: { top: thin, bottom: thin, left: thin, right: thin, insideH: thin, insideV: thin },
+    },
+    grid: Array.from({ length: cols }, () => pt(colWidthPt)),
+    rows,
+  };
+}
+
+function slicerParagraph(text: string, runProps: RunProperties): BodyElement {
+  return {
+    kind: 'paragraph',
+    paragraph: {
+      properties: {},
+      runs: text.length > 0 ? [{ text, properties: runProps }] : [],
+    },
+  };
 }

@@ -29,6 +29,8 @@ export type {
   CfRuleIconSet,
   CfRule,
   ConditionalFormat,
+  DataValidationType,
+  DataValidation,
   SparklineKind,
   ParsedSparkline,
   ExcelTable,

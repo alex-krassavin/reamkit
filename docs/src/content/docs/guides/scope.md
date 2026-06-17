@@ -98,6 +98,15 @@ charts — and is byte-stable across a read↔write loop.
   sheet, so the grid renders as data; on top of that Ream applies the named pivot
   style (`pivotTableStyleInfo`) — banded rows and a styled header — and emphasises
   grand-total / subtotal rows. The pivot is not recomputed from its cache.
+- **Data validation** (`<dataValidations>`) — a `list` validation paints an in-cell
+  dropdown affordance (a small button + ▾ at the cell's right edge) on every cell of
+  its range, in PDF and HTML; the constraint, its formulas and the input/error
+  prompts round-trip through `convert('xlsx')`.
+- **Slicers** (`xl/slicers` + `xl/slicerCaches`) — a slicer panel renders as a
+  captioned button box after the grid (the way chart frames do). A native-table
+  slicer fills its buttons from the referenced table column's distinct values and
+  highlights the items the column's autofilter keeps; an OLAP/pivot slicer whose
+  items live in a pivot cache degrades to a caption-only box.
 - Charts anchored to the sheet (the worksheet drawing part) render after the grid.
 
 **PresentationML (§19)**
@@ -150,8 +159,18 @@ charts — and is byte-stable across a read↔write loop.
   metric-compatible substitutes get a target tool's page geometry close — without its
   private font metrics — but _pixel-identical_ output is a non-goal: that would need the
   exact same font file and the renderer's internal glyph rounding.
-- **A couple of rarely-used Excel constructs are not rendered yet** — data
-  validation and slicers.
+- **Some Excel constructs are not rendered yet:**
+  - **Floating pictures, shapes and text boxes on a worksheet** — only charts are
+    pulled from the sheet drawing; other anchored drawings are dropped.
+  - **Cell comments / notes** (legacy and threaded) and **form / ActiveX controls**
+    (checkboxes, option buttons, spinners).
+  - **Sheet header/footer text** (the `&P` / `&D` / `&F` codes) and **cell hyperlinks**.
+  - **Conditional-format rule types** beyond compare-to-constant, colour scales, data
+    bars and icon sets — top/bottom-N, above/below average, duplicate/unique, text- and
+    date-based, and formula (`expression`) rules.
+  - A few **cell-format details**: non-solid and gradient fills, diagonal borders, text
+    rotation / indent / shrink-to-fit, wrapped text, and mixed (rich-text) formatting
+    within a single cell.
 
 ## Validation
 

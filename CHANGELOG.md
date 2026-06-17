@@ -3,6 +3,27 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.13.0
+
+### Added
+
+- **Excel data validation (XLSX).** Worksheet `<dataValidations>` are read into the
+  SpreadsheetML model. A `list` validation paints an in-cell dropdown affordance — a
+  small button with a ▾ at the cell's right edge — on every cell of its range, in PDF
+  (a gated shape pass reusing the conditional-format icon machinery) and HTML (a
+  floated inline SVG). The constraint, its formulas and the input/error prompts write
+  back through `convert('xlsx')`, so the SheetDoc stays a byte-stable round-trip
+  fixpoint. `showDropDown` keeps ECMA's inverted sense ("1" hides the dropdown); x14
+  cross-sheet list sources are a documented omission.
+- **Excel slicers (XLSX).** Slicers (`xl/slicers` + `xl/slicerCaches`) are resolved in
+  the reader and render as captioned button boxes after the grid, the way chart frames
+  do. A native-table slicer fills its buttons from the referenced table column's
+  distinct values and highlights the items the column's autofilter keeps; an OLAP/pivot
+  slicer whose items live in a pivot cache degrades to a caption-only box. The panel
+  reuses the existing table layout/emit path (a styled mini-table); style accents
+  follow the table/pivot heuristic. Slicer parts are not written back (dropped on
+  `convert('xlsx')`, like pivot tables).
+
 ## 1.12.0
 
 ### Added

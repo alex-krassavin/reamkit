@@ -181,6 +181,38 @@ const pdf = await doc.convert('pdf', { fonts });
 const html = await doc.convert('html');
 ```
 
+## Excel data validation
+
+A `list` data validation (`<dataValidations>`) paints an in-cell dropdown affordance
+— a small button with a ▾ — on every cell of its range, in both PDF and HTML. The
+validation, its formulas and the input/error prompts also round-trip through
+`convert('xlsx')`:
+
+```ts
+import { Ream } from 'reamkit';
+
+const doc = Ream.parse(xlsxBytes);
+const pdf = await doc.convert('pdf', { fonts }); // list cells show a ▾ dropdown button
+const html = await doc.convert('html');
+const xlsx = await doc.convert('xlsx'); // the <dataValidations> survive the round-trip
+```
+
+## Excel slicers
+
+A slicer (`xl/slicers` + `xl/slicerCaches`) renders as a captioned button box after the
+grid — the way a chart frame does. A native-table slicer fills its buttons from the
+referenced table column's distinct values and highlights the ones the column's
+autofilter keeps; an OLAP/pivot slicer whose items live in a pivot cache degrades to a
+caption-only box.
+
+```ts
+import { Ream } from 'reamkit';
+
+const doc = Ream.parse(xlsxBytes);
+const pdf = await doc.convert('pdf', { fonts }); // a button box per slicer, after the grid
+const html = await doc.convert('html');
+```
+
 ## SmartArt diagrams
 
 SmartArt (DOCX and PPTX) renders from the diagram's pre-rendered DrawingML drawing

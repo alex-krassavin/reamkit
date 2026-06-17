@@ -830,6 +830,8 @@ function emitCell(
   }
 
   out.push(`<${tag}${attrs.length > 0 ? ` ${attrs.join(' ')}` : ''} style="${css.join(';')}">`);
+  // Data-validation dropdown (E-SHEET SV1): a ▾ button floated to the right edge.
+  if (cell.properties.dropdown) out.push(cellDropdownSvg());
   // Conditional-format icon (E-SHEET SC1c): an inline glyph before the value.
   if (cell.properties.icon) out.push(cellIconSvg(cell.properties.icon));
   // Sparkline (E-SHEET SC2): a mini inline-SVG chart in the cell.
@@ -858,6 +860,16 @@ function cellSparklineSvg(sp: CellSparkline): string {
   return (
     `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="vertical-align:middle">` +
     `<g transform="translate(0,${H}) scale(1,-1)">${parts.join('')}</g></svg>`
+  );
+}
+
+// A data-validation dropdown affordance (E-SHEET SV1): a small light-grey button
+// with a dark ▾, floated to the cell's right edge — mirroring the PDF layout.
+function cellDropdownSvg(): string {
+  return (
+    '<svg width="13" height="13" viewBox="0 0 13 13" style="float:right;margin-left:3px">' +
+    '<rect x="0.5" y="0.5" width="12" height="12" fill="#F0F0F0" stroke="#B0B0B0"/>' +
+    '<polygon points="3.4,5 9.6,5 6.5,8.6" fill="#595959"/></svg>'
   );
 }
 
