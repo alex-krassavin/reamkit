@@ -11,16 +11,18 @@
 // from the FONT/FORMAT/PALETTE/XF records (biff-styles) into the same XlsxStyles
 // model the OOXML path uses. Embedded charts/drawings are not read yet.
 
-import type { Sheet, SheetDoc } from '@/core/ir/sheet';
+import type { Sheet, SheetDoc, SheetImageRef } from '@/core/ir/sheet';
 import type {
   ColumnWidth,
   MergedRange,
   ParsedWorksheet,
   WorksheetCell,
 } from '@/core/spreadsheet-model';
+import type { EscherAnchor } from '@/excel/xls/escher';
 
 import { ResourceStore } from '@/core/ir';
 import { parseBiffStyles } from '@/excel/xls/biff-styles';
+import { parseBlipStore, parseSheetPictures } from '@/excel/xls/escher';
 import { openCfb } from '@/core/ole/cfb';
 
 // Record type numbers (MS-XLS §2.3).
@@ -43,6 +45,8 @@ const REC = {
   STRING: 0x0207,
   MERGECELLS: 0x00e5,
   COLINFO: 0x007d,
+  MSODRAWINGGROUP: 0x00eb, // workbook-globals Escher BLIP store
+  MSODRAWING: 0x00ec, // per-sheet Escher shapes
 } as const;
 
 // Bombs / corruption guards.
@@ -98,12 +102,18 @@ export function readXlsToSheetDoc(xls: Uint8Array): SheetDoc {
     }
   }
 
+  // Office Drawing (Escher): the workbook-globals MSODrawingGroup holds the image
+  // pool (BLIP store); each sheet's MSODrawing references it. Bytes go into one
+  // shared resource store (XLS-5).
+  const resources = new ResourceStore();
+  const blips = parseBlipStore(gatherDrawing(globals, REC.MSODRAWINGGROUP));
+
   const sheets: Array<Sheet> = [];
   for (const bs of boundSheets) {
     if (bs.type !== 0) continue; // 0 = worksheet (skip chart/macro sheets)
     if (bs.offset + 4 > wb.length) continue;
-    const grid = readSheet(wb, view, bs.offset);
-    sheets.push({ name: bs.name, grid });
+    const { grid, images } = readSheet(wb, view, bs.offset, blips, resources);
+    sheets.push({ name: bs.name, grid, ...(images.length > 0 ? { images } : {}) });
   }
   if (sheets.length === 0) throw new Error('.xls has no worksheets');
 
@@ -114,8 +124,37 @@ export function readXlsToSheetDoc(xls: Uint8Array): SheetDoc {
     sharedStrings,
     definedNames: [],
     date1904,
-    resources: new ResourceStore(),
+    resources,
   };
+}
+
+// Concatenate a record's data with its immediately-following CONTINUE records'
+// data — an MSODrawingGroup / MSODrawing Escher stream can be split across them.
+function gatherDrawing(recs: ReadonlyArray<BiffRecord>, type: number): Uint8Array {
+  const parts: Array<Uint8Array> = [];
+  let inside = false;
+  for (const rec of recs) {
+    if (rec.type === type) {
+      parts.push(rec.data);
+      inside = true;
+    } else if (rec.type === REC.CONTINUE && inside) {
+      parts.push(rec.data);
+    } else {
+      inside = false;
+    }
+  }
+  return concatBytes(parts);
+}
+
+function concatBytes(parts: ReadonlyArray<Uint8Array>): Uint8Array {
+  const total = parts.reduce((n, p) => n + p.length, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const p of parts) {
+    out.set(p, off);
+    off += p.length;
+  }
+  return out;
 }
 
 // Read a BOF…EOF substream starting at a byte offset, returning its records
@@ -146,9 +185,16 @@ function parseBoundSheet(data: Uint8Array): { name: string; offset: number; type
   return { name, offset, type };
 }
 
-// A worksheet substream → ParsedWorksheet. Only value-bearing records are read;
-// the column count/row count come from the actual cells.
-function readSheet(wb: Uint8Array, view: DataView, start: number): ParsedWorksheet {
+// A worksheet substream → its grid + any embedded pictures. Only value-bearing
+// records are read; the column/row count come from the actual cells. Pictures
+// come from the sheet's MSODrawing (Escher) referencing the workbook BLIP store.
+function readSheet(
+  wb: Uint8Array,
+  view: DataView,
+  start: number,
+  blips: ReadonlyArray<Uint8Array | undefined>,
+  resources: ResourceStore,
+): { grid: ParsedWorksheet; images: Array<SheetImageRef> } {
   const records = readSubstream(wb, view, start);
   const cells: Array<WorksheetCell> = [];
   const merges: Array<MergedRange> = [];
@@ -240,7 +286,44 @@ function readSheet(wb: Uint8Array, view: DataView, start: number): ParsedWorkshe
     }
   }
 
-  return { cells, maxRow, maxColumn, columns, merges, rowHeights: [] };
+  const grid: ParsedWorksheet = { cells, maxRow, maxColumn, columns, merges, rowHeights: [] };
+  const drawing = gatherDrawing(records, REC.MSODRAWING);
+  const images =
+    drawing.length > 0 && blips.length > 0 ? buildImages(drawing, blips, resources) : [];
+  return { grid, images };
+}
+
+// Escher picture shapes → SheetImageRefs: pull each shape's BLIP bytes into the
+// shared resource store and size it from its cell anchor (approximate — the
+// projection inlines the placement anyway).
+function buildImages(
+  drawing: Uint8Array,
+  blips: ReadonlyArray<Uint8Array | undefined>,
+  resources: ResourceStore,
+): Array<SheetImageRef> {
+  const out: Array<SheetImageRef> = [];
+  for (const pic of parseSheetPictures(drawing)) {
+    const bytes = blips[pic.blipIndex - 1];
+    if (!bytes) continue;
+    const { widthPt, heightPt } = anchorSize(pic.anchor);
+    out.push({ resourceId: resources.put(bytes), widthPt, heightPt });
+  }
+  return out;
+}
+
+// A cell anchor → an approximate point size using default cell metrics (the
+// exact column widths / row heights are not yet threaded here). Absent anchor →
+// a default thumbnail size.
+function anchorSize(anchor: EscherAnchor | undefined): { widthPt: number; heightPt: number } {
+  if (!anchor) return { widthPt: 96, heightPt: 72 };
+  const DEFAULT_COL_PT = 48;
+  const DEFAULT_ROW_PT = 15;
+  const cols = anchor.col2 + anchor.dx2 / 1024 - (anchor.col1 + anchor.dx1 / 1024);
+  const rows = anchor.row2 + anchor.dy2 / 1024 - (anchor.row1 + anchor.dy1 / 1024);
+  return {
+    widthPt: Math.max(8, cols * DEFAULT_COL_PT),
+    heightPt: Math.max(8, rows * DEFAULT_ROW_PT),
+  };
 }
 
 function numCell(row: number, column: number, style: number, rawValue: string): WorksheetCell {

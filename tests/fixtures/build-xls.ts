@@ -257,6 +257,63 @@ function boundSheetData(name: string): Uint8Array {
   return d; // raw record DATA wrapped below so we can patch in place
 }
 
+// --- Office Drawing (Escher) builders for embedded images (XLS-5) ------------
+
+// `[verInstance:u16][type:u16][len:u32][data]`. A container sets ver = 0xF.
+function escher(ver: number, instance: number, type: number, data: Uint8Array): Uint8Array {
+  const out = new Uint8Array(8 + data.length);
+  const v = new DataView(out.buffer);
+  v.setUint16(0, ((instance << 4) | (ver & 0x0f)) & 0xffff, true);
+  v.setUint16(2, type, true);
+  v.setUint32(4, data.length, true);
+  out.set(data, 8);
+  return out;
+}
+
+// MSODrawingGroup BIFF record (0x00EB) — a DggContainer → BStoreContainer with
+// one BSE per image. The image bytes sit after a filler prefix; the reader
+// magic-scans for them.
+export function msoDrawingGroupRec(images: ReadonlyArray<Uint8Array>): Uint8Array {
+  const bses = images.map((png) => {
+    const d = new Uint8Array(44 + png.length); // 44-byte BSE/blip header filler
+    d.set(png, 44);
+    return escher(2, 0, 0xf007, d); // BSE
+  });
+  const bstore = escher(0xf, images.length, 0xf001, concat(bses)); // BStoreContainer
+  return rec(0x00eb, escher(0xf, 0, 0xf000, bstore)); // DggContainer
+}
+
+// MSODrawing BIFF record (0x00EC) — a SpgrContainer of picture SpContainers,
+// each with an OPT `pib` (BLIP index) and a cell anchor.
+export function msoDrawingRec(
+  pics: ReadonlyArray<{
+    blipIndex: number;
+    col1?: number;
+    row1?: number;
+    col2?: number;
+    row2?: number;
+  }>,
+): Uint8Array {
+  const sps = pics.map((p) => {
+    const opt = new Uint8Array(6);
+    const ov = new DataView(opt.buffer);
+    ov.setUint16(0, 0x4104, true); // pib | fBid
+    ov.setUint32(2, p.blipIndex, true);
+    const optRec = escher(3, 1, 0xf00b, opt); // OPT, one property
+
+    const anc = new Uint8Array(18);
+    const av = new DataView(anc.buffer);
+    av.setUint16(2, p.col1 ?? 0, true);
+    av.setUint16(6, p.row1 ?? 0, true);
+    av.setUint16(10, p.col2 ?? 2, true);
+    av.setUint16(14, p.row2 ?? 3, true);
+    const ancRec = escher(0, 0, 0xf010, anc); // ClientAnchor
+
+    return escher(0xf, 0, 0xf004, concat([optRec, ancRec])); // SpContainer
+  });
+  return rec(0x00ec, escher(0xf, 0, 0xf003, concat(sps))); // SpgrContainer
+}
+
 export interface XlsSheetInput {
   readonly name: string;
   readonly records: ReadonlyArray<Uint8Array>;

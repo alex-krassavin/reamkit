@@ -26,13 +26,14 @@ function looksLikeXls(bytes: Uint8Array): boolean {
 }
 
 // What the BIFF8 reader does not surface yet — reported so a caller's loss report
-// is honest about the gap. Cell content AND styling (fonts/fills/borders/number
-// formats/alignment) are read; embedded drawings are not.
+// is honest about the gap. Cell content, styling (fonts/fills/borders/number
+// formats/alignment) and embedded pictures are read; charts and drawing shapes
+// (autoshapes / text boxes) are not.
 const XLS_LOSSES: ReadonlyArray<Loss> = [
   {
     severity: 'dropped',
     feature: FEATURES.charts,
-    detail: 'legacy .xls embedded charts, images and drawing objects are not read',
+    detail: 'legacy .xls embedded charts and drawing shapes (autoshapes, text boxes) are not read',
   },
 ];
 
