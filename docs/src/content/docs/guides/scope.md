@@ -98,6 +98,15 @@ charts — and is byte-stable across a read↔write loop.
   sheet, so the grid renders as data; on top of that Ream applies the named pivot
   style (`pivotTableStyleInfo`) — banded rows and a styled header — and emphasises
   grand-total / subtotal rows. The pivot is not recomputed from its cache.
+- **Data validation** (`<dataValidations>`) — a `list` validation paints an in-cell
+  dropdown affordance (a small button + ▾ at the cell's right edge) on every cell of
+  its range, in PDF and HTML; the constraint, its formulas and the input/error
+  prompts round-trip through `convert('xlsx')`.
+- **Slicers** (`xl/slicers` + `xl/slicerCaches`) — a slicer panel renders as a
+  captioned button box after the grid (the way chart frames do). A native-table
+  slicer fills its buttons from the referenced table column's distinct values and
+  highlights the items the column's autofilter keeps; an OLAP/pivot slicer whose
+  items live in a pivot cache degrades to a caption-only box.
 - Charts anchored to the sheet (the worksheet drawing part) render after the grid.
 
 **PresentationML (§19)**
@@ -150,8 +159,8 @@ charts — and is byte-stable across a read↔write loop.
   metric-compatible substitutes get a target tool's page geometry close — without its
   private font metrics — but _pixel-identical_ output is a non-goal: that would need the
   exact same font file and the renderer's internal glyph rounding.
-- **A couple of rarely-used Excel constructs are not rendered yet** — data
-  validation and slicers.
+- **A couple of rarely-used Excel constructs are not rendered yet** — form and
+  ActiveX controls (checkboxes, option buttons, spinners) and cell comments/notes.
 
 ## Validation
 
