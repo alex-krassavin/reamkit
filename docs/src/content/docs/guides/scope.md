@@ -76,6 +76,12 @@ charts — and is byte-stable across a read↔write loop.
 
 **SpreadsheetML (§18)**
 - Grids, shared strings, number formats and dates (incl. the 1904 date system).
+- **Legacy `.xls`** (BIFF8, Excel 97–2003) — the binary `Workbook` stream inside the
+  OLE2/CFB container is read into the same grid model, so an old `.xls` renders to
+  PDF/SVG/HTML and even re-writes to `.xlsx`. Cell values and structure (sheets,
+  shared strings, merges, column widths, the 1904 flag) are read; cell styling
+  (fonts/fills/borders/number formats from the XF table) and embedded charts/
+  drawings are not yet, so the grid renders with default formatting.
 - The print model — gridline suppression, print area, fit-to-page scaling, repeated
   print titles, manual page breaks, horizontal/vertical centering, and **column-band
   pagination**: a sheet wider than the page (and not fit-to-width) splits across
@@ -192,8 +198,10 @@ charts — and is byte-stable across a read↔write loop.
 
 ## Not yet
 
-- **Legacy `.doc` / `.xls`** (the binary OLE/CFB formats) — Ream parses only the OOXML
-  ZIP+XML formats. Re-save as `.docx` / `.xlsx`.
+- **Legacy `.doc` / `.ppt`** (the binary OLE/CFB formats) — not read yet; re-save as
+  `.docx` / `.pptx`. (Legacy **`.xls`** — BIFF8 — _is_ read; see SpreadsheetML above.
+  The shared CFB container reader (`src/core/ole`) is the keystone the others would
+  reuse.)
 - **Byte-for-byte visual reproduction of another renderer.** `layoutProfile` plus the
   metric-compatible substitutes get a target tool's page geometry close — without its
   private font metrics — but _pixel-identical_ output is a non-goal: that would need the

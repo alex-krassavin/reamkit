@@ -13,6 +13,7 @@ export const FEATURES = {
   text: 'text',
   tables: 'tables',
   tablesNested: 'tables.nested',
+  cellFormatting: 'cellFormatting',
   lists: 'lists',
   sections: 'sections',
   headersFooters: 'headersFooters',

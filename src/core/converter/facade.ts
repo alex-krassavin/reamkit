@@ -20,16 +20,19 @@ import { ConversionLossError, FEATURES } from '@/core/ir';
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
 import { FontRegistry } from '@/core/font';
 import { chainProviders } from '@/core/fonts/provider';
+import { fetchFontSet } from '@/core/fonts';
 import { flowRenderOptions } from '@/core/converter/project';
 import { writeDocx } from '@/word/docx-writer';
 import { writeXlsx } from '@/excel/xlsx-writer';
 import { writeHtml } from '@/html/html-writer';
 import { layoutStyledDocument } from '@/layout/styled-layout';
+import { renderStyledPdf } from '@/pdf';
 import { writeSvg } from '@/svg/svg-writer';
 import { convertDocxToPdf } from '@/word/docx-to-pdf';
 import { convertXlsxToPdf } from '@/excel/xlsx-to-pdf';
 import { docxReader } from '@/word/docx-reader';
 import { xlsxReader } from '@/excel/xlsx-reader';
+import { xlsReader } from '@/excel/xls/xls-reader';
 import { pptxReader } from '@/pptx/pptx-reader';
 import { pdfReader } from '@/pdf-reader/reader';
 
@@ -100,6 +103,7 @@ export interface CreateConverterOptions {
 export const DEFAULT_READERS: ReadonlyArray<DocumentReader<SourceDoc>> = [
   docxReader,
   xlsxReader,
+  xlsReader,
   pptxReader,
   pdfReader,
 ];
@@ -185,15 +189,50 @@ export function createConverter(opts: CreateConverterOptions = {}): Converter {
       if (strict && losses.length > 0) throw new ConversionLossError(losses[0]!);
       return { bytes: svg.bytes, losses };
     }
-    const pdf =
-      reader.id === 'xlsx'
-        ? await convertXlsxToPdf(bytes, conv)
-        : await convertDocxToPdf(bytes, conv);
+    let pdf: Uint8Array;
+    if (reader.id === 'xlsx') {
+      pdf = await convertXlsxToPdf(bytes, conv);
+    } else if (reader.produces === 'sheet') {
+      // Other spreadsheet readers (.xls): project to flow and render through the
+      // shared styled-PDF path; fonts are auto-fetched when the caller gives none.
+      pdf = await renderSheetReaderToPdf(reader, bytes, conv, rest.now);
+    } else {
+      pdf = await convertDocxToPdf(bytes, conv);
+    }
     if (strict && losses.length > 0) throw new ConversionLossError(losses[0]!);
     return { bytes: pdf, losses };
   };
 
   return { readers, detect, convert };
+}
+
+// Render a sheet-producing reader's projected flow to PDF — the generic path for
+// spreadsheet inputs other than xlsx (i.e. legacy .xls). Fonts are auto-fetched
+// when the caller supplies none; the principal render knobs pass through, while
+// the full converter feature set (signing, encryption, source embedding) stays
+// on the Ream path.
+async function renderSheetReaderToPdf(
+  reader: DocumentReader<SourceDoc>,
+  bytes: Uint8Array,
+  conv: ConvertDocxOptions,
+  now: Date | undefined,
+): Promise<Uint8Array> {
+  const fonts =
+    conv.fonts ??
+    (conv.fontBytes
+      ? { regular: conv.fontBytes }
+      : await fetchFontSet({
+          ...(conv.fontFamily ? { family: conv.fontFamily } : {}),
+          ...(conv.fontFetch ? { fetch: conv.fontFetch } : {}),
+        }));
+  const { doc: flow } = readToFlow(reader, bytes, now ? { now } : undefined);
+  return renderStyledPdf(flow.body, {
+    registry: FontRegistry.fromBytes(fonts),
+    ...flowRenderOptions(flow),
+    ...(conv.pdfA ? { pdfA: conv.pdfA } : {}),
+    ...(conv.info ? { info: conv.info } : {}),
+    ...(conv.section ? { section: conv.section } : {}),
+  });
 }
 
 // Resolve regular/bold/italic/boldItalic through the chain. v0 resolves the
