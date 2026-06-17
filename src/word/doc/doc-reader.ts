@@ -1,27 +1,33 @@
-// Legacy `.doc` reader (DOC-1/2/3) — the DocumentReader that sniffs a Word
+// Legacy `.doc` reader (DOC-1..4) — the DocumentReader that sniffs a Word
 // 97–2003 binary file (an OLE2/CFB container with a `WordDocument` stream) and
-// reads its text, run formatting and paragraph formatting into the same FlowDoc
-// the OOXML docx reader produces, so the whole render pipeline (projection →
+// reads its text, run/paragraph formatting and tables into the same FlowDoc the
+// OOXML docx reader produces, so the whole render pipeline (projection →
 // PDF/SVG/HTML, re-write to .docx) works on a legacy `.doc` the way it already
 // does for `.xls`. The shared CFB container reader (`src/core/ole`) is the
 // keystone both legacy formats reuse.
 //
 // Scope: paragraphs of formatted runs — bold / italic / underline / font size
-// (CHPX) on each run, and alignment / indentation / spacing (PAPX) on each
-// paragraph. Tables, images, headers/footers, lists and fields are not read yet
-// — recorded as a loss (mirrors how `.xls` shipped values before full styling).
+// (CHPX) on each run, alignment / indentation / spacing (PAPX) on each paragraph,
+// and tables (in-table paragraphs grouped into a row/cell grid). Images,
+// headers/footers, lists and fields are not read yet — recorded as a loss
+// (mirrors how `.xls` shipped values before full styling).
 
 import type {
   Alignment,
   BodyElement,
+  Border,
+  CellBorders,
   ParagraphProperties,
   RunProperties,
+  Table,
+  TableCell,
+  TableRow,
   UnderlineStyle,
 } from '@/core/document-model';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss } from '@/core/ir';
-import type { DocCharProps, DocContent, DocParaProps } from '@/word/doc/doc-text';
+import type { DocCharProps, DocContent, DocParaProps, DocParagraph } from '@/word/doc/doc-text';
 
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
 import { isCfb, openCfb } from '@/core/ole/cfb';
@@ -29,6 +35,18 @@ import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 import { extractDocContent } from '@/word/doc/doc-text';
 
 const ZERO_WIDTH_SPACE = '​';
+
+// US Letter (612pt) minus one-inch margins each side — the table's column band.
+const CONTENT_WIDTH_PT = 468;
+const TABLE_BORDER: Border = { style: 'single', width: pt(0.5), colorHex: '000000' };
+const TABLE_BORDERS: CellBorders = {
+  top: TABLE_BORDER,
+  right: TABLE_BORDER,
+  bottom: TABLE_BORDER,
+  left: TABLE_BORDER,
+  insideH: TABLE_BORDER,
+  insideV: TABLE_BORDER,
+};
 
 // A legacy `.doc` is an OLE2 container with a `WordDocument` stream. The check
 // also keeps a `.xls`/`.ppt` (or an encrypted OOXML, also a CFB) from
@@ -78,11 +96,73 @@ export function readDoc(bytes: Uint8Array): ReadResult<FlowDoc> {
   return { doc, losses: [content.encrypted ? DOC_ENCRYPTED_LOSS : DOC_TEXT_LOSS] };
 }
 
-// Map each extracted paragraph onto a document-model paragraph, carrying the run
-// and paragraph formatting. doc-text has already split paragraphs at the CR mark
-// and cleaned the in-paragraph control characters.
+// Group the extracted paragraphs into the FlowDoc body: runs of in-table
+// paragraphs become Tables; everything else is a paragraph. doc-text has already
+// split paragraphs at the CR / cell mark and cleaned the control characters.
 function buildBody(content: DocContent): Array<BodyElement> {
-  const body: Array<BodyElement> = content.paragraphs.map((p) => ({
+  const body = groupTables(content.paragraphs);
+  // A document ends with a trailing paragraph mark — drop the empty tail it adds.
+  while (body.length > 1 && isEmptyParagraph(body[body.length - 1]!)) body.pop();
+  if (body.length === 0) body.push(emptyParagraph());
+  return body;
+}
+
+// Consecutive in-table paragraphs (sprmPFInTable) collapse into one Table; the
+// rest map straight to paragraphs.
+function groupTables(paras: ReadonlyArray<DocParagraph>): Array<BodyElement> {
+  const out: Array<BodyElement> = [];
+  let i = 0;
+  while (i < paras.length) {
+    if (paras[i]!.props.inTable) {
+      const group: Array<DocParagraph> = [];
+      while (i < paras.length && paras[i]!.props.inTable) group.push(paras[i++]!);
+      out.push({ kind: 'table', table: buildTable(group) });
+    } else {
+      out.push(mapParagraph(paras[i++]!));
+    }
+  }
+  return out;
+}
+
+// Split a run of in-table paragraphs into rows at each TTP (rowEnd); within a row
+// each paragraph is a cell (an empty terminating paragraph is dropped). Cell
+// widths are not in the PAPX we read, so columns share the content width evenly
+// and a default thin border makes the grid visible.
+function buildTable(group: ReadonlyArray<DocParagraph>): Table {
+  const rows: Array<TableRow> = [];
+  let rowParas: Array<DocParagraph> = [];
+  for (const p of group) {
+    rowParas.push(p);
+    if (p.props.rowEnd) {
+      rows.push(buildRow(rowParas));
+      rowParas = [];
+    }
+  }
+  if (rowParas.length > 0) rows.push(buildRow(rowParas)); // a row without a TTP (defensive)
+
+  const cols = Math.max(1, ...rows.map((r) => r.cells.length));
+  const colWidth = pt(CONTENT_WIDTH_PT / cols);
+  const grid = Array.from({ length: cols }, () => colWidth);
+  return { properties: { borders: TABLE_BORDERS, layout: 'fixed' }, grid, rows };
+}
+
+function buildRow(rowParas: ReadonlyArray<DocParagraph>): TableRow {
+  const cells: Array<TableCell> = [];
+  for (const p of rowParas) {
+    // The TTP terminates the row; when it carries no text it is not itself a cell.
+    if (p.props.rowEnd && isBlank(p)) continue;
+    cells.push({ properties: {}, content: [mapParagraph(p)] });
+  }
+  if (cells.length === 0) cells.push({ properties: {}, content: [emptyParagraph()] });
+  return { properties: {}, cells };
+}
+
+function isBlank(p: DocParagraph): boolean {
+  return p.runs.every((r) => r.text.length === 0);
+}
+
+function mapParagraph(p: DocParagraph): BodyElement {
+  return {
     kind: 'paragraph',
     paragraph: {
       properties: toParaProperties(p.props),
@@ -92,16 +172,14 @@ function buildBody(content: DocContent): Array<BodyElement> {
           ? p.runs.map((r) => ({ text: r.text, properties: toRunProperties(r.props) }))
           : [{ text: ZERO_WIDTH_SPACE, properties: {} }],
     },
-  }));
-  // A document ends with a trailing paragraph mark — drop the empty tail it adds.
-  while (body.length > 1 && isEmptyParagraph(body[body.length - 1]!)) body.pop();
-  if (body.length === 0) {
-    body.push({
-      kind: 'paragraph',
-      paragraph: { properties: {}, runs: [{ text: ZERO_WIDTH_SPACE, properties: {} }] },
-    });
-  }
-  return body;
+  };
+}
+
+function emptyParagraph(): BodyElement {
+  return {
+    kind: 'paragraph',
+    paragraph: { properties: {}, runs: [{ text: ZERO_WIDTH_SPACE, properties: {} }] },
+  };
 }
 
 function isEmptyParagraph(el: BodyElement): boolean {

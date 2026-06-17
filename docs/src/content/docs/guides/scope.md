@@ -80,10 +80,13 @@ charts — and is byte-stable across a read↔write loop.
   paragraphs, while the CHPX and PAPX runs (located through the `PlcfBteChpx` /
   `PlcfBtePapx` bin tables and decoded from their sprms) carry **bold / italic /
   underline / font size** onto each run and **alignment / indentation / spacing**
-  onto each paragraph. So an old `.doc` renders to PDF/SVG/HTML and re-writes to
-  `.docx`. Tables, images, headers/footers, lists and fields are not read yet
-  (re-save as `.docx` for full fidelity); an encrypted file yields no text. The
-  shared CFB reader (`src/core/ole`) is the same keystone `.xls` uses.
+  onto each paragraph. **Tables** are reconstructed too — the in-table paragraphs
+  (marked by the `fInTable` / `fTtp` PAPX flags, cells delimited by the `0x07`
+  cell mark) become a row-and-cell grid. So an old `.doc` renders to PDF/SVG/HTML
+  and re-writes to `.docx`. Images, headers/footers, lists, fields and cell
+  widths/borders/merges are not read yet (re-save as `.docx` for full fidelity);
+  an encrypted file yields no text. The shared CFB reader (`src/core/ole`) is the
+  same keystone `.xls` uses.
 
 **SpreadsheetML (§18)**
 - Grids, shared strings, number formats and dates (incl. the 1904 date system).
@@ -224,7 +227,7 @@ charts — and is byte-stable across a read↔write loop.
 - **Legacy `.ppt`** (the binary PowerPoint OLE/CFB format) — not read yet; re-save
   as `.pptx`. (Legacy **`.xls`** — BIFF8 — and **`.doc`** — Word 97–2003 — _are_
   read; see SpreadsheetML / WordprocessingML above. The `.doc` reader surfaces the
-  document text with run and paragraph formatting; tables, images and the rest of
+  document text with run / paragraph formatting and tables; images and the rest of
   the structure are a later wave. The shared CFB container reader (`src/core/ole`)
   is the keystone all three reuse.)
 - **Byte-for-byte visual reproduction of another renderer.** `layoutProfile` plus the

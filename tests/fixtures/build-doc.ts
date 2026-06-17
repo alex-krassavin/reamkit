@@ -28,7 +28,8 @@ export interface DocFormatRun {
   readonly sizeHalfPts?: number; // font size in half-points
 }
 
-// A paragraph's formatting, over its `length` characters (including the CR mark).
+// A paragraph's formatting, over its `length` characters (including the CR / cell
+// mark that terminates it).
 export interface DocParaFormat {
   readonly length: number;
   readonly jc?: number; // 0 left, 1 center, 2 right, 3 both, 4 distribute
@@ -37,6 +38,8 @@ export interface DocParaFormat {
   readonly indentFirstTwips?: number; // signed (negative = hanging)
   readonly spaceBeforeTwips?: number;
   readonly spaceAfterTwips?: number;
+  readonly inTable?: boolean; // sprmPFInTable — the paragraph is a table cell
+  readonly rowEnd?: boolean; // sprmPFTtp — the row's terminating paragraph
 }
 
 // Where piece text starts in the WordDocument stream — past the FIB fields the
@@ -259,6 +262,8 @@ function buildPapxGrpprl(run: DocParaFormat): Uint8Array {
   if (run.indentFirstTwips !== undefined) sprm(0x8411, ...i16(run.indentFirstTwips)); // sprmPDxaLeft1
   if (run.spaceBeforeTwips !== undefined) sprm(0xa413, ...i16(run.spaceBeforeTwips)); // sprmPDyaBefore
   if (run.spaceAfterTwips !== undefined) sprm(0xa414, ...i16(run.spaceAfterTwips)); // sprmPDyaAfter
+  if (run.inTable) sprm(0x2416, 0x01); // sprmPFInTable
+  if (run.rowEnd) sprm(0x2417, 0x01); // sprmPFTtp
   return Uint8Array.from(parts);
 }
 

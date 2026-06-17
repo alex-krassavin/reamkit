@@ -9,10 +9,13 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildDoc } from './fixtures/build-doc';
+import type { BodyElement } from '@/core/document-model';
 import type { FlowDoc } from '@/core/ir/flow';
 
 import { docReader, readDoc } from '@/word/doc/doc-reader';
 import { Ream } from '@/core/converter/ream';
+
+const CM = String.fromCharCode(0x07); // table cell mark
 
 // The visible text of each paragraph in the FlowDoc body.
 function paragraphTexts(doc: FlowDoc): Array<string> {
@@ -30,6 +33,13 @@ function firstParagraphRuns(doc: FlowDoc) {
 // The paragraph elements of the FlowDoc body.
 function paragraphs(doc: FlowDoc) {
   return doc.body.filter((el) => el.kind === 'paragraph');
+}
+
+// The concatenated text of a table cell's paragraphs.
+function cellText(content: ReadonlyArray<BodyElement>): string {
+  return content
+    .flatMap((el) => (el.kind === 'paragraph' ? el.paragraph.runs.map((r) => r.text) : []))
+    .join('');
 }
 
 describe('doc reader (DOC-1)', () => {
@@ -178,6 +188,61 @@ describe('doc reader (DOC-1)', () => {
     const ps = paragraphs(doc);
     expect(ps[0]?.paragraph.properties.alignment).not.toBe('right');
     expect(ps[1]?.paragraph.properties.alignment).toBe('right');
+  });
+
+  it('groups in-table paragraphs into a 2×2 Table (cell mark 0x07, TTP row end)', () => {
+    const doc = readDoc(
+      buildDoc([{ text: `A${CM}B${CM}C${CM}D${CM}`, compressed: false }], {
+        paraRuns: [
+          { length: 2, inTable: true }, // "A" + cell mark
+          { length: 2, inTable: true, rowEnd: true }, // "B" + cell mark, ends row 1
+          { length: 2, inTable: true }, // "C"
+          { length: 2, inTable: true, rowEnd: true }, // "D", ends row 2
+        ],
+      }),
+    ).doc;
+    const tableEl = doc.body.find((el) => el.kind === 'table');
+    expect(tableEl).toBeDefined();
+    const t = tableEl?.table;
+    expect(t?.rows).toHaveLength(2);
+    expect(t?.rows[0]?.cells).toHaveLength(2);
+    expect(cellText(t!.rows[0]!.cells[0]!.content)).toBe('A');
+    expect(cellText(t!.rows[0]!.cells[1]!.content)).toBe('B');
+    expect(cellText(t!.rows[1]!.cells[0]!.content)).toBe('C');
+    expect(cellText(t!.rows[1]!.cells[1]!.content)).toBe('D');
+  });
+
+  it('keeps the paragraphs before and after a table', () => {
+    const doc = readDoc(
+      buildDoc([{ text: `Before\rA${CM}B${CM}After\r`, compressed: false }], {
+        paraRuns: [
+          { length: 7 }, // "Before" + CR — not in a table
+          { length: 2, inTable: true }, // "A"
+          { length: 2, inTable: true, rowEnd: true }, // "B", ends the row
+          { length: 6 }, // "After" + CR — not in a table
+        ],
+      }),
+    ).doc;
+    expect(doc.body.map((el) => el.kind)).toEqual(['paragraph', 'table', 'paragraph']);
+  });
+
+  it('renders a .doc with a table to a valid PDF', async () => {
+    const pdf = await Ream.parse(
+      buildDoc([{ text: `A${CM}B${CM}C${CM}D${CM}`, compressed: false }], {
+        paraRuns: [
+          { length: 2, inTable: true },
+          { length: 2, inTable: true, rowEnd: true },
+          { length: 2, inTable: true },
+          { length: 2, inTable: true, rowEnd: true },
+        ],
+      }),
+    ).convert('pdf', {
+      fonts: {
+        regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
+        bold: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Bold.ttf')),
+      },
+    });
+    expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-');
   });
 
   it('renders a formatted .doc to a valid PDF', async () => {

@@ -1,4 +1,4 @@
-// Legacy `.doc` text + formatting (DOC-1/2/3) — pulls the document out of a Word
+// Legacy `.doc` text + formatting (DOC-1..4) — pulls the document out of a Word
 // 97–2003 binary file as paragraphs of formatted runs. A `.doc` is a CFB (the
 // same OLE2 container as `.xls`) holding a `WordDocument` stream and a table
 // stream (`0Table` / `1Table`). Three separate structures have to be joined,
@@ -9,8 +9,8 @@
 //   - PAPX runs (in FKP pages, found through PlcBtePapx) carry paragraph
 //     formatting, one run per paragraph.
 // This walks the text character by character, attaches each character's CHPX,
-// splits paragraphs at the CR mark, attaches each paragraph's PAPX, and emits
-// maximal same-formatting runs.
+// splits paragraphs at the CR mark (and the 0x07 table cell mark), attaches each
+// paragraph's PAPX, and emits maximal same-formatting runs.
 //
 // Spec: [MS-DOC] §2.5 (FIB), §2.8.35 (PlcPcd), §2.9.38 (Clx), §2.9.73
 // (FcCompressed), §2.8.6 (PlcBteChpx), §2.8.5 (PlcBtePapx), §2.9.55 (ChpxFkp),
@@ -50,7 +50,11 @@ const SPRM_P_DXA_LEFT = 0x840f; // left indent (twips)
 const SPRM_P_DXA_LEFT1 = 0x8411; // first-line indent (twips, signed)
 const SPRM_P_DYA_BEFORE = 0xa413; // space before (twips)
 const SPRM_P_DYA_AFTER = 0xa414; // space after (twips)
+const SPRM_P_F_IN_TABLE = 0x2416; // paragraph is in a table
+const SPRM_P_F_TTP = 0x2417; // table terminating paragraph (end of row)
 const SPRA_LEN = [1, 1, 2, 4, 2, 2, 0, 3];
+
+const CELL_MARK = 0x07; // ends a table cell (and, on the TTP, a row)
 
 const MAX_TEXT = 1 << 24; // 16M-char guard against a crafted piece table
 
@@ -68,6 +72,8 @@ export interface DocParaProps {
   readonly indentFirstTwips?: number; // signed (negative = hanging)
   readonly spaceBeforeTwips?: number;
   readonly spaceAfterTwips?: number;
+  readonly inTable?: boolean; // sprmPFInTable
+  readonly rowEnd?: boolean; // sprmPFTtp — the row's terminating paragraph
 }
 
 export interface DocRun {
@@ -78,6 +84,9 @@ export interface DocRun {
 export interface DocParagraph {
   readonly runs: ReadonlyArray<DocRun>;
   readonly props: DocParaProps;
+  // The paragraph was ended by a cell mark (0x07) rather than a CR — i.e. it
+  // closes a table cell. With props.rowEnd it also closes the row.
+  readonly cellMark?: boolean;
 }
 
 export interface DocContent {
@@ -290,6 +299,8 @@ function decodePapxGrpprl(d: Uint8Array): DocParaProps {
   let indentFirstTwips: number | undefined;
   let spaceBeforeTwips: number | undefined;
   let spaceAfterTwips: number | undefined;
+  let inTable: boolean | undefined;
+  let rowEnd: boolean | undefined;
   for (const s of sprms(d)) {
     switch (s.sprm) {
       case SPRM_P_JC:
@@ -310,6 +321,12 @@ function decodePapxGrpprl(d: Uint8Array): DocParaProps {
       case SPRM_P_DYA_AFTER:
         spaceAfterTwips = u16(d, s.op);
         break;
+      case SPRM_P_F_IN_TABLE:
+        inTable = d[s.op] !== 0;
+        break;
+      case SPRM_P_F_TTP:
+        rowEnd = d[s.op] !== 0;
+        break;
     }
   }
   return {
@@ -319,6 +336,8 @@ function decodePapxGrpprl(d: Uint8Array): DocParaProps {
     ...(indentFirstTwips !== undefined ? { indentFirstTwips } : {}),
     ...(spaceBeforeTwips !== undefined ? { spaceBeforeTwips } : {}),
     ...(spaceAfterTwips !== undefined ? { spaceAfterTwips } : {}),
+    ...(inTable ? { inTable } : {}),
+    ...(rowEnd ? { rowEnd } : {}),
   };
 }
 
@@ -373,9 +392,13 @@ function buildParagraphs(
       cur = '';
     }
   };
-  const endParagraph = (fc: number): void => {
+  const endParagraph = (fc: number, cellMark: boolean): void => {
     flushRun();
-    paragraphs.push({ runs, props: lookup(papx, fc) ?? {} });
+    paragraphs.push({
+      runs,
+      props: lookup(papx, fc) ?? {},
+      ...(cellMark ? { cellMark: true } : {}),
+    });
     runs = [];
   };
 
@@ -388,8 +411,10 @@ function buildParagraphs(
       lastFc = fc;
       const code = piece.compressed ? byteCode(wd, fc) : unitCode(wd, fc);
       if (code < 0) continue;
-      if (code === CR) {
-        endParagraph(fc);
+      // A CR ends a paragraph; a cell mark (0x07) ends a table cell (and, on the
+      // TTP, a row) — both terminate the current paragraph.
+      if (code === CR || code === CELL_MARK) {
+        endParagraph(fc, code === CELL_MARK);
         continue;
       }
       const ch =
@@ -404,7 +429,10 @@ function buildParagraphs(
       cur += ch;
     }
   }
-  endParagraph(lastFc); // the final paragraph (empty if the text ended with CR)
+  // Flush a final paragraph only when text didn't end on a terminator — otherwise
+  // the trailing mark would add a spurious empty paragraph (and a phantom row in a
+  // table that ends, as it must, on the TTP).
+  if (cur.length > 0 || runs.length > 0) endParagraph(lastFc, false);
   return paragraphs;
 }
 
