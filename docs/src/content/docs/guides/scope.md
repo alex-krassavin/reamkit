@@ -159,8 +159,18 @@ charts — and is byte-stable across a read↔write loop.
   metric-compatible substitutes get a target tool's page geometry close — without its
   private font metrics — but _pixel-identical_ output is a non-goal: that would need the
   exact same font file and the renderer's internal glyph rounding.
-- **A couple of rarely-used Excel constructs are not rendered yet** — form and
-  ActiveX controls (checkboxes, option buttons, spinners) and cell comments/notes.
+- **Some Excel constructs are not rendered yet:**
+  - **Floating pictures, shapes and text boxes on a worksheet** — only charts are
+    pulled from the sheet drawing; other anchored drawings are dropped.
+  - **Cell comments / notes** (legacy and threaded) and **form / ActiveX controls**
+    (checkboxes, option buttons, spinners).
+  - **Sheet header/footer text** (the `&P` / `&D` / `&F` codes) and **cell hyperlinks**.
+  - **Conditional-format rule types** beyond compare-to-constant, colour scales, data
+    bars and icon sets — top/bottom-N, above/below average, duplicate/unique, text- and
+    date-based, and formula (`expression`) rules.
+  - A few **cell-format details**: non-solid and gradient fills, diagonal borders, text
+    rotation / indent / shrink-to-fit, wrapped text, and mixed (rich-text) formatting
+    within a single cell.
 
 ## Validation
 
