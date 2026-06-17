@@ -71,6 +71,20 @@ export function projectSheetDoc(sheet: SheetDoc): FlowDoc {
       });
     }
 
+    // W1: anchored pictures render as image blocks after the grid (anchor-ordered;
+    // bytes live in sheet.resources). Like charts, placement collapses to inline.
+    for (const img of ws.images ?? []) {
+      body.push({
+        kind: 'image',
+        image: {
+          resource: img.resourceId,
+          width: pt(img.widthPt),
+          height: pt(img.heightPt),
+          paragraphProperties: {},
+        },
+      });
+    }
+
     // §SV2: slicer panels render as styled button boxes after the grid + charts.
     for (const slicer of ws.slicers ?? []) {
       body.push({ kind: 'table', table: slicerTable(slicer) });

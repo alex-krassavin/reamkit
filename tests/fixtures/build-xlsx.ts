@@ -123,6 +123,11 @@ export interface XlsxBuilderOptions {
     /** Anchor cells; defaults to B2..H17 (≈ 6×4 inches on default tracks). */
     readonly anchor?: { from: [number, number]; to: [number, number] };
   };
+  /** Attach a picture to the FIRST sheet via a drawing part (xdr:pic, W1). */
+  readonly sheetImage?: {
+    readonly pngBytes: Uint8Array;
+    readonly anchor?: { from: [number, number]; to: [number, number] };
+  };
   /** Attach Excel table parts to the FIRST sheet (E-SHEET SC3). */
   readonly tables?: ReadonlyArray<{
     readonly ref: string;
@@ -459,6 +464,10 @@ ${sharedStringsList.map((str) => `  <si><t>${escapeXml(str)}</t></si>`).join('\n
           ? '<Override PartName="/xl/charts/colors1.xml" ContentType="application/vnd.ms-office.chartcolorstyle+xml"/>'
           : '')
       : '') +
+    (options.sheetImage
+      ? '<Default Extension="png" ContentType="image/png"/>' +
+        '<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>'
+      : '') +
     (options.tables
       ? options.tables
           .map(
@@ -538,6 +547,39 @@ ${chartRels}</Relationships>`,
       );
       entries['xl/charts/colors1.xml'] = encoder.encode(options.sheetChart.colorsXml);
     }
+  }
+  if (options.sheetImage && sheetParts.length > 0) {
+    const first = sheetParts[0]!;
+    first.xml = first.xml.replace('</worksheet>', '<drawing r:id="rId100"/></worksheet>');
+    entries[`xl/worksheets/_rels/${first.fileName}.rels`] = encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId100" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/>
+</Relationships>`,
+    );
+    const a = options.sheetImage.anchor ?? { from: [1, 1], to: [4, 8] };
+    entries['xl/drawings/drawing1.xml'] = encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <xdr:twoCellAnchor>
+    <xdr:from><xdr:col>${a.from[0]}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${a.from[1]}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>
+    <xdr:to><xdr:col>${a.to[0]}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${a.to[1]}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>
+    <xdr:pic>
+      <xdr:nvPicPr><xdr:cNvPr id="2" name="Picture 1"/><xdr:cNvPicPr/></xdr:nvPicPr>
+      <xdr:blipFill><a:blip r:embed="rId1"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill>
+      <xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr>
+    </xdr:pic>
+    <xdr:clientData/>
+  </xdr:twoCellAnchor>
+</xdr:wsDr>`,
+    );
+    entries['xl/drawings/_rels/drawing1.xml.rels'] = encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.png"/>
+</Relationships>`,
+    );
+    entries['xl/media/image1.png'] = options.sheetImage.pngBytes;
   }
   if (options.tables && options.tables.length > 0 && sheetParts.length > 0) {
     const first = sheetParts[0]!;

@@ -9,7 +9,14 @@ import type { Chart, DocumentInfo } from '@/core/document-model';
 import type { CoreProperties, Relationship } from '@/core/opc';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
-import type { Sheet, SheetChartRef, SheetDoc, SheetSlicer, SheetSlicerItem } from '@/core/ir/sheet';
+import type {
+  Sheet,
+  SheetChartRef,
+  SheetDoc,
+  SheetImageRef,
+  SheetSlicer,
+  SheetSlicerItem,
+} from '@/core/ir/sheet';
 import type {
   ExcelTable,
   MergedRange,
@@ -86,6 +93,9 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
   // theme-backed resolver mirrors the docx reader's so schemeClr references in
   // charts resolve to the workbook's actual accents.
   const chartData = new Map<string, Chart>();
+  // Content-addressed store for sheet pictures (W1); populated below as anchors
+  // resolve, then handed to the SheetDoc so the renderer can fetch image bytes.
+  const resources = new ResourceStore();
   const palette = buildThemePalette(pkg, workbookRels);
   const resolveColor = makeColorResolver(palette);
 
@@ -103,15 +113,22 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
     if (!resolved) continue;
     const worksheet = parseWorksheet(resolved.data);
 
-    // §20.5: the sheet's drawing part — resolve chart frames (and their chart
-    // parts) here; the projection emits a block per frame after the grid.
+    // §20.5: the sheet's drawing part — resolve chart frames and pictures here;
+    // the projection emits a block per frame after the grid (W1 for pictures).
     const charts: Array<SheetChartRef> = [];
+    const images: Array<SheetImageRef> = [];
     if (worksheet.drawingRelId) {
       const wsRels = pkg.getPartRelationships(resolved.path);
       const drawingRel = wsRels.find((r) => r.id === worksheet.drawingRelId);
       const drawing = drawingRel ? pkg.resolveRelatedPart(resolved.path, drawingRel) : undefined;
       if (drawing) {
-        for (const ref of parseSheetDrawing(drawing.data, drawing.path, pkg, worksheet)) {
+        const { charts: chartRefs, pictures } = parseSheetDrawing(
+          drawing.data,
+          drawing.path,
+          pkg,
+          worksheet,
+        );
+        for (const ref of chartRefs) {
           if (!chartData.has(ref.chartPartPath)) {
             const chartXml = pkg.getPart(ref.chartPartPath);
             const parsed = chartXml ? parseChart(chartXml, resolveColor) : null;
@@ -125,6 +142,15 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
             chartPartPath: ref.chartPartPath,
             widthPt: ref.widthPt,
             heightPt: ref.heightPt,
+          });
+        }
+        for (const pic of pictures) {
+          const bytes = pkg.getPart(pic.imagePartPath);
+          if (!bytes) continue;
+          images.push({
+            resourceId: resources.put(bytes),
+            widthPt: pic.widthPt,
+            heightPt: pic.heightPt,
           });
         }
       }
@@ -189,7 +215,12 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
       tables || pivotTables
         ? { ...worksheet, ...(tables ? { tables } : {}), ...(pivotTables ? { pivotTables } : {}) }
         : worksheet;
-    sheetsOut.push({ name: sheet.name, grid, ...(charts.length > 0 ? { charts } : {}) });
+    sheetsOut.push({
+      name: sheet.name,
+      grid,
+      ...(charts.length > 0 ? { charts } : {}),
+      ...(images.length > 0 ? { images } : {}),
+    });
   }
 
   // §SV2 — resolve slicer panels now that every table is indexed. Slicer caches
@@ -233,7 +264,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
     definedNames,
     date1904,
     ...(chartData.size > 0 ? { chartData } : {}),
-    resources: new ResourceStore(),
+    resources,
     ...(info ? { info } : {}),
   };
 }

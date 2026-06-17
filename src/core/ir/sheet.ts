@@ -11,13 +11,22 @@
 
 import type { Chart, DocumentInfo } from '@/core/document-model';
 import type { DefinedName, ParsedWorksheet, XlsxStyles } from '@/core/spreadsheet-model';
-import type { ResourceStore } from '@/core/ir/resources';
+import type { ResourceId, ResourceStore } from '@/core/ir/resources';
 
 // §20.5 SpreadsheetDrawingML — a chart frame anchored over a sheet's grid,
 // already sized from its two-cell anchor. chartPartPath keys into
 // SheetDoc.chartData for the resolved chart.
 export interface SheetChartRef {
   readonly chartPartPath: string;
+  readonly widthPt: number;
+  readonly heightPt: number;
+}
+
+// §20.5.2.1 xdr:pic — a picture anchored over a sheet's grid, sized from its
+// anchor. The bytes live in SheetDoc.resources; `resourceId` keys into it. The
+// projection emits an ImageBlock per picture after the grid (like chart frames).
+export interface SheetImageRef {
+  readonly resourceId: ResourceId;
   readonly widthPt: number;
   readonly heightPt: number;
 }
@@ -52,6 +61,8 @@ export interface Sheet {
   readonly grid: ParsedWorksheet;
   // Chart frames on this sheet, anchor-ordered (resolved data in chartData).
   readonly charts?: ReadonlyArray<SheetChartRef>;
+  // Picture frames on this sheet, anchor-ordered (bytes in SheetDoc.resources).
+  readonly images?: ReadonlyArray<SheetImageRef>;
   // Slicer panels on this sheet (E-SHEET SV2), rendered after the grid + charts.
   readonly slicers?: ReadonlyArray<SheetSlicer>;
 }

@@ -23,6 +23,21 @@ export interface SheetChartRef {
   readonly anchorRow: number;
 }
 
+// §20.5.2.1 xdr:pic — a picture anchored over the grid. The reader reads the
+// resolved media part's bytes into the SheetDoc resource store.
+export interface SheetPicture {
+  readonly imagePartPath: string;
+  readonly widthPt: number;
+  readonly heightPt: number;
+  readonly anchorRow: number;
+}
+
+// Both kinds of anchored frame the drawing yields, anchor-ordered.
+export interface SheetDrawing {
+  readonly charts: Array<SheetChartRef>;
+  readonly pictures: Array<SheetPicture>;
+}
+
 const parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: '@_',
@@ -32,31 +47,36 @@ const parser = new XMLParser({
 
 const TWIPS_PER_PT = 20;
 
-// §20.5.2.35/.33/.1 — xdr:twoCellAnchor / oneCellAnchor / absoluteAnchor.
+// §20.5.2.35/.33/.1 — xdr:twoCellAnchor / oneCellAnchor / absoluteAnchor. Each
+// anchor frames either a chart (graphicFrame) or a picture (xdr:pic); both are
+// sized from the anchor and returned anchor-ordered.
 export function parseSheetDrawing(
   drawingXml: Uint8Array,
   drawingPartPath: string,
   pkg: OpcPackage,
   worksheet: ParsedWorksheet,
-): Array<SheetChartRef> {
+): SheetDrawing {
   const tree = parser.parse(new TextDecoder().decode(drawingXml)) as Record<string, unknown>;
   const root = tree['wsDr'];
-  if (!root || typeof root !== 'object') return [];
+  if (!root || typeof root !== 'object') return { charts: [], pictures: [] };
   const rootObj = root as Record<string, unknown>;
   const colWidthPt = makeColWidthPt(worksheet);
   const rowHeightPt = makeRowHeightPt(worksheet);
   const rels = pkg.getPartRelationships(drawingPartPath);
+  const partPathOf = (relId: string): string | undefined => {
+    const rel = rels.find((r) => r.id === relId);
+    return rel ? pkg.resolveRelatedPart(drawingPartPath, rel)?.path : undefined;
+  };
 
-  const out: Array<SheetChartRef> = [];
+  const charts: Array<SheetChartRef> = [];
+  const pictures: Array<SheetPicture> = [];
   for (const kind of ['twoCellAnchor', 'oneCellAnchor', 'absoluteAnchor'] as const) {
     for (const anchor of asArray(rootObj[kind])) {
       if (!anchor || typeof anchor !== 'object') continue;
       const a = anchor as Record<string, unknown>;
       const chartRelId = chartRelIdOf(a);
-      if (!chartRelId) continue;
-      const rel = rels.find((r) => r.id === chartRelId);
-      const resolved = rel ? pkg.resolveRelatedPart(drawingPartPath, rel) : undefined;
-      if (!resolved) continue;
+      const picRelId = chartRelId ? undefined : picRelIdOf(a);
+      if (!chartRelId && !picRelId) continue;
 
       const from = cellMarker(a['from']);
       let widthPt = 0;
@@ -74,15 +94,33 @@ export function parseSheetDrawing(
         heightPt = emuToPt(num(e['@_cy']) ?? 0);
       }
       if (widthPt <= 0 || heightPt <= 0) continue;
-      out.push({
-        chartPartPath: resolved.path,
-        widthPt,
-        heightPt,
-        anchorRow: from?.row ?? 0,
-      });
+      const anchorRow = from?.row ?? 0;
+
+      if (chartRelId) {
+        const path = partPathOf(chartRelId);
+        if (path) charts.push({ chartPartPath: path, widthPt, heightPt, anchorRow });
+      } else if (picRelId) {
+        const path = partPathOf(picRelId);
+        if (path) pictures.push({ imagePartPath: path, widthPt, heightPt, anchorRow });
+      }
     }
   }
-  return out.sort((x, y) => x.anchorRow - y.anchorRow);
+  charts.sort((x, y) => x.anchorRow - y.anchorRow);
+  pictures.sort((x, y) => x.anchorRow - y.anchorRow);
+  return { charts, pictures };
+}
+
+// xdr:pic → xdr:blipFill → a:blip @r:embed (removeNSPrefix → pic/blipFill/blip,
+// r:embed → @_embed, mirroring chartRelIdOf's r:id → @_id).
+function picRelIdOf(anchor: Record<string, unknown>): string | undefined {
+  const pic = anchor['pic'];
+  if (!pic || typeof pic !== 'object') return undefined;
+  const blipFill = (pic as Record<string, unknown>)['blipFill'];
+  if (!blipFill || typeof blipFill !== 'object') return undefined;
+  const blip = (blipFill as Record<string, unknown>)['blip'];
+  if (!blip || typeof blip !== 'object') return undefined;
+  const embed = (blip as Record<string, unknown>)['@_embed'];
+  return typeof embed === 'string' && embed !== '' ? embed : undefined;
 }
 
 // xdr:graphicFrame → a:graphic → a:graphicData[uri=chart] → c:chart @r:id.
