@@ -7,7 +7,7 @@
 
 import type { BodyElement, HeaderFooterReference, SectionProperties } from '@/core/document-model';
 import type { FlowDoc } from '@/core/ir/flow';
-import type { SheetComment, SheetDoc } from '@/core/ir/sheet';
+import type { SheetComment, SheetDoc, SheetFormControl } from '@/core/ir/sheet';
 
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 import { pt } from '@/core/ir';
@@ -112,6 +112,12 @@ export function projectSheetDoc(sheet: SheetDoc): FlowDoc {
     if (ws.comments && ws.comments.length > 0) {
       body.push(...commentBlocks(ws.comments));
     }
+
+    // W8: form controls are listed in a "Form controls" section after the grid,
+    // each with a type-appropriate affordance and its state.
+    if (ws.formControls && ws.formControls.length > 0) {
+      body.push(...formControlBlocks(ws.formControls));
+    }
   }
 
   return {
@@ -155,6 +161,45 @@ function commentBlocks(comments: ReadonlyArray<SheetComment>): Array<BodyElement
     });
   }
   return out;
+}
+
+// Form controls (W8) as a "Form controls" section after the grid: a bold heading
+// then one line per control with a type-appropriate ASCII affordance and state —
+// a checkbox/option button shows its checked state, a spin/scroll its value.
+function formControlBlocks(controls: ReadonlyArray<SheetFormControl>): Array<BodyElement> {
+  const out: Array<BodyElement> = [
+    {
+      kind: 'paragraph',
+      paragraph: { properties: {}, runs: [{ text: 'Form controls', properties: { bold: true } }] },
+    },
+  ];
+  for (const c of controls) {
+    out.push({
+      kind: 'paragraph',
+      paragraph: { properties: {}, runs: [{ text: formControlLabel(c), properties: {} }] },
+    });
+  }
+  return out;
+}
+
+function formControlLabel(c: SheetFormControl): string {
+  const name = c.name ?? c.objectType ?? 'Control';
+  switch ((c.objectType ?? '').toLowerCase()) {
+    case 'checkbox':
+      return `${c.checked ? '[x]' : '[ ]'} ${name}`;
+    case 'radio':
+      return `${c.checked ? '(o)' : '( )'} ${name}`;
+    case 'buttons':
+      return `[ ${name} ]`;
+    case 'spin':
+    case 'scroll':
+      return c.value !== undefined ? `${name} (value ${c.value})` : name;
+    case 'drop':
+    case 'list':
+      return `${name} (list)`;
+    default:
+      return c.objectType ? `${name} (${c.objectType})` : name;
+  }
 }
 
 // Expand the first sheet's <headerFooter> into header/footer bands and attach them

@@ -22,6 +22,7 @@ import type {
   ConditionalFormat,
   DataValidation,
   DataValidationType,
+  FormControlRef,
   HeaderFooter,
   HyperlinkRef,
   MergedRange,
@@ -88,6 +89,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
   const dataValidations = parseDataValidations(wsObj);
   const hyperlinks = parseHyperlinks(wsObj);
   const headerFooter = parseHeaderFooter(wsObj);
+  const formControls = parseFormControls(wsObj);
   const sparklines = parseSparklines(wsObj);
   const tablePartRelIds = parseTableParts(wsObj);
   const printModel = {
@@ -103,6 +105,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
     ...(dataValidations.length > 0 ? { dataValidations } : {}),
     ...(hyperlinks.length > 0 ? { hyperlinks } : {}),
     ...(headerFooter ? { headerFooter } : {}),
+    ...(formControls.length > 0 ? { formControls } : {}),
     ...(sparklines.length > 0 ? { sparklines } : {}),
     ...(tablePartRelIds.length > 0 ? { tablePartRelIds } : {}),
   };
@@ -806,6 +809,43 @@ function parseSparklines(ws: Record<string, unknown>): Array<ParsedSparkline> {
     }
   }
   return out;
+}
+
+// §18.3.* form controls (E-SHEET W8). Declared either as a transitional
+// <controls> child of the worksheet or, in modern files, under the x14 extLst —
+// often wrapped in <mc:AlternateContent><mc:Choice Requires="x14">. removeNSPrefix
+// strips the x14:/mc:/r: prefixes, so each <control name r:id> reads plainly; the
+// relId resolves (in the reader) to the control's ctrlProp part (type + state).
+// Deduped by relId so a Choice/Fallback or doubled declaration counts once.
+function parseFormControls(ws: Record<string, unknown>): Array<FormControlRef> {
+  const out: Array<FormControlRef> = [];
+  const seen = new Set<string>();
+  collectControls(asObjectNode(ws['controls']), out, seen);
+  for (const ext of toArray(asObjectNode(ws['extLst'])?.['ext'])) {
+    collectControls(asObjectNode(asObjectNode(ext)?.['controls']), out, seen);
+  }
+  return out;
+}
+
+function collectControls(
+  node: Record<string, unknown> | undefined,
+  out: Array<FormControlRef>,
+  seen: Set<string>,
+): void {
+  if (!node) return;
+  const direct = toArray(node['control']);
+  const fromChoice = toArray(asObjectNode(node['AlternateContent'])?.['Choice']).flatMap((c) =>
+    toArray(asObjectNode(c)?.['control']),
+  );
+  for (const c of [...direct, ...fromChoice]) {
+    const obj = asObjectNode(c);
+    if (!obj) continue;
+    const relId = strAttr(obj, 'id');
+    if (!relId || seen.has(relId)) continue;
+    seen.add(relId);
+    const name = strAttr(obj, 'name');
+    out.push({ relId, ...(name ? { name } : {}) });
+  }
 }
 
 function asObjectNode(v: unknown): Record<string, unknown> | undefined {

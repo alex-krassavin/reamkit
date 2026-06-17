@@ -162,6 +162,13 @@ export interface XlsxBuilderOptions {
     readonly text: string;
   }>;
   readonly persons?: ReadonlyArray<{ readonly id: string; readonly name: string }>;
+  /** Form controls on the FIRST sheet (E-SHEET W8): each gets a ctrlProp part. */
+  readonly formControls?: ReadonlyArray<{
+    readonly name: string;
+    readonly objectType: string;
+    readonly checked?: boolean;
+    readonly value?: number;
+  }>;
   /** Attach Excel table parts to the FIRST sheet (E-SHEET SC3). */
   readonly tables?: ReadonlyArray<{
     readonly ref: string;
@@ -750,13 +757,46 @@ ${rels.join('\n')}
 <personList xmlns="http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments">${personsXml}</personList>`,
     );
     const wbRelsPath = 'xl/_rels/workbook.xml.rels';
-    const existing = decoder.decode(entries[wbRelsPath]!);
+    const existing = decoder.decode(entries[wbRelsPath]);
     entries[wbRelsPath] = encoder.encode(
       existing.replace(
         '</Relationships>',
         '  <Relationship Id="rIdPerson" Type="http://schemas.microsoft.com/office/2017/10/relationships/person" Target="persons/person.xml"/>\n</Relationships>',
       ),
     );
+  }
+  // W8: form controls — an x14 extLst <controls> on the sheet + a ctrlProp part
+  // (type + state) per control, each wired by a worksheet ctrlProp relationship.
+  if (options.formControls && options.formControls.length > 0 && sheetParts.length > 0) {
+    const first = sheetParts[0]!;
+    const parts = options.formControls.map((fc, i) => ({ rid: `rIdFc${i + 1}`, idx: i + 1, fc }));
+    const ctrlXml = parts
+      .map(
+        (p) =>
+          `<x14:control shapeId="${p.idx}" r:id="${p.rid}" name="${escapeXml(p.fc.name)}"><x14:controlPr/></x14:control>`,
+      )
+      .join('');
+    const extLst =
+      '<extLst><ext xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"' +
+      ' xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"' +
+      ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"' +
+      ' uri="{05C60535-1F16-4fd2-B633-F4F36F0B64E0}">' +
+      `<x14:controls><mc:AlternateContent><mc:Choice Requires="x14">${ctrlXml}</mc:Choice></mc:AlternateContent></x14:controls></ext></extLst>`;
+    first.xml = first.xml.replace('</worksheet>', `${extLst}</worksheet>`);
+    for (const p of parts) {
+      const checked =
+        p.fc.checked !== undefined ? ` checked="${p.fc.checked ? 'Checked' : 'Unchecked'}"` : '';
+      const val = p.fc.value !== undefined ? ` val="${p.fc.value}"` : '';
+      entries[`xl/ctrlProps/ctrlProp${p.idx}.xml`] = encoder.encode(
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<formControlPr xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" objectType="${p.fc.objectType}"${checked}${val}/>`,
+      );
+      mergeWorksheetRel(
+        entries,
+        first.fileName,
+        `  <Relationship Id="${p.rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/ctrlProp" Target="../ctrlProps/ctrlProp${p.idx}.xml"/>`,
+      );
+    }
   }
   if (options.tables && options.tables.length > 0 && sheetParts.length > 0) {
     const first = sheetParts[0]!;

@@ -14,6 +14,7 @@ import type {
   SheetChartRef,
   SheetComment,
   SheetDoc,
+  SheetFormControl,
   SheetHyperlink,
   SheetImageRef,
   SheetSlicer,
@@ -48,6 +49,7 @@ import { parseTablePartFull } from '@/excel/table-parser';
 import { parsePivotTablePart } from '@/excel/pivot-table-parser';
 import { parseSlicerCachePart, parseSlicerPart } from '@/excel/slicer-parser';
 import { parseLegacyComments, parsePersons, parseThreadedComments } from '@/excel/comments-parser';
+import { parseFormControlProps } from '@/excel/form-control-parser';
 import { parseSheetShapes } from '@/excel/sheet-shape-parser';
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
 import { resolveCellText } from '@/excel/print-model';
@@ -287,6 +289,21 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
       if (resolvedComments.length > 0) comments = resolvedComments;
     }
 
+    // §18.3.* form controls (W8): resolve each control's relId to its ctrlProp
+    // part (objectType + state). The projection lists them after the grid.
+    let formControls: Array<SheetFormControl> | undefined;
+    if (worksheet.formControls && worksheet.formControls.length > 0) {
+      const wsRels = pkg.getPartRelationships(resolved.path);
+      const resolvedControls: Array<SheetFormControl> = [];
+      for (const fc of worksheet.formControls) {
+        const rel = wsRels.find((r) => r.id === fc.relId);
+        const part = rel ? pkg.resolveRelatedPart(resolved.path, rel) : undefined;
+        const props = part ? parseFormControlProps(part.data) : {};
+        resolvedControls.push({ ...(fc.name ? { name: fc.name } : {}), ...props });
+      }
+      if (resolvedControls.length > 0) formControls = resolvedControls;
+    }
+
     const grid =
       tables || pivotTables
         ? { ...worksheet, ...(tables ? { tables } : {}), ...(pivotTables ? { pivotTables } : {}) }
@@ -299,6 +316,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
       ...(shapes ? { shapes } : {}),
       ...(hyperlinks ? { hyperlinks } : {}),
       ...(comments ? { comments } : {}),
+      ...(formControls ? { formControls } : {}),
     });
   }
 

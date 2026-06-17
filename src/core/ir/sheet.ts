@@ -78,6 +78,17 @@ export interface SheetComment {
   readonly threaded: boolean;
 }
 
+// A form control resolved against its ctrlProp part (E-SHEET W8): the control's
+// display name, its objectType (CheckBox / Radio / Spin / …) and the bit of state
+// the listing shows — `checked` for check/option buttons, `value` for spin/scroll/
+// list controls. The projection lists each with a type-appropriate affordance.
+export interface SheetFormControl {
+  readonly name?: string;
+  readonly objectType?: string;
+  readonly checked?: boolean;
+  readonly value?: number;
+}
+
 export interface Sheet {
   readonly name: string;
   // The grid + per-sheet geometry exactly as parsed: cells, columns, rows,
@@ -99,6 +110,9 @@ export interface Sheet {
   // after the grid, mirroring Excel's "print comments at end of sheet". Each keeps
   // its cell ref, resolved author and text; render-only (not written back).
   readonly comments?: ReadonlyArray<SheetComment>;
+  // Form controls on this sheet (E-SHEET W8), resolved to type + state. The
+  // projection lists them in a "Form controls" section after the grid; render-only.
+  readonly formControls?: ReadonlyArray<SheetFormControl>;
 }
 
 export interface SheetDoc {

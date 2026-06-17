@@ -37,6 +37,7 @@ export type {
   DataValidation,
   HyperlinkRef,
   HeaderFooter,
+  FormControlRef,
   SheetRichRun,
   SparklineKind,
   ParsedSparkline,

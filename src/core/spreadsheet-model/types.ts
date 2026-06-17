@@ -107,6 +107,9 @@ export interface ParsedWorksheet {
   // §18.3.1.46 <headerFooter> — sheet header/footer format strings (E-SHEET W4).
   // The projection expands the &-codes into header/footer bands; render-only.
   readonly headerFooter?: HeaderFooter;
+  // Form controls declared on the sheet (E-SHEET W8) — raw {name, relId}; the
+  // reader resolves each relId to its ctrlProp (type + state). Render-only.
+  readonly formControls?: ReadonlyArray<FormControlRef>;
   // x14 extension <sparklineGroups> in extLst — per-cell mini charts (E-SHEET SC2).
   readonly sparklines?: ReadonlyArray<ParsedSparkline>;
   // §18.3.1.95 <tableParts> — relationship ids of the sheet's table parts. The
@@ -467,6 +470,15 @@ export interface HyperlinkRef {
 export interface HeaderFooter {
   readonly oddHeader?: string;
   readonly oddFooter?: string;
+}
+
+// §18.3.1.* form control (E-SHEET W8) — a checkbox / option button / spinner /
+// button etc. declared in the worksheet (legacy <controls> or the x14 extLst).
+// `relId` resolves to the control's ctrlProp part (type + state); `name` is its
+// display name. Raw form (the reader resolves relId); render-only.
+export interface FormControlRef {
+  readonly name?: string;
+  readonly relId: string;
 }
 
 // §18.4.4 <r> — one formatting run inside a rich-text shared string (E-SHEET W6).

@@ -135,6 +135,13 @@ charts — and is byte-stable across a read↔write loop.
   and listed in a "Comments" section after the grid — a heading then one line per
   comment, `<cell> — <author>: <text>` — mirroring Excel's "print comments at end of
   sheet". The legacy VML note box is ignored; only the text + author are surfaced.
+- **Form controls** — checkboxes, option buttons, spinners, scroll bars, list /
+  drop-downs and buttons (the worksheet's `<controls>`, each resolved to its
+  `ctrlProp` part for type + state) are listed in a "Form controls" section after
+  the grid, each with a type-appropriate affordance and its state (`[x]` / `[ ]`
+  for a checked box, `(o)` for an option button, the value for a spinner). The
+  control's anchored VML shape isn't drawn in place; **ActiveX** controls are OLE
+  binaries and remain a graceful loss.
 
 **PresentationML (§19)**
 - Each slide is a page at the deck size (`p:sldSz`); shapes are floating content
@@ -187,7 +194,9 @@ charts — and is byte-stable across a read↔write loop.
   private font metrics — but _pixel-identical_ output is a non-goal: that would need the
   exact same font file and the renderer's internal glyph rounding.
 - **Some Excel constructs are not rendered yet:**
-  - **Form / ActiveX controls** (checkboxes, option buttons, spinners).
+  - **ActiveX controls** — these are OLE binaries (`xl/activeX/*.bin`); their state
+    can't be rendered. (Modern **form** controls — checkboxes, option buttons,
+    spinners — *are* listed, above.)
   - Two **conditional-format rule types**: `expression` (an arbitrary formula —
     Ream has no formula engine, so cached values can't drive an ad-hoc condition)
     and `timePeriod` (today / this-week / last-month …, which is relative to the
