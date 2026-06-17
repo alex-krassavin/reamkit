@@ -14,6 +14,8 @@ import type { FontProvider } from '@/core/fonts/provider';
 import type { Loss, LossReport } from '@/core/ir';
 import type { FontBytesByVariant } from '@/core/font';
 
+import type { ProjectSheetOptions } from '@/excel/sheet-to-flow';
+
 import { ConversionLossError, FEATURES } from '@/core/ir';
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
 import { FontRegistry } from '@/core/font';
@@ -43,6 +45,12 @@ export interface ConvertOptions extends ConvertDocxOptions {
    */
   readonly strict?: boolean;
   /**
+   * E-SHEET W9 — reference date for conditional-format `timePeriod` rules and
+   * TODAY()/NOW() in `expression` rules (spreadsheet input). An explicit input,
+   * never the wall clock; omitted ⇒ those clock-relative rules no-op.
+   */
+  readonly now?: Date;
+  /**
    * Font resolution chain (ir-design §8). When set (and no caller `fonts`),
    * the facade resolves the default font set through these providers — e.g.
    * [localFontProvider(), remoteFontProvider()] — and reports a 'substituted'
@@ -63,13 +71,17 @@ export interface ConvertResult {
 // discriminant `kind` selects the projection — FlowDoc passes through.
 export type SourceDoc = FlowDoc | SheetDoc;
 
-export function toFlowDoc(doc: SourceDoc): FlowDoc {
-  return doc.kind === 'sheet' ? projectSheetDoc(doc) : doc;
+export function toFlowDoc(doc: SourceDoc, options: ProjectSheetOptions = {}): FlowDoc {
+  return doc.kind === 'sheet' ? projectSheetDoc(doc, options) : doc;
 }
 
-function readToFlow(reader: DocumentReader<SourceDoc>, bytes: Uint8Array): ReadResult<FlowDoc> {
+function readToFlow(
+  reader: DocumentReader<SourceDoc>,
+  bytes: Uint8Array,
+  options: ProjectSheetOptions = {},
+): ReadResult<FlowDoc> {
   const { doc, losses } = reader.read(bytes);
-  return { doc: toFlowDoc(doc), losses };
+  return { doc: toFlowDoc(doc, options), losses };
 }
 
 export interface Converter {
@@ -110,7 +122,11 @@ export function createConverter(opts: CreateConverterOptions = {}): Converter {
     const losses: Array<Loss> = [];
     if (to === 'docx') {
       // FlowDoc → docx writer directly: re-serialization, zero I/O.
-      const { doc: flow, losses: readLosses } = readToFlow(reader, bytes);
+      const { doc: flow, losses: readLosses } = readToFlow(
+        reader,
+        bytes,
+        rest.now ? { now: rest.now } : undefined,
+      );
       losses.push(...readLosses);
       const out = writeDocx(flow);
       losses.push(...out.losses);
@@ -120,7 +136,11 @@ export function createConverter(opts: CreateConverterOptions = {}): Converter {
 
     if (to === 'html') {
       // FlowDoc → html writer directly: no layout and no fonts — zero I/O.
-      const { doc: flow, losses: readLosses } = readToFlow(reader, bytes);
+      const { doc: flow, losses: readLosses } = readToFlow(
+        reader,
+        bytes,
+        rest.now ? { now: rest.now } : undefined,
+      );
       losses.push(...readLosses);
       const html = writeHtml(flow);
       losses.push(...html.losses);
@@ -155,7 +175,7 @@ export function createConverter(opts: CreateConverterOptions = {}): Converter {
       if (!fonts) {
         throw new Error("to: 'svg' requires options.fonts/fontBytes or fontProviders");
       }
-      const { doc: flow } = readToFlow(reader, bytes);
+      const { doc: flow } = readToFlow(reader, bytes, rest.now ? { now: rest.now } : undefined);
       const laid = layoutStyledDocument(flow.body, {
         registry: FontRegistry.fromBytes(fonts),
         ...flowRenderOptions(flow),

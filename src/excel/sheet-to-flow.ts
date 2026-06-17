@@ -25,7 +25,15 @@ import {
 const HEADER_REL = '_xlsxHeaderDefault';
 const FOOTER_REL = '_xlsxFooterDefault';
 
-export function projectSheetDoc(sheet: SheetDoc): FlowDoc {
+// Projection knobs (E-SHEET W9). `now` is the injected reference date that drives
+// conditional-format `timePeriod` windows and TODAY()/NOW() in `expression`
+// rules. Omitted ⇒ those clock-relative constructs no-op, so the projection
+// stays deterministic and byte-identical to before.
+export interface ProjectSheetOptions {
+  readonly now?: Date;
+}
+
+export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = {}): FlowDoc {
   const body: Array<BodyElement> = [];
   // Page geometry comes from the first sheet's <pageSetup>/<pageMargins>; the
   // renderer supports one section, so later sheets share the first's geometry.
@@ -65,6 +73,7 @@ export function projectSheetDoc(sheet: SheetDoc): FlowDoc {
         sheetGrids,
         ...(ws.hyperlinks ? { hyperlinks: ws.hyperlinks } : {}),
         ...(sheet.sharedStringRuns ? { sharedStringRuns: sheet.sharedStringRuns } : {}),
+        ...(options.now ? { now: options.now } : {}),
       }),
     );
 

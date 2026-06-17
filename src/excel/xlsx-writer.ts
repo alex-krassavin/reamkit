@@ -507,6 +507,17 @@ function cfRuleXml(rule: CfRule): string {
         (rule.formula !== undefined ? `<formula>${escapeText(rule.formula)}</formula>` : '') +
         '</cfRule>'
       );
+    case 'expression':
+      return (
+        `<cfRule type="expression"${p} dxfId="${rule.dxfId}">` +
+        `<formula>${escapeText(rule.formula)}</formula></cfRule>`
+      );
+    case 'timePeriod':
+      return (
+        `<cfRule type="timePeriod"${p} timePeriod="${rule.timePeriod}" dxfId="${rule.dxfId}">` +
+        (rule.formula !== undefined ? `<formula>${escapeText(rule.formula)}</formula>` : '') +
+        '</cfRule>'
+      );
   }
 }
 

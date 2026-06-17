@@ -435,6 +435,45 @@ export interface CfRuleText {
   readonly formula?: string;
 }
 
+// §18.3.1.10 <cfRule type="expression"> — an arbitrary formula evaluated per cell
+// in the range; a TRUE (or non-zero) result applies the dxf. Ream evaluates it
+// against the grid's cached values with a small deterministic formula engine
+// (E-SHEET W9); the `formula` is kept verbatim for faithful write-back. A formula
+// the engine cannot model simply does not apply (graceful loss, never misrender).
+export interface CfRuleExpression {
+  readonly type: 'expression';
+  readonly priority: number;
+  readonly formula: string;
+  readonly dxfId: number;
+}
+
+// §18.18.82 ST_TimePeriod — the clock-relative window a `timePeriod` rule tests.
+export type TimePeriodKind =
+  | 'today'
+  | 'yesterday'
+  | 'tomorrow'
+  | 'last7Days'
+  | 'thisWeek'
+  | 'lastWeek'
+  | 'nextWeek'
+  | 'thisMonth'
+  | 'lastMonth'
+  | 'nextMonth';
+
+// §18.3.1.10 <cfRule type="timePeriod"> — cells whose date falls in a window
+// relative to "today" take the dxf. The window is computed from an injected
+// reference date (options.now) — Ream never reads the wall clock — so the rule
+// is a no-op (deterministic) when no date is supplied. Excel also emits a helper
+// `<formula>`; it is preserved verbatim for write-back but the window drives the
+// match.
+export interface CfRuleTimePeriod {
+  readonly type: 'timePeriod';
+  readonly priority: number;
+  readonly timePeriod: TimePeriodKind;
+  readonly dxfId: number;
+  readonly formula?: string;
+}
+
 export type CfRule =
   | CfRuleCellIs
   | CfRuleColorScale
@@ -443,7 +482,9 @@ export type CfRule =
   | CfRuleTop10
   | CfRuleAboveAverage
   | CfRuleDupUnique
-  | CfRuleText;
+  | CfRuleText
+  | CfRuleExpression
+  | CfRuleTimePeriod;
 
 // §18.3.1.18 <conditionalFormatting sqref="A1:A10 C1:C5"> — rules over ranges.
 export interface ConditionalFormat {

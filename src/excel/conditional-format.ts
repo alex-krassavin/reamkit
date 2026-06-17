@@ -9,8 +9,10 @@
 // (mean ± N·σ), `duplicate/uniqueValues` (value frequency) — and the per-cell
 // text tests (`containsText`/`beginsWith`/`endsWith`/`notContainsText`). A cell's
 // text format (fill/font) is claimed by the first applicable highlight rule; a
-// dataBar/iconSet applies independently on top. `expression` (needs a formula
-// engine) and `timePeriod` (needs the wall clock) stay a documented graceful loss.
+// dataBar/iconSet applies independently on top. W9 adds `expression` (an
+// arbitrary formula evaluated per cell by the formula engine over the cached grid
+// values) and `timePeriod` (a clock-relative date window against an injected
+// reference day) — both deterministic, no recalculation, no wall clock.
 
 import type { CellIcon, CellIconShape } from '@/core/document-model';
 import type {
@@ -29,6 +31,19 @@ import type {
   WorksheetCell,
   XlsxStyles,
 } from '@/core/spreadsheet-model';
+import type { CompiledFormula, EvalContext, FErr, Rect, Scalar } from '@/excel/formula';
+
+import {
+  BLANK,
+  bool,
+  compileFormula,
+  err,
+  evaluateToBool,
+  num,
+  serialFromDate,
+  str,
+  timePeriodMatches,
+} from '@/excel/formula';
 
 type Rgb = readonly [number, number, number];
 
@@ -98,6 +113,13 @@ interface FlatRule {
   readonly threshold?: ResolvedThreshold | undefined;
   // duplicate/uniqueValues: the set of value keys that qualify (W5).
   readonly dupKeys?: ReadonlySet<string> | undefined;
+  // expression (W9): the formula compiled once. undefined when it failed to
+  // parse — the rule then never applies (graceful loss).
+  readonly compiled?: CompiledFormula | undefined;
+  // expression (W9): the rule's relative-reference origin (the sqref's first
+  // cell). A covered cell shifts the formula's unanchored refs by its offset
+  // from here, exactly as Excel anchors a conditional-format expression.
+  readonly origin?: { readonly row: number; readonly col: number };
 }
 
 // Returns undefined when the sheet has no conditional formats (the common case)
@@ -106,11 +128,16 @@ interface FlatRule {
 // cellIs and the text tests ignore it. `resolveText` resolves a cell's string
 // value (shared strings / number format) for the duplicate/unique frequency map —
 // numeric cells key by value without it, so it is only needed for text cells.
+// `date1904`/`now` (E-SHEET W9) feed the formula engine: `now` (an injected
+// reference date — never the wall clock) drives TODAY()/NOW() and the timePeriod
+// windows; absent ⇒ those constructs no-op, so the output stays deterministic.
 export function buildConditionalFormatter(
   conditionalFormats: ReadonlyArray<ConditionalFormat> | undefined,
   styles: XlsxStyles,
   cells: ReadonlyArray<WorksheetCell>,
   resolveText?: (cell: WorksheetCell) => string,
+  date1904 = false,
+  now?: Date,
 ): CellConditionalFormatter | undefined {
   if (!conditionalFormats || conditionalFormats.length === 0) return undefined;
   const dxfs = styles.dxfs ?? [];
@@ -141,8 +168,18 @@ export function buildConditionalFormatter(
           rule,
           dupKeys: resolveDupUnique(rule, cf.ranges, cells, resolveText),
         });
+      } else if (rule.type === 'expression') {
+        // W9: compile the formula once; remember the sqref's first cell as the
+        // relative-reference origin for the per-cell shift.
+        const first = cf.ranges[0];
+        flat.push({
+          ranges: cf.ranges,
+          rule,
+          compiled: compileFormula(rule.formula),
+          ...(first ? { origin: { row: first.startRow, col: first.startColumn } } : {}),
+        });
       } else {
-        // cellIs + the text tests: matched per-cell, no range precompute.
+        // cellIs / the text tests / timePeriod: matched per-cell, no precompute.
         flat.push({ ranges: cf.ranges, rule });
       }
     }
@@ -152,10 +189,21 @@ export function buildConditionalFormatter(
   // a dataBar fills its own slot independently, so a bar can sit over a fill.
   flat.sort((a, b) => a.rule.priority - b.rule.priority);
 
+  // W9: an `expression` rule can apply to a cell with no value of its own (it may
+  // reference neighbours), so when one is present we cannot take the empty-cell
+  // shortcut. The evaluator context (grid lookup) is built only then, keeping
+  // every existing sheet's path byte-identical. `nowSerial` is the injected day.
+  const hasExpr = flat.some((f) => f.rule.type === 'expression');
+  const nowSerial = now !== undefined ? serialFromDate(now, date1904) : undefined;
+  const ctx = hasExpr ? buildEvalContext(cells, resolveText, nowSerial, date1904) : undefined;
+
   return (row, col, value, text) => {
     // A cell with neither a comparable number nor any text matches nothing — skip
     // the loop entirely so number-only sheets stay byte-identical to before W5.
-    if (value === undefined && (text === undefined || text.length === 0)) return undefined;
+    // (An expression rule may still target an empty cell, so keep going then.)
+    if (!hasExpr && value === undefined && (text === undefined || text.length === 0)) {
+      return undefined;
+    }
     const dupKey = dupKeyOf(value, text);
     let textFmt: CfOverride | undefined;
     let textClaimed = false;
@@ -165,7 +213,17 @@ export function buildConditionalFormatter(
       textFmt = dxfToOverride(dxfs[dxfId]);
       textClaimed = true;
     };
-    for (const { ranges, rule, scale, bar: resolved, iconThresholds, threshold, dupKeys } of flat) {
+    for (const {
+      ranges,
+      rule,
+      scale,
+      bar: resolved,
+      iconThresholds,
+      threshold,
+      dupKeys,
+      compiled,
+      origin,
+    } of flat) {
       if (!coversCell(ranges, row, col)) continue;
       switch (rule.type) {
         case 'cellIs':
@@ -219,6 +277,25 @@ export function buildConditionalFormatter(
             claim(rule.dxfId);
           }
           break;
+        case 'expression':
+          // W9: evaluate the compiled formula at this cell, shifting unanchored
+          // references by the cell's offset from the rule origin.
+          if (!textClaimed && compiled && ctx && origin) {
+            const shift = { dRow: row - origin.row, dCol: col - origin.col };
+            if (evaluateToBool(compiled, ctx, shift)) claim(rule.dxfId);
+          }
+          break;
+        case 'timePeriod':
+          // W9: the cell's serial date against the window relative to options.now.
+          if (
+            !textClaimed &&
+            value !== undefined &&
+            nowSerial !== undefined &&
+            timePeriodMatches(rule.timePeriod, value, nowSerial, date1904)
+          ) {
+            claim(rule.dxfId);
+          }
+          break;
       }
     }
     if (!bar && !icon) return textFmt;
@@ -228,6 +305,83 @@ export function buildConditionalFormatter(
       ...(icon ? { icon } : {}),
     };
   };
+}
+
+// --- expression engine context (E-SHEET W9) ---------------------------------
+
+// Build a formula EvalContext over the worksheet's cached cell values. The grid
+// is read once into a (row,col) → scalar map (point lookups) plus a flat list of
+// the populated cells (range scans for SUM/COUNTIF). It is read-only and pure —
+// precisely the cached-value lookup the engine needs, with no recalculation.
+function buildEvalContext(
+  cells: ReadonlyArray<WorksheetCell>,
+  resolveText: ((cell: WorksheetCell) => string) | undefined,
+  nowSerial: number | undefined,
+  date1904: boolean,
+): EvalContext {
+  const COLS = 16384; // key stride: column is 0..16383 (XFD)
+  const byKey = new Map<number, Scalar>();
+  const populated: Array<{ row: number; col: number; value: Scalar }> = [];
+  for (const cell of cells) {
+    const s = cellToScalar(cell, resolveText);
+    if (s.t === 'blank') continue;
+    byKey.set(cell.row * COLS + cell.column, s);
+    populated.push({ row: cell.row, col: cell.column, value: s });
+  }
+  return {
+    nowSerial,
+    date1904,
+    getCell: (row, col) => byKey.get(row * COLS + col) ?? BLANK,
+    eachCell: (rect: Rect, visit) => {
+      for (const c of populated) {
+        if (c.row >= rect.r0 && c.row <= rect.r1 && c.col >= rect.c0 && c.col <= rect.c1) {
+          visit(c.row, c.col, c.value);
+        }
+      }
+    },
+  };
+}
+
+// A stored worksheet cell → a formula scalar (its cached value). Strings resolve
+// through `resolveText` (shared strings / inline / number format); without a
+// resolver a shared-string cell falls back to its raw text. A non-finite number
+// or an empty non-string cell is treated as blank.
+function cellToScalar(
+  cell: WorksheetCell,
+  resolveText: ((cell: WorksheetCell) => string) | undefined,
+): Scalar {
+  switch (cell.type) {
+    case 'n': {
+      const n = Number(cell.rawValue);
+      return Number.isFinite(n) ? num(n) : BLANK;
+    }
+    case 'b':
+      return bool(cell.rawValue === '1' || cell.rawValue.toUpperCase() === 'TRUE');
+    case 'e':
+      return err(toFErr(cell.rawValue));
+    case 's':
+    case 'str':
+    case 'inlineStr':
+      return str(resolveText ? resolveText(cell) : (cell.inlineText ?? cell.rawValue));
+    default:
+      // 'd' (ISO date text) and any other type: expose the raw text verbatim.
+      return cell.rawValue.length > 0 ? str(cell.rawValue) : BLANK;
+  }
+}
+
+const FERRS: ReadonlySet<string> = new Set<FErr>([
+  '#NULL!',
+  '#DIV/0!',
+  '#VALUE!',
+  '#REF!',
+  '#NAME?',
+  '#NUM!',
+  '#N/A',
+]);
+
+// Map a stored error cell's raw text to a known error value (default #VALUE!).
+function toFErr(raw: string): FErr {
+  return (FERRS.has(raw) ? raw : '#VALUE!') as FErr;
 }
 
 // The duplicate/unique comparison key for a cell at evaluation time. Numbers key

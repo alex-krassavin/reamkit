@@ -249,6 +249,9 @@ interface PrintModelOptions {
   // sharedStrings array; a t="s" cell whose index has runs emits multiple runs
   // with their own formatting. Absent ⇒ every cell is a single run.
   readonly sharedStringRuns?: ReadonlyArray<ReadonlyArray<SheetRichRun> | undefined>;
+  // E-SHEET W9 — the injected reference date for conditional-format `timePeriod`
+  // windows and TODAY()/NOW() in `expression` rules. Absent ⇒ those no-op.
+  readonly now?: Date;
 }
 
 export function worksheetToBody(
@@ -438,8 +441,11 @@ export function worksheetToBody(
     worksheet.conditionalFormats,
     styles,
     worksheet.cells,
-    // Resolve a cell's string value for the W5 text / duplicate-unique rules.
+    // Resolve a cell's string value for the W5 text / duplicate-unique rules and
+    // the W9 expression engine's references to text cells.
     (cell) => resolveCellText(cell, sharedStrings, styles, date1904),
+    date1904,
+    print.now,
   );
 
   // Sparklines (E-SHEET SC2): host-cell (absolute key) → resolved value series.

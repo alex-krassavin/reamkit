@@ -93,8 +93,13 @@ charts — and is byte-stable across a read↔write loop.
   with a zero axis so negative values run the other way) and `iconSet` — traffic
   lights, arrows, signs, symbols (check / exclamation / cross), flags, ratings (a
   bar meter) and quarters (a clock pie). The cross-cell rules resolve against the
-  range's value extent. The highest-priority matching rule claims the cell's
-  fill / font; a data bar or icon applies on top.
+  range's value extent. Also `expression` (an arbitrary formula, evaluated per
+  cell by a small built-in formula engine against the workbook's cached values —
+  no recalculation) and `timePeriod` (today / this-week / last-month … windows).
+  Both stay deterministic: `timePeriod` and `TODAY()`/`NOW()` read an explicit
+  reference date you pass as `now` (never the system clock), so without one those
+  clock-relative rules simply don't paint. The highest-priority matching rule
+  claims the cell's fill / font; a data bar or icon applies on top.
 - **Sparklines** — per-cell line / column / win-loss mini charts, including
   cross-sheet data ranges and blank-cell gaps.
 - **Excel tables** (`xl/tables`) — banded rows and a styled header row, the
@@ -197,11 +202,12 @@ charts — and is byte-stable across a read↔write loop.
   - **ActiveX controls** — these are OLE binaries (`xl/activeX/*.bin`); their state
     can't be rendered. (Modern **form** controls — checkboxes, option buttons,
     spinners — *are* listed, above.)
-  - Two **conditional-format rule types**: `expression` (an arbitrary formula —
-    Ream has no formula engine, so cached values can't drive an ad-hoc condition)
-    and `timePeriod` (today / this-week / last-month …, which is relative to the
-    wall clock — Ream's output is deterministic and does not read the system date).
-    Both are skipped (left unrendered) rather than misrendered.
+  - The `expression` formula engine covers the functions conditional formats
+    commonly use (logic, math, text, the date functions, `COUNTIF`/`SUMIF`); a
+    formula that reaches outside it — a sheet-qualified reference, a defined name,
+    or a function not in the library — evaluates to an error and the rule simply
+    doesn't apply (a graceful loss, never a misrender). Rules are evaluated only
+    on cells that carry a stored value.
 
 ## Validation
 

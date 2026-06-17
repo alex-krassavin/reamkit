@@ -70,10 +70,25 @@ export function applyNumberFormat(
 // The 1904 epoch (legacy Mac Excel) uses 1904-01-01 as day 0 and has no leap
 // bug. Files saved with <workbookPr date1904="1"/> store dates offset by
 // exactly 1462 days from the 1900-epoch interpretation.
-function excelSerialToDate(serial: number, date1904: boolean): Date {
+export function excelSerialToDate(serial: number, date1904: boolean): Date {
   const ms = serial * 86400 * 1000;
   if (date1904) return new Date(Date.UTC(1904, 0, 1) + ms);
   return new Date(Date.UTC(1899, 11, 30) + ms);
+}
+
+// The inverse over a UTC calendar date: (year, month0, day) → the integer Excel
+// serial day, using the same epoch. Round-trips excelSerialToDate exactly for an
+// integer serial (the time-of-day is zero), so a serial → parts → serial loop is
+// stable. Used by the formula engine's date functions and the timePeriod windows
+// (E-SHEET W9) to map an injected reference date into serial space.
+export function excelSerialFromUtcParts(
+  year: number,
+  month0: number,
+  day: number,
+  date1904: boolean,
+): number {
+  const epoch = date1904 ? Date.UTC(1904, 0, 1) : Date.UTC(1899, 11, 30);
+  return Math.round((Date.UTC(year, month0, day) - epoch) / 86400000);
 }
 
 const MONTH_ABBR = [

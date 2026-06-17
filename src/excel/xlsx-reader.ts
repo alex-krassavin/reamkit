@@ -30,6 +30,7 @@ import type {
 import type { TableFilterColumn } from '@/excel/table-parser';
 import type { SlicerCacheDef, SlicerDef } from '@/excel/slicer-parser';
 
+import type { ProjectSheetOptions } from '@/excel/sheet-to-flow';
 import { FEATURES, ResourceStore } from '@/core/ir';
 import { OpcPackage, isOoxmlRel, parseCoreProperties } from '@/core/opc';
 import {
@@ -51,6 +52,7 @@ import { parseSlicerCachePart, parseSlicerPart } from '@/excel/slicer-parser';
 import { parseLegacyComments, parsePersons, parseThreadedComments } from '@/excel/comments-parser';
 import { parseFormControlProps } from '@/excel/form-control-parser';
 import { parseSheetShapes } from '@/excel/sheet-shape-parser';
+
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
 import { resolveCellText } from '@/excel/print-model';
 
@@ -79,8 +81,8 @@ interface TableLoc {
   readonly filters: ReadonlyArray<TableFilterColumn>;
 }
 
-export function readXlsx(xlsx: Uint8Array): ReadResult<FlowDoc> {
-  return { doc: projectSheetDoc(readXlsxToSheetDoc(xlsx)), losses: [] };
+export function readXlsx(xlsx: Uint8Array, options: ProjectSheetOptions = {}): ReadResult<FlowDoc> {
+  return { doc: projectSheetDoc(readXlsxToSheetDoc(xlsx), options), losses: [] };
 }
 
 // bytes → SheetDoc: the SpreadsheetML IR node. Everything that needs the OPC
