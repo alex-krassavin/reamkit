@@ -21,6 +21,12 @@ function paragraphTexts(doc: FlowDoc): Array<string> {
     .map((el) => el.paragraph.runs.map((r) => r.text).join(''));
 }
 
+// The runs (text + resolved properties) of the document's first paragraph.
+function firstParagraphRuns(doc: FlowDoc) {
+  const p = doc.body.find((el) => el.kind === 'paragraph');
+  return p ? p.paragraph.runs : [];
+}
+
 describe('doc reader (DOC-1)', () => {
   it('reads UTF-16 piece text and splits paragraphs at the CR mark', () => {
     const doc = readDoc(buildDoc([{ text: 'Hello world\rSecond line\r', compressed: false }])).doc;
@@ -77,6 +83,55 @@ describe('doc reader (DOC-1)', () => {
 
   it('exposes the .doc format id through Ream', () => {
     expect(Ream.parse(buildDoc([{ text: 'hi\r', compressed: false }])).format).toBe('doc');
+  });
+
+  it('reads bold/italic run formatting and splits runs at the boundaries', () => {
+    // "Bold " bold, "then " plain, "italic" italic, then the paragraph mark.
+    const doc = readDoc(
+      buildDoc([{ text: 'Bold then italic\r', compressed: false }], {
+        formatRuns: [
+          { length: 5, bold: true },
+          { length: 5 },
+          { length: 6, italic: true },
+          { length: 1 },
+        ],
+      }),
+    ).doc;
+    const runs = firstParagraphRuns(doc);
+    expect(runs.map((r) => r.text)).toEqual(['Bold ', 'then ', 'italic']);
+    // Properties are post-cascade, so unset toggles resolve to false (not absent).
+    expect(runs[0]?.properties.bold).toBe(true);
+    expect(runs[0]?.properties.italic).toBeFalsy();
+    expect(runs[1]?.properties.bold).toBeFalsy();
+    expect(runs[1]?.properties.italic).toBeFalsy();
+    expect(runs[2]?.properties.italic).toBe(true);
+    expect(runs[2]?.properties.bold).toBeFalsy();
+  });
+
+  it('reads font size (half-points) and underline from the CHPX', () => {
+    const doc = readDoc(
+      buildDoc([{ text: 'x\r', compressed: false }], {
+        formatRuns: [{ length: 1, sizeHalfPts: 48, underlineKul: 1 }, { length: 1 }],
+      }),
+    ).doc;
+    const runs = firstParagraphRuns(doc);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.properties.fontSizePt).toBe(24); // 48 half-points
+    expect(runs[0]?.properties.underline).toBe('single');
+  });
+
+  it('renders a formatted .doc to a valid PDF', async () => {
+    const pdf = await Ream.parse(
+      buildDoc([{ text: 'Bold title\rbody text\r', compressed: false }], {
+        formatRuns: [{ length: 11, bold: true, sizeHalfPts: 36 }, { length: 10 }],
+      }),
+    ).convert('pdf', {
+      fonts: {
+        regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
+        bold: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Bold.ttf')),
+      },
+    });
+    expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-');
   });
 
   it('renders a .doc to a valid PDF', async () => {
