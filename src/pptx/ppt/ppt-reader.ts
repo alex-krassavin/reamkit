@@ -8,12 +8,14 @@
 // Like pptxReader, each slide becomes one page at the deck size: a page-breaking
 // paragraph anchors the page and the slide's text follows as paragraphs. PPT-2
 // adds run formatting (bold/italic/underline/size/colour from the StyleTextPropAtom)
-// and paragraph alignment/indent level; per-shape placement, images and autoshapes
-// come in later waves — recorded as a loss until then.
+// and paragraph alignment/indent level; PPT-3 emits the slide's embedded images
+// (in-flow after its text). Per-shape placement and autoshapes come in later waves
+// — recorded as a loss until then.
 
 import type {
   Alignment,
   BodyElement,
+  ImageBlock,
   ParagraphProperties,
   Run,
   RunProperties,
@@ -22,7 +24,7 @@ import type {
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss } from '@/core/ir';
-import type { PptContent, PptParagraph, PptRun } from '@/pptx/ppt/ppt-text';
+import type { PptContent, PptImage, PptParagraph, PptRun } from '@/pptx/ppt/ppt-text';
 
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
 import { isCfb, openCfb } from '@/core/ole/cfb';
@@ -53,14 +55,14 @@ function looksLikePpt(bytes: Uint8Array): boolean {
   }
 }
 
-// The slide text and its run/paragraph formatting are read; the higher-level
-// structure (shape placement, images, autoshapes) is not yet. Reported (degraded,
-// keyed on text) so a caller's loss report is honest about the gap.
+// The slide text, its run/paragraph formatting and embedded images are read; the
+// higher-level structure (shape placement, autoshapes) is not yet. Reported
+// (degraded, keyed on text) so a caller's loss report is honest about the gap.
 const PPT_TEXT_LOSS: Loss = {
   severity: 'degraded',
   feature: FEATURES.text,
   detail:
-    "legacy .ppt: each slide's text (with run formatting — bold/italic/underline/size/colour — and paragraph alignment/indent) is read into one page per slide; per-shape placement, images and autoshapes are not yet (re-save as .pptx for full fidelity)",
+    "legacy .ppt: each slide's text (with run formatting — bold/italic/underline/size/colour — and paragraph alignment/indent) and embedded images are read into one page per slide; per-shape placement and autoshapes are not yet (re-save as .pptx for full fidelity)",
 };
 
 const PPT_ENCRYPTED_LOSS: Loss = {
@@ -71,9 +73,10 @@ const PPT_ENCRYPTED_LOSS: Loss = {
 
 export function readPpt(bytes: Uint8Array): ReadResult<FlowDoc> {
   const content = extractPptContent(bytes);
-  const body = buildBody(content);
   const width = pt(content.slideWidthPt ?? DEFAULT_SLIDE_W);
   const height = pt(content.slideHeightPt ?? DEFAULT_SLIDE_H);
+  const resources = new ResourceStore();
+  const body = buildBody(content, resources);
 
   const doc: FlowDoc = {
     kind: 'flow',
@@ -91,34 +94,110 @@ export function readPpt(bytes: Uint8Array): ReadResult<FlowDoc> {
       footers: [],
     },
     styles: EMPTY_STYLE_SHEET,
-    resources: new ResourceStore(),
+    resources,
   };
   return { doc, losses: [content.encrypted ? PPT_ENCRYPTED_LOSS : PPT_TEXT_LOSS] };
 }
 
-// One page per slide: the first body element of each slide carries a page break
-// (after the first slide) so every slide starts a fresh page, even an empty one.
-function buildBody(content: PptContent): Array<BodyElement> {
+// One page per slide: a slide's text paragraphs come first, then its images
+// (in-flow). The first body element carries a page break (after the first slide)
+// so every slide starts a fresh page, even an empty one.
+function buildBody(content: PptContent, resources: ResourceStore): Array<BodyElement> {
   const body: Array<BodyElement> = [];
   content.slides.forEach((slide, slideIndex) => {
-    const lines = slide.paragraphs.filter((p) => paragraphText(p).length > 0);
     const breakBefore = slideIndex > 0;
-    if (lines.length === 0) {
+    const els: Array<BodyElement> = [];
+    for (const para of slide.paragraphs) {
+      if (paragraphText(para).length === 0) continue;
+      els.push({
+        kind: 'paragraph',
+        paragraph: { properties: toParaProperties(para, false), runs: para.runs.map(toRun) },
+      });
+    }
+    for (const image of slide.images ?? []) {
+      const block = imageBlock(image, resources);
+      if (block) els.push(block);
+    }
+    if (els.length === 0) {
       body.push(anchorParagraph(breakBefore));
       return;
     }
-    lines.forEach((para, lineIndex) => {
-      body.push({
-        kind: 'paragraph',
-        paragraph: {
-          properties: toParaProperties(para, breakBefore && lineIndex === 0),
-          runs: para.runs.map(toRun),
-        },
-      });
-    });
+    // The page break must sit on a paragraph (the layout honors it only there).
+    // A text-first slide breaks on its first paragraph; an image-first slide gets
+    // a breaking anchor paragraph prepended.
+    if (breakBefore) {
+      const first = els[0]!;
+      if (first.kind === 'paragraph') {
+        els[0] = {
+          kind: 'paragraph',
+          paragraph: {
+            ...first.paragraph,
+            properties: { ...first.paragraph.properties, pageBreakBefore: true },
+          },
+        };
+      } else {
+        body.push(anchorParagraph(true));
+      }
+    }
+    body.push(...els);
   });
   if (body.length === 0) body.push(anchorParagraph(false));
   return body;
+}
+
+// An embedded picture → an in-flow ImageBlock sized from its intrinsic pixels (at
+// 96 dpi); the layout engine clamps the width to the page. The dimensions come
+// from the PNG/JPEG header directly, which also gates out formats the renderer
+// cannot embed (a metafile, say).
+function imageBlock(image: PptImage, resources: ResourceStore): BodyElement | undefined {
+  const size = imagePixelSize(image.bytes);
+  if (!size) return undefined;
+  const block: ImageBlock = {
+    resource: resources.put(image.bytes),
+    width: pt(size.w * 0.75),
+    height: pt(size.h * 0.75),
+    paragraphProperties: {},
+  };
+  return { kind: 'image', image: block };
+}
+
+// Intrinsic pixel dimensions from a PNG (IHDR) or JPEG (SOF) header, or undefined
+// when the bytes are neither (so the picture is skipped rather than mis-sized).
+function imagePixelSize(d: Uint8Array): { w: number; h: number } | undefined {
+  if (d.length >= 24 && d[0] === 0x89 && d[1] === 0x50 && d[2] === 0x4e && d[3] === 0x47) {
+    const w = u32be(d, 16);
+    const h = u32be(d, 20);
+    return w > 0 && h > 0 ? { w, h } : undefined;
+  }
+  if (d.length >= 4 && d[0] === 0xff && d[1] === 0xd8) {
+    let off = 2;
+    while (off + 9 < d.length) {
+      if (d[off] !== 0xff) {
+        off++;
+        continue;
+      }
+      const marker = d[off + 1]!;
+      if (
+        marker >= 0xc0 &&
+        marker <= 0xcf &&
+        marker !== 0xc4 &&
+        marker !== 0xc8 &&
+        marker !== 0xcc
+      ) {
+        const h = (d[off + 5]! << 8) | d[off + 6]!;
+        const w = (d[off + 7]! << 8) | d[off + 8]!;
+        return w > 0 && h > 0 ? { w, h } : undefined;
+      }
+      const len = (d[off + 2]! << 8) | d[off + 3]!;
+      if (len < 2) break;
+      off += 2 + len;
+    }
+  }
+  return undefined;
+}
+
+function u32be(d: Uint8Array, o: number): number {
+  return ((d[o]! << 24) | (d[o + 1]! << 16) | (d[o + 2]! << 8) | d[o + 3]!) >>> 0;
 }
 
 function toRun(r: PptRun): Run {

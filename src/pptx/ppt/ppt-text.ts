@@ -26,10 +26,22 @@ const RT_SLIDE_PERSIST_ATOM = 0x03f3;
 const RT_SLIDE = 0x03ee;
 const RT_USER_EDIT_ATOM = 0x0ff5;
 const RT_PERSIST_DIRECTORY_ATOM = 0x1772;
+const RT_DRAWING_GROUP = 0x040b;
 const RT_TEXT_HEADER_ATOM = 0x0f9f;
 const RT_TEXT_CHARS_ATOM = 0x0fa0;
 const RT_STYLE_TEXT_PROP_ATOM = 0x0fa1;
 const RT_TEXT_BYTES_ATOM = 0x0fa8;
+
+// OfficeArt (Escher) record types for the drawing layer (PPT-3), sharing the same
+// header as the PPT records. The DrawingGroupContainer holds the picture store
+// (OfficeArtBStoreContainer of OfficeArtFBSE entries); each slide's shapes
+// reference a store entry by a 1-based `pib` index in their OPT property table.
+const FBT_BSTORE_CONTAINER = 0xf001;
+const FBT_BSE = 0xf007;
+const FBT_SP_CONTAINER = 0xf004;
+const FBT_OPT = 0xf00b;
+const PROP_PIB = 0x0104; // OPT property (low 14 bits): 1-based index into the FBSE store
+const FBSE_FODELAY_OFFSET = 28; // foDelay in the FBSE data (record offset 36 − 8-byte header)
 
 // CurrentUserAtom.headerToken (§2.3.2) — the encrypted variant means the document
 // streams are obfuscated and the text cannot be read.
@@ -60,8 +72,20 @@ export interface PptParagraph {
   readonly align?: number;
   readonly level?: number;
 }
+// An embedded picture referenced by a slide shape — the raw image bytes pulled
+// from the Pictures stream (PPT-3).
+export interface PptImage {
+  readonly bytes: Uint8Array;
+}
 export interface PptSlide {
   readonly paragraphs: ReadonlyArray<PptParagraph>;
+  readonly images?: ReadonlyArray<PptImage>;
+}
+// The document-level picture store (FBSE offsets into the Pictures stream) plus the
+// Pictures stream itself — threaded into the slide walks to resolve shape blips.
+interface ImageContext {
+  readonly foDelays: ReadonlyArray<number>;
+  readonly pictures: Uint8Array;
 }
 export interface PptContent {
   readonly slides: ReadonlyArray<PptSlide>;
@@ -139,18 +163,28 @@ export function extractPptContent(bytes: Uint8Array): PptContent {
   const { persist, docPersistId } = buildPersistDirectory(stream, currentEditOffset);
   const docOffset = docPersistId !== undefined ? persist.get(docPersistId) : undefined;
   const docRec = docOffset !== undefined ? recordAt(stream, docOffset) : findDocument(stream);
+  const noImages: ImageContext = { foDelays: [], pictures: new Uint8Array(0) };
   if (!docRec || docRec.type !== RT_DOCUMENT) {
     // No resolvable document container — last resort: every RT_Slide in the stream.
-    return { slides: slidesByScan(stream), encrypted: false };
+    return { slides: slidesByScan(stream, noImages), encrypted: false };
   }
 
-  // If the slide list resolved no text (an unresolvable persist directory, say),
+  // The picture store: the FBSE offsets into the Pictures stream, resolved by a
+  // shape's 1-based `pib` index (PPT-3).
+  const img: ImageContext = {
+    foDelays: parseFbseStore(docRec.data),
+    pictures: cfb.readStream('Pictures') ?? new Uint8Array(0),
+  };
+
+  // If the slide list resolved no content (an unresolvable persist directory, say),
   // fall back to scanning the stream for slide containers directly.
-  const slides = readSlideList(stream, docRec.data, persist);
-  const hasText = slides.some((s) => s.paragraphs.some((p) => paragraphText(p).length > 0));
+  const slides = readSlideList(stream, docRec.data, persist, img);
+  const hasContent = slides.some(
+    (s) => s.paragraphs.some((p) => paragraphText(p).length > 0) || (s.images?.length ?? 0) > 0,
+  );
   const size = readSlideSize(docRec.data);
   return {
-    slides: hasText ? slides : slidesByScan(stream),
+    slides: hasContent ? slides : slidesByScan(stream, img),
     ...(size ?? {}),
     encrypted: false,
   };
@@ -213,6 +247,7 @@ function readSlideList(
   stream: Uint8Array,
   docData: Uint8Array,
   persist: Map<number, number>,
+  img: ImageContext,
 ): Array<PptSlide> {
   const slwt = findChild(
     docData,
@@ -228,10 +263,11 @@ function readSlideList(
     if (pendingRef === undefined) return;
     const slideOff = persist.get(pendingRef);
     const slideRec = slideOff !== undefined ? recordAt(stream, slideOff) : undefined;
-    const inline =
-      slideRec && slideRec.type === RT_SLIDE ? collectParagraphs(slideRec.data, 0) : [];
+    const isSlide = slideRec !== undefined && slideRec.type === RT_SLIDE;
+    const inline = isSlide ? collectParagraphs(slideRec.data, 0) : [];
     const hasInline = inline.some((p) => paragraphText(p).length > 0);
-    slides.push({ paragraphs: hasInline ? inline : outline });
+    const images = isSlide ? collectImages(slideRec.data, img) : [];
+    slides.push({ paragraphs: hasInline ? inline : outline, ...(images.length ? { images } : {}) });
     outline = [];
     pendingRef = undefined;
   };
@@ -290,19 +326,29 @@ function styledParagraphs(
 }
 
 // Last-resort slide discovery: every RT_Slide container in the stream, in stream
-// order (usually slide order), with its inline text. Used when the persist /
-// document structure cannot be resolved.
-function slidesByScan(stream: Uint8Array): Array<PptSlide> {
+// order (usually slide order), with its inline text and images. Used when the
+// persist / document structure cannot be resolved.
+function slidesByScan(stream: Uint8Array, img: ImageContext): Array<PptSlide> {
   const slides: Array<PptSlide> = [];
-  collectSlides(stream, slides, 0);
+  collectSlides(stream, slides, img, 0);
   return slides;
 }
 
-function collectSlides(d: Uint8Array, out: Array<PptSlide>, depth: number): void {
+function collectSlides(
+  d: Uint8Array,
+  out: Array<PptSlide>,
+  img: ImageContext,
+  depth: number,
+): void {
   if (depth > MAX_DEPTH) return;
   for (const rec of records(d)) {
-    if (rec.type === RT_SLIDE) out.push({ paragraphs: collectParagraphs(rec.data, 0) });
-    else if (rec.isContainer) collectSlides(rec.data, out, depth + 1);
+    if (rec.type === RT_SLIDE) {
+      const images = collectImages(rec.data, img);
+      out.push({
+        paragraphs: collectParagraphs(rec.data, 0),
+        ...(images.length ? { images } : {}),
+      });
+    } else if (rec.isContainer) collectSlides(rec.data, out, img, depth + 1);
   }
 }
 
@@ -354,6 +400,118 @@ function readSlideSize(
   // page; the reader defaults to a standard 10"×7.5" deck otherwise.
   if (w < 216 || w > 4320 || h < 216 || h > 4320) return undefined;
   return { slideWidthPt: w, slideHeightPt: h };
+}
+
+// === Images (PPT-3) ==========================================================
+
+// The picture store: the DrawingGroupContainer's OfficeArtBStoreContainer holds
+// one OfficeArtFBSE per stored image; each FBSE's foDelay is the byte offset into
+// the Pictures stream of that image's OfficeArtBlip. A slide shape's 1-based `pib`
+// indexes this array.
+function parseFbseStore(docData: Uint8Array): Array<number> {
+  const group = findChild(docData, (r) => r.type === RT_DRAWING_GROUP);
+  if (!group) return [];
+  const store = findDescendantContainer(group, FBT_BSTORE_CONTAINER, 0);
+  if (!store) return [];
+  const foDelays: Array<number> = [];
+  for (const r of records(store)) {
+    if (r.type === FBT_BSE) {
+      foDelays.push(
+        r.data.length >= FBSE_FODELAY_OFFSET + 4 ? u32(r.data, FBSE_FODELAY_OFFSET) : 0,
+      );
+    }
+  }
+  return foDelays;
+}
+
+// Depth-first search for the first container of `type` (the Escher tree nests an
+// OfficeArtDggContainer inside the DrawingGroup; the BStoreContainer is within it).
+function findDescendantContainer(
+  d: Uint8Array,
+  type: number,
+  depth: number,
+): Uint8Array | undefined {
+  if (depth > MAX_DEPTH) return undefined;
+  for (const r of records(d)) {
+    if (r.type === type) return r.data;
+    if (r.isContainer) {
+      const found = findDescendantContainer(r.data, type, depth + 1);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
+
+// Every picture shape in a slide's drawing → its image bytes. A shape container's
+// OPT table carries the `pib` blip index; that resolves through the FBSE store to
+// a Pictures-stream offset, and the blip there yields the raw image.
+function collectImages(slideData: Uint8Array, img: ImageContext): Array<PptImage> {
+  if (img.foDelays.length === 0 || img.pictures.length === 0) return [];
+  const out: Array<PptImage> = [];
+  collectImageShapes(slideData, img, out, 0);
+  return out;
+}
+
+function collectImageShapes(
+  d: Uint8Array,
+  img: ImageContext,
+  out: Array<PptImage>,
+  depth: number,
+): void {
+  if (depth > MAX_DEPTH) return;
+  for (const r of records(d)) {
+    if (r.type === FBT_SP_CONTAINER) {
+      let pib: number | undefined;
+      for (const child of records(r.data)) {
+        if (child.type === FBT_OPT) pib = optProperty(child.data, child.instance, PROP_PIB);
+      }
+      if (pib !== undefined && pib >= 1 && pib <= img.foDelays.length) {
+        const bytes = readBlipBytes(img.pictures, img.foDelays[pib - 1]!);
+        if (bytes) out.push({ bytes });
+      }
+    } else if (r.isContainer) {
+      collectImageShapes(r.data, img, out, depth + 1);
+    }
+  }
+}
+
+// §2.3.7.2 OfficeArtFOPT — `count` properties, each a 2-byte id (low 14 bits) + a
+// 4-byte value. Returns the simple (non-complex) value of `wantId`.
+function optProperty(d: Uint8Array, count: number, wantId: number): number | undefined {
+  for (let i = 0; i < count && i * 6 + 6 <= d.length; i++) {
+    const id = u16(d, i * 6);
+    if ((id & 0x3fff) === wantId && (id & 0x8000) === 0) return u32(d, i * 6 + 2);
+  }
+  return undefined;
+}
+
+// The OfficeArtBlip at `foDelay` in the Pictures stream → its raw image bytes. The
+// blip header carries one or two UIDs before the payload; a bounded magic scan
+// finds the PNG/JPEG start regardless (mirrors the `.xls` Escher reader).
+function readBlipBytes(pictures: Uint8Array, foDelay: number): Uint8Array | undefined {
+  if (foDelay < 0 || foDelay + 8 > pictures.length) return undefined;
+  const recLen = u32(pictures, foDelay + 4);
+  const start = foDelay + 8;
+  const blip = pictures.subarray(start, Math.min(pictures.length, start + recLen));
+  const limit = Math.min(blip.length, 80);
+  for (let off = 0; off < limit; off++) {
+    for (const magic of IMAGE_MAGICS) {
+      if (matchesMagic(blip, off, magic)) return blip.subarray(off);
+    }
+  }
+  return undefined;
+}
+
+// PNG and JPEG signatures — the raster formats the renderer can embed.
+const IMAGE_MAGICS: ReadonlyArray<ReadonlyArray<number>> = [
+  [0x89, 0x50, 0x4e, 0x47], // PNG
+  [0xff, 0xd8, 0xff], // JPEG
+];
+
+function matchesMagic(d: Uint8Array, off: number, magic: ReadonlyArray<number>): boolean {
+  if (off + magic.length > d.length) return false;
+  for (let i = 0; i < magic.length; i++) if (d[off + i] !== magic[i]) return false;
+  return true;
 }
 
 // === Text + formatting (PPT-2) ===============================================

@@ -23,6 +23,16 @@ const RT_TEXT_CHARS_ATOM = 0x0fa0;
 const RT_STYLE_TEXT_PROP_ATOM = 0x0fa1;
 const RT_TEXT_BYTES_ATOM = 0x0fa8;
 const RT_PP_DRAWING = 0x040c;
+const RT_DRAWING_GROUP = 0x040b;
+
+// OfficeArt (Escher) record types for the picture store + picture shapes (PPT-3).
+const FBT_DGG_CONTAINER = 0xf000;
+const FBT_BSTORE_CONTAINER = 0xf001;
+const FBT_BSE = 0xf007;
+const FBT_SP_CONTAINER = 0xf004;
+const FBT_OPT = 0xf00b;
+const FBT_BLIP_PNG = 0xf01e;
+const PROP_PIB_ID = 0x4104; // OPT property id: pib (0x0104) with the fBid flag (0x4000)
 
 const TOKEN_UNENCRYPTED = 0xe391c05f;
 const TOKEN_ENCRYPTED = 0xf3d1c4df;
@@ -60,6 +70,8 @@ export interface PptSlideInput {
   // Lengths sum to the raw text length; the builder adds the phantom terminator.
   readonly charRuns?: ReadonlyArray<PptStyleRun>;
   readonly paraRuns?: ReadonlyArray<PptParaStyleRun>;
+  // A picture shape referencing the deck image at this 1-based index (pib).
+  readonly imageRef?: number;
 }
 
 export interface BuildPptOptions {
@@ -67,6 +79,8 @@ export interface BuildPptOptions {
   readonly slideSizeInches?: { readonly w: number; readonly h: number };
   // Drop the Current User stream, to exercise the document-scan fallback.
   readonly omitCurrentUser?: boolean;
+  // Deck images, stored in the Pictures stream and referenced by slide imageRef.
+  readonly images?: ReadonlyArray<Uint8Array>;
 }
 
 // Build an 8-byte record header + data. A container uses recVer 0xF (low nibble);
@@ -200,15 +214,40 @@ export function buildPpt(
   });
   const slwt = rec(RT_SLIDE_LIST_WITH_TEXT, 0, true, concat(slwtParts));
 
-  const docData = concat([docAtom, slwt]);
+  // --- Pictures stream + DrawingGroup picture store (PPT-3) -------------------
+  const images = opts.images ?? [];
+  const blips: Array<Uint8Array> = [];
+  const foDelays: Array<number> = [];
+  let picOff = 0;
+  for (const image of images) {
+    foDelays.push(picOff);
+    // OfficeArtBlipPNG: 16-byte UID + 1 tag byte, then the raw image bytes.
+    const blip = rec(
+      FBT_BLIP_PNG,
+      0x6e0,
+      false,
+      concat([new Uint8Array(16), Uint8Array.of(0xff), image]),
+    );
+    blips.push(blip);
+    picOff += blip.length;
+  }
+  const picturesStream = concat(blips);
+  const drawingGroup =
+    images.length > 0
+      ? rec(RT_DRAWING_GROUP, 0, true, rec(FBT_DGG_CONTAINER, 0, true, buildBStore(foDelays)))
+      : new Uint8Array(0);
+
+  const docData = concat([docAtom, drawingGroup, slwt]);
   const docRec = rec(RT_DOCUMENT, 0, true, docData);
 
-  // --- one SlideContainer per slide, carrying its inline drawing text --------
+  // --- one SlideContainer per slide, carrying its inline drawing text and any
+  //     picture shape (an SpContainer with the pib blip reference) -------------
   const slideRecs = slides.map((slide) => {
+    const parts: Array<Uint8Array> = [];
     const block = slideTextBlock(slide);
-    if (!block) return rec(RT_SLIDE, 0, true, new Uint8Array(0));
-    const inner = slide.nested ? rec(RT_PP_DRAWING, 0, true, block) : block;
-    return rec(RT_SLIDE, 0, true, inner);
+    if (block) parts.push(slide.nested ? rec(RT_PP_DRAWING, 0, true, block) : block);
+    if (slide.imageRef !== undefined) parts.push(imageShapeContainer(slide.imageRef));
+    return rec(RT_SLIDE, 0, true, concat(parts));
   });
 
   // --- assign absolute offsets: [doc][slides...][persistDir][userEdit] -------
@@ -262,7 +301,28 @@ export function buildPpt(
 
   const streams = [{ name: 'PowerPoint Document', data: powerpointDocument }];
   if (!opts.omitCurrentUser) streams.push({ name: 'Current User', data: currentUser });
+  if (picturesStream.length > 0) streams.push({ name: 'Pictures', data: picturesStream });
   return buildCfb(streams);
+}
+
+// The OfficeArtBStoreContainer: one OfficeArtFBSE per stored image, each carrying
+// its foDelay (the blip's byte offset in the Pictures stream) at data offset 28.
+function buildBStore(foDelays: ReadonlyArray<number>): Uint8Array {
+  const fbses = foDelays.map((foDelay) => {
+    const d = new Uint8Array(36);
+    new DataView(d.buffer).setUint32(28, foDelay, true); // foDelay
+    return rec(FBT_BSE, 2, false, d);
+  });
+  return rec(FBT_BSTORE_CONTAINER, foDelays.length, true, concat(fbses));
+}
+
+// A picture shape: an SpContainer whose OPT table carries the pib blip index.
+function imageShapeContainer(pib: number): Uint8Array {
+  const opt = new Uint8Array(6);
+  const ov = new DataView(opt.buffer);
+  ov.setUint16(0, PROP_PIB_ID, true); // property id (pib | fBid)
+  ov.setUint32(2, pib, true); // 1-based index into the FBSE store
+  return rec(FBT_SP_CONTAINER, 0, true, rec(FBT_OPT, 1, false, opt));
 }
 
 function encodeUtf16(s: string): Uint8Array {

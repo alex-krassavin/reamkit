@@ -25,6 +25,19 @@ const fonts = {
   bold: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Bold.ttf')),
 };
 
+// The smallest image the decoder accepts — a 1×1 transparent PNG.
+const PNG_1x1 = Uint8Array.from(
+  Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+    'base64',
+  ),
+);
+
+// The image blocks in the FlowDoc body.
+function imageBlocks(doc: FlowDoc) {
+  return doc.body.filter((el) => el.kind === 'image');
+}
+
 // The visible (non-empty, non-anchor) paragraph texts of the FlowDoc body.
 function visibleTexts(doc: FlowDoc): Array<string> {
   return doc.body
@@ -209,5 +222,47 @@ describe('ppt reader formatting (PPT-2)', () => {
     expect(paras[0]!.paragraph.runs[0]!.properties.bold).toBe(true);
     expect(paras[1]!.paragraph.runs.map((r) => r.text).join('')).toBe('Body');
     expect(paras[1]!.paragraph.runs[0]!.properties.bold).toBeFalsy();
+  });
+});
+
+describe('ppt reader images (PPT-3)', () => {
+  it('reads an embedded picture referenced by a slide shape', () => {
+    const doc = readPpt(buildPpt([{ imageRef: 1 }], { images: [PNG_1x1] })).doc;
+    const imgs = imageBlocks(doc);
+    expect(imgs).toHaveLength(1);
+    expect(imgs[0]!.image.resource).toBeDefined();
+    expect(imgs[0]!.image.width).toBeGreaterThan(0);
+    expect(imgs[0]!.image.height).toBeGreaterThan(0);
+    // The bytes round-trip through the ResourceStore.
+    const stored = doc.resources.get(imgs[0]!.image.resource!);
+    expect(stored && stored[0]).toBe(0x89); // PNG signature
+  });
+
+  it('emits a slide image after the slide text', () => {
+    const doc = readPpt(buildPpt([{ text: 'Caption', imageRef: 1 }], { images: [PNG_1x1] })).doc;
+    const kinds = doc.body.map((el) => el.kind);
+    expect(kinds).toEqual(['paragraph', 'image']);
+  });
+
+  it('places each slide image on its own page', () => {
+    const doc = readPpt(
+      buildPpt([{ imageRef: 1 }, { imageRef: 2 }], { images: [PNG_1x1, PNG_1x1] }),
+    ).doc;
+    expect(imageBlocks(doc)).toHaveLength(2);
+    expect(pageCount(doc)).toBe(2);
+  });
+
+  it('skips a picture whose bytes are not a decodable image', () => {
+    const doc = readPpt(
+      buildPpt([{ imageRef: 1 }], { images: [Uint8Array.of(1, 2, 3, 4, 5, 6, 7, 8)] }),
+    ).doc;
+    expect(imageBlocks(doc)).toHaveLength(0);
+  });
+
+  it('converts a .ppt with an image to PDF', async () => {
+    const pdf = await Ream.parse(
+      buildPpt([{ text: 'Pic', imageRef: 1 }], { images: [PNG_1x1] }),
+    ).convert('pdf', { fonts });
+    expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-');
   });
 });
