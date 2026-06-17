@@ -128,6 +128,13 @@ export interface XlsxBuilderOptions {
     readonly pngBytes: Uint8Array;
     readonly anchor?: { from: [number, number]; to: [number, number] };
   };
+  /** Attach a shape to the FIRST sheet via a drawing part (xdr:sp, W2). */
+  readonly sheetShape?: {
+    readonly text?: string;
+    readonly fillHex?: string;
+    readonly preset?: string;
+    readonly anchor?: { from: [number, number]; to: [number, number] };
+  };
   /** Attach Excel table parts to the FIRST sheet (E-SHEET SC3). */
   readonly tables?: ReadonlyArray<{
     readonly ref: string;
@@ -468,6 +475,9 @@ ${sharedStringsList.map((str) => `  <si><t>${escapeXml(str)}</t></si>`).join('\n
       ? '<Default Extension="png" ContentType="image/png"/>' +
         '<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>'
       : '') +
+    (options.sheetShape && !options.sheetImage
+      ? '<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>'
+      : '') +
     (options.tables
       ? options.tables
           .map(
@@ -580,6 +590,40 @@ ${chartRels}</Relationships>`,
 </Relationships>`,
     );
     entries['xl/media/image1.png'] = options.sheetImage.pngBytes;
+  }
+  if (options.sheetShape && sheetParts.length > 0) {
+    const first = sheetParts[0]!;
+    first.xml = first.xml.replace('</worksheet>', '<drawing r:id="rId100"/></worksheet>');
+    entries[`xl/worksheets/_rels/${first.fileName}.rels`] = encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId100" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/>
+</Relationships>`,
+    );
+    const a = options.sheetShape.anchor ?? { from: [1, 1], to: [4, 6] };
+    const fill = options.sheetShape.fillHex ?? '4472C4';
+    const preset = options.sheetShape.preset ?? 'roundRect';
+    const text = options.sheetShape.text ?? 'Shape text';
+    entries['xl/drawings/drawing1.xml'] = encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <xdr:twoCellAnchor>
+    <xdr:from><xdr:col>${a.from[0]}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${a.from[1]}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>
+    <xdr:to><xdr:col>${a.to[0]}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${a.to[1]}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>
+    <xdr:sp>
+      <xdr:nvSpPr><xdr:cNvPr id="2" name="Shape 1"/><xdr:cNvSpPr/></xdr:nvSpPr>
+      <xdr:spPr>
+        <a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></a:xfrm>
+        <a:prstGeom prst="${preset}"><a:avLst/></a:prstGeom>
+        <a:solidFill><a:srgbClr val="${fill}"/></a:solidFill>
+        <a:ln w="12700"><a:solidFill><a:srgbClr val="2F5496"/></a:solidFill></a:ln>
+      </xdr:spPr>
+      <xdr:txBody><a:bodyPr/><a:p><a:r><a:t>${escapeXml(text)}</a:t></a:r></a:p></xdr:txBody>
+    </xdr:sp>
+    <xdr:clientData/>
+  </xdr:twoCellAnchor>
+</xdr:wsDr>`,
+    );
   }
   if (options.tables && options.tables.length > 0 && sheetParts.length > 0) {
     const first = sheetParts[0]!;

@@ -5,7 +5,7 @@
 // Document-derived state only; caller conversion options stay with the
 // converter/facade.
 
-import type { Chart, DocumentInfo } from '@/core/document-model';
+import type { Chart, DocumentInfo, ShapeBlock } from '@/core/document-model';
 import type { CoreProperties, Relationship } from '@/core/opc';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
@@ -44,6 +44,7 @@ import { parseSheetDrawing } from '@/excel/sheet-drawing';
 import { parseTablePartFull } from '@/excel/table-parser';
 import { parsePivotTablePart } from '@/excel/pivot-table-parser';
 import { parseSlicerCachePart, parseSlicerPart } from '@/excel/slicer-parser';
+import { parseSheetShapes } from '@/excel/sheet-shape-parser';
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
 import { resolveCellText } from '@/excel/print-model';
 
@@ -113,10 +114,12 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
     if (!resolved) continue;
     const worksheet = parseWorksheet(resolved.data);
 
-    // §20.5: the sheet's drawing part — resolve chart frames and pictures here;
-    // the projection emits a block per frame after the grid (W1 for pictures).
+    // §20.5: the sheet's drawing part — resolve chart frames, pictures and shapes
+    // here; the projection emits a block per frame after the grid (W1 pictures,
+    // W2 shapes).
     const charts: Array<SheetChartRef> = [];
     const images: Array<SheetImageRef> = [];
+    let shapes: Array<ShapeBlock> | undefined;
     if (worksheet.drawingRelId) {
       const wsRels = pkg.getPartRelationships(resolved.path);
       const drawingRel = wsRels.find((r) => r.id === worksheet.drawingRelId);
@@ -152,6 +155,14 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
             widthPt: pic.widthPt,
             heightPt: pic.heightPt,
           });
+        }
+        // §20.5.2.30 xdr:sp shapes (W2). The shared DrawingML readers need the
+        // preserveOrder PoNode tree, so shapes parse the drawing a second time —
+        // gated on a shape open tag (`:sp>`/`:sp `) so chart/picture-only drawings
+        // skip it (xdr:spPr / xdr:grpSp do not match).
+        if (bytesInclude(drawing.data, ':sp>') || bytesInclude(drawing.data, ':sp ')) {
+          const parsed = parseSheetShapes(drawing.data, worksheet, resolveColor);
+          if (parsed.length > 0) shapes = parsed;
         }
       }
     }
@@ -220,6 +231,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
       grid,
       ...(charts.length > 0 ? { charts } : {}),
       ...(images.length > 0 ? { images } : {}),
+      ...(shapes ? { shapes } : {}),
     });
   }
 

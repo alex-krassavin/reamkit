@@ -176,8 +176,9 @@ function spanPt(
 }
 
 // Column width in points: <col> overrides (Excel "chars"), else the default —
-// the same conversions the print model uses.
-function makeColWidthPt(ws: ParsedWorksheet): (col: number) => number {
+// the same conversions the print model uses. Exported so the sheet-shape parser
+// (E-SHEET W2) sizes shape anchors with the same track geometry.
+export function makeColWidthPt(ws: ParsedWorksheet): (col: number) => number {
   return (col: number): number => {
     for (const c of ws.columns) {
       if (col >= c.min - 1 && col <= c.max - 1) {
@@ -188,7 +189,7 @@ function makeColWidthPt(ws: ParsedWorksheet): (col: number) => number {
   };
 }
 
-function makeRowHeightPt(ws: ParsedWorksheet): (row: number) => number {
+export function makeRowHeightPt(ws: ParsedWorksheet): (row: number) => number {
   return (row: number): number => {
     for (const r of ws.rowHeights) {
       if (r.row === row) return r.heightPt;

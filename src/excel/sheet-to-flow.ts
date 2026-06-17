@@ -85,6 +85,12 @@ export function projectSheetDoc(sheet: SheetDoc): FlowDoc {
       });
     }
 
+    // W2: anchored shapes render as shape blocks after the grid (anchor-ordered;
+    // placement collapses to inline, like charts/pictures).
+    for (const shape of ws.shapes ?? []) {
+      body.push({ kind: 'shape', shape });
+    }
+
     // §SV2: slicer panels render as styled button boxes after the grid + charts.
     for (const slicer of ws.slicers ?? []) {
       body.push({ kind: 'table', table: slicerTable(slicer) });

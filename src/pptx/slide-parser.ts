@@ -380,7 +380,8 @@ export function backdropElement(fill: ShapeFill, widthPt: Pt, heightPt: Pt): Bod
 }
 
 // p:spPr geometry: a:prstGeom (preset) or a:custGeom (custom path), default rect.
-function parseGeometry(spPr: PoNode | undefined): ShapeGeometry {
+// Exported for sheet shapes (E-SHEET W2), whose xdr:spPr carries the same a: children.
+export function parseGeometry(spPr: PoNode | undefined): ShapeGeometry {
   if (!spPr) return RECT_GEOMETRY;
   const prst = poChildren(spPr).find((c) => poIs(c, 'a:prstGeom'));
   if (prst) return parsePrstGeom(prst);
@@ -450,8 +451,9 @@ function txBodyParagraphs(
 }
 
 // p:txBody → ShapeTextBody. a:bodyPr carries the insets and the vertical anchor
-// (PX6: anchor t/ctr/b).
-function parseTxBody(
+// (PX6: anchor t/ctr/b). Exported for sheet shapes (E-SHEET W2) — like SmartArt,
+// they pass no placeholder cascade, so runs use their direct a:rPr formatting.
+export function parseTxBody(
   txBody: PoNode,
   ph: PlaceholderRef | undefined,
   cascade: PlaceholderCascade | undefined,

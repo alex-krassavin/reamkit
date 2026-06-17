@@ -9,7 +9,7 @@
 // later), never in the tree. Like FlowDoc, caller-supplied conversion options
 // (fonts, PDF/A profile, …) are NOT part of it — they parameterize transforms.
 
-import type { Chart, DocumentInfo } from '@/core/document-model';
+import type { Chart, DocumentInfo, ShapeBlock } from '@/core/document-model';
 import type { DefinedName, ParsedWorksheet, XlsxStyles } from '@/core/spreadsheet-model';
 import type { ResourceId, ResourceStore } from '@/core/ir/resources';
 
@@ -63,6 +63,8 @@ export interface Sheet {
   readonly charts?: ReadonlyArray<SheetChartRef>;
   // Picture frames on this sheet, anchor-ordered (bytes in SheetDoc.resources).
   readonly images?: ReadonlyArray<SheetImageRef>;
+  // Drawing shapes on this sheet (E-SHEET W2), fully resolved + anchor-ordered.
+  readonly shapes?: ReadonlyArray<ShapeBlock>;
   // Slicer panels on this sheet (E-SHEET SV2), rendered after the grid + charts.
   readonly slicers?: ReadonlyArray<SheetSlicer>;
 }
