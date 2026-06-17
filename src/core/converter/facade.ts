@@ -35,6 +35,7 @@ import { docReader } from '@/word/doc/doc-reader';
 import { xlsxReader } from '@/excel/xlsx-reader';
 import { xlsReader } from '@/excel/xls/xls-reader';
 import { pptxReader } from '@/pptx/pptx-reader';
+import { pptReader } from '@/pptx/ppt/ppt-reader';
 import { pdfReader } from '@/pdf-reader/reader';
 
 export interface ConvertOptions extends ConvertDocxOptions {
@@ -107,6 +108,7 @@ export const DEFAULT_READERS: ReadonlyArray<DocumentReader<SourceDoc>> = [
   xlsxReader,
   xlsReader,
   pptxReader,
+  pptReader,
   pdfReader,
 ];
 
