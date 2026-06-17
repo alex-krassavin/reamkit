@@ -5,26 +5,28 @@
 // .docx) works on a legacy `.ppt` the way it already does for `.xls` and `.doc`.
 // The shared CFB container reader (`src/core/ole`) is the keystone all three reuse.
 //
-// Like pptxReader, each slide becomes one page at the deck size: a page-breaking
-// paragraph anchors the page and the slide's text follows as paragraphs. PPT-2
-// adds run formatting (bold/italic/underline/size/colour from the StyleTextPropAtom)
-// and paragraph alignment/indent level; PPT-3 emits the slide's embedded images
-// (in-flow after its text). Per-shape placement and autoshapes come in later waves
-// — recorded as a loss until then.
+// Like pptxReader, each slide becomes one page at the deck size. PPT-2 adds run
+// formatting (bold/italic/underline/size/colour from the StyleTextPropAtom) and
+// paragraph alignment/indent level; PPT-3 reads embedded images; PPT-4 positions a
+// shape that carries a slide anchor as a floating ShapeBlock (text) / ImageBlock
+// (picture), falling back to reading-order flow for un-anchored shapes. Decorative
+// autoshapes come in a later wave — recorded as a loss until then.
 
 import type {
   Alignment,
   BodyElement,
+  FloatAnchor,
   ImageBlock,
   ParagraphProperties,
   Run,
   RunProperties,
+  ShapeBlock,
   UnderlineStyle,
 } from '@/core/document-model';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss } from '@/core/ir';
-import type { PptContent, PptImage, PptParagraph, PptRun } from '@/pptx/ppt/ppt-text';
+import type { PptContent, PptImage, PptParagraph, PptRect, PptRun } from '@/pptx/ppt/ppt-text';
 
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
 import { isCfb, openCfb } from '@/core/ole/cfb';
@@ -55,14 +57,14 @@ function looksLikePpt(bytes: Uint8Array): boolean {
   }
 }
 
-// The slide text, its run/paragraph formatting and embedded images are read; the
-// higher-level structure (shape placement, autoshapes) is not yet. Reported
-// (degraded, keyed on text) so a caller's loss report is honest about the gap.
+// The slide text, its run/paragraph formatting, embedded images and per-shape
+// placement are read; decorative autoshapes are not yet. Reported (degraded, keyed
+// on text) so a caller's loss report is honest about the gap.
 const PPT_TEXT_LOSS: Loss = {
   severity: 'degraded',
   feature: FEATURES.text,
   detail:
-    "legacy .ppt: each slide's text (with run formatting — bold/italic/underline/size/colour — and paragraph alignment/indent) and embedded images are read into one page per slide; per-shape placement and autoshapes are not yet (re-save as .pptx for full fidelity)",
+    "legacy .ppt: each slide's text (with run formatting — bold/italic/underline/size/colour — and paragraph alignment/indent), embedded images and per-shape placement (anchored shapes positioned, un-anchored ones in reading order) are read into one page per slide; decorative autoshapes are not yet (re-save as .pptx for full fidelity)",
 };
 
 const PPT_ENCRYPTED_LOSS: Loss = {
@@ -99,57 +101,132 @@ export function readPpt(bytes: Uint8Array): ReadResult<FlowDoc> {
   return { doc, losses: [content.encrypted ? PPT_ENCRYPTED_LOSS : PPT_TEXT_LOSS] };
 }
 
-// One page per slide: a slide's text paragraphs come first, then its images
-// (in-flow). The first body element carries a page break (after the first slide)
-// so every slide starts a fresh page, even an empty one.
+// One page per slide. A shape carrying an anchor is positioned (a floating
+// ShapeBlock for text, a floating ImageBlock for a picture); an un-anchored shape
+// flows in reading order. The page break sits on a paragraph (the layout honors it
+// only there): an in-flow-first slide breaks on its first paragraph, a floating-
+// only slide gets a breaking anchor paragraph to force its page.
 function buildBody(content: PptContent, resources: ResourceStore): Array<BodyElement> {
   const body: Array<BodyElement> = [];
   content.slides.forEach((slide, slideIndex) => {
-    const breakBefore = slideIndex > 0;
-    const els: Array<BodyElement> = [];
-    for (const para of slide.paragraphs) {
-      if (paragraphText(para).length === 0) continue;
-      els.push({
-        kind: 'paragraph',
-        paragraph: { properties: toParaProperties(para, false), runs: para.runs.map(toRun) },
-      });
-    }
-    for (const image of slide.images ?? []) {
-      const block = imageBlock(image, resources);
-      if (block) els.push(block);
-    }
-    if (els.length === 0) {
-      body.push(anchorParagraph(breakBefore));
-      return;
-    }
-    // The page break must sit on a paragraph (the layout honors it only there).
-    // A text-first slide breaks on its first paragraph; an image-first slide gets
-    // a breaking anchor paragraph prepended.
-    if (breakBefore) {
-      const first = els[0]!;
-      if (first.kind === 'paragraph') {
-        els[0] = {
-          kind: 'paragraph',
-          paragraph: {
-            ...first.paragraph,
-            properties: { ...first.paragraph.properties, pageBreakBefore: true },
-          },
-        };
+    const inFlowParas: Array<BodyElement> = [];
+    const inFlowImages: Array<BodyElement> = [];
+    const floats: Array<BodyElement> = [];
+    for (const shape of slide.shapes) {
+      if (shape.rectPt) {
+        if (shape.paragraphs?.some((p) => paragraphText(p).length > 0)) {
+          floats.push(positionedTextShape(shape.rectPt, shape.paragraphs));
+        }
+        if (shape.image) {
+          const block = positionedImage(shape.rectPt, shape.image, resources);
+          if (block) floats.push(block);
+        }
       } else {
-        body.push(anchorParagraph(true));
+        for (const para of shape.paragraphs ?? []) {
+          if (paragraphText(para).length > 0) inFlowParas.push(flowParagraph(para));
+        }
+        if (shape.image) {
+          const block = inFlowImage(shape.image, resources);
+          if (block) inFlowImages.push(block);
+        }
       }
     }
-    body.push(...els);
+    // In-flow text reads before in-flow pictures (a slide's outline then its media).
+    pushSlide(body, [...inFlowParas, ...inFlowImages], floats, slideIndex > 0);
   });
   if (body.length === 0) body.push(anchorParagraph(false));
   return body;
 }
 
-// An embedded picture → an in-flow ImageBlock sized from its intrinsic pixels (at
-// 96 dpi); the layout engine clamps the width to the page. The dimensions come
+// Append one slide's elements with the page break on a paragraph.
+function pushSlide(
+  body: Array<BodyElement>,
+  inFlow: Array<BodyElement>,
+  floats: Array<BodyElement>,
+  breakBefore: boolean,
+): void {
+  if (inFlow.length === 0 && floats.length === 0) {
+    body.push(anchorParagraph(breakBefore));
+    return;
+  }
+  if (inFlow.length > 0) {
+    const first = inFlow[0]!;
+    if (breakBefore && first.kind === 'paragraph') {
+      inFlow[0] = {
+        kind: 'paragraph',
+        paragraph: {
+          ...first.paragraph,
+          properties: { ...first.paragraph.properties, pageBreakBefore: true },
+        },
+      };
+    } else if (breakBefore) {
+      body.push(anchorParagraph(true));
+    }
+    body.push(...inFlow);
+  } else {
+    // Floating-only slide: an in-flow anchor forces the page the floats land on.
+    body.push(anchorParagraph(breakBefore));
+  }
+  body.push(...floats);
+}
+
+function flowParagraph(para: PptParagraph): BodyElement {
+  return {
+    kind: 'paragraph',
+    paragraph: { properties: toParaProperties(para, false), runs: para.runs.map(toRun) },
+  };
+}
+
+// A page-relative float anchor at the shape's slide rectangle (slide coords = page
+// coords on a margin-positioned canvas).
+function floatAt(rect: PptRect): FloatAnchor {
+  return {
+    wrap: 'none',
+    posH: { relativeFrom: 'page', offsetPt: pt(rect.x) },
+    posV: { relativeFrom: 'page', offsetPt: pt(rect.y) },
+  };
+}
+
+// A positioned text box: a borderless, fill-less ShapeBlock at the shape rectangle,
+// its paragraphs top-anchored inside.
+function positionedTextShape(rect: PptRect, paragraphs: ReadonlyArray<PptParagraph>): BodyElement {
+  const shape: ShapeBlock = {
+    float: floatAt(rect),
+    width: pt(rect.w),
+    height: pt(rect.h),
+    geometry: { kind: 'preset', preset: 'rect', adjust: new Map() },
+    fill: { kind: 'none' },
+    text: {
+      content: paragraphs.filter((p) => paragraphText(p).length > 0).map(flowParagraph),
+      anchor: 't',
+    },
+    paragraphProperties: {},
+  };
+  return { kind: 'shape', shape };
+}
+
+// A positioned picture: a floating ImageBlock filling the shape rectangle.
+function positionedImage(
+  rect: PptRect,
+  image: PptImage,
+  resources: ResourceStore,
+): BodyElement | undefined {
+  if (!imagePixelSize(image.bytes)) return undefined; // gate: a decodable raster
+  const block: ImageBlock = {
+    float: floatAt(rect),
+    resource: resources.put(image.bytes),
+    width: pt(rect.w),
+    height: pt(rect.h),
+    paragraphProperties: {},
+  };
+  return { kind: 'image', image: block };
+}
+
+// An un-anchored picture → an in-flow ImageBlock sized from its intrinsic pixels
+// (at 96 dpi); the layout engine clamps the width to the page. The dimensions come
 // from the PNG/JPEG header directly, which also gates out formats the renderer
 // cannot embed (a metafile, say).
-function imageBlock(image: PptImage, resources: ResourceStore): BodyElement | undefined {
+function inFlowImage(image: PptImage, resources: ResourceStore): BodyElement | undefined {
   const size = imagePixelSize(image.bytes);
   if (!size) return undefined;
   const block: ImageBlock = {

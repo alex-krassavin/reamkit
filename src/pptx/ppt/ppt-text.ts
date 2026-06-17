@@ -12,9 +12,12 @@
 // (cp1252) atoms inside the slide's drawing, falling back to the slide list's
 // outline text when a slide stores none inline. PPT-2 pairs each text atom with the
 // StyleTextPropAtom that follows it, so runs carry bold / italic / underline / size
-// / colour and paragraphs carry alignment / indent level. Everything is best-effort
-// and graceful-on-failure — structural doubt yields missing text, never wrong
-// text — mirroring the `.doc`/`.xls` readers built on the same CFB keystone.
+// / colour and paragraphs carry alignment / indent level. PPT-3 reads embedded
+// pictures (Pictures stream). PPT-4 reads each shape's OfficeArtClientAnchor so text
+// boxes and pictures carry their slide rectangle; an un-anchored shape (e.g. a
+// placeholder inheriting master geometry) falls back to reading-order flow.
+// Everything is best-effort and graceful-on-failure — structural doubt yields
+// missing content, never wrong content — mirroring the `.doc`/`.xls` readers.
 
 import { isCfb, openCfb } from '@/core/ole/cfb';
 
@@ -40,6 +43,8 @@ const FBT_BSTORE_CONTAINER = 0xf001;
 const FBT_BSE = 0xf007;
 const FBT_SP_CONTAINER = 0xf004;
 const FBT_OPT = 0xf00b;
+const FBT_CLIENT_TEXTBOX = 0xf00d; // OfficeArtClientTextbox — holds the PPT text atoms
+const FBT_CLIENT_ANCHOR = 0xf010; // OfficeArtClientAnchor — the slide rectangle (PPT-4)
 const PROP_PIB = 0x0104; // OPT property (low 14 bits): 1-based index into the FBSE store
 const FBSE_FODELAY_OFFSET = 28; // foDelay in the FBSE data (record offset 36 − 8-byte header)
 
@@ -77,9 +82,22 @@ export interface PptParagraph {
 export interface PptImage {
   readonly bytes: Uint8Array;
 }
+// A shape's rectangle on the slide, in points (from the OfficeArtClientAnchor).
+export interface PptRect {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+// One slide shape (PPT-4): its text and/or picture, plus its slide rectangle when
+// the shape carries an explicit anchor (else it is laid out in reading order).
+export interface PptShape {
+  readonly rectPt?: PptRect;
+  readonly paragraphs?: ReadonlyArray<PptParagraph>;
+  readonly image?: PptImage;
+}
 export interface PptSlide {
-  readonly paragraphs: ReadonlyArray<PptParagraph>;
-  readonly images?: ReadonlyArray<PptImage>;
+  readonly shapes: ReadonlyArray<PptShape>;
 }
 // The document-level picture store (FBSE offsets into the Pictures stream) plus the
 // Pictures stream itself — threaded into the slide walks to resolve shape blips.
@@ -179,15 +197,38 @@ export function extractPptContent(bytes: Uint8Array): PptContent {
   // If the slide list resolved no content (an unresolvable persist directory, say),
   // fall back to scanning the stream for slide containers directly.
   const slides = readSlideList(stream, docRec.data, persist, img);
-  const hasContent = slides.some(
-    (s) => s.paragraphs.some((p) => paragraphText(p).length > 0) || (s.images?.length ?? 0) > 0,
-  );
+  const hasContent = slides.some(slideHasContent);
   const size = readSlideSize(docRec.data);
   return {
     slides: hasContent ? slides : slidesByScan(stream, img),
     ...(size ?? {}),
     encrypted: false,
   };
+}
+
+// Whether a slide carries any readable content (text or a picture).
+function slideHasContent(s: PptSlide): boolean {
+  return s.shapes.some((sh) => shapeHasText(sh) || sh.image !== undefined);
+}
+function shapeHasText(sh: PptShape): boolean {
+  return sh.paragraphs?.some((p) => paragraphText(p).length > 0) ?? false;
+}
+
+// A slide's shapes: the positioned text boxes and pictures from its drawing, with
+// a reading-order text fallback (whole-slide inline text, else the outline) added
+// as an un-anchored shape when no shape carries text.
+function slideShapes(
+  slideData: Uint8Array,
+  img: ImageContext,
+  outline: ReadonlyArray<PptParagraph>,
+): Array<PptShape> {
+  const shapes = collectShapes(slideData, img);
+  if (!shapes.some(shapeHasText)) {
+    const inline = collectParagraphs(slideData, 0);
+    const text = inline.some((p) => paragraphText(p).length > 0) ? inline : outline;
+    if (text.some((p) => paragraphText(p).length > 0)) shapes.push({ paragraphs: text });
+  }
+  return shapes;
 }
 
 // Build the persist-id → offset map and the document's persist id. The edits form
@@ -264,10 +305,12 @@ function readSlideList(
     const slideOff = persist.get(pendingRef);
     const slideRec = slideOff !== undefined ? recordAt(stream, slideOff) : undefined;
     const isSlide = slideRec !== undefined && slideRec.type === RT_SLIDE;
-    const inline = isSlide ? collectParagraphs(slideRec.data, 0) : [];
-    const hasInline = inline.some((p) => paragraphText(p).length > 0);
-    const images = isSlide ? collectImages(slideRec.data, img) : [];
-    slides.push({ paragraphs: hasInline ? inline : outline, ...(images.length ? { images } : {}) });
+    const shapes = isSlide
+      ? slideShapes(slideRec.data, img, outline)
+      : outline.some((p) => paragraphText(p).length > 0)
+        ? [{ paragraphs: outline }]
+        : [];
+    slides.push({ shapes });
     outline = [];
     pendingRef = undefined;
   };
@@ -343,11 +386,7 @@ function collectSlides(
   if (depth > MAX_DEPTH) return;
   for (const rec of records(d)) {
     if (rec.type === RT_SLIDE) {
-      const images = collectImages(rec.data, img);
-      out.push({
-        paragraphs: collectParagraphs(rec.data, 0),
-        ...(images.length ? { images } : {}),
-      });
+      out.push({ shapes: slideShapes(rec.data, img, []) });
     } else if (rec.isContainer) collectSlides(rec.data, out, img, depth + 1);
   }
 }
@@ -402,7 +441,7 @@ function readSlideSize(
   return { slideWidthPt: w, slideHeightPt: h };
 }
 
-// === Images (PPT-3) ==========================================================
+// === Shapes: placement + pictures (PPT-3..4) =================================
 
 // The picture store: the DrawingGroupContainer's OfficeArtBStoreContainer holds
 // one OfficeArtFBSE per stored image; each FBSE's foDelay is the byte offset into
@@ -442,37 +481,86 @@ function findDescendantContainer(
   return undefined;
 }
 
-// Every picture shape in a slide's drawing → its image bytes. A shape container's
-// OPT table carries the `pib` blip index; that resolves through the FBSE store to
-// a Pictures-stream offset, and the blip there yields the raw image.
-function collectImages(slideData: Uint8Array, img: ImageContext): Array<PptImage> {
-  if (img.foDelays.length === 0 || img.pictures.length === 0) return [];
-  const out: Array<PptImage> = [];
-  collectImageShapes(slideData, img, out, 0);
+// Every drawing shape in a slide → a PptShape: its client-anchor rectangle (when
+// present), the text in its client text box, and the picture its `pib` references.
+// Top-level shapes carry an OfficeArtClientAnchor (0xF010); the recursion descends
+// the group/drawing containers but a grouped shape's group-relative ChildAnchor is
+// left unpositioned (it falls back to reading-order flow).
+function collectShapes(slideData: Uint8Array, img: ImageContext): Array<PptShape> {
+  const out: Array<PptShape> = [];
+  collectShapeContainers(slideData, img, out, 0);
   return out;
 }
 
-function collectImageShapes(
+function collectShapeContainers(
   d: Uint8Array,
   img: ImageContext,
-  out: Array<PptImage>,
+  out: Array<PptShape>,
   depth: number,
 ): void {
   if (depth > MAX_DEPTH) return;
   for (const r of records(d)) {
     if (r.type === FBT_SP_CONTAINER) {
+      let rectPt: PptRect | undefined;
+      let paragraphs: Array<PptParagraph> | undefined;
       let pib: number | undefined;
       for (const child of records(r.data)) {
-        if (child.type === FBT_OPT) pib = optProperty(child.data, child.instance, PROP_PIB);
+        if (child.type === FBT_CLIENT_ANCHOR) rectPt = parseAnchor(child.data);
+        else if (child.type === FBT_CLIENT_TEXTBOX) paragraphs = collectParagraphs(child.data, 0);
+        else if (child.type === FBT_OPT) pib = optProperty(child.data, child.instance, PROP_PIB);
       }
+      let image: PptImage | undefined;
       if (pib !== undefined && pib >= 1 && pib <= img.foDelays.length) {
         const bytes = readBlipBytes(img.pictures, img.foDelays[pib - 1]!);
-        if (bytes) out.push({ bytes });
+        if (bytes) image = { bytes };
+      }
+      const textParas =
+        paragraphs && paragraphs.some((p) => paragraphText(p).length > 0) ? paragraphs : undefined;
+      if (textParas || image) {
+        out.push({
+          ...(rectPt ? { rectPt } : {}),
+          ...(textParas ? { paragraphs: textParas } : {}),
+          ...(image ? { image } : {}),
+        });
       }
     } else if (r.isContainer) {
-      collectImageShapes(r.data, img, out, depth + 1);
+      collectShapeContainers(r.data, img, out, depth + 1);
     }
   }
+}
+
+// OfficeArtClientAnchor (§2.7.1/§2.7.2) → the shape's rectangle in points. The
+// data is four coordinates in the order top, left, right, bottom — 2-byte i16 in
+// the common 8-byte SmallRectStruct form, 4-byte i32 in the 16-byte RectStruct
+// form — in master units (576 per inch ⇒ points = units / 8). An implausible
+// rectangle yields undefined, so the shape falls back to reading-order flow.
+function parseAnchor(data: Uint8Array): PptRect | undefined {
+  let top: number;
+  let left: number;
+  let right: number;
+  let bottom: number;
+  if (data.length >= 16) {
+    top = i32(data, 0);
+    left = i32(data, 4);
+    right = i32(data, 8);
+    bottom = i32(data, 12);
+  } else if (data.length >= 8) {
+    top = i16(data, 0);
+    left = i16(data, 2);
+    right = i16(data, 4);
+    bottom = i16(data, 6);
+  } else {
+    return undefined;
+  }
+  const x = left / 8;
+  const y = top / 8;
+  const w = (right - left) / 8;
+  const h = (bottom - top) / 8;
+  // Bound to a plausible on-slide rectangle; a misread can't fling content off-page.
+  if (!(w > 0 && h > 0) || w > 5000 || h > 5000 || Math.abs(x) > 5000 || Math.abs(y) > 5000) {
+    return undefined;
+  }
+  return { x, y, w, h };
 }
 
 // §2.3.7.2 OfficeArtFOPT — `count` properties, each a 2-byte id (low 14 bits) + a
@@ -751,4 +839,8 @@ function u32(d: Uint8Array, off: number): number {
 }
 function i32(d: Uint8Array, off: number): number {
   return u32(d, off) | 0;
+}
+function i16(d: Uint8Array, off: number): number {
+  const v = u16(d, off);
+  return v >= 0x8000 ? v - 0x10000 : v;
 }

@@ -115,9 +115,11 @@ describe('ppt reader (PPT-1)', () => {
     const content = extractPptContent(
       buildPpt([{ text: 'Found by scan' }], { omitCurrentUser: true }),
     );
-    expect(content.slides.flatMap((s) => s.paragraphs.map(paragraphText))).toContain(
-      'Found by scan',
-    );
+    expect(
+      content.slides.flatMap((s) =>
+        s.shapes.flatMap((sh) => sh.paragraphs ?? []).map(paragraphText),
+      ),
+    ).toContain('Found by scan');
   });
 
   it('reports an encrypted deck as a dropped loss and reads no text', () => {
@@ -262,6 +264,65 @@ describe('ppt reader images (PPT-3)', () => {
   it('converts a .ppt with an image to PDF', async () => {
     const pdf = await Ream.parse(
       buildPpt([{ text: 'Pic', imageRef: 1 }], { images: [PNG_1x1] }),
+    ).convert('pdf', { fonts });
+    expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-');
+  });
+});
+
+describe('ppt reader placement (PPT-4)', () => {
+  it('positions an anchored text box as a floating shape at its rectangle', () => {
+    const doc = readPpt(
+      buildPpt([{ boxes: [{ anchor: { x: 100, y: 50, w: 200, h: 80 }, text: 'Positioned' }] }]),
+    ).doc;
+    const shapes = doc.body.filter((el) => el.kind === 'shape');
+    expect(shapes).toHaveLength(1);
+    const shape = shapes[0]!.shape;
+    expect(shape.float?.posH?.offsetPt).toBe(100);
+    expect(shape.float?.posV?.offsetPt).toBe(50);
+    expect(shape.width).toBe(200);
+    expect(shape.height).toBe(80);
+    const text = (shape.text?.content ?? [])
+      .filter((el) => el.kind === 'paragraph')
+      .map((el) => el.paragraph.runs.map((r) => r.text).join(''))
+      .join('');
+    expect(text).toBe('Positioned');
+  });
+
+  it('positions an anchored picture as a floating image at its rectangle', () => {
+    const doc = readPpt(
+      buildPpt([{ boxes: [{ anchor: { x: 10, y: 20, w: 300, h: 200 }, imageRef: 1 }] }], {
+        images: [PNG_1x1],
+      }),
+    ).doc;
+    const imgs = imageBlocks(doc);
+    expect(imgs).toHaveLength(1);
+    const image = imgs[0]!.image;
+    expect(image.float?.posH?.offsetPt).toBe(10);
+    expect(image.float?.posV?.offsetPt).toBe(20);
+    expect(image.width).toBe(300);
+    expect(image.height).toBe(200);
+  });
+
+  it('leaves an un-anchored shape in reading-order flow (no float)', () => {
+    const doc = readPpt(buildPpt([{ boxes: [{ text: 'No anchor' }] }])).doc;
+    expect(doc.body.filter((el) => el.kind === 'shape')).toHaveLength(0);
+    expect(visibleTexts(doc)).toContain('No anchor');
+  });
+
+  it('gives each floating-only slide its own page', () => {
+    const doc = readPpt(
+      buildPpt([
+        { boxes: [{ anchor: { x: 0, y: 0, w: 100, h: 50 }, text: 'A' }] },
+        { boxes: [{ anchor: { x: 0, y: 0, w: 100, h: 50 }, text: 'B' }] },
+      ]),
+    ).doc;
+    expect(doc.body.filter((el) => el.kind === 'shape')).toHaveLength(2);
+    expect(pageCount(doc)).toBe(2);
+  });
+
+  it('converts a .ppt with positioned shapes to PDF', async () => {
+    const pdf = await Ream.parse(
+      buildPpt([{ boxes: [{ anchor: { x: 50, y: 50, w: 200, h: 100 }, text: 'Slide' }] }]),
     ).convert('pdf', { fonts });
     expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-');
   });

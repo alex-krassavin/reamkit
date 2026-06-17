@@ -31,8 +31,11 @@ const FBT_BSTORE_CONTAINER = 0xf001;
 const FBT_BSE = 0xf007;
 const FBT_SP_CONTAINER = 0xf004;
 const FBT_OPT = 0xf00b;
+const FBT_CLIENT_TEXTBOX = 0xf00d;
+const FBT_CLIENT_ANCHOR = 0xf010;
 const FBT_BLIP_PNG = 0xf01e;
 const PROP_PIB_ID = 0x4104; // OPT property id: pib (0x0104) with the fBid flag (0x4000)
+const MASTER_PER_POINT = 8; // 576 master units / inch ÷ 72 points / inch
 
 const TOKEN_UNENCRYPTED = 0xe391c05f;
 const TOKEN_ENCRYPTED = 0xf3d1c4df;
@@ -72,6 +75,21 @@ export interface PptSlideInput {
   readonly paraRuns?: ReadonlyArray<PptParaStyleRun>;
   // A picture shape referencing the deck image at this 1-based index (pib).
   readonly imageRef?: number;
+  // Positioned shapes: each an SpContainer with an OfficeArtClientAnchor (the
+  // rectangle, given in points) and a client text box and/or a picture (PPT-4).
+  readonly boxes?: ReadonlyArray<PptBoxInput>;
+}
+
+// A positioned drawing shape for the fixture.
+export interface PptBoxInput {
+  readonly anchor?: {
+    readonly x: number;
+    readonly y: number;
+    readonly w: number;
+    readonly h: number;
+  };
+  readonly text?: string; // a client text box (UTF-16), paragraphs split by '\r'
+  readonly imageRef?: number; // a picture shape (1-based pib index)
 }
 
 export interface BuildPptOptions {
@@ -247,6 +265,7 @@ export function buildPpt(
     const block = slideTextBlock(slide);
     if (block) parts.push(slide.nested ? rec(RT_PP_DRAWING, 0, true, block) : block);
     if (slide.imageRef !== undefined) parts.push(imageShapeContainer(slide.imageRef));
+    for (const box of slide.boxes ?? []) parts.push(buildShapeContainer(box));
     return rec(RT_SLIDE, 0, true, concat(parts));
   });
 
@@ -323,6 +342,36 @@ function imageShapeContainer(pib: number): Uint8Array {
   ov.setUint16(0, PROP_PIB_ID, true); // property id (pib | fBid)
   ov.setUint32(2, pib, true); // 1-based index into the FBSE store
   return rec(FBT_SP_CONTAINER, 0, true, rec(FBT_OPT, 1, false, opt));
+}
+
+// A positioned shape: an SpContainer carrying an OfficeArtClientAnchor (the
+// rectangle, point coords → master units), optionally a client text box and/or a
+// pib picture reference (PPT-4).
+function buildShapeContainer(box: PptBoxInput): Uint8Array {
+  const parts: Array<Uint8Array> = [];
+  if (box.imageRef !== undefined) {
+    const opt = new Uint8Array(6);
+    const ov = new DataView(opt.buffer);
+    ov.setUint16(0, PROP_PIB_ID, true);
+    ov.setUint32(2, box.imageRef, true);
+    parts.push(rec(FBT_OPT, 1, false, opt));
+  }
+  if (box.anchor) {
+    const { x, y, w, h } = box.anchor;
+    const a = new Uint8Array(8);
+    const av = new DataView(a.buffer);
+    av.setInt16(0, Math.round(y * MASTER_PER_POINT), true); // top
+    av.setInt16(2, Math.round(x * MASTER_PER_POINT), true); // left
+    av.setInt16(4, Math.round((x + w) * MASTER_PER_POINT), true); // right
+    av.setInt16(6, Math.round((y + h) * MASTER_PER_POINT), true); // bottom
+    parts.push(rec(FBT_CLIENT_ANCHOR, 0, false, a));
+  }
+  if (box.text !== undefined) {
+    parts.push(
+      rec(FBT_CLIENT_TEXTBOX, 0, true, rec(RT_TEXT_CHARS_ATOM, 0, false, encodeUtf16(box.text))),
+    );
+  }
+  return rec(FBT_SP_CONTAINER, 0, true, concat(parts));
 }
 
 function encodeUtf16(s: string): Uint8Array {
