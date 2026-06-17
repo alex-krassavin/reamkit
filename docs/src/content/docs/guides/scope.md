@@ -84,11 +84,12 @@ charts — and is byte-stable across a read↔write loop.
   (marked by the `fInTable` / `fTtp` PAPX flags, cells delimited by the `0x07`
   cell mark) become a row-and-cell grid — and **inline images** are extracted (the
   picture character's CHPX points at a PICF in the `Data` stream; the raster blip
-  is pulled out and sized from the PICF). So an old `.doc` renders to PDF/SVG/HTML
-  and re-writes to `.docx`. Headers/footers, lists, fields and cell
-  widths/borders/merges are not read yet (re-save as `.docx` for full fidelity);
-  an encrypted file yields no text. The shared CFB reader (`src/core/ole`) is the
-  same keystone `.xls` uses.
+  is pulled out and sized from the PICF). **Fields** resolve to their cached
+  result — the field code (`PAGE`, `NUMPAGES`, `REF`, …) is dropped and the stored
+  result text kept. So an old `.doc` renders to PDF/SVG/HTML and re-writes to
+  `.docx`. Headers/footers, lists and table cell widths/borders/merges are not
+  read yet (re-save as `.docx` for full fidelity); an encrypted file yields no
+  text. The shared CFB reader (`src/core/ole`) is the same keystone `.xls` uses.
 
 **SpreadsheetML (§18)**
 - Grids, shared strings, number formats and dates (incl. the 1904 date system).
@@ -231,10 +232,10 @@ charts — and is byte-stable across a read↔write loop.
   read; see SpreadsheetML / WordprocessingML above. The shared CFB container reader
   (`src/core/ole`) is the keystone all three reuse.)
 - **The legacy `.doc` reader does not yet read** (re-save as `.docx` for these):
-  headers/footers, lists / numbering, fields, and table cell widths / borders /
-  vertical merges. Its document text, run formatting (bold/italic/underline/size),
-  paragraph formatting (alignment/indent/spacing), table grids and inline images
-  _are_ read.
+  headers/footers, lists / numbering, and table cell widths / borders / vertical
+  merges. Its document text, run formatting (bold/italic/underline/size),
+  paragraph formatting (alignment/indent/spacing), table grids, inline images and
+  fields (cached result) _are_ read.
 - **Byte-for-byte visual reproduction of another renderer.** `layoutProfile` plus the
   metric-compatible substitutes get a target tool's page geometry close — without its
   private font metrics — but _pixel-identical_ output is a non-goal: that would need the

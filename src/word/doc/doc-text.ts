@@ -58,6 +58,9 @@ const SPRM_P_F_TTP = 0x2417; // table terminating paragraph (end of row)
 const SPRA_LEN = [1, 1, 2, 4, 2, 2, 0, 3];
 
 const CELL_MARK = 0x07; // ends a table cell (and, on the TTP, a row)
+const FIELD_BEGIN = 0x13; // a field begins; its code (suppressed) follows
+const FIELD_SEPARATOR = 0x14; // the code ends; the cached result (kept) follows
+const FIELD_END = 0x15; // the field ends
 
 const MAX_TEXT = 1 << 24; // 16M-char guard against a crafted piece table
 
@@ -462,6 +465,11 @@ function buildParagraphs(
   let curProps: DocCharProps = {};
   let cp = 0;
   let lastFc = 0;
+  // Field nesting: a field is `0x13 code 0x14 result 0x15`; the code is dropped,
+  // the cached result kept. codeDepth counts fields currently inside their code
+  // portion (which may nest), so any text there is suppressed.
+  let fieldDepth = 0;
+  let codeDepth = 0;
 
   const flushRun = (): void => {
     if (cur.length > 0) {
@@ -494,6 +502,23 @@ function buildParagraphs(
         endParagraph(fc, code === CELL_MARK);
         continue;
       }
+      // Field delimiters: enter the code (suppress), reach the separator (the
+      // result follows, kept), or end the field. The markers themselves are dropped.
+      if (code === FIELD_BEGIN) {
+        fieldDepth++;
+        codeDepth++;
+        continue;
+      }
+      if (code === FIELD_SEPARATOR) {
+        if (codeDepth > 0) codeDepth--;
+        continue;
+      }
+      if (code === FIELD_END) {
+        if (fieldDepth > 0) fieldDepth--;
+        if (codeDepth > fieldDepth) codeDepth = fieldDepth; // a field with no separator
+        continue;
+      }
+      if (codeDepth > 0) continue; // inside a field's code — suppress everything
       // A picture occupies a special 0x01 character whose CHPX points (via
       // sprmCPicLocation) at a PICF in the Data stream.
       if (code === PIC_CHAR) {

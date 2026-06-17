@@ -17,6 +17,9 @@ import { Ream } from '@/core/converter/ream';
 
 const CM = String.fromCharCode(0x07); // table cell mark
 const PIC = String.fromCharCode(0x01); // picture placeholder char
+const F13 = String.fromCharCode(0x13); // field begin
+const F14 = String.fromCharCode(0x14); // field separator
+const F15 = String.fromCharCode(0x15); // field end
 // The smallest image the decoder accepts — a 1×1 transparent PNG.
 const PNG_1x1 = Uint8Array.from(
   Buffer.from(
@@ -232,6 +235,27 @@ describe('doc reader (DOC-1)', () => {
       }),
     ).doc;
     expect(doc.body.map((el) => el.kind)).toEqual(['paragraph', 'table', 'paragraph']);
+  });
+
+  it('suppresses field codes and keeps the cached result (DOC-6)', () => {
+    // "Page {PAGE→1} of {NUMPAGES→3}" — the codes are dropped, the results kept.
+    const doc = readDoc(
+      buildDoc([
+        {
+          text: `Page ${F13} PAGE ${F14}1${F15} of ${F13}NUMPAGES${F14}3${F15}\r`,
+          compressed: false,
+        },
+      ]),
+    ).doc;
+    expect(paragraphTexts(doc)).toEqual(['Page 1 of 3']);
+  });
+
+  it('suppresses the whole code of a nested field', () => {
+    // An outer field whose code contains a nested field; only the outer result shows.
+    const doc = readDoc(
+      buildDoc([{ text: `${F13}IF ${F13}A${F14}B${F15} ${F14}RESULT${F15}\r`, compressed: false }]),
+    ).doc;
+    expect(paragraphTexts(doc)).toEqual(['RESULT']);
   });
 
   it('reads an inline picture into an image block (DOC-5)', () => {
