@@ -226,10 +226,13 @@ charts — and is byte-stable across a read↔write loop.
 
 - **Legacy `.ppt`** (the binary PowerPoint OLE/CFB format) — not read yet; re-save
   as `.pptx`. (Legacy **`.xls`** — BIFF8 — and **`.doc`** — Word 97–2003 — _are_
-  read; see SpreadsheetML / WordprocessingML above. The `.doc` reader surfaces the
-  document text with run / paragraph formatting and tables; images and the rest of
-  the structure are a later wave. The shared CFB container reader (`src/core/ole`)
-  is the keystone all three reuse.)
+  read; see SpreadsheetML / WordprocessingML above. The shared CFB container reader
+  (`src/core/ole`) is the keystone all three reuse.)
+- **The legacy `.doc` reader does not yet read** (re-save as `.docx` for these):
+  embedded images, headers/footers, lists / numbering, fields, and table cell
+  widths / borders / vertical merges. Its document text, run formatting
+  (bold/italic/underline/size), paragraph formatting (alignment/indent/spacing)
+  and table grids _are_ read.
 - **Byte-for-byte visual reproduction of another renderer.** `layoutProfile` plus the
   metric-compatible substitutes get a target tool's page geometry close — without its
   private font metrics — but _pixel-identical_ output is a non-goal: that would need the
