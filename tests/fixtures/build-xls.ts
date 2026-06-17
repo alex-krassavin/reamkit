@@ -381,6 +381,46 @@ export function chartRecords(opts: {
   return out;
 }
 
+// MSODrawing (0x00EC) with non-picture shapes — each an SpContainer carrying an
+// Sp record (instance = shape type), an optional fill colour, a cell anchor and an
+// optional ClientTextbox marker (XLS-7).
+export function msoDrawingShapesRec(
+  shapes: ReadonlyArray<{
+    shapeType: number;
+    hasText?: boolean;
+    fillRgb?: [number, number, number];
+  }>,
+): Uint8Array {
+  const sps = shapes.map((s) => {
+    const children: Array<Uint8Array> = [escher(2, s.shapeType, 0xf00a, new Uint8Array(8))]; // Sp
+    if (s.fillRgb) {
+      const d = new Uint8Array(6);
+      const v = new DataView(d.buffer);
+      v.setUint16(0, 0x0181, true); // fillColor property id
+      v.setUint32(2, (s.fillRgb[0] | (s.fillRgb[1] << 8) | (s.fillRgb[2] << 16)) >>> 0, true);
+      children.push(escher(3, 1, 0xf00b, d)); // OPT, 1 property
+    }
+    const anc = new Uint8Array(18);
+    const av = new DataView(anc.buffer);
+    av.setUint16(10, 2, true); // col2
+    av.setUint16(14, 3, true); // row2
+    children.push(escher(0, 0, 0xf010, anc)); // ClientAnchor
+    if (s.hasText) children.push(escher(0, 0, 0xf00d, new Uint8Array(0))); // ClientTextbox
+    return escher(0xf, 0, 0xf004, concat(children)); // SpContainer
+  });
+  return rec(0x00ec, escher(0xf, 0, 0xf003, concat(sps))); // SpgrContainer
+}
+
+// A TXO (0x01B6) text-object record + its CONTINUE record carrying the text.
+export function txoRecs(text: string): Array<Uint8Array> {
+  const td = new Uint8Array(18);
+  new DataView(td.buffer).setUint16(10, text.length, true); // cchText
+  const chars = ascii(text);
+  const cont = new Uint8Array(1 + chars.length); // [grbit=compressed][chars]
+  cont.set(chars, 1);
+  return [rec(0x01b6, td), rec(0x003c, cont)];
+}
+
 export interface XlsSheetInput {
   readonly name: string;
   readonly records: ReadonlyArray<Uint8Array>;

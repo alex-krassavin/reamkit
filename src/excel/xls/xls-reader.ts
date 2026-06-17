@@ -2,7 +2,8 @@
 // workbook (an OLE2/CFB container holding a `Workbook` stream) and reads it into
 // the same SheetDoc the OOXML xlsx reader produces, so the whole render pipeline
 // (projection → PDF/SVG/HTML, and even re-write to .xlsx) works on a 1997–2003
-// `.xls`. Styling and embedded drawings are not read yet — recorded as losses.
+// `.xls`. Cell data, styling, images, charts and drawing shapes are all read; the
+// remaining gap is the secondary sheet features (recorded as a loss).
 
 import type { DocumentReader } from '@/core/ir/adapters';
 import type { Loss } from '@/core/ir';
@@ -25,15 +26,16 @@ function looksLikeXls(bytes: Uint8Array): boolean {
   }
 }
 
-// What the BIFF8 reader does not surface yet — reported so a caller's loss report
-// is honest about the gap. Cell content, styling (fonts/fills/borders/number
-// formats/alignment), embedded pictures and charts are read; freeform drawing
-// shapes (autoshapes, text boxes) are not.
+// The visual content of a `.xls` — cell values, styling, images, charts and
+// drawing shapes — is read; what remains are the secondary sheet features, which
+// have BIFF records the reader does not yet parse. Reported so a caller's loss
+// report is honest about the gap.
 const XLS_LOSSES: ReadonlyArray<Loss> = [
   {
-    severity: 'dropped',
-    feature: FEATURES.shapes,
-    detail: 'legacy .xls drawing shapes (autoshapes, text boxes) are not read',
+    severity: 'degraded',
+    feature: FEATURES.cellFormatting,
+    detail:
+      "legacy .xls secondary features (conditional formatting, comments, hyperlinks, data validation, defined names, the page-setup print model) are not read; the sheet's cell data, styling, images, charts and drawing shapes are",
   },
 ];
 

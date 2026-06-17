@@ -11,7 +11,7 @@
 // from the FONT/FORMAT/PALETTE/XF records (biff-styles) into the same XlsxStyles
 // model the OOXML path uses. Embedded charts/drawings are not read yet.
 
-import type { Chart } from '@/core/document-model';
+import type { BodyElement, Chart, ShapeBlock } from '@/core/document-model';
 import type { Sheet, SheetChartRef, SheetDoc, SheetImageRef } from '@/core/ir/sheet';
 import type {
   ColumnWidth,
@@ -19,12 +19,12 @@ import type {
   ParsedWorksheet,
   WorksheetCell,
 } from '@/core/spreadsheet-model';
-import type { EscherAnchor } from '@/excel/xls/escher';
+import type { EscherAnchor, EscherShape } from '@/excel/xls/escher';
 
-import { ResourceStore } from '@/core/ir';
+import { ResourceStore, pt } from '@/core/ir';
 import { parseBiffChart } from '@/excel/xls/biff-chart';
 import { parseBiffStyles } from '@/excel/xls/biff-styles';
-import { parseBlipStore, parseSheetPictures } from '@/excel/xls/escher';
+import { parseBlipStore, parseSheetPictures, parseSheetShapes } from '@/excel/xls/escher';
 import { openCfb } from '@/core/ole/cfb';
 
 // Record type numbers (MS-XLS §2.3).
@@ -49,6 +49,7 @@ const REC = {
   COLINFO: 0x007d,
   MSODRAWINGGROUP: 0x00eb, // workbook-globals Escher BLIP store
   MSODRAWING: 0x00ec, // per-sheet Escher shapes
+  TXO: 0x01b6, // text object (text-box content)
 } as const;
 
 // Bombs / corruption guards.
@@ -116,7 +117,7 @@ export function readXlsToSheetDoc(xls: Uint8Array): SheetDoc {
   for (const bs of boundSheets) {
     if (bs.type !== 0) continue; // 0 = worksheet (skip chart/macro sheets)
     if (bs.offset + 4 > wb.length) continue;
-    const { grid, images, charts } = readSheet(
+    const { grid, images, charts, shapes } = readSheet(
       wb,
       view,
       bs.offset,
@@ -130,6 +131,7 @@ export function readXlsToSheetDoc(xls: Uint8Array): SheetDoc {
       grid,
       ...(images.length > 0 ? { images } : {}),
       ...(charts.length > 0 ? { charts } : {}),
+      ...(shapes.length > 0 ? { shapes } : {}),
     });
   }
   if (sheets.length === 0) throw new Error('.xls has no worksheets');
@@ -218,7 +220,12 @@ function readSheet(
   resources: ResourceStore,
   sharedStrings: ReadonlyArray<string>,
   chartData: Map<string, Chart>,
-): { grid: ParsedWorksheet; images: Array<SheetImageRef>; charts: Array<SheetChartRef> } {
+): {
+  grid: ParsedWorksheet;
+  images: Array<SheetImageRef>;
+  charts: Array<SheetChartRef>;
+  shapes: Array<ShapeBlock>;
+} {
   const records = readSubstream(wb, view, start);
   const cells: Array<WorksheetCell> = [];
   const merges: Array<MergedRange> = [];
@@ -337,7 +344,93 @@ function readSheet(
     }
   }
 
-  return { grid, images, charts };
+  // Drawing shapes (autoshapes, text boxes): the Escher non-picture shapes, with
+  // each text box's text from its TXO record, associated by order (XLS-7).
+  const shapes =
+    drawing.length > 0 ? buildShapes(parseSheetShapes(drawing), gatherTxoTexts(records)) : [];
+
+  return { grid, images, charts, shapes };
+}
+
+// A sheet's TXO (text-object) record texts, in order — the cch is in the TXO
+// record, the characters in the immediately-following CONTINUE record.
+function gatherTxoTexts(recs: ReadonlyArray<BiffRecord>): Array<string> {
+  const out: Array<string> = [];
+  for (let i = 0; i < recs.length; i++) {
+    if (recs[i]!.type !== REC.TXO) continue;
+    const cch = readU16(recs[i]!.data, 10);
+    const next = recs[i + 1];
+    if (cch > 0 && next && next.type === REC.CONTINUE && next.data.length > 0) {
+      out.push(decodeChars(next.data, 1, cch, (next.data[0]! & 0x01) !== 0));
+    } else {
+      out.push('');
+    }
+  }
+  return out;
+}
+
+// Escher shapes → ShapeBlocks: preset geometry from the shape type, the
+// best-effort fill/line colours, the anchor size, and the text box's text (from
+// the matching TXO, by order). Text-bearing shapes consume the TXO texts in turn.
+function buildShapes(
+  escherShapes: ReadonlyArray<EscherShape>,
+  txoTexts: ReadonlyArray<string>,
+): Array<ShapeBlock> {
+  const out: Array<ShapeBlock> = [];
+  let textIdx = 0;
+  for (const s of escherShapes) {
+    const text = s.hasText ? (txoTexts[textIdx++] ?? '') : '';
+    const { widthPt, heightPt } = anchorSize(s.anchor);
+    out.push({
+      width: pt(widthPt),
+      height: pt(heightPt),
+      geometry: { kind: 'preset', preset: shapePreset(s.shapeType) },
+      fill: s.fillColorHex ? { kind: 'solid', colorHex: s.fillColorHex } : { kind: 'none' },
+      ...(s.lineColorHex ? { line: { colorHex: s.lineColorHex } } : {}),
+      ...(text.length > 0
+        ? {
+            text: {
+              content: [
+                {
+                  kind: 'paragraph',
+                  paragraph: { properties: {}, runs: [{ text, properties: {} }] },
+                },
+              ] satisfies Array<BodyElement>,
+            },
+          }
+        : {}),
+      paragraphProperties: {},
+    });
+  }
+  return out;
+}
+
+// §2.5.* MSOSPT shape type → a DrawingML preset-geometry name the renderer draws.
+function shapePreset(type: number): string {
+  switch (type) {
+    case 1:
+      return 'rect';
+    case 2:
+      return 'roundRect';
+    case 3:
+      return 'ellipse';
+    case 4:
+      return 'diamond';
+    case 5:
+      return 'triangle';
+    case 6:
+      return 'rtTriangle';
+    case 7:
+      return 'parallelogram';
+    case 8:
+      return 'trapezoid';
+    case 9:
+      return 'hexagon';
+    case 20:
+      return 'line';
+    default:
+      return 'rect'; // text boxes (202) and the long tail render as a rectangle
+  }
 }
 
 // Escher picture shapes → SheetImageRefs: pull each shape's BLIP bytes into the

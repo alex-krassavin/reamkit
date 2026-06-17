@@ -82,9 +82,13 @@ charts — and is byte-stable across a read↔write loop.
   strings, merges, column widths, the 1904 flag), **styling** — fonts, fills,
   borders, number formats and alignment from the FONT/FORMAT/XF records, with colours
   resolved through the BIFF colour palette — **embedded pictures** (from the
-  Office-Drawing/Escher BLIP store) and **embedded charts** (the BIFF chart substream,
-  plotted from the worksheet cells its AI records reference) are read. Freeform
-  drawing shapes (autoshapes, text boxes) are not yet.
+  Office-Drawing/Escher BLIP store), **embedded charts** (the BIFF chart substream,
+  plotted from the worksheet cells its AI records reference) and **drawing shapes**
+  (autoshapes + text boxes, from the Escher shape records and their TXO text) are
+  read. What remains for `.xls` are the secondary sheet features — conditional
+  formatting, comments, hyperlinks, data validation, defined names and the
+  page-setup print model — which the OOXML `.xlsx` reader handles but the BIFF
+  reader does not yet.
 - The print model — gridline suppression, print area, fit-to-page scaling, repeated
   print titles, manual page breaks, horizontal/vertical centering, and **column-band
   pagination**: a sheet wider than the page (and not fit-to-width) splits across

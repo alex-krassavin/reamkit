@@ -115,6 +115,76 @@ function collectPictures(d: Uint8Array, out: Array<EscherPicture>, depth: number
   }
 }
 
+// A non-picture drawing shape: its preset type (MSOSPT), cell anchor, fill/line
+// colours (when literal RGB) and whether it carries a text box.
+export interface EscherShape {
+  readonly shapeType: number;
+  readonly hasText: boolean;
+  readonly anchor?: EscherAnchor;
+  readonly fillColorHex?: string;
+  readonly lineColorHex?: string;
+}
+
+const FBT_SP = 0xf00a;
+const FBT_CLIENT_TEXTBOX = 0xf00d;
+const PROP_FILL_COLOR = 0x0181;
+const PROP_LINE_COLOR = 0x01c0;
+
+// The non-picture shapes (autoshapes, text boxes) in a sheet's MSODrawing — every
+// SpContainer that is NOT a picture (no `pib`). Pictures are handled separately.
+export function parseSheetShapes(msoDrawing: Uint8Array): Array<EscherShape> {
+  const out: Array<EscherShape> = [];
+  collectShapes(msoDrawing, out, 0);
+  return out;
+}
+
+function collectShapes(d: Uint8Array, out: Array<EscherShape>, depth: number): void {
+  if (depth > MAX_DEPTH) return;
+  for (const r of records(d)) {
+    if (r.type === FBT_SP_CONTAINER) {
+      let shapeType = 0;
+      let hasText = false;
+      let pib: number | undefined;
+      let anchor: EscherAnchor | undefined;
+      let fill: string | undefined;
+      let line: string | undefined;
+      for (const child of records(r.data)) {
+        if (child.type === FBT_SP)
+          shapeType = child.instance; // Sp instance = shape type
+        else if (child.type === FBT_OPT) {
+          pib = optProperty(child.data, child.instance, PROP_PIB);
+          fill = optColor(child.data, child.instance, PROP_FILL_COLOR);
+          line = optColor(child.data, child.instance, PROP_LINE_COLOR);
+        } else if (child.type === FBT_CLIENT_ANCHOR) anchor = parseAnchor(child.data);
+        else if (child.type === FBT_CLIENT_TEXTBOX) hasText = true;
+      }
+      if (pib === undefined && shapeType !== 0) {
+        out.push({
+          shapeType,
+          hasText,
+          ...(anchor ? { anchor } : {}),
+          ...(fill ? { fillColorHex: fill } : {}),
+          ...(line ? { lineColorHex: line } : {}),
+        });
+      }
+    } else if (r.isContainer) {
+      collectShapes(r.data, out, depth + 1);
+    }
+  }
+}
+
+// An OPT colour property → 6-hex RGB, but only when it is a literal RGB (the
+// flags byte is 0). Palette / scheme / system colours are skipped (best-effort).
+function optColor(d: Uint8Array, count: number, wantId: number): string | undefined {
+  const v = optProperty(d, count, wantId);
+  if (v === undefined || v >>> 24 !== 0) return undefined;
+  return `${hex2(v & 0xff)}${hex2((v >> 8) & 0xff)}${hex2((v >> 16) & 0xff)}`;
+}
+
+function hex2(n: number): string {
+  return n.toString(16).padStart(2, '0').toUpperCase();
+}
+
 // §2.3.7.2 OfficeArtFOPT — `instance` is the property count; each entry is a
 // 2-byte id (low 14 bits) + 4-byte value. Returns the simple value of `wantId`.
 function optProperty(d: Uint8Array, count: number, wantId: number): number | undefined {
