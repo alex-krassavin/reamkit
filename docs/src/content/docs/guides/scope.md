@@ -9,8 +9,10 @@ doesn't yet.
 
 ## Implemented
 
-**Input** — Ream parses **Word (`.docx`)**, **Excel (`.xlsx`)**, **PowerPoint
-(`.pptx`)** and **PDF**, sniffed from the bytes. A **PowerPoint** deck becomes
+**Input** — Ream parses **Word (`.docx` and legacy `.doc`)**, **Excel (`.xlsx`
+and legacy `.xls`)**, **PowerPoint (`.pptx`)** and **PDF**, sniffed from the bytes.
+The legacy binary `.doc` / `.xls` (the OLE2/CFB formats) are read through a shared
+container reader — see WordprocessingML / SpreadsheetML below. A **PowerPoint** deck becomes
 one page per slide at the deck size, its shapes read as positioned content: text
 boxes (run formatting, alignment, vertical anchor, bullets, indents),
 layout/master placeholders, pictures, shapes (geometry/fill/stroke/gradient),
@@ -237,11 +239,11 @@ charts — and is byte-stable across a read↔write loop.
   read; see SpreadsheetML / WordprocessingML above. The shared CFB container reader
   (`src/core/ole`) is the keystone all three reuse.)
 - **The legacy `.doc` reader does not yet read** (re-save as `.docx` for these):
-  the exact list number format (`LST`/`LVL` tables — list items render as a generic
-  indented bullet) and table cell borders / vertical merges. Its document text, run
-  formatting (bold/italic/underline/size), paragraph formatting
-  (alignment/indent/spacing), tables (with per-column widths), inline images,
-  fields (cached result), the section's headers/footers and list items _are_ read.
+  the exact list **number format** (the `LST` / `LVL` tables — list items render as a
+  generic indented bullet, so a numbered list shows bullets) and table cell
+  **borders / vertical merges**. Everything else — text, run and paragraph
+  formatting, tables with column widths, inline images, fields, and the section's
+  headers/footers — is read (see WordprocessingML above).
 - **Byte-for-byte visual reproduction of another renderer.** `layoutProfile` plus the
   metric-compatible substitutes get a target tool's page geometry close — without its
   private font metrics — but _pixel-identical_ output is a non-goal: that would need the
