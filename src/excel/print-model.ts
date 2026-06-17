@@ -49,7 +49,7 @@ import type {
   XlsxStyles,
 } from '@/excel';
 import type { CellConditionalFormatter, CfOverride } from '@/excel/conditional-format';
-import type { SheetSlicer } from '@/core/ir/sheet';
+import type { SheetHyperlink, SheetSlicer } from '@/core/ir/sheet';
 import { eighthPtToPt, halfPtToPt, pt, twipsToPt } from '@/core/ir';
 import { applyNumberFormat, parseAreaRef, parseTitleRowRange } from '@/excel';
 import { bandedTables, computeColumnBands } from '@/excel/column-bands';
@@ -240,6 +240,9 @@ interface PrintModelOptions {
   // E-SHEET SC2 tail (TC3) — sheet name → grid, for sparklines whose data range
   // is sheet-qualified (Sheet2!A1:C1). Absent ⇒ same-sheet resolution only.
   readonly sheetGrids?: ReadonlyMap<string, ParsedWorksheet>;
+  // E-SHEET W3 — cell hyperlinks resolved to external URLs; a covered cell's run
+  // takes the URL as its href (PDF /Link + HTML <a>). Absent ⇒ no cell links.
+  readonly hyperlinks?: ReadonlyArray<SheetHyperlink>;
 }
 
 export function worksheetToBody(
@@ -528,6 +531,12 @@ export function worksheetToBody(
       // A data-validation `list` cell paints a dropdown affordance (E-SHEET SV1).
       const dropdown = dropdownRanges.length > 0 && rangesCover(dropdownRanges, absR, absC);
 
+      // A cell covered by an external hyperlink (E-SHEET W3) → its run takes the URL.
+      const href =
+        print.hyperlinks && print.hyperlinks.length > 0
+          ? hyperlinkUrlAt(print.hyperlinks, absR, absC)
+          : undefined;
+
       // Clamp a merge's horizontal span to the in-window columns so a merge
       // straddling the print-area edge cannot exceed the grid.
       const visibleEndCol = merge ? Math.min(merge.endColumn, colWindowEnd) : 0;
@@ -554,7 +563,8 @@ export function worksheetToBody(
             kind: 'paragraph',
             paragraph: {
               properties: paragraphProps,
-              runs: text.length > 0 ? [{ text, properties: runProps }] : [],
+              runs:
+                text.length > 0 ? [{ text, properties: runProps, ...(href ? { href } : {}) }] : [],
             },
           },
         ],
@@ -842,6 +852,21 @@ function rangesCover(ranges: ReadonlyArray<MergedRange>, row: number, col: numbe
     }
   }
   return false;
+}
+
+// §18.3.1.47 — the URL of the first hyperlink whose range covers the cell (W3).
+function hyperlinkUrlAt(
+  links: ReadonlyArray<SheetHyperlink>,
+  row: number,
+  col: number,
+): string | undefined {
+  for (const l of links) {
+    const r = l.ref;
+    if (row >= r.startRow && row <= r.endRow && col >= r.startColumn && col <= r.endColumn) {
+      return l.url;
+    }
+  }
+  return undefined;
 }
 
 // E-SHEET SC2 — resolve the sheet's sparklines to a host-cell → value-series map.

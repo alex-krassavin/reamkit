@@ -101,6 +101,9 @@ export interface ParsedWorksheet {
   // §18.3.1.32 <dataValidations> — per-range input constraints (E-SHEET SV1). A
   // `list` validation paints an in-cell dropdown affordance; all types round-trip.
   readonly dataValidations?: ReadonlyArray<DataValidation>;
+  // §18.3.1.47 <hyperlinks> — raw cell hyperlinks (E-SHEET W3). The reader
+  // resolves each relId to an external URL; render-only (not written back).
+  readonly hyperlinks?: ReadonlyArray<HyperlinkRef>;
   // x14 extension <sparklineGroups> in extLst — per-cell mini charts (E-SHEET SC2).
   readonly sparklines?: ReadonlyArray<ParsedSparkline>;
   // §18.3.1.95 <tableParts> — relationship ids of the sheet's table parts. The
@@ -375,6 +378,18 @@ export type CfRule = CfRuleCellIs | CfRuleColorScale | CfRuleDataBar | CfRuleIco
 export interface ConditionalFormat {
   readonly ranges: ReadonlyArray<MergedRange>;
   readonly rules: ReadonlyArray<CfRule>;
+}
+
+// §18.3.1.47 <hyperlink ref r:id location display tooltip> — a cell (or range)
+// hyperlink (E-SHEET W3). `relId` resolves to an external URL through the
+// worksheet relationships; `location` is an in-workbook target (Sheet!cell). The
+// raw form rides on the grid; the reader resolves it to a SheetHyperlink.
+export interface HyperlinkRef {
+  readonly ref: string;
+  readonly relId?: string;
+  readonly location?: string;
+  readonly display?: string;
+  readonly tooltip?: string;
 }
 
 // §18.18.18 ST_DataValidationType — the constraint a <dataValidation> enforces.

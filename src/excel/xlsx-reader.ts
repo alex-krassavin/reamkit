@@ -13,6 +13,7 @@ import type {
   Sheet,
   SheetChartRef,
   SheetDoc,
+  SheetHyperlink,
   SheetImageRef,
   SheetSlicer,
   SheetSlicerItem,
@@ -31,6 +32,7 @@ import { FEATURES, ResourceStore } from '@/core/ir';
 import { OpcPackage, isOoxmlRel, parseCoreProperties } from '@/core/opc';
 import {
   EMPTY_XLSX_STYLES,
+  parseAreaRef,
   parseSharedStrings,
   parseWorkbook,
   parseWorksheet,
@@ -222,6 +224,31 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
       if (resolvedPivots.length > 0) pivotTables = resolvedPivots;
     }
 
+    // §18.3.1.47 cell hyperlinks (W3): resolve each relId to its external URL via
+    // the worksheet rels; location-only (in-workbook) links carry no URL.
+    let hyperlinks: Array<SheetHyperlink> | undefined;
+    if (worksheet.hyperlinks && worksheet.hyperlinks.length > 0) {
+      const wsRels = pkg.getPartRelationships(resolved.path);
+      const resolvedLinks: Array<SheetHyperlink> = [];
+      for (const h of worksheet.hyperlinks) {
+        if (h.relId === undefined) continue; // in-workbook location link → no URL
+        const rel = wsRels.find((r) => r.id === h.relId);
+        if (!rel || rel.targetMode !== 'External' || !rel.target) continue;
+        const area = parseAreaRef(h.ref);
+        if (!area) continue;
+        resolvedLinks.push({
+          ref: {
+            startColumn: area.startColumn,
+            startRow: area.startRow,
+            endColumn: area.endColumn,
+            endRow: area.endRow,
+          },
+          url: rel.target,
+        });
+      }
+      if (resolvedLinks.length > 0) hyperlinks = resolvedLinks;
+    }
+
     const grid =
       tables || pivotTables
         ? { ...worksheet, ...(tables ? { tables } : {}), ...(pivotTables ? { pivotTables } : {}) }
@@ -232,6 +259,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
       ...(charts.length > 0 ? { charts } : {}),
       ...(images.length > 0 ? { images } : {}),
       ...(shapes ? { shapes } : {}),
+      ...(hyperlinks ? { hyperlinks } : {}),
     });
   }
 

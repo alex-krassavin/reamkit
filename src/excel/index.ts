@@ -12,6 +12,7 @@ export type {
   ColumnWidth,
   DataValidation,
   DataValidationType,
+  HyperlinkRef,
   ExcelTable,
   MergedRange,
   ParsedWorksheet,

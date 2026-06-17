@@ -54,6 +54,7 @@ export function projectSheetDoc(sheet: SheetDoc): FlowDoc {
         ...(titleRows ? { titleRows } : {}),
         gridLines,
         sheetGrids,
+        ...(ws.hyperlinks ? { hyperlinks: ws.hyperlinks } : {}),
       }),
     );
 

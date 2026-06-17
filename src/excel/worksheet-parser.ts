@@ -18,6 +18,7 @@ import type {
   ConditionalFormat,
   DataValidation,
   DataValidationType,
+  HyperlinkRef,
   MergedRange,
   ParsedSparkline,
   ParsedWorksheet,
@@ -80,6 +81,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
       : undefined;
   const conditionalFormats = parseConditionalFormatting(wsObj);
   const dataValidations = parseDataValidations(wsObj);
+  const hyperlinks = parseHyperlinks(wsObj);
   const sparklines = parseSparklines(wsObj);
   const tablePartRelIds = parseTableParts(wsObj);
   const printModel = {
@@ -93,6 +95,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
     ...(drawingRelId !== undefined ? { drawingRelId } : {}),
     ...(conditionalFormats.length > 0 ? { conditionalFormats } : {}),
     ...(dataValidations.length > 0 ? { dataValidations } : {}),
+    ...(hyperlinks.length > 0 ? { hyperlinks } : {}),
     ...(sparklines.length > 0 ? { sparklines } : {}),
     ...(tablePartRelIds.length > 0 ? { tablePartRelIds } : {}),
   };
@@ -452,6 +455,35 @@ function parseDataValidations(ws: Record<string, unknown>): Array<DataValidation
 function boolAttr(obj: Record<string, unknown>, key: string): boolean {
   const raw = strAttr(obj, key);
   return raw === '1' || raw === 'true';
+}
+
+// §18.3.1.47 <hyperlinks><hyperlink ref r:id location display tooltip> — raw cell
+// hyperlinks (E-SHEET W3). removeNSPrefix turns r:id into id (mirrors the drawing
+// relId); the reader resolves relId → an external URL. A hyperlink with neither a
+// relId nor a location carries no target and is dropped.
+function parseHyperlinks(ws: Record<string, unknown>): Array<HyperlinkRef> {
+  const node = asObjectNode(ws['hyperlinks']);
+  if (!node) return [];
+  const out: Array<HyperlinkRef> = [];
+  for (const h of toArray(node['hyperlink'])) {
+    const obj = asObjectNode(h);
+    if (!obj) continue;
+    const ref = strAttr(obj, 'ref');
+    if (!ref) continue;
+    const relId = strAttr(obj, 'id');
+    const location = strAttr(obj, 'location');
+    if (relId === undefined && location === undefined) continue;
+    const display = strAttr(obj, 'display');
+    const tooltip = strAttr(obj, 'tooltip');
+    out.push({
+      ref,
+      ...(relId !== undefined ? { relId } : {}),
+      ...(location !== undefined ? { location } : {}),
+      ...(display !== undefined ? { display } : {}),
+      ...(tooltip !== undefined ? { tooltip } : {}),
+    });
+  }
+  return out;
 }
 
 // sqref is whitespace-separated areas ("A1:A10 C1:C5"); each resolves to a box.

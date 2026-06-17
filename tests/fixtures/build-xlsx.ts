@@ -135,6 +135,14 @@ export interface XlsxBuilderOptions {
     readonly preset?: string;
     readonly anchor?: { from: [number, number]; to: [number, number] };
   };
+  /** Attach cell hyperlinks to the FIRST sheet (E-SHEET W3). A `url` is emitted as
+   *  an external `r:id` relationship; a `location` is an in-workbook target. */
+  readonly hyperlinks?: ReadonlyArray<{
+    readonly ref: string;
+    readonly url?: string;
+    readonly location?: string;
+    readonly tooltip?: string;
+  }>;
   /** Attach Excel table parts to the FIRST sheet (E-SHEET SC3). */
   readonly tables?: ReadonlyArray<{
     readonly ref: string;
@@ -624,6 +632,38 @@ ${chartRels}</Relationships>`,
   </xdr:twoCellAnchor>
 </xdr:wsDr>`,
     );
+  }
+  if (options.hyperlinks && options.hyperlinks.length > 0 && sheetParts.length > 0) {
+    const first = sheetParts[0]!;
+    const rels: Array<string> = [];
+    const linkTags = options.hyperlinks.map((h, i) => {
+      const tip = h.tooltip ? ` tooltip="${escapeXml(h.tooltip)}"` : '';
+      if (h.url !== undefined) {
+        const rid = `rIdHl${i + 1}`;
+        rels.push(
+          `  <Relationship Id="${rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${escapeXml(h.url)}" TargetMode="External"/>`,
+        );
+        return `<hyperlink ref="${escapeXml(h.ref)}" r:id="${rid}"${tip}/>`;
+      }
+      const loc = h.location ? ` location="${escapeXml(h.location)}"` : '';
+      return `<hyperlink ref="${escapeXml(h.ref)}"${loc}${tip}/>`;
+    });
+    first.xml = first.xml.replace(
+      '</worksheet>',
+      `<hyperlinks>${linkTags.join('')}</hyperlinks></worksheet>`,
+    );
+    if (rels.length > 0) {
+      const relsPath = `xl/worksheets/_rels/${first.fileName}.rels`;
+      const existing = entries[relsPath] ? decoder.decode(entries[relsPath]) : undefined;
+      entries[relsPath] = encoder.encode(
+        existing
+          ? existing.replace('</Relationships>', `${rels.join('\n')}\n</Relationships>`)
+          : `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+${rels.join('\n')}
+</Relationships>`,
+      );
+    }
   }
   if (options.tables && options.tables.length > 0 && sheetParts.length > 0) {
     const first = sheetParts[0]!;

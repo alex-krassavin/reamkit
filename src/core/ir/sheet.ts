@@ -10,7 +10,12 @@
 // (fonts, PDF/A profile, …) are NOT part of it — they parameterize transforms.
 
 import type { Chart, DocumentInfo, ShapeBlock } from '@/core/document-model';
-import type { DefinedName, ParsedWorksheet, XlsxStyles } from '@/core/spreadsheet-model';
+import type {
+  DefinedName,
+  MergedRange,
+  ParsedWorksheet,
+  XlsxStyles,
+} from '@/core/spreadsheet-model';
 import type { ResourceId, ResourceStore } from '@/core/ir/resources';
 
 // §20.5 SpreadsheetDrawingML — a chart frame anchored over a sheet's grid,
@@ -54,6 +59,13 @@ export interface SheetSlicer {
   readonly selectedTextHex?: string;
 }
 
+// §18.3.1.47 — a cell (or range) hyperlink resolved to an external URL (E-SHEET
+// W3). The projection stamps run.href on every cell the range covers.
+export interface SheetHyperlink {
+  readonly ref: MergedRange;
+  readonly url: string;
+}
+
 export interface Sheet {
   readonly name: string;
   // The grid + per-sheet geometry exactly as parsed: cells, columns, rows,
@@ -65,6 +77,9 @@ export interface Sheet {
   readonly images?: ReadonlyArray<SheetImageRef>;
   // Drawing shapes on this sheet (E-SHEET W2), fully resolved + anchor-ordered.
   readonly shapes?: ReadonlyArray<ShapeBlock>;
+  // Cell hyperlinks resolved to external URLs (E-SHEET W3); the projection sets
+  // run.href on covered cells. In-workbook (location-only) links are not carried.
+  readonly hyperlinks?: ReadonlyArray<SheetHyperlink>;
   // Slicer panels on this sheet (E-SHEET SV2), rendered after the grid + charts.
   readonly slicers?: ReadonlyArray<SheetSlicer>;
 }

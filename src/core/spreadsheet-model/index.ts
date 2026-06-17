@@ -31,6 +31,7 @@ export type {
   ConditionalFormat,
   DataValidationType,
   DataValidation,
+  HyperlinkRef,
   SparklineKind,
   ParsedSparkline,
   ExcelTable,
