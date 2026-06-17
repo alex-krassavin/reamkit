@@ -3,6 +3,56 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.14.0
+
+### Added
+
+- **Excel sheet pictures and shapes (XLSX).** Pictures (`xdr:pic`) and shapes /
+  text boxes (`xdr:sp`) anchored to a worksheet's drawing render as blocks after
+  the grid, anchor-ordered, the way charts already do. A picture keeps its bytes
+  (re-encoded into the PDF image XObject / HTML data URI); a shape keeps its preset
+  or custom geometry, fill, outline and text body, reusing the DrawingML shape
+  readers (parsed a second time on the preserve-order tree, gated so chart- and
+  picture-only drawings don't pay for it). Render-only.
+- **Excel cell hyperlinks (XLSX).** A worksheet `<hyperlinks>` entry whose `r:id`
+  resolves to an external URL turns every covered cell into a clickable link — a PDF
+  `/Link` annotation and an HTML `<a>` (scheme-allowlisted). In-workbook
+  (location-only) links carry no URL and are skipped. Render-only.
+- **Excel header/footer text (XLSX).** `<headerFooter>` expands Excel's `&`-code
+  mini-language into the page margins: `&L`/`&C`/`&R` regions, `&P`/`&N` page-number
+  fields resolved per page, `&A` sheet name, `&B`/`&I` bold/italic; non-deterministic
+  or unsupported codes (date/time/file/path, font/size/colour selections) are
+  dropped. Each region becomes its own aligned paragraph.
+- **Excel conditional-format rule types (XLSX).** Beyond `cellIs` / `colorScale` /
+  `dataBar` / `iconSet`, the value- and text-driven families now resolve: `top10`
+  (top/bottom N or N %), `aboveAverage` (mean, optionally shifted by N standard
+  deviations), `duplicateValues` / `uniqueValues` (value frequency across the range —
+  numbers by value, text case-insensitively) and the text tests (`containsText` /
+  `notContainsText` / `beginsWith` / `endsWith`). They write back through
+  `convert('xlsx')`. `expression` (needs a formula engine) and `timePeriod` (clock-
+  relative — Ream's output is deterministic) stay a documented graceful loss.
+- **Excel cell-format details (XLSX).** **In-cell rich text** — a shared string built
+  from several `<r>` runs renders one run per `<r>`, each with its own bold / italic /
+  underline / colour / size / super- or sub-script. **Wrapped text** (`wrapText`)
+  keeps its full text and wraps to the cell, growing the row. **Non-solid fills**
+  (gray / hatch patterns) blend foreground over background to a representative solid,
+  and **gradient fills** are summarised to the mean of their stops. **Left indent**,
+  **diagonal cell borders** (up / down strokes), **text rotation** (rotated / vertical
+  cells render stacked top-to-bottom) and **shrink-to-fit** (the font scales down to
+  the column width) all render; the alignment + border attributes round-trip.
+- **Excel cell comments / notes (XLSX).** Legacy notes (`xl/comments`) and modern
+  threaded comments (`xl/threadedComments`, authors resolved through `xl/persons`) are
+  read and listed in a "Comments" section after the grid — a heading then one line per
+  comment, `<cell> — <author>: <text>` — mirroring Excel's "print comments at end of
+  sheet". The legacy VML note box is ignored; only the text + author surface.
+  Render-only.
+- **Excel form controls (XLSX).** Checkboxes, option buttons, spinners, scroll bars,
+  list / drop-downs and buttons (the worksheet's `<controls>`, each resolved to its
+  `ctrlProp` part for type and state) are listed in a "Form controls" section after
+  the grid, each with a type-appropriate affordance and its state (`[x]` / `[ ]` for a
+  checked box, `(o)` for an option button, the value for a spinner). ActiveX controls
+  are OLE binaries and remain a graceful loss. Render-only.
+
 ## 1.13.0
 
 ### Added
