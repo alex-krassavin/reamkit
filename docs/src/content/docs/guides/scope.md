@@ -10,9 +10,10 @@ doesn't yet.
 ## Implemented
 
 **Input** — Ream parses **Word (`.docx` and legacy `.doc`)**, **Excel (`.xlsx`
-and legacy `.xls`)**, **PowerPoint (`.pptx`)** and **PDF**, sniffed from the bytes.
-The legacy binary `.doc` / `.xls` (the OLE2/CFB formats) are read through a shared
-container reader — see WordprocessingML / SpreadsheetML below. A **PowerPoint** deck becomes
+and legacy `.xls`)**, **PowerPoint (`.pptx` and legacy `.ppt`)** and **PDF**, sniffed
+from the bytes. The legacy binary `.doc` / `.xls` / `.ppt` (the OLE2/CFB formats) are
+read through a shared container reader — see WordprocessingML / SpreadsheetML /
+PresentationML below. A **PowerPoint** deck becomes
 one page per slide at the deck size, its shapes read as positioned content: text
 boxes (run formatting, alignment, vertical anchor, bullets, indents),
 layout/master placeholders, pictures, shapes (geometry/fill/stroke/gradient),
@@ -205,6 +206,14 @@ charts — and is byte-stable across a read↔write loop.
 - **Theme** colours (`a:clrScheme`), slide/master backgrounds (`p:bg`) painted
   behind the content, and groups (`p:grpSp`) mapped through their child transform.
 - Run hyperlinks (`a:hlinkClick`) → clickable PDF annotations / HTML `<a>`.
+- **Legacy `.ppt`** (PowerPoint 97–2003) — the binary `PowerPoint Document` stream
+  inside the OLE2/CFB container, reached through the Current User → UserEditAtom →
+  PersistDirectoryAtom indirection. Each slide becomes one page at the deck size
+  (the DocumentAtom slide size, in master units); the text is read from the
+  TextChars / TextBytes atoms with run formatting (bold / italic / underline / size
+  / colour from the StyleTextPropAtom) and paragraph alignment / indent level, and
+  embedded images are pulled from the Pictures stream (OfficeArtBlip referenced by a
+  shape's `pib`). Per-shape placement and autoshapes are not read — see Not yet.
 
 **Graphics & math**
 - DrawingML shapes (preset and custom geometry, gradients, group shapes, theme colors).
@@ -234,10 +243,13 @@ charts — and is byte-stable across a read↔write loop.
 
 ## Not yet
 
-- **Legacy `.ppt`** (the binary PowerPoint OLE/CFB format) — not read yet; re-save
-  as `.pptx`. (Legacy **`.xls`** — BIFF8 — and **`.doc`** — Word 97–2003 — _are_
-  read; see SpreadsheetML / WordprocessingML above. The shared CFB container reader
-  (`src/core/ole`) is the keystone all three reuse.)
+- **The legacy `.ppt` reader does not yet read** (re-save as `.pptx` for these):
+  per-shape **placement** — each slide's text and images are laid out in reading
+  order down the page rather than positioned at their slide rectangles — and
+  decorative **autoshapes** (the lines / boxes / connectors in the drawing). The
+  slide text with run and paragraph formatting, and embedded images, _are_ read
+  (see PresentationML above). All three legacy binary formats (`.doc` / `.xls` /
+  `.ppt`) are read through the shared CFB container reader (`src/core/ole`).
 - **The legacy `.doc` reader does not yet read** (re-save as `.docx` for these):
   the exact list **number format** (the `LST` / `LVL` tables — list items render as a
   generic indented bullet, so a numbered list shows bullets) and table cell
