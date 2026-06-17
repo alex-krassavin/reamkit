@@ -19,7 +19,27 @@ const parser = new XMLParser({
   removeNSPrefix: true,
 });
 
+// §18.5.1.1 <autoFilter><filterColumn colId><filters><filter val> — the values
+// a column's filter keeps visible. Used only for slicer selection (E-SHEET SV2);
+// not part of the persisted ExcelTable (so the writer/roundtrip stay unchanged).
+export interface TableFilterColumn {
+  readonly colId: number; // 0-based offset within the table
+  readonly values: ReadonlyArray<string>;
+}
+
+// The richer parse the reader needs for slicer resolution: the persisted
+// ExcelTable plus the table's numeric id and any autofilter value filters.
+export interface ParsedTablePart {
+  readonly table: ExcelTable;
+  readonly id?: number;
+  readonly filters: ReadonlyArray<TableFilterColumn>;
+}
+
 export function parseTablePart(data: Uint8Array): ExcelTable | undefined {
+  return parseTablePartFull(data)?.table;
+}
+
+export function parseTablePartFull(data: Uint8Array): ParsedTablePart | undefined {
   const tree = parser.parse(decoder.decode(data)) as Record<string, unknown>;
   const t = asObj(tree['table']);
   if (!t) return undefined;
@@ -29,7 +49,8 @@ export function parseTablePart(data: Uint8Array): ExcelTable | undefined {
   const si = asObj(t['tableStyleInfo']);
   const name = strAttr(t, 'name');
   const styleName = si ? strAttr(si, 'name') : undefined;
-  return {
+  const af = asObj(t['autoFilter']);
+  const table: ExcelTable = {
     ref,
     ...(name ? { name } : {}),
     ...(styleName ? { styleName } : {}),
@@ -38,8 +59,38 @@ export function parseTablePart(data: Uint8Array): ExcelTable | undefined {
     showColumnStripes: si ? boolAttr(si, 'showColumnStripes') : false,
     showFirstColumn: si ? boolAttr(si, 'showFirstColumn') : false,
     showLastColumn: si ? boolAttr(si, 'showLastColumn') : false,
-    autoFilter: asObj(t['autoFilter']) !== undefined,
+    autoFilter: af !== undefined,
   };
+  const id = numAttr(t, 'id');
+  return {
+    table,
+    ...(id !== undefined ? { id } : {}),
+    filters: parseFilterColumns(af),
+  };
+}
+
+function parseFilterColumns(af: Record<string, unknown> | undefined): Array<TableFilterColumn> {
+  if (!af) return [];
+  const out: Array<TableFilterColumn> = [];
+  for (const fc of asArray(af['filterColumn'])) {
+    const col = asObj(fc);
+    if (!col) continue;
+    const colId = numAttr(col, 'colId');
+    if (colId === undefined) continue;
+    const filters = asObj(col['filters']);
+    if (!filters) continue;
+    const values: Array<string> = [];
+    for (const f of asArray(filters['filter'])) {
+      const v = asObj(f) ? strAttr(asObj(f)!, 'val') : undefined;
+      if (v !== undefined) values.push(v);
+    }
+    out.push({ colId, values });
+  }
+  return out;
+}
+
+function asArray(v: unknown): Array<unknown> {
+  return Array.isArray(v) ? v : v === undefined || v === null ? [] : [v];
 }
 
 function asObj(v: unknown): Record<string, unknown> | undefined {

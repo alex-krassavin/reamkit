@@ -15,6 +15,7 @@ import {
   resolvePrintArea,
   resolvePrintTitleRows,
   sectionFromWorksheet,
+  slicerTable,
   worksheetToBody,
 } from '@/excel/print-model';
 
@@ -68,6 +69,11 @@ export function projectSheetDoc(sheet: SheetDoc): FlowDoc {
           paragraphProperties: {},
         },
       });
+    }
+
+    // §SV2: slicer panels render as styled button boxes after the grid + charts.
+    for (const slicer of ws.slicers ?? []) {
+      body.push({ kind: 'table', table: slicerTable(slicer) });
     }
   }
 

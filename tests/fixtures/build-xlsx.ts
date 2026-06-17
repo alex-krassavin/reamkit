@@ -130,6 +130,26 @@ export interface XlsxBuilderOptions {
     readonly styleName?: string;
     readonly showRowStripes?: boolean;
     readonly headerRowCount?: number;
+    /** <autoFilter><filterColumn colId><filters><filter val> — slicer selection. */
+    readonly filters?: ReadonlyArray<{
+      readonly colId: number;
+      readonly values: ReadonlyArray<string>;
+    }>;
+  }>;
+  /** Attach slicer + slicerCache parts (E-SHEET SV2). The slicer part rel is on
+   *  the FIRST sheet; the cache rel is on the workbook. A `cache.tableId` binds
+   *  the slicer to a `tables` entry (1-based by order) for native-table items. */
+  readonly slicers?: ReadonlyArray<{
+    readonly name: string;
+    readonly caption: string;
+    readonly cacheName: string;
+    readonly columnCount?: number;
+    readonly styleName?: string;
+    readonly cache: {
+      readonly sourceName?: string;
+      readonly tableId?: number;
+      readonly column?: number; // table column id (1-based)
+    };
   }>;
   /** Attach pivot table parts to the FIRST sheet (E-PIVOT). Referenced via a
    *  sheet relationship only — no element in the worksheet XML. */
@@ -168,15 +188,27 @@ function buildTableXml(
     styleName?: string;
     showRowStripes?: boolean;
     headerRowCount?: number;
+    filters?: ReadonlyArray<{ colId: number; values: ReadonlyArray<string> }>;
   },
 ): string {
   const name = t.name ?? `Table${id}`;
   const style = t.styleName ?? 'TableStyleMedium2';
   const stripes = t.showRowStripes === false ? '0' : '1';
   const hrc = t.headerRowCount !== undefined ? ` headerRowCount="${t.headerRowCount}"` : '';
+  const autoFilter =
+    t.filters && t.filters.length > 0
+      ? `<autoFilter ref="${t.ref}">${t.filters
+          .map(
+            (fc) =>
+              `<filterColumn colId="${fc.colId}"><filters>${fc.values
+                .map((v) => `<filter val="${escapeXml(v)}"/>`)
+                .join('')}</filters></filterColumn>`,
+          )
+          .join('')}</autoFilter>`
+      : `<autoFilter ref="${t.ref}"/>`;
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="${id}" name="${name}" displayName="${name}" ref="${t.ref}"${hrc} totalsRowShown="0">
-  <autoFilter ref="${t.ref}"/>
+  ${autoFilter}
   <tableColumns count="1"><tableColumn id="1" name="Col"/></tableColumns>
   <tableStyleInfo name="${style}" showFirstColumn="0" showLastColumn="0" showRowStripes="${stripes}" showColumnStripes="0"/>
 </table>`;
@@ -443,6 +475,15 @@ ${sharedStringsList.map((str) => `  <si><t>${escapeXml(str)}</t></si>`).join('\n
           )
           .join('')
       : '') +
+    (options.slicers
+      ? options.slicers
+          .map(
+            (_, i) =>
+              `<Override PartName="/xl/slicers/slicer${i + 1}.xml" ContentType="application/vnd.ms-excel.slicer+xml"/>` +
+              `<Override PartName="/xl/slicerCaches/slicerCache${i + 1}.xml" ContentType="application/vnd.ms-excel.slicerCache+xml"/>`,
+          )
+          .join('')
+      : '') +
     '\n</Types>';
 
   const entries: Record<string, Uint8Array> = {
@@ -545,6 +586,65 @@ ${relLines}
     for (const p of parts) {
       entries[`xl/pivotTables/pivotTable${p.idx}.xml`] = encoder.encode(
         buildPivotTableXml(p.idx, p.p),
+      );
+    }
+  }
+  if (options.slicers && options.slicers.length > 0 && sheetParts.length > 0) {
+    const first = sheetParts[0]!;
+    const slicerParts = options.slicers.map((s, i) => ({ idx: i + 1, s }));
+    // Worksheet rels → slicer parts (merge into sheet1's existing rels).
+    const wsRelLines = slicerParts
+      .map(
+        (p) =>
+          `  <Relationship Id="rIdSl${p.idx}" Type="http://schemas.microsoft.com/office/2007/relationships/slicer" Target="../slicers/slicer${p.idx}.xml"/>`,
+      )
+      .join('\n');
+    const wsRelsPath = `xl/worksheets/_rels/${first.fileName}.rels`;
+    const wsExisting = entries[wsRelsPath] ? decoder.decode(entries[wsRelsPath]) : undefined;
+    entries[wsRelsPath] = encoder.encode(
+      wsExisting
+        ? wsExisting.replace('</Relationships>', `${wsRelLines}\n</Relationships>`)
+        : `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+${wsRelLines}
+</Relationships>`,
+    );
+    // Workbook rels → slicerCache parts.
+    const wbRelLines = slicerParts
+      .map(
+        (p) =>
+          `  <Relationship Id="rIdSc${p.idx}" Type="http://schemas.microsoft.com/office/2007/relationships/slicerCache" Target="slicerCaches/slicerCache${p.idx}.xml"/>`,
+      )
+      .join('\n');
+    const wbRelsPath = 'xl/_rels/workbook.xml.rels';
+    entries[wbRelsPath] = encoder.encode(
+      decoder
+        .decode(entries[wbRelsPath])
+        .replace('</Relationships>', `${wbRelLines}\n</Relationships>`),
+    );
+    // The slicer + slicerCache parts.
+    const x14 = 'http://schemas.microsoft.com/office/spreadsheetml/2009/9/main';
+    const rNs = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+    for (const p of slicerParts) {
+      const sl = p.s;
+      const styleAttr = sl.styleName ? ` style="${escapeXml(sl.styleName)}"` : '';
+      entries[`xl/slicers/slicer${p.idx}.xml`] = encoder.encode(
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<slicers xmlns="${x14}" xmlns:r="${rNs}"><slicer name="${escapeXml(sl.name)}" cache="${escapeXml(
+          sl.cacheName,
+        )}" caption="${escapeXml(sl.caption)}" columnCount="${sl.columnCount ?? 1}"${styleAttr}/></slicers>`,
+      );
+      const cache = sl.cache;
+      const sourceAttr = cache.sourceName ? ` sourceName="${escapeXml(cache.sourceName)}"` : '';
+      const tableExt =
+        cache.tableId !== undefined && cache.column !== undefined
+          ? `<extLst><ext xmlns:x14="${x14}" uri="{2F2917AC-EB37-4324-AD4E-5DD8C200BD13}"><x14:slicerCacheDefinition><x14:tableSlicerCache tableId="${cache.tableId}" column="${cache.column}"/></x14:slicerCacheDefinition></ext></extLst>`
+          : '';
+      entries[`xl/slicerCaches/slicerCache${p.idx}.xml`] = encoder.encode(
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<slicerCacheDefinition xmlns="${x14}" xmlns:r="${rNs}" name="${escapeXml(
+          sl.cacheName,
+        )}"${sourceAttr}>${tableExt}</slicerCacheDefinition>`,
       );
     }
   }
