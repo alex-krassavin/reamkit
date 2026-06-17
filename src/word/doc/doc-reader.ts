@@ -1,18 +1,19 @@
-// Legacy `.doc` reader (DOC-1..8) — the DocumentReader that sniffs a Word
+// Legacy `.doc` reader (DOC-1..9) — the DocumentReader that sniffs a Word
 // 97–2003 binary file (an OLE2/CFB container with a `WordDocument` stream) and
-// reads its text, run/paragraph formatting, tables, inline images and
-// headers/footers into the same FlowDoc the OOXML docx reader produces, so the
-// whole render pipeline (projection → PDF/SVG/HTML, re-write to .docx) works on a
-// legacy `.doc` the way it already does for `.xls`. The shared CFB container
-// reader (`src/core/ole`) is the keystone both legacy formats reuse.
+// reads its text, run/paragraph formatting, tables, inline images,
+// headers/footers and list items into the same FlowDoc the OOXML docx reader
+// produces, so the whole render pipeline (projection → PDF/SVG/HTML, re-write to
+// .docx) works on a legacy `.doc` the way it already does for `.xls`. The shared
+// CFB container reader (`src/core/ole`) is the keystone both legacy formats reuse.
 //
 // Scope: paragraphs of formatted runs — bold / italic / underline / font size
 // (CHPX) on each run, alignment / indentation / spacing (PAPX) on each paragraph,
 // tables (in-table paragraphs grouped into a row/cell grid, with per-column widths
 // from sprmTDefTable), inline images (the picture char's CHPX → a PICF in the Data
-// stream), fields (resolved to their cached result) and the section's
-// headers/footers (the PlcfHdd stories). Lists and table cell borders/merges are
-// not read yet — recorded as a loss.
+// stream), fields (resolved to their cached result), the section's headers/footers
+// (the PlcfHdd stories) and list items (sprmPIlfo/sprmPIlvl → an indented bullet).
+// Table cell borders/merges and the exact list number format are not read yet —
+// recorded as a loss.
 
 import type {
   Alignment,
@@ -49,6 +50,10 @@ const ZERO_WIDTH_SPACE = '​';
 
 // US Letter (612pt) minus one-inch margins each side — the table's column band.
 const CONTENT_WIDTH_PT = 468;
+// List items render with a generic bullet per level + a quarter-inch indent per
+// level (the exact numbered format is not read from the LST/LVL tables).
+const LIST_BULLETS = ['•', '◦', '▪'];
+const LIST_INDENT_PT = 18;
 const TABLE_BORDER: Border = { style: 'single', width: pt(0.5), colorHex: '000000' };
 const TABLE_BORDERS: CellBorders = {
   top: TABLE_BORDER,
@@ -77,7 +82,7 @@ const DOC_TEXT_LOSS: Loss = {
   severity: 'degraded',
   feature: FEATURES.text,
   detail:
-    "legacy .doc: the document text, run formatting (bold/italic/underline/size), paragraph formatting (alignment/indent/spacing), tables (with column widths), inline images, fields and the section's headers/footers are read; lists and table cell borders/merges are not (re-save as .docx for full fidelity)",
+    "legacy .doc: the document text, run formatting (bold/italic/underline/size), paragraph formatting (alignment/indent/spacing), tables (with column widths), inline images, fields, the section's headers/footers and list items (as indented bullets) are read; table cell borders/merges and the exact list number format are not (re-save as .docx for full fidelity)",
 };
 
 const DOC_ENCRYPTED_LOSS: Loss = {
@@ -242,12 +247,21 @@ function isBlank(p: DocParagraph): boolean {
 function mapParagraph(p: DocParagraph, resources: ResourceStore): Array<BodyElement> {
   const out: Array<BodyElement> = [];
   const textRuns = p.runs.filter((r) => r.picture === undefined);
-  if (textRuns.some((r) => r.text.length > 0)) {
+  const ilvl = p.props.listIlvl ?? 0;
+  const isList = (p.props.listIlfo ?? 0) > 0;
+  if (textRuns.some((r) => r.text.length > 0) || isList) {
+    const runs = textRuns.map((r) => ({ text: r.text, properties: toRunProperties(r.props) }));
+    let properties = toParaProperties(p.props);
+    if (isList) {
+      // A generic bullet + a per-level indent (the LST/LVL number format isn't read).
+      runs.unshift({ text: `${LIST_BULLETS[ilvl % LIST_BULLETS.length]} `, properties: {} });
+      properties = { ...properties, indentLeft: pt((ilvl + 1) * LIST_INDENT_PT) };
+    }
     out.push({
       kind: 'paragraph',
       paragraph: {
-        properties: toParaProperties(p.props),
-        runs: textRuns.map((r) => ({ text: r.text, properties: toRunProperties(r.props) })),
+        properties,
+        runs: runs.length > 0 ? runs : [{ text: ZERO_WIDTH_SPACE, properties: {} }],
       },
     });
   }

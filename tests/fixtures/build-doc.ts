@@ -42,6 +42,8 @@ export interface DocParaFormat {
   readonly inTable?: boolean; // sprmPFInTable — the paragraph is a table cell
   readonly rowEnd?: boolean; // sprmPFTtp — the row's terminating paragraph
   readonly cellEdgesTwips?: ReadonlyArray<number>; // sprmTDefTable cell boundaries
+  readonly listIlfo?: number; // sprmPIlfo — list override (>0 ⇒ a list item)
+  readonly listIlvl?: number; // sprmPIlvl — list level
 }
 
 // Where piece text starts in the WordDocument stream — past the FIB fields the
@@ -363,6 +365,8 @@ function buildPapxGrpprl(run: DocParaFormat): Uint8Array {
     const cb = content.length + 1; // a 2-byte count that includes the count field
     sprm(0xd608, cb & 0xff, (cb >> 8) & 0xff, ...content); // sprmTDefTable
   }
+  if (run.listIlvl !== undefined) sprm(0x260a, run.listIlvl & 0xff); // sprmPIlvl
+  if (run.listIlfo !== undefined) sprm(0x460b, run.listIlfo & 0xff, (run.listIlfo >> 8) & 0xff); // sprmPIlfo
   if (run.inTable) sprm(0x2416, 0x01); // sprmPFInTable
   if (run.rowEnd) sprm(0x2417, 0x01); // sprmPFTtp
   return Uint8Array.from(parts);

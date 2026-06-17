@@ -60,6 +60,8 @@ const SPRM_P_DYA_AFTER = 0xa414; // space after (twips)
 const SPRM_P_F_IN_TABLE = 0x2416; // paragraph is in a table
 const SPRM_P_F_TTP = 0x2417; // table terminating paragraph (end of row)
 const SPRM_T_DEF_TABLE = 0xd608; // table definition (cell boundaries + descriptors)
+const SPRM_P_ILVL = 0x260a; // list level (0–8)
+const SPRM_P_ILFO = 0x460b; // list-format override index (>0 ⇒ the paragraph is a list item)
 const SPRA_LEN = [1, 1, 2, 4, 2, 2, 0, 3];
 // spra-6 sprms whose operand is prefixed by a 2-byte (not 1-byte) length.
 const SPRM_LONG_OPERAND = new Set([0xd608, 0xc60d]); // sprmTDefTable, sprmPChgTabs
@@ -99,6 +101,8 @@ export interface DocParaProps {
   // sprmTDefTable rgdxaCenter — the (cols+1) cell-boundary x-positions (twips);
   // present on the TTP. Cell i width = edge[i+1] − edge[i].
   readonly cellEdgesTwips?: ReadonlyArray<number>;
+  readonly listIlfo?: number; // sprmPIlfo — list override (>0 ⇒ a list item)
+  readonly listIlvl?: number; // sprmPIlvl — list level (0–8)
 }
 
 export interface DocRun {
@@ -406,6 +410,8 @@ function decodePapxGrpprl(d: Uint8Array): DocParaProps {
   let inTable: boolean | undefined;
   let rowEnd: boolean | undefined;
   let cellEdgesTwips: Array<number> | undefined;
+  let listIlfo: number | undefined;
+  let listIlvl: number | undefined;
   for (const s of sprms(d)) {
     switch (s.sprm) {
       case SPRM_P_JC:
@@ -442,6 +448,12 @@ function decodePapxGrpprl(d: Uint8Array): DocParaProps {
         if (edges.length >= 2) cellEdgesTwips = edges;
         break;
       }
+      case SPRM_P_ILVL:
+        listIlvl = d[s.op]!;
+        break;
+      case SPRM_P_ILFO:
+        listIlfo = u16(d, s.op);
+        break;
     }
   }
   return {
@@ -454,6 +466,8 @@ function decodePapxGrpprl(d: Uint8Array): DocParaProps {
     ...(inTable ? { inTable } : {}),
     ...(rowEnd ? { rowEnd } : {}),
     ...(cellEdgesTwips ? { cellEdgesTwips } : {}),
+    ...(listIlfo !== undefined ? { listIlfo } : {}),
+    ...(listIlvl !== undefined ? { listIlvl } : {}),
   };
 }
 

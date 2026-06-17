@@ -354,6 +354,22 @@ describe('doc reader (DOC-1)', () => {
     expect(doc.headersFooters).toBeUndefined();
   });
 
+  it('renders list items with a bullet marker and per-level indent (DOC-9)', () => {
+    const doc = readDoc(
+      buildDoc([{ text: 'First\rSecond\r', compressed: false }], {
+        paraRuns: [
+          { length: 6, listIlfo: 1, listIlvl: 0 }, // "First" — list item, level 0
+          { length: 7, listIlfo: 1, listIlvl: 1 }, // "Second" — list item, level 1
+        ],
+      }),
+    ).doc;
+    const ps = paragraphs(doc);
+    expect(ps[0]?.paragraph.runs.map((r) => r.text)).toEqual(['• ', 'First']);
+    expect(ps[0]?.paragraph.properties.indentLeft).toBe(18); // level 0 → 18pt
+    expect(ps[1]?.paragraph.runs.map((r) => r.text)).toEqual(['◦ ', 'Second']);
+    expect(ps[1]?.paragraph.properties.indentLeft).toBe(36); // level 1 → 36pt
+  });
+
   it('renders a .doc with a table to a valid PDF', async () => {
     const pdf = await Ream.parse(
       buildDoc([{ text: `A${CM}B${CM}C${CM}D${CM}`, compressed: false }], {
