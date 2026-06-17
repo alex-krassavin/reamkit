@@ -478,6 +478,35 @@ function cfRuleXml(rule: CfRule): string {
         rule.cfvos.map(cfvoXml).join('') +
         '</iconSet></cfRule>'
       );
+    case 'top10':
+      return (
+        `<cfRule type="top10"${p} dxfId="${rule.dxfId}" rank="${rule.rank}"` +
+        (rule.percent ? ' percent="1"' : '') +
+        (rule.bottom ? ' bottom="1"' : '') +
+        '/>'
+      );
+    case 'aboveAverage':
+      return (
+        `<cfRule type="aboveAverage"${p} dxfId="${rule.dxfId}"` +
+        // aboveAverage defaults to true; only the false case needs the attribute.
+        (rule.aboveAverage ? '' : ' aboveAverage="0"') +
+        (rule.equalAverage ? ' equalAverage="1"' : '') +
+        (rule.stdDev !== undefined ? ` stdDev="${rule.stdDev}"` : '') +
+        '/>'
+      );
+    case 'duplicateValues':
+    case 'uniqueValues':
+      return `<cfRule type="${rule.type}"${p} dxfId="${rule.dxfId}"/>`;
+    case 'containsText':
+    case 'notContainsText':
+    case 'beginsWith':
+    case 'endsWith':
+      return (
+        `<cfRule type="${rule.type}"${p} operator="${rule.type}" dxfId="${rule.dxfId}"` +
+        ` text="${escapeAttr(rule.text)}">` +
+        (rule.formula !== undefined ? `<formula>${escapeText(rule.formula)}</formula>` : '') +
+        '</cfRule>'
+      );
   }
 }
 

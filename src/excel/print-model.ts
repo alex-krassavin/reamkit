@@ -432,6 +432,8 @@ export function worksheetToBody(
     worksheet.conditionalFormats,
     styles,
     worksheet.cells,
+    // Resolve a cell's string value for the W5 text / duplicate-unique rules.
+    (cell) => resolveCellText(cell, sharedStrings, styles, date1904),
   );
 
   // Sparklines (E-SHEET SC2): host-cell (absolute key) → resolved value series.
@@ -471,6 +473,8 @@ export function worksheetToBody(
 
       const ws = cellMatrix[r]?.[c];
       let text = ws ? resolveCellText(ws, sharedStrings, styles, date1904) : '';
+      // The full (pre-truncation) text feeds conditional-format text/dup rules (W5).
+      const cfText = text.length > 0 ? text : undefined;
       if (text.length > textBudget) text = text.slice(0, Math.max(0, textBudget));
       textBudget -= text.length;
       const xf = ws && ws.styleIndex !== undefined ? styles.cellXfs[ws.styleIndex] : undefined;
@@ -494,7 +498,7 @@ export function worksheetToBody(
       if (cfFormatter && ws) {
         const cfValue =
           ws.type === 'n' && Number.isFinite(Number(ws.rawValue)) ? Number(ws.rawValue) : undefined;
-        const over = cfFormatter(absR, absC, cfValue);
+        const over = cfFormatter(absR, absC, cfValue, cfText);
         if (over) {
           if (over.fillHex) shading = { colorHex: over.fillHex };
           if (over.dataBar) dataBar = over.dataBar;

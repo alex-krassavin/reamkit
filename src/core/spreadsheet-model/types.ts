@@ -375,7 +375,60 @@ export interface CfRuleIconSet {
   readonly reverse?: boolean;
 }
 
-export type CfRule = CfRuleCellIs | CfRuleColorScale | CfRuleDataBar | CfRuleIconSet;
+// §18.3.1.10 <cfRule type="top10"> — the top (or `bottom`) N values of the range
+// take the differential format. `rank` is N; with `percent` it is a percentage of
+// the range's cell count. Resolves against the range's value extent, like a scale.
+export interface CfRuleTop10 {
+  readonly type: 'top10';
+  readonly priority: number;
+  readonly rank: number;
+  readonly percent: boolean;
+  readonly bottom: boolean;
+  readonly dxfId: number;
+}
+
+// §18.3.1.10 <cfRule type="aboveAverage"> — cells above (default) or below the
+// range mean take the format. `equalAverage` makes the comparison inclusive;
+// `stdDev`, when set, shifts the threshold by N population standard deviations.
+export interface CfRuleAboveAverage {
+  readonly type: 'aboveAverage';
+  readonly priority: number;
+  readonly aboveAverage: boolean;
+  readonly equalAverage: boolean;
+  readonly stdDev?: number;
+  readonly dxfId: number;
+}
+
+// §18.3.1.10 <cfRule type="duplicateValues" | "uniqueValues"> — cells whose value
+// repeats within the range (duplicate) or occurs exactly once (unique) take the
+// format. Compares numbers by value and strings case-insensitively, like Excel.
+export interface CfRuleDupUnique {
+  readonly type: 'duplicateValues' | 'uniqueValues';
+  readonly priority: number;
+  readonly dxfId: number;
+}
+
+// §18.3.1.10 <cfRule type="containsText" | "notContainsText" | "beginsWith" |
+// "endsWith"> — a case-insensitive substring test against the cell's text.
+// `text` is the needle; `formula` carries Excel's generated SEARCH/LEFT/RIGHT
+// expression verbatim for faithful write-back (it is matched directly, not run).
+export interface CfRuleText {
+  readonly type: 'containsText' | 'notContainsText' | 'beginsWith' | 'endsWith';
+  readonly priority: number;
+  readonly text: string;
+  readonly dxfId: number;
+  readonly formula?: string;
+}
+
+export type CfRule =
+  | CfRuleCellIs
+  | CfRuleColorScale
+  | CfRuleDataBar
+  | CfRuleIconSet
+  | CfRuleTop10
+  | CfRuleAboveAverage
+  | CfRuleDupUnique
+  | CfRuleText;
 
 // §18.3.1.18 <conditionalFormatting sqref="A1:A10 C1:C5"> — rules over ranges.
 export interface ConditionalFormat {

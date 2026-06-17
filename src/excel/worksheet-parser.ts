@@ -8,10 +8,14 @@ import type {
   CellType,
   CfOperator,
   CfRule,
+  CfRuleAboveAverage,
   CfRuleCellIs,
   CfRuleColorScale,
   CfRuleDataBar,
+  CfRuleDupUnique,
   CfRuleIconSet,
+  CfRuleText,
+  CfRuleTop10,
   Cfvo,
   CfvoType,
   ColumnWidth,
@@ -371,8 +375,11 @@ function parseMerges(ws: Record<string, unknown>): Array<MergedRange> {
 }
 
 // §18.3.1.18 <conditionalFormatting sqref="…"> elements (one or more), each
-// owning <cfRule>s. Reads `cellIs` (SC1) and `colorScale` (SC1b) rules; dataBar
-// and iconSet are skipped until a follow-up.
+// owning <cfRule>s. Reads the value/text-driven families: `cellIs`, `colorScale`,
+// `dataBar`, `iconSet`, `top10`, `aboveAverage`, `duplicate/uniqueValues` and the
+// text tests (`containsText`/`beginsWith`/…). `expression` (formula) and
+// `timePeriod` (clock-relative) rules need a formula engine / a wall clock and are
+// a documented graceful loss — left unparsed (and so stably dropped on write).
 function parseConditionalFormatting(ws: Record<string, unknown>): Array<ConditionalFormat> {
   const raw = ws['conditionalFormatting'];
   const items = Array.isArray(raw) ? raw : raw !== undefined ? [raw] : [];
@@ -535,7 +542,8 @@ const CF_OPERATORS: ReadonlySet<string> = new Set<CfOperator>([
 
 function parseCfRule(obj: Record<string, unknown>): CfRule | undefined {
   const priority = parseNumericAttr(obj, 'priority') ?? 0;
-  switch (strAttr(obj, 'type')) {
+  const type = strAttr(obj, 'type');
+  switch (type) {
     case 'cellIs':
       return parseCellIsRule(obj, priority);
     case 'colorScale':
@@ -544,9 +552,85 @@ function parseCfRule(obj: Record<string, unknown>): CfRule | undefined {
       return parseDataBarRule(obj, priority);
     case 'iconSet':
       return parseIconSetRule(obj, priority);
+    case 'top10':
+      return parseTop10Rule(obj, priority);
+    case 'aboveAverage':
+      return parseAboveAverageRule(obj, priority);
+    case 'duplicateValues':
+    case 'uniqueValues':
+      return parseDupUniqueRule(type, obj, priority);
+    case 'containsText':
+    case 'notContainsText':
+    case 'beginsWith':
+    case 'endsWith':
+      return parseTextRule(type, obj, priority);
     default:
-      return undefined; // dataBar2010/etc. — skipped
+      return undefined; // expression / timePeriod / dataBar2010 / etc. — skipped
   }
+}
+
+// §18.3.1.10 type="top10" — `rank` (default 10) top values take the dxf; `percent`
+// reads rank as a percentage, `bottom` flips to the lowest values.
+function parseTop10Rule(obj: Record<string, unknown>, priority: number): CfRuleTop10 | undefined {
+  const dxfId = parseNumericAttr(obj, 'dxfId');
+  if (dxfId === undefined) return undefined;
+  const rank = parseNumericAttr(obj, 'rank') ?? 10;
+  return {
+    type: 'top10',
+    priority,
+    rank,
+    percent: boolAttr(obj, 'percent'),
+    bottom: boolAttr(obj, 'bottom'),
+    dxfId,
+  };
+}
+
+// §18.3.1.10 type="aboveAverage" — `aboveAverage` defaults to true; `equalAverage`
+// makes it inclusive; `stdDev` (when present) shifts the threshold by N std-devs.
+function parseAboveAverageRule(
+  obj: Record<string, unknown>,
+  priority: number,
+): CfRuleAboveAverage | undefined {
+  const dxfId = parseNumericAttr(obj, 'dxfId');
+  if (dxfId === undefined) return undefined;
+  const aboveRaw = strAttr(obj, 'aboveAverage');
+  const aboveAverage = aboveRaw === undefined ? true : aboveRaw === '1' || aboveRaw === 'true';
+  const stdDev = parseNumericAttr(obj, 'stdDev');
+  return {
+    type: 'aboveAverage',
+    priority,
+    aboveAverage,
+    equalAverage: boolAttr(obj, 'equalAverage'),
+    ...(stdDev !== undefined ? { stdDev } : {}),
+    dxfId,
+  };
+}
+
+// §18.3.1.10 type="duplicateValues" | "uniqueValues" — attribute-only; the dxf
+// paints repeated (or one-off) values across the range.
+function parseDupUniqueRule(
+  type: 'duplicateValues' | 'uniqueValues',
+  obj: Record<string, unknown>,
+  priority: number,
+): CfRuleDupUnique | undefined {
+  const dxfId = parseNumericAttr(obj, 'dxfId');
+  if (dxfId === undefined) return undefined;
+  return { type, priority, dxfId };
+}
+
+// §18.3.1.10 the text tests — `text` is the needle; Excel's generated `<formula>`
+// is preserved verbatim (for faithful write-back) but matched directly, not run.
+function parseTextRule(
+  type: 'containsText' | 'notContainsText' | 'beginsWith' | 'endsWith',
+  obj: Record<string, unknown>,
+  priority: number,
+): CfRuleText | undefined {
+  const dxfId = parseNumericAttr(obj, 'dxfId');
+  if (dxfId === undefined) return undefined;
+  const text = strAttr(obj, 'text');
+  if (text === undefined) return undefined;
+  const formula = formulaText(obj['formula']);
+  return { type, priority, text, dxfId, ...(formula !== undefined ? { formula } : {}) };
 }
 
 // §18.3.1.49 <iconSet iconSet="3TrafficLights1"> — N cfvo thresholds (N = 3/4/5)

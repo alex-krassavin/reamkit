@@ -84,12 +84,17 @@ charts — and is byte-stable across a read↔write loop.
 - **Frozen panes** round-trip through the writer and become sticky header rows /
   columns in HTML output. They do not affect PDF — in Excel freezing is a view
   setting that does not print (the printed repeat is the print titles above).
-- **Conditional formatting** — `cellIs` (compare-to-constant highlights),
-  `colorScale` (2/3-stop gradients), `dataBar` (in-cell bars, with a zero axis
-  so negative values run the other way) and `iconSet` — traffic lights, arrows,
-  signs, symbols (check / exclamation / cross), flags, ratings (a bar meter) and
-  quarters (a clock pie). The cross-cell rules resolve against the range's value
-  extent.
+- **Conditional formatting** — the highlight rules: `cellIs` (compare-to-constant),
+  `top10` (top/bottom N or N %), `aboveAverage` (mean, optionally shifted by N
+  standard deviations), `duplicateValues` / `uniqueValues` (value frequency across
+  the range, numbers by value and text case-insensitively) and the text tests
+  (`containsText` / `notContainsText` / `beginsWith` / `endsWith`); plus the
+  visual encodings `colorScale` (2/3-stop gradients), `dataBar` (in-cell bars,
+  with a zero axis so negative values run the other way) and `iconSet` — traffic
+  lights, arrows, signs, symbols (check / exclamation / cross), flags, ratings (a
+  bar meter) and quarters (a clock pie). The cross-cell rules resolve against the
+  range's value extent. The highest-priority matching rule claims the cell's
+  fill / font; a data bar or icon applies on top.
 - **Sparklines** — per-cell line / column / win-loss mini charts, including
   cross-sheet data ranges and blank-cell gaps.
 - **Excel tables** (`xl/tables`) — banded rows and a styled header row, the
@@ -169,9 +174,11 @@ charts — and is byte-stable across a read↔write loop.
 - **Some Excel constructs are not rendered yet:**
   - **Cell comments / notes** (legacy and threaded) and **form / ActiveX controls**
     (checkboxes, option buttons, spinners).
-  - **Conditional-format rule types** beyond compare-to-constant, colour scales, data
-    bars and icon sets — top/bottom-N, above/below average, duplicate/unique, text- and
-    date-based, and formula (`expression`) rules.
+  - Two **conditional-format rule types**: `expression` (an arbitrary formula —
+    Ream has no formula engine, so cached values can't drive an ad-hoc condition)
+    and `timePeriod` (today / this-week / last-month …, which is relative to the
+    wall clock — Ream's output is deterministic and does not read the system date).
+    Both are skipped (left unrendered) rather than misrendered.
   - A few **cell-format details**: non-solid and gradient fills, diagonal borders, text
     rotation / indent / shrink-to-fit, wrapped text, and mixed (rich-text) formatting
     within a single cell.
