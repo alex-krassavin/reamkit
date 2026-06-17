@@ -213,7 +213,11 @@ charts — and is byte-stable across a read↔write loop.
   TextChars / TextBytes atoms with run formatting (bold / italic / underline / size
   / colour from the StyleTextPropAtom) and paragraph alignment / indent level, and
   embedded images are pulled from the Pictures stream (OfficeArtBlip referenced by a
-  shape's `pib`). Per-shape placement and autoshapes are not read — see Not yet.
+  shape's `pib`). A shape that carries a slide anchor (OfficeArtClientAnchor) is
+  positioned at its rectangle — text boxes and pictures become floating content,
+  like the `.pptx` reader; an un-anchored shape (e.g. a placeholder that inherits
+  master geometry) flows in reading order. Decorative autoshapes are not read — see
+  Not yet.
 
 **Graphics & math**
 - DrawingML shapes (preset and custom geometry, gradients, group shapes, theme colors).
@@ -244,12 +248,12 @@ charts — and is byte-stable across a read↔write loop.
 ## Not yet
 
 - **The legacy `.ppt` reader does not yet read** (re-save as `.pptx` for these):
-  per-shape **placement** — each slide's text and images are laid out in reading
-  order down the page rather than positioned at their slide rectangles — and
-  decorative **autoshapes** (the lines / boxes / connectors in the drawing). The
-  slide text with run and paragraph formatting, and embedded images, _are_ read
-  (see PresentationML above). All three legacy binary formats (`.doc` / `.xls` /
-  `.ppt`) are read through the shared CFB container reader (`src/core/ole`).
+  decorative **autoshapes** — the lines / boxes / connectors in the drawing (their
+  geometry, fill and line). The slide text with run and paragraph formatting,
+  embedded images, and per-shape placement (anchored shapes positioned at their
+  rectangles) _are_ read (see PresentationML above). All three legacy binary formats
+  (`.doc` / `.xls` / `.ppt`) are read through the shared CFB container reader
+  (`src/core/ole`).
 - **The legacy `.doc` reader does not yet read** (re-save as `.docx` for these):
   the exact list **number format** (the `LST` / `LVL` tables — list items render as a
   generic indented bullet, so a numbered list shows bullets) and table cell
