@@ -20,9 +20,11 @@ const TC = 'http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomme
 
 // The flattened text of every paragraph in the body (after the grid table).
 function paragraphTexts(body: ReadonlyArray<BodyElement>): Array<string> {
-  return body
-    .filter((el) => el.kind === 'paragraph')
-    .map((el) => (el.kind === 'paragraph' ? el.paragraph.runs.map((r) => r.text).join('') : ''));
+  const out: Array<string> = [];
+  for (const el of body) {
+    if (el.kind === 'paragraph') out.push(el.paragraph.runs.map((r) => r.text).join(''));
+  }
+  return out;
 }
 
 describe('comment parsers (E-SHEET W7)', () => {
