@@ -62,8 +62,11 @@ describe('xls wired into the converter (XLS-3)', () => {
   });
 
   it('does not misdetect a non-workbook compound file as .xls', () => {
-    // A .doc-like container (a WordDocument stream, no Workbook) must not match.
+    // A WordDocument stream (no Workbook) is a legacy .doc — the .doc reader
+    // claims it, the .xls reader must not; and a CFB with neither matches nothing.
     const docLike = buildCfb([{ name: 'WordDocument', data: new Uint8Array(2000) }]);
-    expect(createConverter().detect(docLike)).toBeUndefined();
+    expect(createConverter().detect(docLike)?.id).toBe('doc');
+    const neither = buildCfb([{ name: 'RandomStream', data: new Uint8Array(2000) }]);
+    expect(createConverter().detect(neither)).toBeUndefined();
   });
 });

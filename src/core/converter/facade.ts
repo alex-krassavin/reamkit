@@ -31,6 +31,7 @@ import { writeSvg } from '@/svg/svg-writer';
 import { convertDocxToPdf } from '@/word/docx-to-pdf';
 import { convertXlsxToPdf } from '@/excel/xlsx-to-pdf';
 import { docxReader } from '@/word/docx-reader';
+import { docReader } from '@/word/doc/doc-reader';
 import { xlsxReader } from '@/excel/xlsx-reader';
 import { xlsReader } from '@/excel/xls/xls-reader';
 import { pptxReader } from '@/pptx/pptx-reader';
@@ -102,6 +103,7 @@ export interface CreateConverterOptions {
 
 export const DEFAULT_READERS: ReadonlyArray<DocumentReader<SourceDoc>> = [
   docxReader,
+  docReader,
   xlsxReader,
   xlsReader,
   pptxReader,

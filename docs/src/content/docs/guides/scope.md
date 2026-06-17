@@ -73,6 +73,14 @@ charts — and is byte-stable across a read↔write loop.
 - Tracked changes (`w:ins` / `w:del`).
 - Reads both **Transitional and Strict** (ISO 29500) packages; block-level
   content controls (`w:sdt`) flow through.
+- **Legacy `.doc`** (Word 97–2003) — the binary `WordDocument` stream inside the
+  OLE2/CFB container is read for its **text**: the FIB locates the piece table
+  (the CLX), whose pieces — 16-bit Unicode or 8-bit Windows-1252 ("compressed") —
+  are stitched back into the document text and split into paragraphs, so an old
+  `.doc` renders to PDF/SVG/HTML and re-writes to `.docx`. Character/paragraph
+  formatting, tables, images, headers/footers, lists and fields are not read yet
+  (re-save as `.docx` for full fidelity); an encrypted file yields no text. The
+  shared CFB reader (`src/core/ole`) is the same keystone the `.xls` path uses.
 
 **SpreadsheetML (§18)**
 - Grids, shared strings, number formats and dates (incl. the 1904 date system).
@@ -210,10 +218,11 @@ charts — and is byte-stable across a read↔write loop.
 
 ## Not yet
 
-- **Legacy `.doc` / `.ppt`** (the binary OLE/CFB formats) — not read yet; re-save as
-  `.docx` / `.pptx`. (Legacy **`.xls`** — BIFF8 — _is_ read; see SpreadsheetML above.
-  The shared CFB container reader (`src/core/ole`) is the keystone the others would
-  reuse.)
+- **Legacy `.ppt`** (the binary PowerPoint OLE/CFB format) — not read yet; re-save
+  as `.pptx`. (Legacy **`.xls`** — BIFF8 — and **`.doc`** — Word 97–2003 — _are_
+  read; see SpreadsheetML / WordprocessingML above. The `.doc` reader surfaces the
+  document text; its rich formatting — fonts, tables, images — is a later wave. The
+  shared CFB container reader (`src/core/ole`) is the keystone all three reuse.)
 - **Byte-for-byte visual reproduction of another renderer.** `layoutProfile` plus the
   metric-compatible substitutes get a target tool's page geometry close — without its
   private font metrics — but _pixel-identical_ output is a non-goal: that would need the
