@@ -327,3 +327,75 @@ describe('ppt reader placement (PPT-4)', () => {
     expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-');
   });
 });
+
+describe('ppt reader autoshapes (PPT-5)', () => {
+  it('reads a filled autoshape as a positioned vector shape', () => {
+    const doc = readPpt(
+      buildPpt([
+        {
+          boxes: [
+            { anchor: { x: 10, y: 10, w: 100, h: 50 }, shapeType: 1, fillColorHex: 'FF8800' },
+          ],
+        },
+      ]),
+    ).doc;
+    const shapes = doc.body.filter((el) => el.kind === 'shape');
+    expect(shapes).toHaveLength(1);
+    const shape = shapes[0]!.shape;
+    expect(shape.geometry.preset).toBe('rect');
+    expect(shape.fill).toEqual({ kind: 'solid', colorHex: 'FF8800' });
+    expect(shape.float?.posH?.offsetPt).toBe(10);
+    expect(shape.width).toBe(100);
+  });
+
+  it('reads the line colour of an autoshape', () => {
+    const doc = readPpt(
+      buildPpt([
+        { boxes: [{ anchor: { x: 0, y: 0, w: 100, h: 2 }, shapeType: 1, lineColorHex: '0000FF' }] },
+      ]),
+    ).doc;
+    const shape = doc.body.find((el) => el.kind === 'shape')!.shape;
+    expect(shape.line?.colorHex).toBe('0000FF');
+  });
+
+  it('maps the MSOSPT shape type to a preset geometry', () => {
+    const doc = readPpt(
+      buildPpt([
+        { boxes: [{ anchor: { x: 0, y: 0, w: 80, h: 80 }, shapeType: 3, fillColorHex: '00FF00' }] },
+      ]),
+    ).doc;
+    expect(doc.body.find((el) => el.kind === 'shape')!.shape.geometry.preset).toBe('ellipse');
+  });
+
+  it('skips an autoshape with no literal fill or line colour', () => {
+    const doc = readPpt(
+      buildPpt([
+        {
+          boxes: [
+            { anchor: { x: 0, y: 0, w: 100, h: 50 }, shapeType: 1 }, // no colour → skipped
+            { anchor: { x: 0, y: 60, w: 100, h: 50 }, shapeType: 1, fillColorHex: 'FF0000' },
+          ],
+        },
+      ]),
+    ).doc;
+    expect(doc.body.filter((el) => el.kind === 'shape')).toHaveLength(1);
+  });
+
+  it('converts a .ppt with an autoshape to PDF', async () => {
+    const pdf = await Ream.parse(
+      buildPpt([
+        {
+          boxes: [
+            {
+              anchor: { x: 50, y: 50, w: 200, h: 100 },
+              shapeType: 2,
+              fillColorHex: '3366CC',
+              lineColorHex: '000000',
+            },
+          ],
+        },
+      ]),
+    ).convert('pdf', { fonts });
+    expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-');
+  });
+});

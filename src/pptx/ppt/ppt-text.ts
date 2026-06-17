@@ -1,5 +1,5 @@
-// Legacy `.ppt` (PowerPoint 97–2003, [MS-PPT]) record reader + per-slide text
-// extraction (PPT-1..2). A `.ppt` is an OLE2/CFB container whose `PowerPoint
+// Legacy `.ppt` (PowerPoint 97–2003, [MS-PPT]) record reader + per-slide content
+// extraction (PPT-1..5). A `.ppt` is an OLE2/CFB container whose `PowerPoint
 // Document` stream is a tree of records sharing the OfficeArt header layout
 // (`[recVerInstance:u16][recType:u16][recLen:u32]`, a container when the low
 // nibble of recVerInstance is 0xF — the same convention `escher.ts` walks for
@@ -15,13 +15,14 @@
 // / colour and paragraphs carry alignment / indent level. PPT-3 reads embedded
 // pictures (Pictures stream). PPT-4 reads each shape's OfficeArtClientAnchor so text
 // boxes and pictures carry their slide rectangle; an un-anchored shape (e.g. a
-// placeholder inheriting master geometry) falls back to reading-order flow.
+// placeholder inheriting master geometry) falls back to reading-order flow. PPT-5
+// reads decorative autoshapes (the FSP shape type + the OPT fill / line colour).
 // Everything is best-effort and graceful-on-failure — structural doubt yields
 // missing content, never wrong content — mirroring the `.doc`/`.xls` readers.
 
 import { isCfb, openCfb } from '@/core/ole/cfb';
 
-// --- [MS-PPT] §2.13.24 record types (the ones PPT-1..2 need) -----------------
+// --- [MS-PPT] §2.13.24 record types (the ones the `.ppt` reader needs) --------
 const RT_DOCUMENT = 0x03e8;
 const RT_DOCUMENT_ATOM = 0x03e9;
 const RT_SLIDE_LIST_WITH_TEXT = 0x0ff0;
@@ -42,11 +43,18 @@ const RT_TEXT_BYTES_ATOM = 0x0fa8;
 const FBT_BSTORE_CONTAINER = 0xf001;
 const FBT_BSE = 0xf007;
 const FBT_SP_CONTAINER = 0xf004;
+const FBT_FSP = 0xf00a; // OfficeArtFSP — recInstance is the shape type, body has the flags
 const FBT_OPT = 0xf00b;
 const FBT_CLIENT_TEXTBOX = 0xf00d; // OfficeArtClientTextbox — holds the PPT text atoms
 const FBT_CLIENT_ANCHOR = 0xf010; // OfficeArtClientAnchor — the slide rectangle (PPT-4)
 const PROP_PIB = 0x0104; // OPT property (low 14 bits): 1-based index into the FBSE store
+const PROP_FILL_COLOR = 0x0181; // OPT fillColor (PPT-5)
+const PROP_LINE_COLOR = 0x01c0; // OPT lineColor (PPT-5)
 const FBSE_FODELAY_OFFSET = 28; // foDelay in the FBSE data (record offset 36 − 8-byte header)
+// OfficeArtFSP flags (§2.2.40): skip groups, the patriarch and the background shape.
+const FSP_FLAG_GROUP = 0x0001;
+const FSP_FLAG_PATRIARCH = 0x0004;
+const FSP_FLAG_BACKGROUND = 0x0400;
 
 // CurrentUserAtom.headerToken (§2.3.2) — the encrypted variant means the document
 // streams are obfuscated and the text cannot be read.
@@ -89,12 +97,21 @@ export interface PptRect {
   readonly w: number;
   readonly h: number;
 }
-// One slide shape (PPT-4): its text and/or picture, plus its slide rectangle when
-// the shape carries an explicit anchor (else it is laid out in reading order).
+// A decorative autoshape (PPT-5): its preset type plus any literal fill / line
+// colour. Carried only by an anchored shape that has no text and no picture.
+export interface PptAutoShape {
+  readonly shapeType: number; // MSOSPT (the FSP recInstance)
+  readonly fillColorHex?: string;
+  readonly lineColorHex?: string;
+}
+// One slide shape (PPT-4..5): its text, picture and/or autoshape geometry, plus its
+// slide rectangle when the shape carries an explicit anchor (else it is laid out in
+// reading order).
 export interface PptShape {
   readonly rectPt?: PptRect;
   readonly paragraphs?: ReadonlyArray<PptParagraph>;
   readonly image?: PptImage;
+  readonly autoShape?: PptAutoShape;
 }
 export interface PptSlide {
   readonly shapes: ReadonlyArray<PptShape>;
@@ -206,9 +223,11 @@ export function extractPptContent(bytes: Uint8Array): PptContent {
   };
 }
 
-// Whether a slide carries any readable content (text or a picture).
+// Whether a slide carries any readable content (text, a picture or an autoshape).
 function slideHasContent(s: PptSlide): boolean {
-  return s.shapes.some((sh) => shapeHasText(sh) || sh.image !== undefined);
+  return s.shapes.some(
+    (sh) => shapeHasText(sh) || sh.image !== undefined || sh.autoShape !== undefined,
+  );
 }
 function shapeHasText(sh: PptShape): boolean {
   return sh.paragraphs?.some((p) => paragraphText(p).length > 0) ?? false;
@@ -504,10 +523,21 @@ function collectShapeContainers(
       let rectPt: PptRect | undefined;
       let paragraphs: Array<PptParagraph> | undefined;
       let pib: number | undefined;
+      let shapeType = 0;
+      let fspFlags = 0;
+      let fillColorHex: string | undefined;
+      let lineColorHex: string | undefined;
       for (const child of records(r.data)) {
-        if (child.type === FBT_CLIENT_ANCHOR) rectPt = parseAnchor(child.data);
+        if (child.type === FBT_FSP) {
+          shapeType = child.instance;
+          fspFlags = child.data.length >= 8 ? u32(child.data, 4) : 0;
+        } else if (child.type === FBT_CLIENT_ANCHOR) rectPt = parseAnchor(child.data);
         else if (child.type === FBT_CLIENT_TEXTBOX) paragraphs = collectParagraphs(child.data, 0);
-        else if (child.type === FBT_OPT) pib = optProperty(child.data, child.instance, PROP_PIB);
+        else if (child.type === FBT_OPT) {
+          pib = optProperty(child.data, child.instance, PROP_PIB);
+          fillColorHex = optColor(child.data, child.instance, PROP_FILL_COLOR);
+          lineColorHex = optColor(child.data, child.instance, PROP_LINE_COLOR);
+        }
       }
       let image: PptImage | undefined;
       if (pib !== undefined && pib >= 1 && pib <= img.foDelays.length) {
@@ -516,11 +546,30 @@ function collectShapeContainers(
       }
       const textParas =
         paragraphs && paragraphs.some((p) => paragraphText(p).length > 0) ? paragraphs : undefined;
-      if (textParas || image) {
+      // A decorative autoshape: an anchored shape with a preset type, a literal
+      // fill or line colour, and no text/picture — and not a group / patriarch /
+      // background shape.
+      const decorative =
+        (fspFlags & (FSP_FLAG_GROUP | FSP_FLAG_PATRIARCH | FSP_FLAG_BACKGROUND)) === 0;
+      const autoShape =
+        !textParas &&
+        !image &&
+        rectPt &&
+        shapeType > 0 &&
+        decorative &&
+        (fillColorHex || lineColorHex)
+          ? {
+              shapeType,
+              ...(fillColorHex ? { fillColorHex } : {}),
+              ...(lineColorHex ? { lineColorHex } : {}),
+            }
+          : undefined;
+      if (textParas || image || autoShape) {
         out.push({
           ...(rectPt ? { rectPt } : {}),
           ...(textParas ? { paragraphs: textParas } : {}),
           ...(image ? { image } : {}),
+          ...(autoShape ? { autoShape } : {}),
         });
       }
     } else if (r.isContainer) {
@@ -571,6 +620,15 @@ function optProperty(d: Uint8Array, count: number, wantId: number): number | und
     if ((id & 0x3fff) === wantId && (id & 0x8000) === 0) return u32(d, i * 6 + 2);
   }
   return undefined;
+}
+
+// An OPT colour property → 6-hex RGB, but only when it is a literal sRGB value (the
+// flags byte is 0). Palette / scheme / system colours are skipped (no theme is
+// resolved). Mirrors the `.xls` Escher reader.
+function optColor(d: Uint8Array, count: number, wantId: number): string | undefined {
+  const v = optProperty(d, count, wantId);
+  if (v === undefined || v >>> 24 !== 0) return undefined;
+  return `${hex2(v & 0xff)}${hex2((v >> 8) & 0xff)}${hex2((v >> 16) & 0xff)}`;
 }
 
 // The OfficeArtBlip at `foDelay` in the Pictures stream → its raw image bytes. The

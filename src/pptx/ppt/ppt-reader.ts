@@ -1,4 +1,4 @@
-// Legacy `.ppt` reader (PPT-1..2) — the DocumentReader that sniffs a PowerPoint
+// Legacy `.ppt` reader (PPT-1..5) — the DocumentReader that sniffs a PowerPoint
 // 97–2003 binary file (an OLE2/CFB container with a `PowerPoint Document` stream)
 // and reads each slide's text into the same FlowDoc the OOXML pptx reader
 // produces, so the whole render pipeline (projection → PDF/SVG/HTML, re-write to
@@ -9,8 +9,9 @@
 // formatting (bold/italic/underline/size/colour from the StyleTextPropAtom) and
 // paragraph alignment/indent level; PPT-3 reads embedded images; PPT-4 positions a
 // shape that carries a slide anchor as a floating ShapeBlock (text) / ImageBlock
-// (picture), falling back to reading-order flow for un-anchored shapes. Decorative
-// autoshapes come in a later wave — recorded as a loss until then.
+// (picture), falling back to reading-order flow for un-anchored shapes; PPT-5 reads
+// decorative autoshapes (preset geometry + literal fill/line). What stays a loss:
+// theme/scheme colours (no theme is resolved) and exact custom geometry.
 
 import type {
   Alignment,
@@ -21,12 +22,21 @@ import type {
   Run,
   RunProperties,
   ShapeBlock,
+  ShapeFill,
+  ShapeLine,
   UnderlineStyle,
 } from '@/core/document-model';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss } from '@/core/ir';
-import type { PptContent, PptImage, PptParagraph, PptRect, PptRun } from '@/pptx/ppt/ppt-text';
+import type {
+  PptAutoShape,
+  PptContent,
+  PptImage,
+  PptParagraph,
+  PptRect,
+  PptRun,
+} from '@/pptx/ppt/ppt-text';
 
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
 import { isCfb, openCfb } from '@/core/ole/cfb';
@@ -39,8 +49,8 @@ const ZERO_WIDTH_SPACE = '​';
 // DocumentAtom gives no usable slide size.
 const DEFAULT_SLIDE_W = 720;
 const DEFAULT_SLIDE_H = 540;
-// A half-inch margin keeps the flat text dump off the page edge (PPT-1..2 have no
-// per-shape geometry yet; PPT-4 positions text and drops to a margin-less canvas).
+// A half-inch margin insets the reading-order fallback content off the page edge;
+// positioned shapes anchor page-relative and so are unaffected by it.
 const SLIDE_MARGIN = 36;
 // A quarter-inch indent per bullet/outline level (mirrors the .doc list reader).
 const LEVEL_INDENT_PT = 18;
@@ -57,14 +67,15 @@ function looksLikePpt(bytes: Uint8Array): boolean {
   }
 }
 
-// The slide text, its run/paragraph formatting, embedded images and per-shape
-// placement are read; decorative autoshapes are not yet. Reported (degraded, keyed
-// on text) so a caller's loss report is honest about the gap.
+// The slide text, its run/paragraph formatting, embedded images, per-shape
+// placement and decorative autoshapes are read; theme-coloured shapes and exact
+// custom geometry are not. Reported (degraded, keyed on text) so a caller's loss
+// report is honest about the gap.
 const PPT_TEXT_LOSS: Loss = {
   severity: 'degraded',
   feature: FEATURES.text,
   detail:
-    "legacy .ppt: each slide's text (with run formatting — bold/italic/underline/size/colour — and paragraph alignment/indent), embedded images and per-shape placement (anchored shapes positioned, un-anchored ones in reading order) are read into one page per slide; decorative autoshapes are not yet (re-save as .pptx for full fidelity)",
+    "legacy .ppt: each slide's text (with run formatting — bold/italic/underline/size/colour — and paragraph alignment/indent), embedded images, per-shape placement and decorative autoshapes (preset geometry with literal fill/line colours) are read into one page per slide; theme-coloured shapes and exact custom geometry are not (re-save as .pptx for full fidelity)",
 };
 
 const PPT_ENCRYPTED_LOSS: Loss = {
@@ -121,6 +132,7 @@ function buildBody(content: PptContent, resources: ResourceStore): Array<BodyEle
           const block = positionedImage(shape.rectPt, shape.image, resources);
           if (block) floats.push(block);
         }
+        if (shape.autoShape) floats.push(positionedAutoShape(shape.rectPt, shape.autoShape));
       } else {
         for (const para of shape.paragraphs ?? []) {
           if (paragraphText(para).length > 0) inFlowParas.push(flowParagraph(para));
@@ -220,6 +232,53 @@ function positionedImage(
     paragraphProperties: {},
   };
   return { kind: 'image', image: block };
+}
+
+// MSOSPT (the FSP shape type) → a DrawingML preset name; unknown types fall back
+// to a rectangle. Connectors (13, 20–49) are drawn as a line.
+const SHAPE_PRESETS: ReadonlyMap<number, string> = new Map([
+  [1, 'rect'],
+  [2, 'roundRect'],
+  [3, 'ellipse'],
+  [4, 'diamond'],
+  [5, 'triangle'],
+  [6, 'rtTriangle'],
+  [7, 'parallelogram'],
+  [8, 'trapezoid'],
+  [9, 'hexagon'],
+  [10, 'octagon'],
+  [13, 'line'],
+  [20, 'line'],
+]);
+function isLineShape(shapeType: number): boolean {
+  return shapeType === 13 || (shapeType >= 20 && shapeType <= 49);
+}
+
+// A decorative autoshape → a positioned vector ShapeBlock with its preset geometry
+// and any literal fill / line colour.
+function positionedAutoShape(rect: PptRect, auto: PptAutoShape): BodyElement {
+  const line = isLineShape(auto.shapeType);
+  const fill: ShapeFill =
+    auto.fillColorHex && !line ? { kind: 'solid', colorHex: auto.fillColorHex } : { kind: 'none' };
+  const stroke: ShapeLine | undefined = auto.lineColorHex
+    ? { colorHex: auto.lineColorHex, fill: 'solid' }
+    : line
+      ? { fill: 'solid' }
+      : undefined;
+  const shape: ShapeBlock = {
+    float: floatAt(rect),
+    width: pt(rect.w),
+    height: pt(rect.h),
+    geometry: {
+      kind: 'preset',
+      preset: SHAPE_PRESETS.get(auto.shapeType) ?? 'rect',
+      adjust: new Map(),
+    },
+    fill,
+    ...(stroke ? { line: stroke } : {}),
+    paragraphProperties: {},
+  };
+  return { kind: 'shape', shape };
 }
 
 // An un-anchored picture → an in-flow ImageBlock sized from its intrinsic pixels

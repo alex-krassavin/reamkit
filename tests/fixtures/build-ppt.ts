@@ -30,11 +30,14 @@ const FBT_DGG_CONTAINER = 0xf000;
 const FBT_BSTORE_CONTAINER = 0xf001;
 const FBT_BSE = 0xf007;
 const FBT_SP_CONTAINER = 0xf004;
+const FBT_FSP = 0xf00a;
 const FBT_OPT = 0xf00b;
 const FBT_CLIENT_TEXTBOX = 0xf00d;
 const FBT_CLIENT_ANCHOR = 0xf010;
 const FBT_BLIP_PNG = 0xf01e;
 const PROP_PIB_ID = 0x4104; // OPT property id: pib (0x0104) with the fBid flag (0x4000)
+const PROP_FILL_COLOR = 0x0181;
+const PROP_LINE_COLOR = 0x01c0;
 const MASTER_PER_POINT = 8; // 576 master units / inch ÷ 72 points / inch
 
 const TOKEN_UNENCRYPTED = 0xe391c05f;
@@ -90,6 +93,9 @@ export interface PptBoxInput {
   };
   readonly text?: string; // a client text box (UTF-16), paragraphs split by '\r'
   readonly imageRef?: number; // a picture shape (1-based pib index)
+  readonly shapeType?: number; // an autoshape: the FSP recInstance (MSOSPT)
+  readonly fillColorHex?: string; // OPT fillColor (6-hex literal RGB)
+  readonly lineColorHex?: string; // OPT lineColor (6-hex literal RGB)
 }
 
 export interface BuildPptOptions {
@@ -344,17 +350,26 @@ function imageShapeContainer(pib: number): Uint8Array {
   return rec(FBT_SP_CONTAINER, 0, true, rec(FBT_OPT, 1, false, opt));
 }
 
-// A positioned shape: an SpContainer carrying an OfficeArtClientAnchor (the
-// rectangle, point coords → master units), optionally a client text box and/or a
-// pib picture reference (PPT-4).
+// A positioned shape: an SpContainer carrying (in order) an FSP (shape type, for
+// an autoshape), an FOPT (pib / fill / line properties), an OfficeArtClientAnchor
+// (the rectangle, point coords → master units) and a client text box (PPT-4..5).
 function buildShapeContainer(box: PptBoxInput): Uint8Array {
   const parts: Array<Uint8Array> = [];
-  if (box.imageRef !== undefined) {
-    const opt = new Uint8Array(6);
+  if (box.shapeType !== undefined) {
+    parts.push(rec(FBT_FSP, box.shapeType, false, new Uint8Array(8))); // spid + flags (0)
+  }
+  const props: Array<{ id: number; value: number }> = [];
+  if (box.imageRef !== undefined) props.push({ id: PROP_PIB_ID, value: box.imageRef });
+  if (box.fillColorHex) props.push({ id: PROP_FILL_COLOR, value: rgbColorRef(box.fillColorHex) });
+  if (box.lineColorHex) props.push({ id: PROP_LINE_COLOR, value: rgbColorRef(box.lineColorHex) });
+  if (props.length > 0) {
+    const opt = new Uint8Array(props.length * 6);
     const ov = new DataView(opt.buffer);
-    ov.setUint16(0, PROP_PIB_ID, true);
-    ov.setUint32(2, box.imageRef, true);
-    parts.push(rec(FBT_OPT, 1, false, opt));
+    props.forEach((p, i) => {
+      ov.setUint16(i * 6, p.id, true);
+      ov.setUint32(i * 6 + 2, p.value, true);
+    });
+    parts.push(rec(FBT_OPT, props.length, false, opt));
   }
   if (box.anchor) {
     const { x, y, w, h } = box.anchor;
@@ -372,6 +387,15 @@ function buildShapeContainer(box: PptBoxInput): Uint8Array {
     );
   }
   return rec(FBT_SP_CONTAINER, 0, true, concat(parts));
+}
+
+// A 6-hex RGB → an OfficeArtCOLORREF value (red | green<<8 | blue<<16, flags 0 =
+// literal sRGB).
+function rgbColorRef(hex: string): number {
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+  return (r | (g << 8) | (b << 16)) >>> 0;
 }
 
 function encodeUtf16(s: string): Uint8Array {
