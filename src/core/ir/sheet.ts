@@ -14,6 +14,7 @@ import type {
   DefinedName,
   MergedRange,
   ParsedWorksheet,
+  SheetRichRun,
   XlsxStyles,
 } from '@/core/spreadsheet-model';
 import type { ResourceId, ResourceStore } from '@/core/ir/resources';
@@ -91,6 +92,12 @@ export interface SheetDoc {
   readonly styles: XlsxStyles;
   /** §18.4 shared string table; a cell with type 's' indexes into it. */
   readonly sharedStrings: ReadonlyArray<string>;
+  /**
+   * §18.4.4 per-index rich-text runs (E-SHEET W6), parallel to sharedStrings —
+   * `[i]` is defined only when shared string i carries per-run formatting.
+   * Render-only: the writer flattens to plain text, so it is absent on round-trip.
+   */
+  readonly sharedStringRuns?: ReadonlyArray<ReadonlyArray<SheetRichRun> | undefined>;
   /** §18.2.5 workbook defined names (print areas/titles, named ranges). */
   readonly definedNames: ReadonlyArray<DefinedName>;
   /** §18.2.28 1904 date system (serial-to-date epoch). */

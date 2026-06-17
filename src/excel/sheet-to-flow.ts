@@ -64,6 +64,7 @@ export function projectSheetDoc(sheet: SheetDoc): FlowDoc {
         gridLines,
         sheetGrids,
         ...(ws.hyperlinks ? { hyperlinks: ws.hyperlinks } : {}),
+        ...(sheet.sharedStringRuns ? { sharedStringRuns: sheet.sharedStringRuns } : {}),
       }),
     );
 

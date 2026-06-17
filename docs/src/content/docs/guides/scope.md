@@ -120,6 +120,16 @@ charts — and is byte-stable across a read↔write loop.
 - **Header/footer text** (`<headerFooter>`) — Excel's `&`-code mini-language (`&L`/`&C`/
   `&R` regions, `&P`/`&N` page-number fields resolved per page, `&A` sheet name,
   `&B`/`&I` bold/italic) renders in the page margins.
+- **Cell formatting details** — **in-cell rich text** (a shared string built from
+  several `<r>` runs renders one document-model run per run, each with its own
+  bold / italic / underline / colour / size / super- or sub-script); **wrapped
+  text** (`wrapText` cells keep their full text and wrap to the cell, growing the
+  row); **left indent** (`indent`); **non-solid pattern fills** (gray / hatch
+  patterns blend foreground over background to a representative solid) and
+  **gradient fills** (summarised to the mean of their stops); **diagonal cell
+  borders** (up / down strokes across the cell); **text rotation** (`textRotation`
+  — rotated / vertical cells render their text stacked top-to-bottom); and
+  **shrink-to-fit** (`shrinkToFit` scales the cell's font down to its column width).
 
 **PresentationML (§19)**
 - Each slide is a page at the deck size (`p:sldSz`); shapes are floating content
@@ -179,9 +189,6 @@ charts — and is byte-stable across a read↔write loop.
     and `timePeriod` (today / this-week / last-month …, which is relative to the
     wall clock — Ream's output is deterministic and does not read the system date).
     Both are skipped (left unrendered) rather than misrendered.
-  - A few **cell-format details**: non-solid and gradient fills, diagonal borders, text
-    rotation / indent / shrink-to-fit, wrapped text, and mixed (rich-text) formatting
-    within a single cell.
 
 ## Validation
 

@@ -86,7 +86,11 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
   if (sheets.length === 0) throw new Error('xlsx has no sheets');
 
   const sharedStringsData = pkg.getPart(SHARED_STRINGS_PART);
-  const sharedStrings = sharedStringsData ? parseSharedStrings(sharedStringsData) : [];
+  // texts feed every consumer (round-trip, value resolution); runs (W6) carry
+  // per-run rich formatting for the strings that have it — render-only.
+  const { texts: sharedStrings, runs: sharedStringRuns } = sharedStringsData
+    ? parseSharedStrings(sharedStringsData)
+    : { texts: [] as ReadonlyArray<string>, runs: [] as ReadonlyArray<undefined> };
 
   const stylesData = pkg.getPart(STYLES_PART);
   const styles = stylesData ? parseXlsxStyles(stylesData) : EMPTY_XLSX_STYLES;
@@ -301,6 +305,9 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
     sheets: sheetsOut,
     styles,
     sharedStrings,
+    // Carry rich runs only when some shared string actually has them (W6) — keeps
+    // the common plain-text workbook's SheetDoc unchanged.
+    ...(sharedStringRuns.some((r) => r !== undefined) ? { sharedStringRuns } : {}),
     definedNames,
     date1904,
     ...(chartData.size > 0 ? { chartData } : {}),

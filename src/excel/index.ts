@@ -18,6 +18,7 @@ export type {
   MergedRange,
   ParsedWorksheet,
   RowHeight,
+  SheetRichRun,
   WorksheetCell,
   XlsxPageMargins,
   XlsxPageSetup,

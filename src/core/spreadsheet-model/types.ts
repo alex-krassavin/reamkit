@@ -236,6 +236,11 @@ export interface XlsxBorder {
   readonly right?: XlsxBorderEdge;
   readonly bottom?: XlsxBorderEdge;
   readonly left?: XlsxBorderEdge;
+  // §18.8.4 <diagonal> — the diagonal stroke; @diagonalUp (bottom-left → top-right)
+  // and/or @diagonalDown (top-left → bottom-right) select which corners it spans (W6).
+  readonly diagonal?: XlsxBorderEdge;
+  readonly diagonalUp?: boolean;
+  readonly diagonalDown?: boolean;
 }
 
 export type XlsxHorizontalAlign =
@@ -253,6 +258,13 @@ export interface XlsxCellAlignment {
   readonly horizontal?: XlsxHorizontalAlign;
   readonly vertical?: XlsxVerticalAlign;
   readonly wrapText?: boolean;
+  // §18.8.1 — left indent in "indent levels" (each ≈ 3 character widths) (W6).
+  readonly indent?: number;
+  // §18.8.1 textRotation — degrees counter-clockwise (0–90), 91–180 clockwise as
+  // (value − 90), and 255 = stacked vertical text (W6).
+  readonly textRotation?: number;
+  // §18.8.1 shrinkToFit — scale the text down so it fits the cell on one line (W6).
+  readonly shrinkToFit?: boolean;
 }
 
 export interface XlsxCellXf {
@@ -455,6 +467,24 @@ export interface HyperlinkRef {
 export interface HeaderFooter {
   readonly oddHeader?: string;
   readonly oddFooter?: string;
+}
+
+// §18.4.4 <r> — one formatting run inside a rich-text shared string (E-SHEET W6).
+// A `<si>` with multiple `<r><rPr>…</rPr><t>…</t></r>` runs carries per-run
+// formatting from <rPr> (its own font properties, not a cellXf index). The
+// projection emits these as separate document-model runs so a single cell can mix
+// bold / colour / size. Render-only: the writer flattens back to plain text, so
+// the round-trip stays byte-stable (rich formatting in a shared string is dropped
+// on `convert('xlsx')`, a documented loss like slicers/pivots).
+export interface SheetRichRun {
+  readonly text: string;
+  readonly bold?: boolean;
+  readonly italic?: boolean;
+  readonly underline?: boolean;
+  readonly colorHex?: string;
+  readonly sizePt?: number;
+  // §18.4.2 <vertAlign> — superscript / subscript within the cell text.
+  readonly vertAlign?: 'superscript' | 'subscript';
 }
 
 // §18.18.18 ST_DataValidationType — the constraint a <dataValidation> enforces.

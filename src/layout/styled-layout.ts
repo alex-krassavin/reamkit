@@ -4122,6 +4122,28 @@ function emitRowChunk(
       row.rowCount,
       colCount,
     );
+    // Diagonal cell strokes (Excel diagonal borders): a line across the cell box,
+    // drawn in the shapes pass like the icon / dropdown glyphs. diagonalDown runs
+    // top-left → bottom-right, diagonalUp bottom-left → top-right.
+    const diagDown = cell.borders.diagonalDown;
+    const diagUp = cell.borders.diagonalUp;
+    if ((diagDown || diagUp) && cell.mergeRole !== 'middle' && cell.mergeRole !== 'end') {
+      const transform = flipTransform([1, 0, 0, 1, cellX, rowBottom], pageHeight);
+      const w = cell.widthPt;
+      const h = row.heightPt;
+      const pushDiagonal = (b: Border, y0: number, y1: number): void => {
+        out.push({
+          type: 'shape',
+          shape: {
+            paths: [new PathBuilder().moveTo(0, y0).lineTo(w, y1).build()],
+            stroke: { colorHex: b.colorHex ?? '000000', widthPt: b.width ?? 0.75 },
+            transform,
+          },
+        });
+      };
+      if (diagDown) pushDiagonal(diagDown, h, 0);
+      if (diagUp) pushDiagonal(diagUp, 0, h);
+    }
     if (cell.mergeRole === 'middle' || cell.mergeRole === 'end') continue;
     let textY = rowTop - cell.padTopPt;
     for (const line of cell.lines) {

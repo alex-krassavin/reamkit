@@ -68,7 +68,7 @@ describe('xlsx parsers', () => {
       ['Hello', 42],
     ]);
     const pkg = OpcPackage.open(xlsx);
-    const strs = parseSharedStrings(pkg.requirePart('xl/sharedStrings.xml'));
+    const strs = parseSharedStrings(pkg.requirePart('xl/sharedStrings.xml')).texts;
     expect(strs).toEqual(['Hello', 'World']);
   });
 
@@ -150,7 +150,7 @@ describe('xlsx parsers', () => {
         enc(
           `<x:sst xmlns:x="${X}"><x:si><x:t>Hi</x:t></x:si><x:si><x:t>There</x:t></x:si></x:sst>`,
         ),
-      ),
+      ).texts,
     ).toEqual(['Hi', 'There']);
 
     // worksheet.xml with x: prefix: one shared-string cell + one number cell.
@@ -565,7 +565,7 @@ describe('xlsx robustness', () => {
     const big = 'A'.repeat(100_000);
     const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
     const M = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
-    const shared = parseSharedStrings(enc(`<sst xmlns="${M}"><si><t>${big}</t></si></sst>`));
+    const shared = parseSharedStrings(enc(`<sst xmlns="${M}"><si><t>${big}</t></si></sst>`)).texts;
     expect(shared[0]!.length).toBe(32_767);
     const ws = parseWorksheet(
       enc(

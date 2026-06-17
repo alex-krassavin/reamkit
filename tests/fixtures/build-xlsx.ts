@@ -99,6 +99,9 @@ export interface XlsxBuilderOptions {
   readonly rows?: ReadonlyArray<ReadonlyArray<XlsxValue | XlsxCellSpec>>;
   readonly sheets?: ReadonlyArray<XlsxSheetSpec>;
   readonly stylesXml?: string;
+  /** Raw <si> entries for xl/sharedStrings.xml, overriding the generated table —
+   *  for rich-text (W6) fixtures. Cell string indices must line up with these. */
+  readonly sharedStringsXml?: string;
   readonly mergeRefs?: ReadonlyArray<string>;
   readonly columns?: ReadonlyArray<{
     readonly min: number;
@@ -473,7 +476,7 @@ ${sheetRows.join('\n')}
 
   const sharedStringsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${sharedStringsList.length}" uniqueCount="${sharedStringsList.length}">
-${sharedStringsList.map((str) => `  <si><t>${escapeXml(str)}</t></si>`).join('\n')}
+${options.sharedStringsXml ?? sharedStringsList.map((str) => `  <si><t>${escapeXml(str)}</t></si>`).join('\n')}
 </sst>`;
 
   const sheetOverrides = sheetParts

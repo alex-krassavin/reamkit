@@ -145,6 +145,13 @@ function parseBorders(root: Record<string, unknown>): Array<XlsxBorder> {
     if (right) border.right = right;
     if (bottom) border.bottom = bottom;
     if (left) border.left = left;
+    // §18.8.4 diagonal stroke + which corners it spans (E-SHEET W6).
+    const diagonal = parseBorderEdge(asObject(obj['diagonal']));
+    if (diagonal) {
+      border.diagonal = diagonal;
+      if (boolAttr(obj, 'diagonalUp')) border.diagonalUp = true;
+      if (boolAttr(obj, 'diagonalDown')) border.diagonalDown = true;
+    }
     out.push(border);
   }
   return out;
@@ -217,6 +224,16 @@ function parseFills(root: Record<string, unknown>): Array<XlsxFill> {
       if (fg) fill.fgColorHex = fg;
       if (bg) fill.bgColorHex = bg;
     }
+    // §18.8.24 <gradientFill> (E-SHEET W6): the print model has no gradient, so
+    // summarise the stops to their average colour and carry it as a solid fill —
+    // the cell gets its intended background; on write-back it round-trips as solid.
+    if (!fill.patternType) {
+      const avg = averageGradientColor(asObject(obj['gradientFill']));
+      if (avg) {
+        fill.patternType = 'solid';
+        fill.fgColorHex = avg;
+      }
+    }
     out.push(fill);
   }
   return out;
@@ -253,6 +270,12 @@ function parseCellXfs(root: Record<string, unknown>): Array<XlsxCellXf> {
       if (h) a.horizontal = h as XlsxHorizontalAlign;
       if (v) a.vertical = v as XlsxVerticalAlign;
       if (wrap !== undefined) a.wrapText = wrap;
+      const indent = numAttr(align, 'indent');
+      if (indent !== undefined && indent > 0) a.indent = indent;
+      const rotation = numAttr(align, 'textRotation');
+      if (rotation !== undefined && rotation !== 0) a.textRotation = rotation;
+      const shrink = boolAttr(align, 'shrinkToFit');
+      if (shrink) a.shrinkToFit = true;
       if (Object.keys(a).length > 0) xf.alignment = a;
     }
     out.push(xf);
@@ -307,6 +330,31 @@ function childToggle(obj: Record<string, unknown>, childName: string): boolean {
   const val = strAttr(child as Record<string, unknown>, 'val');
   if (val === undefined) return true;
   return !(val === 'false' || val === '0');
+}
+
+// The mean of a gradientFill's stop colours (E-SHEET W6) — a representative solid.
+function averageGradientColor(gf: Record<string, unknown> | undefined): string | undefined {
+  if (!gf) return undefined;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let n = 0;
+  for (const s of asArray(gf['stop'])) {
+    const so = asObject(s);
+    const hex = so ? colorOf(asObject(so['color'])) : undefined;
+    if (!hex) continue;
+    r += parseInt(hex.slice(0, 2), 16);
+    g += parseInt(hex.slice(2, 4), 16);
+    b += parseInt(hex.slice(4, 6), 16);
+    n++;
+  }
+  if (n === 0) return undefined;
+  const h = (x: number): string =>
+    Math.round(x / n)
+      .toString(16)
+      .padStart(2, '0')
+      .toUpperCase();
+  return `${h(r)}${h(g)}${h(b)}`;
 }
 
 function colorOf(node: Record<string, unknown> | undefined): string | undefined {
