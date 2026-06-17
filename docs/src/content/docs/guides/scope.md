@@ -107,7 +107,9 @@ charts — and is byte-stable across a read↔write loop.
   slicer fills its buttons from the referenced table column's distinct values and
   highlights the items the column's autofilter keeps; an OLAP/pivot slicer whose
   items live in a pivot cache degrades to a caption-only box.
-- Charts anchored to the sheet (the worksheet drawing part) render after the grid.
+- Charts, **pictures and shapes** anchored to the sheet (the worksheet drawing part)
+  render after the grid — a picture keeps its bytes; a shape its preset/custom
+  geometry, fill, outline and text body (reusing the DrawingML shape readers).
 
 **PresentationML (§19)**
 - Each slide is a page at the deck size (`p:sldSz`); shapes are floating content
@@ -160,8 +162,6 @@ charts — and is byte-stable across a read↔write loop.
   private font metrics — but _pixel-identical_ output is a non-goal: that would need the
   exact same font file and the renderer's internal glyph rounding.
 - **Some Excel constructs are not rendered yet:**
-  - **Floating pictures, shapes and text boxes on a worksheet** — only charts are
-    pulled from the sheet drawing; other anchored drawings are dropped.
   - **Cell comments / notes** (legacy and threaded) and **form / ActiveX controls**
     (checkboxes, option buttons, spinners).
   - **Sheet header/footer text** (the `&P` / `&D` / `&F` codes) and **cell hyperlinks**.
