@@ -57,6 +57,14 @@ export function buildDoc(
     readonly formatRuns?: ReadonlyArray<DocFormatRun>;
     readonly paraRuns?: ReadonlyArray<DocParaFormat>;
     readonly data?: Uint8Array; // the Data stream (embedded pictures: see buildPicf)
+    readonly headerFooter?: {
+      readonly defaultHeader?: string;
+      readonly defaultFooter?: string;
+      readonly firstHeader?: string;
+      readonly firstFooter?: string;
+      readonly evenHeader?: string;
+      readonly evenFooter?: string;
+    };
   } = {},
 ): Uint8Array {
   const whichTable = opts.whichTable ?? '1Table';
@@ -70,6 +78,19 @@ export function buildDoc(
     if (cursor % 2 !== 0) cursor++;
     const bytes = p.compressed ? encodeCp1252(p.text) : encodeUtf16(p.text);
     placed.push({ offset: cursor, bytes, chars: p.text.length, compressed: p.compressed });
+    cursor += bytes.length;
+  }
+  const mainChars = placed.reduce((sum, p) => sum + p.chars, 0);
+
+  // Optional header/footer stories: appended after the main text so they sit at
+  // CP ≥ ccpText, with a PlcfHdd dividing them.
+  let headerCps: Array<number> | undefined;
+  if (opts.headerFooter) {
+    const story = buildHeaderStream(opts.headerFooter);
+    headerCps = story.cps;
+    if (cursor % 2 !== 0) cursor++;
+    const bytes = encodeUtf16(story.text);
+    placed.push({ offset: cursor, bytes, chars: story.text.length, compressed: false });
     cursor += bytes.length;
   }
   const totalChars = placed.reduce((sum, p) => sum + p.chars, 0);
@@ -137,6 +158,12 @@ export function buildDoc(
   if (first && opts.paraRuns && opts.paraRuns.length > 0) {
     addBte(buildPapxFkp(first.offset, step, opts.paraRuns), 0x102);
   }
+  if (headerCps) {
+    const plcfHdd = new Uint8Array(headerCps.length * 4);
+    const hv = new DataView(plcfHdd.buffer);
+    headerCps.forEach((cp, i) => hv.setUint32(i * 4, cp, true));
+    fibFields.push({ fc: 0xf2, off: addBinTable(plcfHdd), lcb: plcfHdd.length }); // PlcfHdd
+  }
 
   // Assemble the table stream: CLX then the bin tables.
   const table = new Uint8Array(tableEnd);
@@ -153,7 +180,11 @@ export function buildDoc(
     (whichTable === '1Table' ? 0x0200 : 0x0000) | (opts.encrypted ? 0x0100 : 0x0000),
     true,
   ); // fWhichTblStm | fEncrypted
-  wv.setUint32(0x4c, totalChars, true); // ccpText
+  wv.setUint32(0x4c, mainChars, true); // ccpText (the header story sits past it)
+  if (headerCps) {
+    wv.setUint32(0x50, 0, true); // ccpFtn (no footnotes)
+    wv.setUint32(0x54, totalChars - mainChars, true); // ccpHdd
+  }
   for (const f of fibFields) {
     wv.setUint32(f.fc, f.off, true); // fcPlcfBte{Chpx,Papx}
     wv.setUint32(f.fc + 4, f.lcb, true); // lcbPlcfBte{Chpx,Papx}
@@ -168,6 +199,42 @@ export function buildDoc(
     { name: whichTable, data: table },
     ...(opts.data ? [{ name: 'Data', data: opts.data }] : []),
   ]);
+}
+
+// §2.8.26 PlcfHdd — lay the 12 header/footer stories (indices 0–5 are doc-wide
+// separators, left empty; 6–11 are section 0's even/odd/first header and footer)
+// as CR-terminated text, returning the concatenated story stream and the 13 CP
+// boundaries that divide it.
+function buildHeaderStream(hf: {
+  readonly defaultHeader?: string;
+  readonly defaultFooter?: string;
+  readonly firstHeader?: string;
+  readonly firstFooter?: string;
+  readonly evenHeader?: string;
+  readonly evenFooter?: string;
+}): { text: string; cps: Array<number> } {
+  const cr = String.fromCharCode(0x0d);
+  const slots = [
+    '',
+    '',
+    '',
+    '',
+    '',
+    '', // doc-wide separators
+    hf.evenHeader, // 6
+    hf.defaultHeader, // 7 (odd-page = primary)
+    hf.evenFooter, // 8
+    hf.defaultFooter, // 9 (odd-page = primary)
+    hf.firstHeader, // 10
+    hf.firstFooter, // 11
+  ].map((t) => (t ? t + cr : ''));
+  const cps = [0];
+  let text = '';
+  for (const s of slots) {
+    text += s;
+    cps.push(text.length);
+  }
+  return { text, cps };
 }
 
 // §2.9.158 PICF — a picture descriptor (68-byte header) then the image bytes, as

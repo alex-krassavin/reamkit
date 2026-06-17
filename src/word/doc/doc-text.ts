@@ -22,6 +22,10 @@ import { openCfb } from '@/core/ole/cfb';
 const WIDENT = 0xa5ec; // FibBase.wIdent — the "this is a Word doc" magic
 const OFF_FLAGS1 = 0x0a; // FibBase bit field (fEncrypted, fWhichTblStm, …)
 const OFF_CCPTEXT = 0x4c; // fibRgLw97.ccpText — main-document char count
+const OFF_CCPFTN = 0x50; // fibRgLw97.ccpFtn — footnote story char count
+const OFF_CCPHDD = 0x54; // fibRgLw97.ccpHdd — header/footer story char count
+const OFF_FCPLCFHDD = 0xf2; // fibRgFcLcb97.fcPlcfHdd — header/footer story divisions
+const OFF_LCBPLCFHDD = 0xf6;
 const OFF_FCPLCFBTECHPX = 0xfa; // fibRgFcLcb97.fcPlcfBteChpx — CHPX bin table
 const OFF_LCBPLCFBTECHPX = 0xfe;
 const OFF_FCPLCFBTEPAPX = 0x102; // fibRgFcLcb97.fcPlcfBtePapx — PAPX bin table
@@ -112,8 +116,21 @@ export interface DocParagraph {
   readonly cellMark?: boolean;
 }
 
+// The section's header/footer stories (best-effort: the binary story ordering
+// cannot be validated against a real file, so only well-formed, non-empty stories
+// are surfaced). `default` is the odd-page (primary) header/footer.
+export interface DocHeaderFooters {
+  readonly defaultHeader?: ReadonlyArray<DocParagraph>;
+  readonly defaultFooter?: ReadonlyArray<DocParagraph>;
+  readonly firstHeader?: ReadonlyArray<DocParagraph>;
+  readonly firstFooter?: ReadonlyArray<DocParagraph>;
+  readonly evenHeader?: ReadonlyArray<DocParagraph>;
+  readonly evenFooter?: ReadonlyArray<DocParagraph>;
+}
+
 export interface DocContent {
   readonly paragraphs: ReadonlyArray<DocParagraph>;
+  readonly headerFooters?: DocHeaderFooters;
   // The file is encrypted/obfuscated — text cannot be read without the key.
   readonly encrypted: boolean;
 }
@@ -162,7 +179,60 @@ export function extractDocContent(bytes: Uint8Array): DocContent {
   const papx = parsePlcBte(wd, table, OFF_FCPLCFBTEPAPX, OFF_LCBPLCFBTEPAPX, parsePapxFkp);
   const ccpText = u32(wd, OFF_CCPTEXT);
   const data = cfb.readStream('Data'); // embedded picture store (PICF + image)
-  return { paragraphs: buildParagraphs(wd, pieces, chpx, papx, ccpText, data), encrypted: false };
+  const main = buildParagraphs(wd, pieces, chpx, papx, 0, ccpText, data);
+  const headerFooters = extractHeaderFooters(wd, table, pieces, chpx, papx, data, ccpText);
+  return { paragraphs: main, ...(headerFooters ? { headerFooters } : {}), encrypted: false };
+}
+
+// §2.8.26 PlcfHdd — the header/footer stories live in the same piece-table stream,
+// after the main text and footnotes; PlcfHdd is a plex of CPs (relative to that
+// start) dividing it into stories. The first 6 are doc-wide separators; then 6 per
+// section: even/odd page header, even/odd page footer, first-page header, first-
+// page footer. We surface section 0's stories (best-effort — see DocHeaderFooters).
+function extractHeaderFooters(
+  wd: Uint8Array,
+  table: Uint8Array,
+  pieces: ReadonlyArray<Piece>,
+  chpx: ReadonlyArray<BteRun<DocCharProps>>,
+  papx: ReadonlyArray<BteRun<DocParaProps>>,
+  data: Uint8Array | undefined,
+  ccpText: number,
+): DocHeaderFooters | undefined {
+  if (u32(wd, OFF_CCPHDD) === 0) return undefined;
+  const fc = u32(wd, OFF_FCPLCFHDD);
+  const lcb = u32(wd, OFF_LCBPLCFHDD);
+  if (lcb < 8 || fc + lcb > table.length) return undefined;
+  const plc = table.subarray(fc, fc + lcb);
+  const n = Math.floor(lcb / 4); // CP entries
+  const hddStart = ccpText + u32(wd, OFF_CCPFTN); // the header story's first CP
+
+  // Story i spans CP[i]..CP[i+1] (relative to hddStart); an empty story is dropped.
+  const story = (i: number): ReadonlyArray<DocParagraph> | undefined => {
+    if (i + 1 >= n) return undefined;
+    const a = hddStart + u32(plc, i * 4);
+    const b = hddStart + u32(plc, (i + 1) * 4);
+    if (b <= a) return undefined;
+    const paras = buildParagraphs(wd, pieces, chpx, papx, a, b, data);
+    const hasContent = paras.some((p) => p.runs.some((r) => r.text.length > 0 || r.picture));
+    return hasContent ? paras : undefined;
+  };
+
+  // Section 0's six stories begin at index 6.
+  const evenHeader = story(6);
+  const defaultHeader = story(7); // odd-page = the primary header
+  const evenFooter = story(8);
+  const defaultFooter = story(9); // odd-page = the primary footer
+  const firstHeader = story(10);
+  const firstFooter = story(11);
+  const hf: DocHeaderFooters = {
+    ...(defaultHeader ? { defaultHeader } : {}),
+    ...(defaultFooter ? { defaultFooter } : {}),
+    ...(firstHeader ? { firstHeader } : {}),
+    ...(firstFooter ? { firstFooter } : {}),
+    ...(evenHeader ? { evenHeader } : {}),
+    ...(evenFooter ? { evenFooter } : {}),
+  };
+  return Object.keys(hf).length > 0 ? hf : undefined;
 }
 
 // §2.9.38 Clx — zero or more Prc (each a 0x01 byte + i16 length + grpprl) then
@@ -481,15 +551,15 @@ function buildParagraphs(
   pieces: ReadonlyArray<Piece>,
   chpx: ReadonlyArray<BteRun<DocCharProps>>,
   papx: ReadonlyArray<BteRun<DocParaProps>>,
-  ccpText: number,
+  cpStart: number,
+  cpEnd: number,
   data: Uint8Array | undefined,
 ): Array<DocParagraph> {
-  const limit = ccpText > 0 ? Math.min(ccpText, MAX_TEXT) : MAX_TEXT;
+  const end = Math.min(cpEnd, cpStart + MAX_TEXT);
   const paragraphs: Array<DocParagraph> = [];
   let runs: Array<DocRun> = [];
   let cur = '';
   let curProps: DocCharProps = {};
-  let cp = 0;
   let lastFc = 0;
   // Field nesting: a field is `0x13 code 0x14 result 0x15`; the code is dropped,
   // the cached result kept. codeDepth counts fields currently inside their code
@@ -514,10 +584,12 @@ function buildParagraphs(
   };
 
   for (const piece of pieces) {
-    if (cp >= limit) break;
+    if (piece.cpStart >= end) break;
+    if (piece.cpEnd <= cpStart) continue; // the piece is entirely before the window
     const step = piece.compressed ? 1 : 2;
-    const nChars = piece.cpEnd - piece.cpStart;
-    for (let k = 0; k < nChars && cp < limit; k++, cp++) {
+    const kStart = Math.max(0, cpStart - piece.cpStart);
+    const kEnd = Math.min(piece.cpEnd - piece.cpStart, end - piece.cpStart);
+    for (let k = kStart; k < kEnd; k++) {
       const fc = piece.fc + k * step;
       lastFc = fc;
       const code = piece.compressed ? byteCode(wd, fc) : unitCode(wd, fc);

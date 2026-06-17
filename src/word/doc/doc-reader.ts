@@ -1,23 +1,26 @@
-// Legacy `.doc` reader (DOC-1..7) — the DocumentReader that sniffs a Word
+// Legacy `.doc` reader (DOC-1..8) — the DocumentReader that sniffs a Word
 // 97–2003 binary file (an OLE2/CFB container with a `WordDocument` stream) and
-// reads its text, run/paragraph formatting, tables and inline images into the
-// same FlowDoc the OOXML docx reader produces, so the whole render pipeline
-// (projection → PDF/SVG/HTML, re-write to .docx) works on a legacy `.doc` the way
-// it already does for `.xls`. The shared CFB container reader (`src/core/ole`) is
-// the keystone both legacy formats reuse.
+// reads its text, run/paragraph formatting, tables, inline images and
+// headers/footers into the same FlowDoc the OOXML docx reader produces, so the
+// whole render pipeline (projection → PDF/SVG/HTML, re-write to .docx) works on a
+// legacy `.doc` the way it already does for `.xls`. The shared CFB container
+// reader (`src/core/ole`) is the keystone both legacy formats reuse.
 //
 // Scope: paragraphs of formatted runs — bold / italic / underline / font size
 // (CHPX) on each run, alignment / indentation / spacing (PAPX) on each paragraph,
 // tables (in-table paragraphs grouped into a row/cell grid, with per-column widths
 // from sprmTDefTable), inline images (the picture char's CHPX → a PICF in the Data
-// stream) and fields (resolved to their cached result). Headers/footers, lists and
-// table cell borders/merges are not read yet — recorded as a loss.
+// stream), fields (resolved to their cached result) and the section's
+// headers/footers (the PlcfHdd stories). Lists and table cell borders/merges are
+// not read yet — recorded as a loss.
 
 import type {
   Alignment,
   BodyElement,
   Border,
   CellBorders,
+  HeaderFooterReference,
+  HeaderFooterType,
   ImageBlock,
   ParagraphProperties,
   RunProperties,
@@ -74,7 +77,7 @@ const DOC_TEXT_LOSS: Loss = {
   severity: 'degraded',
   feature: FEATURES.text,
   detail:
-    'legacy .doc: the document text, run formatting (bold/italic/underline/size), paragraph formatting (alignment/indent/spacing), tables (with column widths), inline images and fields are read; headers/footers, lists and table cell borders/merges are not (re-save as .docx for full fidelity)',
+    "legacy .doc: the document text, run formatting (bold/italic/underline/size), paragraph formatting (alignment/indent/spacing), tables (with column widths), inline images, fields and the section's headers/footers are read; lists and table cell borders/merges are not (re-save as .docx for full fidelity)",
 };
 
 const DOC_ENCRYPTED_LOSS: Loss = {
@@ -88,6 +91,34 @@ export function readDoc(bytes: Uint8Array): ReadResult<FlowDoc> {
   const resources = new ResourceStore();
   const body = buildBody(content, resources);
 
+  // Header/footer stories → a named-body map + the section's references.
+  const headersFooters = new Map<string, ReadonlyArray<BodyElement>>();
+  const headers: Array<HeaderFooterReference> = [];
+  const footers: Array<HeaderFooterReference> = [];
+  const addStory = (
+    story: ReadonlyArray<DocParagraph> | undefined,
+    kind: 'header' | 'footer',
+    type: HeaderFooterType,
+  ): void => {
+    if (!story) return;
+    const id = `${kind}-${type}`;
+    const els = resolveBodyStyles(
+      story.flatMap((p) => mapParagraph(p, resources)),
+      EMPTY_STYLE_SHEET,
+    );
+    headersFooters.set(id, els);
+    (kind === 'header' ? headers : footers).push({ type, relationshipId: id });
+  };
+  const hf = content.headerFooters;
+  if (hf) {
+    addStory(hf.defaultHeader, 'header', 'default');
+    addStory(hf.firstHeader, 'header', 'first');
+    addStory(hf.evenHeader, 'header', 'even');
+    addStory(hf.defaultFooter, 'footer', 'default');
+    addStory(hf.firstFooter, 'footer', 'first');
+    addStory(hf.evenFooter, 'footer', 'even');
+  }
+
   // Word's default page: US Letter with one-inch margins.
   const doc: FlowDoc = {
     kind: 'flow',
@@ -96,11 +127,12 @@ export function readDoc(bytes: Uint8Array): ReadResult<FlowDoc> {
     section: {
       pageSize: { width: pt(612), height: pt(792) },
       margins: { top: pt(72), right: pt(72), bottom: pt(72), left: pt(72) },
-      headers: [],
-      footers: [],
+      headers,
+      footers,
     },
     styles: EMPTY_STYLE_SHEET,
     resources,
+    ...(headersFooters.size > 0 ? { headersFooters } : {}),
   };
   return { doc, losses: [content.encrypted ? DOC_ENCRYPTED_LOSS : DOC_TEXT_LOSS] };
 }

@@ -322,6 +322,38 @@ describe('doc reader (DOC-1)', () => {
     expect(t!.rows[0]!.cells[1]!.properties.width).toBe(72);
   });
 
+  it('reads the default header and footer stories (DOC-8)', () => {
+    const doc = readDoc(
+      buildDoc([{ text: 'Body\r', compressed: false }], {
+        headerFooter: { defaultHeader: 'My header', defaultFooter: 'Page footer' },
+      }),
+    ).doc;
+    expect(doc.section?.headers.map((h) => h.type)).toEqual(['default']);
+    expect(doc.section?.footers.map((f) => f.type)).toEqual(['default']);
+    const hdrId = doc.section!.headers[0]!.relationshipId;
+    const ftrId = doc.section!.footers[0]!.relationshipId;
+    expect(cellText(doc.headersFooters!.get(hdrId)!)).toBe('My header');
+    expect(cellText(doc.headersFooters!.get(ftrId)!)).toBe('Page footer');
+    expect(paragraphTexts(doc)).toEqual(['Body']); // the body is unaffected
+  });
+
+  it('classifies a first-page header as type "first"', () => {
+    const doc = readDoc(
+      buildDoc([{ text: 'Body\r', compressed: false }], {
+        headerFooter: { firstHeader: 'Cover header' },
+      }),
+    ).doc;
+    expect(doc.section?.headers.map((h) => h.type)).toEqual(['first']);
+    const id = doc.section!.headers[0]!.relationshipId;
+    expect(cellText(doc.headersFooters!.get(id)!)).toBe('Cover header');
+  });
+
+  it('has no header/footer references when the doc has none', () => {
+    const doc = readDoc(buildDoc([{ text: 'Body\r', compressed: false }])).doc;
+    expect(doc.section?.headers).toEqual([]);
+    expect(doc.headersFooters).toBeUndefined();
+  });
+
   it('renders a .doc with a table to a valid PDF', async () => {
     const pdf = await Ream.parse(
       buildDoc([{ text: `A${CM}B${CM}C${CM}D${CM}`, compressed: false }], {
