@@ -1,5 +1,5 @@
 // Legacy `.ppt` (PowerPoint 97–2003, [MS-PPT]) record reader + per-slide text
-// extraction (PPT-1). A `.ppt` is an OLE2/CFB container whose `PowerPoint
+// extraction (PPT-1..2). A `.ppt` is an OLE2/CFB container whose `PowerPoint
 // Document` stream is a tree of records sharing the OfficeArt header layout
 // (`[recVerInstance:u16][recType:u16][recLen:u32]`, a container when the low
 // nibble of recVerInstance is 0xF — the same convention `escher.ts` walks for
@@ -10,13 +10,15 @@
 //
 // PPT-1 pulls each slide's text: the TextCharsAtom (UTF-16) / TextBytesAtom
 // (cp1252) atoms inside the slide's drawing, falling back to the slide list's
-// outline text when a slide stores none inline. Everything is best-effort and
-// graceful-on-failure — structural doubt yields missing text, never wrong text —
-// mirroring the `.doc`/`.xls` readers built on the same CFB keystone.
+// outline text when a slide stores none inline. PPT-2 pairs each text atom with the
+// StyleTextPropAtom that follows it, so runs carry bold / italic / underline / size
+// / colour and paragraphs carry alignment / indent level. Everything is best-effort
+// and graceful-on-failure — structural doubt yields missing text, never wrong
+// text — mirroring the `.doc`/`.xls` readers built on the same CFB keystone.
 
 import { isCfb, openCfb } from '@/core/ole/cfb';
 
-// --- [MS-PPT] §2.13.24 record types (the ones PPT-1 needs) -------------------
+// --- [MS-PPT] §2.13.24 record types (the ones PPT-1..2 need) -----------------
 const RT_DOCUMENT = 0x03e8;
 const RT_DOCUMENT_ATOM = 0x03e9;
 const RT_SLIDE_LIST_WITH_TEXT = 0x0ff0;
@@ -24,7 +26,9 @@ const RT_SLIDE_PERSIST_ATOM = 0x03f3;
 const RT_SLIDE = 0x03ee;
 const RT_USER_EDIT_ATOM = 0x0ff5;
 const RT_PERSIST_DIRECTORY_ATOM = 0x1772;
+const RT_TEXT_HEADER_ATOM = 0x0f9f;
 const RT_TEXT_CHARS_ATOM = 0x0fa0;
+const RT_STYLE_TEXT_PROP_ATOM = 0x0fa1;
 const RT_TEXT_BYTES_ATOM = 0x0fa8;
 
 // CurrentUserAtom.headerToken (§2.3.2) — the encrypted variant means the document
@@ -39,9 +43,22 @@ const SLWT_INSTANCE_SLIDES = 0;
 const MAX_EDITS = 4096;
 const MAX_DEPTH = 24;
 
-// One slide's extracted text, as paragraphs (split at the CR paragraph mark).
-export interface PptParagraph {
+// A run of uniformly-formatted text within a paragraph (PPT-2).
+export interface PptRun {
   readonly text: string;
+  readonly bold?: boolean;
+  readonly italic?: boolean;
+  readonly underline?: boolean;
+  readonly sizePt?: number;
+  readonly colorHex?: string;
+}
+
+// One slide paragraph: its runs plus the raw PPT alignment enum (0 left, 1 center,
+// 2 right, 3 justify, 4 distribute) and indent level (0–4), mapped by the reader.
+export interface PptParagraph {
+  readonly runs: ReadonlyArray<PptRun>;
+  readonly align?: number;
+  readonly level?: number;
 }
 export interface PptSlide {
   readonly paragraphs: ReadonlyArray<PptParagraph>;
@@ -130,7 +147,7 @@ export function extractPptContent(bytes: Uint8Array): PptContent {
   // If the slide list resolved no text (an unresolvable persist directory, say),
   // fall back to scanning the stream for slide containers directly.
   const slides = readSlideList(stream, docRec.data, persist);
-  const hasText = slides.some((s) => s.paragraphs.some((p) => p.text.length > 0));
+  const hasText = slides.some((s) => s.paragraphs.some((p) => paragraphText(p).length > 0));
   const size = readSlideSize(docRec.data);
   return {
     slides: hasText ? slides : slidesByScan(stream),
@@ -211,20 +228,22 @@ function readSlideList(
     if (pendingRef === undefined) return;
     const slideOff = persist.get(pendingRef);
     const slideRec = slideOff !== undefined ? recordAt(stream, slideOff) : undefined;
-    const inline = slideRec && slideRec.type === RT_SLIDE ? collectText(slideRec.data, 0) : [];
-    slides.push({ paragraphs: inline.length > 0 ? inline : outline });
+    const inline =
+      slideRec && slideRec.type === RT_SLIDE ? collectParagraphs(slideRec.data, 0) : [];
+    const hasInline = inline.some((p) => paragraphText(p).length > 0);
+    slides.push({ paragraphs: hasInline ? inline : outline });
     outline = [];
     pendingRef = undefined;
   };
 
-  for (const rec of records(slwt)) {
+  const recs = [...records(slwt)];
+  for (let i = 0; i < recs.length; i++) {
+    const rec = recs[i]!;
     if (rec.type === RT_SLIDE_PERSIST_ATOM) {
       flush(); // close the previous slide before starting the next
       pendingRef = rec.data.length >= 4 ? u32(rec.data, 0) : undefined;
-    } else if (rec.type === RT_TEXT_CHARS_ATOM) {
-      outline.push(...splitParagraphs(decodeUtf16(rec.data)));
-    } else if (rec.type === RT_TEXT_BYTES_ATOM) {
-      outline.push(...splitParagraphs(decodeCp1252(rec.data)));
+    } else if (rec.type === RT_TEXT_CHARS_ATOM || rec.type === RT_TEXT_BYTES_ATOM) {
+      outline.push(...styledParagraphs(rec, findFollowingStyle(recs, i)));
     }
   }
   flush();
@@ -232,16 +251,42 @@ function readSlideList(
 }
 
 // Recursively gather the text atoms inside a slide container (its drawing's client
-// text boxes), in record order, as paragraphs.
-function collectText(d: Uint8Array, depth: number): Array<PptParagraph> {
+// text boxes), in record order, pairing each with the StyleTextPropAtom that
+// follows it so runs carry their formatting.
+function collectParagraphs(d: Uint8Array, depth: number): Array<PptParagraph> {
   if (depth > MAX_DEPTH) return [];
   const out: Array<PptParagraph> = [];
-  for (const rec of records(d)) {
-    if (rec.type === RT_TEXT_CHARS_ATOM) out.push(...splitParagraphs(decodeUtf16(rec.data)));
-    else if (rec.type === RT_TEXT_BYTES_ATOM) out.push(...splitParagraphs(decodeCp1252(rec.data)));
-    else if (rec.isContainer) out.push(...collectText(rec.data, depth + 1));
+  const recs = [...records(d)];
+  for (let i = 0; i < recs.length; i++) {
+    const rec = recs[i]!;
+    if (rec.type === RT_TEXT_CHARS_ATOM || rec.type === RT_TEXT_BYTES_ATOM) {
+      out.push(...styledParagraphs(rec, findFollowingStyle(recs, i)));
+    } else if (rec.isContainer) {
+      out.push(...collectParagraphs(rec.data, depth + 1));
+    }
   }
   return out;
+}
+
+// The StyleTextPropAtom that applies to the text atom at index `i`: the first one
+// following it before the next text atom / text header begins.
+function findFollowingStyle(recs: ReadonlyArray<PptRecord>, i: number): Uint8Array | undefined {
+  for (let j = i + 1; j < recs.length; j++) {
+    const t = recs[j]!.type;
+    if (t === RT_STYLE_TEXT_PROP_ATOM) return recs[j]!.data;
+    if (t === RT_TEXT_CHARS_ATOM || t === RT_TEXT_BYTES_ATOM || t === RT_TEXT_HEADER_ATOM) break;
+  }
+  return undefined;
+}
+
+// A text atom (+ its optional StyleTextPropAtom) → formatted paragraphs.
+function styledParagraphs(
+  textRec: PptRecord,
+  styleData: Uint8Array | undefined,
+): Array<PptParagraph> {
+  const text =
+    textRec.type === RT_TEXT_CHARS_ATOM ? decodeUtf16(textRec.data) : decodeCp1252(textRec.data);
+  return buildStyledParagraphs(text, styleData);
 }
 
 // Last-resort slide discovery: every RT_Slide container in the stream, in stream
@@ -256,7 +301,7 @@ function slidesByScan(stream: Uint8Array): Array<PptSlide> {
 function collectSlides(d: Uint8Array, out: Array<PptSlide>, depth: number): void {
   if (depth > MAX_DEPTH) return;
   for (const rec of records(d)) {
-    if (rec.type === RT_SLIDE) out.push({ paragraphs: collectText(rec.data, 0) });
+    if (rec.type === RT_SLIDE) out.push({ paragraphs: collectParagraphs(rec.data, 0) });
     else if (rec.isContainer) collectSlides(rec.data, out, depth + 1);
   }
 }
@@ -311,25 +356,205 @@ function readSlideSize(
   return { slideWidthPt: w, slideHeightPt: h };
 }
 
-// Split a decoded text run into paragraphs at the CR (0x0D) paragraph mark; the
-// vertical tab (0x0B) is a soft line break, normalized to a space. Control
-// characters and the UTF-16 BOM are stripped. A trailing empty paragraph (from a
-// terminating CR) is dropped.
-function splitParagraphs(text: string): Array<PptParagraph> {
+// === Text + formatting (PPT-2) ===============================================
+
+// One character run / paragraph run parsed out of a StyleTextPropAtom.
+interface CharRun {
+  count: number;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  sizePt?: number;
+  colorHex?: string;
+}
+interface ParaRun {
+  count: number;
+  align?: number;
+  level?: number;
+}
+
+export function paragraphText(p: PptParagraph): string {
+  return p.runs.map((r) => r.text).join('');
+}
+
+// A decoded text run (+ its StyleTextPropAtom) → paragraphs of formatted runs. The
+// text is split at the CR (0x0D) paragraph mark; the StyleTextPropAtom's character
+// runs colour each slice. Without a style atom, each paragraph is a single plain
+// run.
+function buildStyledParagraphs(
+  text: string,
+  styleData: Uint8Array | undefined,
+): Array<PptParagraph> {
+  const style = styleData ? parseStyleTextProp(styleData, text.length) : undefined;
+  const charProps = style ? expandCharProps(style.charRuns, text.length) : undefined;
+  const paraRuns = style?.paraRuns ?? [];
+
   const paras: Array<PptParagraph> = [];
-  for (const raw of text.split('\r')) {
-    let s = '';
-    for (let i = 0; i < raw.length; i++) {
-      const c = raw.charCodeAt(i);
-      if (c === 0x0b || c === 0x0a || c === 0x09) s += ' ';
-      else if (c === 0xfeff || c < 0x20) continue;
-      else s += raw[i];
+  let runs: Array<PptRun> = [];
+  let cur = '';
+  let curProps: CharRun | undefined;
+  let paraIndex = 0;
+
+  const pushRun = (): void => {
+    if (cur.length > 0) runs.push(toRun(cur, curProps));
+    cur = '';
+  };
+  const endParagraph = (): void => {
+    pushRun();
+    const meta = paraRuns[paraIndex];
+    paras.push({
+      runs,
+      ...(meta?.align !== undefined ? { align: meta.align } : {}),
+      ...(meta?.level !== undefined ? { level: meta.level } : {}),
+    });
+    runs = [];
+    paraIndex++;
+  };
+
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c === 0x0d) {
+      endParagraph();
+      continue;
     }
-    paras.push({ text: s });
+    const props = charProps?.[i];
+    if (cur.length > 0 && !sameProps(props, curProps)) pushRun();
+    if (cur.length === 0) curProps = props;
+    if (c === 0x0b || c === 0x0a || c === 0x09) cur += ' ';
+    else if (c !== 0xfeff && c >= 0x20) cur += text[i];
   }
-  // Drop a single trailing empty paragraph left by the terminating CR.
-  if (paras.length > 1 && paras[paras.length - 1]!.text.length === 0) paras.pop();
+  endParagraph();
+
+  // Drop a single trailing empty paragraph left by a terminating CR.
+  if (paras.length > 1 && paragraphText(paras[paras.length - 1]!).length === 0) paras.pop();
   return paras;
+}
+
+function toRun(text: string, props: CharRun | undefined): PptRun {
+  if (!props) return { text };
+  return {
+    text,
+    ...(props.bold ? { bold: true } : {}),
+    ...(props.italic ? { italic: true } : {}),
+    ...(props.underline ? { underline: true } : {}),
+    ...(props.sizePt ? { sizePt: props.sizePt } : {}),
+    ...(props.colorHex ? { colorHex: props.colorHex } : {}),
+  };
+}
+
+function sameProps(a: CharRun | undefined, b: CharRun | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    !!a.bold === !!b.bold &&
+    !!a.italic === !!b.italic &&
+    !!a.underline === !!b.underline &&
+    a.sizePt === b.sizePt &&
+    a.colorHex === b.colorHex
+  );
+}
+
+// Expand the character runs into a per-character props array, so the paragraph
+// splitter can group consecutive equal-property characters into runs.
+function expandCharProps(charRuns: ReadonlyArray<CharRun>, textLen: number): Array<CharRun> {
+  const out: Array<CharRun> = [];
+  for (const run of charRuns) {
+    for (let i = 0; i < run.count && out.length < textLen; i++) out.push(run);
+  }
+  while (out.length < textLen) out.push(charRuns[charRuns.length - 1] ?? { count: 0 });
+  return out;
+}
+
+// StyleTextPropAtom (§2.9.1): a paragraph-run section then a character-run
+// section, each summing to the text length + 1 (the phantom paragraph
+// terminator). Within a run, optional fields follow the masks in the spec's byte
+// order (NOT bit-ascending); every present field must be read to stay aligned,
+// even the ones we drop. We keep the character bold/italic/underline/size/colour
+// and the paragraph alignment/indent level.
+function parseStyleTextProp(
+  data: Uint8Array,
+  textLen: number,
+): { paraRuns: Array<ParaRun>; charRuns: Array<CharRun> } | undefined {
+  const target = textLen + 1;
+  let off = 0;
+
+  // --- paragraph runs (§2.9.20 TextPFException) ---
+  const paraRuns: Array<ParaRun> = [];
+  let consumed = 0;
+  while (consumed < target && off + 10 <= data.length) {
+    const count = u32(data, off);
+    const level = u16(data, off + 4);
+    const mask = u32(data, off + 6);
+    off += 10;
+    let align: number | undefined;
+    if ((mask & 0x0000000f) !== 0) off += 2; // bulletFlags
+    if ((mask & 0x00000080) !== 0) off += 2; // bulletChar
+    if ((mask & 0x00000010) !== 0) off += 2; // bulletFontRef
+    if ((mask & 0x00000040) !== 0) off += 2; // bulletSize
+    if ((mask & 0x00000020) !== 0) off += 4; // bulletColor
+    if ((mask & 0x00000800) !== 0) {
+      align = u16(data, off); // textAlignment
+      off += 2;
+    }
+    if ((mask & 0x00001000) !== 0) off += 2; // lineSpacing
+    if ((mask & 0x00002000) !== 0) off += 2; // spaceBefore
+    if ((mask & 0x00004000) !== 0) off += 2; // spaceAfter
+    if ((mask & 0x00000100) !== 0) off += 2; // leftMargin
+    if ((mask & 0x00000400) !== 0) off += 2; // indent
+    if ((mask & 0x00008000) !== 0) off += 2; // defaultTabSize
+    if ((mask & 0x00100000) !== 0) off += 2 + (off + 2 <= data.length ? u16(data, off) : 0) * 4; // tabStops
+    if ((mask & 0x00010000) !== 0) off += 2; // fontAlign
+    if ((mask & 0x000e0000) !== 0) off += 2; // wrapFlags (charWrap/wordWrap/overflow)
+    if ((mask & 0x00200000) !== 0) off += 2; // textDirection
+    paraRuns.push({ count, level, ...(align !== undefined ? { align } : {}) });
+    consumed += count;
+    if (count <= 0) break;
+  }
+
+  // --- character runs (§2.9.11 TextCFException) ---
+  const charRuns: Array<CharRun> = [];
+  consumed = 0;
+  while (consumed < target && off + 8 <= data.length) {
+    const count = u32(data, off);
+    const mask = u32(data, off + 4);
+    off += 8;
+    const run: CharRun = { count };
+    // fontStyle (CFStyle): present if any style bit (bold/italic/underline/
+    // shadow/fehint/kumi/emboss) or the fHasStyle group (bits 10–13) is set.
+    if ((mask & 0x00003eb7) !== 0) {
+      const style = u16(data, off);
+      off += 2;
+      if ((mask & 0x1) !== 0 && (style & 0x1) !== 0) run.bold = true;
+      if ((mask & 0x2) !== 0 && (style & 0x2) !== 0) run.italic = true;
+      if ((mask & 0x4) !== 0 && (style & 0x4) !== 0) run.underline = true;
+    }
+    if ((mask & 0x00010000) !== 0) off += 2; // fontRef
+    if ((mask & 0x00200000) !== 0) off += 2; // oldEAFontRef
+    if ((mask & 0x00400000) !== 0) off += 2; // ansiFontRef
+    if ((mask & 0x00800000) !== 0) off += 2; // symbolFontRef
+    if ((mask & 0x00020000) !== 0) {
+      const sz = u16(data, off); // fontSize (points)
+      off += 2;
+      if (sz > 0) run.sizePt = sz;
+    }
+    if ((mask & 0x00040000) !== 0) {
+      // color (ColorIndexStruct: red, green, blue, index); 0xFE = explicit sRGB.
+      if (off + 4 <= data.length && data[off + 3] === 0xfe) {
+        run.colorHex = hex2(data[off]!) + hex2(data[off + 1]!) + hex2(data[off + 2]!);
+      }
+      off += 4;
+    }
+    if ((mask & 0x00080000) !== 0) off += 2; // position
+    charRuns.push(run);
+    consumed += count;
+    if (count <= 0) break;
+  }
+
+  return paraRuns.length > 0 || charRuns.length > 0 ? { paraRuns, charRuns } : undefined;
+}
+
+function hex2(n: number): string {
+  return n.toString(16).padStart(2, '0').toUpperCase();
 }
 
 function decodeUtf16(d: Uint8Array): string {

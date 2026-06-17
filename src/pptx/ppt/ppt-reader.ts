@@ -1,4 +1,4 @@
-// Legacy `.ppt` reader (PPT-1) — the DocumentReader that sniffs a PowerPoint
+// Legacy `.ppt` reader (PPT-1..2) — the DocumentReader that sniffs a PowerPoint
 // 97–2003 binary file (an OLE2/CFB container with a `PowerPoint Document` stream)
 // and reads each slide's text into the same FlowDoc the OOXML pptx reader
 // produces, so the whole render pipeline (projection → PDF/SVG/HTML, re-write to
@@ -6,20 +6,28 @@
 // The shared CFB container reader (`src/core/ole`) is the keystone all three reuse.
 //
 // Like pptxReader, each slide becomes one page at the deck size: a page-breaking
-// paragraph anchors the page and the slide's text follows as paragraphs. PPT-1
-// reads the text only; per-shape placement, run/paragraph formatting, images and
-// autoshapes come in later waves — recorded as a loss until then.
+// paragraph anchors the page and the slide's text follows as paragraphs. PPT-2
+// adds run formatting (bold/italic/underline/size/colour from the StyleTextPropAtom)
+// and paragraph alignment/indent level; per-shape placement, images and autoshapes
+// come in later waves — recorded as a loss until then.
 
-import type { BodyElement, ParagraphProperties } from '@/core/document-model';
+import type {
+  Alignment,
+  BodyElement,
+  ParagraphProperties,
+  Run,
+  RunProperties,
+  UnderlineStyle,
+} from '@/core/document-model';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss } from '@/core/ir';
-import type { PptContent } from '@/pptx/ppt/ppt-text';
+import type { PptContent, PptParagraph, PptRun } from '@/pptx/ppt/ppt-text';
 
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
 import { isCfb, openCfb } from '@/core/ole/cfb';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
-import { extractPptContent } from '@/pptx/ppt/ppt-text';
+import { extractPptContent, paragraphText } from '@/pptx/ppt/ppt-text';
 
 const ZERO_WIDTH_SPACE = '​';
 
@@ -27,9 +35,11 @@ const ZERO_WIDTH_SPACE = '​';
 // DocumentAtom gives no usable slide size.
 const DEFAULT_SLIDE_W = 720;
 const DEFAULT_SLIDE_H = 540;
-// A half-inch margin keeps the flat text dump off the page edge (PPT-1 has no
-// per-shape geometry yet; PPT-2 positions text and drops to a margin-less canvas).
+// A half-inch margin keeps the flat text dump off the page edge (PPT-1..2 have no
+// per-shape geometry yet; PPT-4 positions text and drops to a margin-less canvas).
 const SLIDE_MARGIN = 36;
+// A quarter-inch indent per bullet/outline level (mirrors the .doc list reader).
+const LEVEL_INDENT_PT = 18;
 
 // A legacy `.ppt` is an OLE2 container with a `PowerPoint Document` stream. The
 // check also keeps a `.xls`/`.doc` (or an encrypted OOXML, also a CFB) from
@@ -43,14 +53,14 @@ function looksLikePpt(bytes: Uint8Array): boolean {
   }
 }
 
-// The slide text is read; the higher-level structure (shape placement, formatting,
-// images, autoshapes) is not yet. Reported (degraded, keyed on text) so a caller's
-// loss report is honest about the gap.
+// The slide text and its run/paragraph formatting are read; the higher-level
+// structure (shape placement, images, autoshapes) is not yet. Reported (degraded,
+// keyed on text) so a caller's loss report is honest about the gap.
 const PPT_TEXT_LOSS: Loss = {
   severity: 'degraded',
   feature: FEATURES.text,
   detail:
-    "legacy .ppt: each slide's text is read into one page per slide; per-shape placement, run/paragraph formatting, images and autoshapes are not yet (re-save as .pptx for full fidelity)",
+    "legacy .ppt: each slide's text (with run formatting — bold/italic/underline/size/colour — and paragraph alignment/indent) is read into one page per slide; per-shape placement, images and autoshapes are not yet (re-save as .pptx for full fidelity)",
 };
 
 const PPT_ENCRYPTED_LOSS: Loss = {
@@ -91,23 +101,64 @@ export function readPpt(bytes: Uint8Array): ReadResult<FlowDoc> {
 function buildBody(content: PptContent): Array<BodyElement> {
   const body: Array<BodyElement> = [];
   content.slides.forEach((slide, slideIndex) => {
-    const lines = slide.paragraphs.filter((p) => p.text.length > 0);
+    const lines = slide.paragraphs.filter((p) => paragraphText(p).length > 0);
     const breakBefore = slideIndex > 0;
     if (lines.length === 0) {
       body.push(anchorParagraph(breakBefore));
       return;
     }
-    lines.forEach((line, lineIndex) => {
-      const properties: ParagraphProperties =
-        breakBefore && lineIndex === 0 ? { pageBreakBefore: true } : {};
+    lines.forEach((para, lineIndex) => {
       body.push({
         kind: 'paragraph',
-        paragraph: { properties, runs: [{ text: line.text, properties: {} }] },
+        paragraph: {
+          properties: toParaProperties(para, breakBefore && lineIndex === 0),
+          runs: para.runs.map(toRun),
+        },
       });
     });
   });
   if (body.length === 0) body.push(anchorParagraph(false));
   return body;
+}
+
+function toRun(r: PptRun): Run {
+  const underline: UnderlineStyle | undefined = r.underline ? 'single' : undefined;
+  const properties: RunProperties = {
+    ...(r.bold ? { bold: true } : {}),
+    ...(r.italic ? { italic: true } : {}),
+    ...(underline ? { underline } : {}),
+    ...(r.sizePt ? { fontSizePt: pt(r.sizePt) } : {}),
+    ...(r.colorHex ? { colorHex: r.colorHex } : {}),
+  };
+  return { text: r.text, properties };
+}
+
+function toParaProperties(p: PptParagraph, breakBefore: boolean): ParagraphProperties {
+  const alignment = p.align !== undefined ? alignmentFrom(p.align) : undefined;
+  const level = p.level ?? 0;
+  return {
+    ...(breakBefore ? { pageBreakBefore: true } : {}),
+    ...(alignment ? { alignment } : {}),
+    ...(level > 0 ? { indentLeft: pt(level * LEVEL_INDENT_PT) } : {}),
+  };
+}
+
+// PowerPoint TextAlignmentEnum → the document-model alignment (0 = left default).
+function alignmentFrom(a: number): Alignment | undefined {
+  switch (a) {
+    case 1:
+      return 'center';
+    case 2:
+      return 'right';
+    case 3:
+    case 6: // justifyLow ≈ justify
+      return 'both';
+    case 4:
+    case 5: // thaiDistributed ≈ distribute
+      return 'distribute';
+    default:
+      return undefined;
+  }
 }
 
 // An (otherwise empty) page anchor: a single zero-width-space run gives the page

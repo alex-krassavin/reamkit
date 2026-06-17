@@ -13,7 +13,7 @@ import { buildPpt } from './fixtures/build-ppt';
 import { buildCfb } from './fixtures/build-cfb';
 import type { FlowDoc } from '@/core/ir/flow';
 
-import { extractPptContent } from '@/pptx/ppt/ppt-text';
+import { extractPptContent, paragraphText } from '@/pptx/ppt/ppt-text';
 import { pptReader, readPpt } from '@/pptx/ppt/ppt-reader';
 import { Ream } from '@/core/converter/ream';
 import { createConverter } from '@/core/converter/facade';
@@ -40,6 +40,13 @@ function pageCount(doc: FlowDoc): number {
     doc.body.filter((el) => el.kind === 'paragraph' && el.paragraph.properties.pageBreakBefore)
       .length
   );
+}
+
+// The first body paragraph (the first slide's first line).
+function firstParagraph(doc: FlowDoc) {
+  const p = doc.body.find((el) => el.kind === 'paragraph');
+  if (!p) throw new Error('no paragraph');
+  return p.paragraph;
 }
 
 describe('ppt reader (PPT-1)', () => {
@@ -95,7 +102,7 @@ describe('ppt reader (PPT-1)', () => {
     const content = extractPptContent(
       buildPpt([{ text: 'Found by scan' }], { omitCurrentUser: true }),
     );
-    expect(content.slides.flatMap((s) => s.paragraphs.map((p) => p.text))).toContain(
+    expect(content.slides.flatMap((s) => s.paragraphs.map(paragraphText))).toContain(
       'Found by scan',
     );
   });
@@ -136,5 +143,71 @@ describe('ppt reader (PPT-1)', () => {
   it('converts a .ppt to HTML carrying the slide text', async () => {
     const html = await Ream.parse(buildPpt([{ text: 'Hello deck' }])).convert('html');
     expect(new TextDecoder().decode(html)).toContain('Hello deck');
+  });
+});
+
+describe('ppt reader formatting (PPT-2)', () => {
+  it('reads bold / italic / underline from the StyleTextPropAtom', () => {
+    const doc = readPpt(
+      buildPpt([
+        { text: 'Styled', charRuns: [{ length: 6, bold: true, italic: true, underline: true }] },
+      ]),
+    ).doc;
+    const run = firstParagraph(doc).runs[0]!;
+    expect(run.text).toBe('Styled');
+    expect(run.properties.bold).toBe(true);
+    expect(run.properties.italic).toBe(true);
+    expect(run.properties.underline).toBe('single');
+  });
+
+  it('reads the font size (points) of a run', () => {
+    const doc = readPpt(buildPpt([{ text: 'Big', charRuns: [{ length: 3, sizePt: 40 }] }])).doc;
+    expect(firstParagraph(doc).runs[0]!.properties.fontSizePt).toBe(40);
+  });
+
+  it('reads an explicit RGB run colour (ColorIndexStruct index 0xFE)', () => {
+    const doc = readPpt(
+      buildPpt([{ text: 'Red', charRuns: [{ length: 3, colorHex: 'FF0000' }] }]),
+    ).doc;
+    expect(firstParagraph(doc).runs[0]!.properties.colorHex).toBe('FF0000');
+  });
+
+  it('splits a line into runs at character-run boundaries', () => {
+    const doc = readPpt(
+      buildPpt([{ text: 'AB', charRuns: [{ length: 1, bold: true }, { length: 1 }] }]),
+    ).doc;
+    const runs = firstParagraph(doc).runs;
+    expect(runs.map((r) => r.text)).toEqual(['A', 'B']);
+    expect(runs[0]!.properties.bold).toBe(true);
+    expect(runs[1]!.properties.bold).toBeFalsy();
+  });
+
+  it('reads paragraph alignment from the paragraph run', () => {
+    const doc = readPpt(buildPpt([{ text: 'Centered', paraRuns: [{ length: 8, align: 1 }] }])).doc;
+    expect(firstParagraph(doc).properties.alignment).toBe('center');
+  });
+
+  it('indents a paragraph by its outline level', () => {
+    const doc = readPpt(buildPpt([{ text: 'Indented', paraRuns: [{ length: 8, level: 2 }] }])).doc;
+    expect(firstParagraph(doc).properties.indentLeft).toBe(36); // 2 × 18pt
+  });
+
+  it('keeps per-paragraph formatting across a CR-split run', () => {
+    // "Title\rBody": a centered title then a left body, bold title run.
+    const doc = readPpt(
+      buildPpt([
+        {
+          text: 'Title\rBody',
+          charRuns: [{ length: 6, bold: true }, { length: 4 }],
+          paraRuns: [{ length: 6, align: 1 }, { length: 4 }],
+        },
+      ]),
+    ).doc;
+    const paras = doc.body.filter((el) => el.kind === 'paragraph');
+    expect(paras[0]!.paragraph.runs.map((r) => r.text).join('')).toBe('Title');
+    expect(paras[0]!.paragraph.properties.alignment).toBe('center');
+    expect(paras[0]!.paragraph.runs[0]!.properties.bold).toBe(true);
+    expect(paras[1]!.paragraph.runs.map((r) => r.text).join('')).toBe('Body');
+    expect(paras[1]!.paragraph.runs[0]!.properties.bold).toBeFalsy();
   });
 });

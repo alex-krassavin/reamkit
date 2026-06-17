@@ -20,6 +20,7 @@ const RT_USER_EDIT_ATOM = 0x0ff5;
 const RT_PERSIST_DIRECTORY_ATOM = 0x1772;
 const RT_CURRENT_USER_ATOM = 0x0ff6;
 const RT_TEXT_CHARS_ATOM = 0x0fa0;
+const RT_STYLE_TEXT_PROP_ATOM = 0x0fa1;
 const RT_TEXT_BYTES_ATOM = 0x0fa8;
 const RT_PP_DRAWING = 0x040c;
 
@@ -28,6 +29,23 @@ const TOKEN_ENCRYPTED = 0xf3d1c4df;
 
 // DocumentAtom.slideSize unit: master units, 576 per inch (must match ppt-text.ts).
 const MASTER_UNITS_PER_INCH = 576;
+
+// A run of character formatting in a StyleTextPropAtom, over `length` characters.
+export interface PptStyleRun {
+  readonly length: number;
+  readonly bold?: boolean;
+  readonly italic?: boolean;
+  readonly underline?: boolean;
+  readonly sizePt?: number;
+  readonly colorHex?: string; // 6-hex → an explicit-RGB ColorIndexStruct (index 0xFE)
+}
+
+// A paragraph run in a StyleTextPropAtom, over `length` characters.
+export interface PptParaStyleRun {
+  readonly length: number;
+  readonly align?: number; // TextAlignmentEnum: 0 left, 1 center, 2 right, 3 justify, 4 distribute
+  readonly level?: number; // indent level 0–4
+}
 
 export interface PptSlideInput {
   // Inline drawing text (a TextCharsAtom, UTF-16), paragraphs split by '\r'.
@@ -38,6 +56,10 @@ export interface PptSlideInput {
   readonly outline?: string;
   // Wrap the inline text in a PPDrawing container, to exercise recursive descent.
   readonly nested?: boolean;
+  // A StyleTextPropAtom for the inline text: character runs and/or paragraph runs.
+  // Lengths sum to the raw text length; the builder adds the phantom terminator.
+  readonly charRuns?: ReadonlyArray<PptStyleRun>;
+  readonly paraRuns?: ReadonlyArray<PptParaStyleRun>;
 }
 
 export interface BuildPptOptions {
@@ -70,14 +92,85 @@ function concat(parts: ReadonlyArray<Uint8Array>): Uint8Array {
   return out;
 }
 
-function textAtom(slide: PptSlideInput): Uint8Array | undefined {
+// A slide's inline text record (TextChars/TextBytes) followed by its optional
+// StyleTextPropAtom, or undefined when the slide carries no inline text.
+function slideTextBlock(slide: PptSlideInput): Uint8Array | undefined {
+  let textRec: Uint8Array;
+  let textLen: number;
   if (slide.textBytes !== undefined) {
-    return rec(RT_TEXT_BYTES_ATOM, 0, false, encodeCp1252(slide.textBytes));
+    textRec = rec(RT_TEXT_BYTES_ATOM, 0, false, encodeCp1252(slide.textBytes));
+    textLen = slide.textBytes.length;
+  } else if (slide.text !== undefined) {
+    textRec = rec(RT_TEXT_CHARS_ATOM, 0, false, encodeUtf16(slide.text));
+    textLen = slide.text.length;
+  } else {
+    return undefined;
   }
-  if (slide.text !== undefined) {
-    return rec(RT_TEXT_CHARS_ATOM, 0, false, encodeUtf16(slide.text));
-  }
-  return undefined;
+  if (!slide.charRuns && !slide.paraRuns) return textRec;
+  const style = rec(
+    RT_STYLE_TEXT_PROP_ATOM,
+    0,
+    false,
+    buildStyleTextProp(
+      slide.charRuns ?? [{ length: textLen }],
+      slide.paraRuns ?? [{ length: textLen }],
+    ),
+  );
+  return concat([textRec, style]);
+}
+
+// A StyleTextPropAtom body: the paragraph-run section then the character-run
+// section, in the on-disk field order ppt-text.ts reads back. The last run of each
+// section gets +1 for the phantom paragraph terminator (matching PowerPoint).
+function buildStyleTextProp(
+  charRuns: ReadonlyArray<PptStyleRun>,
+  paraRuns: ReadonlyArray<PptParaStyleRun>,
+): Uint8Array {
+  const out: Array<number> = [];
+  const u16 = (v: number): void => void out.push(v & 0xff, (v >> 8) & 0xff);
+  const u32 = (v: number): void =>
+    void out.push(v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff);
+
+  paraRuns.forEach((r, i) => {
+    u32(r.length + (i === paraRuns.length - 1 ? 1 : 0)); // count (+ phantom terminator)
+    u16(r.level ?? 0); // indentLevel
+    const mask = r.align !== undefined ? 0x00000800 : 0; // textAlignment bit
+    u32(mask);
+    if (r.align !== undefined) u16(r.align);
+  });
+
+  charRuns.forEach((r, i) => {
+    u32(r.length + (i === charRuns.length - 1 ? 1 : 0)); // count (+ phantom terminator)
+    let mask = 0;
+    let style = 0;
+    if (r.bold) {
+      mask |= 0x1;
+      style |= 0x1;
+    }
+    if (r.italic) {
+      mask |= 0x2;
+      style |= 0x2;
+    }
+    if (r.underline) {
+      mask |= 0x4;
+      style |= 0x4;
+    }
+    const hasStyle = (mask & 0x3eb7) !== 0;
+    if (r.sizePt) mask |= 0x00020000; // size bit
+    if (r.colorHex) mask |= 0x00040000; // color bit
+    u32(mask);
+    if (hasStyle) u16(style); // fontStyle (CFStyle)
+    if (r.sizePt) u16(r.sizePt); // fontSize (points)
+    if (r.colorHex) {
+      const hex = r.colorHex;
+      const rr = parseInt(hex.slice(0, 2), 16);
+      const gg = parseInt(hex.slice(2, 4), 16);
+      const bb = parseInt(hex.slice(4, 6), 16);
+      out.push(rr, gg, bb, 0xfe); // ColorIndexStruct: red, green, blue, index 0xFE = explicit
+    }
+  });
+
+  return Uint8Array.from(out);
 }
 
 export function buildPpt(
@@ -112,9 +205,9 @@ export function buildPpt(
 
   // --- one SlideContainer per slide, carrying its inline drawing text --------
   const slideRecs = slides.map((slide) => {
-    const atom = textAtom(slide);
-    if (!atom) return rec(RT_SLIDE, 0, true, new Uint8Array(0));
-    const inner = slide.nested ? rec(RT_PP_DRAWING, 0, true, atom) : atom;
+    const block = slideTextBlock(slide);
+    if (!block) return rec(RT_SLIDE, 0, true, new Uint8Array(0));
+    const inner = slide.nested ? rec(RT_PP_DRAWING, 0, true, block) : block;
     return rec(RT_SLIDE, 0, true, inner);
   });
 
