@@ -494,6 +494,9 @@ export interface CellProperties {
   readonly dataBar?: CellDataBar;
   readonly icon?: CellIcon;
   readonly sparkline?: CellSparkline;
+  // A data-validation `list` cell (E-SHEET SV1): the renderer paints an in-cell
+  // dropdown affordance at the cell's right edge (a small button + ▾ glyph).
+  readonly dropdown?: boolean;
 }
 
 export interface RowProperties {

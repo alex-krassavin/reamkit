@@ -32,6 +32,7 @@ import type {
 } from '@/core/document-model';
 import type {
   CellRange,
+  DataValidation,
   DefinedName,
   MergedRange,
   ParsedWorksheet,
@@ -438,6 +439,11 @@ export function worksheetToBody(
   // cell's own fill and below conditional formatting.
   const tableFormatByCell = buildTableFormatLookup(worksheet);
 
+  // §18.3.1.33 data-validation `list` cells (E-SHEET SV1): the ranges whose cells
+  // should paint an in-cell dropdown affordance. Empty (the dropdown block is
+  // then skipped, byte-identical) unless the sheet has a shown list validation.
+  const dropdownRanges = listDropdownRanges(worksheet.dataValidations);
+
   const rows: Array<TableRow> = [];
   for (let r = 0; r < rowCount; r++) {
     const absR = r + rowStart;
@@ -518,6 +524,9 @@ export function worksheetToBody(
         }
       }
 
+      // A data-validation `list` cell paints a dropdown affordance (E-SHEET SV1).
+      const dropdown = dropdownRanges.length > 0 && rangesCover(dropdownRanges, absR, absC);
+
       // Clamp a merge's horizontal span to the in-window columns so a merge
       // straddling the print-area edge cannot exceed the grid.
       const visibleEndCol = merge ? Math.min(merge.endColumn, colWindowEnd) : 0;
@@ -533,6 +542,7 @@ export function worksheetToBody(
         ...(icon ? { icon } : {}),
         ...(sparkline ? { sparkline } : {}),
         ...(borders ? { borders } : {}),
+        ...(dropdown ? { dropdown: true } : {}),
       };
 
       const paragraphProps = cellParaProps(alignment);
@@ -807,6 +817,30 @@ function mapBorderStyle(style: XlsxBorderStyleName): { style: BorderStyle; sizeE
 
 function key(row: number, col: number): string {
   return `${row},${col}`;
+}
+
+// §18.3.1.33 — the ranges of `list` data validations that should show an in-cell
+// dropdown. ECMA's showDropDown is INVERTED ("1" HIDES the dropdown), so a list
+// validation contributes its ranges unless the flag is set (E-SHEET SV1).
+function listDropdownRanges(
+  dvs: ReadonlyArray<DataValidation> | undefined,
+): ReadonlyArray<MergedRange> {
+  if (!dvs || dvs.length === 0) return [];
+  const out: Array<MergedRange> = [];
+  for (const dv of dvs) {
+    if (dv.type !== 'list' || dv.showDropDown) continue;
+    out.push(...dv.ranges);
+  }
+  return out;
+}
+
+function rangesCover(ranges: ReadonlyArray<MergedRange>, row: number, col: number): boolean {
+  for (const r of ranges) {
+    if (row >= r.startRow && row <= r.endRow && col >= r.startColumn && col <= r.endColumn) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // E-SHEET SC2 — resolve the sheet's sparklines to a host-cell → value-series map.

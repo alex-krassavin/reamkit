@@ -357,6 +357,8 @@ interface CellLayout {
   readonly dataBar?: CellDataBar;
   readonly icon?: CellIcon;
   readonly sparkline?: CellSparkline;
+  // A data-validation `list` cell paints a dropdown button at the right edge.
+  readonly dropdown?: boolean;
   readonly lines: ReadonlyArray<Line>;
   // Nested tables (a w:tbl inside this cell) rendered below the lines.
   readonly nestedTables?: ReadonlyArray<TableBlock>;
@@ -1494,6 +1496,33 @@ const CF_ICON_SIZE_PT = 9;
 const CF_ICON_GUTTER_PT = 12;
 // The unfilled portion of a meter glyph (ratings bars / quarter pie).
 const CF_ICON_EMPTY_HEX = 'BFBFBF';
+
+// A data-validation `list` cell paints a dropdown button at its right edge
+// (E-SHEET SV1): a light-grey square (thin border) with a dark ▾. Sized to the
+// row, capped at DROPDOWN_BUTTON_PT; the cell reserves DROPDOWN_GUTTER_PT of
+// right padding so the value never runs under the button.
+const DROPDOWN_BUTTON_PT = 11;
+const DROPDOWN_GUTTER_PT = 13;
+const DROPDOWN_FILL_HEX = 'F0F0F0';
+const DROPDOWN_BORDER_HEX = 'B0B0B0';
+const DROPDOWN_ARROW_HEX = '595959';
+
+// The button (filled, thin-bordered square) + a centred ▾, in a local y-up
+// [0,s]² frame; emitRowChunk composes the page-flip transform (mirrors the CF
+// icon path). The triangle's apex points toward the bottom (smaller y).
+function buildDropdownPrims(s: number): ReadonlyArray<ChartShapePrim> {
+  return [
+    {
+      paths: [rectAtPath(0, 0, s, s)],
+      fillColorHex: DROPDOWN_FILL_HEX,
+      stroke: { colorHex: DROPDOWN_BORDER_HEX, widthPt: 0.5 },
+    },
+    {
+      paths: [trianglePath([s / 2, s * 0.34], [s * 0.26, s * 0.64], [s * 0.74, s * 0.64])],
+      fillColorHex: DROPDOWN_ARROW_HEX,
+    },
+  ];
+}
 
 type FilledIconShape =
   | 'circle'
@@ -2949,10 +2978,13 @@ function layoutTableCell(
   const padTopPt = cellMar?.top ?? tableMar?.top ?? 0;
   const padBottomPt = cellMar?.bottom ?? tableMar?.bottom ?? 0;
   const padLeftBase = cellMar?.left ?? tableMar?.left ?? DEFAULT_CELL_PADDING_TWIPS * TWIP_TO_PT;
-  const padRightPt = cellMar?.right ?? tableMar?.right ?? DEFAULT_CELL_PADDING_TWIPS * TWIP_TO_PT;
+  const padRightBase = cellMar?.right ?? tableMar?.right ?? DEFAULT_CELL_PADDING_TWIPS * TWIP_TO_PT;
   // A conditional-format icon (E-SHEET SC1c) reserves a left gutter; the cell's
   // text is inset past it so the glyph and the value never overlap.
   const padLeftPt = padLeftBase + (cell.properties.icon ? CF_ICON_GUTTER_PT : 0);
+  // A data-validation dropdown (E-SHEET SV1) reserves a right gutter so the value
+  // never runs under the button.
+  const padRightPt = padRightBase + (cell.properties.dropdown ? DROPDOWN_GUTTER_PT : 0);
 
   const innerWidth = Math.max(1, widthPt - padLeftPt - padRightPt);
   const lines: Array<Line> = [];
@@ -3019,6 +3051,7 @@ function layoutTableCell(
     ...(cell.properties.dataBar ? { dataBar: cell.properties.dataBar } : {}),
     ...(cell.properties.icon ? { icon: cell.properties.icon } : {}),
     ...(cell.properties.sparkline ? { sparkline: cell.properties.sparkline } : {}),
+    ...(cell.properties.dropdown ? { dropdown: true } : {}),
     lines,
     ...(nestedTables.length > 0 ? { nestedTables } : {}),
     contentHeightPt,
@@ -4018,6 +4051,28 @@ function emitRowChunk(
               ...(prim.fillColorHex ? { fillColorHex: prim.fillColorHex } : {}),
               ...(prim.stroke ? { stroke: prim.stroke } : {}),
               transform: iconTransform,
+            },
+          });
+        }
+      }
+    }
+    // Data-validation dropdown (E-SHEET SV1): a small button + ▾ at the cell's
+    // right edge, painted in the shapes pass (over fills, under text). The cell
+    // reserves a right gutter so it never covers the value.
+    if (cell.dropdown && cell.mergeRole !== 'middle' && cell.mergeRole !== 'end') {
+      const btn = Math.min(DROPDOWN_BUTTON_PT, Math.max(0, row.heightPt - 2));
+      if (btn > 1) {
+        const btnX = cellX + cell.widthPt - btn - 1.5;
+        const btnBottomYUp = rowBottom + (row.heightPt - btn) / 2;
+        const btnTransform = flipTransform([1, 0, 0, 1, btnX, btnBottomYUp], pageHeight);
+        for (const prim of buildDropdownPrims(btn)) {
+          out.push({
+            type: 'shape',
+            shape: {
+              paths: prim.paths,
+              ...(prim.fillColorHex ? { fillColorHex: prim.fillColorHex } : {}),
+              ...(prim.stroke ? { stroke: prim.stroke } : {}),
+              transform: btnTransform,
             },
           });
         }

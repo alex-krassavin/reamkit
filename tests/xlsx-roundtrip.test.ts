@@ -51,6 +51,7 @@ function normGrid(g: ParsedWorksheet): unknown {
     rowBreaks: g.rowBreaks,
     colBreaks: g.colBreaks,
     conditionalFormats: g.conditionalFormats,
+    dataValidations: g.dataValidations,
     sparklines: g.sparklines,
     tables: g.tables,
     pane: g.pane,
@@ -241,6 +242,19 @@ const fixtures: Array<{ name: string; xlsx: Uint8Array }> = [
       rows: [[10], [50], [90]],
       conditionalFormattingXml:
         '<conditionalFormatting sqref="A1:A3"><cfRule type="iconSet" priority="1"><iconSet iconSet="3TrafficLights1"><cfvo type="percent" val="0"/><cfvo type="percent" val="33"/><cfvo type="percent" val="67"/></iconSet></cfRule></conditionalFormatting>',
+    }),
+  },
+  {
+    name: 'data validations (SV1)',
+    xlsx: buildXlsx({
+      rows: [['Yes'], [50]],
+      dataValidationsXml:
+        '<dataValidations count="2">' +
+        '<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="A1">' +
+        '<formula1>"Yes,No,Maybe"</formula1></dataValidation>' +
+        '<dataValidation type="whole" operator="between" showErrorMessage="1" errorStyle="stop" sqref="A2">' +
+        '<formula1>1</formula1><formula2>100</formula2></dataValidation>' +
+        '</dataValidations>',
     }),
   },
   {

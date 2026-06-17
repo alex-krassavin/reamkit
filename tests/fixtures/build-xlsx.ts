@@ -87,6 +87,8 @@ export interface XlsxSheetSpec {
   readonly freeze?: { readonly rows?: number; readonly cols?: number };
   /** Raw <conditionalFormatting> markup injected into the worksheet. */
   readonly conditionalFormattingXml?: string;
+  /** Raw <dataValidations> markup injected into the worksheet (E-SHEET SV1). */
+  readonly dataValidationsXml?: string;
   /** Raw <extLst> markup injected at the end of the worksheet (x14 sparklines). */
   readonly extLstXml?: string;
 }
@@ -110,6 +112,7 @@ export interface XlsxBuilderOptions {
   readonly colBreaks?: ReadonlyArray<number>;
   readonly freeze?: { readonly rows?: number; readonly cols?: number };
   readonly conditionalFormattingXml?: string;
+  readonly dataValidationsXml?: string;
   readonly extLstXml?: string;
   readonly date1904?: boolean;
   readonly definedNames?: ReadonlyArray<XlsxDefinedNameSpec>;
@@ -240,6 +243,9 @@ export function buildXlsx(
             ...(options.freeze ? { freeze: options.freeze } : {}),
             ...(options.conditionalFormattingXml
               ? { conditionalFormattingXml: options.conditionalFormattingXml }
+              : {}),
+            ...(options.dataValidationsXml
+              ? { dataValidationsXml: options.dataValidationsXml }
               : {}),
             ...(options.extLstXml ? { extLstXml: options.extLstXml } : {}),
           },
@@ -381,6 +387,7 @@ ${sheetRows.join('\n')}
   ${printOptionsXml}
   ${mergeXml}
   ${sheet.conditionalFormattingXml ?? ''}
+  ${sheet.dataValidationsXml ?? ''}
   ${marginsXml}
   ${setupXml}
   ${rowBreaksXml}
