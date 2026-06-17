@@ -89,6 +89,8 @@ export interface XlsxSheetSpec {
   readonly conditionalFormattingXml?: string;
   /** Raw <dataValidations> markup injected into the worksheet (E-SHEET SV1). */
   readonly dataValidationsXml?: string;
+  /** <headerFooter><oddHeader>/<oddFooter> &-code strings (E-SHEET W4). */
+  readonly headerFooter?: { readonly oddHeader?: string; readonly oddFooter?: string };
   /** Raw <extLst> markup injected at the end of the worksheet (x14 sparklines). */
   readonly extLstXml?: string;
 }
@@ -113,6 +115,7 @@ export interface XlsxBuilderOptions {
   readonly freeze?: { readonly rows?: number; readonly cols?: number };
   readonly conditionalFormattingXml?: string;
   readonly dataValidationsXml?: string;
+  readonly headerFooter?: { readonly oddHeader?: string; readonly oddFooter?: string };
   readonly extLstXml?: string;
   readonly date1904?: boolean;
   readonly definedNames?: ReadonlyArray<XlsxDefinedNameSpec>;
@@ -299,6 +302,7 @@ export function buildXlsx(
             ...(options.dataValidationsXml
               ? { dataValidationsXml: options.dataValidationsXml }
               : {}),
+            ...(options.headerFooter ? { headerFooter: options.headerFooter } : {}),
             ...(options.extLstXml ? { extLstXml: options.extLstXml } : {}),
           },
         ];
@@ -418,6 +422,16 @@ export function buildXlsx(
           sheet.colBreaks.map((id) => `<brk id="${id}" max="1048575" man="1"/>`).join('') +
           '</colBreaks>'
         : '';
+    const headerFooterXml = sheet.headerFooter
+      ? '<headerFooter>' +
+        (sheet.headerFooter.oddHeader
+          ? `<oddHeader>${escapeXml(sheet.headerFooter.oddHeader)}</oddHeader>`
+          : '') +
+        (sheet.headerFooter.oddFooter
+          ? `<oddFooter>${escapeXml(sheet.headerFooter.oddFooter)}</oddFooter>`
+          : '') +
+        '</headerFooter>'
+      : '';
     const freezeCols = sheet.freeze?.cols ?? 0;
     const freezeRows = sheet.freeze?.rows ?? 0;
     const sheetViewsXml =
@@ -442,6 +456,7 @@ ${sheetRows.join('\n')}
   ${sheet.dataValidationsXml ?? ''}
   ${marginsXml}
   ${setupXml}
+  ${headerFooterXml}
   ${rowBreaksXml}
   ${colBreaksXml}
   ${sheet.extLstXml ?? ''}

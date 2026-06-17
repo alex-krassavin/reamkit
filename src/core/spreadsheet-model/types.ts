@@ -104,6 +104,9 @@ export interface ParsedWorksheet {
   // §18.3.1.47 <hyperlinks> — raw cell hyperlinks (E-SHEET W3). The reader
   // resolves each relId to an external URL; render-only (not written back).
   readonly hyperlinks?: ReadonlyArray<HyperlinkRef>;
+  // §18.3.1.46 <headerFooter> — sheet header/footer format strings (E-SHEET W4).
+  // The projection expands the &-codes into header/footer bands; render-only.
+  readonly headerFooter?: HeaderFooter;
   // x14 extension <sparklineGroups> in extLst — per-cell mini charts (E-SHEET SC2).
   readonly sparklines?: ReadonlyArray<ParsedSparkline>;
   // §18.3.1.95 <tableParts> — relationship ids of the sheet's table parts. The
@@ -390,6 +393,15 @@ export interface HyperlinkRef {
   readonly location?: string;
   readonly display?: string;
   readonly tooltip?: string;
+}
+
+// §18.3.1.46 <headerFooter> — the sheet's print header/footer format strings
+// (E-SHEET W4). Each carries Excel's &-code mini-language (&L/&C/&R regions,
+// &P/&N/&D/&F/&A field codes, &B/&I formatting). v1 reads the odd (= default)
+// header and footer; even/first variants are a later refinement.
+export interface HeaderFooter {
+  readonly oddHeader?: string;
+  readonly oddFooter?: string;
 }
 
 // §18.18.18 ST_DataValidationType — the constraint a <dataValidation> enforces.

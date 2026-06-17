@@ -110,6 +110,11 @@ charts — and is byte-stable across a read↔write loop.
 - Charts, **pictures and shapes** anchored to the sheet (the worksheet drawing part)
   render after the grid — a picture keeps its bytes; a shape its preset/custom
   geometry, fill, outline and text body (reusing the DrawingML shape readers).
+- **Cell hyperlinks** (`<hyperlinks>`) — an external `r:id` resolves to a URL and the
+  covered cell becomes a clickable link (PDF `/Link` annotation, HTML `<a>`).
+- **Header/footer text** (`<headerFooter>`) — Excel's `&`-code mini-language (`&L`/`&C`/
+  `&R` regions, `&P`/`&N` page-number fields resolved per page, `&A` sheet name,
+  `&B`/`&I` bold/italic) renders in the page margins.
 
 **PresentationML (§19)**
 - Each slide is a page at the deck size (`p:sldSz`); shapes are floating content
@@ -164,7 +169,6 @@ charts — and is byte-stable across a read↔write loop.
 - **Some Excel constructs are not rendered yet:**
   - **Cell comments / notes** (legacy and threaded) and **form / ActiveX controls**
     (checkboxes, option buttons, spinners).
-  - **Sheet header/footer text** (the `&P` / `&D` / `&F` codes) and **cell hyperlinks**.
   - **Conditional-format rule types** beyond compare-to-constant, colour scales, data
     bars and icon sets — top/bottom-N, above/below average, duplicate/unique, text- and
     date-based, and formula (`expression`) rules.

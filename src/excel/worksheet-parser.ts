@@ -18,6 +18,7 @@ import type {
   ConditionalFormat,
   DataValidation,
   DataValidationType,
+  HeaderFooter,
   HyperlinkRef,
   MergedRange,
   ParsedSparkline,
@@ -82,6 +83,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
   const conditionalFormats = parseConditionalFormatting(wsObj);
   const dataValidations = parseDataValidations(wsObj);
   const hyperlinks = parseHyperlinks(wsObj);
+  const headerFooter = parseHeaderFooter(wsObj);
   const sparklines = parseSparklines(wsObj);
   const tablePartRelIds = parseTableParts(wsObj);
   const printModel = {
@@ -96,6 +98,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
     ...(conditionalFormats.length > 0 ? { conditionalFormats } : {}),
     ...(dataValidations.length > 0 ? { dataValidations } : {}),
     ...(hyperlinks.length > 0 ? { hyperlinks } : {}),
+    ...(headerFooter ? { headerFooter } : {}),
     ...(sparklines.length > 0 ? { sparklines } : {}),
     ...(tablePartRelIds.length > 0 ? { tablePartRelIds } : {}),
   };
@@ -455,6 +458,21 @@ function parseDataValidations(ws: Record<string, unknown>): Array<DataValidation
 function boolAttr(obj: Record<string, unknown>, key: string): boolean {
   const raw = strAttr(obj, key);
   return raw === '1' || raw === 'true';
+}
+
+// §18.3.1.46 <headerFooter><oddHeader>/<oddFooter> — the sheet's print header and
+// footer format strings (E-SHEET W4). The projection expands the &-codes; v1 reads
+// the odd (= default) header/footer (even/first variants are a later refinement).
+function parseHeaderFooter(ws: Record<string, unknown>): HeaderFooter | undefined {
+  const node = asObjectNode(ws['headerFooter']);
+  if (!node) return undefined;
+  const oddHeader = formulaText(node['oddHeader']);
+  const oddFooter = formulaText(node['oddFooter']);
+  if (!oddHeader && !oddFooter) return undefined;
+  return {
+    ...(oddHeader ? { oddHeader } : {}),
+    ...(oddFooter ? { oddFooter } : {}),
+  };
 }
 
 // §18.3.1.47 <hyperlinks><hyperlink ref r:id location display tooltip> — raw cell

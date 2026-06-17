@@ -32,6 +32,7 @@ export type {
   DataValidationType,
   DataValidation,
   HyperlinkRef,
+  HeaderFooter,
   SparklineKind,
   ParsedSparkline,
   ExcelTable,
