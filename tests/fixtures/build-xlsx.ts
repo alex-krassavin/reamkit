@@ -149,6 +149,19 @@ export interface XlsxBuilderOptions {
     readonly location?: string;
     readonly tooltip?: string;
   }>;
+  /** Legacy cell comments (xl/comments) on the FIRST sheet (E-SHEET W7). */
+  readonly comments?: ReadonlyArray<{
+    readonly ref: string;
+    readonly author: string;
+    readonly text: string;
+  }>;
+  /** Threaded comments on the FIRST sheet + the workbook person directory (W7). */
+  readonly threadedComments?: ReadonlyArray<{
+    readonly ref: string;
+    readonly personId: string;
+    readonly text: string;
+  }>;
+  readonly persons?: ReadonlyArray<{ readonly id: string; readonly name: string }>;
   /** Attach Excel table parts to the FIRST sheet (E-SHEET SC3). */
   readonly tables?: ReadonlyArray<{
     readonly ref: string;
@@ -683,6 +696,68 @@ ${rels.join('\n')}
       );
     }
   }
+  // W7: legacy cell comments — xl/comments1.xml + a worksheet relationship.
+  if (options.comments && options.comments.length > 0 && sheetParts.length > 0) {
+    const first = sheetParts[0]!;
+    const authors = [...new Set(options.comments.map((c) => c.author))];
+    const authorsXml = authors.map((a) => `<author>${escapeXml(a)}</author>`).join('');
+    const listXml = options.comments
+      .map(
+        (c) =>
+          `<comment ref="${escapeXml(c.ref)}" authorId="${authors.indexOf(c.author)}">` +
+          `<text><r><t xml:space="preserve">${escapeXml(c.text)}</t></r></text></comment>`,
+      )
+      .join('');
+    entries['xl/comments1.xml'] = encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<comments xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><authors>${authorsXml}</authors><commentList>${listXml}</commentList></comments>`,
+    );
+    mergeWorksheetRel(
+      entries,
+      first.fileName,
+      '  <Relationship Id="rIdCmt" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="../comments1.xml"/>',
+    );
+  }
+  // W7: threaded comments — the part + a worksheet rel; persons → workbook rel.
+  if (options.threadedComments && options.threadedComments.length > 0 && sheetParts.length > 0) {
+    const first = sheetParts[0]!;
+    const tcXml = options.threadedComments
+      .map(
+        (t, i) =>
+          `<threadedComment ref="${escapeXml(t.ref)}" id="{0000-${i}}" personId="${escapeXml(t.personId)}">` +
+          `<text>${escapeXml(t.text)}</text></threadedComment>`,
+      )
+      .join('');
+    entries['xl/threadedComments/threadedComment1.xml'] = encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<ThreadedComments xmlns="http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments">${tcXml}</ThreadedComments>`,
+    );
+    mergeWorksheetRel(
+      entries,
+      first.fileName,
+      '  <Relationship Id="rIdTc" Type="http://schemas.microsoft.com/office/2017/10/relationships/threadedComment" Target="../threadedComments/threadedComment1.xml"/>',
+    );
+  }
+  if (options.persons && options.persons.length > 0) {
+    const personsXml = options.persons
+      .map(
+        (p) =>
+          `<person displayName="${escapeXml(p.name)}" id="${escapeXml(p.id)}" userId="" providerId="None"/>`,
+      )
+      .join('');
+    entries['xl/persons/person.xml'] = encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<personList xmlns="http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments">${personsXml}</personList>`,
+    );
+    const wbRelsPath = 'xl/_rels/workbook.xml.rels';
+    const existing = decoder.decode(entries[wbRelsPath]!);
+    entries[wbRelsPath] = encoder.encode(
+      existing.replace(
+        '</Relationships>',
+        '  <Relationship Id="rIdPerson" Type="http://schemas.microsoft.com/office/2017/10/relationships/person" Target="persons/person.xml"/>\n</Relationships>',
+      ),
+    );
+  }
   if (options.tables && options.tables.length > 0 && sheetParts.length > 0) {
     const first = sheetParts[0]!;
     const parts = options.tables.map((t, i) => ({ rid: `rIdT${i + 1}`, idx: i + 1, t }));
@@ -834,6 +909,25 @@ ${propsXml}  <sheets>
 ${lines.join('\n')}
   </sheets>${definedNamesXml}
 </workbook>`;
+}
+
+// Merge a relationship line into a worksheet's .rels (creating the file if none),
+// so several features can each attach a rel to the same sheet (W7).
+function mergeWorksheetRel(
+  entries: Record<string, Uint8Array>,
+  sheetFileName: string,
+  relLine: string,
+): void {
+  const relsPath = `xl/worksheets/_rels/${sheetFileName}.rels`;
+  const existing = entries[relsPath] ? decoder.decode(entries[relsPath]) : undefined;
+  entries[relsPath] = encoder.encode(
+    existing
+      ? existing.replace('</Relationships>', `${relLine}\n</Relationships>`)
+      : `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+${relLine}
+</Relationships>`,
+  );
 }
 
 function buildWorkbookRelsXml(sheetCount: number, includeStyles: boolean): string {

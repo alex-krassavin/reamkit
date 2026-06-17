@@ -130,6 +130,11 @@ charts — and is byte-stable across a read↔write loop.
   borders** (up / down strokes across the cell); **text rotation** (`textRotation`
   — rotated / vertical cells render their text stacked top-to-bottom); and
   **shrink-to-fit** (`shrinkToFit` scales the cell's font down to its column width).
+- **Cell comments / notes** — legacy notes (`xl/comments`) and modern threaded
+  comments (`xl/threadedComments`, authors resolved through `xl/persons`) are read
+  and listed in a "Comments" section after the grid — a heading then one line per
+  comment, `<cell> — <author>: <text>` — mirroring Excel's "print comments at end of
+  sheet". The legacy VML note box is ignored; only the text + author are surfaced.
 
 **PresentationML (§19)**
 - Each slide is a page at the deck size (`p:sldSz`); shapes are floating content
@@ -182,8 +187,7 @@ charts — and is byte-stable across a read↔write loop.
   private font metrics — but _pixel-identical_ output is a non-goal: that would need the
   exact same font file and the renderer's internal glyph rounding.
 - **Some Excel constructs are not rendered yet:**
-  - **Cell comments / notes** (legacy and threaded) and **form / ActiveX controls**
-    (checkboxes, option buttons, spinners).
+  - **Form / ActiveX controls** (checkboxes, option buttons, spinners).
   - Two **conditional-format rule types**: `expression` (an arbitrary formula —
     Ream has no formula engine, so cached values can't drive an ad-hoc condition)
     and `timePeriod` (today / this-week / last-month …, which is relative to the

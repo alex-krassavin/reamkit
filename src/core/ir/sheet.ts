@@ -67,6 +67,17 @@ export interface SheetHyperlink {
   readonly url: string;
 }
 
+// A cell comment / note (E-SHEET W7): an A1 anchor, the resolved author display
+// name (legacy authorId → authors / threaded personId → person), the text body,
+// and whether it came from the modern threaded comments part (a conversation) or
+// the legacy note part.
+export interface SheetComment {
+  readonly ref: string;
+  readonly author?: string;
+  readonly text: string;
+  readonly threaded: boolean;
+}
+
 export interface Sheet {
   readonly name: string;
   // The grid + per-sheet geometry exactly as parsed: cells, columns, rows,
@@ -83,6 +94,11 @@ export interface Sheet {
   readonly hyperlinks?: ReadonlyArray<SheetHyperlink>;
   // Slicer panels on this sheet (E-SHEET SV2), rendered after the grid + charts.
   readonly slicers?: ReadonlyArray<SheetSlicer>;
+  // Cell comments / notes (E-SHEET W7): legacy (xl/comments) and threaded
+  // (xl/threadedComments). The projection lists them in a "Comments" section
+  // after the grid, mirroring Excel's "print comments at end of sheet". Each keeps
+  // its cell ref, resolved author and text; render-only (not written back).
+  readonly comments?: ReadonlyArray<SheetComment>;
 }
 
 export interface SheetDoc {

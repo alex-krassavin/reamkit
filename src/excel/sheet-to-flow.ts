@@ -7,7 +7,7 @@
 
 import type { BodyElement, HeaderFooterReference, SectionProperties } from '@/core/document-model';
 import type { FlowDoc } from '@/core/ir/flow';
-import type { SheetDoc } from '@/core/ir/sheet';
+import type { SheetComment, SheetDoc } from '@/core/ir/sheet';
 
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 import { pt } from '@/core/ir';
@@ -106,6 +106,12 @@ export function projectSheetDoc(sheet: SheetDoc): FlowDoc {
     for (const slicer of ws.slicers ?? []) {
       body.push({ kind: 'table', table: slicerTable(slicer) });
     }
+
+    // W7: cell comments / notes are listed in a "Comments" section after the grid
+    // (Excel's "print comments at end of sheet"): a heading + one line per comment.
+    if (ws.comments && ws.comments.length > 0) {
+      body.push(...commentBlocks(ws.comments));
+    }
   }
 
   return {
@@ -122,6 +128,33 @@ export function projectSheetDoc(sheet: SheetDoc): FlowDoc {
     ...(headersFooters.size > 0 ? { headersFooters } : {}),
     ...(sheet.info ? { info: sheet.info } : {}),
   };
+}
+
+// Cell comments / notes (W7) as a "Comments" section after the grid: a bold
+// heading then one paragraph per comment — "<ref> — <author>: <text>". Multi-line
+// note text is collapsed to a single line so the listing stays compact.
+function commentBlocks(comments: ReadonlyArray<SheetComment>): Array<BodyElement> {
+  const out: Array<BodyElement> = [
+    {
+      kind: 'paragraph',
+      paragraph: { properties: {}, runs: [{ text: 'Comments', properties: { bold: true } }] },
+    },
+  ];
+  for (const c of comments) {
+    const body = c.text.replace(/\s+/g, ' ').trim();
+    const label = c.author ? `${c.ref} — ${c.author}: ` : `${c.ref}: `;
+    out.push({
+      kind: 'paragraph',
+      paragraph: {
+        properties: {},
+        runs: [
+          { text: label, properties: { bold: true } },
+          ...(body.length > 0 ? [{ text: body, properties: {} }] : []),
+        ],
+      },
+    });
+  }
+  return out;
 }
 
 // Expand the first sheet's <headerFooter> into header/footer bands and attach them

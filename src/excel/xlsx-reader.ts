@@ -12,6 +12,7 @@ import type { FlowDoc } from '@/core/ir/flow';
 import type {
   Sheet,
   SheetChartRef,
+  SheetComment,
   SheetDoc,
   SheetHyperlink,
   SheetImageRef,
@@ -46,6 +47,7 @@ import { parseSheetDrawing } from '@/excel/sheet-drawing';
 import { parseTablePartFull } from '@/excel/table-parser';
 import { parsePivotTablePart } from '@/excel/pivot-table-parser';
 import { parseSlicerCachePart, parseSlicerPart } from '@/excel/slicer-parser';
+import { parseLegacyComments, parsePersons, parseThreadedComments } from '@/excel/comments-parser';
 import { parseSheetShapes } from '@/excel/sheet-shape-parser';
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
 import { resolveCellText } from '@/excel/print-model';
@@ -58,6 +60,10 @@ const CORE_PROPS_PART = 'docProps/core.xml';
 // references its slicer parts; the workbook references the slicer caches.
 const SLICER_REL_TAIL = '/slicer';
 const SLICER_CACHE_REL_TAIL = '/slicerCache';
+// Threaded comments + their person directory live in the MS 2017 namespace, so
+// they match by relationship-type tail rather than the OOXML transitional helper.
+const THREADED_COMMENTS_REL_TAIL = '/threadedComment';
+const PERSON_REL_TAIL = '/person';
 // A slicer over a huge column is bounded so a crafted file cannot blow up the box.
 const MAX_SLICER_ITEMS = 256;
 
@@ -96,6 +102,14 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
   const styles = stylesData ? parseXlsxStyles(stylesData) : EMPTY_XLSX_STYLES;
 
   const workbookRels = pkg.getPartRelationships(WORKBOOK_PART);
+  // Threaded-comment authors (E-SHEET W7): xl/persons/person.xml maps person ids
+  // to display names. Workbook-scoped, resolved once and shared across sheets.
+  const persons = new Map<string, string>();
+  for (const rel of workbookRels) {
+    if (!rel.type.endsWith(PERSON_REL_TAIL)) continue;
+    const part = pkg.resolveRelatedPart(WORKBOOK_PART, rel);
+    if (part) for (const [id, name] of parsePersons(part.data)) persons.set(id, name);
+  }
   // Charts keyed by their part path (globally unique across sheets); the
   // theme-backed resolver mirrors the docx reader's so schemeClr references in
   // charts resolve to the workbook's actual accents.
@@ -253,6 +267,26 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
       if (resolvedLinks.length > 0) hyperlinks = resolvedLinks;
     }
 
+    // §18.7 cell comments / notes (W7): legacy xl/comments and modern threaded
+    // comments, both resolved through the worksheet rels. Legacy notes precede the
+    // threaded conversation so a cell that has both reads oldest-first.
+    let comments: Array<SheetComment> | undefined;
+    {
+      const wsRels = pkg.getPartRelationships(resolved.path);
+      const resolvedComments: Array<SheetComment> = [];
+      for (const rel of wsRels) {
+        if (!isOoxmlRel(rel.type, 'comments')) continue;
+        const part = pkg.resolveRelatedPart(resolved.path, rel);
+        if (part) resolvedComments.push(...parseLegacyComments(part.data));
+      }
+      for (const rel of wsRels) {
+        if (!rel.type.endsWith(THREADED_COMMENTS_REL_TAIL)) continue;
+        const part = pkg.resolveRelatedPart(resolved.path, rel);
+        if (part) resolvedComments.push(...parseThreadedComments(part.data, persons));
+      }
+      if (resolvedComments.length > 0) comments = resolvedComments;
+    }
+
     const grid =
       tables || pivotTables
         ? { ...worksheet, ...(tables ? { tables } : {}), ...(pivotTables ? { pivotTables } : {}) }
@@ -264,6 +298,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
       ...(images.length > 0 ? { images } : {}),
       ...(shapes ? { shapes } : {}),
       ...(hyperlinks ? { hyperlinks } : {}),
+      ...(comments ? { comments } : {}),
     });
   }
 
