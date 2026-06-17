@@ -26,6 +26,7 @@ export interface DocFormatRun {
   readonly italic?: boolean;
   readonly underlineKul?: number; // Word `kul` code (0 = none, 1 = single, …)
   readonly sizeHalfPts?: number; // font size in half-points
+  readonly picOffset?: number; // a picture: sprmCFSpec + sprmCPicLocation → Data offset
 }
 
 // A paragraph's formatting, over its `length` characters (including the CR / cell
@@ -54,6 +55,7 @@ export function buildDoc(
     readonly encrypted?: boolean;
     readonly formatRuns?: ReadonlyArray<DocFormatRun>;
     readonly paraRuns?: ReadonlyArray<DocParaFormat>;
+    readonly data?: Uint8Array; // the Data stream (embedded pictures: see buildPicf)
   } = {},
 ): Uint8Array {
   const whichTable = opts.whichTable ?? '1Table';
@@ -163,7 +165,26 @@ export function buildDoc(
   return buildCfb([
     { name: 'WordDocument', data: wd },
     { name: whichTable, data: table },
+    ...(opts.data ? [{ name: 'Data', data: opts.data }] : []),
   ]);
+}
+
+// §2.9.158 PICF — a picture descriptor (68-byte header) then the image bytes, as
+// stored in the Data stream. The image sits right after the header so the reader's
+// magic scan finds it at the region start.
+export function buildPicf(image: Uint8Array, widthTwips: number, heightTwips: number): Uint8Array {
+  const cbHeader = 0x44; // 68
+  const out = new Uint8Array(cbHeader + image.length);
+  const dv = new DataView(out.buffer);
+  dv.setUint32(0, out.length, true); // lcb
+  dv.setUint16(4, cbHeader, true); // cbHeader
+  dv.setUint16(6, 0x0064, true); // mm — not a metafile (an OfficeArt blip)
+  dv.setUint16(0x1c, widthTwips, true); // dxaGoal
+  dv.setUint16(0x1e, heightTwips, true); // dyaGoal
+  dv.setUint16(0x20, 1000, true); // mx — 100%
+  dv.setUint16(0x22, 1000, true); // my — 100%
+  out.set(image, cbHeader);
+  return out;
 }
 
 // §2.9.55 ChpxFkp — (crun+1) FCs, crun word-offsets to each CHPX (0 = none), the
@@ -246,6 +267,11 @@ function buildChpxGrpprl(run: DocFormatRun): Uint8Array {
   if (run.italic) sprm(0x0836, 0x01); // sprmCFItalic
   if (run.underlineKul) sprm(0x2a3e, run.underlineKul & 0xff); // sprmCKul
   if (run.sizeHalfPts) sprm(0x4a43, run.sizeHalfPts & 0xff, (run.sizeHalfPts >> 8) & 0xff); // sprmCHps
+  if (run.picOffset !== undefined) {
+    sprm(0x0855, 0x01); // sprmCFSpec — special character (picture)
+    const fc = run.picOffset >>> 0;
+    sprm(0x6a03, fc & 0xff, (fc >> 8) & 0xff, (fc >> 16) & 0xff, (fc >> 24) & 0xff); // sprmCPicLocation
+  }
   return Uint8Array.from(parts);
 }
 

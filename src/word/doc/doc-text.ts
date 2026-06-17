@@ -44,6 +44,9 @@ const SPRM_C_FBOLD = 0x0835;
 const SPRM_C_FITALIC = 0x0836;
 const SPRM_C_KUL = 0x2a3e; // underline kind
 const SPRM_C_HPS = 0x4a43; // font size, half-points
+const SPRM_C_FSPEC = 0x0855; // fSpec — special character (e.g. a picture placeholder)
+const SPRM_C_PIC_LOCATION = 0x6a03; // picture data offset into the Data stream
+const PIC_CHAR = 0x01; // the special character a picture occupies in the text
 const SPRM_P_JC = 0x2403; // paragraph justification
 const SPRM_P_DXA_RIGHT = 0x840e; // right indent (twips)
 const SPRM_P_DXA_LEFT = 0x840f; // left indent (twips)
@@ -63,6 +66,15 @@ export interface DocCharProps {
   readonly italic?: boolean;
   readonly underlineKul?: number; // Word `kul` underline code (0 = none)
   readonly sizeHalfPts?: number; // font size in half-points
+  readonly fSpec?: boolean; // the character is special (sprmCFSpec)
+  readonly picOffset?: number; // sprmCPicLocation — offset into the Data stream
+}
+
+// An embedded picture: the extracted image bytes and its display size (twips).
+export interface DocPicture {
+  readonly bytes: Uint8Array;
+  readonly widthTwips: number;
+  readonly heightTwips: number;
 }
 
 export interface DocParaProps {
@@ -79,6 +91,8 @@ export interface DocParaProps {
 export interface DocRun {
   readonly text: string;
   readonly props: DocCharProps;
+  // Set instead of text when the run is an embedded picture.
+  readonly picture?: DocPicture;
 }
 
 export interface DocParagraph {
@@ -138,7 +152,8 @@ export function extractDocContent(bytes: Uint8Array): DocContent {
   const chpx = parsePlcBte(wd, table, OFF_FCPLCFBTECHPX, OFF_LCBPLCFBTECHPX, parseChpxFkp);
   const papx = parsePlcBte(wd, table, OFF_FCPLCFBTEPAPX, OFF_LCBPLCFBTEPAPX, parsePapxFkp);
   const ccpText = u32(wd, OFF_CCPTEXT);
-  return { paragraphs: buildParagraphs(wd, pieces, chpx, papx, ccpText), encrypted: false };
+  const data = cfb.readStream('Data'); // embedded picture store (PICF + image)
+  return { paragraphs: buildParagraphs(wd, pieces, chpx, papx, ccpText, data), encrypted: false };
 }
 
 // §2.9.38 Clx — zero or more Prc (each a 0x01 byte + i16 length + grpprl) then
@@ -266,6 +281,8 @@ function decodeChpxGrpprl(d: Uint8Array): DocCharProps {
   let italic: boolean | undefined;
   let underlineKul: number | undefined;
   let sizeHalfPts: number | undefined;
+  let fSpec: boolean | undefined;
+  let picOffset: number | undefined;
   for (const s of sprms(d)) {
     switch (s.sprm) {
       case SPRM_C_FBOLD:
@@ -280,6 +297,12 @@ function decodeChpxGrpprl(d: Uint8Array): DocCharProps {
       case SPRM_C_HPS:
         sizeHalfPts = u16(d, s.op);
         break;
+      case SPRM_C_FSPEC:
+        fSpec = d[s.op] !== 0;
+        break;
+      case SPRM_C_PIC_LOCATION:
+        picOffset = u32(d, s.op);
+        break;
     }
   }
   return {
@@ -287,6 +310,8 @@ function decodeChpxGrpprl(d: Uint8Array): DocCharProps {
     ...(italic !== undefined ? { italic } : {}),
     ...(underlineKul !== undefined ? { underlineKul } : {}),
     ...(sizeHalfPts !== undefined ? { sizeHalfPts } : {}),
+    ...(fSpec ? { fSpec } : {}),
+    ...(picOffset !== undefined ? { picOffset } : {}),
   };
 }
 
@@ -368,6 +393,57 @@ function toggleBool(v: number): boolean | undefined {
   return undefined;
 }
 
+// §2.9.158 PICF — the picture descriptor at a Data-stream offset: a header
+// (cbHeader bytes) then the image. dxaGoal/dyaGoal are the natural size in twips,
+// scaled by mx/my (per-mille). We scan the image region for a raster magic (an
+// OfficeArt blip header precedes the PNG/JPEG); a metafile (WMF/EMF) has no such
+// magic and is skipped.
+function extractPicture(data: Uint8Array, fcPic: number): DocPicture | undefined {
+  if (fcPic < 0 || fcPic + 0x24 > data.length) return undefined;
+  const lcb = u32(data, fcPic);
+  const cbHeader = u16(data, fcPic + 4);
+  if (cbHeader < 0x2e || lcb <= cbHeader || fcPic + lcb > data.length) return undefined;
+  const dxaGoal = u16(data, fcPic + 0x1c);
+  const dyaGoal = u16(data, fcPic + 0x1e);
+  const mx = u16(data, fcPic + 0x20) || 1000;
+  const my = u16(data, fcPic + 0x22) || 1000;
+  const bytes = scanImage(data.subarray(fcPic + cbHeader, fcPic + lcb));
+  if (!bytes) return undefined;
+  return {
+    bytes,
+    widthTwips: Math.round((dxaGoal * mx) / 1000),
+    heightTwips: Math.round((dyaGoal * my) / 1000),
+  };
+}
+
+const IMAGE_MAGICS: ReadonlyArray<ReadonlyArray<number>> = [
+  [0x89, 0x50, 0x4e, 0x47], // PNG
+  [0xff, 0xd8, 0xff], // JPEG
+  [0x47, 0x49, 0x46, 0x38], // GIF
+  [0x42, 0x4d], // BMP
+  [0x49, 0x49, 0x2a, 0x00], // TIFF (LE)
+  [0x4d, 0x4d, 0x00, 0x2a], // TIFF (BE)
+];
+
+// The first known raster magic in the region → the bytes from there to the end
+// (the OfficeArt blip header precedes the image payload).
+function scanImage(region: Uint8Array): Uint8Array | undefined {
+  const limit = Math.min(region.length, 512);
+  for (let off = 0; off < limit; off++) {
+    for (const magic of IMAGE_MAGICS) {
+      if (off + magic.length <= region.length && magicAt(region, off, magic)) {
+        return region.subarray(off);
+      }
+    }
+  }
+  return undefined;
+}
+
+function magicAt(d: Uint8Array, off: number, magic: ReadonlyArray<number>): boolean {
+  for (let i = 0; i < magic.length; i++) if (d[off + i] !== magic[i]) return false;
+  return true;
+}
+
 // Walk the pieces character by character: attach each character's CHPX (by FC),
 // split paragraphs at the CR mark (attaching each paragraph's PAPX, also by FC),
 // clean the in-paragraph control characters, and coalesce same-formatting runs.
@@ -377,6 +453,7 @@ function buildParagraphs(
   chpx: ReadonlyArray<BteRun<DocCharProps>>,
   papx: ReadonlyArray<BteRun<DocParaProps>>,
   ccpText: number,
+  data: Uint8Array | undefined,
 ): Array<DocParagraph> {
   const limit = ccpText > 0 ? Math.min(ccpText, MAX_TEXT) : MAX_TEXT;
   const paragraphs: Array<DocParagraph> = [];
@@ -416,6 +493,20 @@ function buildParagraphs(
       if (code === CR || code === CELL_MARK) {
         endParagraph(fc, code === CELL_MARK);
         continue;
+      }
+      // A picture occupies a special 0x01 character whose CHPX points (via
+      // sprmCPicLocation) at a PICF in the Data stream.
+      if (code === PIC_CHAR) {
+        const props = lookup(chpx, fc) ?? {};
+        const picture =
+          data && props.fSpec && props.picOffset !== undefined
+            ? extractPicture(data, props.picOffset)
+            : undefined;
+        if (picture) {
+          flushRun();
+          runs.push({ text: '', props: {}, picture });
+        }
+        continue; // the 0x01 placeholder itself is not text
       }
       const ch =
         code === 0x09 || code === 0x0b ? ' ' : code < 0x20 ? '' : String.fromCharCode(code);

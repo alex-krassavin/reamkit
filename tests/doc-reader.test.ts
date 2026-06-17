@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import { buildDoc } from './fixtures/build-doc';
+import { buildDoc, buildPicf } from './fixtures/build-doc';
 import type { BodyElement } from '@/core/document-model';
 import type { FlowDoc } from '@/core/ir/flow';
 
@@ -16,6 +16,14 @@ import { docReader, readDoc } from '@/word/doc/doc-reader';
 import { Ream } from '@/core/converter/ream';
 
 const CM = String.fromCharCode(0x07); // table cell mark
+const PIC = String.fromCharCode(0x01); // picture placeholder char
+// The smallest image the decoder accepts — a 1×1 transparent PNG.
+const PNG_1x1 = Uint8Array.from(
+  Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+    'base64',
+  ),
+);
 
 // The visible text of each paragraph in the FlowDoc body.
 function paragraphTexts(doc: FlowDoc): Array<string> {
@@ -224,6 +232,49 @@ describe('doc reader (DOC-1)', () => {
       }),
     ).doc;
     expect(doc.body.map((el) => el.kind)).toEqual(['paragraph', 'table', 'paragraph']);
+  });
+
+  it('reads an inline picture into an image block (DOC-5)', () => {
+    const doc = readDoc(
+      buildDoc([{ text: `${PIC}\r`, compressed: false }], {
+        formatRuns: [
+          { length: 1, picOffset: 0 }, // the picture placeholder char
+          { length: 1 }, // the CR
+        ],
+        data: buildPicf(PNG_1x1, 1440, 720), // 72pt × 36pt
+      }),
+    ).doc;
+    const img = doc.body.find((el) => el.kind === 'image');
+    expect(img).toBeDefined();
+    expect(doc.resources.get(img!.image.resource!)).toEqual(PNG_1x1);
+    expect(img!.image.width).toBe(72); // 1440 twips / 20
+    expect(img!.image.height).toBe(36); // 720 twips / 20
+  });
+
+  it('drops a picture whose Data stream is absent, without failing', () => {
+    const doc = readDoc(
+      buildDoc([{ text: `${PIC}Body\r`, compressed: false }], {
+        formatRuns: [{ length: 1, picOffset: 0 }, { length: 5 }],
+        // no `data` — the picture cannot be resolved
+      }),
+    ).doc;
+    expect(doc.body.find((el) => el.kind === 'image')).toBeUndefined();
+    expect(paragraphTexts(doc)).toEqual(['Body']);
+  });
+
+  it('renders a .doc with an image to a valid PDF', async () => {
+    const pdf = await Ream.parse(
+      buildDoc([{ text: `${PIC}\r`, compressed: false }], {
+        formatRuns: [{ length: 1, picOffset: 0 }, { length: 1 }],
+        data: buildPicf(PNG_1x1, 1440, 1440),
+      }),
+    ).convert('pdf', {
+      fonts: {
+        regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
+        bold: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Bold.ttf')),
+      },
+    });
+    expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-');
   });
 
   it('renders a .doc with a table to a valid PDF', async () => {
