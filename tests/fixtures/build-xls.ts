@@ -314,6 +314,73 @@ export function msoDrawingRec(
   return rec(0x00ec, escher(0xf, 0, 0xf003, concat(sps))); // SpgrContainer
 }
 
+// --- BIFF chart substream builders (XLS-6) -----------------------------------
+
+interface ChartRange {
+  r0: number;
+  r1: number;
+  c0: number;
+  c1: number;
+}
+
+// An AI record (0x1051) whose formula is a ptgArea3d over `range`.
+function aiRec(id: number, range: ChartRange): Uint8Array {
+  const rgce = new Uint8Array(11);
+  const rv = new DataView(rgce.buffer);
+  rgce[0] = 0x3b; // ptgArea3d
+  rv.setUint16(1, 0, true); // ixti
+  rv.setUint16(3, range.r0, true);
+  rv.setUint16(5, range.r1, true);
+  rv.setUint16(7, range.c0, true);
+  rv.setUint16(9, range.c1, true);
+  const d = new Uint8Array(8 + rgce.length);
+  const dv = new DataView(d.buffer);
+  d[0] = id; // 0 = name, 1 = values, 2 = categories
+  d[1] = 2; // rt = worksheet reference
+  dv.setUint16(6, rgce.length, true); // cce
+  d.set(rgce, 8);
+  return rec(0x1051, d);
+}
+
+function seriesTextRec(name: string): Uint8Array {
+  const chars = ascii(name);
+  const d = new Uint8Array(4 + chars.length);
+  d[2] = name.length; // cch
+  d.set(chars, 4);
+  return rec(0x100d, d);
+}
+
+// A nested chart substream (BOF dt=0x20 … EOF) with one series, to embed in a
+// sheet's records. The values / categories reference worksheet cells.
+export function chartRecords(opts: {
+  kind?: 'bar' | 'line' | 'pie' | 'area' | 'scatter';
+  values: ChartRange;
+  categories?: ChartRange;
+  name?: string;
+}): Array<Uint8Array> {
+  const bof = new Uint8Array(16);
+  const bv = new DataView(bof.buffer);
+  bv.setUint16(0, 0x0600, true);
+  bv.setUint16(2, 0x0020, true); // dt = chart
+  const typeCode = {
+    bar: 0x1017,
+    line: 0x1018,
+    pie: 0x1019,
+    area: 0x101a,
+    scatter: 0x101b,
+  }[opts.kind ?? 'bar'];
+  const out: Array<Uint8Array> = [
+    rec(0x0809, bof),
+    rec(typeCode, new Uint8Array(6)), // chart-type group
+    rec(0x1003, new Uint8Array(12)), // SERIES
+    aiRec(1, opts.values),
+  ];
+  if (opts.categories) out.push(aiRec(2, opts.categories));
+  if (opts.name) out.push(seriesTextRec(opts.name));
+  out.push(rec(0x000a, new Uint8Array(0))); // chart EOF
+  return out;
+}
+
 export interface XlsSheetInput {
   readonly name: string;
   readonly records: ReadonlyArray<Uint8Array>;

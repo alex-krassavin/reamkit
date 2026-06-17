@@ -26,12 +26,12 @@ const sampleXls = (): Uint8Array =>
   });
 
 describe('xls wired into the converter (XLS-3)', () => {
-  it('Ream.parse exposes the SheetDoc, format id and the drawing loss', () => {
+  it('Ream.parse exposes the SheetDoc, format id and the drawing-shapes loss', () => {
     const doc = Ream.parse(sampleXls());
     expect(doc.format).toBe('xls');
     expect(doc.sheet?.kind).toBe('sheet');
     expect(doc.sheet?.sheets[0]?.name).toBe('Sheet1');
-    expect(doc.losses.some((l) => l.feature === 'charts')).toBe(true);
+    expect(doc.losses.some((l) => l.feature === 'shapes')).toBe(true);
   });
 
   it('converts an .xls to a valid PDF', async () => {

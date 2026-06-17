@@ -11,7 +11,8 @@
 // from the FONT/FORMAT/PALETTE/XF records (biff-styles) into the same XlsxStyles
 // model the OOXML path uses. Embedded charts/drawings are not read yet.
 
-import type { Sheet, SheetDoc, SheetImageRef } from '@/core/ir/sheet';
+import type { Chart } from '@/core/document-model';
+import type { Sheet, SheetChartRef, SheetDoc, SheetImageRef } from '@/core/ir/sheet';
 import type {
   ColumnWidth,
   MergedRange,
@@ -21,6 +22,7 @@ import type {
 import type { EscherAnchor } from '@/excel/xls/escher';
 
 import { ResourceStore } from '@/core/ir';
+import { parseBiffChart } from '@/excel/xls/biff-chart';
 import { parseBiffStyles } from '@/excel/xls/biff-styles';
 import { parseBlipStore, parseSheetPictures } from '@/excel/xls/escher';
 import { openCfb } from '@/core/ole/cfb';
@@ -107,13 +109,28 @@ export function readXlsToSheetDoc(xls: Uint8Array): SheetDoc {
   // shared resource store (XLS-5).
   const resources = new ResourceStore();
   const blips = parseBlipStore(gatherDrawing(globals, REC.MSODRAWINGGROUP));
+  // Embedded charts resolved against each sheet's cells, keyed globally (XLS-6).
+  const chartData = new Map<string, Chart>();
 
   const sheets: Array<Sheet> = [];
   for (const bs of boundSheets) {
     if (bs.type !== 0) continue; // 0 = worksheet (skip chart/macro sheets)
     if (bs.offset + 4 > wb.length) continue;
-    const { grid, images } = readSheet(wb, view, bs.offset, blips, resources);
-    sheets.push({ name: bs.name, grid, ...(images.length > 0 ? { images } : {}) });
+    const { grid, images, charts } = readSheet(
+      wb,
+      view,
+      bs.offset,
+      blips,
+      resources,
+      sharedStrings,
+      chartData,
+    );
+    sheets.push({
+      name: bs.name,
+      grid,
+      ...(images.length > 0 ? { images } : {}),
+      ...(charts.length > 0 ? { charts } : {}),
+    });
   }
   if (sheets.length === 0) throw new Error('.xls has no worksheets');
 
@@ -125,6 +142,7 @@ export function readXlsToSheetDoc(xls: Uint8Array): SheetDoc {
     definedNames: [],
     date1904,
     resources,
+    ...(chartData.size > 0 ? { chartData } : {}),
   };
 }
 
@@ -163,6 +181,9 @@ function concatBytes(parts: ReadonlyArray<Uint8Array>): Uint8Array {
 function readSubstream(wb: Uint8Array, view: DataView, start: number): Array<BiffRecord> {
   const out: Array<BiffRecord> = [];
   let p = start;
+  // A worksheet substream can nest a chart substream (its own BOF…EOF), so track
+  // BOF/EOF depth and stop only at the matching EOF — not the first nested one.
+  let depth = 0;
   while (p + 4 <= wb.length) {
     const type = view.getUint16(p, true);
     const len = view.getUint16(p + 2, true);
@@ -170,7 +191,8 @@ function readSubstream(wb: Uint8Array, view: DataView, start: number): Array<Bif
     if (dataStart + len > wb.length) break;
     out.push({ type, data: wb.subarray(dataStart, dataStart + len) });
     p = dataStart + len;
-    if (type === REC.EOF) break;
+    if (type === REC.BOF) depth++;
+    else if (type === REC.EOF && --depth <= 0) break;
     if (out.length > 1_000_000) break; // runaway guard
   }
   return out;
@@ -194,7 +216,9 @@ function readSheet(
   start: number,
   blips: ReadonlyArray<Uint8Array | undefined>,
   resources: ResourceStore,
-): { grid: ParsedWorksheet; images: Array<SheetImageRef> } {
+  sharedStrings: ReadonlyArray<string>,
+  chartData: Map<string, Chart>,
+): { grid: ParsedWorksheet; images: Array<SheetImageRef>; charts: Array<SheetChartRef> } {
   const records = readSubstream(wb, view, start);
   const cells: Array<WorksheetCell> = [];
   const merges: Array<MergedRange> = [];
@@ -290,7 +314,30 @@ function readSheet(
   const drawing = gatherDrawing(records, REC.MSODRAWING);
   const images =
     drawing.length > 0 && blips.length > 0 ? buildImages(drawing, blips, resources) : [];
-  return { grid, images };
+
+  // Embedded charts: a nested chart substream (BOF dt=0x20 … EOF) is plotted from
+  // the sheet's own cells (XLS-6).
+  const charts: Array<SheetChartRef> = [];
+  for (let i = 0; i < records.length; i++) {
+    if (records[i]!.type !== REC.BOF || readU16(records[i]!.data, 2) !== 0x0020) continue;
+    let depth = 0;
+    const sub: Array<BiffRecord> = [];
+    let j = i;
+    for (; j < records.length; j++) {
+      sub.push(records[j]!);
+      if (records[j]!.type === REC.BOF) depth++;
+      else if (records[j]!.type === REC.EOF && --depth <= 0) break;
+    }
+    i = j;
+    const chart = parseBiffChart(sub, cells, sharedStrings);
+    if (chart) {
+      const path = `xls-chart-${chartData.size}`;
+      chartData.set(path, chart);
+      charts.push({ chartPartPath: path, widthPt: 360, heightPt: 240 });
+    }
+  }
+
+  return { grid, images, charts };
 }
 
 // Escher picture shapes → SheetImageRefs: pull each shape's BLIP bytes into the

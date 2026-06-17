@@ -81,9 +81,10 @@ charts — and is byte-stable across a read↔write loop.
   PDF/SVG/HTML and even re-writes to `.xlsx`. Cell values, structure (sheets, shared
   strings, merges, column widths, the 1904 flag), **styling** — fonts, fills,
   borders, number formats and alignment from the FONT/FORMAT/XF records, with colours
-  resolved through the BIFF colour palette — and **embedded pictures** (from the
-  Office-Drawing/Escher BLIP store) are read. Charts and drawing shapes (autoshapes,
-  text boxes) are not yet.
+  resolved through the BIFF colour palette — **embedded pictures** (from the
+  Office-Drawing/Escher BLIP store) and **embedded charts** (the BIFF chart substream,
+  plotted from the worksheet cells its AI records reference) are read. Freeform
+  drawing shapes (autoshapes, text boxes) are not yet.
 - The print model — gridline suppression, print area, fit-to-page scaling, repeated
   print titles, manual page breaks, horizontal/vertical centering, and **column-band
   pagination**: a sheet wider than the page (and not fit-to-width) splits across
