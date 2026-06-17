@@ -5,12 +5,13 @@
 // render path (PDF/SVG/HTML) is identical. A dedicated grid layout would be a
 // separate SheetDoc consumer; for now FlowDoc is the one projection.
 
-import type { BodyElement, SectionProperties } from '@/core/document-model';
+import type { BodyElement, HeaderFooterReference, SectionProperties } from '@/core/document-model';
 import type { FlowDoc } from '@/core/ir/flow';
-import type { SheetDoc } from '@/core/ir/sheet';
+import type { SheetComment, SheetDoc, SheetFormControl } from '@/core/ir/sheet';
 
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 import { pt } from '@/core/ir';
+import { buildHeaderFooterContent } from '@/excel/header-footer';
 import {
   resolvePrintArea,
   resolvePrintTitleRows,
@@ -19,11 +20,19 @@ import {
   worksheetToBody,
 } from '@/excel/print-model';
 
+// Synthetic relationship ids keying the first sheet's header/footer band content
+// in FlowDoc.headersFooters (E-SHEET W4).
+const HEADER_REL = '_xlsxHeaderDefault';
+const FOOTER_REL = '_xlsxFooterDefault';
+
 export function projectSheetDoc(sheet: SheetDoc): FlowDoc {
   const body: Array<BodyElement> = [];
   // Page geometry comes from the first sheet's <pageSetup>/<pageMargins>; the
   // renderer supports one section, so later sheets share the first's geometry.
   let firstSheetSection: SectionProperties | undefined;
+  // First sheet's expanded header/footer band content (E-SHEET W4), keyed for
+  // FlowDoc.headersFooters; the renderer paints it in the page margins.
+  const headersFooters = new Map<string, ReadonlyArray<BodyElement>>();
 
   // Sheet name → grid, so a sparkline whose data range is sheet-qualified
   // (Sheet2!A1:C1) resolves against the right sheet (E-SHEET SC2 tail TC3).
@@ -32,7 +41,7 @@ export function projectSheetDoc(sheet: SheetDoc): FlowDoc {
   for (let sheetIdx = 0; sheetIdx < sheet.sheets.length; sheetIdx++) {
     const ws = sheet.sheets[sheetIdx]!;
     if (sheetIdx === 0) {
-      firstSheetSection = sectionFromWorksheet(ws.grid);
+      firstSheetSection = withHeaderFooter(sectionFromWorksheet(ws.grid), ws, headersFooters);
     }
 
     // Each sheet after the first starts on its own PDF page. We do NOT print the
@@ -54,6 +63,8 @@ export function projectSheetDoc(sheet: SheetDoc): FlowDoc {
         ...(titleRows ? { titleRows } : {}),
         gridLines,
         sheetGrids,
+        ...(ws.hyperlinks ? { hyperlinks: ws.hyperlinks } : {}),
+        ...(sheet.sharedStringRuns ? { sharedStringRuns: sheet.sharedStringRuns } : {}),
       }),
     );
 
@@ -71,9 +82,41 @@ export function projectSheetDoc(sheet: SheetDoc): FlowDoc {
       });
     }
 
+    // W1: anchored pictures render as image blocks after the grid (anchor-ordered;
+    // bytes live in sheet.resources). Like charts, placement collapses to inline.
+    for (const img of ws.images ?? []) {
+      body.push({
+        kind: 'image',
+        image: {
+          resource: img.resourceId,
+          width: pt(img.widthPt),
+          height: pt(img.heightPt),
+          paragraphProperties: {},
+        },
+      });
+    }
+
+    // W2: anchored shapes render as shape blocks after the grid (anchor-ordered;
+    // placement collapses to inline, like charts/pictures).
+    for (const shape of ws.shapes ?? []) {
+      body.push({ kind: 'shape', shape });
+    }
+
     // §SV2: slicer panels render as styled button boxes after the grid + charts.
     for (const slicer of ws.slicers ?? []) {
       body.push({ kind: 'table', table: slicerTable(slicer) });
+    }
+
+    // W7: cell comments / notes are listed in a "Comments" section after the grid
+    // (Excel's "print comments at end of sheet"): a heading + one line per comment.
+    if (ws.comments && ws.comments.length > 0) {
+      body.push(...commentBlocks(ws.comments));
+    }
+
+    // W8: form controls are listed in a "Form controls" section after the grid,
+    // each with a type-appropriate affordance and its state.
+    if (ws.formControls && ws.formControls.length > 0) {
+      body.push(...formControlBlocks(ws.formControls));
     }
   }
 
@@ -88,6 +131,103 @@ export function projectSheetDoc(sheet: SheetDoc): FlowDoc {
     styles: EMPTY_STYLE_SHEET,
     resources: sheet.resources,
     ...(sheet.chartData && sheet.chartData.size > 0 ? { charts: sheet.chartData } : {}),
+    ...(headersFooters.size > 0 ? { headersFooters } : {}),
     ...(sheet.info ? { info: sheet.info } : {}),
   };
+}
+
+// Cell comments / notes (W7) as a "Comments" section after the grid: a bold
+// heading then one paragraph per comment — "<ref> — <author>: <text>". Multi-line
+// note text is collapsed to a single line so the listing stays compact.
+function commentBlocks(comments: ReadonlyArray<SheetComment>): Array<BodyElement> {
+  const out: Array<BodyElement> = [
+    {
+      kind: 'paragraph',
+      paragraph: { properties: {}, runs: [{ text: 'Comments', properties: { bold: true } }] },
+    },
+  ];
+  for (const c of comments) {
+    const body = c.text.replace(/\s+/g, ' ').trim();
+    const label = c.author ? `${c.ref} — ${c.author}: ` : `${c.ref}: `;
+    out.push({
+      kind: 'paragraph',
+      paragraph: {
+        properties: {},
+        runs: [
+          { text: label, properties: { bold: true } },
+          ...(body.length > 0 ? [{ text: body, properties: {} }] : []),
+        ],
+      },
+    });
+  }
+  return out;
+}
+
+// Form controls (W8) as a "Form controls" section after the grid: a bold heading
+// then one line per control with a type-appropriate ASCII affordance and state —
+// a checkbox/option button shows its checked state, a spin/scroll its value.
+function formControlBlocks(controls: ReadonlyArray<SheetFormControl>): Array<BodyElement> {
+  const out: Array<BodyElement> = [
+    {
+      kind: 'paragraph',
+      paragraph: { properties: {}, runs: [{ text: 'Form controls', properties: { bold: true } }] },
+    },
+  ];
+  for (const c of controls) {
+    out.push({
+      kind: 'paragraph',
+      paragraph: { properties: {}, runs: [{ text: formControlLabel(c), properties: {} }] },
+    });
+  }
+  return out;
+}
+
+function formControlLabel(c: SheetFormControl): string {
+  const name = c.name ?? c.objectType ?? 'Control';
+  switch ((c.objectType ?? '').toLowerCase()) {
+    case 'checkbox':
+      return `${c.checked ? '[x]' : '[ ]'} ${name}`;
+    case 'radio':
+      return `${c.checked ? '(o)' : '( )'} ${name}`;
+    case 'buttons':
+      return `[ ${name} ]`;
+    case 'spin':
+    case 'scroll':
+      return c.value !== undefined ? `${name} (value ${c.value})` : name;
+    case 'drop':
+    case 'list':
+      return `${name} (list)`;
+    default:
+      return c.objectType ? `${name} (${c.objectType})` : name;
+  }
+}
+
+// Expand the first sheet's <headerFooter> into header/footer bands and attach them
+// to its section (creating a minimal section when the sheet has no custom page
+// geometry). The section is returned unchanged when there is no header/footer.
+function withHeaderFooter(
+  section: SectionProperties | undefined,
+  ws: SheetDoc['sheets'][number],
+  headersFooters: Map<string, ReadonlyArray<BodyElement>>,
+): SectionProperties | undefined {
+  const hf = ws.grid.headerFooter;
+  if (!hf || (!hf.oddHeader && !hf.oddFooter)) return section;
+  const headers: Array<HeaderFooterReference> = [];
+  const footers: Array<HeaderFooterReference> = [];
+  if (hf.oddHeader) {
+    const content = buildHeaderFooterContent(hf.oddHeader, ws.name);
+    if (content.length > 0) {
+      headersFooters.set(HEADER_REL, resolveBodyStyles(content, EMPTY_STYLE_SHEET));
+      headers.push({ type: 'default', relationshipId: HEADER_REL });
+    }
+  }
+  if (hf.oddFooter) {
+    const content = buildHeaderFooterContent(hf.oddFooter, ws.name);
+    if (content.length > 0) {
+      headersFooters.set(FOOTER_REL, resolveBodyStyles(content, EMPTY_STYLE_SHEET));
+      footers.push({ type: 'default', relationshipId: FOOTER_REL });
+    }
+  }
+  if (headers.length === 0 && footers.length === 0) return section;
+  return { ...(section ?? { headers: [], footers: [] }), headers, footers };
 }

@@ -478,6 +478,35 @@ function cfRuleXml(rule: CfRule): string {
         rule.cfvos.map(cfvoXml).join('') +
         '</iconSet></cfRule>'
       );
+    case 'top10':
+      return (
+        `<cfRule type="top10"${p} dxfId="${rule.dxfId}" rank="${rule.rank}"` +
+        (rule.percent ? ' percent="1"' : '') +
+        (rule.bottom ? ' bottom="1"' : '') +
+        '/>'
+      );
+    case 'aboveAverage':
+      return (
+        `<cfRule type="aboveAverage"${p} dxfId="${rule.dxfId}"` +
+        // aboveAverage defaults to true; only the false case needs the attribute.
+        (rule.aboveAverage ? '' : ' aboveAverage="0"') +
+        (rule.equalAverage ? ' equalAverage="1"' : '') +
+        (rule.stdDev !== undefined ? ` stdDev="${rule.stdDev}"` : '') +
+        '/>'
+      );
+    case 'duplicateValues':
+    case 'uniqueValues':
+      return `<cfRule type="${rule.type}"${p} dxfId="${rule.dxfId}"/>`;
+    case 'containsText':
+    case 'notContainsText':
+    case 'beginsWith':
+    case 'endsWith':
+      return (
+        `<cfRule type="${rule.type}"${p} operator="${rule.type}" dxfId="${rule.dxfId}"` +
+        ` text="${escapeAttr(rule.text)}">` +
+        (rule.formula !== undefined ? `<formula>${escapeText(rule.formula)}</formula>` : '') +
+        '</cfRule>'
+      );
   }
 }
 
@@ -694,10 +723,13 @@ function patternFill(f: XlsxFill): string {
 }
 
 function borderXml(b: XlsxBorder): string {
-  return `<border>${edgeXml('left', b.left)}${edgeXml('right', b.right)}${edgeXml(
+  const diag = b.diagonal
+    ? `${b.diagonalUp ? ' diagonalUp="1"' : ''}${b.diagonalDown ? ' diagonalDown="1"' : ''}`
+    : '';
+  return `<border${diag}>${edgeXml('left', b.left)}${edgeXml('right', b.right)}${edgeXml(
     'top',
     b.top,
-  )}${edgeXml('bottom', b.bottom)}</border>`;
+  )}${edgeXml('bottom', b.bottom)}${edgeXml('diagonal', b.diagonal)}</border>`;
 }
 
 function edgeXml(name: string, edge: XlsxBorderEdge | undefined): string {
@@ -717,7 +749,9 @@ function cellXfXml(xf: XlsxCellXf): string {
   const alignment = a
     ? `<alignment${a.horizontal ? ` horizontal="${a.horizontal}"` : ''}${
         a.vertical ? ` vertical="${a.vertical}"` : ''
-      }${a.wrapText ? ' wrapText="1"' : ''}/>`
+      }${a.wrapText ? ' wrapText="1"' : ''}${a.textRotation !== undefined ? ` textRotation="${a.textRotation}"` : ''}${
+        a.indent !== undefined ? ` indent="${a.indent}"` : ''
+      }${a.shrinkToFit ? ' shrinkToFit="1"' : ''}/>`
     : '';
   return (
     `<xf numFmtId="${xf.numFmtId}" fontId="${xf.fontId}" fillId="${xf.fillId}" borderId="${xf.borderId}"${apply}>` +

@@ -101,6 +101,15 @@ export interface ParsedWorksheet {
   // §18.3.1.32 <dataValidations> — per-range input constraints (E-SHEET SV1). A
   // `list` validation paints an in-cell dropdown affordance; all types round-trip.
   readonly dataValidations?: ReadonlyArray<DataValidation>;
+  // §18.3.1.47 <hyperlinks> — raw cell hyperlinks (E-SHEET W3). The reader
+  // resolves each relId to an external URL; render-only (not written back).
+  readonly hyperlinks?: ReadonlyArray<HyperlinkRef>;
+  // §18.3.1.46 <headerFooter> — sheet header/footer format strings (E-SHEET W4).
+  // The projection expands the &-codes into header/footer bands; render-only.
+  readonly headerFooter?: HeaderFooter;
+  // Form controls declared on the sheet (E-SHEET W8) — raw {name, relId}; the
+  // reader resolves each relId to its ctrlProp (type + state). Render-only.
+  readonly formControls?: ReadonlyArray<FormControlRef>;
   // x14 extension <sparklineGroups> in extLst — per-cell mini charts (E-SHEET SC2).
   readonly sparklines?: ReadonlyArray<ParsedSparkline>;
   // §18.3.1.95 <tableParts> — relationship ids of the sheet's table parts. The
@@ -230,6 +239,11 @@ export interface XlsxBorder {
   readonly right?: XlsxBorderEdge;
   readonly bottom?: XlsxBorderEdge;
   readonly left?: XlsxBorderEdge;
+  // §18.8.4 <diagonal> — the diagonal stroke; @diagonalUp (bottom-left → top-right)
+  // and/or @diagonalDown (top-left → bottom-right) select which corners it spans (W6).
+  readonly diagonal?: XlsxBorderEdge;
+  readonly diagonalUp?: boolean;
+  readonly diagonalDown?: boolean;
 }
 
 export type XlsxHorizontalAlign =
@@ -247,6 +261,13 @@ export interface XlsxCellAlignment {
   readonly horizontal?: XlsxHorizontalAlign;
   readonly vertical?: XlsxVerticalAlign;
   readonly wrapText?: boolean;
+  // §18.8.1 — left indent in "indent levels" (each ≈ 3 character widths) (W6).
+  readonly indent?: number;
+  // §18.8.1 textRotation — degrees counter-clockwise (0–90), 91–180 clockwise as
+  // (value − 90), and 255 = stacked vertical text (W6).
+  readonly textRotation?: number;
+  // §18.8.1 shrinkToFit — scale the text down so it fits the cell on one line (W6).
+  readonly shrinkToFit?: boolean;
 }
 
 export interface XlsxCellXf {
@@ -369,12 +390,113 @@ export interface CfRuleIconSet {
   readonly reverse?: boolean;
 }
 
-export type CfRule = CfRuleCellIs | CfRuleColorScale | CfRuleDataBar | CfRuleIconSet;
+// §18.3.1.10 <cfRule type="top10"> — the top (or `bottom`) N values of the range
+// take the differential format. `rank` is N; with `percent` it is a percentage of
+// the range's cell count. Resolves against the range's value extent, like a scale.
+export interface CfRuleTop10 {
+  readonly type: 'top10';
+  readonly priority: number;
+  readonly rank: number;
+  readonly percent: boolean;
+  readonly bottom: boolean;
+  readonly dxfId: number;
+}
+
+// §18.3.1.10 <cfRule type="aboveAverage"> — cells above (default) or below the
+// range mean take the format. `equalAverage` makes the comparison inclusive;
+// `stdDev`, when set, shifts the threshold by N population standard deviations.
+export interface CfRuleAboveAverage {
+  readonly type: 'aboveAverage';
+  readonly priority: number;
+  readonly aboveAverage: boolean;
+  readonly equalAverage: boolean;
+  readonly stdDev?: number;
+  readonly dxfId: number;
+}
+
+// §18.3.1.10 <cfRule type="duplicateValues" | "uniqueValues"> — cells whose value
+// repeats within the range (duplicate) or occurs exactly once (unique) take the
+// format. Compares numbers by value and strings case-insensitively, like Excel.
+export interface CfRuleDupUnique {
+  readonly type: 'duplicateValues' | 'uniqueValues';
+  readonly priority: number;
+  readonly dxfId: number;
+}
+
+// §18.3.1.10 <cfRule type="containsText" | "notContainsText" | "beginsWith" |
+// "endsWith"> — a case-insensitive substring test against the cell's text.
+// `text` is the needle; `formula` carries Excel's generated SEARCH/LEFT/RIGHT
+// expression verbatim for faithful write-back (it is matched directly, not run).
+export interface CfRuleText {
+  readonly type: 'containsText' | 'notContainsText' | 'beginsWith' | 'endsWith';
+  readonly priority: number;
+  readonly text: string;
+  readonly dxfId: number;
+  readonly formula?: string;
+}
+
+export type CfRule =
+  | CfRuleCellIs
+  | CfRuleColorScale
+  | CfRuleDataBar
+  | CfRuleIconSet
+  | CfRuleTop10
+  | CfRuleAboveAverage
+  | CfRuleDupUnique
+  | CfRuleText;
 
 // §18.3.1.18 <conditionalFormatting sqref="A1:A10 C1:C5"> — rules over ranges.
 export interface ConditionalFormat {
   readonly ranges: ReadonlyArray<MergedRange>;
   readonly rules: ReadonlyArray<CfRule>;
+}
+
+// §18.3.1.47 <hyperlink ref r:id location display tooltip> — a cell (or range)
+// hyperlink (E-SHEET W3). `relId` resolves to an external URL through the
+// worksheet relationships; `location` is an in-workbook target (Sheet!cell). The
+// raw form rides on the grid; the reader resolves it to a SheetHyperlink.
+export interface HyperlinkRef {
+  readonly ref: string;
+  readonly relId?: string;
+  readonly location?: string;
+  readonly display?: string;
+  readonly tooltip?: string;
+}
+
+// §18.3.1.46 <headerFooter> — the sheet's print header/footer format strings
+// (E-SHEET W4). Each carries Excel's &-code mini-language (&L/&C/&R regions,
+// &P/&N/&D/&F/&A field codes, &B/&I formatting). v1 reads the odd (= default)
+// header and footer; even/first variants are a later refinement.
+export interface HeaderFooter {
+  readonly oddHeader?: string;
+  readonly oddFooter?: string;
+}
+
+// §18.3.1.* form control (E-SHEET W8) — a checkbox / option button / spinner /
+// button etc. declared in the worksheet (legacy <controls> or the x14 extLst).
+// `relId` resolves to the control's ctrlProp part (type + state); `name` is its
+// display name. Raw form (the reader resolves relId); render-only.
+export interface FormControlRef {
+  readonly name?: string;
+  readonly relId: string;
+}
+
+// §18.4.4 <r> — one formatting run inside a rich-text shared string (E-SHEET W6).
+// A `<si>` with multiple `<r><rPr>…</rPr><t>…</t></r>` runs carries per-run
+// formatting from <rPr> (its own font properties, not a cellXf index). The
+// projection emits these as separate document-model runs so a single cell can mix
+// bold / colour / size. Render-only: the writer flattens back to plain text, so
+// the round-trip stays byte-stable (rich formatting in a shared string is dropped
+// on `convert('xlsx')`, a documented loss like slicers/pivots).
+export interface SheetRichRun {
+  readonly text: string;
+  readonly bold?: boolean;
+  readonly italic?: boolean;
+  readonly underline?: boolean;
+  readonly colorHex?: string;
+  readonly sizePt?: number;
+  // §18.4.2 <vertAlign> — superscript / subscript within the cell text.
+  readonly vertAlign?: 'superscript' | 'subscript';
 }
 
 // §18.18.18 ST_DataValidationType — the constraint a <dataValidation> enforces.

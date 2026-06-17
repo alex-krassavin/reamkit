@@ -5,11 +5,21 @@
 // Document-derived state only; caller conversion options stay with the
 // converter/facade.
 
-import type { Chart, DocumentInfo } from '@/core/document-model';
+import type { Chart, DocumentInfo, ShapeBlock } from '@/core/document-model';
 import type { CoreProperties, Relationship } from '@/core/opc';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
-import type { Sheet, SheetChartRef, SheetDoc, SheetSlicer, SheetSlicerItem } from '@/core/ir/sheet';
+import type {
+  Sheet,
+  SheetChartRef,
+  SheetComment,
+  SheetDoc,
+  SheetFormControl,
+  SheetHyperlink,
+  SheetImageRef,
+  SheetSlicer,
+  SheetSlicerItem,
+} from '@/core/ir/sheet';
 import type {
   ExcelTable,
   MergedRange,
@@ -24,6 +34,7 @@ import { FEATURES, ResourceStore } from '@/core/ir';
 import { OpcPackage, isOoxmlRel, parseCoreProperties } from '@/core/opc';
 import {
   EMPTY_XLSX_STYLES,
+  parseAreaRef,
   parseSharedStrings,
   parseWorkbook,
   parseWorksheet,
@@ -37,6 +48,9 @@ import { parseSheetDrawing } from '@/excel/sheet-drawing';
 import { parseTablePartFull } from '@/excel/table-parser';
 import { parsePivotTablePart } from '@/excel/pivot-table-parser';
 import { parseSlicerCachePart, parseSlicerPart } from '@/excel/slicer-parser';
+import { parseLegacyComments, parsePersons, parseThreadedComments } from '@/excel/comments-parser';
+import { parseFormControlProps } from '@/excel/form-control-parser';
+import { parseSheetShapes } from '@/excel/sheet-shape-parser';
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
 import { resolveCellText } from '@/excel/print-model';
 
@@ -48,6 +62,10 @@ const CORE_PROPS_PART = 'docProps/core.xml';
 // references its slicer parts; the workbook references the slicer caches.
 const SLICER_REL_TAIL = '/slicer';
 const SLICER_CACHE_REL_TAIL = '/slicerCache';
+// Threaded comments + their person directory live in the MS 2017 namespace, so
+// they match by relationship-type tail rather than the OOXML transitional helper.
+const THREADED_COMMENTS_REL_TAIL = '/threadedComment';
+const PERSON_REL_TAIL = '/person';
 // A slicer over a huge column is bounded so a crafted file cannot blow up the box.
 const MAX_SLICER_ITEMS = 256;
 
@@ -76,16 +94,31 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
   if (sheets.length === 0) throw new Error('xlsx has no sheets');
 
   const sharedStringsData = pkg.getPart(SHARED_STRINGS_PART);
-  const sharedStrings = sharedStringsData ? parseSharedStrings(sharedStringsData) : [];
+  // texts feed every consumer (round-trip, value resolution); runs (W6) carry
+  // per-run rich formatting for the strings that have it — render-only.
+  const { texts: sharedStrings, runs: sharedStringRuns } = sharedStringsData
+    ? parseSharedStrings(sharedStringsData)
+    : { texts: [] as ReadonlyArray<string>, runs: [] as ReadonlyArray<undefined> };
 
   const stylesData = pkg.getPart(STYLES_PART);
   const styles = stylesData ? parseXlsxStyles(stylesData) : EMPTY_XLSX_STYLES;
 
   const workbookRels = pkg.getPartRelationships(WORKBOOK_PART);
+  // Threaded-comment authors (E-SHEET W7): xl/persons/person.xml maps person ids
+  // to display names. Workbook-scoped, resolved once and shared across sheets.
+  const persons = new Map<string, string>();
+  for (const rel of workbookRels) {
+    if (!rel.type.endsWith(PERSON_REL_TAIL)) continue;
+    const part = pkg.resolveRelatedPart(WORKBOOK_PART, rel);
+    if (part) for (const [id, name] of parsePersons(part.data)) persons.set(id, name);
+  }
   // Charts keyed by their part path (globally unique across sheets); the
   // theme-backed resolver mirrors the docx reader's so schemeClr references in
   // charts resolve to the workbook's actual accents.
   const chartData = new Map<string, Chart>();
+  // Content-addressed store for sheet pictures (W1); populated below as anchors
+  // resolve, then handed to the SheetDoc so the renderer can fetch image bytes.
+  const resources = new ResourceStore();
   const palette = buildThemePalette(pkg, workbookRels);
   const resolveColor = makeColorResolver(palette);
 
@@ -103,15 +136,24 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
     if (!resolved) continue;
     const worksheet = parseWorksheet(resolved.data);
 
-    // §20.5: the sheet's drawing part — resolve chart frames (and their chart
-    // parts) here; the projection emits a block per frame after the grid.
+    // §20.5: the sheet's drawing part — resolve chart frames, pictures and shapes
+    // here; the projection emits a block per frame after the grid (W1 pictures,
+    // W2 shapes).
     const charts: Array<SheetChartRef> = [];
+    const images: Array<SheetImageRef> = [];
+    let shapes: Array<ShapeBlock> | undefined;
     if (worksheet.drawingRelId) {
       const wsRels = pkg.getPartRelationships(resolved.path);
       const drawingRel = wsRels.find((r) => r.id === worksheet.drawingRelId);
       const drawing = drawingRel ? pkg.resolveRelatedPart(resolved.path, drawingRel) : undefined;
       if (drawing) {
-        for (const ref of parseSheetDrawing(drawing.data, drawing.path, pkg, worksheet)) {
+        const { charts: chartRefs, pictures } = parseSheetDrawing(
+          drawing.data,
+          drawing.path,
+          pkg,
+          worksheet,
+        );
+        for (const ref of chartRefs) {
           if (!chartData.has(ref.chartPartPath)) {
             const chartXml = pkg.getPart(ref.chartPartPath);
             const parsed = chartXml ? parseChart(chartXml, resolveColor) : null;
@@ -126,6 +168,23 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
             widthPt: ref.widthPt,
             heightPt: ref.heightPt,
           });
+        }
+        for (const pic of pictures) {
+          const bytes = pkg.getPart(pic.imagePartPath);
+          if (!bytes) continue;
+          images.push({
+            resourceId: resources.put(bytes),
+            widthPt: pic.widthPt,
+            heightPt: pic.heightPt,
+          });
+        }
+        // §20.5.2.30 xdr:sp shapes (W2). The shared DrawingML readers need the
+        // preserveOrder PoNode tree, so shapes parse the drawing a second time —
+        // gated on a shape open tag (`:sp>`/`:sp `) so chart/picture-only drawings
+        // skip it (xdr:spPr / xdr:grpSp do not match).
+        if (bytesInclude(drawing.data, ':sp>') || bytesInclude(drawing.data, ':sp ')) {
+          const parsed = parseSheetShapes(drawing.data, worksheet, resolveColor);
+          if (parsed.length > 0) shapes = parsed;
         }
       }
     }
@@ -185,11 +244,80 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
       if (resolvedPivots.length > 0) pivotTables = resolvedPivots;
     }
 
+    // §18.3.1.47 cell hyperlinks (W3): resolve each relId to its external URL via
+    // the worksheet rels; location-only (in-workbook) links carry no URL.
+    let hyperlinks: Array<SheetHyperlink> | undefined;
+    if (worksheet.hyperlinks && worksheet.hyperlinks.length > 0) {
+      const wsRels = pkg.getPartRelationships(resolved.path);
+      const resolvedLinks: Array<SheetHyperlink> = [];
+      for (const h of worksheet.hyperlinks) {
+        if (h.relId === undefined) continue; // in-workbook location link → no URL
+        const rel = wsRels.find((r) => r.id === h.relId);
+        if (!rel || rel.targetMode !== 'External' || !rel.target) continue;
+        const area = parseAreaRef(h.ref);
+        if (!area) continue;
+        resolvedLinks.push({
+          ref: {
+            startColumn: area.startColumn,
+            startRow: area.startRow,
+            endColumn: area.endColumn,
+            endRow: area.endRow,
+          },
+          url: rel.target,
+        });
+      }
+      if (resolvedLinks.length > 0) hyperlinks = resolvedLinks;
+    }
+
+    // §18.7 cell comments / notes (W7): legacy xl/comments and modern threaded
+    // comments, both resolved through the worksheet rels. Legacy notes precede the
+    // threaded conversation so a cell that has both reads oldest-first.
+    let comments: Array<SheetComment> | undefined;
+    {
+      const wsRels = pkg.getPartRelationships(resolved.path);
+      const resolvedComments: Array<SheetComment> = [];
+      for (const rel of wsRels) {
+        if (!isOoxmlRel(rel.type, 'comments')) continue;
+        const part = pkg.resolveRelatedPart(resolved.path, rel);
+        if (part) resolvedComments.push(...parseLegacyComments(part.data));
+      }
+      for (const rel of wsRels) {
+        if (!rel.type.endsWith(THREADED_COMMENTS_REL_TAIL)) continue;
+        const part = pkg.resolveRelatedPart(resolved.path, rel);
+        if (part) resolvedComments.push(...parseThreadedComments(part.data, persons));
+      }
+      if (resolvedComments.length > 0) comments = resolvedComments;
+    }
+
+    // §18.3.* form controls (W8): resolve each control's relId to its ctrlProp
+    // part (objectType + state). The projection lists them after the grid.
+    let formControls: Array<SheetFormControl> | undefined;
+    if (worksheet.formControls && worksheet.formControls.length > 0) {
+      const wsRels = pkg.getPartRelationships(resolved.path);
+      const resolvedControls: Array<SheetFormControl> = [];
+      for (const fc of worksheet.formControls) {
+        const rel = wsRels.find((r) => r.id === fc.relId);
+        const part = rel ? pkg.resolveRelatedPart(resolved.path, rel) : undefined;
+        const props = part ? parseFormControlProps(part.data) : {};
+        resolvedControls.push({ ...(fc.name ? { name: fc.name } : {}), ...props });
+      }
+      if (resolvedControls.length > 0) formControls = resolvedControls;
+    }
+
     const grid =
       tables || pivotTables
         ? { ...worksheet, ...(tables ? { tables } : {}), ...(pivotTables ? { pivotTables } : {}) }
         : worksheet;
-    sheetsOut.push({ name: sheet.name, grid, ...(charts.length > 0 ? { charts } : {}) });
+    sheetsOut.push({
+      name: sheet.name,
+      grid,
+      ...(charts.length > 0 ? { charts } : {}),
+      ...(images.length > 0 ? { images } : {}),
+      ...(shapes ? { shapes } : {}),
+      ...(hyperlinks ? { hyperlinks } : {}),
+      ...(comments ? { comments } : {}),
+      ...(formControls ? { formControls } : {}),
+    });
   }
 
   // §SV2 — resolve slicer panels now that every table is indexed. Slicer caches
@@ -230,10 +358,13 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
     sheets: sheetsOut,
     styles,
     sharedStrings,
+    // Carry rich runs only when some shared string actually has them (W6) — keeps
+    // the common plain-text workbook's SheetDoc unchanged.
+    ...(sharedStringRuns.some((r) => r !== undefined) ? { sharedStringRuns } : {}),
     definedNames,
     date1904,
     ...(chartData.size > 0 ? { chartData } : {}),
-    resources: new ResourceStore(),
+    resources,
     ...(info ? { info } : {}),
   };
 }

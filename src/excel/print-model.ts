@@ -23,6 +23,7 @@ import type {
   PageMargins,
   PageSize,
   ParagraphProperties,
+  Run,
   RunProperties,
   SectionProperties,
   Table,
@@ -36,6 +37,7 @@ import type {
   DefinedName,
   MergedRange,
   ParsedWorksheet,
+  SheetRichRun,
   WorksheetCell,
   XlsxBorder,
   XlsxBorderEdge,
@@ -49,7 +51,7 @@ import type {
   XlsxStyles,
 } from '@/excel';
 import type { CellConditionalFormatter, CfOverride } from '@/excel/conditional-format';
-import type { SheetSlicer } from '@/core/ir/sheet';
+import type { SheetHyperlink, SheetSlicer } from '@/core/ir/sheet';
 import { eighthPtToPt, halfPtToPt, pt, twipsToPt } from '@/core/ir';
 import { applyNumberFormat, parseAreaRef, parseTitleRowRange } from '@/excel';
 import { bandedTables, computeColumnBands } from '@/excel/column-bands';
@@ -240,6 +242,13 @@ interface PrintModelOptions {
   // E-SHEET SC2 tail (TC3) — sheet name → grid, for sparklines whose data range
   // is sheet-qualified (Sheet2!A1:C1). Absent ⇒ same-sheet resolution only.
   readonly sheetGrids?: ReadonlyMap<string, ParsedWorksheet>;
+  // E-SHEET W3 — cell hyperlinks resolved to external URLs; a covered cell's run
+  // takes the URL as its href (PDF /Link + HTML <a>). Absent ⇒ no cell links.
+  readonly hyperlinks?: ReadonlyArray<SheetHyperlink>;
+  // E-SHEET W6 — per-index rich-text runs for shared strings, parallel to the
+  // sharedStrings array; a t="s" cell whose index has runs emits multiple runs
+  // with their own formatting. Absent ⇒ every cell is a single run.
+  readonly sharedStringRuns?: ReadonlyArray<ReadonlyArray<SheetRichRun> | undefined>;
 }
 
 export function worksheetToBody(
@@ -429,6 +438,8 @@ export function worksheetToBody(
     worksheet.conditionalFormats,
     styles,
     worksheet.cells,
+    // Resolve a cell's string value for the W5 text / duplicate-unique rules.
+    (cell) => resolveCellText(cell, sharedStrings, styles, date1904),
   );
 
   // Sparklines (E-SHEET SC2): host-cell (absolute key) → resolved value series.
@@ -468,6 +479,8 @@ export function worksheetToBody(
 
       const ws = cellMatrix[r]?.[c];
       let text = ws ? resolveCellText(ws, sharedStrings, styles, date1904) : '';
+      // The full (pre-truncation) text feeds conditional-format text/dup rules (W5).
+      const cfText = text.length > 0 ? text : undefined;
       if (text.length > textBudget) text = text.slice(0, Math.max(0, textBudget));
       textBudget -= text.length;
       const xf = ws && ws.styleIndex !== undefined ? styles.cellXfs[ws.styleIndex] : undefined;
@@ -491,7 +504,7 @@ export function worksheetToBody(
       if (cfFormatter && ws) {
         const cfValue =
           ws.type === 'n' && Number.isFinite(Number(ws.rawValue)) ? Number(ws.rawValue) : undefined;
-        const over = cfFormatter(absR, absC, cfValue);
+        const over = cfFormatter(absR, absC, cfValue, cfText);
         if (over) {
           if (over.fillHex) shading = { colorHex: over.fillHex };
           if (over.dataBar) dataBar = over.dataBar;
@@ -500,14 +513,29 @@ export function worksheetToBody(
         }
       }
 
+      // §18.8.1 wrapText (E-SHEET W6): a wrapped cell keeps its full text — the
+      // table cell layout breaks it to the cell width and the row grows (atLeast).
+      const wrapText = xf?.alignment?.wrapText === true;
+      // §18.8.1 textRotation (E-SHEET W6): a rotated / vertical cell renders its
+      // text stacked top-to-bottom (one glyph per line) — the faithful flowed
+      // rendering for the dominant vertical-header case (textRotation 255 exactly,
+      // ±90° in reading orientation). The row grows to fit, like Excel.
+      const rotation = xf?.alignment?.textRotation;
+      const rotated = rotation !== undefined && rotation !== 0 && text.length > 0;
+      // A shrinkToFit cell keeps its full text too — the layout scales the font to
+      // fit rather than clipping (Excel shrinks instead of overflowing).
+      const shrinkToFit = xf?.alignment?.shrinkToFit === true && !wrapText && !rotated;
       // Cell overflow (Excel/Calc print model): a non-wrapping cell's text
       // overflows into EMPTY neighbours to the right (left/general alignment) but
       // is CLIPPED where an occupied cell blocks it — Calc renders only the part
-      // that fits, dropping the rest. We mirror that for string cells (we don't
-      // model wrapText) so the rendered text matches Calc's (TextSim).
+      // that fits, dropping the rest. We mirror that for string cells (a wrapText,
+      // rotated or shrinkToFit cell is exempt) so the rendered text matches Calc's.
       if (
         text.length > 0 &&
         !merge &&
+        !wrapText &&
+        !rotated &&
+        !shrinkToFit &&
         ws &&
         (ws.type === 's' || ws.type === 'str' || ws.type === 'inlineStr') &&
         (alignment === undefined || alignment === 'left')
@@ -525,8 +553,28 @@ export function worksheetToBody(
         }
       }
 
+      // §18.8.1 shrinkToFit (E-SHEET W6): instead of clipping, scale the font down
+      // so the text fits its own column on one line. The grid auto-sizes columns to
+      // content, so we shrink against the column's character capacity (the same
+      // char model the clip uses) rather than a post-layout width.
+      if (shrinkToFit && ws && text.length > 0) {
+        const charsFit = Math.max(1, columnWidths[c]! / TWIPS_PER_EXCEL_CHAR);
+        if (text.length > charsFit) {
+          // `xf` is non-nullish here (shrinkToFit was derived from xf.alignment).
+          const baseHalfPt = (styles.fonts[xf.fontId]?.sizePt ?? 11) * 2;
+          const scaledHalfPt = Math.max(2, Math.round((baseHalfPt * charsFit) / text.length));
+          runProps = { ...runProps, fontSizePt: halfPtToPt(scaledHalfPt) };
+        }
+      }
+
       // A data-validation `list` cell paints a dropdown affordance (E-SHEET SV1).
       const dropdown = dropdownRanges.length > 0 && rangesCover(dropdownRanges, absR, absC);
+
+      // A cell covered by an external hyperlink (E-SHEET W3) → its run takes the URL.
+      const href =
+        print.hyperlinks && print.hyperlinks.length > 0
+          ? hyperlinkUrlAt(print.hyperlinks, absR, absC)
+          : undefined;
 
       // Clamp a merge's horizontal span to the in-window columns so a merge
       // straddling the print-area edge cannot exceed the grid.
@@ -546,19 +594,37 @@ export function worksheetToBody(
         ...(dropdown ? { dropdown: true } : {}),
       };
 
-      const paragraphProps = cellParaProps(alignment);
-      cells.push({
-        properties,
-        content: [
-          {
-            kind: 'paragraph',
-            paragraph: {
-              properties: paragraphProps,
-              runs: text.length > 0 ? [{ text, properties: runProps }] : [],
-            },
-          },
-        ],
-      });
+      // §18.8.1 indent (E-SHEET W6): a left indent of N levels ≈ N×3 characters,
+      // applied as the paragraph's left indent on top of the cell padding.
+      const indentLevels = xf?.alignment?.indent ?? 0;
+      const baseParaProps = cellParaProps(alignment);
+      const paragraphProps =
+        indentLevels > 0
+          ? { ...baseParaProps, indentLeft: twipsToPt(indentLevels * 3 * TWIPS_PER_EXCEL_CHAR) }
+          : baseParaProps;
+      // A shared-string cell whose index carries rich runs (E-SHEET W6) emits one
+      // document-model run per <r>, each layering its <rPr> over the cell font;
+      // every other cell stays a single run.
+      const richRuns =
+        ws && ws.type === 's' && print.sharedStringRuns
+          ? print.sharedStringRuns[Number(ws.rawValue)]
+          : undefined;
+      const cellRuns: Array<Run> =
+        richRuns && richRuns.length > 0
+          ? richRuns.map((rr) => ({
+              text: rr.text,
+              properties: richRunProps(runProps, rr),
+              ...(href ? { href } : {}),
+            }))
+          : text.length > 0
+            ? [{ text, properties: runProps, ...(href ? { href } : {}) }]
+            : [];
+      // A rotated cell stacks its glyphs vertically (one centred paragraph per
+      // character); every other cell is a single paragraph of its runs.
+      const content: Array<BodyElement> = rotated
+        ? stackedVerticalContent(text, runProps, href)
+        : [{ kind: 'paragraph', paragraph: { properties: paragraphProps, runs: cellRuns } }];
+      cells.push({ properties, content });
     }
     const baseRowProps = rowHeightMap.get(r);
     const rowHeightTwips =
@@ -723,6 +789,42 @@ function runPropsFromXf(xf: XlsxCellXf, styles: XlsxStyles): RunProperties {
   return props;
 }
 
+// Stacked vertical cell text (E-SHEET W6): one centred paragraph per character so
+// the glyphs run top-to-bottom and the row grows to fit (Excel textRotation 255 /
+// ±90° vertical text). Combining marks would ideally stay with their base, but a
+// per-code-point split is a faithful approximation for the label text this targets.
+function stackedVerticalContent(
+  text: string,
+  runProps: RunProperties,
+  href: string | undefined,
+): Array<BodyElement> {
+  const out: Array<BodyElement> = [];
+  for (const ch of text) {
+    out.push({
+      kind: 'paragraph',
+      paragraph: {
+        properties: { alignment: 'center' },
+        runs: [{ text: ch, properties: runProps, ...(href ? { href } : {}) }],
+      },
+    });
+  }
+  return out;
+}
+
+// Layer a rich-text run's own <rPr> over the cell's base font (E-SHEET W6). The
+// run properties from the shared string win for what they set — bold/italic/
+// underline, colour, size and super/subscript — inheriting the rest from the cell.
+function richRunProps(base: RunProperties, rr: SheetRichRun): RunProperties {
+  const out: { -readonly [K in keyof RunProperties]: RunProperties[K] } = { ...base };
+  if (rr.bold) out.bold = true;
+  if (rr.italic) out.italic = true;
+  if (rr.underline) out.underline = 'single';
+  if (rr.colorHex) out.colorHex = rr.colorHex;
+  if (rr.sizePt !== undefined) out.fontSizePt = halfPtToPt(Math.round(rr.sizePt * 2));
+  if (rr.vertAlign) out.verticalAlign = rr.vertAlign;
+  return out;
+}
+
 // A conditional-format override applied over the base run props (CF wins for
 // the properties it sets — font colour, bold, italic). Size is left untouched.
 function applyCfOverride(base: RunProperties, o: CfOverride): RunProperties {
@@ -750,6 +852,30 @@ function mapAlignment(h: XlsxHorizontalAlign | undefined): Alignment | undefined
   return undefined;
 }
 
+// Approximate fg coverage (0..1) of each non-solid §18.18.55 ST_PatternType, used
+// to blend the pattern foreground over its background into one representative
+// solid (E-SHEET W6). Excel renders these as repeating dot/line patterns; the
+// print model has no tiling, so a density-weighted blend is the faithful summary.
+const PATTERN_DENSITY: Readonly<Record<string, number>> = {
+  darkGray: 0.75,
+  mediumGray: 0.5,
+  lightGray: 0.25,
+  gray125: 0.125,
+  gray0625: 0.0625,
+  darkHorizontal: 0.5,
+  darkVertical: 0.5,
+  darkDown: 0.5,
+  darkUp: 0.5,
+  darkGrid: 0.62,
+  darkTrellis: 0.75,
+  lightHorizontal: 0.25,
+  lightVertical: 0.25,
+  lightDown: 0.25,
+  lightUp: 0.25,
+  lightGrid: 0.37,
+  lightTrellis: 0.5,
+};
+
 function shadingFromXf(xf: XlsxCellXf, styles: XlsxStyles): CellShading | undefined {
   // Apply the fill when applyFill is explicitly true OR fillId > 1 (Excel
   // reserves fillId 0=none, 1=gray125 system fills — any user fill starts at 2).
@@ -758,8 +884,35 @@ function shadingFromXf(xf: XlsxCellXf, styles: XlsxStyles): CellShading | undefi
     if (!xf.applyFill) return undefined;
   }
   const fill = styles.fills[xf.fillId];
-  if (!fill || fill.patternType !== 'solid' || !fill.fgColorHex) return undefined;
-  return { colorHex: fill.fgColorHex };
+  if (!fill) return undefined;
+  const pattern = fill.patternType;
+  if (!pattern || pattern === 'none') return undefined;
+  if (pattern === 'solid') return fill.fgColorHex ? { colorHex: fill.fgColorHex } : undefined;
+  // §18.8.20 a non-solid patternFill (E-SHEET W6) → a solid blend of fg over bg.
+  // A gradientFill (no patternType) is summarised by the reader into fgColorHex.
+  const density = PATTERN_DENSITY[pattern];
+  if (density === undefined || !fill.fgColorHex) return undefined;
+  const blended = blendHex(fill.fgColorHex, fill.bgColorHex ?? 'FFFFFF', density);
+  return blended ? { colorHex: blended } : undefined;
+}
+
+// Blend two 6-hex colours: `fraction` of `fg` over `(1 - fraction)` of `bg`.
+function blendHex(fg: string, bg: string, fraction: number): string | undefined {
+  const a = hexToRgb(fg);
+  const b = hexToRgb(bg);
+  if (!a || !b) return undefined;
+  const mix = (x: number, y: number): string =>
+    Math.max(0, Math.min(255, Math.round(x * fraction + y * (1 - fraction))))
+      .toString(16)
+      .padStart(2, '0')
+      .toUpperCase();
+  return `${mix(a[0], b[0])}${mix(a[1], b[1])}${mix(a[2], b[2])}`;
+}
+
+function hexToRgb(hex: string): readonly [number, number, number] | undefined {
+  const h = hex.length === 8 ? hex.slice(2) : hex;
+  if (!/^[0-9A-Fa-f]{6}$/.test(h)) return undefined;
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
 }
 
 function bordersFromXf(xf: XlsxCellXf, styles: XlsxStyles): CellBorders | undefined {
@@ -776,6 +929,13 @@ function bordersFromXf(xf: XlsxCellXf, styles: XlsxStyles): CellBorders | undefi
   if (right) out.right = right;
   if (bottom) out.bottom = bottom;
   if (left) out.left = left;
+  // §18.8.4 diagonal strokes (E-SHEET W6): the same edge style drives one or both
+  // diagonals, selected by diagonalUp / diagonalDown.
+  const diagonal = border.diagonal ? mapBorderEdge(border.diagonal) : undefined;
+  if (diagonal) {
+    if (border.diagonalDown) out.diagonalDown = diagonal;
+    if (border.diagonalUp) out.diagonalUp = diagonal;
+  }
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
@@ -842,6 +1002,21 @@ function rangesCover(ranges: ReadonlyArray<MergedRange>, row: number, col: numbe
     }
   }
   return false;
+}
+
+// §18.3.1.47 — the URL of the first hyperlink whose range covers the cell (W3).
+function hyperlinkUrlAt(
+  links: ReadonlyArray<SheetHyperlink>,
+  row: number,
+  col: number,
+): string | undefined {
+  for (const l of links) {
+    const r = l.ref;
+    if (row >= r.startRow && row <= r.endRow && col >= r.startColumn && col <= r.endColumn) {
+      return l.url;
+    }
+  }
+  return undefined;
 }
 
 // E-SHEET SC2 — resolve the sheet's sparklines to a host-cell → value-series map.

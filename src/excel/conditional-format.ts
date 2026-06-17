@@ -1,18 +1,27 @@
-// Conditional formatting evaluation (E-SHEET SC1/SC1b/SC1c) — the first Excel
+// Conditional formatting evaluation (E-SHEET SC1/SC1b/SC1c + W5) — the first Excel
 // feature the flat table projection could not express. A sheet's
 // <conditionalFormatting> rules plus the workbook's <dxfs> become a per-cell
-// lookup; the print model overrides each cell's base format. Handles `cellIs`
-// (compare to a constant → dxf), `colorScale` (interpolate a fill across the
-// range's value extent), and `dataBar` (an in-cell bar whose length encodes the
-// value); iconSet follows. A cell's text format (fill/font) is claimed by the
-// first applicable cellIs/colorScale; a dataBar applies independently on top.
+// lookup; the print model overrides each cell's base format. Handles the
+// value-driven families: `cellIs` (compare to a constant → dxf), `colorScale`
+// (interpolate a fill across the range's value extent), `dataBar` (an in-cell bar
+// whose length encodes the value) and `iconSet`; plus the W5 families that also
+// resolve against the range — `top10` (top/bottom N or N%), `aboveAverage`
+// (mean ± N·σ), `duplicate/uniqueValues` (value frequency) — and the per-cell
+// text tests (`containsText`/`beginsWith`/`endsWith`/`notContainsText`). A cell's
+// text format (fill/font) is claimed by the first applicable highlight rule; a
+// dataBar/iconSet applies independently on top. `expression` (needs a formula
+// engine) and `timePeriod` (needs the wall clock) stay a documented graceful loss.
 
 import type { CellIcon, CellIconShape } from '@/core/document-model';
 import type {
   CfOperator,
+  CfRuleAboveAverage,
   CfRuleColorScale,
   CfRuleDataBar,
+  CfRuleDupUnique,
   CfRuleIconSet,
+  CfRuleText,
+  CfRuleTop10,
   Cfvo,
   ConditionalFormat,
   Dxf,
@@ -63,7 +72,18 @@ export type CellConditionalFormatter = (
   row: number,
   col: number,
   numericValue: number | undefined,
+  // The cell's resolved text — needed by the text tests and to key duplicate /
+  // unique comparisons for non-numeric cells. Empty/undefined for a blank cell.
+  text: string | undefined,
 ) => CfOverride | undefined;
+
+// A resolved top10/aboveAverage threshold: a value matches by comparing against
+// `threshold` per the rule's direction (and inclusivity).
+interface ResolvedThreshold {
+  readonly threshold: number;
+  readonly below: boolean; // bottom-N / below-average
+  readonly orEqual: boolean; // include values exactly at the threshold
+}
 
 interface FlatRule {
   readonly ranges: ReadonlyArray<MergedRange>;
@@ -74,15 +94,23 @@ interface FlatRule {
   readonly scale?: ResolvedColorScale | undefined;
   readonly bar?: ResolvedDataBar | undefined;
   readonly iconThresholds?: ReadonlyArray<number> | undefined;
+  // top10 / aboveAverage: the value threshold resolved from the range (W5).
+  readonly threshold?: ResolvedThreshold | undefined;
+  // duplicate/uniqueValues: the set of value keys that qualify (W5).
+  readonly dupKeys?: ReadonlySet<string> | undefined;
 }
 
 // Returns undefined when the sheet has no conditional formats (the common case)
 // so callers skip the work entirely and stay byte-identical. `cells` supplies
-// the range values colorScale rules need (min/max/percentile); cellIs ignores it.
+// the range values the extent rules need (min/max/percentile/mean/frequency);
+// cellIs and the text tests ignore it. `resolveText` resolves a cell's string
+// value (shared strings / number format) for the duplicate/unique frequency map —
+// numeric cells key by value without it, so it is only needed for text cells.
 export function buildConditionalFormatter(
   conditionalFormats: ReadonlyArray<ConditionalFormat> | undefined,
   styles: XlsxStyles,
   cells: ReadonlyArray<WorksheetCell>,
+  resolveText?: (cell: WorksheetCell) => string,
 ): CellConditionalFormatter | undefined {
   if (!conditionalFormats || conditionalFormats.length === 0) return undefined;
   const dxfs = styles.dxfs ?? [];
@@ -99,7 +127,22 @@ export function buildConditionalFormatter(
           rule,
           iconThresholds: resolveIconThresholds(rule, cf.ranges, cells),
         });
+      } else if (rule.type === 'top10') {
+        flat.push({ ranges: cf.ranges, rule, threshold: resolveTop10(rule, cf.ranges, cells) });
+      } else if (rule.type === 'aboveAverage') {
+        flat.push({
+          ranges: cf.ranges,
+          rule,
+          threshold: resolveAboveAverage(rule, cf.ranges, cells),
+        });
+      } else if (rule.type === 'duplicateValues' || rule.type === 'uniqueValues') {
+        flat.push({
+          ranges: cf.ranges,
+          rule,
+          dupKeys: resolveDupUnique(rule, cf.ranges, cells, resolveText),
+        });
       } else {
+        // cellIs + the text tests: matched per-cell, no range precompute.
         flat.push({ ranges: cf.ranges, rule });
       }
     }
@@ -109,36 +152,71 @@ export function buildConditionalFormatter(
   // a dataBar fills its own slot independently, so a bar can sit over a fill.
   flat.sort((a, b) => a.rule.priority - b.rule.priority);
 
-  return (row, col, value) => {
-    if (value === undefined) return undefined;
+  return (row, col, value, text) => {
+    // A cell with neither a comparable number nor any text matches nothing — skip
+    // the loop entirely so number-only sheets stay byte-identical to before W5.
+    if (value === undefined && (text === undefined || text.length === 0)) return undefined;
+    const dupKey = dupKeyOf(value, text);
     let textFmt: CfOverride | undefined;
     let textClaimed = false;
     let bar: CfOverride['dataBar'];
     let icon: CfOverride['icon'];
-    for (const { ranges, rule, scale, bar: resolved, iconThresholds } of flat) {
+    const claim = (dxfId: number): void => {
+      textFmt = dxfToOverride(dxfs[dxfId]);
+      textClaimed = true;
+    };
+    for (const { ranges, rule, scale, bar: resolved, iconThresholds, threshold, dupKeys } of flat) {
       if (!coversCell(ranges, row, col)) continue;
       switch (rule.type) {
         case 'cellIs':
-          if (!textClaimed && cellIsMatches(rule.operator, value, rule.formulas)) {
-            textFmt = dxfToOverride(dxfs[rule.dxfId]);
-            textClaimed = true;
+          if (
+            !textClaimed &&
+            value !== undefined &&
+            cellIsMatches(rule.operator, value, rule.formulas)
+          ) {
+            claim(rule.dxfId);
           }
           break;
         case 'colorScale':
-          if (!textClaimed && scale) {
+          if (!textClaimed && value !== undefined && scale) {
             textFmt = { fillHex: rgbHex(colorScaleColor(scale, value)) };
             textClaimed = true;
           }
           break;
         case 'dataBar':
-          if (!bar && resolved) {
+          if (!bar && value !== undefined && resolved) {
             bar = dataBarBar(resolved, value);
           }
           break;
         case 'iconSet':
-          if (!icon && iconThresholds) {
+          if (!icon && value !== undefined && iconThresholds) {
             const bucket = iconBucket(iconThresholds, value);
             icon = iconToCell(rule.iconSet, iconThresholds.length, bucket, rule.reverse ?? false);
+          }
+          break;
+        case 'top10':
+        case 'aboveAverage':
+          if (
+            !textClaimed &&
+            value !== undefined &&
+            threshold &&
+            thresholdMatches(threshold, value)
+          ) {
+            claim(rule.dxfId);
+          }
+          break;
+        case 'duplicateValues':
+        case 'uniqueValues':
+          if (!textClaimed && dupKey !== undefined && dupKeys?.has(dupKey)) {
+            claim(rule.dxfId);
+          }
+          break;
+        case 'containsText':
+        case 'notContainsText':
+        case 'beginsWith':
+        case 'endsWith':
+          if (!textClaimed && text !== undefined && textRuleMatches(rule, text)) {
+            claim(rule.dxfId);
           }
           break;
       }
@@ -150,6 +228,39 @@ export function buildConditionalFormatter(
       ...(icon ? { icon } : {}),
     };
   };
+}
+
+// The duplicate/unique comparison key for a cell at evaluation time. Numbers key
+// by value (`n:`), text case-insensitively (`s:`) — the two are namespaced so a
+// numeric 5 and the string "5" never collide (Excel treats them as distinct).
+function dupKeyOf(value: number | undefined, text: string | undefined): string | undefined {
+  if (value !== undefined) return `n:${value}`;
+  if (text === undefined) return undefined;
+  const k = text.trim().toLowerCase();
+  return k.length > 0 ? `s:${k}` : undefined;
+}
+
+// A case-insensitive substring test (W5). containsText / notContainsText match
+// anywhere; beginsWith / endsWith anchor to the ends. Excel's SEARCH is
+// case-insensitive, so the comparison folds case.
+function textRuleMatches(rule: CfRuleText, text: string): boolean {
+  const hay = text.toLowerCase();
+  const needle = rule.text.toLowerCase();
+  switch (rule.type) {
+    case 'containsText':
+      return hay.includes(needle);
+    case 'notContainsText':
+      return !hay.includes(needle);
+    case 'beginsWith':
+      return hay.startsWith(needle);
+    case 'endsWith':
+      return hay.endsWith(needle);
+  }
+}
+
+function thresholdMatches(t: ResolvedThreshold, value: number): boolean {
+  if (t.below) return t.orEqual ? value <= t.threshold : value < t.threshold;
+  return t.orEqual ? value >= t.threshold : value > t.threshold;
 }
 
 function coversCell(ranges: ReadonlyArray<MergedRange>, row: number, col: number): boolean {
@@ -484,4 +595,85 @@ const ICON_RAMPS: Readonly<Record<number, ReadonlyArray<string>>> = {
 function iconColor(count: number, e: number): string {
   const ramp = ICON_RAMPS[count] ?? ICON_RAMPS[3]!;
   return ramp[Math.max(0, Math.min(ramp.length - 1, e))]!;
+}
+
+// --- top10 / aboveAverage / duplicate-unique (E-SHEET W5) -------------------
+
+// §18.3.1.10 top10 — resolve the cutoff value for the top (or bottom) N / N% of
+// the range. A cell qualifies when it is at or beyond that cutoff, so ties at the
+// boundary all match (as in Excel). Returns undefined (rule no-op) on an empty
+// range. `rank` 0 clamps to 1; a percent rank floors the count.
+function resolveTop10(
+  rule: CfRuleTop10,
+  ranges: ReadonlyArray<MergedRange>,
+  cells: ReadonlyArray<WorksheetCell>,
+): ResolvedThreshold | undefined {
+  const vals = collectRangeValues(cells, ranges);
+  if (vals.length === 0) return undefined;
+  const n = vals.length;
+  const raw = rule.percent ? Math.floor((n * rule.rank) / 100) : rule.rank;
+  const count = Math.max(1, Math.min(n, raw));
+  // bottom → ascending so sorted[count-1] is the N-th smallest; top → descending.
+  const sorted = [...vals].sort((a, b) => (rule.bottom ? a - b : b - a));
+  return { threshold: sorted[count - 1]!, below: rule.bottom, orEqual: true };
+}
+
+// §18.3.1.10 aboveAverage — resolve the threshold to the range mean, shifted by
+// N population standard deviations when `stdDev` is set. `equalAverage` makes the
+// comparison inclusive of the threshold itself.
+function resolveAboveAverage(
+  rule: CfRuleAboveAverage,
+  ranges: ReadonlyArray<MergedRange>,
+  cells: ReadonlyArray<WorksheetCell>,
+): ResolvedThreshold | undefined {
+  const vals = collectRangeValues(cells, ranges);
+  if (vals.length === 0) return undefined;
+  const mean = vals.reduce((s, v) => s + v, 0) / vals.length;
+  let threshold = mean;
+  if (rule.stdDev !== undefined && rule.stdDev > 0) {
+    const variance = vals.reduce((s, v) => s + (v - mean) * (v - mean), 0) / vals.length;
+    const sd = Math.sqrt(variance);
+    threshold = rule.aboveAverage ? mean + rule.stdDev * sd : mean - rule.stdDev * sd;
+  }
+  return { threshold, below: !rule.aboveAverage, orEqual: rule.equalAverage };
+}
+
+// §18.3.1.10 duplicate/uniqueValues — the set of value keys that repeat within the
+// range (duplicate) or occur exactly once (unique). Numbers key by value, text
+// case-insensitively; blanks (absent from the sparse cell list) never qualify.
+function resolveDupUnique(
+  rule: CfRuleDupUnique,
+  ranges: ReadonlyArray<MergedRange>,
+  cells: ReadonlyArray<WorksheetCell>,
+  resolveText: ((cell: WorksheetCell) => string) | undefined,
+): ReadonlySet<string> | undefined {
+  const counts = new Map<string, number>();
+  for (const cell of cells) {
+    if (!coversCell(ranges, cell.row, cell.column)) continue;
+    const key = cellDupKey(cell, resolveText);
+    if (key === undefined) continue;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  if (counts.size === 0) return undefined;
+  const qualifies =
+    rule.type === 'duplicateValues' ? (c: number) => c >= 2 : (c: number) => c === 1;
+  const out = new Set<string>();
+  for (const [k, c] of counts) if (qualifies(c)) out.add(k);
+  return out;
+}
+
+// The duplicate/unique key for a stored cell — mirrors dupKeyOf but reads the raw
+// cell: numbers from rawValue, text via the supplied resolver (shared strings /
+// inline / number format). Without a resolver, only numeric cells get a key.
+function cellDupKey(
+  cell: WorksheetCell,
+  resolveText: ((cell: WorksheetCell) => string) | undefined,
+): string | undefined {
+  if (cell.type === 'n') {
+    const n = Number(cell.rawValue);
+    return Number.isFinite(n) ? `n:${n}` : undefined;
+  }
+  if (!resolveText) return undefined;
+  const k = resolveText(cell).trim().toLowerCase();
+  return k.length > 0 ? `s:${k}` : undefined;
 }

@@ -84,12 +84,17 @@ charts — and is byte-stable across a read↔write loop.
 - **Frozen panes** round-trip through the writer and become sticky header rows /
   columns in HTML output. They do not affect PDF — in Excel freezing is a view
   setting that does not print (the printed repeat is the print titles above).
-- **Conditional formatting** — `cellIs` (compare-to-constant highlights),
-  `colorScale` (2/3-stop gradients), `dataBar` (in-cell bars, with a zero axis
-  so negative values run the other way) and `iconSet` — traffic lights, arrows,
-  signs, symbols (check / exclamation / cross), flags, ratings (a bar meter) and
-  quarters (a clock pie). The cross-cell rules resolve against the range's value
-  extent.
+- **Conditional formatting** — the highlight rules: `cellIs` (compare-to-constant),
+  `top10` (top/bottom N or N %), `aboveAverage` (mean, optionally shifted by N
+  standard deviations), `duplicateValues` / `uniqueValues` (value frequency across
+  the range, numbers by value and text case-insensitively) and the text tests
+  (`containsText` / `notContainsText` / `beginsWith` / `endsWith`); plus the
+  visual encodings `colorScale` (2/3-stop gradients), `dataBar` (in-cell bars,
+  with a zero axis so negative values run the other way) and `iconSet` — traffic
+  lights, arrows, signs, symbols (check / exclamation / cross), flags, ratings (a
+  bar meter) and quarters (a clock pie). The cross-cell rules resolve against the
+  range's value extent. The highest-priority matching rule claims the cell's
+  fill / font; a data bar or icon applies on top.
 - **Sparklines** — per-cell line / column / win-loss mini charts, including
   cross-sheet data ranges and blank-cell gaps.
 - **Excel tables** (`xl/tables`) — banded rows and a styled header row, the
@@ -107,7 +112,36 @@ charts — and is byte-stable across a read↔write loop.
   slicer fills its buttons from the referenced table column's distinct values and
   highlights the items the column's autofilter keeps; an OLAP/pivot slicer whose
   items live in a pivot cache degrades to a caption-only box.
-- Charts anchored to the sheet (the worksheet drawing part) render after the grid.
+- Charts, **pictures and shapes** anchored to the sheet (the worksheet drawing part)
+  render after the grid — a picture keeps its bytes; a shape its preset/custom
+  geometry, fill, outline and text body (reusing the DrawingML shape readers).
+- **Cell hyperlinks** (`<hyperlinks>`) — an external `r:id` resolves to a URL and the
+  covered cell becomes a clickable link (PDF `/Link` annotation, HTML `<a>`).
+- **Header/footer text** (`<headerFooter>`) — Excel's `&`-code mini-language (`&L`/`&C`/
+  `&R` regions, `&P`/`&N` page-number fields resolved per page, `&A` sheet name,
+  `&B`/`&I` bold/italic) renders in the page margins.
+- **Cell formatting details** — **in-cell rich text** (a shared string built from
+  several `<r>` runs renders one document-model run per run, each with its own
+  bold / italic / underline / colour / size / super- or sub-script); **wrapped
+  text** (`wrapText` cells keep their full text and wrap to the cell, growing the
+  row); **left indent** (`indent`); **non-solid pattern fills** (gray / hatch
+  patterns blend foreground over background to a representative solid) and
+  **gradient fills** (summarised to the mean of their stops); **diagonal cell
+  borders** (up / down strokes across the cell); **text rotation** (`textRotation`
+  — rotated / vertical cells render their text stacked top-to-bottom); and
+  **shrink-to-fit** (`shrinkToFit` scales the cell's font down to its column width).
+- **Cell comments / notes** — legacy notes (`xl/comments`) and modern threaded
+  comments (`xl/threadedComments`, authors resolved through `xl/persons`) are read
+  and listed in a "Comments" section after the grid — a heading then one line per
+  comment, `<cell> — <author>: <text>` — mirroring Excel's "print comments at end of
+  sheet". The legacy VML note box is ignored; only the text + author are surfaced.
+- **Form controls** — checkboxes, option buttons, spinners, scroll bars, list /
+  drop-downs and buttons (the worksheet's `<controls>`, each resolved to its
+  `ctrlProp` part for type + state) are listed in a "Form controls" section after
+  the grid, each with a type-appropriate affordance and its state (`[x]` / `[ ]`
+  for a checked box, `(o)` for an option button, the value for a spinner). The
+  control's anchored VML shape isn't drawn in place; **ActiveX** controls are OLE
+  binaries and remain a graceful loss.
 
 **PresentationML (§19)**
 - Each slide is a page at the deck size (`p:sldSz`); shapes are floating content
@@ -160,17 +194,14 @@ charts — and is byte-stable across a read↔write loop.
   private font metrics — but _pixel-identical_ output is a non-goal: that would need the
   exact same font file and the renderer's internal glyph rounding.
 - **Some Excel constructs are not rendered yet:**
-  - **Floating pictures, shapes and text boxes on a worksheet** — only charts are
-    pulled from the sheet drawing; other anchored drawings are dropped.
-  - **Cell comments / notes** (legacy and threaded) and **form / ActiveX controls**
-    (checkboxes, option buttons, spinners).
-  - **Sheet header/footer text** (the `&P` / `&D` / `&F` codes) and **cell hyperlinks**.
-  - **Conditional-format rule types** beyond compare-to-constant, colour scales, data
-    bars and icon sets — top/bottom-N, above/below average, duplicate/unique, text- and
-    date-based, and formula (`expression`) rules.
-  - A few **cell-format details**: non-solid and gradient fills, diagonal borders, text
-    rotation / indent / shrink-to-fit, wrapped text, and mixed (rich-text) formatting
-    within a single cell.
+  - **ActiveX controls** — these are OLE binaries (`xl/activeX/*.bin`); their state
+    can't be rendered. (Modern **form** controls — checkboxes, option buttons,
+    spinners — *are* listed, above.)
+  - Two **conditional-format rule types**: `expression` (an arbitrary formula —
+    Ream has no formula engine, so cached values can't drive an ad-hoc condition)
+    and `timePeriod` (today / this-week / last-month …, which is relative to the
+    wall clock — Ream's output is deterministic and does not read the system date).
+    Both are skipped (left unrendered) rather than misrendered.
 
 ## Validation
 

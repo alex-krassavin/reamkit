@@ -416,6 +416,10 @@ export interface CellBorders {
   readonly left?: Border;
   readonly insideH?: Border;
   readonly insideV?: Border;
+  // Diagonal strokes across the cell box: `diagonalDown` runs top-left →
+  // bottom-right, `diagonalUp` bottom-left → top-right (Excel diagonal borders).
+  readonly diagonalDown?: Border;
+  readonly diagonalUp?: Border;
 }
 
 export interface CellMargins {

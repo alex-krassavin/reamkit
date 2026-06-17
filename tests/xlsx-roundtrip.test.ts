@@ -245,6 +245,22 @@ const fixtures: Array<{ name: string; xlsx: Uint8Array }> = [
     }),
   },
   {
+    name: 'conditional formatting extended families (W5)',
+    xlsx: buildXlsx({
+      rows: [[1], [2], [2], [9]],
+      stylesXml: DXF_STYLES,
+      conditionalFormattingXml:
+        '<conditionalFormatting sqref="A1:A4">' +
+        '<cfRule type="top10" dxfId="0" priority="1" rank="2"/>' +
+        '<cfRule type="aboveAverage" dxfId="0" priority="2" aboveAverage="0" equalAverage="1"/>' +
+        '<cfRule type="duplicateValues" dxfId="0" priority="3"/>' +
+        '<cfRule type="uniqueValues" dxfId="0" priority="4"/>' +
+        '<cfRule type="containsText" dxfId="0" priority="5" operator="containsText" text="x">' +
+        '<formula>NOT(ISERROR(SEARCH("x",A1)))</formula></cfRule>' +
+        '</conditionalFormatting>',
+    }),
+  },
+  {
     name: 'data validations (SV1)',
     xlsx: buildXlsx({
       rows: [['Yes'], [50]],

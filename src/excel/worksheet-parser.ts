@@ -8,16 +8,23 @@ import type {
   CellType,
   CfOperator,
   CfRule,
+  CfRuleAboveAverage,
   CfRuleCellIs,
   CfRuleColorScale,
   CfRuleDataBar,
+  CfRuleDupUnique,
   CfRuleIconSet,
+  CfRuleText,
+  CfRuleTop10,
   Cfvo,
   CfvoType,
   ColumnWidth,
   ConditionalFormat,
   DataValidation,
   DataValidationType,
+  FormControlRef,
+  HeaderFooter,
+  HyperlinkRef,
   MergedRange,
   ParsedSparkline,
   ParsedWorksheet,
@@ -80,6 +87,9 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
       : undefined;
   const conditionalFormats = parseConditionalFormatting(wsObj);
   const dataValidations = parseDataValidations(wsObj);
+  const hyperlinks = parseHyperlinks(wsObj);
+  const headerFooter = parseHeaderFooter(wsObj);
+  const formControls = parseFormControls(wsObj);
   const sparklines = parseSparklines(wsObj);
   const tablePartRelIds = parseTableParts(wsObj);
   const printModel = {
@@ -93,6 +103,9 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
     ...(drawingRelId !== undefined ? { drawingRelId } : {}),
     ...(conditionalFormats.length > 0 ? { conditionalFormats } : {}),
     ...(dataValidations.length > 0 ? { dataValidations } : {}),
+    ...(hyperlinks.length > 0 ? { hyperlinks } : {}),
+    ...(headerFooter ? { headerFooter } : {}),
+    ...(formControls.length > 0 ? { formControls } : {}),
     ...(sparklines.length > 0 ? { sparklines } : {}),
     ...(tablePartRelIds.length > 0 ? { tablePartRelIds } : {}),
   };
@@ -365,8 +378,11 @@ function parseMerges(ws: Record<string, unknown>): Array<MergedRange> {
 }
 
 // §18.3.1.18 <conditionalFormatting sqref="…"> elements (one or more), each
-// owning <cfRule>s. Reads `cellIs` (SC1) and `colorScale` (SC1b) rules; dataBar
-// and iconSet are skipped until a follow-up.
+// owning <cfRule>s. Reads the value/text-driven families: `cellIs`, `colorScale`,
+// `dataBar`, `iconSet`, `top10`, `aboveAverage`, `duplicate/uniqueValues` and the
+// text tests (`containsText`/`beginsWith`/…). `expression` (formula) and
+// `timePeriod` (clock-relative) rules need a formula engine / a wall clock and are
+// a documented graceful loss — left unparsed (and so stably dropped on write).
 function parseConditionalFormatting(ws: Record<string, unknown>): Array<ConditionalFormat> {
   const raw = ws['conditionalFormatting'];
   const items = Array.isArray(raw) ? raw : raw !== undefined ? [raw] : [];
@@ -454,6 +470,50 @@ function boolAttr(obj: Record<string, unknown>, key: string): boolean {
   return raw === '1' || raw === 'true';
 }
 
+// §18.3.1.46 <headerFooter><oddHeader>/<oddFooter> — the sheet's print header and
+// footer format strings (E-SHEET W4). The projection expands the &-codes; v1 reads
+// the odd (= default) header/footer (even/first variants are a later refinement).
+function parseHeaderFooter(ws: Record<string, unknown>): HeaderFooter | undefined {
+  const node = asObjectNode(ws['headerFooter']);
+  if (!node) return undefined;
+  const oddHeader = formulaText(node['oddHeader']);
+  const oddFooter = formulaText(node['oddFooter']);
+  if (!oddHeader && !oddFooter) return undefined;
+  return {
+    ...(oddHeader ? { oddHeader } : {}),
+    ...(oddFooter ? { oddFooter } : {}),
+  };
+}
+
+// §18.3.1.47 <hyperlinks><hyperlink ref r:id location display tooltip> — raw cell
+// hyperlinks (E-SHEET W3). removeNSPrefix turns r:id into id (mirrors the drawing
+// relId); the reader resolves relId → an external URL. A hyperlink with neither a
+// relId nor a location carries no target and is dropped.
+function parseHyperlinks(ws: Record<string, unknown>): Array<HyperlinkRef> {
+  const node = asObjectNode(ws['hyperlinks']);
+  if (!node) return [];
+  const out: Array<HyperlinkRef> = [];
+  for (const h of toArray(node['hyperlink'])) {
+    const obj = asObjectNode(h);
+    if (!obj) continue;
+    const ref = strAttr(obj, 'ref');
+    if (!ref) continue;
+    const relId = strAttr(obj, 'id');
+    const location = strAttr(obj, 'location');
+    if (relId === undefined && location === undefined) continue;
+    const display = strAttr(obj, 'display');
+    const tooltip = strAttr(obj, 'tooltip');
+    out.push({
+      ref,
+      ...(relId !== undefined ? { relId } : {}),
+      ...(location !== undefined ? { location } : {}),
+      ...(display !== undefined ? { display } : {}),
+      ...(tooltip !== undefined ? { tooltip } : {}),
+    });
+  }
+  return out;
+}
+
 // sqref is whitespace-separated areas ("A1:A10 C1:C5"); each resolves to a box.
 function parseSqref(sqref: string): Array<MergedRange> {
   const out: Array<MergedRange> = [];
@@ -485,7 +545,8 @@ const CF_OPERATORS: ReadonlySet<string> = new Set<CfOperator>([
 
 function parseCfRule(obj: Record<string, unknown>): CfRule | undefined {
   const priority = parseNumericAttr(obj, 'priority') ?? 0;
-  switch (strAttr(obj, 'type')) {
+  const type = strAttr(obj, 'type');
+  switch (type) {
     case 'cellIs':
       return parseCellIsRule(obj, priority);
     case 'colorScale':
@@ -494,9 +555,85 @@ function parseCfRule(obj: Record<string, unknown>): CfRule | undefined {
       return parseDataBarRule(obj, priority);
     case 'iconSet':
       return parseIconSetRule(obj, priority);
+    case 'top10':
+      return parseTop10Rule(obj, priority);
+    case 'aboveAverage':
+      return parseAboveAverageRule(obj, priority);
+    case 'duplicateValues':
+    case 'uniqueValues':
+      return parseDupUniqueRule(type, obj, priority);
+    case 'containsText':
+    case 'notContainsText':
+    case 'beginsWith':
+    case 'endsWith':
+      return parseTextRule(type, obj, priority);
     default:
-      return undefined; // dataBar2010/etc. — skipped
+      return undefined; // expression / timePeriod / dataBar2010 / etc. — skipped
   }
+}
+
+// §18.3.1.10 type="top10" — `rank` (default 10) top values take the dxf; `percent`
+// reads rank as a percentage, `bottom` flips to the lowest values.
+function parseTop10Rule(obj: Record<string, unknown>, priority: number): CfRuleTop10 | undefined {
+  const dxfId = parseNumericAttr(obj, 'dxfId');
+  if (dxfId === undefined) return undefined;
+  const rank = parseNumericAttr(obj, 'rank') ?? 10;
+  return {
+    type: 'top10',
+    priority,
+    rank,
+    percent: boolAttr(obj, 'percent'),
+    bottom: boolAttr(obj, 'bottom'),
+    dxfId,
+  };
+}
+
+// §18.3.1.10 type="aboveAverage" — `aboveAverage` defaults to true; `equalAverage`
+// makes it inclusive; `stdDev` (when present) shifts the threshold by N std-devs.
+function parseAboveAverageRule(
+  obj: Record<string, unknown>,
+  priority: number,
+): CfRuleAboveAverage | undefined {
+  const dxfId = parseNumericAttr(obj, 'dxfId');
+  if (dxfId === undefined) return undefined;
+  const aboveRaw = strAttr(obj, 'aboveAverage');
+  const aboveAverage = aboveRaw === undefined ? true : aboveRaw === '1' || aboveRaw === 'true';
+  const stdDev = parseNumericAttr(obj, 'stdDev');
+  return {
+    type: 'aboveAverage',
+    priority,
+    aboveAverage,
+    equalAverage: boolAttr(obj, 'equalAverage'),
+    ...(stdDev !== undefined ? { stdDev } : {}),
+    dxfId,
+  };
+}
+
+// §18.3.1.10 type="duplicateValues" | "uniqueValues" — attribute-only; the dxf
+// paints repeated (or one-off) values across the range.
+function parseDupUniqueRule(
+  type: 'duplicateValues' | 'uniqueValues',
+  obj: Record<string, unknown>,
+  priority: number,
+): CfRuleDupUnique | undefined {
+  const dxfId = parseNumericAttr(obj, 'dxfId');
+  if (dxfId === undefined) return undefined;
+  return { type, priority, dxfId };
+}
+
+// §18.3.1.10 the text tests — `text` is the needle; Excel's generated `<formula>`
+// is preserved verbatim (for faithful write-back) but matched directly, not run.
+function parseTextRule(
+  type: 'containsText' | 'notContainsText' | 'beginsWith' | 'endsWith',
+  obj: Record<string, unknown>,
+  priority: number,
+): CfRuleText | undefined {
+  const dxfId = parseNumericAttr(obj, 'dxfId');
+  if (dxfId === undefined) return undefined;
+  const text = strAttr(obj, 'text');
+  if (text === undefined) return undefined;
+  const formula = formulaText(obj['formula']);
+  return { type, priority, text, dxfId, ...(formula !== undefined ? { formula } : {}) };
 }
 
 // §18.3.1.49 <iconSet iconSet="3TrafficLights1"> — N cfvo thresholds (N = 3/4/5)
@@ -672,6 +809,43 @@ function parseSparklines(ws: Record<string, unknown>): Array<ParsedSparkline> {
     }
   }
   return out;
+}
+
+// §18.3.* form controls (E-SHEET W8). Declared either as a transitional
+// <controls> child of the worksheet or, in modern files, under the x14 extLst —
+// often wrapped in <mc:AlternateContent><mc:Choice Requires="x14">. removeNSPrefix
+// strips the x14:/mc:/r: prefixes, so each <control name r:id> reads plainly; the
+// relId resolves (in the reader) to the control's ctrlProp part (type + state).
+// Deduped by relId so a Choice/Fallback or doubled declaration counts once.
+function parseFormControls(ws: Record<string, unknown>): Array<FormControlRef> {
+  const out: Array<FormControlRef> = [];
+  const seen = new Set<string>();
+  collectControls(asObjectNode(ws['controls']), out, seen);
+  for (const ext of toArray(asObjectNode(ws['extLst'])?.['ext'])) {
+    collectControls(asObjectNode(asObjectNode(ext)?.['controls']), out, seen);
+  }
+  return out;
+}
+
+function collectControls(
+  node: Record<string, unknown> | undefined,
+  out: Array<FormControlRef>,
+  seen: Set<string>,
+): void {
+  if (!node) return;
+  const direct = toArray(node['control']);
+  const fromChoice = toArray(asObjectNode(node['AlternateContent'])?.['Choice']).flatMap((c) =>
+    toArray(asObjectNode(c)?.['control']),
+  );
+  for (const c of [...direct, ...fromChoice]) {
+    const obj = asObjectNode(c);
+    if (!obj) continue;
+    const relId = strAttr(obj, 'id');
+    if (!relId || seen.has(relId)) continue;
+    seen.add(relId);
+    const name = strAttr(obj, 'name');
+    out.push({ relId, ...(name ? { name } : {}) });
+  }
 }
 
 function asObjectNode(v: unknown): Record<string, unknown> | undefined {
