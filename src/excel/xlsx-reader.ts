@@ -11,6 +11,7 @@ import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type {
   Sheet,
+  SheetActiveXControl,
   SheetChartRef,
   SheetComment,
   SheetDoc,
@@ -51,6 +52,7 @@ import { parsePivotTablePart } from '@/excel/pivot-table-parser';
 import { parseSlicerCachePart, parseSlicerPart } from '@/excel/slicer-parser';
 import { parseLegacyComments, parsePersons, parseThreadedComments } from '@/excel/comments-parser';
 import { parseFormControlProps } from '@/excel/form-control-parser';
+import { activeXType, parseActiveX } from '@/excel/activex-parser';
 import { parseSheetShapes } from '@/excel/sheet-shape-parser';
 
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
@@ -306,6 +308,22 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
       if (resolvedControls.length > 0) formControls = resolvedControls;
     }
 
+    // §18.3.* ActiveX / OLE controls (W10): resolve each oleObject's relId to its
+    // activeX part (progId → type + the property bag's visible state). Listed
+    // after the grid, like form controls.
+    let activeXControls: Array<SheetActiveXControl> | undefined;
+    if (worksheet.oleObjects && worksheet.oleObjects.length > 0) {
+      const wsRels = pkg.getPartRelationships(resolved.path);
+      const resolvedAx: Array<SheetActiveXControl> = [];
+      for (const ole of worksheet.oleObjects) {
+        const rel = wsRels.find((r) => r.id === ole.relId);
+        const part = rel ? pkg.resolveRelatedPart(resolved.path, rel) : undefined;
+        const props = part ? parseActiveX(part.data) : {};
+        resolvedAx.push({ type: activeXType(ole.progId), ...props });
+      }
+      if (resolvedAx.length > 0) activeXControls = resolvedAx;
+    }
+
     const grid =
       tables || pivotTables
         ? { ...worksheet, ...(tables ? { tables } : {}), ...(pivotTables ? { pivotTables } : {}) }
@@ -319,6 +337,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
       ...(hyperlinks ? { hyperlinks } : {}),
       ...(comments ? { comments } : {}),
       ...(formControls ? { formControls } : {}),
+      ...(activeXControls ? { activeXControls } : {}),
     });
   }
 

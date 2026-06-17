@@ -110,6 +110,10 @@ export interface ParsedWorksheet {
   // Form controls declared on the sheet (E-SHEET W8) — raw {name, relId}; the
   // reader resolves each relId to its ctrlProp (type + state). Render-only.
   readonly formControls?: ReadonlyArray<FormControlRef>;
+  // §18.3.* <oleObjects> — embedded OLE / ActiveX controls (E-SHEET W10); the
+  // reader resolves each relId to its activeX part (type + visible state from the
+  // property bag). Render-only.
+  readonly oleObjects?: ReadonlyArray<OleObjectRef>;
   // x14 extension <sparklineGroups> in extLst — per-cell mini charts (E-SHEET SC2).
   readonly sparklines?: ReadonlyArray<ParsedSparkline>;
   // §18.3.1.95 <tableParts> — relationship ids of the sheet's table parts. The
@@ -519,6 +523,15 @@ export interface HeaderFooter {
 // display name. Raw form (the reader resolves relId); render-only.
 export interface FormControlRef {
   readonly name?: string;
+  readonly relId: string;
+}
+
+// §18.3.* <oleObjects><oleObject progId r:id> — an embedded OLE / ActiveX control
+// (E-SHEET W10). `progId` (e.g. Forms.CheckBox.1) names the control class; `relId`
+// resolves to its xl/activeX/activeXN.xml part (the persisted property bag). Raw
+// form (the reader resolves relId); render-only.
+export interface OleObjectRef {
+  readonly progId?: string;
   readonly relId: string;
 }
 

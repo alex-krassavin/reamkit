@@ -152,8 +152,13 @@ charts — and is byte-stable across a read↔write loop.
   `ctrlProp` part for type + state) are listed in a "Form controls" section after
   the grid, each with a type-appropriate affordance and its state (`[x]` / `[ ]`
   for a checked box, `(o)` for an option button, the value for a spinner). The
-  control's anchored VML shape isn't drawn in place; **ActiveX** controls are OLE
-  binaries and remain a graceful loss.
+  control's anchored VML shape isn't drawn in place.
+- **ActiveX controls** — the embedded OLE controls (`<oleObjects>` → `xl/activeX`)
+  are listed in an "ActiveX controls" section the same way: the `progId` gives the
+  control type and the `<ax:ocxPr>` property bag its visible state (caption,
+  checked/value, group). A control persisted only to its binary `.bin`
+  (MS-OFORMS) renders as its type without the caption — reading that property bag
+  from the OLE/CFB stream is the remaining piece.
 
 **PresentationML (§19)**
 - Each slide is a page at the deck size (`p:sldSz`); shapes are floating content
@@ -208,9 +213,10 @@ charts — and is byte-stable across a read↔write loop.
   private font metrics — but _pixel-identical_ output is a non-goal: that would need the
   exact same font file and the renderer's internal glyph rounding.
 - **Some Excel constructs are not rendered yet:**
-  - **ActiveX controls** — these are OLE binaries (`xl/activeX/*.bin`); their state
-    can't be rendered. (Modern **form** controls — checkboxes, option buttons,
-    spinners — *are* listed, above.)
+  - **ActiveX control binary state** — an ActiveX control persisted only to its
+    `.bin` (MS-OFORMS, not the `<ax:ocxPr>` property bag) renders as its control
+    type without the caption/value. (Property-bag-persisted controls *are* listed
+    with their visible state, above.)
   - The `expression` formula engine covers the functions conditional formats
     commonly use (logic, math, text, the date functions, `COUNTIF`/`SUMIF`); a
     formula that reaches outside it — a sheet-qualified reference, a defined name,

@@ -28,6 +28,7 @@ import type {
   HeaderFooter,
   HyperlinkRef,
   MergedRange,
+  OleObjectRef,
   ParsedSparkline,
   ParsedWorksheet,
   RowHeight,
@@ -93,6 +94,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
   const hyperlinks = parseHyperlinks(wsObj);
   const headerFooter = parseHeaderFooter(wsObj);
   const formControls = parseFormControls(wsObj);
+  const oleObjects = parseOleObjects(wsObj);
   const sparklines = parseSparklines(wsObj);
   const tablePartRelIds = parseTableParts(wsObj);
   const printModel = {
@@ -109,6 +111,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
     ...(hyperlinks.length > 0 ? { hyperlinks } : {}),
     ...(headerFooter ? { headerFooter } : {}),
     ...(formControls.length > 0 ? { formControls } : {}),
+    ...(oleObjects.length > 0 ? { oleObjects } : {}),
     ...(sparklines.length > 0 ? { sparklines } : {}),
     ...(tablePartRelIds.length > 0 ? { tablePartRelIds } : {}),
   };
@@ -900,6 +903,42 @@ function collectControls(
     seen.add(relId);
     const name = strAttr(obj, 'name');
     out.push({ relId, ...(name ? { name } : {}) });
+  }
+}
+
+// §18.3.* <oleObjects><oleObject progId r:id> — embedded OLE / ActiveX controls
+// (E-SHEET W10). Like form controls they are often wrapped in <mc:AlternateContent>
+// <mc:Choice Requires="x14">; removeNSPrefix strips the prefixes so each reads as
+// <oleObject progId id>. The relId resolves (in the reader) to the control's
+// activeX part (the property bag). Deduped by relId.
+function parseOleObjects(ws: Record<string, unknown>): Array<OleObjectRef> {
+  const out: Array<OleObjectRef> = [];
+  const seen = new Set<string>();
+  collectOleObjects(asObjectNode(ws['oleObjects']), out, seen);
+  for (const ext of toArray(asObjectNode(ws['extLst'])?.['ext'])) {
+    collectOleObjects(asObjectNode(asObjectNode(ext)?.['oleObjects']), out, seen);
+  }
+  return out;
+}
+
+function collectOleObjects(
+  node: Record<string, unknown> | undefined,
+  out: Array<OleObjectRef>,
+  seen: Set<string>,
+): void {
+  if (!node) return;
+  const direct = toArray(node['oleObject']);
+  const fromChoice = toArray(asObjectNode(node['AlternateContent'])?.['Choice']).flatMap((c) =>
+    toArray(asObjectNode(c)?.['oleObject']),
+  );
+  for (const o of [...direct, ...fromChoice]) {
+    const obj = asObjectNode(o);
+    if (!obj) continue;
+    const relId = strAttr(obj, 'id');
+    if (!relId || seen.has(relId)) continue;
+    seen.add(relId);
+    const progId = strAttr(obj, 'progId');
+    out.push({ relId, ...(progId ? { progId } : {}) });
   }
 }
 

@@ -41,6 +41,7 @@ export type {
   HyperlinkRef,
   HeaderFooter,
   FormControlRef,
+  OleObjectRef,
   SheetRichRun,
   SparklineKind,
   ParsedSparkline,
