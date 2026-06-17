@@ -41,6 +41,7 @@ export interface DocParaFormat {
   readonly spaceAfterTwips?: number;
   readonly inTable?: boolean; // sprmPFInTable — the paragraph is a table cell
   readonly rowEnd?: boolean; // sprmPFTtp — the row's terminating paragraph
+  readonly cellEdgesTwips?: ReadonlyArray<number>; // sprmTDefTable cell boundaries
 }
 
 // Where piece text starts in the WordDocument stream — past the FIB fields the
@@ -288,6 +289,13 @@ function buildPapxGrpprl(run: DocParaFormat): Uint8Array {
   if (run.indentFirstTwips !== undefined) sprm(0x8411, ...i16(run.indentFirstTwips)); // sprmPDxaLeft1
   if (run.spaceBeforeTwips !== undefined) sprm(0xa413, ...i16(run.spaceBeforeTwips)); // sprmPDyaBefore
   if (run.spaceAfterTwips !== undefined) sprm(0xa414, ...i16(run.spaceAfterTwips)); // sprmPDyaAfter
+  // sprmTDefTable (a long-operand sprm) goes before the table flags so the reader
+  // must skip its 2-byte-length operand correctly to still reach sprmPFTtp.
+  if (run.cellEdgesTwips) {
+    const content = [(run.cellEdgesTwips.length - 1) & 0xff, ...run.cellEdgesTwips.flatMap(i16)];
+    const cb = content.length + 1; // a 2-byte count that includes the count field
+    sprm(0xd608, cb & 0xff, (cb >> 8) & 0xff, ...content); // sprmTDefTable
+  }
   if (run.inTable) sprm(0x2416, 0x01); // sprmPFInTable
   if (run.rowEnd) sprm(0x2417, 0x01); // sprmPFTtp
   return Uint8Array.from(parts);

@@ -55,7 +55,10 @@ const SPRM_P_DYA_BEFORE = 0xa413; // space before (twips)
 const SPRM_P_DYA_AFTER = 0xa414; // space after (twips)
 const SPRM_P_F_IN_TABLE = 0x2416; // paragraph is in a table
 const SPRM_P_F_TTP = 0x2417; // table terminating paragraph (end of row)
+const SPRM_T_DEF_TABLE = 0xd608; // table definition (cell boundaries + descriptors)
 const SPRA_LEN = [1, 1, 2, 4, 2, 2, 0, 3];
+// spra-6 sprms whose operand is prefixed by a 2-byte (not 1-byte) length.
+const SPRM_LONG_OPERAND = new Set([0xd608, 0xc60d]); // sprmTDefTable, sprmPChgTabs
 
 const CELL_MARK = 0x07; // ends a table cell (and, on the TTP, a row)
 const FIELD_BEGIN = 0x13; // a field begins; its code (suppressed) follows
@@ -89,6 +92,9 @@ export interface DocParaProps {
   readonly spaceAfterTwips?: number;
   readonly inTable?: boolean; // sprmPFInTable
   readonly rowEnd?: boolean; // sprmPFTtp — the row's terminating paragraph
+  // sprmTDefTable rgdxaCenter — the (cols+1) cell-boundary x-positions (twips);
+  // present on the TTP. Cell i width = edge[i+1] − edge[i].
+  readonly cellEdgesTwips?: ReadonlyArray<number>;
 }
 
 export interface DocRun {
@@ -329,6 +335,7 @@ function decodePapxGrpprl(d: Uint8Array): DocParaProps {
   let spaceAfterTwips: number | undefined;
   let inTable: boolean | undefined;
   let rowEnd: boolean | undefined;
+  let cellEdgesTwips: Array<number> | undefined;
   for (const s of sprms(d)) {
     switch (s.sprm) {
       case SPRM_P_JC:
@@ -355,6 +362,16 @@ function decodePapxGrpprl(d: Uint8Array): DocParaProps {
       case SPRM_P_F_TTP:
         rowEnd = d[s.op] !== 0;
         break;
+      case SPRM_T_DEF_TABLE: {
+        // The operand is itcMac (u8) then (itcMac+1) cell-boundary positions.
+        const cols = d[s.op] ?? 0;
+        const edges: Array<number> = [];
+        for (let i = 0; i <= cols && s.op + 1 + i * 2 + 2 <= d.length; i++) {
+          edges.push(i16(d, s.op + 1 + i * 2));
+        }
+        if (edges.length >= 2) cellEdgesTwips = edges;
+        break;
+      }
     }
   }
   return {
@@ -366,6 +383,7 @@ function decodePapxGrpprl(d: Uint8Array): DocParaProps {
     ...(spaceAfterTwips !== undefined ? { spaceAfterTwips } : {}),
     ...(inTable ? { inTable } : {}),
     ...(rowEnd ? { rowEnd } : {}),
+    ...(cellEdgesTwips ? { cellEdgesTwips } : {}),
   };
 }
 
@@ -379,9 +397,17 @@ function* sprms(d: Uint8Array): Generator<{ sprm: number; op: number }> {
     let op = p;
     let len = SPRA_LEN[spra]!;
     if (spra === 6) {
-      if (p >= d.length) break;
-      len = d[p]!;
-      op = p + 1;
+      if (SPRM_LONG_OPERAND.has(sprm)) {
+        if (p + 2 > d.length) break;
+        const cb = u16(d, p); // a 2-byte count, including the count field itself
+        if (cb < 1) break;
+        len = cb - 1;
+        op = p + 2;
+      } else {
+        if (p >= d.length) break;
+        len = d[p]!;
+        op = p + 1;
+      }
     }
     if (op + len > d.length) break;
     yield { sprm, op };

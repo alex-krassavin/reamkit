@@ -1,4 +1,4 @@
-// Legacy `.doc` reader (DOC-1..5) — the DocumentReader that sniffs a Word
+// Legacy `.doc` reader (DOC-1..7) — the DocumentReader that sniffs a Word
 // 97–2003 binary file (an OLE2/CFB container with a `WordDocument` stream) and
 // reads its text, run/paragraph formatting, tables and inline images into the
 // same FlowDoc the OOXML docx reader produces, so the whole render pipeline
@@ -8,9 +8,10 @@
 //
 // Scope: paragraphs of formatted runs — bold / italic / underline / font size
 // (CHPX) on each run, alignment / indentation / spacing (PAPX) on each paragraph,
-// tables (in-table paragraphs grouped into a row/cell grid) and inline images
-// (the picture char's CHPX → a PICF in the Data stream). Headers/footers, lists
-// and fields are not read yet — recorded as a loss.
+// tables (in-table paragraphs grouped into a row/cell grid, with per-column widths
+// from sprmTDefTable), inline images (the picture char's CHPX → a PICF in the Data
+// stream) and fields (resolved to their cached result). Headers/footers, lists and
+// table cell borders/merges are not read yet — recorded as a loss.
 
 import type {
   Alignment,
@@ -73,7 +74,7 @@ const DOC_TEXT_LOSS: Loss = {
   severity: 'degraded',
   feature: FEATURES.text,
   detail:
-    'legacy .doc: the document text, run formatting (bold/italic/underline/size), paragraph formatting (alignment/indent/spacing), tables and inline images are read; headers/footers, lists, fields and table cell widths/borders/merges are not (re-save as .docx for full fidelity)',
+    'legacy .doc: the document text, run formatting (bold/italic/underline/size), paragraph formatting (alignment/indent/spacing), tables (with column widths), inline images and fields are read; headers/footers, lists and table cell borders/merges are not (re-save as .docx for full fidelity)',
 };
 
 const DOC_ENCRYPTED_LOSS: Loss = {
@@ -136,36 +137,67 @@ function groupTables(
 }
 
 // Split a run of in-table paragraphs into rows at each TTP (rowEnd); within a row
-// each paragraph is a cell (an empty terminating paragraph is dropped). Cell
-// widths are not in the PAPX we read, so columns share the content width evenly
-// and a default thin border makes the grid visible.
+// each paragraph is a cell (an empty terminating paragraph is dropped). Column
+// widths come from the TTP's sprmTDefTable; a default thin border makes the grid
+// visible (cell borders/merges are not read yet).
 function buildTable(group: ReadonlyArray<DocParagraph>, resources: ResourceStore): Table {
+  // The TTP's sprmTDefTable gives the cell-boundary positions for the row.
+  const edges = group.find((p) => p.props.cellEdgesTwips)?.props.cellEdgesTwips;
   const rows: Array<TableRow> = [];
   let rowParas: Array<DocParagraph> = [];
   for (const p of group) {
     rowParas.push(p);
     if (p.props.rowEnd) {
-      rows.push(buildRow(rowParas, resources));
+      rows.push(buildRow(rowParas, resources, edges));
       rowParas = [];
     }
   }
-  if (rowParas.length > 0) rows.push(buildRow(rowParas, resources)); // a row without a TTP
+  if (rowParas.length > 0) rows.push(buildRow(rowParas, resources, edges)); // a row without a TTP
 
-  const cols = Math.max(1, ...rows.map((r) => r.cells.length));
-  const colWidth = pt(CONTENT_WIDTH_PT / cols);
-  const grid = Array.from({ length: cols }, () => colWidth);
-  return { properties: { borders: TABLE_BORDERS, layout: 'fixed' }, grid, rows };
+  return {
+    properties: { borders: TABLE_BORDERS, layout: 'fixed' },
+    grid: columnWidths(edges, rows),
+    rows,
+  };
 }
 
-function buildRow(rowParas: ReadonlyArray<DocParagraph>, resources: ResourceStore): TableRow {
+// Per-column widths from the cell boundaries (twips → points); without them the
+// columns share the content width evenly.
+function columnWidths(edges: ReadonlyArray<number> | undefined, rows: ReadonlyArray<TableRow>) {
+  if (edges && edges.length >= 2) {
+    const widths = [];
+    for (let i = 0; i + 1 < edges.length; i++)
+      widths.push(twipsToPt(Math.max(0, edges[i + 1]! - edges[i]!)));
+    return widths;
+  }
+  const cols = Math.max(1, ...rows.map((r) => r.cells.length));
+  const even = pt(CONTENT_WIDTH_PT / cols);
+  return Array.from({ length: cols }, () => even);
+}
+
+function buildRow(
+  rowParas: ReadonlyArray<DocParagraph>,
+  resources: ResourceStore,
+  edges: ReadonlyArray<number> | undefined,
+): TableRow {
   const cells: Array<TableCell> = [];
+  let col = 0;
   for (const p of rowParas) {
     // The TTP terminates the row; when it carries no text it is not itself a cell.
     if (p.props.rowEnd && isBlank(p)) continue;
-    cells.push({ properties: {}, content: mapParagraph(p, resources) });
+    const width = cellWidth(edges, col++);
+    cells.push({ properties: width ? { width } : {}, content: mapParagraph(p, resources) });
   }
   if (cells.length === 0) cells.push({ properties: {}, content: [emptyParagraph()] });
   return { properties: {}, cells };
+}
+
+function cellWidth(edges: ReadonlyArray<number> | undefined, col: number) {
+  if (edges && col + 1 < edges.length) {
+    const w = edges[col + 1]! - edges[col]!;
+    if (w > 0) return twipsToPt(w);
+  }
+  return undefined;
 }
 
 function isBlank(p: DocParagraph): boolean {

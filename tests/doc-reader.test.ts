@@ -301,6 +301,27 @@ describe('doc reader (DOC-1)', () => {
     expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-');
   });
 
+  it('reads cell widths from sprmTDefTable and stays aligned past it (DOC-7)', () => {
+    const doc = readDoc(
+      buildDoc([{ text: `A${CM}B${CM}`, compressed: false }], {
+        paraRuns: [
+          { length: 2, inTable: true },
+          // The TTP carries the long sprmTDefTable before the table flags.
+          { length: 2, inTable: true, rowEnd: true, cellEdgesTwips: [0, 2880, 4320] },
+        ],
+      }),
+    ).doc;
+    const t = doc.body.find((el) => el.kind === 'table')?.table;
+    expect(t).toBeDefined();
+    // The row was still detected — sprmPFTtp is read after the 2-byte-length sprm.
+    expect(t!.rows).toHaveLength(1);
+    expect(t!.rows[0]!.cells).toHaveLength(2);
+    // 2880 and 1440 twips → 144 and 72 points.
+    expect(t!.grid).toEqual([144, 72]);
+    expect(t!.rows[0]!.cells[0]!.properties.width).toBe(144);
+    expect(t!.rows[0]!.cells[1]!.properties.width).toBe(72);
+  });
+
   it('renders a .doc with a table to a valid PDF', async () => {
     const pdf = await Ream.parse(
       buildDoc([{ text: `A${CM}B${CM}C${CM}D${CM}`, compressed: false }], {
