@@ -27,6 +27,11 @@ function firstParagraphRuns(doc: FlowDoc) {
   return p ? p.paragraph.runs : [];
 }
 
+// The paragraph elements of the FlowDoc body.
+function paragraphs(doc: FlowDoc) {
+  return doc.body.filter((el) => el.kind === 'paragraph');
+}
+
 describe('doc reader (DOC-1)', () => {
   it('reads UTF-16 piece text and splits paragraphs at the CR mark', () => {
     const doc = readDoc(buildDoc([{ text: 'Hello world\rSecond line\r', compressed: false }])).doc;
@@ -120,10 +125,69 @@ describe('doc reader (DOC-1)', () => {
     expect(runs[0]?.properties.underline).toBe('single');
   });
 
+  it('reads paragraph alignment from the PAPX', () => {
+    const doc = readDoc(
+      buildDoc([{ text: 'Centered\r', compressed: false }], {
+        paraRuns: [{ length: 9, jc: 1 }], // jc 1 = center
+      }),
+    ).doc;
+    expect(paragraphs(doc)[0]?.paragraph.properties.alignment).toBe('center');
+  });
+
+  it('reads paragraph indents and spacing (twips → points) from the PAPX', () => {
+    const doc = readDoc(
+      buildDoc([{ text: 'Indented\r', compressed: false }], {
+        paraRuns: [
+          {
+            length: 9,
+            indentLeftTwips: 720, // 36pt
+            indentFirstTwips: -360, // -18pt (hanging)
+            spaceBeforeTwips: 240, // 12pt
+            spaceAfterTwips: 120, // 6pt
+          },
+        ],
+      }),
+    ).doc;
+    const props = paragraphs(doc)[0]?.paragraph.properties;
+    expect(props?.indentLeft).toBe(36);
+    expect(props?.indentFirstLine).toBe(-18);
+    expect(props?.spacingBefore).toBe(12);
+    expect(props?.spacingAfter).toBe(6);
+  });
+
+  it('applies CHPX run formatting and PAPX paragraph formatting together', () => {
+    const doc = readDoc(
+      buildDoc([{ text: 'Title\r', compressed: false }], {
+        formatRuns: [{ length: 6, bold: true }],
+        paraRuns: [{ length: 6, jc: 1 }],
+      }),
+    ).doc;
+    expect(firstParagraphRuns(doc)[0]?.properties.bold).toBe(true);
+    expect(paragraphs(doc)[0]?.paragraph.properties.alignment).toBe('center');
+  });
+
+  it('gives each paragraph its own PAPX alignment', () => {
+    const doc = readDoc(
+      buildDoc([{ text: 'Left\rRight\r', compressed: false }], {
+        paraRuns: [
+          { length: 5, jc: 0 }, // left (default)
+          { length: 6, jc: 2 }, // right
+        ],
+      }),
+    ).doc;
+    const ps = paragraphs(doc);
+    expect(ps[0]?.paragraph.properties.alignment).not.toBe('right');
+    expect(ps[1]?.paragraph.properties.alignment).toBe('right');
+  });
+
   it('renders a formatted .doc to a valid PDF', async () => {
     const pdf = await Ream.parse(
       buildDoc([{ text: 'Bold title\rbody text\r', compressed: false }], {
         formatRuns: [{ length: 11, bold: true, sizeHalfPts: 36 }, { length: 10 }],
+        paraRuns: [
+          { length: 11, jc: 1 }, // centered title
+          { length: 10, indentLeftTwips: 360 },
+        ],
       }),
     ).convert('pdf', {
       fonts: {

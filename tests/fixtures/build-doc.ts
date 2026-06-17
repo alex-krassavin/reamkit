@@ -1,15 +1,15 @@
 // Minimal Word 97–2003 `.doc` builder for tests — packs a `WordDocument` stream
-// (the FIB fields the reader needs, the piece text and, optionally, a CHPX FKP
-// page) and a table stream (the CLX piece table plus, optionally, the PlcfBteChpx
-// bin table) into a CFB container, so the `.doc` reader has a deterministic input
-// without a checked-in binary. Mirrors build-xls.ts: it writes exactly the bytes
-// doc-text.ts reads back (FibBase offsets, PlcPcd, FcCompressed, FKP, sprm), so
-// the round trip validates the offset/compression/formatting logic rather than
-// restating it.
+// (the FIB fields the reader needs, the piece text and optional CHPX/PAPX FKP
+// pages) and a table stream (the CLX piece table plus optional PlcBteChpx /
+// PlcBtePapx bin tables) into a CFB container, so the `.doc` reader has a
+// deterministic input without a checked-in binary. Mirrors build-xls.ts: it
+// writes exactly the bytes doc-text.ts reads back (FibBase offsets, PlcPcd,
+// FcCompressed, FKP, sprm), so the round trip validates the offset / compression
+// / formatting logic rather than restating it.
 //
-// CHPX formatting is synthesised against the FIRST piece's FC mapping, so tests
-// that pass `formatRuns` use a single piece (enough to exercise the reader's
-// FKP → sprm → FC→CP path; the reader itself handles the multi-piece case).
+// CHPX/PAPX formatting is synthesised against the FIRST piece's FC mapping, so
+// tests that pass `formatRuns` / `paraRuns` use a single piece (enough to
+// exercise the reader's FKP → sprm → FC→CP path; the reader handles multi-piece).
 
 import { buildCfb } from './build-cfb';
 
@@ -28,6 +28,17 @@ export interface DocFormatRun {
   readonly sizeHalfPts?: number; // font size in half-points
 }
 
+// A paragraph's formatting, over its `length` characters (including the CR mark).
+export interface DocParaFormat {
+  readonly length: number;
+  readonly jc?: number; // 0 left, 1 center, 2 right, 3 both, 4 distribute
+  readonly indentLeftTwips?: number;
+  readonly indentRightTwips?: number;
+  readonly indentFirstTwips?: number; // signed (negative = hanging)
+  readonly spaceBeforeTwips?: number;
+  readonly spaceAfterTwips?: number;
+}
+
 // Where piece text starts in the WordDocument stream — past the FIB fields the
 // reader probes (fcClx/lcbClx sit at 0x1A2/0x1A6).
 const TEXT_BASE = 0x200;
@@ -39,6 +50,7 @@ export function buildDoc(
     readonly whichTable?: '0Table' | '1Table';
     readonly encrypted?: boolean;
     readonly formatRuns?: ReadonlyArray<DocFormatRun>;
+    readonly paraRuns?: ReadonlyArray<DocParaFormat>;
   } = {},
 ): Uint8Array {
   const whichTable = opts.whichTable ?? '1Table';
@@ -60,11 +72,11 @@ export function buildDoc(
   const n = placed.length;
   const plc = new Uint8Array((n + 1) * 4 + n * 8);
   const pv = new DataView(plc.buffer);
-  let cp = 0;
+  let cpAcc = 0;
   pv.setUint32(0, 0, true);
   for (let i = 0; i < n; i++) {
-    cp += placed[i]!.chars;
-    pv.setUint32((i + 1) * 4, cp, true);
+    cpAcc += placed[i]!.chars;
+    pv.setUint32((i + 1) * 4, cpAcc, true);
   }
   const pcdBase = (n + 1) * 4;
   for (let i = 0; i < n; i++) {
@@ -83,39 +95,50 @@ export function buildDoc(
   new DataView(clx.buffer).setUint32(1, plc.length, true);
   clx.set(plc, 5);
 
-  // Optional CHPX formatting: an FKP page in the WordDocument stream (after the
-  // text, 512-aligned) plus a PlcfBteChpx that points at it from the table stream.
-  let wdLength = cursor;
-  let fkpPage: Uint8Array | undefined;
-  let fkpOffset = 0;
-  let plcfBteChpx: Uint8Array | undefined;
+  // Append FKP pages (in the WordDocument stream, 512-aligned, after the text)
+  // and bin tables (in the table stream, 4-aligned, after the CLX). Each FKP page
+  // is named by a one-entry PlcBte that points at it.
   const first = placed[0];
-  if (opts.formatRuns && opts.formatRuns.length > 0 && first) {
-    const step = first.compressed ? 1 : 2;
-    fkpOffset = Math.ceil(cursor / FKP_SIZE) * FKP_SIZE;
-    fkpPage = buildChpxFkp(first.offset, step, opts.formatRuns);
-    plcfBteChpx = buildPlcfBteChpx(
-      first.offset,
-      first.offset + totalChars * step,
-      fkpOffset / FKP_SIZE,
-    );
-    wdLength = fkpOffset + FKP_SIZE;
+  const step = first?.compressed ? 1 : 2;
+  const fkpPages: Array<{ offset: number; page: Uint8Array }> = [];
+  const binTables: Array<{ offset: number; data: Uint8Array }> = [];
+  const fibFields: Array<{ fc: number; off: number; lcb: number }> = [];
+  let wdEnd = cursor;
+  let tableEnd = clx.length;
+
+  const addFkp = (page: Uint8Array): number => {
+    const offset = Math.ceil(wdEnd / FKP_SIZE) * FKP_SIZE;
+    fkpPages.push({ offset, page });
+    wdEnd = offset + FKP_SIZE;
+    return offset / FKP_SIZE;
+  };
+  const addBinTable = (data: Uint8Array): number => {
+    const offset = Math.ceil(tableEnd / 4) * 4;
+    binTables.push({ offset, data });
+    tableEnd = offset + data.length;
+    return offset;
+  };
+  const addBte = (page: Uint8Array, fcFieldOff: number): void => {
+    const pageNumber = addFkp(page);
+    const bte = buildPlcBte(first!.offset, first!.offset + totalChars * step, pageNumber);
+    const tableOff = addBinTable(bte);
+    fibFields.push({ fc: fcFieldOff, off: tableOff, lcb: bte.length });
+  };
+
+  if (first && opts.formatRuns && opts.formatRuns.length > 0) {
+    addBte(buildChpxFkp(first.offset, step, opts.formatRuns), 0xfa);
+  }
+  if (first && opts.paraRuns && opts.paraRuns.length > 0) {
+    addBte(buildPapxFkp(first.offset, step, opts.paraRuns), 0x102);
   }
 
-  // Table stream: the CLX, then (4-aligned) the PlcfBteChpx when present.
-  let tableLength = clx.length;
-  let plcfOffset = 0;
-  if (plcfBteChpx) {
-    plcfOffset = Math.ceil(clx.length / 4) * 4;
-    tableLength = plcfOffset + plcfBteChpx.length;
-  }
-  const table = new Uint8Array(tableLength);
+  // Assemble the table stream: CLX then the bin tables.
+  const table = new Uint8Array(tableEnd);
   table.set(clx, 0);
-  if (plcfBteChpx) table.set(plcfBteChpx, plcfOffset);
+  for (const b of binTables) table.set(b.data, b.offset);
 
-  // WordDocument stream: the FIB fields the reader probes, the piece bytes and
-  // the optional FKP page.
-  const wd = new Uint8Array(wdLength);
+  // Assemble the WordDocument stream: FIB fields, piece bytes, FKP pages.
+  const wd = new Uint8Array(wdEnd);
   const wv = new DataView(wd.buffer);
   wv.setUint16(0x00, 0xa5ec, true); // wIdent
   wv.setUint16(0x02, 0x00c1, true); // nFib (Word 97)
@@ -125,14 +148,14 @@ export function buildDoc(
     true,
   ); // fWhichTblStm | fEncrypted
   wv.setUint32(0x4c, totalChars, true); // ccpText
-  if (plcfBteChpx) {
-    wv.setUint32(0xfa, plcfOffset, true); // fcPlcfBteChpx
-    wv.setUint32(0xfe, plcfBteChpx.length, true); // lcbPlcfBteChpx
+  for (const f of fibFields) {
+    wv.setUint32(f.fc, f.off, true); // fcPlcfBte{Chpx,Papx}
+    wv.setUint32(f.fc + 4, f.lcb, true); // lcbPlcfBte{Chpx,Papx}
   }
   wv.setUint32(0x1a2, 0, true); // fcClx — CLX at offset 0 of the table stream
   wv.setUint32(0x1a6, clx.length, true); // lcbClx
   for (const p of placed) wd.set(p.bytes, p.offset);
-  if (fkpPage) wd.set(fkpPage, fkpOffset);
+  for (const f of fkpPages) wd.set(f.page, f.offset);
 
   return buildCfb([
     { name: 'WordDocument', data: wd },
@@ -170,7 +193,47 @@ function buildChpxFkp(fcBase: number, step: number, runs: ReadonlyArray<DocForma
   return page;
 }
 
-// §2.6.1 — the sprm list for a character run.
+// §2.9.23 PapxFkp — (cpara+1) FCs, cpara 13-byte BX (first byte = word-offset of
+// the PapxInFkp), the PapxInFkp blobs at word-aligned offsets, and cpara in byte
+// 511. Every paragraph has a PAPX (unlike CHPX, where 0 means "no formatting").
+function buildPapxFkp(
+  fcBase: number,
+  step: number,
+  runs: ReadonlyArray<DocParaFormat>,
+): Uint8Array {
+  const cpara = runs.length;
+  const page = new Uint8Array(FKP_SIZE);
+  const dv = new DataView(page.buffer);
+  dv.setUint32(0, fcBase, true);
+  let cum = 0;
+  for (let i = 0; i < cpara; i++) {
+    cum += runs[i]!.length;
+    dv.setUint32((i + 1) * 4, fcBase + cum * step, true);
+  }
+  const bxBase = (cpara + 1) * 4;
+  let blobOff = bxBase + cpara * 13;
+  for (let i = 0; i < cpara; i++) {
+    const blob = buildPapxInFkp(buildPapxGrpprl(runs[i]!));
+    if (blobOff % 2 !== 0) blobOff++; // PapxInFkp offsets are in 2-byte words
+    page.set(blob, blobOff);
+    page[bxBase + i * 13] = blobOff / 2; // BX bOffset; the rest of the BX is PHE (0)
+    blobOff += blob.length;
+  }
+  page[FKP_SIZE - 1] = cpara;
+  return page;
+}
+
+// §2.9.24 PapxInFkp — a u8 cb then GrpPrlAndIstd (istd + grpprl). cb≠0 ⇒ size is
+// 2·cb−1 (odd); cb=0 ⇒ a second u8 gives 2·cb2 (even). istd is always 0 here.
+function buildPapxInFkp(grpprl: Uint8Array): Uint8Array {
+  const size = 2 + grpprl.length; // GrpPrlAndIstd: istd (2 bytes) + grpprl
+  if (size % 2 === 1) {
+    return Uint8Array.from([(size + 1) / 2, 0, 0, ...grpprl]); // cb, istd lo/hi, grpprl
+  }
+  return Uint8Array.from([0, size / 2, 0, 0, ...grpprl]); // cb=0, cb2, istd lo/hi, grpprl
+}
+
+// §2.6.1 — the character sprm list for a run.
 function buildChpxGrpprl(run: DocFormatRun): Uint8Array {
   const parts: Array<number> = [];
   const sprm = (op: number, ...operand: Array<number>): void => {
@@ -183,9 +246,25 @@ function buildChpxGrpprl(run: DocFormatRun): Uint8Array {
   return Uint8Array.from(parts);
 }
 
-// §2.8.6 PlcBteChpx — a one-entry PLC: two FCs (the covered range) and one page
-// number naming the FKP.
-function buildPlcfBteChpx(fcStart: number, fcEnd: number, pageNumber: number): Uint8Array {
+// §2.6.2 — the paragraph sprm list. Indents are signed 2-byte twips.
+function buildPapxGrpprl(run: DocParaFormat): Uint8Array {
+  const parts: Array<number> = [];
+  const sprm = (op: number, ...operand: Array<number>): void => {
+    parts.push(op & 0xff, (op >> 8) & 0xff, ...operand);
+  };
+  const i16 = (v: number): Array<number> => [v & 0xff, (v >> 8) & 0xff];
+  if (run.jc !== undefined) sprm(0x2403, run.jc & 0xff); // sprmPJc
+  if (run.indentLeftTwips !== undefined) sprm(0x840f, ...i16(run.indentLeftTwips)); // sprmPDxaLeft
+  if (run.indentRightTwips !== undefined) sprm(0x840e, ...i16(run.indentRightTwips)); // sprmPDxaRight
+  if (run.indentFirstTwips !== undefined) sprm(0x8411, ...i16(run.indentFirstTwips)); // sprmPDxaLeft1
+  if (run.spaceBeforeTwips !== undefined) sprm(0xa413, ...i16(run.spaceBeforeTwips)); // sprmPDyaBefore
+  if (run.spaceAfterTwips !== undefined) sprm(0xa414, ...i16(run.spaceAfterTwips)); // sprmPDyaAfter
+  return Uint8Array.from(parts);
+}
+
+// §2.8.5/§2.8.6 PlcBte — a one-entry PLC: two FCs (the covered range) and one
+// page number naming the FKP.
+function buildPlcBte(fcStart: number, fcEnd: number, pageNumber: number): Uint8Array {
   const plc = new Uint8Array(12);
   const dv = new DataView(plc.buffer);
   dv.setUint32(0, fcStart, true);

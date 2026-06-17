@@ -74,15 +74,16 @@ charts — and is byte-stable across a read↔write loop.
 - Reads both **Transitional and Strict** (ISO 29500) packages; block-level
   content controls (`w:sdt`) flow through.
 - **Legacy `.doc`** (Word 97–2003) — the binary `WordDocument` stream inside the
-  OLE2/CFB container is read for its **text and run formatting**: the FIB locates
-  the piece table (the CLX), whose pieces — 16-bit Unicode or 8-bit Windows-1252
+  OLE2/CFB container is read for its **text and formatting**: the FIB locates the
+  piece table (the CLX), whose pieces — 16-bit Unicode or 8-bit Windows-1252
   ("compressed") — are stitched back into the document text and split into
-  paragraphs, while the CHPX runs (located through the `PlcfBteChpx` bin table and
-  decoded from their sprms) carry **bold / italic / underline / font size** onto
-  each run. So an old `.doc` renders to PDF/SVG/HTML and re-writes to `.docx`.
-  Paragraph formatting, tables, images, headers/footers, lists and fields are not
-  read yet (re-save as `.docx` for full fidelity); an encrypted file yields no
-  text. The shared CFB reader (`src/core/ole`) is the same keystone `.xls` uses.
+  paragraphs, while the CHPX and PAPX runs (located through the `PlcfBteChpx` /
+  `PlcfBtePapx` bin tables and decoded from their sprms) carry **bold / italic /
+  underline / font size** onto each run and **alignment / indentation / spacing**
+  onto each paragraph. So an old `.doc` renders to PDF/SVG/HTML and re-writes to
+  `.docx`. Tables, images, headers/footers, lists and fields are not read yet
+  (re-save as `.docx` for full fidelity); an encrypted file yields no text. The
+  shared CFB reader (`src/core/ole`) is the same keystone `.xls` uses.
 
 **SpreadsheetML (§18)**
 - Grids, shared strings, number formats and dates (incl. the 1904 date system).
@@ -223,9 +224,9 @@ charts — and is byte-stable across a read↔write loop.
 - **Legacy `.ppt`** (the binary PowerPoint OLE/CFB format) — not read yet; re-save
   as `.pptx`. (Legacy **`.xls`** — BIFF8 — and **`.doc`** — Word 97–2003 — _are_
   read; see SpreadsheetML / WordprocessingML above. The `.doc` reader surfaces the
-  document text and run formatting; paragraph/table/image structure is a later
-  wave. The shared CFB container reader (`src/core/ole`) is the keystone all three
-  reuse.)
+  document text with run and paragraph formatting; tables, images and the rest of
+  the structure are a later wave. The shared CFB container reader (`src/core/ole`)
+  is the keystone all three reuse.)
 - **Byte-for-byte visual reproduction of another renderer.** `layoutProfile` plus the
   metric-compatible substitutes get a target tool's page geometry close — without its
   private font metrics — but _pixel-identical_ output is a non-goal: that would need the

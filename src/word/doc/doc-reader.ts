@@ -1,27 +1,27 @@
-// Legacy `.doc` reader (DOC-1/DOC-2) — the DocumentReader that sniffs a Word
+// Legacy `.doc` reader (DOC-1/2/3) — the DocumentReader that sniffs a Word
 // 97–2003 binary file (an OLE2/CFB container with a `WordDocument` stream) and
-// reads its text and run-level formatting into the same FlowDoc the OOXML docx
-// reader produces, so the whole render pipeline (projection → PDF/SVG/HTML,
-// re-write to .docx) works on a legacy `.doc` the way it already does for `.xls`.
-// The shared CFB container reader (`src/core/ole`) is the keystone both legacy
-// formats reuse.
+// reads its text, run formatting and paragraph formatting into the same FlowDoc
+// the OOXML docx reader produces, so the whole render pipeline (projection →
+// PDF/SVG/HTML, re-write to .docx) works on a legacy `.doc` the way it already
+// does for `.xls`. The shared CFB container reader (`src/core/ole`) is the
+// keystone both legacy formats reuse.
 //
-// Scope: the document text, split into paragraphs at the Word paragraph mark,
-// with bold / italic / underline / font-size read from the CHPX runs. Paragraph
-// formatting, tables, images, headers/footers, lists and fields are not read yet
+// Scope: paragraphs of formatted runs — bold / italic / underline / font size
+// (CHPX) on each run, and alignment / indentation / spacing (PAPX) on each
+// paragraph. Tables, images, headers/footers, lists and fields are not read yet
 // — recorded as a loss (mirrors how `.xls` shipped values before full styling).
 
 import type {
+  Alignment,
   BodyElement,
-  Run,
+  ParagraphProperties,
   RunProperties,
-  SectionProperties,
   UnderlineStyle,
 } from '@/core/document-model';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss } from '@/core/ir';
-import type { DocCharProps, DocContent } from '@/word/doc/doc-text';
+import type { DocCharProps, DocContent, DocParaProps } from '@/word/doc/doc-text';
 
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
 import { isCfb, openCfb } from '@/core/ole/cfb';
@@ -29,12 +29,6 @@ import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 import { extractDocContent } from '@/word/doc/doc-text';
 
 const ZERO_WIDTH_SPACE = '​';
-
-// Paragraph / page-break / line-break / tab control characters.
-const CR = 0x0d; // paragraph mark
-const PAGE_BREAK = 0x0c;
-const LINE_BREAK = 0x0b;
-const TAB = 0x09;
 
 // A legacy `.doc` is an OLE2 container with a `WordDocument` stream. The check
 // also keeps a `.xls`/`.ppt` (or an encrypted OOXML, also a CFB) from
@@ -48,14 +42,13 @@ function looksLikeDoc(bytes: Uint8Array): boolean {
   }
 }
 
-// The document text + run formatting is read; paragraph formatting and the
-// higher-level structure are not. Reported (degraded, keyed on text) so a
-// caller's loss report is honest.
+// The text + run + paragraph formatting is read; the higher-level structure is
+// not. Reported (degraded, keyed on text) so a caller's loss report is honest.
 const DOC_TEXT_LOSS: Loss = {
   severity: 'degraded',
   feature: FEATURES.text,
   detail:
-    'legacy .doc: the document text, paragraph breaks and run formatting (bold/italic/underline/size) are read; paragraph formatting, tables, images, headers/footers, lists and fields are not (re-save as .docx for full fidelity)',
+    'legacy .doc: the document text, run formatting (bold/italic/underline/size) and paragraph formatting (alignment/indent/spacing) are read; tables, images, headers/footers, lists and fields are not (re-save as .docx for full fidelity)',
 };
 
 const DOC_ENCRYPTED_LOSS: Loss = {
@@ -66,76 +59,49 @@ const DOC_ENCRYPTED_LOSS: Loss = {
 
 export function readDoc(bytes: Uint8Array): ReadResult<FlowDoc> {
   const content = extractDocContent(bytes);
-  const body = buildParagraphs(content);
+  const body = buildBody(content);
 
   // Word's default page: US Letter with one-inch margins.
-  const section: SectionProperties = {
-    pageSize: { width: pt(612), height: pt(792) },
-    margins: { top: pt(72), right: pt(72), bottom: pt(72), left: pt(72) },
-    headers: [],
-    footers: [],
-  };
-
   const doc: FlowDoc = {
     kind: 'flow',
     body: resolveBodyStyles(body, EMPTY_STYLE_SHEET),
     sections: [],
-    section,
+    section: {
+      pageSize: { width: pt(612), height: pt(792) },
+      margins: { top: pt(72), right: pt(72), bottom: pt(72), left: pt(72) },
+      headers: [],
+      footers: [],
+    },
     styles: EMPTY_STYLE_SHEET,
     resources: new ResourceStore(),
   };
   return { doc, losses: [content.encrypted ? DOC_ENCRYPTED_LOSS : DOC_TEXT_LOSS] };
 }
 
-// Turn the formatted run stream into paragraphs: split at the CR (and page-break)
-// mark, carry each source run's formatting onto its document-model run, and clean
-// the in-paragraph control characters (a manual line break / tab → space). One
-// pass, so no control-character regex is needed.
-function buildParagraphs(content: DocContent): Array<BodyElement> {
-  const paragraphs: Array<BodyElement> = [];
-  let runs: Array<Run> = [];
-  let buf = '';
-  let bufProps: RunProperties = {};
-
-  const flushRun = (): void => {
-    if (buf.length > 0) {
-      runs.push({ text: buf, properties: bufProps });
-      buf = '';
-    }
-  };
-  const flushParagraph = (): void => {
-    flushRun();
-    paragraphs.push({
-      kind: 'paragraph',
-      paragraph: {
-        properties: {},
-        // An empty paragraph still needs a run so the line is emitted.
-        runs: runs.length > 0 ? runs : [{ text: ZERO_WIDTH_SPACE, properties: {} }],
-      },
-    });
-    runs = [];
-  };
-
-  for (const docRun of content.runs) {
-    flushRun(); // the buffered text belongs to the previous run's properties
-    bufProps = toRunProperties(docRun.props);
-    for (const ch of docRun.text) {
-      const c = ch.codePointAt(0)!;
-      if (c === CR || c === PAGE_BREAK) {
-        flushParagraph();
-      } else if (c === LINE_BREAK || c === TAB) {
-        buf += ' ';
-      } else if (c >= 0x20) {
-        buf += ch;
-      }
-    }
-  }
-  flushParagraph();
+// Map each extracted paragraph onto a document-model paragraph, carrying the run
+// and paragraph formatting. doc-text has already split paragraphs at the CR mark
+// and cleaned the in-paragraph control characters.
+function buildBody(content: DocContent): Array<BodyElement> {
+  const body: Array<BodyElement> = content.paragraphs.map((p) => ({
+    kind: 'paragraph',
+    paragraph: {
+      properties: toParaProperties(p.props),
+      // An empty paragraph still needs a run so the line is emitted.
+      runs:
+        p.runs.length > 0
+          ? p.runs.map((r) => ({ text: r.text, properties: toRunProperties(r.props) }))
+          : [{ text: ZERO_WIDTH_SPACE, properties: {} }],
+    },
+  }));
   // A document ends with a trailing paragraph mark — drop the empty tail it adds.
-  while (paragraphs.length > 1 && isEmptyParagraph(paragraphs[paragraphs.length - 1]!)) {
-    paragraphs.pop();
+  while (body.length > 1 && isEmptyParagraph(body[body.length - 1]!)) body.pop();
+  if (body.length === 0) {
+    body.push({
+      kind: 'paragraph',
+      paragraph: { properties: {}, runs: [{ text: ZERO_WIDTH_SPACE, properties: {} }] },
+    });
   }
-  return paragraphs;
+  return body;
 }
 
 function isEmptyParagraph(el: BodyElement): boolean {
@@ -157,6 +123,19 @@ function toRunProperties(p: DocCharProps): RunProperties {
   };
 }
 
+function toParaProperties(p: DocParaProps): ParagraphProperties {
+  const alignment = p.jc !== undefined ? alignmentFromJc(p.jc) : undefined;
+  // Twips → points (20 twips per point); indents may be negative (hanging).
+  return {
+    ...(alignment ? { alignment } : {}),
+    ...(p.indentLeftTwips !== undefined ? { indentLeft: pt(p.indentLeftTwips / 20) } : {}),
+    ...(p.indentRightTwips !== undefined ? { indentRight: pt(p.indentRightTwips / 20) } : {}),
+    ...(p.indentFirstTwips !== undefined ? { indentFirstLine: pt(p.indentFirstTwips / 20) } : {}),
+    ...(p.spaceBeforeTwips !== undefined ? { spacingBefore: pt(p.spaceBeforeTwips / 20) } : {}),
+    ...(p.spaceAfterTwips !== undefined ? { spacingAfter: pt(p.spaceAfterTwips / 20) } : {}),
+  };
+}
+
 // Word's `kul` underline code → the document-model underline style.
 function underlineStyle(kul: number): UnderlineStyle | undefined {
   switch (kul) {
@@ -170,6 +149,22 @@ function underlineStyle(kul: number): UnderlineStyle | undefined {
       return 'dash';
     default:
       return 'single';
+  }
+}
+
+// Word's `jc` justification code → the document-model alignment (0 = left default).
+function alignmentFromJc(jc: number): Alignment | undefined {
+  switch (jc) {
+    case 1:
+      return 'center';
+    case 2:
+      return 'right';
+    case 3:
+      return 'both';
+    case 4:
+      return 'distribute';
+    default:
+      return undefined;
   }
 }
 
