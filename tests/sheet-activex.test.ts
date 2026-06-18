@@ -76,6 +76,24 @@ describe('ActiveX controls — end to end (E-SHEET W10)', () => {
     ]);
   });
 
+  it('recovers the state of a persistStreamInit control from its activeX#.bin', () => {
+    // The real 116-byte stream from LibreOffice's activex_checkbox.xlsx (a control
+    // with NO <ax:ocxPr> — its caption/value/group name live only in the .bin).
+    const binHex =
+      '401dd28b42ecce119e0d00aa006002f3000244004601c080010000000d0000800a0000800400' +
+      '0000010000800e00008006000080d91000000707000031000000437573746f6d204361707469' +
+      '6f6e00005368656574312043000218003500000007000080e1000000ee02000043616c696272' +
+      '6900';
+    const bin = new Uint8Array(binHex.length / 2);
+    for (let i = 0; i < bin.length; i++) bin[i] = parseInt(binHex.slice(i * 2, i * 2 + 2), 16);
+    const sheet = Ream.parse(
+      buildXlsx({ rows: [['x']], oleObjects: [{ progId: 'Forms.CheckBox.1', binBytes: bin }] }),
+    ).sheet;
+    expect(sheet?.sheets[0]?.activeXControls).toEqual([
+      { type: 'checkbox', caption: 'Custom Caption', value: '1', groupName: 'Sheet1' },
+    ]);
+  });
+
   it('adds no ActiveX section to a sheet without controls (byte-zero)', () => {
     const flow = Ream.parse(buildXlsx({ rows: [['data']] })).flow;
     expect(paragraphTexts(flow.body)).not.toContain('ActiveX controls');

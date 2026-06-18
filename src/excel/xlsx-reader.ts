@@ -52,7 +52,12 @@ import { parsePivotTablePart } from '@/excel/pivot-table-parser';
 import { parseSlicerCachePart, parseSlicerPart } from '@/excel/slicer-parser';
 import { parseLegacyComments, parsePersons, parseThreadedComments } from '@/excel/comments-parser';
 import { parseFormControlProps } from '@/excel/form-control-parser';
-import { activeXType, parseActiveX } from '@/excel/activex-parser';
+import {
+  activeXBinRelId,
+  activeXType,
+  parseActiveX,
+  parseActiveXBin,
+} from '@/excel/activex-parser';
 import { parseSheetShapes } from '@/excel/sheet-shape-parser';
 
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
@@ -319,7 +324,20 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
         const rel = wsRels.find((r) => r.id === ole.relId);
         const part = rel ? pkg.resolveRelatedPart(resolved.path, rel) : undefined;
         const props = part ? parseActiveX(part.data) : {};
-        resolvedAx.push({ type: activeXType(ole.progId), ...props });
+        // A persistStreamInit control keeps no <ax:ocxPr>; recover its caption /
+        // value / group name from the binary activeX#.bin (resolved through the
+        // activeX#.xml part's own relationships). The property bag wins where both
+        // carry a value, so a normal property-bag control stays unchanged.
+        let binProps = {};
+        if (part) {
+          const binRelId = activeXBinRelId(part.data);
+          const binRel = binRelId
+            ? pkg.getPartRelationships(part.path).find((r) => r.id === binRelId)
+            : undefined;
+          const binPart = binRel ? pkg.resolveRelatedPart(part.path, binRel) : undefined;
+          if (binPart) binProps = parseActiveXBin(binPart.data);
+        }
+        resolvedAx.push({ type: activeXType(ole.progId), ...binProps, ...props });
       }
       if (resolvedAx.length > 0) activeXControls = resolvedAx;
     }

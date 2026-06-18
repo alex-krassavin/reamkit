@@ -285,10 +285,14 @@ charts — and is byte-stable across a read↔write loop.
   private font metrics — but _pixel-identical_ output is a non-goal: that would need the
   exact same font file and the renderer's internal glyph rounding.
 - **Some Excel constructs are not rendered yet:**
-  - **ActiveX control binary state** — an ActiveX control persisted only to its
-    `.bin` (MS-OFORMS, not the `<ax:ocxPr>` property bag) renders as its control
-    type without the caption/value. (Property-bag-persisted controls *are* listed
-    with their visible state, above.)
+  - **ActiveX control binary state** — a control persisted to its `.bin` (MS-OFORMS,
+    not the `<ax:ocxPr>` property bag) is read for the **MorphData family** (check
+    box / option button / toggle button / text box / combo / list box, one shared
+    control structure): its caption, value and group name come from the binary
+    stream. A **CommandButton/Label** `.bin` (a different control structure) and a
+    CFB-storage `.bin` are not parsed — those render by type without the caption,
+    never with a wrong one. (Property-bag-persisted controls are listed with their
+    visible state, above.)
   - The `expression` formula engine covers ~90 functions (logic incl.
     `IFS`/`SWITCH`/`XOR`, math + the `SUM`/`COUNT`/`MEDIAN`/`SUMPRODUCT`
     aggregates and the `COUNTIF(S)`/`SUMIF(S)`/`AVERAGEIF(S)` predicates, text,
