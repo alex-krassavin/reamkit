@@ -3,6 +3,66 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.15.0
+
+Three new input formats — the legacy binary `.doc`, `.xls` and `.ppt` (Office
+97–2003) — and the conditional-format expression formula engine. `Ream.parse` now
+sniffs and reads **seven formats** in total.
+
+### Added
+
+- **Read legacy `.doc` (Word 97–2003).** The binary WordprocessingML format
+  (OLE2/CFB) parses through a shared container reader into the same interlayer as
+  `.docx`. Reads the document **text** (the piece table / CLX — 16-bit Unicode and
+  8-bit Windows-1252 pieces), **run formatting** (bold / italic / underline / size
+  from the CHPX), **paragraph formatting** (alignment, indents, spacing from the
+  PAPX), **tables** (cells from the `0x07` mark, per-column widths, cell borders,
+  vertical merges and background shading), **inline images** (the picture
+  character's PICF in the `Data` stream), **fields** (resolved to their cached
+  result), the section's **headers and footers** (the PlcfHdd stories) and **list
+  items** (numbered or bulleted, in their resolved number format). Converts onward
+  to PDF / SVG / HTML / DOCX / XLSX like any source.
+- **Read legacy `.xls` (Excel 97–2003 / BIFF8).** Reads the grid (NUMBER / RK /
+  MULRK / LABELSST / BOOLERR / FORMULA records) with full **styling** (fonts,
+  fills, borders, number formats and the colour palette from the XF table),
+  **embedded images** and **charts** (the Escher BLIP store; the BIFF chart
+  substream), **drawing shapes and text boxes**, **cell hyperlinks** (HLINK), the
+  **page-setup print model**, **defined names** (named ranges, print area, repeated
+  titles), **cell comments**, **data validation**, **frozen panes**, **custom row
+  heights** and **conditional formatting** — the classic `cellIs` / `expression`
+  rules and the 2007 **colour-scale / data-bar / icon-set** extensions (CF12).
+- **Read legacy `.ppt` (PowerPoint 97–2003).** Each slide becomes a page at the
+  deck size. Reads the slide **text** with **run and paragraph formatting** (the
+  StyleTextPropAtom), **embedded images** (the Pictures stream), **per-shape
+  placement** (anchored text boxes and pictures at their slide rectangles) and
+  **decorative autoshapes** — preset or exact freeform geometry, with fill / line
+  colours resolved through the slide's colour scheme (literal, scheme- and
+  system-relative).
+- **Conditional-format expression formula engine (XLSX).** `<cfRule
+  type="expression">` and `type="timePeriod">` now evaluate — closing the
+  documented graceful loss from 1.14.0 — with a deterministic, no-recalculation
+  engine over the workbook's cached values: ~140 functions (logic / info incl. the
+  `IS*` family and `IFS` / `SWITCH` / `XOR`; math, trig and exponential; the `SUM` /
+  `COUNT` / `MEDIAN` / `SUMPRODUCT` / `STDEV` / `VAR` / `PERCENTILE` aggregates and
+  the `COUNTIF(S)` / `SUMIF(S)` / `AVERAGEIF(S)` predicates; text; date / time; the
+  `MATCH` / `INDEX` / `VLOOKUP` / `HLOOKUP` lookups and `ROW` / `COLUMN`),
+  sheet-qualified references (`Sheet2!A1`), defined names, inline array constants
+  (`OR(A1={1,3,5})`) and the per-cell relative-reference shift. `timePeriod` and
+  `TODAY()` / `NOW()` read an injected reference date (`options.now`), never the
+  system clock. A construct beyond a deterministic per-cell predicate evaluates to
+  an error and the rule simply does not paint — never a misrender.
+- **ActiveX control visible state (XLSX).** An `<oleObject>` ActiveX form control
+  renders its visible state — a check box / option button / toggle as checked or
+  unchecked, a text / combo / list control with its value — resolved from the
+  control's `ctrlProp` part and, for the MorphData control family, from the binary
+  `.bin` stream (MS-OFORMS) when the caption / value is persisted only there.
+
+### Changed
+
+- The interlayer sniffs and reads **seven input formats** now (`.docx`, `.xlsx`,
+  `.pptx`, `.pdf` and the legacy `.doc`, `.xls`, `.ppt`); the README and the docs
+  site were rewritten to state the full read / write matrix.
+
 ## 1.14.0
 
 ### Added
