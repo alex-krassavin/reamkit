@@ -93,11 +93,24 @@ describe('conditional formatting — expression (E-SHEET W9)', () => {
     expect(columnShadings([[1], [2], [3], [4]], cf)).toEqual([undefined, RED, undefined, RED]);
   });
 
-  it('an unsupported construct simply does not apply (graceful loss)', () => {
-    // ROW() is not in the function library → #NAME? → the rule never paints.
+  it('resolves ROW() to the current cell (row-banding idiom)', () => {
+    // MOD(ROW(),2)=0 paints even rows — ROW() reports each covered cell's row.
     const cf =
       '<conditionalFormatting sqref="A1:A3">' +
-      '<cfRule type="expression" dxfId="0" priority="1"><formula>ROW()=2</formula></cfRule>' +
+      '<cfRule type="expression" dxfId="0" priority="1"><formula>MOD(ROW(),2)=0</formula></cfRule>' +
+      '</conditionalFormatting>';
+    const out = columnShadings([[1], [2], [3]], cf);
+    expect(out[0]).toBeUndefined(); // row 1 (odd)
+    expect(out[1]).toBeTruthy(); // row 2 (even) → painted
+    expect(out[2]).toBeUndefined(); // row 3 (odd)
+  });
+
+  it('an unsupported construct simply does not apply (graceful loss)', () => {
+    // INDIRECT is a dynamic, volatile reference — intentionally not modelled (it
+    // cannot be deterministic) → #NAME? → the rule never paints.
+    const cf =
+      '<conditionalFormatting sqref="A1:A3">' +
+      '<cfRule type="expression" dxfId="0" priority="1"><formula>INDIRECT("A2")=2</formula></cfRule>' +
       '</conditionalFormatting>';
     expect(columnShadings([[1], [2], [3]], cf)).toEqual([undefined, undefined, undefined]);
   });

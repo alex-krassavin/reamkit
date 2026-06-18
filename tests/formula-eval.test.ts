@@ -382,3 +382,102 @@ describe('formula engine — extended function library', () => {
     expect(ev('XLOOKUP(1,A1:A5,B1:B5)=10', g)).toBe(false); // not in the library
   });
 });
+
+describe('formula engine — Wave 4 (trig / exp / extended math)', () => {
+  it('evaluates the exponential and logarithm family', () => {
+    expect(ev('ROUND(EXP(1),5)=2.71828')).toBe(true);
+    expect(ev('LN(EXP(3))=3')).toBe(true);
+    expect(ev('LOG10(1000)=3')).toBe(true);
+    expect(ev('LOG(8,2)=3')).toBe(true);
+    expect(ev('LOG(100)=2')).toBe(true); // default base 10
+    expect(ev('LN(0)')).toBe(false); // domain error → #NUM! → no match
+  });
+
+  it('evaluates trig in radians plus DEGREES/RADIANS/PI', () => {
+    expect(ev('SIN(0)=0')).toBe(true);
+    expect(ev('ROUND(COS(0),5)=1')).toBe(true);
+    expect(ev('ROUND(PI(),5)=3.14159')).toBe(true);
+    expect(ev('DEGREES(PI())=180')).toBe(true);
+    expect(ev('ROUND(RADIANS(180),5)=ROUND(PI(),5)')).toBe(true);
+    expect(ev('ROUND(ATAN2(1,1),5)=ROUND(PI()/4,5)')).toBe(true);
+    expect(ev('ASIN(2)')).toBe(false); // out of domain → #NUM!
+  });
+
+  it('evaluates FACT, COMBIN, PERMUT, SUMSQ', () => {
+    expect(ev('FACT(5)=120')).toBe(true);
+    expect(ev('COMBIN(5,2)=10')).toBe(true);
+    expect(ev('PERMUT(5,2)=20')).toBe(true);
+    expect(ev('SUMSQ(3,4)=25')).toBe(true);
+    expect(ev('FACT(-1)')).toBe(false); // #NUM!
+  });
+});
+
+describe('formula engine — Wave 4 (statistics)', () => {
+  const g = makeCtx({ A1: 2, A2: 4, A3: 4, A4: 4, A5: 5, A6: 5, A7: 7, A8: 9 });
+
+  it('computes sample/population spread', () => {
+    expect(ev('STDEVP(A1:A8)=2', g)).toBe(true); // population stdev of the classic set
+    expect(ev('VARP(A1:A8)=4', g)).toBe(true);
+    expect(ev('ROUND(STDEV(A1:A8),4)=2.1381', g)).toBe(true); // sample stdev (÷ n−1)
+    expect(ev('ROUND(VAR(A1:A8),4)=4.5714', g)).toBe(true);
+    expect(ev('STDEV(5)')).toBe(false); // < 2 points → #DIV/0!
+  });
+
+  it('computes deviation, mean and modal aggregates', () => {
+    expect(ev('DEVSQ(2,4,6)=8')).toBe(true);
+    expect(ev('AVEDEV(2,4,6)*3=4')).toBe(true); // mean |dev| = 4/3, tested exactly
+    expect(ev('GEOMEAN(4,9)=6')).toBe(true);
+    expect(ev('HARMEAN(2,4,4)=3')).toBe(true);
+    expect(ev('MODE(A1:A8)=4', g)).toBe(true);
+    expect(ev('ISNA(MODE(1,2,3))')).toBe(true); // all unique → #N/A
+  });
+
+  it('AVERAGEA/MAXA/MINA count text as 0 and RANK orders a value', () => {
+    const t = makeCtx({ A1: 4, A2: 'x', A3: 8 });
+    expect(ev('AVERAGEA(A1:A3)=4', t)).toBe(true); // (4 + 0 + 8) / 3
+    expect(ev('MINA(A1:A3)=0', t)).toBe(true);
+    expect(ev('MAXA(A1:A3)=8', t)).toBe(true);
+    expect(ev('RANK(7,A1:A8)=2', g)).toBe(true); // 7 is the 2nd-largest
+    expect(ev('RANK(7,A1:A8,1)=7', g)).toBe(true); // ascending order
+  });
+
+  it('PERCENTILE/QUARTILE interpolate', () => {
+    const p = makeCtx({ A1: 1, A2: 2, A3: 3, A4: 4 });
+    expect(ev('PERCENTILE(A1:A4,0.5)=2.5', p)).toBe(true);
+    expect(ev('QUARTILE(A1:A4,2)=2.5', p)).toBe(true);
+    expect(ev('QUARTILE(A1:A4,0)=1', p)).toBe(true);
+  });
+});
+
+describe('formula engine — Wave 4 (reference / information)', () => {
+  const g = makeCtx({ A1: 1, A2: 2, A3: 3 });
+  const at = (row: number, col: number): Shift => ({ dRow: 0, dCol: 0, curRow: row, curCol: col });
+
+  it('ROW/COLUMN report the reference or the current cell', () => {
+    expect(ev('ROW(A5)=5', g)).toBe(true);
+    expect(ev('COLUMN(C1)=3', g)).toBe(true);
+    expect(ev('ROW()=8', g, at(7, 2))).toBe(true); // current cell C8
+    expect(ev('COLUMN()=3', g, at(7, 2))).toBe(true);
+    expect(ev('MOD(ROW(),2)=0', g, at(3, 0))).toBe(true); // row-banding idiom (row 4)
+  });
+
+  it('ROWS/COLUMNS measure a range', () => {
+    expect(ev('ROWS(A1:A3)=3', g)).toBe(true);
+    expect(ev('COLUMNS(A1:C1)=3', g)).toBe(true);
+  });
+
+  it('TYPE / ERROR.TYPE classify a value', () => {
+    expect(ev('TYPE(1)=1')).toBe(true);
+    expect(ev('TYPE("x")=2')).toBe(true);
+    expect(ev('TYPE(TRUE)=4')).toBe(true);
+    expect(ev('TYPE(1/0)=16')).toBe(true);
+    expect(ev('ERROR.TYPE(1/0)=2')).toBe(true);
+    expect(ev('ISNA(ERROR.TYPE(5))')).toBe(true); // not an error → #N/A
+  });
+
+  it('UNICHAR / UNICODE round-trip a code point', () => {
+    expect(ev('UNICHAR(65)="A"')).toBe(true);
+    expect(ev('UNICODE("A")=65')).toBe(true);
+    expect(ev('UNICODE(UNICHAR(8364))=8364')).toBe(true); // €
+  });
+});

@@ -302,7 +302,12 @@ export function buildConditionalFormatter(
           // W9: evaluate the compiled formula at this cell, shifting unanchored
           // references by the cell's offset from the rule origin.
           if (!textClaimed && compiled && ctx && origin) {
-            const shift = { dRow: row - origin.row, dCol: col - origin.col };
+            const shift = {
+              dRow: row - origin.row,
+              dCol: col - origin.col,
+              curRow: row,
+              curCol: col,
+            };
             if (evaluateToBool(compiled, ctx, shift)) claim(rule.dxfId);
           }
           break;

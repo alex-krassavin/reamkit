@@ -13,6 +13,12 @@
 //   date / time: TODAY/NOW/YEAR/MONTH/DAY/WEEKDAY/DATE/EDATE/EOMONTH/DAYS/HOUR/
 //     MINUTE/SECOND/TIME/WEEKNUM/ISOWEEKNUM — the clock-relative ones read the
 //     injected reference day.
+// Wave 4 broadens this toward the full surface a CF predicate can reach: the trig /
+// exponential family (PI/EXP/LN/LOG/LOG10/SIN…/ASIN…/SINH…/DEGREES/RADIANS/SQRTPI/
+// FACT/COMBIN/PERMUT/SUMSQ), the statistics (STDEV(P)/VAR(P) + .S/.P aliases, AVEDEV/
+// DEVSQ/GEOMEAN/HARMEAN, AVERAGEA/MAXA/MINA, MODE/RANK + aliases, PERCENTILE/QUARTILE),
+// the position functions (ROW/COLUMN — with or without a reference —, ROWS/COLUMNS),
+// the info functions (TYPE/ERROR.TYPE), and UNICHAR/UNICODE.
 // An unknown function (or a misused one) returns #NAME?/#VALUE! so the rule simply
 // does not apply — Ream never guesses and never misrenders. Where an exact Excel
 // semantic is ambiguous (e.g. CEILING with mixed-sign significance) the engine
@@ -20,6 +26,7 @@
 
 import type { Ast } from '@/excel/formula/parser';
 import type { EvalContext } from '@/excel/formula/context';
+import type { Shift } from '@/excel/formula/eval';
 import type { FErr, FValue, Rect, Scalar } from '@/excel/formula/value';
 
 import { serialFromYmd, serialToParts } from '@/excel/formula/dates';
@@ -39,7 +46,13 @@ import {
 
 type Ev = (a: Ast) => FValue;
 
-export function callFn(name: string, args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+export function callFn(
+  name: string,
+  args: ReadonlyArray<Ast>,
+  ev: Ev,
+  ctx: EvalContext,
+  shift: Shift,
+): FValue {
   switch (name) {
     // --- logic ---------------------------------------------------------------
     case 'TRUE':
@@ -294,6 +307,113 @@ export function callFn(name: string, args: ReadonlyArray<Ast>, ev: Ev, ctx: Eval
       return lookupFn(args, ev, ctx, 'v');
     case 'HLOOKUP':
       return lookupFn(args, ev, ctx, 'h');
+
+    // --- trig / exponential / extended math (Wave 4) ------------------------
+    case 'PI':
+      return args.length === 0 ? num(Math.PI) : err('#VALUE!');
+    case 'EXP':
+      return math1(args, ev, ctx, Math.exp);
+    case 'LN':
+      return math1(args, ev, ctx, (x) => (x <= 0 ? NaN : Math.log(x)));
+    case 'LOG10':
+      return math1(args, ev, ctx, (x) => (x <= 0 ? NaN : Math.log10(x)));
+    case 'LOG':
+      return logFn(args, ev, ctx);
+    case 'SIN':
+      return math1(args, ev, ctx, Math.sin);
+    case 'COS':
+      return math1(args, ev, ctx, Math.cos);
+    case 'TAN':
+      return math1(args, ev, ctx, Math.tan);
+    case 'ASIN':
+      return math1(args, ev, ctx, (x) => (Math.abs(x) > 1 ? NaN : Math.asin(x)));
+    case 'ACOS':
+      return math1(args, ev, ctx, (x) => (Math.abs(x) > 1 ? NaN : Math.acos(x)));
+    case 'ATAN':
+      return math1(args, ev, ctx, Math.atan);
+    case 'ATAN2':
+      // Excel ATAN2(x, y) is the angle of the point (x, y) — JS atan2 takes (y, x).
+      return math2(args, ev, ctx, (x, y) => (x === 0 && y === 0 ? NaN : Math.atan2(y, x)));
+    case 'SINH':
+      return math1(args, ev, ctx, Math.sinh);
+    case 'COSH':
+      return math1(args, ev, ctx, Math.cosh);
+    case 'TANH':
+      return math1(args, ev, ctx, Math.tanh);
+    case 'DEGREES':
+      return math1(args, ev, ctx, (x) => (x * 180) / Math.PI);
+    case 'RADIANS':
+      return math1(args, ev, ctx, (x) => (x * Math.PI) / 180);
+    case 'SQRTPI':
+      return math1(args, ev, ctx, (x) => (x < 0 ? NaN : Math.sqrt(x * Math.PI)));
+    case 'FACT':
+      return factFn(args, ev, ctx);
+    case 'COMBIN':
+      return combinPermut(args, ev, ctx, false);
+    case 'PERMUT':
+      return combinPermut(args, ev, ctx, true);
+    case 'SUMSQ':
+      return aggregate(args, ev, ctx, (ns) => ns.reduce((a, b) => a + b * b, 0));
+
+    // --- statistics (Wave 4) -------------------------------------------------
+    case 'STDEV':
+    case 'STDEV.S':
+      return statSpread(args, ev, ctx, 'stdev', true);
+    case 'STDEVP':
+    case 'STDEV.P':
+      return statSpread(args, ev, ctx, 'stdev', false);
+    case 'VAR':
+    case 'VAR.S':
+      return statSpread(args, ev, ctx, 'var', true);
+    case 'VARP':
+    case 'VAR.P':
+      return statSpread(args, ev, ctx, 'var', false);
+    case 'AVEDEV':
+      return statSpread(args, ev, ctx, 'avedev', false);
+    case 'DEVSQ':
+      return statSpread(args, ev, ctx, 'devsq', false);
+    case 'GEOMEAN':
+      return geoHarMean(args, ev, ctx, true);
+    case 'HARMEAN':
+      return geoHarMean(args, ev, ctx, false);
+    case 'AVERAGEA':
+      return aggregateA(args, ev, ctx, 'avg');
+    case 'MAXA':
+      return aggregateA(args, ev, ctx, 'max');
+    case 'MINA':
+      return aggregateA(args, ev, ctx, 'min');
+    case 'MODE':
+    case 'MODE.SNGL':
+      return modeFn(args, ev, ctx);
+    case 'RANK':
+    case 'RANK.EQ':
+      return rankFn(args, ev, ctx);
+    case 'PERCENTILE':
+    case 'PERCENTILE.INC':
+      return percentileFn(args, ev, ctx);
+    case 'QUARTILE':
+    case 'QUARTILE.INC':
+      return quartileFn(args, ev, ctx);
+
+    // --- reference / information (Wave 4) -----------------------------------
+    case 'ROW':
+      return rowColFn(args, ev, shift, true);
+    case 'COLUMN':
+      return rowColFn(args, ev, shift, false);
+    case 'ROWS':
+      return rowsColsFn(args, ev, true);
+    case 'COLUMNS':
+      return rowsColsFn(args, ev, false);
+    case 'TYPE':
+      return typeFn(args, ev, ctx);
+    case 'ERROR.TYPE':
+      return errorTypeFn(args, ev, ctx);
+
+    // --- text (Wave 4) -------------------------------------------------------
+    case 'UNICHAR':
+      return unicharFn(args, ev, ctx);
+    case 'UNICODE':
+      return unicodeFn(args, ev, ctx);
 
     default:
       return err('#NAME?');
@@ -1474,4 +1594,257 @@ function lookupFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext, vh: 'v' | 
     else break;
   }
   return best < 0 ? err('#N/A') : resultAt(best);
+}
+
+// === Wave 4 helpers — broadening the library toward the full CF surface ======
+
+// A two-argument numeric function (ATAN2, LOG-with-base style).
+function math2(
+  args: ReadonlyArray<Ast>,
+  ev: Ev,
+  ctx: EvalContext,
+  f: (a: number, b: number) => number,
+): FValue {
+  if (args.length !== 2) return err('#VALUE!');
+  const a = numArg(args, ev, ctx, 0);
+  if (typeof a !== 'number') return err(a.e);
+  const b = numArg(args, ev, ctx, 1);
+  if (typeof b !== 'number') return err(b.e);
+  const r = f(a, b);
+  return Number.isNaN(r) ? err('#NUM!') : num(r);
+}
+
+// LOG(number, [base = 10]).
+function logFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  if (args.length < 1 || args.length > 2) return err('#VALUE!');
+  const x = numArg(args, ev, ctx, 0);
+  if (typeof x !== 'number') return err(x.e);
+  let base = 10;
+  if (args.length === 2) {
+    const b = numArg(args, ev, ctx, 1);
+    if (typeof b !== 'number') return err(b.e);
+    base = b;
+  }
+  if (x <= 0 || base <= 0 || base === 1) return err('#NUM!');
+  return num(Math.log(x) / Math.log(base));
+}
+
+// FACT(n) — n! over the truncated non-negative integer (capped to avoid overflow).
+function factFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  if (args.length !== 1) return err('#VALUE!');
+  const n = numArg(args, ev, ctx, 0);
+  if (typeof n !== 'number') return err(n.e);
+  const k = Math.trunc(n);
+  if (k < 0 || k > 170) return err('#NUM!');
+  let r = 1;
+  for (let i = 2; i <= k; i++) r *= i;
+  return num(r);
+}
+
+// COMBIN(n, k) = C(n,k); PERMUT(n, k) = P(n,k) = n!/(n−k)!.
+function combinPermut(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext, perm: boolean): FValue {
+  if (args.length !== 2) return err('#VALUE!');
+  const nN = numArg(args, ev, ctx, 0);
+  if (typeof nN !== 'number') return err(nN.e);
+  const kN = numArg(args, ev, ctx, 1);
+  if (typeof kN !== 'number') return err(kN.e);
+  const n = Math.trunc(nN);
+  const k = Math.trunc(kN);
+  if (n < 0 || k < 0 || k > n) return err('#NUM!');
+  let p = 1;
+  for (let i = 0; i < k; i++) p *= n - i;
+  if (perm) return num(p);
+  let kf = 1;
+  for (let i = 2; i <= k; i++) kf *= i;
+  return num(Math.round(p / kf));
+}
+
+// STDEV/VAR (sample → ÷(n−1), population → ÷n) and the deviation aggregates
+// AVEDEV (mean |x−μ|) and DEVSQ (Σ(x−μ)²).
+function statSpread(
+  args: ReadonlyArray<Ast>,
+  ev: Ev,
+  ctx: EvalContext,
+  kind: 'stdev' | 'var' | 'avedev' | 'devsq',
+  sample: boolean,
+): FValue {
+  const ns = gatherNumbers(args, ev, ctx);
+  if (!Array.isArray(ns)) return err(ns);
+  const n = ns.length;
+  if (n === 0 || (sample && n < 2)) return err('#DIV/0!');
+  const mean = ns.reduce((a, b) => a + b, 0) / n;
+  if (kind === 'avedev') return num(ns.reduce((a, b) => a + Math.abs(b - mean), 0) / n);
+  const ss = ns.reduce((a, b) => a + (b - mean) * (b - mean), 0);
+  if (kind === 'devsq') return num(ss);
+  const variance = ss / (sample ? n - 1 : n);
+  return num(kind === 'var' ? variance : Math.sqrt(variance));
+}
+
+// GEOMEAN (all values must be > 0) / HARMEAN.
+function geoHarMean(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext, geo: boolean): FValue {
+  const ns = gatherNumbers(args, ev, ctx);
+  if (!Array.isArray(ns)) return err(ns);
+  if (ns.length === 0 || ns.some((x) => x <= 0)) return err('#NUM!');
+  if (geo) return num(Math.exp(ns.reduce((a, b) => a + Math.log(b), 0) / ns.length));
+  return num(ns.length / ns.reduce((a, b) => a + 1 / b, 0));
+}
+
+// AVERAGEA/MAXA/MINA — like AVERAGE/MAX/MIN but text counts as 0 and a logical as
+// 1/0, so they enter the count / extent.
+function aggregateA(
+  args: ReadonlyArray<Ast>,
+  ev: Ev,
+  ctx: EvalContext,
+  kind: 'avg' | 'max' | 'min',
+): FValue {
+  const ns: Array<number> = [];
+  let e: FErr | undefined;
+  const take = (s: Scalar): void => {
+    if (s.t === 'num') ns.push(s.v);
+    else if (s.t === 'bool') ns.push(s.v ? 1 : 0);
+    else if (s.t === 'str') ns.push(0);
+    else if (s.t === 'err') e ??= s.v;
+  };
+  for (const a of args) {
+    const v = ev(a);
+    if (v.t === 'ref') refEach(v, ctx, (_r, _c, s) => take(s));
+    else take(deref(v, ctx));
+  }
+  if (e) return err(e);
+  if (ns.length === 0) return kind === 'avg' ? err('#DIV/0!') : num(0);
+  if (kind === 'avg') return num(ns.reduce((a, b) => a + b, 0) / ns.length);
+  return num(kind === 'max' ? Math.max(...ns) : Math.min(...ns));
+}
+
+// MODE — the most frequent number, ties broken by earliest occurrence; #N/A when
+// every value is unique.
+function modeFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  const ns = gatherNumbers(args, ev, ctx);
+  if (!Array.isArray(ns)) return err(ns);
+  const counts = new Map<number, number>();
+  for (const x of ns) counts.set(x, (counts.get(x) ?? 0) + 1);
+  let maxCount = 1;
+  for (const c of counts.values()) if (c > maxCount) maxCount = c;
+  if (maxCount < 2) return err('#N/A');
+  for (const x of ns) if (counts.get(x) === maxCount) return num(x);
+  return err('#N/A');
+}
+
+// RANK(number, ref, [order]) — order 0/omitted ranks descending (largest = 1).
+function rankFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  if (args.length < 2 || args.length > 3) return err('#VALUE!');
+  const x = numArg(args, ev, ctx, 0);
+  if (typeof x !== 'number') return err(x.e);
+  const ns = gatherNumbers([args[1]!], ev, ctx);
+  if (!Array.isArray(ns)) return err(ns);
+  let asc = false;
+  if (args.length === 3) {
+    const o = numArg(args, ev, ctx, 2);
+    if (typeof o !== 'number') return err(o.e);
+    asc = o !== 0;
+  }
+  if (!ns.includes(x)) return err('#N/A');
+  let rank = 1;
+  for (const v of ns) if (asc ? v < x : v > x) rank++;
+  return num(rank);
+}
+
+// PERCENTILE(array, k∈[0,1]) — the inclusive (linear-interpolation) method.
+function percentileFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  if (args.length !== 2) return err('#VALUE!');
+  const ns = gatherNumbers([args[0]!], ev, ctx);
+  if (!Array.isArray(ns)) return err(ns);
+  const k = numArg(args, ev, ctx, 1);
+  if (typeof k !== 'number') return err(k.e);
+  return percentile(ns, k);
+}
+
+// QUARTILE(array, q) — q 0..4 maps to the 0/25/50/75/100th percentile.
+function quartileFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  if (args.length !== 2) return err('#VALUE!');
+  const ns = gatherNumbers([args[0]!], ev, ctx);
+  if (!Array.isArray(ns)) return err(ns);
+  const q = numArg(args, ev, ctx, 1);
+  if (typeof q !== 'number') return err(q.e);
+  const qi = Math.trunc(q);
+  if (qi < 0 || qi > 4) return err('#NUM!');
+  return percentile(ns, qi / 4);
+}
+
+function percentile(ns: ReadonlyArray<number>, k: number): FValue {
+  if (ns.length === 0 || k < 0 || k > 1) return err('#NUM!');
+  const sorted = [...ns].sort((a, b) => a - b);
+  const pos = k * (sorted.length - 1);
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  return num(sorted[lo]! + (sorted[hi]! - sorted[lo]!) * (pos - lo));
+}
+
+// The reference an argument evaluates to (ROW/COLUMN/ROWS/COLUMNS), else undefined.
+function rectArg(arg: Ast, ev: Ev): Rect | undefined {
+  const v = ev(arg);
+  return v.t === 'ref' ? v.rect : undefined;
+}
+
+// ROW([ref]) / COLUMN([ref]): with a reference, the top row/left column (1-based)
+// of its rectangle; with no argument, the current cell from the per-cell shift.
+function rowColFn(args: ReadonlyArray<Ast>, ev: Ev, shift: Shift, isRow: boolean): FValue {
+  if (args.length === 0) {
+    const cur = isRow ? shift.curRow : shift.curCol;
+    return cur === undefined ? err('#VALUE!') : num(cur + 1);
+  }
+  if (args.length !== 1) return err('#VALUE!');
+  const rect = rectArg(args[0]!, ev);
+  return rect ? num((isRow ? rect.r0 : rect.c0) + 1) : err('#VALUE!');
+}
+
+// ROWS(ref) / COLUMNS(ref): the height / width of the reference's rectangle.
+function rowsColsFn(args: ReadonlyArray<Ast>, ev: Ev, isRows: boolean): FValue {
+  if (args.length !== 1) return err('#VALUE!');
+  const rect = rectArg(args[0]!, ev);
+  if (!rect) return err('#VALUE!');
+  return num(isRows ? rect.r1 - rect.r0 + 1 : rect.c1 - rect.c0 + 1);
+}
+
+// TYPE: 1 number (and blank), 2 text, 4 logical, 16 error.
+function typeFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  if (args.length !== 1) return err('#VALUE!');
+  const s = deref(ev(args[0]!), ctx);
+  if (s.t === 'str') return num(2);
+  if (s.t === 'bool') return num(4);
+  if (s.t === 'err') return num(16);
+  return num(1);
+}
+
+// §18.17.2 ERROR.TYPE — the 1..7 code for an error value; #N/A for a non-error.
+const ERROR_TYPE_CODES: Readonly<Record<FErr, number>> = {
+  '#NULL!': 1,
+  '#DIV/0!': 2,
+  '#VALUE!': 3,
+  '#REF!': 4,
+  '#NAME?': 5,
+  '#NUM!': 6,
+  '#N/A': 7,
+};
+function errorTypeFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  if (args.length !== 1) return err('#VALUE!');
+  const s = deref(ev(args[0]!), ctx);
+  return s.t === 'err' ? num(ERROR_TYPE_CODES[s.v]) : err('#N/A');
+}
+
+// UNICHAR(n) → the character for a Unicode code point; UNICODE(text) → the code
+// point of the first character.
+function unicharFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  if (args.length !== 1) return err('#VALUE!');
+  const n = numArg(args, ev, ctx, 0);
+  if (typeof n !== 'number') return err(n.e);
+  const cp = Math.trunc(n);
+  if (cp < 1 || cp > 0x10ffff) return err('#VALUE!');
+  return str(String.fromCodePoint(cp));
+}
+function unicodeFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  const t = textArg(args, ev, ctx, 0);
+  if (typeof t !== 'string') return err(t.v);
+  if (args.length !== 1 || t.length === 0) return err('#VALUE!');
+  return num(t.codePointAt(0)!);
 }

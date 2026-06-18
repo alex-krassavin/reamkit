@@ -14,9 +14,14 @@ import { callFn } from '@/excel/formula/functions';
 import { bool, deref, err, num, str, toNumber, toText } from '@/excel/formula/value';
 
 // The cell's offset from the rule origin, added to UNANCHORED reference axes.
+// `curRow`/`curCol` carry the ABSOLUTE current cell (origin + delta) so ROW()/
+// COLUMN() with no argument can report it; absent (NO_SHIFT) ⇒ those no-arg forms
+// have no cell to name and yield #VALUE!.
 export interface Shift {
   readonly dRow: number;
   readonly dCol: number;
+  readonly curRow?: number;
+  readonly curCol?: number;
 }
 
 export const NO_SHIFT: Shift = { dRow: 0, dCol: 0 };
@@ -72,7 +77,7 @@ export function evaluate(ast: Ast, ctx: EvalContext, shift: Shift): FValue {
     case 'bin':
       return evalBin(ast.op, ast.a, ast.b, ctx, shift);
     case 'call':
-      return callFn(ast.name, ast.args, (a) => evaluate(a, ctx, shift), ctx);
+      return callFn(ast.name, ast.args, (a) => evaluate(a, ctx, shift), ctx, shift);
   }
 }
 
