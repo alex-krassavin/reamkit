@@ -24,7 +24,7 @@ Status: ✅ fixed & committed · 🛠 in progress · ⬜ todo · 🚫 won't-fix 
 | F2a | all legacy | Embedded OLE object's stream shadows the main document's | ✅ `4656d0b` |
 | F2b | doc | Word 6.0/95 (nFib < 105) — no CLX, different FIB | 🚫 out of scope |
 | F3 | pptx | Hidden slides (show="0") rendered instead of omitted | ✅ `cebed0d` |
-| F3b | ppt | Hidden slides not omitted (binary SSSlideInfoAtom fHidden) | ⬜ backlog |
+| F3b | ppt | Slide content overflows the fixed canvas into extra pages | ⬜ backlog |
 | F4 | doc | Section page size / orientation not read (landscape → portrait) | ⬜ backlog |
 | N1 | doc/xls | Letter-vs-A4 "dims" mismatch | 🚫 default artifact |
 
@@ -98,13 +98,24 @@ printed/exported deck; we rendered them, so the page count ran high.
 counts) — both now match the golden. Skip `show="0"` slides + record one
 `dropped` loss. Test: `tests/pptx-reader.test.ts` (`hiddenSlides` fixture).
 
-## ⬜ F3b — .ppt (legacy) hidden slides
+## ⬜ F3b — .ppt slide content overflows into extra pages
 
-`23884…ppt` is 37 vs LibreOffice's 30 — plausibly the same hidden-slide cause,
-but the binary `.ppt` hidden flag lives in `SSSlideInfoAtom` (RT 0x03F9, slide
-flags bit 0x04 `fHidden`), which the HSLF reader doesn't parse yet. Unverified
-(could also be notes/master miscount). Backlog — needs the SSSlideInfoAtom read
-+ a real-sample check before assuming the cause.
+`23884…ppt` is 37 pages vs LibreOffice's 30. **Verified it is NOT hidden slides**
+(walked the record tree: 30 `RT_Slide` containers, 0 with `SSSlideInfoAtom`
+fHidden — and the reader correctly enumerates 30 slides). The 7 extra pages are
+**render overflow**: `ppt-reader.buildBody` flows the text of *un-anchored*
+shapes (no `rectPt` — e.g. the outline-text fallback) in reading order, and on a
+slide whose text exceeds the canvas that flow paginates onto a 2nd page. pptx
+never hits this because every shape is positioned (floating, out-of-flow).
+
+No clean fix: floating the un-anchored text at a default rect stops the overflow
+but makes *multiple* un-anchored shapes overlap (we have no positions for them);
+flowing keeps them readable but paginates. PowerPoint/LibreOffice never split a
+slide — they autofit/clip text to placeholders, which is a layout-engine
+capability (per-section "no internal pagination" / autofit) we don't have. The
+gap is cosmetic (content is all present, ~80% text-sim), so this is deferred
+rather than fixed with a regression-prone float. Needs the autofit/clip layout
+feature, validated visually — not just on page count.
 
 ## 🚫 N1 — Letter vs A4 default paper
 
