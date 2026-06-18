@@ -79,6 +79,9 @@ export function buildDoc(
     readonly encrypted?: boolean;
     readonly formatRuns?: ReadonlyArray<DocFormatRun>;
     readonly paraRuns?: ReadonlyArray<DocParaFormat>;
+    // First section's page size in twips → a SEP (sprmSXaPage/sprmSYaPage) plus
+    // the PlcfSed that points at it. Landscape is just width > height.
+    readonly pageSizeTwips?: { readonly width: number; readonly height: number };
     readonly data?: Uint8Array; // the Data stream (embedded pictures: see buildPicf)
     readonly headerFooter?: {
       readonly defaultHeader?: string;
@@ -207,6 +210,30 @@ export function buildDoc(
     fibFields.push({ fc: 0x2ea, off: addBinTable(plfLfo), lcb: plfLfo.length }); // fcPlfLfo/lcb
   }
 
+  // Section page size (F4): a Sepx (sprmSXaPage/sprmSYaPage) appended to the
+  // WordDocument stream, addressed by a one-section PlcfSed in the table stream.
+  let sepx: { offset: number; bytes: Uint8Array } | undefined;
+  if (opts.pageSizeTwips) {
+    const grpprl = new Uint8Array(8);
+    const gv = new DataView(grpprl.buffer);
+    gv.setUint16(0, 0xb01f, true); // sprmSXaPage
+    gv.setUint16(2, opts.pageSizeTwips.width, true);
+    gv.setUint16(4, 0xb020, true); // sprmSYaPage
+    gv.setUint16(6, opts.pageSizeTwips.height, true);
+    const sepxBytes = new Uint8Array(2 + grpprl.length); // cb + grpprl
+    new DataView(sepxBytes.buffer).setUint16(0, grpprl.length, true);
+    sepxBytes.set(grpprl, 2);
+    sepx = { offset: wdEnd, bytes: sepxBytes };
+    wdEnd += sepxBytes.length;
+    // PlcfSed: 2 CPs (0, mainChars) then one 12-byte SED whose fcSepx → the Sepx.
+    const plcfSed = new Uint8Array(8 + 12);
+    const sv = new DataView(plcfSed.buffer);
+    sv.setUint32(4, mainChars, true);
+    sv.setUint32(8 + 2, sepx.offset, true); // SED.fcSepx
+    sv.setUint32(8 + 8, 0xffffffff, true); // SED.fcMpr (none)
+    fibFields.push({ fc: 0xca, off: addBinTable(plcfSed), lcb: plcfSed.length }); // fcPlcfSed/lcb
+  }
+
   // Assemble the table stream: CLX then the bin tables.
   const table = new Uint8Array(tableEnd);
   table.set(clx, 0);
@@ -235,6 +262,7 @@ export function buildDoc(
   wv.setUint32(0x1a6, clx.length, true); // lcbClx
   for (const p of placed) wd.set(p.bytes, p.offset);
   for (const f of fkpPages) wd.set(f.page, f.offset);
+  if (sepx) wd.set(sepx.bytes, sepx.offset);
 
   return buildCfb([
     { name: 'WordDocument', data: wd },

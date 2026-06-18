@@ -12,6 +12,7 @@ import {
   imageBlock,
   paragraphBlock,
   paragraphFromRuns,
+  sectionFromPdfPages,
 } from './flow-build';
 import { collectPageImages } from './images';
 import { readStructTree } from './struct-tree';
@@ -175,7 +176,7 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
   for (const { img } of orphans) body.push(imageBlock(img, resources));
 
   if (body.length === 0) return undefined;
-  return { doc: buildFlowDoc(body, resources), losses: imageLosses };
+  return { doc: buildFlowDoc(body, resources, sectionFromPdfPages(pages)), losses: imageLosses };
 }
 
 function squash(text: string): string {

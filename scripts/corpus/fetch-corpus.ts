@@ -1,12 +1,17 @@
-// Fetch a licence-clean corpus of real .docx/.xlsx into corpus/external/
-// (gitignored), with a provenance manifest. Source: Apache POI's test-data
-// (Apache-2.0) — files crafted to exercise OOXML edge cases.
+// Fetch a licence-clean corpus of real documents into corpus/external/
+// (gitignored), with a provenance manifest. Covers every format Ream reads:
+// the OOXML trio (.docx/.xlsx/.pptx), the legacy binaries (.doc/.xls/.ppt) and
+// .pdf. Sources: Apache POI test-data (Apache-2.0), LibreOffice regression
+// corpora (MPL-2.0), and Mozilla pdf.js's committed test PDFs (Apache-2.0) —
+// all crafted to exercise format edge cases and real-world bug reports.
 //
-// SECURITY: macro-enabled formats (.docm/.xlsm) are skipped, but treat ALL
-// fetched documents as untrusted — validate them with CORPUS_SANDBOX=docker so
-// the reference render (LibreOffice) and our own parse run isolated.
+// SECURITY: macro-enabled formats (.docm/.xlsm/.pptm) are skipped, but treat
+// ALL fetched documents as untrusted (the pdf.js set deliberately includes
+// fuzzed/malformed files) — validate with CORPUS_SANDBOX=docker so the
+// reference render runs isolated, and CORPUS_ISOLATE_OURS=1 so our own parse
+// runs under a wall-clock + heap cap.
 //
-// Usage: tsx scripts/corpus/fetch-corpus.ts [--limit 60]
+// Usage: tsx scripts/corpus/fetch-corpus.ts [--limit 60] [--source <id-prefix>]
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -74,6 +79,85 @@ const SOURCES: ReadonlyArray<Source> = [
     ext: /\.xlsx$/i,
     license: 'MPL-2.0',
   },
+  // --- PresentationML (.pptx) ---
+  {
+    id: 'poi-pptx',
+    repo: 'apache/poi',
+    path: 'test-data/slideshow',
+    ref: 'trunk',
+    ext: /\.pptx$/i,
+    license: 'Apache-2.0',
+  },
+  {
+    id: 'lo-pptx',
+    repo: 'LibreOffice/core',
+    path: 'sd/qa/unit/data/pptx',
+    ref: 'master',
+    ext: /\.pptx$/i,
+    license: 'MPL-2.0',
+  },
+  // --- Legacy binary Word (.doc — MS-DOC / WW8) ---
+  {
+    id: 'poi-doc',
+    repo: 'apache/poi',
+    path: 'test-data/document',
+    ref: 'trunk',
+    ext: /\.doc$/i,
+    license: 'Apache-2.0',
+  },
+  {
+    id: 'lo-doc',
+    repo: 'LibreOffice/core',
+    path: 'sw/qa/extras/ww8export/data',
+    ref: 'master',
+    ext: /\.doc$/i,
+    license: 'MPL-2.0',
+  },
+  // --- Legacy binary Excel (.xls — BIFF8) ---
+  {
+    id: 'poi-xls',
+    repo: 'apache/poi',
+    path: 'test-data/spreadsheet',
+    ref: 'trunk',
+    ext: /\.xls$/i,
+    license: 'Apache-2.0',
+  },
+  {
+    id: 'lo-xls',
+    repo: 'LibreOffice/core',
+    path: 'sc/qa/unit/data/xls',
+    ref: 'master',
+    ext: /\.xls$/i,
+    license: 'MPL-2.0',
+  },
+  // --- Legacy binary PowerPoint (.ppt — MS-PPT / HSLF) ---
+  {
+    id: 'poi-ppt',
+    repo: 'apache/poi',
+    path: 'test-data/slideshow',
+    ref: 'trunk',
+    ext: /\.ppt$/i,
+    license: 'Apache-2.0',
+  },
+  {
+    id: 'lo-ppt',
+    repo: 'LibreOffice/core',
+    path: 'sd/qa/unit/data/ppt',
+    ref: 'master',
+    ext: /\.ppt$/i,
+    license: 'MPL-2.0',
+  },
+  // --- PDF (read path) — Mozilla pdf.js's committed real-world test corpus,
+  // including deliberately malformed / fuzzed files. Treat as hostile: render
+  // the reference sandboxed and isolate our own parse (CORPUS_ISOLATE_OURS=1).
+  {
+    id: 'pdfjs',
+    repo: 'mozilla/pdf.js',
+    path: 'test/pdfs',
+    ref: 'master',
+    ext: /\.pdf$/i,
+    license: 'Apache-2.0',
+  },
 ];
 
 interface GhEntry {
@@ -116,7 +200,7 @@ async function main(): Promise<void> {
         (e) =>
           e.type === 'file' &&
           s.ext.test(e.name) &&
-          !/\.(docm|xlsm)$/i.test(e.name) && // never fetch macro-enabled files
+          !/\.(docm|xlsm|pptm)$/i.test(e.name) && // never fetch macro-enabled files
           e.download_url,
       )
       .slice(0, LIMIT);

@@ -390,7 +390,9 @@ function leadingBaselines(pages: Array<StextPage>): Array<number> {
 
 export function listCorpus(dir: string): Array<string> {
   return readdirSync(dir)
-    .filter((f) => /\.(docx|docm|xlsx|xlsm)$/i.test(f) && !f.startsWith('~$'))
+    .filter(
+      (f) => /\.(docx|docm|xlsx|xlsm|pptx|pptm|doc|xls|ppt|pdf)$/i.test(f) && !f.startsWith('~$'),
+    )
     .sort()
     .map((f) => resolve(dir, f));
 }

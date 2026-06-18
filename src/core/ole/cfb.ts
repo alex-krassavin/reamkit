@@ -64,6 +64,9 @@ export function openCfb(bytes: Uint8Array): Cfb {
   const sectorSize = 1 << sectorShift;
   const miniSectorSize = 1 << miniSectorShift;
   const miniCutoff = view.getUint32(56, true);
+  // §2.2 — only v3 (512-byte sectors) and v4 (4096) exist; the directory entry's
+  // stream-size field is read per-version below (v3 ignores its high 4 bytes).
+  const majorVersion = view.getUint16(26, true);
 
   // How many real sectors the file body can hold — every sector index must land
   // inside this, and no chain may be longer than this (the cycle guard).
@@ -143,22 +146,41 @@ export function openCfb(bytes: Uint8Array): Cfb {
   const dirView = new DataView(dirBytes.buffer, dirBytes.byteOffset, dirBytes.byteLength);
   const entries: Array<CfbEntry> = [];
   const entryCount = Math.floor(dirBytes.length / DIR_ENTRY_SIZE);
+  // Raw (directory-index-keyed) view that also keeps each entry's red-black-tree
+  // pointers, so the storage hierarchy can be walked (`entries` above is the
+  // flat public list of allocated entries only). The sibling/child fields are
+  // entry indices into this directory.
+  const rawByIndex: Array<
+    { entry: CfbEntry; left: number; right: number; child: number; isRoot: boolean } | undefined
+  > = new Array(entryCount);
   for (let i = 0; i < entryCount; i++) {
     const base = i * DIR_ENTRY_SIZE;
     const objType = dirView.getUint8(base + 66);
     if (objType !== 1 && objType !== 2 && objType !== 5) continue; // unallocated
     const nameLen = dirView.getUint16(base + 64, true);
     const name = decodeName(dirBytes, base, nameLen);
-    // §2.6.1 — a v3 stream size only uses the low 4 bytes; read 64-bit safely.
+    // §2.6.1 — in a v3 file the stream-size field is 32-bit and the high 4
+    // bytes are reserved; Word and others leave non-zero garbage there, so a
+    // reader MUST ignore them for v3 (using the full 64-bit value yields absurd
+    // sizes that trip the size guard and reject an otherwise valid file). Only
+    // v4 (4096-byte sectors) uses the full 64-bit size.
     const sizeLow = dirView.getUint32(base + 120, true);
     const sizeHigh = dirView.getUint32(base + 124, true);
-    const size = sizeHigh * 0x1_0000_0000 + sizeLow;
-    entries.push({
+    const size = majorVersion === 3 ? sizeLow : sizeHigh * 0x1_0000_0000 + sizeLow;
+    const entry: CfbEntry = {
       name,
       type: objType === 5 ? 'root' : objType === 1 ? 'storage' : 'stream',
       startSector: dirView.getUint32(base + 116, true),
       size,
-    });
+    };
+    entries.push(entry);
+    rawByIndex[i] = {
+      entry,
+      left: dirView.getUint32(base + 68, true),
+      right: dirView.getUint32(base + 72, true),
+      child: dirView.getUint32(base + 76, true),
+      isRoot: objType === 5,
+    };
   }
 
   const root = entries.find((e) => e.type === 'root');
@@ -213,12 +235,40 @@ export function openCfb(bytes: Uint8Array): Cfb {
     return readMiniStream(entry);
   };
 
-  const byName = new Map<string, CfbEntry>();
-  for (const e of entries) {
-    if (e.type === 'stream' && !byName.has(e.name.toLowerCase())) {
-      byName.set(e.name.toLowerCase(), e);
+  // The main document's streams are the direct children of the root storage.
+  // The directory is a red-black tree keyed by name; the root entry's `child`
+  // points at the tree of its immediate children, while an embedded OLE object's
+  // streams hang off a nested storage (e.g. ObjectPool). Collect just the root's
+  // own children — following sibling links but never descending into a child
+  // storage — so they take precedence over an embedded object's same-named
+  // stream. Without this a flat first-wins scan can return an embedded
+  // `WordDocument`/`1Table` and the parse comes up empty (MS-CFB §2.6).
+  const topLevel = new Set<CfbEntry>();
+  const rootRaw = rawByIndex.find((r) => r?.isRoot);
+  if (rootRaw) {
+    const stack = [rootRaw.child];
+    const seen = new Set<number>();
+    while (stack.length > 0) {
+      const idx = stack.pop()!;
+      if (idx >= entryCount || seen.has(idx)) continue; // NOSTREAM / out-of-range / cycle
+      seen.add(idx);
+      const node = rawByIndex[idx];
+      if (!node) continue;
+      topLevel.add(node.entry);
+      stack.push(node.left, node.right); // siblings only — not node.child
     }
   }
+
+  const byName = new Map<string, CfbEntry>();
+  const addStreams = (list: Iterable<CfbEntry>): void => {
+    for (const e of list) {
+      if (e.type === 'stream' && !byName.has(e.name.toLowerCase())) {
+        byName.set(e.name.toLowerCase(), e);
+      }
+    }
+  };
+  addStreams(topLevel); // main-document streams win the name…
+  addStreams(entries); // …then any nested stream whose name is otherwise unused
 
   return {
     entries,

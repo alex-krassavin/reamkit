@@ -11,7 +11,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { FontBytesByVariant } from '@/core/font';
-import { convertDocxToPdfSync, convertXlsxToPdfSync } from '@/core/converter';
+import { Ream } from '@/core/converter/ream';
 
 const [input, outPdf] = process.argv.slice(2);
 if (!input || !outPdf) {
@@ -29,8 +29,9 @@ const fonts: FontBytesByVariant = {
   boldItalic: font('Roboto-BoldItalic.ttf'),
 };
 
+// The Ream facade sniffs the format and dispatches — one path for every input
+// (docx/xlsx/pptx/pdf + legacy doc/xls/ppt), which is what makes this child a
+// safe universal isolator for untrusted corpus files.
 const bytes = new Uint8Array(readFileSync(input));
-const pdf = /\.(xlsx|xlsm)$/i.test(input)
-  ? convertXlsxToPdfSync(bytes, { fonts })
-  : convertDocxToPdfSync(bytes, { fonts });
+const pdf = await Ream.parse(bytes).convert('pdf', { fonts });
 writeFileSync(outPdf, pdf);

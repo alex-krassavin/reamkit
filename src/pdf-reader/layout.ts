@@ -15,6 +15,7 @@ import {
   dedupeLosses,
   imageBlock,
   paragraphFromRuns,
+  sectionFromPdfPages,
   shapeBlock,
 } from './flow-build';
 import { collectPageImages } from './images';
@@ -98,7 +99,10 @@ export function reconstructByLayout(file: PdfFile): Reconstruction {
     blocks.sort((a, b) => a.col - b.col || b.top - a.top);
     for (const block of blocks) body.push(block.el);
   });
-  return { doc: buildFlowDoc(body, resources), losses: dedupeLosses(losses) };
+  return {
+    doc: buildFlowDoc(body, resources, sectionFromPdfPages(pages)),
+    losses: dedupeLosses(losses),
+  };
 }
 
 // EP17 — a two-column gutter: the centre of the widest vertical whitespace band

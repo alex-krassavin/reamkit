@@ -32,6 +32,8 @@ const OFF_FCPLCFBTEPAPX = 0x102; // fibRgFcLcb97.fcPlcfBtePapx — PAPX bin tabl
 const OFF_LCBPLCFBTEPAPX = 0x106;
 const OFF_FCCLX = 0x1a2; // fibRgFcLcb97.fcClx — CLX offset in the table stream
 const OFF_LCBCLX = 0x1a6; // fibRgFcLcb97.lcbClx — CLX byte length
+const OFF_FCPLCFSED = 0xca; // fibRgFcLcb97.fcPlcfSed — section descriptors (PlcfSed)
+const OFF_LCBPLCFSED = 0xce;
 const OFF_FCPLFLST = 0x2e2; // fibRgFcLcb97.fcPlfLst — the list table (PlfLst)
 const OFF_LCBPLFLST = 0x2e6; // (excludes the appended LVL array)
 const OFF_FCPLFLFO = 0x2ea; // fibRgFcLcb97.fcPlfLfo — the list-format-override table
@@ -68,6 +70,9 @@ const SPRM_T_DEF_TABLE_SHD = 0xd612; // per-cell shading array (Shd: cvFore/cvBa
 const MAX_ROW_CELLS = 256; // a row's cell count is small; guard a crafted huge array
 const SPRM_P_ILVL = 0x260a; // list level (0–8)
 const SPRM_P_ILFO = 0x460b; // list-format override index (>0 ⇒ the paragraph is a list item)
+const SPRM_S_XA_PAGE = 0xb01f; // section page width in twips (xaPage)
+const SPRM_S_YA_PAGE = 0xb020; // section page height in twips (yaPage)
+const MAX_PAGE_TWIPS = 31680; // Word's max page dimension (22 inches) — sanity bound
 const SPRA_LEN = [1, 1, 2, 4, 2, 2, 0, 3];
 // spra-6 sprms whose operand is prefixed by a 2-byte (not 1-byte) length.
 const SPRM_LONG_OPERAND = new Set([0xd608, 0xc60d]); // sprmTDefTable, sprmPChgTabs
@@ -190,6 +195,9 @@ export interface DocContent {
   readonly headerFooters?: DocHeaderFooters;
   // The list tables resolving a paragraph's (ilfo, ilvl) to its number format.
   readonly listTables?: DocListTables;
+  // The first section's page size in points (xaPage/yaPage from its SEP), when
+  // present and sane; absent ⇒ the reader's default (US Letter) applies.
+  readonly pageSize?: { readonly widthPt: number; readonly heightPt: number };
   // The file is encrypted/obfuscated — text cannot be read without the key.
   readonly encrypted: boolean;
 }
@@ -208,6 +216,37 @@ interface BteRun<TProps> {
 }
 
 const EMPTY: DocContent = { paragraphs: [], encrypted: false };
+
+// The first section's page size (§2.6.4 SEP). The FIB's PlcfSed in the table
+// stream lists each section's Sepx; its grpprl carries sprmSXaPage/sprmSYaPage
+// (page width/height in twips). Word stores already-swapped dimensions for a
+// landscape section (xaPage > yaPage), so they map straight to the page size —
+// no orientation fix-up needed. Returns the first section's size (the single
+// geometry the FlowDoc carries; a multi-section .doc reflows to it), or none
+// when there is no usable PlcfSed / the values are out of range.
+function readSectionPageSize(
+  wd: Uint8Array,
+  table: Uint8Array,
+): { widthPt: number; heightPt: number } | undefined {
+  const fc = u32(wd, OFF_FCPLCFSED);
+  const lcb = u32(wd, OFF_LCBPLCFSED);
+  // PlcfSed = (n+1) CPs (4 bytes each) then n SED structures (12 bytes); n ≥ 1.
+  if (lcb < 4 + 16 || fc + lcb > table.length) return undefined;
+  const plc = table.subarray(fc, fc + lcb);
+  const n = Math.floor((lcb - 4) / 16);
+  const fcSepx = u32(plc, (n + 1) * 4 + 2); // first SED.fcSepx (offset 2 in the SED)
+  if (fcSepx === 0xffffffff || fcSepx + 2 > wd.length) return undefined;
+  const cb = u16(wd, fcSepx);
+  const grpprl = wd.subarray(fcSepx + 2, Math.min(wd.length, fcSepx + 2 + cb));
+  let xa = 0;
+  let ya = 0;
+  for (const { sprm, op } of sprms(grpprl)) {
+    if (sprm === SPRM_S_XA_PAGE) xa = u16(grpprl, op);
+    else if (sprm === SPRM_S_YA_PAGE) ya = u16(grpprl, op);
+  }
+  if (xa < 1 || ya < 1 || xa > MAX_PAGE_TWIPS || ya > MAX_PAGE_TWIPS) return undefined;
+  return { widthPt: xa / 20, heightPt: ya / 20 };
+}
 
 // The `WordDocument` stream of a `.doc` → its main-document paragraphs. Returns
 // none when the stream is missing, not a Word file, encrypted, or has no piece
@@ -241,10 +280,12 @@ export function extractDocContent(bytes: Uint8Array): DocContent {
   const main = buildParagraphs(wd, pieces, chpx, papx, 0, ccpText, data);
   const headerFooters = extractHeaderFooters(wd, table, pieces, chpx, papx, data, ccpText);
   const listTables = parseListTables(wd, table);
+  const pageSize = readSectionPageSize(wd, table);
   return {
     paragraphs: main,
     ...(headerFooters ? { headerFooters } : {}),
     ...(listTables ? { listTables } : {}),
+    ...(pageSize ? { pageSize } : {}),
     encrypted: false,
   };
 }

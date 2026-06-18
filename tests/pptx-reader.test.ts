@@ -31,6 +31,15 @@ describe('pptx reader seam (E-PPTX PX0)', () => {
     expect(Math.round(y1 - y0)).toBe(540);
   });
 
+  it('omits hidden slides (p:sld@show="0") and records the loss', async () => {
+    // PowerPoint and LibreOffice both drop hidden slides from an exported deck.
+    const pptx = buildPptx(['', '', ''], { hiddenSlides: [false, true, false] });
+    const doc = Ream.parse(pptx);
+    expect(doc.losses.some((l) => /hidden slide/.test(l.detail))).toBe(true);
+    const pdf = await doc.convert('pdf', { fonts: FONTS });
+    expect(PdfFile.parse(pdf).pages().length).toBe(2); // the hidden middle slide is gone
+  });
+
   it('honours a 4:3 deck size', async () => {
     const pptx = buildPptx([''], { cx: 9144000, cy: 6858000 }); // 10" × 7.5"
     const pdf = await Ream.parse(pptx).convert('pdf', { fonts: FONTS });

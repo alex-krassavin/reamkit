@@ -7,6 +7,7 @@ import type {
   BodyElement,
   CustomPathCmd,
   ParagraphProperties,
+  SectionProperties,
   ShapeFill,
   ShapeLine,
 } from '@/core/document-model';
@@ -14,6 +15,7 @@ import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss } from '@/core/ir';
 
 import type { PdfImage } from './images';
+import type { PdfPage } from './document';
 import type { PdfVector } from './vector';
 import { ResourceStore, pt } from '@/core/ir';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
@@ -152,14 +154,47 @@ export function shapeBlock(v: PdfVector): BodyElement {
   };
 }
 
+// Derive the FlowDoc section geometry from the source pages so a reconstructed
+// PDF re-renders at its real page size and orientation rather than the layout
+// engine's A4 default — without it an A3 source paginates onto several A4
+// pages, a wide/landscape page is letterboxed, and so on. PDF user-space units
+// are points, matching Pt, so the MediaBox extents map straight to the page
+// size. Uses the first page's box (the near-universal uniform-size case); a PDF
+// whose pages differ in size reflows to this single geometry — a known
+// approximation, still far better than a fixed A4.
+export function sectionFromPdfPages(pages: ReadonlyArray<PdfPage>): SectionProperties | undefined {
+  const box = pages[0]?.mediaBox;
+  if (!box) return undefined;
+  const width = Math.abs(box[2] - box[0]);
+  const height = Math.abs(box[3] - box[1]);
+  if (!(width > 0 && height > 0)) return undefined;
+  return {
+    pageSize: {
+      width: pt(width),
+      height: pt(height),
+      orientation: width > height ? 'landscape' : 'portrait',
+    },
+    // A PDF page has no margin model — text is positioned absolutely anywhere on
+    // the MediaBox — so the page box is the content box. Zero margins keep the
+    // reflow from inventing a 1-inch inset the source never had, never clip a
+    // small page (the layout default of 1 inch can exceed a tiny MediaBox), and
+    // reduce spurious over-pagination.
+    margins: { top: pt(0), right: pt(0), bottom: pt(0), left: pt(0) },
+    headers: [],
+    footers: [],
+  };
+}
+
 export function buildFlowDoc(
   body: ReadonlyArray<BodyElement>,
   resources: ResourceStore = new ResourceStore(),
+  section?: SectionProperties,
 ): FlowDoc {
   return {
     kind: 'flow',
     body: resolveBodyStyles([...body], EMPTY_STYLE_SHEET),
     sections: [],
+    ...(section ? { section } : {}),
     styles: EMPTY_STYLE_SHEET,
     resources,
   };
