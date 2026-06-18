@@ -26,7 +26,8 @@ import {
   visualDiff,
 } from './lib';
 import type { FontBytesByVariant } from '@/core/font';
-import { convertDocxToPdf, convertDocxToPdfSync, convertXlsxToPdfSync } from '@/core/converter';
+import { convertDocxToPdf } from '@/core/converter';
+import { Ream } from '@/core/converter/ream';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '../..');
@@ -75,7 +76,7 @@ const OUR_TIMEOUT_MS = 60_000;
 
 // Convert with our library, writing the PDF to `outPath`. When isolating, spawn
 // a child so a hostile/pathological doc can't hang or OOM the runner.
-async function ourConvert(input: string, isXlsx: boolean, outPath: string): Promise<void> {
+async function ourConvert(input: string, outPath: string): Promise<void> {
   if (ISOLATE_OURS) {
     execFileSync('npx', ['tsx', resolve(here, 'convert-one.ts'), input, outPath], {
       stdio: 'ignore',
@@ -86,12 +87,15 @@ async function ourConvert(input: string, isXlsx: boolean, outPath: string): Prom
   }
   const bytes = new Uint8Array(readFileSync(input));
   const profileOpt = PROFILE ? { layoutProfile: PROFILE } : {};
+  // The Ream facade sniffs the format from the bytes and dispatches to the right
+  // reader, so one path covers all seven inputs (docx/xlsx/pptx/pdf + the legacy
+  // doc/xls/ppt). AUTOFONT stays a docx-only escape hatch: it runs the real async
+  // substitute-font auto-detection so the visual metric reflects layout fidelity
+  // rather than a font mismatch.
   const pdf =
-    AUTOFONT && !isXlsx
+    AUTOFONT && /\.docx$/i.test(input)
       ? await convertDocxToPdf(bytes, profileOpt)
-      : isXlsx
-        ? convertXlsxToPdfSync(bytes, { fonts: FONTS, ...profileOpt })
-        : convertDocxToPdfSync(bytes, { fonts: FONTS, ...profileOpt });
+      : await Ream.parse(bytes).convert('pdf', { fonts: FONTS, ...profileOpt });
   writeFileSync(outPath, pdf);
 }
 
@@ -126,14 +130,17 @@ async function main(): Promise<void> {
 
   for (const input of inputs) {
     const name = basename(input);
-    const isXlsx = name.endsWith('.xlsx') || name.endsWith('.xlsm');
+    const isPdf = /\.pdf$/i.test(name);
     try {
       // 1. Our PDF (isolated in a child process under sandbox mode).
       const ourPdfPath = resolve(workDir, name + '.our.pdf');
-      await ourConvert(input, isXlsx, ourPdfPath);
+      await ourConvert(input, ourPdfPath);
 
-      // 2. Reference PDF (sandboxed LibreOffice under sandbox mode).
-      const refPdfPath = referenceToPdf(input, workDir);
+      // 2. Reference PDF. For Office formats this is LibreOffice's golden render;
+      //    for a PDF *source* the reference is the original file, so the diff
+      //    measures our read→render roundtrip fidelity (LibreOffice's own PDF
+      //    import is too lossy to be a golden).
+      const refPdfPath = isPdf ? input : referenceToPdf(input, workDir);
 
       // 3. Rasterise + stext.
       const ourPpms = rasterize(ourPdfPath, resolve(workDir, name + '.our-%d.ppm'), DPI);
@@ -205,7 +212,7 @@ function renderReport(rows: Array<Row>, dpi: number): string {
   lines.push(`# Corpus validation report`);
   lines.push('');
   lines.push(
-    `Reference: LibreOffice \`soffice\`. Our profile: \`${PROFILE ?? 'ream'}\`` +
+    `Reference: LibreOffice \`soffice\` (PDF sources: the original file — a read→render roundtrip). Our profile: \`${PROFILE ?? 'ream'}\`` +
       `${AUTOFONT ? ' (autofont)' : ''}. Raster DPI: ${dpi}. ` +
       `Visual = worst-page pixel mismatch ratio (lower is better). ` +
       `TextSim = LCS char similarity vs reference (higher is better). ` +
