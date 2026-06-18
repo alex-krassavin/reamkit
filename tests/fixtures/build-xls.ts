@@ -344,6 +344,52 @@ export const hPageBreakRec = (rows: ReadonlyArray<number>): Uint8Array =>
 export const vPageBreakRec = (cols: ReadonlyArray<number>): Uint8Array =>
   pageBreakRec(0x001a, cols);
 
+// NAME / Lbl (0x0018): a workbook defined name (XLS-10). A built-in (Print_Area
+// 0x06 / Print_Titles 0x07) stores its id as the single name char; a regular name
+// stores the ascii string. The rgce is one or more PtgArea3d (0x3B) tokens,
+// optionally joined by tUnion (0x10) for a Print_Titles rows+cols pair.
+export function nameRec(opts: {
+  readonly builtinId?: number;
+  readonly name?: string;
+  readonly itab?: number; // 1-based sheet scope (0 = global)
+  readonly areas: ReadonlyArray<{
+    readonly r0: number;
+    readonly r1: number;
+    readonly c0: number;
+    readonly c1: number;
+    readonly ixti?: number;
+  }>;
+  readonly union?: boolean;
+}): Uint8Array {
+  const ptgs: Array<Uint8Array> = [];
+  opts.areas.forEach((a, i) => {
+    const p = new Uint8Array(11);
+    const v = new DataView(p.buffer);
+    p[0] = 0x3b; // PtgArea3d (ref class)
+    v.setUint16(1, a.ixti ?? 0, true); // ixti
+    v.setUint16(3, a.r0, true);
+    v.setUint16(5, a.r1, true);
+    v.setUint16(7, a.c0, true);
+    v.setUint16(9, a.c1, true);
+    ptgs.push(p);
+    if (opts.union && i > 0) ptgs.push(Uint8Array.of(0x10)); // tUnion
+  });
+  const rgce = concat(ptgs);
+
+  const nameChars =
+    opts.builtinId !== undefined ? Uint8Array.of(opts.builtinId) : ascii(opts.name ?? 'Name');
+  const cch = opts.builtinId !== undefined ? 1 : (opts.name ?? 'Name').length;
+
+  const head = new Uint8Array(14);
+  const hv = new DataView(head.buffer);
+  hv.setUint16(0, opts.builtinId !== undefined ? 0x0020 : 0x0000, true); // grbit (fBuiltin)
+  head[3] = cch;
+  hv.setUint16(4, rgce.length, true); // cce
+  hv.setUint16(8, opts.itab ?? 0, true); // itab (sheet scope)
+  // Name = XLUnicodeStringNoCch: flags(1) = 0 (8-bit) then the chars.
+  return rec(0x0018, concat([head, Uint8Array.of(0x00), nameChars, rgce]));
+}
+
 function sstData(strings: ReadonlyArray<string>): Uint8Array {
   const parts: Array<Uint8Array> = [];
   const head = new Uint8Array(8);
@@ -564,6 +610,7 @@ export function buildXls(opts: {
   readonly sst?: ReadonlyArray<string>;
   readonly date1904?: boolean;
   readonly styleRecords?: ReadonlyArray<Uint8Array>;
+  readonly globalRecords?: ReadonlyArray<Uint8Array>;
 }): Uint8Array {
   return buildCfb([{ name: 'Workbook', data: buildWorkbookStream(opts) }]);
 }
@@ -574,6 +621,9 @@ export function buildWorkbookStream(opts: {
   readonly date1904?: boolean;
   // FONT/FORMAT/XF/PALETTE records (already wrapped) injected into the globals.
   readonly styleRecords?: ReadonlyArray<Uint8Array>;
+  // Other already-wrapped workbook-global records (e.g. NAME / Lbl) — appended to
+  // the globals substream after the style records, before EOF.
+  readonly globalRecords?: ReadonlyArray<Uint8Array>;
 }): Uint8Array {
   // BoundSheet8 data is kept patchable; lbPlyPos is filled in once sheet sizes
   // are known. Records are wrapped (length-prefixed) only AFTER patching, since
@@ -590,9 +640,10 @@ export function buildWorkbookStream(opts: {
   if (opts.sst && opts.sst.length > 0) globalRecs.push({ type: 0x00fc, data: sstData(opts.sst) });
 
   const styleRecords = opts.styleRecords ?? [];
-  const styleLen = styleRecords.reduce((n, r) => n + r.length, 0);
+  const globalRecords = opts.globalRecords ?? [];
+  const extraLen = [...styleRecords, ...globalRecords].reduce((n, r) => n + r.length, 0);
   const eof = rec(0x000a, new Uint8Array(0));
-  const globalsLen = globalRecs.reduce((n, r) => n + 4 + r.data.length, 0) + styleLen + eof.length;
+  const globalsLen = globalRecs.reduce((n, r) => n + 4 + r.data.length, 0) + extraLen + eof.length;
 
   const sheetStreams = opts.sheets.map((s) =>
     concat([rec(0x0809, bofData(0x0010)), ...s.records, rec(0x000a, new Uint8Array(0))]),
@@ -609,6 +660,7 @@ export function buildWorkbookStream(opts: {
   const globalsBytes = concat([
     ...globalRecs.map((r) => rec(r.type, r.data)),
     ...styleRecords,
+    ...globalRecords,
     eof,
   ]);
   return concat([globalsBytes, ...sheetStreams]);

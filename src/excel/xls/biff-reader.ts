@@ -21,6 +21,7 @@ import type {
 } from '@/core/ir/sheet';
 import type {
   ColumnWidth,
+  DefinedName,
   HeaderFooter,
   MergedRange,
   ParsedWorksheet,
@@ -61,6 +62,7 @@ const REC = {
   MSODRAWING: 0x00ec, // per-sheet Escher shapes
   TXO: 0x01b6, // text object (text-box content)
   HLINK: 0x01b8, // cell/range hyperlink (§2.4.140)
+  NAME: 0x0018, // Lbl — workbook defined name (print area/titles, named range) XLS-10
   // Print model (all sheet-scoped) — XLS-9.
   SETUP: 0x00a1, // page setup (paper/scale/orientation/fit/header+footer margin)
   WSBOOL: 0x0081, // sheet flags — fFitToPage at 0x0100 (NOT 0x0085 = BoundSheet8)
@@ -108,9 +110,13 @@ export function readXlsToSheetDoc(xls: Uint8Array): SheetDoc {
   let date1904 = false;
   const boundSheets: Array<{ name: string; offset: number; type: number }> = [];
   let sharedStrings: ReadonlyArray<string> = [];
+  const lblRecords: Array<Uint8Array> = []; // defined names (Lbl), resolved after the loop
   for (let i = 0; i < globals.length; i++) {
     const rec = globals[i]!;
     switch (rec.type) {
+      case REC.NAME:
+        lblRecords.push(rec.data);
+        break;
       case REC.DATEMODE:
         date1904 = rec.data.length >= 2 && readU16(rec.data, 0) === 1;
         break;
@@ -167,7 +173,7 @@ export function readXlsToSheetDoc(xls: Uint8Array): SheetDoc {
     sheets,
     styles: parseBiffStyles(globals),
     sharedStrings,
-    definedNames: [],
+    definedNames: buildDefinedNames(lblRecords, boundSheets),
     date1904,
     resources,
     ...(chartData.size > 0 ? { chartData } : {}),
@@ -624,6 +630,170 @@ function parseBreaks(d: Uint8Array): Array<number> {
   const out: Array<number> = [];
   for (let k = 0; k < count && 2 + k * 6 + 2 <= d.length; k++) out.push(readU16(d, 2 + k * 6));
   return out;
+}
+
+// === Defined names (Lbl records) — XLS-10 ====================================
+
+// The built-in name ids the reader models — the print-model names that the
+// projection resolves (others, e.g. _FilterDatabase, carry no render meaning and
+// are skipped). The reserved _xlnm. prefix matches the OOXML reader's names.
+const BUILTIN_NAMES: ReadonlyMap<number, string> = new Map([
+  [0x06, '_xlnm.Print_Area'],
+  [0x07, '_xlnm.Print_Titles'],
+]);
+
+// One area extracted from a name's parsed formula, 0-based inclusive.
+interface NameArea {
+  r0: number;
+  r1: number;
+  c0: number;
+  c1: number;
+}
+
+// The workbook's Lbl (defined-name) records → DefinedName[] in the same shape the
+// OOXML reader produces, so the projection resolves print areas / titles (and the
+// writer round-trips named ranges) identically.
+function buildDefinedNames(
+  lblRecords: ReadonlyArray<Uint8Array>,
+  boundSheets: ReadonlyArray<{ name: string; offset: number; type: number }>,
+): Array<DefinedName> {
+  // Map a 1-based BoundSheet8 index → the 0-based worksheet index (type 0 only),
+  // since SheetDoc.sheets and localSheetId count only worksheets.
+  const wsIndex: Array<number | undefined> = [];
+  let ws = 0;
+  for (const bs of boundSheets) wsIndex.push(bs.type === 0 ? ws++ : undefined);
+
+  const out: Array<DefinedName> = [];
+  for (const d of lblRecords) {
+    const dn = parseLbl(d, wsIndex);
+    if (dn) out.push(dn);
+  }
+  return out;
+}
+
+// One Lbl record (§2.4.150) → a DefinedName, or undefined when it is an unmodelled
+// built-in, an unparseable formula, or scoped to a non-worksheet (missing, never
+// wrong). Layout: grbit(2) chKey(1) cch(1) cce(2) reserved(2) itab(2) reserved(4)
+// then the Name (XLUnicodeStringNoCch: flags(1) + chars) then the rgce formula.
+function parseLbl(
+  d: Uint8Array,
+  wsIndex: ReadonlyArray<number | undefined>,
+): DefinedName | undefined {
+  if (d.length < 15) return undefined;
+  const grbit = readU16(d, 0);
+  const builtin = (grbit & 0x0020) !== 0; // fBuiltin
+  const cch = d[3]!;
+  const cce = readU16(d, 4);
+  const itab = readU16(d, 8);
+  const nameFlags = d[14]!; // XLUnicodeStringNoCch flags (fHighByte = bit 0)
+  const highByte = (nameFlags & 0x01) !== 0;
+  const nameBytes = cch * (highByte ? 2 : 1);
+
+  let name: string;
+  if (builtin) {
+    const id = highByte ? readU16(d, 15) : (d[15] ?? 0xff); // the single built-in id char
+    const mapped = BUILTIN_NAMES.get(id);
+    if (mapped === undefined) return undefined;
+    name = mapped;
+  } else {
+    name = decodeChars(d, 15, cch, highByte);
+    if (name.length === 0) return undefined;
+  }
+
+  const rgceOff = 15 + nameBytes;
+  const value = formatNameValue(d.subarray(rgceOff, Math.min(d.length, rgceOff + cce)));
+  if (value === undefined) return undefined; // unparseable formula → skip
+
+  if (itab > 0) {
+    const localSheetId = wsIndex[itab - 1];
+    if (localSheetId === undefined) return undefined; // scoped to a non-worksheet
+    return { name, value, localSheetId };
+  }
+  return { name, value };
+}
+
+// A name's NameParsedFormula (Rgce) → an A1-style value string (the form the
+// OOXML defined-name resolver parses). Walks the ptg stream collecting the cell
+// ranges it references; any unrecognized ptg aborts the walk so a name resolves
+// to its ranges or to nothing — never to a wrong range.
+function formatNameValue(rgce: Uint8Array): string | undefined {
+  const areas = extractNameAreas(rgce);
+  return areas ? areas.map(formatArea).join(',') : undefined;
+}
+
+function extractNameAreas(rgce: Uint8Array): Array<NameArea> | undefined {
+  const areas: Array<NameArea> = [];
+  let off = 0;
+  while (off < rgce.length) {
+    const ptg = rgce[off]!;
+    const base = ptg & 0x1f;
+    // Operand ptgs carry a class in bits 5–6 (ptg ≥ 0x20); operators are < 0x20.
+    if (ptg >= 0x20 && base === 0x05) {
+      // PtgArea (2-D): an 8-byte RgceArea.
+      if (off + 9 > rgce.length) return undefined;
+      areas.push(readArea(rgce, off + 1));
+      off += 9;
+    } else if (ptg >= 0x20 && base === 0x1b) {
+      // PtgArea3d: a 2-byte ixti then the 8-byte area.
+      if (off + 11 > rgce.length) return undefined;
+      areas.push(readArea(rgce, off + 3));
+      off += 11;
+    } else if (ptg >= 0x20 && base === 0x04) {
+      // PtgRef (single cell): a 4-byte RgceLoc.
+      if (off + 5 > rgce.length) return undefined;
+      areas.push(readCell(rgce, off + 1));
+      off += 5;
+    } else if (ptg >= 0x20 && base === 0x1a) {
+      // PtgRef3d: ixti then the 4-byte loc.
+      if (off + 7 > rgce.length) return undefined;
+      areas.push(readCell(rgce, off + 3));
+      off += 7;
+    } else if (ptg >= 0x20 && base === 0x09) {
+      off += 3; // PtgMemFunc: ptg + cce; the subexpression follows inline
+    } else if (ptg >= 0x20 && base === 0x06) {
+      off += 7; // PtgMemArea: ptg + reserved(4) + cce; subexpression inline
+    } else if (ptg === 0x10 || ptg === 0x0f || ptg === 0x11 || ptg === 0x15) {
+      off += 1; // tUnion (,) / tIsect (space) / tRange (:) / tParen
+    } else {
+      return undefined; // an unmodelled ptg — abort rather than risk a wrong range
+    }
+  }
+  return areas.length > 0 ? areas : undefined;
+}
+
+function readArea(d: Uint8Array, off: number): NameArea {
+  return {
+    r0: readU16(d, off),
+    r1: readU16(d, off + 2),
+    c0: readU16(d, off + 4) & 0x3fff,
+    c1: readU16(d, off + 6) & 0x3fff,
+  };
+}
+function readCell(d: Uint8Array, off: number): NameArea {
+  const r = readU16(d, off);
+  const c = readU16(d, off + 2) & 0x3fff;
+  return { r0: r, r1: r, c0: c, c1: c };
+}
+
+// An area → an A1 token: a whole-row band (full column span) is "r0:r1", a
+// whole-column band is "cA:cB", a single cell is "A1", else "A1:B2".
+function formatArea(a: NameArea): string {
+  const fullWidth = a.c0 === 0 && a.c1 >= 0xff; // repeat-rows band
+  const fullHeight = a.r0 === 0 && a.r1 >= 0xffff; // repeat-columns band
+  if (fullWidth && !fullHeight) return `${a.r0 + 1}:${a.r1 + 1}`;
+  if (fullHeight && !fullWidth) return `${colLetters(a.c0)}:${colLetters(a.c1)}`;
+  const tl = `${colLetters(a.c0)}${a.r0 + 1}`;
+  return a.r0 === a.r1 && a.c0 === a.c1 ? tl : `${tl}:${colLetters(a.c1)}${a.r1 + 1}`;
+}
+function colLetters(c: number): string {
+  let n = c + 1;
+  let s = '';
+  while (n > 0) {
+    n--;
+    s = String.fromCharCode(65 + (n % 26)) + s;
+    n = Math.floor(n / 26);
+  }
+  return s;
 }
 
 // A sheet's TXO (text-object) record texts, in order — the cch is in the TXO

@@ -23,6 +23,7 @@ import {
   leftMarginRec,
   mergeCellsRec,
   mulRkRec,
+  nameRec,
   numberRec,
   printGridlinesRec,
   rec,
@@ -39,6 +40,7 @@ import type { SheetDoc } from '@/core/ir/sheet';
 import type { WorksheetCell } from '@/core/spreadsheet-model';
 import { decodeRk, readSst, readXlsToSheetDoc } from '@/excel/xls/biff-reader';
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
+import { resolvePrintArea, resolvePrintTitleRows } from '@/excel/print-model';
 
 const cellAt = (
   doc: SheetDoc,
@@ -299,6 +301,56 @@ describe('xls print model (XLS-9)', () => {
   it('projects a landscape sheet to a wider-than-tall page', () => {
     const flow = projectSheetDoc(sheetDoc([setupRec({ landscape: true, paperSize: 1 })]));
     expect(flow.section.pageSize.width).toBeGreaterThan(flow.section.pageSize.height);
+  });
+});
+
+describe('xls defined names (XLS-10)', () => {
+  const docWith = (globalRecords: ReadonlyArray<Uint8Array>): SheetDoc =>
+    readXlsToSheetDoc(
+      buildXls({ sheets: [{ name: 'S', records: [numberRec(0, 0, 1)] }], globalRecords }),
+    );
+
+  it('reads a Print_Area built-in name scoped to its sheet', () => {
+    const doc = docWith([
+      nameRec({ builtinId: 0x06, itab: 1, areas: [{ r0: 0, r1: 9, c0: 0, c1: 3 }] }),
+    ]);
+    expect(doc.definedNames).toEqual([
+      { name: '_xlnm.Print_Area', localSheetId: 0, value: 'A1:D10' },
+    ]);
+    expect(resolvePrintArea(doc.definedNames, 0)).toEqual({
+      startColumn: 0,
+      startRow: 0,
+      endColumn: 3,
+      endRow: 9,
+    });
+  });
+
+  it('reads Print_Titles repeat-rows from the union formula', () => {
+    const doc = docWith([
+      nameRec({
+        builtinId: 0x07,
+        itab: 1,
+        union: true,
+        areas: [
+          { r0: 0, r1: 1, c0: 0, c1: 255 }, // rows 1-2 (repeat rows; full column span)
+          { r0: 0, r1: 65535, c0: 0, c1: 0 }, // column A (repeat cols; full row span)
+        ],
+      }),
+    ]);
+    expect(doc.definedNames[0]!.name).toBe('_xlnm.Print_Titles');
+    expect(resolvePrintTitleRows(doc.definedNames, 0)).toEqual({ startRow: 0, endRow: 1 });
+  });
+
+  it('reads a regular (user) named range', () => {
+    const doc = docWith([
+      nameRec({ name: 'MyRange', itab: 0, areas: [{ r0: 1, r1: 4, c0: 1, c1: 2 }] }),
+    ]);
+    expect(doc.definedNames).toEqual([{ name: 'MyRange', value: 'B2:C5' }]);
+  });
+
+  it('skips a name with no resolvable reference (no wrong range)', () => {
+    const doc = docWith([nameRec({ name: 'Empty', itab: 0, areas: [] })]);
+    expect(doc.definedNames).toEqual([]);
   });
 });
 
