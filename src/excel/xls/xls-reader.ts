@@ -26,16 +26,18 @@ function looksLikeXls(bytes: Uint8Array): boolean {
   }
 }
 
-// The visual content of a `.xls` — cell values, styling, images, charts and
-// drawing shapes — is read; what remains are the secondary sheet features, which
-// have BIFF records the reader does not yet parse. Reported so a caller's loss
-// report is honest about the gap.
+// A `.xls` sheet's cell data, styling, images, charts, drawing shapes and its
+// secondary features (conditional formatting — including the 2007 colour-scale /
+// data-bar / icon-set extensions —, comments, hyperlinks, data validation, defined
+// names and the page-setup print model) are read; what remains are frozen panes and
+// Excel tables / autofilter, whose BIFF records the reader does not yet parse.
+// Reported so a caller's loss report is honest about the gap.
 const XLS_LOSSES: ReadonlyArray<Loss> = [
   {
     severity: 'degraded',
     feature: FEATURES.cellFormatting,
     detail:
-      "legacy .xls secondary features (conditional formatting, comments, hyperlinks, data validation, defined names, the page-setup print model) are not read; the sheet's cell data, styling, images, charts and drawing shapes are",
+      'legacy .xls frozen panes and Excel tables / autofilter are not read; the sheet’s cell data, styling, images, charts, drawing shapes, conditional formatting, comments, hyperlinks, data validation, defined names and page-setup print model are',
   },
 ];
 

@@ -23,7 +23,12 @@ import type {
 import type {
   CfOperator,
   CfRuleCellIs,
+  CfRuleColorScale,
+  CfRuleDataBar,
   CfRuleExpression,
+  CfRuleIconSet,
+  Cfvo,
+  CfvoType,
   ColumnWidth,
   ConditionalFormat,
   DataValidation,
@@ -95,6 +100,9 @@ const REC = {
   // Conditional formatting (sheet-scoped) — XLS-13.
   CONDFMT: 0x01b0, // CondFmt — the range set + count of CF rules that follow
   CF: 0x01b1, // one CF rule (classic cellIs / expression)
+  // Conditional formatting v12 (Excel 2007+ graphical rules) — XLS-CF12.
+  CONDFMT12: 0x0879, // CondFmt12 — the range set + count of CF12 rules that follow
+  CF12: 0x087a, // one CF12 rule (colour scale / data bar / icon set, …)
 } as const;
 
 // Bombs / corruption guards.
@@ -387,7 +395,10 @@ function readSheet(
   }
 
   const dataValidations = parseDataValidations(records);
-  const conditionalFormats = parseConditionalFormats(records, dxfs, cfColor);
+  const conditionalFormats = [
+    ...parseConditionalFormats(records, dxfs, cfColor),
+    ...parseConditionalFormats12(records, cfColor),
+  ];
   const grid: ParsedWorksheet = {
     cells,
     maxRow,
@@ -985,9 +996,10 @@ const DXF_PATTERN = 0x20000000;
 const DXF_PROT = 0x40000000;
 
 // A sheet's CondFmt + CF runs → ConditionalFormat[] (classic cellIs / expression
-// rules; the CF12 colorScale/dataBar/iconSet extensions are a separate record set
-// and are not read). Each CondFmt (0x1B0) gives the sqref ranges and a count of CF
-// (0x1B1) records that follow; each CF appends its dxf to the workbook `dxfs` array
+// rules; the CF12 colorScale/dataBar/iconSet extensions ride a separate record set
+// read by parseConditionalFormats12). Each CondFmt (0x1B0) gives the sqref ranges
+// and a count of CF (0x1B1) records that follow; each CF appends its dxf to the
+// workbook `dxfs` array
 // (its index = the rule's dxfId), so the projection resolves the fill exactly as
 // the OOXML path does.
 function parseConditionalFormats(
@@ -1106,6 +1118,262 @@ function cfConstant(rgce: Uint8Array): string | undefined {
     return `"${decodeChars(rgce, 3, rgce[1]!, (rgce[2]! & 0x01) !== 0)}"`; // PtgStr
   }
   return undefined;
+}
+
+// === Conditional formatting v12 (CondFmt12 + CF12) — XLS-CF12 =================
+//
+// Excel 2007+ writes its modern, "graphical" conditional formats — colour scales,
+// data bars and icon sets, which the classic CF record (cellIs/expression only)
+// cannot express — as a future-record block: one CondFmt12 (0x0879) carrying the
+// ranges and a rule count, then that many CF12 (0x087A) records. The wire layout is
+// MS-XLS §2.4.42/§2.4.43 and Apache POI's CFRule12Record + ColorGradient/DataBar/
+// IconMultiState formatting; the substructure offsets were ground-truthed against a
+// real Excel-authored sample (POI's ConditionalFormattingSamples.xls — 22 CondFmt12
+// / 24 CF12). Only the three graphical types are read here: a CF12 cellIs/expression
+// rule is already covered by the classic CF path, and any colour that is theme-
+// relative (not a literal sRGB value or a palette index) is left unresolved so the
+// rule is skipped rather than rendered with a guessed colour — missing, never wrong.
+
+const FTR_HEADER = 12; // FrtRefHeaderU = rt(2) + grbitFrt(2) + ref8U(8)
+const CF12_COLOR_SCALE = 3; // conditionType (MS-XLS §2.4.42 ct)
+const CF12_DATA_BAR = 4;
+const CF12_ICON_SET = 6;
+const CF12_ICON_REVERSED = 0x04; // IconMultiStateFormatting options bit (POI)
+
+// IconSet id (MS-XLS) → the OOXML iconSet name the model + renderer already share.
+const CF12_ICON_SETS: ReadonlyArray<string> = [
+  '3Arrows',
+  '3ArrowsGray',
+  '3Flags',
+  '3TrafficLights1',
+  '3TrafficLights2',
+  '3Signs',
+  '3Symbols',
+  '3Symbols2',
+  '4Arrows',
+  '4ArrowsGray',
+  '4RedToBlack',
+  '4Rating',
+  '4TrafficLights',
+  '5Arrows',
+  '5ArrowsGray',
+  '5Rating',
+  '5Quarters',
+];
+
+// CFVO threshold type id (MS-XLS RangeType) → CfvoType; 0 and 6 are unmapped.
+const CF12_CFVO_TYPES: ReadonlyArray<CfvoType | undefined> = [
+  undefined,
+  'num',
+  'min',
+  'max',
+  'percent',
+  'percentile',
+  undefined,
+  'formula',
+];
+
+// A moving byte cursor over a record's data — the CF12 substructures are a chain of
+// variable-length fields, so an advancing offset reads cleaner than index maths.
+interface Cur {
+  readonly d: Uint8Array;
+  p: number;
+}
+const u8 = (c: Cur): number => c.d[c.p++] ?? 0;
+const u16At = (c: Cur): number => {
+  const v = readU16(c.d, c.p);
+  c.p += 2;
+  return v;
+};
+const i32At = (c: Cur): number => {
+  const v = readU32(c.d, c.p) | 0;
+  c.p += 4;
+  return v;
+};
+const f64At = (c: Cur): number => {
+  const v = readF64(c.d, c.p);
+  c.p += 8;
+  return v;
+};
+
+// One byte triple → an upper-case 6-hex-digit colour, matching the palette resolver.
+function rgbToHex(r: number, g: number, b: number): string {
+  return (
+    r.toString(16).padStart(2, '0') +
+    g.toString(16).padStart(2, '0') +
+    b.toString(16).padStart(2, '0')
+  ).toUpperCase();
+}
+
+// FullColorExt (POI ExtendedColor, 16 bytes): xclrType(4), 4 type-specific bytes
+// (palette index / literal R,G,B,A / theme index), numTint(8). Resolves a literal
+// sRGB or a palette index; a theme-relative or auto colour returns undefined.
+function readExtColor(c: Cur, color: (icv: number) => string | undefined): string | undefined {
+  if (c.p + 16 > c.d.length) return undefined;
+  const xclrType = i32At(c);
+  let hex: string | undefined;
+  if (xclrType === 1) {
+    hex = color(i32At(c)); // indexed (palette)
+  } else if (xclrType === 2) {
+    hex = rgbToHex(c.d[c.p] ?? 0, c.d[c.p + 1] ?? 0, c.d[c.p + 2] ?? 0); // literal R,G,B(,A)
+    c.p += 4;
+  } else {
+    c.p += 4; // themed / auto / unset → unresolved
+  }
+  c.p += 8; // numTint — not applied (a faithful tint needs the resolved base colour)
+  return hex;
+}
+
+// CFVO / Threshold (POI Threshold): type(1), cce(2), rgce(cce); a literal value(8)
+// follows only when there is no formula and the type is not min/max. `trailer` is
+// the subclass tail consumed after the base: ColorGradient +8 (position), IconMulti
+// +5 (equals + reserved), DataBar 0.
+function readCfvo(c: Cur, trailer: number): Cfvo | undefined {
+  if (c.p + 3 > c.d.length) return undefined;
+  const typeId = u8(c);
+  const cce = u16At(c);
+  c.p += cce; // the rgce formula — not translated to A1 here
+  let val: string | undefined;
+  if (cce === 0 && typeId !== 2 && typeId !== 3) val = String(f64At(c));
+  c.p += trailer;
+  const type = CF12_CFVO_TYPES[typeId];
+  if (type === undefined || c.p > c.d.length) return undefined;
+  return val !== undefined ? { type, val } : { type };
+}
+
+// ColorGradientFormatting: short(2,ignored) reserved(1) numI(1) numG(1) options(1),
+// then numI ColorGradientThresholds, then numG × [step(8) + ExtendedColor].
+function readColorScale(
+  c: Cur,
+  priority: number,
+  color: (icv: number) => string | undefined,
+): CfRuleColorScale | undefined {
+  c.p += 3; // 2 ignored + 1 reserved
+  const numI = u8(c);
+  const numG = u8(c);
+  c.p += 1; // options
+  if (numI < 2 || numI > 3 || numI !== numG) return undefined;
+  const cfvos: Array<Cfvo> = [];
+  for (let k = 0; k < numI; k++) {
+    const v = readCfvo(c, 8); // ColorGradientThreshold: + position(8)
+    if (!v) return undefined;
+    cfvos.push(v);
+  }
+  const colorsHex: Array<string> = [];
+  for (let k = 0; k < numG; k++) {
+    c.p += 8; // step counter (double)
+    const hex = readExtColor(c, color);
+    if (!hex) return undefined; // a theme-relative stop → skip the whole scale
+    colorsHex.push(hex);
+  }
+  if (c.p > c.d.length) return undefined;
+  return { type: 'colorScale', priority, cfvos, colorsHex };
+}
+
+// DataBarFormatting: short(2,ignored) reserved(1) options(1) percentMin(1)
+// percentMax(1), ExtendedColor, then the min and max DataBarThresholds.
+function readDataBar(
+  c: Cur,
+  priority: number,
+  color: (icv: number) => string | undefined,
+): CfRuleDataBar | undefined {
+  c.p += 4; // 2 ignored + 1 reserved + 1 options
+  const minLength = u8(c); // percentMin
+  const maxLength = u8(c); // percentMax
+  const colorHex = readExtColor(c, color);
+  if (!colorHex) return undefined;
+  const lo = readCfvo(c, 0);
+  const hi = readCfvo(c, 0);
+  if (!lo || !hi) return undefined;
+  return { type: 'dataBar', priority, cfvos: [lo, hi], colorHex, minLength, maxLength };
+}
+
+// IconMultiStateFormatting: short(2,ignored) reserved(1) num(1) set(1) options(1),
+// then num IconMultiStateThresholds. `set` indexes CF12_ICON_SETS; options bit 2
+// reverses the glyph order.
+function readIconSet(c: Cur, priority: number): CfRuleIconSet | undefined {
+  c.p += 3; // 2 ignored + 1 reserved
+  const num = u8(c);
+  const setId = u8(c);
+  const options = u8(c);
+  const iconSet = CF12_ICON_SETS[setId];
+  if (iconSet === undefined || num < 3 || num > 5) return undefined;
+  const cfvos: Array<Cfvo> = [];
+  for (let k = 0; k < num; k++) {
+    const v = readCfvo(c, 5); // IconMultiStateThreshold: + equals(1) + reserved(4)
+    if (!v) return undefined;
+    cfvos.push(v);
+  }
+  const reverse = (options & CF12_ICON_REVERSED) !== 0;
+  return { type: 'iconSet', priority, iconSet, cfvos, ...(reverse ? { reverse } : {}) };
+}
+
+// One CF12 (0x087A) record → a colour-scale / data-bar / icon-set rule, or undefined
+// for the other condition types (left to the classic CF path) or an unresolved
+// colour. The header is fully length-prefixed (MS-XLS §2.4.42), so the cursor skips
+// each field by its own count and a field we don't model can't desync the parse.
+function parseCf12Rule(
+  d: Uint8Array,
+  color: (icv: number) => string | undefined,
+): CfRuleColorScale | CfRuleDataBar | CfRuleIconSet | undefined {
+  if (d.length < FTR_HEADER + 16) return undefined;
+  const c: Cur = { d, p: FTR_HEADER };
+  const ct = u8(c); // conditionType
+  c.p += 1; // comparisonOperation
+  const cce1 = u16At(c);
+  const cce2 = u16At(c);
+  const extLen = i32At(c);
+  c.p += extLen === 0 ? 2 : extLen; // 2 reserved bytes, or the ext-formatting (DXF) block
+  c.p += cce1 + cce2; // formula1 + formula2
+  const scaleLen = u16At(c); // formula_scale is length-prefixed (read length, then skip)
+  c.p += scaleLen;
+  c.p += 1; // ext_opts
+  const priority = u16At(c); // the OOXML priority (1 = highest)
+  c.p += 2; // template_type — the semantics come from conditionType for these three
+  const tplLen = u8(c); // template_params is length-prefixed (read length, then skip)
+  c.p += tplLen;
+  if (c.p > d.length) return undefined;
+  if (ct === CF12_COLOR_SCALE) return readColorScale(c, priority, color);
+  if (ct === CF12_DATA_BAR) return readDataBar(c, priority, color);
+  if (ct === CF12_ICON_SET) return readIconSet(c, priority);
+  return undefined;
+}
+
+// CondFmt12 (0x0879) + the CF12 (0x087A) rules that follow → ConditionalFormat[],
+// mirroring parseConditionalFormats: the header gives the sqref ranges and rule
+// count, then the next `numcf` CF12 records carry the rules (graphical types only).
+function parseConditionalFormats12(
+  records: ReadonlyArray<BiffRecord>,
+  color: (icv: number) => string | undefined,
+): Array<ConditionalFormat> {
+  const out: Array<ConditionalFormat> = [];
+  for (let i = 0; i < records.length; i++) {
+    if (records[i]!.type !== REC.CONDFMT12) continue;
+    const head = records[i]!.data;
+    if (head.length < FTR_HEADER + 14) continue;
+    const numcf = readU16(head, FTR_HEADER); // field_1_numcf
+    const cref = readU16(head, FTR_HEADER + 12); // CellRangeAddressList count
+    const ranges: Array<MergedRange> = [];
+    for (let k = 0; k < cref && FTR_HEADER + 14 + k * 8 + 8 <= head.length; k++) {
+      const o = FTR_HEADER + 14 + k * 8;
+      ranges.push({
+        startRow: readU16(head, o),
+        endRow: readU16(head, o + 2),
+        startColumn: readU16(head, o + 4),
+        endColumn: readU16(head, o + 6),
+      });
+    }
+    const rules: Array<CfRuleColorScale | CfRuleDataBar | CfRuleIconSet> = [];
+    let seen = 0;
+    for (let j = i + 1; j < records.length && seen < numcf; j++) {
+      if (records[j]!.type !== REC.CF12) break;
+      seen++;
+      const rule = parseCf12Rule(records[j]!.data, color);
+      if (rule) rules.push(rule);
+    }
+    if (ranges.length > 0 && rules.length > 0) out.push({ ranges, rules });
+  }
+  return out;
 }
 
 // A sheet's TXO (text-object) record texts, in order — the cch is in the TXO

@@ -739,6 +739,131 @@ export function cfRec(opts: {
   return rec(0x01b1, concat([head, ...dxfParts, rgce1, rgce2]));
 }
 
+// === Conditional formatting v12 (CondFmt12 + CF12) — XLS-CF12 =================
+// Byte layouts mirror MS-XLS §2.4.42/§2.4.43 and a real Excel-authored sample.
+
+// CFVO threshold type id (MS-XLS RangeType): 1 num, 2 min, 3 max, 4 percent,
+// 5 percentile, 7 formula.
+export interface Cf12Cfvo {
+  readonly type: number;
+  readonly value?: number; // present (and read) only when type is not min/max
+}
+
+// A Threshold (CFVO): type(1), cce(2)=0, then value(8) when there is a value, then
+// `trailer` subclass bytes (colour-scale +8 position, icon-set +5, data-bar 0).
+function cf12Cfvo(v: Cf12Cfvo, trailer: number): Uint8Array {
+  const hasVal = v.value !== undefined;
+  const d = new Uint8Array(3 + (hasVal ? 8 : 0) + trailer);
+  d[0] = v.type; // cce stays 0
+  if (v.value !== undefined) new DataView(d.buffer).setFloat64(3, v.value, true);
+  return d;
+}
+
+// A FullColorExt (ExtendedColor, 16 bytes) carrying a literal sRGB value.
+function cf12ExtColor([r, g, b]: readonly [number, number, number]): Uint8Array {
+  const d = new Uint8Array(16);
+  new DataView(d.buffer).setUint32(0, 2, true); // xclrType = RGB
+  d[4] = r;
+  d[5] = g;
+  d[6] = b;
+  d[7] = 0xff; // alpha
+  return d; // numTint left 0
+}
+
+// The 48-byte CF12 header (FtrHeader … template_params) shared by every rule, with
+// all formula lengths and the ext-formatting length zero.
+function cf12Head(ct: number, priority: number, templateType: number): Uint8Array {
+  const head = new Uint8Array(48);
+  const v = new DataView(head.buffer);
+  v.setUint16(0, 0x087a, true); // FtrHeader.rt
+  head[12] = ct; // conditionType
+  // cp @13, cce1 @14, cce2 @16, extLen @18(4), reserved @22, scale_len @24, ext_opts @26 = 0
+  v.setUint16(27, priority, true); // priority
+  v.setUint16(29, templateType, true); // template_type
+  head[31] = 16; // template_param_length (params @32..47 = 0)
+  return head;
+}
+
+// CF12 (0x087A) — a colour-scale rule: N stops, each a CFVO (+ 8-byte position) and
+// a literal-sRGB ExtendedColor (preceded by an 8-byte step counter).
+export function cf12ColorScaleRec(opts: {
+  readonly priority?: number;
+  readonly stops: ReadonlyArray<{ cfvo: Cf12Cfvo; rgb: readonly [number, number, number] }>;
+}): Uint8Array {
+  const n = opts.stops.length;
+  const sub = new Uint8Array(6);
+  sub[3] = n; // numI
+  sub[4] = n; // numG
+  const thresholds = opts.stops.map((s) => cf12Cfvo(s.cfvo, 8));
+  const colors = opts.stops.map((s) => concat([new Uint8Array(8), cf12ExtColor(s.rgb)]));
+  const struct = concat([sub, ...thresholds, ...colors]);
+  return rec(0x087a, concat([cf12Head(3, opts.priority ?? 1, 0x02), struct]));
+}
+
+// CF12 (0x087A) — a data-bar rule: options/percentMin/percentMax, the bar colour,
+// then the lower and upper CFVO thresholds.
+export function cf12DataBarRec(opts: {
+  readonly priority?: number;
+  readonly rgb: readonly [number, number, number];
+  readonly percentMin?: number;
+  readonly percentMax?: number;
+  readonly min: Cf12Cfvo;
+  readonly max: Cf12Cfvo;
+}): Uint8Array {
+  const sub = new Uint8Array(6);
+  sub[4] = opts.percentMin ?? 0;
+  sub[5] = opts.percentMax ?? 100;
+  const struct = concat([
+    sub,
+    cf12ExtColor(opts.rgb),
+    cf12Cfvo(opts.min, 0),
+    cf12Cfvo(opts.max, 0),
+  ]);
+  return rec(0x087a, concat([cf12Head(4, opts.priority ?? 1, 0x03), struct]));
+}
+
+// CF12 (0x087A) — an icon-set rule: the icon-set id, options (bit 2 reverses), and
+// one CFVO threshold per icon (each + a 5-byte equals/reserved trailer).
+export function cf12IconSetRec(opts: {
+  readonly priority?: number;
+  readonly setId: number;
+  readonly reverse?: boolean;
+  readonly thresholds: ReadonlyArray<Cf12Cfvo>;
+}): Uint8Array {
+  const sub = new Uint8Array(6);
+  sub[3] = opts.thresholds.length; // num
+  sub[4] = opts.setId; // set
+  sub[5] = opts.reverse ? 0x04 : 0; // options (REVERSED)
+  const struct = concat([sub, ...opts.thresholds.map((t) => cf12Cfvo(t, 5))]);
+  return rec(0x087a, concat([cf12Head(6, opts.priority ?? 1, 0x04), struct]));
+}
+
+// CondFmt12 (0x0879) — the CF12 group header: numcf + a needs-recalc/id word, the
+// enclosing CellRangeAddress, then the CellRangeAddressList the rules apply to.
+export function condFmt12Rec(opts: {
+  readonly numcf: number;
+  readonly ranges: ReadonlyArray<{ r0: number; r1: number; c0: number; c1: number }>;
+}): Uint8Array {
+  const d = new Uint8Array(24 + 2 + opts.ranges.length * 8);
+  const v = new DataView(d.buffer);
+  v.setUint16(0, 0x0879, true); // FtrHeader.rt
+  v.setUint16(12, opts.numcf, true); // numcf
+  const b = opts.ranges[0] ?? { r0: 0, r1: 0, c0: 0, c1: 0 }; // enclosing bbox
+  v.setUint16(16, b.r0, true);
+  v.setUint16(18, b.r1, true);
+  v.setUint16(20, b.c0, true);
+  v.setUint16(22, b.c1, true);
+  v.setUint16(24, opts.ranges.length, true); // CellRangeAddressList count
+  opts.ranges.forEach((r, k) => {
+    const o = 26 + k * 8;
+    v.setUint16(o, r.r0, true);
+    v.setUint16(o + 2, r.r1, true);
+    v.setUint16(o + 4, r.c0, true);
+    v.setUint16(o + 6, r.c1, true);
+  });
+  return rec(0x0879, d);
+}
+
 export interface XlsSheetInput {
   readonly name: string;
   readonly records: ReadonlyArray<Uint8Array>;

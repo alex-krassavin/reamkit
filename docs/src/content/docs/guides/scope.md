@@ -117,10 +117,11 @@ charts — and is byte-stable across a read↔write loop.
   header/footer and manual page breaks), **defined names** (named ranges plus the
   print area and repeated titles, from the NAME records), **cell comments** (the
   Note record's author + the text-box text), **data validation** (the rule type,
-  ranges and a `list` rule's in-cell dropdown) and **conditional formatting** (the
-  classic `cellIs` / `expression` rules with their differential fill / font colour).
-  Only the 2007 colour-scale / data-bar / icon-set extensions (the CF12 records,
-  present only in a `.xls` re-saved by Excel 2007+) degrade gracefully.
+  ranges and a `list` rule's in-cell dropdown) and **conditional formatting** — both
+  the classic `cellIs` / `expression` rules (with their differential fill / font
+  colour) and the 2007 **colour-scale / data-bar / icon-set** extensions (the CF12
+  records, present only in a `.xls` re-saved by Excel 2007+); only a graphical rule
+  whose colour is theme-relative rather than a literal value degrades gracefully.
 - The print model — gridline suppression, print area, fit-to-page scaling, repeated
   print titles, manual page breaks, horizontal/vertical centering, and **column-band
   pagination**: a sheet wider than the page (and not fit-to-width) splits across
@@ -267,9 +268,10 @@ charts — and is byte-stable across a read↔write loop.
   a legacy `.doc` table cell's **background shading**; a legacy `.ppt` shape's
   **palette-relative colour** (literal, scheme- and system-relative colours resolve)
   or a rare **arc / ellipse freeform segment** (it falls back to the path's preset
-  bounds); the legacy `.xls` **2007 conditional-format extensions** (colour scales /
-  data bars / icon sets — the `CF12` records, which only exist in a `.xls` re-saved by
-  Excel 2007+); and an ActiveX **CommandButton / Label** whose caption is persisted
+  bounds); a legacy `.xls` colour-scale / data-bar / icon-set rule (a 2007 `CF12`
+  record) whose colour is **theme-relative** rather than a literal value (the rules
+  themselves, with literal or palette colours, are read); and an ActiveX
+  **CommandButton / Label** whose caption is persisted
   only to a binary `.bin` (the MorphData control family — check box / option / toggle
   / text / combo / list — and every property-bag control _are_ read, with their
   caption and value).

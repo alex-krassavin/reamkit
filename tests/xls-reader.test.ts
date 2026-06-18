@@ -11,8 +11,12 @@ import {
   boolRec,
   bottomMarginRec,
   buildXls,
+  cf12ColorScaleRec,
+  cf12DataBarRec,
+  cf12IconSetRec,
   cfRec,
   commentObjRec,
+  condFmt12Rec,
   condFmtRec,
   dvRec,
   errRec,
@@ -581,12 +585,160 @@ describe('xls conditional formatting (XLS-13)', () => {
     expect(cell?.properties.shading).toBeUndefined();
   });
 
-  it('skips an unmodelled CF12 record gracefully', () => {
+  it('ignores a CF12 rule that has no CondFmt12 header', () => {
     const doc = readXlsToSheetDoc(
       buildXls({
         sheets: [{ name: 'S', records: [numberRec(0, 0, 1), rec(0x087a, new Uint8Array(20))] }],
       }),
     );
+    expect(doc.sheets[0]!.grid.conditionalFormats).toBeUndefined();
+  });
+});
+
+describe('xls conditional formatting v12 (XLS-CF12)', () => {
+  // Read a sheet whose A1:A3 carries the values 1/2/3 plus the given CF12 rule
+  // (CondFmt12 header + one CF12 record), produced by the build-xls fixture.
+  const cf12Sheet = (rule: Uint8Array): SheetDoc =>
+    readXlsToSheetDoc(
+      buildXls({
+        sheets: [
+          {
+            name: 'S',
+            records: [
+              numberRec(0, 0, 1),
+              numberRec(1, 0, 2),
+              numberRec(2, 0, 3),
+              condFmt12Rec({ numcf: 1, ranges: [{ r0: 0, r1: 2, c0: 0, c1: 0 }] }),
+              rule,
+            ],
+          },
+        ],
+      }),
+    );
+
+  it('reads a 3-stop colour scale (cfvos + literal sRGB colours)', () => {
+    const doc = cf12Sheet(
+      cf12ColorScaleRec({
+        priority: 1,
+        stops: [
+          { cfvo: { type: 2 }, rgb: [0xf8, 0x69, 0x6b] }, // min  → F8696B
+          { cfvo: { type: 5, value: 50 }, rgb: [0xff, 0xeb, 0x84] }, // percentile 50 → FFEB84
+          { cfvo: { type: 3 }, rgb: [0x63, 0xbe, 0x7b] }, // max  → 63BE7B
+        ],
+      }),
+    );
+    expect(doc.sheets[0]!.grid.conditionalFormats).toEqual([
+      {
+        ranges: [{ startRow: 0, endRow: 2, startColumn: 0, endColumn: 0 }],
+        rules: [
+          {
+            type: 'colorScale',
+            priority: 1,
+            cfvos: [{ type: 'min' }, { type: 'percentile', val: '50' }, { type: 'max' }],
+            colorsHex: ['F8696B', 'FFEB84', '63BE7B'],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('reads a data bar (colour + min/max cfvos + percent clamps)', () => {
+    const doc = cf12Sheet(
+      cf12DataBarRec({
+        priority: 2,
+        rgb: [0x63, 0x8e, 0xc6],
+        percentMin: 10,
+        percentMax: 90,
+        min: { type: 2 },
+        max: { type: 3 },
+      }),
+    );
+    expect(doc.sheets[0]!.grid.conditionalFormats?.[0]?.rules[0]).toEqual({
+      type: 'dataBar',
+      priority: 2,
+      cfvos: [{ type: 'min' }, { type: 'max' }],
+      colorHex: '638EC6',
+      minLength: 10,
+      maxLength: 90,
+    });
+  });
+
+  it('reads an icon set (named set + per-icon cfvos + reverse)', () => {
+    const doc = cf12Sheet(
+      cf12IconSetRec({
+        priority: 3,
+        setId: 3, // 3TrafficLights1
+        reverse: true,
+        thresholds: [
+          { type: 4, value: 0 }, // percent 0
+          { type: 4, value: 33 },
+          { type: 4, value: 67 },
+        ],
+      }),
+    );
+    expect(doc.sheets[0]!.grid.conditionalFormats?.[0]?.rules[0]).toEqual({
+      type: 'iconSet',
+      priority: 3,
+      iconSet: '3TrafficLights1',
+      cfvos: [
+        { type: 'percent', val: '0' },
+        { type: 'percent', val: '33' },
+        { type: 'percent', val: '67' },
+      ],
+      reverse: true,
+    });
+  });
+
+  it('shades a cell from a colour scale through the projection', () => {
+    const doc = cf12Sheet(
+      cf12ColorScaleRec({
+        stops: [
+          { cfvo: { type: 2 }, rgb: [0xff, 0x00, 0x00] },
+          { cfvo: { type: 3 }, rgb: [0x00, 0xff, 0x00] },
+        ],
+      }),
+    );
+    const table = projectSheetDoc(doc).body.find((el) => el.kind === 'table');
+    const cell = table?.kind === 'table' ? table.table.rows[2]?.cells[0] : undefined;
+    expect(cell?.properties.shading).toBeTruthy();
+  });
+
+  it('reads two CF12 rules sharing one CondFmt12 header', () => {
+    const doc = readXlsToSheetDoc(
+      buildXls({
+        sheets: [
+          {
+            name: 'S',
+            records: [
+              numberRec(0, 0, 1),
+              condFmt12Rec({ numcf: 2, ranges: [{ r0: 0, r1: 0, c0: 0, c1: 0 }] }),
+              cf12DataBarRec({ priority: 1, rgb: [1, 2, 3], min: { type: 2 }, max: { type: 3 } }),
+              cf12IconSetRec({
+                priority: 2,
+                setId: 0,
+                thresholds: [
+                  { type: 4, value: 0 },
+                  { type: 4, value: 33 },
+                  { type: 4, value: 67 },
+                ],
+              }),
+            ],
+          },
+        ],
+      }),
+    );
+    const rules = doc.sheets[0]!.grid.conditionalFormats?.[0]?.rules;
+    expect(rules?.map((r) => r.type)).toEqual(['dataBar', 'iconSet']);
+  });
+
+  it('skips a graphical rule whose colour is theme-relative, never guessing', () => {
+    // A data bar whose ExtendedColor is themed (xclrType 3) cannot be resolved to a
+    // concrete sRGB value, so the whole rule is dropped rather than mis-coloured.
+    const themed = cf12DataBarRec({ rgb: [0, 0, 0], min: { type: 2 }, max: { type: 3 } });
+    // The ExtendedColor sits after rec header(4) + CF12 header(48) + data-bar sub(6);
+    // flip its xclrType from 2 (literal RGB) to 3 (themed) so it cannot resolve.
+    new DataView(themed.buffer).setUint32(4 + 48 + 6, 3, true);
+    const doc = cf12Sheet(themed);
     expect(doc.sheets[0]!.grid.conditionalFormats).toBeUndefined();
   });
 });
