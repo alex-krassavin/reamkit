@@ -85,8 +85,9 @@ charts — and is byte-stable across a read↔write loop.
   underline / font size** onto each run and **alignment / indentation / spacing**
   onto each paragraph. **Tables** are reconstructed too — the in-table paragraphs
   (marked by the `fInTable` / `fTtp` PAPX flags, cells delimited by the `0x07`
-  cell mark) become a row-and-cell grid, with per-column widths from the table
-  definition (`sprmTDefTable`) — and **inline images** are extracted (the
+  cell mark) become a row-and-cell grid, with per-column widths **and per-cell
+  borders and vertical merges** from the table definition (`sprmTDefTable`'s
+  `TC80` array) — and **inline images** are extracted (the
   picture character's CHPX points at a PICF in the `Data` stream; the raster blip
   is pulled out and sized from the PICF). **Fields** resolve to their cached
   result — the field code (`PAGE`, `NUMPAGES`, `REF`, …) is dropped and the stored
@@ -95,7 +96,7 @@ charts — and is byte-stable across a read↔write loop.
   here, so only well-formed stories are surfaced). **List items** (`sprmPIlfo` /
   `sprmPIlvl`) render with their resolved **number format** — a real "1." / "a)" /
   "iii." or the bullet glyph, from the `LST` / `LVL` / `LFO` tables. So an old `.doc`
-  renders to PDF/SVG/HTML and re-writes to `.docx`. Table cell borders/merges are not
+  renders to PDF/SVG/HTML and re-writes to `.docx`. Cell background shading is not
   read yet (re-save as `.docx` for full fidelity); an encrypted file yields no text.
   The shared CFB reader
   (`src/core/ole`) is the same keystone `.xls` uses.
@@ -266,10 +267,10 @@ charts — and is byte-stable across a read↔write loop.
   (`.doc` / `.xls` / `.ppt`) are read through the shared CFB container reader
   (`src/core/ole`).
 - **The legacy `.doc` reader does not yet read** (re-save as `.docx` for these):
-  table cell **borders / vertical merges**. Everything else — text, run and
-  paragraph formatting, tables with column widths, list items (with their number
-  format / bullet), inline images, fields, and the section's headers/footers — is
-  read (see WordprocessingML above).
+  table cell **background shading**. Everything else — text, run and paragraph
+  formatting, tables with column widths, cell borders and vertical merges, list
+  items (with their number format / bullet), inline images, fields, and the
+  section's headers/footers — is read (see WordprocessingML above).
 - **The legacy `.xls` reader does not yet read** (re-save as `.xlsx` for these): the
   **2007 conditional-format extensions** — colour scales, data bars and icon sets,
   which live in the separate `CF12` records and only exist in a `.xls` re-saved by

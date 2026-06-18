@@ -93,6 +93,27 @@ export interface DocPicture {
   readonly heightTwips: number;
 }
 
+// One cell border (DOC-11) from a Brc80: its width in points, colour and whether
+// it is a double line. Absent when the cell edge has no border.
+export interface DocBorder {
+  readonly widthPt: number;
+  readonly colorHex: string;
+  readonly double?: boolean;
+}
+
+// A table cell's TC80 descriptor (DOC-11): its four edge borders and its vertical-
+// merge marker (`restart` = the top of a vertical span, `continue` = a cell merged
+// into the one above). Carried per cell on the row's TTP.
+export interface DocTc {
+  readonly borders?: {
+    readonly top?: DocBorder;
+    readonly left?: DocBorder;
+    readonly bottom?: DocBorder;
+    readonly right?: DocBorder;
+  };
+  readonly vMerge?: 'restart' | 'continue';
+}
+
 export interface DocParaProps {
   readonly jc?: number; // Word justification (0 left, 1 center, 2 right, 3 both, 4 distribute)
   readonly indentLeftTwips?: number;
@@ -105,6 +126,9 @@ export interface DocParaProps {
   // sprmTDefTable rgdxaCenter — the (cols+1) cell-boundary x-positions (twips);
   // present on the TTP. Cell i width = edge[i+1] − edge[i].
   readonly cellEdgesTwips?: ReadonlyArray<number>;
+  // sprmTDefTable TC80 per-cell descriptors (borders + vertical merge), one per
+  // cell, present on the TTP alongside cellEdgesTwips (DOC-11).
+  readonly cellDescriptors?: ReadonlyArray<DocTc>;
   readonly listIlfo?: number; // sprmPIlfo — list override (>0 ⇒ a list item)
   readonly listIlvl?: number; // sprmPIlvl — list level (0–8)
 }
@@ -288,6 +312,63 @@ function readLvl(d: Uint8Array, off: number): { info: DocLvl; next: number } | u
     p += 2;
   }
   return { info: { nfc, iStartAt, xst }, next: p };
+}
+
+// The [MS-DOC] Ico colour index (§2.9.59) → "RRGGBB" (0 = auto → black for a
+// border). 0x0D is dark-red #800000 (the spec HTML's duplicate of 0x0C is errata).
+const ICO_RGB: ReadonlyArray<string> = [
+  '000000',
+  '000000',
+  '0000FF',
+  '00FFFF',
+  '00FF00',
+  'FF00FF',
+  'FF0000',
+  'FFFF00',
+  'FFFFFF',
+  '000080',
+  '008080',
+  '008000',
+  '800080',
+  '800000',
+  '808000',
+  '808080',
+  'C0C0C0',
+];
+
+// One TC80 (§2.9.328): tcgrf (u16) + wWidth (i16) + 4 × Brc80 (top, left, bottom,
+// right). The 2-bit vertMerge field (tcgrf bits 5–6): 1 = continuation, 3 = restart.
+function parseTc80(d: Uint8Array, off: number): DocTc {
+  const vm = (u16(d, off) >> 5) & 0x3;
+  const top = parseBrc80(d, off + 4);
+  const left = parseBrc80(d, off + 8);
+  const bottom = parseBrc80(d, off + 12);
+  const right = parseBrc80(d, off + 16);
+  const borders = {
+    ...(top ? { top } : {}),
+    ...(left ? { left } : {}),
+    ...(bottom ? { bottom } : {}),
+    ...(right ? { right } : {}),
+  };
+  return {
+    ...(Object.keys(borders).length > 0 ? { borders } : {}),
+    ...(vm === 3 ? { vMerge: 'restart' as const } : {}),
+    ...(vm === 1 ? { vMerge: 'continue' as const } : {}),
+  };
+}
+
+// One Brc80 (§2.9.18): dptLineWidth (u8, ⅛ pt), brcType (u8), ico (u8). An "on"
+// border has a real line style; nil (0x00 / 0xFF) or zero width → no border.
+function parseBrc80(d: Uint8Array, off: number): DocBorder | undefined {
+  if (off + 4 > d.length) return undefined;
+  const width = d[off]!;
+  const brcType = d[off + 1]!;
+  if (brcType === 0x00 || brcType === 0xff || width === 0) return undefined;
+  return {
+    widthPt: Math.max(2, width) / 8,
+    colorHex: ICO_RGB[d[off + 2]!] ?? '000000',
+    ...(brcType === 0x03 ? { double: true } : {}),
+  };
 }
 
 // §2.8.26 PlcfHdd — the header/footer stories live in the same piece-table stream,
@@ -512,6 +593,7 @@ function decodePapxGrpprl(d: Uint8Array): DocParaProps {
   let inTable: boolean | undefined;
   let rowEnd: boolean | undefined;
   let cellEdgesTwips: Array<number> | undefined;
+  let cellDescriptors: Array<DocTc> | undefined;
   let listIlfo: number | undefined;
   let listIlvl: number | undefined;
   for (const s of sprms(d)) {
@@ -541,13 +623,20 @@ function decodePapxGrpprl(d: Uint8Array): DocParaProps {
         rowEnd = d[s.op] !== 0;
         break;
       case SPRM_T_DEF_TABLE: {
-        // The operand is itcMac (u8) then (itcMac+1) cell-boundary positions.
+        // The operand is itcMac (u8), (itcMac+1) cell-boundary positions, then the
+        // itcMac × TC80 cell descriptors (borders + vertical merge) — DOC-11.
         const cols = d[s.op] ?? 0;
         const edges: Array<number> = [];
         for (let i = 0; i <= cols && s.op + 1 + i * 2 + 2 <= d.length; i++) {
           edges.push(i16(d, s.op + 1 + i * 2));
         }
         if (edges.length >= 2) cellEdgesTwips = edges;
+        const tcBase = s.op + 1 + (cols + 1) * 2;
+        const descriptors: Array<DocTc> = [];
+        for (let i = 0; i < cols && tcBase + i * 20 + 20 <= d.length; i++) {
+          descriptors.push(parseTc80(d, tcBase + i * 20));
+        }
+        if (descriptors.length > 0) cellDescriptors = descriptors;
         break;
       }
       case SPRM_P_ILVL:
@@ -568,6 +657,7 @@ function decodePapxGrpprl(d: Uint8Array): DocParaProps {
     ...(inTable ? { inTable } : {}),
     ...(rowEnd ? { rowEnd } : {}),
     ...(cellEdgesTwips ? { cellEdgesTwips } : {}),
+    ...(cellDescriptors ? { cellDescriptors } : {}),
     ...(listIlfo !== undefined ? { listIlfo } : {}),
     ...(listIlvl !== undefined ? { listIlvl } : {}),
   };

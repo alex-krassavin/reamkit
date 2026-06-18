@@ -1,4 +1,4 @@
-// Legacy `.doc` reader (DOC-1..9) — the DocumentReader that sniffs a Word
+// Legacy `.doc` reader (DOC-1..11) — the DocumentReader that sniffs a Word
 // 97–2003 binary file (an OLE2/CFB container with a `WordDocument` stream) and
 // reads its text, run/paragraph formatting, tables, inline images,
 // headers/footers and list items into the same FlowDoc the OOXML docx reader
@@ -11,15 +11,16 @@
 // tables (in-table paragraphs grouped into a row/cell grid, with per-column widths
 // from sprmTDefTable), inline images (the picture char's CHPX → a PICF in the Data
 // stream), fields (resolved to their cached result), the section's headers/footers
-// (the PlcfHdd stories) and list items (sprmPIlfo/sprmPIlvl → the LST/LVL number
-// format or bullet — DOC-10). Table cell borders/merges are not read yet —
-// recorded as a loss.
+// (the PlcfHdd stories), list items (sprmPIlfo/sprmPIlvl → the LST/LVL number
+// format or bullet — DOC-10) and table cell borders + vertical merges (the row's
+// TC80 array in sprmTDefTable — DOC-11).
 
 import type {
   Alignment,
   BodyElement,
   Border,
   CellBorders,
+  CellMerge,
   HeaderFooterReference,
   HeaderFooterType,
   ImageBlock,
@@ -34,6 +35,7 @@ import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss } from '@/core/ir';
 import type {
+  DocBorder,
   DocCharProps,
   DocContent,
   DocListTables,
@@ -41,6 +43,7 @@ import type {
   DocParaProps,
   DocParagraph,
   DocPicture,
+  DocTc,
 } from '@/word/doc/doc-text';
 
 import { FEATURES, ResourceStore, pt, twipsToPt } from '@/core/ir';
@@ -175,7 +178,7 @@ const DOC_TEXT_LOSS: Loss = {
   severity: 'degraded',
   feature: FEATURES.text,
   detail:
-    "legacy .doc: the document text, run formatting (bold/italic/underline/size), paragraph formatting (alignment/indent/spacing), tables (with column widths), inline images, fields, the section's headers/footers and list items (with their number format / bullet) are read; table cell borders/merges are not (re-save as .docx for full fidelity)",
+    "legacy .doc: the document text, run formatting (bold/italic/underline/size), paragraph formatting (alignment/indent/spacing), tables (with column widths, cell borders and vertical merges), inline images, fields, the section's headers/footers and list items (with their number format / bullet) are read; cell background shading is not (re-save as .docx for full fidelity)",
 };
 
 const DOC_ENCRYPTED_LOSS: Loss = {
@@ -270,31 +273,45 @@ function groupTables(
 
 // Split a run of in-table paragraphs into rows at each TTP (rowEnd); within a row
 // each paragraph is a cell (an empty terminating paragraph is dropped). Column
-// widths come from the TTP's sprmTDefTable; a default thin border makes the grid
-// visible (cell borders/merges are not read yet).
+// widths + per-cell borders come from the TTP's sprmTDefTable (DOC-7/DOC-11);
+// vertical-merge markers are resolved across rows into CellMerge roles (DOC-11). A
+// default thin border keeps an undescribed grid visible.
 function buildTable(
   group: ReadonlyArray<DocParagraph>,
   resources: ResourceStore,
   markers: ListMarkers,
 ): Table {
-  // The TTP's sprmTDefTable gives the cell-boundary positions for the row.
   const edges = group.find((p) => p.props.cellEdgesTwips)?.props.cellEdgesTwips;
-  const rows: Array<TableRow> = [];
+  const rawRows: Array<Array<RawCell>> = [];
   let rowParas: Array<DocParagraph> = [];
   for (const p of group) {
     rowParas.push(p);
     if (p.props.rowEnd) {
-      rows.push(buildRow(rowParas, resources, edges, markers));
+      rawRows.push(buildRawRow(rowParas, resources, edges, markers));
       rowParas = [];
     }
   }
-  if (rowParas.length > 0) rows.push(buildRow(rowParas, resources, edges, markers)); // no TTP
+  if (rowParas.length > 0) rawRows.push(buildRawRow(rowParas, resources, edges, markers)); // no TTP
+  resolveVerticalMerges(rawRows);
 
+  const rows: Array<TableRow> = rawRows.map((cells) => ({
+    properties: {},
+    cells: cells.map(toTableCell),
+  }));
   return {
     properties: { borders: TABLE_BORDERS, layout: 'fixed' },
     grid: columnWidths(edges, rows),
     rows,
   };
+}
+
+// A cell before its vertical-merge role is resolved.
+interface RawCell {
+  readonly content: Array<BodyElement>;
+  readonly width: ReturnType<typeof pt> | undefined;
+  readonly borders: CellBorders | undefined;
+  readonly vMergeRaw: 'restart' | 'continue' | undefined;
+  merge?: CellMerge;
 }
 
 // Per-column widths from the cell boundaries (twips → points); without them the
@@ -311,25 +328,96 @@ function columnWidths(edges: ReadonlyArray<number> | undefined, rows: ReadonlyAr
   return Array.from({ length: cols }, () => even);
 }
 
-function buildRow(
+function buildRawRow(
   rowParas: ReadonlyArray<DocParagraph>,
   resources: ResourceStore,
   edges: ReadonlyArray<number> | undefined,
   markers: ListMarkers,
-): TableRow {
-  const cells: Array<TableCell> = [];
+): Array<RawCell> {
+  // The row's TC80 descriptors (borders + vertical merge) ride on its TTP.
+  const descriptors = rowParas.find((p) => p.props.cellDescriptors)?.props.cellDescriptors;
+  const cells: Array<RawCell> = [];
   let col = 0;
   for (const p of rowParas) {
     // The TTP terminates the row; when it carries no text it is not itself a cell.
     if (p.props.rowEnd && isBlank(p)) continue;
-    const width = cellWidth(edges, col++);
+    const tc = descriptors?.[col];
     cells.push({
-      properties: width ? { width } : {},
       content: mapParagraph(p, resources, markers),
+      width: cellWidth(edges, col),
+      borders: tc?.borders ? toCellBorders(tc.borders) : undefined,
+      vMergeRaw: tc?.vMerge,
+    });
+    col++;
+  }
+  if (cells.length === 0) {
+    cells.push({
+      content: [emptyParagraph()],
+      width: undefined,
+      borders: undefined,
+      vMergeRaw: undefined,
     });
   }
-  if (cells.length === 0) cells.push({ properties: {}, content: [emptyParagraph()] });
-  return { properties: {}, cells };
+  return cells;
+}
+
+// Resolve the per-cell vertical-merge markers (DOC-11) into CellMerge roles: in
+// each column, a `restart` followed by ≥1 `continue` becomes start / middle… / end
+// (the renderer then spans the start cell down). A lone restart stays a normal cell.
+function resolveVerticalMerges(rows: ReadonlyArray<ReadonlyArray<RawCell>>): void {
+  const maxCols = Math.max(0, ...rows.map((r) => r.length));
+  for (let c = 0; c < maxCols; c++) {
+    let span: Array<RawCell> = [];
+    const close = (): void => {
+      if (span.length >= 2) {
+        span[0]!.merge = 'start';
+        span[span.length - 1]!.merge = 'end';
+        for (let k = 1; k < span.length - 1; k++) span[k]!.merge = 'middle';
+      }
+      span = [];
+    };
+    for (const row of rows) {
+      const cell = row[c];
+      if (cell?.vMergeRaw === 'restart') {
+        close();
+        span = [cell];
+      } else if (cell?.vMergeRaw === 'continue' && span.length > 0) {
+        span.push(cell);
+      } else {
+        close();
+      }
+    }
+    close();
+  }
+}
+
+function toTableCell(raw: RawCell): TableCell {
+  return {
+    properties: {
+      ...(raw.width ? { width: raw.width } : {}),
+      ...(raw.borders ? { borders: raw.borders } : {}),
+      ...(raw.merge ? { merge: raw.merge } : {}),
+    },
+    content: raw.content,
+  };
+}
+
+// One TC80's borders → the model's CellBorders (only the edges that have a border).
+function toCellBorders(b: NonNullable<DocTc['borders']>): CellBorders {
+  const edge = (db: DocBorder | undefined): Border | undefined =>
+    db
+      ? { style: db.double ? 'double' : 'single', width: pt(db.widthPt), colorHex: db.colorHex }
+      : undefined;
+  const top = edge(b.top);
+  const left = edge(b.left);
+  const bottom = edge(b.bottom);
+  const right = edge(b.right);
+  return {
+    ...(top ? { top } : {}),
+    ...(left ? { left } : {}),
+    ...(bottom ? { bottom } : {}),
+    ...(right ? { right } : {}),
+  };
 }
 
 function cellWidth(edges: ReadonlyArray<number> | undefined, col: number) {

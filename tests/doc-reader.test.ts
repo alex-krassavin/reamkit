@@ -237,6 +237,57 @@ describe('doc reader (DOC-1)', () => {
     expect(doc.body.map((el) => el.kind)).toEqual(['paragraph', 'table', 'paragraph']);
   });
 
+  it('reads per-cell borders from the TC80 array (DOC-11)', () => {
+    const doc = readDoc(
+      buildDoc([{ text: `A${CM}B${CM}`, compressed: false }], {
+        paraRuns: [
+          { length: 2, inTable: true }, // cell A
+          {
+            length: 2,
+            inTable: true,
+            rowEnd: true,
+            cellEdgesTwips: [0, 1440, 2880], // 2 cells
+            // cell A: a 2pt (16/8) red (ico 6) single top border; cell B: no borders.
+            cellTc: [{ borders: { top: { widthEighthPt: 16, brcType: 1, ico: 6 } } }, {}],
+          },
+        ],
+      }),
+    ).doc;
+    const t = doc.body.find((el) => el.kind === 'table')?.table;
+    expect(t?.rows[0]?.cells[0]?.properties.borders?.top).toEqual({
+      style: 'single',
+      width: 2,
+      colorHex: 'FF0000',
+    });
+    expect(t?.rows[0]?.cells[1]?.properties.borders).toBeUndefined();
+  });
+
+  it('resolves a vertical merge into start/end cell roles (DOC-11)', () => {
+    const doc = readDoc(
+      buildDoc([{ text: `A${CM}B${CM}`, compressed: false }], {
+        paraRuns: [
+          {
+            length: 2,
+            inTable: true,
+            rowEnd: true,
+            cellEdgesTwips: [0, 1440],
+            cellTc: [{ vMerge: 'restart' }],
+          },
+          {
+            length: 2,
+            inTable: true,
+            rowEnd: true,
+            cellEdgesTwips: [0, 1440],
+            cellTc: [{ vMerge: 'continue' }],
+          },
+        ],
+      }),
+    ).doc;
+    const t = doc.body.find((el) => el.kind === 'table')?.table;
+    expect(t?.rows[0]?.cells[0]?.properties.merge).toBe('start');
+    expect(t?.rows[1]?.cells[0]?.properties.merge).toBe('end');
+  });
+
   it('suppresses field codes and keeps the cached result (DOC-6)', () => {
     // "Page {PAGE→1} of {NUMPAGES→3}" — the codes are dropped, the results kept.
     const doc = readDoc(

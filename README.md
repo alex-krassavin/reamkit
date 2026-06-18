@@ -195,8 +195,9 @@ hyperlinks — then converts onward to PDF, SVG, HTML or DOCX like any source.
 
 **Reads legacy `.doc`, `.xls` and `.ppt`, too.** The binary Word / Excel /
 PowerPoint 97–2003 formats (OLE2/CFB) parse through a shared container reader: a
-`.doc` yields its text with run and paragraph formatting, tables, inline images,
-fields, headers/footers and lists (numbered or bulleted, in their number format);
+`.doc` yields its text with run and paragraph formatting, tables (with cell
+borders and vertical merges), inline images, fields, headers/footers and lists
+(numbered or bulleted, in their number format);
 an `.xls` yields the grid with styling, embedded
 images, charts, drawing shapes, cell hyperlinks, the page-setup print model,
 defined names (named ranges, print area, repeated titles), cell comments, data

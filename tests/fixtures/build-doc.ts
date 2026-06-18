@@ -42,8 +42,26 @@ export interface DocParaFormat {
   readonly inTable?: boolean; // sprmPFInTable — the paragraph is a table cell
   readonly rowEnd?: boolean; // sprmPFTtp — the row's terminating paragraph
   readonly cellEdgesTwips?: ReadonlyArray<number>; // sprmTDefTable cell boundaries
+  // Per-cell TC80 descriptors (DOC-11): borders (each a Brc80) + vertical merge.
+  readonly cellTc?: ReadonlyArray<{
+    readonly borders?: {
+      readonly top?: DocBrcInput;
+      readonly left?: DocBrcInput;
+      readonly bottom?: DocBrcInput;
+      readonly right?: DocBrcInput;
+    };
+    readonly vMerge?: 'restart' | 'continue';
+  }>;
   readonly listIlfo?: number; // sprmPIlfo — list override (>0 ⇒ a list item)
   readonly listIlvl?: number; // sprmPIlvl — list level
+}
+
+// One Brc80 edge for the fixture: width in eighths of a point, brcType (1 single /
+// 3 double), and the Ico colour index.
+interface DocBrcInput {
+  readonly widthEighthPt?: number;
+  readonly brcType?: number;
+  readonly ico?: number;
 }
 
 // Where piece text starts in the WordDocument stream — past the FIB fields the
@@ -438,6 +456,22 @@ function buildPapxGrpprl(run: DocParaFormat): Uint8Array {
   // must skip its 2-byte-length operand correctly to still reach sprmPFTtp.
   if (run.cellEdgesTwips) {
     const content = [(run.cellEdgesTwips.length - 1) & 0xff, ...run.cellEdgesTwips.flatMap(i16)];
+    // After the boundaries, the itcMac × TC80 cell descriptors (DOC-11).
+    if (run.cellTc) {
+      const brc = (e?: DocBrcInput): Array<number> =>
+        e ? [e.widthEighthPt ?? 8, e.brcType ?? 1, e.ico ?? 1, 0] : [0, 0, 0, 0];
+      for (const tc of run.cellTc) {
+        const tcgrf = tc.vMerge === 'restart' ? 0x60 : tc.vMerge === 'continue' ? 0x20 : 0;
+        content.push(
+          ...i16(tcgrf),
+          ...i16(0), // wWidth
+          ...brc(tc.borders?.top),
+          ...brc(tc.borders?.left),
+          ...brc(tc.borders?.bottom),
+          ...brc(tc.borders?.right),
+        );
+      }
+    }
     const cb = content.length + 1; // a 2-byte count that includes the count field
     sprm(0xd608, cb & 0xff, (cb >> 8) & 0xff, ...content); // sprmTDefTable
   }
