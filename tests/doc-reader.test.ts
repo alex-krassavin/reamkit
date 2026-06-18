@@ -59,6 +59,25 @@ describe('doc reader (DOC-1)', () => {
     expect(paragraphTexts(doc)).toEqual(['Hello world', 'Second line']);
   });
 
+  it('reads the section page size from the SEP (landscape Letter, F4)', () => {
+    // sprmSXaPage/sprmSYaPage in the first section's Sepx → the FlowDoc section.
+    // Landscape Letter: width 15840 twips (11"), height 12240 (8.5") → 792×612pt.
+    const doc = readDoc(
+      buildDoc([{ text: 'Hi\r', compressed: true }], {
+        pageSizeTwips: { width: 15840, height: 12240 },
+      }),
+    ).doc;
+    expect(Math.round(doc.section!.pageSize!.width)).toBe(792);
+    expect(Math.round(doc.section!.pageSize!.height)).toBe(612);
+    expect(doc.section!.pageSize!.orientation).toBe('landscape');
+  });
+
+  it('defaults to US Letter when the section gives no page size', () => {
+    const doc = readDoc(buildDoc([{ text: 'Hi\r', compressed: true }])).doc;
+    expect(Math.round(doc.section!.pageSize!.width)).toBe(612);
+    expect(Math.round(doc.section!.pageSize!.height)).toBe(792);
+  });
+
   it('decodes a compressed (Windows-1252) piece, not Latin-1', () => {
     // 0x97 → em dash (—), 0x92 → right single quote (’) — the cp1252 high range.
     const doc = readDoc(buildDoc([{ text: 'Café — déjà’\r', compressed: true }])).doc;

@@ -220,13 +220,22 @@ export function readDoc(bytes: Uint8Array): ReadResult<FlowDoc> {
     addStory(hf.evenFooter, 'footer', 'even');
   }
 
-  // Word's default page: US Letter with one-inch margins.
+  // The first section's page size (SEP sprmSXaPage/sprmSYaPage); US Letter when
+  // the section gives none. Margins stay Word's one-inch default for now.
+  const ps = content.pageSize;
+  const pageSize = ps
+    ? {
+        width: pt(ps.widthPt),
+        height: pt(ps.heightPt),
+        orientation: ps.widthPt > ps.heightPt ? ('landscape' as const) : ('portrait' as const),
+      }
+    : { width: pt(612), height: pt(792) };
   const doc: FlowDoc = {
     kind: 'flow',
     body: resolveBodyStyles(body, EMPTY_STYLE_SHEET),
     sections: [],
     section: {
-      pageSize: { width: pt(612), height: pt(792) },
+      pageSize,
       margins: { top: pt(72), right: pt(72), bottom: pt(72), left: pt(72) },
       headers,
       footers,
