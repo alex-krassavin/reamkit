@@ -649,3 +649,27 @@ describe('ppt reader custom geometry (PPT-7)', () => {
     expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-');
   });
 });
+
+describe('ppt reader system colours (PPT-8)', () => {
+  it('resolves a shape fill from a Windows system colour (windowText → black)', () => {
+    const doc = readPpt(
+      buildPpt([
+        { boxes: [{ anchor: { x: 0, y: 0, w: 80, h: 40 }, shapeType: 1, fillSysColor: 8 }] },
+      ]),
+    ).doc;
+    expect(doc.body.find((el) => el.kind === 'shape')!.shape.fill).toEqual({
+      kind: 'solid',
+      colorHex: '000000',
+    });
+  });
+
+  it('skips a procedural system colour (0xF0–0xF7) rather than guess', () => {
+    const doc = readPpt(
+      buildPpt([
+        { boxes: [{ anchor: { x: 0, y: 0, w: 80, h: 40 }, shapeType: 1, fillSysColor: 0xf0 }] },
+      ]),
+    ).doc;
+    // No resolvable colour ⇒ no autoshape is emitted (a shape needs a fill or line).
+    expect(doc.body.filter((el) => el.kind === 'shape')).toHaveLength(0);
+  });
+});

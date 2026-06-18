@@ -117,6 +117,7 @@ export interface PptBoxInput {
   readonly lineColorHex?: string; // OPT lineColor (6-hex literal RGB)
   readonly fillSchemeIndex?: number; // OPT fillColor as a scheme index (0–7), PPT-6
   readonly lineSchemeIndex?: number; // OPT lineColor as a scheme index (0–7), PPT-6
+  readonly fillSysColor?: number; // OPT fillColor as a Windows system-colour index, PPT-8
   readonly freeform?: PptFreeformInput; // exact custom geometry (PPT-7)
 }
 
@@ -415,6 +416,8 @@ function buildShapeContainer(box: PptBoxInput): Uint8Array {
   if (box.fillColorHex) props.push({ id: PROP_FILL_COLOR, value: rgbColorRef(box.fillColorHex) });
   else if (box.fillSchemeIndex !== undefined)
     props.push({ id: PROP_FILL_COLOR, value: schemeColorRef(box.fillSchemeIndex) });
+  else if (box.fillSysColor !== undefined)
+    props.push({ id: PROP_FILL_COLOR, value: ((box.fillSysColor & 0xffff) | (0x10 << 24)) >>> 0 });
   if (box.lineColorHex) props.push({ id: PROP_LINE_COLOR, value: rgbColorRef(box.lineColorHex) });
   else if (box.lineSchemeIndex !== undefined)
     props.push({ id: PROP_LINE_COLOR, value: schemeColorRef(box.lineSchemeIndex) });

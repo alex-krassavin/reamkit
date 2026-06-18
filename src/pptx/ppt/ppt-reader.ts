@@ -1,4 +1,4 @@
-// Legacy `.ppt` reader (PPT-1..7) — the DocumentReader that sniffs a PowerPoint
+// Legacy `.ppt` reader (PPT-1..8) — the DocumentReader that sniffs a PowerPoint
 // 97–2003 binary file (an OLE2/CFB container with a `PowerPoint Document` stream)
 // and reads each slide's text into the same FlowDoc the OOXML pptx reader
 // produces, so the whole render pipeline (projection → PDF/SVG/HTML, re-write to
@@ -12,8 +12,10 @@
 // (picture), falling back to reading-order flow for un-anchored shapes; PPT-5 reads
 // decorative autoshapes (preset geometry + literal fill/line); PPT-6 resolves a
 // shape's scheme-relative fill/line colour through the slide's colour scheme;
-// PPT-7 reads a freeform's exact custom geometry (pVertices + pSegmentInfo). What
-// stays a loss: palette/system (non-scheme) colours.
+// PPT-7 reads a freeform's exact custom geometry (pVertices + pSegmentInfo); PPT-8
+// resolves a system colour (fSysIndex) through the default Windows scheme. The only
+// colour left unresolved is a palette-relative one (which a real `.ppt` shape
+// essentially never uses).
 
 import type {
   Alignment,
@@ -74,13 +76,13 @@ function looksLikePpt(bytes: Uint8Array): boolean {
 
 // The slide text, its run/paragraph formatting, embedded images, per-shape
 // placement, decorative autoshapes (preset and freeform geometry) and their
-// scheme-resolved fill/line colour are read; palette/system colours are not.
-// Reported (degraded, keyed on text) so a caller's loss report is honest.
+// fill/line colour — literal, scheme- or system-resolved — are read. Reported
+// (degraded, keyed on text) so a caller's loss report is honest about the format.
 const PPT_TEXT_LOSS: Loss = {
   severity: 'degraded',
   feature: FEATURES.text,
   detail:
-    "legacy .ppt: each slide's text (with run formatting — bold/italic/underline/size/colour — and paragraph alignment/indent), embedded images, per-shape placement and decorative autoshapes (preset or exact freeform geometry with literal or scheme-resolved fill/line colours) are read into one page per slide; palette/system colours are not (re-save as .pptx for full fidelity)",
+    "legacy .ppt: each slide's text (with run formatting — bold/italic/underline/size/colour — and paragraph alignment/indent), embedded images, per-shape placement and decorative autoshapes (preset or exact freeform geometry with literal, scheme- or system-resolved fill/line colours) are read into one page per slide (re-save as .pptx for full fidelity)",
 };
 
 const PPT_ENCRYPTED_LOSS: Loss = {

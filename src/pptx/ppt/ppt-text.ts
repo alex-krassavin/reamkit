@@ -22,7 +22,8 @@
 // follows it), instead of dropping it as it did when only a literal sRGB value read.
 // PPT-7 reads a freeform shape's exact custom geometry — the OPT's pVertices and
 // pSegmentInfo complex arrays walked into a path (moveTo / lineTo / cubic curveTo /
-// close) in its geometry-bounds space. Everything is best-effort and graceful-on-
+// close) in its geometry-bounds space. PPT-8 resolves a system colour (fSysIndex)
+// through the default Windows scheme. Everything is best-effort and graceful-on-
 // failure — structural doubt yields missing content, never wrong content —
 // mirroring the `.doc`/`.xls` readers.
 
@@ -75,6 +76,9 @@ const SLIDE_FLAG_MASTER_SCHEME = 0x0002;
 // OfficeArtCOLORREF flags byte (§2.2.2): fSchemeIndex ⇒ the red byte is an index
 // (0–7) into the colour scheme; flags 0 ⇒ a literal sRGB value.
 const COLORREF_SCHEME_INDEX = 0x08;
+// OfficeArtCOLORREF fSysIndex (§2.2.2): the low 16 bits are a Windows system-colour
+// index; values < 0xF0 map directly, 0xF0–0xF7 are procedural (PPT-8).
+const COLORREF_SYS_INDEX = 0x10;
 const FBSE_FODELAY_OFFSET = 28; // foDelay in the FBSE data (record offset 36 − 8-byte header)
 // OfficeArtFSP flags (§2.2.40): skip groups, the patriarch and the background shape.
 const FSP_FLAG_GROUP = 0x0001;
@@ -808,10 +812,30 @@ function parseFreeformGeometry(d: Uint8Array, count: number): PptCustomGeometry 
   return drew ? { pathWidth, pathHeight, commands } : undefined;
 }
 
+// The Windows system colours an OfficeArtCOLORREF fSysIndex can name (the default
+// scheme every offline renderer falls back to), by GetSysColor index. Only the
+// values an actual shape fill / line uses in practice are mapped; a procedural
+// index (0xF0–0xF7 — "use the fill/line colour") stays unresolved.
+const SYS_COLORS: ReadonlyMap<number, string> = new Map([
+  [5, 'FFFFFF'], // WINDOW
+  [6, '000000'], // WINDOWFRAME
+  [7, '000000'], // MENUTEXT
+  [8, '000000'], // WINDOWTEXT
+  [13, '0078D7'], // HIGHLIGHT
+  [14, 'FFFFFF'], // HIGHLIGHTTEXT
+  [15, 'F0F0F0'], // BTNFACE / 3DFACE
+  [16, 'A0A0A0'], // BTNSHADOW
+  [18, '000000'], // BTNTEXT
+  [20, 'FFFFFF'], // 3DHIGHLIGHT
+  [23, '000000'], // INFOTEXT
+  [24, 'FFFFE1'], // INFOBK
+]);
+
 // An OPT colour property → 6-hex RGB. A literal sRGB value (flags byte 0) is taken
 // directly; a scheme-relative value (fSchemeIndex) resolves through the slide's
-// colour scheme (PPT-6). Palette / system colours, and any scheme index without a
-// resolved scheme, are skipped (missing colour, never a wrong one).
+// colour scheme (PPT-6); a system colour (fSysIndex) resolves through the default
+// Windows scheme (PPT-8). A palette-relative colour, and any index we cannot map,
+// are skipped (missing colour, never a wrong one).
 function optColor(
   d: Uint8Array,
   count: number,
@@ -826,6 +850,7 @@ function optColor(
     const idx = v & 0xff;
     if (idx < scheme.length) return scheme[idx];
   }
+  if (flags === COLORREF_SYS_INDEX) return SYS_COLORS.get(v & 0xffff);
   return undefined;
 }
 
