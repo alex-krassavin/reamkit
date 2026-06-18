@@ -31,6 +31,7 @@ import type { FErr, FValue, Rect, Scalar } from '@/excel/formula/value';
 
 import { serialFromYmd, serialToParts } from '@/excel/formula/dates';
 import {
+  arrEach,
   bool,
   deref,
   err,
@@ -538,6 +539,17 @@ function andOr(name: 'AND' | 'OR', args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalCo
         // text / blank cells are ignored by AND/OR over a range
       });
       if (e) return err(e);
+    } else if (v.t === 'arr') {
+      let e: FErr | undefined;
+      arrEach(v.rows, (s) => {
+        if (s.t === 'err') e ??= s.v;
+        else if (s.t === 'num' || s.t === 'bool') {
+          const b = s.t === 'bool' ? s.v : s.v !== 0;
+          any = true;
+          acc = name === 'AND' ? acc && b : acc || b;
+        }
+      });
+      if (e) return err(e);
     } else {
       const b = toBool(v, ctx);
       if (typeof b === 'string') return err(b);
@@ -560,6 +572,14 @@ function gatherNumbers(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): Arra
       let e: FErr | undefined;
       refEach(v, ctx, (_r, _c, s) => {
         if (s.t === 'num') out.push(s.v);
+        else if (s.t === 'err') e ??= s.v;
+      });
+      if (e) return e;
+    } else if (v.t === 'arr') {
+      let e: FErr | undefined;
+      arrEach(v.rows, (s) => {
+        if (s.t === 'num') out.push(s.v);
+        else if (s.t === 'bool') out.push(s.v ? 1 : 0);
         else if (s.t === 'err') e ??= s.v;
       });
       if (e) return e;
@@ -593,6 +613,10 @@ function countFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext, nonBlank: b
     const v = ev(a);
     if (v.t === 'ref') {
       refEach(v, ctx, (_r, _c, s) => {
+        if (nonBlank ? s.t !== 'blank' : s.t === 'num') count++;
+      });
+    } else if (v.t === 'arr') {
+      arrEach(v.rows, (s) => {
         if (nonBlank ? s.t !== 'blank' : s.t === 'num') count++;
       });
     } else {

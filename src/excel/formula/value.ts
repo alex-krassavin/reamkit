@@ -31,7 +31,15 @@ export type Scalar =
 // A reference value. `sheet` (a workbook sheet index) is set only for a
 // cross-sheet qualifier (Sheet2!A1) or a defined name that targets another sheet;
 // when undefined the reference is on the rule's own sheet (the common case).
-export type FValue = Scalar | { readonly t: 'ref'; readonly rect: Rect; readonly sheet?: number };
+//
+// An `arr` value is an inline array constant ({1,2;3,4}) — rows of scalars. It
+// flattens into aggregates, broadcasts element-wise against a scalar in the
+// operators, and collapses to its top-left element in a scalar context (Excel's
+// implicit intersection of a constant array).
+export type FValue =
+  | Scalar
+  | { readonly t: 'ref'; readonly rect: Rect; readonly sheet?: number }
+  | { readonly t: 'arr'; readonly rows: ReadonlyArray<ReadonlyArray<Scalar>> };
 
 export const BLANK: Scalar = { t: 'blank' };
 export const TRUE: Scalar = { t: 'bool', v: true };
@@ -59,10 +67,19 @@ export function isErr(v: FValue): v is { t: 'err'; v: FErr } {
 // cell → blank); any larger rect in a scalar context is #VALUE! (we do not
 // implement implicit intersection). Non-refs pass through unchanged.
 export function deref(v: FValue, ctx: EvalContext): Scalar {
+  if (v.t === 'arr') return v.rows[0]?.[0] ?? BLANK; // implicit intersection → top-left
   if (v.t !== 'ref') return v;
   const { r0, c0, r1, c1 } = v.rect;
   if (r0 === r1 && c0 === c1) return refGet(v.sheet, ctx, r0, c0);
   return err('#VALUE!');
+}
+
+// Visit every scalar element of an array constant, row by row.
+export function arrEach(
+  rows: ReadonlyArray<ReadonlyArray<Scalar>>,
+  visit: (value: Scalar) => void,
+): void {
+  for (const row of rows) for (const s of row) visit(s);
 }
 
 // Iterate the populated cells of a reference, honouring a cross-sheet qualifier

@@ -68,6 +68,12 @@ export function evaluate(ast: Ast, ctx: EvalContext, shift: Shift): FValue {
       // A defined name resolves against the workbook (a reference or a literal);
       // an unknown name — or no workbook wired in — is #NAME?.
       return ctx.resolveName?.(ast.name) ?? err('#NAME?');
+    case 'array':
+      // An inline array constant → its scalar elements (each reduced now).
+      return {
+        t: 'arr',
+        rows: ast.rows.map((row) => row.map((el) => deref(evaluate(el, ctx, shift), ctx))),
+      };
     case 'unary':
       return evalUnary(ast.op, evaluate(ast.x, ctx, shift), ctx);
     case 'pct': {
@@ -109,6 +115,14 @@ function evalUnary(op: '-' | '+', x: FValue, ctx: EvalContext): FValue {
 function evalBin(op: BinOp, aAst: Ast, bAst: Ast, ctx: EvalContext, shift: Shift): FValue {
   const a = evaluate(aAst, ctx, shift);
   const b = evaluate(bAst, ctx, shift);
+  // An array operand broadcasts the operator element-wise (e.g. A1={1,3,5}).
+  if (a.t === 'arr' || b.t === 'arr') return broadcastBin(op, a, b, ctx);
+  return applyBin(op, a, b, ctx);
+}
+
+// Apply a binary operator to a (scalar/reference) operand pair — the core scalar
+// semantics, shared by the direct path and by array broadcasting.
+function applyBin(op: BinOp, a: FValue, b: FValue, ctx: EvalContext): FValue {
   if (op === '&') {
     const ta = toText(a, ctx);
     if (typeof ta !== 'string') return err(ta);
@@ -138,6 +152,32 @@ function evalBin(op: BinOp, aAst: Ast, bAst: Ast, ctx: EvalContext, shift: Shift
       return Number.isNaN(r) ? err('#NUM!') : num(r);
     }
   }
+}
+
+// Broadcast a binary operator over an array operand: a scalar (or 1×1) pairs with
+// every element; two equal-shaped arrays combine element-wise; a 1-row/1-col
+// operand stretches along that axis. Mismatched shapes → #VALUE!.
+function broadcastBin(op: BinOp, a: FValue, b: FValue, ctx: EvalContext): FValue {
+  const ar = a.t === 'arr' ? a.rows : [[deref(a, ctx)]];
+  const br = b.t === 'arr' ? b.rows : [[deref(b, ctx)]];
+  const nRows = Math.max(ar.length, br.length);
+  const out: Array<Array<Scalar>> = [];
+  for (let r = 0; r < nRows; r++) {
+    const arow = ar[ar.length === 1 ? 0 : r];
+    const brow = br[br.length === 1 ? 0 : r];
+    if (!arow || !brow) return err('#VALUE!');
+    const nCols = Math.max(arow.length, brow.length);
+    const row: Array<Scalar> = [];
+    for (let c = 0; c < nCols; c++) {
+      const ea = arow[arow.length === 1 ? 0 : c];
+      const eb = brow[brow.length === 1 ? 0 : c];
+      if (ea === undefined || eb === undefined) return err('#VALUE!');
+      const res = applyBin(op, ea, eb, ctx);
+      row.push(res.t === 'ref' || res.t === 'arr' ? err('#VALUE!') : res);
+    }
+    out.push(row);
+  }
+  return { t: 'arr', rows: out };
 }
 
 function compareOp(op: BinOp, a: Scalar, b: Scalar): FValue {

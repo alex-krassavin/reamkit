@@ -481,3 +481,33 @@ describe('formula engine — Wave 4 (reference / information)', () => {
     expect(ev('UNICODE(UNICHAR(8364))=8364')).toBe(true); // €
   });
 });
+
+describe('formula engine — Wave 4 (array constants)', () => {
+  it('flattens an array constant into an aggregate', () => {
+    expect(ev('SUM({1,2,3})=6')).toBe(true);
+    expect(ev('SUM({1,2;3,4})=10')).toBe(true); // 2×2
+    expect(ev('SUM({-1,2,-3})=-2')).toBe(true); // signed elements
+    expect(ev('COUNT({1,2,3,4})=4')).toBe(true);
+    expect(ev('MAX({3,9,5})=9')).toBe(true);
+  });
+
+  it('broadcasts an operator element-wise against a scalar', () => {
+    expect(ev('SUM({1,2,3}*2)=12')).toBe(true);
+    expect(ev('SUM({1,2,3}+10)=36')).toBe(true);
+  });
+
+  it('supports the OR(cell={…}) membership idiom', () => {
+    const g = makeCtx({ A1: 3 });
+    expect(ev('OR(A1={1,3,5})', g)).toBe(true); // 3 is in the set
+    expect(ev('OR(A1={2,4,6})', g)).toBe(false); // 3 is not
+    expect(ev('OR(5={5,6,7})')).toBe(true);
+    expect(ev('AND({1,1,1})')).toBe(true);
+    expect(ev('AND({1,0,1})')).toBe(false);
+  });
+
+  it('collapses to the top-left element in a scalar context', () => {
+    expect(ev('{9,8,7}+0=9')).toBe(true); // row array → first element
+    expect(ev('{5;6;7}+0=5')).toBe(true); // column array → first element
+    expect(ev('IF({1,0},"y","n")="y"')).toBe(true); // condition uses the top-left
+  });
+});

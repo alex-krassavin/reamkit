@@ -155,8 +155,9 @@ export function tokenize(src: string): Array<Token> {
       i += 2;
       continue;
     }
-    // Single-character operators / punctuation (`!` separates a sheet qualifier).
-    if ('+-*/^&=<>%:(),!'.includes(ch)) {
+    // Single-character operators / punctuation (`!` separates a sheet qualifier;
+    // `{ } ;` delimit an inline array constant).
+    if ('+-*/^&=<>%:(),!{};'.includes(ch)) {
       out.push({ kind: 'op', text: ch });
       i++;
       continue;

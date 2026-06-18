@@ -32,6 +32,7 @@ export type Ast =
   | { readonly k: 'cell'; readonly ref: CellRef; readonly sheet?: string }
   | { readonly k: 'range'; readonly a: CellRef; readonly b: CellRef; readonly sheet?: string }
   | { readonly k: 'name'; readonly name: string }
+  | { readonly k: 'array'; readonly rows: ReadonlyArray<ReadonlyArray<Ast>> }
   | { readonly k: 'unary'; readonly op: '-' | '+'; readonly x: Ast }
   | { readonly k: 'pct'; readonly x: Ast }
   | { readonly k: 'bin'; readonly op: BinOp; readonly a: Ast; readonly b: Ast }
@@ -158,6 +159,7 @@ class Parser {
           this.expect(')');
           return e;
         }
+        if (t.text === '{') return this.parseArray();
         throw new ParseError(`unexpected operator ${t.text}`);
       case 'eof':
         throw new ParseError('unexpected end of formula');
@@ -214,6 +216,35 @@ class Parser {
       return { k: 'range', a, b, sheet };
     }
     return { k: 'cell', ref: a, sheet };
+  }
+
+  // An inline array constant {1,2,3} / {1,2;3,4}: rows separated by `;`, elements
+  // by `,`. The opening `{` is already consumed. Elements are parsed as
+  // expressions (so a signed literal like -1 works) and reduced to scalars at
+  // eval; the total element count is capped against a crafted huge array.
+  private parseArray(): Ast {
+    const rows: Array<Array<Ast>> = [];
+    let row: Array<Ast> = [];
+    let count = 0;
+    for (;;) {
+      row.push(this.parseExpr(0));
+      if (++count > MAX_ARGS) throw new ParseError('array constant too large');
+      const t = this.peek();
+      if (t.kind === 'op' && t.text === ',') {
+        this.next();
+        continue;
+      }
+      if (t.kind === 'op' && t.text === ';') {
+        this.next();
+        rows.push(row);
+        row = [];
+        continue;
+      }
+      break;
+    }
+    rows.push(row);
+    this.expect('}');
+    return { k: 'array', rows };
   }
 
   private parseArgs(): Array<Ast> {
