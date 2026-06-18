@@ -45,6 +45,8 @@ export interface BuildPptxOptions {
   readonly slideRels?: ReadonlyArray<string>;
   /** Per-slide `<p:bg>…</p:bg>` (placed in p:cSld before the spTree). */
   readonly slideBg?: ReadonlyArray<string>;
+  /** Per-slide hidden flag → emits `p:sld@show="0"` on that slide. */
+  readonly hiddenSlides?: ReadonlyArray<boolean>;
 }
 
 const NS = `xmlns:p="${P_NS}" xmlns:a="${A_NS}" xmlns:r="${R_NS}"`;
@@ -128,9 +130,10 @@ export function buildPptx(
     'ppt/_rels/presentation.xml.rels': encoder.encode(presRels),
   };
   for (let i = 0; i < n; i++) {
+    const show = options.hiddenSlides?.[i] ? ' show="0"' : '';
     const slide =
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
-      `<p:sld ${NS}>` +
+      `<p:sld ${NS}${show}>` +
       `<p:cSld>${options.slideBg?.[i] ?? ''}<p:spTree>${slides[i] ?? ''}</p:spTree></p:cSld>` +
       `</p:sld>`;
     files[`ppt/slides/slide${i + 1}.xml`] = encoder.encode(slide);

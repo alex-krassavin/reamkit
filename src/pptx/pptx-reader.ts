@@ -52,6 +52,17 @@ const parser = new XMLParser({
   trimValues: false,
 });
 
+// Whether a slide is hidden (p:sld@show="0"). The attribute lives on the slide's
+// root element; scan a bounded prefix (the root tag is at the very top) rather
+// than parse the whole slide a second time just for this. If the root tag were
+// improbably long and fell outside the window we simply render the slide — a
+// harmless over-render, never a wrong omission.
+function isSlideHidden(data: Uint8Array): boolean {
+  const head = decoder.decode(data.subarray(0, 4096));
+  const root = head.match(/<p:sld\b[^>]*>/);
+  return root ? /\bshow\s*=\s*["']0["']/.test(root[0]) : false;
+}
+
 export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
   const losses: Array<Loss> = [];
   const pkg = OpcPackage.open(bytes);
@@ -80,11 +91,26 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
     );
     const lst = kids.find((c) => poIs(c, 'p:sldIdLst'));
     const ids = lst ? poChildren(lst).filter((c) => poIs(c, 'p:sldId')) : [];
+    let hidden = 0;
     for (const sldId of ids) {
       const rid = poAttr(sldId, 'r:id');
       const rel = rid !== undefined ? slideRelById.get(rid) : undefined;
       const part = rel ? pkg.resolveRelatedPart(presPath, rel) : undefined;
-      if (part) slideParts.push(part);
+      if (!part) continue;
+      // p:sld@show="0" marks a hidden slide; PowerPoint and LibreOffice both omit
+      // hidden slides from a printed/exported deck, so we skip them too.
+      if (isSlideHidden(part.data)) {
+        hidden++;
+        continue;
+      }
+      slideParts.push(part);
+    }
+    if (hidden > 0) {
+      losses.push({
+        severity: 'dropped',
+        feature: FEATURES.text,
+        detail: `${hidden} hidden slide(s) omitted (p:sld@show="0")`,
+      });
     }
   }
   if (slideParts.length === 0) {
