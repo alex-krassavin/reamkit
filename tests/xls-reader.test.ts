@@ -12,6 +12,7 @@ import {
   bottomMarginRec,
   buildXls,
   commentObjRec,
+  dvRec,
   errRec,
   footerRec,
   formulaNumberRec,
@@ -426,6 +427,111 @@ describe('xls cell comments (XLS-11)', () => {
       }),
     );
     expect(doc.sheets[0]!.comments).toBeUndefined();
+  });
+});
+
+describe('xls data validation (XLS-12)', () => {
+  const cellProps = (doc: SheetDoc): Record<string, unknown> | undefined => {
+    const table = projectSheetDoc(doc).body.find((el) => el.kind === 'table');
+    return table?.kind === 'table' ? table.table.rows[0]?.cells[0]?.properties : undefined;
+  };
+
+  it('reads a list validation into the grid', () => {
+    const doc = readXlsToSheetDoc(
+      buildXls({
+        sheets: [
+          {
+            name: 'S',
+            records: [
+              numberRec(0, 0, 1),
+              dvRec({
+                valType: 3,
+                listLiteral: 'Yes,No',
+                ranges: [{ r0: 0, r1: 0, c0: 0, c1: 0 }],
+              }),
+            ],
+          },
+        ],
+      }),
+    );
+    expect(doc.sheets[0]!.grid.dataValidations).toEqual([
+      {
+        type: 'list',
+        ranges: [{ startRow: 0, endRow: 0, startColumn: 0, endColumn: 0 }],
+        showDropDown: false,
+        showInputMessage: true,
+        showErrorMessage: true,
+        formula1: '"Yes,No"',
+      },
+    ]);
+  });
+
+  it('paints an in-cell dropdown for a list validation cell', () => {
+    const doc = readXlsToSheetDoc(
+      buildXls({
+        sst: ['x'],
+        sheets: [
+          {
+            name: 'S',
+            records: [
+              labelSstRec(0, 0, 0),
+              dvRec({ valType: 3, listLiteral: 'A,B', ranges: [{ r0: 0, r1: 0, c0: 0, c1: 0 }] }),
+            ],
+          },
+        ],
+      }),
+    );
+    expect(cellProps(doc)?.dropdown).toBe(true);
+  });
+
+  it('does not paint a dropdown when the combo is suppressed', () => {
+    const doc = readXlsToSheetDoc(
+      buildXls({
+        sst: ['x'],
+        sheets: [
+          {
+            name: 'S',
+            records: [
+              labelSstRec(0, 0, 0),
+              dvRec({
+                valType: 3,
+                suppressCombo: true,
+                listLiteral: 'A',
+                ranges: [{ r0: 0, r1: 0, c0: 0, c1: 0 }],
+              }),
+            ],
+          },
+        ],
+      }),
+    );
+    expect(doc.sheets[0]!.grid.dataValidations?.[0]?.showDropDown).toBe(true);
+    expect(cellProps(doc)?.dropdown).toBeUndefined();
+  });
+
+  it('reads a whole-number validation with operator and range', () => {
+    const doc = readXlsToSheetDoc(
+      buildXls({
+        sheets: [
+          {
+            name: 'S',
+            records: [
+              numberRec(0, 0, 1),
+              dvRec({ valType: 1, operator: 4, ranges: [{ r0: 1, r1: 3, c0: 1, c1: 1 }] }),
+            ],
+          },
+        ],
+      }),
+    );
+    expect(doc.sheets[0]!.grid.dataValidations).toEqual([
+      {
+        type: 'whole',
+        ranges: [{ startRow: 1, endRow: 3, startColumn: 1, endColumn: 1 }],
+        operator: 'greaterThan',
+        showDropDown: false,
+        showInputMessage: true,
+        showErrorMessage: true,
+      },
+    ]);
   });
 });
 

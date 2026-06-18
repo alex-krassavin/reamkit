@@ -630,6 +630,51 @@ export function commentObjRec(idObj: number): Uint8Array {
   return rec(0x005d, d);
 }
 
+// DV (0x01BE): one data-validation rule (XLS-12). dwDvFlags + four (empty) strings
+// + two DVParsedFormulas + a SqRefU. A list literal is written as a PtgStr formula1.
+export function dvRec(opts: {
+  readonly valType: number; // 0=any,1=whole,2=decimal,3=list,4=date,5=time,6=textLength,7=custom
+  readonly operator?: number; // typOperator 0..7
+  readonly allowBlank?: boolean;
+  readonly suppressCombo?: boolean; // fSuppressCombo (hides the dropdown)
+  readonly listLiteral?: string; // for a list rule: "a,b,c" → a PtgStr in formula1
+  readonly ranges: ReadonlyArray<{ r0: number; r1: number; c0: number; c1: number }>;
+}): Uint8Array {
+  const u16le = (v: number): Uint8Array => {
+    const a = new Uint8Array(2);
+    new DataView(a.buffer).setUint16(0, v, true);
+    return a;
+  };
+  let flags = (opts.valType & 0x0f) | ((opts.operator ?? 0) << 20) | 0x40000 | 0x80000;
+  if (opts.allowBlank) flags |= 0x100;
+  if (opts.suppressCombo) flags |= 0x200;
+  const flagsBytes = new Uint8Array(4);
+  new DataView(flagsBytes.buffer).setUint32(0, flags >>> 0, true);
+
+  const empty = (): Uint8Array => Uint8Array.of(0, 0, 0); // XLUnicodeString cch 0, flags 0
+  let rgce1 = new Uint8Array(0);
+  if (opts.listLiteral !== undefined) {
+    const chars = ascii(opts.listLiteral);
+    rgce1 = concat([Uint8Array.of(0x17, chars.length, 0x00), chars]); // PtgStr
+  }
+
+  const parts: Array<Uint8Array> = [
+    flagsBytes,
+    empty(), // promptTitle
+    empty(), // errorTitle
+    empty(), // prompt
+    empty(), // error
+    u16le(rgce1.length), // cce1
+    u16le(0), // unused
+    rgce1,
+    u16le(0), // cce2
+    u16le(0), // unused
+    u16le(opts.ranges.length), // SqRefU count
+  ];
+  for (const r of opts.ranges) parts.push(u16le(r.r0), u16le(r.r1), u16le(r.c0), u16le(r.c1));
+  return rec(0x01be, concat(parts));
+}
+
 export interface XlsSheetInput {
   readonly name: string;
   readonly records: ReadonlyArray<Uint8Array>;

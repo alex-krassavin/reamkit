@@ -22,6 +22,8 @@ import type {
 } from '@/core/ir/sheet';
 import type {
   ColumnWidth,
+  DataValidation,
+  DataValidationType,
   DefinedName,
   HeaderFooter,
   MergedRange,
@@ -81,6 +83,8 @@ const REC = {
   // Cell comments (sheet-scoped) — XLS-11.
   NOTE: 0x001c, // Note — the comment's cell + author + idObj
   OBJ: 0x005d, // Obj — the comment's text-box object (FtCmo ot 0x19)
+  // Data validation (sheet-scoped) — XLS-12.
+  DV: 0x01be, // one validation rule (DVAL 0x01B2 is the table header, not needed)
 } as const;
 
 // Bombs / corruption guards.
@@ -362,6 +366,7 @@ function readSheet(
     }
   }
 
+  const dataValidations = parseDataValidations(records);
   const grid: ParsedWorksheet = {
     cells,
     maxRow,
@@ -370,6 +375,7 @@ function readSheet(
     merges,
     rowHeights: [],
     ...parsePrintModel(records),
+    ...(dataValidations.length > 0 ? { dataValidations } : {}),
   };
   const drawing = gatherDrawing(records, REC.MSODRAWING);
   const images =
@@ -800,6 +806,137 @@ function colLetters(c: number): string {
     n = Math.floor(n / 26);
   }
   return s;
+}
+
+// === Data validation (DV records) — XLS-12 ===================================
+
+// valType (DV flags bits 0–3) → the validation type; typOperator (bits 20–23) →
+// the comparison operator (meaningful only for the value-range types).
+const DV_TYPES: ReadonlyArray<DataValidationType> = [
+  'none',
+  'whole',
+  'decimal',
+  'list',
+  'date',
+  'time',
+  'textLength',
+  'custom',
+];
+const DV_OPERATORS: ReadonlyArray<string> = [
+  'between',
+  'notBetween',
+  'equal',
+  'notEqual',
+  'greaterThan',
+  'lessThan',
+  'greaterThanOrEqual',
+  'lessThanOrEqual',
+];
+const DV_OPERATOR_TYPES = new Set<DataValidationType>([
+  'whole',
+  'decimal',
+  'date',
+  'time',
+  'textLength',
+]);
+
+// The sheet's DV records → DataValidation[] in the same shape the OOXML reader
+// builds, so a `list` rule paints the projection's in-cell dropdown affordance.
+function parseDataValidations(records: ReadonlyArray<BiffRecord>): Array<DataValidation> {
+  const out: Array<DataValidation> = [];
+  for (const r of records) {
+    if (r.type === REC.DV) {
+      const dv = parseDv(r.data);
+      if (dv) out.push(dv);
+    }
+  }
+  return out;
+}
+
+// One DV record (§2.4.82) → a DataValidation, or undefined when structurally short
+// (missing, never wrong). Layout: dwDvFlags(u32), four XLUnicodeStrings
+// (promptTitle/errorTitle/prompt/error), two DVParsedFormulas (cce + unused +
+// rgce), then a SqRefU (count + Ref8U array).
+function parseDv(d: Uint8Array): DataValidation | undefined {
+  if (d.length < 4) return undefined;
+  const flags = readU32(d, 0);
+  const type = DV_TYPES[flags & 0x0f];
+  if (type === undefined) return undefined;
+  const operator = DV_OPERATORS[(flags >> 20) & 0x0f];
+
+  let off = 4;
+  const promptTitle = readXlStringEnd(d, off);
+  off = promptTitle.next;
+  const errorTitle = readXlStringEnd(d, off);
+  off = errorTitle.next;
+  const prompt = readXlStringEnd(d, off);
+  off = prompt.next;
+  const error = readXlStringEnd(d, off);
+  off = error.next;
+
+  if (off + 4 > d.length) return undefined;
+  const cce1 = readU16(d, off);
+  off += 4; // cce1 + unused
+  const rgce1 = d.subarray(off, Math.min(d.length, off + cce1));
+  off += cce1;
+  if (off + 4 > d.length) return undefined;
+  const cce2 = readU16(d, off);
+  off += 4 + cce2; // skip formula2 (unused for list / most rules)
+
+  if (off + 2 > d.length) return undefined;
+  const cref = readU16(d, off);
+  off += 2;
+  const ranges: Array<MergedRange> = [];
+  for (let k = 0; k < cref && off + 8 <= d.length; k++) {
+    ranges.push({
+      startRow: readU16(d, off),
+      endRow: readU16(d, off + 2),
+      startColumn: readU16(d, off + 4),
+      endColumn: readU16(d, off + 6),
+    });
+    off += 8;
+  }
+  if (ranges.length === 0) return undefined;
+
+  const formula1 = type === 'list' ? extractListSource(rgce1) : undefined;
+  return {
+    type,
+    ranges,
+    ...(operator !== undefined && DV_OPERATOR_TYPES.has(type) ? { operator } : {}),
+    ...((flags & 0x100) !== 0 ? { allowBlank: true } : {}),
+    showDropDown: (flags & 0x200) !== 0, // fSuppressCombo (ECMA's inverted sense)
+    ...((flags & 0x40000) !== 0 ? { showInputMessage: true } : {}),
+    ...((flags & 0x80000) !== 0 ? { showErrorMessage: true } : {}),
+    ...(promptTitle.value ? { promptTitle: promptTitle.value } : {}),
+    ...(errorTitle.value ? { errorTitle: errorTitle.value } : {}),
+    ...(prompt.value ? { prompt: prompt.value } : {}),
+    ...(error.value ? { error: error.value } : {}),
+    ...(formula1 ? { formula1 } : {}),
+  };
+}
+
+// A `list` validation's source from rgce1: a PtgStr (0x17) literal "a,b,c", or an
+// area reference rendered to A1. Undefined when neither (the dropdown still shows).
+function extractListSource(rgce: Uint8Array): string | undefined {
+  if (rgce.length >= 3 && rgce[0] === 0x17) {
+    const cch = rgce[1]!;
+    return `"${decodeChars(rgce, 3, cch, (rgce[2]! & 0x01) !== 0)}"`;
+  }
+  const areas = extractNameAreas(rgce);
+  return areas ? areas.map(formatArea).join(',') : undefined;
+}
+
+// An XLUnicodeString that also returns its end offset (readXlString returns only
+// the text) — used to walk the DV record's four consecutive strings.
+function readXlStringEnd(d: Uint8Array, off: number): { value: string; next: number } {
+  if (off + 3 > d.length) return { value: '', next: d.length };
+  const cch = readU16(d, off);
+  const flags = d[off + 2]!;
+  const high = (flags & 0x01) !== 0;
+  let p = off + 3;
+  if ((flags & 0x08) !== 0) p += 2; // rich-run count
+  if ((flags & 0x04) !== 0) p += 4; // phonetic size
+  return { value: decodeChars(d, p, cch, high), next: p + cch * (high ? 2 : 1) };
 }
 
 // A sheet's TXO (text-object) record texts, in order — the cch is in the TXO

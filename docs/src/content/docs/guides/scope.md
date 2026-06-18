@@ -113,9 +113,10 @@ charts — and is byte-stable across a read↔write loop.
   read, plus **cell hyperlinks** (the HLINK record's URL moniker), the **page-setup
   print model** (orientation, scale, fit-to-page, margins, gridlines, centering,
   header/footer and manual page breaks), **defined names** (named ranges plus the
-  print area and repeated titles, from the NAME records) and **cell comments** (the
-  Note record's author + the text-box text). The remaining secondary sheet features
-  (conditional formatting, data validation) are not read yet — see Not yet.
+  print area and repeated titles, from the NAME records), **cell comments** (the
+  Note record's author + the text-box text) and **data validation** (the rule type,
+  ranges and a `list` rule's in-cell dropdown). The remaining secondary sheet
+  feature — conditional formatting — is not read yet — see Not yet.
 - The print model — gridline suppression, print area, fit-to-page scaling, repeated
   print titles, manual page breaks, horizontal/vertical centering, and **column-band
   pagination**: a sheet wider than the page (and not fit-to-width) splits across
@@ -267,12 +268,12 @@ charts — and is byte-stable across a read↔write loop.
   **borders / vertical merges**. Everything else — text, run and paragraph
   formatting, tables with column widths, inline images, fields, and the section's
   headers/footers — is read (see WordprocessingML above).
-- **The legacy `.xls` reader does not yet read** (re-save as `.xlsx` for these): the
-  remaining secondary sheet features — **conditional formatting** and **data
-  validation** — which the OOXML `.xlsx` reader handles but the BIFF reader does not.
-  The cell data, styling, embedded images, charts, drawing shapes, cell hyperlinks,
-  the **page-setup print model**, **defined names** (named ranges, print area,
-  repeated titles) and **cell comments** _are_ read (see SpreadsheetML above).
+- **The legacy `.xls` reader does not yet read** (re-save as `.xlsx` for these):
+  **conditional formatting** — the one remaining secondary sheet feature the OOXML
+  `.xlsx` reader handles but the BIFF reader does not. The cell data, styling,
+  embedded images, charts, drawing shapes, cell hyperlinks, the **page-setup print
+  model**, **defined names** (named ranges, print area, repeated titles), **cell
+  comments** and **data validation** _are_ read (see SpreadsheetML above).
 - **Byte-for-byte visual reproduction of another renderer.** `layoutProfile` plus the
   metric-compatible substitutes get a target tool's page geometry close — without its
   private font metrics — but _pixel-identical_ output is a non-goal: that would need the
