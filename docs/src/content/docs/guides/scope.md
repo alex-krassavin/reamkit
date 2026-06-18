@@ -140,13 +140,23 @@ charts — and is byte-stable across a read↔write loop.
   with a zero axis so negative values run the other way) and `iconSet` — traffic
   lights, arrows, signs, symbols (check / exclamation / cross), flags, ratings (a
   bar meter) and quarters (a clock pie). The cross-cell rules resolve against the
-  range's value extent. Also `expression` (an arbitrary formula, evaluated per
-  cell by a small built-in formula engine against the workbook's cached values —
-  no recalculation) and `timePeriod` (today / this-week / last-month … windows).
-  Both stay deterministic: `timePeriod` and `TODAY()`/`NOW()` read an explicit
-  reference date you pass as `now` (never the system clock), so without one those
-  clock-relative rules simply don't paint. The highest-priority matching rule
-  claims the cell's fill / font; a data bar or icon applies on top.
+  range's value extent. Also `expression` — an arbitrary formula evaluated per cell
+  by a built-in formula engine against the workbook's cached values (no
+  recalculation): ~140 functions (logic / info incl. `IFS`/`SWITCH`/`XOR` and the
+  `IS*` family; the math, trig and exponential set; the `SUM`/`COUNT`/`MEDIAN`/
+  `SUMPRODUCT`/`STDEV`/`VAR`/`PERCENTILE` aggregates and the `COUNTIF(S)`/`SUMIF(S)`/
+  `AVERAGEIF(S)` predicates; text; date / time; the `MATCH`/`INDEX`/`VLOOKUP`/
+  `HLOOKUP` lookups and `ROW`/`COLUMN`), sheet-qualified references (`Sheet2!A1`),
+  defined names, inline array constants (`OR(A1={1,3,5})`) and the per-cell
+  relative-reference shift. A construct genuinely beyond a deterministic per-cell
+  predicate — a 3-D reference, a dynamic-array / `LAMBDA` idiom, or a volatile /
+  dynamic-reference function (`RAND`/`INDIRECT`/`OFFSET`) — evaluates to an error, so
+  the rule simply does not paint rather than misrender. And `timePeriod` (today /
+  this-week / last-month … windows). Both stay deterministic: `timePeriod` and
+  `TODAY()`/`NOW()` read an explicit reference date you pass as `now` (never the
+  system clock), so without one those clock-relative rules simply don't paint. The
+  highest-priority matching rule claims the cell's fill / font; a data bar or icon
+  applies on top.
 - **Sparklines** — per-cell line / column / win-loss mini charts, including
   cross-sheet data ranges and blank-cell gaps.
 - **Excel tables** (`xl/tables`) — banded rows and a styled header row, the
@@ -278,15 +288,6 @@ charts — and is byte-stable across a read↔write loop.
   only to a binary `.bin` (the MorphData control family — check box / option / toggle
   / text / combo / list — and every property-bag control _are_ read, with their
   caption and value).
-- **The conditional-format formula engine** covers ~90 functions (logic incl.
-  `IFS`/`SWITCH`/`XOR`, math + the `SUM`/`COUNT`/`MEDIAN`/`SUMPRODUCT` aggregates and
-  the `COUNTIF(S)`/`SUMIF(S)`/`AVERAGEIF(S)` predicates, text, the date / time
-  functions, and the `MATCH`/`INDEX`/`VLOOKUP`/`HLOOKUP` lookups), resolves
-  **sheet-qualified references** (`Sheet2!A1`) and **defined names** against the
-  workbook, and shifts relative references per cell. A formula a step beyond it — an
-  unsupported function, an array-formula idiom, a 3-D reference — evaluates to an error
-  and the rule simply doesn't apply (a graceful loss, never a misrender); where an
-  exact Excel semantic is ambiguous the engine errs the same way rather than guess.
 
 ## Validation
 
