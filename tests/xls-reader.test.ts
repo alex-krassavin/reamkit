@@ -13,12 +13,15 @@ import {
   errRec,
   formulaNumberRec,
   formulaStringRecs,
+  hlinkRec,
   labelSstRec,
   mergeCellsRec,
   mulRkRec,
   numberRec,
+  rec,
   rkRec,
 } from './fixtures/build-xls';
+import type { FlowDoc } from '@/core/ir/flow';
 import type { SheetDoc } from '@/core/ir/sheet';
 import type { WorksheetCell } from '@/core/spreadsheet-model';
 import { decodeRk, readSst, readXlsToSheetDoc } from '@/excel/xls/biff-reader';
@@ -122,6 +125,93 @@ describe('xls reader — end to end (XLS-2)', () => {
     const table = flow.body.find((el) => el.kind === 'table');
     expect(table?.kind).toBe('table');
     if (table?.kind === 'table') expect(table.table.rows.length).toBeGreaterThan(0);
+  });
+});
+
+describe('xls hyperlinks (XLS-8)', () => {
+  // The first run href anywhere in the projected grid table.
+  const findHref = (flow: FlowDoc): string | undefined => {
+    for (const el of flow.body) {
+      if (el.kind !== 'table') continue;
+      for (const row of el.table.rows) {
+        for (const cell of row.cells) {
+          for (const block of cell.content) {
+            if (block.kind !== 'paragraph') continue;
+            for (const run of block.paragraph.runs) if (run.href) return run.href;
+          }
+        }
+      }
+    }
+    return undefined;
+  };
+
+  it('reads an external URL hyperlink (HLINK) into the SheetDoc', () => {
+    const xls = buildXls({
+      sst: ['Site'],
+      sheets: [
+        {
+          name: 'S',
+          records: [
+            labelSstRec(1, 1, 0), // B2 = "Site"
+            hlinkRec({
+              firstRow: 1,
+              lastRow: 1,
+              firstCol: 1,
+              lastCol: 1,
+              url: 'https://example.com/',
+            }),
+          ],
+        },
+      ],
+    });
+    expect(readXlsToSheetDoc(xls).sheets[0]!.hyperlinks).toEqual([
+      {
+        ref: { startRow: 1, endRow: 1, startColumn: 1, endColumn: 1 },
+        url: 'https://example.com/',
+      },
+    ]);
+  });
+
+  it('stamps the URL onto the covered cell run through projection', () => {
+    const xls = buildXls({
+      sst: ['Site'],
+      sheets: [
+        {
+          name: 'S',
+          records: [
+            labelSstRec(0, 0, 0),
+            hlinkRec({
+              firstRow: 0,
+              lastRow: 0,
+              firstCol: 0,
+              lastCol: 0,
+              url: 'https://reamkit.dev/',
+            }),
+          ],
+        },
+      ],
+    });
+    expect(findHref(projectSheetDoc(readXlsToSheetDoc(xls)))).toBe('https://reamkit.dev/');
+  });
+
+  it('ignores a malformed/short HLINK record (no wrong content)', () => {
+    const xls = buildXls({
+      sheets: [{ name: 'S', records: [numberRec(0, 0, 1), rec(0x01b8, new Uint8Array(10))] }],
+    });
+    expect(readXlsToSheetDoc(xls).sheets[0]!.hyperlinks).toBeUndefined();
+  });
+
+  it('ignores an in-workbook location-only link (no external URL)', () => {
+    // An HLink with HasMoniker clear: streamVersion 2, flags 0x08 (HasLocationStr).
+    const data = new Uint8Array(32);
+    const v = new DataView(data.buffer);
+    v.setUint16(0, 0, true); // ref8 A1
+    v.setUint32(24, 2, true); // streamVersion
+    v.setUint32(28, 0x08, true); // flags: HasLocationStr only (no moniker)
+    const xls = buildXls({
+      sheets: [{ name: 'S', records: [numberRec(0, 0, 1), rec(0x01b8, data)] }],
+    });
+    expect(readXlsToSheetDoc(xls).sheets[0]!.hyperlinks).toBeUndefined();
   });
 });
 

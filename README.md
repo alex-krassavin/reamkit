@@ -197,11 +197,12 @@ hyperlinks — then converts onward to PDF, SVG, HTML or DOCX like any source.
 PowerPoint 97–2003 formats (OLE2/CFB) parse through a shared container reader: a
 `.doc` yields its text with run and paragraph formatting, tables, inline images,
 fields, headers/footers and lists; an `.xls` yields the grid with styling, embedded
-images, charts and drawing shapes; a `.ppt` yields each slide's text (with run and
-paragraph formatting), embedded images, per-shape placement (anchored text boxes
-and pictures at their slide rectangles) and decorative autoshapes (with fill / line
-colours resolved through the slide's colour scheme), one page per slide — all
-convert onward to PDF, SVG, HTML, or back to `.docx` / `.xlsx` like any source.
+images, charts, drawing shapes and cell hyperlinks; a `.ppt` yields each slide's
+text (with run and paragraph formatting), embedded images, per-shape placement
+(anchored text boxes and pictures at their slide rectangles) and decorative
+autoshapes (with fill / line colours resolved through the slide's colour scheme),
+one page per slide — all convert onward to PDF, SVG, HTML, or back to `.docx` /
+`.xlsx` like any source.
 
 See [`CHANGELOG.md`](./CHANGELOG.md) for the release history; the docs
 [**Scope**](https://reamkit.dev/guides/scope/) guide has the full feature matrix

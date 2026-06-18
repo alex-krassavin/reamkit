@@ -110,9 +110,9 @@ charts — and is byte-stable across a read↔write loop.
   Office-Drawing/Escher BLIP store), **embedded charts** (the BIFF chart substream,
   plotted from the worksheet cells its AI records reference) and **drawing shapes**
   (autoshapes + text boxes, from the Escher shape records and their TXO text) are
-  read. The secondary sheet features (conditional formatting, comments, hyperlinks,
-  data validation, defined names, the page-setup print model) are not read yet —
-  see Not yet.
+  read, plus **cell hyperlinks** (the HLINK record's URL moniker). The remaining
+  secondary sheet features (conditional formatting, comments, data validation,
+  defined names, the page-setup print model) are not read yet — see Not yet.
 - The print model — gridline suppression, print area, fit-to-page scaling, repeated
   print titles, manual page breaks, horizontal/vertical centering, and **column-band
   pagination**: a sheet wider than the page (and not fit-to-width) splits across
@@ -265,10 +265,11 @@ charts — and is byte-stable across a read↔write loop.
   formatting, tables with column widths, inline images, fields, and the section's
   headers/footers — is read (see WordprocessingML above).
 - **The legacy `.xls` reader does not yet read** (re-save as `.xlsx` for these): the
-  secondary sheet features — **conditional formatting, cell comments, hyperlinks,
-  data validation, defined names** and the **page-setup print model** — which the
-  OOXML `.xlsx` reader handles but the BIFF reader does not. The cell data, styling,
-  embedded images, charts and drawing shapes _are_ read (see SpreadsheetML above).
+  remaining secondary sheet features — **conditional formatting, cell comments, data
+  validation, defined names** and the **page-setup print model** — which the OOXML
+  `.xlsx` reader handles but the BIFF reader does not. The cell data, styling,
+  embedded images, charts, drawing shapes and **cell hyperlinks** _are_ read (see
+  SpreadsheetML above).
 - **Byte-for-byte visual reproduction of another renderer.** `layoutProfile` plus the
   metric-compatible substitutes get a target tool's page geometry close — without its
   private font metrics — but _pixel-identical_ output is a non-goal: that would need the

@@ -12,7 +12,13 @@
 // model the OOXML path uses. Embedded charts/drawings are not read yet.
 
 import type { BodyElement, Chart, ShapeBlock } from '@/core/document-model';
-import type { Sheet, SheetChartRef, SheetDoc, SheetImageRef } from '@/core/ir/sheet';
+import type {
+  Sheet,
+  SheetChartRef,
+  SheetDoc,
+  SheetHyperlink,
+  SheetImageRef,
+} from '@/core/ir/sheet';
 import type {
   ColumnWidth,
   MergedRange,
@@ -50,6 +56,7 @@ const REC = {
   MSODRAWINGGROUP: 0x00eb, // workbook-globals Escher BLIP store
   MSODRAWING: 0x00ec, // per-sheet Escher shapes
   TXO: 0x01b6, // text object (text-box content)
+  HLINK: 0x01b8, // cell/range hyperlink (§2.4.140)
 } as const;
 
 // Bombs / corruption guards.
@@ -117,7 +124,7 @@ export function readXlsToSheetDoc(xls: Uint8Array): SheetDoc {
   for (const bs of boundSheets) {
     if (bs.type !== 0) continue; // 0 = worksheet (skip chart/macro sheets)
     if (bs.offset + 4 > wb.length) continue;
-    const { grid, images, charts, shapes } = readSheet(
+    const { grid, images, charts, shapes, hyperlinks } = readSheet(
       wb,
       view,
       bs.offset,
@@ -132,6 +139,7 @@ export function readXlsToSheetDoc(xls: Uint8Array): SheetDoc {
       ...(images.length > 0 ? { images } : {}),
       ...(charts.length > 0 ? { charts } : {}),
       ...(shapes.length > 0 ? { shapes } : {}),
+      ...(hyperlinks.length > 0 ? { hyperlinks } : {}),
     });
   }
   if (sheets.length === 0) throw new Error('.xls has no worksheets');
@@ -225,11 +233,13 @@ function readSheet(
   images: Array<SheetImageRef>;
   charts: Array<SheetChartRef>;
   shapes: Array<ShapeBlock>;
+  hyperlinks: Array<SheetHyperlink>;
 } {
   const records = readSubstream(wb, view, start);
   const cells: Array<WorksheetCell> = [];
   const merges: Array<MergedRange> = [];
   const columns: Array<ColumnWidth> = [];
+  const hyperlinks: Array<SheetHyperlink> = [];
   let maxRow = -1;
   let maxColumn = -1;
   const add = (cell: WorksheetCell): void => {
@@ -314,6 +324,11 @@ function readSheet(
         columns.push({ min: colFirst + 1, max: colLast + 1, widthChars });
         break;
       }
+      case REC.HLINK: {
+        const link = parseHlink(d);
+        if (link) hyperlinks.push(link);
+        break;
+      }
     }
   }
 
@@ -349,7 +364,92 @@ function readSheet(
   const shapes =
     drawing.length > 0 ? buildShapes(parseSheetShapes(drawing), gatherTxoTexts(records)) : [];
 
-  return { grid, images, charts, shapes };
+  return { grid, images, charts, shapes, hyperlinks };
+}
+
+// HLink flags (the hlink object's hlinkFlags, [MS-OSHARED] §2.3.7.1).
+const HLINK_HAS_MONIKER = 0x00000001;
+const HLINK_HAS_DISPLAY_NAME = 0x00000010;
+const HLINK_HAS_FRAME_NAME = 0x00000080;
+const HLINK_MONIKER_AS_STR = 0x00000100;
+// URLMoniker CLSID {79EAC9E0-BAF9-11CE-8C82-00AA004BA90B} as on-disk LE bytes.
+const URL_MONIKER_CLSID: ReadonlyArray<number> = [
+  0xe0, 0xc9, 0xea, 0x79, 0xf9, 0xba, 0xce, 0x11, 0x8c, 0x82, 0x00, 0xaa, 0x00, 0x4b, 0xa9, 0x0b,
+];
+
+// An HLink record (§2.4.140) → a resolved cell/range hyperlink, but only for an
+// external URL: a Ref8U range, the StdHlink CLSID, then a Hyperlink Object whose
+// moniker is a URLMoniker (the common web-link case). In-workbook location links
+// and file/UNC monikers carry no URL and are skipped (missing, never wrong).
+function parseHlink(d: Uint8Array): SheetHyperlink | undefined {
+  if (d.length < 32) return undefined;
+  const ref: MergedRange = {
+    startRow: readU16(d, 0),
+    endRow: readU16(d, 2),
+    startColumn: readU16(d, 4),
+    endColumn: readU16(d, 6),
+  };
+  // ref8 (8) + hlinkClsid (16) → the hlink object at offset 24.
+  if (readU32(d, 24) !== 2) return undefined; // streamVersion MUST be 2
+  const flags = readU32(d, 28);
+  let off = 32;
+  if (flags & HLINK_HAS_DISPLAY_NAME) off = skipHlinkString(d, off);
+  if (flags & HLINK_HAS_FRAME_NAME) off = skipHlinkString(d, off);
+  if ((flags & HLINK_HAS_MONIKER) === 0) return undefined; // location-only link
+  if (flags & HLINK_MONIKER_AS_STR) {
+    // Moniker stored as a string (relative/UNC path) — keep only an absolute URL.
+    const s = readHlinkString(d, off);
+    return s && isAbsoluteUrl(s.value) ? { ref, url: s.value } : undefined;
+  }
+  // oleMoniker: a 16-byte CLSID then the moniker data.
+  if (off + 16 > d.length || !clsidEquals(d, off, URL_MONIKER_CLSID)) return undefined;
+  const url = readUrlMonikerUrl(d, off + 16);
+  return url ? { ref, url } : undefined;
+}
+
+// A HyperlinkString (§2.3.7.9): a u32 character count (including the terminating
+// NUL) then that many UTF-16LE chars. Returns the string (NUL stripped) + offset.
+function readHlinkString(d: Uint8Array, off: number): { value: string; next: number } | undefined {
+  if (off + 4 > d.length) return undefined;
+  const bytes = readU32(d, off) * 2;
+  const start = off + 4;
+  if (start + bytes > d.length) return undefined;
+  return { value: stripNul(decodeUtf16Le(d, start, bytes)), next: start + bytes };
+}
+function skipHlinkString(d: Uint8Array, off: number): number {
+  return readHlinkString(d, off)?.next ?? d.length; // a bad length aborts the walk
+}
+
+// A URLMoniker's data (§2.3.7.6): a u32 byte length then a NUL-terminated UTF-16LE
+// URL. The NUL bounds the URL, so the optional trailing serial-GUID tail is ignored.
+function readUrlMonikerUrl(d: Uint8Array, off: number): string | undefined {
+  if (off + 4 > d.length) return undefined;
+  let s = '';
+  for (let i = off + 4; i + 1 < d.length; i += 2) {
+    const c = d[i]! | (d[i + 1]! << 8);
+    if (c === 0) break;
+    s += String.fromCharCode(c);
+  }
+  return s.length > 0 ? s : undefined;
+}
+
+function decodeUtf16Le(d: Uint8Array, off: number, bytes: number): string {
+  let s = '';
+  for (let i = 0; i + 1 < bytes; i += 2) {
+    s += String.fromCharCode(d[off + i]! | (d[off + i + 1]! << 8));
+  }
+  return s;
+}
+function stripNul(s: string): string {
+  for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) === 0) return s.slice(0, i);
+  return s;
+}
+function isAbsoluteUrl(s: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(s);
+}
+function clsidEquals(d: Uint8Array, off: number, clsid: ReadonlyArray<number>): boolean {
+  for (let i = 0; i < 16; i++) if (d[off + i] !== clsid[i]) return false;
+  return true;
 }
 
 // A sheet's TXO (text-object) record texts, in order — the cch is in the TXO

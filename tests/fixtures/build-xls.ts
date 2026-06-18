@@ -212,6 +212,59 @@ export function mergeCellsRec(
   return rec(0x00e5, d);
 }
 
+// The StdHlink and URLMoniker CLSIDs (on-disk LE bytes).
+const STD_HLINK_CLSID = [
+  0xd0, 0xc9, 0xea, 0x79, 0xf9, 0xba, 0xce, 0x11, 0x8c, 0x82, 0x00, 0xaa, 0x00, 0x4b, 0xa9, 0x0b,
+];
+const URL_MONIKER_CLSID = [
+  0xe0, 0xc9, 0xea, 0x79, 0xf9, 0xba, 0xce, 0x11, 0x8c, 0x82, 0x00, 0xaa, 0x00, 0x4b, 0xa9, 0x0b,
+];
+
+// An HLink record (0x01B8): an external URL hyperlink over a cell range — a Ref8U
+// range, the StdHlink CLSID, then a Hyperlink Object (streamVersion 2, flags
+// HasMoniker|IsAbsolute) carrying a URLMoniker with a NUL-terminated UTF-16LE URL.
+export function hlinkRec(opts: {
+  readonly firstRow: number;
+  readonly lastRow: number;
+  readonly firstCol: number;
+  readonly lastCol: number;
+  readonly url: string;
+}): Uint8Array {
+  const ref8 = new Uint8Array(8);
+  const rv = new DataView(ref8.buffer);
+  rv.setUint16(0, opts.firstRow, true);
+  rv.setUint16(2, opts.lastRow, true);
+  rv.setUint16(4, opts.firstCol, true);
+  rv.setUint16(6, opts.lastCol, true);
+
+  const head = new Uint8Array(8);
+  const hv = new DataView(head.buffer);
+  hv.setUint32(0, 2, true); // streamVersion
+  hv.setUint32(4, 0x03, true); // hlinkFlags: HasMoniker | IsAbsolute
+
+  // URLMoniker data: a u32 byte length then a NUL-terminated UTF-16LE URL.
+  const urlBytes = new Uint8Array((opts.url.length + 1) * 2); // + the NUL terminator
+  for (let i = 0; i < opts.url.length; i++) {
+    const c = opts.url.charCodeAt(i);
+    urlBytes[i * 2] = c & 0xff;
+    urlBytes[i * 2 + 1] = (c >> 8) & 0xff;
+  }
+  const urlLen = new Uint8Array(4);
+  new DataView(urlLen.buffer).setUint32(0, urlBytes.length, true);
+
+  return rec(
+    0x01b8,
+    concat([
+      ref8,
+      Uint8Array.from(STD_HLINK_CLSID),
+      head,
+      Uint8Array.from(URL_MONIKER_CLSID),
+      urlLen,
+      urlBytes,
+    ]),
+  );
+}
+
 function sstData(strings: ReadonlyArray<string>): Uint8Array {
   const parts: Array<Uint8Array> = [];
   const head = new Uint8Array(8);
