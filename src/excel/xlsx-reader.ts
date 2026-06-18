@@ -11,6 +11,7 @@ import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type {
   Sheet,
+  SheetActiveXControl,
   SheetChartRef,
   SheetComment,
   SheetDoc,
@@ -30,6 +31,7 @@ import type {
 import type { TableFilterColumn } from '@/excel/table-parser';
 import type { SlicerCacheDef, SlicerDef } from '@/excel/slicer-parser';
 
+import type { ProjectSheetOptions } from '@/excel/sheet-to-flow';
 import { FEATURES, ResourceStore } from '@/core/ir';
 import { OpcPackage, isOoxmlRel, parseCoreProperties } from '@/core/opc';
 import {
@@ -50,7 +52,14 @@ import { parsePivotTablePart } from '@/excel/pivot-table-parser';
 import { parseSlicerCachePart, parseSlicerPart } from '@/excel/slicer-parser';
 import { parseLegacyComments, parsePersons, parseThreadedComments } from '@/excel/comments-parser';
 import { parseFormControlProps } from '@/excel/form-control-parser';
+import {
+  activeXBinRelId,
+  activeXType,
+  parseActiveX,
+  parseActiveXBin,
+} from '@/excel/activex-parser';
 import { parseSheetShapes } from '@/excel/sheet-shape-parser';
+
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
 import { resolveCellText } from '@/excel/print-model';
 
@@ -79,8 +88,8 @@ interface TableLoc {
   readonly filters: ReadonlyArray<TableFilterColumn>;
 }
 
-export function readXlsx(xlsx: Uint8Array): ReadResult<FlowDoc> {
-  return { doc: projectSheetDoc(readXlsxToSheetDoc(xlsx)), losses: [] };
+export function readXlsx(xlsx: Uint8Array, options: ProjectSheetOptions = {}): ReadResult<FlowDoc> {
+  return { doc: projectSheetDoc(readXlsxToSheetDoc(xlsx), options), losses: [] };
 }
 
 // bytes → SheetDoc: the SpreadsheetML IR node. Everything that needs the OPC
@@ -304,6 +313,35 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
       if (resolvedControls.length > 0) formControls = resolvedControls;
     }
 
+    // §18.3.* ActiveX / OLE controls (W10): resolve each oleObject's relId to its
+    // activeX part (progId → type + the property bag's visible state). Listed
+    // after the grid, like form controls.
+    let activeXControls: Array<SheetActiveXControl> | undefined;
+    if (worksheet.oleObjects && worksheet.oleObjects.length > 0) {
+      const wsRels = pkg.getPartRelationships(resolved.path);
+      const resolvedAx: Array<SheetActiveXControl> = [];
+      for (const ole of worksheet.oleObjects) {
+        const rel = wsRels.find((r) => r.id === ole.relId);
+        const part = rel ? pkg.resolveRelatedPart(resolved.path, rel) : undefined;
+        const props = part ? parseActiveX(part.data) : {};
+        // A persistStreamInit control keeps no <ax:ocxPr>; recover its caption /
+        // value / group name from the binary activeX#.bin (resolved through the
+        // activeX#.xml part's own relationships). The property bag wins where both
+        // carry a value, so a normal property-bag control stays unchanged.
+        let binProps = {};
+        if (part) {
+          const binRelId = activeXBinRelId(part.data);
+          const binRel = binRelId
+            ? pkg.getPartRelationships(part.path).find((r) => r.id === binRelId)
+            : undefined;
+          const binPart = binRel ? pkg.resolveRelatedPart(part.path, binRel) : undefined;
+          if (binPart) binProps = parseActiveXBin(binPart.data);
+        }
+        resolvedAx.push({ type: activeXType(ole.progId), ...binProps, ...props });
+      }
+      if (resolvedAx.length > 0) activeXControls = resolvedAx;
+    }
+
     const grid =
       tables || pivotTables
         ? { ...worksheet, ...(tables ? { tables } : {}), ...(pivotTables ? { pivotTables } : {}) }
@@ -317,6 +355,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
       ...(hyperlinks ? { hyperlinks } : {}),
       ...(comments ? { comments } : {}),
       ...(formControls ? { formControls } : {}),
+      ...(activeXControls ? { activeXControls } : {}),
     });
   }
 

@@ -89,6 +89,18 @@ export interface SheetFormControl {
   readonly value?: number;
 }
 
+// An ActiveX control resolved against its activeX part (E-SHEET W10): the control
+// class (`type`, from the <oleObject progId>) plus the visible state persisted in
+// the property bag — its `caption`, `value` (checked/text/number, as a string)
+// and OptionButton `groupName`. The projection lists each with a type-appropriate
+// affordance in an "ActiveX controls" section; render-only.
+export interface SheetActiveXControl {
+  readonly type: string;
+  readonly caption?: string;
+  readonly value?: string;
+  readonly groupName?: string;
+}
+
 export interface Sheet {
   readonly name: string;
   // The grid + per-sheet geometry exactly as parsed: cells, columns, rows,
@@ -113,6 +125,9 @@ export interface Sheet {
   // Form controls on this sheet (E-SHEET W8), resolved to type + state. The
   // projection lists them in a "Form controls" section after the grid; render-only.
   readonly formControls?: ReadonlyArray<SheetFormControl>;
+  // ActiveX controls on this sheet (E-SHEET W10), resolved to type + visible state.
+  // Listed in an "ActiveX controls" section after the grid; render-only.
+  readonly activeXControls?: ReadonlyArray<SheetActiveXControl>;
 }
 
 export interface SheetDoc {

@@ -9,8 +9,11 @@ doesn't yet.
 
 ## Implemented
 
-**Input** — Ream parses **Word (`.docx`)**, **Excel (`.xlsx`)**, **PowerPoint
-(`.pptx`)** and **PDF**, sniffed from the bytes. A **PowerPoint** deck becomes
+**Input** — Ream parses **Word (`.docx` and legacy `.doc`)**, **Excel (`.xlsx`
+and legacy `.xls`)**, **PowerPoint (`.pptx` and legacy `.ppt`)** and **PDF**, sniffed
+from the bytes. The legacy binary `.doc` / `.xls` / `.ppt` (the OLE2/CFB formats) are
+read through a shared container reader — see WordprocessingML / SpreadsheetML /
+PresentationML below. A **PowerPoint** deck becomes
 one page per slide at the deck size, its shapes read as positioned content: text
 boxes (run formatting, alignment, vertical anchor, bullets, indents),
 layout/master placeholders, pictures, shapes (geometry/fill/stroke/gradient),
@@ -73,9 +76,55 @@ charts — and is byte-stable across a read↔write loop.
 - Tracked changes (`w:ins` / `w:del`).
 - Reads both **Transitional and Strict** (ISO 29500) packages; block-level
   content controls (`w:sdt`) flow through.
+- **Legacy `.doc`** (Word 97–2003) — the binary `WordDocument` stream inside the
+  OLE2/CFB container is read for its **text and formatting**: the FIB locates the
+  piece table (the CLX), whose pieces — 16-bit Unicode or 8-bit Windows-1252
+  ("compressed") — are stitched back into the document text and split into
+  paragraphs, while the CHPX and PAPX runs (located through the `PlcfBteChpx` /
+  `PlcfBtePapx` bin tables and decoded from their sprms) carry **bold / italic /
+  underline / font size** onto each run and **alignment / indentation / spacing**
+  onto each paragraph. **Tables** are reconstructed too — the in-table paragraphs
+  (marked by the `fInTable` / `fTtp` PAPX flags, cells delimited by the `0x07`
+  cell mark) become a row-and-cell grid, with per-column widths, **per-cell borders
+  and vertical merges** (the table definition's `TC80` array) and **per-cell
+  background shading** (`sprmTDefTableShd`'s `cvBack` fill) — and **inline images**
+  are extracted (the
+  picture character's CHPX points at a PICF in the `Data` stream; the raster blip
+  is pulled out and sized from the PICF). **Fields** resolve to their cached
+  result — the field code (`PAGE`, `NUMPAGES`, `REF`, …) is dropped and the stored
+  result text kept. The section's **headers and footers** are lifted from the
+  `PlcfHdd` stories (best-effort: the binary story ordering can't be ground-truthed
+  here, so only well-formed stories are surfaced). **List items** (`sprmPIlfo` /
+  `sprmPIlvl`) render with their resolved **number format** — a real "1." / "a)" /
+  "iii." or the bullet glyph, from the `LST` / `LVL` / `LFO` tables. So an old `.doc`
+  renders to PDF/SVG/HTML and re-writes to `.docx`. Legacy drawing shapes / text
+  boxes and comments are not read (re-save as `.docx` for full fidelity); an
+  encrypted file yields no text.
+  The shared CFB reader
+  (`src/core/ole`) is the same keystone `.xls` uses.
 
 **SpreadsheetML (§18)**
 - Grids, shared strings, number formats and dates (incl. the 1904 date system).
+- **Legacy `.xls`** (BIFF8, Excel 97–2003) — the binary `Workbook` stream inside the
+  OLE2/CFB container is read into the same grid model, so an old `.xls` renders to
+  PDF/SVG/HTML and even re-writes to `.xlsx`. Cell values, structure (sheets, shared
+  strings, merges, column widths, custom row heights, frozen panes, the 1904 flag),
+  **styling** — fonts, fills,
+  borders, number formats and alignment from the FONT/FORMAT/XF records, with colours
+  resolved through the BIFF colour palette — **embedded pictures** (from the
+  Office-Drawing/Escher BLIP store), **embedded charts** (the BIFF chart substream,
+  plotted from the worksheet cells its AI records reference) and **drawing shapes**
+  (autoshapes + text boxes, from the Escher shape records and their TXO text) are
+  read, plus **cell hyperlinks** (the HLINK record's URL moniker), the **page-setup
+  print model** (orientation, scale, fit-to-page, margins, gridlines, centering,
+  header/footer and manual page breaks), **defined names** (named ranges plus the
+  print area and repeated titles, from the NAME records), **cell comments** (the
+  Note record's author + the text-box text), **data validation** (the rule type,
+  ranges and a `list` rule's in-cell dropdown) and **conditional formatting** — both
+  the classic `cellIs` / `expression` rules (with their differential fill / font
+  colour) and the 2007 **colour-scale / data-bar / icon-set** extensions (the CF12
+  records, present only in a `.xls` re-saved by Excel 2007+); only a graphical rule
+  whose colour is theme-relative rather than a literal value degrades gracefully.
 - The print model — gridline suppression, print area, fit-to-page scaling, repeated
   print titles, manual page breaks, horizontal/vertical centering, and **column-band
   pagination**: a sheet wider than the page (and not fit-to-width) splits across
@@ -93,8 +142,23 @@ charts — and is byte-stable across a read↔write loop.
   with a zero axis so negative values run the other way) and `iconSet` — traffic
   lights, arrows, signs, symbols (check / exclamation / cross), flags, ratings (a
   bar meter) and quarters (a clock pie). The cross-cell rules resolve against the
-  range's value extent. The highest-priority matching rule claims the cell's
-  fill / font; a data bar or icon applies on top.
+  range's value extent. Also `expression` — an arbitrary formula evaluated per cell
+  by a built-in formula engine against the workbook's cached values (no
+  recalculation): ~140 functions (logic / info incl. `IFS`/`SWITCH`/`XOR` and the
+  `IS*` family; the math, trig and exponential set; the `SUM`/`COUNT`/`MEDIAN`/
+  `SUMPRODUCT`/`STDEV`/`VAR`/`PERCENTILE` aggregates and the `COUNTIF(S)`/`SUMIF(S)`/
+  `AVERAGEIF(S)` predicates; text; date / time; the `MATCH`/`INDEX`/`VLOOKUP`/
+  `HLOOKUP` lookups and `ROW`/`COLUMN`), sheet-qualified references (`Sheet2!A1`),
+  defined names, inline array constants (`OR(A1={1,3,5})`) and the per-cell
+  relative-reference shift. A construct genuinely beyond a deterministic per-cell
+  predicate — a 3-D reference, a dynamic-array / `LAMBDA` idiom, or a volatile /
+  dynamic-reference function (`RAND`/`INDIRECT`/`OFFSET`) — evaluates to an error, so
+  the rule simply does not paint rather than misrender. And `timePeriod` (today /
+  this-week / last-month … windows). Both stay deterministic: `timePeriod` and
+  `TODAY()`/`NOW()` read an explicit reference date you pass as `now` (never the
+  system clock), so without one those clock-relative rules simply don't paint. The
+  highest-priority matching rule claims the cell's fill / font; a data bar or icon
+  applies on top.
 - **Sparklines** — per-cell line / column / win-loss mini charts, including
   cross-sheet data ranges and blank-cell gaps.
 - **Excel tables** (`xl/tables`) — banded rows and a styled header row, the
@@ -140,8 +204,13 @@ charts — and is byte-stable across a read↔write loop.
   `ctrlProp` part for type + state) are listed in a "Form controls" section after
   the grid, each with a type-appropriate affordance and its state (`[x]` / `[ ]`
   for a checked box, `(o)` for an option button, the value for a spinner). The
-  control's anchored VML shape isn't drawn in place; **ActiveX** controls are OLE
-  binaries and remain a graceful loss.
+  control's anchored VML shape isn't drawn in place.
+- **ActiveX controls** — the embedded OLE controls (`<oleObjects>` → `xl/activeX`)
+  are listed in an "ActiveX controls" section the same way: the `progId` gives the
+  control type and the `<ax:ocxPr>` property bag its visible state (caption,
+  checked/value, group). A control persisted only to its binary `.bin`
+  (MS-OFORMS) renders as its type without the caption — reading that property bag
+  from the OLE/CFB stream is the remaining piece.
 
 **PresentationML (§19)**
 - Each slide is a page at the deck size (`p:sldSz`); shapes are floating content
@@ -158,6 +227,22 @@ charts — and is byte-stable across a read↔write loop.
 - **Theme** colours (`a:clrScheme`), slide/master backgrounds (`p:bg`) painted
   behind the content, and groups (`p:grpSp`) mapped through their child transform.
 - Run hyperlinks (`a:hlinkClick`) → clickable PDF annotations / HTML `<a>`.
+- **Legacy `.ppt`** (PowerPoint 97–2003) — the binary `PowerPoint Document` stream
+  inside the OLE2/CFB container, reached through the Current User → UserEditAtom →
+  PersistDirectoryAtom indirection. Each slide becomes one page at the deck size
+  (the DocumentAtom slide size, in master units); the text is read from the
+  TextChars / TextBytes atoms with run formatting (bold / italic / underline / size
+  / colour from the StyleTextPropAtom) and paragraph alignment / indent level, and
+  embedded images are pulled from the Pictures stream (OfficeArtBlip referenced by a
+  shape's `pib`). A shape that carries a slide anchor (OfficeArtClientAnchor) is
+  positioned at its rectangle — text boxes and pictures become floating content,
+  like the `.pptx` reader; an un-anchored shape (e.g. a placeholder that inherits
+  master geometry) flows in reading order. Decorative autoshapes are read as vector
+  shapes — the preset type from the OfficeArtFSP (or, for a freeform, its **exact
+  custom geometry** walked from the `pVertices` / `pSegmentInfo` arrays) plus their
+  fill / line colour, whether a literal sRGB value, a system colour (the default
+  Windows scheme) or one resolved through the slide's colour scheme (the master's
+  when the slide follows it); only a palette-relative colour degrades gracefully.
 
 **Graphics & math**
 - DrawingML shapes (preset and custom geometry, gradients, group shapes, theme colors).
@@ -187,21 +272,24 @@ charts — and is byte-stable across a read↔write loop.
 
 ## Not yet
 
-- **Legacy `.doc` / `.xls`** (the binary OLE/CFB formats) — Ream parses only the OOXML
-  ZIP+XML formats. Re-save as `.docx` / `.xlsx`.
 - **Byte-for-byte visual reproduction of another renderer.** `layoutProfile` plus the
   metric-compatible substitutes get a target tool's page geometry close — without its
   private font metrics — but _pixel-identical_ output is a non-goal: that would need the
   exact same font file and the renderer's internal glyph rounding.
-- **Some Excel constructs are not rendered yet:**
-  - **ActiveX controls** — these are OLE binaries (`xl/activeX/*.bin`); their state
-    can't be rendered. (Modern **form** controls — checkboxes, option buttons,
-    spinners — *are* listed, above.)
-  - Two **conditional-format rule types**: `expression` (an arbitrary formula —
-    Ream has no formula engine, so cached values can't drive an ad-hoc condition)
-    and `timePeriod` (today / this-week / last-month …, which is relative to the
-    wall clock — Ream's output is deterministic and does not read the system date).
-    Both are skipped (left unrendered) rather than misrendered.
+- **A few format edge cases degrade gracefully** — re-save the original in its modern
+  format for byte-exact fidelity, but each is a _missing detail, never a wrong one_:
+  a legacy `.ppt` shape's
+  **palette-relative colour** (literal, scheme- and system-relative colours resolve)
+  or a rare **arc / ellipse freeform segment** (it falls back to the path's preset
+  bounds); in a legacy `.xls`, a 2007 **Excel table's** banded style / autofilter
+  (its shared-feature record is one even Apache POI leaves unparsed, so the cell
+  values still render — only the table's banding is absent) and a colour-scale /
+  data-bar / icon-set rule (a 2007 `CF12` record) whose colour is **theme-relative**
+  rather than a literal value (the rules themselves, with literal or palette colours,
+  are read); and an ActiveX **CommandButton / Label** whose caption is persisted
+  only to a binary `.bin` (the MorphData control family — check box / option / toggle
+  / text / combo / list — and every property-bag control _are_ read, with their
+  caption and value).
 
 ## Validation
 

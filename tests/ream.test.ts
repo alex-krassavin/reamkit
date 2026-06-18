@@ -55,7 +55,7 @@ describe('Ream (parse once → convert many)', () => {
   });
 
   it('unknown bytes throw with the reader list', () => {
-    expect(() => Ream.parse(new Uint8Array([1, 2, 3, 4]))).toThrow(/docx, xlsx/);
+    expect(() => Ream.parse(new Uint8Array([1, 2, 3, 4]))).toThrow(/docx, doc, xlsx/);
   });
 
   it('font chain records a substitution loss; strict throws', async () => {

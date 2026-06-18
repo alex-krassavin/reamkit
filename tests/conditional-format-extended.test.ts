@@ -3,8 +3,8 @@
 // duplicate/uniqueValues (value frequency, numbers and text) and the text tests
 // (containsText / notContainsText / beginsWith / endsWith). Each reuses the SC1
 // dxf → per-cell fill machinery; only the matching predicate is new. The
-// non-deterministic families (expression needs a formula engine, timePeriod the
-// wall clock) stay unparsed, so they are absent here by design.
+// formula-driven families (expression, timePeriod) arrived later in W9 and have
+// their own suite (conditional-format-expression.test.ts).
 
 import { readFileSync } from 'node:fs';
 

@@ -23,6 +23,10 @@ export interface ConvertXlsxOptions extends Omit<StyledRenderOptions, 'registry'
   // For PDF/A-3 only: embed the input .xlsx as an associated source file
   // (/AFRelationship /Source). Ignored for other profiles.
   readonly embedSource?: boolean;
+  // E-SHEET W9 — the reference date for conditional-format `timePeriod` rules and
+  // TODAY()/NOW() in `expression` rules. An explicit input (never the wall clock),
+  // so output stays deterministic; omitted ⇒ those clock-relative rules no-op.
+  readonly now?: Date;
   // Digitally sign the output (ISO 32000 §12.8). Requires the async
   // convertXlsxToPdf (signing uses WebCrypto). Ignored by the sync converter.
   readonly signature?: SignatureOptions;
@@ -85,8 +89,10 @@ function prepareXlsxStyledRender(
   }
   const registry = FontRegistry.fromBytes(fonts);
 
-  // All document-derived state now comes from the xlsx reader (ir-design §7).
-  const { doc: flow } = readXlsx(xlsx);
+  // All document-derived state now comes from the xlsx reader (ir-design §7). The
+  // reference date (W9) feeds the conditional-format formula engine during the
+  // SheetDoc → FlowDoc projection.
+  const { doc: flow } = readXlsx(xlsx, options.now !== undefined ? { now: options.now } : {});
 
   const {
     fontBytes: _ignoreA,
@@ -94,6 +100,7 @@ function prepareXlsxStyledRender(
     section: sectionOverride,
     info: callerInfo,
     embedSource,
+    now: _ignoreNow,
     attachments: callerAttachments,
     signature: _ignoreSig,
     // Spreadsheet geometry (row heights / column widths) is governed by the Calc
@@ -107,6 +114,7 @@ function prepareXlsxStyledRender(
   void _ignoreA;
   void _ignoreB;
   void _ignoreProfile;
+  void _ignoreNow;
   const section = sectionOverride ?? flow.section;
   // Caller overrides spread over the document's own metadata.
   const info = flow.info || callerInfo ? { ...flow.info, ...callerInfo } : undefined;

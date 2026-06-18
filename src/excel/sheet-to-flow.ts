@@ -7,7 +7,12 @@
 
 import type { BodyElement, HeaderFooterReference, SectionProperties } from '@/core/document-model';
 import type { FlowDoc } from '@/core/ir/flow';
-import type { SheetComment, SheetDoc, SheetFormControl } from '@/core/ir/sheet';
+import type {
+  SheetActiveXControl,
+  SheetComment,
+  SheetDoc,
+  SheetFormControl,
+} from '@/core/ir/sheet';
 
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 import { pt } from '@/core/ir';
@@ -25,7 +30,15 @@ import {
 const HEADER_REL = '_xlsxHeaderDefault';
 const FOOTER_REL = '_xlsxFooterDefault';
 
-export function projectSheetDoc(sheet: SheetDoc): FlowDoc {
+// Projection knobs (E-SHEET W9). `now` is the injected reference date that drives
+// conditional-format `timePeriod` windows and TODAY()/NOW() in `expression`
+// rules. Omitted ⇒ those clock-relative constructs no-op, so the projection
+// stays deterministic and byte-identical to before.
+export interface ProjectSheetOptions {
+  readonly now?: Date;
+}
+
+export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = {}): FlowDoc {
   const body: Array<BodyElement> = [];
   // Page geometry comes from the first sheet's <pageSetup>/<pageMargins>; the
   // renderer supports one section, so later sheets share the first's geometry.
@@ -63,8 +76,11 @@ export function projectSheetDoc(sheet: SheetDoc): FlowDoc {
         ...(titleRows ? { titleRows } : {}),
         gridLines,
         sheetGrids,
+        sheetName: ws.name,
+        definedNames: sheet.definedNames,
         ...(ws.hyperlinks ? { hyperlinks: ws.hyperlinks } : {}),
         ...(sheet.sharedStringRuns ? { sharedStringRuns: sheet.sharedStringRuns } : {}),
+        ...(options.now ? { now: options.now } : {}),
       }),
     );
 
@@ -117,6 +133,12 @@ export function projectSheetDoc(sheet: SheetDoc): FlowDoc {
     // each with a type-appropriate affordance and its state.
     if (ws.formControls && ws.formControls.length > 0) {
       body.push(...formControlBlocks(ws.formControls));
+    }
+
+    // W10: ActiveX controls in an "ActiveX controls" section, same as form
+    // controls (type-appropriate affordance + the property bag's visible state).
+    if (ws.activeXControls && ws.activeXControls.length > 0) {
+      body.push(...activeXBlocks(ws.activeXControls));
     }
   }
 
@@ -199,6 +221,54 @@ function formControlLabel(c: SheetFormControl): string {
       return `${name} (list)`;
     default:
       return c.objectType ? `${name} (${c.objectType})` : name;
+  }
+}
+
+// ActiveX controls (W10) as an "ActiveX controls" section after the grid — one
+// line per control with a type-appropriate ASCII affordance and the visible
+// state read from its property bag.
+function activeXBlocks(controls: ReadonlyArray<SheetActiveXControl>): Array<BodyElement> {
+  const out: Array<BodyElement> = [
+    {
+      kind: 'paragraph',
+      paragraph: {
+        properties: {},
+        runs: [{ text: 'ActiveX controls', properties: { bold: true } }],
+      },
+    },
+  ];
+  for (const c of controls) {
+    out.push({
+      kind: 'paragraph',
+      paragraph: { properties: {}, runs: [{ text: activeXLabel(c), properties: {} }] },
+    });
+  }
+  return out;
+}
+
+function activeXLabel(c: SheetActiveXControl): string {
+  const label = c.caption && c.caption.length > 0 ? c.caption : c.type;
+  const on = c.value === '1' || c.value?.toLowerCase() === 'true';
+  switch (c.type) {
+    case 'checkbox':
+      return `${on ? '[x]' : '[ ]'} ${label}`;
+    case 'option':
+      return `${on ? '(o)' : '( )'} ${label}`;
+    case 'button':
+    case 'toggle':
+      return `[ ${label} ]`;
+    case 'textbox':
+      return `[ ${c.value ?? c.caption ?? ''} ]`;
+    case 'combo':
+    case 'list':
+      return `${label} (list)`;
+    case 'spin':
+    case 'scroll':
+      return c.value !== undefined ? `${label} (value ${c.value})` : label;
+    case 'label':
+      return c.caption ?? 'Label';
+    default:
+      return label;
   }
 }
 

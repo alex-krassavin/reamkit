@@ -31,6 +31,7 @@ import { FontRegistry } from '@/core/font';
 import { fetchFontSet } from '@/core/fonts';
 import { ConversionLossError } from '@/core/ir';
 import { writeDocx } from '@/word/docx-writer';
+import { projectSheetDoc } from '@/excel/sheet-to-flow';
 import { writeXlsx } from '@/excel/xlsx-writer';
 import { writeHtml } from '@/html/html-writer';
 import { layoutStyledDocument } from '@/layout/styled-layout';
@@ -65,12 +66,20 @@ export interface ReamConvertOptions extends Omit<StyledRenderOptions, 'registry'
   readonly embedSource?: boolean;
   // Digitally sign the output (ISO 32000 §12.8, WebCrypto).
   readonly signature?: SignatureOptions;
+  // E-SHEET W9 — the reference date for conditional-format `timePeriod` rules and
+  // TODAY()/NOW() in `expression` rules. Supplying it re-projects a spreadsheet
+  // source so those clock-relative rules resolve against this date (an explicit
+  // input — never the wall clock). Omitted ⇒ they no-op and output is unchanged.
+  readonly now?: Date;
 }
 
 const SOURCE_MIME: Readonly<Record<string, string>> = {
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  doc: 'application/msword',
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  xls: 'application/vnd.ms-excel',
   pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  ppt: 'application/vnd.ms-powerpoint',
   pdf: 'application/pdf',
 };
 
@@ -118,9 +127,15 @@ export class Ream {
   ): Promise<ConvertResult> {
     const losses: Array<Loss> = [...this.losses];
 
+    // W9: a caller-supplied reference date re-projects the sheet so conditional-
+    // format timePeriod / TODAY() rules resolve against it. Without it (or for a
+    // non-sheet source) the parse-time flow — byte-identical to before — is used.
+    const flow =
+      this.sheet && options.now ? projectSheetDoc(this.sheet, { now: options.now }) : this.flow;
+
     if (to === 'html') {
       // Flow medium: no layout, no fonts to embed — zero I/O.
-      const html = writeHtml(this.flow);
+      const html = writeHtml(flow);
       losses.push(...html.losses);
       this.enforceStrict(options, losses);
       return { bytes: html.bytes, losses };
@@ -130,7 +145,7 @@ export class Ream {
       // Flow medium too: the writer re-serializes the interlayer — no layout,
       // no fonts, zero I/O. Output is denormalized (resolved properties as
       // direct formatting) but valid; see docx-writer.ts.
-      const docx = writeDocx(this.flow);
+      const docx = writeDocx(flow);
       losses.push(...docx.losses);
       this.enforceStrict(options, losses);
       return { bytes: docx.bytes, losses };
@@ -152,9 +167,9 @@ export class Ream {
     const registry = FontRegistry.fromBytes(fonts);
 
     if (to === 'svg') {
-      const laid = layoutStyledDocument(this.flow.body, {
+      const laid = layoutStyledDocument(flow.body, {
         registry,
-        ...flowRenderOptions(this.flow),
+        ...flowRenderOptions(flow),
       });
       const svg = writeSvg(laid);
       losses.push(...svg.losses);
@@ -183,7 +198,7 @@ export class Ream {
     void _f;
 
     // Caller overrides spread over the document's own metadata.
-    const info = this.flow.info || callerInfo ? { ...this.flow.info, ...callerInfo } : undefined;
+    const info = flow.info || callerInfo ? { ...flow.info, ...callerInfo } : undefined;
     const attachments = [...(callerAttachments ?? [])];
     if (embedSource && options.pdfA?.startsWith('PDF/A-3')) {
       attachments.push({
@@ -198,7 +213,7 @@ export class Ream {
     const styled = {
       registry,
       ...(registriesByFamily ? { registriesByFamily } : {}),
-      ...flowRenderOptions(this.flow),
+      ...flowRenderOptions(flow),
       ...(info ? { info } : {}),
       ...(attachments.length > 0 ? { attachments } : {}),
       ...(signature ? { signaturePlaceholder: signature } : {}),
@@ -207,8 +222,8 @@ export class Ream {
     // §7.6: encryption runs on this async path (WebCrypto); the plain branch
     // stays the byte-stable sync render.
     let pdf = styled.encrypt
-      ? await renderStyledPdfEncrypted(this.flow.body, styled)
-      : renderStyledPdf(this.flow.body, styled);
+      ? await renderStyledPdfEncrypted(flow.body, styled)
+      : renderStyledPdf(flow.body, styled);
     if (signature) pdf = await signPdf(pdf, signature);
     this.enforceStrict(options, losses);
     return { bytes: pdf, losses };

@@ -13,8 +13,10 @@ import type {
   CfRuleColorScale,
   CfRuleDataBar,
   CfRuleDupUnique,
+  CfRuleExpression,
   CfRuleIconSet,
   CfRuleText,
+  CfRuleTimePeriod,
   CfRuleTop10,
   Cfvo,
   CfvoType,
@@ -26,11 +28,13 @@ import type {
   HeaderFooter,
   HyperlinkRef,
   MergedRange,
+  OleObjectRef,
   ParsedSparkline,
   ParsedWorksheet,
   RowHeight,
   SheetPane,
   SparklineKind,
+  TimePeriodKind,
   WorksheetCell,
   XlsxPageMargins,
   XlsxPageSetup,
@@ -90,6 +94,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
   const hyperlinks = parseHyperlinks(wsObj);
   const headerFooter = parseHeaderFooter(wsObj);
   const formControls = parseFormControls(wsObj);
+  const oleObjects = parseOleObjects(wsObj);
   const sparklines = parseSparklines(wsObj);
   const tablePartRelIds = parseTableParts(wsObj);
   const printModel = {
@@ -106,6 +111,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
     ...(hyperlinks.length > 0 ? { hyperlinks } : {}),
     ...(headerFooter ? { headerFooter } : {}),
     ...(formControls.length > 0 ? { formControls } : {}),
+    ...(oleObjects.length > 0 ? { oleObjects } : {}),
     ...(sparklines.length > 0 ? { sparklines } : {}),
     ...(tablePartRelIds.length > 0 ? { tablePartRelIds } : {}),
   };
@@ -379,10 +385,10 @@ function parseMerges(ws: Record<string, unknown>): Array<MergedRange> {
 
 // §18.3.1.18 <conditionalFormatting sqref="…"> elements (one or more), each
 // owning <cfRule>s. Reads the value/text-driven families: `cellIs`, `colorScale`,
-// `dataBar`, `iconSet`, `top10`, `aboveAverage`, `duplicate/uniqueValues` and the
-// text tests (`containsText`/`beginsWith`/…). `expression` (formula) and
-// `timePeriod` (clock-relative) rules need a formula engine / a wall clock and are
-// a documented graceful loss — left unparsed (and so stably dropped on write).
+// `dataBar`, `iconSet`, `top10`, `aboveAverage`, `duplicate/uniqueValues`, the
+// text tests (`containsText`/`beginsWith`/…), plus `expression` (formula, run by
+// the W9 engine) and `timePeriod` (a clock-relative date window). Only the 2010+
+// extension variants (`dataBar2010`, `iconSet2010`, …) remain unparsed.
 function parseConditionalFormatting(ws: Record<string, unknown>): Array<ConditionalFormat> {
   const raw = ws['conditionalFormatting'];
   const items = Array.isArray(raw) ? raw : raw !== undefined ? [raw] : [];
@@ -567,9 +573,61 @@ function parseCfRule(obj: Record<string, unknown>): CfRule | undefined {
     case 'beginsWith':
     case 'endsWith':
       return parseTextRule(type, obj, priority);
+    case 'expression':
+      return parseExpressionRule(obj, priority);
+    case 'timePeriod':
+      return parseTimePeriodRule(obj, priority);
     default:
-      return undefined; // expression / timePeriod / dataBar2010 / etc. — skipped
+      return undefined; // dataBar2010 / iconSet2010 / etc. — skipped
   }
+}
+
+const TIME_PERIODS: ReadonlySet<string> = new Set<TimePeriodKind>([
+  'today',
+  'yesterday',
+  'tomorrow',
+  'last7Days',
+  'thisWeek',
+  'lastWeek',
+  'nextWeek',
+  'thisMonth',
+  'lastMonth',
+  'nextMonth',
+]);
+
+// §18.3.1.10 type="expression" — the single <formula> is the predicate; the
+// conditional-format layer evaluates it per cell against the cached grid values
+// (E-SHEET W9). A rule without a formula is dropped.
+function parseExpressionRule(
+  obj: Record<string, unknown>,
+  priority: number,
+): CfRuleExpression | undefined {
+  const dxfId = parseNumericAttr(obj, 'dxfId');
+  if (dxfId === undefined) return undefined;
+  const formula = formulaText(obj['formula']);
+  if (formula === undefined) return undefined;
+  return { type: 'expression', priority, formula, dxfId };
+}
+
+// §18.3.1.10 type="timePeriod" — the timePeriod attribute names the clock-
+// relative window; Excel also emits a helper <formula> which we keep verbatim
+// for write-back. An unknown period is dropped (no faithful render).
+function parseTimePeriodRule(
+  obj: Record<string, unknown>,
+  priority: number,
+): CfRuleTimePeriod | undefined {
+  const dxfId = parseNumericAttr(obj, 'dxfId');
+  if (dxfId === undefined) return undefined;
+  const period = strAttr(obj, 'timePeriod');
+  if (period === undefined || !TIME_PERIODS.has(period)) return undefined;
+  const formula = formulaText(obj['formula']);
+  return {
+    type: 'timePeriod',
+    priority,
+    timePeriod: period as TimePeriodKind,
+    dxfId,
+    ...(formula !== undefined ? { formula } : {}),
+  };
 }
 
 // §18.3.1.10 type="top10" — `rank` (default 10) top values take the dxf; `percent`
@@ -845,6 +903,42 @@ function collectControls(
     seen.add(relId);
     const name = strAttr(obj, 'name');
     out.push({ relId, ...(name ? { name } : {}) });
+  }
+}
+
+// §18.3.* <oleObjects><oleObject progId r:id> — embedded OLE / ActiveX controls
+// (E-SHEET W10). Like form controls they are often wrapped in <mc:AlternateContent>
+// <mc:Choice Requires="x14">; removeNSPrefix strips the prefixes so each reads as
+// <oleObject progId id>. The relId resolves (in the reader) to the control's
+// activeX part (the property bag). Deduped by relId.
+function parseOleObjects(ws: Record<string, unknown>): Array<OleObjectRef> {
+  const out: Array<OleObjectRef> = [];
+  const seen = new Set<string>();
+  collectOleObjects(asObjectNode(ws['oleObjects']), out, seen);
+  for (const ext of toArray(asObjectNode(ws['extLst'])?.['ext'])) {
+    collectOleObjects(asObjectNode(asObjectNode(ext)?.['oleObjects']), out, seen);
+  }
+  return out;
+}
+
+function collectOleObjects(
+  node: Record<string, unknown> | undefined,
+  out: Array<OleObjectRef>,
+  seen: Set<string>,
+): void {
+  if (!node) return;
+  const direct = toArray(node['oleObject']);
+  const fromChoice = toArray(asObjectNode(node['AlternateContent'])?.['Choice']).flatMap((c) =>
+    toArray(asObjectNode(c)?.['oleObject']),
+  );
+  for (const o of [...direct, ...fromChoice]) {
+    const obj = asObjectNode(o);
+    if (!obj) continue;
+    const relId = strAttr(obj, 'id');
+    if (!relId || seen.has(relId)) continue;
+    seen.add(relId);
+    const progId = strAttr(obj, 'progId');
+    out.push({ relId, ...(progId ? { progId } : {}) });
   }
 }
 

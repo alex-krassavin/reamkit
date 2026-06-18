@@ -169,6 +169,16 @@ export interface XlsxBuilderOptions {
     readonly checked?: boolean;
     readonly value?: number;
   }>;
+  /** ActiveX controls on the FIRST sheet (E-SHEET W10): <oleObjects> + activeX part. */
+  readonly oleObjects?: ReadonlyArray<{
+    readonly progId: string;
+    readonly caption?: string;
+    readonly value?: string;
+    readonly groupName?: string;
+    /** When set, the control is persistStreamInit: no <ax:ocxPr>, an activeX#.bin
+     *  (MS-OFORMS) carrying these bytes wired through the activeX part's rels. */
+    readonly binBytes?: Uint8Array;
+  }>;
   /** Attach Excel table parts to the FIRST sheet (E-SHEET SC3). */
   readonly tables?: ReadonlyArray<{
     readonly ref: string;
@@ -795,6 +805,58 @@ ${rels.join('\n')}
         entries,
         first.fileName,
         `  <Relationship Id="${p.rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/ctrlProp" Target="../ctrlProps/ctrlProp${p.idx}.xml"/>`,
+      );
+    }
+  }
+  // W10: ActiveX controls — a worksheet <oleObjects> + an activeX#.xml part
+  // (the property bag) per control, wired by a worksheet oleObject relationship.
+  if (options.oleObjects && options.oleObjects.length > 0 && sheetParts.length > 0) {
+    const first = sheetParts[0]!;
+    const parts = options.oleObjects.map((ole, i) => ({ rid: `rIdAx${i + 1}`, idx: i + 1, ole }));
+    const oleXml = parts
+      .map(
+        (p) =>
+          `<oleObject progId="${escapeXml(p.ole.progId)}" shapeId="${p.idx}" r:id="${p.rid}"><objectPr defaultSize="0"/></oleObject>`,
+      )
+      .join('');
+    first.xml = first.xml.replace(
+      '</worksheet>',
+      `<oleObjects xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">${oleXml}</oleObjects></worksheet>`,
+    );
+    for (const p of parts) {
+      if (p.ole.binBytes) {
+        // persistStreamInit: no <ax:ocxPr>; the state is in activeX#.bin, wired
+        // through the activeX part's own relationships.
+        entries[`xl/activeX/activeX${p.idx}.xml`] = encoder.encode(
+          `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<ax:ocx ax:classid="{8BD21D40-EC42-11CE-9E0D-00AA006002F3}" ax:persistence="persistStreamInit" r:id="rId1" xmlns:ax="http://schemas.microsoft.com/office/2006/activeX" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>`,
+        );
+        entries[`xl/activeX/activeX${p.idx}.bin`] = p.ole.binBytes;
+        entries[`xl/activeX/_rels/activeX${p.idx}.xml.rels`] = encoder.encode(
+          `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.microsoft.com/office/2006/relationships/activeXControlBinary" Target="activeX${p.idx}.bin"/></Relationships>`,
+        );
+      } else {
+        const ocxPr = [
+          p.ole.caption !== undefined
+            ? `<ax:ocxPr ax:name="Caption" ax:value="${escapeXml(p.ole.caption)}"/>`
+            : '',
+          p.ole.value !== undefined
+            ? `<ax:ocxPr ax:name="Value" ax:value="${escapeXml(p.ole.value)}"/>`
+            : '',
+          p.ole.groupName !== undefined
+            ? `<ax:ocxPr ax:name="GroupName" ax:value="${escapeXml(p.ole.groupName)}"/>`
+            : '',
+        ].join('');
+        entries[`xl/activeX/activeX${p.idx}.xml`] = encoder.encode(
+          `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<ax:ocx ax:classid="{00000000-0000-0000-0000-000000000000}" ax:persistence="persistPropertyBag" xmlns:ax="http://schemas.microsoft.com/office/2006/activeX">${ocxPr}</ax:ocx>`,
+        );
+      }
+      mergeWorksheetRel(
+        entries,
+        first.fileName,
+        `  <Relationship Id="${p.rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject" Target="../activeX/activeX${p.idx}.xml"/>`,
       );
     }
   }

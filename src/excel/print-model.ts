@@ -240,8 +240,13 @@ interface PrintModelOptions {
   // top of each continuation page.
   readonly titleRows?: { readonly startRow: number; readonly endRow: number };
   // E-SHEET SC2 tail (TC3) — sheet name → grid, for sparklines whose data range
-  // is sheet-qualified (Sheet2!A1:C1). Absent ⇒ same-sheet resolution only.
+  // is sheet-qualified (Sheet2!A1:C1), and (W9 tail) an `expression` CF rule that
+  // references another sheet or a defined name. Absent ⇒ same-sheet resolution only.
   readonly sheetGrids?: ReadonlyMap<string, ParsedWorksheet>;
+  // This sheet's name (so a self-qualified Sheet1!A1 and a sheet-scoped defined
+  // name resolve) and the workbook's defined names (W9 expression CF tail).
+  readonly sheetName?: string;
+  readonly definedNames?: ReadonlyArray<DefinedName>;
   // E-SHEET W3 — cell hyperlinks resolved to external URLs; a covered cell's run
   // takes the URL as its href (PDF /Link + HTML <a>). Absent ⇒ no cell links.
   readonly hyperlinks?: ReadonlyArray<SheetHyperlink>;
@@ -249,6 +254,9 @@ interface PrintModelOptions {
   // sharedStrings array; a t="s" cell whose index has runs emits multiple runs
   // with their own formatting. Absent ⇒ every cell is a single run.
   readonly sharedStringRuns?: ReadonlyArray<ReadonlyArray<SheetRichRun> | undefined>;
+  // E-SHEET W9 — the injected reference date for conditional-format `timePeriod`
+  // windows and TODAY()/NOW() in `expression` rules. Absent ⇒ those no-op.
+  readonly now?: Date;
 }
 
 export function worksheetToBody(
@@ -438,8 +446,14 @@ export function worksheetToBody(
     worksheet.conditionalFormats,
     styles,
     worksheet.cells,
-    // Resolve a cell's string value for the W5 text / duplicate-unique rules.
+    // Resolve a cell's string value for the W5 text / duplicate-unique rules and
+    // the W9 expression engine's references to text cells.
     (cell) => resolveCellText(cell, sharedStrings, styles, date1904),
+    date1904,
+    print.now,
+    print.sheetGrids,
+    print.sheetName,
+    print.definedNames,
   );
 
   // Sparklines (E-SHEET SC2): host-cell (absolute key) → resolved value series.

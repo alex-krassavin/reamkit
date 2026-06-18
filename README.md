@@ -1,12 +1,20 @@
 # Ream
 
-> DOCX & XLSX → PDF, from scratch — no LibreOffice, no headless Office, no commercial SDK.
+> Read Word, Excel, PowerPoint and PDF — and convert any of them to PDF, SVG, HTML, DOCX or XLSX. From scratch, in the browser. No LibreOffice, no headless Office, no commercial SDK.
 
-Convert Word (`.docx`) and Excel (`.xlsx`) documents to PDF, **in the browser** —
-implemented from the **ECMA-376** (OOXML) and **ISO 32000** (PDF) specifications,
-with no wrapper around LibreOffice, headless Office, or any commercial SDK. Pure
-TypeScript/JavaScript working on `Uint8Array` in and `Uint8Array` out, so it also
-runs unchanged in Node.js, serverless, and edge runtimes.
+Ream parses **seven document formats** — the modern Office Open XML trio (`.docx`,
+`.xlsx`, `.pptx`), `.pdf`, and the legacy binary `.doc` / `.xls` / `.ppt` — into one
+format-neutral interlayer, then renders that to **PDF, SVG, HTML, DOCX or XLSX**.
+It is implemented directly from the **ECMA-376** (OOXML), **ISO 32000 / 19005**
+(PDF / PDF/A), and Microsoft's binary-format specifications — no wrapper around
+LibreOffice, headless Office, or any commercial SDK. Pure TypeScript/JavaScript on
+`Uint8Array` in and `Uint8Array` out, so the same code runs unchanged in the browser,
+Node.js, serverless and edge runtimes.
+
+|            |                                                                                             |
+| ---------- | ------------------------------------------------------------------------------------------- |
+| **Reads**  | `.docx` · `.xlsx` · `.pptx` · `.pdf` · legacy `.doc` · `.xls` · `.ppt`                       |
+| **Writes** | `.pdf` (incl. PDF/A-1/2/3, PDF/UA-1, signed, encrypted) · `.svg` · `.html` · `.docx` · `.xlsx` |
 
 ## Install
 
@@ -168,7 +176,8 @@ fields)/footnotes and endnotes/hyperlinks and bookmarks/floating drawings/
 images/tracked changes, SpreadsheetML grids,
 number formats and the print model (gridlines, print area, fit-to-page,
 repeated titles, page breaks), **conditional formatting** (color scales, data
-bars, icon sets), **sparklines** and **Excel tables**, DrawingML shapes and
+bars, icon sets, and `expression` rules evaluated by a ~140-function formula
+engine), **sparklines** and **Excel tables**, DrawingML shapes and
 charts, OMML math, Type0+CIDFontType2 embedding with subsetting, Knuth-Plass
 line breaking, Liang hyphenation, OpenType ligatures/kerning + Arabic cursive
 joining, BiDi (UAX #9), hyperlinks (PDF link annotations + HTML anchors,
@@ -192,6 +201,23 @@ into a page at the deck size — text boxes (with run formatting, alignment,
 bullets and indents), layout/master placeholders, pictures, shapes, DrawingML
 tables, embedded charts, theme colours, slide backgrounds, grouped shapes and
 hyperlinks — then converts onward to PDF, SVG, HTML or DOCX like any source.
+
+**Reads legacy `.doc`, `.xls` and `.ppt`, too.** The binary Word / Excel /
+PowerPoint 97–2003 formats (OLE2/CFB) parse through a shared container reader: a
+`.doc` yields its text with run and paragraph formatting, tables (with cell
+borders, vertical merges and background shading), inline images, fields,
+headers/footers and lists (numbered or bulleted, in their number format);
+an `.xls` yields the grid with styling, embedded
+images, charts, drawing shapes, cell hyperlinks, the page-setup print model,
+defined names (named ranges, print area, repeated titles), cell comments, data
+validation, frozen panes, custom row heights and conditional formatting (the
+classic cellIs / expression rules **and** the 2007 colour-scale / data-bar /
+icon-set extensions); a `.ppt` yields each slide's
+text (with run and paragraph formatting), embedded images, per-shape placement
+(anchored text boxes and pictures at their slide rectangles) and decorative
+autoshapes (preset or exact freeform geometry, with fill / line colours resolved
+through the slide's colour scheme), one page per slide — all convert onward to PDF,
+SVG, HTML, or back to `.docx` / `.xlsx` like any source.
 
 See [`CHANGELOG.md`](./CHANGELOG.md) for the release history; the docs
 [**Scope**](https://reamkit.dev/guides/scope/) guide has the full feature matrix
