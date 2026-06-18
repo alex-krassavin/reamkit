@@ -269,10 +269,12 @@ charts — and is byte-stable across a read↔write loop.
   a legacy `.doc` table cell's **background shading**; a legacy `.ppt` shape's
   **palette-relative colour** (literal, scheme- and system-relative colours resolve)
   or a rare **arc / ellipse freeform segment** (it falls back to the path's preset
-  bounds); a legacy `.xls` colour-scale / data-bar / icon-set rule (a 2007 `CF12`
-  record) whose colour is **theme-relative** rather than a literal value (the rules
-  themselves, with literal or palette colours, are read); and an ActiveX
-  **CommandButton / Label** whose caption is persisted
+  bounds); in a legacy `.xls`, a 2007 **Excel table's** banded style / autofilter
+  (its shared-feature record is one even Apache POI leaves unparsed, so the cell
+  values still render — only the table's banding is absent) and a colour-scale /
+  data-bar / icon-set rule (a 2007 `CF12` record) whose colour is **theme-relative**
+  rather than a literal value (the rules themselves, with literal or palette colours,
+  are read); and an ActiveX **CommandButton / Label** whose caption is persisted
   only to a binary `.bin` (the MorphData control family — check box / option / toggle
   / text / combo / list — and every property-bag control _are_ read, with their
   caption and value).
