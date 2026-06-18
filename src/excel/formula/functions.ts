@@ -1,10 +1,22 @@
-// Formula function library (E-SHEET W9) — a curated, deterministic subset of the
-// Excel function set chosen for what conditional-format expressions actually use:
-// logic (AND/OR/IF/IFERROR/IS*), math (ABS/MOD/ROUND…/SUM/AVERAGE/MIN/MAX/COUNT),
-// text (LEN/LEFT/RIGHT/MID/SEARCH/EXACT/…), the range predicates COUNTIF/SUMIF,
-// and the date functions (TODAY/NOW/YEAR/MONTH/DAY/WEEKDAY/DATE/EDATE/EOMONTH)
-// that read the injected reference day. An unknown function returns #NAME? so the
-// rule simply does not apply — Ream never guesses and never misrenders.
+// Formula function library (E-SHEET W9) — a deterministic subset of the Excel
+// function set broad enough for what conditional-format expressions actually use:
+//   logic / info: AND/OR/NOT/IF/IFERROR/IFNA/IFS/SWITCH/XOR/NA + IS* (incl.
+//     ISEVEN/ISODD/ISNONTEXT/ISREF);
+//   math: ABS/SIGN/SQRT/INT/MOD/POWER/ROUND…/TRUNC/PRODUCT/QUOTIENT/GCD/LCM/
+//     MROUND/EVEN/ODD/CEILING/FLOOR + the aggregates SUM/AVERAGE/MIN/MAX/MEDIAN/
+//     LARGE/SMALL/COUNT/COUNTA/COUNTBLANK/SUMPRODUCT;
+//   range predicates: COUNTIF/SUMIF/AVERAGEIF + the multi-criteria COUNTIFS/
+//     SUMIFS/AVERAGEIFS;
+//   text: LEN/LEFT/RIGHT/MID/LOWER/UPPER/TRIM/PROPER/CONCATENATE/CONCAT/TEXTJOIN/
+//     SUBSTITUTE/REPLACE/REPT/EXACT/SEARCH/FIND/CHAR/CODE/CLEAN/T/VALUE;
+//   lookup: CHOOSE/MATCH/INDEX/VLOOKUP/HLOOKUP;
+//   date / time: TODAY/NOW/YEAR/MONTH/DAY/WEEKDAY/DATE/EDATE/EOMONTH/DAYS/HOUR/
+//     MINUTE/SECOND/TIME/WEEKNUM/ISOWEEKNUM — the clock-relative ones read the
+//     injected reference day.
+// An unknown function (or a misused one) returns #NAME?/#VALUE! so the rule simply
+// does not apply — Ream never guesses and never misrenders. Where an exact Excel
+// semantic is ambiguous (e.g. CEILING with mixed-sign significance) the engine
+// errs to #NUM! rather than risk a wrong truth value.
 
 import type { Ast } from '@/excel/formula/parser';
 import type { EvalContext } from '@/excel/formula/context';
@@ -160,6 +172,116 @@ export function callFn(name: string, args: ReadonlyArray<Ast>, ev: Ev, ctx: Eval
       return edate(args, ev, ctx, false);
     case 'EOMONTH':
       return edate(args, ev, ctx, true);
+    case 'DAYS':
+      return daysFn(args, ev, ctx);
+    case 'HOUR':
+      return timePart(args, ev, ctx, 'h');
+    case 'MINUTE':
+      return timePart(args, ev, ctx, 'm');
+    case 'SECOND':
+      return timePart(args, ev, ctx, 's');
+    case 'TIME':
+      return timeFn(args, ev, ctx);
+    case 'WEEKNUM':
+      return weekNum(args, ev, ctx, false);
+    case 'ISOWEEKNUM':
+      return weekNum(args, ev, ctx, true);
+
+    // --- extended logic / information ---------------------------------------
+    case 'ISNONTEXT':
+      return is1(args, ev, ctx, (s) => s.t !== 'str');
+    case 'ISREF':
+      return args.length === 1 ? bool(ev(args[0]!).t === 'ref') : err('#VALUE!');
+    case 'ISEVEN':
+      return isParity(args, ev, ctx, true);
+    case 'ISODD':
+      return isParity(args, ev, ctx, false);
+    case 'NA':
+      return err('#N/A');
+    case 'IFNA': {
+      if (args.length !== 2) return err('#VALUE!');
+      const v = ev(args[0]!);
+      const d = deref(v, ctx);
+      return d.t === 'err' && d.v === '#N/A' ? ev(args[1]!) : v;
+    }
+    case 'XOR':
+      return xorFn(args, ev, ctx);
+    case 'IFS':
+      return ifsFn(args, ev, ctx);
+    case 'SWITCH':
+      return switchFn(args, ev, ctx);
+
+    // --- extended math ------------------------------------------------------
+    case 'PRODUCT':
+      return aggregate(args, ev, ctx, (ns) => (ns.length ? ns.reduce((a, b) => a * b, 1) : 0));
+    case 'MEDIAN':
+      return medianFn(args, ev, ctx);
+    case 'LARGE':
+      return largeSmall(args, ev, ctx, true);
+    case 'SMALL':
+      return largeSmall(args, ev, ctx, false);
+    case 'QUOTIENT':
+      return quotient(args, ev, ctx);
+    case 'CEILING':
+      return ceilingFloor(args, ev, ctx, 'ceil');
+    case 'FLOOR':
+      return ceilingFloor(args, ev, ctx, 'floor');
+    case 'MROUND':
+      return mround(args, ev, ctx);
+    case 'EVEN':
+      return evenOdd(args, ev, ctx, true);
+    case 'ODD':
+      return evenOdd(args, ev, ctx, false);
+    case 'GCD':
+      return gcdLcm(args, ev, ctx, 'gcd');
+    case 'LCM':
+      return gcdLcm(args, ev, ctx, 'lcm');
+    case 'SUMPRODUCT':
+      return sumProduct(args, ev, ctx);
+    case 'COUNTBLANK':
+      return countBlank(args, ev, ctx);
+    case 'COUNTIFS':
+      return countSumAvgIfs(args, ev, ctx, 'count');
+    case 'SUMIFS':
+      return countSumAvgIfs(args, ev, ctx, 'sum');
+    case 'AVERAGEIFS':
+      return countSumAvgIfs(args, ev, ctx, 'avg');
+    case 'AVERAGEIF':
+      return averageIf(args, ev, ctx);
+
+    // --- extended text ------------------------------------------------------
+    case 'CONCAT':
+      return concatFlatten(args, ev, ctx);
+    case 'TEXTJOIN':
+      return textJoin(args, ev, ctx);
+    case 'SUBSTITUTE':
+      return substitute(args, ev, ctx);
+    case 'REPLACE':
+      return replaceFn(args, ev, ctx);
+    case 'REPT':
+      return rept(args, ev, ctx);
+    case 'PROPER':
+      return text1(args, ev, ctx, properCase);
+    case 'CHAR':
+      return charFn(args, ev, ctx);
+    case 'CODE':
+      return codeFn(args, ev, ctx);
+    case 'CLEAN':
+      return text1(args, ev, ctx, stripControl);
+    case 'T':
+      return tFn(args, ev, ctx);
+
+    // --- lookup -------------------------------------------------------------
+    case 'CHOOSE':
+      return chooseFn(args, ev, ctx);
+    case 'MATCH':
+      return matchFn(args, ev, ctx);
+    case 'INDEX':
+      return indexFn(args, ev, ctx);
+    case 'VLOOKUP':
+      return lookupFn(args, ev, ctx, 'v');
+    case 'HLOOKUP':
+      return lookupFn(args, ev, ctx, 'h');
 
     default:
       return err('#NAME?');
@@ -609,4 +731,710 @@ function wildcardToRegExp(pattern: string): RegExp {
 
 function escapeRe(ch: string): string {
   return /[.*+?^${}()|[\]\\]/.test(ch) ? `\\${ch}` : ch;
+}
+
+// --- extended library helpers (broader CF function coverage) ---------------
+
+// Cap a positional range scan (MATCH/INDEX/lookup/CONCAT/TEXTJOIN) so a
+// whole-column reference cannot make a per-cell rule iterate millions of cells.
+// A range past the cap yields a graceful error (the rule no-ops), never a hang.
+const MAX_SCAN = 200_000;
+
+function isParity(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext, even: boolean): FValue {
+  if (args.length !== 1) return err('#VALUE!');
+  const a = numArg(args, ev, ctx, 0);
+  if (typeof a !== 'number') return err(a.e);
+  const odd = Math.abs(Math.trunc(a)) % 2 === 1;
+  return bool(even ? !odd : odd);
+}
+
+function xorFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  let trues = 0;
+  let any = false;
+  for (const a of args) {
+    const v = ev(a);
+    if (v.t === 'ref') {
+      let e: FErr | undefined;
+      ctx.eachCell(v.rect, (_r, _c, s) => {
+        if (s.t === 'err') e ??= s.v;
+        else if (s.t === 'num' || s.t === 'bool') {
+          any = true;
+          if (s.t === 'bool' ? s.v : s.v !== 0) trues++;
+        }
+      });
+      if (e) return err(e);
+    } else {
+      const b = toBool(v, ctx);
+      if (typeof b === 'string') return err(b);
+      any = true;
+      if (b) trues++;
+    }
+  }
+  return any ? bool(trues % 2 === 1) : err('#VALUE!');
+}
+
+function ifsFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  if (args.length < 2 || args.length % 2 !== 0) return err('#VALUE!');
+  for (let i = 0; i < args.length; i += 2) {
+    const c = toBool(ev(args[i]!), ctx);
+    if (typeof c === 'string') return err(c);
+    if (c) return ev(args[i + 1]!);
+  }
+  return err('#N/A');
+}
+
+function switchFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  if (args.length < 3) return err('#VALUE!');
+  const target = deref(ev(args[0]!), ctx);
+  if (target.t === 'err') return target;
+  let i = 1;
+  for (; i + 1 < args.length; i += 2) {
+    const cand = deref(ev(args[i]!), ctx);
+    if (cand.t === 'err') return cand;
+    if (scalarEquals(target, cand)) return ev(args[i + 1]!);
+  }
+  // A trailing odd argument is the default value.
+  return i < args.length ? ev(args[i]!) : err('#N/A');
+}
+
+// Exact-equality between two scalars (text case-insensitive), for SWITCH/MATCH.
+function scalarEquals(a: Scalar, b: Scalar): boolean {
+  if (a.t === 'num' && b.t === 'num') return a.v === b.v;
+  if (a.t === 'str' && b.t === 'str') return a.v.toLowerCase() === b.v.toLowerCase();
+  if (a.t === 'bool' && b.t === 'bool') return a.v === b.v;
+  return a.t === 'blank' && b.t === 'blank';
+}
+
+// Three-way compare for MATCH/VLOOKUP approximate search; undefined ⇒ different
+// types (incomparable, skipped). Text compares case-insensitively.
+function cmpScalar(a: Scalar, b: Scalar): number | undefined {
+  if (a.t === 'num' && b.t === 'num') return a.v < b.v ? -1 : a.v > b.v ? 1 : 0;
+  if (a.t === 'str' && b.t === 'str') {
+    const x = a.v.toLowerCase();
+    const y = b.v.toLowerCase();
+    return x < y ? -1 : x > y ? 1 : 0;
+  }
+  if (a.t === 'bool' && b.t === 'bool') return a.v === b.v ? 0 : a.v ? 1 : -1;
+  return undefined;
+}
+
+function quotient(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  if (args.length !== 2) return err('#VALUE!');
+  const a = numArg(args, ev, ctx, 0);
+  if (typeof a !== 'number') return err(a.e);
+  const b = numArg(args, ev, ctx, 1);
+  if (typeof b !== 'number') return err(b.e);
+  if (b === 0) return err('#DIV/0!');
+  return num(Math.trunc(a / b));
+}
+
+// CEILING / FLOOR (legacy two-argument form): round the magnitude to a multiple
+// of |significance|, away from zero (ceil) or toward zero (floor). A number and
+// significance of opposite signs is #NUM! (we never guess the modern variant).
+function ceilingFloor(
+  args: ReadonlyArray<Ast>,
+  ev: Ev,
+  ctx: EvalContext,
+  mode: 'ceil' | 'floor',
+): FValue {
+  if (args.length !== 2) return err('#VALUE!');
+  const a = numArg(args, ev, ctx, 0);
+  if (typeof a !== 'number') return err(a.e);
+  const sig = numArg(args, ev, ctx, 1);
+  if (typeof sig !== 'number') return err(sig.e);
+  if (sig === 0) return num(0);
+  if (a !== 0 && a > 0 !== sig > 0) return err('#NUM!');
+  const q = Math.abs(a) / Math.abs(sig);
+  const snapped = Math.abs(q - Math.round(q)) < 1e-9 ? Math.round(q) : q;
+  const mag = (mode === 'ceil' ? Math.ceil(snapped) : Math.floor(snapped)) * Math.abs(sig);
+  return num(a < 0 ? -mag : mag);
+}
+
+// Round a non-negative ratio half-away-from-zero, snapping a value within a
+// floating tolerance of *.5 up (1.3/0.2 = 6.4999… must round to 7, like Excel).
+function roundHalfAway(q: number): number {
+  const f = Math.floor(q);
+  return Math.abs(q - f - 0.5) < 1e-9 ? f + 1 : Math.round(q);
+}
+
+function mround(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  if (args.length !== 2) return err('#VALUE!');
+  const n = numArg(args, ev, ctx, 0);
+  if (typeof n !== 'number') return err(n.e);
+  const mult = numArg(args, ev, ctx, 1);
+  if (typeof mult !== 'number') return err(mult.e);
+  if (mult === 0) return num(0);
+  if (n !== 0 && n > 0 !== mult > 0) return err('#NUM!');
+  const mag = roundHalfAway(Math.abs(n) / Math.abs(mult)) * Math.abs(mult);
+  return num(n < 0 ? -mag : mag);
+}
+
+function evenOdd(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext, even: boolean): FValue {
+  if (args.length !== 1) return err('#VALUE!');
+  const a = numArg(args, ev, ctx, 0);
+  if (typeof a !== 'number') return err(a.e);
+  let m = Math.ceil(Math.abs(a)); // round the magnitude away from zero to an int
+  if (even) {
+    if (m % 2 !== 0) m++;
+  } else if (m % 2 === 0) {
+    m++;
+  }
+  return num(a < 0 ? -m : m);
+}
+
+function gcd2(a: number, b: number): number {
+  a = Math.abs(a);
+  b = Math.abs(b);
+  while (b) {
+    const t = a % b;
+    a = b;
+    b = t;
+  }
+  return a;
+}
+
+function gcdLcm(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext, mode: 'gcd' | 'lcm'): FValue {
+  const ns = gatherNumbers(args, ev, ctx);
+  if (!Array.isArray(ns)) return err(ns);
+  if (ns.length === 0) return err('#VALUE!');
+  const ints: Array<number> = [];
+  for (const n of ns) {
+    const t = Math.trunc(n);
+    if (t < 0) return err('#NUM!');
+    ints.push(t);
+  }
+  if (mode === 'gcd') return num(ints.reduce((a, b) => gcd2(a, b)));
+  let l = ints[0]!;
+  for (let i = 1; i < ints.length; i++) {
+    const b = ints[i]!;
+    if (l === 0 || b === 0) {
+      l = 0;
+      continue;
+    }
+    l = (l / gcd2(l, b)) * b;
+    if (!Number.isSafeInteger(l)) return err('#NUM!');
+  }
+  return num(l);
+}
+
+function medianFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  const ns = gatherNumbers(args, ev, ctx);
+  if (!Array.isArray(ns)) return err(ns);
+  if (ns.length === 0) return err('#NUM!');
+  const s = [...ns].sort((a, b) => a - b);
+  const midIdx = Math.floor(s.length / 2);
+  return num(s.length % 2 ? s[midIdx]! : (s[midIdx - 1]! + s[midIdx]!) / 2);
+}
+
+function largeSmall(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext, large: boolean): FValue {
+  if (args.length !== 2) return err('#VALUE!');
+  const ns = gatherNumbers([args[0]!], ev, ctx);
+  if (!Array.isArray(ns)) return err(ns);
+  const k = numArg(args, ev, ctx, 1);
+  if (typeof k !== 'number') return err(k.e);
+  const ki = Math.trunc(k);
+  if (ki < 1 || ki > ns.length) return err('#NUM!');
+  const s = [...ns].sort((a, b) => (large ? b - a : a - b));
+  return num(s[ki - 1]!);
+}
+
+function countBlank(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  if (args.length !== 1) return err('#VALUE!');
+  const r = asRef(ev(args[0]!));
+  if (!r) return err('#VALUE!');
+  const area = (r.r1 - r.r0 + 1) * (r.c1 - r.c0 + 1);
+  let filled = 0;
+  ctx.eachCell(r, (_x, _y, s) => {
+    // An empty-string cell counts as blank for COUNTBLANK (like Excel).
+    if (!(s.t === 'blank' || (s.t === 'str' && s.v === ''))) filled++;
+  });
+  return num(Math.max(0, area - filled));
+}
+
+// COUNTIFS / SUMIFS / AVERAGEIFS — multiple aligned (range, criteria) pairs, AND
+// across them. The value range (sum/average) is the first argument for the IFS
+// variants. Iterates the first range's POPULATED cells, aligning the others by
+// offset — matching the existing COUNTIF/SUMIF semantics over the sparse grid.
+function countSumAvgIfs(
+  args: ReadonlyArray<Ast>,
+  ev: Ev,
+  ctx: EvalContext,
+  mode: 'count' | 'sum' | 'avg',
+): FValue {
+  const isCount = mode === 'count';
+  let valueRect: Rect | undefined;
+  let pairStart = 0;
+  if (!isCount) {
+    const vr = asRef(ev(args[0]!));
+    if (!vr) return err('#VALUE!');
+    valueRect = vr;
+    pairStart = 1;
+  }
+  const pairs = args.length - pairStart;
+  if (pairs < 2 || pairs % 2 !== 0) return err('#VALUE!');
+  const ranges: Array<Rect> = [];
+  const crits: Array<NumCrit | TextCrit> = [];
+  for (let i = pairStart; i + 1 < args.length; i += 2) {
+    const rng = asRef(ev(args[i]!));
+    if (!rng) return err('#VALUE!');
+    const crit = parseCriteria(deref(ev(args[i + 1]!), ctx));
+    if ('e' in crit) return err(crit.e);
+    ranges.push(rng);
+    crits.push(crit);
+  }
+  const base = ranges[0]!;
+  const h = base.r1 - base.r0;
+  const w = base.c1 - base.c0;
+  for (const r of ranges) if (r.r1 - r.r0 !== h || r.c1 - r.c0 !== w) return err('#VALUE!');
+  if (valueRect && (valueRect.r1 - valueRect.r0 !== h || valueRect.c1 - valueRect.c0 !== w)) {
+    return err('#VALUE!');
+  }
+  let count = 0;
+  let total = 0;
+  let numCount = 0;
+  let e: FErr | undefined;
+  ctx.eachCell(base, (r, c, s0) => {
+    if (!matchCriteria(s0, crits[0]!)) return;
+    for (let k = 1; k < ranges.length; k++) {
+      const rk = ranges[k]!;
+      if (!matchCriteria(ctx.getCell(rk.r0 + (r - base.r0), rk.c0 + (c - base.c0)), crits[k]!)) {
+        return;
+      }
+    }
+    count++;
+    if (isCount) return;
+    const vr = valueRect!;
+    const target = ctx.getCell(vr.r0 + (r - base.r0), vr.c0 + (c - base.c0));
+    if (target.t === 'num') {
+      total += target.v;
+      numCount++;
+    } else if (target.t === 'err') e ??= target.v;
+  });
+  if (e) return err(e);
+  if (isCount) return num(count);
+  if (mode === 'sum') return num(total);
+  return numCount === 0 ? err('#DIV/0!') : num(total / numCount);
+}
+
+function averageIf(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  if (args.length < 2 || args.length > 3) return err('#VALUE!');
+  const range = asRef(ev(args[0]!));
+  if (!range) return err('#VALUE!');
+  const crit = parseCriteria(deref(ev(args[1]!), ctx));
+  if ('e' in crit) return err(crit.e);
+  const avgRect = args.length === 3 ? asRef(ev(args[2]!)) : range;
+  if (!avgRect) return err('#VALUE!');
+  let total = 0;
+  let count = 0;
+  let e: FErr | undefined;
+  ctx.eachCell(range, (r, c, s) => {
+    if (!matchCriteria(s, crit)) return;
+    const target =
+      avgRect === range ? s : ctx.getCell(avgRect.r0 + (r - range.r0), avgRect.c0 + (c - range.c0));
+    if (target.t === 'num') {
+      total += target.v;
+      count++;
+    } else if (target.t === 'err') e ??= target.v;
+  });
+  if (e) return err(e);
+  return count === 0 ? err('#DIV/0!') : num(total / count);
+}
+
+// SUMPRODUCT of equal-dimension ranges (the dot-product form). Iterates the first
+// range's populated cells; a blank/text/zero factor at a position contributes a
+// zero term. The array-condition idiom (SUMPRODUCT((A=x)*(B))) needs array
+// semantics we do not model, so it gracefully #VALUE!s rather than misrender.
+function sumProduct(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  if (args.length === 0) return err('#VALUE!');
+  const vals = args.map((a) => ev(a));
+  const rects = vals.map((v) => (v.t === 'ref' ? v.rect : undefined));
+  if (rects.every((r) => r === undefined)) {
+    let p = 1;
+    for (const v of vals) {
+      const n = toNumber(v, ctx);
+      if (typeof n === 'string') return err(n);
+      p *= n;
+    }
+    return num(p);
+  }
+  if (rects.some((r) => r === undefined)) return err('#VALUE!');
+  const base = rects[0]!;
+  const h = base.r1 - base.r0;
+  const w = base.c1 - base.c0;
+  for (const r of rects) if (r!.r1 - r!.r0 !== h || r!.c1 - r!.c0 !== w) return err('#VALUE!');
+  let total = 0;
+  let e: FErr | undefined;
+  ctx.eachCell(base, (r, c, s0) => {
+    if (s0.t === 'err') {
+      e ??= s0.v;
+      return;
+    }
+    if (s0.t !== 'num') return;
+    let term = s0.v;
+    for (let k = 1; k < rects.length && term !== 0; k++) {
+      const rk = rects[k]!;
+      const cell = ctx.getCell(rk.r0 + (r - base.r0), rk.c0 + (c - base.c0));
+      if (cell.t === 'num') term *= cell.v;
+      else if (cell.t === 'err') {
+        e ??= cell.v;
+        term = 0;
+      } else term = 0;
+    }
+    total += term;
+  });
+  return e ? err(e) : num(total);
+}
+
+function concatFlatten(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  let out = '';
+  for (const a of args) {
+    const v = ev(a);
+    if (v.t === 'ref') {
+      const { r0, c0, r1, c1 } = v.rect;
+      if ((r1 - r0 + 1) * (c1 - c0 + 1) > MAX_SCAN) return err('#VALUE!');
+      for (let r = r0; r <= r1; r++) {
+        for (let c = c0; c <= c1; c++) {
+          const t = toText(ctx.getCell(r, c), ctx);
+          if (typeof t !== 'string') return err(t);
+          out += t;
+          if (out.length > 32767) return err('#VALUE!');
+        }
+      }
+    } else {
+      const t = toText(v, ctx);
+      if (typeof t !== 'string') return err(t);
+      out += t;
+    }
+  }
+  return str(out);
+}
+
+function textJoin(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  if (args.length < 3) return err('#VALUE!');
+  const delim = textArg(args, ev, ctx, 0);
+  if (typeof delim !== 'string') return err(delim.v);
+  const ignore = toBool(ev(args[1]!), ctx);
+  if (typeof ignore === 'string') return err(ignore);
+  const parts: Array<string> = [];
+  for (let i = 2; i < args.length; i++) {
+    const v = ev(args[i]!);
+    if (v.t === 'ref') {
+      const { r0, c0, r1, c1 } = v.rect;
+      if ((r1 - r0 + 1) * (c1 - c0 + 1) > MAX_SCAN) return err('#VALUE!');
+      for (let r = r0; r <= r1; r++) {
+        for (let c = c0; c <= c1; c++) {
+          const t = toText(ctx.getCell(r, c), ctx);
+          if (typeof t !== 'string') return err(t);
+          if (!(ignore && t === '')) parts.push(t);
+        }
+      }
+    } else {
+      const t = toText(v, ctx);
+      if (typeof t !== 'string') return err(t);
+      if (!(ignore && t === '')) parts.push(t);
+    }
+  }
+  return str(parts.join(delim));
+}
+
+function substitute(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  if (args.length < 3 || args.length > 4) return err('#VALUE!');
+  const text = textArg(args, ev, ctx, 0);
+  if (typeof text !== 'string') return err(text.v);
+  const oldT = textArg(args, ev, ctx, 1);
+  if (typeof oldT !== 'string') return err(oldT.v);
+  const newT = textArg(args, ev, ctx, 2);
+  if (typeof newT !== 'string') return err(newT.v);
+  if (oldT === '') return str(text);
+  if (args.length === 3) return str(text.split(oldT).join(newT));
+  const inst = numArg(args, ev, ctx, 3);
+  if (typeof inst !== 'number') return err(inst.e);
+  const k = Math.trunc(inst);
+  if (k < 1) return err('#VALUE!');
+  let idx = -1;
+  let count = 0;
+  for (;;) {
+    idx = text.indexOf(oldT, idx + 1);
+    if (idx < 0) return str(text); // fewer than k occurrences ⇒ unchanged
+    if (++count === k) return str(text.slice(0, idx) + newT + text.slice(idx + oldT.length));
+  }
+}
+
+function replaceFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  if (args.length !== 4) return err('#VALUE!');
+  const text = textArg(args, ev, ctx, 0);
+  if (typeof text !== 'string') return err(text.v);
+  const start = numArg(args, ev, ctx, 1);
+  if (typeof start !== 'number') return err(start.e);
+  const len = numArg(args, ev, ctx, 2);
+  if (typeof len !== 'number') return err(len.e);
+  const newT = textArg(args, ev, ctx, 3);
+  if (typeof newT !== 'string') return err(newT.v);
+  const s = Math.trunc(start);
+  const l = Math.trunc(len);
+  if (s < 1 || l < 0) return err('#VALUE!');
+  return str(text.slice(0, s - 1) + newT + text.slice(s - 1 + l));
+}
+
+function rept(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  if (args.length !== 2) return err('#VALUE!');
+  const text = textArg(args, ev, ctx, 0);
+  if (typeof text !== 'string') return err(text.v);
+  const n = numArg(args, ev, ctx, 1);
+  if (typeof n !== 'number') return err(n.e);
+  const k = Math.trunc(n);
+  if (k < 0) return err('#VALUE!');
+  if (text.length * k > 32767) return err('#VALUE!'); // Excel's cell text cap
+  return str(text.repeat(k));
+}
+
+// PROPER: capitalise the first letter of each run of letters, lowercase the rest.
+function properCase(s: string): string {
+  return s.replace(/[A-Za-z]+/g, (w) => w[0]!.toUpperCase() + w.slice(1).toLowerCase());
+}
+
+function charFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  if (args.length !== 1) return err('#VALUE!');
+  const n = numArg(args, ev, ctx, 0);
+  if (typeof n !== 'number') return err(n.e);
+  const code = Math.trunc(n);
+  if (code < 1 || code > 255) return err('#VALUE!');
+  return str(String.fromCharCode(code));
+}
+
+function codeFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  const t = textArg(args, ev, ctx, 0);
+  if (typeof t !== 'string') return err(t.v);
+  if (t.length === 0) return err('#VALUE!');
+  return num(t.charCodeAt(0));
+}
+
+// CLEAN: drop the non-printing control characters (code < 32).
+function stripControl(s: string): string {
+  let out = '';
+  for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) >= 32) out += s[i];
+  return out;
+}
+
+function tFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  if (args.length !== 1) return err('#VALUE!');
+  const s = deref(ev(args[0]!), ctx);
+  if (s.t === 'err') return s;
+  return s.t === 'str' ? s : str('');
+}
+
+function daysFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  if (args.length !== 2) return err('#VALUE!');
+  const end = numArg(args, ev, ctx, 0);
+  if (typeof end !== 'number') return err(end.e);
+  const start = numArg(args, ev, ctx, 1);
+  if (typeof start !== 'number') return err(start.e);
+  return num(Math.trunc(end) - Math.trunc(start));
+}
+
+// HOUR/MINUTE/SECOND read the time-of-day from a serial's fractional part. A
+// whole-day serial (the common cached value) has no time, so all three are 0;
+// a TIME()-built fraction decodes back exactly.
+function timePart(
+  args: ReadonlyArray<Ast>,
+  ev: Ev,
+  ctx: EvalContext,
+  part: 'h' | 'm' | 's',
+): FValue {
+  if (args.length !== 1) return err('#VALUE!');
+  const a = numArg(args, ev, ctx, 0);
+  if (typeof a !== 'number') return err(a.e);
+  if (a < 0) return err('#NUM!');
+  let secs = Math.round((a - Math.floor(a)) * 86400);
+  if (secs >= 86400) secs -= 86400;
+  if (part === 'h') return num(Math.floor(secs / 3600));
+  if (part === 'm') return num(Math.floor(secs / 60) % 60);
+  return num(secs % 60);
+}
+
+function timeFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  if (args.length !== 3) return err('#VALUE!');
+  const h = numArg(args, ev, ctx, 0);
+  if (typeof h !== 'number') return err(h.e);
+  const m = numArg(args, ev, ctx, 1);
+  if (typeof m !== 'number') return err(m.e);
+  const s = numArg(args, ev, ctx, 2);
+  if (typeof s !== 'number') return err(s.e);
+  const total = Math.trunc(h) * 3600 + Math.trunc(m) * 60 + Math.trunc(s);
+  return num((((total % 86400) + 86400) % 86400) / 86400); // Excel wraps mod 24h
+}
+
+// The Excel WEEKNUM return_type → the weekday (0=Sun…6=Sat) that begins the week.
+function weekStartDow(type: number): number | undefined {
+  switch (type) {
+    case 1:
+    case 17:
+      return 0; // week begins Sunday
+    case 2:
+    case 11:
+      return 1; // week begins Monday
+    case 12:
+      return 2;
+    case 13:
+      return 3;
+    case 14:
+      return 4;
+    case 15:
+      return 5;
+    case 16:
+      return 6;
+    default:
+      return undefined;
+  }
+}
+
+function weekNum(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext, iso: boolean): FValue {
+  if (args.length < 1 || args.length > 2) return err('#VALUE!');
+  const a = numArg(args, ev, ctx, 0);
+  if (typeof a !== 'number') return err(a.e);
+  if (a < 0) return err('#NUM!');
+  const serial = Math.floor(a);
+  if (iso) return num(isoWeek(serial, ctx.date1904));
+  let type = 1;
+  if (args.length === 2) {
+    const t = numArg(args, ev, ctx, 1);
+    if (typeof t !== 'number') return err(t.e);
+    type = Math.trunc(t);
+  }
+  if (type === 21) return num(isoWeek(serial, ctx.date1904));
+  const firstDow = weekStartDow(type);
+  if (firstDow === undefined) return err('#NUM!');
+  const parts = serialToParts(serial, ctx.date1904);
+  const jan1 = serialFromYmd(parts.year, 1, 1, ctx.date1904);
+  const jan1Dow = serialToParts(jan1, ctx.date1904).dow;
+  const offset = (jan1Dow - firstDow + 7) % 7; // days from the week-start to Jan 1
+  const dayOfYear = serial - jan1 + 1; // 1-indexed
+  return num(Math.floor((dayOfYear + offset - 1) / 7) + 1);
+}
+
+// ISO 8601 week number: weeks start Monday; week 1 holds the year's first
+// Thursday. Computed from the Thursday of the target's week (which fixes the year).
+function isoWeek(serial: number, date1904: boolean): number {
+  const isoDow = (serialToParts(serial, date1904).dow + 6) % 7; // Mon=0…Sun=6
+  const thursday = serial - isoDow + 3;
+  const ty = serialToParts(thursday, date1904).year;
+  const jan1 = serialFromYmd(ty, 1, 1, date1904);
+  return Math.floor((thursday - jan1) / 7) + 1;
+}
+
+function chooseFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  if (args.length < 2) return err('#VALUE!');
+  const i = numArg(args, ev, ctx, 0);
+  if (typeof i !== 'number') return err(i.e);
+  const k = Math.trunc(i);
+  if (k < 1 || k > args.length - 1) return err('#VALUE!');
+  return ev(args[k]!);
+}
+
+function matchFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  if (args.length < 2 || args.length > 3) return err('#VALUE!');
+  const target = deref(ev(args[0]!), ctx);
+  if (target.t === 'err') return target;
+  const range = asRef(ev(args[1]!));
+  if (!range) return err('#VALUE!');
+  let type = 1;
+  if (args.length === 3) {
+    const t = numArg(args, ev, ctx, 2);
+    if (typeof t !== 'number') return err(t.e);
+    type = Math.trunc(t);
+  }
+  const horizontal = range.r0 === range.r1;
+  const vertical = range.c0 === range.c1;
+  if (!horizontal && !vertical) return err('#N/A'); // MATCH wants a 1-D vector
+  const len = horizontal ? range.c1 - range.c0 + 1 : range.r1 - range.r0 + 1;
+  if (len > MAX_SCAN) return err('#N/A');
+  const at = (i: number): Scalar =>
+    horizontal ? ctx.getCell(range.r0, range.c0 + i) : ctx.getCell(range.r0 + i, range.c0);
+  if (type === 0) {
+    const re = target.t === 'str' ? wildcardToRegExp(target.v) : undefined;
+    for (let i = 0; i < len; i++) {
+      const cell = at(i);
+      if (re ? cell.t === 'str' && re.test(cell.v) : scalarEquals(cell, target)) return num(i + 1);
+    }
+    return err('#N/A');
+  }
+  // Approximate: type 1 ⇒ largest ≤ target (ascending), -1 ⇒ smallest ≥ (descending).
+  let best = -1;
+  for (let i = 0; i < len; i++) {
+    const cmp = cmpScalar(at(i), target);
+    if (cmp === undefined) continue;
+    if (type === 1 ? cmp <= 0 : cmp >= 0) best = i;
+    else break;
+  }
+  return best < 0 ? err('#N/A') : num(best + 1);
+}
+
+function indexFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
+  if (args.length < 2 || args.length > 3) return err('#VALUE!');
+  const range = asRef(ev(args[0]!));
+  if (!range) return err('#VALUE!');
+  const rn = numArg(args, ev, ctx, 1);
+  if (typeof rn !== 'number') return err(rn.e);
+  let r = Math.trunc(rn);
+  let cn = 1;
+  if (args.length === 3) {
+    const c = numArg(args, ev, ctx, 2);
+    if (typeof c !== 'number') return err(c.e);
+    cn = Math.trunc(c);
+  }
+  const rows = range.r1 - range.r0 + 1;
+  const cols = range.c1 - range.c0 + 1;
+  // A single index into a one-row range selects the column.
+  if (args.length === 2 && rows === 1 && cols > 1) {
+    cn = r;
+    r = 1;
+  }
+  if (r < 0 || cn < 0 || r > rows || cn > cols) return err('#REF!');
+  if (r === 0 || cn === 0) return err('#VALUE!'); // whole row/column ⇒ an array
+  return ctx.getCell(range.r0 + r - 1, range.c0 + cn - 1);
+}
+
+function lookupFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext, vh: 'v' | 'h'): FValue {
+  if (args.length < 3 || args.length > 4) return err('#VALUE!');
+  const target = deref(ev(args[0]!), ctx);
+  if (target.t === 'err') return target;
+  const table = asRef(ev(args[1]!));
+  if (!table) return err('#VALUE!');
+  const idx = numArg(args, ev, ctx, 2);
+  if (typeof idx !== 'number') return err(idx.e);
+  const line = Math.trunc(idx);
+  let approx = true;
+  if (args.length === 4) {
+    const b = toBool(ev(args[3]!), ctx);
+    if (typeof b === 'string') return err(b);
+    approx = b;
+  }
+  const rows = table.r1 - table.r0 + 1;
+  const cols = table.c1 - table.c0 + 1;
+  const vertical = vh === 'v';
+  const vecLen = vertical ? rows : cols;
+  if (line < 1 || line > (vertical ? cols : rows)) return err('#REF!');
+  if (vecLen > MAX_SCAN) return err('#N/A');
+  const keyAt = (i: number): Scalar =>
+    vertical ? ctx.getCell(table.r0 + i, table.c0) : ctx.getCell(table.r0, table.c0 + i);
+  const resultAt = (i: number): Scalar =>
+    vertical
+      ? ctx.getCell(table.r0 + i, table.c0 + line - 1)
+      : ctx.getCell(table.r0 + line - 1, table.c0 + i);
+  if (!approx) {
+    const re = target.t === 'str' ? wildcardToRegExp(target.v) : undefined;
+    for (let i = 0; i < vecLen; i++) {
+      const k = keyAt(i);
+      if (re ? k.t === 'str' && re.test(k.v) : scalarEquals(k, target)) return resultAt(i);
+    }
+    return err('#N/A');
+  }
+  let best = -1;
+  for (let i = 0; i < vecLen; i++) {
+    const cmp = cmpScalar(keyAt(i), target);
+    if (cmp === undefined) continue;
+    if (cmp <= 0) best = i;
+    else break;
+  }
+  return best < 0 ? err('#N/A') : resultAt(best);
 }

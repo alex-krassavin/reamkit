@@ -264,3 +264,121 @@ describe('timePeriod windows (W9)', () => {
     expect(timePeriodMatches('thisMonth', feb, jan, false)).toBe(false);
   });
 });
+
+describe('formula engine — extended function library', () => {
+  // A1:A5 = 1..5, B1:B5 = 10..50, C1:C3 = fruit; E1:H1 / E2:H2 a horizontal table.
+  const g = makeCtx({
+    A1: 1,
+    A2: 2,
+    A3: 3,
+    A4: 4,
+    A5: 5,
+    B1: 10,
+    B2: 20,
+    B3: 30,
+    B4: 40,
+    B5: 50,
+    C1: 'apple',
+    C2: 'banana',
+    C3: 'cherry',
+    E1: 1,
+    F1: 2,
+    G1: 3,
+    H1: 4,
+    E2: 10,
+    F2: 20,
+    G2: 30,
+    H2: 40,
+  });
+
+  it('extended logic / information: ISEVEN/ISODD/ISNONTEXT/XOR/IFS/SWITCH/IFNA/NA', () => {
+    expect(ev('ISEVEN(4)', g)).toBe(true);
+    expect(ev('ISODD(3)', g)).toBe(true);
+    expect(ev('ISNONTEXT(5)', g)).toBe(true);
+    expect(ev('ISNONTEXT("x")', g)).toBe(false);
+    expect(ev('XOR(TRUE,FALSE)', g)).toBe(true);
+    expect(ev('XOR(TRUE,TRUE)', g)).toBe(false);
+    expect(ev('XOR(TRUE,TRUE,TRUE)', g)).toBe(true);
+    expect(ev('IFS(FALSE,1,TRUE,2)=2', g)).toBe(true);
+    expect(ev('ISNA(IFS(FALSE,1,FALSE,2))', g)).toBe(true); // no match ⇒ #N/A
+    expect(ev('SWITCH(2,1,"a",2,"b","z")="b"', g)).toBe(true);
+    expect(ev('SWITCH(9,1,"a","def")="def"', g)).toBe(true); // trailing default
+    expect(ev('IFNA(NA(),5)=5', g)).toBe(true);
+    expect(ev('IFNA(3,5)=3', g)).toBe(true);
+  });
+
+  it('extended math: PRODUCT/QUOTIENT/GCD/LCM/MROUND/EVEN/ODD/CEILING/FLOOR', () => {
+    expect(ev('PRODUCT(A1:A3)=6', g)).toBe(true);
+    expect(ev('QUOTIENT(7,2)=3', g)).toBe(true);
+    expect(ev('ISERROR(QUOTIENT(1,0))', g)).toBe(true);
+    expect(ev('GCD(12,18)=6', g)).toBe(true);
+    expect(ev('LCM(4,6)=12', g)).toBe(true);
+    expect(ev('MROUND(10,3)=9', g)).toBe(true);
+    expect(ev('MROUND(13,2)=14', g)).toBe(true); // 6.5 rounds half away from zero
+    expect(ev('EVEN(3)=4', g)).toBe(true);
+    expect(ev('EVEN(-1)=-2', g)).toBe(true);
+    expect(ev('ODD(2)=3', g)).toBe(true);
+    expect(ev('ODD(-2)=-3', g)).toBe(true);
+    expect(ev('CEILING(2.5,1)=3', g)).toBe(true);
+    expect(ev('FLOOR(2.5,1)=2', g)).toBe(true);
+    expect(ev('CEILING(-2.5,-1)=-3', g)).toBe(true);
+    expect(ev('ISERROR(CEILING(-2.5,1))', g)).toBe(true); // mixed sign ⇒ #NUM!
+  });
+
+  it('statistics / IFS aggregates: MEDIAN/LARGE/SMALL/COUNTBLANK/SUMPRODUCT/COUNTIFS/SUMIFS/AVERAGEIF(S)', () => {
+    expect(ev('MEDIAN(A1:A5)=3', g)).toBe(true);
+    expect(ev('MEDIAN(A1:A4)=2.5', g)).toBe(true);
+    expect(ev('LARGE(A1:A5,2)=4', g)).toBe(true);
+    expect(ev('SMALL(A1:A5,2)=2', g)).toBe(true);
+    expect(ev('COUNTBLANK(A1:A10)=5', g)).toBe(true); // A6:A10 are empty
+    expect(ev('SUMPRODUCT(A1:A3,B1:B3)=140', g)).toBe(true); // 1·10+2·20+3·30
+    expect(ev('COUNTIFS(A1:A5,">2",B1:B5,"<50")=2', g)).toBe(true);
+    expect(ev('SUMIFS(B1:B5,A1:A5,">2")=120', g)).toBe(true);
+    expect(ev('AVERAGEIF(A1:A5,">2")=4', g)).toBe(true);
+    expect(ev('AVERAGEIFS(B1:B5,A1:A5,">2")=40', g)).toBe(true);
+  });
+
+  it('extended text: SUBSTITUTE/REPLACE/REPT/PROPER/CHAR/CODE/CLEAN/T/CONCAT/TEXTJOIN', () => {
+    expect(ev('SUBSTITUTE("a-b-c","-","+")="a+b+c"', g)).toBe(true);
+    expect(ev('SUBSTITUTE("a-b-c","-","+",2)="a-b+c"', g)).toBe(true);
+    expect(ev('REPLACE("abcdef",2,3,"XY")="aXYef"', g)).toBe(true);
+    expect(ev('REPT("ab",3)="ababab"', g)).toBe(true);
+    expect(ev('PROPER("hello world")="Hello World"', g)).toBe(true);
+    expect(ev('CHAR(65)="A"', g)).toBe(true);
+    expect(ev('CODE("A")=65', g)).toBe(true);
+    expect(ev(`CLEAN("a${String.fromCharCode(7)}b")="ab"`, g)).toBe(true); // strips a BEL
+    expect(ev('T("hi")="hi"', g)).toBe(true);
+    expect(ev('T(B1)=""', g)).toBe(true); // a number ⇒ empty text
+    expect(ev('CONCAT(C1:C3)="applebananacherry"', g)).toBe(true);
+    expect(ev('TEXTJOIN("-",TRUE,C1:C3)="apple-banana-cherry"', g)).toBe(true);
+    expect(ev('TEXTJOIN(",",TRUE,C1,"",C2)="apple,banana"', g)).toBe(true); // skips empty
+  });
+
+  it('date / time: DAYS / TIME with HOUR-MINUTE-SECOND / WEEKNUM / ISOWEEKNUM', () => {
+    expect(ev('DAYS(45,40)=5', g)).toBe(true);
+    expect(ev('HOUR(TIME(13,30,15))=13', g)).toBe(true);
+    expect(ev('MINUTE(TIME(13,30,15))=30', g)).toBe(true);
+    expect(ev('SECOND(TIME(13,30,15))=15', g)).toBe(true);
+    expect(ev('WEEKNUM(DATE(2023,1,1))=1', g)).toBe(true); // Jan 1 2023 is a Sunday
+    expect(ev('WEEKNUM(DATE(2023,1,8))=2', g)).toBe(true);
+    expect(ev('ISOWEEKNUM(DATE(2023,1,1))=52', g)).toBe(true); // ISO: belongs to 2022 W52
+    expect(ev('ISOWEEKNUM(DATE(2023,1,2))=1', g)).toBe(true); // the Monday starts ISO W1
+  });
+
+  it('lookup: CHOOSE / MATCH / INDEX / VLOOKUP / HLOOKUP', () => {
+    expect(ev('CHOOSE(2,"a","b","c")="b"', g)).toBe(true);
+    expect(ev('MATCH(3,A1:A5,0)=3', g)).toBe(true); // exact
+    expect(ev('MATCH(3.5,A1:A5,1)=3', g)).toBe(true); // largest ≤ 3.5 (ascending)
+    expect(ev('MATCH("banana",C1:C3,0)=2', g)).toBe(true);
+    expect(ev('INDEX(B1:B5,3)=30', g)).toBe(true);
+    expect(ev('INDEX(A1:A5,4)=4', g)).toBe(true);
+    expect(ev('VLOOKUP(3,A1:B5,2,FALSE)=30', g)).toBe(true);
+    expect(ev('VLOOKUP(3.5,A1:B5,2,TRUE)=30', g)).toBe(true); // approximate
+    expect(ev('ISNA(VLOOKUP(99,A1:B5,2,FALSE))', g)).toBe(true);
+    expect(ev('HLOOKUP(3,E1:H2,2,FALSE)=30', g)).toBe(true);
+  });
+
+  it('an unsupported function still no-ops gracefully (#NAME?)', () => {
+    expect(ev('XLOOKUP(1,A1:A5,B1:B5)=10', g)).toBe(false); // not in the library
+  });
+});
