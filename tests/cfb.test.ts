@@ -64,6 +64,28 @@ describe('CFB / OLE2 reader (XLS-1)', () => {
     expect(cfb.readStream('1Table')).toEqual(small);
   });
 
+  it('prefers a top-level stream over an embedded-storage stream of the same name', () => {
+    // Models a .doc that embeds an OLE object: both the main document and the
+    // embedded object own a `WordDocument` stream, and the embedded one comes
+    // first in the directory. A flat first-wins reader returns the embedded
+    // stream — and the .doc parse then comes up empty — so the tree-aware reader
+    // must return the main document's (the root storage's direct child).
+    const mainWd = pattern(200, 21);
+    const embeddedWd = pattern(120, 22);
+    const cfb = openCfb(
+      buildCfb(
+        [
+          { name: 'WordDocument', data: mainWd },
+          { name: '1Table', data: pattern(80, 23) },
+        ],
+        {
+          storages: [{ name: 'ObjectPool', streams: [{ name: 'WordDocument', data: embeddedWd }] }],
+        },
+      ),
+    );
+    expect(cfb.readStream('WordDocument')).toEqual(mainWd);
+  });
+
   it('looks streams up case-insensitively and reports missing ones', () => {
     const cfb = openCfb(buildCfb([{ name: 'Workbook', data: pattern(200, 6) }]));
     expect(cfb.hasStream('workbook')).toBe(true);
