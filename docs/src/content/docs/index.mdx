@@ -1,9 +1,9 @@
 ---
 title: Ream
-description: Convert Word (.docx) and Excel (.xlsx) to PDF in the browser, implemented from the ECMA-376 and ISO 32000 specifications.
+description: Read Word, Excel, PowerPoint and PDF — and convert any of them to PDF, SVG, HTML, DOCX or XLSX. In the browser, from the ECMA-376 and ISO 32000 specifications.
 template: splash
 hero:
-  tagline: Convert Word (.docx) and Excel (.xlsx) to PDF — in the browser, from the ECMA-376 and ISO 32000 specifications. No LibreOffice, no headless Office, no commercial SDK. Pure TypeScript, Uint8Array in and Uint8Array out.
+  tagline: Read Word, Excel, PowerPoint and PDF — including the legacy .doc / .xls / .ppt — and convert any of them to PDF, SVG, HTML, DOCX or XLSX. In the browser, from the ECMA-376 and ISO 32000 specifications. No LibreOffice, no headless Office, no commercial SDK. Pure TypeScript, Uint8Array in and Uint8Array out.
   actions:
     - text: Getting started
       link: /guides/getting-started/
@@ -31,11 +31,12 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
     conversion path. The same code runs unchanged in the browser, Node.js, serverless and edge
     runtimes. You supply the fonts (or let it fetch open substitutes).
   </Card>
-  <Card title="Word & Excel" icon="document">
-    WordprocessingML — text, styles, tables (incl. table styles), lists, multi-column sections,
-    headers/footers with real page numbers, footnotes, hyperlinks and bookmarks, images and floating
-    drawings, tracked changes. SpreadsheetML — grids, number formats, dates, and the full print
-    model. Plus DrawingML shapes, charts and OfficeMath.
+  <Card title="Seven formats in" icon="document">
+    Office Open XML — **`.docx`** (text, styles, tables, lists, multi-column sections,
+    headers/footers with real page numbers, footnotes, drawings, tracked changes), **`.xlsx`**
+    (grids, number formats, the print model, conditional formatting, charts) and **`.pptx`** (slides,
+    placeholders, shapes, tables, charts). Plus **`.pdf`** and the legacy binary **`.doc` / `.xls` /
+    `.ppt`** (97–2003). DrawingML shapes, charts and OfficeMath throughout.
   </Card>
   <Card title="Real typography" icon="seti:font">
     Type0 + CIDFontType2 embedding with subsetting, Knuth–Plass line breaking, Liang hyphenation,
@@ -43,12 +44,14 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
   </Card>
   <Card title="Compliant PDF" icon="approve-check">
     PDF/A-1, -2 and -3 (levels a / b / u) and **PDF/UA-1** — all formally **veraPDF-validated** —
-    plus tagged PDF (logical structure, alt text) and digital signatures (PKCS#7 detached, ECDSA).
+    plus tagged PDF (logical structure, alt text), digital signatures (PKCS#7 detached, RSA / ECDSA,
+    PAdES, RFC 3161 timestamps) and AES-256 encryption.
   </Card>
   <Card title="One parse, any target" icon="rocket">
-    `Ream.parse(bytes)` reads a document once into a format-neutral interlayer; `convert('pdf')`,
-    `convert('svg')`, `convert('html')` and `convert('docx')` render from it — including docx → docx
-    for in-browser editing. New formats plug in as reader/writer adapters — more are on the way.
+    `Ream.parse(bytes)` reads any of the seven formats once into a format-neutral interlayer;
+    `convert('pdf' | 'svg' | 'html' | 'docx' | 'xlsx')` renders from it — so a `.doc` becomes a
+    `.docx`, a `.pptx` becomes a PDF, a PDF becomes flowed HTML. Formats plug in as reader/writer
+    adapters.
   </Card>
 </CardGrid>
 
