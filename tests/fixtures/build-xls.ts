@@ -265,6 +265,85 @@ export function hlinkRec(opts: {
   );
 }
 
+// === Print model records (XLS-9) ============================================
+
+// Setup (0x00A1): paper size, scale, fit-to-N, orientation (fPortrait 0x02 set
+// unless landscape; fNoPls/fNoOrient clear so it is honoured) and header/footer
+// margins (numHdr @16, numFtr @24 as doubles).
+export function setupRec(opts: {
+  readonly paperSize?: number;
+  readonly scale?: number;
+  readonly fitWidth?: number;
+  readonly fitHeight?: number;
+  readonly landscape?: boolean;
+  readonly headerMarginInches?: number;
+  readonly footerMarginInches?: number;
+}): Uint8Array {
+  const d = new Uint8Array(34);
+  const v = new DataView(d.buffer);
+  v.setUint16(0, opts.paperSize ?? 1, true);
+  v.setUint16(2, opts.scale ?? 100, true);
+  v.setUint16(6, opts.fitWidth ?? 1, true);
+  v.setUint16(8, opts.fitHeight ?? 1, true);
+  v.setUint16(10, opts.landscape ? 0x0000 : 0x0002, true); // grbit
+  v.setFloat64(16, opts.headerMarginInches ?? 0.3, true);
+  v.setFloat64(24, opts.footerMarginInches ?? 0.3, true);
+  return rec(0x00a1, d);
+}
+
+// WsBool (0x0081): fFitToPage at 0x0100.
+export function wsBoolRec(fitToPage: boolean): Uint8Array {
+  const d = new Uint8Array(2);
+  new DataView(d.buffer).setUint16(0, fitToPage ? 0x0100 : 0x0000, true);
+  return rec(0x0081, d);
+}
+
+function boolU16Rec(type: number, on: boolean): Uint8Array {
+  const d = new Uint8Array(2);
+  new DataView(d.buffer).setUint16(0, on ? 1 : 0, true);
+  return rec(type, d);
+}
+export const printGridlinesRec = (on: boolean): Uint8Array => boolU16Rec(0x002b, on);
+export const hCenterRec = (on: boolean): Uint8Array => boolU16Rec(0x0083, on);
+export const vCenterRec = (on: boolean): Uint8Array => boolU16Rec(0x0084, on);
+
+function marginRec(type: number, inches: number): Uint8Array {
+  const d = new Uint8Array(8);
+  new DataView(d.buffer).setFloat64(0, inches, true);
+  return rec(type, d);
+}
+export const leftMarginRec = (inches: number): Uint8Array => marginRec(0x0026, inches);
+export const rightMarginRec = (inches: number): Uint8Array => marginRec(0x0027, inches);
+export const topMarginRec = (inches: number): Uint8Array => marginRec(0x0028, inches);
+export const bottomMarginRec = (inches: number): Uint8Array => marginRec(0x0029, inches);
+
+// Header (0x0014) / Footer (0x0015): an XLUnicodeString (cch u16, flags u8, chars);
+// an empty string emits a zero-length record (= no header/footer).
+function hfRec(type: number, text: string): Uint8Array {
+  if (text.length === 0) return rec(type, new Uint8Array(0));
+  const d = new Uint8Array(3 + text.length);
+  new DataView(d.buffer).setUint16(0, text.length, true);
+  d[2] = 0; // flags: 8-bit chars
+  for (let i = 0; i < text.length; i++) d[3 + i] = text.charCodeAt(i) & 0xff;
+  return rec(type, d);
+}
+export const headerRec = (text: string): Uint8Array => hfRec(0x0014, text);
+export const footerRec = (text: string): Uint8Array => hfRec(0x0015, text);
+
+// HPageBreak (0x001B) / VPageBreak (0x001A): a u16 count then count×6-byte entries
+// whose first u16 is the row/column that begins the next page.
+function pageBreakRec(type: number, indices: ReadonlyArray<number>): Uint8Array {
+  const d = new Uint8Array(2 + indices.length * 6);
+  const v = new DataView(d.buffer);
+  v.setUint16(0, indices.length, true);
+  indices.forEach((idx, k) => v.setUint16(2 + k * 6, idx, true));
+  return rec(type, d);
+}
+export const hPageBreakRec = (rows: ReadonlyArray<number>): Uint8Array =>
+  pageBreakRec(0x001b, rows);
+export const vPageBreakRec = (cols: ReadonlyArray<number>): Uint8Array =>
+  pageBreakRec(0x001a, cols);
+
 function sstData(strings: ReadonlyArray<string>): Uint8Array {
   const parts: Array<Uint8Array> = [];
   const head = new Uint8Array(8);

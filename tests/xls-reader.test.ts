@@ -9,17 +9,30 @@ import { describe, expect, it } from 'vitest';
 
 import {
   boolRec,
+  bottomMarginRec,
   buildXls,
   errRec,
+  footerRec,
   formulaNumberRec,
   formulaStringRecs,
+  hCenterRec,
+  hPageBreakRec,
+  headerRec,
   hlinkRec,
   labelSstRec,
+  leftMarginRec,
   mergeCellsRec,
   mulRkRec,
   numberRec,
+  printGridlinesRec,
   rec,
+  rightMarginRec,
   rkRec,
+  setupRec,
+  topMarginRec,
+  vCenterRec,
+  vPageBreakRec,
+  wsBoolRec,
 } from './fixtures/build-xls';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { SheetDoc } from '@/core/ir/sheet';
@@ -212,6 +225,80 @@ describe('xls hyperlinks (XLS-8)', () => {
       sheets: [{ name: 'S', records: [numberRec(0, 0, 1), rec(0x01b8, data)] }],
     });
     expect(readXlsToSheetDoc(xls).sheets[0]!.hyperlinks).toBeUndefined();
+  });
+});
+
+describe('xls print model (XLS-9)', () => {
+  const sheetDoc = (records: ReadonlyArray<Uint8Array>): SheetDoc =>
+    readXlsToSheetDoc(
+      buildXls({
+        sst: ['Hi'],
+        sheets: [{ name: 'S', records: [labelSstRec(0, 0, 0), ...records] }],
+      }),
+    );
+  const gridOf = (records: ReadonlyArray<Uint8Array>) => sheetDoc(records).sheets[0]!.grid;
+
+  it('reads page setup (orientation, scale, fit) and fit-to-page', () => {
+    const g = gridOf([
+      setupRec({ landscape: true, scale: 80, fitWidth: 2, fitHeight: 3 }),
+      wsBoolRec(true),
+    ]);
+    expect(g.pageSetup?.orientation).toBe('landscape');
+    expect(g.pageSetup?.scale).toBe(80);
+    expect(g.pageSetup?.fitToWidth).toBe(2);
+    expect(g.pageSetup?.fitToHeight).toBe(3);
+    expect(g.fitToPage).toBe(true);
+  });
+
+  it('reads print options (gridlines + horizontal/vertical centering)', () => {
+    const g = gridOf([printGridlinesRec(true), hCenterRec(true), vCenterRec(true)]);
+    expect(g.printOptions).toEqual({
+      gridLines: true,
+      horizontalCentered: true,
+      verticalCentered: true,
+    });
+  });
+
+  it('reads page margins plus header/footer margins from Setup', () => {
+    const g = gridOf([
+      leftMarginRec(0.5),
+      rightMarginRec(0.5),
+      topMarginRec(1),
+      bottomMarginRec(1),
+      setupRec({ headerMarginInches: 0.25, footerMarginInches: 0.25 }),
+    ]);
+    expect(g.pageMargins).toEqual({
+      leftInches: 0.5,
+      rightInches: 0.5,
+      topInches: 1,
+      bottomInches: 1,
+      headerInches: 0.25,
+      footerInches: 0.25,
+    });
+  });
+
+  it('reads header and footer strings (an empty record yields none)', () => {
+    const g = gridOf([headerRec('&CReport'), footerRec('')]);
+    expect(g.headerFooter).toEqual({ oddHeader: '&CReport' });
+  });
+
+  it('reads manual row and column breaks', () => {
+    const g = gridOf([hPageBreakRec([10, 20]), vPageBreakRec([5])]);
+    expect(g.rowBreaks).toEqual([10, 20]);
+    expect(g.colBreaks).toEqual([5]);
+  });
+
+  it('leaves print fields undefined when no print records are present', () => {
+    const g = gridOf([]);
+    expect(g.pageSetup).toBeUndefined();
+    expect(g.printOptions).toBeUndefined();
+    expect(g.pageMargins).toBeUndefined();
+    expect(g.rowBreaks).toBeUndefined();
+  });
+
+  it('projects a landscape sheet to a wider-than-tall page', () => {
+    const flow = projectSheetDoc(sheetDoc([setupRec({ landscape: true, paperSize: 1 })]));
+    expect(flow.section.pageSize.width).toBeGreaterThan(flow.section.pageSize.height);
   });
 });
 

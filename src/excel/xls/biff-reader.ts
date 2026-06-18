@@ -21,9 +21,13 @@ import type {
 } from '@/core/ir/sheet';
 import type {
   ColumnWidth,
+  HeaderFooter,
   MergedRange,
   ParsedWorksheet,
   WorksheetCell,
+  XlsxPageMargins,
+  XlsxPageSetup,
+  XlsxPrintOptions,
 } from '@/core/spreadsheet-model';
 import type { EscherAnchor, EscherShape } from '@/excel/xls/escher';
 
@@ -57,6 +61,20 @@ const REC = {
   MSODRAWING: 0x00ec, // per-sheet Escher shapes
   TXO: 0x01b6, // text object (text-box content)
   HLINK: 0x01b8, // cell/range hyperlink (§2.4.140)
+  // Print model (all sheet-scoped) — XLS-9.
+  SETUP: 0x00a1, // page setup (paper/scale/orientation/fit/header+footer margin)
+  WSBOOL: 0x0081, // sheet flags — fFitToPage at 0x0100 (NOT 0x0085 = BoundSheet8)
+  PRINTGRIDLINES: 0x002b,
+  HCENTER: 0x0083,
+  VCENTER: 0x0084,
+  LEFTMARGIN: 0x0026,
+  RIGHTMARGIN: 0x0027,
+  TOPMARGIN: 0x0028,
+  BOTTOMMARGIN: 0x0029,
+  HEADER: 0x0014,
+  FOOTER: 0x0015,
+  HPAGEBREAK: 0x001b, // horizontal (row) breaks
+  VPAGEBREAK: 0x001a, // vertical (column) breaks
 } as const;
 
 // Bombs / corruption guards.
@@ -332,7 +350,15 @@ function readSheet(
     }
   }
 
-  const grid: ParsedWorksheet = { cells, maxRow, maxColumn, columns, merges, rowHeights: [] };
+  const grid: ParsedWorksheet = {
+    cells,
+    maxRow,
+    maxColumn,
+    columns,
+    merges,
+    rowHeights: [],
+    ...parsePrintModel(records),
+  };
   const drawing = gatherDrawing(records, REC.MSODRAWING);
   const images =
     drawing.length > 0 && blips.length > 0 ? buildImages(drawing, blips, resources) : [];
@@ -450,6 +476,154 @@ function isAbsoluteUrl(s: string): boolean {
 function clsidEquals(d: Uint8Array, off: number, clsid: ReadonlyArray<number>): boolean {
   for (let i = 0; i < 16; i++) if (d[off + i] !== clsid[i]) return false;
   return true;
+}
+
+// The sheet's print model (XLS-9): the page-setup, print-option, margin,
+// header/footer and manual-page-break records scattered through the worksheet
+// substream → the same grid fields the OOXML `.xlsx` path fills, so the existing
+// print/pagination model renders a legacy workbook identically. Each record is
+// optional; an absent one leaves its field undefined (the projection's defaults).
+function parsePrintModel(records: ReadonlyArray<BiffRecord>): {
+  pageSetup?: XlsxPageSetup;
+  fitToPage?: boolean;
+  printOptions?: XlsxPrintOptions;
+  pageMargins?: XlsxPageMargins;
+  headerFooter?: HeaderFooter;
+  rowBreaks?: Array<number>;
+  colBreaks?: Array<number>;
+} {
+  let paperSize: number | undefined;
+  let orientation: 'portrait' | 'landscape' | undefined;
+  let scale: number | undefined;
+  let fitToWidth: number | undefined;
+  let fitToHeight: number | undefined;
+  let fitToPage: boolean | undefined;
+  let gridLines: boolean | undefined;
+  let horizontalCentered: boolean | undefined;
+  let verticalCentered: boolean | undefined;
+  let left: number | undefined;
+  let right: number | undefined;
+  let top: number | undefined;
+  let bottom: number | undefined;
+  let headerMargin: number | undefined;
+  let footerMargin: number | undefined;
+  let oddHeader: string | undefined;
+  let oddFooter: string | undefined;
+  let rowBreaks: Array<number> | undefined;
+  let colBreaks: Array<number> | undefined;
+
+  for (const r of records) {
+    const d = r.data;
+    switch (r.type) {
+      case REC.SETUP: {
+        if (d.length < 12) break;
+        // grbit: fNoPls 0x04 ⇒ paper/scale/orientation undefined; fNoOrient 0x40 ⇒
+        // orientation undefined; fPortrait 0x02 ⇒ portrait, else landscape.
+        const grbit = readU16(d, 10);
+        if ((grbit & 0x0004) === 0 && (grbit & 0x0040) === 0) {
+          orientation = (grbit & 0x0002) !== 0 ? 'portrait' : 'landscape';
+        }
+        const sc = readU16(d, 2);
+        if (sc >= 10 && sc <= 400) scale = sc;
+        const ps = readU16(d, 0);
+        if ((grbit & 0x0004) === 0 && ps > 0) paperSize = ps;
+        fitToWidth = readU16(d, 6);
+        fitToHeight = readU16(d, 8);
+        if (d.length >= 32) {
+          headerMargin = readF64(d, 16); // numHdr (inches)
+          footerMargin = readF64(d, 24); // numFtr (inches)
+        }
+        break;
+      }
+      case REC.WSBOOL:
+        if (d.length >= 2) fitToPage = (readU16(d, 0) & 0x0100) !== 0; // fFitToPage
+        break;
+      case REC.PRINTGRIDLINES:
+        if (d.length >= 2) gridLines = (readU16(d, 0) & 0x0001) !== 0;
+        break;
+      case REC.HCENTER:
+        if (d.length >= 2) horizontalCentered = readU16(d, 0) !== 0;
+        break;
+      case REC.VCENTER:
+        if (d.length >= 2) verticalCentered = readU16(d, 0) !== 0;
+        break;
+      case REC.LEFTMARGIN:
+        if (d.length >= 8) left = readF64(d, 0);
+        break;
+      case REC.RIGHTMARGIN:
+        if (d.length >= 8) right = readF64(d, 0);
+        break;
+      case REC.TOPMARGIN:
+        if (d.length >= 8) top = readF64(d, 0);
+        break;
+      case REC.BOTTOMMARGIN:
+        if (d.length >= 8) bottom = readF64(d, 0);
+        break;
+      case REC.HEADER: {
+        const s = readXlString(d, 0); // empty record ⇒ '' ⇒ no header
+        if (s.length > 0) oddHeader = s;
+        break;
+      }
+      case REC.FOOTER: {
+        const s = readXlString(d, 0);
+        if (s.length > 0) oddFooter = s;
+        break;
+      }
+      case REC.HPAGEBREAK:
+        rowBreaks = parseBreaks(d);
+        break;
+      case REC.VPAGEBREAK:
+        colBreaks = parseBreaks(d);
+        break;
+    }
+  }
+
+  const pageSetup: XlsxPageSetup = {
+    ...(paperSize !== undefined ? { paperSize } : {}),
+    ...(orientation !== undefined ? { orientation } : {}),
+    ...(scale !== undefined ? { scale } : {}),
+    ...(fitToWidth !== undefined ? { fitToWidth } : {}),
+    ...(fitToHeight !== undefined ? { fitToHeight } : {}),
+  };
+  const printOptions: XlsxPrintOptions = {
+    ...(gridLines !== undefined ? { gridLines } : {}),
+    ...(horizontalCentered !== undefined ? { horizontalCentered } : {}),
+    ...(verticalCentered !== undefined ? { verticalCentered } : {}),
+  };
+  const pageMargins: XlsxPageMargins | undefined =
+    left !== undefined && right !== undefined && top !== undefined && bottom !== undefined
+      ? {
+          leftInches: left,
+          rightInches: right,
+          topInches: top,
+          bottomInches: bottom,
+          ...(headerMargin !== undefined ? { headerInches: headerMargin } : {}),
+          ...(footerMargin !== undefined ? { footerInches: footerMargin } : {}),
+        }
+      : undefined;
+  const headerFooter: HeaderFooter = {
+    ...(oddHeader !== undefined ? { oddHeader } : {}),
+    ...(oddFooter !== undefined ? { oddFooter } : {}),
+  };
+
+  return {
+    ...(Object.keys(pageSetup).length > 0 ? { pageSetup } : {}),
+    ...(fitToPage !== undefined ? { fitToPage } : {}),
+    ...(Object.keys(printOptions).length > 0 ? { printOptions } : {}),
+    ...(pageMargins ? { pageMargins } : {}),
+    ...(Object.keys(headerFooter).length > 0 ? { headerFooter } : {}),
+    ...(rowBreaks && rowBreaks.length > 0 ? { rowBreaks } : {}),
+    ...(colBreaks && colBreaks.length > 0 ? { colBreaks } : {}),
+  };
+}
+
+// A page-break record (HPageBreak/VPageBreak): a u16 count then that many 6-byte
+// entries whose first u16 is the row (or column) that begins the next page.
+function parseBreaks(d: Uint8Array): Array<number> {
+  const count = readU16(d, 0);
+  const out: Array<number> = [];
+  for (let k = 0; k < count && 2 + k * 6 + 2 <= d.length; k++) out.push(readU16(d, 2 + k * 6));
+  return out;
 }
 
 // A sheet's TXO (text-object) record texts, in order — the cch is in the TXO
