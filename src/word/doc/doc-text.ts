@@ -64,6 +64,8 @@ const SPRM_P_DYA_AFTER = 0xa414; // space after (twips)
 const SPRM_P_F_IN_TABLE = 0x2416; // paragraph is in a table
 const SPRM_P_F_TTP = 0x2417; // table terminating paragraph (end of row)
 const SPRM_T_DEF_TABLE = 0xd608; // table definition (cell boundaries + descriptors)
+const SPRM_T_DEF_TABLE_SHD = 0xd612; // per-cell shading array (Shd: cvFore/cvBack/ipat)
+const MAX_ROW_CELLS = 256; // a row's cell count is small; guard a crafted huge array
 const SPRM_P_ILVL = 0x260a; // list level (0–8)
 const SPRM_P_ILFO = 0x460b; // list-format override index (>0 ⇒ the paragraph is a list item)
 const SPRA_LEN = [1, 1, 2, 4, 2, 2, 0, 3];
@@ -129,6 +131,9 @@ export interface DocParaProps {
   // sprmTDefTable TC80 per-cell descriptors (borders + vertical merge), one per
   // cell, present on the TTP alongside cellEdgesTwips (DOC-11).
   readonly cellDescriptors?: ReadonlyArray<DocTc>;
+  // sprmTDefTableShd — each cell's background fill hex (cvBack), or undefined for an
+  // auto (no-fill) cell. Indexed parallel to cellDescriptors.
+  readonly cellShadings?: ReadonlyArray<string | undefined>;
   readonly listIlfo?: number; // sprmPIlfo — list override (>0 ⇒ a list item)
   readonly listIlvl?: number; // sprmPIlvl — list level (0–8)
 }
@@ -371,6 +376,15 @@ function parseBrc80(d: Uint8Array, off: number): DocBorder | undefined {
   };
 }
 
+// An (r, g, b) byte triple → an upper-case 6-hex-digit colour (a COLORREF stores
+// its channels as R, G, B in that order).
+function colorHex(r: number, g: number, b: number): string {
+  return [r, g, b]
+    .map((c) => c.toString(16).padStart(2, '0'))
+    .join('')
+    .toUpperCase();
+}
+
 // §2.8.26 PlcfHdd — the header/footer stories live in the same piece-table stream,
 // after the main text and footnotes; PlcfHdd is a plex of CPs (relative to that
 // start) dividing it into stories. The first 6 are doc-wide separators; then 6 per
@@ -594,6 +608,7 @@ function decodePapxGrpprl(d: Uint8Array): DocParaProps {
   let rowEnd: boolean | undefined;
   let cellEdgesTwips: Array<number> | undefined;
   let cellDescriptors: Array<DocTc> | undefined;
+  let cellShadings: Array<string | undefined> | undefined;
   let listIlfo: number | undefined;
   let listIlvl: number | undefined;
   for (const s of sprms(d)) {
@@ -642,6 +657,18 @@ function decodePapxGrpprl(d: Uint8Array): DocParaProps {
       case SPRM_P_ILVL:
         listIlvl = d[s.op]!;
         break;
+      case SPRM_T_DEF_TABLE_SHD: {
+        // §2.6.3 sprmTDefTableShd — an array of Shd (cvFore[4] cvBack[4] ipat[2]),
+        // one per cell. cvBack is the cell's background fill (= the OOXML w:shd
+        // @fill); a COLORREF whose 4th byte is 0x00 is a literal sRGB, 0xFF is auto.
+        const shd: Array<string | undefined> = [];
+        for (let i = 0; s.op + i * 10 + 10 <= d.length && i < MAX_ROW_CELLS; i++) {
+          const o = s.op + i * 10 + 4; // cvBack
+          shd.push(d[o + 3] === 0x00 ? colorHex(d[o]!, d[o + 1]!, d[o + 2]!) : undefined);
+        }
+        if (shd.length > 0) cellShadings = shd;
+        break;
+      }
       case SPRM_P_ILFO:
         listIlfo = u16(d, s.op);
         break;
@@ -658,6 +685,7 @@ function decodePapxGrpprl(d: Uint8Array): DocParaProps {
     ...(rowEnd ? { rowEnd } : {}),
     ...(cellEdgesTwips ? { cellEdgesTwips } : {}),
     ...(cellDescriptors ? { cellDescriptors } : {}),
+    ...(cellShadings ? { cellShadings } : {}),
     ...(listIlfo !== undefined ? { listIlfo } : {}),
     ...(listIlvl !== undefined ? { listIlvl } : {}),
   };

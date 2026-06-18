@@ -52,6 +52,9 @@ export interface DocParaFormat {
     };
     readonly vMerge?: 'restart' | 'continue';
   }>;
+  // Per-cell background fill (sprmTDefTableShd): a 6-hex colour, or undefined for an
+  // auto (no-fill) cell. Indexed parallel to cellTc.
+  readonly cellShadings?: ReadonlyArray<string | undefined>;
   readonly listIlfo?: number; // sprmPIlfo — list override (>0 ⇒ a list item)
   readonly listIlvl?: number; // sprmPIlvl — list level
 }
@@ -474,6 +477,19 @@ function buildPapxGrpprl(run: DocParaFormat): Uint8Array {
     }
     const cb = content.length + 1; // a 2-byte count that includes the count field
     sprm(0xd608, cb & 0xff, (cb >> 8) & 0xff, ...content); // sprmTDefTable
+  }
+  // sprmTDefTableShd — a 1-byte-length operand of Shd entries (cvFore/cvBack/ipat),
+  // cvBack carrying each cell's fill (sRGB) or auto (no fill).
+  if (run.cellShadings) {
+    const hex2 = (s: string, i: number): number => parseInt(s.slice(i, i + 2), 16) & 0xff;
+    const shd: Array<number> = [];
+    for (const fill of run.cellShadings) {
+      shd.push(0, 0, 0, 0xff); // cvFore = auto
+      if (fill) shd.push(hex2(fill, 0), hex2(fill, 2), hex2(fill, 4), 0x00);
+      else shd.push(0, 0, 0, 0xff); // cvBack = auto (no fill)
+      shd.push(0, 0); // ipat
+    }
+    sprm(0xd612, shd.length & 0xff, ...shd); // sprmTDefTableShd
   }
   if (run.listIlvl !== undefined) sprm(0x260a, run.listIlvl & 0xff); // sprmPIlvl
   if (run.listIlfo !== undefined) sprm(0x460b, run.listIlfo & 0xff, (run.listIlfo >> 8) & 0xff); // sprmPIlfo

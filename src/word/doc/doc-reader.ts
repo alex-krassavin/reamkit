@@ -178,7 +178,7 @@ const DOC_TEXT_LOSS: Loss = {
   severity: 'degraded',
   feature: FEATURES.text,
   detail:
-    "legacy .doc: the document text, run formatting (bold/italic/underline/size), paragraph formatting (alignment/indent/spacing), tables (with column widths, cell borders and vertical merges), inline images, fields, the section's headers/footers and list items (with their number format / bullet) are read; cell background shading is not (re-save as .docx for full fidelity)",
+    "legacy .doc: the document text, run formatting (bold/italic/underline/size), paragraph formatting (alignment/indent/spacing), tables (with column widths, cell borders, vertical merges and cell background shading), inline images, fields, the section's headers/footers and list items (with their number format / bullet) are read; drawing shapes / text boxes and comments are not (re-save as .docx for full fidelity)",
 };
 
 const DOC_ENCRYPTED_LOSS: Loss = {
@@ -310,6 +310,7 @@ interface RawCell {
   readonly content: Array<BodyElement>;
   readonly width: ReturnType<typeof pt> | undefined;
   readonly borders: CellBorders | undefined;
+  readonly shading: string | undefined; // background-fill hex from sprmTDefTableShd
   readonly vMergeRaw: 'restart' | 'continue' | undefined;
   merge?: CellMerge;
 }
@@ -334,8 +335,10 @@ function buildRawRow(
   edges: ReadonlyArray<number> | undefined,
   markers: ListMarkers,
 ): Array<RawCell> {
-  // The row's TC80 descriptors (borders + vertical merge) ride on its TTP.
+  // The row's TC80 descriptors (borders + vertical merge) + per-cell shading ride
+  // on its TTP.
   const descriptors = rowParas.find((p) => p.props.cellDescriptors)?.props.cellDescriptors;
+  const shadings = rowParas.find((p) => p.props.cellShadings)?.props.cellShadings;
   const cells: Array<RawCell> = [];
   let col = 0;
   for (const p of rowParas) {
@@ -346,6 +349,7 @@ function buildRawRow(
       content: mapParagraph(p, resources, markers),
       width: cellWidth(edges, col),
       borders: tc?.borders ? toCellBorders(tc.borders) : undefined,
+      shading: shadings?.[col],
       vMergeRaw: tc?.vMerge,
     });
     col++;
@@ -355,6 +359,7 @@ function buildRawRow(
       content: [emptyParagraph()],
       width: undefined,
       borders: undefined,
+      shading: undefined,
       vMergeRaw: undefined,
     });
   }
@@ -396,6 +401,7 @@ function toTableCell(raw: RawCell): TableCell {
     properties: {
       ...(raw.width ? { width: raw.width } : {}),
       ...(raw.borders ? { borders: raw.borders } : {}),
+      ...(raw.shading ? { shading: { colorHex: raw.shading } } : {}),
       ...(raw.merge ? { merge: raw.merge } : {}),
     },
     content: raw.content,

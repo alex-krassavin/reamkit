@@ -85,9 +85,10 @@ charts — and is byte-stable across a read↔write loop.
   underline / font size** onto each run and **alignment / indentation / spacing**
   onto each paragraph. **Tables** are reconstructed too — the in-table paragraphs
   (marked by the `fInTable` / `fTtp` PAPX flags, cells delimited by the `0x07`
-  cell mark) become a row-and-cell grid, with per-column widths **and per-cell
-  borders and vertical merges** from the table definition (`sprmTDefTable`'s
-  `TC80` array) — and **inline images** are extracted (the
+  cell mark) become a row-and-cell grid, with per-column widths, **per-cell borders
+  and vertical merges** (the table definition's `TC80` array) and **per-cell
+  background shading** (`sprmTDefTableShd`'s `cvBack` fill) — and **inline images**
+  are extracted (the
   picture character's CHPX points at a PICF in the `Data` stream; the raster blip
   is pulled out and sized from the PICF). **Fields** resolve to their cached
   result — the field code (`PAGE`, `NUMPAGES`, `REF`, …) is dropped and the stored
@@ -96,8 +97,9 @@ charts — and is byte-stable across a read↔write loop.
   here, so only well-formed stories are surfaced). **List items** (`sprmPIlfo` /
   `sprmPIlvl`) render with their resolved **number format** — a real "1." / "a)" /
   "iii." or the bullet glyph, from the `LST` / `LVL` / `LFO` tables. So an old `.doc`
-  renders to PDF/SVG/HTML and re-writes to `.docx`. Cell background shading is not
-  read yet (re-save as `.docx` for full fidelity); an encrypted file yields no text.
+  renders to PDF/SVG/HTML and re-writes to `.docx`. Legacy drawing shapes / text
+  boxes and comments are not read (re-save as `.docx` for full fidelity); an
+  encrypted file yields no text.
   The shared CFB reader
   (`src/core/ole`) is the same keystone `.xls` uses.
 
@@ -276,7 +278,7 @@ charts — and is byte-stable across a read↔write loop.
   exact same font file and the renderer's internal glyph rounding.
 - **A few format edge cases degrade gracefully** — re-save the original in its modern
   format for byte-exact fidelity, but each is a _missing detail, never a wrong one_:
-  a legacy `.doc` table cell's **background shading**; a legacy `.ppt` shape's
+  a legacy `.ppt` shape's
   **palette-relative colour** (literal, scheme- and system-relative colours resolve)
   or a rare **arc / ellipse freeform segment** (it falls back to the path's preset
   bounds); in a legacy `.xls`, a 2007 **Excel table's** banded style / autofilter

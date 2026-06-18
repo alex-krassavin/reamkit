@@ -262,6 +262,26 @@ describe('doc reader (DOC-1)', () => {
     expect(t?.rows[0]?.cells[1]?.properties.borders).toBeUndefined();
   });
 
+  it('reads per-cell background shading from sprmTDefTableShd (DOC-11)', () => {
+    const doc = readDoc(
+      buildDoc([{ text: `A${CM}B${CM}`, compressed: false }], {
+        paraRuns: [
+          { length: 2, inTable: true },
+          {
+            length: 2,
+            inTable: true,
+            rowEnd: true,
+            cellEdgesTwips: [0, 1440, 2880],
+            cellShadings: ['FFFF00', undefined], // cell A yellow fill, cell B no fill
+          },
+        ],
+      }),
+    ).doc;
+    const t = doc.body.find((el) => el.kind === 'table')?.table;
+    expect(t?.rows[0]?.cells[0]?.properties.shading).toEqual({ colorHex: 'FFFF00' });
+    expect(t?.rows[0]?.cells[1]?.properties.shading).toBeUndefined();
+  });
+
   it('resolves a vertical merge into start/end cell roles (DOC-11)', () => {
     const doc = readDoc(
       buildDoc([{ text: `A${CM}B${CM}`, compressed: false }], {
