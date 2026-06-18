@@ -64,6 +64,9 @@ export function openCfb(bytes: Uint8Array): Cfb {
   const sectorSize = 1 << sectorShift;
   const miniSectorSize = 1 << miniSectorShift;
   const miniCutoff = view.getUint32(56, true);
+  // §2.2 — only v3 (512-byte sectors) and v4 (4096) exist; the directory entry's
+  // stream-size field is read per-version below (v3 ignores its high 4 bytes).
+  const majorVersion = view.getUint16(26, true);
 
   // How many real sectors the file body can hold — every sector index must land
   // inside this, and no chain may be longer than this (the cycle guard).
@@ -149,10 +152,14 @@ export function openCfb(bytes: Uint8Array): Cfb {
     if (objType !== 1 && objType !== 2 && objType !== 5) continue; // unallocated
     const nameLen = dirView.getUint16(base + 64, true);
     const name = decodeName(dirBytes, base, nameLen);
-    // §2.6.1 — a v3 stream size only uses the low 4 bytes; read 64-bit safely.
+    // §2.6.1 — in a v3 file the stream-size field is 32-bit and the high 4
+    // bytes are reserved; Word and others leave non-zero garbage there, so a
+    // reader MUST ignore them for v3 (using the full 64-bit value yields absurd
+    // sizes that trip the size guard and reject an otherwise valid file). Only
+    // v4 (4096-byte sectors) uses the full 64-bit size.
     const sizeLow = dirView.getUint32(base + 120, true);
     const sizeHigh = dirView.getUint32(base + 124, true);
-    const size = sizeHigh * 0x1_0000_0000 + sizeLow;
+    const size = majorVersion === 3 ? sizeLow : sizeHigh * 0x1_0000_0000 + sizeLow;
     entries.push({
       name,
       type: objType === 5 ? 'root' : objType === 1 ? 'storage' : 'stream',

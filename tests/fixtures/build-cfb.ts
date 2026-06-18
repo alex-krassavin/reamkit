@@ -19,7 +19,19 @@ export interface CfbStreamInput {
   readonly data: Uint8Array;
 }
 
-export function buildCfb(streams: ReadonlyArray<CfbStreamInput>): Uint8Array {
+export interface BuildCfbOptions {
+  // Write 0xFFFFFFFF into the reserved high 4 bytes of every stream's 64-bit
+  // size field, modelling the real Word/Office quirk: in a v3 container those
+  // bytes are reserved and MUST be ignored (MS-CFB §2.6.1), yet writers leave
+  // non-zero garbage there. A reader that uses the full 64-bit value sees an
+  // absurd size and wrongly rejects an otherwise valid file.
+  readonly garbageSizeHighDword?: boolean;
+}
+
+export function buildCfb(
+  streams: ReadonlyArray<CfbStreamInput>,
+  options: BuildCfbOptions = {},
+): Uint8Array {
   const sectors: Array<Uint8Array> = [];
   const fat: Array<number> = [];
 
@@ -75,7 +87,7 @@ export function buildCfb(streams: ReadonlyArray<CfbStreamInput>): Uint8Array {
     const isBig = s.data.length >= CUTOFF;
     const start =
       s.data.length === 0 ? ENDOFCHAIN : isBig ? bigStart.get(s.name)! : miniStart.get(s.name)!;
-    dir.push(dirEntry(s.name, 2, start, s.data.length));
+    dir.push(dirEntry(s.name, 2, start, s.data.length, options.garbageSizeHighDword));
   }
   // Pad the directory to a whole sector (4 entries per 512-byte sector).
   while (dir.length % 4 !== 0) dir.push(unallocatedEntry());
@@ -108,7 +120,13 @@ export function buildCfb(streams: ReadonlyArray<CfbStreamInput>): Uint8Array {
   return concat([header, ...sectors]);
 }
 
-function dirEntry(name: string, type: number, startSector: number, size: number): Uint8Array {
+function dirEntry(
+  name: string,
+  type: number,
+  startSector: number,
+  size: number,
+  garbageHigh = false,
+): Uint8Array {
   const e = new Uint8Array(DIR_ENTRY_SIZE);
   const v = new DataView(e.buffer);
   for (let i = 0; i < name.length && i < 31; i++) v.setUint16(i * 2, name.charCodeAt(i), true);
@@ -120,7 +138,7 @@ function dirEntry(name: string, type: number, startSector: number, size: number)
   v.setUint32(76, NOSTREAM, true); // child
   v.setUint32(116, startSector, true);
   v.setUint32(120, size >>> 0, true);
-  v.setUint32(124, Math.floor(size / 0x1_0000_0000), true);
+  v.setUint32(124, garbageHigh ? 0xffffffff : Math.floor(size / 0x1_0000_0000), true);
   return e;
 }
 

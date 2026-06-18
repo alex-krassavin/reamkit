@@ -43,6 +43,27 @@ describe('CFB / OLE2 reader (XLS-1)', () => {
     expect(cfb.readStream('Empty')).toEqual(new Uint8Array(0));
   });
 
+  it('ignores garbage in the reserved high 4 bytes of a v3 stream size (MS-CFB §2.6.1)', () => {
+    // Word and other Office writers leave non-zero junk in the high dword of a
+    // v3 directory entry's 64-bit size field. A reader that uses the full value
+    // sees an absurd size (~1.8e19 B) and rejects the file with "stream exceeds
+    // size limit"; a correct reader masks it to the low 4 bytes. Cover both the
+    // regular-FAT (big) and mini-stream (small) read paths.
+    const big = pattern(5000, 11); // ≥ 4096 cutoff
+    const small = pattern(1000, 12); // < 4096 cutoff
+    const cfb = openCfb(
+      buildCfb(
+        [
+          { name: 'WordDocument', data: big },
+          { name: '1Table', data: small },
+        ],
+        { garbageSizeHighDword: true },
+      ),
+    );
+    expect(cfb.readStream('WordDocument')).toEqual(big);
+    expect(cfb.readStream('1Table')).toEqual(small);
+  });
+
   it('looks streams up case-insensitively and reports missing ones', () => {
     const cfb = openCfb(buildCfb([{ name: 'Workbook', data: pattern(200, 6) }]));
     expect(cfb.hasStream('workbook')).toBe(true);
