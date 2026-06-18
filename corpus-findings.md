@@ -25,7 +25,7 @@ Status: ✅ fixed & committed · 🛠 in progress · ⬜ todo · 🚫 won't-fix 
 | F2b | doc | Word 6.0/95 (nFib < 105) — no CLX, different FIB | 🚫 out of scope |
 | F3 | pptx | Hidden slides (show="0") rendered instead of omitted | ✅ `cebed0d` |
 | F3b | ppt | Slide content overflows the fixed canvas into extra pages | ⬜ backlog |
-| F4 | doc | Section page size / orientation not read (landscape → portrait) | ⬜ backlog |
+| F4 | doc | Section page size not read (A4/landscape → Letter portrait) | ✅ `789ee57` |
 | N1 | doc/xls | Letter-vs-A4 "dims" mismatch | 🚫 default artifact |
 
 ---
@@ -80,14 +80,23 @@ degrades gracefully (empty body + `text` loss). Supporting it is a separate
 feature with real misread risk and no validatable reference to hand — left as a
 principled residual.
 
-## ⬜ F4 — .doc section page size / orientation not read
+## ✅ F4 — .doc section page size not read (commit `789ee57`)
 
-`53379.doc` renders portrait Letter where LibreOffice shows landscape
-(`dims 850x1100 vs 1100x850`): the `.doc` reader doesn't read the section's
-page width/height/orientation from the SEP (sprmSXaPage / sprmSYaPage /
-sprmSBOrientation), so it falls back to the default. Analogous to the docx
-`w:pgSz` path and to F1 for PDF. Backlog (separate from the N1 default-paper
-artifact, which is a genuine default difference, not an ignored explicit size).
+The reader always used the hardcoded US-Letter default, so an A4 / Legal /
+landscape `.doc` came out the wrong size. Read the first section's page size from
+its SEP: FIB `fcPlcfSed` → `PlcfSed` → first `SED.fcSepx` → `Sepx` grpprl →
+`sprmSXaPage` (0xB01F) / `sprmSYaPage` (0xB020), in twips. Word stores
+already-swapped dimensions for a landscape section (verified on 53379: its
+landscape sections have `xa=15840 > ya=12240` + `orient=2`), so they map straight
+to the page size — no orientation fix-up. `47304.doc` now renders A4 and matches
+the golden (✅). Test: `tests/doc-reader.test.ts` (build-doc `pageSizeTwips`).
+
+Residual: a **multi-section** `.doc` reflows to the *first* section's geometry (a
+single-section FlowDoc, mirroring F1) — `53379.doc`, whose first section is
+portrait but whose visible page 1 LibreOffice shows landscape, still mismatches;
+and `52117.doc` has a FIB anomaly (fcPlcfSed=0) so it gracefully keeps the Letter
+default. Per-section `.doc` geometry (FlowDoc `sections[]` like docx) is the
+follow-up.
 
 ## ✅ F3 — pptx hidden slides rendered (commit `cebed0d`)
 
