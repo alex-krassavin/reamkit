@@ -26,18 +26,21 @@ import type {
   CfRuleTop10,
   Cfvo,
   ConditionalFormat,
+  DefinedName,
   Dxf,
   MergedRange,
   WorksheetCell,
   XlsxStyles,
 } from '@/core/spreadsheet-model';
-import type { CompiledFormula, EvalContext, FErr, Rect, Scalar } from '@/excel/formula';
+import type { CompiledFormula, EvalContext, FErr, FValue, Rect, Scalar } from '@/excel/formula';
 
 import {
   BLANK,
+  NO_SHIFT,
   bool,
   compileFormula,
   err,
+  evaluate,
   evaluateToBool,
   num,
   serialFromDate,
@@ -138,6 +141,12 @@ export function buildConditionalFormatter(
   resolveText?: (cell: WorksheetCell) => string,
   date1904 = false,
   now?: Date,
+  // The whole workbook, for an `expression` rule that reaches another sheet
+  // (Sheet2!A1) or a defined name. Absent ⇒ same-sheet references only (#REF!/
+  // #NAME? for those, exactly as before).
+  sheetGrids?: ReadonlyMap<string, { readonly cells: ReadonlyArray<WorksheetCell> }>,
+  currentSheet?: string,
+  definedNames?: ReadonlyArray<DefinedName>,
 ): CellConditionalFormatter | undefined {
   if (!conditionalFormats || conditionalFormats.length === 0) return undefined;
   const dxfs = styles.dxfs ?? [];
@@ -195,7 +204,19 @@ export function buildConditionalFormatter(
   // every existing sheet's path byte-identical. `nowSerial` is the injected day.
   const hasExpr = flat.some((f) => f.rule.type === 'expression');
   const nowSerial = now !== undefined ? serialFromDate(now, date1904) : undefined;
-  const ctx = hasExpr ? buildEvalContext(cells, resolveText, nowSerial, date1904) : undefined;
+  // The cross-sheet / defined-name layer is built only for an expression rule
+  // that has the workbook wired in — keeping the common path byte-identical.
+  const cross =
+    hasExpr && sheetGrids
+      ? {
+          sheets: [...sheetGrids].map(([name, ws]) => ({ name, cells: ws.cells })),
+          ...(currentSheet !== undefined ? { currentSheet } : {}),
+          definedNames: definedNames ?? [],
+        }
+      : undefined;
+  const ctx = hasExpr
+    ? buildEvalContext(cells, resolveText, nowSerial, date1904, cross)
+    : undefined;
 
   return (row, col, value, text) => {
     // A cell with neither a comparable number nor any text matches nothing — skip
@@ -313,13 +334,17 @@ export function buildConditionalFormatter(
 // is read once into a (row,col) → scalar map (point lookups) plus a flat list of
 // the populated cells (range scans for SUM/COUNTIF). It is read-only and pure —
 // precisely the cached-value lookup the engine needs, with no recalculation.
-function buildEvalContext(
+interface SheetMap {
+  readonly byKey: Map<number, Scalar>;
+  readonly populated: Array<{ row: number; col: number; value: Scalar }>;
+}
+const COLS = 16384; // key stride: column is 0..16383 (XFD)
+
+// Read a sheet's cached cells into a (row,col)→scalar map plus a populated list.
+function indexCells(
   cells: ReadonlyArray<WorksheetCell>,
   resolveText: ((cell: WorksheetCell) => string) | undefined,
-  nowSerial: number | undefined,
-  date1904: boolean,
-): EvalContext {
-  const COLS = 16384; // key stride: column is 0..16383 (XFD)
+): SheetMap {
   const byKey = new Map<number, Scalar>();
   const populated: Array<{ row: number; col: number; value: Scalar }> = [];
   for (const cell of cells) {
@@ -328,18 +353,89 @@ function buildEvalContext(
     byKey.set(cell.row * COLS + cell.column, s);
     populated.push({ row: cell.row, col: cell.column, value: s });
   }
-  return {
+  return { byKey, populated };
+}
+
+function eachInMap(
+  map: SheetMap,
+  rect: Rect,
+  visit: (r: number, c: number, v: Scalar) => void,
+): void {
+  for (const c of map.populated) {
+    if (c.row >= rect.r0 && c.row <= rect.r1 && c.col >= rect.c0 && c.col <= rect.c1) {
+      visit(c.row, c.col, c.value);
+    }
+  }
+}
+
+function buildEvalContext(
+  cells: ReadonlyArray<WorksheetCell>,
+  resolveText: ((cell: WorksheetCell) => string) | undefined,
+  nowSerial: number | undefined,
+  date1904: boolean,
+  cross?: {
+    readonly sheets: ReadonlyArray<{ name: string; cells: ReadonlyArray<WorksheetCell> }>;
+    readonly currentSheet?: string;
+    readonly definedNames: ReadonlyArray<DefinedName>;
+  },
+): EvalContext {
+  const self = indexCells(cells, resolveText);
+  const base: EvalContext = {
     nowSerial,
     date1904,
-    getCell: (row, col) => byKey.get(row * COLS + col) ?? BLANK,
-    eachCell: (rect: Rect, visit) => {
-      for (const c of populated) {
-        if (c.row >= rect.r0 && c.row <= rect.r1 && c.col >= rect.c0 && c.col <= rect.c1) {
-          visit(c.row, c.col, c.value);
-        }
+    getCell: (row, col) => self.byKey.get(row * COLS + col) ?? BLANK,
+    eachCell: (rect, visit) => eachInMap(self, rect, visit),
+  };
+  if (!cross) return base;
+
+  // A sheet name (lower-cased) → its index; its scalar map is built on first use.
+  const sheetByName = new Map<string, number>();
+  cross.sheets.forEach((s, i) => sheetByName.set(s.name.toLowerCase(), i));
+  const maps: Array<SheetMap | undefined> = new Array<SheetMap | undefined>(cross.sheets.length);
+  const sheetData = (idx: number): SheetMap =>
+    (maps[idx] ??= indexCells(cross.sheets[idx]!.cells, resolveText));
+  const currentIdx =
+    cross.currentSheet !== undefined
+      ? sheetByName.get(cross.currentSheet.toLowerCase())
+      : undefined;
+
+  // A defined name (lower-cased) → its descriptor, preferring a name scoped to the
+  // current sheet over a workbook-scoped one; other sheets' local names are skipped.
+  const nameMap = new Map<string, DefinedName>();
+  for (const dn of cross.definedNames) {
+    if (dn.localSheetId !== undefined && dn.localSheetId !== currentIdx) continue;
+    const key = dn.name.toLowerCase();
+    if (dn.localSheetId !== undefined || !nameMap.has(key)) nameMap.set(key, dn);
+  }
+
+  const resolving = new Set<string>(); // guards a name that references another name
+  const ctx: EvalContext = {
+    ...base,
+    sheetIndex: (name) => sheetByName.get(name.toLowerCase()),
+    getCellOn: (sheet, row, col) => sheetData(sheet).byKey.get(row * COLS + col) ?? BLANK,
+    eachCellOn: (sheet, rect, visit) => eachInMap(sheetData(sheet), rect, visit),
+    resolveName: (rawName): FValue | undefined => {
+      const key = rawName.toLowerCase();
+      const dn = nameMap.get(key);
+      if (!dn || resolving.has(key)) return undefined;
+      const value = dn.value.startsWith('=') ? dn.value.slice(1) : dn.value;
+      const compiled = compileFormula(value);
+      if (!compiled) return undefined;
+      const ast = compiled.ast;
+      if (ast.k === 'num') return num(ast.v);
+      if (ast.k === 'str') return str(ast.v);
+      if (ast.k === 'bool') return bool(ast.v);
+      // Only a plain reference name resolves; a name that is itself a formula no-ops.
+      if (ast.k !== 'cell' && ast.k !== 'range') return undefined;
+      resolving.add(key);
+      try {
+        return evaluate(ast, ctx, NO_SHIFT);
+      } finally {
+        resolving.delete(key);
       }
     },
   };
+  return ctx;
 }
 
 // A stored worksheet cell → a formula scalar (its cached value). Strings resolve

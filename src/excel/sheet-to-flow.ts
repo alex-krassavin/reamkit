@@ -76,6 +76,8 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
         ...(titleRows ? { titleRows } : {}),
         gridLines,
         sheetGrids,
+        sheetName: ws.name,
+        definedNames: sheet.definedNames,
         ...(ws.hyperlinks ? { hyperlinks: ws.hyperlinks } : {}),
         ...(sheet.sharedStringRuns ? { sharedStringRuns: sheet.sharedStringRuns } : {}),
         ...(options.now ? { now: options.now } : {}),

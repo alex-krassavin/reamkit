@@ -289,12 +289,17 @@ charts — and is byte-stable across a read↔write loop.
     `.bin` (MS-OFORMS, not the `<ax:ocxPr>` property bag) renders as its control
     type without the caption/value. (Property-bag-persisted controls *are* listed
     with their visible state, above.)
-  - The `expression` formula engine covers the functions conditional formats
-    commonly use (logic, math, text, the date functions, `COUNTIF`/`SUMIF`); a
-    formula that reaches outside it — a sheet-qualified reference, a defined name,
-    or a function not in the library — evaluates to an error and the rule simply
-    doesn't apply (a graceful loss, never a misrender). Rules are evaluated only
-    on cells that carry a stored value.
+  - The `expression` formula engine covers ~90 functions (logic incl.
+    `IFS`/`SWITCH`/`XOR`, math + the `SUM`/`COUNT`/`MEDIAN`/`SUMPRODUCT`
+    aggregates and the `COUNTIF(S)`/`SUMIF(S)`/`AVERAGEIF(S)` predicates, text,
+    the date / time functions, and the `MATCH`/`INDEX`/`VLOOKUP`/`HLOOKUP`
+    lookups), resolves **sheet-qualified references** (`Sheet2!A1`) and **defined
+    names** against the workbook, and shifts relative references per cell. A
+    formula a step beyond it — an unsupported function, an array-formula idiom, a
+    3-D reference — evaluates to an error and the rule simply doesn't apply (a
+    graceful loss, never a misrender); where an exact Excel semantic is ambiguous
+    the engine errs the same way rather than guess. Rules are evaluated only on
+    cells that carry a stored value.
 
 ## Validation
 

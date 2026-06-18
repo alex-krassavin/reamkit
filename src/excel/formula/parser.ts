@@ -29,8 +29,8 @@ export type Ast =
   | { readonly k: 'str'; readonly v: string }
   | { readonly k: 'bool'; readonly v: boolean }
   | { readonly k: 'err'; readonly v: FErr }
-  | { readonly k: 'cell'; readonly ref: CellRef }
-  | { readonly k: 'range'; readonly a: CellRef; readonly b: CellRef }
+  | { readonly k: 'cell'; readonly ref: CellRef; readonly sheet?: string }
+  | { readonly k: 'range'; readonly a: CellRef; readonly b: CellRef; readonly sheet?: string }
   | { readonly k: 'name'; readonly name: string }
   | { readonly k: 'unary'; readonly op: '-' | '+'; readonly x: Ast }
   | { readonly k: 'pct'; readonly x: Ast }
@@ -141,7 +141,17 @@ class Parser {
       case 'err':
         return { k: 'err', v: t.text as FErr };
       case 'word':
+        // A word directly before `!` is a sheet qualifier (Sheet2!A1); otherwise
+        // it is classified by parseWord (function / cell / TRUE/FALSE / name).
+        if (this.peek().kind === 'op' && this.peek().text === '!') {
+          this.next();
+          return this.parseSheetCell(t.text);
+        }
         return this.parseWord(t.text);
+      case 'sheetq':
+        // A 'quoted sheet name' is only valid immediately before `!` and a cell.
+        this.expect('!');
+        return this.parseSheetCell(t.text);
       case 'op':
         if (t.text === '(') {
           const e = this.parseExpr(0);
@@ -185,6 +195,25 @@ class Parser {
       return { k: 'cell', ref };
     }
     return { k: 'name', name: upper };
+  }
+
+  // A sheet-qualified cell or range — the `!` is already consumed; `sheet` is the
+  // (unquoted) sheet name. `Sheet2!A1` or `Sheet2!A1:B3`. The evaluator resolves
+  // the name against the workbook; an unknown sheet becomes #REF!.
+  private parseSheetCell(sheet: string): Ast {
+    const t = this.next();
+    if (t.kind !== 'word') throw new ParseError('expected a cell after !');
+    const a = parseCellRef(t.text);
+    if (!a) throw new ParseError('expected a cell reference after !');
+    if (this.peek().kind === 'op' && this.peek().text === ':') {
+      this.next();
+      const rhs = this.next();
+      if (rhs.kind !== 'word') throw new ParseError('expected a cell after :');
+      const b = parseCellRef(rhs.text);
+      if (!b) throw new ParseError('bad range end after !');
+      return { k: 'range', a, b, sheet };
+    }
+    return { k: 'cell', ref: a, sheet };
   }
 
   private parseArgs(): Array<Ast> {

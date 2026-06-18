@@ -4,7 +4,7 @@
 // keeps the evaluator pure and deterministic — it never reads the wall clock or
 // recomputes a cell; it only looks up values Excel already cached.
 
-import type { Rect, Scalar } from '@/excel/formula/value';
+import type { FValue, Rect, Scalar } from '@/excel/formula/value';
 
 export interface EvalContext {
   // The cached value of the cell at (row, col) — both absolute, 0-indexed. An
@@ -25,4 +25,19 @@ export interface EvalContext {
   // false = 1900 epoch (the default), true = 1904 epoch. Date functions
   // (YEAR/MONTH/DAY/DATE/WEEKDAY/…) convert serials ↔ calendar with it.
   readonly date1904: boolean;
+  // --- cross-workbook resolution (optional) — present only when the caller wired
+  // the whole workbook in. Absent ⇒ a sheet-qualified reference / defined name
+  // resolves to nothing (#REF!/#NAME?), exactly as before this was supported.
+  // A sheet name (case-insensitive) → its 0-based workbook index, or undefined.
+  readonly sheetIndex?: (name: string) => number | undefined;
+  // getCell / eachCell, but on a specific sheet by index (cross-sheet references).
+  readonly getCellOn?: (sheet: number, row: number, col: number) => Scalar;
+  readonly eachCellOn?: (
+    sheet: number,
+    rect: Rect,
+    visit: (row: number, col: number, value: Scalar) => void,
+  ) => void;
+  // Resolve a defined name (case-insensitive) to its target — a reference value
+  // (a Rect, optionally on another sheet) or a literal scalar; undefined ⇒ #NAME?.
+  readonly resolveName?: (name: string) => FValue | undefined;
 }

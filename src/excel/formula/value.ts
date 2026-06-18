@@ -28,7 +28,10 @@ export type Scalar =
   | { readonly t: 'err'; readonly v: FErr }
   | { readonly t: 'blank' };
 
-export type FValue = Scalar | { readonly t: 'ref'; readonly rect: Rect };
+// A reference value. `sheet` (a workbook sheet index) is set only for a
+// cross-sheet qualifier (Sheet2!A1) or a defined name that targets another sheet;
+// when undefined the reference is on the rule's own sheet (the common case).
+export type FValue = Scalar | { readonly t: 'ref'; readonly rect: Rect; readonly sheet?: number };
 
 export const BLANK: Scalar = { t: 'blank' };
 export const TRUE: Scalar = { t: 'bool', v: true };
@@ -58,8 +61,29 @@ export function isErr(v: FValue): v is { t: 'err'; v: FErr } {
 export function deref(v: FValue, ctx: EvalContext): Scalar {
   if (v.t !== 'ref') return v;
   const { r0, c0, r1, c1 } = v.rect;
-  if (r0 === r1 && c0 === c1) return ctx.getCell(r0, c0);
+  if (r0 === r1 && c0 === c1) return refGet(v.sheet, ctx, r0, c0);
   return err('#VALUE!');
+}
+
+// Iterate the populated cells of a reference, honouring a cross-sheet qualifier
+// (an absent eachCellOn ⇒ no cross-sheet support ⇒ the foreign range is empty).
+export function refEach(
+  v: { readonly rect: Rect; readonly sheet?: number },
+  ctx: EvalContext,
+  visit: (row: number, col: number, value: Scalar) => void,
+): void {
+  if (v.sheet !== undefined) ctx.eachCellOn?.(v.sheet, v.rect, visit);
+  else ctx.eachCell(v.rect, visit);
+}
+
+// Read one absolute cell on a reference's sheet (the current sheet when unset).
+export function refGet(
+  sheet: number | undefined,
+  ctx: EvalContext,
+  row: number,
+  col: number,
+): Scalar {
+  return sheet !== undefined ? (ctx.getCellOn?.(sheet, row, col) ?? BLANK) : ctx.getCell(row, col);
 }
 
 // §18.17.3 — number coercion. blank → 0, logical → 1/0, a numeric string →

@@ -10,7 +10,8 @@ export type TokenKind =
   | 'str'
   | 'err'
   | 'word' // a cell ref, function name, defined name, or TRUE/FALSE — parser decides
-  | 'op' // + - * / ^ & = <> < > <= >= % : ( ) ,
+  | 'sheetq' // a 'quoted sheet name' (only valid immediately before a `!` qualifier)
+  | 'op' // + - * / ^ & = <> < > <= >= % : ! ( ) ,
   | 'eof';
 
 export interface Token {
@@ -56,6 +57,27 @@ export function tokenize(src: string): Array<Token> {
     const ch = src[i]!;
     if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
       i++;
+      continue;
+    }
+    // A 'single-quoted sheet name' — '' is an escaped quote. Only meaningful right
+    // before a `!` (Sheet2!A1 / 'My Sheet'!A1); the parser enforces that.
+    if (ch === "'") {
+      let s = '';
+      i++;
+      while (i < n) {
+        if (src[i] === "'") {
+          if (src[i + 1] === "'") {
+            s += "'";
+            i += 2;
+            continue;
+          }
+          i++;
+          break;
+        }
+        s += src[i];
+        i++;
+      }
+      out.push({ kind: 'sheetq', text: s });
       continue;
     }
     // Quoted string — "" is an escaped quote inside the literal.
@@ -133,8 +155,8 @@ export function tokenize(src: string): Array<Token> {
       i += 2;
       continue;
     }
-    // Single-character operators / punctuation.
-    if ('+-*/^&=<>%:(),'.includes(ch)) {
+    // Single-character operators / punctuation (`!` separates a sheet qualifier).
+    if ('+-*/^&=<>%:(),!'.includes(ch)) {
       out.push({ kind: 'op', text: ch });
       i++;
       continue;

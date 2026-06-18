@@ -8,7 +8,7 @@
 
 import type { Ast, BinOp, CellRef } from '@/excel/formula/parser';
 import type { EvalContext } from '@/excel/formula/context';
-import type { FErr, FValue, Rect, Scalar } from '@/excel/formula/value';
+import type { FErr, FValue, Scalar } from '@/excel/formula/value';
 
 import { callFn } from '@/excel/formula/functions';
 import { bool, deref, err, num, str, toNumber, toText } from '@/excel/formula/value';
@@ -32,10 +32,19 @@ export function evaluate(ast: Ast, ctx: EvalContext, shift: Shift): FValue {
     case 'err':
       return err(ast.v);
     case 'cell': {
-      const rect = cellRect(ast.ref, shift);
-      return rect ?? err('#REF!');
+      const sheet = sheetIdx(ast.sheet, ctx);
+      if (sheet === false) return err('#REF!');
+      const r = resolveRef(ast.ref, shift);
+      if (!r) return err('#REF!');
+      return {
+        t: 'ref',
+        rect: { r0: r.row, c0: r.col, r1: r.row, c1: r.col },
+        ...(sheet !== undefined ? { sheet } : {}),
+      };
     }
     case 'range': {
+      const sheet = sheetIdx(ast.sheet, ctx);
+      if (sheet === false) return err('#REF!');
       const a = resolveRef(ast.a, shift);
       const b = resolveRef(ast.b, shift);
       if (!a || !b) return err('#REF!');
@@ -47,11 +56,13 @@ export function evaluate(ast: Ast, ctx: EvalContext, shift: Shift): FValue {
           r1: Math.max(a.row, b.row),
           c1: Math.max(a.col, b.col),
         },
+        ...(sheet !== undefined ? { sheet } : {}),
       };
     }
     case 'name':
-      // A defined name (or any unrecognised bare word) is unsupported → #NAME?.
-      return err('#NAME?');
+      // A defined name resolves against the workbook (a reference or a literal);
+      // an unknown name — or no workbook wired in — is #NAME?.
+      return ctx.resolveName?.(ast.name) ?? err('#NAME?');
     case 'unary':
       return evalUnary(ast.op, evaluate(ast.x, ctx, shift), ctx);
     case 'pct': {
@@ -75,10 +86,13 @@ function resolveRef(ref: CellRef, shift: Shift): { row: number; col: number } | 
   return { row, col };
 }
 
-function cellRect(ref: CellRef, shift: Shift): { t: 'ref'; rect: Rect } | undefined {
-  const r = resolveRef(ref, shift);
-  if (!r) return undefined;
-  return { t: 'ref', rect: { r0: r.row, c0: r.col, r1: r.row, c1: r.col } };
+// Resolve a sheet-qualifier name to a workbook sheet index: undefined ⇒ the
+// rule's own sheet (no qualifier); a number ⇒ that sheet; false ⇒ an unknown
+// sheet (or no workbook wired in), which the caller turns into #REF!.
+function sheetIdx(name: string | undefined, ctx: EvalContext): number | undefined | false {
+  if (name === undefined) return undefined;
+  const idx = ctx.sheetIndex?.(name);
+  return idx === undefined ? false : idx;
 }
 
 function evalUnary(op: '-' | '+', x: FValue, ctx: EvalContext): FValue {

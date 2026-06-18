@@ -101,6 +101,99 @@ describe('conditional formatting — expression (E-SHEET W9)', () => {
       '</conditionalFormatting>';
     expect(columnShadings([[1], [2], [3]], cf)).toEqual([undefined, undefined, undefined]);
   });
+
+  it('evaluates one of the new functions (SUMPRODUCT) over two columns', () => {
+    // Highlight A where the row's A·B + … cumulative? Keep it per-row: SUMPRODUCT of
+    // the single-row pair A1:B1 = A1*B1; highlight when the product exceeds 10.
+    const cf =
+      '<conditionalFormatting sqref="A1:A3">' +
+      '<cfRule type="expression" dxfId="0" priority="1">' +
+      '<formula>SUMPRODUCT(A1:A1,B1:B1)&gt;10</formula></cfRule></conditionalFormatting>';
+    expect(
+      columnShadings(
+        [
+          [2, 3],
+          [4, 5],
+          [1, 1],
+        ],
+        cf,
+      ),
+    ).toEqual([undefined, RED, undefined]); // 6, 20, 1
+  });
+});
+
+// W9 tail — an `expression` rule that reaches outside its own sheet: a
+// sheet-qualified reference (Sheet2!A1) or a workbook defined name. The whole
+// workbook (every sheet's grid + the defined names) is wired into the formula
+// engine through the projection.
+describe('conditional formatting — cross-sheet refs & defined names', () => {
+  // Sheet1 carries the rows + CF; Sheet2 the referenced data. Returns Sheet1's
+  // column-A shadings.
+  function crossShadings(
+    sheet1: ReadonlyArray<ReadonlyArray<number | string>>,
+    sheet2: ReadonlyArray<ReadonlyArray<number | string>>,
+    cfXml: string,
+    definedNames?: ReadonlyArray<{ name: string; value: string; localSheetId?: number }>,
+  ): Array<string | undefined> {
+    const sheet = readXlsxToSheetDoc(
+      buildXlsx({
+        sheets: [
+          { name: 'Sheet1', rows: sheet1.map((r) => [...r]), conditionalFormattingXml: cfXml },
+          { name: 'Sheet2', rows: sheet2.map((r) => [...r]) },
+        ],
+        stylesXml: STYLES,
+        ...(definedNames ? { definedNames: [...definedNames] } : {}),
+      }),
+    );
+    const flow = projectSheetDoc(sheet, {});
+    const table = flow.body.find((el) => el.kind === 'table'); // Sheet1's grid is first
+    if (table?.kind !== 'table') throw new Error('expected a grid table');
+    return table.table.rows.map((row) => row.cells[0]?.properties.shading?.colorHex);
+  }
+
+  it('resolves a per-row sheet-qualified reference (Sheet2!A1)', () => {
+    const cf =
+      '<conditionalFormatting sqref="A1:A3">' +
+      '<cfRule type="expression" dxfId="0" priority="1"><formula>Sheet2!A1&gt;5</formula></cfRule>' +
+      '</conditionalFormatting>';
+    // The unanchored Sheet2!A1 shifts per row → Sheet2 A1/A2/A3 = 10/3/7.
+    expect(crossShadings([[0], [0], [0]], [[10], [3], [7]], cf)).toEqual([RED, undefined, RED]);
+  });
+
+  it('aggregates a sheet-qualified absolute range', () => {
+    const cf =
+      '<conditionalFormatting sqref="A1:A2">' +
+      '<cfRule type="expression" dxfId="0" priority="1">' +
+      '<formula>SUM(Sheet2!$A$1:$A$3)&gt;15</formula></cfRule></conditionalFormatting>';
+    expect(crossShadings([[0], [0]], [[10], [3], [7]], cf)).toEqual([RED, RED]); // sum 20 > 15
+    expect(crossShadings([[0], [0]], [[1], [2], [3]], cf)).toEqual([undefined, undefined]); // 6
+  });
+
+  it('resolves a defined name pointing at another sheet', () => {
+    const cf =
+      '<conditionalFormatting sqref="A1:A3">' +
+      '<cfRule type="expression" dxfId="0" priority="1"><formula>A1&gt;Threshold</formula></cfRule>' +
+      '</conditionalFormatting>';
+    const names = [{ name: 'Threshold', value: 'Sheet2!$A$1' }]; // = 10
+    expect(crossShadings([[5], [12], [20]], [[10]], cf, names)).toEqual([undefined, RED, RED]);
+  });
+
+  it('resolves a defined name bound to a literal constant', () => {
+    const cf =
+      '<conditionalFormatting sqref="A1:A3">' +
+      '<cfRule type="expression" dxfId="0" priority="1"><formula>A1&gt;Limit</formula></cfRule>' +
+      '</conditionalFormatting>';
+    const names = [{ name: 'Limit', value: '8' }];
+    expect(crossShadings([[5], [9], [20]], [[0]], cf, names)).toEqual([undefined, RED, RED]);
+  });
+
+  it('an unknown sheet qualifier is #REF! → the rule never paints', () => {
+    const cf =
+      '<conditionalFormatting sqref="A1:A2">' +
+      '<cfRule type="expression" dxfId="0" priority="1"><formula>Nope!A1&gt;0</formula></cfRule>' +
+      '</conditionalFormatting>';
+    expect(crossShadings([[0], [0]], [[10], [10]], cf)).toEqual([undefined, undefined]);
+  });
 });
 
 describe('conditional formatting — timePeriod (E-SHEET W9)', () => {

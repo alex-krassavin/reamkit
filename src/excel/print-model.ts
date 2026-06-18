@@ -240,8 +240,13 @@ interface PrintModelOptions {
   // top of each continuation page.
   readonly titleRows?: { readonly startRow: number; readonly endRow: number };
   // E-SHEET SC2 tail (TC3) — sheet name → grid, for sparklines whose data range
-  // is sheet-qualified (Sheet2!A1:C1). Absent ⇒ same-sheet resolution only.
+  // is sheet-qualified (Sheet2!A1:C1), and (W9 tail) an `expression` CF rule that
+  // references another sheet or a defined name. Absent ⇒ same-sheet resolution only.
   readonly sheetGrids?: ReadonlyMap<string, ParsedWorksheet>;
+  // This sheet's name (so a self-qualified Sheet1!A1 and a sheet-scoped defined
+  // name resolve) and the workbook's defined names (W9 expression CF tail).
+  readonly sheetName?: string;
+  readonly definedNames?: ReadonlyArray<DefinedName>;
   // E-SHEET W3 — cell hyperlinks resolved to external URLs; a covered cell's run
   // takes the URL as its href (PDF /Link + HTML <a>). Absent ⇒ no cell links.
   readonly hyperlinks?: ReadonlyArray<SheetHyperlink>;
@@ -446,6 +451,9 @@ export function worksheetToBody(
     (cell) => resolveCellText(cell, sharedStrings, styles, date1904),
     date1904,
     print.now,
+    print.sheetGrids,
+    print.sheetName,
+    print.definedNames,
   );
 
   // Sparklines (E-SHEET SC2): host-cell (absolute key) → resolved value series.

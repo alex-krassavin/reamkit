@@ -22,7 +22,7 @@ export type { Shift } from '@/excel/formula/eval';
 export type { Scalar, FValue, Rect, FErr } from '@/excel/formula/value';
 export { num, str, bool, err, BLANK } from '@/excel/formula/value';
 export { serialFromDate, serialToParts, timePeriodMatches } from '@/excel/formula/dates';
-export { NO_SHIFT } from '@/excel/formula/eval';
+export { NO_SHIFT, evaluate } from '@/excel/formula/eval';
 
 // A parsed formula, ready to evaluate against many cells (the AST is compiled
 // once per conditional-format rule, then evaluated per covered cell with a

@@ -23,7 +23,19 @@ import type { EvalContext } from '@/excel/formula/context';
 import type { FErr, FValue, Rect, Scalar } from '@/excel/formula/value';
 
 import { serialFromYmd, serialToParts } from '@/excel/formula/dates';
-import { bool, deref, err, isErr, num, str, toBool, toNumber, toText } from '@/excel/formula/value';
+import {
+  bool,
+  deref,
+  err,
+  isErr,
+  num,
+  refEach,
+  refGet,
+  str,
+  toBool,
+  toNumber,
+  toText,
+} from '@/excel/formula/value';
 
 type Ev = (a: Ast) => FValue;
 
@@ -395,7 +407,7 @@ function andOr(name: 'AND' | 'OR', args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalCo
     const v = ev(a);
     if (v.t === 'ref') {
       let e: FErr | undefined;
-      ctx.eachCell(v.rect, (_r, _c, s) => {
+      refEach(v, ctx, (_r, _c, s) => {
         if (s.t === 'err') {
           e ??= s.v;
         } else if (s.t === 'num' || s.t === 'bool') {
@@ -426,7 +438,7 @@ function gatherNumbers(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): Arra
     const v = ev(a);
     if (v.t === 'ref') {
       let e: FErr | undefined;
-      ctx.eachCell(v.rect, (_r, _c, s) => {
+      refEach(v, ctx, (_r, _c, s) => {
         if (s.t === 'num') out.push(s.v);
         else if (s.t === 'err') e ??= s.v;
       });
@@ -460,7 +472,7 @@ function countFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext, nonBlank: b
   for (const a of args) {
     const v = ev(a);
     if (v.t === 'ref') {
-      ctx.eachCell(v.rect, (_r, _c, s) => {
+      refEach(v, ctx, (_r, _c, s) => {
         if (nonBlank ? s.t !== 'blank' : s.t === 'num') count++;
       });
     } else {
@@ -628,15 +640,15 @@ function countSumIf(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext, sum: boo
   let count = 0;
   let total = 0;
   let e: FErr | undefined;
-  ctx.eachCell(range.rect, (r, c, s) => {
+  refEach(range, ctx, (r, c, s) => {
     if (!matchCriteria(s, crit)) return;
     count++;
     if (!sum) return;
     let target = s;
     if (sumRect) {
-      const sr = sumRect.r0 + (r - range.rect.r0);
-      const sc = sumRect.c0 + (c - range.rect.c0);
-      target = ctx.getCell(sr, sc);
+      const sr = sumRect.rect.r0 + (r - range.rect.r0);
+      const sc = sumRect.rect.c0 + (c - range.rect.c0);
+      target = refGet(sumRect.sheet, ctx, sr, sc);
     }
     if (target.t === 'num') total += target.v;
     else if (target.t === 'err') e ??= target.v;
@@ -645,8 +657,14 @@ function countSumIf(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext, sum: boo
   return num(sum ? total : count);
 }
 
-function asRef(v: FValue): Rect | undefined {
-  return v.t === 'ref' ? v.rect : undefined;
+// A reference value reduced to its rectangle + (optional cross-sheet) sheet index;
+// undefined when the value is not a reference. Range functions iterate it through
+// refEach/refGet so a cross-sheet qualifier reads the right sheet.
+type RefVal = { readonly rect: Rect; readonly sheet?: number };
+function asRef(v: FValue): RefVal | undefined {
+  return v.t === 'ref'
+    ? { rect: v.rect, ...(v.sheet !== undefined ? { sheet: v.sheet } : {}) }
+    : undefined;
 }
 
 interface NumCrit {
@@ -755,7 +773,7 @@ function xorFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
     const v = ev(a);
     if (v.t === 'ref') {
       let e: FErr | undefined;
-      ctx.eachCell(v.rect, (_r, _c, s) => {
+      refEach(v, ctx, (_r, _c, s) => {
         if (s.t === 'err') e ??= s.v;
         else if (s.t === 'num' || s.t === 'bool') {
           any = true;
@@ -942,9 +960,9 @@ function countBlank(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue 
   if (args.length !== 1) return err('#VALUE!');
   const r = asRef(ev(args[0]!));
   if (!r) return err('#VALUE!');
-  const area = (r.r1 - r.r0 + 1) * (r.c1 - r.c0 + 1);
+  const area = (r.rect.r1 - r.rect.r0 + 1) * (r.rect.c1 - r.rect.c0 + 1);
   let filled = 0;
-  ctx.eachCell(r, (_x, _y, s) => {
+  refEach(r, ctx, (_x, _y, s) => {
     // An empty-string cell counts as blank for COUNTBLANK (like Excel).
     if (!(s.t === 'blank' || (s.t === 'str' && s.v === ''))) filled++;
   });
@@ -962,17 +980,17 @@ function countSumAvgIfs(
   mode: 'count' | 'sum' | 'avg',
 ): FValue {
   const isCount = mode === 'count';
-  let valueRect: Rect | undefined;
+  let valueRef: RefVal | undefined;
   let pairStart = 0;
   if (!isCount) {
     const vr = asRef(ev(args[0]!));
     if (!vr) return err('#VALUE!');
-    valueRect = vr;
+    valueRef = vr;
     pairStart = 1;
   }
   const pairs = args.length - pairStart;
   if (pairs < 2 || pairs % 2 !== 0) return err('#VALUE!');
-  const ranges: Array<Rect> = [];
+  const ranges: Array<RefVal> = [];
   const crits: Array<NumCrit | TextCrit> = [];
   for (let i = pairStart; i + 1 < args.length; i += 2) {
     const rng = asRef(ev(args[i]!));
@@ -982,29 +1000,37 @@ function countSumAvgIfs(
     ranges.push(rng);
     crits.push(crit);
   }
-  const base = ranges[0]!;
+  const base = ranges[0]!.rect;
   const h = base.r1 - base.r0;
   const w = base.c1 - base.c0;
-  for (const r of ranges) if (r.r1 - r.r0 !== h || r.c1 - r.c0 !== w) return err('#VALUE!');
-  if (valueRect && (valueRect.r1 - valueRect.r0 !== h || valueRect.c1 - valueRect.c0 !== w)) {
-    return err('#VALUE!');
+  for (const r of ranges)
+    if (r.rect.r1 - r.rect.r0 !== h || r.rect.c1 - r.rect.c0 !== w) {
+      return err('#VALUE!');
+    }
+  if (valueRef) {
+    const vr = valueRef.rect;
+    if (vr.r1 - vr.r0 !== h || vr.c1 - vr.c0 !== w) return err('#VALUE!');
   }
   let count = 0;
   let total = 0;
   let numCount = 0;
   let e: FErr | undefined;
-  ctx.eachCell(base, (r, c, s0) => {
+  refEach(ranges[0]!, ctx, (r, c, s0) => {
     if (!matchCriteria(s0, crits[0]!)) return;
     for (let k = 1; k < ranges.length; k++) {
       const rk = ranges[k]!;
-      if (!matchCriteria(ctx.getCell(rk.r0 + (r - base.r0), rk.c0 + (c - base.c0)), crits[k]!)) {
-        return;
-      }
+      const cell = refGet(rk.sheet, ctx, rk.rect.r0 + (r - base.r0), rk.rect.c0 + (c - base.c0));
+      if (!matchCriteria(cell, crits[k]!)) return;
     }
     count++;
     if (isCount) return;
-    const vr = valueRect!;
-    const target = ctx.getCell(vr.r0 + (r - base.r0), vr.c0 + (c - base.c0));
+    const vref = valueRef!;
+    const target = refGet(
+      vref.sheet,
+      ctx,
+      vref.rect.r0 + (r - base.r0),
+      vref.rect.c0 + (c - base.c0),
+    );
     if (target.t === 'num') {
       total += target.v;
       numCount++;
@@ -1022,15 +1048,17 @@ function averageIf(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
   if (!range) return err('#VALUE!');
   const crit = parseCriteria(deref(ev(args[1]!), ctx));
   if ('e' in crit) return err(crit.e);
-  const avgRect = args.length === 3 ? asRef(ev(args[2]!)) : range;
-  if (!avgRect) return err('#VALUE!');
+  const avgRef = args.length === 3 ? asRef(ev(args[2]!)) : range;
+  if (!avgRef) return err('#VALUE!');
+  const rr = range.rect;
+  const ar = avgRef.rect;
   let total = 0;
   let count = 0;
   let e: FErr | undefined;
-  ctx.eachCell(range, (r, c, s) => {
+  refEach(range, ctx, (r, c, s) => {
     if (!matchCriteria(s, crit)) return;
     const target =
-      avgRect === range ? s : ctx.getCell(avgRect.r0 + (r - range.r0), avgRect.c0 + (c - range.c0));
+      avgRef === range ? s : refGet(avgRef.sheet, ctx, ar.r0 + (r - rr.r0), ar.c0 + (c - rr.c0));
     if (target.t === 'num') {
       total += target.v;
       count++;
@@ -1047,8 +1075,8 @@ function averageIf(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
 function sumProduct(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
   if (args.length === 0) return err('#VALUE!');
   const vals = args.map((a) => ev(a));
-  const rects = vals.map((v) => (v.t === 'ref' ? v.rect : undefined));
-  if (rects.every((r) => r === undefined)) {
+  const refs = vals.map((v) => asRef(v));
+  if (refs.every((r) => r === undefined)) {
     let p = 1;
     for (const v of vals) {
       const n = toNumber(v, ctx);
@@ -1057,23 +1085,26 @@ function sumProduct(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue 
     }
     return num(p);
   }
-  if (rects.some((r) => r === undefined)) return err('#VALUE!');
-  const base = rects[0]!;
+  if (refs.some((r) => r === undefined)) return err('#VALUE!');
+  const base = refs[0]!.rect;
   const h = base.r1 - base.r0;
   const w = base.c1 - base.c0;
-  for (const r of rects) if (r!.r1 - r!.r0 !== h || r!.c1 - r!.c0 !== w) return err('#VALUE!');
+  for (const r of refs)
+    if (r!.rect.r1 - r!.rect.r0 !== h || r!.rect.c1 - r!.rect.c0 !== w) {
+      return err('#VALUE!');
+    }
   let total = 0;
   let e: FErr | undefined;
-  ctx.eachCell(base, (r, c, s0) => {
+  refEach(refs[0]!, ctx, (r, c, s0) => {
     if (s0.t === 'err') {
       e ??= s0.v;
       return;
     }
     if (s0.t !== 'num') return;
     let term = s0.v;
-    for (let k = 1; k < rects.length && term !== 0; k++) {
-      const rk = rects[k]!;
-      const cell = ctx.getCell(rk.r0 + (r - base.r0), rk.c0 + (c - base.c0));
+    for (let k = 1; k < refs.length && term !== 0; k++) {
+      const rk = refs[k]!;
+      const cell = refGet(rk.sheet, ctx, rk.rect.r0 + (r - base.r0), rk.rect.c0 + (c - base.c0));
       if (cell.t === 'num') term *= cell.v;
       else if (cell.t === 'err') {
         e ??= cell.v;
@@ -1094,7 +1125,7 @@ function concatFlatten(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FVal
       if ((r1 - r0 + 1) * (c1 - c0 + 1) > MAX_SCAN) return err('#VALUE!');
       for (let r = r0; r <= r1; r++) {
         for (let c = c0; c <= c1; c++) {
-          const t = toText(ctx.getCell(r, c), ctx);
+          const t = toText(refGet(v.sheet, ctx, r, c), ctx);
           if (typeof t !== 'string') return err(t);
           out += t;
           if (out.length > 32767) return err('#VALUE!');
@@ -1123,7 +1154,7 @@ function textJoin(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
       if ((r1 - r0 + 1) * (c1 - c0 + 1) > MAX_SCAN) return err('#VALUE!');
       for (let r = r0; r <= r1; r++) {
         for (let c = c0; c <= c1; c++) {
-          const t = toText(ctx.getCell(r, c), ctx);
+          const t = toText(refGet(v.sheet, ctx, r, c), ctx);
           if (typeof t !== 'string') return err(t);
           if (!(ignore && t === '')) parts.push(t);
         }
@@ -1337,19 +1368,22 @@ function matchFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
   if (target.t === 'err') return target;
   const range = asRef(ev(args[1]!));
   if (!range) return err('#VALUE!');
+  const rect = range.rect;
   let type = 1;
   if (args.length === 3) {
     const t = numArg(args, ev, ctx, 2);
     if (typeof t !== 'number') return err(t.e);
     type = Math.trunc(t);
   }
-  const horizontal = range.r0 === range.r1;
-  const vertical = range.c0 === range.c1;
+  const horizontal = rect.r0 === rect.r1;
+  const vertical = rect.c0 === rect.c1;
   if (!horizontal && !vertical) return err('#N/A'); // MATCH wants a 1-D vector
-  const len = horizontal ? range.c1 - range.c0 + 1 : range.r1 - range.r0 + 1;
+  const len = horizontal ? rect.c1 - rect.c0 + 1 : rect.r1 - rect.r0 + 1;
   if (len > MAX_SCAN) return err('#N/A');
   const at = (i: number): Scalar =>
-    horizontal ? ctx.getCell(range.r0, range.c0 + i) : ctx.getCell(range.r0 + i, range.c0);
+    horizontal
+      ? refGet(range.sheet, ctx, rect.r0, rect.c0 + i)
+      : refGet(range.sheet, ctx, rect.r0 + i, rect.c0);
   if (type === 0) {
     const re = target.t === 'str' ? wildcardToRegExp(target.v) : undefined;
     for (let i = 0; i < len; i++) {
@@ -1373,6 +1407,7 @@ function indexFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
   if (args.length < 2 || args.length > 3) return err('#VALUE!');
   const range = asRef(ev(args[0]!));
   if (!range) return err('#VALUE!');
+  const rect = range.rect;
   const rn = numArg(args, ev, ctx, 1);
   if (typeof rn !== 'number') return err(rn.e);
   let r = Math.trunc(rn);
@@ -1382,8 +1417,8 @@ function indexFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
     if (typeof c !== 'number') return err(c.e);
     cn = Math.trunc(c);
   }
-  const rows = range.r1 - range.r0 + 1;
-  const cols = range.c1 - range.c0 + 1;
+  const rows = rect.r1 - rect.r0 + 1;
+  const cols = rect.c1 - rect.c0 + 1;
   // A single index into a one-row range selects the column.
   if (args.length === 2 && rows === 1 && cols > 1) {
     cn = r;
@@ -1391,7 +1426,7 @@ function indexFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
   }
   if (r < 0 || cn < 0 || r > rows || cn > cols) return err('#REF!');
   if (r === 0 || cn === 0) return err('#VALUE!'); // whole row/column ⇒ an array
-  return ctx.getCell(range.r0 + r - 1, range.c0 + cn - 1);
+  return refGet(range.sheet, ctx, rect.r0 + r - 1, rect.c0 + cn - 1);
 }
 
 function lookupFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext, vh: 'v' | 'h'): FValue {
@@ -1400,6 +1435,8 @@ function lookupFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext, vh: 'v' | 
   if (target.t === 'err') return target;
   const table = asRef(ev(args[1]!));
   if (!table) return err('#VALUE!');
+  const rect = table.rect;
+  const sh = table.sheet;
   const idx = numArg(args, ev, ctx, 2);
   if (typeof idx !== 'number') return err(idx.e);
   const line = Math.trunc(idx);
@@ -1409,18 +1446,18 @@ function lookupFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext, vh: 'v' | 
     if (typeof b === 'string') return err(b);
     approx = b;
   }
-  const rows = table.r1 - table.r0 + 1;
-  const cols = table.c1 - table.c0 + 1;
+  const rows = rect.r1 - rect.r0 + 1;
+  const cols = rect.c1 - rect.c0 + 1;
   const vertical = vh === 'v';
   const vecLen = vertical ? rows : cols;
   if (line < 1 || line > (vertical ? cols : rows)) return err('#REF!');
   if (vecLen > MAX_SCAN) return err('#N/A');
   const keyAt = (i: number): Scalar =>
-    vertical ? ctx.getCell(table.r0 + i, table.c0) : ctx.getCell(table.r0, table.c0 + i);
+    vertical ? refGet(sh, ctx, rect.r0 + i, rect.c0) : refGet(sh, ctx, rect.r0, rect.c0 + i);
   const resultAt = (i: number): Scalar =>
     vertical
-      ? ctx.getCell(table.r0 + i, table.c0 + line - 1)
-      : ctx.getCell(table.r0 + line - 1, table.c0 + i);
+      ? refGet(sh, ctx, rect.r0 + i, rect.c0 + line - 1)
+      : refGet(sh, ctx, rect.r0 + line - 1, rect.c0 + i);
   if (!approx) {
     const re = target.t === 'str' ? wildcardToRegExp(target.v) : undefined;
     for (let i = 0; i < vecLen; i++) {
