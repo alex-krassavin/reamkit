@@ -399,3 +399,82 @@ describe('ppt reader autoshapes (PPT-5)', () => {
     expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-');
   });
 });
+
+describe('ppt reader scheme colours (PPT-6)', () => {
+  // Distinct values per slot so a wrong index is detectable; slot 4 = fills.
+  const SCHEME = ['000000', '111111', '222222', '808080', '336699', '444444', '555555', '666666'];
+
+  it('resolves a shape fill from the slide colour scheme', () => {
+    const doc = readPpt(
+      buildPpt([
+        {
+          colorScheme: SCHEME,
+          boxes: [{ anchor: { x: 10, y: 10, w: 100, h: 50 }, shapeType: 1, fillSchemeIndex: 4 }],
+        },
+      ]),
+    ).doc;
+    const shape = doc.body.find((el) => el.kind === 'shape')!.shape;
+    expect(shape.fill).toEqual({ kind: 'solid', colorHex: '336699' });
+  });
+
+  it('resolves a shape line colour from the scheme (slot 1)', () => {
+    const doc = readPpt(
+      buildPpt([
+        {
+          colorScheme: SCHEME,
+          boxes: [{ anchor: { x: 0, y: 0, w: 100, h: 2 }, shapeType: 1, lineSchemeIndex: 1 }],
+        },
+      ]),
+    ).doc;
+    expect(doc.body.find((el) => el.kind === 'shape')!.shape.line?.colorHex).toBe('111111');
+  });
+
+  it('follows the master colour scheme when fMasterScheme is set', () => {
+    // The master's slot 4 differs from the slide's own — the master must win.
+    const master = ['000000', '111111', '222222', '808080', 'aa1122', '444444', '555555', '666666'];
+    const doc = readPpt(
+      buildPpt(
+        [
+          {
+            colorScheme: SCHEME, // a decoy own scheme
+            followMasterScheme: true,
+            boxes: [{ anchor: { x: 5, y: 5, w: 90, h: 40 }, shapeType: 1, fillSchemeIndex: 4 }],
+          },
+        ],
+        { masters: [{ colorScheme: master }] },
+      ),
+    ).doc;
+    expect(doc.body.find((el) => el.kind === 'shape')!.shape.fill).toEqual({
+      kind: 'solid',
+      colorHex: 'AA1122',
+    });
+  });
+
+  it('drops a scheme colour when no scheme is present (no wrong colour)', () => {
+    const doc = readPpt(
+      buildPpt([
+        { boxes: [{ anchor: { x: 0, y: 0, w: 100, h: 50 }, shapeType: 1, fillSchemeIndex: 4 }] },
+      ]),
+    ).doc;
+    expect(doc.body.filter((el) => el.kind === 'shape')).toHaveLength(0);
+  });
+
+  it('converts a .ppt with a scheme-coloured shape to PDF', async () => {
+    const pdf = await Ream.parse(
+      buildPpt([
+        {
+          colorScheme: SCHEME,
+          boxes: [
+            {
+              anchor: { x: 50, y: 50, w: 200, h: 100 },
+              shapeType: 2,
+              fillSchemeIndex: 4,
+              lineSchemeIndex: 1,
+            },
+          ],
+        },
+      ]),
+    ).convert('pdf', { fonts });
+    expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-');
+  });
+});

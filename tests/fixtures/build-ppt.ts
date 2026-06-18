@@ -24,6 +24,12 @@ const RT_STYLE_TEXT_PROP_ATOM = 0x0fa1;
 const RT_TEXT_BYTES_ATOM = 0x0fa8;
 const RT_PP_DRAWING = 0x040c;
 const RT_DRAWING_GROUP = 0x040b;
+const RT_SLIDE_ATOM = 0x03ef;
+const RT_MAIN_MASTER = 0x03f8;
+const RT_COLOR_SCHEME_ATOM = 0x07f0;
+const COLOR_SCHEME_INSTANCE = 1; // slideSchemeColorSchemeAtom (vs scheme-list 6)
+const SLIDE_FLAG_MASTER_SCHEME = 0x0002; // slideAtom.slideFlags.fMasterScheme
+const COLORREF_FLAG_SCHEME = 0x08; // OfficeArtCOLORREF fSchemeIndex flags byte
 
 // OfficeArt (Escher) record types for the picture store + picture shapes (PPT-3).
 const FBT_DGG_CONTAINER = 0xf000;
@@ -81,6 +87,13 @@ export interface PptSlideInput {
   // Positioned shapes: each an SpContainer with an OfficeArtClientAnchor (the
   // rectangle, given in points) and a client text box and/or a picture (PPT-4).
   readonly boxes?: ReadonlyArray<PptBoxInput>;
+  // The slide's own colour scheme (8 × 6-hex RGB) — a SlideSchemeColorSchemeAtom
+  // in the SlideContainer, so a shape's scheme-relative colour resolves (PPT-6).
+  readonly colorScheme?: ReadonlyArray<string>;
+  // Set slideAtom.slideFlags.fMasterScheme so the slide follows the master at
+  // masterIndex (default 0) for its scheme instead of its own (PPT-6).
+  readonly followMasterScheme?: boolean;
+  readonly masterIndex?: number;
 }
 
 // A positioned drawing shape for the fixture.
@@ -96,6 +109,8 @@ export interface PptBoxInput {
   readonly shapeType?: number; // an autoshape: the FSP recInstance (MSOSPT)
   readonly fillColorHex?: string; // OPT fillColor (6-hex literal RGB)
   readonly lineColorHex?: string; // OPT lineColor (6-hex literal RGB)
+  readonly fillSchemeIndex?: number; // OPT fillColor as a scheme index (0–7), PPT-6
+  readonly lineSchemeIndex?: number; // OPT lineColor as a scheme index (0–7), PPT-6
 }
 
 export interface BuildPptOptions {
@@ -105,6 +120,9 @@ export interface BuildPptOptions {
   readonly omitCurrentUser?: boolean;
   // Deck images, stored in the Pictures stream and referenced by slide imageRef.
   readonly images?: ReadonlyArray<Uint8Array>;
+  // Slide masters, each persisted as a MainMasterContainer with its own colour
+  // scheme — referenced by a slide's followMasterScheme + masterIndex (PPT-6).
+  readonly masters?: ReadonlyArray<{ readonly colorScheme: ReadonlyArray<string> }>;
 }
 
 // Build an 8-byte record header + data. A container uses recVer 0xF (low nibble);
@@ -227,6 +245,8 @@ export function buildPpt(
   //     persist id) followed by the slide's outline text atom (if any) ---------
   const docPersistId = 1;
   const slidePersistIds = slides.map((_, i) => 2 + i);
+  const masters = opts.masters ?? [];
+  const masterPersistIds = masters.map((_, i) => 2 + slides.length + i);
   const slwtParts: Array<Uint8Array> = [];
   slides.forEach((slide, i) => {
     const spa = new Uint8Array(20);
@@ -268,18 +288,33 @@ export function buildPpt(
   //     picture shape (an SpContainer with the pib blip reference) -------------
   const slideRecs = slides.map((slide) => {
     const parts: Array<Uint8Array> = [];
+    if (slide.followMasterScheme) {
+      parts.push(slideAtom(masterPersistIds[slide.masterIndex ?? 0] ?? 0));
+    }
     const block = slideTextBlock(slide);
     if (block) parts.push(slide.nested ? rec(RT_PP_DRAWING, 0, true, block) : block);
     if (slide.imageRef !== undefined) parts.push(imageShapeContainer(slide.imageRef));
     for (const box of slide.boxes ?? []) parts.push(buildShapeContainer(box));
+    if (slide.colorScheme) parts.push(colorSchemeAtom(slide.colorScheme));
     return rec(RT_SLIDE, 0, true, concat(parts));
   });
 
-  // --- assign absolute offsets: [doc][slides...][persistDir][userEdit] -------
+  // One MainMasterContainer per master, carrying just its colour scheme (the
+  // SlideSchemeColorSchemeAtom) — enough for a slide that follows the master.
+  const masterRecs = masters.map((m) =>
+    rec(RT_MAIN_MASTER, 0, true, colorSchemeAtom(m.colorScheme)),
+  );
+
+  // --- assign absolute offsets: [doc][slides...][masters...][persistDir][userEdit]
   let cursor = 0;
   const docOffset = cursor;
   cursor += docRec.length;
   const slideOffsets = slideRecs.map((r) => {
+    const off = cursor;
+    cursor += r.length;
+    return off;
+  });
+  const masterOffsets = masterRecs.map((r) => {
     const off = cursor;
     cursor += r.length;
     return off;
@@ -296,6 +331,7 @@ export function buildPpt(
   };
   addEntry(docPersistId, docOffset);
   slidePersistIds.forEach((id, i) => addEntry(id, slideOffsets[i]!));
+  masterPersistIds.forEach((id, i) => addEntry(id, masterOffsets[i]!));
   const persistRec = rec(RT_PERSIST_DIRECTORY_ATOM, 0, false, concat(dirEntries));
   const persistOffset = cursor;
   cursor += persistRec.length;
@@ -308,12 +344,12 @@ export function buildPpt(
   ev.setUint32(8, 0, true); // offsetLastEdit (no prior edit)
   ev.setUint32(12, persistOffset, true); // offsetPersistDirectory
   ev.setUint32(16, docPersistId, true); // docPersistIdRef
-  ev.setUint32(20, 2 + slides.length, true); // persistIdSeed (> all persist ids)
+  ev.setUint32(20, 2 + slides.length + masters.length, true); // persistIdSeed (> all ids)
   const editRec = rec(RT_USER_EDIT_ATOM, 0, false, editData);
   const editOffset = cursor;
   cursor += editRec.length;
 
-  const powerpointDocument = concat([docRec, ...slideRecs, persistRec, editRec]);
+  const powerpointDocument = concat([docRec, ...slideRecs, ...masterRecs, persistRec, editRec]);
 
   // --- Current User stream: CurrentUserAtom → offsetToCurrentEdit ------------
   const cuData = new Uint8Array(20);
@@ -361,7 +397,11 @@ function buildShapeContainer(box: PptBoxInput): Uint8Array {
   const props: Array<{ id: number; value: number }> = [];
   if (box.imageRef !== undefined) props.push({ id: PROP_PIB_ID, value: box.imageRef });
   if (box.fillColorHex) props.push({ id: PROP_FILL_COLOR, value: rgbColorRef(box.fillColorHex) });
+  else if (box.fillSchemeIndex !== undefined)
+    props.push({ id: PROP_FILL_COLOR, value: schemeColorRef(box.fillSchemeIndex) });
   if (box.lineColorHex) props.push({ id: PROP_LINE_COLOR, value: rgbColorRef(box.lineColorHex) });
+  else if (box.lineSchemeIndex !== undefined)
+    props.push({ id: PROP_LINE_COLOR, value: schemeColorRef(box.lineSchemeIndex) });
   if (props.length > 0) {
     const opt = new Uint8Array(props.length * 6);
     const ov = new DataView(opt.buffer);
@@ -396,6 +436,35 @@ function rgbColorRef(hex: string): number {
   const g = parseInt(hex.slice(2, 4), 16);
   const b = parseInt(hex.slice(4, 6), 16);
   return (r | (g << 8) | (b << 16)) >>> 0;
+}
+
+// A scheme-relative OfficeArtCOLORREF: the red byte is the scheme index (0–7); the
+// flags byte sets fSchemeIndex; green/blue are 0 (PPT-6).
+function schemeColorRef(index: number): number {
+  return ((index & 0xff) | (COLORREF_FLAG_SCHEME << 24)) >>> 0;
+}
+
+// A SlideAtom (§2.4.24): a 24-byte body with masterIdRef at offset 12 and
+// slideFlags (fMasterScheme) at offset 20, so the slide follows its master's scheme.
+function slideAtom(masterIdRef: number): Uint8Array {
+  const d = new Uint8Array(24);
+  const dv = new DataView(d.buffer);
+  dv.setUint32(12, masterIdRef, true); // masterIdRef
+  dv.setUint16(20, SLIDE_FLAG_MASTER_SCHEME, true); // slideFlags.fMasterScheme
+  return rec(RT_SLIDE_ATOM, 0, false, d);
+}
+
+// A SlideSchemeColorSchemeAtom (recInstance 1): 8 ColorStruct entries (red, green,
+// blue, unused) parsed from 6-hex RGB.
+function colorSchemeAtom(scheme: ReadonlyArray<string>): Uint8Array {
+  const body = new Uint8Array(32);
+  for (let i = 0; i < 8; i++) {
+    const hex = scheme[i] ?? '000000';
+    body[i * 4] = parseInt(hex.slice(0, 2), 16);
+    body[i * 4 + 1] = parseInt(hex.slice(2, 4), 16);
+    body[i * 4 + 2] = parseInt(hex.slice(4, 6), 16);
+  }
+  return rec(RT_COLOR_SCHEME_ATOM, COLOR_SCHEME_INSTANCE, false, body);
 }
 
 function encodeUtf16(s: string): Uint8Array {

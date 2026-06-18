@@ -17,6 +17,9 @@
 // boxes and pictures carry their slide rectangle; an un-anchored shape (e.g. a
 // placeholder inheriting master geometry) falls back to reading-order flow. PPT-5
 // reads decorative autoshapes (the FSP shape type + the OPT fill / line colour).
+// PPT-6 resolves a shape's scheme-relative fill / line colour through the slide's
+// colour scheme (its own SlideSchemeColorSchemeAtom, or the master's when the slide
+// follows it), instead of dropping it as it did when only a literal sRGB value read.
 // Everything is best-effort and graceful-on-failure — structural doubt yields
 // missing content, never wrong content — mirroring the `.doc`/`.xls` readers.
 
@@ -35,6 +38,9 @@ const RT_TEXT_HEADER_ATOM = 0x0f9f;
 const RT_TEXT_CHARS_ATOM = 0x0fa0;
 const RT_STYLE_TEXT_PROP_ATOM = 0x0fa1;
 const RT_TEXT_BYTES_ATOM = 0x0fa8;
+const RT_SLIDE_ATOM = 0x03ef; // SlideAtom — carries masterIdRef + slideFlags (PPT-6)
+const RT_MAIN_MASTER = 0x03f8; // MainMasterContainer — its colour scheme is inherited
+const RT_COLOR_SCHEME_ATOM = 0x07f0; // SlideSchemeColorSchemeAtom — the 8-colour scheme
 
 // OfficeArt (Escher) record types for the drawing layer (PPT-3), sharing the same
 // header as the PPT records. The DrawingGroupContainer holds the picture store
@@ -50,6 +56,14 @@ const FBT_CLIENT_ANCHOR = 0xf010; // OfficeArtClientAnchor — the slide rectang
 const PROP_PIB = 0x0104; // OPT property (low 14 bits): 1-based index into the FBSE store
 const PROP_FILL_COLOR = 0x0181; // OPT fillColor (PPT-5)
 const PROP_LINE_COLOR = 0x01c0; // OPT lineColor (PPT-5)
+// The colour scheme is the slideSchemeColorSchemeAtom — recInstance 1 (recInstance
+// 6 is the alternative SchemeListElement palette, which is not used for resolution).
+const COLOR_SCHEME_INSTANCE = 1;
+// SlideAtom.slideFlags.fMasterScheme (§2.4.24): set ⇒ follow the master's scheme.
+const SLIDE_FLAG_MASTER_SCHEME = 0x0002;
+// OfficeArtCOLORREF flags byte (§2.2.2): fSchemeIndex ⇒ the red byte is an index
+// (0–7) into the colour scheme; flags 0 ⇒ a literal sRGB value.
+const COLORREF_SCHEME_INDEX = 0x08;
 const FBSE_FODELAY_OFFSET = 28; // foDelay in the FBSE data (record offset 36 − 8-byte header)
 // OfficeArtFSP flags (§2.2.40): skip groups, the patriarch and the background shape.
 const FSP_FLAG_GROUP = 0x0001;
@@ -240,8 +254,9 @@ function slideShapes(
   slideData: Uint8Array,
   img: ImageContext,
   outline: ReadonlyArray<PptParagraph>,
+  scheme: SchemeColors | undefined,
 ): Array<PptShape> {
-  const shapes = collectShapes(slideData, img);
+  const shapes = collectShapes(slideData, img, scheme);
   if (!shapes.some(shapeHasText)) {
     const inline = collectParagraphs(slideData, 0);
     const text = inline.some((p) => paragraphText(p).length > 0) ? inline : outline;
@@ -325,7 +340,7 @@ function readSlideList(
     const slideRec = slideOff !== undefined ? recordAt(stream, slideOff) : undefined;
     const isSlide = slideRec !== undefined && slideRec.type === RT_SLIDE;
     const shapes = isSlide
-      ? slideShapes(slideRec.data, img, outline)
+      ? slideShapes(slideRec.data, img, outline, resolveScheme(slideRec.data, persist, stream))
       : outline.some((p) => paragraphText(p).length > 0)
         ? [{ paragraphs: outline }]
         : [];
@@ -405,7 +420,7 @@ function collectSlides(
   if (depth > MAX_DEPTH) return;
   for (const rec of records(d)) {
     if (rec.type === RT_SLIDE) {
-      out.push({ shapes: slideShapes(rec.data, img, []) });
+      out.push({ shapes: slideShapes(rec.data, img, [], resolveScheme(rec.data)) });
     } else if (rec.isContainer) collectSlides(rec.data, out, img, depth + 1);
   }
 }
@@ -505,9 +520,13 @@ function findDescendantContainer(
 // Top-level shapes carry an OfficeArtClientAnchor (0xF010); the recursion descends
 // the group/drawing containers but a grouped shape's group-relative ChildAnchor is
 // left unpositioned (it falls back to reading-order flow).
-function collectShapes(slideData: Uint8Array, img: ImageContext): Array<PptShape> {
+function collectShapes(
+  slideData: Uint8Array,
+  img: ImageContext,
+  scheme: SchemeColors | undefined,
+): Array<PptShape> {
   const out: Array<PptShape> = [];
-  collectShapeContainers(slideData, img, out, 0);
+  collectShapeContainers(slideData, img, out, 0, scheme);
   return out;
 }
 
@@ -516,6 +535,7 @@ function collectShapeContainers(
   img: ImageContext,
   out: Array<PptShape>,
   depth: number,
+  scheme: SchemeColors | undefined,
 ): void {
   if (depth > MAX_DEPTH) return;
   for (const r of records(d)) {
@@ -535,8 +555,8 @@ function collectShapeContainers(
         else if (child.type === FBT_CLIENT_TEXTBOX) paragraphs = collectParagraphs(child.data, 0);
         else if (child.type === FBT_OPT) {
           pib = optProperty(child.data, child.instance, PROP_PIB);
-          fillColorHex = optColor(child.data, child.instance, PROP_FILL_COLOR);
-          lineColorHex = optColor(child.data, child.instance, PROP_LINE_COLOR);
+          fillColorHex = optColor(child.data, child.instance, PROP_FILL_COLOR, scheme);
+          lineColorHex = optColor(child.data, child.instance, PROP_LINE_COLOR, scheme);
         }
       }
       let image: PptImage | undefined;
@@ -573,7 +593,7 @@ function collectShapeContainers(
         });
       }
     } else if (r.isContainer) {
-      collectShapeContainers(r.data, img, out, depth + 1);
+      collectShapeContainers(r.data, img, out, depth + 1, scheme);
     }
   }
 }
@@ -622,13 +642,76 @@ function optProperty(d: Uint8Array, count: number, wantId: number): number | und
   return undefined;
 }
 
-// An OPT colour property → 6-hex RGB, but only when it is a literal sRGB value (the
-// flags byte is 0). Palette / scheme / system colours are skipped (no theme is
-// resolved). Mirrors the `.xls` Escher reader.
-function optColor(d: Uint8Array, count: number, wantId: number): string | undefined {
+// An OPT colour property → 6-hex RGB. A literal sRGB value (flags byte 0) is taken
+// directly; a scheme-relative value (fSchemeIndex) resolves through the slide's
+// colour scheme (PPT-6). Palette / system colours, and any scheme index without a
+// resolved scheme, are skipped (missing colour, never a wrong one).
+function optColor(
+  d: Uint8Array,
+  count: number,
+  wantId: number,
+  scheme: SchemeColors | undefined,
+): string | undefined {
   const v = optProperty(d, count, wantId);
-  if (v === undefined || v >>> 24 !== 0) return undefined;
-  return `${hex2(v & 0xff)}${hex2((v >> 8) & 0xff)}${hex2((v >> 16) & 0xff)}`;
+  if (v === undefined) return undefined;
+  const flags = v >>> 24;
+  if (flags === 0) return `${hex2(v & 0xff)}${hex2((v >> 8) & 0xff)}${hex2((v >> 16) & 0xff)}`;
+  if (flags === COLORREF_SCHEME_INDEX && scheme) {
+    const idx = v & 0xff;
+    if (idx < scheme.length) return scheme[idx];
+  }
+  return undefined;
+}
+
+// The eight scheme colours as 6-hex RGB, indexed by COLORREF scheme slot (0 =
+// background, 1 = text&lines, 2 = shadows, 3 = title text, 4 = fills, 5 = accent,
+// 6 = accent&hyperlink, 7 = accent&followed-hyperlink).
+type SchemeColors = ReadonlyArray<string>;
+
+// The colour scheme that applies to a slide's shapes: the slide's own
+// SlideSchemeColorSchemeAtom, unless slideAtom.slideFlags.fMasterScheme is set, in
+// which case the master's scheme is used (resolved through the persist directory).
+// Returns undefined when no scheme can be located, so a scheme colour stays dropped.
+function resolveScheme(
+  slideData: Uint8Array,
+  persist?: Map<number, number>,
+  stream?: Uint8Array,
+): SchemeColors | undefined {
+  let schemeData = findColorScheme(slideData);
+  const slideAtom = findChild(slideData, (r) => r.type === RT_SLIDE_ATOM);
+  if (slideAtom && slideAtom.length >= 22 && persist && stream) {
+    const followMaster = (u16(slideAtom, 20) & SLIDE_FLAG_MASTER_SCHEME) !== 0;
+    if (followMaster) {
+      const masterOff = persist.get(u32(slideAtom, 12)); // masterIdRef
+      const masterRec = masterOff !== undefined ? recordAt(stream, masterOff) : undefined;
+      if (masterRec && masterRec.type === RT_MAIN_MASTER) {
+        const masterScheme = findColorScheme(masterRec.data);
+        if (masterScheme) schemeData = masterScheme;
+      }
+    }
+  }
+  return schemeData ? parseColorScheme(schemeData) : undefined;
+}
+
+// The slide/master colour scheme atom (recInstance 1), skipping the alternative
+// SchemeListElement palettes (recInstance 6) that share the record type.
+function findColorScheme(containerData: Uint8Array): Uint8Array | undefined {
+  return findChild(
+    containerData,
+    (r) => r.type === RT_COLOR_SCHEME_ATOM && r.instance === COLOR_SCHEME_INSTANCE,
+  );
+}
+
+// A SlideSchemeColorSchemeAtom body → its eight ColorStruct entries (red, green,
+// blue, unused) as 6-hex RGB.
+function parseColorScheme(d: Uint8Array): SchemeColors | undefined {
+  if (d.length < 32) return undefined;
+  const colors: Array<string> = [];
+  for (let i = 0; i < 8; i++) {
+    const o = i * 4;
+    colors.push(`${hex2(d[o]!)}${hex2(d[o + 1]!)}${hex2(d[o + 2]!)}`);
+  }
+  return colors;
 }
 
 // The OfficeArtBlip at `foDelay` in the Pictures stream → its raw image bytes. The

@@ -10,8 +10,9 @@
 // paragraph alignment/indent level; PPT-3 reads embedded images; PPT-4 positions a
 // shape that carries a slide anchor as a floating ShapeBlock (text) / ImageBlock
 // (picture), falling back to reading-order flow for un-anchored shapes; PPT-5 reads
-// decorative autoshapes (preset geometry + literal fill/line). What stays a loss:
-// theme/scheme colours (no theme is resolved) and exact custom geometry.
+// decorative autoshapes (preset geometry + literal fill/line); PPT-6 resolves a
+// shape's scheme-relative fill/line colour through the slide's colour scheme. What
+// stays a loss: exact custom geometry, and palette/system (non-scheme) colours.
 
 import type {
   Alignment,
@@ -68,14 +69,14 @@ function looksLikePpt(bytes: Uint8Array): boolean {
 }
 
 // The slide text, its run/paragraph formatting, embedded images, per-shape
-// placement and decorative autoshapes are read; theme-coloured shapes and exact
-// custom geometry are not. Reported (degraded, keyed on text) so a caller's loss
-// report is honest about the gap.
+// placement, decorative autoshapes and their scheme-resolved fill/line colour are
+// read; exact custom geometry (and palette/system colours) are not. Reported
+// (degraded, keyed on text) so a caller's loss report is honest about the gap.
 const PPT_TEXT_LOSS: Loss = {
   severity: 'degraded',
   feature: FEATURES.text,
   detail:
-    "legacy .ppt: each slide's text (with run formatting — bold/italic/underline/size/colour — and paragraph alignment/indent), embedded images, per-shape placement and decorative autoshapes (preset geometry with literal fill/line colours) are read into one page per slide; theme-coloured shapes and exact custom geometry are not (re-save as .pptx for full fidelity)",
+    "legacy .ppt: each slide's text (with run formatting — bold/italic/underline/size/colour — and paragraph alignment/indent), embedded images, per-shape placement and decorative autoshapes (preset geometry with literal or scheme-resolved fill/line colours) are read into one page per slide; exact custom geometry and palette/system colours are not (re-save as .pptx for full fidelity)",
 };
 
 const PPT_ENCRYPTED_LOSS: Loss = {
