@@ -50,6 +50,24 @@ describe('heuristic layout reconstruction (E-PDF EP4)', () => {
     expect(joined.indexOf('Bravo')).toBeLessThan(joined.indexOf('Charlie'));
   });
 
+  it('carries the source page size + orientation into the FlowDoc section (F1)', async () => {
+    // Force a non-A4 landscape MediaBox on the generated PDF, then confirm the
+    // reader reflects it back — so a re-render keeps the size/orientation
+    // instead of falling back to the layout engine's A4 default.
+    const pdf = await Ream.parse(buildDocxFromBody(spaced('OnlyLine'))).convert('pdf', {
+      fonts: FONTS,
+      pageWidth: 1000,
+      pageHeight: 600,
+    });
+    const section = reconstructByLayout(PdfFile.parse(pdf)).doc.section;
+    expect(section?.pageSize?.width).toBe(1000);
+    expect(section?.pageSize?.height).toBe(600);
+    expect(section?.pageSize?.orientation).toBe('landscape');
+    // A PDF has no margin model — the page box is the content box.
+    expect(section?.margins?.left).toBe(0);
+    expect(section?.margins?.top).toBe(0);
+  });
+
   it('marks a line far larger than the median as a heading', async () => {
     const big = '<w:p><w:r><w:rPr><w:sz w:val="48"/></w:rPr><w:t>BigTitle</w:t></w:r></w:p>';
     const flow = await layoutFlow(
