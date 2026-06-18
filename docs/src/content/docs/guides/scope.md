@@ -119,8 +119,8 @@ charts — and is byte-stable across a read↔write loop.
   Note record's author + the text-box text), **data validation** (the rule type,
   ranges and a `list` rule's in-cell dropdown) and **conditional formatting** (the
   classic `cellIs` / `expression` rules with their differential fill / font colour).
-  Only the 2007 colour-scale / data-bar / icon-set extensions (the CF12 records) are
-  not read yet — see Not yet.
+  Only the 2007 colour-scale / data-bar / icon-set extensions (the CF12 records,
+  present only in a `.xls` re-saved by Excel 2007+) degrade gracefully.
 - The print model — gridline suppression, print area, fit-to-page scaling, repeated
   print titles, manual page breaks, horizontal/vertical centering, and **column-band
   pagination**: a sheet wider than the page (and not fit-to-width) splits across
@@ -226,9 +226,9 @@ charts — and is byte-stable across a read↔write loop.
   master geometry) flows in reading order. Decorative autoshapes are read as vector
   shapes — the preset type from the OfficeArtFSP (or, for a freeform, its **exact
   custom geometry** walked from the `pVertices` / `pSegmentInfo` arrays) plus their
-  fill / line colour, whether a literal sRGB value or one resolved through the
-  slide's colour scheme (the master's when the slide follows it); only palette /
-  system colours are not — see Not yet.
+  fill / line colour, whether a literal sRGB value, a system colour (the default
+  Windows scheme) or one resolved through the slide's colour scheme (the master's
+  when the slide follows it); only a palette-relative colour degrades gracefully.
 
 **Graphics & math**
 - DrawingML shapes (preset and custom geometry, gradients, group shapes, theme colors).
@@ -258,52 +258,30 @@ charts — and is byte-stable across a read↔write loop.
 
 ## Not yet
 
-- **The legacy `.ppt` reader does not yet read** (re-save as `.pptx` for these): a
-  shape's **palette / system colours** (a shape's literal sRGB and colour-scheme
-  fill / line _are_ resolved, but a palette- or system-relative colour is dropped),
-  and the rare arc / ellipse freeform segment (a path using one falls back to its
-  preset bounds rather than risk a mis-aligned curve). The slide text with run and
-  paragraph formatting, embedded images, per-shape placement and autoshapes — preset
-  geometry _and_ exact freeform geometry, with literal or scheme-resolved fill /
-  line — _are_ read (see PresentationML above). All three legacy binary formats
-  (`.doc` / `.xls` / `.ppt`) are read through the shared CFB container reader
-  (`src/core/ole`).
-- **The legacy `.doc` reader does not yet read** (re-save as `.docx` for these):
-  table cell **background shading**. Everything else — text, run and paragraph
-  formatting, tables with column widths, cell borders and vertical merges, list
-  items (with their number format / bullet), inline images, fields, and the
-  section's headers/footers — is read (see WordprocessingML above).
-- **The legacy `.xls` reader does not yet read** (re-save as `.xlsx` for these): the
-  **2007 conditional-format extensions** — colour scales, data bars and icon sets,
-  which live in the separate `CF12` records and only exist in a `.xls` re-saved by
-  Excel 2007+ (the 97–2003 UI had no such rules). Everything else _is_ read: the cell
-  data, styling, embedded images, charts, drawing shapes, cell hyperlinks, the
-  page-setup print model, defined names, cell comments, data validation and the
-  classic `cellIs` / `expression` conditional-format rules (see SpreadsheetML above).
 - **Byte-for-byte visual reproduction of another renderer.** `layoutProfile` plus the
   metric-compatible substitutes get a target tool's page geometry close — without its
   private font metrics — but _pixel-identical_ output is a non-goal: that would need the
   exact same font file and the renderer's internal glyph rounding.
-- **Some Excel constructs are not rendered yet:**
-  - **ActiveX control binary state** — a control persisted to its `.bin` (MS-OFORMS,
-    not the `<ax:ocxPr>` property bag) is read for the **MorphData family** (check
-    box / option button / toggle button / text box / combo / list box, one shared
-    control structure): its caption, value and group name come from the binary
-    stream. A **CommandButton/Label** `.bin` (a different control structure) and a
-    CFB-storage `.bin` are not parsed — those render by type without the caption,
-    never with a wrong one. (Property-bag-persisted controls are listed with their
-    visible state, above.)
-  - The `expression` formula engine covers ~90 functions (logic incl.
-    `IFS`/`SWITCH`/`XOR`, math + the `SUM`/`COUNT`/`MEDIAN`/`SUMPRODUCT`
-    aggregates and the `COUNTIF(S)`/`SUMIF(S)`/`AVERAGEIF(S)` predicates, text,
-    the date / time functions, and the `MATCH`/`INDEX`/`VLOOKUP`/`HLOOKUP`
-    lookups), resolves **sheet-qualified references** (`Sheet2!A1`) and **defined
-    names** against the workbook, and shifts relative references per cell. A
-    formula a step beyond it — an unsupported function, an array-formula idiom, a
-    3-D reference — evaluates to an error and the rule simply doesn't apply (a
-    graceful loss, never a misrender); where an exact Excel semantic is ambiguous
-    the engine errs the same way rather than guess. Rules are evaluated only on
-    cells that carry a stored value.
+- **A few format edge cases degrade gracefully** — re-save the original in its modern
+  format for byte-exact fidelity, but each is a _missing detail, never a wrong one_:
+  a legacy `.doc` table cell's **background shading**; a legacy `.ppt` shape's
+  **palette-relative colour** (literal, scheme- and system-relative colours resolve)
+  or a rare **arc / ellipse freeform segment** (it falls back to the path's preset
+  bounds); the legacy `.xls` **2007 conditional-format extensions** (colour scales /
+  data bars / icon sets — the `CF12` records, which only exist in a `.xls` re-saved by
+  Excel 2007+); and an ActiveX **CommandButton / Label** whose caption is persisted
+  only to a binary `.bin` (the MorphData control family — check box / option / toggle
+  / text / combo / list — and every property-bag control _are_ read, with their
+  caption and value).
+- **The conditional-format formula engine** covers ~90 functions (logic incl.
+  `IFS`/`SWITCH`/`XOR`, math + the `SUM`/`COUNT`/`MEDIAN`/`SUMPRODUCT` aggregates and
+  the `COUNTIF(S)`/`SUMIF(S)`/`AVERAGEIF(S)` predicates, text, the date / time
+  functions, and the `MATCH`/`INDEX`/`VLOOKUP`/`HLOOKUP` lookups), resolves
+  **sheet-qualified references** (`Sheet2!A1`) and **defined names** against the
+  workbook, and shifts relative references per cell. A formula a step beyond it — an
+  unsupported function, an array-formula idiom, a 3-D reference — evaluates to an error
+  and the rule simply doesn't apply (a graceful loss, never a misrender); where an
+  exact Excel semantic is ambiguous the engine errs the same way rather than guess.
 
 ## Validation
 
