@@ -149,15 +149,24 @@ const PALETTE56 = [
   '333333',
 ];
 
-export function parseBiffStyles(records: ReadonlyArray<BiffRec>): XlsxStyles {
-  // Resolve a palette index → "FFRRGGBB" (8-hex ARGB, like the xlsx rgb attr).
-  // 0x7FFF / 64 / 65 are automatic or system colours → undefined (renderer default).
+// A palette-index → "FFRRGGBB" (8-hex ARGB, like the xlsx rgb attr) resolver built
+// from the default 56-colour palette plus any PALETTE override. 0x7FFF / 64 / 65
+// are automatic or system colours → undefined (the renderer default). Exported so
+// the conditional-format reader (XLS-13) resolves its dxf colours the same way.
+export function buildBiffPalette(
+  records: ReadonlyArray<BiffRec>,
+): (icv: number) => string | undefined {
   const palette: Array<string> = [...PALETTE56.slice(0, 8), ...PALETTE56];
-  const color = (icv: number): string | undefined => {
+  for (const rec of records) if (rec.type === REC_PALETTE) applyPalette(rec.data, palette);
+  return (icv: number): string | undefined => {
     if (icv === 0x7fff || icv === 64 || icv === 65) return undefined;
     const rgb = palette[icv];
     return rgb ? `FF${rgb}` : undefined;
   };
+}
+
+export function parseBiffStyles(records: ReadonlyArray<BiffRec>): XlsxStyles {
+  const color = buildBiffPalette(records);
 
   // FONT records — index 4 is skipped in BIFF, so the 5th record is font id 5.
   const fonts: Array<XlsxFont> = [];
@@ -206,8 +215,6 @@ export function parseBiffStyles(records: ReadonlyArray<BiffRec>): XlsxStyles {
       const ifmt = u16(d, 0);
       const code = readXlUnicode(d, 2);
       if (code) numFmts.set(ifmt, code);
-    } else if (rec.type === REC_PALETTE) {
-      applyPalette(d, palette);
     } else if (rec.type === REC_XF) {
       cellXfs.push(parseXf(d, color, internFill, internBorder));
     }

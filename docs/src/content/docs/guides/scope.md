@@ -114,9 +114,11 @@ charts — and is byte-stable across a read↔write loop.
   print model** (orientation, scale, fit-to-page, margins, gridlines, centering,
   header/footer and manual page breaks), **defined names** (named ranges plus the
   print area and repeated titles, from the NAME records), **cell comments** (the
-  Note record's author + the text-box text) and **data validation** (the rule type,
-  ranges and a `list` rule's in-cell dropdown). The remaining secondary sheet
-  feature — conditional formatting — is not read yet — see Not yet.
+  Note record's author + the text-box text), **data validation** (the rule type,
+  ranges and a `list` rule's in-cell dropdown) and **conditional formatting** (the
+  classic `cellIs` / `expression` rules with their differential fill / font colour).
+  Only the 2007 colour-scale / data-bar / icon-set extensions (the CF12 records) are
+  not read yet — see Not yet.
 - The print model — gridline suppression, print area, fit-to-page scaling, repeated
   print titles, manual page breaks, horizontal/vertical centering, and **column-band
   pagination**: a sheet wider than the page (and not fit-to-width) splits across
@@ -268,12 +270,13 @@ charts — and is byte-stable across a read↔write loop.
   **borders / vertical merges**. Everything else — text, run and paragraph
   formatting, tables with column widths, inline images, fields, and the section's
   headers/footers — is read (see WordprocessingML above).
-- **The legacy `.xls` reader does not yet read** (re-save as `.xlsx` for these):
-  **conditional formatting** — the one remaining secondary sheet feature the OOXML
-  `.xlsx` reader handles but the BIFF reader does not. The cell data, styling,
-  embedded images, charts, drawing shapes, cell hyperlinks, the **page-setup print
-  model**, **defined names** (named ranges, print area, repeated titles), **cell
-  comments** and **data validation** _are_ read (see SpreadsheetML above).
+- **The legacy `.xls` reader does not yet read** (re-save as `.xlsx` for these): the
+  **2007 conditional-format extensions** — colour scales, data bars and icon sets,
+  which live in the separate `CF12` records and only exist in a `.xls` re-saved by
+  Excel 2007+ (the 97–2003 UI had no such rules). Everything else _is_ read: the cell
+  data, styling, embedded images, charts, drawing shapes, cell hyperlinks, the
+  page-setup print model, defined names, cell comments, data validation and the
+  classic `cellIs` / `expression` conditional-format rules (see SpreadsheetML above).
 - **Byte-for-byte visual reproduction of another renderer.** `layoutProfile` plus the
   metric-compatible substitutes get a target tool's page geometry close — without its
   private font metrics — but _pixel-identical_ output is a non-goal: that would need the

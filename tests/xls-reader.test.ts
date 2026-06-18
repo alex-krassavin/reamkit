@@ -11,7 +11,9 @@ import {
   boolRec,
   bottomMarginRec,
   buildXls,
+  cfRec,
   commentObjRec,
+  condFmtRec,
   dvRec,
   errRec,
   footerRec,
@@ -532,6 +534,60 @@ describe('xls data validation (XLS-12)', () => {
         showErrorMessage: true,
       },
     ]);
+  });
+});
+
+describe('xls conditional formatting (XLS-13)', () => {
+  // A cellIs rule over A1:A3: value > 5 → a solid fill from palette index 10 (red).
+  const cfSheet = (cellValue: number): SheetDoc =>
+    readXlsToSheetDoc(
+      buildXls({
+        sheets: [
+          {
+            name: 'S',
+            records: [
+              numberRec(0, 0, cellValue),
+              condFmtRec({ ccf: 1, ranges: [{ r0: 0, r1: 2, c0: 0, c1: 0 }] }),
+              cfRec({ operator: 5, intValue: 5, fillFgIcv: 10 }), // greaterThan 5, red fill
+            ],
+          },
+        ],
+      }),
+    );
+
+  it('reads a cellIs rule and its dxf fill', () => {
+    const doc = cfSheet(10);
+    expect(doc.sheets[0]!.grid.conditionalFormats).toEqual([
+      {
+        ranges: [{ startRow: 0, endRow: 2, startColumn: 0, endColumn: 0 }],
+        rules: [
+          { type: 'cellIs', priority: 1, operator: 'greaterThan', formulas: ['5'], dxfId: 0 },
+        ],
+      },
+    ]);
+    expect(doc.styles.dxfs?.[0]?.fill?.patternType).toBe('solid');
+    expect(doc.styles.dxfs?.[0]?.fill?.fgColorHex).toMatch(/^FF[0-9A-F]{6}$/);
+  });
+
+  it('shades a matching cell through the projection', () => {
+    const table = projectSheetDoc(cfSheet(10)).body.find((el) => el.kind === 'table');
+    const cell = table?.kind === 'table' ? table.table.rows[0]?.cells[0] : undefined;
+    expect(cell?.properties.shading).toBeTruthy();
+  });
+
+  it('does not shade a non-matching cell', () => {
+    const table = projectSheetDoc(cfSheet(1)).body.find((el) => el.kind === 'table');
+    const cell = table?.kind === 'table' ? table.table.rows[0]?.cells[0] : undefined;
+    expect(cell?.properties.shading).toBeUndefined();
+  });
+
+  it('skips an unmodelled CF12 record gracefully', () => {
+    const doc = readXlsToSheetDoc(
+      buildXls({
+        sheets: [{ name: 'S', records: [numberRec(0, 0, 1), rec(0x087a, new Uint8Array(20))] }],
+      }),
+    );
+    expect(doc.sheets[0]!.grid.conditionalFormats).toBeUndefined();
   });
 });
 

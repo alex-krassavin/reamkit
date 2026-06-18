@@ -21,14 +21,21 @@ import type {
   SheetImageRef,
 } from '@/core/ir/sheet';
 import type {
+  CfOperator,
+  CfRuleCellIs,
+  CfRuleExpression,
   ColumnWidth,
+  ConditionalFormat,
   DataValidation,
   DataValidationType,
   DefinedName,
+  Dxf,
   HeaderFooter,
   MergedRange,
   ParsedWorksheet,
   WorksheetCell,
+  XlsxFill,
+  XlsxFont,
   XlsxPageMargins,
   XlsxPageSetup,
   XlsxPrintOptions,
@@ -37,7 +44,7 @@ import type { EscherAnchor, EscherShape } from '@/excel/xls/escher';
 
 import { ResourceStore, pt } from '@/core/ir';
 import { parseBiffChart } from '@/excel/xls/biff-chart';
-import { parseBiffStyles } from '@/excel/xls/biff-styles';
+import { buildBiffPalette, parseBiffStyles } from '@/excel/xls/biff-styles';
 import { parseBlipStore, parseSheetPictures, parseSheetShapes } from '@/excel/xls/escher';
 import { openCfb } from '@/core/ole/cfb';
 
@@ -85,6 +92,9 @@ const REC = {
   OBJ: 0x005d, // Obj — the comment's text-box object (FtCmo ot 0x19)
   // Data validation (sheet-scoped) — XLS-12.
   DV: 0x01be, // one validation rule (DVAL 0x01B2 is the table header, not needed)
+  // Conditional formatting (sheet-scoped) — XLS-13.
+  CONDFMT: 0x01b0, // CondFmt — the range set + count of CF rules that follow
+  CF: 0x01b1, // one CF rule (classic cellIs / expression)
 } as const;
 
 // Bombs / corruption guards.
@@ -151,6 +161,11 @@ export function readXlsToSheetDoc(xls: Uint8Array): SheetDoc {
   const blips = parseBlipStore(gatherDrawing(globals, REC.MSODRAWINGGROUP));
   // Embedded charts resolved against each sheet's cells, keyed globally (XLS-6).
   const chartData = new Map<string, Chart>();
+  // Conditional-format differential formats accumulate workbook-wide; each cfRule's
+  // dxfId indexes this shared array (XLS-13). The palette resolves dxf colours the
+  // same way the XF styles do.
+  const dxfs: Array<Dxf> = [];
+  const cfColor = buildBiffPalette(globals);
 
   const sheets: Array<Sheet> = [];
   for (const bs of boundSheets) {
@@ -164,6 +179,8 @@ export function readXlsToSheetDoc(xls: Uint8Array): SheetDoc {
       resources,
       sharedStrings,
       chartData,
+      dxfs,
+      cfColor,
     );
     sheets.push({
       name: bs.name,
@@ -177,10 +194,11 @@ export function readXlsToSheetDoc(xls: Uint8Array): SheetDoc {
   }
   if (sheets.length === 0) throw new Error('.xls has no worksheets');
 
+  const baseStyles = parseBiffStyles(globals);
   return {
     kind: 'sheet',
     sheets,
-    styles: parseBiffStyles(globals),
+    styles: dxfs.length > 0 ? { ...baseStyles, dxfs } : baseStyles,
     sharedStrings,
     definedNames: buildDefinedNames(lblRecords, boundSheets),
     date1904,
@@ -261,6 +279,8 @@ function readSheet(
   resources: ResourceStore,
   sharedStrings: ReadonlyArray<string>,
   chartData: Map<string, Chart>,
+  dxfs: Array<Dxf>,
+  cfColor: (icv: number) => string | undefined,
 ): {
   grid: ParsedWorksheet;
   images: Array<SheetImageRef>;
@@ -367,6 +387,7 @@ function readSheet(
   }
 
   const dataValidations = parseDataValidations(records);
+  const conditionalFormats = parseConditionalFormats(records, dxfs, cfColor);
   const grid: ParsedWorksheet = {
     cells,
     maxRow,
@@ -376,6 +397,7 @@ function readSheet(
     rowHeights: [],
     ...parsePrintModel(records),
     ...(dataValidations.length > 0 ? { dataValidations } : {}),
+    ...(conditionalFormats.length > 0 ? { conditionalFormats } : {}),
   };
   const drawing = gatherDrawing(records, REC.MSODRAWING);
   const images =
@@ -937,6 +959,153 @@ function readXlStringEnd(d: Uint8Array, off: number): { value: string; next: num
   if ((flags & 0x08) !== 0) p += 2; // rich-run count
   if ((flags & 0x04) !== 0) p += 4; // phonetic size
   return { value: decodeChars(d, p, cch, high), next: p + cch * (high ? 2 : 1) };
+}
+
+// === Conditional formatting (CondFmt + CF) — XLS-13 ==========================
+
+// CF.cp (comparison operator) → the model's CfOperator (cellIs only).
+const CF_OPERATORS: ReadonlyArray<CfOperator | undefined> = [
+  undefined, // 0x00 no comparison
+  'between',
+  'notBetween',
+  'equal',
+  'notEqual',
+  'greaterThan',
+  'lessThan',
+  'greaterThanOrEqual',
+  'lessThanOrEqual',
+];
+
+// DXFN option-flag "block present" bits (POI CFRuleBase): font / align / border /
+// pattern / protection, each a fixed size when present.
+const DXF_FONT = 0x04000000;
+const DXF_ALIGN = 0x08000000;
+const DXF_BORDER = 0x10000000;
+const DXF_PATTERN = 0x20000000;
+const DXF_PROT = 0x40000000;
+
+// A sheet's CondFmt + CF runs → ConditionalFormat[] (classic cellIs / expression
+// rules; the CF12 colorScale/dataBar/iconSet extensions are a separate record set
+// and are not read). Each CondFmt (0x1B0) gives the sqref ranges and a count of CF
+// (0x1B1) records that follow; each CF appends its dxf to the workbook `dxfs` array
+// (its index = the rule's dxfId), so the projection resolves the fill exactly as
+// the OOXML path does.
+function parseConditionalFormats(
+  records: ReadonlyArray<BiffRecord>,
+  dxfs: Array<Dxf>,
+  color: (icv: number) => string | undefined,
+): Array<ConditionalFormat> {
+  const out: Array<ConditionalFormat> = [];
+  for (let i = 0; i < records.length; i++) {
+    if (records[i]!.type !== REC.CONDFMT) continue;
+    const head = records[i]!.data;
+    if (head.length < 14) continue;
+    const ccf = readU16(head, 0);
+    const cref = readU16(head, 12);
+    const ranges: Array<MergedRange> = [];
+    for (let k = 0; k < cref && 14 + k * 8 + 8 <= head.length; k++) {
+      const o = 14 + k * 8;
+      ranges.push({
+        startRow: readU16(head, o),
+        endRow: readU16(head, o + 2),
+        startColumn: readU16(head, o + 4),
+        endColumn: readU16(head, o + 6),
+      });
+    }
+    // The next `ccf` records of type CF carry this group's rules.
+    const rules: Array<CfRuleCellIs | CfRuleExpression> = [];
+    let priority = 1;
+    for (let j = i + 1; j < records.length && rules.length < ccf; j++) {
+      if (records[j]!.type !== REC.CF) break;
+      const rule = parseCfRule(records[j]!.data, dxfs, color, priority++);
+      if (rule) rules.push(rule);
+    }
+    if (ranges.length > 0 && rules.length > 0) out.push({ ranges, rules });
+  }
+  return out;
+}
+
+// One CF record (§2.4.40) → a cellIs / expression rule. Its dxf (fill/font colour)
+// is appended to `dxfs`; the operand formulas are located from the record tail
+// (recLen − cce2 − cce1) so a miscomputed DXFN size can't corrupt them.
+function parseCfRule(
+  d: Uint8Array,
+  dxfs: Array<Dxf>,
+  color: (icv: number) => string | undefined,
+  priority: number,
+): CfRuleCellIs | CfRuleExpression | undefined {
+  if (d.length < 6) return undefined;
+  const ct = d[0]!;
+  if (ct !== 0x01 && ct !== 0x02) return undefined; // classic cellIs / expression only
+  const cce1 = readU16(d, 2);
+  const cce2 = readU16(d, 4);
+  const rgce1Start = d.length - cce2 - cce1;
+  if (rgce1Start < 6) return undefined;
+
+  const dxfId = dxfs.length;
+  dxfs.push(parseCfDxf(d, rgce1Start, color));
+
+  if (ct === 0x02) return { type: 'expression', priority, formula: '(formula)', dxfId };
+  const operator = CF_OPERATORS[d[1]!];
+  if (operator === undefined) return undefined;
+  const formulas: Array<string> = [];
+  const f1 = cfConstant(d.subarray(rgce1Start, d.length - cce2));
+  if (f1 !== undefined) formulas.push(f1);
+  if (cce2 > 0) {
+    const f2 = cfConstant(d.subarray(d.length - cce2));
+    if (f2 !== undefined) formulas.push(f2);
+  }
+  return { type: 'cellIs', priority, operator, formulas, dxfId };
+}
+
+// The CF record's DXFN (offset 6 .. rgce1Start) → a Dxf (fill + font colour). The
+// option-flag dword names which fixed-size sub-blocks are present; the colour is
+// read only when the block walk lands exactly on rgce1Start (else the DXFN has an
+// unmodelled block and the colour is left out — graceful, never wrong).
+function parseCfDxf(
+  d: Uint8Array,
+  rgce1Start: number,
+  color: (icv: number) => string | undefined,
+): Dxf {
+  const dxf: { font?: XlsxFont; fill?: XlsxFill } = {};
+  if (rgce1Start < 12) return dxf;
+  const options = readU32(d, 6);
+  let p = 6 + 6; // past the 6-byte DXFN header (4-byte options + 2-byte word)
+  const fontAt = (options & DXF_FONT) !== 0 ? p : -1;
+  if (options & DXF_FONT) p += 118; // dxffntd
+  if (options & DXF_ALIGN) p += 8; // dxfalc
+  if (options & DXF_BORDER) p += 8; // dxfbdr
+  const patAt = (options & DXF_PATTERN) !== 0 ? p : -1;
+  if (options & DXF_PATTERN) p += 4; // dxfpat
+  if (options & DXF_PROT) p += 2; // dxfprot
+  if (p !== rgce1Start) return dxf; // an unmodelled DXFN block → leave the colour out
+
+  if (patAt >= 0 && patAt + 4 <= d.length) {
+    const pat = readU32(d, patAt);
+    const hex = color((pat >> 16) & 0x7f) ?? color((pat >> 23) & 0x7f);
+    if (hex) dxf.fill = { patternType: 'solid', fgColorHex: hex }; // fg = the solid colour
+  }
+  if (fontAt >= 0 && fontAt + 84 <= d.length) {
+    const icvFore = readU32(d, fontAt + 80) | 0; // i32; −1 / 32767 / 64 / 65 = auto
+    if (icvFore >= 0) {
+      const hex = color(icvFore);
+      if (hex) dxf.font = { colorHex: hex };
+    }
+  }
+  return dxf;
+}
+
+// A CF operand formula (rgce) → a constant's text (PtgInt / PtgNum / PtgStr), or
+// undefined for a cell-referencing / unrecognized formula (rendered without text).
+function cfConstant(rgce: Uint8Array): string | undefined {
+  if (rgce.length < 1) return undefined;
+  const ptg = rgce[0]!;
+  if (ptg === 0x1e && rgce.length >= 3) return String(readU16(rgce, 1)); // PtgInt
+  if (ptg === 0x1f && rgce.length >= 9) return String(readF64(rgce, 1)); // PtgNum
+  if (ptg === 0x17 && rgce.length >= 3) {
+    return `"${decodeChars(rgce, 3, rgce[1]!, (rgce[2]! & 0x01) !== 0)}"`; // PtgStr
+  }
+  return undefined;
 }
 
 // A sheet's TXO (text-object) record texts, in order — the cch is in the TXO

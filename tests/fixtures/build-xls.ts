@@ -675,6 +675,70 @@ export function dvRec(opts: {
   return rec(0x01be, concat(parts));
 }
 
+// CondFmt (0x01B0): the CF group header (XLS-13) — ccf + flags + bounding Ref8U +
+// SqRefU (the ranges the following CF rules apply to).
+export function condFmtRec(opts: {
+  readonly ccf: number;
+  readonly ranges: ReadonlyArray<{ r0: number; r1: number; c0: number; c1: number }>;
+}): Uint8Array {
+  const d = new Uint8Array(14 + opts.ranges.length * 8);
+  const v = new DataView(d.buffer);
+  v.setUint16(0, opts.ccf, true); // ccf
+  v.setUint16(2, 0, true); // flags
+  const b = opts.ranges[0] ?? { r0: 0, r1: 0, c0: 0, c1: 0 }; // refBound bbox
+  v.setUint16(4, b.r0, true);
+  v.setUint16(6, b.r1, true);
+  v.setUint16(8, b.c0, true);
+  v.setUint16(10, b.c1, true);
+  v.setUint16(12, opts.ranges.length, true); // cref
+  opts.ranges.forEach((r, k) => {
+    const o = 14 + k * 8;
+    v.setUint16(o, r.r0, true);
+    v.setUint16(o + 2, r.r1, true);
+    v.setUint16(o + 4, r.c0, true);
+    v.setUint16(o + 6, r.c1, true);
+  });
+  return rec(0x01b0, d);
+}
+
+// CF (0x01B1): one conditional-format rule (XLS-13). ct/cp/cce1/cce2, then a DXFN
+// (6-byte header + an optional 4-byte pattern block carrying the fill colour), then
+// the operand formulas as PtgInt constants.
+export function cfRec(opts: {
+  readonly type?: 1 | 2; // 1 = cellIs (default), 2 = expression
+  readonly operator?: number; // cp 1..8 (default 5 = greaterThan)
+  readonly intValue?: number; // formula1 (PtgInt)
+  readonly secondIntValue?: number; // formula2 (PtgInt, for between/notBetween)
+  readonly fillFgIcv?: number; // dxf pattern foreground palette index
+}): Uint8Array {
+  const ptgInt = (val: number): Uint8Array => {
+    const a = new Uint8Array(3);
+    a[0] = 0x1e;
+    new DataView(a.buffer).setUint16(1, val, true);
+    return a;
+  };
+  const rgce1 = opts.intValue !== undefined ? ptgInt(opts.intValue) : new Uint8Array(0);
+  const rgce2 = opts.secondIntValue !== undefined ? ptgInt(opts.secondIntValue) : new Uint8Array(0);
+
+  const dxfParts: Array<Uint8Array> = [];
+  const header = new Uint8Array(6); // options dword (+ 2-byte word)
+  if (opts.fillFgIcv !== undefined) new DataView(header.buffer).setUint32(0, 0x20000000, true);
+  dxfParts.push(header);
+  if (opts.fillFgIcv !== undefined) {
+    const pat = new Uint8Array(4); // fls=solid (1<<10) | icvFg<<16
+    new DataView(pat.buffer).setUint32(0, ((1 << 10) | (opts.fillFgIcv << 16)) >>> 0, true);
+    dxfParts.push(pat);
+  }
+
+  const head = new Uint8Array(6);
+  const hv = new DataView(head.buffer);
+  head[0] = opts.type ?? 1; // ct
+  head[1] = opts.operator ?? 5; // cp
+  hv.setUint16(2, rgce1.length, true); // cce1
+  hv.setUint16(4, rgce2.length, true); // cce2
+  return rec(0x01b1, concat([head, ...dxfParts, rgce1, rgce2]));
+}
+
 export interface XlsSheetInput {
   readonly name: string;
   readonly records: ReadonlyArray<Uint8Array>;
