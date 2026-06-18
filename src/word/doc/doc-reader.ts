@@ -11,8 +11,8 @@
 // tables (in-table paragraphs grouped into a row/cell grid, with per-column widths
 // from sprmTDefTable), inline images (the picture char's CHPX → a PICF in the Data
 // stream), fields (resolved to their cached result), the section's headers/footers
-// (the PlcfHdd stories) and list items (sprmPIlfo/sprmPIlvl → an indented bullet).
-// Table cell borders/merges and the exact list number format are not read yet —
+// (the PlcfHdd stories) and list items (sprmPIlfo/sprmPIlvl → the LST/LVL number
+// format or bullet — DOC-10). Table cell borders/merges are not read yet —
 // recorded as a loss.
 
 import type {
@@ -36,6 +36,8 @@ import type { Loss } from '@/core/ir';
 import type {
   DocCharProps,
   DocContent,
+  DocListTables,
+  DocLvl,
   DocParaProps,
   DocParagraph,
   DocPicture,
@@ -64,6 +66,97 @@ const TABLE_BORDERS: CellBorders = {
   insideV: TABLE_BORDER,
 };
 
+// A list marker resolver (DOC-10): maps a list paragraph's (ilfo, ilvl) to its
+// rendered marker text — a real number ("1.", "a)", "iii.") or a bullet glyph —
+// keeping per-(lsid, level) running counters across the body. Returns undefined
+// when the list tables can't resolve the level (the caller uses a generic bullet).
+function createListMarkers(tables: DocListTables | undefined) {
+  const counters = new Map<number, Array<number | undefined>>();
+  const resolve = (ilfo: number, ilvl: number): { lsid: number; lvl: DocLvl } | undefined => {
+    if (!tables || ilfo < 1 || ilfo > tables.lfoLsids.length) return undefined;
+    const lsid = tables.lfoLsids[ilfo - 1]!;
+    const list = tables.lists.get(lsid);
+    const lvl = list?.levels[list.simple ? 0 : ilvl];
+    return list && lvl ? { lsid, lvl } : undefined;
+  };
+  return {
+    marker(ilfo: number, ilvl: number): string | undefined {
+      const r = resolve(ilfo, ilvl);
+      if (!r) return undefined;
+      const { lsid, lvl } = r;
+      // A bullet (nfc 23) / none (0xFF) / placeholder-less template renders literally.
+      if (lvl.nfc === 23 || lvl.nfc === 0xff || !lvl.xst.some((cu) => cu <= 8)) {
+        return lvl.xst.map((cu) => String.fromCharCode(cu)).join('');
+      }
+      // Advance this level's counter; reset the deeper levels (they re-seed later).
+      const col = counters.get(lsid) ?? [];
+      col[ilvl] = (col[ilvl] ?? lvl.iStartAt - 1) + 1;
+      for (let l = ilvl + 1; l < col.length; l++) col[l] = undefined;
+      counters.set(lsid, col);
+      // Each placeholder → the number of that level, formatted by that level's nfc.
+      let out = '';
+      for (const cu of lvl.xst) {
+        if (cu <= 8) {
+          const other = resolve(ilfo, cu);
+          out += formatListNumber(other?.lvl.nfc ?? 0, col[cu] ?? other?.lvl.iStartAt ?? 1);
+        } else {
+          out += String.fromCharCode(cu);
+        }
+      }
+      return out;
+    },
+  };
+}
+type ListMarkers = ReturnType<typeof createListMarkers>;
+
+// An MSONFC number format + value → the marker text for one level's number.
+function formatListNumber(nfc: number, n: number): string {
+  switch (nfc) {
+    case 1:
+      return toRoman(n);
+    case 2:
+      return toRoman(n).toLowerCase();
+    case 3:
+      return toLetters(n);
+    case 4:
+      return toLetters(n).toLowerCase();
+    case 22:
+      return n < 10 ? `0${n}` : String(n); // arabicLZ (decimal with leading zero)
+    default:
+      return String(n); // arabic + anything not specially numbered
+  }
+}
+function toLetters(n: number): string {
+  let s = '';
+  while (n > 0) {
+    n--;
+    s = String.fromCharCode(65 + (n % 26)) + s;
+    n = Math.floor(n / 26);
+  }
+  return s;
+}
+const ROMAN: ReadonlyArray<readonly [number, string]> = [
+  [1000, 'M'],
+  [900, 'CM'],
+  [500, 'D'],
+  [400, 'CD'],
+  [100, 'C'],
+  [90, 'XC'],
+  [50, 'L'],
+  [40, 'XL'],
+  [10, 'X'],
+  [9, 'IX'],
+  [5, 'V'],
+  [4, 'IV'],
+  [1, 'I'],
+];
+function toRoman(n: number): string {
+  if (n <= 0) return String(n);
+  let out = '';
+  for (const [v, sym] of ROMAN) while (n >= v) ((out += sym), (n -= v));
+  return out;
+}
+
 // A legacy `.doc` is an OLE2 container with a `WordDocument` stream. The check
 // also keeps a `.xls`/`.ppt` (or an encrypted OOXML, also a CFB) from
 // mis-routing here.
@@ -82,7 +175,7 @@ const DOC_TEXT_LOSS: Loss = {
   severity: 'degraded',
   feature: FEATURES.text,
   detail:
-    "legacy .doc: the document text, run formatting (bold/italic/underline/size), paragraph formatting (alignment/indent/spacing), tables (with column widths), inline images, fields, the section's headers/footers and list items (as indented bullets) are read; table cell borders/merges and the exact list number format are not (re-save as .docx for full fidelity)",
+    "legacy .doc: the document text, run formatting (bold/italic/underline/size), paragraph formatting (alignment/indent/spacing), tables (with column widths), inline images, fields, the section's headers/footers and list items (with their number format / bullet) are read; table cell borders/merges are not (re-save as .docx for full fidelity)",
 };
 
 const DOC_ENCRYPTED_LOSS: Loss = {
@@ -146,7 +239,8 @@ export function readDoc(bytes: Uint8Array): ReadResult<FlowDoc> {
 // paragraphs become Tables; everything else is a paragraph. doc-text has already
 // split paragraphs at the CR / cell mark and cleaned the control characters.
 function buildBody(content: DocContent, resources: ResourceStore): Array<BodyElement> {
-  const body = groupTables(content.paragraphs, resources);
+  const markers = createListMarkers(content.listTables);
+  const body = groupTables(content.paragraphs, resources, markers);
   // A document ends with a trailing paragraph mark — drop the empty tail it adds.
   while (body.length > 1 && isEmptyParagraph(body[body.length - 1]!)) body.pop();
   if (body.length === 0) body.push(emptyParagraph());
@@ -158,6 +252,7 @@ function buildBody(content: DocContent, resources: ResourceStore): Array<BodyEle
 function groupTables(
   paras: ReadonlyArray<DocParagraph>,
   resources: ResourceStore,
+  markers: ListMarkers,
 ): Array<BodyElement> {
   const out: Array<BodyElement> = [];
   let i = 0;
@@ -165,9 +260,9 @@ function groupTables(
     if (paras[i]!.props.inTable) {
       const group: Array<DocParagraph> = [];
       while (i < paras.length && paras[i]!.props.inTable) group.push(paras[i++]!);
-      out.push({ kind: 'table', table: buildTable(group, resources) });
+      out.push({ kind: 'table', table: buildTable(group, resources, markers) });
     } else {
-      out.push(...mapParagraph(paras[i++]!, resources));
+      out.push(...mapParagraph(paras[i++]!, resources, markers));
     }
   }
   return out;
@@ -177,7 +272,11 @@ function groupTables(
 // each paragraph is a cell (an empty terminating paragraph is dropped). Column
 // widths come from the TTP's sprmTDefTable; a default thin border makes the grid
 // visible (cell borders/merges are not read yet).
-function buildTable(group: ReadonlyArray<DocParagraph>, resources: ResourceStore): Table {
+function buildTable(
+  group: ReadonlyArray<DocParagraph>,
+  resources: ResourceStore,
+  markers: ListMarkers,
+): Table {
   // The TTP's sprmTDefTable gives the cell-boundary positions for the row.
   const edges = group.find((p) => p.props.cellEdgesTwips)?.props.cellEdgesTwips;
   const rows: Array<TableRow> = [];
@@ -185,11 +284,11 @@ function buildTable(group: ReadonlyArray<DocParagraph>, resources: ResourceStore
   for (const p of group) {
     rowParas.push(p);
     if (p.props.rowEnd) {
-      rows.push(buildRow(rowParas, resources, edges));
+      rows.push(buildRow(rowParas, resources, edges, markers));
       rowParas = [];
     }
   }
-  if (rowParas.length > 0) rows.push(buildRow(rowParas, resources, edges)); // a row without a TTP
+  if (rowParas.length > 0) rows.push(buildRow(rowParas, resources, edges, markers)); // no TTP
 
   return {
     properties: { borders: TABLE_BORDERS, layout: 'fixed' },
@@ -216,6 +315,7 @@ function buildRow(
   rowParas: ReadonlyArray<DocParagraph>,
   resources: ResourceStore,
   edges: ReadonlyArray<number> | undefined,
+  markers: ListMarkers,
 ): TableRow {
   const cells: Array<TableCell> = [];
   let col = 0;
@@ -223,7 +323,10 @@ function buildRow(
     // The TTP terminates the row; when it carries no text it is not itself a cell.
     if (p.props.rowEnd && isBlank(p)) continue;
     const width = cellWidth(edges, col++);
-    cells.push({ properties: width ? { width } : {}, content: mapParagraph(p, resources) });
+    cells.push({
+      properties: width ? { width } : {},
+      content: mapParagraph(p, resources, markers),
+    });
   }
   if (cells.length === 0) cells.push({ properties: {}, content: [emptyParagraph()] });
   return { properties: {}, cells };
@@ -244,7 +347,11 @@ function isBlank(p: DocParagraph): boolean {
 // A paragraph → its text paragraph (if it has text) followed by an image block per
 // embedded picture. A picture occupies its own run, so a picture-only paragraph
 // yields just the image(s).
-function mapParagraph(p: DocParagraph, resources: ResourceStore): Array<BodyElement> {
+function mapParagraph(
+  p: DocParagraph,
+  resources: ResourceStore,
+  markers?: ListMarkers,
+): Array<BodyElement> {
   const out: Array<BodyElement> = [];
   const textRuns = p.runs.filter((r) => r.picture === undefined);
   const ilvl = p.props.listIlvl ?? 0;
@@ -253,8 +360,11 @@ function mapParagraph(p: DocParagraph, resources: ResourceStore): Array<BodyElem
     const runs = textRuns.map((r) => ({ text: r.text, properties: toRunProperties(r.props) }));
     let properties = toParaProperties(p.props);
     if (isList) {
-      // A generic bullet + a per-level indent (the LST/LVL number format isn't read).
-      runs.unshift({ text: `${LIST_BULLETS[ilvl % LIST_BULLETS.length]} `, properties: {} });
+      // The LST/LVL number format (DOC-10) → a real "1." / "a)" / bullet marker;
+      // an unresolved list falls back to a generic per-level bullet. + a per-level indent.
+      const marker =
+        markers?.marker(p.props.listIlfo!, ilvl) ?? LIST_BULLETS[ilvl % LIST_BULLETS.length];
+      runs.unshift({ text: `${marker} `, properties: {} });
       properties = { ...properties, indentLeft: pt((ilvl + 1) * LIST_INDENT_PT) };
     }
     out.push({

@@ -67,6 +67,20 @@ export function buildDoc(
       readonly evenHeader?: string;
       readonly evenFooter?: string;
     };
+    // List tables (DOC-10): `lfos` maps each 1-based ilfo to a list's lsid; `lstfs`
+    // gives each list its levels (nfc + iStartAt + the xst number-text code units).
+    readonly lists?: {
+      readonly lfos: ReadonlyArray<number>;
+      readonly lstfs: ReadonlyArray<{
+        readonly lsid: number;
+        readonly simple?: boolean;
+        readonly levels: ReadonlyArray<{
+          readonly nfc: number;
+          readonly iStartAt?: number;
+          readonly xst: ReadonlyArray<number>;
+        }>;
+      }>;
+    };
   } = {},
 ): Uint8Array {
   const whichTable = opts.whichTable ?? '1Table';
@@ -166,6 +180,11 @@ export function buildDoc(
     headerCps.forEach((cp, i) => hv.setUint32(i * 4, cp, true));
     fibFields.push({ fc: 0xf2, off: addBinTable(plcfHdd), lcb: plcfHdd.length }); // PlcfHdd
   }
+  if (opts.lists) {
+    const { plfLst, lcbLstfs, plfLfo } = buildListTables(opts.lists);
+    fibFields.push({ fc: 0x2e2, off: addBinTable(plfLst), lcb: lcbLstfs }); // fcPlfLst/lcbPlfLst
+    fibFields.push({ fc: 0x2ea, off: addBinTable(plfLfo), lcb: plfLfo.length }); // fcPlfLfo/lcb
+  }
 
   // Assemble the table stream: CLX then the bin tables.
   const table = new Uint8Array(tableEnd);
@@ -201,6 +220,63 @@ export function buildDoc(
     { name: whichTable, data: table },
     ...(opts.data ? [{ name: 'Data', data: opts.data }] : []),
   ]);
+}
+
+// The list tables (DOC-10): PlfLfo (lfoMac + 16-byte LFOs, lsid @0) and PlfLst
+// (cLst + 28-byte LSTFs, then the appended LVL array — each LVL = a 28-byte LVLF +
+// the xst). lcbPlfLst covers only the LSTFs; the LVLs follow contiguously.
+function buildListTables(lists: {
+  readonly lfos: ReadonlyArray<number>;
+  readonly lstfs: ReadonlyArray<{
+    readonly lsid: number;
+    readonly simple?: boolean;
+    readonly levels: ReadonlyArray<{
+      readonly nfc: number;
+      readonly iStartAt?: number;
+      readonly xst: ReadonlyArray<number>;
+    }>;
+  }>;
+}): { plfLst: Uint8Array; lcbLstfs: number; plfLfo: Uint8Array } {
+  const plfLfo = new Uint8Array(4 + lists.lfos.length * 16);
+  const fv = new DataView(plfLfo.buffer);
+  fv.setUint32(0, lists.lfos.length, true); // lfoMac
+  lists.lfos.forEach((lsid, i) => fv.setInt32(4 + i * 16, lsid, true)); // LFO.lsid
+
+  const cLst = lists.lstfs.length;
+  const lcbLstfs = 2 + cLst * 28;
+  const lstfPart = new Uint8Array(lcbLstfs);
+  const lv = new DataView(lstfPart.buffer);
+  lv.setInt16(0, cLst, true); // cLst
+  lists.lstfs.forEach((lst, i) => {
+    const base = 2 + i * 28;
+    lv.setInt32(base, lst.lsid, true); // LSTF.lsid
+    lstfPart[base + 26] = lst.simple ? 0x01 : 0x00; // flags: fSimpleList
+  });
+
+  const parts: Array<Uint8Array> = [lstfPart];
+  for (const lst of lists.lstfs) {
+    const count = lst.simple ? 1 : 9;
+    for (let l = 0; l < count; l++) {
+      const lvl = lst.levels[l] ?? lst.levels[lst.levels.length - 1] ?? { nfc: 23, xst: [0x2022] };
+      const lvlf = new Uint8Array(28); // cbGrpprlChpx @24 / cbGrpprlPapx @25 = 0
+      new DataView(lvlf.buffer).setInt32(0, lvl.iStartAt ?? 1, true);
+      lvlf[4] = lvl.nfc;
+      const xst = new Uint8Array(2 + lvl.xst.length * 2);
+      const xv = new DataView(xst.buffer);
+      xv.setUint16(0, lvl.xst.length, true);
+      lvl.xst.forEach((cu, j) => xv.setUint16(2 + j * 2, cu, true));
+      parts.push(lvlf, xst);
+    }
+  }
+
+  const total = parts.reduce((n, p) => n + p.length, 0);
+  const plfLst = new Uint8Array(total);
+  let off = 0;
+  for (const p of parts) {
+    plfLst.set(p, off);
+    off += p.length;
+  }
+  return { plfLst, lcbLstfs, plfLfo };
 }
 
 // §2.8.26 PlcfHdd — lay the 12 header/footer stories (indices 0–5 are doc-wide

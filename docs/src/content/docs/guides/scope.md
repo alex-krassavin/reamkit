@@ -93,10 +93,11 @@ charts — and is byte-stable across a read↔write loop.
   result text kept. The section's **headers and footers** are lifted from the
   `PlcfHdd` stories (best-effort: the binary story ordering can't be ground-truthed
   here, so only well-formed stories are surfaced). **List items** (`sprmPIlfo` /
-  `sprmPIlvl`) render as an indented bullet per level. So an old `.doc` renders to
-  PDF/SVG/HTML and re-writes to `.docx`. Table cell borders/merges and the exact
-  list number format (the `LST`/`LVL` tables) are not read yet (re-save as `.docx`
-  for full fidelity); an encrypted file yields no text. The shared CFB reader
+  `sprmPIlvl`) render with their resolved **number format** — a real "1." / "a)" /
+  "iii." or the bullet glyph, from the `LST` / `LVL` / `LFO` tables. So an old `.doc`
+  renders to PDF/SVG/HTML and re-writes to `.docx`. Table cell borders/merges are not
+  read yet (re-save as `.docx` for full fidelity); an encrypted file yields no text.
+  The shared CFB reader
   (`src/core/ole`) is the same keystone `.xls` uses.
 
 **SpreadsheetML (§18)**
@@ -265,11 +266,10 @@ charts — and is byte-stable across a read↔write loop.
   (`.doc` / `.xls` / `.ppt`) are read through the shared CFB container reader
   (`src/core/ole`).
 - **The legacy `.doc` reader does not yet read** (re-save as `.docx` for these):
-  the exact list **number format** (the `LST` / `LVL` tables — list items render as a
-  generic indented bullet, so a numbered list shows bullets) and table cell
-  **borders / vertical merges**. Everything else — text, run and paragraph
-  formatting, tables with column widths, inline images, fields, and the section's
-  headers/footers — is read (see WordprocessingML above).
+  table cell **borders / vertical merges**. Everything else — text, run and
+  paragraph formatting, tables with column widths, list items (with their number
+  format / bullet), inline images, fields, and the section's headers/footers — is
+  read (see WordprocessingML above).
 - **The legacy `.xls` reader does not yet read** (re-save as `.xlsx` for these): the
   **2007 conditional-format extensions** — colour scales, data bars and icon sets,
   which live in the separate `CF12` records and only exist in a `.xls` re-saved by

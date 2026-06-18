@@ -32,6 +32,10 @@ const OFF_FCPLCFBTEPAPX = 0x102; // fibRgFcLcb97.fcPlcfBtePapx — PAPX bin tabl
 const OFF_LCBPLCFBTEPAPX = 0x106;
 const OFF_FCCLX = 0x1a2; // fibRgFcLcb97.fcClx — CLX offset in the table stream
 const OFF_LCBCLX = 0x1a6; // fibRgFcLcb97.lcbClx — CLX byte length
+const OFF_FCPLFLST = 0x2e2; // fibRgFcLcb97.fcPlfLst — the list table (PlfLst)
+const OFF_LCBPLFLST = 0x2e6; // (excludes the appended LVL array)
+const OFF_FCPLFLFO = 0x2ea; // fibRgFcLcb97.fcPlfLfo — the list-format-override table
+const OFF_LCBPLFLFO = 0x2ee;
 const FLAG_ENCRYPTED = 0x0100; // FibBase.fEncrypted
 const FLAG_WHICH_TBL = 0x0200; // FibBase.fWhichTblStm — 1 ⇒ 1Table, 0 ⇒ 0Table
 
@@ -132,9 +136,31 @@ export interface DocHeaderFooters {
   readonly evenFooter?: ReadonlyArray<DocParagraph>;
 }
 
+// One list level (LVL) — the format of its number (DOC-10). `nfc` is the MSONFC
+// code (0 arabic, 1/2 upper/lower roman, 3/4 upper/lower letter, 23 bullet, 0xFF
+// none); `xst` is the number-text template as UTF-16 code units, where a code unit
+// ≤ 8 is a placeholder for the number of that (zero-based) level.
+export interface DocLvl {
+  readonly nfc: number;
+  readonly iStartAt: number;
+  readonly xst: ReadonlyArray<number>;
+}
+
+// The workbook's list tables (DOC-10): an LFO → lsid map (a paragraph's 1-based
+// sprmPIlfo indexes it) and, per lsid, the list's levels.
+export interface DocListTables {
+  readonly lfoLsids: ReadonlyArray<number>;
+  readonly lists: ReadonlyMap<
+    number,
+    { readonly simple: boolean; readonly levels: ReadonlyArray<DocLvl> }
+  >;
+}
+
 export interface DocContent {
   readonly paragraphs: ReadonlyArray<DocParagraph>;
   readonly headerFooters?: DocHeaderFooters;
+  // The list tables resolving a paragraph's (ilfo, ilvl) to its number format.
+  readonly listTables?: DocListTables;
   // The file is encrypted/obfuscated — text cannot be read without the key.
   readonly encrypted: boolean;
 }
@@ -185,7 +211,83 @@ export function extractDocContent(bytes: Uint8Array): DocContent {
   const data = cfb.readStream('Data'); // embedded picture store (PICF + image)
   const main = buildParagraphs(wd, pieces, chpx, papx, 0, ccpText, data);
   const headerFooters = extractHeaderFooters(wd, table, pieces, chpx, papx, data, ccpText);
-  return { paragraphs: main, ...(headerFooters ? { headerFooters } : {}), encrypted: false };
+  const listTables = parseListTables(wd, table);
+  return {
+    paragraphs: main,
+    ...(headerFooters ? { headerFooters } : {}),
+    ...(listTables ? { listTables } : {}),
+    encrypted: false,
+  };
+}
+
+// The list tables (DOC-10): PlfLfo (LFO → lsid) and PlfLst (the LSTFs + the LVL
+// array appended after them). Bounds-checked throughout — structural doubt yields
+// no/fewer lists (so a list item falls back to a generic bullet), never a wrong
+// number. [MS-DOC] §2.9.{129,130,131,150}; the LVL array starts at fcPlfLst +
+// lcbPlfLst (lcbPlfLst covers only the LSTFs).
+function parseListTables(wd: Uint8Array, table: Uint8Array): DocListTables | undefined {
+  const lstFc = u32(wd, OFF_FCPLFLST);
+  const lstLcb = u32(wd, OFF_LCBPLFLST);
+  if (lstLcb === 0 || lstFc + 2 > table.length) return undefined;
+
+  // PlfLfo: lfoMac (u32) then lfoMac × 16-byte LFO (lsid at offset 0).
+  const lfoLsids: Array<number> = [];
+  const lfoFc = u32(wd, OFF_FCPLFLFO);
+  if (lfoFc + 4 <= table.length) {
+    const lfoMac = u32(table, lfoFc);
+    for (let i = 0; i < lfoMac && lfoFc + 4 + i * 16 + 4 <= table.length; i++) {
+      lfoLsids.push(u32(table, lfoFc + 4 + i * 16) | 0);
+    }
+  }
+
+  // PlfLst: cLst (i16) then cLst × 28-byte LSTF (lsid @0, flags @26 fSimpleList b0).
+  const cLst = i16(table, lstFc);
+  if (cLst <= 0 || cLst > 0xffff) return undefined;
+  const lstfs: Array<{ lsid: number; simple: boolean }> = [];
+  for (let i = 0; i < cLst && lstFc + 2 + i * 28 + 28 <= table.length; i++) {
+    const base = lstFc + 2 + i * 28;
+    lstfs.push({ lsid: u32(table, base) | 0, simple: (table[base + 26]! & 0x01) !== 0 });
+  }
+
+  // The LVL array follows the LSTFs, in list order; each list contributes 1 LVL
+  // (fSimpleList) or 9, in level order. Each LVL is variable-length, so walk it.
+  const lists = new Map<number, { simple: boolean; levels: Array<DocLvl> }>();
+  let p = lstFc + lstLcb;
+  for (const lstf of lstfs) {
+    const levels: Array<DocLvl> = [];
+    for (let l = 0; l < (lstf.simple ? 1 : 9); l++) {
+      const lvl = readLvl(table, p);
+      if (!lvl) {
+        p = table.length;
+        break;
+      }
+      levels.push(lvl.info);
+      p = lvl.next;
+    }
+    if (!lists.has(lstf.lsid)) lists.set(lstf.lsid, { simple: lstf.simple, levels });
+  }
+  return lfoLsids.length > 0 || lists.size > 0 ? { lfoLsids, lists } : undefined;
+}
+
+// One LVL = LVLF (28 bytes: iStartAt i32 @0, nfc u8 @4, cbGrpprlChpx @24,
+// cbGrpprlPapx @25) + grpprlPapx + grpprlChpx + the Xst number-text template
+// (u16 cch then cch UTF-16LE code units). Returns the level + the next offset.
+function readLvl(d: Uint8Array, off: number): { info: DocLvl; next: number } | undefined {
+  if (off + 28 > d.length) return undefined;
+  const iStartAt = u32(d, off) | 0;
+  const nfc = d[off + 4]!;
+  const cbChpx = d[off + 24]!;
+  const cbPapx = d[off + 25]!;
+  let p = off + 28 + cbPapx + cbChpx;
+  if (p + 2 > d.length) return undefined;
+  const cch = u16(d, p);
+  p += 2;
+  const xst: Array<number> = [];
+  for (let i = 0; i < cch && p + 2 <= d.length; i++) {
+    xst.push(u16(d, p));
+    p += 2;
+  }
+  return { info: { nfc, iStartAt, xst }, next: p };
 }
 
 // §2.8.26 PlcfHdd — the header/footer stories live in the same piece-table stream,
