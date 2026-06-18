@@ -106,7 +106,8 @@ charts — and is byte-stable across a read↔write loop.
 - **Legacy `.xls`** (BIFF8, Excel 97–2003) — the binary `Workbook` stream inside the
   OLE2/CFB container is read into the same grid model, so an old `.xls` renders to
   PDF/SVG/HTML and even re-writes to `.xlsx`. Cell values, structure (sheets, shared
-  strings, merges, column widths, the 1904 flag), **styling** — fonts, fills,
+  strings, merges, column widths, custom row heights, frozen panes, the 1904 flag),
+  **styling** — fonts, fills,
   borders, number formats and alignment from the FONT/FORMAT/XF records, with colours
   resolved through the BIFF colour palette — **embedded pictures** (from the
   Office-Drawing/Escher BLIP store), **embedded charts** (the BIFF chart substream,

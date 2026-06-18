@@ -864,6 +864,41 @@ export function condFmt12Rec(opts: {
   return rec(0x0879, d);
 }
 
+// === View records (frozen panes + row heights) — XLS-VIEW =====================
+
+// Row (0x0208): row index + miyRw height in twips; option-flag bit 0x40 (fUnsynced)
+// marks a manually-set (custom) height — only such rows are read back.
+export function rowRec(opts: {
+  readonly row: number;
+  readonly heightPt: number;
+  readonly custom?: boolean;
+}): Uint8Array {
+  const d = new Uint8Array(16);
+  const v = new DataView(d.buffer);
+  v.setUint16(0, opts.row, true); // rw
+  v.setUint16(6, Math.round(opts.heightPt * 20) & 0x7fff, true); // miyRw (twips)
+  v.setUint16(12, opts.custom ? 0x40 : 0, true); // option flags (fUnsynced)
+  return rec(0x0208, d);
+}
+
+// Window2 (0x023E): the sheet window option flags — bit 0x08 (fFrozen) tells the
+// reader the Pane split holds frozen-row / frozen-column counts.
+export function window2Rec(frozen: boolean): Uint8Array {
+  const d = new Uint8Array(18);
+  new DataView(d.buffer).setUint16(0, frozen ? 0x08 : 0x00, true);
+  return rec(0x023e, d);
+}
+
+// Pane (0x0041): the split position — x columns, y rows (frozen counts when
+// Window2's fFrozen is set), then the top row / left column / active pane.
+export function paneRec(opts: { readonly cols: number; readonly rows: number }): Uint8Array {
+  const d = new Uint8Array(10);
+  const v = new DataView(d.buffer);
+  v.setUint16(0, opts.cols, true); // x
+  v.setUint16(2, opts.rows, true); // y
+  return rec(0x0041, d);
+}
+
 export interface XlsSheetInput {
   readonly name: string;
   readonly records: ReadonlyArray<Uint8Array>;

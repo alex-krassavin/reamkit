@@ -38,6 +38,8 @@ import type {
   HeaderFooter,
   MergedRange,
   ParsedWorksheet,
+  RowHeight,
+  SheetPane,
   WorksheetCell,
   XlsxFill,
   XlsxFont,
@@ -73,6 +75,9 @@ const REC = {
   STRING: 0x0207,
   MERGECELLS: 0x00e5,
   COLINFO: 0x007d,
+  ROW: 0x0208, // per-row record — carries the custom row height (XLS-VIEW)
+  WINDOW2: 0x023e, // sheet window options — the frozen-pane flag (XLS-VIEW)
+  PANE: 0x0041, // pane split / freeze position (XLS-VIEW)
   MSODRAWINGGROUP: 0x00eb, // workbook-globals Escher BLIP store
   MSODRAWING: 0x00ec, // per-sheet Escher shapes
   TXO: 0x01b6, // text object (text-box content)
@@ -109,6 +114,7 @@ const REC = {
 const MAX_SHEETS = 4096;
 const MAX_CELLS = 1 << 22;
 const MAX_STRINGS = 1 << 21;
+const MAX_ROW_HEIGHTS = 1 << 20;
 
 interface BiffRecord {
   readonly type: number;
@@ -302,6 +308,9 @@ function readSheet(
   const merges: Array<MergedRange> = [];
   const columns: Array<ColumnWidth> = [];
   const hyperlinks: Array<SheetHyperlink> = [];
+  const rowHeights: Array<RowHeight> = [];
+  let frozen = false; // Window2 freeze flag — Pane x/y are counts only when set.
+  let paneSplit: { cols: number; rows: number } | undefined;
   let maxRow = -1;
   let maxColumn = -1;
   const add = (cell: WorksheetCell): void => {
@@ -386,6 +395,31 @@ function readSheet(
         columns.push({ min: colFirst + 1, max: colLast + 1, widthChars });
         break;
       }
+      case REC.ROW: {
+        // §2.4.221 Row: miyRw (low 15 bits) is the height in twips; option-flag bit
+        // 0x40 (fUnsynced) marks a row whose height was set, not auto-fit. Only such
+        // rows are recorded — a default-height row keeps the sheet default.
+        if (d.length >= 14 && rowHeights.length < MAX_ROW_HEIGHTS) {
+          const custom = (readU16(d, 12) & 0x40) !== 0;
+          if (custom) {
+            rowHeights.push({
+              row: readU16(d, 0),
+              heightPt: (readU16(d, 6) & 0x7fff) / 20,
+              customHeight: true,
+            });
+          }
+        }
+        break;
+      }
+      case REC.WINDOW2:
+        // §2.4.348 Window2: option-flag bit 0x08 (fFrozen) — the Pane x/y are pane
+        // counts (not split positions) only when it is set.
+        if (d.length >= 2) frozen = (readU16(d, 0) & 0x08) !== 0;
+        break;
+      case REC.PANE:
+        // §2.4.184 Pane: x = columns, y = rows to the left/above the split.
+        if (d.length >= 4) paneSplit = { cols: readU16(d, 0), rows: readU16(d, 2) };
+        break;
       case REC.HLINK: {
         const link = parseHlink(d);
         if (link) hyperlinks.push(link);
@@ -399,16 +433,22 @@ function readSheet(
     ...parseConditionalFormats(records, dxfs, cfColor),
     ...parseConditionalFormats12(records, cfColor),
   ];
+  // A frozen pane only when Window2 set fFrozen and the Pane split is non-zero.
+  const pane: SheetPane | undefined =
+    frozen && paneSplit && (paneSplit.rows > 0 || paneSplit.cols > 0)
+      ? { frozenRows: paneSplit.rows, frozenCols: paneSplit.cols }
+      : undefined;
   const grid: ParsedWorksheet = {
     cells,
     maxRow,
     maxColumn,
     columns,
     merges,
-    rowHeights: [],
+    rowHeights,
     ...parsePrintModel(records),
     ...(dataValidations.length > 0 ? { dataValidations } : {}),
     ...(conditionalFormats.length > 0 ? { conditionalFormats } : {}),
+    ...(pane ? { pane } : {}),
   };
   const drawing = gatherDrawing(records, REC.MSODRAWING);
   const images =

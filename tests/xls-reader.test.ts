@@ -34,15 +34,18 @@ import {
   nameRec,
   noteRec,
   numberRec,
+  paneRec,
   printGridlinesRec,
   rec,
   rightMarginRec,
   rkRec,
+  rowRec,
   setupRec,
   topMarginRec,
   txoRecs,
   vCenterRec,
   vPageBreakRec,
+  window2Rec,
   wsBoolRec,
 } from './fixtures/build-xls';
 import type { FlowDoc } from '@/core/ir/flow';
@@ -740,6 +743,34 @@ describe('xls conditional formatting v12 (XLS-CF12)', () => {
     new DataView(themed.buffer).setUint32(4 + 48 + 6, 3, true);
     const doc = cf12Sheet(themed);
     expect(doc.sheets[0]!.grid.conditionalFormats).toBeUndefined();
+  });
+});
+
+describe('xls frozen panes + row heights (XLS-VIEW)', () => {
+  const sheet = (records: ReadonlyArray<Uint8Array>): SheetDoc =>
+    readXlsToSheetDoc(buildXls({ sheets: [{ name: 'S', records }] }));
+
+  it('reads a custom row height (and skips default-height rows)', () => {
+    const doc = sheet([
+      numberRec(0, 0, 1),
+      rowRec({ row: 0, heightPt: 12.75 }), // default → not custom → skipped
+      rowRec({ row: 2, heightPt: 30, custom: true }), // explicit → recorded
+    ]);
+    expect(doc.sheets[0]!.grid.rowHeights).toEqual([{ row: 2, heightPt: 30, customHeight: true }]);
+  });
+
+  it('reads a frozen pane (2 rows + 1 column) from Window2 + Pane', () => {
+    const doc = sheet([numberRec(0, 0, 1), window2Rec(true), paneRec({ cols: 1, rows: 2 })]);
+    expect(doc.sheets[0]!.grid.pane).toEqual({ frozenRows: 2, frozenCols: 1 });
+  });
+
+  it('ignores a Pane split when Window2 is not frozen (a plain divider)', () => {
+    const doc = sheet([numberRec(0, 0, 1), window2Rec(false), paneRec({ cols: 1, rows: 2 })]);
+    expect(doc.sheets[0]!.grid.pane).toBeUndefined();
+  });
+
+  it('emits no pane when nothing is frozen', () => {
+    expect(sheet([numberRec(0, 0, 1)]).sheets[0]!.grid.pane).toBeUndefined();
   });
 });
 
