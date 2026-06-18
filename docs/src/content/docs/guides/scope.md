@@ -224,9 +224,10 @@ charts — and is byte-stable across a read↔write loop.
   positioned at its rectangle — text boxes and pictures become floating content,
   like the `.pptx` reader; an un-anchored shape (e.g. a placeholder that inherits
   master geometry) flows in reading order. Decorative autoshapes are read as vector
-  shapes — the preset type from the OfficeArtFSP plus their fill / line colour,
-  whether a literal sRGB value or one resolved through the slide's colour scheme (the
-  master's when the slide follows it); only exact custom geometry and palette /
+  shapes — the preset type from the OfficeArtFSP (or, for a freeform, its **exact
+  custom geometry** walked from the `pVertices` / `pSegmentInfo` arrays) plus their
+  fill / line colour, whether a literal sRGB value or one resolved through the
+  slide's colour scheme (the master's when the slide follows it); only palette /
   system colours are not — see Not yet.
 
 **Graphics & math**
@@ -258,12 +259,13 @@ charts — and is byte-stable across a read↔write loop.
 ## Not yet
 
 - **The legacy `.ppt` reader does not yet read** (re-save as `.pptx` for these): a
-  shape's **exact custom geometry** (a non-preset autoshape falls back to a
-  rectangle) and **palette / system colours** (a shape's literal sRGB and
-  colour-scheme fill / line _are_ resolved, but a palette- or system-relative colour
-  is dropped). The slide text with run and paragraph formatting, embedded images,
-  per-shape placement and preset autoshapes (with literal or scheme-resolved fill /
-  line) _are_ read (see PresentationML above). All three legacy binary formats
+  shape's **palette / system colours** (a shape's literal sRGB and colour-scheme
+  fill / line _are_ resolved, but a palette- or system-relative colour is dropped),
+  and the rare arc / ellipse freeform segment (a path using one falls back to its
+  preset bounds rather than risk a mis-aligned curve). The slide text with run and
+  paragraph formatting, embedded images, per-shape placement and autoshapes — preset
+  geometry _and_ exact freeform geometry, with literal or scheme-resolved fill /
+  line — _are_ read (see PresentationML above). All three legacy binary formats
   (`.doc` / `.xls` / `.ppt`) are read through the shared CFB container reader
   (`src/core/ole`).
 - **The legacy `.doc` reader does not yet read** (re-save as `.docx` for these):

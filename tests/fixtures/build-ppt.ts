@@ -44,6 +44,12 @@ const FBT_BLIP_PNG = 0xf01e;
 const PROP_PIB_ID = 0x4104; // OPT property id: pib (0x0104) with the fBid flag (0x4000)
 const PROP_FILL_COLOR = 0x0181;
 const PROP_LINE_COLOR = 0x01c0;
+const PROP_GEO_LEFT = 0x0140; // geometry bounds (simple LONGs), PPT-7
+const PROP_GEO_TOP = 0x0141;
+const PROP_GEO_RIGHT = 0x0142;
+const PROP_GEO_BOTTOM = 0x0143;
+const PROP_VERTICES_COMPLEX = 0x8145; // pVertices (0x0145) with the fComplex flag (0x8000)
+const PROP_SEGMENT_INFO_COMPLEX = 0x8146; // pSegmentInfo (0x0146) with fComplex
 const MASTER_PER_POINT = 8; // 576 master units / inch ÷ 72 points / inch
 
 const TOKEN_UNENCRYPTED = 0xe391c05f;
@@ -111,6 +117,16 @@ export interface PptBoxInput {
   readonly lineColorHex?: string; // OPT lineColor (6-hex literal RGB)
   readonly fillSchemeIndex?: number; // OPT fillColor as a scheme index (0–7), PPT-6
   readonly lineSchemeIndex?: number; // OPT lineColor as a scheme index (0–7), PPT-6
+  readonly freeform?: PptFreeformInput; // exact custom geometry (PPT-7)
+}
+
+// A freeform shape's geometry: the bounds extent (left/top are 0) plus the raw
+// pVertices (i16 POINT pairs) and pSegmentInfo (u16 opcodes) arrays (PPT-7).
+export interface PptFreeformInput {
+  readonly geoRight: number;
+  readonly geoBottom: number;
+  readonly vertices: ReadonlyArray<readonly [number, number]>;
+  readonly segments: ReadonlyArray<number>;
 }
 
 export interface BuildPptOptions {
@@ -394,7 +410,7 @@ function buildShapeContainer(box: PptBoxInput): Uint8Array {
   if (box.shapeType !== undefined) {
     parts.push(rec(FBT_FSP, box.shapeType, false, new Uint8Array(8))); // spid + flags (0)
   }
-  const props: Array<{ id: number; value: number }> = [];
+  const props: Array<{ id: number; value: number; blob?: Uint8Array }> = [];
   if (box.imageRef !== undefined) props.push({ id: PROP_PIB_ID, value: box.imageRef });
   if (box.fillColorHex) props.push({ id: PROP_FILL_COLOR, value: rgbColorRef(box.fillColorHex) });
   else if (box.fillSchemeIndex !== undefined)
@@ -402,14 +418,29 @@ function buildShapeContainer(box: PptBoxInput): Uint8Array {
   if (box.lineColorHex) props.push({ id: PROP_LINE_COLOR, value: rgbColorRef(box.lineColorHex) });
   else if (box.lineSchemeIndex !== undefined)
     props.push({ id: PROP_LINE_COLOR, value: schemeColorRef(box.lineSchemeIndex) });
+  if (box.freeform) {
+    const f = box.freeform;
+    // The geometry bounds (simple LONGs; left/top default to 0) then the two
+    // complex array properties — their 4-byte value is the trailing blob length.
+    props.push({ id: PROP_GEO_LEFT, value: 0 });
+    props.push({ id: PROP_GEO_TOP, value: 0 });
+    props.push({ id: PROP_GEO_RIGHT, value: f.geoRight });
+    props.push({ id: PROP_GEO_BOTTOM, value: f.geoBottom });
+    const vBlob = buildVerticesBlob(f.vertices);
+    const sBlob = buildSegmentsBlob(f.segments);
+    props.push({ id: PROP_VERTICES_COMPLEX, value: vBlob.length, blob: vBlob });
+    props.push({ id: PROP_SEGMENT_INFO_COMPLEX, value: sBlob.length, blob: sBlob });
+  }
   if (props.length > 0) {
-    const opt = new Uint8Array(props.length * 6);
-    const ov = new DataView(opt.buffer);
+    // The fixed 6-byte entries first, then any complex blobs in entry order.
+    const fixed = new Uint8Array(props.length * 6);
+    const ov = new DataView(fixed.buffer);
     props.forEach((p, i) => {
       ov.setUint16(i * 6, p.id, true);
       ov.setUint32(i * 6 + 2, p.value, true);
     });
-    parts.push(rec(FBT_OPT, props.length, false, opt));
+    const blobs = props.filter((p) => p.blob).map((p) => p.blob as Uint8Array);
+    parts.push(rec(FBT_OPT, props.length, false, concat([fixed, ...blobs])));
   }
   if (box.anchor) {
     const { x, y, w, h } = box.anchor;
@@ -427,6 +458,37 @@ function buildShapeContainer(box: PptBoxInput): Uint8Array {
     );
   }
   return rec(FBT_SP_CONTAINER, 0, true, concat(parts));
+}
+
+// An IMsoArray complex property: a 6-byte header (nElems, nElemsAlloc, cbElem)
+// then the element bytes (PPT-7).
+function buildArrayProp(cbElem: number, count: number, body: Uint8Array): Uint8Array {
+  const out = new Uint8Array(6 + body.length);
+  const dv = new DataView(out.buffer);
+  dv.setUint16(0, count, true);
+  dv.setUint16(2, count, true); // nElemsAlloc
+  dv.setUint16(4, cbElem, true);
+  out.set(body, 6);
+  return out;
+}
+
+// pVertices: each POINT a pair of i16 (a 4-byte element).
+function buildVerticesBlob(verts: ReadonlyArray<readonly [number, number]>): Uint8Array {
+  const body = new Uint8Array(verts.length * 4);
+  const dv = new DataView(body.buffer);
+  verts.forEach(([x, y], i) => {
+    dv.setInt16(i * 4, x, true);
+    dv.setInt16(i * 4 + 2, y, true);
+  });
+  return buildArrayProp(4, verts.length, body);
+}
+
+// pSegmentInfo: each opcode a u16 (a 2-byte element).
+function buildSegmentsBlob(segs: ReadonlyArray<number>): Uint8Array {
+  const body = new Uint8Array(segs.length * 2);
+  const dv = new DataView(body.buffer);
+  segs.forEach((s, i) => dv.setUint16(i * 2, s, true));
+  return buildArrayProp(2, segs.length, body);
 }
 
 // A 6-hex RGB → an OfficeArtCOLORREF value (red | green<<8 | blue<<16, flags 0 =

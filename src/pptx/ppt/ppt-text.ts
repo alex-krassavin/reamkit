@@ -1,5 +1,5 @@
 // Legacy `.ppt` (PowerPoint 97–2003, [MS-PPT]) record reader + per-slide content
-// extraction (PPT-1..5). A `.ppt` is an OLE2/CFB container whose `PowerPoint
+// extraction (PPT-1..7). A `.ppt` is an OLE2/CFB container whose `PowerPoint
 // Document` stream is a tree of records sharing the OfficeArt header layout
 // (`[recVerInstance:u16][recType:u16][recLen:u32]`, a container when the low
 // nibble of recVerInstance is 0xF — the same convention `escher.ts` walks for
@@ -20,8 +20,11 @@
 // PPT-6 resolves a shape's scheme-relative fill / line colour through the slide's
 // colour scheme (its own SlideSchemeColorSchemeAtom, or the master's when the slide
 // follows it), instead of dropping it as it did when only a literal sRGB value read.
-// Everything is best-effort and graceful-on-failure — structural doubt yields
-// missing content, never wrong content — mirroring the `.doc`/`.xls` readers.
+// PPT-7 reads a freeform shape's exact custom geometry — the OPT's pVertices and
+// pSegmentInfo complex arrays walked into a path (moveTo / lineTo / cubic curveTo /
+// close) in its geometry-bounds space. Everything is best-effort and graceful-on-
+// failure — structural doubt yields missing content, never wrong content —
+// mirroring the `.doc`/`.xls` readers.
 
 import { isCfb, openCfb } from '@/core/ole/cfb';
 
@@ -56,6 +59,14 @@ const FBT_CLIENT_ANCHOR = 0xf010; // OfficeArtClientAnchor — the slide rectang
 const PROP_PIB = 0x0104; // OPT property (low 14 bits): 1-based index into the FBSE store
 const PROP_FILL_COLOR = 0x0181; // OPT fillColor (PPT-5)
 const PROP_LINE_COLOR = 0x01c0; // OPT lineColor (PPT-5)
+// Freeform geometry OPT properties (§2.3.6 / [MS-ODRAW]); the bounds are simple
+// LONGs, the vertices / segment info complex array properties (PPT-7).
+const PROP_GEO_LEFT = 0x0140;
+const PROP_GEO_TOP = 0x0141;
+const PROP_GEO_RIGHT = 0x0142;
+const PROP_GEO_BOTTOM = 0x0143;
+const PROP_VERTICES = 0x0145;
+const PROP_SEGMENT_INFO = 0x0146;
 // The colour scheme is the slideSchemeColorSchemeAtom — recInstance 1 (recInstance
 // 6 is the alternative SchemeListElement palette, which is not used for resolution).
 const COLOR_SCHEME_INSTANCE = 1;
@@ -111,12 +122,36 @@ export interface PptRect {
   readonly w: number;
   readonly h: number;
 }
+// One command of a freeform path (PPT-7), in geometry-bounds space (0..pathWidth,
+// 0..pathHeight, y down) — the same path-space the DrawingML custom geometry uses.
+export type PptPathCmd =
+  | { readonly kind: 'move'; readonly x: number; readonly y: number }
+  | { readonly kind: 'line'; readonly x: number; readonly y: number }
+  | {
+      readonly kind: 'cubic';
+      readonly x1: number;
+      readonly y1: number;
+      readonly x2: number;
+      readonly y2: number;
+      readonly x: number;
+      readonly y: number;
+    }
+  | { readonly kind: 'close' };
+// A shape's exact custom geometry (PPT-7): the freeform path from the OPT's
+// pVertices + pSegmentInfo arrays, in its geometry-bounds coordinate space.
+export interface PptCustomGeometry {
+  readonly pathWidth: number;
+  readonly pathHeight: number;
+  readonly commands: ReadonlyArray<PptPathCmd>;
+}
 // A decorative autoshape (PPT-5): its preset type plus any literal fill / line
-// colour. Carried only by an anchored shape that has no text and no picture.
+// colour. Carried only by an anchored shape that has no text and no picture. A
+// freeform additionally carries its exact custom geometry (PPT-7).
 export interface PptAutoShape {
   readonly shapeType: number; // MSOSPT (the FSP recInstance)
   readonly fillColorHex?: string;
   readonly lineColorHex?: string;
+  readonly geometry?: PptCustomGeometry;
 }
 // One slide shape (PPT-4..5): its text, picture and/or autoshape geometry, plus its
 // slide rectangle when the shape carries an explicit anchor (else it is laid out in
@@ -547,6 +582,7 @@ function collectShapeContainers(
       let fspFlags = 0;
       let fillColorHex: string | undefined;
       let lineColorHex: string | undefined;
+      let geometry: PptCustomGeometry | undefined;
       for (const child of records(r.data)) {
         if (child.type === FBT_FSP) {
           shapeType = child.instance;
@@ -557,6 +593,7 @@ function collectShapeContainers(
           pib = optProperty(child.data, child.instance, PROP_PIB);
           fillColorHex = optColor(child.data, child.instance, PROP_FILL_COLOR, scheme);
           lineColorHex = optColor(child.data, child.instance, PROP_LINE_COLOR, scheme);
+          geometry = parseFreeformGeometry(child.data, child.instance);
         }
       }
       let image: PptImage | undefined;
@@ -566,22 +603,23 @@ function collectShapeContainers(
       }
       const textParas =
         paragraphs && paragraphs.some((p) => paragraphText(p).length > 0) ? paragraphs : undefined;
-      // A decorative autoshape: an anchored shape with a preset type, a literal
-      // fill or line colour, and no text/picture — and not a group / patriarch /
-      // background shape.
+      // A decorative autoshape: an anchored shape with a preset type (or its own
+      // freeform geometry — PPT-7), a literal fill or line colour, and no
+      // text/picture — and not a group / patriarch / background shape.
       const decorative =
         (fspFlags & (FSP_FLAG_GROUP | FSP_FLAG_PATRIARCH | FSP_FLAG_BACKGROUND)) === 0;
       const autoShape =
         !textParas &&
         !image &&
         rectPt &&
-        shapeType > 0 &&
+        (shapeType > 0 || geometry) &&
         decorative &&
         (fillColorHex || lineColorHex)
           ? {
               shapeType,
               ...(fillColorHex ? { fillColorHex } : {}),
               ...(lineColorHex ? { lineColorHex } : {}),
+              ...(geometry ? { geometry } : {}),
             }
           : undefined;
       if (textParas || image || autoShape) {
@@ -640,6 +678,134 @@ function optProperty(d: Uint8Array, count: number, wantId: number): number | und
     if ((id & 0x3fff) === wantId && (id & 0x8000) === 0) return u32(d, i * 6 + 2);
   }
   return undefined;
+}
+
+// A complex OFOPT property's blob: the `count` fixed 6-byte entries come first,
+// then each complex entry's data follows in entry order, its byte length given by
+// that entry's 4-byte value. Returns the bytes of `wantId`'s blob (bounds-checked).
+function optComplex(d: Uint8Array, count: number, wantId: number): Uint8Array | undefined {
+  let offset = count * 6; // the complex region starts after the fixed entries
+  for (let i = 0; i < count && i * 6 + 6 <= d.length; i++) {
+    const id = u16(d, i * 6);
+    if ((id & 0x8000) === 0) continue; // fComplex clear ⇒ no trailing data
+    const len = u32(d, i * 6 + 2);
+    if ((id & 0x3fff) === wantId) {
+      return offset + len <= d.length && len > 0 ? d.subarray(offset, offset + len) : undefined;
+    }
+    offset += len;
+  }
+  return undefined;
+}
+
+// An IMsoArray complex property: a 6-byte header (nElems u16, nElemsAlloc u16,
+// cbElem i16) then nElems × cbElem bytes. A negative cbElem (e.g. 0xFFF0 = −16)
+// encodes the real element size as (−cbElem) >> 2 (Apache POI EscherArrayProperty).
+function arrayHeader(blob: Uint8Array): { count: number; size: number; base: number } | undefined {
+  if (blob.length < 6) return undefined;
+  const raw = u16(blob, 4);
+  const signed = raw >= 0x8000 ? raw - 0x10000 : raw;
+  const size = signed < 0 ? -signed >> 2 : signed;
+  if (size <= 0) return undefined;
+  return { count: u16(blob, 0), size, base: 6 };
+}
+
+// A 4-byte OPT value as a signed LONG (the geometry bounds may be negative).
+function signedLong(v: number | undefined): number | undefined {
+  return v === undefined ? undefined : v >= 0x80000000 ? v - 0x100000000 : v;
+}
+
+const MAX_PATH_ELEMS = 20000; // a sane cap on a freeform's vertex / segment count
+
+// A freeform shape's exact custom geometry (PPT-7): walk the pSegmentInfo opcodes,
+// pulling points from pVertices, into path commands in the geometry-bounds space.
+// The opcode's top 3 bits are the MSOPATHTYPE (lineTo 0, curveTo 1, moveTo 2,
+// close 3, end 4, escape 5); a lineTo/moveTo consumes one point, a curveTo three
+// (a cubic bezier), close/end none. An arc / ellipse escape (which would consume
+// points for a curve we do not synthesize) makes the whole path bail to its preset
+// — a missing custom geometry, never a mis-aligned one. Mirrors POI HSLFAutoShape.
+function parseFreeformGeometry(d: Uint8Array, count: number): PptCustomGeometry | undefined {
+  const vBlob = optComplex(d, count, PROP_VERTICES);
+  const sBlob = optComplex(d, count, PROP_SEGMENT_INFO);
+  if (!vBlob || !sBlob) return undefined;
+
+  // The vertices: each a POINT — an i16 pair (4-byte element) or i32 pair (8-byte).
+  const vh = arrayHeader(vBlob);
+  if (!vh || vh.count > MAX_PATH_ELEMS) return undefined;
+  const verts: Array<{ x: number; y: number }> = [];
+  for (let i = 0; i < vh.count; i++) {
+    const off = vh.base + i * vh.size;
+    if (off + vh.size > vBlob.length) break;
+    if (vh.size >= 8) verts.push({ x: i32(vBlob, off), y: i32(vBlob, off + 4) });
+    else if (vh.size >= 4) verts.push({ x: i16(vBlob, off), y: i16(vBlob, off + 2) });
+    else return undefined;
+  }
+  if (verts.length === 0) return undefined;
+
+  const sh = arrayHeader(sBlob);
+  if (!sh || sh.size < 2 || sh.count > MAX_PATH_ELEMS) return undefined;
+
+  // The geometry-bounds box; absent extents fall back to the vertices' own range.
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const v of verts) {
+    if (v.x < minX) minX = v.x;
+    if (v.x > maxX) maxX = v.x;
+    if (v.y < minY) minY = v.y;
+    if (v.y > maxY) maxY = v.y;
+  }
+  const left = signedLong(optProperty(d, count, PROP_GEO_LEFT)) ?? minX;
+  const top = signedLong(optProperty(d, count, PROP_GEO_TOP)) ?? minY;
+  const right = signedLong(optProperty(d, count, PROP_GEO_RIGHT)) ?? maxX;
+  const bottom = signedLong(optProperty(d, count, PROP_GEO_BOTTOM)) ?? maxY;
+  const pathWidth = right - left;
+  const pathHeight = bottom - top;
+  if (!(pathWidth > 0) || !(pathHeight > 0) || pathWidth > 1e7 || pathHeight > 1e7)
+    return undefined;
+
+  const commands: Array<PptPathCmd> = [];
+  let vi = 0;
+  let drew = false; // a path needs at least one drawing (line / curve) segment
+  for (let i = 0; i < sh.count; i++) {
+    const off = sh.base + i * sh.size;
+    if (off + 2 > sBlob.length) break;
+    const type = (u16(sBlob, off) >> 13) & 0x7;
+    if (type === 2) {
+      const v = verts[vi++];
+      if (!v) break;
+      commands.push({ kind: 'move', x: v.x - left, y: v.y - top });
+    } else if (type === 0) {
+      const v = verts[vi++];
+      if (!v) break;
+      commands.push({ kind: 'line', x: v.x - left, y: v.y - top });
+      drew = true;
+    } else if (type === 1) {
+      const c1 = verts[vi++];
+      const c2 = verts[vi++];
+      const e = verts[vi++];
+      if (!c1 || !c2 || !e) break;
+      commands.push({
+        kind: 'cubic',
+        x1: c1.x - left,
+        y1: c1.y - top,
+        x2: c2.x - left,
+        y2: c2.y - top,
+        x: e.x - left,
+        y: e.y - top,
+      });
+      drew = true;
+    } else if (type === 3) {
+      commands.push({ kind: 'close' });
+    } else if (type === 4) {
+      break; // msopathEnd
+    } else if (type === 5) {
+      // An escape: low-range codes (arc / ellipse / extension) consume points for
+      // geometry we do not model — bail; high-range codes are render hints, skip.
+      if (((u16(sBlob, off) >> 8) & 0x1f) < 0x0a) return undefined;
+    }
+  }
+  return drew ? { pathWidth, pathHeight, commands } : undefined;
 }
 
 // An OPT colour property → 6-hex RGB. A literal sRGB value (flags byte 0) is taken

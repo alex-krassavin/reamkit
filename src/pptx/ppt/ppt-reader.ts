@@ -1,4 +1,4 @@
-// Legacy `.ppt` reader (PPT-1..5) — the DocumentReader that sniffs a PowerPoint
+// Legacy `.ppt` reader (PPT-1..7) — the DocumentReader that sniffs a PowerPoint
 // 97–2003 binary file (an OLE2/CFB container with a `PowerPoint Document` stream)
 // and reads each slide's text into the same FlowDoc the OOXML pptx reader
 // produces, so the whole render pipeline (projection → PDF/SVG/HTML, re-write to
@@ -11,12 +11,15 @@
 // shape that carries a slide anchor as a floating ShapeBlock (text) / ImageBlock
 // (picture), falling back to reading-order flow for un-anchored shapes; PPT-5 reads
 // decorative autoshapes (preset geometry + literal fill/line); PPT-6 resolves a
-// shape's scheme-relative fill/line colour through the slide's colour scheme. What
-// stays a loss: exact custom geometry, and palette/system (non-scheme) colours.
+// shape's scheme-relative fill/line colour through the slide's colour scheme;
+// PPT-7 reads a freeform's exact custom geometry (pVertices + pSegmentInfo). What
+// stays a loss: palette/system (non-scheme) colours.
 
 import type {
   Alignment,
   BodyElement,
+  CustomGeometry,
+  CustomPathCmd,
   FloatAnchor,
   ImageBlock,
   ParagraphProperties,
@@ -33,6 +36,7 @@ import type { Loss } from '@/core/ir';
 import type {
   PptAutoShape,
   PptContent,
+  PptCustomGeometry,
   PptImage,
   PptParagraph,
   PptRect,
@@ -69,14 +73,14 @@ function looksLikePpt(bytes: Uint8Array): boolean {
 }
 
 // The slide text, its run/paragraph formatting, embedded images, per-shape
-// placement, decorative autoshapes and their scheme-resolved fill/line colour are
-// read; exact custom geometry (and palette/system colours) are not. Reported
-// (degraded, keyed on text) so a caller's loss report is honest about the gap.
+// placement, decorative autoshapes (preset and freeform geometry) and their
+// scheme-resolved fill/line colour are read; palette/system colours are not.
+// Reported (degraded, keyed on text) so a caller's loss report is honest.
 const PPT_TEXT_LOSS: Loss = {
   severity: 'degraded',
   feature: FEATURES.text,
   detail:
-    "legacy .ppt: each slide's text (with run formatting — bold/italic/underline/size/colour — and paragraph alignment/indent), embedded images, per-shape placement and decorative autoshapes (preset geometry with literal or scheme-resolved fill/line colours) are read into one page per slide; exact custom geometry and palette/system colours are not (re-save as .pptx for full fidelity)",
+    "legacy .ppt: each slide's text (with run formatting — bold/italic/underline/size/colour — and paragraph alignment/indent), embedded images, per-shape placement and decorative autoshapes (preset or exact freeform geometry with literal or scheme-resolved fill/line colours) are read into one page per slide; palette/system colours are not (re-save as .pptx for full fidelity)",
 };
 
 const PPT_ENCRYPTED_LOSS: Loss = {
@@ -255,8 +259,23 @@ function isLineShape(shapeType: number): boolean {
   return shapeType === 13 || (shapeType >= 20 && shapeType <= 49);
 }
 
+// A PptPathCmd → the document-model CustomPathCmd (a rename of the `kind` field
+// tag to `cmd`); the coordinates are already in path-bounds space.
+function toCustomGeometry(g: PptCustomGeometry): CustomGeometry {
+  const commands: Array<CustomPathCmd> = g.commands.map((c) =>
+    c.kind === 'move'
+      ? { cmd: 'move', x: c.x, y: c.y }
+      : c.kind === 'line'
+        ? { cmd: 'line', x: c.x, y: c.y }
+        : c.kind === 'cubic'
+          ? { cmd: 'cubic', x1: c.x1, y1: c.y1, x2: c.x2, y2: c.y2, x: c.x, y: c.y }
+          : { cmd: 'close' },
+  );
+  return { pathWidth: g.pathWidth, pathHeight: g.pathHeight, commands };
+}
+
 // A decorative autoshape → a positioned vector ShapeBlock with its preset geometry
-// and any literal fill / line colour.
+// (or its exact freeform geometry — PPT-7) and any literal fill / line colour.
 function positionedAutoShape(rect: PptRect, auto: PptAutoShape): BodyElement {
   const line = isLineShape(auto.shapeType);
   const fill: ShapeFill =
@@ -270,11 +289,9 @@ function positionedAutoShape(rect: PptRect, auto: PptAutoShape): BodyElement {
     float: floatAt(rect),
     width: pt(rect.w),
     height: pt(rect.h),
-    geometry: {
-      kind: 'preset',
-      preset: SHAPE_PRESETS.get(auto.shapeType) ?? 'rect',
-      adjust: new Map(),
-    },
+    geometry: auto.geometry
+      ? { kind: 'custom', custom: toCustomGeometry(auto.geometry) }
+      : { kind: 'preset', preset: SHAPE_PRESETS.get(auto.shapeType) ?? 'rect', adjust: new Map() },
     fill,
     ...(stroke ? { line: stroke } : {}),
     paragraphProperties: {},

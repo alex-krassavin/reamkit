@@ -205,9 +205,9 @@ validation and conditional formatting (classic cellIs / expression rules); a `.p
 yields each slide's
 text (with run and paragraph formatting), embedded images, per-shape placement
 (anchored text boxes and pictures at their slide rectangles) and decorative
-autoshapes (with fill / line colours resolved through the slide's colour scheme),
-one page per slide — all convert onward to PDF, SVG, HTML, or back to `.docx` /
-`.xlsx` like any source.
+autoshapes (preset or exact freeform geometry, with fill / line colours resolved
+through the slide's colour scheme), one page per slide — all convert onward to PDF,
+SVG, HTML, or back to `.docx` / `.xlsx` like any source.
 
 See [`CHANGELOG.md`](./CHANGELOG.md) for the release history; the docs
 [**Scope**](https://reamkit.dev/guides/scope/) guide has the full feature matrix

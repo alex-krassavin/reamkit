@@ -478,3 +478,174 @@ describe('ppt reader scheme colours (PPT-6)', () => {
     expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-');
   });
 });
+
+describe('ppt reader custom geometry (PPT-7)', () => {
+  // The segment opcodes (top 3 bits = MSOPATHTYPE): moveTo 0x4000, lineTo 0x0001,
+  // curveTo 0x2001, close 0x6001.
+  const MOVE = 0x4000;
+  const LINE = 0x0001;
+  const CURVE = 0x2001;
+  const CLOSE = 0x6001;
+
+  it('reads a freeform triangle as exact custom geometry', () => {
+    const doc = readPpt(
+      buildPpt([
+        {
+          boxes: [
+            {
+              anchor: { x: 10, y: 10, w: 200, h: 100 },
+              shapeType: 0,
+              lineColorHex: '0000FF',
+              freeform: {
+                geoRight: 200,
+                geoBottom: 100,
+                vertices: [
+                  [0, 0],
+                  [200, 0],
+                  [100, 100],
+                ],
+                segments: [MOVE, LINE, LINE, CLOSE],
+              },
+            },
+          ],
+        },
+      ]),
+    ).doc;
+    const shape = doc.body.find((el) => el.kind === 'shape')!.shape;
+    expect(shape.geometry.kind).toBe('custom');
+    expect(shape.geometry.custom).toEqual({
+      pathWidth: 200,
+      pathHeight: 100,
+      commands: [
+        { cmd: 'move', x: 0, y: 0 },
+        { cmd: 'line', x: 200, y: 0 },
+        { cmd: 'line', x: 100, y: 100 },
+        { cmd: 'close' },
+      ],
+    });
+  });
+
+  it('reads a curveTo segment as a cubic bezier (three points)', () => {
+    const doc = readPpt(
+      buildPpt([
+        {
+          boxes: [
+            {
+              anchor: { x: 0, y: 0, w: 100, h: 50 },
+              shapeType: 0,
+              lineColorHex: '000000',
+              freeform: {
+                geoRight: 100,
+                geoBottom: 50,
+                vertices: [
+                  [0, 0],
+                  [10, 50],
+                  [90, 50],
+                  [100, 0],
+                ],
+                segments: [MOVE, CURVE],
+              },
+            },
+          ],
+        },
+      ]),
+    ).doc;
+    const shape = doc.body.find((el) => el.kind === 'shape')!.shape;
+    expect(shape.geometry.custom?.commands).toEqual([
+      { cmd: 'move', x: 0, y: 0 },
+      { cmd: 'cubic', x1: 10, y1: 50, x2: 90, y2: 50, x: 100, y: 0 },
+    ]);
+  });
+
+  it('skips a render-hint escape without consuming a vertex', () => {
+    // 0xAC00 is an escape (top bits 101) with sub-code 0x0C (auto-line) — a hint
+    // that pulls no point; the second lineTo must still land on the third vertex.
+    const doc = readPpt(
+      buildPpt([
+        {
+          boxes: [
+            {
+              anchor: { x: 0, y: 0, w: 100, h: 100 },
+              shapeType: 0,
+              lineColorHex: '000000',
+              freeform: {
+                geoRight: 100,
+                geoBottom: 100,
+                vertices: [
+                  [0, 0],
+                  [100, 0],
+                  [100, 100],
+                ],
+                segments: [MOVE, LINE, 0xac00, LINE, CLOSE],
+              },
+            },
+          ],
+        },
+      ]),
+    ).doc;
+    const shape = doc.body.find((el) => el.kind === 'shape')!.shape;
+    expect(shape.geometry.custom?.commands).toEqual([
+      { cmd: 'move', x: 0, y: 0 },
+      { cmd: 'line', x: 100, y: 0 },
+      { cmd: 'line', x: 100, y: 100 },
+      { cmd: 'close' },
+    ]);
+  });
+
+  it('falls back to preset geometry on an unmodelled arc escape (never wrong)', () => {
+    // 0xA300 is an escape with sub-code 0x03 (arc-to) — it would consume points for
+    // a curve we do not synthesize, so the whole custom path bails to the preset.
+    const doc = readPpt(
+      buildPpt([
+        {
+          boxes: [
+            {
+              anchor: { x: 0, y: 0, w: 100, h: 100 },
+              shapeType: 1,
+              fillColorHex: 'FF0000',
+              freeform: {
+                geoRight: 100,
+                geoBottom: 100,
+                vertices: [
+                  [0, 0],
+                  [100, 0],
+                ],
+                segments: [MOVE, 0xa300],
+              },
+            },
+          ],
+        },
+      ]),
+    ).doc;
+    const shape = doc.body.find((el) => el.kind === 'shape')!.shape;
+    expect(shape.geometry.kind).toBe('preset');
+    expect(shape.geometry.preset).toBe('rect');
+  });
+
+  it('converts a .ppt freeform to PDF', async () => {
+    const pdf = await Ream.parse(
+      buildPpt([
+        {
+          boxes: [
+            {
+              anchor: { x: 50, y: 50, w: 200, h: 120 },
+              shapeType: 0,
+              fillColorHex: '3366CC',
+              freeform: {
+                geoRight: 200,
+                geoBottom: 120,
+                vertices: [
+                  [0, 0],
+                  [200, 60],
+                  [0, 120],
+                ],
+                segments: [MOVE, LINE, LINE, CLOSE],
+              },
+            },
+          ],
+        },
+      ]),
+    ).convert('pdf', { fonts });
+    expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-');
+  });
+});
