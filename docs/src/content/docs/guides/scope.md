@@ -112,10 +112,10 @@ charts — and is byte-stable across a read↔write loop.
   (autoshapes + text boxes, from the Escher shape records and their TXO text) are
   read, plus **cell hyperlinks** (the HLINK record's URL moniker), the **page-setup
   print model** (orientation, scale, fit-to-page, margins, gridlines, centering,
-  header/footer and manual page breaks) and **defined names** (named ranges plus the
-  print area and repeated titles, from the NAME records). The remaining secondary
-  sheet features (conditional formatting, comments, data validation) are not read
-  yet — see Not yet.
+  header/footer and manual page breaks), **defined names** (named ranges plus the
+  print area and repeated titles, from the NAME records) and **cell comments** (the
+  Note record's author + the text-box text). The remaining secondary sheet features
+  (conditional formatting, data validation) are not read yet — see Not yet.
 - The print model — gridline suppression, print area, fit-to-page scaling, repeated
   print titles, manual page breaks, horizontal/vertical centering, and **column-band
   pagination**: a sheet wider than the page (and not fit-to-width) splits across
@@ -268,11 +268,11 @@ charts — and is byte-stable across a read↔write loop.
   formatting, tables with column widths, inline images, fields, and the section's
   headers/footers — is read (see WordprocessingML above).
 - **The legacy `.xls` reader does not yet read** (re-save as `.xlsx` for these): the
-  remaining secondary sheet features — **conditional formatting, cell comments** and
-  **data validation** — which the OOXML `.xlsx` reader handles but the BIFF reader
-  does not. The cell data, styling, embedded images, charts, drawing shapes, cell
-  hyperlinks, the **page-setup print model** and **defined names** (named ranges,
-  print area, repeated titles) _are_ read (see SpreadsheetML above).
+  remaining secondary sheet features — **conditional formatting** and **data
+  validation** — which the OOXML `.xlsx` reader handles but the BIFF reader does not.
+  The cell data, styling, embedded images, charts, drawing shapes, cell hyperlinks,
+  the **page-setup print model**, **defined names** (named ranges, print area,
+  repeated titles) and **cell comments** _are_ read (see SpreadsheetML above).
 - **Byte-for-byte visual reproduction of another renderer.** `layoutProfile` plus the
   metric-compatible substitutes get a target tool's page geometry close — without its
   private font metrics — but _pixel-identical_ output is a non-goal: that would need the

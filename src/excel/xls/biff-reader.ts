@@ -15,6 +15,7 @@ import type { BodyElement, Chart, ShapeBlock } from '@/core/document-model';
 import type {
   Sheet,
   SheetChartRef,
+  SheetComment,
   SheetDoc,
   SheetHyperlink,
   SheetImageRef,
@@ -77,6 +78,9 @@ const REC = {
   FOOTER: 0x0015,
   HPAGEBREAK: 0x001b, // horizontal (row) breaks
   VPAGEBREAK: 0x001a, // vertical (column) breaks
+  // Cell comments (sheet-scoped) — XLS-11.
+  NOTE: 0x001c, // Note — the comment's cell + author + idObj
+  OBJ: 0x005d, // Obj — the comment's text-box object (FtCmo ot 0x19)
 } as const;
 
 // Bombs / corruption guards.
@@ -148,7 +152,7 @@ export function readXlsToSheetDoc(xls: Uint8Array): SheetDoc {
   for (const bs of boundSheets) {
     if (bs.type !== 0) continue; // 0 = worksheet (skip chart/macro sheets)
     if (bs.offset + 4 > wb.length) continue;
-    const { grid, images, charts, shapes, hyperlinks } = readSheet(
+    const { grid, images, charts, shapes, hyperlinks, comments } = readSheet(
       wb,
       view,
       bs.offset,
@@ -164,6 +168,7 @@ export function readXlsToSheetDoc(xls: Uint8Array): SheetDoc {
       ...(charts.length > 0 ? { charts } : {}),
       ...(shapes.length > 0 ? { shapes } : {}),
       ...(hyperlinks.length > 0 ? { hyperlinks } : {}),
+      ...(comments.length > 0 ? { comments } : {}),
     });
   }
   if (sheets.length === 0) throw new Error('.xls has no worksheets');
@@ -258,6 +263,7 @@ function readSheet(
   charts: Array<SheetChartRef>;
   shapes: Array<ShapeBlock>;
   hyperlinks: Array<SheetHyperlink>;
+  comments: Array<SheetComment>;
 } {
   const records = readSubstream(wb, view, start);
   const cells: Array<WorksheetCell> = [];
@@ -396,7 +402,7 @@ function readSheet(
   const shapes =
     drawing.length > 0 ? buildShapes(parseSheetShapes(drawing), gatherTxoTexts(records)) : [];
 
-  return { grid, images, charts, shapes, hyperlinks };
+  return { grid, images, charts, shapes, hyperlinks, comments: parseComments(records) };
 }
 
 // HLink flags (the hlink object's hlinkFlags, [MS-OSHARED] §2.3.7.1).
@@ -809,6 +815,59 @@ function gatherTxoTexts(recs: ReadonlyArray<BiffRecord>): Array<string> {
     } else {
       out.push('');
     }
+  }
+  return out;
+}
+
+// Cell comments (XLS-11): a Note (0x1C) gives the cell + author + idObj; its text
+// lives in the Txo of the Obj whose FtCmo id matches idObj (ot 0x19 = comment).
+// Join on the shared object id (POI's HSSFComment key), not record adjacency, so
+// a non-comment Obj interleaved in the drawing block can't desync the text.
+function parseComments(records: ReadonlyArray<BiffRecord>): Array<SheetComment> {
+  const textByObj = new Map<number, string>();
+  let pendingObjId: number | undefined;
+  const notes: Array<{ idObj: number; rw: number; col: number; author: string }> = [];
+
+  for (let i = 0; i < records.length; i++) {
+    const r = records[i]!;
+    const d = r.data;
+    if (r.type === REC.OBJ) {
+      // FtCmo: ft 0x15 @0, cb @2, ot @4 (0x19 = comment), id @6.
+      pendingObjId =
+        d.length >= 8 && readU16(d, 0) === 0x0015 && readU16(d, 4) === 0x0019
+          ? readU16(d, 6)
+          : undefined;
+    } else if (r.type === REC.TXO && pendingObjId !== undefined) {
+      const cch = readU16(d, 10);
+      const next = records[i + 1];
+      textByObj.set(
+        pendingObjId,
+        cch > 0 && next && next.type === REC.CONTINUE && next.data.length > 0
+          ? decodeChars(next.data, 1, cch, (next.data[0]! & 0x01) !== 0)
+          : '',
+      );
+      pendingObjId = undefined;
+    } else if (r.type === REC.NOTE && d.length >= 11) {
+      const cchAuthor = readU16(d, 8);
+      notes.push({
+        rw: readU16(d, 0),
+        col: readU16(d, 2),
+        idObj: readU16(d, 6),
+        author: decodeChars(d, 11, cchAuthor, (d[10]! & 0x01) !== 0),
+      });
+    }
+  }
+
+  const out: Array<SheetComment> = [];
+  for (const n of notes) {
+    const text = textByObj.get(n.idObj) ?? '';
+    if (text.length === 0) continue; // no resolvable text → skip (missing, never wrong)
+    out.push({
+      ref: `${colLetters(n.col)}${n.rw + 1}`,
+      ...(n.author.length > 0 ? { author: n.author } : {}),
+      text,
+      threaded: false,
+    });
   }
   return out;
 }

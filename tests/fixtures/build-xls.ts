@@ -599,6 +599,37 @@ export function txoRecs(text: string): Array<Uint8Array> {
   return [rec(0x01b6, td), rec(0x003c, cont)];
 }
 
+// Note (0x001C): a cell comment's anchor + author + idObj (XLS-11).
+export function noteRec(opts: {
+  readonly row: number;
+  readonly col: number;
+  readonly idObj: number;
+  readonly author?: string;
+}): Uint8Array {
+  const author = ascii(opts.author ?? '');
+  const d = new Uint8Array(11 + author.length);
+  const v = new DataView(d.buffer);
+  v.setUint16(0, opts.row, true);
+  v.setUint16(2, opts.col, true);
+  v.setUint16(4, 0x0002, true); // grbit: fShow
+  v.setUint16(6, opts.idObj, true); // idObj
+  v.setUint16(8, opts.author?.length ?? 0, true); // cchAuthor
+  d[10] = 0; // fHighByte = 0 (compressed)
+  d.set(author, 11);
+  return rec(0x001c, d);
+}
+
+// Obj (0x005D) for a comment text box: an FtCmo sub-record with ot 0x19 (comment).
+export function commentObjRec(idObj: number): Uint8Array {
+  const d = new Uint8Array(22);
+  const v = new DataView(d.buffer);
+  v.setUint16(0, 0x0015, true); // ft = FtCmo
+  v.setUint16(2, 0x0012, true); // cb = 18
+  v.setUint16(4, 0x0019, true); // ot = comment
+  v.setUint16(6, idObj, true); // id (matches Note.idObj)
+  return rec(0x005d, d);
+}
+
 export interface XlsSheetInput {
   readonly name: string;
   readonly records: ReadonlyArray<Uint8Array>;

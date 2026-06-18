@@ -11,6 +11,7 @@ import {
   boolRec,
   bottomMarginRec,
   buildXls,
+  commentObjRec,
   errRec,
   footerRec,
   formulaNumberRec,
@@ -24,6 +25,7 @@ import {
   mergeCellsRec,
   mulRkRec,
   nameRec,
+  noteRec,
   numberRec,
   printGridlinesRec,
   rec,
@@ -31,6 +33,7 @@ import {
   rkRec,
   setupRec,
   topMarginRec,
+  txoRecs,
   vCenterRec,
   vPageBreakRec,
   wsBoolRec,
@@ -351,6 +354,78 @@ describe('xls defined names (XLS-10)', () => {
   it('skips a name with no resolvable reference (no wrong range)', () => {
     const doc = docWith([nameRec({ name: 'Empty', itab: 0, areas: [] })]);
     expect(doc.definedNames).toEqual([]);
+  });
+});
+
+describe('xls cell comments (XLS-11)', () => {
+  it('reads a cell comment (ref, author, text) into the SheetDoc', () => {
+    const doc = readXlsToSheetDoc(
+      buildXls({
+        sheets: [
+          {
+            name: 'S',
+            records: [
+              numberRec(0, 0, 1),
+              commentObjRec(1),
+              ...txoRecs('Looks off'),
+              noteRec({ row: 0, col: 0, idObj: 1, author: 'Alex' }),
+            ],
+          },
+        ],
+      }),
+    );
+    expect(doc.sheets[0]!.comments).toEqual([
+      { ref: 'A1', author: 'Alex', text: 'Looks off', threaded: false },
+    ]);
+  });
+
+  it('joins note → text by object id regardless of record order', () => {
+    const doc = readXlsToSheetDoc(
+      buildXls({
+        sheets: [
+          {
+            name: 'S',
+            records: [noteRec({ row: 2, col: 3, idObj: 7 }), commentObjRec(7), ...txoRecs('Later')],
+          },
+        ],
+      }),
+    );
+    expect(doc.sheets[0]!.comments).toEqual([{ ref: 'D3', text: 'Later', threaded: false }]);
+  });
+
+  it('lists comments in a Comments section in the projection', () => {
+    const doc = readXlsToSheetDoc(
+      buildXls({
+        sheets: [
+          {
+            name: 'S',
+            records: [
+              numberRec(0, 0, 1),
+              commentObjRec(1),
+              ...txoRecs('A remark'),
+              noteRec({ row: 0, col: 0, idObj: 1, author: 'Q' }),
+            ],
+          },
+        ],
+      }),
+    );
+    const text = projectSheetDoc(doc)
+      .body.filter((el) => el.kind === 'paragraph')
+      .flatMap((el) => el.paragraph.runs.map((r) => r.text))
+      .join(' ');
+    expect(text).toContain('Comments');
+    expect(text).toContain('A remark');
+  });
+
+  it('skips a note whose object has no text (no wrong content)', () => {
+    const doc = readXlsToSheetDoc(
+      buildXls({
+        sheets: [
+          { name: 'S', records: [numberRec(0, 0, 1), noteRec({ row: 0, col: 0, idObj: 9 })] },
+        ],
+      }),
+    );
+    expect(doc.sheets[0]!.comments).toBeUndefined();
   });
 });
 
