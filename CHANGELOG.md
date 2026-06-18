@@ -3,6 +3,28 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.15.1
+
+Read-fidelity fixes across the binary and PDF readers, found by a cross-format
+validation sweep against real third-party documents.
+
+### Fixed
+
+- **Legacy `.doc` / `.xls` / `.ppt` (CFB container).** Ignore the non-zero garbage
+  some Office writers leave in the reserved high 4 bytes of a v3 stream-size field
+  (MS-CFB §2.6.1) — affected files were wrongly rejected as exceeding the size
+  limit. And resolve streams from the main document's storage, so an embedded OLE
+  object's same-named `WordDocument` / `1Table` / `Workbook` no longer shadows the
+  real one (a `.doc` that embeds an object could otherwise parse to nothing).
+- **Read PDF.** Preserve the source page size: a reconstructed PDF re-renders at
+  its real MediaBox size and orientation instead of a fixed A4 — an A3 page no
+  longer splits across several A4 pages, and landscape / custom page sizes are
+  kept.
+- **Read `.pptx`.** Omit hidden slides (`p:sld@show="0"`) from the rendered deck,
+  matching PowerPoint and LibreOffice; the omission is reported as a loss.
+- **Read legacy `.doc`.** Read the section page size from the SEP (sprmSXaPage /
+  sprmSYaPage), so an A4 or landscape document is no longer forced to US Letter.
+
 ## 1.15.0
 
 Three new input formats — the legacy binary `.doc`, `.xls` and `.ppt` (Office
