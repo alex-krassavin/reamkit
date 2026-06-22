@@ -115,6 +115,48 @@ h1#_top,
   backdrop-filter: blur(10px);
 }
 
+/* Match the design: logo left, a flexible gap, then a compact search, a divider
+   and the GitHub link clustered on the right. Starlight stretches the search in
+   a 3-column `auto 1fr auto` grid (only on >=50rem with a sidebar, so this no-ops
+   on the flex mobile header) — give the title column the free space instead. */
+:root[data-has-sidebar] .header {
+  grid-template-columns: 1fr auto auto;
+}
+site-search button[data-open-modal] {
+  width: 236px;
+}
+/* Vertical rule before the social group. */
+.header .right-group::before {
+  content: '';
+  align-self: center;
+  width: 1px;
+  height: 24px;
+  background: var(--rk-border);
+  margin-inline-end: 6px;
+}
+/* The design's header carries only GitHub (icon + label); email lives in the
+   page footer / contact line. */
+.header .right-group a[href^='mailto:'] {
+  display: none;
+}
+.header .right-group a[href*='github.com'] {
+  width: auto;
+  height: auto;
+  gap: 7px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: #4a4232;
+}
+.header .right-group a[href*='github.com']:hover {
+  background: var(--rk-hover);
+  color: var(--rk-terra);
+}
+.header .right-group a[href*='github.com']::after {
+  content: 'GitHub';
+}
+
 /* ---- Sidebar nav: rounded pills with a soft active background ---- */
 #starlight__sidebar {
   border-inline-end: 1px solid var(--rk-border);
