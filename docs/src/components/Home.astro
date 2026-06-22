@@ -77,7 +77,11 @@ const ICONS: Record<string, string> = {
 };
 ---
 
-<div class="rk-home">
+<!-- `not-content` opts the custom home out of Starlight's prose styling, whose
+     `.sl-markdown-content a` link colour would otherwise win over these scoped
+     button colours (Astro scopes with :where(), i.e. zero specificity) and make
+     the primary button's text terracotta-on-terracotta until hover. -->
+<div class="rk-home not-content">
   <!-- hero -->
   <section class="rk-hero">
     <div class="rk-tags">
