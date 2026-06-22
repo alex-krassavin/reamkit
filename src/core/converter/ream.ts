@@ -39,40 +39,58 @@ import { renderStyledPdf, renderStyledPdfEncrypted, signPdf } from '@/pdf';
 import { writeSvg } from '@/svg/svg-writer';
 import { resolveDocxAutoFonts } from '@/word/docx-to-pdf';
 
+/** The output formats {@link Ream.convert} can produce. */
 export type ReamTarget = 'pdf' | 'svg' | 'html' | 'docx' | 'xlsx';
 
+/** Options for {@link Ream.parse}. */
 export interface ReamParseOptions {
-  // Reader registry override — defaults to the built-in docx + xlsx readers.
+  /** Reader registry override; defaults to the built-in docx + xlsx readers. */
   readonly readers?: ReadonlyArray<DocumentReader<SourceDoc>>;
-  // §7.6 — the user password for an encrypted PDF. Defaults to the empty string,
-  // which opens the common permissions-only encryption (EP14).
+  /**
+   * The user password for an encrypted PDF source (ISO 32000 §7.6). Defaults to
+   * the empty string, which opens the common permissions-only encryption (EP14).
+   */
   readonly password?: string;
 }
 
+/**
+ * Options for {@link Ream.convert} and {@link Ream.convertWithReport}. Extends
+ * the low-level {@link StyledRenderOptions} (minus the font `registry` and
+ * `styles`, which Ream builds itself) with font resolution and source-touching
+ * conveniences.
+ */
 export interface ReamConvertOptions extends Omit<StyledRenderOptions, 'registry' | 'styles'> {
+  /** Explicit font bytes per variant (regular/bold/italic/bold-italic). */
   readonly fonts?: FontBytesByVariant;
+  /** Shorthand for supplying a single regular-variant font as raw bytes. */
   readonly fontBytes?: Uint8Array;
-  // Substitute family hint for the auto-download path.
+  /** Substitute family hint for the auto-download path. */
   readonly fontFamily?: string;
-  // Injectable fetch for the auto-download path (defaults to global fetch).
+  /** Injectable `fetch` for the auto-download path (defaults to the global `fetch`). */
   readonly fontFetch?: FetchLike;
-  // Font resolution chain (caller/embedded/local/remote) — used when
-  // `fonts`/`fontBytes` are absent; a remote/local winner records a
-  // substitution Loss.
+  /**
+   * Font resolution chain (caller/embedded/local/remote), used when neither
+   * `fonts` nor `fontBytes` is given. A remote or local winner records a
+   * substitution {@link Loss}.
+   */
   readonly fontProviders?: ReadonlyArray<FontProvider>;
-  // Throw ConversionLossError on the first loss instead of reporting it.
+  /** Throw {@link ConversionLossError} on the first loss instead of reporting it. */
   readonly strict?: boolean;
-  // PDF/A-3 only: embed the parsed source file (/AFRelationship /Source).
+  /** PDF/A-3 only: embed the parsed source file (`/AFRelationship /Source`). */
   readonly embedSource?: boolean;
-  // Digitally sign the output (ISO 32000 §12.8, WebCrypto).
+  /** Digitally sign the output (ISO 32000 §12.8, WebCrypto). */
   readonly signature?: SignatureOptions;
-  // E-SHEET W9 — the reference date for conditional-format `timePeriod` rules and
-  // TODAY()/NOW() in `expression` rules. Supplying it re-projects a spreadsheet
-  // source so those clock-relative rules resolve against this date (an explicit
-  // input — never the wall clock). Omitted ⇒ they no-op and output is unchanged.
+  /**
+   * Reference date for spreadsheet conditional-format `timePeriod` rules and for
+   * `TODAY()`/`NOW()` in `expression` rules (E-SHEET W9). Supplying it re-projects
+   * a spreadsheet source so those clock-relative rules resolve against this date —
+   * an explicit input, never the wall clock. Omitted, they no-op and the output is
+   * unchanged.
+   */
   readonly now?: Date;
 }
 
+/** OOXML / legacy MIME types by reader id, for the PDF/A-3 embedded source file. */
 const SOURCE_MIME: Readonly<Record<string, string>> = {
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   doc: 'application/msword',
@@ -83,20 +101,51 @@ const SOURCE_MIME: Readonly<Record<string, string>> = {
   pdf: 'application/pdf',
 };
 
+/**
+ * The object face of the library: parse a document once into the format-neutral
+ * {@link FlowDoc} interlayer, then convert it to any number of targets without
+ * re-reading the source.
+ *
+ * ```ts
+ * const doc = Ream.parse(bytes); // sniff → reader → FlowDoc
+ * const pdf = await doc.convert('pdf', { fonts });
+ * const svg = await doc.convert('svg', { fonts });
+ * ```
+ *
+ * It is a thin GRASP Controller: readers parse, `flowRenderOptions` projects the
+ * FlowDoc, and layout/emit plus the writers do the work. As a deliberate
+ * composition root, importing it pulls in every format module — prefer the
+ * per-format functions when bundle size matters more than convenience. The
+ * source bytes are retained only for the two source-touching features: docx
+ * substitute-font auto-detection and PDF/A-3 `embedSource`.
+ */
 export class Ream {
+  /**
+   * @param flow     The interlayer — the parsed, format-neutral document tree.
+   * @param sheet    The native SpreadsheetML tree when the source is a spreadsheet
+   *                 (xlsx); {@link Ream.flow} is its projection through the print model.
+   * @param losses   Losses recorded while reading the source.
+   * @param source   The original source bytes (kept only for docx auto-fonts and
+   *                 PDF/A-3 `embedSource`).
+   * @param readerId The id of the reader that parsed the source.
+   */
   private constructor(
-    // The interlayer itself — the parsed, format-neutral document tree.
     readonly flow: FlowDoc,
-    // The native SpreadsheetML tree when the source is a spreadsheet (xlsx);
-    // the FlowDoc above is its projection through the print model.
     readonly sheet: SheetDoc | undefined,
-    // Losses recorded while reading the source.
     readonly losses: ReadonlyArray<Loss>,
     private readonly source: Uint8Array,
     private readonly readerId: string,
   ) {}
 
-  // Sniff the format, parse once into the FlowDoc interlayer.
+  /**
+   * Sniff the format and parse the bytes once into the {@link FlowDoc} interlayer.
+   *
+   * @param bytes   The raw document bytes; the format is detected by sniffing.
+   * @param options Optional reader-registry override and/or password for an
+   *                encrypted source.
+   * @returns A reusable {@link Ream} instance.
+   * @throws Error when no registered reader recognizes the bytes.
+   */
   static parse(bytes: Uint8Array, options: ReamParseOptions = {}): Ream {
     const readers = options.readers ?? DEFAULT_READERS;
     const reader = readers.find((r) => r.sniff(bytes));
@@ -112,15 +161,36 @@ export class Ream {
     return new Ream(toFlowDoc(doc), sheet, losses, bytes, reader.id);
   }
 
-  // Source format id ('docx', 'xlsx', …).
+  /** The source format id (`'docx'`, `'xlsx'`, …). */
   get format(): string {
     return this.readerId;
   }
 
+  /**
+   * Convert the parsed document to `to` and return just the output bytes. A thin
+   * wrapper over {@link Ream.convertWithReport} that drops the loss report.
+   *
+   * @param to      The target format.
+   * @param options Font resolution and target-specific options.
+   * @returns The encoded output bytes.
+   */
   async convert(to: ReamTarget, options: ReamConvertOptions = {}): Promise<Uint8Array> {
     return (await this.convertWithReport(to, options)).bytes;
   }
 
+  /**
+   * Convert the parsed document to `to`, returning the output bytes together with
+   * the accumulated {@link Loss} report (read-time losses plus any added while
+   * writing). HTML, DOCX and XLSX are produced straight from the interlayer — no
+   * layout, no fonts, zero I/O; SVG and PDF run the layout engine and resolve
+   * fonts first.
+   *
+   * @param to      The target format. `'xlsx'` requires a spreadsheet source.
+   * @param options Font resolution and target-specific options.
+   * @returns The encoded bytes and the loss report.
+   * @throws Error when `to` is `'xlsx'` but the source has no grid.
+   * @throws ConversionLossError when `options.strict` is set and any loss was recorded.
+   */
   async convertWithReport(
     to: ReamTarget,
     options: ReamConvertOptions = {},
@@ -229,6 +299,16 @@ export class Ream {
     return { bytes: pdf, losses };
   }
 
+  /**
+   * Resolve the font set for a layout/PDF conversion. Explicit `fonts`/`fontBytes`
+   * win; otherwise the provider chain is tried, then an open substitute set is
+   * auto-downloaded (per detected family for docx). Any substitution is appended
+   * to `losses`.
+   *
+   * @param options The convert options carrying the font preferences.
+   * @param losses  The mutable loss list a substitution is appended to.
+   * @returns The font bytes and, for docx, optional per-family registries.
+   */
   private async resolveFonts(
     options: ReamConvertOptions,
     losses: Array<Loss>,
@@ -257,6 +337,13 @@ export class Ream {
     return { fonts: await fetchFontSet(fetchOpt) };
   }
 
+  /**
+   * In strict mode, throw {@link ConversionLossError} for the first recorded loss.
+   *
+   * @param options The convert options (checked for `strict`).
+   * @param losses  The losses accumulated so far.
+   * @throws ConversionLossError when `options.strict` is set and `losses` is non-empty.
+   */
   private enforceStrict(options: ReamConvertOptions, losses: ReadonlyArray<Loss>): void {
     if (options.strict && losses.length > 0) throw new ConversionLossError(losses[0]!);
   }

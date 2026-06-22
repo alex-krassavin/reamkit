@@ -38,6 +38,7 @@ import { pptxReader } from '@/pptx/pptx-reader';
 import { pptReader } from '@/pptx/ppt/ppt-reader';
 import { pdfReader } from '@/pdf-reader/reader';
 
+/** Options for a {@link Converter.convert} call (extends the docx PDF options). */
 export interface ConvertOptions extends ConvertDocxOptions {
   /**
    * Target: 'pdf' (default), 'svg' (page-stack preview), 'html'/'docx' (flowed),
@@ -66,16 +67,29 @@ export interface ConvertOptions extends ConvertDocxOptions {
   readonly fontProviders?: ReadonlyArray<FontProvider>;
 }
 
+/** The output of a conversion: the encoded bytes and the accumulated losses. */
 export interface ConvertResult {
+  /** The encoded output bytes (PDF / SVG / HTML / DOCX / XLSX). */
   readonly bytes: Uint8Array;
+  /** Every {@link Loss} recorded while reading the source and writing the target. */
   readonly losses: LossReport;
 }
 
-// A reader yields one of the source IR trees; the render path is FlowDoc, so a
-// SheetDoc is projected to a FlowDoc at the boundary (E-SHEET SB1). The
-// discriminant `kind` selects the projection — FlowDoc passes through.
+/**
+ * One of the source IR trees a reader yields. The render path is {@link FlowDoc},
+ * so a {@link SheetDoc} is projected to a FlowDoc at the boundary (E-SHEET SB1);
+ * the discriminant `kind` selects the projection and a FlowDoc passes through.
+ */
 export type SourceDoc = FlowDoc | SheetDoc;
 
+/**
+ * Normalize a {@link SourceDoc} to a {@link FlowDoc}: a {@link SheetDoc} is run
+ * through the print-model projection; a FlowDoc passes through unchanged.
+ *
+ * @param doc     The reader's native tree.
+ * @param options Projection options (e.g. the `now` reference date).
+ * @returns The flow tree the render path consumes.
+ */
 export function toFlowDoc(doc: SourceDoc, options: ProjectSheetOptions = {}): FlowDoc {
   return doc.kind === 'sheet' ? projectSheetDoc(doc, options) : doc;
 }
@@ -89,19 +103,23 @@ function readToFlow(
   return { doc: toFlowDoc(doc, options), losses };
 }
 
+/** A registry-driven converter: readers → layout → writers (ir-design §7). */
 export interface Converter {
   /** The registered readers, in sniffing order. */
   readonly readers: ReadonlyArray<DocumentReader<SourceDoc>>;
   /** Detect the input format by reader sniffing; undefined when unknown. */
   detect: (bytes: Uint8Array) => DocumentReader<SourceDoc> | undefined;
+  /** Read the bytes and convert them to the requested target (default `'pdf'`). */
   convert: (bytes: Uint8Array, options?: ConvertOptions) => Promise<ConvertResult>;
 }
 
+/** Options for {@link createConverter}. */
 export interface CreateConverterOptions {
-  /** Override / extend the reader registry (defaults to docx + xlsx). */
+  /** Override / extend the reader registry (defaults to {@link DEFAULT_READERS}). */
   readonly readers?: ReadonlyArray<DocumentReader<SourceDoc>>;
 }
 
+/** The built-in readers, in sniffing order: docx, doc, xlsx, xls, pptx, ppt, pdf. */
 export const DEFAULT_READERS: ReadonlyArray<DocumentReader<SourceDoc>> = [
   docxReader,
   docReader,
@@ -112,6 +130,13 @@ export const DEFAULT_READERS: ReadonlyArray<DocumentReader<SourceDoc>> = [
   pdfReader,
 ];
 
+/**
+ * Build a {@link Converter} over a reader registry. The async boundary (font
+ * fetching) lives here; readers and writers stay synchronous.
+ *
+ * @param opts Optional reader-registry override.
+ * @returns A converter exposing `readers`, `detect` and `convert`.
+ */
 export function createConverter(opts: CreateConverterOptions = {}): Converter {
   const readers = opts.readers ?? DEFAULT_READERS;
 
@@ -239,9 +264,15 @@ async function renderSheetReaderToPdf(
   });
 }
 
-// Resolve regular/bold/italic/boldItalic through the chain. v0 resolves the
-// document-default family (per-run family-aware resolution folds in when the
-// converters take providers natively). A 'remote' winner is a substitution.
+/**
+ * Resolve the regular/bold/italic/bold-italic variants of the document-default
+ * family through a {@link FontProvider} chain. A `remote` or `local` winner is
+ * reported as a substitution {@link Loss}.
+ *
+ * @param providers The provider chain, highest priority first.
+ * @returns The resolved font bytes (present when the regular variant resolves)
+ *          and an optional substitution loss.
+ */
 export async function resolveFontsViaChain(
   providers: ReadonlyArray<FontProvider>,
 ): Promise<{ fonts?: FontBytesByVariant; loss?: Loss }> {
