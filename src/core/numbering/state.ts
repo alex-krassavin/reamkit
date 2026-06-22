@@ -13,10 +13,25 @@ import type {
   NumberingReference,
 } from '@/core/document-model';
 
+/**
+ * Mutable list-counter state for one numbering scope (e.g. a body or a single
+ * header/footer band). Tracks a counter per list per level and advances them as
+ * paragraphs are visited in order.
+ */
 export class NumberingState {
   // numId → counters indexed by ilvl (0..8). 0 means "not yet started".
   private readonly counters = new Map<string, Array<number>>();
 
+  /**
+   * Advance the counter for `ref` (resetting deeper levels) and format its
+   * marker text. The first hit at a level seeds it from the level's `start`;
+   * subsequent hits increment.
+   *
+   * @param numbering The parsed numbering definitions.
+   * @param ref       The paragraph's `numId` + `ilvl` reference.
+   * @returns The formatted marker (e.g. `"2."`, `"•"`), or `null` when the
+   *          reference does not resolve to a known list level.
+   */
   resolveMarker(numbering: Numbering, ref: NumberingReference): string | null {
     const instance = numbering.numInstances.get(ref.numId);
     if (!instance) return null;

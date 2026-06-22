@@ -18,15 +18,27 @@
 import type { PoNode } from '@/core/po-helpers';
 import { poAttr, poChildren, poIntAttr, poIs } from '@/core/po-helpers';
 
+/**
+ * A colour transform child (§20.1.2.3): `lumMod`/`lumOff` modulate luminance,
+ * `shade` darkens toward black, `tint` lightens toward white. `val` is normalised
+ * to 0..1 (the XML stores thousandths of a percent). `alpha` is parsed but ignored
+ * (solid fills emit no transparency).
+ */
 export interface ColorMod {
   readonly kind: 'lumMod' | 'lumOff' | 'shade' | 'tint' | 'alpha';
   readonly val: number;
 }
 
+/**
+ * A theme-agnostic colour reference emitted by the shape parser: either a direct
+ * sRGB value or a theme scheme-name reference, each with optional colour
+ * transforms. A {@link ColorResolver} maps it to a concrete 6-hex string.
+ */
 export type RawColor =
   | { readonly srgb: string; readonly mods?: ReadonlyArray<ColorMod> }
   | { readonly scheme: string; readonly mods?: ReadonlyArray<ColorMod> };
 
+/** Maps a {@link RawColor} to a 6-hex string, or `undefined` when unresolvable. */
 export type ColorResolver = (raw: RawColor) => string | undefined;
 
 function clamp01(x: number): number {
@@ -65,7 +77,15 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   return [r + m, g + m, b + m];
 }
 
-// Apply DrawingML colour transforms to a 6-hex value, returning a 6-hex value.
+/**
+ * Apply DrawingML colour transforms ({@link ColorMod}s) to a 6-hex value,
+ * returning a 6-hex value. `shade`/`tint` scale in RGB; `lumMod`/`lumOff` adjust
+ * luminance in HSL. An empty `mods` returns `hex` unchanged.
+ *
+ * @param hex  The base colour, RRGGBB.
+ * @param mods The transforms to apply, in order.
+ * @returns The transformed colour, uppercase RRGGBB.
+ */
 export function applyColorMods(hex: string, mods: ReadonlyArray<ColorMod>): string {
   if (mods.length === 0) return hex;
   const n = parseInt(hex, 16);
@@ -94,8 +114,10 @@ export function applyColorMods(hex: string, mods: ReadonlyArray<ColorMod>): stri
   return (toHex(r) + toHex(g) + toHex(b)).toUpperCase();
 }
 
-// Office 2013 default theme palette — the colours Word assigns to the standard
-// scheme slots when a document carries no custom theme part.
+/**
+ * Office 2013 default theme palette — the colours Word assigns to the standard
+ * scheme slots when a document carries no custom theme part.
+ */
 export const DEFAULT_THEME_PALETTE: ReadonlyMap<string, string> = new Map([
   ['dk1', '000000'],
   ['lt1', 'FFFFFF'],
@@ -120,12 +142,22 @@ const SCHEME_ALIAS: Readonly<Record<string, string>> = {
   bg2: 'lt2',
 };
 
+/**
+ * Resolve a `schemeClr` text/background alias (`tx1`/`bg1`/`tx2`/`bg2`,
+ * §20.1.2.3.29) to its underlying `dk`/`lt` slot name; other names pass through.
+ */
 export function resolveSchemeName(name: string): string {
   return SCHEME_ALIAS[name] ?? name;
 }
 
-// Build a resolver over a scheme-name → hex palette. sRGB references pass
-// through verbatim (upper-cased); scheme references are aliased then looked up.
+/**
+ * Build a {@link ColorResolver} over a scheme-name → hex `palette`. sRGB
+ * references pass through verbatim (upper-cased); scheme references are aliased
+ * (via {@link resolveSchemeName}) then looked up; colour transforms are applied.
+ *
+ * @param palette The scheme-name → RRGGBB map (e.g. {@link DEFAULT_THEME_PALETTE}).
+ * @returns A resolver that maps a {@link RawColor} to a hex string or `undefined`.
+ */
 export function makeColorResolver(palette: ReadonlyMap<string, string>): ColorResolver {
   return (raw) => {
     const base =
@@ -135,9 +167,13 @@ export function makeColorResolver(palette: ReadonlyMap<string, string>): ColorRe
   };
 }
 
+/** A {@link ColorResolver} backed by the {@link DEFAULT_THEME_PALETTE}. */
 export const defaultColorResolver: ColorResolver = makeColorResolver(DEFAULT_THEME_PALETTE);
 
-// Colour transform children under an a:srgbClr / a:schemeClr.
+/**
+ * Read the colour transform children ({@link ColorMod}s) under an `a:srgbClr` /
+ * `a:schemeClr` node, normalising each `val` from thousandths-of-a-percent to 0..1.
+ */
 export function readColorMods(colorNode: PoNode): Array<ColorMod> {
   const mods: Array<ColorMod> = [];
   for (const c of poChildren(colorNode)) {
@@ -151,10 +187,17 @@ export function readColorMods(colorNode: PoNode): Array<ColorMod> {
   return mods;
 }
 
-// a:srgbClr / a:schemeClr node → resolved hex (with colour transforms);
-// undefined when the node is some other element, valueless, or the resolver
-// does not know the colour. Container traversal policy (stop at the first
-// colour node vs continue past unresolved ones) stays with the callers.
+/**
+ * Resolve an `a:srgbClr` / `a:schemeClr` node to a hex string (with colour
+ * transforms applied). Returns `undefined` when the node is some other element,
+ * valueless, or the resolver does not know the colour. Container traversal policy
+ * (stop at the first colour node vs continue past unresolved ones) stays with the
+ * callers.
+ *
+ * @param c            The candidate colour node.
+ * @param resolveColor The resolver mapping a {@link RawColor} to hex.
+ * @returns The resolved RRGGBB, or `undefined`.
+ */
 export function resolveColorNode(c: PoNode, resolveColor: ColorResolver): string | undefined {
   const isSrgb = poIs(c, 'a:srgbClr');
   if (!isSrgb && !poIs(c, 'a:schemeClr')) return undefined;

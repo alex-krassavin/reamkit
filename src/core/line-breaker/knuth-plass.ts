@@ -8,41 +8,55 @@
 //     dropped from the active set rather than retried with shrink, since our
 //     pipeline never asks for negative stretch.
 
+/** A box: unbreakable content (a word or glyph cluster) of fixed `width`. */
 export interface BoxItem {
   readonly type: 'box';
   readonly width: number;
 }
 
+/** Glue: flexible inter-word space, a candidate breakpoint after a {@link BoxItem}. */
 export interface GlueItem {
   readonly type: 'glue';
-  readonly width: number; // natural width
-  readonly stretch: number; // how far it can expand (positive)
-  readonly shrink: number; // how far it can contract (positive)
+  /** Natural width. */
+  readonly width: number;
+  /** How far it can expand (positive). */
+  readonly stretch: number;
+  /** How far it can contract (positive). */
+  readonly shrink: number;
 }
 
+/** A penalty: an optional breakpoint with a cost (e.g. a hyphenation point). */
 export interface PenaltyItem {
   readonly type: 'penalty';
-  readonly width: number; // width if break taken here (e.g. hyphen char)
-  readonly penalty: number; // negative = forced, +Infinity = forbidden
-  readonly flagged: boolean; // true for hyphenation points — paired penalty avoided
+  /** Width added if the break is taken here (e.g. the hyphen char). */
+  readonly width: number;
+  /** Break cost: negative = forced, `+Infinity` = forbidden. */
+  readonly penalty: number;
+  /** True for hyphenation points — two flagged breaks in a row are penalized. */
+  readonly flagged: boolean;
 }
 
+/** One item in the box/glue/penalty stream {@link breakLines} consumes. */
 export type Item = BoxItem | GlueItem | PenaltyItem;
 
+/** The output of {@link breakLines}: where each line breaks and how it stretches. */
 export interface BreakResult {
-  // Indices into items[] where the line breaks happen (last index is also
-  // the final forced break / sentinel penalty).
+  /**
+   * Indices into `items[]` where the line breaks happen (the last index is also
+   * the final forced break / sentinel penalty).
+   */
   readonly breaks: ReadonlyArray<number>;
-  // Per-line adjustment ratio in [-1, ∞). Used by the layout consumer to
-  // distribute extra space across glues on each line.
+  /**
+   * Per-line adjustment ratio in `[-1, ∞)`. Used by the layout consumer to
+   * distribute extra space across the glues on each line.
+   */
   readonly ratios: ReadonlyArray<number>;
 }
 
 // Tuning knobs — match TeX's defaults closely enough for our needs.
-// Exported: writers push the paragraph-final forced break with this value.
+/** A penalty `≤` this forces a break here; writers push the paragraph-final break with it. */
 export const FORCED_BREAK = -10_000;
-// A penalty ≥ this forbids a break at that point. Exported for the greedy
-// breaker (greedy.ts), which shares the same feasibility convention.
+/** A penalty `≥` this forbids a break here (shared with the greedy breaker). */
 export const FORBIDDEN_BREAK = 10_000;
 const LINE_PENALTY = 10; // α — extra demerits per line
 const FITNESS_PENALTY = 100; // γ — adjacent-line fitness mismatch
@@ -86,12 +100,15 @@ interface ActiveNode {
 }
 
 /**
- * Break a paragraph into lines using the Knuth-Plass total-fit algorithm.
+ * Break a paragraph into lines using the Knuth-Plass total-fit algorithm:
+ * dynamic programming over the box/glue/penalty stream that minimizes total
+ * demerits across the whole paragraph.
  *
- * `lineWidths`: either a number (uniform width) or an array indexed by line
- * (0-based). When the array is shorter than the paragraph the last entry is
- * reused for trailing lines — this matches the common case of "first line
- * different, rest the same".
+ * @param items      The box/glue/penalty stream.
+ * @param lineWidths Target width: a number (uniform) or an array indexed by line
+ *                   (0-based); a shorter array reuses its last entry for trailing
+ *                   lines (the common "first line different, rest the same" case).
+ * @returns The break indices and per-line adjustment ratios ({@link BreakResult}).
  */
 export function breakLines(
   items: ReadonlyArray<Item>,

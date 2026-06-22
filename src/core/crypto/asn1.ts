@@ -5,6 +5,12 @@
 
 const textEncoder = new TextEncoder();
 
+/**
+ * Concatenate a list of byte arrays into a single {@link Uint8Array}.
+ *
+ * @param arrays The arrays to join, in order.
+ * @returns A new array holding every input back to back.
+ */
 export function concat(arrays: ReadonlyArray<Uint8Array>): Uint8Array {
   let total = 0;
   for (const a of arrays) total += a.length;
@@ -29,7 +35,13 @@ function encodeLength(len: number): Uint8Array {
   return new Uint8Array([0x80 | bytes.length, ...bytes]);
 }
 
-// Tag-length-value: wrap `content` in an identifier octet + length.
+/**
+ * Tag-length-value: wrap `content` in an identifier octet + definite-form length.
+ *
+ * @param tag     The identifier octet (tag class + constructed bit + number).
+ * @param content The already-encoded value bytes.
+ * @returns The complete `tag || length || content` encoding.
+ */
 export function tlv(tag: number, content: Uint8Array): Uint8Array {
   const len = encodeLength(content.length);
   const out = new Uint8Array(1 + len.length + content.length);
@@ -39,11 +51,15 @@ export function tlv(tag: number, content: Uint8Array): Uint8Array {
   return out;
 }
 
+/** SEQUENCE (tag `0x30`) wrapping the concatenated `items`. */
 export const seq = (...items: Array<Uint8Array>): Uint8Array => tlv(0x30, concat(items));
+/** SET (tag `0x31`) wrapping the concatenated `items`. */
 export const set = (...items: Array<Uint8Array>): Uint8Array => tlv(0x31, concat(items));
+/** OCTET STRING (tag `0x04`) wrapping raw `bytes`. */
 export const octetString = (bytes: Uint8Array): Uint8Array => tlv(0x04, bytes);
+/** NULL (tag `0x05`, empty content). */
 export const nullValue = (): Uint8Array => tlv(0x05, new Uint8Array(0));
-// [n] context-tag, constructed (EXPLICIT or IMPLICIT-over-constructed).
+/** `[n]` context-tag, constructed (EXPLICIT or IMPLICIT-over-constructed). */
 export const explicit = (tagNum: number, content: Uint8Array): Uint8Array =>
   tlv(0xa0 | tagNum, content);
 
@@ -59,6 +75,13 @@ function base128(v: number): Array<number> {
   return out;
 }
 
+/**
+ * Encode a dotted OBJECT IDENTIFIER (§8.19). The first two arcs fold into
+ * `40*a + b`; each subsequent arc is base-128 big-endian.
+ *
+ * @param dotted The OID in dotted form, e.g. `"1.2.840.113549.1.7.2"`.
+ * @returns The OID TLV (tag `0x06`).
+ */
 export function oid(dotted: string): Uint8Array {
   const parts = dotted.split('.').map((p) => Number(p));
   const body: Array<number> = [...base128(40 * parts[0]! + parts[1]!)];
@@ -66,9 +89,14 @@ export function oid(dotted: string): Uint8Array {
   return tlv(0x06, new Uint8Array(body));
 }
 
-// §8.3 — INTEGER (two's complement, minimal). Accepts a small non-negative
-// number or raw magnitude bytes; prepends 0x00 when the top bit is set so the
-// value stays positive.
+/**
+ * Encode an INTEGER (§8.3) in minimal two's-complement form. Accepts a small
+ * non-negative number or raw magnitude bytes; prepends `0x00` when the top bit
+ * is set so the value stays positive.
+ *
+ * @param value A non-negative number, or big-endian magnitude bytes.
+ * @returns The INTEGER TLV (tag `0x02`).
+ */
 export function integer(value: number | Uint8Array): Uint8Array {
   let bytes: Array<number>;
   if (typeof value === 'number') {
@@ -90,8 +118,13 @@ export function integer(value: number | Uint8Array): Uint8Array {
 
 const pad2 = (n: number): string => n.toString().padStart(2, '0');
 
-// CMS Time (RFC 5652 §11.3): UTCTime (YYMMDDHHMMSSZ) for years 1950–2049,
-// GeneralizedTime (YYYYMMDDHHMMSSZ) otherwise.
+/**
+ * Encode a CMS Time (RFC 5652 §11.3): `UTCTime` (`YYMMDDHHMMSSZ`) for years
+ * 1950–2049, `GeneralizedTime` (`YYYYMMDDHHMMSSZ`) otherwise.
+ *
+ * @param d The instant to encode (formatted in UTC).
+ * @returns The time TLV (tag `0x17` or `0x18`).
+ */
 export function cmsTime(d: Date): Uint8Array {
   const y = d.getUTCFullYear();
   const mmddhhmmss =
@@ -116,22 +149,39 @@ function compareDer(a: Uint8Array, b: Uint8Array): number {
   return a.length - b.length;
 }
 
-// The sorted, concatenated content of a SET OF — without the outer tag, so the
-// same canonical body can be wrapped once as SET (0x31, for signing) and once
-// as [0] IMPLICIT (0xa0, inside the SignerInfo).
+/**
+ * The sorted, concatenated content of a `SET OF` (§11.6) — without the outer
+ * tag, so the same canonical body can be wrapped once as SET (`0x31`, for
+ * signing) and once as `[0]` IMPLICIT (`0xa0`, inside the `SignerInfo`).
+ *
+ * @param items The set members (each a full DER encoding).
+ * @returns The members sorted ascending by encoding and concatenated.
+ */
 export function setOfBody(items: ReadonlyArray<Uint8Array>): Uint8Array {
   return concat([...items].sort(compareDer));
 }
 
 // ---- Minimal reader (only what cert issuer/serial extraction needs) ----
 
+/** A parsed DER tag-length-value, as byte offsets into the source buffer. */
 export interface Tlv {
+  /** The identifier octet. */
   readonly tag: number;
+  /** Offset of the first content byte. */
   readonly contentStart: number;
+  /** Offset one past the last content byte. */
   readonly contentEnd: number;
+  /** Offset one past the whole TLV (same as `contentEnd` for definite lengths). */
   readonly end: number;
 }
 
+/**
+ * Parse the immediate child TLVs of a constructed `parent`, in order.
+ *
+ * @param buf    The buffer the offsets index into.
+ * @param parent The constructed TLV whose content is walked.
+ * @returns Each child {@link Tlv}, left to right.
+ */
 export function children(buf: Uint8Array, parent: Tlv): Array<Tlv> {
   const out: Array<Tlv> = [];
   let p = parent.contentStart;
@@ -143,6 +193,13 @@ export function children(buf: Uint8Array, parent: Tlv): Array<Tlv> {
   return out;
 }
 
+/**
+ * Read a single TLV header at `offset`, decoding short- and long-form lengths.
+ *
+ * @param buf    The source buffer.
+ * @param offset The offset of the identifier octet.
+ * @returns The parsed {@link Tlv} (offsets relative to `buf`).
+ */
 export function readTlv(buf: Uint8Array, offset: number): Tlv {
   const tag = buf[offset]!;
   let i = offset + 1;
@@ -159,9 +216,16 @@ export function readTlv(buf: Uint8Array, offset: number): Tlv {
   return { tag, contentStart: i, contentEnd: i + len, end: i + len };
 }
 
-// Certificate ::= SEQ { tbsCertificate SEQ { [0] version?, serialNumber INTEGER,
-//   signature AlgId, issuer Name, ... }, ... }. Returns the issuer Name and
-// serialNumber as raw DER TLV slices (verbatim, for IssuerAndSerialNumber).
+/**
+ * Pull the issuer Name and serialNumber out of an X.509 certificate, as raw DER
+ * TLV slices (verbatim, for the CMS `IssuerAndSerialNumber`).
+ *
+ * `Certificate ::= SEQ { tbsCertificate SEQ { [0] version?, serialNumber INTEGER,
+ * signature AlgId, issuer Name, ... }, ... }`.
+ *
+ * @param cert The DER-encoded certificate.
+ * @returns The `issuer` Name and `serial` INTEGER, each a verbatim DER slice.
+ */
 export function certIssuerAndSerial(cert: Uint8Array): {
   readonly issuer: Uint8Array;
   readonly serial: Uint8Array;

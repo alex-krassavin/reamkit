@@ -10,11 +10,16 @@ import type { PathSegment, VectorPath } from '@/core/vector';
 import { arcToBeziers, ellipseSegments, roundRectSegments } from '@/core/arc-to-bezier';
 import { PathBuilder } from '@/core/vector';
 
+/**
+ * The four closed segments of the `w`×`h` bounding rectangle, in the local y-up
+ * frame (origin bottom-left). The fallback geometry for unknown presets.
+ */
 export function rectSegments(w: number, h: number): ReadonlyArray<PathSegment> {
   return new PathBuilder().moveTo(0, 0).lineTo(w, 0).lineTo(w, h).lineTo(0, h).close().build()
     .segments;
 }
 
+/** The `w`×`h` bounding rectangle as a {@link VectorPath}. */
 export function rectPath(w: number, h: number): VectorPath {
   return { segments: rectSegments(w, h) };
 }
@@ -32,10 +37,19 @@ const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.m
 const frac = (adjust: ReadonlyMap<string, number>, key: string, def: number): number =>
   (adjust.get(key) ?? def) / 100000;
 
-// Map a preset name → path(s). Returns null for an unknown preset so the
-// caller falls back to the bounding rectangle — graceful degradation that
-// keeps even unimplemented presets visible (with the right fill/line) and
-// never throws.
+/**
+ * Map a preset shape name (§20.1.10.55) to its vector path(s) in the local y-up
+ * frame, sized `w`×`h` points and shaped by the `adjust` guides. Returns `null`
+ * for an unknown preset so the caller falls back to the bounding rectangle —
+ * graceful degradation that keeps even unimplemented presets visible (with the
+ * right fill/line) and never throws.
+ *
+ * @param preset The preset geometry name (e.g. `'roundRect'`, `'rightArrow'`).
+ * @param w      Box width in points.
+ * @param h      Box height in points.
+ * @param adjust Raw `a:gd` adjust guides by name (thousandths of a percent).
+ * @returns The path(s), or `null` for an unrecognised preset.
+ */
 export function presetPaths(
   preset: string,
   w: number,
@@ -134,11 +148,18 @@ export function presetPaths(
   }
 }
 
-// ECMA-376 §20.1.9 custom geometry → vector path. Path-space coordinates
-// (y-down, origin top-left) are scaled to the shape box and flipped to the
-// local y-up frame. Quadratics are elevated to cubics; arcTo is decomposed via
-// the shared arc helper. Angles are 1/60000° clockwise in y-down, which becomes
-// negative (CCW) once y is flipped.
+/**
+ * Convert a custom geometry (§20.1.9) to a vector path. Path-space coordinates
+ * (y-down, origin top-left) are scaled to the shape box and flipped to the local
+ * y-up frame; quadratics are elevated to cubics; `arcTo` is decomposed via the
+ * shared arc helper. Angles are 1/60000° clockwise in y-down, which becomes
+ * negative (CCW) once y is flipped.
+ *
+ * @param geom The parsed custom geometry (path size + draw commands).
+ * @param wPt  Box width in points.
+ * @param hPt  Box height in points.
+ * @returns A single-element array holding the built path.
+ */
 export function customPaths(geom: CustomGeometry, wPt: number, hPt: number): Array<VectorPath> {
   const sx = geom.pathWidth > 0 ? wPt / geom.pathWidth : 1;
   const sy = geom.pathHeight > 0 ? hPt / geom.pathHeight : 1;

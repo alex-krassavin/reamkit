@@ -15,6 +15,17 @@ import type {
 } from '@/core/document-model';
 import { NumberingState } from '@/core/numbering/state';
 
+/**
+ * Apply list numbering to a body as a FlowDoc transform (§17.9): walk the
+ * elements (recursing into table cells), advancing list counters and prepending
+ * each numbered paragraph's resolved marker as a leading `listMarker` run, with
+ * level-inherited indents. Shapes and charts do not advance counters. Returns the
+ * body unchanged when there is no numbering.
+ *
+ * @param body      The body elements to transform.
+ * @param numbering The parsed numbering definitions, or `undefined`.
+ * @returns A new body with markers materialized.
+ */
 export function applyNumbering(
   body: ReadonlyArray<BodyElement>,
   numbering: Numbering | undefined,
@@ -87,6 +98,14 @@ function mergeIndentFromLevel(
   return out;
 }
 
+/**
+ * Apply {@link applyNumbering} to each header/footer band independently (each
+ * gets its own counter state), keyed as in the input map.
+ *
+ * @param hf        The header/footer bodies by key, or `undefined`.
+ * @param numbering The parsed numbering definitions, or `undefined`.
+ * @returns A new map with numbering applied (empty when `hf` is empty/absent).
+ */
 export function applyNumberingToHeadersFooters(
   hf: ReadonlyMap<string, ReadonlyArray<BodyElement>> | undefined,
   numbering: Numbering | undefined,

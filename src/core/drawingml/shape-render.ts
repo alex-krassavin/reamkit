@@ -8,16 +8,28 @@ import type { ShapeGradient, StrokeStyle, VectorPath } from '@/core/vector';
 
 import { customPaths, presetPaths, rectPath } from '@/core/drawingml/preset-geometry';
 
-// 1 inch = 914400 EMU = 72 pt, so 1 pt = 12700 EMU.
+/** EMU per point: 1 inch = 914400 EMU = 72 pt, so 1 pt = 12700 EMU. */
 export const EMU_PER_PT = 12700;
 
 // a:ln default width when @w is absent (9525 EMU = 0.75pt).
 const DEFAULT_LINE_WIDTH_EMU = 9525;
 
-// Word's default text-box insets (§20.1.2.1) — 0.1" L/R, 0.05" T/B in EMU.
+/** Word's default left/right text-box inset (§20.1.2.1) — 0.1", in points. */
 export const DEFAULT_INSET_LR_PT = 91440 / EMU_PER_PT;
+/** Word's default top/bottom text-box inset (§20.1.2.1) — 0.05", in points. */
 export const DEFAULT_INSET_TB_PT = 45720 / EMU_PER_PT;
 
+/**
+ * Build the vector path(s) for a shape's geometry, sized `widthPt`×`heightPt`.
+ * Dispatches preset geometries to {@link presetPaths} (falling back to the
+ * bounding rectangle for unknown presets) and custom geometries to
+ * {@link customPaths}.
+ *
+ * @param geometry The shape geometry (preset or custom).
+ * @param widthPt  Box width in points.
+ * @param heightPt Box height in points.
+ * @returns The path(s) in the local y-up frame.
+ */
 export function buildShapePaths(
   geometry: ShapeGeometry,
   widthPt: number,
@@ -36,8 +48,13 @@ export function buildShapePaths(
   return [rectPath(widthPt, heightPt)];
 }
 
-// A gradient's solid approximation: the per-channel average of its stop colours
-// (§EP16). Writers without gradient support (the plain PDF emitter) paint this.
+/**
+ * A gradient's solid approximation: the per-channel average of its stop colours
+ * (EP16). Writers without gradient support (the plain PDF emitter) paint this.
+ *
+ * @param gradient The gradient fill.
+ * @returns The averaged colour as uppercase RRGGBB (`'000000'` if no valid stops).
+ */
 export function gradientToSolid(gradient: ShapeGradient): string {
   let r = 0;
   let g = 0;
@@ -59,10 +76,16 @@ export function gradientToSolid(gradient: ShapeGradient): string {
   return (hx(r) + hx(g) + hx(b)).toUpperCase();
 }
 
-// An SVG `<linearGradient>` / `<radialGradient>` definition for a gradient fill
-// (EP16), shared by the SVG and HTML writers. The linear vector is expressed in
-// objectBoundingBox space; the angle is negated because the shape's own path
-// transform flips y (local y-up → page y-down).
+/**
+ * An SVG `<linearGradient>` / `<radialGradient>` definition for a gradient fill
+ * (EP16), shared by the SVG and HTML writers. The linear vector is expressed in
+ * `objectBoundingBox` space; the angle is negated because the shape's own path
+ * transform flips y (local y-up → page y-down).
+ *
+ * @param id The gradient element id (referenced by `fill="url(#id)"`).
+ * @param g  The gradient fill.
+ * @returns The `<linearGradient>` or `<radialGradient>` markup.
+ */
 export function gradientSvgDef(id: string, g: ShapeGradient): string {
   const n = (x: number): string => String(Math.round(x * 1e4) / 1e4);
   const stops = g.stops
@@ -78,6 +101,14 @@ export function gradientSvgDef(id: string, g: ShapeGradient): string {
   );
 }
 
+/**
+ * Build a {@link StrokeStyle} from a shape's `a:ln` line, resolving the default
+ * width (0.75pt), dash pattern and line cap. Returns `undefined` for no line or
+ * an explicit no-fill stroke.
+ *
+ * @param line The parsed line, or `undefined`.
+ * @returns The stroke style, or `undefined` when nothing should be stroked.
+ */
 export function buildStroke(line: ShapeLine | undefined): StrokeStyle | undefined {
   if (!line || line.fill === 'none') return undefined;
   const widthPt = line.width ?? DEFAULT_LINE_WIDTH_EMU / EMU_PER_PT;
@@ -116,7 +147,21 @@ function dashPattern(dash: ShapeDash, w: number): Array<number> | undefined {
   }
 }
 
-// DrawingML rot is clockwise in y-down space ⇒ a negative angle in PDF y-up.
+/**
+ * Build the 2×3 affine placement matrix `[a, b, c, d, e, f]` that positions a
+ * shape's local y-up box at `(pageX, pageY)`, applying rotation and h/v flips
+ * about the box centre. DrawingML `rot` is clockwise in y-down space ⇒ a
+ * negative angle in PDF y-up.
+ *
+ * @param pageX       Box left, in page points.
+ * @param pageY       Box bottom, in page points.
+ * @param widthPt     Box width in points.
+ * @param heightPt    Box height in points.
+ * @param rotation60k Rotation in 1/60000°, clockwise.
+ * @param flipH       Mirror horizontally.
+ * @param flipV       Mirror vertically.
+ * @returns The affine matrix as `[a, b, c, d, e, f]`.
+ */
 export function buildShapeTransform(
   pageX: number,
   pageY: number,

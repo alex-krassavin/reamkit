@@ -49,6 +49,19 @@ const TYPE_OF_TAG: Readonly<Record<string, ChartType>> = {
   'c:scatterChart': 'scatter',
 };
 
+/**
+ * Parse a DrawingML chart part (chart1.xml) into a {@link Chart}, reading the
+ * CACHED data (`c:numCache` / `c:strCache`) rather than the embedded spreadsheet
+ * — the cache holds the last-computed categories and values, exactly what Word
+ * renders. Supports bar/column, line, pie/doughnut, area and scatter; other
+ * chart types parse with `type: 'unknown'` (the renderer reserves the box but
+ * draws nothing). Categories are shared and taken from the first series carrying
+ * them.
+ *
+ * @param chartXml     The raw chart1.xml part bytes.
+ * @param resolveColor Maps a DrawingML colour reference to a 6-hex string.
+ * @returns The parsed chart, or `null` when there is no `c:chart` / `c:plotArea`.
+ */
 export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): Chart | null {
   const tree = parser.parse(decoder.decode(chartXml)) as Array<PoNode>;
   const chart = poFindByPath(tree, ['c:chartSpace', 'c:chart']);
@@ -268,9 +281,15 @@ function isGrouping(
   return v === 'clustered' || v === 'stacked' || v === 'percentStacked' || v === 'standard';
 }
 
-// MS-ODRAWXML chartColorStyle (charts/colorsN.xml): the top-level colour list
-// is the series cycle (`meth="cycle"` — the common case; variations are
-// luminance tweaks for >N series and are ignored in v1).
+/**
+ * MS-ODRAWXML chartColorStyle (charts/colorsN.xml): the top-level colour list is
+ * the series cycle (`meth="cycle"` — the common case; variations are luminance
+ * tweaks for `>N` series and are ignored in v1).
+ *
+ * @param colorsXml    The raw colorsN.xml part bytes.
+ * @param resolveColor Maps a DrawingML colour reference to a 6-hex string.
+ * @returns The resolved series-colour cycle, in order (empty if none resolve).
+ */
 export function parseChartColorStyle(
   colorsXml: Uint8Array,
   resolveColor: ColorResolver,
@@ -289,8 +308,18 @@ export function parseChartColorStyle(
   return out;
 }
 
-// The chart part's own rels may carry a chartColorStyle (colorsN.xml) — the
-// custom series-colour cycle. Shared by the docx and xlsx readers.
+/**
+ * Augment a parsed {@link Chart} with its custom series-colour cycle when the
+ * chart part's own relationships carry a chartColorStyle (colorsN.xml). Returns
+ * the chart unchanged when no such relationship resolves to a non-empty cycle.
+ * Shared by the docx and xlsx readers.
+ *
+ * @param chart         The parsed chart to augment.
+ * @param pkg           The OPC package, for relationship lookup.
+ * @param chartPartPath The chart part path, used as the relationship source.
+ * @param resolveColor  Maps a DrawingML colour reference to a 6-hex string.
+ * @returns The chart, with `seriesColorCycle` set when a cycle is found.
+ */
 export function withChartColorStyle(
   chart: Chart,
   pkg: OpcPackage,
