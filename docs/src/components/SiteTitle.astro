@@ -1,0 +1,56 @@
+---
+/**
+ * Overrides Starlight's SiteTitle with the Reamkit wordmark from the design:
+ * the stacked-papers logo, "Ream" in IBM Plex Serif, and a mono "docs" badge.
+ */
+---
+
+<a href="/" class="rk-site-title" aria-label="Ream docs — home">
+  <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
+    <rect x="9" y="2" width="18" height="24" rx="2.5" fill="#e6be8e"></rect>
+    <rect x="6" y="4.5" width="18" height="24" rx="2.5" fill="#d38f50"></rect>
+    <rect x="3" y="7" width="18" height="24" rx="2.5" fill="#c2632b"></rect>
+    <path
+      d="M7.5 13.5h9M7.5 18h9M7.5 22.5h6"
+      stroke="#fff"
+      stroke-width="2.2"
+      stroke-linecap="round"></path>
+  </svg>
+  <span class="rk-word">Ream</span>
+  <span class="rk-badge">docs</span>
+</a>
+
+<style>
+  .rk-site-title {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    text-decoration: none;
+    color: var(--rk-ink, #221c13);
+  }
+  .rk-site-title svg {
+    display: block;
+    filter: drop-shadow(0 2px 3px rgba(120, 70, 20, 0.22));
+  }
+  .rk-word {
+    font-family: var(--rk-serif, 'IBM Plex Serif', serif);
+    font-weight: 600;
+    font-size: 20px;
+    letter-spacing: -0.01em;
+  }
+  .rk-badge {
+    font-family: var(--sl-font-mono, 'IBM Plex Mono', monospace);
+    font-size: 10.5px;
+    color: #9a8c72;
+    letter-spacing: 0.04em;
+    padding: 3px 7px;
+    border: 1px solid #e0d4be;
+    border-radius: 5px;
+  }
+  /* The "docs" badge is decorative chrome — drop it on narrow headers. */
+  @media (max-width: 50rem) {
+    .rk-badge {
+      display: none;
+    }
+  }
+</style>
