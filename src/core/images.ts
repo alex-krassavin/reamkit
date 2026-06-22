@@ -13,8 +13,14 @@
 
 import { unzlibSync, zlibSync } from 'fflate';
 
+/** The raster formats this module recognizes and can prepare for embedding. */
 export type ImageFormat = 'jpeg' | 'png' | 'jpeg2000';
 
+/**
+ * Sniff the raster format from a file's leading magic bytes (JPEG SOI, the PNG
+ * signature, or a JP2 box / raw JPEG 2000 codestream). Returns the
+ * {@link ImageFormat}, or `null` when none matches.
+ */
 export function detectImageFormat(bytes: Uint8Array): ImageFormat | null {
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
     return 'jpeg';
@@ -63,32 +69,48 @@ export function detectImageFormat(bytes: Uint8Array): ImageFormat | null {
   return null;
 }
 
+/** Options controlling how {@link prepareImage} emits an image. */
 export interface EmbedImageOptions {
-  // PDF/A-1 forbids transparency (soft masks). When true, PNG alpha is
-  // composited onto an opaque white background and no /SMask is emitted.
+  /**
+   * PDF/A-1 forbids transparency (soft masks). When true, PNG alpha is
+   * composited onto an opaque white background and no `/SMask` is emitted.
+   */
   readonly flattenAlpha?: boolean;
 }
 
-// The prepare/add split (oop-design §3.1): `prepareImage` is the pure expert —
-// decode, validate (throws on unsupported/corrupt input) and produce the
-// ready-to-emit stream bytes; `addImage` only creates the PDF objects. Layout
-// probes with `prepareImage` (no throwaway document), the emit phase replays
-// the prepared result, and other writers (SVG) reuse the mime/dimensions.
+/**
+ * The ready-to-emit result of decoding and validating one image, from the
+ * prepare/add split (oop-design §3.1): {@link prepareImage} is the pure expert —
+ * decode, validate (throws on unsupported/corrupt input) and produce the
+ * stream bytes; `addImage` only creates the PDF objects. Layout probes with
+ * `prepareImage` (no throwaway document), the emit phase replays the prepared
+ * result, and other writers (SVG) reuse the mime/dimensions.
+ */
 export interface PreparedImage {
   readonly format: ImageFormat;
   readonly mimeType: 'image/jp2' | 'image/jpeg' | 'image/png';
   readonly widthPx: number;
   readonly heightPx: number;
-  // ColorSpace/BitsPerComponent are absent for JPEG 2000 (carried inside the
-  // JPX codestream).
+  /**
+   * ColorSpace/BitsPerComponent are absent for JPEG 2000 (carried inside the
+   * JPX codestream).
+   */
   readonly colorSpace?: 'DeviceGray' | 'DeviceRGB';
   readonly bitsPerComponent?: number;
+  /** The PDF stream filter the `data` bytes are encoded with. */
   readonly filter: 'DCTDecode' | 'FlateDecode' | 'JPXDecode';
   readonly data: Uint8Array;
-  // PNG alpha channel, already FlateDecode-compressed (DeviceGray, 8 bpc).
+  /** PNG alpha channel, already FlateDecode-compressed (DeviceGray, 8 bpc). */
   readonly smaskData?: Uint8Array;
 }
 
+/**
+ * Decode and validate one image into a {@link PreparedImage} ready to embed.
+ * JPEG and JPEG 2000 pass through verbatim (readers decode them); PNG is
+ * inflated, de-filtered and re-compressed, splitting any alpha into a soft mask.
+ *
+ * @throws Error when the format is unrecognized, unsupported, or corrupt.
+ */
 export function prepareImage(bytes: Uint8Array, options: EmbedImageOptions = {}): PreparedImage {
   const format = detectImageFormat(bytes);
   if (format === 'jpeg') return prepareJpeg(bytes);

@@ -9,25 +9,31 @@ import { zipSync } from 'fflate';
 
 import type { Relationship } from '@/core/opc/relationships';
 
+/** One part to write into the package: its path, bytes, and content type. */
 export interface OpcPart {
-  /** Package path, e.g. 'word/document.xml'. No leading slash. */
+  /** Package path, e.g. `'word/document.xml'`. No leading slash. */
   readonly path: string;
   readonly data: Uint8Array;
-  /** Content type for the [Content_Types].xml Override (XML parts). */
+  /** Content type for the `[Content_Types].xml` Override (XML parts). */
   readonly contentType: string;
 }
 
-// A part's relationships (id/type/target[/External]). The reader returns the
-// same Relationship shape, so a writer round-trips through parseRelationships.
+/**
+ * A part's relationships (id/type/target[/External]). The reader returns the
+ * same {@link Relationship} shape, so a writer round-trips through
+ * `parseRelationships`.
+ */
 export interface OpcPartRelationships {
-  /** The owning part, e.g. 'word/document.xml' (or '' for the package root). */
+  /** The owning part, e.g. `'word/document.xml'` (or `''` for the package root). */
   readonly sourcePart: string;
   readonly relationships: ReadonlyArray<Relationship>;
 }
 
+/** The full input to {@link buildOpcPackage}: parts plus their relationships. */
 export interface OpcWriteOptions {
+  /** The content parts (excluding `[Content_Types].xml` and `.rels`, which are generated). */
   readonly parts: ReadonlyArray<OpcPart>;
-  /** Package-level relationships (_rels/.rels). */
+  /** Package-level relationships (`_rels/.rels`). */
   readonly rootRelationships: ReadonlyArray<Relationship>;
   /** Per-part relationships (word/_rels/<part>.rels). */
   readonly partRelationships?: ReadonlyArray<OpcPartRelationships>;
@@ -47,6 +53,13 @@ const CT_NS = 'http://schemas.openxmlformats.org/package/2006/content-types';
 // time otherwise). DOS time floors at 1980-01-01.
 const FIXED_MTIME = Date.UTC(1980, 0, 1, 0, 0, 0);
 
+/**
+ * Assemble parts + relationships into a deterministic OPC ZIP: it synthesizes
+ * `[Content_Types].xml` and the `.rels` parts, then zips everything with a fixed
+ * timestamp so the same input always yields byte-identical output.
+ *
+ * @returns The packaged `.docx`/`.xlsx`/… bytes.
+ */
 export function buildOpcPackage(options: OpcWriteOptions): Uint8Array {
   const entries: Record<string, [Uint8Array, { mtime: number }]> = {};
   const add = (path: string, data: Uint8Array): void => {
@@ -66,8 +79,11 @@ export function buildOpcPackage(options: OpcWriteOptions): Uint8Array {
   return zipSync(entries);
 }
 
-// `word/document.xml` → `word/_rels/document.xml.rels`; '' (root) is handled
-// separately as `_rels/.rels`.
+/**
+ * The relationships-part path for a part: `word/document.xml` →
+ * `word/_rels/document.xml.rels`. (`''` (root) is handled separately as
+ * `_rels/.rels`.)
+ */
 export function relsPathFor(partPath: string): string {
   const slash = partPath.lastIndexOf('/');
   const dir = slash >= 0 ? partPath.slice(0, slash) : '';

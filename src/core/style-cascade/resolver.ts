@@ -30,8 +30,10 @@ interface StyleChainResult {
   readonly pPr: ParagraphProperties;
 }
 
-// Null Object for StyleSheet — parsers fall back to it when a package has no
-// styles part, and grid-based formats (xlsx) render with it outright.
+/**
+ * Null Object for {@link StyleSheet} — parsers fall back to it when a package has
+ * no styles part, and grid-based formats (xlsx) render with it outright.
+ */
 export const EMPTY_STYLE_SHEET: StyleSheet = {
   defaultRunProperties: {},
   defaultParagraphProperties: {},
@@ -47,6 +49,15 @@ const runCascadeCache = new WeakMap<
   WeakMap<RunProperties, WeakMap<ParagraphProperties, ResolvedRunProperties>>
 >();
 
+/**
+ * Resolve a run's effective properties (ECMA-376 §17.7.2): document defaults →
+ * paragraph-style run layer → run-style layer → direct run properties.
+ * Memoized by the identity of `(sheet, runDirect, paragraphDirect)`.
+ *
+ * @param runDirect       The run's direct properties (its `styleId` drives the run-style layer).
+ * @param paragraphDirect The owning paragraph's direct properties (its `styleId` drives the paragraph-style layer).
+ * @param sheet           The stylesheet supplying defaults and style chains.
+ */
 export function resolveRunProperties(
   runDirect: RunProperties,
   paragraphDirect: ParagraphProperties,
@@ -96,6 +107,14 @@ const paragraphCascadeCache = new WeakMap<
   WeakMap<ParagraphProperties, ResolvedParagraphProperties>
 >();
 
+/**
+ * Resolve a paragraph's effective properties (ECMA-376 §17.7.2): document
+ * defaults → paragraph-style chain → direct properties. Memoized by the
+ * identity of `(sheet, paragraphDirect)`.
+ *
+ * @param paragraphDirect The paragraph's direct properties (its `styleId` drives the style chain).
+ * @param sheet           The stylesheet supplying defaults and style chains.
+ */
 export function resolveParagraphProperties(
   paragraphDirect: ParagraphProperties,
   sheet: StyleSheet,
@@ -253,6 +272,12 @@ function primeParagraphFixpoint(para: ParagraphProperties): void {
   if (!bySheet.has(para)) bySheet.set(para, para as ResolvedParagraphProperties);
 }
 
+/**
+ * Resolve the style cascade across an entire body so the tree carries final
+ * effective run/paragraph properties (FlowDoc transform, ir-design stage 6).
+ * Recurses into tables and shape text. Mutates the tree IN PLACE and returns it;
+ * resolving again over {@link EMPTY_STYLE_SHEET} is the identity.
+ */
 export function resolveBodyStyles(
   body: ReadonlyArray<BodyElement>,
   sheet: StyleSheet,
@@ -295,6 +320,10 @@ export function resolveBodyStyles(
   return body;
 }
 
+/**
+ * Run {@link resolveBodyStyles} over every header/footer body in the map.
+ * Mutates each body in place and returns the same map.
+ */
 export function resolveHeadersFootersStyles(
   hf: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
   sheet: StyleSheet,

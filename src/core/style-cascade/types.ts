@@ -12,6 +12,11 @@ import type {
 import type { Pt } from '@/core/ir';
 import { halfPtToPt, twipsToPt } from '@/core/ir';
 
+/**
+ * A run's fully-resolved properties: every field required because the cascade
+ * has collapsed all inheritance against document defaults and the style chain.
+ * Consumed directly by the renderer.
+ */
 export interface ResolvedRunProperties {
   readonly bold: boolean;
   readonly italic: boolean;
@@ -22,11 +27,17 @@ export interface ResolvedRunProperties {
   readonly fontFamily: FontFamilyMap;
   readonly verticalAlign: VerticalAlign;
   readonly rtl: boolean;
-  // Natural language (w:lang @w:val). Optional — only set when the source
-  // specifies one; consumed by the tagged-PDF per-element /Lang, never layout.
+  /**
+   * Natural language (`w:lang @w:val`). Optional — only set when the source
+   * specifies one; consumed by the tagged-PDF per-element `/Lang`, never layout.
+   */
   readonly lang?: string;
 }
 
+/**
+ * A paragraph's fully-resolved properties: every field required, the cascade
+ * having collapsed all inheritance. Consumed directly by the renderer.
+ */
 export interface ResolvedParagraphProperties {
   readonly alignment: Alignment;
   readonly spacingBefore: Pt;
@@ -38,18 +49,24 @@ export interface ResolvedParagraphProperties {
   readonly indentFirstLine: Pt;
   readonly pageBreakBefore: boolean;
   readonly bidi: boolean;
-  // ECMA-376 §17.3.1.20 — resolved outline level (0–8). Undefined = body text.
-  // Used only by tagged-PDF heading detection.
+  /**
+   * ECMA-376 §17.3.1.20 — resolved outline level (0–8). Undefined = body text.
+   * Used only by tagged-PDF heading detection.
+   */
   readonly outlineLevel?: number;
-  // The paragraph's style id (e.g. "Heading2"), carried through for heading
-  // detection when a style lacks an explicit outline level.
+  /**
+   * The paragraph's style id (e.g. `"Heading2"`), carried through for heading
+   * detection when a style lacks an explicit outline level.
+   */
   readonly styleId?: string;
-  // §17.9 list reference, carried through for tagged-PDF list structure
-  // (L/LI nesting) — markers themselves are materialized by applyNumbering.
+  /**
+   * §17.9 list reference, carried through for tagged-PDF list structure
+   * (L/LI nesting) — markers themselves are materialized by `applyNumbering`.
+   */
   readonly numbering?: NumberingReference;
 }
 
-// Word's empty document defaults (used when docDefaults is absent).
+/** Word's empty-document run defaults (used when `docDefaults` is absent). */
 export const DEFAULT_RESOLVED_RUN: ResolvedRunProperties = {
   bold: false,
   italic: false,
@@ -62,6 +79,7 @@ export const DEFAULT_RESOLVED_RUN: ResolvedRunProperties = {
   rtl: false,
 };
 
+/** Word's empty-document paragraph defaults (used when `docDefaults` is absent). */
 export const DEFAULT_RESOLVED_PARAGRAPH: ResolvedParagraphProperties = {
   alignment: 'left',
   spacingBefore: twipsToPt(0),

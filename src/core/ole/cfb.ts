@@ -21,8 +21,10 @@ const HEADER_SIZE = 512;
 const DIR_ENTRY_SIZE = 128;
 const MAX_TOTAL_BYTES = 512 * 1024 * 1024; // overall output ceiling
 
+/** The object type of a CFB directory entry (MS-CFB §2.6.1). */
 export type CfbEntryType = 'root' | 'storage' | 'stream' | 'unknown';
 
+/** One CFB directory entry: its name, type, starting sector and byte size. */
 export interface CfbEntry {
   readonly name: string;
   readonly type: CfbEntryType;
@@ -30,8 +32,10 @@ export interface CfbEntry {
   readonly size: number;
 }
 
+/** Error thrown for a malformed or unsupported compound file. */
 export class CfbError extends Error {}
 
+/** A parsed compound file: its directory entries plus stream-access helpers. */
 export interface Cfb {
   /** Every directory entry, in directory order (index 0 is the root storage). */
   readonly entries: ReadonlyArray<CfbEntry>;
@@ -41,8 +45,11 @@ export interface Cfb {
   hasStream: (name: string) => boolean;
 }
 
-// Cheap magic-byte probe — the first eight bytes are the CFB signature. Shared by
-// the legacy readers' sniff and by OpcPackage to tell an OLE file from a ZIP.
+/**
+ * Cheap magic-byte probe — the first eight bytes are the CFB signature. Shared
+ * by the legacy readers' sniff and by `OpcPackage` to tell an OLE file from a
+ * ZIP.
+ */
 export function isCfb(bytes: Uint8Array): boolean {
   if (bytes.length < HEADER_SIZE) return false;
   for (let i = 0; i < SIGNATURE.length; i++) {
@@ -51,6 +58,16 @@ export function isCfb(bytes: Uint8Array): boolean {
   return true;
 }
 
+/**
+ * Parse a compound file's bytes into a {@link Cfb}: read the header, FAT (via the
+ * DIFAT), directory and mini-FAT, and expose its streams by name. The
+ * main-document storage's own streams win a name clash over an embedded object's
+ * (MS-CFB §2.6). Every sector index is bounds-checked and every chain walk is
+ * capped, so a crafted container aborts rather than looping or exhausting memory.
+ *
+ * @throws CfbError on a bad signature, an unsupported sector layout, or a
+ *         corrupt/cyclic FAT, mini-FAT or DIFAT chain.
+ */
 export function openCfb(bytes: Uint8Array): Cfb {
   if (!isCfb(bytes)) throw new CfbError('not a compound file (bad signature)');
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

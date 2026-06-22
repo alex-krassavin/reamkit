@@ -15,17 +15,29 @@ const parser = new XMLParser({
   trimValues: false,
 });
 
+/**
+ * Package-level metadata from `docProps/core.xml` (ECMA-376 Part 2 §11.1), in
+ * the Dublin Core / OPC core vocabulary. Shared by docx and xlsx packages.
+ */
 export interface CoreProperties {
   readonly title?: string;
   readonly subject?: string;
+  /** `dc:creator` → PDF "Author". */
   readonly creator?: string; // dc:creator → PDF "Author"
   readonly keywords?: string;
   readonly description?: string;
   readonly lastModifiedBy?: string;
+  /** `dcterms:created` timestamp. */
   readonly created?: Date; // dcterms:created
+  /** `dcterms:modified` timestamp. */
   readonly modified?: Date; // dcterms:modified
 }
 
+/**
+ * Parse `docProps/core.xml` into {@link CoreProperties}. Tolerates the
+ * `cp:`/`dc:`/`dcterms:` prefixed and the bare element forms; returns `{}` when
+ * the root element is absent.
+ */
 export function parseCoreProperties(data: Uint8Array): CoreProperties {
   const tree = parser.parse(decoder.decode(data)) as Record<string, unknown>;
   // The root is <cp:coreProperties> but fast-xml-parser strips namespaces by
