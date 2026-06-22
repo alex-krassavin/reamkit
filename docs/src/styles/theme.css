@@ -245,11 +245,26 @@ site-search button[data-open-modal]:hover {
   border-color: var(--rk-terra);
   color: var(--rk-muted);
 }
-site-search button[data-open-modal] kbd {
+/* The shortcut hint is Starlight's nested <kbd><kbd>⌘</kbd><kbd>K</kbd></kbd>.
+   Style only the outer one as a single subtle pill and keep the keys plain
+   inside, so it reads as one "⌘K" badge instead of two boxed keys. (Don't set
+   `display` — Starlight's sl-hidden / md:sl-flex handles the responsive show.) */
+site-search button[data-open-modal] > kbd {
+  gap: 1px;
   font-family: var(--sl-font-mono);
+  font-size: 11px;
   background: transparent;
   border: 1px solid #e0d4be;
+  border-radius: 4px;
   color: #a89a80;
+  padding: 1px 5px;
+}
+site-search button[data-open-modal] kbd kbd {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  font-size: inherit;
 }
 
 /* ---- Cards (Starlight <Card> on inner pages) ---- */
