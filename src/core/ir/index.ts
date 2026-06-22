@@ -23,11 +23,13 @@ export { FEATURES, featureWithin } from '@/core/ir/features';
 export type { Loss, LossReport, LossSeverity } from '@/core/ir/loss';
 export { ConversionLossError, formatLoss } from '@/core/ir/loss';
 
-// Passthrough bag for the round-trip door (ir-design §4): a node MAY carry the
-// source format's raw fragment keyed by format id (e.g. { ooxml: <fragment> }).
-// Writers for other formats ignore it; a same-format writer may use it to
-// reproduce constructs the neutral core does not model. v1 promises only
-// cross-format fidelity — this keeps the door open without promising more.
+/**
+ * Passthrough bag for the round-trip door (ir-design §4): a node MAY carry the
+ * source format's raw fragment keyed by format id (e.g. `{ ooxml: <fragment> }`).
+ * Writers for other formats ignore it; a same-format writer may use it to
+ * reproduce constructs the neutral core does not model. v1 promises only
+ * cross-format fidelity — this keeps the door open without promising more.
+ */
 export interface NativeBag {
   readonly [formatId: string]: unknown;
 }
