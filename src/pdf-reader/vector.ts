@@ -13,12 +13,22 @@ import type { ShapeGradient } from '@/core/vector';
 
 import type { PdfFile, PdfPage } from './document';
 
+/**
+ * One painted vector path lifted off a page (E-PDF EP10/EP11/EP16c): the path
+ * segments, whichever of solid fill / gradient fill / stroke survived the
+ * de-cluttering filter, and the path's page-space bounding box plus enclosing
+ * marked-content id.
+ */
 export interface PdfVector {
   readonly segs: ReadonlyArray<PathSeg>;
-  readonly fillHex?: string; // present iff a qualifying solid fill survived (EP10)
-  readonly gradient?: ShapeGradient; // present iff a shading-pattern fill survived (EP16c)
-  readonly strokeHex?: string; // present iff a qualifying stroke survived (EP11)
-  readonly lineWidth?: number; // stroke width in page-space points (EP11)
+  /** Present iff a qualifying solid fill survived (EP10). */
+  readonly fillHex?: string;
+  /** Present iff a shading-pattern fill survived (EP16c). */
+  readonly gradient?: ShapeGradient;
+  /** Present iff a qualifying stroke survived (EP11). */
+  readonly strokeHex?: string;
+  /** Stroke width in page-space points (EP11). */
+  readonly lineWidth?: number;
   readonly minX: number;
   readonly minY: number;
   readonly maxX: number;
@@ -32,6 +42,15 @@ const MIN_AREA = 16; // pt² — skip dots / hairlines
 const MIN_STROKE_LEN = 6; // pt — skip stroke specks (tick marks, dots)
 const MAX_VECTORS = 2000; // per-page DoS guard
 
+/**
+ * Lift the painted vector paths off a page (E-PDF EP10/EP11/EP16c). Runs the
+ * content interpreter for its fill (EP10), stroke (EP11) and shading-pattern
+ * (EP16c) placements and keeps only the ones that read as real graphics:
+ * hairline/degenerate fills, invisible white paint, short stroke specks and the
+ * near-full-page background are all dropped, so a reconstructed document gains
+ * genuine coloured shapes, lines and gradients without the dot / page-background
+ * clutter. Clips and the bare `sh` operator are not captured (a documented loss).
+ */
 export function collectPageVectors(file: PdfFile, page: PdfPage): Array<PdfVector> {
   const [px0, py0, px1, py1] = page.mediaBox;
   const pageArea = Math.max(1, Math.abs((px1 - px0) * (py1 - py0)));

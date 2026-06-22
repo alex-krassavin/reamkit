@@ -9,6 +9,13 @@ import { layoutStyledDocument } from '@/layout/styled-layout';
 import { emitStyledPdf, emitStyledPdfEncrypted } from '@/pdf/styled-page-emitter';
 import { PdfDocument } from '@/pdf/writer';
 
+/**
+ * Render a body to a PDF: lay it out, then emit it over a fresh
+ * {@link PdfDocument}. The byte-stable synchronous path.
+ *
+ * @throws Error when `options.encrypt` is set — encryption requires the async
+ *         {@link renderStyledPdfEncrypted} path (WebCrypto).
+ */
 export function renderStyledPdf(
   body: ReadonlyArray<BodyElement>,
   options: StyledRenderOptions,
@@ -21,10 +28,17 @@ export function renderStyledPdf(
   return emitStyledPdf(laid, options, doc);
 }
 
-// §7.6 — the encrypting variant (async: WebCrypto). Validates the standing
-// conflicts here so every converter shares them: PDF/A forbids /Encrypt
-// (ISO 19005), signatures + encryption is out of scope in v1, and PDF/UA
-// requires assistive technology to keep extraction access (bit 10).
+/**
+ * The encrypting variant of {@link renderStyledPdf} (ISO 32000 §7.6; async
+ * because WebCrypto is). Validates the standing conflicts here so every
+ * converter shares them: PDF/A forbids `/Encrypt` (ISO 19005), signatures +
+ * encryption is out of scope in v1, and PDF/UA requires assistive technology to
+ * keep extraction access (bit 10, forced on here). With no `options.encrypt` it
+ * falls through to the plain {@link renderStyledPdf}.
+ *
+ * @throws Error when `options.pdfA` is set (PDF/A forbids encryption) or when a
+ *         signature placeholder is combined with encryption.
+ */
 export async function renderStyledPdfEncrypted(
   body: ReadonlyArray<BodyElement>,
   options: StyledRenderOptions,

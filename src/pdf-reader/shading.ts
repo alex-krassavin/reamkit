@@ -11,7 +11,16 @@ import type { PdfDict, PdfValue } from '@/pdf/objects';
 import type { PdfFile, PdfPage } from './document';
 import { PDF_NULL, PdfStream } from '@/pdf/objects';
 
-// Resource name → gradient, for every PatternType-2 (shading) pattern on the page.
+/**
+ * Resolve a page's `/Pattern` resources into gradient fills (E-PDF EP16c, ISO
+ * 32000-1 §8.7.4.5). Every `PatternType` 2 (shading) pattern is evaluated — its
+ * `/Shading` type 2 (axial) or 3 (radial) plus the `/Function` colour stops —
+ * and keyed by resource name; the interpreter looks the name up when a shape is
+ * filled with `/Pattern cs /Pn scn`. The bare `sh` operator (clip-bounded) is
+ * not captured.
+ *
+ * @returns A map from pattern resource name to its {@link ShapeGradient}.
+ */
 export function buildShadingMap(file: PdfFile, page: PdfPage): Map<string, ShapeGradient> {
   const out = new Map<string, ShapeGradient>();
   if (!page.resources) return out;

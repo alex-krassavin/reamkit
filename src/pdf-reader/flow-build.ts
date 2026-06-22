@@ -20,13 +20,20 @@ import type { PdfVector } from './vector';
 import { ResourceStore, pt } from '@/core/ir';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 
-// A reconstruction's document plus the losses incurred reading it (e.g. an
-// undecodable image colour space) — surfaced through the reader's LossReport.
+/**
+ * A reconstruction's document plus the losses incurred reading it (e.g. an
+ * undecodable image colour space) — surfaced through the reader's `LossReport`.
+ */
 export interface Reconstruction {
   readonly doc: FlowDoc;
   readonly losses: ReadonlyArray<Loss>;
 }
 
+/**
+ * Build a paragraph {@link BodyElement} from a single plain-text string,
+ * optionally at the given outline (heading) level. Empty text yields a
+ * paragraph with no runs. The link-free counterpart of {@link paragraphFromRuns}.
+ */
 export function paragraphBlock(text: string, outlineLevel?: number): BodyElement {
   const properties: ParagraphProperties = outlineLevel !== undefined ? { outlineLevel } : {};
   return {
@@ -35,16 +42,18 @@ export function paragraphBlock(text: string, outlineLevel?: number): BodyElement
   };
 }
 
-// One piece of reconstructed text, carrying any hyperlink (E-PDF EP8).
+/** One piece of reconstructed text, carrying any hyperlink (E-PDF EP8). */
 export interface TextSpan {
   readonly text: string;
   readonly href?: string;
 }
 
-// Build a paragraph from positioned spans, coalescing consecutive spans that
-// share an href into one run (so a link survives as its own run) and squashing
-// whitespace. With no hrefs this collapses to a single run — the same shape
-// `paragraphBlock` produces.
+/**
+ * Build a paragraph {@link BodyElement} from positioned {@link TextSpan}s,
+ * coalescing consecutive spans that share an `href` into one run (so a link
+ * survives as its own run) and squashing whitespace. With no hrefs this
+ * collapses to a single run — the same shape {@link paragraphBlock} produces.
+ */
 export function paragraphFromRuns(
   spans: ReadonlyArray<TextSpan>,
   outlineLevel?: number,
@@ -76,8 +85,11 @@ export function paragraphFromRuns(
   };
 }
 
-// Store the image bytes (content-addressed dedup) and build the block that
-// references them, sized in points from the placement CTM.
+/**
+ * Store a {@link PdfImage}'s bytes (content-addressed dedup) and build the image
+ * {@link BodyElement} that references them, sized in points from the placement
+ * CTM. `alt` becomes the block's alt text when given.
+ */
 export function imageBlock(image: PdfImage, resources: ResourceStore, alt?: string): BodyElement {
   const resource = resources.put(image.bytes);
   return {
@@ -92,17 +104,20 @@ export function imageBlock(image: PdfImage, resources: ResourceStore, alt?: stri
   };
 }
 
-// Collapse losses sharing a message (the same colour space dropped on many pages).
+/** Collapse losses sharing a `detail` message (the same colour space dropped on many pages). */
 export function dedupeLosses(losses: ReadonlyArray<Loss>): Array<Loss> {
   const byDetail = new Map<string, Loss>();
   for (const loss of losses) if (!byDetail.has(loss.detail)) byDetail.set(loss.detail, loss);
   return [...byDetail.values()];
 }
 
-// A lifted path (filled EP10 / stroked EP11) as a custom-geometry shape.
-// Page-space points (y-up) become path-space (bbox-relative, y-down); the shape
-// is sized from the bounding box (plus the stroke thickness) and placed in flow
-// order by the caller. A fill becomes a solid fill, a stroke becomes the outline.
+/**
+ * Turn a lifted {@link PdfVector} path (filled EP10 / stroked EP11) into a
+ * custom-geometry shape {@link BodyElement}. Page-space points (y-up) become
+ * path-space (bbox-relative, y-down); the shape is sized from the bounding box
+ * (plus the stroke thickness) and placed in flow order by the caller. A fill
+ * becomes a solid fill, a stroke becomes the outline.
+ */
 export function shapeBlock(v: PdfVector): BodyElement {
   const w = v.maxX - v.minX;
   const h = v.maxY - v.minY;
@@ -154,14 +169,17 @@ export function shapeBlock(v: PdfVector): BodyElement {
   };
 }
 
-// Derive the FlowDoc section geometry from the source pages so a reconstructed
-// PDF re-renders at its real page size and orientation rather than the layout
-// engine's A4 default — without it an A3 source paginates onto several A4
-// pages, a wide/landscape page is letterboxed, and so on. PDF user-space units
-// are points, matching Pt, so the MediaBox extents map straight to the page
-// size. Uses the first page's box (the near-universal uniform-size case); a PDF
-// whose pages differ in size reflows to this single geometry — a known
-// approximation, still far better than a fixed A4.
+/**
+ * Derive the {@link SectionProperties} geometry from the source pages so a
+ * reconstructed PDF re-renders at its real page size and orientation rather than
+ * the layout engine's `A4` default — without it an `A3` source paginates onto
+ * several `A4` pages, a wide/landscape page is letterboxed, and so on. PDF
+ * user-space units are points, matching `Pt`, so the `MediaBox` extents map
+ * straight to the page size. Uses the first {@link PdfPage}'s box (the
+ * near-universal uniform-size case); a PDF whose pages differ in size reflows to
+ * this single geometry — a known approximation, still far better than a fixed
+ * `A4`. Returns `undefined` when there is no usable first-page box.
+ */
 export function sectionFromPdfPages(pages: ReadonlyArray<PdfPage>): SectionProperties | undefined {
   const box = pages[0]?.mediaBox;
   if (!box) return undefined;
@@ -185,6 +203,13 @@ export function sectionFromPdfPages(pages: ReadonlyArray<PdfPage>): SectionPrope
   };
 }
 
+/**
+ * Assemble the final {@link FlowDoc} for a reconstruction: the body elements
+ * with their styles resolved against the empty style sheet, the lifted-image
+ * resource store, and the optional page {@link SectionProperties}. Shared by
+ * both reconstruction paths (the tagged fast-path EP3 and the heuristic layout
+ * path EP4).
+ */
 export function buildFlowDoc(
   body: ReadonlyArray<BodyElement>,
   resources: ResourceStore = new ResourceStore(),

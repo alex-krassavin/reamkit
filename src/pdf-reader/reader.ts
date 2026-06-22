@@ -31,6 +31,18 @@ function sniffPdf(bytes: Uint8Array): boolean {
   return false;
 }
 
+/**
+ * Parse PDF bytes into a {@link FlowDoc} (E-PDF EP5): reconstruct via the tagged
+ * structure tree when present (EP3), else the layout heuristic (EP4), lifting
+ * raster images back into reading order (EP6). Records losses for encryption that
+ * could not be opened, heuristic (untagged) reconstruction, and the vector
+ * regions that are not reconstructed (clipping paths, bare `sh` shadings).
+ *
+ * @param bytes    The complete PDF file bytes.
+ * @param password The user password for an encrypted source; the empty string
+ *                 opens permissions-only encryption.
+ * @returns The reconstructed FlowDoc and its accumulated {@link Loss} report.
+ */
 export function readPdf(bytes: Uint8Array, password = ''): ReadResult<FlowDoc> {
   const file = PdfFile.parse(bytes, password);
   const losses: Array<Loss> = [];
@@ -67,6 +79,10 @@ export function readPdf(bytes: Uint8Array, password = ''): ReadResult<FlowDoc> {
   return { doc: reconstruction.doc, losses };
 }
 
+/**
+ * The `pdfReader` adapter: a {@link DocumentReader} that sniffs the `%PDF-`
+ * header and parses the bytes into a {@link FlowDoc} (E-PDF EP5).
+ */
 export const pdfReader: DocumentReader<FlowDoc> = {
   id: 'pdf',
   produces: 'flow',

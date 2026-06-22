@@ -17,8 +17,10 @@ import type { Decryptor } from './decrypt';
 import type { PdfArray, PdfDict, PdfValue } from '@/pdf/objects';
 import { PDF_NULL, PdfName, PdfRef, PdfStream } from '@/pdf/objects';
 
+/** A PDF rectangle `[llx, lly, urx, ury]` in default user-space units (§7.9.5). */
 export type Rectangle = readonly [number, number, number, number];
 
+/** A resolved leaf page: its dictionary plus its inherited `/MediaBox` and `/Resources`. */
 export interface PdfPage {
   readonly dict: PdfDict;
   readonly mediaBox: Rectangle;
@@ -35,6 +37,14 @@ const DEFAULT_MEDIA_BOX: Rectangle = [0, 0, 612, 792]; // US Letter, the PDF def
 const MAX_PAGES = 50_000; // DoS guard on a pathological page tree
 const MAX_OBJSTM_N = 200_000; // DoS guard on an object stream's object count
 
+/**
+ * The document layer (E-PDF EP1/EP7): wraps a whole PDF byte buffer and exposes
+ * its objects — the cross-reference table (classic `xref` + `trailer` and
+ * cross-reference streams), cached indirect-reference resolution (including
+ * objects packed inside object streams), the page tree (walked with attribute
+ * inheritance), and stream decoding (FlateDecode + predictors). A brute-force
+ * object scan recovers files whose xref is broken. Construct via {@link PdfFile.parse}.
+ */
 export class PdfFile {
   private readonly cache = new Map<number, PdfValue>();
   // objStm object number → its decoded members (objNum → value), decoded once.
@@ -49,6 +59,15 @@ export class PdfFile {
     readonly trailer: PdfDict,
   ) {}
 
+  /**
+   * Parse a whole PDF byte buffer: read the cross-reference chain (or brute-force
+   * recover a broken one) and initialize decryption from `/Encrypt` (§7.6).
+   *
+   * @param bytes    The complete PDF file bytes.
+   * @param password The user password for an encrypted source (EP14); the empty
+   *                 string opens permissions-only encryption.
+   * @returns A ready-to-query {@link PdfFile}.
+   */
   static parse(bytes: Uint8Array, password = ''): PdfFile {
     let xref = new Map<number, XrefEntry>();
     let trailer: PdfDict = new Map();
@@ -77,9 +96,11 @@ export class PdfFile {
     return file;
   }
 
-  // Build the decryptor from /Encrypt (§7.6). Runs before any other object is
-  // resolved, so the /Encrypt dictionary itself is read in the clear; its object
-  // is then never decrypted.
+  /**
+   * Build the decryptor from `/Encrypt` (§7.6). Runs before any other object is
+   * resolved, so the `/Encrypt` dictionary itself is read in the clear; its object
+   * is then never decrypted.
+   */
   private initEncryption(password: string): void {
     const encVal = this.trailer.get('Encrypt');
     if (encVal === undefined) return;
@@ -90,14 +111,18 @@ export class PdfFile {
     this.decryptor = buildDecryptor(enc, Array.isArray(id) ? id : undefined, password);
   }
 
-  // Resolve a stream's /Length when it is an indirect reference.
+  /** Resolve a stream's `/Length` when it is an indirect reference. */
   private readonly lengthResolver = (r: PdfRef): number | undefined => {
     const n = this.resolve(r);
     return typeof n === 'number' ? n : undefined;
   };
 
-  // Dereference one level: a PdfRef becomes the object it points at (parsed and
-  // cached); any other value is returned unchanged.
+  /**
+   * Dereference one level: a `PdfRef` becomes the object it points at (parsed and
+   * cached); any other value is returned unchanged. Decrypts each resolved
+   * string/stream (§7.6) except the `/Encrypt` dictionary itself, and guards
+   * against self-referential cycles.
+   */
   resolve(value: PdfValue): PdfValue {
     if (!(value instanceof PdfRef)) return value;
     const cached = this.cache.get(value.id);
@@ -124,7 +149,7 @@ export class PdfFile {
     return result;
   }
 
-  // Decode (once) the members of an object stream and return objNum → value.
+  /** Decode (once) the members of an object stream (§7.5.7) and return objNum → value. */
   private objectFromStream(streamObj: number): Map<number, PdfValue> {
     const cached = this.objStmCache.get(streamObj);
     if (cached) return cached;
@@ -150,23 +175,26 @@ export class PdfFile {
     return out;
   }
 
-  // Resolve dict[key] in one step.
+  /** Resolve `dict[key]` in one step (look up then dereference). */
   get(dict: PdfDict, key: string): PdfValue {
     return this.resolve(dict.get(key) ?? PDF_NULL);
   }
 
+  /** The document catalog (`/Root`), or an empty dict when it cannot be resolved. */
   get catalog(): PdfDict {
     const root = this.resolve(this.trailer.get('Root') ?? PDF_NULL);
     return root instanceof Map ? root : new Map();
   }
 
-  // The document is encrypted but no decryptor could be built (an unsupported
-  // handler, or a wrong/missing user password) — its content is unreadable.
+  /**
+   * The document is encrypted but no decryptor could be built (an unsupported
+   * handler, or a wrong/missing user password) — its content is unreadable.
+   */
   get encryptionUnsupported(): boolean {
     return this.trailer.get('Encrypt') !== undefined && this.decryptor === undefined;
   }
 
-  // The leaf pages, in document order, each with its inherited MediaBox/Resources.
+  /** The leaf pages, in document order, each with its inherited `/MediaBox` and `/Resources`. */
   pages(): Array<PdfPage> {
     const out: Array<PdfPage> = [];
     const root = this.get(this.catalog, 'Pages');
@@ -174,6 +202,11 @@ export class PdfFile {
     return out;
   }
 
+  /**
+   * Recurse the `/Pages` tree, accumulating leaf pages into `out` with inherited
+   * `/MediaBox` and `/Resources`. Bounded by `MAX_PAGES` and a `seen` set (cycle
+   * guard).
+   */
   private walkPageTree(
     node: PdfDict,
     inherited: { mediaBox?: Rectangle | undefined; resources?: PdfDict | undefined },
@@ -199,8 +232,10 @@ export class PdfFile {
     out.push({ dict: node, mediaBox: mediaBox ?? DEFAULT_MEDIA_BOX, resources });
   }
 
-  // A page's concatenated, decoded content stream bytes (/Contents may be a
-  // single stream or an array of streams joined with a space, per §7.8.2).
+  /**
+   * A page's concatenated, decoded content stream bytes (`/Contents` may be a
+   * single stream or an array of streams joined with a separator, per §7.8.2).
+   */
   pageContent(page: PdfPage): Uint8Array {
     const contents = this.get(page.dict, 'Contents');
     const streams: Array<PdfStream> = [];
@@ -215,8 +250,10 @@ export class PdfFile {
     return concatWithSpaces(parts);
   }
 
-  // Decode a stream's bytes, applying its /Filter chain (FlateDecode + any
-  // /Predictor supported; unknown filters pass through undecoded).
+  /**
+   * Decode a stream's bytes, applying its `/Filter` chain (FlateDecode + any
+   * `/Predictor` supported; unknown filters pass through undecoded).
+   */
   streamData(stream: PdfStream): Uint8Array {
     let data = stream.data;
     const filter = this.resolve(stream.dict.get('Filter') ?? PDF_NULL);
@@ -516,5 +553,5 @@ function lastIndexOfAscii(buf: Uint8Array, needle: string): number {
   return -1;
 }
 
-// Re-export for callers that walk a resolved dict's array values.
+/** Re-export for callers that walk a resolved dict's array values. */
 export type { PdfArray };

@@ -5,13 +5,25 @@
 
 import { Lexer } from './lexer';
 
+/** A parsed `/ToUnicode` CMap: the code→Unicode mapping and the code width. */
 export interface ToUnicode {
-  readonly map: ReadonlyMap<number, string>; // code → Unicode
+  /** Character code → Unicode string (a single code may map to a ligature). */
+  readonly map: ReadonlyMap<number, string>;
+  /** Whether character codes are one or two bytes wide (from `codespacerange`). */
   readonly codeBytes: 1 | 2;
 }
 
 const MAX_RANGE = 65_536; // DoS guard on a pathological bfrange
 
+/**
+ * Parse a `/ToUnicode` CMap (ISO 32000-1 §9.10.3) into a code→Unicode map. Reads
+ * the `codespacerange` (code width), `bfchar` (single codes) and `bfrange`
+ * (contiguous ranges, scalar or array destination) blocks; everything else is
+ * ignored.
+ *
+ * @param bytes The decoded CMap stream.
+ * @returns The mapping plus the declared code width (1 or 2 bytes).
+ */
 export function parseToUnicodeCMap(bytes: Uint8Array): ToUnicode {
   const lexer = new Lexer(bytes);
   const map = new Map<number, string>();

@@ -55,6 +55,17 @@ type EmitOptions = Pick<
   'attachments' | 'info' | 'language' | 'pdfUA' | 'signaturePlaceholder'
 >;
 
+/**
+ * The emit phase: turn a laid-out document into PDF objects (ISO 32000) and
+ * serialize it. The counterpart of `layoutStyledDocument` (the seam of
+ * ir-design §7 / oop-design §4.1); it sees only the laid-out document plus the
+ * output-side options, never the layout options. Fonts and images embed first
+ * (the object order the pre-split renderer produced), pages replay their
+ * `PageItem`s, then the catalog assembles the OutputIntent / XMP / struct-tree /
+ * attachments as required.
+ *
+ * @returns The serialized PDF bytes.
+ */
 export function emitStyledPdf(
   laid: LaidOutPdfDocument,
   options: EmitOptions,
@@ -64,9 +75,16 @@ export function emitStyledPdf(
   return doc.build(a.catalogRef, a.infoRef, a.buildOptions);
 }
 
-// §7.6 — the encrypted build: assemble as usual, encrypt every collected
-// object, then add the (plaintext) /Encrypt dictionary and emit with a file
-// ID. Asynchronous because WebCrypto is.
+/**
+ * The encrypted build (ISO 32000 §7.6): assemble as usual, encrypt every
+ * collected object with the derived file key, then add the (plaintext)
+ * `/Encrypt` dictionary and emit with a file `/ID`. Asynchronous because
+ * WebCrypto is.
+ *
+ * @param encrypt The encryption parameters (handler revision, permissions,
+ *                passwords) used to prepare the file key and `/Encrypt` dict.
+ * @returns The serialized, encrypted PDF bytes.
+ */
 export async function emitStyledPdfEncrypted(
   laid: LaidOutPdfDocument,
   options: EmitOptions,
@@ -1039,16 +1057,21 @@ function formatNumber(n: number): string {
   return n.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
 }
 
-// Per-page tagging state threaded into emitPageContent. `next` is the running
-// MCID counter (reset per page); `assigned` records whether any tagged marked
-// content was emitted (so the page gets /StructParents); `record` ties an
-// assigned MCID back to its structure node.
+/**
+ * Per-page tagging state threaded into `emitPageContent` when emitting a tagged
+ * PDF (ISO 32000-1 §14.7).
+ */
 export interface PageTagging {
+  /** The running MCID counter, reset per page. */
   next: number;
+  /** Whether any tagged marked content was emitted (so the page gets `/StructParents`). */
   assigned: boolean;
+  /** Tie an assigned MCID back to its structure node. */
   record: (structId: number, mcid: number) => void;
-  // The marked-content tag for a structure node — its structure type, so the
-  // BDC tag matches the StructElem /S (§14.7.2: a heading is /H1, a cell's
-  // paragraph /P, …), not a hardcoded /P.
+  /**
+   * The marked-content tag for a structure node — its structure type, so the
+   * `BDC` tag matches the `StructElem` `/S` (§14.7.2: a heading is `/H1`, a
+   * cell's paragraph `/P`, …), not a hardcoded `/P`.
+   */
   tagFor: (structId: number) => string;
 }

@@ -8,6 +8,11 @@
 // so a parsed document is the inverse of a written one — the natural shape for
 // round-tripping Ream's own tagged output back into a FlowDoc.
 
+/**
+ * One COS lexical token (ISO 32000-1 §7.2/§7.3): a number, name, string (literal
+ * or hex), an array/dictionary delimiter, a bare keyword (`obj` / `R` / `stream`
+ * / `true` / …), or end-of-input.
+ */
 export type Token =
   | { readonly kind: 'num'; readonly value: number }
   | { readonly kind: 'name'; readonly value: string }
@@ -54,8 +59,18 @@ function hexVal(b: number): number {
   return -1;
 }
 
+/**
+ * COS lexer (ISO 32000-1 §7.2/§7.3): scans a PDF byte buffer into a stream of
+ * {@link Token}s. The parser drives it with look-ahead to recover the object
+ * grammar. `pos` is the public cursor; callers (and the parser's rewind logic)
+ * read and assign it directly.
+ */
 export class Lexer {
   pos: number;
+  /**
+   * @param buf The PDF byte buffer to tokenize.
+   * @param pos The starting byte offset (defaults to the start of the buffer).
+   */
   constructor(
     private readonly buf: Uint8Array,
     pos = 0,
@@ -63,15 +78,17 @@ export class Lexer {
     this.pos = pos;
   }
 
+  /** The length of the underlying byte buffer. */
   get length(): number {
     return this.buf.length;
   }
 
+  /** The byte at index `i`, or −1 when out of range. */
   byteAt(i: number): number {
     return i >= 0 && i < this.buf.length ? this.buf[i]! : -1;
   }
 
-  // §7.2.3 — skip whitespace and `%`-to-end-of-line comments.
+  /** §7.2.3 — skip whitespace and `%`-to-end-of-line comments. */
   skipWhitespace(): void {
     const buf = this.buf;
     while (this.pos < buf.length) {
@@ -90,7 +107,7 @@ export class Lexer {
     }
   }
 
-  // Read and consume the next token from the current position.
+  /** Read and consume the next {@link Token} from the current position. */
   nextToken(): Token {
     this.skipWhitespace();
     const buf = this.buf;
@@ -136,6 +153,7 @@ export class Lexer {
     return this.nextToken();
   }
 
+  /** Read a numeric token (optional sign, digits and a decimal point). */
   private readNumber(): Token {
     const buf = this.buf;
     const start = this.pos;
@@ -150,6 +168,7 @@ export class Lexer {
     return { kind: 'num', value: Number.isFinite(value) ? value : 0 };
   }
 
+  /** Read a `/Name` token, decoding `#XX` hex escapes (§7.3.5). */
   private readName(): Token {
     const buf = this.buf;
     this.pos++; // consume '/'
@@ -173,6 +192,7 @@ export class Lexer {
     return { kind: 'name', value: latin1(Uint8Array.from(out)) };
   }
 
+  /** Read a bare keyword token: a run of regular bytes (`obj`, `R`, `true`, …). */
   private readKeyword(): Token {
     const buf = this.buf;
     const start = this.pos;
@@ -180,6 +200,7 @@ export class Lexer {
     return { kind: 'keyword', value: latin1(buf.subarray(start, this.pos)) };
   }
 
+  /** Read a `<…>` hex string (§7.3.4.3); an odd trailing digit takes a low nibble of 0. */
   private readHexString(): Token {
     const buf = this.buf;
     this.pos++; // consume '<'
@@ -201,6 +222,10 @@ export class Lexer {
     return { kind: 'hexstr', bytes: Uint8Array.from(out) };
   }
 
+  /**
+   * Read a `(…)` literal string (§7.3.4.2): handles nested parentheses, backslash
+   * escapes and octal codes. The bytes are decoded latin1.
+   */
   private readLiteralString(): Token {
     const buf = this.buf;
     this.pos++; // consume '('
@@ -268,8 +293,10 @@ export class Lexer {
     return { kind: 'str', value: latin1(Uint8Array.from(out)) };
   }
 
-  // First index of an ASCII needle at or after `from` (−1 if none). Used to find
-  // `endstream` when a stream's /Length is missing or an unresolved reference.
+  /**
+   * First index of an ASCII `needle` at or after `from` (−1 if none). Used to find
+   * `endstream` when a stream's `/Length` is missing or an unresolved reference.
+   */
   indexOfAscii(needle: string, from: number): number {
     const buf = this.buf;
     const n = needle.length;
@@ -282,10 +309,12 @@ export class Lexer {
     return -1;
   }
 
-  // §7.3.8.1 — read a stream's raw bytes. `pos` must sit right after the `stream`
-  // keyword. The keyword is followed by CRLF (or a lone LF); the data then runs
-  // for `length` bytes, or — when the length is unknown — up to `endstream`.
-  // Leaves `pos` at the `endstream` keyword.
+  /**
+   * §7.3.8.1 — read a stream's raw bytes. `pos` must sit right after the `stream`
+   * keyword. The keyword is followed by CRLF (or a lone LF); the data then runs
+   * for `length` bytes, or — when the length is unknown — up to `endstream`.
+   * Leaves `pos` at the `endstream` keyword.
+   */
   readStreamBody(length: number | undefined): Uint8Array {
     const buf = this.buf;
     if (buf[this.pos] === 0x0d && buf[this.pos + 1] === 0x0a) this.pos += 2;
@@ -309,10 +338,12 @@ export class Lexer {
   }
 }
 
-// Bytes → a Latin-1 (ISO-8859-1) string: each byte becomes the code point of the
-// same value, so the string round-trips back to the exact bytes. PDF text in
-// strings is decoded to Unicode later (via the font's /ToUnicode); at the COS
-// layer a string is just bytes.
+/**
+ * Bytes → a Latin-1 (ISO-8859-1) string: each byte becomes the code point of the
+ * same value, so the string round-trips back to the exact bytes. PDF text in
+ * strings is decoded to Unicode later (via the font's `/ToUnicode`); at the COS
+ * layer a string is just bytes.
+ */
 export function latin1(bytes: Uint8Array): string {
   let s = '';
   for (const b of bytes) s += String.fromCharCode(b);

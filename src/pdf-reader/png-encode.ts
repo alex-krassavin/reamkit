@@ -8,7 +8,7 @@
 
 import { zlibSync } from 'fflate';
 
-// gray = 1ch, rgb = 3ch, gray-alpha = 2ch, rgba = 4ch.
+/** A PNG colour type: `gray` = 1ch, `rgb` = 3ch, `gray-alpha` = 2ch, `rgba` = 4ch. */
 export type PngColor = 'gray' | 'rgb' | 'gray-alpha' | 'rgba';
 
 const COLOR_TYPE: Record<PngColor, number> = { gray: 0, rgb: 2, 'gray-alpha': 4, rgba: 6 };
@@ -16,7 +16,14 @@ const CHANNELS: Record<PngColor, number> = { gray: 1, rgb: 3, 'gray-alpha': 2, r
 
 const SIGNATURE = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
-// `samples` is row-major, 8-bit, `CHANNELS[color]` interleaved values per pixel.
+/**
+ * Wrap raw 8-bit samples into a minimal PNG file (RFC 2083): a single `IDAT`
+ * with filter-none scanlines, no interlacing, colour types 0/2/4/6. Produces a
+ * format every writer already embeds — `detectImageFormat` recognises this
+ * output (the HTML data-URI and docx media paths both rely on it).
+ *
+ * @param samples Row-major, 8-bit, `CHANNELS[color]` interleaved values per pixel.
+ */
 export function encodePng(
   width: number,
   height: number,

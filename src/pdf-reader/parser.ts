@@ -9,24 +9,33 @@ import type { PdfArray, PdfDict, PdfValue } from '@/pdf/objects';
 
 import { PDF_NULL, PdfHexString, PdfName, PdfRef, PdfStream } from '@/pdf/objects';
 
-// When a stream's /Length is an indirect reference it cannot be resolved while
-// parsing the object in isolation; the document layer passes a resolver. Without
-// one the parser falls back to scanning for `endstream`.
+/**
+ * Resolves an indirect-reference `/Length` to its numeric value. When a stream's
+ * `/Length` is an indirect reference it cannot be resolved while parsing the
+ * object in isolation; the document layer passes a resolver. Without one the
+ * parser falls back to scanning for `endstream`.
+ */
 export type LengthResolver = (ref: PdfRef) => number | undefined;
 
+/** A parsed `N G obj … endobj` definition: its id, generation and contained value. */
 export interface IndirectObject {
   readonly id: number;
   readonly generation: number;
   readonly value: PdfValue;
 }
 
-// Parse one object value at the lexer's current position.
+/** Parse one object value at the lexer's current position. */
 export function parseObject(lexer: Lexer, resolveLength?: LengthResolver): PdfValue {
   return parseValue(lexer, lexer.nextToken(), resolveLength);
 }
 
-// Parse an `N G obj … endobj` definition (the lexer must sit at the leading
-// integer). Returns the id/generation and the contained value.
+/**
+ * Parse an `N G obj … endobj` definition (the lexer must sit at the leading
+ * integer).
+ *
+ * @returns The {@link IndirectObject} (id, generation and contained value), or
+ *          `undefined` when the `N G obj` header does not parse.
+ */
 export function parseIndirectObject(
   lexer: Lexer,
   resolveLength?: LengthResolver,

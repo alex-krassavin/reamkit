@@ -13,6 +13,17 @@ import { PDF_NULL, PdfName, PdfStream } from '@/pdf/objects';
 
 const MAX_FORM_DEPTH = 8;
 
+/**
+ * Extract a page's text as positioned {@link TextRun}s (E-PDF EP2/EP8/EP13).
+ * Interprets the page content stream and, recursively, the Form XObjects it
+ * paints (EP13 — their text would otherwise be missed), then tags any run whose
+ * origin falls inside a `/Link` annotation's `/Rect` with that link's URI (EP8)
+ * so hyperlinks survive.
+ *
+ * @param file The owning {@link PdfFile}.
+ * @param page The page to extract.
+ * @returns The page's runs, each carrying an `href` when it sits under a link.
+ */
 export function extractPageText(file: PdfFile, page: PdfPage): Array<TextRun> {
   const runs: Array<TextRun> = [];
   collectRuns(file, page.resources, file.pageContent(page), IDENTITY, 0, new Set(), runs);

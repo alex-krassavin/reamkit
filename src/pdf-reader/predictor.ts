@@ -3,6 +3,7 @@
 // FlateDecode their data and then undo a PNG (Predictor ≥ 10) or TIFF
 // (Predictor 2) predictor; this is the shared, dependency-free math.
 
+/** The `/DecodeParms` that parameterize a `/Predictor` (ISO 32000-1 §7.4.4.4). */
 export interface PredictorParams {
   readonly predictor: number;
   readonly colors: number;
@@ -10,6 +11,14 @@ export interface PredictorParams {
   readonly columns: number;
 }
 
+/**
+ * Reverse a stream's `/Predictor` (ISO 32000-1 §7.4.4.4) after FlateDecode. Undoes
+ * a PNG predictor (`/Predictor` ≥ 10, each row prefixed with a filter-type byte:
+ * None/Sub/Up/Average/Paeth) or TIFF horizontal differencing (`/Predictor` 2,
+ * 8-bit components only). Shared by image XObjects (image-decode.ts) and
+ * cross-reference / object streams (document.ts). A `/Predictor` < 2, or
+ * unsupported parameters, returns the data unchanged.
+ */
 export function reversePredictor(data: Uint8Array, p: PredictorParams): Uint8Array {
   if (p.predictor < 2) return data;
   const bpp = Math.max(1, Math.ceil((p.colors * p.bitsPerComponent) / 8));

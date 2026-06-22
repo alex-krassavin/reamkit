@@ -23,6 +23,12 @@ import type { PdfDict, PdfValue } from '@/pdf/objects';
 import type { PdfFile } from './document';
 import { PDF_NULL, PdfHexString, PdfName, PdfStream } from '@/pdf/objects';
 
+/**
+ * The result of {@link decodePdfImage}: either a decoded standalone raster file
+ * (with pixel dimensions and an optional `degraded` note for a partial loss,
+ * e.g. a JPEG's alpha dropped) or a typed failure carrying the loss severity and
+ * a human-readable reason.
+ */
 export type DecodedImage =
   | {
       readonly ok: true;
@@ -30,12 +36,27 @@ export type DecodedImage =
       readonly format: 'png' | 'jpeg' | 'jpeg2000';
       readonly widthPx: number;
       readonly heightPx: number;
-      readonly degraded?: string; // a partial loss (e.g. a JPEG's alpha dropped)
+      /** A partial loss note (e.g. a JPEG's alpha dropped). */
+      readonly degraded?: string;
     }
   | { readonly ok: false; readonly severity: 'dropped' | 'degraded'; readonly detail: string };
 
 const MAX_PIXELS = 40_000_000; // DoS guard (~40 MP)
 
+/**
+ * Decode a PDF image XObject (ISO 32000-1 §8.9) into a standalone raster file
+ * the FlowDoc resource store can hold. JPEG (`/DCTDecode`) and JPEG 2000
+ * (`/JPXDecode`) pass through verbatim — only the filters layered before them
+ * are stripped; everything else is decoded to raw samples and re-wrapped as PNG.
+ * Supports DeviceGray/RGB/CMYK, CalGray/CalRGB, ICCBased (by `/N`) and Indexed
+ * colour spaces; Flate, LZW (EP12), RunLength, ASCII85, ASCIIHex and CCITT
+ * Group 4 / Group 3 1-D fax (EP15) filters; PNG/TIFF predictors; bit depths
+ * 1/2/4/8/16; and an `/SMask` folded in as the PNG alpha channel. Unsupported
+ * inputs (stencil `/ImageMask`, Separation/DeviceN/Lab, JBIG2, CCITT Group 3
+ * 2-D) return a typed failure so the caller records a loss.
+ *
+ * @returns The decoded image, or `{ ok: false }` with the loss severity and reason.
+ */
 export function decodePdfImage(file: PdfFile, stream: PdfStream): DecodedImage {
   const d = stream.dict;
   const width = intOf(file.get(d, 'Width')) || intOf(file.get(d, 'W'));
