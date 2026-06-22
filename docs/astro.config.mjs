@@ -18,6 +18,7 @@ export default defineConfig({
       components: {
         SiteTitle: './src/components/SiteTitle.astro',
         Sidebar: './src/components/Sidebar.astro',
+        SocialIcons: './src/components/SocialIcons.astro',
       },
       head: [
         { tag: 'link', attrs: { rel: 'preconnect', href: 'https://fonts.googleapis.com' } },
@@ -62,6 +63,11 @@ export default defineConfig({
           icon: 'github',
           label: 'GitHub',
           href: 'https://github.com/alex-krassavin/reamkit',
+        },
+        {
+          icon: 'linkedin',
+          label: "Author's LinkedIn",
+          href: 'https://www.linkedin.com/in/alexandr-krassavin-b68856238',
         },
         {
           icon: 'email',

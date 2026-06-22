@@ -146,7 +146,9 @@ site-search button[data-open-modal] {
 .header .social-icons::after {
   display: none;
 }
-.header .right-group a[href*='github.com'] {
+/* GitHub + the author's LinkedIn: matching labelled pills in the header cluster. */
+.header .right-group a[href*='github.com'],
+.header .right-group a[href*='linkedin.com'] {
   display: inline-flex;
   align-items: center;
   width: auto;
@@ -160,16 +162,21 @@ site-search button[data-open-modal] {
   color: #4a4232;
   text-decoration: none;
 }
-.header .right-group a[href*='github.com'] svg {
+.header .right-group a[href*='github.com'] svg,
+.header .right-group a[href*='linkedin.com'] svg {
   width: 17px;
   height: 17px;
 }
-.header .right-group a[href*='github.com']:hover {
+.header .right-group a[href*='github.com']:hover,
+.header .right-group a[href*='linkedin.com']:hover {
   background: var(--rk-hover);
   color: var(--rk-terra);
 }
 .header .right-group a[href*='github.com']::after {
   content: 'GitHub';
+}
+.header .right-group a[href*='linkedin.com']::after {
+  content: 'LinkedIn';
 }
 
 /* ---- Sidebar nav: rounded pills with a soft active background ---- */
