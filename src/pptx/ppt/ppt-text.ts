@@ -97,37 +97,49 @@ const SLWT_INSTANCE_SLIDES = 0;
 const MAX_EDITS = 4096;
 const MAX_DEPTH = 24;
 
-// A run of uniformly-formatted text within a paragraph (PPT-2).
+/** A run of uniformly-formatted text within a paragraph (PPT-2). */
 export interface PptRun {
   readonly text: string;
   readonly bold?: boolean;
   readonly italic?: boolean;
   readonly underline?: boolean;
+  /** The font size in points, when set on the run. */
   readonly sizePt?: number;
+  /** The run colour as 6-hex RGB (no `#`), when an explicit sRGB colour is set. */
   readonly colorHex?: string;
 }
 
-// One slide paragraph: its runs plus the raw PPT alignment enum (0 left, 1 center,
-// 2 right, 3 justify, 4 distribute) and indent level (0–4), mapped by the reader.
+/**
+ * One slide paragraph: its runs plus the raw PPT alignment enum (0 left, 1
+ * center, 2 right, 3 justify, 4 distribute) and indent level (0–4), mapped by the
+ * reader.
+ */
 export interface PptParagraph {
   readonly runs: ReadonlyArray<PptRun>;
+  /** The raw PowerPoint TextAlignmentEnum (mapped to a document-model alignment by the reader). */
   readonly align?: number;
+  /** The 0-based outline/indent level. */
   readonly level?: number;
 }
-// An embedded picture referenced by a slide shape — the raw image bytes pulled
-// from the Pictures stream (PPT-3).
+/**
+ * An embedded picture referenced by a slide shape — the raw image bytes pulled
+ * from the Pictures stream (PPT-3).
+ */
 export interface PptImage {
   readonly bytes: Uint8Array;
 }
-// A shape's rectangle on the slide, in points (from the OfficeArtClientAnchor).
+/** A shape's rectangle on the slide, in points (from the OfficeArtClientAnchor). */
 export interface PptRect {
   readonly x: number;
   readonly y: number;
   readonly w: number;
   readonly h: number;
 }
-// One command of a freeform path (PPT-7), in geometry-bounds space (0..pathWidth,
-// 0..pathHeight, y down) — the same path-space the DrawingML custom geometry uses.
+/**
+ * One command of a freeform path (PPT-7), in geometry-bounds space
+ * (`0..pathWidth`, `0..pathHeight`, y down) — the same path-space the DrawingML
+ * custom geometry uses.
+ */
 export type PptPathCmd =
   | { readonly kind: 'move'; readonly x: number; readonly y: number }
   | { readonly kind: 'line'; readonly x: number; readonly y: number }
@@ -141,31 +153,41 @@ export type PptPathCmd =
       readonly y: number;
     }
   | { readonly kind: 'close' };
-// A shape's exact custom geometry (PPT-7): the freeform path from the OPT's
-// pVertices + pSegmentInfo arrays, in its geometry-bounds coordinate space.
+/**
+ * A shape's exact custom geometry (PPT-7): the freeform path from the OPT's
+ * `pVertices` + `pSegmentInfo` arrays, in its geometry-bounds coordinate space.
+ */
 export interface PptCustomGeometry {
   readonly pathWidth: number;
   readonly pathHeight: number;
   readonly commands: ReadonlyArray<PptPathCmd>;
 }
-// A decorative autoshape (PPT-5): its preset type plus any literal fill / line
-// colour. Carried only by an anchored shape that has no text and no picture. A
-// freeform additionally carries its exact custom geometry (PPT-7).
+/**
+ * A decorative autoshape (PPT-5): its preset type plus any literal fill / line
+ * colour. Carried only by an anchored shape that has no text and no picture. A
+ * freeform additionally carries its exact custom geometry (PPT-7).
+ */
 export interface PptAutoShape {
-  readonly shapeType: number; // MSOSPT (the FSP recInstance)
+  /** The MSOSPT shape type (the FSP `recInstance`). */
+  readonly shapeType: number;
+  /** The resolved fill colour as 6-hex RGB, when present. */
   readonly fillColorHex?: string;
+  /** The resolved line colour as 6-hex RGB, when present. */
   readonly lineColorHex?: string;
   readonly geometry?: PptCustomGeometry;
 }
-// One slide shape (PPT-4..5): its text, picture and/or autoshape geometry, plus its
-// slide rectangle when the shape carries an explicit anchor (else it is laid out in
-// reading order).
+/**
+ * One slide shape (PPT-4..5): its text, picture and/or autoshape geometry, plus
+ * its slide rectangle when the shape carries an explicit anchor (else it is laid
+ * out in reading order).
+ */
 export interface PptShape {
   readonly rectPt?: PptRect;
   readonly paragraphs?: ReadonlyArray<PptParagraph>;
   readonly image?: PptImage;
   readonly autoShape?: PptAutoShape;
 }
+/** One slide: its shapes in document order. */
 export interface PptSlide {
   readonly shapes: ReadonlyArray<PptShape>;
 }
@@ -175,11 +197,13 @@ interface ImageContext {
   readonly foDelays: ReadonlyArray<number>;
   readonly pictures: Uint8Array;
 }
+/** The extracted content of a `.ppt`: its slides, deck page size and encryption flag. */
 export interface PptContent {
   readonly slides: ReadonlyArray<PptSlide>;
-  // The deck page size in points, when the DocumentAtom gives a sane slide size.
+  /** The deck page size in points, when the DocumentAtom gives a sane slide size. */
   readonly slideWidthPt?: number;
   readonly slideHeightPt?: number;
+  /** Whether the document streams are encrypted/obfuscated (so no text can be read). */
   readonly encrypted: boolean;
 }
 
@@ -221,6 +245,19 @@ function* records(d: Uint8Array): Generator<PptRecord> {
   }
 }
 
+/**
+ * Walk a `.ppt` (CFB) into its {@link PptContent}: reads the `Current User`
+ * stream for the latest edit (and the encryption token), walks the edit chain to
+ * a persist directory, resolves the DocumentContainer and its slide list, and
+ * reads each slide's shapes/text/pictures. Degrades gracefully — when the
+ * persist/document structure can't be resolved it falls back to scanning the
+ * stream for slide containers directly, and structural doubt yields missing
+ * content, never wrong content. An encrypted file returns no slides with
+ * `encrypted: true`.
+ *
+ * @param bytes The raw `.ppt` (CFB) bytes.
+ * @returns The slides, deck size and encryption flag (empty when not a readable `.ppt`).
+ */
 export function extractPptContent(bytes: Uint8Array): PptContent {
   const empty: PptContent = { slides: [], encrypted: false };
   if (!isCfb(bytes)) return empty;
@@ -951,6 +988,7 @@ interface ParaRun {
   level?: number;
 }
 
+/** The concatenated plain text of a paragraph's runs. */
 export function paragraphText(p: PptParagraph): string {
   return p.runs.map((r) => r.text).join('');
 }

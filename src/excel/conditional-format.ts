@@ -71,13 +71,17 @@ interface ResolvedDataBar {
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
-// A resolved per-cell override: a solid highlight fill, font tweaks, an in-cell
-// data bar (fraction of the cell width 0..1 + colour), and/or a leading icon.
+/**
+ * A resolved per-cell override the print model layers over a cell's base format: a
+ * solid highlight fill, font tweaks, an in-cell data bar (fraction of the cell
+ * width 0..1 + colour), and/or a leading icon.
+ */
 export interface CfOverride {
   readonly fillHex?: string;
   readonly fontColorHex?: string;
   readonly bold?: boolean;
   readonly italic?: boolean;
+  /** An in-cell data bar: its fraction of the cell width, colour, and optional left offset. */
   readonly dataBar?: {
     readonly fraction: number;
     readonly colorHex: string;
@@ -86,12 +90,17 @@ export interface CfOverride {
   readonly icon?: CellIcon;
 }
 
+/**
+ * A per-cell lookup returning the {@link CfOverride} for the cell at `(row, col)`,
+ * or undefined when no rule applies. `numericValue` is the cell's comparable number
+ * (undefined for non-numeric cells); `text` is its resolved string — needed by the
+ * text tests and to key duplicate / unique comparisons for non-numeric cells
+ * (empty/undefined for a blank cell).
+ */
 export type CellConditionalFormatter = (
   row: number,
   col: number,
   numericValue: number | undefined,
-  // The cell's resolved text — needed by the text tests and to key duplicate /
-  // unique comparisons for non-numeric cells. Empty/undefined for a blank cell.
   text: string | undefined,
 ) => CfOverride | undefined;
 
@@ -125,15 +134,31 @@ interface FlatRule {
   readonly origin?: { readonly row: number; readonly col: number };
 }
 
-// Returns undefined when the sheet has no conditional formats (the common case)
-// so callers skip the work entirely and stay byte-identical. `cells` supplies
-// the range values the extent rules need (min/max/percentile/mean/frequency);
-// cellIs and the text tests ignore it. `resolveText` resolves a cell's string
-// value (shared strings / number format) for the duplicate/unique frequency map —
-// numeric cells key by value without it, so it is only needed for text cells.
-// `date1904`/`now` (E-SHEET W9) feed the formula engine: `now` (an injected
-// reference date — never the wall clock) drives TODAY()/NOW() and the timePeriod
-// windows; absent ⇒ those constructs no-op, so the output stays deterministic.
+/**
+ * Compile a sheet's `<conditionalFormatting>` rules + the workbook's `<dxfs>` into
+ * a per-cell {@link CellConditionalFormatter}. Returns undefined when the sheet has
+ * no conditional formats (the common case) so callers skip the work entirely and
+ * stay byte-identical.
+ *
+ * @param conditionalFormats The sheet's rules; undefined/empty ⇒ no formatter.
+ * @param styles             The workbook style table (its `dxfs` supply the highlights).
+ * @param cells              The range values the extent rules need
+ *                           (min/max/percentile/mean/frequency); `cellIs` and the
+ *                           text tests ignore it.
+ * @param resolveText        Resolves a cell's string value (shared strings / number
+ *                           format) for the duplicate/unique frequency map — numeric
+ *                           cells key by value without it, so it is only needed for
+ *                           text cells.
+ * @param date1904           The workbook date epoch (feeds the W9 formula engine).
+ * @param now                An injected reference date — never the wall clock —
+ *                           driving `TODAY()`/`NOW()` and the `timePeriod` windows;
+ *                           absent ⇒ those constructs no-op (deterministic output).
+ * @param sheetGrids         The whole workbook, for an `expression` rule that reaches
+ *                           another sheet (`Sheet2!A1`) or a defined name; absent ⇒
+ *                           same-sheet references only.
+ * @param currentSheet       The rule sheet's name, for resolving sheet-local names.
+ * @param definedNames       The workbook defined names visible to `expression` rules.
+ */
 export function buildConditionalFormatter(
   conditionalFormats: ReadonlyArray<ConditionalFormat> | undefined,
   styles: XlsxStyles,

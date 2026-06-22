@@ -13,14 +13,17 @@ import { resolveColorNode } from '@/core/drawingml/colors';
 import { pt } from '@/core/ir';
 import { poAttr, poChildren, poIntAttr, poIs } from '@/core/po-helpers';
 
-// §19.3.1.36 p:ph — a shape's placeholder reference. type/idx tie a slide shape
-// to the matching prototype in its layout and master.
+/**
+ * §19.3.1.36 `p:ph` — a shape's placeholder reference. `type`/`idx` tie a slide
+ * shape to the matching prototype in its layout and master.
+ */
 export interface PlaceholderRef {
-  readonly type?: string; // e.g. 'title', 'ctrTitle', 'subTitle', 'body', 'obj'
+  /** The placeholder type, e.g. `'title'`, `'ctrTitle'`, `'subTitle'`, `'body'`, `'obj'`. */
+  readonly type?: string;
   readonly idx?: string;
 }
 
-// An a:xfrm box in EMU (off + ext).
+/** An `a:xfrm` box in EMU (`off` + `ext`). */
 export interface ShapeBoxEmu {
   readonly x: number;
   readonly y: number;
@@ -30,9 +33,11 @@ export interface ShapeBoxEmu {
 
 const isTrue = (v: string | undefined): boolean => v === '1' || v === 'true' || v === 'on';
 
-// p:nvSpPr/p:nvPr/p:ph → the placeholder reference, or undefined for an ordinary
-// (non-placeholder) shape. A bare <p:ph/> returns an empty ref (still a
-// placeholder: type defaults to 'obj').
+/**
+ * `p:nvSpPr/p:nvPr/p:ph` → the placeholder reference, or `undefined` for an
+ * ordinary (non-placeholder) shape. A bare `<p:ph/>` returns an empty ref (still
+ * a placeholder: `type` defaults to `'obj'`).
+ */
 export function parsePh(sp: PoNode): PlaceholderRef | undefined {
   const nvSpPr = poChildren(sp).find((c) => poIs(c, 'p:nvSpPr'));
   const nvPr = nvSpPr ? poChildren(nvSpPr).find((c) => poIs(c, 'p:nvPr')) : undefined;
@@ -46,8 +51,12 @@ export function parsePh(sp: PoNode): PlaceholderRef | undefined {
   };
 }
 
-// An xfrm node (a:off + a:ext children) → the EMU box. Works for both a:xfrm
-// (in p:spPr) and p:xfrm (on a p:graphicFrame), whose children are identical.
+/**
+ * An xfrm node (`a:off` + `a:ext` children) → the EMU box. Works for both
+ * `a:xfrm` (in `p:spPr`) and `p:xfrm` (on a `p:graphicFrame`), whose children are
+ * identical. Returns `undefined` for a missing or degenerate (non-positive)
+ * extent.
+ */
 export function boxFromXfrm(xfrm: PoNode | undefined): ShapeBoxEmu | undefined {
   if (!xfrm) return undefined;
   const off = poChildren(xfrm).find((c) => poIs(c, 'a:off'));
@@ -60,17 +69,21 @@ export function boxFromXfrm(xfrm: PoNode | undefined): ShapeBoxEmu | undefined {
   return { x, y, cx, cy };
 }
 
-// p:spPr/a:xfrm → the EMU box, or undefined when the shape carries no explicit
-// transform (a placeholder that inherits it from the layout/master).
+/**
+ * `p:spPr/a:xfrm` → the EMU box, or `undefined` when the shape carries no
+ * explicit transform (a placeholder that inherits it from the layout/master).
+ */
 export function parseXfrmBox(spPr: PoNode | undefined): ShapeBoxEmu | undefined {
   return boxFromXfrm(spPr ? poChildren(spPr).find((c) => poIs(c, 'a:xfrm')) : undefined);
 }
 
-// a:rPr / a:defRPr → RunProperties. Both the direct run formatting on a slide
-// (a:rPr) and the per-level defaults in a master's p:txStyles (a:defRPr) share
-// this element, so the cascade reuses the same reader: size (sz, hundredths of a
-// point), bold/italic/underline, solid colour and the latin typeface. Scheme
-// colours and the theme font cascade come in PX5.
+/**
+ * `a:rPr` / `a:defRPr` → {@link RunProperties}. Both the direct run formatting on
+ * a slide (`a:rPr`) and the per-level defaults in a master's `p:txStyles`
+ * (`a:defRPr`) share this element, so the cascade reuses the same reader: size
+ * (`sz`, hundredths of a point), bold/italic/underline, solid colour and the
+ * latin typeface. Scheme colours and the theme font cascade come in PX5.
+ */
 export function rPrToRunProps(rPr: PoNode | undefined, colors: ColorResolver): RunProperties {
   if (!rPr) return {};
   const sz = poIntAttr(rPr, 'sz');

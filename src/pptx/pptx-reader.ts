@@ -63,6 +63,17 @@ function isSlideHidden(data: Uint8Array): boolean {
   return root ? /\bshow\s*=\s*["']0["']/.test(root[0]) : false;
 }
 
+/**
+ * Read a PresentationML (`.pptx`) package into a {@link FlowDoc}: one page per
+ * slide at the deck size (`p:sldSz`), each slide's shapes placed as absolutely
+ * positioned floating elements. Hidden slides (`p:sld@show="0"`) are omitted (and
+ * recorded as a {@link Loss}, mirroring PowerPoint/LibreOffice export). Resolves
+ * each slide's layout → master → theme chain into the placeholder cascade, colour
+ * resolver and inherited background, plus its images and charts.
+ *
+ * @param bytes The raw `.pptx` (OPC ZIP) bytes.
+ * @returns The {@link FlowDoc} plus the accumulated loss report.
+ */
 export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
   const losses: Array<Loss> = [];
   const pkg = OpcPackage.open(bytes);
@@ -176,6 +187,11 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
   return { doc, losses };
 }
 
+/**
+ * Parse an OOXML part's bytes into preserve-order {@link PoNode} roots with the
+ * module's shared, presentation-tuned {@link XMLParser} (attributes kept, values
+ * not coerced, whitespace preserved). Shared with the slide-style resolvers.
+ */
 export function parseXml(data: Uint8Array): Array<PoNode> {
   return parser.parse(decoder.decode(data)) as Array<PoNode>;
 }
@@ -362,6 +378,11 @@ function deckColorResolver(pkg: OpcPackage, masterPath: string): ColorResolver {
   return makeColorResolver(palette);
 }
 
+/**
+ * The {@link DocumentReader} for PresentationML (`.pptx`): sniffs the OPC ZIP for
+ * `ppt/presentation.xml` (a cheap substring probe, no unzip) and reads it via
+ * {@link readPptx}.
+ */
 export const pptxReader: DocumentReader<FlowDoc> = {
   id: 'pptx',
   produces: 'flow',

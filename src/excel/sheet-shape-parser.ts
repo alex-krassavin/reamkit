@@ -27,9 +27,18 @@ interface SheetShape {
 
 const ANCHOR_KINDS = ['xdr:twoCellAnchor', 'xdr:oneCellAnchor', 'xdr:absoluteAnchor'] as const;
 
-// §20.5.2.30 xdr:sp — parse the drawing's shape anchors into anchor-ordered
-// ShapeBlocks. Empty when the drawing has no shapes (chart/picture-only), so the
-// reader's gate keeps non-shape sheets off this second parse.
+/**
+ * Parse a drawing's `xdr:sp` shape anchors (§20.5.2.30) into anchor-ordered
+ * {@link ShapeBlock}s (E-SHEET W2), reusing the shared DrawingML geometry / fill /
+ * line / text readers. A shape's box comes from its sheet anchor (from/to tracks),
+ * not its `a:xfrm`. Returns `[]` when the drawing has no shapes (chart/picture-only),
+ * so the reader's gate keeps non-shape sheets off this second parse.
+ *
+ * @param drawingXml The drawing part bytes (re-parsed via `parseXml` for the
+ *                   preserveOrder tree the shape readers expect).
+ * @param worksheet  The host worksheet, for the column/row track geometry.
+ * @param colors     The theme colour resolver threaded into fill/line parsing.
+ */
 export function parseSheetShapes(
   drawingXml: Uint8Array,
   worksheet: ParsedWorksheet,

@@ -45,6 +45,7 @@ const parser = new XMLParser({
 // The font/fill/border/xf/styles model types now live in
 // @/core/spreadsheet-model; this parser imports them above and produces them.
 
+/** The empty style table, returned for a workbook with no (or a malformed) `styles.xml`. */
 export const EMPTY_XLSX_STYLES: XlsxStyles = {
   numFmts: new Map(),
   fonts: [],
@@ -53,6 +54,13 @@ export const EMPTY_XLSX_STYLES: XlsxStyles = {
   cellXfs: [],
 };
 
+/**
+ * Parse `xl/styles.xml` (§18.8) into the {@link XlsxStyles} table the renderer
+ * consumes: custom number formats, fonts, fills, borders, the cell formats
+ * (`cellXfs` — each indexing font/fill/border/numFmt + optional alignment) and the
+ * differential formats (`dxfs`) conditional formatting applies. Returns
+ * {@link EMPTY_XLSX_STYLES} when the root is absent or malformed.
+ */
 export function parseXlsxStyles(data: Uint8Array): XlsxStyles {
   const xml = decoder.decode(data);
   const tree = parser.parse(xml) as Record<string, unknown>;

@@ -5,6 +5,15 @@
 
 import type { MathNode } from '@/core/document-model';
 
+/**
+ * Serialize a {@link MathNode} tree to the inner content of an `<m:oMath>`
+ * element (ECMA-376 Part 1 §22). The inverse of `parseOMath`; the `m:` namespace
+ * is declared by the caller, and the output round-trips back through the parser
+ * (WT3).
+ *
+ * @param node The math tree (typically a `row` node).
+ * @returns The serialized OMML markup.
+ */
 export function omathXml(node: MathNode): string {
   return ser(node);
 }

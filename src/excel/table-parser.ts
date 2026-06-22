@@ -19,26 +19,45 @@ const parser = new XMLParser({
   removeNSPrefix: true,
 });
 
-// §18.5.1.1 <autoFilter><filterColumn colId><filters><filter val> — the values
-// a column's filter keeps visible. Used only for slicer selection (E-SHEET SV2);
-// not part of the persisted ExcelTable (so the writer/roundtrip stay unchanged).
+/**
+ * §18.5.1.1 `<autoFilter><filterColumn colId><filters><filter val>` — the values
+ * a column's filter keeps visible. Used only for slicer selection (E-SHEET SV2);
+ * not part of the persisted {@link ExcelTable} (so the writer/roundtrip stay
+ * unchanged).
+ */
 export interface TableFilterColumn {
-  readonly colId: number; // 0-based offset within the table
+  /** 0-based column offset within the table. */
+  readonly colId: number;
+  /** The values the filter keeps visible. */
   readonly values: ReadonlyArray<string>;
 }
 
-// The richer parse the reader needs for slicer resolution: the persisted
-// ExcelTable plus the table's numeric id and any autofilter value filters.
+/**
+ * The richer parse the reader needs for slicer resolution: the persisted
+ * {@link ExcelTable} plus the table's numeric id and any autofilter value filters.
+ */
 export interface ParsedTablePart {
   readonly table: ExcelTable;
+  /** The table's numeric `@id` (matched against a slicer cache's `tableId`). */
   readonly id?: number;
   readonly filters: ReadonlyArray<TableFilterColumn>;
 }
 
+/**
+ * Parse `xl/tables/tableN.xml` (§18.5.1.2) into the persisted {@link ExcelTable}
+ * (range, header-row count, autofilter presence, banded-style flags), or undefined
+ * when the root or its `ref` is missing. The slimmer of the two entry points;
+ * {@link parseTablePartFull} also returns the id + filters.
+ */
 export function parseTablePart(data: Uint8Array): ExcelTable | undefined {
   return parseTablePartFull(data)?.table;
 }
 
+/**
+ * Parse a table part into the full {@link ParsedTablePart} — the {@link ExcelTable}
+ * plus the table's numeric id and any autofilter value filters (for slicer
+ * resolution). Returns undefined when the root or its `ref` is missing.
+ */
 export function parseTablePartFull(data: Uint8Array): ParsedTablePart | undefined {
   const tree = parser.parse(decoder.decode(data)) as Record<string, unknown>;
   const t = asObj(tree['table']);

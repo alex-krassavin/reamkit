@@ -64,6 +64,15 @@ const parser = new XMLParser({
 // The worksheet/style model types now live in @/core/spreadsheet-model (the
 // SpreadsheetML sibling of document-model); this parser imports them above.
 
+/**
+ * Parse `worksheet.xml` (§18.3.1.99) into a {@link ParsedWorksheet}: a flat list
+ * of cells with absolute row/column addresses and their raw stored values, plus
+ * the per-sheet geometry and print model (columns, merges, row heights,
+ * pageMargins/pageSetup, breaks, frozen pane, conditional formats, data
+ * validations, hyperlinks, header/footer, form controls, OLE objects, sparklines
+ * and table parts). `r=` is optional on `<row>`/`<c>`; absent indices are inferred
+ * from document order. A malformed root or missing `sheetData` yields an empty grid.
+ */
 export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
   const xml = decoder.decode(data);
   const tree = parser.parse(xml) as Record<string, unknown>;

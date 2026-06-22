@@ -45,6 +45,17 @@ const BORDER_STYLES = new Set<BorderStyle>([
 const WIDTH_TYPES = new Set<'auto' | 'dxa' | 'pct' | 'nil'>(['auto', 'dxa', 'pct', 'nil']);
 const HEIGHT_RULES = new Set<'auto' | 'atLeast' | 'exact'>(['auto', 'atLeast', 'exact']);
 
+/**
+ * Parse a `w:tbl` (ECMA-376 Part 1 §17.4) in preserveOrder shape into the typed
+ * {@link Table} model: its properties (style ref, look, width, layout, borders,
+ * default cell margins), column grid and rows. Vertical merges are resolved in a
+ * second pass so cells carry the resolved {@link CellMerge} role, not the raw
+ * `w:vMerge` markers.
+ *
+ * @param tbl The `w:tbl` PoNode.
+ * @param ctx The document-wide parse context (resolvers for colour, images, etc.).
+ * @returns The parsed table.
+ */
 export function parseTable(tbl: PoNode, ctx: ParseContext = DEFAULT_PARSE_CONTEXT): Table {
   const properties = parseTableProperties(poFirstChild(tbl, 'w:tblPr'));
   const grid = parseTableGrid(poFirstChild(tbl, 'w:tblGrid'));

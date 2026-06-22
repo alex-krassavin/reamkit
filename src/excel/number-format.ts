@@ -37,6 +37,20 @@ const BUILTIN_DATE_FORMATS: ReadonlyMap<number, string> = new Map([
   [47, 'mm:ss.0'],
 ]);
 
+/**
+ * Render a cell's raw stored value through its number format (§18.8.30 built-ins
+ * and §18.8.31 custom codes). Handles `General`, text (`@`), the built-in date /
+ * time formats, custom date codes, and the numeric placeholder grammar (`0` `#`
+ * `,` `.` `%`, scientific notation, quoted literals, `;`-separated sections). An
+ * unknown id, or a value that does not parse as a number, falls back to a plain
+ * render of `rawValue`.
+ *
+ * @param rawValue      The cell's raw stored value (a serial for dates).
+ * @param numFmtId      The number-format id from the cell's `cellXf`.
+ * @param customFormats Custom format codes by id (from `<numFmts>`).
+ * @param date1904      The workbook date epoch (1904 vs the 1900 default).
+ * @returns The formatted display string.
+ */
 export function applyNumberFormat(
   rawValue: string,
   numFmtId: number,
@@ -61,26 +75,32 @@ export function applyNumberFormat(
   return applyFormatString(rawValue, format);
 }
 
-// Excel serial date → JS Date. The default 1900 epoch uses 1899-12-30 as day 0
-// (so serial 1 is 1900-01-01) and inherits the Lotus 1-2-3 leap-year bug:
-// serial 60 is considered "1900-02-29" which never existed. For serial ≥ 61
-// the simple formula is exact; values < 60 are vanishingly rare in business
-// sheets (and our render is approximate anyway).
-//
-// The 1904 epoch (legacy Mac Excel) uses 1904-01-01 as day 0 and has no leap
-// bug. Files saved with <workbookPr date1904="1"/> store dates offset by
-// exactly 1462 days from the 1900-epoch interpretation.
+/**
+ * Excel serial date → JS `Date`. The default 1900 epoch uses 1899-12-30 as day 0
+ * (so serial 1 is 1900-01-01) and inherits the Lotus 1-2-3 leap-year bug: serial 60
+ * is considered "1900-02-29" which never existed. For serial ≥ 61 the simple
+ * formula is exact; values < 60 are vanishingly rare in business sheets (and our
+ * render is approximate anyway).
+ *
+ * The 1904 epoch (legacy Mac Excel) uses 1904-01-01 as day 0 and has no leap bug.
+ * Files saved with `<workbookPr date1904="1"/>` store dates offset by exactly 1462
+ * days from the 1900-epoch interpretation.
+ */
 export function excelSerialToDate(serial: number, date1904: boolean): Date {
   const ms = serial * 86400 * 1000;
   if (date1904) return new Date(Date.UTC(1904, 0, 1) + ms);
   return new Date(Date.UTC(1899, 11, 30) + ms);
 }
 
-// The inverse over a UTC calendar date: (year, month0, day) → the integer Excel
-// serial day, using the same epoch. Round-trips excelSerialToDate exactly for an
-// integer serial (the time-of-day is zero), so a serial → parts → serial loop is
-// stable. Used by the formula engine's date functions and the timePeriod windows
-// (E-SHEET W9) to map an injected reference date into serial space.
+/**
+ * The inverse over a UTC calendar date: `(year, month0, day)` → the integer Excel
+ * serial day, using the same epoch. Round-trips {@link excelSerialToDate} exactly
+ * for an integer serial (the time-of-day is zero), so a serial → parts → serial
+ * loop is stable. Used by the formula engine's date functions and the `timePeriod`
+ * windows (E-SHEET W9) to map an injected reference date into serial space.
+ *
+ * @param month0 The 0-indexed month (0 = January).
+ */
 export function excelSerialFromUtcParts(
   year: number,
   month0: number,

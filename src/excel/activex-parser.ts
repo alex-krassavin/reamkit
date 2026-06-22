@@ -26,16 +26,24 @@ const parser = new XMLParser({
   removeNSPrefix: true, // ax:ocx → ocx, ax:name → @_name, r:id → @_id
 });
 
+/** An ActiveX control's visible state from its property bag / binary stream (E-SHEET W10). */
 export interface ActiveXProps {
-  // The control's displayed text (CommandButton/Label/CheckBox/OptionButton).
+  /** The control's displayed text (CommandButton/Label/CheckBox/OptionButton). */
   readonly caption?: string;
-  // The control's state/value as persisted ("1"/"0" for a checkbox/option, the
-  // text for a textbox, a number for a spin/scroll).
+  /**
+   * The control's state/value as persisted (`"1"`/`"0"` for a checkbox/option, the
+   * text for a textbox, a number for a spin/scroll).
+   */
   readonly value?: string;
-  // OptionButton group membership (mutually-exclusive set).
+  /** OptionButton group membership (mutually-exclusive set). */
   readonly groupName?: string;
 }
 
+/**
+ * Parse a `xl/activeX/activeX#.xml` part (an `<ax:ocx>` whose `<ax:ocxPr name
+ * value>` children persist the visible state) into {@link ActiveXProps}. Reads the
+ * caption / value / group name; returns `{}` for a non-property-bag control.
+ */
 export function parseActiveX(data: Uint8Array): ActiveXProps {
   const tree = parser.parse(decoder.decode(data)) as Record<string, unknown>;
   const ocx = asObject(tree['ocx']);
@@ -57,9 +65,11 @@ export function parseActiveX(data: Uint8Array): ActiveXProps {
   };
 }
 
-// Forms.CheckBox.1 → 'checkbox', Forms.CommandButton.1 → 'button', … — the
-// control class from the <oleObject progId>, normalised to the affordance keys
-// the projection switches on. Unknown progIds fall back to a generic control.
+/**
+ * Map an ActiveX `<oleObject progId>` to the affordance key the projection switches
+ * on: `Forms.CheckBox.1 → 'checkbox'`, `Forms.CommandButton.1 → 'button'`, …. An
+ * unknown progId falls back to a generic `'control'`.
+ */
 export function activeXType(progId: string | undefined): string {
   const m = /Forms\.(\w+)\.\d+/i.exec(progId ?? '');
   switch ((m?.[1] ?? '').toLowerCase()) {
@@ -105,10 +115,13 @@ function strAttr(obj: Record<string, unknown>, key: string): string | undefined 
   return typeof v === 'string' ? v : undefined;
 }
 
-// The <ax:ocx r:id> of a control whose state is persisted to a binary stream
-// (persistStreamInit / persistStream / persistStorage) rather than to <ax:ocxPr>;
-// the reader resolves it (through the activeX#.xml part's own relationships) to
-// the activeX#.bin. undefined ⇒ a property-bag control (the .bin is not needed).
+/**
+ * The `<ax:ocx r:id>` of a control whose state is persisted to a binary stream
+ * (`persistStreamInit` / `persistStream` / `persistStorage`) rather than to
+ * `<ax:ocxPr>`; the reader resolves it (through the `activeX#.xml` part's own
+ * relationships) to the `activeX#.bin`. Returns undefined for a property-bag
+ * control (the `.bin` is not needed).
+ */
 export function activeXBinRelId(xmlData: Uint8Array): string | undefined {
   const tree = parser.parse(decoder.decode(xmlData)) as Record<string, unknown>;
   const ocx = asObject(tree['ocx']);
@@ -175,10 +188,13 @@ function u32le(d: Uint8Array, i: number): number {
   return (d[i]! | (d[i + 1]! << 8) | (d[i + 2]! << 16) | (d[i + 3]! << 24)) >>> 0;
 }
 
-// Parse an activeX#.bin (a persistStreamInit MorphDataControl) for its caption,
-// value and group name. Returns {} for any non-MorphData stream (a CFB storage,
-// a CommandButton/Label, a structurally implausible blob) — a graceful miss,
-// never a wrong caption. Bounds-checked throughout; any overflow bails to {}.
+/**
+ * Parse an `activeX#.bin` (a `persistStreamInit` MorphDataControl) for its caption,
+ * value and group name, per [MS-OFORMS] §2.2.5. Returns `{}` for any non-MorphData
+ * stream (a CFB storage, a CommandButton/Label, a structurally implausible blob) —
+ * a graceful miss, never a wrong caption. Bounds-checked throughout; any overflow
+ * bails to `{}`.
+ */
 export function parseActiveXBin(data: Uint8Array): ActiveXProps {
   if (data.length >= 8 && CFB_MAGIC.every((b, i) => data[i] === b)) return {};
   // The stream is [16-byte classid GUID][MorphDataControl]; tolerate a missing

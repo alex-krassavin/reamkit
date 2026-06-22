@@ -39,8 +39,11 @@ const DIAGRAM_URI = 'http://schemas.openxmlformats.org/drawingml/2006/diagram';
 // Namespaces whose <mc:Choice> we can render. 'wps' = wordprocessingShape.
 const UNDERSTOOD_NS = new Set(['wps']);
 
-// Shape data without the owning paragraph's properties (attached by the caller,
-// mirroring how the image branch returns size + id and the caller adds pPr).
+/**
+ * A parsed DrawingML shape without the owning paragraph's properties (attached by
+ * the caller, mirroring how the image branch returns size + id and the caller
+ * adds the `pPr`).
+ */
 export interface ShapeData {
   readonly width: Pt;
   readonly height: Pt;
@@ -48,20 +51,28 @@ export interface ShapeData {
   readonly fill: ShapeFill;
   readonly line?: ShapeLine;
   readonly transform?: ShapeTransform;
+  /** The shape's text body (a `wps:txbx`), when it carries one. */
   readonly text?: ShapeTextBody;
 }
 
-// Parses the body elements of a w:txbxContent. Injected by the caller to avoid
-// a cycle with document-parser (which imports this module).
+/**
+ * Parses the body elements of a `w:txbxContent`. Injected by the caller to avoid
+ * a module cycle with `document-parser` (which imports this module).
+ */
 export type ParseBody = (children: ReadonlyArray<PoNode>) => Array<BodyElement>;
 
+/**
+ * The result of parsing a `<w:drawing>` (or legacy VML picture): an embedded
+ * picture, a DrawingML shape, a chart reference, or a SmartArt diagram. Each
+ * variant carries optional alternate text and a float anchor.
+ */
 export type DrawingContent =
   | {
       readonly kind: 'image';
       readonly imageId: string;
       readonly width: Pt;
       readonly height: Pt;
-      // wp:docPr @descr/@title — alternate text for the tagged-PDF Figure.
+      /** `wp:docPr` `@descr`/`@title` — alternate text for the tagged-PDF Figure. */
       readonly altText?: string;
       readonly float?: FloatAnchor;
     }
@@ -73,6 +84,7 @@ export type DrawingContent =
     }
   | {
       readonly kind: 'chart';
+      /** The `c:chart` `@r:id` relationship id to the chart part. */
       readonly chartRelId: string;
       readonly width: Pt;
       readonly height: Pt;
@@ -80,12 +92,12 @@ export type DrawingContent =
       readonly float?: FloatAnchor;
     }
   | {
-      // SmartArt: the data-part relationship id (dgm:relIds @r:dm) + the frame
-      // extent in EMU. The reader resolves the drawing override and renders its
-      // shapes; the diagram has no single block (E-SMARTART).
       readonly kind: 'diagram';
+      /** SmartArt data-part relationship id (`dgm:relIds` `@r:dm`); the reader resolves the drawing override. */
       readonly dmRelId: string;
+      /** Frame width in EMU. */
       readonly widthEmu: number;
+      /** Frame height in EMU. */
       readonly heightEmu: number;
       readonly altText?: string;
       readonly float?: FloatAnchor;
@@ -137,10 +149,15 @@ function parseAnchorPos(
   };
 }
 
-// ECMA-376 Part 3 — resolve <mc:AlternateContent> to the children of the first
-// <mc:Choice> whose Requires lists only namespaces we understand, else the
-// <mc:Fallback> children, else nothing. (Requires holds space-separated
-// namespace prefixes as declared in the document.)
+/**
+ * ECMA-376 Part 3 (Markup Compatibility) — resolve an `<mc:AlternateContent>` to
+ * the children of the first `<mc:Choice>` whose `Requires` lists only namespaces
+ * we understand, else the `<mc:Fallback>` children, else nothing. (`Requires`
+ * holds space-separated namespace prefixes as declared in the document.)
+ *
+ * @param altContent The `mc:AlternateContent` node.
+ * @returns The chosen branch's children.
+ */
 export function resolveMc(altContent: PoNode): ReadonlyArray<PoNode> {
   for (const choice of poChildren(altContent)) {
     if (!poIs(choice, 'mc:Choice')) continue;
@@ -153,9 +170,15 @@ export function resolveMc(altContent: PoNode): ReadonlyArray<PoNode> {
   return fallback ? poChildren(fallback) : [];
 }
 
-// Flatten a children list, expanding any <mc:AlternateContent> to its chosen
-// branch so downstream scanning sees plain elements (a <w:drawing>, or the VML
-// we ignore). Used both at run level and inside a:graphicData.
+/**
+ * Flatten a children list, expanding any `<mc:AlternateContent>` to its chosen
+ * branch (via {@link resolveMc}) so downstream scanning sees plain elements (a
+ * `<w:drawing>`, or the VML we ignore). Used both at run level and inside
+ * `a:graphicData`.
+ *
+ * @param children The raw child list.
+ * @returns The flattened children.
+ */
 export function expandMcChildren(children: ReadonlyArray<PoNode>): Array<PoNode> {
   const out: Array<PoNode> = [];
   for (const c of children) {
@@ -165,6 +188,17 @@ export function expandMcChildren(children: ReadonlyArray<PoNode>): Array<PoNode>
   return out;
 }
 
+/**
+ * Parse a `<w:drawing>` (ECMA-376 Part 1 §20) into a {@link DrawingContent}. The
+ * `a:graphicData` `@uri` selects the branch: a `wps:wsp` shape, a chart, a
+ * SmartArt diagram, or — falling through — an embedded picture from
+ * `a:blip @r:embed`.
+ *
+ * @param drawing      The `w:drawing` node.
+ * @param resolveColor Resolver for theme/scheme colours used by shape fills/lines.
+ * @param parseBody    Optional body parser for a shape's text box (omitted ⇒ no text).
+ * @returns The parsed content, or `null` when no anchor / recognizable graphic is found.
+ */
 export function parseDrawing(
   drawing: PoNode,
   resolveColor: ColorResolver,
@@ -240,12 +274,18 @@ export function parseDrawing(
   return null;
 }
 
-// ISO/IEC 29500-1 §14 (VML, transitional) — a legacy <w:pict>/<w:object>
-// picture. Modern files use <w:drawing> (parsed above); VML still shows up in
-// headers, OLE-object previews (@o:ole), and documents last saved by older
-// Word. A VML shape carries an <v:imagedata r:id> pointing at the media part,
-// and a CSS-like @style ("width:75.6pt;height:49.2pt") gives its box. We read
-// just enough to recover the picture: the relationship id, the size, the @alt.
+/**
+ * Parse a legacy `<w:pict>`/`<w:object>` VML picture (ISO/IEC 29500-1 §14, VML
+ * transitional) into an `image` {@link DrawingContent}. Modern files use
+ * `<w:drawing>` ({@link parseDrawing}); VML still shows up in headers, OLE-object
+ * previews (`@o:ole`) and documents last saved by older Word. A VML shape carries
+ * an `<v:imagedata r:id>` pointing at the media part and a CSS-like `@style`
+ * (`"width:75.6pt;height:49.2pt"`) giving its box; just enough is read to recover
+ * the relationship id, the size and the `@alt` text.
+ *
+ * @param node The `w:pict` / `w:object` node.
+ * @returns The picture, or `null` when there is no embedded `v:imagedata` or no usable size.
+ */
 export function parseVmlPicture(node: PoNode): DrawingContent | null {
   const imagedata = poFindDescendant(node, 'v:imagedata');
   if (!imagedata) return null;
@@ -389,6 +429,11 @@ function parseXfrm(xfrm: PoNode): ShapeTransform {
   };
 }
 
+/**
+ * Parse an `a:prstGeom` (§20.1.9.18) into a preset {@link ShapeGeometry}: the
+ * `@prst` preset name plus the `a:avLst` adjust values (each `a:gd`'s `val …`
+ * formula). Defaults to the `rect` preset when `@prst` is absent.
+ */
 export function parsePrstGeom(prst: PoNode): ShapeGeometry {
   const preset = poAttr(prst, 'prst') ?? 'rect';
   const adjust = new Map<string, number>();
@@ -406,10 +451,13 @@ export function parsePrstGeom(prst: PoNode): ShapeGeometry {
   return { kind: 'preset', preset, adjust };
 }
 
-// ECMA-376 §20.1.9.11 custGeom → §20.1.9.15 path. Parses the first <a:path>
-// (multiple subpaths with differing w/h are a follow-up). Coordinates stay in
-// path-space; the geometry layer scales + y-flips them. Falls back to a rect
-// preset when the path is empty or has no usable size.
+/**
+ * Parse an `a:custGeom` (ECMA-376 §20.1.9.11) → its first `<a:path>`
+ * (§20.1.9.15) into a custom {@link ShapeGeometry}. Coordinates stay in
+ * path-space (the geometry layer scales + y-flips them). Multiple subpaths with
+ * differing `w`/`h` are a follow-up; falls back to a `rect` preset when the path
+ * is empty or has no usable size.
+ */
 export function parseCustGeom(cust: PoNode): ShapeGeometry {
   const pathLst = poChildren(cust).find((c) => poIs(c, 'a:pathLst'));
   const path = pathLst ? poChildren(pathLst).find((c) => poIs(c, 'a:path')) : undefined;
@@ -485,6 +533,13 @@ function pts(node: PoNode): Array<{ x: number; y: number }> {
 
 const firstPt = (node: PoNode): { x: number; y: number } | undefined => pts(node)[0];
 
+/**
+ * Parse a shape's fill from its `a:spPr`: the first of `a:noFill`, `a:solidFill`
+ * or `a:gradFill` wins. An unresolvable colour degrades to `{ kind: 'none' }`.
+ *
+ * @param spPr         The `wps:spPr` node.
+ * @param resolveColor Resolver for theme/scheme colours.
+ */
 export function parseFill(spPr: PoNode, resolveColor: ColorResolver): ShapeFill {
   for (const child of poChildren(spPr)) {
     if (poIs(child, 'a:noFill')) return { kind: 'none' };
@@ -500,6 +555,14 @@ export function parseFill(spPr: PoNode, resolveColor: ColorResolver): ShapeFill 
   return { kind: 'none' };
 }
 
+/**
+ * Parse a shape's outline (`a:ln`) from its `a:spPr` into a {@link ShapeLine}:
+ * width, cap, solid colour, dash pattern, and an explicit `a:noFill` (an unstroked
+ * outline). Returns `undefined` when the shape has no `a:ln`.
+ *
+ * @param spPr         The `wps:spPr` node.
+ * @param resolveColor Resolver for theme/scheme colours.
+ */
 export function parseLine(spPr: PoNode, resolveColor: ColorResolver): ShapeLine | undefined {
   const ln = poChildren(spPr).find((c) => poIs(c, 'a:ln'));
   if (!ln) return undefined;

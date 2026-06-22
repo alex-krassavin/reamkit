@@ -30,15 +30,24 @@ function capLen(s: string): string {
   return s.length > MAX_CELL_CHARS ? s.slice(0, MAX_CELL_CHARS) : s;
 }
 
-// The flattened text of every shared string (a cell with t="s" indexes into it),
-// plus — for the strings that carry per-run formatting — the parsed rich runs
-// (E-SHEET W6). `runs[i]` is undefined unless si i has ≥ 2 runs OR a single run
-// that actually sets formatting, so the common plain-text case stays cheap.
+/**
+ * The flattened text of every shared string (a cell with `t="s"` indexes into it),
+ * plus — for the strings that carry per-run formatting — the parsed rich runs
+ * (E-SHEET W6). `runs[i]` is undefined unless si `i` has ≥ 2 runs OR a single run
+ * that actually sets formatting, so the common plain-text case stays cheap.
+ */
 export interface SharedStrings {
+  /** The flattened text of each shared string, parallel to the `<si>` order. */
   readonly texts: ReadonlyArray<string>;
+  /** Per-index rich runs, parallel to {@link SharedStrings.texts}; `undefined` for plain strings. */
   readonly runs: ReadonlyArray<ReadonlyArray<SheetRichRun> | undefined>;
 }
 
+/**
+ * Parse `xl/sharedStrings.xml` (§18.4.8) into the deduplicated string table plus,
+ * for rich strings, their per-run formatting. Each string is capped to the Excel
+ * cell limit (32 767 chars).
+ */
 export function parseSharedStrings(data: Uint8Array): SharedStrings {
   const xml = decoder.decode(data);
   const tree = parser.parse(xml) as Record<string, unknown>;

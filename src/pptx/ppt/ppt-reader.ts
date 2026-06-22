@@ -91,6 +91,17 @@ const PPT_ENCRYPTED_LOSS: Loss = {
   detail: 'legacy .ppt is encrypted/obfuscated — its text cannot be read',
 };
 
+/**
+ * Read a legacy `.ppt` (PowerPoint 97–2003 OLE2/CFB) into the same
+ * {@link FlowDoc} the OOXML pptx reader produces: one page per slide at the deck
+ * size, with each slide's text (run + paragraph formatting), embedded images,
+ * per-shape placement and decorative autoshapes. Always reports a single
+ * {@link Loss} — degraded (the format is read best-effort; re-save as `.pptx` for
+ * full fidelity), or dropped when the file is encrypted/obfuscated.
+ *
+ * @param bytes The raw `.ppt` (CFB) bytes.
+ * @returns The {@link FlowDoc} plus the one-element loss report.
+ */
 export function readPpt(bytes: Uint8Array): ReadResult<FlowDoc> {
   const content = extractPptContent(bytes);
   const width = pt(content.slideWidthPt ?? DEFAULT_SLIDE_W);
@@ -408,6 +419,11 @@ function anchorParagraph(breakBefore: boolean): BodyElement {
   };
 }
 
+/**
+ * The {@link DocumentReader} for legacy `.ppt`: sniffs an OLE2/CFB container with
+ * a `PowerPoint Document` stream (which also keeps an `.xls`/`.doc` or an
+ * encrypted OOXML from mis-routing here) and reads it via {@link readPpt}.
+ */
 export const pptReader: DocumentReader<FlowDoc> = {
   id: 'ppt',
   produces: 'flow',

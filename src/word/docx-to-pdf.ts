@@ -12,20 +12,34 @@ import { renderStyledPdf, renderStyledPdfEncrypted, signPdf } from '@/pdf';
 const STYLES_PART = 'word/styles.xml';
 const MAIN_DOCUMENT_PART = 'word/document.xml';
 
+/**
+ * Options for the `.docx` → PDF converters. Extends the low-level
+ * {@link StyledRenderOptions} (minus the font `registry` and `styles`, which the
+ * converter builds itself) with font supply, substitute-font hints and two
+ * source-touching conveniences.
+ */
 export interface ConvertDocxOptions extends Omit<StyledRenderOptions, 'registry' | 'styles'> {
+  /** A single regular-variant font as raw bytes. */
   readonly fontBytes?: Uint8Array;
+  /** Explicit font bytes per variant (regular/bold/italic/bold-italic). */
   readonly fonts?: FontBytesByVariant;
-  // Force a substitute font family for the auto-download path (e.g. 'serif').
-  // Ignored when `fonts`/`fontBytes` are supplied.
+  /**
+   * Force a substitute font family for the auto-download path (e.g. `'serif'`).
+   * Ignored when `fonts`/`fontBytes` are supplied.
+   */
   readonly fontFamily?: string;
-  // Injectable fetch for the auto-download path (defaults to global fetch).
+  /** Injectable `fetch` for the auto-download path (defaults to the global `fetch`). */
   readonly fontFetch?: FetchLike;
-  // For PDF/A-3 only: embed the input .docx as an associated source file
-  // (/AFRelationship /Source) so the archive carries its own source. Ignored
-  // for other profiles (PDF/A-1/2 forbid arbitrary embedded files).
+  /**
+   * For PDF/A-3 only: embed the input `.docx` as an associated source file
+   * (`/AFRelationship /Source`) so the archive carries its own source. Ignored
+   * for other profiles (PDF/A-1/2 forbid arbitrary embedded files).
+   */
   readonly embedSource?: boolean;
-  // Digitally sign the output (ISO 32000 §12.8). Requires the async
-  // convertDocxToPdf (signing uses WebCrypto). Ignored by the sync converter.
+  /**
+   * Digitally sign the output (ISO 32000 §12.8). Requires the async
+   * {@link convertDocxToPdf} (signing uses WebCrypto); ignored by the sync converter.
+   */
   readonly signature?: SignatureOptions;
 }
 
@@ -93,12 +107,16 @@ function prepareDocxStyledRender(
   };
 }
 
-// Convert a .docx to PDF, downloading an open substitute font automatically
-// when the caller does not supply one. With `fonts`/`fontBytes` set, no network
-// access occurs (it just delegates to the synchronous path).
-// Distinct curated families the document references — always includes the sans
-// default as a fallback for unstyled runs / math / charts. The async path
-// fetches one substitute set per family so each run renders in the right one.
+/**
+ * The distinct curated font families the document references (scanning the
+ * `w:ascii` of `styles.xml` + `document.xml`), always including the sans default
+ * `'arimo'` as a fallback for unstyled runs / math / charts. The async path
+ * fetches one substitute set per family so each run renders in the right one.
+ *
+ * @param docx The `.docx` bytes.
+ * @returns The resolved {@link FamilyKey} set; just the default when the package
+ *   cannot be opened.
+ */
 export function detectDocxFamilyKeys(docx: Uint8Array): Set<FamilyKey> {
   const keys = new Set<FamilyKey>(['arimo']);
   let pkg: OpcPackage;
@@ -157,10 +175,17 @@ async function buildUnsignedDocxPdf(
   return convertDocxToPdfSync(docx, withFonts);
 }
 
-// Substitute-font auto-download for a docx without caller fonts: detect the
-// families used, fetch an open set per family (single-family documents take
-// the simple path). Shared by the converter and the Ream facade — both work
-// from the same source bytes.
+/**
+ * Substitute-font auto-download for a `.docx` without caller-supplied fonts:
+ * detect the families used and fetch an open set per family (a single-family
+ * document takes the simple one-family path). Shared by the converter and the
+ * {@link Ream} facade — both work from the same source bytes.
+ *
+ * @param docx    The `.docx` bytes.
+ * @param options Optional `fontFamily` override and injectable `fontFetch`.
+ * @returns The base font bytes plus, for a multi-family document, a per-family
+ *   registry map so each run resolves to its own substitute.
+ */
 export async function resolveDocxAutoFonts(
   docx: Uint8Array,
   options: { readonly fontFamily?: string; readonly fontFetch?: FetchLike } = {},
@@ -190,10 +215,15 @@ export async function resolveDocxAutoFonts(
   return { fonts: baseBytes!, registriesByFamily };
 }
 
-// Best-effort detection of the document's primary font family, used to choose
-// a substitute for auto-download. Prefers the document defaults' ascii font,
-// then falls back to the most frequent run font. Cheap regex over the XML —
-// no need to fully parse for this hint.
+/**
+ * Best-effort detection of the document's primary font family, used to choose a
+ * substitute for auto-download. Prefers the document defaults' `w:ascii` font,
+ * then falls back to the most frequent run font. A cheap regex over the XML — no
+ * need to fully parse for this hint.
+ *
+ * @param docx The `.docx` bytes.
+ * @returns The detected family name, or `undefined` when none is found.
+ */
 export function detectDocxFontFamily(docx: Uint8Array): string | undefined {
   let pkg: OpcPackage;
   try {

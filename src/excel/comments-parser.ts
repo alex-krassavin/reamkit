@@ -26,10 +26,12 @@ const parser = new XMLParser({
   removeNSPrefix: true,
 });
 
-// §18.7.3/§18.7.6 xl/comments#.xml — legacy notes. authorId indexes <authors>;
-// the text is rich (<r><t>) so it flattens like a shared string. Excel stores a
-// bold "Author:\n" run at the head of the text — stripped here so the resolved
-// author is not shown twice.
+/**
+ * Parse a legacy `xl/comments#.xml` part (§18.7.3/§18.7.6) into {@link SheetComment}s.
+ * `authorId` indexes the `<authors>` list; the text is rich (`<r><t>`) so it
+ * flattens like a shared string. Excel stores a bold "Author:\n" run at the head
+ * of the text — stripped here so the resolved author is not shown twice.
+ */
 export function parseLegacyComments(data: Uint8Array): Array<SheetComment> {
   const tree = parser.parse(decoder.decode(data)) as Record<string, unknown>;
   const root = asObject(tree['comments']);
@@ -50,7 +52,10 @@ export function parseLegacyComments(data: Uint8Array): Array<SheetComment> {
   return out;
 }
 
-// xl/persons/person.xml — id → displayName, for resolving threaded authors.
+/**
+ * Parse `xl/persons/person.xml` into an `id → displayName` map, used to resolve
+ * the authors of threaded comments.
+ */
 export function parsePersons(data: Uint8Array): Map<string, string> {
   const tree = parser.parse(decoder.decode(data)) as Record<string, unknown>;
   const root = asObject(tree['personList']);
@@ -65,9 +70,15 @@ export function parsePersons(data: Uint8Array): Map<string, string> {
   return map;
 }
 
-// xl/threadedComments/threadedComment#.xml — a conversation. Each entry is one
-// message (replies share the ref); personId resolves through `persons`. They are
-// returned in document order so a thread reads top to bottom.
+/**
+ * Parse a modern `xl/threadedComments/threadedComment#.xml` part (a conversation)
+ * into {@link SheetComment}s. Each entry is one message (replies share the `ref`);
+ * `personId` resolves through `persons`. Entries are returned in document order so
+ * a thread reads top to bottom.
+ *
+ * @param data    The threaded-comments part bytes.
+ * @param persons The `id → displayName` map from {@link parsePersons}.
+ */
 export function parseThreadedComments(
   data: Uint8Array,
   persons: ReadonlyMap<string, string>,

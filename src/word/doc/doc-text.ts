@@ -84,33 +84,43 @@ const FIELD_END = 0x15; // the field ends
 
 const MAX_TEXT = 1 << 24; // 16M-char guard against a crafted piece table
 
+/** Run (character) formatting decoded from a CHPX grpprl. */
 export interface DocCharProps {
   readonly bold?: boolean;
   readonly italic?: boolean;
-  readonly underlineKul?: number; // Word `kul` underline code (0 = none)
-  readonly sizeHalfPts?: number; // font size in half-points
-  readonly fSpec?: boolean; // the character is special (sprmCFSpec)
-  readonly picOffset?: number; // sprmCPicLocation — offset into the Data stream
+  /** Word `kul` underline code (0 = none). */
+  readonly underlineKul?: number;
+  /** Font size in half-points. */
+  readonly sizeHalfPts?: number;
+  /** The character is special — `sprmCFSpec` (e.g. a picture placeholder). */
+  readonly fSpec?: boolean;
+  /** `sprmCPicLocation` — offset into the `Data` stream of the picture's PICF. */
+  readonly picOffset?: number;
 }
 
-// An embedded picture: the extracted image bytes and its display size (twips).
+/** An embedded picture: the extracted image bytes and its display size (twips). */
 export interface DocPicture {
   readonly bytes: Uint8Array;
   readonly widthTwips: number;
   readonly heightTwips: number;
 }
 
-// One cell border (DOC-11) from a Brc80: its width in points, colour and whether
-// it is a double line. Absent when the cell edge has no border.
+/**
+ * One cell border (DOC-11) from a Brc80: its width in points, colour and whether
+ * it is a double line. Absent when the cell edge has no border.
+ */
 export interface DocBorder {
   readonly widthPt: number;
   readonly colorHex: string;
+  /** The border is a double line (`brcType` 0x03). */
   readonly double?: boolean;
 }
 
-// A table cell's TC80 descriptor (DOC-11): its four edge borders and its vertical-
-// merge marker (`restart` = the top of a vertical span, `continue` = a cell merged
-// into the one above). Carried per cell on the row's TTP.
+/**
+ * A table cell's TC80 descriptor (DOC-11): its four edge borders and its
+ * vertical-merge marker (`restart` = the top of a vertical span, `continue` = a
+ * cell merged into the one above). Carried per cell on the row's TTP.
+ */
 export interface DocTc {
   readonly borders?: {
     readonly top?: DocBorder;
@@ -121,46 +131,65 @@ export interface DocTc {
   readonly vMerge?: 'restart' | 'continue';
 }
 
+/** Paragraph formatting decoded from a PAPX grpprl. */
 export interface DocParaProps {
-  readonly jc?: number; // Word justification (0 left, 1 center, 2 right, 3 both, 4 distribute)
+  /** Word justification (0 left, 1 center, 2 right, 3 both, 4 distribute). */
+  readonly jc?: number;
   readonly indentLeftTwips?: number;
   readonly indentRightTwips?: number;
-  readonly indentFirstTwips?: number; // signed (negative = hanging)
+  /** First-line indent, signed (negative = hanging). */
+  readonly indentFirstTwips?: number;
   readonly spaceBeforeTwips?: number;
   readonly spaceAfterTwips?: number;
-  readonly inTable?: boolean; // sprmPFInTable
-  readonly rowEnd?: boolean; // sprmPFTtp — the row's terminating paragraph
-  // sprmTDefTable rgdxaCenter — the (cols+1) cell-boundary x-positions (twips);
-  // present on the TTP. Cell i width = edge[i+1] − edge[i].
+  /** The paragraph is in a table — `sprmPFInTable`. */
+  readonly inTable?: boolean;
+  /** This is the row's terminating paragraph (TTP) — `sprmPFTtp`. */
+  readonly rowEnd?: boolean;
+  /**
+   * `sprmTDefTable` rgdxaCenter — the (cols+1) cell-boundary x-positions (twips);
+   * present on the TTP. Cell `i` width = `edge[i+1] − edge[i]`.
+   */
   readonly cellEdgesTwips?: ReadonlyArray<number>;
-  // sprmTDefTable TC80 per-cell descriptors (borders + vertical merge), one per
-  // cell, present on the TTP alongside cellEdgesTwips (DOC-11).
+  /**
+   * `sprmTDefTable` TC80 per-cell descriptors (borders + vertical merge), one per
+   * cell, present on the TTP alongside `cellEdgesTwips` (DOC-11).
+   */
   readonly cellDescriptors?: ReadonlyArray<DocTc>;
-  // sprmTDefTableShd — each cell's background fill hex (cvBack), or undefined for an
-  // auto (no-fill) cell. Indexed parallel to cellDescriptors.
+  /**
+   * `sprmTDefTableShd` — each cell's background fill hex (cvBack), or `undefined`
+   * for an auto (no-fill) cell. Indexed parallel to `cellDescriptors`.
+   */
   readonly cellShadings?: ReadonlyArray<string | undefined>;
-  readonly listIlfo?: number; // sprmPIlfo — list override (>0 ⇒ a list item)
-  readonly listIlvl?: number; // sprmPIlvl — list level (0–8)
+  /** `sprmPIlfo` — list-format override index (>0 ⇒ the paragraph is a list item). */
+  readonly listIlfo?: number;
+  /** `sprmPIlvl` — list level (0–8). */
+  readonly listIlvl?: number;
 }
 
+/** One maximal same-formatting run of text, or an embedded picture. */
 export interface DocRun {
   readonly text: string;
   readonly props: DocCharProps;
-  // Set instead of text when the run is an embedded picture.
+  /** Set instead of `text` when the run is an embedded picture. */
   readonly picture?: DocPicture;
 }
 
+/** One paragraph: its runs plus the decoded paragraph properties. */
 export interface DocParagraph {
   readonly runs: ReadonlyArray<DocRun>;
   readonly props: DocParaProps;
-  // The paragraph was ended by a cell mark (0x07) rather than a CR — i.e. it
-  // closes a table cell. With props.rowEnd it also closes the row.
+  /**
+   * The paragraph was ended by a cell mark (0x07) rather than a CR — i.e. it
+   * closes a table cell. With `props.rowEnd` it also closes the row.
+   */
   readonly cellMark?: boolean;
 }
 
-// The section's header/footer stories (best-effort: the binary story ordering
-// cannot be validated against a real file, so only well-formed, non-empty stories
-// are surfaced). `default` is the odd-page (primary) header/footer.
+/**
+ * The section's header/footer stories (best-effort: the binary story ordering
+ * cannot be validated against a real file, so only well-formed, non-empty stories
+ * are surfaced). `default` is the odd-page (primary) header/footer.
+ */
 export interface DocHeaderFooters {
   readonly defaultHeader?: ReadonlyArray<DocParagraph>;
   readonly defaultFooter?: ReadonlyArray<DocParagraph>;
@@ -170,18 +199,22 @@ export interface DocHeaderFooters {
   readonly evenFooter?: ReadonlyArray<DocParagraph>;
 }
 
-// One list level (LVL) — the format of its number (DOC-10). `nfc` is the MSONFC
-// code (0 arabic, 1/2 upper/lower roman, 3/4 upper/lower letter, 23 bullet, 0xFF
-// none); `xst` is the number-text template as UTF-16 code units, where a code unit
-// ≤ 8 is a placeholder for the number of that (zero-based) level.
+/**
+ * One list level (LVL) — the format of its number (DOC-10). `nfc` is the MSONFC
+ * code (0 arabic, 1/2 upper/lower roman, 3/4 upper/lower letter, 23 bullet, 0xFF
+ * none); `xst` is the number-text template as UTF-16 code units, where a code unit
+ * ≤ 8 is a placeholder for the number of that (zero-based) level.
+ */
 export interface DocLvl {
   readonly nfc: number;
   readonly iStartAt: number;
   readonly xst: ReadonlyArray<number>;
 }
 
-// The workbook's list tables (DOC-10): an LFO → lsid map (a paragraph's 1-based
-// sprmPIlfo indexes it) and, per lsid, the list's levels.
+/**
+ * The document's list tables (DOC-10): an LFO → lsid map (a paragraph's 1-based
+ * `sprmPIlfo` indexes it) and, per lsid, the list's levels.
+ */
 export interface DocListTables {
   readonly lfoLsids: ReadonlyArray<number>;
   readonly lists: ReadonlyMap<
@@ -190,15 +223,18 @@ export interface DocListTables {
   >;
 }
 
+/** Everything extracted from a `.doc`'s `WordDocument` stream. */
 export interface DocContent {
   readonly paragraphs: ReadonlyArray<DocParagraph>;
   readonly headerFooters?: DocHeaderFooters;
-  // The list tables resolving a paragraph's (ilfo, ilvl) to its number format.
+  /** The list tables resolving a paragraph's (ilfo, ilvl) to its number format. */
   readonly listTables?: DocListTables;
-  // The first section's page size in points (xaPage/yaPage from its SEP), when
-  // present and sane; absent ⇒ the reader's default (US Letter) applies.
+  /**
+   * The first section's page size in points (xaPage/yaPage from its SEP), when
+   * present and sane; absent ⇒ the reader's default (US Letter) applies.
+   */
   readonly pageSize?: { readonly widthPt: number; readonly heightPt: number };
-  // The file is encrypted/obfuscated — text cannot be read without the key.
+  /** The file is encrypted/obfuscated — text cannot be read without the key. */
   readonly encrypted: boolean;
 }
 
@@ -248,9 +284,19 @@ function readSectionPageSize(
   return { widthPt: xa / 20, heightPt: ya / 20 };
 }
 
-// The `WordDocument` stream of a `.doc` → its main-document paragraphs. Returns
-// none when the stream is missing, not a Word file, encrypted, or has no piece
-// table (older Word 6/95 without a CLX is out of scope).
+/**
+ * Extract a `.doc`'s `WordDocument` stream into its main-document paragraphs plus
+ * the section's header/footer stories, list tables and first-section page size.
+ * Joins the piece table (CLX → CPs/FCs), CHPX run formatting and PAPX paragraph
+ * formatting, splitting at the CR / cell marks. Every offset is bounds-checked, so
+ * a structurally odd file yields no text rather than throwing.
+ *
+ * @param bytes The `.doc` (OLE2/CFB) bytes.
+ * @returns The extracted {@link DocContent}; `encrypted` is set (with no
+ *   paragraphs) for an encrypted file, and an empty result is returned when the
+ *   stream is missing, not a Word file, or has no piece table (Word 6/95 is out of
+ *   scope).
+ */
 export function extractDocContent(bytes: Uint8Array): DocContent {
   const cfb = openCfb(bytes);
   const wd = cfb.readStream('WordDocument');
