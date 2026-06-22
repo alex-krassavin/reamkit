@@ -121,8 +121,18 @@ interface BiffRecord {
   readonly data: Uint8Array;
 }
 
-// bytes → SheetDoc. Throws on a non-OLE / non-BIFF8 input (the reader's sniff
-// keeps those away); a structurally odd record is skipped, never fatal.
+/**
+ * Read a legacy `.xls` (BIFF8) workbook into a {@link SheetDoc} — the same IR
+ * tree the OOXML xlsx reader produces. Reads the workbook globals (sheet
+ * directory, shared strings, date system, styles, defined names, Escher BLIP
+ * store) and each worksheet substream's cells, styling and overlays.
+ *
+ * @param xls The `.xls` bytes (an OLE2/CFB container holding a `Workbook` stream).
+ * @returns The parsed spreadsheet IR tree.
+ * @throws Error on a non-OLE / non-BIFF8 input or a workbook with no worksheets
+ *   (the reader's sniff keeps malformed inputs away); a structurally odd record
+ *   is skipped, never fatal.
+ */
 export function readXlsToSheetDoc(xls: Uint8Array): SheetDoc {
   const cfb = openCfb(xls);
   const wb = cfb.readStream('Workbook') ?? cfb.readStream('Book');
@@ -1615,8 +1625,11 @@ function formulaCell(d: Uint8Array, next: BiffRecord | undefined): WorksheetCell
   return numCell(row, col, style, String(readF64(d, 6)));
 }
 
-// §2.5.198.5 RkNumber — a packed 30-bit number: bit0 ×100, bit1 integer-vs-IEEE.
-// Exported for unit tests (the int / ×100 / IEEE paths).
+/**
+ * §2.5.198.5 RkNumber — decode a packed 30-bit number: bit 0 means ÷100, bit 1
+ * selects integer vs. the 30 high bits of an IEEE double. Exported for unit tests
+ * (the int / ×100 / IEEE paths).
+ */
 export function decodeRk(rk: number): number {
   const div100 = (rk & 0x01) !== 0;
   let value: number;
@@ -1692,11 +1705,16 @@ function decodeChars(d: Uint8Array, off: number, cch: number, highByte: boolean)
   return s;
 }
 
-// §2.4.265 SST — `cstTotal`/`cstUnique` then `cstUnique` rich strings, read by a
-// continuation-aware reader (a string can split across a CONTINUE boundary, and
-// the byte after the boundary is a fresh fHighByte flag for the rest). Exported
-// for unit tests of the continuation handling. `blocks` are the SST record's
-// data followed by each CONTINUE record's data.
+/**
+ * §2.4.265 SST — read the shared-string table: `cstTotal`/`cstUnique` then
+ * `cstUnique` rich strings, via a continuation-aware reader (a string can split
+ * across a CONTINUE boundary, and the byte after the boundary is a fresh
+ * `fHighByte` flag for the rest). Exported for unit tests of the continuation
+ * handling.
+ *
+ * @param blocks The SST record's data followed by each CONTINUE record's data.
+ * @returns The unique shared strings, in index order.
+ */
 export function readSst(blocks: ReadonlyArray<Uint8Array>): Array<string> {
   const r = new SstReader(blocks);
   r.u32(); // cstTotal (ignored — cstUnique drives the count)
@@ -1706,20 +1724,24 @@ export function readSst(blocks: ReadonlyArray<Uint8Array>): Array<string> {
   return out;
 }
 
-// A cursor over the SST's record blocks. Header/flag reads stay within a block
-// (the spec never splits them); only the character array crosses boundaries, and
-// each crossing re-reads the fHighByte flag.
+/**
+ * A cursor over the SST's record blocks. Header/flag reads stay within a block
+ * (the spec never splits them); only the character array crosses boundaries, and
+ * each crossing re-reads the `fHighByte` flag.
+ */
 class SstReader {
   private bi = 0;
   private off = 0;
+  /** @param blocks The SST record's data followed by each CONTINUE record's data. */
   constructor(private readonly blocks: ReadonlyArray<Uint8Array>) {}
 
+  /** Whether the cursor has consumed every block. */
   atEnd(): boolean {
     this.settle();
     return this.bi >= this.blocks.length;
   }
 
-  // Advance off the end of exhausted blocks (a "skip" crossing — no flag byte).
+  /** Advance off the end of exhausted blocks (a "skip" crossing — no flag byte). */
   private settle(): void {
     while (this.bi < this.blocks.length && this.off >= this.blocks[this.bi]!.length) {
       this.bi++;
@@ -1727,18 +1749,22 @@ class SstReader {
     }
   }
 
+  /** Read one byte, advancing across exhausted blocks; 0 past the end. */
   byte(): number {
     this.settle();
     if (this.bi >= this.blocks.length) return 0;
     return this.blocks[this.bi]![this.off++]!;
   }
+  /** Read a little-endian unsigned 16-bit integer. */
   u16(): number {
     return this.byte() | (this.byte() << 8);
   }
+  /** Read a little-endian unsigned 32-bit integer. */
   u32(): number {
     return (this.u16() | (this.u16() << 16)) >>> 0;
   }
 
+  /** Skip `n` bytes (used for the rich-run + phonetic tails, which carry no flags). */
   private skip(n: number): void {
     let left = n;
     while (left > 0) {
@@ -1750,6 +1776,11 @@ class SstReader {
     }
   }
 
+  /**
+   * Read one XLUnicodeRichExtendedString: a 16-bit char count, a flags byte, the
+   * optional rich-run / phonetic sizes, the (possibly continuation-split)
+   * characters, then the skipped rich-run + phonetic tails.
+   */
   readString(): string {
     const cch = this.u16();
     const flags = this.byte();

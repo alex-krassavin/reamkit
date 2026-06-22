@@ -88,13 +88,30 @@ interface TableLoc {
   readonly filters: ReadonlyArray<TableFilterColumn>;
 }
 
+/**
+ * Read a `.xlsx` and project it to a {@link FlowDoc} in one step:
+ * {@link readXlsxToSheetDoc} then {@link projectSheetDoc}. The xlsx reader
+ * records no read-time losses.
+ *
+ * @param xlsx    The `.xlsx` (OPC ZIP) bytes.
+ * @param options Projection knobs (the W9 reference date).
+ * @returns The flow document plus an (empty) loss list.
+ */
 export function readXlsx(xlsx: Uint8Array, options: ProjectSheetOptions = {}): ReadResult<FlowDoc> {
   return { doc: projectSheetDoc(readXlsxToSheetDoc(xlsx), options), losses: [] };
 }
 
-// bytes → SheetDoc: the SpreadsheetML IR node. Everything that needs the OPC
-// package (parsing + chart/drawing resolution) happens here; the SheetDoc →
-// FlowDoc projection (sheet-to-flow) is then a pure transform.
+/**
+ * Read a `.xlsx` into the {@link SheetDoc} SpreadsheetML IR node. Everything that
+ * needs the OPC package — workbook/worksheet/styles/shared-string parsing, chart
+ * and drawing resolution, tables, pivots, slicers, hyperlinks, comments and
+ * controls — happens here; the SheetDoc → FlowDoc projection (sheet-to-flow) is
+ * then a pure transform.
+ *
+ * @param xlsx The `.xlsx` (OPC ZIP) bytes.
+ * @returns The parsed spreadsheet IR tree.
+ * @throws Error when `xl/workbook.xml` is missing or the workbook has no sheets.
+ */
 export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
   const pkg = OpcPackage.open(xlsx);
   const workbookData = pkg.getPart(WORKBOOK_PART);
@@ -551,6 +568,12 @@ function lighten(hex: string, amount: number): string {
   return `${hx(ch(16))}${hx(ch(8))}${hx(ch(0))}`;
 }
 
+/**
+ * The OOXML `.xlsx` {@link DocumentReader}: sniffs the OPC ZIP for
+ * `xl/workbook.xml` and reads it into a {@link SheetDoc}. The reader's native
+ * tree is the SheetDoc; the facade/Ream project it to a {@link FlowDoc} for
+ * rendering (E-SHEET SB1).
+ */
 export const xlsxReader: DocumentReader<SheetDoc> = {
   id: 'xlsx',
   // The reader's native tree is the SheetDoc; the facade/Ream project it to a

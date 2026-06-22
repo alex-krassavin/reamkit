@@ -57,17 +57,23 @@ import { applyNumberFormat, parseAreaRef, parseTitleRowRange } from '@/excel';
 import { bandedTables, computeColumnBands } from '@/excel/column-bands';
 import { buildConditionalFormatter } from '@/excel/conditional-format';
 
-// Excel "character width" → twips. Calibri 11pt default Maximum Digit Width
-// is ~7 px ≈ 5.25 pt ≈ 105 twips. This is a coarse approximation but the
-// auto-fit pass refines column widths against the actual cell text anyway.
+/**
+ * Excel "character width" → twips. Calibri 11pt default Maximum Digit Width is
+ * ~7 px ≈ 5.25 pt ≈ 105 twips. This is a coarse approximation but the auto-fit
+ * pass refines column widths against the actual cell text anyway.
+ */
 export const TWIPS_PER_EXCEL_CHAR = 105;
 
-// Excel's default column width is 8.43 "characters" ≈ 64px ≈ 960 twips. Used for
-// columns without an explicit <col width="..">.
+/**
+ * Excel's default column width is 8.43 "characters" ≈ 64px ≈ 960 twips. Used for
+ * columns without an explicit `<col width="..">`.
+ */
 export const DEFAULT_COL_TWIPS = 960;
 
-// Excel's default row height is ~15pt = 300 twips. Used (for the fitToHeight
-// estimate) for rows without an explicit <row ht="..">.
+/**
+ * Excel's default row height is ~15pt = 300 twips. Used (for the `fitToHeight`
+ * estimate) for rows without an explicit `<row ht="..">`.
+ */
 export const DEFAULT_ROW_TWIPS = 300;
 
 // 1 point = 20 twips (Word/Excel unit conversion).
@@ -89,6 +95,12 @@ const PAPER_SIZES_TWIPS: ReadonlyMap<number, readonly [number, number]> = new Ma
   [70, [5953, 8392]], // A6 105mm × 148mm
 ]);
 const DEFAULT_PAPER_TWIPS: readonly [number, number] = [11906, 16838];
+
+/**
+ * Build the page section (paper size + margins) from a worksheet's `<pageSetup>`
+ * / `<pageMargins>`. Returns `undefined` when neither is set, so the renderer
+ * applies its A4 default.
+ */
 export function sectionFromWorksheet(worksheet: ParsedWorksheet): SectionProperties | undefined {
   const pageSize = pageSizeFromSetup(worksheet.pageSetup);
   const margins = marginsFromXlsx(worksheet.pageMargins);
@@ -134,8 +146,10 @@ function marginsFromXlsx(margins: XlsxPageMargins | undefined): PageMargins | un
 const PRINT_AREA_NAME = '_xlnm.Print_Area';
 const PRINT_TITLES_NAME = '_xlnm.Print_Titles';
 
-// ECMA-376 §18.2.5 — resolve the sheet-scoped _xlnm.Print_Area defined name
-// (localSheetId = the sheet's 0-based index) into a clipping range.
+/**
+ * ECMA-376 §18.2.5 — resolve the sheet-scoped `_xlnm.Print_Area` defined name
+ * (`localSheetId` = the sheet's 0-based index) into a clipping range.
+ */
 export function resolvePrintArea(
   definedNames: ReadonlyArray<DefinedName>,
   sheetIdx: number,
@@ -148,7 +162,7 @@ export function resolvePrintArea(
   return undefined;
 }
 
-// ECMA-376 §18.2.5 — _xlnm.Print_Titles → the repeated row range (0-indexed).
+/** ECMA-376 §18.2.5 — `_xlnm.Print_Titles` → the repeated row range (0-indexed). */
 export function resolvePrintTitleRows(
   definedNames: ReadonlyArray<DefinedName>,
   sheetIdx: number,
@@ -259,6 +273,22 @@ interface PrintModelOptions {
   readonly now?: Date;
 }
 
+/**
+ * Project one worksheet's grid into Flow body elements — a single {@link Table}
+ * (or, when the sheet is wider than the page, several column-banded tables). The
+ * full print model lives here: the used-range/print-area window, merge handling,
+ * the style cascade (fonts/fills/borders/alignment), print scaling, conditional
+ * formatting, sparklines, table/pivot banding, overflow and rotation. Memory- and
+ * text-budget-bounded against untrusted input.
+ *
+ * @param worksheet    The parsed grid + per-sheet geometry.
+ * @param sharedStrings The workbook shared-string table (`t="s"` cells index it).
+ * @param styles       The workbook style table (cellXfs + fonts/fills/borders).
+ * @param date1904     The 1904 date system flag (serial-to-date epoch).
+ * @param print        The print-model knobs (print area, gridlines, title rows, …).
+ * @returns The body elements (one table block, or banded tables); empty for a
+ *   blank or empty-print-area sheet.
+ */
 export function worksheetToBody(
   worksheet: ParsedWorksheet,
   sharedStrings: ReadonlyArray<string>,
@@ -768,6 +798,17 @@ function makeVerticalContinuation(
   };
 }
 
+/**
+ * Resolve a cell's displayed text from its RAW stored value: shared-string and
+ * inline-string lookup, boolean → `TRUE`/`FALSE`, and the number-format pass
+ * (§18.8) for numeric cells. Error/string/date cells pass through verbatim.
+ *
+ * @param cell         The parsed cell.
+ * @param sharedStrings The shared-string table for `t="s"` cells.
+ * @param styles       The style table (for the cell's number format).
+ * @param date1904     The 1904 date system flag.
+ * @returns The resolved display string.
+ */
 export function resolveCellText(
   cell: WorksheetCell,
   sharedStrings: ReadonlyArray<string>,
@@ -1202,6 +1243,12 @@ const SLICER_WIDTH_PT = 108; // ≈ 1.5in, Excel's default slicer width
 const SLICER_ROW_PT = 16;
 const SLICER_UNSELECTED_HEX = 'F2F2F2';
 
+/**
+ * Project a slicer panel (E-SHEET SV2) into a styled mini-{@link Table} emitted
+ * after the grid: a caption header spanning the button columns, then one button
+ * cell per item — the slicer accent fill + white text when selected, a light
+ * band when not; the last row padded so every row keeps the column count.
+ */
 export function slicerTable(slicer: SheetSlicer): Table {
   const cols = Math.max(1, slicer.columnCount);
   const colWidthPt = SLICER_WIDTH_PT / cols;

@@ -40,8 +40,16 @@ const REC_SERIESTEXT = 0x100d;
 
 const COLS = 16384;
 
-// The chart substream's records + the host sheet's cells/strings → a Chart, or
-// undefined when there are no series to plot.
+/**
+ * Parse a BIFF chart substream (XLS-6) into a {@link Chart}. The series values
+ * are read straight from the host sheet's cells through each series' AI ranges
+ * (BIFF caches no plotted numbers, unlike OOXML).
+ *
+ * @param records       The chart substream's records (between its BOF…EOF).
+ * @param cells         The host sheet's cells (the value source for AI ranges).
+ * @param sharedStrings The workbook shared strings (for category / name text).
+ * @returns The chart, or `undefined` when there are no series to plot.
+ */
 export function parseBiffChart(
   records: ReadonlyArray<Rec>,
   cells: ReadonlyArray<WorksheetCell>,

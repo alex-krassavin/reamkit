@@ -30,14 +30,29 @@ import {
 const HEADER_REL = '_xlsxHeaderDefault';
 const FOOTER_REL = '_xlsxFooterDefault';
 
-// Projection knobs (E-SHEET W9). `now` is the injected reference date that drives
-// conditional-format `timePeriod` windows and TODAY()/NOW() in `expression`
-// rules. Omitted ⇒ those clock-relative constructs no-op, so the projection
-// stays deterministic and byte-identical to before.
+/**
+ * Projection knobs (E-SHEET W9).
+ */
 export interface ProjectSheetOptions {
+  /**
+   * The injected reference date that drives conditional-format `timePeriod`
+   * windows and `TODAY()`/`NOW()` in `expression` rules. Omitted ⇒ those
+   * clock-relative constructs no-op, so the projection stays deterministic and
+   * byte-identical to before.
+   */
   readonly now?: Date;
 }
 
+/**
+ * Project a {@link SheetDoc} into a {@link FlowDoc} (E-SHEET SA2): each grid sheet
+ * becomes flow blocks (a table + chart/picture/shape/slicer frames, then comment
+ * / control listings), with sheets after the first starting on a new page. The
+ * first sheet's page geometry + header/footer drive the document section.
+ *
+ * @param sheet   The SpreadsheetML IR tree.
+ * @param options Projection knobs (the W9 reference date).
+ * @returns The format-neutral flow document the render path consumes.
+ */
 export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = {}): FlowDoc {
   const body: Array<BodyElement> = [];
   // Page geometry comes from the first sheet's <pageSetup>/<pageMargins>; the
