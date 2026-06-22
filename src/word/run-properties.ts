@@ -24,6 +24,16 @@ const UNDERLINE_STYLES = new Set<UnderlineStyle>([
 
 const VERTICAL_ALIGNS = new Set<VerticalAlign>(['baseline', 'superscript', 'subscript']);
 
+/**
+ * Parse a run-properties element (`w:rPr`, ECMA-376 Part 1 §17.3.2) into the
+ * typed {@link RunProperties}. Reads the character formatting the renderer needs:
+ * style reference, bold/italic/strike toggles, underline style, size, colour,
+ * font family map, vertical alignment, RTL, and language; sizes convert from
+ * half-points to points and colours normalize to uppercase hex.
+ *
+ * @param rPr The flat-tree `w:rPr` element (or `undefined`/non-element).
+ * @returns The parsed properties; an empty object when `rPr` is absent.
+ */
 export function parseRunProperties(rPr: unknown): RunProperties {
   const el = asElement(rPr);
   if (!el) return {};

@@ -40,6 +40,16 @@ const parser = new XMLParser({
 
 const STYLE_TYPES = new Set<StyleType>(['paragraph', 'character', 'table', 'numbering']);
 
+/**
+ * Parse `word/styles.xml` (ECMA-376 Part 1 §17.7) into a {@link StyleSheet}: the
+ * document defaults (`w:docDefaults` run/paragraph properties) plus the named
+ * styles, keyed by `styleId`. Table styles additionally carry their base layer,
+ * conditional (`w:tblStylePr`) layers and banding sizes. `basedOn` inheritance is
+ * recorded but not resolved — that happens in the style-cascade module.
+ *
+ * @param stylesXml The raw `styles.xml` bytes.
+ * @returns The parsed stylesheet, or `EMPTY_STYLE_SHEET` when the root is absent.
+ */
 export function parseStyles(stylesXml: Uint8Array): StyleSheet {
   const xml = decoder.decode(stylesXml);
   const tree = parser.parse(xml) as Record<string, unknown>;

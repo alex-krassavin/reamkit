@@ -217,6 +217,18 @@ function newScope(): PartScope {
   return { rels: [], relSeq: 0, relIdByResource: new Map() };
 }
 
+/**
+ * Serialize a {@link FlowDoc} to a WordprocessingML package (E-DOCX) — the
+ * inverse of the docx reader. A flow medium with zero layout and zero I/O: the
+ * body's resolved properties are written as direct (denormalized) formatting, so
+ * the round-trip is semantic, not byte-for-byte. Emits the main document plus
+ * numbering, footnotes/endnotes, comments (+ commentsExtended), per-section
+ * headers/footers, charts and media parts; anything not yet serialized is
+ * reported as a {@link Loss}.
+ *
+ * @param flow The interlayer to write back.
+ * @returns The encoded `.docx` bytes and the loss report.
+ */
 export function writeDocx(flow: FlowDoc): WriteResult {
   const losses: Array<Loss> = [];
   const body: Array<string> = [];
@@ -637,6 +649,11 @@ function emitHeadersFooters(
   return refs;
 }
 
+/**
+ * The {@link DocumentWriter} registration for `.docx`: its id, the medium it
+ * consumes (`flow`), the feature set it supports, and the {@link writeDocx}
+ * entry point.
+ */
 export const docxWriter: DocumentWriter<FlowDoc> = {
   id: 'docx',
   consumes: 'flow',

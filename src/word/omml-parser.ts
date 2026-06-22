@@ -17,6 +17,14 @@ import {
   poVal,
 } from '@/core/po-helpers';
 
+/**
+ * Parse an `<m:oMath>` subtree (ECMA-376 Part 1 §22) into a recursive
+ * {@link MathNode}. Coverage grows by milestone; unrecognized constructs degrade
+ * by recursing into their content so any literal symbols still surface.
+ *
+ * @param oMath The `m:oMath` PoNode.
+ * @returns A `row` node wrapping the parsed content.
+ */
 export function parseOMath(oMath: PoNode): MathNode {
   return { type: 'row', children: parseMathSeq(poChildren(oMath)) };
 }
@@ -97,7 +105,13 @@ function parseMathNode(node: PoNode): MathNode | null {
   }
 }
 
-// Collect a named child element's content as a row (m:num, m:den, m:e, …).
+/**
+ * Collect a named child element's content as a `row` node (`m:num`, `m:den`,
+ * `m:e`, …). Returns an empty row when the child is absent.
+ *
+ * @param parent The enclosing math element.
+ * @param tag    The child element's qualified tag.
+ */
 export function childRow(parent: PoNode, tag: string): MathNode {
   const el = poChildren(parent).find((c) => poIs(c, tag));
   return { type: 'row', children: el ? parseMathSeq(poChildren(el)) : [] };

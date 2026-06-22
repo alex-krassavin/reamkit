@@ -13,19 +13,36 @@ import type { FErr, FValue, Scalar } from '@/excel/formula/value';
 import { callFn } from '@/excel/formula/functions';
 import { bool, deref, err, num, str, toNumber, toText } from '@/excel/formula/value';
 
-// The cell's offset from the rule origin, added to UNANCHORED reference axes.
-// `curRow`/`curCol` carry the ABSOLUTE current cell (origin + delta) so ROW()/
-// COLUMN() with no argument can report it; absent (NO_SHIFT) ⇒ those no-arg forms
-// have no cell to name and yield #VALUE!.
+/**
+ * The cell's offset from the rule origin, added to UNANCHORED reference axes.
+ * `curRow`/`curCol` carry the ABSOLUTE current cell (origin + delta) so `ROW()`/
+ * `COLUMN()` with no argument can report it; absent ({@link NO_SHIFT}) ⇒ those
+ * no-arg forms have no cell to name and yield `#VALUE!`.
+ */
 export interface Shift {
+  /** Row delta from the rule origin, added to an unanchored row axis. */
   readonly dRow: number;
+  /** Column delta from the rule origin, added to an unanchored column axis. */
   readonly dCol: number;
+  /** The absolute current row, for no-arg `ROW()`; absent ⇒ `#VALUE!`. */
   readonly curRow?: number;
+  /** The absolute current column, for no-arg `COLUMN()`; absent ⇒ `#VALUE!`. */
   readonly curCol?: number;
 }
 
+/** The zero shift — no offset and no current cell (no-arg `ROW`/`COLUMN` → `#VALUE!`). */
 export const NO_SHIFT: Shift = { dRow: 0, dCol: 0 };
 
+/**
+ * Evaluate an {@link Ast} against an `EvalContext` and a per-cell {@link Shift},
+ * yielding an `FValue` (a scalar, a reference, or an array). Cells/ranges
+ * evaluate to reference values; scalar operators dereference them.
+ *
+ * @param ast   The syntax tree to evaluate.
+ * @param ctx   The evaluation context (grid access, defined names, date system).
+ * @param shift The current cell's offset from the rule origin.
+ * @returns The computed value.
+ */
 export function evaluate(ast: Ast, ctx: EvalContext, shift: Shift): FValue {
   switch (ast.k) {
     case 'num':

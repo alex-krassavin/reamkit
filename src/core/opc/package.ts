@@ -13,21 +13,32 @@ const ROOT_RELS_PATH = '_rels/.rels';
 
 const MIB = 1024 * 1024;
 
-// Resource caps applied while unzipping a package — a defence against
-// decompression ("zip") bombs and pathological archives. Generous defaults that
-// never reject a legitimate office document; tighten for untrusted input.
+/**
+ * Resource caps applied while unzipping a package — a defence against
+ * decompression ("zip") bombs and pathological archives. Generous defaults that
+ * never reject a legitimate office document; tighten for untrusted input.
+ */
 export interface OpcOpenOptions {
-  // Reject an archive whose raw (compressed) size exceeds this (default 128 MiB).
+  /** Reject an archive whose raw (compressed) size exceeds this (default 128 MiB). */
   readonly maxArchiveBytes?: number;
-  // Reject any single entry declaring an uncompressed size over this (default 256 MiB).
+  /** Reject any single entry declaring an uncompressed size over this (default 256 MiB). */
   readonly maxEntryBytes?: number;
-  // Reject if the total declared uncompressed size exceeds this (default 512 MiB).
+  /** Reject if the total declared uncompressed size exceeds this (default 512 MiB). */
   readonly maxTotalBytes?: number;
-  // Reject archives with more than this many entries (default 65 536).
+  /** Reject archives with more than this many entries (default 65 536). */
   readonly maxEntries?: number;
 }
 
+/**
+ * An opened OPC package (ECMA-376 Part 2): a ZIP archive's parts plus its
+ * package-level relationships, with helpers to look up parts, resolve part
+ * relationships, and find the main document part.
+ */
 export class OpcPackage {
+  /**
+   * @param parts             The package parts keyed by ZIP-convention path (no leading slash).
+   * @param rootRelationships The package-level relationships from `_rels/.rels`.
+   */
   private constructor(
     private readonly parts: ReadonlyMap<string, Uint8Array>,
     private readonly rootRelationships: ReadonlyArray<Relationship>,
@@ -35,6 +46,14 @@ export class OpcPackage {
 
   private readonly relsCache = new Map<string, ReadonlyArray<Relationship>>();
 
+  /**
+   * Unzip and validate a package's bytes. Rejects an OLE compound file (an
+   * encrypted OOXML container or a legacy binary `.doc`/`.xls`) and enforces the
+   * zip-bomb caps from `options`.
+   *
+   * @throws Error when the bytes are not a ZIP package, a cap is exceeded, or
+   *         `_rels/.rels` is missing.
+   */
   static open(buffer: Uint8Array, options: OpcOpenOptions = {}): OpcPackage {
     // OLE CFB magic (D0 CF 11 E0): a password-protected (encrypted) OOXML
     // container or a legacy binary .doc/.xls — either way, not a ZIP package.
@@ -101,23 +120,32 @@ export class OpcPackage {
     return new OpcPackage(parts, parseRelationships(relsBytes));
   }
 
+  /** The bytes of the part at `path`, or undefined when absent. */
   getPart(path: string): Uint8Array | undefined {
     return this.parts.get(normalizePath(path));
   }
 
+  /**
+   * The bytes of the part at `path`.
+   *
+   * @throws Error when the part is absent.
+   */
   requirePart(path: string): Uint8Array {
     const data = this.getPart(path);
     if (!data) throw new Error(`OPC part not found: ${path}`);
     return data;
   }
 
+  /** Every part path in the package (ZIP convention, no leading slash). */
   listParts(): Array<string> {
     return [...this.parts.keys()];
   }
 
-  // ECMA-376 Part 2 §9.3.4 — Part relationships.
-  // For a part at path "dir/name.ext" relationships live at
-  // "dir/_rels/name.ext.rels". Returns [] if the rels part is absent.
+  /**
+   * The relationships of the part at `partPath` (ECMA-376 Part 2 §9.3.4). For a
+   * part at `dir/name.ext` they live at `dir/_rels/name.ext.rels`. Returns `[]`
+   * if the rels part is absent. Parsed rels are cached per part.
+   */
   getPartRelationships(partPath: string): ReadonlyArray<Relationship> {
     const normalized = normalizePath(partPath);
     // One conversion asks for the main part's rels several times (images,
@@ -134,9 +162,11 @@ export class OpcPackage {
     return rels;
   }
 
-  // Resolve a relationship against its source part and return the related
-  // part's data (Internal relationships only). External relationships
-  // (e.g. http hyperlinks) return undefined.
+  /**
+   * Resolve a relationship against its source part and return the related part's
+   * resolved path + data (Internal relationships only). External relationships
+   * (e.g. http hyperlinks) and unresolvable targets return undefined.
+   */
   resolveRelatedPart(
     sourcePartPath: string,
     relationship: Relationship,
@@ -149,7 +179,12 @@ export class OpcPackage {
     return { path: resolved, data };
   }
 
-  // ECMA-376 Part 2 §11.1 — exactly one officeDocument relationship.
+  /**
+   * The path of the main document part, from the package's single
+   * `officeDocument` relationship (ECMA-376 Part 2 §11.1).
+   *
+   * @throws Error when there is no such relationship, or more than one.
+   */
   getMainDocumentPath(): string {
     const candidates = this.rootRelationships.filter(
       (r) => isOoxmlRel(r.type, 'officeDocument') && r.targetMode === 'Internal',
@@ -165,6 +200,12 @@ export class OpcPackage {
     return resolveTarget('/', candidates[0]!.target);
   }
 
+  /**
+   * The main document part's path and bytes.
+   *
+   * @throws Error when the officeDocument relationship is missing/ambiguous or
+   *         the part it points at is absent.
+   */
   getMainDocument(): { path: string; data: Uint8Array } {
     const path = this.getMainDocumentPath();
     return { path, data: this.requirePart(path) };

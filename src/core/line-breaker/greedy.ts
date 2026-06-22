@@ -14,6 +14,20 @@
 import type { Item } from '@/core/line-breaker/knuth-plass';
 import { FORBIDDEN_BREAK, FORCED_BREAK } from '@/core/line-breaker/knuth-plass';
 
+/**
+ * Break a paragraph into lines greedily (first-fit, E-PARITY FP3): each line
+ * ends at the last feasible breakpoint that still fits the target width, never
+ * looking ahead to balance the paragraph — matching Word/LibreOffice line (and
+ * page) counts under a renderer-compatibility `layoutProfile`. An over-long run
+ * with no earlier break gets an emergency break so it cannot merge forward.
+ *
+ * @param items      The box/glue/penalty stream, sharing the {@link Item} shape
+ *                   and feasibility convention of {@link breakLines}.
+ * @param lineWidths Target width: a single number (uniform) or a per-line array
+ *                   (0-based), reusing the last entry for trailing lines.
+ * @returns Indices into `items` where each line ends — the same shape
+ *          {@link breakLines} returns, so the layout consumer is identical.
+ */
 export function greedyBreakLines(
   items: ReadonlyArray<Item>,
   lineWidths: number | ReadonlyArray<number>,

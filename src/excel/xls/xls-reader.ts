@@ -42,6 +42,12 @@ const XLS_LOSSES: ReadonlyArray<Loss> = [
   },
 ];
 
+/**
+ * The legacy `.xls` {@link DocumentReader} (XLS-3): sniffs a BIFF8 OLE2/CFB
+ * workbook and reads it into the same {@link SheetDoc} the OOXML xlsx reader
+ * produces, so the whole render pipeline works on a 1997–2003 `.xls`. Reports a
+ * single degraded {@link Loss} for the unread Excel-tables / autofilter feature.
+ */
 export const xlsReader: DocumentReader<SheetDoc> = {
   id: 'xls',
   produces: 'sheet',

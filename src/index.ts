@@ -1,19 +1,26 @@
-// Public API for Ream.
-//
-// The package converts Word (.docx) and Excel (.xlsx) documents to PDF (and an
-// SVG page preview), implemented from the ECMA-376 and ISO 32000 specifications
-// without wrapping LibreOffice, headless Office, or any commercial SDK.
-//
-// Typical use:
-//
-//   import { Ream } from 'reamkit';
-//   const doc = Ream.parse(bytes);            // docx or xlsx — sniffed
-//   const pdf = await doc.convert('pdf');     // one parse, any target
-//
-// Advanced consumers can build custom pipelines from the reader/writer
-// interfaces, drive the layout engine directly via renderStyledPdf, supply a
-// hyphenator, or import the typed document model from the
-// "reamkit/document-model" subpath.
+/**
+ * The public API for Ream.
+ *
+ * The package reads Word, Excel, PowerPoint and PDF — including the legacy
+ * `.doc` / `.xls` / `.ppt` — and converts any of them to PDF, SVG, HTML, DOCX or
+ * XLSX, implemented from the ECMA-376 and ISO 32000 specifications without
+ * wrapping LibreOffice, headless Office, or any commercial SDK.
+ *
+ * Typical use:
+ *
+ * ```ts
+ * import { Ream } from 'reamkit';
+ * const doc = Ream.parse(bytes); // format sniffed
+ * const pdf = await doc.convert('pdf'); // one parse, any target
+ * ```
+ *
+ * Advanced consumers can build custom pipelines from the reader/writer
+ * interfaces, drive the layout engine directly via {@link renderStyledPdf},
+ * supply a hyphenator, or import the typed document model from the
+ * `reamkit/document-model` subpath.
+ *
+ * @packageDocumentation
+ */
 
 // --- Remote fonts (used by the auto-download path; exported for customisation) ---
 export { fetchFontSet, resolveFamilyKey } from '@/core/fonts';

@@ -16,14 +16,25 @@ const parser = new XMLParser({
   removeNSPrefix: true,
 });
 
+/** A form control's resolved state from its `ctrlProp` part (E-SHEET W8). */
 export interface FormControlProps {
-  // §18.18.18-ish ST_ObjectType — CheckBox, Radio, Spin, Scroll, Drop, List,
-  // Buttons, Label, GBox, Dialog, EditBox, Note … (the producer's spelling kept).
+  /**
+   * §18.18.18-ish `ST_ObjectType` — `CheckBox`, `Radio`, `Spin`, `Scroll`, `Drop`,
+   * `List`, `Buttons`, `Label`, `GBox`, `Dialog`, `EditBox`, `Note` … (the
+   * producer's spelling kept).
+   */
   readonly objectType?: string;
+  /** Checked state for a check/option button. */
   readonly checked?: boolean;
+  /** Current value for a spin / scroll / list control. */
   readonly value?: number;
 }
 
+/**
+ * Parse a `xl/ctrlProps/ctrlProp#.xml` part (a single `<formControlPr>`) into the
+ * control's {@link FormControlProps} — its `objectType` plus the bit of state the
+ * listing shows (`checked` for check/option buttons, `val` for spin/scroll/list).
+ */
 export function parseFormControlProps(data: Uint8Array): FormControlProps {
   const tree = parser.parse(decoder.decode(data)) as Record<string, unknown>;
   const pr = tree['formControlPr'];

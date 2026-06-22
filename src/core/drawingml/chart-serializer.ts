@@ -23,6 +23,18 @@ const GROUP_TAG: Readonly<Record<string, string>> = {
 const CAT_AX_ID = 111111111;
 const VAL_AX_ID = 222222222;
 
+/**
+ * Serialize a {@link Chart} to a DrawingML chart part (chart1.xml) — the inverse
+ * of `parseChart`. Emits exactly the cached data the parser reads
+ * (`c:numCache` / `c:strCache`), so a parse → serialize → parse round-trip
+ * preserves type, series, categories, colours, title, legend and axis titles.
+ * Pie/doughnut charts omit axes; scatter emits two value axes (`c:valAx`);
+ * everything else gets a category + value axis pair. Shared by the xlsx writer
+ * (embedded charts, WT1) and the docx writer (drawing charts, WT3).
+ *
+ * @param chart The chart to serialize.
+ * @returns The chart1.xml document as a string (with the XML declaration).
+ */
 export function chartSpaceXml(chart: Chart): string {
   const isScatter = chart.type === 'scatter';
   const isPie = chart.type === 'pie' || chart.doughnut === true;

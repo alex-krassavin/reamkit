@@ -17,8 +17,15 @@ interface Regions {
   readonly right: Array<Run>;
 }
 
-// Expand a header/footer format string into header/footer band content — one
-// aligned paragraph per non-empty region — or [] when every region is empty.
+/**
+ * Expand a print header/footer `&`-code string (E-SHEET W4) into header/footer band
+ * content — one aligned paragraph per non-empty left/centre/right region — or `[]`
+ * when every region is empty. `&P`/`&N` become dynamic PAGE/NUMPAGES field runs the
+ * renderer resolves per page; non-deterministic or unsupported codes are dropped.
+ *
+ * @param formatString The raw `&`-code format string.
+ * @param sheetName    The worksheet tab name, substituted for `&A`.
+ */
 export function buildHeaderFooterContent(
   formatString: string,
   sheetName: string,

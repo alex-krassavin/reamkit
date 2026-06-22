@@ -36,6 +36,21 @@ interface Line {
   readonly spans: ReadonlyArray<TextSpan>;
 }
 
+/**
+ * Heuristically reconstruct an untagged PDF into a {@link Reconstruction}
+ * (E-PDF EP4). With no structure tree there is only positioned content, so
+ * reading order is recovered the way a human eye does: split a clean two-column
+ * page at its central gutter (EP17), then within each column cluster runs
+ * sharing a baseline into lines, order each line left-to-right inserting spaces
+ * across gaps, group lines into paragraphs by their vertical spacing, and
+ * interleave the column's images and filled vector paths (EP10) by their top
+ * edge. Each run's `href` is carried through as a span so links survive, and a
+ * font size well above the document median is guessed as a heading. The result
+ * is inherently approximate.
+ *
+ * @param file The PDF to reconstruct.
+ * @returns The reconstructed {@link FlowDoc} plus any read-time losses.
+ */
 export function reconstructByLayout(file: PdfFile): Reconstruction {
   const pages = file.pages();
   const pageRuns = pages.map((page) => extractPageText(file, page));

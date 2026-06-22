@@ -6,6 +6,13 @@
 // correct default for the CJK / symbol / private-use blocks we do not yet
 // shape specially.
 
+/**
+ * Unicode UAX #9 Bidi_Class values, grouped as in the spec: strong (`L`, `R`,
+ * `AL`), weak (`EN`/`ES`/`ET`/`AN`/`CS`/`NSM`/`BN`), neutral (`B`/`S`/`WS`/`ON`)
+ * and explicit formatting (`LRE`…`PDI`). Only the classes used by the scripts we
+ * target (Latin, Hebrew, Arabic) plus the shared punctuation/format characters
+ * are produced; everything else defaults to `L`.
+ */
 export type BidiClass =
   // Strong
   | 'L'
@@ -167,6 +174,16 @@ const RANGES: ReadonlyArray<Range> = [
   { lo: 0x2030, hi: 0x205e, cls: 'ON' },
 ];
 
+/**
+ * Classify a code point into its UAX #9 {@link BidiClass}. Explicit single code
+ * points are checked first (highest precedence), then the ordered, non-overlapping
+ * ranges (first match wins). Code points outside every listed range default to
+ * `L`, the correct default for the CJK / symbol / private-use blocks we do not
+ * yet shape specially.
+ *
+ * @param cp The Unicode code point.
+ * @returns The character's bidirectional class.
+ */
 export function bidiClass(cp: number): BidiClass {
   const single = SINGLE.get(cp);
   if (single !== undefined) return single;

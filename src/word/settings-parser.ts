@@ -17,16 +17,27 @@ const parser = new XMLParser({
   trimValues: false,
 });
 
+/** The handful of `word/settings.xml` flags the renderer consumes. */
 export interface DocumentSettings {
-  // ECMA-376 §17.15.1.36 — w:evenAndOddHeaders. When true, even-numbered
-  // pages use the 'even' header/footer references instead of 'default'.
+  /**
+   * ECMA-376 §17.15.1.36 — `w:evenAndOddHeaders`. When `true`, even-numbered
+   * pages use the `'even'` header/footer references instead of `'default'`.
+   */
   readonly evenAndOddHeaders: boolean;
 }
 
+/** The all-defaults {@link DocumentSettings}, returned when no `w:settings` root is found. */
 export const EMPTY_SETTINGS: DocumentSettings = {
   evenAndOddHeaders: false,
 };
 
+/**
+ * Parse `word/settings.xml` (ECMA-376 §17.15), extracting only the flags the
+ * renderer needs; everything else (compat, autoSpaceDE, …) is ignored.
+ *
+ * @param data The raw `word/settings.xml` bytes.
+ * @returns The extracted {@link DocumentSettings}, or {@link EMPTY_SETTINGS} when the root is absent.
+ */
 export function parseSettings(data: Uint8Array): DocumentSettings {
   const xml = decoder.decode(data);
   const tree = parser.parse(xml) as Array<PoNode>;

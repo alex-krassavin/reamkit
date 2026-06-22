@@ -9,6 +9,11 @@
 
 import { XMLParser } from 'fast-xml-parser';
 
+/**
+ * One `<Relationship>` (ECMA-376 Part 2 §9.3): its id, Type URI, target, and
+ * whether the target is package-`Internal` or `External` (defaults to Internal
+ * when the attribute is absent).
+ */
 export interface Relationship {
   readonly id: string;
   readonly type: string;
@@ -29,6 +34,13 @@ const parser = new XMLParser({
   isArray: (tagName) => tagName === 'Relationship',
 });
 
+/**
+ * Parse a relationships part (`_rels/*.rels`) into {@link Relationship}s.
+ * Tolerates a namespace prefix on the elements; returns `[]` when there are no
+ * relationships.
+ *
+ * @throws Error when a `<Relationship>` lacks a required `Id`/`Type`/`Target`.
+ */
 export function parseRelationships(data: Uint8Array): Array<Relationship> {
   const xml = decoder.decode(data);
   const tree = parser.parse(xml) as {

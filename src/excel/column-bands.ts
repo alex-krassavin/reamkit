@@ -15,16 +15,26 @@ import type {
 
 import { twipsToPt } from '@/core/ir';
 
+/** A contiguous run of columns that prints together as one band (E-SHEET SE1). */
 export interface ColumnBand {
-  readonly start: number; // first local column index (inclusive)
-  readonly end: number; // last local column index (inclusive)
+  /** First local column index (inclusive). */
+  readonly start: number;
+  /** Last local column index (inclusive). */
+  readonly end: number;
 }
 
-// Greedy fill: accumulate column widths until the next column would overflow the
-// content width, then start a new band. A manual column break (colBreaks holds
-// local indices that begin a new page) always starts a new band. Every band keeps
-// at least one column — a single column wider than the page stands alone (the
-// layout shrinks it, the one case where fitting is unavoidable).
+/**
+ * Greedy fill: accumulate column widths until the next column would overflow the
+ * content width, then start a new band. A manual column break (`colBreaks` holds
+ * local indices that begin a new page) always starts a new band. Every band keeps
+ * at least one column — a single column wider than the page stands alone (the
+ * layout shrinks it, the one case where fitting is unavoidable).
+ *
+ * @param columnWidths     Per-column widths in twips, by local index.
+ * @param contentWidthTwips The printable content width one band must fit within.
+ * @param colBreaks        Local column indices that force a new band.
+ * @returns The bands in left-to-right order.
+ */
 export function computeColumnBands(
   columnWidths: ReadonlyArray<number>,
   contentWidthTwips: number,
@@ -50,11 +60,20 @@ export function computeColumnBands(
   return bands;
 }
 
-// Build one table BodyElement per band from the fully materialised rows + column
-// widths (twips, local index). Bands after the first force a page break before
-// their first row, so each band starts on a fresh page. A horizontal span that
-// crosses a band boundary is clipped to the band it starts in; later bands render
-// the overlapped columns blank, matching Excel's split-at-the-break behaviour.
+/**
+ * Build one table {@link BodyElement} per band from the fully materialised rows +
+ * column widths (twips, local index). Bands after the first force a page break
+ * before their first row, so each band starts on a fresh page. A horizontal span
+ * that crosses a band boundary is clipped to the band it starts in; later bands
+ * render the overlapped columns blank, matching Excel's split-at-the-break
+ * behaviour.
+ *
+ * @param rows         The full sheet rows (every band slices the same rows).
+ * @param columnWidths Per-column widths in twips, by local index.
+ * @param bands        The bands from {@link computeColumnBands}.
+ * @param properties   The shared table properties applied to every band.
+ * @returns One table body element per band, in band order.
+ */
 export function bandedTables(
   rows: ReadonlyArray<TableRow>,
   columnWidths: ReadonlyArray<number>,

@@ -8,8 +8,20 @@ import type { FlowDoc } from '@/core/ir/flow';
 import type { StyledRenderOptions } from '@/pdf';
 import { EMPTY_STYLE_SHEET } from '@/core/style-cascade';
 
+/** Styled-render options projected from a {@link FlowDoc} (everything but the font `registry`). */
 export type FlowRenderOptions = Omit<StyledRenderOptions, 'registry'>;
 
+/**
+ * Project a {@link FlowDoc} to the {@link StyledRenderOptions} the layout/PDF path
+ * consumes (minus the font `registry`, which the caller supplies). This is the
+ * single owner of the field-by-field mapping the converters and the facade used
+ * to repeat by hand. Key presence is significant — the conditional spreads are
+ * semantics, not style.
+ *
+ * @param flow The parsed interlayer.
+ * @returns The render options, threading the document's own sections,
+ *          header/footer bands, notes, resources, charts, fonts and language.
+ */
 export function flowRenderOptions(flow: FlowDoc): FlowRenderOptions {
   return {
     // flow.body already carries materialized list markers AND resolved

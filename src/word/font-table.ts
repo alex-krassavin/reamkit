@@ -30,8 +30,14 @@ const VARIANT_BY_TAG: Record<string, EmbedVariant> = {
   BoldItalic: 'boldItalic',
 };
 
-// §17.8.1 — restore an obfuscated embedded font by XOR-ing the first 32 bytes
-// with the fontKey GUID bytes in reverse order.
+/**
+ * §17.8.1 — restore an obfuscated embedded font by XOR-ing its first 32 bytes
+ * with the `fontKey` GUID bytes in reverse order, recovering a normal sfnt.
+ *
+ * @param data    The obfuscated `.odttf` bytes.
+ * @param fontKey The 16-byte `w:fontKey` GUID (with or without braces/dashes).
+ * @returns The de-obfuscated bytes, or `data` unchanged when `fontKey` is not a GUID.
+ */
 export function deobfuscateEmbeddedFont(data: Uint8Array, fontKey: string): Uint8Array {
   const hex = fontKey.replace(/[{}-]/g, '');
   if (hex.length !== 32) return data; // not a GUID → assume already plain
@@ -44,6 +50,12 @@ export function deobfuscateEmbeddedFont(data: Uint8Array, fontKey: string): Uint
   return out;
 }
 
+/**
+ * Parse `word/fontTable.xml` for its embedded-font references (§17.8). Returns
+ * one `FontTableEntry` per `w:font` that carries at least one `w:embed*` child,
+ * each naming the relationship id + `w:fontKey` for a Regular/Bold/Italic/
+ * BoldItalic face. A regex pass, not a full XML parse — only the embed refs matter.
+ */
 export function parseFontTable(data: Uint8Array): Array<FontTableEntry> {
   const xml = new TextDecoder('utf-8').decode(data);
   const out: Array<FontTableEntry> = [];
@@ -65,8 +77,16 @@ export function parseFontTable(data: Uint8Array): Array<FontTableEntry> {
   return out;
 }
 
-// Build a registry per embedded font, keyed by the normalized font name so a
-// run's w:ascii can match it. A font lacking a usable Regular face is skipped.
+/**
+ * De-obfuscate and load every embedded font in the package, building one
+ * {@link FontRegistry} per font keyed by its normalized (trimmed, lower-cased)
+ * name so a run's `w:ascii` can match it. Each candidate face is validated
+ * against the sfnt signature; a font lacking a usable Regular face, or whose
+ * faces fail to parse, is skipped (the family then falls back to substitution).
+ *
+ * @param pkg The opened OPC package for the `.docx`.
+ * @returns A map from normalized font name to its registry (empty when nothing embeds).
+ */
 export function loadEmbeddedFonts(pkg: OpcPackage): Map<string, FontRegistry> {
   const out = new Map<string, FontRegistry>();
   const ftData = pkg.getPart(FONT_TABLE_PART);

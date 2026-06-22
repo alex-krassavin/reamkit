@@ -11,19 +11,25 @@ import type { Token } from '@/excel/formula/lexer';
 
 import { tokenize } from '@/excel/formula/lexer';
 
-// One coordinate of a cell reference. `abs` records whether the axis was `$`
-// anchored — an unanchored axis shifts by the cell's offset from the rule's
-// origin when a conditional-format expression is evaluated per cell.
+/**
+ * One coordinate of a cell reference. `abs` records whether the axis was `$`
+ * anchored — an unanchored axis shifts by the cell's offset from the rule's
+ * origin when a conditional-format expression is evaluated per cell.
+ */
 export interface Axis {
-  readonly index: number; // 0-indexed row or column
+  /** 0-indexed row or column. */
+  readonly index: number;
+  /** Whether the axis carried a `$` anchor (stays put under the per-cell shift). */
   readonly abs: boolean;
 }
 
+/** A single-cell reference: its column and row {@link Axis}es. */
 export interface CellRef {
   readonly col: Axis;
   readonly row: Axis;
 }
 
+/** The formula syntax tree — a discriminated union over the node kind `k`. */
 export type Ast =
   | { readonly k: 'num'; readonly v: number }
   | { readonly k: 'str'; readonly v: string }
@@ -38,8 +44,10 @@ export type Ast =
   | { readonly k: 'bin'; readonly op: BinOp; readonly a: Ast; readonly b: Ast }
   | { readonly k: 'call'; readonly name: string; readonly args: ReadonlyArray<Ast> };
 
+/** The binary operators the parser recognises (see {@link Ast} `bin` nodes). */
 export type BinOp = '+' | '-' | '*' | '/' | '^' | '&' | '=' | '<>' | '<' | '>' | '<=' | '>=';
 
+/** Thrown when the token stream is not a well-formed formula. */
 export class ParseError extends Error {}
 
 // Precedence + associativity per binary operator. Higher binds tighter.
@@ -66,9 +74,15 @@ const CELL_RE = /^(\$?)([A-Za-z]{1,3})(\$?)([0-9]{1,7})$/;
 const MAX_COL = 16383; // XFD
 const MAX_ROW = 1048575;
 
-// Parse a formula string into an AST, or throw ParseError. Callers (the CF
-// compiler) catch and treat a parse failure as "rule does not apply" — a formula
-// using a construct we do not model never misrenders, it just no-ops.
+/**
+ * Parse a formula string into an {@link Ast}. Callers (the CF compiler) catch
+ * the throw and treat a parse failure as "rule does not apply" — a formula using
+ * a construct we do not model never misrenders, it just no-ops.
+ *
+ * @param src The formula source.
+ * @returns The parsed syntax tree.
+ * @throws ParseError on a malformed formula (or {@link LexError} from tokenizing).
+ */
 export function parse(src: string): Ast {
   const parser = new Parser(tokenize(src));
   const ast = parser.parseExpr(0);
@@ -76,22 +90,35 @@ export function parse(src: string): Ast {
   return ast;
 }
 
+/** A precedence-climbing (Pratt) parser over a {@link tokenize} token stream. */
 class Parser {
   private pos = 0;
   private depth = 0;
+  /** @param toks The token stream to parse (must end with an `eof` token). */
   constructor(private readonly toks: ReadonlyArray<Token>) {}
 
+  /** The current token without consuming it. */
   private peek(): Token {
     return this.toks[this.pos]!;
   }
+  /** Consume and return the current token. */
   private next(): Token {
     return this.toks[this.pos++]!;
   }
 
+  /** Assert the stream is fully consumed; throws `ParseError` on trailing tokens. */
   expectEof(): void {
     if (this.peek().kind !== 'eof') throw new ParseError(`trailing tokens at ${this.pos}`);
   }
 
+  /**
+   * Parse an expression whose operators bind at least as tightly as `minBp`
+   * (the precedence-climbing entry point).
+   *
+   * @param minBp The minimum binding power; operators below it stop the climb.
+   * @returns The parsed sub-tree.
+   * @throws ParseError when the expression nests past the depth cap or is malformed.
+   */
   parseExpr(minBp: number): Ast {
     if (++this.depth > MAX_DEPTH) throw new ParseError('expression too deep');
     let left = this.parseUnary();
@@ -109,8 +136,11 @@ class Parser {
     return left;
   }
 
-  // Unary +/- bind tighter than ^ (Excel: -2^2 = 4), so they live above the
-  // binary loop; postfix % binds tighter still.
+  /**
+   * Parse a (possibly signed) operand. Unary `+`/`-` bind tighter than `^`
+   * (Excel: `-2^2` = 4), so they live above the binary loop; postfix `%` binds
+   * tighter still.
+   */
   private parseUnary(): Ast {
     const t = this.peek();
     if (t.kind === 'op' && (t.text === '-' || t.text === '+')) {
@@ -120,6 +150,7 @@ class Parser {
     return this.parsePostfix();
   }
 
+  /** Parse a primary then fold any trailing postfix `%` percent operators. */
   private parsePostfix(): Ast {
     let x = this.parsePrimary();
     while (this.peek().kind === 'op' && this.peek().text === '%') {
@@ -129,6 +160,11 @@ class Parser {
     return x;
   }
 
+  /**
+   * Parse a primary expression: a literal, a parenthesised sub-expression, an
+   * inline array constant, or a word (classified by `parseWord` /
+   * sheet-qualifier handling).
+   */
   private parsePrimary(): Ast {
     const t = this.next();
     switch (t.kind) {
@@ -166,6 +202,12 @@ class Parser {
     }
   }
 
+  /**
+   * Classify a `word` token: a `(` directly after it makes it a function call,
+   * regardless of shape (so `LOG10( … )` is the function, bare `LOG10` is the
+   * cell reference); else an A1-shaped word is a cell ref (extended to a range on
+   * a trailing `:`), `TRUE`/`FALSE` a logical, anything else a defined name.
+   */
   private parseWord(word: string): Ast {
     // A `(` directly after the word makes it a function call, regardless of shape
     // (so LOG10( … ) is the function, bare LOG10 is the cell reference).
@@ -199,9 +241,11 @@ class Parser {
     return { k: 'name', name: upper };
   }
 
-  // A sheet-qualified cell or range — the `!` is already consumed; `sheet` is the
-  // (unquoted) sheet name. `Sheet2!A1` or `Sheet2!A1:B3`. The evaluator resolves
-  // the name against the workbook; an unknown sheet becomes #REF!.
+  /**
+   * Parse a sheet-qualified cell or range — the `!` is already consumed; `sheet`
+   * is the (unquoted) sheet name. `Sheet2!A1` or `Sheet2!A1:B3`. The evaluator
+   * resolves the name against the workbook; an unknown sheet becomes `#REF!`.
+   */
   private parseSheetCell(sheet: string): Ast {
     const t = this.next();
     if (t.kind !== 'word') throw new ParseError('expected a cell after !');
@@ -218,10 +262,12 @@ class Parser {
     return { k: 'cell', ref: a, sheet };
   }
 
-  // An inline array constant {1,2,3} / {1,2;3,4}: rows separated by `;`, elements
-  // by `,`. The opening `{` is already consumed. Elements are parsed as
-  // expressions (so a signed literal like -1 works) and reduced to scalars at
-  // eval; the total element count is capped against a crafted huge array.
+  /**
+   * Parse an inline array constant `{1,2,3}` / `{1,2;3,4}`: rows separated by
+   * `;`, elements by `,`. The opening `{` is already consumed. Elements are
+   * parsed as expressions (so a signed literal like `-1` works) and reduced to
+   * scalars at eval; the element count is capped against a crafted huge array.
+   */
   private parseArray(): Ast {
     const rows: Array<Array<Ast>> = [];
     let row: Array<Ast> = [];
@@ -247,6 +293,7 @@ class Parser {
     return { k: 'array', rows };
   }
 
+  /** Parse a comma-separated function argument list (the `(` already consumed). */
   private parseArgs(): Array<Ast> {
     const args: Array<Ast> = [];
     if (this.peek().kind === 'op' && this.peek().text === ')') return args;
@@ -263,6 +310,7 @@ class Parser {
     return args;
   }
 
+  /** Consume the next token, asserting it is the operator `op`. */
   private expect(op: string): void {
     const t = this.next();
     if (t.kind !== 'op' || t.text !== op) throw new ParseError(`expected ${op}`);

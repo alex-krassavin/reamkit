@@ -18,26 +18,39 @@ const parser = new XMLParser({
   removeNSPrefix: true,
 });
 
-// §18.3.1 (2009/9/main) <slicer> — one panel. `cacheName` (@cache) keys into the
-// workbook's slicer caches; `caption` (@caption) titles the box.
+/**
+ * §18.3.1 (2009/9/main) `<slicer>` — one slicer panel. `cacheName` (`@cache`) keys
+ * into the workbook's slicer caches; `caption` (`@caption`) titles the box.
+ */
 export interface SlicerDef {
   readonly name: string;
+  /** The slicer-cache name (`@cache`) binding this panel to its source. */
   readonly cacheName: string;
   readonly caption: string;
   readonly columnCount: number;
   readonly styleName?: string;
 }
 
-// <slicerCacheDefinition> — binds a slicer to its source. A native-table slicer
-// carries an <x14:tableSlicerCache tableId column> (the table + column whose
-// values are the buttons). `sourceName` is the field/column name.
+/**
+ * `<slicerCacheDefinition>` — binds a slicer to its source. A native-table slicer
+ * carries an `<x14:tableSlicerCache tableId column>` (the table + column whose
+ * values are the buttons). `sourceName` is the field/column name.
+ */
 export interface SlicerCacheDef {
   readonly name: string;
+  /** The source field/column name. */
   readonly sourceName?: string;
+  /** The source table id (a native-table slicer), matched against a parsed table part's id. */
   readonly tableId?: number;
+  /** The source column offset within that table. */
   readonly columnId?: number;
 }
 
+/**
+ * Parse `xl/slicers/slicerN.xml` into its {@link SlicerDef} panels (caption,
+ * column count, style, cache name). A slicer missing a name or cache name is
+ * skipped.
+ */
 export function parseSlicerPart(data: Uint8Array): Array<SlicerDef> {
   const tree = parser.parse(decoder.decode(data)) as Record<string, unknown>;
   const root = asObj(tree['slicers']);
@@ -62,6 +75,11 @@ export function parseSlicerPart(data: Uint8Array): Array<SlicerDef> {
   return out;
 }
 
+/**
+ * Parse `xl/slicerCaches/slicerCacheN.xml` into a {@link SlicerCacheDef}, resolving
+ * a native-table source (`extLst → ext → slicerCacheDefinition → tableSlicerCache`)
+ * to its `tableId` + column. Returns undefined when the root or its name is missing.
+ */
 export function parseSlicerCachePart(data: Uint8Array): SlicerCacheDef | undefined {
   const tree = parser.parse(decoder.decode(data)) as Record<string, unknown>;
   const root = asObj(tree['slicerCacheDefinition']);

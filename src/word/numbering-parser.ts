@@ -41,11 +41,22 @@ const FORMATS = new Set<NumberingFormat>([
   'none',
 ]);
 
+/** The empty {@link Numbering} returned when a document has no `numbering.xml`. */
 export const EMPTY_NUMBERING: Numbering = {
   abstractNums: new Map(),
   numInstances: new Map(),
 };
 
+/**
+ * Parse `word/numbering.xml` (ECMA-376 Part 1 §17.9) into a {@link Numbering}:
+ * the abstract numbering definitions (each level's format, start, text template
+ * and indent/run properties) plus the num instances that bind a `numId` to an
+ * `abstractNumId`. `basedOn` inheritance and per-level overrides are not resolved
+ * here; an unparseable format defaults to `decimal`.
+ *
+ * @param data The raw `numbering.xml` bytes.
+ * @returns The parsed numbering, or {@link EMPTY_NUMBERING} when the root is absent.
+ */
 export function parseNumbering(data: Uint8Array): Numbering {
   const xml = decoder.decode(data);
   const tree = parser.parse(xml) as Record<string, unknown>;

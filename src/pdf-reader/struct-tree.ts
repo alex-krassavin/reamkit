@@ -10,22 +10,46 @@ import type { PdfDict, PdfValue } from '@/pdf/objects';
 import type { PdfFile } from './document';
 import { PDF_NULL, PdfName } from '@/pdf/objects';
 
+/** A marked-content reference: a page index plus an MCID on that page. */
 export interface StructMcid {
-  readonly page: number; // page index
+  /** Zero-based page index the MCID lives on. */
+  readonly page: number;
   readonly mcid: number;
 }
 
+/**
+ * One node of the recovered logical structure tree (ISO 32000-1 §14.7): a
+ * `/StructElem`'s role, its own marked-content references (the text it owns) and
+ * its child elements.
+ */
 export interface StructNode {
-  readonly type: string; // /S role name
-  readonly mcids: ReadonlyArray<StructMcid>; // the element's own marked content
+  /** The `/S` role name (`Document`, `P`, `H1`, `Table`, `TR`, `TD`, `L`, `LI`, …). */
+  readonly type: string;
+  /** The element's own marked content, linking it to interpreter-extracted text (EP2). */
+  readonly mcids: ReadonlyArray<StructMcid>;
   readonly children: ReadonlyArray<StructNode>;
-  readonly alt?: string; // /Alt — alternate text (figures)
-  readonly colSpan?: number; // /A /Table /ColSpan (table cells)
-  readonly rowSpan?: number; // /A /Table /RowSpan
+  /** `/Alt` — alternate text (figures). */
+  readonly alt?: string;
+  /** `/A /Table /ColSpan` on a table cell. */
+  readonly colSpan?: number;
+  /** `/A /Table /RowSpan` on a table cell. */
+  readonly rowSpan?: number;
 }
 
 const MAX_NODES = 200_000; // DoS guard on a pathological tree
 
+/**
+ * Read the `/StructTreeRoot` (ISO 32000-1 §14.7) into a {@link StructNode} tree,
+ * recovering reading order and roles. Walks each `/StructElem`'s `/K` children —
+ * resolving nested elements, bare-integer and `/MCR` marked-content references
+ * (carrying the owning page), and skipping `/OBJR` object references (no text) —
+ * guards against cycles and pathological size, and lifts `/Alt` plus table cell
+ * `/ColSpan`/`/RowSpan`. Multiple top-level roots are wrapped in a synthetic
+ * `Document` node.
+ *
+ * @returns The structure-tree root, or `undefined` when the catalog has no
+ *          `/StructTreeRoot` (an untagged PDF).
+ */
 export function readStructTree(file: PdfFile): StructNode | undefined {
   const stRoot = file.get(file.catalog, 'StructTreeRoot');
   if (!(stRoot instanceof Map)) return undefined;

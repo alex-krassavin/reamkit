@@ -47,6 +47,18 @@ import {
 
 type Ev = (a: Ast) => FValue;
 
+/**
+ * Dispatch a built-in formula function by name, evaluating its arguments through
+ * `ev`. An unknown or misused function returns `#NAME?`/`#VALUE!` so the calling
+ * conditional-format rule simply does not apply — Ream never guesses.
+ *
+ * @param name  The upper-cased function name (e.g. `SUM`, `VLOOKUP`).
+ * @param args  The unevaluated argument expressions.
+ * @param ev    Evaluator for one argument (closes over the context + shift).
+ * @param ctx   The evaluation context (grid access, defined names, date system).
+ * @param shift The per-cell shift (used by no-arg `ROW`/`COLUMN`).
+ * @returns The function's result value.
+ */
 export function callFn(
   name: string,
   args: ReadonlyArray<Ast>,

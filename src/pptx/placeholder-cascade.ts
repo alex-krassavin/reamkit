@@ -19,11 +19,19 @@ import type { PlaceholderRef, ShapeBoxEmu } from '@/pptx/sp-helpers';
 import { poChildren, poIs } from '@/core/po-helpers';
 import { parsePh, parseXfrmBox, rPrToRunProps } from '@/pptx/sp-helpers';
 
+/**
+ * The placeholder cascade (PX2): the resolver a slide parser consults whenever a
+ * slide placeholder shape (`p:sp` with a `p:ph`) lacks its own geometry or run
+ * formatting, supplying the inherited values from the slide's layout, then its
+ * master.
+ */
 export interface PlaceholderCascade {
-  // The inherited EMU box for a slide placeholder without its own a:xfrm.
+  /** The inherited EMU box for a slide placeholder without its own `a:xfrm`. */
   readonly geometryFor: (ph: PlaceholderRef) => ShapeBoxEmu | undefined;
-  // The master's default run formatting for a placeholder's paragraph at the
-  // given 0-based outline level (empty when no master text styles apply).
+  /**
+   * The master's default run formatting for a placeholder's paragraph at the
+   * given 0-based outline level (empty when no master text styles apply).
+   */
   readonly defaultsFor: (ph: PlaceholderRef, level: number) => RunProperties;
 }
 
@@ -42,6 +50,16 @@ function categoryOf(type: string | undefined): StyleCategory {
   return 'other';
 }
 
+/**
+ * Build a {@link PlaceholderCascade} from a slide's already-parsed layout and
+ * master trees: it resolves a placeholder's inherited geometry (the layout's
+ * matching `a:xfrm`, else the master's) and per-level default run formatting (the
+ * master's `p:txStyles`).
+ *
+ * @param layoutTree The parsed `p:sldLayout` part.
+ * @param masterTree The parsed `p:sldMaster` part, when present.
+ * @param colors     The deck's colour resolver, for scheme colours in the text styles.
+ */
 export function buildPlaceholderCascade(
   layoutTree: ReadonlyArray<PoNode>,
   masterTree: ReadonlyArray<PoNode> | undefined,

@@ -8,8 +8,18 @@ import type { PathSegment, StrokeStyle, VectorShape } from '@/core/vector';
 export type { PathSegment, StrokeStyle, VectorPath, VectorShape } from '@/core/vector';
 export { PathBuilder } from '@/core/vector';
 
-// `patternName` (EP16b): when set, the fill is the named shading pattern from
-// the page's /Pattern resources (a gradient) rather than a solid colour.
+/**
+ * Emit a {@link VectorShape} as PDF content-stream operators (ISO 32000 §8.5),
+ * wrapped in a `q`/`Q` save-restore with the shape's transform as the CTM. The
+ * subpaths are painted with a single operator, so the winding rule is decided
+ * once (even-odd if any subpath asks).
+ *
+ * @param shape       The shape to draw.
+ * @param patternName When set, the fill is this named shading pattern from the
+ *   page's `/Pattern` resources (a gradient, EP16b) rather than a solid colour;
+ *   only used if the shape actually carries a `fillGradient`.
+ * @returns The content-stream operator lines.
+ */
 export function emitVectorShape(shape: VectorShape, patternName?: string): Array<string> {
   const out: Array<string> = [];
   out.push('q');

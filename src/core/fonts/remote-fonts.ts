@@ -33,6 +33,7 @@ const VARIANT_SUFFIX: Record<FontVariant, string> = {
   boldItalic: '700Bold_Italic',
 };
 
+/** A curated open substitute family (the Croscore + Carlito/Caladea set, like LibreOffice). */
 export type FamilyKey = 'arimo' | 'tinos' | 'cousine' | 'carlito' | 'caladea';
 
 interface CuratedFamily {
@@ -89,8 +90,14 @@ const MONO = new Set([
   'monospace',
 ]);
 
-// Map a document-referenced font family to a curated open substitute: an exact
-// metric twin when one is known, otherwise a serif/mono/sans style fallback.
+/**
+ * Map a document-referenced font family to a curated open substitute: an exact
+ * metric twin when one is known (e.g. Calibri → Carlito), otherwise a
+ * serif/mono/sans style fallback.
+ *
+ * @param name The referenced family name (case-insensitive); empty ⇒ Arimo.
+ * @returns The chosen {@link FamilyKey}.
+ */
 export function resolveFamilyKey(name: string | undefined): FamilyKey {
   if (!name) return 'arimo';
   const n = name.trim().toLowerCase();
@@ -110,6 +117,7 @@ function fontUrl(family: CuratedFamily, variant: FontVariant): string {
     : `${CDN_BASE}/${family.pkg}/${leaf}`;
 }
 
+/** A minimal `fetch`-like function (injectable for tests / offline use). */
 export type FetchLike = (
   url: string,
 ) => Promise<{ ok: boolean; arrayBuffer: () => Promise<ArrayBuffer> }>;
@@ -148,15 +156,22 @@ async function fetchTtf(
   return result;
 }
 
+/** Options for {@link fetchFontSet}. */
 export interface FetchFontSetOptions {
-  // Document font family name to substitute, or a curated key directly.
+  /** Document font family name to substitute, or a curated {@link FamilyKey} directly. */
   readonly family?: string | FamilyKey;
-  // Injectable fetch (defaults to global fetch). Lets tests run offline.
+  /** Injectable fetch (defaults to the global `fetch`); lets tests run offline. */
   readonly fetch?: FetchLike;
 }
 
-// Download a full variant set (regular required; bold/italic/boldItalic
-// best-effort) for the family that best matches the requested name.
+/**
+ * Download a full variant set (regular required; bold/italic/bold-italic
+ * best-effort) for the open family that best matches the requested name.
+ *
+ * @param options The family to substitute and an optional fetch override.
+ * @returns The downloaded font bytes per variant.
+ * @throws Error when the required regular face cannot be downloaded.
+ */
 export async function fetchFontSet(options: FetchFontSetOptions = {}): Promise<FontBytesByVariant> {
   const fetchImpl: FetchLike = options.fetch ?? ((url) => fetch(url));
   const key: FamilyKey =
@@ -180,7 +195,7 @@ export async function fetchFontSet(options: FetchFontSetOptions = {}): Promise<F
   };
 }
 
-// Test/diagnostic helper: clear the in-memory download cache.
+/** Test / diagnostic helper: clear the in-memory font-download cache. */
 export function clearFontCache(): void {
   cache.clear();
 }

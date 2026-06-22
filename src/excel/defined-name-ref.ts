@@ -10,6 +10,7 @@
 
 import { parseCellRef } from '@/excel/cell-reference';
 
+/** A 0-indexed inclusive cell range (the bounding box of a parsed area). */
 export interface CellRange {
   readonly startColumn: number;
   readonly startRow: number;
@@ -49,10 +50,16 @@ function parseSingleArea(token: string): CellRange | undefined {
   }
 }
 
-// _xlnm.Print_Titles names repeated print rows/columns, e.g. "Sheet1!$1:$2"
-// (rows 1-2) or "Sheet1!$A:$B,Sheet1!$1:$1" (cols A-B + row 1). We extract the
-// ROW range only — column titles repeat across horizontal page breaks, which we
-// don't paginate. Returns 0-indexed inclusive rows, or undefined if none.
+/**
+ * Extract the repeated-row range from an `_xlnm.Print_Titles` value, e.g.
+ * `"Sheet1!$1:$2"` (rows 1-2) or `"Sheet1!$A:$B,Sheet1!$1:$1"` (cols A-B + row 1).
+ * Only the ROW range is recovered — column titles repeat across horizontal page
+ * breaks, which the layout does not paginate.
+ *
+ * @param value The defined-name value.
+ * @returns The 0-indexed inclusive row range, or `undefined` when no pure row
+ *          range is present.
+ */
 export function parseTitleRowRange(
   value: string,
 ): { readonly startRow: number; readonly endRow: number } | undefined {
@@ -69,6 +76,16 @@ export function parseTitleRowRange(
   return undefined;
 }
 
+/**
+ * Resolve a `<definedName>` area value (§18.2.5 / §18.17) to the bounding box of
+ * every parseable area. A value may be a single cell (`"Sheet1!$A$1"`), a range
+ * (`"Sheet1!$A$1:$D$20"`), or several comma-separated areas; the sheet qualifier
+ * and `$` absolute markers are stripped. Multiple disjoint areas collapse to one
+ * enclosing box (a faithful approximation — Excel prints them in sequence).
+ *
+ * @param value The defined-name value (e.g. a `_xlnm.Print_Area`).
+ * @returns The 0-indexed inclusive bounding box, or `undefined` when no area parses.
+ */
 export function parseAreaRef(value: string): CellRange | undefined {
   if (!value) return undefined;
   let box: CellRange | undefined;

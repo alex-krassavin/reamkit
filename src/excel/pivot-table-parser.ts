@@ -21,6 +21,14 @@ const parser = new XMLParser({
   removeNSPrefix: true,
 });
 
+/**
+ * Parse `xl/pivotTables/pivotTableN.xml` (§18.10.1.73) into a {@link PivotTable}:
+ * the output `<location>` (range + header/data offsets), the banded-style flags,
+ * and the row/column total markers derived from `<rowItems>`/`<colItems>` (so the
+ * reader can band the region in the pivot palette — E-PIVOT). The output cells are
+ * already cached in the worksheet, so they render as a normal grid. Returns
+ * undefined when the root or its `ref` is missing.
+ */
 export function parsePivotTablePart(data: Uint8Array): PivotTable | undefined {
   const tree = parser.parse(decoder.decode(data)) as Record<string, unknown>;
   const def = asObj(tree['pivotTableDefinition']);

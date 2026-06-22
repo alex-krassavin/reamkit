@@ -9,6 +9,16 @@ import { asElement, getAttr, getVal, parseIntAttr, parseToggle } from '@/word/xm
 const ALIGNMENTS = new Set<Alignment>(['left', 'right', 'center', 'both', 'distribute']);
 const LINE_RULES = new Set<'auto' | 'exact' | 'atLeast'>(['auto', 'exact', 'atLeast']);
 
+/**
+ * Parse a `w:pPr` element (ECMA-376 Part 1 §17.3.1) into {@link ParagraphProperties}.
+ * Reads the style reference, alignment, spacing, indentation, page-break-before,
+ * bidi, outline level, numbering reference (`w:numPr`) and paragraph-mark run
+ * properties (`w:rPr`); unrecognized or out-of-range values are skipped.
+ *
+ * @param pPr The `w:pPr` element in flat (fast-xml-parser) shape, or anything
+ *   non-element (yielding an empty result).
+ * @returns The extracted properties; an empty object when `pPr` is absent.
+ */
 export function parseParagraphProperties(pPr: unknown): ParagraphProperties {
   const el = asElement(pPr);
   if (!el) return {};

@@ -8,6 +8,18 @@ import type { ContentFont } from './content';
 import type { PdfFile } from './document';
 import { PDF_NULL, PdfName, PdfStream } from '@/pdf/objects';
 
+/**
+ * Build a {@link ContentFont} (the interpreter's decode + advance hooks) from a
+ * `/Font` dictionary (E-PDF EP2). Unicode comes from the `/ToUnicode` CMap;
+ * glyph advances from a simple font's `/Widths` (§9.6.2.1) or a composite
+ * `/Type0` font's descendant `/W` array (§9.7.4.3). A code with no `/ToUnicode`
+ * entry decodes to its Latin-1 character for a simple font, or to nothing for a
+ * composite one.
+ *
+ * @param file     The owning {@link PdfFile}, used to resolve indirect references.
+ * @param fontDict The `/Font` dictionary.
+ * @returns The decode/advance hooks plus the code width (1 or 2 bytes per code).
+ */
 export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont {
   const isType0 = asName(file.resolve(fontDict.get('Subtype') ?? PDF_NULL)) === 'Type0';
 

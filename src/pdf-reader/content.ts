@@ -14,38 +14,62 @@ import type { ShapeGradient } from '@/core/vector';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 import { PDF_NULL, PdfHexString, PdfName } from '@/pdf/objects';
 
+/**
+ * A page font as the interpreter needs it (built from the font dictionaries in
+ * EP2b): how wide each code is, and how a run of codes decodes to Unicode. An
+ * unmapped font falls back to Latin-1 with a half-em advance so text still
+ * surfaces.
+ */
 export interface ContentFont {
-  readonly bytesPerCode: 1 | 2; // simple fonts read 1 byte/code, Type0 reads 2
+  /** Bytes per character code: simple fonts read 1 byte/code, Type0 reads 2. */
+  readonly bytesPerCode: 1 | 2;
+  /** Decode a sequence of character codes to a Unicode string. */
   decode: (codes: ReadonlyArray<number>) => string;
-  width: (code: number) => number; // glyph advance in 1000-unit text space
+  /** Glyph advance for one code, in 1000-unit text space. */
+  width: (code: number) => number;
 }
 
+/**
+ * One positioned text run emitted by a show operator: its decoded text, the
+ * glyph origin in page space and the effective font size — the raw material a
+ * later stage groups into lines and paragraphs.
+ */
 export interface TextRun {
   readonly text: string;
-  readonly x: number; // glyph-origin in page space (points)
+  /** Glyph origin x in page space (points). */
+  readonly x: number;
+  /** Glyph origin y in page space (points). */
   readonly y: number;
   readonly fontSizePt: number;
   readonly fontKey: string;
-  // The marked-content id of the enclosing BDC sequence (§14.6), if any — the
-  // link from this text to the structure element that owns it (E-PDF EP3).
+  /**
+   * The marked-content id of the enclosing `BDC` sequence (§14.6), if any — the
+   * link from this text to the structure element that owns it (E-PDF EP3).
+   */
   readonly mcid?: number;
-  // A /Link annotation whose /Rect covers this run's origin attaches its URI here
-  // (E-PDF EP8), so the reconstructed run carries the hyperlink.
+  /**
+   * A `/Link` annotation whose `/Rect` covers this run's origin attaches its URI
+   * here (E-PDF EP8), so the reconstructed run carries the hyperlink.
+   */
   readonly href?: string;
 }
 
-// A painted XObject (`/Name Do`, §8.8) — an image or form. The CTM maps the unit
-// square to page space, so it carries both the placement and the size; the mcid
-// links the paint to its structure element (a /Figure, E-PDF EP6).
+/**
+ * A painted XObject (`/Name Do`, §8.8) — an image or form. The CTM maps the unit
+ * square to page space, so it carries both the placement and the size; the
+ * `mcid` links the paint to its structure element (a `/Figure`, E-PDF EP6).
+ */
 export interface ImagePlacement {
-  readonly name: string; // XObject resource name (no leading slash)
+  /** XObject resource name (no leading slash). */
+  readonly name: string;
   readonly ctm: Matrix;
   readonly mcid?: number;
 }
 
-// A painted path (E-PDF EP10/EP11) — segments in page space (y-up) carrying the
-// fill colour (when filled) and/or the stroke colour and width (when stroked).
-// Clips, shadings and gradients are not captured.
+/**
+ * One segment of a painted path (E-PDF EP10/EP11), in page space (y-up): a
+ * `move`/`line`/`cubic` Bézier point or a subpath `close`.
+ */
 export type PathSeg =
   | { readonly op: 'move'; readonly x: number; readonly y: number }
   | { readonly op: 'line'; readonly x: number; readonly y: number }
@@ -60,28 +84,45 @@ export type PathSeg =
     }
   | { readonly op: 'close' };
 
+/**
+ * A painted path emitted by the path-painting operators (§8.5.3), captured in
+ * page space (y-up). The optional fields record only what the paint mode set:
+ * a fill colour/gradient (EP10/EP16c) and/or a stroke colour + width (EP11),
+ * plus the enclosing structure id.
+ */
 export interface VectorPlacement {
   readonly segs: ReadonlyArray<PathSeg>;
-  readonly fillHex?: string; // present iff the path is filled (f / F / f* / B / b)
-  readonly gradient?: ShapeGradient; // present iff filled with a shading pattern — EP16c
-  readonly strokeHex?: string; // present iff the path is stroked (S / s / B / b) — EP11
-  readonly lineWidth?: number; // stroke width in page-space points — EP11
+  /** Fill colour (6-hex), present iff the path is filled (`f` / `F` / `f*` / `B` / `b`). */
+  readonly fillHex?: string;
+  /** Shading pattern, present iff filled with one (EP16c). */
+  readonly gradient?: ShapeGradient;
+  /** Stroke colour (6-hex), present iff the path is stroked (`S` / `s` / `B` / `b`) — EP11. */
+  readonly strokeHex?: string;
+  /** Stroke width in page-space points — EP11. */
+  readonly lineWidth?: number;
   readonly mcid?: number;
 }
 
+/** Everything {@link interpretContent} extracts from one page's content stream. */
 export interface InterpretResult {
   readonly texts: Array<TextRun>;
   readonly images: Array<ImagePlacement>;
   readonly vectors: Array<VectorPlacement>;
 }
 
-// 2D affine matrix [a b c d e f] = ⎡a b 0⎤ row-vector convention ([x y 1] · M).
-//                                  ⎢c d 0⎥
-//                                  ⎣e f 1⎦
+/**
+ * 2D affine matrix `[a b c d e f]`, row-vector convention (`[x y 1] · M`):
+ * ```
+ * ⎡a b 0⎤
+ * ⎢c d 0⎥
+ * ⎣e f 1⎦
+ * ```
+ */
 export type Matrix = readonly [number, number, number, number, number, number];
+/** The identity {@link Matrix} (no transform). */
 export const IDENTITY: Matrix = [1, 0, 0, 1, 0, 0];
 
-// A applied first, then B.
+/** Compose two {@link Matrix matrices}: `a` applied first, then `b`. */
 export function multiply(a: Matrix, b: Matrix): Matrix {
   return [
     a[0] * b[0] + a[1] * b[2],
@@ -137,6 +178,20 @@ function initialState(): TextState {
   };
 }
 
+/**
+ * Walk a page's decoded content stream (§9.4) and extract its positioned text,
+ * painted XObjects and painted paths. Tracks the graphics state (CTM via
+ * `q`/`Q`/`cm`) and text state (text/line matrices, font, size, spacing), and
+ * emits one {@link TextRun} per show operator (`Tj` / `TJ` / `'` / `"`) in page
+ * space (points).
+ *
+ * @param bytes      The page's decoded content-stream bytes.
+ * @param fonts      Page fonts by resource key (`Tf` name), for decoding + widths;
+ *                   an unmapped key falls back to Latin-1 with a half-em advance.
+ * @param initialCtm The starting CTM mapping user space to page space.
+ * @param shadings   Shading patterns by name, selected by `scn`/`sc` (EP16c).
+ * @returns The extracted text runs, image placements and vector paths.
+ */
 export function interpretContent(
   bytes: Uint8Array,
   fonts: ReadonlyMap<string, ContentFont>,

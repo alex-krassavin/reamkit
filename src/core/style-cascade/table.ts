@@ -32,6 +32,13 @@ import type {
   TableStyleLayer,
 } from '@/core/document-model';
 
+/**
+ * Apply table styles across a body (ECMA-376 §17.7.6): for each table, fold its
+ * `basedOn` chain and apply the base + `tblLook`-gated conditional region layers
+ * to every cell's chrome (shading, borders, margins) and run/paragraph text, as
+ * a fallback under direct formatting. Recurses into nested tables and shape
+ * text. Mutates the tree IN PLACE and returns it.
+ */
 export function resolveTableStyles(
   body: ReadonlyArray<BodyElement>,
   sheet: StyleSheet,

@@ -12,23 +12,40 @@ import { flowRenderOptions } from '@/core/converter/project';
 import { readXlsx } from '@/excel/xlsx-reader';
 import { renderStyledPdf, renderStyledPdfEncrypted, signPdf } from '@/pdf';
 
+/**
+ * Options for the xlsx → PDF convenience converters. Extends the low-level
+ * {@link StyledRenderOptions} (minus the font `registry` and `styles`, which the
+ * converter builds itself) with font acquisition and source-touching conveniences.
+ */
 export interface ConvertXlsxOptions extends Omit<StyledRenderOptions, 'registry' | 'styles'> {
+  /** Shorthand for supplying a single regular-variant font as raw bytes. */
   readonly fontBytes?: Uint8Array;
+  /** Explicit font bytes per variant (regular/bold/italic/bold-italic). */
   readonly fonts?: FontBytesByVariant;
-  // Force a substitute font family for the auto-download path. Ignored when
-  // `fonts`/`fontBytes` are supplied.
+  /**
+   * Force a substitute font family for the auto-download path. Ignored when
+   * `fonts`/`fontBytes` are supplied.
+   */
   readonly fontFamily?: string;
-  // Injectable fetch for the auto-download path (defaults to global fetch).
+  /** Injectable `fetch` for the auto-download path (defaults to the global `fetch`). */
   readonly fontFetch?: FetchLike;
-  // For PDF/A-3 only: embed the input .xlsx as an associated source file
-  // (/AFRelationship /Source). Ignored for other profiles.
+  /**
+   * For PDF/A-3 only: embed the input `.xlsx` as an associated source file
+   * (`/AFRelationship /Source`). Ignored for other profiles.
+   */
   readonly embedSource?: boolean;
-  // E-SHEET W9 — the reference date for conditional-format `timePeriod` rules and
-  // TODAY()/NOW() in `expression` rules. An explicit input (never the wall clock),
-  // so output stays deterministic; omitted ⇒ those clock-relative rules no-op.
+  /**
+   * E-SHEET W9 — the reference date for conditional-format `timePeriod` rules and
+   * `TODAY()`/`NOW()` in `expression` rules. An explicit input (never the wall
+   * clock), so output stays deterministic; omitted ⇒ those clock-relative rules
+   * no-op.
+   */
   readonly now?: Date;
-  // Digitally sign the output (ISO 32000 §12.8). Requires the async
-  // convertXlsxToPdf (signing uses WebCrypto). Ignored by the sync converter.
+  /**
+   * Digitally sign the output (ISO 32000 §12.8). Requires the async
+   * {@link convertXlsxToPdf} (signing uses WebCrypto). Ignored by the sync
+   * converter.
+   */
   readonly signature?: SignatureOptions;
 }
 

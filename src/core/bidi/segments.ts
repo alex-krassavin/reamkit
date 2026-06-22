@@ -15,15 +15,34 @@ const RLE = 0x202b;
 const PDF_FMT = 0x202c;
 const LRE = 0x202a;
 
+/**
+ * One piece of a paragraph handed to {@link segmentLevels}: a plain text run, or
+ * an atomic object (inline image / math box). A segment may carry a run-level
+ * direction override, applied via explicit RLE/LRE…PDF wrapping.
+ */
 export interface BidiSegment {
-  // Text content; ignored when `object` is true.
+  /** Text content; ignored when `object` is true. */
   readonly text: string;
-  // Atomic neutral object (inline image / math box) — counts as ONE position.
+  /** Atomic neutral object (inline image / math box) — counts as ONE position. */
   readonly object?: boolean;
-  // Run-level direction override (w:rtl).
+  /** Run-level direction override (`w:rtl`). */
   readonly rtl?: boolean;
 }
 
+/**
+ * Resolve UAX #9 embedding levels for a paragraph described as a flat list of
+ * {@link BidiSegment}s, returning one level per "real" position: one per text
+ * code point, one per object. Carries the explicit-formatting protocol: an `rtl`
+ * segment is wrapped in RLE…PDF (an LTR segment inside an RTL paragraph in
+ * LRE…PDF) so run-level direction overrides neutral resolution, and each object
+ * participates as U+FFFC (Object Replacement Character). The inserted control
+ * characters are not reflected in the output — their levels are projected back
+ * onto the real positions only.
+ *
+ * @param segments The paragraph's segments, in logical order.
+ * @param baseDir  The paragraph base direction.
+ * @returns One embedding level per real position (text code point or object).
+ */
 export function segmentLevels(
   segments: ReadonlyArray<BidiSegment>,
   baseDir: 'ltr' | 'rtl',

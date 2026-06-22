@@ -11,7 +11,10 @@
 import type { PathSegment } from '@/core/vector';
 import { PathBuilder } from '@/core/vector';
 
-// Point on an axis-aligned ellipse at angle θ (radians, CCW from +x).
+/**
+ * Point on an axis-aligned ellipse at angle θ (radians, CCW from +x): returns
+ * `[cx + rx·cosθ, cy + ry·sinθ]`.
+ */
 export function arcPoint(
   cx: number,
   cy: number,
@@ -22,11 +25,16 @@ export function arcPoint(
   return [cx + rx * Math.cos(angleRad), cy + ry * Math.sin(angleRad)];
 }
 
-// Decompose an arc into cubic segments, ≤90° each. Returns ONLY 'cubic'
-// segments — the pen is assumed to already sit at the arc's start point
-// (arcPoint(..., startAngleRad)); the caller emits a leading move/line.
-// Degenerate input (non-positive radius or zero sweep) yields no segments,
-// so no NaN can reach the serializer.
+/**
+ * Decompose an arc into cubic segments, ≤90° each. Returns ONLY `cubic`
+ * segments — the pen is assumed to already sit at the arc's start point
+ * (`arcPoint(..., startAngleRad)`); the caller emits a leading move/line.
+ * Degenerate input (non-positive radius or zero sweep) yields no segments,
+ * so no NaN can reach the serializer.
+ *
+ * @param startAngleRad Start angle in radians (CCW from +x).
+ * @param sweepAngleRad Signed angular extent in radians (sign = winding direction).
+ */
 export function arcToBeziers(
   cx: number,
   cy: number,
@@ -68,8 +76,10 @@ export function arcToBeziers(
   return segments;
 }
 
-// Full ellipse inscribed in the (0,0)–(w,h) box, as a closed path. Starts at
-// the rightmost point and sweeps a full turn CCW.
+/**
+ * Full ellipse inscribed in the `(0,0)`–`(w,h)` box, as a closed path. Starts at
+ * the rightmost point and sweeps a full turn CCW.
+ */
 export function ellipseSegments(w: number, h: number): ReadonlyArray<PathSegment> {
   const rx = w / 2;
   const ry = h / 2;
@@ -83,9 +93,11 @@ export function ellipseSegments(w: number, h: number): ReadonlyArray<PathSegment
     .build().segments;
 }
 
-// Rounded rectangle in the (0,0)–(w,h) box (y-up) with uniform corner radius r
-// (clamped to half the shorter side). Traversed CCW: bottom edge → BR corner →
-// right edge → TR corner → top edge → TL corner → left edge → BL corner.
+/**
+ * Rounded rectangle in the `(0,0)`–`(w,h)` box (y-up) with uniform corner radius
+ * `r` (clamped to half the shorter side). Traversed CCW: bottom edge → BR corner
+ * → right edge → TR corner → top edge → TL corner → left edge → BL corner.
+ */
 export function roundRectSegments(w: number, h: number, r: number): ReadonlyArray<PathSegment> {
   const rr = Math.max(0, Math.min(r, Math.min(w, h) / 2));
   const b = new PathBuilder();

@@ -7,8 +7,10 @@
 import type { StrokeStyle, VectorPath } from '@/core/vector';
 import { PathBuilder } from '@/core/vector';
 
+/** The sparkline type: a trend `line`, a `column` bar chart, or `winLoss` bars. */
 export type SparklineKind = 'line' | 'column' | 'winLoss';
 
+/** One drawable layer of a sparkline: paths sharing a fill and/or stroke. */
 export interface SparklinePrim {
   readonly paths: ReadonlyArray<VectorPath>;
   readonly fillColorHex?: string;
@@ -19,6 +21,19 @@ export interface SparklinePrim {
 const DEFAULT_SERIES_HEX = '376092';
 const LOSS_HEX = 'D00000';
 
+/**
+ * Build sparkline primitives (E-SHEET SC2) for a single cell in a local y-up
+ * `[0,width]×[0,height]` frame — a bare trend glyph with no axes, legend or
+ * labels. Gaps (`null`) break a line and skip a bar while preserving the slot.
+ * Returns an empty array for a non-positive box or an all-null series.
+ *
+ * @param kind     The sparkline type.
+ * @param values   The data points, in order; `null` marks a gap.
+ * @param width    Frame width in points.
+ * @param height   Frame height in points.
+ * @param colorHex Series colour (RRGGBB); defaults to Excel's sparkline blue.
+ * @returns The drawable layers (win/loss yields separate win and loss layers).
+ */
 export function buildSparkline(
   kind: SparklineKind,
   values: ReadonlyArray<number | null>,

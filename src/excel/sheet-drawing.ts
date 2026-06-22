@@ -13,26 +13,33 @@ import { DEFAULT_COL_TWIPS, DEFAULT_ROW_TWIPS, TWIPS_PER_EXCEL_CHAR } from '@/ex
 
 const CHART_URI = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
 
+/** §20.5 — a chart frame anchored over the grid, sized from its cell-range anchor. */
 export interface SheetChartRef {
-  // The resolved chart part path ('xl/charts/chart1.xml') — globally unique,
-  // used as the FlowDoc charts key and the ChartBlock.chartRelId.
+  /**
+   * The resolved chart part path (`'xl/charts/chart1.xml'`) — globally unique, used
+   * as the FlowDoc charts key and the `ChartBlock.chartRelId`.
+   */
   readonly chartPartPath: string;
   readonly widthPt: number;
   readonly heightPt: number;
-  // Anchor top row (0-based) — used only to order charts on the sheet.
+  /** Anchor top row (0-based) — used only to order charts on the sheet. */
   readonly anchorRow: number;
 }
 
-// §20.5.2.1 xdr:pic — a picture anchored over the grid. The reader reads the
-// resolved media part's bytes into the SheetDoc resource store.
+/**
+ * §20.5.2.1 `xdr:pic` — a picture anchored over the grid. The reader reads the
+ * resolved media part's bytes into the SheetDoc resource store.
+ */
 export interface SheetPicture {
+  /** The resolved media part path; the reader loads its bytes into the resource store. */
   readonly imagePartPath: string;
   readonly widthPt: number;
   readonly heightPt: number;
+  /** Anchor top row (0-based) — used only to order pictures on the sheet. */
   readonly anchorRow: number;
 }
 
-// Both kinds of anchored frame the drawing yields, anchor-ordered.
+/** Both kinds of anchored frame the drawing yields, anchor-ordered. */
 export interface SheetDrawing {
   readonly charts: Array<SheetChartRef>;
   readonly pictures: Array<SheetPicture>;
@@ -47,9 +54,17 @@ const parser = new XMLParser({
 
 const TWIPS_PER_PT = 20;
 
-// §20.5.2.35/.33/.1 — xdr:twoCellAnchor / oneCellAnchor / absoluteAnchor. Each
-// anchor frames either a chart (graphicFrame) or a picture (xdr:pic); both are
-// sized from the anchor and returned anchor-ordered.
+/**
+ * Parse a `xl/drawings/drawingN.xml` part (§20.5.2.35/.33/.1 — `xdr:twoCellAnchor`
+ * / `oneCellAnchor` / `absoluteAnchor`) into the {@link SheetDrawing} it yields.
+ * Each anchor frames either a chart (`graphicFrame`) or a picture (`xdr:pic`); both
+ * are sized from the anchor and returned anchor-ordered.
+ *
+ * @param drawingXml      The drawing part bytes.
+ * @param drawingPartPath The drawing part path, for resolving its relationships.
+ * @param pkg             The OPC package, used to resolve relId → part path.
+ * @param worksheet       The host worksheet, for the column/row track geometry.
+ */
 export function parseSheetDrawing(
   drawingXml: Uint8Array,
   drawingPartPath: string,
@@ -175,9 +190,12 @@ function spanPt(
   return span - fromOffPt + toOffPt;
 }
 
-// Column width in points: <col> overrides (Excel "chars"), else the default —
-// the same conversions the print model uses. Exported so the sheet-shape parser
-// (E-SHEET W2) sizes shape anchors with the same track geometry.
+/**
+ * Build a `col → width-in-points` accessor: a `<col>` override (Excel "chars")
+ * where present, else the default — the same conversions the print model uses.
+ * Exported so the sheet-shape parser (E-SHEET W2) sizes shape anchors with the same
+ * track geometry.
+ */
 export function makeColWidthPt(ws: ParsedWorksheet): (col: number) => number {
   return (col: number): number => {
     for (const c of ws.columns) {
@@ -189,6 +207,10 @@ export function makeColWidthPt(ws: ParsedWorksheet): (col: number) => number {
   };
 }
 
+/**
+ * Build a `row → height-in-points` accessor: the explicit row height where present,
+ * else the default. Pairs with {@link makeColWidthPt} for the anchor track geometry.
+ */
 export function makeRowHeightPt(ws: ParsedWorksheet): (row: number) => number {
   return (row: number): number => {
     for (const r of ws.rowHeights) {

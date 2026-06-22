@@ -1,3 +1,10 @@
+/**
+ * The typed document model — the OOXML-faithful node types (paragraphs, runs,
+ * tables, sections, drawings, charts, math) that the readers populate and the
+ * writers consume. Imported via the `reamkit/document-model` subpath.
+ *
+ * @packageDocumentation
+ */
 export type {
   AbstractNumbering,
   Alignment,

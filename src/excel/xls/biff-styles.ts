@@ -149,10 +149,16 @@ const PALETTE56 = [
   '333333',
 ];
 
-// A palette-index → "FFRRGGBB" (8-hex ARGB, like the xlsx rgb attr) resolver built
-// from the default 56-colour palette plus any PALETTE override. 0x7FFF / 64 / 65
-// are automatic or system colours → undefined (the renderer default). Exported so
-// the conditional-format reader (XLS-13) resolves its dxf colours the same way.
+/**
+ * Build a palette-index → `"FFRRGGBB"` (8-hex ARGB, like the xlsx `rgb` attr)
+ * resolver from the default 56-colour palette plus any `PALETTE` override.
+ * `0x7FFF` / 64 / 65 are automatic or system colours → `undefined` (the renderer
+ * default). Exported so the conditional-format reader (XLS-13) resolves its dxf
+ * colours the same way.
+ *
+ * @param records The workbook-globals records (scanned for a `PALETTE` override).
+ * @returns A function mapping a colour index (icv) to its hex, or `undefined`.
+ */
 export function buildBiffPalette(
   records: ReadonlyArray<BiffRec>,
 ): (icv: number) => string | undefined {
@@ -165,6 +171,16 @@ export function buildBiffPalette(
   };
 }
 
+/**
+ * Read a `.xls` workbook globals' FONT / FORMAT / PALETTE / XF records (XLS-4)
+ * into the shared `XlsxStyles` model the OOXML path uses. BIFF packs each XF's
+ * fill and border inline and stores colours as palette indices; these are
+ * resolved through {@link buildBiffPalette} and de-duplicated into the model's
+ * shared fill/border arrays.
+ *
+ * @param records The workbook-globals record stream.
+ * @returns The style table (numFmts, fonts, fills, borders, cellXfs).
+ */
 export function parseBiffStyles(records: ReadonlyArray<BiffRec>): XlsxStyles {
   const color = buildBiffPalette(records);
 

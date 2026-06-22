@@ -2,6 +2,7 @@
 // These fonts are guaranteed to be available in every conforming PDF reader
 // and do not need to be embedded.
 
+/** One of the 14 Standard Type 1 font names (ISO 32000-1 §9.6.2.2). */
 export type BuiltinFontName =
   | 'Helvetica'
   | 'Helvetica-Bold'
@@ -18,6 +19,10 @@ export type BuiltinFontName =
   | 'Symbol'
   | 'ZapfDingbats';
 
+/**
+ * The 14 Standard Type 1 fonts, guaranteed available in every conforming PDF
+ * reader and never embedded.
+ */
 export const BUILTIN_FONTS: ReadonlyArray<BuiltinFontName> = [
   'Helvetica',
   'Helvetica-Bold',

@@ -67,6 +67,18 @@ const REL_HYPERLINK =
   'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink';
 const THEME_PART = 'word/theme/theme1.xml';
 
+/**
+ * Read a `.docx` package into the {@link FlowDoc} interlayer (ir-design §7): the
+ * document-derived half of what the converter used to do inline. Parses the main
+ * document, styles, numbering, notes, comments, headers/footers, charts, embedded
+ * fonts and core properties, runs the body through the stage-6 FlowDoc transforms
+ * (list markers then the style cascade), and returns the tree plus any
+ * graceful-degradation losses. Caller-supplied conversion options (fonts, PDF/A,
+ * signature) stay with the converter/facade.
+ *
+ * @param docx The raw `.docx` (OPC ZIP) bytes.
+ * @returns The parsed {@link FlowDoc} and the losses recorded while reading.
+ */
 export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
   const pkg = OpcPackage.open(docx);
   const main = pkg.getMainDocument();
@@ -193,6 +205,10 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
   return { doc, losses };
 }
 
+/**
+ * The {@link DocumentReader} registration for `.docx`: its id, the FlowDoc
+ * feature set it supports, the sniffer, and the {@link readDocx} entry point.
+ */
 export const docxReader: DocumentReader<FlowDoc> = {
   id: 'docx',
   produces: 'flow',

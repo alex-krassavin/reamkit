@@ -7,6 +7,10 @@
 
 import type { Chart, ChartSeries } from '@/core/document-model';
 
+/**
+ * An axis-aligned rectangle in the scene's local y-up frame: bars, scatter
+ * point markers, legend swatches. Position is the bottom-left corner.
+ */
 export interface ChartRect {
   readonly x: number;
   readonly y: number;
@@ -16,18 +20,24 @@ export interface ChartRect {
   readonly strokeHex?: string;
   readonly strokeWidthPt?: number;
 }
+/** An open stroked polyline: line-chart series, gridlines and axis lines. */
 export interface ChartPolyline {
   readonly points: ReadonlyArray<readonly [number, number]>;
   readonly strokeHex: string;
   readonly widthPt: number;
 }
-// A closed, filled polygon (area-chart bands). Drawn before strokes/labels.
+/** A closed, filled polygon (area-chart bands). Drawn before strokes/labels. */
 export interface ChartPolygon {
   readonly points: ReadonlyArray<readonly [number, number]>;
   readonly fillHex: string;
   readonly strokeHex?: string;
   readonly widthPt?: number;
 }
+/**
+ * A circular sector (pie/doughnut slice), centred at `(cx, cy)` with radius `r`.
+ * `startRad`/`sweepRad` are radians in the y-up frame; sweeps are negative for
+ * Excel's clockwise winding. The doughnut hole is a white wedge drawn last.
+ */
 export interface ChartWedge {
   readonly cx: number;
   readonly cy: number;
@@ -37,15 +47,25 @@ export interface ChartWedge {
   readonly fillHex: string;
   readonly strokeHex?: string;
 }
+/** How a {@link ChartLabel} sits horizontally relative to its anchor point. */
 export type LabelAlign = 'left' | 'center' | 'right';
+/** A text label (title, axis tick, category, data value, legend entry). */
 export interface ChartLabel {
   readonly text: string;
-  readonly x: number; // anchor point; `align` says how text sits relative to it
-  readonly y: number; // baseline
+  /** Anchor point; `align` says how text sits relative to it. */
+  readonly x: number;
+  /** Text baseline. */
+  readonly y: number;
   readonly sizePt: number;
   readonly colorHex: string;
   readonly align: LabelAlign;
 }
+/**
+ * The fully laid-out chart: rectangles, polylines, wedges and labels (plus
+ * optional filled polygons) in a local y-up frame, origin bottom-left. The
+ * renderer maps these to draw commands — rects/polylines/wedges/polygons via the
+ * vector layer, labels via the text pass.
+ */
 export interface ChartScene {
   readonly rects: ReadonlyArray<ChartRect>;
   readonly polylines: ReadonlyArray<ChartPolyline>;
@@ -54,18 +74,35 @@ export interface ChartScene {
   readonly polygons?: ReadonlyArray<ChartPolygon>;
 }
 
+/**
+ * Injected text-width measurer: the rendered advance width (points) of `text` at
+ * `sizePt`. Keeps this module free of any font/PDF dependency, so it is
+ * unit-testable in isolation.
+ */
 export type MeasureText = (text: string, sizePt: number) => number;
 
+/** Font size (points) for axis ticks, category/data labels and legend text. */
 export const CHART_LABEL_PT = 9;
+/** Font size (points) for the chart title. */
 export const CHART_TITLE_PT = 13;
 const AXIS_COLOR = '595959';
 const GRID_COLOR = 'D9D9D9';
 const LABEL_COLOR = '595959';
 const TITLE_COLOR = '404040';
 
-// Office accent cycle for series without an explicit colour.
+/** The Office accent cycle (RRGGBB) for series without an explicit colour. */
 export const SERIES_COLORS = ['4472C4', 'ED7D31', 'A5A5A5', 'FFC000', '5B9BD5', '70AD47'];
 
+/**
+ * Resolve a series colour: the series' own `colorHex` if set, else cycling
+ * through `cycle` (the chart's theme accent cycle) or, failing that,
+ * {@link SERIES_COLORS} by index.
+ *
+ * @param s     The series.
+ * @param i     The series index, used to pick from the cycle.
+ * @param cycle Optional per-chart colour cycle; falls back to {@link SERIES_COLORS}.
+ * @returns An RRGGBB hex string.
+ */
 export const seriesColor = (s: ChartSeries, i: number, cycle?: ReadonlyArray<string>): string =>
   s.colorHex ??
   (cycle && cycle.length > 0 ? cycle[i % cycle.length]! : SERIES_COLORS[i % SERIES_COLORS.length]!);
@@ -80,12 +117,24 @@ function niceNum(range: number, round: boolean): number {
   return nf * 10 ** exp;
 }
 
+/** A value-axis scale: the rounded `min`/`max` extent and the tick `step`. */
 export interface Scale {
   readonly min: number;
   readonly max: number;
   readonly step: number;
 }
 
+/**
+ * Compute a human-friendly axis {@link Scale} for the data range using
+ * Heckbert's "nice numbers" algorithm: rounded endpoints and a 1/2/5·10ⁿ step
+ * that yields about `maxTicks` ticks. A degenerate range (`dataMin === dataMax`)
+ * is widened by 1 so the axis is non-empty.
+ *
+ * @param dataMin  The smallest data value to cover.
+ * @param dataMax  The largest data value to cover.
+ * @param maxTicks Target upper bound on tick count (default 6).
+ * @returns The rounded min/max and tick step.
+ */
 export function niceScale(dataMin: number, dataMax: number, maxTicks = 6): Scale {
   const lo = Math.min(dataMin, dataMax);
   let hi = Math.max(dataMin, dataMax);
@@ -97,6 +146,14 @@ export function niceScale(dataMin: number, dataMax: number, maxTicks = 6): Scale
   return { min: Math.floor(lo / step) * step, max: Math.ceil(hi / step) * step, step };
 }
 
+/**
+ * Format an axis tick value, choosing decimal places from the tick `step` so
+ * `0.25`-spaced ticks read `0.25` while integer steps drop the fraction.
+ *
+ * @param v    The tick value.
+ * @param step The tick spacing (from {@link niceScale}).
+ * @returns The label text.
+ */
 export function formatTick(v: number, step: number): string {
   if (Number.isInteger(step) && Number.isInteger(v)) return String(v);
   const decimals = Math.max(0, -Math.floor(Math.log10(step)));
@@ -425,6 +482,17 @@ function groupingFrameOpts(chart: Chart, nCats: number): FrameOpts {
 }
 
 // ─── bar / column chart (clustered, stacked, percentStacked) ────────────────
+/**
+ * Lay out a bar/column {@link Chart} into a {@link ChartScene}. Honours
+ * `chart.grouping` (clustered / stacked / percentStacked) and `chart.barDir`
+ * (column vs horizontal bar), over the shared cartesian frame.
+ *
+ * @param chart   The bar/column chart.
+ * @param wPt     Frame width in points.
+ * @param hPt     Frame height in points.
+ * @param measure Text measurer used to size labels and reserve axis gutters.
+ * @returns The positioned scene primitives.
+ */
 export function buildBarScene(
   chart: Chart,
   wPt: number,
@@ -539,6 +607,17 @@ function areaBand(
   return { points: pts, fillHex, strokeHex: fillHex, widthPt: 1 };
 }
 
+/**
+ * Lay out an area {@link Chart} into a {@link ChartScene}: each series becomes a
+ * filled polygon down to the value baseline (stacked when `chart.grouping` is
+ * stacked / percentStacked), over the shared cartesian frame.
+ *
+ * @param chart   The area chart.
+ * @param wPt     Frame width in points.
+ * @param hPt     Frame height in points.
+ * @param measure Text measurer used to size labels and reserve axis gutters.
+ * @returns The positioned scene primitives.
+ */
 export function buildAreaScene(
   chart: Chart,
   wPt: number,
@@ -580,6 +659,17 @@ export function buildAreaScene(
 }
 
 // ─── scatter chart (numeric X/Y) ────────────────────────────────────────────
+/**
+ * Lay out a scatter {@link Chart} into a {@link ChartScene}: numeric X/Y series
+ * plotted as marker points over a frame with two value axes (X from each
+ * series' `xValues`, Y from its `values`).
+ *
+ * @param chart   The scatter chart.
+ * @param wPt     Frame width in points.
+ * @param hPt     Frame height in points.
+ * @param measure Text measurer used to size labels and reserve axis gutters.
+ * @returns The positioned scene primitives.
+ */
 export function buildScatterScene(
   chart: Chart,
   wPt: number,
@@ -659,6 +749,17 @@ export function buildScatterScene(
 }
 
 // ─── line chart ───────────────────────────────────────────────────────────────
+/**
+ * Lay out a line {@link Chart} into a {@link ChartScene}: each series becomes a
+ * stroked polyline across the category slots, over the shared cartesian frame.
+ * Unlike bars/areas the value axis auto-mins (it need not include 0).
+ *
+ * @param chart   The line chart.
+ * @param wPt     Frame width in points.
+ * @param hPt     Frame height in points.
+ * @param measure Text measurer used to size labels and reserve axis gutters.
+ * @returns The positioned scene primitives.
+ */
 export function buildLineScene(
   chart: Chart,
   wPt: number,
@@ -697,6 +798,17 @@ export function buildLineScene(
 const sliceColor = (series: ChartSeries, i: number): string =>
   pointColor(series, i) ?? SERIES_COLORS[i % SERIES_COLORS.length]!;
 
+/**
+ * Lay out a pie/doughnut {@link Chart} into a {@link ChartScene}: the first
+ * series' values become proportional wedges (a centre hole for doughnut),
+ * with a legend instead of axes.
+ *
+ * @param chart   The pie/doughnut chart.
+ * @param wPt     Frame width in points.
+ * @param hPt     Frame height in points.
+ * @param measure Text measurer used to size labels and the legend.
+ * @returns The positioned scene primitives.
+ */
 export function buildPieScene(
   chart: Chart,
   wPt: number,
@@ -864,8 +976,17 @@ function layoutLegend(
   };
 }
 
-// Dispatch by chart type. Returns null for an unrenderable type (the renderer
-// then reserves the box with a light border).
+/**
+ * Lay out any supported {@link Chart} into a {@link ChartScene}, dispatching by
+ * `chart.type` to the per-type builders.
+ *
+ * @param chart   The chart to lay out.
+ * @param wPt     Frame width in points.
+ * @param hPt     Frame height in points.
+ * @param measure Text measurer used to size labels and reserve gutters.
+ * @returns The positioned scene, or `null` for an unrenderable type (the
+ *          renderer then reserves the box with a light border).
+ */
 export function buildChartScene(
   chart: Chart,
   wPt: number,

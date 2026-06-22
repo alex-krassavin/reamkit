@@ -102,6 +102,14 @@ interface TagEntry {
   readonly data: Uint8Array;
 }
 
+/**
+ * Synthesise a minimal valid ICC v2 matrix/TRC RGB display profile from scratch
+ * (no external `.icc` asset), for use as a PDF/A-1b `OutputIntent`'s
+ * `DestOutputProfile`. Colorimetrically "sRGB-ish"; PDF/A validators check
+ * structural validity (version, class, required tags) rather than exact colour.
+ *
+ * @returns The encoded ICC profile bytes.
+ */
 export function buildSrgbIccProfile(): Uint8Array {
   const desc = buildTextDescription(DESC);
   const wtpt = buildXYZ(D50.x, D50.y, D50.z);

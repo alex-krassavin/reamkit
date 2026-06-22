@@ -31,6 +31,19 @@ import { ResourceStore, pt } from '@/core/ir';
 // equal because the structure tree carries no widths; layout auto-fits anyway).
 const ASSUMED_CONTENT_WIDTH_PT = 468;
 
+/**
+ * Reconstruct a {@link Reconstruction} from a tagged PDF's logical structure
+ * (E-PDF EP3 — the honest inverse of the tagged PDF Ream writes). Walks the
+ * structure tree ({@link readStructTree}), pulls each element's text from the
+ * per-page MCID → text map the content interpreter produced (EP2), and rebuilds
+ * headings (`H1`–`H6` → outline level), paragraphs, tables (`Table` → `TR` →
+ * `TH`/`TD`), list items (each `LI` → label + body) and figures (EP6 — each
+ * `/Figure`'s MCID resolves to a lifted image carrying its `/Alt`). Images no
+ * `/Figure` claims are appended in page + top-down order so nothing is lost.
+ *
+ * @returns The reconstructed document and image losses, or `undefined` when the
+ *          PDF carries no structure tree or yields no body content.
+ */
 export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined {
   const root = readStructTree(file);
   if (!root) return undefined;

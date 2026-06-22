@@ -11,8 +11,10 @@
 import type { NativeBag, Pt, ResourceId } from '@/core/ir';
 import type { ShapeGradient } from '@/core/vector';
 
+/** Paragraph horizontal alignment (`w:jc`); `both` = justified. */
 export type Alignment = 'left' | 'right' | 'center' | 'both' | 'distribute';
 
+/** Run underline style (ECMA-376 §17.18.99 ST_Underline, the subset Ream renders). */
 export type UnderlineStyle =
   | 'none'
   | 'single'
@@ -24,8 +26,14 @@ export type UnderlineStyle =
   | 'dashHeavy'
   | 'wave';
 
+/** Run vertical alignment (`w:vertAlign`): baseline or super/subscript. */
 export type VerticalAlign = 'baseline' | 'superscript' | 'subscript';
 
+/**
+ * The four script slots of `w:rFonts` (§17.3.2.26). A character picks its font
+ * from the slot its Unicode range maps to (ASCII, high-ANSI, complex-script,
+ * East-Asian).
+ */
 export interface FontFamilyMap {
   readonly ascii?: string;
   readonly hAnsi?: string;
@@ -33,10 +41,13 @@ export interface FontFamilyMap {
   readonly eastAsia?: string;
 }
 
-// ECMA-376 Part 1 §17.3.2 — Run Properties (rPr).
-// Boolean toggle properties follow §17.17.4: an absent <w:b/> means "inherit";
-// a present <w:b/> with no val (or val=true/1/on) means true; val=false/0/off
-// means explicit false.
+/**
+ * ECMA-376 Part 1 §17.3.2 — Run Properties (`rPr`). All fields optional so the
+ * cascade can inherit them (undefined = "inherit from parent in the style
+ * chain"). Boolean toggle properties follow §17.17.4: an absent `<w:b/>` means
+ * "inherit"; a present `<w:b/>` with no val (or val=true/1/on) means true;
+ * val=false/0/off means explicit false.
+ */
 export interface RunProperties {
   readonly styleId?: string;
   readonly bold?: boolean;
@@ -47,21 +58,28 @@ export interface RunProperties {
   readonly colorHex?: string;
   readonly fontFamily?: FontFamilyMap;
   readonly verticalAlign?: VerticalAlign;
-  // ECMA-376 §17.3.2.30 — w:rtl. Marks the run as right-to-left, which seeds
-  // the BiDi algorithm with an R/AL bias even for neutral characters.
+  /**
+   * ECMA-376 §17.3.2.30 — `w:rtl`. Marks the run as right-to-left, which seeds
+   * the BiDi algorithm with an R/AL bias even for neutral characters.
+   */
   readonly rtl?: boolean;
-  // ECMA-376 §17.3.2.20 — w:lang @w:val (e.g. "en-US", "ru-RU"). Used for the
-  // tagged-PDF per-element /Lang; does not affect visual layout.
+  /**
+   * ECMA-376 §17.3.2.20 — `w:lang @w:val` (e.g. `"en-US"`, `"ru-RU"`). Used for
+   * the tagged-PDF per-element `/Lang`; does not affect visual layout.
+   */
   readonly lang?: string;
 }
 
-// ECMA-376 Part 1 §17.3.1 — Paragraph Properties (pPr).
-// All lengths in canonical Pt (converted from twips by the parser).
-//
-// indentFirstLine encodes both <w:ind w:firstLine="…"/> (positive value)
-// and <w:ind w:hanging="…"/> (stored as the negative twips, so a hanging
-// indent of 360 twips becomes indentFirstLine = -18pt — the first line ends up
-// 360 twips to the left of indentLeftTwips).
+/**
+ * ECMA-376 Part 1 §17.3.1 — Paragraph Properties (`pPr`). All lengths in
+ * canonical Pt (converted from twips by the parser); all fields optional for
+ * cascade inheritance.
+ *
+ * `indentFirstLine` encodes both `<w:ind w:firstLine="…"/>` (positive value)
+ * and `<w:ind w:hanging="…"/>` (stored as the negative twips, so a hanging
+ * indent of 360 twips becomes `indentFirstLine = -18pt` — the first line ends up
+ * 360 twips to the left of `indentLeft`).
+ */
 export interface ParagraphProperties {
   readonly styleId?: string;
   readonly alignment?: Alignment;
@@ -72,34 +90,47 @@ export interface ParagraphProperties {
   readonly indentLeft?: Pt;
   readonly indentRight?: Pt;
   readonly indentFirstLine?: Pt;
+  /** The implicit default run properties for runs in this paragraph (`w:pPr/w:rPr`). */
   readonly runProperties?: RunProperties;
   readonly numbering?: NumberingReference;
-  // ECMA-376 Part 1 §17.3.1.21 — w:pageBreakBefore. When true, the paragraph
-  // starts on a fresh page even if there is room on the current one.
+  /**
+   * ECMA-376 Part 1 §17.3.1.21 — `w:pageBreakBefore`. When true, the paragraph
+   * starts on a fresh page even if there is room on the current one.
+   */
   readonly pageBreakBefore?: boolean;
-  // ECMA-376 §17.3.1.6 — w:bidi. Sets the paragraph's base direction to RTL,
-  // so the BiDi paragraph embedding level is 1 and default alignment is right.
+  /**
+   * ECMA-376 §17.3.1.6 — `w:bidi`. Sets the paragraph's base direction to RTL,
+   * so the BiDi paragraph embedding level is 1 and default alignment is right.
+   */
   readonly bidi?: boolean;
-  // ECMA-376 §17.3.1.20 — w:outlineLvl. Outline level 0–8 maps to Heading 1–9;
-  // 9 (or absent) is body text. Drives tagged-PDF heading structure (H1–H6).
+  /**
+   * ECMA-376 §17.3.1.20 — `w:outlineLvl`. Outline level 0–8 maps to Heading 1–9;
+   * 9 (or absent) is body text. Drives tagged-PDF heading structure (H1–H6).
+   */
   readonly outlineLevel?: number;
 }
 
-// ECMA-376 §20.4.2.8 — wp:inline picture extent inside a w:r. Stored on Run
-// alongside (or instead of) `text` so layout can position the image as if it
-// were a glyph in the line box.
+/**
+ * ECMA-376 §20.4.2.8 — `wp:inline` picture extent inside a `w:r`. Stored on
+ * {@link Run} alongside (or instead of) `text` so layout can position the image
+ * as if it were a glyph in the line box.
+ */
 export interface InlineImage {
-  // Content-addressed bytes in the document's ResourceStore; absent when the
-  // source relationship did not resolve (the layout box still reserves space).
+  /**
+   * Content-addressed bytes in the document's `ResourceStore`; absent when the
+   * source relationship did not resolve (the layout box still reserves space).
+   */
   readonly resource?: ResourceId;
   readonly width: Pt;
   readonly height: Pt;
 }
 
-// ECMA-376 Part 1 §22 — OfficeMathML (OMML). A recursive math element tree.
-// The union grows by milestone; the layout engine renders structural elements
-// (fraction bars, radicals, big operators, stretchy delimiters) as vector
-// paths and ordinary symbols as font glyphs.
+/**
+ * ECMA-376 Part 1 §22 — OfficeMathML (OMML). A recursive math element tree.
+ * The union grows by milestone; the layout engine renders structural elements
+ * (fraction bars, radicals, big operators, stretchy delimiters) as vector
+ * paths and ordinary symbols as font glyphs.
+ */
 export type MathNode =
   | MathRow
   | MathRun
@@ -116,14 +147,16 @@ export type MathNode =
   | MathGroupChr
   | MathEqArray;
 
-// A sequence of sibling nodes (m:oMath, m:e, m:num, m:den, m:fName …).
+/** A sequence of sibling nodes (`m:oMath`, `m:e`, `m:num`, `m:den`, `m:fName` …). */
 export interface MathRow {
   readonly type: 'row';
   readonly children: ReadonlyArray<MathNode>;
 }
 
-// m:r / m:t — literal symbols. `italic`/`bold` come from m:rPr/m:sty; `nor`
-// (normal text) forces upright. With none set, letters auto-italicise.
+/**
+ * `m:r` / `m:t` — literal symbols. `italic`/`bold` come from `m:rPr`/`m:sty`;
+ * `nor` (normal text) forces upright. With none set, letters auto-italicise.
+ */
 export interface MathRun {
   readonly type: 'run';
   readonly text: string;
@@ -132,7 +165,7 @@ export interface MathRun {
   readonly nor?: boolean;
 }
 
-// m:f — fraction. barless = m:fPr/m:type val="noBar".
+/** `m:f` — fraction. `barless` = `m:fPr/m:type val="noBar"`. */
 export interface MathFraction {
   readonly type: 'fraction';
   readonly num: MathNode;
@@ -140,7 +173,7 @@ export interface MathFraction {
   readonly barless?: boolean;
 }
 
-// m:sSup / m:sSub / m:sSubSup / m:sPre (pre-scripts).
+/** `m:sSup` / `m:sSub` / `m:sSubSup` / `m:sPre` (pre-scripts). */
 export interface MathScript {
   readonly type: 'script';
   readonly base: MathNode;
@@ -149,14 +182,14 @@ export interface MathScript {
   readonly pre?: boolean; // scripts sit before the base (m:sPre)
 }
 
-// m:rad — radical with optional degree (m:deg).
+/** `m:rad` — radical with optional degree (`m:deg`). */
 export interface MathRadical {
   readonly type: 'radical';
   readonly radicand: MathNode;
   readonly degree?: MathNode;
 }
 
-// m:nary — n-ary operator (∑ ∏ ∫ …) with optional sub/sup limits.
+/** `m:nary` — n-ary operator (∑ ∏ ∫ …) with optional sub/sup limits. */
 export interface MathNary {
   readonly type: 'nary';
   readonly op: string;
@@ -166,14 +199,14 @@ export interface MathNary {
   readonly limLoc?: 'undOvr' | 'subSup'; // limits below/above vs at sub/sup
 }
 
-// m:func — function application (sin x, …): a name applied to an argument.
+/** `m:func` — function application (sin x, …): a name applied to an argument. */
 export interface MathFunc {
   readonly type: 'func';
   readonly name: MathNode;
   readonly body: MathNode;
 }
 
-// m:limLow / m:limUpp — a limit below/above the base.
+/** `m:limLow` / `m:limUpp` — a limit below/above the base. */
 export interface MathLimit {
   readonly type: 'limit';
   readonly base: MathNode;
@@ -181,7 +214,7 @@ export interface MathLimit {
   readonly pos: 'low' | 'upp';
 }
 
-// m:d — delimiters around one or more elements.
+/** `m:d` — delimiters around one or more elements. */
 export interface MathDelimiter {
   readonly type: 'delimiter';
   readonly begChr: string;
@@ -190,27 +223,27 @@ export interface MathDelimiter {
   readonly children: ReadonlyArray<MathNode>;
 }
 
-// m:m — matrix of cells (rows × columns).
+/** `m:m` — matrix of cells (rows × columns). */
 export interface MathMatrix {
   readonly type: 'matrix';
   readonly rows: ReadonlyArray<ReadonlyArray<MathNode>>;
 }
 
-// m:acc — accent character over a base (hat, bar, vec, dot, tilde …).
+/** `m:acc` — accent character over a base (hat, bar, vec, dot, tilde …). */
 export interface MathAccent {
   readonly type: 'accent';
   readonly char: string;
   readonly base: MathNode;
 }
 
-// m:bar — a bar above or below the base.
+/** `m:bar` — a bar above or below the base. */
 export interface MathBar {
   readonly type: 'bar';
   readonly base: MathNode;
   readonly pos: 'top' | 'bot';
 }
 
-// m:groupChr — a grouping character (brace …) above or below the base.
+/** `m:groupChr` — a grouping character (brace …) above or below the base. */
 export interface MathGroupChr {
   readonly type: 'groupChr';
   readonly char: string;
@@ -218,68 +251,96 @@ export interface MathGroupChr {
   readonly pos: 'top' | 'bot';
 }
 
-// m:eqArr — an equation array: a stack of equations, each on its own line,
-// left-aligned, the block vertically centred on the math axis.
+/**
+ * `m:eqArr` — an equation array: a stack of equations, each on its own line,
+ * left-aligned, the block vertically centred on the math axis.
+ */
 export interface MathEqArray {
   readonly type: 'eqArr';
   readonly rows: ReadonlyArray<MathNode>;
 }
 
+/**
+ * ECMA-376 Part 1 §17.3.2 — a run: a span of `text` (or an inline image / math
+ * object) sharing one set of {@link RunProperties}, plus the reference markers
+ * (hyperlink, note, comment, page-number field) the layout acts on.
+ */
 export interface Run {
   readonly native?: NativeBag;
   readonly text: string;
   readonly properties: RunProperties;
-  // ECMA-376 §17.16.22 — the run sits inside a w:hyperlink whose r:id resolved
-  // to an external target. The URL is stored as written in the rels part;
-  // writers MUST pass it through the scheme allowlist (core/links) before
-  // emitting anything clickable.
+  /**
+   * ECMA-376 §17.16.22 — the run sits inside a `w:hyperlink` whose `r:id`
+   * resolved to an external target. The URL is stored as written in the rels
+   * part; writers MUST pass it through the scheme allowlist (`core/links`)
+   * before emitting anything clickable.
+   */
   readonly href?: string;
-  // §17.16.5.35 PAGE / §17.16.5.33 NUMPAGES — the run is a page-number field;
-  // `text` holds the source's cached result. Header/footer rendering
-  // substitutes the real number per page; body rendering keeps the cache.
+  /**
+   * §17.16.5.35 PAGE / §17.16.5.33 NUMPAGES — the run is a page-number field;
+   * `text` holds the source's cached result. Header/footer rendering
+   * substitutes the real number per page; body rendering keeps the cache.
+   */
   readonly field?: 'PAGE' | 'NUMPAGES';
+  /**
+   * §17.16.22 `w:hyperlink @w:anchor` — internal link target: a bookmark name
+   * in this document (never a URL — bypasses the scheme allowlist).
+   */
   // §17.11.14 w:footnoteReference / §17.11.6 w:endnoteReference — the run
   // marks a note reference; the layout assigns sequential numbers in reading
   // order and renders them superscript.
-  // §17.16.22 w:hyperlink @w:anchor — internal link target: a bookmark name
-  // in this document (never a URL — bypasses the scheme allowlist).
   readonly anchor?: string;
   readonly footnoteRef?: string;
   readonly endnoteRef?: string;
-  // §17.13.4.1 w:commentReference — the run anchors a review comment by id; the
-  // comment's content/author live in FlowDoc.comments.
+  /**
+   * §17.13.4.1 `w:commentReference` — the run anchors a review comment by id;
+   * the comment's content/author live in `FlowDoc.comments`.
+   */
   readonly commentRef?: string;
-  // §17.13.4.3/4 w:commentRangeStart/End — the ids of the comment ranges this
-  // run falls inside (a run may be covered by several). Renderers highlight the
-  // covered span; the marker run (commentRef) sits at the range's end.
+  /**
+   * §17.13.4.3/4 `w:commentRangeStart`/`End` — the ids of the comment ranges
+   * this run falls inside (a run may be covered by several). Renderers highlight
+   * the covered span; the marker run (`commentRef`) sits at the range's end.
+   */
   readonly commentRangeRefs?: ReadonlyArray<string>;
-  // §17.11.13 w:footnoteRef / §17.11.5 w:endnoteRef — inside note content:
-  // render the OWNING note's number here.
+  /**
+   * §17.11.13 `w:footnoteRef` / §17.11.5 `w:endnoteRef` — inside note content:
+   * render the OWNING note's number here.
+   */
   readonly noteNumber?: true;
-  // The run is a list-item marker materialized by applyNumbering ("1.", "•").
-  // Tagged PDF wraps its glyphs in a Lbl structure element (§14.8.4.3.3).
+  /**
+   * The run is a list-item marker materialized by `applyNumbering` (`"1."`,
+   * `"•"`). Tagged PDF wraps its glyphs in a Lbl structure element (§14.8.4.3.3).
+   */
   readonly listMarker?: true;
-  // When set, the run renders this image inline in the line; `text` is ignored.
+  /** When set, the run renders this image inline in the line; `text` is ignored. */
   readonly inlineImage?: InlineImage;
-  // When set, the run is an inline OfficeMath object; `text` is ignored.
+  /** When set, the run is an inline OfficeMath object; `text` is ignored. */
   readonly math?: MathNode;
-  // ECMA-376 Part 1 §17.3.3.1 — w:br w:type="page". A forced page break: the
-  // paragraph's following content starts on a new page.
+  /**
+   * ECMA-376 Part 1 §17.3.3.1 — `w:br w:type="page"`. A forced page break: the
+   * paragraph's following content starts on a new page.
+   */
   readonly pageBreak?: boolean;
 }
 
+/** ECMA-376 Part 1 §17.3.1 — a paragraph: its {@link ParagraphProperties} and runs. */
 export interface Paragraph {
   readonly native?: NativeBag;
   readonly properties: ParagraphProperties;
   readonly runs: ReadonlyArray<Run>;
-  // §17.13.6.2 w:bookmarkStart — names of bookmarks opening in (or
-  // immediately before) this paragraph. Paragraph-level v1: the destination
-  // is the paragraph's first line.
+  /**
+   * §17.13.6.2 `w:bookmarkStart` — names of bookmarks opening in (or
+   * immediately before) this paragraph. Paragraph-level v1: the destination
+   * is the paragraph's first line.
+   */
   readonly bookmarks?: ReadonlyArray<string>;
 }
 
-// ECMA-376 Part 1 §17.13.4.2 w:comment — a review comment: its block content
-// plus the author/date attribution. Anchored from a run's `commentRef`.
+/**
+ * ECMA-376 Part 1 §17.13.4.2 `w:comment` — a review comment: its block content
+ * plus the author/date attribution. Anchored from a run's `commentRef`.
+ */
 export interface Comment {
   readonly content: ReadonlyArray<BodyElement>;
   readonly author?: string;
@@ -302,7 +363,7 @@ export interface Comment {
   readonly done?: boolean;
 }
 
-// ECMA-376 Part 1 §17.9 — Numbering.
+/** ECMA-376 Part 1 §17.9 — `w:numFmt` list marker format. */
 export type NumberingFormat =
   | 'decimal'
   | 'lowerLetter'
@@ -312,42 +373,50 @@ export type NumberingFormat =
   | 'bullet'
   | 'none';
 
+/** A paragraph's list reference (`w:numPr`): the numbering instance id + level. */
 export interface NumberingReference {
   readonly numId: string;
   readonly ilvl: number;
 }
 
+/** One level of an abstract numbering definition (`w:lvl`): its format and chrome. */
 export interface NumberingLevel {
   readonly ilvl: number;
   readonly start: number;
   readonly format: NumberingFormat;
+  /** §17.9.11 `w:lvlText` — the marker template (e.g. `"%1."`). */
   readonly lvlText: string;
   readonly paragraphProperties: ParagraphProperties;
   readonly runProperties: RunProperties;
 }
 
+/** §17.9.1 `w:abstractNum` — a reusable list definition keyed by level. */
 export interface AbstractNumbering {
   readonly id: string;
   readonly levels: ReadonlyMap<number, NumberingLevel>;
 }
 
+/** §17.9.18 `w:num` — a concrete list instance bound to an {@link AbstractNumbering}. */
 export interface NumberingInstance {
   readonly numId: string;
   readonly abstractNumId: string;
 }
 
+/** The parsed `word/numbering.xml`: abstract definitions + their instances. */
 export interface Numbering {
   readonly abstractNums: ReadonlyMap<string, AbstractNumbering>;
   readonly numInstances: ReadonlyMap<string, NumberingInstance>;
 }
 
-// ECMA-376 Part 1 §17.7 — Styles.
+/** ECMA-376 Part 1 §17.7 — `w:style @w:type` style category. */
 export type StyleType = 'paragraph' | 'character' | 'table' | 'numbering';
 
-// §17.7.6 — one table-style formatting layer: the style's own base layer
-// (w:style/tblPr + tcPr + rPr + pPr) or one conditional override
-// (w:tblStylePr). Borders come from tblBorders (table layer) or tcBorders
-// (region layer) — whichever the layer carries.
+/**
+ * §17.7.6 — one table-style formatting layer: the style's own base layer
+ * (`w:style/tblPr` + `tcPr` + `rPr` + `pPr`) or one conditional override
+ * (`w:tblStylePr`). Borders come from `tblBorders` (table layer) or `tcBorders`
+ * (region layer) — whichever the layer carries.
+ */
 export interface TableStyleLayer {
   readonly borders?: CellBorders;
   readonly cellMargins?: CellMargins;
@@ -356,8 +425,7 @@ export interface TableStyleLayer {
   readonly paragraphProperties?: ParagraphProperties;
 }
 
-// §17.7.6.3 w:tblStylePr @w:type — the table regions a conditional layer
-// targets.
+/** §17.7.6.3 `w:tblStylePr @w:type` — the table regions a conditional layer targets. */
 export type TableStyleConditionType =
   | 'wholeTable'
   | 'band1Vert'
@@ -373,11 +441,17 @@ export type TableStyleConditionType =
   | 'swCell'
   | 'seCell';
 
+/** A conditional table-style override: the region `type` and the layer it applies. */
 export interface TableStyleCondition {
   readonly type: TableStyleConditionType;
   readonly layer: TableStyleLayer;
 }
 
+/**
+ * ECMA-376 §17.7 — one style definition: its id, category, `basedOn` parent,
+ * and the run/paragraph properties it contributes (plus the table-style layers
+ * for `type === 'table'`).
+ */
 export interface Style {
   readonly id: string;
   readonly type: StyleType;
@@ -385,14 +459,19 @@ export interface Style {
   readonly isDefault: boolean;
   readonly runProperties: RunProperties;
   readonly paragraphProperties: ParagraphProperties;
-  // Table styles only (§17.7.6): the base layer and conditional overrides.
+  /** Table styles only (§17.7.6): the base layer and conditional overrides. */
   readonly tableLayer?: TableStyleLayer;
   readonly tableConditions?: ReadonlyArray<TableStyleCondition>;
-  // w:tblPr/w:tblStyleRowBandSize / ColBandSize (default 1).
+  /** `w:tblPr/w:tblStyleRowBandSize` / `ColBandSize` (default 1). */
   readonly rowBandSize?: number;
   readonly colBandSize?: number;
 }
 
+/**
+ * The parsed `word/styles.xml`: document defaults (`docDefaults`) plus the
+ * styles map keyed by id. The cascade resolver merges these into the resolved
+ * property objects the renderer consumes.
+ */
 export interface StyleSheet {
   readonly defaultRunProperties: RunProperties;
   readonly defaultParagraphProperties: ParagraphProperties;
@@ -401,14 +480,17 @@ export interface StyleSheet {
 
 // ECMA-376 Part 1 §17.4 — Tables.
 
+/** §17.18.2 ST_Border — a cell-border line style (the subset Ream renders). */
 export type BorderStyle = 'none' | 'single' | 'double' | 'thick' | 'dotted' | 'dashed';
 
+/** One border edge: its line style plus optional width and colour. */
 export interface Border {
   readonly style: BorderStyle;
   readonly width?: Pt;
   readonly colorHex?: string;
 }
 
+/** §17.4.39 `w:tcBorders` — the per-edge borders of a cell (or table). */
 export interface CellBorders {
   readonly top?: Border;
   readonly right?: Border;
@@ -416,12 +498,15 @@ export interface CellBorders {
   readonly left?: Border;
   readonly insideH?: Border;
   readonly insideV?: Border;
-  // Diagonal strokes across the cell box: `diagonalDown` runs top-left →
-  // bottom-right, `diagonalUp` bottom-left → top-right (Excel diagonal borders).
+  /**
+   * Diagonal strokes across the cell box: `diagonalDown` runs top-left →
+   * bottom-right, `diagonalUp` bottom-left → top-right (Excel diagonal borders).
+   */
   readonly diagonalDown?: Border;
   readonly diagonalUp?: Border;
 }
 
+/** §17.4.42 `w:tcMar` — a cell's inner padding per side. */
 export interface CellMargins {
   readonly top?: Pt;
   readonly right?: Pt;
@@ -429,23 +514,28 @@ export interface CellMargins {
   readonly left?: Pt;
 }
 
+/** §17.4.33 `w:shd` — a cell's solid background fill (6-hex). */
 export interface CellShading {
   readonly colorHex: string;
 }
 
-// A conditional-format data bar: a horizontal bar of width `fraction` (0..1 of
-// the cell), painted over the shading and under the text (E-SHEET SC1c). It
-// starts at `startFraction` from the cell's left (default 0); a mixed-sign range
-// puts the axis inside the cell so negative bars run left of it (tail TC4).
+/**
+ * A conditional-format data bar: a horizontal bar of width `fraction` (`0..1` of
+ * the cell), painted over the shading and under the text (E-SHEET SC1c). It
+ * starts at `startFraction` from the cell's left (default 0); a mixed-sign range
+ * puts the axis inside the cell so negative bars run left of it (tail TC4).
+ */
 export interface CellDataBar {
   readonly fraction: number;
   readonly colorHex: string;
   readonly startFraction?: number;
 }
 
-// A conditional-format icon: a small glyph at the cell's left, chosen by the
-// value's bucket (E-SHEET SC1c). Format-neutral — the xlsx layer maps Excel's
-// named icon families (3TrafficLights, 3Arrows, …) onto these shapes + colours.
+/**
+ * A conditional-format icon: a small glyph at the cell's left, chosen by the
+ * value's bucket (E-SHEET SC1c). Format-neutral — the xlsx layer maps Excel's
+ * named icon families (3TrafficLights, 3Arrows, …) onto these shapes + colours.
+ */
 export type CellIconShape =
   | 'circle'
   | 'square'
@@ -461,33 +551,43 @@ export type CellIconShape =
   // clock-fill pie). Both read `fill` for how many units are coloured in.
   | 'bars'
   | 'pie';
+/** One resolved conditional-format icon: its {@link CellIconShape}, colour and fill level. */
 export interface CellIcon {
   readonly shape: CellIconShape;
   readonly colorHex: string;
-  // Meter glyphs (`bars` / `pie`): how many of `levels` units are filled with
-  // `colorHex`; the rest are drawn in a neutral grey. Absent for single glyphs.
+  /**
+   * Meter glyphs (`bars` / `pie`): how many of `levels` units are filled with
+   * `colorHex`; the rest are drawn in a neutral grey. Absent for single glyphs.
+   */
   readonly fill?: { readonly filled: number; readonly levels: number };
 }
 
-// A sparkline: a mini chart filling the cell, plotting `values` (E-SHEET SC2).
-// Format-neutral — the xlsx layer resolves the data range to a value sequence;
-// the layout renders line / column / win-loss geometry sized to the cell.
+/**
+ * A sparkline: a mini chart filling the cell, plotting `values` (E-SHEET SC2).
+ * Format-neutral — the xlsx layer resolves the data range to a value sequence;
+ * the layout renders line / column / win-loss geometry sized to the cell.
+ */
 export interface CellSparkline {
   readonly kind: 'line' | 'column' | 'winLoss';
-  // A blank/non-numeric cell in the range is a gap (null) so x-positions stay
-  // aligned: a line breaks across it, a column/win-loss skips its slot.
+  /**
+   * A blank/non-numeric cell in the range is a gap (`null`) so x-positions stay
+   * aligned: a line breaks across it, a column/win-loss skips its slot.
+   */
   readonly values: ReadonlyArray<number | null>;
   readonly colorHex?: string;
 }
 
-// Resolved position of a cell in a vertical merge group (ECMA-376 §17.4.85
-// vMerge markers are resolved by the reader): 'start' opens a group that at
-// least one cell continues, 'middle' / 'end' are continuations; undefined =
-// not merged. Continuation cells stay in their rows (they hold the column
-// slot); writers that need an HTML-style rowSpan can derive it by counting a
-// start's middle/end run downwards.
+/**
+ * Resolved position of a cell in a vertical merge group (ECMA-376 §17.4.85
+ * `vMerge` markers are resolved by the reader): `start` opens a group that at
+ * least one cell continues, `middle` / `end` are continuations; undefined =
+ * not merged. Continuation cells stay in their rows (they hold the column
+ * slot); writers that need an HTML-style rowSpan can derive it by counting a
+ * start's middle/end run downwards.
+ */
 export type CellMerge = 'start' | 'middle' | 'end';
 
+/** §17.4.30 `w:tcPr` — a cell's properties: span/merge, chrome, and CF overlays. */
 export interface CellProperties {
   readonly width?: Pt;
   readonly colSpan?: number;
@@ -498,24 +598,31 @@ export interface CellProperties {
   readonly dataBar?: CellDataBar;
   readonly icon?: CellIcon;
   readonly sparkline?: CellSparkline;
-  // A data-validation `list` cell (E-SHEET SV1): the renderer paints an in-cell
-  // dropdown affordance at the cell's right edge (a small button + ▾ glyph).
+  /**
+   * A data-validation `list` cell (E-SHEET SV1): the renderer paints an in-cell
+   * dropdown affordance at the cell's right edge (a small button + ▾ glyph).
+   */
   readonly dropdown?: boolean;
 }
 
+/** §17.4.81 `w:trPr` — a table row's properties: height, split/header flags. */
 export interface RowProperties {
   readonly height?: Pt;
   readonly heightRule?: 'auto' | 'atLeast' | 'exact';
   readonly cantSplit?: boolean;
   readonly isHeader?: boolean;
-  // Force this row to begin a new page (xlsx manual <rowBreaks>). The renderer
-  // flushes the page before the row, then repeats any leading header rows.
+  /**
+   * Force this row to begin a new page (xlsx manual `<rowBreaks>`). The renderer
+   * flushes the page before the row, then repeats any leading header rows.
+   */
   readonly pageBreakBefore?: boolean;
 }
 
-// §17.4.62 w:tblLook — which of the table style's conditional formats apply.
-// Modern files carry explicit attributes; legacy files a hex bitmask (both
-// parsed). Band flags are negative ("no band") per the spec.
+/**
+ * §17.4.62 `w:tblLook` — which of the table style's conditional formats apply.
+ * Modern files carry explicit attributes; legacy files a hex bitmask (both
+ * parsed). Band flags are negative ("no band") per the spec.
+ */
 export interface TableLook {
   readonly firstRow?: boolean;
   readonly lastRow?: boolean;
@@ -525,9 +632,12 @@ export interface TableLook {
   readonly noVBand?: boolean;
 }
 
+/** §17.4.60 `w:tblPr` — a table's properties: style ref, width/layout, chrome. */
 export interface TableProperties {
-  // §17.7.6 — raw reference to a table style (resolved by the reader's
-  // resolveTableStyles transform; round-trip material afterwards).
+  /**
+   * §17.7.6 — raw reference to a table style (resolved by the reader's
+   * `resolveTableStyles` transform; round-trip material afterwards).
+   */
   readonly styleId?: string;
   readonly look?: TableLook;
   readonly widthPt?: Pt;
@@ -536,25 +646,35 @@ export interface TableProperties {
   readonly layout?: 'auto' | 'fixed';
   readonly defaultCellMargins?: CellMargins;
   readonly borders?: CellBorders;
-  // ECMA-376 §17.4.27 (w:jc) / xlsx <printOptions horizontalCentered>. Centers
-  // or right-aligns a table narrower than the content width; absent ⇒ left.
+  /**
+   * ECMA-376 §17.4.27 (`w:jc`) / xlsx `<printOptions horizontalCentered>`.
+   * Centers or right-aligns a table narrower than the content width; absent ⇒ left.
+   */
   readonly alignment?: 'left' | 'center' | 'right';
-  // A sticky-pane hint from a frozen worksheet view (E-SHEET SE3): the first
-  // `rows` rows / `cols` columns stay pinned while the rest scrolls. Consumed
-  // only by the HTML writer (an interactive target); PDF/SVG ignore it.
+  /**
+   * A sticky-pane hint from a frozen worksheet view (E-SHEET SE3): the first
+   * `rows` rows / `cols` columns stay pinned while the rest scrolls. Consumed
+   * only by the HTML writer (an interactive target); PDF/SVG ignore it.
+   */
   readonly frozen?: { readonly rows: number; readonly cols: number };
 }
 
+/** §17.4.66 `w:tc` — a table cell: its {@link CellProperties} and block content. */
 export interface TableCell {
   readonly properties: CellProperties;
   readonly content: ReadonlyArray<BodyElement>;
 }
 
+/** §17.4.79 `w:tr` — a table row: its {@link RowProperties} and cells. */
 export interface TableRow {
   readonly properties: RowProperties;
   readonly cells: ReadonlyArray<TableCell>;
 }
 
+/**
+ * §17.4.38 `w:tbl` — a table: its {@link TableProperties}, the `w:tblGrid`
+ * column widths (`grid`), and its rows.
+ */
 export interface Table {
   readonly native?: NativeBag;
   readonly properties: TableProperties;
@@ -562,16 +682,18 @@ export interface Table {
   readonly rows: ReadonlyArray<TableRow>;
 }
 
-// ECMA-376 Part 1 §20.4.2.8 — wp:inline picture extent. EMU = English
-// Metric Units: 914400 per inch (1 pt = 12700 EMU).
+/**
+ * ECMA-376 Part 1 §20.4.2.8 — a block-level image (`wp:inline` picture extent).
+ * EMU = English Metric Units: 914400 per inch (1 pt = 12700 EMU).
+ */
 export interface ImageBlock {
-  // §20.4.2.3 — present when the drawing is anchored (floating).
+  /** §20.4.2.3 — present when the drawing is anchored (floating). */
   readonly float?: FloatAnchor;
   readonly resource?: ResourceId;
   readonly width: Pt;
   readonly height: Pt;
   readonly paragraphProperties: ParagraphProperties;
-  // wp:docPr @descr/@title — alternate text for the tagged-PDF Figure (/Alt).
+  /** `wp:docPr @descr/@title` — alternate text for the tagged-PDF Figure (`/Alt`). */
   readonly altText?: string;
 }
 
@@ -580,10 +702,12 @@ export interface ImageBlock {
 // collapses to a ShapeBlock, mirroring ImageBlock; it carries the paragraph's
 // properties for block spacing / alignment.
 
-// §20.1.10.55 prstGeom path command (custGeom <a:pathLst>), in path-space
-// units (a:path @w/@h). quad is elevated to cubic at layout; arc uses
-// DrawingML angle convention (1/60000°, clockwise, y-down) and is converted
-// to beziers by the geometry layer.
+/**
+ * §20.1.10.55 prstGeom path command (custGeom `<a:pathLst>`), in path-space
+ * units (`a:path @w/@h`). `quad` is elevated to cubic at layout; `arc` uses the
+ * DrawingML angle convention (1/60000°, clockwise, y-down) and is converted
+ * to beziers by the geometry layer.
+ */
 export type CustomPathCmd =
   | { readonly cmd: 'move'; readonly x: number; readonly y: number }
   | { readonly cmd: 'line'; readonly x: number; readonly y: number }
@@ -612,13 +736,17 @@ export type CustomPathCmd =
     }
   | { readonly cmd: 'close' };
 
+/**
+ * §20.1.9.11 `custGeom` — a custom geometry: its path-space extent
+ * (`pathWidth`/`pathHeight`) and the {@link CustomPathCmd} list that draws it.
+ */
 export interface CustomGeometry {
   readonly pathWidth: number;
   readonly pathHeight: number;
   readonly commands: ReadonlyArray<CustomPathCmd>;
 }
 
-// §20.1.10.55 prstGeom / §20.1.9.11 custGeom.
+/** §20.1.10.55 `prstGeom` / §20.1.9.11 `custGeom` — a shape's geometry source. */
 export interface ShapeGeometry {
   readonly kind: 'preset' | 'custom';
   readonly preset?: string; // kind==='preset', e.g. 'roundRect'
@@ -626,14 +754,17 @@ export interface ShapeGeometry {
   readonly custom?: CustomGeometry; // kind==='custom'
 }
 
+/** A shape's fill mode (`a:noFill`/`a:solidFill`/`a:gradFill`). */
 export type ShapeFillKind = 'none' | 'solid' | 'gradient';
 
+/** A shape's fill: none, a solid colour, or a {@link ShapeGradient}. */
 export interface ShapeFill {
   readonly kind: ShapeFillKind;
   readonly colorHex?: string; // resolved 6-hex (kind==='solid')
   readonly gradient?: ShapeGradient; // kind==='gradient' (a:gradFill, EP16)
 }
 
+/** §20.1.10.49 ST_PresetLineDashVal — a shape outline's preset dash pattern. */
 export type ShapeDash =
   | 'solid'
   | 'dot'
@@ -644,7 +775,7 @@ export type ShapeDash =
   | 'sysDash'
   | 'sysDot';
 
-// §20.1.2.2.24 a:ln — outline.
+/** §20.1.2.2.24 `a:ln` — a shape's outline (stroke). */
 export interface ShapeLine {
   readonly width?: Pt; // a:ln @w; default 0.75pt
   readonly colorHex?: string; // resolved 6-hex
@@ -653,14 +784,14 @@ export interface ShapeLine {
   readonly fill?: 'solid' | 'none'; // a:ln/a:noFill ⇒ no visible stroke
 }
 
-// §20.1.7.6 a:xfrm — rotation (1/60000°, clockwise) + flips.
+/** §20.1.7.6 `a:xfrm` — a shape's rotation (1/60000°, clockwise) + flips. */
 export interface ShapeTransform {
   readonly rotation60k?: number;
   readonly flipH?: boolean;
   readonly flipV?: boolean;
 }
 
-// wps:txbx (w:txbxContent) + wps:bodyPr — text inside a shape.
+/** `wps:txbx` (`w:txbxContent`) + `wps:bodyPr` — text inside a shape. */
 export interface ShapeTextBody {
   readonly content: ReadonlyArray<BodyElement>;
   readonly insetLeft?: Pt;
@@ -670,8 +801,14 @@ export interface ShapeTextBody {
   readonly anchor?: 't' | 'ctr' | 'b'; // vertical anchor
 }
 
+/**
+ * A block-level DrawingML shape (§20.1): its size, {@link ShapeGeometry}, fill,
+ * outline, transform and optional text body. A standalone shape carries the
+ * paragraph's properties for block spacing / alignment, mirroring
+ * {@link ImageBlock}.
+ */
 export interface ShapeBlock {
-  // §20.4.2.3 — present when the drawing is anchored (floating).
+  /** §20.4.2.3 — present when the drawing is anchored (floating). */
   readonly float?: FloatAnchor;
   readonly width: Pt; // wp:extent cx (fallback a:ext cx)
   readonly height: Pt; // wp:extent cy
@@ -681,22 +818,27 @@ export interface ShapeBlock {
   readonly transform?: ShapeTransform;
   readonly text?: ShapeTextBody;
   readonly paragraphProperties: ParagraphProperties;
-  // wp:docPr @descr/@title — alternate text for the tagged-PDF Figure (/Alt).
+  /** `wp:docPr @descr/@title` — alternate text for the tagged-PDF Figure (`/Alt`). */
   readonly altText?: string;
 }
 
-// ECMA-376 Part 1 §21.2 — DrawingML charts. A chart is referenced from a
-// w:drawing (a:graphicData uri=…/chart → c:chart r:id) and its data lives in a
-// separate chart part (e.g. word/charts/chart1.xml). The parsed Chart is keyed
-// by that relationship id and supplied to the renderer alongside the body
-// (mirroring how image bytes are supplied), so ChartBlock only carries the ref.
+/**
+ * ECMA-376 Part 1 §21.2 — the kind of a DrawingML chart. A chart is referenced
+ * from a `w:drawing` (`a:graphicData uri=…/chart` → `c:chart r:id`) and its data
+ * lives in a separate chart part (e.g. `word/charts/chart1.xml`). The parsed
+ * {@link Chart} is keyed by that relationship id and supplied to the renderer
+ * alongside the body (mirroring image bytes), so {@link ChartBlock} only carries
+ * the ref.
+ */
 export type ChartType = 'bar' | 'line' | 'pie' | 'area' | 'scatter' | 'unknown';
 
+/** A per-point colour override (`c:dPt`) at series index `idx`. */
 export interface ChartDataPoint {
   readonly idx: number;
   readonly colorHex: string; // c:dPt per-point colour override
 }
 
+/** One chart data series (`c:ser`): its name, values and colour overrides. */
 export interface ChartSeries {
   readonly name?: string;
   readonly values: ReadonlyArray<number>; // c:val/c:yVal numCache (idx-ordered, gaps → 0)
@@ -705,6 +847,7 @@ export interface ChartSeries {
   readonly pointColors?: ReadonlyArray<ChartDataPoint>; // c:dPt overrides (pie slices)
 }
 
+/** A parsed chart (§21.2): its type, title, categories, series and rendering options. */
 export interface Chart {
   readonly type: ChartType;
   readonly title?: string;
@@ -718,22 +861,26 @@ export interface Chart {
   readonly showValues?: boolean; // c:dLbls/c:showVal — print each datum's value
   readonly catAxisTitle?: string; // c:catAx/c:title
   readonly valAxisTitle?: string; // c:valAx/c:title
-  // MS-ODRAWXML chartColorStyle (colorsN.xml): the cycle of series colours;
-  // overrides the built-in Office accent cycle when present.
+  /**
+   * MS-ODRAWXML `chartColorStyle` (`colorsN.xml`): the cycle of series colours;
+   * overrides the built-in Office accent cycle when present.
+   */
   readonly seriesColorCycle?: ReadonlyArray<string>;
 }
 
+/** A block-level chart reference (`c:chart`): its size and relationship id. */
 export interface ChartBlock {
-  // §20.4.2.3 — present when the drawing is anchored (floating).
+  /** §20.4.2.3 — present when the drawing is anchored (floating). */
   readonly float?: FloatAnchor;
   readonly chartRelId: string; // c:chart @r:id (resolve against the document's rels)
   readonly width: Pt;
   readonly height: Pt;
   readonly paragraphProperties: ParagraphProperties;
-  // wp:docPr @descr/@title — alternate text for the tagged-PDF Figure (/Alt).
+  /** `wp:docPr @descr/@title` — alternate text for the tagged-PDF Figure (`/Alt`). */
   readonly altText?: string;
 }
 
+/** One top-level body item: a discriminated union over the block kinds. */
 export type BodyElement =
   | { readonly kind: 'paragraph'; readonly paragraph: Paragraph }
   | { readonly kind: 'table'; readonly table: Table }
@@ -741,13 +888,14 @@ export type BodyElement =
   | { readonly kind: 'shape'; readonly shape: ShapeBlock }
   | { readonly kind: 'chart'; readonly chart: ChartBlock };
 
-// ECMA-376 Part 1 §17.6 — Sections.
+/** ECMA-376 Part 1 §17.6.13 `w:pgSz` — the section's page dimensions + orientation. */
 export interface PageSize {
   readonly width: Pt;
   readonly height: Pt;
   readonly orientation?: 'portrait' | 'landscape';
 }
 
+/** §17.6.11 `w:pgMar` — the section's page margins (and header/footer offsets). */
 export interface PageMargins {
   readonly top: Pt;
   readonly right: Pt;
@@ -757,32 +905,41 @@ export interface PageMargins {
   readonly footer?: Pt;
 }
 
+/** §17.10 — which page class a header/footer reference applies to. */
 export type HeaderFooterType = 'default' | 'first' | 'even';
 
+/** §17.10.5/§17.10.2 `w:headerReference`/`w:footerReference` — a typed rels pointer. */
 export interface HeaderFooterReference {
   readonly type: HeaderFooterType;
   readonly relationshipId: string;
 }
 
+/** §17.6.17 `w:sectPr` — a section's page setup, header/footer refs and columns. */
 export interface SectionProperties {
   readonly pageSize?: PageSize;
   readonly margins?: PageMargins;
   readonly headers: ReadonlyArray<HeaderFooterReference>;
   readonly footers: ReadonlyArray<HeaderFooterReference>;
-  // ECMA-376 §17.10.6 — w:titlePg toggle in sectPr. When true the first page
-  // of the section uses the `first` header/footer references.
+  /**
+   * ECMA-376 §17.10.6 — `w:titlePg` toggle in `sectPr`. When true the first page
+   * of the section uses the `first` header/footer references.
+   */
   readonly titlePg?: boolean;
-  // ECMA-376 §17.15.1.36 — w:evenAndOddHeaders toggle in word/settings.xml
-  // (document-wide, not per-section). When true even-numbered pages use the
-  // `even` header/footer references.
+  /**
+   * ECMA-376 §17.15.1.36 — `w:evenAndOddHeaders` toggle in `word/settings.xml`
+   * (document-wide, not per-section). When true even-numbered pages use the
+   * `even` header/footer references.
+   */
   readonly evenAndOddHeaders?: boolean;
-  // §17.6.4 w:cols — multi-column section layout.
+  /** §17.6.4 `w:cols` — multi-column section layout. */
   readonly columns?: SectionColumns;
 }
 
-// §20.4.2.3 wp:anchor — a floating drawing's placement. v1 honours
-// out-of-flow placement for wrap 'none' (incl. behindDoc); the side-wrapping
-// modes (square/tight/through) and topAndBottom stay in flow as blocks.
+/**
+ * §20.4.2.3 `wp:anchor` — a floating drawing's placement. v1 honours
+ * out-of-flow placement for wrap `'none'` (incl. `behindDoc`); the side-wrapping
+ * modes (square/tight/through) and `topAndBottom` stay in flow as blocks.
+ */
 export interface FloatAnchor {
   readonly wrap: 'none' | 'square' | 'tight' | 'through' | 'topAndBottom';
   readonly behind?: boolean; // wp:anchor @behindDoc
@@ -797,24 +954,30 @@ export interface FloatAnchor {
   };
 }
 
-// §17.6.4 — column definitions: equal-width count + gutter, or explicit
-// per-column widths/gutters (w:col children).
+/**
+ * §17.6.4 — column definitions: an equal-width `count` + gutter, or explicit
+ * per-column widths/gutters (`w:col` children).
+ */
 export interface SectionColumns {
   readonly count: number;
   readonly spacePt: number;
   readonly explicit?: ReadonlyArray<{ readonly widthPt: number; readonly spacePt: number }>;
 }
 
-// A document can contain multiple sections (ECMA-376 §17.6.17). Each section's
-// sectPr lives either inside a paragraph's pPr (mid-document break) or as the
-// final child of w:body (final section). The Section descriptor below records
-// the properties and the upper-exclusive bound in BodyElement[] that the
-// section covers — section i applies to body[sections[i-1].endIndex..sections[i].endIndex).
+/**
+ * One section descriptor for a multi-section document (ECMA-376 §17.6.17). Each
+ * section's `sectPr` lives either inside a paragraph's `pPr` (mid-document
+ * break) or as the final child of `w:body` (final section). Records the
+ * properties and the upper-exclusive bound in `BodyElement[]` the section
+ * covers — section i applies to
+ * `body[sections[i-1].endIndex..sections[i].endIndex)`.
+ */
 export interface Section {
   readonly properties: SectionProperties;
   readonly endIndex: number;
 }
 
+/** The parsed WordprocessingML document: body, stylesheet, numbering and section setup. */
 export interface DocumentModel {
   readonly body: ReadonlyArray<BodyElement>;
   readonly styleSheet: StyleSheet;
@@ -822,17 +985,19 @@ export interface DocumentModel {
   readonly section?: SectionProperties;
 }
 
-// Document metadata (PDF /Info-shaped, sourced from docProps/core.xml and/or
-// caller options). Lives in the model so FlowDoc can carry it format-neutrally.
+/**
+ * Document metadata (PDF `/Info`-shaped, sourced from `docProps/core.xml` and/or
+ * caller options). Lives in the model so FlowDoc can carry it format-neutrally.
+ */
 export interface DocumentInfo {
   readonly title?: string;
   readonly author?: string;
   readonly subject?: string;
   readonly keywords?: string;
   readonly creator?: string;
-  // Producer defaults to "Ream" if not provided.
+  /** Producer; defaults to "Ream" if not provided. */
   readonly producer?: string;
-  // ISO 8601 dates; converted to PDF date format (D:YYYYMMDDHHmmSS).
+  /** ISO 8601 date; converted to PDF date format (`D:YYYYMMDDHHmmSS`). */
   readonly creationDate?: Date;
   readonly modificationDate?: Date;
 }

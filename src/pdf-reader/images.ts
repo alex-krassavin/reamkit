@@ -17,16 +17,26 @@ import type { PdfFile, PdfPage } from './document';
 import { PDF_NULL, PdfName, PdfStream } from '@/pdf/objects';
 import { FEATURES } from '@/core/ir';
 
+/**
+ * One raster image lifted off a page (E-PDF EP6): the standalone image file
+ * (`png`/`jpeg`/`jpeg2000`), its page-space rectangle (computed from the CTM
+ * that maps the unit square) and the enclosing marked-content id so the tagged
+ * path can attach it to a `/Figure`.
+ */
 export interface PdfImage {
   readonly bytes: Uint8Array;
   readonly format: 'png' | 'jpeg' | 'jpeg2000';
-  readonly widthPt: number; // display size in page points (from the CTM)
+  /** Display size in page points (from the CTM). */
+  readonly widthPt: number;
   readonly heightPt: number;
-  readonly x: number; // page-space lower-left corner (points, y-up)
+  /** Page-space lower-left corner (points, y-up). */
+  readonly x: number;
   readonly y: number;
+  /** Enclosing marked-content id, if the placement was inside a `/Figure`. */
   readonly mcid?: number;
 }
 
+/** The images lifted off one page plus any losses for images that could not be reconstructed. */
 export interface PageImages {
   readonly images: Array<PdfImage>;
   readonly losses: Array<Loss>;
@@ -36,6 +46,15 @@ const NO_FONTS: ReadonlyMap<string, ContentFont> = new Map();
 const MAX_FORM_DEPTH = 12;
 const MAX_IMAGES = 4096; // per-page DoS guard
 
+/**
+ * Lift the raster images off a page (E-PDF EP6). Runs the content interpreter
+ * (EP2) for its `Do` placements, resolves each name against the page's
+ * `/Resources` `/XObject`, and either decodes an `/Image` (via `decodePdfImage`)
+ * or recurses into a `/Form` XObject — composing the form's `/Matrix` onto the
+ * placement CTM, depth-guarded against cyclic forms. Each surviving image
+ * carries its page-space rectangle and enclosing structure id. Unsupported
+ * images become {@link Loss} entries rather than broken pictures.
+ */
 export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
   const images: Array<PdfImage> = [];
   const lossByDetail = new Map<string, Loss>();

@@ -45,27 +45,37 @@ const CHART_URI = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
 const TABLE_URI = 'http://schemas.openxmlformats.org/drawingml/2006/table';
 const DIAGRAM_URI = 'http://schemas.openxmlformats.org/drawingml/2006/diagram';
 
-// Per-slide parsing context: the placeholder cascade (PX2), an image resolver
-// that turns a slide-scoped relationship id (a:blip @r:embed) into a
-// ResourceStore id (PX3a), and a chart resolver that parses a referenced chart
-// part (c:chart @r:id) and returns its document-unique key (PX4a). All optional
-// — a bare slide needs none.
+/**
+ * Per-slide parsing context: the placeholder cascade (PX2), an image resolver
+ * that turns a slide-scoped relationship id (`a:blip @r:embed`) into a
+ * {@link ResourceId} (PX3a), and a chart resolver that parses a referenced chart
+ * part (`c:chart @r:id`) and returns its document-unique key (PX4a). All optional
+ * — a bare slide needs none.
+ */
 export interface SlideContext {
   readonly cascade?: PlaceholderCascade;
+  /** A slide-scoped blip relationship id (`a:blip @r:embed`) → a stored resource (PX3a). */
   readonly resolveImage?: (relId: string) => ResourceId | undefined;
+  /** A chart relationship id (`c:chart @r:id`) → its document-unique key (PX4a). */
   readonly resolveChart?: (relId: string) => string | undefined;
-  // The deck's colour resolver (master theme palette, PX5); defaults to the
-  // Office palette when absent.
+  /**
+   * The deck's colour resolver (master theme palette, PX5); defaults to the
+   * Office palette when absent.
+   */
   readonly colors?: ColorResolver;
-  // A run hyperlink (a:hlinkClick @r:id) → its external URL (PX6).
+  /** A run hyperlink (`a:hlinkClick @r:id`) → its external URL (PX6). */
   readonly resolveHyperlink?: (relId: string) => string | undefined;
-  // A SmartArt data relationship (dgm:relIds @r:dm) → the diagram's pre-rendered
-  // drawing override (its dsp:spTree), or undefined when the file ships no
-  // override (E-SMARTART SA0).
+  /**
+   * A SmartArt data relationship (`dgm:relIds @r:dm`) → the diagram's pre-rendered
+   * drawing override (its `dsp:spTree`), or `undefined` when the file ships no
+   * override (E-SMARTART SA0).
+   */
   readonly resolveDiagram?: (relId: string) => PoNode | undefined;
-  // Sink for graceful-degradation notices (E-SMARTART SA3): a SmartArt that
-  // declares a diagram but ships no drawing override records a dropped-feature
-  // Loss here rather than vanishing without a trace.
+  /**
+   * Sink for graceful-degradation notices (E-SMARTART SA3): a SmartArt that
+   * declares a diagram but ships no drawing override records a dropped-feature
+   * {@link Loss} here rather than vanishing without a trace.
+   */
   readonly onLoss?: (loss: Loss) => void;
 }
 
@@ -87,10 +97,17 @@ const RECT_GEOMETRY: ShapeGeometry = { kind: 'preset', preset: 'rect', adjust: n
 type GroupTransform = (box: ShapeBoxEmu) => ShapeBoxEmu;
 const IDENTITY_TRANSFORM: GroupTransform = (box) => box;
 
-// Walk a shape container (p:spTree or a p:grpSp), turning each p:sp into a
-// floating text/graphic shape, each p:pic into a floating image, each
-// p:graphicFrame into a chart/table, and recursing into nested p:grpSp groups
-// (composing their transforms). `transform` maps child-space boxes to the slide.
+/**
+ * Walk a shape container (`p:spTree` or a `p:grpSp`), turning each `p:sp` into a
+ * floating text/graphic shape, each `p:pic` into a floating image, each
+ * `p:graphicFrame` into a chart/table, and recursing into nested `p:grpSp` groups
+ * (composing their transforms).
+ *
+ * @param container The shape container node.
+ * @param ctx       The per-slide parsing context.
+ * @param transform Maps child-space boxes to the slide (identity at the top level).
+ * @returns The container's shapes as positioned {@link BodyElement}s.
+ */
 export function parseSlideShapes(
   container: PoNode,
   ctx: SlideContext = {},
@@ -253,10 +270,16 @@ function parseGraphicFrame(
   return [];
 }
 
-// The diagram's child shapes live in the spTree's own coordinate space
-// (dsp:grpSpPr/a:xfrm chOff/chExt); map that onto a target box (the frame on a
-// slide, or the inline/anchored box in docx). Usually the child space equals the
-// box, so the scale is 1. Shared by pptx and docx (E-SMARTART).
+/**
+ * The diagram's child shapes live in the spTree's own coordinate space
+ * (`dsp:grpSpPr/a:xfrm` `chOff`/`chExt`); map that onto a target box (the frame on
+ * a slide, or the inline/anchored box in docx). Usually the child space equals
+ * the box, so the scale is 1. Shared by pptx and docx (E-SMARTART).
+ *
+ * @param spTree The diagram drawing's `dsp:spTree`.
+ * @param frame  The target box the diagram is placed into.
+ * @returns A transform mapping diagram-space boxes onto `frame`.
+ */
 export function diagramTransform(spTree: PoNode, frame: ShapeBoxEmu): GroupTransform {
   const grpSpPr = poChildren(spTree).find((c) => poIs(c, 'dsp:grpSpPr'));
   const xfrm = grpSpPr ? poChildren(grpSpPr).find((c) => poIs(c, 'a:xfrm')) : undefined;
@@ -276,11 +299,16 @@ export function diagramTransform(spTree: PoNode, frame: ShapeBoxEmu): GroupTrans
   });
 }
 
-// A SmartArt diagram that declares its data part but ships no pre-rendered
-// drawing override (older files, or a generator that omitted the fallback).
-// Ream renders the override rather than executing Office's layout engine, so
-// without it the diagram can't be drawn — this records the gap as a dropped
-// feature instead of letting it vanish. Shared by pptx and docx (E-SMARTART SA3).
+/**
+ * A {@link Loss} for a SmartArt diagram that declares its data part but ships no
+ * pre-rendered drawing override (older files, or a generator that omitted the
+ * fallback). Ream renders the override rather than executing Office's layout
+ * engine, so without it the diagram can't be drawn — this records the gap as a
+ * dropped feature instead of letting it vanish. Shared by pptx and docx
+ * (E-SMARTART SA3).
+ *
+ * @param where Optional location tag for the loss report (e.g. `slide 3`).
+ */
 export function noDiagramOverrideLoss(where?: string): Loss {
   return {
     severity: 'dropped',
@@ -291,12 +319,20 @@ export function noDiagramOverrideLoss(where?: string): Loss {
   };
 }
 
-// Render a SmartArt drawing override (a dsp:spTree) into floating shapes.
-// `transform` maps each shape's diagram-space box to the target space and
-// `makeFloat` anchors it: page-relative for a slide, column/paragraph-relative
-// for an inline docx diagram. The dsp: wrapper holds an ordinary a: spPr/txBody,
-// so the shared DrawingML readers apply unchanged. Shared by pptx and docx
-// (E-SMARTART); diagrams carry no placeholder cascade.
+/**
+ * Render a SmartArt drawing override (a `dsp:spTree`) into floating shapes. The
+ * `dsp:` wrapper holds an ordinary `a:` `spPr`/`txBody`, so the shared DrawingML
+ * readers apply unchanged. Shared by pptx and docx (E-SMARTART); diagrams carry
+ * no placeholder cascade.
+ *
+ * @param spTree      The diagram drawing's `dsp:spTree`.
+ * @param transform   Maps each shape's diagram-space box to the target space.
+ * @param makeFloat   Anchors a box — page-relative for a slide, column/paragraph-
+ *                    relative for an inline docx diagram.
+ * @param colors      The colour resolver for the shapes' fills/strokes/text.
+ * @param resolveLink A run hyperlink resolver, or `undefined`.
+ * @returns The diagram's visible shapes as positioned {@link ShapeBlock}s.
+ */
 export function parseDiagramDrawing(
   spTree: PoNode,
   transform: GroupTransform,
@@ -337,11 +373,13 @@ export function parseDiagramDrawing(
   return out;
 }
 
-// p:bg → the background fill, or undefined when none/unsupported. p:bgPr carries
-// the fill directly (a:solidFill/a:gradFill — the same children parseFill reads;
-// a picture background is not yet supported); p:bgRef (a theme fill-style index)
-// is approximated by its colour child as a solid fill. Used for the slide's own
-// background and the inherited layout/master one (PX5b).
+/**
+ * `p:bg` → the background fill, or `undefined` when none/unsupported. `p:bgPr`
+ * carries the fill directly (`a:solidFill`/`a:gradFill` — the same children
+ * `parseFill` reads; a picture background is not yet supported); `p:bgRef` (a
+ * theme fill-style index) is approximated by its colour child as a solid fill.
+ * Used for the slide's own background and the inherited layout/master one (PX5b).
+ */
 export function parseBackgroundFill(bg: PoNode, colors: ColorResolver): ShapeFill | undefined {
   const bgPr = poChildren(bg).find((c) => poIs(c, 'p:bgPr'));
   if (bgPr) {
@@ -358,8 +396,14 @@ export function parseBackgroundFill(bg: PoNode, colors: ColorResolver): ShapeFil
   return undefined;
 }
 
-// A full-slide backdrop element for a background fill: a rectangle covering the
-// page, anchored behind the content (PX5b).
+/**
+ * A full-slide backdrop element for a background fill: a rectangle covering the
+ * page, anchored behind the content (PX5b).
+ *
+ * @param fill     The resolved background fill.
+ * @param widthPt  The page width in points.
+ * @param heightPt The page height in points.
+ */
 export function backdropElement(fill: ShapeFill, widthPt: Pt, heightPt: Pt): BodyElement {
   return {
     kind: 'shape',
@@ -379,8 +423,11 @@ export function backdropElement(fill: ShapeFill, widthPt: Pt, heightPt: Pt): Bod
   };
 }
 
-// p:spPr geometry: a:prstGeom (preset) or a:custGeom (custom path), default rect.
-// Exported for sheet shapes (E-SHEET W2), whose xdr:spPr carries the same a: children.
+/**
+ * `p:spPr` geometry: `a:prstGeom` (preset) or `a:custGeom` (custom path), default
+ * rect. Exported for sheet shapes (E-SHEET W2), whose `xdr:spPr` carries the same
+ * `a:` children.
+ */
 export function parseGeometry(spPr: PoNode | undefined): ShapeGeometry {
   if (!spPr) return RECT_GEOMETRY;
   const prst = poChildren(spPr).find((c) => poIs(c, 'a:prstGeom'));
@@ -450,9 +497,19 @@ function txBodyParagraphs(
   return content;
 }
 
-// p:txBody → ShapeTextBody. a:bodyPr carries the insets and the vertical anchor
-// (PX6: anchor t/ctr/b). Exported for sheet shapes (E-SHEET W2) — like SmartArt,
-// they pass no placeholder cascade, so runs use their direct a:rPr formatting.
+/**
+ * `p:txBody` → {@link ShapeTextBody}. `a:bodyPr` carries the insets and the
+ * vertical anchor (PX6: anchor `t`/`ctr`/`b`). Exported for sheet shapes
+ * (E-SHEET W2) — like SmartArt, they pass no placeholder cascade, so runs use
+ * their direct `a:rPr` formatting.
+ *
+ * @param txBody      The `p:txBody` node.
+ * @param ph          The owning placeholder ref, when this is a placeholder shape.
+ * @param cascade     The placeholder cascade supplying inherited run defaults.
+ * @param colors      The colour resolver for run colours.
+ * @param resolveLink A run hyperlink resolver, or `undefined`.
+ * @returns The text body, or `undefined` when it holds no paragraphs.
+ */
 export function parseTxBody(
   txBody: PoNode,
   ph: PlaceholderRef | undefined,

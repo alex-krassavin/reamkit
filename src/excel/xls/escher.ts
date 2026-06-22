@@ -25,12 +25,14 @@ interface EscherRecord {
   readonly data: Uint8Array;
 }
 
-// A picture shape: the BLIP store index it references plus its cell anchor.
+/** A picture shape: the BLIP store index it references plus its cell anchor. */
 export interface EscherPicture {
-  readonly blipIndex: number; // 1-based (pib)
+  /** 1-based index into the BLIP store (the OPT `pib` property). */
+  readonly blipIndex: number;
   readonly anchor?: EscherAnchor;
 }
 
+/** A from/to two-cell anchor (each cell index a u16, each offset 1/1024 of the cell). */
 export interface EscherAnchor {
   readonly col1: number;
   readonly row1: number;
@@ -62,9 +64,15 @@ function* records(d: Uint8Array): Generator<EscherRecord> {
   }
 }
 
-// The BLIP store: one entry per BSE (so a `pib` index lines up), holding the
-// extracted image bytes — or undefined for an entry we cannot read (a metafile
-// blip, an empty slot), which keeps the indices aligned.
+/**
+ * Read the workbook-globals MSODrawingGroup's BLIP store: one entry per BSE (so a
+ * `pib` index lines up), holding the extracted image bytes — or `undefined` for
+ * an entry we cannot read (a metafile blip, an empty slot), which keeps the
+ * indices aligned.
+ *
+ * @param msoDrawingGroup The concatenated MSODrawingGroup record bytes.
+ * @returns The image pool, indexed so `pib − 1` selects an entry.
+ */
 export function parseBlipStore(msoDrawingGroup: Uint8Array): Array<Uint8Array | undefined> {
   const store = findContainer(msoDrawingGroup, FBT_BSTORE_CONTAINER, 0);
   if (!store) return [];
@@ -88,8 +96,10 @@ function findContainer(d: Uint8Array, type: number, depth: number): Uint8Array |
   return undefined;
 }
 
-// The picture shapes in a sheet's MSODrawing: every SpContainer that carries a
-// `pib` (a picture-fill reference) with its anchor.
+/**
+ * The picture shapes in a sheet's MSODrawing: every SpContainer that carries a
+ * `pib` (a picture-fill reference into the BLIP store) with its cell anchor.
+ */
 export function parseSheetPictures(msoDrawing: Uint8Array): Array<EscherPicture> {
   const out: Array<EscherPicture> = [];
   collectPictures(msoDrawing, out, 0);
@@ -115,10 +125,14 @@ function collectPictures(d: Uint8Array, out: Array<EscherPicture>, depth: number
   }
 }
 
-// A non-picture drawing shape: its preset type (MSOSPT), cell anchor, fill/line
-// colours (when literal RGB) and whether it carries a text box.
+/**
+ * A non-picture drawing shape: its preset type (MSOSPT), cell anchor, fill/line
+ * colours (when literal RGB) and whether it carries a text box.
+ */
 export interface EscherShape {
+  /** The MSOSPT preset shape type (the Sp record's instance). */
   readonly shapeType: number;
+  /** Whether the shape carries a client text box. */
   readonly hasText: boolean;
   readonly anchor?: EscherAnchor;
   readonly fillColorHex?: string;
@@ -130,8 +144,11 @@ const FBT_CLIENT_TEXTBOX = 0xf00d;
 const PROP_FILL_COLOR = 0x0181;
 const PROP_LINE_COLOR = 0x01c0;
 
-// The non-picture shapes (autoshapes, text boxes) in a sheet's MSODrawing — every
-// SpContainer that is NOT a picture (no `pib`). Pictures are handled separately.
+/**
+ * The non-picture shapes (autoshapes, text boxes) in a sheet's MSODrawing — every
+ * SpContainer that is NOT a picture (no `pib`). Pictures are handled separately
+ * by {@link parseSheetPictures}.
+ */
 export function parseSheetShapes(msoDrawing: Uint8Array): Array<EscherShape> {
   const out: Array<EscherShape> = [];
   collectShapes(msoDrawing, out, 0);

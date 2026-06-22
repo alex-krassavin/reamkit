@@ -11,7 +11,12 @@ import type { PdfDict, PdfValue } from '@/pdf/objects';
 
 import { PdfHexString, PdfName, PdfStream } from '@/pdf/objects';
 
+/** Decrypts the strings and streams of an encrypted PDF, per indirect object. */
 export interface Decryptor {
+  /**
+   * Decrypt one value with its owning object's number and generation (which seed
+   * the per-object key). Recurses into arrays and dictionaries.
+   */
   decrypt: (value: PdfValue, objNum: number, gen: number) => PdfValue;
 }
 
@@ -26,6 +31,18 @@ const AES_SALT = Uint8Array.from([0x73, 0x41, 0x6c, 0x54]); // "sAlT" (§7.6.2)
 const ZERO16 = new Uint8Array(16);
 const EMPTY = new Uint8Array(0);
 
+/**
+ * Build a {@link Decryptor} from the `/Encrypt` dictionary and the file `/ID`
+ * (ISO 32000 §7.6.3 / ISO 32000-2 §7.6.4). Derives the file key for the
+ * handler's revision — R6/V5 via `/UE` (AES-256), else the legacy MD5 key — and
+ * picks the cipher (RC4, AES-128 `/AESV2`, AES-256 `/AESV3`).
+ *
+ * @param encrypt  The `/Encrypt` dictionary.
+ * @param idArray  The trailer `/ID` array (its first element seeds the legacy key).
+ * @param password The user password (EP14); the empty string opens permissions-only encryption.
+ * @returns A decryptor, or `undefined` for a non-Standard filter, an unencrypting
+ *          crypt filter, or a password that fails key validation.
+ */
 export function buildDecryptor(
   encrypt: PdfDict,
   idArray: PdfValue | undefined,

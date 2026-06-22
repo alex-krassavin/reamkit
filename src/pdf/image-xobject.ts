@@ -16,12 +16,23 @@ import { prepareImage } from '@/core/images';
 export { detectImageFormat, prepareImage } from '@/core/images';
 export type { EmbedImageOptions, ImageFormat, PreparedImage } from '@/core/images';
 
+/** A reference to an embedded image XObject plus its pixel dimensions. */
 export interface EmbeddedImage {
+  /** Indirect reference to the image XObject, for a page's `/XObject` resources. */
   readonly ref: PdfRef;
   readonly widthPx: number;
   readonly heightPx: number;
 }
 
+/**
+ * Create the PDF image-XObject objects from an already-prepared image (ISO
+ * 32000-1 §8.9.5), emitting an `/SMask` soft-mask object first when present.
+ * The decode/validate work happens earlier in `prepareImage`; this only writes
+ * the objects.
+ *
+ * @param prepared The decoded, ready-to-emit image stream.
+ * @returns The image reference and its pixel dimensions.
+ */
 export function addImage(doc: PdfDocument, prepared: PreparedImage): EmbeddedImage {
   // The soft mask object precedes the color image — the order the pre-split
   // embed produced.
@@ -58,6 +69,14 @@ export function addImage(doc: PdfDocument, prepared: PreparedImage): EmbeddedIma
   return { ref, widthPx: prepared.widthPx, heightPx: prepared.heightPx };
 }
 
+/**
+ * Decode raw image `bytes` and embed them in one step — a convenience over
+ * `prepareImage` + {@link addImage}.
+ *
+ * @param bytes   The raw image file bytes (PNG/JPEG/…).
+ * @param options Decode/embed options.
+ * @returns The image reference and its pixel dimensions.
+ */
 export function embedImage(
   doc: PdfDocument,
   bytes: Uint8Array,

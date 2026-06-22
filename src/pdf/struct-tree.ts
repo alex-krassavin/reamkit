@@ -16,8 +16,10 @@ import type { PdfDict, PdfRef, PdfValue } from '@/pdf/objects';
 import type { PdfDocument } from '@/pdf/writer';
 import { PDF_NULL, dict, name, unicodeString } from '@/pdf/objects';
 
-// Standard structure types (ISO 32000-1 Table 333/337). Every type here is
-// recognised without a /RoleMap, so the builder never emits one.
+/**
+ * Standard structure types (ISO 32000-1 Table 333/337). Every type here is
+ * recognised without a `/RoleMap`, so the builder never emits one.
+ */
 export type StructType =
   | 'Document'
   | 'Part'
@@ -49,44 +51,65 @@ interface Mcref {
   readonly mcid: number;
 }
 
+/** One node in the logical structure tree: a {@link StructType} plus its children, marked-content and attributes. */
 export class StructNode {
   readonly children: Array<StructNode> = [];
   readonly mcrefs: Array<Mcref> = [];
-  // §14.7.4.3 object references (/OBJR kids) — e.g. a Link element pointing at
-  // its link annotation. The annotation's own /StructParent entry is recorded
-  // via addAnnotParent.
+  /**
+   * §14.7.4.3 object references (`/OBJR` kids) — e.g. a Link element pointing at
+   * its link annotation. The annotation's own `/StructParent` entry is recorded
+   * via {@link StructTreeBuilder.addAnnotParent}.
+   */
   readonly objrs: Array<{ readonly annotRef: PdfRef; readonly pageIndex: number }> = [];
   parent: StructNode | null = null;
   ref: PdfRef | null = null;
-  // Alternate text (/Alt, §14.9.4) — required on Figure for PDF/A-1a.
+  /** Alternate text (`/Alt`, §14.9.4) — required on Figure for PDF/A-1a. */
   alt: string | null = null;
-  // Natural language (/Lang) when it differs from the document default.
+  /** Natural language (`/Lang`) when it differs from the document default. */
   lang: string | null = null;
-  // §14.8.5.2 Table attributes (emitted via a /A attribute object on the cell):
-  //   scope   — /Scope on a TH (Row/Column) so AT binds headers to data cells.
-  //   colSpan — /ColSpan when the cell spans >1 column (gridSpan).
-  //   rowSpan — /RowSpan when the cell spans >1 row (vertical merge).
+  /**
+   * §14.8.5.2 Table attribute (emitted via a `/A` attribute object on the cell):
+   * `/Scope` on a TH (Row/Column) so assistive tech binds headers to data cells.
+   */
   scope: 'Row' | 'Column' | null = null;
+  /** §14.8.5.2 — `/ColSpan` when the cell spans more than one column (gridSpan). */
   colSpan: number | null = null;
+  /** §14.8.5.2 — `/RowSpan` when the cell spans more than one row (vertical merge). */
   rowSpan: number | null = null;
 
+  /**
+   * @param id   The node's index, used for deterministic id assignment and `/ID`.
+   * @param type The structure type (mutable, so the renderer can retag).
+   */
   constructor(
     readonly id: number,
     public type: StructType,
   ) {}
 }
 
+/**
+ * Builds the tagged-PDF logical structure tree (ISO 32000-1 §14.7–14.8): a
+ * `/StructTreeRoot` over a tree of {@link StructNode}s, tied back to page
+ * marked-content via MCRs and the `/ParentTree`. A generic emitter — the
+ * structure-type mapping policy lives in the renderer. Object ids are assigned by
+ * a deterministic pre-order DFS so identical input yields byte-identical output.
+ */
 export class StructTreeBuilder {
   private readonly nodes: Array<StructNode> = [];
-  // The root logical element (the single /Document under StructTreeRoot).
+  /** The root logical element (the single `/Document` under `/StructTreeRoot`). */
   readonly root: StructNode;
 
   constructor() {
     this.root = this.create('Document', null);
   }
 
-  // Create a node of `type` as the last child of `parent` (null = a free node;
-  // only the root is created that way).
+  /**
+   * Create a node of `type` as the last child of `parent`.
+   *
+   * @param parent The parent node, or `null` for a free node (only the root is
+   *   created that way).
+   * @returns The new node.
+   */
   create(type: StructType, parent: StructNode | null): StructNode {
     const node = new StructNode(this.nodes.length, type);
     node.parent = parent;
@@ -95,29 +118,48 @@ export class StructTreeBuilder {
     return node;
   }
 
+  /**
+   * Look up a node by its id.
+   *
+   * @throws Error if no node has that id.
+   */
   node(id: number): StructNode {
     const n = this.nodes[id];
     if (!n) throw new Error(`Unknown struct node id ${id}`);
     return n;
   }
 
-  // Record that marked content `mcid` on page `pageIndex` is the content of the
-  // node `nodeId`. Called from the emit phase as MCIDs are assigned.
+  /**
+   * Record that marked content `mcid` on page `pageIndex` is the content of node
+   * `nodeId`. Called from the emit phase as MCIDs are assigned.
+   */
   addMcref(nodeId: number, pageIndex: number, mcid: number): void {
     this.node(nodeId).mcrefs.push({ pageIndex, mcid });
   }
 
-  // §14.7.4.4: an annotation's /StructParent key maps DIRECTLY to its owning
-  // StructElem in the parent tree (a scalar entry, unlike the per-page MCID
-  // arrays). The emit phase allocates keys above the page indices.
+  /**
+   * §14.7.4.4: an annotation's `/StructParent` key maps DIRECTLY to its owning
+   * `/StructElem` in the parent tree (a scalar entry, unlike the per-page MCID
+   * arrays). The emit phase allocates keys above the page indices.
+   */
   private readonly annotParents: Array<{ readonly key: number; readonly nodeId: number }> = [];
+  /**
+   * Register that annotation parent-tree key `key` resolves to node `nodeId`.
+   *
+   * @see StructTreeBuilder.annotParents
+   */
   addAnnotParent(key: number, nodeId: number): void {
     this.annotParents.push({ key, nodeId });
   }
 
-  // Emit the StructTreeRoot, every StructElem, and the ParentTree; return the
-  // StructTreeRoot ref for the catalog. Must run after all pages are added (so
-  // `pageRefs` is complete) and after every addMcref call.
+  /**
+   * Emit the `/StructTreeRoot`, every `/StructElem`, and the `/ParentTree`. Must
+   * run after all pages are added (so `pageRefs` is complete) and after every
+   * {@link StructTreeBuilder.addMcref} call.
+   *
+   * @param pageRefs The page object references, indexed by page number.
+   * @returns A reference to the `/StructTreeRoot`, for the catalog.
+   */
   emit(doc: PdfDocument, pageRefs: ReadonlyArray<PdfRef>): PdfRef {
     // Deterministic pre-order DFS → stable object-id assignment.
     const order: Array<StructNode> = [];

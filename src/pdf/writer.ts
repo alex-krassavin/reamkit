@@ -17,35 +17,66 @@ interface IndirectObject {
   readonly value: PdfValue;
 }
 
+/** Options for {@link PdfDocument.build}. */
 export interface BuildOptions {
-  // PDF header version, e.g. "1.7" (default) or "1.4" (PDF/A-1).
+  /** PDF header version, e.g. `"1.7"` (default) or `"1.4"` (PDF/A-1). */
   readonly version?: string;
-  // When true, emit a /ID array in the trailer (required by PDF/A). The two
-  // identifiers are a deterministic hash of the file body — no Date/random,
-  // so the same input always yields the same bytes.
+  /**
+   * When true, emit a `/ID` array in the trailer (required by PDF/A). The two
+   * identifiers are a deterministic hash of the file body — no `Date`/random,
+   * so the same input always yields the same bytes.
+   */
   readonly id?: boolean;
-  // The /Encrypt dictionary's ref (§7.6.2) — emitted in the trailer. The
-  // referenced object must be added AFTER encryptAll so it stays plaintext.
+  /**
+   * The `/Encrypt` dictionary's ref (§7.6.2) — emitted in the trailer. The
+   * referenced object must be added AFTER {@link PdfDocument.encryptAll} so it
+   * stays plaintext.
+   */
   readonly encrypt?: PdfRef;
 }
 
+/**
+ * Collects indirect objects and emits a complete PDF file (ISO 32000-1 §7.5):
+ * header (§7.5.2), body of indirect objects (§7.5.3), cross-reference table
+ * (§7.5.4) and trailer (§7.5.5).
+ */
 export class PdfDocument {
   private readonly objects: Array<IndirectObject> = [];
 
+  /**
+   * Append `value` as a new indirect object.
+   *
+   * @param value The object to add.
+   * @returns An indirect reference to it (generation 0).
+   */
   add(value: PdfValue): PdfRef {
     const id = this.objects.length + 1;
     this.objects.push({ id, value });
     return new PdfRef(id);
   }
 
-  // §7.6: encrypt every string and stream in every object added so far. The
-  // /Encrypt dictionary must be added after this pass (it stays plaintext).
+  /**
+   * Encrypt every string and stream in every object added so far (§7.6). The
+   * `/Encrypt` dictionary itself must be added AFTER this pass so it stays
+   * plaintext.
+   *
+   * @param fileKey The document encryption key.
+   */
   async encryptAll(fileKey: Uint8Array): Promise<void> {
     for (const obj of this.objects) {
       (obj as { value: PdfValue }).value = await encryptObjectGraph(obj.value, fileKey);
     }
   }
 
+  /**
+   * Serialize the whole document to bytes: header, body, cross-reference table
+   * and trailer.
+   *
+   * @param root    Reference to the document catalog (`/Root`).
+   * @param info    Optional reference to the `/Info` dictionary.
+   * @param options Header version, `/ID` emission, and `/Encrypt` reference.
+   * @returns The complete PDF file bytes.
+   */
   build(root: PdfRef, info?: PdfRef, options: BuildOptions = {}): Uint8Array {
     const parts: Array<Uint8Array> = [];
     const offsets = new Array<number>(this.objects.length + 1).fill(0);

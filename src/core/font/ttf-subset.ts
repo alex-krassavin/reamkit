@@ -24,6 +24,17 @@ const COMPOSITE_MORE_COMPONENTS = 0x0020;
 const COMPOSITE_WE_HAVE_AN_X_AND_Y_SCALE = 0x0040;
 const COMPOSITE_WE_HAVE_A_TWO_BY_TWO = 0x0080;
 
+/**
+ * Subset a TrueType font to the glyphs in `usedGids` (plus their composite
+ * components and GID 0). All tables are kept intact so the CIDFontType2
+ * `/CIDToGIDMap /Identity` contract holds; only `glyf`/`loca` are rebuilt, with
+ * unused glyphs zero-length.
+ *
+ * @param parsed   The parsed source font (must have `glyf` + `loca`).
+ * @param usedGids The glyph ids actually used.
+ * @returns The subset font bytes.
+ * @throws Error when the font has no `glyf`/`loca` (e.g. a CFF/OTF font).
+ */
 export function subsetTtf(parsed: ParsedTtf, usedGids: Iterable<number>): Uint8Array {
   const glyf = parsed.tables.get('glyf');
   const loca = parsed.tables.get('loca');
@@ -36,10 +47,16 @@ export function subsetTtf(parsed: ParsedTtf, usedGids: Iterable<number>): Uint8A
   return assembleSubsetTtf(parsed, newGlyf, newLoca);
 }
 
-// The glyph ids actually present in a subset for `usedGids`: the seeds, their
-// composite components (transitively), and GID 0. With Identity CID↔GID this is
-// exactly the set of CIDs present in the embedded subset, used to build the
-// PDF/A /CIDSet (ISO 19005-1 §6.3.5). Mirrors subsetTtf's own closure.
+/**
+ * The glyph ids actually present in a subset for `usedGids`: the seeds, their
+ * composite components (transitively) and GID 0. With Identity CID↔GID this is
+ * exactly the CID set of the embedded subset, used to build the PDF/A `/CIDSet`
+ * (ISO 19005-1 §6.3.5). Mirrors {@link subsetTtf}'s own closure.
+ *
+ * @param parsed   The parsed font.
+ * @param usedGids The seed glyph ids.
+ * @returns The closed set of glyph ids.
+ */
 export function glyphClosure(parsed: ParsedTtf, usedGids: Iterable<number>): Set<number> {
   const glyf = parsed.tables.get('glyf');
   if (!glyf) return new Set<number>([0, ...usedGids]);

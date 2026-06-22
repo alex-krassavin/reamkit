@@ -70,6 +70,19 @@ const CT_TABLE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.ta
 const MAIN_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
 const R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 
+/**
+ * Serialize a {@link SheetDoc} back to a `.xlsx` (E-SHEET SD1). The first writer
+ * that consumes the SpreadsheetML IR node directly (not the FlowDoc projection),
+ * so the cells keep their RAW value + style index and the SheetDoc is a stable
+ * round-trip fixpoint (SD2). Re-emits the full grid surface — values, shared
+ * strings, styles, merges, column/row geometry, the page model, conditional
+ * formatting, sparklines, table parts and embedded charts — through the core OPC
+ * writer.
+ *
+ * @param sheet The spreadsheet IR tree to write.
+ * @returns The encoded `.xlsx` bytes and any write-time losses (e.g. a chart
+ *   frame whose data could not be resolved).
+ */
 export function writeXlsx(sheet: SheetDoc): WriteResult {
   const losses: Array<Loss> = [];
 
@@ -166,6 +179,7 @@ export function writeXlsx(sheet: SheetDoc): WriteResult {
   return { bytes, losses };
 }
 
+/** The `.xlsx` {@link DocumentWriter}: a thin wrapper over {@link writeXlsx}. */
 export const xlsxWriter: DocumentWriter<SheetDoc> = {
   id: 'xlsx',
   consumes: 'sheet',

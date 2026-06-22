@@ -36,6 +36,17 @@ const SCHEME_SLOTS = new Set([
   'folHlink',
 ]);
 
+/**
+ * Parse a DrawingML theme part (ECMA-376 §20.1.6.2, `a:clrScheme`) into a
+ * `name → hex` colour map. Reads the twelve scheme slots — `dk1`/`lt1`/`dk2`/
+ * `lt2`, `accent1`–`accent6`, `hlink`/`folHlink` — taking each slot's
+ * `a:srgbClr@val` or, for a system colour, its resolved `a:sysClr@lastClr`.
+ * Unknown slots and slots with no resolvable colour are skipped.
+ *
+ * @param themeXml The raw `word/theme/theme1.xml` (or sibling) bytes, UTF-8.
+ * @returns A map keyed by slot name (`'accent1'`, …) to uppercase RRGGBB hex;
+ *          empty when no `a:clrScheme` is present.
+ */
 export function parseTheme(themeXml: Uint8Array): Map<string, string> {
   const out = new Map<string, string>();
   const tree = parser.parse(decoder.decode(themeXml)) as Array<PoNode>;

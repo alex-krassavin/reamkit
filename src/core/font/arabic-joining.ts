@@ -9,7 +9,12 @@
 // and the rarer extended letters fall back to dual-joining, which is correct for
 // the vast majority of letters.
 
+/**
+ * A character's Arabic joining class (ArabicShaping.txt): Right-, Left-,
+ * Dual-joining, join-Causing, Non-joining, or Transparent (combining marks).
+ */
 export type JoiningType = 'R' | 'L' | 'D' | 'C' | 'U' | 'T';
+/** The contextual cursive form a letter takes: isolated, initial, medial or final. */
 export type ArabicForm = 'isol' | 'init' | 'medi' | 'fina';
 
 // Right-joining letters: they connect only to the preceding letter (so they can
@@ -39,6 +44,13 @@ function isTransparentMark(cp: number): boolean {
   );
 }
 
+/**
+ * Classify a code point's Arabic {@link JoiningType}. Covers the standard Arabic
+ * block plus tatweel and the ZWJ/ZWNJ controls; everything else is non-joining.
+ *
+ * @param cp The Unicode code point.
+ * @returns Its joining type.
+ */
 export function arabicJoiningType(cp: number): JoiningType {
   if (cp === 0x0640) return 'C'; // tatweel (kashida)
   if (cp === 0x200d) return 'C'; // ZWJ
@@ -55,8 +67,15 @@ export function arabicJoiningType(cp: number): JoiningType {
 const canJoinRight = (t: JoiningType): boolean => t === 'R' || t === 'D' || t === 'C'; // toward prev
 const canJoinLeft = (t: JoiningType): boolean => t === 'L' || t === 'D' || t === 'C'; // toward next
 
-// Assign a cursive form to each code point. Non-joining characters get 'isol'
-// (their glyph is never in the positional maps, so this is a harmless default).
+/**
+ * Assign a cursive {@link ArabicForm} to each code point in a run, from the
+ * joining types of the surrounding letters (transparent marks are skipped).
+ * Non-joining characters get `'isol'` — a harmless default, since their glyph is
+ * never in the positional maps.
+ *
+ * @param cps The run's code points, in logical order.
+ * @returns The per-code-point form, parallel to `cps`.
+ */
 export function assignArabicForms(cps: ReadonlyArray<number>): Array<ArabicForm> {
   const types = cps.map(arabicJoiningType);
   const forms: Array<ArabicForm> = new Array(cps.length).fill('isol');

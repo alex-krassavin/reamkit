@@ -71,35 +71,60 @@ const RUN_CONTAINER_TAGS = new Set([
   'w:moveTo',
 ]);
 
-// Resolves a drawing relationship id to a content-addressed ResourceId —
-// supplied by the converter (which owns the OPC package and the ResourceStore).
+/**
+ * Resolves a drawing relationship id to a content-addressed `ResourceId` —
+ * supplied by the converter (which owns the OPC package and the `ResourceStore`).
+ */
 export type ImageResolver = (relId: string) => ResourceId | undefined;
+/** Resolves a `w:hyperlink` `r:id` to its external target URL. */
 export type HyperlinkResolver = (relId: string) => string | undefined;
 
-// Document-wide resolvers every nested parser needs — one context object
-// instead of threading a parameter pair through ten signatures (oop-design §8).
+/**
+ * Document-wide resolvers every nested parser needs — one context object instead
+ * of threading a parameter pair through ten signatures (oop-design §8).
+ */
 export interface ParseContext {
+  /** Resolver for theme/scheme/auto colours. */
   readonly resolveColor: ColorResolver;
+  /** Resolver for a drawing relationship id to a stored image. */
   readonly resolveImage?: ImageResolver;
-  // §17.16.22 w:hyperlink r:id → external target URL from the owning part's
-  // rels (TargetMode="External" only). Absent ⇒ links unwrap to plain text.
+  /**
+   * §17.16.22 `w:hyperlink` `r:id` → external target URL from the owning part's
+   * rels (`TargetMode="External"` only). Absent ⇒ links unwrap to plain text.
+   */
   readonly resolveHyperlink?: HyperlinkResolver;
-  // SmartArt: a data relationship id (dgm:relIds @r:dm) → the diagram's
-  // pre-rendered drawing override (its dsp:spTree), or undefined when the file
-  // ships none (E-SMARTART SA2).
+  /**
+   * SmartArt: a data relationship id (`dgm:relIds` `@r:dm`) → the diagram's
+   * pre-rendered drawing override (its `dsp:spTree`), or `undefined` when the file
+   * ships none (E-SMARTART SA2).
+   */
   readonly resolveDiagram?: (relId: string) => PoNode | undefined;
-  // Sink for graceful-degradation notices (E-SMARTART SA3): a SmartArt with no
-  // drawing override records a dropped-feature Loss rather than vanishing.
+  /**
+   * Sink for graceful-degradation notices (E-SMARTART SA3): a SmartArt with no
+   * drawing override records a dropped-feature {@link Loss} rather than vanishing.
+   */
   readonly onLoss?: (loss: Loss) => void;
-  // §17.13.4 comment ranges currently open as the body is read — a mutable set
-  // the run collector stamps onto each run (commentRangeRefs). A comment range
-  // can span paragraphs, so the state is document-level, not per-paragraph. The
-  // reference is readonly; its contents mutate during the walk (CM2c).
+  /**
+   * §17.13.4 comment ranges currently open as the body is read — a mutable set
+   * the run collector stamps onto each run (`commentRangeRefs`). A comment range
+   * can span paragraphs, so the state is document-level, not per-paragraph. The
+   * reference is readonly; its contents mutate during the walk (CM2c).
+   */
   readonly openCommentRanges?: Set<string>;
 }
 
+/** The default {@link ParseContext} — just the default colour resolver. */
 export const DEFAULT_PARSE_CONTEXT: ParseContext = { resolveColor: defaultColorResolver };
 
+/**
+ * Parse `word/document.xml` (ECMA-376 Part 1 §17) into a flat list of
+ * {@link BodyElement}, preserving the original interleaving of paragraphs and
+ * tables.
+ *
+ * @param documentXml The raw `document.xml` bytes.
+ * @param ctx         The document-wide parse context.
+ * @returns The body elements; empty when the `w:body` is absent.
+ */
 export function parseDocument(
   documentXml: Uint8Array,
   ctx: ParseContext = DEFAULT_PARSE_CONTEXT,
@@ -113,15 +138,21 @@ export function parseDocument(
 
 const HF_TYPES = new Set<HeaderFooterType>(['default', 'first', 'even']);
 
+/** The empty {@link SectionProperties} fallback (no headers/footers). */
 export const EMPTY_SECTION: SectionProperties = {
   headers: [],
   footers: [],
 };
 
-// ECMA-376 Part 1 §17.6.17 — sectPr lives as the last child of w:body and
-// describes the (final) section of the document. Returned as a single
-// SectionProperties for backward compatibility; for multi-section documents
-// the renderer reads parseSections instead.
+/**
+ * Parse the document's final section properties (ECMA-376 Part 1 §17.6.17 — the
+ * body-level `sectPr` is the last child of `w:body` and describes the final
+ * section). Returned as a single {@link SectionProperties} for backward
+ * compatibility; multi-section documents use {@link parseSections} instead.
+ *
+ * @param documentXml The raw `document.xml` bytes.
+ * @returns The final section's properties, or {@link EMPTY_SECTION} when there is none.
+ */
 export function parseSection(documentXml: Uint8Array): SectionProperties {
   const sections = parseSections(documentXml);
   if (sections.length === 0) return EMPTY_SECTION;
@@ -130,11 +161,16 @@ export function parseSection(documentXml: Uint8Array): SectionProperties {
   return sections[sections.length - 1]!.properties;
 }
 
-// ECMA-376 §17.6 — collect every sectPr (one per intermediate paragraph plus
-// the body-final one). Each Section carries the endIndex (exclusive) into the
-// body element list: section i applies to body[sections[i-1].endIndex..endIndex).
-// A document with no sectPr at all returns a single empty section spanning
-// the whole body.
+/**
+ * Collect every section in the document (ECMA-376 §17.6): one `sectPr` per
+ * intermediate paragraph plus the body-final one. Each {@link Section} carries
+ * the exclusive `endIndex` into the body-element list, so section `i` applies to
+ * `body[sections[i-1].endIndex .. endIndex)`. A document with no `sectPr` at all
+ * returns a single empty section spanning the whole body.
+ *
+ * @param documentXml The raw `document.xml` bytes.
+ * @returns The sections in document order; empty when the `w:body` is absent.
+ */
 export function parseSections(documentXml: Uint8Array): Array<Section> {
   const xml = decoder.decode(documentXml);
   const tree = parser.parse(xml) as Array<PoNode>;
@@ -265,8 +301,14 @@ function pushHeaderFooter(node: PoNode, list: Array<HeaderFooterReference>): voi
   list.push({ type, relationshipId: rId });
 }
 
-// Parses word/header*.xml or word/footer*.xml. The root is w:hdr or w:ftr,
-// and its children are the same body-element shape as the main document.
+/**
+ * Parse `word/header*.xml` or `word/footer*.xml`. The root is `w:hdr` or
+ * `w:ftr`, whose children are the same body-element shape as the main document.
+ *
+ * @param xml The raw header/footer part bytes.
+ * @param ctx The document-wide parse context.
+ * @returns The body elements; empty when neither root is found.
+ */
 export function parseHeaderFooter(
   xml: Uint8Array,
   ctx: ParseContext = DEFAULT_PARSE_CONTEXT,
@@ -277,6 +319,16 @@ export function parseHeaderFooter(
   return parseBodyElements(poChildren(root), ctx);
 }
 
+/**
+ * Parse a sequence of body-level children (`w:p`, `w:tbl`, `w:sdt`,
+ * `w:bookmarkStart`) into {@link BodyElement}s, preserving order. A lone-drawing
+ * paragraph collapses to a standalone image/shape/chart block; a block-level SDT
+ * unwraps to its content; a body-level bookmark anchors onto the next paragraph.
+ *
+ * @param children The body-level child nodes.
+ * @param ctx      The document-wide parse context.
+ * @returns The parsed body elements.
+ */
 export function parseBodyElements(
   children: ReadonlyArray<PoNode>,
   ctx: ParseContext = DEFAULT_PARSE_CONTEXT,
@@ -804,9 +856,17 @@ function elementTag(node: PoNode): string | undefined {
   return undefined;
 }
 
-// §17.11 — footnotes.xml / endnotes.xml. Returns content by id; the
-// separator / continuationSeparator / continuationNotice stubs (negative ids
-// or an explicit w:type) are skipped — the layout draws its own separator.
+/**
+ * Parse `footnotes.xml` / `endnotes.xml` (§17.11) into note content by id. The
+ * separator / continuationSeparator / continuationNotice stubs (negative ids or
+ * an explicit `w:type`) are skipped — the layout draws its own separator.
+ *
+ * @param notesXml The raw notes-part bytes.
+ * @param rootTag  The part's root element (`w:footnotes` or `w:endnotes`).
+ * @param noteTag  The per-note element (`w:footnote` or `w:endnote`).
+ * @param ctx      The document-wide parse context.
+ * @returns A map from note id to its body content.
+ */
 export function parseNotes(
   notesXml: Uint8Array,
   rootTag: 'w:footnotes' | 'w:endnotes',
@@ -870,6 +930,15 @@ function parseCommentsRaw(
   return { comments, paraIds };
 }
 
+/**
+ * Parse `word/comments.xml` (§17.13.4) into {@link Comment}s by id, each with its
+ * block content and author/initials/date attribution. Thread metadata is added
+ * separately by {@link parseCommentThreads}.
+ *
+ * @param commentsXml The raw `comments.xml` bytes.
+ * @param ctx         The document-wide parse context.
+ * @returns A map from comment id to the parsed comment.
+ */
 export function parseComments(
   commentsXml: Uint8Array,
   ctx: ParseContext = DEFAULT_PARSE_CONTEXT,
@@ -885,9 +954,15 @@ export interface CommentExtension {
   readonly done: boolean;
 }
 
-// §commentsEx (Microsoft w15) — word/commentsExtended.xml. A flat list of
-// commentEx, each keyed by a comment's paraId: paraIdParent links a reply to
-// its parent, done flags a resolved thread. Prefix-agnostic (w15 by convention).
+/**
+ * Parse `word/commentsExtended.xml` (Microsoft w15 `commentsEx`) — a flat list
+ * of `commentEx`, each keyed by a comment's `paraId`: `paraIdParent` links a
+ * reply to its parent, `done` flags a resolved thread. Prefix-agnostic (w15 by
+ * convention).
+ *
+ * @param xml The raw `commentsExtended.xml` bytes.
+ * @returns A map from `paraId` to its {@link CommentExtension}.
+ */
 export function parseCommentsExtended(xml: Uint8Array): Map<string, CommentExtension> {
   const tree = parser.parse(decoder.decode(xml)) as Array<PoNode>;
   const out = new Map<string, CommentExtension>();
@@ -935,8 +1010,16 @@ function linkCommentThreads(
   return out;
 }
 
-// Read comments with their thread metadata: comments.xml for content/attribution
-// + commentsExtended.xml (optional) for reply links and resolved flags (CM4).
+/**
+ * Read comments with their thread metadata: `comments.xml` for content /
+ * attribution plus the optional `commentsExtended.xml` for reply links and
+ * resolved flags (CM4). A reply gains `parentId`, a resolved thread gains `done`.
+ *
+ * @param commentsXml         The raw `comments.xml` bytes.
+ * @param commentsExtendedXml The raw `commentsExtended.xml` bytes, or `undefined`.
+ * @param ctx                 The document-wide parse context.
+ * @returns A map from comment id to the parsed, thread-linked comment.
+ */
 export function parseCommentThreads(
   commentsXml: Uint8Array,
   commentsExtendedXml: Uint8Array | undefined,
@@ -947,9 +1030,14 @@ export function parseCommentThreads(
   return linkCommentThreads(comments, paraIds, parseCommentsExtended(commentsExtendedXml));
 }
 
-// §people (Microsoft w15) — word/people.xml maps an author display name to a
-// presence identity (`w15:presenceInfo/@w15:userId`, usually an email). Returns
-// author → userId, used to enrich a comment's authorId. Prefix-agnostic.
+/**
+ * Parse `word/people.xml` (Microsoft w15) — maps an author display name to a
+ * presence identity (`w15:presenceInfo/@w15:userId`, usually an email), used to
+ * enrich a comment's `authorId`. Prefix-agnostic.
+ *
+ * @param xml The raw `people.xml` bytes.
+ * @returns A map from author name to userId.
+ */
 export function parsePeople(xml: Uint8Array): Map<string, string> {
   const tree = parser.parse(decoder.decode(xml)) as Array<PoNode>;
   const out = new Map<string, string>();
@@ -970,7 +1058,15 @@ export function parsePeople(xml: Uint8Array): Map<string, string> {
   return out;
 }
 
-// Attach each comment's authorId by matching its author name against people.xml.
+/**
+ * Attach each comment's `authorId` by matching its author name against the
+ * {@link parsePeople} map. Comments without a matching author pass through
+ * unchanged.
+ *
+ * @param comments The comments by id.
+ * @param people   The author → userId map from `people.xml`.
+ * @returns The comments with `authorId` filled in where resolvable.
+ */
 export function applyAuthorIds(
   comments: Map<string, Comment>,
   people: Map<string, string>,

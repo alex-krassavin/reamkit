@@ -9,15 +9,20 @@ import type { TimePeriodKind } from '@/core/spreadsheet-model';
 
 import { excelSerialFromUtcParts, excelSerialToDate } from '@/excel/number-format';
 
+/** The UTC calendar fields an Excel serial decomposes into. */
 export interface DateParts {
   readonly year: number;
-  readonly month: number; // 1-indexed
+  /** 1-indexed month (January = 1). */
+  readonly month: number;
   readonly day: number;
-  readonly dow: number; // 0 = Sunday … 6 = Saturday (Excel WEEKDAY type 1 minus 1)
+  /** Day of week, 0 = Sunday … 6 = Saturday (Excel WEEKDAY type 1 minus 1). */
+  readonly dow: number;
 }
 
-// Decompose an Excel serial into UTC calendar parts. A fractional serial is
-// floored to its day first (the calendar date is time-of-day independent).
+/**
+ * Decompose an Excel serial into UTC calendar parts. A fractional serial is
+ * floored to its day first (the calendar date is time-of-day independent).
+ */
 export function serialToParts(serial: number, date1904: boolean): DateParts {
   const d = excelSerialToDate(Math.floor(serial), date1904);
   return {
@@ -28,16 +33,20 @@ export function serialToParts(serial: number, date1904: boolean): DateParts {
   };
 }
 
-// A UTC Date's calendar day → integer Excel serial. Reads the Date's UTC date
-// parts (not its instant), so a caller passing `new Date('2026-06-17')`
-// (UTC midnight) maps to that day regardless of the host time zone.
+/**
+ * A UTC Date's calendar day → integer Excel serial. Reads the Date's UTC date
+ * parts (not its instant), so a caller passing `new Date('2026-06-17')`
+ * (UTC midnight) maps to that day regardless of the host time zone.
+ */
 export function serialFromDate(d: Date, date1904: boolean): number {
   return excelSerialFromUtcParts(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), date1904);
 }
 
-// (year, month1, day) → integer serial. Excel's DATE rolls out-of-range months
-// and days (DATE(2024,13,1) = 2025-01-01); Date.UTC already normalises, so this
-// inherits the same behaviour.
+/**
+ * `(year, month1, day)` → integer serial. Excel's `DATE` rolls out-of-range
+ * months and days (`DATE(2024,13,1)` = 2025-01-01); `Date.UTC` already
+ * normalises, so this inherits the same behaviour.
+ */
 export function serialFromYmd(
   year: number,
   month1: number,
@@ -47,10 +56,12 @@ export function serialFromYmd(
   return excelSerialFromUtcParts(year, month1 - 1, day, date1904);
 }
 
-// §18.3.1.10 timePeriod — does a cell's date fall in the window relative to
-// `nowSerial` (the injected reference day)? Windows match Excel's built-in rules:
-// the week runs Sunday..Saturday; "last 7 days" is today and the previous six.
-// Both serials are floored to whole days before comparison.
+/**
+ * §18.3.1.10 `timePeriod` — does a cell's date fall in the window relative to
+ * `nowSerial` (the injected reference day)? Windows match Excel's built-in
+ * rules: the week runs Sunday..Saturday; "last 7 days" is today and the previous
+ * six. Both serials are floored to whole days before comparison.
+ */
 export function timePeriodMatches(
   period: TimePeriodKind,
   cellSerial: number,

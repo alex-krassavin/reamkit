@@ -22,24 +22,38 @@ const parser = new XMLParser({
   removeNSPrefix: true,
 });
 
+/** §18.2.19 `<sheet name sheetId r:id>` — one worksheet reference in tab order. */
 export interface SheetReference {
+  /** The sheet (tab) display name. */
   readonly name: string;
+  /** The workbook-internal sheet id (`@sheetId`); `''` when absent. */
   readonly sheetId: string;
+  /** The relationship id (`r:id`) resolving to the sheet's worksheet part. */
   readonly relationshipId: string;
 }
 
 // DefinedName (the workbook's named ranges — print areas/titles ride these)
 // now lives in @/core/spreadsheet-model; imported above.
 
+/** The parsed `workbook.xml`: the ordered sheet list, the date epoch and defined names. */
 export interface ParsedWorkbook {
+  /** The worksheet references in tab order. */
   readonly sheets: ReadonlyArray<SheetReference>;
-  // ECMA-376 Part 1 §18.2.28 — <workbookPr date1904="1"/>. When true the
-  // serial-to-date conversion uses 1904-01-01 as day 0 instead of the
-  // standard 1899-12-30 epoch (legacy Mac Excel files).
+  /**
+   * ECMA-376 Part 1 §18.2.28 — `<workbookPr date1904="1"/>`. When true the
+   * serial-to-date conversion uses 1904-01-01 as day 0 instead of the
+   * standard 1899-12-30 epoch (legacy Mac Excel files).
+   */
   readonly date1904: boolean;
+  /** §18.2.5 workbook defined names (print areas/titles, named ranges). */
   readonly definedNames: ReadonlyArray<DefinedName>;
 }
 
+/**
+ * Parse `workbook.xml` into its ordered {@link SheetReference} list plus the date
+ * epoch and {@link ParsedWorkbook.definedNames}. A sheet entry missing a name or
+ * relationship id is skipped; a malformed root yields an empty workbook.
+ */
 export function parseWorkbook(data: Uint8Array): ParsedWorkbook {
   const xml = decoder.decode(data);
   const tree = parser.parse(xml) as Record<string, unknown>;

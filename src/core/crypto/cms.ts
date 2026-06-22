@@ -26,27 +26,40 @@ const ecdsaAlgId = (): Uint8Array => der.seq(der.oid(OID.ecdsaWithSHA256));
 const attribute = (oidStr: string, value: Uint8Array): Uint8Array =>
   der.seq(der.oid(oidStr), der.set(value));
 
+/** Inputs to {@link buildPkcs7Detached} for a detached PDF signature. */
 export interface CmsParams {
-  // Signer's X.509 certificate (DER). Included in the CMS so a verifier can
-  // build the trust path; its issuer + serial identify the signer.
+  /**
+   * Signer's X.509 certificate (DER). Included in the CMS so a verifier can
+   * build the trust path; its issuer + serial identify the signer.
+   */
   readonly certificate: Uint8Array;
-  // Optional additional chain certificates (DER), e.g. intermediates.
+  /** Optional additional chain certificates (DER), e.g. intermediates. */
   readonly extraCertificates?: ReadonlyArray<Uint8Array>;
-  // SHA-256 digest of the signed PDF byte range (the detached content).
+  /** SHA-256 digest of the signed PDF byte range (the detached content). */
   readonly messageDigest: Uint8Array;
   readonly signingTime: Date;
-  // Public-key algorithm of the signer's key (default 'rsa'). Selects the
-  // SignerInfo signatureAlgorithm (rsaEncryption vs ecdsa-with-SHA256); the
-  // digest stays SHA-256 either way.
+  /**
+   * Public-key algorithm of the signer's key (default `'rsa'`). Selects the
+   * `SignerInfo` signatureAlgorithm (`rsaEncryption` vs `ecdsa-with-SHA256`); the
+   * digest stays SHA-256 either way.
+   */
   readonly signatureAlgorithm?: 'rsa' | 'ecdsa';
-  // Signs the DER of the signedAttrs over SHA-256. For 'rsa' this is
-  // RSASSA-PKCS1-v1_5; for 'ecdsa' it must return a DER Ecdsa-Sig-Value
-  // (SEQUENCE { r INTEGER, s INTEGER }), not the raw r‖s.
+  /**
+   * Signs the DER of the `signedAttrs` over SHA-256. For `'rsa'` this is
+   * RSASSA-PKCS1-v1_5; for `'ecdsa'` it must return a DER `Ecdsa-Sig-Value`
+   * (`SEQUENCE { r INTEGER, s INTEGER }`), not the raw r‖s.
+   */
   readonly sign: (signedAttrsDer: Uint8Array) => Promise<Uint8Array>;
 }
 
-// Build a complete CMS ContentInfo (id-signedData) wrapping a single SignerInfo
-// with authenticated attributes (contentType, messageDigest, signingTime).
+/**
+ * Build a complete CMS `ContentInfo` (`id-signedData`) wrapping a single
+ * `SignerInfo` with authenticated attributes (`contentType`, `messageDigest`,
+ * `signingTime`). Detached: the signed PDF bytes are not carried in the CMS.
+ *
+ * @param params The certificate(s), message digest, signing time and sign callback.
+ * @returns The DER-encoded PKCS#7 blob for the signature dictionary's `/Contents`.
+ */
 export async function buildPkcs7Detached(params: CmsParams): Promise<Uint8Array> {
   const { issuer, serial } = der.certIssuerAndSerial(params.certificate);
 

@@ -11,6 +11,17 @@ import { poChildren, poTag } from '@/core/po-helpers';
 const ATTRS_KEY = ':@';
 const TEXT_KEY = '#text';
 
+/**
+ * Convert one `preserveOrder` element ({@link PoNode}) into the flat object shape
+ * `fast-xml-parser` produces *without* `preserveOrder`, so the flat-tree property
+ * parsers (`run-properties.ts`, `paragraph-properties.ts`) can consume it unchanged.
+ *
+ * Attributes are flattened to `@_`-prefixed keys, text nodes concatenate into
+ * `#text`, and repeated child tags collapse to an array under the tag name.
+ *
+ * @param node The PO element to flatten; `undefined` yields an empty object.
+ * @returns The flat `{ "@_w:val": …, "w:b": {…}, "w:r": [{…}], "#text": "…" }` shape.
+ */
 export function poElementToFlat(node: PoNode | undefined): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (!node) return out;

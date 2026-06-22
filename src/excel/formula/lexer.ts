@@ -5,6 +5,7 @@
 // Whitespace separates tokens but is otherwise dropped (the space intersection
 // operator is not supported — irrelevant for conditional-format expressions).
 
+/** The lexical categories the {@link tokenize} pass emits. */
 export type TokenKind =
   | 'num'
   | 'str'
@@ -14,6 +15,7 @@ export type TokenKind =
   | 'op' // + - * / ^ & = <> < > <= >= % : ! ( ) ,
   | 'eof';
 
+/** One token: its {@link TokenKind} and the matched source text. */
 export interface Token {
   readonly kind: TokenKind;
   readonly text: string;
@@ -34,6 +36,7 @@ const KNOWN_ERRORS: ReadonlySet<string> = new Set([
   '#N/A',
 ]);
 
+/** Thrown when the source cannot be tokenized (bad character, over-long input). */
 export class LexError extends Error {}
 
 function isDigit(ch: string): boolean {
@@ -48,6 +51,15 @@ function isWordPart(ch: string): boolean {
   return isWordStart(ch) || isDigit(ch) || ch === '.';
 }
 
+/**
+ * Tokenize a formula string into a flat token stream terminated by an `eof`
+ * token. Whitespace separates tokens but is otherwise dropped.
+ *
+ * @param src The formula source.
+ * @returns The token list, ending with an `eof` token.
+ * @throws LexError when `src` exceeds the source cap or holds an unexpected
+ *   character / bad error literal.
+ */
 export function tokenize(src: string): Array<Token> {
   if (src.length > MAX_SOURCE) throw new LexError('formula too long');
   const out: Array<Token> = [];

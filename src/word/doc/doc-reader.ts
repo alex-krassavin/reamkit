@@ -187,6 +187,17 @@ const DOC_ENCRYPTED_LOSS: Loss = {
   detail: 'legacy .doc is encrypted/obfuscated — its text cannot be read',
 };
 
+/**
+ * Read a legacy Word 97–2003 `.doc` (DOC-1..11) into the same {@link FlowDoc} the
+ * OOXML docx reader produces: paragraphs of formatted runs, tables (column widths,
+ * cell borders, vertical merges, shading), inline images, list items, the first
+ * section's page size and the section's headers/footers. The text + formatting is
+ * read; drawing shapes / text boxes and comments are not, so a `degraded` (or
+ * `dropped`, for an encrypted file) {@link Loss} is reported.
+ *
+ * @param bytes The `.doc` (OLE2/CFB) bytes.
+ * @returns The projected {@link FlowDoc} and the read loss(es).
+ */
 export function readDoc(bytes: Uint8Array): ReadResult<FlowDoc> {
   const content = extractDocContent(bytes);
   const resources = new ResourceStore();
@@ -570,6 +581,11 @@ function alignmentFromJc(jc: number): Alignment | undefined {
   }
 }
 
+/**
+ * The {@link DocumentReader} for legacy `.doc`: sniffs a Word 97–2003 binary (a
+ * CFB with a `WordDocument` stream) and reads it via {@link readDoc} into a
+ * {@link FlowDoc}.
+ */
 export const docReader: DocumentReader<FlowDoc> = {
   id: 'doc',
   produces: 'flow',

@@ -18,14 +18,16 @@ import { bidiClass } from '@/core/bidi/char-types';
 
 const MAX_DEPTH = 125;
 
+/** Base paragraph direction: explicit `'ltr'`/`'rtl'`, or `'auto'` to derive it from the first strong character (P2/P3). */
 export type Direction = 'ltr' | 'rtl' | 'auto';
 
+/** The result of {@link computeBidi}: per-code-point embedding levels, the paragraph base level, and the final working types. */
 export interface BidiResult {
-  // One entry per input code point.
+  /** One entry per input code point. */
   readonly levels: ReadonlyArray<number>;
-  // The resolved paragraph embedding level (0 = LTR, 1 = RTL).
+  /** The resolved paragraph embedding level (0 = LTR, 1 = RTL). */
   readonly paragraphLevel: number;
-  // Working types after all resolution (useful for tests / debugging).
+  /** Working types after all resolution (useful for tests / debugging). */
   readonly types: ReadonlyArray<BidiClass>;
 }
 
@@ -65,6 +67,19 @@ interface StatusEntry {
   readonly isolate: boolean;
 }
 
+/**
+ * Run the full UAX #9 Bidirectional Algorithm over a sequence of code points and
+ * return the resolved embedding levels. Applies, in order: P2/P3 (paragraph
+ * level), X1–X8 (explicit levels & directions, including isolates), X9 (remove
+ * explicit format/BN chars from rule processing), X10/BD13 (isolating run
+ * sequences), W1–W7, N0–N2, I1–I2 and L1. L2 reordering is left to the caller
+ * via {@link reorderVisual}.
+ *
+ * @param codePoints The paragraph's code points, in logical order.
+ * @param dir        The base direction; `'auto'` derives the paragraph level from
+ *                   the first strong character.
+ * @returns The {@link BidiResult} (levels, paragraph level, final working types).
+ */
 export function computeBidi(codePoints: ReadonlyArray<number>, dir: Direction): BidiResult {
   const n = codePoints.length;
   const origTypes: Array<BidiClass> = new Array(n);
@@ -632,10 +647,14 @@ function applyL1(
   }
 }
 
-// ---- L2 ----
-// Given the resolved levels for a (sub)range, return the visual order as a
-// permutation `visual[k] = logical index`. Reverses contiguous runs from the
-// highest level down to the lowest odd level.
+/**
+ * Rule L2 — given the resolved levels for a (sub)range, return the visual order
+ * as a permutation `visual[k] = logical index`. Reverses contiguous runs from the
+ * highest level down to the lowest odd level.
+ *
+ * @param levels One resolved embedding level per position, in logical order.
+ * @returns The visual order as a permutation where `result[k]` is the logical index at visual position `k`.
+ */
 export function reorderVisual(levels: ReadonlyArray<number>): Array<number> {
   const n = levels.length;
   const order = Array.from({ length: n }, (_, i) => i);
