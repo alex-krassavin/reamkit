@@ -110,8 +110,10 @@ h1#_top,
 }
 
 /* ---- Header ---- */
+/* No border-bottom here: Starlight already gives `.header` one (gray-6 → our tan
+   --rk-border), and `.header` matches both the outer <header> and the inner
+   layout <div>, so adding it again drew a doubled line. */
 .header {
-  border-bottom: 1px solid var(--rk-border);
   backdrop-filter: blur(10px);
 }
 
@@ -139,15 +141,28 @@ site-search button[data-open-modal] {
 .header .right-group a[href^='mailto:'] {
   display: none;
 }
+/* Starlight draws a separator after the social icons (before the theme toggle,
+   which the design hides) — drop it so only the divider before GitHub remains. */
+.header .social-icons::after {
+  display: none;
+}
 .header .right-group a[href*='github.com'] {
+  display: inline-flex;
+  align-items: center;
   width: auto;
   height: auto;
   gap: 7px;
   padding: 7px 9px;
   border-radius: 7px;
   font-size: 13.5px;
+  line-height: 1;
   font-weight: 500;
   color: #4a4232;
+  text-decoration: none;
+}
+.header .right-group a[href*='github.com'] svg {
+  width: 17px;
+  height: 17px;
 }
 .header .right-group a[href*='github.com']:hover {
   background: var(--rk-hover);
