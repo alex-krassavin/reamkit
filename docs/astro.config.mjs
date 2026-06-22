@@ -18,6 +18,7 @@ export default defineConfig({
       components: {
         SiteTitle: './src/components/SiteTitle.astro',
         Sidebar: './src/components/Sidebar.astro',
+        SocialIcons: './src/components/SocialIcons.astro',
       },
       head: [
         { tag: 'link', attrs: { rel: 'preconnect', href: 'https://fonts.googleapis.com' } },

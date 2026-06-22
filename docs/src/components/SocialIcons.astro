@@ -1,0 +1,30 @@
+---
+/**
+ * Replaces Starlight's SocialIcons so the external profile links (GitHub and
+ * the author's LinkedIn) open in a new tab. Mirrors Starlight's own markup; the
+ * mailto: email link stays in the same tab.
+ */
+import config from 'virtual:starlight/user-config';
+import { Icon } from '@astrojs/starlight/components';
+
+const links = config.social ?? [];
+const isExternal = (href: string) => /^https?:\/\//.test(href);
+---
+
+{
+  links.length > 0 && (
+    <span class="social-icons">
+      {links.map(({ href, icon, label }) => (
+        <a
+          href={href}
+          rel={isExternal(href) ? 'me noopener noreferrer' : 'me'}
+          target={isExternal(href) ? '_blank' : undefined}
+          class="sl-flex"
+        >
+          <span class="sr-only">{label}</span>
+          <Icon name={icon} />
+        </a>
+      ))}
+    </span>
+  )
+}
