@@ -1,0 +1,241 @@
+/* Reamkit Docs — warm-paper theme (from the Claude Design handoff).
+   Themes Starlight to the design: IBM Plex type, a paper/terracotta palette, and
+   restyled sidebar, table of contents, cards, inline code and search. The design
+   is light-only, so the palette is forced regardless of the theme toggle (which
+   is hidden below). */
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap');
+
+:root {
+  --sl-font: 'IBM Plex Sans', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --sl-font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Raw design tokens (reused by the home page + component overrides). */
+  --rk-paper: #fbfaf7;
+  --rk-ink: #221c13;
+  --rk-terra: #c2632b;
+  --rk-terra-deep: #a8511f;
+  --rk-terra-text: #8a4416;
+  --rk-soft: #f3efe6;
+  --rk-soft-2: #f4e6d4;
+  --rk-hover: #eee5d4;
+  --rk-card: #ffffff;
+  --rk-border: #e3d8c4;
+  --rk-border-card: #e8decb;
+  --rk-border-soft: #e6dcc9;
+  --rk-muted: #6e6450;
+  --rk-muted-2: #8a7c64;
+  --rk-label: #a4977c;
+  --rk-serif: 'IBM Plex Serif', Georgia, 'Times New Roman', serif;
+  --rk-code-bg: #211c15;
+  --rk-code-fg: #ece3d2;
+  --rk-code-accent: #f1c99a;
+  --rk-shadow-card: 0 1px 0 #f0e8d7, 0 12px 30px -24px rgba(70, 50, 20, 0.35);
+}
+
+/* Force the paper palette on every theme state — the design has no dark mode. */
+:root,
+:root[data-theme='light'],
+:root[data-theme='dark'] {
+  color-scheme: light;
+
+  --sl-color-accent-low: #f4e6d4;
+  --sl-color-accent: #c2632b;
+  --sl-color-accent-high: #8a4416;
+
+  --sl-color-white: #221c13; /* strongest text / headings */
+  --sl-color-gray-1: #2c2518;
+  --sl-color-gray-2: #3f3829;
+  --sl-color-gray-3: #6e6450;
+  --sl-color-gray-4: #8a7c64;
+  --sl-color-gray-5: #a4977c;
+  --sl-color-gray-6: #e3d8c4;
+  --sl-color-gray-7: #f0e8d7;
+  --sl-color-black: #fbfaf7; /* page background */
+
+  --sl-color-text: #3f3829;
+  --sl-color-text-accent: #c2632b;
+  --sl-color-text-invert: #ffffff;
+  --sl-color-bg: #fbfaf7;
+  --sl-color-bg-nav: rgba(251, 250, 247, 0.9);
+  --sl-color-bg-sidebar: #fbfaf7;
+  --sl-color-bg-inline-code: #f4e7d6;
+  --sl-color-bg-accent: #c2632b;
+  --sl-color-hairline: #e3d8c4;
+  --sl-color-hairline-light: #ebe1cf;
+  --sl-color-hairline-shade: #e3d8c4;
+}
+
+::selection {
+  background: #f1d6b6;
+  color: #221c13;
+}
+
+/* ---- Typography ---- */
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3,
+.sl-markdown-content h4,
+h1#_top,
+.content-panel h1,
+:is(h1, h2, h3).heading {
+  font-family: var(--rk-serif);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+/* The big page title. */
+.content-panel h1 {
+  letter-spacing: -0.02em;
+}
+
+/* Accent bar before content H2s, echoing the design's article headings. */
+.sl-markdown-content > h2 {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-top: 2.2rem;
+}
+.sl-markdown-content > h2::before {
+  content: '';
+  flex: none;
+  width: 7px;
+  height: 18px;
+  border-radius: 2px;
+  background: var(--rk-terra);
+}
+/* Don't let Starlight's anchor link offset the flex row. */
+.sl-markdown-content > h2 > a.sl-anchor-link {
+  margin-left: 4px;
+}
+
+/* ---- Header ---- */
+.header {
+  border-bottom: 1px solid var(--rk-border);
+  backdrop-filter: blur(10px);
+}
+
+/* ---- Sidebar nav: rounded pills with a soft active background ---- */
+#starlight__sidebar {
+  border-inline-end: 1px solid var(--rk-border);
+}
+.sidebar-content a {
+  border-radius: 8px;
+  font-size: 14px;
+  padding: 8px 12px;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+.sidebar-content a:hover {
+  background: var(--rk-hover);
+  color: var(--rk-ink);
+}
+.sidebar-content a[aria-current='page'],
+.sidebar-content a[aria-current='page']:hover {
+  background: var(--rk-soft-2);
+  color: var(--rk-ink);
+  font-weight: 500;
+}
+.sidebar-content .group-label span {
+  font-family: var(--sl-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--rk-label);
+  font-weight: 500;
+}
+
+/* ---- Right-hand table of contents: left accent bar ---- */
+starlight-toc a {
+  border-inline-start: 2px solid var(--rk-border-soft);
+  padding-block: 6px;
+  color: var(--rk-muted);
+  font-size: 13.5px;
+}
+starlight-toc a[aria-current='true'],
+starlight-toc a:hover {
+  border-inline-start-color: var(--rk-terra);
+  color: var(--rk-terra);
+}
+.right-sidebar h2,
+mobile-starlight-toc .toggle {
+  font-family: var(--sl-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--rk-label);
+}
+
+/* ---- Inline code ---- */
+.sl-markdown-content code:not(:where(.expressive-code *)) {
+  font-size: 0.86em;
+  background: #f4e7d6;
+  color: var(--rk-terra-text);
+  border: 1px solid #ecdfc9;
+  border-radius: 5px;
+  padding: 0.1em 0.4em;
+}
+
+/* ---- Search button ---- */
+site-search button[data-open-modal] {
+  background: var(--rk-soft);
+  border: 1px solid var(--rk-border);
+  border-radius: 8px;
+  color: var(--rk-muted-2);
+}
+site-search button[data-open-modal]:hover {
+  border-color: var(--rk-terra);
+  color: var(--rk-muted);
+}
+site-search button[data-open-modal] kbd {
+  font-family: var(--sl-font-mono);
+  background: transparent;
+  border: 1px solid #e0d4be;
+  color: #a89a80;
+}
+
+/* ---- Cards (Starlight <Card> on inner pages) ---- */
+.card {
+  background: var(--rk-card);
+  border: 1px solid var(--rk-border-card);
+  border-radius: 13px;
+  box-shadow: var(--rk-shadow-card);
+}
+.card .icon {
+  color: var(--rk-terra);
+  background: var(--rk-soft-2);
+  border: 1px solid #ead7be;
+  border-radius: 10px;
+  padding: 0.4em;
+}
+.card .title {
+  font-family: var(--rk-serif);
+  font-weight: 600;
+}
+
+/* ---- Buttons / links / asides accent ---- */
+.sl-markdown-content a:not(:where(.not-content *)) {
+  color: var(--rk-terra);
+  text-underline-offset: 2px;
+}
+
+/* ---- Hide the theme toggle (light-only design) ---- */
+starlight-theme-select,
+.right-group .social-icons + starlight-theme-select {
+  display: none !important;
+}
+
+/* ---- Scrollbars ---- */
+* {
+  scrollbar-color: #e0d6c4 var(--rk-paper);
+}
+*::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #e0d6c4;
+  border-radius: 7px;
+  border: 3px solid var(--rk-paper);
+}

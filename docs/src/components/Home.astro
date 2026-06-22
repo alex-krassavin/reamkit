@@ -1,0 +1,559 @@
+---
+/**
+ * Reamkit docs home — the hero, the reads → Ream.parse() → writes diagram, and
+ * the feature cards, recreated from the Claude Design handoff. Rendered inside
+ * Starlight's splash template (index.mdx).
+ */
+
+const FMT = {
+  word: '#2b579a',
+  excel: '#1f7244',
+  ppt: '#c43e1c',
+  pdf: '#c8341f',
+  svg: '#7a4db8',
+  html: '#e36209',
+  legacy: '#9a8d74',
+};
+
+const inputs = [
+  ['docx', 'word'],
+  ['xlsx', 'excel'],
+  ['pptx', 'ppt'],
+  ['pdf', 'pdf'],
+  ['doc', 'legacy'],
+  ['xls', 'legacy'],
+  ['ppt', 'legacy'],
+] as const;
+
+const outputs = [
+  ['pdf', 'pdf'],
+  ['svg', 'svg'],
+  ['html', 'html'],
+  ['docx', 'word'],
+  ['xlsx', 'excel'],
+] as const;
+
+const features = [
+  {
+    k: 'spec',
+    title: 'From the spec',
+    body: 'Built directly from ECMA-376 (OOXML) and ISO 32000 / 19005 (PDF / PDF/A) — not a wrapper around LibreOffice, headless Office, or any commercial SDK.',
+  },
+  {
+    k: 'browser',
+    title: 'Browser-first',
+    body: 'Pure TypeScript on Uint8Array in and Uint8Array out — zero node:* imports on the conversion path. The same code runs in the browser, Node, serverless and edge.',
+  },
+  {
+    k: 'formats',
+    title: 'Seven formats in',
+    body: 'The OOXML trio plus .pdf and the legacy binary .doc / .xls / .ppt (97–2003). DrawingML shapes, charts and OfficeMath throughout.',
+  },
+  {
+    k: 'type',
+    title: 'Real typography',
+    body: 'Type0 + CIDFontType2 embedding with subsetting, Knuth–Plass line breaking, Liang hyphenation, OpenType ligatures and kerning, BiDi and Arabic joining.',
+  },
+  {
+    k: 'check',
+    title: 'Compliant PDF',
+    body: 'PDF/A-1/2/3 (a/b/u) and PDF/UA-1 — all veraPDF-validated — plus tagged PDF, digital signatures and AES-256 encryption.',
+  },
+  {
+    k: 'rocket',
+    title: 'One parse, any target',
+    body: 'Ream.parse(bytes) reads once into a format-neutral interlayer; convert renders PDF, SVG, HTML, DOCX or XLSX from it. Formats plug in as adapters.',
+  },
+];
+
+const ICONS: Record<string, string> = {
+  spec: '<path d="M12 5C10 3.6 6.5 3.6 4 4.6V19c2.5-1 6-1 8 .5 2-1.5 5.5-1.5 8-.5V4.6C17.5 3.6 14 3.6 12 5z"/><path d="M12 5v14.5"/>',
+  browser: '<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M3 8h18"/><path d="M8 20h8"/>',
+  formats: '<rect x="8" y="3" width="11" height="15" rx="2"/><path d="M5 6.5V19a2 2 0 0 0 2 2h9"/>',
+  type: '<path d="M5 19L11 5h2l6 14"/><path d="M7.6 14h8.8"/>',
+  check: '<path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/>',
+  rocket:
+    '<path d="M9 15c-1.2 1-1.6 4.2-1.6 4.2s3.2-.4 4.2-1.6"/><path d="M9.5 15.5l-1-1c1-5 5-9.5 9.5-9.5 0 4.5-4.5 8.5-9.5 9.5z"/><circle cx="14.5" cy="9.5" r="1.1"/>',
+};
+---
+
+<div class="rk-home">
+  <!-- hero -->
+  <section class="rk-hero">
+    <div class="rk-tags">
+      <span class="rk-tag rk-tag--mit">MIT</span>
+      <span class="rk-tag">TypeScript</span>
+      <span class="rk-tag">Browser · Node · Edge</span>
+    </div>
+    <h1 class="rk-h1">Read any office document.<br /><span>Convert it to anything.</span></h1>
+    <p class="rk-lede">
+      Ream parses Word, Excel, PowerPoint and PDF — including the legacy <code
+        >.doc / .xls / .ppt</code
+      > — and writes PDF, SVG, HTML, DOCX or XLSX. In the browser, straight from the ECMA-376 and ISO
+      32000 specifications. No LibreOffice, no headless Office, no commercial SDK.
+    </p>
+    <div class="rk-cta">
+      <a class="rk-btn rk-btn--primary" href="/guides/getting-started/">
+        Getting started
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+      </a>
+      <a class="rk-btn" href="https://github.com/alex-krassavin/reamkit" target="_blank" rel="noopener">View on GitHub</a>
+      <a class="rk-mail" href="mailto:info@reamkit.dev">info@reamkit.dev</a>
+    </div>
+  </section>
+
+  <!-- conversion diagram -->
+  <section class="rk-flow">
+    <div class="rk-panel">
+      <div class="rk-panel-label">Reads · seven formats in</div>
+      <div class="rk-chips">
+        {
+          inputs.map(([ext, fam]) => (
+            <span class="rk-chip">
+              <span class="rk-dot" style={`background:${FMT[fam]}`} />.{ext}
+            </span>
+          ))
+        }
+      </div>
+    </div>
+
+    <div class="rk-arrow">
+      <span class="rk-dash"></span>
+      <div class="rk-parse">
+        <span class="rk-ring"></span>
+        <div class="rk-parse-box">
+          <span class="rk-parse-fn">Ream.parse()</span>
+          <span class="rk-parse-sub">→ FlowDoc</span>
+        </div>
+      </div>
+      <span class="rk-dash"></span>
+    </div>
+
+    <div class="rk-panel">
+      <div class="rk-panel-label">Writes · five formats out</div>
+      <div class="rk-chips">
+        {
+          outputs.map(([ext, fam]) => (
+            <span class="rk-chip">
+              <span class="rk-dot" style={`background:${FMT[fam]}`} />.{ext}
+            </span>
+          ))
+        }
+      </div>
+    </div>
+  </section>
+
+  <!-- features -->
+  <section class="rk-features">
+    <h2 class="rk-h2">Built from the spec, in the browser</h2>
+    <p class="rk-sub">One parse, any target — the architecture in six pieces.</p>
+    <div class="rk-grid">
+      {
+        features.map((f) => (
+          <article class="rk-fcard">
+            <div class="rk-ficon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" set:html={ICONS[f.k]} />
+            </div>
+            <h3 class="rk-ftitle">{f.title}</h3>
+            <p class="rk-fbody">{f.body}</p>
+          </article>
+        ))
+      }
+    </div>
+  </section>
+
+  <!-- closing -->
+  <section class="rk-closing">
+    <span>
+      Questions, bug reports or collaboration — <a href="mailto:info@reamkit.dev">info@reamkit.dev</a>
+    </span>
+    <span class="rk-built">Built from ECMA-376 &amp; ISO 32000</span>
+  </section>
+</div>
+
+<style>
+  .rk-home {
+    --paper: #fbfaf7;
+    --ink: #221c13;
+    --terra: #c2632b;
+    --soft: #f3efe6;
+    --soft2: #f4e6d4;
+    --bcard: #e8decb;
+    --bsoft: #e6dcc9;
+    --serif: 'IBM Plex Serif', Georgia, serif;
+    --mono: 'IBM Plex Mono', ui-monospace, monospace;
+    color: var(--ink);
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 0 clamp(20px, 5vw, 56px);
+  }
+  .rk-home :global(code) {
+    font-family: var(--mono);
+    font-size: 0.86em;
+  }
+
+  /* hero */
+  .rk-hero {
+    padding: 48px 0 8px;
+  }
+  .rk-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 22px;
+    animation: rkRise 0.5s ease both;
+  }
+  .rk-tag {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    color: var(--muted, #6e6450);
+    background: var(--soft);
+    border: 1px solid var(--bsoft);
+    border-radius: 6px;
+    padding: 4px 9px;
+  }
+  .rk-tag--mit {
+    color: #8a4416;
+    background: var(--soft2);
+    border-color: #ead7be;
+  }
+  .rk-h1 {
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: clamp(38px, 5.2vw, 62px);
+    line-height: 1.03;
+    letter-spacing: -0.022em;
+    margin: 0 0 22px;
+    max-width: 880px;
+    text-wrap: balance;
+    animation: rkRise 0.5s ease 0.05s both;
+  }
+  .rk-h1 span {
+    color: var(--terra);
+  }
+  .rk-lede {
+    font-size: 19px;
+    line-height: 1.6;
+    color: #5a513f;
+    max-width: 660px;
+    margin: 0 0 30px;
+    text-wrap: pretty;
+    animation: rkRise 0.5s ease 0.1s both;
+  }
+  .rk-cta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+    animation: rkRise 0.5s ease 0.15s both;
+  }
+  .rk-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    text-decoration: none;
+    font-size: 15px;
+    font-weight: 500;
+    border-radius: 9px;
+    padding: 12px 18px;
+    background: var(--soft);
+    color: #3a3327;
+    border: 1px solid #dcd0ba;
+    transition:
+      border-color 0.15s ease,
+      color 0.15s ease,
+      background 0.15s ease;
+  }
+  .rk-btn:hover {
+    border-color: var(--terra);
+    color: var(--terra);
+  }
+  .rk-btn--primary {
+    background: var(--terra);
+    color: #fff;
+    font-weight: 600;
+    border: none;
+    padding: 12px 20px;
+    box-shadow: 0 10px 22px -10px rgba(194, 99, 43, 0.7);
+  }
+  .rk-btn--primary:hover {
+    background: #a8511f;
+    color: #fff;
+  }
+  .rk-mail {
+    color: #8a7c64;
+    text-decoration: none;
+    font-size: 14px;
+    font-family: var(--mono);
+    padding: 12px 8px;
+  }
+  .rk-mail:hover {
+    color: var(--terra);
+  }
+
+  /* diagram */
+  .rk-flow {
+    display: flex;
+    align-items: stretch;
+    gap: 14px;
+    flex-wrap: wrap;
+    padding: 34px 0 8px;
+    animation: rkRise 0.6s ease 0.2s both;
+  }
+  .rk-panel {
+    flex: 1;
+    min-width: 280px;
+    background: #fff;
+    border: 1px solid var(--bcard);
+    border-radius: 12px;
+    padding: 15px 16px 17px;
+    box-shadow:
+      0 1px 0 #f0e8d7,
+      0 16px 34px -26px rgba(70, 50, 20, 0.4);
+  }
+  .rk-panel-label {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+    color: #a4977c;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+  .rk-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+  }
+  .rk-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: #3a3327;
+    background: var(--soft);
+    border: 1px solid var(--bsoft);
+    border-radius: 7px;
+    padding: 5px 9px;
+  }
+  .rk-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+  }
+  .rk-arrow {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    padding: 0 4px;
+  }
+  .rk-dash {
+    width: 46px;
+    height: 2px;
+    background: linear-gradient(90deg, var(--terra) 0 50%, transparent 50% 100%);
+    background-size: 14px 2px;
+    animation: rkDash 1s linear infinite;
+  }
+  .rk-parse {
+    position: relative;
+    animation: rkFloat 4.5s ease-in-out infinite;
+  }
+  .rk-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 11px;
+    background: var(--terra);
+    animation: rkPulse 2.6s ease-out infinite;
+  }
+  .rk-parse-box {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    background: #211c15;
+    color: #fff;
+    border-radius: 11px;
+    padding: 11px 16px;
+    box-shadow: 0 14px 30px -14px rgba(40, 28, 10, 0.7);
+  }
+  .rk-parse-fn {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 500;
+    color: #f1c99a;
+  }
+  .rk-parse-sub {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: #b5a98f;
+  }
+
+  /* features */
+  .rk-features {
+    padding: 44px 0 16px;
+  }
+  .rk-h2 {
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: 24px;
+    letter-spacing: -0.01em;
+    margin: 0 0 4px;
+  }
+  .rk-sub {
+    color: #8a7c64;
+    font-size: 15px;
+    margin: 0 0 24px;
+  }
+  .rk-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+    gap: 16px;
+  }
+  .rk-fcard {
+    background: #fff;
+    border: 1px solid var(--bcard);
+    border-radius: 13px;
+    padding: 22px 22px 20px;
+    box-shadow:
+      0 1px 0 #f0e8d7,
+      0 12px 30px -24px rgba(70, 50, 20, 0.35);
+    transition:
+      transform 0.18s ease,
+      box-shadow 0.18s ease,
+      border-color 0.18s ease;
+  }
+  .rk-fcard:hover {
+    transform: translateY(-3px);
+    border-color: #e0be96;
+    box-shadow:
+      0 1px 0 #f0e8d7,
+      0 20px 40px -22px rgba(120, 70, 20, 0.4);
+  }
+  .rk-ficon {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    background: var(--soft2);
+    border: 1px solid #ead7be;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--terra);
+    margin-bottom: 15px;
+  }
+  .rk-ftitle {
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: 18.5px;
+    margin: 0 0 8px;
+    letter-spacing: -0.005em;
+  }
+  .rk-fbody {
+    font-size: 14px;
+    line-height: 1.6;
+    color: #6e6450;
+    margin: 0;
+    text-wrap: pretty;
+  }
+
+  /* closing */
+  .rk-closing {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    justify-content: space-between;
+    border-top: 1px solid #e3d8c4;
+    margin-top: 24px;
+    padding: 24px 0 8px;
+    font-size: 14.5px;
+    color: #6e6450;
+  }
+  .rk-closing a {
+    color: var(--terra);
+    text-decoration: none;
+    font-weight: 600;
+  }
+  .rk-built {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: #a4977c;
+  }
+
+  @keyframes rkRise {
+    from {
+      transform: translateY(16px);
+      opacity: 0;
+    }
+    to {
+      transform: none;
+      opacity: 1;
+    }
+  }
+  @keyframes rkDash {
+    to {
+      background-position: 14px 0;
+    }
+  }
+  @keyframes rkFloat {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-4px);
+    }
+  }
+  @keyframes rkPulse {
+    0% {
+      transform: scale(0.85);
+      opacity: 0.55;
+    }
+    70% {
+      transform: scale(1.75);
+      opacity: 0;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .rk-home * {
+      animation: none !important;
+    }
+  }
+</style>
+
+<!-- Home-only layout overrides. This component renders only on the index page,
+     so these globals load only there: widen the content column for the hero,
+     drop the prose padding, and hide Starlight's auto page title (the hero
+     supplies its own h1) and the "Edit page" / last-updated footer. -->
+<style is:global>
+  :root {
+    --sl-content-width: 70rem;
+  }
+  .sl-markdown-content {
+    margin-top: 0 !important;
+  }
+  .content-panel + .content-panel {
+    border-top: 0;
+  }
+  /* Starlight renders the frontmatter title as the first content heading; the
+     hero already has its own. */
+  .content-panel h1#_top,
+  .content-panel:first-of-type {
+    display: none;
+  }
+  .sl-markdown-content > .rk-home {
+    margin-block: 0;
+  }
+  /* No "Edit this page" / community footer on the splash home. */
+  .main-pane footer.sl-flex {
+    display: none;
+  }
+</style>

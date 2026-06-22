@@ -1,63 +1,9 @@
 ---
-title: Ream
-description: Read Word, Excel, PowerPoint and PDF — and convert any of them to PDF, SVG, HTML, DOCX or XLSX. In the browser, from the ECMA-376 and ISO 32000 specifications.
-template: splash
-hero:
-  tagline: Read Word, Excel, PowerPoint and PDF — including the legacy .doc / .xls / .ppt — and convert any of them to PDF, SVG, HTML, DOCX or XLSX. In the browser, from the ECMA-376 and ISO 32000 specifications. No LibreOffice, no headless Office, no commercial SDK. Pure TypeScript, Uint8Array in and Uint8Array out.
-  actions:
-    - text: Getting started
-      link: /guides/getting-started/
-      icon: right-arrow
-    - text: View on GitHub
-      link: https://github.com/alex-krassavin/reamkit
-      icon: external
-      variant: minimal
-    - text: info@reamkit.dev
-      link: mailto:info@reamkit.dev
-      icon: email
-      variant: minimal
+title: Read any office document. Convert it to anything.
+description: Ream reads Word, Excel, PowerPoint and PDF — including the legacy .doc / .xls / .ppt — and writes PDF, SVG, HTML, DOCX or XLSX. In the browser, from the ECMA-376 and ISO 32000 specifications.
+tableOfContents: false
 ---
 
-import { Card, CardGrid } from '@astrojs/starlight/components';
+import Home from '../../components/Home.astro';
 
-<CardGrid stagger>
-  <Card title="From the spec" icon="open-book">
-    Built directly from **ECMA-376** (OOXML) and **ISO 32000 / 19005** (PDF / PDF/A) — not a wrapper
-    around LibreOffice, headless Office, or any commercial SDK. Existing implementations are read as
-    a reference, never a dependency.
-  </Card>
-  <Card title="Browser-first" icon="laptop">
-    Pure TypeScript working on `Uint8Array` in and `Uint8Array` out — zero `node:*` imports on the
-    conversion path. The same code runs unchanged in the browser, Node.js, serverless and edge
-    runtimes. You supply the fonts (or let it fetch open substitutes).
-  </Card>
-  <Card title="Seven formats in" icon="document">
-    Office Open XML — **`.docx`** (text, styles, tables, lists, multi-column sections,
-    headers/footers with real page numbers, footnotes, drawings, tracked changes), **`.xlsx`**
-    (grids, number formats, the print model, conditional formatting, charts) and **`.pptx`** (slides,
-    placeholders, shapes, tables, charts). Plus **`.pdf`** and the legacy binary **`.doc` / `.xls` /
-    `.ppt`** (97–2003). DrawingML shapes, charts and OfficeMath throughout.
-  </Card>
-  <Card title="Real typography" icon="seti:font">
-    Type0 + CIDFontType2 embedding with subsetting, Knuth–Plass line breaking, Liang hyphenation,
-    OpenType ligatures and kerning, BiDi (UAX #9) and Arabic cursive joining.
-  </Card>
-  <Card title="Compliant PDF" icon="approve-check">
-    PDF/A-1, -2 and -3 (levels a / b / u) and **PDF/UA-1** — all formally **veraPDF-validated** —
-    plus tagged PDF (logical structure, alt text), digital signatures (PKCS#7 detached, RSA / ECDSA,
-    PAdES, RFC 3161 timestamps) and AES-256 encryption.
-  </Card>
-  <Card title="One parse, any target" icon="rocket">
-    `Ream.parse(bytes)` reads any of the seven formats once into a format-neutral interlayer;
-    `convert('pdf' | 'svg' | 'html' | 'docx' | 'xlsx')` renders from it — so a `.doc` becomes a
-    `.docx`, a `.pptx` becomes a PDF, a PDF becomes flowed HTML. Formats plug in as reader/writer
-    adapters.
-  </Card>
-</CardGrid>
-
-<p style="text-align: center; margin-top: 3rem;">
-  Questions, bug reports or collaboration —
-  <a href="mailto:info@reamkit.dev">
-    <strong>info@reamkit.dev</strong>
-  </a>
-</p>
+<Home />

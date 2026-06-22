@@ -10,7 +10,46 @@ export default defineConfig({
     starlight({
       title: 'Ream',
       description:
-        'Convert Word (.docx) and Excel (.xlsx) to PDF in the browser — implemented from the ECMA-376 and ISO 32000 specifications.',
+        'Read Word, Excel, PowerPoint and PDF — including the legacy .doc / .xls / .ppt — and convert any of them to PDF, SVG, HTML, DOCX or XLSX. In the browser, from the ECMA-376 and ISO 32000 specifications.',
+      // The warm-paper design (Claude Design handoff): theme tokens + restyled
+      // sidebar / TOC / cards / search, and the branded site title.
+      customCss: ['./src/styles/theme.css'],
+      components: {
+        SiteTitle: './src/components/SiteTitle.astro',
+        Sidebar: './src/components/Sidebar.astro',
+      },
+      head: [
+        { tag: 'link', attrs: { rel: 'preconnect', href: 'https://fonts.googleapis.com' } },
+        {
+          tag: 'link',
+          attrs: { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: true },
+        },
+      ],
+      // Dark code blocks (#211C15) in IBM Plex Mono, matching the design.
+      expressiveCode: {
+        themes: ['github-dark'],
+        styleOverrides: {
+          borderRadius: '9px',
+          borderWidth: '1px',
+          borderColor: '#2e2619',
+          codeBackground: '#211c15',
+          codeFontFamily: "'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
+          codeFontSize: '13.5px',
+          codeLineHeight: '1.72',
+          uiFontFamily: "'IBM Plex Mono', ui-monospace, monospace",
+          frames: {
+            editorTabBarBackground: '#2a2318',
+            editorActiveTabBackground: '#2a2318',
+            editorActiveTabForeground: '#c99a63',
+            editorActiveTabIndicatorBottomColor: '#c2632b',
+            editorTabBarBorderBottomColor: '#342a1c',
+            terminalTitlebarBackground: '#2a2318',
+            terminalTitlebarForeground: '#c99a63',
+            terminalBackground: '#211c15',
+            frameBoxShadowCssValue: '0 16px 38px -26px rgba(40,28,10,.7)',
+          },
+        },
+      },
       social: [
         {
           icon: 'github',
