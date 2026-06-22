@@ -15,17 +15,25 @@
 import { assignArabicForms } from '@/core/font/arabic-joining';
 import { BigEndianReader } from '@/core/font/binary-reader';
 
+/** GSUB ligature substitutions: a comma-joined input GID sequence → output GID. */
 export type LigatureMap = ReadonlyMap<string, number>;
+/** GPOS pair kerning: `"gid1,gid2"` → advance adjustment in font units. */
 export type KerningMap = ReadonlyMap<string, number>;
 
-// GSUB single-substitution maps (gid → positional gid) for the Arabic cursive
-// features init / medi / fina. Empty for fonts without Arabic shaping.
+/**
+ * GSUB single-substitution maps (gid → positional gid) for the Arabic cursive
+ * features init / medi / fina. Empty for fonts without Arabic shaping.
+ */
 export interface ArabicJoiningForms {
+  /** Initial-form substitutions. */
   readonly init: ReadonlyMap<number, number>;
+  /** Medial-form substitutions. */
   readonly medi: ReadonlyMap<number, number>;
+  /** Final-form substitutions. */
   readonly fina: ReadonlyMap<number, number>;
 }
 
+/** An {@link ArabicJoiningForms} with no substitutions (a non-Arabic font). */
 export const EMPTY_JOINING_FORMS: ArabicJoiningForms = {
   init: new Map(),
   medi: new Map(),
@@ -37,7 +45,13 @@ interface TableInfo {
   readonly length: number;
 }
 
-// Parse the GSUB table and return only the liga / clig substitutions.
+/**
+ * Parse a GSUB table and return only the `liga`/`clig` ligature substitutions.
+ *
+ * @param raw   The whole font bytes.
+ * @param table The GSUB table location, or `undefined` when the font has none.
+ * @returns The ligature map (empty when absent or on any parse error).
+ */
 export function parseGsubLigatures(raw: Uint8Array, table: TableInfo | undefined): LigatureMap {
   if (!table) return new Map();
   try {
@@ -54,8 +68,13 @@ export function parseGsubLigatures(raw: Uint8Array, table: TableInfo | undefined
   }
 }
 
-// Parse the GPOS table and return only the kern lookup as a map keyed on
-// "gid1,gid2".
+/**
+ * Parse a GPOS table and return only the `kern` pair-positioning lookup.
+ *
+ * @param raw   The whole font bytes.
+ * @param table The GPOS table location, or `undefined` when the font has none.
+ * @returns The kerning map keyed on `"gid1,gid2"` (empty when absent or on error).
+ */
 export function parseGposKerning(raw: Uint8Array, table: TableInfo | undefined): KerningMap {
   if (!table) return new Map();
   try {
@@ -72,8 +91,15 @@ export function parseGposKerning(raw: Uint8Array, table: TableInfo | undefined):
   }
 }
 
-// Parse GSUB single substitution (Lookup Type 1) for the Arabic positional
-// features. Each produces a gid → gid map the shaper applies per cursive form.
+/**
+ * Parse GSUB single substitutions (Lookup Type 1) for the Arabic positional
+ * features. Each of init/medi/fina yields a gid → gid map the shaper applies per
+ * cursive form.
+ *
+ * @param raw   The whole font bytes.
+ * @param table The GSUB table location, or `undefined` when the font has none.
+ * @returns The per-form joining maps (empty when absent or on error).
+ */
 export function parseGsubArabicForms(
   raw: Uint8Array,
   table: TableInfo | undefined,
@@ -443,11 +469,27 @@ function matchingGlyphs(
 
 // ----- Shaping API -----
 
+/** The result of {@link shapeText}: output glyph ids and their advances. */
 export interface ShapedRun {
+  /** Output glyph ids, after ligature, kerning and Arabic-joining substitution. */
   readonly gids: Array<number>;
-  readonly advances: Array<number>; // font-unit advance per output gid
+  /** Font-unit advance per output gid (parallel to `gids`). */
+  readonly advances: Array<number>;
 }
 
+/**
+ * Shape a string into glyphs: map characters to GIDs, apply Arabic cursive
+ * joining, then ligature substitution and pair kerning, returning the output
+ * glyph ids with their font-unit advances.
+ *
+ * @param text              The text to shape.
+ * @param glyphForCodepoint Codepoint → glyph id (from the font's cmap).
+ * @param advanceWidths     Per-glyph advance widths (font units).
+ * @param ligatures         GSUB ligature map.
+ * @param kerning           GPOS pair-kerning map.
+ * @param joiningForms      Arabic init/medi/fina maps (default: none).
+ * @returns The shaped run (gids + advances).
+ */
 export function shapeText(
   text: string,
   glyphForCodepoint: (cp: number) => number,

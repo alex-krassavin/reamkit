@@ -24,11 +24,20 @@ import {
   parseGsubLigatures,
 } from '@/core/font/opentype-layout';
 
+/** A table's location within the sfnt: byte offset and length. */
 export interface TtfTableInfo {
+  /** Byte offset of the table from the start of the file. */
   readonly offset: number;
+  /** Table length in bytes. */
   readonly length: number;
 }
 
+/**
+ * A parsed TrueType / OpenType font (ISO/IEC 14496-22): metrics, the
+ * cmap-derived codepoint→glyph mapping, OpenType layout maps (ligatures,
+ * kerning, Arabic joining) and the raw bytes for embedding. Glyph outlines
+ * (glyf/CFF) are not decoded — the whole font is embedded in the PDF /FontFile2.
+ */
 export interface ParsedTtf {
   readonly raw: Uint8Array;
   readonly sfntVersion: number;
@@ -38,15 +47,19 @@ export interface ParsedTtf {
   readonly fontBBox: readonly [number, number, number, number];
   readonly ascender: number;
   readonly descender: number;
-  // hhea line gap (font units); with ascender/descender it forms the hhea
-  // vertical triple that drives the 'libreoffice' line-height profile (E-PARITY).
+  /**
+   * hhea line gap (font units); with ascender/descender it forms the hhea
+   * vertical triple that drives the `'libreoffice'` line-height profile (E-PARITY).
+   */
   readonly lineGap: number;
   readonly capHeight: number;
   readonly xHeight: number;
-  // E-PARITY line-height metrics. OS/2 win/typo verticals (font units) selected
-  // by layoutProfile: 'word' uses winAscent/winDescent (the GDI cell box);
-  // 'libreoffice' uses the hhea triple above, or typo* when useTypoMetrics is
-  // set. All fall back to hhea when the font has no OS/2 table.
+  /**
+   * E-PARITY line-height metrics: OS/2 win/typo verticals (font units) selected
+   * by layout profile. `'word'` uses winAscent/winDescent (the GDI cell box);
+   * `'libreoffice'` uses the hhea triple above, or typo* when `useTypoMetrics` is
+   * set. All fall back to hhea when the font has no OS/2 table.
+   */
   readonly vmetrics: {
     readonly typoAscent: number;
     readonly typoDescent: number;
@@ -63,19 +76,27 @@ export interface ParsedTtf {
   readonly glyphOffsets: ReadonlyArray<number>;
   readonly advanceWidths: ReadonlyArray<number>;
   readonly glyphForCodepoint: (cp: number) => number;
-  // OpenType layout: ligature substitution map (input GID sequence
-  // "gid1,gid2[,gid3...]" → output GID) and pair kerning ("gid1,gid2" →
-  // advance adjustment in font units).
+  /** OpenType ligature substitutions: input GID sequence `"gid1,gid2[,gid3…]"` → output GID. */
   readonly ligatures: LigatureMap;
+  /** OpenType pair kerning: `"gid1,gid2"` → advance adjustment in font units. */
   readonly kerning: KerningMap;
-  // Arabic cursive-joining substitutions (init/medi/fina). Empty for non-Arabic
-  // fonts → the shaper leaves output unchanged.
+  /**
+   * Arabic cursive-joining substitutions (init/medi/fina). Empty for non-Arabic
+   * fonts, so the shaper leaves output unchanged.
+   */
   readonly joiningForms: ArabicJoiningForms;
 }
 
 const SFNT_TRUETYPE = 0x00010000;
 const SFNT_OPENTYPE_CFF = 0x4f54544f;
 
+/**
+ * Parse TrueType / OpenType font bytes into a {@link ParsedTtf}.
+ *
+ * @param raw The font bytes (sfnt: TrueType `0x00010000` or OpenType-CFF `OTTO`).
+ * @returns The parsed metrics, mappings and layout tables.
+ * @throws Error when the bytes are not a TrueType or OpenType font.
+ */
 export function parseTtf(raw: Uint8Array): ParsedTtf {
   const r = new BigEndianReader(raw);
   const sfntVersion = r.u32();

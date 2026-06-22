@@ -7,19 +7,34 @@
 import type { ParsedTtf } from '@/core/font/ttf-parser';
 import { shapeText } from '@/core/font/opentype-layout';
 
+/**
+ * Text measurement and glyph encoding derived purely from a parsed font (no PDF
+ * involved). Layout measures with these, and the PDF emitter reuses the same
+ * functions, so emit encodes exactly what layout measured. CIDs are GIDs
+ * (Identity ordering), so the hex encoding is writer-agnostic glyph addressing.
+ */
 export interface FontMeasure {
+  /** Glyph advance width in 1000-unit PDF text space, for a glyph id. */
   readonly pdfWidthForGid: (gid: number) => number;
+  /** Shaped width of `text` at `fontSize`, in points. */
   readonly textWidthPt: (text: string, fontSize: number) => number;
+  /** Encode `text` as a hex string of 4-digit glyph ids (Identity-H addressing). */
   readonly encodeTextAsCidHex: (text: string) => string;
 }
 
 const EMPTY_KERNING = new Map<string, number>();
 
-// `kern` gates pair kerning in the measured advances (E-PARITY FP4): the default
-// keeps it; the 'word' layoutProfile turns it off, since Word leaves "Kerning
-// for fonts" off by default — and Ream's Tj output is un-kerned anyway, so a
-// kern-free measure matches what actually renders. Glyph identity (the CID hex)
-// is kern-independent, so only the measured widths change.
+/**
+ * Build a {@link FontMeasure} over a parsed font.
+ *
+ * @param parsed The parsed TTF/OTF.
+ * @param kern   Whether to apply pair kerning to measured advances (E-PARITY
+ *               FP4). The default keeps it; the `'word'` layout profile turns it
+ *               off (Word leaves font kerning off by default, and Ream's `Tj`
+ *               output is un-kerned anyway). Glyph identity is kern-independent,
+ *               so only the widths change.
+ * @returns The measurement / encoding closures.
+ */
 export function createFontMeasure(parsed: ParsedTtf, kern = true): FontMeasure {
   const scale = 1000 / parsed.unitsPerEm;
   const kerning = kern ? parsed.kerning : EMPTY_KERNING;
