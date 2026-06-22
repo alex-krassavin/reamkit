@@ -15,13 +15,17 @@ import type { FontBytesByVariant, FontRegistry, FontVariant } from '@/core/font'
 import { pickVariant } from '@/core/font';
 import { fetchFontSet, resolveFamilyKey } from '@/core/fonts/remote-fonts';
 
+/** A font resolution request: the wanted family and style. */
 export interface FontRequest {
   /** Family name as the document references it (e.g. "Times New Roman"). */
   readonly family?: string;
+  /** Whether a bold face is wanted. */
   readonly bold: boolean;
+  /** Whether an italic face is wanted. */
   readonly italic: boolean;
 }
 
+/** A provider's answer: resolved bytes, or `none` to fall through to the next provider. */
 export type FontAnswer =
   | {
       readonly kind: 'bytes';
@@ -33,11 +37,14 @@ export type FontAnswer =
     }
   | { readonly kind: 'none' };
 
+/** The shared `none` answer — a provider that cannot satisfy a request. */
 export const NO_FONT: FontAnswer = { kind: 'none' };
 
+/** One stage in the font-resolution chain (ir-design §8). */
 export interface FontProvider {
-  /** 'embedded' | 'caller' | 'local' | 'remote' | custom ids. */
+  /** Provider id: `'embedded'` | `'caller'` | `'local'` | `'remote'` | a custom id. */
   readonly id: string;
+  /** Resolve a request to bytes, or {@link NO_FONT} to defer to the next provider. */
   resolve: (req: FontRequest) => Promise<FontAnswer>;
 }
 

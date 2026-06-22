@@ -56,24 +56,36 @@ function insertPattern(root: TrieNode, pattern: string): void {
   node.weights = [...weights];
 }
 
+/** A configured hyphenator for one language. */
 export interface Hyphenator {
-  // Returns the 0-indexed break positions inside `word`. A position p means
-  // the word can be split between word[p-1] and word[p]; "computer" with
-  // breaks [3,5] → "com·pu·ter".
+  /**
+   * Return the 0-indexed break positions inside `word`. A position `p` means the
+   * word can be split between `word[p-1]` and `word[p]`; e.g. "computer" with
+   * breaks `[3,5]` → "com·pu·ter".
+   */
   hyphenate: (word: string) => Array<number>;
 }
 
+/** Options for {@link createHyphenator}. */
 export interface HyphenatorOptions {
-  // The minimum chars before the first break and after the last break.
-  // ECMA standard defaults from the TeX patterns header are usually 2/3 for
-  // English and 2/2 for many other languages.
+  /** Minimum characters before the first break (TeX default: 2). */
   readonly leftMin?: number;
+  /** Minimum characters after the last break (TeX default: 3 for English, often 2 elsewhere). */
   readonly rightMin?: number;
-  // Explicit exceptions override pattern-based output. Each exception is a
-  // word with hyphens marking allowed breaks: "as-so-ciate".
+  /**
+   * Explicit exceptions that override pattern output. Each is a word with
+   * hyphens marking the allowed breaks, e.g. `"as-so-ciate"`.
+   */
   readonly exceptions?: ReadonlyArray<string>;
 }
 
+/**
+ * Build a Liang pattern-based {@link Hyphenator} from a pattern list.
+ *
+ * @param patterns The TeX-style hyphenation patterns (e.g. `"hy3ph"`).
+ * @param options  Left/right minimums and explicit exceptions.
+ * @returns The hyphenator.
+ */
 export function createHyphenator(
   patterns: ReadonlyArray<string>,
   options: HyphenatorOptions = {},
@@ -134,8 +146,13 @@ export function createHyphenator(
   };
 }
 
-// Split a TeX-style pattern bundle (whitespace-separated string) into the
-// pattern array `createHyphenator` expects.
+/**
+ * Split a TeX-style pattern bundle (a whitespace-separated string) into the
+ * pattern array {@link createHyphenator} expects.
+ *
+ * @param bundle The whitespace-separated patterns.
+ * @returns The pattern array (empty entries removed).
+ */
 export function splitPatternBundle(bundle: string): Array<string> {
   return bundle.split(/\s+/).filter((s) => s.length > 0);
 }
