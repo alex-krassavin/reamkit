@@ -10,7 +10,43 @@ import Default from '@astrojs/starlight/components/Sidebar.astro';
 
 <div class="rk-install not-content">
   <div class="rk-install-label">Install</div>
-  <code class="rk-install-cmd">npm i reamkit</code>
+  <button
+    class="rk-install-cmd"
+    type="button"
+    data-clipboard="npm i reamkit"
+    aria-label="Copy “npm i reamkit” to the clipboard"
+  >
+    <code>npm i reamkit</code>
+    <span class="rk-copy" aria-hidden="true">
+      <svg
+        class="rk-copy-copy"
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <rect x="9" y="9" width="13" height="13" rx="2"></rect>
+        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+      </svg>
+      <svg
+        class="rk-copy-done"
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.4"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M20 6 9 17l-5-5"></path>
+      </svg>
+    </span>
+  </button>
   <p class="rk-install-note">fflate + fast-xml-parser. MIT © Alex Krassavin.</p>
 </div>
 
@@ -31,14 +67,51 @@ import Default from '@astrojs/starlight/components/Sidebar.astro';
     margin-bottom: 9px;
   }
   .rk-install-cmd {
-    display: block;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100%;
     font-family: var(--sl-font-mono, 'IBM Plex Mono', monospace);
     font-size: 12.5px;
+    text-align: left;
     background: #211c15;
     color: #ece3d2;
     padding: 9px 11px;
     border-radius: 7px;
     border: 0;
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+  .rk-install-cmd:hover {
+    background: #2a2318;
+  }
+  .rk-install-cmd code {
+    background: none;
+    border: 0;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+  }
+  .rk-copy {
+    display: inline-flex;
+    flex: none;
+    color: #9a8c72;
+    transition: color 0.15s ease;
+  }
+  .rk-install-cmd:hover .rk-copy {
+    color: #ece3d2;
+  }
+  /* Swap the copy glyph for a green check for a moment after a successful copy. */
+  .rk-copy-done {
+    display: none;
+  }
+  .rk-install-cmd.copied .rk-copy-copy {
+    display: none;
+  }
+  .rk-install-cmd.copied .rk-copy-done {
+    display: inline;
+    color: #8fc98f;
   }
   .rk-install-note {
     font-size: 11.5px;
@@ -49,3 +122,37 @@ import Default from '@astrojs/starlight/components/Sidebar.astro';
   /* The sidebar is hidden on small screens (mobile uses the top nav), so the
      box rides along with it. */
 </style>
+
+<script>
+  function bindCopy() {
+    document.querySelectorAll('.rk-install-cmd[data-clipboard]').forEach((btn) => {
+      if (btn.dataset.copyBound) return;
+      btn.dataset.copyBound = '1';
+      btn.addEventListener('click', async () => {
+        const text = btn.dataset.clipboard ?? '';
+        try {
+          await navigator.clipboard.writeText(text);
+        } catch {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          try {
+            document.execCommand('copy');
+          } catch {
+            /* clipboard unavailable — nothing more we can do */
+          }
+          ta.remove();
+        }
+        btn.classList.add('copied');
+        window.clearTimeout(btn._copyTimer);
+        btn._copyTimer = window.setTimeout(() => btn.classList.remove('copied'), 1500);
+      });
+    });
+  }
+  bindCopy();
+  // Re-bind after Starlight client navigations (no-op on a plain MPA load).
+  document.addEventListener('astro:page-load', bindCopy);
+</script>
