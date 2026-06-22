@@ -2,6 +2,7 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import starlightTypeDoc, { typeDocSidebarGroup } from 'starlight-typedoc';
+import { pluginLineNumbers } from '@expressive-code/plugin-line-numbers';
 
 // Served at https://reamkit.dev (GitHub Pages + custom domain).
 export default defineConfig({
@@ -25,9 +26,12 @@ export default defineConfig({
           attrs: { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: true },
         },
       ],
-      // Dark code blocks (#211C15) in IBM Plex Mono, matching the design.
+      // Dark code blocks (#211C15) in IBM Plex Mono with line numbers, per the
+      // design.
       expressiveCode: {
         themes: ['github-dark'],
+        plugins: [pluginLineNumbers()],
+        defaultProps: { showLineNumbers: true },
         styleOverrides: {
           borderRadius: '9px',
           borderWidth: '1px',
@@ -37,6 +41,9 @@ export default defineConfig({
           codeFontSize: '13.5px',
           codeLineHeight: '1.72',
           uiFontFamily: "'IBM Plex Mono', ui-monospace, monospace",
+          lineNumbers: {
+            foreground: '#5e5644',
+          },
           frames: {
             editorTabBarBackground: '#2a2318',
             editorActiveTabBackground: '#2a2318',
