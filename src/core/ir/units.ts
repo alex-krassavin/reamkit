@@ -9,6 +9,13 @@
 // through `pt()` or a `*ToPt` converter — the brand marks API boundaries, not
 // every intermediate expression.
 
+/**
+ * The IR's one length unit: PostScript points (1/72 inch), as a branded number.
+ * Readers convert their format-native units (twips, half-points, EMU, …) to `Pt`
+ * at the boundary, and writers convert out the same way. The brand is shallow —
+ * a `Pt` is assignable to `number` so layout arithmetic reads it freely; only
+ * *constructing* one requires {@link pt} or a `*ToPt` converter.
+ */
 export type Pt = number & { readonly __brand: 'pt' };
 
 /** Brand a raw number as points. The number must already BE points. */
@@ -49,10 +56,12 @@ export function pxToPt(px: number): Pt {
   return (px * 0.75) as Pt;
 }
 
+/** Inches: 1 inch = 72 pt. */
 export function inchToPt(inches: number): Pt {
   return (inches * 72) as Pt;
 }
 
+/** Millimetres: 25.4 mm = 1 inch = 72 pt. */
 export function mmToPt(mm: number): Pt {
   return ((mm / 25.4) * 72) as Pt;
 }

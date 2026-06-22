@@ -12,6 +12,7 @@
 // probed. Ids therefore stay deterministic for a deterministic put order —
 // which our readers guarantee.
 
+/** A content-addressed id for a binary resource held in a {@link ResourceStore}. */
 export type ResourceId = string & { readonly __brand: 'resource-id' };
 
 const FNV_PRIME = 0x01000193;
@@ -37,6 +38,13 @@ function equalBytes(x: Uint8Array, y: Uint8Array): boolean {
   return true;
 }
 
+/**
+ * A content-addressed store for the IR's binary payloads (images, fonts). IR
+ * trees stay pure JSON and reference bytes by {@link ResourceId}; ids derive
+ * from the bytes (a synchronous 64-bit FNV-1a), so identical payloads
+ * deduplicate for free and equal documents get equal ids — which keeps IR-level
+ * diffs and the byte-identical gates meaningful.
+ */
 export class ResourceStore {
   private readonly byId = new Map<ResourceId, Uint8Array>();
 
@@ -58,18 +66,22 @@ export class ResourceStore {
     }
   }
 
+  /** Look up the bytes for an id, or `undefined` when absent. */
   get(id: ResourceId): Uint8Array | undefined {
     return this.byId.get(id);
   }
 
+  /** Whether an id is present in the store. */
   has(id: ResourceId): boolean {
     return this.byId.has(id);
   }
 
+  /** All stored ids, in insertion order. */
   ids(): ReadonlyArray<ResourceId> {
     return [...this.byId.keys()];
   }
 
+  /** The number of distinct resources stored. */
   get size(): number {
     return this.byId.size;
   }

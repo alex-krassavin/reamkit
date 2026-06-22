@@ -7,8 +7,15 @@
 // their own; this registry only canonicalizes the names the core uses, so the
 // capability matrix in the docs can be generated from code.
 
+/**
+ * A capability/loss feature name. A plain string, hierarchical via dot-segments
+ * (`'tables.nested'` ⊂ `'tables'`); the vocabulary is OPEN so third-party
+ * adapters can introduce their own. {@link FEATURES} canonicalizes the names the
+ * core uses.
+ */
 export type Feature = string;
 
+/** The feature names the core declares, so the docs' capability matrix is code-generated. */
 export const FEATURES = {
   text: 'text',
   tables: 'tables',
@@ -34,6 +41,7 @@ export const FEATURES = {
   pdfSignatures: 'pdf.signatures',
 } as const;
 
+/** Union of the canonical {@link FEATURES} values. */
 export type KnownFeature = (typeof FEATURES)[keyof typeof FEATURES];
 
 /** True when `feature` equals `prefix` or sits under it ('tables.nested' ⊂ 'tables'). */
