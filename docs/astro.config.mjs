@@ -64,6 +64,11 @@ export default defineConfig({
           href: 'https://github.com/alex-krassavin/reamkit',
         },
         {
+          icon: 'linkedin',
+          label: "Author's LinkedIn",
+          href: 'https://www.linkedin.com/in/alexandr-krassavin-b68856238',
+        },
+        {
           icon: 'email',
           label: 'info@reamkit.dev',
           href: 'mailto:info@reamkit.dev',
