@@ -9,23 +9,32 @@ import type { PdfRef, PdfValue } from '@/pdf/objects';
 import type { PdfDocument } from '@/pdf/writer';
 import { dict, name, ref, stream, unicodeString } from '@/pdf/objects';
 
-// ISO 32000-2 §14.13 — how the embedded file relates to the document.
+/** How an embedded file relates to the document (`/AFRelationship`, ISO 32000-2 §14.13). */
 export type AFRelationship = 'Source' | 'Data' | 'Alternative' | 'Supplement' | 'Unspecified';
 
+/** One file to embed as a PDF/A-3 associated file (see {@link embedAssociatedFile}). */
 export interface AttachedFile {
-  // File name as shown to the user, e.g. "source.docx". ASCII recommended.
+  /** File name as shown to the user, e.g. `"source.docx"`. ASCII recommended. */
   readonly name: string;
   readonly bytes: Uint8Array;
-  // MIME type for the /EmbeddedFile /Subtype, e.g.
-  // "application/vnd.openxmlformats-officedocument.wordprocessingml.document".
+  /**
+   * MIME type for the `/EmbeddedFile` `/Subtype`, e.g.
+   * `"application/vnd.openxmlformats-officedocument.wordprocessingml.document"`.
+   */
   readonly mimeType: string;
   readonly relationship?: AFRelationship;
   readonly description?: string;
 }
 
-// Embed `file` and return its /Filespec ref (to place in the catalog /AF array
-// and the /Names /EmbeddedFiles name tree). The MIME type becomes a Name (the
-// serializer hex-escapes the "/"), which readers decode back.
+/**
+ * Embed `file` as an `/EmbeddedFile` stream wrapped in a `/Filespec` (ISO 32000-1
+ * §7.11, ISO 19005-3 §6.8). The MIME type becomes a `Name` (the serializer
+ * hex-escapes the `/`), which readers decode back.
+ *
+ * @param file The file bytes plus its name, MIME type and relationship.
+ * @returns A reference to the `/Filespec`, to place in the catalog `/AF` array
+ *   and the `/Names` `/EmbeddedFiles` name tree.
+ */
 export function embedAssociatedFile(doc: PdfDocument, file: AttachedFile): PdfRef {
   const efRef = doc.add(
     stream(

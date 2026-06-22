@@ -27,31 +27,50 @@ import type {
 } from '@/core/document-model';
 import type { PathSegment } from '@/core/vector';
 
+/** Font variant a math glyph renders in (drives the auto-italic of letters). */
 export type MathVariant = 'regular' | 'italic' | 'bold' | 'boldItalic';
 
+/**
+ * An ordinary symbol drawn from the font: a string positioned in the box's local
+ * frame (origin = box left, baseline at `y = 0`, y up).
+ */
 export interface MathGlyphItem {
   readonly kind: 'glyph';
   readonly x: number;
-  readonly y: number; // baseline offset (up positive)
+  /** Baseline offset, up positive. */
+  readonly y: number;
   readonly text: string;
   readonly variant: MathVariant;
   readonly sizePt: number;
 }
+/** A filled rectangle (fraction bars, accent rules); `(x, y)` is its bottom-left edge. */
 export interface MathRuleItem {
-  readonly kind: 'rule'; // filled rectangle (y = bottom edge)
+  readonly kind: 'rule';
   readonly x: number;
   readonly y: number;
   readonly w: number;
   readonly h: number;
 }
+/**
+ * A vector path drawn instead of a math-font glyph (radicals, stretchy
+ * delimiters, big operators) — so no math font is needed.
+ */
 export interface MathPathItem {
-  readonly kind: 'path'; // vector path (radicals, delimiters, big operators)
+  readonly kind: 'path';
   readonly segments: ReadonlyArray<PathSegment>;
-  readonly strokeWidthPt?: number; // present ⇒ stroked
-  readonly fill?: boolean; // true ⇒ filled
+  /** Present ⇒ stroked at this width. */
+  readonly strokeWidthPt?: number;
+  /** `true` ⇒ filled. */
+  readonly fill?: boolean;
 }
+/** A positioned draw item in a {@link MathBox}'s local frame. */
 export type MathDrawItem = MathGlyphItem | MathRuleItem | MathPathItem;
 
+/**
+ * A laid-out math box: a width plus ascent (above the baseline) and descent
+ * (below), and a flat list of positioned {@link MathDrawItem}s in a LOCAL frame
+ * (origin = box left, baseline at `y = 0`, y up).
+ */
 export interface MathBox {
   readonly width: number;
   readonly ascent: number;
@@ -59,8 +78,10 @@ export interface MathBox {
   readonly items: ReadonlyArray<MathDrawItem>;
 }
 
+/** Injected text-measure: the advance width of `text` at `sizePt` in `variant`. */
 export type MeasureMath = (text: string, sizePt: number, variant: MathVariant) => number;
 
+/** Layout context threaded through {@link layoutMath} — currently just the em size. */
 export interface MathCtx {
   readonly sizePt: number;
 }
@@ -74,6 +95,7 @@ const FRAC_GAP = 0.15; // gap between rule and num/den
 const FRAC_PAD = 0.12; // horizontal padding around a fraction
 const SCRIPT_SIZE = 0.7; // sub/superscript size relative to base
 
+/** Decompose a {@link MathVariant} into its independent bold / italic flags. */
 export function variantStyle(v: MathVariant): { bold: boolean; italic: boolean } {
   return {
     bold: v === 'bold' || v === 'boldItalic',
@@ -95,6 +117,18 @@ function runCharVariant(ch: string, run: MathRun): MathVariant {
   return variantOf(italic, bold);
 }
 
+/**
+ * Recursively lay out an ECMA-376 §22 OfficeMath node into a {@link MathBox}.
+ * Ordinary symbols become {@link MathGlyphItem}s (rendered from the font);
+ * structural elements (fraction rules, radicals, big operators, stretchy
+ * delimiters) become rule/path items drawn as vector graphics. Pure: text widths
+ * arrive through the injected `measure` fn.
+ *
+ * @param node    The math tree node to lay out.
+ * @param ctx     The layout context (em size).
+ * @param measure The injected advance-width measurer.
+ * @returns The positioned box; constructs added in later milestones render empty.
+ */
 export function layoutMath(node: MathNode, ctx: MathCtx, measure: MeasureMath): MathBox {
   switch (node.type) {
     case 'run':
@@ -860,7 +894,7 @@ function layoutGroupChr(node: MathGroupChr, ctx: MathCtx, measure: MeasureMath):
   return { width: w, ascent: baseBox.ascent, descent: -yBase, items };
 }
 
-// Translate every item in a box by (dx, dy).
+/** Translate every item in a box by `(dx, dy)`, returning shifted copies. */
 export function shiftItems(
   items: ReadonlyArray<MathDrawItem>,
   dx: number,
@@ -893,8 +927,10 @@ function shiftSegment(s: PathSegment, dx: number, dy: number): PathSegment {
   }
 }
 
-// Flatten a math tree into (variant, text) glyph segments — used to subset the
-// right glyphs into the right font variant. Grows alongside layoutMath.
+/**
+ * Flatten a math tree into `(variant, text)` glyph segments — used to subset the
+ * right glyphs into the right font variant. Grows alongside {@link layoutMath}.
+ */
 export function mathGlyphSegments(node: MathNode): Array<{ variant: MathVariant; text: string }> {
   const out: Array<{ variant: MathVariant; text: string }> = [];
   const visit = (n: MathNode): void => {

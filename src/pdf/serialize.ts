@@ -17,6 +17,14 @@ const formatNumber = (n: number): string => {
   return n.toFixed(6).replace(/0+$/, '').replace(/\.$/, '');
 };
 
+/**
+ * Serialize a single PDF value to its textual representation (ISO 32000-1 §7.3).
+ *
+ * @param v The value to serialize.
+ * @returns The serialized string.
+ * @throws Error on a non-finite number, or a {@link PdfStream} (which must be an
+ *   indirect object, not inlined).
+ */
 export function serializeValue(v: PdfValue): string {
   if (v === PDF_NULL) return 'null';
   if (typeof v === 'boolean') return v ? 'true' : 'false';
@@ -49,6 +57,16 @@ function serializeDict(d: PdfDict): string {
   return `<<${entries.join(' ')}>>`;
 }
 
+/**
+ * Serialize a value as a complete `id gen obj … endobj` indirect object
+ * (§7.3.10). Streams are emitted with their raw payload; everything else is
+ * inlined via {@link serializeValue}.
+ *
+ * @param id         The object number.
+ * @param generation The generation number.
+ * @param value      The object value.
+ * @returns The encoded indirect-object bytes.
+ */
 export function serializeIndirectObject(
   id: number,
   generation: number,

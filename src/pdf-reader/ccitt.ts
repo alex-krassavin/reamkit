@@ -8,15 +8,31 @@
 // The white/black run-length codes are the fixed modified-Huffman tables from
 // T.4; the two-dimensional vertical/pass/horizontal mode codes are from T.6.
 
+/**
+ * The `/CCITTFaxDecode` parameters that drive {@link decodeCcitt} (ISO 32000-1
+ * §7.4.6), pulled from the filter's `/DecodeParms`.
+ */
 export interface CcittParams {
-  readonly k: number; // /K — <0 Group 4, 0 Group 3 1-D, >0 Group 3 2-D (unsupported)
-  readonly columns: number; // /Columns (pixels per row)
-  readonly rows: number; // /Rows (or the image /Height) — the row count to decode
-  readonly byteAlign: boolean; // /EncodedByteAlign — pad each row to a byte boundary
+  /** `/K` — `<0` Group 4, `0` Group 3 1-D, `>0` Group 3 2-D (unsupported). */
+  readonly k: number;
+  /** `/Columns` (pixels per row). */
+  readonly columns: number;
+  /** `/Rows` (or the image `/Height`) — the row count to decode. */
+  readonly rows: number;
+  /** `/EncodedByteAlign` — pad each row to a byte boundary. */
+  readonly byteAlign: boolean;
 }
 
-// Returns the packed bitmap (rowBytes × rows, bit 1 = black, MSB first) or
-// undefined when the stream cannot be decoded (e.g. Group 3 2-D).
+/**
+ * Decode a CCITT Group 3 / Group 4 fax stream into a packed 1-bit-per-pixel
+ * bitmap.
+ *
+ * @param data   The raw fax codestream (any wrapping filters already stripped).
+ * @param params The `/CCITTFaxDecode` parameters.
+ * @returns The packed bitmap (`rowBytes × rows`, bit 1 = black, MSB first), or
+ *   `undefined` when the stream cannot be decoded (e.g. Group 3 2-D, or nothing
+ *   decoded at all).
+ */
 export function decodeCcitt(data: Uint8Array, params: CcittParams): Uint8Array | undefined {
   const { k, columns, rows, byteAlign } = params;
   if (k > 0) return undefined; // Group 3 two-dimensional — not supported
@@ -142,9 +158,11 @@ function readRun(reader: BitReader, color: number): number {
   return -1; // runaway makeup chain
 }
 
+/** A decoded T.6 two-dimensional mode code: pass, horizontal, or vertical V(d). */
 export interface Mode {
   readonly kind: 'pass' | 'horizontal' | 'vertical';
-  readonly d: number; // vertical offset (−3..3)
+  /** Vertical offset (−3..3); meaningful only when `kind` is `'vertical'`. */
+  readonly d: number;
 }
 
 function readMode(reader: BitReader): Mode | undefined {
@@ -199,10 +217,11 @@ class BitReader {
 
 // --- the fixed T.4 / T.6 code tables ----------------------------------------
 
-// [run, bit-string]; terminating runs are 0..63, make-up runs are multiples of
-// 64. The shared make-up codes (1792..2560) belong to both colours. Exported so
-// the test can build an independent encoder and validate the codes are a valid
-// prefix set.
+/**
+ * T.4 white-run modified-Huffman codes as `[run, bit-string]` (terminating runs
+ * 0..63, make-up runs multiples of 64). Exported so the test can build an
+ * independent encoder and validate the codes form a valid prefix set.
+ */
 export const WHITE_CODES: ReadonlyArray<readonly [number, string]> = [
   [0, '00110101'],
   [1, '000111'],

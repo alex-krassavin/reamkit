@@ -68,6 +68,20 @@ import {
   resolveRunProperties,
 } from '@/core/style-cascade';
 
+/**
+ * Render a {@link FlowDoc} to a self-contained HTML document (ir-design §7).
+ *
+ * A flow medium: no pagination, no layout engine and no fonts to embed, so this
+ * is a pure, zero-I/O transform. `flow.body` already carries FINAL effective
+ * properties (the Stage-6 contract), so values map straight to CSS; every read
+ * still routes through the cascade resolver over the empty sheet, a memoized
+ * identity on reader output. Charts and shapes emit as inline SVG; deliberately
+ * out of scope (reported as losses): inline math and headers/footers (no fixed
+ * pages to band them onto). Page-break hints map to CSS `break-before`.
+ *
+ * @param flow The format-neutral interlayer document tree.
+ * @returns The encoded HTML bytes plus the recorded {@link Loss} list.
+ */
 export function writeHtml(flow: FlowDoc): WriteResult {
   const losses: Array<Loss> = [];
   const out: Array<string> = [];
@@ -116,6 +130,10 @@ export function writeHtml(flow: FlowDoc): WriteResult {
   return { bytes: new TextEncoder().encode(out.join('\n')), losses };
 }
 
+/**
+ * The flow-medium {@link DocumentWriter} adapter (id `'html'`), wrapping
+ * {@link writeHtml}, with the set of {@link FEATURES} it renders.
+ */
 export const htmlWriter: DocumentWriter<FlowDoc> = {
   id: 'html',
   consumes: 'flow',

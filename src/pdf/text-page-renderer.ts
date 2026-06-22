@@ -11,8 +11,10 @@ import { embedTtfFont } from '@/pdf/cid-font';
 import { dict, name, ref, stream } from '@/pdf/objects';
 import { PdfDocument } from '@/pdf/writer';
 
+/** A font for {@link renderPlainTextPdf}: an already-parsed TTF or its raw bytes. */
 export type FontInput = ParsedTtf | { readonly bytes: Uint8Array };
 
+/** Options for {@link renderPlainTextPdf}; every layout dimension defaults (A4, 72pt margins, 12pt text). */
 export interface TextRenderOptions {
   readonly font: FontInput;
   readonly pageWidth?: number;
@@ -22,6 +24,7 @@ export interface TextRenderOptions {
   readonly marginTop?: number;
   readonly marginBottom?: number;
   readonly fontSize?: number;
+  /** Baseline-to-baseline distance in points; defaults to `1.2 × fontSize`. */
   readonly lineHeight?: number;
 }
 
@@ -30,6 +33,14 @@ const A4_HEIGHT = 842;
 
 const encoder = new TextEncoder();
 
+/**
+ * Render plain-text paragraphs to a single-font PDF, paginating greedily with
+ * real TTF metrics and embedding the subset font.
+ *
+ * @param paragraphs One string per paragraph; empty strings become blank lines.
+ * @param options    The font plus optional page geometry and type size.
+ * @returns The encoded PDF bytes.
+ */
 export function renderPlainTextPdf(
   paragraphs: ReadonlyArray<string>,
   options: TextRenderOptions,

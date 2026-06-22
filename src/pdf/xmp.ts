@@ -3,19 +3,23 @@
 // (pdfaid:part + pdfaid:conformance) and that the standard properties agree
 // with the /Info dictionary.
 
+/** The document metadata projected into an XMP packet by {@link buildXmpPacket}. */
 export interface XmpInput {
   readonly title?: string;
   readonly author?: string;
   readonly subject?: string;
   readonly keywords?: string;
-  readonly creator?: string; // application that created the doc (xmp:CreatorTool)
+  /** Application that created the doc (`xmp:CreatorTool`). */
+  readonly creator?: string;
   readonly producer?: string;
   readonly createDate?: Date;
   readonly modifyDate?: Date;
-  // PDF/A identifier: part 1 (ISO 19005-1) / 2 / 3; conformance level
-  // 'A' (tagged) / 'B' (visual) / 'U' (Unicode — parts 2/3 only).
+  /**
+   * PDF/A identifier: part 1 (ISO 19005-1) / 2 / 3; conformance level
+   * `'A'` (tagged) / `'B'` (visual) / `'U'` (Unicode — parts 2/3 only).
+   */
   readonly pdfaPart?: '1' | '2' | '3';
-  // PDF/UA identification (ISO 14289-1) — pdfuaid:part.
+  /** PDF/UA identification (ISO 14289-1) — `pdfuaid:part`. */
   readonly pdfuaPart?: '1';
   readonly pdfaConformance?: 'A' | 'B' | 'U';
 }
@@ -37,6 +41,15 @@ function xmpDate(d: Date): string {
   );
 }
 
+/**
+ * Build an XMP metadata packet (ISO 16684-1) for the document `/Metadata`
+ * stream, emitting only the sections the supplied {@link XmpInput} populates
+ * (PDF/A and PDF/UA identifiers, Dublin Core, XMP basic, Adobe PDF). For PDF/A
+ * the standard properties must agree with the `/Info` dictionary.
+ *
+ * @param input The metadata to project.
+ * @returns The UTF-8 encoded XMP packet bytes.
+ */
 export function buildXmpPacket(input: XmpInput): Uint8Array {
   const props: Array<string> = [];
 

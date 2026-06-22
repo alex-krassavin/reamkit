@@ -22,11 +22,24 @@ import { paintPlan } from '@/layout/page-doc';
 
 const PAGE_GAP = 12;
 
+/** Options for {@link writeSvg}. */
 export interface SvgWriteOptions {
   /** Gap between stacked pages, in px/pt (default 12). */
   readonly pageGap?: number;
 }
 
+/**
+ * Render a {@link LaidOutDocument} to a single SVG preview (ir-design §7 /
+ * stage 6). Written purely against the PageDoc schema; knows nothing about OOXML
+ * or the PDF writer. PageItem coordinates are already top-left/y-down — SVG's own
+ * frame — so they are emitted verbatim. Pages stack vertically in one `<svg>`,
+ * separated by {@link SvgWriteOptions.pageGap}, each on a white outlined rect so
+ * they read as pages.
+ *
+ * @param laid The laid-out, paginated document from the layout engine.
+ * @param opts Optional page-gap override.
+ * @returns The encoded SVG bytes plus the recorded {@link Loss} list.
+ */
 export function writeSvg(laid: LaidOutDocument, opts: SvgWriteOptions = {}): WriteResult {
   const gap = opts.pageGap ?? PAGE_GAP;
   const losses: Array<Loss> = [];
@@ -55,6 +68,10 @@ export function writeSvg(laid: LaidOutDocument, opts: SvgWriteOptions = {}): Wri
   return { bytes: new TextEncoder().encode(parts.join('\n')), losses };
 }
 
+/**
+ * The page-medium {@link DocumentWriter} adapter (id `'svg'`), wrapping
+ * {@link writeSvg}, with the set of {@link FEATURES} it renders.
+ */
 export const svgWriter: DocumentWriter<LaidOutDocument> = {
   id: 'svg',
   consumes: 'page',

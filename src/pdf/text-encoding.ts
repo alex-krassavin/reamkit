@@ -35,6 +35,14 @@ const WIN_ANSI_REMAP: Record<number, number> = {
 
 const SUBSTITUTE = 0x3f;
 
+/**
+ * Encode text as WinAnsiEncoding (CP-1252) bytes (ISO 32000-1 §D.2). Latin-1 is
+ * passed through; the CP-1252 high range (smart quotes, dashes, €, …) is
+ * remapped; anything else becomes `?`.
+ *
+ * @param text The string to encode.
+ * @returns One byte per code point.
+ */
 export function encodeWinAnsi(text: string): Uint8Array {
   const codePoints = [...text];
   const out = new Uint8Array(codePoints.length);
@@ -51,9 +59,14 @@ export function encodeWinAnsi(text: string): Uint8Array {
   return out;
 }
 
-// ISO 32000-1:2008 §7.3.4.2 — Literal strings: parentheses must be balanced
-// or escaped; backslash escapes itself. Output bytes ready to be wrapped in
-// "(" ... ")" within a content stream.
+/**
+ * Encode text as a PDF literal string body (ISO 32000-1 §7.3.4.2): WinAnsi
+ * bytes with `(`, `)` and `\` backslash-escaped. The result is ready to be
+ * wrapped in `(` … `)` within a content stream.
+ *
+ * @param text The string to encode.
+ * @returns The escaped bytes (without the surrounding parentheses).
+ */
 export function encodeLiteralBytes(text: string): Uint8Array {
   const bytes = encodeWinAnsi(text);
   let extra = 0;

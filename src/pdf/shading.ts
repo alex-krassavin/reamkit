@@ -22,8 +22,12 @@ interface Bbox {
   readonly maxY: number;
 }
 
-// The local-space bounding box of a shape's paths (y-up). Returns undefined for
-// an empty/degenerate shape (no gradient can be placed).
+/**
+ * The local-space bounding box of a shape's paths (y-up).
+ *
+ * @returns The bounding box, or `undefined` for an empty/degenerate shape (where
+ *   no gradient can be placed).
+ */
 export function shapeBbox(shape: VectorShape): Bbox | undefined {
   let minX = Infinity;
   let minY = Infinity;
@@ -50,7 +54,16 @@ export function shapeBbox(shape: VectorShape): Bbox | undefined {
     : undefined;
 }
 
-// Build the PatternType-2 shading pattern object and return its ref.
+/**
+ * Build the PatternType-2 shading pattern object (axial or radial) for a
+ * DrawingML gradient (EP16b) and add it to `doc`. The pattern's `/Matrix` is the
+ * shape's CTM and the shading `/Coords` are in the shape's local space.
+ *
+ * @param gradient The gradient fill (kind, angle, colour stops).
+ * @param bbox     The shape's local-space bounding box, from {@link shapeBbox}.
+ * @param ctm      The shape's current transformation matrix, used as `/Matrix`.
+ * @returns A reference to the `/Pattern` object, for a `/Pattern cs /Pn scn` fill.
+ */
 export function buildGradientPattern(
   doc: PdfDocument,
   gradient: ShapeGradient,

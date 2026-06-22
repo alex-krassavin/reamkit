@@ -8,6 +8,7 @@
 import type { PdfValue } from '@/pdf/objects';
 import { PdfHexString, PdfStream, dict, name } from '@/pdf/objects';
 
+/** The user-access permission flags (`/P`, §7.6.4.4.7); each defaults to allowed. */
 export interface PdfPermissions {
   /** Bit 3 — print the document (default true). */
   readonly printing?: boolean;
@@ -25,6 +26,7 @@ export interface PdfPermissions {
   readonly documentAssembly?: boolean;
 }
 
+/** Passwords and permissions for {@link preparePdfEncryption}. */
 export interface PdfEncryptOptions {
   /** Required to OPEN the document. Empty string = opens without a prompt. */
   readonly userPassword?: string;
@@ -33,16 +35,24 @@ export interface PdfEncryptOptions {
   readonly permissions?: PdfPermissions;
 }
 
+/** The output of {@link preparePdfEncryption}: the file key plus the `/Encrypt` dictionary. */
 export interface PreparedEncryption {
-  readonly fileKey: Uint8Array; // 32-byte FEK — encrypts every string/stream
+  /** 32-byte file encryption key (FEK) — encrypts every string/stream. */
+  readonly fileKey: Uint8Array;
   readonly encryptDict: PdfValue;
 }
 
 const encoder = new TextEncoder();
 const subtle = globalThis.crypto.subtle;
 
-// §7.6.4.4.7 P: bits 1–2 reserved 0, undefined bits 1 → all-permissions is
-// 0xFFFFFFFC (-4 as int32).
+/**
+ * Compute the `/P` permission integer (§7.6.4.4.7) from the high-level flags:
+ * bits 1–2 are reserved 0 and undefined bits are 1, so all-permissions is
+ * `0xFFFFFFFC` (-4 as int32); each disabled flag clears its bit.
+ *
+ * @param p The permission flags, or `undefined` for all-allowed.
+ * @returns The signed 32-bit `/P` value.
+ */
 export function permissionBits(p: PdfPermissions | undefined): number {
   let bits = -4; // all 1s, bits 1-2 zero
   const off = (bit: number) => (bits &= ~(1 << (bit - 1)));
@@ -90,6 +100,16 @@ async function aesCbcNoPad(key: Uint8Array, iv: Uint8Array, data: Uint8Array): P
   return out.slice(0, data.length);
 }
 
+/**
+ * AES-CBC decryption without padding, the inverse of the internal no-pad
+ * encrypt. Appends a crafted padding block so WebCrypto's PKCS7 unpad succeeds
+ * and returns exactly `data.length` plain bytes.
+ *
+ * @param key  The 16-byte AES key.
+ * @param iv   The initialization vector.
+ * @param data The ciphertext (a 16-byte multiple).
+ * @returns The decrypted bytes.
+ */
 export async function aesCbcNoPadDecrypt(
   key: Uint8Array,
   iv: Uint8Array,
@@ -108,7 +128,16 @@ export async function aesCbcNoPadDecrypt(
   return out.slice(0, data.length);
 }
 
-// §7.6.4.3.4 Algorithm 2.B — the iterated hash hardening.
+/**
+ * The iterated hash hardening of Algorithm 2.B (§7.6.4.3.4): SHA-256/384/512
+ * rounds interleaved with AES-CBC, run to the spec's stopping condition.
+ *
+ * @param password The (truncated) password bytes.
+ * @param salt     The validation or key salt.
+ * @param userData Additional hash input (the 48-byte `/U` for owner derivation,
+ *   empty otherwise).
+ * @returns The derived 32-byte key.
+ */
 export async function hardHash(
   password: Uint8Array,
   salt: Uint8Array,
@@ -129,8 +158,14 @@ export async function hardHash(
   return k.slice(0, 32);
 }
 
-// §7.6.4.4.8/.9 (Algorithms 8–10): derive /U /UE /O /OE /Perms and a random
-// file encryption key.
+/**
+ * Build the V5/R6 (AES-256) Standard-security-handler `/Encrypt` dictionary:
+ * derive `/U`, `/UE`, `/O`, `/OE` and `/Perms` (§7.6.4.4.8–.10, Algorithms
+ * 8–10) for a freshly-generated random file encryption key.
+ *
+ * @param options The passwords and permissions.
+ * @returns The file key and the `/Encrypt` dictionary ({@link PreparedEncryption}).
+ */
 export async function preparePdfEncryption(
   options: PdfEncryptOptions,
 ): Promise<PreparedEncryption> {
@@ -200,6 +235,14 @@ async function encryptBytes(fileKey: Uint8Array, data: Uint8Array): Promise<Uint
   return concat(iv, cipher);
 }
 
+/**
+ * Decrypt AESV3 content (§7.6.3.3): split the leading 16-byte IV and
+ * AES-256-CBC-decrypt the remainder.
+ *
+ * @param fileKey The 32-byte file encryption key.
+ * @param data    The `IV ‖ ciphertext` bytes.
+ * @returns The decrypted plaintext.
+ */
 export async function decryptBytes(fileKey: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
   const iv = data.slice(0, 16);
   const k = await subtle.importKey('raw', fileKey as BufferSource, 'AES-CBC', false, ['decrypt']);
@@ -208,10 +251,17 @@ export async function decryptBytes(fileKey: Uint8Array, data: Uint8Array): Promi
   );
 }
 
-// Encrypt every string and stream in an object graph (the /Encrypt dictionary
-// itself is added AFTER this pass and never encrypted; trailer /ID strings
-// live outside the body). Strings come back as hex strings — cipher bytes are
-// binary.
+/**
+ * Recursively encrypt every string and stream in an object graph (AESV3). The
+ * `/Encrypt` dictionary itself is added AFTER this pass and never encrypted, and
+ * trailer `/ID` strings live outside the body. Strings come back as hex strings,
+ * since the cipher bytes are binary; numbers, booleans, names, refs, null and
+ * raw tokens pass through unchanged.
+ *
+ * @param value   The value to walk.
+ * @param fileKey The 32-byte file encryption key.
+ * @returns The value with its strings/streams replaced by their ciphertext.
+ */
 export async function encryptObjectGraph(value: PdfValue, fileKey: Uint8Array): Promise<PdfValue> {
   if (typeof value === 'string') {
     return new PdfHexString(await encryptBytes(fileKey, encoder.encode(value)));

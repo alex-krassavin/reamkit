@@ -15,34 +15,38 @@ import { PdfHexString, PdfRawToken, dict, name, ref } from '@/pdf/objects';
 const BYTE_RANGE_PLACEHOLDER = '[0 0000000000 0000000000 0000000000]';
 const DEFAULT_RESERVE_BYTES = 8192; // /Contents hole (16 384 hex chars)
 
+/** The signature-dictionary metadata stamped at placeholder time by {@link addSignaturePlaceholder}. */
 export interface SignaturePlaceholder {
   readonly reason?: string;
   readonly location?: string;
-  // Signer name recorded in the dictionary (/Name).
+  /** Signer name recorded in the dictionary (`/Name`). */
   readonly name?: string;
   readonly contactInfo?: string;
-  // Claimed signing time (→ /M and the CMS signingTime attribute).
+  /** Claimed signing time (→ `/M` and the CMS `signingTime` attribute). */
   readonly signingTime?: Date;
-  // Signature field name (default "Signature1").
+  /** Signature field name (default `"Signature1"`). */
   readonly fieldName?: string;
-  // Bytes reserved for the /Contents signature hole (default 8192).
+  /** Bytes reserved for the `/Contents` signature hole (default 8192). */
   readonly reserveBytes?: number;
 }
 
+/** The signing key material consumed by {@link signPdf}. */
 export interface SignerCredentials {
-  // Signer's X.509 certificate (DER).
+  /** Signer's X.509 certificate (DER). */
   readonly certificate: Uint8Array;
-  // WebCrypto private key. An RSASSA-PKCS1-v1_5 key (default) or — when
-  // `algorithm` is 'ecdsa' — an ECDSA key (P-256/P-384/P-521).
+  /**
+   * WebCrypto private key. An RSASSA-PKCS1-v1_5 key (default) or — when
+   * `algorithm` is `'ecdsa'` — an ECDSA key (P-256/P-384/P-521).
+   */
   readonly privateKey: CryptoKey;
-  // Signature algorithm of the key (default 'rsa').
+  /** Signature algorithm of the key (default `'rsa'`). */
   readonly algorithm?: 'rsa' | 'ecdsa';
-  // Optional chain certificates (DER) to embed alongside the signer cert.
+  /** Optional chain certificates (DER) to embed alongside the signer cert. */
   readonly extraCertificates?: ReadonlyArray<Uint8Array>;
   readonly signingTime?: Date;
 }
 
-// Converter convenience: everything needed to emit + sign in one call.
+/** Converter convenience: everything needed to emit a placeholder and sign in one call. */
 export interface SignatureOptions extends SignaturePlaceholder, SignerCredentials {}
 
 function pad2(n: number): string {
@@ -57,10 +61,16 @@ function pdfDate(d: Date): string {
   );
 }
 
-// Add an (invisible) signature field + its signature dictionary to a document
-// being built. The dictionary carries placeholder /ByteRange and /Contents that
-// signPdf fills later. Returns the field ref (attach to the page's /Annots) and
-// the /AcroForm dict (attach to the catalog).
+/**
+ * Add an (invisible) signature field plus its signature dictionary to a document
+ * being built (§12.8). The dictionary carries placeholder `/ByteRange` and
+ * `/Contents` that {@link signPdf} fills later.
+ *
+ * @param ph      The signature metadata and reserved-bytes size.
+ * @param pageRef The page the (zero-size) widget annotation belongs to.
+ * @returns The field ref (attach to the page's `/Annots`) and the `/AcroForm`
+ *   dictionary (attach to the catalog).
+ */
 export function addSignaturePlaceholder(
   doc: PdfDocument,
   ph: SignaturePlaceholder,
@@ -148,10 +158,18 @@ function toHex(bytes: Uint8Array): string {
   return s;
 }
 
-// Sign a PDF that already carries a signature placeholder (from
-// addSignaturePlaceholder / options.signaturePlaceholder). Computes the real
-// ByteRange, hashes the covered bytes, builds the detached CMS, and writes it
-// into the reserved /Contents hole — leaving every other byte untouched.
+/**
+ * Sign a PDF that already carries a signature placeholder (from
+ * {@link addSignaturePlaceholder}). Computes the real `/ByteRange`, hashes the
+ * covered bytes (SHA-256), builds the detached PKCS#7/CMS, and writes it into
+ * the reserved `/Contents` hole — leaving every other byte untouched.
+ *
+ * @param pdf  The placeholder-bearing PDF bytes.
+ * @param cred The signer's certificate, key and algorithm.
+ * @returns A new byte array with the real ByteRange and signature spliced in.
+ * @throws Error when no placeholder is found, it is malformed, WebCrypto is
+ *   unavailable, or the signature exceeds the reserved `/Contents` size.
+ */
 export async function signPdf(pdf: Uint8Array, cred: SignerCredentials): Promise<Uint8Array> {
   const out = pdf.slice();
   // Match the FULL fixed-width placeholder, not a bare '/ByteRange' — an

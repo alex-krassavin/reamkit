@@ -109,9 +109,11 @@ import {
 } from '@/core/drawingml/shape-render';
 import { StructTreeBuilder } from '@/pdf/struct-tree';
 
-// PDF/A profiles: part 1 (ISO 19005-1, PDF 1.4) / 2 (ISO 19005-2) / 3
-// (ISO 19005-3, both PDF 1.7); conformance level a (tagged) / b (visual) /
-// u (Unicode — only 2/3).
+/**
+ * PDF/A conformance string: part 1 (ISO 19005-1, PDF 1.4) / 2 (ISO 19005-2) / 3
+ * (ISO 19005-3, both PDF 1.7); conformance level a (tagged) / b (visual) /
+ * u (Unicode — only 2/3).
+ */
 export type PdfALevel =
   | 'PDF/A-1b'
   | 'PDF/A-1a'
@@ -122,10 +124,13 @@ export type PdfALevel =
   | 'PDF/A-3u'
   | 'PDF/A-3a';
 
+/** A {@link PdfALevel} decomposed into the part, level, and the apparatus they imply. */
 export interface PdfAProfile {
   readonly part: 1 | 2 | 3;
   readonly level: 'a' | 'b' | 'u';
+  /** Whether the level mandates a tagged PDF (level `a`). */
   readonly tagged: boolean; // level a
+  /** PDF version the part pins: part 1 → 1.4, else 1.7. */
   readonly version: '1.4' | '1.7'; // part 1 → 1.4, else 1.7
 }
 
@@ -137,53 +142,86 @@ function parsePdfAProfile(pdfA: PdfALevel): PdfAProfile {
   return { part, level, tagged: level === 'a', version: part === 1 ? '1.4' : '1.7' };
 }
 
-// E-PARITY: renderer-compatibility profile for the line-height model.
-//   'ream' (default) — Ream's flat 1.2× leading; byte-identical to before.
-//   'word' — leading from the font's OS/2 usWin metrics (the GDI cell box).
-//   'libreoffice' — leading from hhea (or OS/2 typo when USE_TYPO_METRICS is set).
-// Opt-in: a profile emulates that renderer's vertical rhythm for closer visual
-// parity. It never changes default ('ream') output.
+/**
+ * E-PARITY: renderer-compatibility profile for the line-height model.
+ *   `'ream'` (default) — Ream's flat 1.2× leading; byte-identical to before.
+ *   `'word'` — leading from the font's OS/2 usWin metrics (the GDI cell box).
+ *   `'libreoffice'` — leading from hhea (or OS/2 typo when USE_TYPO_METRICS is set).
+ *
+ * Opt-in: a profile emulates that renderer's vertical rhythm for closer visual
+ * parity. It never changes default (`'ream'`) output.
+ */
 export type LayoutProfile = 'ream' | 'word' | 'libreoffice';
 
+/**
+ * The full option set the layout engine and PDF emitter consume: the resolved
+ * font registry, the style/numbering tables, the section model and page
+ * geometry, the after-body apparatus (footnotes, endnotes, comments), and every
+ * PDF-output toggle (PDF/A, tagged, PDF/UA, encryption, attachments,
+ * signatures). Only `registry` and `styles` are required; everything else falls
+ * back to a sensible default.
+ */
 export interface StyledRenderOptions {
+  /** The resolved font set every run draws with (the guaranteed fallback registry). */
   readonly registry: FontRegistry;
+  /** Renderer-compatibility profile for the line-height model (default `'ream'`). */
   readonly layoutProfile?: LayoutProfile;
-  // Per-run font resolution: when supplied, each text run picks the registry of
-  // its declared family (sans→arimo / serif→tinos / mono→cousine via the run's
-  // w:ascii) instead of always using `registry`. Absent ⇒ single-family (every
-  // run uses `registry`), byte-identical to before. `registry` remains the
-  // guaranteed fallback for math/chart/default glyphs and any missing family.
+  /**
+   * Per-run font resolution: when supplied, each text run picks the registry of
+   * its declared family (sans→arimo / serif→tinos / mono→cousine via the run's
+   * `w:ascii`) instead of always using `registry`. Absent ⇒ single-family (every
+   * run uses `registry`), byte-identical to before. `registry` remains the
+   * guaranteed fallback for math/chart/default glyphs and any missing family.
+   */
   readonly registriesByFamily?: ReadonlyMap<FamilyKey, FontRegistry>;
-  // The document's OWN embedded fonts (word/fonts/*.odttf, de-obfuscated), keyed
-  // by normalized font name. A run whose w:ascii matches one renders with the
-  // real font — glyph-exact, no substitution. Highest priority.
+  /**
+   * The document's OWN embedded fonts (`word/fonts/*.odttf`, de-obfuscated),
+   * keyed by normalized font name. A run whose `w:ascii` matches one renders with
+   * the real font — glyph-exact, no substitution. Highest priority.
+   */
   readonly embeddedFonts?: ReadonlyMap<string, FontRegistry>;
+  /** §18.8 / ECMA-376 style table the cascade resolves against. */
   readonly styles: StyleSheet;
+  /** §17.9 numbering definitions; applied to list paragraphs before layout. */
   readonly numbering?: Numbering;
-  // Single-section legacy entry-point. If `sections` is set it takes
-  // precedence and `section` is ignored.
+  /**
+   * Single-section legacy entry-point. If `sections` is set it takes precedence
+   * and `section` is ignored.
+   */
   readonly section?: SectionProperties;
-  // ECMA-376 §17.6 — ordered list of sections. Each section's endIndex is the
-  // exclusive bound into the body array (section N covers
-  // body[sections[N-1].endIndex..sections[N].endIndex)).
+  /**
+   * ECMA-376 §17.6 — ordered list of sections. Each section's `endIndex` is the
+   * exclusive bound into the body array (section N covers
+   * `body[sections[N-1].endIndex..sections[N].endIndex)`).
+   */
   readonly sections?: ReadonlyArray<Section>;
+  /** Header/footer body content keyed by relationship id. */
   readonly headersFooters?: ReadonlyMap<string, ReadonlyArray<BodyElement>>;
-  // §17.11 notes content by id. Footnotes render in a reserved band at the
-  // bottom of the referencing page; endnotes flow after the body.
+  /**
+   * §17.11 notes content by id. Footnotes render in a reserved band at the
+   * bottom of the referencing page; endnotes flow after the body.
+   */
   readonly footnotes?: ReadonlyMap<string, ReadonlyArray<BodyElement>>;
   readonly endnotes?: ReadonlyMap<string, ReadonlyArray<BodyElement>>;
-  // §17.13.4 review comments by id; rendered as superscript markers in text and
-  // a list after the body (after endnotes), each with its author/date.
+  /**
+   * §17.13.4 review comments by id; rendered as superscript markers in text and
+   * a list after the body (after endnotes), each with its author/date.
+   */
   readonly comments?: ReadonlyMap<string, Comment>;
-  // CM2b — also emit each comment as a native PDF /Text (sticky-note) annotation
-  // at its marker. Opt-in and interactive-only: suppressed under PDF/A and tagged
-  // output (where it would need annotation/appearance conformance), since the
-  // clickable marker + Comments section already carry the content there.
+  /**
+   * CM2b — also emit each comment as a native PDF `/Text` (sticky-note)
+   * annotation at its marker. Opt-in and interactive-only: suppressed under
+   * PDF/A and tagged output (where it would need annotation/appearance
+   * conformance), since the clickable marker + Comments section already carry
+   * the content there.
+   */
   readonly commentAnnotations?: boolean;
-  // Content-addressed binary store; image nodes reference it by ResourceId.
+  /** Content-addressed binary store; image nodes reference it by {@link ResourceId}. */
   readonly resources?: ResourceStore;
-  // Parsed charts keyed by relationship id (ChartBlock.chartRelId). Supplied by
-  // the converter, which resolves the chart parts from the package.
+  /**
+   * Parsed charts keyed by relationship id (`ChartBlock.chartRelId`). Supplied by
+   * the converter, which resolves the chart parts from the package.
+   */
   readonly charts?: ReadonlyMap<string, Chart>;
   readonly pageWidth?: number;
   readonly pageHeight?: number;
@@ -191,53 +229,74 @@ export interface StyledRenderOptions {
   readonly marginRight?: number;
   readonly marginTop?: number;
   readonly marginBottom?: number;
-  // Optional Liang hyphenator. When set, each word token is split at allowed
-  // hyphenation positions and offered to Knuth-Plass as potential break
-  // points (with a small disincentive). Improves justified paragraph rags.
+  /**
+   * Optional Liang hyphenator. When set, each word token is split at allowed
+   * hyphenation positions and offered to Knuth-Plass as potential break points
+   * (with a small disincentive). Improves justified paragraph rags.
+   */
   readonly hyphenator?: Hyphenator;
-  // Optional /Info dictionary metadata (ISO 32000-1 §14.3.3). Unset fields
-  // are omitted; if any field is set a PDF /Info entry is emitted.
+  /**
+   * Optional `/Info` dictionary metadata (ISO 32000-1 §14.3.3). Unset fields are
+   * omitted; if any field is set a PDF `/Info` entry is emitted.
+   */
   readonly info?: DocumentInfo;
-  // When set, emit a PDF/A-conformant file: an OutputIntent with an embedded
-  // sRGB ICC profile, document XMP /Metadata (the pdfaid identifier), /ID, and
-  // subset-tagged fonts with a /CIDSet. The profile picks the rest:
-  //   part 1 → PDF 1.4 + flattened image alpha (no transparency);
-  //   part 2/3 → PDF 1.7 + preserved transparency (image /SMask + page group);
-  //   part 3 → may carry embedded associated files (see `attachments`);
-  //   level a → tagged (logical structure); b → visual; u → b + Unicode mapping.
+  /**
+   * When set, emit a PDF/A-conformant file: an OutputIntent with an embedded
+   * sRGB ICC profile, document XMP `/Metadata` (the pdfaid identifier), `/ID`,
+   * and subset-tagged fonts with a `/CIDSet`. The profile picks the rest:
+   *   part 1 → PDF 1.4 + flattened image alpha (no transparency);
+   *   part 2/3 → PDF 1.7 + preserved transparency (image `/SMask` + page group);
+   *   part 3 → may carry embedded associated files (see `attachments`);
+   *   level a → tagged (logical structure); b → visual; u → b + Unicode mapping.
+   */
   readonly pdfA?: PdfALevel;
-  // Emit a tagged PDF (ISO 32000-1 §14.8): a /StructTreeRoot describing reading
-  // order, marked content (BDC/EMC + MCID) on body text, and /Artifact marking
-  // of page decoration. Implied by pdfA: 'PDF/A-1a'. Independent of PDF/A
-  // otherwise (a plain tagged PDF is useful on its own).
+  /**
+   * Emit a tagged PDF (ISO 32000-1 §14.8): a `/StructTreeRoot` describing reading
+   * order, marked content (BDC/EMC + MCID) on body text, and `/Artifact` marking
+   * of page decoration. Implied by `pdfA: 'PDF/A-1a'`. Independent of PDF/A
+   * otherwise (a plain tagged PDF is useful on its own).
+   */
   readonly tagged?: boolean;
-  // PDF/UA-1 (ISO 14289-1): implies tagged; the XMP carries pdfuaid:part=1
-  // and the document always gets a title (AT announces it). Combines freely
-  // with pdfA level-a profiles.
+  /**
+   * PDF/UA-1 (ISO 14289-1): implies tagged; the XMP carries `pdfuaid:part=1` and
+   * the document always gets a title (AT announces it). Combines freely with
+   * `pdfA` level-a profiles.
+   */
   readonly pdfUA?: boolean;
-  // Document natural language (BCP 47, e.g. "en-US", "ru-RU") for the tagged-PDF
-  // catalog /Lang (§14.9.2). Defaults to "en-US". The docx converter fills this
-  // from the document's default w:lang.
+  /**
+   * Document natural language (BCP 47, e.g. `"en-US"`, `"ru-RU"`) for the
+   * tagged-PDF catalog `/Lang` (§14.9.2). Defaults to `"en-US"`. The docx
+   * converter fills this from the document's default `w:lang`.
+   */
   readonly language?: string;
-  // §7.6 PDF encryption (AES-256, R6). Only honoured on the ASYNC conversion
-  // path (WebCrypto); mutually exclusive with pdfA (ISO 19005 forbids
-  // /Encrypt) and with signatures (v1).
+  /**
+   * §7.6 PDF encryption (AES-256, R6). Only honoured on the ASYNC conversion
+   * path (WebCrypto); mutually exclusive with `pdfA` (ISO 19005 forbids
+   * `/Encrypt`) and with signatures (v1).
+   */
   readonly encrypt?: PdfEncryptOptions;
-  // Files to embed as associated files (catalog /AF + /Names /EmbeddedFiles).
-  // Only emitted for plain PDF and PDF/A-3 (PDF/A-1/2 forbid arbitrary embedded
-  // files); ignored for PDF/A-1/2. The docx/xlsx converters can embed the source
-  // document automatically via `embedSource`.
+  /**
+   * Files to embed as associated files (catalog `/AF` + `/Names`
+   * `/EmbeddedFiles`). Only emitted for plain PDF and PDF/A-3 (PDF/A-1/2 forbid
+   * arbitrary embedded files); ignored for PDF/A-1/2. The docx/xlsx converters
+   * can embed the source document automatically via `embedSource`.
+   */
   readonly attachments?: ReadonlyArray<AttachedFile>;
-  // Emit an (invisible) signature field + signature dictionary with placeholder
-  // /ByteRange and /Contents (ISO 32000 §12.8). The result is an UNSIGNED PDF;
-  // pass it to signPdf() to fill the placeholder with a real PKCS#7 signature.
+  /**
+   * Emit an (invisible) signature field + signature dictionary with placeholder
+   * `/ByteRange` and `/Contents` (ISO 32000 §12.8). The result is an UNSIGNED
+   * PDF; pass it to `signPdf()` to fill the placeholder with a real PKCS#7
+   * signature.
+   */
   readonly signaturePlaceholder?: SignaturePlaceholder;
 }
 
 // Re-exported from the document model (moved there so FlowDoc can carry it).
 export type { DocumentInfo } from '@/core/document-model';
 
+/** A4 page width in points (the page-geometry fallback). */
 export const A4_WIDTH = 595;
+/** A4 page height in points (the page-geometry fallback). */
 export const A4_HEIGHT = 842;
 const TWIP_TO_PT = 1 / 20;
 const EIGHTH_PT = 1 / 8;
@@ -394,36 +453,45 @@ interface TableBlock {
   readonly xOffsetPt: number;
 }
 
-// PDF-only companion the same layout pass produces (oop-design A13): the
-// logical-structure tree, per-section geometry (the emit fallback page), and
-// the parsed PDF/A profile. Consumed only by emitStyledPdf; the SVG writer
-// never sees it.
-// §17.13.6.2 — a bookmark's GoTo destination: the page (0-based) and the
-// y-up top of the anchoring paragraph's first line.
+/**
+ * §17.13.6.2 — a bookmark's GoTo destination: the page (0-based) and the y-up
+ * top of the anchoring paragraph's first line.
+ */
 export interface BookmarkPosition {
   readonly pageIdx: number;
   readonly yTopPt: number;
 }
 
+/** A comment's `/Text` annotation payload: the author and the flattened body (CM2b). */
 export interface CommentNote {
   readonly author?: string;
   readonly contents: string;
 }
 
+/**
+ * PDF-only companion the same layout pass produces (oop-design A13): the
+ * logical-structure tree, per-section geometry (the emit fallback page), and the
+ * parsed PDF/A profile. Consumed only by `emitStyledPdf`; the SVG writer never
+ * sees it.
+ */
 export interface PdfLayoutAux {
   readonly structBuilder: StructTreeBuilder | undefined;
   readonly sectionCtxs: ReadonlyArray<SectionRenderCtx>;
   readonly pdfaProfile: PdfAProfile | undefined;
   readonly tagged: boolean;
   readonly bookmarks: ReadonlyMap<string, BookmarkPosition>;
-  // CM2b — comment marker anchor (`comment-${n}`) → the note the emitter attaches
-  // as a /Text annotation. Present only when commentAnnotations was requested.
+  /**
+   * CM2b — comment marker anchor (`comment-${n}`) → the note the emitter attaches
+   * as a `/Text` annotation. Present only when `commentAnnotations` was requested.
+   */
   readonly commentNotes?: ReadonlyMap<string, CommentNote>;
 }
 
-// What layoutStyledDocument actually returns: the PageDoc with the PDF
-// companion riding on `pdf`. Assignable to the narrow LaidOutDocument, so
-// PageDoc-only consumers (writeSvg) take it as-is.
+/**
+ * What {@link layoutStyledDocument} actually returns: the PageDoc with the PDF
+ * companion riding on `pdf`. Assignable to the narrow `LaidOutDocument`, so
+ * PageDoc-only consumers (`writeSvg`) take it as-is.
+ */
 export interface LaidOutPdfDocument extends LaidOutDocument {
   readonly pdf: PdfLayoutAux;
 }
@@ -733,8 +801,17 @@ interface NotePlan {
   ) => { blocks: ReadonlyArray<LaidOutBlock>; heightPt: number } | undefined;
 }
 
-// Layout phase (the FlowDoc→PageDoc transform of ir-design §7): body →
-// positioned pages (PageItems), font/image resources, logical structure.
+/**
+ * Layout phase (the FlowDoc→PageDoc transform of ir-design §7): body →
+ * positioned pages (PageItems), font/image resources, logical structure. Drives
+ * the whole pass — numbering and note numbering, per-section geometry, per-block
+ * layout, the footnote/endnote/comment tails, then pagination — and returns the
+ * {@link LaidOutPdfDocument} (the PageDoc plus its PDF companion).
+ *
+ * @param body    The document body the section model partitions.
+ * @param options The resolved fonts, styles, section model, and PDF-output toggles.
+ * @returns The positioned pages plus the PDF-only {@link PdfLayoutAux} companion.
+ */
 export function layoutStyledDocument(
   body: ReadonlyArray<BodyElement>,
   options: StyledRenderOptions,
@@ -936,10 +1013,13 @@ export function layoutStyledDocument(
 // Emit phase: PageDoc draft → PDF objects (content streams, page dicts,
 // catalog, PDF/A apparatus, structure tree, signature placeholder) → bytes.
 
-// Priority for page geometry:
-//   1. explicit value in StyledRenderOptions (test/library caller override)
-//   2. value from section properties (sectPr/pgSz/pgMar from the docx)
-//   3. A4 + 1-inch margins fallback
+/**
+ * The resolved page box + header/footer offsets, in points. Priority for page
+ * geometry:
+ *   1. explicit value in {@link StyledRenderOptions} (test/library caller override)
+ *   2. value from section properties (`sectPr/pgSz/pgMar` from the docx)
+ *   3. A4 + 1-inch margins fallback
+ */
 export interface PageDimensions {
   readonly pageWidth: number;
   readonly pageHeight: number;
@@ -976,6 +1056,13 @@ function resolvePageDimensions(
   };
 }
 
+/**
+ * Per-section render context: the section's exclusive body `endIndex`, its
+ * resolved {@link PageDimensions} (flattened), the derived content box, the
+ * column geometry, the pre-laid header/footer bands, and the title-page /
+ * even-and-odd header toggles. Built once per section and threaded through both
+ * layout and pagination.
+ */
 export interface SectionRenderCtx {
   readonly endIndex: number;
   readonly properties: SectionProperties;
@@ -986,10 +1073,12 @@ export interface SectionRenderCtx {
   readonly marginBottom: number;
   readonly contentWidth: number;
   readonly pageContentHeight: number;
-  // §17.6.4 multi-column sections: per-column x-offset (from marginLeft) and
-  // width. Absent for single-column sections. Body blocks are laid out at the
-  // FIRST column's width (explicit unequal widths degrade to flowing without
-  // re-wrap); headers/footers and footnotes keep the full content width.
+  /**
+   * §17.6.4 multi-column sections: per-column x-offset (from `marginLeft`) and
+   * width. Absent for single-column sections. Body blocks are laid out at the
+   * FIRST column's width (explicit unequal widths degrade to flowing without
+   * re-wrap); headers/footers and footnotes keep the full content width.
+   */
   readonly columns?: ReadonlyArray<{ readonly xOffsetPt: number; readonly widthPt: number }>;
   readonly headerSet: HeaderFooterSet;
   readonly footerSet: HeaderFooterSet;
@@ -3246,12 +3335,23 @@ function listItemParagraphNode(
   };
 }
 
-// A9 (oop-design §4.3): the page-assembly state machine, extracted verbatim
-// from paginateSections. One instance assembles all pages of a document:
-// fields are the former local state, methods the former closures — the block
-// loop drives it. Push order into `current`/`pages` IS the byte order of the
-// emitted PDF, so the bodies move unchanged.
+/**
+ * A9 (oop-design §4.3): the page-assembly state machine, extracted verbatim from
+ * `paginateSections`. One instance assembles all pages of a document: fields are
+ * the former local state, methods the former closures — the block loop drives it.
+ * Push order into `current`/`pages` IS the byte order of the emitted PDF, so the
+ * bodies move unchanged.
+ */
 class PageAssembler {
+  /**
+   * @param sectionCtxs      The per-section render contexts, in order; assembly
+   *                         starts on the first section's first page.
+   * @param builder          The tagged-PDF structure builder, or `undefined` for
+   *                         untagged output.
+   * @param notes            The footnote plan (lazy per-section layout), or
+   *                         `undefined` when there are none.
+   * @param bookmarkPositions Out-param: bookmark name → its GoTo destination.
+   */
   constructor(
     readonly sectionCtxs: ReadonlyArray<SectionRenderCtx>,
     readonly builder: StructTreeBuilder | undefined,
@@ -3272,16 +3372,21 @@ class PageAssembler {
   pendingPageBreak = false;
   cursorY: number;
 
-  // §17.6.4 multi-column flow: content fills column after column before the
-  // page flushes. this.colStartLen marks where the this.current column's items begin in
-  // `this.current` — the single-column "page has content" guard generalizes to
-  // "this column has content" (identical when there is one column).
+  /**
+   * §17.6.4 multi-column flow: content fills column after column before the page
+   * flushes. `colStartLen` marks where the current column's items begin in
+   * `current` — the single-column "page has content" guard generalizes to "this
+   * column has content" (identical when there is one column).
+   */
   colIdx = 0;
   colStartLen = 0;
+  /** The current column's left edge (`marginLeft` plus the column x-offset). */
   colLeft = (): number => this.ctx.marginLeft + (this.ctx.columns?.[this.colIdx]?.xOffsetPt ?? 0);
+  /** The current column's width (the section content width when single-column). */
   colWidth = (): number => this.ctx.columns?.[this.colIdx]?.widthPt ?? this.ctx.contentWidth;
+  /** Whether the current column has received any items yet. */
   colHasContent = (): boolean => this.current.length > this.colStartLen;
-  // Overflow step: next column on this page, or a fresh page after the last.
+  /** Overflow step: next column on this page, or a fresh page after the last. */
   advanceColumn = (): void => {
     if (this.ctx.columns && this.colIdx + 1 < this.ctx.columns.length) {
       this.colIdx++;
@@ -3292,14 +3397,19 @@ class PageAssembler {
     }
   };
 
-  // §20.4.2.3 out-of-flow drawings (wrap 'none'): they render at their
-  // anchored position without moving the cursor. behindDoc sinks below the
-  // body text, everything else above it; both flush with the page.
+  /**
+   * §20.4.2.3 out-of-flow drawings (wrap `'none'`): they render at their anchored
+   * position without moving the cursor. `behindDoc` sinks below the body text,
+   * everything else above it; both flush with the page.
+   */
   floatsBehind: Array<PageItem> = [];
   floatsFront: Array<PageItem> = [];
-  // Side-wrapping floats (wrapSquare/tight/through): rectangles the body text
-  // must flow around. Page-scoped, like the float graphics.
+  /**
+   * Side-wrapping floats (wrapSquare/tight/through): rectangles the body text
+   * must flow around. Page-scoped, like the float graphics.
+   */
   exclusions: Array<{ x0: number; x1: number; topYUp: number; bottomYUp: number }> = [];
+  /** The float's left edge on the page, resolved from its horizontal anchor. */
   floatX = (f: FloatAnchor, widthPt: number): number => {
     const h = f.posH;
     if (!h) return this.colLeft();
@@ -3319,8 +3429,10 @@ class PageAssembler {
     if (h.align === 'right') return base + span - widthPt;
     return base + (h.offsetPt ?? 0);
   };
-  // The drawing's TOP in the y-up cursor frame. paragraph/line-relative
-  // offsets hang off the anchoring paragraph's this.current position.
+  /**
+   * The drawing's TOP in the y-up cursor frame. Paragraph/line-relative offsets
+   * hang off the anchoring paragraph's current position.
+   */
   floatTopYUp = (f: FloatAnchor): number => {
     const v = f.posV;
     if (!v) return this.cursorY;
@@ -3329,23 +3441,28 @@ class PageAssembler {
       return this.ctx.pageHeight - this.ctx.marginTop - (v.offsetPt ?? 0);
     return this.cursorY - (v.offsetPt ?? 0);
   };
-  // Tagged PDF: the stack of open list levels (for L/LI/LBody nesting). Cleared
-  // whenever a non-list-item block interrupts the run of list paragraphs.
+  /**
+   * Tagged PDF: the stack of open list levels (for L/LI/LBody nesting). Cleared
+   * whenever a non-list-item block interrupts the run of list paragraphs.
+   */
   readonly listStack: Array<ListFrame> = [];
 
-  // §17.11 footnotes: this.notes reserved for the CURRENT page (greedy — a line
-  // carrying a reference pulls its note's height out of the page bottom, so
-  // the line and its note land together). `this.placedNotes` is global: a note
-  // renders once, on its first reference's page.
+  /**
+   * §17.11 footnotes: `pageNotes` reserved for the CURRENT page (greedy — a line
+   * carrying a reference pulls its note's height out of the page bottom, so the
+   * line and its note land together). `placedNotes` is global: a note renders
+   * once, on its first reference's page.
+   */
   pageNotes: Array<{ n: number; blocks: ReadonlyArray<LaidOutBlock>; heightPt: number }> = [];
   noteReserve = 0;
   readonly placedNotes = new Set<string>();
-  // The page's usable bottom: the margin plus whatever the this.notes band has
-  // claimed so far.
+  /** The page's usable bottom: the margin plus whatever the notes band has claimed so far. */
   bottomLimit = (): number => this.ctx.marginBottom + this.noteReserve;
 
-  // The first exclusion a line spanning [yTop-h, yTop] collides with in the
-  // current column (x-overlap with the column required).
+  /**
+   * The first exclusion a line spanning `[yTop-h, yTop]` collides with in the
+   * current column (x-overlap with the column required).
+   */
   exclusionAt = (
     yTop: number,
     h: number,
@@ -3360,8 +3477,10 @@ class PageAssembler {
     return undefined;
   };
 
-  // Per-line geometry beside an exclusion: the narrowed width and the x shift.
-  // Text goes on the WIDER side of the float (one side per line, v1).
+  /**
+   * Per-line geometry beside an exclusion: the narrowed width and the x shift.
+   * Text goes on the WIDER side of the float (one side per line, v1).
+   */
   lineGeometryAt = (yTop: number, h: number): { width: number; xOffset: number } => {
     const full = this.colWidth();
     const e = this.exclusionAt(yTop, h);
@@ -3376,10 +3495,12 @@ class PageAssembler {
     return { width: Math.max(MIN_WRAP_WIDTH, leftRoom), xOffset: 0 };
   };
 
-  // Estimated per-line widths for a paragraph starting at startY: narrowed
-  // while lines (estimated at the first line's height) overlap an exclusion,
-  // then one full width Knuth-Plass reuses for the tail. Undefined when
-  // nothing overlaps — the caller keeps the original block.
+  /**
+   * Estimated per-line widths for a paragraph starting at `startY`: narrowed
+   * while lines (estimated at the first line's height) overlap an exclusion, then
+   * one full width Knuth-Plass reuses for the tail. `undefined` when nothing
+   * overlaps — the caller keeps the original block.
+   */
   lineWidthsFor = (
     block: { readonly lines: ReadonlyArray<Line>; readonly resolved: ResolvedParagraphProperties },
     startY: number,
@@ -3401,8 +3522,10 @@ class PageAssembler {
     return narrowed ? widths : undefined;
   };
 
-  // New (unplaced) footnotes referenced by a line's tokens, with their layout
-  // at the this.current section's width.
+  /**
+   * New (unplaced) footnotes referenced by a line's tokens, with their layout at
+   * the current section's width.
+   */
   lineFootnotes = (
     line: Line,
   ): Array<{ id: string; n: number; blocks: ReadonlyArray<LaidOutBlock>; heightPt: number }> => {
@@ -3425,8 +3548,10 @@ class PageAssembler {
     return out;
   };
 
-  // The this.notes band for the flushing page: separator rule + each note's blocks
-  // stacked inside the reserved area. Tagged: each note is a Note→P element.
+  /**
+   * The notes band for the flushing page: separator rule + each note's blocks
+   * stacked inside the reserved area. Tagged: each note is a Note→P element.
+   */
   renderNotesBand = (): Array<PageItem> => {
     if (this.pageNotes.length === 0) return [];
     const out: Array<PageItem> = [];
@@ -3460,8 +3585,10 @@ class PageAssembler {
     return out;
   };
 
-  // Dynamic PAGE/NUMPAGES bands re-render after pagination (both numbers are
-  // known only then); each use records where its commands must be spliced.
+  /**
+   * Dynamic PAGE/NUMPAGES bands re-render after pagination (both numbers are
+   * known only then); each use records where its commands must be spliced.
+   */
   readonly dynBands: Array<{
     pageIdx: number;
     pageNumber: number;
@@ -3469,6 +3596,14 @@ class PageAssembler {
     render: (pageNumber: number, totalPages: number) => Array<PageItem>;
   }> = [];
 
+  /**
+   * Finish the in-progress page: pick the header/footer band, queue any dynamic
+   * band, push the assembled commands as a page, then reset all per-page state
+   * (cursor, floats, exclusions, notes, columns) for the next one.
+   *
+   * @param force Emit a page even when no body content was placed (used to
+   *              guarantee one page for a header/footer-only document).
+   */
   flushPage = (force = false): void => {
     if (this.current.length === 0 && !force) return;
     const band = bandForPage(

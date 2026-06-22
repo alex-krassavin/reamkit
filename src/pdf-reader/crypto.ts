@@ -8,6 +8,10 @@
 
 // --- RC4 (legacy stream cipher, §7.6.2) -------------------------------------
 
+/**
+ * RC4 stream cipher (§7.6.2). Symmetric, so the same call both encrypts and
+ * decrypts; used by the legacy V1/V2/V4 Standard security handlers.
+ */
 export function rc4(key: Uint8Array, data: Uint8Array): Uint8Array {
   const s = new Uint8Array(256);
   for (let i = 0; i < 256; i++) s[i] = i;
@@ -39,6 +43,7 @@ const MD5_K = Array.from({ length: 64 }, (_, i) =>
   Math.floor(Math.abs(Math.sin(i + 1)) * 4294967296),
 );
 
+/** MD5 digest (RFC 1321) → 16 bytes; the key-derivation hash for V1/V2/V4. */
 export function md5(input: Uint8Array): Uint8Array {
   const len = input.length;
   const withOne = ((len + 8) >> 6) + 1;

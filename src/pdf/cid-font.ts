@@ -15,21 +15,41 @@ import { dict, name, ref, stream } from '@/pdf/objects';
 
 const encoder = new TextEncoder();
 
+/** Options for {@link embedTtfFont}. */
 export interface EmbedTtfOptions {
+  /** The glyph ids actually used; given, the font is subset to just these (plus their closure). */
   readonly usedGids?: Iterable<number>;
-  // Emit a /CIDSet in the font descriptor (required by PDF/A-1; omitted
-  // otherwise, since PDF/A-2/3 only constrain it when present).
+  /**
+   * Emit a `/CIDSet` in the font descriptor (required by PDF/A-1; omitted
+   * otherwise, since PDF/A-2/3 only constrain it when present).
+   */
   readonly cidSet?: boolean;
 }
 
+/** The result of {@link embedTtfFont}: the Type 0 font reference plus measurement/encoding helpers. */
 export interface EmbeddedFont {
+  /** Indirect reference to the `/Type0` font dictionary, for page resource `/Font` entries. */
   readonly fontRef: PdfRef;
+  /** The parsed source font. */
   readonly parsed: ParsedTtf;
+  /** Glyph advance width in PDF text-space units (1000/em) for a given glyph id. */
   readonly pdfWidthForGid: (gid: number) => number;
+  /** Measured width of `text` at `fontSize`, in points. */
   readonly textWidthPt: (text: string, fontSize: number) => number;
+  /** Encode `text` as the hex CID string used inside a `Tj`/`TJ` show operator (Identity-H). */
   readonly encodeTextAsCidHex: (text: string) => string;
 }
 
+/**
+ * Embed a TrueType font as a composite (Type 0) font with a CIDFontType2
+ * descendant (ISO 32000-1 §9.7), optionally subsetting it to the used glyphs.
+ * Adds the `/FontFile2`, `/FontDescriptor`, `/CIDFontType2` and `/Type0` objects
+ * (plus a `/ToUnicode` CMap and an optional `/CIDSet`) to `doc`.
+ *
+ * @param parsed  The parsed TrueType font.
+ * @param options Subset glyph set and/or PDF/A-1 `/CIDSet` emission.
+ * @returns The font reference and measurement/encoding helpers ({@link EmbeddedFont}).
+ */
 export function embedTtfFont(
   doc: PdfDocument,
   parsed: ParsedTtf,
