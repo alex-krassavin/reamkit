@@ -3,6 +3,19 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.15.2
+
+A layout fix for CJK line wrapping.
+
+### Fixed
+
+- **CJK line wrapping.** Long Chinese / Japanese / kana text in a narrow container
+  (a table cell, a narrow column) now wraps like Word instead of overflowing the
+  edge. The line breaker only opened break opportunities at whitespace, so a
+  space-less CJK run stayed one unbreakable box; it now breaks between adjacent
+  ideographs (Unicode UAX #14) — keeping closing punctuation off the start of a
+  line and openers off the end. Non-CJK layout is byte-identical.
+
 ## 1.15.1
 
 Read-fidelity fixes across the binary and PDF readers, found by a cross-format

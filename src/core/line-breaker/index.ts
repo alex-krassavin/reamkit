@@ -1,5 +1,6 @@
 export { FORCED_BREAK, breakLines } from '@/core/line-breaker/knuth-plass';
 export { greedyBreakLines } from '@/core/line-breaker/greedy';
+export { splitCjkSegment, cjkBreakBetween, isCjkWide } from '@/core/line-breaker/cjk';
 export type {
   Item,
   BoxItem,
