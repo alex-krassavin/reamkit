@@ -85,7 +85,13 @@ import { createFontMeasure, shapeText } from '@/core/font';
 import { resolveFamilyKey } from '@/core/fonts';
 import { prepareImage } from '@/core/images';
 import { analyzeString, hasBidiCharacters, segmentLevels } from '@/core/bidi';
-import { FORCED_BREAK, breakLines, greedyBreakLines } from '@/core/line-breaker';
+import {
+  FORCED_BREAK,
+  breakLines,
+  cjkBreakBetween,
+  greedyBreakLines,
+  splitCjkSegment,
+} from '@/core/line-breaker';
 import { applyNumbering, applyNumberingToHeadersFooters } from '@/core/numbering';
 import {
   DEFAULT_RESOLVED_PARAGRAPH,
@@ -2506,7 +2512,13 @@ function tokenizeText(text: string): Array<{ text: string; isSpace: boolean }> {
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     if (m[1] !== undefined) out.push({ text: m[1], isSpace: true });
-    else if (m[2] !== undefined) out.push({ text: m[2], isSpace: false });
+    else if (m[2] !== undefined) {
+      // CJK runs carry no whitespace, so split them into per-ideograph pieces —
+      // each becomes its own box and a wrap opportunity opens between them
+      // (see paragraphItemStream). A segment with no CJK is returned unchanged,
+      // so Latin tokenization stays byte-identical.
+      for (const piece of splitCjkSegment(m[2])) out.push({ text: piece, isSpace: false });
+    }
   }
   return out;
 }
@@ -2534,11 +2546,20 @@ interface StreamEntry {
 // Tokens → the Knuth–Plass item stream: spaces become glue, images/math are
 // atomic boxes, text optionally splits at hyphenation points with flagged
 // penalties, and the paragraph closes with infinite glue + a forced break.
+// The last Unicode code point of a string (surrogate-pair aware).
+function lastCodePoint(s: string): number {
+  const chars = [...s];
+  return chars.length > 0 ? chars[chars.length - 1]!.codePointAt(0)! : 0;
+}
+
 function paragraphItemStream(
   tokens: ReadonlyArray<Token>,
   hyphenator: Hyphenator | undefined,
 ): Array<StreamEntry> {
   const entries: Array<StreamEntry> = [];
+  // Last code point of the previous text box, for CJK wrap-opportunity detection;
+  // reset at spaces / images / math (a break is already present or not wanted).
+  let prevBoxEndCp: number | null = null;
   for (const tok of tokens) {
     if (tok.isSpace || tok.kind === 'image' || tok.kind === 'math') {
       // Spaces are glue; images and math boxes are atomic (un-hyphenatable) boxes.
@@ -2553,10 +2574,22 @@ function paragraphItemStream(
           : { type: 'box', width: tok.widthPt },
         token: tok,
       });
+      prevBoxEndCp = null;
       continue;
     }
-    // Text non-space token. Try hyphenation; if no breaks (or too short), one
-    // box covers the whole word.
+    // Text non-space token. A CJK wrap opportunity opens before it when a wide
+    // ideograph sits on either side of the boundary (core/line-breaker/cjk) —
+    // mark it with a zero-width, zero-cost penalty. `cjkBreakBetween` is false for
+    // non-CJK boundaries, so Latin item streams stay byte-identical.
+    const startCp = tok.text.codePointAt(0) ?? 0;
+    if (prevBoxEndCp !== null && cjkBreakBetween(prevBoxEndCp, startCp)) {
+      entries.push({
+        item: { type: 'penalty', width: 0, penalty: 0, flagged: false },
+        token: null,
+      });
+    }
+    prevBoxEndCp = lastCodePoint(tok.text);
+    // Try hyphenation; if no breaks (or too short), one box covers the whole word.
     const positions = hyphenator ? hyphenator.hyphenate(tok.text) : [];
     if (positions.length === 0) {
       entries.push({ item: { type: 'box', width: tok.widthPt }, token: tok });
