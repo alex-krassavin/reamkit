@@ -1,0 +1,822 @@
+---
+/**
+ * The in-browser converter playground.
+ *
+ * Everything runs client-side: the script lazy-loads reamkit on first
+ * interaction via a dynamic `import()`, so the (large) converter bundle only
+ * downloads when a visitor actually converts something — and the file itself is
+ * never uploaded anywhere. Word / Excel / PowerPoint / PDF (and the legacy
+ * binaries) go in; PDF / SVG / HTML / DOCX / XLSX come out. HTML / DOCX / XLSX
+ * are zero-I/O; PDF / SVG additionally fetch open substitute fonts once from a
+ * CDN. The static structure below is filled/toggled by the script; all styles
+ * are namespaced under `.rk-play` so they can safely be global (the injected
+ * loss rows would otherwise miss Astro's scoping attribute).
+ */
+---
+
+<section class="rk-play not-content">
+  <header class="rk-play-head">
+    <h1 class="rk-play-title">Convert a document in your browser</h1>
+    <p class="rk-play-lede">
+      Drop a file and convert it to PDF, SVG, HTML, DOCX or XLSX — the whole thing runs on this page.
+      <strong>Your document never leaves the browser</strong>: no upload, no server, no account.
+    </p>
+  </header>
+
+  <!-- drop zone (a <label> so click + keyboard open the picker natively) -->
+  <label class="rk-drop" id="rk-drop" for="rk-file">
+    <input
+      class="rk-file-input"
+      id="rk-file"
+      type="file"
+      accept=".docx,.xlsx,.pptx,.pdf,.doc,.xls,.ppt"
+    />
+    <div class="rk-drop-idle" id="rk-drop-idle">
+      <svg
+        class="rk-drop-icon"
+        width="30"
+        height="30"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.7"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M12 16V4"></path>
+        <path d="M7 9l5-5 5 5"></path>
+        <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"></path>
+      </svg>
+      <div class="rk-drop-main">Drag &amp; drop a document, or <span>browse</span></div>
+      <div class="rk-drop-formats">.docx · .xlsx · .pptx · .pdf · .doc · .xls · .ppt</div>
+    </div>
+    <div class="rk-drop-loaded" id="rk-drop-loaded" hidden>
+      <div class="rk-file-badge" id="rk-file-fmt">docx</div>
+      <div class="rk-file-meta">
+        <div class="rk-file-name" id="rk-file-name">document.docx</div>
+        <div class="rk-file-size" id="rk-file-size">— KB</div>
+      </div>
+      <div class="rk-file-change">Choose another</div>
+    </div>
+  </label>
+
+  <!-- controls (revealed once a file parses) -->
+  <div class="rk-controls" id="rk-controls" hidden>
+    <div class="rk-controls-row">
+      <span class="rk-controls-label">Convert to</span>
+      <div class="rk-fmts" id="rk-fmts" role="group" aria-label="Output format">
+        <button class="rk-fmt is-on" data-fmt="pdf" type="button">PDF</button>
+        <button class="rk-fmt" data-fmt="svg" type="button">SVG</button>
+        <button class="rk-fmt" data-fmt="html" type="button">HTML</button>
+        <button class="rk-fmt" data-fmt="docx" type="button">DOCX</button>
+        <button class="rk-fmt" data-fmt="xlsx" type="button" data-sheet-only="1">XLSX</button>
+      </div>
+    </div>
+    <button class="rk-go" id="rk-go" type="button">
+      Convert to PDF
+      <svg
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M5 12h14M13 6l6 6-6 6"></path>
+      </svg>
+    </button>
+  </div>
+
+  <!-- status line (spinner / error) -->
+  <div class="rk-status" id="rk-status" hidden>
+    <span class="rk-spin" id="rk-spin" aria-hidden="true"></span>
+    <span id="rk-status-text"></span>
+  </div>
+
+  <!-- result -->
+  <div class="rk-result" id="rk-result" hidden>
+    <div class="rk-result-bar">
+      <div class="rk-result-info">
+        <span class="rk-result-dot"></span>
+        <span id="rk-result-name">output.pdf</span>
+        <span class="rk-result-size" id="rk-result-size">— KB</span>
+      </div>
+      <a class="rk-download" id="rk-download" download>
+        <svg
+          width="15"
+          height="15"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M12 4v11"></path>
+          <path d="M7 10l5 5 5-5"></path>
+          <path d="M4 20h16"></path>
+        </svg>
+        Download
+      </a>
+    </div>
+    <iframe class="rk-preview" id="rk-preview" title="Conversion preview"></iframe>
+    <div class="rk-nopreview" id="rk-nopreview" hidden>
+      Binary output — <strong>download</strong> to open it in Word or Excel.
+    </div>
+    <div class="rk-losses" id="rk-losses" hidden></div>
+  </div>
+
+  <p class="rk-play-foot">
+    Runs entirely in your browser from the published <code>reamkit</code> package. PDF and SVG fetch
+    open metric-compatible fonts (Carlito, Tinos…) once from jsDelivr; HTML, DOCX and XLSX need no
+    network at all.
+  </p>
+</section>
+
+<style is:global>
+  .rk-play {
+    max-width: 940px;
+    margin: 0 auto;
+    padding: 8px clamp(4px, 3vw, 24px) 40px;
+    color: var(--rk-ink);
+  }
+  /* The component's own `display` rules (flex) would otherwise win over the HTML
+     `hidden` attribute — force hidden elements to stay hidden. */
+  .rk-play [hidden] {
+    display: none !important;
+  }
+
+  .rk-play-head {
+    padding: 8px 0 22px;
+  }
+  .rk-play-title {
+    font-family: var(--rk-serif);
+    font-weight: 600;
+    font-size: clamp(27px, 4vw, 38px);
+    line-height: 1.08;
+    letter-spacing: -0.02em;
+    margin: 0 0 12px;
+  }
+  .rk-play-lede {
+    font-size: 16.5px;
+    line-height: 1.6;
+    color: var(--rk-muted);
+    max-width: 640px;
+    margin: 0;
+    text-wrap: pretty;
+  }
+  .rk-play-lede strong {
+    color: var(--rk-terra-text);
+    font-weight: 600;
+  }
+
+  /* drop zone */
+  .rk-drop {
+    display: block;
+    position: relative;
+    border: 1.5px dashed #d8c8a8;
+    border-radius: 14px;
+    background: linear-gradient(180deg, #fffdf9, var(--rk-soft));
+    padding: 34px 24px;
+    cursor: pointer;
+    transition:
+      border-color 0.16s ease,
+      background 0.16s ease,
+      box-shadow 0.16s ease;
+  }
+  .rk-drop:hover {
+    border-color: var(--rk-terra);
+    background: linear-gradient(180deg, #fffdf9, #f6ecd9);
+  }
+  .rk-drop.is-drag {
+    border-color: var(--rk-terra);
+    border-style: solid;
+    background: #f8eeda;
+    box-shadow: 0 0 0 4px rgba(194, 99, 43, 0.12);
+  }
+  .rk-drop:focus-within {
+    outline: 2px solid var(--rk-terra);
+    outline-offset: 3px;
+  }
+  .rk-file-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  .rk-drop-idle {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 7px;
+  }
+  .rk-drop-icon {
+    color: var(--rk-terra);
+    opacity: 0.85;
+    margin-bottom: 2px;
+  }
+  .rk-drop-main {
+    font-size: 16px;
+    font-weight: 500;
+    color: #43392a;
+  }
+  .rk-drop-main span {
+    color: var(--rk-terra);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .rk-drop-formats {
+    font-family: var(--rk-mono, 'IBM Plex Mono', monospace);
+    font-size: 12px;
+    letter-spacing: 0.02em;
+    color: var(--rk-label);
+  }
+
+  .rk-drop-loaded {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .rk-file-badge {
+    flex: none;
+    font-family: var(--rk-mono, 'IBM Plex Mono', monospace);
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #fff;
+    background: var(--rk-terra);
+    border-radius: 7px;
+    padding: 7px 10px;
+  }
+  .rk-file-meta {
+    flex: 1;
+    min-width: 0;
+  }
+  .rk-file-name {
+    font-size: 15px;
+    font-weight: 600;
+    color: #33291b;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .rk-file-size {
+    font-family: var(--rk-mono, 'IBM Plex Mono', monospace);
+    font-size: 12px;
+    color: var(--rk-muted-2);
+  }
+  .rk-file-change {
+    flex: none;
+    font-size: 13px;
+    color: var(--rk-terra);
+    font-weight: 500;
+  }
+
+  /* controls */
+  .rk-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    margin-top: 18px;
+  }
+  .rk-controls-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .rk-controls-label {
+    font-family: var(--rk-mono, 'IBM Plex Mono', monospace);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--rk-label);
+  }
+  .rk-fmts {
+    display: inline-flex;
+    background: var(--rk-soft);
+    border: 1px solid var(--rk-border-soft);
+    border-radius: 10px;
+    padding: 3px;
+    gap: 2px;
+  }
+  .rk-fmt {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    font-family: var(--rk-mono, 'IBM Plex Mono', monospace);
+    font-size: 12.5px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    color: var(--rk-muted);
+    padding: 6px 12px;
+    border-radius: 7px;
+    cursor: pointer;
+    transition:
+      background 0.14s ease,
+      color 0.14s ease;
+  }
+  .rk-fmt:hover:not(.is-on):not(:disabled) {
+    color: var(--rk-terra);
+  }
+  .rk-fmt.is-on {
+    background: #fff;
+    color: var(--rk-terra);
+    box-shadow: 0 1px 3px rgba(80, 55, 20, 0.14);
+  }
+  .rk-fmt:disabled {
+    opacity: 0.36;
+    cursor: not-allowed;
+  }
+  .rk-go {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border: none;
+    cursor: pointer;
+    font-size: 15px;
+    font-weight: 600;
+    color: #fff;
+    background: var(--rk-terra);
+    border-radius: 10px;
+    padding: 11px 20px;
+    box-shadow: 0 10px 22px -10px rgba(194, 99, 43, 0.7);
+    transition:
+      background 0.15s ease,
+      transform 0.1s ease;
+  }
+  .rk-go:hover:not(:disabled) {
+    background: var(--rk-terra-deep);
+  }
+  .rk-go:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+  .rk-go:disabled {
+    opacity: 0.55;
+    cursor: default;
+    box-shadow: none;
+  }
+
+  /* status */
+  .rk-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 18px;
+    font-size: 14.5px;
+    color: var(--rk-muted);
+  }
+  .rk-status.is-error {
+    color: #a5341b;
+  }
+  .rk-spin {
+    flex: none;
+    width: 15px;
+    height: 15px;
+    border: 2px solid #e4d7bf;
+    border-top-color: var(--rk-terra);
+    border-radius: 50%;
+    animation: rkspin 0.7s linear infinite;
+  }
+  .rk-status.is-error .rk-spin {
+    display: none;
+  }
+  @keyframes rkspin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .rk-spin {
+      animation: none;
+    }
+  }
+
+  /* result */
+  .rk-result {
+    margin-top: 20px;
+    border: 1px solid var(--rk-border-card);
+    border-radius: 13px;
+    background: #fff;
+    overflow: hidden;
+    box-shadow: var(--rk-shadow-card);
+  }
+  .rk-result-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--rk-border);
+    background: var(--rk-soft);
+  }
+  .rk-result-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: #33291b;
+  }
+  .rk-result-dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #2f8a4e;
+  }
+  .rk-result-size {
+    font-family: var(--rk-mono, 'IBM Plex Mono', monospace);
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--rk-muted-2);
+  }
+  .rk-download {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    text-decoration: none;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: #fff;
+    background: var(--rk-terra);
+    border-radius: 8px;
+    padding: 8px 14px;
+    transition: background 0.15s ease;
+  }
+  .rk-download:hover {
+    background: var(--rk-terra-deep);
+  }
+  .rk-preview {
+    display: block;
+    width: 100%;
+    height: 540px;
+    border: 0;
+    background: #f7f5ef;
+  }
+  .rk-nopreview {
+    padding: 40px 20px;
+    text-align: center;
+    font-size: 14.5px;
+    color: var(--rk-muted);
+  }
+  .rk-nopreview strong {
+    color: var(--rk-terra);
+  }
+
+  /* loss report */
+  .rk-losses {
+    border-top: 1px solid var(--rk-border);
+  }
+  .rk-losses summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 11px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--rk-muted);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .rk-losses summary::-webkit-details-marker {
+    display: none;
+  }
+  .rk-losses summary::before {
+    content: '▸';
+    color: var(--rk-label);
+    transition: transform 0.15s ease;
+  }
+  .rk-losses details[open] summary::before {
+    transform: rotate(90deg);
+  }
+  .rk-losses-list {
+    padding: 0 14px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .rk-loss-row {
+    display: flex;
+    align-items: baseline;
+    gap: 9px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #52483a;
+  }
+  .rk-loss-sev {
+    flex: none;
+    font-family: var(--rk-mono, 'IBM Plex Mono', monospace);
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-radius: 5px;
+    padding: 2px 6px;
+    color: #7a5a1a;
+    background: #f4e6d4;
+  }
+  .rk-loss-sev.dropped {
+    color: #9a3520;
+    background: #f6ddd4;
+  }
+  .rk-loss-sev.degraded {
+    color: #8a5a12;
+    background: #f6ecd0;
+  }
+  .rk-loss-sev.substituted {
+    color: #4a6a2f;
+    background: #e9efd9;
+  }
+  .rk-loss-feat {
+    font-weight: 600;
+    color: #3d3324;
+  }
+  .rk-loss-where {
+    color: var(--rk-muted-2);
+  }
+
+  .rk-play-foot {
+    margin: 26px 0 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--rk-muted-2);
+  }
+  .rk-play-foot code {
+    font-family: var(--rk-mono, 'IBM Plex Mono', monospace);
+    font-size: 0.9em;
+    color: var(--rk-terra-text);
+    background: var(--rk-soft);
+    border: 1px solid var(--rk-border-soft);
+    border-radius: 5px;
+    padding: 1px 5px;
+  }
+
+  @media (max-width: 640px) {
+    .rk-controls {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .rk-go {
+      justify-content: center;
+    }
+    .rk-preview {
+      height: 60vh;
+    }
+  }
+</style>
+
+<!-- Page-chrome overrides. This component renders only on /playground, so these
+     globals load only there: widen the content column, drop the auto page title
+     (the component supplies its own heading) and the "Edit page" footer. Mirrors
+     the home page's approach. -->
+<style is:global>
+  :root {
+    --sl-content-width: 62rem;
+  }
+  .sl-markdown-content {
+    margin-top: 0 !important;
+  }
+  .content-panel + .content-panel {
+    border-top: 0;
+  }
+  /* Starlight renders the frontmatter title as the first content heading; the
+     playground supplies its own. */
+  .content-panel:first-of-type {
+    display: none;
+  }
+  .main-pane footer.sl-flex {
+    display: none;
+  }
+</style>
+
+<script>
+  import type { Ream } from 'reamkit';
+
+  type Target = 'pdf' | 'svg' | 'html' | 'docx' | 'xlsx';
+
+  const MIME: Record<Target, string> = {
+    pdf: 'application/pdf',
+    svg: 'image/svg+xml',
+    html: 'text/html',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  };
+  const PREVIEWABLE = new Set<Target>(['pdf', 'svg', 'html']);
+  const SHEET_SOURCES = new Set(['xlsx', 'xls']);
+
+  const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+
+  // Wire up once the playground markup is on the page. Guarded so it survives
+  // Starlight's client-side (View Transitions) navigation, which re-runs scripts.
+  function init() {
+    const root = document.querySelector<HTMLElement>('.rk-play');
+    if (!root || root.dataset.wired) return;
+    root.dataset.wired = '1';
+
+    const drop = $('rk-drop');
+    const fileInput = $<HTMLInputElement>('rk-file');
+    const idle = $('rk-drop-idle');
+    const loaded = $('rk-drop-loaded');
+    const controls = $('rk-controls');
+    const fmts = $('rk-fmts');
+    const go = $<HTMLButtonElement>('rk-go');
+    const statusEl = $('rk-status');
+    const statusText = $('rk-status-text');
+    const result = $('rk-result');
+    const preview = $<HTMLIFrameElement>('rk-preview');
+    const noPreview = $('rk-nopreview');
+    const lossesEl = $('rk-losses');
+    const downloadEl = $<HTMLAnchorElement>('rk-download');
+
+    let ReamCtor: typeof Ream | null = null;
+    let doc: Ream | null = null;
+    let baseName = 'document';
+    let target: Target = 'pdf';
+    let blobUrl: string | null = null;
+
+    async function loadReam(): Promise<typeof Ream> {
+      if (!ReamCtor) ReamCtor = (await import('reamkit')).Ream;
+      return ReamCtor;
+    }
+
+    const fmtKB = (n: number) =>
+      n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
+
+    function setStatus(text: string, isError = false, spinning = true) {
+      statusEl.hidden = false;
+      statusEl.classList.toggle('is-error', isError);
+      $('rk-spin').style.display = isError || !spinning ? 'none' : '';
+      statusText.textContent = text;
+    }
+    function clearStatus() {
+      statusEl.hidden = true;
+    }
+    function clearResult() {
+      result.hidden = true;
+      if (blobUrl) {
+        URL.revokeObjectURL(blobUrl);
+        blobUrl = null;
+      }
+      preview.removeAttribute('src');
+    }
+
+    function selectTarget(next: Target) {
+      target = next;
+      for (const b of fmts.querySelectorAll<HTMLButtonElement>('.rk-fmt')) {
+        b.classList.toggle('is-on', b.dataset.fmt === next);
+      }
+      go.firstChild!.textContent = `Convert to ${next.toUpperCase()} `;
+      clearResult();
+    }
+
+    async function onFile(file: File) {
+      clearResult();
+      clearStatus();
+      setStatus('Reading & sniffing the format…');
+      let bytes: Uint8Array;
+      try {
+        bytes = new Uint8Array(await file.arrayBuffer());
+        const Ream = await loadReam();
+        doc = Ream.parse(bytes);
+      } catch {
+        doc = null;
+        setStatus(
+          'Could not recognise that file. Supported inputs: .docx .xlsx .pptx .pdf .doc .xls .ppt',
+          true,
+        );
+        controls.hidden = true;
+        return;
+      }
+      clearStatus();
+      baseName = file.name.replace(/\.[^./\\]+$/, '') || 'document';
+      const fmt = doc.format;
+
+      // Show the loaded-file summary in the drop zone.
+      $('rk-file-fmt').textContent = fmt;
+      $('rk-file-name').textContent = file.name;
+      $('rk-file-size').textContent = fmtKB(file.size);
+      idle.hidden = true;
+      loaded.hidden = false;
+
+      // XLSX output needs a grid; enable it only for spreadsheet sources.
+      const isSheet = SHEET_SOURCES.has(fmt);
+      const xlsxBtn = fmts.querySelector<HTMLButtonElement>('[data-fmt="xlsx"]')!;
+      xlsxBtn.disabled = !isSheet;
+      if (!isSheet && target === 'xlsx') selectTarget('pdf');
+
+      controls.hidden = false;
+    }
+
+    function renderLosses(losses: ReadonlyArray<{ severity: string; feature: string; detail: string; where?: string }>) {
+      if (!losses.length) {
+        lossesEl.hidden = true;
+        lossesEl.textContent = '';
+        return;
+      }
+      const rows = losses
+        .map((l) => {
+          const where = l.where ? ` <span class="rk-loss-where">(${escapeHtml(l.where)})</span>` : '';
+          return `<div class="rk-loss-row"><span class="rk-loss-sev ${l.severity}">${l.severity}</span><span><span class="rk-loss-feat">${escapeHtml(l.feature)}</span> — ${escapeHtml(l.detail)}${where}</span></div>`;
+        })
+        .join('');
+      const label = `${losses.length} conversion ${losses.length === 1 ? 'note' : 'notes'}`;
+      lossesEl.innerHTML = `<details><summary>${label}</summary><div class="rk-losses-list">${rows}</div></details>`;
+      lossesEl.hidden = false;
+    }
+
+    async function convert() {
+      if (!doc) return;
+      clearResult();
+      go.disabled = true;
+      setStatus(
+        target === 'pdf' || target === 'svg'
+          ? 'Laying out & fetching fonts…'
+          : 'Converting…',
+      );
+      try {
+        const { bytes, losses } = await doc.convertWithReport(target);
+        clearStatus();
+        const outName = `${baseName}.${target}`;
+        // Copy into a fresh ArrayBuffer so the Blob owns plain bytes.
+        const blob = new Blob([bytes.slice()], { type: MIME[target] });
+        blobUrl = URL.createObjectURL(blob);
+
+        downloadEl.href = blobUrl;
+        downloadEl.download = outName;
+        $('rk-result-name').textContent = outName;
+        $('rk-result-size').textContent = fmtKB(blob.size);
+
+        if (PREVIEWABLE.has(target)) {
+          // Sandbox the untrusted HTML/SVG output (block scripts); PDF renders in
+          // the browser's built-in viewer, which the sandbox would suppress.
+          if (target === 'pdf') preview.removeAttribute('sandbox');
+          else preview.setAttribute('sandbox', '');
+          preview.src = blobUrl;
+          preview.hidden = false;
+          noPreview.hidden = true;
+        } else {
+          preview.hidden = true;
+          preview.removeAttribute('src');
+          noPreview.hidden = false;
+        }
+        renderLosses(losses);
+        result.hidden = false;
+      } catch (err) {
+        setStatus(`Conversion failed: ${err instanceof Error ? err.message : String(err)}`, true);
+      } finally {
+        go.disabled = false;
+      }
+    }
+
+    // --- events ---
+    fileInput.addEventListener('change', () => {
+      const f = fileInput.files?.[0];
+      if (f) void onFile(f);
+    });
+    for (const ev of ['dragenter', 'dragover'] as const) {
+      drop.addEventListener(ev, (e) => {
+        e.preventDefault();
+        drop.classList.add('is-drag');
+      });
+    }
+    for (const ev of ['dragleave', 'dragend', 'drop'] as const) {
+      drop.addEventListener(ev, () => drop.classList.remove('is-drag'));
+    }
+    drop.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const f = e.dataTransfer?.files?.[0];
+      if (f) {
+        fileInput.value = '';
+        void onFile(f);
+      }
+    });
+    fmts.addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('.rk-fmt');
+      if (btn && !btn.disabled) selectTarget(btn.dataset.fmt as Target);
+    });
+    go.addEventListener('click', () => void convert());
+  }
+
+  function escapeHtml(s: string): string {
+    return s.replace(/[&<>"]/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' } as Record<string, string>
+    )[c]!);
+  }
+
+  init();
+  document.addEventListener('astro:page-load', init);
+</script>

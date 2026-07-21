@@ -89,6 +89,7 @@ export default defineConfig({
         }),
       ],
       sidebar: [
+        { label: 'Playground', slug: 'playground' },
         {
           label: 'Guides',
           items: [
