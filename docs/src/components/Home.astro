@@ -173,7 +173,10 @@ const ICONS: Record<string, string> = {
     <span>
       Questions, bug reports or collaboration — <a href="mailto:info@reamkit.dev">info@reamkit.dev</a>
     </span>
-    <span class="rk-built">Built from ECMA-376 &amp; ISO 32000</span>
+    <span class="rk-closing-end">
+      <a href="/llms.txt">Docs for AI: llms.txt</a>
+      <span class="rk-built">Built from ECMA-376 &amp; ISO 32000</span>
+    </span>
   </section>
 </div>
 
@@ -474,6 +477,12 @@ const ICONS: Record<string, string> = {
     text-decoration: none;
     font-weight: 600;
   }
+  .rk-closing-end {
+    display: inline-flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
   .rk-built {
     font-family: var(--mono);
     font-size: 11.5px;
@@ -547,8 +556,10 @@ const ICONS: Record<string, string> = {
   .sl-markdown-content > .rk-home {
     margin-block: 0;
   }
-  /* No "Edit this page" / community footer on the splash home. */
-  .main-pane footer.sl-flex {
+  /* No "Edit this page" / community footer on the splash home — including the
+     site-wide llms.txt footer link (the closing block above has its own). */
+  .main-pane footer.sl-flex,
+  .main-pane .rk-llms-footer {
     display: none;
   }
 </style>

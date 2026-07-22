@@ -1,0 +1,40 @@
+---
+/**
+ * Footer override: render Starlight's default footer (edit link, last-updated,
+ * pagination), then append a small site-wide link to the AI-docs files
+ * (llms.txt / llms-full.txt). Hidden on the home page, which carries its own
+ * link in the closing block (see Home.astro).
+ */
+import Default from '@astrojs/starlight/components/Footer.astro';
+---
+
+<Default />
+<div class="rk-llms-footer">
+  <span>Docs for AI assistants:</span>
+  <a href="/llms.txt">llms.txt</a>
+  <span aria-hidden="true">·</span>
+  <a href="/llms-full.txt">llms-full.txt</a>
+</div>
+
+<style>
+  .rk-llms-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 1.25rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--rk-border, #e3d8c4);
+    font-family: var(--rk-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-size: var(--sl-text-xs);
+    color: var(--rk-muted-2, #8a7c64);
+  }
+  .rk-llms-footer a {
+    color: var(--rk-terra, #c2632b);
+    text-decoration: none;
+    font-weight: 600;
+  }
+  .rk-llms-footer a:hover {
+    text-decoration: underline;
+  }
+</style>
