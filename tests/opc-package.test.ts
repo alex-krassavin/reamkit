@@ -58,3 +58,35 @@ describe('OpcPackage.open — zip-bomb hardening', () => {
     expect(() => OpcPackage.open(bomb, { maxEntries: 1 })).toThrow(/zip-bomb guard/);
   });
 });
+
+describe('OpcPackage.open — Windows-style backslash entry names', () => {
+  // APPNOTE §4.4.17.1 requires forward slashes, but Windows producers write
+  // "_rels\.rels" and "xl\workbook.xml" anyway. Excel, POI and LibreOffice all
+  // normalize; we used to reject the package outright as missing its root
+  // relationships. Corpus: tdf131575.xlsx, tdf76115.xlsx, 49609.xlsx.
+  const rel = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
+
+  const backslashPackage = (): Uint8Array =>
+    zipSync({
+      '[Content_Types].xml': enc(
+        `<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>`,
+      ),
+      '_rels\\.rels': enc(
+        `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+          `<Relationship Id="rId1" Type="${rel}/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
+      ),
+      'xl\\workbook.xml': enc(`<workbook/>`),
+    });
+
+  it('opens a package whose entries use backslashes', () => {
+    const pkg = OpcPackage.open(backslashPackage());
+    expect(pkg.listParts()).toContain('xl/workbook.xml');
+    expect(pkg.getPart('xl/workbook.xml')).toBeDefined();
+  });
+
+  it('resolves the main document part through the normalized root rels', () => {
+    const pkg = OpcPackage.open(backslashPackage());
+    expect(pkg.getMainDocumentPath()).toBe('xl/workbook.xml');
+  });
+});

@@ -1,0 +1,42 @@
+{
+  "file": "tdf122336.xlsx",
+  "paperDeclared": false,
+  "libreOffice": {
+    "pages": 9,
+    "pageSizes": [
+      {
+        "widthPt": 595,
+        "heightPt": 842
+      }
+    ],
+    "chars": 234,
+    "firstLines": [
+      "UitvoeringsdatumStarttijd",
+      "Eindtijd",
+      "Klantnaam",
+      "Omschrijving",
+      "Naam locatieBevestigd vi",
+      "Toegewezen werknemers",
+      "Toegewezen voertuigen",
+      "Toegewezen materialen",
+      "Info"
+    ]
+  },
+  "ream": {
+    "pages": 5,
+    "pageSizes": [
+      {
+        "widthPt": 595,
+        "heightPt": 842
+      }
+    ],
+    "chars": 232,
+    "firstLines": [
+      "UitvoeringsdatumStarttijd",
+      "EindtijdKlantnaam",
+      "OmschrijvingNaam locatieBevestigd",
+      "Toegewezen werknemersToegewezen voertuigen",
+      "Toegewezen materialenInfo"
+    ]
+  }
+}

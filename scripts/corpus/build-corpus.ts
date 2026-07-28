@@ -163,6 +163,72 @@ docs.push({
   }),
 });
 
+// 9-11. The print model. Everything above renders a grid; these pin the parts
+// that decide WHERE it lands — the print window, the repeated header rows and
+// the scale. Those had no byte coverage at all, which is why xlsx→PDF geometry
+// could drift a long way before anything went red.
+
+// A ledger tall enough to spill across pages — otherwise a fixture claiming to
+// exercise repeated headers or manual breaks fits on one page and exercises
+// neither.
+const LEDGER_ROWS = Array.from({ length: 80 }, (_, i) => [
+  `Row ${i + 1}`,
+  (i + 1) * 100,
+  (i + 1) * 110,
+  (i + 1) * 210,
+]);
+
+docs.push({
+  name: 'sheet-print-area.xlsx',
+  bytes: buildXlsx({
+    rows: [['Region', 'Q1', 'Q2', 'Total'], ...LEDGER_ROWS],
+    columns: [{ min: 1, max: 4, widthChars: 12 }],
+    // Print only A1:C20 — the rows and the Total column outside it must not
+    // reach the page, and gridlines are on so the window's edges are visible.
+    definedNames: [{ name: '_xlnm.Print_Area', localSheetId: 0, value: 'Sheet1!$A$1:$C$20' }],
+    printOptions: { gridLines: true },
+    pageSetup: { paperSize: 9, orientation: 'portrait' },
+  }),
+});
+
+docs.push({
+  name: 'sheet-print-titles.xlsx',
+  bytes: buildXlsx({
+    rows: [['Region', 'Q1', 'Q2', 'Total'], ...LEDGER_ROWS],
+    columns: [{ min: 1, max: 4, widthChars: 12 }],
+    // Row 1 repeats at the top of every continuation page.
+    definedNames: [{ name: '_xlnm.Print_Titles', localSheetId: 0, value: 'Sheet1!$1:$1' }],
+    pageSetup: { paperSize: 9, orientation: 'portrait' },
+  }),
+});
+
+docs.push({
+  name: 'sheet-row-breaks.xlsx',
+  bytes: buildXlsx({
+    rows: [['Region', 'Q1', 'Q2', 'Total'], ...LEDGER_ROWS],
+    columns: [{ min: 1, max: 4, widthChars: 12 }],
+    merges: ['A1:D1'],
+    // A manual break at row 21 — pagination the document dictates rather than
+    // the page height. Deliberately NOT combined with fitToPage: "scale onto
+    // one page" and "break here" contradict each other, and a fixture built on
+    // a contradiction pins whichever way we happened to resolve it.
+    pageSetup: { paperSize: 9, orientation: 'landscape' },
+    rowBreaks: [20],
+  }),
+});
+
+docs.push({
+  name: 'sheet-fit-scale.xlsx',
+  bytes: buildXlsx({
+    rows: [['Region', 'Q1', 'Q2', 'Total'], ...LEDGER_ROWS],
+    columns: [{ min: 1, max: 4, widthChars: 12 }],
+    // fitToHeight=1 on a ledger that needs several pages unscaled: the print
+    // scale has to shrink it onto one.
+    pageSetup: { paperSize: 9, orientation: 'portrait', fitToHeight: 1 },
+    fitToPage: true,
+  }),
+});
+
 function cell(text: string, bold = false): string {
   return `<w:tc><w:p><w:pPr></w:pPr>${run(text, bold ? '<w:b/>' : '')}</w:p></w:tc>`;
 }

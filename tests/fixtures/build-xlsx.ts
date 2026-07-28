@@ -77,6 +77,12 @@ export interface XlsxSheetSpec {
     readonly widthChars: number;
   }>;
   readonly rowHeights?: ReadonlyArray<XlsxRowHeightSpec>;
+  /** §18.3.1.81 `<sheetFormatPr defaultRowHeight>` — height of rows with no `ht`. */
+  readonly defaultRowHeightPt?: number;
+  /** §18.3.1.81 `<sheetFormatPr defaultColWidth>` — width of columns no `<col>` covers. */
+  readonly defaultColWidthChars?: number;
+  /** §18.3.1.81 `<sheetFormatPr baseColWidth>` — what the default column is derived from. */
+  readonly baseColWidthChars?: number;
   readonly pageMargins?: XlsxPageMarginsSpec;
   readonly pageSetup?: XlsxPageSetupSpec;
   readonly printOptions?: XlsxPrintOptionsSpec;
@@ -109,6 +115,12 @@ export interface XlsxBuilderOptions {
     readonly widthChars: number;
   }>;
   readonly rowHeights?: ReadonlyArray<XlsxRowHeightSpec>;
+  /** §18.3.1.81 `<sheetFormatPr defaultRowHeight>` — height of rows with no `ht`. */
+  readonly defaultRowHeightPt?: number;
+  /** §18.3.1.81 `<sheetFormatPr defaultColWidth>` — width of columns no `<col>` covers. */
+  readonly defaultColWidthChars?: number;
+  /** §18.3.1.81 `<sheetFormatPr baseColWidth>` — what the default column is derived from. */
+  readonly baseColWidthChars?: number;
   readonly pageMargins?: XlsxPageMarginsSpec;
   readonly pageSetup?: XlsxPageSetupSpec;
   readonly printOptions?: XlsxPrintOptionsSpec;
@@ -322,6 +334,15 @@ export function buildXlsx(
             ...(options.mergeRefs ? { mergeRefs: options.mergeRefs } : {}),
             ...(options.columns ? { columns: options.columns } : {}),
             ...(options.rowHeights ? { rowHeights: options.rowHeights } : {}),
+            ...(options.defaultRowHeightPt !== undefined
+              ? { defaultRowHeightPt: options.defaultRowHeightPt }
+              : {}),
+            ...(options.defaultColWidthChars !== undefined
+              ? { defaultColWidthChars: options.defaultColWidthChars }
+              : {}),
+            ...(options.baseColWidthChars !== undefined
+              ? { baseColWidthChars: options.baseColWidthChars }
+              : {}),
             ...(options.pageMargins ? { pageMargins: options.pageMargins } : {}),
             ...(options.pageSetup ? { pageSetup: options.pageSetup } : {}),
             ...(options.printOptions ? { printOptions: options.printOptions } : {}),
@@ -368,9 +389,18 @@ export function buildXlsx(
             : isCellSpec(item)
               ? item
               : { value: item };
-        if (!spec || spec.value === null) continue;
+        if (!spec) continue;
         const ref = formatCellRef({ row: r, column: c });
         const styleAttr = spec.styleIndex !== undefined ? ` s="${spec.styleIndex}"` : '';
+        if (spec.value === null) {
+          // A styled EMPTY cell — `<c r=".." s="N"/>` with no value. Real files
+          // are full of them (whole-row/column formatting), and they behave
+          // differently from an absent cell: they paint, so a neighbour's text
+          // cannot overflow across them. A `{ value: null }` with no style is
+          // still just an absent cell.
+          if (spec.styleIndex !== undefined) cells.push(`<c r="${ref}"${styleAttr}/>`);
+          continue;
+        }
         if (typeof spec.value === 'number') {
           cells.push(`<c r="${ref}"${styleAttr}><v>${spec.value}</v></c>`);
         } else if (typeof spec.value === 'boolean') {
@@ -430,6 +460,22 @@ export function buildXlsx(
         '/>'
       : '';
     const sheetPrXml = sheet.fitToPage ? '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>' : '';
+    const sheetFormatPrXml =
+      sheet.defaultRowHeightPt !== undefined ||
+      sheet.defaultColWidthChars !== undefined ||
+      sheet.baseColWidthChars !== undefined
+        ? `<sheetFormatPr` +
+          (sheet.baseColWidthChars !== undefined
+            ? ` baseColWidth="${sheet.baseColWidthChars}"`
+            : '') +
+          (sheet.defaultRowHeightPt !== undefined
+            ? ` defaultRowHeight="${sheet.defaultRowHeightPt}"`
+            : '') +
+          (sheet.defaultColWidthChars !== undefined
+            ? ` defaultColWidth="${sheet.defaultColWidthChars}"`
+            : '') +
+          '/>'
+        : '';
     const printOptionsXml = sheet.printOptions
       ? `<printOptions` +
         (sheet.printOptions.gridLines !== undefined
@@ -479,6 +525,7 @@ export function buildXlsx(
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   ${sheetPrXml}
   ${sheetViewsXml}
+  ${sheetFormatPrXml}
   ${colsXml}
   <sheetData>
 ${sheetRows.join('\n')}

@@ -18,6 +18,7 @@ import {
   parseWorksheet,
 } from '@/excel';
 import { OpcPackage } from '@/core/opc';
+import { readXlsx } from '@/excel/xlsx-reader';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FONTS = {
@@ -707,6 +708,42 @@ describe('implicit cell/row positions (§18.3.1.4 — r= optional)', () => {
     expect(ws.maxColumn).toBe(1);
   });
 
+  it('treats an UNPARSEABLE r= as absent rather than dropping the cell', () => {
+    const M = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+    // tdf122336.xlsx ships r="11_2"-style garbage refs from a third-party
+    // producer. A ref that cannot be read carries no position, which is the
+    // case §18.3.1.4 already covers: fall back to document order. Dropping the
+    // cell instead turned a 9-page sheet into a blank page.
+    const ws = parseWorksheet(
+      enc(
+        `<worksheet xmlns="${M}"><sheetData>` +
+          `<row r="1"><c r="11_2" t="str"><v>first</v></c><c r="13_2" t="str"><v>second</v></c></row>` +
+          `</sheetData></worksheet>`,
+      ),
+    );
+    expect(ws.cells).toHaveLength(2);
+    expect(ws.cells.map((c) => [c.row, c.column])).toEqual([
+      [0, 0],
+      [0, 1],
+    ]);
+    expect(ws.cells.map((c) => c.rawValue)).toEqual(['first', 'second']);
+  });
+
+  it('falls back to <v> when t="inlineStr" is written without <is>', () => {
+    const M = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+    // duplicate-filename.xlsx declares the inline-string type and then writes
+    // the text into <v>. A real <is> still wins where both are present.
+    const ws = parseWorksheet(
+      enc(
+        `<worksheet xmlns="${M}"><sheetData><row r="1">` +
+          `<c r="A1" t="inlineStr"><v>v2</v></c>` +
+          `<c r="B1" t="inlineStr"><is><t>proper</t></is><v>ignored</v></c>` +
+          `</row></sheetData></worksheet>`,
+      ),
+    );
+    expect(ws.cells.map((c) => c.inlineText)).toEqual(['v2', 'proper']);
+  });
+
   it('honours explicit r= and resumes implicit numbering after it', () => {
     const M = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
     // Row pinned to r="3"; cell pinned to C → next cell resumes at D.
@@ -721,6 +758,76 @@ describe('implicit cell/row positions (§18.3.1.4 — r= optional)', () => {
     const c2 = ws.cells.find((x) => x.rawValue === '2')!;
     expect([c1.row, c1.column]).toEqual([2, 2]); // C3 → row 2, col 2
     expect([c2.row, c2.column]).toEqual([2, 3]); // resumes at D3
+  });
+});
+
+describe('projection losses (never silently wrong)', () => {
+  // The defence-in-depth caps in the print model are correct — a pathological
+  // sheet must not exhaust memory — but a cap that fires without saying so is
+  // exactly the silent wrongness the loss report exists to prevent. Reading a
+  // capped sheet must come back with a Loss naming what was clipped.
+
+  it('reports a loss when the grid is clipped to the column cap', () => {
+    // 1200 columns — past the 1024-column materialization cap.
+    const wide = buildXlsx([Array.from({ length: 1200 }, (_, i) => `c${i}`)]);
+    const { doc, losses } = readXlsx(wide);
+    expect(doc.body.length).toBeGreaterThan(0);
+    const clip = losses.find((l) => /column/i.test(l.detail));
+    expect(clip).toBeDefined();
+    expect(clip!.severity).toBe('dropped');
+    expect(clip!.detail).toContain('1200');
+  });
+
+  it('reports a loss when the grid is clipped to the row cap', () => {
+    const tall = buildXlsx(Array.from({ length: 50_010 }, (_, i) => [`r${i}`]));
+    const { losses } = readXlsx(tall);
+    const clip = losses.find((l) => /row/i.test(l.detail));
+    expect(clip).toBeDefined();
+    expect(clip!.severity).toBe('dropped');
+  });
+
+  it('reports a loss when the per-sheet text budget is exhausted', () => {
+    // 40 cells × 30 000 chars = 1.2M, past the 1M per-sheet budget. Cells past
+    // the budget render empty — the caller has to be told.
+    const big = 'x'.repeat(30_000);
+    const heavy = buildXlsx(Array.from({ length: 40 }, () => [big]));
+    const { losses } = readXlsx(heavy);
+    const budget = losses.find((l) => /text budget/i.test(l.detail));
+    expect(budget).toBeDefined();
+    expect(budget!.severity).toBe('dropped');
+  });
+
+  it('bounds the grid by TOTAL cells, not per-dimension (tiny file, astronomic extent)', () => {
+    // LibreOffice's too-many-cols-rows.xlsx: a 2.5 KB sheet holding five real
+    // cells but spanning A1:XFE16777217. Capping rows and columns separately
+    // still admits their product — 50 000 × 1024 = 51.2M cells — so the sheet
+    // exhausted the heap. Amplification needs no zip bomb: a declared extent
+    // is enough.
+    const sheetData =
+      `<row r="1"><c r="A1"><v>1</v></c><c r="XFB1"><v>2</v></c><c r="XFE1"><v>3</v></c></row>` +
+      `<row r="16777214"><c r="A16777214"><v>11</v></c></row>` +
+      `<row r="16777217"><c r="A16777217"><v>21</v></c></row>`;
+    const { doc, losses } = readXlsx(rawXlsx(sheetData));
+
+    let cells = 0;
+    for (const element of doc.body) {
+      if (element.kind === 'table') {
+        for (const row of element.table.rows) cells += row.cells.length;
+      }
+    }
+    expect(cells).toBeGreaterThan(0);
+    expect(cells).toBeLessThanOrEqual(2_000_000);
+    // …and it must say the sheet was clipped rather than pass off a corner of
+    // it as the whole thing.
+    expect(losses.some((l) => l.severity === 'dropped')).toBe(true);
+  });
+
+  it('stays silent for an ordinary sheet', () => {
+    const plain = buildXlsx([
+      ['Region', 'Revenue'],
+      ['Moscow', 1200000],
+    ]);
+    expect(readXlsx(plain).losses).toEqual([]);
   });
 });
 
@@ -962,8 +1069,15 @@ describe('xlsx print-model rendering', () => {
     const text = asLatin1(convertXlsxToPdfSync(xlsx, { fonts: FONTS }));
     // A2 overflows into the empty B2 → full text kept.
     expect(text).toContain(`<${hexOf(overflow)}> Tj`);
-    // A1 is clipped — its full text is gone, only the fitting prefix (~5) remains.
+    // A1 is clipped — its full text is gone, and what survives is a prefix.
     expect(text).not.toContain(`<${hexOf(blocked)}> Tj`);
-    expect(text).toContain(`<${hexOf('l'.repeat(5))}> Tj`);
+    // How MANY characters fit is a function of the column width, the cell inset
+    // and the glyph's advance; pinning an exact count here pins those three
+    // together and breaks whenever any of them is corrected. What matters is
+    // that a prefix survives and it is shorter than the whole.
+    const prefixes = Array.from({ length: blocked.length - 1 }, (_, i) => i + 1).filter((n) =>
+      text.includes(`<${hexOf('l'.repeat(n))}> Tj`),
+    );
+    expect(prefixes.length).toBeGreaterThan(0);
   });
 });

@@ -130,6 +130,6 @@ function withColSpan(cell: TableCell, span: number): TableCell {
 function blankCell(span: number): TableCell {
   return {
     properties: span > 1 ? { colSpan: span } : {},
-    content: [{ kind: 'paragraph', paragraph: { properties: {}, runs: [] } }],
+    content: [],
   };
 }

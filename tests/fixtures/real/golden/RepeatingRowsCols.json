@@ -1,0 +1,36 @@
+{
+  "file": "RepeatingRowsCols.xlsx",
+  "paperDeclared": true,
+  "libreOffice": {
+    "pages": 4,
+    "pageSizes": [
+      {
+        "widthPt": 595,
+        "heightPt": 842
+      }
+    ],
+    "chars": 121,
+    "firstLines": [
+      "147",
+      "147",
+      "147",
+      "147"
+    ]
+  },
+  "ream": {
+    "pages": 4,
+    "pageSizes": [
+      {
+        "widthPt": 595,
+        "heightPt": 842
+      }
+    ],
+    "chars": 121,
+    "firstLines": [
+      "147",
+      "147",
+      "147",
+      "147"
+    ]
+  }
+}

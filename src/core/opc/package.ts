@@ -93,6 +93,13 @@ export class OpcPackage {
           violation ??= `more than ${maxEntries} entries`;
           return false;
         }
+        // APPNOTE §4.5.3 — 0xFFFFFFFF in the 32-bit size field is the zip64
+        // sentinel for "the real value is in the extra field", not a size.
+        // Every entry of tdf82984_zip64XLSXImport.xlsx (4.7 KB total) declares
+        // it, so reading it literally refused the whole document as a 4 GiB
+        // bomb. An unknown size is bounded the same way a forged one already
+        // is: by maxArchiveBytes over the compressed input.
+        if (info.originalSize === 0xffffffff) return true;
         if (info.originalSize > maxEntry) {
           violation ??= `entry "${info.name}" declares ${info.originalSize} bytes (limit ${maxEntry})`;
           return false;
@@ -215,7 +222,14 @@ export class OpcPackage {
 // Paths inside a ZIP have no leading slash; OPC PartNames are conceptually
 // absolute with a leading slash. Normalize to the ZIP convention.
 function normalizePath(p: string): string {
-  return p.startsWith('/') ? p.slice(1) : p;
+  // APPNOTE §4.4.17.1 mandates '/' as the separator, but Windows producers
+  // write "_rels\.rels" and "xl\workbook.xml" regardless (corpus: tdf131575,
+  // tdf76115, 49609). Excel, POI and LibreOffice all normalize; rejecting the
+  // package as missing its root relationships helps nobody. A backslash is not
+  // legal in a PartName either (§9.1.1.1), so this can only ever repair a
+  // separator, never mangle a real name.
+  const slashed = p.includes('\\') ? p.replace(/\\/g, '/') : p;
+  return slashed.startsWith('/') ? slashed.slice(1) : slashed;
 }
 
 // ECMA-376 Part 2 §9.3.2 — Target resolution.

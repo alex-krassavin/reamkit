@@ -1,0 +1,30 @@
+{
+  "file": "tdf167019.xlsx",
+  "paperDeclared": true,
+  "libreOffice": {
+    "pages": 1,
+    "pageSizes": [
+      {
+        "widthPt": 842,
+        "heightPt": 595
+      }
+    ],
+    "chars": 511,
+    "firstLines": [
+      "Maurice Pitot - Tension Artérielle"
+    ]
+  },
+  "ream": {
+    "pages": 1,
+    "pageSizes": [
+      {
+        "widthPt": 842,
+        "heightPt": 595
+      }
+    ],
+    "chars": 517,
+    "firstLines": [
+      "Maurice Pitot - Tension Artérielle"
+    ]
+  }
+}

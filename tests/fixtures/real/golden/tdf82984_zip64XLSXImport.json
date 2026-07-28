@@ -1,0 +1,30 @@
+{
+  "file": "tdf82984_zip64XLSXImport.xlsx",
+  "paperDeclared": false,
+  "libreOffice": {
+    "pages": 1,
+    "pageSizes": [
+      {
+        "widthPt": 595,
+        "heightPt": 842
+      }
+    ],
+    "chars": 773,
+    "firstLines": [
+      "TitoloSezioneCodice elaScalaDimensione"
+    ]
+  },
+  "ream": {
+    "pages": 1,
+    "pageSizes": [
+      {
+        "widthPt": 595,
+        "heightPt": 842
+      }
+    ],
+    "chars": 737,
+    "firstLines": [
+      "TitoloSezione Codice el ScalaDimensione"
+    ]
+  }
+}

@@ -106,7 +106,9 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
   const oleObjects = parseOleObjects(wsObj);
   const sparklines = parseSparklines(wsObj);
   const tablePartRelIds = parseTableParts(wsObj);
+  const sheetFormat = parseSheetFormatPr(wsObj);
   const printModel = {
+    ...sheetFormat,
     ...(pageMargins ? { pageMargins } : {}),
     ...(pageSetup ? { pageSetup } : {}),
     ...(fitToPage ? { fitToPage } : {}),
@@ -339,6 +341,32 @@ function parseNumericAttr(obj: Record<string, unknown>, key: string): number | u
   if (raw === undefined) return undefined;
   const n = Number(raw);
   return Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * ECMA-376 §18.3.1.81 `<sheetFormatPr>` — the sheet's default row height and
+ * column width, which apply to every row/column that does not override them.
+ *
+ * Both were previously ignored, so a row without an explicit `ht` had no height
+ * at all and ended up however tall its text wanted to be. A spreadsheet row has
+ * a definite height; text metrics do not get a vote.
+ */
+function parseSheetFormatPr(ws: Record<string, unknown>): {
+  defaultRowHeightPt?: number;
+  defaultColWidthChars?: number;
+  baseColWidthChars?: number;
+} {
+  const node = ws['sheetFormatPr'];
+  if (!node || typeof node !== 'object') return {};
+  const obj = node as Record<string, unknown>;
+  const height = parseNumericAttr(obj, 'defaultRowHeight');
+  const width = parseNumericAttr(obj, 'defaultColWidth');
+  const base = parseNumericAttr(obj, 'baseColWidth');
+  return {
+    ...(height !== undefined && height > 0 ? { defaultRowHeightPt: height } : {}),
+    ...(width !== undefined && width > 0 ? { defaultColWidthChars: width } : {}),
+    ...(base !== undefined && base > 0 ? { baseColWidthChars: base } : {}),
+  };
 }
 
 function parseColumns(ws: Record<string, unknown>): Array<ColumnWidth> {
@@ -978,15 +1006,21 @@ function parseCell(c: unknown, fallbackRow: number, fallbackCol: number): Worksh
   const ref = strAttr(obj, 'r');
   // r= is optional (§18.3.1.4): without it the position is implied by order —
   // the current row and the column after the previous cell.
+  //
+  // A ref that is PRESENT but unreadable gets the same treatment: it carries no
+  // position either, so document order is the only answer available, and it is
+  // the one the spec already sanctions. Dropping the cell instead turned
+  // tdf122336.xlsx — whose producer writes r="11_2" — into a blank page.
+  const implied = { column: fallbackCol, row: fallbackRow };
   let address: { column: number; row: number };
   if (ref) {
     try {
       address = parseCellRef(ref);
     } catch {
-      return null;
+      address = implied;
     }
   } else {
-    address = { column: fallbackCol, row: fallbackRow };
+    address = implied;
   }
   const typeStr = strAttr(obj, 't') ?? 'n';
   const type = validateCellType(typeStr);
@@ -997,7 +1031,12 @@ function parseCell(c: unknown, fallbackRow: number, fallbackCol: number): Worksh
   const base = { column: address.column, row: address.row, type } as const;
   if (type === 'inlineStr') {
     const is = obj['is'];
-    const inlineText = inlineStringText(is);
+    // §18.3.1.4 — t="inlineStr" pairs with <is>, but producers exist that
+    // declare the type and then write the text into <v> anyway
+    // (duplicate-filename.xlsx). The text is right there; taking it beats
+    // rendering a blank cell over a technicality.
+    const fromIs = inlineStringText(is);
+    const inlineText = fromIs !== '' ? fromIs : rawValue;
     return {
       ...base,
       rawValue: '',

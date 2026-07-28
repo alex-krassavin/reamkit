@@ -33,6 +33,7 @@ import type {
 } from '@/core/document-model';
 import type {
   CellRange,
+  CellType,
   DataValidation,
   DefinedName,
   MergedRange,
@@ -42,7 +43,6 @@ import type {
   XlsxBorder,
   XlsxBorderEdge,
   XlsxBorderStyleName,
-  XlsxCellAlignment,
   XlsxCellXf,
   XlsxFont,
   XlsxHorizontalAlign,
@@ -52,23 +52,53 @@ import type {
 } from '@/excel';
 import type { CellConditionalFormatter, CfOverride } from '@/excel/conditional-format';
 import type { SheetHyperlink, SheetSlicer } from '@/core/ir/sheet';
+import type { Loss } from '@/core/ir/loss';
+import { FEATURES } from '@/core/ir/features';
 import { eighthPtToPt, halfPtToPt, pt, twipsToPt } from '@/core/ir';
 import { applyNumberFormat, parseAreaRef, parseTitleRowRange } from '@/excel';
 import { bandedTables, computeColumnBands } from '@/excel/column-bands';
 import { buildConditionalFormatter } from '@/excel/conditional-format';
 
 /**
- * Excel "character width" → twips. Calibri 11pt default Maximum Digit Width is
- * ~7 px ≈ 5.25 pt ≈ 105 twips. This is a coarse approximation but the auto-fit
- * pass refines column widths against the actual cell text anyway.
+ * Excel "character width" → twips: the default font's Maximum Digit Width,
+ * ~7 px at 96 DPI ≈ 5.25 pt ≈ 105 twips.
  */
 export const TWIPS_PER_EXCEL_CHAR = 105;
+
+/**
+ * ECMA-376 §18.3.1.13 — a `<col width>` measures characters of text, and the
+ * rendered column is that many Maximum Digit Widths PLUS a fixed 5-pixel
+ * padding: `px = chars × MDW + 5`. 5 px at 96 DPI = 3.75 pt = 75 twips.
+ *
+ * Omitting it made every column 75 twips narrow, which compounds: on a sheet of
+ * equal 12-character columns the third one landed ~37 pt left of where
+ * LibreOffice puts it. That {@link DEFAULT_COL_TWIPS} below is 960 is the proof
+ * the padding belongs — 8.43 characters only reaches Excel's documented 64 px
+ * default with it (8.43 × 7 + 5 = 64.01 px = 48.01 pt = 960 twips), so the
+ * default was derived from the full formula while the explicit path dropped it.
+ */
+export const COL_PADDING_TWIPS = 75;
+
+/**
+ * Excel insets a cell's text by ~2 px each side (1.5 pt at 96 DPI). The layout
+ * engine's default is a word processor's 108 twips (5.4 pt), which is nearly
+ * four times as much.
+ */
+const EXCEL_CELL_INSET_PT = 1.5;
 
 /**
  * Excel's default column width is 8.43 "characters" ≈ 64px ≈ 960 twips. Used for
  * columns without an explicit `<col width="..">`.
  */
 export const DEFAULT_COL_TWIPS = 960;
+
+/**
+ * ECMA-376 §18.3.1.81 — the row height Excel uses when a sheet declares no
+ * `<sheetFormatPr defaultRowHeight>`: 15pt, the line height of its default
+ * theme font (Calibri 11). Independent of whatever font we end up rendering
+ * with — the height belongs to the document, not to the typesetter.
+ */
+const EXCEL_DEFAULT_ROW_HEIGHT_PT = 15;
 
 /**
  * Excel's default row height is ~15pt = 300 twips. Used (for the `fitToHeight`
@@ -98,16 +128,22 @@ const DEFAULT_PAPER_TWIPS: readonly [number, number] = [11906, 16838];
 
 /**
  * Build the page section (paper size + margins) from a worksheet's `<pageSetup>`
- * / `<pageMargins>`. Returns `undefined` when neither is set, so the renderer
- * applies its A4 default.
+ * / `<pageMargins>`.
+ *
+ * Margins are always set, to Excel's own defaults when the worksheet declares
+ * none (§18.3.1.62) — the renderer's fallback is a word processor's inch, which
+ * is not what a spreadsheet prints. The paper size is left unset when the
+ * worksheet names none, because there the file genuinely holds no answer: Excel
+ * picks by locale and printer, and the renderer's deterministic A4 is as good
+ * as anything we could invent.
  */
-export function sectionFromWorksheet(worksheet: ParsedWorksheet): SectionProperties | undefined {
+export function sectionFromWorksheet(worksheet: ParsedWorksheet): SectionProperties {
   const pageSize = pageSizeFromSetup(worksheet.pageSetup);
-  const margins = marginsFromXlsx(worksheet.pageMargins);
-  if (!pageSize && !margins) return undefined;
   return {
     ...(pageSize ? { pageSize } : {}),
-    ...(margins ? { margins } : {}),
+    // Always set: a worksheet that omits <pageMargins> still prints with
+    // Excel's margins, not a word processor's.
+    margins: marginsFromXlsx(worksheet.pageMargins),
     headers: [],
     footers: [],
   };
@@ -127,8 +163,24 @@ function pageSizeFromSetup(setup: XlsxPageSetup | undefined): PageSize | undefin
   return { width: twipsToPt(w), height: twipsToPt(h), orientation };
 }
 
-function marginsFromXlsx(margins: XlsxPageMargins | undefined): PageMargins | undefined {
-  if (!margins) return undefined;
+/**
+ * ECMA-376 §18.3.1.62 — the page margins Excel writes when the user has not
+ * touched them, in inches. A worksheet may omit `<pageMargins>` entirely, and
+ * falling through to the renderer's default (a word processor's 1 inch) put the
+ * grid 0.3 inch — 21.6 pt — right of where Excel and LibreOffice print it, on
+ * every such sheet.
+ */
+const EXCEL_DEFAULT_MARGINS: PageMargins = {
+  left: twipsToPt(Math.round(0.7 * TWIPS_PER_INCH)),
+  right: twipsToPt(Math.round(0.7 * TWIPS_PER_INCH)),
+  top: twipsToPt(Math.round(0.75 * TWIPS_PER_INCH)),
+  bottom: twipsToPt(Math.round(0.75 * TWIPS_PER_INCH)),
+  header: twipsToPt(Math.round(0.3 * TWIPS_PER_INCH)),
+  footer: twipsToPt(Math.round(0.3 * TWIPS_PER_INCH)),
+};
+
+function marginsFromXlsx(margins: XlsxPageMargins | undefined): PageMargins {
+  if (!margins) return EXCEL_DEFAULT_MARGINS;
   return {
     top: twipsToPt(Math.round(margins.topInches * TWIPS_PER_INCH)),
     right: twipsToPt(Math.round(margins.rightInches * TWIPS_PER_INCH)),
@@ -188,8 +240,8 @@ function sheetContentWidthTwips(worksheet: ParsedWorksheet): number {
   const pageSize = pageSizeFromSetup(worksheet.pageSetup);
   const pageWidthTwips = pageSize ? Math.round(pageSize.width * 20) : DEFAULT_PAPER_TWIPS[0];
   const margins = marginsFromXlsx(worksheet.pageMargins);
-  const left = margins ? Math.round(margins.left * 20) : TWIPS_PER_INCH;
-  const right = margins ? Math.round(margins.right * 20) : TWIPS_PER_INCH;
+  const left = Math.round(margins.left * 20);
+  const right = Math.round(margins.right * 20);
   return Math.max(TWIPS_PER_INCH / 2, pageWidthTwips - left - right);
 }
 
@@ -197,8 +249,8 @@ function sheetContentHeightTwips(worksheet: ParsedWorksheet): number {
   const pageSize = pageSizeFromSetup(worksheet.pageSetup);
   const pageHeightTwips = pageSize ? Math.round(pageSize.height * 20) : DEFAULT_PAPER_TWIPS[1];
   const margins = marginsFromXlsx(worksheet.pageMargins);
-  const top = margins ? Math.round(margins.top * 20) : TWIPS_PER_INCH;
-  const bottom = margins ? Math.round(margins.bottom * 20) : TWIPS_PER_INCH;
+  const top = Math.round(margins.top * 20);
+  const bottom = Math.round(margins.bottom * 20);
   return Math.max(TWIPS_PER_INCH / 2, pageHeightTwips - top - bottom);
 }
 
@@ -271,6 +323,12 @@ interface PrintModelOptions {
   // E-SHEET W9 — the injected reference date for conditional-format `timePeriod`
   // windows and TODAY()/NOW() in `expression` rules. Absent ⇒ those no-op.
   readonly now?: Date;
+  // Sink for projection losses. The defence-in-depth caps below are correct —
+  // a pathological sheet must not exhaust memory — but a cap that fires without
+  // saying so is precisely the silent wrongness LossReport exists to prevent.
+  // Absent ⇒ the caps still apply, they just go unreported (internal callers
+  // that already know); readXlsx always supplies one.
+  readonly losses?: Array<Loss>;
 }
 
 /**
@@ -347,16 +405,75 @@ export function worksheetToBody(
   // materialized grid so a pathological sheet (real values seeded across the
   // 16384×1048576 cell space) cannot exhaust memory. A PDF table larger than
   // this is unreadable regardless.
+  //
+  // The per-dimension caps are NOT sufficient on their own: their product is
+  // 51.2M cells, which is exactly how LibreOffice's too-many-cols-rows.xlsx —
+  // 2.5 KB holding five real cells, declared as A1:XFE16777217 — exhausted a
+  // 6 GB heap. Amplification needs no zip bomb; a declared extent is enough.
+  // MAX_GRID_CELLS bounds the product, and rows give way first: columns carry
+  // the record shape, rows are homogeneous repetitions of it.
   const MAX_GRID_COLS = 1024;
   const MAX_GRID_ROWS = 50_000;
-  const rowCount = Math.min(rowEnd - rowStart + 1, MAX_GRID_ROWS);
-  const colCount = Math.min(colEnd - colStart + 1, MAX_GRID_COLS);
+  const MAX_GRID_CELLS = 1_000_000;
+  const wantRows = rowEnd - rowStart + 1;
+  const wantCols = colEnd - colStart + 1;
+  let colCount = Math.min(wantCols, MAX_GRID_COLS);
+  let rowCount = Math.max(
+    1,
+    Math.min(wantRows, MAX_GRID_ROWS, Math.floor(MAX_GRID_CELLS / colCount)),
+  );
+  // A clipped window ends wherever the cap fell, which on an amplified sheet is
+  // in the middle of nothing: too-many-cols-rows.xlsx puts its five values at
+  // the extremes of A1:XFE16777217, so the surviving 976×1024 window holds one
+  // of them and 999 423 blank cells. Blank space still paginates — the sheet
+  // projected 2657 near-empty pages — so trim the tail the cap left behind.
+  //
+  // Only when a cap actually fired. A window that reflects the used range or a
+  // declared print area ends where the author said it does, trailing blanks
+  // included, and Excel prints those.
+  if (rowCount < wantRows) {
+    rowCount = Math.max(1, lastContentRow(worksheet, rowStart, rowCount, colStart, colCount) + 1);
+  }
+  if (colCount < wantCols) {
+    colCount = Math.max(
+      1,
+      lastContentColumn(worksheet, rowStart, rowCount, colStart, colCount) + 1,
+    );
+  }
+  if (rowCount < wantRows) {
+    print.losses?.push({
+      severity: 'dropped',
+      feature: FEATURES.tables,
+      detail: `grid clipped to the first ${rowCount} rows of ${wantRows} in the used range (memory guard)`,
+      ...(print.sheetName ? { where: `sheet "${print.sheetName}"` } : {}),
+    });
+  }
+  if (colCount < wantCols) {
+    print.losses?.push({
+      severity: 'dropped',
+      feature: FEATURES.tables,
+      detail: `grid clipped to the first ${colCount} columns of ${wantCols} in the used range (memory guard)`,
+      ...(print.sheetName ? { where: `sheet "${print.sheetName}"` } : {}),
+    });
+  }
   // Absolute index of the last in-window row/column (for merge clamping).
   const rowWindowEnd = rowStart + rowCount - 1;
   const colWindowEnd = colStart + colCount - 1;
 
-  // Per-row height overrides keyed by LOCAL (window-relative) row index.
+  // Row heights keyed by LOCAL (window-relative) row index.
+  //
+  // EVERY row gets one. A spreadsheet row has a definite height — §18.3.1.81
+  // `<sheetFormatPr defaultRowHeight>`, or Excel's 15pt for its default theme
+  // font — and leaving rows without one let the text's own leading decide,
+  // which made the row pitch a property of the rendering font rather than of
+  // the document. The per-row `ht` overrides below take precedence.
+  const defaultRowTwips = Math.round(
+    (worksheet.defaultRowHeightPt ?? EXCEL_DEFAULT_ROW_HEIGHT_PT) * TWIPS_PER_POINT,
+  );
   const rowHeightMap = new Map<number, { heightTwips: number; heightRule: 'atLeast' }>();
+  for (let r = 0; r < rowCount; r++) {
+    rowHeightMap.set(r, { heightTwips: defaultRowTwips, heightRule: 'atLeast' });
+  }
   for (const h of worksheet.rowHeights) {
     const local = h.row - rowStart;
     if (local < 0 || local >= rowCount) continue;
@@ -404,9 +521,19 @@ export function worksheetToBody(
 
   // Column widths (LOCAL index): prefer <col width="..">; fall back to Excel's
   // default column width (8.43 chars ≈ 960 twips).
-  const columnWidths = new Array<number>(colCount).fill(DEFAULT_COL_TWIPS);
+  // §18.3.1.81 `<sheetFormatPr defaultColWidth>` overrides Excel's 8.43-char
+  // default for every column no `<col>` covers — the horizontal twin of
+  // defaultRowHeight, and ignored for the same reason.
+  // defaultColWidth wins; failing that Excel derives the default column from
+  // baseColWidth by the same characters + 5px formula; failing both, 8.43.
+  const defaultColChars = worksheet.defaultColWidthChars ?? worksheet.baseColWidthChars;
+  const defaultColTwips =
+    defaultColChars !== undefined
+      ? Math.round(defaultColChars * TWIPS_PER_EXCEL_CHAR + COL_PADDING_TWIPS)
+      : DEFAULT_COL_TWIPS;
+  const columnWidths = new Array<number>(colCount).fill(defaultColTwips);
   for (const col of worksheet.columns) {
-    const twips = Math.round(col.widthChars * TWIPS_PER_EXCEL_CHAR);
+    const twips = Math.round(col.widthChars * TWIPS_PER_EXCEL_CHAR + COL_PADDING_TWIPS);
     for (let abs = col.min - 1; abs <= col.max - 1; abs++) {
       const i = abs - colStart;
       if (i >= 0 && i < colCount) columnWidths[i] = twips;
@@ -443,6 +570,9 @@ export function worksheetToBody(
   // the renderer. Real sheets are far under this budget; once it is exhausted
   // the remaining cells render empty.
   let textBudget = MAX_SHEET_TEXT_CHARS;
+  // Reported once, on the cell that first runs the budget dry — every later
+  // cell would repeat the same fact.
+  let textBudgetReported = false;
 
   // Cells sharing a cellXf reuse the SAME properties objects — not equal
   // copies. The style cascade memoizes by object identity, so on grid-shaped
@@ -504,7 +634,12 @@ export function worksheetToBody(
   for (let r = 0; r < rowCount; r++) {
     const absR = r + rowStart;
     const cells: Array<TableCell> = [];
+    // Columns swallowed by a cell overflowing rightwards over them (see the
+    // overflow block below). Reset per row; filled left-to-right, so a column
+    // is always marked before the loop reaches it.
+    const overflowed = new Set<number>();
     for (let c = 0; c < colCount; c++) {
+      if (overflowed.has(c)) continue;
       const absC = c + colStart;
       const merge = mergeOrigins.get(key(absR, absC));
       const insideNotOrigin = insideMerge.has(key(absR, absC));
@@ -525,11 +660,22 @@ export function worksheetToBody(
       let text = ws ? resolveCellText(ws, sharedStrings, styles, date1904) : '';
       // The full (pre-truncation) text feeds conditional-format text/dup rules (W5).
       const cfText = text.length > 0 ? text : undefined;
-      if (text.length > textBudget) text = text.slice(0, Math.max(0, textBudget));
+      if (text.length > textBudget) {
+        text = text.slice(0, Math.max(0, textBudget));
+        if (!textBudgetReported) {
+          textBudgetReported = true;
+          print.losses?.push({
+            severity: 'dropped',
+            feature: FEATURES.text,
+            detail: `per-sheet text budget of ${MAX_SHEET_TEXT_CHARS} characters exhausted; the remaining cells render empty`,
+            ...(print.sheetName ? { where: `sheet "${print.sheetName}"` } : {}),
+          });
+        }
+      }
       textBudget -= text.length;
       const xf = ws && ws.styleIndex !== undefined ? styles.cellXfs[ws.styleIndex] : undefined;
       let runProps = cellRunProps(xf);
-      const alignment = xf ? alignmentFromXf(xf) : undefined;
+      const alignment = alignmentFromXf(xf, ws?.type);
       let shading = xf ? shadingFromXf(xf, styles) : undefined;
       // A table's banded/header fill + header text colour sit below the cell's
       // own fill (used only when the cell declares none) and below conditional
@@ -557,6 +703,8 @@ export function worksheetToBody(
         }
       }
 
+      // Columns this cell's text runs over, set by the overflow block below.
+      let overflowSpan = 1;
       // §18.8.1 wrapText (E-SHEET W6): a wrapped cell keeps its full text — the
       // table cell layout breaks it to the cell width and the row grows (atLeast).
       const wrapText = xf?.alignment?.wrapText === true;
@@ -582,11 +730,22 @@ export function worksheetToBody(
         !shrinkToFit &&
         ws &&
         (ws.type === 's' || ws.type === 'str' || ws.type === 'inlineStr') &&
-        (alignment === undefined || alignment === 'left')
+        alignment === 'left'
       ) {
         let availTwips = columnWidths[c]!;
         let cc = c + 1;
-        while (cc < colCount && !cellHasContent(cellMatrix[r]?.[cc])) {
+        // A neighbour is free real estate only if it draws NOTHING at all —
+        // no value, no fill or border of its own, and none of the marks a cell
+        // can carry without text (a sparkline, a validation dropdown). Spanning
+        // over one that does would erase it. Excel draws the text ACROSS such a
+        // cell and keeps what it holds; we cannot, so we stop and clip instead
+        // — visibly short beats visibly wrong.
+        const neighbourIsFree = (col: number): boolean =>
+          !cellHasContent(cellMatrix[r]?.[col]) &&
+          !cellPaintsSomething(cellMatrix[r]?.[col], styles) &&
+          !sparklineByCell.has(key(absR, col + colStart)) &&
+          !(dropdownRanges.length > 0 && rangesCover(dropdownRanges, absR, col + colStart));
+        while (cc < colCount && neighbourIsFree(cc)) {
           availTwips += columnWidths[cc]!;
           cc++;
         }
@@ -594,6 +753,14 @@ export function worksheetToBody(
           // an occupied cell stops the overflow → clip to the available width
           const charsFit = Math.max(1, Math.round(availTwips / TWIPS_PER_EXCEL_CHAR));
           if (text.length > charsFit) text = text.slice(0, charsFit);
+        }
+        // Claim the empty neighbours the text runs over. Without this the cell
+        // keeps its single column's width and the layout WRAPS the text inside
+        // it — three stacked lines where Excel and LibreOffice draw one. The
+        // grid still totals the same width, so nothing else on the row moves.
+        if (cc > c + 1) {
+          overflowSpan = cc - c;
+          for (let k = c + 1; k < cc; k++) overflowed.add(k);
         }
       }
 
@@ -626,7 +793,9 @@ export function worksheetToBody(
       const properties: CellProperties = {
         ...(merge && visibleEndCol > merge.startColumn
           ? { colSpan: visibleEndCol - merge.startColumn + 1 }
-          : {}),
+          : overflowSpan > 1
+            ? { colSpan: overflowSpan }
+            : {}),
         ...(merge && Math.min(merge.endRow, rowWindowEnd) > merge.startRow
           ? { merge: 'start' as const }
           : {}),
@@ -665,9 +834,17 @@ export function worksheetToBody(
             : [];
       // A rotated cell stacks its glyphs vertically (one centred paragraph per
       // character); every other cell is a single paragraph of its runs.
+      // An EMPTY cell contributes no content at all — not an empty paragraph.
+      // A paragraph with no runs still lays out a line box the height of its
+      // font, which puts a ~13pt floor under every row and makes a declared
+      // 12.75pt row impossible. In a spreadsheet an empty cell draws nothing and
+      // the row's own height governs; fills, borders and the cell marks are cell
+      // PROPERTIES and paint without it.
       const content: Array<BodyElement> = rotated
         ? stackedVerticalContent(text, runProps, href)
-        : [{ kind: 'paragraph', paragraph: { properties: paragraphProps, runs: cellRuns } }];
+        : cellRuns.length === 0
+          ? []
+          : [{ kind: 'paragraph', paragraph: { properties: paragraphProps, runs: cellRuns } }];
       cells.push({ properties, content });
     }
     const baseRowProps = rowHeightMap.get(r);
@@ -698,6 +875,30 @@ export function worksheetToBody(
   // margins.
   const centered = worksheet.printOptions?.horizontalCentered === true;
   const tableProperties: TableProperties = {
+    // A spreadsheet cell insets its text by about 2 px (1.5 pt at 96 DPI), not
+    // by a word processor's 108 twips / 5.4 pt. The wider inset shifted every
+    // left-aligned value right and every right-aligned one left, and it eats
+    // into a column whose width the author fixed — Excel does not reflow a
+    // narrow column to make room for padding.
+    // Vertically there is no inset at all: in a spreadsheet the row height IS
+    // the cell box, which is the whole point of a declared `ht`. Leaving the
+    // word-processor default of 5.4pt top AND bottom put a 10.8pt floor under
+    // every row, so a 12.75pt row could not render at 12.75pt and a sheet of
+    // 173 empty rows needed three pages where one was asked for.
+    defaultCellMargins: {
+      left: pt(EXCEL_CELL_INSET_PT),
+      right: pt(EXCEL_CELL_INSET_PT),
+      top: pt(0),
+      bottom: pt(0),
+    },
+    // §17.4.20 tblLayout — the layout engine's default is auto-fit, where the
+    // grid is only a hint and column widths are derived from cell content. That
+    // is right for WordprocessingML and wrong here: `<col width="..">` is what
+    // the author set and what Excel and LibreOffice print. Auto-fitting it made
+    // every column after the first land somewhere else — up to 80pt off the
+    // reference render on a four-column sheet whose columns were all declared
+    // the same width.
+    layout: 'fixed',
     ...(print.gridLines
       ? {
           borders: {
@@ -749,7 +950,13 @@ export function worksheetToBody(
       : undefined;
   const table: Table = {
     properties: frozen ? { ...tableProperties, frozen } : tableProperties,
-    grid: columnWidths.map((w) => twipsToPt(w)),
+    // The print scale shrinks the whole sheet, columns included — `bandWidths`
+    // above already scales them for the banded path, and the single-table path
+    // has to agree. It emitted full-width columns for a scaled sheet, which was
+    // invisible while the layout auto-fitted the grid away and became a clipped
+    // page the moment the grid started to count: 49156.xlsx declares
+    // `scale="47"`, so its 1100pt of columns has to come down to ~517pt.
+    grid: bandWidths.map((w) => twipsToPt(w)),
     rows,
   };
 
@@ -891,10 +1098,34 @@ function applyCfOverride(base: RunProperties, o: CfOverride): RunProperties {
   };
 }
 
-function alignmentFromXf(xf: XlsxCellXf): Alignment | undefined {
-  const align: XlsxCellAlignment | undefined = xf.alignment;
-  if (!align) return undefined;
-  return mapAlignment(align.horizontal);
+/**
+ * ECMA-376 §18.8.1 — a cell's horizontal alignment, falling back to `general`.
+ *
+ * "General" is not "left": it is decided by the VALUE. Numbers, dates and times
+ * go right, booleans and errors centre, text goes left. Treating an absent
+ * `<alignment>` as no alignment at all left every number hugging the left edge
+ * of its column, tens of points from where Excel and LibreOffice put it — on
+ * the sheets where it matters most, since a column of figures is the common
+ * case.
+ */
+function alignmentFromXf(xf: XlsxCellXf | undefined, type: CellType | undefined): Alignment {
+  const explicit = xf?.alignment ? mapAlignment(xf.alignment.horizontal) : undefined;
+  if (explicit) return explicit;
+  return generalAlignment(type);
+}
+
+function generalAlignment(type: CellType | undefined): Alignment {
+  switch (type) {
+    case 'n':
+    case 'd':
+      return 'right';
+    case 'b':
+    case 'e':
+      return 'center';
+    default:
+      // 's' | 'str' | 'inlineStr' | an empty cell.
+      return 'left';
+  }
 }
 
 function mapAlignment(h: XlsxHorizontalAlign | undefined): Alignment | undefined {
@@ -1088,7 +1319,7 @@ function buildSparklineLookup(
     const area = parseAreaRef(sp.dataRange);
     if (!host || !area) continue;
     const grid = resolveSeriesGrid(sp.dataRange, worksheet, print.sheetGrids);
-    const values = collectSeriesValues(grid.cells, area);
+    const values = collectSeriesValues(grid.cells, area, print);
     if (values.length === 0 || values.every((v) => v === null)) continue;
     out.set(key(host.startRow, host.startColumn), {
       kind: sp.kind,
@@ -1125,6 +1356,7 @@ const MAX_SPARKLINE_POINTS = 1000;
 function collectSeriesValues(
   cells: ReadonlyArray<WorksheetCell>,
   area: CellRange,
+  print: PrintModelOptions,
 ): Array<number | null> {
   const byKey = new Map<string, number>();
   for (const c of cells) {
@@ -1136,6 +1368,14 @@ function collectSeriesValues(
   }
   const cellCount = (area.endRow - area.startRow + 1) * (area.endColumn - area.startColumn + 1);
   if (cellCount > MAX_SPARKLINE_POINTS) {
+    // The populated values all survive; what is lost are the blank gaps that
+    // held the x-positions apart, so the plotted spacing no longer matches.
+    print.losses?.push({
+      severity: 'degraded',
+      feature: FEATURES.charts,
+      detail: `sparkline range spans ${cellCount} cells (over ${MAX_SPARKLINE_POINTS}); plotted as the compact populated series, so blank gaps no longer hold their x-positions`,
+      ...(print.sheetName ? { where: `sheet "${print.sheetName}"` } : {}),
+    });
     const pts = [...byKey.entries()].map(([k, v]) => {
       const [r, col] = k.split(',').map(Number) as [number, number];
       return { r, col, v };
@@ -1233,6 +1473,71 @@ function buildTableFormatLookup(worksheet: ParsedWorksheet): Map<string, TableCe
 // carries a value or inline text — empty styled cells do not.
 function cellHasContent(cell: WorksheetCell | undefined): boolean {
   return !!cell && (cell.rawValue !== '' || cell.inlineText !== undefined);
+}
+
+/**
+ * The window-local index of the last row inside `[rowStart, rowStart+rowCount)`
+ * that carries anything — a value, or a merge reaching into the window. `-1`
+ * when the window is entirely blank.
+ */
+function lastContentRow(
+  worksheet: ParsedWorksheet,
+  rowStart: number,
+  rowCount: number,
+  colStart: number,
+  colCount: number,
+): number {
+  const rowEnd = rowStart + rowCount - 1;
+  const colEnd = colStart + colCount - 1;
+  let last = -1;
+  for (const c of worksheet.cells) {
+    if (!cellHasContent(c)) continue;
+    if (c.row < rowStart || c.row > rowEnd || c.column < colStart || c.column > colEnd) continue;
+    if (c.row - rowStart > last) last = c.row - rowStart;
+  }
+  for (const m of worksheet.merges) {
+    if (m.startColumn > colEnd || m.endColumn < colStart) continue;
+    const reach = Math.min(m.endRow, rowEnd) - rowStart;
+    if (reach > last) last = reach;
+  }
+  return last;
+}
+
+/** The column twin of {@link lastContentRow}. */
+function lastContentColumn(
+  worksheet: ParsedWorksheet,
+  rowStart: number,
+  rowCount: number,
+  colStart: number,
+  colCount: number,
+): number {
+  const rowEnd = rowStart + rowCount - 1;
+  const colEnd = colStart + colCount - 1;
+  let last = -1;
+  for (const c of worksheet.cells) {
+    if (!cellHasContent(c)) continue;
+    if (c.row < rowStart || c.row > rowEnd || c.column < colStart || c.column > colEnd) continue;
+    if (c.column - colStart > last) last = c.column - colStart;
+  }
+  for (const m of worksheet.merges) {
+    if (m.startRow > rowEnd || m.endRow < rowStart) continue;
+    const reach = Math.min(m.endColumn, colEnd) - colStart;
+    if (reach > last) last = reach;
+  }
+  return last;
+}
+
+/**
+ * Whether an EMPTY cell still draws something of its own — a fill or a border.
+ *
+ * Such a cell cannot be swallowed by a neighbour's overflowing text: the span
+ * that gives the text its width would take the paint with it.
+ */
+function cellPaintsSomething(cell: WorksheetCell | undefined, styles: XlsxStyles): boolean {
+  if (!cell || cell.styleIndex === undefined) return false;
+  const xf = styles.cellXfs[cell.styleIndex];
+  if (!xf) return false;
+  return shadingFromXf(xf, styles) !== undefined || bordersFromXf(xf, styles) !== undefined;
 }
 
 // E-SHEET SV2 — a slicer panel projected as a styled mini-table emitted after the

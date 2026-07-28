@@ -5,8 +5,14 @@
 // render path (PDF/SVG/HTML) is identical. A dedicated grid layout would be a
 // separate SheetDoc consumer; for now FlowDoc is the one projection.
 
-import type { BodyElement, HeaderFooterReference, SectionProperties } from '@/core/document-model';
+import type {
+  BodyElement,
+  HeaderFooterReference,
+  Section,
+  SectionProperties,
+} from '@/core/document-model';
 import type { FlowDoc } from '@/core/ir/flow';
+import type { Loss } from '@/core/ir/loss';
 import type {
   SheetActiveXControl,
   SheetComment,
@@ -41,6 +47,15 @@ export interface ProjectSheetOptions {
    * byte-identical to before.
    */
   readonly now?: Date;
+  /**
+   * Sink the projection writes its {@link Loss} entries into — the print
+   * model's defence-in-depth caps (grid size, per-sheet text budget, sparkline
+   * range) fire on pathological input, and a cap that fires without saying so
+   * is a silent wrongness. {@link readXlsx} always supplies one and returns it
+   * as the read result's loss report; omitted ⇒ the caps still apply but go
+   * unreported.
+   */
+  readonly losses?: Array<Loss>;
 }
 
 /**
@@ -55,8 +70,18 @@ export interface ProjectSheetOptions {
  */
 export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = {}): FlowDoc {
   const body: Array<BodyElement> = [];
-  // Page geometry comes from the first sheet's <pageSetup>/<pageMargins>; the
-  // renderer supports one section, so later sheets share the first's geometry.
+  // ONE SECTION PER SHEET. A workbook's sheets set their paper independently —
+  // tdf171828_fail_to_import_file.xlsx is A4 landscape, then Letter portrait,
+  // then A4 landscape again — and reprinting them all on the first sheet's
+  // paper is not an approximation, it is the wrong page. The layout has taken
+  // `sections` (each with the body index it runs to) since docx needed it; the
+  // spreadsheet projection simply never used them.
+  // Each sheet's geometry, in order; the body index each sheet ends at is
+  // recorded alongside once its blocks are in.
+  const sheetSections: Array<SectionProperties> = [];
+  const sheetEnds: Array<number> = [];
+  // Kept for FlowDoc.section, the single-section field the render path falls
+  // back to and which other consumers still read.
   let firstSheetSection: SectionProperties | undefined;
   // First sheet's expanded header/footer band content (E-SHEET W4), keyed for
   // FlowDoc.headersFooters; the renderer paints it in the page margins.
@@ -68,9 +93,15 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
 
   for (let sheetIdx = 0; sheetIdx < sheet.sheets.length; sheetIdx++) {
     const ws = sheet.sheets[sheetIdx]!;
-    if (sheetIdx === 0) {
-      firstSheetSection = withHeaderFooter(sectionFromWorksheet(ws.grid), ws, headersFooters);
-    }
+    // The header/footer band is a document-level resource keyed by a synthetic
+    // id, so only the first sheet's can be carried; its geometry, though, is
+    // per-sheet.
+    const sheetSection =
+      sheetIdx === 0
+        ? withHeaderFooter(sectionFromWorksheet(ws.grid), ws, headersFooters)
+        : sectionFromWorksheet(ws.grid);
+    if (sheetIdx === 0) firstSheetSection = sheetSection;
+    sheetSections.push(sheetSection);
 
     // Each sheet after the first starts on its own PDF page. We do NOT print the
     // sheet name (Calc/Excel `--convert-to pdf` emit it nowhere), so the page
@@ -96,6 +127,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
         ...(ws.hyperlinks ? { hyperlinks: ws.hyperlinks } : {}),
         ...(sheet.sharedStringRuns ? { sharedStringRuns: sheet.sharedStringRuns } : {}),
         ...(options.now ? { now: options.now } : {}),
+        ...(options.losses ? { losses: options.losses } : {}),
       }),
     );
 
@@ -155,7 +187,16 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     if (ws.activeXControls && ws.activeXControls.length > 0) {
       body.push(...activeXBlocks(ws.activeXControls));
     }
+    sheetEnds.push(body.length);
   }
+
+  // Section i covers body[sections[i-1].endIndex .. sections[i].endIndex). A
+  // single-sheet workbook keeps `sections` empty so the render path stays on
+  // the FlowDoc.section fallback it has always used, byte for byte.
+  const sections: Array<Section> =
+    sheetSections.length > 1
+      ? sheetSections.map((properties, i) => ({ properties, endIndex: sheetEnds[i]! }))
+      : [];
 
   return {
     kind: 'flow',
@@ -163,7 +204,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // cells are built with direct props only, so resolving over the empty sheet
     // just materializes the defaults.
     body: resolveBodyStyles(body, EMPTY_STYLE_SHEET),
-    sections: [],
+    sections,
     ...(firstSheetSection ? { section: firstSheetSection } : {}),
     styles: EMPTY_STYLE_SHEET,
     resources: sheet.resources,
@@ -291,10 +332,10 @@ function activeXLabel(c: SheetActiveXControl): string {
 // to its section (creating a minimal section when the sheet has no custom page
 // geometry). The section is returned unchanged when there is no header/footer.
 function withHeaderFooter(
-  section: SectionProperties | undefined,
+  section: SectionProperties,
   ws: SheetDoc['sheets'][number],
   headersFooters: Map<string, ReadonlyArray<BodyElement>>,
-): SectionProperties | undefined {
+): SectionProperties {
   const hf = ws.grid.headerFooter;
   if (!hf || (!hf.oddHeader && !hf.oddFooter)) return section;
   const headers: Array<HeaderFooterReference> = [];
@@ -314,5 +355,5 @@ function withHeaderFooter(
     }
   }
   if (headers.length === 0 && footers.length === 0) return section;
-  return { ...(section ?? { headers: [], footers: [] }), headers, footers };
+  return { ...section, headers, footers };
 }

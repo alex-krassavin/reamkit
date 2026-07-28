@@ -3,6 +3,73 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.15.3
+
+Spreadsheet rendering: the grid now lands where a spreadsheet puts it, and a
+sheet that cannot be rendered in full says so instead of quietly shrinking.
+Found by a validation sweep over 642 real `.xlsx` documents.
+
+### Fixed
+
+- **Column widths.** A `<col width>` is now honoured as written. Widths were
+  treated as a hint and refitted to cell content — right for WordprocessingML,
+  wrong for a spreadsheet, where it moved every column after the first. The
+  width also regains the 5-pixel padding the measurement carries
+  (ECMA-376 §18.3.1.13), and `<sheetFormatPr>`'s `defaultColWidth` /
+  `baseColWidth` are read for columns no `<col>` covers.
+- **Row heights.** `<sheetFormatPr defaultRowHeight>` is read; rows without an
+  explicit `ht` take it, or Excel's 15pt when the sheet declares none. Row pitch
+  was previously whatever leading the rendering font wanted, so a sheet asking
+  for 30pt rows drew them at 13pt.
+- **Page margins.** A sheet that declares no `<pageMargins>` now prints with
+  Excel's defaults (0.7in sides, 0.75in top and bottom) rather than a word
+  processor's inch, which shifted the whole grid.
+- **Number alignment.** "General" alignment follows the value's type
+  (§18.8.1): numbers and dates right, booleans and errors centred, text left.
+  Columns of figures previously rendered flush left.
+- **Cell padding.** Cell text is inset like a spreadsheet's — a couple of
+  points at the sides, nothing above or below, where the row height is the box.
+- **Print scale.** `<pageSetup scale>` now shrinks column widths along with
+  fonts and row heights. A scaled sheet kept full-width columns and lost the
+  overflow off the page edge.
+- **Text overflow.** A cell without `wrapText` runs its text across the empty
+  cells to its right on one line, as Excel and LibreOffice draw it, instead of
+  wrapping it inside its own column. It stops at a neighbour that holds
+  anything of its own — a value, a fill, a border, a sparkline.
+- **Per-sheet page setup.** Each sheet prints on the paper and orientation it
+  declares. A workbook mixing, say, A4 landscape and US Letter portrait was
+  printed entirely on the first sheet's paper.
+- **Blank rows paginate.** A sheet whose rows are mostly empty no longer piles
+  them all onto page one: consumed space now breaks a page whether or not
+  anything was drawn on it. Blank space is most of a spreadsheet.
+- **Cell references.** A cell whose `r=` cannot be parsed is placed by document
+  order — the fallback §18.3.1.4 already defines for an absent one — instead of
+  being dropped. Files from at least one producer rendered blank.
+- **Inline strings.** A cell typed `inlineStr` that writes its text into `<v>`
+  instead of `<is>` renders that text rather than nothing.
+- **Windows ZIP separators.** Packages whose entries use `\` instead of `/`
+  now open; they were rejected outright as missing their root relationships.
+  Affects `.docx`, `.xlsx` and `.pptx`, including format detection.
+- **Zip64.** An entry declaring the 0xFFFFFFFF size sentinel is no longer read
+  as a literal 4 GiB and refused by the archive-size guard.
+
+### Changed
+
+- **Spreadsheet conversions now report losses.** The xlsx reader always
+  returned an empty loss report, while the print model quietly clipped
+  pathological sheets — an over-wide grid, an exhausted per-sheet text budget,
+  an oversized sparkline range. Those clips are now reported. Callers passing
+  `strict: true` will see such a document throw where it previously converted
+  silently; that is the point of the report, but it is a behaviour change.
+
+### Security
+
+- **Declared-extent amplification.** A 2.5 KB worksheet declaring
+  `A1:XFE16777217` exhausted a 6 GB heap: the grid was bounded per dimension
+  (1024 columns, 50 000 rows) but nothing bounded their product. The projected
+  grid is now bounded by total cells, and the blank tail a bound leaves behind
+  is trimmed rather than paginated.
+
 ## 1.15.2
 
 A layout fix for CJK line wrapping.

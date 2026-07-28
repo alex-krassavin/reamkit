@@ -1,0 +1,34 @@
+{
+  "file": "AverageTaxRates.xlsx",
+  "paperDeclared": true,
+  "libreOffice": {
+    "pages": 3,
+    "pageSizes": [
+      {
+        "widthPt": 595,
+        "heightPt": 842
+      }
+    ],
+    "chars": 6047,
+    "firstLines": [
+      "(iii) AVERAGE TAX RATES ON ANNUAL EARNINGS IN % TERMS*",
+      "MODIFIED",
+      "SELF-"
+    ]
+  },
+  "ream": {
+    "pages": 3,
+    "pageSizes": [
+      {
+        "widthPt": 595,
+        "heightPt": 842
+      }
+    ],
+    "chars": 6493,
+    "firstLines": [
+      "(iii) AVERAGE TAX RATES ON ANNUAL EARNINGS IN % TERMS*",
+      "MODIFIED RATESINGLE",
+      "SELF-EMPLOYEDSINGLE"
+    ]
+  }
+}
