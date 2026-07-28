@@ -2,14 +2,9 @@
   "generated": "2026-07-28",
   "totals": {
     "files": 642,
-    "violations": 29
+    "violations": 28
   },
   "violations": [
-    {
-      "path": "corpus/external/lo-xlsx/too-many-cols-rows.xlsx",
-      "kind": "crash",
-      "detail": "exceeded the 512 MB heap cap or the 120s timeout"
-    },
     {
       "path": "corpus/external/lo-xlsx/forcepoint107.xlsx",
       "kind": "threw",

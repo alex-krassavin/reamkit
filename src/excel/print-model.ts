@@ -355,17 +355,28 @@ export function worksheetToBody(
   // materialized grid so a pathological sheet (real values seeded across the
   // 16384×1048576 cell space) cannot exhaust memory. A PDF table larger than
   // this is unreadable regardless.
+  //
+  // The per-dimension caps are NOT sufficient on their own: their product is
+  // 51.2M cells, which is exactly how LibreOffice's too-many-cols-rows.xlsx —
+  // 2.5 KB holding five real cells, declared as A1:XFE16777217 — exhausted a
+  // 6 GB heap. Amplification needs no zip bomb; a declared extent is enough.
+  // MAX_GRID_CELLS bounds the product, and rows give way first: columns carry
+  // the record shape, rows are homogeneous repetitions of it.
   const MAX_GRID_COLS = 1024;
   const MAX_GRID_ROWS = 50_000;
+  const MAX_GRID_CELLS = 1_000_000;
   const wantRows = rowEnd - rowStart + 1;
   const wantCols = colEnd - colStart + 1;
-  const rowCount = Math.min(wantRows, MAX_GRID_ROWS);
   const colCount = Math.min(wantCols, MAX_GRID_COLS);
+  const rowCount = Math.max(
+    1,
+    Math.min(wantRows, MAX_GRID_ROWS, Math.floor(MAX_GRID_CELLS / colCount)),
+  );
   if (rowCount < wantRows) {
     print.losses?.push({
       severity: 'dropped',
       feature: FEATURES.tables,
-      detail: `grid clipped to the first ${MAX_GRID_ROWS} rows of ${wantRows} in the used range (memory guard)`,
+      detail: `grid clipped to the first ${rowCount} rows of ${wantRows} in the used range (memory guard)`,
       ...(print.sheetName ? { where: `sheet "${print.sheetName}"` } : {}),
     });
   }
@@ -373,7 +384,7 @@ export function worksheetToBody(
     print.losses?.push({
       severity: 'dropped',
       feature: FEATURES.tables,
-      detail: `grid clipped to the first ${MAX_GRID_COLS} columns of ${wantCols} in the used range (memory guard)`,
+      detail: `grid clipped to the first ${colCount} columns of ${wantCols} in the used range (memory guard)`,
       ...(print.sheetName ? { where: `sheet "${print.sheetName}"` } : {}),
     });
   }

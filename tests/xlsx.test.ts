@@ -761,6 +761,31 @@ describe('projection losses (never silently wrong)', () => {
     expect(budget!.severity).toBe('dropped');
   });
 
+  it('bounds the grid by TOTAL cells, not per-dimension (tiny file, astronomic extent)', () => {
+    // LibreOffice's too-many-cols-rows.xlsx: a 2.5 KB sheet holding five real
+    // cells but spanning A1:XFE16777217. Capping rows and columns separately
+    // still admits their product — 50 000 × 1024 = 51.2M cells — so the sheet
+    // exhausted the heap. Amplification needs no zip bomb: a declared extent
+    // is enough.
+    const sheetData =
+      `<row r="1"><c r="A1"><v>1</v></c><c r="XFB1"><v>2</v></c><c r="XFE1"><v>3</v></c></row>` +
+      `<row r="16777214"><c r="A16777214"><v>11</v></c></row>` +
+      `<row r="16777217"><c r="A16777217"><v>21</v></c></row>`;
+    const { doc, losses } = readXlsx(rawXlsx(sheetData));
+
+    let cells = 0;
+    for (const element of doc.body) {
+      if (element.kind === 'table') {
+        for (const row of element.table.rows) cells += row.cells.length;
+      }
+    }
+    expect(cells).toBeGreaterThan(0);
+    expect(cells).toBeLessThanOrEqual(2_000_000);
+    // …and it must say the sheet was clipped rather than pass off a corner of
+    // it as the whole thing.
+    expect(losses.some((l) => l.severity === 'dropped')).toBe(true);
+  });
+
   it('stays silent for an ordinary sheet', () => {
     const plain = buildXlsx([
       ['Region', 'Revenue'],
