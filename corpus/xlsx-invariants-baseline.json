@@ -1,0 +1,169 @@
+{
+  "generated": "2026-07-28",
+  "totals": {
+    "files": 642,
+    "violations": 32
+  },
+  "violations": [
+    {
+      "path": "corpus/external/lo-xlsx/too-many-cols-rows.xlsx",
+      "kind": "crash",
+      "detail": "exceeded the 512 MB heap cap or the 120s timeout"
+    },
+    {
+      "path": "corpus/external/lo-xlsx/forcepoint107.xlsx",
+      "kind": "threw",
+      "detail": "offset is out of bounds"
+    },
+    {
+      "path": "corpus/external/lo-xlsx/tdf131575.xlsx",
+      "kind": "threw",
+      "detail": "OPC package missing _rels/.rels"
+    },
+    {
+      "path": "corpus/external/lo-xlsx/tdf76115.xlsx",
+      "kind": "threw",
+      "detail": "OPC package missing _rels/.rels"
+    },
+    {
+      "path": "corpus/external/lo-xlsx/tdf82984_zip64XLSXImport.xlsx",
+      "kind": "threw",
+      "detail": "OPC archive rejected (zip-bomb guard): entry \"docProps/core.xml\" declares 4294967295 bytes (limit 268435456)"
+    },
+    {
+      "path": "corpus/external/poi-xlsx/49609.xlsx",
+      "kind": "threw",
+      "detail": "OPC package missing _rels/.rels"
+    },
+    {
+      "path": "corpus/external/poi-xlsx/58325_db.xlsx",
+      "kind": "threw",
+      "detail": "Maximum nested tags exceeded"
+    },
+    {
+      "path": "corpus/external/poi-xlsx/58325_lt.xlsx",
+      "kind": "threw",
+      "detail": "Maximum nested tags exceeded"
+    },
+    {
+      "path": "corpus/external/poi-xlsx/58616.xlsx",
+      "kind": "threw",
+      "detail": "OLE compound file: a password-protected (encrypted) OOXML document or a legacy binary .doc/.xls — re-save as an unencryp"
+    },
+    {
+      "path": "corpus/external/poi-xlsx/clusterfuzz-testcase-minimized-POIFuzzer-5040805309710336.xlsx",
+      "kind": "threw",
+      "detail": "OPC archive rejected (zip-bomb guard): entry \"+&�\u001f�\u0014���U_l�Δ:�\u001a��\u000b*`�{�rr\u0019�GN�\"՝�sm�%\u0010��PK\u0001k�T�rOH\bQ�qn�\u0002�.�Ϛ��4���8B���"
+    },
+    {
+      "path": "corpus/external/poi-xlsx/clusterfuzz-testcase-minimized-POIXSSFFuzzer-4828727001088000.xlsx",
+      "kind": "threw",
+      "detail": "OPC archive rejected (zip-bomb guard): entry \"|\r+ãáðFæÖ\u00044a\u0010\u001cb:¹Ç\u00126:$óö:\u0013àV9\u0004Ö%9H\u001eö\f¶2±üCÜÖ\u0014?Ä\fBR:Î¡J9ºþIÀ(5\fÏì"
+    },
+    {
+      "path": "corpus/external/poi-xlsx/clusterfuzz-testcase-minimized-POIXSSFFuzzer-5089447305609216.xlsx",
+      "kind": "threw",
+      "detail": "invalid zip data"
+    },
+    {
+      "path": "corpus/external/poi-xlsx/clusterfuzz-testcase-minimized-POIXSSFFuzzer-5185049589579776.xlsx",
+      "kind": "threw",
+      "detail": "OPC archive rejected (zip-bomb guard): entry \"\u0000\u0000\u0000¤\u0000\u0000\u0000\u0000[Content_Types].xmlUT\u0005\u0000\u0003ðÎ\u0012ux\u000b\u0000\u0001\u0004äw5\u0000\u0004\u0011\u0000\u0000\u0000PK\u0001\u0002\u001e\u0003\n\u0000\u0000\u0000\u0000\u0000ºu7O\u0000\u0000\u0000\u0000\u0000\u0000"
+    },
+    {
+      "path": "corpus/external/poi-xlsx/clusterfuzz-testcase-minimized-POIXSSFFuzzer-6123461607817216.xlsx",
+      "kind": "threw",
+      "detail": "invalid zip data"
+    },
+    {
+      "path": "corpus/external/poi-xlsx/clusterfuzz-testcase-minimized-POIXSSFFuzzer-6419366255919104.xlsx",
+      "kind": "threw",
+      "detail": "invalid zip data"
+    },
+    {
+      "path": "corpus/external/poi-xlsx/clusterfuzz-testcase-minimized-POIXSSFFuzzer-6448258963341312.xlsx",
+      "kind": "threw",
+      "detail": "OPC package missing _rels/.rels"
+    },
+    {
+      "path": "corpus/external/poi-xlsx/clusterfuzz-testcase-minimized-XLSX2CSVFuzzer-5025401116950528.xlsx",
+      "kind": "threw",
+      "detail": "OPC package missing _rels/.rels"
+    },
+    {
+      "path": "corpus/external/poi-xlsx/clusterfuzz-testcase-minimized-XLSX2CSVFuzzer-5542865479270400.xlsx",
+      "kind": "threw",
+      "detail": "invalid zip data"
+    },
+    {
+      "path": "corpus/external/poi-xlsx/clusterfuzz-testcase-minimized-XLSX2CSVFuzzer-5636439151607808.xlsx",
+      "kind": "threw",
+      "detail": "invalid zip data"
+    },
+    {
+      "path": "corpus/external/poi-xlsx/clusterfuzz-testcase-minimized-XLSX2CSVFuzzer-6504225896792064.xlsx",
+      "kind": "threw",
+      "detail": "OPC archive rejected (zip-bomb guard): entry \"\" declares 670424433 bytes (limit 268435456)"
+    },
+    {
+      "path": "corpus/external/poi-xlsx/clusterfuzz-testcase-minimized-XLSX2CSVFuzzer-6594557414080512.xlsx",
+      "kind": "threw",
+      "detail": "invalid zip data"
+    },
+    {
+      "path": "corpus/external/poi-xlsx/crash-274d6342e4842d61be0fb48eaadad6208ae767ae.xlsx",
+      "kind": "threw",
+      "detail": "OPC package missing _rels/.rels"
+    },
+    {
+      "path": "corpus/external/poi-xlsx/crash-9bf3cd4bd6f50a8a9339d363c2c7af14b536865c.xlsx",
+      "kind": "threw",
+      "detail": "OLE compound file: a password-protected (encrypted) OOXML document or a legacy binary .doc/.xls — re-save as an unencryp"
+    },
+    {
+      "path": "corpus/external/poi-xlsx/deep-data.xlsx",
+      "kind": "threw",
+      "detail": "invalid zip data"
+    },
+    {
+      "path": "corpus/external/poi-xlsx/protected_passtika.xlsx",
+      "kind": "threw",
+      "detail": "OLE compound file: a password-protected (encrypted) OOXML document or a legacy binary .doc/.xls — re-save as an unencryp"
+    },
+    {
+      "path": "corpus/external/poi-xlsx/WithEmbeded.xlsx",
+      "kind": "threw",
+      "detail": "readTagExp returned undefined at position 3521. Context: \".X.��p�M�\u001b,���q7�\u000b�\b�\u000b�\u000b|wf\u00178��K3�Fl\u001cT�\u0006��B�$���b�<k[]�����b%�"
+    },
+    {
+      "path": "corpus/external/lo-xlsx/tdf122336.xlsx",
+      "kind": "silent-empty",
+      "detail": "22 value cells in the file, 0 in the output, 0 losses reported"
+    },
+    {
+      "path": "corpus/external/poi-xlsx/duplicate-filename.xlsx",
+      "kind": "silent-empty",
+      "detail": "1 value cells in the file, 0 in the output, 0 losses reported"
+    },
+    {
+      "path": "corpus/external/lo-xlsx/tdf171828_fail_to_import_file.xlsx",
+      "kind": "under-extraction",
+      "detail": "1249/2805 value cells kept (45%), 0 losses reported"
+    },
+    {
+      "path": "corpus/external/poi-xlsx/53105.xlsx",
+      "kind": "under-extraction",
+      "detail": "1025/16385 value cells kept (6%), 0 losses reported"
+    },
+    {
+      "path": "corpus/external/poi-xlsx/no_drawing_patriarch.xlsx",
+      "kind": "under-extraction",
+      "detail": "31335/66935 value cells kept (47%), 0 losses reported"
+    },
+    {
+      "path": "corpus/external/poi-xlsx/poc-shared-strings.xlsx",
+      "kind": "under-extraction",
+      "detail": "31/12000 value cells kept (0%), 0 losses reported"
+    }
+  ]
+}

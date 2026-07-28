@@ -32,11 +32,34 @@ Per document the harness reports:
   matching page size + font). Lower is better.
 - **Pages** — page-count agreement.
 
+## Invariant sweep (xlsx) — no reference renderer needed
+
+`npm run corpus` answers "does our render match LibreOffice?". The invariant
+sweep answers a cheaper and stricter question that needs no oracle at all:
+*did we silently lose the file?*
+
+```sh
+npm run corpus:xlsx:invariants            # check against the committed baseline
+npm run corpus:xlsx:invariants -- --update   # bank progress / re-seed
+XLSX_CORPUS_DIRS=corpus/external/lo-xlsx npm run corpus:xlsx:invariants  # narrow
+```
+
+Three invariants per document, each parsed in a child process under a 512 MB
+heap cap and a wall-clock timeout:
+
+1. **no silent loss** — a file with value cells must project to a non-empty
+   document, or the reader must report a `Loss` saying what it dropped;
+2. **bounded resources** — an unbounded allocation driven by a declared
+   `dimension` is a denial-of-service vector, not a cosmetic bug;
+3. **no unexpected throw** — well-formed packages parse; deliberately
+   corrupt/fuzzed input may throw, and the baseline records which.
+
+Violations are diffed against `corpus/xlsx-invariants-baseline.json`, so the
+burn-down is visible in review and a regression fails the run. A baselined
+entry is a known gap, not an accepted one.
+
 ## Notes
 
-- xlsx comparison is intentionally apples-to-oranges: we render a sheet as a
-  bordered grid plus a sheet-name title, whereas LibreOffice Calc prints via its
-  own print-area model. Divergence there is expected.
 - Inputs declare an explicit A4 `sectPr` so both engines agree on page geometry;
   documents without one make LibreOffice fall back to a locale paper size.
 - This is not part of `npm test` (it shells out to external binaries); run it
