@@ -80,11 +80,11 @@ describe('gradient fills (E-PDF EP16)', () => {
     const page = file.pages()[0]!;
     const patterns = file.get(page.resources!, 'Pattern');
     expect(patterns instanceof Map).toBe(true);
-    const pattern = file.resolve((patterns as PdfDict).get('Sh0') ?? null);
+    const pattern = file.resolve((patterns as PdfDict).get('Sh0')!);
     expect((pattern as PdfDict).get('PatternType')).toBe(2);
-    const shading = file.resolve((pattern as PdfDict).get('Shading') ?? null);
+    const shading = file.resolve((pattern as PdfDict).get('Shading')!);
     expect((shading as PdfDict).get('ShadingType')).toBe(2); // axial (a:lin)
-    const fn = file.resolve((shading as PdfDict).get('Function') ?? null);
+    const fn = file.resolve((shading as PdfDict).get('Function')!);
     expect((fn as PdfDict).get('C0')).toEqual([1, 0, 0]); // FF0000
     expect((fn as PdfDict).get('C1')).toEqual([0, 0, 1]); // 0000FF
     const content = new TextDecoder('latin1').decode(file.pageContent(page));

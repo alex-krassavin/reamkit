@@ -105,10 +105,10 @@ describe('ppt reader (PPT-1)', () => {
   it('reads the slide size into the page size (master units → points)', () => {
     const def = readPpt(buildPpt([{ text: 'a' }])).doc;
     // Default 10in × 7.5in deck → 720 × 540 pt.
-    expect(def.section.pageSize).toEqual({ width: 720, height: 540 });
+    expect(def.section!.pageSize).toEqual({ width: 720, height: 540 });
     // 16:9 on-screen deck: 13⅓in × 7.5in → 960 × 540 pt.
     const wide = readPpt(buildPpt([{ text: 'a' }], { slideSizeInches: { w: 40 / 3, h: 7.5 } })).doc;
-    expect(wide.section.pageSize).toEqual({ width: 960, height: 540 });
+    expect(wide.section!.pageSize).toEqual({ width: 960, height: 540 });
   });
 
   it('reads slides when the Current User stream is missing (scan fallback)', () => {

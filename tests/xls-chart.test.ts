@@ -29,7 +29,7 @@ const chartXls = (kind?: 'bar' | 'line' | 'pie'): Uint8Array =>
           labelSstRec(1, 1, 1),
           labelSstRec(2, 1, 2),
           ...chartRecords({
-            kind,
+            ...(kind ? { kind } : {}),
             values: { r0: 0, r1: 2, c0: 0, c1: 0 },
             categories: { r0: 0, r1: 2, c0: 1, c1: 1 },
             name: 'Sales',

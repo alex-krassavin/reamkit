@@ -16,7 +16,8 @@ import { fileURLToPath } from 'node:url';
 import { basename, dirname, resolve } from 'node:path';
 
 import { listCorpus } from './lib';
-import type { BodyElement, FlowDoc } from '@/core/document-model';
+import type { BodyElement } from '@/core/document-model';
+import type { FlowDoc } from '@/core/ir/flow';
 import { readDocx } from '@/word/docx-reader';
 import { writeDocx } from '@/word/docx-writer';
 

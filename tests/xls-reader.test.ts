@@ -48,6 +48,8 @@ import {
   window2Rec,
   wsBoolRec,
 } from './fixtures/build-xls';
+import type { CellProperties } from '@/core/document-model';
+
 import type { FlowDoc } from '@/core/ir/flow';
 import type { SheetDoc } from '@/core/ir/sheet';
 import type { WorksheetCell } from '@/core/spreadsheet-model';
@@ -313,7 +315,7 @@ describe('xls print model (XLS-9)', () => {
 
   it('projects a landscape sheet to a wider-than-tall page', () => {
     const flow = projectSheetDoc(sheetDoc([setupRec({ landscape: true, paperSize: 1 })]));
-    expect(flow.section.pageSize.width).toBeGreaterThan(flow.section.pageSize.height);
+    expect(flow.section!.pageSize!.width).toBeGreaterThan(flow.section!.pageSize!.height);
   });
 });
 
@@ -440,7 +442,7 @@ describe('xls cell comments (XLS-11)', () => {
 });
 
 describe('xls data validation (XLS-12)', () => {
-  const cellProps = (doc: SheetDoc): Record<string, unknown> | undefined => {
+  const cellProps = (doc: SheetDoc): CellProperties | undefined => {
     const table = projectSheetDoc(doc).body.find((el) => el.kind === 'table');
     return table?.kind === 'table' ? table.table.rows[0]?.cells[0]?.properties : undefined;
   };

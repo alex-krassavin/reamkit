@@ -652,7 +652,7 @@ export function dvRec(opts: {
   new DataView(flagsBytes.buffer).setUint32(0, flags >>> 0, true);
 
   const empty = (): Uint8Array => Uint8Array.of(0, 0, 0); // XLUnicodeString cch 0, flags 0
-  let rgce1 = new Uint8Array(0);
+  let rgce1: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
   if (opts.listLiteral !== undefined) {
     const chars = ascii(opts.listLiteral);
     rgce1 = concat([Uint8Array.of(0x17, chars.length, 0x00), chars]); // PtgStr

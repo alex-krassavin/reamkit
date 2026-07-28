@@ -408,8 +408,8 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     );
     const { bytes } = writeDocx(flow);
     const pkg = OpcPackage.open(bytes);
-    expect(decode(pkg.getPart('word/header1.xml'))).toContain('page header');
-    expect(decode(pkg.getPart('word/footer1.xml'))).toContain('page footer');
+    expect(decode(pkg.requirePart('word/header1.xml'))).toContain('page header');
+    expect(decode(pkg.requirePart('word/footer1.xml'))).toContain('page footer');
 
     // Re-read resolves the parts through their relationships.
     const { doc: again } = readDocx(bytes);

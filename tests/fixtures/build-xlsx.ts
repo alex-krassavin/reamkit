@@ -320,9 +320,11 @@ function buildPivotTableXml(
 export function buildXlsx(
   rowsOrOptions: ReadonlyArray<ReadonlyArray<XlsxValue>> | XlsxBuilderOptions,
 ): Uint8Array {
+  // Array.isArray does not narrow a ReadonlyArray union, so the else branch
+  // keeps both members; test for the options shape instead.
   const options: XlsxBuilderOptions = Array.isArray(rowsOrOptions)
     ? { rows: rowsOrOptions as ReadonlyArray<ReadonlyArray<XlsxValue>> }
-    : rowsOrOptions;
+    : (rowsOrOptions as XlsxBuilderOptions);
 
   const sheets: Array<XlsxSheetSpec> =
     options.sheets && options.sheets.length > 0
