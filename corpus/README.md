@@ -32,6 +32,12 @@ Per document the harness reports:
   matching page size + font). Lower is better.
 - **Pages** — page-count agreement.
 
+The verdict is `✅` only when *all* of them agree: same page count, same page
+size, TextSim > 95%, worst-page visual mismatch < 10% and geometry similarity
+≥ 50%. `🈳` marks a document where **both** sides extracted no text — two empty
+strings score a perfect similarity, so this must never read as a pass; it is
+evidence of nothing and usually means the reference render failed too.
+
 ## Invariant sweep (xlsx) — no reference renderer needed
 
 `npm run corpus` answers "does our render match LibreOffice?". The invariant

@@ -110,6 +110,44 @@ interface Row {
   readonly note: string;
 }
 
+interface VerdictInput {
+  readonly textSimilarity: number;
+  readonly geometrySimilarity: number;
+  readonly worstVisual: number;
+  readonly pageMatch: boolean;
+  readonly dimsMatch: boolean;
+  readonly ourChars: number;
+  readonly refChars: number;
+}
+
+/**
+ * The per-document verdict.
+ *
+ * This used to be `textSimilarity > 0.95 && worstVisual < 0.1`, which passed
+ * documents no reader would call passing:
+ *
+ *   - a page-count mismatch was not consulted at all, so a sheet that spilled
+ *     onto a second page LibreOffice fits on one was green;
+ *   - two empty extractions score a similarity of 1.0, so documents where
+ *     BOTH sides rendered no text at all were green — the most alarming
+ *     result the harness can produce, reported as its best;
+ *   - a page-size mismatch reached the report only as free text in the note
+ *     column, where nothing aggregated it;
+ *   - geometrySimilarity was computed, printed, and never used.
+ *
+ * `🈳` (vacuous) is deliberately its own state rather than a failure: an empty
+ * document legitimately renders empty on both sides. What it must never be is
+ * a pass, because it is evidence of nothing.
+ */
+function verdict(v: VerdictInput): string {
+  if (v.ourChars === 0 && v.refChars === 0) return '🈳';
+  if (!v.dimsMatch || !v.pageMatch) return '⚠️';
+  if (v.textSimilarity <= 0.95 || v.worstVisual >= 0.1) return '⚠️';
+  // Below this the pages hold the same characters in visibly different places.
+  if (v.geometrySimilarity < 0.5) return '⚠️';
+  return '✅';
+}
+
 function pct(n: number): string {
   return (n * 100).toFixed(1) + '%';
 }
@@ -164,7 +202,15 @@ async function main(): Promise<void> {
 
       rows.push({
         name,
-        status: sd.textSimilarity > 0.95 && worstVisual < 0.1 ? '✅' : '⚠️',
+        status: verdict({
+          textSimilarity: sd.textSimilarity,
+          geometrySimilarity: sd.geometrySimilarity,
+          worstVisual,
+          pageMatch,
+          dimsMatch: dimNote === '',
+          ourChars: sd.ourChars,
+          refChars: sd.refChars,
+        }),
         pages: pageMatch ? String(ourPpms.length) : `${ourPpms.length}≠${refPpms.length}`,
         textSim: pct(sd.textSimilarity),
         geom: pct(sd.geometrySimilarity),
@@ -196,15 +242,16 @@ async function main(): Promise<void> {
 }
 
 function renderReport(rows: Array<Row>, dpi: number): string {
-  // Surface problems first: ❌ then ⚠️ then ✅, alphabetical within a group.
-  const rank: Record<string, number> = { '❌': 0, '⚠️': 1, '✅': 2 };
+  // Surface problems first: ❌ then ⚠️ then 🈳 then ✅, alphabetical within a group.
+  const rank: Record<string, number> = { '❌': 0, '⚠️': 1, '🈳': 2, '✅': 3 };
   const sorted = [...rows].sort(
     (a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9) || a.name.localeCompare(b.name),
   );
-  const counts = { ok: 0, warn: 0, fail: 0 };
+  const counts = { ok: 0, warn: 0, vacuous: 0, fail: 0 };
   for (const r of rows) {
     if (r.status === '✅') counts.ok++;
     else if (r.status === '⚠️') counts.warn++;
+    else if (r.status === '🈳') counts.vacuous++;
     else counts.fail++;
   }
 
@@ -220,7 +267,8 @@ function renderReport(rows: Array<Row>, dpi: number): string {
   );
   lines.push('');
   lines.push(
-    `**${rows.length} docs — ✅ ${counts.ok} clean · ⚠️ ${counts.warn} divergent · ❌ ${counts.fail} failed.**`,
+    `**${rows.length} docs — ✅ ${counts.ok} clean · ⚠️ ${counts.warn} divergent · ` +
+      `🈳 ${counts.vacuous} vacuous (both sides empty — evidence of nothing) · ❌ ${counts.fail} failed.**`,
   );
   lines.push('');
   lines.push('| Doc | St | Pages | TextSim | Geom | Drift | Visual | Note |');
