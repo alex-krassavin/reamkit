@@ -14,7 +14,15 @@ exports[`byte gate: static fixtures > list-basic.docx 1`] = `"32fcfa92398c31c03e
 
 exports[`byte gate: static fixtures > sheet-basic.xlsx 1`] = `"00d3e60313b2536af5ef238414c67f3f41cdd6de2dad10cb2e66d42fbc933163"`;
 
+exports[`byte gate: static fixtures > sheet-fit-scale.xlsx 1`] = `"d5fdee20913f32ff6b802a5334960872d95abcd4aba870cb01992b3db4a22443"`;
+
 exports[`byte gate: static fixtures > sheet-formats.xlsx 1`] = `"2fbbc8004c09d631865ae3b73c5de4821953f38d741d44977f15058a056e2c09"`;
+
+exports[`byte gate: static fixtures > sheet-print-area.xlsx 1`] = `"ce7b0593dfaa7938d18561d35c211074ab904b8407a21253f050d6610f11a0c2"`;
+
+exports[`byte gate: static fixtures > sheet-print-titles.xlsx 1`] = `"2b87db0f278b56d806c3bdcd1c8d5d5666487b266f05acdd192df15545470495"`;
+
+exports[`byte gate: static fixtures > sheet-row-breaks.xlsx 1`] = `"9c2b20a0c5506f5df014617ed13e3993f34b6df19dad1d95853b55b0fa8dc6e9"`;
 
 exports[`byte gate: static fixtures > table-basic.docx 1`] = `"f511b6168f1b433cea859122a02ef2ebed3d027776c267bb77279f6f3c29e1b7"`;
 
