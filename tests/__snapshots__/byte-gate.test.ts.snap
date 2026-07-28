@@ -22,7 +22,7 @@ exports[`byte gate: static fixtures > sheet-print-area.xlsx 1`] = `"6fa0010072d4
 
 exports[`byte gate: static fixtures > sheet-print-titles.xlsx 1`] = `"d289adc814dace9212f895ce9d1598d0143f0ecfb8d8a76d0d7f103da989a233"`;
 
-exports[`byte gate: static fixtures > sheet-row-breaks.xlsx 1`] = `"a4c4130f334520498ce5f4a8dc030948c26117efa3b1ec570efc2b3b525091e9"`;
+exports[`byte gate: static fixtures > sheet-row-breaks.xlsx 1`] = `"1b1a9b76f60d14879c01cfab57f91590a404944d55aef47d0d6b02b041eb59cc"`;
 
 exports[`byte gate: static fixtures > table-basic.docx 1`] = `"f511b6168f1b433cea859122a02ef2ebed3d027776c267bb77279f6f3c29e1b7"`;
 

@@ -366,13 +366,24 @@ export function worksheetToBody(
   // as LibreOffice/Excel clip to the used range anyway.
   let usedRow = -1;
   let usedCol = -1;
+  const contentAt = new Set<string>();
   for (const c of worksheet.cells) {
     if (c.rawValue !== '' || c.inlineText !== undefined) {
+      contentAt.add(key(c.row, c.column));
       if (c.row > usedRow) usedRow = c.row;
       if (c.column > usedCol) usedCol = c.column;
     }
   }
+  // A merge extends the range only when its ORIGIN holds something. The span
+  // has to be covered or the merge is clipped — but a merge follows content, it
+  // does not create any, and treating every merge as content lets pure
+  // formatting define the sheet. 57893-many-merges.xlsx is 50 000 rows of
+  // merges over cells that hold nothing at all: once blank space started
+  // paginating honestly, that made 1042 empty pages out of a document
+  // LibreOffice prints as one. Empty styled cells are already excluded here for
+  // the same reason.
   for (const m of worksheet.merges) {
+    if (!contentAt.has(key(m.startRow, m.startColumn))) continue;
     if (m.endRow > usedRow) usedRow = m.endRow;
     if (m.endColumn > usedCol) usedCol = m.endColumn;
   }

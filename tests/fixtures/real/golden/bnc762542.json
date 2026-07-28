@@ -15,17 +15,15 @@
     ]
   },
   "ream": {
-    "pages": 3,
+    "pages": 1,
     "pageSizes": [
       {
         "widthPt": 1191,
         "heightPt": 842
       }
     ],
-    "chars": 81,
+    "chars": 53,
     "firstLines": [
-      "Sheet 1",
-      "Sheet 1",
       "Sheet 1"
     ]
   }

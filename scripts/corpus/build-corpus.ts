@@ -207,7 +207,7 @@ docs.push({
   bytes: buildXlsx({
     rows: [['Region', 'Q1', 'Q2', 'Total'], ...LEDGER_ROWS],
     columns: [{ min: 1, max: 4, widthChars: 12 }],
-    merges: ['A1:D1'],
+    mergeRefs: ['A1:D1'],
     // A manual break at row 21 — pagination the document dictates rather than
     // the page height. Deliberately NOT combined with fitToPage: "scale onto
     // one page" and "break here" contradict each other, and a fixture built on

@@ -347,6 +347,26 @@ describe('grid geometry', () => {
     expect(losses.some((l) => l.severity === 'dropped' && /rows/.test(l.detail))).toBe(true);
   });
 
+  it('does not let an empty merge stretch the used range', () => {
+    // A merge follows content; it does not create any. 57893-many-merges.xlsx
+    // is 50 000 rows of merges over cells that hold nothing at all, and letting
+    // those merges set the used range turned it into 1042 blank pages once
+    // blank space started paginating honestly. LibreOffice prints one.
+    const anchored = pageCount(buildXlsx({ rows: [['x']], mergeRefs: ['A1:C1'] }));
+    const stranded = pageCount(buildXlsx({ rows: [['x']], mergeRefs: ['A1:C1', 'E200:F400'] }));
+    expect(stranded).toBe(anchored);
+    expect(stranded).toBe(1);
+  });
+
+  it('still follows a merge that starts on a cell with content', () => {
+    // The merge loop exists for a reason: a merged cell's value lives in the
+    // origin and the span reaches past it, so the grid has to cover the span or
+    // the merge is clipped.
+    const { doc } = readXlsx(buildXlsx({ rows: [['spanning value']], mergeRefs: ['A1:D1'] }));
+    const table = doc.body.find((e) => e.kind === 'table');
+    expect(table?.kind === 'table' && table.table.grid.length).toBe(4);
+  });
+
   it('keeps equal declared widths equally spaced', () => {
     // Four columns declared identical must come out identical. Auto-fit makes
     // each one as wide as its own content, so the pitch wanders — which is what
