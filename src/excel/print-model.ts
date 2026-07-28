@@ -93,6 +93,14 @@ const EXCEL_CELL_INSET_PT = 1.5;
 export const DEFAULT_COL_TWIPS = 960;
 
 /**
+ * ECMA-376 §18.3.1.81 — the row height Excel uses when a sheet declares no
+ * `<sheetFormatPr defaultRowHeight>`: 15pt, the line height of its default
+ * theme font (Calibri 11). Independent of whatever font we end up rendering
+ * with — the height belongs to the document, not to the typesetter.
+ */
+const EXCEL_DEFAULT_ROW_HEIGHT_PT = 15;
+
+/**
  * Excel's default row height is ~15pt = 300 twips. Used (for the `fitToHeight`
  * estimate) for rows without an explicit `<row ht="..">`.
  */
@@ -434,8 +442,20 @@ export function worksheetToBody(
   const rowWindowEnd = rowStart + rowCount - 1;
   const colWindowEnd = colStart + colCount - 1;
 
-  // Per-row height overrides keyed by LOCAL (window-relative) row index.
+  // Row heights keyed by LOCAL (window-relative) row index.
+  //
+  // EVERY row gets one. A spreadsheet row has a definite height — §18.3.1.81
+  // `<sheetFormatPr defaultRowHeight>`, or Excel's 15pt for its default theme
+  // font — and leaving rows without one let the text's own leading decide,
+  // which made the row pitch a property of the rendering font rather than of
+  // the document. The per-row `ht` overrides below take precedence.
+  const defaultRowTwips = Math.round(
+    (worksheet.defaultRowHeightPt ?? EXCEL_DEFAULT_ROW_HEIGHT_PT) * TWIPS_PER_POINT,
+  );
   const rowHeightMap = new Map<number, { heightTwips: number; heightRule: 'atLeast' }>();
+  for (let r = 0; r < rowCount; r++) {
+    rowHeightMap.set(r, { heightTwips: defaultRowTwips, heightRule: 'atLeast' });
+  }
   for (const h of worksheet.rowHeights) {
     const local = h.row - rowStart;
     if (local < 0 || local >= rowCount) continue;
@@ -483,7 +503,14 @@ export function worksheetToBody(
 
   // Column widths (LOCAL index): prefer <col width="..">; fall back to Excel's
   // default column width (8.43 chars ≈ 960 twips).
-  const columnWidths = new Array<number>(colCount).fill(DEFAULT_COL_TWIPS);
+  // §18.3.1.81 `<sheetFormatPr defaultColWidth>` overrides Excel's 8.43-char
+  // default for every column no `<col>` covers — the horizontal twin of
+  // defaultRowHeight, and ignored for the same reason.
+  const defaultColTwips =
+    worksheet.defaultColWidthChars !== undefined
+      ? Math.round(worksheet.defaultColWidthChars * TWIPS_PER_EXCEL_CHAR + COL_PADDING_TWIPS)
+      : DEFAULT_COL_TWIPS;
+  const columnWidths = new Array<number>(colCount).fill(defaultColTwips);
   for (const col of worksheet.columns) {
     const twips = Math.round(col.widthChars * TWIPS_PER_EXCEL_CHAR + COL_PADDING_TWIPS);
     for (let abs = col.min - 1; abs <= col.max - 1; abs++) {

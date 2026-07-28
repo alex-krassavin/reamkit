@@ -156,6 +156,38 @@ describe('grid geometry', () => {
     expect(pitch(half)).toBeCloseTo(pitch(full) / 2, 0);
   });
 
+  it("gives every row a definite height instead of the font's natural leading", () => {
+    // §18.3.1.81. A row without an explicit `ht` had no height at all, so its
+    // pitch came out as whatever leading the rendering font wanted — 13.2pt for
+    // 11pt Roboto — making the row pitch a property of the typesetter rather
+    // than of the document. Excel's default is 15pt regardless of the font it
+    // is drawn with.
+    const items = placed(buildXlsx([['r0'], ['r1'], ['r2'], ['r3']]));
+    const ys = ['r0', 'r1', 'r2', 'r3'].map((t) => at(items, t).y);
+    for (let i = 1; i < ys.length; i++) {
+      expect(ys[i]! - ys[i - 1]!).toBeCloseTo(15, 1);
+    }
+  });
+
+  it('honours <sheetFormatPr defaultRowHeight> over the 15pt fallback', () => {
+    const items = placed(buildXlsx({ rows: [['r0'], ['r1'], ['r2']], defaultRowHeightPt: 24 }));
+    const ys = ['r0', 'r1', 'r2'].map((t) => at(items, t).y);
+    expect(ys[1]! - ys[0]!).toBeCloseTo(24, 1);
+    expect(ys[2]! - ys[1]!).toBeCloseTo(24, 1);
+  });
+
+  it('lets an explicit row ht override the sheet default', () => {
+    const items = placed(
+      buildXlsx({
+        rows: [['r0'], ['r1'], ['r2']],
+        rowHeights: [{ row: 1, heightPt: 40, customHeight: true }],
+      }),
+    );
+    const ys = ['r0', 'r1', 'r2'].map((t) => at(items, t).y);
+    expect(ys[1]! - ys[0]!).toBeCloseTo(15, 1); // r0's own height: the default
+    expect(ys[2]! - ys[1]!).toBeCloseTo(40, 1); // r1 was pinned to 40pt
+  });
+
   it('keeps equal declared widths equally spaced', () => {
     // Four columns declared identical must come out identical. Auto-fit makes
     // each one as wide as its own content, so the pitch wanders — which is what

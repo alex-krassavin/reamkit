@@ -106,7 +106,9 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
   const oleObjects = parseOleObjects(wsObj);
   const sparklines = parseSparklines(wsObj);
   const tablePartRelIds = parseTableParts(wsObj);
+  const sheetFormat = parseSheetFormatPr(wsObj);
   const printModel = {
+    ...sheetFormat,
     ...(pageMargins ? { pageMargins } : {}),
     ...(pageSetup ? { pageSetup } : {}),
     ...(fitToPage ? { fitToPage } : {}),
@@ -339,6 +341,29 @@ function parseNumericAttr(obj: Record<string, unknown>, key: string): number | u
   if (raw === undefined) return undefined;
   const n = Number(raw);
   return Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * ECMA-376 §18.3.1.81 `<sheetFormatPr>` — the sheet's default row height and
+ * column width, which apply to every row/column that does not override them.
+ *
+ * Both were previously ignored, so a row without an explicit `ht` had no height
+ * at all and ended up however tall its text wanted to be. A spreadsheet row has
+ * a definite height; text metrics do not get a vote.
+ */
+function parseSheetFormatPr(ws: Record<string, unknown>): {
+  defaultRowHeightPt?: number;
+  defaultColWidthChars?: number;
+} {
+  const node = ws['sheetFormatPr'];
+  if (!node || typeof node !== 'object') return {};
+  const obj = node as Record<string, unknown>;
+  const height = parseNumericAttr(obj, 'defaultRowHeight');
+  const width = parseNumericAttr(obj, 'defaultColWidth');
+  return {
+    ...(height !== undefined && height > 0 ? { defaultRowHeightPt: height } : {}),
+    ...(width !== undefined && width > 0 ? { defaultColWidthChars: width } : {}),
+  };
 }
 
 function parseColumns(ws: Record<string, unknown>): Array<ColumnWidth> {

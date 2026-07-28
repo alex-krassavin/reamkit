@@ -77,6 +77,10 @@ export interface XlsxSheetSpec {
     readonly widthChars: number;
   }>;
   readonly rowHeights?: ReadonlyArray<XlsxRowHeightSpec>;
+  /** §18.3.1.81 `<sheetFormatPr defaultRowHeight>` — height of rows with no `ht`. */
+  readonly defaultRowHeightPt?: number;
+  /** §18.3.1.81 `<sheetFormatPr defaultColWidth>` — width of columns no `<col>` covers. */
+  readonly defaultColWidthChars?: number;
   readonly pageMargins?: XlsxPageMarginsSpec;
   readonly pageSetup?: XlsxPageSetupSpec;
   readonly printOptions?: XlsxPrintOptionsSpec;
@@ -109,6 +113,10 @@ export interface XlsxBuilderOptions {
     readonly widthChars: number;
   }>;
   readonly rowHeights?: ReadonlyArray<XlsxRowHeightSpec>;
+  /** §18.3.1.81 `<sheetFormatPr defaultRowHeight>` — height of rows with no `ht`. */
+  readonly defaultRowHeightPt?: number;
+  /** §18.3.1.81 `<sheetFormatPr defaultColWidth>` — width of columns no `<col>` covers. */
+  readonly defaultColWidthChars?: number;
   readonly pageMargins?: XlsxPageMarginsSpec;
   readonly pageSetup?: XlsxPageSetupSpec;
   readonly printOptions?: XlsxPrintOptionsSpec;
@@ -322,6 +330,12 @@ export function buildXlsx(
             ...(options.mergeRefs ? { mergeRefs: options.mergeRefs } : {}),
             ...(options.columns ? { columns: options.columns } : {}),
             ...(options.rowHeights ? { rowHeights: options.rowHeights } : {}),
+            ...(options.defaultRowHeightPt !== undefined
+              ? { defaultRowHeightPt: options.defaultRowHeightPt }
+              : {}),
+            ...(options.defaultColWidthChars !== undefined
+              ? { defaultColWidthChars: options.defaultColWidthChars }
+              : {}),
             ...(options.pageMargins ? { pageMargins: options.pageMargins } : {}),
             ...(options.pageSetup ? { pageSetup: options.pageSetup } : {}),
             ...(options.printOptions ? { printOptions: options.printOptions } : {}),
@@ -430,6 +444,17 @@ export function buildXlsx(
         '/>'
       : '';
     const sheetPrXml = sheet.fitToPage ? '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>' : '';
+    const sheetFormatPrXml =
+      sheet.defaultRowHeightPt !== undefined || sheet.defaultColWidthChars !== undefined
+        ? `<sheetFormatPr` +
+          (sheet.defaultRowHeightPt !== undefined
+            ? ` defaultRowHeight="${sheet.defaultRowHeightPt}"`
+            : '') +
+          (sheet.defaultColWidthChars !== undefined
+            ? ` defaultColWidth="${sheet.defaultColWidthChars}"`
+            : '') +
+          '/>'
+        : '';
     const printOptionsXml = sheet.printOptions
       ? `<printOptions` +
         (sheet.printOptions.gridLines !== undefined
@@ -479,6 +504,7 @@ export function buildXlsx(
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   ${sheetPrXml}
   ${sheetViewsXml}
+  ${sheetFormatPrXml}
   ${colsXml}
   <sheetData>
 ${sheetRows.join('\n')}

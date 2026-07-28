@@ -98,6 +98,19 @@ export interface ParsedWorksheet {
   readonly columns: ReadonlyArray<ColumnWidth>;
   readonly merges: ReadonlyArray<MergedRange>;
   readonly rowHeights: ReadonlyArray<RowHeight>;
+  /**
+   * ECMA-376 §18.3.1.81 `<sheetFormatPr defaultRowHeight>` — the height, in
+   * points, of every row that carries no `ht` of its own. A row in a
+   * spreadsheet always has a definite height; it is not decided by whatever
+   * leading the text happens to want. Absent ⇒ Excel's 15pt (its default theme
+   * font, Calibri 11).
+   */
+  readonly defaultRowHeightPt?: number;
+  /**
+   * §18.3.1.81 `<sheetFormatPr defaultColWidth>` — the width, in characters, of
+   * every column no `<col>` covers. Absent ⇒ Excel's 8.43.
+   */
+  readonly defaultColWidthChars?: number;
   readonly pageMargins?: XlsxPageMargins;
   readonly pageSetup?: XlsxPageSetup;
   /**
