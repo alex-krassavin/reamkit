@@ -767,15 +767,15 @@ describe('projection losses (never silently wrong)', () => {
   // exactly the silent wrongness the loss report exists to prevent. Reading a
   // capped sheet must come back with a Loss naming what was clipped.
 
-  it('reports a loss when the grid is clipped to the column cap', () => {
-    // 1200 columns — past the 1024-column materialization cap.
+  it('does not clip a merely wide sheet', () => {
+    // There used to be a 1024-column cap here, and this test asserted the loss
+    // it reported. The cap was ours, not the format's, and it truncated
+    // documents that are simply wide — see the geometry suite. The only column
+    // limit left is SpreadsheetML's own, which a valid document cannot exceed.
     const wide = buildXlsx([Array.from({ length: 1200 }, (_, i) => `c${i}`)]);
     const { doc, losses } = readXlsx(wide);
     expect(doc.body.length).toBeGreaterThan(0);
-    const clip = losses.find((l) => /column/i.test(l.detail));
-    expect(clip).toBeDefined();
-    expect(clip!.severity).toBe('dropped');
-    expect(clip!.detail).toContain('1200');
+    expect(losses.filter((l) => /column/i.test(l.detail))).toEqual([]);
   });
 
   it('reports a loss when the grid is clipped to the row cap', () => {

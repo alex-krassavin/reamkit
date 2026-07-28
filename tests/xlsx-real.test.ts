@@ -80,13 +80,18 @@ describe('real documents: SpreadsheetML dialects', () => {
 });
 
 describe('real documents: scale and amplification', () => {
-  it('53105.xlsx — 16 384 declared columns clip, and say so', () => {
+  it('53105.xlsx — all 16 384 columns render, none clipped', () => {
+    // Two rows across the full column space. A 1024-column cap of ours cut this
+    // to 103 pages where Excel and LibreOffice print 1639; the sheet is not
+    // pathological, only wide, and the memory bound is the total-cell budget
+    // that a 2-row sheet comes nowhere near.
     const { doc, losses } = readXlsx(load('53105.xlsx'));
-    expect(doc.body.length).toBeGreaterThan(0);
-    const clip = losses.find((l) => /columns/.test(l.detail));
-    expect(clip).toBeDefined();
-    expect(clip!.severity).toBe('dropped');
-    expect(clip!.detail).toContain('16384');
+    let columns = 0;
+    for (const element of doc.body) {
+      if (element.kind === 'table') columns += element.table.grid.length;
+    }
+    expect(columns).toBe(16_384);
+    expect(losses.filter((l) => /column/i.test(l.detail))).toEqual([]);
   });
 
   it('too-many-cols-rows.xlsx — A1:XFE16777217 from a 5 KB file stays bounded', () => {
