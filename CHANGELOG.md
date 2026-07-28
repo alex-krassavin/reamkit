@@ -3,6 +3,37 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.15.4
+
+Fixes a regression in 1.15.3 that could turn a spreadsheet into hundreds of
+blank pages, and three more spreadsheet read gaps found by the same validation
+sweep.
+
+### Fixed
+
+- **Blank pages from merged empty cells** (regression in 1.15.3). A sheet whose
+  merges cover cells that hold nothing no longer paginates that emptiness: one
+  corpus workbook of 50 000 such merges produced 1042 blank pages where it
+  should produce one. The used range is built from cells that carry content,
+  and a merge now extends it only when its origin does — a merge follows
+  content, it does not create any. 1.15.3 made blank space paginate correctly,
+  which was right, and exposed this.
+- **Wide sheets were truncated.** A worksheet may use all 16 384 columns, and
+  we capped the rendered grid at 1024 — a limit of ours, not the format's,
+  which cut a two-row sheet spanning the full column space from 1639 pages to
+  103. Memory is bounded by the total-cell budget instead, which such a sheet
+  comes nowhere near.
+- **Numeric cell references.** A producer that addresses cells as
+  `"<column>_<row>"` instead of A1 no longer has its values packed
+  consecutively — and so filed under the wrong column headings. The reading is
+  only used where the file corroborates it (every reference inside a row must
+  agree with that row); otherwise document order stands, as before.
+- **ActiveX controls reached through `<control>`.** §18.3.1.19 `<control>`
+  resolves to either a form control or an ActiveX one, and only the
+  relationship target says which. Routing them all to the form-control path
+  left a sheet of option buttons rendering as bare names, with their captions,
+  states and group names unread beside them.
+
 ## 1.15.3
 
 Spreadsheet rendering: the grid now lands where a spreadsheet puts it, and a
