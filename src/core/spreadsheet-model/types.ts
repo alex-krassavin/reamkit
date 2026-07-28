@@ -108,9 +108,17 @@ export interface ParsedWorksheet {
   readonly defaultRowHeightPt?: number;
   /**
    * §18.3.1.81 `<sheetFormatPr defaultColWidth>` — the width, in characters, of
-   * every column no `<col>` covers. Absent ⇒ Excel's 8.43.
+   * every column no `<col>` covers. Absent ⇒ derived from
+   * {@link ParsedWorksheet.baseColWidthChars}, else Excel's 8.43.
    */
   readonly defaultColWidthChars?: number;
+  /**
+   * §18.3.1.81 `<sheetFormatPr baseColWidth>` — the character width the default
+   * column is computed FROM when `defaultColWidth` is absent. Excel's own
+   * default is 8; a sheet that says 10 wants every unlisted column that much
+   * wider, and ignoring it makes the whole grid narrow.
+   */
+  readonly baseColWidthChars?: number;
   readonly pageMargins?: XlsxPageMargins;
   readonly pageSetup?: XlsxPageSetup;
   /**

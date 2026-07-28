@@ -354,15 +354,18 @@ function parseNumericAttr(obj: Record<string, unknown>, key: string): number | u
 function parseSheetFormatPr(ws: Record<string, unknown>): {
   defaultRowHeightPt?: number;
   defaultColWidthChars?: number;
+  baseColWidthChars?: number;
 } {
   const node = ws['sheetFormatPr'];
   if (!node || typeof node !== 'object') return {};
   const obj = node as Record<string, unknown>;
   const height = parseNumericAttr(obj, 'defaultRowHeight');
   const width = parseNumericAttr(obj, 'defaultColWidth');
+  const base = parseNumericAttr(obj, 'baseColWidth');
   return {
     ...(height !== undefined && height > 0 ? { defaultRowHeightPt: height } : {}),
     ...(width !== undefined && width > 0 ? { defaultColWidthChars: width } : {}),
+    ...(base !== undefined && base > 0 ? { baseColWidthChars: base } : {}),
   };
 }
 

@@ -188,6 +188,68 @@ describe('grid geometry', () => {
     expect(ys[2]! - ys[1]!).toBeCloseTo(40, 1); // r1 was pinned to 40pt
   });
 
+  it('runs unwrapped text across empty neighbours on ONE line', () => {
+    // Excel does not wrap a cell unless wrapText is set: the text runs over the
+    // empty cells to its right. We kept the full text but left the cell one
+    // column wide, so the layout broke it into a stack of lines — three where
+    // Excel and LibreOffice draw one (RepeatingRowsCols.xlsx).
+    const phrase = 'no repeating rows or columns';
+    const items = placed(
+      buildXlsx({
+        // Row 2 anchors the used range at four columns; row 1 leaves B..D empty
+        // so the phrase has somewhere to run.
+        rows: [[phrase], [null, null, null, 'anchor']],
+        columns: [{ min: 1, max: 4, widthChars: 10 }],
+      }),
+    );
+    const lines = items.filter((i) => phrase.startsWith(i.text));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.text).toBe(phrase);
+  });
+
+  it('stops the overflow at a neighbour that paints its own fill', () => {
+    // An empty cell carrying a fill is not free space: spanning over it to give
+    // the text room would take its paint with it. Clip instead — visibly short
+    // beats visibly wrong.
+    const stylesXml = `
+      <fonts count="1"><font/></fonts>
+      <fills count="3">
+        <fill><patternFill patternType="none"/></fill>
+        <fill><patternFill patternType="gray125"/></fill>
+        <fill><patternFill patternType="solid"><fgColor rgb="FF00FF00"/></patternFill></fill>
+      </fills>
+      <borders count="1"><border/></borders>
+      <cellXfs count="2">
+        <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+        <xf numFmtId="0" fontId="0" fillId="2" borderId="0" applyFill="1"/>
+      </cellXfs>`;
+    const phrase = 'no repeating rows or columns';
+    const rows = [
+      // B1 is EMPTY but filled green, so the text may not run over it.
+      [phrase, { value: null, styleIndex: 1 }],
+      [null, null, null, 'anchor'],
+    ];
+    const columns = [{ min: 1, max: 4, widthChars: 10 }];
+    const blocked = placed(buildXlsx({ rows, columns, stylesXml }));
+    // Same sheet without the fill: there the phrase does run across.
+    const free = placed(
+      buildXlsx({ rows: [[phrase], [null, null, null, 'anchor']], columns, stylesXml }),
+    );
+    expect(free.map((i) => i.text)).toContain(phrase);
+    expect(blocked.map((i) => i.text)).not.toContain(phrase);
+  });
+
+  it('derives the default column width from <sheetFormatPr baseColWidth>', () => {
+    // baseColWidth is what Excel computes the default column FROM when
+    // defaultColWidth is absent. Ignoring a sheet that asks for 10 left every
+    // unlisted column at 8.43 and the whole grid narrow.
+    const wide = placed(buildXlsx({ rows: [['A', 'B']], baseColWidthChars: 20 }));
+    const narrow = placed(buildXlsx({ rows: [['A', 'B']] }));
+    const pitch = (items: Array<PlacedText>): number => at(items, 'B').x - at(items, 'A').x;
+    expect(pitch(wide)).toBeCloseTo(20 * 5.25 + 3.75, 1);
+    expect(pitch(narrow)).toBeCloseTo(48, 1); // Excel's 8.43-char default
+  });
+
   it('keeps equal declared widths equally spaced', () => {
     // Four columns declared identical must come out identical. Auto-fit makes
     // each one as wide as its own content, so the pitch wanders — which is what

@@ -506,9 +506,12 @@ export function worksheetToBody(
   // §18.3.1.81 `<sheetFormatPr defaultColWidth>` overrides Excel's 8.43-char
   // default for every column no `<col>` covers — the horizontal twin of
   // defaultRowHeight, and ignored for the same reason.
+  // defaultColWidth wins; failing that Excel derives the default column from
+  // baseColWidth by the same characters + 5px formula; failing both, 8.43.
+  const defaultColChars = worksheet.defaultColWidthChars ?? worksheet.baseColWidthChars;
   const defaultColTwips =
-    worksheet.defaultColWidthChars !== undefined
-      ? Math.round(worksheet.defaultColWidthChars * TWIPS_PER_EXCEL_CHAR + COL_PADDING_TWIPS)
+    defaultColChars !== undefined
+      ? Math.round(defaultColChars * TWIPS_PER_EXCEL_CHAR + COL_PADDING_TWIPS)
       : DEFAULT_COL_TWIPS;
   const columnWidths = new Array<number>(colCount).fill(defaultColTwips);
   for (const col of worksheet.columns) {
@@ -613,7 +616,12 @@ export function worksheetToBody(
   for (let r = 0; r < rowCount; r++) {
     const absR = r + rowStart;
     const cells: Array<TableCell> = [];
+    // Columns swallowed by a cell overflowing rightwards over them (see the
+    // overflow block below). Reset per row; filled left-to-right, so a column
+    // is always marked before the loop reaches it.
+    const overflowed = new Set<number>();
     for (let c = 0; c < colCount; c++) {
+      if (overflowed.has(c)) continue;
       const absC = c + colStart;
       const merge = mergeOrigins.get(key(absR, absC));
       const insideNotOrigin = insideMerge.has(key(absR, absC));
@@ -677,6 +685,8 @@ export function worksheetToBody(
         }
       }
 
+      // Columns this cell's text runs over, set by the overflow block below.
+      let overflowSpan = 1;
       // §18.8.1 wrapText (E-SHEET W6): a wrapped cell keeps its full text — the
       // table cell layout breaks it to the cell width and the row grows (atLeast).
       const wrapText = xf?.alignment?.wrapText === true;
@@ -706,7 +716,18 @@ export function worksheetToBody(
       ) {
         let availTwips = columnWidths[c]!;
         let cc = c + 1;
-        while (cc < colCount && !cellHasContent(cellMatrix[r]?.[cc])) {
+        // A neighbour is free real estate only if it draws NOTHING at all —
+        // no value, no fill or border of its own, and none of the marks a cell
+        // can carry without text (a sparkline, a validation dropdown). Spanning
+        // over one that does would erase it. Excel draws the text ACROSS such a
+        // cell and keeps what it holds; we cannot, so we stop and clip instead
+        // — visibly short beats visibly wrong.
+        const neighbourIsFree = (col: number): boolean =>
+          !cellHasContent(cellMatrix[r]?.[col]) &&
+          !cellPaintsSomething(cellMatrix[r]?.[col], styles) &&
+          !sparklineByCell.has(key(absR, col + colStart)) &&
+          !(dropdownRanges.length > 0 && rangesCover(dropdownRanges, absR, col + colStart));
+        while (cc < colCount && neighbourIsFree(cc)) {
           availTwips += columnWidths[cc]!;
           cc++;
         }
@@ -714,6 +735,14 @@ export function worksheetToBody(
           // an occupied cell stops the overflow → clip to the available width
           const charsFit = Math.max(1, Math.round(availTwips / TWIPS_PER_EXCEL_CHAR));
           if (text.length > charsFit) text = text.slice(0, charsFit);
+        }
+        // Claim the empty neighbours the text runs over. Without this the cell
+        // keeps its single column's width and the layout WRAPS the text inside
+        // it — three stacked lines where Excel and LibreOffice draw one. The
+        // grid still totals the same width, so nothing else on the row moves.
+        if (cc > c + 1) {
+          overflowSpan = cc - c;
+          for (let k = c + 1; k < cc; k++) overflowed.add(k);
         }
       }
 
@@ -746,7 +775,9 @@ export function worksheetToBody(
       const properties: CellProperties = {
         ...(merge && visibleEndCol > merge.startColumn
           ? { colSpan: visibleEndCol - merge.startColumn + 1 }
-          : {}),
+          : overflowSpan > 1
+            ? { colSpan: overflowSpan }
+            : {}),
         ...(merge && Math.min(merge.endRow, rowWindowEnd) > merge.startRow
           ? { merge: 'start' as const }
           : {}),
@@ -1406,6 +1437,19 @@ function buildTableFormatLookup(worksheet: ParsedWorksheet): Map<string, TableCe
 // carries a value or inline text — empty styled cells do not.
 function cellHasContent(cell: WorksheetCell | undefined): boolean {
   return !!cell && (cell.rawValue !== '' || cell.inlineText !== undefined);
+}
+
+/**
+ * Whether an EMPTY cell still draws something of its own — a fill or a border.
+ *
+ * Such a cell cannot be swallowed by a neighbour's overflowing text: the span
+ * that gives the text its width would take the paint with it.
+ */
+function cellPaintsSomething(cell: WorksheetCell | undefined, styles: XlsxStyles): boolean {
+  if (!cell || cell.styleIndex === undefined) return false;
+  const xf = styles.cellXfs[cell.styleIndex];
+  if (!xf) return false;
+  return shadingFromXf(xf, styles) !== undefined || bordersFromXf(xf, styles) !== undefined;
 }
 
 // E-SHEET SV2 — a slicer panel projected as a styled mini-table emitted after the

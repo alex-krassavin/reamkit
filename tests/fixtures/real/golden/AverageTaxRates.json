@@ -17,21 +17,18 @@
     ]
   },
   "ream": {
-    "pages": 6,
+    "pages": 3,
     "pageSizes": [
       {
         "widthPt": 595,
         "heightPt": 842
       }
     ],
-    "chars": 6431,
+    "chars": 6493,
     "firstLines": [
-      "(iii) AVERAGE TAX RATES ON ANNUAL EARNINGS",
-      "*  Average",
+      "(iii) AVERAGE TAX RATES ON ANNUAL EARNINGS IN % TERMS*",
       "MODIFIED RATESINGLE",
-      "employee and",
-      "SELF-EMPLOYEDSINGLE",
-      "*  Average"
+      "SELF-EMPLOYEDSINGLE"
     ]
   }
 }
