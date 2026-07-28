@@ -3393,6 +3393,7 @@ class PageAssembler {
   ) {
     this.ctx = sectionCtxs[0]!;
     this.cursorY = this.ctx.pageHeight - this.ctx.marginTop;
+    this.colStartY = this.cursorY;
   }
 
   readonly pages: Array<LaidOutPage> = [];
@@ -3413,18 +3414,34 @@ class PageAssembler {
    */
   colIdx = 0;
   colStartLen = 0;
+  /** The cursor's y at the top of the current column — see {@link colHasContent}. */
+  colStartY: number;
   /** The current column's left edge (`marginLeft` plus the column x-offset). */
   colLeft = (): number => this.ctx.marginLeft + (this.ctx.columns?.[this.colIdx]?.xOffsetPt ?? 0);
   /** The current column's width (the section content width when single-column). */
   colWidth = (): number => this.ctx.columns?.[this.colIdx]?.widthPt ?? this.ctx.contentWidth;
-  /** Whether the current column has received any items yet. */
-  colHasContent = (): boolean => this.current.length > this.colStartLen;
+  /**
+   * Whether the current column is already in use.
+   *
+   * This gates every overflow break, so that a block too tall for an empty page
+   * is placed rather than looping forever. It used to ask whether the column had
+   * received any drawable ITEM, which is not the same question: a run of empty
+   * table rows consumes vertical space and draws nothing, so the guard stayed
+   * false, no break ever fired, and the rows marched off the bottom of the page.
+   * A spreadsheet is full of such rows — the sheet in tdf171828.xlsx has 162 of
+   * them — and they were silently costing whole pages of pagination.
+   *
+   * Consumed space counts as use, whether or not any ink went with it.
+   */
+  colHasContent = (): boolean =>
+    this.current.length > this.colStartLen || this.cursorY < this.colStartY;
   /** Overflow step: next column on this page, or a fresh page after the last. */
   advanceColumn = (): void => {
     if (this.ctx.columns && this.colIdx + 1 < this.ctx.columns.length) {
       this.colIdx++;
       this.colStartLen = this.current.length;
       this.cursorY = this.ctx.pageHeight - this.ctx.marginTop;
+      this.colStartY = this.cursorY;
     } else {
       this.flushPage();
     }
@@ -3638,7 +3655,12 @@ class PageAssembler {
    *              guarantee one page for a header/footer-only document).
    */
   flushPage = (force = false): void => {
-    if (this.current.length === 0 && !force) return;
+    // A page counts as used when it holds drawn items OR when something consumed
+    // vertical space on it. Testing only for items discarded pages made of empty
+    // rows — and, because the early return also skips the cursor reset below,
+    // let the cursor keep descending so every later row piled onto the same
+    // page. See colHasContent for the same conflation on the other side.
+    if (this.current.length === 0 && this.cursorY >= this.colStartY && !force) return;
     const band = bandForPage(
       this.pageInSection,
       this.globalPageIdx,
@@ -3686,6 +3708,7 @@ class PageAssembler {
     this.pageInSection++;
     this.globalPageIdx++;
     this.cursorY = this.ctx.pageHeight - this.ctx.marginTop;
+    this.colStartY = this.cursorY;
   };
 }
 

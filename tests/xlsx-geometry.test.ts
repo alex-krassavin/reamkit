@@ -57,6 +57,15 @@ function placed(xlsx: Uint8Array): Array<PlacedText> {
   return out;
 }
 
+/** How many pages the sheet lays out to. */
+function pageCount(xlsx: Uint8Array): number {
+  const flow = Ream.parse(xlsx).flow;
+  return layoutStyledDocument(flow.body, {
+    registry: FontRegistry.fromBytes(FONTS),
+    ...flowRenderOptions(flow),
+  }).pages.length;
+}
+
 const at = (items: Array<PlacedText>, text: string): PlacedText => {
   const hit = items.find((i) => i.text === text);
   if (!hit) throw new Error(`no placed text "${text}" among ${items.map((i) => i.text).join('|')}`);
@@ -275,6 +284,37 @@ describe('grid geometry', () => {
     // Every section ends inside the body, in order.
     expect(first!.endIndex).toBeLessThan(second!.endIndex);
     expect(second!.endIndex).toBe(flow.body.length);
+  });
+
+  it('paginates empty rows the same as filled ones', () => {
+    // Pagination was gated on whether a page had received a drawable ITEM, and
+    // a page holding none was discarded outright. Empty rows consume space and
+    // draw nothing, so no break ever fired and they marched off the bottom of
+    // page one — a sheet of 292 rows came out on a single page. A spreadsheet
+    // is mostly empty rows; they are not nothing, they are blank space that has
+    // to be paged like any other.
+    const tall = 60;
+    const count = 40;
+    const withText = buildXlsx({
+      rows: Array.from({ length: count }, (_, i) => [`r${i}`]),
+      rowHeights: Array.from({ length: count }, (_, i) => ({
+        row: i,
+        heightPt: tall,
+        customHeight: true,
+      })),
+    });
+    // Same geometry, but only the first and last rows carry a value — the rest
+    // are blank rows of the same declared height.
+    const mostlyEmpty = buildXlsx({
+      rows: Array.from({ length: count }, (_, i) => (i === 0 || i === count - 1 ? [`r${i}`] : [])),
+      rowHeights: Array.from({ length: count }, (_, i) => ({
+        row: i,
+        heightPt: tall,
+        customHeight: true,
+      })),
+    });
+    expect(pageCount(mostlyEmpty)).toBe(pageCount(withText));
+    expect(pageCount(withText)).toBeGreaterThan(1);
   });
 
   it('keeps equal declared widths equally spaced', () => {

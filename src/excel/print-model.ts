@@ -417,11 +417,29 @@ export function worksheetToBody(
   const MAX_GRID_CELLS = 1_000_000;
   const wantRows = rowEnd - rowStart + 1;
   const wantCols = colEnd - colStart + 1;
-  const colCount = Math.min(wantCols, MAX_GRID_COLS);
-  const rowCount = Math.max(
+  let colCount = Math.min(wantCols, MAX_GRID_COLS);
+  let rowCount = Math.max(
     1,
     Math.min(wantRows, MAX_GRID_ROWS, Math.floor(MAX_GRID_CELLS / colCount)),
   );
+  // A clipped window ends wherever the cap fell, which on an amplified sheet is
+  // in the middle of nothing: too-many-cols-rows.xlsx puts its five values at
+  // the extremes of A1:XFE16777217, so the surviving 976×1024 window holds one
+  // of them and 999 423 blank cells. Blank space still paginates — the sheet
+  // projected 2657 near-empty pages — so trim the tail the cap left behind.
+  //
+  // Only when a cap actually fired. A window that reflects the used range or a
+  // declared print area ends where the author said it does, trailing blanks
+  // included, and Excel prints those.
+  if (rowCount < wantRows) {
+    rowCount = Math.max(1, lastContentRow(worksheet, rowStart, rowCount, colStart, colCount) + 1);
+  }
+  if (colCount < wantCols) {
+    colCount = Math.max(
+      1,
+      lastContentColumn(worksheet, rowStart, rowCount, colStart, colCount) + 1,
+    );
+  }
   if (rowCount < wantRows) {
     print.losses?.push({
       severity: 'dropped',
@@ -816,9 +834,17 @@ export function worksheetToBody(
             : [];
       // A rotated cell stacks its glyphs vertically (one centred paragraph per
       // character); every other cell is a single paragraph of its runs.
+      // An EMPTY cell contributes no content at all — not an empty paragraph.
+      // A paragraph with no runs still lays out a line box the height of its
+      // font, which puts a ~13pt floor under every row and makes a declared
+      // 12.75pt row impossible. In a spreadsheet an empty cell draws nothing and
+      // the row's own height governs; fills, borders and the cell marks are cell
+      // PROPERTIES and paint without it.
       const content: Array<BodyElement> = rotated
         ? stackedVerticalContent(text, runProps, href)
-        : [{ kind: 'paragraph', paragraph: { properties: paragraphProps, runs: cellRuns } }];
+        : cellRuns.length === 0
+          ? []
+          : [{ kind: 'paragraph', paragraph: { properties: paragraphProps, runs: cellRuns } }];
       cells.push({ properties, content });
     }
     const baseRowProps = rowHeightMap.get(r);
@@ -854,7 +880,17 @@ export function worksheetToBody(
     // left-aligned value right and every right-aligned one left, and it eats
     // into a column whose width the author fixed — Excel does not reflow a
     // narrow column to make room for padding.
-    defaultCellMargins: { left: pt(EXCEL_CELL_INSET_PT), right: pt(EXCEL_CELL_INSET_PT) },
+    // Vertically there is no inset at all: in a spreadsheet the row height IS
+    // the cell box, which is the whole point of a declared `ht`. Leaving the
+    // word-processor default of 5.4pt top AND bottom put a 10.8pt floor under
+    // every row, so a 12.75pt row could not render at 12.75pt and a sheet of
+    // 173 empty rows needed three pages where one was asked for.
+    defaultCellMargins: {
+      left: pt(EXCEL_CELL_INSET_PT),
+      right: pt(EXCEL_CELL_INSET_PT),
+      top: pt(0),
+      bottom: pt(0),
+    },
     // §17.4.20 tblLayout — the layout engine's default is auto-fit, where the
     // grid is only a hint and column widths are derived from cell content. That
     // is right for WordprocessingML and wrong here: `<col width="..">` is what
@@ -1437,6 +1473,58 @@ function buildTableFormatLookup(worksheet: ParsedWorksheet): Map<string, TableCe
 // carries a value or inline text — empty styled cells do not.
 function cellHasContent(cell: WorksheetCell | undefined): boolean {
   return !!cell && (cell.rawValue !== '' || cell.inlineText !== undefined);
+}
+
+/**
+ * The window-local index of the last row inside `[rowStart, rowStart+rowCount)`
+ * that carries anything — a value, or a merge reaching into the window. `-1`
+ * when the window is entirely blank.
+ */
+function lastContentRow(
+  worksheet: ParsedWorksheet,
+  rowStart: number,
+  rowCount: number,
+  colStart: number,
+  colCount: number,
+): number {
+  const rowEnd = rowStart + rowCount - 1;
+  const colEnd = colStart + colCount - 1;
+  let last = -1;
+  for (const c of worksheet.cells) {
+    if (!cellHasContent(c)) continue;
+    if (c.row < rowStart || c.row > rowEnd || c.column < colStart || c.column > colEnd) continue;
+    if (c.row - rowStart > last) last = c.row - rowStart;
+  }
+  for (const m of worksheet.merges) {
+    if (m.startColumn > colEnd || m.endColumn < colStart) continue;
+    const reach = Math.min(m.endRow, rowEnd) - rowStart;
+    if (reach > last) last = reach;
+  }
+  return last;
+}
+
+/** The column twin of {@link lastContentRow}. */
+function lastContentColumn(
+  worksheet: ParsedWorksheet,
+  rowStart: number,
+  rowCount: number,
+  colStart: number,
+  colCount: number,
+): number {
+  const rowEnd = rowStart + rowCount - 1;
+  const colEnd = colStart + colCount - 1;
+  let last = -1;
+  for (const c of worksheet.cells) {
+    if (!cellHasContent(c)) continue;
+    if (c.row < rowStart || c.row > rowEnd || c.column < colStart || c.column > colEnd) continue;
+    if (c.column - colStart > last) last = c.column - colStart;
+  }
+  for (const m of worksheet.merges) {
+    if (m.startRow > rowEnd || m.endRow < rowStart) continue;
+    const reach = Math.min(m.endColumn, colEnd) - colStart;
+    if (reach > last) last = reach;
+  }
+  return last;
 }
 
 /**
