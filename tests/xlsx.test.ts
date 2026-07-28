@@ -708,6 +708,42 @@ describe('implicit cell/row positions (§18.3.1.4 — r= optional)', () => {
     expect(ws.maxColumn).toBe(1);
   });
 
+  it('treats an UNPARSEABLE r= as absent rather than dropping the cell', () => {
+    const M = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+    // tdf122336.xlsx ships r="11_2"-style garbage refs from a third-party
+    // producer. A ref that cannot be read carries no position, which is the
+    // case §18.3.1.4 already covers: fall back to document order. Dropping the
+    // cell instead turned a 9-page sheet into a blank page.
+    const ws = parseWorksheet(
+      enc(
+        `<worksheet xmlns="${M}"><sheetData>` +
+          `<row r="1"><c r="11_2" t="str"><v>first</v></c><c r="13_2" t="str"><v>second</v></c></row>` +
+          `</sheetData></worksheet>`,
+      ),
+    );
+    expect(ws.cells).toHaveLength(2);
+    expect(ws.cells.map((c) => [c.row, c.column])).toEqual([
+      [0, 0],
+      [0, 1],
+    ]);
+    expect(ws.cells.map((c) => c.rawValue)).toEqual(['first', 'second']);
+  });
+
+  it('falls back to <v> when t="inlineStr" is written without <is>', () => {
+    const M = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+    // duplicate-filename.xlsx declares the inline-string type and then writes
+    // the text into <v>. A real <is> still wins where both are present.
+    const ws = parseWorksheet(
+      enc(
+        `<worksheet xmlns="${M}"><sheetData><row r="1">` +
+          `<c r="A1" t="inlineStr"><v>v2</v></c>` +
+          `<c r="B1" t="inlineStr"><is><t>proper</t></is><v>ignored</v></c>` +
+          `</row></sheetData></worksheet>`,
+      ),
+    );
+    expect(ws.cells.map((c) => c.inlineText)).toEqual(['v2', 'proper']);
+  });
+
   it('honours explicit r= and resumes implicit numbering after it', () => {
     const M = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
     // Row pinned to r="3"; cell pinned to C → next cell resumes at D.

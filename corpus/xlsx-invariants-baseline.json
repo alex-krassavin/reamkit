@@ -2,7 +2,7 @@
   "generated": "2026-07-28",
   "totals": {
     "files": 642,
-    "violations": 28
+    "violations": 26
   },
   "violations": [
     {
@@ -129,16 +129,6 @@
       "path": "corpus/external/poi-xlsx/WithEmbeded.xlsx",
       "kind": "threw",
       "detail": "readTagExp returned undefined at position 3521. Context: \".X.��p�M�\u001b,���q7�\u000b�\b�\u000b�\u000b|wf\u00178��K3�Fl\u001cT�\u0006��B�$���b�<k[]�����b%�"
-    },
-    {
-      "path": "corpus/external/lo-xlsx/tdf122336.xlsx",
-      "kind": "silent-empty",
-      "detail": "22 value cells in the file, 0 in the output, 0 losses reported"
-    },
-    {
-      "path": "corpus/external/poi-xlsx/duplicate-filename.xlsx",
-      "kind": "silent-empty",
-      "detail": "1 value cells in the file, 0 in the output, 0 losses reported"
     },
     {
       "path": "corpus/external/lo-xlsx/tdf171828_fail_to_import_file.xlsx",
