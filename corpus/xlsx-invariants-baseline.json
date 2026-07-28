@@ -2,7 +2,7 @@
   "generated": "2026-07-28",
   "totals": {
     "files": 642,
-    "violations": 26
+    "violations": 23
   },
   "violations": [
     {
@@ -11,24 +11,9 @@
       "detail": "offset is out of bounds"
     },
     {
-      "path": "corpus/external/lo-xlsx/tdf131575.xlsx",
-      "kind": "threw",
-      "detail": "OPC package missing _rels/.rels"
-    },
-    {
-      "path": "corpus/external/lo-xlsx/tdf76115.xlsx",
-      "kind": "threw",
-      "detail": "OPC package missing _rels/.rels"
-    },
-    {
       "path": "corpus/external/lo-xlsx/tdf82984_zip64XLSXImport.xlsx",
       "kind": "threw",
       "detail": "OPC archive rejected (zip-bomb guard): entry \"docProps/core.xml\" declares 4294967295 bytes (limit 268435456)"
-    },
-    {
-      "path": "corpus/external/poi-xlsx/49609.xlsx",
-      "kind": "threw",
-      "detail": "OPC package missing _rels/.rels"
     },
     {
       "path": "corpus/external/poi-xlsx/58325_db.xlsx",

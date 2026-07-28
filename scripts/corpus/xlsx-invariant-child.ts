@@ -36,7 +36,19 @@ const decoder = new TextDecoder('utf-8');
 // Namespace-prefix-agnostic: some producers write <x:v>. Self-closing cells
 // (<c r="A1"/>) carry no value and are correctly not counted.
 const VALUE_NODE = /<(?:[A-Za-z_][\w.-]*:)?(?:v|is)[\s>]/g;
-const WORKSHEET_PART = /^xl\/worksheets\/[^/]+\.xml$/i;
+// Worksheets normally live under xl/worksheets/, but producers put them
+// elsewhere (tdf76115.xlsx uses xl/sheet1.xml) and the relationship graph is
+// the only authority on which part is which. Rather than borrow our own
+// resolver — which would make the reference metric depend on the code it is
+// meant to check — recognise a worksheet by the one element only a worksheet
+// has.
+const XL_PART = /^xl\/.+\.xml$/i;
+const SHEET_DATA = /<(?:[A-Za-z_][\w.-]*:)?sheetData[\s>/]/;
+// §18.14 external-link parts wrap CACHED values of another workbook's cells in
+// <sheetDataSet><sheetData sheetId=…>. They match the worksheet probe above but
+// are not cells of this document and Excel renders none of them, so counting
+// them would make a correct reader look like it dropped content.
+const EXTERNAL_LINK_PART = /^xl\/externalLinks\//i;
 
 /**
  * Count the value-bearing cells straight from the package XML — the reference
@@ -48,8 +60,9 @@ function countRawValueCells(bytes: Uint8Array): number {
   const pkg = OpcPackage.open(bytes);
   let total = 0;
   for (const part of pkg.listParts()) {
-    if (!WORKSHEET_PART.test(part)) continue;
+    if (!XL_PART.test(part) || EXTERNAL_LINK_PART.test(part)) continue;
     const xml = decoder.decode(pkg.requirePart(part));
+    if (!SHEET_DATA.test(xml)) continue;
     total += xml.match(VALUE_NODE)?.length ?? 0;
   }
   return total;

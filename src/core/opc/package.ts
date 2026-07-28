@@ -215,7 +215,14 @@ export class OpcPackage {
 // Paths inside a ZIP have no leading slash; OPC PartNames are conceptually
 // absolute with a leading slash. Normalize to the ZIP convention.
 function normalizePath(p: string): string {
-  return p.startsWith('/') ? p.slice(1) : p;
+  // APPNOTE §4.4.17.1 mandates '/' as the separator, but Windows producers
+  // write "_rels\.rels" and "xl\workbook.xml" regardless (corpus: tdf131575,
+  // tdf76115, 49609). Excel, POI and LibreOffice all normalize; rejecting the
+  // package as missing its root relationships helps nobody. A backslash is not
+  // legal in a PartName either (§9.1.1.1), so this can only ever repair a
+  // separator, never mangle a real name.
+  const slashed = p.includes('\\') ? p.replace(/\\/g, '/') : p;
+  return slashed.startsWith('/') ? slashed.slice(1) : slashed;
 }
 
 // ECMA-376 Part 2 §9.3.2 — Target resolution.
