@@ -23,20 +23,22 @@
     ]
   },
   "ream": {
-    "pages": 5,
+    "pages": 7,
     "pageSizes": [
       {
         "widthPt": 595,
         "heightPt": 842
       }
     ],
-    "chars": 232,
+    "chars": 229,
     "firstLines": [
       "UitvoeringsdatumStarttijd",
       "EindtijdKlantnaam",
       "OmschrijvingNaam locatieBevestigd",
       "Toegewezen werknemersToegewezen voertuigen",
-      "Toegewezen materialenInfo"
+      "Toegewezen materialenInfo",
+      "Van Rompaey MarcusNeen",
+      ". ANNULATIE"
     ]
   }
 }
