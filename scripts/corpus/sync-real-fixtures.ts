@@ -39,9 +39,49 @@ interface Adopted {
 // Kept alphabetical by file so the NOTICE diffs cleanly.
 const ADOPTED: ReadonlyArray<Adopted> = [
   {
+    file: '49156.xlsx',
+    source: 'poi-xlsx',
+    why: 'Print area combined with manual row breaks — pagination driven by the document, not the page size.',
+  },
+  {
     file: '53105.xlsx',
     source: 'poi-xlsx',
     why: 'Declares all 16 384 columns, so the grid materialization cap fires and must report the clip.',
+  },
+  {
+    file: 'AverageTaxRates.xlsx',
+    source: 'poi-xlsx',
+    why: 'fitToPage scaling plus manual breaks across three sheets.',
+  },
+  {
+    file: 'RepeatingRowsCols.xlsx',
+    source: 'poi-xlsx',
+    why: 'Print_Titles across four sheets — the header rows must repeat on every continuation page.',
+  },
+  {
+    file: 'bnc762542.xlsx',
+    source: 'lo-xlsx',
+    why: 'A3 landscape with fitToPage — paper size 8, the largest in the set.',
+  },
+  {
+    file: 'simple-monthly-budget.xlsx',
+    source: 'poi-xlsx',
+    why: 'An ordinary real-world workbook (landscape, fitToPage) rather than a bug reproduction.',
+  },
+  {
+    file: 'tdf100034.xlsx',
+    source: 'lo-xlsx',
+    why: 'Letter paper (size 1) with a print area over two sheets — guards the A4-vs-Letter default.',
+  },
+  {
+    file: 'tdf167019.xlsx',
+    source: 'lo-xlsx',
+    why: 'A4 landscape with both a print area and print titles.',
+  },
+  {
+    file: 'tdf58243.xlsx',
+    source: 'lo-xlsx',
+    why: 'Print area, print titles and fitToPage together — the densest print-model document in the corpus.',
   },
   {
     file: 'duplicate-filename.xlsx',

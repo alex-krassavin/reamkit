@@ -1,0 +1,32 @@
+{
+  "file": "49156.xlsx",
+  "paperDeclared": false,
+  "libreOffice": {
+    "pages": 2,
+    "pageSizes": [
+      {
+        "widthPt": 612,
+        "heightPt": 792
+      }
+    ],
+    "chars": 813,
+    "firstLines": [
+      "1Page 1 of 2",
+      "(F)3(G)3(H)3"
+    ]
+  },
+  "ream": {
+    "pages": 2,
+    "pageSizes": [
+      {
+        "widthPt": 595,
+        "heightPt": 842
+      }
+    ],
+    "chars": 349,
+    "firstLines": [
+      "1",
+      "(F)3(G)3(H)3"
+    ]
+  }
+}

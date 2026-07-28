@@ -21,7 +21,7 @@ import type { HyperlinkResolver, ImageResolver, ParseContext } from '@/word';
 import type { PoNode } from '@/core/po-helpers';
 import { poFindDescendant } from '@/core/po-helpers';
 import { parseXml } from '@/pptx/pptx-reader';
-import { bytesInclude } from '@/core/bytes';
+import { bytesIncludePartName } from '@/core/bytes';
 import { applyNumbering, applyNumberingToHeadersFooters } from '@/core/numbering';
 import {
   EMPTY_STYLE_SHEET,
@@ -231,7 +231,7 @@ export const docxReader: DocumentReader<FlowDoc> = {
   // names sit as plain bytes in the container, so a substring probe is cheap
   // and reliable without unzipping.
   sniff: (bytes) =>
-    bytes[0] === 0x50 && bytes[1] === 0x4b && bytesInclude(bytes, 'word/document.xml'),
+    bytes[0] === 0x50 && bytes[1] === 0x4b && bytesIncludePartName(bytes, 'word/document.xml'),
   read: (bytes) => readDocx(bytes),
 };
 

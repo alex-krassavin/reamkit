@@ -1,0 +1,32 @@
+{
+  "file": "simple-monthly-budget.xlsx",
+  "paperDeclared": false,
+  "libreOffice": {
+    "pages": 2,
+    "pageSizes": [
+      {
+        "widthPt": 792,
+        "heightPt": 612
+      }
+    ],
+    "chars": 633,
+    "firstLines": [
+      "SIMPLE MONTHLY BUDGET",
+      "Need to add more entries? Start typing below"
+    ]
+  },
+  "ream": {
+    "pages": 2,
+    "pageSizes": [
+      {
+        "widthPt": 842,
+        "heightPt": 595
+      }
+    ],
+    "chars": 593,
+    "firstLines": [
+      "SIMPLE MONTHLY",
+      "Personal care$50.00"
+    ]
+  }
+}

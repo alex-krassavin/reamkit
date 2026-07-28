@@ -43,7 +43,7 @@ import {
   parseWorksheet,
   parseXlsxStyles,
 } from '@/excel';
-import { bytesInclude } from '@/core/bytes';
+import { bytesInclude, bytesIncludePartName } from '@/core/bytes';
 import { parseChart, withChartColorStyle } from '@/core/drawingml/chart-parser';
 import { DEFAULT_THEME_PALETTE, makeColorResolver } from '@/core/drawingml/colors';
 import { parseTheme } from '@/core/drawingml/theme-parser';
@@ -589,7 +589,7 @@ export const xlsxReader: DocumentReader<SheetDoc> = {
   produces: 'sheet',
   supports: new Set([FEATURES.text, FEATURES.tables]),
   sniff: (bytes) =>
-    bytes[0] === 0x50 && bytes[1] === 0x4b && bytesInclude(bytes, 'xl/workbook.xml'),
+    bytes[0] === 0x50 && bytes[1] === 0x4b && bytesIncludePartName(bytes, 'xl/workbook.xml'),
   read: (bytes) => ({ doc: readXlsxToSheetDoc(bytes), losses: [] }),
 };
 

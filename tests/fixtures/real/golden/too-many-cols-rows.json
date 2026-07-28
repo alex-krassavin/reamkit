@@ -1,0 +1,31 @@
+{
+  "file": "too-many-cols-rows.xlsx",
+  "paperDeclared": true,
+  "libreOffice": {
+    "pages": 2,
+    "pageSizes": [
+      {
+        "widthPt": 595,
+        "heightPt": 842
+      }
+    ],
+    "chars": 27,
+    "firstLines": [
+      "Sheet1",
+      "Sheet1"
+    ]
+  },
+  "ream": {
+    "pages": 1,
+    "pageSizes": [
+      {
+        "widthPt": 595,
+        "heightPt": 842
+      }
+    ],
+    "chars": 13,
+    "firstLines": [
+      "Sheet1"
+    ]
+  }
+}

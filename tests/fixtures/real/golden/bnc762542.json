@@ -1,0 +1,31 @@
+{
+  "file": "bnc762542.xlsx",
+  "paperDeclared": true,
+  "libreOffice": {
+    "pages": 1,
+    "pageSizes": [
+      {
+        "widthPt": 1191,
+        "heightPt": 842
+      }
+    ],
+    "chars": 53,
+    "firstLines": [
+      "Sheet 1"
+    ]
+  },
+  "ream": {
+    "pages": 2,
+    "pageSizes": [
+      {
+        "widthPt": 1191,
+        "heightPt": 842
+      }
+    ],
+    "chars": 67,
+    "firstLines": [
+      "Sheet 1",
+      "Sheet 1"
+    ]
+  }
+}

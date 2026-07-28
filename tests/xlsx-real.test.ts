@@ -13,6 +13,7 @@ import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { OpcPackage } from '@/core/opc';
+import { Ream } from '@/core/converter/ream';
 import { readXlsx } from '@/excel/xlsx-reader';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -44,6 +45,15 @@ describe('real documents: package-level tolerance', () => {
     expect(pkg.listParts()).toContain('_rels/.rels');
     expect(pkg.getMainDocumentPath()).toBe('xl/workbook.xml');
     expect(textCells(load('tdf76115.xlsx')).length).toBeGreaterThan(1000);
+  });
+
+  it('tdf76115.xlsx — the format sniffer recognises it too', () => {
+    // The sniffs scan the raw ZIP bytes for a part name without unzipping, so
+    // they were blind to the backslash spelling the OPC layer now normalizes:
+    // the reader could read this document but the public entry point refused
+    // to dispatch to it.
+    expect(() => Ream.parse(load('tdf76115.xlsx'))).not.toThrow();
+    expect(Ream.parse(load('tdf76115.xlsx')).format).toBe('xlsx');
   });
 
   it('tdf82984_zip64XLSXImport.xlsx — zip64 size sentinels are not real sizes', () => {

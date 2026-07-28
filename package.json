@@ -72,7 +72,8 @@
     "corpus:roundtrip": "tsx scripts/corpus/roundtrip.ts",
     "corpus:roundtrip:xlsx": "tsx scripts/corpus/xlsx-roundtrip.ts",
     "corpus:xlsx:invariants": "tsx scripts/corpus/xlsx-invariants.ts",
-    "corpus:fixtures": "tsx scripts/corpus/sync-real-fixtures.ts"
+    "corpus:fixtures": "tsx scripts/corpus/sync-real-fixtures.ts",
+    "corpus:golden": "tsx scripts/corpus/make-golden.ts"
   },
   "dependencies": {
     "fast-xml-parser": "5.7.0",
