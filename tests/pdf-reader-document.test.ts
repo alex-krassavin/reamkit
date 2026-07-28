@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { zlibSync } from 'fflate';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
-import type { PdfDict } from '@/pdf/objects';
+import type { PdfDict, PdfValue } from '@/pdf/objects';
 import { Ream } from '@/core/converter/ream';
 import { dict, name, stream } from '@/pdf/objects';
 import { PdfDocument } from '@/pdf/writer';
@@ -50,7 +50,7 @@ describe('PDF document layer — classic xref + page tree (E-PDF EP1)', () => {
     const file = PdfFile.parse(
       tinyPdf(
         comp,
-        new Map([
+        new Map<string, PdfValue>([
           ['Length', comp.length],
           ['Filter', name('FlateDecode')],
         ]),

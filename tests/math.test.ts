@@ -28,7 +28,7 @@ const FRACTION = `<m:oMath ${M_NS}>
   </m:f>
 </m:oMath>`;
 
-const measure = (t: string, sz: number): number => [...t].length * sz * 0.5;
+const measure = (t: string, sz: number, _variant?: string): number => [...t].length * sz * 0.5;
 
 describe('OMML parser', () => {
   it('parses an inline fraction into a math run', () => {

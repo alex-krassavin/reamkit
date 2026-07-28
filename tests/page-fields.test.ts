@@ -37,7 +37,9 @@ function pageText(commands: ReadonlyArray<{ type: string }>): string {
   let out = '';
   for (const c of commands) {
     if (c.type !== 'line') continue;
-    const line = (c as { line: { tokens: ReadonlyArray<{ kind: string; text?: string }> } }).line;
+    const line = (
+      c as unknown as { line: { tokens: ReadonlyArray<{ kind: string; text?: string }> } }
+    ).line;
     for (const t of line.tokens) if (t.kind === 'text') out += t.text ?? '';
     out += '\n';
   }

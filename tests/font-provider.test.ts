@@ -81,7 +81,13 @@ describe('remoteFontProvider fallback cascade', () => {
   it('degrades boldItalic to bold when the CDN set is partial (A4 fix)', async () => {
     // fetchFontSet is best-effort: italic faces fail here, bold succeeds.
     const fakeFetch = (url: string) => {
-      if (url.includes('Italic')) return Promise.resolve({ ok: false, status: 404 });
+      if (url.includes('Italic')) {
+        return Promise.resolve({
+          ok: false,
+          status: 404,
+          arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+        });
+      }
       const bytes = url.includes('Bold') ? ROBOTO_BOLD : ROBOTO;
       return Promise.resolve({
         ok: true,

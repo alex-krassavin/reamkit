@@ -54,9 +54,11 @@ function escapeXml(s: string): string {
 }
 
 export interface FixtureImage {
-  readonly contentType: 'image/png' | 'image/jpeg';
+  /** Any content type: fixtures deliberately feed formats the writer drops, to assert the loss. */
+  readonly contentType: string;
   readonly bytes: Uint8Array;
-  readonly extension: 'png' | 'jpg' | 'jpeg';
+  /** Any extension, for the same reason as contentType. */
+  readonly extension: string;
 }
 
 export interface BuildDocxOptions {

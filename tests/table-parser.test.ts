@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
+import type { BodyElement } from '@/core/document-model';
+
 import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 
 import { OpcPackage } from '@/core/opc';
@@ -12,7 +14,7 @@ function parse(bodyInnerXml: string) {
   return parseDocument(pkg.getMainDocument().data);
 }
 
-function textOf(cellContent: ReturnType<typeof parse>): string {
+function textOf(cellContent: ReadonlyArray<BodyElement>): string {
   const para = cellContent.find((b) => b.kind === 'paragraph');
   if (!para) return '';
   return para.paragraph.runs.map((r) => r.text).join('');

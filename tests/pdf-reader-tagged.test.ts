@@ -61,19 +61,17 @@ describe('tagged-PDF reconstruction (E-PDF EP3)', () => {
   it('maps an H1 structure element back to outline level 0', async () => {
     const flow = await taggedFlow(heading('A Heading', 0) + para('Body text here.'));
     const headingPara = flow.body.find(
-      (
-        b,
-      ): b is {
-        kind: 'paragraph';
-        paragraph: { properties: { outlineLevel?: number }; runs: ReadonlyArray<{ text: string }> };
-      } =>
+      (b) =>
         b.kind === 'paragraph' &&
-        (b as { paragraph: { runs: ReadonlyArray<{ text: string }> } }).paragraph.runs
+        b.paragraph.runs
           .map((r) => r.text)
           .join('')
           .includes('A Heading'),
     );
-    expect(headingPara?.paragraph.properties.outlineLevel).toBe(0);
+    expect(headingPara?.kind).toBe('paragraph');
+    expect(
+      headingPara?.kind === 'paragraph' ? headingPara.paragraph.properties.outlineLevel : undefined,
+    ).toBe(0);
   });
 
   it('returns undefined for an untagged PDF', async () => {
