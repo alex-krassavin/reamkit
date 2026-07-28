@@ -52,6 +52,8 @@ import type {
 } from '@/excel';
 import type { CellConditionalFormatter, CfOverride } from '@/excel/conditional-format';
 import type { SheetHyperlink, SheetSlicer } from '@/core/ir/sheet';
+import type { Loss } from '@/core/ir/loss';
+import { FEATURES } from '@/core/ir/features';
 import { eighthPtToPt, halfPtToPt, pt, twipsToPt } from '@/core/ir';
 import { applyNumberFormat, parseAreaRef, parseTitleRowRange } from '@/excel';
 import { bandedTables, computeColumnBands } from '@/excel/column-bands';
@@ -271,6 +273,12 @@ interface PrintModelOptions {
   // E-SHEET W9 — the injected reference date for conditional-format `timePeriod`
   // windows and TODAY()/NOW() in `expression` rules. Absent ⇒ those no-op.
   readonly now?: Date;
+  // Sink for projection losses. The defence-in-depth caps below are correct —
+  // a pathological sheet must not exhaust memory — but a cap that fires without
+  // saying so is precisely the silent wrongness LossReport exists to prevent.
+  // Absent ⇒ the caps still apply, they just go unreported (internal callers
+  // that already know); readXlsx always supplies one.
+  readonly losses?: Array<Loss>;
 }
 
 /**
@@ -349,8 +357,26 @@ export function worksheetToBody(
   // this is unreadable regardless.
   const MAX_GRID_COLS = 1024;
   const MAX_GRID_ROWS = 50_000;
-  const rowCount = Math.min(rowEnd - rowStart + 1, MAX_GRID_ROWS);
-  const colCount = Math.min(colEnd - colStart + 1, MAX_GRID_COLS);
+  const wantRows = rowEnd - rowStart + 1;
+  const wantCols = colEnd - colStart + 1;
+  const rowCount = Math.min(wantRows, MAX_GRID_ROWS);
+  const colCount = Math.min(wantCols, MAX_GRID_COLS);
+  if (rowCount < wantRows) {
+    print.losses?.push({
+      severity: 'dropped',
+      feature: FEATURES.tables,
+      detail: `grid clipped to the first ${MAX_GRID_ROWS} rows of ${wantRows} in the used range (memory guard)`,
+      ...(print.sheetName ? { where: `sheet "${print.sheetName}"` } : {}),
+    });
+  }
+  if (colCount < wantCols) {
+    print.losses?.push({
+      severity: 'dropped',
+      feature: FEATURES.tables,
+      detail: `grid clipped to the first ${MAX_GRID_COLS} columns of ${wantCols} in the used range (memory guard)`,
+      ...(print.sheetName ? { where: `sheet "${print.sheetName}"` } : {}),
+    });
+  }
   // Absolute index of the last in-window row/column (for merge clamping).
   const rowWindowEnd = rowStart + rowCount - 1;
   const colWindowEnd = colStart + colCount - 1;
@@ -443,6 +469,9 @@ export function worksheetToBody(
   // the renderer. Real sheets are far under this budget; once it is exhausted
   // the remaining cells render empty.
   let textBudget = MAX_SHEET_TEXT_CHARS;
+  // Reported once, on the cell that first runs the budget dry — every later
+  // cell would repeat the same fact.
+  let textBudgetReported = false;
 
   // Cells sharing a cellXf reuse the SAME properties objects — not equal
   // copies. The style cascade memoizes by object identity, so on grid-shaped
@@ -525,7 +554,18 @@ export function worksheetToBody(
       let text = ws ? resolveCellText(ws, sharedStrings, styles, date1904) : '';
       // The full (pre-truncation) text feeds conditional-format text/dup rules (W5).
       const cfText = text.length > 0 ? text : undefined;
-      if (text.length > textBudget) text = text.slice(0, Math.max(0, textBudget));
+      if (text.length > textBudget) {
+        text = text.slice(0, Math.max(0, textBudget));
+        if (!textBudgetReported) {
+          textBudgetReported = true;
+          print.losses?.push({
+            severity: 'dropped',
+            feature: FEATURES.text,
+            detail: `per-sheet text budget of ${MAX_SHEET_TEXT_CHARS} characters exhausted; the remaining cells render empty`,
+            ...(print.sheetName ? { where: `sheet "${print.sheetName}"` } : {}),
+          });
+        }
+      }
       textBudget -= text.length;
       const xf = ws && ws.styleIndex !== undefined ? styles.cellXfs[ws.styleIndex] : undefined;
       let runProps = cellRunProps(xf);
@@ -1088,7 +1128,7 @@ function buildSparklineLookup(
     const area = parseAreaRef(sp.dataRange);
     if (!host || !area) continue;
     const grid = resolveSeriesGrid(sp.dataRange, worksheet, print.sheetGrids);
-    const values = collectSeriesValues(grid.cells, area);
+    const values = collectSeriesValues(grid.cells, area, print);
     if (values.length === 0 || values.every((v) => v === null)) continue;
     out.set(key(host.startRow, host.startColumn), {
       kind: sp.kind,
@@ -1125,6 +1165,7 @@ const MAX_SPARKLINE_POINTS = 1000;
 function collectSeriesValues(
   cells: ReadonlyArray<WorksheetCell>,
   area: CellRange,
+  print: PrintModelOptions,
 ): Array<number | null> {
   const byKey = new Map<string, number>();
   for (const c of cells) {
@@ -1136,6 +1177,14 @@ function collectSeriesValues(
   }
   const cellCount = (area.endRow - area.startRow + 1) * (area.endColumn - area.startColumn + 1);
   if (cellCount > MAX_SPARKLINE_POINTS) {
+    // The populated values all survive; what is lost are the blank gaps that
+    // held the x-positions apart, so the plotted spacing no longer matches.
+    print.losses?.push({
+      severity: 'degraded',
+      feature: FEATURES.charts,
+      detail: `sparkline range spans ${cellCount} cells (over ${MAX_SPARKLINE_POINTS}); plotted as the compact populated series, so blank gaps no longer hold their x-positions`,
+      ...(print.sheetName ? { where: `sheet "${print.sheetName}"` } : {}),
+    });
     const pts = [...byKey.entries()].map(([k, v]) => {
       const [r, col] = k.split(',').map(Number) as [number, number];
       return { r, col, v };

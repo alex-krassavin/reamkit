@@ -18,6 +18,7 @@ import {
   parseWorksheet,
 } from '@/excel';
 import { OpcPackage } from '@/core/opc';
+import { readXlsx } from '@/excel/xlsx-reader';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FONTS = {
@@ -721,6 +722,51 @@ describe('implicit cell/row positions (§18.3.1.4 — r= optional)', () => {
     const c2 = ws.cells.find((x) => x.rawValue === '2')!;
     expect([c1.row, c1.column]).toEqual([2, 2]); // C3 → row 2, col 2
     expect([c2.row, c2.column]).toEqual([2, 3]); // resumes at D3
+  });
+});
+
+describe('projection losses (never silently wrong)', () => {
+  // The defence-in-depth caps in the print model are correct — a pathological
+  // sheet must not exhaust memory — but a cap that fires without saying so is
+  // exactly the silent wrongness the loss report exists to prevent. Reading a
+  // capped sheet must come back with a Loss naming what was clipped.
+
+  it('reports a loss when the grid is clipped to the column cap', () => {
+    // 1200 columns — past the 1024-column materialization cap.
+    const wide = buildXlsx([Array.from({ length: 1200 }, (_, i) => `c${i}`)]);
+    const { doc, losses } = readXlsx(wide);
+    expect(doc.body.length).toBeGreaterThan(0);
+    const clip = losses.find((l) => /column/i.test(l.detail));
+    expect(clip).toBeDefined();
+    expect(clip!.severity).toBe('dropped');
+    expect(clip!.detail).toContain('1200');
+  });
+
+  it('reports a loss when the grid is clipped to the row cap', () => {
+    const tall = buildXlsx(Array.from({ length: 50_010 }, (_, i) => [`r${i}`]));
+    const { losses } = readXlsx(tall);
+    const clip = losses.find((l) => /row/i.test(l.detail));
+    expect(clip).toBeDefined();
+    expect(clip!.severity).toBe('dropped');
+  });
+
+  it('reports a loss when the per-sheet text budget is exhausted', () => {
+    // 40 cells × 30 000 chars = 1.2M, past the 1M per-sheet budget. Cells past
+    // the budget render empty — the caller has to be told.
+    const big = 'x'.repeat(30_000);
+    const heavy = buildXlsx(Array.from({ length: 40 }, () => [big]));
+    const { losses } = readXlsx(heavy);
+    const budget = losses.find((l) => /text budget/i.test(l.detail));
+    expect(budget).toBeDefined();
+    expect(budget!.severity).toBe('dropped');
+  });
+
+  it('stays silent for an ordinary sheet', () => {
+    const plain = buildXlsx([
+      ['Region', 'Revenue'],
+      ['Moscow', 1200000],
+    ]);
+    expect(readXlsx(plain).losses).toEqual([]);
   });
 });
 

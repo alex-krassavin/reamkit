@@ -9,6 +9,7 @@ import type { Chart, DocumentInfo, ShapeBlock } from '@/core/document-model';
 import type { CoreProperties, Relationship } from '@/core/opc';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
+import type { Loss } from '@/core/ir/loss';
 import type {
   Sheet,
   SheetActiveXControl,
@@ -90,15 +91,22 @@ interface TableLoc {
 
 /**
  * Read a `.xlsx` and project it to a {@link FlowDoc} in one step:
- * {@link readXlsxToSheetDoc} then {@link projectSheetDoc}. The xlsx reader
- * records no read-time losses.
+ * {@link readXlsxToSheetDoc} then {@link projectSheetDoc}.
+ *
+ * Parsing itself is lossless — SpreadsheetML maps cleanly onto the sheet IR.
+ * The losses come from the projection: the print model's defence-in-depth caps
+ * (grid size, per-sheet text budget, sparkline range) clip pathological sheets,
+ * and each clip is reported rather than applied in silence.
  *
  * @param xlsx    The `.xlsx` (OPC ZIP) bytes.
  * @param options Projection knobs (the W9 reference date).
- * @returns The flow document plus an (empty) loss list.
+ * @returns The flow document plus whatever the projection had to clip.
  */
 export function readXlsx(xlsx: Uint8Array, options: ProjectSheetOptions = {}): ReadResult<FlowDoc> {
-  return { doc: projectSheetDoc(readXlsxToSheetDoc(xlsx), options), losses: [] };
+  // The reader owns the sink so the report cannot be split across callers.
+  const losses: Array<Loss> = [];
+  const doc = projectSheetDoc(readXlsxToSheetDoc(xlsx), { ...options, losses });
+  return { doc, losses };
 }
 
 /**

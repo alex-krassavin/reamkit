@@ -7,6 +7,7 @@
 
 import type { BodyElement, HeaderFooterReference, SectionProperties } from '@/core/document-model';
 import type { FlowDoc } from '@/core/ir/flow';
+import type { Loss } from '@/core/ir/loss';
 import type {
   SheetActiveXControl,
   SheetComment,
@@ -41,6 +42,15 @@ export interface ProjectSheetOptions {
    * byte-identical to before.
    */
   readonly now?: Date;
+  /**
+   * Sink the projection writes its {@link Loss} entries into — the print
+   * model's defence-in-depth caps (grid size, per-sheet text budget, sparkline
+   * range) fire on pathological input, and a cap that fires without saying so
+   * is a silent wrongness. {@link readXlsx} always supplies one and returns it
+   * as the read result's loss report; omitted ⇒ the caps still apply but go
+   * unreported.
+   */
+  readonly losses?: Array<Loss>;
 }
 
 /**
@@ -96,6 +106,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
         ...(ws.hyperlinks ? { hyperlinks: ws.hyperlinks } : {}),
         ...(sheet.sharedStringRuns ? { sharedStringRuns: sheet.sharedStringRuns } : {}),
         ...(options.now ? { now: options.now } : {}),
+        ...(options.losses ? { losses: options.losses } : {}),
       }),
     );
 

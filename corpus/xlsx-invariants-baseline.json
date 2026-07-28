@@ -2,7 +2,7 @@
   "generated": "2026-07-28",
   "totals": {
     "files": 642,
-    "violations": 32
+    "violations": 29
   },
   "violations": [
     {
@@ -149,21 +149,6 @@
       "path": "corpus/external/lo-xlsx/tdf171828_fail_to_import_file.xlsx",
       "kind": "under-extraction",
       "detail": "1249/2805 value cells kept (45%), 0 losses reported"
-    },
-    {
-      "path": "corpus/external/poi-xlsx/53105.xlsx",
-      "kind": "under-extraction",
-      "detail": "1025/16385 value cells kept (6%), 0 losses reported"
-    },
-    {
-      "path": "corpus/external/poi-xlsx/no_drawing_patriarch.xlsx",
-      "kind": "under-extraction",
-      "detail": "31335/66935 value cells kept (47%), 0 losses reported"
-    },
-    {
-      "path": "corpus/external/poi-xlsx/poc-shared-strings.xlsx",
-      "kind": "under-extraction",
-      "detail": "31/12000 value cells kept (0%), 0 losses reported"
     }
   ]
 }
