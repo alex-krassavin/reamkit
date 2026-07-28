@@ -93,6 +93,13 @@ export class OpcPackage {
           violation ??= `more than ${maxEntries} entries`;
           return false;
         }
+        // APPNOTE §4.5.3 — 0xFFFFFFFF in the 32-bit size field is the zip64
+        // sentinel for "the real value is in the extra field", not a size.
+        // Every entry of tdf82984_zip64XLSXImport.xlsx (4.7 KB total) declares
+        // it, so reading it literally refused the whole document as a 4 GiB
+        // bomb. An unknown size is bounded the same way a forged one already
+        // is: by maxArchiveBytes over the compressed input.
+        if (info.originalSize === 0xffffffff) return true;
         if (info.originalSize > maxEntry) {
           violation ??= `entry "${info.name}" declares ${info.originalSize} bytes (limit ${maxEntry})`;
           return false;

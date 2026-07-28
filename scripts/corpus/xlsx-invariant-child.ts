@@ -10,7 +10,8 @@
 
 import { appendFileSync, readFileSync } from 'node:fs';
 
-import type { BodyElement, FlowDoc } from '@/core/document-model';
+import type { BodyElement } from '@/core/document-model';
+import type { FlowDoc } from '@/core/ir/flow';
 import { OpcPackage } from '@/core/opc';
 import { readXlsx } from '@/excel/xlsx-reader';
 

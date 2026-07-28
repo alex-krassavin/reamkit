@@ -2,18 +2,13 @@
   "generated": "2026-07-28",
   "totals": {
     "files": 642,
-    "violations": 23
+    "violations": 22
   },
   "violations": [
     {
       "path": "corpus/external/lo-xlsx/forcepoint107.xlsx",
       "kind": "threw",
       "detail": "offset is out of bounds"
-    },
-    {
-      "path": "corpus/external/lo-xlsx/tdf82984_zip64XLSXImport.xlsx",
-      "kind": "threw",
-      "detail": "OPC archive rejected (zip-bomb guard): entry \"docProps/core.xml\" declares 4294967295 bytes (limit 268435456)"
     },
     {
       "path": "corpus/external/poi-xlsx/58325_db.xlsx",

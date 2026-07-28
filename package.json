@@ -71,7 +71,8 @@
     "corpus": "tsx scripts/corpus/run.ts",
     "corpus:roundtrip": "tsx scripts/corpus/roundtrip.ts",
     "corpus:roundtrip:xlsx": "tsx scripts/corpus/xlsx-roundtrip.ts",
-    "corpus:xlsx:invariants": "tsx scripts/corpus/xlsx-invariants.ts"
+    "corpus:xlsx:invariants": "tsx scripts/corpus/xlsx-invariants.ts",
+    "corpus:fixtures": "tsx scripts/corpus/sync-real-fixtures.ts"
   },
   "dependencies": {
     "fast-xml-parser": "5.7.0",
