@@ -14,7 +14,7 @@ import { describe, expect, it } from 'vitest';
 
 import { OpcPackage } from '@/core/opc';
 import { Ream } from '@/core/converter/ream';
-import { readXlsx } from '@/excel/xlsx-reader';
+import { readXlsx, readXlsxToSheetDoc } from '@/excel/xlsx-reader';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const load = (name: string): Uint8Array =>
@@ -72,6 +72,29 @@ describe('real documents: SpreadsheetML dialects', () => {
     // but r="11_2" dropped every cell on the floor.
     expect(cells.length).toBeGreaterThanOrEqual(19);
     expect(cells).toContain('Van Rompaey Marcus');
+  });
+
+  it('tdf111980_radioButtons.xlsx — <control> reaches ActiveX, not just form controls', () => {
+    // §18.3.1.19 <control> resolves to BOTH kinds: a form control's ctrlProps
+    // part and an ActiveX control's activeX#.xml. Only the relationship target
+    // says which, and reading an ocx part as a ctrlProps one yields nothing —
+    // so this sheet of option buttons came out as five bare names with their
+    // captions and states sitting unread in the .bin beside them.
+    const sheet = readXlsxToSheetDoc(load('tdf111980_radioButtons.xlsx')).sheets[0]!;
+    expect(sheet.formControls ?? []).toHaveLength(0);
+    const controls = sheet.activeXControls ?? [];
+    expect(controls).toHaveLength(5);
+    // Typed from the class id — <control> carries no progId to type it by.
+    expect(controls.every((c) => c.type === 'option')).toBe(true);
+    expect(controls.map((c) => c.caption)).toEqual([
+      'ActiveX 3',
+      'ActiveX nogroup2',
+      'ActiveX nogroup2',
+      'ActiveX button2',
+      'ActiveX button1',
+    ]);
+    // Exactly one of the group is selected, and the group name came through.
+    expect(controls.filter((c) => c.value === '1').map((c) => c.groupName)).toEqual(['Sheet1']);
   });
 
   it('duplicate-filename.xlsx — t="inlineStr" written into <v>', () => {

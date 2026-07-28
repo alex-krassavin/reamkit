@@ -94,6 +94,11 @@ const ADOPTED: ReadonlyArray<Adopted> = [
     why: 'Declares t="inlineStr" but writes the text into <v>; also ships two ZIP entries for the same part name.',
   },
   {
+    file: 'tdf111980_radioButtons.xlsx',
+    source: 'lo-xlsx',
+    why: 'Reaches its ActiveX controls through §18.3.1.19 <control> rather than <oleObject>, with the state in binary activeX#.bin property bags.',
+  },
+  {
     file: 'tdf122336.xlsx',
     source: 'lo-xlsx',
     why: 'Namespace-prefixed SpreadsheetML (<x:worksheet>), GUID-shaped r:id values, and unparseable cell refs (r="11_2").',
