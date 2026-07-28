@@ -84,7 +84,16 @@ function textOf(elements: ReadonlyArray<BodyElement>): string {
   return out;
 }
 
-/** Count the cells that carry visible text in the projected document. */
+/**
+ * Count the cells that carry text in the projected document.
+ *
+ * Deliberately does NOT trim. The reference this is measured against counts
+ * `<v>`/`<is>` nodes, which makes no judgement about whitespace, so trimming
+ * here would make the two sides disagree about the same cell. Spreadsheets are
+ * full of formulas returning a single space — tdf171828.xlsx has ~1550 of them,
+ * and trimming reported that file as losing 55% of its content when nothing was
+ * lost at all.
+ */
 function countDocCells(doc: FlowDoc): number {
   let total = 0;
   const walk = (elements: ReadonlyArray<BodyElement>): void => {
@@ -92,7 +101,7 @@ function countDocCells(doc: FlowDoc): number {
       if (element.kind !== 'table') continue;
       for (const row of element.table.rows) {
         for (const cell of row.cells) {
-          if (textOf(cell.content).trim().length > 0) total++;
+          if (textOf(cell.content).length > 0) total++;
           walk(cell.content);
         }
       }

@@ -1,0 +1,123 @@
+{
+  "file": "tdf171828_fail_to_import_file.xlsx",
+  "paperDeclared": true,
+  "libreOffice": {
+    "pages": 56,
+    "pageSizes": [
+      {
+        "widthPt": 842,
+        "heightPt": 595
+      },
+      {
+        "widthPt": 612,
+        "heightPt": 792
+      }
+    ],
+    "chars": 19577,
+    "firstLines": [
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Berechnung des effektiven Jahreszins nach der Uniform",
+      "Berechnung des eff. Jahreszinssatzes bei Anleihen",
+      "(Diese Formel weicht bei kleinen Werten für Laufzeit und Agi",
+      "Für den effektiven Jahreszinssatz gilt nach einem Jahr (in G",
+      "aufgenommen wird. Dabei betrage der Disagiosatz",
+      "und die Summe der Zinsen",
+      ", also 12,28%.",
+      "kann sich von der Tilgungsdauer",
+      ".",
+      "3. für alle",
+      "3. Falls",
+      "und",
+      "12.9836066 11.8032787",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ]
+  },
+  "ream": {
+    "pages": 31,
+    "pageSizes": [
+      {
+        "widthPt": 842,
+        "heightPt": 595
+      },
+      {
+        "widthPt": 612,
+        "heightPt": 792
+      }
+    ],
+    "chars": 21698,
+    "firstLines": [
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Berechnung des effektiven Jahreszins nach der",
+      "fällig.",
+      "Bei Anleihen wird oft mit der Näherungsformel mit Auf- (Agio",
+      "Zur Herleitung der Berechnungsvorschrift stellen wir die Bil",
+      "Der Subtrahend ergibt sich zum einen aus den Raten, die inne",
+      "Bei Disagio handelt es sich um einen Abschlag auf den Nennwe",
+      ".",
+      ".",
+      "folgt für den Effektivzinssatz:",
+      "Die einzelnen Zahlungsströme sind die in der jeweiligen Peri",
+      "ausgegangen.",
+      "(vollständige Induktion über",
+      ", dann gilt",
+      "(wegen 3.2).",
+      "12.983606551713.8707312786885246",
+      "JM",
+      "Fehlermeldungen"
+    ]
+  }
+}

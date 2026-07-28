@@ -250,6 +250,33 @@ describe('grid geometry', () => {
     expect(pitch(narrow)).toBeCloseTo(48, 1); // Excel's 8.43-char default
   });
 
+  it('gives each sheet its own page geometry', () => {
+    // A workbook's sheets set their paper independently, and applying the first
+    // sheet's setup to the whole document silently reprints the others on the
+    // wrong paper. tdf171828_fail_to_import_file.xlsx is A4 landscape then
+    // Letter portrait then A4 landscape; LibreOffice emits 17 landscape pages
+    // and 39 portrait ones, we emitted 56 landscape.
+    const flow = Ream.parse(
+      buildXlsx({
+        sheets: [
+          { name: 'Wide', rows: [['a']], pageSetup: { paperSize: 9, orientation: 'landscape' } },
+          { name: 'Tall', rows: [['b']], pageSetup: { paperSize: 1, orientation: 'portrait' } },
+        ],
+      }),
+    ).flow;
+
+    expect(flow.sections).toHaveLength(2);
+    const [first, second] = flow.sections;
+    expect(first!.properties.pageSize?.orientation).toBe('landscape');
+    expect(second!.properties.pageSize?.orientation).toBe('portrait');
+    // A4 landscape is wider than it is tall; Letter portrait is the reverse.
+    expect(first!.properties.pageSize!.width).toBeGreaterThan(first!.properties.pageSize!.height);
+    expect(second!.properties.pageSize!.width).toBeLessThan(second!.properties.pageSize!.height);
+    // Every section ends inside the body, in order.
+    expect(first!.endIndex).toBeLessThan(second!.endIndex);
+    expect(second!.endIndex).toBe(flow.body.length);
+  });
+
   it('keeps equal declared widths equally spaced', () => {
     // Four columns declared identical must come out identical. Auto-fit makes
     // each one as wide as its own content, so the pitch wanders — which is what

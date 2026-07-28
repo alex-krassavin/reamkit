@@ -79,6 +79,11 @@ const ADOPTED: ReadonlyArray<Adopted> = [
     why: 'A4 landscape with both a print area and print titles.',
   },
   {
+    file: 'tdf171828_fail_to_import_file.xlsx',
+    source: 'lo-xlsx',
+    why: 'Three sheets on three different papers (A4 landscape, Letter portrait, A4 landscape) — the mixed-geometry workbook.',
+  },
+  {
     file: 'tdf58243.xlsx',
     source: 'lo-xlsx',
     why: 'Print area, print titles and fitToPage together — the densest print-model document in the corpus.',
