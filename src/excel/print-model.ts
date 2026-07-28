@@ -33,6 +33,7 @@ import type {
 } from '@/core/document-model';
 import type {
   CellRange,
+  CellType,
   DataValidation,
   DefinedName,
   MergedRange,
@@ -42,7 +43,6 @@ import type {
   XlsxBorder,
   XlsxBorderEdge,
   XlsxBorderStyleName,
-  XlsxCellAlignment,
   XlsxCellXf,
   XlsxFont,
   XlsxHorizontalAlign,
@@ -60,11 +60,31 @@ import { bandedTables, computeColumnBands } from '@/excel/column-bands';
 import { buildConditionalFormatter } from '@/excel/conditional-format';
 
 /**
- * Excel "character width" → twips. Calibri 11pt default Maximum Digit Width is
- * ~7 px ≈ 5.25 pt ≈ 105 twips. This is a coarse approximation but the auto-fit
- * pass refines column widths against the actual cell text anyway.
+ * Excel "character width" → twips: the default font's Maximum Digit Width,
+ * ~7 px at 96 DPI ≈ 5.25 pt ≈ 105 twips.
  */
 export const TWIPS_PER_EXCEL_CHAR = 105;
+
+/**
+ * ECMA-376 §18.3.1.13 — a `<col width>` measures characters of text, and the
+ * rendered column is that many Maximum Digit Widths PLUS a fixed 5-pixel
+ * padding: `px = chars × MDW + 5`. 5 px at 96 DPI = 3.75 pt = 75 twips.
+ *
+ * Omitting it made every column 75 twips narrow, which compounds: on a sheet of
+ * equal 12-character columns the third one landed ~37 pt left of where
+ * LibreOffice puts it. That {@link DEFAULT_COL_TWIPS} below is 960 is the proof
+ * the padding belongs — 8.43 characters only reaches Excel's documented 64 px
+ * default with it (8.43 × 7 + 5 = 64.01 px = 48.01 pt = 960 twips), so the
+ * default was derived from the full formula while the explicit path dropped it.
+ */
+export const COL_PADDING_TWIPS = 75;
+
+/**
+ * Excel insets a cell's text by ~2 px each side (1.5 pt at 96 DPI). The layout
+ * engine's default is a word processor's 108 twips (5.4 pt), which is nearly
+ * four times as much.
+ */
+const EXCEL_CELL_INSET_PT = 1.5;
 
 /**
  * Excel's default column width is 8.43 "characters" ≈ 64px ≈ 960 twips. Used for
@@ -100,16 +120,22 @@ const DEFAULT_PAPER_TWIPS: readonly [number, number] = [11906, 16838];
 
 /**
  * Build the page section (paper size + margins) from a worksheet's `<pageSetup>`
- * / `<pageMargins>`. Returns `undefined` when neither is set, so the renderer
- * applies its A4 default.
+ * / `<pageMargins>`.
+ *
+ * Margins are always set, to Excel's own defaults when the worksheet declares
+ * none (§18.3.1.62) — the renderer's fallback is a word processor's inch, which
+ * is not what a spreadsheet prints. The paper size is left unset when the
+ * worksheet names none, because there the file genuinely holds no answer: Excel
+ * picks by locale and printer, and the renderer's deterministic A4 is as good
+ * as anything we could invent.
  */
-export function sectionFromWorksheet(worksheet: ParsedWorksheet): SectionProperties | undefined {
+export function sectionFromWorksheet(worksheet: ParsedWorksheet): SectionProperties {
   const pageSize = pageSizeFromSetup(worksheet.pageSetup);
-  const margins = marginsFromXlsx(worksheet.pageMargins);
-  if (!pageSize && !margins) return undefined;
   return {
     ...(pageSize ? { pageSize } : {}),
-    ...(margins ? { margins } : {}),
+    // Always set: a worksheet that omits <pageMargins> still prints with
+    // Excel's margins, not a word processor's.
+    margins: marginsFromXlsx(worksheet.pageMargins),
     headers: [],
     footers: [],
   };
@@ -129,8 +155,24 @@ function pageSizeFromSetup(setup: XlsxPageSetup | undefined): PageSize | undefin
   return { width: twipsToPt(w), height: twipsToPt(h), orientation };
 }
 
-function marginsFromXlsx(margins: XlsxPageMargins | undefined): PageMargins | undefined {
-  if (!margins) return undefined;
+/**
+ * ECMA-376 §18.3.1.62 — the page margins Excel writes when the user has not
+ * touched them, in inches. A worksheet may omit `<pageMargins>` entirely, and
+ * falling through to the renderer's default (a word processor's 1 inch) put the
+ * grid 0.3 inch — 21.6 pt — right of where Excel and LibreOffice print it, on
+ * every such sheet.
+ */
+const EXCEL_DEFAULT_MARGINS: PageMargins = {
+  left: twipsToPt(Math.round(0.7 * TWIPS_PER_INCH)),
+  right: twipsToPt(Math.round(0.7 * TWIPS_PER_INCH)),
+  top: twipsToPt(Math.round(0.75 * TWIPS_PER_INCH)),
+  bottom: twipsToPt(Math.round(0.75 * TWIPS_PER_INCH)),
+  header: twipsToPt(Math.round(0.3 * TWIPS_PER_INCH)),
+  footer: twipsToPt(Math.round(0.3 * TWIPS_PER_INCH)),
+};
+
+function marginsFromXlsx(margins: XlsxPageMargins | undefined): PageMargins {
+  if (!margins) return EXCEL_DEFAULT_MARGINS;
   return {
     top: twipsToPt(Math.round(margins.topInches * TWIPS_PER_INCH)),
     right: twipsToPt(Math.round(margins.rightInches * TWIPS_PER_INCH)),
@@ -190,8 +232,8 @@ function sheetContentWidthTwips(worksheet: ParsedWorksheet): number {
   const pageSize = pageSizeFromSetup(worksheet.pageSetup);
   const pageWidthTwips = pageSize ? Math.round(pageSize.width * 20) : DEFAULT_PAPER_TWIPS[0];
   const margins = marginsFromXlsx(worksheet.pageMargins);
-  const left = margins ? Math.round(margins.left * 20) : TWIPS_PER_INCH;
-  const right = margins ? Math.round(margins.right * 20) : TWIPS_PER_INCH;
+  const left = Math.round(margins.left * 20);
+  const right = Math.round(margins.right * 20);
   return Math.max(TWIPS_PER_INCH / 2, pageWidthTwips - left - right);
 }
 
@@ -199,8 +241,8 @@ function sheetContentHeightTwips(worksheet: ParsedWorksheet): number {
   const pageSize = pageSizeFromSetup(worksheet.pageSetup);
   const pageHeightTwips = pageSize ? Math.round(pageSize.height * 20) : DEFAULT_PAPER_TWIPS[1];
   const margins = marginsFromXlsx(worksheet.pageMargins);
-  const top = margins ? Math.round(margins.top * 20) : TWIPS_PER_INCH;
-  const bottom = margins ? Math.round(margins.bottom * 20) : TWIPS_PER_INCH;
+  const top = Math.round(margins.top * 20);
+  const bottom = Math.round(margins.bottom * 20);
   return Math.max(TWIPS_PER_INCH / 2, pageHeightTwips - top - bottom);
 }
 
@@ -443,7 +485,7 @@ export function worksheetToBody(
   // default column width (8.43 chars ≈ 960 twips).
   const columnWidths = new Array<number>(colCount).fill(DEFAULT_COL_TWIPS);
   for (const col of worksheet.columns) {
-    const twips = Math.round(col.widthChars * TWIPS_PER_EXCEL_CHAR);
+    const twips = Math.round(col.widthChars * TWIPS_PER_EXCEL_CHAR + COL_PADDING_TWIPS);
     for (let abs = col.min - 1; abs <= col.max - 1; abs++) {
       const i = abs - colStart;
       if (i >= 0 && i < colCount) columnWidths[i] = twips;
@@ -580,7 +622,7 @@ export function worksheetToBody(
       textBudget -= text.length;
       const xf = ws && ws.styleIndex !== undefined ? styles.cellXfs[ws.styleIndex] : undefined;
       let runProps = cellRunProps(xf);
-      const alignment = xf ? alignmentFromXf(xf) : undefined;
+      const alignment = alignmentFromXf(xf, ws?.type);
       let shading = xf ? shadingFromXf(xf, styles) : undefined;
       // A table's banded/header fill + header text colour sit below the cell's
       // own fill (used only when the cell declares none) and below conditional
@@ -633,7 +675,7 @@ export function worksheetToBody(
         !shrinkToFit &&
         ws &&
         (ws.type === 's' || ws.type === 'str' || ws.type === 'inlineStr') &&
-        (alignment === undefined || alignment === 'left')
+        alignment === 'left'
       ) {
         let availTwips = columnWidths[c]!;
         let cc = c + 1;
@@ -749,6 +791,20 @@ export function worksheetToBody(
   // margins.
   const centered = worksheet.printOptions?.horizontalCentered === true;
   const tableProperties: TableProperties = {
+    // A spreadsheet cell insets its text by about 2 px (1.5 pt at 96 DPI), not
+    // by a word processor's 108 twips / 5.4 pt. The wider inset shifted every
+    // left-aligned value right and every right-aligned one left, and it eats
+    // into a column whose width the author fixed — Excel does not reflow a
+    // narrow column to make room for padding.
+    defaultCellMargins: { left: pt(EXCEL_CELL_INSET_PT), right: pt(EXCEL_CELL_INSET_PT) },
+    // §17.4.20 tblLayout — the layout engine's default is auto-fit, where the
+    // grid is only a hint and column widths are derived from cell content. That
+    // is right for WordprocessingML and wrong here: `<col width="..">` is what
+    // the author set and what Excel and LibreOffice print. Auto-fitting it made
+    // every column after the first land somewhere else — up to 80pt off the
+    // reference render on a four-column sheet whose columns were all declared
+    // the same width.
+    layout: 'fixed',
     ...(print.gridLines
       ? {
           borders: {
@@ -800,7 +856,13 @@ export function worksheetToBody(
       : undefined;
   const table: Table = {
     properties: frozen ? { ...tableProperties, frozen } : tableProperties,
-    grid: columnWidths.map((w) => twipsToPt(w)),
+    // The print scale shrinks the whole sheet, columns included — `bandWidths`
+    // above already scales them for the banded path, and the single-table path
+    // has to agree. It emitted full-width columns for a scaled sheet, which was
+    // invisible while the layout auto-fitted the grid away and became a clipped
+    // page the moment the grid started to count: 49156.xlsx declares
+    // `scale="47"`, so its 1100pt of columns has to come down to ~517pt.
+    grid: bandWidths.map((w) => twipsToPt(w)),
     rows,
   };
 
@@ -942,10 +1004,34 @@ function applyCfOverride(base: RunProperties, o: CfOverride): RunProperties {
   };
 }
 
-function alignmentFromXf(xf: XlsxCellXf): Alignment | undefined {
-  const align: XlsxCellAlignment | undefined = xf.alignment;
-  if (!align) return undefined;
-  return mapAlignment(align.horizontal);
+/**
+ * ECMA-376 §18.8.1 — a cell's horizontal alignment, falling back to `general`.
+ *
+ * "General" is not "left": it is decided by the VALUE. Numbers, dates and times
+ * go right, booleans and errors centre, text goes left. Treating an absent
+ * `<alignment>` as no alignment at all left every number hugging the left edge
+ * of its column, tens of points from where Excel and LibreOffice put it — on
+ * the sheets where it matters most, since a column of figures is the common
+ * case.
+ */
+function alignmentFromXf(xf: XlsxCellXf | undefined, type: CellType | undefined): Alignment {
+  const explicit = xf?.alignment ? mapAlignment(xf.alignment.horizontal) : undefined;
+  if (explicit) return explicit;
+  return generalAlignment(type);
+}
+
+function generalAlignment(type: CellType | undefined): Alignment {
+  switch (type) {
+    case 'n':
+    case 'd':
+      return 'right';
+    case 'b':
+    case 'e':
+      return 'center';
+    default:
+      // 's' | 'str' | 'inlineStr' | an empty cell.
+      return 'left';
+  }
 }
 
 function mapAlignment(h: XlsxHorizontalAlign | undefined): Alignment | undefined {

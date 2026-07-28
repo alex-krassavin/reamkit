@@ -23,21 +23,20 @@
     ]
   },
   "ream": {
-    "pages": 6,
+    "pages": 5,
     "pageSizes": [
       {
         "widthPt": 595,
         "heightPt": 842
       }
     ],
-    "chars": 229,
+    "chars": 232,
     "firstLines": [
-      "UitvoeringsdatuStarttijd",
+      "UitvoeringsdatumStarttijd",
       "EindtijdKlantnaam",
-      "OmschrijvingNaam locatie",
-      "BevestigdToegewezen werknemers",
-      "Toegewezen voertuigenToegewezen materialen",
-      "Info"
+      "OmschrijvingNaam locatieBevestigd",
+      "Toegewezen werknemersToegewezen voertuigen",
+      "Toegewezen materialenInfo"
     ]
   }
 }

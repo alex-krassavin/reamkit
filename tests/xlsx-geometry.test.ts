@@ -1,0 +1,174 @@
+// Where the grid actually lands on the page.
+//
+// The rest of the xlsx suite asks what is on the page; this asks where. Both
+// questions matter, but only the first had coverage, which is why a sheet could
+// render every cell correctly and still put the grid somewhere Excel never
+// would.
+//
+// These assert against the spreadsheet model rather than against LibreOffice:
+// a declared column width is a number in the file, and honouring it is not a
+// matter of taste. The golden suite (xlsx-golden.test.ts) is where agreement
+// with another renderer is measured.
+
+import { readFileSync } from 'node:fs';
+
+import { describe, expect, it } from 'vitest';
+
+import { buildXlsx } from './fixtures/build-xlsx';
+import { FontRegistry } from '@/core/font';
+import { Ream } from '@/core/converter/ream';
+import { flowRenderOptions } from '@/core/converter/project';
+import { layoutStyledDocument } from '@/layout/styled-layout';
+
+const FONTS = {
+  regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
+  bold: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Bold.ttf')),
+};
+
+interface PlacedText {
+  readonly text: string;
+  readonly x: number;
+  readonly y: number;
+}
+
+/** Every text line the layout placed, with its position. */
+function placed(xlsx: Uint8Array): Array<PlacedText> {
+  const flow = Ream.parse(xlsx).flow;
+  const laid = layoutStyledDocument(flow.body, {
+    registry: FontRegistry.fromBytes(FONTS),
+    ...flowRenderOptions(flow),
+  });
+  const out: Array<PlacedText> = [];
+  for (const page of laid.pages) {
+    for (const command of page.commands) {
+      if (command.type !== 'line') continue;
+      const c = command as unknown as {
+        originX: number;
+        baselineY: number;
+        line: { tokens: ReadonlyArray<{ text?: string }> };
+      };
+      const text = c.line.tokens
+        .map((t) => t.text ?? '')
+        .join('')
+        .trim();
+      if (text.length > 0) out.push({ text, x: c.originX, y: c.baselineY });
+    }
+  }
+  return out;
+}
+
+const at = (items: Array<PlacedText>, text: string): PlacedText => {
+  const hit = items.find((i) => i.text === text);
+  if (!hit) throw new Error(`no placed text "${text}" among ${items.map((i) => i.text).join('|')}`);
+  return hit;
+};
+
+describe('grid geometry', () => {
+  it('honours declared column widths instead of fitting them to content', () => {
+    // A is declared WIDE and holds a short value; B is declared NARROW and holds
+    // a long one. Auto-fit — the table default, since tblGrid is only a hint in
+    // WordprocessingML — sizes them by content and produces the reverse. In a
+    // spreadsheet the declared width is not a hint: it is what the author set,
+    // it is what Excel and LibreOffice print, and getting it wrong moves every
+    // column after it.
+    const xlsx = buildXlsx({
+      rows: [['x', 'a very long value indeed']],
+      columns: [
+        { min: 1, max: 1, widthChars: 40 },
+        { min: 2, max: 2, widthChars: 6 },
+      ],
+    });
+    const items = placed(xlsx);
+    const a = at(items, 'x');
+    const b = at(items, 'a very long value indeed');
+
+    // Column A is 40 chars ≈ 210pt wide, so B starts far to the right of A.
+    // Under auto-fit the two nearly touch.
+    expect(b.x - a.x).toBeGreaterThan(150);
+  });
+
+  it('gives a declared width the 5-pixel padding the spec puts on it', () => {
+    // §18.3.1.13: px = chars × MaximumDigitWidth + 5. At 96 DPI that padding is
+    // 3.75pt, and dropping it made every column that much narrow — an error
+    // that compounds across the sheet. Excel's own documented 8.43-character
+    // default only reaches its documented 64px with the padding included.
+    const xlsx = buildXlsx({
+      rows: [['A', 'B']],
+      columns: [{ min: 1, max: 1, widthChars: 12 }],
+    });
+    const items = placed(xlsx);
+    // 12 × 5.25pt + 3.75pt = 66.75pt.
+    expect(at(items, 'B').x - at(items, 'A').x).toBeCloseTo(66.75, 1);
+  });
+
+  it("uses Excel's page margins, not a word processor's, when the sheet declares none", () => {
+    // §18.3.1.62: 0.7" left/right, 0.75" top/bottom. The renderer's fallback is
+    // 1 inch, which pushed the grid 0.3" (21.6pt) right on every sheet that
+    // omits <pageMargins> — which most do.
+    const noMargins = buildXlsx([['A']]);
+    const declared = buildXlsx({
+      rows: [['A']],
+      pageMargins: { left: 2, right: 0.7, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 },
+    });
+    const left = at(placed(noMargins), 'A').x;
+    // 0.7 inch = 50.4pt, plus the cell's own left padding.
+    expect(left).toBeGreaterThan(50.4);
+    expect(left).toBeLessThan(50.4 + 12);
+    // An explicit margin still wins: 2 inches = 144pt.
+    expect(at(placed(declared), 'A').x).toBeGreaterThan(144);
+  });
+
+  it('applies §18.8.1 general alignment — numbers right, text left, booleans centred', () => {
+    // "General" is not "left": it is decided by the value's type. A column of
+    // figures rendered flush left is the most visible way a spreadsheet can
+    // look wrong, and it was the largest remaining gap against LibreOffice
+    // once column widths were fixed.
+    const xlsx = buildXlsx({
+      rows: [['text', 1234, true]],
+      columns: [{ min: 1, max: 3, widthChars: 20 }],
+    });
+    const items = placed(xlsx);
+    const colWidth = 20 * 5.25 + 3.75;
+    const text = at(items, 'text');
+    const number = at(items, '1234');
+    const bool = at(items, 'TRUE');
+
+    // Text sits at its column's left edge; the number is pushed to the right of
+    // its own column, and the boolean sits between the two.
+    const numberOffset = number.x - (text.x + colWidth);
+    const boolOffset = bool.x - (text.x + 2 * colWidth);
+    expect(numberOffset).toBeGreaterThan(colWidth / 2);
+    expect(boolOffset).toBeGreaterThan(colWidth / 4);
+    expect(boolOffset).toBeLessThan(numberOffset);
+  });
+
+  it('shrinks column widths with the print scale, not just fonts and rows', () => {
+    // <pageSetup scale="50"> shrinks the whole sheet. The scale reached fonts
+    // and row heights but not the emitted column grid, which was invisible
+    // while the layout auto-fitted that grid away — and became a clipped page
+    // the moment the grid started to count. 49156.xlsx (scale="47") went from
+    // 349 extracted characters to 43.
+    const rows = [['A', 'B', 'C']];
+    const columns = [{ min: 1, max: 3, widthChars: 20 }];
+    const full = placed(buildXlsx({ rows, columns }));
+    const half = placed(buildXlsx({ rows, columns, pageSetup: { paperSize: 9, scale: 50 } }));
+    const pitch = (items: Array<PlacedText>): number => at(items, 'B').x - at(items, 'A').x;
+    expect(pitch(half)).toBeCloseTo(pitch(full) / 2, 0);
+  });
+
+  it('keeps equal declared widths equally spaced', () => {
+    // Four columns declared identical must come out identical. Auto-fit makes
+    // each one as wide as its own content, so the pitch wanders — which is what
+    // pushed our columns out of step with LibreOffice's by up to 80pt.
+    const xlsx = buildXlsx({
+      rows: [['A', 'BB', 'CCC', 'DDDD']],
+      columns: [{ min: 1, max: 4, widthChars: 12 }],
+    });
+    const items = placed(xlsx);
+    const xs = ['A', 'BB', 'CCC', 'DDDD'].map((t) => at(items, t).x);
+    const pitches = [xs[1]! - xs[0]!, xs[2]! - xs[1]!, xs[3]! - xs[2]!];
+    for (const pitch of pitches) {
+      expect(pitch).toBeCloseTo(pitches[0]!, 1);
+    }
+  });
+});
