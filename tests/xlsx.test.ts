@@ -744,6 +744,46 @@ describe('implicit cell/row positions (§18.3.1.4 — r= optional)', () => {
     expect(ws.cells.map((c) => c.inlineText)).toEqual(['v2', 'proper']);
   });
 
+  it('decodes a numeric "<column>_<row>" ref when the row agrees', () => {
+    const M = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+    // tdf122336.xlsx's producer writes the address as two 1-based numbers
+    // rather than A1 notation. It is not a spec spelling, but it is not noise
+    // either: every ref in <row r="2"> ends in _2, so the file states its own
+    // convention and we can check it before trusting it. Placing these by
+    // document order instead packs them consecutively — putting each value
+    // under the wrong column heading.
+    const ws = parseWorksheet(
+      enc(
+        `<worksheet xmlns="${M}"><sheetData>` +
+          `<row r="2"><c r="1_2"><v>a</v></c><c r="4_2"><v>b</v></c><c r="22_2"><v>c</v></c></row>` +
+          `</sheetData></worksheet>`,
+      ),
+    );
+    expect(ws.cells.map((c) => [c.row, c.column])).toEqual([
+      [1, 0],
+      [1, 3],
+      [1, 21],
+    ]);
+  });
+
+  it('refuses a numeric ref whose row disagrees with the row it sits in', () => {
+    const M = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+    // The guard is the whole point: a ref that does not agree with its own row
+    // tells us nothing, so it falls back to document order rather than being
+    // decoded on a guess. Same two refs as above, in the wrong row.
+    const ws = parseWorksheet(
+      enc(
+        `<worksheet xmlns="${M}"><sheetData>` +
+          `<row r="1"><c r="4_2"><v>a</v></c><c r="22_2"><v>b</v></c></row>` +
+          `</sheetData></worksheet>`,
+      ),
+    );
+    expect(ws.cells.map((c) => [c.row, c.column])).toEqual([
+      [0, 0],
+      [0, 1],
+    ]);
+  });
+
   it('honours explicit r= and resumes implicit numbering after it', () => {
     const M = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
     // Row pinned to r="3"; cell pinned to C → next cell resumes at D.
@@ -767,15 +807,15 @@ describe('projection losses (never silently wrong)', () => {
   // exactly the silent wrongness the loss report exists to prevent. Reading a
   // capped sheet must come back with a Loss naming what was clipped.
 
-  it('reports a loss when the grid is clipped to the column cap', () => {
-    // 1200 columns — past the 1024-column materialization cap.
+  it('does not clip a merely wide sheet', () => {
+    // There used to be a 1024-column cap here, and this test asserted the loss
+    // it reported. The cap was ours, not the format's, and it truncated
+    // documents that are simply wide — see the geometry suite. The only column
+    // limit left is SpreadsheetML's own, which a valid document cannot exceed.
     const wide = buildXlsx([Array.from({ length: 1200 }, (_, i) => `c${i}`)]);
     const { doc, losses } = readXlsx(wide);
     expect(doc.body.length).toBeGreaterThan(0);
-    const clip = losses.find((l) => /column/i.test(l.detail));
-    expect(clip).toBeDefined();
-    expect(clip!.severity).toBe('dropped');
-    expect(clip!.detail).toContain('1200');
+    expect(losses.filter((l) => /column/i.test(l.detail))).toEqual([]);
   });
 
   it('reports a loss when the grid is clipped to the row cap', () => {

@@ -56,6 +56,7 @@ import { parseFormControlProps } from '@/excel/form-control-parser';
 import {
   activeXBinRelId,
   activeXType,
+  activeXTypeFromPart,
   parseActiveX,
   parseActiveXBin,
 } from '@/excel/activex-parser';
@@ -78,6 +79,10 @@ const THREADED_COMMENTS_REL_TAIL = '/threadedComment';
 const PERSON_REL_TAIL = '/person';
 // A slicer over a huge column is bounded so a crafted file cannot blow up the box.
 const MAX_SLICER_ITEMS = 256;
+
+// §18.3.1.19 <control> resolves to either a ctrlProps part (a form control) or
+// an activeX#.xml one; the target path is what tells them apart.
+const ACTIVEX_PART = /^xl\/activeX\//i;
 
 // A table's location, header depth and value filters — indexed by the table's
 // numeric id so a slicer's <tableSlicerCache> can resolve its column's values
@@ -325,13 +330,46 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
 
     // §18.3.* form controls (W8): resolve each control's relId to its ctrlProp
     // part (objectType + state). The projection lists them after the grid.
+    const wsRels = pkg.getPartRelationships(resolved.path);
+    const resolvedAx: Array<SheetActiveXControl> = [];
+
+    // The visible state of an ActiveX control: its property bag, plus — for a
+    // persistStreamInit control, which keeps no <ax:ocxPr> — the caption /
+    // value / group name recovered from the binary activeX#.bin (resolved
+    // through the activeX#.xml part's own relationships). The property bag wins
+    // where both carry a value, so a normal property-bag control is unchanged.
+    const activeXState = (part: { path: string; data: Uint8Array }): SheetActiveXControl => {
+      const props = parseActiveX(part.data);
+      const binRelId = activeXBinRelId(part.data);
+      const binRel = binRelId
+        ? pkg.getPartRelationships(part.path).find((r) => r.id === binRelId)
+        : undefined;
+      const binPart = binRel ? pkg.resolveRelatedPart(part.path, binRel) : undefined;
+      const binProps = binPart ? parseActiveXBin(binPart.data) : {};
+      return { type: 'control', ...binProps, ...props };
+    };
+
     let formControls: Array<SheetFormControl> | undefined;
     if (worksheet.formControls && worksheet.formControls.length > 0) {
-      const wsRels = pkg.getPartRelationships(resolved.path);
       const resolvedControls: Array<SheetFormControl> = [];
       for (const fc of worksheet.formControls) {
         const rel = wsRels.find((r) => r.id === fc.relId);
         const part = rel ? pkg.resolveRelatedPart(resolved.path, rel) : undefined;
+        // §18.3.1.19 <control> reaches BOTH kinds: a form control's ctrlProps
+        // part and an ActiveX control's activeX#.xml. Only the relationship
+        // target says which, and reading an ocx part as a ctrlProps one yields
+        // nothing — which is how a sheet of option buttons came out as a list
+        // of bare names, its captions and values sitting unread in the .bin.
+        // The <control> element carries no progId, so the type comes from the
+        // class id.
+        if (part && ACTIVEX_PART.test(part.path)) {
+          resolvedAx.push({
+            ...activeXState(part),
+            type: activeXTypeFromPart(part.data),
+            ...(fc.name ? { name: fc.name } : {}),
+          });
+          continue;
+        }
         const props = part ? parseFormControlProps(part.data) : {};
         resolvedControls.push({ ...(fc.name ? { name: fc.name } : {}), ...props });
       }
@@ -341,31 +379,17 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
     // §18.3.* ActiveX / OLE controls (W10): resolve each oleObject's relId to its
     // activeX part (progId → type + the property bag's visible state). Listed
     // after the grid, like form controls.
-    let activeXControls: Array<SheetActiveXControl> | undefined;
     if (worksheet.oleObjects && worksheet.oleObjects.length > 0) {
-      const wsRels = pkg.getPartRelationships(resolved.path);
-      const resolvedAx: Array<SheetActiveXControl> = [];
       for (const ole of worksheet.oleObjects) {
         const rel = wsRels.find((r) => r.id === ole.relId);
         const part = rel ? pkg.resolveRelatedPart(resolved.path, rel) : undefined;
-        const props = part ? parseActiveX(part.data) : {};
-        // A persistStreamInit control keeps no <ax:ocxPr>; recover its caption /
-        // value / group name from the binary activeX#.bin (resolved through the
-        // activeX#.xml part's own relationships). The property bag wins where both
-        // carry a value, so a normal property-bag control stays unchanged.
-        let binProps = {};
-        if (part) {
-          const binRelId = activeXBinRelId(part.data);
-          const binRel = binRelId
-            ? pkg.getPartRelationships(part.path).find((r) => r.id === binRelId)
-            : undefined;
-          const binPart = binRel ? pkg.resolveRelatedPart(part.path, binRel) : undefined;
-          if (binPart) binProps = parseActiveXBin(binPart.data);
-        }
-        resolvedAx.push({ type: activeXType(ole.progId), ...binProps, ...props });
+        resolvedAx.push({
+          ...(part ? activeXState(part) : {}),
+          type: activeXType(ole.progId),
+        });
       }
-      if (resolvedAx.length > 0) activeXControls = resolvedAx;
     }
+    const activeXControls = resolvedAx.length > 0 ? resolvedAx : undefined;
 
     const grid =
       tables || pivotTables

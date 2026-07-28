@@ -105,12 +105,15 @@ export interface SheetFormControl {
 
 /**
  * An ActiveX control resolved against its activeX part (E-SHEET W10): the control
- * class (`type`, from the `<oleObject progId>`) plus the visible state persisted
- * in the property bag — `caption`, `value` (checked/text/number, as a string)
- * and OptionButton `groupName`. Render-only.
+ * class (`type`, from the `<oleObject progId>` or, for a §18.3.1.19 `<control>`,
+ * its class id) plus the visible state persisted in the property bag —
+ * `caption`, `value` (checked/text/number, as a string) and OptionButton
+ * `groupName`. Render-only.
  */
 export interface SheetActiveXControl {
   readonly type: string;
+  /** §18.3.1.19 `<control name>` — the control's identifier, when it came that way. */
+  readonly name?: string;
   readonly caption?: string;
   readonly value?: string;
   readonly groupName?: string;

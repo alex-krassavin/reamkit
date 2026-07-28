@@ -1,30 +1,31 @@
 {
-  "file": "bnc762542.xlsx",
-  "paperDeclared": true,
+  "file": "tdf111980_radioButtons.xlsx",
+  "paperDeclared": false,
   "libreOffice": {
-    "pages": 1,
+    "pages": 2,
     "pageSizes": [
       {
-        "widthPt": 1191,
+        "widthPt": 595,
         "heightPt": 842
       }
     ],
-    "chars": 53,
+    "chars": 158,
     "firstLines": [
-      "Sheet 1"
+      "Group Box",
+      "7"
     ]
   },
   "ream": {
     "pages": 1,
     "pageSizes": [
       {
-        "widthPt": 1191,
+        "widthPt": 595,
         "heightPt": 842
       }
     ],
-    "chars": 53,
+    "chars": 107,
     "firstLines": [
-      "Sheet 1"
+      "ActiveX controls"
     ]
   }
 }

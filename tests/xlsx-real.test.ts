@@ -14,7 +14,7 @@ import { describe, expect, it } from 'vitest';
 
 import { OpcPackage } from '@/core/opc';
 import { Ream } from '@/core/converter/ream';
-import { readXlsx } from '@/excel/xlsx-reader';
+import { readXlsx, readXlsxToSheetDoc } from '@/excel/xlsx-reader';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const load = (name: string): Uint8Array =>
@@ -74,19 +74,47 @@ describe('real documents: SpreadsheetML dialects', () => {
     expect(cells).toContain('Van Rompaey Marcus');
   });
 
+  it('tdf111980_radioButtons.xlsx — <control> reaches ActiveX, not just form controls', () => {
+    // §18.3.1.19 <control> resolves to BOTH kinds: a form control's ctrlProps
+    // part and an ActiveX control's activeX#.xml. Only the relationship target
+    // says which, and reading an ocx part as a ctrlProps one yields nothing —
+    // so this sheet of option buttons came out as five bare names with their
+    // captions and states sitting unread in the .bin beside them.
+    const sheet = readXlsxToSheetDoc(load('tdf111980_radioButtons.xlsx')).sheets[0]!;
+    expect(sheet.formControls ?? []).toHaveLength(0);
+    const controls = sheet.activeXControls ?? [];
+    expect(controls).toHaveLength(5);
+    // Typed from the class id — <control> carries no progId to type it by.
+    expect(controls.every((c) => c.type === 'option')).toBe(true);
+    expect(controls.map((c) => c.caption)).toEqual([
+      'ActiveX 3',
+      'ActiveX nogroup2',
+      'ActiveX nogroup2',
+      'ActiveX button2',
+      'ActiveX button1',
+    ]);
+    // Exactly one of the group is selected, and the group name came through.
+    expect(controls.filter((c) => c.value === '1').map((c) => c.groupName)).toEqual(['Sheet1']);
+  });
+
   it('duplicate-filename.xlsx — t="inlineStr" written into <v>', () => {
     expect(textCells(load('duplicate-filename.xlsx'))).toContain('v2');
   });
 });
 
 describe('real documents: scale and amplification', () => {
-  it('53105.xlsx — 16 384 declared columns clip, and say so', () => {
+  it('53105.xlsx — all 16 384 columns render, none clipped', () => {
+    // Two rows across the full column space. A 1024-column cap of ours cut this
+    // to 103 pages where Excel and LibreOffice print 1639; the sheet is not
+    // pathological, only wide, and the memory bound is the total-cell budget
+    // that a 2-row sheet comes nowhere near.
     const { doc, losses } = readXlsx(load('53105.xlsx'));
-    expect(doc.body.length).toBeGreaterThan(0);
-    const clip = losses.find((l) => /columns/.test(l.detail));
-    expect(clip).toBeDefined();
-    expect(clip!.severity).toBe('dropped');
-    expect(clip!.detail).toContain('16384');
+    let columns = 0;
+    for (const element of doc.body) {
+      if (element.kind === 'table') columns += element.table.grid.length;
+    }
+    expect(columns).toBe(16_384);
+    expect(losses.filter((l) => /column/i.test(l.detail))).toEqual([]);
   });
 
   it('too-many-cols-rows.xlsx — A1:XFE16777217 from a 5 KB file stays bounded', () => {

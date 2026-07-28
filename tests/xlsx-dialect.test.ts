@@ -68,7 +68,7 @@ const SYNTHETIC = buildXlsx({
     ['SPb', 720000, false],
   ],
   columns: [{ min: 1, max: 1, widthChars: 18 }],
-  merges: ['A1:C1'],
+  mergeRefs: ['A1:C1'],
   pageSetup: { paperSize: 9, orientation: 'landscape' },
   pageMargins: { left: 0.5, right: 0.5, top: 1, bottom: 1, header: 0.3, footer: 0.3 },
   rowBreaks: [1],

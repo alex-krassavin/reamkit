@@ -115,6 +115,33 @@ function strAttr(obj: Record<string, unknown>, key: string): string | undefined 
   return typeof v === 'string' ? v : undefined;
 }
 
+// MS Forms 2.0 control class ids. Only the two the corpus actually carries are
+// listed, each confirmed against a document that names what it holds
+// (activex_checkbox.xlsx, tdf111980_radioButtons.xlsx). The rest of the family
+// follows an obvious-looking pattern, but guessing a control's type from a
+// pattern is how a spin button ends up drawn as a checkbox — an unmapped id
+// stays the generic 'control', the same bargain the rest of this file makes.
+const ACTIVEX_CLASS_TYPES: ReadonlyMap<string, string> = new Map([
+  ['8BD21D40-EC42-11CE-9E0D-00AA006002F3', 'checkbox'],
+  ['8BD21D50-EC42-11CE-9E0D-00AA006002F3', 'option'],
+]);
+
+/**
+ * The affordance key for an `<ax:ocx ax:classid>`, for controls reached through
+ * §18.3.1.19 `<control>` rather than `<oleObject progId>` — the `<control>`
+ * element carries no progId, so the class id is all there is to type it by.
+ *
+ * @param xmlData The `activeX#.xml` part bytes.
+ * @returns The affordance key, or `'control'` when the class id is unknown.
+ */
+export function activeXTypeFromPart(xmlData: Uint8Array): string {
+  const tree = parser.parse(decoder.decode(xmlData)) as Record<string, unknown>;
+  const ocx = asObject(tree['ocx']);
+  const classId = ocx ? strAttr(ocx, 'classid') : undefined;
+  const key = classId?.replace(/[{}]/g, '').toUpperCase() ?? '';
+  return ACTIVEX_CLASS_TYPES.get(key) ?? 'control';
+}
+
 /**
  * The `<ax:ocx r:id>` of a control whose state is persisted to a binary stream
  * (`persistStreamInit` / `persistStream` / `persistStorage`) rather than to

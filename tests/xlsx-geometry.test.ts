@@ -19,6 +19,7 @@ import { FontRegistry } from '@/core/font';
 import { Ream } from '@/core/converter/ream';
 import { flowRenderOptions } from '@/core/converter/project';
 import { layoutStyledDocument } from '@/layout/styled-layout';
+import { readXlsx } from '@/excel/xlsx-reader';
 
 const FONTS = {
   regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
@@ -315,6 +316,55 @@ describe('grid geometry', () => {
     });
     expect(pageCount(mostlyEmpty)).toBe(pageCount(withText));
     expect(pageCount(withText)).toBeGreaterThan(1);
+  });
+
+  it('renders a sheet as wide as SpreadsheetML allows, without an extra limit', () => {
+    // 53105.xlsx is 2 rows across all 16 384 columns. A 1024-column cap cut it
+    // to 103 pages where Excel and LibreOffice print 1639 — a limit of ours, on
+    // the reasoning that a wider table is unreadable, applied to a document
+    // that is merely wide. The memory bound is the total-cell budget, which a
+    // 2-row sheet comes nowhere near.
+    const wide = buildXlsx([Array.from({ length: 5000 }, (_, i) => `c${i}`)]);
+    const { doc, losses } = readXlsx(wide);
+    let columns = 0;
+    for (const element of doc.body) {
+      if (element.kind === 'table') columns += element.table.grid.length;
+    }
+    expect(columns).toBe(5000);
+    expect(losses.filter((l) => /columns/.test(l.detail))).toEqual([]);
+  });
+
+  it('still bounds a sheet by its total cells', () => {
+    // The budget that actually protects memory stays, and still reports. Two
+    // cells at opposite corners declare a 2000×600 used range — 1.2M cells,
+    // past the budget — without costing anything to build, which is exactly the
+    // amplification shape the budget exists for.
+    const lastRow = [...Array.from<null>({ length: 599 }).fill(null), 'y'];
+    const sparse = Array.from({ length: 2000 }, (_, r) =>
+      r === 0 ? ['x'] : r === 1999 ? lastRow : [],
+    );
+    const { losses } = readXlsx(buildXlsx(sparse));
+    expect(losses.some((l) => l.severity === 'dropped' && /rows/.test(l.detail))).toBe(true);
+  });
+
+  it('does not let an empty merge stretch the used range', () => {
+    // A merge follows content; it does not create any. 57893-many-merges.xlsx
+    // is 50 000 rows of merges over cells that hold nothing at all, and letting
+    // those merges set the used range turned it into 1042 blank pages once
+    // blank space started paginating honestly. LibreOffice prints one.
+    const anchored = pageCount(buildXlsx({ rows: [['x']], mergeRefs: ['A1:C1'] }));
+    const stranded = pageCount(buildXlsx({ rows: [['x']], mergeRefs: ['A1:C1', 'E200:F400'] }));
+    expect(stranded).toBe(anchored);
+    expect(stranded).toBe(1);
+  });
+
+  it('still follows a merge that starts on a cell with content', () => {
+    // The merge loop exists for a reason: a merged cell's value lives in the
+    // origin and the span reaches past it, so the grid has to cover the span or
+    // the merge is clipped.
+    const { doc } = readXlsx(buildXlsx({ rows: [['spanning value']], mergeRefs: ['A1:D1'] }));
+    const table = doc.body.find((e) => e.kind === 'table');
+    expect(table?.kind === 'table' && table.table.grid.length).toBe(4);
   });
 
   it('keeps equal declared widths equally spaced', () => {

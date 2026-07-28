@@ -366,13 +366,24 @@ export function worksheetToBody(
   // as LibreOffice/Excel clip to the used range anyway.
   let usedRow = -1;
   let usedCol = -1;
+  const contentAt = new Set<string>();
   for (const c of worksheet.cells) {
     if (c.rawValue !== '' || c.inlineText !== undefined) {
+      contentAt.add(key(c.row, c.column));
       if (c.row > usedRow) usedRow = c.row;
       if (c.column > usedCol) usedCol = c.column;
     }
   }
+  // A merge extends the range only when its ORIGIN holds something. The span
+  // has to be covered or the merge is clipped — but a merge follows content, it
+  // does not create any, and treating every merge as content lets pure
+  // formatting define the sheet. 57893-many-merges.xlsx is 50 000 rows of
+  // merges over cells that hold nothing at all: once blank space started
+  // paginating honestly, that made 1042 empty pages out of a document
+  // LibreOffice prints as one. Empty styled cells are already excluded here for
+  // the same reason.
   for (const m of worksheet.merges) {
+    if (!contentAt.has(key(m.startRow, m.startColumn))) continue;
     if (m.endRow > usedRow) usedRow = m.endRow;
     if (m.endColumn > usedCol) usedCol = m.endColumn;
   }
@@ -403,16 +414,23 @@ export function worksheetToBody(
 
   // Defence-in-depth for untrusted input: even within the used range, cap the
   // materialized grid so a pathological sheet (real values seeded across the
-  // 16384×1048576 cell space) cannot exhaust memory. A PDF table larger than
-  // this is unreadable regardless.
+  // 16384×1048576 cell space) cannot exhaust memory.
   //
-  // The per-dimension caps are NOT sufficient on their own: their product is
-  // 51.2M cells, which is exactly how LibreOffice's too-many-cols-rows.xlsx —
-  // 2.5 KB holding five real cells, declared as A1:XFE16777217 — exhausted a
-  // 6 GB heap. Amplification needs no zip bomb; a declared extent is enough.
-  // MAX_GRID_CELLS bounds the product, and rows give way first: columns carry
-  // the record shape, rows are homogeneous repetitions of it.
-  const MAX_GRID_COLS = 1024;
+  // MAX_GRID_CELLS is the one that does the work. Per-dimension caps are not
+  // sufficient on their own — their product is what allocates, which is how
+  // LibreOffice's too-many-cols-rows.xlsx (2.5 KB, five real cells, declared as
+  // A1:XFE16777217) exhausted a 6 GB heap. Amplification needs no zip bomb; a
+  // declared extent is enough. Rows give way first: columns carry the record
+  // shape, rows are homogeneous repetitions of it.
+  //
+  // The column limit is SpreadsheetML's own (§18.3.1.13 — column XFD is the
+  // last), i.e. no limit of ours at all. It used to be 1024, on the reasoning
+  // that a wider PDF table is unreadable — but unreadable is the author's call,
+  // not ours, and it silently truncated documents that are simply wide: POI's
+  // 53105.xlsx is 2 rows across all 16 384 columns, and we printed 103 pages of
+  // it where Excel and LibreOffice print 1639. Rendering it in full costs
+  // 339 ms and 69 MB, so the cell budget was carrying the load anyway.
+  const MAX_GRID_COLS = 16_384;
   const MAX_GRID_ROWS = 50_000;
   const MAX_GRID_CELLS = 1_000_000;
   const wantRows = rowEnd - rowStart + 1;
