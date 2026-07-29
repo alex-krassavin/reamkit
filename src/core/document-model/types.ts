@@ -603,6 +603,13 @@ export interface CellProperties {
    * dropdown affordance at the cell's right edge (a small button + ▾ glyph).
    */
   readonly dropdown?: boolean;
+  /**
+   * The cell's text is not allowed to wrap: it renders on one line and whatever
+   * does not fit the cell box is cut, as a spreadsheet cell without `wrapText`
+   * does. Only the paginated layout honours it — an HTML view has no page edge
+   * to clip against and lets the browser decide.
+   */
+  readonly noWrap?: boolean;
 }
 
 /** §17.4.81 `w:trPr` — a table row's properties: height, split/header flags. */

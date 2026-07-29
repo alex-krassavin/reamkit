@@ -74,7 +74,7 @@
     ]
   },
   "ream": {
-    "pages": 41,
+    "pages": 39,
     "pageSizes": [
       {
         "widthPt": 842,
@@ -85,7 +85,7 @@
         "heightPt": 792
       }
     ],
-    "chars": 20393,
+    "chars": 17028,
     "firstLines": [
       "Wilfried Schäfer",
       "Wilfried Schäfer",
@@ -102,17 +102,15 @@
       "Wilfried Schäfer",
       "Wilfried Schäfer",
       "Wilfried Schäfer",
-      "Wilfried Schäfer",
       "Berechnung des effektiven Jahreszins nach der",
-      "Der eff. Zinssatz (Jahreszinssatz) errechnet sich durch die ",
-      "Bei Anleihen wird oft mit der Näherungsformel mit Auf- (Agio",
-      "zeff=effektiver Jahreszinssatz",
-      "Diese Formel mag unglaubwürdig erscheinen, weil sie für z = ",
-      "Bei diesem Tilgungsdarlehen werden während der Laufzeit nur ",
+      "Berechnung des eff. Jahreszinssatzes bei Anleihen",
+      "(Diese Formel weicht bei kleinen Werten für Laufzeit und Agi",
+      "Für den effektiven Jahreszinssatz gilt nach einem Jahr (in G",
+      "aufgenommen wird. Dabei betrage der Disagiosatz",
+      "und die Summe der Zinsen",
+      ", also 12,28%.",
+      "kann sich von der Tilgungsdauer",
       ".",
-      ".",
-      "am Ende der Zinsbindungsdauer ermittelt. Es gilt:",
-      "Im Folgenden wird paradigmatisch eine Vorgehensweise dargest",
       "3. für alle",
       "3. Falls",
       "und",

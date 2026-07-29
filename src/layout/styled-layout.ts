@@ -3174,7 +3174,16 @@ function layoutTableCell(
           imageResources,
           innerWidth,
         );
-        for (const line of block.lines) {
+        // A spreadsheet cell that does not ask to wrap never does: the text runs
+        // as far as its box allows and the rest is cut. Only the layout knows
+        // where that falls — it has the font metrics and the resolved width —
+        // so the projection marks the cell and the line breaker's own first line
+        // is the answer. Estimating the cut before layout could only ever be
+        // approximate, and being generous by a few percent wraps one word onto a
+        // second line, which is the whole difference between a one-line row and
+        // a three-line one.
+        const keep = cell.properties.noWrap === true ? block.lines.slice(0, 1) : block.lines;
+        for (const line of keep) {
           lines.push(line);
           contentHeightPt += computeLineHeight(line, block.resolved);
         }

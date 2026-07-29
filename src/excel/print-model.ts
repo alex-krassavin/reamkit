@@ -676,6 +676,32 @@ export function worksheetToBody(
   // then skipped, byte-identical) unless the sheet has a shown list validation.
   const dropdownRanges = listDropdownRanges(worksheet.dataValidations);
 
+  // The column bands the grid will be split into, in LOCAL column indices — a
+  // band boundary is a page edge, and overflowing text stops at one. Computed
+  // here rather than at the split below because the row loop needs it: text
+  // clipped against the whole grid's width, then sliced into a band, is clipped
+  // to twice the room it actually gets and wraps anyway (the Infos sheet of
+  // tdf171828.xlsx wrapped to three lines inside a one-line row).
+  const bandEndOfCol = new Map<number, number>();
+  {
+    const widthsForBands = scaledColumnWidths(visibleWidths, printScale, scaled);
+    const total = widthsForBands.reduce((sum, w) => sum + w, 0);
+    const breaks = new Set<number>();
+    for (const brk of worksheet.colBreaks ?? []) {
+      const local = brk - colStart;
+      if (local > 0 && local < colCount) breaks.add(local);
+    }
+    const wide = worksheet.fitToPage ? (worksheet.pageSetup?.fitToWidth ?? 1) : 1;
+    const width = sheetContentWidthTwips(worksheet);
+    if (colCount > 1 && (!scaled || wide > 1) && (total > width || breaks.size > 0)) {
+      for (const band of computeColumnBands(widthsForBands, width, breaks)) {
+        for (let i = band.start; i <= band.end; i++) {
+          bandEndOfCol.set(visibleCols[i] ?? i, visibleCols[band.end] ?? band.end);
+        }
+      }
+    }
+  }
+
   const rows: Array<TableRow> = [];
   // Where the first print-title row landed in `rows`. Not derivable from the
   // row index afterwards — hidden rows are skipped, so the two do not agree.
@@ -813,17 +839,16 @@ export function worksheetToBody(
             spanPreservesPaint(cellMatrix[r]?.[col], styles, shading, borders)) &&
           !sparklineByCell.has(key(absR, col + colStart)) &&
           !(dropdownRanges.length > 0 && rangesCover(dropdownRanges, absR, col + colStart));
-        while (cc < colCount && neighbourIsFree(cc)) {
+        const bandEnd = bandEndOfCol.get(c) ?? colCount - 1;
+        while (cc <= bandEnd && neighbourIsFree(cc)) {
           availTwips += columnWidths[cc]!;
           cc++;
         }
-        // Clip to the width the cell will actually have. A cell that does not
-        // declare wrapText never wraps in Excel or LibreOffice — the text runs
-        // as far as it can and is cut, whether an occupied cell stops it or the
-        // page edge does. Clipping only at an occupied cell left the last one on
-        // a row free to wrap instead, and a wrapped row is taller: the Infos
-        // sheet of tdf171828.xlsx, which declares wrapText nowhere, came out as
-        // paragraphs of six lines where LibreOffice prints one and cuts it.
+        // Cut to the width the cell will have. The estimate cannot be exact —
+        // the font is not known here — so CellProperties.noWrap below makes the
+        // layout drop whatever still spills onto a second line. The cut is what
+        // handles the case the layout cannot: a single unbreakable word, which
+        // has no line break to drop and would otherwise run past the cell.
         text = clipToWidth(text, availTwips, charTwips(xf, styles));
         // Claim the empty neighbours the text runs over. Without this the cell
         // keeps its single column's width and the layout WRAPS the text inside
@@ -878,6 +903,9 @@ export function worksheetToBody(
         ...(sparkline ? { sparkline } : {}),
         ...(borders ? { borders } : {}),
         ...(dropdown ? { dropdown: true } : {}),
+        // §18.8.1: without wrapText a cell's text is one line, cut at its box.
+        // Rotated and shrink-to-fit cells have their own handling.
+        ...(!wrapText && !rotated && !shrinkToFit && !merge ? { noWrap: true } : {}),
       };
 
       // §18.8.1 indent (E-SHEET W6): a left indent of N levels ≈ N×3 characters,
@@ -1038,9 +1066,7 @@ export function worksheetToBody(
   const fitWide = worksheet.fitToPage ? (worksheet.pageSetup?.fitToWidth ?? 1) : 1;
   // Round DOWN so the scaled columns pack into the intended page count (rounding
   // up can spill the last column of a band onto an extra page).
-  const bandWidths = scaled
-    ? visibleWidths.map((w) => Math.max(1, Math.floor(w * printScale)))
-    : visibleWidths;
+  const bandWidths = scaledColumnWidths(visibleWidths, printScale, scaled);
   const bandTotal = bandWidths.reduce((sum, w) => sum + w, 0);
   if (
     colCount > 1 &&
@@ -1743,6 +1769,15 @@ function overflowColumnsPastUsedRange(
     extra++;
   }
   return extra;
+}
+
+/** Column widths as the bands see them: shrunk by the print scale, floor-rounded. */
+function scaledColumnWidths(
+  widths: ReadonlyArray<number>,
+  printScale: number,
+  scaled: boolean,
+): Array<number> {
+  return scaled ? widths.map((w) => Math.max(1, Math.floor(w * printScale))) : [...widths];
 }
 
 /**
