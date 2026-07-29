@@ -1138,16 +1138,28 @@ function buildSectionContext(
     dims.footerOffsetPt,
   );
   const columns = buildColumnGeometry(section.properties.columns, contentWidth);
+  // A header band taller than the gap between its own offset and the top margin
+  // would otherwise be drawn straight over the first rows of the body. Excel and
+  // Word both push the body down instead; a multi-line header is ordinary (a
+  // spreadsheet header region may carry a literal line break).
+  const headerBottom =
+    dims.headerOffsetPt +
+    Math.max(
+      headerSet.default.heightPt ?? 0,
+      headerSet.first.heightPt ?? 0,
+      headerSet.even.heightPt ?? 0,
+    );
+  const marginTop = Math.max(dims.marginTop, headerBottom);
   return {
     endIndex: section.endIndex,
     properties: section.properties,
     pageWidth: dims.pageWidth,
     pageHeight: dims.pageHeight,
     marginLeft: dims.marginLeft,
-    marginTop: dims.marginTop,
+    marginTop,
     marginBottom: dims.marginBottom,
     contentWidth,
-    pageContentHeight: dims.pageHeight - dims.marginTop - dims.marginBottom,
+    pageContentHeight: dims.pageHeight - marginTop - dims.marginBottom,
     ...(columns ? { columns } : {}),
     headerSet,
     footerSet,
@@ -1198,6 +1210,8 @@ type HfBand = 'default' | 'first' | 'even';
 interface HfBandEntry {
   readonly commands: Array<PageItem>;
   readonly renderDynamic?: (pageNumber: number, totalPages: number) => Array<PageItem>;
+  /** Laid-out height of the band, so the body can be kept clear of it. */
+  readonly heightPt?: number;
 }
 
 interface HeaderFooterSet {
@@ -1232,21 +1246,38 @@ function layoutHeaderSet(
     if (!ref) return { commands: [] };
     const content = headersFooters.get(ref.relationshipId);
     if (!content) return { commands: [] };
+    let measured = 0;
     const render = (c: ReadonlyArray<BodyElement>): Array<PageItem> => {
       const blocks = laidOutBlocksFor(c, options, fontResources, contentWidth);
+      measured = blocksHeight(blocks);
       return markPagination(
         drawBlocksSequentially(blocks, marginLeft, pageHeight - headerOffsetPt, pageHeight),
       );
     };
     if (contentHasPageFields(content)) {
+      // Measure once with placeholder values so the height is known before the
+      // first page is composed; the per-page render replaces the commands.
+      render(substitutePageFields(content, 1, 1));
       return {
         commands: [],
+        heightPt: measured,
         renderDynamic: (n, total) => render(substitutePageFields(content, n, total)),
       };
     }
-    return { commands: render(content) };
+    const commands = render(content);
+    return { commands, heightPt: measured };
   };
   return { default: band('default'), first: band('first'), even: band('even') };
+}
+
+/** Total laid-out height of a run of blocks, paragraph spacing included. */
+function blocksHeight(blocks: ReadonlyArray<LaidOutBlock>): number {
+  return blocks.reduce(
+    (sum, b) =>
+      sum +
+      (b.kind === 'paragraph' ? b.spacingBeforePt + b.heightPt + b.spacingAfterPt : b.heightPt),
+    0,
+  );
 }
 
 function layoutFooterSet(
@@ -3104,9 +3135,13 @@ function layoutTableCell(
   // A conditional-format icon (E-SHEET SC1c) reserves a left gutter; the cell's
   // text is inset past it so the glyph and the value never overlap.
   const padLeftPt = padLeftBase + (cell.properties.icon ? CF_ICON_GUTTER_PT : 0);
-  // A data-validation dropdown (E-SHEET SV1) reserves a right gutter so the value
-  // never runs under the button.
-  const padRightPt = padRightBase + (cell.properties.dropdown ? DROPDOWN_GUTTER_PT : 0);
+  // A data-validation dropdown is NOT laid out. The arrow is a selection
+  // affordance: it appears when a cell is selected and neither Excel nor
+  // LibreOffice ever prints it. Drawing it put a grey button inside printed
+  // table cells, and its gutter and minimum height pushed tdf58243.xlsx onto a
+  // third page the reference fits in two. CellProperties.dropdown survives for
+  // the HTML writer, which renders an interactive view rather than a page.
+  const padRightPt = padRightBase;
 
   const innerWidth = Math.max(1, widthPt - padLeftPt - padRightPt);
   const lines: Array<Line> = [];
@@ -3173,7 +3208,6 @@ function layoutTableCell(
     ...(cell.properties.dataBar ? { dataBar: cell.properties.dataBar } : {}),
     ...(cell.properties.icon ? { icon: cell.properties.icon } : {}),
     ...(cell.properties.sparkline ? { sparkline: cell.properties.sparkline } : {}),
-    ...(cell.properties.dropdown ? { dropdown: true } : {}),
     lines,
     ...(nestedTables.length > 0 ? { nestedTables } : {}),
     contentHeightPt,

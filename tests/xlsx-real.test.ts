@@ -12,13 +12,27 @@ import { dirname, resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import type { FontBytesByVariant } from '@/core/font';
 import { OpcPackage } from '@/core/opc';
+import { convertXlsxToPdfSync } from '@/core/converter';
 import { Ream } from '@/core/converter/ream';
 import { readXlsx, readXlsxToSheetDoc } from '@/excel/xlsx-reader';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const load = (name: string): Uint8Array =>
   new Uint8Array(readFileSync(resolve(here, 'fixtures/real', name)));
+
+const FONTS: { fonts: FontBytesByVariant } = {
+  fonts: {
+    regular: new Uint8Array(readFileSync(resolve(here, 'fixtures/fonts/Roboto-Regular.ttf'))),
+    bold: new Uint8Array(readFileSync(resolve(here, 'fixtures/fonts/Roboto-Bold.ttf'))),
+    italic: new Uint8Array(readFileSync(resolve(here, 'fixtures/fonts/Roboto-Italic.ttf'))),
+    boldItalic: new Uint8Array(readFileSync(resolve(here, 'fixtures/fonts/Roboto-BoldItalic.ttf'))),
+  },
+};
+
+const pageCount = (pdf: Uint8Array): number =>
+  (new TextDecoder('latin1').decode(pdf).match(/\/MediaBox/g) ?? []).length;
 
 /** Cells carrying visible text in the projected document. */
 function textCells(bytes: Uint8Array): Array<string> {
@@ -116,6 +130,42 @@ describe('real documents: SpreadsheetML dialects', () => {
     const text = textCells(load('AverageTaxRates.xlsx'));
     expect(text).not.toContain('4,726');
     expect(text).not.toContain('6,000');
+  });
+
+  it('tdf58243.xlsx — three things a page-count check cannot see', () => {
+    const sd = readXlsxToSheetDoc(load('tdf58243.xlsx'));
+
+    // §18.8.3 <color indexed="10"> — the legacy palette, still what Excel writes
+    // for a colour picked from the classic dropdown. Ignoring the attribute
+    // rendered these headers black where every other reader shows red.
+    expect(sd.styles.fonts.some((f) => f.colorHex === 'FF0000')).toBe(true);
+
+    // The dropdown arrow of a data-validation `list` cell is a selection
+    // affordance; neither Excel nor LibreOffice prints it, and drawing it also
+    // reserved a gutter and a minimum height that cost a whole page. The flag
+    // stays on the cell — the HTML writer renders an interactive view and wants
+    // it — but the paginated layout must not paint it.
+    expect(sd.sheets[0]!.grid.dataValidations?.some((v) => v.type === 'list')).toBe(true);
+    const { doc } = readXlsx(load('tdf58243.xlsx'));
+    const table = doc.body.find((e) => e.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('expected a table');
+    expect(table.table.rows.some((r) => r.cells.some((c) => c.properties.dropdown))).toBe(true);
+    // Pinned, not argued: removing the button did not by itself close the
+    // page-count gap to LibreOffice's 2, so the remaining difference is
+    // something else and this records where we stand.
+    expect(pageCount(convertXlsxToPdfSync(load('tdf58243.xlsx'), FONTS))).toBe(3);
+
+    // A literal CR LF inside the centre header region is a line break, not text
+    // — drawn as text it came out as a missing-glyph box mid-title.
+    const bands = [...(doc.headersFooters?.values() ?? [])].flat();
+    const centre = bands.filter(
+      (b) => b.kind === 'paragraph' && b.paragraph.properties.alignment === 'center',
+    );
+    expect(centre.length).toBeGreaterThanOrEqual(2);
+    for (const b of bands) {
+      if (b.kind !== 'paragraph') continue;
+      for (const run of b.paragraph.runs) expect(run.text).not.toMatch(/[\r\n]/);
+    }
   });
 
   it('duplicate-filename.xlsx — t="inlineStr" written into <v>', () => {

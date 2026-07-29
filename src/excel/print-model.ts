@@ -814,7 +814,9 @@ export function worksheetToBody(
         }
       }
 
-      // A data-validation `list` cell paints a dropdown affordance (E-SHEET SV1).
+      // A data-validation `list` cell (E-SHEET SV1). The HTML writer paints an
+      // affordance for it; the paginated layout deliberately does not — see
+      // CellProperties.dropdown.
       const dropdown = dropdownRanges.length > 0 && rangesCover(dropdownRanges, absR, absC);
 
       // A cell covered by an external hyperlink (E-SHEET W3) → its run takes the URL.

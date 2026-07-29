@@ -33,14 +33,39 @@ export function buildHeaderFooterContent(
   const regions = parseHeaderFooterString(formatString, sheetName);
   const out: Array<BodyElement> = [];
   const para = (runs: ReadonlyArray<Run>, alignment: Alignment): void => {
-    if (runs.length > 0) {
-      out.push({ kind: 'paragraph', paragraph: { properties: { alignment }, runs: [...runs] } });
+    for (const line of splitLines(runs)) {
+      if (line.length > 0) {
+        out.push({ kind: 'paragraph', paragraph: { properties: { alignment }, runs: line } });
+      }
     }
   };
   para(regions.left, 'left');
   para(regions.center, 'center');
   para(regions.right, 'right');
   return out;
+}
+
+/**
+ * Break a region's runs at the line breaks Excel allows inside one — a header
+ * region is not necessarily one line.
+ *
+ * The break is a literal CR/LF in the format string, not a `&`-code, so it
+ * arrives as text. Left as text it is drawn: tdf58243.xlsx puts a CR LF in the
+ * middle of its centre header and we rendered the carriage return as a missing
+ * glyph — a tofu box mid-title — with the rest of the title running on after it
+ * where every other reader starts a second line.
+ */
+function splitLines(runs: ReadonlyArray<Run>): Array<Array<Run>> {
+  const lines: Array<Array<Run>> = [[]];
+  for (const run of runs) {
+    const parts = run.text.split(/\r\n|\r|\n/);
+    for (let i = 0; i < parts.length; i++) {
+      if (i > 0) lines.push([]);
+      const text = parts[i]!;
+      if (text.length > 0) lines[lines.length - 1]!.push({ ...run, text });
+    }
+  }
+  return lines;
 }
 
 // Single-pass scan of the &-code string. The default region (before any &L/&C/&R)
