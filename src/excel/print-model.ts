@@ -1859,7 +1859,10 @@ function splitCellLines(runs: ReadonlyArray<Run>, wrapText: boolean): Array<Arra
       if (text.length > 0) lines[lines.length - 1]!.push({ ...run, text });
     }
   }
-  return lines.filter((l) => l.length > 0);
+  // Interior and trailing blanks are kept — "a\n\nb" is three lines in Excel
+  // and the middle one is empty. Only a cell that is nothing BUT breaks
+  // collapses to no content at all, the same as an empty cell.
+  return lines.some((l) => l.length > 0) ? lines : [];
 }
 
 /** §18.8.1 `<alignment vertical>`, defaulting to Excel's bottom. */
