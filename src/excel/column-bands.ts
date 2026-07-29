@@ -91,6 +91,13 @@ export function bandedTables(
           : row.properties;
       return { properties: rowProps, cells };
     });
+    // A band with nothing in it draws nothing — but its rows still consume
+    // their height, and on a sheet whose content sits at opposite ends of a
+    // 16 000-column span that is thousands of bands' worth of blank page.
+    // too-many-cols-rows.xlsx made 45 pages that way, 43 of them carrying
+    // nothing but the running header and footer. The first band is kept
+    // regardless, so a sheet that really is empty still renders as one.
+    if (bandIndex > 0 && !bandRows.some(rowDrawsSomething)) return [];
     // Cut at the print-title row so it leads its table and repeats, keeping the
     // two halves inside their own band — the bands paginate one after the other
     // (`pageOrder="downThenOver"`), so they must not be interleaved.
@@ -99,6 +106,22 @@ export function bandedTables(
       ? [bandRows.slice(0, titleRowIndex), bandRows.slice(titleRowIndex)]
       : [bandRows];
     return parts.map((r) => ({ kind: 'table' as const, table: { properties, grid, rows: r } }));
+  });
+}
+
+/** Whether a row would put anything on the page — content, fill, border or mark. */
+function rowDrawsSomething(row: TableRow): boolean {
+  return row.cells.some((cell) => {
+    if (cell.content.length > 0) return true;
+    const p = cell.properties;
+    return (
+      p.shading !== undefined ||
+      p.borders !== undefined ||
+      p.dataBar !== undefined ||
+      p.icon !== undefined ||
+      p.sparkline !== undefined ||
+      p.dropdown === true
+    );
   });
 }
 
