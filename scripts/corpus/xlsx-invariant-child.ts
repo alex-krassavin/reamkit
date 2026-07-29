@@ -52,6 +52,13 @@ const SHEET_DATA = /<(?:[A-Za-z_][\w.-]*:)?sheetData[\s>/]/;
 // are not cells of this document and Excel renders none of them, so counting
 // them would make a correct reader look like it dropped content.
 const EXTERNAL_LINK_PART = /^xl\/externalLinks\//i;
+// §18.2.19 `<sheet state="hidden">`. A hidden tab is content the DOCUMENT says
+// not to print — Excel and LibreOffice both leave it out — so counting its
+// cells marks a reader that correctly omits it as having lost something. The
+// relationship id is the only link from the tab to its part, so resolve through
+// the workbook's own rels rather than guessing at file names.
+const SHEET_ELEMENT = /<(?:[A-Za-z_][\w.-]*:)?sheet\b[^>]*\/?>/g;
+const RELATIONSHIP_ELEMENT = /<Relationship\b[^>]*\/?>/g;
 
 /**
  * Count the value-bearing cells straight from the package XML — the reference
@@ -61,14 +68,38 @@ const EXTERNAL_LINK_PART = /^xl\/externalLinks\//i;
  */
 function countRawValueCells(bytes: Uint8Array): number {
   const pkg = OpcPackage.open(bytes);
+  const hiddenParts = hiddenSheetParts(pkg);
   let total = 0;
   for (const part of pkg.listParts()) {
     if (!XL_PART.test(part) || EXTERNAL_LINK_PART.test(part)) continue;
+    if (hiddenParts.has(part)) continue;
     const xml = decoder.decode(pkg.requirePart(part));
     if (!SHEET_DATA.test(xml)) continue;
     total += countPrintableValues(xml);
   }
   return total;
+}
+
+/** The worksheet parts belonging to tabs the workbook marks hidden. */
+function hiddenSheetParts(pkg: OpcPackage): Set<string> {
+  const out = new Set<string>();
+  const wb = pkg.getPart('xl/workbook.xml');
+  const rels = pkg.getPart('xl/_rels/workbook.xml.rels');
+  if (!wb || !rels) return out;
+  const targets = new Map<string, string>();
+  for (const tag of decoder.decode(rels).match(RELATIONSHIP_ELEMENT) ?? []) {
+    const id = attr(tag, 'Id');
+    const target = attr(tag, 'Target');
+    if (id && target) targets.set(id, target.replace(/^\/?(xl\/)?/, 'xl/'));
+  }
+  for (const tag of decoder.decode(wb).match(SHEET_ELEMENT) ?? []) {
+    const state = attr(tag, 'state');
+    if (state !== 'hidden' && state !== 'veryHidden') continue;
+    const id = attr(tag, 'r:id') ?? attr(tag, 'id');
+    const target = id ? targets.get(id) : undefined;
+    if (target) out.add(target);
+  }
+  return out;
 }
 
 // §18.3.1.13 / §18.3.1.73 `hidden`. A hidden row or column is content the

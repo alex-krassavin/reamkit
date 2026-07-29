@@ -1109,12 +1109,15 @@ function inlineStringText(is: unknown): string {
   const t = obj['t'];
   const direct = textOf(t);
   if (direct) return direct.length > MAX_CELL_CHARS ? direct.slice(0, MAX_CELL_CHARS) : direct;
-  const r = obj['r'];
-  if (Array.isArray(r)) {
-    const joined = r
-      .map((rr) => textOf((rr as Record<string, unknown> | undefined)?.['t']))
-      .join('');
-    return joined.length > MAX_CELL_CHARS ? joined.slice(0, MAX_CELL_CHARS) : joined;
-  }
-  return '';
+  // §18.4.8 `<is>` holds either a bare `<t>` or a sequence of `<r>` runs — and a
+  // SINGLE run is one object, not an array of one. Reading only the array form
+  // dropped every inline string a producer wrote as one formatted run:
+  // 52348.xlsx labels its whole header row `<is><r><rPr/><t>Category</t></r></is>`
+  // and every one of those cells came out empty.
+  const raw = obj['r'];
+  const runs: Array<unknown> = Array.isArray(raw) ? raw : raw !== undefined ? [raw] : [];
+  const joined = runs
+    .map((rr) => textOf((rr as Record<string, unknown> | undefined)?.['t']))
+    .join('');
+  return joined.length > MAX_CELL_CHARS ? joined.slice(0, MAX_CELL_CHARS) : joined;
 }
