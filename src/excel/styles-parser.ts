@@ -375,7 +375,7 @@ function averageGradientColor(gf: Record<string, unknown> | undefined): string |
  * Entries 0-7 are repeated at 8-15 (a quirk of the original palette); 64 and 65
  * are the system foreground and background.
  */
-const INDEXED_COLORS: ReadonlyArray<string> = [
+export const INDEXED_COLORS: ReadonlyArray<string> = [
   '000000',
   'FFFFFF',
   'FF0000',

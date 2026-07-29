@@ -6,6 +6,8 @@
 //     and `[colour]` / `[locale]` codes (the latter two stripped silently)
 // Dates (m/d/yyyy etc.) are deferred — the cell value is shown verbatim.
 
+import { INDEXED_COLORS } from '@/excel/styles-parser';
+
 const BUILTIN: ReadonlyMap<number, string> = new Map([
   [0, 'General'],
   [1, '0'],
@@ -77,6 +79,66 @@ export function applyNumberFormat(
   if (format.trim().toLowerCase() === 'general') return defaultNumberRender(rawValue);
 
   return applyFormatString(rawValue, format);
+}
+
+/**
+ * The colour a number format paints its cell in (§18.8.31), as a 6-digit RRGGBB,
+ * or undefined when the section that applies declares none.
+ *
+ * A `[Red]` at the head of a section is part of the format, not decoration: the
+ * accounting codes write the negative section as `[Red]-#,##0.00`, and rendering
+ * it in the cell's own font colour loses the one signal the format exists for.
+ * `[Color 12]` indexes the same legacy palette a `<color indexed>` does.
+ *
+ * @param rawValue      The cell's raw stored value — it selects the section.
+ * @param numFmtId      The number-format id from the cell's `cellXf`.
+ * @param customFormats Custom format codes by id (from `<numFmts>`).
+ */
+export function numberFormatColorHex(
+  rawValue: string,
+  numFmtId: number,
+  customFormats: ReadonlyMap<number, string>,
+): string | undefined {
+  const format = customFormats.get(numFmtId) ?? BUILTIN.get(numFmtId);
+  if (format === undefined || !format.includes('[')) return undefined;
+  const sections = splitSections(format);
+  const n = Number(rawValue);
+  const section = Number.isFinite(n)
+    ? (sections[sectionIndexFor(n, sections)] ?? sections[0]!)
+    : (sections[3] ?? sections[0]!);
+  return colorOfSection(section);
+}
+
+const FORMAT_COLORS: ReadonlyMap<string, string> = new Map([
+  ['black', '000000'],
+  ['blue', '0000FF'],
+  ['cyan', '00FFFF'],
+  ['green', '00FF00'],
+  ['magenta', 'FF00FF'],
+  ['red', 'FF0000'],
+  ['white', 'FFFFFF'],
+  ['yellow', 'FFFF00'],
+]);
+
+function colorOfSection(section: string): string | undefined {
+  for (const m of section.matchAll(/\[([^\]]*)\]/g)) {
+    const body = m[1]!.trim().toLowerCase();
+    const named = FORMAT_COLORS.get(body);
+    if (named !== undefined) return named;
+    const indexed = /^color\s*(\d+)$/.exec(body);
+    if (indexed) {
+      // §18.8.31 numbers the palette from 1; §18.8.27 indexes it from 0.
+      const i = Number(indexed[1]) - 1;
+      if (i >= 0 && i < INDEXED_COLORS.length) return INDEXED_COLORS[i];
+    }
+  }
+  return undefined;
+}
+
+function sectionIndexFor(n: number, sections: ReadonlyArray<string>): number {
+  if (n > 0) return 0;
+  if (n < 0) return sections.length > 1 ? 1 : 0;
+  return sections.length > 2 ? 2 : 0;
 }
 
 /**
@@ -407,11 +469,7 @@ function applyFormatString(rawValue: string, format: string): string {
     return rawValue;
   }
 
-  let sectionIdx: number;
-  if (n > 0) sectionIdx = 0;
-  else if (n < 0) sectionIdx = sections.length > 1 ? 1 : 0;
-  else sectionIdx = sections.length > 2 ? 2 : 0;
-
+  const sectionIdx = sectionIndexFor(n, sections);
   const section = sections[sectionIdx] ?? sections[0]!;
   return applyNumericSection(n, section, sectionIdx === 1);
 }
@@ -495,9 +553,110 @@ function formatScientific(value: number, cleaned: string, negativeSection: boole
   return `${signPrefix}${mantStr}${eChar}${expSign}${expStr}`;
 }
 
+/**
+ * Resolve the `[...]` codes a numeric section may carry (§18.8.31).
+ *
+ * `[$SYMBOL-LOCALE]` is a currency tag and its SYMBOL is *rendered* — dropping
+ * the whole bracket, as a colour or a locale is dropped, silently loses the `$`
+ * from `[$$-409]#,##0`. The symbol becomes a quoted literal so the placeholder
+ * grammar treats it as text. Everything else in brackets (colours, locales,
+ * conditions) is decoration here and goes.
+ */
+function resolveBracketCodes(format: string): string {
+  return format.replace(/\[([^\]]*)\]/g, (_, body: string) => {
+    const currency = /^\$([^-]*)(?:-.*)?$/.exec(body);
+    const symbol = currency?.[1]?.replace(/"/g, '') ?? '';
+    return symbol.length > 0 ? `"${symbol}"` : '';
+  });
+}
+
+/**
+ * §18.8.31 fraction formats — `# ?/?`, `# ??/??`, `?/?`, `# ?/16`.
+ *
+ * `?` is a digit placeholder like `#` but padded to width with spaces, and the
+ * count of them on the right of the slash bounds the denominator: `??` admits
+ * any denominator up to 99, so 25.378 renders as "25 31/82". A literal number
+ * there instead (`?/16`) fixes the denominator. Returns undefined when the
+ * section is not a fraction, leaving the ordinary grammar to run.
+ */
+function formatFraction(
+  value: number,
+  cleaned: string,
+  negativeSection: boolean,
+): string | undefined {
+  const m = /^(.*?)([0#?]+)\s*\/\s*([0#?]+|\d+)(.*)$/.exec(cleaned);
+  if (!m) return undefined;
+  const head = m[1]!;
+  const denFmt = m[3]!;
+  const tail = m[4]!;
+
+  // The integer part, if any, is the placeholder run at the end of the head.
+  const intMatch = /[0#?]+\s*$/.exec(head);
+  const literalPrefix = unquoteLiteral(head.substring(0, intMatch ? intMatch.index : head.length));
+  const hasInteger = intMatch !== null;
+
+  const magnitude = Math.abs(value);
+  const whole = hasInteger ? Math.floor(magnitude) : 0;
+  const rest = magnitude - whole;
+
+  const fixedDen = /^\d+$/.test(denFmt) ? Number(denFmt) : undefined;
+  const maxDen = fixedDen ?? Math.pow(10, denFmt.length) - 1;
+  if (!Number.isFinite(maxDen) || maxDen < 1) return undefined;
+
+  let num: number;
+  let den: number;
+  if (fixedDen !== undefined) {
+    den = fixedDen;
+    num = Math.round(rest * fixedDen);
+  } else {
+    [num, den] = bestRational(rest, maxDen);
+  }
+  const pieces: Array<string> = [];
+  if (hasInteger) {
+    // Rounding can carry the fraction to a whole unit; without an integer field
+    // to carry into (`?/?` is an improper fraction) it stays in the numerator.
+    let integer = whole;
+    if (den > 0 && num >= den) {
+      integer += Math.floor(num / den);
+      num %= den;
+    }
+    if (integer !== 0 || num === 0) pieces.push(String(integer));
+  }
+  if (num !== 0 || !hasInteger) pieces.push(`${num}/${den}`);
+
+  const sign = value < 0 && !negativeSection ? '-' : '';
+  return `${literalPrefix}${sign}${pieces.join(' ')}${unquoteLiteral(tail)}`;
+}
+
+/**
+ * The closest `n/d` to `value` with `d <= maxDen`, by continued fractions —
+ * the same approximation Excel and LibreOffice show for a `?/?` format.
+ */
+function bestRational(value: number, maxDen: number): [number, number] {
+  if (value === 0) return [0, 1];
+  let [prevN, prevD] = [0, 1];
+  let [n, d] = [1, 0];
+  let x = value;
+  for (let i = 0; i < 64; i++) {
+    const a = Math.floor(x);
+    const nextN = a * n + prevN;
+    const nextD = a * d + prevD;
+    if (nextD > maxDen) break;
+    [prevN, prevD] = [n, d];
+    [n, d] = [nextN, nextD];
+    const frac = x - a;
+    if (frac < 1e-12) break;
+    x = 1 / frac;
+  }
+  if (d === 0) return [Math.round(value * maxDen), maxDen];
+  return [n, d];
+}
+
 function applyNumericSection(value: number, format: string, negativeSection: boolean): string {
-  // Strip [colour] / [locale] codes.
-  const cleaned = format.replace(/\[[^\]]*\]/g, '');
+  const cleaned = resolveBracketCodes(format);
+
+  const fraction = formatFraction(value, cleaned, negativeSection);
+  if (fraction !== undefined) return fraction;
 
   if (/[eE][+-]/.test(cleaned)) return formatScientific(value, cleaned, negativeSection);
 

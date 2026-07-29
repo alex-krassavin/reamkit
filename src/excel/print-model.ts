@@ -55,7 +55,7 @@ import type { SheetHyperlink, SheetSlicer } from '@/core/ir/sheet';
 import type { Loss } from '@/core/ir/loss';
 import { FEATURES } from '@/core/ir/features';
 import { eighthPtToPt, halfPtToPt, pt, twipsToPt } from '@/core/ir';
-import { applyNumberFormat, parseAreaRef, parseTitleRowRange } from '@/excel';
+import { applyNumberFormat, numberFormatColorHex, parseAreaRef, parseTitleRowRange } from '@/excel';
 import { bandedTables, computeColumnBands } from '@/excel/column-bands';
 import { buildConditionalFormatter } from '@/excel/conditional-format';
 
@@ -711,6 +711,15 @@ export function worksheetToBody(
       textBudget -= text.length;
       const xf = ws && ws.styleIndex !== undefined ? styles.cellXfs[ws.styleIndex] : undefined;
       let runProps = cellRunProps(xf);
+      // §18.8.31: the section that applied may name a colour — `[Red]-#,##0.00`
+      // is how every accounting format marks a negative. It belongs to the
+      // format, not to the font, and conditional formatting still overrides it.
+      if (ws?.type === 'n' && xf?.numFmtId) {
+        const fmtColor = numberFormatColorHex(ws.rawValue, xf.numFmtId, styles.numFmts);
+        if (fmtColor !== undefined && fmtColor !== runProps.colorHex) {
+          runProps = { ...runProps, colorHex: fmtColor };
+        }
+      }
       const alignment = alignmentFromXf(xf, ws?.type);
       let shading = xf ? shadingFromXf(xf, styles) : undefined;
       // A table's banded/header fill + header text colour sit below the cell's

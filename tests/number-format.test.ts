@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { applyNumberFormat } from '@/excel';
+import { applyNumberFormat, numberFormatColorHex } from '@/excel';
 
 const noCustom = new Map<number, string>();
 
@@ -159,6 +159,47 @@ describe('applyNumberFormat — codes real producers write', () => {
     expect(applyNumberFormat('3.14159270833', 165, fmt)).toBe('271433.61');
     expect(applyNumberFormat('0.0424', 166, fmt)).toBe('61:03');
     expect(applyNumberFormat('3.14159270833', 167, fmt)).toBe('75:23');
+  });
+
+  it('renders the currency symbol out of a [$SYMBOL-LOCALE] tag', () => {
+    // Dropped with the bracket — as a colour or a locale is — `[$$-409]#,##0`
+    // silently lost its "$" and formats.xlsx printed a bare 12,345.00.
+    const fmt = new Map<number, string>([
+      [164, '[$$-409]#,##0;[RED]\\-[$$-409]#,##0'],
+      [165, '#,##0.00\\ [$USD]'],
+      [166, '[$-409]#,##0'],
+    ]);
+    expect(applyNumberFormat('12345', 164, fmt)).toBe('$12,345');
+    expect(applyNumberFormat('-1234', 164, fmt)).toBe('-$1,234');
+    expect(applyNumberFormat('1234.5', 165, fmt)).toBe('1,234.50 USD');
+    // A locale with no symbol contributes nothing.
+    expect(applyNumberFormat('12345', 166, fmt)).toBe('12,345');
+  });
+
+  it('approximates fractions to the denominator the format allows', () => {
+    const fmt = new Map<number, string>([
+      [164, '# ??/??'],
+      [165, '# ?/?'],
+      [166, '?/?'],
+      [167, '# ?/16'],
+    ]);
+    expect(applyNumberFormat('25.378', 164, fmt)).toBe('25 31/82');
+    expect(applyNumberFormat('2.55', 165, fmt)).toBe('2 5/9');
+    expect(applyNumberFormat('0.3889', 166, fmt)).toBe('2/5');
+    expect(applyNumberFormat('3.3', 167, fmt)).toBe('3 5/16');
+    // A whole number keeps its integer and drops the fraction entirely.
+    expect(applyNumberFormat('4', 164, fmt)).toBe('4');
+  });
+
+  it('reports the colour the applying section names', () => {
+    const fmt = new Map<number, string>([[164, '[$$-409]#,##0;[RED]\\-[$$-409]#,##0']]);
+    expect(numberFormatColorHex('12345', 164, fmt)).toBeUndefined();
+    expect(numberFormatColorHex('-1234', 164, fmt)).toBe('FF0000');
+    // Built-in 40 is #,##0.00_);[Red](#,##0.00).
+    expect(numberFormatColorHex('-5', 40, noCustom)).toBe('FF0000');
+    expect(numberFormatColorHex('5', 40, noCustom)).toBeUndefined();
+    // [Color n] indexes the §18.8.27 palette, numbered from 1 here.
+    expect(numberFormatColorHex('1', 164, new Map([[164, '[Color 5]0']]))).toBe('0000FF');
   });
 
   it('reads .0 after a seconds token as its decimals (built-in 47)', () => {
