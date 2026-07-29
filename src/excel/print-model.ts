@@ -817,8 +817,14 @@ export function worksheetToBody(
           availTwips += columnWidths[cc]!;
           cc++;
         }
-        // An occupied cell stops the overflow → clip to the width available.
-        if (cc < colCount) text = clipToWidth(text, availTwips, charTwips(xf, styles));
+        // Clip to the width the cell will actually have. A cell that does not
+        // declare wrapText never wraps in Excel or LibreOffice — the text runs
+        // as far as it can and is cut, whether an occupied cell stops it or the
+        // page edge does. Clipping only at an occupied cell left the last one on
+        // a row free to wrap instead, and a wrapped row is taller: the Infos
+        // sheet of tdf171828.xlsx, which declares wrapText nowhere, came out as
+        // paragraphs of six lines where LibreOffice prints one and cuts it.
+        text = clipToWidth(text, availTwips, charTwips(xf, styles));
         // Claim the empty neighbours the text runs over. Without this the cell
         // keeps its single column's width and the layout WRAPS the text inside
         // it — three stacked lines where Excel and LibreOffice draw one. The
@@ -1696,16 +1702,27 @@ function overflowColumnsPastUsedRange(
     return defaultTwips;
   };
 
-  let needTwips = 0;
+  // The last cell of each row is the one that can overflow freely: nothing to
+  // its right blocks it, so its text runs on until the page edge. Any earlier
+  // cell is stopped by the next occupied one and clips inside the grid.
+  const lastOfRow = new Map<number, WorksheetCell>();
   for (const cell of worksheet.cells) {
-    if (cell.column !== usedCol) continue;
+    if (!cellHasContent(cell)) continue;
+    const prev = lastOfRow.get(cell.row);
+    if (!prev || cell.column > prev.column) lastOfRow.set(cell.row, cell);
+  }
+
+  let needTwips = 0;
+  for (const cell of lastOfRow.values()) {
     if (!(cell.type === 's' || cell.type === 'str' || cell.type === 'inlineStr')) continue;
     const xf = cell.styleIndex !== undefined ? styles.cellXfs[cell.styleIndex] : undefined;
     const align = xf?.alignment;
     if (align?.wrapText || align?.shrinkToFit || align?.textRotation) continue;
     if (alignmentFromXf(xf, cell.type) !== 'left') continue;
+    let room = 0;
+    for (let abs = cell.column; abs <= usedCol; abs++) room += widthOf(abs);
     const text = resolveCellText(cell, sharedStrings, styles, date1904);
-    needTwips = Math.max(needTwips, estimateChars(text) * charTwips(xf, styles) - widthOf(usedCol));
+    needTwips = Math.max(needTwips, estimateChars(text) * charTwips(xf, styles) - room);
   }
   if (needTwips <= 0) return 0;
 
