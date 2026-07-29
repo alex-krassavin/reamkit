@@ -128,7 +128,6 @@ describe('real documents: SpreadsheetML dialects', () => {
     // so this sheet of option buttons came out as five bare names with their
     // captions and states sitting unread in the .bin beside them.
     const sheet = readXlsxToSheetDoc(load('tdf111980_radioButtons.xlsx')).sheets[0]!;
-    expect(sheet.formControls ?? []).toHaveLength(0);
     const controls = sheet.activeXControls ?? [];
     expect(controls).toHaveLength(5);
     // Typed from the class id — <control> carries no progId to type it by.
@@ -142,6 +141,19 @@ describe('real documents: SpreadsheetML dialects', () => {
     ]);
     // Exactly one of the group is selected, and the group name came through.
     expect(controls.filter((c) => c.value === '1').map((c) => c.groupName)).toEqual(['Sheet1']);
+
+    // Six more controls sit beside them, declared ONLY in the legacy VML: five
+    // Forms-toolbar radio buttons and the group box around two of them. They
+    // have no `<control>` entry and no ctrlProps part, so reading just the
+    // `<controls>` list lost them without a word — LibreOffice draws all six.
+    expect(sheet.formControls).toEqual([
+      { objectType: 'Radio', name: 'Form button1', checked: true },
+      { objectType: 'Radio', name: 'Form button2' },
+      { objectType: 'GBox', name: 'Group Box 7' },
+      { objectType: 'Radio', name: 'Form groupbox1' },
+      { objectType: 'Radio', name: 'Form groupbox2', checked: true },
+      { objectType: 'Radio', name: 'Form outside groupbox3' },
+    ]);
   });
 
   it('AverageTaxRates.xlsx — hidden column and rows stay out of the render', () => {

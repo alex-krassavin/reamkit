@@ -139,6 +139,12 @@ export interface ParsedWorksheet {
   readonly colBreaks?: ReadonlyArray<number>;
   /** §18.3.1.36 `<drawing r:id>` — the sheet's drawing part (charts/shapes). */
   readonly drawingRelId?: string;
+  /**
+   * §18.3.1.36 `<legacyDrawing r:id>` — the relationship to the sheet's VML
+   * drawing part. A form control put on the sheet by Excel's Forms toolbar is
+   * declared there and nowhere else.
+   */
+  readonly legacyDrawingRelId?: string;
   /** §18.3.1.18 `<conditionalFormatting>` — value-driven cell formats (E-SHEET SC1). */
   readonly conditionalFormats?: ReadonlyArray<ConditionalFormat>;
   /**
@@ -662,6 +668,12 @@ export interface HeaderFooter {
 export interface FormControlRef {
   readonly name?: string;
   readonly relId: string;
+  /**
+   * §18.3.1.19 `@shapeId` — the id of this control's shape in the sheet's legacy
+   * VML drawing. It is what tells an ActiveX control's VML shape apart from a
+   * Forms-toolbar control that has no `<control>` entry at all.
+   */
+  readonly shapeId?: string;
 }
 
 /**

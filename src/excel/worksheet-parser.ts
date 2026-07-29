@@ -98,6 +98,13 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
     drawingNode && typeof drawingNode === 'object'
       ? strAttr(drawingNode as Record<string, unknown>, 'id')
       : undefined;
+  // §18.3.1.36 `<legacyDrawing>` — the pre-DrawingML shape part. A sheet's form
+  // controls can live there and nowhere else (see vml-drawing.ts).
+  const legacyNode = wsObj['legacyDrawing'];
+  const legacyDrawingRelId =
+    legacyNode && typeof legacyNode === 'object'
+      ? strAttr(legacyNode as Record<string, unknown>, 'id')
+      : undefined;
   const conditionalFormats = parseConditionalFormatting(wsObj);
   const dataValidations = parseDataValidations(wsObj);
   const hyperlinks = parseHyperlinks(wsObj);
@@ -117,6 +124,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
     ...(colBreaks.length > 0 ? { colBreaks } : {}),
     ...(pane ? { pane } : {}),
     ...(drawingRelId !== undefined ? { drawingRelId } : {}),
+    ...(legacyDrawingRelId !== undefined ? { legacyDrawingRelId } : {}),
     ...(conditionalFormats.length > 0 ? { conditionalFormats } : {}),
     ...(dataValidations.length > 0 ? { dataValidations } : {}),
     ...(hyperlinks.length > 0 ? { hyperlinks } : {}),
@@ -947,7 +955,8 @@ function collectControls(
     if (!relId || seen.has(relId)) continue;
     seen.add(relId);
     const name = strAttr(obj, 'name');
-    out.push({ relId, ...(name ? { name } : {}) });
+    const shapeId = strAttr(obj, 'shapeId');
+    out.push({ relId, ...(name ? { name } : {}), ...(shapeId ? { shapeId } : {}) });
   }
 }
 

@@ -25,6 +25,7 @@ import type {
 import type {
   ExcelTable,
   MergedRange,
+  ParsedWorksheet,
   PivotTable,
   WorksheetCell,
   XlsxStyles,
@@ -53,6 +54,7 @@ import { parsePivotTablePart } from '@/excel/pivot-table-parser';
 import { parseSlicerCachePart, parseSlicerPart } from '@/excel/slicer-parser';
 import { parseLegacyComments, parsePersons, parseThreadedComments } from '@/excel/comments-parser';
 import { parseFormControlProps } from '@/excel/form-control-parser';
+import { parseVmlFormControls } from '@/excel/vml-drawing';
 import {
   activeXBinRelId,
   activeXType,
@@ -382,6 +384,17 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
       if (resolvedControls.length > 0) formControls = resolvedControls;
     }
 
+    // A control put on the sheet by Excel's Forms toolbar is declared ONLY in
+    // the legacy VML drawing — no `<control>` entry, no ctrlProps part. Reading
+    // just the `<controls>` list showed tdf111980_radioButtons.xlsx's five
+    // ActiveX buttons and silently lost the five form radio buttons and the
+    // group box beside them. Shapes whose id matches a `<control shapeId>` are
+    // the ActiveX ones, already resolved above.
+    const legacyControls = readLegacyFormControls(pkg, resolved.path, wsRels, worksheet);
+    if (legacyControls.length > 0) {
+      formControls = [...(formControls ?? []), ...legacyControls];
+    }
+
     // §18.3.* ActiveX / OLE controls (W10): resolve each oleObject's relId to its
     // activeX part (progId → type + the property bag's visible state). Listed
     // after the grid, like form controls.
@@ -467,6 +480,40 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
 // Theme palette: the workbook's theme part merged over the built-in Office
 // defaults (the docx reader's pattern). Drives both chart schemeClr resolution
 // and the table-style accent (E-SHEET SC3).
+/**
+ * The sheet's form controls that live only in its legacy VML drawing (§18.3.1.36).
+ *
+ * Shapes that back an ActiveX control are skipped — their `o:spid` is the
+ * `shapeId` of a `<control>` element, which the caller has already resolved
+ * through the activeX part. What is left is the Forms-toolbar kind, whose
+ * caption and checked state exist nowhere else in the package.
+ */
+function readLegacyFormControls(
+  pkg: OpcPackage,
+  sheetPath: string,
+  wsRels: ReadonlyArray<Relationship>,
+  worksheet: ParsedWorksheet,
+): Array<SheetFormControl> {
+  const relId = worksheet.legacyDrawingRelId;
+  if (relId === undefined) return [];
+  const rel = wsRels.find((r) => r.id === relId);
+  const part = rel ? pkg.resolveRelatedPart(sheetPath, rel) : undefined;
+  if (!part) return [];
+  const activeXShapeIds = new Set(
+    (worksheet.formControls ?? []).map((fc) => fc.shapeId).filter((id) => id !== undefined),
+  );
+  const out: Array<SheetFormControl> = [];
+  for (const shape of parseVmlFormControls(part.data)) {
+    if (shape.shapeId !== undefined && activeXShapeIds.has(shape.shapeId)) continue;
+    out.push({
+      objectType: shape.objectType,
+      ...(shape.caption ? { name: shape.caption } : {}),
+      ...(shape.checked ? { checked: true } : {}),
+    });
+  }
+  return out;
+}
+
 function buildThemePalette(
   pkg: OpcPackage,
   workbookRels: ReadonlyArray<Relationship>,
