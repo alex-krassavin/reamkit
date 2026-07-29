@@ -144,6 +144,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // factor fit-to-page worked out from the grid's totals. The drawings below
     // are anchored to that grid and shrink with it.
     const scaleSink = { value: 1 };
+    const drawingExtentPt = shapeExtentPt(ws.shapes);
     body.push(
       ...worksheetToBody(ws.grid, sheet.sharedStrings, sheet.styles, sheet.date1904, {
         ...(printArea ? { printArea } : {}),
@@ -158,6 +159,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
         ...(options.digitWidthPt !== undefined ? { digitWidthPt: options.digitWidthPt } : {}),
         ...(options.losses ? { losses: options.losses } : {}),
         scaleSink,
+        ...(drawingExtentPt ? { drawingExtentPt } : {}),
       }),
     );
 
@@ -363,6 +365,27 @@ function activeXLabel(c: SheetActiveXControl): string {
 // Expand the first sheet's <headerFooter> into header/footer bands and attach them
 // to its section (creating a minimal section when the sheet has no custom page
 // geometry). The section is returned unchanged when there is no header/footer.
+/**
+ * How far the sheet's drawings reach from its origin, or undefined when it has
+ * none. Fit-to-page has to fit them as well as the cells: a drawing anchored
+ * past the last value is still printed, and on a sheet whose values sit in a
+ * handful of cells it is the drawing that decides the page.
+ */
+function shapeExtentPt(
+  shapes: ReadonlyArray<ShapeBlock> | undefined,
+): { widthPt: number; heightPt: number } | undefined {
+  if (!shapes || shapes.length === 0) return undefined;
+  let widthPt = 0;
+  let heightPt = 0;
+  for (const shape of shapes) {
+    const x = shape.float?.posH?.offsetPt ?? 0;
+    const y = shape.float?.posV?.offsetPt ?? 0;
+    widthPt = Math.max(widthPt, x + shape.width);
+    heightPt = Math.max(heightPt, y + shape.height);
+  }
+  return widthPt > 0 || heightPt > 0 ? { widthPt, heightPt } : undefined;
+}
+
 /**
  * A drawing at the sheet's print scale: its box and the point it floats at
  * shrink together, exactly as the grid beneath them does. Returns the shape

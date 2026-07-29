@@ -354,6 +354,13 @@ interface PrintModelOptions {
   // where the grid's own totals are. Recomputing it outside would mean
   // duplicating the used-range logic and, sooner or later, disagreeing with it.
   readonly scaleSink?: { value: number };
+  // How far the sheet's drawings reach from its origin, in points. A drawing
+  // anchored past the last cell still has to be printed, so fit-to-page has to
+  // fit IT too — measuring only the range the cells occupy left a sheet whose
+  // values sit in a handful of cells and whose callout runs down to row 78 with
+  // nothing to shrink (bnc762542.xlsx), where the reference shrinks to about
+  // four fifths.
+  readonly drawingExtentPt?: { readonly widthPt: number; readonly heightPt: number };
   // Sink for projection losses. The defence-in-depth caps below are correct —
   // a pathological sheet must not exhaust memory — but a cap that fires without
   // saying so is precisely the silent wrongness LossReport exists to prevent.
@@ -438,7 +445,22 @@ export function worksheetToBody(
     if (host.startRow > usedRow) usedRow = host.startRow;
     if (host.startColumn > usedCol) usedCol = host.startColumn;
   }
-  if (usedRow < 0 || usedCol < 0) return []; // nothing but empty styled cells
+  if (usedRow < 0 || usedCol < 0) {
+    // Nothing but empty styled cells — no grid to render. The sheet may still
+    // carry drawings, and fit-to-page still has to fit THEM, so resolve the
+    // scale before leaving: bnc762542.xlsx keeps every value in a styled-empty
+    // cell and prints nothing but its callout.
+    if (print.scaleSink) {
+      print.scaleSink.value = computePrintScale(
+        worksheet,
+        Math.round((print.drawingExtentPt?.widthPt ?? 0) * TWIPS_PER_POINT),
+        sheetContentWidthTwips(worksheet),
+        Math.round((print.drawingExtentPt?.heightPt ?? 0) * TWIPS_PER_POINT),
+        sheetContentHeightTwips(worksheet),
+      );
+    }
+    return [];
+  }
 
   // Overflow does not stop at the used range either. A long string in the last
   // used column keeps running across the empty grid to its right, and Excel and
@@ -644,11 +666,14 @@ export function worksheetToBody(
     if (hiddenRows.has(r)) continue;
     totalGridHeightTwips += rowHeightMap.get(r)?.heightTwips ?? DEFAULT_ROW_TWIPS;
   }
+  // The extent that has to fit is the grid's OR the drawings', whichever
+  // reaches further — see PrintContext.drawingExtentPt.
+  const drawing = print.drawingExtentPt;
   const printScale = computePrintScale(
     worksheet,
-    totalGridTwips,
+    Math.max(totalGridTwips, Math.round((drawing?.widthPt ?? 0) * TWIPS_PER_POINT)),
     sheetContentWidthTwips(worksheet),
-    totalGridHeightTwips,
+    Math.max(totalGridHeightTwips, Math.round((drawing?.heightPt ?? 0) * TWIPS_PER_POINT)),
     sheetContentHeightTwips(worksheet),
   );
   const scaled = printScale < 0.999;
