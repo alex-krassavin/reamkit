@@ -49,6 +49,10 @@ export function parseSheetShapes(
   if (!wsDr) return [];
   const colWidthPt = makeColWidthPt(worksheet);
   const rowHeightPt = makeRowHeightPt(worksheet);
+  // The print scale shrinks the sheet — grid, fonts and row heights alike — and
+  // a drawing anchored to that grid shrinks with it. Left at full size the
+  // shapes of a fit-to-page sheet float over a grid less than half their scale.
+  const scale = explicitPrintScale(worksheet);
 
   const shapes: Array<SheetShape> = [];
   for (const anchor of poChildren(wsDr)) {
@@ -71,8 +75,19 @@ export function parseSheetShapes(
 
     shapes.push({
       shape: {
-        width: pt(box.widthPt),
-        height: pt(box.heightPt),
+        // §20.5.2.35: a `twoCellAnchor` is a TWO-dimensional placement. Emitted
+        // as a plain block the drawing kept only its size and its order down
+        // the page — everything landed against the left margin, which turned
+        // bnc762542.xlsx's callout (three swatches, three leader lines, three
+        // labels, side by side) into a single vertical stack. The layout floats
+        // a shape at its anchor when one is given, so give it one.
+        float: {
+          wrap: 'none' as const,
+          posH: { relativeFrom: 'margin' as const, offsetPt: pt(box.xPt * scale) },
+          posV: { relativeFrom: 'margin' as const, offsetPt: pt(box.yPt * scale) },
+        },
+        width: pt(box.widthPt * scale),
+        height: pt(box.heightPt * scale),
         geometry,
         fill,
         ...(line ? { line } : {}),
@@ -86,10 +101,29 @@ export function parseSheetShapes(
   return shapes.map((s) => s.shape);
 }
 
+/**
+ * The sheet's EXPLICIT print scale (§18.3.1.63 `<pageSetup scale>`), as a
+ * factor. A drawing is anchored to the grid and shrinks with it, so leaving it
+ * at full size floats it over a grid less than half its scale.
+ *
+ * Fit-to-page is deliberately not handled here: its factor falls out of the
+ * grid's own totals, which only the projection knows, and a wrong scale would
+ * be worse than none. Those sheets keep their drawings unscaled for now.
+ */
+function explicitPrintScale(worksheet: ParsedWorksheet): number {
+  if (worksheet.fitToPage) return 1;
+  const pct = worksheet.pageSetup?.scale;
+  if (pct === undefined || !Number.isFinite(pct) || pct <= 0) return 1;
+  return Math.min(1, pct / 100);
+}
+
 interface AnchorBox {
   readonly widthPt: number;
   readonly heightPt: number;
   readonly anchorRow: number;
+  /** Distance from the sheet's top-left corner to the shape's, in points. */
+  readonly xPt: number;
+  readonly yPt: number;
 }
 
 // The shape's size from its anchor: full tracks in [from..to) plus the offset
@@ -105,13 +139,37 @@ function anchorBox(
     if (!from || !to) return undefined;
     const widthPt = span(from.col, from.colOffPt, to.col, to.colOffPt, colWidthPt);
     const heightPt = span(from.row, from.rowOffPt, to.row, to.rowOffPt, rowHeightPt);
-    return widthPt > 0 && heightPt > 0 ? { widthPt, heightPt, anchorRow: from.row } : undefined;
+    if (!(widthPt > 0 && heightPt > 0)) return undefined;
+    return {
+      widthPt,
+      heightPt,
+      anchorRow: from.row,
+      xPt: origin(from.col, from.colOffPt, colWidthPt),
+      yPt: origin(from.row, from.rowOffPt, rowHeightPt),
+    };
   }
   const ext = poChildren(anchor).find((c) => poIs(c, 'xdr:ext'));
   if (!ext) return undefined;
   const widthPt = emuToPt(poIntAttr(ext, 'cx') ?? 0);
   const heightPt = emuToPt(poIntAttr(ext, 'cy') ?? 0);
-  return widthPt > 0 && heightPt > 0 ? { widthPt, heightPt, anchorRow: from?.row ?? 0 } : undefined;
+  if (!(widthPt > 0 && heightPt > 0)) return undefined;
+  return {
+    widthPt,
+    heightPt,
+    anchorRow: from?.row ?? 0,
+    xPt: from ? origin(from.col, from.colOffPt, colWidthPt) : 0,
+    yPt: from ? origin(from.row, from.rowOffPt, rowHeightPt) : 0,
+  };
+}
+
+/**
+ * The distance from the sheet's origin to a marker: every whole track before it
+ * plus the marker's own offset into the one it lands in.
+ */
+function origin(index: number, offsetPt: number, trackPt: (i: number) => number): number {
+  let total = 0;
+  for (let i = 0; i < index; i++) total += trackPt(i);
+  return total + offsetPt;
 }
 
 interface Marker {
