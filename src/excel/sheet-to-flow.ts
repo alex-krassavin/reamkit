@@ -12,6 +12,7 @@ import type {
   SectionProperties,
   ShapeBlock,
 } from '@/core/document-model';
+import type { ParsedWorksheet } from '@/core/spreadsheet-model';
 import type { Pt } from '@/core/ir';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss } from '@/core/ir/loss';
@@ -195,7 +196,15 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // point their `twoCellAnchor` names — scaled with the sheet, since that is
     // what the anchor's tracks were measured in.
     for (const shape of ws.shapes ?? []) {
-      body.push({ kind: 'shape', shape: scaleShape(shape, scaleSink.value) });
+      body.push({
+        kind: 'shape',
+        shape: centreShape(
+          scaleShape(shape, scaleSink.value),
+          ws.grid,
+          drawingExtentPt,
+          scaleSink.value,
+        ),
+      });
     }
 
     // §SV2: slicer panels render as styled button boxes after the grid + charts.
@@ -384,6 +393,46 @@ function shapeExtentPt(
     heightPt = Math.max(heightPt, y + shape.height);
   }
   return widthPt > 0 || heightPt > 0 ? { widthPt, heightPt } : undefined;
+}
+
+/**
+ * `<printOptions horizontalCentered/verticalCentered>` centres what is PRINTED,
+ * and a drawing is printed. We centred the table only, which leaves a drawing
+ * at its raw offset — and on a sheet whose cells are all empty there is no
+ * table to centre at all: bnc762542.xlsx asks for both axes and its callout sat
+ * some 280pt left of where the reference puts it, matching the file's own
+ * numbers exactly but ignoring the request that moves them.
+ */
+function centreShape(
+  shape: ShapeBlock,
+  worksheet: ParsedWorksheet,
+  extent: { widthPt: number; heightPt: number } | undefined,
+  scale: number,
+): ShapeBlock {
+  const options = worksheet.printOptions;
+  if (!extent || (!options?.horizontalCentered && !options?.verticalCentered)) return shape;
+  const section = sectionFromWorksheet(worksheet);
+  const size = section.pageSize;
+  const margins = section.margins;
+  if (!size || !margins) return shape;
+  const dx = options.horizontalCentered
+    ? (size.width - margins.left - margins.right - extent.widthPt * scale) / 2
+    : 0;
+  const dy = options.verticalCentered
+    ? (size.height - margins.top - margins.bottom - extent.heightPt * scale) / 2
+    : 0;
+  if (dx <= 0 && dy <= 0) return shape;
+  const posH = shape.float?.posH;
+  const posV = shape.float?.posV;
+  if (!shape.float) return shape;
+  return {
+    ...shape,
+    float: {
+      ...shape.float,
+      ...(posH && dx > 0 ? { posH: { ...posH, offsetPt: pt((posH.offsetPt ?? 0) + dx) } } : {}),
+      ...(posV && dy > 0 ? { posV: { ...posV, offsetPt: pt((posV.offsetPt ?? 0) + dy) } } : {}),
+    },
+  };
 }
 
 /**
