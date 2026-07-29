@@ -85,7 +85,7 @@
         "heightPt": 792
       }
     ],
-    "chars": 17761,
+    "chars": 17768,
     "firstLines": [
       "Wilfried Schäfer",
       "Wilfried Schäfer",
@@ -102,7 +102,7 @@
       "Wilfried Schäfer",
       "Wilfried Schäfer",
       "Wilfried Schäfer",
-      "Berechnung des effektiven Jahreszins nach der",
+      "Berechnung des effektiven Jahreszins nach der Uniform-M",
       "Berechnung des eff. Jahreszinssatzes bei Anleihen",
       "(Diese Formel weicht bei kleinen Werten für Laufzeit und Agi",
       "Für den effektiven Jahreszinssatz gilt nach einem Jahr (in G",
@@ -114,7 +114,7 @@
       "(vollständige Induktion über",
       ", dann gilt",
       "(wegen 3.2).",
-      "12.9836065573771 11.8032786885246"
+      "12.9836065573771 11.8032786"
     ]
   }
 }

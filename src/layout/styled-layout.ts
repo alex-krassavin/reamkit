@@ -3177,22 +3177,32 @@ function layoutTableCell(
   if (mergeRole !== 'middle' && mergeRole !== 'end') {
     for (const el of cell.content) {
       if (el.kind === 'paragraph') {
+        // A spreadsheet cell that does not ask to wrap never does: the text runs
+        // as far as its box allows and the rest is cut. Only the layout knows
+        // where that falls — it has the font metrics and the resolved width — so
+        // the projection marks the cell and the layout does the cutting.
+        //
+        // It has to cut at the GLYPH, though. Taking the line breaker's first
+        // line instead looks equivalent and is not: the breaker only breaks at
+        // spaces, so a string a hair too wide loses its whole last word rather
+        // than its last letter. tdf82984's "Carta geologica - litologica" came
+        // out as "Carta" where every other reader shows "Carta geol" — 22pt of
+        // white space in a column whose neighbours run full. So measure the
+        // whole line, then trim it to the box.
+        const noWrap = cell.properties.noWrap === true;
         const block = layoutParagraphBlock(
           el.paragraph,
           options,
           fontResources,
           imageResources,
-          innerWidth,
+          noWrap ? NO_WRAP_MEASURE_WIDTH : innerWidth,
         );
-        // A spreadsheet cell that does not ask to wrap never does: the text runs
-        // as far as its box allows and the rest is cut. Only the layout knows
-        // where that falls — it has the font metrics and the resolved width —
-        // so the projection marks the cell and the line breaker's own first line
-        // is the answer. Estimating the cut before layout could only ever be
-        // approximate, and being generous by a few percent wraps one word onto a
-        // second line, which is the whole difference between a one-line row and
-        // a three-line one.
-        const keep = cell.properties.noWrap === true ? block.lines.slice(0, 1) : block.lines;
+        // Up to the cell's right EDGE, not to its inner box: the right padding
+        // keeps wrapped text off the border, but a clip is the border. Excel and
+        // LibreOffice both run the text to it — measured against the inner box
+        // instead, tdf167019's dates lost their last digit and printed
+        // "25/10/201".
+        const keep = noWrap ? clipLineToWidth(block.lines, widthPt - padLeftPt) : block.lines;
         for (const line of keep) {
           lines.push(line);
           contentHeightPt += computeLineHeight(line, block.resolved);
@@ -4613,6 +4623,52 @@ function emitCellBorders(
   pushSide('left', cell.borders.left);
   if (rowIdx === rowCount - 1) pushSide('bottom', cell.borders.bottom);
   if (cell.colStart + cell.colSpan - 1 === colCount - 1) pushSide('right', cell.borders.right);
+}
+
+// Wide enough that the line breaker never breaks: a non-wrapping cell is laid
+// out as one line and then cut to its box. Not Infinity — the breaker does
+// arithmetic with this width.
+const NO_WRAP_MEASURE_WIDTH = 1e6;
+
+/**
+ * One line, trimmed to `widthPt` at the last glyph that fits — what a
+ * non-wrapping spreadsheet cell shows. Everything past the box is dropped;
+ * Excel and LibreOffice paint the straddling glyph and clip it in the middle,
+ * which needs a clip rectangle per cell, so a whole glyph is where we stop.
+ */
+function clipLineToWidth(lines: ReadonlyArray<Line>, widthPt: number): Array<Line> {
+  const line = lines[0];
+  if (!line) return [];
+  if (line.contentWidthPt <= widthPt) return [line];
+  const tokens: Array<Token> = [];
+  let used = 0;
+  for (const token of line.tokens) {
+    const advance = token.widthPt;
+    if (used + advance <= widthPt) {
+      tokens.push(token);
+      used += advance;
+      continue;
+    }
+    // The token that straddles the edge: keep the characters that fit. Only
+    // text can be cut — an image or a formula is atomic and simply drops.
+    if (token.kind === 'text') {
+      const room = widthPt - used;
+      let text = '';
+      let textWidth = 0;
+      for (const ch of token.text) {
+        const next = token.font.measure.textWidthPt(text + ch, token.fontSizePt);
+        if (next > room) break;
+        text += ch;
+        textWidth = next;
+      }
+      if (text.length > 0) {
+        tokens.push({ ...token, text, widthPt: textWidth });
+        used += textWidth;
+      }
+    }
+    break;
+  }
+  return [{ ...line, tokens, contentWidthPt: used }];
 }
 
 /**

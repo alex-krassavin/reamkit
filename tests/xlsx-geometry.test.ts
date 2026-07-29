@@ -259,6 +259,28 @@ describe('grid geometry', () => {
     expect(lines[0]!.text).toBe(phrase);
   });
 
+  it('cuts a non-wrapping cell at the glyph, not back to the last space', () => {
+    // A cell that does not wrap is cut where its box ends. Taking the line
+    // breaker's first line looks equivalent and is not: the breaker only breaks
+    // at spaces, so a string a hair too wide loses its whole last WORD.
+    // tdf82984's "Carta geologica - litologica" printed as "Carta" — a quarter
+    // of the column, with 22pt of white beside neighbours that ran full.
+    const phrase = 'Carta geologica - litologica';
+    const items = placed(
+      buildXlsx({
+        // The neighbour holds content, so the text cannot overflow into it and
+        // has to be cut inside its own column.
+        rows: [[phrase, 'x']],
+        columns: [{ min: 1, max: 2, widthChars: 9 }],
+      }),
+    );
+    const shown = at(items, items.find((i) => i.text.startsWith('Carta'))?.text ?? '').text;
+    expect(phrase.startsWith(shown)).toBe(true);
+    // More than the first word, and not the whole string either.
+    expect(shown.length).toBeGreaterThan('Carta'.length);
+    expect(shown.length).toBeLessThan(phrase.length);
+  });
+
   it('stops the overflow at a neighbour that paints its own fill', () => {
     // An empty cell carrying a fill is not free space: spanning over it to give
     // the text room would take its paint with it. Clip instead — visibly short
