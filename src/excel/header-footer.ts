@@ -33,8 +33,10 @@ interface Regions {
 export function buildHeaderFooterContent(
   formatString: string,
   sheetName: string,
+  scale = 1,
+  basePt = DEFAULT_HEADER_PT,
 ): Array<BodyElement> {
-  const regions = parseHeaderFooterString(formatString, sheetName);
+  const regions = parseHeaderFooterString(formatString, sheetName, scale, basePt);
   const out: Array<BodyElement> = [];
   const para = (runs: ReadonlyArray<Run>, alignment: Alignment): void => {
     for (const line of splitLines(runs)) {
@@ -74,7 +76,15 @@ function splitLines(runs: ReadonlyArray<Run>): Array<Array<Run>> {
 
 // Single-pass scan of the &-code string. The default region (before any &L/&C/&R)
 // is the centre, matching Excel.
-function parseHeaderFooterString(s: string, sheetName: string): Regions {
+/** The point size a header run takes when it names none — the layout's own. */
+const DEFAULT_HEADER_PT = 11;
+
+function parseHeaderFooterString(
+  s: string,
+  sheetName: string,
+  scale: number,
+  basePt: number,
+): Regions {
   const regions: Regions = { left: [], center: [], right: [] };
   let current: Array<Run> = regions.center;
   let bold = false;
@@ -85,14 +95,22 @@ function parseHeaderFooterString(s: string, sheetName: string): Regions {
   let colorHex: string | undefined;
   let buf = '';
 
-  const runProps = (): RunProperties => ({
-    ...(bold ? { bold: true } : {}),
-    ...(italic ? { italic: true } : {}),
-    ...(underline ? { underline: 'single' as const } : {}),
-    ...(strike ? { strike: true } : {}),
-    ...(sizePt !== undefined ? { fontSizePt: pt(sizePt) } : {}),
-    ...(colorHex !== undefined ? { colorHex } : {}),
-  });
+  const runProps = (): RunProperties => {
+    const effectivePt = (sizePt ?? basePt) * scale;
+    return {
+      ...(bold ? { bold: true } : {}),
+      ...(italic ? { italic: true } : {}),
+      ...(underline ? { underline: 'single' as const } : {}),
+      ...(strike ? { strike: true } : {}),
+      // The print scale shrinks everything printed on the page, headers included:
+      // a header left at its literal size over a grid at half scale is twice as
+      // tall as it should be — and a header band taller than the gap above the
+      // top margin pushes the body down, which costs rows and, on tdf58243.xlsx,
+      // a whole third page. A run that names no size takes the sheet's own.
+      ...(effectivePt !== DEFAULT_HEADER_PT ? { fontSizePt: pt(effectivePt) } : {}),
+      ...(colorHex !== undefined ? { colorHex } : {}),
+    };
+  };
   const flush = (): void => {
     if (buf.length > 0) {
       current.push({ text: buf, properties: runProps() });

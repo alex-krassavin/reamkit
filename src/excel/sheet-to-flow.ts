@@ -118,12 +118,42 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // out entirely — tdf171828.xlsx hides its lookup table, and printing it added
     // two pages of working data to the end of the document.
     if (ws.hidden) continue;
+
+    // The grid is projected FIRST, before the section is built: the header band
+    // has to be laid out at the sheet's print scale, and the scale only falls
+    // out of the projection. Its blocks are pushed below, in their old place.
+    const scaleSink = { value: 1 };
+    const drawingExtentPt = shapeExtentPt(ws.shapes);
+    const printArea = resolvePrintArea(sheet.definedNames, sheetIdx);
+    const titleRows = resolvePrintTitleRows(sheet.definedNames, sheetIdx);
+    const gridBody = worksheetToBody(ws.grid, sheet.sharedStrings, sheet.styles, sheet.date1904, {
+      ...(printArea ? { printArea } : {}),
+      ...(titleRows ? { titleRows } : {}),
+      gridLines: ws.grid.printOptions?.gridLines === true,
+      sheetGrids,
+      sheetName: ws.name,
+      definedNames: sheet.definedNames,
+      ...(ws.hyperlinks ? { hyperlinks: ws.hyperlinks } : {}),
+      ...(sheet.sharedStringRuns ? { sharedStringRuns: sheet.sharedStringRuns } : {}),
+      ...(options.now ? { now: options.now } : {}),
+      ...(options.digitWidthPt !== undefined ? { digitWidthPt: options.digitWidthPt } : {}),
+      ...(options.losses ? { losses: options.losses } : {}),
+      scaleSink,
+      ...(drawingExtentPt ? { drawingExtentPt } : {}),
+    });
+
     // The header/footer band is a document-level resource keyed by a synthetic
     // id, so only the first sheet's can be carried; its geometry, though, is
     // per-sheet.
     const sheetSection =
       printed === 0
-        ? withHeaderFooter(sectionFromWorksheet(ws.grid), ws, headersFooters)
+        ? withHeaderFooter(
+            sectionFromWorksheet(ws.grid),
+            ws,
+            headersFooters,
+            scaleSink.value,
+            sheet.styles.fonts[0]?.sizePt,
+          )
         : sectionFromWorksheet(ws.grid);
     if (printed === 0) firstSheetSection = sheetSection;
     sheetSections.push(sheetSection);
@@ -138,31 +168,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       });
     }
 
-    const printArea = resolvePrintArea(sheet.definedNames, sheetIdx);
-    const titleRows = resolvePrintTitleRows(sheet.definedNames, sheetIdx);
-    const gridLines = ws.grid.printOptions?.gridLines === true;
-    // The scale the sheet resolved to — an explicit `<pageSetup scale>` or the
-    // factor fit-to-page worked out from the grid's totals. The drawings below
-    // are anchored to that grid and shrink with it.
-    const scaleSink = { value: 1 };
-    const drawingExtentPt = shapeExtentPt(ws.shapes);
-    body.push(
-      ...worksheetToBody(ws.grid, sheet.sharedStrings, sheet.styles, sheet.date1904, {
-        ...(printArea ? { printArea } : {}),
-        ...(titleRows ? { titleRows } : {}),
-        gridLines,
-        sheetGrids,
-        sheetName: ws.name,
-        definedNames: sheet.definedNames,
-        ...(ws.hyperlinks ? { hyperlinks: ws.hyperlinks } : {}),
-        ...(sheet.sharedStringRuns ? { sharedStringRuns: sheet.sharedStringRuns } : {}),
-        ...(options.now ? { now: options.now } : {}),
-        ...(options.digitWidthPt !== undefined ? { digitWidthPt: options.digitWidthPt } : {}),
-        ...(options.losses ? { losses: options.losses } : {}),
-        scaleSink,
-        ...(drawingExtentPt ? { drawingExtentPt } : {}),
-      }),
-    );
+    body.push(...gridBody);
 
     // §20.5: the sheet's chart frames render as blocks after its grid,
     // anchor-ordered (resolved chart data lives in sheet.chartData).
@@ -470,20 +476,22 @@ function withHeaderFooter(
   section: SectionProperties,
   ws: SheetDoc['sheets'][number],
   headersFooters: Map<string, ReadonlyArray<BodyElement>>,
+  scale: number,
+  basePt: number | undefined,
 ): SectionProperties {
   const hf = ws.grid.headerFooter;
   if (!hf || (!hf.oddHeader && !hf.oddFooter)) return section;
   const headers: Array<HeaderFooterReference> = [];
   const footers: Array<HeaderFooterReference> = [];
   if (hf.oddHeader) {
-    const content = buildHeaderFooterContent(hf.oddHeader, ws.name);
+    const content = buildHeaderFooterContent(hf.oddHeader, ws.name, scale, basePt);
     if (content.length > 0) {
       headersFooters.set(HEADER_REL, resolveBodyStyles(content, EMPTY_STYLE_SHEET));
       headers.push({ type: 'default', relationshipId: HEADER_REL });
     }
   }
   if (hf.oddFooter) {
-    const content = buildHeaderFooterContent(hf.oddFooter, ws.name);
+    const content = buildHeaderFooterContent(hf.oddFooter, ws.name, scale, basePt);
     if (content.length > 0) {
       headersFooters.set(FOOTER_REL, resolveBodyStyles(content, EMPTY_STYLE_SHEET));
       footers.push({ type: 'default', relationshipId: FOOTER_REL });
