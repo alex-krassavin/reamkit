@@ -1246,12 +1246,21 @@ export function resolveCellText(
 }
 
 function runPropsFromXf(xf: XlsxCellXf, styles: XlsxStyles): RunProperties {
-  if (!xf.applyFont && xf.fontId === 0) return {};
+  // Font 0 is the workbook's Normal style, and it is a font like any other —
+  // skipping it on the reasoning that "the default needs no properties" only
+  // holds if the layout's default happens to match. It usually does not: a
+  // workbook written against Arial declares `<sz val="10"/>`, and every cell
+  // that inherits it rendered at the layout's 11pt. Ten percent oversize is not
+  // a rounding difference — it inflates every row it appears in, so the drift
+  // accumulates down the page (45540_classic_Header.xlsx ends ~18pt low) and,
+  // because a column's width is quoted in that font's digits, spreads the
+  // columns rightwards too.
   const font: XlsxFont | undefined = styles.fonts[xf.fontId];
   if (!font) return {};
   const props: { -readonly [K in keyof RunProperties]: RunProperties[K] } = {};
   if (font.bold) props.bold = true;
   if (font.italic) props.italic = true;
+  if (font.underline) props.underline = 'single';
   if (font.sizePt !== undefined) props.fontSizePt = halfPtToPt(Math.round(font.sizePt * 2));
   if (font.colorHex) props.colorHex = font.colorHex;
   return props;

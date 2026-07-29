@@ -2683,8 +2683,17 @@ function lineFromRange(
 ): Line | null {
   let st = start;
   let et = breakIdx;
-  // Skip leading nulls / spaces.
-  while (st < et && (entries[st]!.token === null || entries[st]!.token?.isSpace)) st++;
+  // Skip leading nulls, and leading spaces on a CONTINUATION line — where they
+  // are the break's own whitespace. On the first line they are the author's:
+  // 45540_classic_Header.xlsx indents a footnote's continuation by writing four
+  // spaces into the cell (`<t xml:space="preserve">    in September…`), and
+  // dropping them put the text flush against the column edge.
+  while (
+    st < et &&
+    (entries[st]!.token === null || (!isFirst && entries[st]!.token?.isSpace === true))
+  ) {
+    st++;
+  }
   // Trim trailing nulls / spaces — except a space that paints. Whitespace is
   // dropped at a line end because it is invisible, and an underlined or struck
   // space is not: Excel and LibreOffice both rule right across the run of them
