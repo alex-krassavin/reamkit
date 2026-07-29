@@ -984,11 +984,19 @@ export function worksheetToBody(
       // 12.75pt row impossible. In a spreadsheet an empty cell draws nothing and
       // the row's own height governs; fills, borders and the cell marks are cell
       // PROPERTIES and paint without it.
+      // A hard line break inside a cell (§18.4.12 — a literal LF, however the
+      // producer spelled it) is a break, not a character: it is the only way a
+      // wrapping cell holds two lines. Drawn as text it came out as a
+      // missing-glyph box mid-word. A cell that does not wrap shows one line in
+      // Excel, so there the break reads as a space.
       const content: Array<BodyElement> = rotated
         ? stackedVerticalContent(text, runProps, href)
         : cellRuns.length === 0
           ? []
-          : [{ kind: 'paragraph', paragraph: { properties: paragraphProps, runs: cellRuns } }];
+          : splitCellLines(cellRuns, wrapText).map((runs) => ({
+              kind: 'paragraph' as const,
+              paragraph: { properties: paragraphProps, runs },
+            }));
       // A right-aligned cell overflows the other way — leftwards — and the
       // widest label in a form column is routinely wider than the column it
       // sits in. Without it the text is drawn from the cell's own left edge and
@@ -1824,6 +1832,25 @@ function scaledColumnWidths(
   scaled: boolean,
 ): Array<number> {
   return scaled ? widths.map((w) => Math.max(1, Math.floor(w * printScale))) : [...widths];
+}
+
+/**
+ * Break a cell's runs at the hard line breaks inside them, or — for a cell that
+ * does not wrap, and so shows one line — flatten those breaks to spaces.
+ */
+function splitCellLines(runs: ReadonlyArray<Run>, wrapText: boolean): Array<Array<Run>> {
+  if (!runs.some((r) => /[\r\n]/.test(r.text))) return [[...runs]];
+  if (!wrapText) return [runs.map((r) => ({ ...r, text: r.text.replace(/[\r\n]+/g, ' ') }))];
+  const lines: Array<Array<Run>> = [[]];
+  for (const run of runs) {
+    const parts = run.text.split(/\r\n|\r|\n/);
+    for (let i = 0; i < parts.length; i++) {
+      if (i > 0) lines.push([]);
+      const text = parts[i]!;
+      if (text.length > 0) lines[lines.length - 1]!.push({ ...run, text });
+    }
+  }
+  return lines.filter((l) => l.length > 0);
 }
 
 /** §18.8.1 `<alignment vertical>`, defaulting to Excel's bottom. */
