@@ -16,16 +16,15 @@
     ]
   },
   "ream": {
-    "pages": 3,
+    "pages": 2,
     "pageSizes": [
       {
         "widthPt": 595,
         "heightPt": 842
       }
     ],
-    "chars": 1798,
+    "chars": 1647,
     "firstLines": [
-      "IRFU/GRH/DDB",
       "IRFU/GRH/DDB",
       "IRFU/GRH/DDB"
     ]

@@ -272,12 +272,89 @@ function sheetContentHeightTwips(worksheet: ParsedWorksheet): number {
   return Math.max(TWIPS_PER_INCH / 2, pageHeightTwips - top - bottom);
 }
 
+/**
+ * The grid as the fit-to-page search sees it: the extents that have to be packed
+ * into pages, the breaks that force one, and the band repeated at the top of each
+ * continuation page.
+ */
+interface FitGeometry {
+  /** Visible row heights in twips, in order (unscaled). */
+  readonly rowTwips: ReadonlyArray<number>;
+  /** Indices into `rowTwips` that start a new page (manual `<rowBreaks>`). */
+  readonly rowBreaks: ReadonlySet<number>;
+  /** Height of the `_xlnm.Print_Titles` rows, repeated on every page after the first. */
+  readonly titleTwips: number;
+  /** Visible column widths in twips, in order (unscaled). */
+  readonly colTwips: ReadonlyArray<number>;
+  /** Indices into `colTwips` that start a new band (manual `<colBreaks>`). */
+  readonly colBreaks: ReadonlySet<number>;
+}
+
+/**
+ * How many pages the grid ACTUALLY paginates into at a given scale — the same
+ * greedy fill the layout performs, run over one axis.
+ *
+ * A row does not split, so the closed form `contentHeight × fitToHeight / total`
+ * is a lower bound and not an answer: whatever height the last row that will not
+ * fit leaves unused is a page's worth of slack the formula never accounts for,
+ * and print titles make it worse by consuming their height again on every page.
+ */
+function pageCountAtScale(
+  extents: ReadonlyArray<number>,
+  forcedBreaks: ReadonlySet<number>,
+  repeatTwips: number,
+  limitTwips: number,
+  scale: number,
+): number {
+  let pages = 1;
+  let used = 0;
+  for (let i = 0; i < extents.length; i++) {
+    const extent = extents[i]! * scale;
+    if (used > 0 && (forcedBreaks.has(i) || used + extent > limitTwips)) {
+      pages++;
+      used = repeatTwips * scale;
+    }
+    used += extent;
+  }
+  return pages;
+}
+
+/**
+ * The largest whole percentage at or below `closed` that paginates into at most
+ * `maxPages` pages. Whole percentages because that is the unit Excel searches in
+ * and stores the answer in (`<pageSetup scale="51">`), so the two agree exactly.
+ * Monotone — shrinking never adds a page — so a binary search is enough.
+ */
+function searchFitScale(
+  closed: number,
+  maxPages: number,
+  pageCount: (scale: number) => number,
+): number {
+  const floor = Math.round(MIN_PRINT_SCALE * 100);
+  let hi = Math.min(100, Math.floor(closed * 100));
+  if (hi <= floor) return Math.max(MIN_PRINT_SCALE, closed);
+  if (pageCount(hi / 100) <= maxPages) return closed;
+  let lo = floor;
+  // Shrink only when shrinking gets there. A manual page break costs a page at
+  // every scale, so a sheet with three of them and `fitToHeight="1"` can never
+  // satisfy the target — searching for one drove the scale into the floor and
+  // rendered AverageTaxRates.xlsx at 1pt. Unreachable ⇒ leave the closed form.
+  if (pageCount(lo / 100) > maxPages) return closed;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (pageCount(mid / 100) <= maxPages) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo / 100;
+}
+
 function computePrintScale(
   worksheet: ParsedWorksheet,
   totalGridTwips: number,
   contentWidthTwips: number,
   totalGridHeightTwips: number,
   contentHeightTwips: number,
+  geometry: FitGeometry,
 ): number {
   const setup = worksheet.pageSetup;
   let s = 1;
@@ -296,6 +373,28 @@ function computePrintScale(
     if (fitW >= 1 && totalGridTwips > 0) sW = (contentWidthTwips * fitW) / totalGridTwips;
     if (fitH >= 1 && totalGridHeightTwips > 0) {
       sH = (contentHeightTwips * fitH) / totalGridHeightTwips;
+    }
+    // The formula divides an area; the printer packs whole rows and whole
+    // columns. Where the two disagree the sheet spills onto one more page than
+    // it was asked to take, so shrink until it really fits — see
+    // {@link pageCountAtScale}. tdf58243.xlsx asks for 2×2 pages: the formula
+    // gives 52 %, the print titles it ignores bring that to Excel's stored 51 %,
+    // and the row boundaries it also ignores mean only 50 % fits.
+    if (fitW >= 1 && geometry.colTwips.length > 0) {
+      sW = searchFitScale(sW, fitW, (scale) =>
+        pageCountAtScale(geometry.colTwips, geometry.colBreaks, 0, contentWidthTwips, scale),
+      );
+    }
+    if (fitH >= 1 && geometry.rowTwips.length > 0) {
+      sH = searchFitScale(sH, fitH, (scale) =>
+        pageCountAtScale(
+          geometry.rowTwips,
+          geometry.rowBreaks,
+          geometry.titleTwips,
+          contentHeightTwips,
+          scale,
+        ),
+      );
     }
     s = Math.min(sW, sH);
   } else if (setup?.scale !== undefined && setup.scale > 0) {
@@ -457,6 +556,9 @@ export function worksheetToBody(
         sheetContentWidthTwips(worksheet),
         Math.round((print.drawingExtentPt?.heightPt ?? 0) * TWIPS_PER_POINT),
         sheetContentHeightTwips(worksheet),
+        // No grid to paginate — the drawing extent alone decides, so the closed
+        // form is the whole answer here.
+        { rowTwips: [], rowBreaks: new Set(), titleTwips: 0, colTwips: [], colBreaks: new Set() },
       );
     }
     return [];
@@ -662,10 +764,28 @@ export function worksheetToBody(
   // overrides, else Excel's ~15pt default). Wrapping can grow rows past this, so
   // it's an estimate — but shrinking fonts reduces wrapping toward it.
   let totalGridHeightTwips = 0;
+  // The same rows as an ordered list, plus the breaks and the repeated title
+  // band, so fit-to-page can paginate them instead of dividing an area.
+  const fitRowTwips: Array<number> = [];
+  const fitRowBreaks = new Set<number>();
+  const manualRowBreaks = new Set(worksheet.rowBreaks ?? []);
+  let fitTitleTwips = 0;
   for (let r = 0; r < rowCount; r++) {
     if (hiddenRows.has(r)) continue;
-    totalGridHeightTwips += rowHeightMap.get(r)?.heightTwips ?? DEFAULT_ROW_TWIPS;
+    const twips = rowHeightMap.get(r)?.heightTwips ?? DEFAULT_ROW_TWIPS;
+    totalGridHeightTwips += twips;
+    const abs = r + rowStart;
+    if (manualRowBreaks.has(abs)) fitRowBreaks.add(fitRowTwips.length);
+    if (print.titleRows && abs >= print.titleRows.startRow && abs <= print.titleRows.endRow) {
+      fitTitleTwips += twips;
+    }
+    fitRowTwips.push(twips);
   }
+  const manualColBreaks = new Set(worksheet.colBreaks ?? []);
+  const fitColBreaks = new Set<number>();
+  visibleCols.forEach((c, i) => {
+    if (manualColBreaks.has(c + colStart)) fitColBreaks.add(i);
+  });
   // The extent that has to fit is the grid's OR the drawings', whichever
   // reaches further — see PrintContext.drawingExtentPt.
   const drawing = print.drawingExtentPt;
@@ -675,6 +795,13 @@ export function worksheetToBody(
     sheetContentWidthTwips(worksheet),
     Math.max(totalGridHeightTwips, Math.round((drawing?.heightPt ?? 0) * TWIPS_PER_POINT)),
     sheetContentHeightTwips(worksheet),
+    {
+      rowTwips: fitRowTwips,
+      rowBreaks: fitRowBreaks,
+      titleTwips: fitTitleTwips,
+      colTwips: visibleWidths,
+      colBreaks: fitColBreaks,
+    },
   );
   const scaled = printScale < 0.999;
   if (print.scaleSink) print.scaleSink.value = printScale;

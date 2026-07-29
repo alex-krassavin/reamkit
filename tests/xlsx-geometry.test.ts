@@ -168,6 +168,43 @@ describe('grid geometry', () => {
     expect(pitch(half)).toBeCloseTo(pitch(full) / 2, 0);
   });
 
+  // Five 300pt rows asked to fit two A4 pages. The closed form divides an area:
+  // 2 × 734pt of body over 1500pt of rows is 97 %, which packs 2 rows per page
+  // and takes three. Rows do not split, so the answer is 81 % — three per page.
+  const tallFit = (fitToHeight: number) =>
+    buildXlsx({
+      rows: [['r0'], ['r1'], ['r2'], ['r3'], ['r4']],
+      rowHeights: [0, 1, 2, 3, 4].map((row) => ({ row, heightPt: 300 })),
+      fitToPage: true,
+      pageSetup: { paperSize: 9, fitToWidth: 1, fitToHeight },
+    });
+
+  it('shrinks fit-to-page until the rows really fit, not until the areas do', () => {
+    expect(pageCount(tallFit(2))).toBe(2);
+    expect(pageCount(tallFit(3))).toBe(3);
+  });
+
+  it('leaves the scale alone when no amount of shrinking reaches the target', () => {
+    // A manual break costs a page at every scale, so `fitToHeight="1"` here is
+    // unreachable. Searching for it anyway drove the scale into its 10 % floor
+    // and rendered AverageTaxRates.xlsx at 1pt — when the target cannot be met,
+    // the closed form stands and the sheet simply takes the pages it takes.
+    const rows = [['A', 'B'], ['x'], ['y']];
+    const columns = [{ min: 1, max: 2, widthChars: 20 }];
+    const plain = placed(buildXlsx({ rows, columns }));
+    const unreachable = placed(
+      buildXlsx({
+        rows,
+        columns,
+        rowBreaks: [1],
+        fitToPage: true,
+        pageSetup: { paperSize: 9, fitToWidth: 1, fitToHeight: 1 },
+      }),
+    );
+    const pitch = (items: Array<PlacedText>): number => at(items, 'B').x - at(items, 'A').x;
+    expect(pitch(unreachable)).toBeCloseTo(pitch(plain), 1);
+  });
+
   it("gives every row a definite height instead of the font's natural leading", () => {
     // §18.3.1.81. A row without an explicit `ht` had no height at all, so its
     // pitch came out as whatever leading the rendering font wanted — 13.2pt for
@@ -451,6 +488,56 @@ describe('column width unit (§18.3.1.13)', () => {
     expect(width(named)).toBeCloseTo(40 * 5.25 + 3.75, 1);
     // The reader's face is wider than Calibri's, so the column is too.
     expect(width(anonymous)).toBeGreaterThan(width(named));
+  });
+});
+
+describe('a table that spills over a page break', () => {
+  // Every cell a thin box; 80 rows so the grid takes more than one page.
+  const bordered = (): Uint8Array =>
+    buildXlsx({
+      rows: Array.from({ length: 80 }, (_, i) => [{ value: `r${i}`, styleIndex: 1 }]),
+      stylesXml:
+        `<fonts count="1"><font/></fonts><fills count="1"><fill/></fills>` +
+        `<borders count="2"><border/><border>` +
+        ['left', 'right', 'top', 'bottom']
+          .map((s) => `<${s} style="thin"><color rgb="FF000000"/></${s}>`)
+          .join('') +
+        `</border></borders>` +
+        `<cellXfs count="2"><xf/><xf borderId="1" applyBorder="1"/></cellXfs>`,
+    });
+
+  it('closes the table at the bottom of the page it leaves', () => {
+    // Only the last row paints its bottom edge — every other horizontal rule is
+    // the row below it painting its top. Across a page break that row is on the
+    // NEXT page, so the table was left hanging open: on tdf58243.xlsx the
+    // vertical rules ran past the last row into white space.
+    const flow = Ream.parse(bordered()).flow;
+    const laid = layoutStyledDocument(flow.body, {
+      registry: FontRegistry.fromBytes(FONTS),
+      ...flowRenderOptions(flow),
+    });
+    expect(laid.pages.length).toBeGreaterThan(1);
+    const lowestBottom = (page: (typeof laid.pages)[number]): number =>
+      Math.max(
+        ...page.commands
+          .filter((c): c is typeof c & { side: string; y: number; height: number } => {
+            const item = c as { type: string; side?: string };
+            return item.type === 'border' && item.side === 'bottom';
+          })
+          .map((c) => c.y + c.height),
+      );
+    const lowestTop = (page: (typeof laid.pages)[number]): number =>
+      Math.max(
+        ...page.commands
+          .filter((c): c is typeof c & { side: string; y: number; height: number } => {
+            const item = c as { type: string; side?: string };
+            return item.type === 'border' && item.side === 'top';
+          })
+          .map((c) => c.y + c.height),
+      );
+    // The last row on page 1 is closed: its bottom edge is level with the
+    // bottom of the last box drawn there, not a rule short of it.
+    expect(lowestBottom(laid.pages[0]!)).toBeCloseTo(lowestTop(laid.pages[0]!), 1);
   });
 });
 

@@ -4209,6 +4209,24 @@ function paginateSections(
             cellStructIds,
           );
           asm.cursorY -= chunk.heightPt;
+          // Only the table's last row paints its bottom edge — every other
+          // horizontal rule is the next row's top (see emitCellBorders). That
+          // convention has no notion of a page: when the next row starts a new
+          // page, the edge it owed this one is drawn up there, and the table is
+          // left hanging open at the bottom of the page it just left. Look
+          // ahead and close it. tdf58243.xlsx shows the seam plainly — the
+          // vertical rules run past the last row into white space.
+          if (ci === chunks.length - 1 && ri < block.rows.length - 1) {
+            const next = block.rows[ri + 1]!;
+            const nextHeight = Math.min(next.heightPt, asm.ctx.pageContentHeight);
+            const nextForced =
+              next.breakBefore && ri + 1 >= headerRows.length && asm.current.length > 0;
+            const nextOverflow =
+              asm.cursorY - nextHeight < asm.bottomLimit() && asm.colHasContent();
+            if (nextForced || nextOverflow) {
+              emitRowBottomEdge(asm.current, chunk, tableX, asm.cursorY, asm.ctx.pageHeight);
+            }
+          }
         }
       }
     }
@@ -4595,4 +4613,36 @@ function emitCellBorders(
   pushSide('left', cell.borders.left);
   if (rowIdx === rowCount - 1) pushSide('bottom', cell.borders.bottom);
   if (cell.colStart + cell.colSpan - 1 === colCount - 1) pushSide('right', cell.borders.right);
+}
+
+/**
+ * The bottom edge of a row that ends a page — the rule the row below it owed it
+ * and drew on the next page instead. See the call site: a table that spills over
+ * a break is closed on both sides of it, the way Excel and Word print one.
+ *
+ * A cell whose bottom is suppressed (a vertical merge continuing past the break)
+ * stays open; inventing an edge there would cut the merge in half.
+ */
+function emitRowBottomEdge(
+  out: Array<PageItem>,
+  row: RowLayout,
+  marginLeft: number,
+  rowBottom: number,
+  pageHeight: number,
+): void {
+  for (let i = 0; i < row.cells.length; i++) {
+    const cell = row.cells[i]!;
+    const border = cell.borders.bottom;
+    if (!border || border.style === 'none') continue;
+    out.push({
+      type: 'border',
+      side: 'bottom',
+      x: pt(marginLeft + (row.columnXOffsets[i] ?? 0)),
+      y: pt(pageHeight - rowBottom - row.heightPt),
+      width: pt(cell.widthPt),
+      height: pt(row.heightPt),
+      borderSizePt: border.width ?? DEFAULT_BORDER_SIZE_EIGHTH * EIGHTH_PT,
+      borderColorHex: border.colorHex ?? '000000',
+    });
+  }
 }

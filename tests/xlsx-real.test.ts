@@ -199,10 +199,10 @@ describe('real documents: SpreadsheetML dialects', () => {
     const table = doc.body.find((e) => e.kind === 'table');
     if (table?.kind !== 'table') throw new Error('expected a table');
     expect(table.table.rows.some((r) => r.cells.some((c) => c.properties.dropdown))).toBe(true);
-    // Pinned, not argued: removing the button did not by itself close the
-    // page-count gap to LibreOffice's 2, so the remaining difference is
-    // something else and this records where we stand.
-    expect(pageCount(convertXlsxToPdfSync(load('tdf58243.xlsx'), FONTS))).toBe(3);
+    // Two pages, the same as LibreOffice. The sheet asks to fit 2×2 pages and
+    // the closed-form scale gave 52 %, which spills the last three rows onto a
+    // third page; fit-to-page now paginates for real and lands on 50 %.
+    expect(pageCount(convertXlsxToPdfSync(load('tdf58243.xlsx'), FONTS))).toBe(2);
 
     // A literal CR LF inside the centre header region is a line break, not text
     // — drawn as text it came out as a missing-glyph box mid-title.
