@@ -50,11 +50,35 @@ export interface VmlFormControl {
 const SPID_PREFIX = /^_x0000_s/;
 
 /**
+ * The `x:ObjectType` values that name a FORM CONTROL.
+ *
+ * Not everything with an `<x:ClientData>` is one — a cell comment is a VML
+ * shape with `ObjectType="Note"`, and so are text boxes, pictures and movies.
+ * Taking the element's presence as the test listed every comment in the
+ * document as a form control.
+ */
+const CONTROL_TYPES: ReadonlySet<string> = new Set([
+  'Button',
+  'Checkbox',
+  'CheckBox',
+  'Dialog',
+  'Drop',
+  'Edit',
+  'EditBox',
+  'GBox',
+  'Label',
+  'List',
+  'Radio',
+  'Scroll',
+  'Spin',
+]);
+
+/**
  * Read the form controls out of a legacy VML drawing part.
  *
  * Shapes with no `<x:ClientData>`, or whose object type is not a control (a
- * plain drawing, a comment box), are skipped — this is not a general VML shape
- * reader, only the control channel.
+ * comment, a text box, a picture), are skipped — this is not a general VML
+ * shape reader, only the control channel. See {@link CONTROL_TYPES}.
  *
  * @param data The raw `vmlDrawing#.vml` bytes.
  * @returns One entry per control shape, in document order.
@@ -69,7 +93,7 @@ export function parseVmlFormControls(data: Uint8Array): Array<VmlFormControl> {
     const client = asObject(shape['ClientData']);
     if (!client) continue;
     const objectType = strAttr(client, 'ObjectType');
-    if (!objectType) continue;
+    if (!objectType || !CONTROL_TYPES.has(objectType)) continue;
     const spid = strAttr(shape, 'spid');
     const control: Mutable<VmlFormControl> = { objectType };
     if (spid) control.shapeId = spid.replace(SPID_PREFIX, '');

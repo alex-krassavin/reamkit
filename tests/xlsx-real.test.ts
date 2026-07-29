@@ -146,6 +146,8 @@ describe('real documents: SpreadsheetML dialects', () => {
     // Forms-toolbar radio buttons and the group box around two of them. They
     // have no `<control>` entry and no ctrlProps part, so reading just the
     // `<controls>` list lost them without a word — LibreOffice draws all six.
+    // Only actual control types: a cell comment is a VML shape too
+    // (`ObjectType="Note"`) and must not be listed as a control.
     expect(sheet.formControls).toEqual([
       { objectType: 'Radio', name: 'Form button1', checked: true },
       { objectType: 'Radio', name: 'Form button2' },
