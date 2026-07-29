@@ -74,6 +74,7 @@
     "corpus:xlsx:invariants": "tsx scripts/corpus/xlsx-invariants.ts",
     "corpus:fixtures": "tsx scripts/corpus/sync-real-fixtures.ts",
     "corpus:golden": "tsx scripts/corpus/make-golden.ts",
+    "corpus:visual": "tsx scripts/corpus/visual-diff.ts",
     "typecheck:dist": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

@@ -35,8 +35,10 @@ const decoder = new TextDecoder('utf-8');
 
 // A value-bearing cell writes either <v> (stored value) or <is> (inline string).
 // Namespace-prefix-agnostic: some producers write <x:v>. Self-closing cells
-// (<c r="A1"/>) carry no value and are correctly not counted.
-const VALUE_NODE = /<(?:[A-Za-z_][\w.-]*:)?(?:v|is)[\s>]/g;
+// (<c r="A1"/>) carry no value and are correctly not counted. NOT global:
+// `.test()` on a /g regex carries lastIndex between calls and would skip every
+// other cell.
+const HAS_VALUE = /<(?:[A-Za-z_][\w.-]*:)?(?:v|is)[\s>]/;
 // Worksheets normally live under xl/worksheets/, but producers put them
 // elsewhere (tdf76115.xlsx uses xl/sheet1.xml) and the relationship graph is
 // the only authority on which part is which. Rather than borrow our own
@@ -64,9 +66,74 @@ function countRawValueCells(bytes: Uint8Array): number {
     if (!XL_PART.test(part) || EXTERNAL_LINK_PART.test(part)) continue;
     const xml = decoder.decode(pkg.requirePart(part));
     if (!SHEET_DATA.test(xml)) continue;
-    total += xml.match(VALUE_NODE)?.length ?? 0;
+    total += countPrintableValues(xml);
   }
   return total;
+}
+
+// §18.3.1.13 / §18.3.1.73 `hidden`. A hidden row or column is content the
+// DOCUMENT says not to print, so counting it here would mark a reader that
+// correctly omits it as having lost something — the question this metric asks
+// is whether we dropped anything silently, not whether we drew everything the
+// file contains.
+const COL_ELEMENT = /<(?:[A-Za-z_][\w.-]*:)?col\b[^>]*>/g;
+const ROW_ELEMENT = /<(?:[A-Za-z_][\w.-]*:)?row\b[^>]*>/g;
+const CELL_ELEMENT = /<(?:[A-Za-z_][\w.-]*:)?c\b[^>]*?(?:\/>|>)/g;
+const attr = (tag: string, name: string): string | undefined =>
+  new RegExp(`\\b${name}="([^"]*)"`).exec(tag)?.[1];
+const isHidden = (tag: string): boolean => {
+  const v = attr(tag, 'hidden');
+  return v === '1' || v === 'true';
+};
+
+/** Column index (0-based) of an A1 reference like `"AB12"`; -1 when unusable. */
+function columnOf(ref: string | undefined): number {
+  const letters = /^([A-Za-z]+)/.exec(ref ?? '')?.[1];
+  if (!letters) return -1;
+  let n = 0;
+  for (const ch of letters.toUpperCase()) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n - 1;
+}
+
+/** Value-bearing cells that the sheet actually prints. */
+function countPrintableValues(xml: string): number {
+  const hiddenCols = new Set<number>();
+  for (const tag of xml.match(COL_ELEMENT) ?? []) {
+    if (!isHidden(tag)) continue;
+    const min = Number(attr(tag, 'min') ?? NaN);
+    const max = Number(attr(tag, 'max') ?? NaN);
+    if (!Number.isFinite(min) || !Number.isFinite(max)) continue;
+    // A hidden run to the sheet's last column is common and harmless to bound.
+    for (let c = min; c <= Math.min(max, 16_384); c++) hiddenCols.add(c - 1);
+  }
+
+  // Rows are delimited by their opening tags; the slice up to the next one is
+  // that row's cells.
+  let total = 0;
+  const rowTags = [...xml.matchAll(ROW_ELEMENT)];
+  for (let i = 0; i < rowTags.length; i++) {
+    const tag = rowTags[i]!;
+    if (isHidden(tag[0])) continue;
+    const from = tag.index + tag[0].length;
+    const to = i + 1 < rowTags.length ? rowTags[i + 1]!.index : xml.length;
+    for (const cell of splitCells(xml.slice(from, to))) {
+      if (hiddenCols.has(columnOf(attr(cell, 'r')))) continue;
+      if (HAS_VALUE.test(cell)) total++;
+    }
+  }
+  return total;
+}
+
+/** One string per `<c>…</c>` (or self-closing `<c/>`) in a row's markup. */
+function splitCells(rowBody: string): Array<string> {
+  const out: Array<string> = [];
+  const starts = [...rowBody.matchAll(CELL_ELEMENT)];
+  for (let i = 0; i < starts.length; i++) {
+    const from = starts[i]!.index;
+    const to = i + 1 < starts.length ? starts[i + 1]!.index : rowBody.length;
+    out.push(rowBody.slice(from, to));
+  }
+  return out;
 }
 
 /** Concatenated text of a body element subtree. */
