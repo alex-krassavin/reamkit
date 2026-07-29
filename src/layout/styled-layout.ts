@@ -429,6 +429,7 @@ interface CellLayout {
   readonly nestedTables?: ReadonlyArray<TableBlock>;
   readonly contentHeightPt: number;
   readonly totalHeightPt: number;
+  readonly verticalAlign?: 'top' | 'center' | 'bottom';
   readonly colStart: number;
   readonly colSpan: number;
   readonly mergeRole: MergeRole;
@@ -3236,6 +3237,7 @@ function layoutTableCell(
     ...(nestedTables.length > 0 ? { nestedTables } : {}),
     contentHeightPt,
     totalHeightPt,
+    ...(cell.properties.verticalAlign ? { verticalAlign: cell.properties.verticalAlign } : {}),
     colStart,
     colSpan,
     mergeRole,
@@ -4394,7 +4396,23 @@ function emitRowChunk(
       if (diagUp) pushDiagonal(diagUp, 0, h);
     }
     if (cell.mergeRole === 'middle' || cell.mergeRole === 'end') continue;
-    let textY = rowTop - cell.padTopPt;
+    // A box taller than its content: a spreadsheet cell sits at the BOTTOM of
+    // it unless it says otherwise, which is what Excel and LibreOffice both do
+    // and what a declared row height makes visible. Skipped for a vertical
+    // merge, whose box is taller than this one row.
+    const slack =
+      cell.mergeRole === 'standalone' && cell.verticalAlign !== undefined
+        ? row.heightPt - cell.padTopPt - cell.contentHeightPt - cell.padBottomPt
+        : 0;
+    const vOffset =
+      slack <= 0
+        ? 0
+        : cell.verticalAlign === 'bottom'
+          ? slack
+          : cell.verticalAlign === 'center'
+            ? slack / 2
+            : 0;
+    let textY = rowTop - cell.padTopPt - vOffset;
     for (const line of cell.lines) {
       const h = computeLineHeight(line, line.resolved);
       textY -= h;

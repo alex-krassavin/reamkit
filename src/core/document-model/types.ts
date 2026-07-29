@@ -610,6 +610,13 @@ export interface CellProperties {
    * to clip against and lets the browser decide.
    */
   readonly noWrap?: boolean;
+  /**
+   * Where the cell's content sits in a box taller than itself. A spreadsheet
+   * cell defaults to `'bottom'` — §18.8.1, and both Excel and LibreOffice do it
+   * — which is visible on any row taller than its text. Absent ⇒ the top, which
+   * is a word-processor table's default.
+   */
+  readonly verticalAlign?: 'top' | 'center' | 'bottom';
 }
 
 /** §17.4.81 `w:trPr` — a table row's properties: height, split/header flags. */

@@ -195,8 +195,11 @@ describe('grid geometry', () => {
       }),
     );
     const ys = ['r0', 'r1', 'r2'].map((t) => at(items, t).y);
-    expect(ys[1]! - ys[0]!).toBeCloseTo(15, 1); // r0's own height: the default
-    expect(ys[2]! - ys[1]!).toBeCloseTo(40, 1); // r1 was pinned to 40pt
+    // A cell sits at the BOTTOM of its box (§18.8.1), so the step between two
+    // rows' text is the height of the LOWER one: r1 is pinned to 40pt and its
+    // text drops to the foot of that box, then r2's default 15pt follows.
+    expect(ys[1]! - ys[0]!).toBeCloseTo(40, 1);
+    expect(ys[2]! - ys[1]!).toBeCloseTo(15, 1);
   });
 
   it('runs unwrapped text across empty neighbours on ONE line', () => {
@@ -447,5 +450,40 @@ describe('column width unit (§18.3.1.13)', () => {
     expect(width(named)).toBeCloseTo(40 * 5.25 + 3.75, 1);
     // The reader's face is wider than Calibri's, so the column is too.
     expect(width(anonymous)).toBeGreaterThan(width(named));
+  });
+});
+
+describe('vertical alignment (§18.8.1)', () => {
+  it('sits a cell at the bottom of a box taller than its text', () => {
+    // Excel's default is bottom, and LibreOffice does the same; we drew every
+    // cell against the top, which on tdf144642's 28.35pt rows floated the text
+    // a line-height above where both of them put it.
+    const items = placed(
+      buildXlsx({ rows: [['tall']], rowHeights: [{ row: 0, heightPt: 60, customHeight: true }] }),
+    );
+    const y = at(items, 'tall').y;
+    const flat = placed(buildXlsx({ rows: [['tall']] }));
+    // The 60pt row pushes its text down by the slack over the 15pt default.
+    expect(y - at(flat, 'tall').y).toBeCloseTo(45, 0);
+  });
+
+  it('honours an explicit vertical="top"', () => {
+    const items = placed(
+      buildXlsx({
+        rows: [[{ value: 'tall', styleIndex: 1 }]],
+        rowHeights: [{ row: 0, heightPt: 60, customHeight: true }],
+        stylesXml:
+          `<fonts count="1"><font/></fonts><fills count="1"><fill/></fills>` +
+          `<borders count="1"><border/></borders>` +
+          `<cellXfs count="2"><xf/><xf applyAlignment="1"><alignment vertical="top"/></xf></cellXfs>`,
+      }),
+    );
+    // The same 60pt row without the override drops its text to the foot of the
+    // box; with it the text stays at the head, 45pt of slack higher.
+    const bottom = placed(
+      buildXlsx({ rows: [['tall']], rowHeights: [{ row: 0, heightPt: 60, customHeight: true }] }),
+    );
+    // 60pt of box less the line the text occupies — the slack it drops through.
+    expect(at(bottom, 'tall').y - at(items, 'tall').y).toBeCloseTo(46.8, 0);
   });
 });

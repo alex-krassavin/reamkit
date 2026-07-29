@@ -944,6 +944,11 @@ export function worksheetToBody(
         // §18.8.1: without wrapText a cell's text is one line, cut at its box.
         // Rotated and shrink-to-fit cells have their own handling.
         ...(!wrapText && !rotated && !shrinkToFit && !merge ? { noWrap: true } : {}),
+        // §18.8.1 `<alignment vertical>` — a spreadsheet cell sits at the BOTTOM
+        // of its box by default, which any row taller than its text shows. We
+        // drew every cell against the top: on a sheet of 28.35pt rows the text
+        // floated a line-height above where Excel and LibreOffice put it.
+        verticalAlign: verticalAlignOf(xf),
       };
 
       // §18.8.1 indent (E-SHEET W6): a left indent of N levels ≈ N×3 characters,
@@ -1819,6 +1824,17 @@ function scaledColumnWidths(
   scaled: boolean,
 ): Array<number> {
   return scaled ? widths.map((w) => Math.max(1, Math.floor(w * printScale))) : [...widths];
+}
+
+/** §18.8.1 `<alignment vertical>`, defaulting to Excel's bottom. */
+function verticalAlignOf(xf: XlsxCellXf | undefined): 'top' | 'center' | 'bottom' {
+  const v = xf?.alignment?.vertical;
+  if (v === 'top') return 'top';
+  if (v === 'center') return 'center';
+  // `justify` and `distributed` spread the lines; with no such layout mode the
+  // closest honest reading is the box's natural top.
+  if (v === 'justify' || v === 'distributed') return 'top';
+  return 'bottom';
 }
 
 /**
