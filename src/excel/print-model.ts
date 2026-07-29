@@ -677,6 +677,9 @@ export function worksheetToBody(
   const dropdownRanges = listDropdownRanges(worksheet.dataValidations);
 
   const rows: Array<TableRow> = [];
+  // Where the first print-title row landed in `rows`. Not derivable from the
+  // row index afterwards — hidden rows are skipped, so the two do not agree.
+  let titleRowIndex = -1;
   for (let r = 0; r < rowCount; r++) {
     if (hiddenRows.has(r)) continue;
     const absR = r + rowStart;
@@ -962,6 +965,7 @@ export function worksheetToBody(
       ...(isTitleRow ? { isHeader: true } : {}),
       ...(breakRows.has(absR) ? { pageBreakBefore: true } : {}),
     };
+    if (isTitleRow && titleRowIndex < 0) titleRowIndex = rows.length;
     rows.push({ properties: rowProps, cells });
   }
 
@@ -1038,7 +1042,8 @@ export function worksheetToBody(
     (bandTotal > contentWidthTwips || colBreaksLocal.size > 0)
   ) {
     const bands = computeColumnBands(bandWidths, contentWidthTwips, colBreaksLocal);
-    if (bands.length > 1) return bandedTables(rows, bandWidths, bands, tableProperties);
+    if (bands.length > 1)
+      return bandedTables(rows, bandWidths, bands, tableProperties, titleRowIndex);
   }
 
   // A frozen pane becomes a sticky-pane hint for the HTML writer (E-SHEET SE3).
@@ -1047,6 +1052,25 @@ export function worksheetToBody(
     worksheet.pane && (worksheet.pane.frozenRows > 0 || worksheet.pane.frozenCols > 0)
       ? { rows: worksheet.pane.frozenRows, cols: worksheet.pane.frozenCols }
       : undefined;
+  // §18.2.5 `_xlnm.Print_Titles` repeats its rows at the top of every page,
+  // wherever they sit. The layout repeats only the leading header rows of a
+  // table — a mid-table header is not a repeating title in Word, where the flag
+  // comes from — so a title row with content above it (tdf171828.xlsx puts its
+  // column headings in row 17, under a form block) never repeated. Cutting the
+  // sheet in two at that row makes it leading, and two abutting tables of the
+  // same grid lay out exactly as one.
+  if (titleRowIndex > 0 && titleRowIndex < rows.length) {
+    const titleStart = titleRowIndex;
+    const grid = bandWidths.map((w) => twipsToPt(w));
+    return [
+      {
+        kind: 'table',
+        table: { properties: tableProperties, grid, rows: rows.slice(0, titleStart) },
+      },
+      { kind: 'table', table: { properties: tableProperties, grid, rows: rows.slice(titleStart) } },
+    ];
+  }
+
   const table: Table = {
     properties: frozen ? { ...tableProperties, frozen } : tableProperties,
     // The print scale shrinks the whole sheet, columns included — `bandWidths`

@@ -79,8 +79,9 @@ export function bandedTables(
   columnWidths: ReadonlyArray<number>,
   bands: ReadonlyArray<ColumnBand>,
   properties: TableProperties,
+  titleRowIndex = -1,
 ): Array<BodyElement> {
-  return bands.map((band, bandIndex) => {
+  return bands.flatMap((band, bandIndex) => {
     const grid = columnWidths.slice(band.start, band.end + 1).map((w) => twipsToPt(w));
     const bandRows: Array<TableRow> = rows.map((row, rowIndex) => {
       const cells = sliceRowCells(row.cells, band);
@@ -90,7 +91,14 @@ export function bandedTables(
           : row.properties;
       return { properties: rowProps, cells };
     });
-    return { kind: 'table', table: { properties, grid, rows: bandRows } };
+    // Cut at the print-title row so it leads its table and repeats, keeping the
+    // two halves inside their own band — the bands paginate one after the other
+    // (`pageOrder="downThenOver"`), so they must not be interleaved.
+    const split = titleRowIndex > 0 && titleRowIndex < bandRows.length;
+    const parts = split
+      ? [bandRows.slice(0, titleRowIndex), bandRows.slice(titleRowIndex)]
+      : [bandRows];
+    return parts.map((r) => ({ kind: 'table' as const, table: { properties, grid, rows: r } }));
   });
 }
 

@@ -74,7 +74,7 @@
     ]
   },
   "ream": {
-    "pages": 42,
+    "pages": 44,
     "pageSizes": [
       {
         "widthPt": 842,
@@ -85,8 +85,10 @@
         "heightPt": 792
       }
     ],
-    "chars": 21882,
+    "chars": 24890,
     "firstLines": [
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
       "Wilfried Schäfer",
       "Wilfried Schäfer",
       "Wilfried Schäfer",
@@ -115,7 +117,7 @@
       "(vollständige Induktion über",
       ", dann gilt",
       "(wegen 3.2).",
-      "12.983606551713.8707312786885246",
+      "12.9836065573771 11.8032786885246",
       "",
       "",
       "",
