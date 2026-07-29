@@ -86,6 +86,39 @@ describe('real documents: SpreadsheetML dialects', () => {
     // but r="11_2" dropped every cell on the floor.
     expect(cells.length).toBeGreaterThanOrEqual(19);
     expect(cells).toContain('Van Rompaey Marcus');
+
+    // The refs look like <column>_<row> and the row half even agrees, but the
+    // columns they name are wrong: the header row is 11 labels and the data row
+    // 11 values, and only document order files each value under its own
+    // heading. Read as columns, the start time landed under "Klantnaam" — and
+    // then vanished off the right of the page.
+    //
+    // The sheet is wider than the page, so it comes out as one table per
+    // column band; row i of the sheet is row i of each of them.
+    const { doc } = readXlsx(load('tdf122336.xlsx'));
+    const tables = doc.body.filter((e) => e.kind === 'table');
+    const row = (i: number): Array<string> =>
+      tables.flatMap((t) =>
+        t.table.rows[i]!.cells.map((c) =>
+          c.content
+            .map((b) =>
+              b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text).join('') : '',
+            )
+            .join(''),
+        ),
+      );
+    expect(row(0).slice(0, 3)).toEqual(['Uitvoeringsdatu', 'Starttijd', 'Eindtijd']);
+    expect(row(1).slice(0, 3)).toEqual(['12/25/2018', '11:30', '14:30']);
+
+    // `<font/><font><b/></font>`: the empty element parses to a string rather
+    // than an object, and skipping it moved the bold font to index 0 — so
+    // `fontId="1"` resolved to nothing and the header row lost its weight.
+    const sd = readXlsxToSheetDoc(load('tdf122336.xlsx'));
+    expect(sd.styles.fonts).toHaveLength(2);
+    expect(sd.styles.fonts[1]?.bold).toBe(true);
+    expect(tables[0]!.table.rows[0]!.cells[0]!.content).toMatchObject([
+      { paragraph: { runs: [{ properties: { bold: true } }] } },
+    ]);
   });
 
   it('tdf111980_radioButtons.xlsx — <control> reaches ActiveX, not just form controls', () => {

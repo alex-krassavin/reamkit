@@ -212,8 +212,17 @@ function parseFonts(
   if (!node) return [];
   const out: Array<XlsxFont> = [];
   for (const item of asArray(node['font'])) {
+    // An empty element (`<font/>`, `<fill/>`, `<xf/>`) parses to a string, not
+    // an object — but it still OCCUPIES ITS INDEX. Skipping it shifts every
+    // later entry down one, and the ids in cellXfs then point at the wrong
+    // record: tdf122336.xlsx writes `<font/><font><b/></font>`, so its bold
+    // font landed at 0, `fontId="1"` resolved to nothing, and the header row
+    // came out in the body weight.
     const obj = asObject(item);
-    if (!obj) continue;
+    if (!obj) {
+      out.push({});
+      continue;
+    }
     const font: Mutable<XlsxFont> = {};
     const sz = childValAttr(obj, 'sz');
     if (sz !== undefined) {
@@ -241,7 +250,10 @@ function parseFills(
   const out: Array<XlsxFill> = [];
   for (const item of asArray(node['fill'])) {
     const obj = asObject(item);
-    if (!obj) continue;
+    if (!obj) {
+      out.push({});
+      continue;
+    }
     const fill: Mutable<XlsxFill> = {};
     const pf = asObject(obj['patternFill']);
     if (pf) {
@@ -273,7 +285,10 @@ function parseCellXfs(root: Record<string, unknown>): Array<XlsxCellXf> {
   const out: Array<XlsxCellXf> = [];
   for (const item of asArray(node['xf'])) {
     const obj = asObject(item);
-    if (!obj) continue;
+    if (!obj) {
+      out.push({ numFmtId: 0, fontId: 0, fillId: 0, borderId: 0 });
+      continue;
+    }
     const numFmtId = numAttr(obj, 'numFmtId') ?? 0;
     const fontId = numAttr(obj, 'fontId') ?? 0;
     const fillId = numAttr(obj, 'fillId') ?? 0;

@@ -744,14 +744,16 @@ describe('implicit cell/row positions (§18.3.1.4 — r= optional)', () => {
     expect(ws.cells.map((c) => c.inlineText)).toEqual(['v2', 'proper']);
   });
 
-  it('decodes a numeric "<column>_<row>" ref when the row agrees', () => {
+  it('places a numeric "<column>_<row>" ref by document order, not by its number', () => {
     const M = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
     // tdf122336.xlsx's producer writes the address as two 1-based numbers
-    // rather than A1 notation. It is not a spec spelling, but it is not noise
-    // either: every ref in <row r="2"> ends in _2, so the file states its own
-    // convention and we can check it before trusting it. Placing these by
-    // document order instead packs them consecutively — putting each value
-    // under the wrong column heading.
+    // rather than A1 notation. It looks like <column>_<row>, and the row half
+    // even agrees with the row the cell sits in — but the columns it yields are
+    // wrong. That sheet's header row is 11 labels in columns 1..11 and its data
+    // row is 11 values; read as columns the values scatter over 1, 4, 5, 7, 11,
+    // 13, 22, 29..32, filing the start time under "Klantnaam". LibreOffice
+    // places them consecutively, and consecutively is where each value lands
+    // under its own heading. The first number is a producer field id.
     const ws = parseWorksheet(
       enc(
         `<worksheet xmlns="${M}"><sheetData>` +
@@ -761,26 +763,8 @@ describe('implicit cell/row positions (§18.3.1.4 — r= optional)', () => {
     );
     expect(ws.cells.map((c) => [c.row, c.column])).toEqual([
       [1, 0],
-      [1, 3],
-      [1, 21],
-    ]);
-  });
-
-  it('refuses a numeric ref whose row disagrees with the row it sits in', () => {
-    const M = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
-    // The guard is the whole point: a ref that does not agree with its own row
-    // tells us nothing, so it falls back to document order rather than being
-    // decoded on a guess. Same two refs as above, in the wrong row.
-    const ws = parseWorksheet(
-      enc(
-        `<worksheet xmlns="${M}"><sheetData>` +
-          `<row r="1"><c r="4_2"><v>a</v></c><c r="22_2"><v>b</v></c></row>` +
-          `</sheetData></worksheet>`,
-      ),
-    );
-    expect(ws.cells.map((c) => [c.row, c.column])).toEqual([
-      [0, 0],
-      [0, 1],
+      [1, 1],
+      [1, 2],
     ]);
   });
 

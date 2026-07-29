@@ -1019,13 +1019,22 @@ function parseCell(c: unknown, fallbackRow: number, fallbackCol: number): Worksh
   // position either, so document order is the only answer available, and it is
   // the one the spec already sanctions. Dropping the cell instead turned
   // tdf122336.xlsx — whose producer writes r="11_2" — into a blank page.
+  //
+  // Nor is such a ref worth guessing at. `11_2` reads as `<column>_<row>`, and
+  // the file even corroborates the row half — every ref inside `<row r="2">`
+  // ends in `_2` — but the columns it yields are wrong: that sheet's header row
+  // is 11 labels in columns 1..11, its data row is 11 values, and reading the
+  // refs as columns scatters them over 1, 4, 5, 7, 11, 13, 22, 29..32, filing
+  // the start time under "Klantnaam" and stretching two rows across seven
+  // pages. In document order every value lands under its own heading. The first
+  // number is the producer's own field id, not a column.
   const implied = { column: fallbackCol, row: fallbackRow };
   let address: { column: number; row: number };
   if (ref) {
     try {
       address = parseCellRef(ref);
     } catch {
-      address = numericRef(ref, fallbackRow) ?? implied;
+      address = implied;
     }
   } else {
     address = implied;
@@ -1057,39 +1066,6 @@ function parseCell(c: unknown, fallbackRow: number, fallbackCol: number): Worksh
     rawValue,
     ...(Number.isFinite(styleIndex) ? { styleIndex: styleIndex as number } : {}),
   };
-}
-
-// `<column>_<row>`, both 1-based — the address spelling of the producer behind
-// tdf122336.xlsx, in place of A1 notation.
-const NUMERIC_REF = /^(\d+)_(\d+)$/;
-
-/**
- * Decode a numeric `"4_2"`-style reference, but only when the file corroborates
- * the reading.
- *
- * This is not a spec spelling and there is no obligation to understand it. What
- * makes it safe to act on is that the file states its own convention and can be
- * checked against itself: every ref inside `<row r="2">` ends in `_2`. So the
- * row half must agree with the row the cell actually sits in — and when it does
- * not, the reference has told us nothing and document order (§18.3.1.4) remains
- * the answer. A guess that cannot be checked is worse than the fallback; this
- * one can be.
- *
- * The alternative is not harmless: these cells are sparse (columns 1, 4, 5, 7,
- * 11, 13, 22 …), so packing them consecutively files every value under the
- * wrong heading.
- *
- * @param ref      The unparseable `r` attribute.
- * @param rowIndex The 0-based row the cell sits in.
- * @returns The address, or undefined when the reading is not corroborated.
- */
-function numericRef(ref: string, rowIndex: number): { column: number; row: number } | undefined {
-  const m = NUMERIC_REF.exec(ref);
-  if (!m) return undefined;
-  const column = Number(m[1]);
-  const row = Number(m[2]);
-  if (column < 1 || row !== rowIndex + 1) return undefined;
-  return { column: column - 1, row: rowIndex };
 }
 
 function validateCellType(t: string): CellType {
