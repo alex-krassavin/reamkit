@@ -56,6 +56,21 @@ export interface ProjectSheetOptions {
    * unreported.
    */
   readonly losses?: Array<Loss>;
+  /**
+   * Width of a digit in the font the document will actually be rendered in, at
+   * the workbook's default size, in points.
+   *
+   * §18.3.1.13 measures a column in Maximum Digit Widths of the workbook's own
+   * default font — the unit is a property of the font, not a constant. Laying
+   * columns out in one font's digit and then drawing the text in another makes
+   * every column the wrong width for its contents: with Calibri's 5.25 pt
+   * assumed and Roboto's 6.18 pt drawn, a column holds a sixth less than the
+   * file says, and the text that does not fit is clipped away.
+   *
+   * Omitted ⇒ Excel's own 7 px, which is right only if the render font matches
+   * the workbook's.
+   */
+  readonly digitWidthPt?: number;
 }
 
 /**
@@ -134,6 +149,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
         ...(ws.hyperlinks ? { hyperlinks: ws.hyperlinks } : {}),
         ...(sheet.sharedStringRuns ? { sharedStringRuns: sheet.sharedStringRuns } : {}),
         ...(options.now ? { now: options.now } : {}),
+        ...(options.digitWidthPt !== undefined ? { digitWidthPt: options.digitWidthPt } : {}),
         ...(options.losses ? { losses: options.losses } : {}),
       }),
     );

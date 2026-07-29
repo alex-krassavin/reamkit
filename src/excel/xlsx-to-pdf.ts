@@ -6,11 +6,17 @@ import type { BodyElement } from '@/core/document-model';
 import type { FontBytesByVariant } from '@/core/font';
 import type { FetchLike } from '@/core/fonts';
 import type { SignatureOptions, StyledRenderOptions } from '@/pdf';
-import { FontRegistry } from '@/core/font';
+import { FontRegistry, createFontMeasure } from '@/core/font';
 import { fetchFontSet } from '@/core/fonts';
 import { flowRenderOptions } from '@/core/converter/project';
 import { readXlsx } from '@/excel/xlsx-reader';
 import { renderStyledPdf, renderStyledPdfEncrypted, signPdf } from '@/pdf';
+
+/**
+ * The point size Excel's column-width unit is quoted at — its default theme
+ * font is 11 pt, and 8.43 of its digits are the documented 64 px column.
+ */
+const DEFAULT_WORKBOOK_FONT_PT = 11;
 
 /**
  * Options for the xlsx → PDF convenience converters. Extends the low-level
@@ -109,7 +115,15 @@ function prepareXlsxStyledRender(
   // All document-derived state now comes from the xlsx reader (ir-design §7). The
   // reference date (W9) feeds the conditional-format formula engine during the
   // SheetDoc → FlowDoc projection.
-  const { doc: flow } = readXlsx(xlsx, options.now !== undefined ? { now: options.now } : {});
+  // §18.3.1.13 measures a column in Maximum Digit Widths — of the font it is
+  // drawn in, not of Excel's. Measure the face we are about to render with so
+  // the columns hold what the file says they hold.
+  const { parsed } = registry.resolveByStyle(false, false);
+  const digitWidthPt = createFontMeasure(parsed).textWidthPt('0', DEFAULT_WORKBOOK_FONT_PT);
+  const { doc: flow } = readXlsx(xlsx, {
+    ...(options.now !== undefined ? { now: options.now } : {}),
+    digitWidthPt,
+  });
 
   const {
     fontBytes: _ignoreA,

@@ -95,6 +95,21 @@ const EXCEL_CELL_INSET_PT = 1.5;
  */
 export const DEFAULT_COL_TWIPS = 960;
 
+/** The character count behind {@link DEFAULT_COL_TWIPS}, for a non-Calibri unit. */
+const DEFAULT_COL_CHARS = 8.43;
+
+/**
+ * The column-width unit in twips: the Maximum Digit Width of the font the
+ * document is rendered in (§18.3.1.13), or Excel's own 7 px when the caller has
+ * not measured one.
+ */
+function digitTwips(digitWidthPt: number | undefined): number {
+  if (digitWidthPt === undefined || !Number.isFinite(digitWidthPt) || digitWidthPt <= 0) {
+    return TWIPS_PER_EXCEL_CHAR;
+  }
+  return digitWidthPt * TWIPS_PER_POINT;
+}
+
 /**
  * ECMA-376 §18.3.1.81 — the row height Excel uses when a sheet declares no
  * `<sheetFormatPr defaultRowHeight>`: 15pt, the line height of its default
@@ -326,6 +341,10 @@ interface PrintModelOptions {
   // E-SHEET W9 — the injected reference date for conditional-format `timePeriod`
   // windows and TODAY()/NOW() in `expression` rules. Absent ⇒ those no-op.
   readonly now?: Date;
+  // §18.3.1.13 measures a column in Maximum Digit Widths of the workbook's own
+  // default font, so the unit is a property of the FONT — see
+  // ProjectSheetOptions.digitWidthPt. Absent ⇒ Excel's own 7 px.
+  readonly digitWidthPt?: number;
   // Sink for projection losses. The defence-in-depth caps below are correct —
   // a pathological sheet must not exhaust memory — but a cap that fires without
   // saying so is precisely the silent wrongness LossReport exists to prevent.
@@ -367,6 +386,18 @@ export function worksheetToBody(
   // "used range": the extent of cells that carry content (a value or inline
   // text) or are spanned by a merge. Empty styled cells outside it are dropped,
   // as LibreOffice/Excel clip to the used range anyway.
+  // §18.3.1.13's unit of column width is the Maximum Digit Width of the
+  // WORKBOOK's default font. When the file names one — Calibri 11, Arial 10,
+  // the two Excel itself defaults to — that width is Excel's documented 7 px,
+  // and LibreOffice reproduces it because it substitutes metric-compatible
+  // faces (Carlito, Liberation Sans). Only when the file names no font at all
+  // does the reader's own default decide, and then the face we render with is
+  // the honest answer: tdf122336.xlsx declares `<font/>`, LibreOffice laid its
+  // columns out in Caladea, and its 40-character column takes a page to itself
+  // where ours took half of one.
+  const charTwipsUnit =
+    styles.fonts[0]?.name === undefined ? digitTwips(print.digitWidthPt) : TWIPS_PER_EXCEL_CHAR;
+
   let usedRow = -1;
   let usedCol = -1;
   const contentAt = new Set<string>();
@@ -406,7 +437,14 @@ export function worksheetToBody(
   // Without columns to run into, the cell keeps its own width and the layout
   // wraps the text inside it: open-as-read-only.xlsx declares `<dimension
   // ref="A1"/>` and its single sentence came out as nine stacked lines.
-  usedCol += overflowColumnsPastUsedRange(worksheet, usedCol, sharedStrings, styles, date1904);
+  usedCol += overflowColumnsPastUsedRange(
+    worksheet,
+    usedCol,
+    sharedStrings,
+    styles,
+    date1904,
+    charTwipsUnit,
+  );
 
   // Print area (when defined) overrides the rendered window: Excel prints only
   // the _xlnm.Print_Area range. Clip it to the used range so a print area that
@@ -558,8 +596,8 @@ export function worksheetToBody(
   const defaultColChars = worksheet.defaultColWidthChars ?? worksheet.baseColWidthChars;
   const defaultColTwips =
     defaultColChars !== undefined
-      ? Math.round(defaultColChars * TWIPS_PER_EXCEL_CHAR + COL_PADDING_TWIPS)
-      : DEFAULT_COL_TWIPS;
+      ? Math.round(defaultColChars * charTwipsUnit + COL_PADDING_TWIPS)
+      : Math.round(DEFAULT_COL_CHARS * charTwipsUnit + COL_PADDING_TWIPS);
   const columnWidths = new Array<number>(colCount).fill(defaultColTwips);
   // §18.3.1.13/§18.3.1.73 `hidden` — Excel and LibreOffice print neither a
   // hidden column nor a hidden row. Rendering them put a hidden currency column
@@ -567,7 +605,7 @@ export function worksheetToBody(
   // and broke the table's structure around them.
   const hiddenCols = new Set<number>();
   for (const col of worksheet.columns) {
-    const twips = Math.round(col.widthChars * TWIPS_PER_EXCEL_CHAR + COL_PADDING_TWIPS);
+    const twips = Math.round(col.widthChars * charTwipsUnit + COL_PADDING_TWIPS);
     for (let abs = col.min - 1; abs <= col.max - 1; abs++) {
       const i = abs - colStart;
       if (i < 0 || i >= colCount) continue;
@@ -849,7 +887,7 @@ export function worksheetToBody(
         // layout drop whatever still spills onto a second line. The cut is what
         // handles the case the layout cannot: a single unbreakable word, which
         // has no line break to drop and would otherwise run past the cell.
-        text = clipToWidth(text, availTwips, charTwips(xf, styles));
+        text = clipToWidth(text, availTwips, charTwips(xf, styles, charTwipsUnit));
         // Claim the empty neighbours the text runs over. Without this the cell
         // keeps its single column's width and the layout WRAPS the text inside
         // it — three stacked lines where Excel and LibreOffice draw one. The
@@ -961,12 +999,12 @@ export function worksheetToBody(
         !shrinkToFit &&
         c > 0 &&
         alignment === 'right' &&
-        estimateChars(text) * charTwips(xf, styles) > columnWidths[c]!
+        estimateChars(text) * charTwips(xf, styles, charTwipsUnit) > columnWidths[c]!
       ) {
         leftOverflow.push({
           index: cells.length,
           column: c,
-          needTwips: estimateChars(text) * charTwips(xf, styles) - columnWidths[c]!,
+          needTwips: estimateChars(text) * charTwips(xf, styles, charTwipsUnit) - columnWidths[c]!,
           shading,
           borders,
         });
@@ -1709,12 +1747,12 @@ function overflowColumnsPastUsedRange(
   sharedStrings: ReadonlyArray<string>,
   styles: XlsxStyles,
   date1904: boolean,
+  charTwipsUnit: number,
 ): number {
   const defaultChars = worksheet.defaultColWidthChars ?? worksheet.baseColWidthChars;
-  const defaultTwips =
-    defaultChars !== undefined
-      ? Math.round(defaultChars * TWIPS_PER_EXCEL_CHAR + COL_PADDING_TWIPS)
-      : DEFAULT_COL_TWIPS;
+  const defaultTwips = Math.round(
+    (defaultChars ?? DEFAULT_COL_CHARS) * charTwipsUnit + COL_PADDING_TWIPS,
+  );
   // The columns past the used range are not necessarily default-width: a `<col>`
   // range routinely covers far more columns than hold anything. Sizing the
   // budget by the default instead of by what the column will actually be made
@@ -1723,7 +1761,7 @@ function overflowColumnsPastUsedRange(
   const widthOf = (abs: number): number => {
     for (const col of worksheet.columns) {
       if (abs < col.min - 1 || abs > col.max - 1) continue;
-      return col.hidden ? 0 : Math.round(col.widthChars * TWIPS_PER_EXCEL_CHAR + COL_PADDING_TWIPS);
+      return col.hidden ? 0 : Math.round(col.widthChars * charTwipsUnit + COL_PADDING_TWIPS);
     }
     return defaultTwips;
   };
@@ -1748,7 +1786,10 @@ function overflowColumnsPastUsedRange(
     let room = 0;
     for (let abs = cell.column; abs <= usedCol; abs++) room += widthOf(abs);
     const text = resolveCellText(cell, sharedStrings, styles, date1904);
-    needTwips = Math.max(needTwips, estimateChars(text) * charTwips(xf, styles) - room);
+    needTwips = Math.max(
+      needTwips,
+      estimateChars(text) * charTwips(xf, styles, charTwipsUnit) - room,
+    );
   }
   if (needTwips <= 0) return 0;
 
@@ -1790,10 +1831,10 @@ function scaledColumnWidths(
  * overflow clip then cuts it in the middle of a word: tdf171828.xlsx lost the
  * "eff. Zins =" half of a label that fits its band perfectly well.
  */
-function charTwips(xf: XlsxCellXf | undefined, styles: XlsxStyles): number {
+function charTwips(xf: XlsxCellXf | undefined, styles: XlsxStyles, unit: number): number {
   const sizePt = (xf ? styles.fonts[xf.fontId]?.sizePt : undefined) ?? DEFAULT_FONT_PT;
-  if (!Number.isFinite(sizePt) || sizePt <= 0) return TWIPS_PER_EXCEL_CHAR;
-  return (TWIPS_PER_EXCEL_CHAR * sizePt) / DEFAULT_FONT_PT;
+  if (!Number.isFinite(sizePt) || sizePt <= 0) return unit;
+  return (unit * sizePt) / DEFAULT_FONT_PT;
 }
 
 // How wide a character renders, in the column-width unit — Excel's Maximum

@@ -19,7 +19,8 @@ import { FontRegistry } from '@/core/font';
 import { Ream } from '@/core/converter/ream';
 import { flowRenderOptions } from '@/core/converter/project';
 import { layoutStyledDocument } from '@/layout/styled-layout';
-import { readXlsx } from '@/excel/xlsx-reader';
+import { readXlsx, readXlsxToSheetDoc } from '@/excel/xlsx-reader';
+import { projectSheetDoc } from '@/excel/sheet-to-flow';
 
 const FONTS = {
   regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
@@ -411,5 +412,40 @@ describe('grid geometry', () => {
     for (const pitch of pitches) {
       expect(pitch).toBeCloseTo(pitches[0]!, 1);
     }
+  });
+});
+
+describe('column width unit (§18.3.1.13)', () => {
+  it('measures a column in the digit width of the font it is drawn in', () => {
+    // The unit is the workbook default font's Maximum Digit Width. When the
+    // file names a font — Calibri 11, Arial 10 — that width is Excel's
+    // documented 7px, and a metric-compatible substitute reproduces it. When it
+    // names none, the reader's own face decides: tdf122336.xlsx declares
+    // `<font/>` and LibreOffice laid its 40-character columns out one per page
+    // where we fitted two.
+    const named = buildXlsx({
+      rows: [['x']],
+      columns: [{ min: 1, max: 1, widthChars: 40 }],
+      stylesXml:
+        `<fonts count="1"><font><name val="Calibri"/><sz val="11"/></font></fonts>` +
+        `<fills count="1"><fill/></fills><borders count="1"><border/></borders>` +
+        `<cellXfs count="1"><xf/></cellXfs>`,
+    });
+    const anonymous = buildXlsx({
+      rows: [['x']],
+      columns: [{ min: 1, max: 1, widthChars: 40 }],
+    });
+    // The projection takes the measured digit width; the reader alone has no
+    // font, so both would fall back to Excel's unit.
+    const width = (bytes: Uint8Array): number => {
+      const flow = projectSheetDoc(readXlsxToSheetDoc(bytes), { digitWidthPt: 6.18 });
+      const table = flow.body.find((e) => e.kind === 'table');
+      if (table?.kind !== 'table') throw new Error('expected a table');
+      return table.table.grid[0]!;
+    };
+    // Excel's own unit: 40 × 7px + 5px of padding.
+    expect(width(named)).toBeCloseTo(40 * 5.25 + 3.75, 1);
+    // The reader's face is wider than Calibri's, so the column is too.
+    expect(width(anonymous)).toBeGreaterThan(width(named));
   });
 });

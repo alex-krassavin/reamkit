@@ -27,7 +27,7 @@ import type { SheetDoc } from '@/core/ir/sheet';
 import type { SignatureOptions, StyledRenderOptions } from '@/pdf';
 import { DEFAULT_READERS, resolveFontsViaChain, toFlowDoc } from '@/core/converter/facade';
 import { flowRenderOptions } from '@/core/converter/project';
-import { FontRegistry } from '@/core/font';
+import { FontRegistry, createFontMeasure } from '@/core/font';
 import { fetchFontSet } from '@/core/fonts';
 import { ConversionLossError } from '@/core/ir';
 import { writeDocx } from '@/word/docx-writer';
@@ -41,6 +41,12 @@ import { resolveDocxAutoFonts } from '@/word/docx-to-pdf';
 
 /** The output formats {@link Ream.convert} can produce. */
 export type ReamTarget = 'pdf' | 'svg' | 'html' | 'docx' | 'xlsx';
+
+/**
+ * The point size Excel's column-width unit is quoted at — its default theme
+ * font is 11 pt, and 8.43 of its digits are the documented 64 px column.
+ */
+const DEFAULT_WORKBOOK_FONT_PT = 11;
 
 /** Options for {@link Ream.parse}. */
 export interface ReamParseOptions {
@@ -236,10 +242,25 @@ export class Ream {
     const { fonts, registriesByFamily } = await this.resolveFonts(options, losses);
     const registry = FontRegistry.fromBytes(fonts);
 
+    // §18.3.1.13 measures a column in Maximum Digit Widths — of the font it is
+    // drawn in. The parse-time projection has no font, so a paginated target
+    // re-projects the grid against the face it is about to render with;
+    // otherwise every column is laid out to one font's digit and filled with
+    // another's, and the text that does not fit is clipped away.
+    const paginated = this.sheet
+      ? projectSheetDoc(this.sheet, {
+          ...(options.now ? { now: options.now } : {}),
+          digitWidthPt: createFontMeasure(registry.resolveByStyle(false, false).parsed).textWidthPt(
+            '0',
+            DEFAULT_WORKBOOK_FONT_PT,
+          ),
+        })
+      : flow;
+
     if (to === 'svg') {
-      const laid = layoutStyledDocument(flow.body, {
+      const laid = layoutStyledDocument(paginated.body, {
         registry,
-        ...flowRenderOptions(flow),
+        ...flowRenderOptions(paginated),
       });
       const svg = writeSvg(laid);
       losses.push(...svg.losses);
@@ -268,7 +289,7 @@ export class Ream {
     void _f;
 
     // Caller overrides spread over the document's own metadata.
-    const info = flow.info || callerInfo ? { ...flow.info, ...callerInfo } : undefined;
+    const info = paginated.info || callerInfo ? { ...paginated.info, ...callerInfo } : undefined;
     const attachments = [...(callerAttachments ?? [])];
     if (embedSource && options.pdfA?.startsWith('PDF/A-3')) {
       attachments.push({
@@ -283,7 +304,7 @@ export class Ream {
     const styled = {
       registry,
       ...(registriesByFamily ? { registriesByFamily } : {}),
-      ...flowRenderOptions(flow),
+      ...flowRenderOptions(paginated),
       ...(info ? { info } : {}),
       ...(attachments.length > 0 ? { attachments } : {}),
       ...(signature ? { signaturePlaceholder: signature } : {}),
@@ -292,8 +313,8 @@ export class Ream {
     // §7.6: encryption runs on this async path (WebCrypto); the plain branch
     // stays the byte-stable sync render.
     let pdf = styled.encrypt
-      ? await renderStyledPdfEncrypted(flow.body, styled)
-      : renderStyledPdf(flow.body, styled);
+      ? await renderStyledPdfEncrypted(paginated.body, styled)
+      : renderStyledPdf(paginated.body, styled);
     if (signature) pdf = await signPdf(pdf, signature);
     this.enforceStrict(options, losses);
     return { bytes: pdf, losses };
