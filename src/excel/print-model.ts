@@ -283,15 +283,18 @@ function computePrintScale(
   let s = 1;
   if (worksheet.fitToPage) {
     // fitToPage overrides any explicit scale. The binding (smaller) of the two
-    // fit factors wins. fitToWidth defaults to 1 page (existing behavior);
-    // fitToHeight constrains only when explicitly ≥1 (a width-only "fit all
-    // columns" sheet has fitToHeight="0" and keeps flowing down as before).
+    // fit factors wins. BOTH default to 1 page (§18.3.1.63 CT_PageSetup): a
+    // sheet that turns fit-to-page on and names neither is asking to fit on one
+    // page each way. Treating an absent fitToHeight as "unconstrained" — the
+    // meaning of an explicit `fitToHeight="0"` — left such a sheet at full size
+    // and let it flow down: bnc762542.xlsx resolved to no shrink at all where
+    // the reference shrinks it to about four fifths.
     const fitW = setup?.fitToWidth ?? 1;
+    const fitH = setup?.fitToHeight ?? 1;
     let sW = 1;
     let sH = 1;
     if (fitW >= 1 && totalGridTwips > 0) sW = (contentWidthTwips * fitW) / totalGridTwips;
-    const fitH = setup?.fitToHeight;
-    if (fitH !== undefined && fitH >= 1 && totalGridHeightTwips > 0) {
+    if (fitH >= 1 && totalGridHeightTwips > 0) {
       sH = (contentHeightTwips * fitH) / totalGridHeightTwips;
     }
     s = Math.min(sW, sH);
@@ -345,6 +348,12 @@ interface PrintModelOptions {
   // default font, so the unit is a property of the FONT — see
   // ProjectSheetOptions.digitWidthPt. Absent ⇒ Excel's own 7 px.
   readonly digitWidthPt?: number;
+  // The print scale this sheet resolved to, reported back to the caller. A
+  // drawing is anchored to the grid and shrinks with it, but it is emitted
+  // beside the grid rather than inside it — and the factor is only known here,
+  // where the grid's own totals are. Recomputing it outside would mean
+  // duplicating the used-range logic and, sooner or later, disagreeing with it.
+  readonly scaleSink?: { value: number };
   // Sink for projection losses. The defence-in-depth caps below are correct —
   // a pathological sheet must not exhaust memory — but a cap that fires without
   // saying so is precisely the silent wrongness LossReport exists to prevent.
@@ -643,6 +652,7 @@ export function worksheetToBody(
     sheetContentHeightTwips(worksheet),
   );
   const scaled = printScale < 0.999;
+  if (print.scaleSink) print.scaleSink.value = printScale;
 
   // Manual <rowBreaks>: each brk id is the 0-based row that starts a new page →
   // force a page break before that (absolute) row.

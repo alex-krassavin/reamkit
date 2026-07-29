@@ -10,7 +10,9 @@ import type {
   HeaderFooterReference,
   Section,
   SectionProperties,
+  ShapeBlock,
 } from '@/core/document-model';
+import type { Pt } from '@/core/ir';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss } from '@/core/ir/loss';
 import type {
@@ -20,8 +22,8 @@ import type {
   SheetFormControl,
 } from '@/core/ir/sheet';
 
-import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 import { pt } from '@/core/ir';
+import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 import { buildHeaderFooterContent } from '@/excel/header-footer';
 import {
   resolvePrintArea,
@@ -138,6 +140,10 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     const printArea = resolvePrintArea(sheet.definedNames, sheetIdx);
     const titleRows = resolvePrintTitleRows(sheet.definedNames, sheetIdx);
     const gridLines = ws.grid.printOptions?.gridLines === true;
+    // The scale the sheet resolved to — an explicit `<pageSetup scale>` or the
+    // factor fit-to-page worked out from the grid's totals. The drawings below
+    // are anchored to that grid and shrink with it.
+    const scaleSink = { value: 1 };
     body.push(
       ...worksheetToBody(ws.grid, sheet.sharedStrings, sheet.styles, sheet.date1904, {
         ...(printArea ? { printArea } : {}),
@@ -151,6 +157,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
         ...(options.now ? { now: options.now } : {}),
         ...(options.digitWidthPt !== undefined ? { digitWidthPt: options.digitWidthPt } : {}),
         ...(options.losses ? { losses: options.losses } : {}),
+        scaleSink,
       }),
     );
 
@@ -182,10 +189,11 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       });
     }
 
-    // W2: anchored shapes render as shape blocks after the grid (anchor-ordered;
-    // placement collapses to inline, like charts/pictures).
+    // W2: anchored shapes render as floating shape blocks over the grid, at the
+    // point their `twoCellAnchor` names — scaled with the sheet, since that is
+    // what the anchor's tracks were measured in.
     for (const shape of ws.shapes ?? []) {
-      body.push({ kind: 'shape', shape });
+      body.push({ kind: 'shape', shape: scaleShape(shape, scaleSink.value) });
     }
 
     // §SV2: slicer panels render as styled button boxes after the grid + charts.
@@ -355,6 +363,37 @@ function activeXLabel(c: SheetActiveXControl): string {
 // Expand the first sheet's <headerFooter> into header/footer bands and attach them
 // to its section (creating a minimal section when the sheet has no custom page
 // geometry). The section is returned unchanged when there is no header/footer.
+/**
+ * A drawing at the sheet's print scale: its box and the point it floats at
+ * shrink together, exactly as the grid beneath them does. Returns the shape
+ * untouched at 1.0 so an unscaled sheet stays byte-identical.
+ */
+function scaleShape(shape: ShapeBlock, scale: number): ShapeBlock {
+  if (!(scale > 0) || scale >= 0.999) return shape;
+  const offset = (o: { readonly offsetPt?: Pt } | undefined): number | undefined =>
+    o?.offsetPt === undefined ? undefined : o.offsetPt * scale;
+  const posH = shape.float?.posH;
+  const posV = shape.float?.posV;
+  return {
+    ...shape,
+    width: pt(shape.width * scale),
+    height: pt(shape.height * scale),
+    ...(shape.float
+      ? {
+          float: {
+            ...shape.float,
+            ...(posH ? { posH: { ...posH, ...withOffset(offset(posH)) } } : {}),
+            ...(posV ? { posV: { ...posV, ...withOffset(offset(posV)) } } : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+function withOffset(value: number | undefined): { offsetPt?: Pt } {
+  return value === undefined ? {} : { offsetPt: pt(value) };
+}
+
 function withHeaderFooter(
   section: SectionProperties,
   ws: SheetDoc['sheets'][number],

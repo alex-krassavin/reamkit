@@ -49,10 +49,6 @@ export function parseSheetShapes(
   if (!wsDr) return [];
   const colWidthPt = makeColWidthPt(worksheet);
   const rowHeightPt = makeRowHeightPt(worksheet);
-  // The print scale shrinks the sheet — grid, fonts and row heights alike — and
-  // a drawing anchored to that grid shrinks with it. Left at full size the
-  // shapes of a fit-to-page sheet float over a grid less than half their scale.
-  const scale = explicitPrintScale(worksheet);
 
   const shapes: Array<SheetShape> = [];
   for (const anchor of poChildren(wsDr)) {
@@ -83,11 +79,11 @@ export function parseSheetShapes(
         // a shape at its anchor when one is given, so give it one.
         float: {
           wrap: 'none' as const,
-          posH: { relativeFrom: 'margin' as const, offsetPt: pt(box.xPt * scale) },
-          posV: { relativeFrom: 'margin' as const, offsetPt: pt(box.yPt * scale) },
+          posH: { relativeFrom: 'margin' as const, offsetPt: pt(box.xPt) },
+          posV: { relativeFrom: 'margin' as const, offsetPt: pt(box.yPt) },
         },
-        width: pt(box.widthPt * scale),
-        height: pt(box.heightPt * scale),
+        width: pt(box.widthPt),
+        height: pt(box.heightPt),
         geometry,
         fill,
         ...(line ? { line } : {}),
@@ -99,22 +95,6 @@ export function parseSheetShapes(
   }
   shapes.sort((a, b) => a.anchorRow - b.anchorRow);
   return shapes.map((s) => s.shape);
-}
-
-/**
- * The sheet's EXPLICIT print scale (§18.3.1.63 `<pageSetup scale>`), as a
- * factor. A drawing is anchored to the grid and shrinks with it, so leaving it
- * at full size floats it over a grid less than half its scale.
- *
- * Fit-to-page is deliberately not handled here: its factor falls out of the
- * grid's own totals, which only the projection knows, and a wrong scale would
- * be worse than none. Those sheets keep their drawings unscaled for now.
- */
-function explicitPrintScale(worksheet: ParsedWorksheet): number {
-  if (worksheet.fitToPage) return 1;
-  const pct = worksheet.pageSetup?.scale;
-  if (pct === undefined || !Number.isFinite(pct) || pct <= 0) return 1;
-  return Math.min(1, pct / 100);
 }
 
 interface AnchorBox {
