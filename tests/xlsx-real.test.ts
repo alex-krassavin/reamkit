@@ -97,6 +97,27 @@ describe('real documents: SpreadsheetML dialects', () => {
     expect(controls.filter((c) => c.value === '1').map((c) => c.groupName)).toEqual(['Sheet1']);
   });
 
+  it('AverageTaxRates.xlsx — hidden column and rows stay out of the render', () => {
+    // The sheet hides a currency column between two visible ones and seven rows
+    // in the middle of its table. Rendering them showed a column no other
+    // reader shows, an extra data row, a second copy of the header band, and
+    // broke the table's borders around them.
+    const sheet = readXlsxToSheetDoc(load('AverageTaxRates.xlsx')).sheets[0]!;
+    expect(sheet.grid.columns.filter((c) => c.hidden)).toHaveLength(1);
+    expect(sheet.grid.rowHeights.filter((r) => r.hidden)).toHaveLength(7);
+
+    const { doc } = readXlsx(load('AverageTaxRates.xlsx'));
+    const table = doc.body.find((e) => e.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('expected a table');
+    // Twelve printed columns: the label plus 1997..2007. Thirteen would mean the
+    // hidden currency column came back.
+    expect(table.table.grid).toHaveLength(12);
+    // The hidden rows carry these; none may appear.
+    const text = textCells(load('AverageTaxRates.xlsx'));
+    expect(text).not.toContain('4,726');
+    expect(text).not.toContain('6,000');
+  });
+
   it('duplicate-filename.xlsx — t="inlineStr" written into <v>', () => {
     expect(textCells(load('duplicate-filename.xlsx'))).toContain('v2');
   });

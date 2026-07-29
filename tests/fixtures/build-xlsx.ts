@@ -36,6 +36,7 @@ export interface XlsxRowHeightSpec {
   readonly row: number; // 0-indexed
   readonly heightPt: number;
   readonly customHeight?: boolean;
+  readonly hidden?: boolean;
 }
 
 export interface XlsxPageMarginsSpec {
@@ -75,6 +76,7 @@ export interface XlsxSheetSpec {
     readonly min: number;
     readonly max: number;
     readonly widthChars: number;
+    readonly hidden?: boolean;
   }>;
   readonly rowHeights?: ReadonlyArray<XlsxRowHeightSpec>;
   /** §18.3.1.81 `<sheetFormatPr defaultRowHeight>` — height of rows with no `ht`. */
@@ -113,6 +115,7 @@ export interface XlsxBuilderOptions {
     readonly min: number;
     readonly max: number;
     readonly widthChars: number;
+    readonly hidden?: boolean;
   }>;
   readonly rowHeights?: ReadonlyArray<XlsxRowHeightSpec>;
   /** §18.3.1.81 `<sheetFormatPr defaultRowHeight>` — height of rows with no `ht`. */
@@ -414,7 +417,8 @@ export function buildXlsx(
       }
       const heightSpec = rowHeightLookup.get(r);
       const heightAttrs = heightSpec
-        ? ` ht="${heightSpec.heightPt}"${heightSpec.customHeight !== false ? ' customHeight="1"' : ''}`
+        ? ` ht="${heightSpec.heightPt}"${heightSpec.customHeight !== false ? ' customHeight="1"' : ''}` +
+          (heightSpec.hidden ? ' hidden="1"' : '')
         : '';
       if (cells.length > 0 || heightSpec) {
         sheetRows.push(`  <row r="${r + 1}"${heightAttrs}>${cells.join('')}</row>`);
@@ -426,7 +430,10 @@ export function buildXlsx(
         ? '<cols>' +
           sheet.columns
             .map(
-              (c) => `<col min="${c.min}" max="${c.max}" width="${c.widthChars}" customWidth="1"/>`,
+              (c) =>
+                `<col min="${c.min}" max="${c.max}" width="${c.widthChars}" customWidth="1"` +
+                (c.hidden ? ' hidden="1"' : '') +
+                '/>',
             )
             .join('') +
           '</cols>'

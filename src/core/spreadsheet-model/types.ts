@@ -26,6 +26,8 @@ export interface ColumnWidth {
   readonly min: number; // 1-indexed in OOXML, kept as-is here
   readonly max: number;
   readonly widthChars: number;
+  /** §18.3.1.13 `hidden` — Excel and LibreOffice print neither the column nor its cells. */
+  readonly hidden?: boolean;
 }
 
 /** §18.3.1.55 `<mergeCell>` — a merged cell rectangle (0-indexed, inclusive bounds). */
@@ -45,6 +47,8 @@ export interface RowHeight {
   readonly row: number; // 0-indexed
   readonly heightPt: number;
   readonly customHeight: boolean;
+  /** §18.3.1.73 `hidden` — the row is not printed at all. */
+  readonly hidden?: boolean;
 }
 
 /** ECMA-376 Part 1 §18.3.1.62 — `<pageMargins>`. All attributes are in inches. */

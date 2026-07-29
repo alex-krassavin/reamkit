@@ -194,13 +194,20 @@ function parseRowHeight(
   rowIndex: number | undefined,
 ): RowHeight | undefined {
   if (rowIndex === undefined) return undefined;
+  // A hidden row usually carries no `ht`, so it has to be recorded on `hidden`
+  // alone — returning early when `ht` is absent lost it entirely.
+  const hidden = boolAttr(obj, 'hidden');
   const htRaw = strAttr(obj, 'ht');
-  if (htRaw === undefined) return undefined;
-  const heightPt = Number(htRaw);
-  if (!Number.isFinite(heightPt)) return undefined;
+  const heightPt = htRaw !== undefined ? Number(htRaw) : Number.NaN;
+  if (!Number.isFinite(heightPt) && !hidden) return undefined;
   const customRaw = strAttr(obj, 'customHeight');
   const customHeight = customRaw === '1' || customRaw === 'true';
-  return { row: rowIndex, heightPt, customHeight };
+  return {
+    row: rowIndex,
+    heightPt: Number.isFinite(heightPt) ? heightPt : 0,
+    customHeight,
+    ...(hidden ? { hidden } : {}),
+  };
 }
 
 function parsePageMargins(ws: Record<string, unknown>): XlsxPageMargins | undefined {
@@ -383,7 +390,8 @@ function parseColumns(ws: Record<string, unknown>): Array<ColumnWidth> {
     const max = Number(strAttr(obj, 'max'));
     const width = Number(strAttr(obj, 'width'));
     if (Number.isFinite(min) && Number.isFinite(max) && Number.isFinite(width)) {
-      out.push({ min, max, widthChars: width });
+      const hidden = boolAttr(obj, 'hidden');
+      out.push({ min, max, widthChars: width, ...(hidden ? { hidden } : {}) });
     }
   }
   return out;

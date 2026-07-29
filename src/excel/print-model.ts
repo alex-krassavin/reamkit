@@ -550,23 +550,40 @@ export function worksheetToBody(
       ? Math.round(defaultColChars * TWIPS_PER_EXCEL_CHAR + COL_PADDING_TWIPS)
       : DEFAULT_COL_TWIPS;
   const columnWidths = new Array<number>(colCount).fill(defaultColTwips);
+  // §18.3.1.13/§18.3.1.73 `hidden` — Excel and LibreOffice print neither a
+  // hidden column nor a hidden row. Rendering them put a hidden currency column
+  // and seven hidden rows into AverageTaxRates.xlsx that no other reader shows,
+  // and broke the table's structure around them.
+  const hiddenCols = new Set<number>();
   for (const col of worksheet.columns) {
     const twips = Math.round(col.widthChars * TWIPS_PER_EXCEL_CHAR + COL_PADDING_TWIPS);
     for (let abs = col.min - 1; abs <= col.max - 1; abs++) {
       const i = abs - colStart;
-      if (i >= 0 && i < colCount) columnWidths[i] = twips;
+      if (i < 0 || i >= colCount) continue;
+      columnWidths[i] = twips;
+      if (col.hidden) hiddenCols.add(i);
     }
   }
+  const hiddenRows = new Set<number>();
+  for (const h of worksheet.rowHeights) {
+    if (h.hidden) hiddenRows.add(h.row - rowStart);
+  }
+  // The grid the rest of the projection works with: local indices of the
+  // columns that actually print, in order.
+  const visibleCols: Array<number> = [];
+  for (let c = 0; c < colCount; c++) if (!hiddenCols.has(c)) visibleCols.push(c);
+  const visibleWidths = visibleCols.map((c) => columnWidths[c]!);
 
   // Print scaling (fit-to-page / explicit <pageSetup scale>) → uniform shrink of
   // fonts + row heights. `scaled` gates the change so unscaled sheets stay
   // byte-identical (1.0 ⇒ no-op).
-  const totalGridTwips = columnWidths.reduce((sum, w) => sum + w, 0);
+  const totalGridTwips = visibleWidths.reduce((sum, w) => sum + w, 0);
   // Total grid height for fitToHeight: sum the rendered rows' heights (custom
   // overrides, else Excel's ~15pt default). Wrapping can grow rows past this, so
   // it's an estimate — but shrinking fonts reduces wrapping toward it.
   let totalGridHeightTwips = 0;
   for (let r = 0; r < rowCount; r++) {
+    if (hiddenRows.has(r)) continue;
     totalGridHeightTwips += rowHeightMap.get(r)?.heightTwips ?? DEFAULT_ROW_TWIPS;
   }
   const printScale = computePrintScale(
@@ -650,6 +667,7 @@ export function worksheetToBody(
 
   const rows: Array<TableRow> = [];
   for (let r = 0; r < rowCount; r++) {
+    if (hiddenRows.has(r)) continue;
     const absR = r + rowStart;
     const cells: Array<TableCell> = [];
     // Columns swallowed by a cell overflowing rightwards over them (see the
@@ -657,7 +675,7 @@ export function worksheetToBody(
     // is always marked before the loop reaches it.
     const overflowed = new Set<number>();
     for (let c = 0; c < colCount; c++) {
-      if (overflowed.has(c)) continue;
+      if (hiddenCols.has(c) || overflowed.has(c)) continue;
       const absC = c + colStart;
       const merge = mergeOrigins.get(key(absR, absC));
       const insideNotOrigin = insideMerge.has(key(absR, absC));
@@ -948,8 +966,8 @@ export function worksheetToBody(
   // Round DOWN so the scaled columns pack into the intended page count (rounding
   // up can spill the last column of a band onto an extra page).
   const bandWidths = scaled
-    ? columnWidths.map((w) => Math.max(1, Math.floor(w * printScale)))
-    : columnWidths;
+    ? visibleWidths.map((w) => Math.max(1, Math.floor(w * printScale)))
+    : visibleWidths;
   const bandTotal = bandWidths.reduce((sum, w) => sum + w, 0);
   if (
     colCount > 1 &&

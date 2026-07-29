@@ -367,6 +367,36 @@ describe('grid geometry', () => {
     expect(table?.kind === 'table' && table.table.grid.length).toBe(4);
   });
 
+  it('prints neither a hidden column nor a hidden row', () => {
+    // §18.3.1.13 / §18.3.1.73 `hidden`. Excel and LibreOffice print neither, and
+    // rendering them is not a cosmetic difference: AverageTaxRates.xlsx hides a
+    // currency column between two visible ones and seven rows in the middle of
+    // its table, so showing them inserted a column no other reader shows and
+    // broke the table's structure around it.
+    const xlsx = buildXlsx({
+      rows: [
+        ['keep-a', 'HIDE-COL', 'keep-b'],
+        ['HIDE-ROW', 'HIDE-ROW', 'HIDE-ROW'],
+        ['keep-c', 'HIDE-COL', 'keep-d'],
+      ],
+      columns: [
+        { min: 1, max: 1, widthChars: 12 },
+        { min: 2, max: 2, widthChars: 12, hidden: true },
+        { min: 3, max: 3, widthChars: 12 },
+      ],
+      rowHeights: [{ row: 1, heightPt: 15, hidden: true }],
+    });
+    const drawn = placed(xlsx).map((i) => i.text);
+    expect(drawn).toEqual(expect.arrayContaining(['keep-a', 'keep-b', 'keep-c', 'keep-d']));
+    expect(drawn).not.toContain('HIDE-COL');
+    expect(drawn).not.toContain('HIDE-ROW');
+
+    // The grid loses the column too, so nothing after it is displaced.
+    const { doc } = readXlsx(xlsx);
+    const table = doc.body.find((e) => e.kind === 'table');
+    expect(table?.kind === 'table' && table.table.grid.length).toBe(2);
+  });
+
   it('keeps equal declared widths equally spaced', () => {
     // Four columns declared identical must come out identical. Auto-fit makes
     // each one as wide as its own content, so the pitch wanders — which is what
