@@ -403,6 +403,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
         : worksheet;
     sheetsOut.push({
       name: sheet.name,
+      ...(sheet.hidden ? { hidden: true } : {}),
       grid,
       ...(charts.length > 0 ? { charts } : {}),
       ...(images.length > 0 ? { images } : {}),

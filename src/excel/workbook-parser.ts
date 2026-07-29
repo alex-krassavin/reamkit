@@ -30,6 +30,11 @@ export interface SheetReference {
   readonly sheetId: string;
   /** The relationship id (`r:id`) resolving to the sheet's worksheet part. */
   readonly relationshipId: string;
+  /**
+   * §18.2.19 `@state` — `hidden` or `veryHidden` when the tab is not shown.
+   * Excel and LibreOffice print only visible sheets.
+   */
+  readonly hidden?: boolean;
 }
 
 // DefinedName (the workbook's named ranges — print areas/titles ride these)
@@ -76,7 +81,9 @@ export function parseWorkbook(data: Uint8Array): ParsedWorkbook {
     const sheetId = strAttr(obj, 'sheetId');
     const rId = strAttr(obj, 'r:id') ?? strAttr(obj, 'id');
     if (!name || !rId) continue;
-    out.push({ name, sheetId: sheetId ?? '', relationshipId: rId });
+    const state = strAttr(obj, 'state');
+    const hidden = state === 'hidden' || state === 'veryHidden';
+    out.push({ name, sheetId: sheetId ?? '', relationshipId: rId, ...(hidden ? { hidden } : {}) });
   }
   return { sheets: out, date1904, definedNames };
 }

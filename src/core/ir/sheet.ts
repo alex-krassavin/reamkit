@@ -124,6 +124,12 @@ export interface Sheet {
   /** The sheet (tab) name. */
   readonly name: string;
   /**
+   * §18.2.19 `<sheet @state>` — the tab is `hidden` or `veryHidden`. Carried
+   * because a consumer that shows the workbook (the HTML writer) may still want
+   * it; the paginated projection skips it, as Excel and LibreOffice do.
+   */
+  readonly hidden?: boolean;
+  /**
    * The grid + per-sheet geometry exactly as parsed: cells, columns, rows,
    * merges, dimensions, pageSetup/printOptions, manual breaks, drawingRelId.
    */

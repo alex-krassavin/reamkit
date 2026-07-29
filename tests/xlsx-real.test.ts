@@ -193,6 +193,13 @@ describe('real documents: SpreadsheetML dialects', () => {
     expect(cells).toContain('Kreditsumme');
     expect(cells).toContain('Zahlungsbeginn');
 
+    // §18.2.19: the third sheet is state="hidden" — a lookup table nobody
+    // prints. Excel and LibreOffice leave it out; we printed two pages of
+    // working data at the end of the document.
+    const sd0 = readXlsxToSheetDoc(load('tdf171828_fail_to_import_file.xlsx'));
+    expect(sd0.sheets.map((s) => s.hidden ?? false)).toEqual([false, false, true]);
+    expect(cells).not.toContain('Hitab');
+
     // The block is styled entirely from the workbook theme — `theme="2"
     // tint="-0.5"` and friends. Unresolved, those colours parse to nothing and
     // a solid fill with no foreground paints nothing: the whole header block

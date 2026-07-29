@@ -91,22 +91,29 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
   // (Sheet2!A1:C1) resolves against the right sheet (E-SHEET SC2 tail TC3).
   const sheetGrids = new Map(sheet.sheets.map((s) => [s.name, s.grid]));
 
+  // Sheets actually printed so far — not the loop index, which has to keep
+  // counting hidden sheets because `localSheetId` on a defined name does.
+  let printed = 0;
   for (let sheetIdx = 0; sheetIdx < sheet.sheets.length; sheetIdx++) {
     const ws = sheet.sheets[sheetIdx]!;
+    // §18.2.19: a hidden tab is not printed. Excel and LibreOffice both leave it
+    // out entirely — tdf171828.xlsx hides its lookup table, and printing it added
+    // two pages of working data to the end of the document.
+    if (ws.hidden) continue;
     // The header/footer band is a document-level resource keyed by a synthetic
     // id, so only the first sheet's can be carried; its geometry, though, is
     // per-sheet.
     const sheetSection =
-      sheetIdx === 0
+      printed === 0
         ? withHeaderFooter(sectionFromWorksheet(ws.grid), ws, headersFooters)
         : sectionFromWorksheet(ws.grid);
-    if (sheetIdx === 0) firstSheetSection = sheetSection;
+    if (printed === 0) firstSheetSection = sheetSection;
     sheetSections.push(sheetSection);
 
     // Each sheet after the first starts on its own PDF page. We do NOT print the
     // sheet name (Calc/Excel `--convert-to pdf` emit it nowhere), so the page
     // break is an empty page-break-only paragraph (no runs ⇒ no glyphs).
-    if (sheetIdx > 0) {
+    if (printed > 0) {
       body.push({
         kind: 'paragraph',
         paragraph: { properties: { pageBreakBefore: true }, runs: [] },
@@ -188,6 +195,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       body.push(...activeXBlocks(ws.activeXControls));
     }
     sheetEnds.push(body.length);
+    printed++;
   }
 
   // Section i covers body[sections[i-1].endIndex .. sections[i].endIndex). A
