@@ -893,6 +893,10 @@ function emitPageContent(
 
       // Encode a token's text, reversing code points for RTL (odd-level) runs
       // so glyphs lay out right-to-left as our cursor advances left-to-right.
+      /** A text token carrying underline or strikethrough. */
+      const isDecorated = (tok: (typeof line.tokens)[number]): tok is TextToken =>
+        tok.kind === 'text' && (tok.resolvedRun.underline !== 'none' || tok.resolvedRun.strike);
+
       const encodeToken = (tok: TextToken): string => {
         const text = tok.bidiLevel % 2 === 1 ? reverseByCodePoint(tok.text) : tok.text;
         return tok.font.measure.encodeTextAsCidHex(text);
@@ -924,6 +928,44 @@ function emitPageContent(
           hx += w;
         }
         out.push('f');
+        out.push('Q');
+      }
+
+      // §17.3.2.40 `w:u` / §17.3.2.9 `w:strike` — decoration is a path, not a
+      // glyph, so like the highlight above it is drawn with the text object
+      // closed. Trailing spaces are decorated too, which is what a run of them
+      // under an underline is for. Gated on a decorated token being present, so
+      // a document with none emits byte-identically.
+      if (line.tokens.some(isDecorated)) {
+        if (inBT) {
+          out.push('ET');
+          inBT = false;
+        }
+        out.push('q');
+        let dx: number = originX;
+        for (const tok of line.tokens) {
+          const w = tok.widthPt + (tok.kind === 'text' && tok.isSpace ? extraPerSpace : 0);
+          if (isDecorated(tok)) {
+            const [r, g, b] = hexToRgb01(tok.resolvedRun.colorHex);
+            const thickness = Math.max(0.4, tok.fontSizePt * 0.06);
+            out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} rg`);
+            if (tok.resolvedRun.underline !== 'none') {
+              const y = baselineY - tok.fontSizePt * 0.12 - thickness;
+              out.push(
+                `${formatNumber(dx)} ${formatNumber(y)} ` +
+                  `${formatNumber(w)} ${formatNumber(thickness)} re f`,
+              );
+            }
+            if (tok.resolvedRun.strike) {
+              const y = baselineY + tok.fontSizePt * 0.26;
+              out.push(
+                `${formatNumber(dx)} ${formatNumber(y)} ` +
+                  `${formatNumber(w)} ${formatNumber(thickness)} re f`,
+              );
+            }
+          }
+          dx += w;
+        }
         out.push('Q');
       }
 

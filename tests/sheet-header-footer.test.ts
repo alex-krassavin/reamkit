@@ -125,6 +125,33 @@ describe('sheet header/footer — render (E-SHEET W4)', () => {
     expect(pageText(laid.pages[1]!.commands)).toContain('Page 2 of 2');
   });
 
+  it('applies &U, &nn and the style half of &"family,style"', () => {
+    // tdf171828.xlsx writes its header as &"BernhardFashion BT,Bold"&16&U… —
+    // three codes we dropped, so a 16pt bold underlined title printed as plain
+    // body text. The family itself stays dropped (one font set is available).
+    const xlsx = buildXlsx({
+      rows: [['x']],
+      headerFooter: { oddHeader: '&L&"Some Face,Bold Italic"&16&UTitle&RPlain' },
+    });
+    const flow = Ream.parse(xlsx).flow;
+    const bands = [...(flow.headersFooters?.values() ?? [])].flat();
+    const runs = bands.flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs : []));
+    const title = runs.find((r) => r.text === 'Title');
+    expect(title?.properties).toMatchObject({
+      bold: true,
+      italic: true,
+      underline: 'single',
+      fontSizePt: 16,
+    });
+    // Each region starts from the sheet's own font — the right region here is
+    // plain, exactly as LibreOffice prints tdf171828's "Seite &P".
+    expect(runs.find((r) => r.text === 'Plain')?.properties).toMatchObject({
+      bold: false,
+      italic: false,
+      underline: 'none',
+    });
+  });
+
   it('renders a sheet with a header to a valid PDF', () => {
     const xlsx = buildXlsx({ rows: [['x']], headerFooter: { oddHeader: '&CMy Report' } });
     const pdf = convertXlsxToPdfSync(xlsx, { fonts: FONTS });

@@ -65,6 +65,9 @@ import { buildConditionalFormatter } from '@/excel/conditional-format';
  */
 export const TWIPS_PER_EXCEL_CHAR = 105;
 
+/** The point size {@link TWIPS_PER_EXCEL_CHAR} was measured at (Excel's default). */
+const DEFAULT_FONT_PT = 11;
+
 /**
  * ECMA-376 §18.3.1.13 — a `<col width>` measures characters of text, and the
  * rendered column is that many Maximum Digit Widths PLUS a fixed 5-pixel
@@ -397,6 +400,14 @@ export function worksheetToBody(
   }
   if (usedRow < 0 || usedCol < 0) return []; // nothing but empty styled cells
 
+  // Overflow does not stop at the used range either. A long string in the last
+  // used column keeps running across the empty grid to its right, and Excel and
+  // LibreOffice both draw it on one line — there is nothing there to block it.
+  // Without columns to run into, the cell keeps its own width and the layout
+  // wraps the text inside it: open-as-read-only.xlsx declares `<dimension
+  // ref="A1"/>` and its single sentence came out as nine stacked lines.
+  usedCol += overflowColumnsPastUsedRange(worksheet, usedCol, sharedStrings, styles, date1904);
+
   // Print area (when defined) overrides the rendered window: Excel prints only
   // the _xlnm.Print_Area range. Clip it to the used range so a print area that
   // over-declares (e.g. to XFD) cannot re-introduce the dense-grid blow-up.
@@ -674,6 +685,10 @@ export function worksheetToBody(
     // overflow block below). Reset per row; filled left-to-right, so a column
     // is always marked before the loop reaches it.
     const overflowed = new Set<number>();
+    // The local column each emitted cell starts at, and the right-aligned cells
+    // that want space to their left — both consumed by absorbLeftwards below.
+    const cellColumns: Array<number> = [];
+    const leftOverflow: Array<LeftOverflow> = [];
     for (let c = 0; c < colCount; c++) {
       if (hiddenCols.has(c) || overflowed.has(c)) continue;
       const absC = c + colStart;
@@ -779,26 +794,28 @@ export function worksheetToBody(
       ) {
         let availTwips = columnWidths[c]!;
         let cc = c + 1;
-        // A neighbour is free real estate only if it draws NOTHING at all —
-        // no value, no fill or border of its own, and none of the marks a cell
-        // can carry without text (a sparkline, a validation dropdown). Spanning
-        // over one that does would erase it. Excel draws the text ACROSS such a
-        // cell and keeps what it holds; we cannot, so we stop and clip instead
-        // — visibly short beats visibly wrong.
+        // What blocks Excel's overflow is CONTENT — the text is drawn straight
+        // across a filled or bordered neighbour, which keeps everything it
+        // holds. We implement overflow as a column span, and a span erases what
+        // it covers, so decoration is not free for us: it is safe to span only
+        // where nothing would be lost. That is the common case in practice,
+        // because a decorated empty neighbour usually belongs to the same band
+        // as the cell overflowing into it — tdf171828.xlsx puts its labels in a
+        // filled, top-ruled block and we clipped "Kreditsumme" to "Kre".
+        // Anywhere the paint actually differs we still stop and clip, which is
+        // visibly short but never visibly wrong.
         const neighbourIsFree = (col: number): boolean =>
           !cellHasContent(cellMatrix[r]?.[col]) &&
-          !cellPaintsSomething(cellMatrix[r]?.[col], styles) &&
+          (!cellPaintsSomething(cellMatrix[r]?.[col], styles) ||
+            spanPreservesPaint(cellMatrix[r]?.[col], styles, shading, borders)) &&
           !sparklineByCell.has(key(absR, col + colStart)) &&
           !(dropdownRanges.length > 0 && rangesCover(dropdownRanges, absR, col + colStart));
         while (cc < colCount && neighbourIsFree(cc)) {
           availTwips += columnWidths[cc]!;
           cc++;
         }
-        if (cc < colCount) {
-          // an occupied cell stops the overflow → clip to the available width
-          const charsFit = Math.max(1, Math.round(availTwips / TWIPS_PER_EXCEL_CHAR));
-          if (text.length > charsFit) text = text.slice(0, charsFit);
-        }
+        // An occupied cell stops the overflow → clip to the width available.
+        if (cc < colCount) text = clipToWidth(text, availTwips, charTwips(xf, styles));
         // Claim the empty neighbours the text runs over. Without this the cell
         // keeps its single column's width and the layout WRAPS the text inside
         // it — three stacked lines where Excel and LibreOffice draw one. The
@@ -892,8 +909,43 @@ export function worksheetToBody(
         : cellRuns.length === 0
           ? []
           : [{ kind: 'paragraph', paragraph: { properties: paragraphProps, runs: cellRuns } }];
+      // A right-aligned cell overflows the other way — leftwards — and the
+      // widest label in a form column is routinely wider than the column it
+      // sits in. Without it the text is drawn from the cell's own left edge and
+      // runs over whatever is to the right: tdf171828.xlsx has "Tilgungsart"
+      // lying across the value beside it. Recorded here and resolved after the
+      // row is built, because the free space is to the LEFT of a cell the loop
+      // has already emitted.
+      if (
+        text.length > 0 &&
+        !merge &&
+        !wrapText &&
+        !rotated &&
+        !shrinkToFit &&
+        c > 0 &&
+        alignment === 'right' &&
+        estimateChars(text) * charTwips(xf, styles) > columnWidths[c]!
+      ) {
+        leftOverflow.push({
+          index: cells.length,
+          column: c,
+          needTwips: estimateChars(text) * charTwips(xf, styles) - columnWidths[c]!,
+          shading,
+          borders,
+        });
+      }
+      cellColumns.push(c);
       cells.push({ properties, content });
     }
+    absorbLeftwards(cells, cellColumns, leftOverflow, styles, (col) => {
+      if (insideMerge.has(key(absR, col)) || mergeOrigins.has(key(absR, col))) return undefined;
+      if (sparklineByCell.has(key(absR, col + colStart))) return undefined;
+      if (dropdownRanges.length > 0 && rangesCover(dropdownRanges, absR, col + colStart)) {
+        return undefined;
+      }
+      if (cellHasContent(cellMatrix[r]?.[col])) return undefined;
+      return { cell: cellMatrix[r]?.[col], widthTwips: columnWidths[col]! };
+    });
     const baseRowProps = rowHeightMap.get(r);
     const rowHeightTwips =
       scaled && baseRowProps !== undefined
@@ -1585,6 +1637,230 @@ function cellPaintsSomething(cell: WorksheetCell | undefined, styles: XlsxStyles
   const xf = styles.cellXfs[cell.styleIndex];
   if (!xf) return false;
   return shadingFromXf(xf, styles) !== undefined || bordersFromXf(xf, styles) !== undefined;
+}
+
+/**
+ * How many empty columns past the used range the last column's text needs to
+ * run into, bounded by the printable width (Excel stops at the page edge too).
+ *
+ * Only the last used column can want them — anywhere else the grid already has
+ * neighbours. Zero for the overwhelming majority of sheets, which keeps their
+ * projection exactly as it was.
+ */
+function overflowColumnsPastUsedRange(
+  worksheet: ParsedWorksheet,
+  usedCol: number,
+  sharedStrings: ReadonlyArray<string>,
+  styles: XlsxStyles,
+  date1904: boolean,
+): number {
+  const defaultChars = worksheet.defaultColWidthChars ?? worksheet.baseColWidthChars;
+  const defaultTwips =
+    defaultChars !== undefined
+      ? Math.round(defaultChars * TWIPS_PER_EXCEL_CHAR + COL_PADDING_TWIPS)
+      : DEFAULT_COL_TWIPS;
+  // The columns past the used range are not necessarily default-width: a `<col>`
+  // range routinely covers far more columns than hold anything. Sizing the
+  // budget by the default instead of by what the column will actually be made
+  // the grid wider than the page, and a grid wider than the page is split into
+  // bands — one extra, blank page for a document LibreOffice prints as one.
+  const widthOf = (abs: number): number => {
+    for (const col of worksheet.columns) {
+      if (abs < col.min - 1 || abs > col.max - 1) continue;
+      return col.hidden ? 0 : Math.round(col.widthChars * TWIPS_PER_EXCEL_CHAR + COL_PADDING_TWIPS);
+    }
+    return defaultTwips;
+  };
+
+  let needTwips = 0;
+  for (const cell of worksheet.cells) {
+    if (cell.column !== usedCol) continue;
+    if (!(cell.type === 's' || cell.type === 'str' || cell.type === 'inlineStr')) continue;
+    const xf = cell.styleIndex !== undefined ? styles.cellXfs[cell.styleIndex] : undefined;
+    const align = xf?.alignment;
+    if (align?.wrapText || align?.shrinkToFit || align?.textRotation) continue;
+    if (alignmentFromXf(xf, cell.type) !== 'left') continue;
+    const text = resolveCellText(cell, sharedStrings, styles, date1904);
+    needTwips = Math.max(needTwips, estimateChars(text) * charTwips(xf, styles) - widthOf(usedCol));
+  }
+  if (needTwips <= 0) return 0;
+
+  let gridTwips = 0;
+  for (let abs = 0; abs <= usedCol; abs++) gridTwips += widthOf(abs);
+  const limit = sheetContentWidthTwips(worksheet);
+
+  // Bounded independently of the width budget: a run of `<col width="0.01">`
+  // would otherwise take thousands of iterations to fill one page. No page can
+  // show 256 columns of text, so this never binds on a real sheet.
+  const MAX_OVERFLOW_COLS = 256;
+  let extra = 0;
+  while (needTwips > 0 && extra < MAX_OVERFLOW_COLS) {
+    const w = widthOf(usedCol + extra + 1);
+    if (w <= 0 || gridTwips + w > limit) break;
+    gridTwips += w;
+    needTwips -= w;
+    extra++;
+  }
+  return extra;
+}
+
+/**
+ * The width of one character of a cell's own font, in twips.
+ *
+ * {@link TWIPS_PER_EXCEL_CHAR} is the Maximum Digit Width of the DEFAULT 11pt
+ * font, and column widths are measured in exactly those units — but the text
+ * inside a cell is not necessarily written in it. Measuring a 7pt annotation by
+ * the 11pt yardstick makes it read as half again as wide as it is, and the
+ * overflow clip then cuts it in the middle of a word: tdf171828.xlsx lost the
+ * "eff. Zins =" half of a label that fits its band perfectly well.
+ */
+function charTwips(xf: XlsxCellXf | undefined, styles: XlsxStyles): number {
+  const sizePt = (xf ? styles.fonts[xf.fontId]?.sizePt : undefined) ?? DEFAULT_FONT_PT;
+  if (!Number.isFinite(sizePt) || sizePt <= 0) return TWIPS_PER_EXCEL_CHAR;
+  return (TWIPS_PER_EXCEL_CHAR * sizePt) / DEFAULT_FONT_PT;
+}
+
+// How wide a character renders, in the column-width unit — Excel's Maximum
+// Digit Width of 7 px, which is what TWIPS_PER_EXCEL_CHAR measures.
+//
+// Two corrections are folded into these numbers, and both matter. Text is
+// proportional, so a run of spaces or of narrow letters is nowhere near as wide
+// as the same count of digits — counting every character as one made a padded
+// label read half again as wide as it is, and the overflow clip cut it mid-word.
+// And the font that renders is not the font the column was measured against:
+// Roboto's digit is 6.18 pt at 11 pt against Excel's 5.25 pt, so even an exact
+// per-character model in the source font's own units would under-measure the
+// page by a sixth. The factors below are measured off Roboto (Arial and
+// Helvetica sit within a few percent of it) and already scaled into Excel units.
+const NARROW_CHARS = new Set(' .,:;\'"!|il');
+const SEMI_NARROW_CHARS = new Set('ftr()[]{}-/\\');
+const WIDE_CHARS = new Set('MWmw@%');
+
+function charWidthUnits(ch: string): number {
+  if (NARROW_CHARS.has(ch)) return 0.53;
+  if (SEMI_NARROW_CHARS.has(ch)) return 0.71;
+  if (WIDE_CHARS.has(ch)) return 1.77;
+  if (ch >= 'a' && ch <= 'z') return 1.12;
+  if (ch >= 'A' && ch <= 'Z') return 1.36;
+  return 1.18;
+}
+
+/** Width of `text` in column-width units, estimated character by character. */
+function estimateChars(text: string): number {
+  let n = 0;
+  for (const ch of text) n += charWidthUnits(ch);
+  return n;
+}
+
+/** The longest prefix of `text` that fits `availTwips`, by the same estimate. */
+function clipToWidth(text: string, availTwips: number, perChar: number): string {
+  if (perChar <= 0) return text;
+  const budget = availTwips / perChar;
+  let used = 0;
+  let i = 0;
+  for (const ch of text) {
+    const w = charWidthUnits(ch);
+    if (used + w > budget) break;
+    used += w;
+    i += ch.length;
+  }
+  return i >= text.length ? text : text.slice(0, Math.max(1, i));
+}
+
+/** A right-aligned cell that needs room to its left, recorded as its row is built. */
+interface LeftOverflow {
+  /** Index of the cell in the row's `cells` array. */
+  readonly index: number;
+  /** Its local column. */
+  readonly column: number;
+  /** How much wider than its own column the text is. */
+  readonly needTwips: number;
+  readonly shading: CellShading | undefined;
+  readonly borders: CellBorders | undefined;
+}
+
+/** What a candidate column offers a leftward overflow, or undefined if it is not free. */
+type LeftNeighbour = (
+  column: number,
+) => { cell: WorksheetCell | undefined; widthTwips: number } | undefined;
+
+/**
+ * Widen each right-aligned cell that overflows leftwards over the free columns
+ * before it, deleting the cells those columns produced.
+ *
+ * The mirror of the rightward overflow the row loop does inline, but it cannot
+ * be done inline: the space a right-aligned cell needs lies behind it, in cells
+ * already emitted. Same freeness rule as rightwards — nothing in the column,
+ * and nothing painted there that the span would erase.
+ */
+function absorbLeftwards(
+  cells: Array<TableCell>,
+  cellColumns: Array<number>,
+  candidates: ReadonlyArray<LeftOverflow>,
+  styles: XlsxStyles,
+  neighbourAt: LeftNeighbour,
+): void {
+  // Right to left: absorbing shifts every later index, and a candidate never
+  // reaches past one to its left (that one's own cell blocks it).
+  for (let k = candidates.length - 1; k >= 0; k--) {
+    const cand = candidates[k]!;
+    let need = cand.needTwips;
+    let first = cand.index;
+    while (first > 0 && need > 0) {
+      const prev = first - 1;
+      const col = cellColumns[prev]!;
+      // Only a single-column cell can be absorbed whole; a spanning one is
+      // already carrying somebody's text.
+      if ((cells[prev]!.properties.colSpan ?? 1) !== 1) break;
+      if (cellColumns[first]! !== col + 1) break;
+      const free = neighbourAt(col);
+      if (!free) break;
+      if (!spanPreservesPaint(free.cell, styles, cand.shading, cand.borders)) break;
+      need -= free.widthTwips;
+      first = prev;
+    }
+    if (first === cand.index) continue;
+    const span = cand.index - first + 1;
+    const cell = cells[cand.index]!;
+    cells.splice(first, span, {
+      ...cell,
+      properties: { ...cell.properties, colSpan: (cell.properties.colSpan ?? 1) + span - 1 },
+    });
+    cellColumns.splice(first, span, cellColumns[first]!);
+  }
+}
+
+/**
+ * Whether spanning a cell's overflowing text across `neighbour` would leave the
+ * page looking the same as drawing over it would.
+ *
+ * A span paints the ORIGIN's fill and the ORIGIN's outer borders across the
+ * whole run, so it is lossless exactly when the neighbour's fill already
+ * matches, the neighbour carries no vertical rule of its own to erase, and its
+ * horizontal edges are the ones the origin will redraw anyway. A block of empty
+ * cells continuing a filled, top-ruled band — which is what a decorated
+ * neighbour almost always is — passes; a differently filled or boxed cell does
+ * not, and the text is clipped short of it instead.
+ */
+function spanPreservesPaint(
+  neighbour: WorksheetCell | undefined,
+  styles: XlsxStyles,
+  shading: CellShading | undefined,
+  borders: CellBorders | undefined,
+): boolean {
+  if (!neighbour || neighbour.styleIndex === undefined) return true;
+  const xf = styles.cellXfs[neighbour.styleIndex];
+  if (!xf) return true;
+  if (shadingFromXf(xf, styles)?.colorHex !== shading?.colorHex) return false;
+  const nb = bordersFromXf(xf, styles);
+  if (!nb) return true;
+  if (nb.left || nb.right || nb.insideV || nb.diagonalUp || nb.diagonalDown) return false;
+  return sameBorder(nb.top, borders?.top) && sameBorder(nb.bottom, borders?.bottom);
+}
+
+function sameBorder(a: Border | undefined, b: Border | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  return a.style === b.style && a.width === b.width && a.colorHex === b.colorHex;
 }
 
 // E-SHEET SV2 — a slicer panel projected as a styled mini-table emitted after the

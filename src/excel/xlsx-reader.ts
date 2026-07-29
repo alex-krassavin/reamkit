@@ -139,10 +139,16 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
     ? parseSharedStrings(sharedStringsData)
     : { texts: [] as ReadonlyArray<string>, runs: [] as ReadonlyArray<undefined> };
 
-  const stylesData = pkg.getPart(STYLES_PART);
-  const styles = stylesData ? parseXlsxStyles(stylesData) : EMPTY_XLSX_STYLES;
-
   const workbookRels = pkg.getPartRelationships(WORKBOOK_PART);
+  // §18.8.3 `<color theme="N">` resolves against the workbook theme, and Excel
+  // writes it for anything picked from the standard palette. Without the theme
+  // those colours parse to nothing at all: tdf171828.xlsx styles its whole
+  // header block `theme="2" tint="-0.5"` and every one of those fills came out
+  // unpainted. Same palette the charts and table styles already resolve against.
+  const themePalette = buildThemePalette(pkg, workbookRels);
+
+  const stylesData = pkg.getPart(STYLES_PART);
+  const styles = stylesData ? parseXlsxStyles(stylesData, themePalette) : EMPTY_XLSX_STYLES;
   // Threaded-comment authors (E-SHEET W7): xl/persons/person.xml maps person ids
   // to display names. Workbook-scoped, resolved once and shared across sheets.
   const persons = new Map<string, string>();

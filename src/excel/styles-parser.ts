@@ -27,6 +27,7 @@ import type {
   XlsxStyles,
   XlsxVerticalAlign,
 } from '@/core/spreadsheet-model';
+import { applyColorMods } from '@/core/drawingml/colors';
 
 const decoder = new TextDecoder('utf-8');
 
@@ -54,25 +55,32 @@ export const EMPTY_XLSX_STYLES: XlsxStyles = {
   cellXfs: [],
 };
 
+/** A workbook theme's colour scheme, slot name → RRGGBB (see `parseTheme`). */
+export type ThemePalette = ReadonlyMap<string, string>;
+
 /**
  * Parse `xl/styles.xml` (§18.8) into the {@link XlsxStyles} table the renderer
  * consumes: custom number formats, fonts, fills, borders, the cell formats
  * (`cellXfs` — each indexing font/fill/border/numFmt + optional alignment) and the
  * differential formats (`dxfs`) conditional formatting applies. Returns
  * {@link EMPTY_XLSX_STYLES} when the root is absent or malformed.
+ *
+ * @param theme The workbook's theme palette, resolving `<color theme="N">`.
+ *              Without it those colours are dropped, and a sheet styled from the
+ *              theme loses every fill and font colour it has.
  */
-export function parseXlsxStyles(data: Uint8Array): XlsxStyles {
+export function parseXlsxStyles(data: Uint8Array, theme?: ThemePalette): XlsxStyles {
   const xml = decoder.decode(data);
   const tree = parser.parse(xml) as Record<string, unknown>;
   const root = asObject(tree['styleSheet']);
   if (!root) return EMPTY_XLSX_STYLES;
 
-  const dxfs = parseDxfs(root);
+  const dxfs = parseDxfs(root, theme);
   return {
     numFmts: parseNumFmts(root),
-    fonts: parseFonts(root),
-    fills: parseFills(root),
-    borders: parseBorders(root),
+    fonts: parseFonts(root, theme),
+    fills: parseFills(root, theme),
+    borders: parseBorders(root, theme),
     cellXfs: parseCellXfs(root),
     ...(dxfs.length > 0 ? { dxfs } : {}),
   };
@@ -81,7 +89,7 @@ export function parseXlsxStyles(data: Uint8Array): XlsxStyles {
 // §18.8.10 <dxfs> — differential formats a conditional-format rule applies on
 // match. We read the font (bold/italic/color) and fill (solid highlight); a dxf
 // fill's solid colour conventionally rides <bgColor> (Excel quirk).
-function parseDxfs(root: Record<string, unknown>): Array<Dxf> {
+function parseDxfs(root: Record<string, unknown>, theme: ThemePalette | undefined): Array<Dxf> {
   const node = asObject(root['dxfs']);
   if (!node) return [];
   const out: Array<Dxf> = [];
@@ -97,7 +105,7 @@ function parseDxfs(root: Record<string, unknown>): Array<Dxf> {
       const font: Mutable<XlsxFont> = {};
       if (hasChild(fontObj, 'b')) font.bold = childToggle(fontObj, 'b');
       if (hasChild(fontObj, 'i')) font.italic = childToggle(fontObj, 'i');
-      const colorHex = colorOf(asObject(fontObj['color']));
+      const colorHex = colorOf(asObject(fontObj['color']), theme);
       if (colorHex) font.colorHex = colorHex;
       if (Object.keys(font).length > 0) dxf.font = font;
     }
@@ -106,8 +114,8 @@ function parseDxfs(root: Record<string, unknown>): Array<Dxf> {
       const fill: Mutable<XlsxFill> = {};
       const pt = strAttr(pf, 'patternType');
       if (pt) fill.patternType = pt;
-      const fg = colorOf(asObject(pf['fgColor']));
-      const bg = colorOf(asObject(pf['bgColor']));
+      const fg = colorOf(asObject(pf['fgColor']), theme);
+      const bg = colorOf(asObject(pf['bgColor']), theme);
       if (fg) fill.fgColorHex = fg;
       if (bg) fill.bgColorHex = bg;
       if (Object.keys(fill).length > 0) dxf.fill = fill;
@@ -134,7 +142,10 @@ const VALID_BORDER_STYLES: ReadonlySet<XlsxBorderStyleName> = new Set([
   'slantDashDot',
 ]);
 
-function parseBorders(root: Record<string, unknown>): Array<XlsxBorder> {
+function parseBorders(
+  root: Record<string, unknown>,
+  theme: ThemePalette | undefined,
+): Array<XlsxBorder> {
   const node = asObject(root['borders']);
   if (!node) return [];
   const out: Array<XlsxBorder> = [];
@@ -145,16 +156,16 @@ function parseBorders(root: Record<string, unknown>): Array<XlsxBorder> {
       continue;
     }
     const border: Mutable<XlsxBorder> = {};
-    const top = parseBorderEdge(asObject(obj['top']));
-    const right = parseBorderEdge(asObject(obj['right']));
-    const bottom = parseBorderEdge(asObject(obj['bottom']));
-    const left = parseBorderEdge(asObject(obj['left']));
+    const top = parseBorderEdge(asObject(obj['top']), theme);
+    const right = parseBorderEdge(asObject(obj['right']), theme);
+    const bottom = parseBorderEdge(asObject(obj['bottom']), theme);
+    const left = parseBorderEdge(asObject(obj['left']), theme);
     if (top) border.top = top;
     if (right) border.right = right;
     if (bottom) border.bottom = bottom;
     if (left) border.left = left;
     // §18.8.4 diagonal stroke + which corners it spans (E-SHEET W6).
-    const diagonal = parseBorderEdge(asObject(obj['diagonal']));
+    const diagonal = parseBorderEdge(asObject(obj['diagonal']), theme);
     if (diagonal) {
       border.diagonal = diagonal;
       if (boolAttr(obj, 'diagonalUp')) border.diagonalUp = true;
@@ -165,12 +176,15 @@ function parseBorders(root: Record<string, unknown>): Array<XlsxBorder> {
   return out;
 }
 
-function parseBorderEdge(node: Record<string, unknown> | undefined): XlsxBorderEdge | undefined {
+function parseBorderEdge(
+  node: Record<string, unknown> | undefined,
+  theme: ThemePalette | undefined,
+): XlsxBorderEdge | undefined {
   if (!node) return undefined;
   const styleRaw = strAttr(node, 'style');
   if (!styleRaw) return undefined;
   if (!VALID_BORDER_STYLES.has(styleRaw as XlsxBorderStyleName)) return undefined;
-  const colorHex = colorOf(asObject(node['color']));
+  const colorHex = colorOf(asObject(node['color']), theme);
   const edge: Mutable<XlsxBorderEdge> = { style: styleRaw as XlsxBorderStyleName };
   if (colorHex) edge.colorHex = colorHex;
   return edge;
@@ -190,7 +204,10 @@ function parseNumFmts(root: Record<string, unknown>): Map<number, string> {
   return result;
 }
 
-function parseFonts(root: Record<string, unknown>): Array<XlsxFont> {
+function parseFonts(
+  root: Record<string, unknown>,
+  theme: ThemePalette | undefined,
+): Array<XlsxFont> {
   const node = asObject(root['fonts']);
   if (!node) return [];
   const out: Array<XlsxFont> = [];
@@ -206,7 +223,7 @@ function parseFonts(root: Record<string, unknown>): Array<XlsxFont> {
     if (hasChild(obj, 'b')) font.bold = childToggle(obj, 'b');
     if (hasChild(obj, 'i')) font.italic = childToggle(obj, 'i');
     if (hasChild(obj, 'u')) font.underline = childToggle(obj, 'u');
-    const colorRgb = colorOf(asObject(obj['color']));
+    const colorRgb = colorOf(asObject(obj['color']), theme);
     if (colorRgb) font.colorHex = colorRgb;
     const nameVal = childValAttr(obj, 'name');
     if (nameVal) font.name = nameVal;
@@ -215,7 +232,10 @@ function parseFonts(root: Record<string, unknown>): Array<XlsxFont> {
   return out;
 }
 
-function parseFills(root: Record<string, unknown>): Array<XlsxFill> {
+function parseFills(
+  root: Record<string, unknown>,
+  theme: ThemePalette | undefined,
+): Array<XlsxFill> {
   const node = asObject(root['fills']);
   if (!node) return [];
   const out: Array<XlsxFill> = [];
@@ -227,8 +247,8 @@ function parseFills(root: Record<string, unknown>): Array<XlsxFill> {
     if (pf) {
       const pt = strAttr(pf, 'patternType');
       if (pt) fill.patternType = pt;
-      const fg = colorOf(asObject(pf['fgColor']));
-      const bg = colorOf(asObject(pf['bgColor']));
+      const fg = colorOf(asObject(pf['fgColor']), theme);
+      const bg = colorOf(asObject(pf['bgColor']), theme);
       if (fg) fill.fgColorHex = fg;
       if (bg) fill.bgColorHex = bg;
     }
@@ -236,7 +256,7 @@ function parseFills(root: Record<string, unknown>): Array<XlsxFill> {
     // summarise the stops to their average colour and carry it as a solid fill —
     // the cell gets its intended background; on write-back it round-trips as solid.
     if (!fill.patternType) {
-      const avg = averageGradientColor(asObject(obj['gradientFill']));
+      const avg = averageGradientColor(asObject(obj['gradientFill']), theme);
       if (avg) {
         fill.patternType = 'solid';
         fill.fgColorHex = avg;
@@ -341,7 +361,10 @@ function childToggle(obj: Record<string, unknown>, childName: string): boolean {
 }
 
 // The mean of a gradientFill's stop colours (E-SHEET W6) — a representative solid.
-function averageGradientColor(gf: Record<string, unknown> | undefined): string | undefined {
+function averageGradientColor(
+  gf: Record<string, unknown> | undefined,
+  theme: ThemePalette | undefined,
+): string | undefined {
   if (!gf) return undefined;
   let r = 0;
   let g = 0;
@@ -349,7 +372,7 @@ function averageGradientColor(gf: Record<string, unknown> | undefined): string |
   let n = 0;
   for (const s of asArray(gf['stop'])) {
     const so = asObject(s);
-    const hex = so ? colorOf(asObject(so['color'])) : undefined;
+    const hex = so ? colorOf(asObject(so['color']), theme) : undefined;
     if (!hex) continue;
     r += parseInt(hex.slice(0, 2), 16);
     g += parseInt(hex.slice(2, 4), 16);
@@ -444,7 +467,10 @@ export const INDEXED_COLORS: ReadonlyArray<string> = [
   'FFFFFF',
 ];
 
-function colorOf(node: Record<string, unknown> | undefined): string | undefined {
+function colorOf(
+  node: Record<string, unknown> | undefined,
+  theme?: ThemePalette,
+): string | undefined {
   if (!node) return undefined;
   const rgb = strAttr(node, 'rgb');
   if (rgb) {
@@ -457,5 +483,49 @@ function colorOf(node: Record<string, unknown> | undefined): string | undefined 
     const i = Number(indexed);
     if (Number.isInteger(i) && i >= 0 && i < INDEXED_COLORS.length) return INDEXED_COLORS[i];
   }
+  const themeIdx = strAttr(node, 'theme');
+  if (themeIdx !== undefined && theme) {
+    const slot = THEME_SLOTS[Number(themeIdx)];
+    const base = slot ? theme.get(slot) : undefined;
+    if (base) return applyTint(base, Number(strAttr(node, 'tint') ?? '0'));
+  }
   return undefined;
+}
+
+/**
+ * ECMA-376 §18.8.3 `<color theme>` — the index into the workbook theme's colour
+ * scheme. Excel's order is NOT the order the theme part declares them in: the
+ * first two slots are swapped, so `theme="0"` is the light background and
+ * `theme="1"` the dark text, while `theme1.xml` writes `dk1` before `lt1`.
+ */
+const THEME_SLOTS: ReadonlyArray<string> = [
+  'lt1',
+  'dk1',
+  'lt2',
+  'dk2',
+  'accent1',
+  'accent2',
+  'accent3',
+  'accent4',
+  'accent5',
+  'accent6',
+  'hlink',
+  'folHlink',
+];
+
+/**
+ * §18.8.19 `tint` — lighten (positive) or darken (negative) a theme colour by
+ * scaling its HSL luminance. Excel writes it on nearly every theme colour it
+ * uses, so ignoring it is not much better than ignoring the colour: a `theme="2"
+ * tint="-0.5"` band is half as light as its slot.
+ */
+function applyTint(hex: string, tint: number): string {
+  if (!Number.isFinite(tint) || tint === 0) return hex;
+  // The same luminance arithmetic DrawingML spells as lumMod/lumOff.
+  return tint < 0
+    ? applyColorMods(hex, [{ kind: 'lumMod', val: 1 + tint }])
+    : applyColorMods(hex, [
+        { kind: 'lumMod', val: 1 - tint },
+        { kind: 'lumOff', val: tint },
+      ]);
 }

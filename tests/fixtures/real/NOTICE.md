@@ -19,6 +19,7 @@ Upstream path: `sc/qa/unit/data/xlsx` (ref `master`).
 | `tdf167019.xlsx` | `298671dfe0882a2f` | A4 landscape with both a print area and print titles. |
 | `tdf171828_fail_to_import_file.xlsx` | `ebfabb870c52d902` | Three sheets on three different papers (A4 landscape, Letter portrait, A4 landscape) — the mixed-geometry workbook. |
 | `tdf58243.xlsx` | `442be369ae4f768d` | Print area, print titles and fitToPage together — the densest print-model document in the corpus. |
+| `open-as-read-only.xlsx` | `0a6729f7e3fbe08a` | One cell in a one-column used range (`<dimension ref="A1"/>`) holding a sentence far wider than it — the plainest case of text overflowing past the end of the grid. |
 | `tdf111980_radioButtons.xlsx` | `78067fa92760a582` | Reaches its ActiveX controls through §18.3.1.19 <control> rather than <oleObject>, with the state in binary activeX#.bin property bags. |
 | `tdf122336.xlsx` | `d0d409d88cb22f11` | Namespace-prefixed SpreadsheetML (<x:worksheet>), GUID-shaped r:id values, and unparseable cell refs (r="11_2"). |
 | `tdf76115.xlsx` | `1428f774dd01d4c5` | Backslash ZIP separators, and keeps its worksheet at xl/sheet1.xml instead of xl/worksheets/. |

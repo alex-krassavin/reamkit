@@ -760,6 +760,15 @@ function unquoteLiteral(s: string): string {
       i++;
       continue;
     }
+    if (ch === '*' && i + 1 < s.length) {
+      // §18.8.31 `*x` repeats x until the cell is full — a width filler, not a
+      // literal. The accounting formats all carry `_-* ` and printed a literal
+      // asterisk in front of every value ("* 210,896"). Repeating it would need
+      // the laid-out cell width, which this layer does not have; the character
+      // is a space in every format Excel itself writes, so emit nothing.
+      i++;
+      continue;
+    }
     if (ch === '%') {
       // handled by isPercent at caller
       continue;

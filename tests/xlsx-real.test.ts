@@ -168,6 +168,39 @@ describe('real documents: SpreadsheetML dialects', () => {
     }
   });
 
+  it('open-as-read-only.xlsx — text overflows past the end of the used range', () => {
+    // `<dimension ref="A1"/>`: one cell, one column, and a sentence far wider
+    // than it. Excel and LibreOffice run the text across the empty grid to the
+    // right — there is nothing there to block it — and print one line. With no
+    // columns to run into, the cell kept its own width and the layout wrapped
+    // the sentence into nine stacked lines.
+    const { doc } = readXlsx(load('open-as-read-only.xlsx'));
+    const table = doc.body.find((e) => e.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('expected a table');
+    expect(table.table.grid.length).toBeGreaterThan(1);
+    expect(table.table.rows[0]!.cells[0]!.properties.colSpan).toBe(table.table.grid.length);
+    // The widened grid must still fit the page, or it is split into bands and
+    // the document gains a blank second page LibreOffice does not print.
+    expect(pageCount(convertXlsxToPdfSync(load('open-as-read-only.xlsx'), FONTS))).toBe(1);
+  });
+
+  it('tdf171828 — overflow runs across a decorated but empty neighbour', () => {
+    // The labels sit in a filled, top-ruled block: every neighbour to the right
+    // is empty but carries the band's fill and rule. Treating any decoration as
+    // a blocker clipped them to their own narrow column — "Kre" for
+    // "Kreditsumme" — where every other reader prints the label in full.
+    const cells = textCells(load('tdf171828_fail_to_import_file.xlsx'));
+    expect(cells).toContain('Kreditsumme');
+    expect(cells).toContain('Zahlungsbeginn');
+
+    // The block is styled entirely from the workbook theme — `theme="2"
+    // tint="-0.5"` and friends. Unresolved, those colours parse to nothing and
+    // a solid fill with no foreground paints nothing: the whole header block
+    // came out white where every other reader shows it khaki.
+    const sd = readXlsxToSheetDoc(load('tdf171828_fail_to_import_file.xlsx'));
+    expect(sd.styles.fills.some((f) => f.fgColorHex === '948A54')).toBe(true);
+  });
+
   it('duplicate-filename.xlsx — t="inlineStr" written into <v>', () => {
     expect(textCells(load('duplicate-filename.xlsx'))).toContain('v2');
   });

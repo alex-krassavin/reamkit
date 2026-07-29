@@ -2684,8 +2684,23 @@ function lineFromRange(
   let et = breakIdx;
   // Skip leading nulls / spaces.
   while (st < et && (entries[st]!.token === null || entries[st]!.token?.isSpace)) st++;
-  // Trim trailing nulls / spaces.
-  while (et > st && (entries[et - 1]!.token === null || entries[et - 1]!.token?.isSpace)) et--;
+  // Trim trailing nulls / spaces — except a space that paints. Whitespace is
+  // dropped at a line end because it is invisible, and an underlined or struck
+  // space is not: Excel and LibreOffice both rule right across the run of them
+  // that a header pads its region with (tdf171828.xlsx underlines its title and
+  // the 130 spaces after it, which is where the rule across the page comes from).
+  const paints = (t: Token | null | undefined): boolean =>
+    t !== null &&
+    t !== undefined &&
+    t.kind === 'text' &&
+    (t.resolvedRun.underline !== 'none' || t.resolvedRun.strike);
+  while (
+    et > st &&
+    (entries[et - 1]!.token === null ||
+      (entries[et - 1]!.token?.isSpace === true && !paints(entries[et - 1]!.token)))
+  ) {
+    et--;
+  }
   if (st >= et) return null;
 
   const lineTokens: Array<Token> = [];

@@ -1,33 +1,30 @@
 {
-  "file": "tdf58243.xlsx",
+  "file": "open-as-read-only.xlsx",
   "paperDeclared": true,
   "libreOffice": {
-    "pages": 2,
+    "pages": 1,
     "pageSizes": [
       {
         "widthPt": 595,
         "heightPt": 842
       }
     ],
-    "chars": 1678,
+    "chars": 82,
     "firstLines": [
-      "Affectation  des thésards de l&apos;IRFU",
-      "Affectation  des thésards de l&apos;IRFU"
+      "Sheet1"
     ]
   },
   "ream": {
-    "pages": 3,
+    "pages": 1,
     "pageSizes": [
       {
         "widthPt": 595,
         "heightPt": 842
       }
     ],
-    "chars": 1792,
+    "chars": 82,
     "firstLines": [
-      "IRFU/GRH/DDB",
-      "IRFU/GRH/DDB",
-      "IRFU/GRH/DDB"
+      "Sheet1"
     ]
   }
 }

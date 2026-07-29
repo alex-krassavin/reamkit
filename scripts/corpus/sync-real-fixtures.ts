@@ -89,6 +89,11 @@ const ADOPTED: ReadonlyArray<Adopted> = [
     why: 'Print area, print titles and fitToPage together — the densest print-model document in the corpus.',
   },
   {
+    file: 'open-as-read-only.xlsx',
+    source: 'lo-xlsx',
+    why: 'One cell in a one-column used range (`<dimension ref="A1"/>`) holding a sentence far wider than it — the plainest case of text overflowing past the end of the grid.',
+  },
+  {
     file: 'duplicate-filename.xlsx',
     source: 'poi-xlsx',
     why: 'Declares t="inlineStr" but writes the text into <v>; also ships two ZIP entries for the same part name.',

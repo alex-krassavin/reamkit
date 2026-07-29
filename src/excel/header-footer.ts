@@ -6,10 +6,14 @@
 // PAGE/NUMPAGES field runs the renderer resolves per page. The header/footer band
 // layout draws paragraphs, so each region is its own paragraph (a left+right
 // header therefore stacks rather than sharing one line — the common single-region
-// case stays on one line). Non-deterministic or unsupported codes (&D date,
-// &T time, &F file, &Z path, &G picture, font/size/colour/underline) are dropped.
+// case stays on one line). `&B`/`&I`/`&U`/`&S` toggle bold/italic/underline/
+// strike, `&nn` sets the point size, `&Krrggbb` the colour, and the style
+// suffix of `&"family,style"` acts as another bold/italic toggle (the family
+// itself is dropped — the renderer has one font set). Non-deterministic codes
+// (&D date, &T time, &F file, &Z path) and &G pictures are dropped.
 
-import type { Alignment, BodyElement, Run } from '@/core/document-model';
+import type { Alignment, BodyElement, Run, RunProperties } from '@/core/document-model';
+import { pt } from '@/core/ir';
 
 interface Regions {
   readonly left: Array<Run>;
@@ -75,9 +79,20 @@ function parseHeaderFooterString(s: string, sheetName: string): Regions {
   let current: Array<Run> = regions.center;
   let bold = false;
   let italic = false;
+  let underline = false;
+  let strike = false;
+  let sizePt: number | undefined;
+  let colorHex: string | undefined;
   let buf = '';
 
-  const runProps = () => ({ ...(bold ? { bold: true } : {}), ...(italic ? { italic: true } : {}) });
+  const runProps = (): RunProperties => ({
+    ...(bold ? { bold: true } : {}),
+    ...(italic ? { italic: true } : {}),
+    ...(underline ? { underline: 'single' as const } : {}),
+    ...(strike ? { strike: true } : {}),
+    ...(sizePt !== undefined ? { fontSizePt: pt(sizePt) } : {}),
+    ...(colorHex !== undefined ? { colorHex } : {}),
+  });
   const flush = (): void => {
     if (buf.length > 0) {
       current.push({ text: buf, properties: runProps() });
@@ -110,6 +125,17 @@ function parseHeaderFooterString(s: string, sheetName: string): Regions {
     if (next === 'L' || next === 'C' || next === 'R') {
       flush();
       current = next === 'L' ? regions.left : next === 'R' ? regions.right : regions.center;
+      // Each region starts from the sheet's own header font. Carrying the state
+      // across the switch puts the left region's 16pt bold onto the page number
+      // in the right one, which is not what the file means or what LibreOffice
+      // prints — tdf171828's footer sets Bold Italic 12pt for its centre and
+      // then writes a plain "Seite &P" on the right.
+      bold = false;
+      italic = false;
+      underline = false;
+      strike = false;
+      sizePt = undefined;
+      colorHex = undefined;
       i += 2;
       continue;
     }
@@ -140,31 +166,69 @@ function parseHeaderFooterString(s: string, sheetName: string): Regions {
       i += 2;
       continue;
     }
-    if (next === 'K') {
-      // &Krrggbb (or a theme-colour spec) — drop the colour, skip its hex digits.
+    if (next === 'U') {
+      flush();
+      underline = !underline;
       i += 2;
-      let n = 0;
-      while (n < 6 && i < s.length && /[0-9A-Fa-f]/.test(s[i]!)) {
+      continue;
+    }
+    if (next === 'S') {
+      flush();
+      strike = !strike;
+      i += 2;
+      continue;
+    }
+    if (next === 'K') {
+      // &Krrggbb — six hex digits, or a theme spec we cannot resolve here.
+      i += 2;
+      let hex = '';
+      while (hex.length < 6 && i < s.length && /[0-9A-Fa-f]/.test(s[i]!)) {
+        hex += s[i]!;
         i++;
-        n++;
+      }
+      if (hex.length === 6) {
+        flush();
+        colorHex = hex.toUpperCase();
       }
       continue;
     }
     if (next === '"') {
-      // &"font,style" — drop the font selection.
+      // &"font,style" — the family is dropped (the renderer has one font set),
+      // but the style suffix is a bold/italic toggle like &B and &I are, and
+      // dropping it silently unstyles a whole header region.
       i += 2;
-      while (i < s.length && s[i] !== '"') i++;
+      let spec = '';
+      while (i < s.length && s[i] !== '"') {
+        spec += s[i]!;
+        i++;
+      }
       if (i < s.length) i++; // closing quote
+      const style = (spec.split(',')[1] ?? '').toLowerCase();
+      if (style.length > 0) {
+        flush();
+        bold = style.includes('bold');
+        italic = style.includes('italic') || style.includes('oblique');
+      }
       continue;
     }
     if (next >= '0' && next <= '9') {
-      // &nn font size — drop it.
+      // &nn — the point size for what follows. A header written at &16 and
+      // rendered at the body size is the wrong size on every page.
       i += 1;
-      while (i < s.length && s[i]! >= '0' && s[i]! <= '9') i++;
+      let digits = '';
+      while (i < s.length && s[i]! >= '0' && s[i]! <= '9') {
+        digits += s[i]!;
+        i++;
+      }
+      const n = Number(digits);
+      if (Number.isFinite(n) && n > 0 && n <= 409) {
+        flush();
+        sizePt = n;
+      }
       continue;
     }
-    // Any other single-letter code (&D &T &F &Z &G &U &E &S &X &Y &O &H …) is
-    // dropped: non-deterministic (date/time/file) or unsupported styling.
+    // Any other single-letter code (&D &T &F &Z &G &E &X &Y &O &H …) is dropped:
+    // non-deterministic (date/time/file) or unsupported styling.
     i += 2;
   }
   flush();
