@@ -97,9 +97,11 @@ describe('real documents: SpreadsheetML dialects', () => {
     // column band; row i of the sheet is row i of each of them.
     const { doc } = readXlsx(load('tdf122336.xlsx'));
     const tables = doc.body.filter((e) => e.kind === 'table');
+    // A band whose trailing rows draw nothing is trimmed, so later bands can be
+    // shorter than the first — ask each for the row only if it has one.
     const row = (i: number): Array<string> =>
       tables.flatMap((t) =>
-        t.table.rows[i]!.cells.map((c) =>
+        (t.table.rows[i]?.cells ?? []).map((c) =>
           c.content
             .map((b) =>
               b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text).join('') : '',

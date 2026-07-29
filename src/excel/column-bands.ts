@@ -98,6 +98,15 @@ export function bandedTables(
     // nothing but the running header and footer. The first band is kept
     // regardless, so a sheet that really is empty still renders as one.
     if (bandIndex > 0 && !bandRows.some(rowDrawsSomething)) return [];
+    // Trailing rows that draw nothing IN THIS BAND still paginate, and a band
+    // whose columns hold a couple of values near the top otherwise carries the
+    // sheet's whole row count as blank pages: tdf171828.xlsx's second band has
+    // three cells in row 30 and ran to twelve pages, eleven of them empty. The
+    // used range already ends at the last row with content, so on the first
+    // band — which spans it — this trims nothing.
+    while (bandRows.length > 1 && !rowDrawsSomething(bandRows[bandRows.length - 1]!)) {
+      bandRows.pop();
+    }
     // Cut at the print-title row so it leads its table and repeats, keeping the
     // two halves inside their own band — the bands paginate one after the other
     // (`pageOrder="downThenOver"`), so they must not be interleaved.
