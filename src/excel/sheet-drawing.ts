@@ -211,6 +211,12 @@ export function makeColWidthPt(ws: ParsedWorksheet): (col: number) => number {
         return (c.widthChars * TWIPS_PER_EXCEL_CHAR) / TWIPS_PER_PT;
       }
     }
+    // §18.3.1.81 `<sheetFormatPr defaultColWidth>` governs every column no
+    // `<col>` covers — the same fallback the grid uses. Hardcoding Excel's
+    // 8.43 characters contradicted the file's own declaration and sized every
+    // shape anchor against a track the sheet does not have.
+    const chars = ws.defaultColWidthChars ?? ws.baseColWidthChars;
+    if (chars !== undefined) return (chars * TWIPS_PER_EXCEL_CHAR) / TWIPS_PER_PT;
     return DEFAULT_COL_TWIPS / TWIPS_PER_PT;
   };
 }
@@ -224,7 +230,10 @@ export function makeRowHeightPt(ws: ParsedWorksheet): (row: number) => number {
     for (const r of ws.rowHeights) {
       if (r.row === row) return r.heightPt;
     }
-    return DEFAULT_ROW_TWIPS / TWIPS_PER_PT;
+    // §18.3.1.81 `defaultRowHeight` likewise: bnc762542.xlsx declares 12.75pt
+    // and we measured its anchored box against 15, which alone made the shape
+    // 18% too tall.
+    return ws.defaultRowHeightPt ?? DEFAULT_ROW_TWIPS / TWIPS_PER_PT;
   };
 }
 
