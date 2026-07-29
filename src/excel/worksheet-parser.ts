@@ -262,12 +262,14 @@ function parsePageSetup(ws: Record<string, unknown>): XlsxPageSetup | undefined 
   const scale = parseNumericAttr(obj, 'scale');
   const fitToWidth = parseNumericAttr(obj, 'fitToWidth');
   const fitToHeight = parseNumericAttr(obj, 'fitToHeight');
+  const printerSettingsRelId = strAttr(obj, 'id');
   if (
     paperSize === undefined &&
     orientation === undefined &&
     scale === undefined &&
     fitToWidth === undefined &&
-    fitToHeight === undefined
+    fitToHeight === undefined &&
+    printerSettingsRelId === undefined
   ) {
     return undefined;
   }
@@ -277,6 +279,7 @@ function parsePageSetup(ws: Record<string, unknown>): XlsxPageSetup | undefined 
     ...(scale !== undefined ? { scale } : {}),
     ...(fitToWidth !== undefined ? { fitToWidth: Math.round(fitToWidth) } : {}),
     ...(fitToHeight !== undefined ? { fitToHeight: Math.round(fitToHeight) } : {}),
+    ...(printerSettingsRelId !== undefined ? { printerSettingsRelId } : {}),
   };
 }
 

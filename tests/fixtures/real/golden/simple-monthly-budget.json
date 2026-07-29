@@ -1,6 +1,6 @@
 {
   "file": "simple-monthly-budget.xlsx",
-  "paperDeclared": false,
+  "paperDeclared": true,
   "libreOffice": {
     "pages": 2,
     "pageSizes": [
@@ -19,14 +19,14 @@
     "pages": 2,
     "pageSizes": [
       {
-        "widthPt": 842,
-        "heightPt": 595
+        "widthPt": 792,
+        "heightPt": 612
       }
     ],
     "chars": 598,
     "firstLines": [
       "SIMPLE MONTHLY BUDGET",
-      "$50.00"
+      "Miscellaneous$50.00"
     ]
   }
 }

@@ -20,6 +20,7 @@ import { Ream } from '@/core/converter/ream';
 import { flowRenderOptions } from '@/core/converter/project';
 import { layoutStyledDocument } from '@/layout/styled-layout';
 import { readXlsx, readXlsxToSheetDoc } from '@/excel/xlsx-reader';
+import { parsePrinterSettings } from '@/excel/printer-settings';
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
 
 const FONTS = {
@@ -485,5 +486,25 @@ describe('vertical alignment (§18.8.1)', () => {
     );
     // 60pt of box less the line the text occupies — the slack it drops through.
     expect(at(bottom, 'tall').y - at(items, 'tall').y).toBeCloseTo(46.8, 0);
+  });
+});
+
+describe('paper size from the printer settings part', () => {
+  it('takes the paper a <pageSetup> leaves to its printerSettings DEVMODE', () => {
+    // `<pageSetup>` naming no paperSize does not mean "the default": Excel
+    // records the print dialog's choice in the related part, and LibreOffice
+    // reads it. simple-monthly-budget.xlsx prints on Letter that way.
+    const bytes = new Uint8Array(readFileSync('tests/fixtures/real/simple-monthly-budget.xlsx'));
+    const setup = readXlsxToSheetDoc(bytes).sheets[0]!.grid.pageSetup;
+    expect(setup?.paperSize).toBe(1); // §18.3.1.63 — 1 is Letter
+    expect(setup?.orientation).toBe('landscape');
+    // The relationship id is a spelling, not a fact: it must not survive into
+    // the model, or two dialects of one workbook parse differently.
+    expect(setup).not.toHaveProperty('printerSettingsRelId');
+  });
+
+  it('ignores a printerSettings part that is not a DEVMODE', () => {
+    expect(parsePrinterSettings(new Uint8Array(4))).toEqual({});
+    expect(parsePrinterSettings(new Uint8Array(200))).toEqual({});
   });
 });

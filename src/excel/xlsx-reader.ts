@@ -55,6 +55,7 @@ import { parseSlicerCachePart, parseSlicerPart } from '@/excel/slicer-parser';
 import { parseLegacyComments, parsePersons, parseThreadedComments } from '@/excel/comments-parser';
 import { parseFormControlProps } from '@/excel/form-control-parser';
 import { parseVmlFormControls } from '@/excel/vml-drawing';
+import { parsePrinterSettings } from '@/excel/printer-settings';
 import {
   activeXBinRelId,
   activeXType,
@@ -181,7 +182,13 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
     if (!sheetRel) continue;
     const resolved = pkg.resolveRelatedPart(WORKBOOK_PART, sheetRel);
     if (!resolved) continue;
-    const worksheet = parseWorksheet(resolved.data);
+    let worksheet = parseWorksheet(resolved.data);
+    worksheet = withPrinterPageSetup(
+      worksheet,
+      pkg,
+      resolved.path,
+      pkg.getPartRelationships(resolved.path),
+    );
 
     // §20.5: the sheet's drawing part — resolve chart frames, pictures and shapes
     // here; the projection emits a block per frame after the grid (W1 pictures,
@@ -480,6 +487,47 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
 // Theme palette: the workbook's theme part merged over the built-in Office
 // defaults (the docx reader's pattern). Drives both chart schemeClr resolution
 // and the table-style accent (E-SHEET SC3).
+/**
+ * Fill in the paper size and orientation a `<pageSetup>` leaves to its
+ * `printerSettings` part.
+ *
+ * `<pageSetup>` naming no `paperSize` does not mean "the default": Excel
+ * records the print dialog's choice in the DEVMODE of the related part, and
+ * LibreOffice reads it. simple-monthly-budget.xlsx and 45540_classic_Header.xlsx
+ * both print on Letter that way while we assumed A4 — the most visible
+ * difference on every page of either. What the sheet states itself always wins.
+ */
+function withPrinterPageSetup(
+  worksheet: ParsedWorksheet,
+  pkg: OpcPackage,
+  sheetPath: string,
+  wsRels: ReadonlyArray<Relationship>,
+): ParsedWorksheet {
+  const setup = worksheet.pageSetup;
+  const relId = setup?.printerSettingsRelId;
+  if (!setup || relId === undefined) return worksheet;
+  // The id has done its job once resolved, and it must not survive into the
+  // model: a relationship id is a spelling, not a fact about the document, and
+  // two dialects of the same workbook name the same part differently.
+  const { printerSettingsRelId: _resolved, ...rest } = setup;
+  void _resolved;
+  const rel = wsRels.find((r) => r.id === relId);
+  const part = rel ? pkg.resolveRelatedPart(sheetPath, rel) : undefined;
+  const printer = part ? parsePrinterSettings(part.data) : {};
+  return {
+    ...worksheet,
+    pageSetup: {
+      ...rest,
+      ...(rest.paperSize === undefined && printer.paperSize !== undefined
+        ? { paperSize: printer.paperSize }
+        : {}),
+      ...(rest.orientation === undefined && printer.orientation !== undefined
+        ? { orientation: printer.orientation }
+        : {}),
+    },
+  };
+}
+
 /**
  * The sheet's form controls that live only in its legacy VML drawing (§18.3.1.36).
  *

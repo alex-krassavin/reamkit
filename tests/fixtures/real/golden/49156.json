@@ -1,6 +1,6 @@
 {
   "file": "49156.xlsx",
-  "paperDeclared": false,
+  "paperDeclared": true,
   "libreOffice": {
     "pages": 2,
     "pageSizes": [
@@ -19,11 +19,11 @@
     "pages": 2,
     "pageSizes": [
       {
-        "widthPt": 595,
-        "heightPt": 842
+        "widthPt": 612,
+        "heightPt": 792
       }
     ],
-    "chars": 315,
+    "chars": 330,
     "firstLines": [
       "1",
       "(F)3(G)3(H)3"

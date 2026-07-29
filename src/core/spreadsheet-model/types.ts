@@ -76,6 +76,12 @@ export interface XlsxPageSetup {
   readonly fitToWidth?: number;
   /** Number of pages tall to fit to; default 1. */
   readonly fitToHeight?: number;
+  /**
+   * `r:id` of the sheet's `printerSettings` part. When `paperSize` is absent the
+   * paper is whatever that part's DEVMODE says, which is how Excel records the
+   * choice made in the print dialog rather than in the sheet.
+   */
+  readonly printerSettingsRelId?: string;
 }
 
 /**

@@ -791,7 +791,12 @@ export function worksheetToBody(
         }
       }
       textBudget -= text.length;
-      const xf = ws && ws.styleIndex !== undefined ? styles.cellXfs[ws.styleIndex] : undefined;
+      // §18.3.1.4: `s` is optional and defaults to 0 — a cell without it is
+      // formatted by cellXfs[0], the workbook's Normal style, not by nothing at
+      // all. Treating "absent" as "unstyled" gave every such cell the layout's
+      // own defaults: simple-monthly-budget.xlsx writes all of its item labels
+      // without `s`, so a 9pt slate-blue table came out 11pt black.
+      const xf = ws ? styles.cellXfs[ws.styleIndex ?? 0] : undefined;
       let runProps = cellRunProps(xf);
       // §18.8.31: the section that applied may name a colour — `[Red]-#,##0.00`
       // is how every accounting format marks a negative. It belongs to the
@@ -1240,7 +1245,7 @@ export function resolveCellText(
   if (cell.type === 'str' || cell.type === 'e' || cell.type === 'd') return cell.rawValue;
 
   // numeric cell — apply numFmt if any
-  const xf = cell.styleIndex !== undefined ? styles.cellXfs[cell.styleIndex] : undefined;
+  const xf = styles.cellXfs[cell.styleIndex ?? 0];
   const numFmtId = xf?.numFmtId ?? 0;
   return applyNumberFormat(cell.rawValue, numFmtId, styles.numFmts, date1904);
 }
@@ -1801,7 +1806,7 @@ function overflowColumnsPastUsedRange(
   let needTwips = 0;
   for (const cell of lastOfRow.values()) {
     if (!(cell.type === 's' || cell.type === 'str' || cell.type === 'inlineStr')) continue;
-    const xf = cell.styleIndex !== undefined ? styles.cellXfs[cell.styleIndex] : undefined;
+    const xf = styles.cellXfs[cell.styleIndex ?? 0];
     const align = xf?.alignment;
     if (align?.wrapText || align?.shrinkToFit || align?.textRotation) continue;
     if (alignmentFromXf(xf, cell.type) !== 'left') continue;
