@@ -31,6 +31,7 @@ import type {
   XlsxStyles,
 } from '@/core/spreadsheet-model';
 import type { TableFilterColumn } from '@/excel/table-parser';
+import type { VmlShapeBox } from '@/excel/vml-drawing';
 import type { SlicerCacheDef, SlicerDef } from '@/excel/slicer-parser';
 
 import type { ProjectSheetOptions } from '@/excel/sheet-to-flow';
@@ -54,7 +55,7 @@ import { parsePivotTablePart } from '@/excel/pivot-table-parser';
 import { parseSlicerCachePart, parseSlicerPart } from '@/excel/slicer-parser';
 import { parseLegacyComments, parsePersons, parseThreadedComments } from '@/excel/comments-parser';
 import { parseFormControlProps } from '@/excel/form-control-parser';
-import { parseVmlFormControls } from '@/excel/vml-drawing';
+import { parseVmlDrawing } from '@/excel/vml-drawing';
 import { parsePrinterSettings } from '@/excel/printer-settings';
 import {
   activeXBinRelId,
@@ -364,6 +365,11 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
       return { type: 'control', ...binProps, ...props };
     };
 
+    // The legacy VML drawing is read before the <control> list because it is
+    // the only part that carries geometry — an ActiveX control's box lives in
+    // the `Pict` shape that shares its `shapeId`, nowhere else.
+    const legacyVml = readLegacyVml(pkg, resolved.path, wsRels, worksheet);
+
     let formControls: Array<SheetFormControl> | undefined;
     if (worksheet.formControls && worksheet.formControls.length > 0) {
       const resolvedControls: Array<SheetFormControl> = [];
@@ -377,16 +383,22 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
         // of bare names, its captions and values sitting unread in the .bin.
         // The <control> element carries no progId, so the type comes from the
         // class id.
+        const box = fc.shapeId !== undefined ? legacyVml.boxes.get(fc.shapeId) : undefined;
         if (part && ACTIVEX_PART.test(part.path)) {
           resolvedAx.push({
             ...activeXState(part),
             type: activeXTypeFromPart(part.data),
             ...(fc.name ? { name: fc.name } : {}),
+            ...(box ? { box } : {}),
           });
           continue;
         }
         const props = part ? parseFormControlProps(part.data) : {};
-        resolvedControls.push({ ...(fc.name ? { name: fc.name } : {}), ...props });
+        resolvedControls.push({
+          ...(fc.name ? { name: fc.name } : {}),
+          ...props,
+          ...(box ? { box } : {}),
+        });
       }
       if (resolvedControls.length > 0) formControls = resolvedControls;
     }
@@ -397,9 +409,8 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
     // ActiveX buttons and silently lost the five form radio buttons and the
     // group box beside them. Shapes whose id matches a `<control shapeId>` are
     // the ActiveX ones, already resolved above.
-    const legacyControls = readLegacyFormControls(pkg, resolved.path, wsRels, worksheet);
-    if (legacyControls.length > 0) {
-      formControls = [...(formControls ?? []), ...legacyControls];
+    if (legacyVml.controls.length > 0) {
+      formControls = [...(formControls ?? []), ...legacyVml.controls];
     }
 
     // §18.3.* ActiveX / OLE controls (W10): resolve each oleObject's relId to its
@@ -536,30 +547,34 @@ function withPrinterPageSetup(
  * through the activeX part. What is left is the Forms-toolbar kind, whose
  * caption and checked state exist nowhere else in the package.
  */
-function readLegacyFormControls(
+function readLegacyVml(
   pkg: OpcPackage,
   sheetPath: string,
   wsRels: ReadonlyArray<Relationship>,
   worksheet: ParsedWorksheet,
-): Array<SheetFormControl> {
+): { controls: Array<SheetFormControl>; boxes: ReadonlyMap<string, VmlShapeBox> } {
+  const empty = { controls: [], boxes: new Map<string, VmlShapeBox>() };
   const relId = worksheet.legacyDrawingRelId;
-  if (relId === undefined) return [];
+  if (relId === undefined) return empty;
   const rel = wsRels.find((r) => r.id === relId);
   const part = rel ? pkg.resolveRelatedPart(sheetPath, rel) : undefined;
-  if (!part) return [];
+  if (!part) return empty;
   const activeXShapeIds = new Set(
     (worksheet.formControls ?? []).map((fc) => fc.shapeId).filter((id) => id !== undefined),
   );
+  const drawing = parseVmlDrawing(part.data);
   const out: Array<SheetFormControl> = [];
-  for (const shape of parseVmlFormControls(part.data)) {
+  for (const shape of drawing.controls) {
     if (shape.shapeId !== undefined && activeXShapeIds.has(shape.shapeId)) continue;
     out.push({
       objectType: shape.objectType,
       ...(shape.caption ? { name: shape.caption } : {}),
       ...(shape.checked ? { checked: true } : {}),
+      ...(shape.box ? { box: shape.box } : {}),
+      ...(shape.fontSizePt !== undefined ? { fontSizePt: shape.fontSizePt } : {}),
     });
   }
-  return out;
+  return { controls: out, boxes: drawing.boxes };
 }
 
 function buildThemePalette(

@@ -19,6 +19,7 @@ import type { Loss } from '@/core/ir/loss';
 import type {
   SheetActiveXControl,
   SheetComment,
+  SheetControlBox,
   SheetDoc,
   SheetFormControl,
 } from '@/core/ir/sheet';
@@ -213,6 +214,21 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       });
     }
 
+    // W8/W10: a control that knows where it belongs is DRAWN there, as the
+    // widget it is — the ones with no geometry in the file are listed after the
+    // grid instead (formControlBlocks / activeXBlocks below).
+    for (const shape of controlShapeBlocks(ws.formControls, ws.activeXControls)) {
+      body.push({
+        kind: 'shape',
+        shape: centreShape(
+          scaleShape(shape, scaleSink.value),
+          ws.grid,
+          drawingExtentPt,
+          scaleSink.value,
+        ),
+      });
+    }
+
     // §SV2: slicer panels render as styled button boxes after the grid + charts.
     for (const slicer of ws.slicers ?? []) {
       body.push({ kind: 'table', table: slicerTable(slicer) });
@@ -290,17 +306,217 @@ function commentBlocks(comments: ReadonlyArray<SheetComment>): Array<BodyElement
   return out;
 }
 
+// Excel's Forms widgets, in points, measured off the reference render: the
+// option button's disc, the gutter its caption clears, and the grey the group
+// box is framed in.
+const RADIO_DIAMETER_PT = 8.4;
+const RADIO_RING_PT = 0.6;
+const RADIO_DOT_INSET_PT = 1.2;
+const CHECKBOX_SIDE_PT = 8.4;
+const CAPTION_GUTTER_PT = 11.5;
+const CONTROL_LINE_PT = 0.75;
+const GROUP_BOX_GREY = '808080';
+// A Forms control's shape names its own size (`<font size>`); an ActiveX one
+// keeps its font in the .bin we do not read, so it takes the 10pt its class
+// defaults to — which is what the reference draws these five in.
+const DEFAULT_FORM_CONTROL_PT = 8;
+const DEFAULT_ACTIVEX_CONTROL_PT = 10;
+
+/** The kinds of widget we draw; everything else falls back to a plain frame. */
+type ControlGlyph = 'radio' | 'checkbox' | 'group' | 'button' | 'label' | 'frame';
+
+function formControlGlyph(objectType: string | undefined): ControlGlyph {
+  switch ((objectType ?? '').toLowerCase()) {
+    case 'radio':
+      return 'radio';
+    case 'checkbox':
+      return 'checkbox';
+    case 'gbox':
+      return 'group';
+    case 'button':
+    case 'buttons':
+      return 'button';
+    case 'label':
+      return 'label';
+    default:
+      return 'frame';
+  }
+}
+
+function activeXGlyph(type: string): ControlGlyph {
+  switch (type) {
+    case 'option':
+      return 'radio';
+    case 'checkbox':
+      return 'checkbox';
+    case 'button':
+    case 'toggle':
+      return 'button';
+    case 'label':
+      return 'label';
+    default:
+      return 'frame';
+  }
+}
+
+/** A floating shape at `box`, sized and positioned in sheet points. */
+function controlShape(
+  box: SheetControlBox,
+  dx: number,
+  dy: number,
+  widthPt: number,
+  heightPt: number,
+  rest: Omit<ShapeBlock, 'float' | 'width' | 'height' | 'paragraphProperties'>,
+): ShapeBlock {
+  return {
+    float: {
+      wrap: 'none',
+      posH: { relativeFrom: 'margin', offsetPt: pt(box.xPt + dx) },
+      posV: { relativeFrom: 'margin', offsetPt: pt(box.yPt + dy) },
+    },
+    width: pt(widthPt),
+    height: pt(heightPt),
+    ...rest,
+    paragraphProperties: {},
+  };
+}
+
+/**
+ * A control drawn where the document puts it (E-SHEET W8/W10), as the widget it
+ * is: an option button's ring and dot, a check box, a group box's frame, a
+ * push button's outline — each with its caption beside or inside it.
+ *
+ * Listing the captions after the grid instead was a stand-in for having no
+ * geometry to place them with. It read as a paragraph of ASCII where
+ * tdf111980_radioButtons.xlsx has eleven widgets spread across the sheet, the
+ * furthest of them 18cm from where we drew it.
+ */
+function controlShapes(
+  box: SheetControlBox,
+  glyph: ControlGlyph,
+  caption: string | undefined,
+  checked: boolean,
+  fontSizePt: number,
+): Array<ShapeBlock> {
+  const out: Array<ShapeBlock> = [];
+  const noFill = { kind: 'none' as const };
+  const rect = { kind: 'preset' as const, preset: 'rect' };
+  const ellipse = { kind: 'preset' as const, preset: 'ellipse' };
+  const grey = { colorHex: GROUP_BOX_GREY, width: pt(CONTROL_LINE_PT) };
+  const black = { colorHex: '000000', width: pt(CONTROL_LINE_PT) };
+
+  if (glyph === 'radio' || glyph === 'checkbox') {
+    const side = glyph === 'radio' ? RADIO_DIAMETER_PT : CHECKBOX_SIDE_PT;
+    const top = Math.max(0, (box.heightPt - side) / 2);
+    out.push(
+      controlShape(box, 0, top, side, side, {
+        geometry: glyph === 'radio' ? ellipse : rect,
+        fill: { kind: 'solid', colorHex: 'FFFFFF' },
+        line: { colorHex: '000000', width: pt(RADIO_RING_PT) },
+      }),
+    );
+    if (checked) {
+      const dot = side - 2 * RADIO_DOT_INSET_PT;
+      out.push(
+        controlShape(box, RADIO_DOT_INSET_PT, top + RADIO_DOT_INSET_PT, dot, dot, {
+          geometry: glyph === 'radio' ? ellipse : rect,
+          fill: { kind: 'solid', colorHex: '000000' },
+        }),
+      );
+    }
+  } else if (glyph !== 'label') {
+    // A group box frames its contents in grey; a button and any control we have
+    // no widget for get a plain outline at their own box.
+    out.push(
+      controlShape(box, 0, 0, box.widthPt, box.heightPt, {
+        geometry: rect,
+        fill: noFill,
+        line: glyph === 'group' ? grey : black,
+      }),
+    );
+  }
+
+  if (caption !== undefined && caption.length > 0) {
+    // Beside the glyph for a labelled control, inside the frame for a group box
+    // (Excel breaks the top border around it, which needs a clip we do not have)
+    // and across the whole box for a button.
+    const inset = glyph === 'radio' || glyph === 'checkbox' ? CAPTION_GUTTER_PT : 3;
+    const runs = [{ text: caption, properties: { fontSizePt: pt(fontSizePt) } }];
+    out.push(
+      controlShape(box, 0, 0, box.widthPt, box.heightPt, {
+        geometry: rect,
+        fill: noFill,
+        text: {
+          content: [
+            {
+              kind: 'paragraph',
+              paragraph: {
+                properties: glyph === 'button' ? { alignment: 'center' as const } : {},
+                runs,
+              },
+            },
+          ],
+          insetLeft: pt(inset),
+          insetTop: pt(1),
+          insetRight: pt(1),
+          insetBottom: pt(1),
+          anchor: glyph === 'group' ? ('t' as const) : ('ctr' as const),
+        },
+      }),
+    );
+  }
+  return out;
+}
+
+/** Every control that carries geometry, as the shapes that draw it. */
+function controlShapeBlocks(
+  formControls: ReadonlyArray<SheetFormControl> | undefined,
+  activeXControls: ReadonlyArray<SheetActiveXControl> | undefined,
+): Array<ShapeBlock> {
+  const out: Array<ShapeBlock> = [];
+  for (const c of formControls ?? []) {
+    if (!c.box) continue;
+    out.push(
+      ...controlShapes(
+        c.box,
+        formControlGlyph(c.objectType),
+        c.name,
+        c.checked === true,
+        c.fontSizePt ?? DEFAULT_FORM_CONTROL_PT,
+      ),
+    );
+  }
+  for (const c of activeXControls ?? []) {
+    if (!c.box) continue;
+    const on = c.value === '1' || c.value?.toLowerCase() === 'true';
+    out.push(
+      ...controlShapes(
+        c.box,
+        activeXGlyph(c.type),
+        c.caption ?? c.name,
+        on,
+        DEFAULT_ACTIVEX_CONTROL_PT,
+      ),
+    );
+  }
+  return out;
+}
+
 // Form controls (W8) as a "Form controls" section after the grid: a bold heading
 // then one line per control with a type-appropriate ASCII affordance and state —
 // a checkbox/option button shows its checked state, a spin/scroll its value.
+// Only for controls whose drawing carries no geometry; one that knows where it
+// belongs is drawn there instead (see {@link controlShapes}).
 function formControlBlocks(controls: ReadonlyArray<SheetFormControl>): Array<BodyElement> {
+  const listed = controls.filter((c) => c.box === undefined);
+  if (listed.length === 0) return [];
   const out: Array<BodyElement> = [
     {
       kind: 'paragraph',
       paragraph: { properties: {}, runs: [{ text: 'Form controls', properties: { bold: true } }] },
     },
   ];
-  for (const c of controls) {
+  for (const c of listed) {
     out.push({
       kind: 'paragraph',
       paragraph: { properties: {}, runs: [{ text: formControlLabel(c), properties: {} }] },
@@ -333,6 +549,8 @@ function formControlLabel(c: SheetFormControl): string {
 // line per control with a type-appropriate ASCII affordance and the visible
 // state read from its property bag.
 function activeXBlocks(controls: ReadonlyArray<SheetActiveXControl>): Array<BodyElement> {
+  const listed = controls.filter((c) => c.box === undefined);
+  if (listed.length === 0) return [];
   const out: Array<BodyElement> = [
     {
       kind: 'paragraph',
@@ -342,7 +560,7 @@ function activeXBlocks(controls: ReadonlyArray<SheetActiveXControl>): Array<Body
       },
     },
   ];
-  for (const c of controls) {
+  for (const c of listed) {
     out.push({
       kind: 'paragraph',
       paragraph: { properties: {}, runs: [{ text: activeXLabel(c), properties: {} }] },

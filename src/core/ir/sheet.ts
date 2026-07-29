@@ -101,6 +101,23 @@ export interface SheetFormControl {
   readonly objectType?: string;
   readonly checked?: boolean;
   readonly value?: number;
+  /** Where the control sits on the sheet, in points from the grid's origin. */
+  readonly box?: SheetControlBox;
+  /** The caption's declared size, when the shape names one. */
+  readonly fontSizePt?: number;
+}
+
+/**
+ * A control's rectangle on the sheet, in points from the grid's top-left — read
+ * from its legacy VML shape, the only part that says where a control goes.
+ * Absent when the drawing carries no geometry, in which case the control is
+ * listed after the grid rather than drawn in place.
+ */
+export interface SheetControlBox {
+  readonly xPt: number;
+  readonly yPt: number;
+  readonly widthPt: number;
+  readonly heightPt: number;
 }
 
 /**
@@ -112,6 +129,8 @@ export interface SheetFormControl {
  */
 export interface SheetActiveXControl {
   readonly type: string;
+  /** Where the control sits on the sheet — from the VML shape sharing its `shapeId`. */
+  readonly box?: SheetControlBox;
   /** §18.3.1.19 `<control name>` — the control's identifier, when it came that way. */
   readonly name?: string;
   readonly caption?: string;

@@ -65,6 +65,46 @@ describe('form controls — end to end (E-SHEET W8)', () => {
     expect(texts).toContain('[ Run ]');
   });
 
+  it('draws a control that knows where it goes, instead of listing it', () => {
+    // The listing was a stand-in for having no geometry. tdf111980's eleven
+    // controls carry theirs in the legacy VML, and drawn from it they land
+    // where LibreOffice draws them — the group box 209×88pt at 441pt across
+    // the sheet, not a line of ASCII at the origin 18cm away.
+    const flow = Ream.parse(
+      new Uint8Array(readFileSync('tests/fixtures/real/tdf111980_radioButtons.xlsx')),
+    ).flow;
+    const shapes = flow.body.flatMap((e) => (e.kind === 'shape' ? [e.shape] : []));
+    const at = (x: number, y: number) =>
+      shapes.filter(
+        (s) =>
+          Math.abs((s.float?.posH?.offsetPt ?? -1) - x) < 0.01 &&
+          Math.abs((s.float?.posV?.offsetPt ?? -1) - y) < 0.01,
+      );
+    // The group box: its frame, and its caption over it.
+    const group = at(441, 7.5);
+    expect(group).toHaveLength(2);
+    expect(group[0]?.width).toBeCloseTo(209.25, 2);
+    expect(group[0]?.height).toBeCloseTo(87.75, 2);
+
+    // A checked option button draws three things — ring, dot, caption; an
+    // unchecked one draws two. The ring is centred vertically in the control's
+    // box, the dot inset inside the ring, the caption across the whole box.
+    expect(at(280.5, 11.25 + (17.25 - 8.4) / 2)).toHaveLength(1); // ring
+    expect(at(281.7, 16.875)).toHaveLength(1); // dot — this one is checked
+    expect(at(280.5, 11.25)).toHaveLength(1); // caption
+    expect(at(282, 33 + (21 - 8.4) / 2)).toHaveLength(1); // ring
+    expect(at(283.2, 39.3 + 1.2)).toHaveLength(0); // unchecked: no dot
+    expect(at(282, 33)).toHaveLength(1); // caption
+
+    // An ActiveX control's box comes from the VML shape sharing its shapeId.
+    expect(at(564.75, 35.25)).toHaveLength(1);
+
+    // And nothing is listed after the grid any more.
+    const texts = paragraphTexts(flow.body);
+    expect(texts).not.toContain('Form controls');
+    expect(texts).not.toContain('ActiveX controls');
+  });
+
   it('adds no section to a sheet without controls (byte-zero)', () => {
     const flow = Ream.parse(buildXlsx({ rows: [['data']] })).flow;
     expect(paragraphTexts(flow.body)).not.toContain('Form controls');

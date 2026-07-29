@@ -150,14 +150,27 @@ describe('real documents: SpreadsheetML dialects', () => {
     // `<controls>` list lost them without a word — LibreOffice draws all six.
     // Only actual control types: a cell comment is a VML shape too
     // (`ObjectType="Note"`) and must not be listed as a control.
-    expect(sheet.formControls).toEqual([
-      { objectType: 'Radio', name: 'Form button1', checked: true },
-      { objectType: 'Radio', name: 'Form button2' },
-      { objectType: 'GBox', name: 'Group Box 7' },
-      { objectType: 'Radio', name: 'Form groupbox1' },
-      { objectType: 'Radio', name: 'Form groupbox2', checked: true },
-      { objectType: 'Radio', name: 'Form outside groupbox3' },
+    expect(sheet.formControls?.map((c) => ({ ...c, box: undefined }))).toEqual([
+      { objectType: 'Radio', name: 'Form button1', checked: true, fontSizePt: 8, box: undefined },
+      { objectType: 'Radio', name: 'Form button2', fontSizePt: 8, box: undefined },
+      { objectType: 'GBox', name: 'Group Box 7', fontSizePt: 8, box: undefined },
+      { objectType: 'Radio', name: 'Form groupbox1', fontSizePt: 8, box: undefined },
+      { objectType: 'Radio', name: 'Form groupbox2', checked: true, fontSizePt: 8, box: undefined },
+      { objectType: 'Radio', name: 'Form outside groupbox3', fontSizePt: 8, box: undefined },
     ]);
+
+    // Every one of them knows where it goes. The box is what turns the listing
+    // into a drawing: the group box is 209×88pt at 441pt across the sheet, and
+    // without it all eleven controls collapsed to a text list at the origin.
+    expect(sheet.formControls?.[2]?.box).toEqual({
+      xPt: 441,
+      yPt: 7.5,
+      widthPt: 209.25,
+      heightPt: 87.75,
+    });
+    // An ActiveX control's box lives in the `Pict` shape sharing its shapeId —
+    // its own part carries a class id and nothing else.
+    expect(sheet.activeXControls?.map((c) => c.box?.xPt)).toEqual([564.75, 129, 131.25, 0, 2.25]);
   });
 
   it('AverageTaxRates.xlsx — hidden column and rows stay out of the render', () => {
