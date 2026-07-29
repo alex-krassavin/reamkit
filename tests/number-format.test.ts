@@ -124,3 +124,46 @@ describe('applyNumberFormat — dates', () => {
     expect(applyNumberFormat('45292', 14, noCustom)).toBe('1/1/2024');
   });
 });
+
+describe('applyNumberFormat — codes real producers write', () => {
+  it('reads the format name in any case (bug-fixes.xlsx writes GENERAL)', () => {
+    // Matched exactly, "GENERAL" carries no digit placeholder, so the whole
+    // word became a literal prefix and every cell read "GENERAL1", "GENERAL2".
+    const fmt = new Map<number, string>([[164, 'GENERAL']]);
+    expect(applyNumberFormat('1', 164, fmt)).toBe('1');
+    expect(applyNumberFormat('0.5', 164, fmt)).toBe('0.5');
+  });
+
+  it('blanks a zero written only with # (tdf171828 hides a column that way)', () => {
+    // §18.8.31: `#` is an optional digit. A `0` or `?` anywhere in the integer
+    // part forces it back.
+    const fmt = new Map<number, string>([
+      [165, '#'],
+      [166, '#.##'],
+      [167, '#.00'],
+    ]);
+    expect(applyNumberFormat('0', 165, fmt)).toBe('');
+    expect(applyNumberFormat('7', 165, fmt)).toBe('7');
+    expect(applyNumberFormat('0.5', 166, fmt)).toBe('.5');
+    expect(applyNumberFormat('0', 167, fmt)).toBe('.00');
+    expect(applyNumberFormat('0', 3, noCustom)).toBe('0');
+  });
+
+  it('counts elapsed time in [h] / [mm] / [ss] instead of wrapping', () => {
+    const fmt = new Map<number, string>([
+      [165, '[ss].00'],
+      [166, '[mm]:ss'],
+      [167, '[h]:mm'],
+    ]);
+    // seconds-without-truncate-and-decimals.xlsx: 3.14159270833 days.
+    expect(applyNumberFormat('3.14159270833', 165, fmt)).toBe('271433.61');
+    expect(applyNumberFormat('0.0424', 166, fmt)).toBe('61:03');
+    expect(applyNumberFormat('3.14159270833', 167, fmt)).toBe('75:23');
+  });
+
+  it('reads .0 after a seconds token as its decimals (built-in 47)', () => {
+    // Read as a literal dot and a literal zero, mm:ss.0 printed ".0" for every
+    // value. 0.5208333 days = 12:30:00 to a tenth of a second.
+    expect(applyNumberFormat('0.5208333', 47, noCustom)).toBe('30:00.0');
+  });
+});

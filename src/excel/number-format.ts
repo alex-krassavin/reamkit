@@ -65,12 +65,16 @@ export function applyNumberFormat(
   if (builtinDate !== undefined) return formatExcelDate(rawValue, builtinDate, date1904);
 
   const custom = customFormats.get(numFmtId);
-  if (custom !== undefined && isDateFormat(custom))
+  if (custom !== undefined && (isDateFormat(custom) || hasElapsedToken(custom)))
     return formatExcelDate(rawValue, custom, date1904);
 
   const format = custom ?? BUILTIN.get(numFmtId);
   if (!format) return defaultNumberRender(rawValue);
-  if (format === 'General') return defaultNumberRender(rawValue);
+  // Excel accepts the name in any case, and writers use every spelling of it:
+  // bug-fixes.xlsx declares `<numFmt formatCode="GENERAL"/>`. Matched exactly,
+  // the code falls through to the placeholder grammar, which finds no digit
+  // placeholder in it and renders the whole word as a literal prefix — "GENERAL1".
+  if (format.trim().toLowerCase() === 'general') return defaultNumberRender(rawValue);
 
   return applyFormatString(rawValue, format);
 }
@@ -146,6 +150,26 @@ function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }
 
+/** An elapsed h/m/s count, truncated and zero-padded to its placeholder width. */
+function elapsed(value: number, width: number): string {
+  const whole = Math.floor(value);
+  const digits = String(Math.abs(whole)).padStart(width, '0');
+  return whole < 0 ? `-${digits}` : digits;
+}
+
+/**
+ * `[h]`, `[mm]`, `[ss]` — the elapsed-time brackets (§18.8.31), which suppress
+ * the wrap at 24 h / 60 min / 60 s and count from serial 0 instead.
+ *
+ * They carry no date letter outside the bracket, so a code like `[ss].00` reads
+ * as a plain numeric format to {@link isDateFormat} and lands in the placeholder
+ * grammar, where `[ss]` is stripped as if it were a colour and `.00` renders the
+ * serial as ".3".
+ */
+function hasElapsedToken(code: string): boolean {
+  return /\[(?:h+|m+|s+)\]/i.test(code.replace(/"[^"]*"/g, ''));
+}
+
 function isDateFormat(code: string): boolean {
   // Strip quoted literals and [] codes, then look for any date token. The
   // "m" letter alone is ambiguous (month vs minute) so it can't be a sole
@@ -155,7 +179,19 @@ function isDateFormat(code: string): boolean {
 }
 
 interface DateToken {
-  readonly kind: 'lit' | 'y' | 'M' | 'd' | 'h' | 'm' | 's' | 'ampm' | 'elapsed-h';
+  readonly kind:
+    | 'lit'
+    | 'y'
+    | 'M'
+    | 'd'
+    | 'h'
+    | 'm'
+    | 's'
+    | 'ampm'
+    | 'elapsed-h'
+    | 'elapsed-m'
+    | 'elapsed-s'
+    | 'subsec';
   readonly text: string;
 }
 
@@ -189,8 +225,21 @@ function tokenizeDateFormat(format: string): Array<DateToken> {
       }
       i++;
       if (/^h+$/i.test(body)) tokens.push({ kind: 'elapsed-h', text: body });
+      else if (/^m+$/i.test(body)) tokens.push({ kind: 'elapsed-m', text: body });
+      else if (/^s+$/i.test(body)) tokens.push({ kind: 'elapsed-s', text: body });
       // Anything else in brackets (colors, locales) is ignored.
       continue;
+    }
+    if (ch === '.') {
+      // `ss.00` / `[ss].0` — the decimals of a seconds token, not a literal dot
+      // followed by literal zeros (which is how built-in 47, `mm:ss.0`, read).
+      const last = tokens[tokens.length - 1];
+      const run = /^\.(0+)/.exec(format.substring(i));
+      if (run && (last?.kind === 's' || last?.kind === 'elapsed-s')) {
+        tokens.push({ kind: 'subsec', text: run[1]! });
+        i += run[0].length;
+        continue;
+      }
     }
     const lower = ch.toLowerCase();
     if (lower === 'y' || lower === 'm' || lower === 'd' || lower === 'h' || lower === 's') {
@@ -230,7 +279,8 @@ function resolveMonthVsMinute(tokens: Array<DateToken>): Array<DateToken> {
     while (prev >= 0 && resolved[prev]!.kind === 'lit') prev--;
     let next = i + 1;
     while (next < resolved.length && resolved[next]!.kind === 'lit') next++;
-    const prevIsHour = prev >= 0 && resolved[prev]!.kind === 'h';
+    const prevKind = prev >= 0 ? resolved[prev]!.kind : undefined;
+    const prevIsHour = prevKind === 'h' || prevKind === 'elapsed-h';
     const nextIsSec = next < resolved.length && resolved[next]!.kind === 's';
     if (prevIsHour || nextIsSec) {
       // Keep kind 'm' but tag as minutes via length-only check at render time.
@@ -253,7 +303,18 @@ function formatExcelDate(rawValue: string, format: string, date1904: boolean): s
   // negative/zero/text sub-formats don't leak verbatim into the output.
   format = splitSections(format)[0] ?? format;
 
-  const date = excelSerialToDate(serial, date1904);
+  const tokens = resolveMonthVsMinute(tokenizeDateFormat(format));
+  // Elapsed h/m/s count from serial 0 rather than wrapping at the next unit, so
+  // they are read off the serial itself. Fractional seconds are rounded before
+  // the split so the two halves agree — 59.996 s under `.00` is 60.00, not 59
+  // with a ".00" tail. Only round when decimals are actually asked for; whole
+  // seconds keep truncating, as every other token here does.
+  const subsecDigits = tokens.find((t) => t.kind === 'subsec')?.text.length ?? 0;
+  const scale = 10 ** subsecDigits;
+  const totalSeconds =
+    subsecDigits > 0 ? Math.round(serial * 86400 * scale) / scale : serial * 86400;
+
+  const date = excelSerialToDate(subsecDigits > 0 ? totalSeconds / 86400 : serial, date1904);
   const year = date.getUTCFullYear();
   const month = date.getUTCMonth() + 1; // 1-12
   const day = date.getUTCDate();
@@ -262,7 +323,6 @@ function formatExcelDate(rawValue: string, format: string, date1904: boolean): s
   const minute = date.getUTCMinutes();
   const second = date.getUTCSeconds();
 
-  const tokens = resolveMonthVsMinute(tokenizeDateFormat(format));
   const has12hr = tokens.some((t) => t.kind === 'ampm');
   const hourValue = has12hr ? (hour24 % 12 === 0 ? 12 : hour24 % 12) : hour24;
   const ampmLabel = (template: string): string => {
@@ -302,8 +362,16 @@ function formatExcelDate(rawValue: string, format: string, date1904: boolean): s
         out += t.text.length >= 2 ? pad2(hourValue) : String(hourValue);
         break;
       case 'elapsed-h':
-        // [h] = elapsed hours since serial 0; approximate as serial*24.
-        out += String(Math.floor(serial * 24));
+        out += elapsed(totalSeconds / 3600, t.text.length);
+        break;
+      case 'elapsed-m':
+        out += elapsed(totalSeconds / 60, t.text.length);
+        break;
+      case 'elapsed-s':
+        out += elapsed(totalSeconds, t.text.length);
+        break;
+      case 'subsec':
+        out += (totalSeconds - Math.floor(totalSeconds)).toFixed(subsecDigits).substring(1);
         break;
       case 'm':
         out += t.text.length >= 2 ? pad2(minute) : String(minute);
@@ -446,19 +514,25 @@ function applyNumericSection(value: number, format: string, negativeSection: boo
   const useThousands = /,(?=\d)/.test(intFormat) || /[0#],[0#]/.test(intFormat);
   const intStr = useThousands ? intRaw!.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : intRaw!;
 
-  let numberPart = intStr;
+  // §18.8.31: `#` is an *optional* digit, so an integer part of zero written
+  // only with `#` renders as nothing at all — format `#` blanks a zero cell
+  // (tdf171828 uses that to hide a whole column of them) and `#.##` shows ".5"
+  // rather than "0.5". A `0` or `?` anywhere in the integer part forces it.
+  let numberPart = intRaw === '0' && !/[0?]/.test(intFormat) ? '' : intStr;
   if (decimals > 0) {
     let dec = decRaw ?? ''.padEnd(decimals, '0');
     if (dec.length < decimals) dec = dec.padEnd(decimals, '0');
-    // Trim '#' placeholders → optional trailing zeros stripped, '0' kept.
+    // '0' forces its digit, '#' drops it when the whole tail from there on is
+    // zeros — so `#.##` renders 0.5 as ".5", 0.55 as ".55" and 0.05 as ".05".
+    // The decision is per position and reads rightwards, which is why the tail
+    // is trimmed after the fact rather than skipped as it is built.
     let kept = '';
     for (let i = 0; i < decFormat.length; i++) {
       const placeholder = decFormat[i]!;
-      const digit = dec[i] ?? '0';
-      if (placeholder === '0') kept += digit;
-      else if (placeholder === '#') {
-        if (digit !== '0' || kept.length > 0) kept += digit;
-      }
+      if (placeholder === '0' || placeholder === '#') kept += dec[i] ?? '0';
+    }
+    for (let i = kept.length - 1; i >= 0 && kept[i] === '0' && decFormat[i] === '#'; i--) {
+      kept = kept.substring(0, i);
     }
     // Strip trailing # of empty content.
     if (kept.length > 0) numberPart += '.' + kept;
