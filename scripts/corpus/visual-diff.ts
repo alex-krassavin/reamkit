@@ -28,7 +28,13 @@ import { Ream } from '@/core/converter/ream';
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '../..');
 const outDir = resolve(root, 'corpus/.visual');
-const workDir = resolve(root, 'corpus/.visual-work');
+// Per-process scratch. One shared directory raced when two runs overlapped:
+// each wipes it on entry and then lists it to collect the pages it just
+// rasterised, so a run could pick up the OTHER document's PNGs and produce a
+// side-by-side of two different files. It did — a comparison of one fixture
+// showed a completely different spreadsheet in the "ours" pane, which is the
+// worst possible failure for a harness whose whole job is to be believed.
+const workDir = resolve(root, `corpus/.visual-work-${String(process.pid)}`);
 
 // sharp is the docs site's dependency, not the library's — this is a dev-only
 // viewer and the library must not grow a native image dependency for it.
