@@ -724,7 +724,16 @@ function splitNumberFormat(cleaned: string): SplitNumberFormat {
     }
   }
   if (firstDigit < 0) {
-    return { literalPrefix: cleaned, intFormat: '', decFormat: '', literalSuffix: '' };
+    // A section with no digit placeholder is ALL literal — and a literal still
+    // has to be decoded. Returning it raw printed the format code itself:
+    // Excel's Accounting format writes its zero as `_(* "-"_)`, and a balance
+    // row that should read "-" read `_(* "-"_)` instead (49156.xlsx).
+    return {
+      literalPrefix: unquoteLiteral(cleaned),
+      intFormat: '',
+      decFormat: '',
+      literalSuffix: '',
+    };
   }
   const literalPrefix = unquoteLiteral(cleaned.substring(0, firstDigit));
   const literalSuffix = unquoteLiteral(cleaned.substring(lastDigit + 1));

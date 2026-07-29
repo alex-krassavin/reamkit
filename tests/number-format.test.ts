@@ -202,6 +202,16 @@ describe('applyNumberFormat — codes real producers write', () => {
     expect(numberFormatColorHex('1', 164, new Map([[164, '[Color 5]0']]))).toBe('0000FF');
   });
 
+  it('decodes a section that is all literal (the Accounting zero)', () => {
+    // `_(* "-"_)` carries no digit placeholder, so the grammar took a shortcut
+    // and returned the section RAW — a balance row that should read "-" read
+    // `_(* "-"_)`, the format code printing itself (49156.xlsx).
+    const fmt = new Map<number, string>([[164, '_(* #,##0_);_(* \\(#,##0\\);_(* "-"_);_(@_)']]);
+    expect(applyNumberFormat('0', 164, fmt).trim()).toBe('-');
+    expect(applyNumberFormat('1234', 164, fmt).trim()).toBe('1,234');
+    expect(applyNumberFormat('-1234', 164, fmt).trim()).toBe('(1,234)');
+  });
+
   it('reads .0 after a seconds token as its decimals (built-in 47)', () => {
     // Read as a literal dot and a literal zero, mm:ss.0 printed ".0" for every
     // value. 0.5208333 days = 12:30:00 to a tenth of a second.
