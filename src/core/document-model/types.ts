@@ -611,6 +611,14 @@ export interface CellProperties {
    */
   readonly noWrap?: boolean;
   /**
+   * The cell holds a NUMBER under a format of its own, so it may not be shown
+   * truncated: a date cut to "4/30/201" is not a shorter date, it is the wrong
+   * one. Excel and LibreOffice fill such a cell with `#` instead, which says
+   * "widen me" and cannot be misread. Text is exempt — a clipped word is still
+   * recognisably that word.
+   */
+  readonly hashOnOverflow?: boolean;
+  /**
    * Where the cell's content sits in a box taller than itself. A spreadsheet
    * cell defaults to `'bottom'` — §18.8.1, and both Excel and LibreOffice do it
    * — which is visible on any row taller than its text. Absent ⇒ the top, which

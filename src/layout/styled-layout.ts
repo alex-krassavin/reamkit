@@ -3252,7 +3252,13 @@ function layoutTableCell(
         // LibreOffice both run the text to it — measured against the inner box
         // instead, tdf167019's dates lost their last digit and printed
         // "25/10/201".
-        const keep = noWrap ? clipLineToWidth(block.lines, widthPt - padLeftPt) : block.lines;
+        const keep = noWrap
+          ? clipLineToWidth(
+              block.lines,
+              widthPt - padLeftPt,
+              cell.properties.hashOnOverflow === true,
+            )
+          : block.lines;
         for (const line of keep) {
           lines.push(line);
           contentHeightPt += computeLineHeight(line, block.resolved);
@@ -4730,10 +4736,17 @@ const NO_WRAP_MEASURE_WIDTH = 1e6;
  * Excel and LibreOffice paint the straddling glyph and clip it in the middle,
  * which needs a clip rectangle per cell, so a whole glyph is where we stop.
  */
-function clipLineToWidth(lines: ReadonlyArray<Line>, widthPt: number): Array<Line> {
+function clipLineToWidth(
+  lines: ReadonlyArray<Line>,
+  widthPt: number,
+  hashOnOverflow = false,
+): Array<Line> {
   const line = lines[0];
   if (!line) return [];
   if (line.contentWidthPt <= widthPt) return [line];
+  // A number under its own format is never shown truncated — see
+  // CellProperties.hashOnOverflow.
+  if (hashOnOverflow) return [hashFill(line, widthPt)];
   const tokens: Array<Token> = [];
   let used = 0;
   for (const token of line.tokens) {
@@ -4763,6 +4776,25 @@ function clipLineToWidth(lines: ReadonlyArray<Line>, widthPt: number): Array<Lin
     break;
   }
   return [{ ...line, tokens, contentWidthPt: used }];
+}
+
+/**
+ * The line as a row of `#` filling `widthPt` — what Excel and LibreOffice put in
+ * a cell whose number does not fit. At least one, so the cell is never blank:
+ * a column too narrow even for a single `#` still has to say something.
+ */
+function hashFill(line: Line, widthPt: number): Line {
+  const first = line.tokens.find((t): t is TextToken => t.kind === 'text');
+  if (!first) return line;
+  const one = first.font.measure.textWidthPt('#', first.fontSizePt);
+  const count = one > 0 ? Math.max(1, Math.floor(widthPt / one)) : 1;
+  const text = '#'.repeat(count);
+  const token: TextToken = {
+    ...first,
+    text,
+    widthPt: first.font.measure.textWidthPt(text, first.fontSizePt),
+  };
+  return { ...line, tokens: [token], contentWidthPt: token.widthPt };
 }
 
 /**

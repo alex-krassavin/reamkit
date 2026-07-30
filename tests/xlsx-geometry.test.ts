@@ -338,6 +338,39 @@ describe('grid geometry', () => {
     expect(cell('supercalifragilistic')).toContain('supercalifragilistic');
   });
 
+  it('fills a number that cannot fit its column with #, never truncating it', () => {
+    // §18.8.1 — a truncated number is a DIFFERENT number: "4/30/201" reads as a
+    // date and is not the one in the cell. Excel and LibreOffice fill such a
+    // cell with `#`, which says "widen me" and cannot be misread.
+    // column-style-autofilter.xlsx has 3196 of them.
+    const stylesXml =
+      `<numFmts count="1"><numFmt numFmtId="164" formatCode="0.000000"/></numFmts>` +
+      `<fonts count="1"><font><sz val="11"/></font></fonts><fills count="1"><fill/></fills>` +
+      `<borders count="1"><border/></borders>` +
+      `<cellXfs count="2"><xf/><xf numFmtId="164" applyNumberFormat="1"/></cellXfs>`;
+    const drawn = (widthChars: number): Array<string> =>
+      placed(
+        buildXlsx({
+          rows: [[{ value: 1234.567891, styleIndex: 1 }, 'x']],
+          columns: [{ min: 1, max: 2, widthChars }],
+          stylesXml,
+        }),
+      ).map((i) => i.text);
+    // Two characters of column for an eleven-character number.
+    expect(drawn(2).some((t) => /^#+$/.test(t))).toBe(true);
+    // Room enough, and the number itself is drawn.
+    expect(drawn(20)).toContain('1234.567891');
+    // Text is exempt — a clipped word is still recognisably that word.
+    const text = placed(
+      buildXlsx({
+        rows: [['abcdefghijklmnop', 'x']],
+        columns: [{ min: 1, max: 2, widthChars: 2 }],
+        stylesXml,
+      }),
+    ).map((i) => i.text);
+    expect(text.some((t) => /^#+$/.test(t))).toBe(false);
+  });
+
   it('stops the overflow at a neighbour that paints its own fill', () => {
     // An empty cell carrying a fill is not free space: spanning over it to give
     // the text room would take its paint with it. Clip instead — visibly short

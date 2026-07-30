@@ -1207,6 +1207,28 @@ export function worksheetToBody(
         // §18.8.1: without wrapText a cell's text is one line, cut at its box.
         // Rotated and shrink-to-fit cells have their own handling.
         ...(!wrapText && !rotated && !shrinkToFit && !merge ? { noWrap: true } : {}),
+        // §18.8.1 — a number that does not fit its column is shown as a row of
+        // `#`, never truncated, because a truncated number is a DIFFERENT
+        // number: "4/30/201" reads as a date and is not the one in the cell.
+        // column-style-autofilter.xlsx has 3196 such cells.
+        //
+        // Decided HERE, in Excel's own character unit, and not from the width
+        // the text finally renders at. The render font is not the workbook's,
+        // and a face a few percent wider would otherwise fill a column with `#`
+        // that every other reader shows the value in — trading a value that is
+        // slightly wrong for no value at all. Only under a format of the cell's
+        // own: a General number narrows by dropping decimals, and text stays
+        // text, because a clipped word is still recognisably that word.
+        ...(!wrapText &&
+        !rotated &&
+        !shrinkToFit &&
+        !merge &&
+        ws?.type === 'n' &&
+        (xf?.numFmtId ?? 0) !== 0 &&
+        text.length > 0 &&
+        estimateChars(text) * charTwips(xf, styles, textTwipsUnit) > columnWidths[c]!
+          ? { hashOnOverflow: true }
+          : {}),
         // §18.8.1 `<alignment vertical>` — a spreadsheet cell sits at the BOTTOM
         // of its box by default, which any row taller than its text shows. We
         // drew every cell against the top: on a sheet of 28.35pt rows the text
