@@ -74,6 +74,15 @@ export interface ChartScene {
   readonly wedges: ReadonlyArray<ChartWedge>;
   readonly labels: ReadonlyArray<ChartLabel>;
   readonly polygons?: ReadonlyArray<ChartPolygon>;
+  /** §21.2.2.198 chart-space fill + outline: drawn under everything else. */
+  readonly background?: ChartRect;
+  /**
+   * Major gridlines, drawn UNDER the plotted data. Kept apart from the other
+   * polylines because z-order is the whole point: gridlines over the bars strip
+   * every one of them with the axis's own ruling, which is not what any
+   * spreadsheet draws.
+   */
+  readonly gridlines?: ReadonlyArray<ChartPolyline>;
 }
 
 /**
@@ -210,6 +219,8 @@ interface CartesianFrame {
   // mutable scene chrome the caller appends series geometry to:
   readonly rects: Array<ChartRect>;
   readonly polylines: Array<ChartPolyline>;
+  /** Gridlines, kept apart so they draw UNDER the plotted data. */
+  readonly gridlines: Array<ChartPolyline>;
   readonly labels: Array<ChartLabel>;
 }
 
@@ -273,7 +284,7 @@ function buildLegendBlock(
 // right-aligned labels in the left gutter; 'x': vertical lines with centered
 // labels under the plot.
 function pushGridTicks(
-  polylines: Array<ChartPolyline>,
+  gridlines: Array<ChartPolyline>,
   labels: Array<ChartLabel>,
   tickVals: ReadonlyArray<number>,
   fmt: (v: number) => string,
@@ -287,7 +298,7 @@ function pushGridTicks(
   for (const v of tickVals) {
     if (axis === 'x') {
       const gx = at(v);
-      polylines.push({
+      gridlines.push({
         points: [
           [gx, y0],
           [gx, y0 + plotH],
@@ -305,7 +316,7 @@ function pushGridTicks(
       });
     } else {
       const gy = at(v);
-      polylines.push({
+      gridlines.push({
         points: [
           [x0, gy],
           [x0 + plotW, gy],
@@ -360,6 +371,7 @@ function buildFrame(
 ): CartesianFrame {
   const rects: Array<ChartRect> = [];
   const polylines: Array<ChartPolyline> = [];
+  const gridlines: Array<ChartPolyline> = [];
   const labels: Array<ChartLabel> = [];
 
   const nCats = Math.max(chart.categories.length, ...chart.series.map((s) => s.values.length), 1);
@@ -415,7 +427,7 @@ function buildFrame(
 
   if (horizontal) {
     pushGridTicks(
-      polylines,
+      gridlines,
       labels,
       tickVals,
       fmtVal,
@@ -428,7 +440,7 @@ function buildFrame(
     );
   } else {
     pushGridTicks(
-      polylines,
+      gridlines,
       labels,
       tickVals,
       fmtVal,
@@ -485,6 +497,7 @@ function buildFrame(
     valueOffset,
     rects,
     polylines,
+    gridlines,
     labels,
   };
 }
@@ -622,7 +635,13 @@ export function buildBarScene(
         else cumNeg = top;
       }
     }
-    return { rects: f.rects, polylines: f.polylines, wedges: [], labels: f.labels };
+    return {
+      rects: f.rects,
+      polylines: f.polylines,
+      gridlines: f.gridlines,
+      wedges: [],
+      labels: f.labels,
+    };
   }
 
   // clustered: series side by side within each category slot
@@ -665,7 +684,13 @@ export function buildBarScene(
       }
     }
   }
-  return { rects: f.rects, polylines: f.polylines, wedges: [], labels: f.labels };
+  return {
+    rects: f.rects,
+    polylines: f.polylines,
+    gridlines: f.gridlines,
+    wedges: [],
+    labels: f.labels,
+  };
 }
 
 function centeredLabel(text: string, x: number, y: number): ChartLabel {
@@ -734,7 +759,14 @@ export function buildAreaScene(
       polygons.push(areaBand(top, base, f, xAt, seriesColor(series, s, chart.seriesColorCycle)));
     }
   }
-  return { rects: f.rects, polylines: f.polylines, wedges: [], labels: f.labels, polygons };
+  return {
+    rects: f.rects,
+    polylines: f.polylines,
+    gridlines: f.gridlines,
+    wedges: [],
+    labels: f.labels,
+    polygons,
+  };
 }
 
 // ─── scatter chart (numeric X/Y) ────────────────────────────────────────────
@@ -757,6 +789,7 @@ export function buildScatterScene(
 ): ChartScene {
   const rects: Array<ChartRect> = [];
   const polylines: Array<ChartPolyline> = [];
+  const gridlines: Array<ChartPolyline> = [];
   const labels: Array<ChartLabel> = [];
 
   const xs: Array<number> = [];
@@ -767,7 +800,7 @@ export function buildScatterScene(
       ys.push(s.values[i] ?? 0);
     }
   }
-  if (xs.length === 0) return { rects, polylines, wedges: [], labels };
+  if (xs.length === 0) return { rects, polylines, gridlines, wedges: [], labels };
 
   // Both scatter axes auto-min — neither is forced through 0.
   const xScale = niceScale(Math.min(...xs), Math.max(...xs));
@@ -789,7 +822,7 @@ export function buildScatterScene(
 
   pushChartTitle(labels, chart, wPt, hPt);
   pushGridTicks(
-    polylines,
+    gridlines,
     labels,
     yTicks,
     (v) => formatTick(v, yScale.step),
@@ -801,7 +834,7 @@ export function buildScatterScene(
     plotH,
   );
   pushGridTicks(
-    polylines,
+    gridlines,
     labels,
     xTicks,
     (v) => formatTick(v, xScale.step),
@@ -824,7 +857,7 @@ export function buildScatterScene(
     }
   }
   legend.emit(rects, labels);
-  return { rects, polylines, wedges: [], labels };
+  return { rects, polylines, gridlines, wedges: [], labels };
 }
 
 // ─── line chart ───────────────────────────────────────────────────────────────
@@ -850,7 +883,14 @@ export function buildLineScene(
   const allVals = chart.series.flatMap((s) => s.values);
   const range: readonly [number, number] =
     allVals.length > 0 ? [Math.min(...allVals), Math.max(...allVals)] : [0, 1];
-  const f = buildFrame(chart, wPt, hPt, measure, false, { dataRange: range });
+  // …and the axis's own number format applies here exactly as it does to a bar
+  // chart's: 123233_charts.xlsx labels every one of its four charts in currency
+  // and only the line chart came out in bare digits.
+  const lineFormat = chartValueFormatter(chart);
+  const f = buildFrame(chart, wPt, hPt, measure, false, {
+    dataRange: range,
+    ...(lineFormat ? { formatValue: lineFormat } : {}),
+  });
   for (let s = 0; s < chart.series.length; s++) {
     const series = chart.series[s]!;
     const color = seriesColor(series, s, chart.seriesColorCycle);
@@ -870,7 +910,13 @@ export function buildLineScene(
       f.rects.push({ x: px - 1.5, y: py - 1.5, w: 3, h: 3, fillHex: color });
     }
   }
-  return { rects: f.rects, polylines: f.polylines, wedges: [], labels: f.labels };
+  return {
+    rects: f.rects,
+    polylines: f.polylines,
+    gridlines: f.gridlines,
+    wedges: [],
+    labels: f.labels,
+  };
 }
 
 // ─── pie chart ──────────────────────────────────────────────────────────────
@@ -1125,5 +1171,5 @@ function withFrame(scene: ChartScene, chart: Chart, wPt: number, hPt: number): C
     ...(chart.frameFillHex ? { fillHex: chart.frameFillHex } : {}),
     ...(chart.frameLineHex ? { strokeHex: chart.frameLineHex, strokeWidthPt: 0.75 } : {}),
   };
-  return { ...scene, rects: [frame, ...scene.rects] };
+  return { ...scene, background: frame };
 }

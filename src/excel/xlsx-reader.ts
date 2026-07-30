@@ -499,6 +499,16 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
     }
   }
 
+  // §21.2.2.59/.215 — a chart written without caches reads its numbers, its
+  // categories and its series names from the workbook itself. 123233_charts
+  // .xlsx does exactly that, and taken as cache-only its four charts drew as
+  // empty axes with a legend of "Series 1"… Resolved once here, where every
+  // sheet is finally in hand: a chart on sheet 1 routinely points at sheet 4.
+  for (const [path, chart] of chartData) {
+    const resolved = withWorkbookData(chart, sheetsOut, styles, sharedStrings, date1904);
+    if (resolved !== chart) chartData.set(path, resolved);
+  }
+
   const coreData = pkg.getPart(CORE_PROPS_PART);
   const coreProps = coreData ? parseCoreProperties(coreData) : undefined;
   const info = infoFromCore(coreProps);
@@ -542,6 +552,88 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
  * @param richValueText `vm` index → text, from {@link parseRichValueText}.
  * @returns The worksheet, unchanged when nothing resolved (byte-identical path).
  */
+
+/**
+ * A chart with its uncached references resolved against the workbook.
+ *
+ * Only what is missing is filled in: a series that cached its values keeps
+ * them, and a reference naming a sheet this workbook does not have resolves to
+ * nothing rather than to zeros.
+ *
+ * @param chart         The parsed chart.
+ * @param sheets        Every sheet in the workbook, by tab order.
+ * @param styles        The style table (for a referenced cell's number format).
+ * @param sharedStrings The shared-string table.
+ * @param date1904      The workbook's date system.
+ * @returns The chart, unchanged when nothing needed resolving.
+ */
+function withWorkbookData(
+  chart: Chart,
+  sheets: ReadonlyArray<Sheet>,
+  styles: XlsxStyles,
+  sharedStrings: ReadonlyArray<string>,
+  date1904: boolean,
+): Chart {
+  const cellsOf = (ref: string | undefined): Array<string> | undefined => {
+    if (ref === undefined) return undefined;
+    const area = resolveChartRef(ref, sheets);
+    if (!area) return undefined;
+    const out: Array<string> = [];
+    for (let row = area.startRow; row <= area.endRow; row++) {
+      for (let col = area.startColumn; col <= area.endColumn; col++) {
+        const cell = area.grid.cells.find((c) => c.row === row && c.column === col);
+        out.push(cell ? resolveCellText(cell, sharedStrings, styles, date1904) : '');
+      }
+    }
+    return out;
+  };
+
+  let changed = false;
+  const series = chart.series.map((s) => {
+    if (s.values.length > 0 && s.name !== undefined) return s;
+    const values =
+      s.values.length > 0 ? s.values : cellsOf(s.valuesRef)?.map((t) => Number(t) || 0);
+    const name = s.name ?? cellsOf(s.nameRef)?.find((t) => t.length > 0);
+    if (!values && name === undefined) return s;
+    changed = true;
+    return {
+      ...s,
+      ...(values ? { values } : {}),
+      ...(name !== undefined ? { name } : {}),
+    };
+  });
+  const categories = chart.categories.length > 0 ? chart.categories : cellsOf(chart.categoriesRef);
+  if (categories && categories.length > 0 && chart.categories.length === 0) changed = true;
+  if (!changed) return chart;
+  return {
+    ...chart,
+    series,
+    ...(categories && categories.length > 0 ? { categories } : {}),
+  };
+}
+
+/** `Sheet!A1:B2` → the sheet's grid and the 0-based rectangle it names. */
+function resolveChartRef(
+  ref: string,
+  sheets: ReadonlyArray<Sheet>,
+):
+  | {
+      grid: ParsedWorksheet;
+      startRow: number;
+      endRow: number;
+      startColumn: number;
+      endColumn: number;
+    }
+  | undefined {
+  const bang = ref.lastIndexOf('!');
+  if (bang < 0) return undefined;
+  const name = ref.slice(0, bang).replace(/^'|'$/g, '').replace(/''/g, "'");
+  const sheet = sheets.find((s) => s.name === name);
+  if (!sheet) return undefined;
+  const area = parseAreaRef(ref.slice(bang + 1).replace(/\$/g, ''));
+  return area ? { grid: sheet.grid, ...area } : undefined;
+}
+
 function withRichValues(
   worksheet: ParsedWorksheet,
   richValueText: ReadonlyMap<number, string>,

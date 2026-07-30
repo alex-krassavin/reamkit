@@ -126,6 +126,41 @@ describe('parseChart', () => {
     expect(plain!.frameLineHex).toBeUndefined();
   });
 
+  it('takes a gradient-filled series from its first stop, not from its outline', () => {
+    // §20.1.8.33 — a series filled with a gradient still has a colour, and the
+    // scene model carries one per series. Falling through to the outline
+    // painted 123233_charts.xlsx's five gradient bars in the black of their
+    // own hairline.
+    const grad = BAR_CHART.replace(
+      '<c:spPr><a:solidFill><a:srgbClr val="4472C4"/></a:solidFill></c:spPr>',
+      '<c:spPr><a:gradFill><a:gsLst><a:gs pos="0"><a:srgbClr val="8599D3"/></a:gs>' +
+        '<a:gs pos="100000"><a:srgbClr val="5876AE"/></a:gs></a:gsLst></a:gradFill>' +
+        '<a:ln><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln></c:spPr>',
+    );
+    const chart = parseChart(enc.encode(grad), defaultColorResolver);
+    expect(chart!.series[0]?.colorHex).toBe('8599D3');
+  });
+
+  it('keeps the references a cache-less chart reads its data from', () => {
+    // A chart written without caches is not a chart without data — the reader
+    // resolves these against the workbook (123233_charts.xlsx, four charts that
+    // drew as empty axes).
+    const noCache = `<c:chartSpace ${C_NS}><c:chart><c:plotArea><c:barChart>
+      <c:ser><c:idx val="0"/><c:order val="0"/>
+        <c:tx><c:strRef><c:f>data!B1</c:f></c:strRef></c:tx>
+        <c:cat><c:strRef><c:f>data!A2:A4</c:f></c:strRef></c:cat>
+        <c:val><c:numRef><c:f>data!B2:B4</c:f></c:numRef></c:val>
+      </c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>`;
+    const chart = parseChart(enc.encode(noCache), defaultColorResolver);
+    expect(chart!.series[0]?.valuesRef).toBe('data!B2:B4');
+    expect(chart!.series[0]?.nameRef).toBe('data!B1');
+    expect(chart!.categoriesRef).toBe('data!A2:A4');
+    // A cached chart records them too, and keeps its cache.
+    expect(parseChart(enc.encode(BAR_CHART), defaultColorResolver)!.series[0]?.values).toEqual([
+      10, 20, 15,
+    ]);
+  });
+
   it('returns unknown type for an unsupported chart group', () => {
     const radar = `<c:chartSpace ${C_NS}><c:chart><c:plotArea><c:radarChart/></c:plotArea></c:chart></c:chartSpace>`;
     expect(parseChart(enc.encode(radar), defaultColorResolver)!.type).toBe('unknown');

@@ -875,6 +875,14 @@ export interface ChartSeries {
    * sentence.
    */
   readonly pointLabels?: ReadonlyArray<{ readonly idx: number; readonly text: string }>;
+  /**
+   * §21.2.2.59 `c:val/c:numRef/c:f` and §21.2.2.215 `c:tx/c:strRef/c:f` — where
+   * the series reads its numbers and its name FROM, when the chart part carries
+   * no cache of them. A chart written without caches is not a chart without
+   * data: the reader resolves these against the workbook.
+   */
+  readonly valuesRef?: string;
+  readonly nameRef?: string;
 }
 
 /** A parsed chart (§21.2): its type, title, categories, series and rendering options. */
@@ -882,6 +890,8 @@ export interface Chart {
   readonly type: ChartType;
   readonly title?: string;
   readonly categories: ReadonlyArray<string>; // c:cat (shared across series)
+  /** §21.2.2.24 `c:cat/…/c:f` — where the categories live, when uncached. */
+  readonly categoriesRef?: string;
   readonly series: ReadonlyArray<ChartSeries>;
   readonly hasLegend: boolean;
   readonly legendPos?: 'r' | 'l' | 't' | 'b';

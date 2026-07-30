@@ -1617,6 +1617,11 @@ function buildChartLayout(
   }
   const shapes: Array<ChartShapePrim> = [];
   // Area-fill polygons sit at the bottom of the z-order (below gridlines/labels).
+  // Z-order: the chart-space frame under everything, then the gridlines, then
+  // the plotted data over both. Gridlines drawn after the bars ruled white
+  // lines straight across every one of them (123233_charts.xlsx).
+  if (scene.background) shapes.push(rectPrim(scene.background));
+  for (const g of scene.gridlines ?? []) shapes.push(polylinePrim(g));
   for (const pg of scene.polygons ?? []) shapes.push(polygonPrim(pg));
   for (const r of scene.rects) shapes.push(rectPrim(r));
   for (const p of scene.polylines) shapes.push(polylinePrim(p));
@@ -2155,6 +2160,11 @@ function collectFontResources(
           // §21.2.2.49 — a label the author typed is arbitrary text, not digits.
           for (const sr of chart.series) for (const label of sr.pointLabels ?? []) add(label.text);
           add('0123456789.,-%() '); // value-axis tick labels
+          // …and whatever the axis's number format puts around them. A currency
+          // code draws a `$` that appears nowhere else on the page, and left out
+          // of the subset it drew blank: 123233_charts.xlsx labelled its axis
+          // "2,000,000,000.00" where every reader writes "$2,000,000,000.00".
+          if (chart.numberFormat) add(chart.numberFormat);
         }
       }
       // image-block elements use no fonts

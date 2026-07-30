@@ -85,10 +85,12 @@ export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): C
 
   // Categories are shared; take them from the first series that carries them.
   let categories: Array<string> = [];
+  let categoriesRef: string | undefined;
   for (const s of serNodes) {
     const cat = poChildren(s).find((c) => poIs(c, 'c:cat'));
     if (cat) {
       categories = denseStrings(cat);
+      categoriesRef ??= refFormula(cat);
       break;
     }
   }
@@ -120,6 +122,7 @@ export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): C
     type,
     ...(title ? { title } : {}),
     categories,
+    ...(categoriesRef ? { categoriesRef } : {}),
     series,
     hasLegend: legend !== undefined,
     ...(isLegendPos(legendPos) ? { legendPos } : {}),
@@ -152,8 +155,13 @@ function parseSeries(ser: PoNode, resolveColor: ColorResolver): ChartSeries {
   );
   const pointColors = dataPointColors(ser, resolveColor);
   const pointLabels = customDataLabels(ser);
+  // Keep the references so the reader can resolve them when nothing is cached.
+  const valuesRef = valNode ? refFormula(valNode) : undefined;
+  const nameRef = refFormula(poChildren(ser).find((c) => poIs(c, 'c:tx')));
   return {
     values,
+    ...(valuesRef ? { valuesRef } : {}),
+    ...(nameRef ? { nameRef } : {}),
     ...(xValues && xValues.length > 0 ? { xValues } : {}),
     ...(name ? { name } : {}),
     ...(colorHex ? { colorHex } : {}),
@@ -213,6 +221,19 @@ function fillColorOf(spPr: PoNode | undefined, resolveColor: ColorResolver): str
   const directFill = poChildren(spPr).find((c) => poIs(c, 'a:solidFill'));
   const fromFill = directFill ? colorFromSolidFill(directFill, resolveColor) : undefined;
   if (fromFill) return fromFill;
+  // §20.1.8.33 a:gradFill — a series filled with a gradient still has a colour;
+  // the scene model carries one per series, so take the first stop. Falling
+  // through to the outline instead painted 123233_charts.xlsx's five gradient
+  // bars in the black of their own hairline.
+  const grad = poChildren(spPr).find((c) => poIs(c, 'a:gradFill'));
+  const firstStop = grad
+    ? poChildren(grad)
+        .filter((c) => poIs(c, 'a:gsLst'))
+        .flatMap((lst) => poChildren(lst))
+        .find((gs) => poIs(gs, 'a:gs'))
+    : undefined;
+  const fromGrad = firstStop ? colorFromSolidFill(firstStop, resolveColor) : undefined;
+  if (fromGrad) return fromGrad;
   const ln = poChildren(spPr).find((c) => poIs(c, 'a:ln'));
   const lnFill = ln ? poChildren(ln).find((c) => poIs(c, 'a:solidFill')) : undefined;
   return lnFill ? colorFromSolidFill(lnFill, resolveColor) : undefined;
@@ -295,6 +316,14 @@ function chartShowsValues(group: PoNode): boolean {
       return true;
   }
   return false;
+}
+
+/** The `<c:f>` inside a c:val / c:cat / c:tx, or undefined when there is none. */
+function refFormula(container: PoNode | undefined): string | undefined {
+  if (!container) return undefined;
+  const f = poFindDescendant(container, 'c:f');
+  const text = f ? poText(f).trim() : '';
+  return text.length > 0 ? text : undefined;
 }
 
 // Read c:pt entries from the numCache/strCache inside a c:cat / c:val / c:tx.

@@ -90,3 +90,31 @@ describe('OpcPackage.open — Windows-style backslash entry names', () => {
     expect(pkg.getMainDocumentPath()).toBe('xl/workbook.xml');
   });
 });
+describe('part names are case-insensitive (ISO/IEC 29500-2 §9.1.1.1)', () => {
+  it('finds a part and its relationships whatever case they were written in', () => {
+    // Producers mix them: 123233_charts.xlsx writes `xl/worksheets/Sheet1.xml`
+    // and its relationships as `_rels/sheet1.xml.rels`. An exact lookup found no
+    // relationships for that sheet at all, which cost it four charts silently —
+    // a sheet with no drawing rel is indistinguishable from one with no drawing.
+    const enc = new TextEncoder();
+    const pkg = OpcPackage.open(
+      zipSync({
+        '_rels/.rels': enc.encode(
+          '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>',
+        ),
+        'xl/worksheets/Sheet1.xml': enc.encode('<worksheet/>'),
+        'xl/worksheets/_rels/sheet1.xml.rels': enc.encode(
+          '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+            '<Relationship Id="rId1" Type="http://x/drawing" Target="../drawings/drawing1.xml"/>' +
+            '</Relationships>',
+        ),
+      }),
+    );
+    // The exact name still resolves…
+    expect(pkg.getPart('xl/worksheets/Sheet1.xml')).toBeDefined();
+    // …and so does one that differs only in case.
+    expect(pkg.getPart('xl/worksheets/sheet1.xml')).toBeDefined();
+    const rels = pkg.getPartRelationships('xl/worksheets/Sheet1.xml');
+    expect(rels.map((r) => r.id)).toEqual(['rId1']);
+  });
+});

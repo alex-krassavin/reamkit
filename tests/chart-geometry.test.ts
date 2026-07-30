@@ -112,7 +112,8 @@ describe('the chart-space frame (§21.2.2.198)', () => {
   it('draws it first, behind everything else', () => {
     const framed: Chart = { ...barChart('col'), frameFillHex: 'FFFFFF', frameLineHex: 'D9D9D9' };
     const scene = buildChartScene(framed, W, H, measure)!;
-    expect(scene.rects[0]).toMatchObject({
+    // Its own layer, drawn under the gridlines and the data alike.
+    expect(scene.background).toMatchObject({
       x: 0,
       y: 0,
       w: W,
@@ -120,9 +121,10 @@ describe('the chart-space frame (§21.2.2.198)', () => {
       fillHex: 'FFFFFF',
       strokeHex: 'D9D9D9',
     });
-    // A chart without one keeps exactly the rects it had.
+    // A chart without one keeps exactly the rects it had, and no background.
     const plain = buildChartScene(barChart('col'), W, H, measure)!;
-    expect(plain.rects).toHaveLength(scene.rects.length - 1);
+    expect(plain.background).toBeUndefined();
+    expect(plain.rects).toHaveLength(scene.rects.length);
   });
 });
 

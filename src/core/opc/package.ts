@@ -45,6 +45,7 @@ export class OpcPackage {
   ) {}
 
   private readonly relsCache = new Map<string, ReadonlyArray<Relationship>>();
+  private folded: ReadonlyMap<string, Uint8Array> | undefined;
 
   /**
    * Unzip and validate a package's bytes. Rejects an OLE compound file (an
@@ -127,9 +128,35 @@ export class OpcPackage {
     return new OpcPackage(parts, parseRelationships(relsBytes));
   }
 
-  /** The bytes of the part at `path`, or undefined when absent. */
+  /**
+   * The bytes of the part at `path`, or undefined when absent.
+   *
+   * OPC part names are compared case-insensitively (ISO/IEC 29500-2 §9.1.1.1),
+   * so two names differing only in case are the SAME part. Producers do mix
+   * them: 123233_charts.xlsx writes `xl/worksheets/Sheet1.xml` and its
+   * relationships as `_rels/sheet1.xml.rels`, and an exact lookup found no
+   * relationships for that sheet at all — which cost it four charts, silently,
+   * because a sheet with no drawing rel is indistinguishable from one with no
+   * drawing. An exact hit still wins; the fold is only a fallback.
+   */
   getPart(path: string): Uint8Array | undefined {
-    return this.parts.get(normalizePath(path));
+    const normalized = normalizePath(path);
+    return this.parts.get(normalized) ?? this.foldedParts().get(normalized.toLowerCase());
+  }
+
+  /** Parts keyed by their case-folded path, built once on first miss. */
+  private foldedParts(): ReadonlyMap<string, Uint8Array> {
+    if (!this.folded) {
+      const folded = new Map<string, Uint8Array>();
+      // First writer wins: a package with two parts that differ only in case is
+      // malformed, and preferring the earlier one at least stays stable.
+      for (const [path, data] of this.parts) {
+        const key = path.toLowerCase();
+        if (!folded.has(key)) folded.set(key, data);
+      }
+      this.folded = folded;
+    }
+    return this.folded;
   }
 
   /**
@@ -163,7 +190,7 @@ export class OpcPackage {
     const dir = slash >= 0 ? normalized.substring(0, slash) : '';
     const base = slash >= 0 ? normalized.substring(slash + 1) : normalized;
     const relsPath = dir.length > 0 ? `${dir}/_rels/${base}.rels` : `_rels/${base}.rels`;
-    const data = this.parts.get(relsPath);
+    const data = this.getPart(relsPath);
     const rels = data ? parseRelationships(data) : [];
     this.relsCache.set(normalized, rels);
     return rels;
