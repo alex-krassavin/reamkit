@@ -1260,7 +1260,14 @@ export function worksheetToBody(
         // layout drop whatever still spills onto a second line. The cut is what
         // handles the case the layout cannot: a single unbreakable word, which
         // has no line break to drop and would otherwise run past the cell.
-        text = clipToWidth(text, availTwips, charTwips(xf, styles, textTwipsUnit));
+        //
+        // It gets 10 % of headroom, for the same reason `tooWideToShow` does:
+        // the per-character buckets over-charge, and a cut here is final while
+        // the layout still has an exact-metric clip to fall back on. Without it
+        // 50755_workday_formula_example.xlsx lost the last letter of "Inflow
+        // Date" — the estimate charged 986 twips for a heading the font draws
+        // in 889, against a column of 960.
+        text = clipToWidth(text, availTwips * 1.1, charTwips(xf, styles, textTwipsUnit));
         // Claim the empty neighbours the text runs over. Without this the cell
         // keeps its single column's width and the layout WRAPS the text inside
         // it — three stacked lines where Excel and LibreOffice draw one. The

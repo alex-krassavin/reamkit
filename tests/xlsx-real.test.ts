@@ -110,7 +110,10 @@ describe('real documents: SpreadsheetML dialects', () => {
             .join(''),
         ),
       );
-    expect(row(0).slice(0, 3)).toEqual(['Uitvoeringsdatu', 'Starttijd', 'Eindtijd']);
+    // The projection clips off a per-character estimate whose buckets
+    // over-charge, so it keeps a tenth of the column in hand and leaves the
+    // exact cut to the layout: the heading survives even here.
+    expect(row(0).slice(0, 3)).toEqual(['Uitvoeringsdatum', 'Starttijd', 'Eindtijd']);
 
     // …but that is the reader with no render font, where a column is measured
     // in Excel's own 7px digit. Told the font it will actually be drawn in, the
@@ -134,7 +137,11 @@ describe('real documents: SpreadsheetML dialects', () => {
         : [],
     );
     expect(firstRow[0]).toBe('Uitvoeringsdatum');
-    expect(firstRow[6]).toBe('Bevestigd vi');
+    // "Bevestigd via App?" in a column that holds about two thirds of it: the
+    // estimate keeps a couple of characters more than fit, and the layout's own
+    // measurement takes them back — the drawn page ends at "Bevestigd vi",
+    // exactly where LibreOffice ends it.
+    expect(firstRow[6]).toBe('Bevestigd via ');
     expect(row(1).slice(0, 3)).toEqual(['12/25/2018', '11:30', '14:30']);
 
     // `<font/><font><b/></font>`: the empty element parses to a string rather
