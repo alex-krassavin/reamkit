@@ -749,6 +749,36 @@ describe('column width unit (§18.3.1.13)', () => {
   });
 });
 
+describe('a row pinned to a height (§18.3.1.73 customHeight)', () => {
+  it('cuts what does not fit instead of running it over the row below', () => {
+    // Excel and Word both clip a cell to its row. Drawing the overflow put
+    // tdf118668.xlsx's wrapped labels on top of the next row's text — a form of
+    // 9.75pt rows, every one of them pinned.
+    const stylesXml =
+      `<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>` +
+      `<fills count="1"><fill><patternFill patternType="none"/></fill></fills>` +
+      `<borders count="1"><border/></borders>` +
+      `<cellXfs count="2">` +
+      `<xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>` +
+      `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" applyAlignment="1">` +
+      `<alignment wrapText="1"/></xf>` +
+      `</cellXfs>`;
+    const sheet = (pinned: boolean): Uint8Array =>
+      buildXlsx({
+        rows: [[{ value: 'one two three four five six seven eight', styleIndex: 1 }], ['next']],
+        columns: [{ min: 1, max: 1, widthChars: 6 }],
+        rowHeights: [{ row: 0, heightPt: 12, customHeight: pinned }],
+        stylesXml,
+      });
+    // Pinned: only the lines that fit are drawn. Unpinned: the row grows and
+    // keeps every one of them.
+    const pinnedLines = placed(sheet(true)).length;
+    const grownLines = placed(sheet(false)).length;
+    expect(pinnedLines).toBeLessThan(grownLines);
+    expect(pinnedLines).toBeGreaterThan(0);
+  });
+});
+
 describe('a table that spills over a page break', () => {
   // Every cell a thin box; 80 rows so the grid takes more than one page.
   const bordered = (): Uint8Array =>

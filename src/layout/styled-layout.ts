@@ -3209,10 +3209,47 @@ function layoutTableRow(
   for (const c of cells) if (c.totalHeightPt > heightPt) heightPt = c.totalHeightPt;
   if (row.properties.height && row.properties.heightRule === 'exact') {
     heightPt = row.properties.height;
+    // A row pinned to a height keeps it, and what does not fit is CUT — Excel
+    // and Word both clip a cell to its row rather than run it over the row
+    // below. Drawing the overflow instead put tdf118668.xlsx's second lines on
+    // top of the next row's text: a form of 9.75pt rows whose labels wrap.
+    return {
+      heightPt,
+      cells: cells.map((c) => clipCellToHeight(c, heightPt)),
+      columnXOffsets,
+      rowIdx,
+      rowCount,
+    };
   } else if (row.properties.height && row.properties.heightRule === 'atLeast') {
     heightPt = Math.max(heightPt, row.properties.height);
   }
   return { heightPt, cells, columnXOffsets, rowIdx, rowCount };
+}
+
+/**
+ * A cell with only the lines that fit inside `heightPt`.
+ *
+ * Whole lines only: half a line of text reads as a rendering fault, where a
+ * missing one reads as the clipping it is. A cell that already fits, or whose
+ * first line does not, is returned untouched — the first line always draws, as
+ * it does in Excel.
+ *
+ * @param cell     The laid-out cell.
+ * @param heightPt The row's pinned height.
+ * @returns The cell, clipped.
+ */
+function clipCellToHeight(cell: CellLayout, heightPt: number): CellLayout {
+  const room = heightPt - cell.padTopPt - cell.padBottomPt;
+  if (cell.lines.length <= 1 || cell.contentHeightPt <= room) return cell;
+  const kept: Array<Line> = [];
+  let used = 0;
+  for (const line of cell.lines) {
+    const h = computeLineHeight(line, line.resolved);
+    if (kept.length > 0 && used + h > room) break;
+    kept.push(line);
+    used += h;
+  }
+  return { ...cell, lines: kept, contentHeightPt: used };
 }
 
 function layoutTableCell(
