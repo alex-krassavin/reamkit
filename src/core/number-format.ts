@@ -647,10 +647,16 @@ function formatFraction(
   const denFmt = m[3]!;
   const tail = m[4]!;
 
-  // The integer part, if any, is the placeholder run at the end of the head.
-  const intMatch = /[0#?]+\s*$/.exec(head);
-  const literalPrefix = unquoteLiteral(head.substring(0, intMatch ? intMatch.index : head.length));
+  // The integer part, if any, is the LAST placeholder run in the head — whatever
+  // separates it from the fraction is a literal, and need not be a bare space:
+  // formats.xlsx writes `#"  "?/?`, quoting two spaces. Anchored at the end of
+  // the head, the run went unfound there, so 1.2 came out as the improper
+  // `#  6/5` — the `#` printed as itself and the whole number folded into the
+  // numerator — where every reader shows `1  1/5`.
+  const intMatch = /([0#?]+)([^0#?]*)$/.exec(head);
   const hasInteger = intMatch !== null;
+  const literalPrefix = unquoteLiteral(head.substring(0, intMatch ? intMatch.index : head.length));
+  const separator = intMatch ? unquoteLiteral(intMatch[2]!) : ' ';
 
   const magnitude = Math.abs(value);
   const whole = hasInteger ? Math.floor(magnitude) : 0;
@@ -682,7 +688,8 @@ function formatFraction(
   if (num !== 0 || !hasInteger) pieces.push(`${num}/${den}`);
 
   const sign = value < 0 && !negativeSection ? '-' : '';
-  return `${literalPrefix}${sign}${pieces.join(' ')}${unquoteLiteral(tail)}`;
+  const gap = separator.length > 0 ? separator : ' ';
+  return `${literalPrefix}${sign}${pieces.join(gap)}${unquoteLiteral(tail)}`;
 }
 
 /**

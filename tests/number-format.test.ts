@@ -202,6 +202,25 @@ describe('applyNumberFormat — codes real producers write', () => {
     expect(numberFormatColorHex('1', 164, new Map([[164, '[Color 5]0']]))).toBe('0000FF');
   });
 
+  it('separates the whole number from a fraction with a QUOTED literal too', () => {
+    // The integer part is the last placeholder run before the fraction, and
+    // what separates them is a literal that need not be a bare space:
+    // formats.xlsx writes `#"  "?/?`. Anchored at the end of the head, the run
+    // went unfound there — so 1.2 came out as the improper `#  6/5`, the `#`
+    // printed as itself and the whole number folded into the numerator.
+    const fmt = new Map<number, string>([
+      [300, '#"  "?/?'],
+      [301, '# ?/?'],
+      [302, '?/?'],
+    ]);
+    expect(applyNumberFormat('1.2', 300, fmt)).toBe('1  1/5');
+    expect(applyNumberFormat('-1.2', 300, fmt)).toBe('-1  1/5');
+    expect(applyNumberFormat('0.75', 300, fmt)).toBe('3/4');
+    // The plain spellings are unchanged, improper form included.
+    expect(applyNumberFormat('1.2', 301, fmt)).toBe('1 1/5');
+    expect(applyNumberFormat('1.2', 302, fmt)).toBe('6/5');
+  });
+
   it('rounds a General number to the decimals its column has room for', () => {
     // General is not a fixed format: a spreadsheet shows as many decimal places
     // as fit and ROUNDS to that. Rendering every stored digit and letting the

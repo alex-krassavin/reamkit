@@ -37,8 +37,10 @@ import {
   worksheetToBody,
 } from '@/excel/print-model';
 
-// Synthetic relationship ids keying the first sheet's header/footer band content
-// in FlowDoc.headersFooters (E-SHEET W4).
+// Synthetic relationship ids keying each sheet's header/footer band content in
+// FlowDoc.headersFooters (E-SHEET W4). The sheet's index is appended — the map
+// is document-level, and one fixed id meant the last sheet's bands overwrote
+// every earlier sheet's.
 const HEADER_REL = '_xlsxHeaderDefault';
 const FOOTER_REL = '_xlsxFooterDefault';
 
@@ -82,8 +84,8 @@ export interface ProjectSheetOptions {
 /**
  * Project a {@link SheetDoc} into a {@link FlowDoc} (E-SHEET SA2): each grid sheet
  * becomes flow blocks (a table + chart/picture/shape/slicer frames, then comment
- * / control listings), with sheets after the first starting on a new page. The
- * first sheet's page geometry + header/footer drive the document section.
+ * / control listings), with sheets after the first starting on a new page. Each
+ * sheet gets its own section — its page geometry and its own header/footer.
  *
  * @param sheet   The SpreadsheetML IR tree.
  * @param options Projection knobs (the W9 reference date).
@@ -104,7 +106,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
   // Kept for FlowDoc.section, the single-section field the render path falls
   // back to and which other consumers still read.
   let firstSheetSection: SectionProperties | undefined;
-  // First sheet's expanded header/footer band content (E-SHEET W4), keyed for
+  // Every sheet's expanded header/footer band content (E-SHEET W4), keyed for
   // FlowDoc.headersFooters; the renderer paints it in the page margins.
   const headersFooters = new Map<string, ReadonlyArray<BodyElement>>();
 
@@ -145,19 +147,15 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       ...(drawingExtentPt ? { drawingExtentPt } : {}),
     });
 
-    // The header/footer band is a document-level resource keyed by a synthetic
-    // id, so only the first sheet's can be carried; its geometry, though, is
-    // per-sheet.
-    const sheetSection =
-      printed === 0
-        ? withHeaderFooter(
-            sectionFromWorksheet(ws.grid),
-            ws,
-            headersFooters,
-            scaleSink.value,
-            sheet.styles.fonts[0]?.sizePt,
-          )
-        : sectionFromWorksheet(ws.grid);
+    // Each sheet's header/footer band and page geometry are its own.
+    const sheetSection = withHeaderFooter(
+      sectionFromWorksheet(ws.grid),
+      ws,
+      headersFooters,
+      scaleSink.value,
+      sheet.styles.fonts[0]?.sizePt,
+      printed,
+    );
     if (printed === 0) firstSheetSection = sheetSection;
     sheetSections.push(sheetSection);
 
@@ -821,13 +819,25 @@ function withOffset(value: number | undefined): { offsetPt?: Pt } {
   return value === undefined ? {} : { offsetPt: pt(value) };
 }
 
+/**
+ * The sheet's header/footer bands, registered under ids of this sheet's own.
+ *
+ * The map is document-level and the ids used to be fixed, so a second sheet
+ * overwrote the first's bands and every section pointed at the last one — in
+ * practice only the first sheet's header survived, because only its section
+ * carried the references. formats.xlsx puts the sheet name and page number on
+ * all five of its pages and we printed them on one.
+ */
 function withHeaderFooter(
   section: SectionProperties,
   ws: SheetDoc['sheets'][number],
   headersFooters: Map<string, ReadonlyArray<BodyElement>>,
   scale: number,
   basePt: number | undefined,
+  sheetIdx: number,
 ): SectionProperties {
+  const headerRel = `${HEADER_REL}${sheetIdx}`;
+  const footerRel = `${FOOTER_REL}${sheetIdx}`;
   const hf = ws.grid.headerFooter;
   if (!hf || (!hf.oddHeader && !hf.oddFooter)) return section;
   const headers: Array<HeaderFooterReference> = [];
@@ -835,15 +845,15 @@ function withHeaderFooter(
   if (hf.oddHeader) {
     const content = buildHeaderFooterContent(hf.oddHeader, ws.name, scale, basePt);
     if (content.length > 0) {
-      headersFooters.set(HEADER_REL, resolveBodyStyles(content, EMPTY_STYLE_SHEET));
-      headers.push({ type: 'default', relationshipId: HEADER_REL });
+      headersFooters.set(headerRel, resolveBodyStyles(content, EMPTY_STYLE_SHEET));
+      headers.push({ type: 'default', relationshipId: headerRel });
     }
   }
   if (hf.oddFooter) {
     const content = buildHeaderFooterContent(hf.oddFooter, ws.name, scale, basePt);
     if (content.length > 0) {
-      headersFooters.set(FOOTER_REL, resolveBodyStyles(content, EMPTY_STYLE_SHEET));
-      footers.push({ type: 'default', relationshipId: FOOTER_REL });
+      headersFooters.set(footerRel, resolveBodyStyles(content, EMPTY_STYLE_SHEET));
+      footers.push({ type: 'default', relationshipId: footerRel });
     }
   }
   if (headers.length === 0 && footers.length === 0) return section;

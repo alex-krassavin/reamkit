@@ -72,14 +72,17 @@ describe('sheet header/footer — projection (E-SHEET W4)', () => {
         headerFooter: { oddHeader: '&CReport', oddFooter: '&RPage &P' },
       }),
     ).flow;
+    // The id carries the sheet's index: the map is document-level, so a fixed
+    // id let a second sheet overwrite the first's bands and left every sheet
+    // after the first with no header at all.
     expect(flow.section?.headers).toEqual([
-      { type: 'default', relationshipId: '_xlsxHeaderDefault' },
+      { type: 'default', relationshipId: '_xlsxHeaderDefault0' },
     ]);
     expect(flow.section?.footers).toEqual([
-      { type: 'default', relationshipId: '_xlsxFooterDefault' },
+      { type: 'default', relationshipId: '_xlsxFooterDefault0' },
     ]);
-    expect(flow.headersFooters?.has('_xlsxHeaderDefault')).toBe(true);
-    expect(flow.headersFooters?.has('_xlsxFooterDefault')).toBe(true);
+    expect(flow.headersFooters?.has('_xlsxHeaderDefault0')).toBe(true);
+    expect(flow.headersFooters?.has('_xlsxFooterDefault0')).toBe(true);
   });
 
   it('leaves a sheet with no header/footer without bands', () => {
