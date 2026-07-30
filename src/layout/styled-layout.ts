@@ -4318,20 +4318,46 @@ function emitRowChunk(
 ): void {
   const rowTop = cursorY;
   const rowBottom = cursorY - row.heightPt;
+  // Cell fills FIRST, and consecutive cells of one colour as a single
+  // rectangle. Two abutting fills are composited separately, so a shared edge
+  // landing mid-pixel takes each side's partial coverage instead of one whole
+  // one, and a block of same-filled cells shows a pale grid of seams exactly
+  // where its cell boundaries are. Excel and LibreOffice paint the run once and
+  // have no seams to show; so does this now. (Row to row the same edge is still
+  // shared, which is what FILL_SEAM_PT covers.)
+  {
+    let i = 0;
+    while (i < row.cells.length) {
+      const cell = row.cells[i]!;
+      const hidden = cell.mergeRole === 'middle' || cell.mergeRole === 'end';
+      if (!cell.shadingColorHex || hidden) {
+        i++;
+        continue;
+      }
+      let width = cell.widthPt;
+      let j = i + 1;
+      while (j < row.cells.length) {
+        const next = row.cells[j]!;
+        if (next.mergeRole === 'middle' || next.mergeRole === 'end') break;
+        if (next.shadingColorHex !== cell.shadingColorHex) break;
+        width += next.widthPt;
+        j++;
+      }
+      out.push({
+        type: 'fill',
+        x: pt(marginLeft + (row.columnXOffsets[i] ?? 0)),
+        y: pt(pageHeight - rowBottom - row.heightPt - FILL_SEAM_PT),
+        width: pt(width),
+        height: pt(row.heightPt + FILL_SEAM_PT),
+        fillColorHex: cell.shadingColorHex,
+      });
+      i = j;
+    }
+  }
   for (let i = 0; i < row.cells.length; i++) {
     const cell = row.cells[i]!;
     const cellX = marginLeft + (row.columnXOffsets[i] ?? 0);
     const structId = cellStructIds?.[i];
-    if (cell.shadingColorHex && cell.mergeRole !== 'middle' && cell.mergeRole !== 'end') {
-      out.push({
-        type: 'fill',
-        x: pt(cellX),
-        y: pt(pageHeight - rowBottom - row.heightPt),
-        width: pt(cell.widthPt),
-        height: pt(row.heightPt),
-        fillColorHex: cell.shadingColorHex,
-      });
-    }
     // Conditional-format data bar (E-SHEET SC1c): a fraction-width fill over the
     // shading, under the text. Pushed after the shading fill so it paints on top.
     if (cell.dataBar && cell.mergeRole !== 'middle' && cell.mergeRole !== 'end') {
@@ -4613,6 +4639,11 @@ function splitRowIntoChunks(row: RowLayout, capacity: number): Array<RowLayout> 
 
   return out.length > 0 ? out : [row];
 }
+
+// How far a row's fill runs past its own box, to close the seam against the row
+// below. A fifteenth of a point: invisible where the colours differ, and the
+// difference between a flat field and a chequerboard where they do not.
+const FILL_SEAM_PT = 0.07;
 
 // Each shared edge between adjacent cells is the same physical line, so we
 // render it exactly once. Convention: every cell paints its top + left; the
