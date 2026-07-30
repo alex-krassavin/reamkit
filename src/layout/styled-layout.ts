@@ -2124,6 +2124,15 @@ function collectFontResources(
           if (chart.title) add(chart.title);
           for (const c of chart.categories) add(c);
           for (const sr of chart.series) if (sr.name) add(sr.name);
+          // The axis titles are drawn too, and a character that appears ONLY
+          // there was left out of the subset and drew blank — shape-macro-ext-
+          // ref.xlsx prints "Translation X [mm]" as "Translation    mm", with
+          // the text layer still claiming the missing glyphs.
+          if (chart.catAxisTitle) add(chart.catAxisTitle);
+          if (chart.valAxisTitle) add(chart.valAxisTitle);
+          // §21.2.2.49 — a label the author typed is arbitrary text, not digits.
+          for (const sr of chart.series)
+            for (const label of sr.pointLabels ?? []) add(label.text);
           add('0123456789.,-%() '); // value-axis tick labels
         }
       }

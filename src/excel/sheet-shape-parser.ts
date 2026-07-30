@@ -8,12 +8,13 @@
 // a:rPr formatting. A shape's box comes from its sheet ANCHOR (from/to tracks),
 // not its a:xfrm (which is usually relative/zero on a sheet).
 
-import type { ShapeBlock, ShapeFill } from '@/core/document-model';
+import type { ShapeBlock, ShapeFill, ShapeLine, ShapeTextBody } from '@/core/document-model';
 import type { ColorResolver } from '@/core/drawingml/colors';
 import type { ParsedWorksheet } from '@/core/spreadsheet-model';
 import type { PoNode } from '@/core/po-helpers';
 
 import { emuToPt, pt } from '@/core/ir';
+import { resolveColorNode } from '@/core/drawingml/colors';
 import { poChildren, poFirstChild, poIntAttr, poIs, poText } from '@/core/po-helpers';
 import { parseXml } from '@/pptx/pptx-reader';
 import { parseGeometry, parseTxBody } from '@/pptx/slide-parser';
@@ -63,9 +64,21 @@ export function parseSheetShapes(
     const spPr = poChildren(sp).find((c) => poIs(c, 'xdr:spPr'));
     const geometry = parseGeometry(spPr);
     const fill: ShapeFill = spPr ? parseFill(spPr, colors) : { kind: 'none' };
-    const line = spPr ? parseLine(spPr, colors) : undefined;
+    // §20.1.4.2.19 `<xdr:style><a:lnRef>` is where a shape drawn from a gallery
+    // style keeps its outline — spPr then carries no `a:ln` at all, and read
+    // alone it says the shape has no border. shape-macro-ext-ref.xlsx's macro
+    // button lost the blue rule both references draw around it.
+    const line = (spPr ? parseLine(spPr, colors) : undefined) ?? styleLine(sp, colors);
     const txBody = poChildren(sp).find((c) => poIs(c, 'xdr:txBody'));
-    const text = txBody ? parseTxBody(txBody, undefined, undefined, colors, undefined) : undefined;
+    const parsed = txBody
+      ? parseTxBody(txBody, undefined, undefined, colors, undefined)
+      : undefined;
+    // §20.1.4.2.14 `<xdr:style><a:fontRef>` carries the colour the shape's text
+    // takes when its runs name none — for anything drawn from a gallery style
+    // that is where the colour IS. shape-macro-ext-ref.xlsx asks for `lt1` on a
+    // green button and we drew black on green, because a run with no `a:rPr`
+    // colour fell through to the layout's default.
+    const text = parsed ? withStyleTextColor(parsed, sp, colors) : undefined;
     const visibleLine = line !== undefined && line.fill !== 'none';
     if (!text && fill.kind === 'none' && !visibleLine) continue;
 
@@ -95,6 +108,55 @@ export function parseSheetShapes(
   }
   shapes.sort((a, b) => a.anchorRow - b.anchorRow);
   return shapes.map((s) => s.shape);
+}
+
+/**
+ * The outline `<xdr:style><a:lnRef>` names, if it names one.
+ *
+ * The reference's `idx` selects a width from the theme's line-style list, which
+ * this does not read: every gallery style in the corpus resolves to a hairline
+ * there, and drawing the colour at the default width is much closer than
+ * drawing no outline at all.
+ */
+function styleLine(sp: PoNode, colors: ColorResolver): ShapeLine | undefined {
+  const style = poChildren(sp).find((c) => poIs(c, 'xdr:style'));
+  const lnRef = style ? poChildren(style).find((c) => poIs(c, 'a:lnRef')) : undefined;
+  const child = lnRef ? poChildren(lnRef)[0] : undefined;
+  const colorHex = child ? resolveColorNode(child, colors) : undefined;
+  return colorHex === undefined ? undefined : { colorHex, width: pt(0.75) };
+}
+
+/** The colour `<xdr:style><a:fontRef>` names, if it names one. */
+function styleFontColor(sp: PoNode, colors: ColorResolver): string | undefined {
+  const style = poChildren(sp).find((c) => poIs(c, 'xdr:style'));
+  const fontRef = style ? poChildren(style).find((c) => poIs(c, 'a:fontRef')) : undefined;
+  // The colour is whichever colour child it carries — srgbClr, schemeClr, …
+  const child = fontRef ? poChildren(fontRef)[0] : undefined;
+  return child ? resolveColorNode(child, colors) : undefined;
+}
+
+/** The text body with that colour filled in wherever a run declares none. */
+function withStyleTextColor(text: ShapeTextBody, sp: PoNode, colors: ColorResolver): ShapeTextBody {
+  const colorHex = styleFontColor(sp, colors);
+  if (colorHex === undefined) return text;
+  return {
+    ...text,
+    content: text.content.map((block) =>
+      block.kind === 'paragraph'
+        ? {
+            ...block,
+            paragraph: {
+              ...block.paragraph,
+              runs: block.paragraph.runs.map((run) =>
+                run.properties.colorHex === undefined
+                  ? { ...run, properties: { ...run.properties, colorHex } }
+                  : run,
+              ),
+            },
+          }
+        : block,
+    ),
+  };
 }
 
 interface AnchorBox {

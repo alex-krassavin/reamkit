@@ -157,6 +157,8 @@ export interface XlsxBuilderOptions {
     readonly fillHex?: string;
     readonly preset?: string;
     readonly anchor?: { from: [number, number]; to: [number, number] };
+    /** Drop the explicit `a:ln` and carry `<xdr:style>` instead (gallery style). */
+    readonly styleOnly?: boolean;
   };
   /** Attach cell hyperlinks to the FIRST sheet (E-SHEET W3). A `url` is emitted as
    *  an external `r:id` relationship; a `location` is an in-workbook target. */
@@ -735,8 +737,18 @@ ${chartRels}</Relationships>`,
         <a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></a:xfrm>
         <a:prstGeom prst="${preset}"><a:avLst/></a:prstGeom>
         <a:solidFill><a:srgbClr val="${fill}"/></a:solidFill>
-        <a:ln w="12700"><a:solidFill><a:srgbClr val="2F5496"/></a:solidFill></a:ln>
+        ${options.sheetShape.styleOnly ? '' : '<a:ln w="12700"><a:solidFill><a:srgbClr val="2F5496"/></a:solidFill></a:ln>'}
       </xdr:spPr>
+      ${
+        options.sheetShape.styleOnly
+          ? `<xdr:style>
+        <a:lnRef idx="2"><a:srgbClr val="123456"/></a:lnRef>
+        <a:fillRef idx="1"><a:srgbClr val="654321"/></a:fillRef>
+        <a:effectRef idx="0"><a:srgbClr val="000000"/></a:effectRef>
+        <a:fontRef idx="minor"><a:srgbClr val="FFFFFF"/></a:fontRef>
+      </xdr:style>`
+          : ''
+      }
       <xdr:txBody><a:bodyPr/><a:p><a:r><a:t>${escapeXml(text)}</a:t></a:r></a:p></xdr:txBody>
     </xdr:sp>
     <xdr:clientData/>

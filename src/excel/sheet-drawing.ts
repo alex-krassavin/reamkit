@@ -9,7 +9,12 @@ import type { OpcPackage } from '@/core/opc';
 import type { ParsedWorksheet } from '@/core/spreadsheet-model';
 
 import { emuToPt } from '@/core/ir';
-import { DEFAULT_COL_TWIPS, DEFAULT_ROW_TWIPS, TWIPS_PER_EXCEL_CHAR } from '@/excel/print-model';
+import {
+  COL_PADDING_TWIPS,
+  DEFAULT_COL_TWIPS,
+  DEFAULT_ROW_TWIPS,
+  TWIPS_PER_EXCEL_CHAR,
+} from '@/excel/print-model';
 
 const CHART_URI = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
 
@@ -221,10 +226,18 @@ function spanPt(
  * track geometry.
  */
 export function makeColWidthPt(ws: ParsedWorksheet): (col: number) => number {
+  // §18.3.1.13: a rendered column is `chars × MDW + 5px`, and the 5px is not
+  // optional — the grid has always added it. Here it was dropped, so an anchor
+  // drifted 3.75pt left for every explicitly-sized column before it, and the
+  // drawing and the cell it is anchored to disagreed about where that column
+  // starts. shape-macro-ext-ref.xlsx put its macro button 3pt short of the
+  // column band its own anchor names.
+  const widthPt = (chars: number): number =>
+    (chars * TWIPS_PER_EXCEL_CHAR + COL_PADDING_TWIPS) / TWIPS_PER_PT;
   return (col: number): number => {
     for (const c of ws.columns) {
       if (col >= c.min - 1 && col <= c.max - 1) {
-        return (c.widthChars * TWIPS_PER_EXCEL_CHAR) / TWIPS_PER_PT;
+        return widthPt(c.widthChars);
       }
     }
     // §18.3.1.81 `<sheetFormatPr defaultColWidth>` governs every column no
@@ -232,7 +245,8 @@ export function makeColWidthPt(ws: ParsedWorksheet): (col: number) => number {
     // 8.43 characters contradicted the file's own declaration and sized every
     // shape anchor against a track the sheet does not have.
     const chars = ws.defaultColWidthChars ?? ws.baseColWidthChars;
-    if (chars !== undefined) return (chars * TWIPS_PER_EXCEL_CHAR) / TWIPS_PER_PT;
+    if (chars !== undefined) return widthPt(chars);
+    // DEFAULT_COL_TWIPS is 960 — Excel's 8.43 characters WITH the padding.
     return DEFAULT_COL_TWIPS / TWIPS_PER_PT;
   };
 }

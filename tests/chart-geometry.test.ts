@@ -1,6 +1,10 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import type { Chart } from '@/core/document-model';
+import { FontRegistry } from '@/core/font';
+import { layoutStyledDocument } from '@/layout/styled-layout';
 import {
   buildAreaScene,
   buildBarScene,
@@ -55,6 +59,68 @@ describe('formatTick', () => {
     expect(formatTick(100, 20)).toBe('100');
     expect(formatTick(0, 20)).toBe('0');
     expect(formatTick(0.5, 0.5)).toBe('0.5');
+  });
+});
+
+describe('font subsetting reaches every string a chart draws', () => {
+  it('keeps the glyphs an axis title and a typed data label need', () => {
+    // The subset is built from the strings the document draws. Axis titles and
+    // author-typed data labels were left out of that walk, so a character
+    // appearing ONLY there was dropped from the embedded font and drew blank —
+    // with the text layer still claiming it. shape-macro-ext-ref.xlsx printed
+    // "Translation X [mm]" as "Translation    mm".
+    const registry = FontRegistry.fromBytes({
+      regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
+    });
+    const chart: Chart = {
+      ...barChart('col'),
+      title: undefined,
+      categories: ['a', 'b', 'c'],
+      series: [{ name: 'n', values: [1, 2, 3], pointLabels: [{ idx: 0, text: 'Ж' }] }],
+      catAxisTitle: 'Щ',
+      valAxisTitle: 'Э',
+    };
+    const laid = layoutStyledDocument(
+      [
+        {
+          kind: 'chart',
+          chart: { chartRelId: 'c1', width: 300, height: 200, paragraphProperties: {} },
+        },
+      ],
+      { registry, charts: new Map([['c1', chart]]) },
+    );
+    const res = [...laid.fontResources.values()][0]!;
+    for (const ch of ['Щ', 'Э', 'Ж']) {
+      const gid = res.parsed.glyphForCodepoint(ch.codePointAt(0)!);
+      expect(gid).toBeGreaterThan(0);
+      expect(res.gids.has(gid)).toBe(true);
+    }
+  });
+});
+
+describe('a value axis the author fixed (§21.2.2.157)', () => {
+  it('draws to the declared max, not to the data', () => {
+    // Every value here is 0. Left to the data the axis would run 0…1; the
+    // author pinned it at 300 and every reader honours that.
+    const flat: Chart = {
+      ...barChart('col'),
+      series: [{ name: 'S1', values: [0, 0, 0], colorHex: '4472C4' }],
+      valAxisMax: 300,
+    };
+    const ticks = buildBarScene(flat, W, H, measure)
+      .labels.map((l) => l.text)
+      .filter((t) => /^\d+$/.test(t));
+    expect(ticks).toContain('300');
+    expect(ticks).toContain('0');
+
+    // Without it, the same chart scales to its (degenerate) data.
+    const auto = { ...flat };
+    delete (auto as { valAxisMax?: number }).valAxisMax;
+    expect(
+      buildBarScene(auto, W, H, measure)
+        .labels.map((l) => l.text)
+        .filter((t) => /^\d+$/.test(t)),
+    ).not.toContain('300');
   });
 });
 

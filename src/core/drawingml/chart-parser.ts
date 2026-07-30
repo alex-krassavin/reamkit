@@ -99,6 +99,8 @@ export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): C
   const showValues = group ? chartShowsValues(group) : false;
   const catAxisTitle = axisTitle(plotArea, 'c:catAx');
   const valAxisTitle = axisTitle(plotArea, 'c:valAx');
+  const valAxisMin = axisScaling(plotArea, 'c:min');
+  const valAxisMax = axisScaling(plotArea, 'c:max');
   const numberFormat = valueFormatCode(plotArea);
 
   const legend = poChildren(chart).find((c) => poIs(c, 'c:legend'));
@@ -121,6 +123,8 @@ export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): C
     ...(showValues ? { showValues: true } : {}),
     ...(catAxisTitle ? { catAxisTitle } : {}),
     ...(valAxisTitle ? { valAxisTitle } : {}),
+    ...(valAxisMin !== undefined ? { valAxisMin } : {}),
+    ...(valAxisMax !== undefined ? { valAxisMax } : {}),
     ...(numberFormat ? { numberFormat } : {}),
   };
 }
@@ -252,6 +256,15 @@ function axisTitle(plotArea: PoNode, axTag: string): string | undefined {
  * `sourceLinked="1"` means "whatever the source cells use", which the chart part
  * does not carry — those keep the plain numeric render.
  */
+// §21.2.2.157 c:valAx/c:scaling/c:min|c:max — an axis end the author fixed.
+function axisScaling(plotArea: PoNode, tag: 'c:min' | 'c:max'): number | undefined {
+  const ax = poChildren(plotArea).find((c) => poIs(c, 'c:valAx'));
+  const scaling = ax ? poChildren(ax).find((c) => poIs(c, 'c:scaling')) : undefined;
+  const node = scaling ? poChildren(scaling).find((c) => poIs(c, tag)) : undefined;
+  const v = node ? Number(poAttr(node, 'val')) : Number.NaN;
+  return Number.isFinite(v) ? v : undefined;
+}
+
 function valueFormatCode(plotArea: PoNode): string | undefined {
   const ax = poChildren(plotArea).find((c) => poIs(c, 'c:valAx'));
   const numFmt = ax ? poChildren(ax).find((c) => poIs(c, 'c:numFmt')) : undefined;

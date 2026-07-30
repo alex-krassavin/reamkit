@@ -32,6 +32,23 @@ describe('sheet shapes — resolve (E-SHEET W2)', () => {
     expect(para.paragraph.runs[0]?.text).toBe('Shape text');
   });
 
+  it('takes its outline and its text colour from <xdr:style> when spPr has none', () => {
+    // §20.1.4.2.19/§20.1.4.2.14 — a shape drawn from a gallery style keeps its
+    // outline in `a:lnRef` and its text colour in `a:fontRef`, and its spPr then
+    // carries no `a:ln` at all. Read alone, spPr says the shape has no border
+    // and its runs no colour: shape-macro-ext-ref.xlsx drew black text on a
+    // green button with no rule around it, where both references draw white
+    // text inside a blue one.
+    const sheet = readXlsxToSheetDoc(
+      buildXlsx({ rows: [['cell']], sheetShape: { text: 'Go', styleOnly: true } }),
+    ).sheets[0]!;
+    const shape = sheet.shapes![0]!;
+    expect(shape.line).toMatchObject({ colorHex: '123456' });
+    const para = shape.text?.content[0];
+    if (para?.kind !== 'paragraph') throw new Error('expected a paragraph');
+    expect(para.paragraph.runs[0]?.properties.colorHex).toBe('FFFFFF');
+  });
+
   it('leaves a sheet with no drawing without a shapes field', () => {
     const sheet = readXlsxToSheetDoc(buildXlsx({ rows: [[1]] })).sheets[0]!;
     expect(sheet.shapes).toBeUndefined();

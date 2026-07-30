@@ -169,6 +169,28 @@ const ticks = (s: Scale): Array<number> => {
   return out;
 };
 
+/**
+ * The value axis's {@link Scale}: the ends the author fixed where they fixed
+ * them (§21.2.2.157 `c:scaling/c:min|c:max`), the data's own range where they
+ * did not. A fixed end is exact — nice-rounding it would move a number the
+ * author chose — so only the tick step comes from the rounding pass.
+ *
+ * @param chart   The chart (for its fixed ends).
+ * @param dataMin The smallest value to cover.
+ * @param dataMax The largest value to cover.
+ * @returns The axis min/max and tick step.
+ */
+function axisScale(chart: Chart, dataMin: number, dataMax: number): Scale {
+  const min = chart.valAxisMin ?? dataMin;
+  const max = chart.valAxisMax ?? dataMax;
+  const rounded = niceScale(min, max);
+  return {
+    min: chart.valAxisMin ?? rounded.min,
+    max: chart.valAxisMax ?? rounded.max,
+    step: rounded.step,
+  };
+}
+
 // ─── shared cartesian frame (scale, plot area, axes, gridlines, labels) ──────
 interface CartesianFrame {
   readonly x0: number;
@@ -327,7 +349,7 @@ function buildFrame(
   const nCats = Math.max(chart.categories.length, ...chart.series.map((s) => s.values.length), 1);
   const allVals = chart.series.flatMap((s) => s.values.slice(0, nCats));
   const [dataMin, dataMax] = opts.dataRange ?? [Math.min(0, ...allVals), Math.max(0, ...allVals)];
-  const scale = niceScale(dataMin, dataMax);
+  const scale = axisScale(chart, dataMin, dataMax);
   const fmtVal = opts.formatValue ?? ((v: number): string => formatTick(v, scale.step));
   const tickVals = ticks(scale);
 

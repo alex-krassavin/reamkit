@@ -97,6 +97,21 @@ describe('parseChart', () => {
     });
   });
 
+  it('keeps the value-axis ends the author fixed (§21.2.2.157)', () => {
+    // A chart whose cells all read zero still has the axis its author pinned.
+    // Scaling to the data drew shape-macro-ext-ref.xlsx's axis 0…1 where every
+    // reader draws 0…300.
+    const withScaling = BAR_CHART.replace(
+      '<c:valAx><c:axId val="222"/></c:valAx>',
+      '<c:valAx><c:axId val="222"/><c:scaling><c:orientation val="minMax"/><c:max val="300"/></c:scaling></c:valAx>',
+    );
+    const chart = parseChart(enc.encode(withScaling), defaultColorResolver);
+    expect(chart!.valAxisMax).toBe(300);
+    expect(chart!.valAxisMin).toBeUndefined();
+    // …and an axis the author left alone stays automatic.
+    expect(parseChart(enc.encode(BAR_CHART), defaultColorResolver)!.valAxisMax).toBeUndefined();
+  });
+
   it('returns unknown type for an unsupported chart group', () => {
     const radar = `<c:chartSpace ${C_NS}><c:chart><c:plotArea><c:radarChart/></c:plotArea></c:chart></c:chartSpace>`;
     expect(parseChart(enc.encode(radar), defaultColorResolver)!.type).toBe('unknown');

@@ -129,6 +129,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // has to be laid out at the sheet's print scale, and the scale only falls
     // out of the projection. Its blocks are pushed below, in their old place.
     const scaleSink = { value: 1 };
+    const bandSink = { lefts: [0] };
     const drawingExtentPt = shapeExtentPt(ws.shapes);
     const printArea = resolvePrintArea(sheet.definedNames, sheetIdx);
     const titleRows = resolvePrintTitleRows(sheet.definedNames, sheetIdx);
@@ -145,6 +146,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       ...(options.digitWidthPt !== undefined ? { digitWidthPt: options.digitWidthPt } : {}),
       ...(options.losses ? { losses: options.losses } : {}),
       scaleSink,
+      bandSink,
       ...(drawingExtentPt ? { drawingExtentPt } : {}),
     });
 
@@ -183,10 +185,14 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // later band still lands too early; putting each drawing on its own band's
     // page needs the band boundaries the grid projection keeps to itself.
 
+    // Collected rather than pushed: a drawing anchored in a later column band
+    // has to go in beside THAT band's table, not ahead of the whole grid.
+    const drawings: Array<BodyElement> = [];
+
     // §20.5: the sheet's chart frames render as blocks after its grid,
     // anchor-ordered (resolved chart data lives in sheet.chartData).
     for (const ref of ws.charts ?? []) {
-      body.push({
+      drawings.push({
         kind: 'chart',
         chart: {
           ...anchorFloat(ref.xPt, ref.yPt, scaleSink.value),
@@ -201,7 +207,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // W1: anchored pictures render as image blocks after the grid (anchor-ordered;
     // bytes live in sheet.resources). Like charts, placement collapses to inline.
     for (const img of ws.images ?? []) {
-      body.push({
+      drawings.push({
         kind: 'image',
         image: {
           ...anchorFloat(img.xPt, img.yPt, scaleSink.value),
@@ -217,7 +223,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // point their `twoCellAnchor` names — scaled with the sheet, since that is
     // what the anchor's tracks were measured in.
     for (const shape of ws.shapes ?? []) {
-      body.push({
+      drawings.push({
         kind: 'shape',
         shape: centreShape(
           scaleShape(shape, scaleSink.value),
@@ -251,13 +257,13 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
         : [controlBlocks];
     for (let band = 0; band < drawingBands.length; band++) {
       if (band > 0) {
-        body.push({
+        drawings.push({
           kind: 'paragraph',
           paragraph: { properties: { pageBreakBefore: true }, runs: [] },
         });
       }
       for (const shape of drawingBands[band]!) {
-        body.push({
+        drawings.push({
           kind: 'shape',
           shape: centreShape(
             scaleShape(shape, scaleSink.value),
@@ -269,7 +275,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       }
     }
 
-    body.push(...gridBody);
+    body.push(...withDrawingsByBand(drawings, gridBody, bandSink.lefts));
     // §SV2: slicer panels render as styled button boxes after the grid + charts.
     for (const slicer of ws.slicers ?? []) {
       body.push({ kind: 'table', table: slicerTable(slicer) });
@@ -559,6 +565,88 @@ function controlShapes(
  * band its left edge is in, which is where the reference draws it too — the
  * part past the edge is clipped on that page and continues on the next.
  */
+/**
+ * Put each drawing beside the column band it is anchored in.
+ *
+ * A wide sheet's grid prints as one table per band, each on its own page, and a
+ * float lands on whatever page the layout has reached when it meets the block.
+ * Emitted ahead of the whole grid, a drawing anchored in the second band was
+ * printed on the FIRST page at an offset a page and a half wide — off the paper
+ * entirely. shape-macro-ext-ref.xlsx anchors its chart and its macro button at
+ * x=838pt and x=891pt of a 480pt page and lost both.
+ *
+ * Each drawing goes in front of its band's table with its horizontal anchor
+ * measured from that band's left edge instead of the sheet's.
+ *
+ * @param drawings The sheet's floats, in the order they were projected.
+ * @param gridBody The grid's body elements — one table per band.
+ * @param lefts    Each band's left edge in points (from the projection's sink).
+ * @returns The two merged; drawings first when the sheet does not band.
+ */
+function withDrawingsByBand(
+  drawings: ReadonlyArray<BodyElement>,
+  gridBody: ReadonlyArray<BodyElement>,
+  lefts: ReadonlyArray<number>,
+): Array<BodyElement> {
+  const tables = gridBody.filter((el) => el.kind === 'table').length;
+  // One band, or a grid whose tables and bands do not line up: nothing to
+  // distribute against, so keep the order the sheet had before bands existed.
+  if (drawings.length === 0 || lefts.length < 2 || tables !== lefts.length) {
+    return [...drawings, ...gridBody];
+  }
+  const bandOf = (x: number): number => {
+    let band = 0;
+    while (band + 1 < lefts.length && x >= lefts[band + 1]!) band++;
+    return band;
+  };
+  const byBand: Array<Array<BodyElement>> = lefts.map(() => []);
+  for (const el of drawings) {
+    const x = floatLeftPt(el);
+    const band = x === undefined ? 0 : bandOf(x);
+    byBand[band]!.push(x === undefined ? el : shiftFloatLeft(el, lefts[band]!));
+  }
+  // AFTER the band's table, not before it: a band table breaks to its own page
+  // on its FIRST ROW, so a float emitted ahead of it is still on the page
+  // before. The layout is on band k's page from the moment table k starts until
+  // table k+1 breaks, and the end of table k is inside that window.
+  const out: Array<BodyElement> = [];
+  let seen = 0;
+  for (const el of gridBody) {
+    out.push(el);
+    if (el.kind === 'table') out.push(...byBand[seen++]!);
+  }
+  return out;
+}
+
+/** A float's horizontal anchor, for the block kinds a sheet anchors. */
+function floatLeftPt(el: BodyElement): number | undefined {
+  const float =
+    el.kind === 'chart'
+      ? el.chart.float
+      : el.kind === 'image'
+        ? el.image.float
+        : el.kind === 'shape'
+          ? el.shape.float
+          : undefined;
+  return float?.posH?.offsetPt;
+}
+
+/** The same block with its horizontal anchor measured from `by` points later. */
+function shiftFloatLeft(el: BodyElement, by: number): BodyElement {
+  if (by === 0) return el;
+  const moved = <T extends { float?: FloatAnchor }>(block: T): T => ({
+    ...block,
+    float: {
+      ...block.float!,
+      posH: { ...block.float!.posH!, offsetPt: pt((block.float!.posH!.offsetPt ?? 0) - by) },
+    },
+  });
+  if (el.kind === 'chart') return { ...el, chart: moved(el.chart) };
+  if (el.kind === 'image') return { ...el, image: moved(el.image) };
+  if (el.kind === 'shape') return { ...el, shape: moved(el.shape) };
+  return el;
+}
+
 interface BandAxis {
   /** The shape's anchor along this axis, as the float stores it (unscaled). */
   readonly anchorOf: (s: ShapeBlock) => number | undefined;

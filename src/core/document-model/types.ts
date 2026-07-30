@@ -892,6 +892,14 @@ export interface Chart {
   readonly catAxisTitle?: string; // c:catAx/c:title
   readonly valAxisTitle?: string; // c:valAx/c:title
   /**
+   * §21.2.2.157 `c:valAx/c:scaling/c:min|c:max` — the value axis the AUTHOR
+   * fixed. Absent means "auto", and only then is the range read off the data:
+   * a chart whose cells all read zero still has the axis its author pinned, and
+   * scaling it to the data drew 0…1 where every reader draws 0…300.
+   */
+  readonly valAxisMin?: number;
+  readonly valAxisMax?: number;
+  /**
    * §21.2.2.121 `c:valAx/c:numFmt@formatCode` — the number format the value
    * axis's tick labels and the data labels are drawn in, in the same code
    * grammar cells use (§18.8.31). Absent ⇒ a plain numeric render.

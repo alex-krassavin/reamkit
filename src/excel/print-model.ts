@@ -489,6 +489,13 @@ interface PrintModelOptions {
   // where the grid's own totals are. Recomputing it outside would mean
   // duplicating the used-range logic and, sooner or later, disagreeing with it.
   readonly scaleSink?: { value: number };
+  // The left edge of each column band, in points at the print scale, reported
+  // back the same way. A drawing anchored in the second band is anchored past
+  // the first band's width, and printed at that offset it falls off the page
+  // the layout has reached — shape-macro-ext-ref.xlsx lost a whole chart and
+  // the macro button beside it that way. One entry per band table emitted; a
+  // sheet that does not band reports a single 0.
+  readonly bandSink?: { lefts: Array<number> };
   // How far the sheet's drawings reach from its origin, in points. A drawing
   // anchored past the last cell still has to be printed, so fit-to-page has to
   // fit IT too — measuring only the range the cells occupy left a sheet whose
@@ -1485,8 +1492,14 @@ export function worksheetToBody(
     (bandTotal > contentWidthTwips || colBreaksLocal.size > 0)
   ) {
     const bands = computeColumnBands(bandWidths, contentWidthTwips, colBreaksLocal);
-    if (bands.length > 1)
+    if (bands.length > 1) {
+      if (print.bandSink) {
+        print.bandSink.lefts = bands.map((band) =>
+          twipsToPt(bandWidths.slice(0, band.start).reduce((sum, w) => sum + w, 0)),
+        );
+      }
       return bandedTables(rows, bandWidths, bands, tableProperties, titleRowIndex);
+    }
   }
 
   // A frozen pane becomes a sticky-pane hint for the HTML writer (E-SHEET SE3).
