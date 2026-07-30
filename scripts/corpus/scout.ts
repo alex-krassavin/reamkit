@@ -33,9 +33,16 @@ interface Shape {
   readonly chars: number;
 }
 
+// Whitespace is not content, and counting it ranks by the wrong thing:
+// LibreOffice pads an empty cell with spaces where we emit none, so 49156.xlsx
+// read as 302 characters against 813 and sat near the top of this list with a
+// text layer that is character-for-character identical to the reference's.
+const visible = (chars: ReadonlyArray<{ readonly c: string }>): number =>
+  chars.filter((ch) => ch.c.trim().length > 0).length;
+
 const shapeOf = (pdf: string, out: string): Shape => {
   const pages = stext(pdf, out);
-  return { pages: pages.length, chars: pages.reduce((n, p) => n + p.chars.length, 0) };
+  return { pages: pages.length, chars: pages.reduce((n, p) => n + visible(p.chars), 0) };
 };
 
 async function main(): Promise<void> {
