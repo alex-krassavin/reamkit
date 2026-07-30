@@ -2801,17 +2801,41 @@ function wrap(
   const breaks =
     profile === 'ream' ? breakLines(items, widths).breaks : greedyBreakLines(items, widths);
 
-  const lines: Array<Line> = [];
-  let start = 0;
-  let isFirst = true;
-  let lineIdx = 0;
-  for (const breakIdx of breaks) {
-    const width = lineIdx < widths.length ? widths[lineIdx]! : widths[widths.length - 1]!;
-    const line = lineFromRange(entries, start, breakIdx, width, isFirst, resolved, profile);
-    if (line) lines.push(line);
-    start = breakIdx + 1;
-    isFirst = false;
-    lineIdx++;
+  const buildLines = (at: ReadonlyArray<number>): Array<Line> => {
+    const out: Array<Line> = [];
+    let start = 0;
+    let isFirst = true;
+    let lineIdx = 0;
+    for (const breakIdx of at) {
+      const width = lineIdx < widths.length ? widths[lineIdx]! : widths[widths.length - 1]!;
+      const line = lineFromRange(entries, start, breakIdx, width, isFirst, resolved, profile);
+      if (line) out.push(line);
+      start = breakIdx + 1;
+      isFirst = false;
+      lineIdx++;
+    }
+    return out;
+  };
+
+  let lines = buildLines(breaks);
+  // One word too wide for the measure must not cost the paragraph every OTHER
+  // break. Knuth-Plass scores a line by how badly it fits, and a line that
+  // cannot stretch — one word alone in a narrow cell — is infinitely loose,
+  // while an overfull line clamps to a small fixed badness. So the total-fit
+  // answer for a wrapping cell holding "SELF EMPLOYED" in a column that fits
+  // neither word was ONE overfull line, spilling across the cells beside it,
+  // where breaking after "SELF" costs nothing but white space. First-fit has no
+  // such preference: it breaks wherever the next box will not fit.
+  //
+  // Only when the whole paragraph collapsed to that single line. A longer one
+  // that overflows somewhere in the middle made its own trade — a tight line
+  // against a gaping one — and keeps it; taking first-fit there would rewrite
+  // every break in the paragraph to fix one.
+  const spill = (ls: ReadonlyArray<Line>): number =>
+    Math.max(0, ...ls.map((l) => l.contentWidthPt - l.availableWidthPt));
+  if (profile === 'ream' && lines.length === 1 && spill(lines) > 0.01) {
+    const greedy = buildLines(greedyBreakLines(items, widths));
+    if (greedy.length > 1 && spill(greedy) < spill(lines) - 0.01) lines = greedy;
   }
 
   if (lines.length > 0) lines[lines.length - 1]!.isLastInParagraph = true;

@@ -312,6 +312,32 @@ describe('grid geometry', () => {
     expect(shown.length).toBeLessThan(phrase.length);
   });
 
+  it('wraps a cell whose word is wider than the column, instead of one long line', () => {
+    // Knuth-Plass scores a line by how badly it fits, and a line that cannot
+    // stretch — one word alone in a narrow cell — is infinitely loose, while an
+    // overfull line clamps to a small fixed badness. So the total-fit answer for
+    // a wrapping cell holding "SELF EMPLOYED" in a column that fits neither word
+    // was ONE overfull line spilling across the cells beside it, where breaking
+    // after "SELF" costs nothing but white space.
+    const stylesXml =
+      `<fonts count="1"><font><sz val="11"/></font></fonts><fills count="1"><fill/></fills>` +
+      `<borders count="1"><border/></borders>` +
+      `<cellXfs count="2"><xf/><xf applyAlignment="1"><alignment wrapText="1"/></xf></cellXfs>`;
+    const cell = (text: string): Array<string> =>
+      placed(
+        buildXlsx({
+          rows: [[{ value: text, styleIndex: 1 }, 'x']],
+          columns: [{ min: 1, max: 2, widthChars: 8 }],
+          stylesXml,
+        }),
+      ).map((i) => i.text);
+    expect(cell('SELF EMPLOYED')).toEqual(expect.arrayContaining(['SELF', 'EMPLOYED']));
+    // A paragraph that fits keeps the total-fit break it had.
+    expect(cell('alpha beta gamma')).toEqual(expect.arrayContaining(['alpha', 'beta', 'gamma']));
+    // And a single word wider than the column has nowhere to break: it stays.
+    expect(cell('supercalifragilistic')).toContain('supercalifragilistic');
+  });
+
   it('stops the overflow at a neighbour that paints its own fill', () => {
     // An empty cell carrying a fill is not free space: spanning over it to give
     // the text room would take its paint with it. Clip instead — visibly short
