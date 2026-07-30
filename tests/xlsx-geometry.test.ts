@@ -785,6 +785,39 @@ describe('cell indent (§18.8.1)', () => {
   });
 });
 
+describe('the used range', () => {
+  it('reaches a value-less cell that PAINTS something (50299)', () => {
+    // Column H of this sheet is ten cells with a solid fill each and no value —
+    // a colour key beside the data. Bounding the grid to cells that carry
+    // content dropped the column before it was ever materialised, and the whole
+    // band was missing from a page both references print it on.
+    const flow = Ream.parse(new Uint8Array(readFileSync('tests/fixtures/real/50299.xlsx'))).flow;
+    const shadings = new Set<string>();
+    for (const el of flow.body) {
+      if (el.kind !== 'table') continue;
+      for (const row of el.table.rows) {
+        for (const cell of row.cells) {
+          const hex = cell.properties.shading?.colorHex;
+          if (hex) shadings.add(hex);
+        }
+      }
+    }
+    // The ten swatches, in fills[2..11] order.
+    for (const hex of ['C00000', 'FF0000', 'FFC000', 'FFFF00', '92D050', '7030A0']) {
+      expect(shadings).toContain(hex);
+    }
+  });
+
+  it('does not let a fill CREATE one (bnc762542)', () => {
+    // The same file that made this rule get written twice and reverted twice:
+    // every value on it lives in a styled-empty cell, so a fill that could seed
+    // the used range gives a grid to a sheet that prints nothing but a callout.
+    // Painting extends a range; it never opens one.
+    const bytes = new Uint8Array(readFileSync('tests/fixtures/real/bnc762542.xlsx'));
+    expect(pageCount(bytes)).toBe(1);
+  });
+});
+
 describe('a sheet with nothing on it', () => {
   it('is left out of the print (tdf115159)', () => {
     // Two untouched tabs beside one sheet of data. Each sheet is its own

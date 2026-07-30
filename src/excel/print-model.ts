@@ -88,6 +88,14 @@ const DEFAULT_FONT_PT = 11;
  */
 export const COL_PADDING_TWIPS = 75;
 
+/**
+ * How far past the content a value-less but PAINTED cell may push the used
+ * range. A legend or a colour key sits a handful of columns off the data; a
+ * whole-row style reaches column XFD. The distance is what tells them apart.
+ */
+const PAINT_REACH_COLUMNS = 64;
+const PAINT_REACH_ROWS = 512;
+
 /** One screen pixel at 96 DPI, in twips — the unit Excel's width formula works in. */
 const TWIPS_PER_PIXEL = 15;
 
@@ -671,6 +679,29 @@ export function worksheetToBody(
     if (!host) continue;
     if (host.startRow > usedRow) usedRow = host.startRow;
     if (host.startColumn > usedCol) usedCol = host.startColumn;
+  }
+  // A cell that PAINTS something is on the page with nothing in it. Column H of
+  // 50299.xlsx is ten value-less cells carrying a solid fill each, and both
+  // references print the swatches; read for content alone the column was never
+  // materialised, and the band simply was not there.
+  //
+  // Painting extends a used range, it never creates one — the rule the merges
+  // above already follow, and for the same file: bnc762542.xlsx keeps every
+  // value in a styled-empty cell and prints nothing but its callout. And it
+  // reaches only so far past the content, because a style applied to whole rows
+  // makes empty cells out to column XFD — CVLKRA-KYC.xlsx is 49 194 of them
+  // around 48 values, and materialising that grid is what exhausts the heap.
+  if (usedRow >= 0 && usedCol >= 0) {
+    const colReach = usedCol + PAINT_REACH_COLUMNS;
+    const rowReach = usedRow + PAINT_REACH_ROWS;
+    for (const c of worksheet.cells) {
+      if (c.column > colReach || c.row > rowReach) continue;
+      if (c.column <= usedCol && c.row <= usedRow) continue;
+      const xf = styles.cellXfs[c.styleIndex ?? 0];
+      if (!xf || !shadingFromXf(xf, styles)) continue;
+      if (c.row > usedRow) usedRow = c.row;
+      if (c.column > usedCol) usedCol = c.column;
+    }
   }
   if (usedRow < 0 || usedCol < 0) {
     // Nothing but empty styled cells — no grid to render. The sheet may still
