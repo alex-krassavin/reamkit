@@ -114,6 +114,11 @@ const ADOPTED: ReadonlyArray<Adopted> = [
     why: 'Reaches its ActiveX controls through §18.3.1.19 <control> rather than <oleObject>, with the state in binary activeX#.bin property bags.',
   },
   {
+    file: 'tdf115159.xlsx',
+    source: 'lo-xlsx',
+    why: 'Two untouched tabs beside one sheet of data — an empty sheet must not print a page of its own.',
+  },
+  {
     file: 'tdf122336.xlsx',
     source: 'lo-xlsx',
     why: 'Namespace-prefixed SpreadsheetML (<x:worksheet>), GUID-shaped r:id values, and unparseable cell refs (r="11_2").',

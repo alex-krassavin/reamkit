@@ -1,0 +1,30 @@
+{
+  "file": "tdf115159.xlsx",
+  "paperDeclared": true,
+  "libreOffice": {
+    "pages": 1,
+    "pageSizes": [
+      {
+        "widthPt": 595,
+        "heightPt": 842
+      }
+    ],
+    "chars": 4,
+    "firstLines": [
+      "aa"
+    ]
+  },
+  "ream": {
+    "pages": 1,
+    "pageSizes": [
+      {
+        "widthPt": 595,
+        "heightPt": 842
+      }
+    ],
+    "chars": 4,
+    "firstLines": [
+      "aa"
+    ]
+  }
+}

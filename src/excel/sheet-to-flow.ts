@@ -18,6 +18,7 @@ import type { Pt } from '@/core/ir';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss } from '@/core/ir/loss';
 import type {
+  Sheet,
   SheetActiveXControl,
   SheetComment,
   SheetControlBox,
@@ -118,12 +119,23 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
   // Sheets actually printed so far — not the loop index, which has to keep
   // counting hidden sheets because `localSheetId` on a defined name does.
   let printed = 0;
+  // How many sheets are still candidates to print, so the guard above can tell
+  // "this one is empty" from "every one of them is".
+  let printableSheets = sheet.sheets.filter((s) => !s.hidden).length;
   for (let sheetIdx = 0; sheetIdx < sheet.sheets.length; sheetIdx++) {
     const ws = sheet.sheets[sheetIdx]!;
     // §18.2.19: a hidden tab is not printed. Excel and LibreOffice both leave it
     // out entirely — tdf171828.xlsx hides its lookup table, and printing it added
     // two pages of working data to the end of the document.
     if (ws.hidden) continue;
+    // …and neither is a sheet with nothing on it. tdf115159.xlsx carries two
+    // untouched tabs beside its data, and printing them added a blank page the
+    // reference does not produce. The last one standing always prints: a
+    // workbook of nothing but empty sheets is still a document.
+    if (!sheetPrintsAnything(ws) && printableSheets > 1) {
+      printableSheets--;
+      continue;
+    }
 
     // The grid is projected FIRST, before the section is built: the header band
     // has to be laid out at the sheet's print scale, and the scale only falls
@@ -565,6 +577,30 @@ function controlShapes(
  * band its left edge is in, which is where the reference draws it too — the
  * part past the edge is clipped on that page and continues on the next.
  */
+/**
+ * Whether a sheet has anything to put on a page.
+ *
+ * A cell that carries a value or inline text, any drawing, control or slicer,
+ * a printed note, or a header/footer the author typed. A tab nobody touched has
+ * none of those, and Excel and LibreOffice both leave it out of the print.
+ *
+ * @param ws The sheet.
+ * @returns True when the sheet would print something.
+ */
+function sheetPrintsAnything(ws: Sheet): boolean {
+  if (ws.grid.cells.some((c) => c.rawValue !== '' || c.inlineText !== undefined)) return true;
+  if ((ws.charts?.length ?? 0) > 0) return true;
+  if ((ws.images?.length ?? 0) > 0) return true;
+  if ((ws.shapes?.length ?? 0) > 0) return true;
+  if ((ws.slicers?.length ?? 0) > 0) return true;
+  if ((ws.comments?.length ?? 0) > 0) return true;
+  if ((ws.formControls?.length ?? 0) > 0) return true;
+  if ((ws.activeXControls?.length ?? 0) > 0) return true;
+  // A header or footer is text on the page even when the grid is bare.
+  const hf = ws.grid.headerFooter;
+  return hf !== undefined && Object.values(hf).some((v) => typeof v === 'string' && v.length > 0);
+}
+
 /**
  * Put each drawing beside the column band it is anchored in.
  *

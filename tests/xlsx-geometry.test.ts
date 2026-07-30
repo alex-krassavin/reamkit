@@ -749,6 +749,32 @@ describe('column width unit (§18.3.1.13)', () => {
   });
 });
 
+describe('a sheet with nothing on it', () => {
+  it('is left out of the print (tdf115159)', () => {
+    // Two untouched tabs beside one sheet of data. Each sheet is its own
+    // section — the data sheet keeps its printer's margins and the blank ones
+    // the default — and a section whose geometry differs starts a page, so the
+    // empty tabs printed one. Excel and LibreOffice both leave them out.
+    const bytes = new Uint8Array(readFileSync('tests/fixtures/real/tdf115159.xlsx'));
+    expect(readXlsxToSheetDoc(bytes).sheets).toHaveLength(3);
+    expect(pageCount(bytes)).toBe(1);
+  });
+
+  it('still prints when it is the only sheet there is', () => {
+    // A workbook of nothing but empty sheets is still a document.
+    expect(
+      pageCount(
+        buildXlsx({
+          sheets: [
+            { name: 'A', rows: [] },
+            { name: 'B', rows: [] },
+          ],
+        }),
+      ),
+    ).toBe(1);
+  });
+});
+
 describe('a row pinned to a height (§18.3.1.73 customHeight)', () => {
   it('cuts what does not fit instead of running it over the row below', () => {
     // Excel and Word both clip a cell to its row. Drawing the overflow put
