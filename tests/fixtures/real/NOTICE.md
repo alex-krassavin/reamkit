@@ -16,6 +16,7 @@ Upstream path: `sc/qa/unit/data/xlsx` (ref `master`).
 |---|---|---|
 | `Spill.xlsx` | `c1e17e7d0d8b8f1c` | A dynamic array whose spill is blocked: the cells cache a legacy `#VALUE!` and point at a rich value that names the real error. |
 | `bnc762542.xlsx` | `89afbf1b49458804` | A3 landscape with fitToPage — paper size 8, the largest in the set. |
+| `singlecontrol.xlsx` | `a13fd1a411a499f4` | One check box anchored 7331pt down a sheet with no cells — the drawings have to paginate on their own, downwards. |
 | `tdf100034.xlsx` | `8efb54cb804b713f` | Letter paper (size 1) with a print area over two sheets — guards the A4-vs-Letter default. |
 | `tdf167019.xlsx` | `298671dfe0882a2f` | A4 landscape with both a print area and print titles. |
 | `tdf171828_fail_to_import_file.xlsx` | `ebfabb870c52d902` | Three sheets on three different papers (A4 landscape, Letter portrait, A4 landscape) — the mixed-geometry workbook. |

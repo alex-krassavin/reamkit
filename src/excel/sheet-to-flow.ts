@@ -29,6 +29,7 @@ import { pt } from '@/core/ir';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 import { buildHeaderFooterContent } from '@/excel/header-footer';
 import {
+  printableHeightPt,
   printableWidthPt,
   resolvePrintArea,
   resolvePrintTitleRows,
@@ -237,9 +238,16 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // their own: tdf111980_radioButtons.xlsx has no cells at all and eleven
     // controls spread over 650pt of an A4 page, and everything past the right
     // margin simply fell off the one page we printed.
+    // …and DOWN as well as across. singlecontrol.xlsx anchors its one checkbox
+    // 7331pt below the sheet's top — nine pages past the only page its (empty)
+    // grid produces — and every trace of it fell off the document. Down first,
+    // then over, the way Excel paginates; a sheet whose drawings all fit one
+    // page deep bands exactly as before.
     const drawingBands =
       gridBody.length === 0
-        ? bandDrawings(controlBlocks, printableWidthPt(ws.grid), scaleSink.value)
+        ? bandDrawings(controlBlocks, printableHeightPt(ws.grid), scaleSink.value, DOWN).flatMap(
+            (row) => bandDrawings(row, printableWidthPt(ws.grid), scaleSink.value),
+          )
         : [controlBlocks];
     for (let band = 0; band < drawingBands.length; band++) {
       if (band > 0) {
@@ -471,13 +479,31 @@ function controlShapes(
       }),
     );
     if (checked) {
-      const dot = side - 2 * RADIO_DOT_INSET_PT;
-      out.push(
-        controlShape(box, RADIO_DOT_INSET_PT, top + RADIO_DOT_INSET_PT, dot, dot, {
-          geometry: glyph === 'radio' ? ellipse : rect,
-          fill: { kind: 'solid', colorHex: '000000' },
-        }),
-      );
+      const mark = side - 2 * RADIO_DOT_INSET_PT;
+      if (glyph === 'radio') {
+        out.push(
+          controlShape(box, RADIO_DOT_INSET_PT, top + RADIO_DOT_INSET_PT, mark, mark, {
+            geometry: ellipse,
+            fill: { kind: 'solid', colorHex: '000000' },
+          }),
+        );
+      } else {
+        // A ticked check box is a CROSS in the box, in both Excel and Calc.
+        // Filling the square the way a radio fills its ring reads as a colour
+        // swatch: the difference between checked and unchecked is then the
+        // amount of black, not a mark, and singlecontrol.xlsx's one control
+        // came out a solid blob where the reference draws ☒.
+        for (const flipV of [false, true]) {
+          out.push(
+            controlShape(box, RADIO_DOT_INSET_PT, top + RADIO_DOT_INSET_PT, mark, mark, {
+              geometry: { kind: 'preset', preset: 'line' },
+              fill: noFill,
+              line: { colorHex: '000000', width: pt(RADIO_RING_PT) },
+              ...(flipV ? { transform: { flipV: true } } : {}),
+            }),
+          );
+        }
+      }
     }
   } else if (glyph !== 'label') {
     // A group box frames its contents in grey; a button and any control we have
@@ -533,21 +559,55 @@ function controlShapes(
  * band its left edge is in, which is where the reference draws it too — the
  * part past the edge is clipped on that page and continues on the next.
  */
+interface BandAxis {
+  /** The shape's anchor along this axis, as the float stores it (unscaled). */
+  readonly anchorOf: (s: ShapeBlock) => number | undefined;
+  /** How far the shape reaches along this axis, in points. */
+  readonly sizeOf: (s: ShapeBlock) => number;
+  /** The same float with its anchor moved back by `by` (unscaled). */
+  readonly shifted: (s: ShapeBlock, by: number) => ShapeBlock;
+}
+
+const ACROSS: BandAxis = {
+  anchorOf: (s) => s.float?.posH?.offsetPt,
+  sizeOf: (s) => s.width,
+  shifted: (s, by) => ({
+    ...s,
+    float: {
+      ...s.float!,
+      posH: { ...s.float!.posH!, offsetPt: pt((s.float!.posH!.offsetPt ?? 0) - by) },
+    },
+  }),
+};
+
+const DOWN: BandAxis = {
+  anchorOf: (s) => s.float?.posV?.offsetPt,
+  sizeOf: (s) => s.height,
+  shifted: (s, by) => ({
+    ...s,
+    float: {
+      ...s.float!,
+      posV: { ...s.float!.posV!, offsetPt: pt((s.float!.posV!.offsetPt ?? 0) - by) },
+    },
+  }),
+};
+
 function bandDrawings(
   shapes: ReadonlyArray<ShapeBlock>,
   printable: number,
   scale: number,
+  axis: BandAxis = ACROSS,
 ): Array<Array<ShapeBlock>> {
   if (shapes.length === 0 || !(printable > 0)) return [shapes as Array<ShapeBlock>];
-  const rightOf = (s: ShapeBlock): number => (s.float?.posH?.offsetPt ?? 0) * scale + s.width;
+  const rightOf = (s: ShapeBlock): number => (axis.anchorOf(s) ?? 0) * scale + axis.sizeOf(s);
   const extent = Math.max(0, ...shapes.map(rightOf));
   const bandCount = Math.ceil(extent / printable);
   if (bandCount <= 1) return [shapes as Array<ShapeBlock>];
   const bands: Array<Array<ShapeBlock>> = Array.from({ length: bandCount }, () => []);
   for (const shape of shapes) {
-    const posH = shape.float?.posH;
-    const left = (posH?.offsetPt ?? 0) * scale;
-    const right = left + shape.width;
+    const anchor = axis.anchorOf(shape);
+    const left = (anchor ?? 0) * scale;
+    const right = left + axis.sizeOf(shape);
     const first = Math.max(0, Math.min(bandCount - 1, Math.floor(left / printable)));
     // EVERY band the drawing reaches into, not just the one it starts in. A
     // group box 209pt wide anchored 46pt before the boundary is on both pages —
@@ -556,7 +616,7 @@ function bandDrawings(
     // only, its far half and every caption inside it fell off the document.
     const last = Math.max(first, Math.min(bandCount - 1, Math.ceil(right / printable) - 1));
     for (let band = first; band <= last; band++) {
-      if (!shape.float || !posH) {
+      if (!shape.float || anchor === undefined) {
         bands[band]!.push(shape);
         continue;
       }
@@ -570,13 +630,7 @@ function bandDrawings(
       // …and a continuation with neither text, outline nor fill draws nothing
       // at all: the caption's own box is invisible once its text stays behind.
       if (band !== first && !frame.line && frame.fill.kind === 'none') continue;
-      bands[band]!.push({
-        ...(band === first ? shape : frame),
-        float: {
-          ...shape.float,
-          posH: { ...posH, offsetPt: pt((posH.offsetPt ?? 0) - (band * printable) / scale) },
-        },
-      });
+      bands[band]!.push(axis.shifted(band === first ? shape : frame, (band * printable) / scale));
     }
   }
   return bands.filter((b) => b.length > 0);

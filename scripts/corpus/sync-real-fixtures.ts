@@ -69,6 +69,11 @@ const ADOPTED: ReadonlyArray<Adopted> = [
     why: 'A3 landscape with fitToPage — paper size 8, the largest in the set.',
   },
   {
+    file: 'singlecontrol.xlsx',
+    source: 'lo-xlsx',
+    why: 'One check box anchored 7331pt down a sheet with no cells — the drawings have to paginate on their own, downwards.',
+  },
+  {
     file: 'simple-monthly-budget.xlsx',
     source: 'poi-xlsx',
     why: 'An ordinary real-world workbook (landscape, fitToPage) rather than a bug reproduction.',

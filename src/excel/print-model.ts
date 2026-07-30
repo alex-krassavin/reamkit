@@ -279,6 +279,18 @@ function sheetContentWidthTwips(worksheet: ParsedWorksheet): number {
   return Math.max(TWIPS_PER_INCH / 2, pageWidthTwips - left - right);
 }
 
+/**
+ * The printable HEIGHT of one page of this sheet, in points — its paper height
+ * less its own top and bottom margins. The vertical twin of
+ * {@link printableWidthPt}.
+ *
+ * @param worksheet The parsed worksheet (paper + margins).
+ * @returns The height a page of this sheet has for content, in points.
+ */
+export function printableHeightPt(worksheet: ParsedWorksheet): number {
+  return sheetContentHeightTwips(worksheet) / TWIPS_PER_POINT;
+}
+
 function sheetContentHeightTwips(worksheet: ParsedWorksheet): number {
   const pageSize = pageSizeFromSetup(worksheet.pageSetup);
   const pageHeightTwips = pageSize ? Math.round(pageSize.height * 20) : DEFAULT_PAPER_TWIPS[1];

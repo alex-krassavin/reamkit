@@ -1,0 +1,34 @@
+{
+  "file": "singlecontrol.xlsx",
+  "paperDeclared": true,
+  "libreOffice": {
+    "pages": 3,
+    "pageSizes": [
+      {
+        "widthPt": 595,
+        "heightPt": 842
+      }
+    ],
+    "chars": 74,
+    "firstLines": [
+      "Sheet1",
+      "Sheet2",
+      "Sheet3"
+    ]
+  },
+  "ream": {
+    "pages": 3,
+    "pageSizes": [
+      {
+        "widthPt": 595,
+        "heightPt": 842
+      }
+    ],
+    "chars": 74,
+    "firstLines": [
+      "Sheet1",
+      "Sheet2",
+      "Sheet3"
+    ]
+  }
+}

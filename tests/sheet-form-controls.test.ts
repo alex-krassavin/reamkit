@@ -165,6 +165,37 @@ describe('form controls — end to end (E-SHEET W8)', () => {
     expect(texts.some((t) => t.includes('Screen only'))).toBe(false);
   });
 
+  it('ticks a check box with a cross, not a filled square', () => {
+    // Excel and Calc both draw ☒. Filling the square the way an option button
+    // fills its ring makes checked-vs-unchecked a difference in the amount of
+    // black rather than a mark.
+    const shapes = Ream.parse(
+      new Uint8Array(readFileSync('tests/fixtures/real/singlecontrol.xlsx')),
+    ).flow.body.flatMap((e) => (e.kind === 'shape' ? [e.shape] : []));
+    const diagonals = shapes.filter(
+      (s) => s.geometry.kind === 'preset' && s.geometry.preset === 'line',
+    );
+    expect(diagonals).toHaveLength(2);
+    // One each way — the second is the first mirrored.
+    expect(diagonals.map((s) => s.transform?.flipV ?? false)).toEqual([false, true]);
+    expect(diagonals.every((s) => s.fill.kind === 'none')).toBe(true);
+  });
+
+  it('paginates a drawing anchored below the first page onto its own band', () => {
+    // singlecontrol.xlsx has no cells at all and one check box 7331pt down —
+    // nine pages past the only page its empty grid produces. Banded across but
+    // not down, every trace of it fell off the document.
+    const flow = Ream.parse(
+      new Uint8Array(readFileSync('tests/fixtures/real/singlecontrol.xlsx')),
+    ).flow;
+    const caption = flow.body.flatMap((e) => (e.kind === 'shape' && e.shape.text ? [e.shape] : []));
+    expect(caption).toHaveLength(1);
+    // Its band is 9 pages down, so what is left is the remainder of the printable
+    // height (785.2pt for A4 with this sheet's 1cm margins).
+    expect(caption[0]?.float?.posV?.offsetPt).toBeCloseTo(7331.25 - 9 * 785.2, 1);
+    expect(caption[0]?.float?.posH?.offsetPt).toBeCloseTo(122.25, 2);
+  });
+
   it('adds no section to a sheet without controls (byte-zero)', () => {
     const flow = Ream.parse(buildXlsx({ rows: [['data']] })).flow;
     expect(paragraphTexts(flow.body)).not.toContain('Form controls');
