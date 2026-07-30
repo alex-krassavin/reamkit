@@ -785,25 +785,25 @@ describe('cell indent (§18.8.1)', () => {
   });
 });
 
-describe('a vertical merge is ONE box (§18.3.1.55)', () => {
-  /** Every fill the layout painted, with its box. */
-  const fills = (xlsx: Uint8Array): Array<{ y: number; height: number; hex: string }> => {
-    const flow = Ream.parse(xlsx).flow;
-    const laid = layoutStyledDocument(flow.body, {
-      registry: FontRegistry.fromBytes(FONTS),
-      ...flowRenderOptions(flow),
-    });
-    const out: Array<{ y: number; height: number; hex: string }> = [];
-    for (const page of laid.pages) {
-      for (const command of page.commands) {
-        if (command.type !== 'fill') continue;
-        const f = command as unknown as { y: number; height: number; fillColorHex: string };
-        out.push({ y: f.y, height: f.height, hex: f.fillColorHex });
-      }
+/** Every fill the layout painted, with its box. */
+const fills = (xlsx: Uint8Array): Array<{ y: number; height: number; hex: string }> => {
+  const flow = Ream.parse(xlsx).flow;
+  const laid = layoutStyledDocument(flow.body, {
+    registry: FontRegistry.fromBytes(FONTS),
+    ...flowRenderOptions(flow),
+  });
+  const out: Array<{ y: number; height: number; hex: string }> = [];
+  for (const page of laid.pages) {
+    for (const command of page.commands) {
+      if (command.type !== 'fill') continue;
+      const f = command as unknown as { y: number; height: number; fillColorHex: string };
+      out.push({ y: f.y, height: f.height, hex: f.fillColorHex });
     }
-    return out;
-  };
+  }
+  return out;
+};
 
+describe('a vertical merge is ONE box (§18.3.1.55)', () => {
   const green = { value: 'M', styleIndex: 1 };
   const filled = (
     rows: ReadonlyArray<ReadonlyArray<typeof green | string>>,
@@ -1101,5 +1101,30 @@ describe('a cell that is present but empty (§18.3.1.4)', () => {
       }),
     );
     expect(items.map((i) => i.text).sort()).toEqual(['a', 'b', 'c', 'left', 'right']);
+  });
+});
+
+describe('a column of one colour is painted once', () => {
+  it('joins the rows into a single rectangle', () => {
+    // Runs ACROSS a row were already merged; down the page each row painted its
+    // own slice and leaned on a 0.07pt bleed to hide the join — a fifth of a
+    // device pixel at 300 DPI, so the boundary pixel took partial coverage from
+    // each side and came out pale. 51710.xlsx paints its column A grey down 46
+    // pages and showed a rung at every row boundary.
+    const green = { value: 'x', styleIndex: 1 };
+    const xlsx = buildXlsx({
+      rows: [[green], [green], [green], [green]],
+      stylesXml:
+        `<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>` +
+        `<fills count="3"><fill><patternFill patternType="none"/></fill>` +
+        `<fill><patternFill patternType="gray125"/></fill>` +
+        `<fill><patternFill patternType="solid"><fgColor rgb="FF00FF00"/></patternFill></fill>` +
+        `</fills><borders count="1"><border/></borders>` +
+        `<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>` +
+        `<xf numFmtId="0" fontId="0" fillId="2" borderId="0" applyFill="1"/></cellXfs>`,
+    });
+    const painted = fills(xlsx).filter((f) => f.hex === '00FF00');
+    expect(painted).toHaveLength(1);
+    expect(painted[0]!.height).toBeGreaterThan(4 * 14);
   });
 });

@@ -52,7 +52,7 @@ import type { FamilyKey } from '@/core/fonts';
 import type { Hyphenator } from '@/core/hyphenation';
 import type { PreparedImage } from '@/core/images';
 import type { Item } from '@/core/line-breaker';
-import type { ResourceId } from '@/core/ir';
+import type { Pt, ResourceId } from '@/core/ir';
 import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
 import type { ShapeGradient, StrokeStyle, VectorPath } from '@/core/vector';
 import type {
@@ -4440,7 +4440,60 @@ function paginateSections(
     if (d.position === 'header') page.commands.unshift(...cmds);
     else page.commands.push(...cmds);
   }
+  for (const page of asm.pages) coalesceVerticalFills(page.commands);
   return asm.pages;
+}
+
+// Join a column of same-coloured cell fills into one rectangle.
+//
+// Runs ACROSS a row are already merged where they are emitted, for the reason
+// given there: two rects composited separately share an edge that lands
+// mid-pixel, and each side contributes partial coverage where one whole one
+// belongs — a block of one colour shows a pale grid of seams exactly on its
+// cell boundaries. Down the page each row still painted its own slice and
+// leaned on FILL_SEAM_PT, which is a fifteenth of a point: a fifth of a device
+// pixel at 300 DPI, not enough to make the boundary pixel opaque. 51710.xlsx
+// paints its column A grey down 46 pages and showed a rung at every row.
+//
+// Rows are emitted in order, so a run is a stretch of consecutive fills with
+// the same left edge, width and colour whose boxes meet.
+function coalesceVerticalFills(commands: Array<PageItem>): void {
+  const touching = (a: FillItem, b: FillItem): boolean =>
+    Math.abs(a.x - b.x) < 0.01 &&
+    Math.abs(a.width - b.width) < 0.01 &&
+    a.fillColorHex === b.fillColorHex &&
+    Math.min(a.y + a.height, b.y + b.height) >= Math.max(a.y, b.y) - 0.01;
+
+  const open = new Map<string, FillItem>();
+  const dead = new Set<PageItem>();
+  for (const item of commands) {
+    if (item.type !== 'fill') continue;
+    const fill = item as FillItem;
+    const k = `${fill.x.toFixed(2)}|${fill.width.toFixed(2)}|${fill.fillColorHex}`;
+    const prev = open.get(k);
+    if (prev && touching(prev, fill)) {
+      const top = Math.max(prev.y + prev.height, fill.y + fill.height);
+      const bottom = Math.min(prev.y, fill.y);
+      (prev as { y: Pt }).y = pt(bottom);
+      (prev as { height: Pt }).height = pt(top - bottom);
+      dead.add(item);
+      continue;
+    }
+    open.set(k, fill);
+  }
+  if (dead.size === 0) return;
+  const kept = commands.filter((c) => !dead.has(c));
+  commands.length = 0;
+  commands.push(...kept);
+}
+
+interface FillItem {
+  readonly type: 'fill';
+  x: Pt;
+  y: Pt;
+  width: Pt;
+  height: Pt;
+  readonly fillColorHex: string;
 }
 
 // §14.8.5.2 /RowSpan — how many rows a vertical-merge origin spans. Walk down
