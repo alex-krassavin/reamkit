@@ -788,18 +788,25 @@ describe('cell indent (§18.8.1)', () => {
 });
 
 /** Every fill the layout painted, with its box. */
-const fills = (xlsx: Uint8Array): Array<{ y: number; height: number; hex: string }> => {
+const fills = (
+  xlsx: Uint8Array,
+): Array<{ y: number; height: number; width: number; hex: string }> => {
   const flow = Ream.parse(xlsx).flow;
   const laid = layoutStyledDocument(flow.body, {
     registry: FontRegistry.fromBytes(FONTS),
     ...flowRenderOptions(flow),
   });
-  const out: Array<{ y: number; height: number; hex: string }> = [];
+  const out: Array<{ y: number; height: number; width: number; hex: string }> = [];
   for (const page of laid.pages) {
     for (const command of page.commands) {
       if (command.type !== 'fill') continue;
-      const f = command as unknown as { y: number; height: number; fillColorHex: string };
-      out.push({ y: f.y, height: f.height, hex: f.fillColorHex });
+      const f = command as unknown as {
+        y: number;
+        height: number;
+        width: number;
+        fillColorHex: string;
+      };
+      out.push({ y: f.y, height: f.height, width: f.width, hex: f.fillColorHex });
     }
   }
   return out;
@@ -1128,5 +1135,46 @@ describe('a column of one colour is painted once', () => {
     const painted = fills(xlsx).filter((f) => f.hex === '00FF00');
     expect(painted).toHaveLength(1);
     expect(painted[0]!.height).toBeGreaterThan(4 * 14);
+  });
+});
+
+describe('overflow claims a neighbour only when the text needs it', () => {
+  it('leaves a short centred cell in its own column, fill and all', () => {
+    // There was no width test on the rightward path at all, so any left- or
+    // centre-aligned string claimed every empty neighbour to the end of its
+    // band — and since overflow is modelled as a colSpan, the cell's fill and
+    // its centring went with them. 54524.xlsx paints "X", 6.9pt of text in a
+    // 49.5pt column, across two columns; 54206.xlsx runs a header's fill into
+    // an empty column K. The mirror path for right-aligned cells has always
+    // had this predicate.
+    const xlsx = buildXlsx({
+      rows: [[{ value: 'X', styleIndex: 1 }], [null, 'anchor']],
+      columns: [{ min: 1, max: 3, widthChars: 12 }],
+      stylesXml:
+        `<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>` +
+        `<fills count="3"><fill><patternFill patternType="none"/></fill>` +
+        `<fill><patternFill patternType="gray125"/></fill>` +
+        `<fill><patternFill patternType="solid"><fgColor rgb="FF00FF00"/></patternFill></fill>` +
+        `</fills><borders count="1"><border/></borders>` +
+        `<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>` +
+        `<xf numFmtId="0" fontId="0" fillId="2" borderId="0" applyFill="1" applyAlignment="1">` +
+        `<alignment horizontal="center"/></xf></cellXfs>`,
+    });
+    const green = fills(xlsx).filter((f) => f.hex === '00FF00');
+    expect(green).toHaveLength(1);
+    // One column of 12 characters: 84px = 63pt, not two.
+    expect(green[0]!.width).toBeLessThan(70);
+  });
+
+  it('still lets a cell that genuinely overruns take the room', () => {
+    const long = 'a label far wider than the column it sits in';
+    const items = placed(
+      buildXlsx({
+        rows: [[long], [null, 'anchor']],
+        columns: [{ min: 1, max: 3, widthChars: 8 }],
+      }),
+    );
+    // Drawn on ONE line — the span it claimed is what keeps it off three.
+    expect(items.filter((i) => long.startsWith(i.text))).toHaveLength(1);
   });
 });

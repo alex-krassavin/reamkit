@@ -1326,7 +1326,14 @@ export function worksheetToBody(
         // Requiring left alignment kept tdf171828.xlsx's centred "unter
         // Berücksichtung der Sondertilgungen" inside its own 73pt column, where
         // it was cut to "unter Berücksic"; every other reader runs it across.
-        (alignment === 'left' || alignment === 'center')
+        (alignment === 'left' || alignment === 'center') &&
+        // …but only a cell that OVERRUNS spills. There was no such test here at
+        // all, so any left or centred string claimed every empty neighbour to
+        // the end of its band — and since overflow is modelled as a colSpan,
+        // the cell's fill, its rules and its centring went with them. 54524's
+        // "X", 6.9pt of text in a 49.5pt column, painted two. The mirror path
+        // for right-aligned cells below has had this predicate all along.
+        estimateChars(text) * charTwips(xf, styles, textTwipsUnit) > columnWidths[c]!
       ) {
         let availTwips = columnWidths[c]!;
         let cc = c + 1;
@@ -1348,6 +1355,7 @@ export function worksheetToBody(
           // and the thick rule over a whole column of its "mtl. Betrag" row.
           !insideMerge.has(key(absR, col + colStart)) &&
           !mergeOrigins.has(key(absR, col + colStart)) &&
+          // Nothing may be lost…
           (!cellPaintsSomething(cellMatrix[r]?.[col], styles) ||
             spanPreservesPaint(cellMatrix[r]?.[col], styles, shading, borders)) &&
           !sparklineByCell.has(key(absR, col + colStart)) &&

@@ -32,7 +32,7 @@ exports[`byte gate: static fixtures > text-justified.docx 1`] = `"ec69659453ec83
 
 exports[`byte gate: static fixtures > text-styled.docx 1`] = `"86dfcce94d05faec25505d53f6d80f72577ee01d9a5449730f1ae4d10cc50e40"`;
 
-exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: cell-styles 1`] = `"d8753bb4294f60900c2fe4f0024aa69d109ea712f13597dc6f88ba17b2963c89"`;
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: cell-styles 1`] = `"096b45e17bfa4e2a7a8ce8861a202d431018fa135440b631c5636db3f104ed2d"`;
 
 exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: centering 1`] = `"00173ff74bd7e371c5f728998155cd7d8c0a39fa7062919cd6d93c8c8278ac76"`;
 
