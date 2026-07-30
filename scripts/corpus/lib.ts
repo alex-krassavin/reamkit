@@ -4,7 +4,9 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { basename, dirname, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 // ---- external tools ----
 
@@ -105,10 +107,30 @@ export function referenceToPdf(input: string, outDir: string): string {
 
 export function sofficeToPdf(input: string, outDir: string): string {
   // LibreOffice writes <basename>.pdf into outDir.
-  execFileSync('soffice', ['--headless', '--convert-to', 'pdf', '--outdir', outDir, input], {
-    stdio: 'ignore',
-    timeout: SOFFICE_TIMEOUT_MS,
-  });
+  //
+  // Its user profile is the reason for the -env flag. One profile is one
+  // running instance: a second `soffice` started while the first is converting
+  // does not convert, it hands the job to the instance that owns the profile
+  // and exits — and the caller finds no PDF and reports a document that
+  // "threw". A per-process profile lets the scout sweep in the background while
+  // a visual diff runs in the foreground, which is exactly how both get used.
+  const profile = pathToFileURL(resolve(tmpdir(), `ream-lo-${String(process.pid)}`)).href;
+  execFileSync(
+    'soffice',
+    [
+      `-env:UserInstallation=${profile}`,
+      '--headless',
+      '--convert-to',
+      'pdf',
+      '--outdir',
+      outDir,
+      input,
+    ],
+    {
+      stdio: 'ignore',
+      timeout: SOFFICE_TIMEOUT_MS,
+    },
+  );
   return expectPdf(input, outDir);
 }
 
