@@ -996,7 +996,16 @@ export function worksheetToBody(
       // 4.3900875881221957 into "4.390087" (Sparklines.xlsx) and 1161014163
       // into "1161014" (escape-unicode.xlsx) — the second reads as a number a
       // thousand times smaller, with nothing to say a digit was cut.
-      if (ws?.type === 'n' && (styles.cellXfs[ws.styleIndex ?? 0]?.numFmtId ?? 0) === 0) {
+      // …but only for a cell that HOLDS a number. §18.3.1.4 gives `t` the
+      // default "n", so `<c r="C49" s="3"/>` — a cell present only to carry a
+      // style — arrives here typed numeric with an empty value, and `Number('')`
+      // is 0, not NaN. Rounding that emptiness printed a `0` in every styled
+      // blank: invalid_ext_data_validation.xlsx grew a whole page holding one.
+      if (
+        ws?.type === 'n' &&
+        ws.rawValue.length > 0 &&
+        (styles.cellXfs[ws.styleIndex ?? 0]?.numFmtId ?? 0) === 0
+      ) {
         const unit = charTwips(styles.cellXfs[ws.styleIndex ?? 0], styles, textTwipsUnit);
         // Whether a rendering fits is measured the way everything else on this
         // page is: charWidthUnits, which reports the face we DRAW in.
@@ -1053,8 +1062,13 @@ export function worksheetToBody(
       // override the cell's fill/font and may add an in-cell data bar. Only number
       // cells carry a comparable value; no formatter ⇒ block skipped (byte-identical).
       if (cfFormatter && ws) {
+        // A styled blank is not a number cell, however §18.3.1.4 types it: with
+        // no value there is nothing to compare, and offering `Number('')` here
+        // would let every blank match a rule written for zero.
         const cfValue =
-          ws.type === 'n' && Number.isFinite(Number(ws.rawValue)) ? Number(ws.rawValue) : undefined;
+          ws.type === 'n' && ws.rawValue.length > 0 && Number.isFinite(Number(ws.rawValue))
+            ? Number(ws.rawValue)
+            : undefined;
         const over = cfFormatter(absR, absC, cfValue, cfText);
         if (over) {
           if (over.fillHex) shading = { colorHex: over.fillHex };

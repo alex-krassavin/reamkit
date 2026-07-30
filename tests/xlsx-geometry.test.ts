@@ -838,3 +838,37 @@ describe('paper size from the printer settings part', () => {
     expect(parsePrinterSettings(new Uint8Array(200))).toEqual({});
   });
 });
+
+describe('a cell that is present but empty (§18.3.1.4)', () => {
+  it('draws nothing where a styled blank sits', () => {
+    // `t` defaults to "n", so a cell written only to carry a style arrives
+    // typed numeric with an empty value — and `Number('')` is 0, not NaN.
+    // Rounding General to the column width printed that zero: every styled
+    // blank in invalid_ext_data_validation.xlsx grew a `0`, and one of them
+    // took a page of its own.
+    // The blank has to earn its place in the grid: style 1 paints it green, so
+    // it survives the trim that removes cells drawing nothing at all.
+    const stylesXml = `
+      <fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>
+      <fills count="3">
+        <fill><patternFill patternType="none"/></fill>
+        <fill><patternFill patternType="gray125"/></fill>
+        <fill><patternFill patternType="solid"><fgColor rgb="FF00FF00"/></patternFill></fill>
+      </fills>
+      <borders count="1"><border/></borders>
+      <cellXfs count="2">
+        <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+        <xf numFmtId="0" fontId="0" fillId="2" borderId="0" applyFill="1"/>
+      </cellXfs>`;
+    const items = placed(
+      buildXlsx({
+        rows: [
+          ['left', { value: null, styleIndex: 1 }, 'right'],
+          ['a', 'b', 'c'],
+        ],
+        stylesXml,
+      }),
+    );
+    expect(items.map((i) => i.text).sort()).toEqual(['a', 'b', 'c', 'left', 'right']);
+  });
+});

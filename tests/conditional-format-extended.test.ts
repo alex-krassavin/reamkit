@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildXlsx } from './fixtures/build-xlsx';
+import type { XlsxCellSpec } from './fixtures/build-xlsx';
 import type { ConditionalFormat } from '@/core/spreadsheet-model';
 import { readXlsxToSheetDoc } from '@/excel/xlsx-reader';
 import { writeXlsx } from '@/excel/xlsx-writer';
@@ -32,7 +33,7 @@ const STYLES = `
 // Build a single-column sheet with one conditional-format block and return the
 // resolved fill colour of every cell in column A (undefined ⇒ no highlight).
 function columnShadings(
-  rows: ReadonlyArray<ReadonlyArray<number | string>>,
+  rows: ReadonlyArray<ReadonlyArray<number | string | XlsxCellSpec>>,
   cfXml: string,
 ): Array<string | undefined> {
   const flow = Ream.parse(
@@ -153,6 +154,43 @@ describe('conditional formatting — duplicate / unique (E-SHEET W5)', () => {
       '<conditionalFormatting sqref="A1:A3"><cfRule type="duplicateValues" dxfId="0" priority="1"/></conditionalFormatting>';
     // "Apple" and "apple" collapse to one value → both duplicates; "Banana" unique.
     expect(columnShadings([['Apple'], ['apple'], ['Banana']], cf)).toEqual([RED, RED, undefined]);
+  });
+
+  it('does not count a styled blank as a zero', () => {
+    const cf =
+      '<conditionalFormatting sqref="A1:A2"><cfRule type="duplicateValues" dxfId="0" priority="1"/></conditionalFormatting>';
+    // A2 is `<c r="A2" s="0"/>` — present to carry a style, holding nothing.
+    // §18.3.1.4 types it "n" by default and `Number('')` is 0, so it counted as
+    // a second zero and made the one real zero a duplicate of it.
+    const blank = { value: null, styleIndex: 0 };
+    expect(
+      columnShadings(
+        [
+          [0, 'x'],
+          [blank, 'y'],
+        ],
+        cf,
+      ),
+    ).toEqual([undefined, undefined]);
+  });
+
+  it('does not colour a styled blank among real zeros', () => {
+    const cf =
+      '<conditionalFormatting sqref="A1:A3"><cfRule type="duplicateValues" dxfId="0" priority="1"/></conditionalFormatting>';
+    // The two zeros repeat and are highlighted. The blank between them is not
+    // one of them, however the count came out — asking the rule about a cell
+    // that holds nothing must not hand it a zero to match on.
+    const blank = { value: null, styleIndex: 0 };
+    expect(
+      columnShadings(
+        [
+          [0, 'x'],
+          [blank, 'y'],
+          [0, 'z'],
+        ],
+        cf,
+      ),
+    ).toEqual([RED, undefined, RED]);
   });
 
   it('keeps a numeric 5 and the string "5" distinct', () => {

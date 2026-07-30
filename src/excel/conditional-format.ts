@@ -939,7 +939,8 @@ function resolveAboveAverage(
 
 // §18.3.1.10 duplicate/uniqueValues — the set of value keys that repeat within the
 // range (duplicate) or occur exactly once (unique). Numbers key by value, text
-// case-insensitively; blanks (absent from the sparse cell list) never qualify.
+// case-insensitively; a blank never qualifies — whether it is absent from the
+// sparse cell list or present in it carrying nothing but a style.
 function resolveDupUnique(
   rule: CfRuleDupUnique,
   ranges: ReadonlyArray<MergedRange>,
@@ -969,6 +970,13 @@ function cellDupKey(
   resolveText: ((cell: WorksheetCell) => string) | undefined,
 ): string | undefined {
   if (cell.type === 'n') {
+    // A cell can be present and still hold nothing: `<c r="C49" s="3"/>` is
+    // written only to carry a style, and §18.3.1.4 types it "n" by default.
+    // Its rawValue is empty, and `Number('')` is 0 — so a row of styled blanks
+    // read as five copies of the number zero and coloured each other in as
+    // duplicates (invalid_ext_data_validation.xlsx, a page of pink for a row
+    // neither reference fills).
+    if (cell.rawValue.length === 0) return undefined;
     const n = Number(cell.rawValue);
     return Number.isFinite(n) ? `n:${n}` : undefined;
   }
