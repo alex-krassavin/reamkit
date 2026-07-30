@@ -6,7 +6,7 @@
 //     and `[colour]` / `[locale]` codes (the latter two stripped silently)
 // Dates (m/d/yyyy etc.) are deferred — the cell value is shown verbatim.
 
-import { INDEXED_COLORS } from '@/excel/styles-parser';
+import { INDEXED_COLORS } from '@/core/indexed-colors';
 
 const BUILTIN: ReadonlyMap<number, string> = new Map([
   [0, 'General'],

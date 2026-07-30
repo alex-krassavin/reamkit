@@ -876,6 +876,12 @@ export interface Chart {
   readonly catAxisTitle?: string; // c:catAx/c:title
   readonly valAxisTitle?: string; // c:valAx/c:title
   /**
+   * §21.2.2.121 `c:valAx/c:numFmt@formatCode` — the number format the value
+   * axis's tick labels and the data labels are drawn in, in the same code
+   * grammar cells use (§18.8.31). Absent ⇒ a plain numeric render.
+   */
+  readonly numberFormat?: string;
+  /**
    * MS-ODRAWXML `chartColorStyle` (`colorsN.xml`): the cycle of series colours;
    * overrides the built-in Office accent cycle when present.
    */

@@ -9,6 +9,7 @@ import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 
 import { convertDocxToPdfSync } from '@/core/converter';
 import { defaultColorResolver } from '@/core/drawingml/colors';
+import { buildChartScene } from '@/core/drawingml/chart-geometry';
 import { parseChart } from '@/core/drawingml/chart-parser';
 import { OpcPackage } from '@/core/opc';
 import { parseDocument } from '@/word';
@@ -135,6 +136,40 @@ describe('parseChart', () => {
     expect(chart.showValues).toBe(true);
     expect(chart.catAxisTitle).toBe('Quarter');
     expect(chart.valAxisTitle).toBe('Sales');
+  });
+
+  it("draws the axis and its data labels in the axis's own number format", () => {
+    // §21.2.2.121 c:valAx/c:numFmt. simple-monthly-budget.xlsx declares
+    // `"$"#,##0` and we printed 0/1000/2000 down the axis and 3750 on the bar,
+    // where every other reader shows $0/$1,000/$2,000 and $3,750.
+    const money = `<c:chartSpace ${C_NS}><c:chart><c:plotArea><c:barChart>
+      <c:barDir val="col"/><c:grouping val="clustered"/>
+      <c:dLbls><c:showVal val="1"/></c:dLbls>
+      <c:ser><c:idx val="0"/>
+        <c:val><c:numRef><c:numCache><c:ptCount val="2"/>
+          <c:pt idx="0"><c:v>3750</c:v></c:pt><c:pt idx="1"><c:v>2336</c:v></c:pt>
+        </c:numCache></c:numRef></c:val>
+      </c:ser>
+      </c:barChart>
+      <c:valAx><c:numFmt formatCode="&quot;$&quot;#,##0" sourceLinked="0"/></c:valAx>
+    </c:plotArea></c:chart></c:chartSpace>`;
+    const chart = parseChart(enc.encode(money), defaultColorResolver)!;
+    expect(chart.numberFormat).toBe('"$"#,##0');
+    const scene = buildChartScene(chart, 320, 200, (t, sz) => t.length * sz * 0.5);
+    const texts = scene!.labels.map((t) => t.text);
+    expect(texts).toContain('$3,750');
+    expect(texts).toContain('$2,336');
+    // The ticks carry it too — no bare 4000 anywhere on the axis.
+    expect(texts.some((t) => /^\$[\d,]+$/.test(t) && t !== '$3,750' && t !== '$2,336')).toBe(true);
+    expect(texts).not.toContain('4000');
+
+    // General is not a format: it means "plain", and a chart that says so keeps
+    // the numeric render.
+    const general = parseChart(
+      enc.encode(money.replace('&quot;$&quot;#,##0', 'General')),
+      defaultColorResolver,
+    )!;
+    expect(general.numberFormat).toBeUndefined();
   });
 
   it('flags a doughnut chart (renders as a pie with a hole)', () => {

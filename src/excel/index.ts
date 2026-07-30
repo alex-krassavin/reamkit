@@ -37,4 +37,4 @@ export type {
   XlsxStyles,
   XlsxVerticalAlign,
 } from '@/core/spreadsheet-model';
-export { applyNumberFormat, numberFormatColorHex } from '@/excel/number-format';
+export { applyNumberFormat, numberFormatColorHex } from '@/core/number-format';

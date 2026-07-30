@@ -99,6 +99,7 @@ export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): C
   const showValues = group ? chartShowsValues(group) : false;
   const catAxisTitle = axisTitle(plotArea, 'c:catAx');
   const valAxisTitle = axisTitle(plotArea, 'c:valAx');
+  const numberFormat = valueFormatCode(plotArea);
 
   const legend = poChildren(chart).find((c) => poIs(c, 'c:legend'));
   const legendPos = legend
@@ -120,6 +121,7 @@ export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): C
     ...(showValues ? { showValues: true } : {}),
     ...(catAxisTitle ? { catAxisTitle } : {}),
     ...(valAxisTitle ? { valAxisTitle } : {}),
+    ...(numberFormat ? { numberFormat } : {}),
   };
 }
 
@@ -216,6 +218,23 @@ function axisTitle(plotArea: PoNode, axTag: string): string | undefined {
   const ax = poChildren(plotArea).find((c) => poIs(c, axTag));
   const title = ax ? poChildren(ax).find((c) => poIs(c, 'c:title')) : undefined;
   return title ? collectAT(title) || undefined : undefined;
+}
+
+/**
+ * §21.2.2.121 `c:numFmt` on the value axis — the number format its tick labels
+ * and the chart's data labels are drawn in. It is the same code grammar cells
+ * use (§18.8.31), so a currency axis reads as currency: without it a monthly
+ * budget's axis ran 0/1000/2000 where every other reader shows $0/$1,000/$2,000.
+ *
+ * `sourceLinked="1"` means "whatever the source cells use", which the chart part
+ * does not carry — those keep the plain numeric render.
+ */
+function valueFormatCode(plotArea: PoNode): string | undefined {
+  const ax = poChildren(plotArea).find((c) => poIs(c, 'c:valAx'));
+  const numFmt = ax ? poChildren(ax).find((c) => poIs(c, 'c:numFmt')) : undefined;
+  const code = numFmt ? poAttr(numFmt, 'formatCode') : undefined;
+  if (code === undefined || code.trim().length === 0) return undefined;
+  return code.trim().toLowerCase() === 'general' ? undefined : code;
 }
 
 // A c:dLbls with <c:showVal val="1"/> — group-level or on any series.

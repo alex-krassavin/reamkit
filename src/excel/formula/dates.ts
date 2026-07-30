@@ -7,7 +7,7 @@
 
 import type { TimePeriodKind } from '@/core/spreadsheet-model';
 
-import { excelSerialFromUtcParts, excelSerialToDate } from '@/excel/number-format';
+import { excelSerialFromUtcParts, excelSerialToDate } from '@/core/number-format';
 
 /** The UTC calendar fields an Excel serial decomposes into. */
 export interface DateParts {

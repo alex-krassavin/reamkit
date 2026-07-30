@@ -7,6 +7,8 @@
 
 import type { Chart, ChartSeries } from '@/core/document-model';
 
+import { applyNumberFormat } from '@/core/number-format';
+
 /**
  * An axis-aligned rectangle in the scene's local y-up frame: bars, scatter
  * point markers, legend swatches. Position is the bottom-left corner.
@@ -443,8 +445,13 @@ function buildFrame(
 const pctLabel = (v: number): string => `${Math.round(v * 100)}%`;
 
 // A datum's printed value (c:dLbls/showVal): integers as-is, else ≤2 decimals.
-const fmtDataLabel = (v: number): string =>
-  Number.isInteger(v) ? String(v) : String(Math.round(v * 100) / 100);
+// A data label carries the axis's number format too — the figure on the bar and
+// the figure on the axis are the same quantity, and Excel prints both as
+// currency. Without it a budget chart labelled its bars 3750 beside a $3,750
+// axis.
+const fmtDataLabel = (chart: Chart, v: number): string =>
+  chartValueFormatter(chart)?.(v) ??
+  (Number.isInteger(v) ? String(v) : String(Math.round(v * 100) / 100));
 
 function catCount(chart: Chart): number {
   return Math.max(chart.categories.length, ...chart.series.map((s) => s.values.length), 1);
@@ -474,11 +481,36 @@ function stackedTotals(chart: Chart, nCats: number): { min: number; max: number 
 function groupingFrameOpts(chart: Chart, nCats: number): FrameOpts {
   const g = chart.grouping ?? 'clustered';
   if (g === 'percentStacked') return { dataRange: [0, 1], formatValue: pctLabel };
+  const format = chartValueFormatter(chart);
   if (g === 'stacked') {
     const t = stackedTotals(chart, nCats);
-    return { dataRange: [Math.min(0, t.min), Math.max(0, t.max)] };
+    return {
+      dataRange: [Math.min(0, t.min), Math.max(0, t.max)],
+      ...(format ? { formatValue: format } : {}),
+    };
   }
-  return {};
+  return format ? { formatValue: format } : {};
+}
+
+// The axis's own number format (§21.2.2.121), as a tick/label formatter. The
+// code grammar is the cells' (§18.8.31), so `"$"#,##0` prints $1,000 on the
+// axis exactly as it does in the cell the value came from.
+const CHART_FORMAT_ID = 1_000_000;
+const formatterCache = new WeakMap<Chart, ((v: number) => string) | null>();
+
+function chartValueFormatter(chart: Chart): ((v: number) => string) | undefined {
+  const hit = formatterCache.get(chart);
+  if (hit !== undefined) return hit ?? undefined;
+  const code = chart.numberFormat;
+  const made =
+    code === undefined
+      ? null
+      : (
+          (formats) => (v: number) =>
+            applyNumberFormat(String(v), CHART_FORMAT_ID, formats)
+        )(new Map([[CHART_FORMAT_ID, code]]));
+  formatterCache.set(chart, made);
+  return made ?? undefined;
 }
 
 // ─── bar / column chart (clustered, stacked, percentStacked) ────────────────
@@ -532,11 +564,11 @@ export function buildBarScene(
           const raw = series.values[c] ?? 0;
           if (horizontal)
             f.labels.push(
-              centeredLabel(fmtDataLabel(raw), f.x0 + lo + span / 2, along + barW * 0.3),
+              centeredLabel(fmtDataLabel(chart, raw), f.x0 + lo + span / 2, along + barW * 0.3),
             );
           else
             f.labels.push(
-              centeredLabel(fmtDataLabel(raw), along + barW / 2, f.y0 + lo + span / 2 - 3),
+              centeredLabel(fmtDataLabel(chart, raw), along + barW / 2, f.y0 + lo + span / 2 - 3),
             );
         }
         if (v >= 0) cumPos = top;
@@ -566,7 +598,7 @@ export function buildBarScene(
       }
       if (chart.showValues) {
         const raw = series.values[c] ?? 0;
-        const txt = fmtDataLabel(raw);
+        const txt = fmtDataLabel(chart, raw);
         if (horizontal) {
           const end = f.x0 + f.zeroOffset + len;
           f.labels.push({
@@ -781,7 +813,7 @@ export function buildLineScene(
       const y = f.y0 + f.valueOffset(series.values[c] ?? 0);
       pts.push([x, y]);
       if (chart.showValues)
-        f.labels.push(centeredLabel(fmtDataLabel(series.values[c] ?? 0), x, y + 3));
+        f.labels.push(centeredLabel(fmtDataLabel(chart, series.values[c] ?? 0), x, y + 3));
     }
     if (pts.length >= 2) {
       f.polylines.push({ points: pts, strokeHex: color, widthPt: 1.5 });
