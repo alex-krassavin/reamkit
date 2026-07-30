@@ -178,3 +178,38 @@ describe('cell-format round-trip (E-SHEET W6)', () => {
     expect(s1.styles.borders[1]?.diagonalDown).toBe(true);
   });
 });
+
+describe('§18.8.22 <u> names an underline, it does not toggle one', () => {
+  const runProps = (fontXml: string) => {
+    const xlsx = buildXlsx({
+      rows: [[{ value: 'Label', styleIndex: 1 }]],
+      stylesXml:
+        `<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font>` +
+        `<font><sz val="12"/><name val="DejaVu Sans"/>${fontXml}</font></fonts>` +
+        `<fills count="1"><fill><patternFill patternType="none"/></fill></fills>` +
+        `<borders count="1"><border/></borders>` +
+        `<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>` +
+        `<xf numFmtId="0" fontId="1" fillId="0" borderId="0" applyFont="1"/></cellXfs>`,
+    });
+    const cell = firstCell(xlsx);
+    const para = cell.content[0];
+    if (para?.kind !== 'paragraph') throw new Error('expected a paragraph');
+    return para.paragraph.runs[0]?.properties;
+  };
+
+  it('reads val="none" as no underline', () => {
+    // `u` is a CT_UnderlineProperty whose val is a NAME out of
+    // ST_UnderlineValues, not the CT_BooleanProperty `b`/`i`/`strike` are. Read
+    // with the boolean helper beside it, "none" is neither "false" nor "0" and
+    // came out true — which put a rule under every text cell of 52348.xlsx,
+    // whose two fonts both spell the default out as `<u val="none"/>`.
+    expect(runProps('<u val="none"/>')?.underline).not.toBe('single');
+    expect(runProps('<u val="false"/>')?.underline).not.toBe('single');
+  });
+
+  it('still underlines when the element says so, or says nothing at all', () => {
+    expect(runProps('<u/>')?.underline).toBe('single');
+    expect(runProps('<u val="single"/>')?.underline).toBe('single');
+    expect(runProps('<u val="double"/>')?.underline).toBe('single');
+  });
+});

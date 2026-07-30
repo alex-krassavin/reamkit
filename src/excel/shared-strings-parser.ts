@@ -120,7 +120,10 @@ function richRun(text: string, rPr: unknown): SheetRichRun {
   // file bolds "ohne" alone.
   out.bold = has(p, 'b');
   out.italic = has(p, 'i');
-  if (has(p, 'u')) out.underline = true;
+  // …and §18.8.22's `<u>` says WHICH underline, not whether: `val="none"` is a
+  // name in ST_UnderlineValues, so the boolean reader beside it takes it for a
+  // switch nobody turned off.
+  if (has(p, 'u') && attrStr(p['u'], 'val') !== 'none') out.underline = true;
   const color = colorRgb(p['color']);
   if (color) out.colorHex = color;
   const sz = attrNum(p['sz'], 'val');

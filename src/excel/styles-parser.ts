@@ -260,7 +260,7 @@ function parseFonts(
     }
     if (hasChild(obj, 'b')) font.bold = childToggle(obj, 'b');
     if (hasChild(obj, 'i')) font.italic = childToggle(obj, 'i');
-    if (hasChild(obj, 'u')) font.underline = childToggle(obj, 'u');
+    if (hasChild(obj, 'u')) font.underline = childUnderline(obj);
     const colorRgb = colorOf(asObject(obj['color']), theme);
     if (colorRgb) font.colorHex = colorRgb;
     const nameVal = childValAttr(obj, 'name');
@@ -393,6 +393,21 @@ function childValAttr(obj: Record<string, unknown>, childName: string): string |
 
 function hasChild(obj: Record<string, unknown>, childName: string): boolean {
   return childName in obj;
+}
+
+// §18.8.22 `<u>` is a CT_UnderlineProperty, not the CT_BooleanProperty its
+// neighbours `b`/`i`/`strike` are: its `val` is an ST_UnderlineValues NAME —
+// none, single, double, singleAccounting, doubleAccounting — and the element
+// with no val at all means single. Read as a boolean, `val="none"` is neither
+// "false" nor "0" and so came out TRUE, which put a rule under every text cell
+// of 52348.xlsx: its two fonts both spell the default out as `<u val="none"/>`.
+function childUnderline(obj: Record<string, unknown>): boolean {
+  const child = obj['u'];
+  if (child === '' || child === null || child === undefined) return true;
+  if (typeof child !== 'object') return true;
+  const val = strAttr(child as Record<string, unknown>, 'val');
+  if (val === undefined) return true;
+  return !(val === 'none' || val === 'false' || val === '0');
 }
 
 function childToggle(obj: Record<string, unknown>, childName: string): boolean {
