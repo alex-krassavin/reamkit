@@ -36,6 +36,7 @@ Upstream path: `test-data/spreadsheet` (ref `trunk`).
 | File | sha256 (16) | Why it is here |
 |---|---|---|
 | `45540_form_Header.xlsx` | `5e9a5cc4f70614fa` | Forty captionless ActiveX check boxes over a form — a control drawn with its `<control name>` writes an identifier across the page. |
+| `47737.xlsx` | `4bcb8da52e258c61` | Two sheets on `<pageSetup scale>` with no fit-to-page — a scaled sheet still paginates across its columns — and a second sheet whose only text is its header, which Excel refuses to print at all. |
 | `49156.xlsx` | `7376a8118afc503a` | Print area combined with manual row breaks — pagination driven by the document, not the page size. |
 | `53105.xlsx` | `7086065eb8727133` | Declares all 16 384 columns, so the grid materialization cap fires and must report the clip. |
 | `AverageTaxRates.xlsx` | `094b2facaf85870a` | fitToPage scaling plus manual breaks across three sheets. |

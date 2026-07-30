@@ -796,6 +796,16 @@ describe('a sheet with nothing on it', () => {
     expect(pageCount(bytes)).toBe(1);
   });
 
+  it('is left out even when it carries a header (47737)', () => {
+    // A header is furniture, not content. 47737's "Sheet 2" is eighteen rows of
+    // cells that carry a style and no value, and one `<oddHeader>`: Excel
+    // answers "We didn't find anything to print" and LibreOffice prints no page
+    // for it either. Counting the header as content printed it.
+    const bytes = new Uint8Array(readFileSync('tests/fixtures/real/47737.xlsx'));
+    expect(readXlsxToSheetDoc(bytes).sheets).toHaveLength(2);
+    expect(placed(bytes).map((p) => p.text)).not.toContain('Agency Footnotes');
+  });
+
   it('still prints when it is the only sheet there is', () => {
     // A workbook of nothing but empty sheets is still a document.
     expect(

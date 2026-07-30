@@ -588,8 +588,9 @@ function controlShapes(
  * Whether a sheet has anything to put on a page.
  *
  * A cell that carries a value or inline text, any drawing, control or slicer,
- * a printed note, or a header/footer the author typed. A tab nobody touched has
- * none of those, and Excel and LibreOffice both leave it out of the print.
+ * or a printed note. A tab nobody touched has none of those, and Excel and
+ * LibreOffice both leave it out of the print — a header or footer does not
+ * rescue it.
  *
  * @param ws The sheet.
  * @returns True when the sheet would print something.
@@ -603,9 +604,13 @@ function sheetPrintsAnything(ws: Sheet): boolean {
   if ((ws.comments?.length ?? 0) > 0) return true;
   if ((ws.formControls?.length ?? 0) > 0) return true;
   if ((ws.activeXControls?.length ?? 0) > 0) return true;
-  // A header or footer is text on the page even when the grid is bare.
-  const hf = ws.grid.headerFooter;
-  return hf !== undefined && Object.values(hf).some((v) => typeof v === 'string' && v.length > 0);
+  // A header or footer is NOT content. I let one count when this rule went in;
+  // 47737.xlsx has a sheet whose every cell is valueless and whose only text is
+  // `<oddHeader>Agency Footnotes</oddHeader>`, and Excel refuses to print it at
+  // all ("We didn't find anything to print"). LibreOffice agrees. The guard at
+  // the call site still keeps a workbook of nothing but empty sheets from
+  // printing zero pages.
+  return false;
 }
 
 /**

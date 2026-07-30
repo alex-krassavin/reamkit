@@ -1,0 +1,33 @@
+{
+  "file": "47737.xlsx",
+  "paperDeclared": false,
+  "libreOffice": {
+    "pages": 3,
+    "pageSizes": [
+      {
+        "widthPt": 612,
+        "heightPt": 792
+      }
+    ],
+    "chars": 384,
+    "firstLines": [
+      "SF 132 APPORTIONMENT AND REAPPORTIONMENT SCHEDULE",
+      "SF 132 APPORTIONMENT AND REAPPORTIONMENT SCHEDULE",
+      "SF 132 APPORTIONMENT AND REAPPORTIONMENT SCHEDULE"
+    ]
+  },
+  "ream": {
+    "pages": 2,
+    "pageSizes": [
+      {
+        "widthPt": 595,
+        "heightPt": 842
+      }
+    ],
+    "chars": 300,
+    "firstLines": [
+      "SF 132 APPORTIONMENT AND REAPPORTIONMENT SCHEDULE",
+      "SF 132 APPORTIONMENT AND REAPPORTIONMENT SCHEDULE"
+    ]
+  }
+}

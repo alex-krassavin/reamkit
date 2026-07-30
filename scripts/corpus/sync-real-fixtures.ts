@@ -44,6 +44,11 @@ const ADOPTED: ReadonlyArray<Adopted> = [
     why: 'Forty captionless ActiveX check boxes over a form — a control drawn with its `<control name>` writes an identifier across the page.',
   },
   {
+    file: '47737.xlsx',
+    source: 'poi-xlsx',
+    why: 'Two sheets on `<pageSetup scale>` with no fit-to-page — a scaled sheet still paginates across its columns — and a second sheet whose only text is its header, which Excel refuses to print at all.',
+  },
+  {
     file: '49156.xlsx',
     source: 'poi-xlsx',
     why: 'Print area combined with manual row breaks — pagination driven by the document, not the page size.',

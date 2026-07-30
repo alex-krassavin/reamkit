@@ -330,6 +330,24 @@ export function printableWidthPt(worksheet: ParsedWorksheet): number {
   return sheetContentWidthTwips(worksheet) / TWIPS_PER_POINT;
 }
 
+/**
+ * Whether a sheet paginates ACROSS its columns.
+ *
+ * Fit-to-ONE-page does not: the whole grid is squeezed onto a single page
+ * width, and Excel lets that override even a manual column break. An explicit
+ * `<pageSetup scale>` is a different thing entirely — §18.3.1.63 makes it a
+ * plain zoom, and Excel paginates AFTER applying it. Treating the two alike
+ * left 47737.xlsx (`scale="63"`, still 583pt wide) as one 583pt table on a
+ * 487pt page: its last column fell off the paper and its "Heading" with it.
+ *
+ * @param worksheet The sheet.
+ * @param fitWide   `fitToWidth`, or 1 when the sheet is not fit-to-page.
+ * @returns True when the grid should be split into column bands.
+ */
+function bandsAcross(worksheet: ParsedWorksheet, fitWide: number): boolean {
+  return !worksheet.fitToPage || fitWide > 1;
+}
+
 function sheetContentWidthTwips(worksheet: ParsedWorksheet): number {
   const pageSize = pageSizeFromSetup(worksheet.pageSetup);
   const pageWidthTwips = pageSize ? Math.round(pageSize.width * 20) : DEFAULT_PAPER_TWIPS[0];
@@ -1019,7 +1037,7 @@ export function worksheetToBody(
     }
     const wide = worksheet.fitToPage ? (worksheet.pageSetup?.fitToWidth ?? 1) : 1;
     const width = sheetContentWidthTwips(worksheet);
-    if (colCount > 1 && (!scaled || wide > 1) && (total > width || breaks.size > 0)) {
+    if (colCount > 1 && bandsAcross(worksheet, wide) && (total > width || breaks.size > 0)) {
       for (const band of computeColumnBands(widthsForBands, width, breaks)) {
         for (let i = band.start; i <= band.end; i++) {
           bandEndOfCol.set(visibleCols[i] ?? i, visibleCols[band.end] ?? band.end);
@@ -1552,7 +1570,7 @@ export function worksheetToBody(
   const bandTotal = bandWidths.reduce((sum, w) => sum + w, 0);
   if (
     colCount > 1 &&
-    (!scaled || fitWide > 1) &&
+    bandsAcross(worksheet, fitWide) &&
     (bandTotal > contentWidthTwips || colBreaksLocal.size > 0)
   ) {
     const bands = computeColumnBands(bandWidths, contentWidthTwips, colBreaksLocal);

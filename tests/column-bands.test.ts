@@ -105,6 +105,18 @@ describe('wide-sheet column-band pagination (E-SHEET SE1)', () => {
     expect(pageCount(xlsx)).toBe(2);
   });
 
+  it('bands a sheet that is only ZOOMED, on its scaled widths (§18.3.1.63)', () => {
+    // `<pageSetup scale>` and fit-to-page are not the same instruction. Fitting
+    // is a promise about the page count, so the grid may be squeezed onto one
+    // width; a scale is a plain zoom, and Excel paginates after applying it.
+    // Treating a scaled sheet as fitted left 47737.xlsx — `scale="63"`, still
+    // 583pt of columns on a 487pt page — as one over-wide table, and its last
+    // column ran off the paper.
+    const xlsx = buildXlsx({ rows: grid(3, 6), columns: wideCols, pageSetup: { scale: 50 } });
+    expect(bandCount(xlsx)).toBe(2); // 6×2100 scaled twips over a 9026-twip page
+    expect(pageCount(xlsx)).toBe(2);
+  });
+
   it('honours a manual column break as a band boundary on a sheet that fits', () => {
     const xlsx = buildXlsx({
       rows: grid(3, 3),
