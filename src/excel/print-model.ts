@@ -743,8 +743,11 @@ export function worksheetToBody(
     for (const c of worksheet.cells) {
       if (c.column > colReach || c.row > rowReach) continue;
       if (c.column <= usedCol && c.row <= usedRow) continue;
-      const xf = styles.cellXfs[c.styleIndex ?? 0];
-      if (!xf || !shadingFromXf(xf, styles)) continue;
+      // A rule is paint too. Testing the fill alone dropped the row that
+      // CLOSES a block: 54206.xlsx ends each of its tables with a value-less
+      // row whose only property is `<top style="thick"/>`, and both references
+      // draw that rule. `cellPaintsSomething` is already "a fill or a border".
+      if (!cellPaintsSomething(c, styles)) continue;
       if (c.row > usedRow) usedRow = c.row;
       if (c.column > usedCol) usedCol = c.column;
     }
