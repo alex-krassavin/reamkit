@@ -1260,7 +1260,7 @@ export function worksheetToBody(
         ws?.type === 'n' &&
         (xf?.numFmtId ?? 0) !== 0 &&
         text.length > 0 &&
-        estimateChars(text) * charTwips(xf, styles, textTwipsUnit) > columnWidths[c]!
+        tooWideToShow(text, charTwips(xf, styles, textTwipsUnit), columnWidths[c]!)
           ? { hashOnOverflow: true }
           : {}),
         // §18.8.1 `<alignment vertical>` — a spreadsheet cell sits at the BOTTOM
@@ -2266,6 +2266,31 @@ function charWidthUnits(ch: string): number {
   if (ch >= 'a' && ch <= 'z') return 1.12;
   if (ch >= 'A' && ch <= 'Z') return 1.36;
   return 1.18;
+}
+
+/**
+ * Whether a number is too wide for its column to show it at all — the test
+ * behind {@link CellProperties.hashOnOverflow}.
+ *
+ * Two corrections separate this from the clipping estimate, and both are about
+ * how destructive the answer is. Filling a cell with `#` erases the value, so
+ * the test has to be sure.
+ *
+ * `charWidthUnits` measures in the font we DRAW in, expressed in Excel's unit —
+ * right for deciding what fits on the page, wrong for deciding what the
+ * document itself considers too wide, since §18.3.1.13 defines that unit AS the
+ * digit's width. Dividing by our own digit puts the text back in the document's
+ * terms: a face 18 % wider than the workbook's would otherwise hash a column of
+ * dates that every other reader shows (forum-mso-de-104083.xlsx).
+ *
+ * And then a tenth of headroom, because the estimate is an estimate. A value
+ * that overruns by one percent is a value we should draw and let the cell clip;
+ * only one that plainly cannot fit earns the hashes.
+ */
+function tooWideToShow(text: string, perCharTwips: number, columnTwips: number): boolean {
+  const digit = charWidthUnits('0');
+  if (!(digit > 0) || !(perCharTwips > 0)) return false;
+  return (estimateChars(text) / digit) * perCharTwips > columnTwips * 1.1;
 }
 
 /** Width of `text` in column-width units, estimated character by character. */

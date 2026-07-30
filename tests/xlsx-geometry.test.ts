@@ -360,6 +360,23 @@ describe('grid geometry', () => {
     expect(drawn(2).some((t) => /^#+$/.test(t))).toBe(true);
     // Room enough, and the number itself is drawn.
     expect(drawn(20)).toContain('1234.567891');
+    // A value that overruns by a hair is drawn and left to clip: filling the
+    // cell with `#` erases it, so the test has to be sure. A ten-character date
+    // in a column measured for about nine — which is what a default-width
+    // column holds — keeps its date (forum-mso-de-104083.xlsx hashed 439 cells
+    // that way, where the reference hashes none of them).
+    const dates = placed(
+      buildXlsx({
+        rows: [[{ value: 42324, styleIndex: 2 }, 'x']],
+        columns: [{ min: 1, max: 2, widthChars: 8.43 }],
+        stylesXml:
+          `<fonts count="1"><font><sz val="11"/></font></fonts><fills count="1"><fill/></fills>` +
+          `<borders count="1"><border/></borders>` +
+          `<cellXfs count="3"><xf/><xf/><xf numFmtId="14" applyNumberFormat="1"/></cellXfs>`,
+      }),
+    ).map((i) => i.text);
+    expect(dates.some((t) => /^#+$/.test(t))).toBe(false);
+
     // Text is exempt — a clipped word is still recognisably that word.
     const text = placed(
       buildXlsx({
