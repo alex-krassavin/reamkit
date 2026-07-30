@@ -532,6 +532,49 @@ describe('grid geometry', () => {
     expect(cells).toHaveLength(2);
   });
 
+  it('spills a CENTRED cell too, not only a left-aligned one', () => {
+    // Excel and Calc run a centred cell out both ways. Gating overflow on left
+    // alignment kept tdf171828.xlsx's centred "unter Berücksichtung der
+    // Sondertilgungen" inside its own 73pt column, cut to "unter Berücksic".
+    const phrase = 'a centred label much wider than its column';
+    const stylesXml =
+      `<fonts count="1"><font/></fonts><fills count="1"><fill/></fills>` +
+      `<borders count="1"><border/></borders>` +
+      `<cellXfs count="2"><xf/>` +
+      `<xf applyAlignment="1"><alignment horizontal="center"/></xf></cellXfs>`;
+    const items = placed(
+      buildXlsx({
+        rows: [[{ value: phrase, styleIndex: 1 }], [null, null, null, 'anchor']],
+        columns: [{ min: 1, max: 4, widthChars: 10 }],
+        stylesXml,
+      }),
+    );
+    expect(items.map((i) => i.text)).toContain(phrase);
+  });
+
+  it('does not overflow into a cell that belongs to a merge', () => {
+    // An empty cell inside a merge is not free space — it is that merge's. We
+    // spanned over a merge ORIGIN, which made the origin's own span disappear
+    // and left the rest of the merge painting nothing: tdf171828.xlsx lost the
+    // fill and the rule over a whole column of one row.
+    const phrase = 'a label much wider than its own column';
+    const xlsx = buildXlsx({
+      rows: [
+        [phrase, null, null, null],
+        [null, null, null, 'anchor'],
+      ],
+      columns: [{ min: 1, max: 4, widthChars: 10 }],
+      mergeRefs: ['B1:C1'],
+    });
+    const { doc } = readXlsx(xlsx);
+    const table = doc.body.find((e) => e.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('expected a table');
+    const first = table.table.rows[0]!.cells;
+    // The label stays in its own column, and the merge keeps its two.
+    expect(first[0]?.properties.colSpan ?? 1).toBe(1);
+    expect(first[1]?.properties.colSpan).toBe(2);
+  });
+
   it('keeps equal declared widths equally spaced', () => {
     // Four columns declared identical must come out identical. Auto-fit makes
     // each one as wide as its own content, so the pitch wanders — which is what

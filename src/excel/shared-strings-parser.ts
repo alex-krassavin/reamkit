@@ -113,8 +113,12 @@ function richRun(text: string, rPr: unknown): SheetRichRun {
   const p = rPr && typeof rPr === 'object' ? (rPr as Record<string, unknown>) : undefined;
   if (!p) return { text };
   const out: { -readonly [K in keyof SheetRichRun]: SheetRichRun[K] } = { text };
-  if (has(p, 'b')) out.bold = true;
-  if (has(p, 'i')) out.italic = true;
+  // An <rPr> states the run's WHOLE font, so a run that omits <b> inside a bold
+  // cell is not bold — `false`, not "say nothing". Recording only the positive
+  // case printed tdf171828.xlsx's "ohne Sondertilgung" entirely bold where the
+  // file bolds "ohne" alone.
+  out.bold = has(p, 'b');
+  out.italic = has(p, 'i');
   if (has(p, 'u')) out.underline = true;
   const color = colorRgb(p['color']);
   if (color) out.colorHex = color;

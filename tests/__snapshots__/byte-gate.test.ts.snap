@@ -18,7 +18,7 @@ exports[`byte gate: static fixtures > sheet-fit-scale.xlsx 1`] = `"653e39484cda0
 
 exports[`byte gate: static fixtures > sheet-formats.xlsx 1`] = `"cd170cbde77eb0d80bc6833546d4b28f932a56a1315bfebe1ea959a63a57f9b5"`;
 
-exports[`byte gate: static fixtures > sheet-print-area.xlsx 1`] = `"92a92c35d125927098b51ad11c80ae2eb5ad451a1c32046b19c988a1dc56adc1"`;
+exports[`byte gate: static fixtures > sheet-print-area.xlsx 1`] = `"6957d5d49fa30b9a8f0fae1c25ba433d6de2edf0e2c32aafb2ba3cd452e1feda"`;
 
 exports[`byte gate: static fixtures > sheet-print-titles.xlsx 1`] = `"6efd8f82d2685d3d253b46dc032febd4e5db83781866f160bcd4c1435c66deb5"`;
 
@@ -32,7 +32,7 @@ exports[`byte gate: static fixtures > text-justified.docx 1`] = `"ec69659453ec83
 
 exports[`byte gate: static fixtures > text-styled.docx 1`] = `"86dfcce94d05faec25505d53f6d80f72577ee01d9a5449730f1ae4d10cc50e40"`;
 
-exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: cell-styles 1`] = `"2cac740b78471057a210667d82bd00096fbb7eaef8205acf3ebea6fdb1ead625"`;
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: cell-styles 1`] = `"c6d6ceb437b2321dbc567aa1868f414ffbb9d98d9ebf0bee9d5c49a3ac29b947"`;
 
 exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: centering 1`] = `"8ef5931b0df90e5b556a04d8b82fd53a70fccbd40aea33bc39ed6677359e1492"`;
 
@@ -44,7 +44,7 @@ exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: date-1904 1`] = `
 
 exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: fit-to-page 1`] = `"3a0830b2e9016ae9662cdd7dca50d8ebf461453c41f6180bbd0531362057280b"`;
 
-exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: gridlines 1`] = `"e49bf68c4651a2c612dadc5bf1f6d8f38377b4b49729e3c7735a04bf53ee00fd"`;
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: gridlines 1`] = `"89e8bf6049f6f073bd37caff09d1ea5e1a5b981f80d3d1c2a42ef8dea92b2015"`;
 
 exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: landscape 1`] = `"c9af732e8ab2da1087a427387cb4e2e815fbc8dd0c1572359035296768bfa40f"`;
 

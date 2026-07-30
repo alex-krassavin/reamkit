@@ -3078,6 +3078,32 @@ function measureSingleLine(
   return total;
 }
 
+/**
+ * The above-neighbour a cell resolves its top edge against.
+ *
+ * A spanning cell covers several columns and paints ONE top across all of them,
+ * so taking the first column's neighbour throws away any rule the others
+ * declare. tdf100034.xlsx rules the bottom of its two header cells, and a label
+ * overflowing from two columns to their left spanned over both and wiped that
+ * rule off the page. Take the heaviest bottom under the span instead — it is
+ * the one edge the span can draw, so it should be the strongest claim on it.
+ */
+function aboveOfSpan(
+  aboveBordersByCol: ReadonlyArray<CellBorders | undefined>,
+  colIdx: number,
+  span: number,
+): CellBorders | undefined {
+  const first = aboveBordersByCol[colIdx];
+  if (span <= 1) return first;
+  let bottom = first?.bottom;
+  for (let k = 1; k < span; k++) {
+    const b = aboveBordersByCol[colIdx + k]?.bottom;
+    if (heavierBorder(bottom, b) === b) bottom = b;
+  }
+  if (bottom === first?.bottom) return first;
+  return { ...first, ...(bottom ? { bottom } : {}) };
+}
+
 function layoutTableRow(
   row: TableRow,
   rowIdx: number,
@@ -3119,7 +3145,7 @@ function layoutTableRow(
       colCount,
       mergeRole,
       leftNeighbor,
-      aboveBordersByCol[colIdx],
+      aboveOfSpan(aboveBordersByCol, colIdx, span),
     );
     cells.push(cellLayout);
     cursorX += widthPt;

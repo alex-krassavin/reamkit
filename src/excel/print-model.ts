@@ -410,6 +410,10 @@ function scaleRunFont(props: RunProperties, scale: number): RunProperties {
   return { ...props, fontSizePt: halfPtToPt(Math.max(2, Math.round(hp * scale))) };
 }
 
+// The grey Excel and LibreOffice print cell gridlines in — light enough that a
+// declared cell border still reads as the heavier line on the page.
+const PRINT_GRIDLINE_HEX = 'C0C0C0';
+
 // Per-sheet budget on rendered characters — a DoS guard (see use site).
 const MAX_SHEET_TEXT_CHARS = 1_000_000;
 
@@ -1026,7 +1030,11 @@ export function worksheetToBody(
         !shrinkToFit &&
         ws &&
         (ws.type === 's' || ws.type === 'str' || ws.type === 'inlineStr') &&
-        alignment === 'left'
+        // A CENTRED cell spills as well — Excel and Calc run it out both ways.
+        // Requiring left alignment kept tdf171828.xlsx's centred "unter
+        // Berücksichtung der Sondertilgungen" inside its own 73pt column, where
+        // it was cut to "unter Berücksic"; every other reader runs it across.
+        (alignment === 'left' || alignment === 'center')
       ) {
         let availTwips = columnWidths[c]!;
         let cc = c + 1;
@@ -1042,6 +1050,12 @@ export function worksheetToBody(
         // visibly short but never visibly wrong.
         const neighbourIsFree = (col: number): boolean =>
           !cellHasContent(cellMatrix[r]?.[col]) &&
+          // A cell inside a merge belongs to that merge, empty or not. Spanning
+          // over its ORIGIN made the origin's own span disappear and the rest
+          // of the merge paint nothing at all — tdf171828.xlsx lost the fill
+          // and the thick rule over a whole column of its "mtl. Betrag" row.
+          !insideMerge.has(key(absR, col + colStart)) &&
+          !mergeOrigins.has(key(absR, col + colStart)) &&
           (!cellPaintsSomething(cellMatrix[r]?.[col], styles) ||
             spanPreservesPaint(cellMatrix[r]?.[col], styles, shading, borders)) &&
           !sparklineByCell.has(key(absR, col + colStart)) &&
@@ -1263,7 +1277,16 @@ export function worksheetToBody(
   // gridLines="1"> is set. Default ⇒ no synthetic full grid; only borders that
   // come from cell styles are drawn. With gridLines on, lay a thin grid like a
   // print preview with "Gridlines" enabled.
-  const thin: Border = { style: 'single', width: eighthPtToPt(4) };
+  // A printed gridline is a light-grey hairline, not a rule. Left colourless it
+  // painted BLACK at half a point, which is heavier than the cell borders the
+  // sheet actually declares — on tdf100034.xlsx the thin bottom rules under its
+  // total rows read as black against LibreOffice's grey grid and were swamped
+  // by ours, five times the ink of the reference's gridline.
+  const thin: Border = {
+    style: 'single',
+    width: eighthPtToPt(2),
+    colorHex: PRINT_GRIDLINE_HEX,
+  };
   // <printOptions horizontalCentered="1"> centers the sheet within the print
   // margins.
   const centered = worksheet.printOptions?.horizontalCentered === true;
@@ -1498,8 +1521,12 @@ function stackedVerticalContent(
 // underline, colour, size and super/subscript — inheriting the rest from the cell.
 function richRunProps(base: RunProperties, rr: SheetRichRun): RunProperties {
   const out: { -readonly [K in keyof RunProperties]: RunProperties[K] } = { ...base };
-  if (rr.bold) out.bold = true;
-  if (rr.italic) out.italic = true;
+  // A run's <rPr> is the whole font, not a set of additions: a run that omits
+  // <b> inside a bold cell is NOT bold. Treated as "bold if set, inherit
+  // otherwise", tdf171828.xlsx printed "ohne Sondertilgung" all bold where the
+  // file bolds only "ohne".
+  if (rr.bold !== undefined) out.bold = rr.bold;
+  if (rr.italic !== undefined) out.italic = rr.italic;
   if (rr.underline) out.underline = 'single';
   if (rr.colorHex) out.colorHex = rr.colorHex;
   if (rr.sizePt !== undefined) out.fontSizePt = halfPtToPt(Math.round(rr.sizePt * 2));
@@ -2289,7 +2316,16 @@ const SLICER_UNSELECTED_HEX = 'F2F2F2';
 export function slicerTable(slicer: SheetSlicer): Table {
   const cols = Math.max(1, slicer.columnCount);
   const colWidthPt = SLICER_WIDTH_PT / cols;
-  const thin: Border = { style: 'single', width: eighthPtToPt(4) };
+  // A printed gridline is a light-grey hairline, not a rule. Left colourless it
+  // painted BLACK at half a point, which is heavier than the cell borders the
+  // sheet actually declares — on tdf100034.xlsx the thin bottom rules under its
+  // total rows read as black against LibreOffice's grey grid and were swamped
+  // by ours, five times the ink of the reference's gridline.
+  const thin: Border = {
+    style: 'single',
+    width: eighthPtToPt(2),
+    colorHex: PRINT_GRIDLINE_HEX,
+  };
   const rowProps = { height: pt(SLICER_ROW_PT), heightRule: 'atLeast' as const };
   const rows: Array<TableRow> = [];
 

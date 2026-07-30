@@ -888,10 +888,15 @@ describe('xlsx print-model rendering', () => {
         fonts: FONTS,
       }),
     );
-    // The synthetic grid strokes thin black lines → "0 0 0 RG" (stroke colour).
-    // Text fills use lowercase "rg", so its absence proves no grid was drawn.
-    expect(plain).not.toContain('0 0 0 RG');
-    expect(gridded).toContain('0 0 0 RG');
+    // The synthetic grid strokes a light-grey hairline (C0C0C0 → 0.7529…).
+    // Text fills use lowercase "rg", so the absence of the stroke colour proves
+    // no grid was drawn. It is grey and not black on purpose: a gridline that
+    // paints as heavily as a declared cell border swamps the borders the sheet
+    // actually asked for.
+    const grey = '0.753';
+    expect(plain).not.toContain(`${grey} ${grey} ${grey} RG`);
+    expect(gridded).toContain(`${grey} ${grey} ${grey} RG`);
+    expect(gridded).not.toContain('0 0 0 RG');
     // Cell text is identical either way.
     expect(plain).toContain(`<${hexOf('A')}> Tj`);
     expect(gridded).toContain(`<${hexOf('A')}> Tj`);

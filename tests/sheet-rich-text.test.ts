@@ -56,6 +56,28 @@ describe('in-cell rich text (E-SHEET W6)', () => {
     expect(runs[1]?.properties).toMatchObject({ verticalAlign: 'superscript' });
   });
 
+  it('lets a run turn bold OFF inside a bold cell', () => {
+    // An <rPr> states the run's WHOLE font, so a run that omits <b> is not bold
+    // even when the cell is. Read as "bold if set, inherit otherwise",
+    // tdf171828.xlsx printed "ohne Sondertilgung" entirely bold where the file
+    // bolds "ohne" alone.
+    const si =
+      '<si>' +
+      '<r><rPr><b/></rPr><t xml:space="preserve">ohne</t></r>' +
+      '<r><rPr><sz val="11"/></rPr><t xml:space="preserve"> Sondertilgung</t></r>' +
+      '</si>';
+    const stylesXml =
+      `<fonts count="2"><font/><font><b/></font></fonts>` +
+      `<fills count="1"><fill/></fills><borders count="1"><border/></borders>` +
+      `<cellXfs count="2"><xf/><xf fontId="1" applyFont="1"/></cellXfs>`;
+    const runs = cellRuns(
+      buildXlsx({ rows: [[{ value: 'x', styleIndex: 1 }]], sharedStringsXml: si, stylesXml }),
+    );
+    expect(runs.map((r) => r.text)).toEqual(['ohne', ' Sondertilgung']);
+    expect(runs[0]?.properties.bold).toBe(true);
+    expect(runs[1]?.properties.bold).toBe(false);
+  });
+
   it('leaves a plain (single <t>) shared string as one run, unchanged', () => {
     const runs = cellRuns(buildXlsx({ rows: [['Plain text']] }));
     expect(runs.map((r) => r.text)).toEqual(['Plain text']);
