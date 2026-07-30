@@ -21,6 +21,7 @@ import { flowRenderOptions } from '@/core/converter/project';
 import { layoutStyledDocument } from '@/layout/styled-layout';
 import { readXlsx, readXlsxToSheetDoc } from '@/excel/xlsx-reader';
 import { parsePrinterSettings } from '@/excel/printer-settings';
+import { columnTwips } from '@/excel/print-model';
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
 
 const FONTS = {
@@ -731,6 +732,20 @@ describe('column width unit (§18.3.1.13)', () => {
     expect(width(named)).toBeCloseTo(40 * 5.25 + 3.75, 1);
     // The reader's face is wider than Calibri's, so the column is too.
     expect(width(anonymous)).toBeGreaterThan(width(named));
+  });
+
+  it('drops the padding below one character, as Excel documents', () => {
+    // The 5px padding is the formula for a column at least one character wide.
+    // Below that Excel uses `px = Trunc(width × MDW + 0.5)`, with none at all —
+    // and it matters because the padding is a constant: tdf118668.xlsx rules a
+    // form over 168 columns of 0.855 characters, where 3.75pt of padding nearly
+    // doubles a 4.5pt column. The sheet came out 1384pt wide against the
+    // reference's 754 and paginated across two pages instead of one.
+    expect(columnTwips(0.855, 105)).toBe(90); // Trunc(0.855×7 + 0.5) = 6px
+    expect(columnTwips(0.1, 105)).toBe(15); // Trunc(0.7 + 0.5) = 1px
+    // …and at one character and above the padding is back.
+    expect(columnTwips(1, 105)).toBe(180);
+    expect(columnTwips(8.43, 105)).toBe(960); // Excel's documented default
   });
 });
 

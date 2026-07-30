@@ -10,10 +10,10 @@ import type { ParsedWorksheet } from '@/core/spreadsheet-model';
 
 import { emuToPt } from '@/core/ir';
 import {
-  COL_PADDING_TWIPS,
   DEFAULT_COL_TWIPS,
   DEFAULT_ROW_TWIPS,
   TWIPS_PER_EXCEL_CHAR,
+  columnTwips,
 } from '@/excel/print-model';
 
 const CHART_URI = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
@@ -233,7 +233,7 @@ export function makeColWidthPt(ws: ParsedWorksheet): (col: number) => number {
   // starts. shape-macro-ext-ref.xlsx put its macro button 3pt short of the
   // column band its own anchor names.
   const widthPt = (chars: number): number =>
-    (chars * TWIPS_PER_EXCEL_CHAR + COL_PADDING_TWIPS) / TWIPS_PER_PT;
+    columnTwips(chars, TWIPS_PER_EXCEL_CHAR) / TWIPS_PER_PT;
   return (col: number): number => {
     for (const c of ws.columns) {
       if (col >= c.min - 1 && col <= c.max - 1) {

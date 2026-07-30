@@ -88,6 +88,30 @@ const DEFAULT_FONT_PT = 11;
  */
 export const COL_PADDING_TWIPS = 75;
 
+/** One screen pixel at 96 DPI, in twips — the unit Excel's width formula works in. */
+const TWIPS_PER_PIXEL = 15;
+
+/**
+ * §18.3.1.13 — a `<col width>` in twips.
+ *
+ * The padding above is the formula for a column at least one character wide.
+ * Excel documents a SEPARATE one below that: `px = Trunc(width × MDW + 0.5)`,
+ * with no padding at all. It matters because the padding is a constant: on a
+ * form drawn over a fine grid — tdf118668.xlsx rules 168 columns of 0.855
+ * characters — 3.75pt of padding nearly doubles a 4.5pt column, and the sheet
+ * came out 1384pt wide against the reference's 754, so it paginated across two
+ * pages where every reader prints one.
+ *
+ * @param chars     The declared width in characters.
+ * @param charTwips The Maximum Digit Width, in twips.
+ * @returns The rendered column width in twips.
+ */
+export function columnTwips(chars: number, charTwips: number): number {
+  if (chars >= 1) return Math.round(chars * charTwips + COL_PADDING_TWIPS);
+  const px = Math.trunc((chars * charTwips) / TWIPS_PER_PIXEL + 0.5);
+  return px * TWIPS_PER_PIXEL;
+}
+
 /**
  * Excel insets a cell's text by ~2 px each side (1.5 pt at 96 DPI). The layout
  * engine's default is a word processor's 108 twips (5.4 pt), which is nearly
@@ -799,8 +823,8 @@ export function worksheetToBody(
   const defaultColChars = worksheet.defaultColWidthChars ?? worksheet.baseColWidthChars;
   const defaultColTwips =
     defaultColChars !== undefined
-      ? Math.round(defaultColChars * charTwipsUnit + COL_PADDING_TWIPS)
-      : Math.round(DEFAULT_COL_CHARS * charTwipsUnit + COL_PADDING_TWIPS);
+      ? columnTwips(defaultColChars, charTwipsUnit)
+      : columnTwips(DEFAULT_COL_CHARS, charTwipsUnit);
   const columnWidths = new Array<number>(colCount).fill(defaultColTwips);
   // §18.3.1.13/§18.3.1.73 `hidden` — Excel and LibreOffice print neither a
   // hidden column nor a hidden row. Rendering them put a hidden currency column
@@ -808,7 +832,7 @@ export function worksheetToBody(
   // and broke the table's structure around them.
   const hiddenCols = new Set<number>();
   for (const col of worksheet.columns) {
-    const twips = Math.round(col.widthChars * charTwipsUnit + COL_PADDING_TWIPS);
+    const twips = columnTwips(col.widthChars, charTwipsUnit);
     for (let abs = col.min - 1; abs <= col.max - 1; abs++) {
       const i = abs - colStart;
       if (i < 0 || i >= colCount) continue;
@@ -2163,9 +2187,7 @@ function overflowColumnsPastUsedRange(
   charTwipsUnit: number,
 ): number {
   const defaultChars = worksheet.defaultColWidthChars ?? worksheet.baseColWidthChars;
-  const defaultTwips = Math.round(
-    (defaultChars ?? DEFAULT_COL_CHARS) * charTwipsUnit + COL_PADDING_TWIPS,
-  );
+  const defaultTwips = columnTwips(defaultChars ?? DEFAULT_COL_CHARS, charTwipsUnit);
   // The columns past the used range are not necessarily default-width: a `<col>`
   // range routinely covers far more columns than hold anything. Sizing the
   // budget by the default instead of by what the column will actually be made
@@ -2174,7 +2196,7 @@ function overflowColumnsPastUsedRange(
   const widthOf = (abs: number): number => {
     for (const col of worksheet.columns) {
       if (abs < col.min - 1 || abs > col.max - 1) continue;
-      return col.hidden ? 0 : Math.round(col.widthChars * charTwipsUnit + COL_PADDING_TWIPS);
+      return col.hidden ? 0 : columnTwips(col.widthChars, charTwipsUnit);
     }
     return defaultTwips;
   };
