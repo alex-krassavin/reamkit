@@ -55,10 +55,15 @@ describe('charts on xlsx sheets (§20.5 SpreadsheetDrawingML)', () => {
     // twoCellAnchor B2..H17: 6 default columns × 48pt, 15 default rows × 15pt.
     expect(chartBlock.chart.width).toBeCloseTo(6 * 48, 0);
     expect(chartBlock.chart.height).toBeCloseTo(15 * 15, 0);
-    // The chart block comes after the sheet's table in the body.
+    // The chart block comes BEFORE the sheet's table. It is an out-of-flow
+    // float, so it consumes no space and the grid still starts at the top — but
+    // a float lands on whatever page the layout has reached when it meets the
+    // block, and a wide sheet's grid is several pages of column bands. Emitted
+    // after them, a chart anchored beside the data landed on the LAST of those
+    // pages (chart_hyperlink.xlsx).
     const tableIdx = flow.body.findIndex((el) => el.kind === 'table');
     const chartIdx = flow.body.findIndex((el) => el.kind === 'chart');
-    expect(chartIdx).toBeGreaterThan(tableIdx);
+    expect(chartIdx).toBeLessThan(tableIdx);
   });
 
   it('renders chart geometry into the PDF page commands', () => {

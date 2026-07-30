@@ -171,7 +171,18 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       });
     }
 
-    body.push(...gridBody);
+    // The sheet's drawings go in BEFORE its grid. They are out-of-flow floats,
+    // so they consume no space and the grid still starts at the top — but a
+    // float lands on whatever page the layout has reached when it meets the
+    // block, and a wide sheet's grid is several pages of column bands. Emitted
+    // after them, every chart on the sheet ended up on the LAST of those pages:
+    // chart_hyperlink.xlsx anchors two charts under its data in the first band
+    // and we printed them alone on the second page.
+    //
+    // First page of the sheet, then — which is where a drawing anchored in the
+    // first band belongs, and that is nearly all of them. One anchored in a
+    // later band still lands too early; putting each drawing on its own band's
+    // page needs the band boundaries the grid projection keeps to itself.
 
     // §20.5: the sheet's chart frames render as blocks after its grid,
     // anchor-ordered (resolved chart data lives in sheet.chartData).
@@ -252,6 +263,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       }
     }
 
+    body.push(...gridBody);
     // §SV2: slicer panels render as styled button boxes after the grid + charts.
     for (const slicer of ws.slicers ?? []) {
       body.push({ kind: 'table', table: slicerTable(slicer) });

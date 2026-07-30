@@ -219,9 +219,15 @@ function buildLegendBlock(
   hPt: number,
   measure: MeasureText,
 ): ReturnType<typeof layoutLegend> {
-  const legendEntries: Array<LegendEntry> = chart.series
-    .map((s, i) => ({ name: s.name ?? '', colorHex: seriesColor(s, i, chart.seriesColorCycle) }))
-    .filter((e) => e.name !== '');
+  // A series with no <c:tx> still needs a legend key when the chart declares a
+  // legend — otherwise a chart whose series are all unnamed shows none at all,
+  // and nothing on the page says which colour is which. Excel labels them
+  // Series1, Series2… and so do we. chart_hyperlink.xlsx is two unnamed series
+  // under a <c:legend legendPos="b">, and we drew no legend for it.
+  const legendEntries: Array<LegendEntry> = chart.series.map((s, i) => ({
+    name: s.name && s.name.length > 0 ? s.name : `Series${i + 1}`,
+    colorHex: seriesColor(s, i, chart.seriesColorCycle),
+  }));
   return layoutLegend(legendEntries, chart.hasLegend, chart.legendPos ?? 'b', wPt, hPt, measure);
 }
 
@@ -399,7 +405,10 @@ function buildFrame(
 
   const slot = (horizontal ? plotH : plotW) / nCats;
   for (let c = 0; c < nCats; c++) {
-    const cat = chart.categories[c] ?? '';
+    // No <c:cat> means the categories are the point indices, which is what
+    // Excel and Calc both label the axis with — an unlabelled category axis
+    // leaves the bars standing on nothing.
+    const cat = chart.categories[c] ?? String(c + 1);
     if (!cat) continue;
     const center = (horizontal ? y0 : x0) + c * slot + slot / 2;
     if (horizontal) {
