@@ -101,6 +101,12 @@ export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): C
   const valAxisTitle = axisTitle(plotArea, 'c:valAx');
   const valAxisMin = axisScaling(plotArea, 'c:min');
   const valAxisMax = axisScaling(plotArea, 'c:max');
+  // §21.2.2.198 — the chart-space frame sits beside <c:chart>, not inside it.
+  const chartSpace = tree.find((c) => poIs(c, 'c:chartSpace'));
+  const spaceSpPr = poChildren(chartSpace).find((c) => poIs(c, 'c:spPr'));
+  const frameFillHex = fillColorOf(spaceSpPr, resolveColor);
+  const frameLine = spaceSpPr ? poChildren(spaceSpPr).find((c) => poIs(c, 'a:ln')) : undefined;
+  const frameLineHex = frameLine ? fillColorOf(frameLine, resolveColor) : undefined;
   const numberFormat = valueFormatCode(plotArea);
 
   const legend = poChildren(chart).find((c) => poIs(c, 'c:legend'));
@@ -125,6 +131,8 @@ export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): C
     ...(valAxisTitle ? { valAxisTitle } : {}),
     ...(valAxisMin !== undefined ? { valAxisMin } : {}),
     ...(valAxisMax !== undefined ? { valAxisMax } : {}),
+    ...(frameFillHex ? { frameFillHex } : {}),
+    ...(frameLineHex ? { frameLineHex } : {}),
     ...(numberFormat ? { numberFormat } : {}),
   };
 }

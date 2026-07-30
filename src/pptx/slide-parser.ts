@@ -36,7 +36,7 @@ import type { PlaceholderCascade } from '@/pptx/placeholder-cascade';
 import type { PlaceholderRef, ShapeBoxEmu } from '@/pptx/sp-helpers';
 
 import { defaultColorResolver, resolveColorNode } from '@/core/drawingml/colors';
-import { FEATURES, emuToPt } from '@/core/ir';
+import { FEATURES, emuToPt, pt } from '@/core/ir';
 import { poAttr, poChildren, poFindDescendant, poIntAttr, poIs, poText } from '@/core/po-helpers';
 import { parseCustGeom, parseFill, parseLine, parsePrstGeom } from '@/word/drawing-parser';
 import { boxFromXfrm, parsePh, parseXfrmBox, rPrToRunProps } from '@/pptx/sp-helpers';
@@ -563,6 +563,20 @@ function parseSlideParagraph(
     if (poIs(child, 'a:r') || poIs(child, 'a:fld')) {
       const run = parseSlideRun(child, defaults, colors, resolveLink);
       if (run) runs.push(run);
+    }
+  }
+
+  // §21.1.2.2.3 `a:endParaRPr` — the properties of the paragraph MARK. On a
+  // paragraph with no runs it is the only thing that says how tall the line is,
+  // and a blank line that measures the layout's default instead of the size the
+  // file names is the wrong height: shape-macro-ext-ref.xlsx opens its button's
+  // text with an empty 14pt paragraph, and collapsing it drew the caption 12pt
+  // above where both references put it.
+  if (runs.length === 0) {
+    const endRPr = poChildren(aP).find((c) => poIs(c, 'a:endParaRPr'));
+    const sz = endRPr ? poIntAttr(endRPr, 'sz') : undefined;
+    if (sz !== undefined && sz > 0) {
+      runs.push({ text: '', properties: { ...defaults, fontSizePt: pt(sz / 100) } });
     }
   }
 

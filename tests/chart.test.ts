@@ -112,6 +112,20 @@ describe('parseChart', () => {
     expect(parseChart(enc.encode(BAR_CHART), defaultColorResolver)!.valAxisMax).toBeUndefined();
   });
 
+  it('reads the chart-space frame beside <c:chart> (§21.2.2.198)', () => {
+    const framed = BAR_CHART.replace(
+      '<c:chart>',
+      '<c:spPr><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill><a:ln><a:solidFill><a:srgbClr val="D9D9D9"/></a:solidFill></a:ln></c:spPr><c:chart>',
+    );
+    const chart = parseChart(enc.encode(framed), defaultColorResolver);
+    expect(chart!.frameFillHex).toBe('FFFFFF');
+    expect(chart!.frameLineHex).toBe('D9D9D9');
+    // A chart that declares neither keeps none.
+    const plain = parseChart(enc.encode(BAR_CHART), defaultColorResolver);
+    expect(plain!.frameFillHex).toBeUndefined();
+    expect(plain!.frameLineHex).toBeUndefined();
+  });
+
   it('returns unknown type for an unsupported chart group', () => {
     const radar = `<c:chartSpace ${C_NS}><c:chart><c:plotArea><c:radarChart/></c:plotArea></c:chart></c:chartSpace>`;
     expect(parseChart(enc.encode(radar), defaultColorResolver)!.type).toBe('unknown');

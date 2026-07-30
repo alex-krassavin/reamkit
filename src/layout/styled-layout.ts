@@ -1497,7 +1497,29 @@ function layoutShapeBlock(
         imageResources,
         innerWidth,
       );
-      for (const line of blk.lines) {
+      // §21.1.2.2.3 — a paragraph with no runs is still a LINE: it is the blank
+      // line the author typed, and `a:endParaRPr` says how tall. Wrapping zero
+      // tokens yields no line at all, so the shape's text closed up and every
+      // paragraph after the blank one drew 14pt too high (shape-macro-ext-ref
+      // .xlsx opens its button's caption with one).
+      const lines =
+        blk.lines.length > 0
+          ? blk.lines
+          : [
+              {
+                tokens: [],
+                contentWidthPt: 0,
+                maxFontSizePt:
+                  el.paragraph.runs[0]?.properties.fontSizePt ??
+                  options.styles.defaultRunProperties.fontSizePt ??
+                  pt(11),
+                availableWidthPt: innerWidth,
+                firstLine: true,
+                resolved: blk.resolved,
+                isLastInParagraph: true,
+              },
+            ];
+      for (const line of lines) {
         textLines.push(line);
         textHeightPt += computeLineHeight(line, blk.resolved);
       }
@@ -2131,8 +2153,7 @@ function collectFontResources(
           if (chart.catAxisTitle) add(chart.catAxisTitle);
           if (chart.valAxisTitle) add(chart.valAxisTitle);
           // §21.2.2.49 — a label the author typed is arbitrary text, not digits.
-          for (const sr of chart.series)
-            for (const label of sr.pointLabels ?? []) add(label.text);
+          for (const sr of chart.series) for (const label of sr.pointLabels ?? []) add(label.text);
           add('0123456789.,-%() '); // value-axis tick labels
         }
       }

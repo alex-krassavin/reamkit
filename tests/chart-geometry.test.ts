@@ -4,10 +4,12 @@ import { describe, expect, it } from 'vitest';
 
 import type { Chart } from '@/core/document-model';
 import { FontRegistry } from '@/core/font';
+import { pt } from '@/core/ir';
 import { layoutStyledDocument } from '@/layout/styled-layout';
 import {
   buildAreaScene,
   buildBarScene,
+  buildChartScene,
   buildLineScene,
   buildPieScene,
   buildScatterScene,
@@ -72,9 +74,9 @@ describe('font subsetting reaches every string a chart draws', () => {
     const registry = FontRegistry.fromBytes({
       regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
     });
+    const { title: _title, ...noTitle } = barChart('col');
     const chart: Chart = {
-      ...barChart('col'),
-      title: undefined,
+      ...noTitle,
       categories: ['a', 'b', 'c'],
       series: [{ name: 'n', values: [1, 2, 3], pointLabels: [{ idx: 0, text: 'Ж' }] }],
       catAxisTitle: 'Щ',
@@ -84,10 +86,18 @@ describe('font subsetting reaches every string a chart draws', () => {
       [
         {
           kind: 'chart',
-          chart: { chartRelId: 'c1', width: 300, height: 200, paragraphProperties: {} },
+          chart: { chartRelId: 'c1', width: pt(300), height: pt(200), paragraphProperties: {} },
         },
       ],
-      { registry, charts: new Map([['c1', chart]]) },
+      {
+        registry,
+        charts: new Map([['c1', chart]]),
+        styles: {
+          defaultRunProperties: {},
+          defaultParagraphProperties: {},
+          styles: new Map(),
+        },
+      },
     );
     const res = [...laid.fontResources.values()][0]!;
     for (const ch of ['Щ', 'Э', 'Ж']) {
@@ -95,6 +105,24 @@ describe('font subsetting reaches every string a chart draws', () => {
       expect(gid).toBeGreaterThan(0);
       expect(res.gids.has(gid)).toBe(true);
     }
+  });
+});
+
+describe('the chart-space frame (§21.2.2.198)', () => {
+  it('draws it first, behind everything else', () => {
+    const framed: Chart = { ...barChart('col'), frameFillHex: 'FFFFFF', frameLineHex: 'D9D9D9' };
+    const scene = buildChartScene(framed, W, H, measure)!;
+    expect(scene.rects[0]).toMatchObject({
+      x: 0,
+      y: 0,
+      w: W,
+      h: H,
+      fillHex: 'FFFFFF',
+      strokeHex: 'D9D9D9',
+    });
+    // A chart without one keeps exactly the rects it had.
+    const plain = buildChartScene(barChart('col'), W, H, measure)!;
+    expect(plain.rects).toHaveLength(scene.rects.length - 1);
   });
 });
 
@@ -148,11 +176,11 @@ describe('buildBarScene', () => {
   });
 
   it('rescales the value axis to summed totals when stacked', () => {
-    // Clustered tops out at the max single value (25 → tick 30). Stacked tops at
-    // the max category sum (cat2 = 15+25 = 40 → tick 40).
+    // Clustered tops out at the max single value (25). Stacked tops at the max
+    // category sum (cat2 = 15+25 = 40).
     const clustered = buildBarScene({ ...barChart('col'), grouping: 'clustered' }, W, H, measure);
     const stacked = buildBarScene({ ...barChart('col'), grouping: 'stacked' }, W, H, measure);
-    expect(clustered.labels.some((l) => l.text === '30')).toBe(true);
+    expect(clustered.labels.some((l) => l.text === '25')).toBe(true);
     expect(clustered.labels.some((l) => l.text === '40')).toBe(false);
     expect(stacked.labels.some((l) => l.text === '40')).toBe(true);
     expect(inBounds(stacked.rects)).toBe(true);

@@ -178,12 +178,17 @@ const ticks = (s: Scale): Array<number> => {
  * @param chart   The chart (for its fixed ends).
  * @param dataMin The smallest value to cover.
  * @param dataMax The largest value to cover.
+ * @param hPt     The chart's height — how many ticks fit is a question about
+ *                the plot, not about the numbers.
  * @returns The axis min/max and tick step.
  */
-function axisScale(chart: Chart, dataMin: number, dataMax: number): Scale {
+function axisScale(chart: Chart, dataMin: number, dataMax: number, hPt: number): Scale {
   const min = chart.valAxisMin ?? dataMin;
   const max = chart.valAxisMax ?? dataMax;
-  const rounded = niceScale(min, max);
+  // How many ticks fit is a question about the PLOT, not about the numbers: a
+  // tall axis carries more of them. A fixed six drew 0/100/200/300 down a plot
+  // where both references fit 0/50/…/300.
+  const rounded = niceScale(min, max, Math.min(10, Math.max(4, Math.round(hPt / 24))));
   return {
     min: chart.valAxisMin ?? rounded.min,
     max: chart.valAxisMax ?? rounded.max,
@@ -250,7 +255,18 @@ function buildLegendBlock(
     name: s.name && s.name.length > 0 ? s.name : `Series${i + 1}`,
     colorHex: seriesColor(s, i, chart.seriesColorCycle),
   }));
-  return layoutLegend(legendEntries, chart.hasLegend, chart.legendPos ?? 'b', wPt, hPt, measure);
+  // A line chart's key is a LINE, not a filled box — that is what the series
+  // looks like on the plot, and what both references draw.
+  const marker: LegendMarker = chart.type === 'line' || chart.type === 'scatter' ? 'line' : 'box';
+  return layoutLegend(
+    legendEntries,
+    chart.hasLegend,
+    chart.legendPos ?? 'b',
+    wPt,
+    hPt,
+    measure,
+    marker,
+  );
 }
 
 // Gridlines + tick labels along one axis. 'y': horizontal lines with
@@ -349,7 +365,7 @@ function buildFrame(
   const nCats = Math.max(chart.categories.length, ...chart.series.map((s) => s.values.length), 1);
   const allVals = chart.series.flatMap((s) => s.values.slice(0, nCats));
   const [dataMin, dataMax] = opts.dataRange ?? [Math.min(0, ...allVals), Math.max(0, ...allVals)];
-  const scale = axisScale(chart, dataMin, dataMax);
+  const scale = axisScale(chart, dataMin, dataMax, hPt);
   const fmtVal = opts.formatValue ?? ((v: number): string => formatTick(v, scale.step));
   const tickVals = ticks(scale);
 
@@ -974,6 +990,8 @@ interface LegendEntry {
   readonly name: string;
   readonly colorHex: string;
 }
+type LegendMarker = 'box' | 'line';
+
 interface LegendLayout {
   readonly rightWidth: number;
   readonly bottomHeight: number;
@@ -989,13 +1007,21 @@ function layoutLegend(
   wPt: number,
   hPt: number,
   measure: MeasureText,
+  marker: LegendMarker = 'box',
 ): LegendLayout {
   if (!hasLegend || entries.length === 0) {
     return { rightWidth: 0, bottomHeight: 0, emit: () => {} };
   }
   const sw = CHART_LABEL_PT; // swatch size
   const gap = 4;
-  const entryW = (e: LegendEntry): number => sw + 3 + measure(e.name, CHART_LABEL_PT) + gap * 2;
+  // A line key is drawn as a wide, thin bar — the same rect primitive, in the
+  // proportions of the stroke it stands for.
+  const keyW = marker === 'line' ? sw * 2 : sw;
+  const key = (x: number, y: number, colorHex: string): ChartRect =>
+    marker === 'line'
+      ? { x, y: y + sw / 2 - 0.75, w: keyW, h: 1.5, fillHex: colorHex }
+      : { x, y, w: sw, h: sw, fillHex: colorHex };
+  const entryW = (e: LegendEntry): number => keyW + 3 + measure(e.name, CHART_LABEL_PT) + gap * 2;
 
   if (pos === 'r' || pos === 'l') {
     const colW = Math.max(...entries.map(entryW));
@@ -1006,10 +1032,10 @@ function layoutLegend(
         const lx = pos === 'r' ? wPt - colW + gap : gap;
         let ly = hPt / 2 + (entries.length * (sw + 4)) / 2 - sw;
         for (const e of entries) {
-          rects.push({ x: lx, y: ly, w: sw, h: sw, fillHex: e.colorHex });
+          rects.push(key(lx, ly, e.colorHex));
           labels.push({
             text: e.name,
-            x: lx + sw + 3,
+            x: lx + keyW + 3,
             y: ly + 1,
             sizePt: CHART_LABEL_PT,
             colorHex: LABEL_COLOR,
@@ -1028,10 +1054,10 @@ function layoutLegend(
       let lx = (wPt - totalW) / 2 + gap;
       const ly = 2;
       for (const e of entries) {
-        rects.push({ x: lx, y: ly, w: sw, h: sw, fillHex: e.colorHex });
+        rects.push(key(lx, ly, e.colorHex));
         labels.push({
           text: e.name,
-          x: lx + sw + 3,
+          x: lx + keyW + 3,
           y: ly + 1,
           sizePt: CHART_LABEL_PT,
           colorHex: LABEL_COLOR,
@@ -1060,10 +1086,44 @@ export function buildChartScene(
   hPt: number,
   measure: MeasureText,
 ): ChartScene | null {
+  const scene = buildTypedScene(chart, wPt, hPt, measure);
+  return scene && withFrame(scene, chart, wPt, hPt);
+}
+
+function buildTypedScene(
+  chart: Chart,
+  wPt: number,
+  hPt: number,
+  measure: MeasureText,
+): ChartScene | null {
   if (chart.type === 'bar') return buildBarScene(chart, wPt, hPt, measure);
   if (chart.type === 'line') return buildLineScene(chart, wPt, hPt, measure);
   if (chart.type === 'pie') return buildPieScene(chart, wPt, hPt, measure);
   if (chart.type === 'area') return buildAreaScene(chart, wPt, hPt, measure);
   if (chart.type === 'scatter') return buildScatterScene(chart, wPt, hPt, measure);
   return null;
+}
+
+/**
+ * §21.2.2.198 — the chart-space frame, first in the scene so everything else
+ * draws over it. A chart that declares neither fill nor outline is returned
+ * untouched, so a scene without one is unchanged rect for rect.
+ *
+ * @param scene The typed scene.
+ * @param chart The chart (for its frame fill/outline).
+ * @param wPt   The chart's width in points.
+ * @param hPt   Its height.
+ * @returns The scene with the frame behind it.
+ */
+function withFrame(scene: ChartScene, chart: Chart, wPt: number, hPt: number): ChartScene {
+  if (!chart.frameFillHex && !chart.frameLineHex) return scene;
+  const frame: ChartRect = {
+    x: 0,
+    y: 0,
+    w: wPt,
+    h: hPt,
+    ...(chart.frameFillHex ? { fillHex: chart.frameFillHex } : {}),
+    ...(chart.frameLineHex ? { strokeHex: chart.frameLineHex, strokeWidthPt: 0.75 } : {}),
+  };
+  return { ...scene, rects: [frame, ...scene.rects] };
 }

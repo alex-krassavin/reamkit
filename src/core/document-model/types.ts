@@ -900,6 +900,13 @@ export interface Chart {
   readonly valAxisMin?: number;
   readonly valAxisMax?: number;
   /**
+   * §21.2.2.198 `c:chartSpace/c:spPr` — the frame around the whole chart: its
+   * background fill and its outline. Excel writes both on every chart it
+   * creates, and both references draw them.
+   */
+  readonly frameFillHex?: string;
+  readonly frameLineHex?: string;
+  /**
    * §21.2.2.121 `c:valAx/c:numFmt@formatCode` — the number format the value
    * axis's tick labels and the data labels are drawn in, in the same code
    * grammar cells use (§18.8.31). Absent ⇒ a plain numeric render.
