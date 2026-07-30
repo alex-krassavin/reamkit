@@ -469,10 +469,21 @@ describe('grid geometry', () => {
     // baseColWidth is what Excel computes the default column FROM when
     // defaultColWidth is absent. Ignoring a sheet that asks for 10 left every
     // unlisted column at 8.43 and the whole grid narrow.
+    //
+    // §18.3.1.81 pads it TWICE: `defaultColWidth` "includes margin padding and
+    // extra padding for gridlines" and `baseColWidth` explicitly does not, so
+    // deriving one from the other adds the 5px once, and rendering it adds the
+    // 5px again. 47668.xlsx declares baseColWidth="10" and caches its picture
+    // at 768pt over 12 columns plus 48pt — 60pt a column, not 56.25.
     const wide = placed(buildXlsx({ rows: [['A', 'B']], baseColWidthChars: 20 }));
     const narrow = placed(buildXlsx({ rows: [['A', 'B']] }));
     const pitch = (items: Array<PlacedText>): number => at(items, 'B').x - at(items, 'A').x;
-    expect(pitch(wide)).toBeCloseTo(20 * 5.25 + 3.75, 1);
+    expect(pitch(wide)).toBeCloseTo(20 * 5.25 + 3.75 * 2, 1);
+    // baseColWidth 10 → 60pt, the number this file's own cached extent implies.
+    expect(pitch(placed(buildXlsx({ rows: [['A', 'B']], baseColWidthChars: 10 })))).toBeCloseTo(
+      60,
+      1,
+    );
     expect(pitch(narrow)).toBeCloseTo(48, 1); // Excel's 8.43-char default
   });
 

@@ -10,6 +10,7 @@ import type { ParsedWorksheet } from '@/core/spreadsheet-model';
 
 import { emuToPt } from '@/core/ir';
 import {
+  COL_PADDING_TWIPS,
   DEFAULT_COL_TWIPS,
   DEFAULT_ROW_TWIPS,
   TWIPS_PER_EXCEL_CHAR,
@@ -244,8 +245,16 @@ export function makeColWidthPt(ws: ParsedWorksheet): (col: number) => number {
     // `<col>` covers — the same fallback the grid uses. Hardcoding Excel's
     // 8.43 characters contradicted the file's own declaration and sized every
     // shape anchor against a track the sheet does not have.
-    const chars = ws.defaultColWidthChars ?? ws.baseColWidthChars;
-    if (chars !== undefined) return widthPt(chars);
+    // §18.3.1.81 — `defaultColWidth` already includes the margin and gridline
+    // padding; `baseColWidth` explicitly does not, so a default derived from it
+    // takes the padding once more. The anchor tracks have to agree with the
+    // grid's columns or a drawing lands beside the cell it is anchored to.
+    if (ws.defaultColWidthChars !== undefined) return widthPt(ws.defaultColWidthChars);
+    if (ws.baseColWidthChars !== undefined) {
+      return (
+        (columnTwips(ws.baseColWidthChars, TWIPS_PER_EXCEL_CHAR) + COL_PADDING_TWIPS) / TWIPS_PER_PT
+      );
+    }
     // DEFAULT_COL_TWIPS is 960 — Excel's 8.43 characters WITH the padding.
     return DEFAULT_COL_TWIPS / TWIPS_PER_PT;
   };

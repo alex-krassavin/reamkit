@@ -107,6 +107,42 @@ const TWIPS_PER_PIXEL = 15;
  * @returns The rendered column width in twips.
  */
 export function columnTwips(chars: number, charTwips: number): number {
+  return columnTwipsOf(chars, charTwips);
+}
+
+/**
+ * §18.3.1.81 — the DEFAULT column, in twips, from whichever of the two the
+ * sheet declares.
+ *
+ * The two are not the same number. `defaultColWidth` "includes margin padding
+ * and extra padding for gridlines"; `baseColWidth` is the bare character count
+ * and explicitly excludes them, so deriving a default from it adds the padding
+ * once to reach a defaultColWidth and once more to render it. 47668.xlsx says
+ * `baseColWidth="10"` and caches its picture's extent at 9753600 EMU = 768pt
+ * over 12 columns plus 48pt — 60pt, or 80px, a column. Padding it once gives
+ * 75px and squeezed that picture by 6%. LibreOffice measures ~79px here, so
+ * both references agree against us.
+ *
+ * @param worksheet     The sheet.
+ * @param charTwips     The Maximum Digit Width, in twips.
+ * @param fallbackChars The width to use when the sheet declares neither.
+ * @returns The default column width in twips.
+ */
+function defaultColumnTwips(
+  worksheet: ParsedWorksheet,
+  charTwips: number,
+  fallbackChars: number,
+): number {
+  if (worksheet.defaultColWidthChars !== undefined) {
+    return columnTwipsOf(worksheet.defaultColWidthChars, charTwips);
+  }
+  if (worksheet.baseColWidthChars !== undefined) {
+    return columnTwipsOf(worksheet.baseColWidthChars, charTwips) + COL_PADDING_TWIPS;
+  }
+  return columnTwipsOf(fallbackChars, charTwips);
+}
+
+function columnTwipsOf(chars: number, charTwips: number): number {
   if (chars >= 1) return Math.round(chars * charTwips + COL_PADDING_TWIPS);
   const px = Math.trunc((chars * charTwips) / TWIPS_PER_PIXEL + 0.5);
   return px * TWIPS_PER_PIXEL;
@@ -820,11 +856,7 @@ export function worksheetToBody(
   // defaultRowHeight, and ignored for the same reason.
   // defaultColWidth wins; failing that Excel derives the default column from
   // baseColWidth by the same characters + 5px formula; failing both, 8.43.
-  const defaultColChars = worksheet.defaultColWidthChars ?? worksheet.baseColWidthChars;
-  const defaultColTwips =
-    defaultColChars !== undefined
-      ? columnTwips(defaultColChars, charTwipsUnit)
-      : columnTwips(DEFAULT_COL_CHARS, charTwipsUnit);
+  const defaultColTwips = defaultColumnTwips(worksheet, charTwipsUnit, DEFAULT_COL_CHARS);
   const columnWidths = new Array<number>(colCount).fill(defaultColTwips);
   // §18.3.1.13/§18.3.1.73 `hidden` — Excel and LibreOffice print neither a
   // hidden column nor a hidden row. Rendering them put a hidden currency column
@@ -2187,8 +2219,7 @@ function overflowColumnsPastUsedRange(
   date1904: boolean,
   charTwipsUnit: number,
 ): number {
-  const defaultChars = worksheet.defaultColWidthChars ?? worksheet.baseColWidthChars;
-  const defaultTwips = columnTwips(defaultChars ?? DEFAULT_COL_CHARS, charTwipsUnit);
+  const defaultTwips = defaultColumnTwips(worksheet, charTwipsUnit, DEFAULT_COL_CHARS);
   // The columns past the used range are not necessarily default-width: a `<col>`
   // range routinely covers far more columns than hold anything. Sizing the
   // budget by the default instead of by what the column will actually be made
