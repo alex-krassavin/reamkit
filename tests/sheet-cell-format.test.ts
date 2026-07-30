@@ -213,3 +213,30 @@ describe('§18.8.22 <u> names an underline, it does not toggle one', () => {
     expect(runProps('<u val="double"/>')?.underline).toBe('single');
   });
 });
+
+describe('§18.18.3 border weights are screen pixels, not eighth-points', () => {
+  const widthOf = (style: string): number | undefined => {
+    const xlsx = buildXlsx({
+      rows: [[{ value: 'Box', styleIndex: 1 }]],
+      stylesXml:
+        `<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>` +
+        `<fills count="1"><fill><patternFill patternType="none"/></fill></fills>` +
+        `<borders count="2"><border/>` +
+        `<border><top style="${style}"><color rgb="FF000000"/></top></border></borders>` +
+        `<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>` +
+        `<xf numFmtId="0" fontId="0" fillId="0" borderId="1" applyBorder="1"/></cellXfs>`,
+    });
+    return firstCell(xlsx).properties.borders?.top?.width;
+  };
+
+  it('draws thin at 1px, medium at 2px and thick at 3px (96 DPI)', () => {
+    // The names were mapped onto WordprocessingML's eighth-point scale, where
+    // the same words mean 0.5 / 1 / 1.5 pt — so every rule on a spreadsheet came
+    // out a third too light. 52348.xlsx strokes its red medium frame at 1pt
+    // where Excel draws 1.5 and LibreOffice 1.75.
+    expect(widthOf('thin')).toBeCloseTo(0.75);
+    expect(widthOf('medium')).toBeCloseTo(1.5);
+    expect(widthOf('thick')).toBeCloseTo(2.25);
+    expect(widthOf('hair')).toBeCloseTo(0.375);
+  });
+});

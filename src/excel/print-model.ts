@@ -1994,30 +1994,36 @@ function mapBorderEdge(edge: XlsxBorderEdge | undefined): Border | undefined {
   };
 }
 
+// §18.18.3 ST_BorderStyle names a SCREEN weight: hair is a hairline, thin one
+// pixel, medium two, thick three — 0.75 / 1.5 / 2.25 pt at 96 DPI. These were
+// mapped onto WordprocessingML's eighth-point scale instead, where the same
+// names mean 0.5 / 1 / 1.5 pt, so every rule on a spreadsheet came out a third
+// too light: 52348.xlsx strokes its red medium frame at 1pt where Excel draws
+// 1.5 and LibreOffice 1.75.
 function mapBorderStyle(style: XlsxBorderStyleName): { style: BorderStyle; sizeEighthPt: number } {
   switch (style) {
     case 'hair':
-      return { style: 'single', sizeEighthPt: 2 };
+      return { style: 'single', sizeEighthPt: 3 };
     case 'thin':
-      return { style: 'single', sizeEighthPt: 4 };
+      return { style: 'single', sizeEighthPt: 6 };
     case 'medium':
     case 'mediumDashed':
     case 'mediumDashDot':
     case 'mediumDashDotDot':
-      return { style: 'single', sizeEighthPt: 8 };
+      return { style: 'single', sizeEighthPt: 12 };
     case 'thick':
-      return { style: 'thick', sizeEighthPt: 12 };
+      return { style: 'thick', sizeEighthPt: 18 };
     case 'dashed':
     case 'dashDot':
     case 'dashDotDot':
     case 'slantDashDot':
-      return { style: 'dashed', sizeEighthPt: 4 };
+      return { style: 'dashed', sizeEighthPt: 6 };
     case 'dotted':
-      return { style: 'dotted', sizeEighthPt: 4 };
+      return { style: 'dotted', sizeEighthPt: 6 };
     case 'double':
-      return { style: 'double', sizeEighthPt: 4 };
+      return { style: 'double', sizeEighthPt: 6 };
     default:
-      return { style: 'single', sizeEighthPt: 4 };
+      return { style: 'single', sizeEighthPt: 6 };
   }
 }
 

@@ -337,8 +337,10 @@ describe('convertXlsxToPdfSync end-to-end', () => {
     const pdf = convertXlsxToPdfSync(xlsx, { fonts: FONTS });
     const text = asLatin1(pdf);
 
-    // Thick border ~12/8 pt = 1.5 pt width
-    expect(text).toMatch(/1\.5 w/);
+    // §18.18.3 names a screen weight: thick is 3 px at 96 DPI = 2.25 pt. The
+    // eighth-point scale these were once mapped onto is WordprocessingML's, and
+    // it drew every spreadsheet rule a third too light.
+    expect(text).toMatch(/2\.25 w/);
     // Stroke colour FFD92020 → ~(0.851, 0.125, 0.125)
     expect(text).toMatch(/0\.851 0\.125 0\.125 RG/);
   });
