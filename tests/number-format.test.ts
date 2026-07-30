@@ -202,6 +202,29 @@ describe('applyNumberFormat — codes real producers write', () => {
     expect(numberFormatColorHex('1', 164, new Map([[164, '[Color 5]0']]))).toBe('0000FF');
   });
 
+  it('rounds on the decimal number, half away from zero', () => {
+    // `toFixed` rounds the BINARY double, which is not the number the file
+    // means. A rate stored as 0.0095 is 0.00949999999999999… in binary; times
+    // 100 that is 0.9499999999999998 and toFixed(1) answers "0.9" where every
+    // other reader shows 1.0%. Eleven of AverageTaxRates.xlsx's percentages
+    // were a tenth low for exactly this reason.
+    const fmt = new Map<number, string>([
+      [164, '0.0%'],
+      [165, '0.00'],
+      [166, '#,##0'],
+    ]);
+    expect(applyNumberFormat('0.0095', 164, fmt)).toBe('1.0%');
+    expect(applyNumberFormat('-0.0095', 164, fmt)).toBe('-1.0%');
+    expect(applyNumberFormat('0.18449999999999999', 164, fmt)).toBe('18.5%');
+    // The classic binary traps: both of these round DOWN under toFixed.
+    expect(applyNumberFormat('1.005', 165, fmt)).toBe('1.01');
+    expect(applyNumberFormat('2.675', 165, fmt)).toBe('2.68');
+    // Half away from zero, not towards +∞ — and not to even either.
+    expect(applyNumberFormat('-1.005', 165, fmt)).toBe('-1.01');
+    expect(applyNumberFormat('0.125', 165, fmt)).toBe('0.13');
+    expect(applyNumberFormat('1234.5', 166, fmt)).toBe('1,235');
+  });
+
   it('decodes a section that is all literal (the Accounting zero)', () => {
     // `_(* "-"_)` carries no digit placeholder, so the grammar took a shortcut
     // and returned the section RAW — a balance row that should read "-" read

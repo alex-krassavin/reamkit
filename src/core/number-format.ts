@@ -517,6 +517,31 @@ function countDigitPlaceholders(s: string): number {
 // figures (1 for `0.00E+00`, 3 for `##0.0E+0` → exponent snaps to a multiple of
 // 3); the exponent is zero-padded to the placeholder count and carries a sign
 // (always for `E+`, only when negative for `E-`). The `E`/`e` case is preserved.
+/**
+ * `value` rounded to `decimals` places the way a spreadsheet rounds: on the
+ * DECIMAL number, half away from zero.
+ *
+ * `toFixed` rounds the binary double, which is not the number the file means.
+ * A rate stored as 0.0095 is 0.009499999999999999… in binary; times 100 that is
+ * 0.9499999999999998, and `toFixed(1)` dutifully answers "0.9" where Excel and
+ * every other reader show 1.0%. AverageTaxRates.xlsx had eleven of its
+ * percentages a tenth low for exactly this reason.
+ *
+ * Rounding to 15 significant digits first collapses the binary noise back to
+ * the decimal the author typed; shifting through a string exponent then keeps
+ * the scaling exact, so the final round sees 9.5 and not 9.499999999999998.
+ */
+function toFixedDecimal(value: number, decimals: number): string {
+  if (!Number.isFinite(value)) return value.toFixed(decimals);
+  const decimal = Number(value.toPrecision(15));
+  const shifted = Number(`${decimal}e${decimals}`);
+  if (!Number.isFinite(shifted)) return value.toFixed(decimals);
+  // Excel rounds a half away from zero; Math.round takes it towards +∞.
+  const rounded = shifted < 0 ? -Math.round(-shifted) : Math.round(shifted);
+  const back = Number(`${rounded}e${-decimals}`);
+  return Number.isFinite(back) ? back.toFixed(decimals) : value.toFixed(decimals);
+}
+
 function formatScientific(value: number, cleaned: string, negativeSection: boolean): string {
   const m = /^(.*?)([eE])([+-])(.*)$/.exec(cleaned);
   if (!m) return cleaned;
@@ -668,7 +693,7 @@ function applyNumericSection(value: number, format: string, negativeSection: boo
   let decimals = 0;
   for (const c of decFormat) if (c === '0' || c === '#') decimals++;
 
-  const fixed = magnitude.toFixed(decimals);
+  const fixed = toFixedDecimal(magnitude, decimals);
   const [intRaw, decRaw] = fixed.split('.');
   const useThousands = /,(?=\d)/.test(intFormat) || /[0#],[0#]/.test(intFormat);
   const intStr = useThousands ? intRaw!.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : intRaw!;
