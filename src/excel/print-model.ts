@@ -2457,12 +2457,38 @@ const NARROW_CHARS = new Set(' .,:;\'"!|il');
 const SEMI_NARROW_CHARS = new Set('ftr()[]{}-/\\');
 const WIDE_CHARS = new Set('MWmw@%');
 
+// UAX #11 East Asian Wide and Fullwidth: a CJK ideograph, kana, Hangul syllable
+// or fullwidth form is ONE EM, and an em is two Maximum Digit Widths. Falling
+// through to the Latin default charged them 1.18 units apiece, so 51519.xlsx's
+// 201-character report was cut at 73 characters where LibreOffice cuts at 47
+// and Excel at about 40 — we were the only one of the three showing nearly
+// twice what the column holds.
+function isFullWidth(code: number): boolean {
+  return (
+    (code >= 0x1100 && code <= 0x115f) || // Hangul Jamo
+    (code >= 0x2e80 && code <= 0x303e) || // CJK radicals … punctuation
+    (code >= 0x3041 && code <= 0x33ff) || // kana, Hangul compat, CJK compat
+    (code >= 0x3400 && code <= 0x4dbf) || // CJK Ext A
+    (code >= 0x4e00 && code <= 0x9fff) || // CJK Unified
+    (code >= 0xa000 && code <= 0xa4cf) || // Yi
+    (code >= 0xa960 && code <= 0xa97f) || // Hangul Jamo Ext A
+    (code >= 0xac00 && code <= 0xd7a3) || // Hangul syllables
+    (code >= 0xf900 && code <= 0xfaff) || // CJK compatibility ideographs
+    (code >= 0xfe10 && code <= 0xfe6f) || // vertical forms, CJK compat forms
+    (code >= 0xff00 && code <= 0xff60) || // fullwidth forms
+    (code >= 0xffe0 && code <= 0xffe6) || // fullwidth signs
+    (code >= 0x20000 && code <= 0x3fffd) // CJK Ext B … supplementary planes
+  );
+}
+
 function charWidthUnits(ch: string): number {
   if (NARROW_CHARS.has(ch)) return 0.53;
   if (SEMI_NARROW_CHARS.has(ch)) return 0.71;
   if (WIDE_CHARS.has(ch)) return 1.77;
   if (ch >= 'a' && ch <= 'z') return 1.12;
   if (ch >= 'A' && ch <= 'Z') return 1.36;
+  const code = ch.codePointAt(0);
+  if (code !== undefined && isFullWidth(code)) return 2;
   return 1.18;
 }
 

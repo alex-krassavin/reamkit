@@ -240,3 +240,26 @@ describe('§18.18.3 border weights are screen pixels, not eighth-points', () => 
     expect(widthOf('hair')).toBeCloseTo(0.375);
   });
 });
+
+describe('a full-width character is one em (UAX #11)', () => {
+  it('costs two digit widths, not one', () => {
+    // §18.3.1.13 measures a column in Maximum Digit Widths, and a CJK ideograph
+    // is a full em — two of them. Falling through to the Latin default charged
+    // 1.18 apiece, so 51519.xlsx's 201-character report was cut at 73 where
+    // LibreOffice cuts at 47 and Excel at about 40: we were the only one of the
+    // three showing nearly twice what the column holds.
+    const clip = (text: string): number => {
+      const xlsx = buildXlsx({
+        rows: [[text, 'blocker']],
+        columns: [{ min: 1, max: 1, widthChars: 10 }],
+      });
+      return cellText(firstCell(xlsx)).length;
+    };
+    const latin = clip('nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn');
+    const cjk = clip('豊田製品戦略事業統括本部とよたかいしゃトヨタコメント');
+    expect(latin).toBeGreaterThan(8);
+    // Half the Latin count, give or take the bucket the Latin letters land in.
+    expect(cjk).toBeLessThan(latin * 0.65);
+    expect(cjk).toBeGreaterThan(3);
+  });
+});
