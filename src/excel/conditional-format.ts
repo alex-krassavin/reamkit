@@ -94,6 +94,12 @@ export interface CfOverride {
     readonly startFraction?: number;
   };
   readonly icon?: CellIcon;
+  /**
+   * §18.3.1.28 `<dataBar showValue="0">` — the cell shows its BAR and not its
+   * number. Excel's "Show Bar Only": the figure would otherwise sit on top of
+   * its own gauge.
+   */
+  readonly hideValue?: boolean;
 }
 
 /**
@@ -260,6 +266,7 @@ export function buildConditionalFormatter(
     let textFmt: CfOverride | undefined;
     let textClaimed = false;
     let bar: CfOverride['dataBar'];
+    let hideValue = false;
     let icon: CfOverride['icon'];
     const claim = (dxfId: number): void => {
       textFmt = dxfToOverride(dxfs[dxfId]);
@@ -296,6 +303,7 @@ export function buildConditionalFormatter(
         case 'dataBar':
           if (!bar && value !== undefined && resolved) {
             bar = dataBarBar(resolved, value);
+            if (rule.showValue === false) hideValue = true;
           }
           break;
         case 'iconSet':
@@ -360,6 +368,7 @@ export function buildConditionalFormatter(
       ...(textFmt ?? {}),
       ...(bar ? { dataBar: bar } : {}),
       ...(icon ? { icon } : {}),
+      ...(hideValue ? { hideValue: true } : {}),
     };
   };
 }

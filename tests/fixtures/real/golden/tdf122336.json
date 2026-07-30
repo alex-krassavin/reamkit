@@ -30,13 +30,13 @@
         "heightPt": 842
       }
     ],
-    "chars": 230,
+    "chars": 235,
     "firstLines": [
-      "UitvoeringsdatuStarttijd",
+      "Uitvoeringsdatum Starttijd",
       "Eindtijd",
       "Klantnaam",
       "Omschrijving",
-      "Naam locatieBevestigd",
+      "Naam locatieBevestigd vi",
       "Toegewezen werknemers",
       "Toegewezen voertuigen",
       "Toegewezen materialen",

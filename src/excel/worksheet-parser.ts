@@ -797,6 +797,9 @@ function parseDataBarRule(
   if (!colorHex) return undefined;
   const minLength = parseNumericAttr(dbObj, 'minLength');
   const maxLength = parseNumericAttr(dbObj, 'maxLength');
+  // §18.3.1.28 — absent means true; only an explicit false hides the number.
+  const showValueRaw = strAttr(dbObj, 'showValue');
+  const showValue = showValueRaw === '0' || showValueRaw === 'false' ? false : undefined;
   return {
     type: 'dataBar',
     priority,
@@ -804,6 +807,7 @@ function parseDataBarRule(
     colorHex,
     ...(minLength !== undefined ? { minLength } : {}),
     ...(maxLength !== undefined ? { maxLength } : {}),
+    ...(showValue === false ? { showValue } : {}),
   };
 }
 

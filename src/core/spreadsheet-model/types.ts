@@ -517,6 +517,12 @@ export interface CfRuleDataBar {
   readonly colorHex: string;
   readonly minLength?: number;
   readonly maxLength?: number;
+  /**
+   * §18.3.1.28 `showValue` — false means the cell shows the BAR ONLY, with its
+   * number hidden. Excel's "Show Bar Only" checkbox; a dashboard uses it so the
+   * figure does not sit on top of its own gauge.
+   */
+  readonly showValue?: boolean;
 }
 
 /**

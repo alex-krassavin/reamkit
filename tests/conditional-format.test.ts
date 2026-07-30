@@ -26,6 +26,37 @@ const cfRule = (operator: string, dxfId: number, ...formulas: Array<number>): st
   '</cfRule>';
 
 describe('conditional formatting — cellIs (E-SHEET SC1)', () => {
+  it('shows the bar and not the number when the rule says bar only', () => {
+    // §18.3.1.28 `<dataBar showValue="0">` — Excel's "Show Bar Only". The bar
+    // IS the cell's rendering; simple-monthly-budget.xlsx printed 2336 across
+    // the gauge the reference draws bare.
+    const stylesXml = `
+      <fonts count="1"><font><sz val="11"/></font></fonts>
+      <fills count="1"><fill><patternFill patternType="none"/></fill></fills>
+      <borders count="1"><border/></borders>
+      <cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellXfs>
+      <dxfs count="0"/>`;
+    const bar = (showValue: string) =>
+      `<conditionalFormatting sqref="A1:A2"><cfRule type="dataBar" priority="1">` +
+      `<dataBar${showValue}><cfvo type="num" val="0"/><cfvo type="num" val="100"/>` +
+      `<color rgb="FF638EC6"/></dataBar></cfRule></conditionalFormatting>`;
+    const textOf = (cf: string): Array<string> => {
+      const flow = Ream.parse(
+        buildXlsx({ rows: [[40], [80]], stylesXml, conditionalFormattingXml: cf }),
+      ).flow;
+      const table = flow.body.find((el) => el.kind === 'table');
+      if (table?.kind !== 'table') throw new Error('expected a table');
+      return table.table.rows.map((r) =>
+        (r.cells[0]?.content ?? [])
+          .map((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((x) => x.text).join('') : ''))
+          .join(''),
+      );
+    };
+    // The bar itself is drawn either way; only the number goes.
+    expect(textOf(bar(''))).toEqual(['40', '80']);
+    expect(textOf(bar(' showValue="0"'))).toEqual(['', '']);
+  });
+
   it('applies a dxf that formats with nothing but an edge', () => {
     // §18.8.9. A rule may carry only a border, and reading dxfs for font and
     // fill alone made such a rule a no-op — tdf171828.xlsx rules the boundary

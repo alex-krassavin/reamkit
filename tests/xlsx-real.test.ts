@@ -17,6 +17,7 @@ import { OpcPackage } from '@/core/opc';
 import { convertXlsxToPdfSync } from '@/core/converter';
 import { Ream } from '@/core/converter/ream';
 import { readXlsx, readXlsxToSheetDoc } from '@/excel/xlsx-reader';
+import { projectSheetDoc } from '@/excel/sheet-to-flow';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const load = (name: string): Uint8Array =>
@@ -110,6 +111,30 @@ describe('real documents: SpreadsheetML dialects', () => {
         ),
       );
     expect(row(0).slice(0, 3)).toEqual(['Uitvoeringsdatu', 'Starttijd', 'Eindtijd']);
+
+    // …but that is the reader with no render font, where a column is measured
+    // in Excel's own 7px digit. Told the font it will actually be drawn in, the
+    // columns grow — and the TEXT must not be re-scaled with them. charWidthUnits
+    // already reports each character's width in Excel's unit, so measuring the
+    // text in the render font's digit too applied 123.54/105 twice and cut
+    // "Uitvoeringsdatum" one glyph short inside a column 5% WIDER than the
+    // reference's, with 7pt to spare.
+    const drawn = projectSheetDoc(readXlsxToSheetDoc(load('tdf122336.xlsx')), {
+      digitWidthPt: 6.18,
+    });
+    const firstRow = drawn.body.flatMap((e) =>
+      e.kind === 'table'
+        ? (e.table.rows[0]?.cells ?? []).map((c) =>
+            c.content
+              .map((b) =>
+                b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text).join('') : '',
+              )
+              .join(''),
+          )
+        : [],
+    );
+    expect(firstRow[0]).toBe('Uitvoeringsdatum');
+    expect(firstRow[6]).toBe('Bevestigd vi');
     expect(row(1).slice(0, 3)).toEqual(['12/25/2018', '11:30', '14:30']);
 
     // `<font/><font><b/></font>`: the empty element parses to a string rather

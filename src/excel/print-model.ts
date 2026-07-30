@@ -516,6 +516,13 @@ export function worksheetToBody(
   // where ours took half of one.
   const charTwipsUnit =
     styles.fonts[0]?.name === undefined ? digitTwips(print.digitWidthPt) : TWIPS_PER_EXCEL_CHAR;
+  // …but only the COLUMNS are measured in it. `charWidthUnits` already returns
+  // each character's real width expressed in Excel's own 7px unit, so measuring
+  // text with the render font's digit as well applies the same ratio twice —
+  // 123.54/105 on tdf122336.xlsx, which is the "sixth" the note above warns
+  // about, and it cut "Uitvoeringsdatum" to "Uitvoeringsdatu" inside a column
+  // that is 5% WIDER than the reference's and had 7pt to spare.
+  const textTwipsUnit = TWIPS_PER_EXCEL_CHAR;
 
   let usedRow = -1;
   let usedCol = -1;
@@ -1013,6 +1020,10 @@ export function worksheetToBody(
         if (over) {
           if (over.fillHex) shading = { colorHex: over.fillHex };
           if (over.dataBar) dataBar = over.dataBar;
+          // §18.3.1.28 "Show Bar Only": the bar IS the cell's rendering, and
+          // the number would sit on top of its own gauge. simple-monthly-budget
+          // printed 2336 across the bar the reference draws bare.
+          if (over.hideValue) text = '';
           if (over.icon) icon = over.icon;
           // §18.8.9 — a rule's edges win over the cell's own, edge by edge; a
           // border-only dxf is a whole rule that does nothing else.
@@ -1109,7 +1120,7 @@ export function worksheetToBody(
         // layout drop whatever still spills onto a second line. The cut is what
         // handles the case the layout cannot: a single unbreakable word, which
         // has no line break to drop and would otherwise run past the cell.
-        text = clipToWidth(text, availTwips, charTwips(xf, styles, charTwipsUnit));
+        text = clipToWidth(text, availTwips, charTwips(xf, styles, textTwipsUnit));
         // Claim the empty neighbours the text runs over. Without this the cell
         // keeps its single column's width and the layout WRAPS the text inside
         // it — three stacked lines where Excel and LibreOffice draw one. The
@@ -1251,12 +1262,12 @@ export function worksheetToBody(
         !shrinkToFit &&
         c > 0 &&
         alignment === 'right' &&
-        estimateChars(text) * charTwips(xf, styles, charTwipsUnit) > columnWidths[c]!
+        estimateChars(text) * charTwips(xf, styles, textTwipsUnit) > columnWidths[c]!
       ) {
         leftOverflow.push({
           index: cells.length,
           column: c,
-          needTwips: estimateChars(text) * charTwips(xf, styles, charTwipsUnit) - columnWidths[c]!,
+          needTwips: estimateChars(text) * charTwips(xf, styles, textTwipsUnit) - columnWidths[c]!,
           shading,
           borders,
         });
@@ -2076,7 +2087,9 @@ function overflowColumnsPastUsedRange(
     const text = resolveCellText(cell, sharedStrings, styles, date1904);
     needTwips = Math.max(
       needTwips,
-      estimateChars(text) * charTwips(xf, styles, charTwipsUnit) - room,
+      // Text is measured in Excel's own unit — see textTwipsUnit at the top of
+      // worksheetToBody; charWidthUnits has already scaled into it.
+      estimateChars(text) * charTwips(xf, styles, TWIPS_PER_EXCEL_CHAR) - room,
     );
   }
   if (needTwips <= 0) return 0;
