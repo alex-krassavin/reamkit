@@ -9,9 +9,12 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildXlsx } from './fixtures/build-xlsx';
+import type { Loss } from '@/core/ir/loss';
 import type { BodyElement } from '@/core/document-model';
 import { parseLegacyComments, parsePersons, parseThreadedComments } from '@/excel/comments-parser';
 import { Ream } from '@/core/converter/ream';
+import { readXlsxToSheetDoc } from '@/excel/xlsx-reader';
+import { projectSheetDoc } from '@/excel/sheet-to-flow';
 import { convertXlsxToPdfSync } from '@/core/converter';
 
 const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
@@ -63,6 +66,8 @@ check this</t></r></text></comment>
 
 describe('cell comments — end to end (E-SHEET W7)', () => {
   it('lists legacy notes in a Comments section after the grid', () => {
+    // §18.3.1.63 `cellComments="atEnd"` — Excel's "print comments at end of
+    // sheet". Without it a note is an editing annotation and stays off the page.
     const flow = Ream.parse(
       buildXlsx({
         rows: [['data']],
@@ -70,6 +75,7 @@ describe('cell comments — end to end (E-SHEET W7)', () => {
           { ref: 'A1', author: 'Ada', text: 'the first note' },
           { ref: 'B2', author: 'Bo', text: 'a second note' },
         ],
+        pageSetup: { cellComments: 'atEnd' },
       }),
     ).flow;
     const texts = paragraphTexts(flow.body);
@@ -78,33 +84,31 @@ describe('cell comments — end to end (E-SHEET W7)', () => {
     expect(texts).toContain('B2 — Bo: a second note');
   });
 
-  it('prints no notes when the sheet answered the print dialog with "(None)"', () => {
-    // §18.3.1.63 cellComments="none". tdf171828.xlsx says it, and we printed
-    // four notes no other reader shows — a whole page of them.
-    const flow = Ream.parse(
-      buildXlsx({
-        rows: [['data']],
-        comments: [{ ref: 'A1', author: 'Ada', text: 'the first note' }],
-        pageSetup: { cellComments: 'none' },
-      }),
-    ).flow;
-    expect(paragraphTexts(flow.body)).not.toContain('Comments');
-
-    // Silence is not that answer — a sheet that never opened the dialog keeps
-    // its notes listed rather than losing them to an unstated default.
-    const quiet = Ream.parse(
-      buildXlsx({
-        rows: [['data']],
-        comments: [{ ref: 'A1', author: 'Ada', text: 'the first note' }],
-        pageSetup: { paperSize: 9 },
-      }),
-    ).flow;
-    expect(paragraphTexts(quiet.body)).toContain('Comments');
+  it('prints no notes unless the sheet asks for them, and says it dropped them', () => {
+    // §18.3.1.63 `cellComments` defaults to `none`, which is the print dialog's
+    // own default. tdf171828.xlsx says `none` outright and NamedSheetViews.xlsx
+    // says nothing at all; neither reference prints a word of either, and we
+    // printed both — a whole page of notes on the first.
+    for (const pageSetup of [{ cellComments: 'none' as const }, { paperSize: 9 }]) {
+      const losses: Array<Loss> = [];
+      const doc = readXlsxToSheetDoc(
+        buildXlsx({
+          rows: [['data']],
+          comments: [{ ref: 'A1', author: 'Ada', text: 'the first note' }],
+          pageSetup,
+        }),
+      );
+      const flow = projectSheetDoc(doc, { losses });
+      expect(paragraphTexts(flow.body)).not.toContain('Comments');
+      // Not printed is not the same as unnoticed.
+      expect(losses.map((l) => l.detail).join('\n')).toContain('cell note(s) not printed');
+    }
   });
 
   it('lists threaded comments with their resolved authors', () => {
     const flow = Ream.parse(
       buildXlsx({
+        pageSetup: { cellComments: 'atEnd' },
         rows: [['data']],
         threadedComments: [
           { ref: 'A1', personId: 'p1', text: 'question?' },

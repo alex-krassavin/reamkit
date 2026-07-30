@@ -51,6 +51,7 @@ import {
 import type { CellProperties } from '@/core/document-model';
 
 import type { FlowDoc } from '@/core/ir/flow';
+import type { Loss } from '@/core/ir/loss';
 import type { SheetDoc } from '@/core/ir/sheet';
 import type { WorksheetCell } from '@/core/spreadsheet-model';
 import { decodeRk, readSst, readXlsToSheetDoc } from '@/excel/xls/biff-reader';
@@ -421,12 +422,20 @@ describe('xls cell comments (XLS-11)', () => {
         ],
       }),
     );
-    const text = projectSheetDoc(doc)
+    // The note is read; whether it PRINTS is the sheet's own call (§18.3.1.63
+    // `cellComments`, default `none`), and a BIFF sheet that says nothing keeps
+    // its notes off the page the same as an xlsx one. What must not happen is
+    // losing them quietly, so the projection reports the omission.
+    expect(doc.sheets[0]!.comments).toEqual([
+      { ref: 'A1', author: 'Q', text: 'A remark', threaded: false },
+    ]);
+    const losses: Array<Loss> = [];
+    const text = projectSheetDoc(doc, { losses })
       .body.filter((el) => el.kind === 'paragraph')
       .flatMap((el) => el.paragraph.runs.map((r) => r.text))
       .join(' ');
-    expect(text).toContain('Comments');
-    expect(text).toContain('A remark');
+    expect(text).not.toContain('A remark');
+    expect(losses.map((l) => l.detail).join('\n')).toContain('cell note(s) not printed');
   });
 
   it('skips a note whose object has no text (no wrong content)', () => {

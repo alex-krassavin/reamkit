@@ -268,18 +268,31 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     }
 
     // W7: cell comments / notes are listed in a "Comments" section after the
-    // grid (Excel's "print comments at end of sheet") — unless the sheet says
-    // not to. §18.3.1.63 `cellComments="none"` is the author answering the
-    // print dialog's comments question with "(None)", and printing them anyway
-    // put four notes on tdf171828.xlsx that no other reader shows.
+    // grid — but only when the sheet asks for it. §18.3.1.63 `cellComments`
+    // defaults to `none`, which is the print dialog's own default: a note is an
+    // editing annotation, and neither Excel nor LibreOffice puts one on paper
+    // unless told to.
     //
-    // Silence is not that answer. The spec's default is `none`, but a sheet
-    // that never opened the dialog says nothing about its notes, and dropping
-    // content the document carries on the strength of an unstated default is
-    // the losing side of the trade: listed, a note is visibly extra; omitted,
-    // it is invisibly gone.
-    if (ws.comments && ws.comments.length > 0 && ws.grid.pageSetup?.cellComments !== 'none') {
-      body.push(...commentBlocks(ws.comments));
+    // This started out the other way, on the reasoning that dropping content
+    // the document carries is worse than showing a note nobody asked for. Two
+    // corpus documents settled it — tdf171828.xlsx says `none` outright and
+    // NamedSheetViews.xlsx says nothing at all, and neither reference prints a
+    // word of either. A default the format states and both readers honour is
+    // not an unstated one. The omission is reported rather than silent.
+    const printComments =
+      ws.grid.pageSetup?.cellComments === 'atEnd' ||
+      ws.grid.pageSetup?.cellComments === 'asDisplayed';
+    if (ws.comments && ws.comments.length > 0) {
+      if (printComments) body.push(...commentBlocks(ws.comments));
+      else
+        options.losses?.push({
+          severity: 'dropped',
+          feature: 'comments',
+          detail:
+            `${ws.comments.length} cell note(s) not printed — ` +
+            `<pageSetup cellComments> is "${ws.grid.pageSetup?.cellComments ?? 'none'}"`,
+          where: `sheet "${ws.name}"`,
+        });
     }
 
     // W8: form controls are listed in a "Form controls" section after the grid,
