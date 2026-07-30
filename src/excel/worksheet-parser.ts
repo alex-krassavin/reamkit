@@ -1077,7 +1077,16 @@ function parseCell(c: unknown, fallbackRow: number, fallbackCol: number): Worksh
   const styleIndex = styleStr !== undefined ? Number(styleStr) : undefined;
   const v = obj['v'];
   const rawValue = textOf(v);
-  const base = { column: address.column, row: address.row, type } as const;
+  // §18.3.1.4 `vm` — only an error cell can be standing in for a rich value, so
+  // that is the only place the index is worth carrying.
+  const vmStr = type === 'e' ? strAttr(obj, 'vm') : undefined;
+  const vm = vmStr !== undefined ? Number(vmStr) : undefined;
+  const base = {
+    column: address.column,
+    row: address.row,
+    type,
+    ...(vm !== undefined && Number.isInteger(vm) && vm > 0 ? { valueMetadataIndex: vm } : {}),
+  } as const;
   if (type === 'inlineStr') {
     const is = obj['is'];
     // §18.3.1.4 — t="inlineStr" pairs with <is>, but producers exist that

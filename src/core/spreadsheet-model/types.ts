@@ -19,6 +19,12 @@ export interface WorksheetCell {
   readonly inlineText?: string;
   /** Index into the workbook's `cellXfs` (`xl/styles.xml`). 0 means default style. */
   readonly styleIndex?: number;
+  /**
+   * §18.3.1.4 `vm` — 1-based index into `xl/metadata.xml`'s `<valueMetadata>`.
+   * A cell whose value is a rich value stores a legacy error in `<v>` for
+   * readers that predate the feature, and points here for the real one.
+   */
+  readonly valueMetadataIndex?: number;
 }
 
 /** §18.3.1.13 `<col>` — a width (in character units) for the column span `min..max`. */

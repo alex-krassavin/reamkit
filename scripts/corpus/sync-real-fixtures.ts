@@ -59,6 +59,11 @@ const ADOPTED: ReadonlyArray<Adopted> = [
     why: 'Print_Titles across four sheets — the header rows must repeat on every continuation page.',
   },
   {
+    file: 'Spill.xlsx',
+    source: 'lo-xlsx',
+    why: 'A dynamic array whose spill is blocked: the cells cache a legacy `#VALUE!` and point at a rich value that names the real error.',
+  },
+  {
     file: 'bnc762542.xlsx',
     source: 'lo-xlsx',
     why: 'A3 landscape with fitToPage — paper size 8, the largest in the set.',

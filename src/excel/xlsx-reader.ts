@@ -57,6 +57,7 @@ import { parseLegacyComments, parsePersons, parseThreadedComments } from '@/exce
 import { parseFormControlProps } from '@/excel/form-control-parser';
 import { parseVmlDrawing } from '@/excel/vml-drawing';
 import { parsePrinterSettings } from '@/excel/printer-settings';
+import { parseRichValueText } from '@/excel/rich-value';
 import {
   activeXBinRelId,
   activeXType,
@@ -73,6 +74,9 @@ const WORKBOOK_PART = 'xl/workbook.xml';
 const SHARED_STRINGS_PART = 'xl/sharedStrings.xml';
 const STYLES_PART = 'xl/styles.xml';
 const CORE_PROPS_PART = 'docProps/core.xml';
+const METADATA_PART = 'xl/metadata.xml';
+const RICH_VALUE_STRUCTURE_PART = 'xl/richData/rdrichvaluestructure.xml';
+const RICH_VALUE_PART = 'xl/richData/rdrichvalue.xml';
 // MS relationship type tails for slicer parts (E-SHEET SV2). The worksheet
 // references its slicer parts; the workbook references the slicer caches.
 const SLICER_REL_TAIL = '/slicer';
@@ -151,6 +155,14 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
   // unpainted. Same palette the charts and table styles already resolve against.
   const themePalette = buildThemePalette(pkg, workbookRels);
 
+  // A cell can store a legacy error and point at the real value in the rich-value
+  // table (§18.3.1.4 `vm`). Workbook-scoped: resolved once, applied per sheet.
+  const richValueText = parseRichValueText(
+    pkg.getPart(METADATA_PART),
+    pkg.getPart(RICH_VALUE_STRUCTURE_PART),
+    pkg.getPart(RICH_VALUE_PART),
+  );
+
   const stylesData = pkg.getPart(STYLES_PART);
   const styles = stylesData ? parseXlsxStyles(stylesData, themePalette) : EMPTY_XLSX_STYLES;
   // Threaded-comment authors (E-SHEET W7): xl/persons/person.xml maps person ids
@@ -190,6 +202,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
       resolved.path,
       pkg.getPartRelationships(resolved.path),
     );
+    worksheet = withRichValues(worksheet, richValueText);
 
     // §20.5: the sheet's drawing part — resolve chart frames, pictures and shapes
     // here; the projection emits a block per frame after the grid (W1 pictures,
@@ -512,6 +525,33 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
  * both print on Letter that way while we assumed A4 — the most visible
  * difference on every page of either. What the sheet states itself always wins.
  */
+/**
+ * Replace the legacy stand-in in every cell that points at a rich value we can
+ * read. Spill.xlsx caches `#VALUE!` in three cells whose rich value says
+ * `#SPILL!` — the error Excel shows and the one that explains the sheet, since
+ * the file also records which cell three rows down does the blocking.
+ *
+ * @param worksheet The parsed worksheet.
+ * @param richValueText `vm` index → text, from {@link parseRichValueText}.
+ * @returns The worksheet, unchanged when nothing resolved (byte-identical path).
+ */
+function withRichValues(
+  worksheet: ParsedWorksheet,
+  richValueText: ReadonlyMap<number, string>,
+): ParsedWorksheet {
+  if (richValueText.size === 0) return worksheet;
+  const resolves = (cell: WorksheetCell): string | undefined =>
+    cell.valueMetadataIndex !== undefined ? richValueText.get(cell.valueMetadataIndex) : undefined;
+  // A workbook can carry rich values none of THIS sheet's cells point at; leave
+  // it the object it was so nothing downstream sees a change that is not one.
+  if (!worksheet.cells.some((cell) => resolves(cell) !== undefined)) return worksheet;
+  const cells = worksheet.cells.map((cell) => {
+    const text = resolves(cell);
+    return text === undefined ? cell : { ...cell, rawValue: text };
+  });
+  return { ...worksheet, cells };
+}
+
 function withPrinterPageSetup(
   worksheet: ParsedWorksheet,
   pkg: OpcPackage,
