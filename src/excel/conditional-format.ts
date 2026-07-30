@@ -30,6 +30,7 @@ import type {
   Dxf,
   MergedRange,
   WorksheetCell,
+  XlsxBorder,
   XlsxStyles,
 } from '@/core/spreadsheet-model';
 import type { CompiledFormula, EvalContext, FErr, FValue, Rect, Scalar } from '@/excel/formula';
@@ -78,6 +79,11 @@ type Mutable<T> = { -readonly [K in keyof T]: T[K] };
  */
 export interface CfOverride {
   readonly fillHex?: string;
+  /**
+   * §18.8.9 — the edges the rule's dxf declares. A rule may format with nothing
+   * else, and dropping them made such a rule invisible.
+   */
+  readonly border?: XlsxBorder;
   readonly fontColorHex?: string;
   readonly bold?: boolean;
   readonly italic?: boolean;
@@ -591,6 +597,7 @@ function dxfToOverride(dxf: Dxf | undefined): CfOverride | undefined {
   if (dxf.font?.colorHex) out.fontColorHex = dxf.font.colorHex;
   if (dxf.font?.bold !== undefined) out.bold = dxf.font.bold;
   if (dxf.font?.italic !== undefined) out.italic = dxf.font.italic;
+  if (dxf.border) out.border = dxf.border;
   return Object.keys(out).length > 0 ? out : undefined;
 }
 

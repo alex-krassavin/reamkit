@@ -26,6 +26,36 @@ const cfRule = (operator: string, dxfId: number, ...formulas: Array<number>): st
   '</cfRule>';
 
 describe('conditional formatting — cellIs (E-SHEET SC1)', () => {
+  it('applies a dxf that formats with nothing but an edge', () => {
+    // §18.8.9. A rule may carry only a border, and reading dxfs for font and
+    // fill alone made such a rule a no-op — tdf171828.xlsx rules the boundary
+    // under every year that way, and seven of its twelve dxfs are like this.
+    const stylesXml = `
+      <fonts count="1"><font><sz val="11"/></font></fonts>
+      <fills count="1"><fill><patternFill patternType="none"/></fill></fills>
+      <borders count="1"><border/></borders>
+      <cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellXfs>
+      <dxfs count="1"><dxf><border>
+        <bottom style="thin"><color rgb="FF00B050"/></bottom>
+      </border></dxf></dxfs>`;
+    const cf = `<conditionalFormatting sqref="A1:A3">${cfRule('greaterThan', 0, 5)}</conditionalFormatting>`;
+    const sheet = readXlsxToSheetDoc(
+      buildXlsx({ rows: [[2], [6], [9]], stylesXml, conditionalFormattingXml: cf }),
+    );
+    expect(sheet.styles.dxfs?.[0]?.border?.bottom?.style).toBe('thin');
+
+    const flow = Ream.parse(
+      buildXlsx({ rows: [[2], [6], [9]], stylesXml, conditionalFormattingXml: cf }),
+    ).flow;
+    const table = flow.body.find((el) => el.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('expected a table');
+    const bottomOf = (row: number) => table.table.rows[row]?.cells[0]?.properties.borders?.bottom;
+    // 2 does not match the rule; 6 and 9 do.
+    expect(bottomOf(0)).toBeUndefined();
+    expect(bottomOf(1)).toMatchObject({ style: 'single', colorHex: '00B050' });
+    expect(bottomOf(2)).toMatchObject({ style: 'single', colorHex: '00B050' });
+  });
+
   it('applies a dxf highlight fill to cells matching a greaterThan rule', () => {
     const cf = `<conditionalFormatting sqref="A1:A3">${cfRule('greaterThan', 0, 5)}</conditionalFormatting>`;
     const flow = Ream.parse(

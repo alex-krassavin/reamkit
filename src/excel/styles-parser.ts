@@ -132,6 +132,18 @@ function parseDxfs(root: Record<string, unknown>, theme: ThemePalette | undefine
       if (bg) fill.bgColorHex = bg;
       if (Object.keys(fill).length > 0) dxf.fill = fill;
     }
+    // §18.8.9 — a dxf may format with nothing but an edge. Reading only font
+    // and fill made such a rule a no-op: tdf171828.xlsx rules the boundary
+    // under every year with one, and six of its twelve dxfs are border-only.
+    const borderObj = asObject(obj['border']);
+    if (borderObj) {
+      const border: Mutable<XlsxBorder> = {};
+      for (const side of ['top', 'right', 'bottom', 'left'] as const) {
+        const edge = parseBorderEdge(asObject(borderObj[side]), theme);
+        if (edge) border[side] = edge;
+      }
+      if (Object.keys(border).length > 0) dxf.border = border;
+    }
     out.push(dxf);
   }
   return out;

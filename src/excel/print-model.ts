@@ -981,7 +981,7 @@ export function worksheetToBody(
       const tableFmt = tableFormatByCell.get(key(absR, absC));
       if (!shading && tableFmt?.shading) shading = tableFmt.shading;
       if (tableFmt?.fontColorHex) runProps = { ...runProps, colorHex: tableFmt.fontColorHex };
-      const borders = xf ? bordersFromXf(xf, styles) : undefined;
+      let borders = xf ? bordersFromXf(xf, styles) : undefined;
       let dataBar: CellDataBar | undefined;
       let icon: CellIcon | undefined;
       const sparkline = sparklineByCell.get(key(absR, absC));
@@ -997,6 +997,9 @@ export function worksheetToBody(
           if (over.fillHex) shading = { colorHex: over.fillHex };
           if (over.dataBar) dataBar = over.dataBar;
           if (over.icon) icon = over.icon;
+          // §18.8.9 — a rule's edges win over the cell's own, edge by edge; a
+          // border-only dxf is a whole rule that does nothing else.
+          if (over.border) borders = { ...borders, ...mapXlsxBorder(over.border) };
           runProps = applyCfOverride(runProps, over);
         }
       }
@@ -1670,6 +1673,20 @@ function bordersFromXf(xf: XlsxCellXf, styles: XlsxStyles): CellBorders | undefi
     if (border.diagonalUp) out.diagonalUp = diagonal;
   }
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** An {@link XlsxBorder}'s four edges as {@link CellBorders} — a dxf's, or a cell's. */
+function mapXlsxBorder(border: XlsxBorder): CellBorders {
+  const out: { -readonly [K in keyof CellBorders]: CellBorders[K] } = {};
+  const top = mapBorderEdge(border.top);
+  const right = mapBorderEdge(border.right);
+  const bottom = mapBorderEdge(border.bottom);
+  const left = mapBorderEdge(border.left);
+  if (top) out.top = top;
+  if (right) out.right = right;
+  if (bottom) out.bottom = bottom;
+  if (left) out.left = left;
+  return out;
 }
 
 function mapBorderEdge(edge: XlsxBorderEdge | undefined): Border | undefined {

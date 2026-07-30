@@ -419,6 +419,12 @@ export interface XlsxStyles {
 export interface Dxf {
   readonly font?: XlsxFont;
   readonly fill?: XlsxFill;
+  /**
+   * §18.8.9 `<border>` inside a dxf — a rule may format a cell with nothing but
+   * an edge, and half the differential formats in a real workbook do exactly
+   * that (a rule under every year boundary, a box around a total).
+   */
+  readonly border?: XlsxBorder;
 }
 
 /**
