@@ -100,18 +100,19 @@ describe('grid geometry', () => {
     expect(b.x - a.x).toBeGreaterThan(150);
   });
 
-  it('gives a declared width the 5-pixel padding the spec puts on it', () => {
-    // §18.3.1.13: px = chars × MaximumDigitWidth + 5. At 96 DPI that padding is
-    // 3.75pt, and dropping it made every column that much narrow — an error
-    // that compounds across the sheet. Excel's own documented 8.43-character
-    // default only reaches its documented 64px with the padding included.
+  it('does not pad a declared width a second time (§18.3.1.13)', () => {
+    // The stored `width` ALREADY carries the 5px: the forward formula is
+    // `Truncate([chars × MDW + 5] / MDW × 256) / 256`, so the padding is inside
+    // the number. Adding it again on the way out made every explicitly sized
+    // column 5px too wide, which is why our columns measured a fixed 3.75pt
+    // over Excel's however narrow they were.
     const xlsx = buildXlsx({
       rows: [['A', 'B']],
       columns: [{ min: 1, max: 1, widthChars: 12 }],
     });
     const items = placed(xlsx);
-    // 12 × 5.25pt + 3.75pt = 66.75pt.
-    expect(at(items, 'B').x - at(items, 'A').x).toBeCloseTo(66.75, 1);
+    // 12 × 7px = 84px = 63pt.
+    expect(at(items, 'B').x - at(items, 'A').x).toBeCloseTo(63, 1);
   });
 
   it("uses Excel's page margins, not a word processor's, when the sheet declares none", () => {
@@ -664,7 +665,7 @@ describe('grid geometry', () => {
     const items = placed(
       buildXlsx({
         rows: [[{ value: phrase, styleIndex: 1 }], [null, null, null, 'anchor']],
-        columns: [{ min: 1, max: 4, widthChars: 10 }],
+        columns: [{ min: 1, max: 4, widthChars: 15 }],
         stylesXml,
       }),
     );
@@ -739,24 +740,25 @@ describe('column width unit (§18.3.1.13)', () => {
       if (table?.kind !== 'table') throw new Error('expected a table');
       return table.table.grid[0]!;
     };
-    // Excel's own unit: 40 × 7px + 5px of padding.
-    expect(width(named)).toBeCloseTo(40 * 5.25 + 3.75, 1);
+    // Excel's own unit: 40 × 7px, the padding already inside the stored width.
+    expect(width(named)).toBeCloseTo(40 * 5.25, 1);
     // The reader's face is wider than Calibri's, so the column is too.
     expect(width(anonymous)).toBeGreaterThan(width(named));
   });
 
-  it('drops the padding below one character, as Excel documents', () => {
-    // The 5px padding is the formula for a column at least one character wide.
-    // Below that Excel uses `px = Trunc(width × MDW + 0.5)`, with none at all —
-    // and it matters because the padding is a constant: tdf118668.xlsx rules a
-    // form over 168 columns of 0.855 characters, where 3.75pt of padding nearly
-    // doubles a 4.5pt column. The sheet came out 1384pt wide against the
-    // reference's 754 and paginated across two pages instead of one.
+  it('rounds a sub-character width by its own formula, as Excel documents', () => {
+    // Excel gives a column narrower than one character its own conversion,
+    // `px = Trunc(width × MDW + 0.5)`, instead of the 256ths formula it uses
+    // above one — and it matters because a constant error is ruinous at that
+    // scale: tdf118668.xlsx rules a form over 168 columns of 0.855 characters,
+    // and 3.75pt of stray padding nearly doubled a 4.5pt column. The sheet came
+    // out 1384pt wide against the reference's 754 and took two pages.
     expect(columnTwips(0.855, 105)).toBe(90); // Trunc(0.855×7 + 0.5) = 6px
     expect(columnTwips(0.1, 105)).toBe(15); // Trunc(0.7 + 0.5) = 1px
-    // …and at one character and above the padding is back.
-    expect(columnTwips(1, 105)).toBe(180);
-    expect(columnTwips(8.43, 105)).toBe(960); // Excel's documented default
+    // At one character and above, §18.3.1.13's own inverse — and the number it
+    // is anchored on: Excel's default column is stored 9.140625 and is 64px.
+    expect(columnTwips(1, 105)).toBe(105);
+    expect(columnTwips(9.140625, 105)).toBe(960);
   });
 });
 

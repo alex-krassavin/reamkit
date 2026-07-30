@@ -23,7 +23,7 @@
     ]
   },
   "ream": {
-    "pages": 9,
+    "pages": 6,
     "pageSizes": [
       {
         "widthPt": 595,
@@ -33,13 +33,10 @@
     "chars": 235,
     "firstLines": [
       "Uitvoeringsdatum Starttijd",
-      "Eindtijd",
-      "Klantnaam",
-      "Omschrijving",
-      "Naam locatieBevestigd vi",
-      "Toegewezen werknemers",
-      "Toegewezen voertuigen",
-      "Toegewezen materialen",
+      "EindtijdKlantnaam",
+      "OmschrijvingNaam locatie",
+      "Bevestigd v Toegewezen werknemers",
+      "Toegewezen voertuigenToegewezen materialen",
       "Info"
     ]
   }

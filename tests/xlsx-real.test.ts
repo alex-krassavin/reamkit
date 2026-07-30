@@ -141,7 +141,7 @@ describe('real documents: SpreadsheetML dialects', () => {
     // estimate keeps a couple of characters more than fit, and the layout's own
     // measurement takes them back — the drawn page ends at "Bevestigd vi",
     // exactly where LibreOffice ends it.
-    expect(firstRow[6]).toBe('Bevestigd via ');
+    expect(firstRow[6]).toBe('Bevestigd via');
     expect(row(1).slice(0, 3)).toEqual(['12/25/2018', '11:30', '14:30']);
 
     // `<font/><font><b/></font>`: the empty element parses to a string rather

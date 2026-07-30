@@ -145,13 +145,31 @@ function defaultColumnTwips(
     return columnTwipsOf(worksheet.defaultColWidthChars, charTwips);
   }
   if (worksheet.baseColWidthChars !== undefined) {
-    return columnTwipsOf(worksheet.baseColWidthChars, charTwips) + COL_PADDING_TWIPS;
+    // TWICE, and the two are not the same padding. `columnTwipsOf` no longer
+    // adds one of its own — §18.3.1.13's stored width already carries it — so
+    // both are explicit here: one to turn a bare character count into a
+    // `defaultColWidth`, one to render it. The spec's prose would stop at one,
+    // but 47668.xlsx contradicts that from inside: Calibri 11, so a 7px digit,
+    // `baseColWidth="10"`, and a picture anchored across 12 columns plus 48pt
+    // whose cached `a:ext` is 9753600 EMU — 768pt, which is 60pt a column, not
+    // 56.25. Excel wrote that extent; the arithmetic is its own.
+    return columnTwipsOf(worksheet.baseColWidthChars, charTwips) + 2 * COL_PADDING_TWIPS;
   }
   return columnTwipsOf(fallbackChars, charTwips);
 }
 
 function columnTwipsOf(chars: number, charTwips: number): number {
-  if (chars >= 1) return Math.round(chars * charTwips + COL_PADDING_TWIPS);
+  const mdwPx = charTwips / TWIPS_PER_PIXEL;
+  if (chars >= 1 && mdwPx > 0) {
+    // §18.3.1.13's own inverse. The stored `width` ALREADY carries the padding
+    // — the forward formula is `Truncate([chars × MDW + 5] / MDW × 256) / 256`,
+    // so the 5px is inside the number and adding it again on the way out made
+    // every explicitly sized column 5px too wide. Excel's documented default
+    // proves it both ways: 8.43 characters in the UI is written `9.140625`, and
+    // 9.140625 × 7 is the documented 64px. Padding that gave 69.
+    const px = Math.trunc(((256 * chars + Math.trunc(128 / mdwPx)) / 256) * mdwPx);
+    return px * TWIPS_PER_PIXEL;
+  }
   const px = Math.trunc((chars * charTwips) / TWIPS_PER_PIXEL + 0.5);
   return px * TWIPS_PER_PIXEL;
 }
@@ -169,8 +187,14 @@ const EXCEL_CELL_INSET_PT = 1.5;
  */
 export const DEFAULT_COL_TWIPS = 960;
 
-/** The character count behind {@link DEFAULT_COL_TWIPS}, for a non-Calibri unit. */
-const DEFAULT_COL_CHARS = 8.43;
+/**
+ * The width behind {@link DEFAULT_COL_TWIPS}, for a non-Calibri unit.
+ *
+ * In the STORED unit, which is what {@link columnTwips} reads: Excel's default
+ * column is "8.43 characters" in its own interface and `width="9.140625"` in
+ * every file that writes it out, because the stored form carries the padding.
+ */
+const DEFAULT_COL_CHARS = 9.140625;
 
 /**
  * The column-width unit in twips: the Maximum Digit Width of the font the

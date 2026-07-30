@@ -38,11 +38,11 @@
         "heightPt": 842
       }
     ],
-    "chars": 1529,
+    "chars": 1521,
     "firstLines": [
       "$R[]{A}1D",
       "$R[]{A,breakNum=3}1D",
-      "$R[]{B,sheetLink=tru $R[]{B,she $R[]{A,she1D",
+      "$R[]{B,sheetLink=tr $R[]{B,sh $R[]{A,sh 1D",
       "$R[]{}1D",
       "1D",
       "1D",
