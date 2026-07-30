@@ -48,7 +48,7 @@ import {
 import { bytesInclude, bytesIncludePartName } from '@/core/bytes';
 import { parseChart, withChartColorStyle } from '@/core/drawingml/chart-parser';
 import { DEFAULT_THEME_PALETTE, makeColorResolver } from '@/core/drawingml/colors';
-import { parseTheme } from '@/core/drawingml/theme-parser';
+import { parseTheme, parseThemeLineWidths } from '@/core/drawingml/theme-parser';
 import { parseSheetDrawing } from '@/excel/sheet-drawing';
 import { parseTablePartFull } from '@/excel/table-parser';
 import { parsePivotTablePart } from '@/excel/pivot-table-parser';
@@ -182,6 +182,8 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
   const resources = new ResourceStore();
   const palette = buildThemePalette(pkg, workbookRels);
   const resolveColor = makeColorResolver(palette);
+  // §20.1.4.2.19 `<a:lnRef idx>` indexes the theme's line styles for its width.
+  const themeLineWidths = buildThemeLineWidths(pkg, workbookRels);
 
   const sheetsOut: Array<Sheet> = [];
   // §SV2 slicer-resolution state: tables indexed by id (a slicer's
@@ -255,7 +257,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
         // gated on a shape open tag (`:sp>`/`:sp `) so chart/picture-only drawings
         // skip it (xdr:spPr / xdr:grpSp do not match).
         if (bytesInclude(drawing.data, ':sp>') || bytesInclude(drawing.data, ':sp ')) {
-          const parsed = parseSheetShapes(drawing.data, worksheet, resolveColor);
+          const parsed = parseSheetShapes(drawing.data, worksheet, resolveColor, themeLineWidths);
           if (parsed.length > 0) shapes = parsed;
         }
       }
@@ -741,6 +743,18 @@ function buildThemePalette(
     break;
   }
   return palette;
+}
+
+function buildThemeLineWidths(
+  pkg: OpcPackage,
+  workbookRels: ReadonlyArray<Relationship>,
+): Array<number> {
+  for (const rel of workbookRels) {
+    if (!isOoxmlRel(rel.type, 'theme')) continue;
+    const resolved = pkg.resolveRelatedPart(WORKBOOK_PART, rel);
+    if (resolved) return parseThemeLineWidths(resolved.data);
+  }
+  return [];
 }
 
 // Resolve a table's named built-in style to header / band fill colours against

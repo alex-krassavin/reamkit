@@ -71,6 +71,33 @@ export function parseTheme(themeXml: Uint8Array): Map<string, string> {
   return out;
 }
 
+/**
+ * Parse a theme's line-style widths (ECMA-376 §20.1.4.1.21 `a:lnStyleLst`).
+ *
+ * A shape drawn from the gallery keeps its outline as `<a:lnRef idx="N">`,
+ * which is a 1-based index into this list — the reference names the colour and
+ * the list holds the width. The standard Office theme is 0.75pt / 2pt / 3pt.
+ *
+ * @param themeXml The raw theme part bytes, UTF-8.
+ * @returns The widths in points, in list order; empty when the theme declares
+ *          no `a:fmtScheme`.
+ */
+export function parseThemeLineWidths(themeXml: Uint8Array): Array<number> {
+  const tree = parser.parse(decoder.decode(themeXml)) as Array<PoNode>;
+  const list = poFindByPath(tree, ['a:theme', 'a:themeElements', 'a:fmtScheme', 'a:lnStyleLst']);
+  if (!list) return [];
+  const out: Array<number> = [];
+  for (const ln of poChildren(list)) {
+    if (!poIs(ln, 'a:ln')) continue;
+    const w = Number(poAttr(ln, 'w') ?? '');
+    // §20.1.2.1 ST_LineWidth is EMU; a width the theme omits is a hairline.
+    out.push(Number.isFinite(w) && w > 0 ? w / EMU_PER_POINT : 0.75);
+  }
+  return out;
+}
+
+const EMU_PER_POINT = 12700;
+
 function colorOf(slot: PoNode): string | undefined {
   for (const c of poChildren(slot)) {
     if (poIs(c, 'a:srgbClr')) {

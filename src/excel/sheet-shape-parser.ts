@@ -15,7 +15,7 @@ import type { PoNode } from '@/core/po-helpers';
 
 import { emuToPt, pt } from '@/core/ir';
 import { resolveColorNode } from '@/core/drawingml/colors';
-import { poChildren, poFirstChild, poIntAttr, poIs, poText } from '@/core/po-helpers';
+import { poAttr, poChildren, poFirstChild, poIntAttr, poIs, poText } from '@/core/po-helpers';
 import { parseXml } from '@/pptx/pptx-reader';
 import { parseGeometry, parseTxBody } from '@/pptx/slide-parser';
 import { parseFill, parseLine } from '@/word/drawing-parser';
@@ -39,11 +39,14 @@ const ANCHOR_KINDS = ['xdr:twoCellAnchor', 'xdr:oneCellAnchor', 'xdr:absoluteAnc
  *                   preserveOrder tree the shape readers expect).
  * @param worksheet  The host worksheet, for the column/row track geometry.
  * @param colors     The theme colour resolver threaded into fill/line parsing.
+ * @param themeLineWidths The theme's `a:lnStyleLst` widths in points, which an
+ *                   `<a:lnRef idx>` indexes for a gallery-styled outline.
  */
 export function parseSheetShapes(
   drawingXml: Uint8Array,
   worksheet: ParsedWorksheet,
   colors: ColorResolver,
+  themeLineWidths: ReadonlyArray<number> = [],
 ): Array<ShapeBlock> {
   const tree = parseXml(drawingXml);
   const wsDr = tree.find((n) => poIs(n, 'xdr:wsDr'));
@@ -63,12 +66,14 @@ export function parseSheetShapes(
     // shared readers expect; xdr:txBody holds a:bodyPr + a:p like a slide shape.
     const spPr = poChildren(sp).find((c) => poIs(c, 'xdr:spPr'));
     const geometry = parseGeometry(spPr);
-    const fill: ShapeFill = spPr ? parseFill(spPr, colors) : { kind: 'none' };
+    const spFill: ShapeFill = spPr ? parseFill(spPr, colors) : { kind: 'none' };
+    const fill = spFill.kind === 'none' ? styleFill(sp, colors) : spFill;
     // §20.1.4.2.19 `<xdr:style><a:lnRef>` is where a shape drawn from a gallery
     // style keeps its outline — spPr then carries no `a:ln` at all, and read
     // alone it says the shape has no border. shape-macro-ext-ref.xlsx's macro
     // button lost the blue rule both references draw around it.
-    const line = (spPr ? parseLine(spPr, colors) : undefined) ?? styleLine(sp, colors);
+    const line =
+      (spPr ? parseLine(spPr, colors) : undefined) ?? styleLine(sp, colors, themeLineWidths);
     const txBody = poChildren(sp).find((c) => poIs(c, 'xdr:txBody'));
     const parsed = txBody
       ? parseTxBody(txBody, undefined, undefined, colors, undefined)
@@ -113,17 +118,45 @@ export function parseSheetShapes(
 /**
  * The outline `<xdr:style><a:lnRef>` names, if it names one.
  *
- * The reference's `idx` selects a width from the theme's line-style list, which
- * this does not read: every gallery style in the corpus resolves to a hairline
- * there, and drawing the colour at the default width is much closer than
- * drawing no outline at all.
+ * §20.1.4.2.19: the reference's `idx` is a 1-based index into the theme's
+ * `a:lnStyleLst`, which is where the WIDTH lives — the reference itself carries
+ * only the colour. Assuming a hairline drew 50299.xlsx's `idx="2"` rectangle in
+ * 0.75pt where its theme asks for 2pt.
  */
-function styleLine(sp: PoNode, colors: ColorResolver): ShapeLine | undefined {
+function styleLine(
+  sp: PoNode,
+  colors: ColorResolver,
+  themeLineWidths: ReadonlyArray<number>,
+): ShapeLine | undefined {
   const style = poChildren(sp).find((c) => poIs(c, 'xdr:style'));
   const lnRef = style ? poChildren(style).find((c) => poIs(c, 'a:lnRef')) : undefined;
   const child = lnRef ? poChildren(lnRef)[0] : undefined;
   const colorHex = child ? resolveColorNode(child, colors) : undefined;
-  return colorHex === undefined ? undefined : { colorHex, width: pt(0.75) };
+  if (colorHex === undefined) return undefined;
+  const idx = Number(poAttr(lnRef, 'idx') ?? '');
+  const width = Number.isFinite(idx) ? themeLineWidths[idx - 1] : undefined;
+  return { colorHex, width: pt(width ?? 0.75) };
+}
+
+/**
+ * The fill `<xdr:style><a:fillRef>` names, if it names one.
+ *
+ * §20.1.4.2.10, the same mechanism as the outline beside it: a shape drawn from
+ * a gallery style carries no `a:solidFill` in its `spPr` at all, and read alone
+ * it says the shape has no fill. 50299.xlsx's rectangle asks for `accent1` that
+ * way, and we drew it empty on all six sheets.
+ *
+ * `idx="0"` is the explicit "no fill" slot. Above it the reference indexes the
+ * theme's `a:fillStyleLst`, whose upper slots are gradients — this paints the
+ * referenced colour flat, which is the colour such a gradient is built from.
+ */
+function styleFill(sp: PoNode, colors: ColorResolver): ShapeFill {
+  const style = poChildren(sp).find((c) => poIs(c, 'xdr:style'));
+  const fillRef = style ? poChildren(style).find((c) => poIs(c, 'a:fillRef')) : undefined;
+  if (!fillRef || poAttr(fillRef, 'idx') === '0') return { kind: 'none' };
+  const child = poChildren(fillRef)[0];
+  const colorHex = child ? resolveColorNode(child, colors) : undefined;
+  return colorHex === undefined ? { kind: 'none' } : { kind: 'solid', colorHex };
 }
 
 /** The colour `<xdr:style><a:fontRef>` names, if it names one. */

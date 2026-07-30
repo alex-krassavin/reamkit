@@ -54,6 +54,11 @@ const ADOPTED: ReadonlyArray<Adopted> = [
     why: 'Print area combined with manual row breaks — pagination driven by the document, not the page size.',
   },
   {
+    file: '50299.xlsx',
+    source: 'poi-xlsx',
+    why: 'A rectangle whose fill and outline live only in `<xdr:style>` — gallery references into the theme, with nothing in its spPr — beside ten empty cells that carry nothing but a fill.',
+  },
+  {
     file: '53105.xlsx',
     source: 'poi-xlsx',
     why: 'Declares all 16 384 columns, so the grid materialization cap fires and must report the clip.',
