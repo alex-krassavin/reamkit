@@ -298,5 +298,14 @@ describe('real documents: scale and amplification', () => {
     }
     expect(cells).toBeLessThanOrEqual(1_000_000);
     expect(losses.filter((l) => l.severity === 'dropped').length).toBeGreaterThanOrEqual(2);
+
+    // And it says WHY. This sheet asks for more than SpreadsheetML has — a cell
+    // at XFE is past column XFD, the last one the format defines, so no reader
+    // can put it anywhere the file names. Reporting that as a memory guard
+    // would tell the reader to buy RAM for a file that is malformed.
+    const detail = losses.map((l) => l.detail).join('\n');
+    expect(detail).toContain('past column XFD');
+    expect(detail).toContain('past row 1048576');
+    expect(detail).not.toContain('memory guard');
   });
 });

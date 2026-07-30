@@ -617,6 +617,8 @@ export function worksheetToBody(
   // it where Excel and LibreOffice print 1639. Rendering it in full costs
   // 339 ms and 69 MB, so the cell budget was carrying the load anyway.
   const MAX_GRID_COLS = 16_384;
+  // §18.3.1.73 — the last row SpreadsheetML defines; used only to explain a clip.
+  const SHEET_MAX_ROWS = 1_048_576;
   const MAX_GRID_ROWS = 50_000;
   const MAX_GRID_CELLS = 1_000_000;
   const wantRows = rowEnd - rowStart + 1;
@@ -644,11 +646,24 @@ export function worksheetToBody(
       lastContentColumn(worksheet, rowStart, rowCount, colStart, colCount) + 1,
     );
   }
+  // Name the reason. A sheet can ask for more than SpreadsheetML HAS — a cell
+  // at XFE is past column XFD, the last one the format defines, and no reader
+  // can put it anywhere the file actually names. That is a different fact from
+  // "we stopped early to stay inside memory", and reporting the second when the
+  // first is true tells the reader to buy more RAM for a file that is malformed.
+  // too-many-cols-rows.xlsx is both at once: A1:XFE16777217 exceeds the format
+  // in each direction, and only then does the memory cap bite.
+  const reason = (want: number, limit: number, unit: 'row' | 'column', last: string): string =>
+    want > limit
+      ? `the sheet declares cells past ${unit} ${last}, the last SpreadsheetML defines`
+      : 'memory guard';
   if (rowCount < wantRows) {
     print.losses?.push({
       severity: 'dropped',
       feature: FEATURES.tables,
-      detail: `grid clipped to the first ${rowCount} rows of ${wantRows} in the used range (memory guard)`,
+      detail:
+        `grid clipped to the first ${rowCount} rows of ${wantRows} in the used range ` +
+        `(${reason(rowStart + wantRows, SHEET_MAX_ROWS, 'row', String(SHEET_MAX_ROWS))})`,
       ...(print.sheetName ? { where: `sheet "${print.sheetName}"` } : {}),
     });
   }
@@ -656,7 +671,9 @@ export function worksheetToBody(
     print.losses?.push({
       severity: 'dropped',
       feature: FEATURES.tables,
-      detail: `grid clipped to the first ${colCount} columns of ${wantCols} in the used range (memory guard)`,
+      detail:
+        `grid clipped to the first ${colCount} columns of ${wantCols} in the used range ` +
+        `(${reason(colStart + wantCols, MAX_GRID_COLS, 'column', 'XFD')})`,
       ...(print.sheetName ? { where: `sheet "${print.sheetName}"` } : {}),
     });
   }
