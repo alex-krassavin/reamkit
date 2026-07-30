@@ -20,6 +20,7 @@ import type {
   CfRuleTop10,
   Cfvo,
   CfvoType,
+  ColumnStyle,
   ColumnWidth,
   ConditionalFormat,
   DataValidation,
@@ -32,6 +33,7 @@ import type {
   ParsedSparkline,
   ParsedWorksheet,
   RowHeight,
+  RowStyle,
   SheetPane,
   SparklineKind,
   TimePeriodKind,
@@ -165,6 +167,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
 
   const cells: Array<WorksheetCell> = [];
   const rowHeights: Array<RowHeight> = [];
+  const rowStyles: Array<RowStyle> = [];
   let maxRow = -1;
   let maxColumn = -1;
 
@@ -180,6 +183,13 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
     currentRow = explicitRow !== undefined ? explicitRow : currentRow + 1;
     const height = parseRowHeight(obj, currentRow);
     if (height) rowHeights.push(height);
+    // §18.3.1.73 — `s` is the row's style, and `customFormat` is what says to
+    // use it. A row formatted this way writes no `<c>` for the cells it paints.
+    const rowStyle = Number(strAttr(obj, 's'));
+    const customFormat = boolAttr(obj, 'customFormat');
+    if (customFormat && Number.isFinite(rowStyle) && rowStyle > 0) {
+      rowStyles.push({ row: currentRow, styleIndex: rowStyle });
+    }
     const cellRaw = obj['c'];
     const rowCells = Array.isArray(cellRaw) ? cellRaw : cellRaw !== undefined ? [cellRaw] : [];
     let prevCol = -1;
@@ -193,6 +203,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
     }
   }
 
+  const colStyles = parseColumnStyles(wsObj);
   return {
     cells,
     maxRow,
@@ -200,6 +211,8 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
     columns: parseColumns(wsObj),
     merges: parseMerges(wsObj),
     rowHeights,
+    ...(colStyles.length > 0 ? { columnStyles: colStyles } : {}),
+    ...(rowStyles.length > 0 ? { rowStyles } : {}),
     ...printModel,
   };
 }
@@ -406,6 +419,29 @@ function parseSheetFormatPr(ws: Record<string, unknown>): {
     ...(width !== undefined && width > 0 ? { defaultColWidthChars: width } : {}),
     ...(base !== undefined && base > 0 ? { baseColWidthChars: base } : {}),
   };
+}
+
+// §18.3.1.13 `<col style>` — the style every cell of the span takes when it has
+// none of its own. Read separately from the width because the two are
+// independent: a `<col min max style/>` with no `width` is a legal way to
+// format a column, and the width reader below discards it.
+function parseColumnStyles(ws: Record<string, unknown>): Array<ColumnStyle> {
+  const colsNode = ws['cols'];
+  if (!colsNode || typeof colsNode !== 'object') return [];
+  const colRaw = (colsNode as Record<string, unknown>)['col'];
+  const items = Array.isArray(colRaw) ? colRaw : colRaw !== undefined ? [colRaw] : [];
+  const out: Array<ColumnStyle> = [];
+  for (const c of items) {
+    if (!c || typeof c !== 'object') continue;
+    const obj = c as Record<string, unknown>;
+    const min = Number(strAttr(obj, 'min'));
+    const max = Number(strAttr(obj, 'max'));
+    const styleIndex = Number(strAttr(obj, 'style'));
+    if (!Number.isFinite(min) || !Number.isFinite(max)) continue;
+    if (!Number.isFinite(styleIndex) || styleIndex <= 0) continue;
+    out.push({ min, max, styleIndex });
+  }
+  return out;
 }
 
 function parseColumns(ws: Record<string, unknown>): Array<ColumnWidth> {

@@ -37,6 +37,8 @@ export interface XlsxRowHeightSpec {
   readonly heightPt: number;
   readonly customHeight?: boolean;
   readonly hidden?: boolean;
+  /** §18.3.1.73 `s` + `customFormat="1"` — the row's default cell style. */
+  readonly styleIndex?: number;
 }
 
 export interface XlsxPageMarginsSpec {
@@ -79,6 +81,8 @@ export interface XlsxSheetSpec {
     readonly max: number;
     readonly widthChars: number;
     readonly hidden?: boolean;
+    /** §18.3.1.13 `style` — the default style of every cell in the span. */
+    readonly styleIndex?: number;
   }>;
   readonly rowHeights?: ReadonlyArray<XlsxRowHeightSpec>;
   /** §18.3.1.81 `<sheetFormatPr defaultRowHeight>` — height of rows with no `ht`. */
@@ -118,6 +122,8 @@ export interface XlsxBuilderOptions {
     readonly max: number;
     readonly widthChars: number;
     readonly hidden?: boolean;
+    /** §18.3.1.13 `style` — the default style of every cell in the span. */
+    readonly styleIndex?: number;
   }>;
   readonly rowHeights?: ReadonlyArray<XlsxRowHeightSpec>;
   /** §18.3.1.81 `<sheetFormatPr defaultRowHeight>` — height of rows with no `ht`. */
@@ -426,7 +432,10 @@ export function buildXlsx(
       const heightSpec = rowHeightLookup.get(r);
       const heightAttrs = heightSpec
         ? ` ht="${heightSpec.heightPt}"${heightSpec.customHeight !== false ? ' customHeight="1"' : ''}` +
-          (heightSpec.hidden ? ' hidden="1"' : '')
+          (heightSpec.hidden ? ' hidden="1"' : '') +
+          (heightSpec.styleIndex !== undefined
+            ? ` s="${heightSpec.styleIndex}" customFormat="1"`
+            : '')
         : '';
       if (cells.length > 0 || heightSpec) {
         sheetRows.push(`  <row r="${r + 1}"${heightAttrs}>${cells.join('')}</row>`);
@@ -441,6 +450,7 @@ export function buildXlsx(
               (c) =>
                 `<col min="${c.min}" max="${c.max}" width="${c.widthChars}" customWidth="1"` +
                 (c.hidden ? ' hidden="1"' : '') +
+                (c.styleIndex !== undefined ? ` style="${c.styleIndex}"` : '') +
                 '/>',
             )
             .join('') +

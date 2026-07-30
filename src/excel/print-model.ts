@@ -649,6 +649,28 @@ export function worksheetToBody(
   // that is 5% WIDER than the reference's and had 7pt to spare.
   const textTwipsUnit = TWIPS_PER_EXCEL_CHAR;
 
+  // §18.3.1.13 `<col style>` / §18.3.1.73 `<row s customFormat>`: the style a
+  // cell takes when the file writes no `<c>` for it. A spreadsheet formats
+  // whole columns and rows this way — 51710.xlsx paints its column A grey with
+  // one `<col style="1"/>`, and 588 of its rows carry no A cell at all, so the
+  // band simply stopped where the cells did. The row wins over the column, as
+  // §18.3.1.73's `customFormat` is the more specific statement of the two.
+  const rowStyleAt = new Map<number, number>();
+  for (const r of worksheet.rowStyles ?? []) rowStyleAt.set(r.row, r.styleIndex);
+  const columnStyles = worksheet.columnStyles ?? [];
+  const defaultStyleAt = (
+    row: number,
+    col: number,
+    cellXfs: ReadonlyArray<XlsxCellXf>,
+  ): XlsxCellXf | undefined => {
+    const fromRow = rowStyleAt.get(row);
+    if (fromRow !== undefined) return cellXfs[fromRow];
+    for (const cs of columnStyles) {
+      if (col + 1 >= cs.min && col + 1 <= cs.max) return cellXfs[cs.styleIndex];
+    }
+    return undefined;
+  };
+
   let usedRow = -1;
   let usedCol = -1;
   const contentAt = new Set<string>();
@@ -1179,7 +1201,9 @@ export function worksheetToBody(
       // all. Treating "absent" as "unstyled" gave every such cell the layout's
       // own defaults: simple-monthly-budget.xlsx writes all of its item labels
       // without `s`, so a 9pt slate-blue table came out 11pt black.
-      const xf = ws ? styles.cellXfs[ws.styleIndex ?? 0] : undefined;
+      const xf = ws
+        ? styles.cellXfs[ws.styleIndex ?? 0]
+        : defaultStyleAt(absR, absC, styles.cellXfs);
       let runProps = cellRunProps(xf);
       // §18.8.31: the section that applied may name a colour — `[Red]-#,##0.00`
       // is how every accounting format marks a negative. It belongs to the

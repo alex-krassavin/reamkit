@@ -36,6 +36,28 @@ export interface ColumnWidth {
   readonly hidden?: boolean;
 }
 
+/**
+ * §18.3.1.13 `<col style>` / §18.3.1.73 `<row s customFormat>` — the style a
+ * cell takes when the file gives it none of its own.
+ *
+ * A spreadsheet formats whole columns and whole rows without writing a `<c>`
+ * for each one: 51710.xlsx paints its column A grey with a single `<col
+ * min="1" max="1" style="1"/>`, and 588 of its rows carry no A cell at all.
+ * The band is on the page in Excel and in LibreOffice, so the default has to
+ * reach the paint even where there is nothing to paint it on.
+ */
+export interface ColumnStyle {
+  readonly min: number; // 1-indexed, as OOXML writes it
+  readonly max: number;
+  readonly styleIndex: number;
+}
+
+/** §18.3.1.73 — the style a row hands to its unwritten cells. */
+export interface RowStyle {
+  readonly row: number; // 0-indexed
+  readonly styleIndex: number;
+}
+
 /** §18.3.1.55 `<mergeCell>` — a merged cell rectangle (0-indexed, inclusive bounds). */
 export interface MergedRange {
   readonly startColumn: number;
@@ -120,6 +142,10 @@ export interface ParsedWorksheet {
   readonly columns: ReadonlyArray<ColumnWidth>;
   readonly merges: ReadonlyArray<MergedRange>;
   readonly rowHeights: ReadonlyArray<RowHeight>;
+  /** §18.3.1.13 `<col style>` — the default style of a whole column span. */
+  readonly columnStyles?: ReadonlyArray<ColumnStyle>;
+  /** §18.3.1.73 `<row s customFormat="1">` — the default style of a whole row. */
+  readonly rowStyles?: ReadonlyArray<RowStyle>;
   /**
    * ECMA-376 §18.3.1.81 `<sheetFormatPr defaultRowHeight>` — the height, in
    * points, of every row that carries no `ht` of its own. A row in a

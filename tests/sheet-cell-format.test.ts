@@ -263,3 +263,44 @@ describe('a full-width character is one em (UAX #11)', () => {
     expect(cjk).toBeGreaterThan(3);
   });
 });
+
+describe('a style a whole column or row hands to its unwritten cells', () => {
+  // fills[2] is solid green; cellXfs[1] paints it.
+  const STYLE_TABLE =
+    `<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>` +
+    `<fills count="3"><fill><patternFill patternType="none"/></fill>` +
+    `<fill><patternFill patternType="gray125"/></fill>` +
+    `<fill><patternFill patternType="solid"><fgColor rgb="FF00FF00"/></patternFill></fill></fills>` +
+    `<borders count="1"><border/></borders>` +
+    `<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>` +
+    `<xf numFmtId="0" fontId="0" fillId="2" borderId="0" applyFill="1"/></cellXfs>`;
+
+  it('paints a cell the file never wrote a <c> for (§18.3.1.13 col@style)', () => {
+    // 51710.xlsx paints its column A grey with one `<col style="1"/>`, and 588
+    // of its rows carry no A cell at all — so the band stopped dead where the
+    // cells did, twelve pages short of the end.
+    const xlsx = buildXlsx({
+      rows: [
+        [null, 'b'],
+        [null, 'b'],
+      ],
+      columns: [{ min: 1, max: 1, widthChars: 9, styleIndex: 1 }],
+      stylesXml: STYLE_TABLE,
+    });
+    expect(firstCell(xlsx, 1, 0).properties.shading?.colorHex).toBe('00FF00');
+    expect(firstCell(xlsx, 1, 1).properties.shading).toBeUndefined();
+  });
+
+  it('lets a row with customFormat do the same (§18.3.1.73 row@s)', () => {
+    const xlsx = buildXlsx({
+      rows: [
+        ['a', 'b'],
+        [null, 'x'],
+      ],
+      rowHeights: [{ row: 1, heightPt: 15, styleIndex: 1 }],
+      stylesXml: STYLE_TABLE,
+    });
+    expect(firstCell(xlsx, 1, 0).properties.shading?.colorHex).toBe('00FF00');
+    expect(firstCell(xlsx, 0, 0).properties.shading).toBeUndefined();
+  });
+});
