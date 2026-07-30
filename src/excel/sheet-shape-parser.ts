@@ -59,6 +59,7 @@ export function parseSheetShapes(
     if (!ANCHOR_KINDS.some((k) => poIs(anchor, k))) continue;
     const sp = poChildren(anchor).find((c) => poIs(c, 'xdr:sp'));
     if (!sp) continue;
+    if (isHiddenDrawing(sp, 'xdr:nvSpPr')) continue;
     const box = anchorBox(anchor, colWidthPt, rowHeightPt);
     if (!box) continue;
 
@@ -113,6 +114,25 @@ export function parseSheetShapes(
   }
   shapes.sort((a, b) => a.anchorRow - b.anchorRow);
   return shapes.map((s) => s.shape);
+}
+
+/**
+ * Whether a drawing says it is not to be shown.
+ *
+ * §20.1.2.2.8 `cNvPr@hidden` — "Specifies whether this DrawingML object shall
+ * be displayed", default false. POI writes one white rectangle per cell comment
+ * under the name `_xssf_cell_comment` and marks it hidden; read without the
+ * flag, 51850.xlsx grew a 494 × 677pt outlined box across both its pages.
+ *
+ * @param node      The `xdr:sp` / `xdr:pic` / `xdr:graphicFrame` element.
+ * @param nvPropTag Its non-visual properties wrapper.
+ * @returns True when the object declares itself hidden.
+ */
+function isHiddenDrawing(node: PoNode, nvPropTag: string): boolean {
+  const nv = poChildren(node).find((c) => poIs(c, nvPropTag));
+  const cNvPr = nv ? poChildren(nv).find((c) => poIs(c, 'xdr:cNvPr')) : undefined;
+  const hidden = cNvPr ? poAttr(cNvPr, 'hidden') : undefined;
+  return hidden === '1' || hidden === 'true';
 }
 
 /**

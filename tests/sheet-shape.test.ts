@@ -105,3 +105,23 @@ describe('sheet shapes — render (E-SHEET W2)', () => {
     expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-');
   });
 });
+
+describe('a drawing that says it is hidden (§20.1.2.2.8)', () => {
+  it('is not drawn at all', () => {
+    // `cNvPr@hidden` — "Specifies whether this DrawingML object shall be
+    // displayed". POI writes one white, black-outlined rectangle per cell
+    // comment under the name `_xssf_cell_comment` and marks it hidden; read
+    // without the flag, 51850.xlsx grew a 494 × 677pt box across both pages.
+    const shown = readXlsxToSheetDoc(
+      buildXlsx({ rows: [['cell']], sheetShape: { text: 'Ghost', fillHex: 'FFFFFF' } }),
+    ).sheets[0]!;
+    expect(shown.shapes).toHaveLength(1);
+    const hidden = readXlsxToSheetDoc(
+      buildXlsx({
+        rows: [['cell']],
+        sheetShape: { text: 'Ghost', fillHex: 'FFFFFF', hidden: true },
+      }),
+    ).sheets[0]!;
+    expect(hidden.shapes).toBeUndefined();
+  });
+});

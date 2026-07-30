@@ -159,6 +159,8 @@ export interface XlsxBuilderOptions {
     readonly anchor?: { from: [number, number]; to: [number, number] };
     /** Drop the explicit `a:ln` and carry `<xdr:style>` instead (gallery style). */
     readonly styleOnly?: boolean;
+    /** §20.1.2.2.8 `<xdr:cNvPr hidden="1"/>` — the object is not to be shown. */
+    readonly hidden?: boolean;
   };
   /** Attach cell hyperlinks to the FIRST sheet (E-SHEET W3). A `url` is emitted as
    *  an external `r:id` relationship; a `location` is an in-workbook target. */
@@ -732,7 +734,9 @@ ${chartRels}</Relationships>`,
     <xdr:from><xdr:col>${a.from[0]}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${a.from[1]}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>
     <xdr:to><xdr:col>${a.to[0]}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${a.to[1]}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>
     <xdr:sp>
-      <xdr:nvSpPr><xdr:cNvPr id="2" name="Shape 1"/><xdr:cNvSpPr/></xdr:nvSpPr>
+      <xdr:nvSpPr><xdr:cNvPr id="2" name="Shape 1"${
+        options.sheetShape.hidden ? ' hidden="1"' : ''
+      }/><xdr:cNvSpPr/></xdr:nvSpPr>
       <xdr:spPr>
         <a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></a:xfrm>
         <a:prstGeom prst="${preset}"><a:avLst/></a:prstGeom>

@@ -117,6 +117,8 @@ export function parseSheetDrawing(
       const chartRelId = chartRelIdOf(a);
       const picRelId = chartRelId ? undefined : picRelIdOf(a);
       if (!chartRelId && !picRelId) continue;
+      // §20.1.2.2.8 `cNvPr@hidden` — the object says it is not to be shown.
+      if (isHiddenDrawing(a, chartRelId ? 'graphicFrame' : 'pic')) continue;
 
       const from = cellMarker(a['from']);
       let widthPt = 0;
@@ -153,6 +155,23 @@ export function parseSheetDrawing(
   charts.sort((x, y) => x.anchorRow - y.anchorRow);
   pictures.sort((x, y) => x.anchorRow - y.anchorRow);
   return { charts, pictures };
+}
+
+// §20.1.2.2.8 `<xdr:cNvPr hidden="1"/>` — "Specifies whether this DrawingML
+// object shall be displayed", default false. Reached through whichever
+// non-visual wrapper the object carries (xdr:nvPicPr / xdr:nvGraphicFramePr),
+// which removeNSPrefix flattens to nvPicPr / nvGraphicFramePr.
+function isHiddenDrawing(anchor: Record<string, unknown>, kind: 'pic' | 'graphicFrame'): boolean {
+  const node = anchor[kind];
+  if (!node || typeof node !== 'object') return false;
+  const nv = (node as Record<string, unknown>)[
+    kind === 'pic' ? 'nvPicPr' : 'nvGraphicFramePr'
+  ];
+  if (!nv || typeof nv !== 'object') return false;
+  const cNvPr = (nv as Record<string, unknown>)['cNvPr'];
+  if (!cNvPr || typeof cNvPr !== 'object') return false;
+  const hidden = (cNvPr as Record<string, unknown>)['@_hidden'];
+  return hidden === '1' || hidden === 'true' || hidden === true;
 }
 
 // xdr:pic → xdr:blipFill → a:blip @r:embed (removeNSPrefix → pic/blipFill/blip,
