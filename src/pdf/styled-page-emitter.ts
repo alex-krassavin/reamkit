@@ -969,7 +969,10 @@ function emitPageContent(
         out.push('Q');
       }
 
-      if (extraPerSpace > 0 || hasImageToken || hasMathToken || hasRtl) {
+      // A super/subscript draws off the baseline, so the line can no longer be
+      // one Tm and a run of Tj — each token needs its own placement.
+      const hasRise = line.tokens.some((t) => t.kind === 'text' && t.risePt !== undefined);
+      if (extraPerSpace > 0 || hasImageToken || hasMathToken || hasRtl || hasRise) {
         // Per-token absolute positioning. Required for justify (inter-word
         // slack), inline images (text-mode exits), and BiDi (visual order
         // differs from logical order). Tokens are emitted in visual order.
@@ -994,7 +997,7 @@ function emitPageContent(
             inBT = true;
           }
           switchFontIfNeeded(tok);
-          out.push(`1 0 0 1 ${formatNumber(x)} ${formatNumber(baselineY)} Tm`);
+          out.push(`1 0 0 1 ${formatNumber(x)} ${formatNumber(baselineY + (tok.risePt ?? 0))} Tm`);
           out.push(`<${encodeToken(tok)}> Tj`);
           const tokenX0 = x;
           x += tok.widthPt;

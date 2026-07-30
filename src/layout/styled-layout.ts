@@ -2254,11 +2254,21 @@ function layoutParagraphBlock(
   };
 }
 
+/**
+ * Word and Excel both draw a super/subscript at about two thirds of the base
+ * size, raised a third of it or dropped a sixth. The base line height does not
+ * change: a superscript inside a line of body text must not open the leading.
+ */
+const SCRIPT_SCALE = 0.66;
+const SCRIPT_OFFSET: Partial<Record<string, number>> = { superscript: 1 / 3, subscript: -1 / 6 };
+
 interface RunPlan {
   readonly run: Paragraph['runs'][number];
   readonly resolvedRun: ResolvedRunProperties;
   readonly font: FontResource;
   readonly fontSizePt: number;
+  /** How far off the baseline this run draws (super/subscript), in points. */
+  readonly risePt?: number;
   readonly isImage: boolean;
   readonly imageWidthPt: number;
   readonly imageHeightPt: number;
@@ -2382,11 +2392,17 @@ function tokenizeParagraph(
       resolvedRun.bold,
       resolvedRun.italic,
     );
+    // §17.3.2.42 / §18.4.2 `vertAlign` — a super/subscript run draws SMALLER and
+    // off the baseline. The model carried the flag and the HTML writer honoured
+    // it; the PDF layout did neither, so a footnote marker and a cell's
+    // "Salary⁽²⁾" came out full size, on the line (45540_classic_Header.xlsx).
+    const script = SCRIPT_OFFSET[resolvedRun.verticalAlign] ?? 0;
     return {
       run,
       resolvedRun,
       font: lookupFont(fontResources, fontKey),
-      fontSizePt: resolvedRun.fontSizePt,
+      fontSizePt: script === 0 ? resolvedRun.fontSizePt : resolvedRun.fontSizePt * SCRIPT_SCALE,
+      ...(script === 0 ? {} : { risePt: resolvedRun.fontSizePt * script }),
       isImage: false,
       imageWidthPt: 0,
       imageHeightPt: 0,
@@ -2461,6 +2477,7 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         resolvedRun: plan.resolvedRun,
         font: plan.font,
         fontSizePt: plan.fontSizePt,
+        ...(plan.risePt !== undefined ? { risePt: plan.risePt } : {}),
         widthPt: plan.font.measure.textWidthPt(t.text, plan.fontSizePt),
         bidiLevel: 0,
       });
@@ -2524,6 +2541,7 @@ function tokenizePlansBidi(
         resolvedRun: plan.resolvedRun,
         font: plan.font,
         fontSizePt: plan.fontSizePt,
+        ...(plan.risePt !== undefined ? { risePt: plan.risePt } : {}),
         widthPt: plan.font.measure.textWidthPt(text, plan.fontSizePt),
         bidiLevel: curLevel,
       });

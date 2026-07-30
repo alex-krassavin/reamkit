@@ -63,6 +63,12 @@ export interface TextToken {
   readonly resolvedRun: ResolvedRunProperties;
   readonly font: FontResource;
   readonly fontSizePt: number;
+  /**
+   * §17.3.2.42 / §18.4.2 `vertAlign` — how far off the baseline this token
+   * draws: positive for a superscript, negative for a subscript, absent on the
+   * baseline. The line's height is unchanged; only the glyphs move.
+   */
+  readonly risePt?: number;
   readonly widthPt: number;
   /**
    * UAX #9 embedding level of this token's characters (0 for pure-LTR docs).
