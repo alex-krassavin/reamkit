@@ -22,6 +22,14 @@ export interface SheetChartRef {
   readonly chartPartPath: string;
   readonly widthPt: number;
   readonly heightPt: number;
+  /**
+   * Where the anchor puts the frame, in points from the grid's top-left. A
+   * chart is anchored over the sheet like any other drawing; placed in the flow
+   * instead it lands at the left margin, below everything, and on whatever page
+   * that turns out to be.
+   */
+  readonly xPt: number;
+  readonly yPt: number;
   /** Anchor top row (0-based) — used only to order charts on the sheet. */
   readonly anchorRow: number;
 }
@@ -35,6 +43,9 @@ export interface SheetPicture {
   readonly imagePartPath: string;
   readonly widthPt: number;
   readonly heightPt: number;
+  /** Where the anchor puts it, in points from the grid's top-left. */
+  readonly xPt: number;
+  readonly yPt: number;
   /** Anchor top row (0-based) — used only to order pictures on the sheet. */
   readonly anchorRow: number;
 }
@@ -118,13 +129,18 @@ export function parseSheetDrawing(
       }
       if (widthPt <= 0 || heightPt <= 0) continue;
       const anchorRow = from?.row ?? 0;
+      // The anchor's own origin: every track before it, plus its offset into
+      // the one it starts in. `absoluteAnchor` carries no cell marker at all,
+      // so it sits at the grid origin.
+      const xPt = from ? spanPt(0, 0, from.col, from.colOffPt, colWidthPt) : 0;
+      const yPt = from ? spanPt(0, 0, from.row, from.rowOffPt, rowHeightPt) : 0;
 
       if (chartRelId) {
         const path = partPathOf(chartRelId);
-        if (path) charts.push({ chartPartPath: path, widthPt, heightPt, anchorRow });
+        if (path) charts.push({ chartPartPath: path, widthPt, heightPt, xPt, yPt, anchorRow });
       } else if (picRelId) {
         const path = partPathOf(picRelId);
-        if (path) pictures.push({ imagePartPath: path, widthPt, heightPt, anchorRow });
+        if (path) pictures.push({ imagePartPath: path, widthPt, heightPt, xPt, yPt, anchorRow });
       }
     }
   }

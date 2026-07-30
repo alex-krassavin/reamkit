@@ -222,6 +222,8 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
             chartPartPath: ref.chartPartPath,
             widthPt: ref.widthPt,
             heightPt: ref.heightPt,
+            xPt: ref.xPt,
+            yPt: ref.yPt,
           });
         }
         for (const pic of pictures) {
@@ -231,6 +233,8 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
             resourceId: resources.put(bytes),
             widthPt: pic.widthPt,
             heightPt: pic.heightPt,
+            xPt: pic.xPt,
+            yPt: pic.yPt,
           });
         }
         // §20.5.2.30 xdr:sp shapes (W2). The shared DrawingML readers need the

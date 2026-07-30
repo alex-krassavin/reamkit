@@ -16,7 +16,7 @@
     ]
   },
   "ream": {
-    "pages": 2,
+    "pages": 1,
     "pageSizes": [
       {
         "widthPt": 792,
@@ -25,8 +25,7 @@
     ],
     "chars": 610,
     "firstLines": [
-      "SIMPLE MONTHLY BUDGET",
-      "Miscellaneous$50.00"
+      "SIMPLE MONTHLY BUDGET"
     ]
   }
 }

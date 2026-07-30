@@ -698,7 +698,7 @@ export function worksheetToBody(
   const defaultRowTwips = Math.round(
     (worksheet.defaultRowHeightPt ?? EXCEL_DEFAULT_ROW_HEIGHT_PT) * TWIPS_PER_POINT,
   );
-  const rowHeightMap = new Map<number, { heightTwips: number; heightRule: 'atLeast' }>();
+  const rowHeightMap = new Map<number, { heightTwips: number; heightRule: 'atLeast' | 'exact' }>();
   for (let r = 0; r < rowCount; r++) {
     rowHeightMap.set(r, { heightTwips: defaultRowTwips, heightRule: 'atLeast' });
   }
@@ -706,12 +706,15 @@ export function worksheetToBody(
     const local = h.row - rowStart;
     if (local < 0 || local >= rowCount) continue;
     const heightTwips = Math.round(h.heightPt * TWIPS_PER_POINT);
-    // customHeight="1" pins the row exactly; without it the height attr is
-    // advisory. Use 'atLeast' in both cases so PDF wrapping (we have no
-    // clipping) can still grow rows that need more vertical space than Excel
-    // pinned them to — this avoids overlap at the cost of slight divergence
-    // from Excel's exact-truncation behavior.
-    rowHeightMap.set(local, { heightTwips, heightRule: 'atLeast' });
+    // §18.3.1.73 customHeight="1" — the author fixed this height, and Excel
+    // does NOT grow such a row to fit its content; it clips. Growing it is not
+    // a harmless safety margin: the extra height moves every row after it and
+    // changes where the page breaks. simple-monthly-budget.xlsx pins all 23 of
+    // its rows, their sum fits its page with 5pt to spare, and one row carrying
+    // a 20pt "62%" grew past its pin and pushed the last row — and the chart
+    // anchored beside it — onto a second page the reference does not have.
+    // Without the flag the height is advisory and content may still grow it.
+    rowHeightMap.set(local, { heightTwips, heightRule: h.customHeight ? 'exact' : 'atLeast' });
   }
 
   // Index cells by LOCAL (row - rowStart, col - colStart).
@@ -1295,7 +1298,10 @@ export function worksheetToBody(
       absR <= print.titleRows.endRow;
     const rowProps = {
       ...(rowHeightTwips !== undefined
-        ? { height: twipsToPt(rowHeightTwips), heightRule: 'atLeast' as const }
+        ? {
+            height: twipsToPt(rowHeightTwips),
+            heightRule: baseRowProps?.heightRule ?? ('atLeast' as const),
+          }
         : {}),
       ...(isTitleRow ? { isHeader: true } : {}),
       ...(breakRows.has(absR) ? { pageBreakBefore: true } : {}),

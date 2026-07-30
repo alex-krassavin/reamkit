@@ -7,6 +7,7 @@
 
 import type {
   BodyElement,
+  FloatAnchor,
   HeaderFooterReference,
   Section,
   SectionProperties,
@@ -177,9 +178,10 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       body.push({
         kind: 'chart',
         chart: {
+          ...anchorFloat(ref.xPt, ref.yPt, scaleSink.value),
           chartRelId: ref.chartPartPath,
-          width: pt(ref.widthPt),
-          height: pt(ref.heightPt),
+          width: pt(ref.widthPt * scaleSink.value),
+          height: pt(ref.heightPt * scaleSink.value),
           paragraphProperties: {},
         },
       });
@@ -191,9 +193,10 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       body.push({
         kind: 'image',
         image: {
+          ...anchorFloat(img.xPt, img.yPt, scaleSink.value),
           resource: img.resourceId,
-          width: pt(img.widthPt),
-          height: pt(img.heightPt),
+          width: pt(img.widthPt * scaleSink.value),
+          height: pt(img.heightPt * scaleSink.value),
           paragraphProperties: {},
         },
       });
@@ -475,6 +478,34 @@ function controlShapes(
     );
   }
   return out;
+}
+
+/**
+ * §20.5.2.35 — the float a drawing's anchor asks for: pinned at the point the
+ * anchor names, measured from the page margin, wrapping nothing.
+ *
+ * A chart or a picture placed in the FLOW instead lands at the left margin,
+ * below every block before it, and on whatever page that turns out to be:
+ * simple-monthly-budget.xlsx anchors its chart beside the summary on page one
+ * and we printed it alone on page two, a third of the way in from the left.
+ * Shapes have floated at their anchors since W2; these two never did.
+ *
+ * No anchor (an `absoluteAnchor`, or a reader that gave none) ⇒ no float, and
+ * the block keeps the flow placement it has always had.
+ */
+function anchorFloat(
+  xPt: number | undefined,
+  yPt: number | undefined,
+  scale: number,
+): { float?: FloatAnchor } {
+  if (xPt === undefined || yPt === undefined) return {};
+  return {
+    float: {
+      wrap: 'none',
+      posH: { relativeFrom: 'margin', offsetPt: pt(xPt * scale) },
+      posV: { relativeFrom: 'margin', offsetPt: pt(yPt * scale) },
+    },
+  };
 }
 
 /** Every control that carries geometry, as the shapes that draw it. */

@@ -28,6 +28,9 @@ export interface SheetChartRef {
   readonly chartPartPath: string;
   readonly widthPt: number;
   readonly heightPt: number;
+  /** Where the anchor puts it, in points from the grid's top-left. */
+  readonly xPt?: number;
+  readonly yPt?: number;
 }
 
 /**
@@ -39,6 +42,9 @@ export interface SheetImageRef {
   readonly resourceId: ResourceId;
   readonly widthPt: number;
   readonly heightPt: number;
+  /** Where the anchor puts it, in points from the grid's top-left. */
+  readonly xPt?: number;
+  readonly yPt?: number;
 }
 
 /** One item (label + selection state) in a {@link SheetSlicer}. */

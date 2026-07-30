@@ -225,6 +225,37 @@ describe('grid geometry', () => {
     expect(ys[2]! - ys[1]!).toBeCloseTo(24, 1);
   });
 
+  it('does not grow a row whose height the author pinned', () => {
+    // §18.3.1.73 customHeight="1" — Excel does not auto-fit such a row, it
+    // clips. Growing it is not a harmless safety margin: the extra height moves
+    // every row after it and changes where the page breaks.
+    // simple-monthly-budget.xlsx pins all 23 of its rows, their sum fits its
+    // page with 5pt to spare, and one row carrying a 20pt "62%" grew past its
+    // pin and pushed the last row — and the chart anchored beside it — onto a
+    // second page.
+    const big = `<fonts count="2"><font><sz val="11"/></font><font><sz val="36"/></font></fonts>
+      <fills count="1"><fill/></fills><borders count="1"><border/></borders>
+      <cellXfs count="2"><xf/><xf fontId="1" applyFont="1"/></cellXfs>`;
+    const rows = [[{ value: 'huge', styleIndex: 1 }], ['after']];
+    const pinned = placed(
+      buildXlsx({
+        rows,
+        stylesXml: big,
+        rowHeights: [{ row: 0, heightPt: 15, customHeight: true }],
+      }),
+    );
+    const loose = placed(
+      buildXlsx({
+        rows,
+        stylesXml: big,
+        rowHeights: [{ row: 0, heightPt: 15, customHeight: false }],
+      }),
+    );
+    // Pinned, the row keeps its 15pt and the row below starts where 15pt says.
+    // Unpinned, the 36pt line grows it and pushes everything after it down.
+    expect(at(loose, 'after').y - at(pinned, 'after').y).toBeGreaterThan(20);
+  });
+
   it('lets an explicit row ht override the sheet default', () => {
     const items = placed(
       buildXlsx({
