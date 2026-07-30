@@ -719,7 +719,7 @@ function readLegacyVml(
     if (shape.shapeId !== undefined && activeXShapeIds.has(shape.shapeId)) continue;
     out.push({
       objectType: shape.objectType,
-      ...(shape.caption ? { name: shape.caption } : {}),
+      ...(shape.caption ? { name: shape.caption, caption: shape.caption } : {}),
       ...(shape.checked ? { checked: true } : {}),
       ...(shape.box ? { box: shape.box } : {}),
       ...(shape.fontSizePt !== undefined ? { fontSizePt: shape.fontSizePt } : {}),

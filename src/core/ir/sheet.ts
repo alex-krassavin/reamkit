@@ -103,7 +103,19 @@ export interface SheetComment {
  * spin/scroll/list controls. Render-only.
  */
 export interface SheetFormControl {
+  /**
+   * §18.3.1.19 `<control name>` — the shape's NAME, an identifier like
+   * "CheckBox28". Excel shows it in the name box, never on the page; it is what
+   * the after-the-grid listing calls a control that has no geometry.
+   */
   readonly name?: string;
+  /**
+   * The visible label, from the control's legacy VML `<v:textbox>`. A control
+   * drawn in place draws THIS beside its widget — never {@link name}, which is
+   * an internal id: 45540_form_Header.xlsx has forty captionless check boxes
+   * and printing their names put "CheckBox28" across the form's own text.
+   */
+  readonly caption?: string;
   readonly objectType?: string;
   readonly checked?: boolean;
   readonly value?: number;

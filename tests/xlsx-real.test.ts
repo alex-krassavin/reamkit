@@ -175,13 +175,29 @@ describe('real documents: SpreadsheetML dialects', () => {
     // `<controls>` list lost them without a word — LibreOffice draws all six.
     // Only actual control types: a cell comment is a VML shape too
     // (`ObjectType="Note"`) and must not be listed as a control.
+    // The VML textbox is the control's CAPTION; `name` keeps it too, for the
+    // listing a control without geometry falls back to. What is drawn is the
+    // caption alone — `<control name>` is an identifier, never a label.
+    const shown = (name: string) => ({ name, caption: name });
     expect(sheet.formControls?.map((c) => ({ ...c, box: undefined }))).toEqual([
-      { objectType: 'Radio', name: 'Form button1', checked: true, fontSizePt: 8, box: undefined },
-      { objectType: 'Radio', name: 'Form button2', fontSizePt: 8, box: undefined },
-      { objectType: 'GBox', name: 'Group Box 7', fontSizePt: 8, box: undefined },
-      { objectType: 'Radio', name: 'Form groupbox1', fontSizePt: 8, box: undefined },
-      { objectType: 'Radio', name: 'Form groupbox2', checked: true, fontSizePt: 8, box: undefined },
-      { objectType: 'Radio', name: 'Form outside groupbox3', fontSizePt: 8, box: undefined },
+      {
+        objectType: 'Radio',
+        ...shown('Form button1'),
+        checked: true,
+        fontSizePt: 8,
+        box: undefined,
+      },
+      { objectType: 'Radio', ...shown('Form button2'), fontSizePt: 8, box: undefined },
+      { objectType: 'GBox', ...shown('Group Box 7'), fontSizePt: 8, box: undefined },
+      { objectType: 'Radio', ...shown('Form groupbox1'), fontSizePt: 8, box: undefined },
+      {
+        objectType: 'Radio',
+        ...shown('Form groupbox2'),
+        checked: true,
+        fontSizePt: 8,
+        box: undefined,
+      },
+      { objectType: 'Radio', ...shown('Form outside groupbox3'), fontSizePt: 8, box: undefined },
     ]);
 
     // Every one of them knows where it goes. The box is what turns the listing

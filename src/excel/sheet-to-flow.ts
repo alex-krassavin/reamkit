@@ -807,7 +807,10 @@ function controlShapeBlocks(
       ...controlShapes(
         c.box,
         formControlGlyph(c.objectType),
-        c.name,
+        // Its CAPTION, never its name: the name is an internal id, and drawing
+        // it put "CheckBox28" over the form's own text forty times
+        // (45540_form_Header.xlsx).
+        c.caption,
         c.checked === true,
         c.fontSizePt ?? DEFAULT_FORM_CONTROL_PT,
       ),
@@ -820,7 +823,12 @@ function controlShapeBlocks(
       ...controlShapes(
         c.box,
         activeXGlyph(c.type),
-        c.caption ?? c.name,
+        // Its Caption property, and nothing else. `<control name>` is the
+        // shape's identifier — Excel shows it in the name box, never on the
+        // page — and falling back to it printed "CheckBox28" over the form's own
+        // text forty times (45540_form_Header.xlsx, whose boxes have no
+        // caption at all).
+        c.caption,
         on,
         DEFAULT_ACTIVEX_CONTROL_PT,
       ),

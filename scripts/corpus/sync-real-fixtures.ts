@@ -39,6 +39,11 @@ interface Adopted {
 // Kept alphabetical by file so the NOTICE diffs cleanly.
 const ADOPTED: ReadonlyArray<Adopted> = [
   {
+    file: '45540_form_Header.xlsx',
+    source: 'poi-xlsx',
+    why: 'Forty captionless ActiveX check boxes over a form — a control drawn with its `<control name>` writes an identifier across the page.',
+  },
+  {
     file: '49156.xlsx',
     source: 'poi-xlsx',
     why: 'Print area combined with manual row breaks — pagination driven by the document, not the page size.',

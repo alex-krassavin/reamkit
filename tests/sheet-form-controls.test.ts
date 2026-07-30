@@ -13,6 +13,7 @@ import { buildXlsx } from './fixtures/build-xlsx';
 import type { BodyElement } from '@/core/document-model';
 import { parseFormControlProps } from '@/excel/form-control-parser';
 import { parseVmlDrawing } from '@/excel/vml-drawing';
+import { readXlsxToSheetDoc } from '@/excel/xlsx-reader';
 import { Ream } from '@/core/converter/ream';
 import { convertXlsxToPdfSync } from '@/core/converter';
 
@@ -194,6 +195,27 @@ describe('form controls — end to end (E-SHEET W8)', () => {
     // height (785.2pt for A4 with this sheet's 1cm margins).
     expect(caption[0]?.float?.posV?.offsetPt).toBeCloseTo(7331.25 - 9 * 785.2, 1);
     expect(caption[0]?.float?.posH?.offsetPt).toBeCloseTo(122.25, 2);
+  });
+
+  it("draws a control's caption, never its name", () => {
+    // §18.3.1.19 `<control name>` is the shape's IDENTIFIER — Excel shows it in
+    // the name box, never on the page. Falling back to it printed "CheckBox28"
+    // across 45540_form_Header.xlsx's own text once per captionless check box,
+    // forty times over.
+    const bytes = new Uint8Array(readFileSync('tests/fixtures/real/45540_form_Header.xlsx'));
+    const controls = readXlsxToSheetDoc(bytes).sheets[0]?.activeXControls ?? [];
+    expect(controls.length).toBeGreaterThan(30);
+    expect(controls.every((c) => c.caption === undefined)).toBe(true);
+    expect(controls.some((c) => (c.name ?? '').startsWith('CheckBox'))).toBe(true);
+
+    const drawn = Ream.parse(bytes).flow.body.flatMap((e) =>
+      e.kind === 'shape' && e.shape.text
+        ? e.shape.text.content.flatMap((b) =>
+            b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : [],
+          )
+        : [],
+    );
+    expect(drawn.filter((t) => t.startsWith('CheckBox'))).toEqual([]);
   });
 
   it('adds no section to a sheet without controls (byte-zero)', () => {
