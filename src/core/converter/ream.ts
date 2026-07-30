@@ -94,6 +94,12 @@ export interface ReamConvertOptions extends Omit<StyledRenderOptions, 'registry'
    * unchanged.
    */
   readonly now?: Date;
+  /**
+   * §18.3.1.34 `&F` — the workbook's file name, for a spreadsheet whose header
+   * or footer prints it. A byte-oriented reader cannot know it; supplied here,
+   * the code resolves, and omitted it is dropped exactly as before.
+   */
+  readonly fileName?: string;
 }
 
 /** OOXML / legacy MIME types by reader id, for the PDF/A-3 embedded source file. */
@@ -207,7 +213,12 @@ export class Ream {
     // format timePeriod / TODAY() rules resolve against it. Without it (or for a
     // non-sheet source) the parse-time flow — byte-identical to before — is used.
     const flow =
-      this.sheet && options.now ? projectSheetDoc(this.sheet, { now: options.now }) : this.flow;
+      this.sheet && (options.now || options.fileName)
+        ? projectSheetDoc(this.sheet, {
+            ...(options.now ? { now: options.now } : {}),
+            ...(options.fileName ? { fileName: options.fileName } : {}),
+          })
+        : this.flow;
 
     if (to === 'html') {
       // Flow medium: no layout, no fonts to embed — zero I/O.
@@ -250,6 +261,7 @@ export class Ream {
     const paginated = this.sheet
       ? projectSheetDoc(this.sheet, {
           ...(options.now ? { now: options.now } : {}),
+          ...(options.fileName ? { fileName: options.fileName } : {}),
           digitWidthPt: createFontMeasure(registry.resolveByStyle(false, false).parsed).textWidthPt(
             '0',
             DEFAULT_WORKBOOK_FONT_PT,

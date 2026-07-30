@@ -124,7 +124,10 @@ async function main(): Promise<void> {
       const ourPath = resolve(workDir, `${tag}.ream.pdf`);
       writeFileSync(
         ourPath,
-        await Ream.parse(new Uint8Array(readFileSync(input))).convert('pdf', { fonts: FONTS }),
+        await Ream.parse(new Uint8Array(readFileSync(input))).convert('pdf', {
+          fonts: FONTS,
+          fileName: basename(input),
+        }),
       );
       const golden: Golden = {
         file,

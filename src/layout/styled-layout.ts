@@ -4648,10 +4648,16 @@ function emitRowChunk(
         line.contentWidthPt,
         cell.widthPt - cell.padLeftPt - cell.padRightPt,
       );
+      // A paragraph's own left indent counts inside a cell too. The body path
+      // has always added it; this one did not, so §18.8.1's `indent` reached the
+      // model and stopped there — 45544.xlsx indents five rows under "Not
+      // Seeking Employment" and we drew them flush with it.
+      const indentLeft =
+        line.resolved.indentLeft + (line.firstLine ? line.resolved.indentFirstLine : 0);
       out.push({
         type: 'line',
         line,
-        originX: pt(cellX + cell.padLeftPt + offset),
+        originX: pt(cellX + cell.padLeftPt + indentLeft + offset),
         baselineY: pt(pageHeight - (textY + lineDescent(line))),
         ...(structId !== undefined ? { structId } : {}),
       });

@@ -749,6 +749,31 @@ describe('column width unit (§18.3.1.13)', () => {
   });
 });
 
+describe('cell indent (§18.8.1)', () => {
+  it('offsets the text inside the cell, not just the model', () => {
+    // The projection has always put `indent` on the paragraph; the table path
+    // drew every cell at its padding and ignored it, so 45544.xlsx printed five
+    // indented rows flush with the heading above them.
+    const stylesXml =
+      `<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>` +
+      `<fills count="1"><fill><patternFill patternType="none"/></fill></fills>` +
+      `<borders count="1"><border/></borders>` +
+      `<cellXfs count="2">` +
+      `<xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>` +
+      `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" applyAlignment="1">` +
+      `<alignment horizontal="left" indent="1"/></xf>` +
+      `</cellXfs>`;
+    const items = placed(
+      buildXlsx({
+        rows: [['flush'], [{ value: 'indented', styleIndex: 1 }]],
+        columns: [{ min: 1, max: 1, widthChars: 30 }],
+        stylesXml,
+      }),
+    );
+    expect(at(items, 'indented').x).toBeGreaterThan(at(items, 'flush').x + 8);
+  });
+});
+
 describe('a sheet with nothing on it', () => {
   it('is left out of the print (tdf115159)', () => {
     // Two untouched tabs beside one sheet of data. Each sheet is its own

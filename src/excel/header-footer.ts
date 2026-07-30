@@ -29,14 +29,20 @@ interface Regions {
  *
  * @param formatString The raw `&`-code format string.
  * @param sheetName    The worksheet tab name, substituted for `&A`.
+ * @param scale        The sheet's print scale.
+ * @param basePt       The default header font size.
+ * @param fileName     The workbook's file name, substituted for `&F`. A
+ *                     byte-oriented API does not know it, so the caller supplies
+ *                     it; absent, `&F` is dropped as before.
  */
 export function buildHeaderFooterContent(
   formatString: string,
   sheetName: string,
   scale = 1,
   basePt = DEFAULT_HEADER_PT,
+  fileName?: string,
 ): Array<BodyElement> {
-  const regions = parseHeaderFooterString(formatString, sheetName, scale, basePt);
+  const regions = parseHeaderFooterString(formatString, sheetName, scale, basePt, fileName);
   const out: Array<BodyElement> = [];
   const para = (runs: ReadonlyArray<Run>, alignment: Alignment): void => {
     for (const line of splitLines(runs)) {
@@ -84,6 +90,7 @@ function parseHeaderFooterString(
   sheetName: string,
   scale: number,
   basePt: number,
+  fileName?: string,
 ): Regions {
   const regions: Regions = { left: [], center: [], right: [] };
   let current: Array<Run> = regions.center;
@@ -245,8 +252,16 @@ function parseHeaderFooterString(
       }
       continue;
     }
-    // Any other single-letter code (&D &T &F &Z &G &E &X &Y &O &H …) is dropped:
-    // non-deterministic (date/time/file) or unsupported styling.
+    // §18.3.1.34 `&F` — the workbook's file name. A byte-oriented API does not
+    // know it, so it arrives from the caller; without one the code drops as
+    // before. Five of the first forty POI workbooks head every page with it.
+    if (next === 'F') {
+      if (fileName !== undefined && fileName.length > 0) buf += fileName;
+      i += 2;
+      continue;
+    }
+    // Any other single-letter code (&D &T &Z &G &E &X &Y &O &H …) is dropped:
+    // non-deterministic (date/time) or unsupported styling.
     i += 2;
   }
   flush();

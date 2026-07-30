@@ -81,6 +81,12 @@ export interface ProjectSheetOptions {
    * the workbook's.
    */
   readonly digitWidthPt?: number;
+  /**
+   * §18.3.1.34 `&F` — the workbook's file name, for a header or footer that
+   * prints it. The reader takes bytes and cannot know it, so the caller
+   * supplies it; absent, the code is dropped exactly as before.
+   */
+  readonly fileName?: string;
 }
 
 /**
@@ -170,6 +176,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       scaleSink.value,
       sheet.styles.fonts[0]?.sizePt,
       printed,
+      options.fileName,
     );
     if (printed === 0) firstSheetSection = sheetSection;
     sheetSections.push(sheetSection);
@@ -1026,6 +1033,7 @@ function withHeaderFooter(
   scale: number,
   basePt: number | undefined,
   sheetIdx: number,
+  fileName?: string,
 ): SectionProperties {
   const headerRel = `${HEADER_REL}${sheetIdx}`;
   const footerRel = `${FOOTER_REL}${sheetIdx}`;
@@ -1034,14 +1042,14 @@ function withHeaderFooter(
   const headers: Array<HeaderFooterReference> = [];
   const footers: Array<HeaderFooterReference> = [];
   if (hf.oddHeader) {
-    const content = buildHeaderFooterContent(hf.oddHeader, ws.name, scale, basePt);
+    const content = buildHeaderFooterContent(hf.oddHeader, ws.name, scale, basePt, fileName);
     if (content.length > 0) {
       headersFooters.set(headerRel, resolveBodyStyles(content, EMPTY_STYLE_SHEET));
       headers.push({ type: 'default', relationshipId: headerRel });
     }
   }
   if (hf.oddFooter) {
-    const content = buildHeaderFooterContent(hf.oddFooter, ws.name, scale, basePt);
+    const content = buildHeaderFooterContent(hf.oddFooter, ws.name, scale, basePt, fileName);
     if (content.length > 0) {
       headersFooters.set(footerRel, resolveBodyStyles(content, EMPTY_STYLE_SHEET));
       footers.push({ type: 'default', relationshipId: footerRel });

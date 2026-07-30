@@ -118,7 +118,10 @@ async function main(): Promise<void> {
   const ourPdf = resolve(workDir, 'ours.pdf');
   writeFileSync(
     ourPdf,
-    await Ream.parse(new Uint8Array(readFileSync(input))).convert('pdf', { fonts: FONTS }),
+    await Ream.parse(new Uint8Array(readFileSync(input))).convert('pdf', {
+      fonts: FONTS,
+      fileName: basename(input),
+    }),
   );
   const ours = rasterize(ourPdf, 'ours');
   const refs = rasterize(referenceToPdf(input, workDir), 'ref');

@@ -15,7 +15,7 @@
 //   npx tsx scripts/corpus/scout.ts corpus/external/lo-xlsx [limit] [offset]
 
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 
 import { referenceToPdf, stext } from './lib';
 import type { FontBytesByVariant } from '@/core/font';
@@ -62,7 +62,11 @@ async function main(): Promise<void> {
     const src = resolve(dir, name);
     let ours: Shape;
     try {
+      // LibreOffice heads a page with the file's NAME when the sheet asks for
+      // `&F`; a byte-oriented API has to be told it, or the comparison is
+      // against a header we were never given.
       const pdf = await Ream.parse(new Uint8Array(readFileSync(src))).convert('pdf', {
+        fileName: basename(src),
         fonts: FONTS,
       });
       const p = resolve(work, 'ours.pdf');
