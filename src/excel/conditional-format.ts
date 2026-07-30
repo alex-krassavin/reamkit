@@ -84,6 +84,8 @@ export interface CfOverride {
    * else, and dropping them made such a rule invisible.
    */
   readonly border?: XlsxBorder;
+  /** §18.8.9 — the format the rule renders the cell's value in. */
+  readonly numberFormat?: string;
   readonly fontColorHex?: string;
   readonly bold?: boolean;
   readonly italic?: boolean;
@@ -607,6 +609,7 @@ function dxfToOverride(dxf: Dxf | undefined): CfOverride | undefined {
   if (dxf.font?.bold !== undefined) out.bold = dxf.font.bold;
   if (dxf.font?.italic !== undefined) out.italic = dxf.font.italic;
   if (dxf.border) out.border = dxf.border;
+  if (dxf.numberFormat) out.numberFormat = dxf.numberFormat;
   return Object.keys(out).length > 0 ? out : undefined;
 }
 

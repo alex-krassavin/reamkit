@@ -57,6 +57,38 @@ describe('conditional formatting — cellIs (E-SHEET SC1)', () => {
     expect(textOf(bar(' showValue="0"'))).toEqual(['', '']);
   });
 
+  it("renders the value in the rule's own number format", () => {
+    // §18.8.9 — a dxf may carry a `<numFmt>`, which changes what the cell SAYS
+    // and not just how it looks. Every one of new_cond_format_test.xlsx's
+    // fourteen dxfs is a number format and nothing else, so every rule in it
+    // was a no-op: 1 where the reference shows 1.00.
+    const stylesXml = `
+      <fonts count="1"><font><sz val="11"/></font></fonts>
+      <fills count="1"><fill><patternFill patternType="none"/></fill></fills>
+      <borders count="1"><border/></borders>
+      <cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellXfs>
+      <dxfs count="1"><dxf><numFmt numFmtId="2" formatCode="0.00"/></dxf></dxfs>`;
+    const cf = `<conditionalFormatting sqref="A1:A3">${cfRule('greaterThan', 0, 5)}</conditionalFormatting>`;
+    const sheet = readXlsxToSheetDoc(
+      buildXlsx({ rows: [[2], [6], [9]], stylesXml, conditionalFormattingXml: cf }),
+    );
+    expect(sheet.styles.dxfs?.[0]?.numberFormat).toBe('0.00');
+
+    const flow = Ream.parse(
+      buildXlsx({ rows: [[2], [6], [9]], stylesXml, conditionalFormattingXml: cf }),
+    ).flow;
+    const table = flow.body.find((el) => el.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('expected a table');
+    const textOf = (row: number): string =>
+      (table.table.rows[row]?.cells[0]?.content ?? [])
+        .map((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text).join('') : ''))
+        .join('');
+    // 2 does not match the rule and keeps General; 6 and 9 take the rule's format.
+    expect(textOf(0)).toBe('2');
+    expect(textOf(1)).toBe('6.00');
+    expect(textOf(2)).toBe('9.00');
+  });
+
   it('applies a dxf that formats with nothing but an edge', () => {
     // §18.8.9. A rule may carry only a border, and reading dxfs for font and
     // fill alone made such a rule a no-op — tdf171828.xlsx rules the boundary

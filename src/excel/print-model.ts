@@ -430,6 +430,10 @@ function scaleRunFont(props: RunProperties, scale: number): RunProperties {
 // declared cell border still reads as the heavier line on the page.
 const PRINT_GRIDLINE_HEX = 'C0C0C0';
 
+// A synthetic id for a conditional format's own number format, which arrives as
+// a code rather than through the workbook's <numFmts> table.
+const CF_NUMBER_FORMAT_ID = 1_000_001;
+
 // Per-sheet budget on rendered characters — a DoS guard (see use site).
 const MAX_SHEET_TEXT_CHARS = 1_000_000;
 
@@ -1052,6 +1056,17 @@ export function worksheetToBody(
         if (over) {
           if (over.fillHex) shading = { colorHex: over.fillHex };
           if (over.dataBar) dataBar = over.dataBar;
+          // §18.8.9 — a rule may change how the VALUE reads, not just how the
+          // cell looks. Every dxf in new_cond_format_test.xlsx is a number
+          // format and nothing else, so every one of its rules was a no-op.
+          if (over.numberFormat !== undefined && ws.type === 'n' && ws.rawValue.length > 0) {
+            text = applyNumberFormat(
+              ws.rawValue,
+              CF_NUMBER_FORMAT_ID,
+              new Map([[CF_NUMBER_FORMAT_ID, over.numberFormat]]),
+              date1904,
+            );
+          }
           // §18.3.1.28 "Show Bar Only": the bar IS the cell's rendering, and
           // the number would sit on top of its own gauge. simple-monthly-budget
           // printed 2336 across the bar the reference draws bare.

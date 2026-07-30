@@ -425,6 +425,12 @@ export interface Dxf {
    * that (a rule under every year boundary, a box around a total).
    */
   readonly border?: XlsxBorder;
+  /**
+   * §18.8.9 `<numFmt formatCode>` — a rule may change how the VALUE reads, not
+   * just how the cell looks: two decimals where a threshold is crossed. Every
+   * dxf in new_cond_format_test.xlsx is one of these and nothing else.
+   */
+  readonly numberFormat?: string;
 }
 
 /**

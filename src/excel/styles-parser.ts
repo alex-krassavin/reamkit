@@ -135,6 +135,11 @@ function parseDxfs(root: Record<string, unknown>, theme: ThemePalette | undefine
     // §18.8.9 — a dxf may format with nothing but an edge. Reading only font
     // and fill made such a rule a no-op: tdf171828.xlsx rules the boundary
     // under every year with one, and six of its twelve dxfs are border-only.
+    // §18.8.9 — a dxf may carry a number format, which changes what the cell
+    // SAYS and not just how it looks.
+    const numFmtObj = asObject(obj['numFmt']);
+    const code = numFmtObj ? strAttr(numFmtObj, 'formatCode') : undefined;
+    if (code !== undefined && code.length > 0) dxf.numberFormat = code;
     const borderObj = asObject(obj['border']);
     if (borderObj) {
       const border: Mutable<XlsxBorder> = {};
