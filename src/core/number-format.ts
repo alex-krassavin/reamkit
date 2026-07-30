@@ -457,6 +457,38 @@ function defaultNumberRender(rawValue: string): string {
   return String(n);
 }
 
+/**
+ * A General number rounded to the decimals that fit `maxChars` characters.
+ *
+ * General is not a fixed format: a spreadsheet shows as many decimal places as
+ * the column has room for and ROUNDS to that, so 4.3900875881221957 in a
+ * column eight characters wide reads 4.390088. We rendered every stored digit
+ * and let the cell clip it, which turns the same value into 4.390087 — off by
+ * one in the last place shown, with nothing to say a digit was cut.
+ *
+ * The integer part is never dropped: a number too wide even without decimals
+ * keeps them all and the cell says so its own way (see hashOnOverflow).
+ *
+ * @param rawValue The cell's stored value.
+ * @param maxChars How many characters the column has room for.
+ */
+export function generalToWidth(rawValue: string, maxChars: number): string {
+  const n = Number(rawValue);
+  if (!Number.isFinite(n) || Number.isInteger(n)) return defaultNumberRender(rawValue);
+  const full = defaultNumberRender(rawValue);
+  if (full.length <= maxChars) return full;
+  const dot = full.indexOf('.');
+  if (dot < 0) return full;
+  // Room left for decimals once the sign, the integer part and the point are in.
+  const room = Math.floor(maxChars) - dot - 1;
+  if (room < 1) return full;
+  const decimals = Math.min(room, full.length - dot - 1);
+  const shifted = Number(`${Number(n.toPrecision(15))}e${decimals}`);
+  const rounded = shifted < 0 ? -Math.round(-shifted) : Math.round(shifted);
+  const back = Number(`${rounded}e${-decimals}`);
+  return Number.isFinite(back) ? defaultNumberRender(String(back)) : full;
+}
+
 function applyFormatString(rawValue: string, format: string): string {
   const n = Number(rawValue);
   const sections = splitSections(format);

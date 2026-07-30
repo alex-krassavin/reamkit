@@ -55,7 +55,13 @@ import type { SheetHyperlink, SheetSlicer } from '@/core/ir/sheet';
 import type { Loss } from '@/core/ir/loss';
 import { FEATURES } from '@/core/ir/features';
 import { eighthPtToPt, halfPtToPt, pt, twipsToPt } from '@/core/ir';
-import { applyNumberFormat, numberFormatColorHex, parseAreaRef, parseTitleRowRange } from '@/excel';
+import {
+  applyNumberFormat,
+  generalToWidth,
+  numberFormatColorHex,
+  parseAreaRef,
+  parseTitleRowRange,
+} from '@/excel';
 import { bandedTables, computeColumnBands } from '@/excel/column-bands';
 import { buildConditionalFormatter } from '@/excel/conditional-format';
 
@@ -979,6 +985,19 @@ export function worksheetToBody(
 
       const ws = cellMatrix[r]?.[c];
       let text = ws ? resolveCellText(ws, sharedStrings, styles, date1904) : '';
+      // General is not a fixed format: a spreadsheet shows as many decimals as
+      // the column has room for and ROUNDS to that. Rendering every stored digit
+      // and letting the cell clip it turns 4.3900875881221957 into "4.390087"
+      // where every other reader shows "4.390088" — off by one in the last place
+      // shown, with nothing to say a digit was cut (Sparklines.xlsx).
+      if (
+        ws?.type === 'n' &&
+        (styles.cellXfs[ws.styleIndex ?? 0]?.numFmtId ?? 0) === 0 &&
+        text.includes('.')
+      ) {
+        const unit = charTwips(styles.cellXfs[ws.styleIndex ?? 0], styles, textTwipsUnit);
+        if (unit > 0) text = generalToWidth(ws.rawValue, columnWidths[c]! / unit);
+      }
       // The full (pre-truncation) text feeds conditional-format text/dup rules (W5).
       const cfText = text.length > 0 ? text : undefined;
       if (text.length > textBudget) {
