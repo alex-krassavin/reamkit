@@ -5,6 +5,7 @@
 import { XMLParser } from 'fast-xml-parser';
 
 import type { SheetRichRun } from '@/core/spreadsheet-model';
+import { decodeXstring } from '@/excel/escaped-text';
 
 const decoder = new TextDecoder('utf-8');
 
@@ -160,12 +161,12 @@ function colorRgb(node: unknown): string | undefined {
 }
 
 function textOf(node: unknown): string {
-  if (typeof node === 'string') return node;
+  if (typeof node === 'string') return decodeXstring(node);
   if (typeof node === 'number') return String(node);
   if (!node || typeof node !== 'object') return '';
   const obj = node as Record<string, unknown>;
   const inner = obj['#text'];
-  if (typeof inner === 'string') return inner;
+  if (typeof inner === 'string') return decodeXstring(inner);
   if (typeof inner === 'number') return String(inner);
   return '';
 }

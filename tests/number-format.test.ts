@@ -227,14 +227,21 @@ describe('applyNumberFormat — codes real producers write', () => {
     // cell clip it turns 4.3900875881221957 into "4.390087" where every other
     // reader shows "4.390088" — off by one in the last place shown, with
     // nothing to say a digit was cut (Sparklines.xlsx).
-    expect(generalToWidth('4.3900875881221957', 8)).toBe('4.390088');
-    expect(generalToWidth('-6.1052278206732389', 9)).toBe('-6.105228');
+    const upTo =
+      (n: number) =>
+      (t: string): boolean =>
+        t.length <= n;
+    expect(generalToWidth('4.3900875881221957', upTo(8))).toBe('4.390088');
+    expect(generalToWidth('-6.1052278206732389', upTo(9))).toBe('-6.105228');
     // Room for everything ⇒ everything.
-    expect(generalToWidth('4.3900875881221957', 30)).toBe('4.390087588122196');
-    // An integer has no decimals to give up, and a number too wide even without
-    // them keeps them all — the cell says so its own way.
-    expect(generalToWidth('1234', 2)).toBe('1234');
-    expect(generalToWidth('12345.678', 3)).toBe('12345.678');
+    expect(generalToWidth('4.3900875881221957', upTo(30))).toBe('4.390087588122196');
+    // An integer that will not fit goes scientific rather than reading as a
+    // number a thousand times smaller (escape-unicode.xlsx printed "1161014"
+    // for 1161014163).
+    expect(generalToWidth('1161014163', upTo(9))).toBe('1.161E+09');
+    expect(generalToWidth('1161014163', upTo(30))).toBe('1161014163');
+    // Too narrow even for that: the cell says so its own way, with hashes.
+    expect(generalToWidth('1161014163', upTo(3))).toBe('1161014163');
   });
 
   it('rounds on the decimal number, half away from zero', () => {

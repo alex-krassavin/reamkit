@@ -6,6 +6,7 @@ import { strToU8, zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 
 import { buildXlsx } from './fixtures/build-xlsx';
+import { decodeXstring } from '@/excel/escaped-text';
 import { convertXlsxToPdfSync } from '@/core/converter';
 import { parseTtf } from '@/core/font';
 import {
@@ -900,6 +901,21 @@ describe('xlsx print-model rendering', () => {
     // Cell text is identical either way.
     expect(plain).toContain(`<${hexOf('A')}> Tj`);
     expect(gridded).toContain(`<${hexOf('A')}> Tj`);
+  });
+
+  it('decodes the _xHHHH_ escape SpreadsheetML writes for a control character', () => {
+    // §22.9.2.19 ST_Xstring. XML cannot carry a carriage return inside <t> —
+    // any parser would normalise it away — so Excel writes `_x000D_` and every
+    // reader decodes it. Drawn as it stands the escape is gibberish mid
+    // sentence: escape-unicode.xlsx renders "Line 1_x000D_Line 2".
+    expect(decodeXstring('Line 1_x000D_Line 2')).toBe('Line 1\rLine 2');
+    // `_` itself is escaped when it would start a sequence, and decoding is a
+    // single pass: the literal text `_x005F_x000D_` is `_x000D_`, not a return.
+    expect(decodeXstring('_x005F_x000D_')).toBe('_x000D_');
+    // Text with no escape comes back untouched, and a lone surrogate is not a
+    // character — the escape stays as written rather than becoming half of one.
+    expect(decodeXstring('plain text')).toBe('plain text');
+    expect(decodeXstring('_xD800_')).toBe('_xD800_');
   });
 
   it('clips rendering to _xlnm.Print_Area (A1-anchored)', () => {

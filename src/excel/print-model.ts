@@ -990,17 +990,20 @@ export function worksheetToBody(
       const ws = cellMatrix[r]?.[c];
       let text = ws ? resolveCellText(ws, sharedStrings, styles, date1904) : '';
       // General is not a fixed format: a spreadsheet shows as many decimals as
-      // the column has room for and ROUNDS to that. Rendering every stored digit
-      // and letting the cell clip it turns 4.3900875881221957 into "4.390087"
-      // where every other reader shows "4.390088" — off by one in the last place
-      // shown, with nothing to say a digit was cut (Sparklines.xlsx).
-      if (
-        ws?.type === 'n' &&
-        (styles.cellXfs[ws.styleIndex ?? 0]?.numFmtId ?? 0) === 0 &&
-        text.includes('.')
-      ) {
+      // the column has room for and ROUNDS to that, and falls back to
+      // scientific notation when the integer part alone will not fit. Rendering
+      // every stored digit and letting the cell clip it turns
+      // 4.3900875881221957 into "4.390087" (Sparklines.xlsx) and 1161014163
+      // into "1161014" (escape-unicode.xlsx) — the second reads as a number a
+      // thousand times smaller, with nothing to say a digit was cut.
+      if (ws?.type === 'n' && (styles.cellXfs[ws.styleIndex ?? 0]?.numFmtId ?? 0) === 0) {
         const unit = charTwips(styles.cellXfs[ws.styleIndex ?? 0], styles, textTwipsUnit);
-        if (unit > 0) text = generalToWidth(ws.rawValue, columnWidths[c]! / unit);
+        // Whether a rendering fits is measured the way everything else on this
+        // page is: charWidthUnits, which reports the face we DRAW in.
+        if (unit > 0) {
+          const room = columnWidths[c]! / unit;
+          text = generalToWidth(ws.rawValue, (candidate) => estimateChars(candidate) <= room);
+        }
       }
       // The full (pre-truncation) text feeds conditional-format text/dup rules (W5).
       const cfText = text.length > 0 ? text : undefined;

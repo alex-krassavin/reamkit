@@ -42,6 +42,7 @@ import type {
 } from '@/core/spreadsheet-model';
 import { parseCellRef } from '@/excel/cell-reference';
 import { parseAreaRef } from '@/excel/defined-name-ref';
+import { decodeXstring } from '@/excel/escaped-text';
 
 type MutableMerge = {
   -readonly [K in keyof MergedRange]: MergedRange[K];
@@ -1120,12 +1121,12 @@ function strAttr(obj: Record<string, unknown>, key: string): string | undefined 
 }
 
 function textOf(node: unknown): string {
-  if (typeof node === 'string') return node;
+  if (typeof node === 'string') return decodeXstring(node);
   if (typeof node === 'number') return String(node);
   if (!node || typeof node !== 'object') return '';
   const obj = node as Record<string, unknown>;
   const inner = obj['#text'];
-  if (typeof inner === 'string') return inner;
+  if (typeof inner === 'string') return decodeXstring(inner);
   if (typeof inner === 'number') return String(inner);
   return '';
 }

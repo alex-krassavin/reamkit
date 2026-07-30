@@ -469,25 +469,61 @@ function defaultNumberRender(rawValue: string): string {
  * The integer part is never dropped: a number too wide even without decimals
  * keeps them all and the cell says so its own way (see hashOnOverflow).
  *
+ * `fits` decides, and it must measure in the face this will be DRAWN in rather
+ * than count characters against the column's width in the document's unit.
+ * Counted that way we produced nine digits for a column that holds nine of
+ * Excel's and eight of ours, and the layout clipped the ninth — the very
+ * truncation this exists to prevent. Fewer digits than the reference shows is a
+ * coarser number; a clipped one is a different number.
+ *
  * @param rawValue The cell's stored value.
- * @param maxChars How many characters the column has room for.
+ * @param fits     Whether a rendering will fit the cell.
  */
-export function generalToWidth(rawValue: string, maxChars: number): string {
+export function generalToWidth(rawValue: string, fits: (text: string) => boolean): string {
   const n = Number(rawValue);
-  if (!Number.isFinite(n) || Number.isInteger(n)) return defaultNumberRender(rawValue);
+  if (!Number.isFinite(n)) return defaultNumberRender(rawValue);
   const full = defaultNumberRender(rawValue);
-  if (full.length <= maxChars) return full;
+  if (fits(full)) return full;
   const dot = full.indexOf('.');
-  if (dot < 0) return full;
-  // Room left for decimals once the sign, the integer part and the point are in.
-  const room = Math.floor(maxChars) - dot - 1;
-  if (room < 1) return full;
-  const decimals = Math.min(room, full.length - dot - 1);
-  const shifted = Number(`${Number(n.toPrecision(15))}e${decimals}`);
-  const rounded = shifted < 0 ? -Math.round(-shifted) : Math.round(shifted);
-  const back = Number(`${rounded}e${-decimals}`);
-  return Number.isFinite(back) ? defaultNumberRender(String(back)) : full;
+  // No decimals to give up — the number is too wide as an integer, and General
+  // answers that with scientific notation rather than a number that reads as a
+  // smaller one: 1161014163 in a default-width column is 1.16E+09, never
+  // "1161014" (escape-unicode.xlsx).
+  if (dot < 0) return scientificToWidth(n, fits) ?? full;
+  // Give up decimals one at a time until it fits — rounding at each step, so
+  // the last digit shown is the right one.
+  let shortened = full;
+  for (let decimals = full.length - dot - 2; decimals >= 0; decimals--) {
+    const shifted = Number(`${Number(n.toPrecision(15))}e${decimals}`);
+    const rounded = shifted < 0 ? -Math.round(-shifted) : Math.round(shifted);
+    const back = Number(`${rounded}e${-decimals}`);
+    if (!Number.isFinite(back)) break;
+    shortened = defaultNumberRender(String(back));
+    if (fits(shortened)) return shortened;
+  }
+  // Dropping decimals was not enough — the integer part alone overruns.
+  return scientificToWidth(n, fits) ?? shortened;
 }
+
+/**
+ * `value` in scientific notation with as many mantissa decimals as `fits`
+ * allows, spelled Excel's way: an upper-case `E`, a signed exponent of at least
+ * two digits. Undefined when even a bare `1E+09` will not fit — the cell then
+ * says so with hashes rather than shrinking further.
+ */
+function scientificToWidth(value: number, fits: (text: string) => boolean): string | undefined {
+  for (let decimals = MAX_SCIENTIFIC_DECIMALS; decimals >= 0; decimals--) {
+    const [mantissa, exp] = value.toExponential(decimals).split('e');
+    const sign = exp!.startsWith('-') ? '-' : '+';
+    const digits = exp!.replace(/^[-+]/, '').padStart(2, '0');
+    const out = `${mantissa!}E${sign}${digits}`;
+    if (fits(out)) return out;
+  }
+  return undefined;
+}
+
+/** Excel never shows more mantissa decimals than this under General. */
+const MAX_SCIENTIFIC_DECIMALS = 10;
 
 function applyFormatString(rawValue: string, format: string): string {
   const n = Number(rawValue);
