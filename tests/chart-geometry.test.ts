@@ -108,6 +108,29 @@ describe('font subsetting reaches every string a chart draws', () => {
   });
 });
 
+describe('a crowded category axis', () => {
+  it('labels every Nth category so they do not collide', () => {
+    // 47813.xlsx plots 1700 points. Drawing every label turned the axis into a
+    // solid black bar under the plot; Excel and Calc both thin it.
+    const many: Chart = {
+      ...barChart('col'),
+      categories: Array.from({ length: 400 }, (_, i) => String(i + 1)),
+      series: [{ name: 'S', values: Array.from({ length: 400 }, () => 1) }],
+    };
+    const drawn = buildBarScene(many, W, H, measure).labels.filter((l) =>
+      /^\d+$/.test(l.text),
+    ).length;
+    // Far fewer than 400, and not none.
+    expect(drawn).toBeGreaterThan(2);
+    expect(drawn).toBeLessThan(120);
+    // A short axis still labels every category.
+    const few = buildBarScene(barChart('col'), W, H, measure).labels.map((l) => l.text);
+    expect(few).toContain('A');
+    expect(few).toContain('B');
+    expect(few).toContain('C');
+  });
+});
+
 describe('the chart-space frame (§21.2.2.198)', () => {
   it('draws it first, behind everything else', () => {
     const framed: Chart = { ...barChart('col'), frameFillHex: 'FFFFFF', frameLineHex: 'D9D9D9' };

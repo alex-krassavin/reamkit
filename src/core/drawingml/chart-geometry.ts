@@ -454,7 +454,15 @@ function buildFrame(
   }
 
   const slot = (horizontal ? plotH : plotW) / nCats;
-  for (let c = 0; c < nCats; c++) {
+  // Label every Nth category, where N is what it takes for them not to collide.
+  // Excel and Calc both thin a crowded axis; drawing all of them turned
+  // 47813.xlsx's 1700 points into a solid black bar under the plot. The step is
+  // measured, not guessed: the widest label plus a gap, over the slot.
+  const need = horizontal
+    ? CHART_LABEL_PT * 1.4
+    : Math.max(0, ...chart.categories.map((t) => measure(t, CHART_LABEL_PT))) + 4;
+  const step = Math.max(1, Math.ceil(need / Math.max(slot, 0.01)));
+  for (let c = 0; c < nCats; c += step) {
     // No <c:cat> means the categories are the point indices, which is what
     // Excel and Calc both label the axis with — an unlabelled category axis
     // leaves the bars standing on nothing.

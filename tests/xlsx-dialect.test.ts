@@ -24,6 +24,7 @@ import { buildXlsx } from './fixtures/build-xlsx';
 import { toDialect } from './fixtures/xlsx-dialect';
 import type { DialectOptions } from './fixtures/xlsx-dialect';
 import { readXlsxToSheetDoc } from '@/excel/xlsx-reader';
+import { parseWorksheet } from '@/excel/worksheet-parser';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SML_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
@@ -115,5 +116,24 @@ describe('dialect invariance', () => {
     const rels = read('xl/_rels/workbook.xml.rels');
     expect(rels).not.toMatch(/"rId\d+"/);
     expect(read('xl/workbook.xml')).not.toMatch(/rId\d+/);
+  });
+});
+describe('a chartsheet root (§18.3.1.99)', () => {
+  it("reads its drawing and page setup, not just a worksheet's", () => {
+    // A `<chartsheet>` is a tab that is nothing but a chart: no sheetData, but
+    // the same pageMargins / pageSetup / `<drawing r:id>` a worksheet carries.
+    // Reading only `<worksheet>` made it an empty sheet, which then dropped out
+    // of the print entirely — 47813.xlsx lost its whole "Chart" tab, a page the
+    // reference fills with a plot of 1700 points.
+    const xml = new TextEncoder().encode(
+      '<?xml version="1.0"?><chartsheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"' +
+        ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+        '<sheetPr/><pageMargins left="0.75" right="0.75" top="1" bottom="1" header="0.5" footer="0.5"/>' +
+        '<drawing r:id="rId1"/></chartsheet>',
+    );
+    const parsed = parseWorksheet(xml);
+    expect(parsed.drawingRelId).toBe('rId1');
+    expect(parsed.cells).toHaveLength(0);
+    expect(parsed.pageMargins?.leftInches).toBeCloseTo(0.75, 3);
   });
 });

@@ -85,7 +85,12 @@ const parser = new XMLParser({
 export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
   const xml = decoder.decode(data);
   const tree = parser.parse(xml) as Record<string, unknown>;
-  const worksheet = tree['worksheet'];
+  // §18.3.1.99 `<chartsheet>` — a sheet that is nothing but a chart. It has no
+  // sheetData, but it does carry the same `<pageMargins>`, `<pageSetup>` and
+  // `<drawing r:id>` a worksheet does, and reading none of them cost
+  // 47813.xlsx its whole "Chart" tab: a page the reference fills with a plot of
+  // 1700 points came out as the sheet after it.
+  const worksheet = tree['worksheet'] ?? tree['chartsheet'];
   const emptyExtras = () => ({
     columns: [] as ReadonlyArray<ColumnWidth>,
     merges: [] as ReadonlyArray<MergedRange>,
