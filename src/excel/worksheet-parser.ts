@@ -979,7 +979,17 @@ function collectControls(
     seen.add(relId);
     const name = strAttr(obj, 'name');
     const shapeId = strAttr(obj, 'shapeId');
-    out.push({ relId, ...(name ? { name } : {}), ...(shapeId ? { shapeId } : {}) });
+    // §18.3.1.20 `<controlPr print>` — absent means print, so only an explicit
+    // false is worth recording.
+    const controlPr = asObjectNode(obj['controlPr']);
+    const printAttr = controlPr ? strAttr(controlPr, 'print') : undefined;
+    const print = printAttr === '0' || printAttr === 'false' ? false : undefined;
+    out.push({
+      relId,
+      ...(name ? { name } : {}),
+      ...(shapeId ? { shapeId } : {}),
+      ...(print === false ? { print } : {}),
+    });
   }
 }
 

@@ -391,6 +391,13 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
     if (worksheet.formControls && worksheet.formControls.length > 0) {
       const resolvedControls: Array<SheetFormControl> = [];
       for (const fc of worksheet.formControls) {
+        // §18.3.1.20 `<controlPr print="0">`, and the same thing said the
+        // legacy way by the VML shape this control points at. Excel's "Print
+        // object" is on by default; a control that clears it is on screen only,
+        // and button-form-control.xlsx — which says it BOTH ways — prints as a
+        // blank page in Calc while we drew the button.
+        if (fc.print === false) continue;
+        if (fc.shapeId !== undefined && legacyVml.nonPrinting.has(fc.shapeId)) continue;
         const rel = wsRels.find((r) => r.id === fc.relId);
         const part = rel ? pkg.resolveRelatedPart(resolved.path, rel) : undefined;
         // §18.3.1.19 <control> reaches BOTH kinds: a form control's ctrlProps
@@ -596,8 +603,16 @@ function readLegacyVml(
   sheetPath: string,
   wsRels: ReadonlyArray<Relationship>,
   worksheet: ParsedWorksheet,
-): { controls: Array<SheetFormControl>; boxes: ReadonlyMap<string, VmlShapeBox> } {
-  const empty = { controls: [], boxes: new Map<string, VmlShapeBox>() };
+): {
+  controls: Array<SheetFormControl>;
+  boxes: ReadonlyMap<string, VmlShapeBox>;
+  nonPrinting: ReadonlySet<string>;
+} {
+  const empty = {
+    controls: [],
+    boxes: new Map<string, VmlShapeBox>(),
+    nonPrinting: new Set<string>(),
+  };
   const relId = worksheet.legacyDrawingRelId;
   if (relId === undefined) return empty;
   const rel = wsRels.find((r) => r.id === relId);
@@ -618,7 +633,7 @@ function readLegacyVml(
       ...(shape.fontSizePt !== undefined ? { fontSizePt: shape.fontSizePt } : {}),
     });
   }
-  return { controls: out, boxes: drawing.boxes };
+  return { controls: out, boxes: drawing.boxes, nonPrinting: drawing.nonPrinting };
 }
 
 function buildThemePalette(

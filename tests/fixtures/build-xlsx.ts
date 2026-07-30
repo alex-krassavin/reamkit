@@ -185,6 +185,8 @@ export interface XlsxBuilderOptions {
     readonly objectType: string;
     readonly checked?: boolean;
     readonly value?: number;
+    /** §18.3.1.20 `<controlPr print>` — false writes `print="0"`. */
+    readonly print?: boolean;
   }>;
   /** ActiveX controls on the FIRST sheet (E-SHEET W10): <oleObjects> + activeX part. */
   readonly oleObjects?: ReadonlyArray<{
@@ -844,7 +846,7 @@ ${rels.join('\n')}
     const ctrlXml = parts
       .map(
         (p) =>
-          `<x14:control shapeId="${p.idx}" r:id="${p.rid}" name="${escapeXml(p.fc.name)}"><x14:controlPr/></x14:control>`,
+          `<x14:control shapeId="${p.idx}" r:id="${p.rid}" name="${escapeXml(p.fc.name)}"><x14:controlPr${p.fc.print === false ? ' print="0"' : ''}/></x14:control>`,
       )
       .join('');
     const extLst =

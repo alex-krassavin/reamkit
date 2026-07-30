@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { buildXlsx } from './fixtures/build-xlsx';
 import type { BodyElement } from '@/core/document-model';
 import { parseFormControlProps } from '@/excel/form-control-parser';
+import { parseVmlDrawing } from '@/excel/vml-drawing';
 import { Ream } from '@/core/converter/ream';
 import { convertXlsxToPdfSync } from '@/core/converter';
 
@@ -39,6 +40,33 @@ describe('ctrlProp parser (E-SHEET W8)', () => {
       objectType: 'CheckBox',
       checked: false,
     });
+  });
+});
+
+describe('legacy VML "Print object" (E-SHEET W8)', () => {
+  const vml = (printObject: string): Uint8Array =>
+    enc(
+      `<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"
+            xmlns:x="urn:schemas-microsoft-com:office:excel">
+         <v:shape id="_x0000_s1025" type="#_x0000_t201"
+            style='position:absolute;margin-left:68.25pt;margin-top:48pt;width:106.5pt;height:58.5pt'>
+           <v:textbox><div><font>Button 1</font></div></v:textbox>
+           <x:ClientData ObjectType="Button">${printObject}</x:ClientData>
+         </v:shape>
+       </xml>`,
+    );
+
+  it('keeps a shape that says nothing about printing', () => {
+    const drawing = parseVmlDrawing(vml(''));
+    expect(drawing.controls.map((c) => c.caption)).toEqual(['Button 1']);
+    expect(drawing.nonPrinting.size).toBe(0);
+    expect(drawing.boxes.get('1025')?.widthPt).toBeCloseTo(106.5, 2);
+  });
+
+  it('drops one that clears it, and names the shape so its <control> goes too', () => {
+    const drawing = parseVmlDrawing(vml('<x:PrintObject>False</x:PrintObject>'));
+    expect(drawing.controls).toHaveLength(0);
+    expect(drawing.nonPrinting.has('1025')).toBe(true);
   });
 });
 
@@ -116,6 +144,25 @@ describe('form controls — end to end (E-SHEET W8)', () => {
     const texts = paragraphTexts(flow.body);
     expect(texts).not.toContain('Form controls');
     expect(texts).not.toContain('ActiveX controls');
+  });
+
+  it('leaves off a control whose "Print object" is cleared (§18.3.1.20)', () => {
+    // Excel's Print object checkbox is on by default; a control that clears it
+    // is on screen only. button-form-control.xlsx says so twice — `print="0"`
+    // on the controlPr and `<x:PrintObject>False</x:PrintObject>` in the VML —
+    // and LibreOffice prints it as a blank page while we drew the button.
+    const flow = Ream.parse(
+      buildXlsx({
+        rows: [['data']],
+        formControls: [
+          { name: 'Shown', objectType: 'Button' },
+          { name: 'Screen only', objectType: 'Button', print: false },
+        ],
+      }),
+    ).flow;
+    const texts = paragraphTexts(flow.body);
+    expect(texts).toContain('Shown (Button)');
+    expect(texts.some((t) => t.includes('Screen only'))).toBe(false);
   });
 
   it('adds no section to a sheet without controls (byte-zero)', () => {

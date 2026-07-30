@@ -710,6 +710,12 @@ export interface FormControlRef {
    * Forms-toolbar control that has no `<control>` entry at all.
    */
   readonly shapeId?: string;
+  /**
+   * §18.3.1.20 `<controlPr print>` — Excel's "Print object" checkbox. It
+   * defaults to true, and a control that clears it is on screen only: neither
+   * Excel nor Calc puts it on the page.
+   */
+  readonly print?: boolean;
 }
 
 /**

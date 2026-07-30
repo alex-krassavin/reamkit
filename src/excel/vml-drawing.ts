@@ -78,6 +78,13 @@ export interface VmlDrawing {
    * the one thing that says where it goes.
    */
   readonly boxes: ReadonlyMap<string, VmlShapeBox>;
+  /**
+   * Shape ids whose `<x:ClientData>` clears `<x:PrintObject>` — Excel's "Print
+   * object" checkbox, the legacy spelling of §18.3.1.20 `<controlPr print>`.
+   * Such a shape is on screen only, and the `<control>` that shares its id must
+   * not be drawn either.
+   */
+  readonly nonPrinting: ReadonlySet<string>;
 }
 
 const SPID_PREFIX = /^_x0000_s/;
@@ -130,15 +137,30 @@ export function parseVmlDrawing(data: Uint8Array): VmlDrawing {
   const root = asObject(tree['xml']) ?? tree;
   const out: Array<VmlFormControl> = [];
   const boxes = new Map<string, VmlShapeBox>();
+  const nonPrinting = new Set<string>();
   for (const raw of asArray(root['shape'])) {
     const shape = asObject(raw);
     if (!shape) continue;
-    const spid = strAttr(shape, 'spid');
+    // The shape id is `o:spid` when the producer writes one and the plain `id`
+    // otherwise — button-form-control.xlsx spells it only the second way, and
+    // reading just `o:spid` left its shape anonymous, so nothing could pair it
+    // with the `<control shapeId="1025">` that names it.
+    const idAttr = strAttr(shape, 'id');
+    const spid =
+      strAttr(shape, 'spid') ??
+      (idAttr !== undefined && SPID_PREFIX.test(idAttr) ? idAttr : undefined);
     const shapeId = spid?.replace(SPID_PREFIX, '');
     const box = shapeBox(strAttr(shape, 'style'));
     if (shapeId && box) boxes.set(shapeId, box);
     const client = asObject(shape['ClientData']);
     if (!client) continue;
+    // Excel's "Print object", the legacy spelling of §18.3.1.20's `print`.
+    // Absent means print — only `False` takes the shape off the page.
+    const prints = flatText(client['PrintObject'])?.toLowerCase() !== 'false';
+    if (!prints) {
+      if (shapeId) nonPrinting.add(shapeId);
+      continue;
+    }
     const objectType = strAttr(client, 'ObjectType');
     if (!objectType || !CONTROL_TYPES.has(objectType)) continue;
     const control: Mutable<VmlFormControl> = { objectType };
@@ -154,7 +176,7 @@ export function parseVmlDrawing(data: Uint8Array): VmlDrawing {
     if ('FirstButton' in client) control.firstButton = true;
     out.push(control);
   }
-  return { controls: out, boxes };
+  return { controls: out, boxes, nonPrinting };
 }
 
 /** CSS length → points. A bare number is pixels, VML's implicit unit. */
