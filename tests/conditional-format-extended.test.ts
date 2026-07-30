@@ -156,6 +156,24 @@ describe('conditional formatting — duplicate / unique (E-SHEET W5)', () => {
     expect(columnShadings([['Apple'], ['apple'], ['Banana']], cf)).toEqual([RED, RED, undefined]);
   });
 
+  it('still colours a blank for a rule written about zero', () => {
+    // Excel and Calc both compare an empty cell as 0 — 48539.xlsx paints its
+    // whole Pass/Fail column red from `cellIs equal 0` over cells that hold
+    // nothing. Not repeating and not comparing are different questions.
+    const cf =
+      '<conditionalFormatting sqref="A1:A2"><cfRule type="cellIs" dxfId="0" priority="1" operator="equal"><formula>0</formula></cfRule></conditionalFormatting>';
+    const blank = { value: null, styleIndex: 0 };
+    expect(
+      columnShadings(
+        [
+          [0, 'x'],
+          [blank, 'y'],
+        ],
+        cf,
+      ),
+    ).toEqual([RED, RED]);
+  });
+
   it('does not count a styled blank as a zero', () => {
     const cf =
       '<conditionalFormatting sqref="A1:A2"><cfRule type="duplicateValues" dxfId="0" priority="1"/></conditionalFormatting>';

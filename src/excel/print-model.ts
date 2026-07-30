@@ -1105,14 +1105,15 @@ export function worksheetToBody(
       // override the cell's fill/font and may add an in-cell data bar. Only number
       // cells carry a comparable value; no formatter ⇒ block skipped (byte-identical).
       if (cfFormatter && ws) {
-        // A styled blank is not a number cell, however §18.3.1.4 types it: with
-        // no value there is nothing to compare, and offering `Number('')` here
-        // would let every blank match a rule written for zero.
+        // §18.3.1.4 types a value-less cell "n" by default, and `Number('')` is
+        // 0 — which is exactly how Excel and Calc compare it: a rule written
+        // `cellIs equal 0` colours the empty cells too, and 48539.xlsx paints
+        // its whole Pass/Fail column that way. What a blank is NOT is a value
+        // that can repeat, so it goes to the formatter flagged.
+        const blank = ws.rawValue.length === 0 && ws.inlineText === undefined;
         const cfValue =
-          ws.type === 'n' && ws.rawValue.length > 0 && Number.isFinite(Number(ws.rawValue))
-            ? Number(ws.rawValue)
-            : undefined;
-        const over = cfFormatter(absR, absC, cfValue, cfText);
+          ws.type === 'n' && Number.isFinite(Number(ws.rawValue)) ? Number(ws.rawValue) : undefined;
+        const over = cfFormatter(absR, absC, cfValue, cfText, blank);
         if (over) {
           if (over.fillHex) shading = { colorHex: over.fillHex };
           if (over.dataBar) dataBar = over.dataBar;

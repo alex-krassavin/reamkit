@@ -116,6 +116,13 @@ export type CellConditionalFormatter = (
   col: number,
   numericValue: number | undefined,
   text: string | undefined,
+  /**
+   * The cell holds nothing. It still COMPARES as zero — Excel and Calc both
+   * colour an empty cell for a rule written `cellIs equal 0`, which is how
+   * 48539.xlsx paints its whole Pass/Fail column red — but it is not a value
+   * that can repeat, so duplicate/uniqueValues must pass it over.
+   */
+  blank?: boolean,
 ) => CfOverride | undefined;
 
 // A resolved top10/aboveAverage threshold: a value matches by comparing against
@@ -257,14 +264,14 @@ export function buildConditionalFormatter(
     ? buildEvalContext(cells, resolveText, nowSerial, date1904, cross)
     : undefined;
 
-  return (row, col, value, text) => {
+  return (row, col, value, text, blank) => {
     // A cell with neither a comparable number nor any text matches nothing — skip
     // the loop entirely so number-only sheets stay byte-identical to before W5.
     // (An expression rule may still target an empty cell, so keep going then.)
     if (!hasExpr && value === undefined && (text === undefined || text.length === 0)) {
       return undefined;
     }
-    const dupKey = dupKeyOf(value, text);
+    const dupKey = blank === true ? undefined : dupKeyOf(value, text);
     let textFmt: CfOverride | undefined;
     let textClaimed = false;
     let bar: CfOverride['dataBar'];
