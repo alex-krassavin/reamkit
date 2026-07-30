@@ -867,6 +867,14 @@ export interface ChartSeries {
   readonly xValues?: ReadonlyArray<number>; // c:xVal numCache (scatter — paired with values)
   readonly colorHex?: string; // c:spPr solidFill
   readonly pointColors?: ReadonlyArray<ChartDataPoint>; // c:dPt overrides (pie slices)
+  /**
+   * §21.2.2.49 `c:dLbl/c:tx` — a data label the author typed rather than one
+   * the chart computes, by point index. Excel and Calc print it verbatim: it
+   * is the only place a label like "Промышленные потребители; 22,7млрд.кВтч;
+   * 67,3%" exists, and generating one from the value instead loses the whole
+   * sentence.
+   */
+  readonly pointLabels?: ReadonlyArray<{ readonly idx: number; readonly text: string }>;
 }
 
 /** A parsed chart (§21.2): its type, title, categories, series and rendering options. */

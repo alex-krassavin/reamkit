@@ -172,6 +172,34 @@ describe('parseChart', () => {
     expect(general.numberFormat).toBeUndefined();
   });
 
+  it('prints a data label the author typed, not the one it would compute', () => {
+    // §21.2.2.49 — a <c:dLbl> carrying its own <c:tx><c:rich> replaces whatever
+    // the chart would generate for that point, and it is the only place that
+    // text exists. orderOfCNumFmtElements.xlsx labels every slice of its pie
+    // with a sentence ("Промышленные потребители; 22,7млрд.кВтч; 67,3%") and we
+    // drew a bare "67%" over each one.
+    const pie = `<c:chartSpace ${C_NS}><c:chart><c:plotArea><c:pieChart>
+      <c:ser><c:idx val="0"/>
+        <c:dLbls>
+          <c:dLbl><c:idx val="0"/><c:tx><c:rich><a:p><a:r><a:t>Big slice; 60%</a:t></a:r></a:p></c:rich></c:tx></c:dLbl>
+          <c:showVal val="1"/>
+        </c:dLbls>
+        <c:val><c:numRef><c:numCache><c:ptCount val="2"/>
+          <c:pt idx="0"><c:v>60</c:v></c:pt><c:pt idx="1"><c:v>40</c:v></c:pt>
+        </c:numCache></c:numRef></c:val>
+      </c:ser>
+      </c:pieChart></c:plotArea></c:chart></c:chartSpace>`;
+    const chart = parseChart(enc.encode(pie), defaultColorResolver)!;
+    expect(chart.series[0]?.pointLabels).toEqual([{ idx: 0, text: 'Big slice; 60%' }]);
+    const texts = buildChartScene(chart, 320, 240, (t, sz) => t.length * sz * 0.5)!.labels.map(
+      (l) => l.text,
+    );
+    expect(texts).toContain('Big slice; 60%');
+    // The point with no label of its own keeps the computed one.
+    expect(texts).toContain('40%');
+    expect(texts).not.toContain('60%');
+  });
+
   it('flags a doughnut chart (renders as a pie with a hole)', () => {
     const doughnut = `<c:chartSpace ${C_NS}><c:chart><c:plotArea><c:doughnutChart>
       <c:ser><c:idx val="0"/>

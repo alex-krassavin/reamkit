@@ -908,13 +908,17 @@ export function buildPieScene(
     });
     const mid = ang + sweep / 2;
     const pct = Math.round((v / total) * 100);
-    if (pct >= 5) {
+    // A label the author typed wins over the one we would compute — see
+    // ChartSeries.pointLabels. It is drawn whatever the slice's size, because
+    // the author put it there on purpose.
+    const custom = series.pointLabels?.find((l) => l.idx === i)?.text;
+    if (custom !== undefined || pct >= 5) {
       labels.push({
-        text: `${pct}%`,
+        text: custom ?? `${pct}%`,
         x: cx + Math.cos(mid) * labelR,
         y: cy + Math.sin(mid) * labelR - CHART_LABEL_PT / 3,
         sizePt: CHART_LABEL_PT,
-        colorHex: chart.doughnut ? LABEL_COLOR : 'FFFFFF',
+        colorHex: custom !== undefined || chart.doughnut ? LABEL_COLOR : 'FFFFFF',
         align: 'center',
       });
     }

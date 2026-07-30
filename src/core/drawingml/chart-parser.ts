@@ -139,12 +139,14 @@ function parseSeries(ser: PoNode, resolveColor: ColorResolver): ChartSeries {
     resolveColor,
   );
   const pointColors = dataPointColors(ser, resolveColor);
+  const pointLabels = customDataLabels(ser);
   return {
     values,
     ...(xValues && xValues.length > 0 ? { xValues } : {}),
     ...(name ? { name } : {}),
     ...(colorHex ? { colorHex } : {}),
     ...(pointColors.length > 0 ? { pointColors } : {}),
+    ...(pointLabels.length > 0 ? { pointLabels } : {}),
   };
 }
 
@@ -154,6 +156,27 @@ function seriesName(ser: PoNode): string | undefined {
   const direct = poChildren(tx).find((c) => poIs(c, 'c:v'));
   if (direct) return poText(direct) || undefined;
   return readPts(tx)[0]?.v || undefined;
+}
+
+/**
+ * §21.2.2.49 — the labels the author typed, by point index. A `<c:dLbl>` with
+ * its own `<c:tx><c:rich>` replaces whatever the chart would have computed for
+ * that point, and it is the only place that text exists.
+ */
+function customDataLabels(ser: PoNode): Array<{ idx: number; text: string }> {
+  const dLbls = poChildren(ser).find((c) => poIs(c, 'c:dLbls'));
+  if (!dLbls) return [];
+  const out: Array<{ idx: number; text: string }> = [];
+  for (const dLbl of poChildren(dLbls)) {
+    if (!poIs(dLbl, 'c:dLbl')) continue;
+    const idxNode = poChildren(dLbl).find((c) => poIs(c, 'c:idx'));
+    const tx = poChildren(dLbl).find((c) => poIs(c, 'c:tx'));
+    if (!tx) continue;
+    const text = collectAT(tx).trim();
+    if (text.length === 0) continue;
+    out.push({ idx: idxNode ? (poIntAttr(idxNode, 'val') ?? 0) : 0, text });
+  }
+  return out;
 }
 
 function dataPointColors(ser: PoNode, resolveColor: ColorResolver): Array<ChartDataPoint> {
