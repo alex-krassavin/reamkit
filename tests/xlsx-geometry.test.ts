@@ -505,6 +505,33 @@ describe('grid geometry', () => {
     expect(table?.kind === 'table' && table.table.grid.length).toBe(2);
   });
 
+  it('counts an overflow span in VISIBLE columns, so it cannot swallow a value', () => {
+    // A span is consumed against the emitted grid, which skips hidden columns.
+    // Counting absolute ones instead overruns by however many are hidden inside
+    // the run, and an overrunning span covers the cell PAST its end — taking
+    // its content off the page. tdf100034.xlsx hides two columns mid-row and
+    // lost the value in the one after them on two of its four pages.
+    const xlsx = buildXlsx({
+      // A runs long over the empty B and the hidden C/D; E holds a value that
+      // stops the run and must survive it.
+      rows: [['a label far too long for its own column', null, null, null, 'KEEP']],
+      columns: [
+        { min: 1, max: 2, widthChars: 8 },
+        { min: 3, max: 4, widthChars: 8, hidden: true },
+        { min: 5, max: 5, widthChars: 8 },
+      ],
+    });
+    expect(placed(xlsx).map((i) => i.text)).toContain('KEEP');
+    const { doc } = readXlsx(xlsx);
+    const table = doc.body.find((e) => e.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('expected a table');
+    // Three visible columns; the run covers the first two and leaves the third.
+    expect(table.table.grid).toHaveLength(3);
+    const cells = table.table.rows[0]!.cells;
+    expect(cells[0]?.properties.colSpan).toBe(2);
+    expect(cells).toHaveLength(2);
+  });
+
   it('keeps equal declared widths equally spaced', () => {
     // Four columns declared identical must come out identical. Auto-fit makes
     // each one as wide as its own content, so the pitch wanders — which is what

@@ -1047,8 +1047,11 @@ export function worksheetToBody(
           !sparklineByCell.has(key(absR, col + colStart)) &&
           !(dropdownRanges.length > 0 && rangesCover(dropdownRanges, absR, col + colStart));
         const bandEnd = bandEndOfCol.get(c) ?? colCount - 1;
-        while (cc <= bandEnd && neighbourIsFree(cc)) {
-          availTwips += columnWidths[cc]!;
+        // A hidden column is not on the page: it neither blocks the text nor
+        // gives it any room, and — crucially — it is not one of the columns a
+        // colSpan counts (see below).
+        while (cc <= bandEnd && (hiddenCols.has(cc) || neighbourIsFree(cc))) {
+          if (!hiddenCols.has(cc)) availTwips += columnWidths[cc]!;
           cc++;
         }
         // And one more when the only thing in the way is that cell's own right
@@ -1078,7 +1081,14 @@ export function worksheetToBody(
         // it — three stacked lines where Excel and LibreOffice draw one. The
         // grid still totals the same width, so nothing else on the row moves.
         if (cc > c + 1) {
-          overflowSpan = cc - c;
+          // In VISIBLE columns. A span is consumed against the emitted grid,
+          // which skips hidden columns, so counting absolute ones overruns it
+          // by however many are hidden inside the run — and an overrunning
+          // span swallows the cell past its end. tdf100034.xlsx hides two
+          // columns mid-row and lost the value in the one after them
+          // ("Social Advocates for Youth", 100.00) on two of its four pages.
+          overflowSpan = 0;
+          for (let k = c; k < cc; k++) if (!hiddenCols.has(k)) overflowSpan++;
           for (let k = c + 1; k < cc; k++) overflowed.add(k);
         }
       }
@@ -1109,11 +1119,19 @@ export function worksheetToBody(
           : undefined;
 
       // Clamp a merge's horizontal span to the in-window columns so a merge
-      // straddling the print-area edge cannot exceed the grid.
+      // straddling the print-area edge cannot exceed the grid, and count it in
+      // VISIBLE columns — a hidden column inside the merge is not one of the
+      // grid columns the span is consumed against.
       const visibleEndCol = merge ? Math.min(merge.endColumn, colWindowEnd) : 0;
+      let mergeSpan = 0;
+      if (merge && visibleEndCol > merge.startColumn) {
+        for (let a = merge.startColumn; a <= visibleEndCol; a++) {
+          if (!hiddenCols.has(a - colStart)) mergeSpan++;
+        }
+      }
       const properties: CellProperties = {
-        ...(merge && visibleEndCol > merge.startColumn
-          ? { colSpan: visibleEndCol - merge.startColumn + 1 }
+        ...(mergeSpan > 1
+          ? { colSpan: mergeSpan }
           : overflowSpan > 1
             ? { colSpan: overflowSpan }
             : {}),
