@@ -3540,6 +3540,15 @@ class PageAssembler {
    */
   colHasContent = (): boolean =>
     this.current.length > this.colStartLen || this.cursorY < this.colStartY;
+  /**
+   * Whether this page has ANYTHING on it — including drawings, which is the
+   * whole point: a page carrying only floats has an empty `current`, so a page
+   * break asked for after it was silently dropped and the next band's drawings
+   * landed on top of the first's. tdf111980_radioButtons.xlsx has no cells at
+   * all and eleven controls wider than its page.
+   */
+  pageHasContent = (): boolean =>
+    this.current.length > 0 || this.floatsBehind.length > 0 || this.floatsFront.length > 0;
   /** Overflow step: next column on this page, or a fresh page after the last. */
   advanceColumn = (): void => {
     if (this.ctx.columns && this.colIdx + 1 < this.ctx.columns.length) {
@@ -3765,7 +3774,11 @@ class PageAssembler {
     // rows — and, because the early return also skips the cursor reset below,
     // let the cursor keep descending so every later row piled onto the same
     // page. See colHasContent for the same conflation on the other side.
-    if (this.current.length === 0 && this.cursorY >= this.colStartY && !force) return;
+    // …and drawings count. A page whose only content floats — a sheet of form
+    // controls with no cells at all — has an empty `current` and an untouched
+    // cursor, so it was discarded and the next band's drawings piled onto the
+    // page before it.
+    if (!this.pageHasContent() && this.cursorY >= this.colStartY && !force) return;
     const band = bandForPage(
       this.pageInSection,
       this.globalPageIdx,
@@ -3857,7 +3870,7 @@ function paginateSections(
     // A non-list-item block ends any open list run (tagged PDF).
     if (builder && !(block.kind === 'paragraph' && block.list)) asm.listStack.length = 0;
     if (block.kind === 'paragraph') {
-      if (block.resolved.pageBreakBefore && asm.current.length > 0) asm.flushPage();
+      if (block.resolved.pageBreakBefore && asm.pageHasContent()) asm.flushPage();
       asm.cursorY -= block.spacingBeforePt;
       // Float text wrapping: when the paragraph overlaps an exclusion, re-wrap
       // it with per-line widths (the source paragraph re-lays at the column

@@ -254,6 +254,16 @@ export function resolvePrintTitleRows(
 // fit-to-page never enlarges. Floor at Excel's 10% minimum.
 const MIN_PRINT_SCALE = 0.1;
 
+/**
+ * The width one page has for content: the sheet's paper (declared or the A4
+ * default) less its left and right margins, in points. The same measure the
+ * column bands are packed into — a drawing layer banded on any other width
+ * would not line up with the grid beside it.
+ */
+export function printableWidthPt(worksheet: ParsedWorksheet): number {
+  return sheetContentWidthTwips(worksheet) / TWIPS_PER_POINT;
+}
+
 function sheetContentWidthTwips(worksheet: ParsedWorksheet): number {
   const pageSize = pageSizeFromSetup(worksheet.pageSetup);
   const pageWidthTwips = pageSize ? Math.round(pageSize.width * 20) : DEFAULT_PAPER_TWIPS[0];

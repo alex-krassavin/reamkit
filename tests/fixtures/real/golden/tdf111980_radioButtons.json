@@ -16,16 +16,17 @@
     ]
   },
   "ream": {
-    "pages": 1,
+    "pages": 2,
     "pageSizes": [
       {
         "widthPt": 595,
         "heightPt": 842
       }
     ],
-    "chars": 145,
+    "chars": 154,
     "firstLines": [
-      "Group Box 7"
+      "Group Box 7",
+      "ActiveX 3"
     ]
   }
 }

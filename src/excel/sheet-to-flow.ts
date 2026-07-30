@@ -29,6 +29,7 @@ import { pt } from '@/core/ir';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 import { buildHeaderFooterContent } from '@/excel/header-footer';
 import {
+  printableWidthPt,
   resolvePrintArea,
   resolvePrintTitleRows,
   sectionFromWorksheet,
@@ -220,16 +221,35 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // W8/W10: a control that knows where it belongs is DRAWN there, as the
     // widget it is — the ones with no geometry in the file are listed after the
     // grid instead (formControlBlocks / activeXBlocks below).
-    for (const shape of controlShapeBlocks(ws.formControls, ws.activeXControls)) {
-      body.push({
-        kind: 'shape',
-        shape: centreShape(
-          scaleShape(shape, scaleSink.value),
-          ws.grid,
-          drawingExtentPt,
-          scaleSink.value,
-        ),
-      });
+    const controlBlocks = controlShapeBlocks(ws.formControls, ws.activeXControls);
+    // A sheet whose drawings run wider than the page paginates ACROSS them, the
+    // way a wide grid paginates across its columns ("down, then over"). With no
+    // grid there are no column bands to follow, so the drawings are banded on
+    // their own: tdf111980_radioButtons.xlsx has no cells at all and eleven
+    // controls spread over 650pt of an A4 page, and everything past the right
+    // margin simply fell off the one page we printed.
+    const drawingBands =
+      gridBody.length === 0
+        ? bandDrawings(controlBlocks, printableWidthPt(ws.grid), scaleSink.value)
+        : [controlBlocks];
+    for (let band = 0; band < drawingBands.length; band++) {
+      if (band > 0) {
+        body.push({
+          kind: 'paragraph',
+          paragraph: { properties: { pageBreakBefore: true }, runs: [] },
+        });
+      }
+      for (const shape of drawingBands[band]!) {
+        body.push({
+          kind: 'shape',
+          shape: centreShape(
+            scaleShape(shape, scaleSink.value),
+            ws.grid,
+            drawingExtentPt,
+            scaleSink.value,
+          ),
+        });
+      }
     }
 
     // §SV2: slicer panels render as styled button boxes after the grid + charts.
@@ -478,6 +498,65 @@ function controlShapes(
     );
   }
   return out;
+}
+
+/**
+ * Split floating drawings into page-wide bands, left to right — the "down, then
+ * over" order a wide sheet prints in (§18.3.1.63 `pageOrder`), applied to the
+ * drawing layer when there is no grid whose column bands it could follow.
+ *
+ * Each band is shifted back to the page's left margin, so band 2 starts where
+ * the printable width ran out. A drawing straddling the boundary belongs to the
+ * band its left edge is in, which is where the reference draws it too — the
+ * part past the edge is clipped on that page and continues on the next.
+ */
+function bandDrawings(
+  shapes: ReadonlyArray<ShapeBlock>,
+  printable: number,
+  scale: number,
+): Array<Array<ShapeBlock>> {
+  if (shapes.length === 0 || !(printable > 0)) return [shapes as Array<ShapeBlock>];
+  const rightOf = (s: ShapeBlock): number => (s.float?.posH?.offsetPt ?? 0) * scale + s.width;
+  const extent = Math.max(0, ...shapes.map(rightOf));
+  const bandCount = Math.ceil(extent / printable);
+  if (bandCount <= 1) return [shapes as Array<ShapeBlock>];
+  const bands: Array<Array<ShapeBlock>> = Array.from({ length: bandCount }, () => []);
+  for (const shape of shapes) {
+    const posH = shape.float?.posH;
+    const left = (posH?.offsetPt ?? 0) * scale;
+    const right = left + shape.width;
+    const first = Math.max(0, Math.min(bandCount - 1, Math.floor(left / printable)));
+    // EVERY band the drawing reaches into, not just the one it starts in. A
+    // group box 209pt wide anchored 46pt before the boundary is on both pages —
+    // clipped at the edge of the first and continuing from the edge of the
+    // second, which is exactly what the reference draws. Assigned to one band
+    // only, its far half and every caption inside it fell off the document.
+    const last = Math.max(first, Math.min(bandCount - 1, Math.ceil(right / printable) - 1));
+    for (let band = first; band <= last; band++) {
+      if (!shape.float || !posH) {
+        bands[band]!.push(shape);
+        continue;
+      }
+      // A continuation carries the drawing's FRAME and not its text. The label
+      // is anchored at the drawing's left edge, which is back in the band the
+      // drawing started in — it was printed there, and printing it again puts
+      // the same caption on two pages. The reference clips the drawing at the
+      // band boundary instead, which needs a clip rectangle the page model does
+      // not have; dropping the repeat is the part of that we can honour.
+      const { text: _text, ...frame } = shape;
+      // …and a continuation with neither text, outline nor fill draws nothing
+      // at all: the caption's own box is invisible once its text stays behind.
+      if (band !== first && !frame.line && frame.fill.kind === 'none') continue;
+      bands[band]!.push({
+        ...(band === first ? shape : frame),
+        float: {
+          ...shape.float,
+          posH: { ...posH, offsetPt: pt((posH.offsetPt ?? 0) - (band * printable) / scale) },
+        },
+      });
+    }
+  }
+  return bands.filter((b) => b.length > 0);
 }
 
 /**
