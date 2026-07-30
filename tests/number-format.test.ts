@@ -191,6 +191,34 @@ describe('applyNumberFormat — codes real producers write', () => {
     expect(applyNumberFormat('4', 164, fmt)).toBe('4');
   });
 
+  it('knows the built-in currency and fraction ids (§18.8.30)', () => {
+    // A gap in the table is invisible: the id resolves to no code at all, the
+    // cell falls through to the General rendering, and 49273.xlsx printed 0.5
+    // where its `# ?/?` cell reads " 1/2". The engines were all there.
+    expect(applyNumberFormat('1234.5', 5, noCustom)).toBe('$1,235 ');
+    expect(applyNumberFormat('-1234.5', 6, noCustom)).toBe('($1,235)');
+    expect(applyNumberFormat('1234.5', 7, noCustom)).toBe('$1,234.50 ');
+    expect(applyNumberFormat('-1234.5', 8, noCustom)).toBe('($1,234.50)');
+    expect(numberFormatColorHex('-1234.5', 8, noCustom)).toBe('FF0000');
+    expect(applyNumberFormat('0.5', 12, noCustom)).toBe('1/2');
+    expect(applyNumberFormat('2.25', 13, noCustom)).toBe('2 1/4');
+    expect(applyNumberFormat('12345', 48, noCustom)).toBe('12.3E+3');
+  });
+
+  it('reads General through the brackets in front of it', () => {
+    // `[DBNum1][$-804]General` is General with a numeral system and a locale on
+    // it. Tested against the whole code, it missed — and the placeholder
+    // grammar, finding no digit placeholder, printed the keyword: 49273.xlsx
+    // read "General12323". Choosing the numerals is a separate feature; this is
+    // about not writing the word out.
+    const fmt = new Map<number, string>([
+      [176, '[DBNum1][$-804]General'],
+      [177, '[$-409]GENERAL'],
+    ]);
+    expect(applyNumberFormat('12323', 176, fmt)).toBe('12323');
+    expect(applyNumberFormat('0.5', 177, fmt)).toBe('0.5');
+  });
+
   it('reports the colour the applying section names', () => {
     const fmt = new Map<number, string>([[164, '[$$-409]#,##0;[RED]\\-[$$-409]#,##0']]);
     expect(numberFormatColorHex('12345', 164, fmt)).toBeUndefined();

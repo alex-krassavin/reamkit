@@ -14,13 +14,24 @@ const BUILTIN: ReadonlyMap<number, string> = new Map([
   [2, '0.00'],
   [3, '#,##0'],
   [4, '#,##0.00'],
+  // §18.8.30 — the currency and fraction builtins. Absent from this table a
+  // cell falls through to `defaultNumberRender`, so 49273.xlsx's `# ?/?` cell
+  // printed 0.5 where every reader shows ` 1/2`; the fraction engine below was
+  // there all along, nothing ever asked it.
+  [5, '$#,##0_);($#,##0)'],
+  [6, '$#,##0_);[Red]($#,##0)'],
+  [7, '$#,##0.00_);($#,##0.00)'],
+  [8, '$#,##0.00_);[Red]($#,##0.00)'],
   [9, '0%'],
   [10, '0.00%'],
   [11, '0.00E+00'],
+  [12, '# ?/?'],
+  [13, '# ??/??'],
   [37, '#,##0_);(#,##0)'],
   [38, '#,##0_);[Red](#,##0)'],
   [39, '#,##0.00_);(#,##0.00)'],
   [40, '#,##0.00_);[Red](#,##0.00)'],
+  [48, '##0.0E+0'],
   [49, '@'],
 ]);
 
@@ -754,6 +765,15 @@ function bestRational(value: number, maxDen: number): [number, number] {
 
 function applyNumericSection(value: number, format: string, negativeSection: boolean): string {
   const cleaned = resolveBracketCodes(format);
+  // …and General survives being bracketed. `[DBNum1][$-804]General` is General
+  // with a locale and a numeral system on it; matched only against the whole
+  // code, it fell through to the placeholder grammar, which finds no digit
+  // placeholder and renders the keyword itself — 49273.xlsx printed
+  // "General12323". The numeral system is a separate, much larger feature; the
+  // bug is printing the word.
+  if (cleaned.trim().toLowerCase() === 'general') {
+    return defaultNumberRender(String(negativeSection ? Math.abs(value) : value));
+  }
 
   const fraction = formatFraction(value, cleaned, negativeSection);
   if (fraction !== undefined) return fraction;
