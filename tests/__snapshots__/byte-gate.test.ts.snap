@@ -48,7 +48,7 @@ exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: gridlines 1`] = `
 
 exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: landscape 1`] = `"c9af732e8ab2da1087a427387cb4e2e815fbc8dd0c1572359035296768bfa40f"`;
 
-exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: merges 1`] = `"122b051ec5071494f6a32b63941c4cfd8440553bbbe21e4b60aed02e347def00"`;
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: merges 1`] = `"9343adeaf2323414acacd1c7d24e3e94641a68d248621db32fe62340de4d4653"`;
 
 exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: multi-sheet 1`] = `"af9ffcd08a3e82cfc45ceb18e481cfce1329d37f80f35ff390563e3ed4745db8"`;
 

@@ -1104,7 +1104,28 @@ export function worksheetToBody(
         // visual column count of this row stays equal to colCount.
         const verticalParent = verticalMergeParent(worksheet.merges, absR, absC);
         if (verticalParent && absC === verticalParent.startColumn) {
-          cells.push(makeVerticalContinuation(verticalParent, colWindowEnd, absR, rowWindowEnd));
+          // A merge is ONE box, and its continuation rows carried no paint at
+          // all — so a two-row merge filled one row's worth and its outline had
+          // no bottom edge: 50299.xlsx's A2:A3 came out 13.6pt tall where both
+          // references draw 27. Excel fills a merged range with the ORIGIN's
+          // fill and writes the range's outline on whichever cells carry it, so
+          // the fill is taken from the origin and the border from the row's own
+          // cell when it declares one.
+          const originCell =
+            cellMatrix[verticalParent.startRow - rowStart]?.[
+              verticalParent.startColumn - colStart
+            ];
+          const originXf = originCell ? styles.cellXfs[originCell.styleIndex ?? 0] : undefined;
+          const own = cellMatrix[r]?.[c];
+          const ownXf = own ? styles.cellXfs[own.styleIndex ?? 0] : undefined;
+          cells.push(
+            makeVerticalContinuation(verticalParent, colWindowEnd, absR, rowWindowEnd, {
+              shading: originXf ? shadingFromXf(originXf, styles) : undefined,
+              borders:
+                (ownXf ? bordersFromXf(ownXf, styles) : undefined) ??
+                (originXf ? bordersFromXf(originXf, styles) : undefined),
+            }),
+          );
         }
         // else: this column is spanned horizontally by an earlier cell in
         // this row → omit entirely so gridSpan layout works.
@@ -1332,6 +1353,19 @@ export function worksheetToBody(
           for (let k = c; k < cc; k++) if (!hiddenCols.has(k)) overflowSpan++;
           for (let k = c + 1; k < cc; k++) overflowed.add(k);
         }
+      } else if (text.length > 0 && merge && !wrapText && !rotated && !shrinkToFit) {
+        // A merge is a box like any other and its text is cut at ITS edge — not
+        // at its first column's, and not never. The pass above is really two
+        // rules in one: the neighbour-claiming a merge must not do, and the clip
+        // every cell needs. Excluded from both, `$R[]{A,hideDuplicate=true}` ran
+        // out of a 48pt merge and straight across the three cells beside it on
+        // 50299.xlsx, where LibreOffice shows `$R[]{A,hide`.
+        const lastCol = Math.min(merge.endColumn - colStart, bandEndOfCol.get(c) ?? colCount - 1);
+        let availTwips = 0;
+        for (let k = c; k <= lastCol; k++) {
+          if (!hiddenCols.has(k)) availTwips += columnWidths[k] ?? 0;
+        }
+        text = clipToWidth(text, availTwips * 1.1, charTwips(xf, styles, textTwipsUnit));
       }
 
       // §18.8.1 shrinkToFit (E-SHEET W6): instead of clipping, scale the font down
@@ -1388,8 +1422,11 @@ export function worksheetToBody(
           : {}),
         ...(dropdown ? { dropdown: true } : {}),
         // §18.8.1: without wrapText a cell's text is one line, cut at its box.
-        // Rotated and shrink-to-fit cells have their own handling.
-        ...(!wrapText && !rotated && !shrinkToFit && !merge ? { noWrap: true } : {}),
+        // Rotated and shrink-to-fit cells have their own handling; a merged one
+        // does not — its box is simply bigger, and letting it wrap stacked
+        // 50299.xlsx's `$R[]{A,copyRowHeight=true,rowShift=true}` inside a
+        // 48pt-wide merge instead of cutting it.
+        ...(!wrapText && !rotated && !shrinkToFit ? { noWrap: true } : {}),
         // §18.8.1 — a number that does not fit its column is shown as a row of
         // `#`, never truncated, because a truncated number is a DIFFERENT
         // number: "4/30/201" reads as a date and is not the one in the cell.
@@ -1679,6 +1716,7 @@ function makeVerticalContinuation(
   colWindowEnd: number,
   absR: number,
   rowWindowEnd: number,
+  paint: { shading: CellShading | undefined; borders: CellBorders | undefined },
 ): TableCell {
   const visibleEndCol = Math.min(merge.endColumn, colWindowEnd);
   const span = visibleEndCol - merge.startColumn + 1;
@@ -1687,6 +1725,8 @@ function makeVerticalContinuation(
     properties: {
       merge: absR < lastVisibleRow ? ('middle' as const) : ('end' as const),
       ...(span > 1 ? { colSpan: span } : {}),
+      ...(paint.shading ? { shading: paint.shading } : {}),
+      ...(paint.borders ? { borders: paint.borders } : {}),
     },
     content: [
       {

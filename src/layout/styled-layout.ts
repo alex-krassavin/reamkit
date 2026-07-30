@@ -4373,6 +4373,23 @@ function paginateSections(
               }
             }
           }
+          // A vertical merge's box for vertical alignment: measured only for a
+          // row the page takes whole, and only against the room left on the
+          // page, so a merge that a break cuts aligns inside the part that is
+          // actually here.
+          const mergedHeights =
+            chunks.length === 1 && row.cells.some((c) => c.mergeRole === 'start')
+              ? row.cells.map((c) =>
+                  c.mergeRole === 'start'
+                    ? mergedBoxHeightPt(
+                        block.rows,
+                        ri,
+                        c.colStart,
+                        asm.cursorY - asm.bottomLimit(),
+                      )
+                    : undefined,
+                )
+              : undefined;
           emitRowChunk(
             asm.current,
             chunk,
@@ -4381,6 +4398,7 @@ function paginateSections(
             asm.ctx.pageHeight,
             colCount,
             cellStructIds,
+            mergedHeights,
           );
           asm.cursorY -= chunk.heightPt;
           // Only the table's last row paints its bottom edge — every other
@@ -4428,6 +4446,29 @@ function paginateSections(
 // §14.8.5.2 /RowSpan — how many rows a vertical-merge origin spans. Walk down
 // from the origin row at the same column, counting vMerge continuation cells
 // (mergeRole middle/end) until the group ends. A standalone cell spans 1.
+// How tall a vertical merge's box is FROM this row down — the height its own
+// row and its continuation rows add up to, stopping at whatever still fits the
+// page. A merge cut by a page break has only the part that is on the page, and
+// aligning its text inside the whole box would put it past the paper.
+function mergedBoxHeightPt(
+  rows: ReadonlyArray<RowLayout>,
+  startRowIdx: number,
+  colStart: number,
+  availablePt: number,
+): number {
+  let height = rows[startRowIdx]!.heightPt;
+  for (let r = startRowIdx + 1; r < rows.length; r++) {
+    const cont = rows[r]!.cells.find(
+      (c) => c.colStart === colStart && (c.mergeRole === 'middle' || c.mergeRole === 'end'),
+    );
+    if (!cont) break;
+    if (height + rows[r]!.heightPt > availablePt) break;
+    height += rows[r]!.heightPt;
+    if (cont.mergeRole === 'end') break;
+  }
+  return height;
+}
+
 function tableCellRowSpan(
   rows: ReadonlyArray<RowLayout>,
   startRowIdx: number,
@@ -4453,6 +4494,7 @@ function emitRowChunk(
   pageHeight: number,
   colCount: number,
   cellStructIds?: ReadonlyArray<number | undefined>,
+  mergedHeights?: ReadonlyArray<number | undefined>,
 ): void {
   const rowTop = cursorY;
   const rowBottom = cursorY - row.heightPt;
@@ -4467,8 +4509,12 @@ function emitRowChunk(
     let i = 0;
     while (i < row.cells.length) {
       const cell = row.cells[i]!;
-      const hidden = cell.mergeRole === 'middle' || cell.mergeRole === 'end';
-      if (!cell.shadingColorHex || hidden) {
+      // A vertical merge's continuation rows paint too. They were skipped here
+      // because they arrived with no shading of their own, which made a merged
+      // block exactly one row tall however many rows it spanned; they now carry
+      // the merge's fill, and each row painting its own slice (plus the seam
+      // below) gives the block its full height with no join to show for it.
+      if (!cell.shadingColorHex) {
         i++;
         continue;
       }
@@ -4625,11 +4671,14 @@ function emitRowChunk(
     if (cell.mergeRole === 'middle' || cell.mergeRole === 'end') continue;
     // A box taller than its content: a spreadsheet cell sits at the BOTTOM of
     // it unless it says otherwise, which is what Excel and LibreOffice both do
-    // and what a declared row height makes visible. Skipped for a vertical
-    // merge, whose box is taller than this one row.
+    // and what a declared row height makes visible. A vertical merge's box is
+    // taller than this one row — the caller measures it and passes it down, so
+    // 50299.xlsx's `vertical="center"` label sits in the middle of a two-row
+    // merge rather than at the top of its first row.
+    const boxHeightPt = mergedHeights?.[i] ?? row.heightPt;
     const slack =
-      cell.mergeRole === 'standalone' && cell.verticalAlign !== undefined
-        ? row.heightPt - cell.padTopPt - cell.contentHeightPt - cell.padBottomPt
+      cell.verticalAlign !== undefined
+        ? boxHeightPt - cell.padTopPt - cell.contentHeightPt - cell.padBottomPt
         : 0;
     const vOffset =
       slack <= 0

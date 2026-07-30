@@ -785,6 +785,87 @@ describe('cell indent (§18.8.1)', () => {
   });
 });
 
+describe('a vertical merge is ONE box (§18.3.1.55)', () => {
+  /** Every fill the layout painted, with its box. */
+  const fills = (xlsx: Uint8Array): Array<{ y: number; height: number; hex: string }> => {
+    const flow = Ream.parse(xlsx).flow;
+    const laid = layoutStyledDocument(flow.body, {
+      registry: FontRegistry.fromBytes(FONTS),
+      ...flowRenderOptions(flow),
+    });
+    const out: Array<{ y: number; height: number; hex: string }> = [];
+    for (const page of laid.pages) {
+      for (const command of page.commands) {
+        if (command.type !== 'fill') continue;
+        const f = command as unknown as { y: number; height: number; fillColorHex: string };
+        out.push({ y: f.y, height: f.height, hex: f.fillColorHex });
+      }
+    }
+    return out;
+  };
+
+  const green = { value: 'M', styleIndex: 1 };
+  const filled = (
+    rows: ReadonlyArray<ReadonlyArray<typeof green | string>>,
+    mergeRefs: Array<string>,
+  ): Uint8Array =>
+    buildXlsx({
+      rows,
+      mergeRefs,
+      stylesXml:
+        `<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>` +
+        `<fills count="3"><fill><patternFill patternType="none"/></fill>` +
+        `<fill><patternFill patternType="gray125"/></fill>` +
+        `<fill><patternFill patternType="solid"><fgColor rgb="FF00FF00"/></patternFill></fill>` +
+        `</fills><borders count="1"><border/></borders>` +
+        `<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>` +
+        `<xf numFmtId="0" fontId="0" fillId="2" borderId="0" applyFill="1"/></cellXfs>`,
+    });
+
+  it('paints its whole height, not only its first row', () => {
+    // The continuation rows arrived with no paint of their own and were skipped
+    // by the fill pass, so a two-row merge painted one row's worth: 50299.xlsx
+    // drew 13.6pt of grey where both references draw 27.
+    const greenHeight = (xlsx: Uint8Array): number =>
+      fills(xlsx)
+        .filter((f) => f.hex === '00FF00')
+        .reduce((sum, f) => sum + f.height, 0);
+    const oneRow = greenHeight(filled([[green], ['after']], []));
+    const merged = greenHeight(filled([[green], [{ ...green, value: '' }], ['after']], ['A1:A2']));
+    expect(oneRow).toBeGreaterThan(0);
+    expect(merged).toBeGreaterThan(oneRow * 1.8);
+  });
+
+  it('sits its text at the bottom of the merged box, not of its first row', () => {
+    // A spreadsheet cell sits at the bottom of a box taller than its content,
+    // and a merge's box is every row it spans — Excel and LibreOffice both put
+    // the label on the merge's last row.
+    const items = placed(
+      buildXlsx({ rows: [['a', 'b'], [null, 'c']], mergeRefs: ['A1:A2'] }),
+    );
+    expect(at(items, 'a').y).toBeCloseTo(at(items, 'c').y, 1);
+  });
+
+  it('cuts its text at its own edge instead of running it across the row', () => {
+    // Excluded from the clip pass — which is really the neighbour-claiming rule
+    // a merge must not follow, with the clip every cell needs bolted to it —
+    // 50299.xlsx ran `$R[]{A,hideDuplicate=true}` out of a 48pt merge and over
+    // the three cells beside it.
+    const long = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    const items = placed(
+      buildXlsx({
+        rows: [[long, null, 'right']],
+        mergeRefs: ['A1:B1'],
+        columns: [{ min: 1, max: 3, widthChars: 6 }],
+      }),
+    );
+    const drawn = items.find((i) => long.startsWith(i.text))?.text ?? '';
+    expect(drawn.length).toBeGreaterThan(0);
+    expect(drawn.length).toBeLessThan(long.length);
+    expect(at(items, 'right').x).toBeGreaterThan(at(items, drawn).x);
+  });
+});
+
 describe('the used range', () => {
   it('reaches a value-less cell that PAINTS something (50299)', () => {
     // Column H of this sheet is ten cells with a solid fill each and no value —
