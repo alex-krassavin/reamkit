@@ -234,9 +234,18 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       body.push({ kind: 'table', table: slicerTable(slicer) });
     }
 
-    // W7: cell comments / notes are listed in a "Comments" section after the grid
-    // (Excel's "print comments at end of sheet"): a heading + one line per comment.
-    if (ws.comments && ws.comments.length > 0) {
+    // W7: cell comments / notes are listed in a "Comments" section after the
+    // grid (Excel's "print comments at end of sheet") — unless the sheet says
+    // not to. §18.3.1.63 `cellComments="none"` is the author answering the
+    // print dialog's comments question with "(None)", and printing them anyway
+    // put four notes on tdf171828.xlsx that no other reader shows.
+    //
+    // Silence is not that answer. The spec's default is `none`, but a sheet
+    // that never opened the dialog says nothing about its notes, and dropping
+    // content the document carries on the strength of an unstated default is
+    // the losing side of the trade: listed, a note is visibly extra; omitted,
+    // it is invisibly gone.
+    if (ws.comments && ws.comments.length > 0 && ws.grid.pageSetup?.cellComments !== 'none') {
       body.push(...commentBlocks(ws.comments));
     }
 

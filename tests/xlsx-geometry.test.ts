@@ -313,6 +313,50 @@ describe('grid geometry', () => {
     expect(blocked.map((i) => i.text)).not.toContain(phrase);
   });
 
+  it('runs the text over the rule that CLOSES its band, taking it along', () => {
+    // A vertical rule inside the run would be erased by the span, so the text
+    // stops at it. The rule that closes the run is different: it is the band's
+    // own right edge, and the span's right border lands in the same place. We
+    // refused it, and tdf171828.xlsx printed "ohne Sondertil" for "ohne
+    // Sondertilgung" on every page — five labels cut inside a filled box whose
+    // far edge is exactly where the reference ends each of them.
+    const stylesXml = `
+      <fonts count="1"><font/></fonts>
+      <fills count="3">
+        <fill><patternFill patternType="none"/></fill>
+        <fill><patternFill patternType="gray125"/></fill>
+        <fill><patternFill patternType="solid"><fgColor rgb="FF00FF00"/></patternFill></fill>
+      </fills>
+      <borders count="2">
+        <border/>
+        <border><right style="thin"><color rgb="FF000000"/></right></border>
+      </borders>
+      <cellXfs count="3">
+        <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+        <xf numFmtId="0" fontId="0" fillId="2" borderId="0" applyFill="1"/>
+        <xf numFmtId="0" fontId="0" fillId="2" borderId="1" applyFill="1" applyBorder="1"/>
+      </cellXfs>`;
+    const phrase = 'no repeating rows or columns';
+    const columns = [{ min: 1, max: 4, widthChars: 10 }];
+    const closed = placed(
+      buildXlsx({
+        rows: [
+          // A green run: the text, one plain green cell, then the green cell
+          // that carries the band's closing rule.
+          [
+            { value: phrase, styleIndex: 1 },
+            { value: null, styleIndex: 1 },
+            { value: null, styleIndex: 2 },
+          ],
+          [null, null, null, 'anchor'],
+        ],
+        columns,
+        stylesXml,
+      }),
+    );
+    expect(closed.map((i) => i.text)).toContain(phrase);
+  });
+
   it('derives the default column width from <sheetFormatPr baseColWidth>', () => {
     // baseColWidth is what Excel computes the default column FROM when
     // defaultColWidth is absent. Ignoring a sheet that asks for 10 left every

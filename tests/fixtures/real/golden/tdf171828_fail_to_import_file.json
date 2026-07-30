@@ -74,7 +74,7 @@
     ]
   },
   "ream": {
-    "pages": 28,
+    "pages": 27,
     "pageSizes": [
       {
         "widthPt": 842,
@@ -85,9 +85,8 @@
         "heightPt": 792
       }
     ],
-    "chars": 17768,
+    "chars": 16935,
     "firstLines": [
-      "Wilfried Schäfer",
       "Wilfried Schäfer",
       "Wilfried Schäfer",
       "Wilfried Schäfer",

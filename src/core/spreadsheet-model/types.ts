@@ -82,6 +82,12 @@ export interface XlsxPageSetup {
    * choice made in the print dialog rather than in the sheet.
    */
   readonly printerSettingsRelId?: string;
+  /**
+   * §18.3.1.63 `cellComments` — where the sheet's notes are printed:
+   * `none` (the default) prints none of them, `asDisplayed` prints them where
+   * they float, `atEnd` gathers them after the grid.
+   */
+  readonly cellComments?: 'none' | 'asDisplayed' | 'atEnd';
 }
 
 /**

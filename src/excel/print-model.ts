@@ -999,6 +999,8 @@ export function worksheetToBody(
 
       // Columns this cell's text runs over, set by the overflow block below.
       let overflowSpan = 1;
+      // The right rule the run takes over from the last cell it absorbs.
+      let overflowRightRule: Border | undefined;
       // §18.8.1 wrapText (E-SHEET W6): a wrapped cell keeps its full text — the
       // table cell layout breaks it to the cell width and the row grows (atLeast).
       const wrapText = xf?.alignment?.wrapText === true;
@@ -1048,6 +1050,22 @@ export function worksheetToBody(
         while (cc <= bandEnd && neighbourIsFree(cc)) {
           availTwips += columnWidths[cc]!;
           cc++;
+        }
+        // And one more when the only thing in the way is that cell's own right
+        // rule — the closing edge of the band, which the span takes over. See
+        // absorbableRightRule.
+        if (
+          cc <= bandEnd &&
+          !cellHasContent(cellMatrix[r]?.[cc]) &&
+          !sparklineByCell.has(key(absR, cc + colStart)) &&
+          !(dropdownRanges.length > 0 && rangesCover(dropdownRanges, absR, cc + colStart))
+        ) {
+          const rule = absorbableRightRule(cellMatrix[r]?.[cc], styles, shading, borders);
+          if (rule) {
+            availTwips += columnWidths[cc]!;
+            overflowRightRule = rule;
+            cc++;
+          }
         }
         // Cut to the width the cell will have. The estimate cannot be exact —
         // the font is not known here — so CellProperties.noWrap below makes the
@@ -1106,7 +1124,9 @@ export function worksheetToBody(
         ...(dataBar ? { dataBar } : {}),
         ...(icon ? { icon } : {}),
         ...(sparkline ? { sparkline } : {}),
-        ...(borders ? { borders } : {}),
+        ...(borders || overflowRightRule
+          ? { borders: { ...borders, ...(overflowRightRule ? { right: overflowRightRule } : {}) } }
+          : {}),
         ...(dropdown ? { dropdown: true } : {}),
         // §18.8.1: without wrapText a cell's text is one line, cut at its box.
         // Rotated and shrink-to-fit cells have their own handling.
@@ -2200,6 +2220,38 @@ function spanPreservesPaint(
 function sameBorder(a: Border | undefined, b: Border | undefined): boolean {
   if (a === undefined || b === undefined) return a === b;
   return a.style === b.style && a.width === b.width && a.colorHex === b.colorHex;
+}
+
+/**
+ * The right rule a neighbour carries when that rule is the ONLY thing standing
+ * between it and the overflowing text — in which case the span can simply adopt
+ * it as its own right border and nothing is lost.
+ *
+ * {@link spanPreservesPaint} refuses any vertical rule, which is right for a
+ * rule INSIDE the run (a span erases it) but wrong for the one that closes it:
+ * the last cell's right edge is the boundary of the band the origin sits in,
+ * and the span's own right border lands in exactly the same place. Refusing it
+ * cut five labels short on every page of tdf171828.xlsx — "ohne Sondertilgung"
+ * as "ohne Sondertil" — where the reference runs each of them to that very
+ * edge.
+ */
+function absorbableRightRule(
+  neighbour: WorksheetCell | undefined,
+  styles: XlsxStyles,
+  shading: CellShading | undefined,
+  borders: CellBorders | undefined,
+): Border | undefined {
+  if (!neighbour || neighbour.styleIndex === undefined) return undefined;
+  const xf = styles.cellXfs[neighbour.styleIndex];
+  if (!xf) return undefined;
+  if (shadingFromXf(xf, styles)?.colorHex !== shading?.colorHex) return undefined;
+  const nb = bordersFromXf(xf, styles);
+  if (!nb?.right) return undefined;
+  if (nb.left || nb.insideV || nb.diagonalUp || nb.diagonalDown) return undefined;
+  if (!sameBorder(nb.top, borders?.top) || !sameBorder(nb.bottom, borders?.bottom)) {
+    return undefined;
+  }
+  return nb.right;
 }
 
 // E-SHEET SV2 — a slicer panel projected as a styled mini-table emitted after the

@@ -54,6 +54,8 @@ export interface XlsxPageSetupSpec {
   readonly scale?: number;
   readonly fitToWidth?: number;
   readonly fitToHeight?: number;
+  /** §18.3.1.63 — where the sheet's notes print, if at all. */
+  readonly cellComments?: 'none' | 'asDisplayed' | 'atEnd';
 }
 
 export interface XlsxPrintOptionsSpec {
@@ -465,6 +467,9 @@ export function buildXlsx(
           : '') +
         (sheet.pageSetup.fitToHeight !== undefined
           ? ` fitToHeight="${sheet.pageSetup.fitToHeight}"`
+          : '') +
+        (sheet.pageSetup.cellComments !== undefined
+          ? ` cellComments="${sheet.pageSetup.cellComments}"`
           : '') +
         '/>'
       : '';

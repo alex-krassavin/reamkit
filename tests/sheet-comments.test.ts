@@ -78,6 +78,30 @@ describe('cell comments — end to end (E-SHEET W7)', () => {
     expect(texts).toContain('B2 — Bo: a second note');
   });
 
+  it('prints no notes when the sheet answered the print dialog with "(None)"', () => {
+    // §18.3.1.63 cellComments="none". tdf171828.xlsx says it, and we printed
+    // four notes no other reader shows — a whole page of them.
+    const flow = Ream.parse(
+      buildXlsx({
+        rows: [['data']],
+        comments: [{ ref: 'A1', author: 'Ada', text: 'the first note' }],
+        pageSetup: { cellComments: 'none' },
+      }),
+    ).flow;
+    expect(paragraphTexts(flow.body)).not.toContain('Comments');
+
+    // Silence is not that answer — a sheet that never opened the dialog keeps
+    // its notes listed rather than losing them to an unstated default.
+    const quiet = Ream.parse(
+      buildXlsx({
+        rows: [['data']],
+        comments: [{ ref: 'A1', author: 'Ada', text: 'the first note' }],
+        pageSetup: { paperSize: 9 },
+      }),
+    ).flow;
+    expect(paragraphTexts(quiet.body)).toContain('Comments');
+  });
+
   it('lists threaded comments with their resolved authors', () => {
     const flow = Ream.parse(
       buildXlsx({

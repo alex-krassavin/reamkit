@@ -263,13 +263,19 @@ function parsePageSetup(ws: Record<string, unknown>): XlsxPageSetup | undefined 
   const fitToWidth = parseNumericAttr(obj, 'fitToWidth');
   const fitToHeight = parseNumericAttr(obj, 'fitToHeight');
   const printerSettingsRelId = strAttr(obj, 'id');
+  const commentsRaw = strAttr(obj, 'cellComments');
+  const cellComments: XlsxPageSetup['cellComments'] | undefined =
+    commentsRaw === 'none' || commentsRaw === 'asDisplayed' || commentsRaw === 'atEnd'
+      ? commentsRaw
+      : undefined;
   if (
     paperSize === undefined &&
     orientation === undefined &&
     scale === undefined &&
     fitToWidth === undefined &&
     fitToHeight === undefined &&
-    printerSettingsRelId === undefined
+    printerSettingsRelId === undefined &&
+    cellComments === undefined
   ) {
     return undefined;
   }
@@ -280,6 +286,7 @@ function parsePageSetup(ws: Record<string, unknown>): XlsxPageSetup | undefined 
     ...(fitToWidth !== undefined ? { fitToWidth: Math.round(fitToWidth) } : {}),
     ...(fitToHeight !== undefined ? { fitToHeight: Math.round(fitToHeight) } : {}),
     ...(printerSettingsRelId !== undefined ? { printerSettingsRelId } : {}),
+    ...(cellComments !== undefined ? { cellComments } : {}),
   };
 }
 
