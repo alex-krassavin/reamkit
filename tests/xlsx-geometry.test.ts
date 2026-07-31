@@ -1178,3 +1178,36 @@ describe('overflow claims a neighbour only when the text needs it', () => {
     expect(items.filter((i) => long.startsWith(i.text))).toHaveLength(1);
   });
 });
+
+describe('the column-width unit is the normal style font’s digit (§18.3.1.13)', () => {
+  const pitchWith = (font: string, sizePt: number): number => {
+    const items = placed(
+      buildXlsx({
+        rows: [['A', 'B']],
+        columns: [{ min: 1, max: 1, widthChars: 10 }],
+        stylesXml:
+          `<fonts count="1"><font><sz val="${sizePt}"/><name val="${font}"/></font></fonts>` +
+          `<fills count="1"><fill><patternFill patternType="none"/></fill></fills>` +
+          `<borders count="1"><border/></borders>` +
+          `<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellXfs>`,
+      }),
+    );
+    return at(items, 'B').x - at(items, 'A').x;
+  };
+
+  it('is 7px for Calibri 11 and Arial 10, and 8px for Arial 11', () => {
+    // "…the maximum digit width of the numbers 0, 1, 2, …, 9 AS RENDERED IN THE
+    // NORMAL STYLE'S FONT". The test used to be whether the file named a font
+    // at all, and every named one got Excel's 7px — right for the two faces the
+    // note cited, wrong for anything else. 55850.xlsx and 55927.xlsx are Arial
+    // ELEVEN, 8px, so their columns came out 14% narrow and each lost the last
+    // character of every date it holds.
+    expect(pitchWith('Calibri', 11)).toBeCloseTo(10 * 5.25, 1); // 70px
+    expect(pitchWith('Arial', 10)).toBeCloseTo(10 * 5.25, 1);
+    expect(pitchWith('Arial', 11)).toBeCloseTo(10 * 6.0, 1); // 80px
+  });
+
+  it('keeps 7px for a face it cannot measure', () => {
+    expect(pitchWith('Some Unknown Face', 11)).toBeCloseTo(10 * 5.25, 1);
+  });
+});

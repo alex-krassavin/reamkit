@@ -201,6 +201,56 @@ const DEFAULT_COL_CHARS = 9.140625;
  * document is rendered in (§18.3.1.13), or Excel's own 7 px when the caller has
  * not measured one.
  */
+/**
+ * The digit advance, as a fraction of the em, of the faces a spreadsheet names
+ * for its normal style.
+ *
+ * Read off each face's `hmtx` for `0`–`9`; the metric-compatible substitutes
+ * are listed beside their originals because a file naming one is measured in
+ * the other's unit by every reader that has to substitute.
+ *
+ * Every entry here is measured. The CJK defaults are deliberately absent: the
+ * evidence says ＭＳ Ｐゴシック 11 is 8px — Japanese Excel's default column is
+ * 72px, and §18.3.1.13's forward formula turns that into exactly the
+ * `width="9"` 54524.xlsx writes for its default band — but I have no copy of
+ * the face to measure, and fitting 0.55 to it moved 50299.xlsx from 16 pages
+ * to 22 against LibreOffice's 17. A face we cannot measure keeps the old 7px.
+ */
+const DIGIT_EM: ReadonlyArray<readonly [RegExp, number]> = [
+  [/^(calibri|carlito)$/i, 1063 / 2048],
+  [/^(arial|helvetica|liberation sans|arimo|arial unicode ms)$/i, 1139 / 2048],
+  [/^(times new roman|liberation serif|tinos)$/i, 1024 / 2048],
+  [/^(tahoma)$/i, 1118 / 2048],
+  [/^(verdana|dejavu sans)$/i, 1303 / 2048],
+];
+
+/**
+ * §18.3.1.13 — the Maximum Digit Width, in twips, of the normal style's font.
+ *
+ * "The number of characters of the maximum digit width of the numbers 0, 1,
+ * 2, …, 9 **as rendered in the normal style's font**" — the unit is bound to
+ * that face at that size, and Excel takes it in whole screen pixels. This used
+ * to test only whether the file NAMED a font and hand every named one Excel's
+ * 7px: right for the Calibri 11 and Arial 10 the note below cites, wrong for
+ * anything else. 55850.xlsx and 55927.xlsx are Arial ELEVEN, whose digit is
+ * 8px, so their columns came out 14% narrow and both files lost the last
+ * character of every date. A face we do not know keeps the old 7px rather than
+ * a guess.
+ *
+ * @param name   The normal style's font name.
+ * @param sizePt Its size in points; 11 when the file omits one.
+ * @returns The Maximum Digit Width in twips.
+ */
+function maximumDigitTwips(name: string, sizePt: number | undefined): number {
+  const size = sizePt !== undefined && Number.isFinite(sizePt) && sizePt > 0 ? sizePt : 11;
+  const em = DIGIT_EM.find(([re]) => re.test(name.trim()))?.[1];
+  if (em === undefined) return TWIPS_PER_EXCEL_CHAR;
+  // Points to 96-DPI pixels, then down to whole pixels the way Excel's own
+  // width formulas do — Calibri 11 is 7.61px and Excel's unit is 7.
+  const px = Math.trunc(em * size * (96 / 72));
+  return px > 0 ? px * TWIPS_PER_PIXEL : TWIPS_PER_EXCEL_CHAR;
+}
+
 function digitTwips(digitWidthPt: number | undefined): number {
   if (digitWidthPt === undefined || !Number.isFinite(digitWidthPt) || digitWidthPt <= 0) {
     return TWIPS_PER_EXCEL_CHAR;
@@ -664,7 +714,9 @@ export function worksheetToBody(
   // columns out in Caladea, and its 40-character column takes a page to itself
   // where ours took half of one.
   const charTwipsUnit =
-    styles.fonts[0]?.name === undefined ? digitTwips(print.digitWidthPt) : TWIPS_PER_EXCEL_CHAR;
+    styles.fonts[0]?.name === undefined
+      ? digitTwips(print.digitWidthPt)
+      : maximumDigitTwips(styles.fonts[0].name, styles.fonts[0].sizePt);
   // …but only the COLUMNS are measured in it. `charWidthUnits` already returns
   // each character's real width expressed in Excel's own 7px unit, so measuring
   // text with the render font's digit as well applies the same ratio twice —
