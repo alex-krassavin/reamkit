@@ -69,75 +69,138 @@ export function parseSheetShapes(
   const shapes: Array<SheetShape> = [];
   for (const anchor of poChildren(wsDr)) {
     if (!ANCHOR_KINDS.some((k) => poIs(anchor, k))) continue;
-    const sp = poChildren(anchor).find((c) => poIs(c, 'xdr:sp'));
-    if (!sp) continue;
-    if (isHiddenDrawing(sp, 'xdr:nvSpPr')) continue;
-    const box = anchorBox(anchor, colWidthPt, rowHeightPt);
-    if (!box) continue;
+    const anchored = anchorBox(anchor, colWidthPt, rowHeightPt);
+    if (!anchored) continue;
+    // §20.5.2.17 — an anchor may frame a GROUP rather than a shape, and the
+    // walk looked for a direct `xdr:sp` only: groupShape.xlsx nests two groups
+    // over three rectangles and we drew none of them.
+    const placed: Array<{ sp: PoNode; box: AnchorBox }> = [];
+    const direct = poChildren(anchor).find((c) => poIs(c, 'xdr:sp'));
+    if (direct) placed.push({ sp: direct, box: anchored });
+    for (const group of poChildren(anchor).filter((c) => poIs(c, 'xdr:grpSp'))) {
+      collectGrouped(group, anchored, placed);
+    }
+    for (const { sp, box } of placed) {
+      if (isHiddenDrawing(sp, 'xdr:nvSpPr')) continue;
 
-    // xdr:spPr wraps the same a: children (a:xfrm/a:prstGeom/a:solidFill/a:ln) the
-    // shared readers expect; xdr:txBody holds a:bodyPr + a:p like a slide shape.
-    const spPr = poChildren(sp).find((c) => poIs(c, 'xdr:spPr'));
-    const geometry = parseGeometry(spPr);
-    const spFill: ShapeFill = spPr ? parseFill(spPr, colors) : { kind: 'none' };
-    const fill = spFill.kind === 'none' ? styleFill(sp, colors, themeFillStyles) : spFill;
-    // §20.1.4.2.19 `<xdr:style><a:lnRef>` is where a shape drawn from a gallery
-    // style keeps its outline — spPr then carries no `a:ln` at all, and read
-    // alone it says the shape has no border. shape-macro-ext-ref.xlsx's macro
-    // button lost the blue rule both references draw around it.
-    // §20.1.2.2.24 — an `<a:ln/>` with nothing in it declares nothing, and it is
-    // not a black hairline: 47504.xlsx writes one beside an `<a:lnRef>` that
-    // carries the real outline, and taking the empty element at its word fenced
-    // a gallery shape in black where both references draw the theme's own thin
-    // accent rule.
-    const directLine = spPr ? parseLine(spPr, colors) : undefined;
-    const line =
-      directLine && Object.keys(directLine).length > 0
-        ? directLine
-        : styleLine(sp, colors, themeLineWidths);
-    const txBody = poChildren(sp).find((c) => poIs(c, 'xdr:txBody'));
-    const parsed = txBody
-      ? parseTxBody(txBody, undefined, undefined, colors, undefined)
-      : undefined;
-    // §20.1.4.2.14 `<xdr:style><a:fontRef>` carries the colour the shape's text
-    // takes when its runs name none — for anything drawn from a gallery style
-    // that is where the colour IS. shape-macro-ext-ref.xlsx asks for `lt1` on a
-    // green button and we drew black on green, because a run with no `a:rPr`
-    // colour fell through to the layout's default.
-    const text = parsed ? withStyleTextColor(parsed, sp, colors) : undefined;
-    const shadow =
-      (spPr ? parseShadow(spPr, colors) : undefined) ??
-      styleShadow(sp, colors, themeEffectStyles);
-    const visibleLine = line !== undefined && line.fill !== 'none';
-    if (!text && fill.kind === 'none' && !visibleLine) continue;
+      // xdr:spPr wraps the same a: children (a:xfrm/a:prstGeom/a:solidFill/a:ln) the
+      // shared readers expect; xdr:txBody holds a:bodyPr + a:p like a slide shape.
+      const spPr = poChildren(sp).find((c) => poIs(c, 'xdr:spPr'));
+      const geometry = parseGeometry(spPr);
+      const spFill: ShapeFill = spPr ? parseFill(spPr, colors) : { kind: 'none' };
+      const fill = spFill.kind === 'none' ? styleFill(sp, colors, themeFillStyles) : spFill;
+      // §20.1.4.2.19 `<xdr:style><a:lnRef>` is where a shape drawn from a gallery
+      // style keeps its outline — spPr then carries no `a:ln` at all, and read
+      // alone it says the shape has no border. shape-macro-ext-ref.xlsx's macro
+      // button lost the blue rule both references draw around it.
+      // §20.1.2.2.24 — an `<a:ln/>` with nothing in it declares nothing, and it is
+      // not a black hairline: 47504.xlsx writes one beside an `<a:lnRef>` that
+      // carries the real outline, and taking the empty element at its word fenced
+      // a gallery shape in black where both references draw the theme's own thin
+      // accent rule.
+      const directLine = spPr ? parseLine(spPr, colors) : undefined;
+      const line =
+        directLine && Object.keys(directLine).length > 0
+          ? directLine
+          : styleLine(sp, colors, themeLineWidths);
+      const txBody = poChildren(sp).find((c) => poIs(c, 'xdr:txBody'));
+      const parsed = txBody
+        ? parseTxBody(txBody, undefined, undefined, colors, undefined)
+        : undefined;
+      // §20.1.4.2.14 `<xdr:style><a:fontRef>` carries the colour the shape's text
+      // takes when its runs name none — for anything drawn from a gallery style
+      // that is where the colour IS. shape-macro-ext-ref.xlsx asks for `lt1` on a
+      // green button and we drew black on green, because a run with no `a:rPr`
+      // colour fell through to the layout's default.
+      const text = parsed ? withStyleTextColor(parsed, sp, colors) : undefined;
+      const shadow =
+        (spPr ? parseShadow(spPr, colors) : undefined) ??
+        styleShadow(sp, colors, themeEffectStyles);
+      const visibleLine = line !== undefined && line.fill !== 'none';
+      if (!text && fill.kind === 'none' && !visibleLine) continue;
 
-    shapes.push({
-      shape: {
-        // §20.5.2.35: a `twoCellAnchor` is a TWO-dimensional placement. Emitted
-        // as a plain block the drawing kept only its size and its order down
-        // the page — everything landed against the left margin, which turned
-        // bnc762542.xlsx's callout (three swatches, three leader lines, three
-        // labels, side by side) into a single vertical stack. The layout floats
-        // a shape at its anchor when one is given, so give it one.
-        float: {
-          wrap: 'none' as const,
-          posH: { relativeFrom: 'margin' as const, offsetPt: pt(box.xPt) },
-          posV: { relativeFrom: 'margin' as const, offsetPt: pt(box.yPt) },
+      shapes.push({
+        shape: {
+          // §20.5.2.35: a `twoCellAnchor` is a TWO-dimensional placement. Emitted
+          // as a plain block the drawing kept only its size and its order down
+          // the page — everything landed against the left margin, which turned
+          // bnc762542.xlsx's callout (three swatches, three leader lines, three
+          // labels, side by side) into a single vertical stack. The layout floats
+          // a shape at its anchor when one is given, so give it one.
+          float: {
+            wrap: 'none' as const,
+            posH: { relativeFrom: 'margin' as const, offsetPt: pt(box.xPt) },
+            posV: { relativeFrom: 'margin' as const, offsetPt: pt(box.yPt) },
+          },
+          width: pt(box.widthPt),
+          height: pt(box.heightPt),
+          geometry,
+          fill,
+          ...(line ? { line } : {}),
+          ...(text ? { text } : {}),
+          ...(shadow ? { shadow } : {}),
+          paragraphProperties: {},
         },
-        width: pt(box.widthPt),
-        height: pt(box.heightPt),
-        geometry,
-        fill,
-        ...(line ? { line } : {}),
-        ...(text ? { text } : {}),
-        ...(shadow ? { shadow } : {}),
-        paragraphProperties: {},
-      },
-      anchorRow: box.anchorRow,
-    });
+        anchorRow: box.anchorRow,
+      });
+    }
   }
   shapes.sort((a, b) => a.anchorRow - b.anchorRow);
   return shapes.map((s) => s.shape);
+}
+
+/**
+ * Place a group's children inside the box the group itself occupies.
+ *
+ * §20.5.2.17 `xdr:grpSp` — a group gives its children a coordinate space of its
+ * own: `a:xfrm/a:chOff` + `a:chExt` name that space, and each child's own
+ * `a:xfrm` is a rectangle inside it. Mapping the rectangle onto the group's box
+ * places the child; a nested group recurses through the same map.
+ *
+ * @param group The `xdr:grpSp` element.
+ * @param box   The box the group occupies on the page.
+ * @param out   Collects each `xdr:sp` with the box it lands in.
+ */
+function collectGrouped(
+  group: PoNode,
+  box: AnchorBox,
+  out: Array<{ sp: PoNode; box: AnchorBox }>,
+): void {
+  const grpPr = poChildren(group).find((c) => poIs(c, 'xdr:grpSpPr'));
+  const xfrm = grpPr ? poChildren(grpPr).find((c) => poIs(c, 'a:xfrm')) : undefined;
+  const chOff = xfrm ? poChildren(xfrm).find((c) => poIs(c, 'a:chOff')) : undefined;
+  const chExt = xfrm ? poChildren(xfrm).find((c) => poIs(c, 'a:chExt')) : undefined;
+  const ox = chOff ? (poIntAttr(chOff, 'x') ?? 0) : 0;
+  const oy = chOff ? (poIntAttr(chOff, 'y') ?? 0) : 0;
+  const cw = chExt ? (poIntAttr(chExt, 'cx') ?? 0) : 0;
+  const ch = chExt ? (poIntAttr(chExt, 'cy') ?? 0) : 0;
+  if (!(cw > 0) || !(ch > 0)) return;
+  const place = (node: PoNode, prTag: string): AnchorBox | undefined => {
+    const pr = poChildren(node).find((c) => poIs(c, prTag));
+    const x = pr ? poChildren(pr).find((c) => poIs(c, 'a:xfrm')) : undefined;
+    const off = x ? poChildren(x).find((c) => poIs(c, 'a:off')) : undefined;
+    const ext = x ? poChildren(x).find((c) => poIs(c, 'a:ext')) : undefined;
+    if (!off || !ext) return undefined;
+    const w = ((poIntAttr(ext, 'cx') ?? 0) / cw) * box.widthPt;
+    const h = ((poIntAttr(ext, 'cy') ?? 0) / ch) * box.heightPt;
+    if (!(w > 0) || !(h > 0)) return undefined;
+    return {
+      widthPt: w,
+      heightPt: h,
+      anchorRow: box.anchorRow,
+      xPt: box.xPt + (((poIntAttr(off, 'x') ?? 0) - ox) / cw) * box.widthPt,
+      yPt: box.yPt + (((poIntAttr(off, 'y') ?? 0) - oy) / ch) * box.heightPt,
+    };
+  };
+  for (const child of poChildren(group)) {
+    if (poIs(child, 'xdr:sp')) {
+      const b = place(child, 'xdr:spPr');
+      if (b) out.push({ sp: child, box: b });
+    } else if (poIs(child, 'xdr:grpSp')) {
+      const b = place(child, 'xdr:grpSpPr');
+      if (b) collectGrouped(child, b, out);
+    }
+  }
 }
 
 /**
@@ -228,9 +291,7 @@ function styleFill(
  */
 function placeholderColors(colors: ColorResolver, phHex: string): ColorResolver {
   return (raw) =>
-    'scheme' in raw && raw.scheme === 'phClr'
-      ? applyColorMods(phHex, raw.mods ?? [])
-      : colors(raw);
+    'scheme' in raw && raw.scheme === 'phClr' ? applyColorMods(phHex, raw.mods ?? []) : colors(raw);
 }
 
 /**

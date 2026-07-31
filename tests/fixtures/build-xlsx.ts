@@ -169,6 +169,8 @@ export interface XlsxBuilderOptions {
     readonly hidden?: boolean;
     /** A colour element for the run's own `<a:rPr><a:solidFill>` (e.g. an `a:sysClr`). */
     readonly runColorXml?: string;
+    /** Raw drawing body, replacing the generated `xdr:sp` (e.g. an `xdr:grpSp`). */
+    readonly rawShapeXml?: string;
   };
   /** Attach cell hyperlinks to the FIRST sheet (E-SHEET W3). A `url` is emitted as
    *  an external `r:id` relationship; a `location` is an in-workbook target. */
@@ -745,7 +747,9 @@ ${chartRels}</Relationships>`,
   <xdr:twoCellAnchor>
     <xdr:from><xdr:col>${a.from[0]}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${a.from[1]}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>
     <xdr:to><xdr:col>${a.to[0]}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${a.to[1]}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>
-    <xdr:sp>
+${
+  options.sheetShape.rawShapeXml ??
+  `    <xdr:sp>
       <xdr:nvSpPr><xdr:cNvPr id="2" name="Shape 1"${
         options.sheetShape.hidden ? ' hidden="1"' : ''
       }/><xdr:cNvSpPr/></xdr:nvSpPr>
@@ -770,7 +774,8 @@ ${chartRels}</Relationships>`,
           ? `<a:rPr lang="en-US"><a:solidFill>${options.sheetShape.runColorXml}</a:solidFill></a:rPr>`
           : ''
       }<a:t>${escapeXml(text)}</a:t></a:r></a:p></xdr:txBody>
-    </xdr:sp>
+    </xdr:sp>`
+}
     <xdr:clientData/>
   </xdr:twoCellAnchor>
 </xdr:wsDr>`,

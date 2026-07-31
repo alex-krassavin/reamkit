@@ -82,6 +82,34 @@ describe('sheet shapes — resolve (E-SHEET W2)', () => {
     expect(shape.line?.width).toBeCloseTo(2); // lnStyleLst[1] = 25400 EMU
   });
 
+  it('walks into a shape GROUP and places each child in it', () => {
+    // §20.5.2.17 — an anchor may frame a group rather than a shape, and the
+    // walk looked for a direct `xdr:sp` only. groupShape.xlsx nests two groups
+    // over three rectangles and we drew none of them.
+    const drawing =
+      `<xdr:grpSp><xdr:nvGrpSpPr><xdr:cNvPr id="9" name="Group 1"/><xdr:cNvGrpSpPr/></xdr:nvGrpSpPr>` +
+      `<xdr:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000" cy="1000"/>` +
+      `<a:chOff x="0" y="0"/><a:chExt cx="1000" cy="1000"/></a:xfrm></xdr:grpSpPr>` +
+      `<xdr:sp><xdr:nvSpPr><xdr:cNvPr id="2" name="A"/><xdr:cNvSpPr/></xdr:nvSpPr>` +
+      `<xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="500" cy="1000"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+      `<a:solidFill><a:srgbClr val="4472C4"/></a:solidFill></xdr:spPr></xdr:sp>` +
+      `<xdr:sp><xdr:nvSpPr><xdr:cNvPr id="3" name="B"/><xdr:cNvSpPr/></xdr:nvSpPr>` +
+      `<xdr:spPr><a:xfrm><a:off x="500" y="0"/><a:ext cx="500" cy="1000"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+      `<a:solidFill><a:srgbClr val="ED7D31"/></a:solidFill></xdr:spPr></xdr:sp></xdr:grpSp>`;
+    const sheet = readXlsxToSheetDoc(
+      buildXlsx({ rows: [['cell']], sheetShape: { rawShapeXml: drawing } }),
+    ).sheets[0]!;
+    expect(sheet.shapes).toHaveLength(2);
+    const [a, b] = sheet.shapes!;
+    // Each child takes half the group's box, side by side.
+    expect(a!.fill).toMatchObject({ kind: 'solid', colorHex: '4472C4' });
+    expect(b!.fill).toMatchObject({ kind: 'solid', colorHex: 'ED7D31' });
+    expect(a!.width).toBeCloseTo(b!.width);
+    expect(b!.float?.posH.offsetPt).toBeGreaterThan(a!.float?.posH.offsetPt ?? 0);
+  });
+
   it('leaves a sheet with no drawing without a shapes field', () => {
     const sheet = readXlsxToSheetDoc(buildXlsx({ rows: [[1]] })).sheets[0]!;
     expect(sheet.shapes).toBeUndefined();
