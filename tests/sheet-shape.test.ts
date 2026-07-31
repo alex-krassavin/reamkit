@@ -49,15 +49,34 @@ describe('sheet shapes — resolve (E-SHEET W2)', () => {
     expect(para.paragraph.runs[0]?.properties.colorHex).toBe('FFFFFF');
   });
 
+  it('lets a run\u2019s own <a:sysClr> beat the shape style\u2019s font colour', () => {
+    // §20.1.2.3.32 — a system colour is STATED, not referenced: it carries its
+    // own value in `lastClr` and there is nothing to look up. Unread, the run
+    // fell back to `<a:fontRef>`, which on ConditionalFormattingSamples.xlsx
+    // asks for `lt1`: fifteen navigation buttons came out white on pale blue.
+    const sheet = readXlsxToSheetDoc(
+      buildXlsx({
+        rows: [['cell']],
+        sheetShape: {
+          text: 'Go',
+          styleOnly: true,
+          runColorXml: '<a:sysClr val="windowText" lastClr="000000"/>',
+        },
+      }),
+    ).sheets[0]!;
+    const para = sheet.shapes![0]!.text?.content[0];
+    if (para?.kind !== 'paragraph') throw new Error('expected a paragraph');
+    expect(para.paragraph.runs[0]?.properties.colorHex).toBe('000000');
+  });
+
   it('takes its FILL from <a:fillRef> and its width from the theme (50299)', () => {
     // §20.1.4.2.10 is the outline's twin, and it was the half left unread: this
     // rectangle's spPr holds an `a:xfrm` and an `a:prstGeom` and nothing else,
     // so we drew it hollow on all six sheets that repeat it. Its `a:lnRef
     // idx="2"` indexes the theme's line styles, where the width is — assuming a
     // hairline drew a 2pt rule in 0.75pt.
-    const sheet = readXlsxToSheetDoc(
-      new Uint8Array(readFileSync('tests/fixtures/real/50299.xlsx')),
-    ).sheets[0]!;
+    const sheet = readXlsxToSheetDoc(new Uint8Array(readFileSync('tests/fixtures/real/50299.xlsx')))
+      .sheets[0]!;
     const shape = sheet.shapes![0]!;
     expect(shape.fill).toMatchObject({ kind: 'solid', colorHex: '4F81BD' }); // accent1
     expect(shape.line?.width).toBeCloseTo(2); // lnStyleLst[1] = 25400 EMU

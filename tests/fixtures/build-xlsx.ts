@@ -167,6 +167,8 @@ export interface XlsxBuilderOptions {
     readonly styleOnly?: boolean;
     /** §20.1.2.2.8 `<xdr:cNvPr hidden="1"/>` — the object is not to be shown. */
     readonly hidden?: boolean;
+    /** A colour element for the run's own `<a:rPr><a:solidFill>` (e.g. an `a:sysClr`). */
+    readonly runColorXml?: string;
   };
   /** Attach cell hyperlinks to the FIRST sheet (E-SHEET W3). A `url` is emitted as
    *  an external `r:id` relationship; a `location` is an in-workbook target. */
@@ -763,7 +765,11 @@ ${chartRels}</Relationships>`,
       </xdr:style>`
           : ''
       }
-      <xdr:txBody><a:bodyPr/><a:p><a:r><a:t>${escapeXml(text)}</a:t></a:r></a:p></xdr:txBody>
+      <xdr:txBody><a:bodyPr/><a:p><a:r>${
+        options.sheetShape.runColorXml
+          ? `<a:rPr lang="en-US"><a:solidFill>${options.sheetShape.runColorXml}</a:solidFill></a:rPr>`
+          : ''
+      }<a:t>${escapeXml(text)}</a:t></a:r></a:p></xdr:txBody>
     </xdr:sp>
     <xdr:clientData/>
   </xdr:twoCellAnchor>

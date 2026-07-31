@@ -195,17 +195,43 @@ export function readColorMods(colorNode: PoNode): Array<ColorMod> {
 }
 
 /**
- * Resolve an `a:srgbClr` / `a:schemeClr` node to a hex string (with colour
- * transforms applied). Returns `undefined` when the node is some other element,
- * valueless, or the resolver does not know the colour. Container traversal policy
- * (stop at the first colour node vs continue past unresolved ones) stays with the
- * callers.
+ * §20.1.2.3.32 `a:sysClr` — the host system's own colour. `val` names it and
+ * `lastClr` carries what the producing application resolved it to, which is
+ * what a reader uses; the two names that matter without one are the window
+ * background and its text.
+ */
+const SYSTEM_COLORS: ReadonlyMap<string, string> = new Map([
+  ['window', 'FFFFFF'],
+  ['windowText', '000000'],
+  ['windowFrame', '000000'],
+  ['btnText', '000000'],
+  ['btnFace', 'F0F0F0'],
+  ['highlight', '0078D7'],
+  ['highlightText', 'FFFFFF'],
+]);
+
+/**
+ * Resolve an `a:srgbClr` / `a:schemeClr` / `a:sysClr` node to a hex string (with
+ * colour transforms applied). Returns `undefined` when the node is some other
+ * element, valueless, or the resolver does not know the colour. Container
+ * traversal policy (stop at the first colour node vs continue past unresolved
+ * ones) stays with the callers.
  *
  * @param c            The candidate colour node.
  * @param resolveColor The resolver mapping a {@link RawColor} to hex.
  * @returns The resolved RRGGBB, or `undefined`.
  */
 export function resolveColorNode(c: PoNode, resolveColor: ColorResolver): string | undefined {
+  // A system colour is stated, not referenced: it carries its own value and
+  // there is nothing for the theme resolver to look up. Unread, it fell through
+  // to whatever the container's style said instead — ConditionalFormattingSamples
+  // .xlsx spells its buttons' text `<a:sysClr val="windowText"/>` over a shape
+  // style asking for `lt1`, and fifteen of them came out white on pale blue.
+  if (poIs(c, 'a:sysClr')) {
+    const last = poAttr(c, 'lastClr');
+    if (last && /^[0-9A-Fa-f]{6}$/.test(last)) return last.toUpperCase();
+    return SYSTEM_COLORS.get(poAttr(c, 'val') ?? '');
+  }
   const isSrgb = poIs(c, 'a:srgbClr');
   if (!isSrgb && !poIs(c, 'a:schemeClr')) return undefined;
   const v = poAttr(c, 'val');
