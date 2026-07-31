@@ -171,6 +171,8 @@ export interface XlsxBuilderOptions {
     readonly runColorXml?: string;
     /** Raw drawing body, replacing the generated `xdr:sp` (e.g. an `xdr:grpSp`). */
     readonly rawShapeXml?: string;
+    /** Raw anchor, replacing the generated `xdr:twoCellAnchor` whole (§20.5.2.1). */
+    readonly rawAnchorXml?: string;
   };
   /** Attach cell hyperlinks to the FIRST sheet (E-SHEET W3). A `url` is emitted as
    *  an external `r:id` relationship; a `location` is an in-workbook target. */
@@ -742,7 +744,12 @@ ${chartRels}</Relationships>`,
     const preset = options.sheetShape.preset ?? 'roundRect';
     const text = options.sheetShape.text ?? 'Shape text';
     entries['xl/drawings/drawing1.xml'] = encoder.encode(
-      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+      options.sheetShape.rawAnchorXml
+        ? `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+${options.sheetShape.rawAnchorXml}
+</xdr:wsDr>`
+        : `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
   <xdr:twoCellAnchor>
     <xdr:from><xdr:col>${a.from[0]}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${a.from[1]}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>

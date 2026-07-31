@@ -21,7 +21,15 @@ import type { PoNode } from '@/core/po-helpers';
 
 import { emuToPt, pt } from '@/core/ir';
 import { applyColorMods, resolveColorNode } from '@/core/drawingml/colors';
-import { poAttr, poChildren, poFirstChild, poIntAttr, poIs, poText } from '@/core/po-helpers';
+import {
+  poAttr,
+  poChildren,
+  poFirstChild,
+  poIntAttr,
+  poIs,
+  poTag,
+  poText,
+} from '@/core/po-helpers';
 import { parseXml } from '@/pptx/pptx-reader';
 import { parseGeometry, parseTxBody } from '@/pptx/slide-parser';
 import {
@@ -282,7 +290,7 @@ function styleLine(
 ): ShapeLine | undefined {
   const style = poChildren(sp).find((c) => poIs(c, 'xdr:style'));
   const lnRef = style ? poChildren(style).find((c) => poIs(c, 'a:lnRef')) : undefined;
-  const child = lnRef ? poChildren(lnRef)[0] : undefined;
+  const child = poFirstElement(lnRef);
   const colorHex = child ? resolveColorNode(child, colors) : undefined;
   if (colorHex === undefined) return undefined;
   const idx = Number(poAttr(lnRef, 'idx') ?? '');
@@ -305,6 +313,22 @@ function styleLine(
  * asks for and what both references draw; painting the referenced colour flat
  * instead lost the gradient on every gallery shape.
  */
+/**
+ * The first CHILD ELEMENT of a style reference — `<a:lnRef>`, `<a:fillRef>`,
+ * `<a:effectRef>`, `<a:fontRef>` — each of which wraps exactly one colour.
+ *
+ * Not `poChildren(ref)[0]`: a part saved with indentation puts a whitespace
+ * text node there, and the colour behind it went unread. Every gallery shape in
+ * tdf139763ShapeAnchor.xlsx lost its fill AND its outline that way and drew
+ * nothing at all on a page LibreOffice fills with two blue arrows.
+ *
+ * @param ref The style reference, or undefined.
+ * @returns Its first element child, or undefined.
+ */
+function poFirstElement(ref: PoNode | undefined): PoNode | undefined {
+  return ref ? poChildren(ref).find((c) => poTag(c) !== undefined) : undefined;
+}
+
 function styleFill(
   sp: PoNode,
   colors: ColorResolver,
@@ -313,7 +337,7 @@ function styleFill(
   const style = poChildren(sp).find((c) => poIs(c, 'xdr:style'));
   const fillRef = style ? poChildren(style).find((c) => poIs(c, 'a:fillRef')) : undefined;
   if (!fillRef || poAttr(fillRef, 'idx') === '0') return { kind: 'none' };
-  const child = poChildren(fillRef)[0];
+  const child = poFirstElement(fillRef);
   const colorHex = child ? resolveColorNode(child, colors) : undefined;
   if (colorHex === undefined) return { kind: 'none' };
   const idx = Number(poAttr(fillRef, 'idx') ?? '');
@@ -367,7 +391,7 @@ function styleShadow(
   const list = slot ? poFirstChild(slot, 'a:effectLst') : undefined;
   const shdw = list ? poFirstChild(list, 'a:outerShdw') : undefined;
   if (!shdw) return undefined;
-  const child = poChildren(ref)[0];
+  const child = poFirstElement(ref);
   const phHex = child ? resolveColorNode(child, colors) : undefined;
   return shadowFromOuterShdw(shdw, phHex ? placeholderColors(colors, phHex) : colors);
 }
@@ -377,7 +401,7 @@ function styleFontColor(sp: PoNode, colors: ColorResolver): string | undefined {
   const style = poChildren(sp).find((c) => poIs(c, 'xdr:style'));
   const fontRef = style ? poChildren(style).find((c) => poIs(c, 'a:fontRef')) : undefined;
   // The colour is whichever colour child it carries — srgbClr, schemeClr, …
-  const child = fontRef ? poChildren(fontRef)[0] : undefined;
+  const child = poFirstElement(fontRef);
   return child ? resolveColorNode(child, colors) : undefined;
 }
 
@@ -438,6 +462,7 @@ function anchorBox(
   }
   const ext = poChildren(anchor).find((c) => poIs(c, 'xdr:ext'));
   if (!ext) return undefined;
+  const pos = absolutePos(anchor);
   const widthPt = emuToPt(poIntAttr(ext, 'cx') ?? 0);
   const heightPt = emuToPt(poIntAttr(ext, 'cy') ?? 0);
   if (!(widthPt > 0 && heightPt > 0)) return undefined;
@@ -445,9 +470,23 @@ function anchorBox(
     widthPt,
     heightPt,
     anchorRow: from?.row ?? 0,
-    xPt: from ? origin(from.col, from.colOffPt, colWidthPt) : 0,
-    yPt: from ? origin(from.row, from.rowOffPt, rowHeightPt) : 0,
+    xPt: from ? origin(from.col, from.colOffPt, colWidthPt) : pos.xPt,
+    yPt: from ? origin(from.row, from.rowOffPt, rowHeightPt) : pos.yPt,
   };
+}
+
+/**
+ * §20.5.2.1 `absoluteAnchor` names no cell: it gives the distance from the
+ * sheet's own corner in `<xdr:pos>`. Read nowhere, both of
+ * tdf139763ShapeAnchor.xlsx's arrows piled into the top-left corner.
+ *
+ * @param anchor The anchor element.
+ * @returns The offset in points; zero for an anchor that states none.
+ */
+function absolutePos(anchor: PoNode): { readonly xPt: number; readonly yPt: number } {
+  const node = poChildren(anchor).find((c) => poIs(c, 'xdr:pos'));
+  if (!node) return { xPt: 0, yPt: 0 };
+  return { xPt: emuToPt(poIntAttr(node, 'x') ?? 0), yPt: emuToPt(poIntAttr(node, 'y') ?? 0) };
 }
 
 /**
