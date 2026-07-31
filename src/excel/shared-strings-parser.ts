@@ -62,7 +62,12 @@ export function parseSharedStrings(data: Uint8Array): SharedStrings {
   const tree = parser.parse(xml) as Record<string, unknown>;
   const sst = tree['sst'];
   if (!sst || typeof sst !== 'object') return { texts: [], runs: [] };
-  const siRaw = (sst as Record<string, unknown>)['si'];
+  // §18.4.8 names the item `<si>`; the 2006 beta of the format named it
+  // `<sstItem>` and is otherwise identical here. sample-beta.xlsx is one of
+  // those, and reading only `si` left every one of its labels blank while the
+  // numbers beside them printed — half a sheet, silently.
+  const siRaw =
+    (sst as Record<string, unknown>)['si'] ?? (sst as Record<string, unknown>)['sstItem'];
   const items = Array.isArray(siRaw) ? siRaw : siRaw !== undefined ? [siRaw] : [];
   const texts: Array<string> = [];
   const runs: Array<ReadonlyArray<SheetRichRun> | undefined> = [];
