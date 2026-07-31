@@ -85,7 +85,7 @@
         "heightPt": 792
       }
     ],
-    "chars": 18507,
+    "chars": 18516,
     "firstLines": [
       "Wilfried Schäfer",
       "Wilfried Schäfer",
@@ -120,7 +120,7 @@
       "(vollständige Induktion über",
       ", dann gilt",
       "(wege",
-      "12.9836065573771"
+      "12.9836065573771 ########"
     ]
   }
 }

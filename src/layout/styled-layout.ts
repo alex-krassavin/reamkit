@@ -2148,7 +2148,23 @@ function collectFontResources(
         }
       } else if (el.kind === 'table') {
         for (const row of el.table.rows) {
-          for (const cell of row.cells) visit(cell.content);
+          for (const cell of row.cells) {
+            // A number too wide for its column is drawn as a row of `#` in
+            // place of its own digits (CellProperties.hashOnOverflow) — a
+            // character that appears nowhere in the document's text. Left out
+            // of the subset, the page encodes a glyph the embedded font no
+            // longer has: bug69812.xlsx is one such cell, and its page came out
+            // blank where both references print a number.
+            if (cell.properties.hashOnOverflow === true) {
+              for (const inner of cell.content) {
+                if (inner.kind !== 'paragraph') continue;
+                for (const run of inner.paragraph.runs) {
+                  addRun({ text: '#', properties: run.properties }, inner.paragraph);
+                }
+              }
+            }
+            visit(cell.content);
+          }
         }
       } else if (el.kind === 'shape') {
         if (el.shape.text) visit(el.shape.text.content);

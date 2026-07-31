@@ -328,3 +328,23 @@ describe('General spells an exponent Excel’s way, not JavaScript’s', () => {
     expect(applyNumberFormat('0.5', 0, noCustom)).toBe('0.5');
   });
 });
+
+describe('a comma against the last placeholder is a scale, not punctuation', () => {
+  it('shows the value in thousands, one thousand per comma (§18.8.31)', () => {
+    const custom = new Map<number, string>([[164, '#,##0,,']]);
+    // bug69812.xlsx: one cell, 25 396 277 490 under `#,##0,,`. Both references
+    // print "25,396"; the commas printed themselves.
+    expect(applyNumberFormat('25396277490', 164, custom)).toBe('25,396');
+    expect(applyNumberFormat('25396277490', 164, new Map([[164, '#,##0,']]))).toBe('25,396,277');
+    expect(applyNumberFormat('12345678', 164, new Map([[164, '#,##0.0,']]))).toBe('12,345.7');
+    // A suffix after the scale still prints.
+    expect(applyNumberFormat('25396277490', 164, new Map([[164, '0.0,,"M"']]))).toBe('25396.3M');
+  });
+
+  it('leaves a comma that does not touch a placeholder alone', () => {
+    // Quoted, so a literal — and the grouping comma inside the digits is not a
+    // scale either.
+    expect(applyNumberFormat('1234', 164, new Map([[164, '#,##0","']]))).toBe('1,234,');
+    expect(applyNumberFormat('1234567', 164, new Map([[164, '#,##0']]))).toBe('1,234,567');
+  });
+});

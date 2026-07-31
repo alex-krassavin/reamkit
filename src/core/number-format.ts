@@ -798,7 +798,11 @@ function applyNumericSection(value: number, format: string, negativeSection: boo
   let magnitude = Math.abs(value);
   if (isPercent) magnitude *= 100;
 
-  const { intFormat, decFormat, literalPrefix, literalSuffix } = splitNumberFormat(cleaned);
+  const { intFormat, decFormat, literalPrefix, literalSuffix, scaleCommas } =
+    splitNumberFormat(cleaned);
+  // §18.8.31 — a comma against the last placeholder is not punctuation, it is a
+  // scale: the value is shown in thousands (or millions, per comma).
+  if (scaleCommas > 0) magnitude /= 1000 ** scaleCommas;
   let decimals = 0;
   for (const c of decFormat) if (c === '0' || c === '#') decimals++;
 
@@ -843,6 +847,12 @@ interface SplitNumberFormat {
   intFormat: string;
   decFormat: string;
   literalSuffix: string;
+  /**
+   * §18.8.31 — commas immediately to the right of the last digit placeholder.
+   * Each divides the value by a thousand and prints nothing: `#,##0,,` shows
+   * 25 396 277 490 as "25,396". Read as literals they printed themselves.
+   */
+  scaleCommas: number;
 }
 
 function splitNumberFormat(cleaned: string): SplitNumberFormat {
@@ -867,17 +877,22 @@ function splitNumberFormat(cleaned: string): SplitNumberFormat {
       intFormat: '',
       decFormat: '',
       literalSuffix: '',
+      scaleCommas: 0,
     };
   }
   const literalPrefix = unquoteLiteral(cleaned.substring(0, firstDigit));
-  const literalSuffix = unquoteLiteral(cleaned.substring(lastDigit + 1));
+  // The scaling commas are the ones that TOUCH the last placeholder — a comma
+  // any further out is a literal, and a quoted one always is.
+  const rawSuffix = cleaned.substring(lastDigit + 1);
+  const scaleCommas = /^,+/.exec(rawSuffix)?.[0]?.length ?? 0;
+  const literalSuffix = unquoteLiteral(rawSuffix.substring(scaleCommas));
   const digitRange = cleaned.substring(firstDigit, lastDigit + 1);
   // The '%' inside digit range is handled by isPercent at the caller; strip
   // it from the digit range so the dot parser doesn't get confused.
   const dotIdx = digitRange.indexOf('.');
   const intFormat = dotIdx >= 0 ? digitRange.substring(0, dotIdx) : digitRange;
   const decFormat = dotIdx >= 0 ? digitRange.substring(dotIdx + 1) : '';
-  return { literalPrefix, intFormat, decFormat, literalSuffix };
+  return { literalPrefix, intFormat, decFormat, literalSuffix, scaleCommas };
 }
 
 function unquoteLiteral(s: string): string {
