@@ -33,7 +33,7 @@ import {
 } from 'node:fs';
 import { basename, resolve } from 'node:path';
 
-import { parsePpm, rasterize, referenceToPdf, visualDiff } from './lib';
+import { colorDiff, parsePpm, rasterize, referenceToPdf, visualDiff } from './lib';
 import type { FontBytesByVariant } from '@/core/font';
 import { Ream } from '@/core/converter/ream';
 
@@ -67,6 +67,12 @@ interface Row {
   readonly score: number;
   readonly line: string;
   readonly name: string;
+  /**
+   * Whether the two sides paginate the same. When they do not, page N is not
+   * page N and the pixel score is comparing two different sheets — the number
+   * is meaningless and the file belongs in its own list.
+   */
+  readonly aligned: boolean;
 }
 
 async function main(): Promise<void> {
@@ -104,14 +110,24 @@ async function main(): Promise<void> {
         }),
       );
     } catch (e) {
-      rows.push({ score: 99, name, line: `  threw   ${name} — ${(e as Error).message.slice(0, 60)}` });
+      rows.push({
+        score: 99,
+        name,
+        aligned: false,
+        line: `  threw   ${name} — ${(e as Error).message.slice(0, 60)}`,
+      });
       continue;
     }
     let refPdf: string;
     try {
       refPdf = cachedReference(src, work);
     } catch {
-      rows.push({ score: 98, name, line: `  ref!    ${name} — soffice produced no PDF` });
+      rows.push({
+        score: 98,
+        name,
+        aligned: false,
+        line: `  ref!    ${name} — soffice produced no PDF`,
+      });
       continue;
     }
 
@@ -123,7 +139,12 @@ async function main(): Promise<void> {
       ourPages = rasterize(oursPdf, resolve(work, 'px/o%d.ppm'), dpi);
       refPages = rasterize(refPdf, resolve(work, 'px/r%d.ppm'), dpi);
     } catch (e) {
-      rows.push({ score: 97, name, line: `  raster! ${name} — ${(e as Error).message.slice(0, 50)}` });
+      rows.push({
+        score: 97,
+        name,
+        aligned: false,
+        line: `  raster! ${name} — ${(e as Error).message.slice(0, 50)}`,
+      });
       continue;
     }
 
@@ -132,36 +153,49 @@ async function main(): Promise<void> {
     const compared = Math.min(ourPages.length, refPages.length, MAX_PAGES);
     let worst = 0;
     let worstPage = 0;
+    let worstColor = 0;
     for (let i = 0; i < compared; i++) {
-      const d = visualDiff(
-        parsePpm(new Uint8Array(readFileSync(ourPages[i]!))),
-        parsePpm(new Uint8Array(readFileSync(refPages[i]!))),
-      );
+      const ourPpm = parsePpm(new Uint8Array(readFileSync(ourPages[i]!)));
+      const refPpm = parsePpm(new Uint8Array(readFileSync(refPages[i]!)));
+      // Two pixels of slack: enough that a glyph landing a hair to the left is
+      // not a difference, not enough to hide one that moved a column.
+      const d = visualDiff(ourPpm, refPpm, 24, 2);
+      const c = colorDiff(ourPpm, refPpm);
+      if (c > worstColor) worstColor = c;
       if (d.mismatchRatio > worst) {
         worst = d.mismatchRatio;
         worstPage = i + 1;
       }
     }
-    // A page count that differs is a difference in itself, and the pages past
-    // the shorter side were never compared.
-    const pageGap = Math.abs(ourPages.length - refPages.length);
-    const score = worst + (pageGap > 0 ? 0.05 : 0);
+    const aligned = ourPages.length === refPages.length;
+    // Rank on the colour distance: it is the one that answers "is something
+    // painted wrong or missing", which is what a look at the page finds. The
+    // pixel ratio rides along because it says whether the page MOVED.
     rows.push({
-      score,
+      score: worstColor,
       name,
+      aligned,
       line:
-        `${score.toFixed(3).padStart(8)}  ${name.padEnd(46)} ` +
-        `p${String(worstPage).padStart(2)}  pages ${ourPages.length}/${refPages.length}`,
+        `${worstColor.toFixed(3).padStart(8)} ${worst.toFixed(3).padStart(7)}px  ` +
+        `${name.padEnd(46)} p${String(worstPage).padStart(2)}  ` +
+        `pages ${ourPages.length}/${refPages.length}`,
     });
   }
 
   rmSync(work, { recursive: true, force: true });
   const sorted = rows.sort((a, b) => b.score - a.score);
-  for (const r of sorted) console.log(r.line);
+  // The files whose pages line up: here the number means what it says, and the
+  // top of this list is where to look next.
+  console.log('──  colour  pixels  file ──');
+  for (const r of sorted.filter((x) => x.aligned)) console.log(r.line);
+  // …and the rest, where page N is not page N. A pagination gap is its own
+  // question and usually its own cause (a band we trim, a row we fit).
+  console.log('\n── pagination differs (pixel score not comparable) ──');
+  for (const r of sorted.filter((x) => !x.aligned)) console.log(r.line);
   writeFileSync(
     resolve('corpus/.pixel-scout.json'),
     JSON.stringify(
-      sorted.map((r) => ({ name: r.name, score: Number(r.score.toFixed(4)) })),
+      sorted.map((r) => ({ name: r.name, score: Number(r.score.toFixed(4)), aligned: r.aligned })),
       null,
       1,
     ),
