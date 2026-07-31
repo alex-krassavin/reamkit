@@ -2198,8 +2198,14 @@ function collectFontResources(
   }
 
   if (used.size === 0) {
+    // A document with no text still needs a font RESOURCE — `lookupFont` falls
+    // back to the first one and would otherwise hand back undefined — but it
+    // needs no font PROGRAM. Seeding `.notdef` here made us embed a 13 KB
+    // Roboto subset into 56017.xlsx, whose page draws nothing at all: 89% of
+    // the file was a font no operator names. The emitter skips a resource with
+    // no glyphs; ISO 32000-1 §7.8.3 wants the resources the stream needs.
     const regular = options.registry.resolveByStyle(false, false);
-    used.set(regular.variant, { parsed: regular.parsed, gids: new Set([0]) });
+    used.set(regular.variant, { parsed: regular.parsed, gids: new Set<number>() });
   }
 
   const out = new Map<string, FontResource>();

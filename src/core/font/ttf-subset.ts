@@ -23,9 +23,11 @@ const MAGIC_HEAD_CHECKSUM = 0xb1b0afba;
  * The tables a `/FontFile2` may carry (ISO 32000-1 §9.9.2).
  *
  * The spec names `glyf`, `head`, `hhea`, `hmtx`, `loca` and `maxp` as required,
- * `cvt `/`fpgm`/`prep` when the glyphs are hinted, and `cmap` for a symbolic
- * font. Everything else is dead weight in a PDF, which does its own positioning
- * and its own text extraction: we copied `post`, `GPOS`, `GSUB`, `GDEF`, `name`,
+ * `cvt `/`fpgm`/`prep` when the glyphs are hinted, and `cmap` for a SYMBOLIC
+ * font. A CIDFontType2 with `/CIDToGIDMap /Identity` is not symbolic in that
+ * sense — §9.7.4.2 makes the CID the glyph index and never consults `cmap`, so
+ * 9.3 KB of it rode along in every font we embedded. Everything else is dead
+ * weight too, in a PDF that does its own positioning and text extraction: we copied `post`, `GPOS`, `GSUB`, `GDEF`, `name`,
  * `hdmx`, `LTSH` and the rest through untouched, and they were 120 KB of the
  * 136 KB font program in 55906-MultiSheetRefs.xlsx. `OS/2` is kept because
  * viewers read its metrics when a descriptor is incomplete.
@@ -40,7 +42,6 @@ const EMBEDDABLE_TABLES = new Set([
   'cvt ',
   'fpgm',
   'prep',
-  'cmap',
   'OS/2',
 ]);
 

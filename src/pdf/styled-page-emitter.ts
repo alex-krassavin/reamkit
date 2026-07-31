@@ -514,6 +514,8 @@ function embedFontResources(
   const cidSet = pdfaProfile?.part === 1;
   const out = new Map<string, EmbeddedFont>();
   for (const [variant, res] of laid.fontResources) {
+    // A resource nothing draws from carries no glyphs and needs no program.
+    if (res.gids.size === 0) continue;
     out.set(variant, embedTtfFont(doc, res.parsed, { usedGids: res.gids, cidSet }));
   }
   return out;
