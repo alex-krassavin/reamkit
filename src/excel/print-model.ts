@@ -1347,6 +1347,7 @@ export function worksheetToBody(
 
       // Columns this cell's text runs over, set by the overflow block below.
       let overflowSpan = 1;
+      let paintColumns = 1;
       // The right rule the run takes over from the last cell it absorbs.
       let overflowRightRule: Border | undefined;
       // §18.8.1 wrapText (E-SHEET W6): a wrapped cell keeps its full text — the
@@ -1463,6 +1464,18 @@ export function worksheetToBody(
           overflowSpan = 0;
           for (let k = c; k < cc; k++) if (!hiddenCols.has(k)) overflowSpan++;
           for (let k = c + 1; k < cc; k++) overflowed.add(k);
+          // How much of that run the paint covers. A swallowed neighbour that
+          // paints NOTHING must stay bare — that is what paintColumns is for.
+          // One that paints the same thing was swallowed on `spanPreservesPaint`'s
+          // promise that the span repaints it, and painting only the origin
+          // breaks that promise: 56644.xlsx's `LEAVE BLUE COLUMNS BLANK` sits in
+          // F with G carrying the same blue of its own, and G came out white.
+          paintColumns = 1;
+          for (let k = c + 1; k < cc; k++) {
+            if (hiddenCols.has(k)) continue;
+            if (!cellPaintsSomething(cellMatrix[r]?.[k], styles)) break;
+            paintColumns++;
+          }
         }
       } else if (text.length > 0 && merge && !wrapText && !rotated && !shrinkToFit) {
         // A merge is a box like any other and its text is cut at ITS edge — not
