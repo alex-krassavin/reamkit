@@ -62,7 +62,7 @@ import {
   parseAreaRef,
   parseTitleRowRange,
 } from '@/excel';
-import { bandedTables, computeColumnBands } from '@/excel/column-bands';
+import { bandedTables, computeColumnBands, withHeadingBand } from '@/excel/column-bands';
 import { buildConditionalFormatter } from '@/excel/conditional-format';
 
 /**
@@ -1244,6 +1244,9 @@ export function worksheetToBody(
   }
 
   const rows: Array<TableRow> = [];
+  // §18.3.1.70 `headings` — the sheet row each emitted row IS, for the printed
+  // row-number column. Hidden rows are skipped, so the two do not agree.
+  const rowNumbers: Array<number> = [];
   // Where the first print-title row landed in `rows`. Not derivable from the
   // row index afterwards — hidden rows are skipped, so the two do not agree.
   let titleRowIndex = -1;
@@ -1754,6 +1757,7 @@ export function worksheetToBody(
       ...(breakRows.has(absR) ? { pageBreakBefore: true } : {}),
     };
     if (isTitleRow && titleRowIndex < 0) titleRowIndex = rows.length;
+    rowNumbers.push(absR + 1);
     rows.push({ properties: rowProps, cells });
   }
 
@@ -1883,6 +1887,12 @@ export function worksheetToBody(
     ];
   }
 
+  // §18.3.1.70 — the printed row and column headings, when the sheet asks for
+  // them. NumberFormatTests.xlsx does, and both references print the letters
+  // across the top and the numbers down the side.
+  const headed = worksheet.printOptions?.headings
+    ? withHeadingBand(rows, bandWidths, colStart, rowNumbers)
+    : undefined;
   const table: Table = {
     properties: frozen ? { ...tableProperties, frozen } : tableProperties,
     // The print scale shrinks the whole sheet, columns included — `bandWidths`
@@ -1891,8 +1901,8 @@ export function worksheetToBody(
     // invisible while the layout auto-fitted the grid away and became a clipped
     // page the moment the grid started to count: 49156.xlsx declares
     // `scale="47"`, so its 1100pt of columns has to come down to ~517pt.
-    grid: bandWidths.map((w) => twipsToPt(w)),
-    rows,
+    grid: (headed?.widths ?? bandWidths).map((w: number) => twipsToPt(w)),
+    rows: headed?.rows ?? rows,
   };
 
   return [{ kind: 'table', table }];

@@ -126,6 +126,11 @@ export interface XlsxPageSetup {
  */
 export interface XlsxPrintOptions {
   readonly gridLines?: boolean;
+  /**
+   * §18.3.1.70 `headings` — print the column letters across the top and the row
+   * numbers down the left, the way the sheet looks on screen. Off by default.
+   */
+  readonly headings?: boolean;
   readonly horizontalCentered?: boolean;
   readonly verticalCentered?: boolean;
 }

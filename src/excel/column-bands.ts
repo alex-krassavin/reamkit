@@ -13,7 +13,63 @@ import type {
   TableRow,
 } from '@/core/document-model';
 
+import type { Pt } from '@/core/ir';
 import { twipsToPt } from '@/core/ir';
+
+/** §18.3.1.70 — the width of the row-number column, in twips. */
+const HEADING_COL_TWIPS = 460;
+
+/** The A1-style letters of an absolute column index (0 → A, 26 → AA). */
+function columnLetters(index: number): string {
+  let n = index;
+  let out = '';
+  do {
+    out = String.fromCharCode(65 + (n % 26)) + out;
+    n = Math.floor(n / 26) - 1;
+  } while (n >= 0);
+  return out;
+}
+
+/**
+ * Wrap a grid in its printed row and column headings (§18.3.1.70 `headings`):
+ * the column letters across the top, the row numbers down the left, each in a
+ * thin box, the way the sheet looks on screen. A banded sheet gets its own
+ * letters per band, which is what both references print.
+ *
+ * @param rows       The band's rows.
+ * @param widths     The band's column widths in twips.
+ * @param colStart   The absolute index of the band's first column.
+ * @param rowNumbers The absolute 1-based row number of each row.
+ * @returns The rows and widths with the heading band added.
+ */
+export function withHeadingBand(
+  rows: ReadonlyArray<TableRow>,
+  widths: ReadonlyArray<number>,
+  colStart: number,
+  rowNumbers: ReadonlyArray<number>,
+): { rows: Array<TableRow>; widths: Array<number> } {
+  const border = { style: 'single' as const, width: 0.5 as Pt, colorHex: '808080' };
+  const borders = { top: border, bottom: border, left: border, right: border };
+  const head = (text: string): TableCell => ({
+    properties: { borders, verticalAlign: 'center' as const },
+    content: [
+      {
+        kind: 'paragraph' as const,
+        paragraph: { properties: { alignment: 'center' as const }, runs: [{ text, properties: {} }] },
+      },
+    ],
+  });
+  const letters: Array<TableCell> = [head('')];
+  for (let i = 0; i < widths.length; i++) letters.push(head(columnLetters(colStart + i)));
+  const out: Array<TableRow> = [{ properties: {}, cells: letters }];
+  rows.forEach((row, i) => {
+    out.push({
+      properties: row.properties,
+      cells: [head(String(rowNumbers[i] ?? i + 1)), ...row.cells],
+    });
+  });
+  return { rows: out, widths: [HEADING_COL_TWIPS, ...widths] };
+}
 
 /** A contiguous run of columns that prints together as one band (E-SHEET SE1). */
 export interface ColumnBand {

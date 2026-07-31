@@ -330,10 +330,12 @@ function parsePrintOptions(ws: Record<string, unknown>): XlsxPrintOptions | unde
     return raw === '1' || raw === 'true';
   };
   const gridLines = flag('gridLines');
+  const headings = flag('headings');
   const horizontalCentered = flag('horizontalCentered');
   const verticalCentered = flag('verticalCentered');
   if (
     gridLines === undefined &&
+    headings === undefined &&
     horizontalCentered === undefined &&
     verticalCentered === undefined
   ) {
@@ -341,6 +343,7 @@ function parsePrintOptions(ws: Record<string, unknown>): XlsxPrintOptions | unde
   }
   return {
     ...(gridLines !== undefined ? { gridLines } : {}),
+    ...(headings !== undefined ? { headings } : {}),
     ...(horizontalCentered !== undefined ? { horizontalCentered } : {}),
     ...(verticalCentered !== undefined ? { verticalCentered } : {}),
   };
