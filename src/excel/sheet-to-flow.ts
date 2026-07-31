@@ -13,7 +13,7 @@ import type {
   SectionProperties,
   ShapeBlock,
 } from '@/core/document-model';
-import type { ParsedWorksheet } from '@/core/spreadsheet-model';
+import type { ParsedWorksheet, XlsxStyles } from '@/core/spreadsheet-model';
 import type { Pt } from '@/core/ir';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss } from '@/core/ir/loss';
@@ -33,6 +33,7 @@ import {
   printableHeightPt,
   printableWidthPt,
   resolvePrintArea,
+  cellPaintsVisibly,
   resolvePrintTitleRows,
   sectionFromWorksheet,
   slicerTable,
@@ -138,7 +139,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // untouched tabs beside its data, and printing them added a blank page the
     // reference does not produce. The last one standing always prints: a
     // workbook of nothing but empty sheets is still a document.
-    if (!sheetPrintsAnything(ws) && printableSheets > 1) {
+    if (!sheetPrintsAnything(ws, sheet.styles) && printableSheets > 1) {
       printableSheets--;
       continue;
     }
@@ -595,8 +596,13 @@ function controlShapes(
  * @param ws The sheet.
  * @returns True when the sheet would print something.
  */
-function sheetPrintsAnything(ws: Sheet): boolean {
+function sheetPrintsAnything(ws: Sheet, styles: XlsxStyles): boolean {
   if (ws.grid.cells.some((c) => c.rawValue !== '' || c.inlineText !== undefined)) return true;
+  // A cell that paints is on the page with nothing in it, and a sheet of them
+  // is a sheet: 48779.xlsx is one workbook of three tabs whose whole content is
+  // A1 filled red, and judged on values alone all three read as empty — the
+  // last one standing printed, and it was one of the blank two.
+  if (ws.grid.cells.some((c) => cellPaintsVisibly(c, styles))) return true;
   if ((ws.charts?.length ?? 0) > 0) return true;
   if ((ws.images?.length ?? 0) > 0) return true;
   if ((ws.shapes?.length ?? 0) > 0) return true;

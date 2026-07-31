@@ -838,6 +838,21 @@ export function worksheetToBody(
       if (c.column > usedCol) usedCol = c.column;
     }
   }
+  // …and a sheet whose ONLY cell is paint is still a sheet. The rule above is
+  // "paint extends a used range, it never creates one", and it is what keeps a
+  // whole-row style from materialising 49 194 empty cells around 48 values. But
+  // it also printed 48779.xlsx — one cell, A1, no value, a solid red fill, and
+  // `<dimension ref="A1"/>` to say so — as a blank page where both references
+  // print the swatch. With no content anywhere there is nothing to run away
+  // from: the painted cells ARE the sheet, bounded by the same reach.
+  if (usedRow < 0 && usedCol < 0) {
+      for (const c of worksheet.cells) {
+      if (c.column >= PAINT_REACH_COLUMNS || c.row >= PAINT_REACH_ROWS) continue;
+      if (!cellPaintsVisibly(c, styles)) continue;
+      if (c.row > usedRow) usedRow = c.row;
+      if (c.column > usedCol) usedCol = c.column;
+    }
+  }
   if (usedRow < 0 || usedCol < 0) {
     // Nothing but empty styled cells — no grid to render. The sheet may still
     // carry drawings, and fit-to-page still has to fit THEM, so resolve the
@@ -2493,7 +2508,36 @@ function lastContentColumn(
  * Such a cell cannot be swallowed by a neighbour's overflowing text: the span
  * that gives the text its width would take the paint with it.
  */
-function cellPaintsSomething(cell: WorksheetCell | undefined, styles: XlsxStyles): boolean {
+/**
+ * Whether a cell puts anything VISIBLE on an otherwise-empty page.
+ *
+ * The difference from {@link cellPaintsSomething} is white: a solid fill in the
+ * paper's own colour paints nothing a reader can see, and a sheet of them is a
+ * blank sheet. bnc762542.xlsx is 176 such cells — `fgColor indexed="9"`, the
+ * legacy palette's white — with every word it prints living in a callout, and
+ * both references print the callout on a bare page. 48779.xlsx is one cell of
+ * solid red, and both print the swatch.
+ *
+ * @param cell   The cell, or undefined.
+ * @param styles The workbook's style tables.
+ * @returns True when the cell draws something the eye can find.
+ */
+export function cellPaintsVisibly(
+  cell: WorksheetCell | undefined,
+  styles: XlsxStyles,
+): boolean {
+  if (!cell || cell.styleIndex === undefined) return false;
+  const xf = styles.cellXfs[cell.styleIndex];
+  if (!xf) return false;
+  if (bordersFromXf(xf, styles) !== undefined) return true;
+  const shading = shadingFromXf(xf, styles);
+  return shading !== undefined && shading.colorHex.toUpperCase() !== 'FFFFFF';
+}
+
+export function cellPaintsSomething(
+  cell: WorksheetCell | undefined,
+  styles: XlsxStyles,
+): boolean {
   if (!cell || cell.styleIndex === undefined) return false;
   const xf = styles.cellXfs[cell.styleIndex];
   if (!xf) return false;
