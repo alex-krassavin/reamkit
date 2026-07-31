@@ -117,6 +117,7 @@ function parseDxfs(root: Record<string, unknown>, theme: ThemePalette | undefine
       const font: Mutable<XlsxFont> = {};
       if (hasChild(fontObj, 'b')) font.bold = childToggle(fontObj, 'b');
       if (hasChild(fontObj, 'i')) font.italic = childToggle(fontObj, 'i');
+      if (hasChild(fontObj, 'strike')) font.strike = childToggle(fontObj, 'strike');
       const colorHex = colorOf(asObject(fontObj['color']), theme);
       if (colorHex) font.colorHex = colorHex;
       if (Object.keys(font).length > 0) dxf.font = font;
@@ -261,6 +262,11 @@ function parseFonts(
     if (hasChild(obj, 'b')) font.bold = childToggle(obj, 'b');
     if (hasChild(obj, 'i')) font.italic = childToggle(obj, 'i');
     if (hasChild(obj, 'u')) font.underline = childUnderline(obj);
+    // §18.8.37 `<strike/>` — a CT_BooleanProperty beside `b` and `i`, and the
+    // one of the three we never read. 48962.xlsx strikes a whole cancelled row
+    // (its text, its status, its priority and its date) and we drew all four
+    // plain.
+    if (hasChild(obj, 'strike')) font.strike = childToggle(obj, 'strike');
     const colorRgb = colorOf(asObject(obj['color']), theme);
     if (colorRgb) font.colorHex = colorRgb;
     const nameVal = childValAttr(obj, 'name');

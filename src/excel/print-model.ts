@@ -1962,6 +1962,7 @@ function runPropsFromXf(xf: XlsxCellXf, styles: XlsxStyles): RunProperties {
   if (font.bold) props.bold = true;
   if (font.italic) props.italic = true;
   if (font.underline) props.underline = 'single';
+  if (font.strike) props.strike = true;
   if (font.sizePt !== undefined) props.fontSizePt = halfPtToPt(Math.round(font.sizePt * 2));
   if (font.colorHex) props.colorHex = font.colorHex;
   return props;
@@ -2015,6 +2016,7 @@ function applyCfOverride(base: RunProperties, o: CfOverride): RunProperties {
     ...(o.fontColorHex ? { colorHex: o.fontColorHex } : {}),
     ...(o.bold !== undefined ? { bold: o.bold } : {}),
     ...(o.italic !== undefined ? { italic: o.italic } : {}),
+    ...(o.strike !== undefined ? { strike: o.strike } : {}),
   };
 }
 

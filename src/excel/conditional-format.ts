@@ -89,6 +89,8 @@ export interface CfOverride {
   readonly fontColorHex?: string;
   readonly bold?: boolean;
   readonly italic?: boolean;
+  /** §18.8.37 — the rule strikes the cell's text through. */
+  readonly strike?: boolean;
   /** An in-cell data bar: its fraction of the cell width, colour, and optional left offset. */
   readonly dataBar?: {
     readonly fraction: number;
@@ -615,6 +617,7 @@ function dxfToOverride(dxf: Dxf | undefined): CfOverride | undefined {
   if (dxf.font?.colorHex) out.fontColorHex = dxf.font.colorHex;
   if (dxf.font?.bold !== undefined) out.bold = dxf.font.bold;
   if (dxf.font?.italic !== undefined) out.italic = dxf.font.italic;
+  if (dxf.font?.strike !== undefined) out.strike = dxf.font.strike;
   if (dxf.border) out.border = dxf.border;
   if (dxf.numberFormat) out.numberFormat = dxf.numberFormat;
   return Object.keys(out).length > 0 ? out : undefined;

@@ -333,6 +333,8 @@ export interface XlsxFont {
   readonly bold?: boolean;
   readonly italic?: boolean;
   readonly underline?: boolean;
+  /** §18.8.37 `<strike/>` — the font is struck through. */
+  readonly strike?: boolean;
   readonly colorHex?: string;
   readonly name?: string;
 }
