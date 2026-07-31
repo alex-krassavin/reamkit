@@ -72,6 +72,8 @@ export function computeColumnBands(
  * @param columnWidths Per-column widths in twips, by local index.
  * @param bands        The bands from {@link computeColumnBands}.
  * @param properties   The shared table properties applied to every band.
+ * @param titleRowIndex The print-title row, or -1.
+ * @param drawingReachTwips How far right the sheet's drawings reach (0 if none).
  * @returns One table body element per band, in band order.
  */
 export function bandedTables(
@@ -80,8 +82,10 @@ export function bandedTables(
   bands: ReadonlyArray<ColumnBand>,
   properties: TableProperties,
   titleRowIndex = -1,
+  drawingReachTwips = 0,
 ): Array<BodyElement> {
   return bands.flatMap((band, bandIndex) => {
+    const bandLeft = columnWidths.slice(0, band.start).reduce((sum, w) => sum + w, 0);
     const grid = columnWidths.slice(band.start, band.end + 1).map((w) => twipsToPt(w));
     const bandRows: Array<TableRow> = rows.map((row, rowIndex) => {
       const cells = sliceRowCells(row.cells, band);
@@ -97,7 +101,13 @@ export function bandedTables(
     // too-many-cols-rows.xlsx made 45 pages that way, 43 of them carrying
     // nothing but the running header and footer. The first band is kept
     // regardless, so a sheet that really is empty still renders as one.
-    if (bandIndex > 0 && !bandRows.some(rowDrawsSomething)) return [];
+    //
+    // A drawing draws too, and it is not in any row: 57362.xlsx anchors its
+    // chart at column H over nine cell-less columns, and dropping that band
+    // dropped the page the chart prints on. A band the drawings reach into is
+    // never empty, whatever its cells say.
+    const hostsDrawing = bandLeft < drawingReachTwips;
+    if (bandIndex > 0 && !hostsDrawing && !bandRows.some(rowDrawsSomething)) return [];
     // Trailing rows that draw nothing IN THIS BAND still paginate, and a band
     // whose columns hold a couple of values near the top otherwise carries the
     // sheet's whole row count as blank pages: tdf171828.xlsx's second band has

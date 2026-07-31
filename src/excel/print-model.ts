@@ -784,6 +784,29 @@ export function worksheetToBody(
     if (host.startRow > usedRow) usedRow = host.startRow;
     if (host.startColumn > usedCol) usedCol = host.startColumn;
   }
+  // A drawing is printed too, and it is anchored to the grid (§20.5.2.35): a
+  // chart whose anchor sits eight columns past the last value still has to be
+  // paginated with the sheet. The used range was built from cells alone, so
+  // 57362.xlsx measured 2 columns against a 9890-twip page, never banded, and
+  // printed its chart 350pt off the right edge — one whole page missing. The
+  // reach is the drawing's own right edge, converted to a column; a drawing
+  // cannot create a used range any more than a merge or a fill can.
+  if (usedRow >= 0 && usedCol >= 0 && print.drawingExtentPt) {
+    const wantTwips = Math.round(print.drawingExtentPt.widthPt * TWIPS_PER_POINT);
+    const defTwips = defaultColumnTwips(worksheet, charTwipsUnit, DEFAULT_COL_CHARS);
+    const widthAt = (abs: number): number => {
+      for (const col of worksheet.columns) {
+        if (abs < col.min - 1 || abs > col.max - 1) continue;
+        return col.hidden ? 0 : columnTwips(col.widthChars, charTwipsUnit);
+      }
+      return defTwips;
+    };
+    let acc = 0;
+    for (let col = 0; col < 16384 && acc < wantTwips; col++) {
+      acc += widthAt(col);
+      if (col > usedCol) usedCol = col;
+    }
+  }
   // A cell that PAINTS something is on the page with nothing in it. Column H of
   // 50299.xlsx is ten value-less cells carrying a solid fill each, and both
   // references print the swatches; read for content alone the column was never
@@ -1788,7 +1811,14 @@ export function worksheetToBody(
           twipsToPt(bandWidths.slice(0, band.start).reduce((sum, w) => sum + w, 0)),
         );
       }
-      return bandedTables(rows, bandWidths, bands, tableProperties, titleRowIndex);
+      return bandedTables(
+        rows,
+        bandWidths,
+        bands,
+        tableProperties,
+        titleRowIndex,
+        Math.round((print.drawingExtentPt?.widthPt ?? 0) * TWIPS_PER_POINT * printScale),
+      );
     }
   }
 
