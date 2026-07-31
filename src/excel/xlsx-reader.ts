@@ -7,6 +7,7 @@
 
 import type { Chart, DocumentInfo, ShapeBlock } from '@/core/document-model';
 import type { CoreProperties, Relationship } from '@/core/opc';
+import type { PoNode } from '@/core/po-helpers';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss } from '@/core/ir/loss';
@@ -48,7 +49,11 @@ import {
 import { bytesInclude, bytesIncludePartName } from '@/core/bytes';
 import { parseChart, withChartColorStyle } from '@/core/drawingml/chart-parser';
 import { DEFAULT_THEME_PALETTE, makeColorResolver } from '@/core/drawingml/colors';
-import { parseTheme, parseThemeLineWidths } from '@/core/drawingml/theme-parser';
+import {
+  parseTheme,
+  parseThemeFillStyles,
+  parseThemeLineWidths,
+} from '@/core/drawingml/theme-parser';
 import { parseSheetDrawing } from '@/excel/sheet-drawing';
 import { parseTablePartFull } from '@/excel/table-parser';
 import { parsePivotTablePart } from '@/excel/pivot-table-parser';
@@ -184,6 +189,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
   const resolveColor = makeColorResolver(palette);
   // §20.1.4.2.19 `<a:lnRef idx>` indexes the theme's line styles for its width.
   const themeLineWidths = buildThemeLineWidths(pkg, workbookRels);
+  const themeFillStyles = buildThemeFillStyles(pkg, workbookRels);
 
   const sheetsOut: Array<Sheet> = [];
   // §SV2 slicer-resolution state: tables indexed by id (a slicer's
@@ -257,7 +263,13 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
         // gated on a shape open tag (`:sp>`/`:sp `) so chart/picture-only drawings
         // skip it (xdr:spPr / xdr:grpSp do not match).
         if (bytesInclude(drawing.data, ':sp>') || bytesInclude(drawing.data, ':sp ')) {
-          const parsed = parseSheetShapes(drawing.data, worksheet, resolveColor, themeLineWidths);
+          const parsed = parseSheetShapes(
+            drawing.data,
+            worksheet,
+            resolveColor,
+            themeLineWidths,
+            themeFillStyles,
+          );
           if (parsed.length > 0) shapes = parsed;
         }
       }
@@ -753,6 +765,19 @@ function buildThemeLineWidths(
     if (!isOoxmlRel(rel.type, 'theme')) continue;
     const resolved = pkg.resolveRelatedPart(WORKBOOK_PART, rel);
     if (resolved) return parseThemeLineWidths(resolved.data);
+  }
+  return [];
+}
+
+// §20.1.4.1.13 — the fill styles an `<a:fillRef idx>` indexes into.
+function buildThemeFillStyles(
+  pkg: OpcPackage,
+  workbookRels: ReadonlyArray<Relationship>,
+): Array<PoNode> {
+  for (const rel of workbookRels) {
+    if (!isOoxmlRel(rel.type, 'theme')) continue;
+    const resolved = pkg.resolveRelatedPart(WORKBOOK_PART, rel);
+    if (resolved) return parseThemeFillStyles(resolved.data);
   }
   return [];
 }

@@ -25,7 +25,7 @@ import { poAttr, poChildren, poIntAttr, poIs } from '@/core/po-helpers';
  * (solid fills emit no transparency).
  */
 export interface ColorMod {
-  readonly kind: 'lumMod' | 'lumOff' | 'shade' | 'tint' | 'alpha';
+  readonly kind: 'lumMod' | 'lumOff' | 'shade' | 'tint' | 'alpha' | 'satMod';
   readonly val: number;
 }
 
@@ -105,6 +105,13 @@ export function applyColorMods(hex: string, mods: ReadonlyArray<ColorMod>): stri
       const [h, s, l] = rgbToHsl(r, g, b);
       const l2 = m.kind === 'lumMod' ? l * m.val : clamp01(l + m.val);
       [r, g, b] = hslToRgb(h, s, l2);
+    } else if (m.kind === 'satMod') {
+      // §20.1.2.3.32 — saturation modulation. The Office theme's gradients are
+      // built from it (`<a:shade val="51000"/><a:satMod val="130000"/>`), and
+      // dropping it drew every gallery shape a shade duller than either
+      // reference: 47504.xlsx's rectangle came out grey-blue.
+      const [h, s, l] = rgbToHsl(r, g, b);
+      [r, g, b] = hslToRgb(h, clamp01(s * m.val), l);
     }
   }
   const toHex = (x: number): string =>
@@ -177,7 +184,7 @@ export const defaultColorResolver: ColorResolver = makeColorResolver(DEFAULT_THE
 export function readColorMods(colorNode: PoNode): Array<ColorMod> {
   const mods: Array<ColorMod> = [];
   for (const c of poChildren(colorNode)) {
-    for (const kind of ['lumMod', 'lumOff', 'shade', 'tint', 'alpha'] as const) {
+    for (const kind of ['lumMod', 'lumOff', 'shade', 'tint', 'alpha', 'satMod'] as const) {
       if (poIs(c, `a:${kind}`)) {
         const v = poIntAttr(c, 'val');
         if (v !== undefined) mods.push({ kind, val: v / 100000 });

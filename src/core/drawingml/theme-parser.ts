@@ -96,6 +96,29 @@ export function parseThemeLineWidths(themeXml: Uint8Array): Array<number> {
   return out;
 }
 
+/**
+ * Parse a theme's fill styles (§20.1.4.1.13 `a:fillStyleLst`), as the raw nodes.
+ *
+ * A shape drawn from the gallery carries no fill of its own — only
+ * `<a:fillRef idx="N">`, a 1-based index into this list, and a colour to put
+ * where the styles say `phClr`. The standard Office theme's slots are a solid,
+ * a subtle gradient and a stronger one, so reading the reference's colour alone
+ * paints slot 3 flat: 47504.xlsx's rectangle is a gradient in both references
+ * and a single blue in ours.
+ *
+ * The nodes are handed back unparsed because what they hold is a whole fill —
+ * solid, gradient, pattern — which the shape readers already know how to read.
+ *
+ * @param themeXml The raw theme part bytes, UTF-8.
+ * @returns The `a:fillStyleLst` children in list order; empty when the theme
+ *          declares no `a:fmtScheme`.
+ */
+export function parseThemeFillStyles(themeXml: Uint8Array): Array<PoNode> {
+  const tree = parser.parse(decoder.decode(themeXml)) as Array<PoNode>;
+  const list = poFindByPath(tree, ['a:theme', 'a:themeElements', 'a:fmtScheme', 'a:fillStyleLst']);
+  return list ? [...poChildren(list)] : [];
+}
+
 const EMU_PER_POINT = 12700;
 
 function colorOf(slot: PoNode): string | undefined {

@@ -14,7 +14,7 @@ import type { ParsedWorksheet } from '@/core/spreadsheet-model';
 import type { PoNode } from '@/core/po-helpers';
 
 import { emuToPt, pt } from '@/core/ir';
-import { resolveColorNode } from '@/core/drawingml/colors';
+import { applyColorMods, resolveColorNode } from '@/core/drawingml/colors';
 import { poAttr, poChildren, poFirstChild, poIntAttr, poIs, poText } from '@/core/po-helpers';
 import { parseXml } from '@/pptx/pptx-reader';
 import { parseGeometry, parseTxBody } from '@/pptx/slide-parser';
@@ -41,12 +41,15 @@ const ANCHOR_KINDS = ['xdr:twoCellAnchor', 'xdr:oneCellAnchor', 'xdr:absoluteAnc
  * @param colors     The theme colour resolver threaded into fill/line parsing.
  * @param themeLineWidths The theme's `a:lnStyleLst` widths in points, which an
  *                   `<a:lnRef idx>` indexes for a gallery-styled outline.
+ * @param themeFillStyles The theme's `a:fillStyleLst` nodes, which an
+ *                   `<a:fillRef idx>` indexes for a gallery-styled fill.
  */
 export function parseSheetShapes(
   drawingXml: Uint8Array,
   worksheet: ParsedWorksheet,
   colors: ColorResolver,
   themeLineWidths: ReadonlyArray<number> = [],
+  themeFillStyles: ReadonlyArray<PoNode> = [],
 ): Array<ShapeBlock> {
   const tree = parseXml(drawingXml);
   const wsDr = tree.find((n) => poIs(n, 'xdr:wsDr'));
@@ -68,13 +71,21 @@ export function parseSheetShapes(
     const spPr = poChildren(sp).find((c) => poIs(c, 'xdr:spPr'));
     const geometry = parseGeometry(spPr);
     const spFill: ShapeFill = spPr ? parseFill(spPr, colors) : { kind: 'none' };
-    const fill = spFill.kind === 'none' ? styleFill(sp, colors) : spFill;
+    const fill = spFill.kind === 'none' ? styleFill(sp, colors, themeFillStyles) : spFill;
     // §20.1.4.2.19 `<xdr:style><a:lnRef>` is where a shape drawn from a gallery
     // style keeps its outline — spPr then carries no `a:ln` at all, and read
     // alone it says the shape has no border. shape-macro-ext-ref.xlsx's macro
     // button lost the blue rule both references draw around it.
+    // §20.1.2.2.24 — an `<a:ln/>` with nothing in it declares nothing, and it is
+    // not a black hairline: 47504.xlsx writes one beside an `<a:lnRef>` that
+    // carries the real outline, and taking the empty element at its word fenced
+    // a gallery shape in black where both references draw the theme's own thin
+    // accent rule.
+    const directLine = spPr ? parseLine(spPr, colors) : undefined;
     const line =
-      (spPr ? parseLine(spPr, colors) : undefined) ?? styleLine(sp, colors, themeLineWidths);
+      directLine && Object.keys(directLine).length > 0
+        ? directLine
+        : styleLine(sp, colors, themeLineWidths);
     const txBody = poChildren(sp).find((c) => poIs(c, 'xdr:txBody'));
     const parsed = txBody
       ? parseTxBody(txBody, undefined, undefined, colors, undefined)
@@ -166,17 +177,47 @@ function styleLine(
  * it says the shape has no fill. 50299.xlsx's rectangle asks for `accent1` that
  * way, and we drew it empty on all six sheets.
  *
- * `idx="0"` is the explicit "no fill" slot. Above it the reference indexes the
- * theme's `a:fillStyleLst`, whose upper slots are gradients — this paints the
- * referenced colour flat, which is the colour such a gradient is built from.
+ * `idx="0"` is the explicit "no fill" slot. Above it the reference is a 1-based
+ * index into the theme's `a:fillStyleLst` (§20.1.4.1.13), and THAT is the fill —
+ * the reference only says which colour goes where the style says `phClr`. The
+ * standard Office theme's third slot is a gradient, which is what 47504.xlsx
+ * asks for and what both references draw; painting the referenced colour flat
+ * instead lost the gradient on every gallery shape.
  */
-function styleFill(sp: PoNode, colors: ColorResolver): ShapeFill {
+function styleFill(
+  sp: PoNode,
+  colors: ColorResolver,
+  themeFillStyles: ReadonlyArray<PoNode>,
+): ShapeFill {
   const style = poChildren(sp).find((c) => poIs(c, 'xdr:style'));
   const fillRef = style ? poChildren(style).find((c) => poIs(c, 'a:fillRef')) : undefined;
   if (!fillRef || poAttr(fillRef, 'idx') === '0') return { kind: 'none' };
   const child = poChildren(fillRef)[0];
   const colorHex = child ? resolveColorNode(child, colors) : undefined;
-  return colorHex === undefined ? { kind: 'none' } : { kind: 'solid', colorHex };
+  if (colorHex === undefined) return { kind: 'none' };
+  const idx = Number(poAttr(fillRef, 'idx') ?? '');
+  const slot = Number.isFinite(idx) ? themeFillStyles[idx - 1] : undefined;
+  if (!slot) return { kind: 'solid', colorHex };
+  // The slot is a whole fill written in the theme's own vocabulary, so read it
+  // with the shared reader — under a resolver where `phClr` is the colour the
+  // reference names (§20.1.4.2.10).
+  const themed = parseFill({ 'a:spPr': [slot] }, placeholderColors(colors, colorHex));
+  return themed.kind === 'none' ? { kind: 'solid', colorHex } : themed;
+}
+
+/**
+ * §20.1.4.2.10 — inside a theme's style list, `phClr` stands for "the colour the
+ * reference names". Every other colour resolves as it always did.
+ *
+ * @param colors The workbook's own resolver.
+ * @param phHex  The colour the `a:fillRef` / `a:lnRef` carries.
+ * @returns A resolver that answers `phClr` with that colour, transforms and all.
+ */
+function placeholderColors(colors: ColorResolver, phHex: string): ColorResolver {
+  return (raw) =>
+    'scheme' in raw && raw.scheme === 'phClr'
+      ? applyColorMods(phHex, raw.mods ?? [])
+      : colors(raw);
 }
 
 /** The colour `<xdr:style><a:fontRef>` names, if it names one. */
