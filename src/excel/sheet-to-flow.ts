@@ -148,7 +148,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // out of the projection. Its blocks are pushed below, in their old place.
     const scaleSink = { value: 1 };
     const bandSink = { lefts: [0] };
-    const drawingExtentPt = shapeExtentPt(ws.shapes);
+    const drawingExtentPt = drawingReachPt(ws);
     const printArea = resolvePrintArea(sheet.definedNames, sheetIdx);
     const titleRows = resolvePrintTitleRows(sheet.definedNames, sheetIdx);
     const gridBody = worksheetToBody(ws.grid, sheet.sharedStrings, sheet.styles, sheet.date1904, {
@@ -944,17 +944,24 @@ function activeXLabel(c: SheetActiveXControl): string {
  * past the last value is still printed, and on a sheet whose values sit in a
  * handful of cells it is the drawing that decides the page.
  */
-function shapeExtentPt(
-  shapes: ReadonlyArray<ShapeBlock> | undefined,
-): { widthPt: number; heightPt: number } | undefined {
-  if (!shapes || shapes.length === 0) return undefined;
+function drawingReachPt(ws: Sheet): { widthPt: number; heightPt: number } | undefined {
   let widthPt = 0;
   let heightPt = 0;
-  for (const shape of shapes) {
-    const x = shape.float?.posH?.offsetPt ?? 0;
-    const y = shape.float?.posV?.offsetPt ?? 0;
-    widthPt = Math.max(widthPt, x + shape.width);
-    heightPt = Math.max(heightPt, y + shape.height);
+  for (const shape of ws.shapes ?? []) {
+    widthPt = Math.max(widthPt, (shape.float?.posH?.offsetPt ?? 0) + shape.width);
+    heightPt = Math.max(heightPt, (shape.float?.posV?.offsetPt ?? 0) + shape.height);
+  }
+  // Charts and pictures are printed too, and only the SHAPES were measured —
+  // so a sheet whose only drawing is a chart reported no extent at all, and
+  // 57362.xlsx's chart hung 350pt off the right edge of a page the grid alone
+  // said needed no splitting.
+  for (const c of ws.charts ?? []) {
+    widthPt = Math.max(widthPt, (c.xPt ?? 0) + c.widthPt);
+    heightPt = Math.max(heightPt, (c.yPt ?? 0) + c.heightPt);
+  }
+  for (const p of ws.images ?? []) {
+    widthPt = Math.max(widthPt, (p.xPt ?? 0) + p.widthPt);
+    heightPt = Math.max(heightPt, (p.yPt ?? 0) + p.heightPt);
   }
   return widthPt > 0 || heightPt > 0 ? { widthPt, heightPt } : undefined;
 }
