@@ -594,8 +594,14 @@ function computePrintScale(
 // Excel's default cell font is 11pt (22 half-points); scale that when a run
 // carries no explicit size so the whole sheet shrinks uniformly.
 function scaleRunFont(props: RunProperties, scale: number): RunProperties {
-  const hp = props.fontSizePt !== undefined ? Math.round(props.fontSizePt * 2) : 22;
-  return { ...props, fontSizePt: halfPtToPt(Math.max(2, Math.round(hp * scale))) };
+  // Keep the product exact. This used to round onto a half-point grid, which is
+  // WordprocessingML's unit (§17.3.2.38 `w:sz` counts half-points) and not
+  // SpreadsheetML's — §18.8.22's `sz` is a plain double, and §18.3.1.63's scale
+  // is continuous over 10..400. 56274.xlsx is 8pt at 66%: 5.28pt, rounded up to
+  // 5.5, which is 4% too large. It is not only cosmetic — the size feeds
+  // `textWidthPt`, so wrapping, overflow and fit-to-page all decide on it.
+  const base = props.fontSizePt ?? DEFAULT_FONT_PT;
+  return { ...props, fontSizePt: pt(Math.max(1, base * scale)) };
 }
 
 // The grey Excel and LibreOffice print cell gridlines in — light enough that a
@@ -1301,7 +1307,10 @@ export function worksheetToBody(
       const tableFmt = tableFormatByCell.get(key(absR, absC));
       if (!shading && tableFmt?.shading) shading = tableFmt.shading;
       if (tableFmt?.fontColorHex) runProps = { ...runProps, colorHex: tableFmt.fontColorHex };
-      let borders = xf ? bordersFromXf(xf, styles) : undefined;
+      // §18.3.1.63's scale reduces the printed image, rules included: 56274.xlsx
+      // prints at 66%, where a `thin` edge is 0.495pt and we stroked the full
+      // 0.75 — half again too heavy, and doubled in device pixels.
+      let borders = xf ? scaleBorders(bordersFromXf(xf, styles), printScale) : undefined;
       let dataBar: CellDataBar | undefined;
       let icon: CellIcon | undefined;
       const sparkline = sparklineByCell.get(key(absR, absC));
@@ -1718,8 +1727,12 @@ export function worksheetToBody(
     // every row, so a 12.75pt row could not render at 12.75pt and a sheet of
     // 173 empty rows needed three pages where one was asked for.
     defaultCellMargins: {
-      left: pt(EXCEL_CELL_INSET_PT),
-      right: pt(EXCEL_CELL_INSET_PT),
+      // §18.3.1.63's scale reduces the printed IMAGE, and the inset lives
+      // inside it. 56274.xlsx prints at 66%, where 1.5pt should be 0.99 — we
+      // charged the full 1.5 twice per cell and took 3pt of text room from
+      // every 57.9pt column instead of 1.98.
+      left: pt(EXCEL_CELL_INSET_PT * printScale),
+      right: pt(EXCEL_CELL_INSET_PT * printScale),
       top: pt(0),
       bottom: pt(0),
     },
@@ -2108,6 +2121,24 @@ function mapXlsxBorder(border: XlsxBorder): CellBorders {
   if (right) out.right = right;
   if (bottom) out.bottom = bottom;
   if (left) out.left = left;
+  return out;
+}
+
+/** Every edge of a cell's box, at the print scale. */
+function scaleBorders(
+  borders: CellBorders | undefined,
+  scale: number,
+): CellBorders | undefined {
+  if (!borders || scale >= 0.999) return borders;
+  const edge = (b: Border | undefined): Border | undefined =>
+    b === undefined || b.width === undefined ? b : { ...b, width: pt(b.width * scale) };
+  const out: { -readonly [K in keyof CellBorders]: CellBorders[K] } = {};
+  for (const side of ['top', 'right', 'bottom', 'left', 'insideH', 'insideV'] as const) {
+    const e = edge(borders[side]);
+    if (e) out[side] = e;
+  }
+  if (borders.diagonalUp !== undefined) out.diagonalUp = borders.diagonalUp;
+  if (borders.diagonalDown !== undefined) out.diagonalDown = borders.diagonalDown;
   return out;
 }
 

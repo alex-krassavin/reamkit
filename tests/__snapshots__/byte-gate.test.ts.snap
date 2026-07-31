@@ -14,7 +14,7 @@ exports[`byte gate: static fixtures > list-basic.docx 1`] = `"85d81cd0f1f3dd2296
 
 exports[`byte gate: static fixtures > sheet-basic.xlsx 1`] = `"c4169dda9d85dba57c515903558907ce99222a83999174444ac242f53eaa0ff9"`;
 
-exports[`byte gate: static fixtures > sheet-fit-scale.xlsx 1`] = `"ad8b0662d4a1e5fa8ee461a75551f9714962ae7ce602b4fde627f7139e7c29e8"`;
+exports[`byte gate: static fixtures > sheet-fit-scale.xlsx 1`] = `"066e6117b4897326dc258b7b502a76c36cd477f3138ee2338346a808fca512e4"`;
 
 exports[`byte gate: static fixtures > sheet-formats.xlsx 1`] = `"21378429142595f967e7c42ed6a64ded5a6fc61fb3b9e12674447ac6dc6c2533"`;
 
@@ -42,7 +42,7 @@ exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: column-breaks 1`]
 
 exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: date-1904 1`] = `"670ec849412b2681995b81e447f739892196c7059f94549b4154207aa7fb907c"`;
 
-exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: fit-to-page 1`] = `"6f1ffb148ddcb357a5e2f6c1335fb006becc6f3bb781af299ccf01e159da8ad8"`;
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: fit-to-page 1`] = `"6b14855c32b029bf919e7c96893161f3585314c09464032a963629644cec2097"`;
 
 exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: gridlines 1`] = `"8e693983a95360df94bd485ae05672e5fb40f3b50092396347643544259f090f"`;
 
@@ -58,7 +58,7 @@ exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: print-titles 1`] 
 
 exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: row-breaks 1`] = `"60a0d92ef76bf553530f72f1db5e21a45d5af8e42abf93ddb5ecf2a992909114"`;
 
-exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: scale 1`] = `"712413465e8a9a560bc6a5dc53c351132da5b4c5d918c540545dc04f9f5a4670"`;
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: scale 1`] = `"fc97669fc28ccc22e0cb1c52f5204e1ea0c34cb995d6437f8eb3b2618b937513"`;
 
 exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: sheet-chart 1`] = `"8446b8533987121bef29c2ad6033d801be16c23235c0f3588b381781d05745e2"`;
 
