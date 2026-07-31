@@ -204,6 +204,52 @@ describe('buildBarScene', () => {
     expect(inBounds(scene.rects)).toBe(true);
   });
 
+  it('runs the categories the other way when the axis says maxMin', () => {
+    // §21.2.2.134 — dataValidationTableRange.xlsx ranks 38 counties and writes
+    // `maxMin` so the ranking reads top-down; plotted in file order it comes out
+    // upside down. A horizontal bar chart's first category is at the BOTTOM by
+    // default, so reversing puts it at the top.
+    const chart = { ...barChart('bar'), series: [barChart('bar').series[0]!], hasLegend: false };
+    // Bars of the one series, top of the plot downwards.
+    const barLengths = (c: Chart): Array<number> =>
+      (buildChartScene(c, W, H, measure)?.rects ?? [])
+        .filter((r) => r.fillHex === '4472C4')
+        .sort((a, b) => b.y - a.y)
+        .map((r) => Math.round(r.w));
+    const labelOrder = (c: Chart): Array<string> =>
+      (buildChartScene(c, W, H, measure)?.labels ?? [])
+        .filter((l) => ['A', 'B', 'C'].includes(l.text))
+        .sort((a, b) => b.y - a.y)
+        .map((l) => l.text);
+
+    expect(labelOrder(chart)).toEqual(['C', 'B', 'A']);
+    expect(labelOrder({ ...chart, catAxisReversed: true })).toEqual(['A', 'B', 'C']);
+    // The bars follow their categories rather than staying put.
+    expect(barLengths({ ...chart, catAxisReversed: true })).toEqual(
+      [...barLengths(chart)].reverse(),
+    );
+  });
+
+  it('fills the whole slot when the file asks for no gap', () => {
+    // §21.2.2.75 `gapWidth="0"` — both references draw bars that touch.
+    const scene = buildBarScene(
+      {
+        ...barChart('col'),
+        series: [barChart('col').series[0]!],
+        gapPercent: 0,
+        hasLegend: false,
+      },
+      W,
+      H,
+      measure,
+    );
+    const bars = scene.rects.filter((r) => r.fillHex === '4472C4');
+    expect(bars).toHaveLength(3);
+    const xs = bars.map((b) => b.x).sort((a, b) => a - b);
+    // Each bar starts exactly where the one before it ends.
+    expect(xs[1]! - xs[0]!).toBeCloseTo(bars[0]!.w, 6);
+  });
+
   it('rescales the value axis to summed totals when stacked', () => {
     // Clustered tops out at the max single value (25). Stacked tops at the max
     // category sum (cat2 = 15+25 = 40).

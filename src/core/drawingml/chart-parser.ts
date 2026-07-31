@@ -197,6 +197,9 @@ export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): C
   );
   const valAxisMin = axisScaling(plotArea, 'c:min');
   const valAxisMax = axisScaling(plotArea, 'c:max');
+  // §21.2.2.134 — the category axis may run the other way, which is how a
+  // ranked bar chart puts its first row at the top.
+  const catAxisReversed = axisOrientation(catAxNode) === 'maxMin';
   // §21.2.2.198 — the chart-space frame sits beside <c:chart>, not inside it.
   const chartSpace = tree.find((c) => poIs(c, 'c:chartSpace'));
   const spaceSpPr = poChildren(chartSpace).find((c) => poIs(c, 'c:spPr'));
@@ -233,6 +236,7 @@ export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): C
     ...(doughnut ? { doughnut: true } : {}),
     ...(showValues ? { showValues: true } : {}),
     ...(catAxisTitle ? { catAxisTitle } : {}),
+    ...(catAxisReversed ? { catAxisReversed } : {}),
     ...(valAxisTitle ? { valAxisTitle } : {}),
     ...(secondaryValAxisTitle ? { secondaryValAxisTitle } : {}),
     ...(scatterStyle ? { scatterStyle } : {}),
@@ -480,6 +484,12 @@ function axisTitle(plotArea: PoNode, axTag: string): string | undefined {
  * does not carry — those keep the plain numeric render.
  */
 // §21.2.2.157 c:valAx/c:scaling/c:min|c:max — an axis end the author fixed.
+/** §21.2.2.134 `c:scaling/c:orientation` — `minMax` (the default) or `maxMin`. */
+function axisOrientation(ax: PoNode | undefined): string | undefined {
+  const scaling = ax ? poChildren(ax).find((c) => poIs(c, 'c:scaling')) : undefined;
+  return scaling ? poVal(poChildren(scaling).find((c) => poIs(c, 'c:orientation'))) : undefined;
+}
+
 function axisScaling(plotArea: PoNode, tag: 'c:min' | 'c:max'): number | undefined {
   const ax = poChildren(plotArea).find((c) => poIs(c, 'c:valAx'));
   const scaling = ax ? poChildren(ax).find((c) => poIs(c, 'c:scaling')) : undefined;

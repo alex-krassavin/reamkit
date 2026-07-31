@@ -767,6 +767,10 @@ export function buildBarScene(
   // §21.2.2.75: the slot holds `nSer` bars plus a gap of `gapWidth` percent of
   // one bar. Guessing a flat 15% padding gave every bar 0.63 of its slot —
   // 57362.xlsx asks for 219 and got bars 2.6× the reference's.
+  // …and the bar then fills that width. A further 10 % shaved off it was a
+  // leftover from before the gap was read: dataValidationTableRange.xlsx asks
+  // for `gapWidth="0"`, where both references draw bars that touch, and ours
+  // still showed a white line between every pair.
   const gap = (chart.gapPercent ?? 150) / 100;
   const barW = f.slot / (nSer + gap);
   const groupPad = (f.slot - barW * nSer) / 2;
@@ -780,10 +784,10 @@ export function buildBarScene(
       const along = slotStart + b * barW;
       if (horizontal) {
         const bx = f.x0 + f.zeroOffset + Math.min(0, len);
-        f.rects.push({ x: bx, y: along, w: Math.abs(len), h: barW * 0.9, fillHex: color });
+        f.rects.push({ x: bx, y: along, w: Math.abs(len), h: barW, fillHex: color });
       } else {
         const by = f.y0 + f.zeroOffset + Math.min(0, len);
-        f.rects.push({ x: along, y: by, w: barW * 0.9, h: Math.abs(len), fillHex: color });
+        f.rects.push({ x: along, y: by, w: barW, h: Math.abs(len), fillHex: color });
       }
       if (chart.showValues) {
         const raw = series.values[c] ?? 0;
@@ -1390,8 +1394,44 @@ export function buildChartScene(
   hPt: number,
   measure: MeasureText,
 ): ChartScene | null {
-  const scene = buildTypedScene(chart, wPt, hPt, measure);
+  const plotted = chart.catAxisReversed ? withReversedCategories(chart) : chart;
+  const scene = buildTypedScene(plotted, wPt, hPt, measure);
   return scene && withFrame(scene, chart, wPt, hPt);
+}
+
+/**
+ * §21.2.2.134 `maxMin` on the category axis — the categories run the other way,
+ * which for a horizontal bar chart puts the FIRST one at the top (how every
+ * ranked list reads). Reversing the plotted order says exactly that and leaves
+ * every builder's geometry alone; the per-point overrides move with their
+ * points.
+ *
+ * @param chart The chart as the file declares it.
+ * @returns The same chart with its categories, values and per-point overrides
+ *          in reverse.
+ */
+function withReversedCategories(chart: Chart): Chart {
+  const n = Math.max(chart.categories.length, ...chart.series.map((s) => s.values.length), 1);
+  const flip = (i: number): number => n - 1 - i;
+  return {
+    ...chart,
+    // An empty category list is not a list of empty labels: the builders label
+    // an unlabelled axis with the point index, and padding it would silence it.
+    categories:
+      chart.categories.length > 0
+        ? Array.from({ length: n }, (_, i) => chart.categories[flip(i)] ?? '')
+        : chart.categories,
+    series: chart.series.map((s) => ({
+      ...s,
+      values: Array.from({ length: n }, (_, i) => s.values[flip(i)] ?? 0),
+      ...(s.pointColors
+        ? { pointColors: s.pointColors.map((p) => ({ ...p, idx: flip(p.idx) })) }
+        : {}),
+      ...(s.pointLabels
+        ? { pointLabels: s.pointLabels.map((p) => ({ ...p, idx: flip(p.idx) })) }
+        : {}),
+    })),
+  };
 }
 
 function buildTypedScene(

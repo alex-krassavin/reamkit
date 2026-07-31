@@ -1002,6 +1002,13 @@ export interface Chart {
    */
   readonly gapPercent?: number;
   readonly catAxisTitle?: string; // c:catAx/c:title
+  /**
+   * §21.2.2.134 `c:catAx/c:scaling/c:orientation` = `maxMin` — the category
+   * axis runs the other way. A ranked bar chart is written this way so its
+   * first row reads at the TOP (dataValidationTableRange.xlsx ranks 38 counties
+   * and we printed the ranking upside down).
+   */
+  readonly catAxisReversed?: boolean;
   readonly valAxisTitle?: string; // c:valAx/c:title
   /** §21.2.2.168 — the title of the secondary value axis, when one is drawn. */
   readonly secondaryValAxisTitle?: string;
