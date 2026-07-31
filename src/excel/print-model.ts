@@ -2731,11 +2731,18 @@ function scaledColumnWidths(
 
 /**
  * Break a cell's runs at the hard line breaks inside them, or — for a cell that
- * does not wrap, and so shows one line — flatten those breaks to spaces.
+ * does not wrap, and so shows one line — drop those breaks.
+ *
+ * Dropped, not turned into a space. A line feed is a control character with no
+ * width of its own: switch wrapping off in Excel and the two lines run
+ * together, which is the complaint behind every "my Alt+Enter disappeared"
+ * question. preserve_space.xlsx holds a bold "123", a break and a plain "456",
+ * and the reference prints "123456" where we printed "123 456" — a space the
+ * document does not contain.
  */
 function splitCellLines(runs: ReadonlyArray<Run>, wrapText: boolean): Array<Array<Run>> {
   if (!runs.some((r) => /[\r\n]/.test(r.text))) return [[...runs]];
-  if (!wrapText) return [runs.map((r) => ({ ...r, text: r.text.replace(/[\r\n]+/g, ' ') }))];
+  if (!wrapText) return [runs.map((r) => ({ ...r, text: r.text.replace(/[\r\n]+/g, '') }))];
   const lines: Array<Array<Run>> = [[]];
   for (const run of runs) {
     const parts = run.text.split(/\r\n|\r|\n/);
