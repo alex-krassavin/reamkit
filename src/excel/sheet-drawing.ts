@@ -138,10 +138,23 @@ export function parseSheetDrawing(
       if (widthPt <= 0 || heightPt <= 0) continue;
       const anchorRow = from?.row ?? 0;
       // The anchor's own origin: every track before it, plus its offset into
-      // the one it starts in. `absoluteAnchor` carries no cell marker at all,
-      // so it sits at the grid origin.
-      const xPt = from ? spanPt(0, 0, from.col, from.colOffPt, colWidthPt) : 0;
-      const yPt = from ? spanPt(0, 0, from.row, from.rowOffPt, rowHeightPt) : 0;
+      // the one it starts in. §20.5.2.1 `absoluteAnchor` names no cell at all —
+      // it carries the position outright, in EMU from the grid origin
+      // (absolute-anchor-over-empty-sheet.xlsx puts its logo 351pt across and
+      // 520pt down an otherwise empty sheet).
+      const posRaw = kind === 'absoluteAnchor' ? a['pos'] : undefined;
+      const posNode =
+        posRaw && typeof posRaw === 'object' ? (posRaw as Record<string, unknown>) : undefined;
+      const xPt = posNode
+        ? emuToPt(num(posNode['@_x']) ?? 0)
+        : from
+          ? spanPt(0, 0, from.col, from.colOffPt, colWidthPt)
+          : 0;
+      const yPt = posNode
+        ? emuToPt(num(posNode['@_y']) ?? 0)
+        : from
+          ? spanPt(0, 0, from.row, from.rowOffPt, rowHeightPt)
+          : 0;
 
       if (chartRelId) {
         const path = partPathOf(chartRelId);

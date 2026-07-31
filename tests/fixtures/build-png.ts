@@ -92,3 +92,67 @@ function crc32(data: Uint8Array): number {
   }
   return (crc ^ 0xffffffff) >>> 0;
 }
+
+/**
+ * Build an indexed (colour type 3) PNG — the form half the corpus's images
+ * take. `indices` is one palette index per pixel, row-major; `palette` is RGB
+ * triples. `bitDepth` may be 1, 2, 4 or 8, and `interlaced` writes the pixels
+ * out in Adam7's seven passes instead of straight scanlines.
+ */
+export function buildIndexedPng(
+  width: number,
+  height: number,
+  bitDepth: 1 | 2 | 4 | 8,
+  palette: ReadonlyArray<readonly [number, number, number]>,
+  indices: ReadonlyArray<number>,
+  opts: { readonly interlaced?: boolean; readonly alpha?: ReadonlyArray<number> } = {},
+): Uint8Array {
+  const ihdrData = new Uint8Array(13);
+  writeU32BE(ihdrData, 0, width);
+  writeU32BE(ihdrData, 4, height);
+  ihdrData[8] = bitDepth;
+  ihdrData[9] = 3; // colour type: indexed
+  ihdrData[12] = opts.interlaced ? 1 : 0;
+
+  const plte = new Uint8Array(palette.length * 3);
+  palette.forEach((c, i) => plte.set(c, i * 3));
+
+  const passes = opts.interlaced
+    ? [
+        [0, 0, 8, 8],
+        [4, 0, 8, 8],
+        [0, 4, 4, 8],
+        [2, 0, 4, 4],
+        [0, 2, 2, 4],
+        [1, 0, 2, 2],
+        [0, 1, 1, 2],
+      ]
+    : [[0, 0, 1, 1]];
+  const rows: Array<Uint8Array> = [];
+  for (const [xStart, yStart, xStep, yStep] of passes) {
+    const pw = Math.ceil((width - xStart!) / xStep!);
+    const ph = Math.ceil((height - yStart!) / yStep!);
+    if (pw <= 0 || ph <= 0) continue;
+    const lineBytes = Math.ceil((pw * bitDepth) / 8);
+    for (let y = 0; y < ph; y++) {
+      const row = new Uint8Array(1 + lineBytes); // filter 0 (None) + packed samples
+      for (let x = 0; x < pw; x++) {
+        const idx = indices[(yStart! + y * yStep!) * width + (xStart! + x * xStep!)] ?? 0;
+        const per = 8 / bitDepth;
+        const byte = 1 + Math.floor(x / per);
+        const shift = 8 - bitDepth * ((x % per) + 1);
+        row[byte] = (row[byte]! | (idx << shift)) & 0xff;
+      }
+      rows.push(row);
+    }
+  }
+
+  return concat(
+    PNG_SIGNATURE,
+    makeChunk('IHDR', ihdrData),
+    makeChunk('PLTE', plte),
+    ...(opts.alpha ? [makeChunk('tRNS', new Uint8Array(opts.alpha))] : []),
+    makeChunk('IDAT', zlibSync(concat(...rows))),
+    makeChunk('IEND', new Uint8Array(0)),
+  );
+}

@@ -7,9 +7,11 @@
 // per-scanline filters reversed, then re-compressed; RGBA / Gray+Alpha PNGs
 // split their alpha channel into a separate soft-mask plane.
 //
-// Limitations: bit-depth must be 8; palette (color type 3) and interlaced
-// PNGs are not yet supported. Throws on unsupported inputs so the caller
-// can decide to fall back or surface the error.
+// Every PNG colour type is read: greyscale, RGB, palette (expanded to RGB, its
+// `tRNS` becoming the soft mask) and both alpha forms, at bit depths 1/2/4/8
+// (stretched to 8) and 16 (truncated to its high byte), interlaced or not.
+// Throws on a malformed input so the caller can decide to fall back or surface
+// the error.
 
 import { unzlibSync, zlibSync } from 'fflate';
 
@@ -282,6 +284,8 @@ function decodePng(bytes: Uint8Array): DecodedPng {
   let bitDepth = 0;
   let colorType = 0;
   let interlaceMethod = 0;
+  let palette: Uint8Array | undefined;
+  let paletteAlpha: Uint8Array | undefined;
   const idatChunks: Array<Uint8Array> = [];
   let pos = 8;
   while (pos + 12 <= bytes.length) {
@@ -294,6 +298,13 @@ function decodePng(bytes: Uint8Array): DecodedPng {
       bitDepth = bytes[dataOff + 8]!;
       colorType = bytes[dataOff + 9]!;
       interlaceMethod = bytes[dataOff + 12]!;
+    } else if (type === 'PLTE') {
+      // §11.2.3 — the palette, three bytes per entry.
+      palette = bytes.subarray(dataOff, dataOff + len);
+    } else if (type === 'tRNS') {
+      // §11.3.2.1 — for a palette image, one alpha byte per entry (entries past
+      // the end are opaque).
+      paletteAlpha = bytes.subarray(dataOff, dataOff + len);
     } else if (type === 'IDAT') {
       idatChunks.push(bytes.subarray(dataOff, dataOff + len));
     } else if (type === 'IEND') {
@@ -303,61 +314,156 @@ function decodePng(bytes: Uint8Array): DecodedPng {
   }
   if (width === 0 || height === 0) throw new Error('PNG: missing IHDR');
   if (idatChunks.length === 0) throw new Error('PNG: no IDAT');
-  if (interlaceMethod !== 0) throw new Error('PNG: interlaced not supported');
-  if (bitDepth !== 8) throw new Error(`PNG: bit depth ${bitDepth} not supported`);
-
-  const compressed = concatBytes(idatChunks);
-  const inflated = unzlibSync(compressed);
+  if (![1, 2, 4, 8, 16].includes(bitDepth)) {
+    throw new Error(`PNG: bit depth ${bitDepth} not supported`);
+  }
 
   const channels = pngChannels(colorType);
   if (channels === 0) throw new Error(`PNG color type ${colorType} not supported`);
-  const bpp = channels;
-  const scanlineBytes = width * bpp;
-  const expected = height * (1 + scanlineBytes);
-  if (inflated.length !== expected) {
-    throw new Error(
-      `PNG: inflated size ${inflated.length} != expected ${expected} (interlaced or malformed)`,
-    );
-  }
 
-  const raw = new Uint8Array(height * scanlineBytes);
-  let prev: Uint8Array | null = null;
-  for (let y = 0; y < height; y++) {
-    const inOff = y * (1 + scanlineBytes);
-    const filterType = inflated[inOff]!;
-    const decoded = new Uint8Array(scanlineBytes);
-    for (let x = 0; x < scanlineBytes; x++) {
-      const filt = inflated[inOff + 1 + x]!;
-      const a = x < bpp ? 0 : decoded[x - bpp]!;
-      const b = prev ? prev[x]! : 0;
-      const c = !prev || x < bpp ? 0 : prev[x - bpp]!;
-      let v: number;
-      switch (filterType) {
-        case 0:
-          v = filt;
-          break;
-        case 1:
-          v = filt + a;
-          break;
-        case 2:
-          v = filt + b;
-          break;
-        case 3:
-          v = filt + Math.floor((a + b) / 2);
-          break;
-        case 4:
-          v = filt + paethPredictor(a, b, c);
-          break;
-        default:
-          throw new Error(`PNG: unknown filter type ${filterType}`);
+  const inflated = unzlibSync(concatBytes(idatChunks));
+  const raw = decodeSamples(
+    inflated,
+    width,
+    height,
+    channels,
+    bitDepth,
+    interlaceMethod === 1,
+    // A palette sample is an INDEX; scaling it to the byte range would look up
+    // the wrong colour. Every other sample is an intensity, and a 1/2/4-bit one
+    // has to be stretched to the 8 bits the PDF image carries.
+    colorType !== 3,
+  );
+
+  return splitChannels(width, height, colorType, raw, palette, paletteAlpha);
+}
+
+/**
+ * §7.2 / §9 — the image's samples, one byte each, in `width × height ×
+ * channels` order: the IDAT stream inflated, each scanline unfiltered against
+ * the one before it, and (when the image is interlaced) each of Adam7's seven
+ * passes scattered back into the full-size grid.
+ *
+ * @param inflated    The inflated IDAT stream.
+ * @param width       Image width in pixels.
+ * @param height      Image height in pixels.
+ * @param channels    Samples per pixel for the colour type.
+ * @param bitDepth    Bits per sample (1, 2, 4, 8 or 16).
+ * @param interlaced  True for interlace method 1 (Adam7).
+ * @param scaleToByte Stretch a sub-byte sample to 0…255 — right for an
+ *                    intensity, wrong for a palette index.
+ * @returns One byte per sample.
+ */
+function decodeSamples(
+  inflated: Uint8Array,
+  width: number,
+  height: number,
+  channels: number,
+  bitDepth: number,
+  interlaced: boolean,
+  scaleToByte: boolean,
+): Uint8Array {
+  const out = new Uint8Array(width * height * channels);
+  const passes = interlaced ? ADAM7_PASSES : [{ xStart: 0, yStart: 0, xStep: 1, yStep: 1 }];
+  // A sub-byte sample counts 0…2ⁿ−1 and the PDF image carries bytes, so the
+  // value is stretched over the full range (a 1-bit 1 is white, not 1/255).
+  const maxSample = (1 << Math.min(bitDepth, 8)) - 1;
+  const bpp = Math.max(1, Math.ceil((channels * bitDepth) / 8));
+  let off = 0;
+  for (const p of passes) {
+    const pw = Math.ceil((width - p.xStart) / p.xStep);
+    const ph = Math.ceil((height - p.yStart) / p.yStep);
+    if (pw <= 0 || ph <= 0) continue;
+    const lineBytes = Math.ceil((pw * channels * bitDepth) / 8);
+    let prev: Uint8Array | null = null;
+    for (let y = 0; y < ph; y++) {
+      if (off + 1 + lineBytes > inflated.length) throw new Error('PNG: truncated image data');
+      const filterType = inflated[off]!;
+      const line = unfilterScanline(inflated, off + 1, lineBytes, bpp, filterType, prev);
+      off += 1 + lineBytes;
+      const destY = p.yStart + y * p.yStep;
+      for (let px = 0; px < pw; px++) {
+        const destX = p.xStart + px * p.xStep;
+        const dest = (destY * width + destX) * channels;
+        for (let ch = 0; ch < channels; ch++) {
+          const v = sampleAt(line, px * channels + ch, bitDepth);
+          out[dest + ch] = scaleToByte && bitDepth < 8 ? Math.round((v * 255) / maxSample) : v;
+        }
       }
-      decoded[x] = v & 0xff;
+      prev = line;
     }
-    raw.set(decoded, y * scanlineBytes);
-    prev = decoded;
   }
+  return out;
+}
 
-  return splitChannels(width, height, colorType, raw);
+/**
+ * §9.2 — Adam7's seven passes, each a sub-grid of the image: where the pass
+ * starts and how far apart its pixels sit.
+ */
+const ADAM7_PASSES: ReadonlyArray<{
+  xStart: number;
+  yStart: number;
+  xStep: number;
+  yStep: number;
+}> = [
+  { xStart: 0, yStart: 0, xStep: 8, yStep: 8 },
+  { xStart: 4, yStart: 0, xStep: 8, yStep: 8 },
+  { xStart: 0, yStart: 4, xStep: 4, yStep: 8 },
+  { xStart: 2, yStart: 0, xStep: 4, yStep: 4 },
+  { xStart: 0, yStart: 2, xStep: 2, yStep: 4 },
+  { xStart: 1, yStart: 0, xStep: 2, yStep: 2 },
+  { xStart: 0, yStart: 1, xStep: 1, yStep: 2 },
+];
+
+// §9.2 — one scanline, its filter reversed against the reconstructed line above.
+function unfilterScanline(
+  src: Uint8Array,
+  from: number,
+  lineBytes: number,
+  bpp: number,
+  filterType: number,
+  prev: Uint8Array | null,
+): Uint8Array {
+  const decoded = new Uint8Array(lineBytes);
+  for (let x = 0; x < lineBytes; x++) {
+    const filt = src[from + x]!;
+    const a = x < bpp ? 0 : decoded[x - bpp]!;
+    const b = prev ? prev[x]! : 0;
+    const c = !prev || x < bpp ? 0 : prev[x - bpp]!;
+    let v: number;
+    switch (filterType) {
+      case 0:
+        v = filt;
+        break;
+      case 1:
+        v = filt + a;
+        break;
+      case 2:
+        v = filt + b;
+        break;
+      case 3:
+        v = filt + Math.floor((a + b) / 2);
+        break;
+      case 4:
+        v = filt + paethPredictor(a, b, c);
+        break;
+      default:
+        throw new Error(`PNG: unknown filter type ${filterType}`);
+    }
+    decoded[x] = v & 0xff;
+  }
+  return decoded;
+}
+
+// Sample `i` of an unfiltered scanline. Sub-byte samples pack big-endian-most
+// significant first; a 16-bit one keeps its high byte (the PDF image is 8-bit).
+function sampleAt(line: Uint8Array, i: number, bitDepth: number): number {
+  if (bitDepth === 8) return line[i]!;
+  if (bitDepth === 16) return line[i * 2]!;
+  const per = 8 / bitDepth;
+  const byte = line[Math.floor(i / per)] ?? 0;
+  const shift = 8 - bitDepth * ((i % per) + 1);
+  return (byte >> shift) & ((1 << bitDepth) - 1);
 }
 
 // Composite a decoded image with an alpha channel onto an opaque white
@@ -391,10 +497,38 @@ function splitChannels(
   height: number,
   colorType: number,
   raw: Uint8Array,
+  palette?: Uint8Array,
+  paletteAlpha?: Uint8Array,
 ): DecodedPng {
   const pixelCount = width * height;
   if (colorType === 0) {
     return { width, height, raw, colorSpace: 'DeviceGray', bitsPerComponent: 8 };
+  }
+  // §11.2.3 — an indexed image: each sample is a palette entry. Expanded to RGB
+  // here rather than carried as a PDF /Indexed space, so one code path serves
+  // every writer; `tRNS` gives the entries their alpha and becomes the soft
+  // mask. Left unread, 45 of the corpus's images drew as nothing at all.
+  if (colorType === 3) {
+    if (!palette || palette.length < 3) throw new Error('PNG: palette image without PLTE');
+    const entries = Math.floor(palette.length / 3);
+    const rgb = new Uint8Array(pixelCount * 3);
+    const alpha = paletteAlpha && paletteAlpha.length > 0 ? new Uint8Array(pixelCount) : undefined;
+    for (let i = 0; i < pixelCount; i++) {
+      const idx = raw[i]!;
+      const src = (idx < entries ? idx : 0) * 3;
+      rgb[i * 3] = palette[src]!;
+      rgb[i * 3 + 1] = palette[src + 1]!;
+      rgb[i * 3 + 2] = palette[src + 2]!;
+      if (alpha) alpha[i] = paletteAlpha![idx] ?? 255;
+    }
+    return {
+      width,
+      height,
+      raw: rgb,
+      colorSpace: 'DeviceRGB',
+      bitsPerComponent: 8,
+      ...(alpha ? { smaskRaw: alpha } : {}),
+    };
   }
   if (colorType === 2) {
     return { width, height, raw, colorSpace: 'DeviceRGB', bitsPerComponent: 8 };
@@ -433,12 +567,13 @@ function splitChannels(
       smaskRaw: alpha,
     };
   }
-  throw new Error(`PNG color type ${colorType} not supported (palette/indexed?)`);
+  throw new Error(`PNG color type ${colorType} not supported`);
 }
 
 function pngChannels(colorType: number): number {
   if (colorType === 0) return 1;
   if (colorType === 2) return 3;
+  if (colorType === 3) return 1;
   if (colorType === 4) return 2;
   if (colorType === 6) return 4;
   return 0;
