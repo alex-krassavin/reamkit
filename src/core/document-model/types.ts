@@ -594,6 +594,18 @@ export interface CellProperties {
   readonly merge?: CellMerge;
   readonly borders?: CellBorders;
   readonly margins?: CellMargins;
+  /**
+   * How many of the spanned columns the cell's own PAINT covers, when that is
+   * fewer than `colSpan`.
+   *
+   * Text overflow is modelled as a span — a cell whose value does not fit runs
+   * across the empty neighbours to its right — but Excel runs the TEXT over an
+   * unpainted cell without painting it. With one width for both, a filled cell
+   * carried its fill along: 54436.xlsx ran its pivot header's blue a whole
+   * column past the pivot. Absent ⇒ the paint covers the whole span, which is
+   * what a merge wants.
+   */
+  readonly paintColumns?: number;
   readonly shading?: CellShading;
   readonly dataBar?: CellDataBar;
   readonly icon?: CellIcon;

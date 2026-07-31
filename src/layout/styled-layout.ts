@@ -433,6 +433,11 @@ interface CellLayout {
   readonly colStart: number;
   readonly colSpan: number;
   readonly mergeRole: MergeRole;
+  /**
+   * The width the cell's own fill and rules cover, when a text-overflow span
+   * made {@link widthPt} wider than the cell itself.
+   */
+  readonly paintWidthPt?: number;
 }
 
 interface RowLayout {
@@ -3226,6 +3231,13 @@ function layoutTableRow(
     for (let k = 0; k < span && colIdx + k < columnWidthsPt.length; k++) {
       widthPt += columnWidthsPt[colIdx + k]!;
     }
+    // A text-overflow span is wider than the box the cell's own fill and rules
+    // belong in (CellProperties.paintColumns).
+    const paintSpan = Math.min(span, Math.max(1, cell.properties.paintColumns ?? span));
+    let paintWidthPt = 0;
+    for (let k = 0; k < paintSpan && colIdx + k < columnWidthsPt.length; k++) {
+      paintWidthPt += columnWidthsPt[colIdx + k]!;
+    }
     columnXOffsets.push(cursorX);
     const mergeRole = rowMergeRoles[cellIdx] ?? 'standalone';
     const leftNeighbor = cellIdx > 0 ? row.cells[cellIdx - 1]!.properties.borders : undefined;
@@ -3245,7 +3257,7 @@ function layoutTableRow(
       leftNeighbor,
       aboveOfSpan(aboveBordersByCol, colIdx, span),
     );
-    cells.push(cellLayout);
+    cells.push(paintWidthPt < widthPt ? { ...cellLayout, paintWidthPt } : cellLayout);
     cursorX += widthPt;
     colIdx += span;
   }
@@ -4587,13 +4599,14 @@ function emitRowChunk(
         i++;
         continue;
       }
-      let width = cell.widthPt;
+      // A text-overflow span is wider than the cell's own paint box.
+      let width = cell.paintWidthPt ?? cell.widthPt;
       let j = i + 1;
-      while (j < row.cells.length) {
+      while (j < row.cells.length && cell.paintWidthPt === undefined) {
         const next = row.cells[j]!;
         if (next.mergeRole === 'middle' || next.mergeRole === 'end') break;
         if (next.shadingColorHex !== cell.shadingColorHex) break;
-        width += next.widthPt;
+        width += next.paintWidthPt ?? next.widthPt;
         j++;
       }
       out.push({

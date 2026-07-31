@@ -1519,7 +1519,10 @@ export function worksheetToBody(
         ...(mergeSpan > 1
           ? { colSpan: mergeSpan }
           : overflowSpan > 1
-            ? { colSpan: overflowSpan }
+            ? // The span is the room the TEXT runs across; the paint stays in
+              // the cell that owns it. A merge is the other case — there the
+              // whole range is one cell and the paint covers all of it.
+              { colSpan: overflowSpan, paintColumns: 1 }
             : {}),
         ...(merge && Math.min(merge.endRow, rowWindowEnd) > merge.startRow
           ? { merge: 'start' as const }

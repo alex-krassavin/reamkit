@@ -1211,3 +1211,32 @@ describe('the column-width unit is the normal style font’s digit (§18.3.1.13)
     expect(pitchWith('Some Unknown Face', 11)).toBeCloseTo(10 * 5.25, 1);
   });
 });
+
+describe('an overflow span is not a paint box', () => {
+  it('runs the text across a neighbour without painting it', () => {
+    // Excel runs the TEXT of an over-long cell over the empty cell beside it
+    // and paints nothing there. Modelled as one colSpan, the fill went with the
+    // text: 54436.xlsx ran its pivot header's blue a whole column past the
+    // pivot, so its header band and its total band — the same two columns —
+    // came out different widths.
+    const green = { value: 'a label wider than its own column', styleIndex: 1 };
+    const xlsx = buildXlsx({
+      rows: [[green], [null, 'anchor']],
+      columns: [{ min: 1, max: 3, widthChars: 8 }],
+      stylesXml:
+        `<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>` +
+        `<fills count="3"><fill><patternFill patternType="none"/></fill>` +
+        `<fill><patternFill patternType="gray125"/></fill>` +
+        `<fill><patternFill patternType="solid"><fgColor rgb="FF00FF00"/></patternFill></fill>` +
+        `</fills><borders count="1"><border/></borders>` +
+        `<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>` +
+        `<xf numFmtId="0" fontId="0" fillId="2" borderId="0" applyFill="1"/></cellXfs>`,
+    });
+    // One column of 8 characters is 56px = 42pt; the text spans more than that.
+    const painted = fills(xlsx).filter((f) => f.hex === '00FF00');
+    expect(painted).toHaveLength(1);
+    expect(painted[0]!.width).toBeLessThan(50);
+    // …and the text is still one line, not wrapped into its own column.
+    expect(placed(xlsx).filter((i) => green.value.startsWith(i.text))).toHaveLength(1);
+  });
+});
