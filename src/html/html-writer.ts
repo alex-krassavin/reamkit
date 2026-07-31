@@ -456,6 +456,12 @@ function labelSvg(l: ChartLabel, sceneH: number, anchor: 'start' | 'middle' | 'e
   );
 }
 
+/** `RRGGBB` as the `r,g,b` triple a CSS `rgba()` takes. */
+function hexToRgbCss(hex: string): string {
+  const n = parseInt(hex, 16);
+  return `${String((n >> 16) & 255)},${String((n >> 8) & 255)},${String(n & 255)}`;
+}
+
 function emitShapeBlock(out: Array<string>, shape: ShapeBlock, ctx: EmitCtx): void {
   const w = shape.width;
   const h = shape.height;
@@ -482,10 +488,19 @@ function emitShapeBlock(out: Array<string>, shape: ShapeBlock, ctx: EmitCtx): vo
   const transform = ` transform="matrix(${m.map(fmt).join(' ')})"`;
   const svg: Array<string> = [svgOpen(w, h, shape.altText)];
   if (gradDef) svg.push(`<defs>${gradDef}</defs>`);
+  // §20.1.8.40 — the drop shadow under the shape. The inline SVG is clipped to
+  // the shape's own box, so the shadow is drawn as a `drop-shadow` filter on
+  // the path rather than a second path outside it, which keeps the blur the
+  // source asked for without needing room the viewport does not have.
+  const shadow = shape.shadow;
+  const shadowFilter = shadow
+    ? ` filter="drop-shadow(${fmt(shadow.dxPt)}px ${fmt(shadow.dyPt)}px ` +
+      `${fmt(shadow.blurPt / 2)}px rgba(${hexToRgbCss(shadow.colorHex)},${fmt(shadow.alpha)}))"`
+    : '';
   for (const path of paths) {
     const rule = path.fillRule === 'evenodd' ? ' fill-rule="evenodd"' : '';
     svg.push(
-      `<path d="${svgPathData(path.segments, fmt)}" fill="${fill}"${rule}${stroke}${transform}/>`,
+      `<path d="${svgPathData(path.segments, fmt)}" fill="${fill}"${rule}${stroke}${transform}${shadowFilter}/>`,
     );
   }
   svg.push('</svg>');

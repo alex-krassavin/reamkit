@@ -204,6 +204,35 @@ function emitShape(out: Array<string>, shape: VectorShape, idc: { n: number }): 
   const stroke = shape.stroke
     ? ` stroke="#${shape.stroke.colorHex}" stroke-width="${fmt(shape.stroke.widthPt)}"`
     : '';
+  // §20.1.8.40 — the drop shadow, drawn first so the shape lands on top of it.
+  // SVG can blur, so here the softness the source asked for is the softness
+  // drawn: `blurRad` is the full spread, and a Gaussian's is about 2σ.
+  const shadow = shape.shadow;
+  if (shadow) {
+    const id = `shadow${idc.n++}`;
+    if (shadow.blurPt > 0) {
+      out.push(
+        `<filter id="${id}" x="-50%" y="-50%" width="200%" height="200%">` +
+          `<feGaussianBlur stdDeviation="${fmt(shadow.blurPt / 2)}"/></filter>`,
+      );
+    }
+    // The stored CTM lands in the y-DOWN page frame, so a shadow that falls
+    // down the page moves in +y.
+    const shTransform =
+      `matrix(${fmt(a)} ${fmt(b)} ${fmt(c)} ${fmt(d)} ` +
+      `${fmt(e + shadow.dxPt)} ${fmt(f + shadow.dyPt)})`;
+    out.push(
+      `<g opacity="${fmt(shadow.alpha)}"${shadow.blurPt > 0 ? ` filter="url(#${id})"` : ''}>`,
+    );
+    for (const path of shape.paths) {
+      const rule = path.fillRule === 'evenodd' ? ' fill-rule="evenodd"' : '';
+      out.push(
+        `<path d="${pathData(path.segments)}" fill="#${shadow.colorHex}"${rule}` +
+          ` transform="${shTransform}"/>`,
+      );
+    }
+    out.push('</g>');
+  }
   for (const path of shape.paths) {
     const d2 = pathData(path.segments);
     const rule = path.fillRule === 'evenodd' ? ' fill-rule="evenodd"' : '';

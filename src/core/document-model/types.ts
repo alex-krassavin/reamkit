@@ -841,6 +841,22 @@ export interface ShapeTextBody {
  * paragraph's properties for block spacing / alignment, mirroring
  * {@link ImageBlock}.
  */
+/**
+ * §20.1.8.40 `a:outerShdw` — the drop shadow under a shape: how far it is
+ * displaced, how soft its edge is, and in what colour. `dxPt`/`dyPt` are the
+ * displacement in page coordinates (y grows DOWN), resolved from the spec's
+ * polar `dist`/`dir`.
+ */
+export interface ShapeShadow {
+  readonly dxPt: number;
+  readonly dyPt: number;
+  /** `blurRad` in points; 0 is a hard edge. */
+  readonly blurPt: number;
+  readonly colorHex: string;
+  /** 0..1, from the shadow colour's `a:alpha` (absent ⇒ opaque). */
+  readonly alpha: number;
+}
+
 export interface ShapeBlock {
   /** §20.4.2.3 — present when the drawing is anchored (floating). */
   readonly float?: FloatAnchor;
@@ -851,6 +867,8 @@ export interface ShapeBlock {
   readonly line?: ShapeLine;
   readonly transform?: ShapeTransform;
   readonly text?: ShapeTextBody;
+  /** §20.1.8.40 — the shape's drop shadow, direct or from its style reference. */
+  readonly shadow?: ShapeShadow;
   readonly paragraphProperties: ParagraphProperties;
   /** `wp:docPr @descr/@title` — alternate text for the tagged-PDF Figure (`/Alt`). */
   readonly altText?: string;

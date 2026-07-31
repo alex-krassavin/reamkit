@@ -88,6 +88,19 @@ export interface VectorShape {
   /** Stroke description. Omitted = no stroke. */
   readonly stroke?: StrokeStyle;
   /**
+   * §20.1.8.40 — a drop shadow drawn UNDER this shape: the same paths, offset
+   * by `(dxPt, dyPt)` in the page's own frame (y down), filled in `colorHex` at
+   * `alpha`. `blurPt` is the softness the source asked for; writers that cannot
+   * blur draw a hard edge.
+   */
+  readonly shadow?: {
+    readonly dxPt: number;
+    readonly dyPt: number;
+    readonly blurPt: number;
+    readonly colorHex: string;
+    readonly alpha: number;
+  };
+  /**
    * CTM applied via `cm` (§8.3.4): maps the local frame onto the page. The
    * 6-tuple is `[a b c d e f]` of the matrix `[[a b 0][c d 0][e f 1]]`.
    */

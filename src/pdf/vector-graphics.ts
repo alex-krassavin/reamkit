@@ -18,12 +18,42 @@ export { PathBuilder } from '@/core/vector';
  * @param patternName When set, the fill is this named shading pattern from the
  *   page's `/Pattern` resources (a gradient, EP16b) rather than a solid colour;
  *   only used if the shape actually carries a `fillGradient`.
+ * @param alphaStateName When set, the shape's shadow is drawn first, under this
+ *   named `/ExtGState` (its constant alpha) from the page's resources.
  * @returns The content-stream operator lines.
  */
-export function emitVectorShape(shape: VectorShape, patternName?: string): Array<string> {
+export function emitVectorShape(
+  shape: VectorShape,
+  patternName?: string,
+  alphaStateName?: string,
+): Array<string> {
   const out: Array<string> = [];
-  out.push('q');
   const [a, b, c, d, e, f] = shape.transform;
+  // §20.1.8.40 — the shadow is the same geometry, offset, drawn first so the
+  // shape lands on top of it. PDF has no blur short of a soft-masked image, so
+  // the edge is hard where the source asked for `blurRad`; the displacement,
+  // the colour and the transparency are the source's own.
+  const shadow = shape.shadow;
+  if (shadow) {
+    out.push('q');
+    if (alphaStateName !== undefined) out.push(`/${alphaStateName} gs`);
+    // The stored CTM maps the shape's local frame onto a y-UP page, so a shadow
+    // that falls DOWN the page moves in -y.
+    out.push(
+      `${num(a)} ${num(b)} ${num(c)} ${num(d)} ` +
+        `${num(e + shadow.dxPt)} ${num(f - shadow.dyPt)} cm`,
+    );
+    const [sr, sg, sb] = hexToRgb01(shadow.colorHex);
+    out.push(`${num(sr)} ${num(sg)} ${num(sb)} rg`);
+    let shadowEvenodd = false;
+    for (const path of shape.paths) {
+      if (path.fillRule === 'evenodd') shadowEvenodd = true;
+      for (const seg of path.segments) out.push(emitSegment(seg));
+    }
+    out.push(shadowEvenodd ? 'f*' : 'f');
+    out.push('Q');
+  }
+  out.push('q');
   out.push(`${num(a)} ${num(b)} ${num(c)} ${num(d)} ${num(e)} ${num(f)} cm`);
 
   const stroke = shape.stroke;

@@ -41,6 +41,7 @@ import type {
   SectionColumns,
   SectionProperties,
   ShapeBlock,
+  ShapeShadow,
   StyleSheet,
   Table,
   TableCell,
@@ -373,6 +374,7 @@ interface ShapeBlockLaidOut {
   readonly fillColorHex?: string;
   readonly fillGradient?: ShapeGradient;
   readonly stroke?: StrokeStyle;
+  readonly shadow?: ShapeShadow;
   readonly rotation60k: number;
   readonly flipH: boolean;
   readonly flipV: boolean;
@@ -1543,6 +1545,7 @@ function layoutShapeBlock(
     ...(fillColorHex ? { fillColorHex } : {}),
     ...(fillGradient ? { fillGradient } : {}),
     ...(stroke ? { stroke } : {}),
+    ...(shape.shadow ? { shadow: shape.shadow } : {}),
     rotation60k: t?.rotation60k ?? 0,
     flipH: t?.flipH ?? false,
     flipV: t?.flipV ?? false,
@@ -4220,6 +4223,7 @@ function paginateSections(
             ...(block.fillColorHex ? { fillColorHex: block.fillColorHex } : {}),
             ...(block.fillGradient ? { fillGradient: block.fillGradient } : {}),
             ...(block.stroke ? { stroke: block.stroke } : {}),
+            ...(block.shadow ? { shadow: block.shadow } : {}),
             transform,
           },
           ...(figId !== undefined ? { structId: figId } : {}),

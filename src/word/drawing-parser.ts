@@ -13,6 +13,7 @@ import type {
   ShapeFill,
   ShapeGeometry,
   ShapeLine,
+  ShapeShadow,
   ShapeTextBody,
   ShapeTransform,
 } from '@/core/document-model';
@@ -20,7 +21,7 @@ import type { ColorMod, ColorResolver } from '@/core/drawingml/colors';
 import type { PoNode } from '@/core/po-helpers';
 import type { Pt } from '@/core/ir';
 import type { GradientStop, ShapeGradient } from '@/core/vector';
-import { resolveColorNode } from '@/core/drawingml/colors';
+import { readColorMods, resolveColorNode } from '@/core/drawingml/colors';
 import { emuToPt, pt } from '@/core/ir';
 import {
   poAttr,
@@ -553,6 +554,55 @@ export function parseFill(spPr: PoNode, resolveColor: ColorResolver): ShapeFill 
     }
   }
   return { kind: 'none' };
+}
+
+/**
+ * Parse a shape's drop shadow from its `a:spPr` (§20.1.8.40 `a:effectLst` →
+ * `a:outerShdw`).
+ *
+ * The spec states the displacement in polar form: `dist` in EMU and `dir` in
+ * 60 000ths of a degree, measured clockwise from due east in a frame whose y
+ * grows DOWNWARD — so the standard 2 700 000 (45°) puts the shadow down and to
+ * the right, which is where every reader draws it.
+ *
+ * @param spPr         The shape's `spPr` node.
+ * @param resolveColor Resolver for theme/scheme colours.
+ * @returns The shadow, or undefined when the shape declares none.
+ */
+export function parseShadow(spPr: PoNode, resolveColor: ColorResolver): ShapeShadow | undefined {
+  const list = poChildren(spPr).find((c) => poIs(c, 'a:effectLst'));
+  const shdw = list ? poChildren(list).find((c) => poIs(c, 'a:outerShdw')) : undefined;
+  return shdw ? shadowFromOuterShdw(shdw, resolveColor) : undefined;
+}
+
+/**
+ * Build a {@link ShapeShadow} from an `a:outerShdw` node.
+ *
+ * @param shdw         The `a:outerShdw` node.
+ * @param resolveColor Resolver for theme/scheme colours.
+ * @returns The shadow, or undefined when its colour will not resolve.
+ */
+export function shadowFromOuterShdw(
+  shdw: PoNode,
+  resolveColor: ColorResolver,
+): ShapeShadow | undefined {
+  const colorNode = poChildren(shdw).find((c) => resolveColorNode(c, resolveColor) !== undefined);
+  const colorHex = colorNode ? resolveColorNode(colorNode, resolveColor) : undefined;
+  if (!colorHex) return undefined;
+  const alphaMod = colorNode
+    ? readColorMods(colorNode).find((m) => m.kind === 'alpha')
+    : undefined;
+  const dist = emuToPt(poIntAttr(shdw, 'dist') ?? 0);
+  // §20.1.10.13 ST_PositiveFixedAngle — 60 000ths of a degree.
+  const dirDeg = (poIntAttr(shdw, 'dir') ?? 0) / 60000;
+  const rad = (dirDeg * Math.PI) / 180;
+  return {
+    dxPt: dist * Math.cos(rad),
+    dyPt: dist * Math.sin(rad),
+    blurPt: emuToPt(poIntAttr(shdw, 'blurRad') ?? 0),
+    colorHex,
+    alpha: alphaMod ? alphaMod.val : 1,
+  };
 }
 
 /**

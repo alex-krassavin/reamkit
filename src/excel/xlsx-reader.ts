@@ -51,6 +51,7 @@ import { parseChart, withChartColorStyle } from '@/core/drawingml/chart-parser';
 import { DEFAULT_THEME_PALETTE, makeColorResolver } from '@/core/drawingml/colors';
 import {
   parseTheme,
+  parseThemeEffectStyles,
   parseThemeFillStyles,
   parseThemeLineWidths,
 } from '@/core/drawingml/theme-parser';
@@ -190,6 +191,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
   // §20.1.4.2.19 `<a:lnRef idx>` indexes the theme's line styles for its width.
   const themeLineWidths = buildThemeLineWidths(pkg, workbookRels);
   const themeFillStyles = buildThemeFillStyles(pkg, workbookRels);
+  const themeEffectStyles = buildThemeEffectStyles(pkg, workbookRels);
 
   const sheetsOut: Array<Sheet> = [];
   // §SV2 slicer-resolution state: tables indexed by id (a slicer's
@@ -269,6 +271,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
             resolveColor,
             themeLineWidths,
             themeFillStyles,
+            themeEffectStyles,
           );
           if (parsed.length > 0) shapes = parsed;
         }
@@ -765,6 +768,19 @@ function buildThemeLineWidths(
     if (!isOoxmlRel(rel.type, 'theme')) continue;
     const resolved = pkg.resolveRelatedPart(WORKBOOK_PART, rel);
     if (resolved) return parseThemeLineWidths(resolved.data);
+  }
+  return [];
+}
+
+// §20.1.4.1.15 — the effect styles an `<a:effectRef idx>` indexes into.
+function buildThemeEffectStyles(
+  pkg: OpcPackage,
+  workbookRels: ReadonlyArray<Relationship>,
+): Array<PoNode> {
+  for (const rel of workbookRels) {
+    if (!isOoxmlRel(rel.type, 'theme')) continue;
+    const resolved = pkg.resolveRelatedPart(WORKBOOK_PART, rel);
+    if (resolved) return parseThemeEffectStyles(resolved.data);
   }
   return [];
 }

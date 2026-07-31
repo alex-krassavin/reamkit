@@ -68,6 +68,7 @@ export type {
   SectionColumns,
   SectionProperties,
   ShapeBlock,
+  ShapeShadow,
   ShapeDash,
   ShapeFill,
   ShapeFillKind,

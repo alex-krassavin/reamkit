@@ -8,7 +8,13 @@
 // a:rPr formatting. A shape's box comes from its sheet ANCHOR (from/to tracks),
 // not its a:xfrm (which is usually relative/zero on a sheet).
 
-import type { ShapeBlock, ShapeFill, ShapeLine, ShapeTextBody } from '@/core/document-model';
+import type {
+  ShapeBlock,
+  ShapeFill,
+  ShapeLine,
+  ShapeShadow,
+  ShapeTextBody,
+} from '@/core/document-model';
 import type { ColorResolver } from '@/core/drawingml/colors';
 import type { ParsedWorksheet } from '@/core/spreadsheet-model';
 import type { PoNode } from '@/core/po-helpers';
@@ -18,7 +24,7 @@ import { applyColorMods, resolveColorNode } from '@/core/drawingml/colors';
 import { poAttr, poChildren, poFirstChild, poIntAttr, poIs, poText } from '@/core/po-helpers';
 import { parseXml } from '@/pptx/pptx-reader';
 import { parseGeometry, parseTxBody } from '@/pptx/slide-parser';
-import { parseFill, parseLine } from '@/word/drawing-parser';
+import { parseFill, parseLine, parseShadow, shadowFromOuterShdw } from '@/word/drawing-parser';
 import { makeColWidthPt, makeRowHeightPt } from '@/excel/sheet-drawing';
 
 interface SheetShape {
@@ -43,6 +49,8 @@ const ANCHOR_KINDS = ['xdr:twoCellAnchor', 'xdr:oneCellAnchor', 'xdr:absoluteAnc
  *                   `<a:lnRef idx>` indexes for a gallery-styled outline.
  * @param themeFillStyles The theme's `a:fillStyleLst` nodes, which an
  *                   `<a:fillRef idx>` indexes for a gallery-styled fill.
+ * @param themeEffectStyles The theme's `a:effectStyleLst` nodes, which an
+ *                   `<a:effectRef idx>` indexes for a gallery-styled shadow.
  */
 export function parseSheetShapes(
   drawingXml: Uint8Array,
@@ -50,6 +58,7 @@ export function parseSheetShapes(
   colors: ColorResolver,
   themeLineWidths: ReadonlyArray<number> = [],
   themeFillStyles: ReadonlyArray<PoNode> = [],
+  themeEffectStyles: ReadonlyArray<PoNode> = [],
 ): Array<ShapeBlock> {
   const tree = parseXml(drawingXml);
   const wsDr = tree.find((n) => poIs(n, 'xdr:wsDr'));
@@ -96,6 +105,9 @@ export function parseSheetShapes(
     // green button and we drew black on green, because a run with no `a:rPr`
     // colour fell through to the layout's default.
     const text = parsed ? withStyleTextColor(parsed, sp, colors) : undefined;
+    const shadow =
+      (spPr ? parseShadow(spPr, colors) : undefined) ??
+      styleShadow(sp, colors, themeEffectStyles);
     const visibleLine = line !== undefined && line.fill !== 'none';
     if (!text && fill.kind === 'none' && !visibleLine) continue;
 
@@ -118,6 +130,7 @@ export function parseSheetShapes(
         fill,
         ...(line ? { line } : {}),
         ...(text ? { text } : {}),
+        ...(shadow ? { shadow } : {}),
         paragraphProperties: {},
       },
       anchorRow: box.anchorRow,
@@ -218,6 +231,39 @@ function placeholderColors(colors: ColorResolver, phHex: string): ColorResolver 
     'scheme' in raw && raw.scheme === 'phClr'
       ? applyColorMods(phHex, raw.mods ?? [])
       : colors(raw);
+}
+
+/**
+ * The shadow `<xdr:style><a:effectRef>` names, if it names one.
+ *
+ * §20.1.4.2.8, the same mechanism as the fill and the outline beside it: a
+ * shape drawn from a gallery style carries no `a:effectLst`, only an index into
+ * the theme's `a:effectStyleLst`, and the colour to put where the style says
+ * `phClr`. 47504.xlsx asks for slot 2 that way — the soft shadow both
+ * references draw under it, and which we drew not at all.
+ *
+ * @param sp                The `xdr:sp` node.
+ * @param colors            The workbook's colour resolver.
+ * @param themeEffectStyles The theme's `a:effectStyleLst` nodes.
+ * @returns The shadow, or undefined when the shape names no effect style.
+ */
+function styleShadow(
+  sp: PoNode,
+  colors: ColorResolver,
+  themeEffectStyles: ReadonlyArray<PoNode>,
+): ShapeShadow | undefined {
+  const style = poChildren(sp).find((c) => poIs(c, 'xdr:style'));
+  const ref = style ? poChildren(style).find((c) => poIs(c, 'a:effectRef')) : undefined;
+  if (!ref) return undefined;
+  const idx = Number(poAttr(ref, 'idx') ?? '');
+  if (!Number.isFinite(idx) || idx < 1) return undefined;
+  const slot = themeEffectStyles[idx - 1];
+  const list = slot ? poFirstChild(slot, 'a:effectLst') : undefined;
+  const shdw = list ? poFirstChild(list, 'a:outerShdw') : undefined;
+  if (!shdw) return undefined;
+  const child = poChildren(ref)[0];
+  const phHex = child ? resolveColorNode(child, colors) : undefined;
+  return shadowFromOuterShdw(shdw, phHex ? placeholderColors(colors, phHex) : colors);
 }
 
 /** The colour `<xdr:style><a:fontRef>` names, if it names one. */

@@ -119,6 +119,26 @@ export function parseThemeFillStyles(themeXml: Uint8Array): Array<PoNode> {
   return list ? [...poChildren(list)] : [];
 }
 
+/**
+ * Parse a theme's effect styles (§20.1.4.1.15 `a:effectStyleLst`), as the raw
+ * nodes. `<a:effectRef idx="N">` is a 1-based index into this list, exactly as
+ * the fill and line references index theirs.
+ *
+ * @param themeXml The raw theme part bytes, UTF-8.
+ * @returns The `a:effectStyle` children in list order; empty when the theme
+ *          declares no `a:fmtScheme`.
+ */
+export function parseThemeEffectStyles(themeXml: Uint8Array): Array<PoNode> {
+  const tree = parser.parse(decoder.decode(themeXml)) as Array<PoNode>;
+  const list = poFindByPath(tree, [
+    'a:theme',
+    'a:themeElements',
+    'a:fmtScheme',
+    'a:effectStyleLst',
+  ]);
+  return list ? [...poChildren(list)] : [];
+}
+
 const EMU_PER_POINT = 12700;
 
 function colorOf(slot: PoNode): string | undefined {

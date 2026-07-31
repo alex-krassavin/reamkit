@@ -163,10 +163,27 @@ function assembleStyledPdf(
       }
     }
   }
+  // §20.1.8.40 — a shadow is drawn at the transparency its colour asks for,
+  // which in PDF is a constant alpha in an /ExtGState (ISO 32000-1 §11.6.4.4).
+  // One state per distinct alpha, shared by every shadow that wants it.
+  const alphaStateNames = new Map<number, string>();
+  const extGStateEntries: Record<string, PdfValue> = {};
+  for (const page of renderedPages) {
+    for (const item of paintPlan(page.commands).shapes) {
+      const alpha = item.shape.shadow?.alpha;
+      if (alpha === undefined || alpha >= 1) continue;
+      const key = Math.round(alpha * 1000) / 1000;
+      if (alphaStateNames.has(key)) continue;
+      const nm = `GSa${alphaStateNames.size}`;
+      alphaStateNames.set(key, nm);
+      extGStateEntries[nm] = dict({ ca: key, CA: key });
+    }
+  }
   const resourcesDict = dict({
     Font: fontResourceDict,
     ...(xobjectResourceDict ? { XObject: xobjectResourceDict } : {}),
     ...(Object.keys(patternEntries).length > 0 ? { Pattern: dict(patternEntries) } : {}),
+    ...(Object.keys(extGStateEntries).length > 0 ? { ExtGState: dict(extGStateEntries) } : {}),
   });
 
   // PDF/A: build the sRGB ICC stream once — reused by the catalog OutputIntent
@@ -201,7 +218,12 @@ function assembleStyledPdf(
         tagFor: (structId) => builder.node(structId).type,
       };
     }
-    const { content: contentBytes, links } = emitPageContent(page, pageTagging, gradientNames);
+    const { content: contentBytes, links } = emitPageContent(
+      page,
+      pageTagging,
+      gradientNames,
+      alphaStateNames,
+    );
     const contentsRef = doc.add(stream({}, contentBytes));
     const pageEntries: Record<string, PdfValue> = {
       Type: name('Page'),
@@ -627,6 +649,7 @@ function emitPageContent(
   page: LaidOutPage,
   tagging?: PageTagging,
   gradientNames?: ReadonlyMap<VectorShape, string>,
+  alphaStateNames?: ReadonlyMap<number, string>,
 ): { content: Uint8Array; links: Array<LinkRegion> } {
   const commands = page.commands;
   const links: Array<LinkRegion> = [];
@@ -762,7 +785,14 @@ function emitPageContent(
       ...sh.shape,
       transform: [t[0], -t[1], t[2], -t[3], t[4], H - t[5]],
     };
-    for (const op of emitVectorShape(shape, gradientNames?.get(sh.shape))) out.push(op);
+    const alpha = sh.shape.shadow?.alpha;
+    const alphaState =
+      alpha !== undefined && alpha < 1
+        ? alphaStateNames?.get(Math.round(alpha * 1000) / 1000)
+        : undefined;
+    for (const op of emitVectorShape(shape, gradientNames?.get(sh.shape), alphaState)) {
+      out.push(op);
+    }
   });
 
   const lines = plan.lines;
