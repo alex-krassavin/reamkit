@@ -11,7 +11,7 @@ import type { FontMeasure, ParsedTtf } from '@/core/font';
 import type { PdfRef } from '@/pdf/objects';
 import type { PdfDocument } from '@/pdf/writer';
 import { createFontMeasure, glyphClosure, subsetTtf } from '@/core/font';
-import { dict, name, ref, stream } from '@/pdf/objects';
+import { deflatedStream, dict, name, ref } from '@/pdf/objects';
 
 const encoder = new TextEncoder();
 
@@ -60,7 +60,10 @@ export function embedTtfFont(
 
   const usedGidsArr = options.usedGids ? [...options.usedGids] : undefined;
   const fontFileBytes = usedGidsArr ? subsetTtf(parsed, usedGidsArr) : parsed.raw;
-  const fontFileRef = doc.add(stream({ Length1: fontFileBytes.byteLength }, fontFileBytes));
+  // §9.9 wants the UNCOMPRESSED length in /Length1; the stream itself deflates.
+  const fontFileRef = doc.add(
+    deflatedStream({ Length1: fontFileBytes.byteLength }, fontFileBytes),
+  );
 
   // ISO 19005-1 §6.3.5 — PDF/A-1 *requires* a /CIDSet in a CIDFont subset's
   // descriptor, marking the CIDs present (Identity ordering ⇒ CID = GID, so the
@@ -69,7 +72,7 @@ export function embedTtfFont(
   // emit /CIDSet only when asked (PDF/A-1) and omit it otherwise.
   const cidSetRef =
     usedGidsArr !== undefined && options.cidSet
-      ? doc.add(stream({}, buildCidSet(glyphClosure(parsed, usedGidsArr))))
+      ? doc.add(deflatedStream({}, buildCidSet(glyphClosure(parsed, usedGidsArr))))
       : undefined;
 
   // ISO 32000-1 §9.6.4 / PDF/A §6.3.5 — a subsetted font's name must carry a
@@ -122,7 +125,9 @@ export function embedTtfFont(
     }),
   );
 
-  const toUnicodeRef = doc.add(stream({}, buildToUnicodeCMap(parsed)));
+  const toUnicodeRef = doc.add(
+    deflatedStream({}, buildToUnicodeCMap(parsed)),
+  );
 
   const type0Ref = doc.add(
     dict({
