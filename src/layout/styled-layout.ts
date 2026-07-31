@@ -4976,7 +4976,11 @@ function emitCellBorders(
       side,
       x: pt(cellX),
       y: pt(pageHeight - cellY - rowHeight),
-      width: pt(cell.widthPt),
+      // A rule belongs to the CELL, not to the run of empty neighbours its text
+      // borrowed. The fill beside it already knows that; the border did not, so
+      // 53734.xlsx framed one bold cell in a box twice its width, running out
+      // past its own green fill and past where both references close it.
+      width: pt(cell.paintWidthPt ?? cell.widthPt),
       height: pt(rowHeight),
       borderSizePt: sz,
       borderColorHex: border.colorHex ?? '000000',
