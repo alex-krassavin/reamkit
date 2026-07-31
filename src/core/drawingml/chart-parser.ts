@@ -217,10 +217,16 @@ export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): C
   // §21.2.2.75 — the gap between category slots, as a percentage of the bar
   // width. Unread, every bar took 0.63 of its slot; 57362.xlsx asks for 219 and
   // its bars came out 2.6× too wide. The schema default is 150.
+  // …and a chart that does not write one gets that default, which is NOT the
+  // same as a gap of zero: `Number(undefined ?? '')` is 0, a finite number that
+  // passed the guard below, so every chart silent about its gap drew its bars
+  // touching (60255_extra_drawingparts.xlsx fills its whole slot where both
+  // references leave half of it).
   const gapNode = poChildren(plotArea)
     .flatMap((g) => poChildren(g))
     .find((c) => poIs(c, 'c:gapWidth'));
-  const gapPercent = Number(poVal(gapNode) ?? '');
+  const gapRaw = gapNode ? poVal(gapNode) : undefined;
+  const gapPercent = gapRaw === undefined ? NaN : Number(gapRaw);
 
   return {
     type,
