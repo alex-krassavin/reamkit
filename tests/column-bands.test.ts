@@ -127,3 +127,26 @@ describe('wide-sheet column-band pagination (E-SHEET SE1)', () => {
     expect(pageCount(xlsx)).toBe(2);
   });
 });
+
+describe('printed headings + bands (§18.3.1.70)', () => {
+  it('starts a headed band on its own page, letters and all', () => {
+    // The band break is set on the band's own leading row; the letters row is
+    // prepended in front of it afterwards. Left where it was, the letters
+    // printed alone on one page and the band they label began the next —
+    // ElapsedFormatTests.xlsx grew a blank page between its two bands.
+    const xlsx = buildXlsx({
+      rows: grid(4, 6),
+      columns: wideCols,
+      printOptions: { headings: true },
+    });
+    const tables = Ream.parse(xlsx).flow.body.filter((el) => el.kind === 'table');
+    expect(tables.length).toBeGreaterThan(1);
+    for (const [i, t] of tables.entries()) {
+      // Row 0 is the column letters; it leads the band and carries the break.
+      const first = t.table.rows[0]!;
+      const second = t.table.rows[1];
+      expect(first.properties.pageBreakBefore ?? false).toBe(i > 0);
+      expect(second?.properties.pageBreakBefore ?? false).toBe(false);
+    }
+  });
+});

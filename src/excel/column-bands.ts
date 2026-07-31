@@ -202,7 +202,13 @@ export function bandedTables(
         table: {
           properties,
           grid: headed ? headed.widths.map((w) => twipsToPt(w)) : grid,
-          rows: headed ? headed.rows : part.rows,
+          // The break that starts a band belongs to whatever row comes FIRST.
+          // Set on the band's own first row above, prepending the letters row
+          // pushed it to second place: the heading printed at the top of a page
+          // of its own and the band's first row began the next one, which is
+          // exactly the blank page ElapsedFormatTests.xlsx grew between its two
+          // bands.
+          rows: headed ? leadWithBandBreak(headed.rows) : part.rows,
         },
       };
     });
@@ -263,4 +269,27 @@ function blankCell(span: number): TableCell {
     properties: span > 1 ? { colSpan: span } : {},
     content: [],
   };
+}
+
+/**
+ * Move a `pageBreakBefore` that landed on the second row up to the first.
+ *
+ * The band's page break is set on the band's own leading row, before the
+ * heading band prepends the column-letter row in front of it. Left there, the
+ * letters print on one page and the band they label starts on the next.
+ *
+ * @param rows The band's rows, letters row first.
+ * @returns The same rows with the break carried by whichever leads them.
+ */
+function leadWithBandBreak(rows: Array<TableRow>): Array<TableRow> {
+  const second = rows[1];
+  if (!second?.properties.pageBreakBefore) return rows;
+  const [first, ...rest] = rows;
+  if (!first) return rows;
+  const { pageBreakBefore: _dropped, ...keep } = second.properties;
+  return [
+    { ...first, properties: { ...first.properties, pageBreakBefore: true } },
+    { ...second, properties: keep },
+    ...rest.slice(1),
+  ];
 }
