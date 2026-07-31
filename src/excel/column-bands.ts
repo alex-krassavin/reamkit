@@ -61,7 +61,9 @@ export function withHeadingBand(
   });
   const letters: Array<TableCell> = [head('')];
   for (let i = 0; i < widths.length; i++) letters.push(head(columnLetters(colStart + i)));
-  const out: Array<TableRow> = [{ properties: {}, cells: letters }];
+  // The letters repeat at the top of every page, the way both references print
+  // them — which is what a table's leading header row already does.
+  const out: Array<TableRow> = [{ properties: { isHeader: true }, cells: letters }];
   rows.forEach((row, i) => {
     out.push({
       properties: row.properties,
