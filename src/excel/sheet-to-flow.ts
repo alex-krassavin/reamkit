@@ -129,11 +129,17 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
   // How many sheets are still candidates to print, so the guard above can tell
   // "this one is empty" from "every one of them is".
   let printableSheets = sheet.sheets.filter((s) => !s.hidden).length;
-  // Does anything in this workbook print at all? When nothing does, the first
-  // visible sheet still prints its page (see the guard below).
-  const anyPrints = sheet.sheets.some(
-    (s) => !s.hidden && sheetPrintsAnything(s, sheet.styles),
-  );
+  // Does anything in this workbook print at all? When nothing does, ONE sheet
+  // still prints its page (see the guard below) — and the one worth printing is
+  // whichever carries a header or footer, since that is the only thing such a
+  // workbook can put on paper. npe.xlsx keeps its footer on the second of two
+  // empty tabs, and printing the first gave a page with nothing on it where
+  // LibreOffice prints the footer.
+  const visible = sheet.sheets.filter((s) => !s.hidden);
+  const anyPrints = visible.some((s) => sheetPrintsAnything(s, sheet.styles));
+  const fallbackSheet = anyPrints
+    ? undefined
+    : (visible.find((s) => hasHeaderOrFooter(s)) ?? visible[0]);
   for (let sheetIdx = 0; sheetIdx < sheet.sheets.length; sheetIdx++) {
     const ws = sheet.sheets[sheetIdx]!;
     // §18.2.19: a hidden tab is not printed. Excel and LibreOffice both leave it
@@ -143,12 +149,12 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // …and neither is a sheet with nothing on it. tdf115159.xlsx carries two
     // untouched tabs beside its data, and printing them added a blank page the
     // reference does not produce. A workbook of nothing but empty sheets is
-    // still a document, though, and the one it prints is its FIRST — which is
-    // the sheet that carries the header and footer when any does.
-    // HeaderFooterComplexFormats.xlsx is three empty tabs whose first has both,
-    // and keeping the LAST one standing printed the blank third: a page with
-    // nothing on it where LibreOffice prints two lines of formatted text.
-    if (!sheetPrintsAnything(ws, sheet.styles) && (anyPrints || printed > 0)) {
+    // still a document, though, and the one it prints is the one carrying a
+    // header or footer (see `fallbackSheet`). HeaderFooterComplexFormats.xlsx
+    // is three empty tabs whose FIRST has both, and keeping the LAST one
+    // standing printed the blank third: a page with nothing on it where
+    // LibreOffice prints two lines of formatted text.
+    if (!sheetPrintsAnything(ws, sheet.styles) && ws !== fallbackSheet) {
       printableSheets--;
       continue;
     }
@@ -616,6 +622,17 @@ function controlShapes(
  * @param ws The sheet.
  * @returns True when the sheet would print something.
  */
+/**
+ * Whether a sheet carries a header or footer with anything in it.
+ *
+ * @param ws The sheet.
+ * @returns True when either band has a non-empty format string.
+ */
+function hasHeaderOrFooter(ws: Sheet): boolean {
+  const hf = ws.grid.headerFooter;
+  return Boolean(hf && ((hf.oddHeader?.length ?? 0) > 0 || (hf.oddFooter?.length ?? 0) > 0));
+}
+
 function sheetPrintsAnything(ws: Sheet, styles: XlsxStyles): boolean {
   if (ws.grid.cells.some((c) => c.rawValue !== '' || c.inlineText !== undefined)) return true;
   // A cell that paints is on the page with nothing in it, and a sheet of them
