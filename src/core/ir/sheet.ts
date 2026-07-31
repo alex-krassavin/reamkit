@@ -241,4 +241,10 @@ export interface SheetDoc {
    * reference is resolved at projection time, which is why the palette travels.
    */
   readonly themePalette?: ReadonlyMap<string, string>;
+  /**
+   * §18.3.* — how many embedded objects (`<oleObject progId="Package">` and the
+   * like) the workbook carries. They print as an icon and a caption in Excel
+   * and Calc, both of which live in a metafile; the projection reports them.
+   */
+  readonly embeddedObjects?: number;
 }

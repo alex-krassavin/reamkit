@@ -1056,9 +1056,13 @@ function collectOleObjects(
 ): void {
   if (!node) return;
   const direct = toArray(node['oleObject']);
-  const fromChoice = toArray(asObjectNode(node['AlternateContent'])?.['Choice']).flatMap((c) =>
-    toArray(asObjectNode(c)?.['oleObject']),
-  );
+  // A workbook with TWO embedded objects writes two `mc:AlternateContent`
+  // siblings, and the parser hands those back as an array — which the
+  // single-node reader turned into nothing at all, losing both of
+  // bug64512_embed.xlsx's attachments before anything could report them.
+  const fromChoice = toArray(node['AlternateContent'])
+    .flatMap((ac) => toArray(asObjectNode(ac)?.['Choice']))
+    .flatMap((c) => toArray(asObjectNode(c)?.['oleObject']));
   for (const o of [...direct, ...fromChoice]) {
     const obj = asObjectNode(o);
     if (!obj) continue;

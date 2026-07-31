@@ -194,6 +194,9 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
   const themeEffectStyles = buildThemeEffectStyles(pkg, workbookRels);
 
   const sheetsOut: Array<Sheet> = [];
+  // Embedded files (`<oleObject progId="Package">` and friends) that no page can
+  // show: counted here and reported once, rather than dropped in silence.
+  let embeddedObjects = 0;
   // §SV2 slicer-resolution state: tables indexed by id (a slicer's
   // tableSlicerCache may reference a table on another sheet) and the slicer parts
   // found per OUTPUT sheet — both consumed after the loop, once all tables index.
@@ -459,6 +462,17 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
     // after the grid, like form controls.
     if (worksheet.oleObjects && worksheet.oleObjects.length > 0) {
       for (const ole of worksheet.oleObjects) {
+        // §18.3.* — `<oleObjects>` holds two different things. A Forms control
+        // resolves to an activeX XML part with a property bag; an EMBEDDED FILE
+        // ("Package", "Word.Document", …) resolves to the file's own bytes, and
+        // reading those as XML threw the whole conversion away on
+        // bug64512_embed.xlsx's two attachments. Excel and Calc draw such an
+        // object as its icon and caption, both of which live in a metafile we
+        // do not decode; the object is reported rather than drawn.
+        if (!/^Forms\./i.test(ole.progId ?? '')) {
+          embeddedObjects++;
+          continue;
+        }
         const rel = wsRels.find((r) => r.id === ole.relId);
         const part = rel ? pkg.resolveRelatedPart(resolved.path, rel) : undefined;
         resolvedAx.push({
@@ -543,6 +557,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
     ...(chartData.size > 0 ? { chartData } : {}),
     resources,
     themePalette,
+    ...(embeddedObjects > 0 ? { embeddedObjects } : {}),
     ...(info ? { info } : {}),
   };
 }

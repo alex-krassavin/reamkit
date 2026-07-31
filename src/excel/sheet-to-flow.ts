@@ -357,6 +357,16 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
   // Section i covers body[sections[i-1].endIndex .. sections[i].endIndex). A
   // single-sheet workbook keeps `sections` empty so the render path stays on
   // the FlowDoc.section fallback it has always used, byte for byte.
+  // §18.3.* — an embedded file draws as an icon and a caption, and both live in
+  // a metafile we do not decode. Saying so beats a page that quietly lost two
+  // attachments (bug64512_embed.xlsx).
+  if (sheet.embeddedObjects) {
+    options.losses?.push({
+      severity: 'dropped',
+      feature: 'shapes',
+      detail: `${String(sheet.embeddedObjects)} embedded object(s) not rendered — an OLE embedding draws as an icon from a metafile preview`,
+    });
+  }
   const sections: Array<Section> =
     sheetSections.length > 1
       ? sheetSections.map((properties, i) => ({ properties, endIndex: sheetEnds[i]! }))
