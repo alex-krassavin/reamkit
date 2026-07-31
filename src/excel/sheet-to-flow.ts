@@ -178,6 +178,12 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       ...(sheet.sharedStringRuns ? { sharedStringRuns: sheet.sharedStringRuns } : {}),
       ...(options.now ? { now: options.now } : {}),
       ...(options.digitWidthPt !== undefined ? { digitWidthPt: options.digitWidthPt } : {}),
+      // §18.8.28 — the Normal style's size, which sets the height of a row the
+      // sheet gives none. A workbook property, so it is read here rather than
+      // asked of the caller.
+      ...(sheet.styles.fonts[0]?.sizePt !== undefined
+        ? { defaultFontPt: sheet.styles.fonts[0].sizePt }
+        : {}),
       ...(options.losses ? { losses: options.losses } : {}),
       scaleSink,
       bandSink,

@@ -267,6 +267,41 @@ function digitTwips(digitWidthPt: number | undefined): number {
 const EXCEL_DEFAULT_ROW_HEIGHT_PT = 15;
 
 /**
+ * The same height for a workbook whose Normal style names another size —
+ * Excel's own table, which is not proportional because the height is a line
+ * height and a font's leading is not proportional to its body.
+ *
+ * A workbook written before Calibri says Arial 10 and no `defaultRowHeight`,
+ * and every one of its rows is 12.75pt: tdf100709.xlsx fits twenty of them on
+ * the page where our 15pt fitted fourteen and pushed the rest onto a second.
+ */
+const EXCEL_ROW_HEIGHT_BY_FONT_PT: ReadonlyMap<number, number> = new Map([
+  [8, 11],
+  [9, 12],
+  [10, 12.75],
+  [11, 15],
+  [12, 15.75],
+  [14, 18],
+]);
+
+/**
+ * The row height a sheet that declares none inherits from the workbook's
+ * Normal font. Sizes outside Excel's table scale from its 10pt entry and snap
+ * up to the 0.75pt grid row heights are stored on (one pixel at 96 dpi).
+ *
+ * @param fontPt The Normal style's font size, or undefined if unknown.
+ * @returns The default row height in points.
+ */
+export function defaultRowHeightPtFor(fontPt: number | undefined): number {
+  if (fontPt === undefined || !Number.isFinite(fontPt) || fontPt <= 0) {
+    return EXCEL_DEFAULT_ROW_HEIGHT_PT;
+  }
+  const known = EXCEL_ROW_HEIGHT_BY_FONT_PT.get(fontPt);
+  if (known !== undefined) return known;
+  return Math.ceil((fontPt * 12.75) / 10 / 0.75) * 0.75;
+}
+
+/**
  * Excel's default row height is ~15pt = 300 twips. Used (for the `fitToHeight`
  * estimate) for rows without an explicit `<row ht="..">`.
  */
@@ -692,6 +727,9 @@ interface PrintModelOptions {
   // default font, so the unit is a property of the FONT — see
   // ProjectSheetOptions.digitWidthPt. Absent ⇒ Excel's own 7 px.
   readonly digitWidthPt?: number;
+  // §18.8.28 — the size of the workbook's Normal font, which sets the height of
+  // a row the sheet gives none. Absent ⇒ Excel's own Calibri 11.
+  readonly defaultFontPt?: number;
   // The print scale this sheet resolved to, reported back to the caller. A
   // drawing is anchored to the grid and shrinks with it, but it is emitted
   // beside the grid rather than inside it — and the factor is only known here,
@@ -1048,7 +1086,7 @@ export function worksheetToBody(
   // which made the row pitch a property of the rendering font rather than of
   // the document. The per-row `ht` overrides below take precedence.
   const defaultRowTwips = Math.round(
-    (worksheet.defaultRowHeightPt ?? EXCEL_DEFAULT_ROW_HEIGHT_PT) * TWIPS_PER_POINT,
+    (worksheet.defaultRowHeightPt ?? defaultRowHeightPtFor(print.defaultFontPt)) * TWIPS_PER_POINT,
   );
   const rowHeightMap = new Map<number, { heightTwips: number; heightRule: 'atLeast' | 'exact' }>();
   for (let r = 0; r < rowCount; r++) {
