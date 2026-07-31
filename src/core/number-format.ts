@@ -4,7 +4,8 @@
 //     thousands / percent / accounting basics / text)
 //   - Custom format strings with `0`, `#`, `,`, `.`, `%`, quoted literals,
 //     and `[colour]` / `[locale]` codes (the latter two stripped silently)
-// Dates (m/d/yyyy etc.) are deferred — the cell value is shown verbatim.
+//   - Dates: the §18.8.30 built-ins and custom day/month/year codes, off the
+//     workbook's 1900 or 1904 epoch.
 
 import { INDEXED_COLORS } from '@/core/indexed-colors';
 
@@ -463,9 +464,22 @@ function formatExcelDate(rawValue: string, format: string, date1904: boolean): s
 function defaultNumberRender(rawValue: string): string {
   const n = Number(rawValue);
   if (!Number.isFinite(n)) return rawValue;
-  // Don't reformat — just trim trailing zeros after a stored decimal.
-  if (Number.isInteger(n)) return String(n);
-  return String(n);
+  // Don't reformat — just trim trailing zeros after a stored decimal…
+  // …but a value ECMAScript renders in exponential form comes back spelled
+  // JavaScript's way, `3e-104`, and General is Excel's format: an upper-case E
+  // and a signed exponent of at least two digits. 57236.xlsx stores three such
+  // values and we printed all three with a lower-case e where every other
+  // reader prints `3E-104`. The spelling already lives in `scientificToWidth`
+  // below; this is the same rule, reached by the values that FIT their column
+  // and so never get there.
+  return excelExponent(String(n));
+}
+
+/** Respell ECMAScript's `3e-104` as Excel's `3E-104` (§18.8.31). */
+function excelExponent(rendered: string): string {
+  const m = /^(-?[\d.]+)e([+-]?)(\d+)$/i.exec(rendered);
+  if (!m) return rendered;
+  return `${m[1]!}E${m[2] === '-' ? '-' : '+'}${m[3]!.padStart(2, '0')}`;
 }
 
 /**

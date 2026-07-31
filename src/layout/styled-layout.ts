@@ -4978,10 +4978,11 @@ function emitCellBorders(
 const NO_WRAP_MEASURE_WIDTH = 1e6;
 
 /**
- * One line, trimmed to `widthPt` at the last glyph that fits — what a
- * non-wrapping spreadsheet cell shows. Everything past the box is dropped;
- * Excel and LibreOffice paint the straddling glyph and clip it in the middle,
- * which needs a clip rectangle per cell, so a whole glyph is where we stop.
+ * One line, trimmed to the glyph that STRADDLES `widthPt` — what a non-wrapping
+ * spreadsheet cell shows. Excel and LibreOffice paint that glyph and cut it
+ * through the middle, and so do we now: the caller marks the cell and the
+ * emitters clip the line to its box (TextLineItem.clip). Stopping at the last
+ * glyph that wholly fits is what dropped a character off every cut cell.
  */
 function clipLineToWidth(
   lines: ReadonlyArray<Line>,

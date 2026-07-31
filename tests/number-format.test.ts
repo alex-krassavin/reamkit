@@ -311,3 +311,20 @@ describe('applyNumberFormat — codes real producers write', () => {
     expect(applyNumberFormat('0.5208333', 47, noCustom)).toBe('30:00.0');
   });
 });
+
+describe('General spells an exponent Excel’s way, not JavaScript’s', () => {
+  it('gives an upper-case E, an explicit sign and two exponent digits', () => {
+    // General bottoms out in ECMAScript's Number-to-String, which writes
+    // `3e-104`. §18.8.31 spells scientific notation `E+`/`E-` — built-in 11 is
+    // `0.00E+00` — and every other reader prints `3E-104`. 57236.xlsx stores
+    // three such values and we printed all three with a lower-case e.
+    expect(applyNumberFormat('3.0000000000000002E-104', 0, noCustom)).toBe('3E-104');
+    expect(applyNumberFormat('4.9999999999999998E-106', 0, noCustom)).toBe('5E-106');
+    expect(applyNumberFormat('1e21', 0, noCustom)).toBe('1E+21');
+    // A single-digit exponent is padded, as the built-in codes are.
+    expect(applyNumberFormat('0.0000001', 0, noCustom)).toBe('1E-07');
+    // Everything that is not exponential is untouched.
+    expect(applyNumberFormat('42', 0, noCustom)).toBe('42');
+    expect(applyNumberFormat('0.5', 0, noCustom)).toBe('0.5');
+  });
+});
