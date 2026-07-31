@@ -33,6 +33,11 @@ describe('M1 smoke: docx → pdf with embedded TTF', () => {
     // UNCOMPRESSED length. Nothing we wrote used to be compressed at all, which
     // put a three-page workbook at 192 KB against LibreOffice's 21 KB.
     expect(text).toContain('/Filter /FlateDecode');
+    // ISO 32000-1 §9.9.2 names what a /FontFile2 may carry; a PDF does its own
+    // positioning and its own text extraction, so the layout and naming tables
+    // are dead weight. They were 120 KB of a 136 KB font program.
+    expect(text).not.toContain('GSUB');
+    expect(text).not.toContain('GPOS');
     expect(text).toMatch(/\/Length1 \d+/);
     expect(text).toContain('/ToUnicode');
     expect(text).toMatch(/\/BaseFont \/[A-Z]{6}\+Roboto/);

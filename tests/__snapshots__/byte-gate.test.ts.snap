@@ -1,65 +1,65 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`byte gate: images and PDF/A emit paths > images.docx (PDF/A-1a: tagged structure tree) 1`] = `"7b93f57533be1dc8aee6fea4a573a2146e3db8a057287eab7b6c49f3f14b7a61"`;
+exports[`byte gate: images and PDF/A emit paths > images.docx (PDF/A-1a: tagged structure tree) 1`] = `"ca48fc388beaa84af852d30ab9884fb996fb7472049e130194727dadb4fd723d"`;
 
-exports[`byte gate: images and PDF/A emit paths > images.docx (PDF/A-1b: alpha flattened) 1`] = `"2c7dec0d2d05091b9ab1a77c4f6e8cbc5abb73f1410432e97c49b808c3d83886"`;
+exports[`byte gate: images and PDF/A emit paths > images.docx (PDF/A-1b: alpha flattened) 1`] = `"f987b1c899d0c7e4b6ec900e388db6aeef0d1b80cd2ff66c1d33b74af68f19fe"`;
 
-exports[`byte gate: images and PDF/A emit paths > images.docx (PDF/A-2b: transparency group) 1`] = `"4ca0b84f753b72eb2ee6adbd8d545a41b02213c44572b57a66890699cfaeb16d"`;
+exports[`byte gate: images and PDF/A emit paths > images.docx (PDF/A-2b: transparency group) 1`] = `"c2c95f64a1ac6f85af0d152b150aaac5d86cf1905aa9102d8dfaa0026765e06a"`;
 
-exports[`byte gate: images and PDF/A emit paths > images.docx (plain: SMask kept) 1`] = `"c17aa9cf72d906e18b3f6f8344dc594215606aa801bca944b4bdf1aaf2deb204"`;
+exports[`byte gate: images and PDF/A emit paths > images.docx (plain: SMask kept) 1`] = `"588e22fda8cc01bab3b8b0e54b804b12355e454f15a8cc285ab6a81e51589df7"`;
 
-exports[`byte gate: static fixtures > header-footer.docx 1`] = `"bb5d589b9384ff73c77173eef700565de628bd7516acc69561b36f0091395b44"`;
+exports[`byte gate: static fixtures > header-footer.docx 1`] = `"8e9eb60e0a6b01b3de5d84d9134f62e1be37237c3241c871f17463616ef2c3bf"`;
 
-exports[`byte gate: static fixtures > list-basic.docx 1`] = `"33cd634ef8771733d0facb028a4484afd88c74408c7350faa1a17ecef6ed3f1a"`;
+exports[`byte gate: static fixtures > list-basic.docx 1`] = `"9c96cd451a977e3690c623eefc0125837f4646c181f004aeac36fb58f5fa8847"`;
 
-exports[`byte gate: static fixtures > sheet-basic.xlsx 1`] = `"ac79bdfa9e2fdbed95889d918dee33712feaa1b487d5d293014a1b4937d14564"`;
+exports[`byte gate: static fixtures > sheet-basic.xlsx 1`] = `"1195a173317fe7d4a98944b9803af5f74236d8de0d5ba657d91669d89ad3c1aa"`;
 
-exports[`byte gate: static fixtures > sheet-fit-scale.xlsx 1`] = `"5f4aac24baabe110b6af9adebd3bf21fa8fd6084665a4e9aec0cf2e10278a9f8"`;
+exports[`byte gate: static fixtures > sheet-fit-scale.xlsx 1`] = `"0f6097e919f4218c89f8108c8b4dcea670cbb963ecfe91798c9b50d281df0ba8"`;
 
-exports[`byte gate: static fixtures > sheet-formats.xlsx 1`] = `"9c0df141a6412609ea8bdd1314f8430b4cd120d9324aea4123296af3543f42d1"`;
+exports[`byte gate: static fixtures > sheet-formats.xlsx 1`] = `"aee8ad6a96ebfca2c895c19e227b6ce7bf17d060fa4d611896bdeac28564670f"`;
 
-exports[`byte gate: static fixtures > sheet-print-area.xlsx 1`] = `"ce265b629fa0a95bf34ad9b8b1119962cb3ab672939b498cde0dcdf55a944ad1"`;
+exports[`byte gate: static fixtures > sheet-print-area.xlsx 1`] = `"e6336b034db979271e18c1873d912ff80efc78bb7ca91070670b459d2e999edd"`;
 
-exports[`byte gate: static fixtures > sheet-print-titles.xlsx 1`] = `"b9702e89dc70f9309f8d6026dffca34273b68c1ee130c0d45bf4867f2ebe2902"`;
+exports[`byte gate: static fixtures > sheet-print-titles.xlsx 1`] = `"452650de05c1624fd9f9fc595b6d27da4bb0af0b254566937275b91c3c4ba865"`;
 
-exports[`byte gate: static fixtures > sheet-row-breaks.xlsx 1`] = `"caa38cb17ab7e31e88d3e2240cbbafedd5f7f4d3728124a0e87268e6735c794f"`;
+exports[`byte gate: static fixtures > sheet-row-breaks.xlsx 1`] = `"f79b930f39a67f2ac642d03c2d238b1ec486bdfef41f7580bb8a93f25361b072"`;
 
-exports[`byte gate: static fixtures > table-basic.docx 1`] = `"c50c45c38764d28f1420597cc8075c04af651204df18021b2cc0d679f153d26d"`;
+exports[`byte gate: static fixtures > table-basic.docx 1`] = `"6598007b4bae69dd1773b6fc36024dfb3cd208cf64352a23fbfbccf49d48bbd5"`;
 
-exports[`byte gate: static fixtures > text-basic.docx 1`] = `"11f8d6141dd44750eb12b912e288d6ffb8dca2e7ad80da0f9b82acb794f104bc"`;
+exports[`byte gate: static fixtures > text-basic.docx 1`] = `"4a14f4034d3df89f80638d55b40d717f91a1f1b702a2f6750426473a9e3afefd"`;
 
-exports[`byte gate: static fixtures > text-justified.docx 1`] = `"fd9d4a26ea39154efd4b942139427b79801ef710438d71a37672f6d249a1e19e"`;
+exports[`byte gate: static fixtures > text-justified.docx 1`] = `"190ac4bdddca87fda3046338486dfeca1de2e62f3ed56d131d645ddfc4e80bef"`;
 
-exports[`byte gate: static fixtures > text-styled.docx 1`] = `"5d0743c020d98ebcc83f8daf8abf9a7cb82f571e5a1c3a823a31c3f908b250bc"`;
+exports[`byte gate: static fixtures > text-styled.docx 1`] = `"105808d0540f7f6a81b2d58b08615cadba08d8d4f85c611743cf0bdabc44ae6a"`;
 
-exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: cell-styles 1`] = `"80530003e3429bc1262a2de249075f2fc9c6f78050ca13b4a57e0069677fb27b"`;
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: cell-styles 1`] = `"bb3ed485a667dc3bb8ac4f6efc98a29b194570df69b962c8c31015770f259d92"`;
 
-exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: centering 1`] = `"a63ff4106a7377894525c6b509200b330d8f9322da4ca84c46c09a5dacd978ab"`;
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: centering 1`] = `"cea5e8c8f43e6e86e3d62ca6ebc1e4d511bb9a0f10ead5425b62ce244ba8f8b7"`;
 
-exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: column-bands 1`] = `"75c4cdd0b93eafbb38bc1edc35f3178812735c192a271c892bbae8597ada6f0e"`;
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: column-bands 1`] = `"8f4ca13c9b6b350f2537400cd4d54bfd3c77993fc27532c226932fb3a691189d"`;
 
-exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: column-breaks 1`] = `"170392f36dcf4222018b61bd56cb8b6f7907bb2fa29046bf402f82ac9be9e1c6"`;
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: column-breaks 1`] = `"906bb27af9d84c98eb1bc9a4f46380bc7ae7d5fcdbc4bc6872d45256bfc7bdf1"`;
 
-exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: date-1904 1`] = `"f30d5e41404daf0cf89d275d195474f50d05508e675862a355ba4a8a8e957fe9"`;
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: date-1904 1`] = `"55441e7b7b8fce879985df6637905441fd3fad8846e80f1d11bb4117b20e5264"`;
 
-exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: fit-to-page 1`] = `"f22b017d5954f9d8d282d94a795c8857a320cd9fe57d001c3b3341dd2363b084"`;
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: fit-to-page 1`] = `"44b10b128a44985837e243707017b85ded4e0ff38b8ae407ad3309891154eb02"`;
 
-exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: gridlines 1`] = `"65245e4bced04fb919c701e084c697ea99db17cff7985839832f0691503c2ca0"`;
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: gridlines 1`] = `"0d8ff739e07bf1cbd1f7ae4ccf9ec4b95066da241c66ce135c4ccd23fa574d21"`;
 
-exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: landscape 1`] = `"30a754022409c8c3839a3fd632c2ec580069190f32654c86a6e439b2cb368d7a"`;
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: landscape 1`] = `"6a16a198c617b7989db3b7d44afed939c6defe43dd38d8bba14829e8df2767ef"`;
 
-exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: merges 1`] = `"6e6d178bcb73440eb2e3e6e69f10fe12a9d9882beaee7caf956bf9baa425be35"`;
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: merges 1`] = `"b32f26ce8b2171345ebbb583a8421220b7b5ef1ec1a8f5e7690ff6516c907e96"`;
 
-exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: multi-sheet 1`] = `"6cfb7610b4500327a751a916685f3aa7e34cd988a8fc7ef4c8199341edd2fc4d"`;
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: multi-sheet 1`] = `"323e06117ee684cc188c86ea67c8bbf35786df1e8dcffec16f4c8ee5b2a3beaa"`;
 
-exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: print-area 1`] = `"b66cd24d462bfab365e382c9a54177645831192a81133dc31480eedc3fb10481"`;
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: print-area 1`] = `"151fdeee90edc644e5a87918a49cb30fb2ce7c1181369ff3a3e33765ef9e1d18"`;
 
-exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: print-titles 1`] = `"fc9d3bed84fda57304d4a7958f10d0ffd129b0815e17d9ff286384d037dd2fa9"`;
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: print-titles 1`] = `"ebae93adcb9935eb6822155432e272a69b380fd93a9d1070a9d8c749628d8e24"`;
 
-exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: row-breaks 1`] = `"1c30e418da1761a05956894df2a7a932fc96715b1a70618eb1f88e34e5002888"`;
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: row-breaks 1`] = `"5246a9e27bde9e8e59f78b0be61eb382c6e65ff8b0ec9756b87901eb8d67842e"`;
 
-exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: scale 1`] = `"dd2f11542c51e5f1d599cffbb4fb38aa73ef8f7ebeeb004c530e41f59b93be28"`;
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: scale 1`] = `"bfe10cba680a30a75d1b153167ea3b5573e71c451deadb29de07e1ab86d0c3f3"`;
 
-exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: sheet-chart 1`] = `"b10dc4718cef6364a862a3dbc9043b46b7c88c25e0d91ec7e5b0326b60e862bf"`;
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: sheet-chart 1`] = `"b2f816b86b23ee3e0b331395eba71093ddec4a78f0c0e0c8f88e4f344a17637f"`;
 
-exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: tracks 1`] = `"445f5f56c74d40aa3cea700729a092160a659454cf1d78731d5276140920f312"`;
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: tracks 1`] = `"83c16b16c183859511765a94783022a85b93b6c0125c06a619069edb940f9b6b"`;
