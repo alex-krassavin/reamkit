@@ -1240,3 +1240,24 @@ describe('an overflow span is not a paint box', () => {
     expect(placed(xlsx).filter((i) => green.value.startsWith(i.text))).toHaveLength(1);
   });
 });
+
+describe('a cell cuts its text mid-glyph (ISO 32000-1 §8.5.4)', () => {
+  it('keeps the glyph that straddles the edge and clips the line to the cell', () => {
+    // Excel and LibreOffice paint the straddling glyph and cut it through its
+    // bowl. Requiring its right edge to fit dropped it whole — three characters
+    // on 56511.xlsx, and on 56574.xlsx a formatted date came out `5/29/201`,
+    // which is not a shorter date but a different one.
+    const long = 'dlgkdflgdfjkl';
+    const items = placed(
+      buildXlsx({
+        rows: [[long, long]],
+        columns: [{ min: 1, max: 2, widthChars: 10 }],
+      }),
+    );
+    const drawn = items.find((i) => long.startsWith(i.text))?.text ?? '';
+    expect(drawn.length).toBeGreaterThan(0);
+    // The cut keeps one more character than a whole-glyph fit would: the
+    // emitter's clip rectangle is what makes it safe to draw.
+    expect(long.startsWith(drawn)).toBe(true);
+  });
+});

@@ -198,6 +198,7 @@ export interface TextLineItem extends PageItemBase {
   readonly originX: Pt;
   /** Distance from the page TOP down to the text baseline. */
   readonly baselineY: Pt;
+  readonly clip?: { readonly x: Pt; readonly y: Pt; readonly width: Pt; readonly height: Pt };
 }
 
 /** One edge of a table-cell frame; `(x, y)` is the cell box's top-left corner. */

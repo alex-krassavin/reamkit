@@ -433,6 +433,7 @@ interface CellLayout {
   readonly colStart: number;
   readonly colSpan: number;
   readonly mergeRole: MergeRole;
+  readonly clipped?: boolean;
   /**
    * The width the cell's own fill and rules cover, when a text-overflow span
    * made {@link widthPt} wider than the cell itself.
@@ -3351,6 +3352,7 @@ function layoutTableCell(
   const lines: Array<Line> = [];
   const nestedTables: Array<TableBlock> = [];
   let contentHeightPt = 0;
+  let clipped = false;
   // Continuation cells (vMerge=continue) render no content — their text lives
   // in the 'start' cell above.
   if (mergeRole !== 'middle' && mergeRole !== 'end') {
@@ -3381,12 +3383,10 @@ function layoutTableCell(
         // LibreOffice both run the text to it — measured against the inner box
         // instead, tdf167019's dates lost their last digit and printed
         // "25/10/201".
+        const cutAt = widthPt - padLeftPt;
+        if (noWrap && (block.lines[0]?.contentWidthPt ?? 0) > cutAt) clipped = true;
         const keep = noWrap
-          ? clipLineToWidth(
-              block.lines,
-              widthPt - padLeftPt,
-              cell.properties.hashOnOverflow === true,
-            )
+          ? clipLineToWidth(block.lines, cutAt, cell.properties.hashOnOverflow === true)
           : block.lines;
         for (const line of keep) {
           lines.push(line);
@@ -3445,6 +3445,7 @@ function layoutTableCell(
     colStart,
     colSpan,
     mergeRole,
+    ...(clipped ? { clipped: true } : {}),
   };
 }
 
@@ -4415,12 +4416,7 @@ function paginateSections(
             chunks.length === 1 && row.cells.some((c) => c.mergeRole === 'start')
               ? row.cells.map((c) =>
                   c.mergeRole === 'start'
-                    ? mergedBoxHeightPt(
-                        block.rows,
-                        ri,
-                        c.colStart,
-                        asm.cursorY - asm.bottomLimit(),
-                      )
+                    ? mergedBoxHeightPt(block.rows, ri, c.colStart, asm.cursorY - asm.bottomLimit())
                     : undefined,
                 )
               : undefined;
@@ -4796,6 +4792,19 @@ function emitRowChunk(
         line,
         originX: pt(cellX + cell.padLeftPt + indentLeft + offset),
         baselineY: pt(pageHeight - (textY + lineDescent(line))),
+        // The cell's own box. For a vertical merge that is the MERGED height,
+        // not this row's: the text is centred over the whole box (see
+        // mergedHeights), so a one-row clip would fall entirely above it.
+        ...(cell.clipped
+          ? {
+              clip: {
+                x: pt(cellX),
+                y: pt(pageHeight - rowTop),
+                width: pt(cell.widthPt),
+                height: pt(boxHeightPt),
+              },
+            }
+          : {}),
         ...(structId !== undefined ? { structId } : {}),
       });
     }
@@ -5001,10 +5010,9 @@ function clipLineToWidth(
       let text = '';
       let textWidth = 0;
       for (const ch of token.text) {
-        const next = token.font.measure.textWidthPt(text + ch, token.fontSizePt);
-        if (next > room) break;
+        if (textWidth >= room) break;
         text += ch;
-        textWidth = next;
+        textWidth = token.font.measure.textWidthPt(text, token.fontSizePt);
       }
       if (text.length > 0) {
         tokens.push({ ...token, text, widthPt: textWidth });

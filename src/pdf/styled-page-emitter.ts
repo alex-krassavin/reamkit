@@ -835,6 +835,36 @@ function emitPageContent(
     // Emit one line command's glyphs/images/math. Manages BT/ET through the
     // shared `inBT` state; produces operator-for-operator the same output as
     // before tagging existed, so the non-tagged path stays byte-identical.
+    const emitClipped = (cmd: TextLineItem, body: (c: TextLineItem) => void) => {
+      const clip = cmd.clip;
+      if (!clip) {
+        body(cmd);
+        return;
+      }
+      if (inBT) {
+        out.push('ET');
+        inBT = false;
+      }
+      out.push('q');
+      out.push(
+        `${formatNumber(clip.x)} ${formatNumber(H - clip.y - clip.height)} ${formatNumber(clip.width)} ${formatNumber(clip.height)} re W n`,
+      );
+      lastFont = '';
+      lastSize = -1;
+      lastColor = '';
+      out.push('BT');
+      inBT = true;
+      body(cmd);
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- `body` may close text mode through a closure; flow analysis cannot see it.
+      if (inBT) {
+        out.push('ET');
+        inBT = false;
+      }
+      out.push('Q');
+      lastFont = '';
+      lastSize = -1;
+      lastColor = '';
+    };
     const emitOneLine = (cmd: TextLineItem) => {
       const line = cmd.line;
       const originX = cmd.originX;
@@ -1058,7 +1088,7 @@ function emitPageContent(
         } else {
           out.push('/Artifact BMC');
         }
-        emitOneLine(cmd);
+        emitClipped(cmd, emitOneLine);
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- emitOneLine may leave text mode open (inBT true) via a closure; flow analysis can't track it.
         if (inBT) {
           out.push('ET');
@@ -1069,7 +1099,7 @@ function emitPageContent(
     } else {
       out.push('BT');
       inBT = true;
-      for (const cmd of lines) emitOneLine(cmd);
+      for (const cmd of lines) emitClipped(cmd, emitOneLine);
       // Ensure we exit text mode if the last line ended on an image token.
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- emitOneLine toggles inBT via a closure; flow analysis can't see it and assumes it stays true.
       if (inBT) out.push('ET');
