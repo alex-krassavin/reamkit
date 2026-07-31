@@ -102,7 +102,7 @@ import {
 import { PathBuilder, flipTransform } from '@/core/vector';
 import { buildSparkline } from '@/core/drawingml/sparkline-geometry';
 import { arcPoint, arcToBeziers } from '@/core/arc-to-bezier';
-import { buildChartScene } from '@/core/drawingml/chart-geometry';
+import { buildChartScene, legendSeriesName } from '@/core/drawingml/chart-geometry';
 import { layoutMath, mathGlyphSegments, variantStyle } from '@/layout/math-layout';
 import { rectPath } from '@/core/drawingml/preset-geometry';
 import {
@@ -2156,7 +2156,11 @@ function collectFontResources(
           };
           if (chart.title) add(chart.title);
           for (const c of chart.categories) add(c);
-          for (const sr of chart.series) if (sr.name) add(sr.name);
+          // …and the legend name of a series that HAS no name is invented at
+          // draw time (`Series1`), so ask for the same string the legend will
+          // draw: 57362.xlsx's capital S is on the page nowhere else, and the
+          // subset it was left out of drew "eries1".
+          chart.series.forEach((sr, i) => add(legendSeriesName(sr, i)));
           // The axis titles are drawn too, and a character that appears ONLY
           // there was left out of the subset and drew blank — shape-macro-ext-
           // ref.xlsx prints "Translation X [mm]" as "Translation    mm", with

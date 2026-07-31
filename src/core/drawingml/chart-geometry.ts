@@ -268,8 +268,9 @@ function buildLegendBlock(
   // Series1, Series2… and so do we. chart_hyperlink.xlsx is two unnamed series
   // under a <c:legend legendPos="b">, and we drew no legend for it.
   const legendEntries: Array<LegendEntry> = chart.series.map((s, i) => ({
-    name: s.name && s.name.length > 0 ? s.name : `Series${i + 1}`,
+    name: legendSeriesName(s, i),
     colorHex: seriesColor(s, i, chart.seriesColorCycle),
+    ...(isLineLike(s) ? { marker: 'line' as const } : {}),
   }));
   // A line chart's key is a LINE, not a filled box — that is what the series
   // looks like on the plot, and what both references draw.
@@ -610,6 +611,13 @@ export function buildBarScene(
   const horizontal = chart.barDir === 'bar';
   const nCats = catCount(chart);
   const f = buildFrame(chart, wPt, hPt, measure, horizontal, groupingFrameOpts(chart, nCats));
+  // §21.2.2.145 — a combo's other groups plot on this same frame. Their series
+  // are NOT bars: they must not take a slot in the cluster (57362.xlsx's two
+  // series would each get half a slot and the bars come out at half width), and
+  // they draw as their own type over the top.
+  const barIdx: Array<number> = [];
+  const lineIdx: Array<number> = [];
+  chart.series.forEach((s, i) => (isLineLike(s) ? lineIdx : barIdx).push(i));
 
   if (stacked) {
     const groupPad = f.slot * 0.15;
@@ -617,11 +625,11 @@ export function buildBarScene(
     for (let c = 0; c < f.nCats; c++) {
       const along = (horizontal ? f.y0 : f.x0) + c * f.slot + groupPad;
       const denom = percent
-        ? chart.series.reduce((a, s) => a + Math.abs(s.values[c] ?? 0), 0) || 1
+        ? barIdx.reduce((a, i) => a + Math.abs(chart.series[i]!.values[c] ?? 0), 0) || 1
         : 1;
       let cumPos = 0;
       let cumNeg = 0;
-      for (let s = 0; s < chart.series.length; s++) {
+      for (const s of barIdx) {
         const series = chart.series[s]!;
         const v = (series.values[c] ?? 0) / denom; // fraction when percent, else raw
         const base = v >= 0 ? cumPos : cumNeg;
@@ -648,6 +656,7 @@ export function buildBarScene(
         else cumNeg = top;
       }
     }
+    pushComboLines(chart, f, lineIdx);
     return {
       rects: f.rects,
       polylines: f.polylines,
@@ -658,7 +667,7 @@ export function buildBarScene(
   }
 
   // clustered: series side by side within each category slot
-  const nSer = Math.max(1, chart.series.length);
+  const nSer = Math.max(1, barIdx.length);
   // §21.2.2.75: the slot holds `nSer` bars plus a gap of `gapWidth` percent of
   // one bar. Guessing a flat 15% padding gave every bar 0.63 of its slot —
   // 57362.xlsx asks for 219 and got bars 2.6× the reference's.
@@ -667,11 +676,12 @@ export function buildBarScene(
   const groupPad = (f.slot - barW * nSer) / 2;
   for (let c = 0; c < f.nCats; c++) {
     const slotStart = (horizontal ? f.y0 : f.x0) + c * f.slot + groupPad;
-    for (let s = 0; s < chart.series.length; s++) {
+    for (let b = 0; b < barIdx.length; b++) {
+      const s = barIdx[b]!;
       const series = chart.series[s]!;
       const len = f.valueOffset(series.values[c] ?? 0) - f.zeroOffset; // signed from zero line
       const color = pointColor(series, c) ?? seriesColor(series, s, chart.seriesColorCycle);
-      const along = slotStart + s * barW;
+      const along = slotStart + b * barW;
       if (horizontal) {
         const bx = f.x0 + f.zeroOffset + Math.min(0, len);
         f.rects.push({ x: bx, y: along, w: Math.abs(len), h: barW * 0.9, fillHex: color });
@@ -701,6 +711,7 @@ export function buildBarScene(
       }
     }
   }
+  pushComboLines(chart, f, lineIdx);
   return {
     rects: f.rects,
     polylines: f.polylines,
@@ -708,6 +719,50 @@ export function buildBarScene(
     wedges: [],
     labels: f.labels,
   };
+}
+
+/**
+ * The name a series shows in the legend: its own `c:tx`, or Excel's positional
+ * `SeriesN` when it has none. Exported because the SUBSET has to know it too —
+ * a name invented at draw time is a name no glyph collector ever saw, and
+ * 57362.xlsx drew its unnamed series as "eries1", the capital S appearing
+ * nowhere else on the page and so nowhere in the font.
+ *
+ * @param series The series.
+ * @param index  Its zero-based index in the chart.
+ * @returns The legend text.
+ */
+export function legendSeriesName(series: ChartSeries, index: number): string {
+  return series.name && series.name.length > 0 ? series.name : `Series${index + 1}`;
+}
+
+/** Whether a series plots as a line rather than as a bar of its own cluster. */
+function isLineLike(series: ChartSeries): boolean {
+  return series.type === 'line' || series.type === 'scatter';
+}
+
+/**
+ * Draw a combo's line-group series over an already-built cartesian frame, at the
+ * category slot centres the bars use (§21.2.2.145).
+ */
+function pushComboLines(
+  chart: Chart,
+  f: CartesianFrame,
+  lineIdx: ReadonlyArray<number>,
+): void {
+  for (const s of lineIdx) {
+    const series = chart.series[s]!;
+    const color = seriesColor(series, s, chart.seriesColorCycle);
+    const pts: Array<readonly [number, number]> = [];
+    for (let c = 0; c < f.nCats; c++) {
+      pts.push([f.x0 + c * f.slot + f.slot / 2, f.y0 + f.valueOffset(series.values[c] ?? 0)]);
+    }
+    if (pts.length >= 2) f.polylines.push({ points: pts, strokeHex: color, widthPt: 1.5 });
+    else if (pts.length === 1) {
+      const [px, py] = pts[0]!;
+      f.rects.push({ x: px - 1.5, y: py - 1.5, w: 3, h: 3, fillHex: color });
+    }
+  }
 }
 
 function centeredLabel(text: string, x: number, y: number): ChartLabel {
@@ -1052,6 +1107,8 @@ function pointColor(series: ChartSeries, idx: number): string | undefined {
 interface LegendEntry {
   readonly name: string;
   readonly colorHex: string;
+  /** Per-entry key shape — a combo's line series keeps its line (§21.2.2.145). */
+  readonly marker?: LegendMarker;
 }
 type LegendMarker = 'box' | 'line';
 
@@ -1080,10 +1137,10 @@ function layoutLegend(
   // A line key is drawn as a wide, thin bar — the same rect primitive, in the
   // proportions of the stroke it stands for.
   const keyW = marker === 'line' ? sw * 2 : sw;
-  const key = (x: number, y: number, colorHex: string): ChartRect =>
-    marker === 'line'
-      ? { x, y: y + sw / 2 - 0.75, w: keyW, h: 1.5, fillHex: colorHex }
-      : { x, y, w: sw, h: sw, fillHex: colorHex };
+  const key = (x: number, y: number, e: LegendEntry): ChartRect =>
+    (e.marker ?? marker) === 'line'
+      ? { x, y: y + sw / 2 - 0.75, w: keyW, h: 1.5, fillHex: e.colorHex }
+      : { x, y, w: sw, h: sw, fillHex: e.colorHex };
   const entryW = (e: LegendEntry): number => keyW + 3 + measure(e.name, CHART_LABEL_PT) + gap * 2;
 
   if (pos === 'r' || pos === 'l') {
@@ -1095,7 +1152,7 @@ function layoutLegend(
         const lx = pos === 'r' ? wPt - colW + gap : gap;
         let ly = hPt / 2 + (entries.length * (sw + 4)) / 2 - sw;
         for (const e of entries) {
-          rects.push(key(lx, ly, e.colorHex));
+          rects.push(key(lx, ly, e));
           labels.push({
             text: e.name,
             x: lx + keyW + 3,
@@ -1117,7 +1174,7 @@ function layoutLegend(
       let lx = (wPt - totalW) / 2 + gap;
       const ly = 2;
       for (const e of entries) {
-        rects.push(key(lx, ly, e.colorHex));
+        rects.push(key(lx, ly, e));
         labels.push({
           text: e.name,
           x: lx + keyW + 3,

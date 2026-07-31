@@ -77,11 +77,25 @@ export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): C
   const plotArea = poChildren(chart).find((c) => poIs(c, 'c:plotArea'));
   if (!plotArea) return null;
 
-  const group = poChildren(plotArea).find((c) => (poTag(c) ?? '') in TYPE_OF_TAG);
+  // §21.2.2.145 — a plot area holds a SEQUENCE of chart groups, not one. A combo
+  // writes `c:barChart` and `c:lineChart` beside each other, and taking the first
+  // dropped every series of the rest: 57362.xlsx printed its bars and lost its
+  // line. The first group still gives the chart its type (and its bar direction,
+  // grouping and gap); the others' series carry their own.
+  const groups = poChildren(plotArea).filter((c) => (poTag(c) ?? '') in TYPE_OF_TAG);
+  const group = groups[0];
   const type: ChartType = group ? (TYPE_OF_TAG[poTag(group)!] ?? 'unknown') : 'unknown';
 
-  const serNodes = group ? poChildren(group).filter((c) => poIs(c, 'c:ser')) : [];
-  const series = serNodes.map((s) => parseSeries(s, resolveColor));
+  const serNodes: Array<PoNode> = [];
+  const series: Array<ChartSeries> = [];
+  for (const g of groups) {
+    const groupType: ChartType = TYPE_OF_TAG[poTag(g)!] ?? 'unknown';
+    for (const s of poChildren(g).filter((c) => poIs(c, 'c:ser'))) {
+      serNodes.push(s);
+      const parsed = parseSeries(s, resolveColor);
+      series.push(groupType === type ? parsed : { ...parsed, type: groupType });
+    }
+  }
 
   // Categories are shared; take them from the first series that carries them.
   let categories: Array<string> = [];

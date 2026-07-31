@@ -875,6 +875,14 @@ export interface ChartDataPoint {
 /** One chart data series (`c:ser`): its name, values and colour overrides. */
 export interface ChartSeries {
   readonly name?: string;
+  /**
+   * §21.2.2 — the chart group this series came from, when it is NOT the group
+   * that gave {@link Chart.type}. A `c:plotArea` may hold several groups: a
+   * combo chart writes `c:barChart` and `c:lineChart` side by side, and reading
+   * only the first drops the other's series off the page entirely (57362.xlsx
+   * loses its line). Absent ⇒ the series draws as the chart's own type.
+   */
+  readonly type?: ChartType;
   readonly values: ReadonlyArray<number>; // c:val/c:yVal numCache (idx-ordered, gaps → 0)
   readonly xValues?: ReadonlyArray<number>; // c:xVal numCache (scatter — paired with values)
   readonly colorHex?: string; // c:spPr solidFill
