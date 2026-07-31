@@ -28,6 +28,8 @@ import type {
   XlsxVerticalAlign,
 } from '@/core/spreadsheet-model';
 import { applyColorMods } from '@/core/drawingml/colors';
+import { resolveAlternateContent } from '@/core/opc/alternate-content';
+import { resolveInternalEntities } from '@/core/opc/xml-entities';
 
 import { INDEXED_COLORS } from '@/core/indexed-colors';
 
@@ -92,7 +94,7 @@ interface WorkbookColors {
  *              theme loses every fill and font colour it has.
  */
 export function parseXlsxStyles(data: Uint8Array, theme?: ThemePalette): XlsxStyles {
-  const xml = decoder.decode(data);
+  const xml = resolveAlternateContent(resolveInternalEntities(decoder.decode(data)));
   const tree = parser.parse(xml) as Record<string, unknown>;
   const root = asObject(tree['styleSheet']);
   if (!root) return EMPTY_XLSX_STYLES;
