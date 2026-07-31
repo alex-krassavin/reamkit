@@ -42,6 +42,17 @@ describe('OpcPackage.open — zip-bomb hardening', () => {
     );
   });
 
+  it('refuses a corrupt entry by name instead of leaking the inflater', () => {
+    // forcepoint107.xlsx truncates a deflate stream. fflate threw `RangeError:
+    // offset is out of bounds` straight through us — a message that says
+    // nothing about the document, and an unhandled crash where every other
+    // malformed archive here gets a refusal.
+    const good = zipSync({ 'a.bin': new Uint8Array(4096) });
+    // Chop the payload but keep the directory, so the entry inflates short.
+    const truncated = good.slice(0, Math.floor(good.length / 2));
+    expect(() => OpcPackage.open(truncated)).toThrow(/invalid zip data|zip/i);
+  });
+
   it('rejects a single entry over the per-entry uncompressed cap', () => {
     // 2 MiB of zeros compresses to a few bytes — a classic bomb shape.
     const bomb = zipSync({ 'big.bin': new Uint8Array(2 * 1024 * 1024) });

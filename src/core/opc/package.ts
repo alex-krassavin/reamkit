@@ -88,7 +88,12 @@ export class OpcPackage {
     let total = 0;
     let count = 0;
     let violation: string | undefined;
-    const entries = unzipSync(buffer, {
+    // A corrupt entry is the archive's problem, not the caller's: fflate throws
+    // whatever its inflater hit — `RangeError: offset is out of bounds` on
+    // forcepoint107.xlsx, a message that says nothing about the document and
+    // escaped as an unhandled crash. Every other malformed archive here is
+    // refused by name; so is this one.
+    const entries = unzipGuarded(buffer, {
       filter: (info) => {
         if (++count > maxEntries) {
           violation ??= `more than ${maxEntries} entries`;
@@ -286,4 +291,23 @@ function collapseDotSegments(p: string): string {
     out.push(s);
   }
   return out.join('/');
+}
+
+/**
+ * {@link unzipSync}, with a decompression failure turned into a named refusal.
+ *
+ * @param buffer  The archive bytes.
+ * @param options The fflate options (the zip-bomb entry filter).
+ * @returns The decompressed entries.
+ * @throws Error naming the archive as invalid when inflation fails.
+ */
+function unzipGuarded(
+  buffer: Uint8Array,
+  options: Parameters<typeof unzipSync>[1],
+): ReturnType<typeof unzipSync> {
+  try {
+    return unzipSync(buffer, options);
+  } catch (e) {
+    throw new Error(`invalid zip data: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }
