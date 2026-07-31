@@ -166,6 +166,12 @@ export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): C
   const scatterStyle = SCATTER_STYLES.has(scatterStyleRaw ?? '')
     ? (scatterStyleRaw as Chart['scatterStyle'])
     : undefined;
+  // §21.2.2.106 — on a LINE group `c:marker` is a switch, not a symbol: it says
+  // whether the group's series stamp their points at all.
+  const lineMarkers =
+    group && poIs(group, 'c:lineChart')
+      ? poVal(poChildren(group).find((c) => poIs(c, 'c:marker'))) === '1'
+      : false;
   const barDir = group ? poVal(poChildren(group).find((c) => poIs(c, 'c:barDir'))) : undefined;
   const grouping = group ? poVal(poChildren(group).find((c) => poIs(c, 'c:grouping'))) : undefined;
   const doughnut = group ? poIs(group, 'c:doughnutChart') : false;
@@ -246,6 +252,7 @@ export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): C
     ...(valAxisTitle ? { valAxisTitle } : {}),
     ...(secondaryValAxisTitle ? { secondaryValAxisTitle } : {}),
     ...(scatterStyle ? { scatterStyle } : {}),
+    ...(lineMarkers ? { lineMarkers: true } : {}),
     ...(catAxisLine ? { catAxisLine } : {}),
     ...(valAxisLine ? { valAxisLine } : {}),
     ...(secondaryValAxisLine ? { secondaryValAxisLine } : {}),

@@ -1137,6 +1137,9 @@ export function buildLineScene(
     dataRange: range,
     ...(lineFormat ? { formatValue: lineFormat } : {}),
   });
+  // §21.2.2.106 — the group's `c:marker` switch says whether its series stamp
+  // their points. WithChart.xlsx turns it on and we drew two bare lines.
+  const wedges: Array<ChartWedge> = [];
   for (let s = 0; s < chart.series.length; s++) {
     const series = chart.series[s]!;
     const color = seriesColor(series, s, chart.seriesColorCycle);
@@ -1145,6 +1148,7 @@ export function buildLineScene(
       const x = f.x0 + c * f.slot + f.slot / 2;
       const y = f.y0 + f.valueOffset(series.values[c] ?? 0);
       pts.push([x, y]);
+      if (chart.lineMarkers) pushMarker(f.rects, wedges, series.marker, x, y, color);
       if (chart.showValues)
         f.labels.push(centeredLabel(fmtDataLabel(chart, series.values[c] ?? 0), x, y + 3));
     }
@@ -1160,7 +1164,7 @@ export function buildLineScene(
     rects: f.rects,
     polylines: f.polylines,
     gridlines: f.gridlines,
-    wedges: [],
+    wedges,
     labels: f.labels,
   };
 }

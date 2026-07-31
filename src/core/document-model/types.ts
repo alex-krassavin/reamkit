@@ -1018,6 +1018,11 @@ export interface Chart {
    * `lineMarker` for the chart most people insert.
    */
   readonly scatterStyle?: 'none' | 'line' | 'lineMarker' | 'marker' | 'smooth' | 'smoothMarker';
+  /**
+   * §21.2.2.106 `c:marker` on a `c:lineChart` — whether the group's series mark
+   * their data points. WithChart.xlsx asks for them and we drew bare lines.
+   */
+  readonly lineMarkers?: boolean;
   /** §21.2.2.196 — the category axis's own rule. */
   readonly catAxisLine?: ChartLineStyle;
   /** §21.2.2.196 — the value axis's own rule. */
