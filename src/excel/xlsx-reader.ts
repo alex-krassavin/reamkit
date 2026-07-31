@@ -72,7 +72,11 @@ import {
   parseActiveX,
   parseActiveXBin,
 } from '@/excel/activex-parser';
-import { parseSheetShapes } from '@/excel/sheet-shape-parser';
+import {
+  parseDiagramFrames,
+  parseDiagramShapes,
+  parseSheetShapes,
+} from '@/excel/sheet-shape-parser';
 
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
 import { resolveCellText } from '@/excel/print-model';
@@ -286,6 +290,37 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
             themeEffectStyles,
           );
           if (parsed.length > 0) shapes = parsed;
+        }
+        // A SmartArt diagram is four parts of DESCRIPTION — data, layout, quick
+        // style, colours — that a reader is meant to lay out itself, and nobody
+        // outside Office does. The producer therefore also writes what it drew,
+        // as plain DrawingML under `dsp:`, reachable by a `diagramDrawing`
+        // relationship on the drawing part. tdf83671_SmartArt_import.xlsx draws
+        // three nested circles there and we drew nothing at all.
+        //
+        // A frame is paired with the drawing at its own index: the relationship
+        // names no frame, and a producer writes them in step.
+        const frames = parseDiagramFrames(drawing.data, worksheet);
+        if (frames.length > 0) {
+          const drawingRels = pkg.getPartRelationships(drawing.path);
+          const dsp = drawingRels.filter((r) => r.type.endsWith('/diagramDrawing'));
+          const fromDiagrams: Array<ShapeBlock> = [];
+          frames.forEach((frame, i) => {
+            const rel = dsp[i];
+            const part = rel ? pkg.resolveRelatedPart(drawing.path, rel) : undefined;
+            if (!part) return;
+            fromDiagrams.push(
+              ...parseDiagramShapes(
+                part.data,
+                frame,
+                resolveColor,
+                themeLineWidths,
+                themeFillStyles,
+                themeEffectStyles,
+              ),
+            );
+          });
+          if (fromDiagrams.length > 0) shapes = [...(shapes ?? []), ...fromDiagrams];
         }
       }
     }

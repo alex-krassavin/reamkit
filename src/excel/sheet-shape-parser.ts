@@ -46,7 +46,133 @@ interface SheetShape {
   readonly anchorRow: number;
 }
 
+/**
+ * The namespace a shape's own children carry. A sheet drawing writes them under
+ * `xdr:`; the fallback drawing of a SmartArt diagram writes the SAME children
+ * under `dsp:` (§ MS-ODRAWXML 2.1) — one reader serves both.
+ */
+type ShapeNs = 'xdr' | 'dsp';
+
 const ANCHOR_KINDS = ['xdr:twoCellAnchor', 'xdr:oneCellAnchor', 'xdr:absoluteAnchor'] as const;
+
+/**
+ * One `xdr:sp` / `dsp:sp` as a {@link ShapeBlock} in the box it occupies, or
+ * undefined when it would draw nothing at all.
+ *
+ * @param sp     The shape element.
+ * @param box    The box it occupies on the page.
+ * @param ns     Which namespace its own children carry.
+ * @param colors The theme colour resolver.
+ * @param themeLineWidths   `a:lnStyleLst` widths, indexed by `<a:lnRef idx>`.
+ * @param themeFillStyles   `a:fillStyleLst` nodes, indexed by `<a:fillRef idx>`.
+ * @param themeEffectStyles `a:effectStyleLst` nodes, indexed by `<a:effectRef idx>`.
+ */
+function buildShape(
+  sp: PoNode,
+  box: AnchorBox,
+  ns: ShapeNs,
+  colors: ColorResolver,
+  themeLineWidths: ReadonlyArray<number>,
+  themeFillStyles: ReadonlyArray<PoNode>,
+  themeEffectStyles: ReadonlyArray<PoNode>,
+): ShapeBlock | undefined {
+  // xdr:spPr wraps the same a: children (a:xfrm/a:prstGeom/a:solidFill/a:ln) the
+  // shared readers expect; xdr:txBody holds a:bodyPr + a:p like a slide shape.
+  const spPr = poChildren(sp).find((c) => poIs(c, `${ns}:spPr`));
+  const txBody = poChildren(sp).find((c) => poIs(c, `${ns}:txBody`));
+  const geometry = parseGeometry(spPr);
+  const parsed = txBody
+    ? parseTxBody(txBody, undefined, undefined, colors, undefined)
+    : undefined;
+  // An `<xdr:txBody>` is written whether or not it says anything, so the
+  // test below is for CHARACTERS.
+  const lettered = (parsed?.content ?? []).some(
+    (b) =>
+      b.kind === 'paragraph' && b.paragraph.runs.some((r) => r.text.trim().length > 0),
+  );
+  // §20.1.7.6 — the anchor gives the box, `a:xfrm` gives how the shape sits
+  // in it. Read for the box alone, a shape that is turned lies down flat:
+  // tdf135828_Shape_Rect.xlsx points an `upArrow` up and to the right with
+  // `rot="4616172"` (76.9°), and we drew it squashed across the page.
+  const xfrm = spPr ? poChildren(spPr).find((c) => poIs(c, 'a:xfrm')) : undefined;
+  const transform = xfrm ? parseXfrm(xfrm) : undefined;
+  const turned = transform !== undefined && Object.keys(transform).length > 0;
+  // A turned shape is the one case where the anchor is NOT its box. Excel
+  // spans from/to across what the shape covers once rotated, and keeps the
+  // shape's own size in `a:ext` — 23pt × 156pt for the tall thin `upArrow`
+  // of tdf135828_Shape_Rect.xlsx, whose anchor is 164pt × 30pt because that
+  // is the ground its 76.9° sweep covers. Drawn at the anchor's size the
+  // arrow is a wide stub, and rotating THAT gives a sliver on its side.
+  // Unturned the two agree, and the anchor stays authoritative.
+  //
+  // A turned shape with TEXT is left on its anchor. We lay a shape's text in
+  // the page's frame rather than the shape's, so a label written 20pt wide
+  // and turned 90° into a 156pt band would wrap every word: bnc762542.xlsx
+  // has three of them and its "Description 1" broke after "Description".
+  const own =
+    turned && xfrm && !lettered
+      ? poChildren(xfrm).find((c) => poIs(c, 'a:ext'))
+      : undefined;
+  const ownW = own ? emuToPt(poIntAttr(own, 'cx') ?? 0) : 0;
+  const ownH = own ? emuToPt(poIntAttr(own, 'cy') ?? 0) : 0;
+  // The rotation turns about the centre, so that is what the two boxes share.
+  const useOwn = ownW > 0 && ownH > 0;
+  const widthPt = useOwn ? ownW : box.widthPt;
+  const heightPt = useOwn ? ownH : box.heightPt;
+  const xPt = useOwn ? box.xPt + (box.widthPt - ownW) / 2 : box.xPt;
+  const yPt = useOwn ? box.yPt + (box.heightPt - ownH) / 2 : box.yPt;
+  const spFill: ShapeFill = spPr ? parseFill(spPr, colors) : { kind: 'none' };
+  const fill = spFill.kind === 'none' ? styleFill(sp, ns, colors, themeFillStyles) : spFill;
+  // §20.1.4.2.19 `<xdr:style><a:lnRef>` is where a shape drawn from a gallery
+  // style keeps its outline — spPr then carries no `a:ln` at all, and read
+  // alone it says the shape has no border. shape-macro-ext-ref.xlsx's macro
+  // button lost the blue rule both references draw around it.
+  // §20.1.2.2.24 — an `<a:ln/>` with nothing in it declares nothing, and it is
+  // not a black hairline: 47504.xlsx writes one beside an `<a:lnRef>` that
+  // carries the real outline, and taking the empty element at its word fenced
+  // a gallery shape in black where both references draw the theme's own thin
+  // accent rule.
+  const directLine = spPr ? parseLine(spPr, colors) : undefined;
+  const line =
+    directLine && Object.keys(directLine).length > 0
+      ? directLine
+      : styleLine(sp, ns, colors, themeLineWidths);
+
+  // §20.1.4.2.14 `<xdr:style><a:fontRef>` carries the colour the shape's text
+  // takes when its runs name none — for anything drawn from a gallery style
+  // that is where the colour IS. shape-macro-ext-ref.xlsx asks for `lt1` on a
+  // green button and we drew black on green, because a run with no `a:rPr`
+  // colour fell through to the layout's default.
+  const text = parsed ? withStyleTextColor(parsed, sp, ns, colors) : undefined;
+  const shadow =
+    (spPr ? parseShadow(spPr, colors) : undefined) ??
+    styleShadow(sp, ns, colors, themeEffectStyles);
+  const visibleLine = line !== undefined && line.fill !== 'none';
+  if (!text && fill.kind === 'none' && !visibleLine) return undefined;
+
+  return {
+      // §20.5.2.35: a `twoCellAnchor` is a TWO-dimensional placement. Emitted
+      // as a plain block the drawing kept only its size and its order down
+      // the page — everything landed against the left margin, which turned
+      // bnc762542.xlsx's callout (three swatches, three leader lines, three
+      // labels, side by side) into a single vertical stack. The layout floats
+      // a shape at its anchor when one is given, so give it one.
+      float: {
+        wrap: 'none' as const,
+        posH: { relativeFrom: 'margin' as const, offsetPt: pt(xPt) },
+        posV: { relativeFrom: 'margin' as const, offsetPt: pt(yPt) },
+      },
+      width: pt(widthPt),
+      height: pt(heightPt),
+      geometry,
+      fill,
+      ...(transform && Object.keys(transform).length > 0 ? { transform } : {}),
+      ...(line ? { line } : {}),
+      ...(text ? { text } : {}),
+      ...(shadow ? { shadow } : {}),
+      paragraphProperties: {},
+  };
+}
 
 /**
  * Parse a drawing's `xdr:sp` shape anchors (§20.5.2.30) into anchor-ordered
@@ -97,109 +223,172 @@ export function parseSheetShapes(
     for (const { sp, box } of placed) {
       if (isHiddenDrawing(sp, 'xdr:nvSpPr')) continue;
 
-      // xdr:spPr wraps the same a: children (a:xfrm/a:prstGeom/a:solidFill/a:ln) the
-      // shared readers expect; xdr:txBody holds a:bodyPr + a:p like a slide shape.
-      const spPr = poChildren(sp).find((c) => poIs(c, 'xdr:spPr'));
-      const txBody = poChildren(sp).find((c) => poIs(c, 'xdr:txBody'));
-      const geometry = parseGeometry(spPr);
-      const parsed = txBody
-        ? parseTxBody(txBody, undefined, undefined, colors, undefined)
-        : undefined;
-      // An `<xdr:txBody>` is written whether or not it says anything, so the
-      // test below is for CHARACTERS.
-      const lettered = (parsed?.content ?? []).some(
-        (b) =>
-          b.kind === 'paragraph' && b.paragraph.runs.some((r) => r.text.trim().length > 0),
+      const shape = buildShape(
+        sp,
+        box,
+        'xdr',
+        colors,
+        themeLineWidths,
+        themeFillStyles,
+        themeEffectStyles,
       );
-      // §20.1.7.6 — the anchor gives the box, `a:xfrm` gives how the shape sits
-      // in it. Read for the box alone, a shape that is turned lies down flat:
-      // tdf135828_Shape_Rect.xlsx points an `upArrow` up and to the right with
-      // `rot="4616172"` (76.9°), and we drew it squashed across the page.
-      const xfrm = spPr ? poChildren(spPr).find((c) => poIs(c, 'a:xfrm')) : undefined;
-      const transform = xfrm ? parseXfrm(xfrm) : undefined;
-      const turned = transform !== undefined && Object.keys(transform).length > 0;
-      // A turned shape is the one case where the anchor is NOT its box. Excel
-      // spans from/to across what the shape covers once rotated, and keeps the
-      // shape's own size in `a:ext` — 23pt × 156pt for the tall thin `upArrow`
-      // of tdf135828_Shape_Rect.xlsx, whose anchor is 164pt × 30pt because that
-      // is the ground its 76.9° sweep covers. Drawn at the anchor's size the
-      // arrow is a wide stub, and rotating THAT gives a sliver on its side.
-      // Unturned the two agree, and the anchor stays authoritative.
-      //
-      // A turned shape with TEXT is left on its anchor. We lay a shape's text in
-      // the page's frame rather than the shape's, so a label written 20pt wide
-      // and turned 90° into a 156pt band would wrap every word: bnc762542.xlsx
-      // has three of them and its "Description 1" broke after "Description".
-      const own =
-        turned && xfrm && !lettered
-          ? poChildren(xfrm).find((c) => poIs(c, 'a:ext'))
-          : undefined;
-      const ownW = own ? emuToPt(poIntAttr(own, 'cx') ?? 0) : 0;
-      const ownH = own ? emuToPt(poIntAttr(own, 'cy') ?? 0) : 0;
-      // The rotation turns about the centre, so that is what the two boxes share.
-      const useOwn = ownW > 0 && ownH > 0;
-      const widthPt = useOwn ? ownW : box.widthPt;
-      const heightPt = useOwn ? ownH : box.heightPt;
-      const xPt = useOwn ? box.xPt + (box.widthPt - ownW) / 2 : box.xPt;
-      const yPt = useOwn ? box.yPt + (box.heightPt - ownH) / 2 : box.yPt;
-      const spFill: ShapeFill = spPr ? parseFill(spPr, colors) : { kind: 'none' };
-      const fill = spFill.kind === 'none' ? styleFill(sp, colors, themeFillStyles) : spFill;
-      // §20.1.4.2.19 `<xdr:style><a:lnRef>` is where a shape drawn from a gallery
-      // style keeps its outline — spPr then carries no `a:ln` at all, and read
-      // alone it says the shape has no border. shape-macro-ext-ref.xlsx's macro
-      // button lost the blue rule both references draw around it.
-      // §20.1.2.2.24 — an `<a:ln/>` with nothing in it declares nothing, and it is
-      // not a black hairline: 47504.xlsx writes one beside an `<a:lnRef>` that
-      // carries the real outline, and taking the empty element at its word fenced
-      // a gallery shape in black where both references draw the theme's own thin
-      // accent rule.
-      const directLine = spPr ? parseLine(spPr, colors) : undefined;
-      const line =
-        directLine && Object.keys(directLine).length > 0
-          ? directLine
-          : styleLine(sp, colors, themeLineWidths);
-
-      // §20.1.4.2.14 `<xdr:style><a:fontRef>` carries the colour the shape's text
-      // takes when its runs name none — for anything drawn from a gallery style
-      // that is where the colour IS. shape-macro-ext-ref.xlsx asks for `lt1` on a
-      // green button and we drew black on green, because a run with no `a:rPr`
-      // colour fell through to the layout's default.
-      const text = parsed ? withStyleTextColor(parsed, sp, colors) : undefined;
-      const shadow =
-        (spPr ? parseShadow(spPr, colors) : undefined) ??
-        styleShadow(sp, colors, themeEffectStyles);
-      const visibleLine = line !== undefined && line.fill !== 'none';
-      if (!text && fill.kind === 'none' && !visibleLine) continue;
-
-      shapes.push({
-        shape: {
-          // §20.5.2.35: a `twoCellAnchor` is a TWO-dimensional placement. Emitted
-          // as a plain block the drawing kept only its size and its order down
-          // the page — everything landed against the left margin, which turned
-          // bnc762542.xlsx's callout (three swatches, three leader lines, three
-          // labels, side by side) into a single vertical stack. The layout floats
-          // a shape at its anchor when one is given, so give it one.
-          float: {
-            wrap: 'none' as const,
-            posH: { relativeFrom: 'margin' as const, offsetPt: pt(xPt) },
-            posV: { relativeFrom: 'margin' as const, offsetPt: pt(yPt) },
-          },
-          width: pt(widthPt),
-          height: pt(heightPt),
-          geometry,
-          fill,
-          ...(transform && Object.keys(transform).length > 0 ? { transform } : {}),
-          ...(line ? { line } : {}),
-          ...(text ? { text } : {}),
-          ...(shadow ? { shadow } : {}),
-          paragraphProperties: {},
-        },
-        anchorRow: box.anchorRow,
-      });
+      if (!shape) continue;
+      shapes.push({ shape, anchorRow: box.anchorRow });
     }
   }
   shapes.sort((a, b) => a.anchorRow - b.anchorRow);
   return shapes.map((s) => s.shape);
+}
+
+/**
+ * The boxes the diagram frames of a drawing occupy, in document order.
+ *
+ * §20.5.2.16 `xdr:graphicFrame` is how a sheet hosts a diagram: the frame is
+ * anchored like any other drawing and the diagram itself lives in its own
+ * parts. The frame gives the corner its fallback shapes are laid out from —
+ * see {@link parseDiagramShapes}.
+ *
+ * @param drawingXml The drawing part bytes.
+ * @param worksheet  The host worksheet, for the column/row track geometry.
+ * @returns One box per diagram frame, in the order the drawing writes them.
+ */
+export function parseDiagramFrames(
+  drawingXml: Uint8Array,
+  worksheet: ParsedWorksheet,
+): Array<AnchorBox> {
+  const tree = parseXml(drawingXml);
+  const wsDr = tree.find((n) => poIs(n, 'xdr:wsDr'));
+  if (!wsDr) return [];
+  const colWidthPt = makeColWidthPt(worksheet);
+  const rowHeightPt = makeRowHeightPt(worksheet);
+  const out: Array<AnchorBox> = [];
+  for (const anchor of poChildren(wsDr)) {
+    if (!ANCHOR_KINDS.some((k) => poIs(anchor, k))) continue;
+    const frame = poChildren(anchor).find((c) => poIs(c, 'xdr:graphicFrame'));
+    if (!frame) continue;
+    const data = poFirstChild(poFirstChild(frame, 'a:graphic'), 'a:graphicData');
+    if (!poFirstChild(data, 'dgm:relIds')) continue;
+    const box = anchorBox(anchor, colWidthPt, rowHeightPt);
+    if (box) out.push(box);
+  }
+  return out;
+}
+
+/**
+ * Parse the fallback drawing of a SmartArt diagram (§ MS-ODRAWXML 2.1
+ * `dsp:drawing`) into the shapes it lays out.
+ *
+ * A diagram is FOUR parts of description — data, layout, quick style, colours —
+ * that a renderer is meant to lay out itself, and nobody outside Office does.
+ * The producer therefore also writes what it drew: a plain DrawingML picture of
+ * the result, under `dsp:`, reachable from the drawing part by a
+ * `diagramDrawing` relationship. Reading it is the difference between a diagram
+ * and a blank space — tdf83671_SmartArt_import.xlsx draws three nested circles
+ * where we drew nothing between its "start" and its "end".
+ *
+ * The shapes' `a:xfrm` offsets are relative to the frame the diagram sits in,
+ * so the frame's own corner is all that has to be added.
+ *
+ * @param diagramXml The `dsp:drawing` part bytes.
+ * @param frame      The box the graphic frame occupies on the page.
+ * @param colors     The theme colour resolver.
+ * @param themeLineWidths   `a:lnStyleLst` widths, indexed by `<a:lnRef idx>`.
+ * @param themeFillStyles   `a:fillStyleLst` nodes, indexed by `<a:fillRef idx>`.
+ * @param themeEffectStyles `a:effectStyleLst` nodes, indexed by `<a:effectRef idx>`.
+ * @returns The shapes, in the order the diagram stacks them.
+ */
+export function parseDiagramShapes(
+  diagramXml: Uint8Array,
+  frame: AnchorBox,
+  colors: ColorResolver,
+  themeLineWidths: ReadonlyArray<number> = [],
+  themeFillStyles: ReadonlyArray<PoNode> = [],
+  themeEffectStyles: ReadonlyArray<PoNode> = [],
+): Array<ShapeBlock> {
+  const tree = parseXml(diagramXml);
+  const drawing = tree.find((n) => poIs(n, 'dsp:drawing'));
+  const spTree = drawing ? poFirstChild(drawing, 'dsp:spTree') : undefined;
+  if (!spTree) return [];
+  const out: Array<ShapeBlock> = [];
+  for (const sp of poChildren(spTree)) {
+    if (!poIs(sp, 'dsp:sp')) continue;
+    const box = diagramBox(sp, frame);
+    if (!box) continue;
+    const shape = buildShape(
+      sp,
+      box,
+      'dsp',
+      colors,
+      themeLineWidths,
+      themeFillStyles,
+      themeEffectStyles,
+    );
+    if (!shape) continue;
+    // A diagram gives the LABEL its own rectangle: `dsp:txXfrm` is where the
+    // words go, which is not the middle of the shape they belong to. Left on
+    // the shape, all three of tdf83671_SmartArt_import.xlsx's labels stacked in
+    // the centre of its circles instead of sitting one per band. The graphic
+    // and its label become two blocks, since a block has one box for both.
+    const text = shape.text;
+    const label = text ? textBox(sp, frame) : undefined;
+    if (!label || !text) {
+      out.push(shape);
+      continue;
+    }
+    const { text: _moved, ...graphic } = shape;
+    out.push(graphic);
+    out.push({
+      float: {
+        wrap: 'none' as const,
+        posH: { relativeFrom: 'margin' as const, offsetPt: pt(label.xPt) },
+        posV: { relativeFrom: 'margin' as const, offsetPt: pt(label.yPt) },
+      },
+      width: pt(label.widthPt),
+      height: pt(label.heightPt),
+      geometry: { kind: 'preset', preset: 'rect', adjust: new Map() },
+      fill: { kind: 'none' },
+      text,
+      paragraphProperties: {},
+    });
+  }
+  return out;
+}
+
+/** A diagram label's box: its `dsp:txXfrm`, moved to the frame's corner. */
+function textBox(sp: PoNode, frame: AnchorBox): AnchorBox | undefined {
+  const xfrm = poFirstChild(sp, 'dsp:txXfrm');
+  const ext = xfrm ? poFirstChild(xfrm, 'a:ext') : undefined;
+  if (!ext) return undefined;
+  const widthPt = emuToPt(poIntAttr(ext, 'cx') ?? 0);
+  const heightPt = emuToPt(poIntAttr(ext, 'cy') ?? 0);
+  if (!(widthPt > 0 && heightPt > 0)) return undefined;
+  const off = poFirstChild(xfrm, 'a:off');
+  return {
+    widthPt,
+    heightPt,
+    anchorRow: frame.anchorRow,
+    xPt: frame.xPt + emuToPt(poIntAttr(off, 'x') ?? 0),
+    yPt: frame.yPt + emuToPt(poIntAttr(off, 'y') ?? 0),
+  };
+}
+
+/** A diagram shape's box: its own `a:xfrm`, moved to the frame's corner. */
+function diagramBox(sp: PoNode, frame: AnchorBox): AnchorBox | undefined {
+  const spPr = poFirstChild(sp, 'dsp:spPr');
+  const xfrm = spPr ? poFirstChild(spPr, 'a:xfrm') : undefined;
+  const off = xfrm ? poFirstChild(xfrm, 'a:off') : undefined;
+  const ext = xfrm ? poFirstChild(xfrm, 'a:ext') : undefined;
+  if (!ext) return undefined;
+  const widthPt = emuToPt(poIntAttr(ext, 'cx') ?? 0);
+  const heightPt = emuToPt(poIntAttr(ext, 'cy') ?? 0);
+  if (!(widthPt > 0 && heightPt > 0)) return undefined;
+  return {
+    widthPt,
+    heightPt,
+    anchorRow: frame.anchorRow,
+    xPt: frame.xPt + emuToPt(poIntAttr(off, 'x') ?? 0),
+    yPt: frame.yPt + emuToPt(poIntAttr(off, 'y') ?? 0),
+  };
 }
 
 /**
@@ -285,10 +474,11 @@ function isHiddenDrawing(node: PoNode, nvPropTag: string): boolean {
  */
 function styleLine(
   sp: PoNode,
+  ns: ShapeNs,
   colors: ColorResolver,
   themeLineWidths: ReadonlyArray<number>,
 ): ShapeLine | undefined {
-  const style = poChildren(sp).find((c) => poIs(c, 'xdr:style'));
+  const style = poChildren(sp).find((c) => poIs(c, `${ns}:style`));
   const lnRef = style ? poChildren(style).find((c) => poIs(c, 'a:lnRef')) : undefined;
   const child = poFirstElement(lnRef);
   const colorHex = child ? resolveColorNode(child, colors) : undefined;
@@ -331,10 +521,11 @@ function poFirstElement(ref: PoNode | undefined): PoNode | undefined {
 
 function styleFill(
   sp: PoNode,
+  ns: ShapeNs,
   colors: ColorResolver,
   themeFillStyles: ReadonlyArray<PoNode>,
 ): ShapeFill {
-  const style = poChildren(sp).find((c) => poIs(c, 'xdr:style'));
+  const style = poChildren(sp).find((c) => poIs(c, `${ns}:style`));
   const fillRef = style ? poChildren(style).find((c) => poIs(c, 'a:fillRef')) : undefined;
   if (!fillRef || poAttr(fillRef, 'idx') === '0') return { kind: 'none' };
   const child = poFirstElement(fillRef);
@@ -379,10 +570,11 @@ function placeholderColors(colors: ColorResolver, phHex: string): ColorResolver 
  */
 function styleShadow(
   sp: PoNode,
+  ns: ShapeNs,
   colors: ColorResolver,
   themeEffectStyles: ReadonlyArray<PoNode>,
 ): ShapeShadow | undefined {
-  const style = poChildren(sp).find((c) => poIs(c, 'xdr:style'));
+  const style = poChildren(sp).find((c) => poIs(c, `${ns}:style`));
   const ref = style ? poChildren(style).find((c) => poIs(c, 'a:effectRef')) : undefined;
   if (!ref) return undefined;
   const idx = Number(poAttr(ref, 'idx') ?? '');
@@ -397,8 +589,8 @@ function styleShadow(
 }
 
 /** The colour `<xdr:style><a:fontRef>` names, if it names one. */
-function styleFontColor(sp: PoNode, colors: ColorResolver): string | undefined {
-  const style = poChildren(sp).find((c) => poIs(c, 'xdr:style'));
+function styleFontColor(sp: PoNode, ns: ShapeNs, colors: ColorResolver): string | undefined {
+  const style = poChildren(sp).find((c) => poIs(c, `${ns}:style`));
   const fontRef = style ? poChildren(style).find((c) => poIs(c, 'a:fontRef')) : undefined;
   // The colour is whichever colour child it carries — srgbClr, schemeClr, …
   const child = poFirstElement(fontRef);
@@ -406,8 +598,13 @@ function styleFontColor(sp: PoNode, colors: ColorResolver): string | undefined {
 }
 
 /** The text body with that colour filled in wherever a run declares none. */
-function withStyleTextColor(text: ShapeTextBody, sp: PoNode, colors: ColorResolver): ShapeTextBody {
-  const colorHex = styleFontColor(sp, colors);
+function withStyleTextColor(
+  text: ShapeTextBody,
+  sp: PoNode,
+  ns: ShapeNs,
+  colors: ColorResolver,
+): ShapeTextBody {
+  const colorHex = styleFontColor(sp, ns, colors);
   if (colorHex === undefined) return text;
   return {
     ...text,
@@ -429,7 +626,7 @@ function withStyleTextColor(text: ShapeTextBody, sp: PoNode, colors: ColorResolv
   };
 }
 
-interface AnchorBox {
+export interface AnchorBox {
   readonly widthPt: number;
   readonly heightPt: number;
   readonly anchorRow: number;

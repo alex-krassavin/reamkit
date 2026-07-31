@@ -25,7 +25,7 @@ import { poAttr, poChildren, poIntAttr, poIs } from '@/core/po-helpers';
  * (solid fills emit no transparency).
  */
 export interface ColorMod {
-  readonly kind: 'lumMod' | 'lumOff' | 'shade' | 'tint' | 'alpha' | 'satMod';
+  readonly kind: 'lumMod' | 'lumOff' | 'shade' | 'tint' | 'alpha' | 'satMod' | 'hueOff' | 'satOff';
   readonly val: number;
 }
 
@@ -105,6 +105,18 @@ export function applyColorMods(hex: string, mods: ReadonlyArray<ColorMod>): stri
       const [h, s, l] = rgbToHsl(r, g, b);
       const l2 = m.kind === 'lumMod' ? l * m.val : clamp01(l + m.val);
       [r, g, b] = hslToRgb(h, s, l2);
+    } else if (m.kind === 'hueOff') {
+      // §20.1.2.3.15 — a hue OFFSET, in degrees around the wheel. SmartArt is
+      // built on it: one accent colour and a `hueOff` per node is how a diagram
+      // gets its series of colours, and dropping it drew all three circles of
+      // tdf83671_SmartArt_import.xlsx the same orange where the reference gives
+      // them orange, green and blue.
+      const [h, sat, l] = rgbToHsl(r, g, b);
+      [r, g, b] = hslToRgb((((h + m.val) % 360) + 360) % 360, sat, l);
+    } else if (m.kind === 'satOff') {
+      // §20.1.2.3.27 — the saturation twin, an offset rather than a factor.
+      const [h, sat, l] = rgbToHsl(r, g, b);
+      [r, g, b] = hslToRgb(h, clamp01(sat + m.val), l);
     } else if (m.kind === 'satMod') {
       // §20.1.2.3.32 — saturation modulation. The Office theme's gradients are
       // built from it (`<a:shade val="51000"/><a:satMod val="130000"/>`), and
@@ -184,11 +196,19 @@ export const defaultColorResolver: ColorResolver = makeColorResolver(DEFAULT_THE
 export function readColorMods(colorNode: PoNode): Array<ColorMod> {
   const mods: Array<ColorMod> = [];
   for (const c of poChildren(colorNode)) {
-    for (const kind of ['lumMod', 'lumOff', 'shade', 'tint', 'alpha', 'satMod'] as const) {
+    for (const kind of ['lumMod', 'lumOff', 'shade', 'tint', 'alpha', 'satMod', 'satOff'] as const) {
       if (poIs(c, `a:${kind}`)) {
         const v = poIntAttr(c, 'val');
         if (v !== undefined) mods.push({ kind, val: v / 100000 });
       }
+    }
+    // §20.1.2.3.15 `a:hueOff` counts SIXTIETH-THOUSANDTHS OF A DEGREE, not
+    // thousandths of a percent — a different unit from every other transform
+    // here, and the reason it gets its own line. Kept in degrees, which is what
+    // the HSL helpers below speak.
+    if (poIs(c, 'a:hueOff')) {
+      const v = poIntAttr(c, 'val');
+      if (v !== undefined) mods.push({ kind: 'hueOff', val: v / 60000 });
     }
   }
   return mods;
