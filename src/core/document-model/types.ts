@@ -883,6 +883,14 @@ export interface ChartSeries {
    * loses its line). Absent ⇒ the series draws as the chart's own type.
    */
   readonly type?: ChartType;
+  /**
+   * §21.2.2.9 `c:axId` — the series plots against the SECONDARY value axis: its
+   * group names a `c:valAx` other than the one the first group uses. 57362.xlsx
+   * puts its line on an axis of its own at `axPos="r"`, and plotting it on the
+   * primary scale puts every point at the wrong height whenever the two ranges
+   * differ.
+   */
+  readonly secondaryAxis?: boolean;
   readonly values: ReadonlyArray<number>; // c:val/c:yVal numCache (idx-ordered, gaps → 0)
   readonly xValues?: ReadonlyArray<number>; // c:xVal numCache (scatter — paired with values)
   readonly colorHex?: string; // c:spPr solidFill
@@ -926,6 +934,8 @@ export interface Chart {
   readonly gapPercent?: number;
   readonly catAxisTitle?: string; // c:catAx/c:title
   readonly valAxisTitle?: string; // c:valAx/c:title
+  /** §21.2.2.168 — the title of the secondary value axis, when one is drawn. */
+  readonly secondaryValAxisTitle?: string;
   /**
    * §21.2.2.157 `c:valAx/c:scaling/c:min|c:max` — the value axis the AUTHOR
    * fixed. Absent means "auto", and only then is the range read off the data:

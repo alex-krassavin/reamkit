@@ -221,6 +221,8 @@ interface CartesianFrame {
   readonly horizontal: boolean;
   readonly zeroOffset: number; // value-0 distance from the value-axis min end
   valueOffset: (v: number) => number; // value → distance along the value axis
+  /** §21.2.2.9 — the same for the SECONDARY value axis, when the chart has one. */
+  readonly valueOffset2?: (v: number) => number;
   // mutable scene chrome the caller appends series geometry to:
   readonly rects: Array<ChartRect>;
   readonly polylines: Array<ChartPolyline>;
@@ -381,17 +383,37 @@ function buildFrame(
   const labels: Array<ChartLabel> = [];
 
   const nCats = Math.max(chart.categories.length, ...chart.series.map((s) => s.values.length), 1);
-  const allVals = chart.series.flatMap((s) => s.values.slice(0, nCats));
+  // §21.2.2.9 — a series on the secondary axis is measured against ITS axis, so
+  // it is no part of the primary's range and the primary is no part of its.
+  const onSecondary = chart.series.filter((s) => s.secondaryAxis);
+  const primary = onSecondary.length > 0 ? chart.series.filter((s) => !s.secondaryAxis) : chart.series;
+  const allVals = primary.flatMap((s) => s.values.slice(0, nCats));
   const [dataMin, dataMax] = opts.dataRange ?? [Math.min(0, ...allVals), Math.max(0, ...allVals)];
   const scale = axisScale(chart, dataMin, dataMax, hPt);
   const fmtVal = opts.formatValue ?? ((v: number): string => formatTick(v, scale.step));
   const tickVals = ticks(scale);
+  const vals2 = onSecondary.flatMap((s) => s.values.slice(0, nCats));
+  // The author's own min/max pin the PRIMARY axis (§21.2.2.157 reads one axis);
+  // the secondary takes the nice range of its own data.
+  const scale2 =
+    vals2.length > 0
+      ? niceScale(
+          Math.min(0, ...vals2),
+          Math.max(0, ...vals2),
+          Math.min(10, Math.max(4, Math.round(hPt / 24))),
+        )
+      : undefined;
+  const tickVals2 = scale2 ? ticks(scale2) : [];
 
   let top = 4;
   if (chart.title) top += CHART_TITLE_PT * 1.6;
   if (chart.valAxisTitle) top += CHART_LABEL_PT * 1.4;
   const legend = buildLegendBlock(chart, wPt, hPt, measure);
-  const plotRight = wPt - 4 - legend.rightWidth;
+  const tick2W =
+    scale2 && !horizontal
+      ? Math.max(0, ...tickVals2.map((v) => measure(formatTick(v, scale2.step), CHART_LABEL_PT))) + 4
+      : 0;
+  const plotRight = wPt - 4 - legend.rightWidth - tick2W;
 
   const tickLabelW = Math.max(0, ...tickVals.map((v) => measure(fmtVal(v), CHART_LABEL_PT))) + 4;
   const catLabelH = CHART_LABEL_PT * 1.6;
@@ -459,6 +481,41 @@ function buildFrame(
     );
   }
 
+  const valueOffset2 =
+    scale2 && !horizontal
+      ? (v: number): number => ((v - scale2.min) / (scale2.max - scale2.min)) * plotH
+      : undefined;
+  if (scale2 && valueOffset2) {
+    for (const v of tickVals2) {
+      labels.push({
+        text: formatTick(v, scale2.step),
+        x: x0 + plotW + 3,
+        y: y0 + valueOffset2(v) - CHART_LABEL_PT / 3,
+        sizePt: CHART_LABEL_PT,
+        colorHex: LABEL_COLOR,
+        align: 'left',
+      });
+    }
+    polylines.push({
+      points: [
+        [x0 + plotW, y0],
+        [x0 + plotW, y0 + plotH],
+      ],
+      strokeHex: AXIS_COLOR,
+      widthPt: 0.75,
+    });
+    if (chart.secondaryValAxisTitle) {
+      labels.push({
+        text: chart.secondaryValAxisTitle,
+        x: x0 + plotW,
+        y: hPt - top + 3,
+        sizePt: CHART_LABEL_PT,
+        colorHex: LABEL_COLOR,
+        align: 'left',
+      });
+    }
+  }
+
   const slot = (horizontal ? plotH : plotW) / nCats;
   // Label every Nth category, where N is what it takes for them not to collide.
   // Excel and Calc both thin a crowded axis; drawing all of them turned
@@ -509,6 +566,7 @@ function buildFrame(
     horizontal,
     zeroOffset,
     valueOffset,
+    ...(valueOffset2 ? { valueOffset2 } : {}),
     rects,
     polylines,
     gridlines,
@@ -753,9 +811,10 @@ function pushComboLines(
   for (const s of lineIdx) {
     const series = chart.series[s]!;
     const color = seriesColor(series, s, chart.seriesColorCycle);
+    const at = (series.secondaryAxis ? f.valueOffset2 : undefined) ?? f.valueOffset;
     const pts: Array<readonly [number, number]> = [];
     for (let c = 0; c < f.nCats; c++) {
-      pts.push([f.x0 + c * f.slot + f.slot / 2, f.y0 + f.valueOffset(series.values[c] ?? 0)]);
+      pts.push([f.x0 + c * f.slot + f.slot / 2, f.y0 + at(series.values[c] ?? 0)]);
     }
     if (pts.length >= 2) f.polylines.push({ points: pts, strokeHex: color, widthPt: 1.5 });
     else if (pts.length === 1) {

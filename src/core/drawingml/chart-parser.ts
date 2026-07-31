@@ -86,16 +86,58 @@ export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): C
   const group = groups[0];
   const type: ChartType = group ? (TYPE_OF_TAG[poTag(group)!] ?? 'unknown') : 'unknown';
 
+  // §21.2.2.9 — each group names the two axes it plots against. The first
+  // group's value axis is the primary one; a group naming another is on the
+  // secondary axis, drawn opposite (57362.xlsx's line, at `axPos="r"`).
+  const groupAxIds = (g: PoNode): Array<string> =>
+    poChildren(g)
+      .filter((c) => poIs(c, 'c:axId'))
+      .map((c) => poAttr(c, 'val') ?? '');
+  const primaryAxIds = new Set(group ? groupAxIds(group) : []);
   const serNodes: Array<PoNode> = [];
   const series: Array<ChartSeries> = [];
+  let secondaryValAxId: string | undefined;
   for (const g of groups) {
     const groupType: ChartType = TYPE_OF_TAG[poTag(g)!] ?? 'unknown';
+    const own = groupAxIds(g).filter((id) => !primaryAxIds.has(id));
+    const secondary = own.length > 0;
     for (const s of poChildren(g).filter((c) => poIs(c, 'c:ser'))) {
       serNodes.push(s);
-      const parsed = parseSeries(s, resolveColor);
-      series.push(groupType === type ? parsed : { ...parsed, type: groupType });
+      series.push({
+        ...parseSeries(s, resolveColor),
+        ...(groupType === type ? {} : { type: groupType }),
+        ...(secondary ? { secondaryAxis: true as const } : {}),
+      });
+    }
+    if (secondary && series.length > 0) {
+      // Of the pair, the one a `c:valAx` claims is the value axis.
+      secondaryValAxId ??= own.find((id) =>
+        poChildren(plotArea).some(
+          (c) =>
+            poIs(c, 'c:valAx') &&
+            poChildren(c).some((k) => poIs(k, 'c:axId') && poAttr(k, 'val') === id),
+        ),
+      );
     }
   }
+  const secondaryValAx = secondaryValAxId
+    ? poChildren(plotArea).find(
+        (c) =>
+          poIs(c, 'c:valAx') &&
+          poChildren(c).some((k) => poIs(k, 'c:axId') && poAttr(k, 'val') === secondaryValAxId),
+      )
+    : undefined;
+  // §21.2.2.40 `c:delete` — an axis the author hid is not drawn.
+  const secondaryDeleted =
+    secondaryValAx !== undefined &&
+    poChildren(secondaryValAx).some((c) => poIs(c, 'c:delete') && poAttr(c, 'val') === '1');
+  const secondaryTitleNode =
+    secondaryValAx && !secondaryDeleted
+      ? poChildren(secondaryValAx).find((c) => poIs(c, 'c:title'))
+      : undefined;
+  const secondaryValAxisTitle = secondaryTitleNode
+    ? collectAT(secondaryTitleNode) || 'Axis Title'
+    : undefined;
 
   // Categories are shared; take them from the first series that carries them.
   let categories: Array<string> = [];
@@ -154,6 +196,7 @@ export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): C
     ...(showValues ? { showValues: true } : {}),
     ...(catAxisTitle ? { catAxisTitle } : {}),
     ...(valAxisTitle ? { valAxisTitle } : {}),
+    ...(secondaryValAxisTitle ? { secondaryValAxisTitle } : {}),
     ...(valAxisMin !== undefined ? { valAxisMin } : {}),
     ...(valAxisMax !== undefined ? { valAxisMax } : {}),
     ...(frameFillHex ? { frameFillHex } : {}),
