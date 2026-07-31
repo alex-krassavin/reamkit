@@ -4745,13 +4745,30 @@ function emitRowChunk(
       const start = Math.max(0, Math.min(1, cell.dataBar.startFraction ?? 0));
       const barWidth = cell.widthPt * Math.max(0, Math.min(1, cell.dataBar.fraction));
       if (barWidth > 0) {
+        // §18.3.1.28 — Excel paints a data bar as a GRADIENT that fades away
+        // from the axis the bar grows out of: solid at the axis end, white at
+        // the tip. Drawn flat, databar.xlsx's five gauges read as blocks where
+        // both references read as bars. A negative bar grows leftwards, so its
+        // solid end is its right one.
+        const barX = cellX + cell.widthPt * start;
+        const barBottomYUp = rowBottom;
         out.push({
-          type: 'fill',
-          x: pt(cellX + cell.widthPt * start),
-          y: pt(pageHeight - rowBottom - row.heightPt),
-          width: pt(barWidth),
-          height: pt(row.heightPt),
-          fillColorHex: cell.dataBar.colorHex,
+          type: 'shape',
+          shape: {
+            paths: [rectAtPath(0, 0, barWidth, row.heightPt)],
+            // The solid approximation writers without gradients paint (and the
+            // one PDF/A falls back to) is the bar's own colour.
+            fillColorHex: cell.dataBar.colorHex,
+            fillGradient: {
+              kind: 'linear' as const,
+              angle: cell.dataBar.negative ? 180 : 0,
+              stops: [
+                { offset: 0, colorHex: cell.dataBar.colorHex },
+                { offset: 1, colorHex: 'FFFFFF' },
+              ],
+            },
+            transform: flipTransform([1, 0, 0, 1, barX, barBottomYUp], pageHeight),
+          },
         });
       }
     }

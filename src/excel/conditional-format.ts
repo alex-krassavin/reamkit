@@ -96,6 +96,7 @@ export interface CfOverride {
     readonly fraction: number;
     readonly colorHex: string;
     readonly startFraction?: number;
+    readonly negative?: boolean;
   };
   readonly icon?: CellIcon;
   /**
@@ -800,7 +801,7 @@ function resolveDataBar(
 function dataBarBar(
   bar: ResolvedDataBar,
   value: number,
-): { fraction: number; colorHex: string; startFraction?: number } {
+): { fraction: number; colorHex: string; startFraction?: number; negative?: boolean } {
   if (bar.lower < 0 && bar.upper > 0) {
     const axis = -bar.lower / (bar.upper - bar.lower); // zero's position in [0,1]
     if (value >= 0) {
@@ -808,7 +809,12 @@ function dataBarBar(
       return { fraction: w, colorHex: bar.colorHex, startFraction: axis };
     }
     const w = (Math.abs(value) / Math.abs(bar.lower)) * axis;
-    return { fraction: w, colorHex: bar.negativeColorHex, startFraction: axis - w };
+    return {
+      fraction: w,
+      colorHex: bar.negativeColorHex,
+      startFraction: axis - w,
+      negative: true,
+    };
   }
   return { fraction: dataBarFraction(bar, value), colorHex: bar.colorHex };
 }

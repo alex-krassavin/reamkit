@@ -540,6 +540,12 @@ export interface CellDataBar {
   readonly fraction: number;
   readonly colorHex: string;
   readonly startFraction?: number;
+  /**
+   * The bar runs LEFT from the axis (a negative value in a mixed-sign range),
+   * so its solid end is its right one. Excel fades a data bar away from the
+   * axis, and which way that is depends on the sign.
+   */
+  readonly negative?: boolean;
 }
 
 /**

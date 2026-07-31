@@ -310,7 +310,9 @@ const dataBar = (
 const barAt = (
   flow: ReturnType<typeof Ream.parse>['flow'],
   row: number,
-): { fraction: number; colorHex: string; startFraction?: number } | undefined => {
+):
+  | { fraction: number; colorHex: string; startFraction?: number; negative?: boolean }
+  | undefined => {
   const table = flow.body.find((el) => el.kind === 'table');
   if (table?.kind !== 'table') throw new Error('expected a table');
   return table.table.rows[row]?.cells[0]?.properties.dataBar;
@@ -391,6 +393,10 @@ describe('conditional formatting — dataBar (E-SHEET SC1c)', () => {
     expect(pos?.colorHex).toBe('638EC6'); // positive → series colour
     expect(pos?.fraction).toBeCloseTo(0.5);
     expect(pos?.startFraction).toBeCloseTo(0.5); // runs from the axis to the right
+    // …and each is flagged with the direction it grows in, because Excel fades
+    // a bar AWAY from the axis and which way that is depends on the sign.
+    expect(neg?.negative).toBe(true);
+    expect(pos?.negative).toBeUndefined();
   });
 
   it('keeps an all-positive data bar left-anchored (no axis)', () => {
