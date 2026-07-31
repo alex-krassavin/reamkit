@@ -25,6 +25,7 @@ export type {
   Chart,
   ChartBlock,
   ChartDataPoint,
+  ChartLineStyle,
   ChartSeries,
   ChartType,
   CustomGeometry,

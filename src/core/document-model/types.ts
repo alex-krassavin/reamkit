@@ -913,6 +913,17 @@ export interface ChartSeries {
   readonly nameRef?: string;
 }
 
+/**
+ * §21.2.2.196 `c:spPr/a:ln` on an axis or its gridlines — the rule the author
+ * gave it. `none` is `<a:ln><a:noFill/>`, which means the axis draws no line at
+ * all: 57362.xlsx hides its secondary value axis that way and keeps its labels.
+ */
+export interface ChartLineStyle {
+  readonly none?: boolean;
+  readonly colorHex?: string;
+  readonly widthPt?: number;
+}
+
 /** A parsed chart (§21.2): its type, title, categories, series and rendering options. */
 export interface Chart {
   readonly type: ChartType;
@@ -936,6 +947,14 @@ export interface Chart {
   readonly valAxisTitle?: string; // c:valAx/c:title
   /** §21.2.2.168 — the title of the secondary value axis, when one is drawn. */
   readonly secondaryValAxisTitle?: string;
+  /** §21.2.2.196 — the category axis's own rule. */
+  readonly catAxisLine?: ChartLineStyle;
+  /** §21.2.2.196 — the value axis's own rule. */
+  readonly valAxisLine?: ChartLineStyle;
+  /** §21.2.2.196 — the secondary value axis's own rule. */
+  readonly secondaryValAxisLine?: ChartLineStyle;
+  /** §21.2.2.87 `c:majorGridlines/c:spPr/a:ln` — the gridlines' own rule. */
+  readonly gridLine?: ChartLineStyle;
   /**
    * §21.2.2.157 `c:valAx/c:scaling/c:min|c:max` — the value axis the AUTHOR
    * fixed. Absent means "auto", and only then is the range read off the data:

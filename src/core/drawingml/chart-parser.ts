@@ -7,7 +7,13 @@
 
 import { XMLParser } from 'fast-xml-parser';
 
-import type { Chart, ChartDataPoint, ChartSeries, ChartType } from '@/core/document-model';
+import type {
+  Chart,
+  ChartDataPoint,
+  ChartLineStyle,
+  ChartSeries,
+  ChartType,
+} from '@/core/document-model';
 import type { OpcPackage } from '@/core/opc';
 import type { ColorMod, ColorResolver } from '@/core/drawingml/colors';
 import type { PoNode } from '@/core/po-helpers';
@@ -157,6 +163,15 @@ export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): C
   const showValues = group ? chartShowsValues(group) : false;
   const catAxisTitle = axisTitle(plotArea, 'c:catAx');
   const valAxisTitle = axisTitle(plotArea, 'c:valAx');
+  const catAxNode = poChildren(plotArea).find((c) => poIs(c, 'c:catAx'));
+  const valAxNode = poChildren(plotArea).find((c) => poIs(c, 'c:valAx'));
+  const catAxisLine = lineStyleOf(catAxNode, resolveColor);
+  const valAxisLine = lineStyleOf(valAxNode, resolveColor);
+  const secondaryValAxisLine = lineStyleOf(secondaryValAx, resolveColor);
+  const gridLine = lineStyleOf(
+    valAxNode ? poChildren(valAxNode).find((c) => poIs(c, 'c:majorGridlines')) : undefined,
+    resolveColor,
+  );
   const valAxisMin = axisScaling(plotArea, 'c:min');
   const valAxisMax = axisScaling(plotArea, 'c:max');
   // §21.2.2.198 — the chart-space frame sits beside <c:chart>, not inside it.
@@ -197,6 +212,10 @@ export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): C
     ...(catAxisTitle ? { catAxisTitle } : {}),
     ...(valAxisTitle ? { valAxisTitle } : {}),
     ...(secondaryValAxisTitle ? { secondaryValAxisTitle } : {}),
+    ...(catAxisLine ? { catAxisLine } : {}),
+    ...(valAxisLine ? { valAxisLine } : {}),
+    ...(secondaryValAxisLine ? { secondaryValAxisLine } : {}),
+    ...(gridLine ? { gridLine } : {}),
     ...(valAxisMin !== undefined ? { valAxisMin } : {}),
     ...(valAxisMax !== undefined ? { valAxisMax } : {}),
     ...(frameFillHex ? { frameFillHex } : {}),
@@ -388,6 +407,32 @@ function axisScaling(plotArea: PoNode, tag: 'c:min' | 'c:max'): number | undefin
   const node = scaling ? poChildren(scaling).find((c) => poIs(c, tag)) : undefined;
   const v = node ? Number(poAttr(node, 'val')) : Number.NaN;
   return Number.isFinite(v) ? v : undefined;
+}
+
+/**
+ * §21.2.2.196 `c:spPr/a:ln` — an axis's own rule. `<a:ln><a:noFill/>` means the
+ * axis draws nothing, which is not the same as having no `c:spPr` at all: the
+ * first hides the line, the second leaves it to the renderer's default.
+ *
+ * @param owner        The `c:catAx` / `c:valAx` / `c:majorGridlines` node.
+ * @param resolveColor Maps a DrawingML colour reference to 6 hex digits.
+ * @returns The rule, or undefined when the node says nothing about it.
+ */
+function lineStyleOf(
+  owner: PoNode | undefined,
+  resolveColor: ColorResolver,
+): ChartLineStyle | undefined {
+  const spPr = owner ? poChildren(owner).find((c) => poIs(c, 'c:spPr')) : undefined;
+  const ln = spPr ? poChildren(spPr).find((c) => poIs(c, 'a:ln')) : undefined;
+  if (!ln) return undefined;
+  if (poChildren(ln).some((c) => poIs(c, 'a:noFill'))) return { none: true };
+  const solid = poChildren(ln).find((c) => poIs(c, 'a:solidFill'));
+  const colorHex = solid ? colorFromSolidFill(solid, resolveColor) : undefined;
+  // §20.1.2.1 `w` is in EMU; 12 700 to the point.
+  const emu = Number(poAttr(ln, 'w'));
+  const widthPt = Number.isFinite(emu) && emu > 0 ? emu / 12700 : undefined;
+  if (!colorHex && widthPt === undefined) return undefined;
+  return { ...(colorHex ? { colorHex } : {}), ...(widthPt !== undefined ? { widthPt } : {}) };
 }
 
 function valueFormatCode(plotArea: PoNode): string | undefined {

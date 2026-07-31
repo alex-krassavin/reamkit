@@ -5,7 +5,7 @@
 // to draw commands (rects/polylines/wedges via the vector layer, labels via the
 // text pass).
 
-import type { Chart, ChartSeries } from '@/core/document-model';
+import type { Chart, ChartLineStyle, ChartSeries } from '@/core/document-model';
 
 import { applyNumberFormat } from '@/core/number-format';
 
@@ -309,6 +309,7 @@ function pushGridTicks(
   y0: number,
   plotW: number,
   plotH: number,
+  grid: ChartLineStyle | undefined,
 ): void {
   for (const v of tickVals) {
     if (axis === 'x') {
@@ -318,7 +319,7 @@ function pushGridTicks(
           [gx, y0],
           [gx, y0 + plotH],
         ],
-        strokeHex: GRID_COLOR,
+        strokeHex: grid?.colorHex ?? GRID_COLOR,
         widthPt: 0.75,
       });
       labels.push({
@@ -336,7 +337,7 @@ function pushGridTicks(
           [x0, gy],
           [x0 + plotW, gy],
         ],
-        strokeHex: GRID_COLOR,
+        strokeHex: grid?.colorHex ?? GRID_COLOR,
         widthPt: 0.75,
       });
       labels.push({
@@ -351,29 +352,47 @@ function pushGridTicks(
   }
 }
 
+/**
+ * §21.2.2.196 — an axis draws the rule its `c:spPr/a:ln` asks for. `<a:noFill/>`
+ * draws none at all, and both references honour it: 57362.xlsx gives its value
+ * axis a 0.75pt #D9D9D9 hairline where we drew a 1pt #595959 one, and hides its
+ * secondary axis's line entirely while keeping its labels.
+ */
+function axisStroke(style: ChartLineStyle | undefined): { hex: string; widthPt: number } | null {
+  if (style?.none) return null;
+  return { hex: style?.colorHex ?? AXIS_COLOR, widthPt: style?.widthPt ?? 1 };
+}
+
 function pushAxisLines(
   polylines: Array<ChartPolyline>,
   x0: number,
   y0: number,
   plotW: number,
   plotH: number,
+  chart: Chart,
 ): void {
-  polylines.push({
-    points: [
-      [x0, y0],
-      [x0, y0 + plotH],
-    ],
-    strokeHex: AXIS_COLOR,
-    widthPt: 1,
-  });
-  polylines.push({
-    points: [
-      [x0, y0],
-      [x0 + plotW, y0],
-    ],
-    strokeHex: AXIS_COLOR,
-    widthPt: 1,
-  });
+  const val = axisStroke(chart.valAxisLine);
+  if (val) {
+    polylines.push({
+      points: [
+        [x0, y0],
+        [x0, y0 + plotH],
+      ],
+      strokeHex: val.hex,
+      widthPt: val.widthPt,
+    });
+  }
+  const cat = axisStroke(chart.catAxisLine);
+  if (cat) {
+    polylines.push({
+      points: [
+        [x0, y0],
+        [x0 + plotW, y0],
+      ],
+      strokeHex: cat.hex,
+      widthPt: cat.widthPt,
+    });
+  }
 }
 
 function buildFrame(
@@ -475,6 +494,7 @@ function buildFrame(
       y0,
       plotW,
       plotH,
+      chart.gridLine,
     );
   } else {
     pushGridTicks(
@@ -488,6 +508,7 @@ function buildFrame(
       y0,
       plotW,
       plotH,
+      chart.gridLine,
     );
   }
 
@@ -506,14 +527,17 @@ function buildFrame(
         align: 'left',
       });
     }
-    polylines.push({
-      points: [
-        [x0 + plotW, y0],
-        [x0 + plotW, y0 + plotH],
-      ],
-      strokeHex: AXIS_COLOR,
-      widthPt: 0.75,
-    });
+    const sec = axisStroke(chart.secondaryValAxisLine);
+    if (sec) {
+      polylines.push({
+        points: [
+          [x0 + plotW, y0],
+          [x0 + plotW, y0 + plotH],
+        ],
+        strokeHex: sec.hex,
+        widthPt: sec.widthPt,
+      });
+    }
     if (chart.secondaryValAxisTitle) {
       labels.push({
         text: chart.secondaryValAxisTitle,
@@ -564,7 +588,7 @@ function buildFrame(
     }
   }
 
-  pushAxisLines(polylines, x0, y0, plotW, plotH);
+  pushAxisLines(polylines, x0, y0, plotW, plotH, chart);
   legend.emit(rects, labels);
 
   return {
@@ -974,6 +998,7 @@ export function buildScatterScene(
     y0,
     plotW,
     plotH,
+    chart.gridLine,
   );
   pushGridTicks(
     gridlines,
@@ -986,8 +1011,9 @@ export function buildScatterScene(
     y0,
     plotW,
     plotH,
+    chart.gridLine,
   );
-  pushAxisLines(polylines, x0, y0, plotW, plotH);
+  pushAxisLines(polylines, x0, y0, plotW, plotH, chart);
 
   for (let s = 0; s < chart.series.length; s++) {
     const series = chart.series[s]!;
