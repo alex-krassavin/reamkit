@@ -666,6 +666,14 @@ function emitPageContent(
   if (borders.length > 0) {
     if (tagging) out.push('/Artifact BMC');
     out.push('q');
+    // ISO 32000-1 §8.4.3.3 cap style 2 — a projecting square end, half the line
+    // width past each endpoint. Each cell edge is stroked as its own segment, so
+    // with the initial butt cap two collinear segments MEET rather than overlap:
+    // 56295.xlsx shows a lighter pixel at every cell boundary that lands
+    // mid-pixel, and all four corners of a boxed range are left unpainted where
+    // the horizontal rule stops short of the vertical one. LibreOffice reaches
+    // the same result by overshooting each run by exactly half a width.
+    out.push('2 J');
     let lastWidth = -1;
     let lastColor = '';
     for (const b of borders) {
