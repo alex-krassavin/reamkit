@@ -76,6 +76,7 @@
     "corpus:golden": "tsx scripts/corpus/make-golden.ts",
     "corpus:visual": "tsx scripts/corpus/visual-diff.ts",
     "corpus:scout": "tsx scripts/corpus/scout.ts",
+    "corpus:pixel": "tsx scripts/corpus/pixel-scout.ts",
     "typecheck:dist": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
