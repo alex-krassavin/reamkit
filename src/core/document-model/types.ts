@@ -929,6 +929,46 @@ export interface ChartSeries {
    */
   readonly valuesRef?: string;
   readonly nameRef?: string;
+  /**
+   * §21.2.2.106 `c:marker` — the symbol this series stamps on each of its
+   * points. Absent ⇒ the reader's own default.
+   */
+  readonly marker?: ChartMarker;
+  /**
+   * §21.2.2.198 `c:ser/c:spPr/a:ln` — the series' OWN rule. `<a:noFill/>` is
+   * how Excel writes "scatter with markers only": the group still says
+   * `lineMarker`, and it is this line that says the points are not joined.
+   * SimpleScatterChart.xlsx is two loose dots in both references and we ran a
+   * line between them.
+   */
+  readonly line?: ChartLineStyle;
+}
+
+/**
+ * §21.2.2.107 `c:symbol` (ST_MarkerStyle) — the shape of a scatter/line
+ * series' point marker. `auto` and `picture` are left to the reader, so they
+ * are not carried here.
+ */
+export type ChartMarkerSymbol =
+  | 'circle'
+  | 'dash'
+  | 'diamond'
+  | 'dot'
+  | 'none'
+  | 'plus'
+  | 'square'
+  | 'star'
+  | 'triangle'
+  | 'x';
+
+/**
+ * §21.2.2.106 `c:marker` — a series' point symbol and its size in points
+ * (§21.2.2.153 `c:size`, 2–72). chartTitle_noTitle.xlsx asks for a 5pt circle
+ * at every point and both references draw one; we stamped a square.
+ */
+export interface ChartMarker {
+  readonly symbol: ChartMarkerSymbol;
+  readonly sizePt?: number;
 }
 
 /**

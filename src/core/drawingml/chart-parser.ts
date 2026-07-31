@@ -11,6 +11,8 @@ import type {
   Chart,
   ChartDataPoint,
   ChartLineStyle,
+  ChartMarker,
+  ChartMarkerSymbol,
   ChartSeries,
   ChartType,
 } from '@/core/document-model';
@@ -172,11 +174,25 @@ export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): C
   const valAxisTitle = axisTitle(plotArea, 'c:valAx');
   const catAxNode = poChildren(plotArea).find((c) => poIs(c, 'c:catAx'));
   const valAxNode = poChildren(plotArea).find((c) => poIs(c, 'c:valAx'));
-  const catAxisLine = lineStyleOf(catAxNode, resolveColor);
-  const valAxisLine = lineStyleOf(valAxNode, resolveColor);
+  // §21.2.2.28 `c:axPos` — an axis line and its gridlines are geometry, so bind
+  // them by WHERE the axis sits and not by which element declared it. A scatter
+  // has two `c:valAx` and no `c:catAx` at all: chartTitle_noTitle.xlsx asks for
+  // a 0.75pt #BFBFBF rule along the bottom and got the 1pt #595959 we fall back
+  // to, and its left axis took the BOTTOM axis's styling.
+  const axisAt = (...where: ReadonlyArray<string>): PoNode | undefined =>
+    poChildren(plotArea).find(
+      (c) =>
+        (poIs(c, 'c:catAx') || poIs(c, 'c:valAx') || poIs(c, 'c:dateAx')) &&
+        c !== secondaryValAx &&
+        where.includes(poVal(poChildren(c).find((k) => poIs(k, 'c:axPos'))) ?? ''),
+    );
+  const bottomAxNode = axisAt('b', 't') ?? catAxNode;
+  const leftAxNode = axisAt('l', 'r') ?? valAxNode;
+  const catAxisLine = lineStyleOf(bottomAxNode, resolveColor);
+  const valAxisLine = lineStyleOf(leftAxNode, resolveColor);
   const secondaryValAxisLine = lineStyleOf(secondaryValAx, resolveColor);
   const gridLine = lineStyleOf(
-    valAxNode ? poChildren(valAxNode).find((c) => poIs(c, 'c:majorGridlines')) : undefined,
+    leftAxNode ? poChildren(leftAxNode).find((c) => poIs(c, 'c:majorGridlines')) : undefined,
     resolveColor,
   );
   const valAxisMin = axisScaling(plotArea, 'c:min');
@@ -247,6 +263,8 @@ function parseSeries(ser: PoNode, resolveColor: ColorResolver): ChartSeries {
   );
   const pointColors = dataPointColors(ser, resolveColor);
   const pointLabels = customDataLabels(ser);
+  const marker = seriesMarker(ser);
+  const line = lineStyleOf(ser, resolveColor);
   // Keep the references so the reader can resolve them when nothing is cached.
   const valuesRef = valNode ? refFormula(valNode) : undefined;
   const nameRef = refFormula(poChildren(ser).find((c) => poIs(c, 'c:tx')));
@@ -259,6 +277,41 @@ function parseSeries(ser: PoNode, resolveColor: ColorResolver): ChartSeries {
     ...(colorHex ? { colorHex } : {}),
     ...(pointColors.length > 0 ? { pointColors } : {}),
     ...(pointLabels.length > 0 ? { pointLabels } : {}),
+    ...(marker ? { marker } : {}),
+    ...(line ? { line } : {}),
+  };
+}
+
+const MARKER_SYMBOLS = new Set<string>([
+  'circle',
+  'dash',
+  'diamond',
+  'dot',
+  'none',
+  'plus',
+  'square',
+  'star',
+  'triangle',
+  'x',
+]);
+
+/**
+ * §21.2.2.106 `c:marker` — the series' own point symbol. `auto` (and the
+ * picture marker we cannot draw) read as absent, leaving the reader's default.
+ */
+function seriesMarker(ser: PoNode): ChartMarker | undefined {
+  const node = poChildren(ser).find((c) => poIs(c, 'c:marker'));
+  if (!node) return undefined;
+  const symbol = poVal(poChildren(node).find((c) => poIs(c, 'c:symbol')));
+  if (!symbol || !MARKER_SYMBOLS.has(symbol)) return undefined;
+  // §21.2.2.153 — `c:size` is already in points (2–72).
+  const sizePt = poIntAttr(
+    poChildren(node).find((c) => poIs(c, 'c:size')),
+    'val',
+  );
+  return {
+    symbol: symbol as ChartMarkerSymbol,
+    ...(sizePt !== undefined && sizePt > 0 ? { sizePt } : {}),
   };
 }
 
@@ -436,11 +489,13 @@ function axisScaling(plotArea: PoNode, tag: 'c:min' | 'c:max'): number | undefin
 }
 
 /**
- * §21.2.2.196 `c:spPr/a:ln` — an axis's own rule. `<a:ln><a:noFill/>` means the
- * axis draws nothing, which is not the same as having no `c:spPr` at all: the
- * first hides the line, the second leaves it to the renderer's default.
+ * §21.2.2.196 `c:spPr/a:ln` — an axis's (or a series') own rule.
+ * `<a:ln><a:noFill/>` means it draws nothing, which is not the same as having
+ * no `c:spPr` at all: the first hides the line, the second leaves it to the
+ * renderer's default.
  *
- * @param owner        The `c:catAx` / `c:valAx` / `c:majorGridlines` node.
+ * @param owner        The `c:catAx` / `c:valAx` / `c:majorGridlines` / `c:ser`
+ *                     node.
  * @param resolveColor Maps a DrawingML colour reference to 6 hex digits.
  * @returns The rule, or undefined when the node says nothing about it.
  */

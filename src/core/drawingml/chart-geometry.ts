@@ -5,7 +5,7 @@
 // to draw commands (rects/polylines/wedges via the vector layer, labels via the
 // text pass).
 
-import type { Chart, ChartLineStyle, ChartSeries } from '@/core/document-model';
+import type { Chart, ChartLineStyle, ChartMarker, ChartSeries } from '@/core/document-model';
 
 import { applyNumberFormat } from '@/core/number-format';
 
@@ -209,7 +209,7 @@ function axisScale(chart: Chart, dataMin: number, dataMax: number, hPt: number):
   // How many ticks fit is a question about the PLOT, not about the numbers: a
   // tall axis carries more of them. A fixed six drew 0/100/200/300 down a plot
   // where both references fit 0/50/…/300.
-  const rounded = niceScale(min, max, Math.min(10, Math.max(4, Math.round(hPt / 24))));
+  const rounded = niceScale(min, max, tickBudget(hPt));
   return {
     min: chart.valAxisMin ?? rounded.min,
     max: chart.valAxisMax ?? rounded.max,
@@ -279,7 +279,10 @@ function buildLegendBlock(
   const legendEntries: Array<LegendEntry> = chart.series.map((s, i) => ({
     name: legendSeriesName(s, i),
     colorHex: seriesColor(s, i, chart.seriesColorCycle),
-    ...(isLineLike(s) ? { marker: 'line' as const } : {}),
+    // The key stands for what the series LOOKS like: a series whose own line
+    // draws nothing is a scatter of markers, so its key is a swatch and not a
+    // rule (SimpleScatterChart.xlsx).
+    ...(s.line?.none ? { marker: 'box' as const } : isLineLike(s) ? { marker: 'line' as const } : {}),
   }));
   // A line chart's key is a LINE, not a filled box — that is what the series
   // looks like on the plot, and what both references draw.
@@ -968,9 +971,14 @@ export function buildScatterScene(
   }
   if (xs.length === 0) return { rects, polylines, gridlines, wedges: [], labels };
 
-  // Both scatter axes auto-min — neither is forced through 0.
-  const xScale = niceScale(Math.min(...xs), Math.max(...xs));
-  const yScale = niceScale(Math.min(...ys), Math.max(...ys));
+  // Neither scatter axis is forced through 0 — but Excel only RAISES the floor
+  // off it for data that genuinely sits far from the origin (a 100…110 series),
+  // and runs from zero otherwise. SimpleScatterChart.xlsx plots 0.5 and 1.5 and
+  // both references start its axis at 0 where we started it at 0.4. How many
+  // ticks fit is a question about the plot, exactly as it is for the frame
+  // charts: the x labels sit side by side, so they need more room than the y.
+  const xScale = niceScale(...autoRange(xs), tickBudget(wPt / 2));
+  const yScale = niceScale(...autoRange(ys), tickBudget(hPt));
   const xTicks = ticks(xScale);
   const yTicks = ticks(yScale);
 
@@ -1024,6 +1032,7 @@ export function buildScatterScene(
   const style = chart.scatterStyle ?? 'marker';
   const joins = style === 'line' || style === 'lineMarker' || style.startsWith('smooth');
   const marks = style === 'marker' || style === 'lineMarker' || style === 'smoothMarker';
+  const wedges: Array<ChartWedge> = [];
   for (let s = 0; s < chart.series.length; s++) {
     const series = chart.series[s]!;
     const color = seriesColor(series, s, chart.seriesColorCycle);
@@ -1032,14 +1041,65 @@ export function buildScatterScene(
       const px = xAt(series.xValues?.[i] ?? i);
       const py = yAt(series.values[i] ?? 0);
       pts.push([px, py]);
-      if (marks) rects.push({ x: px - 2, y: py - 2, w: 4, h: 4, fillHex: color });
+      if (marks) pushMarker(rects, wedges, series.marker, px, py, color);
     }
-    if (joins && pts.length >= 2) {
-      polylines.push({ points: pts, strokeHex: color, widthPt: 1.5 });
+    // …unless the series itself says its line draws nothing. That is how Excel
+    // writes "scatter with markers only" — the group keeps `lineMarker` and the
+    // series' own `a:ln` is `<a:noFill/>`.
+    if (joins && !series.line?.none && pts.length >= 2) {
+      polylines.push({ points: pts, strokeHex: color, widthPt: series.line?.widthPt ?? 1.5 });
     }
   }
   legend.emit(rects, labels);
-  return { rects, polylines, gridlines, wedges: [], labels };
+  return { rects, polylines, gridlines, wedges, labels };
+}
+
+/**
+ * The data range an automatic axis covers: its own extent, except that data
+ * starting within 5/6 of the top reads as data that belongs against a zero
+ * baseline — Excel's own rule for when an automatic minimum stays at 0.
+ */
+function autoRange(vals: ReadonlyArray<number>): [number, number] {
+  const lo = Math.min(...vals);
+  const hi = Math.max(...vals);
+  return [lo > 0 && lo < (5 / 6) * hi ? 0 : lo, hi];
+}
+
+/** Ticks that fit along an axis `extentPt` long (mirrors {@link axisScale}). */
+const tickBudget = (extentPt: number): number =>
+  Math.min(10, Math.max(4, Math.round(extentPt / 24)));
+
+/** Side (points) of the square stamped for a series that names no symbol. */
+const DEFAULT_MARKER_PT = 4;
+
+/**
+ * Stamp one data point's marker. §21.2.2.107: `none` draws nothing at all even
+ * when the scatter style marks its points, a round symbol is a disc (a full
+ * wedge — drawn last, so it sits over the line joining the points), and every
+ * other symbol keeps the square we have always drawn.
+ *
+ * @param rects  Collects a square marker.
+ * @param wedges Collects a round marker.
+ * @param marker The series' `c:marker`, if it declared one.
+ * @param x      Point centre, scene x.
+ * @param y      Point centre, scene y.
+ * @param color  The series colour.
+ */
+function pushMarker(
+  rects: Array<ChartRect>,
+  wedges: Array<ChartWedge>,
+  marker: ChartMarker | undefined,
+  x: number,
+  y: number,
+  color: string,
+): void {
+  if (marker?.symbol === 'none') return;
+  const size = marker?.sizePt ?? DEFAULT_MARKER_PT;
+  if (marker?.symbol === 'circle' || marker?.symbol === 'dot') {
+    wedges.push({ cx: x, cy: y, r: size / 2, startRad: 0, sweepRad: -2 * Math.PI, fillHex: color });
+    return;
+  }
+  rects.push({ x: x - size / 2, y: y - size / 2, w: size, h: size, fillHex: color });
 }
 
 // ─── line chart ───────────────────────────────────────────────────────────────

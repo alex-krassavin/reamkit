@@ -30,10 +30,10 @@ import { pt } from '@/core/ir';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 import { buildHeaderFooterContent } from '@/excel/header-footer';
 import {
+  cellPaintsVisibly,
   printableHeightPt,
   printableWidthPt,
   resolvePrintArea,
-  cellPaintsVisibly,
   resolvePrintTitleRows,
   sectionFromWorksheet,
   slicerTable,
