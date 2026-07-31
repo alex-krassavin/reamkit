@@ -5,6 +5,7 @@
 import { XMLParser } from 'fast-xml-parser';
 
 import type { SheetRichRun } from '@/core/spreadsheet-model';
+import { resolveInternalEntities } from '@/core/opc/xml-entities';
 import { decodeXstring } from '@/excel/escaped-text';
 
 const decoder = new TextDecoder('utf-8');
@@ -15,8 +16,9 @@ const parser = new XMLParser({
   // on `htmlEntities`, which defaults to false, so `&#10;` reached the page as
   // five literal characters (formats.xlsx writes "Hello,&#10;Calc!"). Named
   // HTML entities come along with the switch; in XML they are undefined anyway,
-  // and reading `&nbsp;` as a space beats drawing it. Nested DOCTYPE entities
-  // stay unexpanded either way — the parser never registers them (54764-2.xlsx).
+  // and reading `&nbsp;` as a space beats drawing it. Entities a DOCTYPE
+  // declares the parser never registers at all, so they are resolved before it
+  // sees the text — see resolveInternalEntities.
   htmlEntities: true,
   ignoreAttributes: false,
   attributeNamePrefix: '@_',
@@ -58,7 +60,7 @@ export interface SharedStrings {
  * cell limit (32 767 chars).
  */
 export function parseSharedStrings(data: Uint8Array): SharedStrings {
-  const xml = decoder.decode(data);
+  const xml = resolveInternalEntities(decoder.decode(data));
   const tree = parser.parse(xml) as Record<string, unknown>;
   const sst = tree['sst'];
   if (!sst || typeof sst !== 'object') return { texts: [], runs: [] };

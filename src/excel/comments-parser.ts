@@ -12,6 +12,7 @@
 import { XMLParser } from 'fast-xml-parser';
 
 import type { SheetComment } from '@/core/ir/sheet';
+import { resolveInternalEntities } from '@/core/opc/xml-entities';
 
 const decoder = new TextDecoder('utf-8');
 
@@ -21,8 +22,9 @@ const parser = new XMLParser({
   // on `htmlEntities`, which defaults to false, so `&#10;` reached the page as
   // five literal characters (formats.xlsx writes "Hello,&#10;Calc!"). Named
   // HTML entities come along with the switch; in XML they are undefined anyway,
-  // and reading `&nbsp;` as a space beats drawing it. Nested DOCTYPE entities
-  // stay unexpanded either way — the parser never registers them (54764-2.xlsx).
+  // and reading `&nbsp;` as a space beats drawing it. Entities a DOCTYPE
+  // declares the parser never registers at all, so they are resolved before it
+  // sees the text — see resolveInternalEntities.
   htmlEntities: true,
   ignoreAttributes: false,
   attributeNamePrefix: '@_',
@@ -41,7 +43,7 @@ const parser = new XMLParser({
  * of the text — stripped here so the resolved author is not shown twice.
  */
 export function parseLegacyComments(data: Uint8Array): Array<SheetComment> {
-  const tree = parser.parse(decoder.decode(data)) as Record<string, unknown>;
+  const tree = parser.parse(resolveInternalEntities(decoder.decode(data))) as Record<string, unknown>;
   const root = asObject(tree['comments']);
   if (!root) return [];
   const authors = toArray(asObject(root['authors'])?.['author']).map((a) => textOf(a));
@@ -65,7 +67,7 @@ export function parseLegacyComments(data: Uint8Array): Array<SheetComment> {
  * the authors of threaded comments.
  */
 export function parsePersons(data: Uint8Array): Map<string, string> {
-  const tree = parser.parse(decoder.decode(data)) as Record<string, unknown>;
+  const tree = parser.parse(resolveInternalEntities(decoder.decode(data))) as Record<string, unknown>;
   const root = asObject(tree['personList']);
   const map = new Map<string, string>();
   if (!root) return map;
@@ -91,7 +93,7 @@ export function parseThreadedComments(
   data: Uint8Array,
   persons: ReadonlyMap<string, string>,
 ): Array<SheetComment> {
-  const tree = parser.parse(decoder.decode(data)) as Record<string, unknown>;
+  const tree = parser.parse(resolveInternalEntities(decoder.decode(data))) as Record<string, unknown>;
   const root = asObject(tree['ThreadedComments']);
   if (!root) return [];
   const out: Array<SheetComment> = [];
