@@ -290,7 +290,12 @@ const PAPER_SIZES_TWIPS: ReadonlyMap<number, readonly [number, number]> = new Ma
   [11, [8392, 11906]], // A5 148mm × 210mm
   [70, [5953, 8392]], // A6 105mm × 148mm
 ]);
-const DEFAULT_PAPER_TWIPS: readonly [number, number] = [11906, 16838];
+// A sheet with no `<pageSetup>` is emitted onto the renderer's own A4 default,
+// which is 595 x 842 pt — not ISO A4's 595.276 x 841.89. Measuring the printable
+// width against the table's 11906 twips left the layout 6 twips of width the
+// page it lands on does not have, and 57362.xlsx banded a column into the first
+// page that both references put on the second.
+const DEFAULT_PAPER_TWIPS: readonly [number, number] = [11900, 16840];
 
 /**
  * Build the page section (paper size + margins) from a worksheet's `<pageSetup>`

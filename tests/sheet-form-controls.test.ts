@@ -127,16 +127,16 @@ describe('form controls — end to end (E-SHEET W8)', () => {
 
     // An ActiveX control's box comes from the VML shape sharing its shapeId.
     // This one sits past the printable width, so it rides the second band —
-    // shifted back to the left margin by exactly one page of it (487.3pt). The
+    // shifted back to the left margin by exactly one page of it (487pt). The
     // page break between the bands is the projection's only paragraph.
-    expect(at(564.75 - 487.3, 35.25)).toHaveLength(1);
+    expect(at(564.75 - 487, 35.25)).toHaveLength(1);
     expect(flow.body.filter((e) => e.kind === 'paragraph')).toHaveLength(1);
 
     // The group box straddles the boundary, so its FRAME continues into the
     // second band — at a negative offset, since its left edge is back in the
     // first. Its caption does not come with it: it was printed where the
     // drawing starts, and printing it again puts the same label on two pages.
-    const carried = at(441 - 487.3, 7.5);
+    const carried = at(441 - 487, 7.5);
     expect(carried).toHaveLength(1);
     expect(carried[0]?.text).toBeUndefined();
     expect(carried[0]?.line?.colorHex).toBe('808080');

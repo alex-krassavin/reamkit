@@ -42,11 +42,11 @@ exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: column-breaks 1`]
 
 exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: date-1904 1`] = `"670ec849412b2681995b81e447f739892196c7059f94549b4154207aa7fb907c"`;
 
-exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: fit-to-page 1`] = `"6b14855c32b029bf919e7c96893161f3585314c09464032a963629644cec2097"`;
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: fit-to-page 1`] = `"44620264ed448d777c359b4c68c8e874db39114ebcc1e8e1625b630b46bc7085"`;
 
 exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: gridlines 1`] = `"727e4db5dc41eead830b4fca4be55cc953956ae4f68ede8d886a4f82db1d91a9"`;
 
-exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: landscape 1`] = `"684ea395ccde40c0c0b355ff2ab143b0276a8c06affa352a787fa954f2972fd1"`;
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: landscape 1`] = `"fdf8af4214477a4f5aed06e41955f51998bd5d36cf72c3ee6de68fe543b0c835"`;
 
 exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: merges 1`] = `"c49805881ec7274aa65159235157498569c0294a4a5745ac2c759732d3a53ae6"`;
 
