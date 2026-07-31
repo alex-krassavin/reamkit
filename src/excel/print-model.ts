@@ -846,8 +846,24 @@ export function worksheetToBody(
   // print the swatch. With no content anywhere there is nothing to run away
   // from: the painted cells ARE the sheet, bounded by the same reach.
   if (usedRow < 0 && usedCol < 0) {
-      for (const c of worksheet.cells) {
-      if (c.column >= PAINT_REACH_COLUMNS || c.row >= PAINT_REACH_ROWS) continue;
+    // …and no further than the page it prints on. There is no data range here
+    // to paginate FOR, so a sheet of nothing but formatting prints what fits
+    // and stops: 51585.xlsx is 629 columns x 141 rows of empty styled cells,
+    // and paginating them the ordinary way made three pages of colour where
+    // LibreOffice prints one.
+    const pageTwips = sheetContentWidthTwips(worksheet);
+    const defTwips = defaultColumnTwips(worksheet, charTwipsUnit, DEFAULT_COL_CHARS);
+    let acc = 0;
+    let colLimit = 0;
+    while (colLimit < PAINT_REACH_COLUMNS && acc < pageTwips) {
+      const col = worksheet.columns.find(
+        (cc) => colLimit >= cc.min - 1 && colLimit <= cc.max - 1,
+      );
+      acc += col ? (col.hidden ? 0 : columnTwips(col.widthChars, charTwipsUnit)) : defTwips;
+      colLimit++;
+    }
+    for (const c of worksheet.cells) {
+      if (c.column >= colLimit || c.row >= PAINT_REACH_ROWS) continue;
       if (!cellPaintsVisibly(c, styles)) continue;
       if (c.row > usedRow) usedRow = c.row;
       if (c.column > usedCol) usedCol = c.column;
