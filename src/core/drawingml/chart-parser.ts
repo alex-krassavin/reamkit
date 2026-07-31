@@ -574,8 +574,27 @@ export function withChartColorStyle(
     const cycle = parseChartColorStyle(resolved.data, resolveColor);
     if (cycle.length > 0) return { ...chart, seriesColorCycle: cycle };
   }
-  return chart;
+  // No `colorsN.xml` — an Office 2011 extension a chart from 2007 does not
+  // carry. The cycle is then the THEME's own accents (§20.1.4.1.5), which is
+  // what both references paint: WithThreeCharts.xlsx keeps the Office 2007
+  // scheme, so its second series is C0504D red and its pie runs blue, red,
+  // green, purple, cyan, orange — where our built-in 2013 accents drew orange
+  // and blue, orange, grey, yellow, light blue, green.
+  const themed = ACCENT_SLOTS.map((scheme) => resolveColor({ scheme }));
+  return themed.every((c): c is string => c !== undefined)
+    ? { ...chart, seriesColorCycle: themed }
+    : chart;
 }
+
+/** §20.1.4.1.5 — the accent slots a chart cycles its series through. */
+const ACCENT_SLOTS: ReadonlyArray<string> = [
+  'accent1',
+  'accent2',
+  'accent3',
+  'accent4',
+  'accent5',
+  'accent6',
+];
 
 const REL_CHART_COLOR_STYLE =
   'http://schemas.microsoft.com/office/2011/relationships/chartColorStyle';

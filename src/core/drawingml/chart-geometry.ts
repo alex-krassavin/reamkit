@@ -1088,8 +1088,16 @@ export function buildLineScene(
 }
 
 // ─── pie chart ──────────────────────────────────────────────────────────────
-const sliceColor = (series: ChartSeries, i: number): string =>
-  pointColor(series, i) ?? SERIES_COLORS[i % SERIES_COLORS.length]!;
+// A pie's slices cycle the same colours a bar chart's SERIES do — the chart's
+// own cycle when it has one, which is the workbook theme's accents.
+const sliceColor = (
+  series: ChartSeries,
+  i: number,
+  cycle?: ReadonlyArray<string>,
+): string => {
+  const palette = cycle && cycle.length > 0 ? cycle : SERIES_COLORS;
+  return pointColor(series, i) ?? palette[i % palette.length]!;
+};
 
 /**
  * Lay out a pie/doughnut {@link Chart} into a {@link ChartScene}: the first
@@ -1119,10 +1127,13 @@ export function buildPieScene(
 
   let top = 4;
   if (chart.title) top += CHART_TITLE_PT * 1.6;
-  // Pie legend lists categories (each in its slice colour).
-  const legendEntries: Array<LegendEntry> = chart.categories.map((c, i) => ({
-    name: c,
-    colorHex: sliceColor(series, i),
+  // Pie legend lists categories (each in its slice colour). A pie written
+  // without `<c:cat>` has none, and its legend came out empty — the same case
+  // the category axis already answers with the point indices, which is what
+  // both references list: WithThreeCharts.xlsx's pie legend reads 1 to 6.
+  const legendEntries: Array<LegendEntry> = values.map((_, i) => ({
+    name: chart.categories[i] ?? String(i + 1),
+    colorHex: sliceColor(series, i, chart.seriesColorCycle),
   }));
   const legend = layoutLegend(
     legendEntries,
@@ -1155,7 +1166,7 @@ export function buildPieScene(
       r,
       startRad: ang,
       sweepRad: sweep,
-      fillHex: sliceColor(series, i),
+      fillHex: sliceColor(series, i, chart.seriesColorCycle),
       strokeHex: 'FFFFFF',
     });
     const mid = ang + sweep / 2;
