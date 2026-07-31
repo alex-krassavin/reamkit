@@ -348,3 +348,39 @@ describe('a comma against the last placeholder is a scale, not punctuation', () 
     expect(applyNumberFormat('1234567', 164, new Map([[164, '#,##0']]))).toBe('1,234,567');
   });
 });
+
+describe('a section may state a CONDITION, and then it is not the sign that picks it', () => {
+  const fmt = (code: string, v: string): string =>
+    applyNumberFormat(v, 164, new Map([[164, code]]));
+
+  it('takes the first section whose test the value passes', () => {
+    // FormatKM.xlsx carries its own expected values beside every case.
+    const km = '[>999999]#,,"M";[>999]#,"K";#';
+    expect(fmt(km, '1.02')).toBe('1');
+    expect(fmt(km, '102')).toBe('102');
+    expect(fmt(km, '1021.02')).toBe('1K');
+    expect(fmt(km, '102102.102')).toBe('102K');
+    expect(fmt(km, '1021021.02')).toBe('1M');
+    expect(fmt(km, '1021021021.02')).toBe('1021M');
+  });
+
+  it('knows every comparison, spaces and all', () => {
+    expect(fmt('[<10]#" Wow"', '1.5')).toBe('2 Wow');
+    expect(fmt('[>10]#" Big"', '11')).toBe('11 Big');
+    expect(fmt('[<=10]#" Wow"', '10')).toBe('10 Wow');
+    expect(fmt('[>=10]#" Big"', '10')).toBe('10 Big');
+    expect(fmt('[=10]#" Wow"', '10')).toBe('10 Wow');
+    expect(fmt('[<>10]#" Wow"', '11')).toBe('11 Wow');
+    expect(fmt('[<   10]#" Wow"', '1')).toBe('1 Wow');
+  });
+
+  it('prints the number plainly when it satisfies no condition', () => {
+    expect(fmt('[<10]#" Wow"', '11')).toBe('11');
+    expect(fmt('[>10]#" Big"', '10')).toBe('10');
+  });
+
+  it('leaves an unconditional format on the sign', () => {
+    expect(fmt('#,##0;[Red]-#,##0', '-1234')).toBe('-1,234');
+    expect(fmt('0.0;(0.0);"zero"', '0')).toBe('zero');
+  });
+});

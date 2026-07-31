@@ -115,9 +115,11 @@ export function numberFormatColorHex(
   if (format === undefined || !format.includes('[')) return undefined;
   const sections = splitSections(format);
   const n = Number(rawValue);
-  const section = Number.isFinite(n)
-    ? (sections[sectionIndexFor(n, sections)] ?? sections[0]!)
-    : (sections[3] ?? sections[0]!);
+  const idx = Number.isFinite(n) ? sectionIndexFor(n, sections) : 3;
+  // A value that satisfies no condition is not formatted by any section, so it
+  // takes no colour from one either.
+  if (idx < 0) return undefined;
+  const section = sections[idx] ?? sections[0]!;
   return colorOfSection(section);
 }
 
@@ -147,7 +149,56 @@ function colorOfSection(section: string): string | undefined {
   return undefined;
 }
 
+/**
+ * §18.8.31 — a section may carry a CONDITION in brackets (`[>999]`), and then
+ * the sections are no longer positive/negative/zero: the first whose test the
+ * value passes applies, and a section without one is the else. Returns the
+ * comparison, or undefined for a section that states none.
+ *
+ * The operator is what tells this bracket from the others a section may carry —
+ * `[Red]`, `[$€-407]`, `[h]` — none of which start with one.
+ */
+function conditionOf(section: string): { op: string; rhs: number } | undefined {
+  const m = /\[\s*(<=|>=|<>|<|>|=)\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s*\]/.exec(section);
+  if (!m) return undefined;
+  const rhs = Number(m[2]);
+  return Number.isFinite(rhs) ? { op: m[1]!, rhs } : undefined;
+}
+
+function conditionHolds(n: number, c: { op: string; rhs: number }): boolean {
+  switch (c.op) {
+    case '<':
+      return n < c.rhs;
+    case '<=':
+      return n <= c.rhs;
+    case '>':
+      return n > c.rhs;
+    case '>=':
+      return n >= c.rhs;
+    case '=':
+      return n === c.rhs;
+    default:
+      return n !== c.rhs;
+  }
+}
+
+/**
+ * The section that applies to `n`, or -1 when the format is all conditions and
+ * the value passes none of them — Excel then shows the number plainly, which is
+ * what FormatChoiceTests.xlsx expects of `[<10]#" Wow"` at 11.
+ */
 function sectionIndexFor(n: number, sections: ReadonlyArray<string>): number {
+  // At most three sections take conditions; a fourth is the text section and is
+  // never a number's.
+  const numeric = Math.min(sections.length, 3);
+  const conditions = sections.slice(0, numeric).map(conditionOf);
+  if (conditions.some((c) => c !== undefined)) {
+    for (let i = 0; i < numeric; i++) {
+      const c = conditions[i];
+      if (c === undefined || conditionHolds(n, c)) return i;
+    }
+    return -1;
+  }
   if (n > 0) return 0;
   if (n < 0) return sections.length > 1 ? 1 : 0;
   return sections.length > 2 ? 2 : 0;
@@ -563,8 +614,13 @@ function applyFormatString(rawValue: string, format: string): string {
   }
 
   const sectionIdx = sectionIndexFor(n, sections);
+  if (sectionIdx < 0) return defaultNumberRender(rawValue);
   const section = sections[sectionIdx] ?? sections[0]!;
-  return applyNumericSection(n, section, sectionIdx === 1);
+  // The second section is the NEGATIVE one and prints its own sign (or none) —
+  // but only when the sections mean positive/negative/zero. Under conditions
+  // they mean whatever the tests say, and the sign is the value's own.
+  const negativeSection = sectionIdx === 1 && conditionOf(sections[0] ?? '') === undefined;
+  return applyNumericSection(n, section, negativeSection);
 }
 
 // Split on top-level ';' — ignore ';' inside quoted strings and brackets.
