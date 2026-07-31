@@ -116,7 +116,7 @@ export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): C
     ? poVal(poChildren(legend).find((c) => poIs(c, 'c:legendPos')))
     : undefined;
 
-  const title = chartTitle(chart);
+  const title = chartTitle(chart, series);
 
   return {
     type,
@@ -264,9 +264,34 @@ function collectAT(node: PoNode): string {
   return text;
 }
 
-function chartTitle(chart: PoNode): string | undefined {
+/**
+ * §21.2.2.213 `c:title` — the chart's title, authored or generated.
+ *
+ * `c:tx` is OPTIONAL: a `<c:title>` with none asks the application to make the
+ * title up, and §21.2.2.10's `c:autoTitleDeleted val="0"` says that generated
+ * title has not been removed. Excel and LibreOffice agree on the rule — one
+ * series means the series' name, anything else the placeholder "Chart Title" —
+ * and reading only the `a:t` runs gave 56557.xlsx a blank page where the
+ * reference draws its title. Eleven chart parts across eight corpus files are
+ * written this way.
+ *
+ * The placeholder is an application string and therefore a locale: this file
+ * was authored in Swedish, where Excel prints "Diagramrubrik". English is what
+ * both references print here, and what we have to pick.
+ *
+ * @param chart  The `c:chart` element.
+ * @param series The chart's series, for the single-series case.
+ * @returns The title text, or undefined when there is no title to draw.
+ */
+function chartTitle(chart: PoNode, series: ReadonlyArray<{ name?: string }>): string | undefined {
   const title = poChildren(chart).find((c) => poIs(c, 'c:title'));
-  return title ? collectAT(title) || undefined : undefined;
+  if (!title) return undefined;
+  const authored = collectAT(title) || undefined;
+  if (authored) return authored;
+  const deleted =
+    poVal(poChildren(chart).find((c) => poIs(c, 'c:autoTitleDeleted'))) === '1';
+  if (deleted) return undefined;
+  return (series.length === 1 ? series[0]?.name : undefined) ?? 'Chart Title';
 }
 
 // c:catAx / c:valAx → c:title text.

@@ -375,3 +375,43 @@ describe('column chart rendering (end-to-end)', () => {
     expect(text).toMatch(/<[0-9A-F]+> Tj/);
   });
 });
+
+describe('an auto-generated chart title (§21.2.2.213)', () => {
+  const chartXml = (title: string, sers: string): string =>
+    `<?xml version="1.0"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">` +
+    `<c:chart>${title}<c:plotArea><c:barChart><c:barDir val="col"/>${sers}</c:barChart></c:plotArea></c:chart></c:chartSpace>`;
+  const oneSeries =
+    `<c:ser><c:tx><c:strRef><c:strCache><c:pt idx="0"><c:v>Demo</c:v></c:pt></c:strCache></c:strRef></c:tx>` +
+    `<c:val><c:numRef><c:numCache><c:pt idx="0"><c:v>1</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>`;
+
+  it('takes the series name when there is exactly one, and the placeholder otherwise', () => {
+    // `c:tx` is optional: a `<c:title>` without one asks the application to make
+    // the title up, and §21.2.2.10's `autoTitleDeleted val="0"` says the made-up
+    // title stands. Reading only the `a:t` runs left it undefined, and eleven
+    // chart parts across eight corpus files are written this way.
+    const single = parseChart(
+      enc.encode(chartXml('<c:title><c:layout/></c:title><c:autoTitleDeleted val="0"/>', oneSeries)),
+      defaultColorResolver,
+    );
+    expect(single.title).toBe('Demo');
+    const two = parseChart(
+      enc.encode(
+        chartXml('<c:title><c:layout/></c:title>', oneSeries + oneSeries.replace('Demo', 'Other')),
+      ),
+      defaultColorResolver,
+    );
+    expect(two.title).toBe('Chart Title');
+  });
+
+  it('stays silent when the author deleted it, or asked for no title at all', () => {
+    expect(
+      parseChart(
+        enc.encode(
+          chartXml('<c:title><c:layout/></c:title><c:autoTitleDeleted val="1"/>', oneSeries),
+        ),
+        defaultColorResolver,
+      ).title,
+    ).toBeUndefined();
+    expect(parseChart(enc.encode(chartXml('', oneSeries)), defaultColorResolver).title).toBeUndefined();
+  });
+});
