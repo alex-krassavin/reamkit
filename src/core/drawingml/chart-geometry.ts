@@ -1015,13 +1015,27 @@ export function buildScatterScene(
   );
   pushAxisLines(polylines, x0, y0, plotW, plotH, chart);
 
+  // §21.2.2.161 — the style says whether the points are joined, marked, or
+  // both. The schema's default is `marker`; a chart Excel writes as
+  // "scatter with straight lines and markers" says `lineMarker`, and drawing
+  // only its points left chartTitle_withTitleFormula.xlsx as four dots where
+  // both references draw the line through them. A smooth style is drawn
+  // straight — the curve is a fit we do not compute.
+  const style = chart.scatterStyle ?? 'marker';
+  const joins = style === 'line' || style === 'lineMarker' || style.startsWith('smooth');
+  const marks = style === 'marker' || style === 'lineMarker' || style === 'smoothMarker';
   for (let s = 0; s < chart.series.length; s++) {
     const series = chart.series[s]!;
     const color = seriesColor(series, s, chart.seriesColorCycle);
+    const pts: Array<readonly [number, number]> = [];
     for (let i = 0; i < series.values.length; i++) {
       const px = xAt(series.xValues?.[i] ?? i);
       const py = yAt(series.values[i] ?? 0);
-      rects.push({ x: px - 2, y: py - 2, w: 4, h: 4, fillHex: color });
+      pts.push([px, py]);
+      if (marks) rects.push({ x: px - 2, y: py - 2, w: 4, h: 4, fillHex: color });
+    }
+    if (joins && pts.length >= 2) {
+      polylines.push({ points: pts, strokeHex: color, widthPt: 1.5 });
     }
   }
   legend.emit(rects, labels);

@@ -157,6 +157,13 @@ export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): C
     }
   }
 
+  // §21.2.2.161 — a scatter joins its points, marks them, or both.
+  const scatterStyleRaw = group
+    ? poVal(poChildren(group).find((c) => poIs(c, 'c:scatterStyle')))
+    : undefined;
+  const scatterStyle = SCATTER_STYLES.has(scatterStyleRaw ?? '')
+    ? (scatterStyleRaw as Chart['scatterStyle'])
+    : undefined;
   const barDir = group ? poVal(poChildren(group).find((c) => poIs(c, 'c:barDir'))) : undefined;
   const grouping = group ? poVal(poChildren(group).find((c) => poIs(c, 'c:grouping'))) : undefined;
   const doughnut = group ? poIs(group, 'c:doughnutChart') : false;
@@ -212,6 +219,7 @@ export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): C
     ...(catAxisTitle ? { catAxisTitle } : {}),
     ...(valAxisTitle ? { valAxisTitle } : {}),
     ...(secondaryValAxisTitle ? { secondaryValAxisTitle } : {}),
+    ...(scatterStyle ? { scatterStyle } : {}),
     ...(catAxisLine ? { catAxisLine } : {}),
     ...(valAxisLine ? { valAxisLine } : {}),
     ...(secondaryValAxisLine ? { secondaryValAxisLine } : {}),
@@ -370,12 +378,30 @@ function collectAT(node: PoNode): string {
 function chartTitle(chart: PoNode, series: ReadonlyArray<{ name?: string }>): string | undefined {
   const title = poChildren(chart).find((c) => poIs(c, 'c:title'));
   if (!title) return undefined;
-  const authored = collectAT(title) || undefined;
+  const authored = collectAT(title) || cachedTitleText(title);
   if (authored) return authored;
   const deleted =
     poVal(poChildren(chart).find((c) => poIs(c, 'c:autoTitleDeleted'))) === '1';
   if (deleted) return undefined;
   return (series.length === 1 ? series[0]?.name : undefined) ?? 'Chart Title';
+}
+
+/**
+ * §21.2.2.215 — a title the author gave as a FORMULA: `c:tx/c:strRef` with the
+ * text in its `c:strCache`, and not one `a:t` run anywhere. Read for rich text
+ * alone, such a title came out as the generated placeholder —
+ * chartTitle_withTitleFormula.xlsx printed "Chart Title" where both references
+ * print "Formula Title from Excel 2016".
+ *
+ * @param title The `c:title` node.
+ * @returns The cached text, or undefined when the title carries no cache.
+ */
+function cachedTitleText(title: PoNode): string | undefined {
+  const tx = poChildren(title).find((c) => poIs(c, 'c:tx'));
+  const ref = tx ? poChildren(tx).find((c) => poIs(c, 'c:strRef')) : undefined;
+  if (!ref) return undefined;
+  const cached = denseStrings(ref).filter((t) => t.length > 0);
+  return cached.length > 0 ? cached.join(' ') : undefined;
 }
 
 // c:catAx / c:valAx → c:title text.
@@ -388,7 +414,7 @@ function axisTitle(plotArea: PoNode, axTag: string): string | undefined {
   const ax = poChildren(plotArea).find((c) => poIs(c, axTag));
   const title = ax ? poChildren(ax).find((c) => poIs(c, 'c:title')) : undefined;
   if (!title) return undefined;
-  return collectAT(title) || 'Axis Title';
+  return collectAT(title) || cachedTitleText(title) || 'Axis Title';
 }
 
 /**
@@ -595,6 +621,8 @@ const ACCENT_SLOTS: ReadonlyArray<string> = [
   'accent5',
   'accent6',
 ];
+
+const SCATTER_STYLES = new Set(['none', 'line', 'lineMarker', 'marker', 'smooth', 'smoothMarker']);
 
 const REL_CHART_COLOR_STYLE =
   'http://schemas.microsoft.com/office/2011/relationships/chartColorStyle';

@@ -965,6 +965,12 @@ export interface Chart {
   readonly valAxisTitle?: string; // c:valAx/c:title
   /** §21.2.2.168 — the title of the secondary value axis, when one is drawn. */
   readonly secondaryValAxisTitle?: string;
+  /**
+   * §21.2.2.161 `c:scatterStyle` — whether a scatter's points are joined by a
+   * line, marked, or both. The schema's default is `marker`; Excel writes
+   * `lineMarker` for the chart most people insert.
+   */
+  readonly scatterStyle?: 'none' | 'line' | 'lineMarker' | 'marker' | 'smooth' | 'smoothMarker';
   /** §21.2.2.196 — the category axis's own rule. */
   readonly catAxisLine?: ChartLineStyle;
   /** §21.2.2.196 — the value axis's own rule. */
