@@ -899,6 +899,7 @@ function emitPageContent(
       const line = cmd.line;
       const originX = cmd.originX;
       const baselineY = H - cmd.baselineY; // top-left frame → PDF y-up
+      const rotationDeg = cmd.rotationDeg ?? 0;
       // Link regions (ISO 32000-1 §12.5.6.5): contiguous tokens sharing an
       // href become one clickable rect per line. The box mirrors the layout's
       // line metrics (ascent: font size vs math ascent; descent: lineDescent's
@@ -1042,7 +1043,27 @@ function emitPageContent(
       // A super/subscript draws off the baseline, so the line can no longer be
       // one Tm and a run of Tj — each token needs its own placement.
       const hasRise = line.tokens.some((t) => t.kind === 'text' && t.risePt !== undefined);
-      if (extraPerSpace > 0 || hasImageToken || hasMathToken || hasRtl || hasRise) {
+      // A rotated line advances its glyphs along the ROTATED axis, which one text
+      // matrix already does for free — but only on the single-Tm path, where the
+      // advance is the font's and not one this emitter computes in page space.
+      if (rotationDeg !== 0 && !hasImageToken && !hasMathToken) {
+        if (!inBT) {
+          out.push('BT');
+          inBT = true;
+        }
+        const rad = (rotationDeg * Math.PI) / 180;
+        const cos = formatNumber(Math.cos(rad));
+        const sin = formatNumber(Math.sin(rad));
+        out.push(
+          `${cos} ${sin} ${formatNumber(-Math.sin(rad))} ${cos} ` +
+            `${formatNumber(originX)} ${formatNumber(baselineY)} Tm`,
+        );
+        for (const tok of line.tokens) {
+          if (tok.kind !== 'text') continue;
+          switchFontIfNeeded(tok);
+          out.push(`<${tok.font.measure.encodeTextAsCidHex(tok.text)}> Tj`);
+        }
+      } else if (extraPerSpace > 0 || hasImageToken || hasMathToken || hasRtl || hasRise) {
         // Per-token absolute positioning. Required for justify (inter-word
         // slack), inline images (text-mode exits), and BiDi (visual order
         // differs from logical order). Tokens are emitted in visual order.

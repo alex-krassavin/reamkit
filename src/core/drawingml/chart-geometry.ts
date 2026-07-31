@@ -61,6 +61,13 @@ export interface ChartLabel {
   readonly sizePt: number;
   readonly colorHex: string;
   readonly align: LabelAlign;
+  /**
+   * §21.2.2.216 `c:title/c:txPr/a:bodyPr@rot` — a value-axis title reads
+   * bottom-to-top (`rot="-5400000"`, the default every reader applies). Degrees
+   * counter-clockwise about the anchor; `align` then runs along the ROTATED
+   * reading direction.
+   */
+  readonly rotationDeg?: number;
 }
 /**
  * The fully laid-out chart: rectangles, polylines, wedges and labels (plus
@@ -407,11 +414,12 @@ function buildFrame(
 
   let top = 4;
   if (chart.title) top += CHART_TITLE_PT * 1.6;
-  if (chart.valAxisTitle) top += CHART_LABEL_PT * 1.4;
   const legend = buildLegendBlock(chart, wPt, hPt, measure);
   const tick2W =
     scale2 && !horizontal
-      ? Math.max(0, ...tickVals2.map((v) => measure(formatTick(v, scale2.step), CHART_LABEL_PT))) + 4
+      ? Math.max(0, ...tickVals2.map((v) => measure(formatTick(v, scale2.step), CHART_LABEL_PT))) +
+        4 +
+        (chart.secondaryValAxisTitle ? CHART_LABEL_PT * 1.5 : 0)
       : 0;
   const plotRight = wPt - 4 - legend.rightWidth - tick2W;
 
@@ -419,7 +427,8 @@ function buildFrame(
   const catLabelH = CHART_LABEL_PT * 1.6;
   const catTitleH = chart.catAxisTitle ? CHART_LABEL_PT * 1.5 : 0;
 
-  const x0 = 4 + tickLabelW;
+  const valTitleW = chart.valAxisTitle ? CHART_LABEL_PT * 1.5 : 0;
+  const x0 = 4 + valTitleW + tickLabelW;
   const y0 = 4 + legend.bottomHeight + catTitleH + catLabelH;
   const plotW = Math.max(1, plotRight - x0);
   const plotH = Math.max(1, hPt - top - y0);
@@ -429,17 +438,18 @@ function buildFrame(
   const zeroOffset = valueOffset(0);
 
   pushChartTitle(labels, chart, wPt, hPt);
-  // Axis titles. The value-axis title is laid out horizontally above the plot
-  // (a deliberate simplification — chart text is not rotated); the category-axis
-  // title sits centred below the category labels.
+  // Axis titles. A value-axis title reads bottom-to-top, in the gutter outside
+  // its own tick labels; the category-axis title sits centred below the
+  // category labels.
   if (chart.valAxisTitle) {
     labels.push({
       text: chart.valAxisTitle,
-      x: x0,
-      y: hPt - top + 3,
+      x: 4 + CHART_LABEL_PT * 0.9,
+      y: y0 + plotH / 2,
       sizePt: CHART_LABEL_PT,
       colorHex: LABEL_COLOR,
-      align: 'left',
+      align: 'center',
+      rotationDeg: 90,
     });
   }
   if (chart.catAxisTitle) {
@@ -507,11 +517,12 @@ function buildFrame(
     if (chart.secondaryValAxisTitle) {
       labels.push({
         text: chart.secondaryValAxisTitle,
-        x: x0 + plotW,
-        y: hPt - top + 3,
+        x: wPt - 4,
+        y: y0 + plotH / 2,
         sizePt: CHART_LABEL_PT,
         colorHex: LABEL_COLOR,
-        align: 'left',
+        align: 'center',
+        rotationDeg: 90,
       });
     }
   }
@@ -1191,15 +1202,18 @@ function layoutLegend(
   if (!hasLegend || entries.length === 0) {
     return { rightWidth: 0, bottomHeight: 0, emit: () => {} };
   }
-  const sw = CHART_LABEL_PT; // swatch size
+  const sw = CHART_LABEL_PT; // key height reference
   const gap = 4;
-  // A line key is drawn as a wide, thin bar — the same rect primitive, in the
-  // proportions of the stroke it stands for.
-  const keyW = marker === 'line' ? sw * 2 : sw;
+  // Neither reader draws the key as a square: Excel and Calc both draw a WIDE,
+  // flat swatch about twice the text height across — 57362.xlsx's key is 20 x
+  // 4.5pt against a 9pt label. A line key is the same width, drawn as the
+  // stroke it stands for.
+  const keyW = sw * 2.2;
+  const keyH = sw * 0.55;
   const key = (x: number, y: number, e: LegendEntry): ChartRect =>
     (e.marker ?? marker) === 'line'
       ? { x, y: y + sw / 2 - 0.75, w: keyW, h: 1.5, fillHex: e.colorHex }
-      : { x, y, w: sw, h: sw, fillHex: e.colorHex };
+      : { x, y: y + (sw - keyH) / 2, w: keyW, h: keyH, fillHex: e.colorHex };
   const entryW = (e: LegendEntry): number => keyW + 3 + measure(e.name, CHART_LABEL_PT) + gap * 2;
 
   if (pos === 'r' || pos === 'l') {

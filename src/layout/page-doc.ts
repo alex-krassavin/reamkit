@@ -200,6 +200,13 @@ export interface TextLineItem extends PageItemBase {
   /** Distance from the page TOP down to the text baseline. */
   readonly baselineY: Pt;
   readonly clip?: { readonly x: Pt; readonly y: Pt; readonly width: Pt; readonly height: Pt };
+  /**
+   * Counter-clockwise rotation about `(originX, baselineY)`, in degrees. A
+   * value-axis title reads bottom-to-top in every reader (§21.2.2.216
+   * `c:title/c:tx/…/a:bodyPr@rot` = -5400000, i.e. 90°); drawn flat it sat over
+   * the plot's own tick labels. Absent ⇒ horizontal.
+   */
+  readonly rotationDeg?: number;
 }
 
 /** One edge of a table-cell frame; `(x, y)` is the cell box's top-left corner. */

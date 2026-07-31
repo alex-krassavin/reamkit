@@ -329,6 +329,8 @@ interface ChartTextPrim {
   readonly line: Line;
   readonly x: number; // local baseline origin
   readonly y: number;
+  /** Counter-clockwise degrees about the origin (rotated axis titles). */
+  readonly rotationDeg?: number;
 }
 interface ChartLayout {
   readonly shapes: ReadonlyArray<ChartShapePrim>;
@@ -1879,8 +1881,13 @@ function wedgePrim(w: ChartWedge): ChartShapePrim {
 function labelPrim(l: ChartLabel, font: FontResource): ChartTextPrim {
   const line = makeChartLabelLine(l.text, font, l.sizePt, l.colorHex);
   const w = line.contentWidthPt;
-  const x = l.align === 'center' ? l.x - w / 2 : l.align === 'right' ? l.x - w : l.x;
-  return { line, x, y: l.y };
+  const shift = l.align === 'center' ? -w / 2 : l.align === 'right' ? -w : 0;
+  // A rotated label reads along the rotated axis, so its own alignment shifts
+  // it there and not across the page.
+  if (l.rotationDeg) {
+    return { line, x: l.x, y: l.y + shift, rotationDeg: l.rotationDeg };
+  }
+  return { line, x: l.x + shift, y: l.y };
 }
 
 // A minimal single-token Line for a positioned chart label.
@@ -4301,6 +4308,7 @@ function paginateSections(
             line: t.line,
             originX: pt(x + t.x),
             baselineY: pt(asm.ctx.pageHeight - (bottomYUp + t.y)),
+            ...(t.rotationDeg ? { rotationDeg: t.rotationDeg } : {}),
             ...fig,
           });
         }

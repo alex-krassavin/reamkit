@@ -446,8 +446,12 @@ function wedgeSvg(w: ChartWedge): string {
 }
 
 function labelSvg(l: ChartLabel, sceneH: number, anchor: 'start' | 'middle' | 'end'): string {
+  // SVG's y grows downward, so a counter-clockwise rotation is negative here.
+  const rot = l.rotationDeg
+    ? ` transform="rotate(${fmt(-l.rotationDeg)} ${fmt(l.x)} ${fmt(sceneH - l.y)})"`
+    : '';
   return (
-    `<text x="${fmt(l.x)}" y="${fmt(sceneH - l.y)}" font-size="${fmt(l.sizePt)}" ` +
+    `<text x="${fmt(l.x)}" y="${fmt(sceneH - l.y)}"${rot} font-size="${fmt(l.sizePt)}" ` +
     `font-family="sans-serif" fill="#${l.colorHex}" text-anchor="${anchor}">${escapeText(l.text)}</text>`
   );
 }

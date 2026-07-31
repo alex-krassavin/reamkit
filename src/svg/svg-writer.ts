@@ -159,6 +159,11 @@ function emitTextLine(
   }
   const y = item.baselineY;
   let x: number = item.originX;
+  // SVG's y grows downward, so a counter-clockwise page rotation is a negative
+  // one here. The pivot is the line's own origin, as in the PDF text matrix.
+  const rot = item.rotationDeg
+    ? ` transform="rotate(${fmt(-item.rotationDeg)} ${fmt(item.originX)} ${fmt(item.baselineY)})"`
+    : '';
   for (const tok of item.line.tokens) {
     if (tok.kind === 'image') {
       x += tok.widthPt; // inline image boxes reserve space; not rendered in v0
@@ -175,7 +180,7 @@ function emitTextLine(
     }
     if (tok.text.trim().length > 0) {
       out.push(
-        `<text x="${fmt(x)}" y="${fmt(y)}" font-family="sans-serif" font-size="${fmt(tok.fontSizePt)}" fill="#${tok.resolvedRun.colorHex}">${escapeXml(tok.text)}</text>`,
+        `<text x="${fmt(x)}" y="${fmt(y)}"${rot} font-family="sans-serif" font-size="${fmt(tok.fontSizePt)}" fill="#${tok.resolvedRun.colorHex}">${escapeXml(tok.text)}</text>`,
       );
     }
     x += tok.widthPt;
