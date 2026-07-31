@@ -435,6 +435,37 @@ function bandsAcross(worksheet: ParsedWorksheet, fitWide: number): boolean {
   return !worksheet.fitToPage || fitWide > 1;
 }
 
+/**
+ * The manual breaks (§18.3.1.74/§18.3.1.14) that still apply on one axis.
+ *
+ * Fit-to-page and a manual break are two answers to the same question, and
+ * Excel takes the scaling one: turn on "fit to N pages" and the breaks drawn
+ * into the sheet stop dividing it. Honouring both asks for the impossible —
+ * a break costs a page at EVERY scale, so `fitToHeight="1"` beside one of them
+ * can never be satisfied, and the fit search would shrink toward its floor
+ * chasing a page count it will never reach. sheet-fit-breaks.xlsx says fit on
+ * one page and breaks after row 20; the reference prints all forty rows on one
+ * page and we printed two.
+ *
+ * An explicit `0` on the axis means "as many pages as it takes" — nothing is
+ * being fitted there, so the breaks on it stand.
+ *
+ * @param worksheet The sheet, for its `fitToPage` flag and page setup.
+ * @param axis      Which axis's breaks are wanted.
+ * @returns The break indices to honour; empty when fit-to-page overrides them.
+ */
+function honouredBreaks(
+  worksheet: ParsedWorksheet,
+  axis: 'rows' | 'cols',
+): ReadonlyArray<number> {
+  const breaks = (axis === 'rows' ? worksheet.rowBreaks : worksheet.colBreaks) ?? [];
+  if (!worksheet.fitToPage) return breaks;
+  const setup = worksheet.pageSetup;
+  // Both default to 1 page when fit-to-page is on — §18.3.1.63 CT_PageSetup.
+  const fit = (axis === 'rows' ? setup?.fitToHeight : setup?.fitToWidth) ?? 1;
+  return fit >= 1 ? [] : breaks;
+}
+
 function sheetContentWidthTwips(worksheet: ParsedWorksheet): number {
   const pageSize = pageSizeFromSetup(worksheet.pageSetup);
   const pageWidthTwips = pageSize ? Math.round(pageSize.width * 20) : DEFAULT_PAPER_TWIPS[0];
@@ -526,7 +557,14 @@ function searchFitScale(
   const floor = Math.round(MIN_PRINT_SCALE * 100);
   let hi = Math.min(100, Math.floor(closed * 100));
   if (hi <= floor) return Math.max(MIN_PRINT_SCALE, closed);
-  if (pageCount(hi / 100) <= maxPages) return closed;
+  // The whole percent, not the closed form it was floored from. They differ by
+  // under a percent, but the closed form is the scale at which the grid fills
+  // the page EXACTLY — sheet-fit-breaks.xlsx works out to 487.0pt of rows in
+  // 487.0pt of page — and the layout, which rounds where the arithmetic does
+  // not, then spills its last row onto a second page. Excel searches and stores
+  // whole percentages; taking the one we just verified leaves the slack that
+  // rounding needs.
+  if (pageCount(hi / 100) <= maxPages) return hi / 100;
   let lo = floor;
   // Shrink only when shrinking gets there. A manual page break costs a page at
   // every scale, so a sheet with three of them and `fitToHeight="1"` can never
@@ -1109,7 +1147,7 @@ export function worksheetToBody(
   // band, so fit-to-page can paginate them instead of dividing an area.
   const fitRowTwips: Array<number> = [];
   const fitRowBreaks = new Set<number>();
-  const manualRowBreaks = new Set(worksheet.rowBreaks ?? []);
+  const manualRowBreaks = new Set(honouredBreaks(worksheet, 'rows'));
   let fitTitleTwips = 0;
   for (let r = 0; r < rowCount; r++) {
     if (hiddenRows.has(r)) continue;
@@ -1122,7 +1160,7 @@ export function worksheetToBody(
     }
     fitRowTwips.push(twips);
   }
-  const manualColBreaks = new Set(worksheet.colBreaks ?? []);
+  const manualColBreaks = new Set(honouredBreaks(worksheet, 'cols'));
   const fitColBreaks = new Set<number>();
   visibleCols.forEach((c, i) => {
     if (manualColBreaks.has(c + colStart)) fitColBreaks.add(i);
@@ -1149,7 +1187,7 @@ export function worksheetToBody(
 
   // Manual <rowBreaks>: each brk id is the 0-based row that starts a new page →
   // force a page break before that (absolute) row.
-  const breakRows = new Set(worksheet.rowBreaks ?? []);
+  const breakRows = new Set(honouredBreaks(worksheet, 'rows'));
 
   // DoS guard: bound the total rendered text per sheet. A crafted file can
   // reference a multi-MB string from thousands of cells (poc-shared-strings:
