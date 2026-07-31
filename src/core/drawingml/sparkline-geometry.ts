@@ -92,14 +92,22 @@ function columnSpark(
   const slot = w / n;
   const bw = slot * 0.72;
   const off = (slot - bw) / 2;
-  const pad = h * 0.06;
   const paths: Array<VectorPath> = [];
+  const at = (v: number): number => ((v - min) / span) * h;
+  // A column sparkline is measured from its ZERO line: a negative value hangs
+  // BELOW it. Clamped to the frame, this is also the all-positive case — zero
+  // falls under the bottom edge and every bar rises from it, as before —
+  // and the all-negative one, where they hang from the top.
+  // Sparklines.xlsx plots 4, 2, 7, -2, -5: read as a plain range its -5 drew as
+  // a stub pointing UP, which is the one thing the glyph exists to show.
+  const zero = Math.min(h, Math.max(0, at(0)));
   for (let i = 0; i < n; i++) {
     const v = values[i];
     if (v === null || v === undefined) continue; // gap → no bar, slot preserved
-    const frac = (v - min) / span; // 0 at the lowest value, 1 at the highest
-    const bh = Math.max(0.4, pad + frac * (h - pad));
-    paths.push(rectPath(i * slot + off, 0, bw, bh));
+    const y = at(v);
+    const bottom = Math.min(zero, y);
+    const bh = Math.max(0.4, Math.abs(y - zero));
+    paths.push(rectPath(i * slot + off, bottom, bw, bh));
   }
   return paths.length > 0 ? [{ paths, fillColorHex: color }] : [];
 }
