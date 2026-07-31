@@ -732,9 +732,11 @@ function emitPageContent(
         out.push(dash === '' ? '[] 0 d 2 J' : `${dash} 0 d 0 J`);
         lastDash = dash;
       }
-      if (width !== lastWidth) {
-        out.push(`${formatNumber(width)} w`);
-        lastWidth = width;
+      // Each rule of a `double` takes a third of the declared width.
+      const strokeW = b.borderStyle === 'double' ? Math.max(0.25, width / 3) : width;
+      if (strokeW !== lastWidth) {
+        out.push(`${formatNumber(strokeW)} w`);
+        lastWidth = strokeW;
       }
       if (color !== lastColor) {
         const [r, g, bl] = hexToRgb01(color);
@@ -745,23 +747,33 @@ function emitPageContent(
       const y = H - b.y - b.height; // box bottom edge in PDF's y-up frame
       const w = b.width;
       const h = b.height;
-      switch (b.side) {
-        case 'top':
-          out.push(`${formatNumber(x)} ${formatNumber(y + h)} m`);
-          out.push(`${formatNumber(x + w)} ${formatNumber(y + h)} l`);
-          break;
-        case 'bottom':
-          out.push(`${formatNumber(x)} ${formatNumber(y)} m`);
-          out.push(`${formatNumber(x + w)} ${formatNumber(y)} l`);
-          break;
-        case 'left':
-          out.push(`${formatNumber(x)} ${formatNumber(y)} m`);
-          out.push(`${formatNumber(x)} ${formatNumber(y + h)} l`);
-          break;
-        case 'right':
-          out.push(`${formatNumber(x + w)} ${formatNumber(y)} m`);
-          out.push(`${formatNumber(x + w)} ${formatNumber(y + h)} l`);
-          break;
+      // The edge as a segment plus the direction to offset it in: a `double`
+      // rule is TWO lines straddling the edge, and every other style is the one
+      // line down the middle of it.
+      const [x1, y1, x2, y2, nx, ny]: readonly [
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+      ] =
+        b.side === 'top'
+          ? [x, y + h, x + w, y + h, 0, 1]
+          : b.side === 'bottom'
+            ? [x, y, x + w, y, 0, 1]
+            : b.side === 'left'
+              ? [x, y, x, y + h, 1, 0]
+              : [x + w, y, x + w, y + h, 1, 0];
+      // §18.18.3 `double` is a pair of rules with a gap between them, not a
+      // heavier single one — 59264.xlsx labels its sampler cell DOUBLE and both
+      // references draw two lines where we drew one. Each line takes a third of
+      // the declared width and the gap the middle third, which is how Excel and
+      // Calc split it.
+      const offsets = b.borderStyle === 'double' ? [-width / 3, width / 3] : [0];
+      for (const d of offsets) {
+        out.push(`${formatNumber(x1 + nx * d)} ${formatNumber(y1 + ny * d)} m`);
+        out.push(`${formatNumber(x2 + nx * d)} ${formatNumber(y2 + ny * d)} l`);
       }
       out.push('S');
     }

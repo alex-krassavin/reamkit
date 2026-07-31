@@ -2255,21 +2255,29 @@ function mapBorderStyle(style: XlsxBorderStyleName): { style: BorderStyle; sizeE
     case 'thin':
       return { style: 'single', sizeEighthPt: 6 };
     case 'medium':
+      return { style: 'single', sizeEighthPt: 12 };
+    // …and a medium PATTERN is still a pattern. Mapped to a plain rule these
+    // four came out solid: 59264.xlsx is a sampler of every border style, and
+    // both references draw its MEDIUM_DASHED, MEDIUM_DASH_DOT,
+    // MEDIUM_DASH_DOT_DOT and SLANTED_DASH_DOT cells dashed.
     case 'mediumDashed':
     case 'mediumDashDot':
     case 'mediumDashDotDot':
-      return { style: 'single', sizeEighthPt: 12 };
+    case 'slantDashDot':
+      return { style: 'dashed', sizeEighthPt: 12 };
     case 'thick':
       return { style: 'thick', sizeEighthPt: 18 };
     case 'dashed':
     case 'dashDot':
     case 'dashDotDot':
-    case 'slantDashDot':
       return { style: 'dashed', sizeEighthPt: 6 };
     case 'dotted':
       return { style: 'dotted', sizeEighthPt: 6 };
+    // A double rule is three screen pixels across — a line, a gap and a line —
+    // not one. Given a thin rule's 0.75pt it had no room for the gap and drew
+    // as a single hairline (59264.xlsx).
     case 'double':
-      return { style: 'double', sizeEighthPt: 6 };
+      return { style: 'double', sizeEighthPt: 18 };
     default:
       return { style: 'single', sizeEighthPt: 6 };
   }
