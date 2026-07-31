@@ -623,3 +623,54 @@ describe('conditional formatting — render smoke (E-SHEET SC1c)', () => {
     expect(html).toContain('A4.4 4.4 0'); // a quarter-pie arc
   });
 });
+
+// §18.3.1.11 — a `cellIs` rule's operands are not always numbers.
+describe('cellIs against text', () => {
+  const STYLES = `
+    <fonts count="1"><font><sz val="11"/></font></fonts>
+    <fills count="1"><fill><patternFill patternType="none"/></fill></fills>
+    <borders count="1"><border/></borders>
+    <cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellXfs>
+    <dxfs count="1"><dxf><fill><patternFill><bgColor rgb="FFFFCC99"/></patternFill></fill></dxf></dxfs>`;
+
+  /** The shading each cell of the first row resolves to. */
+  function shadings(
+    operator: string,
+    operand: string,
+    values: Array<string | number>,
+  ): Array<unknown> {
+    const { flow } = Ream.parse(
+      buildXlsx({
+        rows: [values],
+        stylesXml: STYLES,
+        conditionalFormattingXml:
+          `<conditionalFormatting sqref="A1:E1"><cfRule type="cellIs" dxfId="0" priority="1" ` +
+          `operator="${operator}"><formula>${operand}</formula></cfRule></conditionalFormatting>`,
+      }),
+    );
+    return flow.body
+      .flatMap((el) => (el.kind === 'table' ? (el.table.rows[0]?.cells ?? []) : []))
+      .map((c) => c.properties.shading);
+  }
+
+  it('formats every cell that holds something — `notEqual ""`', () => {
+    // How a document asks for "everything with a value in it". Read as a
+    // number the operand is NaN and the rule matched nothing:
+    // tdf152581_bordercolorNotExportedToXLSX.xlsx lost the fill on both cells.
+    const [a, b] = shadings('notEqual', '""', ['test', 'x']);
+    expect(a).toBeDefined();
+    expect(b).toBeDefined();
+  });
+
+  it('compares words case-insensitively', () => {
+    const [a, b] = shadings('equal', '"ABC"', ['abc', 'abd']);
+    expect(a).toBeDefined();
+    expect(b).toBeUndefined();
+  });
+
+  it('leaves a numeric comparison arithmetic', () => {
+    const [a, b] = shadings('greaterThan', '5', [10, 3]);
+    expect(a).toBeDefined();
+    expect(b).toBeUndefined();
+  });
+});

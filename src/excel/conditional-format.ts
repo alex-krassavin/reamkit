@@ -299,15 +299,18 @@ export function buildConditionalFormatter(
     } of flat) {
       if (!coversCell(ranges, row, col)) continue;
       switch (rule.type) {
-        case 'cellIs':
-          if (
-            !textClaimed &&
-            value !== undefined &&
-            cellIsMatches(rule.operator, value, rule.formulas)
-          ) {
-            claim(rule);
-          }
+        case 'cellIs': {
+          if (textClaimed) break;
+          // A numeric cell against a numeric operand is arithmetic; anything
+          // else is a text comparison — see cellIsMatchesText.
+          const numeric =
+            value !== undefined && Number.isFinite(Number(operandText(rule.formulas[0])));
+          const hit = numeric
+            ? cellIsMatches(rule.operator, value, rule.formulas)
+            : text !== undefined && cellIsMatchesText(rule.operator, text, rule.formulas);
+          if (hit) claim(rule);
           break;
+        }
         case 'colorScale':
           if (!textClaimed && value !== undefined && scale) {
             textFmt = { fillHex: rgbHex(colorScaleColor(scale, value)) };
@@ -579,6 +582,53 @@ function coversCell(ranges: ReadonlyArray<MergedRange>, row: number, col: number
     }
   }
   return false;
+}
+
+/** A `cellIs` operand: a bare number, or a quoted string literal. */
+function operandText(raw: string | undefined): string {
+  const t = (raw ?? '').trim();
+  const quoted = /^"(.*)"$/su.exec(t);
+  return quoted ? (quoted[1] ?? '') : t;
+}
+
+/**
+ * §18.3.1.11 — a `cellIs` rule compares the cell against one or two operands,
+ * and the comparison is not always arithmetic: `notEqual ""` over a sheet of
+ * words is how a document asks to format every cell that HOLDS something.
+ * Reading only numbers, that rule matched nothing, and
+ * tdf152581_bordercolorNotExportedToXLSX.xlsx lost the border and fill its two
+ * cells carry. Both sides numeric ⇒ compare numbers, as before; otherwise
+ * compare text, case-insensitively, the way Excel collates it.
+ */
+function cellIsMatchesText(
+  operator: CfOperator,
+  text: string,
+  formulas: ReadonlyArray<string>,
+): boolean {
+  const a = operandText(formulas[0]).toLowerCase();
+  const v = text.toLowerCase();
+  switch (operator) {
+    case 'lessThan':
+      return v < a;
+    case 'lessThanOrEqual':
+      return v <= a;
+    case 'equal':
+      return v === a;
+    case 'notEqual':
+      return v !== a;
+    case 'greaterThanOrEqual':
+      return v >= a;
+    case 'greaterThan':
+      return v > a;
+    case 'between':
+    case 'notBetween': {
+      const b = operandText(formulas[1]).toLowerCase();
+      const lo = a <= b ? a : b;
+      const hi = a <= b ? b : a;
+      const inside = v >= lo && v <= hi;
+      return operator === 'between' ? inside : !inside;
+    }
+  }
 }
 
 function cellIsMatches(
