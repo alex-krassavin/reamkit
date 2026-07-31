@@ -333,11 +333,19 @@ describe('grid geometry', () => {
           stylesXml,
         }),
       ).map((i) => i.text);
-    expect(cell('SELF EMPLOYED')).toEqual(expect.arrayContaining(['SELF', 'EMPLOYED']));
+    // The line breaks after SELF, and EMPLOYED — wider than the column on its
+    // own — breaks INSIDE itself, the way Excel, Calc and every browser wrap a
+    // word too long for its box. Whatever the pieces, they spell the phrase and
+    // there is more than one line.
+    const selfEmployed = cell('SELF EMPLOYED').filter((t) => t !== 'x');
+    expect(selfEmployed.length).toBeGreaterThan(1);
+    expect(selfEmployed.join('')).toBe('SELFEMPLOYED');
     // A paragraph that fits keeps the total-fit break it had.
     expect(cell('alpha beta gamma')).toEqual(expect.arrayContaining(['alpha', 'beta', 'gamma']));
-    // And a single word wider than the column has nowhere to break: it stays.
-    expect(cell('supercalifragilistic')).toContain('supercalifragilistic');
+    // A single word wider than the column breaks inside itself too, and keeps
+    // every letter: nothing of it is lost to the cell edge.
+    const long = cell('supercalifragilistic').filter((t) => t !== 'x');
+    expect(long.join('')).toBe('supercalifragilistic');
   });
 
   it('fills a number that cannot fit its column with #, never truncating it', () => {

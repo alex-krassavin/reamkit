@@ -2687,6 +2687,9 @@ function lastCodePoint(s: string): number {
 function paragraphItemStream(
   tokens: ReadonlyArray<Token>,
   hyphenator: Hyphenator | undefined,
+  // The widest line this paragraph will be broken to, when there is one. A word
+  // wider than THAT can never be placed, and has to break inside itself.
+  maxLineWidthPt?: number,
 ): Array<StreamEntry> {
   const entries: Array<StreamEntry> = [];
   // Last code point of the previous text box, for CJK wrap-opportunity detection;
@@ -2724,6 +2727,35 @@ function paragraphItemStream(
     // Try hyphenation; if no breaks (or too short), one box covers the whole word.
     const positions = hyphenator ? hyphenator.hyphenate(tok.text) : [];
     if (positions.length === 0) {
+      // …unless the word is wider than the line itself, and so can never be
+      // placed: a URL has no spaces and no hyphenation points, and one box for
+      // it is a line that overflows by however long the URL is. The cell then
+      // clips it and everything past the first box width is gone —
+      // no_drawing_patriarch.xlsx keeps a catalogue link in every one of its
+      // 7 465 rows and lost all of them. Excel, Calc and every browser break
+      // such a word between characters; so do we, at the last one that fits.
+      // A tenth of headroom, the same the projection gives its own estimates:
+      // a word that overruns its box by a hair is drawn and clipped, as it
+      // always was. Without it an 11-digit product code in a column measured
+      // for the WORKBOOK's font — narrower than the face we draw with — broke
+      // across two lines on every one of no_drawing_patriarch.xlsx's 7 465
+      // rows.
+      const chunks =
+        maxLineWidthPt !== undefined && maxLineWidthPt > 0 && tok.widthPt > maxLineWidthPt * 1.1
+          ? splitToWidth(tok, maxLineWidthPt)
+          : undefined;
+      if (chunks) {
+        chunks.forEach((chunk, ci) => {
+          if (ci > 0) {
+            entries.push({
+              item: { type: 'penalty', width: 0, penalty: 0, flagged: false },
+              token: null,
+            });
+          }
+          entries.push({ item: { type: 'box', width: chunk.widthPt }, token: chunk });
+        });
+        continue;
+      }
       entries.push({ item: { type: 'box', width: tok.widthPt }, token: tok });
       continue;
     }
@@ -2768,6 +2800,50 @@ function paragraphItemStream(
   });
   return entries;
 }
+
+/**
+ * Cut an unbreakable word into the widest pieces that fit `widthPt`, measured
+ * with the token's own font. Each piece keeps the run's formatting, so the line
+ * builder reassembles them exactly as it does hyphenation fragments.
+ *
+ * @param tok     The text token.
+ * @param widthPt The line width to fit each piece into.
+ * @returns The pieces in order, or undefined when even one character overruns
+ *          (nothing can be gained by splitting then).
+ */
+function splitToWidth(tok: Token, widthPt: number): Array<Token> | undefined {
+  if (tok.kind !== 'text') return undefined;
+  const chars = [...tok.text];
+  // A break that leaves two or three characters to the line is not a line
+  // break, it is shredding — and a box that narrow is usually a width nobody
+  // meant (a nested table's cell measured before its own grid is known). Below
+  // that, the word keeps its shape and overflows, as it did before.
+  if (tok.font.measure.textWidthPt(chars.slice(0, MIN_SPLIT_CHARS).join(''), tok.fontSizePt) > widthPt) {
+    return undefined;
+  }
+  const out: Array<Token> = [];
+  let start = 0;
+  while (start < chars.length) {
+    let end = start + 1;
+    let text = chars[start]!;
+    let width = tok.font.measure.textWidthPt(text, tok.fontSizePt);
+    if (width > widthPt && start === 0 && chars.length === 1) return undefined;
+    while (end < chars.length) {
+      const next = text + chars[end]!;
+      const nextWidth = tok.font.measure.textWidthPt(next, tok.fontSizePt);
+      if (nextWidth > widthPt) break;
+      text = next;
+      width = nextWidth;
+      end++;
+    }
+    out.push({ ...tok, text, widthPt: width });
+    start = end;
+  }
+  return out.length > 1 ? out : undefined;
+}
+
+/** The fewest characters a mid-word break may leave on a line. */
+const MIN_SPLIT_CHARS = 6;
 
 // Rebuild one Line from the chosen break range [start, breakIdx): trim
 // edge spaces/sentinels, fold the hyphen glyph when the break sits on a
@@ -2894,7 +2970,10 @@ function wrap(
   if (tokens.length === 0) return [];
 
   const widths = lineWidths ?? [firstLineWidth, otherWidth];
-  const entries = paragraphItemStream(tokens, hyphenator);
+  // The WIDEST line the paragraph will be broken to: a word that fits one of
+  // them can be placed, and only a word too wide for all of them has to break
+  // inside itself.
+  const entries = paragraphItemStream(tokens, hyphenator, Math.max(0, ...widths));
   const items = entries.map((e) => e.item);
   // E-PARITY FP3: a renderer-compat profile breaks lines greedily (first-fit,
   // like Word/LibreOffice); the default 'ream' keeps Knuth-Plass total-fit.
