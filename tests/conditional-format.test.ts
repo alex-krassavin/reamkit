@@ -229,6 +229,20 @@ describe('conditional formatting — colorScale (E-SHEET SC1b)', () => {
     expect(shadingAt(flow, 2)).toBe('00FF00'); // 10 = max → green endpoint
   });
 
+  it('keeps the scale when a stop is a formula it cannot evaluate', () => {
+    // §18.3.1.11 — colorscale.xlsx sets its third scale's top stop to
+    // `2*A1+2`. Dropped as unresolvable, the whole rule went with it and the
+    // column printed with no colour where both references paint the gradient.
+    const cf = `<conditionalFormatting sqref="A1:A3">${colorScale(1, ['num:0', 'formula:2*A1+2'], 'FF0000', '00FF00')}</conditionalFormatting>`;
+    const flow = Ream.parse(
+      buildXlsx({ rows: [[0], [5], [10]], stylesXml: PLAIN_STYLES, conditionalFormattingXml: cf }),
+    ).flow;
+    // The unreadable top stop falls back to the range's own maximum.
+    expect(shadingAt(flow, 0)).toBe('FF0000');
+    expect(shadingAt(flow, 1)).toBe('808000');
+    expect(shadingAt(flow, 2)).toBe('00FF00');
+  });
+
   it('interpolates a 3-stop min/percentile/max gradient', () => {
     const cf = `<conditionalFormatting sqref="A1:A5">${colorScale(1, ['min', 'percentile:50', 'max'], 'FF0000', '00FF00', '0000FF')}</conditionalFormatting>`;
     const flow = Ream.parse(

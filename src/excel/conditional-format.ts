@@ -658,8 +658,8 @@ function resolveColorScale(
   const vmax = sorted[sorted.length - 1]!;
 
   const thresholds: Array<number> = [];
-  for (const cfvo of rule.cfvos) {
-    const t = resolveCfvo(cfvo, vmin, vmax, sorted);
+  for (const [i, cfvo] of rule.cfvos.entries()) {
+    const t = resolveCfvo(cfvo, vmin, vmax, sorted, i === rule.cfvos.length - 1);
     if (t === undefined) return undefined;
     thresholds.push(t);
   }
@@ -686,6 +686,7 @@ function resolveCfvo(
   vmin: number,
   vmax: number,
   sorted: ReadonlyArray<number>,
+  isLast = false,
 ): number | undefined {
   switch (cfvo.type) {
     case 'min':
@@ -695,9 +696,16 @@ function resolveCfvo(
     case 'autoMax':
       return vmax;
     case 'num':
+      return Number.isFinite(Number(cfvo.val)) ? Number(cfvo.val) : undefined;
+    // §18.3.1.11 — a `formula` stop is an expression, and one we cannot
+    // evaluate is not a reason to drop the whole rule: the stop falls back to
+    // the end of the extent it stands for, which is what a reader with no
+    // answer paints. colorscale.xlsx sets its third scale's top stop to
+    // `2*A1+2` and the column came out with no colour at all where both
+    // references paint the full gradient.
     case 'formula': {
       const n = Number(cfvo.val);
-      return Number.isFinite(n) ? n : undefined;
+      return Number.isFinite(n) ? n : isLast ? vmax : vmin;
     }
     case 'percent': {
       const p = Number(cfvo.val);
@@ -773,7 +781,7 @@ function resolveDataBar(
   const vmin = sorted[0]!;
   const vmax = sorted[sorted.length - 1]!;
   const lower = resolveCfvo(rule.cfvos[0]!, vmin, vmax, sorted);
-  const upper = resolveCfvo(rule.cfvos[1]!, vmin, vmax, sorted);
+  const upper = resolveCfvo(rule.cfvos[1]!, vmin, vmax, sorted, true);
   if (lower === undefined || upper === undefined) return undefined;
   return {
     lower,
