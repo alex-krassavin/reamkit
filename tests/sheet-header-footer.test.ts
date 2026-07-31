@@ -162,3 +162,34 @@ describe('sheet header/footer — render (E-SHEET W4)', () => {
     expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-');
   });
 });
+
+describe('&D and &T print the caller\u2019s reference date', () => {
+  it('substitutes the date and the time when one is supplied', () => {
+    // customIndexedColors.xlsx heads every page with `&F - &A - &P`, then
+    // `&D - &A - &T`. LibreOffice prints "07/31/2026 - - 17:41:36" there.
+    const when = new Date(Date.UTC(2026, 6, 31, 17, 41, 36));
+    const content = buildHeaderFooterContent(
+      '&C&D - &T',
+      'Sheet1',
+      1,
+      11,
+      undefined,
+      undefined,
+      when,
+    );
+    expect(
+      paraRuns(content, 'center')
+        .map((r) => r.text)
+        .join(''),
+    ).toBe('07/31/2026 - 17:41:36');
+  });
+
+  it('drops both without one, so the output never reads the wall clock', () => {
+    const content = buildHeaderFooterContent('&C&D - &T', 'Sheet1');
+    expect(
+      paraRuns(content, 'center')
+        .map((r) => r.text)
+        .join(''),
+    ).toBe(' - ');
+  });
+});

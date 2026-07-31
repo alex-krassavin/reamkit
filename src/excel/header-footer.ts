@@ -9,8 +9,9 @@
 // case stays on one line). `&B`/`&I`/`&U`/`&S` toggle bold/italic/underline/
 // strike, `&nn` sets the point size, `&Krrggbb` the colour, and the style
 // suffix of `&"family,style"` acts as another bold/italic toggle (the family
-// itself is dropped — the renderer has one font set). Non-deterministic codes
-// (&D date, &T time, &F file, &Z path) and &G pictures are dropped.
+// itself is dropped — the renderer has one font set). `&F` and `&D`/`&T` are
+// the caller's to supply (a file name, a reference date) and are dropped
+// without one; `&Z` paths and `&G` pictures are dropped outright.
 
 import type { Alignment, BodyElement, Run, RunProperties } from '@/core/document-model';
 import { pt } from '@/core/ir';
@@ -74,6 +75,9 @@ interface Regions {
  * @param fileName     The workbook's file name, substituted for `&F`. A
  *                     byte-oriented API does not know it, so the caller supplies
  *                     it; absent, `&F` is dropped as before.
+ * @param themePalette The workbook theme, resolving a `&K` theme reference.
+ * @param now          The reference date `&D`/`&T` print. An explicit input,
+ *                     never the wall clock; absent, both are dropped as before.
  */
 export function buildHeaderFooterContent(
   formatString: string,
@@ -82,6 +86,7 @@ export function buildHeaderFooterContent(
   basePt = DEFAULT_HEADER_PT,
   fileName?: string,
   themePalette?: ReadonlyMap<string, string>,
+  now?: Date,
 ): Array<BodyElement> {
   const regions = parseHeaderFooterString(
     formatString,
@@ -90,6 +95,7 @@ export function buildHeaderFooterContent(
     basePt,
     fileName,
     themePalette,
+    now,
   );
   const out: Array<BodyElement> = [];
   const para = (runs: ReadonlyArray<Run>, alignment: Alignment): void => {
@@ -140,6 +146,7 @@ function parseHeaderFooterString(
   basePt: number,
   fileName?: string,
   themePalette?: ReadonlyMap<string, string>,
+  now?: Date,
 ): Regions {
   const regions: Regions = { left: [], center: [], right: [] };
   let current: Array<Run> = regions.center;
@@ -323,10 +330,34 @@ function parseHeaderFooterString(
       i += 2;
       continue;
     }
-    // Any other single-letter code (&D &T &Z &G &E &X &Y &O &H …) is dropped:
-    // non-deterministic (date/time) or unsupported styling.
+    // §18.3.1.35 `&D` / §18.3.1.48 `&T` — the date and the time the page is
+    // printed. The wall clock is not ours to read, so these resolve against the
+    // caller's reference date and are dropped without one, exactly as `&F` is.
+    // customIndexedColors.xlsx heads every page with `&D - - &T`.
+    if ((next === 'D' || next === 'T') && now) {
+      buf += next === 'D' ? shortDate(now) : clockTime(now);
+      i += 2;
+      continue;
+    }
+    // Any other single-letter code (&Z &G &E &X &Y &O &H …) is dropped as
+    // unsupported styling.
     i += 2;
   }
   flush();
   return regions;
+}
+
+// §18.3.1.35 — `&D` prints the date in the system's short form, which for a
+// library has to be one fixed spelling; this is the one Excel and Calc write
+// under en-US (and the one the reference render prints). Read in UTC so the
+// same reference date gives the same header on every host.
+function shortDate(d: Date): string {
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return `${p(d.getUTCMonth() + 1)}/${p(d.getUTCDate())}/${String(d.getUTCFullYear())}`;
+}
+
+// §18.3.1.48 — `&T`, the clock time, likewise in UTC and to the second.
+function clockTime(d: Date): string {
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
 }

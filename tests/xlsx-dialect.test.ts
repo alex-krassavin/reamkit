@@ -25,6 +25,7 @@ import { toDialect } from './fixtures/xlsx-dialect';
 import type { DialectOptions } from './fixtures/xlsx-dialect';
 import { readXlsxToSheetDoc } from '@/excel/xlsx-reader';
 import { parseWorksheet } from '@/excel/worksheet-parser';
+import { parseXlsxStyles } from '@/excel/styles-parser';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SML_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
@@ -135,5 +136,33 @@ describe('a chartsheet root (§18.3.1.99)', () => {
     expect(parsed.drawingRelId).toBe('rId1');
     expect(parsed.cells).toHaveLength(0);
     expect(parsed.pageMargins?.leftInches).toBeCloseTo(0.75, 3);
+  });
+});
+
+describe('a workbook palette of its own (§18.8.27)', () => {
+  const styles = (colors: string): Uint8Array =>
+    new TextEncoder().encode(
+      '<?xml version="1.0"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+        '<fills count="1"><fill><patternFill patternType="solid">' +
+        '<fgColor indexed="61"/></patternFill></fill></fills>' +
+        colors +
+        '</styleSheet>',
+    );
+  const palette = (n: number, at61: string): string =>
+    '<colors><indexedColors>' +
+    Array.from({ length: n }, (_, i) => `<rgbColor rgb="00${i === 61 ? at61 : '112233'}"/>`).join(
+      '',
+    ) +
+    '</indexedColors></colors>';
+
+  it('replaces the built-in table where the workbook ships one', () => {
+    // customIndexedColors.xlsx paints from index 61 — a plum in the default
+    // table, and #E8E8E8 in its own, which is what both references draw.
+    expect(parseXlsxStyles(styles(palette(64, 'E8E8E8'))).fills[0]?.fgColorHex).toBe('E8E8E8');
+    expect(parseXlsxStyles(styles('')).fills[0]?.fgColorHex).toBe('993366');
+  });
+
+  it('ignores a list too short to be a palette', () => {
+    expect(parseXlsxStyles(styles(palette(8, 'E8E8E8'))).fills[0]?.fgColorHex).toBe('993366');
   });
 });

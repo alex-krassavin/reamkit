@@ -194,6 +194,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       printed,
       options.fileName,
       sheet.themePalette,
+      options.now,
     );
     if (printed === 0) firstSheetSection = sheetSection;
     sheetSections.push(sheetSection);
@@ -1098,6 +1099,7 @@ function withHeaderFooter(
   sheetIdx: number,
   fileName?: string,
   themePalette?: ReadonlyMap<string, string>,
+  now?: Date,
 ): SectionProperties {
   const headerRel = `${HEADER_REL}${sheetIdx}`;
   const footerRel = `${FOOTER_REL}${sheetIdx}`;
@@ -1113,6 +1115,7 @@ function withHeaderFooter(
       basePt,
       fileName,
       themePalette,
+      now,
     );
     if (content.length > 0) {
       headersFooters.set(headerRel, resolveBodyStyles(content, EMPTY_STYLE_SHEET));
@@ -1127,6 +1130,7 @@ function withHeaderFooter(
       basePt,
       fileName,
       themePalette,
+      now,
     );
     if (content.length > 0) {
       headersFooters.set(footerRel, resolveBodyStyles(content, EMPTY_STYLE_SHEET));
