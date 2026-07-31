@@ -2271,16 +2271,20 @@ function mapBorderStyle(style: XlsxBorderStyleName): { style: BorderStyle; sizeE
     // both references draw its MEDIUM_DASHED, MEDIUM_DASH_DOT,
     // MEDIUM_DASH_DOT_DOT and SLANTED_DASH_DOT cells dashed.
     case 'mediumDashed':
-    case 'mediumDashDot':
-    case 'mediumDashDotDot':
-    case 'slantDashDot':
       return { style: 'dashed', sizeEighthPt: 12 };
+    case 'mediumDashDot':
+    case 'slantDashDot':
+      return { style: 'dashDot', sizeEighthPt: 12 };
+    case 'mediumDashDotDot':
+      return { style: 'dashDotDot', sizeEighthPt: 12 };
     case 'thick':
       return { style: 'thick', sizeEighthPt: 18 };
     case 'dashed':
-    case 'dashDot':
-    case 'dashDotDot':
       return { style: 'dashed', sizeEighthPt: 6 };
+    case 'dashDot':
+      return { style: 'dashDot', sizeEighthPt: 6 };
+    case 'dashDotDot':
+      return { style: 'dashDotDot', sizeEighthPt: 6 };
     case 'dotted':
       return { style: 'dotted', sizeEighthPt: 6 };
     // A double rule is three screen pixels across — a line, a gap and a line —

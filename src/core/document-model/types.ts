@@ -481,7 +481,18 @@ export interface StyleSheet {
 // ECMA-376 Part 1 §17.4 — Tables.
 
 /** §17.18.2 ST_Border — a cell-border line style (the subset Ream renders). */
-export type BorderStyle = 'none' | 'single' | 'double' | 'thick' | 'dotted' | 'dashed';
+export type BorderStyle =
+  | 'none'
+  | 'single'
+  | 'double'
+  | 'thick'
+  | 'dotted'
+  | 'dashed'
+  // §18.18.3 — the dash-DOT family. A dash and a dot alternate, which is what
+  // tells these apart from `dashed` on the page: cell-borders.xlsx names five
+  // of them and we drew a uniform dash for every one.
+  | 'dashDot'
+  | 'dashDotDot';
 
 /** One border edge: its line style plus optional width and colour. */
 export interface Border {

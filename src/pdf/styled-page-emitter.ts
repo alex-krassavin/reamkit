@@ -638,6 +638,15 @@ function dashPatternFor(style: BorderStyle | undefined, widthPt: number): string
   switch (style) {
     case 'dashed':
       return `[${formatNumber(u * 4)} ${formatNumber(u * 1.33)}]`;
+    // …and a dash-dot alternates the two, which is the whole difference
+    // between it and a dash on the page (cell-borders.xlsx names five of them).
+    case 'dashDot':
+      return `[${formatNumber(u * 4)} ${formatNumber(u * 1.33)} ${formatNumber(u)} ${formatNumber(u * 1.33)}]`;
+    case 'dashDotDot':
+      return (
+        `[${formatNumber(u * 4)} ${formatNumber(u * 1.33)} ${formatNumber(u)} ` +
+        `${formatNumber(u * 1.33)} ${formatNumber(u)} ${formatNumber(u * 1.33)}]`
+      );
     case 'dotted':
       return `[${formatNumber(u)} ${formatNumber(u * 1.33)}]`;
     default:

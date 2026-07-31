@@ -21,6 +21,8 @@ const NAMES = [
   'mediumDashDot',
   'mediumDashDotDot',
   'slantDashDot',
+  'dashDot',
+  'dashDotDot',
 ] as const;
 
 const STYLES = `
@@ -45,9 +47,10 @@ function topBorders(): Array<Border | undefined> {
       stylesXml: STYLES,
     }),
   ).flow;
-  const table = flow.body.find((el) => el.kind === 'table');
-  if (table?.kind !== 'table') throw new Error('expected a grid table');
-  return (table.table.rows[0]?.cells ?? []).map((c) => c.properties.borders?.top);
+  // A row this wide bands across pages, so its cells span several tables.
+  return flow.body
+    .flatMap((el) => (el.kind === 'table' ? (el.table.rows[0]?.cells ?? []) : []))
+    .map((c) => c.properties.borders?.top);
 }
 
 describe('border styles (§18.18.3)', () => {
@@ -56,12 +59,15 @@ describe('border styles (§18.18.3)', () => {
     const by = (name: (typeof NAMES)[number]): Border | undefined => got[NAMES.indexOf(name)];
     // Plain medium is a solid 1.5pt rule…
     expect(by('medium')).toMatchObject({ style: 'single', width: 1.5 });
-    // …and every medium PATTERN keeps the weight and gains the dashes.
-    for (const n of ['mediumDashed', 'mediumDashDot', 'mediumDashDotDot', 'slantDashDot'] as const) {
-      expect(by(n)).toMatchObject({ style: 'dashed', width: 1.5 });
-    }
-    // A thin dashed rule stays thin.
+    // …and every medium PATTERN keeps the weight and gains its own dashes.
+    expect(by('mediumDashed')).toMatchObject({ style: 'dashed', width: 1.5 });
+    expect(by('mediumDashDot')).toMatchObject({ style: 'dashDot', width: 1.5 });
+    expect(by('slantDashDot')).toMatchObject({ style: 'dashDot', width: 1.5 });
+    expect(by('mediumDashDotDot')).toMatchObject({ style: 'dashDotDot', width: 1.5 });
+    // A thin rule keeps its weight and its own pattern too.
     expect(by('dashed')).toMatchObject({ style: 'dashed', width: 0.75 });
+    expect(by('dashDot')).toMatchObject({ style: 'dashDot', width: 0.75 });
+    expect(by('dashDotDot')).toMatchObject({ style: 'dashDotDot', width: 0.75 });
   });
 
   it('gives a double rule the width its two lines and their gap need', () => {
