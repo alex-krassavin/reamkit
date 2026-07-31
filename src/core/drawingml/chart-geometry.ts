@@ -154,7 +154,12 @@ export function niceScale(dataMin: number, dataMax: number, maxTicks = 6): Scale
   }
   const range = niceNum(hi - lo, false);
   const step = niceNum(range / Math.max(1, maxTicks - 1), true);
-  return { min: Math.floor(lo / step) * step, max: Math.ceil(hi / step) * step, step };
+  // Excel leaves the top datum room to breathe: it adds about 5% before
+  // rounding up to the major unit, so a max that lands exactly on a step still
+  // clears the ceiling. Without it 57362.xlsx's 12-value bar touched the plot
+  // frame where both references leave a gap and label the axis to 14.
+  const headroom = hi > 0 ? hi * 1.05 : hi;
+  return { min: Math.floor(lo / step) * step, max: Math.ceil(headroom / step) * step, step };
 }
 
 /**
@@ -654,8 +659,12 @@ export function buildBarScene(
 
   // clustered: series side by side within each category slot
   const nSer = Math.max(1, chart.series.length);
-  const groupPad = f.slot * 0.15;
-  const barW = (f.slot - 2 * groupPad) / nSer;
+  // §21.2.2.75: the slot holds `nSer` bars plus a gap of `gapWidth` percent of
+  // one bar. Guessing a flat 15% padding gave every bar 0.63 of its slot —
+  // 57362.xlsx asks for 219 and got bars 2.6× the reference's.
+  const gap = (chart.gapPercent ?? 150) / 100;
+  const barW = f.slot / (nSer + gap);
+  const groupPad = (f.slot - barW * nSer) / 2;
   for (let c = 0; c < f.nCats; c++) {
     const slotStart = (horizontal ? f.y0 : f.x0) + c * f.slot + groupPad;
     for (let s = 0; s < chart.series.length; s++) {

@@ -911,6 +911,11 @@ export interface Chart {
   readonly grouping?: 'clustered' | 'stacked' | 'percentStacked' | 'standard';
   readonly doughnut?: boolean; // c:doughnutChart (a pie with a central hole)
   readonly showValues?: boolean; // c:dLbls/c:showVal — print each datum's value
+  /**
+   * §21.2.2.75 `c:gapWidth` — the gap between category slots as a percentage
+   * of the bar width. Absent ⇒ the schema's 150.
+   */
+  readonly gapPercent?: number;
   readonly catAxisTitle?: string; // c:catAx/c:title
   readonly valAxisTitle?: string; // c:valAx/c:title
   /**

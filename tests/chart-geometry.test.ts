@@ -44,10 +44,14 @@ const barChart = (barDir: 'col' | 'bar'): Chart => ({
 });
 
 describe('niceScale', () => {
-  it('produces round ticks covering the data', () => {
+  it('produces round ticks covering the data, with room above it', () => {
+    // Excel leaves the top datum room to breathe — about 5% before rounding up
+    // to the major unit — so a maximum that lands exactly on a step still
+    // clears the plot frame. 57362.xlsx's 12-value bar touched the ceiling
+    // where both references stop at 14.
     expect(niceScale(0, 95)).toEqual({ min: 0, max: 100, step: 20 });
     expect(niceScale(0, 25)).toEqual({ min: 0, max: 30, step: 10 });
-    expect(niceScale(0, 8)).toEqual({ min: 0, max: 8, step: 2 });
+    expect(niceScale(0, 8)).toEqual({ min: 0, max: 10, step: 2 });
   });
 
   it('handles a flat range', () => {

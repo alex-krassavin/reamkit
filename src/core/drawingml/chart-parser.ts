@@ -117,10 +117,18 @@ export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): C
     : undefined;
 
   const title = chartTitle(chart, series);
+  // §21.2.2.75 — the gap between category slots, as a percentage of the bar
+  // width. Unread, every bar took 0.63 of its slot; 57362.xlsx asks for 219 and
+  // its bars came out 2.6× too wide. The schema default is 150.
+  const gapNode = poChildren(plotArea)
+    .flatMap((g) => poChildren(g))
+    .find((c) => poIs(c, 'c:gapWidth'));
+  const gapPercent = Number(poVal(gapNode) ?? '');
 
   return {
     type,
     ...(title ? { title } : {}),
+    ...(Number.isFinite(gapPercent) && gapPercent >= 0 ? { gapPercent } : {}),
     categories,
     ...(categoriesRef ? { categoriesRef } : {}),
     series,
@@ -295,10 +303,16 @@ function chartTitle(chart: PoNode, series: ReadonlyArray<{ name?: string }>): st
 }
 
 // c:catAx / c:valAx → c:title text.
+//
+// Like the chart's own title (§21.2.2.213), an axis title element with no
+// `c:tx` asks the reader to generate one; Excel and LibreOffice both write the
+// placeholder "Axis Title". 57362.xlsx leaves both of its value axes that way
+// and we drew neither.
 function axisTitle(plotArea: PoNode, axTag: string): string | undefined {
   const ax = poChildren(plotArea).find((c) => poIs(c, axTag));
   const title = ax ? poChildren(ax).find((c) => poIs(c, 'c:title')) : undefined;
-  return title ? collectAT(title) || undefined : undefined;
+  if (!title) return undefined;
+  return collectAT(title) || 'Axis Title';
 }
 
 /**
