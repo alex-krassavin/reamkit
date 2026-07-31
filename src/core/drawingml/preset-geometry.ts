@@ -242,10 +242,16 @@ function blockArrow(
 ): VectorPath {
   const thick = clamp(frac(adjust, 'adj1', 50000), 0, 1);
   const head = clamp(frac(adjust, 'adj2', 50000), 0, 1);
+  // §20.1.9.18 measures BOTH the shaft and the head against `ss` — the SHORTER
+  // side of the box — not against the direction the arrow points. A tall thin
+  // `upArrow` 23pt × 156pt therefore has a 12pt head, not a 78pt one:
+  // tdf135828_Shape_Rect.xlsx drew a shaft that petered out into a spike where
+  // the reference draws a compact triangle on a long stem.
+  const ss = Math.min(w, h);
   if (dir === 'right' || dir === 'left') {
-    const sb = (h * (1 - thick)) / 2;
-    const st = (h * (1 + thick)) / 2;
-    const hl = head * w;
+    const sb = (h - ss * thick) / 2;
+    const st = (h + ss * thick) / 2;
+    const hl = head * ss;
     if (dir === 'right') {
       const bx = w - hl;
       return polygon([
@@ -269,9 +275,9 @@ function blockArrow(
       [w, st],
     ]);
   }
-  const sl = (w * (1 - thick)) / 2;
-  const sr = (w * (1 + thick)) / 2;
-  const hh = head * h;
+  const sl = (w - ss * thick) / 2;
+  const sr = (w + ss * thick) / 2;
+  const hh = head * ss;
   if (dir === 'up') {
     const by = h - hh;
     return polygon([

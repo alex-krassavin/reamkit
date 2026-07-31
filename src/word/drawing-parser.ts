@@ -419,7 +419,17 @@ function parseTextBox(wsp: PoNode, parseBody: ParseBody): ShapeTextBody | undefi
 
 const isTrue = (v: string | undefined): boolean => v === '1' || v === 'true' || v === 'on';
 
-function parseXfrm(xfrm: PoNode): ShapeTransform {
+/**
+ * §20.1.7.6 `a:xfrm` — how a shape sits in its box: rotated about its centre by
+ * `@rot` (sixtieth-thousandths of a degree) and mirrored by `@flipH`/`@flipV`.
+ * The box itself comes from elsewhere — the anchor on a sheet, the extent in a
+ * document — and holds the shape UNROTATED, which is what makes this a separate
+ * transform rather than a different rectangle.
+ *
+ * @param xfrm The `a:xfrm` element.
+ * @returns The transform; empty when it states neither rotation nor a flip.
+ */
+export function parseXfrm(xfrm: PoNode): ShapeTransform {
   const rot = poIntAttr(xfrm, 'rot');
   const flipH = isTrue(poAttr(xfrm, 'flipH'));
   const flipV = isTrue(poAttr(xfrm, 'flipV'));

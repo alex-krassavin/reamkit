@@ -24,7 +24,13 @@ import { applyColorMods, resolveColorNode } from '@/core/drawingml/colors';
 import { poAttr, poChildren, poFirstChild, poIntAttr, poIs, poText } from '@/core/po-helpers';
 import { parseXml } from '@/pptx/pptx-reader';
 import { parseGeometry, parseTxBody } from '@/pptx/slide-parser';
-import { parseFill, parseLine, parseShadow, shadowFromOuterShdw } from '@/word/drawing-parser';
+import {
+  parseFill,
+  parseLine,
+  parseShadow,
+  parseXfrm,
+  shadowFromOuterShdw,
+} from '@/word/drawing-parser';
 import { makeColWidthPt, makeRowHeightPt } from '@/excel/sheet-drawing';
 
 interface SheetShape {
@@ -86,7 +92,48 @@ export function parseSheetShapes(
       // xdr:spPr wraps the same a: children (a:xfrm/a:prstGeom/a:solidFill/a:ln) the
       // shared readers expect; xdr:txBody holds a:bodyPr + a:p like a slide shape.
       const spPr = poChildren(sp).find((c) => poIs(c, 'xdr:spPr'));
+      const txBody = poChildren(sp).find((c) => poIs(c, 'xdr:txBody'));
       const geometry = parseGeometry(spPr);
+      const parsed = txBody
+        ? parseTxBody(txBody, undefined, undefined, colors, undefined)
+        : undefined;
+      // An `<xdr:txBody>` is written whether or not it says anything, so the
+      // test below is for CHARACTERS.
+      const lettered = (parsed?.content ?? []).some(
+        (b) =>
+          b.kind === 'paragraph' && b.paragraph.runs.some((r) => r.text.trim().length > 0),
+      );
+      // §20.1.7.6 — the anchor gives the box, `a:xfrm` gives how the shape sits
+      // in it. Read for the box alone, a shape that is turned lies down flat:
+      // tdf135828_Shape_Rect.xlsx points an `upArrow` up and to the right with
+      // `rot="4616172"` (76.9°), and we drew it squashed across the page.
+      const xfrm = spPr ? poChildren(spPr).find((c) => poIs(c, 'a:xfrm')) : undefined;
+      const transform = xfrm ? parseXfrm(xfrm) : undefined;
+      const turned = transform !== undefined && Object.keys(transform).length > 0;
+      // A turned shape is the one case where the anchor is NOT its box. Excel
+      // spans from/to across what the shape covers once rotated, and keeps the
+      // shape's own size in `a:ext` — 23pt × 156pt for the tall thin `upArrow`
+      // of tdf135828_Shape_Rect.xlsx, whose anchor is 164pt × 30pt because that
+      // is the ground its 76.9° sweep covers. Drawn at the anchor's size the
+      // arrow is a wide stub, and rotating THAT gives a sliver on its side.
+      // Unturned the two agree, and the anchor stays authoritative.
+      //
+      // A turned shape with TEXT is left on its anchor. We lay a shape's text in
+      // the page's frame rather than the shape's, so a label written 20pt wide
+      // and turned 90° into a 156pt band would wrap every word: bnc762542.xlsx
+      // has three of them and its "Description 1" broke after "Description".
+      const own =
+        turned && xfrm && !lettered
+          ? poChildren(xfrm).find((c) => poIs(c, 'a:ext'))
+          : undefined;
+      const ownW = own ? emuToPt(poIntAttr(own, 'cx') ?? 0) : 0;
+      const ownH = own ? emuToPt(poIntAttr(own, 'cy') ?? 0) : 0;
+      // The rotation turns about the centre, so that is what the two boxes share.
+      const useOwn = ownW > 0 && ownH > 0;
+      const widthPt = useOwn ? ownW : box.widthPt;
+      const heightPt = useOwn ? ownH : box.heightPt;
+      const xPt = useOwn ? box.xPt + (box.widthPt - ownW) / 2 : box.xPt;
+      const yPt = useOwn ? box.yPt + (box.heightPt - ownH) / 2 : box.yPt;
       const spFill: ShapeFill = spPr ? parseFill(spPr, colors) : { kind: 'none' };
       const fill = spFill.kind === 'none' ? styleFill(sp, colors, themeFillStyles) : spFill;
       // §20.1.4.2.19 `<xdr:style><a:lnRef>` is where a shape drawn from a gallery
@@ -103,10 +150,7 @@ export function parseSheetShapes(
         directLine && Object.keys(directLine).length > 0
           ? directLine
           : styleLine(sp, colors, themeLineWidths);
-      const txBody = poChildren(sp).find((c) => poIs(c, 'xdr:txBody'));
-      const parsed = txBody
-        ? parseTxBody(txBody, undefined, undefined, colors, undefined)
-        : undefined;
+
       // §20.1.4.2.14 `<xdr:style><a:fontRef>` carries the colour the shape's text
       // takes when its runs name none — for anything drawn from a gallery style
       // that is where the colour IS. shape-macro-ext-ref.xlsx asks for `lt1` on a
@@ -129,13 +173,14 @@ export function parseSheetShapes(
           // a shape at its anchor when one is given, so give it one.
           float: {
             wrap: 'none' as const,
-            posH: { relativeFrom: 'margin' as const, offsetPt: pt(box.xPt) },
-            posV: { relativeFrom: 'margin' as const, offsetPt: pt(box.yPt) },
+            posH: { relativeFrom: 'margin' as const, offsetPt: pt(xPt) },
+            posV: { relativeFrom: 'margin' as const, offsetPt: pt(yPt) },
           },
-          width: pt(box.widthPt),
-          height: pt(box.heightPt),
+          width: pt(widthPt),
+          height: pt(heightPt),
           geometry,
           fill,
+          ...(transform && Object.keys(transform).length > 0 ? { transform } : {}),
           ...(line ? { line } : {}),
           ...(text ? { text } : {}),
           ...(shadow ? { shadow } : {}),
