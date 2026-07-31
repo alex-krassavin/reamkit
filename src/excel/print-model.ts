@@ -1321,11 +1321,21 @@ export function worksheetToBody(
         (styles.cellXfs[ws.styleIndex ?? 0]?.numFmtId ?? 0) === 0
       ) {
         const unit = charTwips(styles.cellXfs[ws.styleIndex ?? 0], styles, textTwipsUnit);
-        // Whether a rendering fits is measured the way everything else on this
-        // page is: charWidthUnits, which reports the face we DRAW in.
-        if (unit > 0) {
+        // Whether a General rendering fits is the DOCUMENT's question, not the
+        // page's: §18.3.1.13 defines a column's unit as the width of its font's
+        // widest digit, and Excel gives up decimals against that. Measuring in
+        // the face we happen to draw with — 18 % wider here — took a digit off
+        // every long number on WithChartSheet.xlsx, printing 1563287.13 where
+        // Excel and LibreOffice print 1563287.125. Dividing by our own digit
+        // puts the estimate back in the document's terms, exactly as
+        // `tooWideToShow` does.
+        const digit = charWidthUnits('0');
+        if (unit > 0 && digit > 0) {
           const room = columnWidths[c]! / unit;
-          text = generalToWidth(ws.rawValue, (candidate) => estimateChars(candidate) <= room);
+          text = generalToWidth(
+            ws.rawValue,
+            (candidate) => estimateChars(candidate) / digit <= room,
+          );
         }
       }
       // The full (pre-truncation) text feeds conditional-format text/dup rules (W5).
