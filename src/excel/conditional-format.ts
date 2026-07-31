@@ -280,8 +280,10 @@ export function buildConditionalFormatter(
     let bar: CfOverride['dataBar'];
     let hideValue = false;
     let icon: CfOverride['icon'];
-    const claim = (dxfId: number): void => {
-      textFmt = dxfToOverride(dxfs[dxfId]);
+    // The 2009 extension writes the format inside the rule, where `dxfId`
+    // names nothing — see CfRuleCellIs.dxf.
+    const claim = (r: { readonly dxfId: number; readonly dxf?: Dxf }): void => {
+      textFmt = dxfToOverride(r.dxf ?? dxfs[r.dxfId]);
       textClaimed = true;
     };
     for (const {
@@ -303,7 +305,7 @@ export function buildConditionalFormatter(
             value !== undefined &&
             cellIsMatches(rule.operator, value, rule.formulas)
           ) {
-            claim(rule.dxfId);
+            claim(rule);
           }
           break;
         case 'colorScale':
@@ -332,13 +334,13 @@ export function buildConditionalFormatter(
             threshold &&
             thresholdMatches(threshold, value)
           ) {
-            claim(rule.dxfId);
+            claim(rule);
           }
           break;
         case 'duplicateValues':
         case 'uniqueValues':
           if (!textClaimed && dupKey !== undefined && dupKeys?.has(dupKey)) {
-            claim(rule.dxfId);
+            claim(rule);
           }
           break;
         case 'containsText':
@@ -346,7 +348,7 @@ export function buildConditionalFormatter(
         case 'beginsWith':
         case 'endsWith':
           if (!textClaimed && text !== undefined && textRuleMatches(rule, text)) {
-            claim(rule.dxfId);
+            claim(rule);
           }
           break;
         case 'expression':
@@ -359,7 +361,7 @@ export function buildConditionalFormatter(
               curRow: row,
               curCol: col,
             };
-            if (evaluateToBool(compiled, ctx, shift)) claim(rule.dxfId);
+            if (evaluateToBool(compiled, ctx, shift)) claim(rule);
           }
           break;
         case 'timePeriod':
@@ -370,7 +372,7 @@ export function buildConditionalFormatter(
             nowSerial !== undefined &&
             timePeriodMatches(rule.timePeriod, value, nowSerial, date1904)
           ) {
-            claim(rule.dxfId);
+            claim(rule);
           }
           break;
       }

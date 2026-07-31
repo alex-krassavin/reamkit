@@ -508,6 +508,12 @@ export interface CfRuleCellIs {
   readonly operator: CfOperator;
   readonly formulas: ReadonlyArray<string>;
   readonly dxfId: number;
+  /**
+   * The format itself, when the rule carries it instead of pointing at the
+   * workbook's table — the 2009 extension (`<x14:cfRule><x14:dxf>`) writes it
+   * inline, and `dxfId` names nothing there. Takes precedence when present.
+   */
+  readonly dxf?: Dxf;
 }
 
 /**
@@ -596,6 +602,12 @@ export interface CfRuleTop10 {
   readonly percent: boolean;
   readonly bottom: boolean;
   readonly dxfId: number;
+  /**
+   * The format itself, when the rule carries it instead of pointing at the
+   * workbook's table — the 2009 extension (`<x14:cfRule><x14:dxf>`) writes it
+   * inline, and `dxfId` names nothing there. Takes precedence when present.
+   */
+  readonly dxf?: Dxf;
 }
 
 /**
@@ -610,6 +622,12 @@ export interface CfRuleAboveAverage {
   readonly equalAverage: boolean;
   readonly stdDev?: number;
   readonly dxfId: number;
+  /**
+   * The format itself, when the rule carries it instead of pointing at the
+   * workbook's table — the 2009 extension (`<x14:cfRule><x14:dxf>`) writes it
+   * inline, and `dxfId` names nothing there. Takes precedence when present.
+   */
+  readonly dxf?: Dxf;
 }
 
 /**
@@ -622,6 +640,12 @@ export interface CfRuleDupUnique {
   readonly type: 'duplicateValues' | 'uniqueValues';
   readonly priority: number;
   readonly dxfId: number;
+  /**
+   * The format itself, when the rule carries it instead of pointing at the
+   * workbook's table — the 2009 extension (`<x14:cfRule><x14:dxf>`) writes it
+   * inline, and `dxfId` names nothing there. Takes precedence when present.
+   */
+  readonly dxf?: Dxf;
 }
 
 /**
@@ -635,6 +659,12 @@ export interface CfRuleText {
   readonly priority: number;
   readonly text: string;
   readonly dxfId: number;
+  /**
+   * The format itself, when the rule carries it instead of pointing at the
+   * workbook's table — the 2009 extension (`<x14:cfRule><x14:dxf>`) writes it
+   * inline, and `dxfId` names nothing there. Takes precedence when present.
+   */
+  readonly dxf?: Dxf;
   readonly formula?: string;
 }
 
@@ -651,6 +681,12 @@ export interface CfRuleExpression {
   readonly priority: number;
   readonly formula: string;
   readonly dxfId: number;
+  /**
+   * The format itself, when the rule carries it instead of pointing at the
+   * workbook's table — the 2009 extension (`<x14:cfRule><x14:dxf>`) writes it
+   * inline, and `dxfId` names nothing there. Takes precedence when present.
+   */
+  readonly dxf?: Dxf;
 }
 
 /** §18.18.82 ST_TimePeriod — the clock-relative window a `timePeriod` rule tests. */
@@ -679,6 +715,12 @@ export interface CfRuleTimePeriod {
   readonly priority: number;
   readonly timePeriod: TimePeriodKind;
   readonly dxfId: number;
+  /**
+   * The format itself, when the rule carries it instead of pointing at the
+   * workbook's table — the 2009 extension (`<x14:cfRule><x14:dxf>`) writes it
+   * inline, and `dxfId` names nothing there. Takes precedence when present.
+   */
+  readonly dxf?: Dxf;
   readonly formula?: string;
 }
 

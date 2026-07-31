@@ -42,6 +42,9 @@ import type {
   XlsxPageSetup,
   XlsxPrintOptions,
 } from '@/core/spreadsheet-model';
+import type { ThemePalette, WorkbookColors } from '@/excel/styles-parser';
+import { INDEXED_COLORS } from '@/core/indexed-colors';
+import { parseDxf } from '@/excel/styles-parser';
 import { resolveInternalEntities } from '@/core/opc/xml-entities';
 import { parseCellRef } from '@/excel/cell-reference';
 import { parseAreaRef } from '@/excel/defined-name-ref';
@@ -86,7 +89,7 @@ const parser = new XMLParser({
  * and table parts). `r=` is optional on `<row>`/`<c>`; absent indices are inferred
  * from document order. A malformed root or missing `sheetData` yields an empty grid.
  */
-export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
+export function parseWorksheet(data: Uint8Array, theme?: ThemePalette): ParsedWorksheet {
   const xml = resolveInternalEntities(decoder.decode(data));
   const tree = parser.parse(xml) as Record<string, unknown>;
   // §18.3.1.99 `<chartsheet>` — a sheet that is nothing but a chart. It has no
@@ -123,7 +126,13 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
     legacyNode && typeof legacyNode === 'object'
       ? strAttr(legacyNode as Record<string, unknown>, 'id')
       : undefined;
-  const conditionalFormats = parseConditionalFormatting(wsObj);
+  const conditionalFormats = [
+    ...parseConditionalFormatting(wsObj),
+    // The 2009 extension's rules resolve their own colours; the workbook's
+    // indexed table is not in reach here, and a `<x14:dxf>` naming an indexed
+    // colour a workbook has REPLACED is rarer than the default is right.
+    ...parseX14ConditionalFormatting(wsObj, { ...(theme ? { theme } : {}), indexed: INDEXED_COLORS }),
+  ];
   const dataValidations = parseDataValidations(wsObj);
   const hyperlinks = parseHyperlinks(wsObj);
   const headerFooter = parseHeaderFooter(wsObj);
@@ -527,6 +536,86 @@ function parseConditionalFormatting(ws: Record<string, unknown>): Array<Conditio
       if (rule) rules.push(rule);
     }
     if (rules.length > 0) out.push({ ranges, rules });
+  }
+  return out;
+}
+
+// ISO/IEC 29500 could not express everything Excel 2010 wanted of a conditional
+// format, so the 2009 extension carries the rest in <extLst>: the same rule
+// families, plus the ones the 2006 schema has no room for. The shape differs in
+// three places — the range is a child <xm:sqref> and not an attribute, the
+// formulas are <xm:f> and not <formula>, and the format is written INSIDE the
+// rule as <x14:dxf> rather than pointing at the workbook's table.
+//
+// Nineteen corpus workbooks put rules here and we read none of them:
+// tdf122102.xlsx paints four cells yellow, green, red and grey, and we printed
+// four plain ones.
+/** The rule types the extension states as a formula rather than a literal. */
+const TEXT_RULES: ReadonlySet<string> = new Set([
+  'containsText',
+  'notContainsText',
+  'beginsWith',
+  'endsWith',
+]);
+
+function parseX14ConditionalFormatting(
+  ws: Record<string, unknown>,
+  colors: WorkbookColors,
+): Array<ConditionalFormat> {
+  const out: Array<ConditionalFormat> = [];
+  for (const ext of toArray(asObjectNode(ws['extLst'])?.['ext'])) {
+    const group = asObjectNode(asObjectNode(ext)?.['conditionalFormattings']);
+    if (!group) continue;
+    for (const cf of toArray(group['conditionalFormatting'])) {
+      const obj = asObjectNode(cf);
+      if (!obj) continue;
+      // <xm:sqref> is the element's text, not an attribute.
+      const sqref = typeof obj['sqref'] === 'string' ? obj['sqref'] : undefined;
+      if (!sqref) continue;
+      const ranges = parseSqref(sqref);
+      if (ranges.length === 0) continue;
+      const rules: Array<CfRule> = [];
+      for (const rn of toArray(obj['cfRule'])) {
+        const node = asObjectNode(rn);
+        if (!node) continue;
+        const rule = parseCfRule(asBaseCfRule(node));
+        if (!rule) continue;
+        // colorScale/dataBar/iconSet colour themselves; the rest take a dxf.
+        const dxf = parseDxf(node['dxf'], colors);
+        rules.push(
+          'dxfId' in rule && Object.keys(dxf).length > 0 ? ({ ...rule, dxf }) : rule,
+        );
+      }
+      if (rules.length > 0) out.push({ ranges, rules });
+    }
+  }
+  return out;
+}
+
+/**
+ * Rewrite a `<x14:cfRule>` into the shape {@link parseCfRule} reads, so one
+ * reader serves both spellings of the same rule.
+ */
+function asBaseCfRule(node: Record<string, unknown>): Record<string, unknown> {
+  const formulas = toArray(node['f']).filter((f) => typeof f === 'string' || typeof f === 'number');
+  // One `<formula>` parses as a string and several as an array; the readers
+  // below expect that shape, not an array of one.
+  const out: Record<string, unknown> = {
+    ...node,
+    formula: formulas.length === 1 ? formulas[0] : formulas,
+  };
+  // Every value-driven family refuses a rule with no `dxfId`, and the extension
+  // has none — it wrote the format inline instead. Stand one in; the parsed
+  // `<x14:dxf>` beside it is what the renderer actually reads.
+  if (out['@_dxfId'] === undefined && node['dxf'] !== undefined) out['@_dxfId'] = '0';
+  // A text rule states its needle in an attribute — a LITERAL. The extension
+  // exists because the needle is a reference (`$B$1`, `Munka1!$A$1`), and it
+  // writes the whole test as its first formula: `NOT(ISERROR(SEARCH($B$1,A1)))`.
+  // Read that instead of comparing against the reference's own spelling, which
+  // no cell contains.
+  if (TEXT_RULES.has(String(out['@_type'])) && formulas.length > 0) {
+    out['@_type'] = 'expression';
+    out['formula'] = formulas[0];
   }
   return out;
 }

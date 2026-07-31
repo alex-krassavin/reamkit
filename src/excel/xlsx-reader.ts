@@ -213,7 +213,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
     if (!sheetRel) continue;
     const resolved = pkg.resolveRelatedPart(WORKBOOK_PART, sheetRel);
     if (!resolved) continue;
-    let worksheet = parseWorksheet(resolved.data);
+    let worksheet = parseWorksheet(resolved.data, themePalette);
     worksheet = withPrinterPageSetup(
       worksheet,
       pkg,

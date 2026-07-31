@@ -77,7 +77,7 @@ export type ThemePalette = ReadonlyMap<string, string>;
  * (§18.8.3 `theme`) and the legacy palette (§18.8.27 `indexed`), which the
  * workbook may replace with one of its own.
  */
-interface WorkbookColors {
+export interface WorkbookColors {
   readonly theme?: ThemePalette;
   readonly indexed: ReadonlyArray<string>;
 }
@@ -120,12 +120,24 @@ export function parseXlsxStyles(data: Uint8Array, theme?: ThemePalette): XlsxSty
 function parseDxfs(root: Record<string, unknown>, colors: WorkbookColors): Array<Dxf> {
   const node = asObject(root['dxfs']);
   if (!node) return [];
-  const out: Array<Dxf> = [];
-  for (const item of asArray(node['dxf'])) {
+  return asArray(node['dxf']).map((item) => parseDxf(item, colors));
+}
+
+/**
+ * Read one §18.8.14 `<dxf>` — the differential format a conditional-format rule
+ * applies on match. Exported because the 2009 extension writes its dxf INSIDE
+ * the rule (`<x14:dxf>`) rather than into the workbook's `<dxfs>` table, and
+ * the sheet reader has to resolve it there.
+ *
+ * @param item   The `<dxf>` node, as parsed.
+ * @param colors The workbook palette, resolving theme and indexed colours.
+ * @returns The format; empty when the node states nothing.
+ */
+export function parseDxf(item: unknown, colors: WorkbookColors): Dxf {
+  {
     const obj = asObject(item);
     if (!obj) {
-      out.push({});
-      continue;
+      return {};
     }
     const dxf: Mutable<Dxf> = {};
     const fontObj = asObject(obj['font']);
@@ -166,9 +178,8 @@ function parseDxfs(root: Record<string, unknown>, colors: WorkbookColors): Array
       }
       if (Object.keys(border).length > 0) dxf.border = border;
     }
-    out.push(dxf);
+    return dxf;
   }
-  return out;
 }
 
 const VALID_BORDER_STYLES: ReadonlySet<XlsxBorderStyleName> = new Set([
