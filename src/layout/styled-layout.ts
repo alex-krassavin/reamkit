@@ -2174,7 +2174,23 @@ function collectFontResources(
   for (const hf of headersFooters.values()) visit(hf);
   for (const note of options.footnotes?.values() ?? []) visit(note);
   for (const note of options.endnotes?.values() ?? []) visit(note);
-  for (const comment of options.comments?.values() ?? []) visit(comment.content);
+  // A comment's content is only half of what gets drawn. `commentTailBlocks`
+  // synthesises the rest — the author, the date, the `[n]` marker, the `re [n]`
+  // reply cue, the `(resolved)` tag — and none of it lives in `comment.content`,
+  // so a character appearing ONLY there never reached the subset. The review
+  // fixture's author is "Alice Reviewer" and its capital A is nowhere else in
+  // the document. Ask the builder for its blocks rather than restating its
+  // wording here, and throw in every digit because the numbers are per-document.
+  for (const comment of options.comments?.values() ?? []) {
+    visit(comment.content);
+    visit(commentTailBlocks(comment, 1, { parentN: 1, depth: 1, done: true }));
+    visit([
+      {
+        kind: 'paragraph',
+        paragraph: { properties: {}, runs: [{ text: '0123456789', properties: {} }] },
+      },
+    ]);
+  }
 
   if (used.size === 0) {
     const regular = options.registry.resolveByStyle(false, false);
