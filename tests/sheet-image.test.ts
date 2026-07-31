@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildXlsx } from './fixtures/build-xlsx';
-import { readXlsxToSheetDoc } from '@/excel/xlsx-reader';
+import { readXlsx, readXlsxToSheetDoc } from '@/excel/xlsx-reader';
 import { Ream } from '@/core/converter/ream';
 import { convertXlsxToPdfSync } from '@/core/converter';
 
@@ -67,5 +67,26 @@ describe('sheet pictures — render (E-SHEET W1)', () => {
     const pdf = convertXlsxToPdfSync(imageXlsx(), { fonts: FONTS });
     expect(pdf.length).toBeGreaterThan(1000);
     expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-');
+  });
+});
+
+describe('a picture we cannot draw says so (never silently wrong)', () => {
+  it('reports a metafile picture instead of dropping it in silence', () => {
+    // A placeable WMF header. WithDrawing.xlsx anchors five pictures and three
+    // are metafiles — both references draw them, no page of ours does, and the
+    // read came back with an empty loss report.
+    const wmf = Uint8Array.from([
+      0xd7, 0xcd, 0xc6, 0x9a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ]);
+    const { losses } = readXlsx(buildXlsx({ rows: [['cell']], sheetImage: { pngBytes: wmf } }));
+    const dropped = losses.find((l) => l.feature === 'images');
+    expect(dropped?.severity).toBe('dropped');
+    expect(dropped?.detail).toMatch(/metafile/i);
+  });
+
+  it('says nothing about a picture it can draw', () => {
+    const { losses } = readXlsx(imageXlsx());
+    expect(losses.filter((l) => l.feature === 'images')).toEqual([]);
   });
 });

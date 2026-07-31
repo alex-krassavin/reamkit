@@ -374,6 +374,16 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       detail: `${String(sheet.embeddedObjects)} embedded object(s) not rendered — an OLE embedding draws as an icon from a metafile preview`,
     });
   }
+  // …and a picture that IS a metafile is the same gap without the OLE wrapper:
+  // WithDrawing.xlsx anchors five and three of them are WMF/EMF, which both
+  // references draw and no page of ours does.
+  if (sheet.metafilePictures) {
+    options.losses?.push({
+      severity: 'dropped',
+      feature: 'images',
+      detail: `${String(sheet.metafilePictures)} picture(s) not rendered — a WMF/EMF/PICT metafile is replayed, not embedded; the anchor keeps its space`,
+    });
+  }
   const sections: Array<Section> =
     sheetSections.length > 1
       ? sheetSections.map((properties, i) => ({ properties, endIndex: sheetEnds[i]! }))

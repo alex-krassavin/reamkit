@@ -37,6 +37,7 @@ import type { SlicerCacheDef, SlicerDef } from '@/excel/slicer-parser';
 
 import type { ProjectSheetOptions } from '@/excel/sheet-to-flow';
 import { FEATURES, ResourceStore } from '@/core/ir';
+import { detectImageFormat } from '@/core/images';
 import { OpcPackage, isOoxmlRel, parseCoreProperties } from '@/core/opc';
 import {
   EMPTY_XLSX_STYLES,
@@ -197,6 +198,10 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
   // Embedded files (`<oleObject progId="Package">` and friends) that no page can
   // show: counted here and reported once, rather than dropped in silence.
   let embeddedObjects = 0;
+  // §20.5.2.x pictures whose bytes are a format no page can embed — a WMF, an
+  // EMF, a PICT. They anchor and reserve their space, and then draw nothing;
+  // counted here and reported once, rather than dropped in silence.
+  let metafilePictures = 0;
   // §SV2 slicer-resolution state: tables indexed by id (a slicer's
   // tableSlicerCache may reference a table on another sheet) and the slicer parts
   // found per OUTPUT sheet — both consumed after the loop, once all tables index.
@@ -255,6 +260,10 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
         for (const pic of pictures) {
           const bytes = pkg.getPart(pic.imagePartPath);
           if (!bytes) continue;
+          // The writer embeds a raster; a metafile is a program to be replayed,
+          // which is a different feature altogether. WithDrawing.xlsx anchors
+          // five pictures and three of them are metafiles.
+          if (detectImageFormat(bytes) === null) metafilePictures++;
           images.push({
             resourceId: resources.put(bytes),
             widthPt: pic.widthPt,
@@ -558,6 +567,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
     resources,
     themePalette,
     ...(embeddedObjects > 0 ? { embeddedObjects } : {}),
+    ...(metafilePictures > 0 ? { metafilePictures } : {}),
     ...(info ? { info } : {}),
   };
 }

@@ -247,4 +247,11 @@ export interface SheetDoc {
    * and Calc, both of which live in a metafile; the projection reports them.
    */
   readonly embeddedObjects?: number;
+  /**
+   * §20.5.2.x — how many anchored pictures are a metafile (WMF / EMF / PICT)
+   * rather than a raster. They keep their anchor and their box, and draw
+   * nothing: replaying a metafile is a different feature from embedding an
+   * image. The projection reports them.
+   */
+  readonly metafilePictures?: number;
 }
