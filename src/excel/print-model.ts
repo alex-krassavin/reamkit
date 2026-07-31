@@ -1858,6 +1858,7 @@ export function worksheetToBody(
         tableProperties,
         titleRowIndex,
         Math.round((print.drawingExtentPt?.widthPt ?? 0) * TWIPS_PER_POINT * printScale),
+        worksheet.printOptions?.headings ? { colStart, rowNumbers } : undefined,
       );
     }
   }

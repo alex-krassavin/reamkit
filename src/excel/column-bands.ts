@@ -132,6 +132,10 @@ export function computeColumnBands(
  * @param properties   The shared table properties applied to every band.
  * @param titleRowIndex The print-title row, or -1.
  * @param drawingReachTwips How far right the sheet's drawings reach (0 if none).
+ * @param headings §18.3.1.70 — the printed row/column headings, when the sheet
+ *   asks for them: the absolute index of the grid's first column and the sheet
+ *   row number of each emitted row. Each band gets ITS OWN letters, which is
+ *   what both references print across the top of a continuation page.
  * @returns One table body element per band, in band order.
  */
 export function bandedTables(
@@ -141,10 +145,13 @@ export function bandedTables(
   properties: TableProperties,
   titleRowIndex = -1,
   drawingReachTwips = 0,
+  headings?: { readonly colStart: number; readonly rowNumbers: ReadonlyArray<number> },
 ): Array<BodyElement> {
   return bands.flatMap((band, bandIndex) => {
     const bandLeft = columnWidths.slice(0, band.start).reduce((sum, w) => sum + w, 0);
-    const grid = columnWidths.slice(band.start, band.end + 1).map((w) => twipsToPt(w));
+    const bandTwips = columnWidths.slice(band.start, band.end + 1);
+    const grid = bandTwips.map((w) => twipsToPt(w));
+    const bandRowNumbers = [...(headings?.rowNumbers ?? [])];
     const bandRows: Array<TableRow> = rows.map((row, rowIndex) => {
       const cells = sliceRowCells(row.cells, band);
       const rowProps =
@@ -174,15 +181,31 @@ export function bandedTables(
     // band — which spans it — this trims nothing.
     while (bandRows.length > 1 && !rowDrawsSomething(bandRows[bandRows.length - 1]!)) {
       bandRows.pop();
+      bandRowNumbers.pop();
     }
     // Cut at the print-title row so it leads its table and repeats, keeping the
     // two halves inside their own band — the bands paginate one after the other
     // (`pageOrder="downThenOver"`), so they must not be interleaved.
     const split = titleRowIndex > 0 && titleRowIndex < bandRows.length;
-    const parts = split
-      ? [bandRows.slice(0, titleRowIndex), bandRows.slice(titleRowIndex)]
-      : [bandRows];
-    return parts.map((r) => ({ kind: 'table' as const, table: { properties, grid, rows: r } }));
+    const parts: Array<{ rows: Array<TableRow>; numbers: Array<number> }> = split
+      ? [
+          { rows: bandRows.slice(0, titleRowIndex), numbers: bandRowNumbers.slice(0, titleRowIndex) },
+          { rows: bandRows.slice(titleRowIndex), numbers: bandRowNumbers.slice(titleRowIndex) },
+        ]
+      : [{ rows: bandRows, numbers: bandRowNumbers }];
+    return parts.map((part) => {
+      const headed = headings
+        ? withHeadingBand(part.rows, bandTwips, headings.colStart + band.start, part.numbers)
+        : undefined;
+      return {
+        kind: 'table' as const,
+        table: {
+          properties,
+          grid: headed ? headed.widths.map((w) => twipsToPt(w)) : grid,
+          rows: headed ? headed.rows : part.rows,
+        },
+      };
+    });
   });
 }
 
