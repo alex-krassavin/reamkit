@@ -1578,11 +1578,19 @@ export function worksheetToBody(
       // content, so we shrink against the column's character capacity (the same
       // char model the clip uses) rather than a post-layout width.
       if (shrinkToFit && ws && text.length > 0) {
-        const charsFit = Math.max(1, columnWidths[c]! / TWIPS_PER_EXCEL_CHAR);
-        if (text.length > charsFit) {
-          // `xf` is non-nullish here (shrinkToFit was derived from xf.alignment).
+        // Measured in the font we DRAW with, not the workbook's: what has to fit
+        // is the rendered line, and our face is the best part of a fifth wider
+        // than Calibri. Scaled by the document's own character model instead,
+        // ShrinkToFit.xlsx still overran its column and wrapped onto a second
+        // line where every reader keeps it on one.
+        // `xf` is non-nullish here (shrinkToFit was derived from xf.alignment).
+        const drawnTwips =
+          (estimateChars(text) / charWidthUnits('0')) * charTwips(xf, styles, textTwipsUnit);
+        const room = columnWidths[c]!;
+        if (drawnTwips > room) {
           const baseHalfPt = (styles.fonts[xf.fontId]?.sizePt ?? 11) * 2;
-          const scaledHalfPt = Math.max(2, Math.round((baseHalfPt * charsFit) / text.length));
+          // Floor, never round: a half point up is a line that does not fit.
+          const scaledHalfPt = Math.max(2, Math.floor((baseHalfPt * room) / drawnTwips));
           runProps = { ...runProps, fontSizePt: halfPtToPt(scaledHalfPt) };
         }
       }
@@ -1634,7 +1642,9 @@ export function worksheetToBody(
         // does not — its box is simply bigger, and letting it wrap stacked
         // 50299.xlsx's `$R[]{A,copyRowHeight=true,rowShift=true}` inside a
         // 48pt-wide merge instead of cutting it.
-        ...(!wrapText && !rotated && !shrinkToFit ? { noWrap: true } : {}),
+        // …and a shrinkToFit cell does not wrap either — shrinking is what it
+        // does INSTEAD. Left to wrap, its scaled text broke onto a second line.
+        ...(!wrapText && !rotated ? { noWrap: true } : {}),
         // §18.8.1 — a number that does not fit its column is shown as a row of
         // `#`, never truncated, because a truncated number is a DIFFERENT
         // number: "4/30/201" reads as a date and is not the one in the cell.

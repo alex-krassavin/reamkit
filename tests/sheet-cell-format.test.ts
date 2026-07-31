@@ -149,6 +149,22 @@ describe('shrinkToFit — font scaled to the column (E-SHEET W6)', () => {
     expect(shrunk).toBeGreaterThan(0);
     expect(shrunk).toBeLessThan(normal); // ~2.5pt vs the 11pt default
   });
+
+  it('keeps the shrunk text on ONE line — shrinking is what it does instead', () => {
+    // §18.8.1: `shrinkToFit` scales the font so the text fits the cell; it does
+    // not wrap. Left wrapping, ShrinkToFit.xlsx broke its scaled label onto a
+    // second line where both references keep it on one.
+    const cell = firstCell(
+      buildXlsx({
+        rows: [
+          [{ value: 'This text is too long for the cell and must be scaled.', styleIndex: 8 }],
+        ],
+        columns: [{ min: 1, max: 1, widthChars: 10 }],
+        stylesXml: STYLES,
+      }),
+    );
+    expect(cell.properties.noWrap).toBe(true);
+  });
 });
 
 describe('cell-format round-trip (E-SHEET W6)', () => {
