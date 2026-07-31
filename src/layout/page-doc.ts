@@ -10,6 +10,7 @@
 // boxes inside a Line) and styling magnitudes (font/stroke sizes) stay plain
 // numbers — they are not page-frame coordinates.
 
+import type { BorderStyle } from '@/core/document-model';
 import type { Pt, ResourceId, ResourceStore } from '@/core/ir';
 import type { FontMeasure, ParsedTtf } from '@/core/font';
 import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
@@ -211,6 +212,12 @@ export interface BorderItem extends PageItemBase {
   readonly height: Pt;
   readonly borderSizePt: number;
   readonly borderColorHex: string;
+  /**
+   * §18.18.3 `ST_BorderStyle` — the rule's PATTERN, when it is not solid.
+   * `dashed`/`dotted` are line patterns, not weights, and dropping them here
+   * painted 57423.xlsx's dashed band as twelve continuous rules.
+   */
+  readonly borderStyle?: BorderStyle;
 }
 
 /** A filled rectangle (cell shading); `(x, y)` is its top-left corner. */

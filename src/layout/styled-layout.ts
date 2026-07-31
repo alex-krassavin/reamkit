@@ -4964,6 +4964,7 @@ function emitCellBorders(
       height: pt(rowHeight),
       borderSizePt: sz,
       borderColorHex: border.colorHex ?? '000000',
+      ...(border.style !== 'single' ? { borderStyle: border.style } : {}),
     });
   };
   pushSide('top', cell.borders.top);
@@ -5072,6 +5073,7 @@ function emitRowBottomEdge(
       height: pt(row.heightPt),
       borderSizePt: border.width ?? DEFAULT_BORDER_SIZE_EIGHTH * EIGHTH_PT,
       borderColorHex: border.colorHex ?? '000000',
+      ...(border.style !== 'single' ? { borderStyle: border.style } : {}),
     });
   }
 }

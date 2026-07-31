@@ -6,7 +6,7 @@
 // pre-split renderer produced), then pages replay their PageItems, then the
 // catalog assembles OutputIntent/XMP/struct-tree/attachments as required.
 
-import type { DocumentInfo } from '@/core/document-model';
+import type { BorderStyle, DocumentInfo } from '@/core/document-model';
 import type { ResourceId } from '@/core/ir';
 import type { EmbeddedFont } from '@/pdf/cid-font';
 import type { PdfDict, PdfRef, PdfValue } from '@/pdf/objects';
@@ -604,6 +604,25 @@ interface LinkRegion {
   readonly structId?: number;
 }
 
+/**
+ * The PDF dash array for a §18.18.3 border style, in points.
+ *
+ * Excel's dashes are proportional to the rule's weight; LibreOffice draws a
+ * `thin` dashed edge as 3pt on / 1pt off, which is 4× / 1.33× its 0.75pt width.
+ * An empty string means a solid rule.
+ */
+function dashPatternFor(style: BorderStyle | undefined, widthPt: number): string {
+  const u = Math.max(0.25, widthPt);
+  switch (style) {
+    case 'dashed':
+      return `[${formatNumber(u * 4)} ${formatNumber(u * 1.33)}]`;
+    case 'dotted':
+      return `[${formatNumber(u)} ${formatNumber(u * 1.33)}]`;
+    default:
+      return '';
+  }
+}
+
 function emitPageContent(
   page: LaidOutPage,
   tagging?: PageTagging,
@@ -676,9 +695,20 @@ function emitPageContent(
     out.push('2 J');
     let lastWidth = -1;
     let lastColor = '';
+    let lastDash = '';
     for (const b of borders) {
       const width = b.borderSizePt;
       const color = b.borderColorHex;
+      // §18.18.3 names line PATTERNS, not just weights, and ISO 32000-1 §8.4.3.6
+      // is where they belong. 57423.xlsx rules a whole band `dashed` and we drew
+      // twelve continuous edges. The projecting cap set above would lengthen
+      // every dash by half a width at each end and close the gaps, so a
+      // patterned rule reverts to the butt cap §8.4.3.3 starts with.
+      const dash = dashPatternFor(b.borderStyle, width);
+      if (dash !== lastDash) {
+        out.push(dash === '' ? '[] 0 d 2 J' : `${dash} 0 d 0 J`);
+        lastDash = dash;
+      }
       if (width !== lastWidth) {
         out.push(`${formatNumber(width)} w`);
         lastWidth = width;
