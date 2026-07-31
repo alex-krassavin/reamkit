@@ -30,6 +30,7 @@ import { flowRenderOptions } from '@/core/converter/project';
 import { FontRegistry, createFontMeasure } from '@/core/font';
 import { fetchFontSet } from '@/core/fonts';
 import { ConversionLossError } from '@/core/ir';
+import { isCfb, openCfb } from '@/core/ole/cfb';
 import { writeDocx } from '@/word/docx-writer';
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
 import { writeXlsx } from '@/excel/xlsx-writer';
@@ -162,6 +163,16 @@ export class Ream {
     const readers = options.readers ?? DEFAULT_READERS;
     const reader = readers.find((r) => r.sniff(bytes));
     if (!reader) {
+      // A password-protected OOXML document is not an unknown format — it is one
+      // we recognise and cannot open. ECMA-376 §2.3 wraps the whole OPC package
+      // in an OLE container, which every reader correctly declines, and the
+      // caller was then told their .xlsx was unrecognizable (58616.xlsx).
+      if (isEncryptedOoxml(bytes)) {
+        throw new Error(
+          'Password-protected OOXML document (ECMA-376 §2.3 EncryptedPackage) — ' +
+            're-save it without a password',
+        );
+      }
       throw new Error(
         `Unrecognized document format (readers: ${readers.map((r) => r.id).join(', ')})`,
       );
@@ -379,5 +390,16 @@ export class Ream {
    */
   private enforceStrict(options: ReamConvertOptions, losses: ReadonlyArray<Loss>): void {
     if (options.strict && losses.length > 0) throw new ConversionLossError(losses[0]!);
+  }
+}
+
+// ECMA-376 §2.3 — an encrypted OPC package is an OLE compound file holding the
+// ciphertext in `EncryptedPackage` beside its `EncryptionInfo`.
+function isEncryptedOoxml(bytes: Uint8Array): boolean {
+  if (!isCfb(bytes)) return false;
+  try {
+    return openCfb(bytes).hasStream('EncryptedPackage');
+  } catch {
+    return false;
   }
 }

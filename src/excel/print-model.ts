@@ -2054,6 +2054,7 @@ function richRunProps(base: RunProperties, rr: SheetRichRun): RunProperties {
   if (rr.bold !== undefined) out.bold = rr.bold;
   if (rr.italic !== undefined) out.italic = rr.italic;
   if (rr.underline) out.underline = 'single';
+  if (rr.strike !== undefined) out.strike = rr.strike;
   if (rr.colorHex) out.colorHex = rr.colorHex;
   if (rr.sizePt !== undefined) out.fontSizePt = halfPtToPt(Math.round(rr.sizePt * 2));
   if (rr.vertAlign) out.verticalAlign = rr.vertAlign;

@@ -776,6 +776,12 @@ export interface SheetRichRun {
   readonly bold?: boolean;
   readonly italic?: boolean;
   readonly underline?: boolean;
+  /**
+   * §18.8.37 `<strike/>` on the run — struck-through text inside a cell that is
+   * otherwise not. 58315.xlsx crosses out the middle of "320-338 350", which is
+   * the whole point of the cell.
+   */
+  readonly strike?: boolean;
   readonly colorHex?: string;
   readonly sizePt?: number;
   /** §18.4.2 `<vertAlign>` — superscript / subscript within the cell text. */

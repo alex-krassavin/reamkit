@@ -129,6 +129,10 @@ function richRun(text: string, rPr: unknown): SheetRichRun {
   // name in ST_UnderlineValues, so the boolean reader beside it takes it for a
   // switch nobody turned off.
   if (has(p, 'u') && attrStr(p['u'], 'val') !== 'none') out.underline = true;
+  // §18.8.37 `<strike/>` — the third of the boolean toggles, and the one this
+  // reader skipped: 58315.xlsx crosses out "-338" in the middle of a cell that
+  // reads "320-338 350", and we printed all three runs plain.
+  out.strike = has(p, 'strike');
   const color = colorRgb(p['color']);
   if (color) out.colorHex = color;
   const sz = attrNum(p['sz'], 'val');
