@@ -126,11 +126,29 @@ function emitPage(
   }
 
   for (const t of plan.lines) {
-    emitTextLine(out, t, losses);
+    emitTextLine(out, t, losses, idc);
   }
 }
 
-function emitTextLine(out: Array<string>, item: TextLineItem, losses: Array<Loss>): void {
+function emitTextLine(
+  out: Array<string>,
+  item: TextLineItem,
+  losses: Array<Loss>,
+  idc: { n: number },
+): void {
+  // A cell whose text overran its box is painted inside it, so the glyph that
+  // straddles the edge is cut rather than dropped — the SVG twin of the PDF
+  // emitter's `q … re W n … Q`. The layout already cut the string to one glyph
+  // past the edge; this is what makes drawing that glyph safe.
+  const clip = item.clip;
+  if (clip) {
+    const id = `clip${idc.n++}`;
+    out.push(
+      `<clipPath id="${id}"><rect x="${fmt(clip.x)}" y="${fmt(clip.y)}" ` +
+        `width="${fmt(clip.width)}" height="${fmt(clip.height)}"/></clipPath>`,
+      `<g clip-path="url(#${id})">`,
+    );
+  }
   const y = item.baselineY;
   let x: number = item.originX;
   for (const tok of item.line.tokens) {
@@ -154,6 +172,7 @@ function emitTextLine(out: Array<string>, item: TextLineItem, losses: Array<Loss
     }
     x += tok.widthPt;
   }
+  if (clip) out.push('</g>');
 }
 
 function emitShape(out: Array<string>, shape: VectorShape, idc: { n: number }): void {

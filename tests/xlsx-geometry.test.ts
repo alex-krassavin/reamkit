@@ -1261,3 +1261,26 @@ describe('a cell cuts its text mid-glyph (ISO 32000-1 §8.5.4)', () => {
     expect(long.startsWith(drawn)).toBe(true);
   });
 });
+
+describe('the cell cut reaches every writer', () => {
+  const overrun = buildXlsx({
+    rows: [['dlgkdflgdfjkl', 'dlgkdflgdfjkl']],
+    columns: [{ min: 1, max: 2, widthChars: 10 }],
+  });
+
+  it('clips the line in SVG the way the PDF emitter does', async () => {
+    const svg = new TextDecoder().decode(
+      await Ream.parse(overrun).convert('svg', { fonts: FONTS }),
+    );
+    expect(svg).toContain('<clipPath');
+    expect(svg).toContain('clip-path="url(#');
+  });
+
+  it('tells the browser not to wrap or spill in HTML (§18.8.1)', async () => {
+    // HTML renders the document model rather than a laid-out page, so the cut
+    // is the browser's to make — it only has to be told.
+    const html = new TextDecoder().decode(await Ream.parse(overrun).convert('html'));
+    expect(html).toContain('white-space:nowrap');
+    expect(html).toContain('overflow:hidden');
+  });
+});

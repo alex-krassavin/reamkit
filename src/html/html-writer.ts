@@ -807,6 +807,11 @@ function emitCell(
   pushBorder(css, 'left', c?.left ?? (pos.firstCol ? t?.left : t?.insideV));
   pushBorder(css, 'right', c?.right ?? (pos.lastCol ? t?.right : t?.insideV));
   if (cell.properties.shading) css.push(`background-color:#${cell.properties.shading.colorHex}`);
+  // §18.8.1 — a cell that does not wrap shows ONE line, cut at its own box.
+  // The paginated writers cut it themselves (the PDF and SVG emitters clip the
+  // line to the cell); HTML renders the document model rather than a laid-out
+  // page, so the browser does the cutting and only needs to be told to.
+  if (cell.properties.noWrap) css.push('white-space:nowrap', 'overflow:hidden');
   // Conditional-format data bar (E-SHEET SC1c): a gradient stop paints the bar
   // over the background colour and under the cell text. startFraction offsets it
   // for axis (mixed-sign) bars (tail TC4).
