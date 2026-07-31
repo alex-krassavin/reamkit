@@ -542,6 +542,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
     date1904,
     ...(chartData.size > 0 ? { chartData } : {}),
     resources,
+    themePalette,
     ...(info ? { info } : {}),
   };
 }

@@ -235,4 +235,10 @@ export interface SheetDoc {
   readonly resources: ResourceStore;
   /** Document metadata from docProps/core.xml. */
   readonly info?: DocumentInfo;
+  /**
+   * §20.1.6.2 the workbook theme's colour scheme, slot name → 6-hex. Cell
+   * colours are resolved against it at parse time; a header/footer's `&K` theme
+   * reference is resolved at projection time, which is why the palette travels.
+   */
+  readonly themePalette?: ReadonlyMap<string, string>;
 }

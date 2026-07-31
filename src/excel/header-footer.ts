@@ -15,6 +15,46 @@
 import type { Alignment, BodyElement, Run, RunProperties } from '@/core/document-model';
 import { pt } from '@/core/ir';
 
+// §18.3.1.55 — the theme-colour order a header/footer's `&K` reference indexes,
+// which is the workbook's own (§18.8.3): background first, then text.
+const HEADER_THEME_SLOTS: ReadonlyArray<string> = [
+  'lt1',
+  'dk1',
+  'lt2',
+  'dk2',
+  'accent1',
+  'accent2',
+  'accent3',
+  'accent4',
+  'accent5',
+  'accent6',
+  'hlink',
+  'folHlink',
+];
+
+/**
+ * Lighten or darken a theme colour by a header/footer tint (§18.3.1.55): the
+ * value is a fraction of the way to white, or to black when the sign is minus.
+ *
+ * @param hex     The theme colour, RRGGBB.
+ * @param amount  0..1.
+ * @param darken  True for a `-` sign.
+ * @returns The tinted colour, RRGGBB.
+ */
+function applyHeaderTint(hex: string, amount: number, darken: boolean): string {
+  if (!(amount > 0)) return hex.toUpperCase();
+  const n = parseInt(hex, 16);
+  const mix = (c: number): number =>
+    darken ? Math.round(c * (1 - amount)) : Math.round(c + (255 - c) * amount);
+  const r = mix((n >> 16) & 255);
+  const g = mix((n >> 8) & 255);
+  const b = mix(n & 255);
+  return [r, g, b]
+    .map((c) => c.toString(16).padStart(2, '0'))
+    .join('')
+    .toUpperCase();
+}
+
 interface Regions {
   readonly left: Array<Run>;
   readonly center: Array<Run>;
@@ -41,8 +81,16 @@ export function buildHeaderFooterContent(
   scale = 1,
   basePt = DEFAULT_HEADER_PT,
   fileName?: string,
+  themePalette?: ReadonlyMap<string, string>,
 ): Array<BodyElement> {
-  const regions = parseHeaderFooterString(formatString, sheetName, scale, basePt, fileName);
+  const regions = parseHeaderFooterString(
+    formatString,
+    sheetName,
+    scale,
+    basePt,
+    fileName,
+    themePalette,
+  );
   const out: Array<BodyElement> = [];
   const para = (runs: ReadonlyArray<Run>, alignment: Alignment): void => {
     for (const line of splitLines(runs)) {
@@ -91,6 +139,7 @@ function parseHeaderFooterString(
   scale: number,
   basePt: number,
   fileName?: string,
+  themePalette?: ReadonlyMap<string, string>,
 ): Regions {
   const regions: Regions = { left: [], center: [], right: [] };
   let current: Array<Run> = regions.center;
@@ -204,8 +253,22 @@ function parseHeaderFooterString(
       continue;
     }
     if (next === 'K') {
-      // &Krrggbb — six hex digits, or a theme spec we cannot resolve here.
+      // §18.3.1.55 — `&K` takes SIX hex digits, or a theme reference written as
+      // two digits of theme-colour index, a sign and three of tint: `&K01+000`
+      // is the theme's first colour at no tint. Read as hex, that reference
+      // consumed the "01" and left "+000" on the page as text — and the colour
+      // it was meant to reset never reset, so HeaderFooterComplexFormats.xlsx
+      // ran red from its "RedUnderlined" to the end of the line.
       i += 2;
+      const themed = /^(\d\d)([+-])(\d\d\d)/.exec(s.slice(i));
+      if (themed) {
+        i += themed[0].length;
+        const slot = HEADER_THEME_SLOTS[Number(themed[1])];
+        const base = slot ? themePalette?.get(slot) : undefined;
+        flush();
+        colorHex = base ? applyHeaderTint(base, Number(themed[3]) / 1000, themed[2] === '-') : undefined;
+        continue;
+      }
       let hex = '';
       while (hex.length < 6 && i < s.length && /[0-9A-Fa-f]/.test(s[i]!)) {
         hex += s[i]!;

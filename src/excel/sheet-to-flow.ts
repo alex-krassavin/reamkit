@@ -129,6 +129,11 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
   // How many sheets are still candidates to print, so the guard above can tell
   // "this one is empty" from "every one of them is".
   let printableSheets = sheet.sheets.filter((s) => !s.hidden).length;
+  // Does anything in this workbook print at all? When nothing does, the first
+  // visible sheet still prints its page (see the guard below).
+  const anyPrints = sheet.sheets.some(
+    (s) => !s.hidden && sheetPrintsAnything(s, sheet.styles),
+  );
   for (let sheetIdx = 0; sheetIdx < sheet.sheets.length; sheetIdx++) {
     const ws = sheet.sheets[sheetIdx]!;
     // §18.2.19: a hidden tab is not printed. Excel and LibreOffice both leave it
@@ -137,9 +142,13 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     if (ws.hidden) continue;
     // …and neither is a sheet with nothing on it. tdf115159.xlsx carries two
     // untouched tabs beside its data, and printing them added a blank page the
-    // reference does not produce. The last one standing always prints: a
-    // workbook of nothing but empty sheets is still a document.
-    if (!sheetPrintsAnything(ws, sheet.styles) && printableSheets > 1) {
+    // reference does not produce. A workbook of nothing but empty sheets is
+    // still a document, though, and the one it prints is its FIRST — which is
+    // the sheet that carries the header and footer when any does.
+    // HeaderFooterComplexFormats.xlsx is three empty tabs whose first has both,
+    // and keeping the LAST one standing printed the blank third: a page with
+    // nothing on it where LibreOffice prints two lines of formatted text.
+    if (!sheetPrintsAnything(ws, sheet.styles) && (anyPrints || printed > 0)) {
       printableSheets--;
       continue;
     }
@@ -178,6 +187,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       sheet.styles.fonts[0]?.sizePt,
       printed,
       options.fileName,
+      sheet.themePalette,
     );
     if (printed === 0) firstSheetSection = sheetSection;
     sheetSections.push(sheetSection);
@@ -1060,6 +1070,7 @@ function withHeaderFooter(
   basePt: number | undefined,
   sheetIdx: number,
   fileName?: string,
+  themePalette?: ReadonlyMap<string, string>,
 ): SectionProperties {
   const headerRel = `${HEADER_REL}${sheetIdx}`;
   const footerRel = `${FOOTER_REL}${sheetIdx}`;
@@ -1068,14 +1079,28 @@ function withHeaderFooter(
   const headers: Array<HeaderFooterReference> = [];
   const footers: Array<HeaderFooterReference> = [];
   if (hf.oddHeader) {
-    const content = buildHeaderFooterContent(hf.oddHeader, ws.name, scale, basePt, fileName);
+    const content = buildHeaderFooterContent(
+      hf.oddHeader,
+      ws.name,
+      scale,
+      basePt,
+      fileName,
+      themePalette,
+    );
     if (content.length > 0) {
       headersFooters.set(headerRel, resolveBodyStyles(content, EMPTY_STYLE_SHEET));
       headers.push({ type: 'default', relationshipId: headerRel });
     }
   }
   if (hf.oddFooter) {
-    const content = buildHeaderFooterContent(hf.oddFooter, ws.name, scale, basePt, fileName);
+    const content = buildHeaderFooterContent(
+      hf.oddFooter,
+      ws.name,
+      scale,
+      basePt,
+      fileName,
+      themePalette,
+    );
     if (content.length > 0) {
       headersFooters.set(footerRel, resolveBodyStyles(content, EMPTY_STYLE_SHEET));
       footers.push({ type: 'default', relationshipId: footerRel });
