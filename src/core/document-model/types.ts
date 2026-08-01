@@ -721,6 +721,18 @@ export interface RowProperties {
    * flushes the page before the row, then repeats any leading header rows.
    */
   readonly pageBreakBefore?: boolean;
+  /**
+   * §17.4.7 `w:cnfStyle` — the conditional formats of the table style this row
+   * takes, whatever its position says. Word's calendar templates give a SECOND
+   * header row `w:firstRow="1"` so it is painted like the first.
+   */
+  readonly conditional?: RowConditionalFormat;
+}
+
+/** §17.4.7 — the row-level conditional-format flags a `w:cnfStyle` declares. */
+export interface RowConditionalFormat {
+  readonly firstRow?: boolean;
+  readonly lastRow?: boolean;
 }
 
 /**

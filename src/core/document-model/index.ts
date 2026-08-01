@@ -66,6 +66,7 @@ export type {
   TabStop,
   Run,
   RunProperties,
+  RowConditionalFormat,
   RowProperties,
   Section,
   FloatAnchor,

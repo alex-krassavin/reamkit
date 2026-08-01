@@ -8,6 +8,7 @@ import type {
   CellMargins,
   CellMerge,
   CellProperties,
+  RowConditionalFormat,
   RowProperties,
   Table,
   TableCell,
@@ -285,6 +286,26 @@ function parseTableRow(
   return { properties, cells };
 }
 
+// §17.4.7 `w:cnfStyle` — the conditional formats of the table style this row
+// takes. Word writes both the explicit attributes and the §17.18.8 bit string
+// (bit 1 firstRow, bit 2 lastRow); either says the same thing. A row claims
+// them whatever its position is: calendar2.docx marks its weekday row
+// `firstRow="1"` so the style paints it blue like the month above it, and
+// reading the position alone drew it black.
+function parseRowConditional(cnf: PoNode | undefined): RowConditionalFormat | undefined {
+  if (!cnf) return undefined;
+  const bits = poAttr(cnf, 'val');
+  const bit = (i: number): boolean => bits?.[i] === '1';
+  const flag = (name: string): boolean | undefined => {
+    const v = poAttr(cnf, name);
+    return v === undefined ? undefined : v === '1' || v === 'true' || v === 'on';
+  };
+  const firstRow = flag('firstRow') ?? bit(0);
+  const lastRow = flag('lastRow') ?? bit(1);
+  if (!firstRow && !lastRow) return undefined;
+  return { ...(firstRow ? { firstRow } : {}), ...(lastRow ? { lastRow } : {}) };
+}
+
 function parseRowProperties(trPr: PoNode | undefined): RowProperties {
   if (!trPr) return {};
   const out: Mutable<RowProperties> = {};
@@ -310,6 +331,8 @@ function parseRowProperties(trPr: PoNode | undefined): RowProperties {
   if (poFirstChild(trPr, 'w:tblHeader')) {
     out.isHeader = poToggle(poFirstChild(trPr, 'w:tblHeader')) ?? true;
   }
+  const cnf = parseRowConditional(poFirstChild(trPr, 'w:cnfStyle'));
+  if (cnf) out.conditional = cnf;
   return out;
 }
 

@@ -196,3 +196,31 @@ describe('a table indent from the style', () => {
     expect(tableOf('<w:tblInd w:w="1440" w:type="dxa"/>').properties.indentPt).toBe(72);
   });
 });
+
+describe('a row that claims a conditional format (§17.4.7 w:cnfStyle)', () => {
+  // calendar2.docx marks its weekday row `w:firstRow="1"` so the style paints
+  // it like the month heading above it; reading the row's INDEX alone drew it
+  // in the body colour.
+  const claimed = (cnf: string) =>
+    '<w:tbl><w:tblPr><w:tblStyle w:val="Fancy"/><w:tblLook w:firstRow="1" w:noHBand="1" w:noVBand="1"/></w:tblPr>' +
+    '<w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>' +
+    '<w:tr><w:tc><w:p><w:r><w:t>head</w:t></w:r></w:p></w:tc></w:tr>' +
+    `<w:tr><w:trPr>${cnf}</w:trPr><w:tc><w:p><w:r><w:t>second</w:t></w:r></w:p></w:tc></w:tr>` +
+    '</w:tbl>';
+  const shadingOfRow1 = (cnf: string) =>
+    firstTable(buildDocxFromBody(claimed(cnf), { stylesXml: FANCY_STYLE })).rows[1]!.cells[0]!
+      .properties.shading?.colorHex;
+
+  it('takes the first-row format from the attribute', () => {
+    expect(shadingOfRow1('<w:cnfStyle w:firstRow="1"/>')).toBe('4472C4');
+  });
+
+  it('takes it from the bit string too (§17.18.8)', () => {
+    expect(shadingOfRow1('<w:cnfStyle w:val="100000000000"/>')).toBe('4472C4');
+  });
+
+  it('leaves a row that claims nothing alone', () => {
+    expect(shadingOfRow1('<w:cnfStyle w:val="000000000000"/>')).toBeUndefined();
+    expect(shadingOfRow1('')).toBeUndefined();
+  });
+});

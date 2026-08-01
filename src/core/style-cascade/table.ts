@@ -100,8 +100,11 @@ function applyTableStyle(table: Table, sheet: StyleSheet): void {
     for (const cell of row.cells) {
       const span = cell.properties.colSpan ?? 1;
       const layer = cellLayer(folded, look, {
-        firstRow: r === 0,
-        lastRow: r === rows.length - 1,
+        // §17.4.7 — a row may CLAIM the first/last-row format whatever its
+        // index is, and Word's calendar templates do exactly that for their
+        // second header row.
+        firstRow: r === 0 || row.properties.conditional?.firstRow === true,
+        lastRow: r === rows.length - 1 || row.properties.conditional?.lastRow === true,
         firstCol: colStart === 0,
         lastCol: colStart + span >= colCount,
         rowBand: bandIndex(r, look.firstRow === true, folded.rowBandSize),
