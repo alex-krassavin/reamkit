@@ -44,8 +44,8 @@ describe('a SmartArt diagram’s fallback drawing', () => {
     // 914400 EMU = 72pt, so 50 + 72 = 122pt across and 30 + 0 = 30pt down.
     const graphic = shapes[0];
     expect(graphic?.fill).toEqual({ kind: 'solid', colorHex: 'FFC000' });
-    expect(graphic?.float?.posH.offsetPt).toBeCloseTo(122, 3);
-    expect(graphic?.float?.posV.offsetPt).toBeCloseTo(30, 3);
+    expect(graphic?.float?.posH?.offsetPt).toBeCloseTo(122, 3);
+    expect(graphic?.float?.posV?.offsetPt).toBeCloseTo(30, 3);
     expect(graphic?.width).toBeCloseTo(144, 3);
   });
 
@@ -54,16 +54,14 @@ describe('a SmartArt diagram’s fallback drawing', () => {
     // of its circles instead of sitting one per band.
     const label = shapes[1];
     expect(label?.text?.content).toHaveLength(1);
-    expect(label?.float?.posV.offsetPt).toBeCloseTo(30 + 36, 3);
+    expect(label?.float?.posV?.offsetPt).toBeCloseTo(30 + 36, 3);
     expect(label?.height).toBeCloseTo(18, 3);
     // The words move; the circle they came from keeps its fill and loses them.
     expect(shapes[0]?.text).toBeUndefined();
   });
 
   it('ignores a shape that states no size', () => {
-    expect(
-      parseDiagramShapes(diagram('<dsp:sp><dsp:spPr/></dsp:sp>'), FRAME, COLORS),
-    ).toEqual([]);
+    expect(parseDiagramShapes(diagram('<dsp:sp><dsp:spPr/></dsp:sp>'), FRAME, COLORS)).toEqual([]);
   });
 });
 

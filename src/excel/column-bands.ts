@@ -55,7 +55,10 @@ export function withHeadingBand(
     content: [
       {
         kind: 'paragraph' as const,
-        paragraph: { properties: { alignment: 'center' as const }, runs: [{ text, properties: {} }] },
+        paragraph: {
+          properties: { alignment: 'center' as const },
+          runs: [{ text, properties: {} }],
+        },
       },
     ],
   });
@@ -189,7 +192,10 @@ export function bandedTables(
     const split = titleRowIndex > 0 && titleRowIndex < bandRows.length;
     const parts: Array<{ rows: Array<TableRow>; numbers: Array<number> }> = split
       ? [
-          { rows: bandRows.slice(0, titleRowIndex), numbers: bandRowNumbers.slice(0, titleRowIndex) },
+          {
+            rows: bandRows.slice(0, titleRowIndex),
+            numbers: bandRowNumbers.slice(0, titleRowIndex),
+          },
           { rows: bandRows.slice(titleRowIndex), numbers: bandRowNumbers.slice(titleRowIndex) },
         ]
       : [{ rows: bandRows, numbers: bandRowNumbers }];

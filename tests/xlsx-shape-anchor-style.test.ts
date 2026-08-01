@@ -24,7 +24,10 @@ const SP =
   '    <a:prstGeom prst="leftArrow"><a:avLst/></a:prstGeom>\n  </xdr:spPr>\n' +
   `  ${GALLERY}\n  <xdr:txBody><a:bodyPr/><a:p><a:endParaRPr/></a:p></xdr:txBody>\n</xdr:sp>`;
 
-function shapeOf(sheetShape: { rawShapeXml?: string; rawAnchorXml?: string }): ShapeBlock | undefined {
+function shapeOf(sheetShape: {
+  rawShapeXml?: string;
+  rawAnchorXml?: string;
+}): ShapeBlock | undefined {
   const { flow } = Ream.parse(buildXlsx({ rows: [['a']], sheetShape }));
   const el = flow.body.find((b) => b.kind === 'shape');
   return el?.kind === 'shape' ? el.shape : undefined;
@@ -53,7 +56,7 @@ describe('absoluteAnchor (§20.5.2.1)', () => {
     );
     const shape = parseSheetShapes(xml, SHEET, () => '4472C4')[0];
     const f = shape?.float;
-    return f ? { x: f.posH.offsetPt, y: f.posV.offsetPt } : undefined;
+    return f ? { x: f.posH?.offsetPt ?? 0, y: f.posV?.offsetPt ?? 0 } : undefined;
   }
 
   it('places the shape at the offset it names', () => {

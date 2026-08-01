@@ -282,7 +282,11 @@ function buildLegendBlock(
     // The key stands for what the series LOOKS like: a series whose own line
     // draws nothing is a scatter of markers, so its key is a swatch and not a
     // rule (SimpleScatterChart.xlsx).
-    ...(s.line?.none ? { marker: 'box' as const } : isLineLike(s) ? { marker: 'line' as const } : {}),
+    ...(s.line?.none
+      ? { marker: 'box' as const }
+      : isLineLike(s)
+        ? { marker: 'line' as const }
+        : {}),
   }));
   // A line chart's key is a LINE, not a filled box — that is what the series
   // looks like on the plot, and what both references draw.
@@ -415,7 +419,8 @@ function buildFrame(
   // §21.2.2.9 — a series on the secondary axis is measured against ITS axis, so
   // it is no part of the primary's range and the primary is no part of its.
   const onSecondary = chart.series.filter((s) => s.secondaryAxis);
-  const primary = onSecondary.length > 0 ? chart.series.filter((s) => !s.secondaryAxis) : chart.series;
+  const primary =
+    onSecondary.length > 0 ? chart.series.filter((s) => !s.secondaryAxis) : chart.series;
   const allVals = primary.flatMap((s) => s.values.slice(0, nCats));
   const [dataMin, dataMax] = opts.dataRange ?? [Math.min(0, ...allVals), Math.max(0, ...allVals)];
   const scale = axisScale(chart, dataMin, dataMax, hPt);
@@ -845,11 +850,7 @@ function isLineLike(series: ChartSeries): boolean {
  * Draw a combo's line-group series over an already-built cartesian frame, at the
  * category slot centres the bars use (§21.2.2.145).
  */
-function pushComboLines(
-  chart: Chart,
-  f: CartesianFrame,
-  lineIdx: ReadonlyArray<number>,
-): void {
+function pushComboLines(chart: Chart, f: CartesianFrame, lineIdx: ReadonlyArray<number>): void {
   for (const s of lineIdx) {
     const series = chart.series[s]!;
     const color = seriesColor(series, s, chart.seriesColorCycle);
@@ -1172,11 +1173,7 @@ export function buildLineScene(
 // ─── pie chart ──────────────────────────────────────────────────────────────
 // A pie's slices cycle the same colours a bar chart's SERIES do — the chart's
 // own cycle when it has one, which is the workbook theme's accents.
-const sliceColor = (
-  series: ChartSeries,
-  i: number,
-  cycle?: ReadonlyArray<string>,
-): string => {
+const sliceColor = (series: ChartSeries, i: number, cycle?: ReadonlyArray<string>): string => {
   const palette = cycle && cycle.length > 0 ? cycle : SERIES_COLORS;
   return pointColor(series, i) ?? palette[i % palette.length]!;
 };

@@ -759,14 +759,7 @@ function emitPageContent(
       // The edge as a segment plus the direction to offset it in: a `double`
       // rule is TWO lines straddling the edge, and every other style is the one
       // line down the middle of it.
-      const [x1, y1, x2, y2, nx, ny]: readonly [
-        number,
-        number,
-        number,
-        number,
-        number,
-        number,
-      ] =
+      const [x1, y1, x2, y2, nx, ny]: readonly [number, number, number, number, number, number] =
         b.side === 'top'
           ? [x, y + h, x + w, y + h, 0, 1]
           : b.side === 'bottom'

@@ -273,7 +273,9 @@ function parseHeaderFooterString(
         const slot = HEADER_THEME_SLOTS[Number(themed[1])];
         const base = slot ? themePalette?.get(slot) : undefined;
         flush();
-        colorHex = base ? applyHeaderTint(base, Number(themed[3]) / 1000, themed[2] === '-') : undefined;
+        colorHex = base
+          ? applyHeaderTint(base, Number(themed[3]) / 1000, themed[2] === '-')
+          : undefined;
         continue;
       }
       let hex = '';

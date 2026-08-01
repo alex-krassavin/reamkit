@@ -71,7 +71,8 @@ describe('x14 conditional formats', () => {
       ),
     );
     expect(ws.conditionalFormats).toHaveLength(2);
-    expect(ws.conditionalFormats?.[0]?.rules[0]?.dxfId).toBe(3);
+    const base = ws.conditionalFormats?.[0]?.rules[0];
+    expect(base && 'dxfId' in base ? base.dxfId : undefined).toBe(3);
   });
 
   it('ignores a block that names no range', () => {

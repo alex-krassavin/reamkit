@@ -196,7 +196,15 @@ export const defaultColorResolver: ColorResolver = makeColorResolver(DEFAULT_THE
 export function readColorMods(colorNode: PoNode): Array<ColorMod> {
   const mods: Array<ColorMod> = [];
   for (const c of poChildren(colorNode)) {
-    for (const kind of ['lumMod', 'lumOff', 'shade', 'tint', 'alpha', 'satMod', 'satOff'] as const) {
+    for (const kind of [
+      'lumMod',
+      'lumOff',
+      'shade',
+      'tint',
+      'alpha',
+      'satMod',
+      'satOff',
+    ] as const) {
       if (poIs(c, `a:${kind}`)) {
         const v = poIntAttr(c, 'val');
         if (v !== undefined) mods.push({ kind, val: v / 100000 });

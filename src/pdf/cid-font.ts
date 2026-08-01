@@ -66,9 +66,7 @@ export function embedTtfFont(
     : undefined;
   const fontFileBytes = usedGidsArr ? subsetTtf(parsed, usedGidsArr) : parsed.raw;
   // §9.9 wants the UNCOMPRESSED length in /Length1; the stream itself deflates.
-  const fontFileRef = doc.add(
-    deflatedStream({ Length1: fontFileBytes.byteLength }, fontFileBytes),
-  );
+  const fontFileRef = doc.add(deflatedStream({ Length1: fontFileBytes.byteLength }, fontFileBytes));
 
   // ISO 19005-1 §6.3.5 — PDF/A-1 *requires* a /CIDSet in a CIDFont subset's
   // descriptor, marking the CIDs present (Identity ordering ⇒ CID = GID, so the
@@ -132,9 +130,7 @@ export function embedTtfFont(
     }),
   );
 
-  const toUnicodeRef = doc.add(
-    deflatedStream({}, buildToUnicodeCMap(parsed, subsetGids)),
-  );
+  const toUnicodeRef = doc.add(deflatedStream({}, buildToUnicodeCMap(parsed, subsetGids)));
 
   const type0Ref = doc.add(
     dict({

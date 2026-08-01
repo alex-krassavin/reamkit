@@ -199,10 +199,7 @@ const VALID_BORDER_STYLES: ReadonlySet<XlsxBorderStyleName> = new Set([
   'slantDashDot',
 ]);
 
-function parseBorders(
-  root: Record<string, unknown>,
-  colors: WorkbookColors,
-): Array<XlsxBorder> {
+function parseBorders(root: Record<string, unknown>, colors: WorkbookColors): Array<XlsxBorder> {
   const node = asObject(root['borders']);
   if (!node) return [];
   const out: Array<XlsxBorder> = [];
@@ -261,10 +258,7 @@ function parseNumFmts(root: Record<string, unknown>): Map<number, string> {
   return result;
 }
 
-function parseFonts(
-  root: Record<string, unknown>,
-  colors: WorkbookColors,
-): Array<XlsxFont> {
+function parseFonts(root: Record<string, unknown>, colors: WorkbookColors): Array<XlsxFont> {
   const node = asObject(root['fonts']);
   if (!node) return [];
   const out: Array<XlsxFont> = [];
@@ -303,10 +297,7 @@ function parseFonts(
   return out;
 }
 
-function parseFills(
-  root: Record<string, unknown>,
-  colors: WorkbookColors,
-): Array<XlsxFill> {
+function parseFills(root: Record<string, unknown>, colors: WorkbookColors): Array<XlsxFill> {
   const node = asObject(root['fills']);
   if (!node) return [];
   const out: Array<XlsxFill> = [];

@@ -858,7 +858,13 @@ describe('a vertical merge is ONE box (§18.3.1.55)', () => {
     // and a merge's box is every row it spans — Excel and LibreOffice both put
     // the label on the merge's last row.
     const items = placed(
-      buildXlsx({ rows: [['a', 'b'], [null, 'c']], mergeRefs: ['A1:A2'] }),
+      buildXlsx({
+        rows: [
+          ['a', 'b'],
+          [null, 'c'],
+        ],
+        mergeRefs: ['A1:A2'],
+      }),
     );
     expect(at(items, 'a').y).toBeCloseTo(at(items, 'c').y, 1);
   });

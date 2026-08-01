@@ -81,14 +81,11 @@ function buildShape(
   const spPr = poChildren(sp).find((c) => poIs(c, `${ns}:spPr`));
   const txBody = poChildren(sp).find((c) => poIs(c, `${ns}:txBody`));
   const geometry = parseGeometry(spPr);
-  const parsed = txBody
-    ? parseTxBody(txBody, undefined, undefined, colors, undefined)
-    : undefined;
+  const parsed = txBody ? parseTxBody(txBody, undefined, undefined, colors, undefined) : undefined;
   // An `<xdr:txBody>` is written whether or not it says anything, so the
   // test below is for CHARACTERS.
   const lettered = (parsed?.content ?? []).some(
-    (b) =>
-      b.kind === 'paragraph' && b.paragraph.runs.some((r) => r.text.trim().length > 0),
+    (b) => b.kind === 'paragraph' && b.paragraph.runs.some((r) => r.text.trim().length > 0),
   );
   // §20.1.7.6 — the anchor gives the box, `a:xfrm` gives how the shape sits
   // in it. Read for the box alone, a shape that is turned lies down flat:
@@ -110,9 +107,7 @@ function buildShape(
   // and turned 90° into a 156pt band would wrap every word: bnc762542.xlsx
   // has three of them and its "Description 1" broke after "Description".
   const own =
-    turned && xfrm && !lettered
-      ? poChildren(xfrm).find((c) => poIs(c, 'a:ext'))
-      : undefined;
+    turned && xfrm && !lettered ? poChildren(xfrm).find((c) => poIs(c, 'a:ext')) : undefined;
   const ownW = own ? emuToPt(poIntAttr(own, 'cx') ?? 0) : 0;
   const ownH = own ? emuToPt(poIntAttr(own, 'cy') ?? 0) : 0;
   // The rotation turns about the centre, so that is what the two boxes share.
@@ -151,26 +146,26 @@ function buildShape(
   if (!text && fill.kind === 'none' && !visibleLine) return undefined;
 
   return {
-      // §20.5.2.35: a `twoCellAnchor` is a TWO-dimensional placement. Emitted
-      // as a plain block the drawing kept only its size and its order down
-      // the page — everything landed against the left margin, which turned
-      // bnc762542.xlsx's callout (three swatches, three leader lines, three
-      // labels, side by side) into a single vertical stack. The layout floats
-      // a shape at its anchor when one is given, so give it one.
-      float: {
-        wrap: 'none' as const,
-        posH: { relativeFrom: 'margin' as const, offsetPt: pt(xPt) },
-        posV: { relativeFrom: 'margin' as const, offsetPt: pt(yPt) },
-      },
-      width: pt(widthPt),
-      height: pt(heightPt),
-      geometry,
-      fill,
-      ...(transform && Object.keys(transform).length > 0 ? { transform } : {}),
-      ...(line ? { line } : {}),
-      ...(text ? { text } : {}),
-      ...(shadow ? { shadow } : {}),
-      paragraphProperties: {},
+    // §20.5.2.35: a `twoCellAnchor` is a TWO-dimensional placement. Emitted
+    // as a plain block the drawing kept only its size and its order down
+    // the page — everything landed against the left margin, which turned
+    // bnc762542.xlsx's callout (three swatches, three leader lines, three
+    // labels, side by side) into a single vertical stack. The layout floats
+    // a shape at its anchor when one is given, so give it one.
+    float: {
+      wrap: 'none' as const,
+      posH: { relativeFrom: 'margin' as const, offsetPt: pt(xPt) },
+      posV: { relativeFrom: 'margin' as const, offsetPt: pt(yPt) },
+    },
+    width: pt(widthPt),
+    height: pt(heightPt),
+    geometry,
+    fill,
+    ...(transform && Object.keys(transform).length > 0 ? { transform } : {}),
+    ...(line ? { line } : {}),
+    ...(text ? { text } : {}),
+    ...(shadow ? { shadow } : {}),
+    paragraphProperties: {},
   };
 }
 

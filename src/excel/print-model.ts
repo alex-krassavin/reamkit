@@ -489,10 +489,7 @@ function bandsAcross(worksheet: ParsedWorksheet, fitWide: number): boolean {
  * @param axis      Which axis's breaks are wanted.
  * @returns The break indices to honour; empty when fit-to-page overrides them.
  */
-function honouredBreaks(
-  worksheet: ParsedWorksheet,
-  axis: 'rows' | 'cols',
-): ReadonlyArray<number> {
+function honouredBreaks(worksheet: ParsedWorksheet, axis: 'rows' | 'cols'): ReadonlyArray<number> {
   const breaks = (axis === 'rows' ? worksheet.rowBreaks : worksheet.colBreaks) ?? [];
   if (!worksheet.fitToPage) return breaks;
   const setup = worksheet.pageSetup;
@@ -932,9 +929,7 @@ export function worksheetToBody(
     let acc = 0;
     let colLimit = 0;
     while (colLimit < PAINT_REACH_COLUMNS && acc < pageTwips) {
-      const col = worksheet.columns.find(
-        (cc) => colLimit >= cc.min - 1 && colLimit <= cc.max - 1,
-      );
+      const col = worksheet.columns.find((cc) => colLimit >= cc.min - 1 && colLimit <= cc.max - 1);
       acc += col ? (col.hidden ? 0 : columnTwips(col.widthChars, charTwipsUnit)) : defTwips;
       colLimit++;
     }
@@ -1357,9 +1352,7 @@ export function worksheetToBody(
           // the fill is taken from the origin and the border from the row's own
           // cell when it declares one.
           const originCell =
-            cellMatrix[verticalParent.startRow - rowStart]?.[
-              verticalParent.startColumn - colStart
-            ];
+            cellMatrix[verticalParent.startRow - rowStart]?.[verticalParent.startColumn - colStart];
           const originXf = originCell ? styles.cellXfs[originCell.styleIndex ?? 0] : undefined;
           const own = cellMatrix[r]?.[c];
           const ownXf = own ? styles.cellXfs[own.styleIndex ?? 0] : undefined;
@@ -2301,10 +2294,7 @@ function mapXlsxBorder(border: XlsxBorder): CellBorders {
 }
 
 /** Every edge of a cell's box, at the print scale. */
-function scaleBorders(
-  borders: CellBorders | undefined,
-  scale: number,
-): CellBorders | undefined {
+function scaleBorders(borders: CellBorders | undefined, scale: number): CellBorders | undefined {
   if (!borders || scale >= 0.999) return borders;
   const edge = (b: Border | undefined): Border | undefined =>
     b === undefined || b.width === undefined ? b : { ...b, width: pt(b.width * scale) };
@@ -2658,10 +2648,7 @@ function lastContentColumn(
  * @param styles The workbook's style tables.
  * @returns True when the cell draws something the eye can find.
  */
-export function cellPaintsVisibly(
-  cell: WorksheetCell | undefined,
-  styles: XlsxStyles,
-): boolean {
+export function cellPaintsVisibly(cell: WorksheetCell | undefined, styles: XlsxStyles): boolean {
   if (!cell || cell.styleIndex === undefined) return false;
   const xf = styles.cellXfs[cell.styleIndex];
   if (!xf) return false;
@@ -2670,10 +2657,7 @@ export function cellPaintsVisibly(
   return shading !== undefined && shading.colorHex.toUpperCase() !== 'FFFFFF';
 }
 
-export function cellPaintsSomething(
-  cell: WorksheetCell | undefined,
-  styles: XlsxStyles,
-): boolean {
+export function cellPaintsSomething(cell: WorksheetCell | undefined, styles: XlsxStyles): boolean {
   if (!cell || cell.styleIndex === undefined) return false;
   const xf = styles.cellXfs[cell.styleIndex];
   if (!xf) return false;

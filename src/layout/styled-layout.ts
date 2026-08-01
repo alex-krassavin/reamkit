@@ -2834,7 +2834,9 @@ function splitToWidth(tok: Token, widthPt: number): Array<Token> | undefined {
   // break, it is shredding — and a box that narrow is usually a width nobody
   // meant (a nested table's cell measured before its own grid is known). Below
   // that, the word keeps its shape and overflows, as it did before.
-  if (tok.font.measure.textWidthPt(chars.slice(0, MIN_SPLIT_CHARS).join(''), tok.fontSizePt) > widthPt) {
+  if (
+    tok.font.measure.textWidthPt(chars.slice(0, MIN_SPLIT_CHARS).join(''), tok.fontSizePt) > widthPt
+  ) {
     return undefined;
   }
   const out: Array<Token> = [];
