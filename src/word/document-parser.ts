@@ -195,6 +195,26 @@ export function parseDocument(
 }
 
 /**
+ * §17.2.1 `w:background` — the colour the whole page is painted, as a six-digit
+ * hex. Read from `@w:color` (Word's own attribute), falling back to the VML
+ * `v:background @fillcolor` beside it. `auto` and a gradient-only background
+ * (which carries no flat colour of its own) both come back undefined.
+ *
+ * @param documentXml The raw `document.xml` bytes.
+ * @returns The colour, or undefined when the document names none.
+ */
+export function parseBackgroundColor(documentXml: Uint8Array): string | undefined {
+  const tree = parser.parse(resolveInternalEntities(decoder.decode(documentXml))) as Array<PoNode>;
+  const doc = poFindByPath(tree, ['w:document']);
+  const bg = doc ? poChildren(doc).find((c) => poIs(c, 'w:background')) : undefined;
+  if (!bg) return undefined;
+  const vml = poChildren(bg).find((c) => poIs(c, 'v:background'));
+  const raw = poAttr(bg, 'color') ?? (vml ? poAttr(vml, 'fillcolor') : undefined);
+  const hex = raw?.replace(/^#/u, '');
+  return hex !== undefined && /^[0-9A-Fa-f]{6}$/u.test(hex) ? hex.toUpperCase() : undefined;
+}
+
+/**
  * Lines a parsed body up with anything counted in SOURCE blocks. `index[i]` is
  * the ordinal of the `w:p`/`w:tbl` that produced body element `i`; `next` is the
  * running count. A paragraph carrying anchored drawings produces several

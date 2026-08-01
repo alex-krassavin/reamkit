@@ -41,5 +41,6 @@ export function flowRenderOptions(flow: FlowDoc): FlowRenderOptions {
     ...(flow.embeddedFonts ? { embeddedFonts: flow.embeddedFonts } : {}),
     ...(flow.language ? { language: flow.language } : {}),
     ...(flow.doNotExpandShiftReturn ? { doNotExpandShiftReturn: true } : {}),
+    ...(flow.pageBackgroundColorHex ? { pageBackgroundColorHex: flow.pageBackgroundColorHex } : {}),
   };
 }

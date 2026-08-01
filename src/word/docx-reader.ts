@@ -43,6 +43,7 @@ import {
   bodyIndexForBlock,
   loadEmbeddedFonts,
   newBlockCounter,
+  parseBackgroundColor,
   parseCommentThreads,
   parseDocument,
   parseHeaderFooter,
@@ -117,6 +118,7 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
   // a hundred (fdo74605 draws its whole diagram on one landscape page).
   const blocks = newBlockCounter();
   const body = parseDocument(main.data, ctx, blocks);
+  const backgroundColorHex = parseBackgroundColor(main.data);
   const rawSections = parseSections(main.data).map((s) => ({
     ...s,
     endIndex: bodyIndexForBlock(blocks, s.endIndex),
@@ -225,6 +227,12 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
     ...(info ? { info } : {}),
     ...(language ? { language } : {}),
     ...(settings.doNotExpandShiftReturn ? { doNotExpandShiftReturn: true } : {}),
+    // §17.2.1 / §17.15.1.28 — the page background is a colour AND a flag: Word
+    // keeps the colour in every document that ever had one and prints it only
+    // when `w:displayBackgroundShape` is set.
+    ...(settings.displayBackgroundShape && backgroundColorHex
+      ? { pageBackgroundColorHex: backgroundColorHex }
+      : {}),
   };
   return { doc, losses };
 }

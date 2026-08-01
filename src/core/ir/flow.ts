@@ -75,4 +75,10 @@ export interface FlowDoc {
    * ends at a soft line break keeps its natural width.
    */
   readonly doNotExpandShiftReturn?: boolean;
+  /**
+   * ECMA-376 §17.2.1 `w:background` — the colour every page is painted, when
+   * the document asks for one AND §17.15.1.28 `w:displayBackgroundShape` says
+   * to draw it.
+   */
+  readonly pageBackgroundColorHex?: string;
 }

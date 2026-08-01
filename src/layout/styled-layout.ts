@@ -297,6 +297,11 @@ export interface StyledRenderOptions {
    */
   readonly doNotExpandShiftReturn?: boolean;
   /**
+   * ECMA-376 §17.2.1 `w:background` — the colour every page is painted before
+   * anything else is drawn on it. Absent ⇒ the paper's own white.
+   */
+  readonly pageBackgroundColorHex?: string;
+  /**
    * §7.6 PDF encryption (AES-256, R6). Only honoured on the ASYNC conversion
    * path (WebCrypto); mutually exclusive with `pdfA` (ISO 19005 forbids
    * `/Encrypt`) and with signatures (v1).
@@ -6135,6 +6140,19 @@ class PageAssembler {
     }
     this.pages.push({
       commands: [
+        // §17.2.1 — the page background is under everything, paper and all.
+        ...(this.ctx.options?.pageBackgroundColorHex !== undefined
+          ? [
+              {
+                type: 'fill' as const,
+                x: pt(0),
+                y: pt(0),
+                width: pt(this.ctx.pageWidth),
+                height: pt(this.ctx.pageHeight),
+                fillColorHex: this.ctx.options.pageBackgroundColorHex,
+              },
+            ]
+          : []),
         ...this.pageBorderItems(),
         ...header.commands,
         ...PageAssembler.byZ(this.floatsBehind),

@@ -38,12 +38,19 @@ export interface DocumentSettings {
    * natural width instead of being stretched to the measure.
    */
   readonly doNotExpandShiftReturn: boolean;
+  /**
+   * ECMA-376 §17.15.1.28 — `w:displayBackgroundShape`. The page background
+   * (§17.2.1 `w:background`) is drawn only when this is set; without it Word
+   * keeps the colour but prints white.
+   */
+  readonly displayBackgroundShape: boolean;
 }
 
 /** The all-defaults {@link DocumentSettings}, returned when no `w:settings` root is found. */
 export const EMPTY_SETTINGS: DocumentSettings = {
   evenAndOddHeaders: false,
   doNotExpandShiftReturn: false,
+  displayBackgroundShape: false,
 };
 
 /**
@@ -61,9 +68,12 @@ export function parseSettings(data: Uint8Array): DocumentSettings {
 
   let evenAndOddHeaders = false;
   let doNotExpandShiftReturn = false;
+  let displayBackgroundShape = false;
   for (const child of poChildren(settings)) {
     if (poIs(child, 'w:evenAndOddHeaders')) {
       evenAndOddHeaders = onOff(child);
+    } else if (poIs(child, 'w:displayBackgroundShape')) {
+      displayBackgroundShape = onOff(child);
       // §17.15.1.35 lives one level down, inside w:compat — and a file may
       // carry more than one of those (fdo106029.docx writes the flag in the
       // first and an empty second one), so every compat block is read.
@@ -73,7 +83,7 @@ export function parseSettings(data: Uint8Array): DocumentSettings {
       }
     }
   }
-  return { evenAndOddHeaders, doNotExpandShiftReturn };
+  return { evenAndOddHeaders, doNotExpandShiftReturn, displayBackgroundShape };
 }
 
 /** §17.17.4 ST_OnOff: an absent or empty `w:val` means on; `0`/`false` mean off. */

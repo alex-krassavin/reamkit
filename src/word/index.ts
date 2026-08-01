@@ -8,6 +8,7 @@ export type { BlockCounter, CommentExtension } from '@/word/document-parser';
 export { extractParagraphs } from '@/word/text-extractor';
 export {
   parseDocument,
+  parseBackgroundColor,
   parseBodyElements,
   parseSection,
   parseSections,
