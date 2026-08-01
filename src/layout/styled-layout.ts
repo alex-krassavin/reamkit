@@ -2381,7 +2381,11 @@ function collectFontResources(
   const visit = (elements: ReadonlyArray<BodyElement>) => {
     for (const el of elements) {
       if (el.kind === 'paragraph') {
-        for (const run of el.paragraph.runs) {
+        // §17.3.2.5/33 — a run set in capitals is DRAWN in them, so those are
+        // the glyphs the subset needs. Collected from the stored text instead,
+        // capitalized.docx asked for "capitalized" and drew "CAPITALIZED" out
+        // of a subset that had only the lower-case letters in it.
+        for (const run of displayCapsRuns(el.paragraph, options)) {
           if (run.math) {
             addMath(run.math);
             continue;
@@ -2682,6 +2686,61 @@ function resolveMathItems(
   });
 }
 
+/**
+ * §17.3.2.5 `w:caps` / §17.3.2.33 `w:smallCaps` — the paragraph's runs as they
+ * are DISPLAYED. A capitals run is upper-cased; a small-capitals run is too,
+ * and the letters that were lower case are split out to be set smaller.
+ *
+ * @param paragraph The paragraph.
+ * @param options   The render options (for the style cascade).
+ * @returns The runs to lay out — the same array when none asks for capitals.
+ */
+function displayCapsRuns(
+  paragraph: Paragraph,
+  options: StyledRenderOptions,
+): ReadonlyArray<Paragraph['runs'][number]> {
+  let any = false;
+  const out: Array<Paragraph['runs'][number]> = [];
+  for (const run of paragraph.runs) {
+    const resolved =
+      run.text.length > 0
+        ? resolveRunProperties(run.properties, paragraph.properties, options.styles)
+        : undefined;
+    if (!resolved || (!resolved.caps && !resolved.smallCaps)) {
+      out.push(run);
+      continue;
+    }
+    any = true;
+    if (resolved.caps) {
+      out.push({ ...run, text: run.text.toUpperCase() });
+      continue;
+    }
+    // Small capitals: one segment per stretch that was, or was not, lower case.
+    // Word sets the former at about four fifths of the size, which is what
+    // LibreOffice draws too.
+    let start = 0;
+    const wasLower = (i: number): boolean => {
+      const ch = run.text[i]!;
+      return ch.toLowerCase() === ch && ch.toUpperCase() !== ch;
+    };
+    for (let i = 1; i <= run.text.length; i++) {
+      if (i < run.text.length && wasLower(i) === wasLower(start)) continue;
+      const segment = run.text.slice(start, i).toUpperCase();
+      out.push(
+        wasLower(start)
+          ? {
+              ...run,
+              text: segment,
+              properties: { ...run.properties, fontSizePt: pt(resolved.fontSizePt * 0.8) },
+            }
+          : { ...run, text: segment },
+      );
+      start = i;
+    }
+  }
+  return any ? out : paragraph.runs;
+}
+
 function tokenizeParagraph(
   paragraph: Paragraph,
   options: StyledRenderOptions,
@@ -2690,8 +2749,13 @@ function tokenizeParagraph(
   contentWidth: number,
   baseDir: 'ltr' | 'rtl',
 ): Array<Token> {
+  // §17.3.2.5 / §17.3.2.33 — a run set in capitals is DISPLAYED in them,
+  // whatever it stores, and small capitals set what was lower case smaller. The
+  // change belongs before the plans are built: everything downstream measures
+  // and draws the text it is given.
+  const runs = displayCapsRuns(paragraph, options);
   // First pass — resolve each run's style and decide image vs text.
-  const plans: Array<RunPlan> = paragraph.runs.map((run) => {
+  const plans: Array<RunPlan> = runs.map((run) => {
     if (run.inlineImage) {
       const naturalW = run.inlineImage.width;
       const widthPt = Math.min(naturalW, contentWidth);

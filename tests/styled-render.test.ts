@@ -365,6 +365,27 @@ describe('Styled rendering: rPr + pPr → PDF', () => {
     expect(xs.some((x) => x > 280 && x < 310)).toBe(true);
   });
 
+  it('draws a run set in capitals in capitals (§17.3.2.5)', () => {
+    // capitalized.docx prints its word in lower case where every other reader
+    // shouts it — and the subset has to carry the glyphs that are DRAWN, not
+    // the ones the run stores, or the same word comes out as missing glyphs.
+    const docx = buildRichDocx([{ runs: [{ text: 'shout', rPrXml: '<w:rPr><w:caps/></w:rPr>' }] }]);
+    const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
+    const parsed = parseTtf(FONTS.regular);
+    expect(text).toMatch(showPattern(parsed, 'SHOUT'));
+    expect(text).not.toMatch(showPattern(parsed, 'shout'));
+  });
+
+  it('sets the lower case of a small-capitals run smaller (§17.3.2.33)', () => {
+    const docx = buildRichDocx([
+      { runs: [{ text: 'Ab', rPrXml: '<w:rPr><w:smallCaps/><w:sz w:val="40"/></w:rPr>' }] },
+    ]);
+    const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
+    // 20pt for the letter that was already a capital, four fifths for the other.
+    expect(text).toMatch(/\/F\d+ 20 Tf/u);
+    expect(text).toMatch(/\/F\d+ 16 Tf/u);
+  });
+
   it('splits a table row taller than the page into chunks across pages', () => {
     // 80 paragraphs in one cell exceeds A4 content height (~698pt) at typical
     // 14pt line height. Expect at least two pages with continuation borders.

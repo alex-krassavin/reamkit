@@ -27,6 +27,10 @@ export interface ResolvedRunProperties {
   /** §17.3.2.40 `w:u @w:color` — the underline's own colour; absent means the text's. */
   readonly underlineColorHex?: string;
   readonly strike: boolean;
+  /** §17.3.2.5 `w:caps` — displayed in capitals. */
+  readonly caps: boolean;
+  /** §17.3.2.33 `w:smallCaps` — displayed in capitals, the lower case smaller. */
+  readonly smallCaps: boolean;
   readonly fontSizePt: Pt;
   readonly colorHex: string;
   readonly fontFamily: FontFamilyMap;
@@ -85,6 +89,8 @@ export const DEFAULT_RESOLVED_RUN: ResolvedRunProperties = {
   italic: false,
   underline: 'none',
   strike: false,
+  caps: false,
+  smallCaps: false,
   fontSizePt: halfPtToPt(22),
   colorHex: '000000',
   fontFamily: {},

@@ -56,6 +56,13 @@ export interface RunProperties {
   /** §17.3.2.40 `w:u @w:color` — the underline's own colour, when it has one. */
   readonly underlineColorHex?: string;
   readonly strike?: boolean;
+  /** §17.3.2.5 `w:caps` — the run is DISPLAYED in capitals, whatever it stores. */
+  readonly caps?: boolean;
+  /**
+   * §17.3.2.33 `w:smallCaps` — displayed in capitals, with the letters that
+   * were lower case set smaller.
+   */
+  readonly smallCaps?: boolean;
   readonly fontSizePt?: Pt;
   readonly colorHex?: string;
   readonly fontFamily?: FontFamilyMap;

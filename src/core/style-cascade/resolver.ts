@@ -195,6 +195,8 @@ function mergeRun(base: ResolvedRunProperties, override: RunProperties): Resolve
       ? { underlineColorHex: override.underlineColorHex ?? base.underlineColorHex }
       : {}),
     strike: override.strike ?? base.strike,
+    caps: override.caps ?? base.caps,
+    smallCaps: override.smallCaps ?? base.smallCaps,
     fontSizePt: override.fontSizePt ?? base.fontSizePt,
     colorHex: override.colorHex ?? base.colorHex,
     fontFamily: override.fontFamily ?? base.fontFamily,

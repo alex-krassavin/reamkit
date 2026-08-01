@@ -71,6 +71,17 @@ describe('parseRunProperties', () => {
     ).toEqual({ underline: 'single' });
   });
 
+  it('reads the capitals toggles (§17.3.2.5 / §17.3.2.33)', () => {
+    expect(parseRunProperties(parseRpr('<w:rPr><w:caps/></w:rPr>'))).toEqual({ caps: true });
+    expect(parseRunProperties(parseRpr('<w:rPr><w:smallCaps/></w:rPr>'))).toEqual({
+      smallCaps: true,
+    });
+    // §17.17.4 — an explicit off is off, not "inherit".
+    expect(parseRunProperties(parseRpr('<w:rPr><w:caps w:val="0"/></w:rPr>'))).toEqual({
+      caps: false,
+    });
+  });
+
   it('rejects malformed color values', () => {
     expect(parseRunProperties(parseRpr('<w:rPr><w:color w:val="auto"/></w:rPr>'))).toEqual({});
     expect(parseRunProperties(parseRpr('<w:rPr><w:color w:val="ZZZZZZ"/></w:rPr>'))).toEqual({});

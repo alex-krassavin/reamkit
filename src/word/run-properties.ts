@@ -58,6 +58,18 @@ export function parseRunProperties(rPr: unknown): RunProperties {
     if (v !== undefined) out.strike = v;
   }
 
+  // §17.3.2.5 / §17.3.2.33 — the run is DISPLAYED in capitals, whatever it
+  // stores. Read nowhere, capitalized.docx printed its word in lower case
+  // where every other reader shouts it.
+  if ('w:caps' in el) {
+    const v = parseToggle(el['w:caps']);
+    if (v !== undefined) out.caps = v;
+  }
+  if ('w:smallCaps' in el) {
+    const v = parseToggle(el['w:smallCaps']);
+    if (v !== undefined) out.smallCaps = v;
+  }
+
   if ('w:u' in el) {
     const v = getVal(el['w:u']);
     if (v && UNDERLINE_STYLES.has(v as UnderlineStyle)) {
