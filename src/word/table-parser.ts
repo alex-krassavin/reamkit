@@ -193,6 +193,14 @@ function parseTableProperties(tblPr: PoNode | undefined): TableProperties {
     if (t === 'fixed' || t === 'auto') out.layout = t;
   }
 
+  // §17.4.27 `w:tblPr/w:jc` — where a table narrower than the text column
+  // sits in it. Read nowhere, fdo66474.docx's right-aligned header table sat
+  // against the left margin, 170pt from where Word and LibreOffice put it.
+  const tblJc = poVal(poFirstChild(tblPr, 'w:jc'));
+  if (tblJc === 'center') out.alignment = 'center';
+  else if (tblJc === 'right' || tblJc === 'end') out.alignment = 'right';
+  else if (tblJc === 'left' || tblJc === 'start') out.alignment = 'left';
+
   const borders = parseBorders(poFirstChild(tblPr, 'w:tblBorders'));
   if (borders) out.borders = borders;
 
