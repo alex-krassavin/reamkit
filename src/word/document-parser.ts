@@ -167,6 +167,7 @@ export const DEFAULT_PARSE_CONTEXT: ParseContext = { resolveColor: defaultColorR
 export function parseDocument(
   documentXml: Uint8Array,
   ctx: ParseContext = DEFAULT_PARSE_CONTEXT,
+  blocks?: BlockCounter,
 ): Array<BodyElement> {
   // A DTD is forbidden in OPC and fast-xml-parser refuses one outright when it
   // declares an EXTERNAL entity — which is the right instinct and the wrong
@@ -177,7 +178,37 @@ export function parseDocument(
   const tree = parser.parse(xml) as Array<PoNode>;
   const body = poFindByPath(tree, ['w:document', 'w:body']);
   if (!body) return [];
-  return parseBodyElements(poChildren(body), ctx);
+  return parseBodyElements(poChildren(body), ctx, blocks);
+}
+
+/**
+ * Lines a parsed body up with anything counted in SOURCE blocks. `index[i]` is
+ * the ordinal of the `w:p`/`w:tbl` that produced body element `i`; `next` is the
+ * running count. A paragraph carrying anchored drawings produces several
+ * elements, so the two counts diverge — and {@link parseSections} counts blocks.
+ */
+export interface BlockCounter {
+  readonly index: Array<number>;
+  next: number;
+}
+
+/** A fresh {@link BlockCounter}. */
+export function newBlockCounter(): BlockCounter {
+  return { index: [], next: 0 };
+}
+
+/**
+ * Translate a section boundary counted in source blocks into one counted in body
+ * elements: the number of elements that came from a block before `blockEnd`.
+ *
+ * @param blocks   The counter filled while parsing the body.
+ * @param blockEnd The section's `endIndex`, in source blocks.
+ * @returns The matching body-element index.
+ */
+export function bodyIndexForBlock(blocks: BlockCounter, blockEnd: number): number {
+  let n = 0;
+  while (n < blocks.index.length && blocks.index[n]! < blockEnd) n++;
+  return n;
 }
 
 const HF_TYPES = new Set<HeaderFooterType>(['default', 'first', 'even']);
@@ -247,6 +278,13 @@ export function parseSections(documentXml: Uint8Array): Array<Section> {
       }
     } else if (poIs(child, 'w:tbl')) {
       bodyIdx++;
+    } else if (poIs(child, 'w:sdt')) {
+      // A block-level content control is chrome: its children are body flow,
+      // and parseBodyElements counts them, so this must too.
+      const content = poChildren(child).find((c) => poIs(c, 'w:sdtContent'));
+      for (const inner of content ? poChildren(content) : []) {
+        if (poIs(inner, 'w:p') || poIs(inner, 'w:tbl')) bodyIdx++;
+      }
     }
   }
 
@@ -418,8 +456,17 @@ export function parseHeaderFooter(
 export function parseBodyElements(
   children: ReadonlyArray<PoNode>,
   ctx: ParseContext = DEFAULT_PARSE_CONTEXT,
+  // Out-param: for each emitted element, the ordinal of the `w:p`/`w:tbl` it
+  // came from. A paragraph carrying anchored drawings emits several elements,
+  // so this is what lets a caller line the body up with something counted in
+  // source blocks — {@link parseSections}' endIndex, for one.
+  blocks?: BlockCounter,
 ): Array<BodyElement> {
   const out: Array<BodyElement> = [];
+  const mark = (n: number): void => {
+    if (!blocks) return;
+    for (let i = 0; i < n; i++) blocks.index.push(blocks.next);
+  };
   // Body-level w:bookmarkStart (between block elements) anchors to the NEXT
   // paragraph.
   let pendingBookmarks: Array<string> | undefined;
@@ -433,21 +480,26 @@ export function parseBodyElements(
       const drawings = tryExtractDrawingFromParagraph(child, ctx);
       if (drawings) {
         out.push(...drawings);
+        mark(drawings.length);
       } else {
         const anchored: Array<BodyElement> = [];
         const paragraph = parseParagraph(child, ctx, pendingBookmarks, anchored);
         // The floats first: each places itself against the paragraph it hangs
         // off, and one emitted after it would hang off whatever follows.
         out.push(...anchored, { kind: 'paragraph', paragraph });
+        mark(anchored.length + 1);
         pendingBookmarks = undefined;
       }
+      if (blocks) blocks.next++;
     } else if (poIs(child, 'w:tbl')) {
       out.push({ kind: 'table', table: parseTable(child, ctx) });
+      mark(1);
+      if (blocks) blocks.next++;
     } else if (poIs(child, 'w:sdt')) {
       // §17.5.2 block-level structured document tag (content control): the
       // wrapper is chrome — its sdtContent children are ordinary body flow.
       const content = poChildren(child).find((c) => poIs(c, 'w:sdtContent'));
-      if (content) out.push(...parseBodyElements(poChildren(content), ctx));
+      if (content) out.push(...parseBodyElements(poChildren(content), ctx, blocks));
     }
   }
   return out;

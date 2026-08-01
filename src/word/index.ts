@@ -4,7 +4,7 @@ export type {
   ParseContext,
   ResolvedDiagram,
 } from '@/word/document-parser';
-export type { CommentExtension } from '@/word/document-parser';
+export type { BlockCounter, CommentExtension } from '@/word/document-parser';
 export { extractParagraphs } from '@/word/text-extractor';
 export {
   parseDocument,
@@ -18,6 +18,8 @@ export {
   parseCommentsExtended,
   parsePeople,
   applyAuthorIds,
+  bodyIndexForBlock,
+  newBlockCounter,
   EMPTY_SECTION,
 } from '@/word/document-parser';
 export { parseRunProperties } from '@/word/run-properties';

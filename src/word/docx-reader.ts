@@ -19,7 +19,6 @@ import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss, ResourceId } from '@/core/ir';
 import type { CoreProperties } from '@/core/opc';
 import type { HyperlinkResolver, ImageResolver, ParseContext, ResolvedDiagram } from '@/word';
-import type { PoNode } from '@/core/po-helpers';
 import { poFindDescendant } from '@/core/po-helpers';
 import { parseXml } from '@/pptx/pptx-reader';
 import { bytesIncludePartName } from '@/core/bytes';
@@ -41,7 +40,9 @@ import {
   EMPTY_SECTION,
   EMPTY_SETTINGS,
   applyAuthorIds,
+  bodyIndexForBlock,
   loadEmbeddedFonts,
+  newBlockCounter,
   parseCommentThreads,
   parseDocument,
   parseHeaderFooter,
@@ -110,8 +111,16 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
     // Tracks open comment ranges across the body so runs carry commentRangeRefs.
     openCommentRanges: new Set<string>(),
   };
-  const body = parseDocument(main.data, ctx);
-  const rawSections = parseSections(main.data);
+  // A paragraph carrying anchored drawings emits several body elements, while
+  // parseSections counts source blocks — so the section boundaries have to be
+  // translated, or a landscape first section covers three elements instead of
+  // a hundred (fdo74605 draws its whole diagram on one landscape page).
+  const blocks = newBlockCounter();
+  const body = parseDocument(main.data, ctx, blocks);
+  const rawSections = parseSections(main.data).map((s) => ({
+    ...s,
+    endIndex: bodyIndexForBlock(blocks, s.endIndex),
+  }));
 
   const stylesData = pkg.getPart(STYLES_PART);
   const styles = stylesData ? parseStyles(stylesData) : EMPTY_STYLE_SHEET;
