@@ -636,13 +636,25 @@ function blocksForDrawing(
       return null;
     }
     const frame = { x: 0, y: 0, cx: content.widthEmu, cy: content.heightEmu };
+    // Each node is placed at its offset INSIDE the diagram, so an anchored
+    // SmartArt has to add where the diagram itself sits: fdo73227 states 108pt
+    // right and 337.5pt down and we drew the whole thing at the column origin.
+    const base = content.float;
     const shapes = parseDiagramDrawing(
       spTree,
       diagramTransform(spTree, frame),
       (box) => ({
         wrap: 'none',
-        posH: { relativeFrom: 'column', offsetPt: emuToPt(box.x) },
-        posV: { relativeFrom: 'paragraph', offsetPt: emuToPt(box.y) },
+        ...(base?.behind !== undefined ? { behind: base.behind } : {}),
+        ...(base?.zOrder !== undefined ? { zOrder: base.zOrder } : {}),
+        posH: {
+          relativeFrom: base?.posH?.relativeFrom ?? 'column',
+          offsetPt: pt((base?.posH?.offsetPt ?? 0) + emuToPt(box.x)),
+        },
+        posV: {
+          relativeFrom: base?.posV?.relativeFrom ?? 'paragraph',
+          offsetPt: pt((base?.posV?.offsetPt ?? 0) + emuToPt(box.y)),
+        },
       }),
       ctx.resolveColor,
       undefined,
