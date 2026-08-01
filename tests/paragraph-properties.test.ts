@@ -167,3 +167,54 @@ describe('tab stops (§17.3.1.37)', () => {
     ).toEqual(['left', 'right']);
   });
 });
+
+// §17.3.1.24 `w:pBdr` — rules around the paragraph, spelled exactly as a cell's
+// are but with a `w:space` in POINTS. Read nowhere, Test_ThemeBorderColor.docx
+// lost the two coloured rules that are the whole of its page.
+describe('paragraph borders (§17.3.1.24)', () => {
+  it('reads each edge with its width, colour and standoff', () => {
+    const p = parseParagraphProperties(
+      parsePpr(
+        '<w:pPr><w:pBdr>' +
+          '<w:top w:val="single" w:sz="48" w:space="1" w:color="DE81E1"/>' +
+          '<w:bottom w:val="double" w:sz="8" w:space="4" w:color="90ABF0"/>' +
+          '</w:pBdr></w:pPr>',
+      ),
+    );
+    expect(p.borders?.top).toEqual({
+      style: 'single',
+      width: eighthPtToPt(48),
+      spacePt: 1,
+      colorHex: 'DE81E1',
+    });
+    expect(p.borders?.bottom).toEqual({
+      style: 'double',
+      width: eighthPtToPt(8),
+      spacePt: 4,
+      colorHex: '90ABF0',
+    });
+    expect(p.borders?.left).toBeUndefined();
+  });
+
+  it('takes start and end as the left and right they are', () => {
+    const p = parseParagraphProperties(
+      parsePpr(
+        '<w:pPr><w:pBdr><w:start w:val="single" w:sz="4"/><w:end w:val="single" w:sz="4"/></w:pBdr></w:pPr>',
+      ),
+    );
+    expect(p.borders?.left?.style).toBe('single');
+    expect(p.borders?.right?.style).toBe('single');
+  });
+
+  it('ignores an edge with no style, and an auto colour', () => {
+    expect(
+      parseParagraphProperties(parsePpr('<w:pPr><w:pBdr><w:top w:sz="4"/></w:pBdr></w:pPr>'))
+        .borders,
+    ).toBeUndefined();
+    expect(
+      parseParagraphProperties(
+        parsePpr('<w:pPr><w:pBdr><w:top w:val="single" w:color="auto"/></w:pBdr></w:pPr>'),
+      ).borders?.top?.colorHex,
+    ).toBeUndefined();
+  });
+});

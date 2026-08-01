@@ -228,6 +228,8 @@ function mergePar(
     // A paragraph's own stops REPLACE the style's — they are not merged.
     tabs: override.tabs ?? base.tabs,
     bidi: override.bidi ?? base.bidi,
+    // …and so does a paragraph's own border set (§17.3.1.24).
+    ...((override.borders ?? base.borders) ? { borders: override.borders ?? base.borders } : {}),
     ...(outlineLevel !== undefined ? { outlineLevel } : {}),
     ...(styleId !== undefined ? { styleId } : {}),
     ...(numbering !== undefined ? { numbering } : {}),

@@ -112,6 +112,11 @@ export interface ParagraphProperties {
   readonly contextualSpacing?: boolean;
   /** ECMA-376 Part 1 §17.3.1.37 — the paragraph's own `w:tabs` stops. */
   readonly tabs?: ReadonlyArray<TabStop>;
+  /**
+   * §17.3.1.24 `w:pBdr` — rules drawn around the paragraph. `w:space` is the
+   * gap each keeps from the text, carried on the {@link Border} as `spacePt`.
+   */
+  readonly borders?: CellBorders;
   readonly indentLeft?: Pt;
   readonly indentRight?: Pt;
   readonly indentFirstLine?: Pt;
@@ -526,6 +531,8 @@ export interface Border {
   readonly style: BorderStyle;
   readonly width?: Pt;
   readonly colorHex?: string;
+  /** §17.3.1.24 `w:space` — how far a paragraph rule stands off its text. */
+  readonly spacePt?: Pt;
 }
 
 /** §17.4.39 `w:tcBorders` — the per-edge borders of a cell (or table). */

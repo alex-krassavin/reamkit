@@ -311,6 +311,27 @@ describe('Styled rendering: rPr + pPr → PDF', () => {
     expect(text).toMatch(new RegExp(`(?:${dot}){40,}`, 'iu'));
   });
 
+  it('draws the rules a paragraph asks for around itself', () => {
+    // §17.3.1.24 — one stroked rule per declared edge, each in its own colour.
+    const docx = buildRichDocx([
+      {
+        pPrXml:
+          '<w:pPr><w:pBdr>' +
+          '<w:top w:val="single" w:sz="48" w:space="1" w:color="DE81E1"/>' +
+          '<w:bottom w:val="single" w:sz="48" w:space="1" w:color="90ABF0"/>' +
+          '</w:pBdr></w:pPr>',
+        runs: [{ text: 'Sample Text' }],
+      },
+    ]);
+    const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
+    // 0xDE/255 = 0.871, 0x81/255 = 0.506, 0xE1/255 = 0.882 — the top rule.
+    expect(text).toMatch(/0\.871 0\.506 0\.882 RG/u);
+    // 0x90/255 = 0.565, 0xAB/255 = 0.671, 0xF0/255 = 0.941 — the bottom one.
+    expect(text).toMatch(/0\.565 0\.671 0\.941 RG/u);
+    // 48 eighths of a point = 6pt wide.
+    expect(text).toMatch(/\n6 w\n/u);
+  });
+
   it('splits a table row taller than the page into chunks across pages', () => {
     // 80 paragraphs in one cell exceeds A4 content height (~698pt) at typical
     // 14pt line height. Expect at least two pages with continuation borders.

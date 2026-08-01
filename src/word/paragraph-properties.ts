@@ -1,7 +1,14 @@
 // ECMA-376 Part 1 §17.3.1 — Paragraph Properties (pPr).
 
-import type { Alignment, ParagraphProperties, TabStop } from '@/core/document-model';
-import { twipsToPt } from '@/core/ir';
+import type {
+  Alignment,
+  Border,
+  BorderStyle,
+  CellBorders,
+  ParagraphProperties,
+  TabStop,
+} from '@/core/document-model';
+import { eighthPtToPt, pt, twipsToPt } from '@/core/ir';
 
 import { parseRunProperties } from '@/word/run-properties';
 import { asArray, asElement, getAttr, getVal, parseIntAttr, parseToggle } from '@/word/xml-helpers';
@@ -68,6 +75,14 @@ export function parseParagraphProperties(pPr: unknown): ParagraphProperties {
     if (stops.length > 0) out.tabs = stops;
   }
 
+  // §17.3.1.24 `w:pBdr` — rules around the paragraph, spelled exactly as a
+  // cell's are. Read nowhere, Test_ThemeBorderColor.docx lost the two coloured
+  // rules that are the whole of its page.
+  if ('w:pBdr' in el) {
+    const borders = parseParagraphBorders(el['w:pBdr']);
+    if (borders) out.borders = borders;
+  }
+
   if ('w:contextualSpacing' in el) {
     const v = parseToggle(el['w:contextualSpacing']);
     if (v !== undefined) out.contextualSpacing = v;
@@ -132,6 +147,57 @@ const TAB_ALIGNMENTS: ReadonlyMap<string, TabStop['alignment']> = new Map([
 ]);
 
 const TAB_LEADERS: ReadonlySet<string> = new Set(['dot', 'hyphen', 'underscore', 'middleDot']);
+
+const BORDER_STYLES = new Set<BorderStyle>([
+  'none',
+  'single',
+  'double',
+  'thick',
+  'dotted',
+  'dashed',
+]);
+
+/**
+ * §17.3.1.24 `w:pBdr` — the rules around a paragraph. Spelled exactly as a
+ * cell's `w:tcBorders` is, but reached through the flat parse shape this module
+ * works in, and with the `w:space` a cell border does not have.
+ *
+ * @param node The `w:pBdr` element.
+ * @returns The edges that name a rule, or `undefined` when none do.
+ */
+function parseParagraphBorders(node: unknown): CellBorders | undefined {
+  const el = asElement(node);
+  if (!el) return undefined;
+  const edge = (...names: Array<string>): Border | undefined => {
+    const found = names.map((n) => el[n]).find((v) => v !== undefined);
+    const b = asElement(found);
+    if (!b) return undefined;
+    const style = getVal(b);
+    if (!style || !BORDER_STYLES.has(style as BorderStyle)) return undefined;
+    const sz = parseIntAttr(b, 'sz');
+    const space = parseIntAttr(b, 'space');
+    const color = getAttr(b, 'color');
+    return {
+      style: style as BorderStyle,
+      ...(sz !== undefined ? { width: eighthPtToPt(sz) } : {}),
+      // §17.3.1.24 — `w:space` is in POINTS, not twips or eighths.
+      ...(space !== undefined ? { spacePt: pt(space) } : {}),
+      ...(color && color !== 'auto' && /^[0-9A-Fa-f]{6}$/u.test(color)
+        ? { colorHex: color.toUpperCase() }
+        : {}),
+    };
+  };
+  const out: Mutable<CellBorders> = {};
+  const top = edge('w:top');
+  const bottom = edge('w:bottom');
+  const left = edge('w:left', 'w:start');
+  const right = edge('w:right', 'w:end');
+  if (top) out.top = top;
+  if (bottom) out.bottom = bottom;
+  if (left) out.left = left;
+  if (right) out.right = right;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
 
 /**
  * §17.3.1.37 `w:tabs` — the paragraph's own stops, in ascending position.

@@ -20,7 +20,7 @@ import type { PoNode } from '@/core/po-helpers';
 import type { Pt } from '@/core/ir';
 import type { ParseContext } from '@/word/document-parser';
 import { DEFAULT_PARSE_CONTEXT, parseBodyElements } from '@/word/document-parser';
-import { eighthPtToPt, twipsToPt } from '@/core/ir';
+import { eighthPtToPt, pt, twipsToPt } from '@/core/ir';
 import {
   poAttr,
   poChildren,
@@ -364,6 +364,10 @@ function parseBorder(node: PoNode | undefined): Border | undefined {
   const color = poAttr(node, 'color');
   const out: Mutable<Border> = { style: val as BorderStyle };
   if (sz !== undefined) out.width = eighthPtToPt(sz);
+  // §17.3.1.24 `w:space` — the gap a paragraph rule keeps from the text, in
+  // POINTS (a cell border has no such attribute and leaves it undefined).
+  const space = poIntAttr(node, 'space');
+  if (space !== undefined) out.spacePt = pt(space);
   if (color && color !== 'auto' && /^[0-9A-Fa-f]{6}$/.test(color)) {
     out.colorHex = color.toUpperCase();
   }

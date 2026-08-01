@@ -4545,6 +4545,9 @@ function paginateSections(
       // Tagged PDF: a plain paragraph → one P (or heading) element; a list item
       // → an L/LI/LBody/P built on the nesting stack. Its lines all reference
       // the resulting leaf by MCID.
+      // Where the paragraph's own rules would go, and the page it started on.
+      const borderTopY = asm.cursorY;
+      const borderPage = asm.pages.length;
       let structId: number | undefined;
       let markerLblId: number | undefined;
       // §14.8.4.3.3 Lbl: the first line's leading marker tokens split into
@@ -4652,6 +4655,35 @@ function paginateSections(
             ...(structId !== undefined ? { structId } : {}),
           });
         }
+      }
+      // §17.3.1.24 `w:pBdr` — the rules around the paragraph, each standing
+      // `w:space` points off the text it frames. Drawn only when the paragraph
+      // stayed on one page: a rule around a fragment is a rule in the wrong
+      // place, and one drawn nowhere is what a bordered paragraph got before.
+      if (pb.resolved.borders && asm.pages.length === borderPage) {
+        const b = pb.resolved.borders;
+        const x0 = asm.colLeft() + pb.resolved.indentLeft;
+        const x1 = asm.colLeft() + asm.colWidth() - pb.resolved.indentRight;
+        const rule = (side: 'top' | 'bottom' | 'left' | 'right', edge: Border): void => {
+          const gap = edge.spacePt ?? 0;
+          const top = borderTopY + gap;
+          const bottom = asm.cursorY - gap;
+          asm.current.push({
+            type: 'border',
+            side,
+            x: pt(x0),
+            y: pt(asm.ctx.pageHeight - top),
+            width: pt(Math.max(0, x1 - x0)),
+            height: pt(Math.max(0, top - bottom)),
+            borderSizePt: edge.width ?? DEFAULT_BORDER_SIZE_EIGHTH * EIGHTH_PT,
+            borderColorHex: edge.colorHex ?? '000000',
+            ...(edge.style !== 'single' ? { borderStyle: edge.style } : {}),
+          });
+        };
+        if (b.top && b.top.style !== 'none') rule('top', b.top);
+        if (b.bottom && b.bottom.style !== 'none') rule('bottom', b.bottom);
+        if (b.left && b.left.style !== 'none') rule('left', b.left);
+        if (b.right && b.right.style !== 'none') rule('right', b.right);
       }
       asm.cursorY -= pb.spacingAfterPt;
       if (pb.pageBreakAfter) asm.pendingPageBreak = true;

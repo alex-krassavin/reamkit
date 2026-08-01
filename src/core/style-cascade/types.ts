@@ -4,6 +4,7 @@
 
 import type {
   Alignment,
+  CellBorders,
   FontFamilyMap,
   NumberingReference,
   TabStop,
@@ -55,6 +56,8 @@ export interface ResolvedParagraphProperties {
   readonly contextualSpacing: boolean;
   /** §17.3.1.37 — the paragraph's tab stops, in ascending position order. */
   readonly tabs: ReadonlyArray<TabStop>;
+  /** §17.3.1.24 `w:pBdr` — rules drawn around the paragraph. */
+  readonly borders?: CellBorders;
   readonly bidi: boolean;
   /**
    * ECMA-376 §17.3.1.20 — resolved outline level (0–8). Undefined = body text.
