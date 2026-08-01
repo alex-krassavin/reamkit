@@ -983,6 +983,11 @@ export interface ShapeLine {
   readonly width?: Pt; // a:ln @w; default 0.75pt
   readonly colorHex?: string; // resolved 6-hex
   readonly dash?: ShapeDash; // a:prstDash @val
+  /**
+   * §20.1.8.21 `a:custDash` — the author's own pattern: dash/space lengths as
+   * MULTIPLES of the line width, in the order they are drawn.
+   */
+  readonly customDash?: ReadonlyArray<number>;
   readonly cap?: 'flat' | 'round' | 'square'; // a:ln @cap (flat=butt)
   readonly fill?: 'solid' | 'none'; // a:ln/a:noFill ⇒ no visible stroke
 }

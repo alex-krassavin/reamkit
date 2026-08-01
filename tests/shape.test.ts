@@ -654,6 +654,30 @@ describe('a gallery-styled shape', () => {
     expect(text).toContain('1 1 1 rg'); // …and the plain paragraph takes white
   });
 
+  it('takes the style colour under a rule that states only a width', () => {
+    // §20.1.4.2.19 — the shape's own `a:ln` says how THICK and how dashed, the
+    // gallery style says what COLOUR. dashed_line_custdash_percentage.docx
+    // rules a 4.5pt accent-blue line that way and we drew a black hairline.
+    const text = styled(
+      '<wps:style><a:lnRef idx="1"><a:srgbClr val="4472C4"/></a:lnRef></wps:style>',
+      `${RECT}<a:ln w="57150"><a:custDash><a:ds d="800000" sp="300000"/></a:custDash></a:ln>`,
+    );
+    expect(text).toContain('0.266667 0.447059 0.768627 RG'); // 4472C4
+    expect(text).toContain('4.5 w');
+    // §20.1.8.21 — dash 800% and space 300% of a 4.5pt rule.
+    expect(text).toContain('[36 13.5] 0 d');
+  });
+
+  it('finds the colour inside a pretty-printed reference', () => {
+    // A text node between the elements is not the element: the "not #text"
+    // test took the indentation and read no colour at all.
+    const text = styled(
+      '<wps:style>\n  <a:fillRef idx="1">\n    <a:srgbClr val="5B9BD5"/>\n  </a:fillRef>\n</wps:style>',
+      RECT,
+    );
+    expect(text).toContain('0.356863 0.607843 0.835294 rg');
+  });
+
   it('reads idx="0" as naming nothing', () => {
     const text = styled(
       '<wps:style><a:fillRef idx="0"><a:srgbClr val="5B9BD5"/></a:fillRef></wps:style>',

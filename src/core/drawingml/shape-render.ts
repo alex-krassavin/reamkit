@@ -112,7 +112,11 @@ export function gradientSvgDef(id: string, g: ShapeGradient): string {
 export function buildStroke(line: ShapeLine | undefined): StrokeStyle | undefined {
   if (!line || line.fill === 'none') return undefined;
   const widthPt = line.width ?? DEFAULT_LINE_WIDTH_EMU / EMU_PER_PT;
-  const dash = line.dash && line.dash !== 'solid' ? dashPattern(line.dash, widthPt) : undefined;
+  // §20.1.8.21 — the author's own pattern states its lengths as multiples of
+  // the line's width, and it wins over any preset beside it.
+  const custom = line.customDash?.map((n) => Math.max(0.01, n * widthPt));
+  const dash =
+    custom ?? (line.dash && line.dash !== 'solid' ? dashPattern(line.dash, widthPt) : undefined);
   // DrawingML 'flat' cap is PDF butt; round/square map straight through.
   const cap: StrokeStyle['cap'] | undefined = line.cap === 'flat' ? 'butt' : line.cap;
   return {

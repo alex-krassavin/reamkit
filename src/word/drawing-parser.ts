@@ -142,6 +142,19 @@ function parseFloatAnchor(anchor: PoNode): FloatAnchor | undefined {
 
 const ANCHOR_ALIGNS = new Set(['left', 'center', 'right']);
 
+/**
+ * The first ELEMENT among a node's children. `poTag` gives a text node no tag
+ * at all, and a "not #text" test let the whitespace between pretty-printed
+ * elements win: dashed_line_custdash_percentage.docx indents its `a:lnRef`, so
+ * the colour inside it went unread and its blue rule came out black.
+ *
+ * @param node The parent node.
+ * @returns The first child that is an element, or `undefined`.
+ */
+function firstElementChild(node: PoNode | undefined): PoNode | undefined {
+  return poChildren(node).find((c) => poTag(c) !== undefined);
+}
+
 function parseAnchorPos(
   anchor: PoNode,
   tag: 'wp:positionH' | 'wp:positionV',
@@ -671,7 +684,19 @@ function parseWspNode(
   // rectangle asks for accent1 that way and we drew its caption on white.
   const style = poChildren(wsp).find((c) => poIs(c, 'wps:style'));
   if (style && fill.kind === 'none') fill = styleRefFill(style, resolveColor);
-  if (style && !line) line = styleRefLine(style, resolveColor);
+  // §20.1.4.2.19 — a shape may state a WIDTH or a dash of its own and take its
+  // COLOUR from the gallery style: dashed_line_custdash_percentage.docx rules a
+  // 4.5pt accent-blue line that way and we drew a black hairline.
+  const styleLine = style ? styleRefLine(style, resolveColor) : undefined;
+  if (styleLine) {
+    const own = line;
+    line = own
+      ? {
+          ...styleLine,
+          ...Object.fromEntries(Object.entries(own).filter(([, v]) => v !== undefined)),
+        }
+      : styleLine;
+  }
   // §20.1.4.2.14 `<a:fontRef>` carries the colour the shape's text takes when
   // its own runs name none — on a gallery-drawn shape that is where the colour
   // IS. LineStyle_DashType.docx asks for `lt1` on seven blue rectangles and we
@@ -698,7 +723,7 @@ function parseWspNode(
 function styleRefFill(style: PoNode, resolveColor: ColorResolver): ShapeFill {
   const ref = poChildren(style).find((c) => poIs(c, 'a:fillRef'));
   if (!ref || poAttr(ref, 'idx') === '0') return { kind: 'none' };
-  const child = poChildren(ref).find((c) => poTag(c) !== '#text');
+  const child = firstElementChild(ref);
   const colorHex = child ? resolveColorNode(child, resolveColor) : undefined;
   return colorHex === undefined ? { kind: 'none' } : { kind: 'solid', colorHex };
 }
@@ -709,7 +734,7 @@ function styleRefFill(style: PoNode, resolveColor: ColorResolver): ShapeFill {
 function styleRefLine(style: PoNode, resolveColor: ColorResolver): ShapeLine | undefined {
   const ref = poChildren(style).find((c) => poIs(c, 'a:lnRef'));
   if (!ref || poAttr(ref, 'idx') === '0') return undefined;
-  const child = poChildren(ref).find((c) => poTag(c) !== '#text');
+  const child = firstElementChild(ref);
   const colorHex = child ? resolveColorNode(child, resolveColor) : undefined;
   return colorHex === undefined ? undefined : { fill: 'solid', colorHex, width: pt(0.75) };
 }
@@ -727,7 +752,7 @@ function withStyleFontColor(
   resolveColor: ColorResolver,
 ): ShapeTextBody {
   const ref = poChildren(style).find((c) => poIs(c, 'a:fontRef'));
-  const child = ref ? poChildren(ref).find((c) => poTag(c) !== '#text') : undefined;
+  const child = firstElementChild(ref);
   const colorHex = child ? resolveColorNode(child, resolveColor) : undefined;
   if (colorHex === undefined) return text;
   return {
@@ -1062,18 +1087,44 @@ export function parseLine(spPr: PoNode, resolveColor: ColorResolver): ShapeLine 
   let noFill = false;
   let colorHex: string | undefined;
   let dash: ShapeDash | undefined;
+  // §20.1.8.21 — the author's own pattern, each length a percentage of the
+  // line's width. dashed_line_custdash_percentage.docx rules a dash-dot-dot
+  // line that way and we drew it solid.
+  let customDash: Array<number> | undefined;
   for (const c of poChildren(ln)) {
     if (poIs(c, 'a:noFill')) noFill = true;
     else if (poIs(c, 'a:solidFill')) colorHex = colorFromContainer(c, resolveColor);
     else if (poIs(c, 'a:prstDash')) dash = normalizeDash(poAttr(c, 'val'));
+    else if (poIs(c, 'a:custDash')) customDash = parseCustDash(c);
   }
   return {
     ...(widthEmu !== undefined ? { width: emuToPt(widthEmu) } : {}),
     ...(colorHex ? { colorHex } : {}),
     ...(dash ? { dash } : {}),
+    ...(customDash && customDash.length > 0 ? { customDash } : {}),
     ...(cap ? { cap } : {}),
     ...(noFill ? { fill: 'none' as const } : {}),
   };
+}
+
+/**
+ * §20.1.8.21 `a:custDash` — the dash/space lengths of the author's own
+ * pattern. Each `a:ds` states them in 1000ths of a percent of the line's
+ * width, so the numbers here are plain multiples of that width.
+ *
+ * @param custDash The `a:custDash` node.
+ * @returns The pattern as [dash, space, dash, space, …], or `undefined`.
+ */
+function parseCustDash(custDash: PoNode): Array<number> | undefined {
+  const out: Array<number> = [];
+  for (const ds of poChildren(custDash)) {
+    if (!poIs(ds, 'a:ds')) continue;
+    const d = (poIntAttr(ds, 'd') ?? 0) / 100000;
+    const sp = (poIntAttr(ds, 'sp') ?? 0) / 100000;
+    if (d <= 0 && sp <= 0) continue;
+    out.push(Math.max(0, d), Math.max(0, sp));
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 const DASH_VALUES = new Set<ShapeDash>([
