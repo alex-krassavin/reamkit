@@ -77,7 +77,12 @@ export function applyNumbering(
       : [
           {
             text: `${marker}\t`,
-            properties: level?.runProperties ?? {},
+            // §17.9.6 — the marker is formatted like the PARAGRAPH MARK, with
+            // the level's own `w:rPr` on top. Taking the level's alone left the
+            // marker at whatever size the paragraph's STYLE lends: fdo78420's
+            // bullets are 9pt text under an 11pt list style, and an 11pt bullet
+            // made every one of its lines 4pt taller — 41 pages against 23.
+            properties: { ...p.properties.runProperties, ...level?.runProperties },
             listMarker: true,
           },
         ];
