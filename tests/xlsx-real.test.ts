@@ -12,13 +12,28 @@ import { dirname, resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import type { FontBytesByVariant } from '@/core/font';
 import { OpcPackage } from '@/core/opc';
+import { convertXlsxToPdfSync } from '@/core/converter';
 import { Ream } from '@/core/converter/ream';
 import { readXlsx, readXlsxToSheetDoc } from '@/excel/xlsx-reader';
+import { projectSheetDoc } from '@/excel/sheet-to-flow';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const load = (name: string): Uint8Array =>
   new Uint8Array(readFileSync(resolve(here, 'fixtures/real', name)));
+
+const FONTS: { fonts: FontBytesByVariant } = {
+  fonts: {
+    regular: new Uint8Array(readFileSync(resolve(here, 'fixtures/fonts/Roboto-Regular.ttf'))),
+    bold: new Uint8Array(readFileSync(resolve(here, 'fixtures/fonts/Roboto-Bold.ttf'))),
+    italic: new Uint8Array(readFileSync(resolve(here, 'fixtures/fonts/Roboto-Italic.ttf'))),
+    boldItalic: new Uint8Array(readFileSync(resolve(here, 'fixtures/fonts/Roboto-BoldItalic.ttf'))),
+  },
+};
+
+const pageCount = (pdf: Uint8Array): number =>
+  (new TextDecoder('latin1').decode(pdf).match(/\/MediaBox/g) ?? []).length;
 
 /** Cells carrying visible text in the projected document. */
 function textCells(bytes: Uint8Array): Array<string> {
@@ -72,6 +87,72 @@ describe('real documents: SpreadsheetML dialects', () => {
     // but r="11_2" dropped every cell on the floor.
     expect(cells.length).toBeGreaterThanOrEqual(19);
     expect(cells).toContain('Van Rompaey Marcus');
+
+    // The refs look like <column>_<row> and the row half even agrees, but the
+    // columns they name are wrong: the header row is 11 labels and the data row
+    // 11 values, and only document order files each value under its own
+    // heading. Read as columns, the start time landed under "Klantnaam" — and
+    // then vanished off the right of the page.
+    //
+    // The sheet is wider than the page, so it comes out as one table per
+    // column band; row i of the sheet is row i of each of them.
+    const { doc } = readXlsx(load('tdf122336.xlsx'));
+    const tables = doc.body.filter((e) => e.kind === 'table');
+    // A band whose trailing rows draw nothing is trimmed, so later bands can be
+    // shorter than the first — ask each for the row only if it has one.
+    const row = (i: number): Array<string> =>
+      tables.flatMap((t) =>
+        (t.table.rows[i]?.cells ?? []).map((c) =>
+          c.content
+            .map((b) =>
+              b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text).join('') : '',
+            )
+            .join(''),
+        ),
+      );
+    // The projection clips off a per-character estimate whose buckets
+    // over-charge, so it keeps a tenth of the column in hand and leaves the
+    // exact cut to the layout: the heading survives even here.
+    expect(row(0).slice(0, 3)).toEqual(['Uitvoeringsdatum', 'Starttijd', 'Eindtijd']);
+
+    // …but that is the reader with no render font, where a column is measured
+    // in Excel's own 7px digit. Told the font it will actually be drawn in, the
+    // columns grow — and the TEXT must not be re-scaled with them. charWidthUnits
+    // already reports each character's width in Excel's unit, so measuring the
+    // text in the render font's digit too applied 123.54/105 twice and cut
+    // "Uitvoeringsdatum" one glyph short inside a column 5% WIDER than the
+    // reference's, with 7pt to spare.
+    const drawn = projectSheetDoc(readXlsxToSheetDoc(load('tdf122336.xlsx')), {
+      digitWidthPt: 6.18,
+    });
+    const firstRow = drawn.body.flatMap((e) =>
+      e.kind === 'table'
+        ? (e.table.rows[0]?.cells ?? []).map((c) =>
+            c.content
+              .map((b) =>
+                b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text).join('') : '',
+              )
+              .join(''),
+          )
+        : [],
+    );
+    expect(firstRow[0]).toBe('Uitvoeringsdatum');
+    // "Bevestigd via App?" in a column that holds about two thirds of it: the
+    // estimate keeps a couple of characters more than fit, and the layout's own
+    // measurement takes them back — the drawn page ends at "Bevestigd vi",
+    // exactly where LibreOffice ends it.
+    expect(firstRow[6]).toBe('Bevestigd via');
+    expect(row(1).slice(0, 3)).toEqual(['12/25/2018', '11:30', '14:30']);
+
+    // `<font/><font><b/></font>`: the empty element parses to a string rather
+    // than an object, and skipping it moved the bold font to index 0 — so
+    // `fontId="1"` resolved to nothing and the header row lost its weight.
+    const sd = readXlsxToSheetDoc(load('tdf122336.xlsx'));
+    expect(sd.styles.fonts).toHaveLength(2);
+    expect(sd.styles.fonts[1]?.bold).toBe(true);
+    expect(tables[0]!.table.rows[0]!.cells[0]!.content).toMatchObject([
+      { paragraph: { runs: [{ properties: { bold: true } }] } },
+    ]);
   });
 
   it('tdf111980_radioButtons.xlsx — <control> reaches ActiveX, not just form controls', () => {
@@ -81,7 +162,6 @@ describe('real documents: SpreadsheetML dialects', () => {
     // so this sheet of option buttons came out as five bare names with their
     // captions and states sitting unread in the .bin beside them.
     const sheet = readXlsxToSheetDoc(load('tdf111980_radioButtons.xlsx')).sheets[0]!;
-    expect(sheet.formControls ?? []).toHaveLength(0);
     const controls = sheet.activeXControls ?? [];
     expect(controls).toHaveLength(5);
     // Typed from the class id — <control> carries no progId to type it by.
@@ -95,6 +175,147 @@ describe('real documents: SpreadsheetML dialects', () => {
     ]);
     // Exactly one of the group is selected, and the group name came through.
     expect(controls.filter((c) => c.value === '1').map((c) => c.groupName)).toEqual(['Sheet1']);
+
+    // Six more controls sit beside them, declared ONLY in the legacy VML: five
+    // Forms-toolbar radio buttons and the group box around two of them. They
+    // have no `<control>` entry and no ctrlProps part, so reading just the
+    // `<controls>` list lost them without a word — LibreOffice draws all six.
+    // Only actual control types: a cell comment is a VML shape too
+    // (`ObjectType="Note"`) and must not be listed as a control.
+    // The VML textbox is the control's CAPTION; `name` keeps it too, for the
+    // listing a control without geometry falls back to. What is drawn is the
+    // caption alone — `<control name>` is an identifier, never a label.
+    const shown = (name: string) => ({ name, caption: name });
+    expect(sheet.formControls?.map((c) => ({ ...c, box: undefined }))).toEqual([
+      {
+        objectType: 'Radio',
+        ...shown('Form button1'),
+        checked: true,
+        fontSizePt: 8,
+        box: undefined,
+      },
+      { objectType: 'Radio', ...shown('Form button2'), fontSizePt: 8, box: undefined },
+      { objectType: 'GBox', ...shown('Group Box 7'), fontSizePt: 8, box: undefined },
+      { objectType: 'Radio', ...shown('Form groupbox1'), fontSizePt: 8, box: undefined },
+      {
+        objectType: 'Radio',
+        ...shown('Form groupbox2'),
+        checked: true,
+        fontSizePt: 8,
+        box: undefined,
+      },
+      { objectType: 'Radio', ...shown('Form outside groupbox3'), fontSizePt: 8, box: undefined },
+    ]);
+
+    // Every one of them knows where it goes. The box is what turns the listing
+    // into a drawing: the group box is 209×88pt at 441pt across the sheet, and
+    // without it all eleven controls collapsed to a text list at the origin.
+    expect(sheet.formControls?.[2]?.box).toEqual({
+      xPt: 441,
+      yPt: 7.5,
+      widthPt: 209.25,
+      heightPt: 87.75,
+    });
+    // An ActiveX control's box lives in the `Pict` shape sharing its shapeId —
+    // its own part carries a class id and nothing else.
+    expect(sheet.activeXControls?.map((c) => c.box?.xPt)).toEqual([564.75, 129, 131.25, 0, 2.25]);
+  });
+
+  it('AverageTaxRates.xlsx — hidden column and rows stay out of the render', () => {
+    // The sheet hides a currency column between two visible ones and seven rows
+    // in the middle of its table. Rendering them showed a column no other
+    // reader shows, an extra data row, a second copy of the header band, and
+    // broke the table's borders around them.
+    const sheet = readXlsxToSheetDoc(load('AverageTaxRates.xlsx')).sheets[0]!;
+    expect(sheet.grid.columns.filter((c) => c.hidden)).toHaveLength(1);
+    expect(sheet.grid.rowHeights.filter((r) => r.hidden)).toHaveLength(7);
+
+    const { doc } = readXlsx(load('AverageTaxRates.xlsx'));
+    const table = doc.body.find((e) => e.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('expected a table');
+    // Twelve printed columns: the label plus 1997..2007. Thirteen would mean the
+    // hidden currency column came back.
+    expect(table.table.grid).toHaveLength(12);
+    // The hidden rows carry these; none may appear.
+    const text = textCells(load('AverageTaxRates.xlsx'));
+    expect(text).not.toContain('4,726');
+    expect(text).not.toContain('6,000');
+  });
+
+  it('tdf58243.xlsx — three things a page-count check cannot see', () => {
+    const sd = readXlsxToSheetDoc(load('tdf58243.xlsx'));
+
+    // §18.8.3 <color indexed="10"> — the legacy palette, still what Excel writes
+    // for a colour picked from the classic dropdown. Ignoring the attribute
+    // rendered these headers black where every other reader shows red.
+    expect(sd.styles.fonts.some((f) => f.colorHex === 'FF0000')).toBe(true);
+
+    // The dropdown arrow of a data-validation `list` cell is a selection
+    // affordance; neither Excel nor LibreOffice prints it, and drawing it also
+    // reserved a gutter and a minimum height that cost a whole page. The flag
+    // stays on the cell — the HTML writer renders an interactive view and wants
+    // it — but the paginated layout must not paint it.
+    expect(sd.sheets[0]!.grid.dataValidations?.some((v) => v.type === 'list')).toBe(true);
+    const { doc } = readXlsx(load('tdf58243.xlsx'));
+    const table = doc.body.find((e) => e.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('expected a table');
+    expect(table.table.rows.some((r) => r.cells.some((c) => c.properties.dropdown))).toBe(true);
+    // Two pages, the same as LibreOffice. The sheet asks to fit 2×2 pages and
+    // the closed-form scale gave 52 %, which spills the last three rows onto a
+    // third page; fit-to-page now paginates for real and lands on 50 %.
+    expect(pageCount(convertXlsxToPdfSync(load('tdf58243.xlsx'), FONTS))).toBe(2);
+
+    // A literal CR LF inside the centre header region is a line break, not text
+    // — drawn as text it came out as a missing-glyph box mid-title.
+    const bands = [...(doc.headersFooters?.values() ?? [])].flat();
+    const centre = bands.filter(
+      (b) => b.kind === 'paragraph' && b.paragraph.properties.alignment === 'center',
+    );
+    expect(centre.length).toBeGreaterThanOrEqual(2);
+    for (const b of bands) {
+      if (b.kind !== 'paragraph') continue;
+      for (const run of b.paragraph.runs) expect(run.text).not.toMatch(/[\r\n]/);
+    }
+  });
+
+  it('open-as-read-only.xlsx — text overflows past the end of the used range', () => {
+    // `<dimension ref="A1"/>`: one cell, one column, and a sentence far wider
+    // than it. Excel and LibreOffice run the text across the empty grid to the
+    // right — there is nothing there to block it — and print one line. With no
+    // columns to run into, the cell kept its own width and the layout wrapped
+    // the sentence into nine stacked lines.
+    const { doc } = readXlsx(load('open-as-read-only.xlsx'));
+    const table = doc.body.find((e) => e.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('expected a table');
+    expect(table.table.grid.length).toBeGreaterThan(1);
+    expect(table.table.rows[0]!.cells[0]!.properties.colSpan).toBe(table.table.grid.length);
+    // The widened grid must still fit the page, or it is split into bands and
+    // the document gains a blank second page LibreOffice does not print.
+    expect(pageCount(convertXlsxToPdfSync(load('open-as-read-only.xlsx'), FONTS))).toBe(1);
+  });
+
+  it('tdf171828 — overflow runs across a decorated but empty neighbour', () => {
+    // The labels sit in a filled, top-ruled block: every neighbour to the right
+    // is empty but carries the band's fill and rule. Treating any decoration as
+    // a blocker clipped them to their own narrow column — "Kre" for
+    // "Kreditsumme" — where every other reader prints the label in full.
+    const cells = textCells(load('tdf171828_fail_to_import_file.xlsx'));
+    expect(cells).toContain('Kreditsumme');
+    expect(cells).toContain('Zahlungsbeginn');
+
+    // §18.2.19: the third sheet is state="hidden" — a lookup table nobody
+    // prints. Excel and LibreOffice leave it out; we printed two pages of
+    // working data at the end of the document.
+    const sd0 = readXlsxToSheetDoc(load('tdf171828_fail_to_import_file.xlsx'));
+    expect(sd0.sheets.map((s) => s.hidden ?? false)).toEqual([false, false, true]);
+    expect(cells).not.toContain('Hitab');
+
+    // The block is styled entirely from the workbook theme — `theme="2"
+    // tint="-0.5"` and friends. Unresolved, those colours parse to nothing and
+    // a solid fill with no foreground paints nothing: the whole header block
+    // came out white where every other reader shows it khaki.
+    const sd = readXlsxToSheetDoc(load('tdf171828_fail_to_import_file.xlsx'));
+    expect(sd.styles.fills.some((f) => f.fgColorHex === '948A54')).toBe(true);
   });
 
   it('duplicate-filename.xlsx — t="inlineStr" written into <v>', () => {
@@ -125,5 +346,14 @@ describe('real documents: scale and amplification', () => {
     }
     expect(cells).toBeLessThanOrEqual(1_000_000);
     expect(losses.filter((l) => l.severity === 'dropped').length).toBeGreaterThanOrEqual(2);
+
+    // And it says WHY. This sheet asks for more than SpreadsheetML has — a cell
+    // at XFE is past column XFD, the last one the format defines, so no reader
+    // can put it anywhere the file names. Reporting that as a memory guard
+    // would tell the reader to buy RAM for a file that is malformed.
+    const detail = losses.map((l) => l.detail).join('\n');
+    expect(detail).toContain('past column XFD');
+    expect(detail).toContain('past row 1048576');
+    expect(detail).not.toContain('memory guard');
   });
 });

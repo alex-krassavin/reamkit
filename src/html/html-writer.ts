@@ -446,10 +446,20 @@ function wedgeSvg(w: ChartWedge): string {
 }
 
 function labelSvg(l: ChartLabel, sceneH: number, anchor: 'start' | 'middle' | 'end'): string {
+  // SVG's y grows downward, so a counter-clockwise rotation is negative here.
+  const rot = l.rotationDeg
+    ? ` transform="rotate(${fmt(-l.rotationDeg)} ${fmt(l.x)} ${fmt(sceneH - l.y)})"`
+    : '';
   return (
-    `<text x="${fmt(l.x)}" y="${fmt(sceneH - l.y)}" font-size="${fmt(l.sizePt)}" ` +
+    `<text x="${fmt(l.x)}" y="${fmt(sceneH - l.y)}"${rot} font-size="${fmt(l.sizePt)}" ` +
     `font-family="sans-serif" fill="#${l.colorHex}" text-anchor="${anchor}">${escapeText(l.text)}</text>`
   );
+}
+
+/** `RRGGBB` as the `r,g,b` triple a CSS `rgba()` takes. */
+function hexToRgbCss(hex: string): string {
+  const n = parseInt(hex, 16);
+  return `${String((n >> 16) & 255)},${String((n >> 8) & 255)},${String(n & 255)}`;
 }
 
 function emitShapeBlock(out: Array<string>, shape: ShapeBlock, ctx: EmitCtx): void {
@@ -478,10 +488,19 @@ function emitShapeBlock(out: Array<string>, shape: ShapeBlock, ctx: EmitCtx): vo
   const transform = ` transform="matrix(${m.map(fmt).join(' ')})"`;
   const svg: Array<string> = [svgOpen(w, h, shape.altText)];
   if (gradDef) svg.push(`<defs>${gradDef}</defs>`);
+  // §20.1.8.40 — the drop shadow under the shape. The inline SVG is clipped to
+  // the shape's own box, so the shadow is drawn as a `drop-shadow` filter on
+  // the path rather than a second path outside it, which keeps the blur the
+  // source asked for without needing room the viewport does not have.
+  const shadow = shape.shadow;
+  const shadowFilter = shadow
+    ? ` filter="drop-shadow(${fmt(shadow.dxPt)}px ${fmt(shadow.dyPt)}px ` +
+      `${fmt(shadow.blurPt / 2)}px rgba(${hexToRgbCss(shadow.colorHex)},${fmt(shadow.alpha)}))"`
+    : '';
   for (const path of paths) {
     const rule = path.fillRule === 'evenodd' ? ' fill-rule="evenodd"' : '';
     svg.push(
-      `<path d="${svgPathData(path.segments, fmt)}" fill="${fill}"${rule}${stroke}${transform}/>`,
+      `<path d="${svgPathData(path.segments, fmt)}" fill="${fill}"${rule}${stroke}${transform}${shadowFilter}/>`,
     );
   }
   svg.push('</svg>');
@@ -807,6 +826,11 @@ function emitCell(
   pushBorder(css, 'left', c?.left ?? (pos.firstCol ? t?.left : t?.insideV));
   pushBorder(css, 'right', c?.right ?? (pos.lastCol ? t?.right : t?.insideV));
   if (cell.properties.shading) css.push(`background-color:#${cell.properties.shading.colorHex}`);
+  // §18.8.1 — a cell that does not wrap shows ONE line, cut at its own box.
+  // The paginated writers cut it themselves (the PDF and SVG emitters clip the
+  // line to the cell); HTML renders the document model rather than a laid-out
+  // page, so the browser does the cutting and only needs to be told to.
+  if (cell.properties.noWrap) css.push('white-space:nowrap', 'overflow:hidden');
   // Conditional-format data bar (E-SHEET SC1c): a gradient stop paints the bar
   // over the background colour and under the cell text. startFraction offsets it
   // for axis (mixed-sign) bars (tail TC4).

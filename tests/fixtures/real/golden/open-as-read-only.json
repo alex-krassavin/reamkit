@@ -1,0 +1,30 @@
+{
+  "file": "open-as-read-only.xlsx",
+  "paperDeclared": true,
+  "libreOffice": {
+    "pages": 1,
+    "pageSizes": [
+      {
+        "widthPt": 595,
+        "heightPt": 842
+      }
+    ],
+    "chars": 82,
+    "firstLines": [
+      "Sheet1"
+    ]
+  },
+  "ream": {
+    "pages": 1,
+    "pageSizes": [
+      {
+        "widthPt": 595,
+        "heightPt": 842
+      }
+    ],
+    "chars": 82,
+    "firstLines": [
+      "Sheet1"
+    ]
+  }
+}

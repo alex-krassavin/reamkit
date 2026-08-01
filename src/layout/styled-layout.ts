@@ -41,6 +41,7 @@ import type {
   SectionColumns,
   SectionProperties,
   ShapeBlock,
+  ShapeShadow,
   StyleSheet,
   Table,
   TableCell,
@@ -52,7 +53,7 @@ import type { FamilyKey } from '@/core/fonts';
 import type { Hyphenator } from '@/core/hyphenation';
 import type { PreparedImage } from '@/core/images';
 import type { Item } from '@/core/line-breaker';
-import type { ResourceId } from '@/core/ir';
+import type { Pt, ResourceId } from '@/core/ir';
 import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
 import type { ShapeGradient, StrokeStyle, VectorPath } from '@/core/vector';
 import type {
@@ -102,7 +103,7 @@ import {
 import { PathBuilder, flipTransform } from '@/core/vector';
 import { buildSparkline } from '@/core/drawingml/sparkline-geometry';
 import { arcPoint, arcToBeziers } from '@/core/arc-to-bezier';
-import { buildChartScene } from '@/core/drawingml/chart-geometry';
+import { buildChartScene, legendSeriesName } from '@/core/drawingml/chart-geometry';
 import { layoutMath, mathGlyphSegments, variantStyle } from '@/layout/math-layout';
 import { rectPath } from '@/core/drawingml/preset-geometry';
 import {
@@ -329,6 +330,8 @@ interface ChartTextPrim {
   readonly line: Line;
   readonly x: number; // local baseline origin
   readonly y: number;
+  /** Counter-clockwise degrees about the origin (rotated axis titles). */
+  readonly rotationDeg?: number;
 }
 interface ChartLayout {
   readonly shapes: ReadonlyArray<ChartShapePrim>;
@@ -371,6 +374,7 @@ interface ShapeBlockLaidOut {
   readonly fillColorHex?: string;
   readonly fillGradient?: ShapeGradient;
   readonly stroke?: StrokeStyle;
+  readonly shadow?: ShapeShadow;
   readonly rotation60k: number;
   readonly flipH: boolean;
   readonly flipV: boolean;
@@ -429,9 +433,16 @@ interface CellLayout {
   readonly nestedTables?: ReadonlyArray<TableBlock>;
   readonly contentHeightPt: number;
   readonly totalHeightPt: number;
+  readonly verticalAlign?: 'top' | 'center' | 'bottom';
   readonly colStart: number;
   readonly colSpan: number;
   readonly mergeRole: MergeRole;
+  readonly clipped?: boolean;
+  /**
+   * The width the cell's own fill and rules cover, when a text-overflow span
+   * made {@link widthPt} wider than the cell itself.
+   */
+  readonly paintWidthPt?: number;
 }
 
 interface RowLayout {
@@ -1138,16 +1149,28 @@ function buildSectionContext(
     dims.footerOffsetPt,
   );
   const columns = buildColumnGeometry(section.properties.columns, contentWidth);
+  // A header band taller than the gap between its own offset and the top margin
+  // would otherwise be drawn straight over the first rows of the body. Excel and
+  // Word both push the body down instead; a multi-line header is ordinary (a
+  // spreadsheet header region may carry a literal line break).
+  const headerBottom =
+    dims.headerOffsetPt +
+    Math.max(
+      headerSet.default.heightPt ?? 0,
+      headerSet.first.heightPt ?? 0,
+      headerSet.even.heightPt ?? 0,
+    );
+  const marginTop = Math.max(dims.marginTop, headerBottom);
   return {
     endIndex: section.endIndex,
     properties: section.properties,
     pageWidth: dims.pageWidth,
     pageHeight: dims.pageHeight,
     marginLeft: dims.marginLeft,
-    marginTop: dims.marginTop,
+    marginTop,
     marginBottom: dims.marginBottom,
     contentWidth,
-    pageContentHeight: dims.pageHeight - dims.marginTop - dims.marginBottom,
+    pageContentHeight: dims.pageHeight - marginTop - dims.marginBottom,
     ...(columns ? { columns } : {}),
     headerSet,
     footerSet,
@@ -1198,6 +1221,8 @@ type HfBand = 'default' | 'first' | 'even';
 interface HfBandEntry {
   readonly commands: Array<PageItem>;
   readonly renderDynamic?: (pageNumber: number, totalPages: number) => Array<PageItem>;
+  /** Laid-out height of the band, so the body can be kept clear of it. */
+  readonly heightPt?: number;
 }
 
 interface HeaderFooterSet {
@@ -1232,21 +1257,38 @@ function layoutHeaderSet(
     if (!ref) return { commands: [] };
     const content = headersFooters.get(ref.relationshipId);
     if (!content) return { commands: [] };
+    let measured = 0;
     const render = (c: ReadonlyArray<BodyElement>): Array<PageItem> => {
       const blocks = laidOutBlocksFor(c, options, fontResources, contentWidth);
+      measured = blocksHeight(blocks);
       return markPagination(
         drawBlocksSequentially(blocks, marginLeft, pageHeight - headerOffsetPt, pageHeight),
       );
     };
     if (contentHasPageFields(content)) {
+      // Measure once with placeholder values so the height is known before the
+      // first page is composed; the per-page render replaces the commands.
+      render(substitutePageFields(content, 1, 1));
       return {
         commands: [],
+        heightPt: measured,
         renderDynamic: (n, total) => render(substitutePageFields(content, n, total)),
       };
     }
-    return { commands: render(content) };
+    const commands = render(content);
+    return { commands, heightPt: measured };
   };
   return { default: band('default'), first: band('first'), even: band('even') };
+}
+
+/** Total laid-out height of a run of blocks, paragraph spacing included. */
+function blocksHeight(blocks: ReadonlyArray<LaidOutBlock>): number {
+  return blocks.reduce(
+    (sum, b) =>
+      sum +
+      (b.kind === 'paragraph' ? b.spacingBeforePt + b.heightPt + b.spacingAfterPt : b.heightPt),
+    0,
+  );
 }
 
 function layoutFooterSet(
@@ -1465,7 +1507,29 @@ function layoutShapeBlock(
         imageResources,
         innerWidth,
       );
-      for (const line of blk.lines) {
+      // §21.1.2.2.3 — a paragraph with no runs is still a LINE: it is the blank
+      // line the author typed, and `a:endParaRPr` says how tall. Wrapping zero
+      // tokens yields no line at all, so the shape's text closed up and every
+      // paragraph after the blank one drew 14pt too high (shape-macro-ext-ref
+      // .xlsx opens its button's caption with one).
+      const lines =
+        blk.lines.length > 0
+          ? blk.lines
+          : [
+              {
+                tokens: [],
+                contentWidthPt: 0,
+                maxFontSizePt:
+                  el.paragraph.runs[0]?.properties.fontSizePt ??
+                  options.styles.defaultRunProperties.fontSizePt ??
+                  pt(11),
+                availableWidthPt: innerWidth,
+                firstLine: true,
+                resolved: blk.resolved,
+                isLastInParagraph: true,
+              },
+            ];
+      for (const line of lines) {
         textLines.push(line);
         textHeightPt += computeLineHeight(line, blk.resolved);
       }
@@ -1481,6 +1545,7 @@ function layoutShapeBlock(
     ...(fillColorHex ? { fillColorHex } : {}),
     ...(fillGradient ? { fillGradient } : {}),
     ...(stroke ? { stroke } : {}),
+    ...(shape.shadow ? { shadow: shape.shadow } : {}),
     rotation60k: t?.rotation60k ?? 0,
     flipH: t?.flipH ?? false,
     flipV: t?.flipV ?? false,
@@ -1563,6 +1628,11 @@ function buildChartLayout(
   }
   const shapes: Array<ChartShapePrim> = [];
   // Area-fill polygons sit at the bottom of the z-order (below gridlines/labels).
+  // Z-order: the chart-space frame under everything, then the gridlines, then
+  // the plotted data over both. Gridlines drawn after the bars ruled white
+  // lines straight across every one of them (123233_charts.xlsx).
+  if (scene.background) shapes.push(rectPrim(scene.background));
+  for (const g of scene.gridlines ?? []) shapes.push(polylinePrim(g));
   for (const pg of scene.polygons ?? []) shapes.push(polygonPrim(pg));
   for (const r of scene.rects) shapes.push(rectPrim(r));
   for (const p of scene.polylines) shapes.push(polylinePrim(p));
@@ -1814,8 +1884,13 @@ function wedgePrim(w: ChartWedge): ChartShapePrim {
 function labelPrim(l: ChartLabel, font: FontResource): ChartTextPrim {
   const line = makeChartLabelLine(l.text, font, l.sizePt, l.colorHex);
   const w = line.contentWidthPt;
-  const x = l.align === 'center' ? l.x - w / 2 : l.align === 'right' ? l.x - w : l.x;
-  return { line, x, y: l.y };
+  const shift = l.align === 'center' ? -w / 2 : l.align === 'right' ? -w : 0;
+  // A rotated label reads along the rotated axis, so its own alignment shifts
+  // it there and not across the page.
+  if (l.rotationDeg) {
+    return { line, x: l.x, y: l.y + shift, rotationDeg: l.rotationDeg };
+  }
+  return { line, x: l.x + shift, y: l.y };
 }
 
 // A minimal single-token Line for a positioned chart label.
@@ -2073,7 +2148,23 @@ function collectFontResources(
         }
       } else if (el.kind === 'table') {
         for (const row of el.table.rows) {
-          for (const cell of row.cells) visit(cell.content);
+          for (const cell of row.cells) {
+            // A number too wide for its column is drawn as a row of `#` in
+            // place of its own digits (CellProperties.hashOnOverflow) — a
+            // character that appears nowhere in the document's text. Left out
+            // of the subset, the page encodes a glyph the embedded font no
+            // longer has: bug69812.xlsx is one such cell, and its page came out
+            // blank where both references print a number.
+            if (cell.properties.hashOnOverflow === true) {
+              for (const inner of cell.content) {
+                if (inner.kind !== 'paragraph') continue;
+                for (const run of inner.paragraph.runs) {
+                  addRun({ text: '#', properties: run.properties }, inner.paragraph);
+                }
+              }
+            }
+            visit(cell.content);
+          }
         }
       } else if (el.kind === 'shape') {
         if (el.shape.text) visit(el.shape.text.content);
@@ -2091,8 +2182,25 @@ function collectFontResources(
           };
           if (chart.title) add(chart.title);
           for (const c of chart.categories) add(c);
-          for (const sr of chart.series) if (sr.name) add(sr.name);
+          // …and the legend name of a series that HAS no name is invented at
+          // draw time (`Series1`), so ask for the same string the legend will
+          // draw: 57362.xlsx's capital S is on the page nowhere else, and the
+          // subset it was left out of drew "eries1".
+          chart.series.forEach((sr, i) => add(legendSeriesName(sr, i)));
+          // The axis titles are drawn too, and a character that appears ONLY
+          // there was left out of the subset and drew blank — shape-macro-ext-
+          // ref.xlsx prints "Translation X [mm]" as "Translation    mm", with
+          // the text layer still claiming the missing glyphs.
+          if (chart.catAxisTitle) add(chart.catAxisTitle);
+          if (chart.valAxisTitle) add(chart.valAxisTitle);
+          // §21.2.2.49 — a label the author typed is arbitrary text, not digits.
+          for (const sr of chart.series) for (const label of sr.pointLabels ?? []) add(label.text);
           add('0123456789.,-%() '); // value-axis tick labels
+          // …and whatever the axis's number format puts around them. A currency
+          // code draws a `$` that appears nowhere else on the page, and left out
+          // of the subset it drew blank: 123233_charts.xlsx labelled its axis
+          // "2,000,000,000.00" where every reader writes "$2,000,000,000.00".
+          if (chart.numberFormat) add(chart.numberFormat);
         }
       }
       // image-block elements use no fonts
@@ -2102,11 +2210,33 @@ function collectFontResources(
   for (const hf of headersFooters.values()) visit(hf);
   for (const note of options.footnotes?.values() ?? []) visit(note);
   for (const note of options.endnotes?.values() ?? []) visit(note);
-  for (const comment of options.comments?.values() ?? []) visit(comment.content);
+  // A comment's content is only half of what gets drawn. `commentTailBlocks`
+  // synthesises the rest — the author, the date, the `[n]` marker, the `re [n]`
+  // reply cue, the `(resolved)` tag — and none of it lives in `comment.content`,
+  // so a character appearing ONLY there never reached the subset. The review
+  // fixture's author is "Alice Reviewer" and its capital A is nowhere else in
+  // the document. Ask the builder for its blocks rather than restating its
+  // wording here, and throw in every digit because the numbers are per-document.
+  for (const comment of options.comments?.values() ?? []) {
+    visit(comment.content);
+    visit(commentTailBlocks(comment, 1, { parentN: 1, depth: 1, done: true }));
+    visit([
+      {
+        kind: 'paragraph',
+        paragraph: { properties: {}, runs: [{ text: '0123456789', properties: {} }] },
+      },
+    ]);
+  }
 
   if (used.size === 0) {
+    // A document with no text still needs a font RESOURCE — `lookupFont` falls
+    // back to the first one and would otherwise hand back undefined — but it
+    // needs no font PROGRAM. Seeding `.notdef` here made us embed a 13 KB
+    // Roboto subset into 56017.xlsx, whose page draws nothing at all: 89% of
+    // the file was a font no operator names. The emitter skips a resource with
+    // no glyphs; ISO 32000-1 §7.8.3 wants the resources the stream needs.
     const regular = options.registry.resolveByStyle(false, false);
-    used.set(regular.variant, { parsed: regular.parsed, gids: new Set([0]) });
+    used.set(regular.variant, { parsed: regular.parsed, gids: new Set<number>() });
   }
 
   const out = new Map<string, FontResource>();
@@ -2182,11 +2312,21 @@ function layoutParagraphBlock(
   };
 }
 
+/**
+ * Word and Excel both draw a super/subscript at about two thirds of the base
+ * size, raised a third of it or dropped a sixth. The base line height does not
+ * change: a superscript inside a line of body text must not open the leading.
+ */
+const SCRIPT_SCALE = 0.66;
+const SCRIPT_OFFSET: Partial<Record<string, number>> = { superscript: 1 / 3, subscript: -1 / 6 };
+
 interface RunPlan {
   readonly run: Paragraph['runs'][number];
   readonly resolvedRun: ResolvedRunProperties;
   readonly font: FontResource;
   readonly fontSizePt: number;
+  /** How far off the baseline this run draws (super/subscript), in points. */
+  readonly risePt?: number;
   readonly isImage: boolean;
   readonly imageWidthPt: number;
   readonly imageHeightPt: number;
@@ -2310,11 +2450,17 @@ function tokenizeParagraph(
       resolvedRun.bold,
       resolvedRun.italic,
     );
+    // §17.3.2.42 / §18.4.2 `vertAlign` — a super/subscript run draws SMALLER and
+    // off the baseline. The model carried the flag and the HTML writer honoured
+    // it; the PDF layout did neither, so a footnote marker and a cell's
+    // "Salary⁽²⁾" came out full size, on the line (45540_classic_Header.xlsx).
+    const script = SCRIPT_OFFSET[resolvedRun.verticalAlign] ?? 0;
     return {
       run,
       resolvedRun,
       font: lookupFont(fontResources, fontKey),
-      fontSizePt: resolvedRun.fontSizePt,
+      fontSizePt: script === 0 ? resolvedRun.fontSizePt : resolvedRun.fontSizePt * SCRIPT_SCALE,
+      ...(script === 0 ? {} : { risePt: resolvedRun.fontSizePt * script }),
       isImage: false,
       imageWidthPt: 0,
       imageHeightPt: 0,
@@ -2389,6 +2535,7 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         resolvedRun: plan.resolvedRun,
         font: plan.font,
         fontSizePt: plan.fontSizePt,
+        ...(plan.risePt !== undefined ? { risePt: plan.risePt } : {}),
         widthPt: plan.font.measure.textWidthPt(t.text, plan.fontSizePt),
         bidiLevel: 0,
       });
@@ -2452,6 +2599,7 @@ function tokenizePlansBidi(
         resolvedRun: plan.resolvedRun,
         font: plan.font,
         fontSizePt: plan.fontSizePt,
+        ...(plan.risePt !== undefined ? { risePt: plan.risePt } : {}),
         widthPt: plan.font.measure.textWidthPt(text, plan.fontSizePt),
         bidiLevel: curLevel,
       });
@@ -2555,6 +2703,9 @@ function lastCodePoint(s: string): number {
 function paragraphItemStream(
   tokens: ReadonlyArray<Token>,
   hyphenator: Hyphenator | undefined,
+  // The widest line this paragraph will be broken to, when there is one. A word
+  // wider than THAT can never be placed, and has to break inside itself.
+  maxLineWidthPt?: number,
 ): Array<StreamEntry> {
   const entries: Array<StreamEntry> = [];
   // Last code point of the previous text box, for CJK wrap-opportunity detection;
@@ -2592,6 +2743,35 @@ function paragraphItemStream(
     // Try hyphenation; if no breaks (or too short), one box covers the whole word.
     const positions = hyphenator ? hyphenator.hyphenate(tok.text) : [];
     if (positions.length === 0) {
+      // …unless the word is wider than the line itself, and so can never be
+      // placed: a URL has no spaces and no hyphenation points, and one box for
+      // it is a line that overflows by however long the URL is. The cell then
+      // clips it and everything past the first box width is gone —
+      // no_drawing_patriarch.xlsx keeps a catalogue link in every one of its
+      // 7 465 rows and lost all of them. Excel, Calc and every browser break
+      // such a word between characters; so do we, at the last one that fits.
+      // A tenth of headroom, the same the projection gives its own estimates:
+      // a word that overruns its box by a hair is drawn and clipped, as it
+      // always was. Without it an 11-digit product code in a column measured
+      // for the WORKBOOK's font — narrower than the face we draw with — broke
+      // across two lines on every one of no_drawing_patriarch.xlsx's 7 465
+      // rows.
+      const chunks =
+        maxLineWidthPt !== undefined && maxLineWidthPt > 0 && tok.widthPt > maxLineWidthPt * 1.1
+          ? splitToWidth(tok, maxLineWidthPt)
+          : undefined;
+      if (chunks) {
+        chunks.forEach((chunk, ci) => {
+          if (ci > 0) {
+            entries.push({
+              item: { type: 'penalty', width: 0, penalty: 0, flagged: false },
+              token: null,
+            });
+          }
+          entries.push({ item: { type: 'box', width: chunk.widthPt }, token: chunk });
+        });
+        continue;
+      }
       entries.push({ item: { type: 'box', width: tok.widthPt }, token: tok });
       continue;
     }
@@ -2637,6 +2817,50 @@ function paragraphItemStream(
   return entries;
 }
 
+/**
+ * Cut an unbreakable word into the widest pieces that fit `widthPt`, measured
+ * with the token's own font. Each piece keeps the run's formatting, so the line
+ * builder reassembles them exactly as it does hyphenation fragments.
+ *
+ * @param tok     The text token.
+ * @param widthPt The line width to fit each piece into.
+ * @returns The pieces in order, or undefined when even one character overruns
+ *          (nothing can be gained by splitting then).
+ */
+function splitToWidth(tok: Token, widthPt: number): Array<Token> | undefined {
+  if (tok.kind !== 'text') return undefined;
+  const chars = [...tok.text];
+  // A break that leaves two or three characters to the line is not a line
+  // break, it is shredding — and a box that narrow is usually a width nobody
+  // meant (a nested table's cell measured before its own grid is known). Below
+  // that, the word keeps its shape and overflows, as it did before.
+  if (tok.font.measure.textWidthPt(chars.slice(0, MIN_SPLIT_CHARS).join(''), tok.fontSizePt) > widthPt) {
+    return undefined;
+  }
+  const out: Array<Token> = [];
+  let start = 0;
+  while (start < chars.length) {
+    let end = start + 1;
+    let text = chars[start]!;
+    let width = tok.font.measure.textWidthPt(text, tok.fontSizePt);
+    if (width > widthPt && start === 0 && chars.length === 1) return undefined;
+    while (end < chars.length) {
+      const next = text + chars[end]!;
+      const nextWidth = tok.font.measure.textWidthPt(next, tok.fontSizePt);
+      if (nextWidth > widthPt) break;
+      text = next;
+      width = nextWidth;
+      end++;
+    }
+    out.push({ ...tok, text, widthPt: width });
+    start = end;
+  }
+  return out.length > 1 ? out : undefined;
+}
+
+/** The fewest characters a mid-word break may leave on a line. */
+const MIN_SPLIT_CHARS = 6;
+
 // Rebuild one Line from the chosen break range [start, breakIdx): trim
 // edge spaces/sentinels, fold the hyphen glyph when the break sits on a
 // hyphenation penalty, and aggregate the line metrics.
@@ -2651,10 +2875,34 @@ function lineFromRange(
 ): Line | null {
   let st = start;
   let et = breakIdx;
-  // Skip leading nulls / spaces.
-  while (st < et && (entries[st]!.token === null || entries[st]!.token?.isSpace)) st++;
-  // Trim trailing nulls / spaces.
-  while (et > st && (entries[et - 1]!.token === null || entries[et - 1]!.token?.isSpace)) et--;
+  // Skip leading nulls, and leading spaces on a CONTINUATION line — where they
+  // are the break's own whitespace. On the first line they are the author's:
+  // 45540_classic_Header.xlsx indents a footnote's continuation by writing four
+  // spaces into the cell (`<t xml:space="preserve">    in September…`), and
+  // dropping them put the text flush against the column edge.
+  while (
+    st < et &&
+    (entries[st]!.token === null || (!isFirst && entries[st]!.token?.isSpace === true))
+  ) {
+    st++;
+  }
+  // Trim trailing nulls / spaces — except a space that paints. Whitespace is
+  // dropped at a line end because it is invisible, and an underlined or struck
+  // space is not: Excel and LibreOffice both rule right across the run of them
+  // that a header pads its region with (tdf171828.xlsx underlines its title and
+  // the 130 spaces after it, which is where the rule across the page comes from).
+  const paints = (t: Token | null | undefined): boolean =>
+    t !== null &&
+    t !== undefined &&
+    t.kind === 'text' &&
+    (t.resolvedRun.underline !== 'none' || t.resolvedRun.strike);
+  while (
+    et > st &&
+    (entries[et - 1]!.token === null ||
+      (entries[et - 1]!.token?.isSpace === true && !paints(entries[et - 1]!.token)))
+  ) {
+    et--;
+  }
   if (st >= et) return null;
 
   const lineTokens: Array<Token> = [];
@@ -2738,24 +2986,51 @@ function wrap(
   if (tokens.length === 0) return [];
 
   const widths = lineWidths ?? [firstLineWidth, otherWidth];
-  const entries = paragraphItemStream(tokens, hyphenator);
+  // The WIDEST line the paragraph will be broken to: a word that fits one of
+  // them can be placed, and only a word too wide for all of them has to break
+  // inside itself.
+  const entries = paragraphItemStream(tokens, hyphenator, Math.max(0, ...widths));
   const items = entries.map((e) => e.item);
   // E-PARITY FP3: a renderer-compat profile breaks lines greedily (first-fit,
   // like Word/LibreOffice); the default 'ream' keeps Knuth-Plass total-fit.
   const breaks =
     profile === 'ream' ? breakLines(items, widths).breaks : greedyBreakLines(items, widths);
 
-  const lines: Array<Line> = [];
-  let start = 0;
-  let isFirst = true;
-  let lineIdx = 0;
-  for (const breakIdx of breaks) {
-    const width = lineIdx < widths.length ? widths[lineIdx]! : widths[widths.length - 1]!;
-    const line = lineFromRange(entries, start, breakIdx, width, isFirst, resolved, profile);
-    if (line) lines.push(line);
-    start = breakIdx + 1;
-    isFirst = false;
-    lineIdx++;
+  const buildLines = (at: ReadonlyArray<number>): Array<Line> => {
+    const out: Array<Line> = [];
+    let start = 0;
+    let isFirst = true;
+    let lineIdx = 0;
+    for (const breakIdx of at) {
+      const width = lineIdx < widths.length ? widths[lineIdx]! : widths[widths.length - 1]!;
+      const line = lineFromRange(entries, start, breakIdx, width, isFirst, resolved, profile);
+      if (line) out.push(line);
+      start = breakIdx + 1;
+      isFirst = false;
+      lineIdx++;
+    }
+    return out;
+  };
+
+  let lines = buildLines(breaks);
+  // One word too wide for the measure must not cost the paragraph every OTHER
+  // break. Knuth-Plass scores a line by how badly it fits, and a line that
+  // cannot stretch — one word alone in a narrow cell — is infinitely loose,
+  // while an overfull line clamps to a small fixed badness. So the total-fit
+  // answer for a wrapping cell holding "SELF EMPLOYED" in a column that fits
+  // neither word was ONE overfull line, spilling across the cells beside it,
+  // where breaking after "SELF" costs nothing but white space. First-fit has no
+  // such preference: it breaks wherever the next box will not fit.
+  //
+  // Only when the whole paragraph collapsed to that single line. A longer one
+  // that overflows somewhere in the middle made its own trade — a tight line
+  // against a gaping one — and keeps it; taking first-fit there would rewrite
+  // every break in the paragraph to fix one.
+  const spill = (ls: ReadonlyArray<Line>): number =>
+    Math.max(0, ...ls.map((l) => l.contentWidthPt - l.availableWidthPt));
+  if (profile === 'ream' && lines.length === 1 && spill(lines) > 0.01) {
+    const greedy = buildLines(greedyBreakLines(items, widths));
+    if (greedy.length > 1 && spill(greedy) < spill(lines) - 0.01) lines = greedy;
   }
 
   if (lines.length > 0) lines[lines.length - 1]!.isLastInParagraph = true;
@@ -3022,6 +3297,32 @@ function measureSingleLine(
   return total;
 }
 
+/**
+ * The above-neighbour a cell resolves its top edge against.
+ *
+ * A spanning cell covers several columns and paints ONE top across all of them,
+ * so taking the first column's neighbour throws away any rule the others
+ * declare. tdf100034.xlsx rules the bottom of its two header cells, and a label
+ * overflowing from two columns to their left spanned over both and wiped that
+ * rule off the page. Take the heaviest bottom under the span instead — it is
+ * the one edge the span can draw, so it should be the strongest claim on it.
+ */
+function aboveOfSpan(
+  aboveBordersByCol: ReadonlyArray<CellBorders | undefined>,
+  colIdx: number,
+  span: number,
+): CellBorders | undefined {
+  const first = aboveBordersByCol[colIdx];
+  if (span <= 1) return first;
+  let bottom = first?.bottom;
+  for (let k = 1; k < span; k++) {
+    const b = aboveBordersByCol[colIdx + k]?.bottom;
+    if (heavierBorder(bottom, b) === b) bottom = b;
+  }
+  if (bottom === first?.bottom) return first;
+  return { ...first, ...(bottom ? { bottom } : {}) };
+}
+
 function layoutTableRow(
   row: TableRow,
   rowIdx: number,
@@ -3046,6 +3347,13 @@ function layoutTableRow(
     for (let k = 0; k < span && colIdx + k < columnWidthsPt.length; k++) {
       widthPt += columnWidthsPt[colIdx + k]!;
     }
+    // A text-overflow span is wider than the box the cell's own fill and rules
+    // belong in (CellProperties.paintColumns).
+    const paintSpan = Math.min(span, Math.max(1, cell.properties.paintColumns ?? span));
+    let paintWidthPt = 0;
+    for (let k = 0; k < paintSpan && colIdx + k < columnWidthsPt.length; k++) {
+      paintWidthPt += columnWidthsPt[colIdx + k]!;
+    }
     columnXOffsets.push(cursorX);
     const mergeRole = rowMergeRoles[cellIdx] ?? 'standalone';
     const leftNeighbor = cellIdx > 0 ? row.cells[cellIdx - 1]!.properties.borders : undefined;
@@ -3063,9 +3371,9 @@ function layoutTableRow(
       colCount,
       mergeRole,
       leftNeighbor,
-      aboveBordersByCol[colIdx],
+      aboveOfSpan(aboveBordersByCol, colIdx, span),
     );
-    cells.push(cellLayout);
+    cells.push(paintWidthPt < widthPt ? { ...cellLayout, paintWidthPt } : cellLayout);
     cursorX += widthPt;
     colIdx += span;
   }
@@ -3073,10 +3381,47 @@ function layoutTableRow(
   for (const c of cells) if (c.totalHeightPt > heightPt) heightPt = c.totalHeightPt;
   if (row.properties.height && row.properties.heightRule === 'exact') {
     heightPt = row.properties.height;
+    // A row pinned to a height keeps it, and what does not fit is CUT — Excel
+    // and Word both clip a cell to its row rather than run it over the row
+    // below. Drawing the overflow instead put tdf118668.xlsx's second lines on
+    // top of the next row's text: a form of 9.75pt rows whose labels wrap.
+    return {
+      heightPt,
+      cells: cells.map((c) => clipCellToHeight(c, heightPt)),
+      columnXOffsets,
+      rowIdx,
+      rowCount,
+    };
   } else if (row.properties.height && row.properties.heightRule === 'atLeast') {
     heightPt = Math.max(heightPt, row.properties.height);
   }
   return { heightPt, cells, columnXOffsets, rowIdx, rowCount };
+}
+
+/**
+ * A cell with only the lines that fit inside `heightPt`.
+ *
+ * Whole lines only: half a line of text reads as a rendering fault, where a
+ * missing one reads as the clipping it is. A cell that already fits, or whose
+ * first line does not, is returned untouched — the first line always draws, as
+ * it does in Excel.
+ *
+ * @param cell     The laid-out cell.
+ * @param heightPt The row's pinned height.
+ * @returns The cell, clipped.
+ */
+function clipCellToHeight(cell: CellLayout, heightPt: number): CellLayout {
+  const room = heightPt - cell.padTopPt - cell.padBottomPt;
+  if (cell.lines.length <= 1 || cell.contentHeightPt <= room) return cell;
+  const kept: Array<Line> = [];
+  let used = 0;
+  for (const line of cell.lines) {
+    const h = computeLineHeight(line, line.resolved);
+    if (kept.length > 0 && used + h > room) break;
+    kept.push(line);
+    used += h;
+  }
+  return { ...cell, lines: kept, contentHeightPt: used };
 }
 
 function layoutTableCell(
@@ -3104,27 +3449,55 @@ function layoutTableCell(
   // A conditional-format icon (E-SHEET SC1c) reserves a left gutter; the cell's
   // text is inset past it so the glyph and the value never overlap.
   const padLeftPt = padLeftBase + (cell.properties.icon ? CF_ICON_GUTTER_PT : 0);
-  // A data-validation dropdown (E-SHEET SV1) reserves a right gutter so the value
-  // never runs under the button.
-  const padRightPt = padRightBase + (cell.properties.dropdown ? DROPDOWN_GUTTER_PT : 0);
+  // A data-validation dropdown is NOT laid out. The arrow is a selection
+  // affordance: it appears when a cell is selected and neither Excel nor
+  // LibreOffice ever prints it. Drawing it put a grey button inside printed
+  // table cells, and its gutter and minimum height pushed tdf58243.xlsx onto a
+  // third page the reference fits in two. CellProperties.dropdown survives for
+  // the HTML writer, which renders an interactive view rather than a page.
+  const padRightPt = padRightBase;
 
   const innerWidth = Math.max(1, widthPt - padLeftPt - padRightPt);
   const lines: Array<Line> = [];
   const nestedTables: Array<TableBlock> = [];
   let contentHeightPt = 0;
+  let clipped = false;
   // Continuation cells (vMerge=continue) render no content — their text lives
   // in the 'start' cell above.
   if (mergeRole !== 'middle' && mergeRole !== 'end') {
     for (const el of cell.content) {
       if (el.kind === 'paragraph') {
+        // A spreadsheet cell that does not ask to wrap never does: the text runs
+        // as far as its box allows and the rest is cut. Only the layout knows
+        // where that falls — it has the font metrics and the resolved width — so
+        // the projection marks the cell and the layout does the cutting.
+        //
+        // It has to cut at the GLYPH, though. Taking the line breaker's first
+        // line instead looks equivalent and is not: the breaker only breaks at
+        // spaces, so a string a hair too wide loses its whole last word rather
+        // than its last letter. tdf82984's "Carta geologica - litologica" came
+        // out as "Carta" where every other reader shows "Carta geol" — 22pt of
+        // white space in a column whose neighbours run full. So measure the
+        // whole line, then trim it to the box.
+        const noWrap = cell.properties.noWrap === true;
         const block = layoutParagraphBlock(
           el.paragraph,
           options,
           fontResources,
           imageResources,
-          innerWidth,
+          noWrap ? NO_WRAP_MEASURE_WIDTH : innerWidth,
         );
-        for (const line of block.lines) {
+        // Up to the cell's right EDGE, not to its inner box: the right padding
+        // keeps wrapped text off the border, but a clip is the border. Excel and
+        // LibreOffice both run the text to it — measured against the inner box
+        // instead, tdf167019's dates lost their last digit and printed
+        // "25/10/201".
+        const cutAt = widthPt - padLeftPt;
+        if (noWrap && (block.lines[0]?.contentWidthPt ?? 0) > cutAt) clipped = true;
+        const keep = noWrap
+          ? clipLineToWidth(block.lines, cutAt, cell.properties.hashOnOverflow === true)
+          : block.lines;
+        for (const line of keep) {
           lines.push(line);
           contentHeightPt += computeLineHeight(line, block.resolved);
         }
@@ -3173,14 +3546,15 @@ function layoutTableCell(
     ...(cell.properties.dataBar ? { dataBar: cell.properties.dataBar } : {}),
     ...(cell.properties.icon ? { icon: cell.properties.icon } : {}),
     ...(cell.properties.sparkline ? { sparkline: cell.properties.sparkline } : {}),
-    ...(cell.properties.dropdown ? { dropdown: true } : {}),
     lines,
     ...(nestedTables.length > 0 ? { nestedTables } : {}),
     contentHeightPt,
     totalHeightPt,
+    ...(cell.properties.verticalAlign ? { verticalAlign: cell.properties.verticalAlign } : {}),
     colStart,
     colSpan,
     mergeRole,
+    ...(clipped ? { clipped: true } : {}),
   };
 }
 
@@ -3200,6 +3574,8 @@ const BORDER_STYLE_RANK: Readonly<Record<BorderStyle, number>> = {
   thick: 4,
   single: 3,
   dashed: 2,
+  dashDot: 2,
+  dashDotDot: 2,
   dotted: 1,
   none: 0,
 };
@@ -3435,6 +3811,15 @@ class PageAssembler {
    */
   colHasContent = (): boolean =>
     this.current.length > this.colStartLen || this.cursorY < this.colStartY;
+  /**
+   * Whether this page has ANYTHING on it — including drawings, which is the
+   * whole point: a page carrying only floats has an empty `current`, so a page
+   * break asked for after it was silently dropped and the next band's drawings
+   * landed on top of the first's. tdf111980_radioButtons.xlsx has no cells at
+   * all and eleven controls wider than its page.
+   */
+  pageHasContent = (): boolean =>
+    this.current.length > 0 || this.floatsBehind.length > 0 || this.floatsFront.length > 0;
   /** Overflow step: next column on this page, or a fresh page after the last. */
   advanceColumn = (): void => {
     if (this.ctx.columns && this.colIdx + 1 < this.ctx.columns.length) {
@@ -3660,7 +4045,11 @@ class PageAssembler {
     // rows — and, because the early return also skips the cursor reset below,
     // let the cursor keep descending so every later row piled onto the same
     // page. See colHasContent for the same conflation on the other side.
-    if (this.current.length === 0 && this.cursorY >= this.colStartY && !force) return;
+    // …and drawings count. A page whose only content floats — a sheet of form
+    // controls with no cells at all — has an empty `current` and an untouched
+    // cursor, so it was discarded and the next band's drawings piled onto the
+    // page before it.
+    if (!this.pageHasContent() && this.cursorY >= this.colStartY && !force) return;
     const band = bandForPage(
       this.pageInSection,
       this.globalPageIdx,
@@ -3752,7 +4141,7 @@ function paginateSections(
     // A non-list-item block ends any open list run (tagged PDF).
     if (builder && !(block.kind === 'paragraph' && block.list)) asm.listStack.length = 0;
     if (block.kind === 'paragraph') {
-      if (block.resolved.pageBreakBefore && asm.current.length > 0) asm.flushPage();
+      if (block.resolved.pageBreakBefore && asm.pageHasContent()) asm.flushPage();
       asm.cursorY -= block.spacingBeforePt;
       // Float text wrapping: when the paragraph overlaps an exclusion, re-wrap
       // it with per-line widths (the source paragraph re-lays at the column
@@ -3931,6 +4320,7 @@ function paginateSections(
             ...(block.fillColorHex ? { fillColorHex: block.fillColorHex } : {}),
             ...(block.fillGradient ? { fillGradient: block.fillGradient } : {}),
             ...(block.stroke ? { stroke: block.stroke } : {}),
+            ...(block.shadow ? { shadow: block.shadow } : {}),
             transform,
           },
           ...(figId !== undefined ? { structId: figId } : {}),
@@ -4019,6 +4409,7 @@ function paginateSections(
             line: t.line,
             originX: pt(x + t.x),
             baselineY: pt(asm.ctx.pageHeight - (bottomYUp + t.y)),
+            ...(t.rotationDeg ? { rotationDeg: t.rotationDeg } : {}),
             ...fig,
           });
         }
@@ -4130,6 +4521,18 @@ function paginateSections(
               }
             }
           }
+          // A vertical merge's box for vertical alignment: measured only for a
+          // row the page takes whole, and only against the room left on the
+          // page, so a merge that a break cuts aligns inside the part that is
+          // actually here.
+          const mergedHeights =
+            chunks.length === 1 && row.cells.some((c) => c.mergeRole === 'start')
+              ? row.cells.map((c) =>
+                  c.mergeRole === 'start'
+                    ? mergedBoxHeightPt(block.rows, ri, c.colStart, asm.cursorY - asm.bottomLimit())
+                    : undefined,
+                )
+              : undefined;
           emitRowChunk(
             asm.current,
             chunk,
@@ -4138,8 +4541,27 @@ function paginateSections(
             asm.ctx.pageHeight,
             colCount,
             cellStructIds,
+            mergedHeights,
           );
           asm.cursorY -= chunk.heightPt;
+          // Only the table's last row paints its bottom edge — every other
+          // horizontal rule is the next row's top (see emitCellBorders). That
+          // convention has no notion of a page: when the next row starts a new
+          // page, the edge it owed this one is drawn up there, and the table is
+          // left hanging open at the bottom of the page it just left. Look
+          // ahead and close it. tdf58243.xlsx shows the seam plainly — the
+          // vertical rules run past the last row into white space.
+          if (ci === chunks.length - 1 && ri < block.rows.length - 1) {
+            const next = block.rows[ri + 1]!;
+            const nextHeight = Math.min(next.heightPt, asm.ctx.pageContentHeight);
+            const nextForced =
+              next.breakBefore && ri + 1 >= headerRows.length && asm.current.length > 0;
+            const nextOverflow =
+              asm.cursorY - nextHeight < asm.bottomLimit() && asm.colHasContent();
+            if (nextForced || nextOverflow) {
+              emitRowBottomEdge(asm.current, chunk, tableX, asm.cursorY, asm.ctx.pageHeight);
+            }
+          }
         }
       }
     }
@@ -4161,12 +4583,88 @@ function paginateSections(
     if (d.position === 'header') page.commands.unshift(...cmds);
     else page.commands.push(...cmds);
   }
+  for (const page of asm.pages) coalesceVerticalFills(page.commands);
   return asm.pages;
+}
+
+// Join a column of same-coloured cell fills into one rectangle.
+//
+// Runs ACROSS a row are already merged where they are emitted, for the reason
+// given there: two rects composited separately share an edge that lands
+// mid-pixel, and each side contributes partial coverage where one whole one
+// belongs — a block of one colour shows a pale grid of seams exactly on its
+// cell boundaries. Down the page each row still painted its own slice and
+// leaned on FILL_SEAM_PT, which is a fifteenth of a point: a fifth of a device
+// pixel at 300 DPI, not enough to make the boundary pixel opaque. 51710.xlsx
+// paints its column A grey down 46 pages and showed a rung at every row.
+//
+// Rows are emitted in order, so a run is a stretch of consecutive fills with
+// the same left edge, width and colour whose boxes meet.
+function coalesceVerticalFills(commands: Array<PageItem>): void {
+  const touching = (a: FillItem, b: FillItem): boolean =>
+    Math.abs(a.x - b.x) < 0.01 &&
+    Math.abs(a.width - b.width) < 0.01 &&
+    a.fillColorHex === b.fillColorHex &&
+    Math.min(a.y + a.height, b.y + b.height) >= Math.max(a.y, b.y) - 0.01;
+
+  const open = new Map<string, FillItem>();
+  const dead = new Set<PageItem>();
+  for (const item of commands) {
+    if (item.type !== 'fill') continue;
+    const fill = item as FillItem;
+    const k = `${fill.x.toFixed(2)}|${fill.width.toFixed(2)}|${fill.fillColorHex}`;
+    const prev = open.get(k);
+    if (prev && touching(prev, fill)) {
+      const top = Math.max(prev.y + prev.height, fill.y + fill.height);
+      const bottom = Math.min(prev.y, fill.y);
+      (prev as { y: Pt }).y = pt(bottom);
+      (prev as { height: Pt }).height = pt(top - bottom);
+      dead.add(item);
+      continue;
+    }
+    open.set(k, fill);
+  }
+  if (dead.size === 0) return;
+  const kept = commands.filter((c) => !dead.has(c));
+  commands.length = 0;
+  commands.push(...kept);
+}
+
+interface FillItem {
+  readonly type: 'fill';
+  x: Pt;
+  y: Pt;
+  width: Pt;
+  height: Pt;
+  readonly fillColorHex: string;
 }
 
 // §14.8.5.2 /RowSpan — how many rows a vertical-merge origin spans. Walk down
 // from the origin row at the same column, counting vMerge continuation cells
 // (mergeRole middle/end) until the group ends. A standalone cell spans 1.
+// How tall a vertical merge's box is FROM this row down — the height its own
+// row and its continuation rows add up to, stopping at whatever still fits the
+// page. A merge cut by a page break has only the part that is on the page, and
+// aligning its text inside the whole box would put it past the paper.
+function mergedBoxHeightPt(
+  rows: ReadonlyArray<RowLayout>,
+  startRowIdx: number,
+  colStart: number,
+  availablePt: number,
+): number {
+  let height = rows[startRowIdx]!.heightPt;
+  for (let r = startRowIdx + 1; r < rows.length; r++) {
+    const cont = rows[r]!.cells.find(
+      (c) => c.colStart === colStart && (c.mergeRole === 'middle' || c.mergeRole === 'end'),
+    );
+    if (!cont) break;
+    if (height + rows[r]!.heightPt > availablePt) break;
+    height += rows[r]!.heightPt;
+    if (cont.mergeRole === 'end') break;
+  }
+  return height;
+}
+
 function tableCellRowSpan(
   rows: ReadonlyArray<RowLayout>,
   startRowIdx: number,
@@ -4192,36 +4690,85 @@ function emitRowChunk(
   pageHeight: number,
   colCount: number,
   cellStructIds?: ReadonlyArray<number | undefined>,
+  mergedHeights?: ReadonlyArray<number | undefined>,
 ): void {
   const rowTop = cursorY;
   const rowBottom = cursorY - row.heightPt;
+  // Cell fills FIRST, and consecutive cells of one colour as a single
+  // rectangle. Two abutting fills are composited separately, so a shared edge
+  // landing mid-pixel takes each side's partial coverage instead of one whole
+  // one, and a block of same-filled cells shows a pale grid of seams exactly
+  // where its cell boundaries are. Excel and LibreOffice paint the run once and
+  // have no seams to show; so does this now. (Row to row the same edge is still
+  // shared, which is what FILL_SEAM_PT covers.)
+  {
+    let i = 0;
+    while (i < row.cells.length) {
+      const cell = row.cells[i]!;
+      // A vertical merge's continuation rows paint too. They were skipped here
+      // because they arrived with no shading of their own, which made a merged
+      // block exactly one row tall however many rows it spanned; they now carry
+      // the merge's fill, and each row painting its own slice (plus the seam
+      // below) gives the block its full height with no join to show for it.
+      if (!cell.shadingColorHex) {
+        i++;
+        continue;
+      }
+      // A text-overflow span is wider than the cell's own paint box.
+      let width = cell.paintWidthPt ?? cell.widthPt;
+      let j = i + 1;
+      while (j < row.cells.length && cell.paintWidthPt === undefined) {
+        const next = row.cells[j]!;
+        if (next.mergeRole === 'middle' || next.mergeRole === 'end') break;
+        if (next.shadingColorHex !== cell.shadingColorHex) break;
+        width += next.paintWidthPt ?? next.widthPt;
+        j++;
+      }
+      out.push({
+        type: 'fill',
+        x: pt(marginLeft + (row.columnXOffsets[i] ?? 0)),
+        y: pt(pageHeight - rowBottom - row.heightPt - FILL_SEAM_PT),
+        width: pt(width),
+        height: pt(row.heightPt + FILL_SEAM_PT),
+        fillColorHex: cell.shadingColorHex,
+      });
+      i = j;
+    }
+  }
   for (let i = 0; i < row.cells.length; i++) {
     const cell = row.cells[i]!;
     const cellX = marginLeft + (row.columnXOffsets[i] ?? 0);
     const structId = cellStructIds?.[i];
-    if (cell.shadingColorHex && cell.mergeRole !== 'middle' && cell.mergeRole !== 'end') {
-      out.push({
-        type: 'fill',
-        x: pt(cellX),
-        y: pt(pageHeight - rowBottom - row.heightPt),
-        width: pt(cell.widthPt),
-        height: pt(row.heightPt),
-        fillColorHex: cell.shadingColorHex,
-      });
-    }
     // Conditional-format data bar (E-SHEET SC1c): a fraction-width fill over the
     // shading, under the text. Pushed after the shading fill so it paints on top.
     if (cell.dataBar && cell.mergeRole !== 'middle' && cell.mergeRole !== 'end') {
       const start = Math.max(0, Math.min(1, cell.dataBar.startFraction ?? 0));
       const barWidth = cell.widthPt * Math.max(0, Math.min(1, cell.dataBar.fraction));
       if (barWidth > 0) {
+        // §18.3.1.28 — Excel paints a data bar as a GRADIENT that fades away
+        // from the axis the bar grows out of: solid at the axis end, white at
+        // the tip. Drawn flat, databar.xlsx's five gauges read as blocks where
+        // both references read as bars. A negative bar grows leftwards, so its
+        // solid end is its right one.
+        const barX = cellX + cell.widthPt * start;
+        const barBottomYUp = rowBottom;
         out.push({
-          type: 'fill',
-          x: pt(cellX + cell.widthPt * start),
-          y: pt(pageHeight - rowBottom - row.heightPt),
-          width: pt(barWidth),
-          height: pt(row.heightPt),
-          fillColorHex: cell.dataBar.colorHex,
+          type: 'shape',
+          shape: {
+            paths: [rectAtPath(0, 0, barWidth, row.heightPt)],
+            // The solid approximation writers without gradients paint (and the
+            // one PDF/A falls back to) is the bar's own colour.
+            fillColorHex: cell.dataBar.colorHex,
+            fillGradient: {
+              kind: 'linear' as const,
+              angle: cell.dataBar.negative ? 180 : 0,
+              stops: [
+                { offset: 0, colorHex: cell.dataBar.colorHex },
+                { offset: 1, colorHex: 'FFFFFF' },
+              ],
+            },
+            transform: flipTransform([1, 0, 0, 1, barX, barBottomYUp], pageHeight),
+          },
         });
       }
     }
@@ -4336,7 +4883,26 @@ function emitRowChunk(
       if (diagUp) pushDiagonal(diagUp, 0, h);
     }
     if (cell.mergeRole === 'middle' || cell.mergeRole === 'end') continue;
-    let textY = rowTop - cell.padTopPt;
+    // A box taller than its content: a spreadsheet cell sits at the BOTTOM of
+    // it unless it says otherwise, which is what Excel and LibreOffice both do
+    // and what a declared row height makes visible. A vertical merge's box is
+    // taller than this one row — the caller measures it and passes it down, so
+    // 50299.xlsx's `vertical="center"` label sits in the middle of a two-row
+    // merge rather than at the top of its first row.
+    const boxHeightPt = mergedHeights?.[i] ?? row.heightPt;
+    const slack =
+      cell.verticalAlign !== undefined
+        ? boxHeightPt - cell.padTopPt - cell.contentHeightPt - cell.padBottomPt
+        : 0;
+    const vOffset =
+      slack <= 0
+        ? 0
+        : cell.verticalAlign === 'bottom'
+          ? slack
+          : cell.verticalAlign === 'center'
+            ? slack / 2
+            : 0;
+    let textY = rowTop - cell.padTopPt - vOffset;
     for (const line of cell.lines) {
       const h = computeLineHeight(line, line.resolved);
       textY -= h;
@@ -4345,11 +4911,30 @@ function emitRowChunk(
         line.contentWidthPt,
         cell.widthPt - cell.padLeftPt - cell.padRightPt,
       );
+      // A paragraph's own left indent counts inside a cell too. The body path
+      // has always added it; this one did not, so §18.8.1's `indent` reached the
+      // model and stopped there — 45544.xlsx indents five rows under "Not
+      // Seeking Employment" and we drew them flush with it.
+      const indentLeft =
+        line.resolved.indentLeft + (line.firstLine ? line.resolved.indentFirstLine : 0);
       out.push({
         type: 'line',
         line,
-        originX: pt(cellX + cell.padLeftPt + offset),
+        originX: pt(cellX + cell.padLeftPt + indentLeft + offset),
         baselineY: pt(pageHeight - (textY + lineDescent(line))),
+        // The cell's own box. For a vertical merge that is the MERGED height,
+        // not this row's: the text is centred over the whole box (see
+        // mergedHeights), so a one-row clip would fall entirely above it.
+        ...(cell.clipped
+          ? {
+              clip: {
+                x: pt(cellX),
+                y: pt(pageHeight - rowTop),
+                width: pt(cell.widthPt),
+                height: pt(boxHeightPt),
+              },
+            }
+          : {}),
         ...(structId !== undefined ? { structId } : {}),
       });
     }
@@ -4475,6 +5060,11 @@ function splitRowIntoChunks(row: RowLayout, capacity: number): Array<RowLayout> 
   return out.length > 0 ? out : [row];
 }
 
+// How far a row's fill runs past its own box, to close the seam against the row
+// below. A fifteenth of a point: invisible where the colours differ, and the
+// difference between a flat field and a chequerboard where they do not.
+const FILL_SEAM_PT = 0.07;
+
 // Each shared edge between adjacent cells is the same physical line, so we
 // render it exactly once. Convention: every cell paints its top + left; the
 // last row paints its bottom and the last spanned column paints its right.
@@ -4500,14 +5090,124 @@ function emitCellBorders(
       side,
       x: pt(cellX),
       y: pt(pageHeight - cellY - rowHeight),
-      width: pt(cell.widthPt),
+      // A rule belongs to the CELL, not to the run of empty neighbours its text
+      // borrowed. The fill beside it already knows that; the border did not, so
+      // 53734.xlsx framed one bold cell in a box twice its width, running out
+      // past its own green fill and past where both references close it.
+      width: pt(cell.paintWidthPt ?? cell.widthPt),
       height: pt(rowHeight),
       borderSizePt: sz,
       borderColorHex: border.colorHex ?? '000000',
+      ...(border.style !== 'single' ? { borderStyle: border.style } : {}),
     });
   };
   pushSide('top', cell.borders.top);
   pushSide('left', cell.borders.left);
   if (rowIdx === rowCount - 1) pushSide('bottom', cell.borders.bottom);
   if (cell.colStart + cell.colSpan - 1 === colCount - 1) pushSide('right', cell.borders.right);
+}
+
+// Wide enough that the line breaker never breaks: a non-wrapping cell is laid
+// out as one line and then cut to its box. Not Infinity — the breaker does
+// arithmetic with this width.
+const NO_WRAP_MEASURE_WIDTH = 1e6;
+
+/**
+ * One line, trimmed to the glyph that STRADDLES `widthPt` — what a non-wrapping
+ * spreadsheet cell shows. Excel and LibreOffice paint that glyph and cut it
+ * through the middle, and so do we now: the caller marks the cell and the
+ * emitters clip the line to its box (TextLineItem.clip). Stopping at the last
+ * glyph that wholly fits is what dropped a character off every cut cell.
+ */
+function clipLineToWidth(
+  lines: ReadonlyArray<Line>,
+  widthPt: number,
+  hashOnOverflow = false,
+): Array<Line> {
+  const line = lines[0];
+  if (!line) return [];
+  if (line.contentWidthPt <= widthPt) return [line];
+  // A number under its own format is never shown truncated — see
+  // CellProperties.hashOnOverflow.
+  if (hashOnOverflow) return [hashFill(line, widthPt)];
+  const tokens: Array<Token> = [];
+  let used = 0;
+  for (const token of line.tokens) {
+    const advance = token.widthPt;
+    if (used + advance <= widthPt) {
+      tokens.push(token);
+      used += advance;
+      continue;
+    }
+    // The token that straddles the edge: keep the characters that fit. Only
+    // text can be cut — an image or a formula is atomic and simply drops.
+    if (token.kind === 'text') {
+      const room = widthPt - used;
+      let text = '';
+      let textWidth = 0;
+      for (const ch of token.text) {
+        if (textWidth >= room) break;
+        text += ch;
+        textWidth = token.font.measure.textWidthPt(text, token.fontSizePt);
+      }
+      if (text.length > 0) {
+        tokens.push({ ...token, text, widthPt: textWidth });
+        used += textWidth;
+      }
+    }
+    break;
+  }
+  return [{ ...line, tokens, contentWidthPt: used }];
+}
+
+/**
+ * The line as a row of `#` filling `widthPt` — what Excel and LibreOffice put in
+ * a cell whose number does not fit. At least one, so the cell is never blank:
+ * a column too narrow even for a single `#` still has to say something.
+ */
+function hashFill(line: Line, widthPt: number): Line {
+  const first = line.tokens.find((t): t is TextToken => t.kind === 'text');
+  if (!first) return line;
+  const one = first.font.measure.textWidthPt('#', first.fontSizePt);
+  const count = one > 0 ? Math.max(1, Math.floor(widthPt / one)) : 1;
+  const text = '#'.repeat(count);
+  const token: TextToken = {
+    ...first,
+    text,
+    widthPt: first.font.measure.textWidthPt(text, first.fontSizePt),
+  };
+  return { ...line, tokens: [token], contentWidthPt: token.widthPt };
+}
+
+/**
+ * The bottom edge of a row that ends a page — the rule the row below it owed it
+ * and drew on the next page instead. See the call site: a table that spills over
+ * a break is closed on both sides of it, the way Excel and Word print one.
+ *
+ * A cell whose bottom is suppressed (a vertical merge continuing past the break)
+ * stays open; inventing an edge there would cut the merge in half.
+ */
+function emitRowBottomEdge(
+  out: Array<PageItem>,
+  row: RowLayout,
+  marginLeft: number,
+  rowBottom: number,
+  pageHeight: number,
+): void {
+  for (let i = 0; i < row.cells.length; i++) {
+    const cell = row.cells[i]!;
+    const border = cell.borders.bottom;
+    if (!border || border.style === 'none') continue;
+    out.push({
+      type: 'border',
+      side: 'bottom',
+      x: pt(marginLeft + (row.columnXOffsets[i] ?? 0)),
+      y: pt(pageHeight - rowBottom - row.heightPt),
+      width: pt(cell.widthPt),
+      height: pt(row.heightPt),
+      borderSizePt: border.width ?? DEFAULT_BORDER_SIZE_EIGHTH * EIGHTH_PT,
+      borderColorHex: border.colorHex ?? '000000',
+      ...(border.style !== 'single' ? { borderStyle: border.style } : {}),
+    });
+  }
 }

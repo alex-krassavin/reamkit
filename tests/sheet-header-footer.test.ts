@@ -72,14 +72,17 @@ describe('sheet header/footer — projection (E-SHEET W4)', () => {
         headerFooter: { oddHeader: '&CReport', oddFooter: '&RPage &P' },
       }),
     ).flow;
+    // The id carries the sheet's index: the map is document-level, so a fixed
+    // id let a second sheet overwrite the first's bands and left every sheet
+    // after the first with no header at all.
     expect(flow.section?.headers).toEqual([
-      { type: 'default', relationshipId: '_xlsxHeaderDefault' },
+      { type: 'default', relationshipId: '_xlsxHeaderDefault0' },
     ]);
     expect(flow.section?.footers).toEqual([
-      { type: 'default', relationshipId: '_xlsxFooterDefault' },
+      { type: 'default', relationshipId: '_xlsxFooterDefault0' },
     ]);
-    expect(flow.headersFooters?.has('_xlsxHeaderDefault')).toBe(true);
-    expect(flow.headersFooters?.has('_xlsxFooterDefault')).toBe(true);
+    expect(flow.headersFooters?.has('_xlsxHeaderDefault0')).toBe(true);
+    expect(flow.headersFooters?.has('_xlsxFooterDefault0')).toBe(true);
   });
 
   it('leaves a sheet with no header/footer without bands', () => {
@@ -125,10 +128,68 @@ describe('sheet header/footer — render (E-SHEET W4)', () => {
     expect(pageText(laid.pages[1]!.commands)).toContain('Page 2 of 2');
   });
 
+  it('applies &U, &nn and the style half of &"family,style"', () => {
+    // tdf171828.xlsx writes its header as &"BernhardFashion BT,Bold"&16&U… —
+    // three codes we dropped, so a 16pt bold underlined title printed as plain
+    // body text. The family itself stays dropped (one font set is available).
+    const xlsx = buildXlsx({
+      rows: [['x']],
+      headerFooter: { oddHeader: '&L&"Some Face,Bold Italic"&16&UTitle&RPlain' },
+    });
+    const flow = Ream.parse(xlsx).flow;
+    const bands = [...(flow.headersFooters?.values() ?? [])].flat();
+    const runs = bands.flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs : []));
+    const title = runs.find((r) => r.text === 'Title');
+    expect(title?.properties).toMatchObject({
+      bold: true,
+      italic: true,
+      underline: 'single',
+      fontSizePt: 16,
+    });
+    // Each region starts from the sheet's own font — the right region here is
+    // plain, exactly as LibreOffice prints tdf171828's "Seite &P".
+    expect(runs.find((r) => r.text === 'Plain')?.properties).toMatchObject({
+      bold: false,
+      italic: false,
+      underline: 'none',
+    });
+  });
+
   it('renders a sheet with a header to a valid PDF', () => {
     const xlsx = buildXlsx({ rows: [['x']], headerFooter: { oddHeader: '&CMy Report' } });
     const pdf = convertXlsxToPdfSync(xlsx, { fonts: FONTS });
     expect(pdf.length).toBeGreaterThan(1000);
     expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-');
+  });
+});
+
+describe('&D and &T print the caller\u2019s reference date', () => {
+  it('substitutes the date and the time when one is supplied', () => {
+    // customIndexedColors.xlsx heads every page with `&F - &A - &P`, then
+    // `&D - &A - &T`. LibreOffice prints "07/31/2026 - - 17:41:36" there.
+    const when = new Date(Date.UTC(2026, 6, 31, 17, 41, 36));
+    const content = buildHeaderFooterContent(
+      '&C&D - &T',
+      'Sheet1',
+      1,
+      11,
+      undefined,
+      undefined,
+      when,
+    );
+    expect(
+      paraRuns(content, 'center')
+        .map((r) => r.text)
+        .join(''),
+    ).toBe('07/31/2026 - 17:41:36');
+  });
+
+  it('drops both without one, so the output never reads the wall clock', () => {
+    const content = buildHeaderFooterContent('&C&D - &T', 'Sheet1');
+    expect(
+      paraRuns(content, 'center')
+        .map((r) => r.text)
+        .join(''),
+    ).toBe(' - ');
   });
 });

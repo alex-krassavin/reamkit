@@ -427,3 +427,29 @@ describe('Styled rendering: rPr + pPr → PDF', () => {
     expect(baseFonts.has('Roboto-Italic')).toBe(true); // MONO → cousine stand-in
   });
 });
+describe('super/subscript (§17.3.2.42 w:vertAlign)', () => {
+  it('draws smaller and off the baseline, not full size on it', () => {
+    // The model carried the flag and the HTML writer honoured it; the PDF
+    // layout did neither, so a footnote marker and a cell's "Salary⁽²⁾" came out
+    // full size on the line (45540_classic_Header.xlsx).
+    const pdf = convertDocxToPdfSync(
+      buildRichDocx([
+        {
+          runs: [
+            { text: 'x' },
+            { text: '2', rPrXml: '<w:rPr><w:vertAlign w:val="superscript"/></w:rPr>' },
+            { text: '3', rPrXml: '<w:rPr><w:vertAlign w:val="subscript"/></w:rPr>' },
+          ],
+        },
+      ]),
+      { fonts: FONTS },
+    );
+    const text = new TextDecoder('latin1').decode(pdf);
+    // Three Tm placements on one line — a line of plain text emits one.
+    const yOf = [...text.matchAll(/1 0 0 1 [\d.-]+ ([\d.-]+) Tm/g)].map((m) => Number(m[1]));
+    expect(yOf.length).toBeGreaterThanOrEqual(3);
+    const [base, sup, sub] = yOf;
+    expect(sup!).toBeGreaterThan(base!);
+    expect(sub!).toBeLessThan(base!);
+  });
+});

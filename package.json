@@ -1,6 +1,6 @@
 {
   "name": "reamkit",
-  "version": "1.15.4",
+  "version": "1.16.0",
   "description": "Ream — convert DOCX, XLSX, PPTX and PDF to PDF, SVG, HTML, DOCX and XLSX, built from scratch on the ECMA-376 and ISO 32000 specifications. Parse once, convert anywhere.",
   "license": "MIT",
   "author": "Alex Krassavin <info@reamkit.dev>",
@@ -74,6 +74,9 @@
     "corpus:xlsx:invariants": "tsx scripts/corpus/xlsx-invariants.ts",
     "corpus:fixtures": "tsx scripts/corpus/sync-real-fixtures.ts",
     "corpus:golden": "tsx scripts/corpus/make-golden.ts",
+    "corpus:visual": "tsx scripts/corpus/visual-diff.ts",
+    "corpus:scout": "tsx scripts/corpus/scout.ts",
+    "corpus:pixel": "tsx scripts/corpus/pixel-scout.ts",
     "typecheck:dist": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

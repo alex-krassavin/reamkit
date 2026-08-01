@@ -9,6 +9,7 @@ import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 
 import { convertDocxToPdfSync } from '@/core/converter';
 import { defaultColorResolver } from '@/core/drawingml/colors';
+import { buildChartScene } from '@/core/drawingml/chart-geometry';
 import { parseChart } from '@/core/drawingml/chart-parser';
 import { OpcPackage } from '@/core/opc';
 import { parseDocument } from '@/word';
@@ -96,6 +97,70 @@ describe('parseChart', () => {
     });
   });
 
+  it('keeps the value-axis ends the author fixed (§21.2.2.157)', () => {
+    // A chart whose cells all read zero still has the axis its author pinned.
+    // Scaling to the data drew shape-macro-ext-ref.xlsx's axis 0…1 where every
+    // reader draws 0…300.
+    const withScaling = BAR_CHART.replace(
+      '<c:valAx><c:axId val="222"/></c:valAx>',
+      '<c:valAx><c:axId val="222"/><c:scaling><c:orientation val="minMax"/><c:max val="300"/></c:scaling></c:valAx>',
+    );
+    const chart = parseChart(enc.encode(withScaling), defaultColorResolver);
+    expect(chart!.valAxisMax).toBe(300);
+    expect(chart!.valAxisMin).toBeUndefined();
+    // …and an axis the author left alone stays automatic.
+    expect(parseChart(enc.encode(BAR_CHART), defaultColorResolver)!.valAxisMax).toBeUndefined();
+  });
+
+  it('reads the chart-space frame beside <c:chart> (§21.2.2.198)', () => {
+    const framed = BAR_CHART.replace(
+      '<c:chart>',
+      '<c:spPr><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill><a:ln><a:solidFill><a:srgbClr val="D9D9D9"/></a:solidFill></a:ln></c:spPr><c:chart>',
+    );
+    const chart = parseChart(enc.encode(framed), defaultColorResolver);
+    expect(chart!.frameFillHex).toBe('FFFFFF');
+    expect(chart!.frameLineHex).toBe('D9D9D9');
+    // A chart that declares neither keeps none.
+    const plain = parseChart(enc.encode(BAR_CHART), defaultColorResolver);
+    expect(plain!.frameFillHex).toBeUndefined();
+    expect(plain!.frameLineHex).toBeUndefined();
+  });
+
+  it('takes a gradient-filled series from its first stop, not from its outline', () => {
+    // §20.1.8.33 — a series filled with a gradient still has a colour, and the
+    // scene model carries one per series. Falling through to the outline
+    // painted 123233_charts.xlsx's five gradient bars in the black of their
+    // own hairline.
+    const grad = BAR_CHART.replace(
+      '<c:spPr><a:solidFill><a:srgbClr val="4472C4"/></a:solidFill></c:spPr>',
+      '<c:spPr><a:gradFill><a:gsLst><a:gs pos="0"><a:srgbClr val="8599D3"/></a:gs>' +
+        '<a:gs pos="100000"><a:srgbClr val="5876AE"/></a:gs></a:gsLst></a:gradFill>' +
+        '<a:ln><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln></c:spPr>',
+    );
+    const chart = parseChart(enc.encode(grad), defaultColorResolver);
+    expect(chart!.series[0]?.colorHex).toBe('8599D3');
+  });
+
+  it('keeps the references a cache-less chart reads its data from', () => {
+    // A chart written without caches is not a chart without data — the reader
+    // resolves these against the workbook (123233_charts.xlsx, four charts that
+    // drew as empty axes).
+    const noCache = `<c:chartSpace ${C_NS}><c:chart><c:plotArea><c:barChart>
+      <c:ser><c:idx val="0"/><c:order val="0"/>
+        <c:tx><c:strRef><c:f>data!B1</c:f></c:strRef></c:tx>
+        <c:cat><c:strRef><c:f>data!A2:A4</c:f></c:strRef></c:cat>
+        <c:val><c:numRef><c:f>data!B2:B4</c:f></c:numRef></c:val>
+      </c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>`;
+    const chart = parseChart(enc.encode(noCache), defaultColorResolver);
+    expect(chart!.series[0]?.valuesRef).toBe('data!B2:B4');
+    expect(chart!.series[0]?.nameRef).toBe('data!B1');
+    expect(chart!.categoriesRef).toBe('data!A2:A4');
+    // A cached chart records them too, and keeps its cache.
+    expect(parseChart(enc.encode(BAR_CHART), defaultColorResolver)!.series[0]?.values).toEqual([
+      10, 20, 15,
+    ]);
+  });
+
   it('returns unknown type for an unsupported chart group', () => {
     const radar = `<c:chartSpace ${C_NS}><c:chart><c:plotArea><c:radarChart/></c:plotArea></c:chart></c:chartSpace>`;
     expect(parseChart(enc.encode(radar), defaultColorResolver)!.type).toBe('unknown');
@@ -135,6 +200,68 @@ describe('parseChart', () => {
     expect(chart.showValues).toBe(true);
     expect(chart.catAxisTitle).toBe('Quarter');
     expect(chart.valAxisTitle).toBe('Sales');
+  });
+
+  it("draws the axis and its data labels in the axis's own number format", () => {
+    // §21.2.2.121 c:valAx/c:numFmt. simple-monthly-budget.xlsx declares
+    // `"$"#,##0` and we printed 0/1000/2000 down the axis and 3750 on the bar,
+    // where every other reader shows $0/$1,000/$2,000 and $3,750.
+    const money = `<c:chartSpace ${C_NS}><c:chart><c:plotArea><c:barChart>
+      <c:barDir val="col"/><c:grouping val="clustered"/>
+      <c:dLbls><c:showVal val="1"/></c:dLbls>
+      <c:ser><c:idx val="0"/>
+        <c:val><c:numRef><c:numCache><c:ptCount val="2"/>
+          <c:pt idx="0"><c:v>3750</c:v></c:pt><c:pt idx="1"><c:v>2336</c:v></c:pt>
+        </c:numCache></c:numRef></c:val>
+      </c:ser>
+      </c:barChart>
+      <c:valAx><c:numFmt formatCode="&quot;$&quot;#,##0" sourceLinked="0"/></c:valAx>
+    </c:plotArea></c:chart></c:chartSpace>`;
+    const chart = parseChart(enc.encode(money), defaultColorResolver)!;
+    expect(chart.numberFormat).toBe('"$"#,##0');
+    const scene = buildChartScene(chart, 320, 200, (t, sz) => t.length * sz * 0.5);
+    const texts = scene!.labels.map((t) => t.text);
+    expect(texts).toContain('$3,750');
+    expect(texts).toContain('$2,336');
+    // The ticks carry it too — no bare 4000 anywhere on the axis.
+    expect(texts.some((t) => /^\$[\d,]+$/.test(t) && t !== '$3,750' && t !== '$2,336')).toBe(true);
+    expect(texts).not.toContain('4000');
+
+    // General is not a format: it means "plain", and a chart that says so keeps
+    // the numeric render.
+    const general = parseChart(
+      enc.encode(money.replace('&quot;$&quot;#,##0', 'General')),
+      defaultColorResolver,
+    )!;
+    expect(general.numberFormat).toBeUndefined();
+  });
+
+  it('prints a data label the author typed, not the one it would compute', () => {
+    // §21.2.2.49 — a <c:dLbl> carrying its own <c:tx><c:rich> replaces whatever
+    // the chart would generate for that point, and it is the only place that
+    // text exists. orderOfCNumFmtElements.xlsx labels every slice of its pie
+    // with a sentence ("Промышленные потребители; 22,7млрд.кВтч; 67,3%") and we
+    // drew a bare "67%" over each one.
+    const pie = `<c:chartSpace ${C_NS}><c:chart><c:plotArea><c:pieChart>
+      <c:ser><c:idx val="0"/>
+        <c:dLbls>
+          <c:dLbl><c:idx val="0"/><c:tx><c:rich><a:p><a:r><a:t>Big slice; 60%</a:t></a:r></a:p></c:rich></c:tx></c:dLbl>
+          <c:showVal val="1"/>
+        </c:dLbls>
+        <c:val><c:numRef><c:numCache><c:ptCount val="2"/>
+          <c:pt idx="0"><c:v>60</c:v></c:pt><c:pt idx="1"><c:v>40</c:v></c:pt>
+        </c:numCache></c:numRef></c:val>
+      </c:ser>
+      </c:pieChart></c:plotArea></c:chart></c:chartSpace>`;
+    const chart = parseChart(enc.encode(pie), defaultColorResolver)!;
+    expect(chart.series[0]?.pointLabels).toEqual([{ idx: 0, text: 'Big slice; 60%' }]);
+    const texts = buildChartScene(chart, 320, 240, (t, sz) => t.length * sz * 0.5)!.labels.map(
+      (l) => l.text,
+    );
+    expect(texts).toContain('Big slice; 60%');
+    // The point with no label of its own keeps the computed one.
+    expect(texts).toContain('40%');
+    expect(texts).not.toContain('60%');
   });
 
   it('flags a doughnut chart (renders as a pie with a hole)', () => {
@@ -246,5 +373,45 @@ describe('column chart rendering (end-to-end)', () => {
     expect(text).toContain('0.34902 0.34902 0.34902 RG');
     // Labels (categories / ticks / title) rendered as text.
     expect(text).toMatch(/<[0-9A-F]+> Tj/);
+  });
+});
+
+describe('an auto-generated chart title (§21.2.2.213)', () => {
+  const chartXml = (title: string, sers: string): string =>
+    `<?xml version="1.0"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">` +
+    `<c:chart>${title}<c:plotArea><c:barChart><c:barDir val="col"/>${sers}</c:barChart></c:plotArea></c:chart></c:chartSpace>`;
+  const oneSeries =
+    `<c:ser><c:tx><c:strRef><c:strCache><c:pt idx="0"><c:v>Demo</c:v></c:pt></c:strCache></c:strRef></c:tx>` +
+    `<c:val><c:numRef><c:numCache><c:pt idx="0"><c:v>1</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>`;
+
+  it('takes the series name when there is exactly one, and the placeholder otherwise', () => {
+    // `c:tx` is optional: a `<c:title>` without one asks the application to make
+    // the title up, and §21.2.2.10's `autoTitleDeleted val="0"` says the made-up
+    // title stands. Reading only the `a:t` runs left it undefined, and eleven
+    // chart parts across eight corpus files are written this way.
+    const single = parseChart(
+      enc.encode(chartXml('<c:title><c:layout/></c:title><c:autoTitleDeleted val="0"/>', oneSeries)),
+      defaultColorResolver,
+    );
+    expect(single.title).toBe('Demo');
+    const two = parseChart(
+      enc.encode(
+        chartXml('<c:title><c:layout/></c:title>', oneSeries + oneSeries.replace('Demo', 'Other')),
+      ),
+      defaultColorResolver,
+    );
+    expect(two.title).toBe('Chart Title');
+  });
+
+  it('stays silent when the author deleted it, or asked for no title at all', () => {
+    expect(
+      parseChart(
+        enc.encode(
+          chartXml('<c:title><c:layout/></c:title><c:autoTitleDeleted val="1"/>', oneSeries),
+        ),
+        defaultColorResolver,
+      ).title,
+    ).toBeUndefined();
+    expect(parseChart(enc.encode(chartXml('', oneSeries)), defaultColorResolver).title).toBeUndefined();
   });
 });

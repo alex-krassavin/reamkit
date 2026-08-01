@@ -1,13 +1,14 @@
 // ISO/IEC 14496-22 — TrueType glyph subsetting.
 //
-// Strategy: keep all tables intact (cmap, hmtx, maxp.numGlyphs, etc.) so the
-// CIDFontType2 /CIDToGIDMap /Identity contract holds. Only the glyf table is
+// Strategy: keep the tables a PDF font program needs (cmap, hmtx,
+// maxp.numGlyphs, etc.) so the CIDFontType2 /CIDToGIDMap /Identity contract
+// holds. Only the glyf table is
 // rebuilt with unused glyphs replaced by zero-length entries; loca is updated
 // to match. The composite-glyph closure is taken (composites reference other
 // glyphs by GID and those must be retained too).
 //
-// All other tables (GPOS, GSUB, GDEF, name, post, OS/2, …) are copied through
-// untouched. The /head table is updated in two places:
+// Tables a PDF font program has no use for (GPOS, GSUB, GDEF, name, post, …)
+// are DROPPED — see EMBEDDABLE_TABLES. The /head table is updated in two places:
 //   - indexToLocFormat is forced to "long" (1) so we don't need to detect
 //     whether the new offsets fit in the short format
 //   - checkSumAdjustment is recomputed after the file is fully assembled
@@ -17,6 +18,32 @@ import type { ParsedTtf, TtfTableInfo } from '@/core/font/ttf-parser';
 const HEAD_CHECKSUM_ADJUSTMENT_OFFSET = 8;
 const HEAD_INDEX_TO_LOC_FORMAT_OFFSET = 50;
 const MAGIC_HEAD_CHECKSUM = 0xb1b0afba;
+
+/**
+ * The tables a `/FontFile2` may carry (ISO 32000-1 §9.9.2).
+ *
+ * The spec names `glyf`, `head`, `hhea`, `hmtx`, `loca` and `maxp` as required,
+ * `cvt `/`fpgm`/`prep` when the glyphs are hinted, and `cmap` for a SYMBOLIC
+ * font. A CIDFontType2 with `/CIDToGIDMap /Identity` is not symbolic in that
+ * sense — §9.7.4.2 makes the CID the glyph index and never consults `cmap`, so
+ * 9.3 KB of it rode along in every font we embedded. Everything else is dead
+ * weight too, in a PDF that does its own positioning and text extraction: we copied `post`, `GPOS`, `GSUB`, `GDEF`, `name`,
+ * `hdmx`, `LTSH` and the rest through untouched, and they were 120 KB of the
+ * 136 KB font program in 55906-MultiSheetRefs.xlsx. `OS/2` is kept because
+ * viewers read its metrics when a descriptor is incomplete.
+ */
+const EMBEDDABLE_TABLES = new Set([
+  'glyf',
+  'head',
+  'hhea',
+  'hmtx',
+  'loca',
+  'maxp',
+  'cvt ',
+  'fpgm',
+  'prep',
+  'OS/2',
+]);
 
 const COMPOSITE_ARG_1_AND_2_ARE_WORDS = 0x0001;
 const COMPOSITE_WE_HAVE_A_SCALE = 0x0008;
@@ -165,7 +192,7 @@ function assembleSubsetTtf(
   newHead[HEAD_INDEX_TO_LOC_FORMAT_OFFSET] = 0;
   newHead[HEAD_INDEX_TO_LOC_FORMAT_OFFSET + 1] = 1;
 
-  const orderedTags = [...parsed.tables.keys()];
+  const orderedTags = [...parsed.tables.keys()].filter((t) => EMBEDDABLE_TABLES.has(t));
   const tableData = new Map<string, Uint8Array>();
   for (const tag of orderedTags) {
     if (tag === 'glyf') tableData.set(tag, newGlyf);

@@ -74,7 +74,7 @@
     ]
   },
   "ream": {
-    "pages": 42,
+    "pages": 34,
     "pageSizes": [
       {
         "widthPt": 842,
@@ -85,7 +85,7 @@
         "heightPt": 792
       }
     ],
-    "chars": 21698,
+    "chars": 18516,
     "firstLines": [
       "Wilfried Schäfer",
       "Wilfried Schäfer",
@@ -101,34 +101,26 @@
       "Wilfried Schäfer",
       "Wilfried Schäfer",
       "Wilfried Schäfer",
-      "Berechnung des effektiven Jahreszins nach der",
-      "fällig.",
-      "Bei Anleihen wird oft mit der Näherungsformel mit Auf- (Agio",
-      "Zur Herleitung der Berechnungsvorschrift stellen wir die Bil",
-      "Der Subtrahend ergibt sich zum einen aus den Raten, die inne",
-      "Bei Disagio handelt es sich um einen Abschlag auf den Nennwe",
-      ".",
-      ".",
-      "folgt für den Effektivzinssatz:",
-      "Die einzelnen Zahlungsströme sind die in der jeweiligen Peri",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Wilfried Schäfer",
+      "Berechnung des effektiven Jahreszins nach der Uniform",
+      "Berechnung des eff. Jahreszinssatzes bei Anleihen",
+      "(Diese Formel weicht bei kleinen Werten für Laufzeit und Agi",
+      "Für den effektiven Jahreszinssatz gilt nach einem Jahr (in G",
+      ". Z. B. soll",
+      "in beiden Fällen ist:",
+      "Dies ist eine Variante aus der Kombination der beiden vorang",
+      "Äquivalenzgleichung",
       "ausgegangen.",
       "(vollständige Induktion über",
       ", dann gilt",
-      "(wegen 3.2).",
-      "12.983606551713.8707312786885246",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "JM",
-      "Fehlermeldungen"
+      "(wege",
+      "12.9836065573771 ########"
     ]
   }
 }

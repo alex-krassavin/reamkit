@@ -1,9 +1,11 @@
 export type {
   CellType,
   WorksheetCell,
+  ColumnStyle,
   ColumnWidth,
   MergedRange,
   RowHeight,
+  RowStyle,
   XlsxPageMargins,
   XlsxPageSetup,
   XlsxPrintOptions,

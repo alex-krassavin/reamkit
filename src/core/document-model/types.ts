@@ -481,7 +481,18 @@ export interface StyleSheet {
 // ECMA-376 Part 1 §17.4 — Tables.
 
 /** §17.18.2 ST_Border — a cell-border line style (the subset Ream renders). */
-export type BorderStyle = 'none' | 'single' | 'double' | 'thick' | 'dotted' | 'dashed';
+export type BorderStyle =
+  | 'none'
+  | 'single'
+  | 'double'
+  | 'thick'
+  | 'dotted'
+  | 'dashed'
+  // §18.18.3 — the dash-DOT family. A dash and a dot alternate, which is what
+  // tells these apart from `dashed` on the page: cell-borders.xlsx names five
+  // of them and we drew a uniform dash for every one.
+  | 'dashDot'
+  | 'dashDotDot';
 
 /** One border edge: its line style plus optional width and colour. */
 export interface Border {
@@ -529,6 +540,12 @@ export interface CellDataBar {
   readonly fraction: number;
   readonly colorHex: string;
   readonly startFraction?: number;
+  /**
+   * The bar runs LEFT from the axis (a negative value in a mixed-sign range),
+   * so its solid end is its right one. Excel fades a data bar away from the
+   * axis, and which way that is depends on the sign.
+   */
+  readonly negative?: boolean;
 }
 
 /**
@@ -594,6 +611,18 @@ export interface CellProperties {
   readonly merge?: CellMerge;
   readonly borders?: CellBorders;
   readonly margins?: CellMargins;
+  /**
+   * How many of the spanned columns the cell's own PAINT covers, when that is
+   * fewer than `colSpan`.
+   *
+   * Text overflow is modelled as a span — a cell whose value does not fit runs
+   * across the empty neighbours to its right — but Excel runs the TEXT over an
+   * unpainted cell without painting it. With one width for both, a filled cell
+   * carried its fill along: 54436.xlsx ran its pivot header's blue a whole
+   * column past the pivot. Absent ⇒ the paint covers the whole span, which is
+   * what a merge wants.
+   */
+  readonly paintColumns?: number;
   readonly shading?: CellShading;
   readonly dataBar?: CellDataBar;
   readonly icon?: CellIcon;
@@ -603,6 +632,28 @@ export interface CellProperties {
    * dropdown affordance at the cell's right edge (a small button + ▾ glyph).
    */
   readonly dropdown?: boolean;
+  /**
+   * The cell's text is not allowed to wrap: it renders on one line and whatever
+   * does not fit the cell box is cut, as a spreadsheet cell without `wrapText`
+   * does. Only the paginated layout honours it — an HTML view has no page edge
+   * to clip against and lets the browser decide.
+   */
+  readonly noWrap?: boolean;
+  /**
+   * The cell holds a NUMBER under a format of its own, so it may not be shown
+   * truncated: a date cut to "4/30/201" is not a shorter date, it is the wrong
+   * one. Excel and LibreOffice fill such a cell with `#` instead, which says
+   * "widen me" and cannot be misread. Text is exempt — a clipped word is still
+   * recognisably that word.
+   */
+  readonly hashOnOverflow?: boolean;
+  /**
+   * Where the cell's content sits in a box taller than itself. A spreadsheet
+   * cell defaults to `'bottom'` — §18.8.1, and both Excel and LibreOffice do it
+   * — which is visible on any row taller than its text. Absent ⇒ the top, which
+   * is a word-processor table's default.
+   */
+  readonly verticalAlign?: 'top' | 'center' | 'bottom';
 }
 
 /** §17.4.81 `w:trPr` — a table row's properties: height, split/header flags. */
@@ -807,6 +858,22 @@ export interface ShapeTextBody {
  * paragraph's properties for block spacing / alignment, mirroring
  * {@link ImageBlock}.
  */
+/**
+ * §20.1.8.40 `a:outerShdw` — the drop shadow under a shape: how far it is
+ * displaced, how soft its edge is, and in what colour. `dxPt`/`dyPt` are the
+ * displacement in page coordinates (y grows DOWN), resolved from the spec's
+ * polar `dist`/`dir`.
+ */
+export interface ShapeShadow {
+  readonly dxPt: number;
+  readonly dyPt: number;
+  /** `blurRad` in points; 0 is a hard edge. */
+  readonly blurPt: number;
+  readonly colorHex: string;
+  /** 0..1, from the shadow colour's `a:alpha` (absent ⇒ opaque). */
+  readonly alpha: number;
+}
+
 export interface ShapeBlock {
   /** §20.4.2.3 — present when the drawing is anchored (floating). */
   readonly float?: FloatAnchor;
@@ -817,6 +884,8 @@ export interface ShapeBlock {
   readonly line?: ShapeLine;
   readonly transform?: ShapeTransform;
   readonly text?: ShapeTextBody;
+  /** §20.1.8.40 — the shape's drop shadow, direct or from its style reference. */
+  readonly shadow?: ShapeShadow;
   readonly paragraphProperties: ParagraphProperties;
   /** `wp:docPr @descr/@title` — alternate text for the tagged-PDF Figure (`/Alt`). */
   readonly altText?: string;
@@ -841,10 +910,93 @@ export interface ChartDataPoint {
 /** One chart data series (`c:ser`): its name, values and colour overrides. */
 export interface ChartSeries {
   readonly name?: string;
+  /**
+   * §21.2.2 — the chart group this series came from, when it is NOT the group
+   * that gave {@link Chart.type}. A `c:plotArea` may hold several groups: a
+   * combo chart writes `c:barChart` and `c:lineChart` side by side, and reading
+   * only the first drops the other's series off the page entirely (57362.xlsx
+   * loses its line). Absent ⇒ the series draws as the chart's own type.
+   */
+  readonly type?: ChartType;
+  /**
+   * §21.2.2.9 `c:axId` — the series plots against the SECONDARY value axis: its
+   * group names a `c:valAx` other than the one the first group uses. 57362.xlsx
+   * puts its line on an axis of its own at `axPos="r"`, and plotting it on the
+   * primary scale puts every point at the wrong height whenever the two ranges
+   * differ.
+   */
+  readonly secondaryAxis?: boolean;
   readonly values: ReadonlyArray<number>; // c:val/c:yVal numCache (idx-ordered, gaps → 0)
   readonly xValues?: ReadonlyArray<number>; // c:xVal numCache (scatter — paired with values)
   readonly colorHex?: string; // c:spPr solidFill
   readonly pointColors?: ReadonlyArray<ChartDataPoint>; // c:dPt overrides (pie slices)
+  /**
+   * §21.2.2.49 `c:dLbl/c:tx` — a data label the author typed rather than one
+   * the chart computes, by point index. Excel and Calc print it verbatim: it
+   * is the only place a label like "Промышленные потребители; 22,7млрд.кВтч;
+   * 67,3%" exists, and generating one from the value instead loses the whole
+   * sentence.
+   */
+  readonly pointLabels?: ReadonlyArray<{ readonly idx: number; readonly text: string }>;
+  /**
+   * §21.2.2.59 `c:val/c:numRef/c:f` and §21.2.2.215 `c:tx/c:strRef/c:f` — where
+   * the series reads its numbers and its name FROM, when the chart part carries
+   * no cache of them. A chart written without caches is not a chart without
+   * data: the reader resolves these against the workbook.
+   */
+  readonly valuesRef?: string;
+  readonly nameRef?: string;
+  /**
+   * §21.2.2.106 `c:marker` — the symbol this series stamps on each of its
+   * points. Absent ⇒ the reader's own default.
+   */
+  readonly marker?: ChartMarker;
+  /**
+   * §21.2.2.198 `c:ser/c:spPr/a:ln` — the series' OWN rule. `<a:noFill/>` is
+   * how Excel writes "scatter with markers only": the group still says
+   * `lineMarker`, and it is this line that says the points are not joined.
+   * SimpleScatterChart.xlsx is two loose dots in both references and we ran a
+   * line between them.
+   */
+  readonly line?: ChartLineStyle;
+}
+
+/**
+ * §21.2.2.107 `c:symbol` (ST_MarkerStyle) — the shape of a scatter/line
+ * series' point marker. `auto` and `picture` are left to the reader, so they
+ * are not carried here.
+ */
+export type ChartMarkerSymbol =
+  | 'circle'
+  | 'dash'
+  | 'diamond'
+  | 'dot'
+  | 'none'
+  | 'plus'
+  | 'square'
+  | 'star'
+  | 'triangle'
+  | 'x';
+
+/**
+ * §21.2.2.106 `c:marker` — a series' point symbol and its size in points
+ * (§21.2.2.153 `c:size`, 2–72). chartTitle_noTitle.xlsx asks for a 5pt circle
+ * at every point and both references draw one; we stamped a square.
+ */
+export interface ChartMarker {
+  readonly symbol: ChartMarkerSymbol;
+  readonly sizePt?: number;
+}
+
+/**
+ * §21.2.2.196 `c:spPr/a:ln` on an axis or its gridlines — the rule the author
+ * gave it. `none` is `<a:ln><a:noFill/>`, which means the axis draws no line at
+ * all: 57362.xlsx hides its secondary value axis that way and keeps its labels.
+ */
+export interface ChartLineStyle {
+  readonly none?: boolean;
+  readonly colorHex?: string;
+  readonly widthPt?: number;
 }
 
 /** A parsed chart (§21.2): its type, title, categories, series and rendering options. */
@@ -852,6 +1004,8 @@ export interface Chart {
   readonly type: ChartType;
   readonly title?: string;
   readonly categories: ReadonlyArray<string>; // c:cat (shared across series)
+  /** §21.2.2.24 `c:cat/…/c:f` — where the categories live, when uncached. */
+  readonly categoriesRef?: string;
   readonly series: ReadonlyArray<ChartSeries>;
   readonly hasLegend: boolean;
   readonly legendPos?: 'r' | 'l' | 't' | 'b';
@@ -859,8 +1013,62 @@ export interface Chart {
   readonly grouping?: 'clustered' | 'stacked' | 'percentStacked' | 'standard';
   readonly doughnut?: boolean; // c:doughnutChart (a pie with a central hole)
   readonly showValues?: boolean; // c:dLbls/c:showVal — print each datum's value
+  /**
+   * §21.2.2.75 `c:gapWidth` — the gap between category slots as a percentage
+   * of the bar width. Absent ⇒ the schema's 150.
+   */
+  readonly gapPercent?: number;
   readonly catAxisTitle?: string; // c:catAx/c:title
+  /**
+   * §21.2.2.134 `c:catAx/c:scaling/c:orientation` = `maxMin` — the category
+   * axis runs the other way. A ranked bar chart is written this way so its
+   * first row reads at the TOP (dataValidationTableRange.xlsx ranks 38 counties
+   * and we printed the ranking upside down).
+   */
+  readonly catAxisReversed?: boolean;
   readonly valAxisTitle?: string; // c:valAx/c:title
+  /** §21.2.2.168 — the title of the secondary value axis, when one is drawn. */
+  readonly secondaryValAxisTitle?: string;
+  /**
+   * §21.2.2.161 `c:scatterStyle` — whether a scatter's points are joined by a
+   * line, marked, or both. The schema's default is `marker`; Excel writes
+   * `lineMarker` for the chart most people insert.
+   */
+  readonly scatterStyle?: 'none' | 'line' | 'lineMarker' | 'marker' | 'smooth' | 'smoothMarker';
+  /**
+   * §21.2.2.106 `c:marker` on a `c:lineChart` — whether the group's series mark
+   * their data points. WithChart.xlsx asks for them and we drew bare lines.
+   */
+  readonly lineMarkers?: boolean;
+  /** §21.2.2.196 — the category axis's own rule. */
+  readonly catAxisLine?: ChartLineStyle;
+  /** §21.2.2.196 — the value axis's own rule. */
+  readonly valAxisLine?: ChartLineStyle;
+  /** §21.2.2.196 — the secondary value axis's own rule. */
+  readonly secondaryValAxisLine?: ChartLineStyle;
+  /** §21.2.2.87 `c:majorGridlines/c:spPr/a:ln` — the gridlines' own rule. */
+  readonly gridLine?: ChartLineStyle;
+  /**
+   * §21.2.2.157 `c:valAx/c:scaling/c:min|c:max` — the value axis the AUTHOR
+   * fixed. Absent means "auto", and only then is the range read off the data:
+   * a chart whose cells all read zero still has the axis its author pinned, and
+   * scaling it to the data drew 0…1 where every reader draws 0…300.
+   */
+  readonly valAxisMin?: number;
+  readonly valAxisMax?: number;
+  /**
+   * §21.2.2.198 `c:chartSpace/c:spPr` — the frame around the whole chart: its
+   * background fill and its outline. Excel writes both on every chart it
+   * creates, and both references draw them.
+   */
+  readonly frameFillHex?: string;
+  readonly frameLineHex?: string;
+  /**
+   * §21.2.2.121 `c:valAx/c:numFmt@formatCode` — the number format the value
+   * axis's tick labels and the data labels are drawn in, in the same code
+   * grammar cells use (§18.8.31). Absent ⇒ a plain numeric render.
+   */
+  readonly numberFormat?: string;
   /**
    * MS-ODRAWXML `chartColorStyle` (`colorsN.xml`): the cycle of series colours;
    * overrides the built-in Office accent cycle when present.

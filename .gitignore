@@ -14,3 +14,7 @@ corpus/external/
 corpus/inputs/
 corpus/report*.md
 
+
+# side-by-side page renders from corpus:visual (regenerate on demand)
+corpus/.visual/
+corpus/.visual-work-*/

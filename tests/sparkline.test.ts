@@ -132,6 +132,32 @@ describe('sparklines — geometry (E-SHEET SC2)', () => {
     expect(segs.filter((s) => s.op === 'line')).toHaveLength(3);
   });
 
+  it('hangs a negative column below the zero line', () => {
+    // Sparklines.xlsx plots 4, 2, 7, -2, -5. Measured as a plain range instead
+    // of from zero, the -5 drew as a stub pointing UP — the one thing the glyph
+    // exists to show.
+    const prims = buildSparkline('column', [4, 2, 7, -2, -5], 50, 12);
+    const ys = prims[0]!.paths.map((p) => {
+      const pts = p.segments.flatMap((sg) => (sg.op === 'move' || sg.op === 'line' ? [sg.y] : []));
+      return { bottom: Math.min(...pts), top: Math.max(...pts) };
+    });
+    // Zero sits 5/12ths up the frame (the range runs -5…7).
+    const zero = (5 / 12) * 12;
+    for (const y of ys.slice(0, 3)) expect(y.bottom).toBeCloseTo(zero); // rise from it
+    for (const y of ys.slice(3)) expect(y.top).toBeCloseTo(zero); // …and hang from it
+    // The deepest negative reaches the floor, the tallest positive the ceiling.
+    expect(ys[4]!.bottom).toBeCloseTo(0);
+    expect(ys[2]!.top).toBeCloseTo(12);
+  });
+
+  it('keeps an all-positive column rising from the frame floor', () => {
+    const prims = buildSparkline('column', [4, 2, 7], 30, 12);
+    for (const p of prims[0]!.paths) {
+      const pts = p.segments.flatMap((sg) => (sg.op === 'move' || sg.op === 'line' ? [sg.y] : []));
+      expect(Math.min(...pts)).toBeCloseTo(0);
+    }
+  });
+
   it('builds a column as one filled rect per value', () => {
     const prims = buildSparkline('column', [1, 5, 3, 8], 56, 16, 'AA0000');
     expect(prims).toHaveLength(1);

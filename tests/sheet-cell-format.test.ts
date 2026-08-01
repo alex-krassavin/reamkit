@@ -149,6 +149,22 @@ describe('shrinkToFit — font scaled to the column (E-SHEET W6)', () => {
     expect(shrunk).toBeGreaterThan(0);
     expect(shrunk).toBeLessThan(normal); // ~2.5pt vs the 11pt default
   });
+
+  it('keeps the shrunk text on ONE line — shrinking is what it does instead', () => {
+    // §18.8.1: `shrinkToFit` scales the font so the text fits the cell; it does
+    // not wrap. Left wrapping, ShrinkToFit.xlsx broke its scaled label onto a
+    // second line where both references keep it on one.
+    const cell = firstCell(
+      buildXlsx({
+        rows: [
+          [{ value: 'This text is too long for the cell and must be scaled.', styleIndex: 8 }],
+        ],
+        columns: [{ min: 1, max: 1, widthChars: 10 }],
+        stylesXml: STYLES,
+      }),
+    );
+    expect(cell.properties.noWrap).toBe(true);
+  });
 });
 
 describe('cell-format round-trip (E-SHEET W6)', () => {
@@ -176,5 +192,131 @@ describe('cell-format round-trip (E-SHEET W6)', () => {
     expect(s1.styles.cellXfs[5]?.alignment).toMatchObject({ indent: 1 });
     expect(s1.styles.borders[1]?.diagonal?.style).toBe('thin');
     expect(s1.styles.borders[1]?.diagonalDown).toBe(true);
+  });
+});
+
+describe('§18.8.22 <u> names an underline, it does not toggle one', () => {
+  const runProps = (fontXml: string) => {
+    const xlsx = buildXlsx({
+      rows: [[{ value: 'Label', styleIndex: 1 }]],
+      stylesXml:
+        `<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font>` +
+        `<font><sz val="12"/><name val="DejaVu Sans"/>${fontXml}</font></fonts>` +
+        `<fills count="1"><fill><patternFill patternType="none"/></fill></fills>` +
+        `<borders count="1"><border/></borders>` +
+        `<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>` +
+        `<xf numFmtId="0" fontId="1" fillId="0" borderId="0" applyFont="1"/></cellXfs>`,
+    });
+    const cell = firstCell(xlsx);
+    const para = cell.content[0];
+    if (para?.kind !== 'paragraph') throw new Error('expected a paragraph');
+    return para.paragraph.runs[0]?.properties;
+  };
+
+  it('reads val="none" as no underline', () => {
+    // `u` is a CT_UnderlineProperty whose val is a NAME out of
+    // ST_UnderlineValues, not the CT_BooleanProperty `b`/`i`/`strike` are. Read
+    // with the boolean helper beside it, "none" is neither "false" nor "0" and
+    // came out true — which put a rule under every text cell of 52348.xlsx,
+    // whose two fonts both spell the default out as `<u val="none"/>`.
+    expect(runProps('<u val="none"/>')?.underline).not.toBe('single');
+    expect(runProps('<u val="false"/>')?.underline).not.toBe('single');
+  });
+
+  it('still underlines when the element says so, or says nothing at all', () => {
+    expect(runProps('<u/>')?.underline).toBe('single');
+    expect(runProps('<u val="single"/>')?.underline).toBe('single');
+    expect(runProps('<u val="double"/>')?.underline).toBe('single');
+  });
+});
+
+describe('§18.18.3 border weights are screen pixels, not eighth-points', () => {
+  const widthOf = (style: string): number | undefined => {
+    const xlsx = buildXlsx({
+      rows: [[{ value: 'Box', styleIndex: 1 }]],
+      stylesXml:
+        `<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>` +
+        `<fills count="1"><fill><patternFill patternType="none"/></fill></fills>` +
+        `<borders count="2"><border/>` +
+        `<border><top style="${style}"><color rgb="FF000000"/></top></border></borders>` +
+        `<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>` +
+        `<xf numFmtId="0" fontId="0" fillId="0" borderId="1" applyBorder="1"/></cellXfs>`,
+    });
+    return firstCell(xlsx).properties.borders?.top?.width;
+  };
+
+  it('draws thin at 1px, medium at 2px and thick at 3px (96 DPI)', () => {
+    // The names were mapped onto WordprocessingML's eighth-point scale, where
+    // the same words mean 0.5 / 1 / 1.5 pt — so every rule on a spreadsheet came
+    // out a third too light. 52348.xlsx strokes its red medium frame at 1pt
+    // where Excel draws 1.5 and LibreOffice 1.75.
+    expect(widthOf('thin')).toBeCloseTo(0.75);
+    expect(widthOf('medium')).toBeCloseTo(1.5);
+    expect(widthOf('thick')).toBeCloseTo(2.25);
+    expect(widthOf('hair')).toBeCloseTo(0.375);
+  });
+});
+
+describe('a full-width character is one em (UAX #11)', () => {
+  it('costs two digit widths, not one', () => {
+    // §18.3.1.13 measures a column in Maximum Digit Widths, and a CJK ideograph
+    // is a full em — two of them. Falling through to the Latin default charged
+    // 1.18 apiece, so 51519.xlsx's 201-character report was cut at 73 where
+    // LibreOffice cuts at 47 and Excel at about 40: we were the only one of the
+    // three showing nearly twice what the column holds.
+    const clip = (text: string): number => {
+      const xlsx = buildXlsx({
+        rows: [[text, 'blocker']],
+        columns: [{ min: 1, max: 1, widthChars: 10 }],
+      });
+      return cellText(firstCell(xlsx)).length;
+    };
+    const latin = clip('nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn');
+    const cjk = clip('豊田製品戦略事業統括本部とよたかいしゃトヨタコメント');
+    expect(latin).toBeGreaterThan(8);
+    // Half the Latin count, give or take the bucket the Latin letters land in.
+    expect(cjk).toBeLessThan(latin * 0.65);
+    expect(cjk).toBeGreaterThan(3);
+  });
+});
+
+describe('a style a whole column or row hands to its unwritten cells', () => {
+  // fills[2] is solid green; cellXfs[1] paints it.
+  const STYLE_TABLE =
+    `<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>` +
+    `<fills count="3"><fill><patternFill patternType="none"/></fill>` +
+    `<fill><patternFill patternType="gray125"/></fill>` +
+    `<fill><patternFill patternType="solid"><fgColor rgb="FF00FF00"/></patternFill></fill></fills>` +
+    `<borders count="1"><border/></borders>` +
+    `<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>` +
+    `<xf numFmtId="0" fontId="0" fillId="2" borderId="0" applyFill="1"/></cellXfs>`;
+
+  it('paints a cell the file never wrote a <c> for (§18.3.1.13 col@style)', () => {
+    // 51710.xlsx paints its column A grey with one `<col style="1"/>`, and 588
+    // of its rows carry no A cell at all — so the band stopped dead where the
+    // cells did, twelve pages short of the end.
+    const xlsx = buildXlsx({
+      rows: [
+        [null, 'b'],
+        [null, 'b'],
+      ],
+      columns: [{ min: 1, max: 1, widthChars: 9, styleIndex: 1 }],
+      stylesXml: STYLE_TABLE,
+    });
+    expect(firstCell(xlsx, 1, 0).properties.shading?.colorHex).toBe('00FF00');
+    expect(firstCell(xlsx, 1, 1).properties.shading).toBeUndefined();
+  });
+
+  it('lets a row with customFormat do the same (§18.3.1.73 row@s)', () => {
+    const xlsx = buildXlsx({
+      rows: [
+        ['a', 'b'],
+        [null, 'x'],
+      ],
+      rowHeights: [{ row: 1, heightPt: 15, styleIndex: 1 }],
+      stylesXml: STYLE_TABLE,
+    });
+    expect(firstCell(xlsx, 1, 0).properties.shading?.colorHex).toBe('00FF00');
+    expect(firstCell(xlsx, 0, 0).properties.shading).toBeUndefined();
   });
 });

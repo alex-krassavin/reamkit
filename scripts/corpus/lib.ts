@@ -4,7 +4,9 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { basename, dirname, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 // ---- external tools ----
 
@@ -105,10 +107,30 @@ export function referenceToPdf(input: string, outDir: string): string {
 
 export function sofficeToPdf(input: string, outDir: string): string {
   // LibreOffice writes <basename>.pdf into outDir.
-  execFileSync('soffice', ['--headless', '--convert-to', 'pdf', '--outdir', outDir, input], {
-    stdio: 'ignore',
-    timeout: SOFFICE_TIMEOUT_MS,
-  });
+  //
+  // Its user profile is the reason for the -env flag. One profile is one
+  // running instance: a second `soffice` started while the first is converting
+  // does not convert, it hands the job to the instance that owns the profile
+  // and exits — and the caller finds no PDF and reports a document that
+  // "threw". A per-process profile lets the scout sweep in the background while
+  // a visual diff runs in the foreground, which is exactly how both get used.
+  const profile = pathToFileURL(resolve(tmpdir(), `ream-lo-${String(process.pid)}`)).href;
+  execFileSync(
+    'soffice',
+    [
+      `-env:UserInstallation=${profile}`,
+      '--headless',
+      '--convert-to',
+      'pdf',
+      '--outdir',
+      outDir,
+      input,
+    ],
+    {
+      stdio: 'ignore',
+      timeout: SOFFICE_TIMEOUT_MS,
+    },
+  );
   return expectPdf(input, outDir);
 }
 
@@ -206,20 +228,38 @@ export interface VisualDiff {
 
 // Compare two PPMs. Pixels differing by more than `tol` (per channel, 0..255)
 // count as mismatches. Returns the mismatch ratio over the overlap region.
-export function visualDiff(our: Ppm, ref: Ppm, tol = 24): VisualDiff {
+//
+// `slack` is how far a pixel may LOOK for its match, in pixels. Two renderers
+// never put a glyph on the same pixel — our font is not the workbook's and the
+// hinting differs — so a page of text scores 16 % against a reference it is
+// character-for-character identical to, and the number says nothing about
+// whether the page is right. Searching a small neighbourhood before counting a
+// mismatch throws that away and keeps what matters: a missing block, a wrong
+// fill, a shifted column. Zero (the default) compares pixel against pixel.
+export function visualDiff(our: Ppm, ref: Ppm, tol = 24, slack = 0): VisualDiff {
   const dimsMatch = our.width === ref.width && our.height === ref.height;
   const w = Math.min(our.width, ref.width);
   const h = Math.min(our.height, ref.height);
+  const at = (p: Ppm, x: number, y: number): number => (y * p.width + x) * 3;
+  const diffAt = (oi: number, ri: number): number =>
+    Math.abs(our.rgb[oi]! - ref.rgb[ri]!) +
+    Math.abs(our.rgb[oi + 1]! - ref.rgb[ri + 1]!) +
+    Math.abs(our.rgb[oi + 2]! - ref.rgb[ri + 2]!);
   let mismatches = 0;
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      const oi = (y * our.width + x) * 3;
-      const ri = (y * ref.width + x) * 3;
-      const d =
-        Math.abs(our.rgb[oi]! - ref.rgb[ri]!) +
-        Math.abs(our.rgb[oi + 1]! - ref.rgb[ri + 1]!) +
-        Math.abs(our.rgb[oi + 2]! - ref.rgb[ri + 2]!);
-      if (d > tol * 3) mismatches++;
+      const oi = at(our, x, y);
+      if (diffAt(oi, at(ref, x, y)) <= tol * 3) continue;
+      let matched = false;
+      for (let dy = -slack; dy <= slack && !matched; dy++) {
+        for (let dx = -slack; dx <= slack && !matched; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          if (diffAt(oi, at(ref, nx, ny)) <= tol * 3) matched = true;
+        }
+      }
+      if (!matched) mismatches++;
     }
   }
   return {
@@ -228,6 +268,54 @@ export function visualDiff(our: Ppm, ref: Ppm, tol = 24): VisualDiff {
     refDims: `${ref.width}x${ref.height}`,
     mismatchRatio: w * h > 0 ? mismatches / (w * h) : 1,
   };
+}
+
+/**
+ * How differently the two pages are COLOURED, ignoring where the colour sits:
+ * the L1 distance between their quantised colour histograms, over the pixel
+ * count. 0 is the same palette in the same proportions.
+ *
+ * The pixel comparison above answers "is this the same page" and is dominated,
+ * on any page with text, by the fact that our font is not the workbook's — a
+ * character-for-character identical page scores several percent because every
+ * glyph lands a hair to one side. This answers a narrower question that survives
+ * that: is anything painted a colour the reference does not paint, or in a
+ * quantity it does not paint it. A fill resolved from the wrong palette, a chart
+ * that did not draw, an image dropped for an unsupported PNG type, a bar chart
+ * with the wrong bars — every one of those moves this, and a page of shifted
+ * text does not.
+ *
+ * @param our  Our raster.
+ * @param ref  The reference raster.
+ * @param bits Bits kept per channel (4 ⇒ a 4096-bucket histogram).
+ * @returns 0…1, the share of pixels whose colour has no counterpart.
+ */
+export function colorDiff(our: Ppm, ref: Ppm, bits = 4): number {
+  const shift = 8 - bits;
+  const buckets = 1 << (bits * 3);
+  const hist = (p: Ppm): { counts: Float64Array; total: number } => {
+    const counts = new Float64Array(buckets);
+    const total = p.width * p.height;
+    for (let i = 0; i < total; i++) {
+      const o = i * 3;
+      const key =
+        ((p.rgb[o]! >> shift) << (bits * 2)) |
+        ((p.rgb[o + 1]! >> shift) << bits) |
+        (p.rgb[o + 2]! >> shift);
+      counts[key]! += 1;
+    }
+    return { counts, total };
+  };
+  const a = hist(our);
+  const b = hist(ref);
+  if (a.total === 0 || b.total === 0) return 1;
+  // Normalised to shares, so two pages of different pixel dimensions still
+  // compare (a page is a page whatever the paper).
+  let sum = 0;
+  for (let i = 0; i < buckets; i++) {
+    sum += Math.abs(a.counts[i]! / a.total - b.counts[i]! / b.total);
+  }
+  return sum / 2;
 }
 
 export interface StructuralDiff {

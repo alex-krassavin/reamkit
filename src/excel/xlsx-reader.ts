@@ -7,6 +7,7 @@
 
 import type { Chart, DocumentInfo, ShapeBlock } from '@/core/document-model';
 import type { CoreProperties, Relationship } from '@/core/opc';
+import type { PoNode } from '@/core/po-helpers';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss } from '@/core/ir/loss';
@@ -25,15 +26,18 @@ import type {
 import type {
   ExcelTable,
   MergedRange,
+  ParsedWorksheet,
   PivotTable,
   WorksheetCell,
   XlsxStyles,
 } from '@/core/spreadsheet-model';
 import type { TableFilterColumn } from '@/excel/table-parser';
+import type { VmlShapeBox } from '@/excel/vml-drawing';
 import type { SlicerCacheDef, SlicerDef } from '@/excel/slicer-parser';
 
 import type { ProjectSheetOptions } from '@/excel/sheet-to-flow';
 import { FEATURES, ResourceStore } from '@/core/ir';
+import { detectImageFormat } from '@/core/images';
 import { OpcPackage, isOoxmlRel, parseCoreProperties } from '@/core/opc';
 import {
   EMPTY_XLSX_STYLES,
@@ -46,13 +50,21 @@ import {
 import { bytesInclude, bytesIncludePartName } from '@/core/bytes';
 import { parseChart, withChartColorStyle } from '@/core/drawingml/chart-parser';
 import { DEFAULT_THEME_PALETTE, makeColorResolver } from '@/core/drawingml/colors';
-import { parseTheme } from '@/core/drawingml/theme-parser';
+import {
+  parseTheme,
+  parseThemeEffectStyles,
+  parseThemeFillStyles,
+  parseThemeLineWidths,
+} from '@/core/drawingml/theme-parser';
 import { parseSheetDrawing } from '@/excel/sheet-drawing';
 import { parseTablePartFull } from '@/excel/table-parser';
 import { parsePivotTablePart } from '@/excel/pivot-table-parser';
 import { parseSlicerCachePart, parseSlicerPart } from '@/excel/slicer-parser';
 import { parseLegacyComments, parsePersons, parseThreadedComments } from '@/excel/comments-parser';
 import { parseFormControlProps } from '@/excel/form-control-parser';
+import { parseVmlDrawing } from '@/excel/vml-drawing';
+import { parsePrinterSettings } from '@/excel/printer-settings';
+import { parseRichValueText } from '@/excel/rich-value';
 import {
   activeXBinRelId,
   activeXType,
@@ -60,7 +72,11 @@ import {
   parseActiveX,
   parseActiveXBin,
 } from '@/excel/activex-parser';
-import { parseSheetShapes } from '@/excel/sheet-shape-parser';
+import {
+  parseDiagramFrames,
+  parseDiagramShapes,
+  parseSheetShapes,
+} from '@/excel/sheet-shape-parser';
 
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
 import { resolveCellText } from '@/excel/print-model';
@@ -69,6 +85,9 @@ const WORKBOOK_PART = 'xl/workbook.xml';
 const SHARED_STRINGS_PART = 'xl/sharedStrings.xml';
 const STYLES_PART = 'xl/styles.xml';
 const CORE_PROPS_PART = 'docProps/core.xml';
+const METADATA_PART = 'xl/metadata.xml';
+const RICH_VALUE_STRUCTURE_PART = 'xl/richData/rdrichvaluestructure.xml';
+const RICH_VALUE_PART = 'xl/richData/rdrichvalue.xml';
 // MS relationship type tails for slicer parts (E-SHEET SV2). The worksheet
 // references its slicer parts; the workbook references the slicer caches.
 const SLICER_REL_TAIL = '/slicer';
@@ -139,10 +158,24 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
     ? parseSharedStrings(sharedStringsData)
     : { texts: [] as ReadonlyArray<string>, runs: [] as ReadonlyArray<undefined> };
 
-  const stylesData = pkg.getPart(STYLES_PART);
-  const styles = stylesData ? parseXlsxStyles(stylesData) : EMPTY_XLSX_STYLES;
-
   const workbookRels = pkg.getPartRelationships(WORKBOOK_PART);
+  // §18.8.3 `<color theme="N">` resolves against the workbook theme, and Excel
+  // writes it for anything picked from the standard palette. Without the theme
+  // those colours parse to nothing at all: tdf171828.xlsx styles its whole
+  // header block `theme="2" tint="-0.5"` and every one of those fills came out
+  // unpainted. Same palette the charts and table styles already resolve against.
+  const themePalette = buildThemePalette(pkg, workbookRels);
+
+  // A cell can store a legacy error and point at the real value in the rich-value
+  // table (§18.3.1.4 `vm`). Workbook-scoped: resolved once, applied per sheet.
+  const richValueText = parseRichValueText(
+    pkg.getPart(METADATA_PART),
+    pkg.getPart(RICH_VALUE_STRUCTURE_PART),
+    pkg.getPart(RICH_VALUE_PART),
+  );
+
+  const stylesData = pkg.getPart(STYLES_PART);
+  const styles = stylesData ? parseXlsxStyles(stylesData, themePalette) : EMPTY_XLSX_STYLES;
   // Threaded-comment authors (E-SHEET W7): xl/persons/person.xml maps person ids
   // to display names. Workbook-scoped, resolved once and shared across sheets.
   const persons = new Map<string, string>();
@@ -160,8 +193,19 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
   const resources = new ResourceStore();
   const palette = buildThemePalette(pkg, workbookRels);
   const resolveColor = makeColorResolver(palette);
+  // §20.1.4.2.19 `<a:lnRef idx>` indexes the theme's line styles for its width.
+  const themeLineWidths = buildThemeLineWidths(pkg, workbookRels);
+  const themeFillStyles = buildThemeFillStyles(pkg, workbookRels);
+  const themeEffectStyles = buildThemeEffectStyles(pkg, workbookRels);
 
   const sheetsOut: Array<Sheet> = [];
+  // Embedded files (`<oleObject progId="Package">` and friends) that no page can
+  // show: counted here and reported once, rather than dropped in silence.
+  let embeddedObjects = 0;
+  // §20.5.2.x pictures whose bytes are a format no page can embed — a WMF, an
+  // EMF, a PICT. They anchor and reserve their space, and then draw nothing;
+  // counted here and reported once, rather than dropped in silence.
+  let metafilePictures = 0;
   // §SV2 slicer-resolution state: tables indexed by id (a slicer's
   // tableSlicerCache may reference a table on another sheet) and the slicer parts
   // found per OUTPUT sheet — both consumed after the loop, once all tables index.
@@ -173,7 +217,14 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
     if (!sheetRel) continue;
     const resolved = pkg.resolveRelatedPart(WORKBOOK_PART, sheetRel);
     if (!resolved) continue;
-    const worksheet = parseWorksheet(resolved.data);
+    let worksheet = parseWorksheet(resolved.data, themePalette);
+    worksheet = withPrinterPageSetup(
+      worksheet,
+      pkg,
+      resolved.path,
+      pkg.getPartRelationships(resolved.path),
+    );
+    worksheet = withRichValues(worksheet, richValueText);
 
     // §20.5: the sheet's drawing part — resolve chart frames, pictures and shapes
     // here; the projection emits a block per frame after the grid (W1 pictures,
@@ -206,15 +257,23 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
             chartPartPath: ref.chartPartPath,
             widthPt: ref.widthPt,
             heightPt: ref.heightPt,
+            xPt: ref.xPt,
+            yPt: ref.yPt,
           });
         }
         for (const pic of pictures) {
           const bytes = pkg.getPart(pic.imagePartPath);
           if (!bytes) continue;
+          // The writer embeds a raster; a metafile is a program to be replayed,
+          // which is a different feature altogether. WithDrawing.xlsx anchors
+          // five pictures and three of them are metafiles.
+          if (detectImageFormat(bytes) === null) metafilePictures++;
           images.push({
             resourceId: resources.put(bytes),
             widthPt: pic.widthPt,
             heightPt: pic.heightPt,
+            xPt: pic.xPt,
+            yPt: pic.yPt,
           });
         }
         // §20.5.2.30 xdr:sp shapes (W2). The shared DrawingML readers need the
@@ -222,8 +281,46 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
         // gated on a shape open tag (`:sp>`/`:sp `) so chart/picture-only drawings
         // skip it (xdr:spPr / xdr:grpSp do not match).
         if (bytesInclude(drawing.data, ':sp>') || bytesInclude(drawing.data, ':sp ')) {
-          const parsed = parseSheetShapes(drawing.data, worksheet, resolveColor);
+          const parsed = parseSheetShapes(
+            drawing.data,
+            worksheet,
+            resolveColor,
+            themeLineWidths,
+            themeFillStyles,
+            themeEffectStyles,
+          );
           if (parsed.length > 0) shapes = parsed;
+        }
+        // A SmartArt diagram is four parts of DESCRIPTION — data, layout, quick
+        // style, colours — that a reader is meant to lay out itself, and nobody
+        // outside Office does. The producer therefore also writes what it drew,
+        // as plain DrawingML under `dsp:`, reachable by a `diagramDrawing`
+        // relationship on the drawing part. tdf83671_SmartArt_import.xlsx draws
+        // three nested circles there and we drew nothing at all.
+        //
+        // A frame is paired with the drawing at its own index: the relationship
+        // names no frame, and a producer writes them in step.
+        const frames = parseDiagramFrames(drawing.data, worksheet);
+        if (frames.length > 0) {
+          const drawingRels = pkg.getPartRelationships(drawing.path);
+          const dsp = drawingRels.filter((r) => r.type.endsWith('/diagramDrawing'));
+          const fromDiagrams: Array<ShapeBlock> = [];
+          frames.forEach((frame, i) => {
+            const rel = dsp[i];
+            const part = rel ? pkg.resolveRelatedPart(drawing.path, rel) : undefined;
+            if (!part) return;
+            fromDiagrams.push(
+              ...parseDiagramShapes(
+                part.data,
+                frame,
+                resolveColor,
+                themeLineWidths,
+                themeFillStyles,
+                themeEffectStyles,
+              ),
+            );
+          });
+          if (fromDiagrams.length > 0) shapes = [...(shapes ?? []), ...fromDiagrams];
         }
       }
     }
@@ -349,10 +446,22 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
       return { type: 'control', ...binProps, ...props };
     };
 
+    // The legacy VML drawing is read before the <control> list because it is
+    // the only part that carries geometry — an ActiveX control's box lives in
+    // the `Pict` shape that shares its `shapeId`, nowhere else.
+    const legacyVml = readLegacyVml(pkg, resolved.path, wsRels, worksheet);
+
     let formControls: Array<SheetFormControl> | undefined;
     if (worksheet.formControls && worksheet.formControls.length > 0) {
       const resolvedControls: Array<SheetFormControl> = [];
       for (const fc of worksheet.formControls) {
+        // §18.3.1.20 `<controlPr print="0">`, and the same thing said the
+        // legacy way by the VML shape this control points at. Excel's "Print
+        // object" is on by default; a control that clears it is on screen only,
+        // and button-form-control.xlsx — which says it BOTH ways — prints as a
+        // blank page in Calc while we drew the button.
+        if (fc.print === false) continue;
+        if (fc.shapeId !== undefined && legacyVml.nonPrinting.has(fc.shapeId)) continue;
         const rel = wsRels.find((r) => r.id === fc.relId);
         const part = rel ? pkg.resolveRelatedPart(resolved.path, rel) : undefined;
         // §18.3.1.19 <control> reaches BOTH kinds: a form control's ctrlProps
@@ -362,18 +471,34 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
         // of bare names, its captions and values sitting unread in the .bin.
         // The <control> element carries no progId, so the type comes from the
         // class id.
+        const box = fc.shapeId !== undefined ? legacyVml.boxes.get(fc.shapeId) : undefined;
         if (part && ACTIVEX_PART.test(part.path)) {
           resolvedAx.push({
             ...activeXState(part),
             type: activeXTypeFromPart(part.data),
             ...(fc.name ? { name: fc.name } : {}),
+            ...(box ? { box } : {}),
           });
           continue;
         }
         const props = part ? parseFormControlProps(part.data) : {};
-        resolvedControls.push({ ...(fc.name ? { name: fc.name } : {}), ...props });
+        resolvedControls.push({
+          ...(fc.name ? { name: fc.name } : {}),
+          ...props,
+          ...(box ? { box } : {}),
+        });
       }
       if (resolvedControls.length > 0) formControls = resolvedControls;
+    }
+
+    // A control put on the sheet by Excel's Forms toolbar is declared ONLY in
+    // the legacy VML drawing — no `<control>` entry, no ctrlProps part. Reading
+    // just the `<controls>` list showed tdf111980_radioButtons.xlsx's five
+    // ActiveX buttons and silently lost the five form radio buttons and the
+    // group box beside them. Shapes whose id matches a `<control shapeId>` are
+    // the ActiveX ones, already resolved above.
+    if (legacyVml.controls.length > 0) {
+      formControls = [...(formControls ?? []), ...legacyVml.controls];
     }
 
     // §18.3.* ActiveX / OLE controls (W10): resolve each oleObject's relId to its
@@ -381,6 +506,17 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
     // after the grid, like form controls.
     if (worksheet.oleObjects && worksheet.oleObjects.length > 0) {
       for (const ole of worksheet.oleObjects) {
+        // §18.3.* — `<oleObjects>` holds two different things. A Forms control
+        // resolves to an activeX XML part with a property bag; an EMBEDDED FILE
+        // ("Package", "Word.Document", …) resolves to the file's own bytes, and
+        // reading those as XML threw the whole conversion away on
+        // bug64512_embed.xlsx's two attachments. Excel and Calc draw such an
+        // object as its icon and caption, both of which live in a metafile we
+        // do not decode; the object is reported rather than drawn.
+        if (!/^Forms\./i.test(ole.progId ?? '')) {
+          embeddedObjects++;
+          continue;
+        }
         const rel = wsRels.find((r) => r.id === ole.relId);
         const part = rel ? pkg.resolveRelatedPart(resolved.path, rel) : undefined;
         resolvedAx.push({
@@ -397,6 +533,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
         : worksheet;
     sheetsOut.push({
       name: sheet.name,
+      ...(sheet.hidden ? { hidden: true } : {}),
       grid,
       ...(charts.length > 0 ? { charts } : {}),
       ...(images.length > 0 ? { images } : {}),
@@ -437,6 +574,16 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
     }
   }
 
+  // §21.2.2.59/.215 — a chart written without caches reads its numbers, its
+  // categories and its series names from the workbook itself. 123233_charts
+  // .xlsx does exactly that, and taken as cache-only its four charts drew as
+  // empty axes with a legend of "Series 1"… Resolved once here, where every
+  // sheet is finally in hand: a chart on sheet 1 routinely points at sheet 4.
+  for (const [path, chart] of chartData) {
+    const resolved = withWorkbookData(chart, sheetsOut, styles, sharedStrings, date1904);
+    if (resolved !== chart) chartData.set(path, resolved);
+  }
+
   const coreData = pkg.getPart(CORE_PROPS_PART);
   const coreProps = coreData ? parseCoreProperties(coreData) : undefined;
   const info = infoFromCore(coreProps);
@@ -453,6 +600,9 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
     date1904,
     ...(chartData.size > 0 ? { chartData } : {}),
     resources,
+    themePalette,
+    ...(embeddedObjects > 0 ? { embeddedObjects } : {}),
+    ...(metafilePictures > 0 ? { metafilePictures } : {}),
     ...(info ? { info } : {}),
   };
 }
@@ -460,6 +610,202 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
 // Theme palette: the workbook's theme part merged over the built-in Office
 // defaults (the docx reader's pattern). Drives both chart schemeClr resolution
 // and the table-style accent (E-SHEET SC3).
+/**
+ * Fill in the paper size and orientation a `<pageSetup>` leaves to its
+ * `printerSettings` part.
+ *
+ * `<pageSetup>` naming no `paperSize` does not mean "the default": Excel
+ * records the print dialog's choice in the DEVMODE of the related part, and
+ * LibreOffice reads it. simple-monthly-budget.xlsx and 45540_classic_Header.xlsx
+ * both print on Letter that way while we assumed A4 — the most visible
+ * difference on every page of either. What the sheet states itself always wins.
+ */
+/**
+ * Replace the legacy stand-in in every cell that points at a rich value we can
+ * read. Spill.xlsx caches `#VALUE!` in three cells whose rich value says
+ * `#SPILL!` — the error Excel shows and the one that explains the sheet, since
+ * the file also records which cell three rows down does the blocking.
+ *
+ * @param worksheet The parsed worksheet.
+ * @param richValueText `vm` index → text, from {@link parseRichValueText}.
+ * @returns The worksheet, unchanged when nothing resolved (byte-identical path).
+ */
+
+/**
+ * A chart with its uncached references resolved against the workbook.
+ *
+ * Only what is missing is filled in: a series that cached its values keeps
+ * them, and a reference naming a sheet this workbook does not have resolves to
+ * nothing rather than to zeros.
+ *
+ * @param chart         The parsed chart.
+ * @param sheets        Every sheet in the workbook, by tab order.
+ * @param styles        The style table (for a referenced cell's number format).
+ * @param sharedStrings The shared-string table.
+ * @param date1904      The workbook's date system.
+ * @returns The chart, unchanged when nothing needed resolving.
+ */
+function withWorkbookData(
+  chart: Chart,
+  sheets: ReadonlyArray<Sheet>,
+  styles: XlsxStyles,
+  sharedStrings: ReadonlyArray<string>,
+  date1904: boolean,
+): Chart {
+  const cellsOf = (ref: string | undefined): Array<string> | undefined => {
+    if (ref === undefined) return undefined;
+    const area = resolveChartRef(ref, sheets);
+    if (!area) return undefined;
+    const out: Array<string> = [];
+    for (let row = area.startRow; row <= area.endRow; row++) {
+      for (let col = area.startColumn; col <= area.endColumn; col++) {
+        const cell = area.grid.cells.find((c) => c.row === row && c.column === col);
+        out.push(cell ? resolveCellText(cell, sharedStrings, styles, date1904) : '');
+      }
+    }
+    return out;
+  };
+
+  let changed = false;
+  const series = chart.series.map((s) => {
+    if (s.values.length > 0 && s.name !== undefined) return s;
+    const values =
+      s.values.length > 0 ? s.values : cellsOf(s.valuesRef)?.map((t) => Number(t) || 0);
+    const name = s.name ?? cellsOf(s.nameRef)?.find((t) => t.length > 0);
+    if (!values && name === undefined) return s;
+    changed = true;
+    return {
+      ...s,
+      ...(values ? { values } : {}),
+      ...(name !== undefined ? { name } : {}),
+    };
+  });
+  const categories = chart.categories.length > 0 ? chart.categories : cellsOf(chart.categoriesRef);
+  if (categories && categories.length > 0 && chart.categories.length === 0) changed = true;
+  if (!changed) return chart;
+  return {
+    ...chart,
+    series,
+    ...(categories && categories.length > 0 ? { categories } : {}),
+  };
+}
+
+/** `Sheet!A1:B2` → the sheet's grid and the 0-based rectangle it names. */
+function resolveChartRef(
+  ref: string,
+  sheets: ReadonlyArray<Sheet>,
+):
+  | {
+      grid: ParsedWorksheet;
+      startRow: number;
+      endRow: number;
+      startColumn: number;
+      endColumn: number;
+    }
+  | undefined {
+  const bang = ref.lastIndexOf('!');
+  if (bang < 0) return undefined;
+  const name = ref.slice(0, bang).replace(/^'|'$/g, '').replace(/''/g, "'");
+  const sheet = sheets.find((s) => s.name === name);
+  if (!sheet) return undefined;
+  const area = parseAreaRef(ref.slice(bang + 1).replace(/\$/g, ''));
+  return area ? { grid: sheet.grid, ...area } : undefined;
+}
+
+function withRichValues(
+  worksheet: ParsedWorksheet,
+  richValueText: ReadonlyMap<number, string>,
+): ParsedWorksheet {
+  if (richValueText.size === 0) return worksheet;
+  const resolves = (cell: WorksheetCell): string | undefined =>
+    cell.valueMetadataIndex !== undefined ? richValueText.get(cell.valueMetadataIndex) : undefined;
+  // A workbook can carry rich values none of THIS sheet's cells point at; leave
+  // it the object it was so nothing downstream sees a change that is not one.
+  if (!worksheet.cells.some((cell) => resolves(cell) !== undefined)) return worksheet;
+  const cells = worksheet.cells.map((cell) => {
+    const text = resolves(cell);
+    return text === undefined ? cell : { ...cell, rawValue: text };
+  });
+  return { ...worksheet, cells };
+}
+
+function withPrinterPageSetup(
+  worksheet: ParsedWorksheet,
+  pkg: OpcPackage,
+  sheetPath: string,
+  wsRels: ReadonlyArray<Relationship>,
+): ParsedWorksheet {
+  const setup = worksheet.pageSetup;
+  const relId = setup?.printerSettingsRelId;
+  if (!setup || relId === undefined) return worksheet;
+  // The id has done its job once resolved, and it must not survive into the
+  // model: a relationship id is a spelling, not a fact about the document, and
+  // two dialects of the same workbook name the same part differently.
+  const { printerSettingsRelId: _resolved, ...rest } = setup;
+  void _resolved;
+  const rel = wsRels.find((r) => r.id === relId);
+  const part = rel ? pkg.resolveRelatedPart(sheetPath, rel) : undefined;
+  const printer = part ? parsePrinterSettings(part.data) : {};
+  return {
+    ...worksheet,
+    pageSetup: {
+      ...rest,
+      ...(rest.paperSize === undefined && printer.paperSize !== undefined
+        ? { paperSize: printer.paperSize }
+        : {}),
+      ...(rest.orientation === undefined && printer.orientation !== undefined
+        ? { orientation: printer.orientation }
+        : {}),
+    },
+  };
+}
+
+/**
+ * The sheet's form controls that live only in its legacy VML drawing (§18.3.1.36).
+ *
+ * Shapes that back an ActiveX control are skipped — their `o:spid` is the
+ * `shapeId` of a `<control>` element, which the caller has already resolved
+ * through the activeX part. What is left is the Forms-toolbar kind, whose
+ * caption and checked state exist nowhere else in the package.
+ */
+function readLegacyVml(
+  pkg: OpcPackage,
+  sheetPath: string,
+  wsRels: ReadonlyArray<Relationship>,
+  worksheet: ParsedWorksheet,
+): {
+  controls: Array<SheetFormControl>;
+  boxes: ReadonlyMap<string, VmlShapeBox>;
+  nonPrinting: ReadonlySet<string>;
+} {
+  const empty = {
+    controls: [],
+    boxes: new Map<string, VmlShapeBox>(),
+    nonPrinting: new Set<string>(),
+  };
+  const relId = worksheet.legacyDrawingRelId;
+  if (relId === undefined) return empty;
+  const rel = wsRels.find((r) => r.id === relId);
+  const part = rel ? pkg.resolveRelatedPart(sheetPath, rel) : undefined;
+  if (!part) return empty;
+  const activeXShapeIds = new Set(
+    (worksheet.formControls ?? []).map((fc) => fc.shapeId).filter((id) => id !== undefined),
+  );
+  const drawing = parseVmlDrawing(part.data);
+  const out: Array<SheetFormControl> = [];
+  for (const shape of drawing.controls) {
+    if (shape.shapeId !== undefined && activeXShapeIds.has(shape.shapeId)) continue;
+    out.push({
+      objectType: shape.objectType,
+      ...(shape.caption ? { name: shape.caption, caption: shape.caption } : {}),
+      ...(shape.checked ? { checked: true } : {}),
+      ...(shape.box ? { box: shape.box } : {}),
+      ...(shape.fontSizePt !== undefined ? { fontSizePt: shape.fontSizePt } : {}),
+    });
+  }
+  return { controls: out, boxes: drawing.boxes, nonPrinting: drawing.nonPrinting };
+}
+
 function buildThemePalette(
   pkg: OpcPackage,
   workbookRels: ReadonlyArray<Relationship>,
@@ -473,6 +819,44 @@ function buildThemePalette(
     break;
   }
   return palette;
+}
+
+function buildThemeLineWidths(
+  pkg: OpcPackage,
+  workbookRels: ReadonlyArray<Relationship>,
+): Array<number> {
+  for (const rel of workbookRels) {
+    if (!isOoxmlRel(rel.type, 'theme')) continue;
+    const resolved = pkg.resolveRelatedPart(WORKBOOK_PART, rel);
+    if (resolved) return parseThemeLineWidths(resolved.data);
+  }
+  return [];
+}
+
+// §20.1.4.1.15 — the effect styles an `<a:effectRef idx>` indexes into.
+function buildThemeEffectStyles(
+  pkg: OpcPackage,
+  workbookRels: ReadonlyArray<Relationship>,
+): Array<PoNode> {
+  for (const rel of workbookRels) {
+    if (!isOoxmlRel(rel.type, 'theme')) continue;
+    const resolved = pkg.resolveRelatedPart(WORKBOOK_PART, rel);
+    if (resolved) return parseThemeEffectStyles(resolved.data);
+  }
+  return [];
+}
+
+// §20.1.4.1.13 — the fill styles an `<a:fillRef idx>` indexes into.
+function buildThemeFillStyles(
+  pkg: OpcPackage,
+  workbookRels: ReadonlyArray<Relationship>,
+): Array<PoNode> {
+  for (const rel of workbookRels) {
+    if (!isOoxmlRel(rel.type, 'theme')) continue;
+    const resolved = pkg.resolveRelatedPart(WORKBOOK_PART, rel);
+    if (resolved) return parseThemeFillStyles(resolved.data);
+  }
+  return [];
 }
 
 // Resolve a table's named built-in style to header / band fill colours against

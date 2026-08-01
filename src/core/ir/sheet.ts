@@ -28,6 +28,9 @@ export interface SheetChartRef {
   readonly chartPartPath: string;
   readonly widthPt: number;
   readonly heightPt: number;
+  /** Where the anchor puts it, in points from the grid's top-left. */
+  readonly xPt?: number;
+  readonly yPt?: number;
 }
 
 /**
@@ -39,6 +42,9 @@ export interface SheetImageRef {
   readonly resourceId: ResourceId;
   readonly widthPt: number;
   readonly heightPt: number;
+  /** Where the anchor puts it, in points from the grid's top-left. */
+  readonly xPt?: number;
+  readonly yPt?: number;
 }
 
 /** One item (label + selection state) in a {@link SheetSlicer}. */
@@ -97,10 +103,39 @@ export interface SheetComment {
  * spin/scroll/list controls. Render-only.
  */
 export interface SheetFormControl {
+  /**
+   * §18.3.1.19 `<control name>` — the shape's NAME, an identifier like
+   * "CheckBox28". Excel shows it in the name box, never on the page; it is what
+   * the after-the-grid listing calls a control that has no geometry.
+   */
   readonly name?: string;
+  /**
+   * The visible label, from the control's legacy VML `<v:textbox>`. A control
+   * drawn in place draws THIS beside its widget — never {@link name}, which is
+   * an internal id: 45540_form_Header.xlsx has forty captionless check boxes
+   * and printing their names put "CheckBox28" across the form's own text.
+   */
+  readonly caption?: string;
   readonly objectType?: string;
   readonly checked?: boolean;
   readonly value?: number;
+  /** Where the control sits on the sheet, in points from the grid's origin. */
+  readonly box?: SheetControlBox;
+  /** The caption's declared size, when the shape names one. */
+  readonly fontSizePt?: number;
+}
+
+/**
+ * A control's rectangle on the sheet, in points from the grid's top-left — read
+ * from its legacy VML shape, the only part that says where a control goes.
+ * Absent when the drawing carries no geometry, in which case the control is
+ * listed after the grid rather than drawn in place.
+ */
+export interface SheetControlBox {
+  readonly xPt: number;
+  readonly yPt: number;
+  readonly widthPt: number;
+  readonly heightPt: number;
 }
 
 /**
@@ -112,6 +147,8 @@ export interface SheetFormControl {
  */
 export interface SheetActiveXControl {
   readonly type: string;
+  /** Where the control sits on the sheet — from the VML shape sharing its `shapeId`. */
+  readonly box?: SheetControlBox;
   /** §18.3.1.19 `<control name>` — the control's identifier, when it came that way. */
   readonly name?: string;
   readonly caption?: string;
@@ -123,6 +160,12 @@ export interface SheetActiveXControl {
 export interface Sheet {
   /** The sheet (tab) name. */
   readonly name: string;
+  /**
+   * §18.2.19 `<sheet @state>` — the tab is `hidden` or `veryHidden`. Carried
+   * because a consumer that shows the workbook (the HTML writer) may still want
+   * it; the paginated projection skips it, as Excel and LibreOffice do.
+   */
+  readonly hidden?: boolean;
   /**
    * The grid + per-sheet geometry exactly as parsed: cells, columns, rows,
    * merges, dimensions, pageSetup/printOptions, manual breaks, drawingRelId.
@@ -192,4 +235,23 @@ export interface SheetDoc {
   readonly resources: ResourceStore;
   /** Document metadata from docProps/core.xml. */
   readonly info?: DocumentInfo;
+  /**
+   * §20.1.6.2 the workbook theme's colour scheme, slot name → 6-hex. Cell
+   * colours are resolved against it at parse time; a header/footer's `&K` theme
+   * reference is resolved at projection time, which is why the palette travels.
+   */
+  readonly themePalette?: ReadonlyMap<string, string>;
+  /**
+   * §18.3.* — how many embedded objects (`<oleObject progId="Package">` and the
+   * like) the workbook carries. They print as an icon and a caption in Excel
+   * and Calc, both of which live in a metafile; the projection reports them.
+   */
+  readonly embeddedObjects?: number;
+  /**
+   * §20.5.2.x — how many anchored pictures are a metafile (WMF / EMF / PICT)
+   * rather than a raster. They keep their anchor and their box, and draw
+   * nothing: replaying a metafile is a different feature from embedding an
+   * image. The projection reports them.
+   */
+  readonly metafilePictures?: number;
 }

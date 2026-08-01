@@ -1,0 +1,32 @@
+{
+  "file": "Spill.xlsx",
+  "paperDeclared": true,
+  "libreOffice": {
+    "pages": 2,
+    "pageSizes": [
+      {
+        "widthPt": 595,
+        "heightPt": 842
+      }
+    ],
+    "chars": 86,
+    "firstLines": [
+      "Sheet1",
+      "Sheet1"
+    ]
+  },
+  "ream": {
+    "pages": 2,
+    "pageSizes": [
+      {
+        "widthPt": 595,
+        "heightPt": 842
+      }
+    ],
+    "chars": 101,
+    "firstLines": [
+      "Sheet1",
+      "Sheet1"
+    ]
+  }
+}

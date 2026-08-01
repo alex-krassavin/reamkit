@@ -20,6 +20,7 @@ import type {
   CfRuleTop10,
   Cfvo,
   CfvoType,
+  ColumnStyle,
   ColumnWidth,
   ConditionalFormat,
   DataValidation,
@@ -32,6 +33,7 @@ import type {
   ParsedSparkline,
   ParsedWorksheet,
   RowHeight,
+  RowStyle,
   SheetPane,
   SparklineKind,
   TimePeriodKind,
@@ -40,8 +42,13 @@ import type {
   XlsxPageSetup,
   XlsxPrintOptions,
 } from '@/core/spreadsheet-model';
+import type { ThemePalette, WorkbookColors } from '@/excel/styles-parser';
+import { INDEXED_COLORS } from '@/core/indexed-colors';
+import { parseDxf } from '@/excel/styles-parser';
+import { resolveInternalEntities } from '@/core/opc/xml-entities';
 import { parseCellRef } from '@/excel/cell-reference';
 import { parseAreaRef } from '@/excel/defined-name-ref';
+import { decodeXstring } from '@/excel/escaped-text';
 
 type MutableMerge = {
   -readonly [K in keyof MergedRange]: MergedRange[K];
@@ -50,6 +57,15 @@ type MutableMerge = {
 const decoder = new TextDecoder('utf-8');
 
 const parser = new XMLParser({
+  // §4.1 of XML 1.0: a numeric character reference is not an entity — `&#10;`
+  // IS a line feed and every parser must decode it. fast-xml-parser gates that
+  // on `htmlEntities`, which defaults to false, so `&#10;` reached the page as
+  // five literal characters (formats.xlsx writes "Hello,&#10;Calc!"). Named
+  // HTML entities come along with the switch; in XML they are undefined anyway,
+  // and reading `&nbsp;` as a space beats drawing it. Entities a DOCTYPE
+  // declares the parser never registers at all, so they are resolved before it
+  // sees the text — see resolveInternalEntities.
+  htmlEntities: true,
   ignoreAttributes: false,
   attributeNamePrefix: '@_',
   textNodeName: '#text',
@@ -73,10 +89,15 @@ const parser = new XMLParser({
  * and table parts). `r=` is optional on `<row>`/`<c>`; absent indices are inferred
  * from document order. A malformed root or missing `sheetData` yields an empty grid.
  */
-export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
-  const xml = decoder.decode(data);
+export function parseWorksheet(data: Uint8Array, theme?: ThemePalette): ParsedWorksheet {
+  const xml = resolveInternalEntities(decoder.decode(data));
   const tree = parser.parse(xml) as Record<string, unknown>;
-  const worksheet = tree['worksheet'];
+  // §18.3.1.99 `<chartsheet>` — a sheet that is nothing but a chart. It has no
+  // sheetData, but it does carry the same `<pageMargins>`, `<pageSetup>` and
+  // `<drawing r:id>` a worksheet does, and reading none of them cost
+  // 47813.xlsx its whole "Chart" tab: a page the reference fills with a plot of
+  // 1700 points came out as the sheet after it.
+  const worksheet = tree['worksheet'] ?? tree['chartsheet'];
   const emptyExtras = () => ({
     columns: [] as ReadonlyArray<ColumnWidth>,
     merges: [] as ReadonlyArray<MergedRange>,
@@ -98,7 +119,20 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
     drawingNode && typeof drawingNode === 'object'
       ? strAttr(drawingNode as Record<string, unknown>, 'id')
       : undefined;
-  const conditionalFormats = parseConditionalFormatting(wsObj);
+  // §18.3.1.36 `<legacyDrawing>` — the pre-DrawingML shape part. A sheet's form
+  // controls can live there and nowhere else (see vml-drawing.ts).
+  const legacyNode = wsObj['legacyDrawing'];
+  const legacyDrawingRelId =
+    legacyNode && typeof legacyNode === 'object'
+      ? strAttr(legacyNode as Record<string, unknown>, 'id')
+      : undefined;
+  const conditionalFormats = [
+    ...parseConditionalFormatting(wsObj),
+    // The 2009 extension's rules resolve their own colours; the workbook's
+    // indexed table is not in reach here, and a `<x14:dxf>` naming an indexed
+    // colour a workbook has REPLACED is rarer than the default is right.
+    ...parseX14ConditionalFormatting(wsObj, { ...(theme ? { theme } : {}), indexed: INDEXED_COLORS }),
+  ];
   const dataValidations = parseDataValidations(wsObj);
   const hyperlinks = parseHyperlinks(wsObj);
   const headerFooter = parseHeaderFooter(wsObj);
@@ -117,6 +151,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
     ...(colBreaks.length > 0 ? { colBreaks } : {}),
     ...(pane ? { pane } : {}),
     ...(drawingRelId !== undefined ? { drawingRelId } : {}),
+    ...(legacyDrawingRelId !== undefined ? { legacyDrawingRelId } : {}),
     ...(conditionalFormats.length > 0 ? { conditionalFormats } : {}),
     ...(dataValidations.length > 0 ? { dataValidations } : {}),
     ...(hyperlinks.length > 0 ? { hyperlinks } : {}),
@@ -143,6 +178,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
 
   const cells: Array<WorksheetCell> = [];
   const rowHeights: Array<RowHeight> = [];
+  const rowStyles: Array<RowStyle> = [];
   let maxRow = -1;
   let maxColumn = -1;
 
@@ -158,6 +194,13 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
     currentRow = explicitRow !== undefined ? explicitRow : currentRow + 1;
     const height = parseRowHeight(obj, currentRow);
     if (height) rowHeights.push(height);
+    // §18.3.1.73 — `s` is the row's style, and `customFormat` is what says to
+    // use it. A row formatted this way writes no `<c>` for the cells it paints.
+    const rowStyle = Number(strAttr(obj, 's'));
+    const customFormat = boolAttr(obj, 'customFormat');
+    if (customFormat && Number.isFinite(rowStyle) && rowStyle > 0) {
+      rowStyles.push({ row: currentRow, styleIndex: rowStyle });
+    }
     const cellRaw = obj['c'];
     const rowCells = Array.isArray(cellRaw) ? cellRaw : cellRaw !== undefined ? [cellRaw] : [];
     let prevCol = -1;
@@ -171,6 +214,7 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
     }
   }
 
+  const colStyles = parseColumnStyles(wsObj);
   return {
     cells,
     maxRow,
@@ -178,6 +222,8 @@ export function parseWorksheet(data: Uint8Array): ParsedWorksheet {
     columns: parseColumns(wsObj),
     merges: parseMerges(wsObj),
     rowHeights,
+    ...(colStyles.length > 0 ? { columnStyles: colStyles } : {}),
+    ...(rowStyles.length > 0 ? { rowStyles } : {}),
     ...printModel,
   };
 }
@@ -194,13 +240,20 @@ function parseRowHeight(
   rowIndex: number | undefined,
 ): RowHeight | undefined {
   if (rowIndex === undefined) return undefined;
+  // A hidden row usually carries no `ht`, so it has to be recorded on `hidden`
+  // alone — returning early when `ht` is absent lost it entirely.
+  const hidden = boolAttr(obj, 'hidden');
   const htRaw = strAttr(obj, 'ht');
-  if (htRaw === undefined) return undefined;
-  const heightPt = Number(htRaw);
-  if (!Number.isFinite(heightPt)) return undefined;
+  const heightPt = htRaw !== undefined ? Number(htRaw) : Number.NaN;
+  if (!Number.isFinite(heightPt) && !hidden) return undefined;
   const customRaw = strAttr(obj, 'customHeight');
   const customHeight = customRaw === '1' || customRaw === 'true';
-  return { row: rowIndex, heightPt, customHeight };
+  return {
+    row: rowIndex,
+    heightPt: Number.isFinite(heightPt) ? heightPt : 0,
+    customHeight,
+    ...(hidden ? { hidden } : {}),
+  };
 }
 
 function parsePageMargins(ws: Record<string, unknown>): XlsxPageMargins | undefined {
@@ -239,12 +292,20 @@ function parsePageSetup(ws: Record<string, unknown>): XlsxPageSetup | undefined 
   const scale = parseNumericAttr(obj, 'scale');
   const fitToWidth = parseNumericAttr(obj, 'fitToWidth');
   const fitToHeight = parseNumericAttr(obj, 'fitToHeight');
+  const printerSettingsRelId = strAttr(obj, 'id');
+  const commentsRaw = strAttr(obj, 'cellComments');
+  const cellComments: XlsxPageSetup['cellComments'] | undefined =
+    commentsRaw === 'none' || commentsRaw === 'asDisplayed' || commentsRaw === 'atEnd'
+      ? commentsRaw
+      : undefined;
   if (
     paperSize === undefined &&
     orientation === undefined &&
     scale === undefined &&
     fitToWidth === undefined &&
-    fitToHeight === undefined
+    fitToHeight === undefined &&
+    printerSettingsRelId === undefined &&
+    cellComments === undefined
   ) {
     return undefined;
   }
@@ -254,6 +315,8 @@ function parsePageSetup(ws: Record<string, unknown>): XlsxPageSetup | undefined 
     ...(scale !== undefined ? { scale } : {}),
     ...(fitToWidth !== undefined ? { fitToWidth: Math.round(fitToWidth) } : {}),
     ...(fitToHeight !== undefined ? { fitToHeight: Math.round(fitToHeight) } : {}),
+    ...(printerSettingsRelId !== undefined ? { printerSettingsRelId } : {}),
+    ...(cellComments !== undefined ? { cellComments } : {}),
   };
 }
 
@@ -278,10 +341,12 @@ function parsePrintOptions(ws: Record<string, unknown>): XlsxPrintOptions | unde
     return raw === '1' || raw === 'true';
   };
   const gridLines = flag('gridLines');
+  const headings = flag('headings');
   const horizontalCentered = flag('horizontalCentered');
   const verticalCentered = flag('verticalCentered');
   if (
     gridLines === undefined &&
+    headings === undefined &&
     horizontalCentered === undefined &&
     verticalCentered === undefined
   ) {
@@ -289,6 +354,7 @@ function parsePrintOptions(ws: Record<string, unknown>): XlsxPrintOptions | unde
   }
   return {
     ...(gridLines !== undefined ? { gridLines } : {}),
+    ...(headings !== undefined ? { headings } : {}),
     ...(horizontalCentered !== undefined ? { horizontalCentered } : {}),
     ...(verticalCentered !== undefined ? { verticalCentered } : {}),
   };
@@ -369,6 +435,29 @@ function parseSheetFormatPr(ws: Record<string, unknown>): {
   };
 }
 
+// §18.3.1.13 `<col style>` — the style every cell of the span takes when it has
+// none of its own. Read separately from the width because the two are
+// independent: a `<col min max style/>` with no `width` is a legal way to
+// format a column, and the width reader below discards it.
+function parseColumnStyles(ws: Record<string, unknown>): Array<ColumnStyle> {
+  const colsNode = ws['cols'];
+  if (!colsNode || typeof colsNode !== 'object') return [];
+  const colRaw = (colsNode as Record<string, unknown>)['col'];
+  const items = Array.isArray(colRaw) ? colRaw : colRaw !== undefined ? [colRaw] : [];
+  const out: Array<ColumnStyle> = [];
+  for (const c of items) {
+    if (!c || typeof c !== 'object') continue;
+    const obj = c as Record<string, unknown>;
+    const min = Number(strAttr(obj, 'min'));
+    const max = Number(strAttr(obj, 'max'));
+    const styleIndex = Number(strAttr(obj, 'style'));
+    if (!Number.isFinite(min) || !Number.isFinite(max)) continue;
+    if (!Number.isFinite(styleIndex) || styleIndex <= 0) continue;
+    out.push({ min, max, styleIndex });
+  }
+  return out;
+}
+
 function parseColumns(ws: Record<string, unknown>): Array<ColumnWidth> {
   const colsNode = ws['cols'];
   if (!colsNode || typeof colsNode !== 'object') return [];
@@ -383,7 +472,8 @@ function parseColumns(ws: Record<string, unknown>): Array<ColumnWidth> {
     const max = Number(strAttr(obj, 'max'));
     const width = Number(strAttr(obj, 'width'));
     if (Number.isFinite(min) && Number.isFinite(max) && Number.isFinite(width)) {
-      out.push({ min, max, widthChars: width });
+      const hidden = boolAttr(obj, 'hidden');
+      out.push({ min, max, widthChars: width, ...(hidden ? { hidden } : {}) });
     }
   }
   return out;
@@ -446,6 +536,86 @@ function parseConditionalFormatting(ws: Record<string, unknown>): Array<Conditio
       if (rule) rules.push(rule);
     }
     if (rules.length > 0) out.push({ ranges, rules });
+  }
+  return out;
+}
+
+// ISO/IEC 29500 could not express everything Excel 2010 wanted of a conditional
+// format, so the 2009 extension carries the rest in <extLst>: the same rule
+// families, plus the ones the 2006 schema has no room for. The shape differs in
+// three places — the range is a child <xm:sqref> and not an attribute, the
+// formulas are <xm:f> and not <formula>, and the format is written INSIDE the
+// rule as <x14:dxf> rather than pointing at the workbook's table.
+//
+// Nineteen corpus workbooks put rules here and we read none of them:
+// tdf122102.xlsx paints four cells yellow, green, red and grey, and we printed
+// four plain ones.
+/** The rule types the extension states as a formula rather than a literal. */
+const TEXT_RULES: ReadonlySet<string> = new Set([
+  'containsText',
+  'notContainsText',
+  'beginsWith',
+  'endsWith',
+]);
+
+function parseX14ConditionalFormatting(
+  ws: Record<string, unknown>,
+  colors: WorkbookColors,
+): Array<ConditionalFormat> {
+  const out: Array<ConditionalFormat> = [];
+  for (const ext of toArray(asObjectNode(ws['extLst'])?.['ext'])) {
+    const group = asObjectNode(asObjectNode(ext)?.['conditionalFormattings']);
+    if (!group) continue;
+    for (const cf of toArray(group['conditionalFormatting'])) {
+      const obj = asObjectNode(cf);
+      if (!obj) continue;
+      // <xm:sqref> is the element's text, not an attribute.
+      const sqref = typeof obj['sqref'] === 'string' ? obj['sqref'] : undefined;
+      if (!sqref) continue;
+      const ranges = parseSqref(sqref);
+      if (ranges.length === 0) continue;
+      const rules: Array<CfRule> = [];
+      for (const rn of toArray(obj['cfRule'])) {
+        const node = asObjectNode(rn);
+        if (!node) continue;
+        const rule = parseCfRule(asBaseCfRule(node));
+        if (!rule) continue;
+        // colorScale/dataBar/iconSet colour themselves; the rest take a dxf.
+        const dxf = parseDxf(node['dxf'], colors);
+        rules.push(
+          'dxfId' in rule && Object.keys(dxf).length > 0 ? ({ ...rule, dxf }) : rule,
+        );
+      }
+      if (rules.length > 0) out.push({ ranges, rules });
+    }
+  }
+  return out;
+}
+
+/**
+ * Rewrite a `<x14:cfRule>` into the shape {@link parseCfRule} reads, so one
+ * reader serves both spellings of the same rule.
+ */
+function asBaseCfRule(node: Record<string, unknown>): Record<string, unknown> {
+  const formulas = toArray(node['f']).filter((f) => typeof f === 'string' || typeof f === 'number');
+  // One `<formula>` parses as a string and several as an array; the readers
+  // below expect that shape, not an array of one.
+  const out: Record<string, unknown> = {
+    ...node,
+    formula: formulas.length === 1 ? formulas[0] : formulas,
+  };
+  // Every value-driven family refuses a rule with no `dxfId`, and the extension
+  // has none — it wrote the format inline instead. Stand one in; the parsed
+  // `<x14:dxf>` beside it is what the renderer actually reads.
+  if (out['@_dxfId'] === undefined && node['dxf'] !== undefined) out['@_dxfId'] = '0';
+  // A text rule states its needle in an attribute — a LITERAL. The extension
+  // exists because the needle is a reference (`$B$1`, `Munka1!$A$1`), and it
+  // writes the whole test as its first formula: `NOT(ISERROR(SEARCH($B$1,A1)))`.
+  // Read that instead of comparing against the reference's own spelling, which
+  // no cell contains.
+  if (TEXT_RULES.has(String(out['@_type'])) && formulas.length > 0) {
+    out['@_type'] = 'expression';
+    out['formula'] = formulas[0];
   }
   return out;
 }
@@ -763,6 +933,9 @@ function parseDataBarRule(
   if (!colorHex) return undefined;
   const minLength = parseNumericAttr(dbObj, 'minLength');
   const maxLength = parseNumericAttr(dbObj, 'maxLength');
+  // §18.3.1.28 — absent means true; only an explicit false hides the number.
+  const showValueRaw = strAttr(dbObj, 'showValue');
+  const showValue = showValueRaw === '0' || showValueRaw === 'false' ? false : undefined;
   return {
     type: 'dataBar',
     priority,
@@ -770,6 +943,7 @@ function parseDataBarRule(
     colorHex,
     ...(minLength !== undefined ? { minLength } : {}),
     ...(maxLength !== undefined ? { maxLength } : {}),
+    ...(showValue === false ? { showValue } : {}),
   };
 }
 
@@ -939,7 +1113,18 @@ function collectControls(
     if (!relId || seen.has(relId)) continue;
     seen.add(relId);
     const name = strAttr(obj, 'name');
-    out.push({ relId, ...(name ? { name } : {}) });
+    const shapeId = strAttr(obj, 'shapeId');
+    // §18.3.1.20 `<controlPr print>` — absent means print, so only an explicit
+    // false is worth recording.
+    const controlPr = asObjectNode(obj['controlPr']);
+    const printAttr = controlPr ? strAttr(controlPr, 'print') : undefined;
+    const print = printAttr === '0' || printAttr === 'false' ? false : undefined;
+    out.push({
+      relId,
+      ...(name ? { name } : {}),
+      ...(shapeId ? { shapeId } : {}),
+      ...(print === false ? { print } : {}),
+    });
   }
 }
 
@@ -965,9 +1150,13 @@ function collectOleObjects(
 ): void {
   if (!node) return;
   const direct = toArray(node['oleObject']);
-  const fromChoice = toArray(asObjectNode(node['AlternateContent'])?.['Choice']).flatMap((c) =>
-    toArray(asObjectNode(c)?.['oleObject']),
-  );
+  // A workbook with TWO embedded objects writes two `mc:AlternateContent`
+  // siblings, and the parser hands those back as an array — which the
+  // single-node reader turned into nothing at all, losing both of
+  // bug64512_embed.xlsx's attachments before anything could report them.
+  const fromChoice = toArray(node['AlternateContent'])
+    .flatMap((ac) => toArray(asObjectNode(ac)?.['Choice']))
+    .flatMap((c) => toArray(asObjectNode(c)?.['oleObject']));
   for (const o of [...direct, ...fromChoice]) {
     const obj = asObjectNode(o);
     if (!obj) continue;
@@ -1011,13 +1200,22 @@ function parseCell(c: unknown, fallbackRow: number, fallbackCol: number): Worksh
   // position either, so document order is the only answer available, and it is
   // the one the spec already sanctions. Dropping the cell instead turned
   // tdf122336.xlsx — whose producer writes r="11_2" — into a blank page.
+  //
+  // Nor is such a ref worth guessing at. `11_2` reads as `<column>_<row>`, and
+  // the file even corroborates the row half — every ref inside `<row r="2">`
+  // ends in `_2` — but the columns it yields are wrong: that sheet's header row
+  // is 11 labels in columns 1..11, its data row is 11 values, and reading the
+  // refs as columns scatters them over 1, 4, 5, 7, 11, 13, 22, 29..32, filing
+  // the start time under "Klantnaam" and stretching two rows across seven
+  // pages. In document order every value lands under its own heading. The first
+  // number is the producer's own field id, not a column.
   const implied = { column: fallbackCol, row: fallbackRow };
   let address: { column: number; row: number };
   if (ref) {
     try {
       address = parseCellRef(ref);
     } catch {
-      address = numericRef(ref, fallbackRow) ?? implied;
+      address = implied;
     }
   } else {
     address = implied;
@@ -1028,7 +1226,16 @@ function parseCell(c: unknown, fallbackRow: number, fallbackCol: number): Worksh
   const styleIndex = styleStr !== undefined ? Number(styleStr) : undefined;
   const v = obj['v'];
   const rawValue = textOf(v);
-  const base = { column: address.column, row: address.row, type } as const;
+  // §18.3.1.4 `vm` — only an error cell can be standing in for a rich value, so
+  // that is the only place the index is worth carrying.
+  const vmStr = type === 'e' ? strAttr(obj, 'vm') : undefined;
+  const vm = vmStr !== undefined ? Number(vmStr) : undefined;
+  const base = {
+    column: address.column,
+    row: address.row,
+    type,
+    ...(vm !== undefined && Number.isInteger(vm) && vm > 0 ? { valueMetadataIndex: vm } : {}),
+  } as const;
   if (type === 'inlineStr') {
     const is = obj['is'];
     // §18.3.1.4 — t="inlineStr" pairs with <is>, but producers exist that
@@ -1049,39 +1256,6 @@ function parseCell(c: unknown, fallbackRow: number, fallbackCol: number): Worksh
     rawValue,
     ...(Number.isFinite(styleIndex) ? { styleIndex: styleIndex as number } : {}),
   };
-}
-
-// `<column>_<row>`, both 1-based — the address spelling of the producer behind
-// tdf122336.xlsx, in place of A1 notation.
-const NUMERIC_REF = /^(\d+)_(\d+)$/;
-
-/**
- * Decode a numeric `"4_2"`-style reference, but only when the file corroborates
- * the reading.
- *
- * This is not a spec spelling and there is no obligation to understand it. What
- * makes it safe to act on is that the file states its own convention and can be
- * checked against itself: every ref inside `<row r="2">` ends in `_2`. So the
- * row half must agree with the row the cell actually sits in — and when it does
- * not, the reference has told us nothing and document order (§18.3.1.4) remains
- * the answer. A guess that cannot be checked is worse than the fallback; this
- * one can be.
- *
- * The alternative is not harmless: these cells are sparse (columns 1, 4, 5, 7,
- * 11, 13, 22 …), so packing them consecutively files every value under the
- * wrong heading.
- *
- * @param ref      The unparseable `r` attribute.
- * @param rowIndex The 0-based row the cell sits in.
- * @returns The address, or undefined when the reading is not corroborated.
- */
-function numericRef(ref: string, rowIndex: number): { column: number; row: number } | undefined {
-  const m = NUMERIC_REF.exec(ref);
-  if (!m) return undefined;
-  const column = Number(m[1]);
-  const row = Number(m[2]);
-  if (column < 1 || row !== rowIndex + 1) return undefined;
-  return { column: column - 1, row: rowIndex };
 }
 
 function validateCellType(t: string): CellType {
@@ -1105,12 +1279,12 @@ function strAttr(obj: Record<string, unknown>, key: string): string | undefined 
 }
 
 function textOf(node: unknown): string {
-  if (typeof node === 'string') return node;
+  if (typeof node === 'string') return decodeXstring(node);
   if (typeof node === 'number') return String(node);
   if (!node || typeof node !== 'object') return '';
   const obj = node as Record<string, unknown>;
   const inner = obj['#text'];
-  if (typeof inner === 'string') return inner;
+  if (typeof inner === 'string') return decodeXstring(inner);
   if (typeof inner === 'number') return String(inner);
   return '';
 }
@@ -1125,12 +1299,15 @@ function inlineStringText(is: unknown): string {
   const t = obj['t'];
   const direct = textOf(t);
   if (direct) return direct.length > MAX_CELL_CHARS ? direct.slice(0, MAX_CELL_CHARS) : direct;
-  const r = obj['r'];
-  if (Array.isArray(r)) {
-    const joined = r
-      .map((rr) => textOf((rr as Record<string, unknown> | undefined)?.['t']))
-      .join('');
-    return joined.length > MAX_CELL_CHARS ? joined.slice(0, MAX_CELL_CHARS) : joined;
-  }
-  return '';
+  // §18.4.8 `<is>` holds either a bare `<t>` or a sequence of `<r>` runs — and a
+  // SINGLE run is one object, not an array of one. Reading only the array form
+  // dropped every inline string a producer wrote as one formatted run:
+  // 52348.xlsx labels its whole header row `<is><r><rPr/><t>Category</t></r></is>`
+  // and every one of those cells came out empty.
+  const raw = obj['r'];
+  const runs: Array<unknown> = Array.isArray(raw) ? raw : raw !== undefined ? [raw] : [];
+  const joined = runs
+    .map((rr) => textOf((rr as Record<string, unknown> | undefined)?.['t']))
+    .join('');
+  return joined.length > MAX_CELL_CHARS ? joined.slice(0, MAX_CELL_CHARS) : joined;
 }

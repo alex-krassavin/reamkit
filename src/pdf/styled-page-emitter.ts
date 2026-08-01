@@ -6,7 +6,7 @@
 // pre-split renderer produced), then pages replay their PageItems, then the
 // catalog assembles OutputIntent/XMP/struct-tree/attachments as required.
 
-import type { DocumentInfo } from '@/core/document-model';
+import type { BorderStyle, DocumentInfo } from '@/core/document-model';
 import type { ResourceId } from '@/core/ir';
 import type { EmbeddedFont } from '@/pdf/cid-font';
 import type { PdfDict, PdfRef, PdfValue } from '@/pdf/objects';
@@ -163,10 +163,27 @@ function assembleStyledPdf(
       }
     }
   }
+  // §20.1.8.40 — a shadow is drawn at the transparency its colour asks for,
+  // which in PDF is a constant alpha in an /ExtGState (ISO 32000-1 §11.6.4.4).
+  // One state per distinct alpha, shared by every shadow that wants it.
+  const alphaStateNames = new Map<number, string>();
+  const extGStateEntries: Record<string, PdfValue> = {};
+  for (const page of renderedPages) {
+    for (const item of paintPlan(page.commands).shapes) {
+      const alpha = item.shape.shadow?.alpha;
+      if (alpha === undefined || alpha >= 1) continue;
+      const key = Math.round(alpha * 1000) / 1000;
+      if (alphaStateNames.has(key)) continue;
+      const nm = `GSa${alphaStateNames.size}`;
+      alphaStateNames.set(key, nm);
+      extGStateEntries[nm] = dict({ ca: key, CA: key });
+    }
+  }
   const resourcesDict = dict({
     Font: fontResourceDict,
     ...(xobjectResourceDict ? { XObject: xobjectResourceDict } : {}),
     ...(Object.keys(patternEntries).length > 0 ? { Pattern: dict(patternEntries) } : {}),
+    ...(Object.keys(extGStateEntries).length > 0 ? { ExtGState: dict(extGStateEntries) } : {}),
   });
 
   // PDF/A: build the sRGB ICC stream once — reused by the catalog OutputIntent
@@ -201,7 +218,12 @@ function assembleStyledPdf(
         tagFor: (structId) => builder.node(structId).type,
       };
     }
-    const { content: contentBytes, links } = emitPageContent(page, pageTagging, gradientNames);
+    const { content: contentBytes, links } = emitPageContent(
+      page,
+      pageTagging,
+      gradientNames,
+      alphaStateNames,
+    );
     const contentsRef = doc.add(stream({}, contentBytes));
     const pageEntries: Record<string, PdfValue> = {
       Type: name('Page'),
@@ -514,6 +536,8 @@ function embedFontResources(
   const cidSet = pdfaProfile?.part === 1;
   const out = new Map<string, EmbeddedFont>();
   for (const [variant, res] of laid.fontResources) {
+    // A resource nothing draws from carries no glyphs and needs no program.
+    if (res.gids.size === 0) continue;
     out.set(variant, embedTtfFont(doc, res.parsed, { usedGids: res.gids, cidSet }));
   }
   return out;
@@ -602,10 +626,39 @@ interface LinkRegion {
   readonly structId?: number;
 }
 
+/**
+ * The PDF dash array for a §18.18.3 border style, in points.
+ *
+ * Excel's dashes are proportional to the rule's weight; LibreOffice draws a
+ * `thin` dashed edge as 3pt on / 1pt off, which is 4× / 1.33× its 0.75pt width.
+ * An empty string means a solid rule.
+ */
+function dashPatternFor(style: BorderStyle | undefined, widthPt: number): string {
+  const u = Math.max(0.25, widthPt);
+  switch (style) {
+    case 'dashed':
+      return `[${formatNumber(u * 4)} ${formatNumber(u * 1.33)}]`;
+    // …and a dash-dot alternates the two, which is the whole difference
+    // between it and a dash on the page (cell-borders.xlsx names five of them).
+    case 'dashDot':
+      return `[${formatNumber(u * 4)} ${formatNumber(u * 1.33)} ${formatNumber(u)} ${formatNumber(u * 1.33)}]`;
+    case 'dashDotDot':
+      return (
+        `[${formatNumber(u * 4)} ${formatNumber(u * 1.33)} ${formatNumber(u)} ` +
+        `${formatNumber(u * 1.33)} ${formatNumber(u)} ${formatNumber(u * 1.33)}]`
+      );
+    case 'dotted':
+      return `[${formatNumber(u)} ${formatNumber(u * 1.33)}]`;
+    default:
+      return '';
+  }
+}
+
 function emitPageContent(
   page: LaidOutPage,
   tagging?: PageTagging,
   gradientNames?: ReadonlyMap<VectorShape, string>,
+  alphaStateNames?: ReadonlyMap<number, string>,
 ): { content: Uint8Array; links: Array<LinkRegion> } {
   const commands = page.commands;
   const links: Array<LinkRegion> = [];
@@ -664,14 +717,35 @@ function emitPageContent(
   if (borders.length > 0) {
     if (tagging) out.push('/Artifact BMC');
     out.push('q');
+    // ISO 32000-1 §8.4.3.3 cap style 2 — a projecting square end, half the line
+    // width past each endpoint. Each cell edge is stroked as its own segment, so
+    // with the initial butt cap two collinear segments MEET rather than overlap:
+    // 56295.xlsx shows a lighter pixel at every cell boundary that lands
+    // mid-pixel, and all four corners of a boxed range are left unpainted where
+    // the horizontal rule stops short of the vertical one. LibreOffice reaches
+    // the same result by overshooting each run by exactly half a width.
+    out.push('2 J');
     let lastWidth = -1;
     let lastColor = '';
+    let lastDash = '';
     for (const b of borders) {
       const width = b.borderSizePt;
       const color = b.borderColorHex;
-      if (width !== lastWidth) {
-        out.push(`${formatNumber(width)} w`);
-        lastWidth = width;
+      // §18.18.3 names line PATTERNS, not just weights, and ISO 32000-1 §8.4.3.6
+      // is where they belong. 57423.xlsx rules a whole band `dashed` and we drew
+      // twelve continuous edges. The projecting cap set above would lengthen
+      // every dash by half a width at each end and close the gaps, so a
+      // patterned rule reverts to the butt cap §8.4.3.3 starts with.
+      const dash = dashPatternFor(b.borderStyle, width);
+      if (dash !== lastDash) {
+        out.push(dash === '' ? '[] 0 d 2 J' : `${dash} 0 d 0 J`);
+        lastDash = dash;
+      }
+      // Each rule of a `double` takes a third of the declared width.
+      const strokeW = b.borderStyle === 'double' ? Math.max(0.25, width / 3) : width;
+      if (strokeW !== lastWidth) {
+        out.push(`${formatNumber(strokeW)} w`);
+        lastWidth = strokeW;
       }
       if (color !== lastColor) {
         const [r, g, bl] = hexToRgb01(color);
@@ -682,23 +756,33 @@ function emitPageContent(
       const y = H - b.y - b.height; // box bottom edge in PDF's y-up frame
       const w = b.width;
       const h = b.height;
-      switch (b.side) {
-        case 'top':
-          out.push(`${formatNumber(x)} ${formatNumber(y + h)} m`);
-          out.push(`${formatNumber(x + w)} ${formatNumber(y + h)} l`);
-          break;
-        case 'bottom':
-          out.push(`${formatNumber(x)} ${formatNumber(y)} m`);
-          out.push(`${formatNumber(x + w)} ${formatNumber(y)} l`);
-          break;
-        case 'left':
-          out.push(`${formatNumber(x)} ${formatNumber(y)} m`);
-          out.push(`${formatNumber(x)} ${formatNumber(y + h)} l`);
-          break;
-        case 'right':
-          out.push(`${formatNumber(x + w)} ${formatNumber(y)} m`);
-          out.push(`${formatNumber(x + w)} ${formatNumber(y + h)} l`);
-          break;
+      // The edge as a segment plus the direction to offset it in: a `double`
+      // rule is TWO lines straddling the edge, and every other style is the one
+      // line down the middle of it.
+      const [x1, y1, x2, y2, nx, ny]: readonly [
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+      ] =
+        b.side === 'top'
+          ? [x, y + h, x + w, y + h, 0, 1]
+          : b.side === 'bottom'
+            ? [x, y, x + w, y, 0, 1]
+            : b.side === 'left'
+              ? [x, y, x, y + h, 1, 0]
+              : [x + w, y, x + w, y + h, 1, 0];
+      // §18.18.3 `double` is a pair of rules with a gap between them, not a
+      // heavier single one — 59264.xlsx labels its sampler cell DOUBLE and both
+      // references draw two lines where we drew one. Each line takes a third of
+      // the declared width and the gap the middle third, which is how Excel and
+      // Calc split it.
+      const offsets = b.borderStyle === 'double' ? [-width / 3, width / 3] : [0];
+      for (const d of offsets) {
+        out.push(`${formatNumber(x1 + nx * d)} ${formatNumber(y1 + ny * d)} m`);
+        out.push(`${formatNumber(x2 + nx * d)} ${formatNumber(y2 + ny * d)} l`);
       }
       out.push('S');
     }
@@ -722,7 +806,14 @@ function emitPageContent(
       ...sh.shape,
       transform: [t[0], -t[1], t[2], -t[3], t[4], H - t[5]],
     };
-    for (const op of emitVectorShape(shape, gradientNames?.get(sh.shape))) out.push(op);
+    const alpha = sh.shape.shadow?.alpha;
+    const alphaState =
+      alpha !== undefined && alpha < 1
+        ? alphaStateNames?.get(Math.round(alpha * 1000) / 1000)
+        : undefined;
+    for (const op of emitVectorShape(shape, gradientNames?.get(sh.shape), alphaState)) {
+      out.push(op);
+    }
   });
 
   const lines = plan.lines;
@@ -825,10 +916,41 @@ function emitPageContent(
     // Emit one line command's glyphs/images/math. Manages BT/ET through the
     // shared `inBT` state; produces operator-for-operator the same output as
     // before tagging existed, so the non-tagged path stays byte-identical.
+    const emitClipped = (cmd: TextLineItem, body: (c: TextLineItem) => void) => {
+      const clip = cmd.clip;
+      if (!clip) {
+        body(cmd);
+        return;
+      }
+      if (inBT) {
+        out.push('ET');
+        inBT = false;
+      }
+      out.push('q');
+      out.push(
+        `${formatNumber(clip.x)} ${formatNumber(H - clip.y - clip.height)} ${formatNumber(clip.width)} ${formatNumber(clip.height)} re W n`,
+      );
+      lastFont = '';
+      lastSize = -1;
+      lastColor = '';
+      out.push('BT');
+      inBT = true;
+      body(cmd);
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- `body` may close text mode through a closure; flow analysis cannot see it.
+      if (inBT) {
+        out.push('ET');
+        inBT = false;
+      }
+      out.push('Q');
+      lastFont = '';
+      lastSize = -1;
+      lastColor = '';
+    };
     const emitOneLine = (cmd: TextLineItem) => {
       const line = cmd.line;
       const originX = cmd.originX;
       const baselineY = H - cmd.baselineY; // top-left frame → PDF y-up
+      const rotationDeg = cmd.rotationDeg ?? 0;
       // Link regions (ISO 32000-1 §12.5.6.5): contiguous tokens sharing an
       // href become one clickable rect per line. The box mirrors the layout's
       // line metrics (ascent: font size vs math ascent; descent: lineDescent's
@@ -893,6 +1015,10 @@ function emitPageContent(
 
       // Encode a token's text, reversing code points for RTL (odd-level) runs
       // so glyphs lay out right-to-left as our cursor advances left-to-right.
+      /** A text token carrying underline or strikethrough. */
+      const isDecorated = (tok: (typeof line.tokens)[number]): tok is TextToken =>
+        tok.kind === 'text' && (tok.resolvedRun.underline !== 'none' || tok.resolvedRun.strike);
+
       const encodeToken = (tok: TextToken): string => {
         const text = tok.bidiLevel % 2 === 1 ? reverseByCodePoint(tok.text) : tok.text;
         return tok.font.measure.encodeTextAsCidHex(text);
@@ -927,7 +1053,68 @@ function emitPageContent(
         out.push('Q');
       }
 
-      if (extraPerSpace > 0 || hasImageToken || hasMathToken || hasRtl) {
+      // §17.3.2.40 `w:u` / §17.3.2.9 `w:strike` — decoration is a path, not a
+      // glyph, so like the highlight above it is drawn with the text object
+      // closed. Trailing spaces are decorated too, which is what a run of them
+      // under an underline is for. Gated on a decorated token being present, so
+      // a document with none emits byte-identically.
+      if (line.tokens.some(isDecorated)) {
+        if (inBT) {
+          out.push('ET');
+          inBT = false;
+        }
+        out.push('q');
+        let dx: number = originX;
+        for (const tok of line.tokens) {
+          const w = tok.widthPt + (tok.kind === 'text' && tok.isSpace ? extraPerSpace : 0);
+          if (isDecorated(tok)) {
+            const [r, g, b] = hexToRgb01(tok.resolvedRun.colorHex);
+            const thickness = Math.max(0.4, tok.fontSizePt * 0.06);
+            out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} rg`);
+            if (tok.resolvedRun.underline !== 'none') {
+              const y = baselineY - tok.fontSizePt * 0.12 - thickness;
+              out.push(
+                `${formatNumber(dx)} ${formatNumber(y)} ` +
+                  `${formatNumber(w)} ${formatNumber(thickness)} re f`,
+              );
+            }
+            if (tok.resolvedRun.strike) {
+              const y = baselineY + tok.fontSizePt * 0.26;
+              out.push(
+                `${formatNumber(dx)} ${formatNumber(y)} ` +
+                  `${formatNumber(w)} ${formatNumber(thickness)} re f`,
+              );
+            }
+          }
+          dx += w;
+        }
+        out.push('Q');
+      }
+
+      // A super/subscript draws off the baseline, so the line can no longer be
+      // one Tm and a run of Tj — each token needs its own placement.
+      const hasRise = line.tokens.some((t) => t.kind === 'text' && t.risePt !== undefined);
+      // A rotated line advances its glyphs along the ROTATED axis, which one text
+      // matrix already does for free — but only on the single-Tm path, where the
+      // advance is the font's and not one this emitter computes in page space.
+      if (rotationDeg !== 0 && !hasImageToken && !hasMathToken) {
+        if (!inBT) {
+          out.push('BT');
+          inBT = true;
+        }
+        const rad = (rotationDeg * Math.PI) / 180;
+        const cos = formatNumber(Math.cos(rad));
+        const sin = formatNumber(Math.sin(rad));
+        out.push(
+          `${cos} ${sin} ${formatNumber(-Math.sin(rad))} ${cos} ` +
+            `${formatNumber(originX)} ${formatNumber(baselineY)} Tm`,
+        );
+        for (const tok of line.tokens) {
+          if (tok.kind !== 'text') continue;
+          switchFontIfNeeded(tok);
+          out.push(`<${tok.font.measure.encodeTextAsCidHex(tok.text)}> Tj`);
+        }
+      } else if (extraPerSpace > 0 || hasImageToken || hasMathToken || hasRtl || hasRise) {
         // Per-token absolute positioning. Required for justify (inter-word
         // slack), inline images (text-mode exits), and BiDi (visual order
         // differs from logical order). Tokens are emitted in visual order.
@@ -952,7 +1139,7 @@ function emitPageContent(
             inBT = true;
           }
           switchFontIfNeeded(tok);
-          out.push(`1 0 0 1 ${formatNumber(x)} ${formatNumber(baselineY)} Tm`);
+          out.push(`1 0 0 1 ${formatNumber(x)} ${formatNumber(baselineY + (tok.risePt ?? 0))} Tm`);
           out.push(`<${encodeToken(tok)}> Tj`);
           const tokenX0 = x;
           x += tok.widthPt;
@@ -1003,7 +1190,7 @@ function emitPageContent(
         } else {
           out.push('/Artifact BMC');
         }
-        emitOneLine(cmd);
+        emitClipped(cmd, emitOneLine);
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- emitOneLine may leave text mode open (inBT true) via a closure; flow analysis can't track it.
         if (inBT) {
           out.push('ET');
@@ -1014,7 +1201,7 @@ function emitPageContent(
     } else {
       out.push('BT');
       inBT = true;
-      for (const cmd of lines) emitOneLine(cmd);
+      for (const cmd of lines) emitClipped(cmd, emitOneLine);
       // Ensure we exit text mode if the last line ended on an image token.
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- emitOneLine toggles inBT via a closure; flow analysis can't see it and assumes it stays true.
       if (inBT) out.push('ET');

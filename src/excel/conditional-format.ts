@@ -30,6 +30,7 @@ import type {
   Dxf,
   MergedRange,
   WorksheetCell,
+  XlsxBorder,
   XlsxStyles,
 } from '@/core/spreadsheet-model';
 import type { CompiledFormula, EvalContext, FErr, FValue, Rect, Scalar } from '@/excel/formula';
@@ -78,16 +79,32 @@ type Mutable<T> = { -readonly [K in keyof T]: T[K] };
  */
 export interface CfOverride {
   readonly fillHex?: string;
+  /**
+   * §18.8.9 — the edges the rule's dxf declares. A rule may format with nothing
+   * else, and dropping them made such a rule invisible.
+   */
+  readonly border?: XlsxBorder;
+  /** §18.8.9 — the format the rule renders the cell's value in. */
+  readonly numberFormat?: string;
   readonly fontColorHex?: string;
   readonly bold?: boolean;
   readonly italic?: boolean;
+  /** §18.8.37 — the rule strikes the cell's text through. */
+  readonly strike?: boolean;
   /** An in-cell data bar: its fraction of the cell width, colour, and optional left offset. */
   readonly dataBar?: {
     readonly fraction: number;
     readonly colorHex: string;
     readonly startFraction?: number;
+    readonly negative?: boolean;
   };
   readonly icon?: CellIcon;
+  /**
+   * §18.3.1.28 `<dataBar showValue="0">` — the cell shows its BAR and not its
+   * number. Excel's "Show Bar Only": the figure would otherwise sit on top of
+   * its own gauge.
+   */
+  readonly hideValue?: boolean;
 }
 
 /**
@@ -102,6 +119,13 @@ export type CellConditionalFormatter = (
   col: number,
   numericValue: number | undefined,
   text: string | undefined,
+  /**
+   * The cell holds nothing. It still COMPARES as zero — Excel and Calc both
+   * colour an empty cell for a rule written `cellIs equal 0`, which is how
+   * 48539.xlsx paints its whole Pass/Fail column red — but it is not a value
+   * that can repeat, so duplicate/uniqueValues must pass it over.
+   */
+  blank?: boolean,
 ) => CfOverride | undefined;
 
 // A resolved top10/aboveAverage threshold: a value matches by comparing against
@@ -243,20 +267,23 @@ export function buildConditionalFormatter(
     ? buildEvalContext(cells, resolveText, nowSerial, date1904, cross)
     : undefined;
 
-  return (row, col, value, text) => {
+  return (row, col, value, text, blank) => {
     // A cell with neither a comparable number nor any text matches nothing — skip
     // the loop entirely so number-only sheets stay byte-identical to before W5.
     // (An expression rule may still target an empty cell, so keep going then.)
     if (!hasExpr && value === undefined && (text === undefined || text.length === 0)) {
       return undefined;
     }
-    const dupKey = dupKeyOf(value, text);
+    const dupKey = blank === true ? undefined : dupKeyOf(value, text);
     let textFmt: CfOverride | undefined;
     let textClaimed = false;
     let bar: CfOverride['dataBar'];
+    let hideValue = false;
     let icon: CfOverride['icon'];
-    const claim = (dxfId: number): void => {
-      textFmt = dxfToOverride(dxfs[dxfId]);
+    // The 2009 extension writes the format inside the rule, where `dxfId`
+    // names nothing — see CfRuleCellIs.dxf.
+    const claim = (r: { readonly dxfId: number; readonly dxf?: Dxf }): void => {
+      textFmt = dxfToOverride(r.dxf ?? dxfs[r.dxfId]);
       textClaimed = true;
     };
     for (const {
@@ -272,15 +299,18 @@ export function buildConditionalFormatter(
     } of flat) {
       if (!coversCell(ranges, row, col)) continue;
       switch (rule.type) {
-        case 'cellIs':
-          if (
-            !textClaimed &&
-            value !== undefined &&
-            cellIsMatches(rule.operator, value, rule.formulas)
-          ) {
-            claim(rule.dxfId);
-          }
+        case 'cellIs': {
+          if (textClaimed) break;
+          // A numeric cell against a numeric operand is arithmetic; anything
+          // else is a text comparison — see cellIsMatchesText.
+          const numeric =
+            value !== undefined && Number.isFinite(Number(operandText(rule.formulas[0])));
+          const hit = numeric
+            ? cellIsMatches(rule.operator, value, rule.formulas)
+            : text !== undefined && cellIsMatchesText(rule.operator, text, rule.formulas);
+          if (hit) claim(rule);
           break;
+        }
         case 'colorScale':
           if (!textClaimed && value !== undefined && scale) {
             textFmt = { fillHex: rgbHex(colorScaleColor(scale, value)) };
@@ -290,6 +320,7 @@ export function buildConditionalFormatter(
         case 'dataBar':
           if (!bar && value !== undefined && resolved) {
             bar = dataBarBar(resolved, value);
+            if (rule.showValue === false) hideValue = true;
           }
           break;
         case 'iconSet':
@@ -306,13 +337,13 @@ export function buildConditionalFormatter(
             threshold &&
             thresholdMatches(threshold, value)
           ) {
-            claim(rule.dxfId);
+            claim(rule);
           }
           break;
         case 'duplicateValues':
         case 'uniqueValues':
           if (!textClaimed && dupKey !== undefined && dupKeys?.has(dupKey)) {
-            claim(rule.dxfId);
+            claim(rule);
           }
           break;
         case 'containsText':
@@ -320,7 +351,7 @@ export function buildConditionalFormatter(
         case 'beginsWith':
         case 'endsWith':
           if (!textClaimed && text !== undefined && textRuleMatches(rule, text)) {
-            claim(rule.dxfId);
+            claim(rule);
           }
           break;
         case 'expression':
@@ -333,7 +364,7 @@ export function buildConditionalFormatter(
               curRow: row,
               curCol: col,
             };
-            if (evaluateToBool(compiled, ctx, shift)) claim(rule.dxfId);
+            if (evaluateToBool(compiled, ctx, shift)) claim(rule);
           }
           break;
         case 'timePeriod':
@@ -344,7 +375,7 @@ export function buildConditionalFormatter(
             nowSerial !== undefined &&
             timePeriodMatches(rule.timePeriod, value, nowSerial, date1904)
           ) {
-            claim(rule.dxfId);
+            claim(rule);
           }
           break;
       }
@@ -354,6 +385,7 @@ export function buildConditionalFormatter(
       ...(textFmt ?? {}),
       ...(bar ? { dataBar: bar } : {}),
       ...(icon ? { icon } : {}),
+      ...(hideValue ? { hideValue: true } : {}),
     };
   };
 }
@@ -552,6 +584,53 @@ function coversCell(ranges: ReadonlyArray<MergedRange>, row: number, col: number
   return false;
 }
 
+/** A `cellIs` operand: a bare number, or a quoted string literal. */
+function operandText(raw: string | undefined): string {
+  const t = (raw ?? '').trim();
+  const quoted = /^"(.*)"$/su.exec(t);
+  return quoted ? (quoted[1] ?? '') : t;
+}
+
+/**
+ * §18.3.1.11 — a `cellIs` rule compares the cell against one or two operands,
+ * and the comparison is not always arithmetic: `notEqual ""` over a sheet of
+ * words is how a document asks to format every cell that HOLDS something.
+ * Reading only numbers, that rule matched nothing, and
+ * tdf152581_bordercolorNotExportedToXLSX.xlsx lost the border and fill its two
+ * cells carry. Both sides numeric ⇒ compare numbers, as before; otherwise
+ * compare text, case-insensitively, the way Excel collates it.
+ */
+function cellIsMatchesText(
+  operator: CfOperator,
+  text: string,
+  formulas: ReadonlyArray<string>,
+): boolean {
+  const a = operandText(formulas[0]).toLowerCase();
+  const v = text.toLowerCase();
+  switch (operator) {
+    case 'lessThan':
+      return v < a;
+    case 'lessThanOrEqual':
+      return v <= a;
+    case 'equal':
+      return v === a;
+    case 'notEqual':
+      return v !== a;
+    case 'greaterThanOrEqual':
+      return v >= a;
+    case 'greaterThan':
+      return v > a;
+    case 'between':
+    case 'notBetween': {
+      const b = operandText(formulas[1]).toLowerCase();
+      const lo = a <= b ? a : b;
+      const hi = a <= b ? b : a;
+      const inside = v >= lo && v <= hi;
+      return operator === 'between' ? inside : !inside;
+    }
+  }
+}
+
 function cellIsMatches(
   operator: CfOperator,
   value: number,
@@ -591,6 +670,9 @@ function dxfToOverride(dxf: Dxf | undefined): CfOverride | undefined {
   if (dxf.font?.colorHex) out.fontColorHex = dxf.font.colorHex;
   if (dxf.font?.bold !== undefined) out.bold = dxf.font.bold;
   if (dxf.font?.italic !== undefined) out.italic = dxf.font.italic;
+  if (dxf.font?.strike !== undefined) out.strike = dxf.font.strike;
+  if (dxf.border) out.border = dxf.border;
+  if (dxf.numberFormat) out.numberFormat = dxf.numberFormat;
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
@@ -629,8 +711,8 @@ function resolveColorScale(
   const vmax = sorted[sorted.length - 1]!;
 
   const thresholds: Array<number> = [];
-  for (const cfvo of rule.cfvos) {
-    const t = resolveCfvo(cfvo, vmin, vmax, sorted);
+  for (const [i, cfvo] of rule.cfvos.entries()) {
+    const t = resolveCfvo(cfvo, vmin, vmax, sorted, i === rule.cfvos.length - 1);
     if (t === undefined) return undefined;
     thresholds.push(t);
   }
@@ -657,6 +739,7 @@ function resolveCfvo(
   vmin: number,
   vmax: number,
   sorted: ReadonlyArray<number>,
+  isLast = false,
 ): number | undefined {
   switch (cfvo.type) {
     case 'min':
@@ -666,9 +749,16 @@ function resolveCfvo(
     case 'autoMax':
       return vmax;
     case 'num':
+      return Number.isFinite(Number(cfvo.val)) ? Number(cfvo.val) : undefined;
+    // §18.3.1.11 — a `formula` stop is an expression, and one we cannot
+    // evaluate is not a reason to drop the whole rule: the stop falls back to
+    // the end of the extent it stands for, which is what a reader with no
+    // answer paints. colorscale.xlsx sets its third scale's top stop to
+    // `2*A1+2` and the column came out with no colour at all where both
+    // references paint the full gradient.
     case 'formula': {
       const n = Number(cfvo.val);
-      return Number.isFinite(n) ? n : undefined;
+      return Number.isFinite(n) ? n : isLast ? vmax : vmin;
     }
     case 'percent': {
       const p = Number(cfvo.val);
@@ -744,7 +834,7 @@ function resolveDataBar(
   const vmin = sorted[0]!;
   const vmax = sorted[sorted.length - 1]!;
   const lower = resolveCfvo(rule.cfvos[0]!, vmin, vmax, sorted);
-  const upper = resolveCfvo(rule.cfvos[1]!, vmin, vmax, sorted);
+  const upper = resolveCfvo(rule.cfvos[1]!, vmin, vmax, sorted, true);
   if (lower === undefined || upper === undefined) return undefined;
   return {
     lower,
@@ -763,7 +853,7 @@ function resolveDataBar(
 function dataBarBar(
   bar: ResolvedDataBar,
   value: number,
-): { fraction: number; colorHex: string; startFraction?: number } {
+): { fraction: number; colorHex: string; startFraction?: number; negative?: boolean } {
   if (bar.lower < 0 && bar.upper > 0) {
     const axis = -bar.lower / (bar.upper - bar.lower); // zero's position in [0,1]
     if (value >= 0) {
@@ -771,7 +861,12 @@ function dataBarBar(
       return { fraction: w, colorHex: bar.colorHex, startFraction: axis };
     }
     const w = (Math.abs(value) / Math.abs(bar.lower)) * axis;
-    return { fraction: w, colorHex: bar.negativeColorHex, startFraction: axis - w };
+    return {
+      fraction: w,
+      colorHex: bar.negativeColorHex,
+      startFraction: axis - w,
+      negative: true,
+    };
   }
   return { fraction: dataBarFraction(bar, value), colorHex: bar.colorHex };
 }
@@ -920,7 +1015,8 @@ function resolveAboveAverage(
 
 // §18.3.1.10 duplicate/uniqueValues — the set of value keys that repeat within the
 // range (duplicate) or occur exactly once (unique). Numbers key by value, text
-// case-insensitively; blanks (absent from the sparse cell list) never qualify.
+// case-insensitively; a blank never qualifies — whether it is absent from the
+// sparse cell list or present in it carrying nothing but a style.
 function resolveDupUnique(
   rule: CfRuleDupUnique,
   ranges: ReadonlyArray<MergedRange>,
@@ -950,6 +1046,13 @@ function cellDupKey(
   resolveText: ((cell: WorksheetCell) => string) | undefined,
 ): string | undefined {
   if (cell.type === 'n') {
+    // A cell can be present and still hold nothing: `<c r="C49" s="3"/>` is
+    // written only to carry a style, and §18.3.1.4 types it "n" by default.
+    // Its rawValue is empty, and `Number('')` is 0 — so a row of styled blanks
+    // read as five copies of the number zero and coloured each other in as
+    // duplicates (invalid_ext_data_validation.xlsx, a page of pink for a row
+    // neither reference fills).
+    if (cell.rawValue.length === 0) return undefined;
     const n = Number(cell.rawValue);
     return Number.isFinite(n) ? `n:${n}` : undefined;
   }

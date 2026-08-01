@@ -39,9 +39,24 @@ interface Adopted {
 // Kept alphabetical by file so the NOTICE diffs cleanly.
 const ADOPTED: ReadonlyArray<Adopted> = [
   {
+    file: '45540_form_Header.xlsx',
+    source: 'poi-xlsx',
+    why: 'Forty captionless ActiveX check boxes over a form — a control drawn with its `<control name>` writes an identifier across the page.',
+  },
+  {
+    file: '47737.xlsx',
+    source: 'poi-xlsx',
+    why: 'Two sheets on `<pageSetup scale>` with no fit-to-page — a scaled sheet still paginates across its columns — and a second sheet whose only text is its header, which Excel refuses to print at all.',
+  },
+  {
     file: '49156.xlsx',
     source: 'poi-xlsx',
     why: 'Print area combined with manual row breaks — pagination driven by the document, not the page size.',
+  },
+  {
+    file: '50299.xlsx',
+    source: 'poi-xlsx',
+    why: 'A rectangle whose fill and outline live only in `<xdr:style>` — gallery references into the theme, with nothing in its spPr — beside ten empty cells that carry nothing but a fill.',
   },
   {
     file: '53105.xlsx',
@@ -59,9 +74,19 @@ const ADOPTED: ReadonlyArray<Adopted> = [
     why: 'Print_Titles across four sheets — the header rows must repeat on every continuation page.',
   },
   {
+    file: 'Spill.xlsx',
+    source: 'lo-xlsx',
+    why: 'A dynamic array whose spill is blocked: the cells cache a legacy `#VALUE!` and point at a rich value that names the real error.',
+  },
+  {
     file: 'bnc762542.xlsx',
     source: 'lo-xlsx',
     why: 'A3 landscape with fitToPage — paper size 8, the largest in the set.',
+  },
+  {
+    file: 'singlecontrol.xlsx',
+    source: 'lo-xlsx',
+    why: 'One check box anchored 7331pt down a sheet with no cells — the drawings have to paginate on their own, downwards.',
   },
   {
     file: 'simple-monthly-budget.xlsx',
@@ -89,6 +114,11 @@ const ADOPTED: ReadonlyArray<Adopted> = [
     why: 'Print area, print titles and fitToPage together — the densest print-model document in the corpus.',
   },
   {
+    file: 'open-as-read-only.xlsx',
+    source: 'lo-xlsx',
+    why: 'One cell in a one-column used range (`<dimension ref="A1"/>`) holding a sentence far wider than it — the plainest case of text overflowing past the end of the grid.',
+  },
+  {
     file: 'duplicate-filename.xlsx',
     source: 'poi-xlsx',
     why: 'Declares t="inlineStr" but writes the text into <v>; also ships two ZIP entries for the same part name.',
@@ -97,6 +127,11 @@ const ADOPTED: ReadonlyArray<Adopted> = [
     file: 'tdf111980_radioButtons.xlsx',
     source: 'lo-xlsx',
     why: 'Reaches its ActiveX controls through §18.3.1.19 <control> rather than <oleObject>, with the state in binary activeX#.bin property bags.',
+  },
+  {
+    file: 'tdf115159.xlsx',
+    source: 'lo-xlsx',
+    why: 'Two untouched tabs beside one sheet of data — an empty sheet must not print a page of its own.',
   },
   {
     file: 'tdf122336.xlsx',

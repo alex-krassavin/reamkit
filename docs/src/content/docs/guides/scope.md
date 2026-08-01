@@ -158,7 +158,10 @@ charts — and is byte-stable across a read↔write loop.
   `TODAY()`/`NOW()` read an explicit reference date you pass as `now` (never the
   system clock), so without one those clock-relative rules simply don't paint. The
   highest-priority matching rule claims the cell's fill / font; a data bar or icon
-  applies on top.
+  applies on top. Rules the 2009 extension carries in `<extLst>` (`x14:cfRule` —
+  a child `<xm:sqref>`, `<xm:f>` formulas and an inline `<x14:dxf>`) are read
+  beside the ones the base schema declares; a `cellIs` operand may be text as
+  well as a number.
 - **Sparklines** — per-cell line / column / win-loss mini charts, including
   cross-sheet data ranges and blank-cell gaps.
 - **Excel tables** (`xl/tables`) — banded rows and a styled header row, the
@@ -178,7 +181,14 @@ charts — and is byte-stable across a read↔write loop.
   items live in a pivot cache degrades to a caption-only box.
 - Charts, **pictures and shapes** anchored to the sheet (the worksheet drawing part)
   render after the grid — a picture keeps its bytes; a shape its preset/custom
-  geometry, fill, outline and text body (reusing the DrawingML shape readers).
+  geometry, fill, outline, text body and `a:xfrm` rotation/flips (reusing the
+  DrawingML shape readers). All three anchor kinds place a drawing:
+  `twoCellAnchor`, `oneCellAnchor` and `absoluteAnchor`; a group (`xdr:grpSp`)
+  maps its children through the group's own coordinate space.
+- **SmartArt** — rendered from the diagram's pre-rendered DrawingML drawing
+  (`diagrams/drawing#.xml`, the `dsp:` namespace) as positioned shapes, each
+  label in the rectangle the diagram sets aside for it; a file with no drawing
+  fallback degrades to a graceful loss rather than an empty space.
 - **Cell hyperlinks** (`<hyperlinks>`) — an external `r:id` resolves to a URL and the
   covered cell becomes a clickable link (PDF `/Link` annotation, HTML `<a>`).
 - **Header/footer text** (`<headerFooter>`) — Excel's `&`-code mini-language (`&L`/`&C`/

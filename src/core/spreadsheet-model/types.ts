@@ -19,6 +19,12 @@ export interface WorksheetCell {
   readonly inlineText?: string;
   /** Index into the workbook's `cellXfs` (`xl/styles.xml`). 0 means default style. */
   readonly styleIndex?: number;
+  /**
+   * §18.3.1.4 `vm` — 1-based index into `xl/metadata.xml`'s `<valueMetadata>`.
+   * A cell whose value is a rich value stores a legacy error in `<v>` for
+   * readers that predate the feature, and points here for the real one.
+   */
+  readonly valueMetadataIndex?: number;
 }
 
 /** §18.3.1.13 `<col>` — a width (in character units) for the column span `min..max`. */
@@ -26,6 +32,30 @@ export interface ColumnWidth {
   readonly min: number; // 1-indexed in OOXML, kept as-is here
   readonly max: number;
   readonly widthChars: number;
+  /** §18.3.1.13 `hidden` — Excel and LibreOffice print neither the column nor its cells. */
+  readonly hidden?: boolean;
+}
+
+/**
+ * §18.3.1.13 `<col style>` / §18.3.1.73 `<row s customFormat>` — the style a
+ * cell takes when the file gives it none of its own.
+ *
+ * A spreadsheet formats whole columns and whole rows without writing a `<c>`
+ * for each one: 51710.xlsx paints its column A grey with a single `<col
+ * min="1" max="1" style="1"/>`, and 588 of its rows carry no A cell at all.
+ * The band is on the page in Excel and in LibreOffice, so the default has to
+ * reach the paint even where there is nothing to paint it on.
+ */
+export interface ColumnStyle {
+  readonly min: number; // 1-indexed, as OOXML writes it
+  readonly max: number;
+  readonly styleIndex: number;
+}
+
+/** §18.3.1.73 — the style a row hands to its unwritten cells. */
+export interface RowStyle {
+  readonly row: number; // 0-indexed
+  readonly styleIndex: number;
 }
 
 /** §18.3.1.55 `<mergeCell>` — a merged cell rectangle (0-indexed, inclusive bounds). */
@@ -45,6 +75,8 @@ export interface RowHeight {
   readonly row: number; // 0-indexed
   readonly heightPt: number;
   readonly customHeight: boolean;
+  /** §18.3.1.73 `hidden` — the row is not printed at all. */
+  readonly hidden?: boolean;
 }
 
 /** ECMA-376 Part 1 §18.3.1.62 — `<pageMargins>`. All attributes are in inches. */
@@ -72,6 +104,18 @@ export interface XlsxPageSetup {
   readonly fitToWidth?: number;
   /** Number of pages tall to fit to; default 1. */
   readonly fitToHeight?: number;
+  /**
+   * `r:id` of the sheet's `printerSettings` part. When `paperSize` is absent the
+   * paper is whatever that part's DEVMODE says, which is how Excel records the
+   * choice made in the print dialog rather than in the sheet.
+   */
+  readonly printerSettingsRelId?: string;
+  /**
+   * §18.3.1.63 `cellComments` — where the sheet's notes are printed:
+   * `none` (the default) prints none of them, `asDisplayed` prints them where
+   * they float, `atEnd` gathers them after the grid.
+   */
+  readonly cellComments?: 'none' | 'asDisplayed' | 'atEnd';
 }
 
 /**
@@ -82,6 +126,11 @@ export interface XlsxPageSetup {
  */
 export interface XlsxPrintOptions {
   readonly gridLines?: boolean;
+  /**
+   * §18.3.1.70 `headings` — print the column letters across the top and the row
+   * numbers down the left, the way the sheet looks on screen. Off by default.
+   */
+  readonly headings?: boolean;
   readonly horizontalCentered?: boolean;
   readonly verticalCentered?: boolean;
 }
@@ -98,6 +147,10 @@ export interface ParsedWorksheet {
   readonly columns: ReadonlyArray<ColumnWidth>;
   readonly merges: ReadonlyArray<MergedRange>;
   readonly rowHeights: ReadonlyArray<RowHeight>;
+  /** §18.3.1.13 `<col style>` — the default style of a whole column span. */
+  readonly columnStyles?: ReadonlyArray<ColumnStyle>;
+  /** §18.3.1.73 `<row s customFormat="1">` — the default style of a whole row. */
+  readonly rowStyles?: ReadonlyArray<RowStyle>;
   /**
    * ECMA-376 §18.3.1.81 `<sheetFormatPr defaultRowHeight>` — the height, in
    * points, of every row that carries no `ht` of its own. A row in a
@@ -135,6 +188,12 @@ export interface ParsedWorksheet {
   readonly colBreaks?: ReadonlyArray<number>;
   /** §18.3.1.36 `<drawing r:id>` — the sheet's drawing part (charts/shapes). */
   readonly drawingRelId?: string;
+  /**
+   * §18.3.1.36 `<legacyDrawing r:id>` — the relationship to the sheet's VML
+   * drawing part. A form control put on the sheet by Excel's Forms toolbar is
+   * declared there and nowhere else.
+   */
+  readonly legacyDrawingRelId?: string;
   /** §18.3.1.18 `<conditionalFormatting>` — value-driven cell formats (E-SHEET SC1). */
   readonly conditionalFormats?: ReadonlyArray<ConditionalFormat>;
   /**
@@ -279,6 +338,8 @@ export interface XlsxFont {
   readonly bold?: boolean;
   readonly italic?: boolean;
   readonly underline?: boolean;
+  /** §18.8.37 `<strike/>` — the font is struck through. */
+  readonly strike?: boolean;
   readonly colorHex?: string;
   readonly name?: string;
 }
@@ -397,6 +458,18 @@ export interface XlsxStyles {
 export interface Dxf {
   readonly font?: XlsxFont;
   readonly fill?: XlsxFill;
+  /**
+   * §18.8.9 `<border>` inside a dxf — a rule may format a cell with nothing but
+   * an edge, and half the differential formats in a real workbook do exactly
+   * that (a rule under every year boundary, a box around a total).
+   */
+  readonly border?: XlsxBorder;
+  /**
+   * §18.8.9 `<numFmt formatCode>` — a rule may change how the VALUE reads, not
+   * just how the cell looks: two decimals where a threshold is crossed. Every
+   * dxf in new_cond_format_test.xlsx is one of these and nothing else.
+   */
+  readonly numberFormat?: string;
 }
 
 /**
@@ -435,6 +508,12 @@ export interface CfRuleCellIs {
   readonly operator: CfOperator;
   readonly formulas: ReadonlyArray<string>;
   readonly dxfId: number;
+  /**
+   * The format itself, when the rule carries it instead of pointing at the
+   * workbook's table — the 2009 extension (`<x14:cfRule><x14:dxf>`) writes it
+   * inline, and `dxfId` names nothing there. Takes precedence when present.
+   */
+  readonly dxf?: Dxf;
 }
 
 /**
@@ -489,6 +568,12 @@ export interface CfRuleDataBar {
   readonly colorHex: string;
   readonly minLength?: number;
   readonly maxLength?: number;
+  /**
+   * §18.3.1.28 `showValue` — false means the cell shows the BAR ONLY, with its
+   * number hidden. Excel's "Show Bar Only" checkbox; a dashboard uses it so the
+   * figure does not sit on top of its own gauge.
+   */
+  readonly showValue?: boolean;
 }
 
 /**
@@ -517,6 +602,12 @@ export interface CfRuleTop10 {
   readonly percent: boolean;
   readonly bottom: boolean;
   readonly dxfId: number;
+  /**
+   * The format itself, when the rule carries it instead of pointing at the
+   * workbook's table — the 2009 extension (`<x14:cfRule><x14:dxf>`) writes it
+   * inline, and `dxfId` names nothing there. Takes precedence when present.
+   */
+  readonly dxf?: Dxf;
 }
 
 /**
@@ -531,6 +622,12 @@ export interface CfRuleAboveAverage {
   readonly equalAverage: boolean;
   readonly stdDev?: number;
   readonly dxfId: number;
+  /**
+   * The format itself, when the rule carries it instead of pointing at the
+   * workbook's table — the 2009 extension (`<x14:cfRule><x14:dxf>`) writes it
+   * inline, and `dxfId` names nothing there. Takes precedence when present.
+   */
+  readonly dxf?: Dxf;
 }
 
 /**
@@ -543,6 +640,12 @@ export interface CfRuleDupUnique {
   readonly type: 'duplicateValues' | 'uniqueValues';
   readonly priority: number;
   readonly dxfId: number;
+  /**
+   * The format itself, when the rule carries it instead of pointing at the
+   * workbook's table — the 2009 extension (`<x14:cfRule><x14:dxf>`) writes it
+   * inline, and `dxfId` names nothing there. Takes precedence when present.
+   */
+  readonly dxf?: Dxf;
 }
 
 /**
@@ -556,6 +659,12 @@ export interface CfRuleText {
   readonly priority: number;
   readonly text: string;
   readonly dxfId: number;
+  /**
+   * The format itself, when the rule carries it instead of pointing at the
+   * workbook's table — the 2009 extension (`<x14:cfRule><x14:dxf>`) writes it
+   * inline, and `dxfId` names nothing there. Takes precedence when present.
+   */
+  readonly dxf?: Dxf;
   readonly formula?: string;
 }
 
@@ -572,6 +681,12 @@ export interface CfRuleExpression {
   readonly priority: number;
   readonly formula: string;
   readonly dxfId: number;
+  /**
+   * The format itself, when the rule carries it instead of pointing at the
+   * workbook's table — the 2009 extension (`<x14:cfRule><x14:dxf>`) writes it
+   * inline, and `dxfId` names nothing there. Takes precedence when present.
+   */
+  readonly dxf?: Dxf;
 }
 
 /** §18.18.82 ST_TimePeriod — the clock-relative window a `timePeriod` rule tests. */
@@ -600,6 +715,12 @@ export interface CfRuleTimePeriod {
   readonly priority: number;
   readonly timePeriod: TimePeriodKind;
   readonly dxfId: number;
+  /**
+   * The format itself, when the rule carries it instead of pointing at the
+   * workbook's table — the 2009 extension (`<x14:cfRule><x14:dxf>`) writes it
+   * inline, and `dxfId` names nothing there. Takes precedence when present.
+   */
+  readonly dxf?: Dxf;
   readonly formula?: string;
 }
 
@@ -658,6 +779,18 @@ export interface HeaderFooter {
 export interface FormControlRef {
   readonly name?: string;
   readonly relId: string;
+  /**
+   * §18.3.1.19 `@shapeId` — the id of this control's shape in the sheet's legacy
+   * VML drawing. It is what tells an ActiveX control's VML shape apart from a
+   * Forms-toolbar control that has no `<control>` entry at all.
+   */
+  readonly shapeId?: string;
+  /**
+   * §18.3.1.20 `<controlPr print>` — Excel's "Print object" checkbox. It
+   * defaults to true, and a control that clears it is on screen only: neither
+   * Excel nor Calc puts it on the page.
+   */
+  readonly print?: boolean;
 }
 
 /**
@@ -685,6 +818,12 @@ export interface SheetRichRun {
   readonly bold?: boolean;
   readonly italic?: boolean;
   readonly underline?: boolean;
+  /**
+   * §18.8.37 `<strike/>` on the run — struck-through text inside a cell that is
+   * otherwise not. 58315.xlsx crosses out the middle of "320-338 350", which is
+   * the whole point of the cell.
+   */
+  readonly strike?: boolean;
   readonly colorHex?: string;
   readonly sizePt?: number;
   /** §18.4.2 `<vertAlign>` — superscript / subscript within the cell text. */

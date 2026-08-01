@@ -25,7 +25,7 @@ import { poAttr, poChildren, poIntAttr, poIs } from '@/core/po-helpers';
  * (solid fills emit no transparency).
  */
 export interface ColorMod {
-  readonly kind: 'lumMod' | 'lumOff' | 'shade' | 'tint' | 'alpha';
+  readonly kind: 'lumMod' | 'lumOff' | 'shade' | 'tint' | 'alpha' | 'satMod' | 'hueOff' | 'satOff';
   readonly val: number;
 }
 
@@ -105,6 +105,25 @@ export function applyColorMods(hex: string, mods: ReadonlyArray<ColorMod>): stri
       const [h, s, l] = rgbToHsl(r, g, b);
       const l2 = m.kind === 'lumMod' ? l * m.val : clamp01(l + m.val);
       [r, g, b] = hslToRgb(h, s, l2);
+    } else if (m.kind === 'hueOff') {
+      // §20.1.2.3.15 — a hue OFFSET, in degrees around the wheel. SmartArt is
+      // built on it: one accent colour and a `hueOff` per node is how a diagram
+      // gets its series of colours, and dropping it drew all three circles of
+      // tdf83671_SmartArt_import.xlsx the same orange where the reference gives
+      // them orange, green and blue.
+      const [h, sat, l] = rgbToHsl(r, g, b);
+      [r, g, b] = hslToRgb((((h + m.val) % 360) + 360) % 360, sat, l);
+    } else if (m.kind === 'satOff') {
+      // §20.1.2.3.27 — the saturation twin, an offset rather than a factor.
+      const [h, sat, l] = rgbToHsl(r, g, b);
+      [r, g, b] = hslToRgb(h, clamp01(sat + m.val), l);
+    } else if (m.kind === 'satMod') {
+      // §20.1.2.3.32 — saturation modulation. The Office theme's gradients are
+      // built from it (`<a:shade val="51000"/><a:satMod val="130000"/>`), and
+      // dropping it drew every gallery shape a shade duller than either
+      // reference: 47504.xlsx's rectangle came out grey-blue.
+      const [h, s, l] = rgbToHsl(r, g, b);
+      [r, g, b] = hslToRgb(h, clamp01(s * m.val), l);
     }
   }
   const toHex = (x: number): string =>
@@ -177,28 +196,62 @@ export const defaultColorResolver: ColorResolver = makeColorResolver(DEFAULT_THE
 export function readColorMods(colorNode: PoNode): Array<ColorMod> {
   const mods: Array<ColorMod> = [];
   for (const c of poChildren(colorNode)) {
-    for (const kind of ['lumMod', 'lumOff', 'shade', 'tint', 'alpha'] as const) {
+    for (const kind of ['lumMod', 'lumOff', 'shade', 'tint', 'alpha', 'satMod', 'satOff'] as const) {
       if (poIs(c, `a:${kind}`)) {
         const v = poIntAttr(c, 'val');
         if (v !== undefined) mods.push({ kind, val: v / 100000 });
       }
+    }
+    // §20.1.2.3.15 `a:hueOff` counts SIXTIETH-THOUSANDTHS OF A DEGREE, not
+    // thousandths of a percent — a different unit from every other transform
+    // here, and the reason it gets its own line. Kept in degrees, which is what
+    // the HSL helpers below speak.
+    if (poIs(c, 'a:hueOff')) {
+      const v = poIntAttr(c, 'val');
+      if (v !== undefined) mods.push({ kind: 'hueOff', val: v / 60000 });
     }
   }
   return mods;
 }
 
 /**
- * Resolve an `a:srgbClr` / `a:schemeClr` node to a hex string (with colour
- * transforms applied). Returns `undefined` when the node is some other element,
- * valueless, or the resolver does not know the colour. Container traversal policy
- * (stop at the first colour node vs continue past unresolved ones) stays with the
- * callers.
+ * §20.1.2.3.32 `a:sysClr` — the host system's own colour. `val` names it and
+ * `lastClr` carries what the producing application resolved it to, which is
+ * what a reader uses; the two names that matter without one are the window
+ * background and its text.
+ */
+const SYSTEM_COLORS: ReadonlyMap<string, string> = new Map([
+  ['window', 'FFFFFF'],
+  ['windowText', '000000'],
+  ['windowFrame', '000000'],
+  ['btnText', '000000'],
+  ['btnFace', 'F0F0F0'],
+  ['highlight', '0078D7'],
+  ['highlightText', 'FFFFFF'],
+]);
+
+/**
+ * Resolve an `a:srgbClr` / `a:schemeClr` / `a:sysClr` node to a hex string (with
+ * colour transforms applied). Returns `undefined` when the node is some other
+ * element, valueless, or the resolver does not know the colour. Container
+ * traversal policy (stop at the first colour node vs continue past unresolved
+ * ones) stays with the callers.
  *
  * @param c            The candidate colour node.
  * @param resolveColor The resolver mapping a {@link RawColor} to hex.
  * @returns The resolved RRGGBB, or `undefined`.
  */
 export function resolveColorNode(c: PoNode, resolveColor: ColorResolver): string | undefined {
+  // A system colour is stated, not referenced: it carries its own value and
+  // there is nothing for the theme resolver to look up. Unread, it fell through
+  // to whatever the container's style said instead — ConditionalFormattingSamples
+  // .xlsx spells its buttons' text `<a:sysClr val="windowText"/>` over a shape
+  // style asking for `lt1`, and fifteen of them came out white on pale blue.
+  if (poIs(c, 'a:sysClr')) {
+    const last = poAttr(c, 'lastClr');
+    if (last && /^[0-9A-Fa-f]{6}$/.test(last)) return last.toUpperCase();
+    return SYSTEM_COLORS.get(poAttr(c, 'val') ?? '');
+  }
   const isSrgb = poIs(c, 'a:srgbClr');
   if (!isSrgb && !poIs(c, 'a:schemeClr')) return undefined;
   const v = poAttr(c, 'val');

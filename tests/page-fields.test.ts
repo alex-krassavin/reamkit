@@ -3,9 +3,11 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
+import type { BodyElement } from '@/core/document-model';
 import { flowRenderOptions } from '@/core/converter/project';
 import { Ream } from '@/core/converter/ream';
 import { FontRegistry } from '@/core/font';
+import { buildHeaderFooterContent } from '@/excel/header-footer';
 import { layoutStyledDocument } from '@/layout/styled-layout';
 import { readDocx } from '@/word/docx-reader';
 
@@ -98,5 +100,22 @@ describe('PAGE / NUMPAGES fields (§17.16.5.33/.35)', () => {
     if (para.kind !== 'paragraph') throw new Error('expected paragraph');
     expect(para.paragraph.runs.map((r) => r.text).join('')).toBe('Chapter 3');
     expect(para.paragraph.runs.every((r) => r.field === undefined)).toBe(true);
+  });
+});
+describe('&F — the workbook file name (§18.3.1.34)', () => {
+  it('prints it when the caller supplies one, and drops it otherwise', () => {
+    // A byte-oriented reader cannot know the name, so it is an explicit input
+    // like `now`. Five of the first forty POI workbooks head every page with it,
+    // and dropped it silently.
+    const named = buildHeaderFooterContent('&L&F', 'Sheet1', 1, 10, 'report.xlsx');
+    const text = (body: ReadonlyArray<BodyElement>): string =>
+      body
+        .flatMap((el) => (el.kind === 'paragraph' ? el.paragraph.runs.map((r) => r.text) : []))
+        .join('');
+    expect(text(named)).toBe('report.xlsx');
+    // Without a name the code drops and the region is empty — as before.
+    expect(buildHeaderFooterContent('&L&F', 'Sheet1', 1, 10)).toEqual([]);
+    // …and it composes with the other codes.
+    expect(text(buildHeaderFooterContent('&Cx&F', 'Sheet1', 1, 10, 'a.xlsx'))).toBe('xa.xlsx');
   });
 });

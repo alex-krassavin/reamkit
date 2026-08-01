@@ -10,6 +10,7 @@
 // boxes inside a Line) and styling magnitudes (font/stroke sizes) stay plain
 // numbers — they are not page-frame coordinates.
 
+import type { BorderStyle } from '@/core/document-model';
 import type { Pt, ResourceId, ResourceStore } from '@/core/ir';
 import type { FontMeasure, ParsedTtf } from '@/core/font';
 import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
@@ -63,6 +64,12 @@ export interface TextToken {
   readonly resolvedRun: ResolvedRunProperties;
   readonly font: FontResource;
   readonly fontSizePt: number;
+  /**
+   * §17.3.2.42 / §18.4.2 `vertAlign` — how far off the baseline this token
+   * draws: positive for a superscript, negative for a subscript, absent on the
+   * baseline. The line's height is unchanged; only the glyphs move.
+   */
+  readonly risePt?: number;
   readonly widthPt: number;
   /**
    * UAX #9 embedding level of this token's characters (0 for pure-LTR docs).
@@ -192,6 +199,14 @@ export interface TextLineItem extends PageItemBase {
   readonly originX: Pt;
   /** Distance from the page TOP down to the text baseline. */
   readonly baselineY: Pt;
+  readonly clip?: { readonly x: Pt; readonly y: Pt; readonly width: Pt; readonly height: Pt };
+  /**
+   * Counter-clockwise rotation about `(originX, baselineY)`, in degrees. A
+   * value-axis title reads bottom-to-top in every reader (§21.2.2.216
+   * `c:title/c:tx/…/a:bodyPr@rot` = -5400000, i.e. 90°); drawn flat it sat over
+   * the plot's own tick labels. Absent ⇒ horizontal.
+   */
+  readonly rotationDeg?: number;
 }
 
 /** One edge of a table-cell frame; `(x, y)` is the cell box's top-left corner. */
@@ -204,6 +219,12 @@ export interface BorderItem extends PageItemBase {
   readonly height: Pt;
   readonly borderSizePt: number;
   readonly borderColorHex: string;
+  /**
+   * §18.18.3 `ST_BorderStyle` — the rule's PATTERN, when it is not solid.
+   * `dashed`/`dotted` are line patterns, not weights, and dropping them here
+   * painted 57423.xlsx's dashed band as twelve continuous rules.
+   */
+  readonly borderStyle?: BorderStyle;
 }
 
 /** A filled rectangle (cell shading); `(x, y)` is its top-left corner. */

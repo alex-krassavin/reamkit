@@ -11,7 +11,7 @@ import type { FontMeasure, ParsedTtf } from '@/core/font';
 import type { PdfRef } from '@/pdf/objects';
 import type { PdfDocument } from '@/pdf/writer';
 import { createFontMeasure, glyphClosure, subsetTtf } from '@/core/font';
-import { dict, name, ref, stream } from '@/pdf/objects';
+import { deflatedStream, dict, name, ref } from '@/pdf/objects';
 
 const encoder = new TextEncoder();
 
@@ -59,8 +59,16 @@ export function embedTtfFont(
   const toPdfUnits = (v: number): number => Math.round(v * scale);
 
   const usedGidsArr = options.usedGids ? [...options.usedGids] : undefined;
+  // What the subset actually contains: the used glyphs plus whatever their
+  // composites pull in — the bound for /ToUnicode.
+  const subsetGids = usedGidsArr
+    ? [...glyphClosure(parsed, usedGidsArr)].sort((a, b) => a - b)
+    : undefined;
   const fontFileBytes = usedGidsArr ? subsetTtf(parsed, usedGidsArr) : parsed.raw;
-  const fontFileRef = doc.add(stream({ Length1: fontFileBytes.byteLength }, fontFileBytes));
+  // §9.9 wants the UNCOMPRESSED length in /Length1; the stream itself deflates.
+  const fontFileRef = doc.add(
+    deflatedStream({ Length1: fontFileBytes.byteLength }, fontFileBytes),
+  );
 
   // ISO 19005-1 §6.3.5 — PDF/A-1 *requires* a /CIDSet in a CIDFont subset's
   // descriptor, marking the CIDs present (Identity ordering ⇒ CID = GID, so the
@@ -69,7 +77,7 @@ export function embedTtfFont(
   // emit /CIDSet only when asked (PDF/A-1) and omit it otherwise.
   const cidSetRef =
     usedGidsArr !== undefined && options.cidSet
-      ? doc.add(stream({}, buildCidSet(glyphClosure(parsed, usedGidsArr))))
+      ? doc.add(deflatedStream({}, buildCidSet(glyphClosure(parsed, usedGidsArr))))
       : undefined;
 
   // ISO 32000-1 §9.6.4 / PDF/A §6.3.5 — a subsetted font's name must carry a
@@ -100,10 +108,12 @@ export function embedTtfFont(
     }),
   );
 
-  const widths: Array<number> = new Array(parsed.numGlyphs);
-  for (let i = 0; i < parsed.numGlyphs; i++) {
-    widths[i] = toPdfUnits(parsed.advanceWidths[i] ?? 0);
-  }
+  // §9.7.4.3 — /W lists the CIDs that differ from /DW, and a subset draws a
+  // handful of them. One entry per glyph in the SOURCE font wrote 3388 numbers
+  // for a document using fifteen: 13 KB of 55906-MultiSheetRefs.xlsx's 192.
+  const widthRuns = consecutiveRuns(
+    subsetGids ?? Array.from({ length: parsed.numGlyphs }, (_, i) => i),
+  ).map((run) => [run[0]!, run.map((g) => toPdfUnits(parsed.advanceWidths[g] ?? 0))] as const);
 
   const cidFontRef = doc.add(
     dict({
@@ -117,12 +127,14 @@ export function embedTtfFont(
       }),
       FontDescriptor: ref(descriptorRef.id),
       DW: 1000,
-      W: [0, widths],
+      W: widthRuns.flatMap(([first, ws]) => [first, ws]),
       CIDToGIDMap: name('Identity'),
     }),
   );
 
-  const toUnicodeRef = doc.add(stream({}, buildToUnicodeCMap(parsed)));
+  const toUnicodeRef = doc.add(
+    deflatedStream({}, buildToUnicodeCMap(parsed, subsetGids)),
+  );
 
   const type0Ref = doc.add(
     dict({
@@ -180,6 +192,17 @@ function subsetTag(postScriptName: string, gids: ReadonlyArray<number>): string 
   return tag;
 }
 
+/** Split a sorted id list into runs of consecutive ids. */
+function consecutiveRuns(ids: ReadonlyArray<number>): Array<Array<number>> {
+  const runs: Array<Array<number>> = [];
+  for (const id of ids) {
+    const last = runs[runs.length - 1];
+    if (last && id === last[last.length - 1]! + 1) last.push(id);
+    else runs.push([id]);
+  }
+  return runs;
+}
+
 // PDF spec Annex D — ToUnicode CMap.
 // We scan the BMP (U+0020..U+FFFF) once and emit a bfchar entry for every
 // codepoint mapped to a non-.notdef glyph. Each glyph keeps only its first
@@ -187,7 +210,14 @@ function subsetTag(postScriptName: string, gids: ReadonlyArray<number>): string 
 //
 // Supplementary plane characters (U+10000+) are not yet enumerated; they
 // will render correctly but won't appear in copy-paste output.
-function buildToUnicodeCMap(parsed: ParsedTtf): Uint8Array {
+function buildToUnicodeCMap(parsed: ParsedTtf, subsetGids?: ReadonlyArray<number>): Uint8Array {
+  // A subset draws a handful of glyphs, and mapping every glyph the SOURCE font
+  // can reach wrote 2767 bfchar entries for a document that uses fifteen — 40 KB
+  // of 55906-MultiSheetRefs.xlsx's 192. §9.10.3 asks for the CIDs that are used
+  // and PDF/A §6.3.8 for every glyph that is drawn: the same set, PROVIDED every
+  // drawn glyph is registered. Scoping here is what proved one was not — see the
+  // comment apparatus in collectFontResources.
+  const inSubset = subsetGids ? new Set(subsetGids) : undefined;
   // Map each glyph to the code point sequence it represents. Direct glyphs map
   // to a single code point; ligature glyphs (fi, ffi, …) map to their component
   // code points so text extraction recovers the original characters — required
@@ -229,6 +259,7 @@ function buildToUnicodeCMap(parsed: ParsedTtf): Uint8Array {
     }
   }
   const pairs = order
+    .filter((g) => inSubset === undefined || inSubset.has(g))
     .map((g): [number, Array<number>] => [g, gidToCps.get(g)!])
     .sort((a, b) => a[0] - b[0]);
 

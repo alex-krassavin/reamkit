@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { applyNumberFormat } from '@/excel';
+import { applyNumberFormat, generalToWidth, numberFormatColorHex } from '@/excel';
 
 const noCustom = new Map<number, string>();
 
@@ -122,5 +122,265 @@ describe('applyNumberFormat — dates', () => {
   it('defaults to 1900 epoch when date1904 is omitted', () => {
     expect(applyNumberFormat('0', 14, noCustom)).toBe('12/30/1899');
     expect(applyNumberFormat('45292', 14, noCustom)).toBe('1/1/2024');
+  });
+});
+
+describe('applyNumberFormat — codes real producers write', () => {
+  it('reads the format name in any case (bug-fixes.xlsx writes GENERAL)', () => {
+    // Matched exactly, "GENERAL" carries no digit placeholder, so the whole
+    // word became a literal prefix and every cell read "GENERAL1", "GENERAL2".
+    const fmt = new Map<number, string>([[164, 'GENERAL']]);
+    expect(applyNumberFormat('1', 164, fmt)).toBe('1');
+    expect(applyNumberFormat('0.5', 164, fmt)).toBe('0.5');
+  });
+
+  it('blanks a zero written only with # (tdf171828 hides a column that way)', () => {
+    // §18.8.31: `#` is an optional digit. A `0` or `?` anywhere in the integer
+    // part forces it back.
+    const fmt = new Map<number, string>([
+      [165, '#'],
+      [166, '#.##'],
+      [167, '#.00'],
+    ]);
+    expect(applyNumberFormat('0', 165, fmt)).toBe('');
+    expect(applyNumberFormat('7', 165, fmt)).toBe('7');
+    expect(applyNumberFormat('0.5', 166, fmt)).toBe('.5');
+    expect(applyNumberFormat('0', 167, fmt)).toBe('.00');
+    expect(applyNumberFormat('0', 3, noCustom)).toBe('0');
+  });
+
+  it('counts elapsed time in [h] / [mm] / [ss] instead of wrapping', () => {
+    const fmt = new Map<number, string>([
+      [165, '[ss].00'],
+      [166, '[mm]:ss'],
+      [167, '[h]:mm'],
+    ]);
+    // seconds-without-truncate-and-decimals.xlsx: 3.14159270833 days.
+    expect(applyNumberFormat('3.14159270833', 165, fmt)).toBe('271433.61');
+    expect(applyNumberFormat('0.0424', 166, fmt)).toBe('61:03');
+    expect(applyNumberFormat('3.14159270833', 167, fmt)).toBe('75:23');
+  });
+
+  it('renders the currency symbol out of a [$SYMBOL-LOCALE] tag', () => {
+    // Dropped with the bracket — as a colour or a locale is — `[$$-409]#,##0`
+    // silently lost its "$" and formats.xlsx printed a bare 12,345.00.
+    const fmt = new Map<number, string>([
+      [164, '[$$-409]#,##0;[RED]\\-[$$-409]#,##0'],
+      [165, '#,##0.00\\ [$USD]'],
+      [166, '[$-409]#,##0'],
+    ]);
+    expect(applyNumberFormat('12345', 164, fmt)).toBe('$12,345');
+    expect(applyNumberFormat('-1234', 164, fmt)).toBe('-$1,234');
+    expect(applyNumberFormat('1234.5', 165, fmt)).toBe('1,234.50 USD');
+    // A locale with no symbol contributes nothing.
+    expect(applyNumberFormat('12345', 166, fmt)).toBe('12,345');
+  });
+
+  it('approximates fractions to the denominator the format allows', () => {
+    const fmt = new Map<number, string>([
+      [164, '# ??/??'],
+      [165, '# ?/?'],
+      [166, '?/?'],
+      [167, '# ?/16'],
+    ]);
+    expect(applyNumberFormat('25.378', 164, fmt)).toBe('25 31/82');
+    expect(applyNumberFormat('2.55', 165, fmt)).toBe('2 5/9');
+    expect(applyNumberFormat('0.3889', 166, fmt)).toBe('2/5');
+    expect(applyNumberFormat('3.3', 167, fmt)).toBe('3 5/16');
+    // A whole number keeps its integer and drops the fraction entirely.
+    expect(applyNumberFormat('4', 164, fmt)).toBe('4');
+  });
+
+  it('knows the built-in currency and fraction ids (§18.8.30)', () => {
+    // A gap in the table is invisible: the id resolves to no code at all, the
+    // cell falls through to the General rendering, and 49273.xlsx printed 0.5
+    // where its `# ?/?` cell reads " 1/2". The engines were all there.
+    expect(applyNumberFormat('1234.5', 5, noCustom)).toBe('$1,235 ');
+    expect(applyNumberFormat('-1234.5', 6, noCustom)).toBe('($1,235)');
+    expect(applyNumberFormat('1234.5', 7, noCustom)).toBe('$1,234.50 ');
+    expect(applyNumberFormat('-1234.5', 8, noCustom)).toBe('($1,234.50)');
+    expect(numberFormatColorHex('-1234.5', 8, noCustom)).toBe('FF0000');
+    expect(applyNumberFormat('0.5', 12, noCustom)).toBe('1/2');
+    expect(applyNumberFormat('2.25', 13, noCustom)).toBe('2 1/4');
+    expect(applyNumberFormat('12345', 48, noCustom)).toBe('12.3E+3');
+  });
+
+  it('reads General through the brackets in front of it', () => {
+    // `[DBNum1][$-804]General` is General with a numeral system and a locale on
+    // it. Tested against the whole code, it missed — and the placeholder
+    // grammar, finding no digit placeholder, printed the keyword: 49273.xlsx
+    // read "General12323". Choosing the numerals is a separate feature; this is
+    // about not writing the word out.
+    const fmt = new Map<number, string>([
+      [176, '[DBNum1][$-804]General'],
+      [177, '[$-409]GENERAL'],
+    ]);
+    expect(applyNumberFormat('12323', 176, fmt)).toBe('12323');
+    expect(applyNumberFormat('0.5', 177, fmt)).toBe('0.5');
+  });
+
+  it('reports the colour the applying section names', () => {
+    const fmt = new Map<number, string>([[164, '[$$-409]#,##0;[RED]\\-[$$-409]#,##0']]);
+    expect(numberFormatColorHex('12345', 164, fmt)).toBeUndefined();
+    expect(numberFormatColorHex('-1234', 164, fmt)).toBe('FF0000');
+    // Built-in 40 is #,##0.00_);[Red](#,##0.00).
+    expect(numberFormatColorHex('-5', 40, noCustom)).toBe('FF0000');
+    expect(numberFormatColorHex('5', 40, noCustom)).toBeUndefined();
+    // [Color n] indexes the §18.8.27 palette, numbered from 1 here.
+    expect(numberFormatColorHex('1', 164, new Map([[164, '[Color 5]0']]))).toBe('0000FF');
+  });
+
+  it('separates the whole number from a fraction with a QUOTED literal too', () => {
+    // The integer part is the last placeholder run before the fraction, and
+    // what separates them is a literal that need not be a bare space:
+    // formats.xlsx writes `#"  "?/?`. Anchored at the end of the head, the run
+    // went unfound there — so 1.2 came out as the improper `#  6/5`, the `#`
+    // printed as itself and the whole number folded into the numerator.
+    const fmt = new Map<number, string>([
+      [300, '#"  "?/?'],
+      [301, '# ?/?'],
+      [302, '?/?'],
+    ]);
+    expect(applyNumberFormat('1.2', 300, fmt)).toBe('1  1/5');
+    expect(applyNumberFormat('-1.2', 300, fmt)).toBe('-1  1/5');
+    expect(applyNumberFormat('0.75', 300, fmt)).toBe('3/4');
+    // The plain spellings are unchanged, improper form included.
+    expect(applyNumberFormat('1.2', 301, fmt)).toBe('1 1/5');
+    expect(applyNumberFormat('1.2', 302, fmt)).toBe('6/5');
+  });
+
+  it('rounds a General number to the decimals its column has room for', () => {
+    // General is not a fixed format: a spreadsheet shows as many decimal places
+    // as fit and ROUNDS to that. Rendering every stored digit and letting the
+    // cell clip it turns 4.3900875881221957 into "4.390087" where every other
+    // reader shows "4.390088" — off by one in the last place shown, with
+    // nothing to say a digit was cut (Sparklines.xlsx).
+    const upTo =
+      (n: number) =>
+      (t: string): boolean =>
+        t.length <= n;
+    expect(generalToWidth('4.3900875881221957', upTo(8))).toBe('4.390088');
+    expect(generalToWidth('-6.1052278206732389', upTo(9))).toBe('-6.105228');
+    // Room for everything ⇒ everything.
+    expect(generalToWidth('4.3900875881221957', upTo(30))).toBe('4.390087588122196');
+    // An integer that will not fit goes scientific rather than reading as a
+    // number a thousand times smaller (escape-unicode.xlsx printed "1161014"
+    // for 1161014163).
+    expect(generalToWidth('1161014163', upTo(9))).toBe('1.161E+09');
+    expect(generalToWidth('1161014163', upTo(30))).toBe('1161014163');
+    // Too narrow even for that: the cell says so its own way, with hashes.
+    expect(generalToWidth('1161014163', upTo(3))).toBe('1161014163');
+  });
+
+  it('rounds on the decimal number, half away from zero', () => {
+    // `toFixed` rounds the BINARY double, which is not the number the file
+    // means. A rate stored as 0.0095 is 0.00949999999999999… in binary; times
+    // 100 that is 0.9499999999999998 and toFixed(1) answers "0.9" where every
+    // other reader shows 1.0%. Eleven of AverageTaxRates.xlsx's percentages
+    // were a tenth low for exactly this reason.
+    const fmt = new Map<number, string>([
+      [164, '0.0%'],
+      [165, '0.00'],
+      [166, '#,##0'],
+    ]);
+    expect(applyNumberFormat('0.0095', 164, fmt)).toBe('1.0%');
+    expect(applyNumberFormat('-0.0095', 164, fmt)).toBe('-1.0%');
+    expect(applyNumberFormat('0.18449999999999999', 164, fmt)).toBe('18.5%');
+    // The classic binary traps: both of these round DOWN under toFixed.
+    expect(applyNumberFormat('1.005', 165, fmt)).toBe('1.01');
+    expect(applyNumberFormat('2.675', 165, fmt)).toBe('2.68');
+    // Half away from zero, not towards +∞ — and not to even either.
+    expect(applyNumberFormat('-1.005', 165, fmt)).toBe('-1.01');
+    expect(applyNumberFormat('0.125', 165, fmt)).toBe('0.13');
+    expect(applyNumberFormat('1234.5', 166, fmt)).toBe('1,235');
+  });
+
+  it('decodes a section that is all literal (the Accounting zero)', () => {
+    // `_(* "-"_)` carries no digit placeholder, so the grammar took a shortcut
+    // and returned the section RAW — a balance row that should read "-" read
+    // `_(* "-"_)`, the format code printing itself (49156.xlsx).
+    const fmt = new Map<number, string>([[164, '_(* #,##0_);_(* \\(#,##0\\);_(* "-"_);_(@_)']]);
+    expect(applyNumberFormat('0', 164, fmt).trim()).toBe('-');
+    expect(applyNumberFormat('1234', 164, fmt).trim()).toBe('1,234');
+    expect(applyNumberFormat('-1234', 164, fmt).trim()).toBe('(1,234)');
+  });
+
+  it('reads .0 after a seconds token as its decimals (built-in 47)', () => {
+    // Read as a literal dot and a literal zero, mm:ss.0 printed ".0" for every
+    // value. 0.5208333 days = 12:30:00 to a tenth of a second.
+    expect(applyNumberFormat('0.5208333', 47, noCustom)).toBe('30:00.0');
+  });
+});
+
+describe('General spells an exponent Excel’s way, not JavaScript’s', () => {
+  it('gives an upper-case E, an explicit sign and two exponent digits', () => {
+    // General bottoms out in ECMAScript's Number-to-String, which writes
+    // `3e-104`. §18.8.31 spells scientific notation `E+`/`E-` — built-in 11 is
+    // `0.00E+00` — and every other reader prints `3E-104`. 57236.xlsx stores
+    // three such values and we printed all three with a lower-case e.
+    expect(applyNumberFormat('3.0000000000000002E-104', 0, noCustom)).toBe('3E-104');
+    expect(applyNumberFormat('4.9999999999999998E-106', 0, noCustom)).toBe('5E-106');
+    expect(applyNumberFormat('1e21', 0, noCustom)).toBe('1E+21');
+    // A single-digit exponent is padded, as the built-in codes are.
+    expect(applyNumberFormat('0.0000001', 0, noCustom)).toBe('1E-07');
+    // Everything that is not exponential is untouched.
+    expect(applyNumberFormat('42', 0, noCustom)).toBe('42');
+    expect(applyNumberFormat('0.5', 0, noCustom)).toBe('0.5');
+  });
+});
+
+describe('a comma against the last placeholder is a scale, not punctuation', () => {
+  it('shows the value in thousands, one thousand per comma (§18.8.31)', () => {
+    const custom = new Map<number, string>([[164, '#,##0,,']]);
+    // bug69812.xlsx: one cell, 25 396 277 490 under `#,##0,,`. Both references
+    // print "25,396"; the commas printed themselves.
+    expect(applyNumberFormat('25396277490', 164, custom)).toBe('25,396');
+    expect(applyNumberFormat('25396277490', 164, new Map([[164, '#,##0,']]))).toBe('25,396,277');
+    expect(applyNumberFormat('12345678', 164, new Map([[164, '#,##0.0,']]))).toBe('12,345.7');
+    // A suffix after the scale still prints.
+    expect(applyNumberFormat('25396277490', 164, new Map([[164, '0.0,,"M"']]))).toBe('25396.3M');
+  });
+
+  it('leaves a comma that does not touch a placeholder alone', () => {
+    // Quoted, so a literal — and the grouping comma inside the digits is not a
+    // scale either.
+    expect(applyNumberFormat('1234', 164, new Map([[164, '#,##0","']]))).toBe('1,234,');
+    expect(applyNumberFormat('1234567', 164, new Map([[164, '#,##0']]))).toBe('1,234,567');
+  });
+});
+
+describe('a section may state a CONDITION, and then it is not the sign that picks it', () => {
+  const fmt = (code: string, v: string): string =>
+    applyNumberFormat(v, 164, new Map([[164, code]]));
+
+  it('takes the first section whose test the value passes', () => {
+    // FormatKM.xlsx carries its own expected values beside every case.
+    const km = '[>999999]#,,"M";[>999]#,"K";#';
+    expect(fmt(km, '1.02')).toBe('1');
+    expect(fmt(km, '102')).toBe('102');
+    expect(fmt(km, '1021.02')).toBe('1K');
+    expect(fmt(km, '102102.102')).toBe('102K');
+    expect(fmt(km, '1021021.02')).toBe('1M');
+    expect(fmt(km, '1021021021.02')).toBe('1021M');
+  });
+
+  it('knows every comparison, spaces and all', () => {
+    expect(fmt('[<10]#" Wow"', '1.5')).toBe('2 Wow');
+    expect(fmt('[>10]#" Big"', '11')).toBe('11 Big');
+    expect(fmt('[<=10]#" Wow"', '10')).toBe('10 Wow');
+    expect(fmt('[>=10]#" Big"', '10')).toBe('10 Big');
+    expect(fmt('[=10]#" Wow"', '10')).toBe('10 Wow');
+    expect(fmt('[<>10]#" Wow"', '11')).toBe('11 Wow');
+    expect(fmt('[<   10]#" Wow"', '1')).toBe('1 Wow');
+  });
+
+  it('prints the number plainly when it satisfies no condition', () => {
+    expect(fmt('[<10]#" Wow"', '11')).toBe('11');
+    expect(fmt('[>10]#" Big"', '10')).toBe('10');
+  });
+
+  it('leaves an unconditional format on the sign', () => {
+    expect(fmt('#,##0;[Red]-#,##0', '-1234')).toBe('-1,234');
+    expect(fmt('0.0;(0.0);"zero"', '0')).toBe('zero');
   });
 });

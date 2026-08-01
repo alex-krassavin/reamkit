@@ -1,5 +1,7 @@
 // ISO 32000-1:2008 §7.3 — Object types.
 
+import { zlibSync } from 'fflate';
+
 /** The PDF `null` object (§7.3.9), modelled as a unique symbol. */
 export const PDF_NULL = Symbol('PDF_NULL');
 /** The type of the PDF `null` object, {@link PDF_NULL}. */
@@ -84,6 +86,21 @@ export const dict = (entries: Record<string, PdfValue>): PdfDict =>
 /** Construct a {@link PdfStream} from a dictionary literal plus its byte payload. */
 export const stream = (entries: Record<string, PdfValue>, data: Uint8Array): PdfStream =>
   new PdfStream(dict(entries), data);
+
+/**
+ * A {@link PdfStream} whose payload is deflated (ISO 32000-1 §7.4.4).
+ *
+ * Nothing we wrote was compressed at all — `grep /Filter` over one of our own
+ * files returned the empty set — so a three-page workbook came out at 192 KB
+ * against LibreOffice's 21 KB, most of it an uncompressed font program. Any
+ * stream that is not already in a compressed image format belongs here.
+ *
+ * @param entries The stream's dictionary, minus `/Filter` and `/Length`.
+ * @param data    The raw payload.
+ * @returns The stream, deflated, with `/Filter /FlateDecode`.
+ */
+export const deflatedStream = (entries: Record<string, PdfValue>, data: Uint8Array): PdfStream =>
+  new PdfStream(dict({ ...entries, Filter: name('FlateDecode') }), zlibSync(data));
 
 /**
  * Build a PDF Unicode string (UTF-16BE with BOM) suitable for `/Info` or

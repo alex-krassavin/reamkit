@@ -2,10 +2,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
+import { unzlibSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
-import { buildTinyPng } from './fixtures/build-png';
+import { buildIndexedPng, buildTinyPng } from './fixtures/build-png';
 import { defaultColorResolver } from '@/core/drawingml/colors';
 import { ResourceStore, eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 import { convertDocxToPdfSync } from '@/core/converter';
@@ -13,7 +14,7 @@ import { parseTtf } from '@/core/font';
 import { OpcPackage } from '@/core/opc';
 import { parseDocument } from '@/word';
 import { readDocx } from '@/word/docx-reader';
-import { detectImageFormat, embedImage } from '@/pdf';
+import { detectImageFormat, embedImage, prepareImage } from '@/pdf';
 import { PdfDocument } from '@/pdf/writer';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -339,5 +340,51 @@ describe('per-part image resolution (C5)', () => {
     if (img?.kind !== 'image') throw new Error('unreachable');
     const bytes = doc.resources.get(img.image.resource!);
     expect(bytes && Buffer.from(bytes).equals(Buffer.from(bluePng))).toBe(true);
+  });
+});
+
+describe('PNG colour types beyond 8-bit RGB', () => {
+  // The decoder's own output, uncompressed: prepareImage hands back Flate
+  // streams, and the point of these is exactly which bytes came out.
+  const decode = (
+    png: Uint8Array,
+  ): { rgb: Array<number>; alpha: Array<number> | undefined; space?: string } => {
+    const prepared = prepareImage(png);
+    return {
+      rgb: [...unzlibSync(prepared.data)],
+      alpha: prepared.smaskData ? [...unzlibSync(prepared.smaskData)] : undefined,
+      ...(prepared.colorSpace ? { space: prepared.colorSpace } : {}),
+    };
+  };
+  const BLACK = [0, 0, 0] as const;
+  const YELLOW = [255, 255, 0] as const;
+
+  it('expands an indexed image through its palette', () => {
+    // tdf99135.docx is exactly this: a 1-bit palette of black over yellow,
+    // which we drew as nothing at all.
+    const png = buildIndexedPng(2, 2, 1, [BLACK, YELLOW], [0, 1, 1, 0]);
+    const { rgb, space } = decode(png);
+    expect(space).toBe('DeviceRGB');
+    expect(rgb).toEqual([0, 0, 0, 255, 255, 0, 255, 255, 0, 0, 0, 0]);
+  });
+
+  it('reads a palette index at every legal bit depth', () => {
+    for (const depth of [1, 2, 4, 8] as const) {
+      const png = buildIndexedPng(2, 1, depth, [BLACK, YELLOW], [1, 0]);
+      expect(decode(png).rgb).toEqual([255, 255, 0, 0, 0, 0]);
+    }
+  });
+
+  it('takes a palette image\u2019s tRNS as the soft mask', () => {
+    const png = buildIndexedPng(2, 1, 8, [BLACK, YELLOW], [0, 1], { alpha: [0, 255] });
+    const { alpha } = decode(png);
+    expect(alpha).toEqual([0, 255]);
+  });
+
+  it('de-interlaces an Adam7 image to the same pixels', () => {
+    const indices = [0, 1, 1, 0];
+    const plain = decode(buildIndexedPng(2, 2, 8, [BLACK, YELLOW], indices));
+    const woven = decode(buildIndexedPng(2, 2, 8, [BLACK, YELLOW], indices, { interlaced: true }));
+    expect(woven.rgb).toEqual(plain.rgb);
   });
 });

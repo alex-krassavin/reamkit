@@ -5,10 +5,21 @@
 import { XMLParser } from 'fast-xml-parser';
 
 import type { SheetRichRun } from '@/core/spreadsheet-model';
+import { resolveInternalEntities } from '@/core/opc/xml-entities';
+import { decodeXstring } from '@/excel/escaped-text';
 
 const decoder = new TextDecoder('utf-8');
 
 const parser = new XMLParser({
+  // §4.1 of XML 1.0: a numeric character reference is not an entity — `&#10;`
+  // IS a line feed and every parser must decode it. fast-xml-parser gates that
+  // on `htmlEntities`, which defaults to false, so `&#10;` reached the page as
+  // five literal characters (formats.xlsx writes "Hello,&#10;Calc!"). Named
+  // HTML entities come along with the switch; in XML they are undefined anyway,
+  // and reading `&nbsp;` as a space beats drawing it. Entities a DOCTYPE
+  // declares the parser never registers at all, so they are resolved before it
+  // sees the text — see resolveInternalEntities.
+  htmlEntities: true,
   ignoreAttributes: false,
   attributeNamePrefix: '@_',
   textNodeName: '#text',
@@ -49,11 +60,16 @@ export interface SharedStrings {
  * cell limit (32 767 chars).
  */
 export function parseSharedStrings(data: Uint8Array): SharedStrings {
-  const xml = decoder.decode(data);
+  const xml = resolveInternalEntities(decoder.decode(data));
   const tree = parser.parse(xml) as Record<string, unknown>;
   const sst = tree['sst'];
   if (!sst || typeof sst !== 'object') return { texts: [], runs: [] };
-  const siRaw = (sst as Record<string, unknown>)['si'];
+  // §18.4.8 names the item `<si>`; the 2006 beta of the format named it
+  // `<sstItem>` and is otherwise identical here. sample-beta.xlsx is one of
+  // those, and reading only `si` left every one of its labels blank while the
+  // numbers beside them printed — half a sheet, silently.
+  const siRaw =
+    (sst as Record<string, unknown>)['si'] ?? (sst as Record<string, unknown>)['sstItem'];
   const items = Array.isArray(siRaw) ? siRaw : siRaw !== undefined ? [siRaw] : [];
   const texts: Array<string> = [];
   const runs: Array<ReadonlyArray<SheetRichRun> | undefined> = [];
@@ -105,9 +121,20 @@ function richRun(text: string, rPr: unknown): SheetRichRun {
   const p = rPr && typeof rPr === 'object' ? (rPr as Record<string, unknown>) : undefined;
   if (!p) return { text };
   const out: { -readonly [K in keyof SheetRichRun]: SheetRichRun[K] } = { text };
-  if (has(p, 'b')) out.bold = true;
-  if (has(p, 'i')) out.italic = true;
-  if (has(p, 'u')) out.underline = true;
+  // An <rPr> states the run's WHOLE font, so a run that omits <b> inside a bold
+  // cell is not bold — `false`, not "say nothing". Recording only the positive
+  // case printed tdf171828.xlsx's "ohne Sondertilgung" entirely bold where the
+  // file bolds "ohne" alone.
+  out.bold = has(p, 'b');
+  out.italic = has(p, 'i');
+  // …and §18.8.22's `<u>` says WHICH underline, not whether: `val="none"` is a
+  // name in ST_UnderlineValues, so the boolean reader beside it takes it for a
+  // switch nobody turned off.
+  if (has(p, 'u') && attrStr(p['u'], 'val') !== 'none') out.underline = true;
+  // §18.8.37 `<strike/>` — the third of the boolean toggles, and the one this
+  // reader skipped: 58315.xlsx crosses out "-338" in the middle of a cell that
+  // reads "320-338 350", and we printed all three runs plain.
+  out.strike = has(p, 'strike');
   const color = colorRgb(p['color']);
   if (color) out.colorHex = color;
   const sz = attrNum(p['sz'], 'val');
@@ -148,12 +175,12 @@ function colorRgb(node: unknown): string | undefined {
 }
 
 function textOf(node: unknown): string {
-  if (typeof node === 'string') return node;
+  if (typeof node === 'string') return decodeXstring(node);
   if (typeof node === 'number') return String(node);
   if (!node || typeof node !== 'object') return '';
   const obj = node as Record<string, unknown>;
   const inner = obj['#text'];
-  if (typeof inner === 'string') return inner;
+  if (typeof inner === 'string') return decodeXstring(inner);
   if (typeof inner === 'number') return String(inner);
   return '';
 }

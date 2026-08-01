@@ -27,9 +27,10 @@ import type { SheetDoc } from '@/core/ir/sheet';
 import type { SignatureOptions, StyledRenderOptions } from '@/pdf';
 import { DEFAULT_READERS, resolveFontsViaChain, toFlowDoc } from '@/core/converter/facade';
 import { flowRenderOptions } from '@/core/converter/project';
-import { FontRegistry } from '@/core/font';
+import { FontRegistry, createFontMeasure } from '@/core/font';
 import { fetchFontSet } from '@/core/fonts';
 import { ConversionLossError } from '@/core/ir';
+import { isCfb, openCfb } from '@/core/ole/cfb';
 import { writeDocx } from '@/word/docx-writer';
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
 import { writeXlsx } from '@/excel/xlsx-writer';
@@ -41,6 +42,12 @@ import { resolveDocxAutoFonts } from '@/word/docx-to-pdf';
 
 /** The output formats {@link Ream.convert} can produce. */
 export type ReamTarget = 'pdf' | 'svg' | 'html' | 'docx' | 'xlsx';
+
+/**
+ * The point size Excel's column-width unit is quoted at — its default theme
+ * font is 11 pt, and 8.43 of its digits are the documented 64 px column.
+ */
+const DEFAULT_WORKBOOK_FONT_PT = 11;
 
 /** Options for {@link Ream.parse}. */
 export interface ReamParseOptions {
@@ -88,6 +95,12 @@ export interface ReamConvertOptions extends Omit<StyledRenderOptions, 'registry'
    * unchanged.
    */
   readonly now?: Date;
+  /**
+   * §18.3.1.34 `&F` — the workbook's file name, for a spreadsheet whose header
+   * or footer prints it. A byte-oriented reader cannot know it; supplied here,
+   * the code resolves, and omitted it is dropped exactly as before.
+   */
+  readonly fileName?: string;
 }
 
 /** OOXML / legacy MIME types by reader id, for the PDF/A-3 embedded source file. */
@@ -150,6 +163,16 @@ export class Ream {
     const readers = options.readers ?? DEFAULT_READERS;
     const reader = readers.find((r) => r.sniff(bytes));
     if (!reader) {
+      // A password-protected OOXML document is not an unknown format — it is one
+      // we recognise and cannot open. ECMA-376 §2.3 wraps the whole OPC package
+      // in an OLE container, which every reader correctly declines, and the
+      // caller was then told their .xlsx was unrecognizable (58616.xlsx).
+      if (isEncryptedOoxml(bytes)) {
+        throw new Error(
+          'Password-protected OOXML document (ECMA-376 §2.3 EncryptedPackage) — ' +
+            're-save it without a password',
+        );
+      }
       throw new Error(
         `Unrecognized document format (readers: ${readers.map((r) => r.id).join(', ')})`,
       );
@@ -201,7 +224,12 @@ export class Ream {
     // format timePeriod / TODAY() rules resolve against it. Without it (or for a
     // non-sheet source) the parse-time flow — byte-identical to before — is used.
     const flow =
-      this.sheet && options.now ? projectSheetDoc(this.sheet, { now: options.now }) : this.flow;
+      this.sheet && (options.now || options.fileName)
+        ? projectSheetDoc(this.sheet, {
+            ...(options.now ? { now: options.now } : {}),
+            ...(options.fileName ? { fileName: options.fileName } : {}),
+          })
+        : this.flow;
 
     if (to === 'html') {
       // Flow medium: no layout, no fonts to embed — zero I/O.
@@ -236,10 +264,26 @@ export class Ream {
     const { fonts, registriesByFamily } = await this.resolveFonts(options, losses);
     const registry = FontRegistry.fromBytes(fonts);
 
+    // §18.3.1.13 measures a column in Maximum Digit Widths — of the font it is
+    // drawn in. The parse-time projection has no font, so a paginated target
+    // re-projects the grid against the face it is about to render with;
+    // otherwise every column is laid out to one font's digit and filled with
+    // another's, and the text that does not fit is clipped away.
+    const paginated = this.sheet
+      ? projectSheetDoc(this.sheet, {
+          ...(options.now ? { now: options.now } : {}),
+          ...(options.fileName ? { fileName: options.fileName } : {}),
+          digitWidthPt: createFontMeasure(registry.resolveByStyle(false, false).parsed).textWidthPt(
+            '0',
+            DEFAULT_WORKBOOK_FONT_PT,
+          ),
+        })
+      : flow;
+
     if (to === 'svg') {
-      const laid = layoutStyledDocument(flow.body, {
+      const laid = layoutStyledDocument(paginated.body, {
         registry,
-        ...flowRenderOptions(flow),
+        ...flowRenderOptions(paginated),
       });
       const svg = writeSvg(laid);
       losses.push(...svg.losses);
@@ -268,7 +312,7 @@ export class Ream {
     void _f;
 
     // Caller overrides spread over the document's own metadata.
-    const info = flow.info || callerInfo ? { ...flow.info, ...callerInfo } : undefined;
+    const info = paginated.info || callerInfo ? { ...paginated.info, ...callerInfo } : undefined;
     const attachments = [...(callerAttachments ?? [])];
     if (embedSource && options.pdfA?.startsWith('PDF/A-3')) {
       attachments.push({
@@ -283,7 +327,7 @@ export class Ream {
     const styled = {
       registry,
       ...(registriesByFamily ? { registriesByFamily } : {}),
-      ...flowRenderOptions(flow),
+      ...flowRenderOptions(paginated),
       ...(info ? { info } : {}),
       ...(attachments.length > 0 ? { attachments } : {}),
       ...(signature ? { signaturePlaceholder: signature } : {}),
@@ -292,8 +336,8 @@ export class Ream {
     // §7.6: encryption runs on this async path (WebCrypto); the plain branch
     // stays the byte-stable sync render.
     let pdf = styled.encrypt
-      ? await renderStyledPdfEncrypted(flow.body, styled)
-      : renderStyledPdf(flow.body, styled);
+      ? await renderStyledPdfEncrypted(paginated.body, styled)
+      : renderStyledPdf(paginated.body, styled);
     if (signature) pdf = await signPdf(pdf, signature);
     this.enforceStrict(options, losses);
     return { bytes: pdf, losses };
@@ -346,5 +390,16 @@ export class Ream {
    */
   private enforceStrict(options: ReamConvertOptions, losses: ReadonlyArray<Loss>): void {
     if (options.strict && losses.length > 0) throw new ConversionLossError(losses[0]!);
+  }
+}
+
+// ECMA-376 §2.3 — an encrypted OPC package is an OLE compound file holding the
+// ciphertext in `EncryptedPackage` beside its `EncryptionInfo`.
+function isEncryptedOoxml(bytes: Uint8Array): boolean {
+  if (!isCfb(bytes)) return false;
+  try {
+    return openCfb(bytes).hasStream('EncryptedPackage');
+  } catch {
+    return false;
   }
 }

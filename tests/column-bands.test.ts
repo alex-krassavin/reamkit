@@ -105,6 +105,18 @@ describe('wide-sheet column-band pagination (E-SHEET SE1)', () => {
     expect(pageCount(xlsx)).toBe(2);
   });
 
+  it('bands a sheet that is only ZOOMED, on its scaled widths (§18.3.1.63)', () => {
+    // `<pageSetup scale>` and fit-to-page are not the same instruction. Fitting
+    // is a promise about the page count, so the grid may be squeezed onto one
+    // width; a scale is a plain zoom, and Excel paginates after applying it.
+    // Treating a scaled sheet as fitted left 47737.xlsx — `scale="63"`, still
+    // 583pt of columns on a 487pt page — as one over-wide table, and its last
+    // column ran off the paper.
+    const xlsx = buildXlsx({ rows: grid(3, 6), columns: wideCols, pageSetup: { scale: 50 } });
+    expect(bandCount(xlsx)).toBe(2); // 6×2100 scaled twips over a 9026-twip page
+    expect(pageCount(xlsx)).toBe(2);
+  });
+
   it('honours a manual column break as a band boundary on a sheet that fits', () => {
     const xlsx = buildXlsx({
       rows: grid(3, 3),
@@ -113,5 +125,28 @@ describe('wide-sheet column-band pagination (E-SHEET SE1)', () => {
     });
     expect(bandCount(xlsx)).toBe(2);
     expect(pageCount(xlsx)).toBe(2);
+  });
+});
+
+describe('printed headings + bands (§18.3.1.70)', () => {
+  it('starts a headed band on its own page, letters and all', () => {
+    // The band break is set on the band's own leading row; the letters row is
+    // prepended in front of it afterwards. Left where it was, the letters
+    // printed alone on one page and the band they label began the next —
+    // ElapsedFormatTests.xlsx grew a blank page between its two bands.
+    const xlsx = buildXlsx({
+      rows: grid(4, 6),
+      columns: wideCols,
+      printOptions: { headings: true },
+    });
+    const tables = Ream.parse(xlsx).flow.body.filter((el) => el.kind === 'table');
+    expect(tables.length).toBeGreaterThan(1);
+    for (const [i, t] of tables.entries()) {
+      // Row 0 is the column letters; it leads the band and carries the break.
+      const first = t.table.rows[0]!;
+      const second = t.table.rows[1];
+      expect(first.properties.pageBreakBefore ?? false).toBe(i > 0);
+      expect(second?.properties.pageBreakBefore ?? false).toBe(false);
+    }
   });
 });

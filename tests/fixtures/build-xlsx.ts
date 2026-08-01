@@ -36,6 +36,9 @@ export interface XlsxRowHeightSpec {
   readonly row: number; // 0-indexed
   readonly heightPt: number;
   readonly customHeight?: boolean;
+  readonly hidden?: boolean;
+  /** §18.3.1.73 `s` + `customFormat="1"` — the row's default cell style. */
+  readonly styleIndex?: number;
 }
 
 export interface XlsxPageMarginsSpec {
@@ -53,6 +56,8 @@ export interface XlsxPageSetupSpec {
   readonly scale?: number;
   readonly fitToWidth?: number;
   readonly fitToHeight?: number;
+  /** §18.3.1.63 — where the sheet's notes print, if at all. */
+  readonly cellComments?: 'none' | 'asDisplayed' | 'atEnd';
 }
 
 export interface XlsxPrintOptionsSpec {
@@ -75,6 +80,9 @@ export interface XlsxSheetSpec {
     readonly min: number;
     readonly max: number;
     readonly widthChars: number;
+    readonly hidden?: boolean;
+    /** §18.3.1.13 `style` — the default style of every cell in the span. */
+    readonly styleIndex?: number;
   }>;
   readonly rowHeights?: ReadonlyArray<XlsxRowHeightSpec>;
   /** §18.3.1.81 `<sheetFormatPr defaultRowHeight>` — height of rows with no `ht`. */
@@ -113,6 +121,9 @@ export interface XlsxBuilderOptions {
     readonly min: number;
     readonly max: number;
     readonly widthChars: number;
+    readonly hidden?: boolean;
+    /** §18.3.1.13 `style` — the default style of every cell in the span. */
+    readonly styleIndex?: number;
   }>;
   readonly rowHeights?: ReadonlyArray<XlsxRowHeightSpec>;
   /** §18.3.1.81 `<sheetFormatPr defaultRowHeight>` — height of rows with no `ht`. */
@@ -152,6 +163,16 @@ export interface XlsxBuilderOptions {
     readonly fillHex?: string;
     readonly preset?: string;
     readonly anchor?: { from: [number, number]; to: [number, number] };
+    /** Drop the explicit `a:ln` and carry `<xdr:style>` instead (gallery style). */
+    readonly styleOnly?: boolean;
+    /** §20.1.2.2.8 `<xdr:cNvPr hidden="1"/>` — the object is not to be shown. */
+    readonly hidden?: boolean;
+    /** A colour element for the run's own `<a:rPr><a:solidFill>` (e.g. an `a:sysClr`). */
+    readonly runColorXml?: string;
+    /** Raw drawing body, replacing the generated `xdr:sp` (e.g. an `xdr:grpSp`). */
+    readonly rawShapeXml?: string;
+    /** Raw anchor, replacing the generated `xdr:twoCellAnchor` whole (§20.5.2.1). */
+    readonly rawAnchorXml?: string;
   };
   /** Attach cell hyperlinks to the FIRST sheet (E-SHEET W3). A `url` is emitted as
    *  an external `r:id` relationship; a `location` is an in-workbook target. */
@@ -180,6 +201,8 @@ export interface XlsxBuilderOptions {
     readonly objectType: string;
     readonly checked?: boolean;
     readonly value?: number;
+    /** §18.3.1.20 `<controlPr print>` — false writes `print="0"`. */
+    readonly print?: boolean;
   }>;
   /** ActiveX controls on the FIRST sheet (E-SHEET W10): <oleObjects> + activeX part. */
   readonly oleObjects?: ReadonlyArray<{
@@ -414,7 +437,11 @@ export function buildXlsx(
       }
       const heightSpec = rowHeightLookup.get(r);
       const heightAttrs = heightSpec
-        ? ` ht="${heightSpec.heightPt}"${heightSpec.customHeight !== false ? ' customHeight="1"' : ''}`
+        ? ` ht="${heightSpec.heightPt}"${heightSpec.customHeight !== false ? ' customHeight="1"' : ''}` +
+          (heightSpec.hidden ? ' hidden="1"' : '') +
+          (heightSpec.styleIndex !== undefined
+            ? ` s="${heightSpec.styleIndex}" customFormat="1"`
+            : '')
         : '';
       if (cells.length > 0 || heightSpec) {
         sheetRows.push(`  <row r="${r + 1}"${heightAttrs}>${cells.join('')}</row>`);
@@ -426,7 +453,11 @@ export function buildXlsx(
         ? '<cols>' +
           sheet.columns
             .map(
-              (c) => `<col min="${c.min}" max="${c.max}" width="${c.widthChars}" customWidth="1"/>`,
+              (c) =>
+                `<col min="${c.min}" max="${c.max}" width="${c.widthChars}" customWidth="1"` +
+                (c.hidden ? ' hidden="1"' : '') +
+                (c.styleIndex !== undefined ? ` style="${c.styleIndex}"` : '') +
+                '/>',
             )
             .join('') +
           '</cols>'
@@ -458,6 +489,9 @@ export function buildXlsx(
           : '') +
         (sheet.pageSetup.fitToHeight !== undefined
           ? ` fitToHeight="${sheet.pageSetup.fitToHeight}"`
+          : '') +
+        (sheet.pageSetup.cellComments !== undefined
+          ? ` cellComments="${sheet.pageSetup.cellComments}"`
           : '') +
         '/>'
       : '';
@@ -710,21 +744,45 @@ ${chartRels}</Relationships>`,
     const preset = options.sheetShape.preset ?? 'roundRect';
     const text = options.sheetShape.text ?? 'Shape text';
     entries['xl/drawings/drawing1.xml'] = encoder.encode(
-      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+      options.sheetShape.rawAnchorXml
+        ? `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+${options.sheetShape.rawAnchorXml}
+</xdr:wsDr>`
+        : `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
   <xdr:twoCellAnchor>
     <xdr:from><xdr:col>${a.from[0]}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${a.from[1]}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>
     <xdr:to><xdr:col>${a.to[0]}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${a.to[1]}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>
-    <xdr:sp>
-      <xdr:nvSpPr><xdr:cNvPr id="2" name="Shape 1"/><xdr:cNvSpPr/></xdr:nvSpPr>
+${
+  options.sheetShape.rawShapeXml ??
+  `    <xdr:sp>
+      <xdr:nvSpPr><xdr:cNvPr id="2" name="Shape 1"${
+        options.sheetShape.hidden ? ' hidden="1"' : ''
+      }/><xdr:cNvSpPr/></xdr:nvSpPr>
       <xdr:spPr>
         <a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></a:xfrm>
         <a:prstGeom prst="${preset}"><a:avLst/></a:prstGeom>
         <a:solidFill><a:srgbClr val="${fill}"/></a:solidFill>
-        <a:ln w="12700"><a:solidFill><a:srgbClr val="2F5496"/></a:solidFill></a:ln>
+        ${options.sheetShape.styleOnly ? '' : '<a:ln w="12700"><a:solidFill><a:srgbClr val="2F5496"/></a:solidFill></a:ln>'}
       </xdr:spPr>
-      <xdr:txBody><a:bodyPr/><a:p><a:r><a:t>${escapeXml(text)}</a:t></a:r></a:p></xdr:txBody>
-    </xdr:sp>
+      ${
+        options.sheetShape.styleOnly
+          ? `<xdr:style>
+        <a:lnRef idx="2"><a:srgbClr val="123456"/></a:lnRef>
+        <a:fillRef idx="1"><a:srgbClr val="654321"/></a:fillRef>
+        <a:effectRef idx="0"><a:srgbClr val="000000"/></a:effectRef>
+        <a:fontRef idx="minor"><a:srgbClr val="FFFFFF"/></a:fontRef>
+      </xdr:style>`
+          : ''
+      }
+      <xdr:txBody><a:bodyPr/><a:p><a:r>${
+        options.sheetShape.runColorXml
+          ? `<a:rPr lang="en-US"><a:solidFill>${options.sheetShape.runColorXml}</a:solidFill></a:rPr>`
+          : ''
+      }<a:t>${escapeXml(text)}</a:t></a:r></a:p></xdr:txBody>
+    </xdr:sp>`
+}
     <xdr:clientData/>
   </xdr:twoCellAnchor>
 </xdr:wsDr>`,
@@ -832,7 +890,7 @@ ${rels.join('\n')}
     const ctrlXml = parts
       .map(
         (p) =>
-          `<x14:control shapeId="${p.idx}" r:id="${p.rid}" name="${escapeXml(p.fc.name)}"><x14:controlPr/></x14:control>`,
+          `<x14:control shapeId="${p.idx}" r:id="${p.rid}" name="${escapeXml(p.fc.name)}"><x14:controlPr${p.fc.print === false ? ' print="0"' : ''}/></x14:control>`,
       )
       .join('');
     const extLst =

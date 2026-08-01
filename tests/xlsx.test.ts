@@ -6,6 +6,7 @@ import { strToU8, zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 
 import { buildXlsx } from './fixtures/build-xlsx';
+import { decodeXstring } from '@/excel/escaped-text';
 import { convertXlsxToPdfSync } from '@/core/converter';
 import { parseTtf } from '@/core/font';
 import {
@@ -336,8 +337,10 @@ describe('convertXlsxToPdfSync end-to-end', () => {
     const pdf = convertXlsxToPdfSync(xlsx, { fonts: FONTS });
     const text = asLatin1(pdf);
 
-    // Thick border ~12/8 pt = 1.5 pt width
-    expect(text).toMatch(/1\.5 w/);
+    // §18.18.3 names a screen weight: thick is 3 px at 96 DPI = 2.25 pt. The
+    // eighth-point scale these were once mapped onto is WordprocessingML's, and
+    // it drew every spreadsheet rule a third too light.
+    expect(text).toMatch(/2\.25 w/);
     // Stroke colour FFD92020 → ~(0.851, 0.125, 0.125)
     expect(text).toMatch(/0\.851 0\.125 0\.125 RG/);
   });
@@ -744,14 +747,16 @@ describe('implicit cell/row positions (§18.3.1.4 — r= optional)', () => {
     expect(ws.cells.map((c) => c.inlineText)).toEqual(['v2', 'proper']);
   });
 
-  it('decodes a numeric "<column>_<row>" ref when the row agrees', () => {
+  it('places a numeric "<column>_<row>" ref by document order, not by its number', () => {
     const M = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
     // tdf122336.xlsx's producer writes the address as two 1-based numbers
-    // rather than A1 notation. It is not a spec spelling, but it is not noise
-    // either: every ref in <row r="2"> ends in _2, so the file states its own
-    // convention and we can check it before trusting it. Placing these by
-    // document order instead packs them consecutively — putting each value
-    // under the wrong column heading.
+    // rather than A1 notation. It looks like <column>_<row>, and the row half
+    // even agrees with the row the cell sits in — but the columns it yields are
+    // wrong. That sheet's header row is 11 labels in columns 1..11 and its data
+    // row is 11 values; read as columns the values scatter over 1, 4, 5, 7, 11,
+    // 13, 22, 29..32, filing the start time under "Klantnaam". LibreOffice
+    // places them consecutively, and consecutively is where each value lands
+    // under its own heading. The first number is a producer field id.
     const ws = parseWorksheet(
       enc(
         `<worksheet xmlns="${M}"><sheetData>` +
@@ -761,26 +766,8 @@ describe('implicit cell/row positions (§18.3.1.4 — r= optional)', () => {
     );
     expect(ws.cells.map((c) => [c.row, c.column])).toEqual([
       [1, 0],
-      [1, 3],
-      [1, 21],
-    ]);
-  });
-
-  it('refuses a numeric ref whose row disagrees with the row it sits in', () => {
-    const M = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
-    // The guard is the whole point: a ref that does not agree with its own row
-    // tells us nothing, so it falls back to document order rather than being
-    // decoded on a guess. Same two refs as above, in the wrong row.
-    const ws = parseWorksheet(
-      enc(
-        `<worksheet xmlns="${M}"><sheetData>` +
-          `<row r="1"><c r="4_2"><v>a</v></c><c r="22_2"><v>b</v></c></row>` +
-          `</sheetData></worksheet>`,
-      ),
-    );
-    expect(ws.cells.map((c) => [c.row, c.column])).toEqual([
-      [0, 0],
-      [0, 1],
+      [1, 1],
+      [1, 2],
     ]);
   });
 
@@ -904,13 +891,33 @@ describe('xlsx print-model rendering', () => {
         fonts: FONTS,
       }),
     );
-    // The synthetic grid strokes thin black lines → "0 0 0 RG" (stroke colour).
-    // Text fills use lowercase "rg", so its absence proves no grid was drawn.
-    expect(plain).not.toContain('0 0 0 RG');
-    expect(gridded).toContain('0 0 0 RG');
+    // The synthetic grid strokes a light-grey hairline (C0C0C0 → 0.7529…).
+    // Text fills use lowercase "rg", so the absence of the stroke colour proves
+    // no grid was drawn. It is grey and not black on purpose: a gridline that
+    // paints as heavily as a declared cell border swamps the borders the sheet
+    // actually asked for.
+    const grey = '0.753';
+    expect(plain).not.toContain(`${grey} ${grey} ${grey} RG`);
+    expect(gridded).toContain(`${grey} ${grey} ${grey} RG`);
+    expect(gridded).not.toContain('0 0 0 RG');
     // Cell text is identical either way.
     expect(plain).toContain(`<${hexOf('A')}> Tj`);
     expect(gridded).toContain(`<${hexOf('A')}> Tj`);
+  });
+
+  it('decodes the _xHHHH_ escape SpreadsheetML writes for a control character', () => {
+    // §22.9.2.19 ST_Xstring. XML cannot carry a carriage return inside <t> —
+    // any parser would normalise it away — so Excel writes `_x000D_` and every
+    // reader decodes it. Drawn as it stands the escape is gibberish mid
+    // sentence: escape-unicode.xlsx renders "Line 1_x000D_Line 2".
+    expect(decodeXstring('Line 1_x000D_Line 2')).toBe('Line 1\rLine 2');
+    // `_` itself is escaped when it would start a sequence, and decoding is a
+    // single pass: the literal text `_x005F_x000D_` is `_x000D_`, not a return.
+    expect(decodeXstring('_x005F_x000D_')).toBe('_x000D_');
+    // Text with no escape comes back untouched, and a lone surrogate is not a
+    // character — the escape stays as written rather than becoming half of one.
+    expect(decodeXstring('plain text')).toBe('plain text');
+    expect(decodeXstring('_xD800_')).toBe('_xD800_');
   });
 
   it('clips rendering to _xlnm.Print_Area (A1-anchored)', () => {

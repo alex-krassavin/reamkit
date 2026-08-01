@@ -57,6 +57,11 @@ export interface ConvertOptions extends ConvertDocxOptions {
    */
   readonly now?: Date;
   /**
+   * §18.3.1.34 `&F` — the workbook's file name, for a spreadsheet whose header
+   * or footer prints it. Absent, the code is dropped.
+   */
+  readonly fileName?: string;
+  /**
    * Font resolution chain (ir-design §8). When set (and no caller `fonts`),
    * the facade resolves the default font set through these providers — e.g.
    * [localFontProvider(), remoteFontProvider()] — and reports a 'substituted'
