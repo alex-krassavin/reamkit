@@ -372,6 +372,11 @@ export interface Run {
    * paragraph's following content starts on a new page.
    */
   readonly pageBreak?: boolean;
+  /**
+   * §17.3.3.1 `w:br w:type="column"` — the text after this run continues in the
+   * NEXT column of the section (or, past the last, on the next page).
+   */
+  readonly columnBreak?: boolean;
 }
 
 /** ECMA-376 Part 1 §17.3.1 — a paragraph: its {@link ParagraphProperties} and runs. */

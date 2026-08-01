@@ -432,6 +432,11 @@ interface ParagraphBlock {
   // ECMA-376 §17.3.3.1 — the paragraph carries a forced page break (w:br
   // w:type="page"); subsequent blocks start on a new page.
   readonly pageBreakAfter?: boolean;
+  /**
+   * §17.3.3.1 — the indices of the lines that a `w:br w:type="column"` sends to
+   * the next column. Pagination advances the column before drawing one.
+   */
+  readonly columnBreakLines?: ReadonlySet<number>;
   // Tagged PDF: when this paragraph is a list item (w:numPr), its list id and
   // nesting level (w:ilvl) so pagination can build the L/LI/LBody structure.
   readonly list?: { readonly numId: string; readonly level: number };
@@ -2680,15 +2685,43 @@ function layoutParagraphBlock(
   );
   const firstLineWidth = paragraphMaxWidth(resolved, contentWidth, true);
   const otherWidth = paragraphMaxWidth(resolved, contentWidth, false);
-  const wrapped = wrap(
-    tokens,
-    firstLineWidth,
-    otherWidth,
-    resolved,
-    options.hyphenator,
-    options.layoutProfile ?? 'ream',
-    lineWidths,
-  );
+  const runWrap = (
+    part: ReadonlyArray<Token>,
+    firstWidth: number,
+    widths: ReadonlyArray<number> | undefined,
+  ): Array<Line> =>
+    wrap(
+      part,
+      firstWidth,
+      otherWidth,
+      resolved,
+      options.hyphenator,
+      options.layoutProfile ?? 'ream',
+      widths,
+    );
+  // §17.3.3.1 — a `w:br w:type="column"` splits the paragraph's own flow: what
+  // follows it belongs in the NEXT column. Wrapping the parts one at a time is
+  // what tells pagination which line that is; columnbreak.docx sets one
+  // mid-paragraph and both halves came out in the first column.
+  const parts = splitAtColumnBreaks(tokens);
+  const columnBreakLines = new Set<number>();
+  let wrapped: Array<Line>;
+  if (parts.length === 1) {
+    wrapped = runWrap(tokens, firstLineWidth, lineWidths);
+  } else {
+    wrapped = [];
+    for (const [i, part] of parts.entries()) {
+      // A continuation is not a first line: it keeps the body indent, not the
+      // first-line one, and the float widths carry on where they left off.
+      const lines = runWrap(
+        part,
+        i === 0 ? firstLineWidth : otherWidth,
+        lineWidths?.slice(wrapped.length),
+      );
+      if (i > 0 && lines.length > 0) columnBreakLines.add(wrapped.length);
+      wrapped.push(...(i === 0 ? lines : lines.map((l) => ({ ...l, firstLine: false }))));
+    }
+  }
   // §17.3.1 — a paragraph with nothing in it is still a LINE: the blank line
   // the author typed, as tall as the font it would have been typed in. Wrapping
   // zero tokens yields no line, so the paragraph took no room and everything
@@ -2712,6 +2745,7 @@ function layoutParagraphBlock(
     spacingAfterPt: resolved.spacingAfter,
     ...(numbering ? { list: { numId: numbering.numId, level: numbering.ilvl } } : {}),
     ...(paragraph.runs.some((r) => r.pageBreak) ? { pageBreakAfter: true } : {}),
+    ...(columnBreakLines.size > 0 ? { columnBreakLines } : {}),
     ...(paragraph.bookmarks && paragraph.bookmarks.length > 0
       ? { bookmarks: paragraph.bookmarks }
       : {}),
@@ -2963,6 +2997,22 @@ function tokenizeParagraph(
   return tokenizePlansBidi(plans, realLevels);
 }
 
+/**
+ * Split a paragraph's tokens at every §17.3.3.1 column break, dropping the
+ * break token itself (its line ends there anyway). One part ⇒ no break.
+ *
+ * @param tokens The paragraph's tokens in order.
+ * @returns The parts, in order; always at least one.
+ */
+function splitAtColumnBreaks(tokens: ReadonlyArray<Token>): Array<Array<Token>> {
+  const parts: Array<Array<Token>> = [[]];
+  for (const t of tokens) {
+    if (t.kind === 'text' && t.columnBreak) parts.push([]);
+    else parts[parts.length - 1]!.push(t);
+  }
+  return parts.filter((p, i) => i === 0 || p.length > 0);
+}
+
 // Fast LTR tokenization — splits each run on whitespace only.
 function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
   const tokens: Array<Token> = [];
@@ -3002,6 +3052,7 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         ...(plan.run.footnoteRef !== undefined ? { footnoteRef: plan.run.footnoteRef } : {}),
         ...(plan.run.anchor !== undefined ? { anchor: plan.run.anchor } : {}),
         ...(plan.run.listMarker ? { listMarker: true } : {}),
+        ...(plan.run.columnBreak ? { columnBreak: true as const } : {}),
         ...(highlight ? { highlight: true } : {}),
         resolvedRun: plan.resolvedRun,
         font: plan.font,
@@ -3067,6 +3118,7 @@ function tokenizePlansBidi(
         ...(plan.run.footnoteRef !== undefined ? { footnoteRef: plan.run.footnoteRef } : {}),
         ...(plan.run.anchor !== undefined ? { anchor: plan.run.anchor } : {}),
         ...(plan.run.listMarker ? { listMarker: true } : {}),
+        ...(plan.run.columnBreak ? { columnBreak: true as const } : {}),
         ...((plan.run.commentRangeRefs?.length ?? 0) > 0 ? { highlight: true } : {}),
         resolvedRun: plan.resolvedRun,
         font: plan.font,
@@ -4991,7 +5043,10 @@ function paginateSections(
         if (lang && lang !== defaultLang) builder.node(structId).lang = lang;
       }
       let firstLineOfBlock = true;
-      for (const line of pb.lines) {
+      for (const [lineIdx, line] of pb.lines.entries()) {
+        // §17.3.3.1 — the line after a column break starts the next column,
+        // even when this one has room to spare.
+        if (pb.columnBreakLines?.has(lineIdx) && asm.colHasContent()) asm.advanceColumn();
         const h = computeLineHeight(line, pb.resolved);
         let newNotes = asm.lineFootnotes(line);
         const addedReserve = (sub: typeof newNotes) =>

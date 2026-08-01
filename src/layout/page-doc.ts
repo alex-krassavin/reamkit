@@ -57,6 +57,11 @@ export interface TextToken {
    */
   readonly listMarker?: true;
   /**
+   * §17.3.3.1 — the token is the break of a `w:br w:type="column"`: what
+   * follows it belongs in the next column.
+   */
+  readonly columnBreak?: true;
+  /**
    * §17.3.1.38 — the token IS a tab: its width is the distance to the stop it
    * advances to, resolved once the line is known, and its text is whatever
    * leader fills that gap.

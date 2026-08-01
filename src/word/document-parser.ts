@@ -921,6 +921,7 @@ function parseRun(
   const properties = parseRunProperties(rPr ? poElementToFlat(rPr) : undefined);
   let text = '';
   let pageBreak = false;
+  let columnBreak = false;
   let inlineImage: InlineImage | undefined;
   let fldChar: 'begin' | 'separate' | 'end' | undefined;
   let instrText: string | undefined;
@@ -967,10 +968,15 @@ function parseRun(
       // is where it goes, and parseParagraph collects that from the same run.
       text += '\t';
     } else if (poIs(child, 'w:br')) {
-      // §17.3.3.1 — w:type="page" forces a page break; any other break type
-      // (textWrapping/column/none) is a soft line break within the text flow.
-      if (poAttr(child, 'type') === 'page') pageBreak = true;
-      else text += '\n';
+      // §17.3.3.1 — `page` forces a page break, `column` sends what follows to
+      // the next column; either way the line ends here, and any other break
+      // type (textWrapping/none) is a soft line break within the text flow.
+      const breakType = poAttr(child, 'type');
+      if (breakType === 'page') pageBreak = true;
+      else {
+        if (breakType === 'column') columnBreak = true;
+        text += '\n';
+      }
     } else if (poIs(child, 'w:noBreakHyphen')) {
       text += '‑';
     } else if (poIs(child, 'w:softHyphen')) {
@@ -1035,6 +1041,7 @@ function parseRun(
       properties,
       ...(inlineImage ? { inlineImage } : {}),
       ...(pageBreak ? { pageBreak: true } : {}),
+      ...(columnBreak ? { columnBreak: true } : {}),
       ...(footnoteRef !== undefined ? { footnoteRef } : {}),
       ...(endnoteRef !== undefined ? { endnoteRef } : {}),
       ...(commentRef !== undefined ? { commentRef } : {}),

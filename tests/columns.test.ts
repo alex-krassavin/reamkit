@@ -71,3 +71,42 @@ describe('multi-column sections (§17.6.4)', () => {
     expect(xs.every((x) => Math.abs(x - 36) < 1)).toBe(true);
   });
 });
+
+describe('a column break (§17.3.3.1 w:br w:type="column")', () => {
+  const twoCols = (bodyXml: string) =>
+    buildDocxFromBody(
+      bodyXml +
+        `<w:sectPr><w:pgSz w:w="8400" w:h="11900"/>` +
+        `<w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720"/>` +
+        `<w:cols w:num="2" w:space="720"/></w:sectPr>`,
+    );
+
+  it('sends what follows it to the next column, mid-paragraph', () => {
+    // columnbreak.docx breaks inside one paragraph, and read as a soft line
+    // break both halves stayed in the first column.
+    const laid = layoutOf(
+      twoCols(
+        '<w:p><w:r><w:t>before</w:t></w:r>' +
+          '<w:r><w:br w:type="column"/></w:r>' +
+          '<w:r><w:t>after</w:t></w:r></w:p>',
+      ),
+    );
+    const xs = lineXs(laid.pages[0]!.commands);
+    expect(xs).toHaveLength(2);
+    expect(xs[0]).toBeCloseTo(36, 0); // column one
+    expect(xs[1]).toBeCloseTo(228, 0); // column two
+    expect(laid.pages).toHaveLength(1);
+  });
+
+  it('starts a fresh page when the break falls in the last column', () => {
+    const laid = layoutOf(
+      twoCols(
+        '<w:p><w:r><w:t>a</w:t></w:r><w:r><w:br w:type="column"/></w:r>' +
+          '<w:r><w:t>b</w:t></w:r><w:r><w:br w:type="column"/></w:r>' +
+          '<w:r><w:t>c</w:t></w:r></w:p>',
+      ),
+    );
+    expect(laid.pages).toHaveLength(2);
+    expect(lineXs(laid.pages[1]!.commands)[0]).toBeCloseTo(36, 0);
+  });
+});
