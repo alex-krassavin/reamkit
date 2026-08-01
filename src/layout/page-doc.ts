@@ -14,7 +14,7 @@ import type { BorderStyle, ImageCrop } from '@/core/document-model';
 import type { Pt, ResourceId, ResourceStore } from '@/core/ir';
 import type { FontMeasure, ParsedTtf } from '@/core/font';
 import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
-import type { PathSegment, VectorShape } from '@/core/vector';
+import type { PathSegment, VectorPath, VectorShape } from '@/core/vector';
 import type { PreparedImage } from '@/core/images';
 
 /** A font bound into a {@link LaidOutDocument}: the parsed face plus what layout/emit need from it. */
@@ -289,6 +289,15 @@ export interface ImageItem extends PageItemBase {
   readonly crop?: ImageCrop;
   /** §20.1.7.6 — degrees clockwise about the box's centre. */
   readonly rotationDeg?: number;
+  /**
+   * §20.1.8.14 — a picture FILL is the shape's outline painted with a picture,
+   * so it is clipped to that outline: the paths in the shape's local frame and
+   * the matrix that maps them onto the page.
+   */
+  readonly clip?: {
+    readonly paths: ReadonlyArray<VectorPath>;
+    readonly transform: readonly [number, number, number, number, number, number];
+  };
 }
 
 /**

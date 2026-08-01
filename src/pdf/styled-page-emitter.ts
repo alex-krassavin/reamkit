@@ -34,7 +34,7 @@ import type { PdfEncryptOptions } from '@/pdf/encryption';
 import { preparePdfEncryption } from '@/pdf/encryption';
 import { paintPlan } from '@/layout/page-doc';
 import { A4_HEIGHT, A4_WIDTH, GLUE_SHRINK_RATIO } from '@/layout/styled-layout';
-import { emitVectorShape } from '@/pdf/vector-graphics';
+import { emitClipPath, emitVectorShape } from '@/pdf/vector-graphics';
 import { buildGradientPattern, shapeBbox } from '@/pdf/shading';
 import { reorderVisual, reverseByCodePoint } from '@/core/bidi';
 import { sanitizeHref } from '@/core/links';
@@ -707,6 +707,13 @@ function emitPageContent(
     // /Im1 Do       paint the XObject
     // Q             restore
     out.push('q');
+    // §20.1.8.14 — a picture FILL is clipped to the shape it fills. The stored
+    // matrix is the top-left one; the page flip (an involution) recovers the
+    // y-up CTM the clip is emitted under, exactly as a shape's is.
+    if (img.clip) {
+      const t = img.clip.transform;
+      out.push(...emitClipPath(img.clip.paths, [t[0], -t[1], t[2], -t[3], t[4], H - t[5]]));
+    }
     out.push(
       ...placeImage(
         img.x,

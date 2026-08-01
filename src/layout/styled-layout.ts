@@ -2666,7 +2666,9 @@ function emitShapeItems(
   pageHeight: number,
   figId: number | undefined,
 ): void {
-  // §20.1.8.14 — a picture fill is the shape's box painted with an image.
+  // §20.1.8.14 — a picture fill is the shape's OUTLINE painted with an image,
+  // so it is clipped to that outline: fdo77718.docx fills the round nodes of
+  // its diagram with photographs and we drew each one as a square.
   if (sh.fillImageResourceName) {
     sink.push({
       type: 'image',
@@ -2676,6 +2678,21 @@ function emitShapeItems(
       height: pt(sh.heightPt),
       imageResourceName: sh.fillImageResourceName,
       ...(sh.fillImageCrop ? { crop: sh.fillImageCrop } : {}),
+      clip: {
+        paths: sh.paths,
+        transform: flipTransform(
+          buildShapeTransform(
+            x,
+            bottomYUp,
+            sh.widthPt,
+            sh.heightPt,
+            sh.rotation60k,
+            sh.flipH,
+            sh.flipV,
+          ),
+          pageHeight,
+        ),
+      },
       ...(figId !== undefined ? { structId: figId } : {}),
     });
   }

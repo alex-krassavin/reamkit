@@ -1,7 +1,7 @@
 // PDF vector emission (ISO 32000 §8.5): VectorShape → content-stream
 // operators. The model itself is format-agnostic and lives in core/vector.
 
-import type { PathSegment, StrokeStyle, VectorShape } from '@/core/vector';
+import type { PathSegment, StrokeStyle, VectorPath, VectorShape } from '@/core/vector';
 
 // Re-export the model so existing '@/pdf/vector-graphics' imports keep
 // working; new code should import the model from '@/core/vector'.
@@ -87,6 +87,42 @@ export function emitVectorShape(
   }
   out.push(paintOp(usePattern || shape.fillColorHex !== undefined, stroke !== undefined, evenodd));
   out.push('Q');
+  return out;
+}
+
+/**
+ * The operators that make `paths` the current CLIP, under `transform` — the
+ * same local→y-up-page matrix {@link emitVectorShape} takes. Emitted inside the
+ * caller's own `q`…`Q`, and followed by the inverse matrix so what comes after
+ * is back in page coordinates.
+ *
+ * @param paths     The clip outline, in the shape's local frame.
+ * @param transform The local→page matrix.
+ * @returns The operators: `cm`, the path, `W n`, and the inverse `cm`.
+ */
+export function emitClipPath(
+  paths: ReadonlyArray<VectorPath>,
+  transform: readonly [number, number, number, number, number, number],
+): Array<string> {
+  const [a, b, c, d, e, f] = transform;
+  const det = a * d - b * c;
+  if (det === 0) return [];
+  const out: Array<string> = [`${num(a)} ${num(b)} ${num(c)} ${num(d)} ${num(e)} ${num(f)} cm`];
+  let evenodd = false;
+  for (const path of paths) {
+    if (path.fillRule === 'evenodd') evenodd = true;
+    for (const seg of path.segments) out.push(emitSegment(seg));
+  }
+  out.push(evenodd ? 'W* n' : 'W n');
+  // …and back to page coordinates for whatever the caller draws next.
+  const ia = d / det;
+  const ib = -b / det;
+  const ic = -c / det;
+  const id = a / det;
+  out.push(
+    `${num(ia)} ${num(ib)} ${num(ic)} ${num(id)} ` +
+      `${num(-(e * ia + f * ic))} ${num(-(e * ib + f * id))} cm`,
+  );
   return out;
 }
 
