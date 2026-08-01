@@ -46,7 +46,14 @@ import {
   poTag,
   poText,
 } from '@/core/po-helpers';
-import { parseCustGeom, parseFill, parseLine, parsePrstGeom } from '@/word/drawing-parser';
+import {
+  parseCustGeom,
+  parseFill,
+  parseLine,
+  parsePrstGeom,
+  parseShadow,
+  parseXfrm,
+} from '@/word/drawing-parser';
 import { boxFromXfrm, parsePh, parseXfrmBox, rPrToRunProps } from '@/pptx/sp-helpers';
 
 const CHART_URI = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
@@ -375,8 +382,21 @@ export function parseDiagramNodes(
     const geometry = parseGeometry(spPr);
     const fill: ShapeFill = spPr ? parseFill(spPr, colors, resolveImage) : { kind: 'none' };
     const line = spPr ? parseLine(spPr, colors) : undefined;
+    const shadow = spPr ? parseShadow(spPr, colors) : undefined;
     const visibleLine = line !== undefined && line.fill !== 'none';
     if (!text && fill.kind === 'none' && !visibleLine) continue;
+
+    // §20.1.7.6 — a node may be turned in its box. fdo87488 stands one panel on
+    // end with `rot="5400000"` and we drew it lying down, twice as wide as the
+    // page. The LABEL does not turn with it: Word states the text's own frame
+    // in `dsp:txXfrm` precisely so it stays upright, so a turned node hands its
+    // text to a second, unturned box.
+    const xfrm = spPr ? poChildren(spPr).find((c) => poIs(c, 'a:xfrm')) : undefined;
+    const spin = xfrm ? parseXfrm(xfrm) : undefined;
+    const turned = (spin?.rotation60k ?? 0) % 21600000 !== 0;
+    const txBox = turned
+      ? boxFromXfrm(poChildren(sp).find((c) => poIs(c, 'dsp:txXfrm')))
+      : undefined;
 
     out.push({
       box,
@@ -386,10 +406,26 @@ export function parseDiagramNodes(
         geometry,
         fill,
         ...(line ? { line } : {}),
-        ...(text ? { text } : {}),
+        ...(text && !txBox ? { text } : {}),
+        ...(spin && Object.keys(spin).length > 0 ? { transform: spin } : {}),
+        ...(shadow ? { shadow } : {}),
         paragraphProperties: {},
       },
     });
+    if (text && txBox) {
+      const placed = transform(txBox);
+      out.push({
+        box: placed,
+        shape: {
+          width: emuToPt(placed.cx),
+          height: emuToPt(placed.cy),
+          geometry: RECT_GEOMETRY,
+          fill: { kind: 'none' },
+          text,
+          paragraphProperties: {},
+        },
+      });
+    }
   }
   return out;
 }
