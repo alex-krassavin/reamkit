@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
 import { countShown, showPattern } from './fixtures/pdf-show';
+import { readDocx } from '@/word/docx-reader';
 import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 
 import { convertDocxToPdfSync } from '@/core/converter';
@@ -125,6 +126,31 @@ describe('parseSection', () => {
     expect(s.headers[0]).toEqual({ type: 'default', relationshipId: 'rId10' });
     expect(s.headers[1]).toEqual({ type: 'first', relationshipId: 'rId12' });
     expect(s.footers).toEqual([{ type: 'default', relationshipId: 'rId11' }]);
+  });
+});
+
+describe('a section that names no band of its own (§17.10.1)', () => {
+  it('takes the header, the footer and the titlePg of the one before it', () => {
+    // endingSectionProps.docx puts its references on the FIRST section and
+    // ends with a continuous one that states none: read alone, that section
+    // left the page with no header and no footer at all.
+    const body =
+      '<w:p><w:pPr><w:sectPr>' +
+      '<w:headerReference w:type="default" r:id="rId10"/>' +
+      '<w:footerReference w:type="first" r:id="rId13"/>' +
+      '<w:titlePg/></w:sectPr></w:pPr><w:r><w:t>one</w:t></w:r></w:p>' +
+      '<w:p><w:r><w:t>two</w:t></w:r></w:p>' +
+      '<w:sectPr><w:type w:val="continuous"/></w:sectPr>';
+    const { doc } = readDocx(
+      buildDocxFromBody(body, {
+        headerXml: '<w:p><w:r><w:t>GENERAL HEADER</w:t></w:r></w:p>',
+        firstFooterXml: '<w:p><w:r><w:t>FIRST FOOTER</w:t></w:r></w:p>',
+      }),
+    );
+    const last = doc.sections[doc.sections.length - 1]!;
+    expect(last.properties.headers.map((h) => h.relationshipId)).toEqual(['rId10']);
+    expect(last.properties.footers.map((f) => f.relationshipId)).toEqual(['rId13']);
+    expect(last.properties.titlePg).toBe(true);
   });
 });
 

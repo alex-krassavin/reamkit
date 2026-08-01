@@ -9,6 +9,7 @@ import type {
   Chart,
   Comment,
   DocumentInfo,
+  HeaderFooterReference,
   Numbering,
   Section,
   StyleSheet,
@@ -144,7 +145,7 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
 
   // evenAndOddHeaders lives in settings.xml; replicate the flag onto every
   // section so the renderer sees a per-section view of header bands.
-  const sections: Array<Section> =
+  const sections: Array<Section> = withInheritedBands(
     rawSections.length > 0
       ? rawSections.map((s) => ({
           ...s,
@@ -159,7 +160,8 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
               : EMPTY_SECTION,
             endIndex: body.length,
           },
-        ];
+        ],
+  ) as Array<Section>;
 
   const headersFooters = loadHeadersFootersForSections(pkg, sections, ctx, resources);
   const charts = loadCharts(pkg, resolveColor, chartOwningParts(pkg, sections));
@@ -413,6 +415,43 @@ function loadTheme(pkg: OpcPackage): Uint8Array | undefined {
     if (resolved) return resolved.data;
   }
   return pkg.getPart(THEME_PART);
+}
+
+/**
+ * §17.10.1 — a section that declares no header (or footer) of a given type
+ * takes the one before it. endingSectionProps.docx puts its references on the
+ * FIRST section and ends with a continuous one that states none, and reading
+ * each section alone left the page with no header and no footer at all.
+ *
+ * @param sections The sections in document order.
+ * @returns The same sections, each carrying the bands it inherits.
+ */
+function withInheritedBands(sections: ReadonlyArray<Section>): ReadonlyArray<Section> {
+  const out: Array<Section> = [];
+  let headers: ReadonlyArray<HeaderFooterReference> = [];
+  let footers: ReadonlyArray<HeaderFooterReference> = [];
+  // §17.10.6 — the flag that chooses BETWEEN the inherited bands comes with
+  // them: endingSectionProps.docx marks its first section `titlePg`, and the
+  // continuous section after it draws the same first-page footer.
+  let titlePg = false;
+  for (const section of sections) {
+    const own = section.properties;
+    // Word inherits per SECTION, not per type: a section that names any band
+    // of its own starts a fresh set.
+    const inherits = own.headers.length === 0 && own.footers.length === 0;
+    headers = own.headers.length > 0 ? own.headers : headers;
+    footers = own.footers.length > 0 ? own.footers : footers;
+    titlePg = inherits ? titlePg : (own.titlePg ?? false);
+    out.push(
+      headers === own.headers && footers === own.footers && titlePg === (own.titlePg ?? false)
+        ? section
+        : {
+            ...section,
+            properties: { ...own, headers, footers, ...(titlePg ? { titlePg: true } : {}) },
+          },
+    );
+  }
+  return out;
 }
 
 function loadHeadersFootersForSections(
