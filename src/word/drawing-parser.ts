@@ -1017,15 +1017,13 @@ function parseVmlWordArt(node: PoNode): DrawingContent | null {
   const fill = poAttr(shape, 'fillcolor');
   const colorHex =
     fill && /^#?[0-9A-Fa-f]{6}$/u.test(fill) ? fill.replace('#', '').toUpperCase() : undefined;
-  // WordArt fills its box, and the parser has no font metrics to fit it with.
-  // Half the height per line is close for a line of capitals; the width has
-  // the last word, since a size that overflows it wraps and "WORD-ART" comes
-  // out as "WORD-A / RT". A bold capital averages about 0.62em wide.
+  // §14.1.2.22 `@fitshape` — WordArt is set at whatever size FILLS its box.
+  // The parser has no font metrics, so it states a size in the right order of
+  // magnitude and marks the body `fitToBox`; the layout, which has the metrics,
+  // scales it to the box it measured. Left to the parser's own guess,
+  // fdo78300.docx's title came out at half the size both references draw.
   const lines = string.split(/\r\n|[\r\n]/u);
-  const longest = Math.max(1, ...lines.map((l) => l.length));
-  const fontSizePt = pt(
-    Math.max(1, Math.min((height / lines.length) * 0.5, width / (longest * 0.62))),
-  );
+  const fontSizePt = pt(Math.max(1, height / lines.length));
   return {
     kind: 'shape',
     data: {
@@ -1037,7 +1035,16 @@ function parseVmlWordArt(node: PoNode): DrawingContent | null {
         content: lines.map((line) => ({
           kind: 'paragraph' as const,
           paragraph: {
-            properties: { alignment: 'center' as const },
+            // WordArt is glyphs in a box: no paragraph spacing above or below,
+            // and single line spacing, or the fit measures the box against a
+            // line taller than the letters it holds.
+            properties: {
+              alignment: 'center' as const,
+              spacingBefore: pt(0),
+              spacingAfter: pt(0),
+              spacingLine: pt(12),
+              spacingLineRule: 'auto' as const,
+            },
             runs: [
               {
                 text: line,
@@ -1051,6 +1058,7 @@ function parseVmlWordArt(node: PoNode): DrawingContent | null {
           },
         })),
         anchor: 'ctr' as const,
+        fitToBox: true,
         insetLeft: pt(0),
         insetRight: pt(0),
         insetTop: pt(0),

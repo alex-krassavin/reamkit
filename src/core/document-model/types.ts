@@ -1117,6 +1117,11 @@ export interface ShapeTextBody {
    * whatever the text needs, whatever the stated box says.
    */
   readonly autoFit?: boolean;
+  /**
+   * §14.1.2.22 `v:textpath @fitshape` — the TEXT follows the shape: legacy
+   * WordArt is set at whatever size fills the box it was drawn in.
+   */
+  readonly fitToBox?: boolean;
 }
 
 /**

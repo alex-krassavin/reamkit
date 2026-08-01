@@ -45,6 +45,7 @@ import type {
   SectionProperties,
   ShapeBlock,
   ShapeShadow,
+  ShapeTextBody,
   StyleSheet,
   TabStop,
   Table,
@@ -1664,6 +1665,34 @@ function layoutFrameBlock(
   return build(Math.min(contentWidth, natural));
 }
 
+// How many times the WordArt fit may re-measure before it is taken as settled.
+const MAX_FIT_PASSES = 4;
+
+// A text body with every run's size multiplied by `k`. The fit flag stays: the
+// next pass measures the scaled text, which may no longer wrap.
+function scaleTextBody(text: ShapeTextBody, k: number): ShapeTextBody {
+  return {
+    ...text,
+    content: text.content.map((el: BodyElement) =>
+      el.kind === 'paragraph'
+        ? {
+            ...el,
+            paragraph: {
+              ...el.paragraph,
+              runs: el.paragraph.runs.map((run: Run) => ({
+                ...run,
+                properties: {
+                  ...run.properties,
+                  fontSizePt: pt((run.properties.fontSizePt ?? 11) * k),
+                },
+              })),
+            },
+          }
+        : el,
+    ),
+  };
+}
+
 function frameShape(
   frame: FrameProperties,
   paragraphs: ReadonlyArray<Paragraph>,
@@ -1892,6 +1921,8 @@ function layoutShapeBlock(
   maxHeight?: number,
   // The page box a `wp14:sizeRelH/V` percentage is measured against.
   box?: RelativeBox,
+  // §14.1.2.22 — how many fit passes this call is already the result of.
+  fitPass = 0,
 ): ShapeBlockLaidOut {
   let widthPt: number = relativeWidth(shape.relativeSize, contentWidth, box) ?? shape.width;
   let heightPt: number =
@@ -2064,6 +2095,31 @@ function layoutShapeBlock(
   // geometry is built after, so the outline follows the height it settles on.
   if (text?.autoFit && !vertical && textLines.length > 0) {
     heightPt = textHeightPt + insetTopPt + insetBottomPt;
+  }
+  // §14.1.2.22 `@fitshape` — the other way round: the TEXT follows the shape.
+  // Legacy WordArt states a size the parser guessed without metrics; now that
+  // the lines are measured, the size that FILLS the box is known, so the body
+  // is laid out once more at it.
+  if (text?.fitToBox === true && textLines.length > 0 && fitPass < MAX_FIT_PASSES) {
+    const innerW = Math.max(1, widthPt - insetLeftPt - insetRightPt);
+    const innerH = Math.max(1, heightPt - insetTopPt - insetBottomPt);
+    const widest = Math.max(1, ...textLines.map((l) => l.contentWidthPt));
+    const k = Math.min(innerW / widest, innerH / Math.max(1, textHeightPt));
+    if (Number.isFinite(k) && k > 0.05 && k < 20 && Math.abs(k - 1) > 0.02) {
+      // The first guess is measured against text that may have WRAPPED, which
+      // understates it; scaled down it stops wrapping and the next pass reads
+      // the true width. A handful of passes settle it.
+      return layoutShapeBlock(
+        { ...shape, text: scaleTextBody(text, k) },
+        options,
+        fontResources,
+        imageResources,
+        contentWidth,
+        maxHeight,
+        box,
+        fitPass + 1,
+      );
+    }
   }
   const paths = buildShapePaths(shape.geometry, widthPt, heightPt);
   const markerPaths = lineEndPaths(paths, shape.line, stroke?.widthPt ?? 0);
