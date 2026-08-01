@@ -8,6 +8,7 @@ import type {
   CellShading,
   FontFamilyMap,
   NumberingReference,
+  RunProperties,
   TabStop,
   UnderlineStyle,
   VerticalAlign,
@@ -76,6 +77,12 @@ export interface ResolvedParagraphProperties {
    * detection when a style lacks an explicit outline level.
    */
   readonly styleId?: string;
+  /**
+   * §17.3.1.29 `w:pPr/w:rPr` — the formatting of the paragraph MARK. An empty
+   * paragraph is as tall as its mark, so dropping this on resolution collapsed
+   * a 36pt empty cell to a line of body text (conditionalstyles-tbllook.docx).
+   */
+  readonly runProperties?: RunProperties;
   /**
    * §17.9 list reference, carried through for tagged-PDF list structure
    * (L/LI nesting) — markers themselves are materialized by `applyNumbering`.

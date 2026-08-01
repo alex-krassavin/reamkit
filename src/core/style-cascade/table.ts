@@ -155,6 +155,18 @@ function applyLayerToCell(tableCell: TableCell, layer: TableStyleLayer): void {
             ...definedOnly(run.properties),
           };
         }
+        // …and the paragraph MARK carries the layer too. A cell with no runs
+        // still has one, and its size is the row's height: conditionalstyles-
+        // tbllook.docx sets its first column in 36pt, and rows whose first cell
+        // is empty collapsed to a line of body text where both references keep
+        // them as tall as the lettering beside them.
+        p.properties = {
+          ...p.properties,
+          runProperties: {
+            ...layer.runProperties,
+            ...definedOnly(p.properties.runProperties ?? {}),
+          },
+        };
       }
     }
   }

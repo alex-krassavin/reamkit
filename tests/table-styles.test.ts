@@ -197,6 +197,31 @@ describe('a table indent from the style', () => {
   });
 });
 
+describe('a conditional layer reaches the paragraph mark too', () => {
+  // conditionalstyles-tbllook.docx sets its first column in 36pt: the cells
+  // with a letter in them are that tall in every reader, and so are the EMPTY
+  // ones — an empty paragraph is as tall as its mark. Stamping the layer onto
+  // runs alone collapsed those rows to a line of body text.
+  const BIG_FIRST_COL =
+    '<w:style w:type="table" w:styleId="Big">' +
+    '<w:tblStylePr w:type="firstCol"><w:rPr><w:sz w:val="72"/></w:rPr></w:tblStylePr>' +
+    '</w:style>';
+
+  it('gives an empty cell the size the layer names', () => {
+    const docx = buildDocxFromBody(
+      '<w:tbl><w:tblPr><w:tblStyle w:val="Big"/><w:tblLook w:firstColumn="1"/></w:tblPr>' +
+        '<w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>' +
+        '<w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl>',
+      { stylesXml: BIG_FIRST_COL },
+    );
+    const table = firstTable(docx);
+    const p = table.rows[0]!.cells[0]!.content[0];
+    expect(
+      p?.kind === 'paragraph' ? p.paragraph.properties.runProperties?.fontSizePt : undefined,
+    ).toBe(36);
+  });
+});
+
 describe('a row that claims a conditional format (§17.4.7 w:cnfStyle)', () => {
   // calendar2.docx marks its weekday row `w:firstRow="1"` so the style paints
   // it like the month heading above it; reading the row's INDEX alone drew it
