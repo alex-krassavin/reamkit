@@ -3633,7 +3633,15 @@ function displayCapsRuns(
 ): ReadonlyArray<Paragraph['runs'][number]> {
   let any = false;
   const out: Array<Paragraph['runs'][number]> = [];
-  for (const run of paragraph.runs) {
+  for (const raw of paragraph.runs) {
+    // §17.3.3.29 `w:softHyphen` — an OPTIONAL hyphen. It marks a place a word
+    // may break and prints only if the break is taken there; we do not break
+    // inside a word, so it prints nowhere. Kept in the model (the text is what
+    // the document holds) and dropped here, where the page is made:
+    // floatingtbl_with_formula.docx marks "E­­x²" twice and we drew "E--x²".
+    const run = raw.text.includes(SOFT_HYPHEN)
+      ? ((any = true), { ...raw, text: raw.text.replaceAll(SOFT_HYPHEN, '') })
+      : raw;
     const resolved =
       run.text.length > 0
         ? resolveRunProperties(run.properties, paragraph.properties, options.styles)
@@ -4032,6 +4040,9 @@ function paragraphMaxWidth(
 // UAX #14 class BA — the hyphens a line may break just after. The soft hyphen
 // (U+00AD) is not here: it is the hyphenator's own, and shows only when used.
 const HYPHENS = new Set([0x2d, 0x2010, 0x2013, 0x2014]);
+
+/** §17.3.3.29 — the optional hyphen, printed only where a line breaks on it. */
+const SOFT_HYPHEN = '\u00AD';
 
 function tokenizeText(text: string): Array<{ text: string; isSpace: boolean; tab?: true }> {
   const out: Array<{ text: string; isSpace: boolean; tab?: true }> = [];
