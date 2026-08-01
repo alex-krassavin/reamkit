@@ -2731,7 +2731,8 @@ function emitShapeText(
       const lineOffset = alignmentOffset(line.resolved.alignment, line.contentWidthPt, innerHeight);
       // The baseline sits `descent` in from the line's far edge, which a
       // quarter turn puts across the box rather than down it.
-      const baselineAcross = up ? across + h - lineDescent(line) : across + lineDescent(line);
+      const off = lineBaselineOffset(line, line.resolved);
+      const baselineAcross = up ? across + h - off : across + off;
       sink.push({
         type: 'line',
         line,
@@ -2778,7 +2779,7 @@ function emitShapeText(
       type: 'line',
       line,
       originX: pt(x + sh.insetLeftPt + lineOffset),
-      baselineY: pt(pageHeight - (textY + lineDescent(line))),
+      baselineY: pt(pageHeight - (textY + lineBaselineOffset(line, line.resolved))),
       ...(figId !== undefined ? { structId: figId } : {}),
     });
     textY -= sh.textLineGaps?.get(i) ?? 0;
@@ -3049,7 +3050,7 @@ function drawBlocksSequentially(
         type: 'line',
         line,
         originX: pt(startX + indentLeft + offset),
-        baselineY: pt(pageHeight - (cursorY + lineDescent(line))),
+        baselineY: pt(pageHeight - (cursorY + lineBaselineOffset(line, block.resolved))),
         ...(structId !== undefined ? { structId } : {}),
       });
     }
@@ -4731,6 +4732,38 @@ function lineDescent(line: Line): number {
   return Math.max(base, line.mathDescentPt ?? 0);
 }
 
+/**
+ * §17.3.1.33 — how far the baseline stands above the BOTTOM of the line box,
+ * which is what says where the extra height of a spaced-out line goes.
+ *
+ * A line given a fixed height (`exact`, `atLeast`) hangs from the bottom of its
+ * box: the space a taller `w:line` asks for opens ABOVE the text, which is what
+ * makes "at least 24pt" push a heading down its own line.
+ *
+ * `auto` — Word's "Multiple", the 1.15 every modern template sets — scales the
+ * line instead, and the space it gains falls BELOW: the first line of a spaced
+ * paragraph starts exactly where a single-spaced one does. Read the other way
+ * round, fdo80800.docx's 1.5-line cells sat 6.6pt under the plain cell beside
+ * them, where Word and LibreOffice write all three on one baseline.
+ *
+ * §17.6.5 — the extra a document GRID adds is not the paragraph's at all, and
+ * is split evenly: the line is centred on its grid row.
+ *
+ * @param line The laid-out line.
+ * @param p    The owning paragraph's resolved properties.
+ * @returns The distance from the line box's bottom edge up to the baseline.
+ */
+function lineBaselineOffset(line: Line, p: ResolvedParagraphProperties): number {
+  const descent = lineDescent(line);
+  const natural = naturalLineHeight(line, p);
+  // What this line would stand at spacing 1 — its font's own height, or the
+  // math box that outgrows it. Whatever the multiple adds on top of that is
+  // the space that falls below the text.
+  const singled = naturalLineHeight(line, { ...p, spacingLineRule: 'auto', spacingLine: pt(0) });
+  const extraBelow = p.spacingLineRule === 'auto' ? Math.max(0, natural - singled) : 0;
+  return descent + extraBelow + (computeLineHeight(line, p) - natural) / 2;
+}
+
 function alignmentOffset(
   alignment: ResolvedParagraphProperties['alignment'],
   lineWidth: number,
@@ -6370,7 +6403,9 @@ function paginateSections(
           line.contentWidthPt,
           line.availableWidthPt,
         );
-        const baselineY = pt(asm.ctx.pageHeight - (asm.cursorY + lineDescent(line)));
+        const baselineY = pt(
+          asm.ctx.pageHeight - (asm.cursorY + lineBaselineOffset(line, pb.resolved)),
+        );
         const exclusionShift =
           asm.exclusions.length > 0 ? asm.lineGeometryAt(asm.cursorY + h, h).xOffset : 0;
         const originX = asm.colLeft() + indentLeft + offset + exclusionShift;
@@ -7065,7 +7100,7 @@ function emitRowChunk(
         type: 'line',
         line,
         originX: pt(cellX + cell.padLeftPt + indentLeft + offset),
-        baselineY: pt(pageHeight - (textY + lineDescent(line))),
+        baselineY: pt(pageHeight - (textY + lineBaselineOffset(line, line.resolved))),
         // The cell's own box. For a vertical merge that is the MERGED height,
         // not this row's: the text is centred over the whole box (see
         // mergedHeights), so a one-row clip would fall entirely above it.
