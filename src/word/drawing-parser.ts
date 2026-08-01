@@ -629,10 +629,30 @@ function vmlShapeData(
     rotationDeg !== undefined && rotationDeg % 360 !== 0
       ? { rotation60k: Math.round(rotationDeg * 60000) }
       : undefined;
+  // §14.1.2.22 — a shape with a `v:textpath` is WordArt, wherever it sits: its
+  // words are what it draws, not the box they were written in. FDO78590.docx
+  // puts two inside its landscape group and we filled two black rectangles
+  // over the picture.
+  const wordArt = vmlWordArtBody(shape, width, height);
+  if (wordArt) {
+    return {
+      width,
+      height,
+      geometry: { kind: 'preset', preset: 'rect', adjust: new Map() },
+      fill: { kind: 'none' },
+      text: wordArt,
+      ...(transform ? { transform } : {}),
+    };
+  }
+  // §14.1.4 — the shape may state its OUTLINE outright, as a `@path` of plain
+  // coordinates in its `@coordsize` space. FDO78590.docx draws a whole
+  // landscape as 97 such shapes, and every one of them came out as the black
+  // rectangle an unrecognised shape degrades to.
+  const custom = vmlCustomGeometry(shape, shapeType);
   return {
     width,
     height,
-    geometry: {
+    geometry: custom ?? {
       kind: 'preset',
       // §14.1.2.19 — a `v:shape` is whatever its shapetype draws. The straight
       // connector (`o:spt="32"`) is a LINE, and drawn as the rectangle every
@@ -649,6 +669,142 @@ function vmlShapeData(
     ...(transform ? { transform } : {}),
     ...(text ? { text } : {}),
   };
+}
+
+/**
+ * §14.1.4 `@path` — a VML shape's own outline, in the coordinate space its
+ * `@coordsize` declares (1000×1000 by default) with `@coordorigin` at the
+ * corner. Word writes freeform shapes this way, as plain numbers; a path that
+ * names a FORMULA (`@n`) or an arc command is left to the preset fallback.
+ *
+ * @param shape     The `v:shape`/`v:rect`/… node.
+ * @param shapeType Its `v:shapetype`, which may carry the path instead.
+ * @returns The geometry, or `undefined` when there is no path we can read.
+ */
+function vmlCustomGeometry(shape: PoNode, shapeType?: PoNode): ShapeGeometry | undefined {
+  const raw = poAttr(shape, 'path') ?? (shapeType ? poAttr(shapeType, 'path') : undefined);
+  if (raw === undefined || raw === '' || raw.includes('@')) return undefined;
+  const size =
+    poAttr(shape, 'coordsize') ?? (shapeType ? poAttr(shapeType, 'coordsize') : undefined);
+  const origin =
+    poAttr(shape, 'coordorigin') ?? (shapeType ? poAttr(shapeType, 'coordorigin') : undefined);
+  const [sx, sy] = pairOf(size) ?? [1000, 1000];
+  const [ox, oy] = pairOf(origin) ?? [0, 0];
+  if (sx <= 0 || sy <= 0) return undefined;
+  const commands = vmlPathCommands(raw, ox, oy);
+  if (commands === undefined || commands.length === 0) return undefined;
+  return { kind: 'custom', custom: { pathWidth: sx, pathHeight: sy, commands } };
+}
+
+// "x,y" (or "x y") → the pair, or undefined.
+function pairOf(v: string | undefined): [number, number] | undefined {
+  const m = v !== undefined ? /^\s*(-?\d+)[ ,]+(-?\d+)\s*$/u.exec(v) : null;
+  return m ? [Number(m[1]), Number(m[2])] : undefined;
+}
+
+// §14.1.4 — the commands a VML path may carry, of which these are the ones
+// with a straight reading: move/line/curve, absolute and relative, and close.
+// Anything else (the arcs, `ae`, `qb`) gives up on the whole path rather than
+// draw half of it. Coordinates are comma-separated and MAY BE OMITTED, which
+// means zero: Word writes `m,l3224,r,587` for "from the corner, right 3224,
+// then down 587".
+// The two-letter VML path commands (§14.1.4): the fill/stroke modifiers and
+// the arcs. `nf`/`ns` draw nothing of their own; the arcs we do not draw.
+const VML_PATH_PAIRS = new Set(['nf', 'ns', 'qx', 'qy', 'qb', 'at', 'wa', 'ar', 'ae']);
+
+function vmlPathCommands(
+  raw: string,
+  originX: number,
+  originY: number,
+): Array<CustomPathCmd> | undefined {
+  const out: Array<CustomPathCmd> = [];
+  let x = 0;
+  let y = 0;
+  let i = 0;
+  const isLetter = (c: string): boolean => /[a-z]/iu.test(c);
+  while (i < raw.length) {
+    const c = raw[i]!;
+    if (!isLetter(c)) {
+      // Separators between commands are fine; a stray number is not.
+      if (/[\s,]/u.test(c)) {
+        i++;
+        continue;
+      }
+      return undefined;
+    }
+    // One letter, or two for the handful of two-letter commands. Only those:
+    // a path ends `xe` — close, then end — and read greedily that is one
+    // command nobody has heard of, and the whole outline is given up on.
+    let cmd = c.toLowerCase();
+    i++;
+    if (i < raw.length && isLetter(raw[i]!)) {
+      const pair = cmd + raw[i]!.toLowerCase();
+      if (VML_PATH_PAIRS.has(pair)) {
+        cmd = pair;
+        i++;
+      }
+    }
+    // Everything up to the next letter is this command's coordinate list.
+    const start = i;
+    while (i < raw.length && !isLetter(raw[i]!)) i++;
+    const args = raw.slice(start, i);
+    if (cmd === 'e' || cmd === 'n' || cmd === 'nf' || cmd === 'ns') continue;
+    if (cmd === 'x') {
+      out.push({ cmd: 'close' });
+      continue;
+    }
+    const nums = vmlPathNumbers(args);
+    if (nums === undefined) return undefined;
+    const rel = cmd === 't' || cmd === 'r' || cmd === 'v';
+    if (cmd === 'm' || cmd === 'l' || cmd === 't' || cmd === 'r') {
+      if (nums.length < 2 || nums.length % 2 !== 0) return undefined;
+      for (let k = 0; k < nums.length; k += 2) {
+        x = rel ? x + nums[k]! : nums[k]!;
+        y = rel ? y + nums[k + 1]! : nums[k + 1]!;
+        const move = (cmd === 'm' || cmd === 't') && k === 0;
+        out.push({ cmd: move ? 'move' : 'line', x: x - originX, y: y - originY });
+      }
+      continue;
+    }
+    if (cmd === 'c' || cmd === 'v') {
+      if (nums.length < 6 || nums.length % 6 !== 0) return undefined;
+      for (let k = 0; k < nums.length; k += 6) {
+        const x1 = rel ? x + nums[k]! : nums[k]!;
+        const y1 = rel ? y + nums[k + 1]! : nums[k + 1]!;
+        const x2 = rel ? x + nums[k + 2]! : nums[k + 2]!;
+        const y2 = rel ? y + nums[k + 3]! : nums[k + 3]!;
+        x = rel ? x + nums[k + 4]! : nums[k + 4]!;
+        y = rel ? y + nums[k + 5]! : nums[k + 5]!;
+        out.push({
+          cmd: 'cubic',
+          x1: x1 - originX,
+          y1: y1 - originY,
+          x2: x2 - originX,
+          y2: y2 - originY,
+          x: x - originX,
+          y: y - originY,
+        });
+      }
+      continue;
+    }
+    return undefined; // an arc or something else we do not draw
+  }
+  return out;
+}
+
+// A VML coordinate list: comma-separated, and an omitted field is zero.
+function vmlPathNumbers(args: string): Array<number> | undefined {
+  const fields = args.trim().split(/\s*,\s*|\s+/u);
+  const out: Array<number> = [];
+  for (const f of fields) {
+    if (f === '') {
+      out.push(0);
+      continue;
+    }
+    if (!/^-?\d+$/u.test(f)) return undefined;
+    out.push(Number(f));
+  }
+  return out;
 }
 
 /**
@@ -929,6 +1085,47 @@ const VML_ARROW_SIZES: ReadonlyMap<string, 'sm' | 'med' | 'lg'> = new Map([
   ['wide', 'lg'],
   ['long', 'lg'],
 ]);
+
+// §14.1.2.22 — the WordArt body a shape's `v:textpath` describes: the string
+// it carries, set at the size that fills the box (the layout does the fitting,
+// which is where the font metrics are). Undefined when the shape has no
+// textpath string of its own.
+function vmlWordArtBody(shape: PoNode, width: Pt, height: Pt): ShapeTextBody | undefined {
+  const textpath = poChildren(shape).find((c) => poIs(c, 'v:textpath'));
+  const string = textpath ? poAttr(textpath, 'string') : undefined;
+  if (string === undefined || string === '') return undefined;
+  const fill = poAttr(shape, 'fillcolor');
+  const colorHex =
+    fill && /^#?[0-9A-Fa-f]{6}$/u.test(fill) ? fill.replace('#', '').toUpperCase() : undefined;
+  const lines = string.split(/\r\n|[\r\n]/u);
+  const fontSizePt = pt(Math.max(1, height / lines.length));
+  return {
+    content: lines.map((line) => ({
+      kind: 'paragraph' as const,
+      paragraph: {
+        // WordArt is glyphs in a box: no paragraph spacing above or below, and
+        // single line spacing, or the fit measures the box against a line
+        // taller than the letters it holds.
+        properties: {
+          alignment: 'center' as const,
+          spacingBefore: pt(0),
+          spacingAfter: pt(0),
+          spacingLine: pt(12),
+          spacingLineRule: 'auto' as const,
+        },
+        runs: [
+          { text: line, properties: { fontSizePt, bold: true, ...(colorHex ? { colorHex } : {}) } },
+        ],
+      },
+    })),
+    anchor: 'ctr' as const,
+    fitToBox: true,
+    insetLeft: pt(0),
+    insetRight: pt(0),
+    insetTop: pt(0),
+    insetBottom: pt(0),
+  };
+}
 
 // §14.1.2.20 `v:textbox` — the shape's own words, in a `w:txbxContent`.
 function vmlTextBox(shape: PoNode, parseBody: ParseBody): ShapeTextBody | undefined {

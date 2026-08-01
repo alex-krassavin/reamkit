@@ -2103,12 +2103,28 @@ function layoutShapeBlock(
   if (text?.fitToBox === true && textLines.length > 0 && fitPass < MAX_FIT_PASSES) {
     const innerW = Math.max(1, widthPt - insetLeftPt - insetRightPt);
     const innerH = Math.max(1, heightPt - insetTopPt - insetBottomPt);
-    const widest = Math.max(1, ...textLines.map((l) => l.contentWidthPt));
-    const k = Math.min(innerW / widest, innerH / Math.max(1, textHeightPt));
+    // WordArt does not wrap: each source line is one line, however wide. So
+    // the size is measured against what a paragraph would be UNBROKEN — the
+    // sum of the widths the breaker gave it — and against as many lines as
+    // there are paragraphs. Measured against the broken lines instead, the
+    // scale oscillates: WordArt.docx settles at "WORD- / ART" where both
+    // references keep it whole.
+    let widest = 0;
+    let running = 0;
+    let paragraphs = 0;
+    for (const l of textLines) {
+      running += l.contentWidthPt;
+      if (l.isLastInParagraph) {
+        widest = Math.max(widest, running);
+        running = 0;
+        paragraphs++;
+      }
+    }
+    widest = Math.max(1, widest, running);
+    const perLine = textHeightPt / Math.max(1, textLines.length);
+    const naturalHeight = Math.max(1, perLine * Math.max(1, paragraphs || textLines.length));
+    const k = Math.min(innerW / widest, innerH / naturalHeight);
     if (Number.isFinite(k) && k > 0.05 && k < 20 && Math.abs(k - 1) > 0.02) {
-      // The first guess is measured against text that may have WRAPPED, which
-      // understates it; scaled down it stops wrapping and the next pass reads
-      // the true width. A handful of passes settle it.
       return layoutShapeBlock(
         { ...shape, text: scaleTextBody(text, k) },
         options,
