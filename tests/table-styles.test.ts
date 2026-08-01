@@ -175,3 +175,24 @@ describe('a table style’s borders against the table’s own', () => {
     expect(t.properties.borders?.insideV?.style).toBe('single');
   });
 });
+
+describe('a table indent from the style', () => {
+  it('back-fills when the table declares none, and yields when it does', () => {
+    const STYLE =
+      '<w:style w:type="table" w:styleId="Indented"><w:name w:val="Indented"/>' +
+      '<w:tblPr><w:tblInd w:w="360" w:type="dxa"/></w:tblPr></w:style>';
+    const tableOf = (tblPrInner: string) => {
+      const body =
+        `<w:tbl><w:tblPr><w:tblStyle w:val="Indented"/>${tblPrInner}</w:tblPr>` +
+        '<w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>' +
+        '<w:tr><w:tc><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc></w:tr></w:tbl>';
+      const el = Ream.parse(buildDocxFromBody(body, { stylesXml: STYLE })).flow.body.find(
+        (b) => b.kind === 'table',
+      );
+      if (el?.kind !== 'table') throw new Error('expected a table');
+      return el.table;
+    };
+    expect(tableOf('').properties.indentPt).toBe(18);
+    expect(tableOf('<w:tblInd w:w="1440" w:type="dxa"/>').properties.indentPt).toBe(72);
+  });
+});

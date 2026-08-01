@@ -160,6 +160,16 @@ function parseTableProperties(tblPr: PoNode | undefined): TableProperties {
     }
   }
 
+  // §17.4.65 `w:tblInd` — the table's own indent from the text margin. Read
+  // nowhere, a table that declares one was drawn flush to the margin:
+  // NumberedList.docx indents its procedure table through its table style.
+  const tblInd = poFirstChild(tblPr, 'w:tblInd');
+  if (tblInd) {
+    const w = poIntAttr(tblInd, 'w');
+    const type = poAttr(tblInd, 'type');
+    if (w !== undefined && (type === undefined || type === 'dxa')) out.indentPt = twipsToPt(w);
+  }
+
   const tblLayout = poFirstChild(tblPr, 'w:tblLayout');
   if (tblLayout) {
     const t = poAttr(tblLayout, 'type');

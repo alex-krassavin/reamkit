@@ -77,10 +77,14 @@ function applyTableStyle(table: Table, sheet: StyleSheet): void {
   const tp = table.properties as {
     borders?: CellBorders;
     defaultCellMargins?: TableStyleLayer['cellMargins'];
+    indentPt?: TableStyleLayer['indentPt'];
   };
   if (!tp.borders && folded.base.borders) tp.borders = folded.base.borders;
   if (!tp.defaultCellMargins && folded.base.cellMargins) {
     tp.defaultCellMargins = folded.base.cellMargins;
+  }
+  if (tp.indentPt === undefined && folded.base.indentPt !== undefined) {
+    tp.indentPt = folded.base.indentPt;
   }
 
   const look = table.properties.look ?? {};
@@ -263,6 +267,9 @@ function mergeLayer(base: TableStyleLayer, override: TableStyleLayer): TableStyl
       : {}),
     ...((override.cellMargins ?? base.cellMargins)
       ? { cellMargins: { ...base.cellMargins, ...definedOnly(override.cellMargins ?? {}) } }
+      : {}),
+    ...((override.indentPt ?? base.indentPt) !== undefined
+      ? { indentPt: override.indentPt ?? base.indentPt }
       : {}),
     ...((override.shading ?? base.shading) ? { shading: override.shading ?? base.shading } : {}),
     ...((override.runProperties ?? base.runProperties)

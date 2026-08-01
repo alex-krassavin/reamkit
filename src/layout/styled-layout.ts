@@ -3597,7 +3597,11 @@ function layoutTableBlock(
   }
   const heightPt = rows.reduce((s, r) => s + r.heightPt, 0);
   const totalWidthPt = columnWidthsPt.reduce((s, w) => s + w, 0);
-  const xOffsetPt = tableXOffset(table.properties.alignment, contentWidth, totalWidthPt);
+  // §17.4.65 — the table's own indent from the text margin, before the slack a
+  // narrow table's alignment shares out.
+  const xOffsetPt =
+    (table.properties.indentPt ?? 0) +
+    tableXOffset(table.properties.alignment, contentWidth, totalWidthPt);
   return { kind: 'table', rows, heightPt, totalWidthPt, colCount, xOffsetPt };
 }
 

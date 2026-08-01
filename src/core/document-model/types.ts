@@ -463,6 +463,8 @@ export type StyleType = 'paragraph' | 'character' | 'table' | 'numbering';
 export interface TableStyleLayer {
   readonly borders?: CellBorders;
   readonly cellMargins?: CellMargins;
+  /** §17.4.65 `w:tblInd` — the table indent a whole-table layer declares. */
+  readonly indentPt?: Pt;
   readonly shading?: CellShading;
   readonly runProperties?: RunProperties;
   readonly paragraphProperties?: ParagraphProperties;
@@ -747,6 +749,12 @@ export interface TableProperties {
    * Centers or right-aligns a table narrower than the content width; absent ⇒ left.
    */
   readonly alignment?: 'left' | 'center' | 'right';
+  /**
+   * §17.4.65 `w:tblInd` — how far the table's leading edge stands in from the
+   * text margin. Distinct from {@link alignment}, which shares out the slack a
+   * narrow table leaves.
+   */
+  readonly indentPt?: Pt;
   /**
    * A sticky-pane hint from a frozen worksheet view (E-SHEET SE3): the first
    * `rows` rows / `cols` columns stay pinned while the rest scrolls. Consumed

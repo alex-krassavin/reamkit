@@ -259,3 +259,28 @@ describe('row height and cell vertical alignment', () => {
     ).toBeUndefined();
   });
 });
+
+// §17.4.65 `w:tblInd` — how far the table's leading edge stands in from the text
+// margin. Read nowhere, a table that declares one was drawn flush to the margin:
+// NumberedList.docx indents its procedure table through its table style.
+describe('table indent (§17.4.65)', () => {
+  const propsOf = (tblPrInner: string) => {
+    const el = parse(
+      `<w:tbl><w:tblPr>${tblPrInner}</w:tblPr>` +
+        '<w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>' +
+        '<w:tr><w:tc><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc></w:tr></w:tbl>',
+    ).find((b) => b.kind === 'table');
+    if (el?.kind !== 'table') throw new Error('expected a table');
+    return el.table.properties;
+  };
+
+  it('reads a dxa indent', () => {
+    expect(propsOf('<w:tblInd w:w="360" w:type="dxa"/>').indentPt).toBe(twipsToPt(360));
+    // A bare w:tblInd is twips too (the type attribute is optional).
+    expect(propsOf('<w:tblInd w:w="720"/>').indentPt).toBe(twipsToPt(720));
+  });
+
+  it('ignores an indent stated in units it does not measure', () => {
+    expect(propsOf('<w:tblInd w:w="50" w:type="pct"/>').indentPt).toBeUndefined();
+  });
+});
