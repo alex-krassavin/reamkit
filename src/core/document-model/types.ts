@@ -82,6 +82,11 @@ export interface RunProperties {
    * glyphs, already blended from the pattern, its colour and the fill.
    */
   readonly shadingColorHex?: string;
+  /**
+   * §17.3.2.35 `w:rPr/w:spacing` — extra space between the run's characters
+   * (negative tightens). Word states it in twentieths of a point.
+   */
+  readonly letterSpacingPt?: Pt;
 }
 
 /**

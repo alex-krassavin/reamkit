@@ -821,6 +821,7 @@ function emitPageContent(
   if (lines.length > 0) {
     let inBT = false;
     let lastFont = '';
+    let lastTc = 0;
     let lastSize = -1;
     let lastColor = '';
     const switchFontIfNeeded = (tok: TextToken) => {
@@ -829,6 +830,14 @@ function emitPageContent(
         out.push(`/${fontKey} ${formatNumber(tok.fontSizePt)} Tf`);
         lastFont = fontKey;
         lastSize = tok.fontSizePt;
+      }
+      // §17.3.2.35 — the run's own character spacing, which PDF applies per
+      // glyph through `Tc` (ISO 32000-1 §9.3.2). Set only when it changes, and
+      // cleared for the runs that ask for none.
+      const tc = tok.resolvedRun.letterSpacingPt ?? 0;
+      if (tc !== lastTc) {
+        out.push(`${formatNumber(tc)} Tc`);
+        lastTc = tc;
       }
       if (tok.resolvedRun.colorHex !== lastColor) {
         const [r, g, b] = hexToRgb01(tok.resolvedRun.colorHex);
@@ -869,6 +878,7 @@ function emitPageContent(
       lastFont = '';
       lastSize = -1;
       lastColor = '';
+      lastTc = 0;
     };
     // Emit an inline math box: glyph items in text mode, rule/path items in
     // graphics mode. All positions are box-local, offset by the box origin.
@@ -946,6 +956,7 @@ function emitPageContent(
       lastFont = '';
       lastSize = -1;
       lastColor = '';
+      lastTc = 0;
       out.push('BT');
       inBT = true;
       body(cmd);
@@ -958,6 +969,7 @@ function emitPageContent(
       lastFont = '';
       lastSize = -1;
       lastColor = '';
+      lastTc = 0;
     };
     const emitOneLine = (cmd: TextLineItem) => {
       const line = cmd.line;

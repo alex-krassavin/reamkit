@@ -6,7 +6,7 @@ import type {
   UnderlineStyle,
   VerticalAlign,
 } from '@/core/document-model';
-import { halfPtToPt } from '@/core/ir';
+import { halfPtToPt, twipsToPt } from '@/core/ir';
 
 import { asElement, getAttr, getVal, parseIntAttr, parseToggle } from '@/word/xml-helpers';
 import { shadingFillHex } from '@/word/shading';
@@ -112,6 +112,16 @@ export function parseRunProperties(rPr: unknown): RunProperties {
   if ('w:rtl' in el) {
     const v = parseToggle(el['w:rtl']);
     if (v !== undefined) out.rtl = v;
+  }
+
+  // §17.3.2.35 — the space added between characters, in twentieths of a point.
+  // The paragraph's `w:spacing` is a different element with different
+  // attributes; this one carries `w:val`. fdo71302.docx tracks out its
+  // Subtitle style that way and we set it solid.
+  if ('w:spacing' in el) {
+    const v = getVal(el['w:spacing']);
+    const n = v === undefined ? Number.NaN : Number(v);
+    if (Number.isFinite(n) && n !== 0) out.letterSpacingPt = twipsToPt(n);
   }
 
   // §17.3.2.32 — the run's own background. Unlike a paragraph's, this one is

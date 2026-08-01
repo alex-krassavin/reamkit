@@ -3434,12 +3434,27 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         font: plan.font,
         fontSizePt: plan.fontSizePt,
         ...(plan.risePt !== undefined ? { risePt: plan.risePt } : {}),
-        widthPt: plan.font.measure.textWidthPt(t.text, plan.fontSizePt),
+        widthPt: measureRunText(plan, t.text),
         bidiLevel: 0,
       });
     }
   }
   return tokens;
+}
+
+/**
+ * §17.3.2.35 — a run's text measured with the space it puts between its
+ * characters. PDF adds the same amount per glyph through `Tc`, so the width the
+ * line is broken at and the width the page draws agree.
+ *
+ * @param plan The run being tokenized.
+ * @param text The token's text.
+ * @returns The advance width in points.
+ */
+function measureRunText(plan: RunPlan, text: string): number {
+  const base = plan.font.measure.textWidthPt(text, plan.fontSizePt);
+  const extra = plan.resolvedRun.letterSpacingPt;
+  return extra === undefined || extra === 0 ? base : base + extra * [...text].length;
 }
 
 // BiDi-aware tokenization — splits each run on whitespace boundaries AND on
@@ -3502,7 +3517,7 @@ function tokenizePlansBidi(
         font: plan.font,
         fontSizePt: plan.fontSizePt,
         ...(plan.risePt !== undefined ? { risePt: plan.risePt } : {}),
-        widthPt: plan.font.measure.textWidthPt(text, plan.fontSizePt),
+        widthPt: measureRunText(plan, text),
         bidiLevel: curLevel,
       });
     };

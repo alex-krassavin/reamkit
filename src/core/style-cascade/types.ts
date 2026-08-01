@@ -45,6 +45,8 @@ export interface ResolvedRunProperties {
   readonly lang?: string;
   /** §17.3.2.32 — the background painted behind the run's glyphs. */
   readonly shadingColorHex?: string;
+  /** §17.3.2.35 — extra space between the run's characters, in points. */
+  readonly letterSpacingPt?: Pt;
 }
 
 /**
