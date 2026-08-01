@@ -2741,6 +2741,22 @@ function emitShapeItems(
   emitShapeText(sh, x, bottomYUp, sink, pageHeight, figId);
 }
 
+// §20.4.2.3 — where an anchored drawing sits across a header or footer band:
+// the alignment its anchor names, or the offset it states. Undefined when the
+// drawing is not anchored at all, and so flows with the band's other content.
+function bandAnchor(
+  float: FloatAnchor | undefined,
+  widthPt: number,
+  contentWidth: number,
+): number | undefined {
+  if (!float) return undefined;
+  const align = float.posH?.align;
+  if (align === 'right') return contentWidth - widthPt;
+  if (align === 'center') return (contentWidth - widthPt) / 2;
+  if (align === 'left') return 0;
+  return float.posH?.offsetPt ?? 0;
+}
+
 // `startY` is in the internal y-up frame the band math works in; the emitted
 // items carry top-left coordinates like everything else on a page.
 function drawBlocksSequentially(
@@ -2784,18 +2800,25 @@ function drawBlocksSequentially(
     // …and a first-page header is very often nothing BUT the crest.
     if (block.kind === 'image') {
       cursorY -= block.spacingBeforePt;
-      const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, contentWidth);
+      const anchored = bandAnchor(block.float, block.widthPt, contentWidth);
+      const offset =
+        anchored ?? alignmentOffset(block.resolvedAlignment, block.widthPt, contentWidth);
+      const top = anchored === undefined ? cursorY : cursorY - (block.float?.posV?.offsetPt ?? 0);
       out.push({
         type: 'image',
         x: pt(startX + offset),
-        y: pt(pageHeight - cursorY),
+        y: pt(pageHeight - top),
         width: pt(block.widthPt),
         height: pt(block.heightPt),
         imageResourceName: block.resourceName,
         ...(block.crop ? { crop: block.crop } : {}),
         ...(block.rotationDeg ? { rotationDeg: block.rotationDeg } : {}),
       });
-      cursorY -= block.heightPt + block.spacingAfterPt;
+      // An ANCHORED drawing is out of the flow: it takes no band height, or the
+      // two logos FDO78292.docx anchors side by side in its footer stack up
+      // instead, each pushing the other off the bottom of the page.
+      if (anchored === undefined) cursorY -= block.heightPt;
+      cursorY -= block.spacingAfterPt;
       continue;
     }
     // A shape — in a band that is nearly always §17.3.1.11's framed paragraph,
@@ -2804,18 +2827,13 @@ function drawBlocksSequentially(
     // frame: FDO73546 numbers its pages this way and we numbered none.
     if (block.kind === 'shape') {
       cursorY -= block.spacingBeforePt;
-      const align = block.float?.posH?.align;
+      const anchored = bandAnchor(block.float, block.widthPt, contentWidth);
       const offset =
-        align === 'right'
-          ? contentWidth - block.widthPt
-          : align === 'center'
-            ? (contentWidth - block.widthPt) / 2
-            : align === 'left'
-              ? 0
-              : (block.float?.posH?.offsetPt ??
-                alignmentOffset(block.resolvedAlignment, block.widthPt, contentWidth));
-      emitShapeItems(block, startX + offset, cursorY - block.heightPt, out, pageHeight, structId);
-      cursorY -= block.heightPt + block.spacingAfterPt;
+        anchored ?? alignmentOffset(block.resolvedAlignment, block.widthPt, contentWidth);
+      const top = anchored === undefined ? cursorY : cursorY - (block.float?.posV?.offsetPt ?? 0);
+      emitShapeItems(block, startX + offset, top - block.heightPt, out, pageHeight, structId);
+      if (anchored === undefined) cursorY -= block.heightPt;
+      cursorY -= block.spacingAfterPt;
       continue;
     }
     cursorY -= block.spacingBeforePt;
