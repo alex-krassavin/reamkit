@@ -980,11 +980,15 @@ function parseRun(
       // dropped (its text is preserved). Colour is irrelevant for pictures,
       // so this deliberately does NOT take ctx.resolveColor (byte-parity with
       // the pre-context code; revisit if inline shapes ever render).
+      // A shape here is drawn, not skipped, so it gets the same parsers a lone
+      // drawing does: its own theme colours, its text box, its pictures.
+      // chart-size.docx anchors a text box beside a run of text and we drew the
+      // empty frame — its "Before.", its chart and its "After." all gone.
       const content = parseDrawing(
         child,
-        defaultColorResolver,
-        undefined,
-        undefined,
+        ctx.resolveColor,
+        (children) => parseBodyElements(children, ctx),
+        ctx.resolveImage,
         ctx.resolveChartPart,
       );
       // §20.4.2.3 — an ANCHORED drawing is not in the line: it hangs off the

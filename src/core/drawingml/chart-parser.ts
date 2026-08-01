@@ -209,9 +209,17 @@ export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): C
   // §21.2.2.198 — the chart-space frame sits beside <c:chart>, not inside it.
   const chartSpace = tree.find((c) => poIs(c, 'c:chartSpace'));
   const spaceSpPr = poChildren(chartSpace).find((c) => poIs(c, 'c:spPr'));
-  const frameFillHex = fillColorOf(spaceSpPr, resolveColor);
   const frameLine = spaceSpPr ? poChildren(spaceSpPr).find((c) => poIs(c, 'a:ln')) : undefined;
-  const frameLineHex = frameLine ? fillColorOf(frameLine, resolveColor) : undefined;
+  // A chart that states no frame at all is not a chart without one: both
+  // references draw plain charts on white inside a light grey rule (chart-prop
+  // .docx, chart-size.docx). A chart that DOES state one is taken at its word,
+  // `<a:noFill/>` included — chart-dupe.docx asks for neither and gets neither.
+  const frameFillHex = spaceSpPr ? fillColorOf(spaceSpPr, resolveColor) : 'FFFFFF';
+  const frameLineHex = spaceSpPr
+    ? frameLine
+      ? fillColorOf(frameLine, resolveColor)
+      : undefined
+    : 'D9D9D9';
   const numberFormat = valueFormatCode(plotArea);
 
   const legend = poChildren(chart).find((c) => poIs(c, 'c:legend'));

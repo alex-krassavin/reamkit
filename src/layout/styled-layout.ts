@@ -405,6 +405,12 @@ interface ShapeBlockLaidOut {
   readonly spacingAfterPt: number;
   // Text box (wps:txbx) laid out within the inset rect, anchored vertically.
   readonly textLines: ReadonlyArray<Line>;
+  /**
+   * A chart inside the text box, by the index of the (token-less) line that
+   * stands in for it. The line reserves the height; the emitter draws the
+   * chart's own primitives from that line's corner.
+   */
+  readonly textCharts?: ReadonlyMap<number, ChartBlockLaidOut>;
   readonly textHeightPt: number;
   readonly insetLeftPt: number;
   readonly insetRightPt: number;
@@ -1587,6 +1593,7 @@ function layoutShapeBlock(
   const insetTopPt = text?.insetTop ?? DEFAULT_INSET_TB_PT;
   const insetBottomPt = text?.insetBottom ?? DEFAULT_INSET_TB_PT;
   const textLines: Array<Line> = [];
+  const textCharts = new Map<number, ChartBlockLaidOut>();
   let textHeightPt = 0;
   // §20.1.10.83 — text set along the box's long axis wraps to its HEIGHT, and
   // its lines stack across the width. btlr-textbox.docx reads bottom-to-top and
@@ -1624,6 +1631,25 @@ function layoutShapeBlock(
           resolved: resolveParagraphProperties(el.image.paragraphProperties, options.styles),
           isLastInParagraph: true,
         };
+        textLines.push(line);
+        textHeightPt += computeLineHeight(line, line.resolved);
+        continue;
+      }
+      // …and a chart in a text box is the same story: a line of its own, as
+      // tall as the chart, drawn from the line's corner. chart-size.docx sets
+      // one between its "Before." and its "After." and we drew an empty frame.
+      if (el.kind === 'chart') {
+        const laid = layoutChartBlock(el.chart, options, fontResources, innerWidth);
+        const line: Line = {
+          tokens: [],
+          contentWidthPt: laid.widthPt,
+          maxFontSizePt: laid.heightPt,
+          availableWidthPt: innerWidth,
+          firstLine: true,
+          resolved: resolveParagraphProperties(el.chart.paragraphProperties, options.styles),
+          isLastInParagraph: true,
+        };
+        textCharts.set(textLines.length, laid);
         textLines.push(line);
         textHeightPt += computeLineHeight(line, line.resolved);
         continue;
@@ -1694,6 +1720,7 @@ function layoutShapeBlock(
     spacingBeforePt: pp.spacingBefore ?? 0,
     spacingAfterPt: pp.spacingAfter ?? 0,
     textLines,
+    ...(textCharts.size > 0 ? { textCharts } : {}),
     textHeightPt,
     insetLeftPt,
     insetRightPt,
@@ -2131,6 +2158,44 @@ function collectImageResources(
   return out;
 }
 
+// A laid-out chart's primitives as page items, drawn from the box's
+// bottom-left corner. The primitives live in a local y-up frame; the page flip
+// composes with the corner, so every caller — body pagination, a header band,
+// a text box holding one — places a chart the same way.
+function chartPageItems(
+  laid: ChartBlockLaidOut,
+  x: number,
+  bottomYUp: number,
+  pageHeight: number,
+  structId?: number,
+): Array<PageItem> {
+  const fig = structId !== undefined ? { structId } : {};
+  const out: Array<PageItem> = [];
+  for (const sh of laid.layout.shapes) {
+    out.push({
+      type: 'shape',
+      shape: {
+        paths: sh.paths,
+        ...(sh.fillColorHex ? { fillColorHex: sh.fillColorHex } : {}),
+        ...(sh.stroke ? { stroke: sh.stroke } : {}),
+        transform: flipTransform([1, 0, 0, 1, x, bottomYUp], pageHeight),
+      },
+      ...fig,
+    });
+  }
+  for (const t of laid.layout.texts) {
+    out.push({
+      type: 'line',
+      line: t.line,
+      originX: pt(x + t.x),
+      baselineY: pt(pageHeight - (bottomYUp + t.y)),
+      ...(t.rotationDeg ? { rotationDeg: t.rotationDeg } : {}),
+      ...fig,
+    });
+  }
+  return out;
+}
+
 // Sequential, non-paginated draw used for header/footer bands. Tables in
 // headers/footers are uncommon in practice and skipped here for simplicity.
 // `startY` is in the internal y-up frame the band math works in; the emitted
@@ -2169,26 +2234,7 @@ function drawBlocksSequentially(
     if (block.kind === 'chart') {
       cursorY -= block.spacingBeforePt + block.heightPt;
       const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, contentWidth);
-      for (const sh of block.layout.shapes) {
-        out.push({
-          type: 'shape',
-          shape: {
-            paths: sh.paths,
-            ...(sh.fillColorHex ? { fillColorHex: sh.fillColorHex } : {}),
-            ...(sh.stroke ? { stroke: sh.stroke } : {}),
-            transform: flipTransform([1, 0, 0, 1, startX + offset, cursorY], pageHeight),
-          },
-        });
-      }
-      for (const t of block.layout.texts) {
-        out.push({
-          type: 'line',
-          line: t.line,
-          originX: pt(startX + offset + t.x),
-          baselineY: pt(pageHeight - (cursorY + t.y)),
-          ...(t.rotationDeg ? { rotationDeg: t.rotationDeg } : {}),
-        });
-      }
+      out.push(...chartPageItems(block, startX + offset, cursorY, pageHeight, structId));
       cursorY -= block.spacingAfterPt;
       continue;
     }
@@ -5128,13 +5174,26 @@ function paginateSections(
         } else {
           textY = shapeTop - sh.insetTopPt;
         }
-        for (const line of sh.textLines) {
+        sh.textLines.forEach((line, i) => {
           textY -= computeLineHeight(line, line.resolved);
           const lineOffset = alignmentOffset(
             line.resolved.alignment,
             line.contentWidthPt,
             innerWidth,
           );
+          const nested = sh.textCharts?.get(i);
+          if (nested) {
+            sink.push(
+              ...chartPageItems(
+                nested,
+                x + sh.insetLeftPt + lineOffset,
+                textY,
+                asm.ctx.pageHeight,
+                figId,
+              ),
+            );
+            return;
+          }
           sink.push({
             type: 'line',
             line,
@@ -5142,7 +5201,7 @@ function paginateSections(
             baselineY: pt(asm.ctx.pageHeight - (textY + lineDescent(line))),
             ...(figId !== undefined ? { structId: figId } : {}),
           });
-        }
+        });
       };
       // One shape, `bottomYUp` being its own bottom edge. §20.5.2.17 — a group
       // draws nothing itself and then draws its members, each at the corner it
@@ -5235,30 +5294,8 @@ function paginateSections(
       // internal y-up cursor frame) composed with the page flip. The whole
       // chart is one Figure (alt = its title); its shapes + labels carry that id.
       const figId = builder ? createFigure(builder, block.altText, 'Chart') : undefined;
-      const fig = figId !== undefined ? { structId: figId } : {};
       const emitChartAt = (x: number, bottomYUp: number, sink: Array<PageItem>) => {
-        for (const s of block.layout.shapes) {
-          sink.push({
-            type: 'shape',
-            shape: {
-              paths: s.paths,
-              ...(s.fillColorHex ? { fillColorHex: s.fillColorHex } : {}),
-              ...(s.stroke ? { stroke: s.stroke } : {}),
-              transform: flipTransform([1, 0, 0, 1, x, bottomYUp], asm.ctx.pageHeight),
-            },
-            ...fig,
-          });
-        }
-        for (const t of block.layout.texts) {
-          sink.push({
-            type: 'line',
-            line: t.line,
-            originX: pt(x + t.x),
-            baselineY: pt(asm.ctx.pageHeight - (bottomYUp + t.y)),
-            ...(t.rotationDeg ? { rotationDeg: t.rotationDeg } : {}),
-            ...fig,
-          });
-        }
+        sink.push(...chartPageItems(block, x, bottomYUp, asm.ctx.pageHeight, figId));
       };
       if (isOutOfFlowFloat(block.float)) {
         const fx = asm.floatX(block.float, block.widthPt);
