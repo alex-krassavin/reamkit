@@ -4135,12 +4135,15 @@ function paragraphItemStream(
       continue;
     }
     if (tok.isSpace || tok.kind === 'image' || tok.kind === 'math') {
-      // A line may break BETWEEN two inline pictures: each is a character of
-      // its own, and a run of them with no space between is not one long word.
-      // Without the opportunity, VariousPictures.docx's five pictures were one
+      // A line may break BEFORE an inline picture: it is a character of its
+      // own, and text with a picture stuck to it is not one long word. Without
+      // the opportunity, VariousPictures.docx's five pictures were one
       // unbreakable box 739pt wide on a 468pt line, and the two we could draw
-      // ran off the right edge of the paper.
-      if (tok.kind === 'image' && prevWasImage) {
+      // ran off the right edge of the paper; fdo82123.docx writes "Test file"
+      // against a 102pt picture in a 135pt cell and we broke the WORDS apart
+      // to keep the picture with "file", where Word and LibreOffice break
+      // between the text and the picture.
+      if (tok.kind === 'image' && (prevWasImage || prevBoxEndCp !== null)) {
         entries.push({
           item: { type: 'penalty', width: 0, penalty: 0, flagged: false },
           token: null,
@@ -4167,7 +4170,8 @@ function paragraphItemStream(
     // mark it with a zero-width, zero-cost penalty. `cjkBreakBetween` is false for
     // non-CJK boundaries, so Latin item streams stay byte-identical.
     const startCp = tok.text.codePointAt(0) ?? 0;
-    if (prevBoxEndCp !== null && cjkBreakBetween(prevBoxEndCp, startCp)) {
+    // …and AFTER one, for the same reason.
+    if (prevWasImage || (prevBoxEndCp !== null && cjkBreakBetween(prevBoxEndCp, startCp))) {
       entries.push({
         item: { type: 'penalty', width: 0, penalty: 0, flagged: false },
         token: null,
