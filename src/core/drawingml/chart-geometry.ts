@@ -446,11 +446,7 @@ function buildFrame(
   // the secondary takes the nice range of its own data.
   const scale2 =
     vals2.length > 0
-      ? niceScale(
-          Math.min(0, ...vals2),
-          Math.max(0, ...vals2),
-          Math.min(10, Math.max(4, Math.round(hPt / 24))),
-        )
+      ? niceScale(Math.min(0, ...vals2), Math.max(0, ...vals2), tickBudget(hPt))
       : undefined;
   const tickVals2 = scale2 ? ticks(scale2) : [];
 
@@ -1133,9 +1129,13 @@ function autoRange(vals: ReadonlyArray<number>): [number, number] {
   return [lo > 0 && lo < (5 / 6) * hi ? 0 : lo, hi];
 }
 
-/** Ticks that fit along an axis `extentPt` long (mirrors {@link axisScale}). */
+/**
+ * Ticks that fit along an axis `extentPt` long (mirrors {@link axisScale}).
+ * A tick every 32pt is what both references draw: at 24 a 250pt plot carried
+ * eleven of them (0, 0.5, 1 … 5.5) where both label 0…6 in whole numbers.
+ */
 const tickBudget = (extentPt: number): number =>
-  Math.min(10, Math.max(4, Math.round(extentPt / 24)));
+  Math.min(10, Math.max(4, Math.round(extentPt / 32)));
 
 /** Side (points) of the square stamped for a series that names no symbol. */
 const DEFAULT_MARKER_PT = 4;

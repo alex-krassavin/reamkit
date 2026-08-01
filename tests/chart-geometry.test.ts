@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import type { Chart } from '@/core/document-model';
+import type { ChartScene } from '@/core/drawingml/chart-geometry';
 import { FontRegistry } from '@/core/font';
 import { pt } from '@/core/ir';
 import { layoutStyledDocument } from '@/layout/styled-layout';
@@ -255,8 +256,13 @@ describe('buildBarScene', () => {
     // category sum (cat2 = 15+25 = 40).
     const clustered = buildBarScene({ ...barChart('col'), grouping: 'clustered' }, W, H, measure);
     const stacked = buildBarScene({ ...barChart('col'), grouping: 'stacked' }, W, H, measure);
-    expect(clustered.labels.some((l) => l.text === '25')).toBe(true);
+    const topTick = (s: ChartScene): number =>
+      Math.max(...s.labels.filter((l) => /^\d+$/u.test(l.text)).map((l) => Number(l.text)));
+    // The clustered axis reaches over the tallest BAR and no further; the
+    // stacked one has to reach over the tallest SUM.
+    expect(topTick(clustered)).toBe(30);
     expect(clustered.labels.some((l) => l.text === '40')).toBe(false);
+    expect(topTick(stacked)).toBeGreaterThanOrEqual(40);
     expect(stacked.labels.some((l) => l.text === '40')).toBe(true);
     expect(inBounds(stacked.rects)).toBe(true);
   });
