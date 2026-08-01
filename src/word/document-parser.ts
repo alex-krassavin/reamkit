@@ -689,6 +689,19 @@ interface CollectedRun {
   readonly instrText?: string;
 }
 
+/**
+ * §17.16.5.44 `MACROBUTTON macroName displayText` — the display text, which is
+ * everything after the macro's name and is all a reader ever sees of the field.
+ *
+ * @param instr The field instruction.
+ * @returns The display text, or `undefined` when this is not a MACROBUTTON.
+ */
+function macroButtonText(instr: string): string | undefined {
+  const m = /^\s*MACROBUTTON\s+\S+\s(.*)$/su.exec(instr);
+  const shown = m?.[1]?.replace(/\s+$/u, '');
+  return shown !== undefined && shown !== '' ? shown : undefined;
+}
+
 // §17.16.5.35 PAGE / §17.16.5.33 NUMPAGES: the instruction's first keyword;
 // switches (\* MERGEFORMAT …) are ignored. Anything else stays a cached
 // result (REF, TOC, DATE, … render their stored text exactly as before).
@@ -755,7 +768,15 @@ function applyFieldFsm(collected: ReadonlyArray<CollectedRun>): Array<Run> {
       }
       const field = parseFieldInstr(st.instr);
       if (field) out.push(synthesizeFieldRun(st.result, field));
-      else out.push(...st.result);
+      else if (st.result.length > 0) out.push(...st.result);
+      else {
+        // §17.16.5.44 MACROBUTTON — the words a reader SEES are in the
+        // instruction, after the macro's name, and the field caches no result
+        // of its own. Unsupportedtextfields.docx asks for "contacts  ssss" and
+        // we printed a blank line where LibreOffice prints them.
+        const shown = macroButtonText(st.instr);
+        if (shown !== undefined) out.push({ text: shown, properties: {} });
+      }
       st = null;
       continue;
     }
