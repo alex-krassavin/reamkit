@@ -37,7 +37,15 @@ import type { PlaceholderRef, ShapeBoxEmu } from '@/pptx/sp-helpers';
 
 import { defaultColorResolver, resolveColorNode } from '@/core/drawingml/colors';
 import { FEATURES, emuToPt, pt } from '@/core/ir';
-import { poAttr, poChildren, poFindDescendant, poIntAttr, poIs, poText } from '@/core/po-helpers';
+import {
+  poAttr,
+  poChildren,
+  poFindDescendant,
+  poIntAttr,
+  poIs,
+  poTag,
+  poText,
+} from '@/core/po-helpers';
 import { parseCustGeom, parseFill, parseLine, parsePrstGeom } from '@/word/drawing-parser';
 import { boxFromXfrm, parsePh, parseXfrmBox, rPrToRunProps } from '@/pptx/sp-helpers';
 
@@ -349,9 +357,14 @@ export function parseDiagramDrawing(
     const box = transform(own);
 
     const txBody = poChildren(sp).find((c) => poIs(c, 'dsp:txBody'));
-    const text = txBody
+    const parsed = txBody
       ? parseTxBody(txBody, undefined, undefined, colors, resolveLink)
       : undefined;
+    // §20.1.4.2.14 — a diagram node states its text colour nowhere in the runs;
+    // it is in the node's `dsp:style/a:fontRef`, and for the stock SmartArt
+    // galleries that is `lt1`. smartart.docx puts white labels on three blue
+    // boxes and we drew them black.
+    const text = parsed ? withDiagramFontColor(parsed, sp, colors) : undefined;
 
     const geometry = parseGeometry(spPr);
     const fill: ShapeFill = spPr ? parseFill(spPr, colors) : { kind: 'none' };
@@ -371,6 +384,38 @@ export function parseDiagramDrawing(
     });
   }
   return out;
+}
+
+// The text body with the node's `dsp:style/a:fontRef` colour filled in wherever
+// a run declares none.
+function withDiagramFontColor(
+  text: ShapeTextBody,
+  sp: PoNode,
+  colors: ColorResolver,
+): ShapeTextBody {
+  const style = poChildren(sp).find((c) => poIs(c, 'dsp:style'));
+  const ref = style ? poChildren(style).find((c) => poIs(c, 'a:fontRef')) : undefined;
+  const child = ref ? poChildren(ref).find((c) => poTag(c) !== undefined) : undefined;
+  const colorHex = child ? resolveColorNode(child, colors) : undefined;
+  if (colorHex === undefined) return text;
+  return {
+    ...text,
+    content: text.content.map((block) =>
+      block.kind === 'paragraph'
+        ? {
+            ...block,
+            paragraph: {
+              ...block.paragraph,
+              runs: block.paragraph.runs.map((run) =>
+                run.properties.colorHex === undefined
+                  ? { ...run, properties: { ...run.properties, colorHex } }
+                  : run,
+              ),
+            },
+          }
+        : block,
+    ),
+  };
 }
 
 /**
