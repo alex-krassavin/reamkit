@@ -161,3 +161,58 @@ describe('parseTable + body ordering', () => {
     expect(cell.content[0]!.table.grid).toEqual([twipsToPt(2000)]);
   });
 });
+
+// §17.13.5.15 — a row taken away by a tracked change, under the reader's
+// accept-all reading of revisions (the one that already drops `w:del` runs).
+describe('a deleted table row', () => {
+  const row = (cells: string) => `<w:tr>${cells}</w:tr>`;
+  const cell = (inner: string) => `<w:tc><w:tcPr/><w:p>${inner}</w:p></w:tc>`;
+  const MOVED = '<w:pPr><w:rPr><w:moveFrom w:id="1" w:author="a" w:date="d"/></w:rPr></w:pPr>';
+  const tbl = (rows: string) =>
+    parse(`<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>${rows}</w:tbl>`);
+  const rowsOf = (body: ReturnType<typeof tbl>) => {
+    const el = body.find((b) => b.kind === 'table');
+    if (el?.kind !== 'table') throw new Error('expected a table');
+    return el.table.rows;
+  };
+
+  it('drops a row whose trPr says it was deleted', () => {
+    const body = tbl(
+      row(
+        '<w:trPr><w:del w:id="1" w:author="a" w:date="d"/></w:trPr>' +
+          cell('<w:r><w:t>gone</w:t></w:r>'),
+      ) + row(cell('<w:r><w:t>kept</w:t></w:r>')),
+    );
+    expect(rowsOf(body)).toHaveLength(1);
+    expect(textOf(rowsOf(body)[0]!.cells[0]!.content)).toBe('kept');
+  });
+
+  it('drops a row whose every paragraph mark was moved away', () => {
+    // How a producer writes a row whose CONTENT was taken: the runs go into
+    // w:moveFrom and each paragraph MARK is marked too. Accepting only the runs
+    // left TC-table-DnD-move.docx a ghost of empty bordered rows where Word and
+    // LibreOffice leave nothing.
+    const body = tbl(
+      row(cell(MOVED + '<w:moveFrom w:id="2"><w:r><w:t>A1</w:t></w:r></w:moveFrom>')) +
+        row(cell('<w:r><w:t>kept</w:t></w:r>')),
+    );
+    expect(rowsOf(body)).toHaveLength(1);
+    expect(textOf(rowsOf(body)[0]!.cells[0]!.content)).toBe('kept');
+  });
+
+  it('keeps a row that merely happens to be empty', () => {
+    // No revision mark anywhere: an empty row is a row the author wanted.
+    expect(rowsOf(tbl(row(cell('')) + row(cell('<w:r><w:t>x</w:t></w:r>'))))).toHaveLength(2);
+  });
+
+  it('keeps a row where one paragraph mark survives', () => {
+    const body = tbl(
+      row(
+        cell(MOVED + '<w:moveFrom w:id="2"><w:r><w:t>A1</w:t></w:r></w:moveFrom>') +
+          cell('<w:r><w:t>stays</w:t></w:r>'),
+      ),
+    );
+    expect(rowsOf(body)).toHaveLength(1);
+    expect(textOf(rowsOf(body)[0]!.cells[1]!.content)).toBe('stays');
+  });
+});

@@ -64,6 +64,7 @@ export function parseTable(tbl: PoNode, ctx: ParseContext = DEFAULT_PARSE_CONTEX
   // semantics, not the OOXML encoding.
   const draftRows: Array<{ properties: RowProperties; cells: Array<DraftCell> }> = [];
   for (const tr of poChildrenWith(tbl, 'w:tr')) {
+    if (isDeletedRow(tr)) continue;
     draftRows.push(parseTableRow(tr, ctx));
   }
   const roles = resolveMergeRoles(draftRows.map((r) => r.cells));
@@ -211,6 +212,39 @@ function parseTableGrid(tblGrid: PoNode | undefined): Array<Pt> {
     cols.push(twipsToPt(w ?? 0));
   }
   return cols;
+}
+
+/**
+ * §17.13.5.15 — whether a row was deleted, under the reader's accept-all
+ * reading of tracked changes (the same one that drops `w:del` runs).
+ *
+ * Two spellings. `w:trPr/w:del` says it outright. The other is how a producer
+ * writes a row whose CONTENT was taken away: every paragraph mark in it carries
+ * `w:del` or `w:moveFrom`, which deletes the mark, and a row whose every mark
+ * is gone is a row that is gone. TC-table-DnD-move.docx moves a table that way,
+ * and accepting only the runs left a ghost of empty bordered rows behind where
+ * Word and LibreOffice leave nothing.
+ *
+ * @param tr The `w:tr` element.
+ * @returns Whether to drop the row.
+ */
+function isDeletedRow(tr: PoNode): boolean {
+  const trPr = poFirstChild(tr, 'w:trPr');
+  if (trPr && (poFirstChild(trPr, 'w:del') ?? poFirstChild(trPr, 'w:moveFrom'))) return true;
+  const cells = poChildrenWith(tr, 'w:tc');
+  if (cells.length === 0) return false;
+  let marks = 0;
+  for (const tc of cells) {
+    for (const p of poChildrenWith(tc, 'w:p')) {
+      const rPr = poFirstChild(poFirstChild(p, 'w:pPr'), 'w:rPr');
+      if (!rPr || !(poFirstChild(rPr, 'w:del') ?? poFirstChild(rPr, 'w:moveFrom'))) return false;
+      marks++;
+    }
+    // A cell holding a nested table (or nothing at all) has no mark to delete,
+    // so the row cannot be read as gone from its marks.
+    if (poChildrenWith(tc, 'w:tbl').length > 0) return false;
+  }
+  return marks > 0;
 }
 
 function parseTableRow(
