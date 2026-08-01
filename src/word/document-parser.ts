@@ -980,13 +980,24 @@ function parseRun(
       // dropped (its text is preserved). Colour is irrelevant for pictures,
       // so this deliberately does NOT take ctx.resolveColor (byte-parity with
       // the pre-context code; revisit if inline shapes ever render).
-      const content = parseDrawing(child, defaultColorResolver);
+      const content = parseDrawing(
+        child,
+        defaultColorResolver,
+        undefined,
+        undefined,
+        ctx.resolveChartPart,
+      );
       // §20.4.2.3 — an ANCHORED drawing is not in the line: it hangs off the
       // paragraph at a position of its own, and the text flows past it. Read as
       // an inline picture it split the line it sat in — anchor-position.docx
       // put its picture between the "A" and the "B" where every other reader
       // sets "AB" beside it.
       if (content?.float && anchored) {
+        anchored.push(...(blocksForDrawing(content, {}, ctx) ?? []));
+      } else if (content?.kind === 'chart' && anchored) {
+        // A chart is block-sized: it takes a line of its own, so it leaves the
+        // run and becomes a block ahead of the paragraph. chart-dupe.docx sets
+        // one beside a trailing space, and keeping it in the run dropped it.
         anchored.push(...(blocksForDrawing(content, {}, ctx) ?? []));
       } else if (content && content.kind === 'image') {
         const resource = ctx.resolveImage?.(content.imageId);

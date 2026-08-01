@@ -377,6 +377,35 @@ describe('column chart rendering (end-to-end)', () => {
   });
 });
 
+describe('a chart in a paragraph that holds text too (chart-dupe.docx)', () => {
+  // A lone drawing collapses to a block; anything else in the paragraph kept
+  // the drawing in the run, where only pictures render — the chart was
+  // dropped. chart-dupe.docx sets one beside a trailing space.
+  const body = chartDrawing('rId5').replace(
+    '</w:r></w:p>',
+    `</w:r><w:r><w:t xml:space="preserve"> </w:t></w:r></w:p>`,
+  );
+
+  it('keeps the chart, as the block it is, and the paragraph beside it', () => {
+    const { doc } = readDocx(buildDocxFromBody(body, { charts: { rId5: BAR_CHART } }));
+    expect(doc.body.map((b) => b.kind)).toEqual(['chart', 'paragraph']);
+    const first = doc.body[0];
+    expect(first?.kind === 'chart' ? first.chart.chartRelId : undefined).toBe(
+      'word/charts/chart1.xml',
+    );
+  });
+
+  it('draws it', () => {
+    const text = asLatin1(
+      convertDocxToPdfSync(buildDocxFromBody(body, { charts: { rId5: BAR_CHART } }), {
+        fonts: FONTS,
+      }),
+    );
+    expect(text).toContain('0.266667 0.447059 0.768627 rg'); // 4472C4 bars
+    expect(text).toMatch(/\nh\nf\n/);
+  });
+});
+
 describe('a chart anchored in a footer (chart-in-footer.docx)', () => {
   // Charts were collected from the main document's rels only, and the band
   // renderer drew paragraphs, tables and images but not charts — a document
