@@ -131,7 +131,10 @@ export function parseWorksheet(data: Uint8Array, theme?: ThemePalette): ParsedWo
     // The 2009 extension's rules resolve their own colours; the workbook's
     // indexed table is not in reach here, and a `<x14:dxf>` naming an indexed
     // colour a workbook has REPLACED is rarer than the default is right.
-    ...parseX14ConditionalFormatting(wsObj, { ...(theme ? { theme } : {}), indexed: INDEXED_COLORS }),
+    ...parseX14ConditionalFormatting(wsObj, {
+      ...(theme ? { theme } : {}),
+      indexed: INDEXED_COLORS,
+    }),
   ];
   const dataValidations = parseDataValidations(wsObj);
   const hyperlinks = parseHyperlinks(wsObj);
@@ -582,9 +585,7 @@ function parseX14ConditionalFormatting(
         if (!rule) continue;
         // colorScale/dataBar/iconSet colour themselves; the rest take a dxf.
         const dxf = parseDxf(node['dxf'], colors);
-        rules.push(
-          'dxfId' in rule && Object.keys(dxf).length > 0 ? ({ ...rule, dxf }) : rule,
-        );
+        rules.push('dxfId' in rule && Object.keys(dxf).length > 0 ? { ...rule, dxf } : rule);
       }
       if (rules.length > 0) out.push({ ranges, rules });
     }

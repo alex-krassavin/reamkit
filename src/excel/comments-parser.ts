@@ -43,7 +43,10 @@ const parser = new XMLParser({
  * of the text — stripped here so the resolved author is not shown twice.
  */
 export function parseLegacyComments(data: Uint8Array): Array<SheetComment> {
-  const tree = parser.parse(resolveInternalEntities(decoder.decode(data))) as Record<string, unknown>;
+  const tree = parser.parse(resolveInternalEntities(decoder.decode(data))) as Record<
+    string,
+    unknown
+  >;
   const root = asObject(tree['comments']);
   if (!root) return [];
   const authors = toArray(asObject(root['authors'])?.['author']).map((a) => textOf(a));
@@ -67,7 +70,10 @@ export function parseLegacyComments(data: Uint8Array): Array<SheetComment> {
  * the authors of threaded comments.
  */
 export function parsePersons(data: Uint8Array): Map<string, string> {
-  const tree = parser.parse(resolveInternalEntities(decoder.decode(data))) as Record<string, unknown>;
+  const tree = parser.parse(resolveInternalEntities(decoder.decode(data))) as Record<
+    string,
+    unknown
+  >;
   const root = asObject(tree['personList']);
   const map = new Map<string, string>();
   if (!root) return map;
@@ -93,7 +99,10 @@ export function parseThreadedComments(
   data: Uint8Array,
   persons: ReadonlyMap<string, string>,
 ): Array<SheetComment> {
-  const tree = parser.parse(resolveInternalEntities(decoder.decode(data))) as Record<string, unknown>;
+  const tree = parser.parse(resolveInternalEntities(decoder.decode(data))) as Record<
+    string,
+    unknown
+  >;
   const root = asObject(tree['ThreadedComments']);
   if (!root) return [];
   const out: Array<SheetComment> = [];

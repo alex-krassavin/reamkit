@@ -177,9 +177,7 @@ export function parseSheetDrawing(
 function isHiddenDrawing(anchor: Record<string, unknown>, kind: 'pic' | 'graphicFrame'): boolean {
   const node = anchor[kind];
   if (!node || typeof node !== 'object') return false;
-  const nv = (node as Record<string, unknown>)[
-    kind === 'pic' ? 'nvPicPr' : 'nvGraphicFramePr'
-  ];
+  const nv = (node as Record<string, unknown>)[kind === 'pic' ? 'nvPicPr' : 'nvGraphicFramePr'];
   if (!nv || typeof nv !== 'object') return false;
   const cNvPr = (nv as Record<string, unknown>)['cNvPr'];
   if (!cNvPr || typeof cNvPr !== 'object') return false;

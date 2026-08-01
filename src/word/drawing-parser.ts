@@ -599,9 +599,7 @@ export function shadowFromOuterShdw(
   const colorNode = poChildren(shdw).find((c) => resolveColorNode(c, resolveColor) !== undefined);
   const colorHex = colorNode ? resolveColorNode(colorNode, resolveColor) : undefined;
   if (!colorHex) return undefined;
-  const alphaMod = colorNode
-    ? readColorMods(colorNode).find((m) => m.kind === 'alpha')
-    : undefined;
+  const alphaMod = colorNode ? readColorMods(colorNode).find((m) => m.kind === 'alpha') : undefined;
   const dist = emuToPt(poIntAttr(shdw, 'dist') ?? 0);
   // §20.1.10.13 ST_PositiveFixedAngle — 60 000ths of a degree.
   const dirDeg = (poIntAttr(shdw, 'dir') ?? 0) / 60000;

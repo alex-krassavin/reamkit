@@ -107,7 +107,7 @@ describe('sheet shapes — resolve (E-SHEET W2)', () => {
     expect(a!.fill).toMatchObject({ kind: 'solid', colorHex: '4472C4' });
     expect(b!.fill).toMatchObject({ kind: 'solid', colorHex: 'ED7D31' });
     expect(a!.width).toBeCloseTo(b!.width);
-    expect(b!.float?.posH.offsetPt).toBeGreaterThan(a!.float?.posH.offsetPt ?? 0);
+    expect(b!.float?.posH?.offsetPt ?? 0).toBeGreaterThan(a!.float?.posH?.offsetPt ?? 0);
   });
 
   it('leaves a sheet with no drawing without a shapes field', () => {

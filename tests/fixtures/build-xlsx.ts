@@ -64,6 +64,8 @@ export interface XlsxPrintOptionsSpec {
   readonly gridLines?: boolean;
   readonly horizontalCentered?: boolean;
   readonly verticalCentered?: boolean;
+  /** §18.3.1.70 — print the row numbers and column letters. */
+  readonly headings?: boolean;
 }
 
 export interface XlsxDefinedNameSpec {
@@ -522,6 +524,9 @@ export function buildXlsx(
           : '') +
         (sheet.printOptions.verticalCentered !== undefined
           ? ` verticalCentered="${sheet.printOptions.verticalCentered ? 1 : 0}"`
+          : '') +
+        (sheet.printOptions.headings !== undefined
+          ? ` headings="${sheet.printOptions.headings ? 1 : 0}"`
           : '') +
         '/>'
       : '';

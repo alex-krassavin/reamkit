@@ -390,17 +390,19 @@ describe('an auto-generated chart title (§21.2.2.213)', () => {
     // title stands. Reading only the `a:t` runs left it undefined, and eleven
     // chart parts across eight corpus files are written this way.
     const single = parseChart(
-      enc.encode(chartXml('<c:title><c:layout/></c:title><c:autoTitleDeleted val="0"/>', oneSeries)),
+      enc.encode(
+        chartXml('<c:title><c:layout/></c:title><c:autoTitleDeleted val="0"/>', oneSeries),
+      ),
       defaultColorResolver,
     );
-    expect(single.title).toBe('Demo');
+    expect(single?.title).toBe('Demo');
     const two = parseChart(
       enc.encode(
         chartXml('<c:title><c:layout/></c:title>', oneSeries + oneSeries.replace('Demo', 'Other')),
       ),
       defaultColorResolver,
     );
-    expect(two.title).toBe('Chart Title');
+    expect(two?.title).toBe('Chart Title');
   });
 
   it('stays silent when the author deleted it, or asked for no title at all', () => {
@@ -410,8 +412,10 @@ describe('an auto-generated chart title (§21.2.2.213)', () => {
           chartXml('<c:title><c:layout/></c:title><c:autoTitleDeleted val="1"/>', oneSeries),
         ),
         defaultColorResolver,
-      ).title,
+      )?.title,
     ).toBeUndefined();
-    expect(parseChart(enc.encode(chartXml('', oneSeries)), defaultColorResolver).title).toBeUndefined();
+    expect(
+      parseChart(enc.encode(chartXml('', oneSeries)), defaultColorResolver)?.title,
+    ).toBeUndefined();
   });
 });

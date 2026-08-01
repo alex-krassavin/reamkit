@@ -450,8 +450,7 @@ function chartTitle(chart: PoNode, series: ReadonlyArray<{ name?: string }>): st
   if (!title) return undefined;
   const authored = collectAT(title) || cachedTitleText(title);
   if (authored) return authored;
-  const deleted =
-    poVal(poChildren(chart).find((c) => poIs(c, 'c:autoTitleDeleted'))) === '1';
+  const deleted = poVal(poChildren(chart).find((c) => poIs(c, 'c:autoTitleDeleted'))) === '1';
   if (deleted) return undefined;
   return (series.length === 1 ? series[0]?.name : undefined) ?? 'Chart Title';
 }
