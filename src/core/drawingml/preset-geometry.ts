@@ -130,6 +130,17 @@ export function presetPaths(
         ]),
       ];
     }
+    // §20.1.10.55 — the rectangles whose corners are rounded or cut off. Each
+    // names which corners with one or two adjust guides; the radius is that
+    // fraction of the SHORTER side.
+    case 'round1Rect':
+    case 'round2SameRect':
+    case 'round2DiagRect':
+    case 'snip1Rect':
+    case 'snip2SameRect':
+    case 'snip2DiagRect':
+    case 'snipRoundRect':
+      return [cornerRect(preset, w, h, adjust)];
     case 'star4':
     case 'star5':
     case 'star6':
@@ -229,6 +240,121 @@ export function customPaths(geom: CustomGeometry, wPt: number, hPt: number): Arr
     }
   }
   return [b.build()];
+}
+
+/** How one corner of a {@link cornerRect} is finished. */
+type Corner = { readonly cut: number; readonly round: boolean };
+const SQUARE: Corner = { cut: 0, round: false };
+
+// The corners in path order — top-left, top-right, bottom-right, bottom-left —
+// as [which adjust guide, rounded or snipped] for each preset. `undefined`
+// leaves the corner square.
+const CORNER_RECTS: ReadonlyMap<
+  string,
+  {
+    readonly defaults: readonly [number, number];
+    readonly corners: readonly [
+      0 | 1 | undefined,
+      0 | 1 | undefined,
+      0 | 1 | undefined,
+      0 | 1 | undefined,
+    ];
+    readonly round: boolean | readonly [boolean, boolean];
+  }
+> = new Map([
+  // One corner: the top-right, the one Word's own preview shows cut.
+  [
+    'round1Rect',
+    { defaults: [16667, 0], corners: [undefined, 0, undefined, undefined], round: true },
+  ],
+  [
+    'snip1Rect',
+    { defaults: [16667, 0], corners: [undefined, 0, undefined, undefined], round: false },
+  ],
+  // Two the same: adj1 the top pair, adj2 the bottom pair.
+  ['round2SameRect', { defaults: [16667, 0], corners: [0, 0, 1, 1], round: true }],
+  ['snip2SameRect', { defaults: [16667, 0], corners: [0, 0, 1, 1], round: false }],
+  // Two diagonal: adj1 top-left and bottom-right, adj2 the other pair.
+  ['round2DiagRect', { defaults: [16667, 0], corners: [0, 1, 0, 1], round: true }],
+  ['snip2DiagRect', { defaults: [16667, 0], corners: [0, 1, 0, 1], round: false }],
+  // One snipped (top-left) and one rounded (top-right).
+  [
+    'snipRoundRect',
+    { defaults: [16667, 16667], corners: [0, 1, undefined, undefined], round: [false, true] },
+  ],
+]);
+
+// A rectangle whose corners are rounded or cut off by the preset's guides.
+function cornerRect(
+  preset: string,
+  w: number,
+  h: number,
+  adjust: ReadonlyMap<string, number>,
+): VectorPath {
+  const spec = CORNER_RECTS.get(preset)!;
+  const ss = Math.min(w, h);
+  // The one-guide presets name it `adj`; the two-guide ones `adj1`/`adj2`.
+  const guide = (i: 0 | 1): number => {
+    const named =
+      adjust.get(i === 0 ? 'adj1' : 'adj2') ?? (i === 0 ? adjust.get('adj') : undefined);
+    return clamp((named ?? spec.defaults[i]) / 100000, 0, 0.5) * ss;
+  };
+  const corners = spec.corners.map((g): Corner => {
+    if (g === undefined) return SQUARE;
+    const round = typeof spec.round === 'boolean' ? spec.round : spec.round[g];
+    return { cut: guide(g), round };
+  }) as [Corner, Corner, Corner, Corner];
+  return roundedCorners(w, h, corners);
+}
+
+// Traverse the box clockwise in the y-up frame — top-left, top-right,
+// bottom-right, bottom-left — finishing each corner as its {@link Corner} says.
+function roundedCorners(
+  w: number,
+  h: number,
+  [tl, tr, br, bl]: readonly [Corner, Corner, Corner, Corner],
+): VectorPath {
+  // Corner: its own point, its centre when rounded, and the angle the incoming
+  // edge arrives at (each corner sweeps 90° clockwise from there).
+  const at: ReadonlyArray<{
+    c: Corner;
+    from: readonly [number, number];
+    to: readonly [number, number];
+    centre: readonly [number, number];
+    start: number;
+  }> = [
+    { c: tl, from: [0, h - tl.cut], to: [tl.cut, h], centre: [tl.cut, h - tl.cut], start: Math.PI },
+    {
+      c: tr,
+      from: [w - tr.cut, h],
+      to: [w, h - tr.cut],
+      centre: [w - tr.cut, h - tr.cut],
+      start: Math.PI / 2,
+    },
+    { c: br, from: [w, br.cut], to: [w - br.cut, 0], centre: [w - br.cut, br.cut], start: 0 },
+    { c: bl, from: [bl.cut, 0], to: [0, bl.cut], centre: [bl.cut, bl.cut], start: -Math.PI / 2 },
+  ];
+  const b = new PathBuilder();
+  at.forEach((corner, i) => {
+    if (i === 0) b.moveTo(corner.from[0], corner.from[1]);
+    else b.lineTo(corner.from[0], corner.from[1]);
+    if (corner.c.cut <= 0) return;
+    if (corner.c.round) {
+      b.append(
+        arcToBeziers(
+          corner.centre[0],
+          corner.centre[1],
+          corner.c.cut,
+          corner.c.cut,
+          corner.start,
+          -Math.PI / 2,
+        ),
+      );
+    } else {
+      b.lineTo(corner.to[0], corner.to[1]);
+    }
+  });
+  return b.close().build();
 }
 
 // §20.1.10.55 star4…star32 — the star family's three published guides. `adj` is

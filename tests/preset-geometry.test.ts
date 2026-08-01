@@ -34,6 +34,13 @@ const KNOWN = [
   'star16',
   'star24',
   'star32',
+  'round1Rect',
+  'round2SameRect',
+  'round2DiagRect',
+  'snip1Rect',
+  'snip2SameRect',
+  'snip2DiagRect',
+  'snipRoundRect',
 ];
 
 function coords(segs: ReadonlyArray<PathSegment>): Array<number> {
@@ -81,6 +88,30 @@ describe('presetPaths', () => {
     if (first.op !== 'move') throw new Error('unreachable');
     expect(first.x).toBeCloseTo(W / 2, 6);
     expect(first.y).toBeCloseTo(H, 6);
+  });
+
+  it('a snipped corner cuts the corner off and leaves the rest square', () => {
+    // adj1 (default 16667) cuts the TOP pair; adj2 defaults to 0, so the bottom
+    // corners stay square. The cut is that fraction of the SHORTER side (60).
+    const segs = presetPaths('snip2SameRect', W, H, new Map())![0]!.segments;
+    expect(segs.map((s) => s.op)).toEqual([
+      'move',
+      'line',
+      'line',
+      'line',
+      'line',
+      'line',
+      'close',
+    ]);
+    const want = [0, 50, 10, 60, 90, 60, 100, 50, 100, 0, 0, 0];
+    coords(segs).forEach((v, i) => expect(v).toBeCloseTo(want[i]!, 3));
+  });
+
+  it('a rounded corner arcs where a snipped one cuts', () => {
+    const snip = presetPaths('snip1Rect', W, H, new Map())![0]!.segments;
+    const round = presetPaths('round1Rect', W, H, new Map())![0]!.segments;
+    expect(snip.map((s) => s.op)).toEqual(['move', 'line', 'line', 'line', 'line', 'close']);
+    expect(round.map((s) => s.op)).toEqual(['move', 'line', 'cubic', 'line', 'line', 'close']);
   });
 
   it('triangle is three line segments closed', () => {
