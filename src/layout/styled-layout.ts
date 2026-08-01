@@ -2172,6 +2172,16 @@ function collectFontResources(
       parsed.joiningForms,
     );
     for (const g of shaped.gids) bucket.gids.add(g);
+    // §17.3.1.38 — a tab's leader characters are drawn but written nowhere: the
+    // layout makes them, from the stop, long after the subset is chosen from
+    // the runs. Left out, the subset had no glyph for them and TOC_field_b
+    // .docx drew its dot leader as a row of missing-glyph boxes.
+    if (run.text.includes('\t')) {
+      for (const stop of resolveParagraphProperties(para.properties, options.styles).tabs) {
+        const ch = stop.leader === undefined ? undefined : TAB_LEADER_CHARS.get(stop.leader);
+        if (ch !== undefined) bucket.gids.add(parsed.glyphForCodepoint(ch.codePointAt(0)!));
+      }
+    }
   };
 
   // Inline math glyphs go to the variant the layout engine will use (italic for

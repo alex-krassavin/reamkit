@@ -290,6 +290,27 @@ describe('Styled rendering: rPr + pPr → PDF', () => {
     expect(counts.slice(0, -1).every((tms) => tms > 1)).toBe(true);
   });
 
+  it('embeds the glyph a tab leader draws with (§17.3.1.38)', () => {
+    // A leader's characters are made by the layout, from the stop, long after
+    // the subset is chosen from the runs. Left out of it, the subset had no
+    // glyph for them: TOC_field_b.docx drew its dot leader as a row of
+    // missing-glyph boxes running past the right margin.
+    const docx = buildRichDocx([
+      {
+        pPrXml:
+          '<w:pPr><w:tabs><w:tab w:val="right" w:leader="dot" w:pos="9016"/></w:tabs></w:pPr>',
+        runs: [{ text: 'Heading\t1' }],
+      },
+    ]);
+    const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
+    const parsed = parseTtf(FONTS.regular);
+    // The leader is drawn as a long run of the dot's own glyph. Pruned from the
+    // subset, the same run came out as the missing-glyph id 0.
+    const dot = parsed.glyphForCodepoint('.'.codePointAt(0)!).toString(16).padStart(4, '0');
+    expect(dot).not.toBe('0000');
+    expect(text).toMatch(new RegExp(`(?:${dot}){40,}`, 'iu'));
+  });
+
   it('splits a table row taller than the page into chunks across pages', () => {
     // 80 paragraphs in one cell exceeds A4 content height (~698pt) at typical
     // 14pt line height. Expect at least two pages with continuation borders.
