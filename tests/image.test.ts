@@ -346,6 +346,58 @@ describe('a run of inline pictures', () => {
   });
 });
 
+describe('an anchored drawing beside text', () => {
+  // §20.4.2.3 — an anchored drawing is not in the line: it hangs off the
+  // paragraph at a position of its own and the text flows past it. Read as an
+  // inline picture it split the line it sat in: anchor-position.docx put its
+  // picture between the "A" and the "B" where every other reader sets "AB"
+  // beside it.
+  const anchored = (wrap: string): string => {
+    const png = buildTinyPng(2, 2, [255, 0, 0, 255]);
+    const drawing = `<w:drawing>
+      <wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+                 distT="0" distB="0" distL="0" distR="0" behindDoc="0" locked="0"
+                 layoutInCell="1" allowOverlap="1" simplePos="0" relativeHeight="1">
+        <wp:simplePos x="0" y="0"/>
+        <wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH>
+        <wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>
+        <wp:extent cx="650240" cy="650240"/>
+        ${wrap}
+        <wp:docPr id="1" name="Picture 1"/>
+        <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+          <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+            <pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+              <pic:blipFill><a:blip r:embed="rId20"/></pic:blipFill>
+              <pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="650240" cy="650240"/></a:xfrm></pic:spPr>
+            </pic:pic>
+          </a:graphicData>
+        </a:graphic>
+      </wp:anchor>
+    </w:drawing>`;
+    const body = `<w:p><w:r><w:t>A</w:t></w:r><w:r>${drawing}</w:r><w:r><w:t>B</w:t></w:r></w:p>`;
+    return asLatin1(
+      convertDocxToPdfSync(
+        buildDocxFromBody(body, {
+          images: { rId20: { contentType: 'image/png', bytes: png, extension: 'png' } },
+        }),
+        { fonts: FONTS },
+      ),
+    );
+  };
+
+  it('leaves the line it hangs off unbroken', () => {
+    // An inline picture leaves text mode mid-line — `ET … Do … BT`. An
+    // anchored one is a block of its own, so the line is never interrupted.
+    expect(anchored('<wp:wrapSquare wrapText="bothSides"/>')).not.toMatch(
+      /ET\nq\n[^\n]+cm\n\/Im\d+ Do\nQ\nBT/u,
+    );
+  });
+
+  it('still draws the picture', () => {
+    expect(anchored('<wp:wrapNone/>')).toMatch(/\/Im\d+ Do/u);
+  });
+});
+
 describe('image robustness', () => {
   it('skips an unsupported/corrupt image instead of crashing the document', () => {
     // Garbage bytes labelled as PNG — embedImage throws; the document must still

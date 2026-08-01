@@ -385,7 +385,11 @@ export function parseBodyElements(
       if (drawings) {
         out.push(...drawings);
       } else {
-        out.push({ kind: 'paragraph', paragraph: parseParagraph(child, ctx, pendingBookmarks) });
+        const anchored: Array<BodyElement> = [];
+        const paragraph = parseParagraph(child, ctx, pendingBookmarks, anchored);
+        // The floats first: each places itself against the paragraph it hangs
+        // off, and one emitted after it would hang off whatever follows.
+        out.push(...anchored, { kind: 'paragraph', paragraph });
         pendingBookmarks = undefined;
       }
     } else if (poIs(child, 'w:tbl')) {
@@ -609,7 +613,15 @@ function blocksForDrawing(
   ];
 }
 
-function parseParagraph(p: PoNode, ctx: ParseContext, extraBookmarks?: Array<string>): Paragraph {
+function parseParagraph(
+  p: PoNode,
+  ctx: ParseContext,
+  extraBookmarks?: Array<string>,
+  // §20.4.2.3 — out-param: the anchored drawings the paragraph's runs carry.
+  // They hang off the paragraph rather than sitting in its lines, so the caller
+  // emits them as blocks beside it.
+  anchored?: Array<BodyElement>,
+): Paragraph {
   // §17.13.6.2 — bookmarks opening in this paragraph (plus any the caller
   // carried over from between-paragraph positions). The hidden _GoBack
   // edit-cursor bookmark is noise in every Word save — skipped.
@@ -643,7 +655,7 @@ function parseParagraph(p: PoNode, ctx: ParseContext, extraBookmarks?: Array<str
     properties = { ...properties, tabs: [...(properties.tabs ?? []), ...pTabs] };
   }
   const collected: Array<CollectedRun> = [];
-  collectRuns(p, collected, ctx);
+  collectRuns(p, collected, ctx, undefined, undefined, anchored);
   return {
     properties,
     runs: applyFieldFsm(collected),
@@ -796,6 +808,9 @@ function collectRuns(
   ctx: ParseContext,
   href?: string,
   anchor?: string,
+  // §20.4.2.3 — out-param threaded to parseRun: the anchored drawings the
+  // paragraph's runs carry, which are blocks of their own rather than glyphs.
+  anchored?: Array<BodyElement>,
 ): void {
   for (const child of poChildren(container)) {
     if (poIs(child, 'w:pPr')) continue;
@@ -812,7 +827,7 @@ function collectRuns(
       continue;
     }
     if (poIs(child, 'w:r')) {
-      const parsed = parseRun(child, ctx);
+      const parsed = parseRun(child, ctx, anchored);
       const ranges =
         ctx.openCommentRanges && ctx.openCommentRanges.size > 0
           ? [...ctx.openCommentRanges]
@@ -855,11 +870,11 @@ function collectRuns(
       const field = parseFieldInstr(poAttr(child, 'instr'));
       if (field) {
         const inner: Array<CollectedRun> = [];
-        collectRuns(child, inner, ctx, href, anchor);
+        collectRuns(child, inner, ctx, href, anchor, anchored);
         out.push({ run: synthesizeFieldRun(applyFieldFsm(inner), field, href) });
         continue;
       }
-      collectRuns(child, out, ctx, href, anchor);
+      collectRuns(child, out, ctx, href, anchor, anchored);
       continue;
     }
     if (tag && RUN_CONTAINER_TAGS.has(tag)) {
@@ -878,7 +893,7 @@ function collectRuns(
           if (bookmark !== undefined && bookmark !== '') childAnchor = bookmark;
         }
       }
-      collectRuns(child, out, ctx, childHref, childAnchor);
+      collectRuns(child, out, ctx, childHref, childAnchor, anchored);
     }
   }
 }
@@ -886,6 +901,9 @@ function collectRuns(
 function parseRun(
   r: PoNode,
   ctx: ParseContext,
+  // §20.4.2.3 — out-param: the ANCHORED drawings this run carries. They are not
+  // part of the line at all; the caller emits them as blocks of their own.
+  anchored?: Array<BodyElement>,
 ): { run: Run; fldChar?: 'begin' | 'separate' | 'end'; instrText?: string } {
   const rPr = poChildren(r).find((c) => poIs(c, 'w:rPr'));
   const properties = parseRunProperties(rPr ? poElementToFlat(rPr) : undefined);
@@ -951,7 +969,14 @@ function parseRun(
       // so this deliberately does NOT take ctx.resolveColor (byte-parity with
       // the pre-context code; revisit if inline shapes ever render).
       const content = parseDrawing(child, defaultColorResolver);
-      if (content && content.kind === 'image') {
+      // §20.4.2.3 — an ANCHORED drawing is not in the line: it hangs off the
+      // paragraph at a position of its own, and the text flows past it. Read as
+      // an inline picture it split the line it sat in — anchor-position.docx
+      // put its picture between the "A" and the "B" where every other reader
+      // sets "AB" beside it.
+      if (content?.float && anchored) {
+        anchored.push(...(blocksForDrawing(content, {}, ctx) ?? []));
+      } else if (content && content.kind === 'image') {
         const resource = ctx.resolveImage?.(content.imageId);
         inlineImage = {
           ...(resource ? { resource } : {}),
