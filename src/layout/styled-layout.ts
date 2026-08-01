@@ -1000,6 +1000,30 @@ export function layoutStyledDocument(
       const content = options.endnotes?.get(id);
       if (content) tailNotes.push({ content, n });
     }
+    // §17.11.6 — the notes after the body are led by the same short rule the
+    // footnote band draws, which is how a reader tells them from the text
+    // above: endnotes.docx ends with one in both references and we ran the
+    // note straight on from the last paragraph.
+    if (tailNotes.length > 0) {
+      blocks.push(
+        layoutShapeBlock(
+          {
+            width: pt(FOOTNOTE_RULE_WIDTH),
+            height: pt(FOOTNOTE_RULE_PT),
+            geometry: { kind: 'preset', preset: 'rect', adjust: new Map() },
+            fill: { kind: 'solid', colorHex: '000000' },
+            paragraphProperties: {
+              spacingBefore: pt(FOOTNOTE_SEPARATOR_HEIGHT),
+              spacingAfter: pt(FOOTNOTE_RULE_GAP_ABOVE),
+            },
+          },
+          options,
+          fontResources,
+          imageResources,
+          lastCtx.contentWidth,
+        ),
+      );
+    }
     for (const note of tailNotes.sort((a, b) => a.n - b.n)) {
       for (const el of substituteNoteNumber(note.content, note.n)) {
         blocks.push(

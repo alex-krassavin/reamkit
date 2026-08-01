@@ -112,6 +112,24 @@ describe('footnotes / endnotes (§17.11)', () => {
     expect(pageText(laid.pages[1]!.commands)).not.toContain('first note');
   });
 
+  it('layout: the notes after the body are led by the same rule', () => {
+    // §17.11.6 — endnotes.docx ends with one in both references, and we ran
+    // the note straight on from the last paragraph.
+    const endnotes =
+      '<w:endnote w:id="5"><w:p><w:r><w:endnoteRef/></w:r><w:r><w:t> the endnote</w:t></w:r></w:p></w:endnote>';
+    const body = '<w:p><w:r><w:t>text</w:t></w:r><w:r><w:endnoteReference w:id="5"/></w:r></w:p>';
+    const laid = layoutOf(buildDocxFromBody(body, { endnotesXml: endnotes }));
+    const page = laid.pages[0]!;
+    expect(pageText(page.commands)).toContain('the endnote');
+    // A short rule, drawn ABOVE the note it leads.
+    const rule = page.commands.find(
+      (c) =>
+        c.type === 'shape' ||
+        (c.type === 'fill' && Math.abs((c as { width: number }).width - 144) < 0.01),
+    );
+    expect(rule).toBeDefined();
+  });
+
   it('layout: a reference near the page bottom moves to the next page WITH its note', () => {
     const filler = Array.from(
       { length: 12 },

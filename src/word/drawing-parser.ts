@@ -700,6 +700,14 @@ function vmlFloat(style: string, zIndex: number | undefined): FloatAnchor | unde
     new RegExp(`mso-position-${name}-relative\\s*:\\s*([a-z-]+)`, 'iu').exec(style)?.[1];
   const hRaw = rel('horizontal');
   const vRaw = rel('vertical');
+  // …and the position itself may be a KEYWORD rather than an offset:
+  // docxopenhyperlinkbox.docx centres its box that way and we set it flush
+  // left.
+  const align = /mso-position-horizontal\s*:\s*(center|right|left)/iu.exec(style)?.[1] as
+    | 'center'
+    | 'right'
+    | 'left'
+    | undefined;
   const x = prop('margin-left') ?? prop('left') ?? 0;
   const y = prop('margin-top') ?? prop('top') ?? 0;
   return {
@@ -708,7 +716,7 @@ function vmlFloat(style: string, zIndex: number | undefined): FloatAnchor | unde
     ...(zIndex !== undefined ? { zOrder: Math.abs(zIndex) } : {}),
     posH: {
       relativeFrom: hRaw === 'page' ? 'page' : hRaw === 'margin' ? 'margin' : 'column',
-      offsetPt: pt(x),
+      ...(align ? { align } : { offsetPt: pt(x) }),
     },
     posV: {
       relativeFrom:
