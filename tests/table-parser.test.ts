@@ -284,3 +284,33 @@ describe('table indent (§17.4.65)', () => {
     expect(propsOf('<w:tblInd w:w="50" w:type="pct"/>').indentPt).toBeUndefined();
   });
 });
+
+describe('a content control around rows or cells (§17.5.2)', () => {
+  // cell-sdt-redline.docx wraps its only cell in a `w:sdt`; read as a plain
+  // child list the wrapper hid it and the table came out with no cells.
+  const cellsOf = (bodyXml: string) => {
+    const el = parse(bodyXml).find((b) => b.kind === 'table');
+    if (el?.kind !== 'table') throw new Error('expected a table');
+    return el.table.rows.map((r) => r.cells.map((c) => textOf(c.content)));
+  };
+  const grid = '<w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>';
+  const cell = (t: string) => `<w:tc><w:p><w:r><w:t>${t}</w:t></w:r></w:p></w:tc>`;
+
+  it('reads a cell the control wraps', () => {
+    expect(
+      cellsOf(
+        `<w:tbl>${grid}<w:tr><w:sdt><w:sdtContent>${cell('A1')}</w:sdtContent></w:sdt>` +
+          `${cell('B1')}</w:tr></w:tbl>`,
+      ),
+    ).toEqual([['A1', 'B1']]);
+  });
+
+  it('reads a row the control wraps', () => {
+    expect(
+      cellsOf(
+        `<w:tbl>${grid}<w:sdt><w:sdtContent><w:tr>${cell('A1')}</w:tr></w:sdtContent></w:sdt>` +
+          `<w:tr>${cell('A2')}</w:tr></w:tbl>`,
+      ),
+    ).toEqual([['A1'], ['A2']]);
+  });
+});

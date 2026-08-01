@@ -27,6 +27,7 @@ import {
   poChildrenWith,
   poFirstChild,
   poIntAttr,
+  poIs,
   poToggle,
   poVal,
 } from '@/core/po-helpers';
@@ -63,7 +64,7 @@ export function parseTable(tbl: PoNode, ctx: ParseContext = DEFAULT_PARSE_CONTEX
   // resolve the markers into CellMerge roles — the model carries the resolved
   // semantics, not the OOXML encoding.
   const draftRows: Array<{ properties: RowProperties; cells: Array<DraftCell> }> = [];
-  for (const tr of poChildrenWith(tbl, 'w:tr')) {
+  for (const tr of poChildrenThroughSdt(tbl, 'w:tr')) {
     if (isDeletedRow(tr)) continue;
     draftRows.push(parseTableRow(tr, ctx));
   }
@@ -76,6 +77,21 @@ export function parseTable(tbl: PoNode, ctx: ParseContext = DEFAULT_PARSE_CONTEX
     }),
   }));
   return { properties, grid, rows };
+}
+
+// §17.5.2 — a content control may wrap the ROWS of a table or the CELLS of a
+// row: `w:sdt` is chrome, and its `w:sdtContent` holds the real thing. Read as
+// a plain child list the wrapper hid them, and cell-sdt-redline.docx's one-cell
+// table came out with no cells at all.
+function poChildrenThroughSdt(node: PoNode | undefined, tag: string): Array<PoNode> {
+  const out: Array<PoNode> = [];
+  for (const child of poChildren(node)) {
+    if (poIs(child, tag)) out.push(child);
+    else if (poIs(child, 'w:sdt')) {
+      out.push(...poChildrenWith(poFirstChild(child, 'w:sdtContent'), tag));
+    }
+  }
+  return out;
 }
 
 interface DraftCell {
@@ -241,7 +257,7 @@ function parseTableGrid(tblGrid: PoNode | undefined): Array<Pt> {
 function isDeletedRow(tr: PoNode): boolean {
   const trPr = poFirstChild(tr, 'w:trPr');
   if (trPr && (poFirstChild(trPr, 'w:del') ?? poFirstChild(trPr, 'w:moveFrom'))) return true;
-  const cells = poChildrenWith(tr, 'w:tc');
+  const cells = poChildrenThroughSdt(tr, 'w:tc');
   if (cells.length === 0) return false;
   let marks = 0;
   for (const tc of cells) {
@@ -263,7 +279,7 @@ function parseTableRow(
 ): { properties: RowProperties; cells: Array<DraftCell> } {
   const properties = parseRowProperties(poFirstChild(tr, 'w:trPr'));
   const cells: Array<DraftCell> = [];
-  for (const tc of poChildrenWith(tr, 'w:tc')) {
+  for (const tc of poChildrenThroughSdt(tr, 'w:tc')) {
     cells.push(parseTableCell(tc, ctx));
   }
   return { properties, cells };
