@@ -494,6 +494,12 @@ export type NumberingFormat =
   | 'koreanCounting'
   | 'taiwaneseCounting'
   | 'taiwaneseCountingThousand'
+  /** §17.18.59 — Hebrew numerals (gematria): א, ב, … ט״ו, ט״ז, י״ז … */
+  | 'hebrew1'
+  /** The Hebrew alphabet as a plain sequence, cycling past ת. */
+  | 'hebrew2'
+  /** ①②③… up to twenty, then plain digits. */
+  | 'decimalEnclosedCircle'
   | 'bullet'
   | 'none';
 

@@ -3552,6 +3552,10 @@ function paragraphBaseDirection(
   if (resolved.bidi) return 'rtl';
   let text = '';
   for (const run of paragraph.runs) {
+    // The list marker is synthesised from the numbering definition, not typed
+    // by the author: a Hebrew numeral (§17.18.59 `hebrew1`) would otherwise
+    // turn a plain English list right-to-left, marker and text and all.
+    if (run.listMarker === true) continue;
     if (!run.inlineImage) text += run.text;
     if (text.length > 64) break; // first strong char is near the start
   }

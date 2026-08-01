@@ -118,11 +118,71 @@ function formatCounter(format: NumberingFormat, n: number): string {
     case 'taiwaneseCounting':
     case 'taiwaneseCountingThousand':
       return counting(n, IDEOGRAPH_DIGITS, COUNTING_UNITS, true);
+    case 'hebrew1':
+      return n === 0 ? '' : toHebrewNumeral(n);
+    case 'hebrew2':
+      // The alphabet as a plain sequence, cycling once it runs out.
+      return n === 0 ? '' : HEBREW_ALPHABET[(n - 1) % HEBREW_ALPHABET.length]!;
+    case 'decimalEnclosedCircle':
+      // U+2460 ① … U+2473 ⑳; past twenty Word prints the number plainly.
+      return n >= 1 && n <= 20 ? String.fromCodePoint(0x245f + n) : String(n);
     case 'bullet':
     case 'none':
     default:
       return '';
   }
+}
+
+// §17.18.59 `hebrew1` — the gematria numerals. Hundreds run ק ר ש ת and repeat
+// ת past four hundred; 15 and 16 are written טו and טז rather than spelling out
+// the divine name.
+const HEBREW_ONES = ['', 'א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט'] as const;
+const HEBREW_TENS = ['', 'י', 'כ', 'ל', 'מ', 'נ', 'ס', 'ע', 'פ', 'צ'] as const;
+const HEBREW_HUNDREDS = ['', 'ק', 'ר', 'ש', 'ת'] as const;
+const HEBREW_ALPHABET = [
+  'א',
+  'ב',
+  'ג',
+  'ד',
+  'ה',
+  'ו',
+  'ז',
+  'ח',
+  'ט',
+  'י',
+  'כ',
+  'ל',
+  'מ',
+  'נ',
+  'ס',
+  'ע',
+  'פ',
+  'צ',
+  'ק',
+  'ר',
+  'ש',
+  'ת',
+] as const;
+
+function toHebrewNumeral(n: number): string {
+  let rest = n;
+  let out = '';
+  while (rest >= 400) {
+    out += 'ת';
+    rest -= 400;
+  }
+  out += HEBREW_HUNDREDS[Math.floor(rest / 100)] ?? '';
+  rest %= 100;
+  if (rest === 15 || rest === 16) {
+    out += rest === 15 ? 'טו' : 'טז';
+  } else {
+    out += HEBREW_TENS[Math.floor(rest / 10)] ?? '';
+    out += HEBREW_ONES[rest % 10] ?? '';
+  }
+  // Word and LibreOffice both print the bare letters in a list marker — the
+  // geresh and gershayim a Hebrew numeral carries in running text are not part
+  // of the number here.
+  return out;
 }
 
 // §17.18.59 ideograph number formats. `IDEOGRAPH_DIGITS[0]` is the zero the

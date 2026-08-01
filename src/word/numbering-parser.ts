@@ -59,6 +59,9 @@ const FORMATS = new Set<NumberingFormat>([
   'koreanCounting',
   'taiwaneseCounting',
   'taiwaneseCountingThousand',
+  'hebrew1',
+  'hebrew2',
+  'decimalEnclosedCircle',
   'bullet',
   'none',
 ]);
