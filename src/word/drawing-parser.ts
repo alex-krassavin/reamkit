@@ -538,13 +538,20 @@ export function parseVmlPicture(node: PoNode, parseBody?: ParseBody): DrawingCon
   const float = shape
     ? vmlFloat(poAttr(shape, 'style') ?? '', poIntAttr(shape, 'z-index'))
     : undefined;
-  // §14.1.2.21 — a picture is framed by its own shape's stroke. The picture
-  // shapetype `_x0000_t75` declares `stroked="f"`, so only a shape that says
-  // otherwise draws one: fdo79915.docx's diagram is `stroked="t"` against that
-  // default and we drew it without its frame.
+  // §14.1.2.21 — a picture is framed only when it SAYS so. The picture
+  // shapetype `_x0000_t75` is `stroked="f"`, and a `v:shape` that names it
+  // without the package declaring it (fdo81031.docx) has nothing to inherit
+  // from — so the frame is drawn on an explicit `stroked="t"` alone, which is
+  // what fdo79915.docx's diagram states and what we drew it without.
   const typeRef = shape ? poAttr(shape, 'type')?.replace(/^#/u, '') : undefined;
   const shapeType = typeRef !== undefined ? vmlShapeTypes(node).get(typeRef) : undefined;
-  const outline = shape ? pictureOutline(vmlLine(shape, shapeType)) : undefined;
+  const stroked = shape
+    ? (poAttr(shape, 'stroked') ?? (shapeType ? poAttr(shapeType, 'stroked') : undefined))
+    : undefined;
+  const outline =
+    shape && (stroked === 't' || stroked === 'true')
+      ? pictureOutline(vmlLine(shape, shapeType))
+      : undefined;
   return {
     kind: 'image',
     imageId,
