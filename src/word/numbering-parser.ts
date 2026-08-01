@@ -100,8 +100,10 @@ export function parseNumbering(data: Uint8Array): Numbering {
       const ilvl = Number(ilvlStr);
       if (!Number.isFinite(ilvl)) continue;
 
+      // §17.9.25 — a level that states no `w:start` starts at ZERO, not one.
+      // FDO74105.docx omits it and LibreOffice numbers its list from 0.
       const startAttr = getValVal(lvlEl['w:start']);
-      const start = startAttr !== undefined ? Number(startAttr) : 1;
+      const start = startAttr !== undefined ? Number(startAttr) : 0;
       const fmtStr = getValVal(lvlEl['w:numFmt']) ?? 'decimal';
       const format: NumberingFormat = FORMATS.has(fmtStr as NumberingFormat)
         ? (fmtStr as NumberingFormat)

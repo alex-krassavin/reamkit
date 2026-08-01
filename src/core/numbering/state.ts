@@ -19,8 +19,10 @@ import type {
  * paragraphs are visited in order.
  */
 export class NumberingState {
-  // numId → counters indexed by ilvl (0..8). 0 means "not yet started".
-  private readonly counters = new Map<string, Array<number>>();
+  // numId → counters indexed by ilvl (0..8). An empty slot means "not yet
+  // started" — a sentinel of 0 could not, since §17.9.25 lets a level START at
+  // zero and the second item would then seed itself again.
+  private readonly counters = new Map<string, Array<number | undefined>>();
 
   /**
    * Advance the counter for `ref` (resetting deeper levels) and format its
@@ -42,20 +44,20 @@ export class NumberingState {
 
     let arr = this.counters.get(ref.numId);
     if (!arr) {
-      arr = new Array<number>(9).fill(0);
+      arr = new Array<number | undefined>(9).fill(undefined);
       this.counters.set(ref.numId, arr);
     }
 
     // Deeper levels reset whenever a shallower level advances.
-    for (let k = ref.ilvl + 1; k < arr.length; k++) arr[k] = 0;
+    for (let k = ref.ilvl + 1; k < arr.length; k++) arr[k] = undefined;
 
-    if (arr[ref.ilvl] === 0) {
-      arr[ref.ilvl] = level.start;
-    } else {
-      arr[ref.ilvl]! += 1;
-    }
+    const current = arr[ref.ilvl];
+    arr[ref.ilvl] = current === undefined ? level.start : current + 1;
 
-    return formatLevelMarker(abstractNum, level, arr);
+    // A level that has not been reached yet still numbers the levels ABOVE it
+    // in a multi-level marker; an unstarted one counts as its own start.
+    const counts = arr.map((n, i) => n ?? abstractNum.levels.get(i)?.start ?? 0);
+    return formatLevelMarker(abstractNum, level, counts);
   }
 }
 
@@ -77,7 +79,9 @@ export function formatLevelMarker(
 }
 
 function formatCounter(format: NumberingFormat, n: number): string {
-  if (n <= 0) return '';
+  // §17.9.25 lets a level start at zero, and a digit format prints it. A
+  // letter or a numeral has no zero, so those stay blank.
+  if (n < 0) return '';
   switch (format) {
     case 'decimal':
       return String(n);
@@ -89,18 +93,18 @@ function formatCounter(format: NumberingFormat, n: number): string {
     case 'ordinal':
       return `${String(n)}${ordinalSuffix(n)}`;
     case 'lowerLetter':
-      return toLetters(n).toLowerCase();
+      return n === 0 ? '' : toLetters(n).toLowerCase();
     case 'upperLetter':
-      return toLetters(n);
+      return n === 0 ? '' : toLetters(n);
     case 'lowerRoman':
-      return toRoman(n).toLowerCase();
+      return n === 0 ? '' : toRoman(n).toLowerCase();
     case 'upperRoman':
-      return toRoman(n);
+      return n === 0 ? '' : toRoman(n);
     // A cycle, and past its end both references number the rest in digits.
     case 'ideographTraditional':
-      return n <= HEAVENLY_STEMS.length ? HEAVENLY_STEMS[n - 1]! : String(n);
+      return n === 0 ? '' : n <= HEAVENLY_STEMS.length ? HEAVENLY_STEMS[n - 1]! : String(n);
     case 'ideographZodiac':
-      return n <= EARTHLY_BRANCHES.length ? EARTHLY_BRANCHES[n - 1]! : String(n);
+      return n === 0 ? '' : n <= EARTHLY_BRANCHES.length ? EARTHLY_BRANCHES[n - 1]! : String(n);
     case 'ideographDigital':
     case 'koreanDigital2':
       return digitByDigit(n, IDEOGRAPH_DIGITS);

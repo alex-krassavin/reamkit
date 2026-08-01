@@ -43,6 +43,23 @@ describe('parseNumbering', () => {
     expect(numbering.numInstances.get('1')!.abstractNumId).toBe('0');
   });
 
+  // §17.9.25 — a level that states no `w:start` starts at ZERO, and the second
+  // item is 1: FDO74105.docx omits it and its list runs 0, 1, 2, …
+  it('starts a level with no w:start at zero, and counts on from there', () => {
+    const numbering = parse(`
+      <w:abstractNum w:abstractNumId="0">
+        <w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl>
+      </w:abstractNum>
+      <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+    `);
+    expect(numbering.abstractNums.get('0')!.levels.get(0)!.start).toBe(0);
+    const state = new NumberingState();
+    const ref = { numId: '1', ilvl: 0 };
+    expect(state.resolveMarker(numbering, ref)).toBe('0.');
+    expect(state.resolveMarker(numbering, ref)).toBe('1.');
+    expect(state.resolveMarker(numbering, ref)).toBe('2.');
+  });
+
   it('parses multi-level numbering with different formats', () => {
     const numbering = parse(`
       <w:abstractNum w:abstractNumId="0">

@@ -33,7 +33,8 @@ describe('html writer (FlowDoc adapter)', () => {
   it('materialized list markers ride along as text', async () => {
     const numberingXml =
       '<w:abstractNum w:abstractNumId="0">' +
-      '<w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl>' +
+      '<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/>' +
+      '<w:lvlText w:val="%1."/></w:lvl>' +
       '</w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>';
     const li = (t: string) =>
       `<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>${t}</w:t></w:r></w:p>`;
