@@ -2761,6 +2761,27 @@ function paragraphItemStream(
   // reset at spaces / images / math (a break is already present or not wanted).
   let prevBoxEndCp: number | null = null;
   for (const tok of tokens) {
+    // §17.3.3.1 `<w:br/>` — a soft line break, which the reader carries as a
+    // newline inside the run's text. Left to the whitespace path it became
+    // glue, and the line builder drew the glue's own characters: a newline has
+    // no glyph, so each break printed as a replacement box. 60329.docx puts 85
+    // of them inside its table cells and every paragraph in there ran on with
+    // a pair of them mid-sentence. The pair below — stretchy glue, then a
+    // forced penalty — is the same one that ends a paragraph.
+    const breaks = tok.isSpace ? (tok.text.match(/\r\n|[\r\n]/gu)?.length ?? 0) : 0;
+    if (breaks > 0) {
+      // One break per newline, so the two the author typed leave the blank
+      // line between paragraphs that they asked for.
+      for (let i = 0; i < breaks; i++) {
+        entries.push({ item: { type: 'glue', width: 0, stretch: 1e6, shrink: 0 }, token: null });
+        entries.push({
+          item: { type: 'penalty', width: 0, penalty: FORCED_BREAK, flagged: false },
+          token: null,
+        });
+      }
+      prevBoxEndCp = null;
+      continue;
+    }
     if (tok.isSpace || tok.kind === 'image' || tok.kind === 'math') {
       // Spaces are glue; images and math boxes are atomic (un-hyphenatable) boxes.
       entries.push({
@@ -2923,6 +2944,7 @@ function lineFromRange(
   isFirst: boolean,
   resolved: ResolvedParagraphProperties,
   profile: LayoutProfile,
+  allowEmpty = false,
 ): Line | null {
   let st = start;
   let et = breakIdx;
@@ -2954,7 +2976,11 @@ function lineFromRange(
   ) {
     et--;
   }
-  if (st >= et) return null;
+  // An empty range is a line with nothing on it. At the end of a paragraph
+  // that is the final forced break and there is no line to draw; in the MIDDLE
+  // it is the blank line two `<w:br/>` in a row ask for, and dropping it ran
+  // the paragraphs of 60329.docx's table cells together.
+  if (st >= et && !allowEmpty) return null;
 
   const lineTokens: Array<Token> = [];
   for (let i = st; i < et; i++) {
@@ -3052,9 +3078,18 @@ function wrap(
     let start = 0;
     let isFirst = true;
     let lineIdx = 0;
-    for (const breakIdx of at) {
+    for (const [i, breakIdx] of at.entries()) {
       const width = lineIdx < widths.length ? widths[lineIdx]! : widths[widths.length - 1]!;
-      const line = lineFromRange(entries, start, breakIdx, width, isFirst, resolved, profile);
+      const line = lineFromRange(
+        entries,
+        start,
+        breakIdx,
+        width,
+        isFirst,
+        resolved,
+        profile,
+        i < at.length - 1,
+      );
       if (line) out.push(line);
       start = breakIdx + 1;
       isFirst = false;
