@@ -744,9 +744,15 @@ function parseTextBox(wsp: PoNode, parseBody: ParseBody): ShapeTextBody | undefi
   const a = bodyPr ? poAttr(bodyPr, 'anchor') : undefined;
   const anchor: ShapeTextBody['anchor'] | undefined =
     a === 'ctr' ? 'ctr' : a === 'b' ? 'b' : a === 't' ? 't' : undefined;
+  // §20.1.10.83 — the East-Asian stacked modes read top-to-bottom like `vert`
+  // does; only the quarter turn differs, and `vert` is the closer of the two.
+  const v = bodyPr ? poAttr(bodyPr, 'vert') : undefined;
+  const vertical: ShapeTextBody['vertical'] | undefined =
+    v === 'vert270' ? 'vert270' : v !== undefined && v !== 'horz' ? 'vert' : undefined;
 
   return {
     content,
+    ...(vertical ? { vertical } : {}),
     ...(lIns !== undefined ? { insetLeft: emuToPt(lIns) } : {}),
     ...(tIns !== undefined ? { insetTop: emuToPt(tIns) } : {}),
     ...(rIns !== undefined ? { insetRight: emuToPt(rIns) } : {}),

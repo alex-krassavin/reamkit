@@ -411,6 +411,8 @@ interface ShapeBlockLaidOut {
   readonly insetTopPt: number;
   readonly insetBottomPt: number;
   readonly anchor: 't' | 'ctr' | 'b';
+  /** §20.1.10.83 — text set along the box's long axis. */
+  readonly vertical?: 'vert' | 'vert270';
   readonly altText?: string;
 }
 
@@ -1586,8 +1588,14 @@ function layoutShapeBlock(
   const insetBottomPt = text?.insetBottom ?? DEFAULT_INSET_TB_PT;
   const textLines: Array<Line> = [];
   let textHeightPt = 0;
+  // §20.1.10.83 — text set along the box's long axis wraps to its HEIGHT, and
+  // its lines stack across the width. btlr-textbox.docx reads bottom-to-top and
+  // we set it flat, so it ran out of the box the wrong way.
+  const vertical = text?.vertical;
   if (text && text.content.length > 0) {
-    const innerWidth = Math.max(1, widthPt - insetLeftPt - insetRightPt);
+    const innerWidth = vertical
+      ? Math.max(1, heightPt - insetTopPt - insetBottomPt)
+      : Math.max(1, widthPt - insetLeftPt - insetRightPt);
     for (const el of text.content) {
       // A picture standing alone in a text box is a paragraph the reader
       // collapsed to an image BLOCK. Skipped with the tables, it vanished:
@@ -1683,6 +1691,7 @@ function layoutShapeBlock(
     insetTopPt,
     insetBottomPt,
     anchor: text?.anchor ?? 't',
+    ...(vertical ? { vertical } : {}),
     ...(shape.altText ? { altText: shape.altText } : {}),
     ...(shape.float ? { float: shape.float } : {}),
   };
@@ -4966,6 +4975,47 @@ function paginateSections(
         sink: Array<PageItem>,
       ) => {
         if (sh.textLines.length === 0) return;
+        // §20.1.10.83 — vertical text runs along the box's height and its lines
+        // stack across its width. A quarter turn puts each line's local +x on
+        // the page's +y (`vert270`, bottom-to-top) or -y (`vert`).
+        if (sh.vertical) {
+          const up = sh.vertical === 'vert270';
+          const innerHeight = Math.max(1, sh.heightPt - sh.insetTopPt - sh.insetBottomPt);
+          // Where the stack of lines begins across the width, by the same
+          // anchor rule the horizontal case uses along the height.
+          let across =
+            sh.anchor === 'b'
+              ? sh.widthPt - sh.insetRightPt - sh.textHeightPt
+              : sh.anchor === 'ctr'
+                ? (sh.widthPt - sh.textHeightPt) / 2
+                : sh.insetLeftPt;
+          for (const line of sh.textLines) {
+            const h = computeLineHeight(line, line.resolved);
+            const lineOffset = alignmentOffset(
+              line.resolved.alignment,
+              line.contentWidthPt,
+              innerHeight,
+            );
+            // The baseline sits `descent` in from the line's far edge, which a
+            // quarter turn puts across the box rather than down it.
+            const baselineAcross = up ? across + h - lineDescent(line) : across + lineDescent(line);
+            sink.push({
+              type: 'line',
+              line,
+              originX: pt(up ? x + baselineAcross : x + sh.widthPt - baselineAcross),
+              baselineY: pt(
+                asm.ctx.pageHeight -
+                  (up
+                    ? bottomYUp + sh.insetBottomPt + lineOffset
+                    : bottomYUp + sh.heightPt - sh.insetTopPt - lineOffset),
+              ),
+              rotationDeg: up ? 90 : -90,
+              ...(figId !== undefined ? { structId: figId } : {}),
+            });
+            across += h;
+          }
+          return;
+        }
         const shapeTop = bottomYUp + sh.heightPt;
         const innerWidth = Math.max(1, sh.widthPt - sh.insetLeftPt - sh.insetRightPt);
         let textY: number;

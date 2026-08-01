@@ -923,6 +923,12 @@ export interface ShapeTextBody {
   readonly insetRight?: Pt;
   readonly insetBottom?: Pt;
   readonly anchor?: 't' | 'ctr' | 'b'; // vertical anchor
+  /**
+   * §20.1.10.83 ST_TextVerticalType (`a:bodyPr @vert`) — text set along the
+   * box's long axis rather than across it. `vert` reads top-to-bottom (turned a
+   * quarter clockwise), `vert270` bottom-to-top.
+   */
+  readonly vertical?: 'vert' | 'vert270';
 }
 
 /**

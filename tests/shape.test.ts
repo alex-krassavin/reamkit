@@ -631,3 +631,36 @@ describe('VML WordArt', () => {
     );
   });
 });
+
+// §20.1.10.83 `a:bodyPr @vert` — text set along the box's long axis rather than
+// across it. btlr-textbox.docx reads bottom-to-top and we set it flat, so it
+// ran out of the box the wrong way.
+describe('vertical text in a shape', () => {
+  const vertical = (vert: string): string => {
+    const inner = '<w:p><w:r><w:t>Sideways</w:t></w:r></w:p>';
+    const body = `<w:p><w:r><w:drawing>
+      <wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+        <wp:extent cx="2743200" cy="1828800"/><wp:docPr id="1" name="S"/>
+        <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+          <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+            <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2743200" cy="1828800"/></a:xfrm>
+                <a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr>
+              <wps:txbx><w:txbxContent>${inner}</w:txbxContent></wps:txbx>
+              <wps:bodyPr vert="${vert}"/>
+            </wps:wsp>
+          </a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`;
+    return asLatin1(convertDocxToPdfSync(buildDocxFromBody(body), { fonts: FONTS }));
+  };
+
+  it('turns the line a quarter, one way for each mode', () => {
+    // A quarter turn is a text matrix of (0 1 -1 0) or its opposite, not the
+    // (1 0 0 1) a flat line uses.
+    expect(vertical('vert270')).toMatch(/\n0 1 -1 0 [\d.]+ [\d.]+ Tm\n/u);
+    expect(vertical('vert')).toMatch(/\n0 -1 1 0 [\d.]+ [\d.]+ Tm\n/u);
+  });
+
+  it('leaves horizontal text flat', () => {
+    expect(vertical('horz')).toMatch(/\n1 0 0 1 [\d.]+ [\d.]+ Tm\n/u);
+  });
+});
