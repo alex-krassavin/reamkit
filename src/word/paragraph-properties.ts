@@ -162,6 +162,14 @@ export function parseParagraphProperties(pPr: unknown): ParagraphProperties {
     }
   }
 
+  // §17.3.1.41 `w:textDirection` — the paragraph reads bottom-to-top (`btLr`)
+  // or top-to-bottom (`tbRl`). fdo76979.docx runs its side tab that way, in a
+  // frame in the header, and we set it flat across the page.
+  if ('w:textDirection' in el) {
+    const v = getVal(el['w:textDirection']);
+    if (v === 'btLr' || v === 'tbRl') out.textDirection = v;
+  }
+
   if ('w:contextualSpacing' in el) {
     const v = parseToggle(el['w:contextualSpacing']);
     if (v !== undefined) out.contextualSpacing = v;

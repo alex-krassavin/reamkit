@@ -90,6 +90,8 @@ export interface ResolvedParagraphProperties {
   readonly runProperties?: RunProperties;
   /** §17.3.1.11 — the paragraph floats as a text frame. */
   readonly frame?: FrameProperties;
+  /** §17.3.1.41 — which way the paragraph's lines run (`lrTb` is not recorded). */
+  readonly textDirection?: 'btLr' | 'tbRl';
   /**
    * §17.6.17 — the paragraph mark carries the section break, so a paragraph
    * with no content of its own prints nothing at all.

@@ -157,6 +157,12 @@ export interface ParagraphProperties {
   readonly sectionBreak?: boolean;
   /** §17.3.1.11 — the paragraph floats as a text frame. */
   readonly frame?: FrameProperties;
+  /**
+   * §17.3.1.41 `w:textDirection` — which way the paragraph's lines run.
+   * `btLr` reads bottom-to-top, `tbRl` top-to-bottom; `lrTb` is the default
+   * and is not recorded.
+   */
+  readonly textDirection?: 'btLr' | 'tbRl';
   readonly alignment?: Alignment;
   readonly spacingBefore?: Pt;
   readonly spacingAfter?: Pt;

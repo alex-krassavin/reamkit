@@ -235,6 +235,7 @@ function mergePar(
   const runProperties = override.runProperties ?? base.runProperties;
   const frame = override.frame ?? base.frame;
   const sectionBreak = override.sectionBreak ?? base.sectionBreak;
+  const textDirection = override.textDirection ?? base.textDirection;
   return {
     alignment: override.alignment ?? base.alignment,
     spacingBefore: override.spacingBefore ?? base.spacingBefore,
@@ -258,6 +259,7 @@ function mergePar(
     ...(runProperties !== undefined ? { runProperties } : {}),
     ...(frame !== undefined ? { frame } : {}),
     ...(sectionBreak !== undefined ? { sectionBreak } : {}),
+    ...(textDirection !== undefined ? { textDirection } : {}),
   };
 }
 

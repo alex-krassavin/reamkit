@@ -1665,11 +1665,37 @@ function frameShape(
   widthPt: number,
   exact: boolean,
 ): ShapeBlock {
+  // §17.3.1.31/24/41 — a frame is a box, and what its FIRST paragraph says
+  // about the box is the box's: the shading behind it, the rule around it, and
+  // the direction its lines run. fdo76979.docx's side tab is one paragraph of
+  // white-on-black reading bottom-to-top, and we drew it flat and unshaded.
+  const lead = paragraphs[0]?.properties;
+  const edge = lead?.borders?.top ?? lead?.borders?.left;
+  const vertical =
+    lead?.textDirection === 'btLr'
+      ? 'vert270'
+      : lead?.textDirection === 'tbRl'
+        ? 'vert'
+        : undefined;
+  const painted = lead?.shading !== undefined || (edge !== undefined && edge.style !== 'none');
   return {
     width: pt(widthPt),
     height: pt(exact ? (frame.heightPt ?? 0) : 0),
-    geometry: { kind: 'custom', custom: { pathWidth: 0, pathHeight: 0, commands: [] } },
-    fill: { kind: 'none' },
+    // A frame draws nothing of its own unless its paragraph asks for a fill or
+    // a rule; then the box IS the rectangle they describe.
+    geometry: painted
+      ? { kind: 'preset', preset: 'rect', adjust: new Map() }
+      : { kind: 'custom', custom: { pathWidth: 0, pathHeight: 0, commands: [] } },
+    fill: lead?.shading ? { kind: 'solid', colorHex: lead.shading.colorHex } : { kind: 'none' },
+    ...(edge && edge.style !== 'none'
+      ? {
+          line: {
+            fill: 'solid' as const,
+            colorHex: edge.colorHex ?? '000000',
+            width: edge.width ?? pt(0.75),
+          },
+        }
+      : {}),
     float: frameFloat(frame),
     paragraphProperties: {},
     text: {
@@ -1679,6 +1705,7 @@ function frameShape(
       insetRight: pt(0),
       insetTop: pt(0),
       insetBottom: pt(0),
+      ...(vertical ? { vertical } : {}),
       ...(exact ? {} : { autoFit: true as const }),
     },
   };
