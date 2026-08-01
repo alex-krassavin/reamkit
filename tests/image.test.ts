@@ -568,3 +568,79 @@ describe('a rotated picture (§20.1.7.6 a:xfrm @rot)', () => {
     );
   });
 });
+
+describe('a GIF picture', () => {
+  // A 2×2 GIF89a: red, green / green, red, with the LZW stream written by hand
+  // — clear, four literals, end, the last two already four bits wide because
+  // the table reached eight entries — so the fixture exercises the real
+  // decoder, code-width step and all.
+  const gif = (transparent: boolean): Uint8Array =>
+    new Uint8Array([
+      0x47,
+      0x49,
+      0x46,
+      0x38,
+      0x39,
+      0x61, // "GIF89a"
+      0x02,
+      0x00,
+      0x02,
+      0x00,
+      0xf0,
+      0x00,
+      0x00, // 2×2, global table of 2
+      0xff,
+      0x00,
+      0x00,
+      0x00,
+      0xff,
+      0x00, // red, green
+      ...(transparent
+        ? [0x21, 0xf9, 0x04, 0x01, 0x00, 0x00, 0x01, 0x00] // GCE: index 1 clear
+        : []),
+      0x2c,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x02,
+      0x00,
+      0x02,
+      0x00,
+      0x00, // image descriptor
+      0x02,
+      0x03,
+      0x44,
+      0x02,
+      0x05,
+      0x00, // LZW min 2, one 3-byte block
+      0x3b, // trailer
+    ]);
+
+  it('decodes to raw pixels, since PDF has no GIF filter', () => {
+    // dml-picture-in-textframe.docx (and seventeen more) drew an empty box.
+    const prepared = prepareImage(gif(false));
+    expect(prepared).toMatchObject({
+      format: 'gif',
+      mimeType: 'image/gif',
+      widthPx: 2,
+      heightPx: 2,
+      colorSpace: 'DeviceRGB',
+      bitsPerComponent: 8,
+      filter: 'FlateDecode',
+    });
+    expect([...unzlibSync(prepared.data)]).toEqual([255, 0, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0]);
+    expect(prepared.smaskData).toBeUndefined();
+  });
+
+  it('turns a transparent index into a soft mask', () => {
+    const prepared = prepareImage(gif(true));
+    expect([...unzlibSync(prepared.smaskData!)]).toEqual([255, 0, 0, 255]);
+  });
+
+  it('paints the see-through pixels white when PDF/A-1 forbids the mask', () => {
+    const prepared = prepareImage(gif(true), { flattenAlpha: true });
+    expect(prepared.smaskData).toBeUndefined();
+    expect([...unzlibSync(prepared.data)].slice(3, 6)).toEqual([255, 255, 255]);
+  });
+});

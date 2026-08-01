@@ -16,7 +16,7 @@
 import { unzlibSync, zlibSync } from 'fflate';
 
 /** The raster formats this module recognizes and can prepare for embedding. */
-export type ImageFormat = 'jpeg' | 'png' | 'jpeg2000';
+export type ImageFormat = 'jpeg' | 'png' | 'jpeg2000' | 'gif';
 
 /**
  * Sniff the raster format from a file's leading magic bytes (JPEG SOI, the PNG
@@ -68,6 +68,18 @@ export function detectImageFormat(bytes: Uint8Array): ImageFormat | null {
   ) {
     return 'jpeg2000';
   }
+  // §Graphics Interchange Format 89a — "GIF87a" / "GIF89a".
+  if (
+    bytes.length >= 6 &&
+    bytes[0] === 0x47 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x38 &&
+    (bytes[4] === 0x37 || bytes[4] === 0x39) &&
+    bytes[5] === 0x61
+  ) {
+    return 'gif';
+  }
   return null;
 }
 
@@ -90,7 +102,7 @@ export interface EmbedImageOptions {
  */
 export interface PreparedImage {
   readonly format: ImageFormat;
-  readonly mimeType: 'image/jp2' | 'image/jpeg' | 'image/png';
+  readonly mimeType: 'image/jp2' | 'image/jpeg' | 'image/png' | 'image/gif';
   readonly widthPx: number;
   readonly heightPx: number;
   /**
@@ -118,6 +130,7 @@ export function prepareImage(bytes: Uint8Array, options: EmbedImageOptions = {})
   if (format === 'jpeg') return prepareJpeg(bytes);
   if (format === 'png') return preparePng(bytes, options);
   if (format === 'jpeg2000') return prepareJpeg2000(bytes);
+  if (format === 'gif') return prepareGif(bytes, options);
   throw new Error('Unsupported image format');
 }
 
@@ -247,6 +260,215 @@ function readJpegInfo(bytes: Uint8Array): JpegInfo {
     i += 2 + length;
   }
   throw new Error('JPEG SOFn marker not found');
+}
+
+/**
+ * Decode a GIF (87a/89a) into a {@link PreparedImage}: the first frame's
+ * palette indices expanded to RGB and re-compressed, with a transparent index
+ * becoming a soft mask. PDF has no GIF filter, so the pixels have to be handed
+ * over as raw ones — dml-picture-in-textframe.docx (and seventeen other corpus
+ * documents) draw nothing at all without this.
+ *
+ * @param bytes   The GIF file.
+ * @param options Emit options (PDF/A-1 forbids the soft mask).
+ * @returns The prepared image.
+ * @throws Error when the file is truncated or holds no image.
+ */
+function prepareGif(bytes: Uint8Array, options: EmbedImageOptions = {}): PreparedImage {
+  const frame = decodeGif(bytes);
+  const rgb = new Uint8Array(frame.width * frame.height * 3);
+  const alpha =
+    frame.transparentIndex !== undefined ? new Uint8Array(frame.width * frame.height) : undefined;
+  for (let i = 0; i < frame.indices.length; i++) {
+    const idx = frame.indices[i]!;
+    const p = idx * 3;
+    rgb[i * 3] = frame.palette[p] ?? 0;
+    rgb[i * 3 + 1] = frame.palette[p + 1] ?? 0;
+    rgb[i * 3 + 2] = frame.palette[p + 2] ?? 0;
+    if (alpha) alpha[i] = idx === frame.transparentIndex ? 0 : 255;
+  }
+  // PDF/A-1 forbids transparency: composite the see-through pixels onto white
+  // rather than dropping the mask and painting them black.
+  if (alpha && options.flattenAlpha) {
+    for (let i = 0; i < alpha.length; i++) {
+      if (alpha[i] === 0) {
+        rgb[i * 3] = 255;
+        rgb[i * 3 + 1] = 255;
+        rgb[i * 3 + 2] = 255;
+      }
+    }
+  }
+  return {
+    format: 'gif',
+    mimeType: 'image/gif',
+    widthPx: frame.width,
+    heightPx: frame.height,
+    colorSpace: 'DeviceRGB',
+    bitsPerComponent: 8,
+    filter: 'FlateDecode',
+    data: zlibSync(rgb),
+    ...(alpha && !options.flattenAlpha ? { smaskData: zlibSync(alpha) } : {}),
+  };
+}
+
+interface GifFrame {
+  readonly width: number;
+  readonly height: number;
+  /** One palette index per pixel, row-major, de-interlaced. */
+  readonly indices: Uint8Array;
+  /** RGB triples. */
+  readonly palette: Uint8Array<ArrayBufferLike>;
+  readonly transparentIndex?: number;
+}
+
+// The FIRST frame only: an animated GIF in a document is a picture, and every
+// reader that prints one prints its first frame.
+function decodeGif(bytes: Uint8Array): GifFrame {
+  const u16 = (i: number): number => (bytes[i] ?? 0) | ((bytes[i + 1] ?? 0) << 8);
+  const screenW = u16(6);
+  const screenH = u16(8);
+  const packed = bytes[10] ?? 0;
+  let pos = 13;
+  let globalPalette: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
+  if ((packed & 0x80) !== 0) {
+    const size = 3 * (1 << ((packed & 0x07) + 1));
+    globalPalette = bytes.subarray(pos, pos + size);
+    pos += size;
+  }
+  let transparentIndex: number | undefined;
+  while (pos < bytes.length) {
+    const block = bytes[pos]!;
+    if (block === 0x21) {
+      // Extension: the graphic control one carries the transparent index.
+      const label = bytes[pos + 1]!;
+      pos += 2;
+      if (label === 0xf9 && (bytes[pos + 1]! & 0x01) !== 0) transparentIndex = bytes[pos + 4];
+      while (pos < bytes.length && bytes[pos] !== 0) pos += bytes[pos]! + 1;
+      pos++;
+      continue;
+    }
+    if (block !== 0x2c) break; // trailer (0x3b) or garbage
+    const width = u16(pos + 5) || screenW;
+    const height = u16(pos + 7) || screenH;
+    const flags = bytes[pos + 9]!;
+    pos += 10;
+    let palette: Uint8Array<ArrayBufferLike> = globalPalette;
+    if ((flags & 0x80) !== 0) {
+      const size = 3 * (1 << ((flags & 0x07) + 1));
+      palette = bytes.subarray(pos, pos + size);
+      pos += size;
+    }
+    const minCodeSize = bytes[pos]!;
+    pos++;
+    const chunks: Array<Uint8Array> = [];
+    while (pos < bytes.length && bytes[pos] !== 0) {
+      const len = bytes[pos]!;
+      chunks.push(bytes.subarray(pos + 1, pos + 1 + len));
+      pos += len + 1;
+    }
+    const flat = concatBytes(chunks);
+    const indices = lzwDecode(flat, minCodeSize, width * height);
+    return {
+      width,
+      height,
+      indices: (flags & 0x40) !== 0 ? deinterlace(indices, width, height) : indices,
+      palette,
+      ...(transparentIndex !== undefined ? { transparentIndex } : {}),
+    };
+  }
+  throw new Error('GIF holds no image');
+}
+
+// The GIF flavour of LZW: codes are packed LSB-first, the code width grows
+// with the table, and the two codes above the palette are Clear and End.
+function lzwDecode(data: Uint8Array, minCodeSize: number, pixelCount: number): Uint8Array {
+  const clear = 1 << minCodeSize;
+  const end = clear + 1;
+  const out = new Uint8Array(pixelCount);
+  let outPos = 0;
+  // Each entry is a run of indices; the first `clear` are the palette itself.
+  let prefix = new Int32Array(4096);
+  let suffix = new Uint8Array(4096);
+  let length = new Int32Array(4096);
+  const reset = (): void => {
+    prefix = new Int32Array(4096);
+    suffix = new Uint8Array(4096);
+    length = new Int32Array(4096);
+    for (let i = 0; i < clear; i++) {
+      prefix[i] = -1;
+      suffix[i] = i;
+      length[i] = 1;
+    }
+  };
+  reset();
+  let next = end + 1;
+  let codeSize = minCodeSize + 1;
+  let prev = -1;
+  let bitBuf = 0;
+  let bitCount = 0;
+  const stack = new Uint8Array(4096);
+  for (let i = 0; i < data.length || bitCount >= codeSize; ) {
+    while (bitCount < codeSize && i < data.length) {
+      bitBuf |= (data[i]! & 0xff) << bitCount;
+      bitCount += 8;
+      i++;
+    }
+    if (bitCount < codeSize) break;
+    const code = bitBuf & ((1 << codeSize) - 1);
+    bitBuf >>>= codeSize;
+    bitCount -= codeSize;
+    if (code === clear) {
+      reset();
+      next = end + 1;
+      codeSize = minCodeSize + 1;
+      prev = -1;
+      continue;
+    }
+    if (code === end) break;
+    let cur = code;
+    if (code >= next) {
+      // The one self-referential case: the code being defined right now.
+      if (prev < 0) break;
+      cur = prev;
+    }
+    let depth = 0;
+    while (cur >= 0 && depth < 4096) {
+      stack[depth] = suffix[cur]!;
+      depth++;
+      cur = prefix[cur]!;
+    }
+    if (code >= next) stack[depth++] = stack[depth - 2] ?? 0;
+    for (let d = depth - 1; d >= 0 && outPos < out.length; d--) out[outPos++] = stack[d]!;
+    if (prev >= 0 && next < 4096) {
+      prefix[next] = prev;
+      suffix[next] = stack[depth - 1]!;
+      length[next] = (length[prev] ?? 1) + 1;
+      next++;
+      if (next === 1 << codeSize && codeSize < 12) codeSize++;
+    }
+    prev = code < next ? code : prev;
+    if (outPos >= out.length) break;
+  }
+  return out;
+}
+
+// The four interlace passes, back into row order.
+function deinterlace(src: Uint8Array, width: number, height: number): Uint8Array {
+  const out = new Uint8Array(src.length);
+  const passes: ReadonlyArray<readonly [number, number]> = [
+    [0, 8],
+    [4, 8],
+    [2, 4],
+    [1, 2],
+  ];
+  let row = 0;
+  for (const [start, step] of passes) {
+    for (let y = start; y < height; y += step) {
+      out.set(src.subarray(row * width, (row + 1) * width), y * width);
+      row++;
+    }
+  }
+  return out;
 }
 
 interface DecodedPng {
