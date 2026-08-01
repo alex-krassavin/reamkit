@@ -876,6 +876,19 @@ export function layoutStyledDocument(
     );
   });
 
+  // §17.3.1.9 `w:contextualSpacing` — the space between two paragraphs of the
+  // SAME style is dropped, which is how a list sits together while keeping its
+  // distance from the text around it. Read nowhere, every item of
+  // ComplexNumberedLists.docx stood ten points from the next.
+  for (let i = 0; i < blocks.length; i++) {
+    const here = blocks[i];
+    const next = blocks[i + 1];
+    if (here?.kind !== 'paragraph' || next?.kind !== 'paragraph') continue;
+    if (here.source?.properties.styleId !== next.source?.properties.styleId) continue;
+    if (here.resolved.contextualSpacing) blocks[i] = { ...here, spacingAfterPt: 0 };
+    if (next.resolved.contextualSpacing) blocks[i + 1] = { ...next, spacingBeforePt: 0 };
+  }
+
   // Footnote plan: per-section lazily-cached layout of each note's content at
   // that section's width (notes referenced only from tables/shape text flow
   // after the body instead — see assignNoteNumbers).

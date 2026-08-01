@@ -63,6 +63,11 @@ export function parseParagraphProperties(pPr: unknown): ParagraphProperties {
     else if (hanging !== undefined) out.indentFirstLine = twipsToPt(-hanging);
   }
 
+  if ('w:contextualSpacing' in el) {
+    const v = parseToggle(el['w:contextualSpacing']);
+    if (v !== undefined) out.contextualSpacing = v;
+  }
+
   if ('w:pageBreakBefore' in el) {
     const v = parseToggle(el['w:pageBreakBefore']);
     if (v !== undefined) out.pageBreakBefore = v;

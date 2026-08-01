@@ -87,6 +87,13 @@ export interface ParagraphProperties {
   readonly spacingAfter?: Pt;
   readonly spacingLine?: Pt;
   readonly spacingLineRule?: 'auto' | 'exact' | 'atLeast';
+  /**
+   * ECMA-376 Part 1 §17.3.1.9 — `w:contextualSpacing`. The space before and
+   * after is dropped where the neighbour is a paragraph of the SAME style: a
+   * list is written this way, so its items sit together while the list as a
+   * whole keeps its space from the text around it.
+   */
+  readonly contextualSpacing?: boolean;
   readonly indentLeft?: Pt;
   readonly indentRight?: Pt;
   readonly indentFirstLine?: Pt;

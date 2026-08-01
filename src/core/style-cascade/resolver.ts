@@ -221,6 +221,7 @@ function mergePar(
     indentRight: override.indentRight ?? base.indentRight,
     indentFirstLine: override.indentFirstLine ?? base.indentFirstLine,
     pageBreakBefore: override.pageBreakBefore ?? base.pageBreakBefore,
+    contextualSpacing: override.contextualSpacing ?? base.contextualSpacing,
     bidi: override.bidi ?? base.bidi,
     ...(outlineLevel !== undefined ? { outlineLevel } : {}),
     ...(styleId !== undefined ? { styleId } : {}),

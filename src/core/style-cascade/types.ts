@@ -48,6 +48,8 @@ export interface ResolvedParagraphProperties {
   readonly indentRight: Pt;
   readonly indentFirstLine: Pt;
   readonly pageBreakBefore: boolean;
+  /** §17.3.1.9 — drop the space between this paragraph and a same-styled neighbour. */
+  readonly contextualSpacing: boolean;
   readonly bidi: boolean;
   /**
    * ECMA-376 §17.3.1.20 — resolved outline level (0–8). Undefined = body text.
@@ -90,5 +92,6 @@ export const DEFAULT_RESOLVED_PARAGRAPH: ResolvedParagraphProperties = {
   indentRight: twipsToPt(0),
   indentFirstLine: twipsToPt(0),
   pageBreakBefore: false,
+  contextualSpacing: false,
   bidi: false,
 };
