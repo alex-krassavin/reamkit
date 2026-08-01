@@ -38,6 +38,7 @@ import type {
   MathNode,
   Numbering,
   Paragraph,
+  RelativeSize,
   Run,
   Section,
   SectionColumns,
@@ -914,6 +915,7 @@ export function layoutStyledDocument(
     }
     const ctx = sectionCtxs[sectionIdx]!;
     const width = ctx.columns ? ctx.columns[0]!.widthPt : ctx.contentWidth;
+    const box: RelativeBox = { pageWidthPt: ctx.pageWidth, pageHeightPt: ctx.pageHeight };
     const group = bodyFrames.starts.get(idx);
     if (group) return layoutFrameBlock(group, options, fontResources, imageResources, width);
     if (bodyFrames.continued.has(idx)) return emptyBlock(options);
@@ -1634,6 +1636,41 @@ function frameFloat(frame: FrameProperties): FloatAnchor {
   };
 }
 
+/** The page and margin box a `wp14` relative size is a share of. */
+interface RelativeBox {
+  readonly pageWidthPt: number;
+  readonly pageHeightPt: number;
+}
+
+/**
+ * A drawing's width when it states one as a share of the page or the margins.
+ *
+ * @param rel     The relative size, if any.
+ * @param content The margin box's width.
+ * @param box     The page box, when the caller knows it.
+ * @returns The width in points, or `undefined` when none is stated.
+ */
+function relativeWidth(
+  rel: RelativeSize | undefined,
+  content: number,
+  box: RelativeBox | undefined,
+): number | undefined {
+  if (!rel?.widthPct) return undefined;
+  const base = rel.widthFrom === 'page' && box ? box.pageWidthPt : content;
+  return base * rel.widthPct;
+}
+
+/** The height twin of {@link relativeWidth}; the margin box's height is the page's content height. */
+function relativeHeight(
+  rel: RelativeSize | undefined,
+  contentHeight: number | undefined,
+  box: RelativeBox | undefined,
+): number | undefined {
+  if (!rel?.heightPct) return undefined;
+  const base = rel.heightFrom === 'page' && box ? box.pageHeightPt : contentHeight;
+  return base === undefined ? undefined : base * rel.heightPct;
+}
+
 function laidOutBlocksFor(
   elements: ReadonlyArray<BodyElement>,
   options: StyledRenderOptions,
@@ -1657,6 +1694,7 @@ function layoutBodyElement(
   imageResources: ReadonlyMap<string, ImageResource> | undefined,
   contentWidth: number,
   maxHeight?: number,
+  box?: RelativeBox,
 ): LaidOutBlock {
   if (el.kind === 'paragraph') {
     return layoutParagraphBlock(el.paragraph, options, fontResources, imageResources, contentWidth);
@@ -1665,7 +1703,7 @@ function layoutBodyElement(
     return layoutTableBlock(el.table, options, fontResources, imageResources, contentWidth);
   }
   if (el.kind === 'image') {
-    return layoutImageBlock(el.image, imageResources, contentWidth);
+    return layoutImageBlock(el.image, imageResources, contentWidth, maxHeight, box);
   }
   if (el.kind === 'chart') {
     return layoutChartBlock(el.chart, options, fontResources, contentWidth, maxHeight);
@@ -1677,6 +1715,7 @@ function layoutBodyElement(
     imageResources,
     contentWidth,
     maxHeight,
+    box,
   );
 }
 
@@ -1684,9 +1723,15 @@ function layoutImageBlock(
   image: ImageBlock,
   imageResources: ReadonlyMap<string, ImageResource> | undefined,
   contentWidth: number,
+  maxHeight?: number,
+  box?: RelativeBox,
 ): ImageBlockLaidOut {
-  let widthPt: number = image.width;
-  let heightPt: number = image.height;
+  let widthPt: number = relativeWidth(image.relativeSize, contentWidth, box) ?? image.width;
+  let heightPt: number =
+    relativeHeight(image.relativeSize, maxHeight, box) ??
+    (image.relativeSize?.widthPct && image.width > 0
+      ? image.height * (widthPt / image.width)
+      : image.height);
   if (widthPt > contentWidth) {
     const scale = contentWidth / widthPt;
     widthPt = contentWidth;
@@ -1716,9 +1761,16 @@ function layoutShapeBlock(
   imageResources: ReadonlyMap<string, ImageResource> | undefined,
   contentWidth: number,
   maxHeight?: number,
+  // The page box a `wp14:sizeRelH/V` percentage is measured against.
+  box?: RelativeBox,
 ): ShapeBlockLaidOut {
-  let widthPt: number = shape.width;
-  let heightPt: number = shape.height;
+  let widthPt: number = relativeWidth(shape.relativeSize, contentWidth, box) ?? shape.width;
+  let heightPt: number =
+    relativeHeight(shape.relativeSize, maxHeight, box) ??
+    (shape.relativeSize?.widthPct && shape.width > 0
+      ? // Only the width is stated: the shape keeps its proportions.
+        shape.height * (widthPt / shape.width)
+      : shape.height);
   // Clamp width to the content area like images, scaling height to keep aspect.
   // §20.4.2.3 — a FLOATING drawing is not in the text column and may hang past
   // it into the margins, which is what both references draw:

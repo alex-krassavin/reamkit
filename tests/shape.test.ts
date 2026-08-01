@@ -845,6 +845,39 @@ describe('a floating drawing and the text column', () => {
             </wps:wsp>
           </a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>`;
 
+  it('takes a size stated as a share of the margins', () => {
+    // `wp14:sizeRelH/V` — dml-shape-relsize.docx asks for 40% of the margin
+    // width and 20% of its height; read as nothing, the shape came out at the
+    // fallback extent, less than half as wide.
+    const relative =
+      `<w:p><w:r><w:drawing>
+        <wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+                   xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing"
+                   distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="1"
+                   behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">
+          <wp:simplePos x="0" y="0"/>
+          <wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH>
+          <wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>
+          <wp:extent cx="914400" cy="457200"/><wp:wrapNone/><wp:docPr id="1" name="S"/>
+          <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+            <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+                <wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="457200"/></a:xfrm>
+                  <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+                  <a:solidFill><a:srgbClr val="4472C4"/></a:solidFill></wps:spPr>
+                <wps:bodyPr/>
+              </wps:wsp>
+            </a:graphicData></a:graphic>
+          <wp14:sizeRelH relativeFrom="margin"><wp14:pctWidth>50000</wp14:pctWidth></wp14:sizeRelH>
+        </wp:anchor></w:drawing></w:r></w:p>` +
+      '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>' +
+      '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>';
+    const text = asLatin1(convertDocxToPdfSync(buildDocxFromBody(relative), { fonts: FONTS }));
+    // Half of the 468pt column, and the height follows to keep the shape square.
+    expect(text).toMatch(/234 0 l/u);
+    expect(text).toMatch(/234 117 l/u);
+  });
+
   it('keeps the width it states, past the column', () => {
     // §20.4.2.3 — a float is not in the text column and may hang into the
     // margins: dml-groupshape-capitalization.docx anchors a 547pt group on a

@@ -64,6 +64,7 @@ export type {
   Paragraph,
   ParagraphProperties,
   FrameProperties,
+  RelativeSize,
   TabStop,
   Run,
   RunProperties,

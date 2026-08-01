@@ -884,6 +884,8 @@ export interface ImageBlock {
   readonly crop?: ImageCrop;
   /** §20.1.7.6 `a:xfrm @rot` — the picture's own rotation (1/60000°, clockwise). */
   readonly rotation60k?: number;
+  /** `wp14:sizeRelH/V` — a size stated as a share of the page or margins. */
+  readonly relativeSize?: RelativeSize;
   readonly paragraphProperties: ParagraphProperties;
   /** `wp:docPr @descr/@title` — alternate text for the tagged-PDF Figure (`/Alt`). */
   readonly altText?: string;
@@ -992,6 +994,19 @@ export interface ShapeLine {
   readonly fill?: 'solid' | 'none'; // a:ln/a:noFill ⇒ no visible stroke
 }
 
+/**
+ * `wp14:sizeRelH` / `wp14:sizeRelV` — the drawing's size as a PERCENTAGE of
+ * the page or the margins rather than the extent beside it. Word 2010 writes
+ * it in the `wp14` namespace, with the extent as the fallback for readers that
+ * do not know it.
+ */
+export interface RelativeSize {
+  readonly widthPct?: number; // 0..1
+  readonly widthFrom?: 'margin' | 'page';
+  readonly heightPct?: number;
+  readonly heightFrom?: 'margin' | 'page';
+}
+
 /** §20.1.7.6 `a:xfrm` — a shape's rotation (1/60000°, clockwise) + flips. */
 export interface ShapeTransform {
   readonly rotation60k?: number;
@@ -1064,6 +1079,8 @@ export interface ShapeBlock {
   readonly fill: ShapeFill;
   readonly line?: ShapeLine;
   readonly transform?: ShapeTransform;
+  /** `wp14:sizeRelH/V` — a size stated as a share of the page or margins. */
+  readonly relativeSize?: RelativeSize;
   readonly text?: ShapeTextBody;
   /** §20.1.8.40 — the shape's drop shadow, direct or from its style reference. */
   readonly shadow?: ShapeShadow;

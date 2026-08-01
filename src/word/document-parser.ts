@@ -571,6 +571,7 @@ function blocksForDrawing(
           height: content.height,
           ...(content.crop ? { crop: content.crop } : {}),
           ...(content.rotation60k ? { rotation60k: content.rotation60k } : {}),
+          ...(content.relativeSize ? { relativeSize: content.relativeSize } : {}),
           paragraphProperties,
           ...(content.altText ? { altText: content.altText } : {}),
           ...(content.float ? { float: content.float } : {}),

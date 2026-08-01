@@ -10,6 +10,7 @@ import type {
   CustomPathCmd,
   FloatAnchor,
   ImageCrop,
+  RelativeSize,
   ShapeDash,
   ShapeFill,
   ShapeGeometry,
@@ -62,6 +63,8 @@ export interface ShapeData {
   readonly fill: ShapeFill;
   readonly line?: ShapeLine;
   readonly transform?: ShapeTransform;
+  /** `wp14:sizeRelH/V` — a size stated as a share of the page or margins. */
+  readonly relativeSize?: RelativeSize;
   /** The shape's text body (a `wps:txbx`), when it carries one. */
   readonly text?: ShapeTextBody;
 }
@@ -87,6 +90,8 @@ export type DrawingContent =
       readonly crop?: ImageCrop;
       /** §20.1.7.6 `a:xfrm @rot` — the picture's rotation (1/60000°, clockwise). */
       readonly rotation60k?: number;
+      /** `wp14:sizeRelH/V` — a size stated as a share of the page or margins. */
+      readonly relativeSize?: RelativeSize;
       /** `wp:docPr` `@descr`/`@title` — alternate text for the tagged-PDF Figure. */
       readonly altText?: string;
       readonly float?: FloatAnchor;
@@ -141,6 +146,37 @@ function parseFloatAnchor(anchor: PoNode): FloatAnchor | undefined {
 }
 
 const ANCHOR_ALIGNS = new Set(['left', 'center', 'right']);
+
+/**
+ * `wp14:sizeRelH` / `wp14:sizeRelV` — the drawing's width and height as
+ * hundredths of a percent of the page or the margins. Word writes the resolved
+ * extent beside them for readers that do not know the namespace, which is what
+ * we drew: dml-shape-relsize.docx asks for 40% of the margin and got the
+ * fallback's 90pt.
+ *
+ * @param anchor The `wp:anchor` node.
+ * @returns The relative size, or `undefined` when the anchor states none.
+ */
+function parseRelativeSize(anchor: PoNode): RelativeSize | undefined {
+  const read = (
+    tag: string,
+    pctTag: string,
+  ): { pct: number; from: 'margin' | 'page' } | undefined => {
+    const node = expandMcChildren(poChildren(anchor)).find((c) => poIs(c, tag));
+    if (!node) return undefined;
+    const pctNode = poChildren(node).find((c) => poIs(c, pctTag));
+    const raw = pctNode ? Number(poText(pctNode).trim()) : NaN;
+    if (!Number.isFinite(raw) || raw <= 0) return undefined;
+    return { pct: raw / 100000, from: poAttr(node, 'relativeFrom') === 'page' ? 'page' : 'margin' };
+  };
+  const h = read('wp14:sizeRelH', 'wp14:pctWidth');
+  const v = read('wp14:sizeRelV', 'wp14:pctHeight');
+  if (!h && !v) return undefined;
+  return {
+    ...(h ? { widthPct: h.pct, widthFrom: h.from } : {}),
+    ...(v ? { heightPct: v.pct, heightFrom: v.from } : {}),
+  };
+}
 
 /**
  * The first ELEMENT among a node's children. `poTag` gives a text node no tag
@@ -264,17 +300,23 @@ export function parseDrawing(
     ...(float ? { float } : {}),
   };
 
+  // `wp14:sizeRelH/V` — the drawing's size as a share of the page or margins.
+  // dml-shape-relsize.docx asks for 40% of the margin width and we drew the
+  // fallback extent, less than half of it.
+  const relativeSize = parseRelativeSize(anchor);
   const graphicData = poFindDescendant(anchor, 'a:graphicData');
   const uri = graphicData ? poAttr(graphicData, 'uri') : undefined;
 
   if (graphicData && uri === WPS_URI) {
     const data = parseWsp(graphicData, extentCx, extentCy, resolveColor, parseBody, resolveImage);
-    return data ? { kind: 'shape', data, ...alt } : null;
+    if (!data) return null;
+    return { kind: 'shape', data: { ...data, ...(relativeSize ? { relativeSize } : {}) }, ...alt };
   }
 
   if (graphicData && uri === WPG_URI) {
     const data = parseWgp(graphicData, extentCx, extentCy, resolveColor, parseBody, resolveImage);
-    return data ? { kind: 'shape', data, ...alt } : null;
+    if (!data) return null;
+    return { kind: 'shape', data: { ...data, ...(relativeSize ? { relativeSize } : {}) }, ...alt };
   }
 
   if (graphicData && uri === CHART_URI) {
@@ -319,6 +361,7 @@ export function parseDrawing(
       height: emuToPt(extentCy),
       ...(crop ? { crop } : {}),
       ...(rot ? { rotation60k: rot } : {}),
+      ...(relativeSize ? { relativeSize } : {}),
       ...alt,
     };
   }
