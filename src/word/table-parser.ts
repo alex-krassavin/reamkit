@@ -44,6 +44,24 @@ const BORDER_STYLES = new Set<BorderStyle>([
   'dashed',
 ]);
 
+// §17.18.2 — the patterns drawn as more than one parallel line. Each becomes a
+// `double`: two rules of the stated total width, which is what they all are.
+const MULTI_LINE_BORDERS = new Set([
+  'triple',
+  'doubleWave',
+  'thinThickSmallGap',
+  'thickThinSmallGap',
+  'thinThickThinSmallGap',
+  'thinThickMediumGap',
+  'thickThinMediumGap',
+  'thinThickThinMediumGap',
+  'thinThickLargeGap',
+  'thickThinLargeGap',
+  'thinThickThinLargeGap',
+  'outset',
+  'inset',
+]);
+
 const WIDTH_TYPES = new Set<'auto' | 'dxa' | 'pct' | 'nil'>(['auto', 'dxa', 'pct', 'nil']);
 const HEIGHT_RULES = new Set<'auto' | 'atLeast' | 'exact'>(['auto', 'atLeast', 'exact']);
 
@@ -439,13 +457,25 @@ function parseBorder(node: PoNode | undefined): Border | undefined {
   // `none` are a rule that is explicitly ABSENT — recorded, so it overrides the
   // one a table or style would otherwise lend the edge; all_gaps_word.docx
   // spells its grid away that way and dropping the edge boxed every cell.
-  // Anything else we cannot spell is far closer to a solid rule of the stated
-  // width than to nothing at all.
-  const val = raw === 'nil' ? 'none' : BORDER_STYLES.has(raw as BorderStyle) ? raw : 'single';
+  // Of the rest, the ones drawn as SEVERAL parallel lines read as a double
+  // rule — fdo76586.docx boxes its table in `thickThinLargeGap` and a single
+  // line is visibly one rule where the reference draws two. Anything else is
+  // far closer to a solid rule of the stated width than to nothing at all.
+  const val =
+    raw === 'nil'
+      ? 'none'
+      : BORDER_STYLES.has(raw as BorderStyle)
+        ? raw
+        : MULTI_LINE_BORDERS.has(raw)
+          ? 'double'
+          : 'single';
   const sz = poIntAttr(node, 'sz');
   const color = poAttr(node, 'color');
   const out: Mutable<Border> = { style: val as BorderStyle };
-  if (sz !== undefined) out.width = eighthPtToPt(sz);
+  // `w:sz` on a compound pattern is the width of ONE of its lines; the rule as
+  // a whole is that line, a gap and another line. A `double` here is drawn to
+  // the TOTAL, so the three of them are what it is given.
+  if (sz !== undefined) out.width = eighthPtToPt(MULTI_LINE_BORDERS.has(raw) ? sz * 3 : sz);
   // §17.3.1.24 `w:space` — the gap a paragraph rule keeps from the text, in
   // POINTS (a cell border has no such attribute and leaves it undefined).
   const space = poIntAttr(node, 'space');
