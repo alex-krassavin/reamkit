@@ -136,11 +136,33 @@ function computeParagraphProperties(
   sheet: StyleSheet,
 ): ResolvedParagraphProperties {
   let acc = mergePar(DEFAULT_RESOLVED_PARAGRAPH, sheet.defaultParagraphProperties);
-  if (paragraphDirect.styleId) {
-    const chain = resolveStyleChain(paragraphDirect.styleId, sheet);
+  // §17.7.4.17 `w:default="1"` — the style a paragraph that names none is
+  // written in. Skipping it left such a paragraph with the document defaults
+  // alone: Bug51170.docx sets ten points after every paragraph in its Normal
+  // style, and reading none of it packed a seven-page deed into four.
+  const styleId = paragraphDirect.styleId ?? defaultParagraphStyleId(sheet);
+  if (styleId) {
+    const chain = resolveStyleChain(styleId, sheet);
     acc = mergePar(acc, chain.pPr);
   }
   return mergePar(acc, paragraphDirect);
+}
+
+/** The id of the `w:default="1"` paragraph style, cached per sheet. */
+const defaultParagraphStyleCache = new WeakMap<StyleSheet, string | null>();
+
+function defaultParagraphStyleId(sheet: StyleSheet): string | undefined {
+  const hit = defaultParagraphStyleCache.get(sheet);
+  if (hit !== undefined) return hit ?? undefined;
+  let found: string | null = null;
+  for (const style of sheet.styles.values()) {
+    if (style.type === 'paragraph' && style.isDefault) {
+      found = style.id;
+      break;
+    }
+  }
+  defaultParagraphStyleCache.set(sheet, found);
+  return found ?? undefined;
 }
 
 function resolveStyleChain(styleId: string, sheet: StyleSheet): StyleChainResult {
