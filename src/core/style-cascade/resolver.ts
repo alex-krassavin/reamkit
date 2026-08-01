@@ -234,6 +234,7 @@ function mergePar(
   // the way a paragraph's tabs do.
   const runProperties = override.runProperties ?? base.runProperties;
   const frame = override.frame ?? base.frame;
+  const sectionBreak = override.sectionBreak ?? base.sectionBreak;
   return {
     alignment: override.alignment ?? base.alignment,
     spacingBefore: override.spacingBefore ?? base.spacingBefore,
@@ -256,6 +257,7 @@ function mergePar(
     ...(numbering !== undefined ? { numbering } : {}),
     ...(runProperties !== undefined ? { runProperties } : {}),
     ...(frame !== undefined ? { frame } : {}),
+    ...(sectionBreak !== undefined ? { sectionBreak } : {}),
   };
 }
 

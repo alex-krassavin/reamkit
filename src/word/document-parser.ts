@@ -712,6 +712,13 @@ function parseParagraph(
   }
   const pPr = poChildren(p).find((c) => poIs(c, 'w:pPr'));
   let properties = parseParagraphProperties(pPr ? poElementToFlat(pPr) : undefined);
+  // §17.6.17 — a `w:sectPr` in the paragraph mark makes this paragraph the last
+  // of its section, and the mark itself the break. An otherwise empty one is
+  // therefore not a blank line: fdo73596_RunInStyle brackets its index with two
+  // of them and we opened a 20pt hole on either side.
+  if (pPr && poChildren(pPr).some((c) => poIs(c, 'w:sectPr'))) {
+    properties = { ...properties, sectionBreak: true };
+  }
   // A display equation (m:oMathPara) centres its paragraph by default
   // (m:oMathParaPr/m:jc may override). Only applied when the paragraph has no
   // explicit alignment of its own.

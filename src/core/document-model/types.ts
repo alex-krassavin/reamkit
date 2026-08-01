@@ -149,6 +149,12 @@ export interface FrameProperties {
 
 export interface ParagraphProperties {
   readonly styleId?: string;
+  /**
+   * §17.6.17 — the paragraph's mark carries a `w:sectPr`: it is the last
+   * paragraph of its section, and the mark IS the section break. One with no
+   * content of its own therefore prints nothing, not an empty line.
+   */
+  readonly sectionBreak?: boolean;
   /** §17.3.1.11 — the paragraph floats as a text frame. */
   readonly frame?: FrameProperties;
   readonly alignment?: Alignment;

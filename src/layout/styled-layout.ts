@@ -3189,6 +3189,18 @@ function layoutParagraphBlock(
   lineWidths?: ReadonlyArray<number>,
 ): ParagraphBlock {
   const baseResolved = resolveParagraphProperties(paragraph.properties, options.styles);
+  // §17.6.17 — the paragraph mark IS the section break, so a paragraph that
+  // holds one and nothing else takes no room: no line, no spacing.
+  if (paragraph.properties.sectionBreak === true && paragraph.runs.length === 0) {
+    return {
+      kind: 'paragraph',
+      resolved: baseResolved,
+      lines: [],
+      heightPt: 0,
+      spacingBeforePt: 0,
+      spacingAfterPt: 0,
+    };
+  }
   const baseDir = paragraphBaseDirection(paragraph, baseResolved);
   // §17.3.1.13 / §17.3.1.12 — in a `w:bidi` paragraph "left" and "right" are
   // the START and END of the line, not sides of the page, so both the

@@ -480,6 +480,27 @@ describe('Headers and footers in rendered PDF', () => {
     expect(pageCount).toBe(2);
   });
 
+  it('an empty paragraph that only carries the section break takes no room', () => {
+    // §17.6.17 — the paragraph MARK is the break, so the paragraph prints
+    // nothing: the two lines land where they would with the break absent.
+    const withBreak = `
+      <w:p><w:r><w:t>ONE</w:t></w:r></w:p>
+      <w:p>
+        <w:pPr><w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr></w:pPr>
+      </w:p>
+      <w:p><w:r><w:t>TWO</w:t></w:r></w:p>
+      <w:sectPr><w:type w:val="continuous"/><w:pgSz w:w="11906" w:h="16838"/></w:sectPr>`;
+    const without = `
+      <w:p><w:r><w:t>ONE</w:t></w:r></w:p>
+      <w:p><w:r><w:t>TWO</w:t></w:r></w:p>
+      <w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr>`;
+    const baselines = (body: string): Array<number> => {
+      const text = asLatin1(convertDocxToPdfSync(buildDocxFromBody(body), { fonts: FONTS }));
+      return [...text.matchAll(/1 0 0 1 [\d.]+ ([\d.]+) Tm/g)].map((m) => Number(m[1]));
+    };
+    expect(baselines(withBreak)).toEqual(baselines(without));
+  });
+
   it('uses pgSz from sectPr to set MediaBox', () => {
     const body = `
       <w:p><w:r><w:t>x</w:t></w:r></w:p>

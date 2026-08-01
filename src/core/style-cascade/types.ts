@@ -91,6 +91,11 @@ export interface ResolvedParagraphProperties {
   /** §17.3.1.11 — the paragraph floats as a text frame. */
   readonly frame?: FrameProperties;
   /**
+   * §17.6.17 — the paragraph mark carries the section break, so a paragraph
+   * with no content of its own prints nothing at all.
+   */
+  readonly sectionBreak?: boolean;
+  /**
    * §17.9 list reference, carried through for tagged-PDF list structure
    * (L/LI nesting) — markers themselves are materialized by `applyNumbering`.
    */
