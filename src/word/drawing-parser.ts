@@ -432,7 +432,12 @@ export function parseDrawing(
  * @returns The picture, or `null` when there is no embedded `v:imagedata` or no usable size.
  */
 export function parseVmlPicture(node: PoNode, parseBody?: ParseBody): DrawingContent | null {
-  const imagedata = poFindDescendant(node, 'v:imagedata');
+  // §14.1.2 — a `v:group` is a drawing of its own, whatever it holds. Reaching
+  // for the first `v:imagedata` in the tree first collapsed a whole canvas to
+  // the picture inside it: fdo61343.docx groups a metafile with the text boxes
+  // that label it, and the labels went with the group.
+  const grouped = poChildren(node).some((c) => poIs(c, 'v:group'));
+  const imagedata = grouped ? undefined : poFindDescendant(node, 'v:imagedata');
   if (!imagedata) return parseVmlWordArt(node) ?? parseVmlShape(node, parseBody);
   // @r:id binds the embedded picture. An external @o:href/@r:href link we do
   // not embed, and an empty placeholder frame (a <v:shape> with no imagedata),
@@ -485,7 +490,7 @@ function parseVmlShape(node: PoNode, parseBody?: ParseBody): DrawingContent | nu
   const shape = poChildren(node).find((c) => VML_SHAPE_TAGS.has(poTag(c) ?? ''));
   if (!shape) return null;
   if (poIs(shape, 'v:group')) {
-    const data = parseVmlGroup(shape, parseBody);
+    const data = parseVmlGroup(shape, parseBody, vmlShapeTypes(node));
     if (!data) return null;
     const groupFloat = vmlFloat(poAttr(shape, 'style') ?? '', poIntAttr(shape, 'z-index'));
     return {
@@ -506,7 +511,14 @@ function parseVmlShape(node: PoNode, parseBody?: ParseBody): DrawingContent | nu
   const boxH = height ?? (from && to ? Math.abs(to.y - from.y) : undefined);
   if (boxW === undefined || boxH === undefined) return null;
 
-  const data = vmlShapeData(shape, tag, pt(Math.max(1, boxW)), pt(Math.max(1, boxH)), parseBody);
+  const data = vmlShapeData(
+    shape,
+    tag,
+    pt(Math.max(1, boxW)),
+    pt(Math.max(1, boxH)),
+    parseBody,
+    vmlShapeTypes(node),
+  );
   if (!data) return null;
   const float = vmlFloat(style, poIntAttr(shape, 'z-index'));
   return {
@@ -528,15 +540,40 @@ function parseVmlShape(node: PoNode, parseBody?: ParseBody): DrawingContent | nu
  * @param parseBody Body parser for a `v:textbox`.
  * @returns The shape, or `null` when it draws nothing and says nothing.
  */
+/**
+ * §14.1.2.19 `v:shapetype` — the reusable shape definitions declared alongside
+ * the shapes that reference them by `@type="#id"`, keyed by id.
+ *
+ * @param node The `w:pict` / `w:object` node.
+ * @returns The shapetypes found anywhere within it.
+ */
+function vmlShapeTypes(node: PoNode): ReadonlyMap<string, PoNode> {
+  const out = new Map<string, PoNode>();
+  const walk = (n: PoNode): void => {
+    for (const c of poChildren(n)) {
+      if (poIs(c, 'v:shapetype')) {
+        const id = poAttr(c, 'id');
+        if (id !== undefined) out.set(id, c);
+      }
+      walk(c);
+    }
+  };
+  walk(node);
+  return out;
+}
+
 function vmlShapeData(
   shape: PoNode,
   tag: string,
   width: Pt,
   height: Pt,
   parseBody?: ParseBody,
+  shapeTypes?: ReadonlyMap<string, PoNode>,
 ): ShapeData | null {
-  const fill = vmlFill(shape);
-  const line = vmlLine(shape);
+  const typeRef = poAttr(shape, 'type')?.replace(/^#/u, '');
+  const shapeType = typeRef !== undefined ? shapeTypes?.get(typeRef) : undefined;
+  const fill = vmlFill(shape, shapeType);
+  const line = vmlLine(shape, shapeType);
   const text = parseBody ? vmlTextBox(shape, parseBody) : undefined;
   // Nothing to draw and nothing to say: a spacer, not a shape.
   if (fill.kind === 'none' && !line && !text) return null;
@@ -560,7 +597,11 @@ function vmlShapeData(
  * @param parseBody Body parser for the members' text boxes.
  * @returns The group as a shape with members, or `null` when it has no box.
  */
-function parseVmlGroup(group: PoNode, parseBody?: ParseBody): ShapeData | null {
+function parseVmlGroup(
+  group: PoNode,
+  parseBody?: ParseBody,
+  shapeTypes?: ReadonlyMap<string, PoNode>,
+): ShapeData | null {
   const width = vmlStyleLength(group, 'width');
   const height = vmlStyleLength(group, 'height');
   if (width === undefined || height === undefined) return null;
@@ -581,8 +622,15 @@ function parseVmlGroup(group: PoNode, parseBody?: ParseBody): ShapeData | null {
     if (w === undefined || h === undefined) continue;
     const data =
       tag === 'v:group'
-        ? parseVmlGroup(child, parseBody)
-        : vmlShapeData(child, tag, pt(Math.max(1, w * sx)), pt(Math.max(1, h * sy)), parseBody);
+        ? parseVmlGroup(child, parseBody, shapeTypes)
+        : vmlShapeData(
+            child,
+            tag,
+            pt(Math.max(1, w * sx)),
+            pt(Math.max(1, h * sy)),
+            parseBody,
+            shapeTypes,
+          );
     if (!data) continue;
     children.push({
       shape: { ...data, paragraphProperties: {} },
@@ -685,8 +733,9 @@ const VML_NAMED_COLORS: Readonly<Record<string, string>> = {
 
 // §14.1.2.5 — `@filled="f"` or a `<v:fill type="none">` says the shape is not
 // filled; otherwise `@fillcolor`, defaulting to VML's own white.
-function vmlFill(shape: PoNode): ShapeFill {
-  if (poAttr(shape, 'filled') === 'f' || poAttr(shape, 'filled') === 'false') {
+function vmlFill(shape: PoNode, shapeType?: PoNode): ShapeFill {
+  const filled = poAttr(shape, 'filled') ?? (shapeType ? poAttr(shapeType, 'filled') : undefined);
+  if (filled === 'f' || filled === 'false') {
     return { kind: 'none' };
   }
   const fillEl = poChildren(shape).find((c) => poIs(c, 'v:fill'));
@@ -701,8 +750,14 @@ function vmlFill(shape: PoNode): ShapeFill {
 
 // §14.1.2.21 — `@stroked="f"` says no outline; otherwise `@strokecolor` and
 // `@strokeweight`, defaulting to VML's own hairline black.
-function vmlLine(shape: PoNode): ShapeLine | undefined {
-  if (poAttr(shape, 'stroked') === 'f' || poAttr(shape, 'stroked') === 'false') return undefined;
+function vmlLine(shape: PoNode, shapeType?: PoNode): ShapeLine | undefined {
+  // §14.1.2.19 — a shape takes what its `v:shapetype` declares for anything it
+  // does not state itself. The picture type `_x0000_t75` is `filled="f"
+  // stroked="f"`, and read without it fdo61343.docx drew a black frame around
+  // every picture in its canvas.
+  const stroked =
+    poAttr(shape, 'stroked') ?? (shapeType ? poAttr(shapeType, 'stroked') : undefined);
+  if (stroked === 'f' || stroked === 'false') return undefined;
   const strokeEl = poChildren(shape).find((c) => poIs(c, 'v:stroke'));
   if (strokeEl && poAttr(strokeEl, 'on') === 'f') return undefined;
   const colorHex =
