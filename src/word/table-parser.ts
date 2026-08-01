@@ -11,6 +11,7 @@ import type {
   FloatAnchor,
   RowConditionalFormat,
   RowProperties,
+  RunProperties,
   Table,
   TableCell,
   TableLook,
@@ -21,7 +22,7 @@ import type {
 import type { PoNode } from '@/core/po-helpers';
 import type { Pt } from '@/core/ir';
 import type { ParseContext } from '@/word/document-parser';
-import { DEFAULT_PARSE_CONTEXT, parseBodyElements } from '@/word/document-parser';
+import { DEFAULT_PARSE_CONTEXT, parseBodyElements, sdtRunProperties } from '@/word/document-parser';
 import { eighthPtToPt, pt, twipsToPt } from '@/core/ir';
 import {
   poAttr,
@@ -139,11 +140,23 @@ export function parseTable(tbl: PoNode, ctx: ParseContext = DEFAULT_PARSE_CONTEX
 // a plain child list the wrapper hid them, and cell-sdt-redline.docx's one-cell
 // table came out with no cells at all.
 function poChildrenThroughSdt(node: PoNode | undefined, tag: string): Array<PoNode> {
-  const out: Array<PoNode> = [];
+  return childrenThroughSdt(node, tag).map((c) => c.node);
+}
+
+// …and the run properties the wrapper lends what it holds (§17.5.2.28), for
+// the callers that carry them further down.
+function childrenThroughSdt(
+  node: PoNode | undefined,
+  tag: string,
+): Array<{ node: PoNode; sdtRunProps?: RunProperties }> {
+  const out: Array<{ node: PoNode; sdtRunProps?: RunProperties }> = [];
   for (const child of poChildren(node)) {
-    if (poIs(child, tag)) out.push(child);
+    if (poIs(child, tag)) out.push({ node: child });
     else if (poIs(child, 'w:sdt')) {
-      out.push(...poChildrenWith(poFirstChild(child, 'w:sdtContent'), tag));
+      const props = sdtRunProperties(child);
+      for (const inner of poChildrenWith(poFirstChild(child, 'w:sdtContent'), tag)) {
+        out.push({ node: inner, ...(props ? { sdtRunProps: props } : {}) });
+      }
     }
   }
   return out;
@@ -349,8 +362,8 @@ function parseTableRow(
 ): { properties: RowProperties; cells: Array<DraftCell> } {
   const properties = parseRowProperties(poFirstChild(tr, 'w:trPr'));
   const cells: Array<DraftCell> = [];
-  for (const tc of poChildrenThroughSdt(tr, 'w:tc')) {
-    cells.push(parseTableCell(tc, ctx));
+  for (const { node, sdtRunProps } of childrenThroughSdt(tr, 'w:tc')) {
+    cells.push(parseTableCell(node, ctx, sdtRunProps));
   }
   return { properties, cells };
 }
@@ -405,9 +418,9 @@ function parseRowProperties(trPr: PoNode | undefined): RowProperties {
   return out;
 }
 
-function parseTableCell(tc: PoNode, ctx: ParseContext): DraftCell {
+function parseTableCell(tc: PoNode, ctx: ParseContext, sdtRunProps?: RunProperties): DraftCell {
   const { properties, vMerge } = parseCellProperties(poFirstChild(tc, 'w:tcPr'));
-  const content = parseBodyElements(poChildren(tc), ctx);
+  const content = parseBodyElements(poChildren(tc), ctx, undefined, sdtRunProps);
   return { cell: { properties, content }, ...(vMerge ? { vMerge } : {}) };
 }
 

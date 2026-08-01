@@ -18,6 +18,7 @@ import type {
   Paragraph,
   ParagraphProperties,
   Run,
+  RunProperties,
   Section,
   SectionColumns,
   SectionProperties,
@@ -461,6 +462,9 @@ export function parseBodyElements(
   // so this is what lets a caller line the body up with something counted in
   // source blocks — {@link parseSections}' endIndex, for one.
   blocks?: BlockCounter,
+  // §17.5.2.28 — the run properties a content control around this content
+  // lends it, under whatever each run states for itself.
+  sdtRunProps?: RunProperties,
 ): Array<BodyElement> {
   const out: Array<BodyElement> = [];
   const mark = (n: number): void => {
@@ -483,7 +487,7 @@ export function parseBodyElements(
         mark(drawings.length);
       } else {
         const anchored: Array<BodyElement> = [];
-        const paragraph = parseParagraph(child, ctx, pendingBookmarks, anchored);
+        const paragraph = parseParagraph(child, ctx, pendingBookmarks, anchored, sdtRunProps);
         // The floats first: each places itself against the paragraph it hangs
         // off, and one emitted after it would hang off whatever follows.
         out.push(...anchored, { kind: 'paragraph', paragraph });
@@ -499,7 +503,16 @@ export function parseBodyElements(
       // §17.5.2 block-level structured document tag (content control): the
       // wrapper is chrome — its sdtContent children are ordinary body flow.
       const content = poChildren(child).find((c) => poIs(c, 'w:sdtContent'));
-      if (content) out.push(...parseBodyElements(poChildren(content), ctx, blocks));
+      if (content) {
+        out.push(
+          ...parseBodyElements(
+            poChildren(content),
+            ctx,
+            blocks,
+            sdtRunProperties(child) ?? sdtRunProps,
+          ),
+        );
+      }
     }
   }
   return out;
@@ -750,6 +763,8 @@ function parseParagraph(
   // They hang off the paragraph rather than sitting in its lines, so the caller
   // emits them as blocks beside it.
   anchored?: Array<BodyElement>,
+  // §17.5.2.28 — what a content control around this paragraph lends its runs.
+  sdtRunProps?: RunProperties,
 ): Paragraph {
   // §17.13.6.2 — bookmarks opening in this paragraph (plus any the caller
   // carried over from between-paragraph positions). The hidden _GoBack
@@ -791,7 +806,7 @@ function parseParagraph(
     properties = { ...properties, tabs: [...(properties.tabs ?? []), ...pTabs] };
   }
   const collected: Array<CollectedRun> = [];
-  collectRuns(p, collected, ctx, undefined, undefined, anchored);
+  collectRuns(p, collected, ctx, undefined, undefined, anchored, sdtRunProps);
   return {
     properties,
     runs: applyFieldFsm(collected),
@@ -967,6 +982,9 @@ function collectRuns(
   // §20.4.2.3 — out-param threaded to parseRun: the anchored drawings the
   // paragraph's runs carry, which are blocks of their own rather than glyphs.
   anchored?: Array<BodyElement>,
+  // §17.5.2.28 — the run properties a `w:sdt` lends its contents, under
+  // whatever each run states for itself.
+  sdtRunProps?: RunProperties,
 ): void {
   for (const child of poChildren(container)) {
     if (poIs(child, 'w:pPr')) continue;
@@ -989,9 +1007,10 @@ function collectRuns(
           ? [...ctx.openCommentRanges]
           : undefined;
       const run =
-        href !== undefined || anchor !== undefined || ranges !== undefined
+        href !== undefined || anchor !== undefined || ranges !== undefined || sdtRunProps
           ? {
               ...parsed.run,
+              ...(sdtRunProps ? { properties: { ...sdtRunProps, ...parsed.run.properties } } : {}),
               ...(href !== undefined ? { href } : {}),
               ...(anchor !== undefined ? { anchor } : {}),
               ...(ranges !== undefined ? { commentRangeRefs: ranges } : {}),
@@ -1026,11 +1045,11 @@ function collectRuns(
       const field = parseFieldInstr(poAttr(child, 'instr'));
       if (field) {
         const inner: Array<CollectedRun> = [];
-        collectRuns(child, inner, ctx, href, anchor, anchored);
+        collectRuns(child, inner, ctx, href, anchor, anchored, sdtRunProps);
         out.push({ run: synthesizeFieldRun(applyFieldFsm(inner), field, href) });
         continue;
       }
-      collectRuns(child, out, ctx, href, anchor, anchored);
+      collectRuns(child, out, ctx, href, anchor, anchored, sdtRunProps);
       continue;
     }
     if (tag && RUN_CONTAINER_TAGS.has(tag)) {
@@ -1049,9 +1068,28 @@ function collectRuns(
           if (bookmark !== undefined && bookmark !== '') childAnchor = bookmark;
         }
       }
-      collectRuns(child, out, ctx, childHref, childAnchor, anchored);
+      // §17.5.2.28 — a content control lends its `w:sdtPr/w:rPr` to what it
+      // holds. fdo78469.docx's cover date is a Date control whose only white
+      // is stated there, and we drew it in the body colour on a dark red cell.
+      const childProps = tag === 'w:sdt' ? (sdtRunProperties(child) ?? sdtRunProps) : sdtRunProps;
+      collectRuns(child, out, ctx, childHref, childAnchor, anchored, childProps);
     }
   }
+}
+
+/**
+ * §17.5.2.28 `w:sdt/w:sdtPr/w:rPr` — the run properties a content control
+ * lends what it holds, when it states any.
+ *
+ * @param sdt The `w:sdt` element.
+ * @returns The properties, or `undefined` when the control states none.
+ */
+export function sdtRunProperties(sdt: PoNode): RunProperties | undefined {
+  const sdtPr = poChildren(sdt).find((c) => poIs(c, 'w:sdtPr'));
+  const rPr = sdtPr ? poChildren(sdtPr).find((c) => poIs(c, 'w:rPr')) : undefined;
+  if (!rPr) return undefined;
+  const props = parseRunProperties(poElementToFlat(rPr));
+  return Object.keys(props).length > 0 ? props : undefined;
 }
 
 // §17.3.3.30 — the Unicode a symbol-font code point stands for. Word writes
