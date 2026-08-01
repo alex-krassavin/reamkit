@@ -4226,7 +4226,11 @@ function paginateSections(
     // start this block on a fresh page.
     if (asm.pendingPageBreak) {
       asm.pendingPageBreak = false;
-      if (asm.current.length > 0) asm.flushPage();
+      // Forced: a break on a page that holds nothing still ends it. Two breaks
+      // in a row are how a document asks for a blank page — 60293.docx does
+      // exactly that and prints three, of which we printed two, collapsing the
+      // pair into one.
+      asm.flushPage(true);
     }
     // A non-list-item block ends any open list run (tagged PDF).
     if (builder && !(block.kind === 'paragraph' && block.list)) asm.listStack.length = 0;
