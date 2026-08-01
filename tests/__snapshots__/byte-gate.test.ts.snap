@@ -24,7 +24,7 @@ exports[`byte gate: static fixtures > sheet-print-titles.xlsx 1`] = `"288d00f98b
 
 exports[`byte gate: static fixtures > sheet-row-breaks.xlsx 1`] = `"3cdd87abc1f4d034ed470a43b7510a22224c8887047560dac69dcb544c93db60"`;
 
-exports[`byte gate: static fixtures > table-basic.docx 1`] = `"25419c03a34b1e37b28379fc797c70dbaba081d4ffb2754e788c9fb6ed6b9a39"`;
+exports[`byte gate: static fixtures > table-basic.docx 1`] = `"ee19b2990a6babfecbda69431256f11fecfb1632c66d3a6f83f839f22df0b8f5"`;
 
 exports[`byte gate: static fixtures > text-basic.docx 1`] = `"563ca5596324d63c5f3f7640dae03e006635013454499f2ca820a9d6951c057b"`;
 

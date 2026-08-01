@@ -3237,7 +3237,15 @@ function computeColumnWidths(
   }
   if (colCount === 0) return [];
 
-  if (table.properties.layout === 'fixed') {
+  // §17.4.49 `w:tblGrid` is the document's own answer, not a hint. Word writes
+  // the grid it last laid the table out at, and every reader — Word reopening
+  // the file included — draws it at those widths; autofit only ever recomputes
+  // them when the user edits. Refitting to the natural width of the text
+  // instead shrank a table to its words: 2_table_doc.docx declares two 221pt
+  // columns across the page and we drew a 100pt box in the corner.
+  //
+  // The measured autofit stays for a table that brings no grid at all.
+  if (gridColTwips(table).some((w) => w > 0)) {
     return gridWidthsScaled(table, contentWidth, colCount);
   }
 
