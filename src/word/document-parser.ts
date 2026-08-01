@@ -1054,6 +1054,99 @@ function collectRuns(
   }
 }
 
+// §17.3.3.30 — the Unicode a symbol-font code point stands for. Word writes
+// `@w:char` in the font's own encoding, which for Symbol, Wingdings and their
+// relatives is the private-use block F020…F0FF. The common ones have real
+// Unicode characters; anything else is passed through as the code point it is,
+// so a caller who supplies the actual font still draws it.
+// Wingdings: the code points that carry a Unicode meaning, by low byte.
+const WINGDINGS_TO_UNICODE: ReadonlyMap<number, string> = new Map([
+  [0x6c, '\u25cf'], // ● filled circle
+  [0x6d, '\u274d'], // ❍ shadowed circle
+  [0x6e, '\u25a0'], // ■ filled square
+  [0x71, '\u2751'], // ❑ shadowed square
+  [0x73, '\u25a1'], // □ square
+  [0x74, '\u2752'], // ❒
+  [0x76, '\u2756'], // ❖
+  [0xa7, '\u25aa'], // ▪ small filled square
+  [0xa8, '\u25ab'], // ▫
+  [0xfc, '\u2714'], // ✔ check
+  [0xfd, '\u2716'], // ✖ cross
+  [0xfe, '\u2612'], // ☒ crossed box
+  [0xfb, '\u2611'], // ☑ checked box
+  [0xe0, '\u21e6'], // ⇦
+  [0xe1, '\u21e8'], // ⇨
+  [0xe2, '\u21e7'], // ⇧
+  [0xe3, '\u21e9'], // ⇩
+  [0xe7, '\u2190'], // ← left arrow
+  [0xe8, '\u2192'], // →
+  [0xe9, '\u2191'], // ↑
+  [0xea, '\u2193'], // ↓
+  [0xeb, '\u2196'], // ↖
+  [0xec, '\u2197'], // ↗
+  [0xed, '\u2199'], // ↙
+  [0xee, '\u2198'], // ↘
+]);
+
+// Symbol: the Greek alphabet sits where the Latin one does, plus the operators.
+const SYMBOL_TO_UNICODE: ReadonlyMap<number, string> = new Map([
+  [0x22, '\u2200'],
+  [0x24, '\u2203'],
+  [0x40, '\u2245'],
+  [0x5c, '\u2234'],
+  [0x61, '\u03b1'],
+  [0x62, '\u03b2'],
+  [0x63, '\u03c7'],
+  [0x64, '\u03b4'],
+  [0x65, '\u03b5'],
+  [0x66, '\u03c6'],
+  [0x67, '\u03b3'],
+  [0x68, '\u03b7'],
+  [0x69, '\u03b9'],
+  [0x6b, '\u03ba'],
+  [0x6c, '\u03bb'],
+  [0x6d, '\u03bc'],
+  [0x6e, '\u03bd'],
+  [0x6f, '\u03bf'],
+  [0x70, '\u03c0'],
+  [0x71, '\u03b8'],
+  [0x72, '\u03c1'],
+  [0x73, '\u03c3'],
+  [0x74, '\u03c4'],
+  [0x75, '\u03c5'],
+  [0x77, '\u03c9'],
+  [0x78, '\u03be'],
+  [0x79, '\u03c8'],
+  [0x7a, '\u03b6'],
+  [0xa5, '\u221e'],
+  [0xb1, '\u00b1'],
+  [0xb3, '\u2265'],
+  [0xb4, '\u00d7'],
+  [0xb7, '\u2022'],
+  [0xb8, '\u00f7'],
+  [0xb9, '\u2260'],
+  [0xba, '\u2261'],
+  [0xbb, '\u2248'],
+  [0xd6, '\u221a'],
+  [0xe5, '\u2211'],
+]);
+
+function symbolChar(font: string | undefined, char: string | undefined): string {
+  const cp = char !== undefined ? Number.parseInt(char, 16) : Number.NaN;
+  if (!Number.isFinite(cp) || cp <= 0) return '';
+  const low = cp & 0xff;
+  const table = /wingdings|webdings|zapf/iu.test(font ?? '')
+    ? WINGDINGS_TO_UNICODE
+    : /symbol/iu.test(font ?? '')
+      ? SYMBOL_TO_UNICODE
+      : undefined;
+  const mapped = table?.get(low);
+  if (mapped !== undefined) return mapped;
+  // Not one we can name: the code point itself, which a caller who supplies
+  // the font draws, and which is already Unicode in an ordinary font.
+  return String.fromCodePoint(cp);
+}
+
 function parseRun(
   r: PoNode,
   ctx: ParseContext,
@@ -1121,6 +1214,12 @@ function parseRun(
         if (breakType === 'column') columnBreak = true;
         text += '\n';
       }
+    } else if (poIs(child, 'w:sym')) {
+      // §17.3.3.30 — a character from a SYMBOL font, named by the font and the
+      // code point it sits at there (usually in the private-use area). Read
+      // nowhere, fdo78384.docx's one arrow left a blank page. What reaches the
+      // page is the Unicode character it stands for, which any font may have.
+      text += symbolChar(poAttr(child, 'font'), poAttr(child, 'char'));
     } else if (poIs(child, 'w:noBreakHyphen')) {
       text += '‑';
     } else if (poIs(child, 'w:softHyphen')) {
