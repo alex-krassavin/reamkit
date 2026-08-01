@@ -840,7 +840,34 @@ function vmlFill(shape: PoNode, shapeType?: PoNode): ShapeFill {
   // §14.1.2.5 — a filled shape that names no colour is WHITE, not transparent.
   // fdo73215.docx draws its diagram as plain `v:rect`s inside a yellow one and
   // every unstated box let the yellow through.
-  return { kind: 'solid', colorHex: colorHex ?? 'FFFFFF' };
+  const base = colorHex ?? 'FFFFFF';
+  // §14.1.2.5 `@type` — the fill may be a GRADIENT between `fillcolor` and the
+  // fill's own `@color2`, running top to bottom unless `@angle` says otherwise.
+  // fdo76016.docx shades its arrow that way, and we painted it flat.
+  const gradient = fillEl ? vmlGradient(fillEl, base) : undefined;
+  if (gradient) return { kind: 'gradient', gradient };
+  return { kind: 'solid', colorHex: base };
+}
+
+// §14.1.2.5 — a `v:fill` of type `gradient` / `gradientRadial`. VML measures
+// `@angle` in degrees from the vertical, so an absent one is the top-to-bottom
+// sweep Word writes by default; our own angle counts clockwise from left-to-
+// right, which is that same sweep at 90.
+function vmlGradient(fillEl: PoNode, base: string): ShapeGradient | undefined {
+  const type = poAttr(fillEl, 'type');
+  if (type !== 'gradient' && type !== 'gradientRadial') return undefined;
+  const color2 = vmlColor(poAttr(fillEl, 'color2'));
+  if (color2 === undefined) return undefined;
+  const raw = Number.parseFloat(poAttr(fillEl, 'angle') ?? '');
+  const angle = (90 + (Number.isFinite(raw) ? raw : 0)) % 360;
+  return {
+    kind: type === 'gradientRadial' ? 'radial' : 'linear',
+    ...(type === 'gradientRadial' ? {} : { angle }),
+    stops: [
+      { offset: 0, colorHex: base },
+      { offset: 1, colorHex: color2 },
+    ],
+  };
 }
 
 // §14.1.2.21 — `@stroked="f"` says no outline; otherwise `@strokecolor` and
