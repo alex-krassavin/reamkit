@@ -1449,12 +1449,17 @@ function balancedColumnHeight(bandHeightPt: number, colCount: number, roomPt: nu
 
 /** Total laid-out height of a run of blocks, paragraph spacing included. */
 function blocksHeight(blocks: ReadonlyArray<LaidOutBlock>): number {
-  return blocks.reduce(
-    (sum, b) =>
+  return blocks.reduce((sum, b) => {
+    // §20.4.2.3 — an ANCHORED drawing is out of the flow: it sits at its own
+    // offset and grows nothing. Counted, it made fdo78420's header band 400pt
+    // tall — two text boxes anchored over the page — and the body began a third
+    // of the way down every page, in 41 pages against the reference's 23.
+    if (b.kind !== 'paragraph' && isOutOfFlowFloat(b.float)) return sum;
+    return (
       sum +
-      (b.kind === 'paragraph' ? b.spacingBeforePt + b.heightPt + b.spacingAfterPt : b.heightPt),
-    0,
-  );
+      (b.kind === 'paragraph' ? b.spacingBeforePt + b.heightPt + b.spacingAfterPt : b.heightPt)
+    );
+  }, 0);
 }
 
 function layoutFooterSet(
