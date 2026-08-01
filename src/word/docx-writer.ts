@@ -1034,7 +1034,13 @@ function cellXml(
 
 function tcPrXml(p: CellProperties): string {
   const out: Array<string> = [];
-  if (p.width !== undefined) out.push(`<w:tcW w:w="${twips(p.width)}" w:type="dxa"/>`);
+  // §17.4.72 — a percentage width goes back as one (fiftieths of a percent);
+  // re-spelling it in twips would move the cell on the next read.
+  if (p.widthFraction !== undefined) {
+    out.push(`<w:tcW w:w="${Math.round(p.widthFraction * 5000)}" w:type="pct"/>`);
+  } else if (p.width !== undefined) {
+    out.push(`<w:tcW w:w="${twips(p.width)}" w:type="dxa"/>`);
+  }
   if (p.colSpan !== undefined && p.colSpan > 1) {
     out.push(`<w:gridSpan w:val="${p.colSpan}"/>`);
   }

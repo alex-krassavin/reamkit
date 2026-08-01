@@ -352,7 +352,18 @@ function parseCellProperties(tcPr: PoNode | undefined): {
   const tcW = poFirstChild(tcPr, 'w:tcW');
   if (tcW) {
     const w = poIntAttr(tcW, 'w');
-    if (w !== undefined) out.width = twipsToPt(w);
+    // §17.4.72 — `w` means what `w:type` says it means. Read as twips whatever
+    // the type, fdo38414.docx's `w:type="pct"` widths (fiftieths of a percent)
+    // became 50pt columns; the type is now kept so the layout can resolve a
+    // percentage against the table and the writer can put it back as it was.
+    const type = poAttr(tcW, 'type');
+    if (type === 'pct' || type === 'dxa' || type === 'auto' || type === 'nil') {
+      out.widthType = type;
+    }
+    if (w !== undefined) {
+      if (type === 'pct') out.widthFraction = w / 5000;
+      else if (type !== 'auto' && type !== 'nil') out.width = twipsToPt(w);
+    }
   }
   const gridSpan = poFirstChild(tcPr, 'w:gridSpan');
   if (gridSpan) {

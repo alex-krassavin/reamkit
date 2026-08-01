@@ -725,6 +725,14 @@ export type CellMerge = 'start' | 'middle' | 'end';
 /** §17.4.30 `w:tcPr` — a cell's properties: span/merge, chrome, and CF overlays. */
 export interface CellProperties {
   readonly width?: Pt;
+  /**
+   * §17.4.72 `w:tcW w:type="pct"` — the cell's preferred width as a share of
+   * the table (`w`/5000). Held apart from {@link width} because a percentage
+   * cannot be resolved until the table's own width is known.
+   */
+  readonly widthFraction?: number;
+  /** §17.18.90 ST_TblWidth — which of the two above the cell actually declared. */
+  readonly widthType?: 'auto' | 'dxa' | 'pct' | 'nil';
   readonly colSpan?: number;
   readonly merge?: CellMerge;
   readonly borders?: CellBorders;

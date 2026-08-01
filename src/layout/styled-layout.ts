@@ -4244,6 +4244,15 @@ function computeColumnWidths(
   // columns across the page and we drew a 100pt box in the corner.
   //
   // The measured autofit stays for a table that brings no grid at all.
+  // §17.4.53 `w:tblLayout w:type="fixed"` — the preferred widths ARE the
+  // layout, and where they disagree with the grid it is the grid that is
+  // stale. fdo38414.docx writes a grid whose first column is 132 twips and
+  // cells that ask for a fifth of the table; drawn on the grid its first
+  // column was two characters wide and every column after it landed one place
+  // to the left of where Word and LibreOffice draw it.
+  const declared = declaredColumnWidths(table, colCount, contentWidth);
+  if (declared) return declared;
+
   if (gridColTwips(table).some((w) => w > 0)) {
     return gridWidthsScaled(table, contentWidth, colCount);
   }
@@ -4300,6 +4309,107 @@ function computeColumnWidths(
 // would drift in the last ulp and break the byte-identical gate.
 function gridColTwips(table: Table): Array<number> {
   return table.grid.map((w) => Math.round(w * 20));
+}
+
+/**
+ * §17.4.53 — column widths taken from the cells' own `w:tcW` for a table laid
+ * out `fixed`. Each cell shares its preferred width over the columns it spans
+ * and the widest claim wins; a column nobody declares keeps its grid share.
+ * Returns `undefined` (⇒ the grid decides) unless the table says `fixed` and
+ * enough of it is declared to trust.
+ */
+function declaredColumnWidths(
+  table: Table,
+  colCount: number,
+  contentWidth: number,
+): Array<number> | undefined {
+  if (table.properties.layout !== 'fixed') return undefined;
+  const target = totalTableTarget(table, contentWidth);
+  const declaredWidth = (cell: TableCell): number | undefined => {
+    const p = cell.properties;
+    if (p.widthFraction !== undefined) return p.widthFraction * target;
+    if (p.width !== undefined && p.widthType !== 'auto' && p.widthType !== 'nil') return p.width;
+    return undefined;
+  };
+  const claimed = new Array<number>(colCount).fill(0);
+  const spanning: Array<{ start: number; span: number; widthPt: number }> = [];
+  let anyDeclared = false;
+  // How far the rows that actually divide the table reach. A grid column past
+  // that is Word's own bookkeeping, touched only by a caption row spanning the
+  // lot: fdo38414.docx carries a twelfth of an inch of it, and giving it width
+  // hung that one row out past every other.
+  let reach = 0;
+  for (const row of table.rows) {
+    if (row.cells.length < 2) continue;
+    let span = 0;
+    for (const cell of row.cells) span += Math.max(1, cell.properties.colSpan ?? 1);
+    if (span > reach) reach = span;
+  }
+  const phantomFrom = reach > 0 && reach < colCount ? reach : colCount;
+  for (const row of table.rows) {
+    let colIdx = 0;
+    for (const cell of row.cells) {
+      const span = Math.max(1, cell.properties.colSpan ?? 1);
+      const widthPt = declaredWidth(cell);
+      if (widthPt !== undefined && widthPt > 0) {
+        anyDeclared = true;
+        // A cell that spans columns says nothing about any ONE of them — only
+        // about their sum. Sharing it out per column instead let the full-width
+        // caption row of fdo38414.docx overrule every column above it.
+        if (span === 1) {
+          if (widthPt > claimed[colIdx]!) claimed[colIdx] = widthPt;
+        } else {
+          spanning.push({ start: colIdx, span, widthPt });
+        }
+      }
+      colIdx += span;
+    }
+  }
+  if (!anyDeclared) return undefined;
+  // A span's width is a floor under the columns it covers: whatever it asks for
+  // beyond what they already claim goes to the ones still undecided, or is
+  // shared out when every one of them is settled.
+  for (const s of spanning) {
+    const end = Math.min(s.start + s.span, phantomFrom);
+    let have = 0;
+    const blank: Array<number> = [];
+    for (let i = s.start; i < end; i++) {
+      have += claimed[i]!;
+      if (claimed[i]! === 0) blank.push(i);
+    }
+    const deficit = s.widthPt - have;
+    if (deficit <= 0) continue;
+    if (blank.length > 0) {
+      const each = deficit / blank.length;
+      for (const i of blank) claimed[i] = each;
+    } else if (have > 0) {
+      for (let i = s.start; i < end; i++) claimed[i] = claimed[i]! * (s.widthPt / have);
+    }
+  }
+  // Columns still undeclared take their grid share of whatever the table has
+  // left over, so a partly-declared table keeps its overall width.
+  const gridTwips = gridColTwips(table);
+  const rest: Array<number> = [];
+  let claimedTotal = 0;
+  for (let i = 0; i < phantomFrom; i++) {
+    if (claimed[i]! > 0) claimedTotal += claimed[i]!;
+    else rest.push(i);
+  }
+  if (rest.length > 0) {
+    const leftover = Math.max(0, target - claimedTotal);
+    const restGrid = rest.reduce((s, i) => s + (gridTwips[i] ?? 0), 0);
+    for (const i of rest) {
+      claimed[i] =
+        restGrid > 0 ? ((gridTwips[i] ?? 0) / restGrid) * leftover : leftover / rest.length;
+    }
+  }
+  const total = claimed.reduce((s, w) => s + w, 0);
+  if (total <= 0) return undefined;
+  // Declared widths are taken as authored: only a table that asks for more than
+  // it has is pulled in, and one that asks for less keeps the gap the author
+  // left rather than being stretched to the margin.
+  const scale = total > target ? target / total : 1;
+  return claimed.map((w) => w * scale);
 }
 
 function gridWidthsScaled(table: Table, contentWidth: number, colCount: number): Array<number> {
