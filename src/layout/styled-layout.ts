@@ -3804,6 +3804,10 @@ function paragraphMaxWidth(
   return Math.max(1, contentWidth - indentLeft - indentRight - firstLineExtra);
 }
 
+// UAX #14 class BA — the hyphens a line may break just after. The soft hyphen
+// (U+00AD) is not here: it is the hyphenator's own, and shows only when used.
+const HYPHENS = new Set([0x2d, 0x2010, 0x2013, 0x2014]);
+
 function tokenizeText(text: string): Array<{ text: string; isSpace: boolean; tab?: true }> {
   const out: Array<{ text: string; isSpace: boolean; tab?: true }> = [];
   if (text.length === 0) return out;
@@ -3951,10 +3955,18 @@ function paragraphItemStream(
       // for the WORKBOOK's font — narrower than the face we draw with — broke
       // across two lines on every one of no_drawing_patriarch.xlsx's 7 465
       // rows.
+      // UAX #14 (BA) — a hyphen is a break opportunity, and a far better one
+      // than the mid-character split below: a word too wide for its line breaks
+      // after its hyphens first. fdo76316.docx's case number `24F-1422-10/2011`
+      // is wider than the cell it sits in and ran into the one beside it, where
+      // both references break it after `1422-`.
+      const tooWide = maxLineWidthPt !== undefined && maxLineWidthPt > 0;
+      const hyphenated = tooWide && tok.widthPt > maxLineWidthPt ? splitAtHyphens(tok) : undefined;
       const chunks =
-        maxLineWidthPt !== undefined && maxLineWidthPt > 0 && tok.widthPt > maxLineWidthPt * 1.1
+        hyphenated ??
+        (tooWide && tok.widthPt > maxLineWidthPt * 1.1
           ? splitToWidth(tok, maxLineWidthPt)
-          : undefined;
+          : undefined);
       if (chunks) {
         chunks.forEach((chunk, ci) => {
           if (ci > 0) {
@@ -4135,6 +4147,29 @@ function fillLeader(tab: TextToken, leader: string, widthPt: number): string {
  * @returns The pieces in order, or undefined when even one character overruns
  *          (nothing can be gained by splitting then).
  */
+// A word broken just AFTER each of its hyphens, as tokens of its own — the
+// break the line breaker then has between them is UAX #14's BA opportunity.
+// Undefined when the word carries no usable hyphen (a leading or a trailing
+// one is not a break: there would be nothing on one side of it).
+function splitAtHyphens(tok: Token): Array<Token> | undefined {
+  if (tok.kind !== 'text') return undefined;
+  const parts: Array<string> = [];
+  let start = 0;
+  for (let i = 0; i < tok.text.length; i++) {
+    if (!HYPHENS.has(tok.text.codePointAt(i) ?? 0)) continue;
+    if (i === start || i === tok.text.length - 1) continue;
+    parts.push(tok.text.slice(start, i + 1));
+    start = i + 1;
+  }
+  if (parts.length === 0) return undefined;
+  parts.push(tok.text.slice(start));
+  return parts.map((text) => ({
+    ...tok,
+    text,
+    widthPt: tok.font.measure.textWidthPt(text, tok.fontSizePt),
+  }));
+}
+
 function splitToWidth(tok: Token, widthPt: number): Array<Token> | undefined {
   if (tok.kind !== 'text') return undefined;
   const chars = [...tok.text];
