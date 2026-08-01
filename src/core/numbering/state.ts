@@ -81,6 +81,13 @@ function formatCounter(format: NumberingFormat, n: number): string {
   switch (format) {
     case 'decimal':
       return String(n);
+    case 'decimalZero':
+      // §17.18.59 — a leading zero below ten (01, 02, … 10, 11).
+      return n < 10 ? `0${String(n)}` : String(n);
+    case 'decimalFullWidth':
+      return digitByDigit(n, FULL_WIDTH_DIGITS);
+    case 'ordinal':
+      return `${String(n)}${ordinalSuffix(n)}`;
     case 'lowerLetter':
       return toLetters(n).toLowerCase();
     case 'upperLetter':
@@ -89,10 +96,105 @@ function formatCounter(format: NumberingFormat, n: number): string {
       return toRoman(n).toLowerCase();
     case 'upperRoman':
       return toRoman(n);
+    // A cycle, and past its end both references number the rest in digits.
+    case 'ideographTraditional':
+      return n <= HEAVENLY_STEMS.length ? HEAVENLY_STEMS[n - 1]! : String(n);
+    case 'ideographZodiac':
+      return n <= EARTHLY_BRANCHES.length ? EARTHLY_BRANCHES[n - 1]! : String(n);
+    case 'ideographDigital':
+    case 'koreanDigital2':
+      return digitByDigit(n, IDEOGRAPH_DIGITS);
+    case 'ideographLegalTraditional':
+      // The formal numerals keep the unit's own digit: ten is 壹拾, not 拾.
+      return counting(n, LEGAL_DIGITS, LEGAL_UNITS, false);
+    case 'chineseCounting':
+    case 'chineseCountingThousand':
+    case 'japaneseCounting':
+    case 'koreanCounting':
+    case 'taiwaneseCounting':
+    case 'taiwaneseCountingThousand':
+      return counting(n, IDEOGRAPH_DIGITS, COUNTING_UNITS, true);
     case 'bullet':
     case 'none':
     default:
       return '';
+  }
+}
+
+// §17.18.59 ideograph number formats. `IDEOGRAPH_DIGITS[0]` is the zero the
+// digit-by-digit formats print (LibreOffice writes 10 as 一零).
+const IDEOGRAPH_DIGITS = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'] as const;
+const COUNTING_UNITS = ['', '十', '百', '千'] as const;
+const LEGAL_DIGITS = ['零', '壹', '貳', '參', '肆', '伍', '陸', '柒', '捌', '玖'] as const;
+const LEGAL_UNITS = ['', '拾', '佰', '仟'] as const;
+const HEAVENLY_STEMS = ['甲', '乙', '丙', '丁', '戊', '己', '庚', '辛', '壬', '癸'] as const;
+const EARTHLY_BRANCHES = [
+  '子',
+  '丑',
+  '寅',
+  '卯',
+  '辰',
+  '巳',
+  '午',
+  '未',
+  '申',
+  '酉',
+  '戌',
+  '亥',
+] as const;
+const FULL_WIDTH_DIGITS = ['０', '１', '２', '３', '４', '５', '６', '７', '８', '９'] as const;
+
+/** Each decimal digit as its own glyph — no units, no elision (10 → 一零). */
+function digitByDigit(n: number, digits: ReadonlyArray<string>): string {
+  return String(n)
+    .split('')
+    .map((d) => digits[Number(d)] ?? d)
+    .join('');
+}
+
+/**
+ * The counting systems: digits carrying place units (十百千). `elideTen` drops
+ * the leading 一 of the tens place, which is what the plain counting systems do
+ * (11 → 十一) and the formal one does not (11 → 壹拾壹). Above the units the
+ * table covers, plain digits — a list marker never gets that far.
+ */
+function counting(
+  n: number,
+  digits: ReadonlyArray<string>,
+  units: ReadonlyArray<string>,
+  elideTen: boolean,
+): string {
+  if (n >= 10 ** units.length) return String(n);
+  const ds = String(n).split('').map(Number);
+  let out = '';
+  ds.forEach((d, i) => {
+    const place = ds.length - 1 - i;
+    if (d === 0) {
+      // An interior zero is spoken once, and never at the end (100 → 一百).
+      if (out.length > 0 && !out.endsWith(digits[0]!) && ds.slice(i).some((x) => x > 0)) {
+        out += digits[0]!;
+      }
+      return;
+    }
+    const head = elideTen && d === 1 && place === 1 && i === 0 ? '' : digits[d]!;
+    out += head + units[place]!;
+  });
+  return out;
+}
+
+/** `1st`, `2nd`, `3rd`, `4th` — the English ordinal suffixes (§17.18.59). */
+function ordinalSuffix(n: number): string {
+  const two = n % 100;
+  if (two >= 11 && two <= 13) return 'th';
+  switch (n % 10) {
+    case 1:
+      return 'st';
+    case 2:
+      return 'nd';
+    case 3:
+      return 'rd';
+    default:
+      return 'th';
   }
 }
 

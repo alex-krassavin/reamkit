@@ -416,10 +416,29 @@ export interface Comment {
 /** ECMA-376 Part 1 §17.9 — `w:numFmt` list marker format. */
 export type NumberingFormat =
   | 'decimal'
+  | 'decimalZero'
+  | 'decimalFullWidth'
+  | 'ordinal'
   | 'lowerLetter'
   | 'upperLetter'
   | 'lowerRoman'
   | 'upperRoman'
+  /** §17.18.59 — the ten heavenly stems 甲乙丙…, then plain digits. */
+  | 'ideographTraditional'
+  /** The twelve earthly branches 子丑寅…, then plain digits. */
+  | 'ideographZodiac'
+  /** The formal (anti-fraud) numerals 壹貳參…, composed with 拾佰仟. */
+  | 'ideographLegalTraditional'
+  /** Digit-by-digit ideographs: 10 is 一零, not 十. */
+  | 'ideographDigital'
+  | 'koreanDigital2'
+  /** Counting ideographs: 10 is 十, 11 is 十一, 21 is 二十一. */
+  | 'chineseCounting'
+  | 'chineseCountingThousand'
+  | 'japaneseCounting'
+  | 'koreanCounting'
+  | 'taiwaneseCounting'
+  | 'taiwaneseCountingThousand'
   | 'bullet'
   | 'none';
 

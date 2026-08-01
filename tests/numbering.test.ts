@@ -143,6 +143,94 @@ describe('NumberingState marker generation', () => {
   });
 });
 
+describe('the ideograph and decimal variants (§17.18.59)', () => {
+  const runFmt = (fmt: string, count: number): Array<string> => {
+    const numbering = parse(
+      `<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/>` +
+        `<w:numFmt w:val="${fmt}"/><w:lvlText w:val="%1"/></w:lvl></w:abstractNum>` +
+        `<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>`,
+    );
+    const state = new NumberingState();
+    return Array.from(
+      { length: count },
+      () => state.resolveMarker(numbering, { numId: '1', ilvl: 0 }) ?? '',
+    );
+  };
+
+  // Every expectation here is what LibreOffice draws for the matching
+  // cjklist*.docx: the cycles fall back to digits past their end, the counting
+  // systems elide the leading 一 of the tens place and the formal one does not.
+  it('numbers the twelve branches, then in digits', () => {
+    expect(runFmt('ideographZodiac', 14)).toEqual([
+      '子',
+      '丑',
+      '寅',
+      '卯',
+      '辰',
+      '巳',
+      '午',
+      '未',
+      '申',
+      '酉',
+      '戌',
+      '亥',
+      '13',
+      '14',
+    ]);
+  });
+
+  it('numbers the ten stems, then in digits', () => {
+    expect(runFmt('ideographTraditional', 12).slice(8)).toEqual(['壬', '癸', '11', '12']);
+  });
+
+  it('counts 十一 and writes the formal numerals 壹拾壹', () => {
+    expect(runFmt('taiwaneseCountingThousand', 21).slice(9)).toEqual([
+      '十',
+      '十一',
+      '十二',
+      '十三',
+      '十四',
+      '十五',
+      '十六',
+      '十七',
+      '十八',
+      '十九',
+      '二十',
+      '二十一',
+    ]);
+    expect(runFmt('ideographLegalTraditional', 12).slice(8)).toEqual([
+      '玖',
+      '壹拾',
+      '壹拾壹',
+      '壹拾貳',
+    ]);
+  });
+
+  it('writes the digital systems digit by digit', () => {
+    expect(runFmt('koreanDigital2', 12).slice(8)).toEqual(['九', '一零', '一一', '一二']);
+    expect(runFmt('decimalFullWidth', 11).slice(8)).toEqual(['９', '１０', '１１']);
+  });
+
+  it('pads a decimalZero and suffixes an ordinal', () => {
+    expect(runFmt('decimalZero', 11).slice(8)).toEqual(['09', '10', '11']);
+    expect(runFmt('ordinal', 4)).toEqual(['1st', '2nd', '3rd', '4th']);
+    expect(runFmt('ordinal', 22).slice(10)).toEqual([
+      '11th',
+      '12th',
+      '13th',
+      '14th',
+      '15th',
+      '16th',
+      '17th',
+      '18th',
+      '19th',
+      '20th',
+      '21st',
+      '22nd',
+    ]);
+  });
+});
+
 describe('numbering a paragraph carries through its style (§17.9.24)', () => {
   it('numbers a heading whose w:numPr lives in the style, not the paragraph', () => {
     // chtoutline.docx numbers Heading 1 "第 %1 章" from the style alone, and
