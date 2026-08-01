@@ -10,6 +10,7 @@ import type {
   CustomPathCmd,
   FloatAnchor,
   ImageCrop,
+  InlineImage,
   RelativeSize,
   ShapeDash,
   ShapeFill,
@@ -92,6 +93,8 @@ export type DrawingContent =
       readonly rotation60k?: number;
       /** `wp14:sizeRelH/V` — a size stated as a share of the page or margins. */
       readonly relativeSize?: RelativeSize;
+      /** §20.4.2.6 `wp:effectExtent` on an INLINE drawing: space reserved around it. */
+      readonly effectExtent?: InlineImage['effectExtent'];
       /** `wp:docPr` `@descr`/`@title` — alternate text for the tagged-PDF Figure. */
       readonly altText?: string;
       readonly float?: FloatAnchor;
@@ -369,6 +372,17 @@ export function parseDrawing(
     // its cover by 10.7° and we set it square.
     const xfrm = poFindDescendant(anchor, 'a:xfrm');
     const rot = xfrm ? poIntAttr(xfrm, 'rot') : undefined;
+    // §20.4.2.6 — an inline drawing reserves its effect extent on the line:
+    // effect-extent-inline.docx turns its cover 40° and states the 46pt the
+    // corners need on each side, without which the picture sat 48pt to the
+    // left of where Word and LibreOffice draw it, up into the top margin.
+    const effect = poIs(anchor, 'wp:inline')
+      ? poChildren(anchor).find((c) => poIs(c, 'wp:effectExtent'))
+      : undefined;
+    const side = (name: string): Pt =>
+      emuToPt(effect ? Math.max(0, poIntAttr(effect, name) ?? 0) : 0);
+    const box = { leftPt: side('l'), topPt: side('t'), rightPt: side('r'), bottomPt: side('b') };
+    const effectExtent = Object.values(box).some((v) => v > 0) ? box : undefined;
     return {
       kind: 'image',
       imageId: rId,
@@ -377,6 +391,7 @@ export function parseDrawing(
       ...(crop ? { crop } : {}),
       ...(rot ? { rotation60k: rot } : {}),
       ...(relativeSize ? { relativeSize } : {}),
+      ...(effectExtent ? { effectExtent } : {}),
       ...alt,
     };
   }

@@ -848,7 +848,21 @@ function emitPageContent(
         inBT = false;
       }
       out.push('q');
-      out.push(...placeImage(x, baselineY, tok.widthPt, tok.heightPt, tok.crop, tok.rotationDeg));
+      // §20.4.2.6 — the reserved box may be larger than the picture (the
+      // effect extent a rotation needs); the picture sits inside it.
+      const b = tok.drawBox;
+      out.push(
+        ...(b
+          ? placeImage(
+              x + b.dxPt,
+              baselineY + b.dyPt,
+              b.widthPt,
+              b.heightPt,
+              tok.crop,
+              tok.rotationDeg,
+            )
+          : placeImage(x, baselineY, tok.widthPt, tok.heightPt, tok.crop, tok.rotationDeg)),
+      );
       out.push(`/${tok.imageResourceName} Do`);
       out.push('Q');
       // Text state is reset by ET; force re-emit on the next text token.

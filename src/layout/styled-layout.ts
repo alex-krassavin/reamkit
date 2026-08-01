@@ -71,6 +71,7 @@ import type { MathDrawItem, MathVariant, MeasureMath } from '@/layout/math-layou
 import type {
   FontResource,
   ImageResource,
+  ImageToken,
   LaidOutDocument,
   LaidOutPage,
   Line,
@@ -376,6 +377,17 @@ interface ImageBlockLaidOut {
   readonly crop?: ImageCrop;
   /** §20.1.7.6 — degrees clockwise about the box's centre. */
   readonly rotationDeg?: number;
+  /**
+   * §20.4.2.6 — where the picture is drawn inside the reserved box when the
+   * drawing states an effect extent: offsets from the box's left and TOP edges
+   * plus the drawn size. Absent ⇒ the picture fills the box.
+   */
+  readonly drawInset?: {
+    readonly dxPt: number;
+    readonly dyTopPt: number;
+    readonly widthPt: number;
+    readonly heightPt: number;
+  };
   readonly spacingBeforePt: number;
   readonly spacingAfterPt: number;
   readonly altText?: string;
@@ -1768,6 +1780,36 @@ function layoutImageBlock(
     widthPt = contentWidth;
     heightPt = heightPt * scale;
   }
+  // §20.4.2.6 — the block reserves the picture PLUS the extent its rotation or
+  // effects need outside the frame, and the picture is drawn inset by it.
+  // effect-extent-inline.docx turns its cover 40° and states 46pt a side.
+  let drawInset: ImageBlockLaidOut['drawInset'];
+  const eff = image.effectExtent;
+  if (eff) {
+    const s = image.width > 0 ? widthPt / image.width : 1;
+    let box = {
+      dxPt: eff.leftPt * s,
+      dyTopPt: eff.topPt * s,
+      widthPt,
+      heightPt,
+    };
+    let reservedW = widthPt + (eff.leftPt + eff.rightPt) * s;
+    let reservedH = heightPt + (eff.topPt + eff.bottomPt) * s;
+    if (reservedW > contentWidth) {
+      const k = contentWidth / reservedW;
+      reservedW = contentWidth;
+      reservedH *= k;
+      box = {
+        dxPt: box.dxPt * k,
+        dyTopPt: box.dyTopPt * k,
+        widthPt: box.widthPt * k,
+        heightPt: box.heightPt * k,
+      };
+    }
+    widthPt = reservedW;
+    heightPt = reservedH;
+    drawInset = box;
+  }
   const res = image.resource ? imageResources?.get(image.resource) : undefined;
   const resolvedAlignment = image.paragraphProperties.alignment ?? 'left';
   return {
@@ -1778,6 +1820,7 @@ function layoutImageBlock(
     resourceName: res?.resourceName ?? '',
     ...(image.crop ? { crop: image.crop } : {}),
     ...(image.rotation60k ? { rotationDeg: image.rotation60k / 60000 } : {}),
+    ...(drawInset ? { drawInset } : {}),
     spacingBeforePt: image.paragraphProperties.spacingBefore ?? 0,
     spacingAfterPt: image.paragraphProperties.spacingAfter ?? 0,
     ...(image.altText ? { altText: image.altText } : {}),
@@ -3041,6 +3084,8 @@ interface RunPlan {
   readonly imageCrop?: ImageCrop;
   /** §20.1.7.6 — the picture's rotation, in degrees clockwise. */
   readonly imageRotationDeg?: number;
+  /** §20.4.2.6 — the picture's own rect inside the reserved (effect-extended) box. */
+  readonly imageDrawBox?: ImageToken['drawBox'];
   readonly math?: {
     readonly items: ReadonlyArray<ResolvedMathItem>;
     readonly widthPt: number;
@@ -3149,10 +3194,24 @@ function tokenizeParagraph(
   // First pass — resolve each run's style and decide image vs text.
   const plans: Array<RunPlan> = runs.map((run) => {
     if (run.inlineImage) {
-      const naturalW = run.inlineImage.width;
+      // §20.4.2.6 — the line reserves the picture PLUS its effect extent, and
+      // the picture is drawn inset by it. Both shrink together when the box is
+      // wider than the column.
+      const eff = run.inlineImage.effectExtent;
+      const padW = (eff?.leftPt ?? 0) + (eff?.rightPt ?? 0);
+      const padH = (eff?.topPt ?? 0) + (eff?.bottomPt ?? 0);
+      const naturalW = run.inlineImage.width + padW;
       const widthPt = Math.min(naturalW, contentWidth);
       const scale = naturalW > 0 ? widthPt / naturalW : 1;
-      const heightPt = run.inlineImage.height * scale;
+      const heightPt = (run.inlineImage.height + padH) * scale;
+      const drawBox = eff
+        ? {
+            dxPt: eff.leftPt * scale,
+            dyPt: eff.bottomPt * scale,
+            widthPt: run.inlineImage.width * scale,
+            heightPt: run.inlineImage.height * scale,
+          }
+        : undefined;
       const res = run.inlineImage.resource
         ? imageResources?.get(run.inlineImage.resource)
         : undefined;
@@ -3180,6 +3239,7 @@ function tokenizeParagraph(
         ...(run.inlineImage.rotation60k
           ? { imageRotationDeg: run.inlineImage.rotation60k / 60000 }
           : {}),
+        ...(drawBox ? { imageDrawBox: drawBox } : {}),
       };
     }
     if (run.math) {
@@ -3296,6 +3356,7 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         heightPt: plan.imageHeightPt,
         ...(plan.imageCrop ? { crop: plan.imageCrop } : {}),
         ...(plan.imageRotationDeg ? { rotationDeg: plan.imageRotationDeg } : {}),
+        ...(plan.imageDrawBox ? { drawBox: plan.imageDrawBox } : {}),
         isSpace: false,
         bidiLevel: 0,
       });
@@ -3355,6 +3416,8 @@ function tokenizePlansBidi(
         widthPt: plan.imageWidthPt,
         heightPt: plan.imageHeightPt,
         ...(plan.imageCrop ? { crop: plan.imageCrop } : {}),
+        ...(plan.imageRotationDeg ? { rotationDeg: plan.imageRotationDeg } : {}),
+        ...(plan.imageDrawBox ? { drawBox: plan.imageDrawBox } : {}),
         isSpace: false,
         bidiLevel: realLevels[realIdx] ?? 0,
       });
@@ -5534,12 +5597,13 @@ function paginateSections(
     } else if (block.kind === 'image') {
       const figId = builder ? createFigure(builder, block.altText, 'Image') : undefined;
       const emitImageAt = (x: number, topYUp: number, sink: Array<PageItem>) => {
+        const ins = block.drawInset;
         sink.push({
           type: 'image',
-          x: pt(x),
-          y: pt(asm.ctx.pageHeight - topYUp),
-          width: pt(block.widthPt),
-          height: pt(block.heightPt),
+          x: pt(x + (ins?.dxPt ?? 0)),
+          y: pt(asm.ctx.pageHeight - (topYUp - (ins?.dyTopPt ?? 0))),
+          width: pt(ins?.widthPt ?? block.widthPt),
+          height: pt(ins?.heightPt ?? block.heightPt),
           imageResourceName: block.resourceName,
           ...(block.crop ? { crop: block.crop } : {}),
           ...(block.rotationDeg ? { rotationDeg: block.rotationDeg } : {}),

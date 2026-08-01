@@ -202,6 +202,17 @@ export interface InlineImage {
   readonly crop?: ImageCrop;
   /** §20.1.7.6 `a:xfrm @rot` — the picture's own rotation (1/60000°, clockwise). */
   readonly rotation60k?: number;
+  /**
+   * §20.4.2.6 `wp:effectExtent` — space the drawing needs BEYOND its extent,
+   * for what a rotation or an effect throws outside the frame. The line box
+   * reserves it; the picture itself is drawn inset by it.
+   */
+  readonly effectExtent?: {
+    readonly leftPt: Pt;
+    readonly topPt: Pt;
+    readonly rightPt: Pt;
+    readonly bottomPt: Pt;
+  };
 }
 
 /**
@@ -886,6 +897,8 @@ export interface ImageBlock {
   readonly rotation60k?: number;
   /** `wp14:sizeRelH/V` — a size stated as a share of the page or margins. */
   readonly relativeSize?: RelativeSize;
+  /** §20.4.2.6 `wp:effectExtent` — space reserved around the picture (see {@link InlineImage}). */
+  readonly effectExtent?: InlineImage['effectExtent'];
   readonly paragraphProperties: ParagraphProperties;
   /** `wp:docPr @descr/@title` — alternate text for the tagged-PDF Figure (`/Alt`). */
   readonly altText?: string;

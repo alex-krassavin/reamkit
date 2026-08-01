@@ -99,6 +99,17 @@ export interface ImageToken {
   readonly crop?: ImageCrop;
   /** §20.1.7.6 — degrees clockwise about the box's centre. */
   readonly rotationDeg?: number;
+  /**
+   * §20.4.2.6 — where the picture itself sits inside the reserved box when the
+   * drawing asked for an effect extent: offsets from the box's left edge and
+   * from the baseline, plus the drawn size. Absent ⇒ the picture fills the box.
+   */
+  readonly drawBox?: {
+    readonly dxPt: number;
+    readonly dyPt: number;
+    readonly widthPt: number;
+    readonly heightPt: number;
+  };
   /** Constants kept to satisfy {@link Token} consumers — they never read these for images. */
   readonly isSpace: false;
   readonly bidiLevel: number;
