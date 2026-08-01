@@ -572,6 +572,40 @@ describe('a gallery-styled shape', () => {
     expect(text).toContain('1 1 1 rg');
   });
 
+  it("leaves a run that inherits a colour with the style's", () => {
+    // §17.7.2 — the theme's font colour is the FLOOR of the cascade, not the
+    // top of it. ColorOverwritten.docx writes its arrow's two lines in a "red"
+    // and a "green" paragraph style, and stamping the theme's white over them
+    // left the shape looking blank.
+    const body = `<w:p><w:r><w:drawing>
+      <wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+        <wp:extent cx="1828800" cy="914400"/><wp:docPr id="1" name="S"/>
+        <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+          <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+            <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wps:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr>
+              <wps:style><a:fontRef idx="minor"><a:srgbClr val="FFFFFF"/></a:fontRef></wps:style>
+              <wps:txbx><w:txbxContent>
+                <w:p><w:pPr><w:pStyle w:val="red"/></w:pPr><w:r><w:t>Ausgang</w:t></w:r></w:p>
+                <w:p><w:r><w:t>plain</w:t></w:r></w:p>
+              </w:txbxContent></wps:txbx>
+              <wps:bodyPr/>
+            </wps:wsp>
+          </a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`;
+    const text = asLatin1(
+      convertDocxToPdfSync(
+        buildDocxFromBody(body, {
+          stylesXml:
+            '<w:style w:type="paragraph" w:styleId="red"><w:name w:val="red"/>' +
+            '<w:rPr><w:color w:val="FF0000"/></w:rPr></w:style>',
+        }),
+        { fonts: FONTS },
+      ),
+    );
+    expect(text).toContain('1 0 0 rg'); // the style's red survives
+    expect(text).toContain('1 1 1 rg'); // …and the plain paragraph takes white
+  });
+
   it('reads idx="0" as naming nothing', () => {
     const text = styled(
       '<wps:style><a:fillRef idx="0"><a:srgbClr val="5B9BD5"/></a:fillRef></wps:style>',

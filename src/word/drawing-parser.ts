@@ -701,7 +701,12 @@ function styleRefLine(style: PoNode, resolveColor: ColorResolver): ShapeLine | u
 }
 
 // §20.1.4.2.14 — give every run that names no colour of its own the one the
-// gallery style's `a:fontRef` names.
+// gallery style's `a:fontRef` names. The theme's colour is the FLOOR of the
+// cascade (§17.7.2), so a run that could inherit one — through its own
+// character style or its paragraph's — keeps what the style sheet gives it:
+// ColorOverwritten.docx writes its arrow's two lines in a "red" and a "green"
+// paragraph style, and stamping the theme's white over them left the shape
+// blank.
 function withStyleFontColor(
   text: ShapeTextBody,
   style: PoNode,
@@ -720,7 +725,9 @@ function withStyleFontColor(
             paragraph: {
               ...block.paragraph,
               runs: block.paragraph.runs.map((run) =>
-                run.properties.colorHex === undefined
+                run.properties.colorHex === undefined &&
+                run.properties.styleId === undefined &&
+                block.paragraph.properties.styleId === undefined
                   ? { ...run, properties: { ...run.properties, colorHex } }
                   : run,
               ),
