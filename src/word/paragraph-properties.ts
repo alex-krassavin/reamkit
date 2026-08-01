@@ -5,6 +5,7 @@ import type {
   Border,
   BorderStyle,
   CellBorders,
+  CellShading,
   ParagraphProperties,
   TabStop,
 } from '@/core/document-model';
@@ -81,6 +82,16 @@ export function parseParagraphProperties(pPr: unknown): ParagraphProperties {
   if ('w:pBdr' in el) {
     const borders = parseParagraphBorders(el['w:pBdr']);
     if (borders) out.borders = borders;
+  }
+
+  // §17.3.1.31 — the paragraph's own background. A direct `@w:fill` hex is
+  // honoured, the way a cell's `w:shd` already is; `auto` and pattern-only
+  // shading leave it unfilled.
+  if ('w:shd' in el) {
+    const fill = getAttr(el['w:shd'], 'fill');
+    if (fill && fill !== 'auto' && /^[0-9A-Fa-f]{6}$/u.test(fill)) {
+      out.shading = { colorHex: fill.toUpperCase() };
+    }
   }
 
   if ('w:contextualSpacing' in el) {

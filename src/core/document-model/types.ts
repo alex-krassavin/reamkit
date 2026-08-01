@@ -117,6 +117,8 @@ export interface ParagraphProperties {
    * gap each keeps from the text, carried on the {@link Border} as `spacePt`.
    */
   readonly borders?: CellBorders;
+  /** §17.3.1.31 `w:pPr/w:shd` — the paragraph's own background fill. */
+  readonly shading?: CellShading;
   readonly indentLeft?: Pt;
   readonly indentRight?: Pt;
   readonly indentFirstLine?: Pt;

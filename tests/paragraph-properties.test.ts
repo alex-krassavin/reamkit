@@ -218,3 +218,25 @@ describe('paragraph borders (§17.3.1.24)', () => {
     ).toBeUndefined();
   });
 });
+
+// §17.3.1.31 `w:pPr/w:shd` — the paragraph's own background. Read nowhere,
+// Test_ThemeTextParaBackgroundColor.docx printed three bare lines where
+// LibreOffice fills three bands behind them.
+describe('paragraph shading (§17.3.1.31)', () => {
+  it('reads a direct fill', () => {
+    expect(
+      parseParagraphProperties(parsePpr('<w:pPr><w:shd w:val="clear" w:fill="F4E7D3"/></w:pPr>'))
+        .shading,
+    ).toEqual({ colorHex: 'F4E7D3' });
+  });
+
+  it('leaves an auto or absent fill unshaded', () => {
+    expect(
+      parseParagraphProperties(parsePpr('<w:pPr><w:shd w:val="clear" w:fill="auto"/></w:pPr>'))
+        .shading,
+    ).toBeUndefined();
+    expect(
+      parseParagraphProperties(parsePpr('<w:pPr><w:shd w:val="pct25"/></w:pPr>')).shading,
+    ).toBeUndefined();
+  });
+});

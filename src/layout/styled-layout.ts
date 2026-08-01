@@ -4660,6 +4660,19 @@ function paginateSections(
       // `w:space` points off the text it frames. Drawn only when the paragraph
       // stayed on one page: a rule around a fragment is a rule in the wrong
       // place, and one drawn nowhere is what a bordered paragraph got before.
+      // §17.3.1.31 — the paragraph's own background, painted behind its lines.
+      // The fill group of the paint plan sits under everything, so pushing it
+      // after the lines still puts it beneath them.
+      if (pb.resolved.shading && asm.pages.length === borderPage) {
+        asm.current.push({
+          type: 'fill',
+          x: pt(asm.colLeft() + pb.resolved.indentLeft),
+          y: pt(asm.ctx.pageHeight - borderTopY),
+          width: pt(Math.max(0, asm.colWidth() - pb.resolved.indentLeft - pb.resolved.indentRight)),
+          height: pt(Math.max(0, borderTopY - asm.cursorY)),
+          fillColorHex: pb.resolved.shading.colorHex,
+        });
+      }
       if (pb.resolved.borders && asm.pages.length === borderPage) {
         const b = pb.resolved.borders;
         const x0 = asm.colLeft() + pb.resolved.indentLeft;

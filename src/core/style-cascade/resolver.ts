@@ -230,6 +230,7 @@ function mergePar(
     bidi: override.bidi ?? base.bidi,
     // …and so does a paragraph's own border set (§17.3.1.24).
     ...((override.borders ?? base.borders) ? { borders: override.borders ?? base.borders } : {}),
+    ...((override.shading ?? base.shading) ? { shading: override.shading ?? base.shading } : {}),
     ...(outlineLevel !== undefined ? { outlineLevel } : {}),
     ...(styleId !== undefined ? { styleId } : {}),
     ...(numbering !== undefined ? { numbering } : {}),

@@ -332,6 +332,17 @@ describe('Styled rendering: rPr + pPr → PDF', () => {
     expect(text).toMatch(/\n6 w\n/u);
   });
 
+  it('paints the background a paragraph asks for behind it', () => {
+    const docx = buildRichDocx([
+      { pPrXml: '<w:pPr><w:shd w:val="clear" w:fill="F4E7D3"/></w:pPr>', runs: [{ text: 'Band' }] },
+    ]);
+    const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
+    // 0xF4/255 = 0.957, 0xE7/255 = 0.906, 0xD3/255 = 0.827.
+    expect(text).toMatch(/0\.957 0\.906 0\.827 rg/u);
+    // …and it is a fill under the text, not a stroke around it.
+    expect(text).toMatch(/0\.957 0\.906 0\.827 rg\n[\d.]+ [\d.]+ [\d.]+ [\d.]+ re\nf/u);
+  });
+
   it('splits a table row taller than the page into chunks across pages', () => {
     // 80 paragraphs in one cell exceeds A4 content height (~698pt) at typical
     // 14pt line height. Expect at least two pages with continuation borders.

@@ -5,6 +5,7 @@
 import type {
   Alignment,
   CellBorders,
+  CellShading,
   FontFamilyMap,
   NumberingReference,
   TabStop,
@@ -58,6 +59,8 @@ export interface ResolvedParagraphProperties {
   readonly tabs: ReadonlyArray<TabStop>;
   /** §17.3.1.24 `w:pBdr` — rules drawn around the paragraph. */
   readonly borders?: CellBorders;
+  /** §17.3.1.31 `w:pPr/w:shd` — the paragraph's own background fill. */
+  readonly shading?: CellShading;
   readonly bidi: boolean;
   /**
    * ECMA-376 §17.3.1.20 — resolved outline level (0–8). Undefined = body text.
