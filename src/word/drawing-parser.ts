@@ -219,6 +219,9 @@ export function parseDrawing(
   // §20.1.8.14 — a group may hold a `pic:pic`, which is a shape with a picture
   // fill; resolving it needs the package's image resolver.
   resolveImage?: (relId: string) => ResourceId | undefined,
+  // §21.2 a chart's r:id → its part path, the key the reader files charts
+  // under; rel ids alone collide between the body and a header/footer.
+  resolveChartPart?: (relId: string) => string | undefined,
 ): DrawingContent | null {
   const anchor =
     poChildren(drawing).find((c) => poIs(c, 'wp:inline')) ??
@@ -260,7 +263,7 @@ export function parseDrawing(
     if (chartRelId && extentCx !== undefined && extentCy !== undefined) {
       return {
         kind: 'chart',
-        chartRelId,
+        chartRelId: resolveChartPart?.(chartRelId) ?? chartRelId,
         width: emuToPt(extentCx),
         height: emuToPt(extentCy),
         ...alt,

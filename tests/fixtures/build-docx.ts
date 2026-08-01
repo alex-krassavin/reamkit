@@ -89,6 +89,10 @@ export interface BuildDocxOptions {
   // Chart parts keyed by the relationship id a c:chart @r:id references. Each
   // value is a full <c:chartSpace>…</c:chartSpace> document.
   readonly charts?: Readonly<Record<string, string>>;
+  // Charts owned by the default footer (word/_rels/footer1.xml.rels), the way
+  // chart-in-footer.docx ships them — same shape as `charts`, and the rel ids
+  // may repeat the body's, since they are scoped to the owning part.
+  readonly footerCharts?: Readonly<Record<string, string>>;
   /** External hyperlink rels for document.xml: rId → URL (TargetMode External). */
   readonly hyperlinks?: Readonly<Record<string, string>>;
 }
@@ -126,11 +130,16 @@ ${bodyInnerXml}
     footerSlots.push({ idx: 2, xml: options.firstFooterXml, rId: 'rId13' });
   if (options.evenFooterXml) footerSlots.push({ idx: 3, xml: options.evenFooterXml, rId: 'rId15' });
 
-  const chartSlots: Array<{ idx: number; xml: string; rId: string }> = [];
-  if (options.charts) {
+  const chartSlots: Array<{ idx: number; xml: string; rId: string; owner: 'document' | 'footer' }> =
+    [];
+  {
     let i = 1;
-    for (const [rId, xml] of Object.entries(options.charts)) {
-      chartSlots.push({ idx: i, xml, rId });
+    for (const [rId, xml] of Object.entries(options.charts ?? {})) {
+      chartSlots.push({ idx: i, xml, rId, owner: 'document' });
+      i++;
+    }
+    for (const [rId, xml] of Object.entries(options.footerCharts ?? {})) {
+      chartSlots.push({ idx: i, xml, rId, owner: 'footer' });
       i++;
     }
   }
@@ -222,7 +231,7 @@ ${h.xml}
   for (const f of footerSlots) {
     entries[`word/footer${f.idx}.xml`] = encoder.encode(
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
 ${f.xml}
 </w:ftr>`,
     );
@@ -238,9 +247,17 @@ ${f.xml}
   if (options.themeXml) {
     docRels.push(`<Relationship Id="rIdTheme" Type="${REL_THEME}" Target="theme/theme1.xml"/>`);
   }
+  const footerRels: Array<string> = [];
   for (const c of chartSlots) {
-    docRels.push(
-      `<Relationship Id="${c.rId}" Type="${REL_CHART}" Target="charts/chart${c.idx}.xml"/>`,
+    const rel = `<Relationship Id="${c.rId}" Type="${REL_CHART}" Target="charts/chart${c.idx}.xml"/>`;
+    (c.owner === 'footer' ? footerRels : docRels).push(rel);
+  }
+  if (footerRels.length > 0) {
+    entries['word/_rels/footer1.xml.rels'] = encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+${footerRels.join('\n')}
+</Relationships>`,
     );
   }
   if (options.hyperlinks) {

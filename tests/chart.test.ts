@@ -13,6 +13,7 @@ import { buildChartScene } from '@/core/drawingml/chart-geometry';
 import { parseChart } from '@/core/drawingml/chart-parser';
 import { OpcPackage } from '@/core/opc';
 import { parseDocument } from '@/word';
+import { readDocx } from '@/word/docx-reader';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FONTS = {
@@ -373,6 +374,45 @@ describe('column chart rendering (end-to-end)', () => {
     expect(text).toContain('0.34902 0.34902 0.34902 RG');
     // Labels (categories / ticks / title) rendered as text.
     expect(text).toMatch(/<[0-9A-F]+> Tj/);
+  });
+});
+
+describe('a chart anchored in a footer (chart-in-footer.docx)', () => {
+  // Charts were collected from the main document's rels only, and the band
+  // renderer drew paragraphs, tables and images but not charts — a document
+  // whose only content is a footer chart came out blank. Relationship ids are
+  // scoped to their owning part (OPC §9.3), so the footer's rId5 here is a
+  // different chart from the body's.
+  const docx = buildDocxFromBody(
+    `<w:p><w:r><w:t>body</w:t></w:r></w:p>` +
+      `<w:sectPr><w:footerReference w:type="default" r:id="rId11"/></w:sectPr>`,
+    {
+      footerXml: chartDrawing('rId5'),
+      footerCharts: { rId5: BAR_CHART },
+      charts: { rId5: PIE_CHART },
+    },
+  );
+
+  it('draws the footer chart on every page', () => {
+    const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
+    expect(text).toContain('0.266667 0.447059 0.768627 rg'); // 4472C4 bars
+    expect(text).toContain('0.929412 0.490196 0.192157 rg'); // ED7D31 bars
+    expect(text).toMatch(/\nh\nf\n/); // a filled bar rect
+  });
+
+  it('keeps the body and the footer rId5 apart', () => {
+    const { doc } = readDocx(docx);
+    // Two chart parts, filed under their part paths rather than a shared id.
+    expect([...(doc.charts?.keys() ?? [])].sort()).toEqual([
+      'word/charts/chart1.xml',
+      'word/charts/chart2.xml',
+    ]);
+    const footer = doc.headersFooters?.get('rId11');
+    const block = footer?.find((b) => b.kind === 'chart');
+    expect(block?.kind === 'chart' ? block.chart.chartRelId : undefined).toBe(
+      'word/charts/chart2.xml',
+    );
+    expect(doc.charts?.get('word/charts/chart2.xml')?.type).toBe('bar');
   });
 });
 

@@ -207,7 +207,7 @@ function parseParagraphBorders(node: unknown): CellBorders | undefined {
     const space = parseIntAttr(b, 'space');
     const color = getAttr(b, 'color');
     return {
-      style: style as BorderStyle,
+      style,
       ...(sz !== undefined ? { width: eighthPtToPt(sz) } : {}),
       // §17.3.1.24 — `w:space` is in POINTS, not twips or eighths.
       ...(space !== undefined ? { spacePt: pt(space) } : {}),

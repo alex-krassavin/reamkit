@@ -99,6 +99,7 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
     resolveImage,
     resolveHyperlink,
     resolveDiagram: makeDiagramResolver(pkg, MAIN_DOCUMENT_PART),
+    resolveChartPart: makeChartResolver(pkg, MAIN_DOCUMENT_PART),
     onLoss: (loss) => losses.push(loss),
     // Tracks open comment ranges across the body so runs carry commentRangeRefs.
     openCommentRanges: new Set<string>(),
@@ -161,7 +162,7 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
         ];
 
   const headersFooters = loadHeadersFootersForSections(pkg, sections, ctx, resources);
-  const charts = loadCharts(pkg, resolveColor);
+  const charts = loadCharts(pkg, resolveColor, chartOwningParts(pkg, sections));
   // The document's own embedded fonts (de-obfuscated). A run whose w:ascii
   // matches one renders with the real font instead of a substitute.
   const embeddedFonts = loadEmbeddedFonts(pkg);
@@ -352,16 +353,43 @@ function makeHyperlinkResolver(
 
 // Resolve & parse every chart part referenced by the main document, keyed by
 // its relationship id (which ChartBlock.chartRelId points to).
-function loadCharts(pkg: OpcPackage, resolveColor: ColorResolver): ReadonlyMap<string, Chart> {
+// Charts live in every part that can hold a drawing, not just the body:
+// chart-in-footer.docx anchors one in a footer, whose rels are its own (OPC
+// §9.3). Key by the chart part's path — unique across owning parts, and the
+// same key the .xlsx and .pptx readers use — and let each part's context map
+// its local r:id onto it (see makeChartResolver).
+function loadCharts(
+  pkg: OpcPackage,
+  resolveColor: ColorResolver,
+  parts: ReadonlyArray<string>,
+): ReadonlyMap<string, Chart> {
   const out = new Map<string, Chart>();
-  for (const rel of pkg.getPartRelationships(MAIN_DOCUMENT_PART)) {
-    if (!isOoxmlRel(rel.type, 'chart')) continue;
-    const resolved = pkg.resolveRelatedPart(MAIN_DOCUMENT_PART, rel);
-    if (!resolved) continue;
-    const chart = parseChart(resolved.data, resolveColor);
-    if (chart) out.set(rel.id, withChartColorStyle(chart, pkg, resolved.path, resolveColor));
+  for (const part of parts) {
+    for (const rel of pkg.getPartRelationships(part)) {
+      if (!isOoxmlRel(rel.type, 'chart')) continue;
+      const resolved = pkg.resolveRelatedPart(part, rel);
+      if (!resolved || out.has(resolved.path)) continue;
+      const chart = parseChart(resolved.data, resolveColor);
+      if (chart)
+        out.set(resolved.path, withChartColorStyle(chart, pkg, resolved.path, resolveColor));
+    }
   }
   return out;
+}
+
+// A drawing's `c:chart` `@r:id` → the chart part's path, i.e. the key
+// {@link loadCharts} files it under. Absent ⇒ the parser keeps the raw rel id.
+function makeChartResolver(
+  pkg: OpcPackage,
+  partName: string,
+): (relId: string) => string | undefined {
+  const byRelId = new Map<string, string>();
+  for (const rel of pkg.getPartRelationships(partName)) {
+    if (!isOoxmlRel(rel.type, 'chart')) continue;
+    const resolved = pkg.resolveRelatedPart(partName, rel);
+    if (resolved) byRelId.set(rel.id, resolved.path);
+  }
+  return (relId) => byRelId.get(relId);
 }
 
 // Theme colour resolver: merge the document's theme palette (if any) over the
@@ -409,10 +437,29 @@ function loadHeadersFootersForSections(
       resolveColor: ctx.resolveColor,
       resolveImage: makeImageResolver(pkg, store, resolved.path),
       resolveHyperlink: makeHyperlinkResolver(pkg, resolved.path),
+      resolveChartPart: makeChartResolver(pkg, resolved.path),
     };
     out.set(rel.id, parseHeaderFooter(resolved.data, hfCtx));
   }
   return out;
+}
+
+// The parts whose relationships may point at a chart: the body plus every
+// header/footer the sections actually use.
+function chartOwningParts(pkg: OpcPackage, sections: ReadonlyArray<Section>): Array<string> {
+  const wanted = new Set<string>();
+  for (const s of sections) {
+    for (const h of s.properties.headers) wanted.add(h.relationshipId);
+    for (const f of s.properties.footers) wanted.add(f.relationshipId);
+  }
+  const parts = [MAIN_DOCUMENT_PART];
+  for (const rel of pkg.getPartRelationships(MAIN_DOCUMENT_PART)) {
+    if (!wanted.has(rel.id)) continue;
+    if (!isOoxmlRel(rel.type, 'header') && !isOoxmlRel(rel.type, 'footer')) continue;
+    const resolved = pkg.resolveRelatedPart(MAIN_DOCUMENT_PART, rel);
+    if (resolved) parts.push(resolved.path);
+  }
+  return parts;
 }
 
 // Best-effort document language for the tagged-PDF catalog /Lang. The default

@@ -18,7 +18,6 @@
 // objects out of pdf/ is mechanical follow-up work, not part of the freeze.
 
 import type {
-  TabStop,
   BodyElement,
   Border,
   BorderStyle,
@@ -45,6 +44,7 @@ import type {
   ShapeBlock,
   ShapeShadow,
   StyleSheet,
+  TabStop,
   Table,
   TableCell,
   TableProperties,
@@ -2161,6 +2161,35 @@ function drawBlocksSequentially(
         emitRowChunk(out, row, tableX, cursorY, pageHeight, block.colCount);
         cursorY -= row.heightPt;
       }
+      continue;
+    }
+    // A chart is a band's content too: chart-in-footer.docx puts one in its
+    // footer and we printed an empty page. Its primitives live in a local y-up
+    // frame, the same one the body's pagination places.
+    if (block.kind === 'chart') {
+      cursorY -= block.spacingBeforePt + block.heightPt;
+      const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, contentWidth);
+      for (const sh of block.layout.shapes) {
+        out.push({
+          type: 'shape',
+          shape: {
+            paths: sh.paths,
+            ...(sh.fillColorHex ? { fillColorHex: sh.fillColorHex } : {}),
+            ...(sh.stroke ? { stroke: sh.stroke } : {}),
+            transform: flipTransform([1, 0, 0, 1, startX + offset, cursorY], pageHeight),
+          },
+        });
+      }
+      for (const t of block.layout.texts) {
+        out.push({
+          type: 'line',
+          line: t.line,
+          originX: pt(startX + offset + t.x),
+          baselineY: pt(pageHeight - (cursorY + t.y)),
+          ...(t.rotationDeg ? { rotationDeg: t.rotationDeg } : {}),
+        });
+      }
+      cursorY -= block.spacingAfterPt;
       continue;
     }
     // …and a first-page header is very often nothing BUT the crest.
@@ -4394,7 +4423,7 @@ class PageAssembler {
       // The next column of a balanced band gets the same share — except the
       // LAST, which takes whatever the rounding left over rather than spilling
       // onto a page of its own.
-      const isLast = this.colIdx + 1 >= (this.ctx.columns?.length ?? 1);
+      const isLast = this.colIdx + 1 >= this.ctx.columns.length;
       this.balanceBottomY =
         this.balanceHeightPt > 0 && !isLast ? this.cursorY - this.balanceHeightPt : undefined;
     } else {

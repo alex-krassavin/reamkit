@@ -33,7 +33,6 @@ import { emuToPt, pt, twipsToPt } from '@/core/ir';
 import { parseOMath } from '@/word/omml-parser';
 import { defaultColorResolver } from '@/core/drawingml/colors';
 import { expandMcChildren, parseDrawing, parseVmlPicture } from '@/word/drawing-parser';
-import { parseBorders } from '@/word/table-parser';
 import { diagramTransform, noDiagramOverrideLoss, parseDiagramDrawing } from '@/pptx/slide-parser';
 import { parseParagraphProperties } from '@/word/paragraph-properties';
 import {
@@ -49,7 +48,7 @@ import {
 } from '@/core/po-helpers';
 import { poElementToFlat } from '@/word/po-to-flat';
 import { parseRunProperties } from '@/word/run-properties';
-import { parseTable } from '@/word/table-parser';
+import { parseBorders, parseTable } from '@/word/table-parser';
 
 const decoder = new TextDecoder('utf-8');
 
@@ -112,6 +111,13 @@ export interface ParseContext {
    * ships none (E-SMARTART SA2).
    */
   readonly resolveDiagram?: (relId: string) => PoNode | undefined;
+  /**
+   * §21.2 a `c:chart` `@r:id` → the chart part's path, the key the reader files
+   * parsed charts under. Relationship ids are scoped to their owning part, so a
+   * footer's `rId1` and the body's `rId1` are different charts. Absent ⇒ the
+   * raw rel id is kept.
+   */
+  readonly resolveChartPart?: (relId: string) => string | undefined;
   /**
    * Sink for graceful-degradation notices (E-SMARTART SA3): a SmartArt with no
    * drawing override records a dropped-feature {@link Loss} rather than vanishing.
@@ -521,7 +527,13 @@ function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): Array<Bod
   // behaves exactly as it did.
   const out: Array<BodyElement> = [];
   for (const d of drawings) {
-    const content = parseDrawing(d, ctx.resolveColor, parseBody, ctx.resolveImage);
+    const content = parseDrawing(
+      d,
+      ctx.resolveColor,
+      parseBody,
+      ctx.resolveImage,
+      ctx.resolveChartPart,
+    );
     if (!content) continue;
     out.push(...(blocksForDrawing(content, paragraphProperties, ctx) ?? []));
   }
