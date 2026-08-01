@@ -2976,13 +2976,28 @@ function layoutParagraphBlock(
 ): ParagraphBlock {
   const baseResolved = resolveParagraphProperties(paragraph.properties, options.styles);
   const baseDir = paragraphBaseDirection(paragraph, baseResolved);
-  // RTL paragraphs default to right alignment. We only override the cascade's
-  // 'left' default (which is also what an absent jc collapses to) — explicit
-  // center/right/justify are preserved.
+  // §17.3.1.13 / §17.3.1.12 — in a `w:bidi` paragraph "left" and "right" are
+  // the START and END of the line, not sides of the page, so both the
+  // alignment and the indents swap. fdo43093.docx names its paragraphs after
+  // where they should land: "RTL Left" asks for `w:jc="right"` and belongs at
+  // the left margin, and "RTL Right", indented a inch from its start, keeps
+  // that inch on the right. We flipped neither.
+  const swapAlign = (a: ResolvedParagraphProperties['alignment']) =>
+    a === 'left' ? 'right' : a === 'right' ? 'left' : a;
   const resolved: ResolvedParagraphProperties =
-    baseDir === 'rtl' && baseResolved.alignment === 'left'
-      ? { ...baseResolved, alignment: 'right' }
-      : baseResolved;
+    baseResolved.bidi === true
+      ? {
+          ...baseResolved,
+          alignment: swapAlign(baseResolved.alignment),
+          indentLeft: baseResolved.indentRight,
+          indentRight: baseResolved.indentLeft,
+        }
+      : // A paragraph the READER only guesses is RTL (its text is, its
+        // properties say nothing) keeps its literal alignment; all that moves
+        // is the 'left' the cascade defaults to.
+        baseDir === 'rtl' && baseResolved.alignment === 'left'
+        ? { ...baseResolved, alignment: 'right' }
+        : baseResolved;
   const tokens = tokenizeParagraph(
     paragraph,
     options,
