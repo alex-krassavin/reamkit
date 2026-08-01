@@ -607,6 +607,20 @@ describe('a gallery-styled shape', () => {
     expect(text).toMatch(/0\.180392 0\.458824 0\.713725 RG/u);
   });
 
+  it('draws a pattern fill as the ink it lays down', () => {
+    // §20.1.8.37 — dml-shape-fillpattern.docx rules twelve rectangles with
+    // `a:pattFill` and we drew twelve empty boxes. A tile is beyond a vector
+    // fill; the two colours blended by the pattern's coverage is much nearer
+    // than nothing at all.
+    const text = styled(
+      '',
+      `${RECT}<a:pattFill prst="ltHorz"><a:fgClr><a:srgbClr val="00FF00"/></a:fgClr>` +
+        '<a:bgClr><a:srgbClr val="FFFFFF"/></a:bgClr></a:pattFill>',
+    );
+    // 15% of pure green over white.
+    expect(text).toContain('0.85098 1 0.85098 rg');
+  });
+
   it('keeps a fill the shape states for itself', () => {
     const text = styled(
       '<wps:style><a:fillRef idx="1"><a:srgbClr val="5B9BD5"/></a:fillRef></wps:style>',

@@ -974,12 +974,73 @@ export function parseFill(
       const hex = colorFromContainer(child, resolveColor);
       return hex ? { kind: 'solid', colorHex: hex } : { kind: 'none' };
     }
+    // §20.1.8.37 `a:pattFill` — a hatch of the foreground colour over the
+    // background one. Drawn as the two blended by how much ink the pattern
+    // lays down: the tile itself is beyond a vector fill, and an unfilled
+    // shape is further from either reference than a tint of the right colour.
+    // dml-shape-fillpattern.docx rules twelve rectangles this way and we drew
+    // twelve empty boxes; dkvert.docx's cover bar came out blank.
+    if (poIs(child, 'a:pattFill')) {
+      const fg = poChildren(child).find((c) => poIs(c, 'a:fgClr'));
+      const bg = poChildren(child).find((c) => poIs(c, 'a:bgClr'));
+      const fgHex = fg ? colorFromContainer(fg, resolveColor) : undefined;
+      const bgHex = bg ? colorFromContainer(bg, resolveColor) : 'FFFFFF';
+      if (!fgHex) return { kind: 'none' };
+      return {
+        kind: 'solid',
+        colorHex: blendHex(fgHex, bgHex ?? 'FFFFFF', patternCoverage(poAttr(child, 'prst'))),
+      };
+    }
     if (poIs(child, 'a:gradFill')) {
       const gradient = parseGradient(child, resolveColor);
       return gradient ? { kind: 'gradient', gradient } : { kind: 'none' };
     }
   }
   return { kind: 'none' };
+}
+
+/**
+ * §20.1.8.37 — roughly how much of a tile the preset pattern inks, which is
+ * what decides how strongly the foreground colour shows through. The families
+ * carry the answer: `pctNN` states it outright, `lt*` is sparse, `dk*` dense,
+ * and the woven ones cover about half.
+ *
+ * @param prst The `a:pattFill` `@prst` value.
+ * @returns The ink coverage, 0..1.
+ */
+function patternCoverage(prst: string | undefined): number {
+  if (!prst) return 0.25;
+  const pct = /^pct(\d+)$/u.exec(prst);
+  if (pct) return Math.min(1, Number(pct[1]) / 100);
+  if (prst.startsWith('lt')) return 0.15;
+  if (prst.startsWith('dk')) return 0.5;
+  if (prst.startsWith('wd')) return 0.2;
+  if (prst.startsWith('nar')) return 0.35;
+  if (prst.endsWith('Grid') || prst === 'divot' || prst === 'wave') return 0.15;
+  if (DENSE_PATTERNS.has(prst)) return 0.5;
+  return 0.25;
+}
+
+const DENSE_PATTERNS = new Set([
+  'trellis',
+  'weave',
+  'plaid',
+  'smCheck',
+  'lgCheck',
+  'solidDmnd',
+  'sphere',
+  'dkCross',
+  'dkDiagCross',
+]);
+
+/** `a` mixed over `b` at `t` (0 = all `b`, 1 = all `a`), as 6-hex. */
+function blendHex(a: string, b: string, t: number): string {
+  const ch = (hex: string, i: number): number => parseInt(hex.slice(i, i + 2), 16);
+  const mix = (i: number): string =>
+    Math.round(ch(a, i) * t + ch(b, i) * (1 - t))
+      .toString(16)
+      .padStart(2, '0');
+  return (mix(0) + mix(2) + mix(4)).toUpperCase();
 }
 
 /**
