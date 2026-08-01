@@ -314,3 +314,19 @@ describe('a content control around rows or cells (§17.5.2)', () => {
     ).toEqual([['A1'], ['A2']]);
   });
 });
+
+describe('a deeply nested table', () => {
+  it('parses past the XML parser’s own nesting guard', () => {
+    // deep-table-cell.docx nests 5000 tables; the guard's default of 100 tags
+    // is about twelve, so an ordinary document of nested tables went unread
+    // whole. The bound stays — it is there for pathological input — but it is
+    // now deeper than any word processor writes.
+    let inner = '<w:p><w:r><w:t>deep</w:t></w:r></w:p>';
+    for (let i = 0; i < 60; i++) {
+      inner = `<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc>${inner}</w:tc></w:tr></w:tbl>`;
+    }
+    const els = parse(inner);
+    expect(els).toHaveLength(1);
+    expect(els[0]!.kind).toBe('table');
+  });
+});

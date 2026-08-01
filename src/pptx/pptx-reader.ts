@@ -54,6 +54,9 @@ const parser = new XMLParser({
   htmlEntities: true,
   ignoreAttributes: false,
   attributeNamePrefix: '@_',
+  // The parser's runaway-nesting guard defaults to 100 tags, which a slide of
+  // nested groups reaches (see word/document-parser).
+  maxNestedTags: 1000,
   preserveOrder: true,
   parseAttributeValue: false,
   parseTagValue: false,

@@ -67,6 +67,11 @@ const parser = new XMLParser({
   parseAttributeValue: false,
   parseTagValue: false,
   trimValues: false,
+  // The parser's own guard against runaway nesting defaults to 100 tags, which
+  // real documents reach: deep-table-cell.docx nests tables past it and the
+  // whole file went unread over a limit meant for pathological input. Deep
+  // enough for any document a word processor can produce, and still bounded.
+  maxNestedTags: 1000,
 });
 
 const RUN_CONTAINER_TAGS = new Set([
