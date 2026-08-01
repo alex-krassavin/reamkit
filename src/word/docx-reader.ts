@@ -276,10 +276,12 @@ function makeDiagramResolver(
     const dataRel = pkg.getPartRelationships(partName).find((r) => r.id === relId);
     const data = dataRel ? pkg.resolveRelatedPart(partName, dataRel) : undefined;
     if (data) {
-      const drawRel = pkg
+      const own = pkg
         .getPartRelationships(data.path)
         .find((r) => r.type.endsWith('/diagramDrawing'));
-      const draw = drawRel ? pkg.resolveRelatedPart(data.path, drawRel) : undefined;
+      const draw = own
+        ? pkg.resolveRelatedPart(data.path, own)
+        : drawingFromOwner(pkg, partName, data.path);
       if (draw) {
         for (const root of parseXml(draw.data)) {
           const found = poFindDescendant(root, 'dsp:spTree');
@@ -293,6 +295,29 @@ function makeDiagramResolver(
     cache.set(relId, spTree);
     return spTree;
   };
+}
+
+// Half the SmartArt in the corpus (5 of 9 files, fdo73227 among them) gives the
+// data part no .rels of its own and hangs the `.../2007/relationships/
+// diagramDrawing` off the part that OWNS the diagram instead. The relationship
+// then names no data part, so the pairing is the one Word writes into the file
+// names: diagrams/data2.xml belongs with diagrams/drawing2.xml. A lone drawing
+// pairs with whatever data part asked, index or no index.
+function drawingFromOwner(
+  pkg: OpcPackage,
+  ownerPart: string,
+  dataPart: string,
+): { readonly path: string; readonly data: Uint8Array } | undefined {
+  const drawings = pkg
+    .getPartRelationships(ownerPart)
+    .filter((r) => r.type.endsWith('/diagramDrawing'));
+  if (drawings.length === 0) return undefined;
+  const index = (path: string): string => /(\d*)\.[^.]+$/u.exec(path)?.[1] ?? '';
+  const want = index(dataPart);
+  const rel =
+    drawings.find((r) => index(r.target) === want) ??
+    (drawings.length === 1 ? drawings[0] : undefined);
+  return rel ? pkg.resolveRelatedPart(ownerPart, rel) : undefined;
 }
 
 function makeImageResolver(
