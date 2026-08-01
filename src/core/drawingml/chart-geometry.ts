@@ -1127,9 +1127,15 @@ export function buildLineScene(
 ): ChartScene {
   // Line charts auto-min: the value axis need not include 0 when the data sits
   // far from it (unlike bars/areas, which need a meaningful baseline at 0).
+  // "Far" is the rule both references apply — the smallest value more than
+  // five sixths of the largest. Cutting the axis off whenever the data merely
+  // starts above zero drew chartex.docx's 1.8…5 line chart on a 1.5…5.5 axis
+  // where both references draw 0…6.
   const allVals = chart.series.flatMap((s) => s.values);
+  const lo = allVals.length > 0 ? Math.min(...allVals) : 0;
+  const hi = allVals.length > 0 ? Math.max(...allVals) : 1;
   const range: readonly [number, number] =
-    allVals.length > 0 ? [Math.min(...allVals), Math.max(...allVals)] : [0, 1];
+    lo > 0 && lo > (5 / 6) * hi ? [lo, hi] : [Math.min(0, lo), Math.max(0, hi)];
   // …and the axis's own number format applies here exactly as it does to a bar
   // chart's: 123233_charts.xlsx labels every one of its four charts in currency
   // and only the line chart came out in bare digits.
