@@ -327,28 +327,34 @@ export function noDiagramOverrideLoss(where?: string): Loss {
   };
 }
 
+/** One SmartArt node: the box it occupies in the target space, and its shape. */
+export interface DiagramNode {
+  readonly box: ShapeBoxEmu;
+  readonly shape: ShapeBlock;
+}
+
 /**
- * Render a SmartArt drawing override (a `dsp:spTree`) into floating shapes. The
- * `dsp:` wrapper holds an ordinary `a:` `spPr`/`txBody`, so the shared DrawingML
+ * Read a SmartArt drawing override (a `dsp:spTree`) into its nodes. The `dsp:`
+ * wrapper holds an ordinary `a:` `spPr`/`txBody`, so the shared DrawingML
  * readers apply unchanged. Shared by pptx and docx (E-SMARTART); diagrams carry
  * no placeholder cascade.
  *
- * @param spTree      The diagram drawing's `dsp:spTree`.
- * @param transform   Maps each shape's diagram-space box to the target space.
- * @param makeFloat   Anchors a box — page-relative for a slide, column/paragraph-
- *                    relative for an inline docx diagram.
- * @param colors      The colour resolver for the shapes' fills/strokes/text.
- * @param resolveLink A run hyperlink resolver, or `undefined`.
- * @returns The diagram's visible shapes as positioned {@link ShapeBlock}s.
+ * @param spTree       The diagram drawing's `dsp:spTree`.
+ * @param transform    Maps each shape's diagram-space box to the target space.
+ * @param colors       The colour resolver for the shapes' fills/strokes/text.
+ * @param resolveLink  A run hyperlink resolver, or `undefined`.
+ * @param resolveImage Resolves a picture fill's `r:embed` against the DRAWING
+ *                     part's own relationships, or `undefined`.
+ * @returns The diagram's visible nodes, in drawing order.
  */
-export function parseDiagramDrawing(
+export function parseDiagramNodes(
   spTree: PoNode,
   transform: GroupTransform,
-  makeFloat: (box: ShapeBoxEmu) => FloatAnchor,
   colors: ColorResolver,
   resolveLink: LinkResolver,
-): Array<ShapeBlock> {
-  const out: Array<ShapeBlock> = [];
+  resolveImage?: (relId: string) => ResourceId | undefined,
+): Array<DiagramNode> {
+  const out: Array<DiagramNode> = [];
   for (const sp of poChildren(spTree)) {
     if (!poIs(sp, 'dsp:sp')) continue;
     const spPr = poChildren(sp).find((c) => poIs(c, 'dsp:spPr'));
@@ -367,23 +373,49 @@ export function parseDiagramDrawing(
     const text = parsed ? withDiagramFontColor(parsed, sp, colors) : undefined;
 
     const geometry = parseGeometry(spPr);
-    const fill: ShapeFill = spPr ? parseFill(spPr, colors) : { kind: 'none' };
+    const fill: ShapeFill = spPr ? parseFill(spPr, colors, resolveImage) : { kind: 'none' };
     const line = spPr ? parseLine(spPr, colors) : undefined;
     const visibleLine = line !== undefined && line.fill !== 'none';
     if (!text && fill.kind === 'none' && !visibleLine) continue;
 
     out.push({
-      float: makeFloat(box),
-      width: emuToPt(box.cx),
-      height: emuToPt(box.cy),
-      geometry,
-      fill,
-      ...(line ? { line } : {}),
-      ...(text ? { text } : {}),
-      paragraphProperties: {},
+      box,
+      shape: {
+        width: emuToPt(box.cx),
+        height: emuToPt(box.cy),
+        geometry,
+        fill,
+        ...(line ? { line } : {}),
+        ...(text ? { text } : {}),
+        paragraphProperties: {},
+      },
     });
   }
   return out;
+}
+
+/**
+ * The same nodes as free-standing floating shapes — what a slide wants, where
+ * every shape is anchored to the page.
+ *
+ * @param spTree      The diagram drawing's `dsp:spTree`.
+ * @param transform   Maps each shape's diagram-space box to the target space.
+ * @param makeFloat   Anchors a node's box.
+ * @param colors      The colour resolver for the shapes' fills/strokes/text.
+ * @param resolveLink A run hyperlink resolver, or `undefined`.
+ * @returns The diagram's visible shapes as positioned {@link ShapeBlock}s.
+ */
+export function parseDiagramDrawing(
+  spTree: PoNode,
+  transform: GroupTransform,
+  makeFloat: (box: ShapeBoxEmu) => FloatAnchor,
+  colors: ColorResolver,
+  resolveLink: LinkResolver,
+): Array<ShapeBlock> {
+  return parseDiagramNodes(spTree, transform, colors, resolveLink).map(({ box, shape }) => ({
+    ...shape,
+    float: makeFloat(box),
+  }));
 }
 
 // The text body with the node's `dsp:style/a:fontRef` colour filled in wherever

@@ -33,7 +33,7 @@ import { emuToPt, pt, twipsToPt } from '@/core/ir';
 import { parseOMath } from '@/word/omml-parser';
 import { defaultColorResolver } from '@/core/drawingml/colors';
 import { expandMcChildren, parseDrawing, parseVmlPicture } from '@/word/drawing-parser';
-import { diagramTransform, noDiagramOverrideLoss, parseDiagramDrawing } from '@/pptx/slide-parser';
+import { diagramTransform, noDiagramOverrideLoss, parseDiagramNodes } from '@/pptx/slide-parser';
 import { parseParagraphProperties } from '@/word/paragraph-properties';
 import {
   poAttr,
@@ -97,6 +97,16 @@ export type ImageResolver = (relId: string) => ResourceId | undefined;
 export type HyperlinkResolver = (relId: string) => string | undefined;
 
 /**
+ * A SmartArt diagram's pre-rendered drawing override: its `dsp:spTree`, plus a
+ * resolver for the picture fills its nodes name — those relationships belong to
+ * the drawing part, not to the part that references the diagram.
+ */
+export interface ResolvedDiagram {
+  readonly spTree: PoNode;
+  readonly resolveImage?: ImageResolver;
+}
+
+/**
  * Document-wide resolvers every nested parser needs — one context object instead
  * of threading a parameter pair through ten signatures (oop-design §8).
  */
@@ -112,10 +122,10 @@ export interface ParseContext {
   readonly resolveHyperlink?: HyperlinkResolver;
   /**
    * SmartArt: a data relationship id (`dgm:relIds` `@r:dm`) → the diagram's
-   * pre-rendered drawing override (its `dsp:spTree`), or `undefined` when the file
-   * ships none (E-SMARTART SA2).
+   * pre-rendered drawing override, or `undefined` when the file ships none
+   * (E-SMARTART SA2).
    */
-  readonly resolveDiagram?: (relId: string) => PoNode | undefined;
+  readonly resolveDiagram?: (relId: string) => ResolvedDiagram | undefined;
   /**
    * §21.2 a `c:chart` `@r:id` → the chart part's path, the key the reader files
    * parsed charts under. Relationship ids are scoped to their owning part, so a
@@ -625,41 +635,47 @@ function blocksForDrawing(
     ];
   }
   if (content.kind === 'diagram') {
-    // SmartArt: resolve the drawing override and render its nodes as floating
-    // shapes anchored to the paragraph's column origin (E-SMARTART SA2). No
-    // override ⇒ keep the (empty) paragraph, byte-stable.
-    const spTree = ctx.resolveDiagram?.(content.dmRelId);
-    if (!spTree) {
+    // SmartArt: resolve the drawing override and render its nodes (E-SMARTART
+    // SA2). No override ⇒ keep the (empty) paragraph, byte-stable.
+    const diagram = ctx.resolveDiagram?.(content.dmRelId);
+    if (!diagram) {
       // No drawing override shipped — record a graceful loss and keep the
       // (empty) paragraph, byte-stable (SA3).
       ctx.onLoss?.(noDiagramOverrideLoss());
       return null;
     }
     const frame = { x: 0, y: 0, cx: content.widthEmu, cy: content.heightEmu };
-    // Each node is placed at its offset INSIDE the diagram, so an anchored
-    // SmartArt has to add where the diagram itself sits: fdo73227 states 108pt
-    // right and 337.5pt down and we drew the whole thing at the column origin.
-    const base = content.float;
-    const shapes = parseDiagramDrawing(
-      spTree,
-      diagramTransform(spTree, frame),
-      (box) => ({
-        wrap: 'none',
-        ...(base?.behind !== undefined ? { behind: base.behind } : {}),
-        ...(base?.zOrder !== undefined ? { zOrder: base.zOrder } : {}),
-        posH: {
-          relativeFrom: base?.posH?.relativeFrom ?? 'column',
-          offsetPt: pt((base?.posH?.offsetPt ?? 0) + emuToPt(box.x)),
-        },
-        posV: {
-          relativeFrom: base?.posV?.relativeFrom ?? 'paragraph',
-          offsetPt: pt((base?.posV?.offsetPt ?? 0) + emuToPt(box.y)),
-        },
-      }),
+    const nodes = parseDiagramNodes(
+      diagram.spTree,
+      diagramTransform(diagram.spTree, frame),
       ctx.resolveColor,
       undefined,
+      diagram.resolveImage,
     );
-    return shapes.length > 0 ? shapes.map((shape) => ({ kind: 'shape', shape })) : null;
+    // One box holding the nodes at their offsets inside it, rather than a
+    // scatter of floats each anchored to the paragraph: a diagram is a drawing
+    // like any other, and an INLINE one has to reserve its height the way the
+    // reference does. fdo87488 stacks two full-page diagrams — the second of
+    // them empty — and we drew one page where the reference draws two.
+    return [
+      {
+        kind: 'shape',
+        shape: {
+          width: emuToPt(content.widthEmu),
+          height: emuToPt(content.heightEmu),
+          children: nodes.map(({ box, shape }) => ({
+            shape,
+            xPt: emuToPt(box.x),
+            yPt: emuToPt(box.y),
+          })),
+          geometry: { kind: 'preset', preset: 'rect', adjust: new Map() },
+          fill: { kind: 'none' },
+          paragraphProperties,
+          ...(content.altText ? { altText: content.altText } : {}),
+          ...(content.float ? { float: content.float } : {}),
+        },
+      },
+    ];
   }
   return [
     {

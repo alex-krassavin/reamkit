@@ -1,4 +1,9 @@
-export type { HyperlinkResolver, ImageResolver, ParseContext } from '@/word/document-parser';
+export type {
+  HyperlinkResolver,
+  ImageResolver,
+  ParseContext,
+  ResolvedDiagram,
+} from '@/word/document-parser';
 export type { CommentExtension } from '@/word/document-parser';
 export { extractParagraphs } from '@/word/text-extractor';
 export {

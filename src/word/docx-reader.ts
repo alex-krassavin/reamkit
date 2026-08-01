@@ -18,7 +18,7 @@ import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss, ResourceId } from '@/core/ir';
 import type { CoreProperties } from '@/core/opc';
-import type { HyperlinkResolver, ImageResolver, ParseContext } from '@/word';
+import type { HyperlinkResolver, ImageResolver, ParseContext, ResolvedDiagram } from '@/word';
 import type { PoNode } from '@/core/po-helpers';
 import { poFindDescendant } from '@/core/po-helpers';
 import { parseXml } from '@/pptx/pptx-reader';
@@ -104,7 +104,7 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
     ...(themeLineWidths && themeLineWidths.length > 0 ? { themeLineWidths } : {}),
     resolveImage,
     resolveHyperlink,
-    resolveDiagram: makeDiagramResolver(pkg, MAIN_DOCUMENT_PART),
+    resolveDiagram: makeDiagramResolver(pkg, MAIN_DOCUMENT_PART, resources),
     resolveChartPart: makeChartResolver(pkg, MAIN_DOCUMENT_PART),
     onLoss: (loss) => losses.push(loss),
     // Tracks open comment ranges across the body so runs carry commentRangeRefs.
@@ -268,11 +268,12 @@ function infoFromCore(core: CoreProperties | undefined): DocumentInfo | undefine
 function makeDiagramResolver(
   pkg: OpcPackage,
   partName: string,
-): (relId: string) => PoNode | undefined {
-  const cache = new Map<string, PoNode | undefined>();
+  store: ResourceStore,
+): (relId: string) => ResolvedDiagram | undefined {
+  const cache = new Map<string, ResolvedDiagram | undefined>();
   return (relId) => {
     if (cache.has(relId)) return cache.get(relId);
-    let spTree: PoNode | undefined;
+    let resolved: ResolvedDiagram | undefined;
     const dataRel = pkg.getPartRelationships(partName).find((r) => r.id === relId);
     const data = dataRel ? pkg.resolveRelatedPart(partName, dataRel) : undefined;
     if (data) {
@@ -284,16 +285,18 @@ function makeDiagramResolver(
         : drawingFromOwner(pkg, partName, data.path);
       if (draw) {
         for (const root of parseXml(draw.data)) {
-          const found = poFindDescendant(root, 'dsp:spTree');
-          if (found) {
-            spTree = found;
+          const spTree = poFindDescendant(root, 'dsp:spTree');
+          if (spTree) {
+            // A node's picture fill names a relationship of the DRAWING part,
+            // not of the document (fdo74792 fills four nodes with clip art).
+            resolved = { spTree, resolveImage: makeImageResolver(pkg, store, draw.path) };
             break;
           }
         }
       }
     }
-    cache.set(relId, spTree);
-    return spTree;
+    cache.set(relId, resolved);
+    return resolved;
   };
 }
 
