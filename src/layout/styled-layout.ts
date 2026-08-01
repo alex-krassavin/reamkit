@@ -500,7 +500,12 @@ interface CellLayout {
   readonly dropdown?: boolean;
   readonly lines: ReadonlyArray<Line>;
   // Nested tables (a w:tbl inside this cell) rendered below the lines.
-  readonly nestedTables?: ReadonlyArray<TableBlock>;
+  /**
+   * Tables nested inside this cell (§17.4.38), each with the number of the
+   * cell's own lines that come BEFORE it — a cell writes paragraphs and tables
+   * in whatever order it likes.
+   */
+  readonly nestedTables?: ReadonlyArray<{ readonly block: TableBlock; readonly afterLine: number }>;
   readonly contentHeightPt: number;
   readonly totalHeightPt: number;
   readonly verticalAlign?: 'top' | 'center' | 'bottom';
@@ -4686,7 +4691,7 @@ function layoutTableCell(
 
   const innerWidth = Math.max(1, widthPt - padLeftPt - padRightPt);
   const lines: Array<Line> = [];
-  const nestedTables: Array<TableBlock> = [];
+  const nestedTables: Array<{ block: TableBlock; afterLine: number }> = [];
   let contentHeightPt = 0;
   let clipped = false;
   // Continuation cells (vMerge=continue) render no content — their text lives
@@ -4739,7 +4744,10 @@ function layoutTableCell(
           imageResources,
           innerWidth,
         );
-        nestedTables.push(nested);
+        // Where it sits among the cell's lines: fdo53985.docx opens a cell
+        // with a nested table and follows it with a paragraph, and drawing
+        // every table after every line printed the two the wrong way round.
+        nestedTables.push({ block: nested, afterLine: lines.length });
         contentHeightPt += nested.heightPt;
       }
       // image/shape/chart inside a cell are not yet rendered (skipped).
@@ -6519,7 +6527,20 @@ function emitRowChunk(
             ? slack / 2
             : 0;
     let textY = rowTop - cell.padTopPt - vOffset;
-    for (const line of cell.lines) {
+    const nestedX = cellX + cell.padLeftPt;
+    // Draw the nested tables that belong before line `n`, in document order.
+    const drawNestedBefore = (n: number): void => {
+      for (const nt of cell.nestedTables ?? []) {
+        if (nt.afterLine !== n) continue;
+        for (const nrow of nt.block.rows) {
+          const nestedIds = structId !== undefined ? nrow.cells.map(() => structId) : undefined;
+          emitRowChunk(out, nrow, nestedX, textY, pageHeight, nt.block.colCount, nestedIds);
+          textY -= nrow.heightPt;
+        }
+      }
+    };
+    for (const [lineIdx, line] of cell.lines.entries()) {
+      drawNestedBefore(lineIdx);
       const h = computeLineHeight(line, line.resolved);
       textY -= h;
       const offset = alignmentOffset(
@@ -6554,19 +6575,10 @@ function emitRowChunk(
         ...(structId !== undefined ? { structId } : {}),
       });
     }
-    // Nested tables render below the cell's paragraph lines, inset to the
-    // cell's content box. Each nested row reuses emitRowChunk; when tagged, its
-    // content is marked under the parent cell's structId.
-    if (cell.nestedTables) {
-      const nestedX = cellX + cell.padLeftPt;
-      for (const nt of cell.nestedTables) {
-        for (const nrow of nt.rows) {
-          const nestedIds = structId !== undefined ? nrow.cells.map(() => structId) : undefined;
-          emitRowChunk(out, nrow, nestedX, textY, pageHeight, nt.colCount, nestedIds);
-          textY -= nrow.heightPt;
-        }
-      }
-    }
+    // Whatever is left goes after the last line, inset to the cell's content
+    // box. Each nested row reuses emitRowChunk; when tagged, its content is
+    // marked under the parent cell's structId.
+    drawNestedBefore(cell.lines.length);
   }
 }
 
