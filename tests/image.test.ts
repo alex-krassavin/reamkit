@@ -528,3 +528,43 @@ describe('PNG colour types beyond 8-bit RGB', () => {
     expect(woven.rgb).toEqual(plain.rgb);
   });
 });
+
+describe('a rotated picture (§20.1.7.6 a:xfrm @rot)', () => {
+  const png = buildTinyPng(2, 2, [255, 0, 0, 255]);
+  const turned = (rot: string): string =>
+    asLatin1(
+      convertDocxToPdfSync(
+        buildDocxFromBody(
+          `<w:p><w:r><w:drawing>
+            <wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+              <wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Picture 1"/>
+              <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+                <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+                  <pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+                    <pic:blipFill><a:blip r:embed="rId20"/></pic:blipFill>
+                    <pic:spPr><a:xfrm ${rot}><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm></pic:spPr>
+                  </pic:pic>
+                </a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`,
+          { images: { rId20: { contentType: 'image/png', bytes: png, extension: 'png' } } },
+        ),
+        { fonts: FONTS },
+      ),
+    );
+
+  it('turns the picture about its centre', () => {
+    // crop-pixel.docx tilts its cover by 641099/60000 = 10.685°, clockwise;
+    // PDF measures the other way, so the matrix carries -10.685°.
+    const text = turned('rot="641099"');
+    const m = /([\d.-]+) ([\d.-]+) ([\d.-]+) ([\d.-]+) [\d.-]+ [\d.-]+ cm\n72 0 0 72 /u.exec(text);
+    expect(m).not.toBeNull();
+    const rad = (-10.685 * Math.PI) / 180;
+    expect(Number(m![1])).toBeCloseTo(Math.cos(rad), 3);
+    expect(Number(m![2])).toBeCloseTo(Math.sin(rad), 3);
+  });
+
+  it('leaves an unturned picture with no matrix of its own', () => {
+    expect(turned('')).not.toMatch(
+      /[\d.-]+ [\d.-]+ [\d.-]+ [\d.-]+ [\d.-]+ [\d.-]+ cm\n72 0 0 72 /u,
+    );
+  });
+});

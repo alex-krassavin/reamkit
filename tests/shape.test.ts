@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
+import { buildTinyPng } from './fixtures/build-png';
 import { countShown, showPattern } from './fixtures/pdf-show';
 import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 
@@ -515,6 +516,53 @@ describe('a drawing group', () => {
 // outline in `<wps:style>` and carries neither in `spPr`. Read alone, spPr says
 // the shape has none: TextEffects_Groupshapes.docx drew its caption on white
 // where LibreOffice fills an accent-blue rectangle behind it.
+describe('a shape filled with a picture (§20.1.8.14)', () => {
+  const png = buildTinyPng(2, 2, [255, 0, 0, 255]);
+  const filled = (blipFill: string): string =>
+    asLatin1(
+      convertDocxToPdfSync(
+        buildDocxFromBody(
+          `<w:p><w:r><w:drawing>
+          <wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+            <wp:extent cx="1828800" cy="914400"/><wp:docPr id="1" name="S"/>
+            <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+              <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+                <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+                  <wps:spPr>
+                    <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+                    ${blipFill}
+                  </wps:spPr>
+                  <wps:style><a:fillRef idx="1"><a:srgbClr val="ED7D31"/></a:fillRef></wps:style>
+                  <wps:bodyPr/>
+                </wps:wsp>
+              </a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`,
+          { images: { rId9: { bytes: png, extension: 'png', contentType: 'image/png' } } },
+        ),
+        { fonts: FONTS },
+      ),
+    );
+
+  it('draws the picture, not the gallery colour beneath it', () => {
+    // crop-roundtrip.docx fills a rectangle with a photo; read as no fill at
+    // all, the shape fell through to its style and drew a plain orange box.
+    const text = filled(
+      '<a:blipFill><a:blip r:embed="rId9"/><a:stretch><a:fillRect/></a:stretch></a:blipFill>',
+    );
+    expect(text).toContain(' Do'); // the image XObject is painted
+    expect(text).not.toMatch(/0\.929412 0\.490196 0\.192157 rg/u); // …and ED7D31 is not
+  });
+
+  it('shows the part a negative fillRect frames', () => {
+    // §20.1.8.30 — a negative inset pushes the picture's edge outside the box,
+    // so what remains inside is a zoomed-in part of it: the emitter clips.
+    const text = filled(
+      '<a:blipFill><a:blip r:embed="rId9"/>' +
+        '<a:stretch><a:fillRect t="-100000" b="0"/></a:stretch></a:blipFill>',
+    );
+    expect(text).toMatch(/re\nW\nn/u); // a clip path around the box
+  });
+});
+
 describe('a gallery-styled shape', () => {
   const styled = (styleXml: string, spPrInner: string, extra = ''): string =>
     asLatin1(

@@ -367,6 +367,8 @@ interface ImageBlockLaidOut {
   readonly resourceName: string;
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
   readonly crop?: ImageCrop;
+  /** §20.1.7.6 — degrees clockwise about the box's centre. */
+  readonly rotationDeg?: number;
   readonly spacingBeforePt: number;
   readonly spacingAfterPt: number;
   readonly altText?: string;
@@ -396,6 +398,8 @@ interface ShapeBlockLaidOut {
   readonly fillGradient?: ShapeGradient;
   /** §20.1.8.14 `a:blipFill` — the picture painted across the shape's box. */
   readonly fillImageResourceName?: string;
+  /** §20.1.8.30 — the part of that picture the box shows. */
+  readonly fillImageCrop?: ImageCrop;
   readonly stroke?: StrokeStyle;
   readonly shadow?: ShapeShadow;
   readonly rotation60k: number;
@@ -1692,6 +1696,7 @@ function layoutImageBlock(
     resolvedAlignment,
     resourceName: res?.resourceName ?? '',
     ...(image.crop ? { crop: image.crop } : {}),
+    ...(image.rotation60k ? { rotationDeg: image.rotation60k / 60000 } : {}),
     spacingBeforePt: image.paragraphProperties.spacingBefore ?? 0,
     spacingAfterPt: image.paragraphProperties.spacingAfter ?? 0,
     ...(image.altText ? { altText: image.altText } : {}),
@@ -1862,6 +1867,9 @@ function layoutShapeBlock(
     ...(children.length > 0 ? { children } : {}),
     paths,
     ...(fillImageResourceName ? { fillImageResourceName } : {}),
+    ...(fillImageResourceName && shape.fill.imageCrop
+      ? { fillImageCrop: shape.fill.imageCrop }
+      : {}),
     ...(fillColorHex ? { fillColorHex } : {}),
     ...(fillGradient ? { fillGradient } : {}),
     ...(stroke ? { stroke } : {}),
@@ -2417,6 +2425,7 @@ function drawBlocksSequentially(
         height: pt(block.heightPt),
         imageResourceName: block.resourceName,
         ...(block.crop ? { crop: block.crop } : {}),
+        ...(block.rotationDeg ? { rotationDeg: block.rotationDeg } : {}),
       });
       cursorY -= block.heightPt + block.spacingAfterPt;
       continue;
@@ -2920,6 +2929,8 @@ interface RunPlan {
   readonly imageHeightPt: number;
   readonly imageResourceName: string;
   readonly imageCrop?: ImageCrop;
+  /** §20.1.7.6 — the picture's rotation, in degrees clockwise. */
+  readonly imageRotationDeg?: number;
   readonly math?: {
     readonly items: ReadonlyArray<ResolvedMathItem>;
     readonly widthPt: number;
@@ -3056,6 +3067,9 @@ function tokenizeParagraph(
         imageHeightPt: heightPt,
         imageResourceName: res?.resourceName ?? '',
         ...(run.inlineImage.crop ? { imageCrop: run.inlineImage.crop } : {}),
+        ...(run.inlineImage.rotation60k
+          ? { imageRotationDeg: run.inlineImage.rotation60k / 60000 }
+          : {}),
       };
     }
     if (run.math) {
@@ -3171,6 +3185,7 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         widthPt: plan.imageWidthPt,
         heightPt: plan.imageHeightPt,
         ...(plan.imageCrop ? { crop: plan.imageCrop } : {}),
+        ...(plan.imageRotationDeg ? { rotationDeg: plan.imageRotationDeg } : {}),
         isSpace: false,
         bidiLevel: 0,
       });
@@ -5304,6 +5319,7 @@ function paginateSections(
           height: pt(block.heightPt),
           imageResourceName: block.resourceName,
           ...(block.crop ? { crop: block.crop } : {}),
+          ...(block.rotationDeg ? { rotationDeg: block.rotationDeg } : {}),
           ...(figId !== undefined ? { structId: figId } : {}),
         });
       };
@@ -5438,6 +5454,7 @@ function paginateSections(
             width: pt(sh.widthPt),
             height: pt(sh.heightPt),
             imageResourceName: sh.fillImageResourceName,
+            ...(sh.fillImageCrop ? { crop: sh.fillImageCrop } : {}),
             ...(figId !== undefined ? { structId: figId } : {}),
           });
         }

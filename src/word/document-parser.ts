@@ -565,6 +565,7 @@ function blocksForDrawing(
           width: content.width,
           height: content.height,
           ...(content.crop ? { crop: content.crop } : {}),
+          ...(content.rotation60k ? { rotation60k: content.rotation60k } : {}),
           paragraphProperties,
           ...(content.altText ? { altText: content.altText } : {}),
           ...(content.float ? { float: content.float } : {}),
@@ -1016,6 +1017,7 @@ function parseRun(
           width: content.width,
           height: content.height,
           ...(content.crop ? { crop: content.crop } : {}),
+          ...(content.rotation60k ? { rotation60k: content.rotation60k } : {}),
         };
       }
     } else if (poIs(child, 'w:pict') || poIs(child, 'w:object')) {

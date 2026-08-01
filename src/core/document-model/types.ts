@@ -200,6 +200,8 @@ export interface InlineImage {
   readonly height: Pt;
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
   readonly crop?: ImageCrop;
+  /** §20.1.7.6 `a:xfrm @rot` — the picture's own rotation (1/60000°, clockwise). */
+  readonly rotation60k?: number;
 }
 
 /**
@@ -880,6 +882,8 @@ export interface ImageBlock {
   readonly height: Pt;
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
   readonly crop?: ImageCrop;
+  /** §20.1.7.6 `a:xfrm @rot` — the picture's own rotation (1/60000°, clockwise). */
+  readonly rotation60k?: number;
   readonly paragraphProperties: ParagraphProperties;
   /** `wp:docPr @descr/@title` — alternate text for the tagged-PDF Figure (`/Alt`). */
   readonly altText?: string;
@@ -956,6 +960,11 @@ export interface ShapeFill {
    * inside a group reaches the page.
    */
   readonly imageResource?: ResourceId;
+  /**
+   * §20.1.8.30 `a:stretch/a:fillRect` (or an `a:srcRect` beside it) — the part
+   * of the picture the box shows, as the fractions cut from each side.
+   */
+  readonly imageCrop?: ImageCrop;
 }
 
 /** §20.1.10.49 ST_PresetLineDashVal — a shape outline's preset dash pattern. */

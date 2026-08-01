@@ -707,7 +707,16 @@ function emitPageContent(
     // /Im1 Do       paint the XObject
     // Q             restore
     out.push('q');
-    out.push(...placeImage(img.x, H - img.y - img.height, img.width, img.height, img.crop));
+    out.push(
+      ...placeImage(
+        img.x,
+        H - img.y - img.height,
+        img.width,
+        img.height,
+        img.crop,
+        img.rotationDeg,
+      ),
+    );
     out.push(`/${img.imageResourceName} Do`);
     out.push('Q');
   });
@@ -839,7 +848,7 @@ function emitPageContent(
         inBT = false;
       }
       out.push('q');
-      out.push(...placeImage(x, baselineY, tok.widthPt, tok.heightPt, tok.crop));
+      out.push(...placeImage(x, baselineY, tok.widthPt, tok.heightPt, tok.crop, tok.rotationDeg));
       out.push(`/${tok.imageResourceName} Do`);
       out.push('Q');
       // Text state is reset by ET; force re-emit on the next text token.
@@ -1247,21 +1256,40 @@ function placeImage(
   width: number,
   height: number,
   crop: ImageCrop | undefined,
+  rotationDeg?: number,
 ): Array<string> {
   const cm = (w: number, h: number, ox: number, oy: number): string =>
     `${formatNumber(w)} 0 0 ${formatNumber(h)} ${formatNumber(ox)} ${formatNumber(oy)} cm`;
-  if (!crop) return [cm(width, height, x, y)];
+  // §20.1.7.6 — a picture turned in its frame turns about the frame's CENTRE,
+  // and the clip and scale below then work in the turned frame exactly as they
+  // do in an upright one. DrawingML measures clockwise, PDF counter-clockwise.
+  const spin = rotationDeg
+    ? [rotateAboutCm(x + width / 2, y + height / 2, -rotationDeg)]
+    : ([] as Array<string>);
+  if (!crop) return [...spin, cm(width, height, x, y)];
   const kept = { w: 1 - crop.left - crop.right, h: 1 - crop.top - crop.bottom };
   // The full picture at the scale that makes its kept part fill the box, moved
   // so that part lands ON the box: left by the cut-away left edge, and down by
   // the cut-away BOTTOM one (PDF's y runs up, DrawingML's crop runs down).
   const full = { w: width / kept.w, h: height / kept.h };
   return [
+    ...spin,
     `${formatNumber(x)} ${formatNumber(y)} ${formatNumber(width)} ${formatNumber(height)} re`,
     'W',
     'n',
     cm(full.w, full.h, x - crop.left * full.w, y - crop.bottom * full.h),
   ];
+}
+
+/** A `cm` that turns the frame `deg` counter-clockwise about `(cx, cy)`. */
+function rotateAboutCm(cx: number, cy: number, deg: number): string {
+  const rad = (deg * Math.PI) / 180;
+  const c = Math.cos(rad);
+  const s = Math.sin(rad);
+  return (
+    `${formatNumber(c)} ${formatNumber(s)} ${formatNumber(-s)} ${formatNumber(c)} ` +
+    `${formatNumber(cx - cx * c + cy * s)} ${formatNumber(cy - cx * s - cy * c)} cm`
+  );
 }
 
 function computeJustifyExtra(line: Line): number {

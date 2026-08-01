@@ -97,6 +97,8 @@ export interface ImageToken {
   readonly heightPt: number;
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
   readonly crop?: ImageCrop;
+  /** §20.1.7.6 — degrees clockwise about the box's centre. */
+  readonly rotationDeg?: number;
   /** Constants kept to satisfy {@link Token} consumers — they never read these for images. */
   readonly isSpace: false;
   readonly bidiLevel: number;
@@ -263,6 +265,8 @@ export interface ImageItem extends PageItemBase {
   readonly imageResourceName: string;
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
   readonly crop?: ImageCrop;
+  /** §20.1.7.6 — degrees clockwise about the box's centre. */
+  readonly rotationDeg?: number;
 }
 
 /**

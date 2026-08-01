@@ -85,6 +85,8 @@ export type DrawingContent =
       readonly height: Pt;
       /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
       readonly crop?: ImageCrop;
+      /** §20.1.7.6 `a:xfrm @rot` — the picture's rotation (1/60000°, clockwise). */
+      readonly rotation60k?: number;
       /** `wp:docPr` `@descr`/`@title` — alternate text for the tagged-PDF Figure. */
       readonly altText?: string;
       readonly float?: FloatAnchor;
@@ -145,7 +147,12 @@ function parseAnchorPos(
   tag: 'wp:positionH' | 'wp:positionV',
   allowed: ReadonlyArray<string>,
 ): { relativeFrom: string; offsetPt?: number; align?: string } | undefined {
-  const pos = poChildren(anchor).find((c) => poIs(c, tag));
+  // §17.17.2 — the position may sit inside an `mc:AlternateContent`: Word
+  // writes the wp14 percentage offset as the Choice and the plain EMU offset as
+  // the Fallback. Read as plain children the anchor looked positionless and
+  // content-control-shape.docx's rule, 97% across the page, was drawn at its
+  // left edge.
+  const pos = expandMcChildren(poChildren(anchor)).find((c) => poIs(c, tag));
   if (!pos) return undefined;
   const relRaw = poAttr(pos, 'relativeFrom') ?? 'margin';
   // Unsupported bases (character, inside/outsideMargin…) degrade to the
@@ -248,7 +255,7 @@ export function parseDrawing(
   const uri = graphicData ? poAttr(graphicData, 'uri') : undefined;
 
   if (graphicData && uri === WPS_URI) {
-    const data = parseWsp(graphicData, extentCx, extentCy, resolveColor, parseBody);
+    const data = parseWsp(graphicData, extentCx, extentCy, resolveColor, parseBody, resolveImage);
     return data ? { kind: 'shape', data, ...alt } : null;
   }
 
@@ -288,12 +295,17 @@ export function parseDrawing(
   const rId = blip ? poAttr(blip, 'embed') : undefined;
   if (extentCx !== undefined && extentCy !== undefined && rId) {
     const crop = parseSrcRect(poFindDescendant(anchor, 'a:srcRect'));
+    // §20.1.7.6 — a picture may be turned in its frame. crop-pixel.docx tilts
+    // its cover by 10.7° and we set it square.
+    const xfrm = poFindDescendant(anchor, 'a:xfrm');
+    const rot = xfrm ? poIntAttr(xfrm, 'rot') : undefined;
     return {
       kind: 'image',
       imageId: rId,
       width: emuToPt(extentCx),
       height: emuToPt(extentCy),
       ...(crop ? { crop } : {}),
+      ...(rot ? { rotation60k: rot } : {}),
       ...alt,
     };
   }
@@ -604,12 +616,13 @@ function parseWsp(
   extentCy: number | undefined,
   resolveColor: ColorResolver,
   parseBody?: ParseBody,
+  resolveImage?: (relId: string) => ResourceId | undefined,
 ): ShapeData | null {
   // wps:wsp is normally a direct child, but a nested mc:AlternateContent can
   // wrap it — expand first so either layout is found.
   const wsp = expandMcChildren(poChildren(graphicData)).find((c) => poIs(c, 'wps:wsp'));
   if (!wsp) return null;
-  return parseWspNode(wsp, extentCx, extentCy, resolveColor, parseBody);
+  return parseWspNode(wsp, extentCx, extentCy, resolveColor, parseBody, resolveImage);
 }
 
 // One `wps:wsp`, given its box in EMU (from the drawing's wp:extent, or from
@@ -620,6 +633,7 @@ function parseWspNode(
   extentCy: number | undefined,
   resolveColor: ColorResolver,
   parseBody?: ParseBody,
+  resolveImage?: (relId: string) => ResourceId | undefined,
 ): ShapeData | null {
   const spPr = poChildren(wsp).find((c) => poIs(c, 'wps:spPr'));
 
@@ -646,7 +660,7 @@ function parseWspNode(
     const cust = poChildren(spPr).find((c) => poIs(c, 'a:custGeom'));
     if (prst) geometry = parsePrstGeom(prst);
     else if (cust) geometry = parseCustGeom(cust);
-    fill = parseFill(spPr, resolveColor);
+    fill = parseFill(spPr, resolveColor, resolveImage);
     line = parseLine(spPr, resolveColor);
   }
 
@@ -909,9 +923,28 @@ const firstPt = (node: PoNode): { x: number; y: number } | undefined => pts(node
  * @param spPr         The `wps:spPr` node.
  * @param resolveColor Resolver for theme/scheme colours.
  */
-export function parseFill(spPr: PoNode, resolveColor: ColorResolver): ShapeFill {
+export function parseFill(
+  spPr: PoNode,
+  resolveColor: ColorResolver,
+  resolveImage?: (relId: string) => ResourceId | undefined,
+): ShapeFill {
   for (const child of poChildren(spPr)) {
     if (poIs(child, 'a:noFill')) return { kind: 'none' };
+    // §20.1.8.14 — the shape is filled with a PICTURE. Unread, the shape fell
+    // through to its gallery style's colour: crop-roundtrip.docx's photo came
+    // out as a plain accent-orange rectangle.
+    if (poIs(child, 'a:blipFill')) {
+      const blip = poFindDescendant(child, 'a:blip');
+      const relId = blip ? poAttr(blip, 'embed') : undefined;
+      const resource = relId !== undefined ? resolveImage?.(relId) : undefined;
+      if (resource === undefined) return { kind: 'none' };
+      const crop = parseSrcRect(poFindDescendant(child, 'a:srcRect')) ?? fillRectCrop(child);
+      return {
+        kind: 'picture',
+        imageResource: resource,
+        ...(crop ? { imageCrop: crop } : {}),
+      };
+    }
     if (poIs(child, 'a:solidFill')) {
       const hex = colorFromContainer(child, resolveColor);
       return hex ? { kind: 'solid', colorHex: hex } : { kind: 'none' };
@@ -922,6 +955,39 @@ export function parseFill(spPr: PoNode, resolveColor: ColorResolver): ShapeFill 
     }
   }
   return { kind: 'none' };
+}
+
+/**
+ * §20.1.8.30 `a:stretch/a:fillRect` — where the picture's edges land relative
+ * to the shape's box, in 1000ths of a percent of that box. A NEGATIVE inset
+ * pushes the edge outside the box, which is how a fill zooms in: what remains
+ * inside is the part the box shows, so the insets convert straight to the crop
+ * fractions of the SOURCE. crop-roundtrip.docx frames the middle of its photo
+ * that way and we drew the whole of it.
+ *
+ * @param blipFill The `a:blipFill` node.
+ * @returns The crop, or `undefined` when the fill states no `a:fillRect`.
+ */
+function fillRectCrop(blipFill: PoNode): ImageCrop | undefined {
+  const stretch = poChildren(blipFill).find((c) => poIs(c, 'a:stretch'));
+  const rect = stretch ? poChildren(stretch).find((c) => poIs(c, 'a:fillRect')) : undefined;
+  if (!rect) return undefined;
+  const side = (name: string): number => (poIntAttr(rect, name) ?? 0) / 100000;
+  const l = side('l');
+  const t = side('t');
+  const r = side('r');
+  const b = side('b');
+  if (l === 0 && t === 0 && r === 0 && b === 0) return undefined;
+  const spanX = 1 - l - r;
+  const spanY = 1 - t - b;
+  if (spanX <= 0 || spanY <= 0) return undefined;
+  const clamp = (v: number): number => Math.min(0.99, Math.max(0, v));
+  return {
+    left: clamp(-l / spanX),
+    top: clamp(-t / spanY),
+    right: clamp(-r / spanX),
+    bottom: clamp(-b / spanY),
+  };
 }
 
 /**
