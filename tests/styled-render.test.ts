@@ -343,6 +343,28 @@ describe('Styled rendering: rPr + pPr → PDF', () => {
     expect(text).toMatch(/0\.957 0\.906 0\.827 rg\n[\d.]+ [\d.]+ [\d.]+ [\d.]+ re\nf/u);
   });
 
+  it('sends an absolute-position tab to the middle and the far side (§17.3.3.15)', () => {
+    // A `w:ptab` has no distance of its own: it reaches for an edge of the
+    // column. Read nowhere, SimpleHeadThreeColFoot.docx printed its three
+    // footer regions as "Footer LeftFooter MiddleFooter Right".
+    const docx = buildDocxFromBody(
+      '<w:p>' +
+        '<w:r><w:t>L</w:t></w:r>' +
+        '<w:r><w:ptab w:relativeTo="margin" w:alignment="center" w:leader="none"/></w:r>' +
+        '<w:r><w:t>M</w:t></w:r>' +
+        '<w:r><w:ptab w:relativeTo="margin" w:alignment="right" w:leader="none"/></w:r>' +
+        '<w:r><w:t>R</w:t></w:r>' +
+        '</w:p>',
+    );
+    const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
+    const xs = [...text.matchAll(/1 0 0 1 ([\d.]+) [\d.]+ Tm/gu)].map((m) => Number(m[1]));
+    expect(xs.length).toBeGreaterThan(2);
+    // A4 less 1in margins is 451pt of column, so the centre tab lands near
+    // 72 + 451/2 and the right one carries its letter to the far margin.
+    expect(Math.max(...xs)).toBeGreaterThan(500);
+    expect(xs.some((x) => x > 280 && x < 310)).toBe(true);
+  });
+
   it('splits a table row taller than the page into chunks across pages', () => {
     // 80 paragraphs in one cell exceeds A4 content height (~698pt) at typical
     // 14pt line height. Expect at least two pages with continuation borders.

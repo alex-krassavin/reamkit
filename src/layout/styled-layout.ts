@@ -18,6 +18,7 @@
 // objects out of pdf/ is mechanical follow-up work, not part of the freeze.
 
 import type {
+  TabStop,
   BodyElement,
   Border,
   BorderStyle,
@@ -3042,6 +3043,7 @@ function resolveTabs(
   tokens: Array<Token>,
   resolved: ResolvedParagraphProperties,
   isFirst: boolean,
+  availableWidthPt: number,
 ): void {
   const stops = resolved.tabs;
   let x = resolved.indentLeft + (isFirst ? resolved.indentFirstLine : 0);
@@ -3078,9 +3080,18 @@ function resolveTabs(
       tokens[i] = { ...tok, widthPt: 0, text: '' };
       continue;
     }
-    const stop = stops.find((sp) => sp.positionPt > x + 0.01);
+    // §17.3.3.15 — an absolute-position tab has no distance of its own: it
+    // reaches for the middle or the far side of the column, wherever those
+    // fall. Everything else is a distance from the text margin.
+    const stopAt = (sp: TabStop): number =>
+      sp.relativeTo === 'center'
+        ? availableWidthPt / 2
+        : sp.relativeTo === 'right'
+          ? availableWidthPt
+          : sp.positionPt;
+    const stop = stops.find((sp) => stopAt(sp) > x + 0.01);
     const position = stop
-      ? stop.positionPt
+      ? stopAt(stop)
       : (Math.floor(x / DEFAULT_TAB_STOP_PT) + 1) * DEFAULT_TAB_STOP_PT;
     const alignment = stop?.alignment ?? 'left';
     let target = position;
@@ -3203,7 +3214,7 @@ function lineFromRange(
     if (ft) lineTokens.push(ft);
   }
 
-  resolveTabs(lineTokens, resolved, isFirst);
+  resolveTabs(lineTokens, resolved, isFirst, availableWidthPt);
 
   // If the chosen break is at a hyphenation penalty, fold the hyphen glyph
   // onto the last text token of the line.

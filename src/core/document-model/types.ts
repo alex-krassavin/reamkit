@@ -88,8 +88,17 @@ export interface RunProperties {
  * gap on the way there.
  */
 export interface TabStop {
-  /** Distance from the text margin, in points (`w:pos`, twips). */
+  /**
+   * Distance from the text margin, in points (`w:pos`, twips). Ignored when
+   * {@link relativeTo} names an edge — a §17.3.3.15 `w:ptab` positions against
+   * the column itself, whose width only the layout knows.
+   */
   readonly positionPt: Pt;
+  /**
+   * §17.3.3.15 `w:ptab` — an ABSOLUTE position tab, which goes to the middle
+   * or the far side of the text column rather than to a stated distance.
+   */
+  readonly relativeTo?: 'center' | 'right';
   /** §17.18.90 ST_TabJc — how the text after the tab sits against the stop. */
   readonly alignment: 'left' | 'center' | 'right' | 'decimal';
   /** §17.18.89 ST_TabTlc — the character drawn across the gap. */

@@ -21,6 +21,7 @@ import type {
   Section,
   SectionColumns,
   SectionProperties,
+  TabStop,
 } from '@/core/document-model';
 
 import type { ColorResolver } from '@/core/drawingml/colors';
@@ -28,7 +29,7 @@ import type { Loss, ResourceId } from '@/core/ir';
 import type { PoNode } from '@/core/po-helpers';
 import type { DrawingContent } from '@/word/drawing-parser';
 import { resolveInternalEntities } from '@/core/opc/xml-entities';
-import { emuToPt, twipsToPt } from '@/core/ir';
+import { emuToPt, pt, twipsToPt } from '@/core/ir';
 import { parseOMath } from '@/word/omml-parser';
 import { defaultColorResolver } from '@/core/drawingml/colors';
 import { expandMcChildren, parseDrawing, parseVmlPicture } from '@/word/drawing-parser';
@@ -437,7 +438,12 @@ function scanForLoneDrawing(container: PoNode, acc: LoneDrawingScan): void {
           if (!acc.vml && poFindDescendant(rc, 'v:imagedata') !== undefined) acc.vml = rc;
         } else if (poIs(rc, 'w:t') && poText(rc).length > 0) {
           acc.hasOther = true;
-        } else if (poIs(rc, 'w:tab') || poIs(rc, 'w:br') || poIs(rc, 'w:noBreakHyphen')) {
+        } else if (
+          poIs(rc, 'w:tab') ||
+          poIs(rc, 'w:ptab') ||
+          poIs(rc, 'w:br') ||
+          poIs(rc, 'w:noBreakHyphen')
+        ) {
           acc.hasOther = true;
         }
       }
@@ -608,6 +614,14 @@ function parseParagraph(p: PoNode, ctx: ParseContext, extraBookmarks?: Array<str
     const alignment = jcVal === 'left' ? 'left' : jcVal === 'right' ? 'right' : 'center';
     properties = { ...properties, alignment };
   }
+  // §17.3.3.15 — every `w:ptab` in the paragraph becomes a stop of its own, in
+  // the order they appear: the tab that reaches it is an ordinary one, and the
+  // resolver takes the next stop past where the line has run. Read nowhere,
+  // SimpleHeadThreeColFoot.docx printed "Footer LeftFooter MiddleFooter Right".
+  const pTabs = collectPositionTabs(p);
+  if (pTabs.length > 0) {
+    properties = { ...properties, tabs: [...(properties.tabs ?? []), ...pTabs] };
+  }
   const collected: Array<CollectedRun> = [];
   collectRuns(p, collected, ctx);
   return {
@@ -615,6 +629,36 @@ function parseParagraph(p: PoNode, ctx: ParseContext, extraBookmarks?: Array<str
     runs: applyFieldFsm(collected),
     ...(bookmarks.length > 0 ? { bookmarks } : {}),
   };
+}
+
+/**
+ * §17.3.3.15 `w:ptab` — the absolute-position tabs a paragraph holds, as stops.
+ *
+ * `@w:alignment` says which edge of the text column the tab reaches for; the
+ * `left` alignment reaches for no edge at all (it goes to where the text
+ * already is) and states no stop. `@w:relativeTo` distinguishes the margin from
+ * the paragraph's indent, which for a stop measured from the text margin is the
+ * same place.
+ *
+ * @param p The `w:p` element.
+ * @returns One stop per position tab, in document order.
+ */
+function collectPositionTabs(p: PoNode): Array<TabStop> {
+  const out: Array<TabStop> = [];
+  const visit = (node: PoNode): void => {
+    for (const child of poChildren(node)) {
+      if (poIs(child, 'w:ptab')) {
+        const alignment = poAttr(child, 'alignment');
+        if (alignment === 'center' || alignment === 'right') {
+          out.push({ positionPt: pt(0), alignment, relativeTo: alignment });
+        }
+        continue;
+      }
+      if (poIs(child, 'w:r') || poIs(child, 'w:hyperlink') || poIs(child, 'w:ins')) visit(child);
+    }
+  };
+  visit(p);
+  return out;
 }
 
 // A parsed run plus the complex-field markers the FSM consumes (§17.16.18
@@ -846,6 +890,10 @@ function parseRun(
     if (poIs(child, 'w:t')) {
       text += poText(child);
     } else if (poIs(child, 'w:tab')) {
+      text += '\t';
+    } else if (poIs(child, 'w:ptab')) {
+      // §17.3.3.15 — an absolute position tab is a tab: what makes it absolute
+      // is where it goes, and parseParagraph collects that from the same run.
       text += '\t';
     } else if (poIs(child, 'w:br')) {
       // §17.3.3.1 — w:type="page" forces a page break; any other break type
