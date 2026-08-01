@@ -736,11 +736,31 @@ function vmlStyleNumber(shape: PoNode, prop: string): number | undefined {
 // §14.1.2 — the VML primitives, as the preset geometry each corresponds to.
 // A `v:shape` states its path in a `v:shapetype` of formulas we do not
 // evaluate, so it is drawn as the box it occupies.
-// §14.1.2.19 `o:spt` — the shapetype's own kind, for the few whose geometry is
-// not the box they occupy.
+// §14.1.2.19 `o:spt` — the shapetype's own kind. VML states the geometry as a
+// `path` of formulas we do not evaluate, but the primitives are numbered, and
+// the number says which shape it is. fdo76016.docx draws an up arrow this way
+// and we drew the rectangle every unrecognised `v:shape` degrades to.
 const VML_SPT_PRESETS: Readonly<Record<string, string>> = {
+  '1': 'rect',
+  '2': 'roundRect',
+  '3': 'ellipse',
+  '4': 'diamond',
+  '5': 'triangle', // isoceles
+  '6': 'rtTriangle',
+  '7': 'parallelogram',
+  '8': 'trapezoid',
+  '9': 'hexagon',
+  '12': 'star5',
+  '13': 'rightArrow',
   '20': 'line', // straight connector
   '32': 'line', // straight ARROW connector
+  '56': 'pentagon',
+  '58': 'star8',
+  '59': 'star16',
+  '60': 'star32',
+  '66': 'leftArrow',
+  '67': 'downArrow',
+  '68': 'upArrow',
 };
 
 const VML_PRESETS: Readonly<Record<string, string>> = {
