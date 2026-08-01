@@ -4910,6 +4910,19 @@ class PageAssembler {
    * must flow around. Page-scoped, like the float graphics.
    */
   exclusions: Array<{ x0: number; x1: number; topYUp: number; bottomYUp: number }> = [];
+  /**
+   * Claim the area a side-wrapping float keeps to itself: its own box grown by
+   * the §20.4.2.3 `distT/B/L/R` stand-off the anchor asks for.
+   */
+  excludeFloat = (f: FloatAnchor, x: number, topYUp: number, w: number, h: number): void => {
+    const d = f.wrapDist;
+    this.exclusions.push({
+      x0: x - (d?.leftPt ?? 0),
+      x1: x + w + (d?.rightPt ?? 0),
+      topYUp: topYUp + (d?.topPt ?? 0),
+      bottomYUp: topYUp - h - (d?.bottomPt ?? 0),
+    });
+  };
   /** The float's left edge on the page, resolved from its horizontal anchor. */
   floatX = (f: FloatAnchor, widthPt: number): number => {
     const h = f.posH;
@@ -5001,18 +5014,25 @@ class PageAssembler {
    * Per-line geometry beside an exclusion: the narrowed width and the x shift.
    * Text goes on the WIDER side of the float (one side per line, v1).
    */
-  lineGeometryAt = (yTop: number, h: number): { width: number; xOffset: number } => {
+  lineGeometryAt = (
+    yTop: number,
+    h: number,
+  ): { width: number; xOffset: number; blockedUntilYUp?: number } => {
     const full = this.colWidth();
     const e = this.exclusionAt(yTop, h);
     if (!e) return { width: full, xOffset: 0 };
     const cl = this.colLeft();
     const leftRoom = e.x0 - FLOAT_TEXT_GAP - cl;
     const rightRoom = cl + full - (e.x1 + FLOAT_TEXT_GAP);
-    if (rightRoom >= leftRoom) {
-      const w = Math.max(MIN_WRAP_WIDTH, rightRoom);
-      return { width: w, xOffset: full - w };
+    // A float as wide as the column leaves no side to flow down: the line
+    // belongs BELOW it, not squeezed into a 36pt gutter that would print on
+    // top of the drawing. effect-extent-line-width.docx anchors a text box
+    // spanning the whole measure and carries the paragraph's tail underneath.
+    if (Math.max(leftRoom, rightRoom) < MIN_WRAP_WIDTH) {
+      return { width: full, xOffset: 0, blockedUntilYUp: e.bottomYUp };
     }
-    return { width: Math.max(MIN_WRAP_WIDTH, leftRoom), xOffset: 0 };
+    if (rightRoom >= leftRoom) return { width: rightRoom, xOffset: full - rightRoom };
+    return { width: leftRoom, xOffset: 0 };
   };
 
   /**
@@ -5033,9 +5053,21 @@ class PageAssembler {
     let y = startY;
     for (let i = 0; i < 200; i++) {
       const g = this.lineGeometryAt(y, h0);
+      // A blocked line is not narrowed — it moves below the float whole, and
+      // the placement loop is what moves it.
+      if (g.blockedUntilYUp !== undefined) {
+        widths.push(this.colWidth());
+        y = g.blockedUntilYUp - h0;
+        if (y < this.bottomLimit()) break;
+        continue;
+      }
       widths.push(g.width);
       if (g.width < this.colWidth()) narrowed = true;
-      else if (i > 0) break; // first full-width line after the float ends the scan
+      // The scan stops at the first full-width line PAST the float — stopping
+      // at any full-width line gave up before ever reaching one anchored part
+      // way down the paragraph (effect-extent-line-width.docx puts its box
+      // 109pt below the paragraph's own top).
+      else if (narrowed) break;
       y -= h0;
       if (y < this.bottomLimit()) break;
     }
@@ -5421,6 +5453,14 @@ function paginateSections(
             }
           }
         }
+        // A float that leaves no room beside it pushes the line under itself.
+        // Two of them stacked push twice, so the walk repeats — bounded, since
+        // each step lands strictly below the exclusion it cleared.
+        for (let guard = 0; guard < 8 && asm.exclusions.length > 0; guard++) {
+          const blocked = asm.lineGeometryAt(asm.cursorY, h).blockedUntilYUp;
+          if (blocked === undefined || blocked >= asm.cursorY) break;
+          asm.cursorY = blocked;
+        }
         asm.cursorY -= h;
         const indentLeft =
           pb.resolved.indentLeft + (line.firstLine ? pb.resolved.indentFirstLine : 0);
@@ -5518,12 +5558,7 @@ function paginateSections(
           ),
         );
         if (block.float.wrap !== 'none') {
-          asm.exclusions.push({
-            x0: fx,
-            x1: fx + block.widthPt,
-            topYUp: fy,
-            bottomYUp: fy - block.heightPt,
-          });
+          asm.excludeFloat(block.float, fx, fy, block.widthPt, block.heightPt);
         }
       } else {
         asm.cursorY -= block.spacingBeforePt;
@@ -5700,12 +5735,7 @@ function paginateSections(
           ),
         );
         if (block.float.wrap !== 'none') {
-          asm.exclusions.push({
-            x0: fx,
-            x1: fx + block.widthPt,
-            topYUp: fy,
-            bottomYUp: fy - block.heightPt,
-          });
+          asm.excludeFloat(block.float, fx, fy, block.widthPt, block.heightPt);
         }
       } else {
         asm.cursorY -= block.spacingBeforePt;
@@ -5737,12 +5767,7 @@ function paginateSections(
           ),
         );
         if (block.float.wrap !== 'none') {
-          asm.exclusions.push({
-            x0: fx,
-            x1: fx + block.widthPt,
-            topYUp: fy,
-            bottomYUp: fy - block.heightPt,
-          });
+          asm.excludeFloat(block.float, fx, fy, block.widthPt, block.heightPt);
         }
       } else {
         asm.cursorY -= block.spacingBeforePt;

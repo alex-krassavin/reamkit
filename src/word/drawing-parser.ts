@@ -138,10 +138,23 @@ function parseFloatAnchor(anchor: PoNode): FloatAnchor | undefined {
   const zOrder = poIntAttr(anchor, 'relativeHeight');
   const posH = parseAnchorPos(anchor, 'wp:positionH', ['margin', 'page', 'column']);
   const posV = parseAnchorPos(anchor, 'wp:positionV', ['margin', 'page', 'paragraph', 'line']);
+  // §20.4.2.3 — the stand-off the wrapped text keeps from each edge. Ignoring
+  // it let effect-extent-line-width.docx fill its paragraph right down to the
+  // text box's top edge, where Word and LibreOffice both stop a line earlier
+  // and carry the rest below the box.
+  const dist = (name: string): Pt => emuToPt(poIntAttr(anchor, name) ?? 0);
+  const wrapDist = {
+    topPt: dist('distT'),
+    bottomPt: dist('distB'),
+    leftPt: dist('distL'),
+    rightPt: dist('distR'),
+  };
+  const anyDist = Object.values(wrapDist).some((v) => v > 0);
   return {
     wrap,
     ...(behind ? { behind: true } : {}),
     ...(zOrder !== undefined ? { zOrder } : {}),
+    ...(anyDist ? { wrapDist } : {}),
     ...(posH ? { posH: posH as NonNullable<FloatAnchor['posH']> } : {}),
     ...(posV ? { posV: posV as NonNullable<FloatAnchor['posV']> } : {}),
   };

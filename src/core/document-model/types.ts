@@ -1391,6 +1391,16 @@ export interface FloatAnchor {
     readonly relativeFrom: 'margin' | 'page' | 'paragraph' | 'line';
     readonly offsetPt?: Pt;
   };
+  /**
+   * §20.4.2.3 `wp:anchor @distT/@distB/@distL/@distR` — how far the wrapped
+   * text stands off each edge of the drawing. Absent sides are 0.
+   */
+  readonly wrapDist?: {
+    readonly topPt: Pt;
+    readonly bottomPt: Pt;
+    readonly leftPt: Pt;
+    readonly rightPt: Pt;
+  };
 }
 
 /**
