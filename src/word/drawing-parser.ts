@@ -46,6 +46,9 @@ const WPG_URI = 'http://schemas.microsoft.com/office/word/2010/wordprocessingGro
 // §20.3 — a canvas of shapes, written in the plain DrawingML namespace. Word
 // exports a pasted PowerPoint group this way.
 const LOCKED_CANVAS_URI = 'http://schemas.openxmlformats.org/drawingml/2006/lockedCanvas';
+// Word's own drawing canvas: the same members (`pic:pic`, `wps:wsp`, `wpg:wgp`)
+// placed by their own `a:xfrm` inside the frame `wp:extent` gives.
+const WPC_URI = 'http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas';
 
 // A group's own "geometry": no commands, so its box paints nothing.
 const EMPTY_GEOMETRY = { pathWidth: 0, pathHeight: 0, commands: [] };
@@ -53,7 +56,10 @@ const EMPTY_GEOMETRY = { pathWidth: 0, pathHeight: 0, commands: [] };
 // Namespaces whose <mc:Choice> we can render. 'wps' = wordprocessingShape,
 // 'wpg' = wordprocessingGroup. The VML in the Fallback is a different geometry
 // language altogether, so a Choice we can read is always the better branch.
-const UNDERSTOOD_NS = new Set(['wps', 'wpg']);
+// The `mc:Choice` namespaces we can actually read. `wpc` joined them once the
+// canvas below was understood — until then fdo65833.docx fell through to its
+// VML fallback, which drew the picture at the whole canvas's size.
+const UNDERSTOOD_NS = new Set(['wps', 'wpg', 'wpc']);
 
 /**
  * A parsed DrawingML shape without the owning paragraph's properties (attached by
@@ -355,6 +361,23 @@ export function parseDrawing(
       resolveImage,
     );
     if (!data) return null;
+    return { kind: 'shape', data: { ...data, ...(relativeSize ? { relativeSize } : {}) }, ...alt };
+  }
+
+  // A Word drawing canvas — a group whose members carry their own positions.
+  // Unread, fdo65833.docx's canvas fell through to the picture path and drew
+  // the screenshot inside it at the whole canvas's size.
+  if (graphicData && uri === WPC_URI) {
+    const canvas = expandMcChildren(poChildren(graphicData)).find((c) => poIsLocal(c, 'wpc'));
+    if (!canvas || extentCx === undefined || extentCy === undefined) return null;
+    const children = groupChildren(canvas, resolveColor, parseBody, resolveImage);
+    const data: ShapeData = {
+      width: emuToPt(extentCx),
+      height: emuToPt(extentCy),
+      ...(children.length > 0 ? { children } : {}),
+      geometry: { kind: 'custom', custom: EMPTY_GEOMETRY },
+      fill: { kind: 'none' },
+    };
     return { kind: 'shape', data: { ...data, ...(relativeSize ? { relativeSize } : {}) }, ...alt };
   }
 
@@ -1062,10 +1085,10 @@ function groupChildren(
   // Word and LibreOffice both draw such a canvas from its content's own corner,
   // which is what taking the topmost-leftmost member as the origin does.
   const declared = at('a:chOff', 'x', 'y');
-  const chOff =
-    !chExt || chExt.x <= 0 || chExt.y <= 0
-      ? memberOrigin(wgp, declared ?? { x: 0, y: 0 })
-      : (declared ?? { x: 0, y: 0 });
+  const degenerate = xfrm !== undefined && (!chExt || chExt.x <= 0 || chExt.y <= 0);
+  const chOff = degenerate
+    ? memberOrigin(wgp, declared ?? { x: 0, y: 0 })
+    : (declared ?? { x: 0, y: 0 });
 
   const out: Array<ShapeGroupChild> = [];
   for (const child of expandMcChildren(poChildren(wgp))) {
