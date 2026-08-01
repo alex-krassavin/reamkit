@@ -25,6 +25,27 @@ const UNDERLINE_STYLES = new Set<UnderlineStyle>([
 
 const VERTICAL_ALIGNS = new Set<VerticalAlign>(['baseline', 'superscript', 'subscript']);
 
+// §17.18.40 ST_HighlightColor — the marker pen's seventeen colours. `none` is
+// the absence of one, so it maps to nothing rather than to a colour.
+const HIGHLIGHT_COLORS: ReadonlyMap<string, string> = new Map([
+  ['black', '000000'],
+  ['blue', '0000FF'],
+  ['cyan', '00FFFF'],
+  ['darkBlue', '000080'],
+  ['darkCyan', '008080'],
+  ['darkGray', '808080'],
+  ['darkGreen', '008000'],
+  ['darkMagenta', '800080'],
+  ['darkRed', '800000'],
+  ['darkYellow', '808000'],
+  ['green', '00FF00'],
+  ['lightGray', 'C0C0C0'],
+  ['magenta', 'FF00FF'],
+  ['red', 'FF0000'],
+  ['white', 'FFFFFF'],
+  ['yellow', 'FFFF00'],
+]);
+
 /**
  * Parse a run-properties element (`w:rPr`, ECMA-376 Part 1 §17.3.2) into the
  * typed {@link RunProperties}. Reads the character formatting the renderer needs:
@@ -132,6 +153,16 @@ export function parseRunProperties(rPr: unknown): RunProperties {
     const shd = el['w:shd'];
     const hex = shadingFillHex(getVal(shd), getAttr(shd, 'color'), getAttr(shd, 'fill'));
     if (hex !== undefined && hex !== 'FFFFFF') out.shadingColorHex = hex;
+  }
+
+  // §17.3.2.15 `w:highlight` — the marker pen: one of seventeen named colours
+  // painted behind the run. It goes in the same slot as the run's shading —
+  // both are a filled box under the glyphs, and where a run states both, the
+  // highlight is the one that shows. fdo76591.docx sets its "IMPORTANT NOTICE"
+  // in white on a black highlight, and unread it was white on white.
+  if ('w:highlight' in el) {
+    const hex = HIGHLIGHT_COLORS.get(getVal(el['w:highlight']) ?? '');
+    if (hex !== undefined) out.shadingColorHex = hex;
   }
 
   // ECMA-376 §17.3.2.20 — w:lang @w:val (the Latin language, e.g. "en-US").
