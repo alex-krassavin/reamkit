@@ -25,6 +25,7 @@ import type {
 import type { ColorResolver } from '@/core/drawingml/colors';
 import type { Loss, ResourceId } from '@/core/ir';
 import type { PoNode } from '@/core/po-helpers';
+import { resolveInternalEntities } from '@/core/opc/xml-entities';
 import { emuToPt, twipsToPt } from '@/core/ir';
 import { parseOMath } from '@/word/omml-parser';
 import { defaultColorResolver } from '@/core/drawingml/colors';
@@ -137,7 +138,12 @@ export function parseDocument(
   documentXml: Uint8Array,
   ctx: ParseContext = DEFAULT_PARSE_CONTEXT,
 ): Array<BodyElement> {
-  const xml = decoder.decode(documentXml);
+  // A DTD is forbidden in OPC and fast-xml-parser refuses one outright when it
+  // declares an EXTERNAL entity — which is the right instinct and the wrong
+  // outcome: ExternalEntityInText.docx names http://poi.apache.org/ and the
+  // whole document went unread over it. The subset is resolved and stripped
+  // here, and a reference to something we will not fetch simply drops.
+  const xml = resolveInternalEntities(decoder.decode(documentXml));
   const tree = parser.parse(xml) as Array<PoNode>;
   const body = poFindByPath(tree, ['w:document', 'w:body']);
   if (!body) return [];
@@ -180,7 +186,7 @@ export function parseSection(documentXml: Uint8Array): SectionProperties {
  * @returns The sections in document order; empty when the `w:body` is absent.
  */
 export function parseSections(documentXml: Uint8Array): Array<Section> {
-  const xml = decoder.decode(documentXml);
+  const xml = resolveInternalEntities(decoder.decode(documentXml));
   const tree = parser.parse(xml) as Array<PoNode>;
   const body = poFindByPath(tree, ['w:document', 'w:body']);
   if (!body) return [];
@@ -321,7 +327,7 @@ export function parseHeaderFooter(
   xml: Uint8Array,
   ctx: ParseContext = DEFAULT_PARSE_CONTEXT,
 ): Array<BodyElement> {
-  const tree = parser.parse(decoder.decode(xml)) as Array<PoNode>;
+  const tree = parser.parse(resolveInternalEntities(decoder.decode(xml))) as Array<PoNode>;
   const root = tree.find((n) => poIs(n, 'w:hdr') || poIs(n, 'w:ftr'));
   if (!root) return [];
   return parseBodyElements(poChildren(root), ctx);
@@ -881,7 +887,7 @@ export function parseNotes(
   noteTag: 'w:footnote' | 'w:endnote',
   ctx: ParseContext = DEFAULT_PARSE_CONTEXT,
 ): Map<string, Array<BodyElement>> {
-  const xml = decoder.decode(notesXml);
+  const xml = resolveInternalEntities(decoder.decode(notesXml));
   const tree = parser.parse(xml) as Array<PoNode>;
   const root = poFindByPath(tree, [rootTag]);
   const out = new Map<string, Array<BodyElement>>();
@@ -906,7 +912,7 @@ function parseCommentsRaw(
   commentsXml: Uint8Array,
   ctx: ParseContext,
 ): { comments: Map<string, Comment>; paraIds: Map<string, string> } {
-  const xml = decoder.decode(commentsXml);
+  const xml = resolveInternalEntities(decoder.decode(commentsXml));
   const tree = parser.parse(xml) as Array<PoNode>;
   const root = poFindByPath(tree, ['w:comments']);
   const comments = new Map<string, Comment>();
@@ -972,7 +978,7 @@ export interface CommentExtension {
  * @returns A map from `paraId` to its {@link CommentExtension}.
  */
 export function parseCommentsExtended(xml: Uint8Array): Map<string, CommentExtension> {
-  const tree = parser.parse(decoder.decode(xml)) as Array<PoNode>;
+  const tree = parser.parse(resolveInternalEntities(decoder.decode(xml))) as Array<PoNode>;
   const out = new Map<string, CommentExtension>();
   const root = tree.find((n) => poIsLocal(n, 'commentsEx'));
   if (!root) return out;
@@ -1047,7 +1053,7 @@ export function parseCommentThreads(
  * @returns A map from author name to userId.
  */
 export function parsePeople(xml: Uint8Array): Map<string, string> {
-  const tree = parser.parse(decoder.decode(xml)) as Array<PoNode>;
+  const tree = parser.parse(resolveInternalEntities(decoder.decode(xml))) as Array<PoNode>;
   const out = new Map<string, string>();
   const root = tree.find((n) => poIsLocal(n, 'people'));
   if (!root) return out;
