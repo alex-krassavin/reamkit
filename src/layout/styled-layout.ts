@@ -866,13 +866,14 @@ export function layoutStyledDocument(
   const sectionList = resolveSectionList(body, options);
 
   const noteAssigned = assignNoteNumbers(
-    applyNumbering(body, options.numbering),
+    applyNumbering(body, options.numbering, options.styles),
     options.comments ? new Set(options.comments.keys()) : undefined,
   );
   const numberedBody = noteAssigned.body;
   const numberedHeadersFooters = applyNumberingToHeadersFooters(
     options.headersFooters,
     options.numbering,
+    options.styles,
   );
 
   // Tagged PDF (ISO 32000-1 §14.8) — implied by PDF/A-1a. When on, paginate

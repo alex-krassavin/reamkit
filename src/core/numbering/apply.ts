@@ -9,11 +9,14 @@
 import type {
   BodyElement,
   Numbering,
+  NumberingReference,
   Paragraph,
   ParagraphProperties,
   Run,
+  StyleSheet,
 } from '@/core/document-model';
 import { NumberingState } from '@/core/numbering/state';
+import { resolveParagraphProperties } from '@/core/style-cascade';
 
 /**
  * Apply list numbering to a body as a FlowDoc transform (§17.9): walk the
@@ -24,17 +27,27 @@ import { NumberingState } from '@/core/numbering/state';
  *
  * @param body      The body elements to transform.
  * @param numbering The parsed numbering definitions, or `undefined`.
+ * @param styles    The style sheet, for a paragraph whose numbering comes from
+ *                  its STYLE (§17.9.24) rather than its own `w:numPr`.
  * @returns A new body with markers materialized.
  */
 export function applyNumbering(
   body: ReadonlyArray<BodyElement>,
   numbering: Numbering | undefined,
+  styles?: StyleSheet,
 ): Array<BodyElement> {
   if (!numbering || numbering.abstractNums.size === 0) return body.map((b) => b);
   const state = new NumberingState();
 
+  // §17.9.24 — a heading is numbered by its style, not by a `w:numPr` of its
+  // own: chtoutline.docx numbers Heading 1 "第 %1 章" that way, and reading the
+  // paragraph alone dropped the chapter number from every heading.
+  const numberingOf = (p: Paragraph): NumberingReference | undefined =>
+    p.properties.numbering ??
+    (styles ? resolveParagraphProperties(p.properties, styles).numbering : undefined);
+
   const transformParagraph = (p: Paragraph): Paragraph => {
-    const ref = p.properties.numbering;
+    const ref = numberingOf(p);
     if (!ref) return p;
     const marker = state.resolveMarker(numbering, ref);
     if (marker === null) return p;
@@ -109,12 +122,13 @@ function mergeIndentFromLevel(
 export function applyNumberingToHeadersFooters(
   hf: ReadonlyMap<string, ReadonlyArray<BodyElement>> | undefined,
   numbering: Numbering | undefined,
+  styles?: StyleSheet,
 ): ReadonlyMap<string, ReadonlyArray<BodyElement>> {
   if (!hf || hf.size === 0) return new Map();
   if (!numbering || numbering.abstractNums.size === 0) return hf;
   const out = new Map<string, ReadonlyArray<BodyElement>>();
   for (const [key, value] of hf) {
-    out.set(key, applyNumbering(value, numbering));
+    out.set(key, applyNumbering(value, numbering, styles));
   }
   return out;
 }

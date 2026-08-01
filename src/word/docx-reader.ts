@@ -180,7 +180,10 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
     // every writer sees ready paragraphs. `numbering`/`styles` stay as raw
     // material for round-trip writers; render projections must NOT re-apply
     // them (the projector sends EMPTY_STYLE_SHEET).
-    body: resolveBodyStyles(applyNumbering(resolveTableStyles(body, styles), numbering), styles),
+    body: resolveBodyStyles(
+      applyNumbering(resolveTableStyles(body, styles), numbering, styles),
+      styles,
+    ),
     sections,
     styles,
     numbering,
@@ -194,7 +197,7 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
       ? { comments: transformComments(rawComments, styles, numbering) }
       : {}),
     headersFooters: resolveHeadersFootersStyles(
-      applyNumberingToHeadersFooters(headersFooters, numbering),
+      applyNumberingToHeadersFooters(headersFooters, numbering, styles),
       styles,
     ),
     charts,
