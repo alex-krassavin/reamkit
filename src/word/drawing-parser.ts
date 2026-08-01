@@ -11,6 +11,7 @@ import type {
   FloatAnchor,
   ImageCrop,
   InlineImage,
+  LineEnd,
   RelativeSize,
   ShapeDash,
   ShapeFill,
@@ -1684,11 +1685,15 @@ export function parseLine(spPr: PoNode, resolveColor: ColorResolver): ShapeLine 
   // line's width. dashed_line_custdash_percentage.docx rules a dash-dot-dot
   // line that way and we drew it solid.
   let customDash: Array<number> | undefined;
+  let headEnd: LineEnd | undefined;
+  let tailEnd: LineEnd | undefined;
   for (const c of poChildren(ln)) {
     if (poIs(c, 'a:noFill')) noFill = true;
     else if (poIs(c, 'a:solidFill')) colorHex = colorFromContainer(c, resolveColor);
     else if (poIs(c, 'a:prstDash')) dash = normalizeDash(poAttr(c, 'val'));
     else if (poIs(c, 'a:custDash')) customDash = parseCustDash(c);
+    else if (poIs(c, 'a:headEnd')) headEnd = parseLineEnd(c);
+    else if (poIs(c, 'a:tailEnd')) tailEnd = parseLineEnd(c);
   }
   return {
     ...(widthEmu !== undefined ? { width: emuToPt(widthEmu) } : {}),
@@ -1697,6 +1702,34 @@ export function parseLine(spPr: PoNode, resolveColor: ColorResolver): ShapeLine 
     ...(customDash && customDash.length > 0 ? { customDash } : {}),
     ...(cap ? { cap } : {}),
     ...(noFill ? { fill: 'none' as const } : {}),
+    ...(headEnd ? { headEnd } : {}),
+    ...(tailEnd ? { tailEnd } : {}),
+  };
+}
+
+const LINE_END_TYPES = new Set(['triangle', 'stealth', 'diamond', 'oval', 'arrow']);
+const LINE_END_SIZES = new Set(['sm', 'med', 'lg']);
+
+/**
+ * §20.1.8.24 / §20.1.8.42 — one end decoration: `@type` plus the `@w`/`@len`
+ * size steps. `none` (and an unknown type) leaves the end bare.
+ *
+ * @param node The `a:headEnd` / `a:tailEnd` node.
+ * @returns The parsed end, or `undefined` when nothing is drawn there.
+ */
+function parseLineEnd(node: PoNode): LineEnd | undefined {
+  const type = poAttr(node, 'type');
+  if (type === undefined || !LINE_END_TYPES.has(type)) return undefined;
+  const w = poAttr(node, 'w');
+  const len = poAttr(node, 'len');
+  const size = (v: string | undefined): 'sm' | 'med' | 'lg' | undefined =>
+    v !== undefined && LINE_END_SIZES.has(v) ? (v as 'sm' | 'med' | 'lg') : undefined;
+  const width = size(w);
+  const length = size(len);
+  return {
+    type: type as LineEnd['type'],
+    ...(width ? { width } : {}),
+    ...(length ? { length } : {}),
   };
 }
 

@@ -1013,6 +1013,21 @@ export interface ShapeLine {
   readonly customDash?: ReadonlyArray<number>;
   readonly cap?: 'flat' | 'round' | 'square'; // a:ln @cap (flat=butt)
   readonly fill?: 'solid' | 'none'; // a:ln/a:noFill ⇒ no visible stroke
+  /** §20.1.8.24 `a:headEnd` — the decoration at the line's first point. */
+  readonly headEnd?: LineEnd;
+  /** §20.1.8.42 `a:tailEnd` — the decoration at the line's last point. */
+  readonly tailEnd?: LineEnd;
+}
+
+/**
+ * §20.1.8.24 / §20.1.8.42 — an arrowhead (or other decoration) at one end of a
+ * line: its shape plus the width and length steps `ST_LineEndWidth` /
+ * `ST_LineEndLength` name.
+ */
+export interface LineEnd {
+  readonly type: 'triangle' | 'stealth' | 'diamond' | 'oval' | 'arrow';
+  readonly width?: 'sm' | 'med' | 'lg';
+  readonly length?: 'sm' | 'med' | 'lg';
 }
 
 /**

@@ -115,6 +115,7 @@ import {
   DEFAULT_INSET_LR_PT,
   DEFAULT_INSET_TB_PT,
   buildShapePaths,
+  lineEndPaths,
   buildShapeTransform,
   buildStroke,
   gradientToSolid,
@@ -413,6 +414,11 @@ interface ShapeBlockLaidOut {
     readonly yPt: number;
   }>;
   readonly paths: ReadonlyArray<VectorPath>;
+  /**
+   * §20.1.8.24 / §20.1.8.42 — the arrowheads at the line's ends, drawn FILLED
+   * in the stroke's own colour (they are shapes, not part of the stroke).
+   */
+  readonly markerPaths?: ReadonlyArray<VectorPath>;
   readonly fillColorHex?: string;
   readonly fillGradient?: ShapeGradient;
   /** §20.1.8.14 `a:blipFill` — the picture painted across the shape's box. */
@@ -1991,6 +1997,7 @@ function layoutShapeBlock(
     heightPt = textHeightPt + insetTopPt + insetBottomPt;
   }
   const paths = buildShapePaths(shape.geometry, widthPt, heightPt);
+  const markerPaths = lineEndPaths(paths, shape.line, stroke?.widthPt ?? 0);
 
   // §20.5.2.17 — a group's members ride the same clamp its box did, so the
   // group keeps its shape when the page is narrower than the drawing.
@@ -2017,6 +2024,7 @@ function layoutShapeBlock(
     heightPt,
     ...(children.length > 0 ? { children } : {}),
     paths,
+    ...(markerPaths.length > 0 ? { markerPaths } : {}),
     ...(fillImageResourceName ? { fillImageResourceName } : {}),
     ...(fillImageResourceName && shape.fill.imageCrop
       ? { fillImageCrop: shape.fill.imageCrop }
@@ -5906,6 +5914,30 @@ function paginateSections(
             height: pt(sh.heightPt),
             imageResourceName: sh.fillImageResourceName,
             ...(sh.fillImageCrop ? { crop: sh.fillImageCrop } : {}),
+            ...(figId !== undefined ? { structId: figId } : {}),
+          });
+        }
+        // The arrowheads ride the same placement as the shape, filled in the
+        // stroke's own colour: a decoration is a shape, not a pen.
+        if (sh.markerPaths && sh.stroke) {
+          sink.push({
+            type: 'shape',
+            shape: {
+              paths: sh.markerPaths,
+              fillColorHex: sh.stroke.colorHex,
+              transform: flipTransform(
+                buildShapeTransform(
+                  x,
+                  bottomYUp,
+                  sh.widthPt,
+                  sh.heightPt,
+                  sh.rotation60k,
+                  sh.flipH,
+                  sh.flipV,
+                ),
+                asm.ctx.pageHeight,
+              ),
+            },
             ...(figId !== undefined ? { structId: figId } : {}),
           });
         }

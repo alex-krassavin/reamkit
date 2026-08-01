@@ -82,6 +82,7 @@ export type {
   ShapeGeometry,
   ShapeGroupChild,
   ShapeLine,
+  LineEnd,
   ShapeTextBody,
   ShapeTransform,
   Style,
