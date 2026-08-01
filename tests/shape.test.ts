@@ -845,6 +845,38 @@ describe('a floating drawing and the text column', () => {
             </wps:wsp>
           </a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>`;
 
+  it('draws the floats in the z-order they state', () => {
+    // §20.4.2.3 `relativeHeight` — dml-rectangle-relsize.docx writes its blue
+    // bar FIRST and gives it the higher z, so it belongs over the white
+    // rectangle that follows; drawn in document order the rectangle hid it.
+    const float = (z: number, hex: string, cy: number): string =>
+      `<w:p><w:r><w:drawing>
+        <wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+                   distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="${z}"
+                   behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">
+          <wp:simplePos x="0" y="0"/>
+          <wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH>
+          <wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>
+          <wp:extent cx="914400" cy="${cy}"/><wp:wrapNone/><wp:docPr id="1" name="S"/>
+          <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+            <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+                <wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="${cy}"/></a:xfrm>
+                  <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+                  <a:solidFill><a:srgbClr val="${hex}"/></a:solidFill></wps:spPr>
+                <wps:bodyPr/>
+              </wps:wsp>
+            </a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>`;
+    const text = asLatin1(
+      convertDocxToPdfSync(
+        // The taller white one is written second but sits BELOW.
+        buildDocxFromBody(float(20, 'FF0000', 114300) + float(10, 'FFFFFF', 914400)),
+        { fonts: FONTS },
+      ),
+    );
+    expect(text.indexOf('1 1 1 rg')).toBeLessThan(text.indexOf('1 0 0 rg'));
+  });
+
   it('takes a size stated as a share of the margins', () => {
     // `wp14:sizeRelH/V` — dml-shape-relsize.docx asks for 40% of the margin
     // width and 20% of its height; read as nothing, the shape came out at the

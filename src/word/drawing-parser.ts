@@ -135,11 +135,13 @@ function parseFloatAnchor(anchor: PoNode): FloatAnchor | undefined {
     else if (poIs(child, 'wp:wrapThrough')) wrap = 'through';
     else if (poIs(child, 'wp:wrapTopAndBottom')) wrap = 'topAndBottom';
   }
+  const zOrder = poIntAttr(anchor, 'relativeHeight');
   const posH = parseAnchorPos(anchor, 'wp:positionH', ['margin', 'page', 'column']);
   const posV = parseAnchorPos(anchor, 'wp:positionV', ['margin', 'page', 'paragraph', 'line']);
   return {
     wrap,
     ...(behind ? { behind: true } : {}),
+    ...(zOrder !== undefined ? { zOrder } : {}),
     ...(posH ? { posH: posH as NonNullable<FloatAnchor['posH']> } : {}),
     ...(posV ? { posV: posV as NonNullable<FloatAnchor['posV']> } : {}),
   };

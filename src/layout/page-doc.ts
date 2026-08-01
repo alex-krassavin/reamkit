@@ -194,6 +194,11 @@ export interface ImageResource {
  */
 export interface PageItemBase {
   /**
+   * §20.4.2.3 — the float's `relativeHeight`. Items with one are sorted by it
+   * inside their layer before the page is written; the rest keep their order.
+   */
+  readonly z?: number;
+  /**
    * Tagged PDF (§14.8): the logical structure node this item's content belongs
    * to. Set only on body content in tagged mode; undefined text in the line pass
    * is treated as an artifact. Ignored when not tagging.

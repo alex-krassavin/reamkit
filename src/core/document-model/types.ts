@@ -1376,6 +1376,12 @@ export interface SectionProperties {
 export interface FloatAnchor {
   readonly wrap: 'none' | 'square' | 'tight' | 'through' | 'topAndBottom';
   readonly behind?: boolean; // wp:anchor @behindDoc
+  /**
+   * §20.4.2.3 `wp:anchor @relativeHeight` — the z-order among the floats on the
+   * page: the higher number is drawn over the lower, whatever their order in
+   * the document.
+   */
+  readonly zOrder?: number;
   readonly posH?: {
     readonly relativeFrom: 'margin' | 'page' | 'column';
     readonly offsetPt?: Pt; // wp:posOffset

@@ -924,8 +924,9 @@ export function layoutStyledDocument(
       options,
       fontResources,
       imageResources,
-      ctx.columns ? ctx.columns[0]!.widthPt : ctx.contentWidth,
+      width,
       ctx.pageContentHeight,
+      box,
     );
   });
 
@@ -4827,6 +4828,26 @@ class PageAssembler {
    * position without moving the cursor. `behindDoc` sinks below the body text,
    * everything else above it; both flush with the page.
    */
+  /**
+   * §20.4.2.3 — a float layer, drawn in `relativeHeight` order. A stable sort
+   * by z leaves the ones that state none where the document put them:
+   * dml-rectangle-relsize.docx writes its blue bar first and gives it the
+   * higher z, and drawn in document order the white rectangle covered it.
+   */
+  /** A float layer that stamps each item it takes with the float's z-order. */
+  static readonly zSink = (target: Array<PageItem>, z: number | undefined): Array<PageItem> =>
+    z === undefined
+      ? target
+      : ({
+          push: (...items: Array<PageItem>): number =>
+            target.push(...items.map((i) => ({ ...i, z }))),
+        } as unknown as Array<PageItem>);
+
+  static readonly byZ = (items: ReadonlyArray<PageItem>): Array<PageItem> =>
+    items.every((i) => i.z === undefined)
+      ? [...items]
+      : [...items].sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
+
   floatsBehind: Array<PageItem> = [];
   floatsFront: Array<PageItem> = [];
   /**
@@ -5088,9 +5109,9 @@ class PageAssembler {
       commands: [
         ...this.pageBorderItems(),
         ...header.commands,
-        ...this.floatsBehind,
+        ...PageAssembler.byZ(this.floatsBehind),
         ...this.current,
-        ...this.floatsFront,
+        ...PageAssembler.byZ(this.floatsFront),
         ...this.renderNotesBand(),
         ...footer.commands,
       ],
@@ -5433,7 +5454,14 @@ function paginateSections(
       if (isOutOfFlowFloat(block.float)) {
         const fx = asm.floatX(block.float, block.widthPt);
         const fy = asm.floatTopYUp(block.float);
-        emitImageAt(fx, fy, block.float.behind ? asm.floatsBehind : asm.floatsFront);
+        emitImageAt(
+          fx,
+          fy,
+          PageAssembler.zSink(
+            block.float.behind ? asm.floatsBehind : asm.floatsFront,
+            block.float.zOrder,
+          ),
+        );
         if (block.float.wrap !== 'none') {
           asm.exclusions.push({
             x0: fx,
@@ -5611,7 +5639,10 @@ function paginateSections(
         emitShapeAt(
           fx,
           fy - block.heightPt,
-          block.float.behind ? asm.floatsBehind : asm.floatsFront,
+          PageAssembler.zSink(
+            block.float.behind ? asm.floatsBehind : asm.floatsFront,
+            block.float.zOrder,
+          ),
         );
         if (block.float.wrap !== 'none') {
           asm.exclusions.push({
@@ -5645,7 +5676,10 @@ function paginateSections(
         emitChartAt(
           fx,
           fy - block.heightPt,
-          block.float.behind ? asm.floatsBehind : asm.floatsFront,
+          PageAssembler.zSink(
+            block.float.behind ? asm.floatsBehind : asm.floatsFront,
+            block.float.zOrder,
+          ),
         );
         if (block.float.wrap !== 'none') {
           asm.exclusions.push({
