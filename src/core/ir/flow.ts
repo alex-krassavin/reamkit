@@ -70,4 +70,9 @@ export interface FlowDoc {
   readonly info?: DocumentInfo;
   /** Document natural language hint (BCP-47), e.g. for tagged-PDF /Lang. */
   readonly language?: string;
+  /**
+   * ECMA-376 §17.15.1.35 `w:doNotExpandShiftReturn` — a justified line that
+   * ends at a soft line break keeps its natural width.
+   */
+  readonly doNotExpandShiftReturn?: boolean;
 }

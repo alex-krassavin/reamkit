@@ -40,5 +40,6 @@ export function flowRenderOptions(flow: FlowDoc): FlowRenderOptions {
     ...(flow.charts ? { charts: flow.charts } : {}),
     ...(flow.embeddedFonts ? { embeddedFonts: flow.embeddedFonts } : {}),
     ...(flow.language ? { language: flow.language } : {}),
+    ...(flow.doNotExpandShiftReturn ? { doNotExpandShiftReturn: true } : {}),
   };
 }

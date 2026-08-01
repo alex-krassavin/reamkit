@@ -1294,7 +1294,7 @@ function rotateAboutCm(cx: number, cy: number, deg: number): string {
 
 function computeJustifyExtra(line: Line): number {
   if (line.resolved.alignment !== 'both') return 0;
-  if (line.isLastInParagraph) return 0;
+  if (line.isLastInParagraph || line.noJustify === true) return 0;
   // A space at the END of a line justifies nothing: there is no glyph after it
   // to push, and counted in it left the line short of the measure by its own
   // width. Word and LibreOffice both hang it past the margin instead.

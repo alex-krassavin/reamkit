@@ -32,11 +32,18 @@ export interface DocumentSettings {
    * pages use the `'even'` header/footer references instead of `'default'`.
    */
   readonly evenAndOddHeaders: boolean;
+  /**
+   * ECMA-376 §17.15.1.35 — `w:compat/w:doNotExpandShiftReturn`. When `true`, a
+   * justified line that ends at a soft line break (`w:br`) is left at its
+   * natural width instead of being stretched to the measure.
+   */
+  readonly doNotExpandShiftReturn: boolean;
 }
 
 /** The all-defaults {@link DocumentSettings}, returned when no `w:settings` root is found. */
 export const EMPTY_SETTINGS: DocumentSettings = {
   evenAndOddHeaders: false,
+  doNotExpandShiftReturn: false,
 };
 
 /**
@@ -53,11 +60,24 @@ export function parseSettings(data: Uint8Array): DocumentSettings {
   if (!settings) return EMPTY_SETTINGS;
 
   let evenAndOddHeaders = false;
+  let doNotExpandShiftReturn = false;
   for (const child of poChildren(settings)) {
     if (poIs(child, 'w:evenAndOddHeaders')) {
-      const val = poAttr(child, 'val');
-      evenAndOddHeaders = val === undefined || val === '' || (val !== '0' && val !== 'false');
+      evenAndOddHeaders = onOff(child);
+      // §17.15.1.35 lives one level down, inside w:compat — and a file may
+      // carry more than one of those (fdo106029.docx writes the flag in the
+      // first and an empty second one), so every compat block is read.
+    } else if (poIs(child, 'w:compat')) {
+      for (const flag of poChildren(child)) {
+        if (poIs(flag, 'w:doNotExpandShiftReturn')) doNotExpandShiftReturn = onOff(flag);
+      }
     }
   }
-  return { evenAndOddHeaders };
+  return { evenAndOddHeaders, doNotExpandShiftReturn };
+}
+
+/** §17.17.4 ST_OnOff: an absent or empty `w:val` means on; `0`/`false` mean off. */
+function onOff(node: PoNode): boolean {
+  const val = poAttr(node, 'val');
+  return val === undefined || val === '' || (val !== '0' && val !== 'false');
 }

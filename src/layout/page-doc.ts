@@ -159,6 +159,12 @@ export interface Line {
   readonly resolved: ResolvedParagraphProperties;
   isLastInParagraph: boolean;
   /**
+   * ECMA-376 §17.15.1.35 — the line ends at a soft line break in a document
+   * that asked for `w:doNotExpandShiftReturn`, so justification leaves it at
+   * its natural width (as the paragraph's own last line is left).
+   */
+  readonly noJustify?: boolean;
+  /**
    * Max ascent/descent contributed by math tokens (0 when none) — they straddle
    * the baseline, so the line height/descent must grow to fit them.
    */

@@ -207,6 +207,7 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
     ...(embeddedFonts.size > 0 ? { embeddedFonts } : {}),
     ...(info ? { info } : {}),
     ...(language ? { language } : {}),
+    ...(settings.doNotExpandShiftReturn ? { doNotExpandShiftReturn: true } : {}),
   };
   return { doc, losses };
 }

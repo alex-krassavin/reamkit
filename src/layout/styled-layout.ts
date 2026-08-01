@@ -281,6 +281,12 @@ export interface StyledRenderOptions {
    */
   readonly language?: string;
   /**
+   * ECMA-376 §17.15.1.35 `w:doNotExpandShiftReturn` — when set, a justified
+   * line that ends at a soft line break (`w:br`) is drawn at its natural width
+   * instead of being stretched out to the measure.
+   */
+  readonly doNotExpandShiftReturn?: boolean;
+  /**
    * §7.6 PDF encryption (AES-256, R6). Only honoured on the ASYNC conversion
    * path (WebCrypto); mutually exclusive with `pdfA` (ISO 19005 forbids
    * `/Encrypt`) and with signatures (v1).
@@ -2956,6 +2962,7 @@ function layoutParagraphBlock(
       resolved,
       options.hyphenator,
       options.layoutProfile ?? 'ream',
+      options.doNotExpandShiftReturn === true,
       widths,
     );
   // §17.3.3.1 — a `w:br w:type="column"` splits the paragraph's own flow: what
@@ -3482,6 +3489,8 @@ interface StreamEntry {
   readonly item: Item;
   readonly token: Token | null;
   readonly hyphenWidthPt?: number;
+  /** The forced break here is a soft line break (`w:br`), not the paragraph's end. */
+  readonly softBreak?: boolean;
 }
 
 // Tokens → the Knuth–Plass item stream: spaces become glue, images/math are
@@ -3524,6 +3533,7 @@ function paragraphItemStream(
         entries.push({
           item: { type: 'penalty', width: 0, penalty: FORCED_BREAK, flagged: false },
           token: null,
+          softBreak: true,
         });
       }
       prevBoxEndCp = null;
@@ -3919,6 +3929,8 @@ function wrap(
   resolved: ResolvedParagraphProperties,
   hyphenator: Hyphenator | undefined,
   profile: LayoutProfile,
+  // §17.15.1.35: leave a line that ends at a soft break unstretched.
+  noExpandShiftReturn: boolean,
   // Float text wrapping: explicit per-line widths (the last reuses for the
   // tail, the Knuth-Plass convention). Overrides first/other when given.
   lineWidths?: ReadonlyArray<number>,
@@ -3953,7 +3965,14 @@ function wrap(
         profile,
         i < at.length - 1,
       );
-      if (line) out.push(line);
+      // §17.15.1.35 — the compat flag fdo106029.docx sets: a line the author
+      // ended with Shift+Enter is not the paragraph's last, but it reads like
+      // one, and stretching "Lorem ipsum … elit." across the whole measure is
+      // what the flag exists to stop.
+      if (line)
+        out.push(
+          noExpandShiftReturn && entries[breakIdx]?.softBreak ? { ...line, noJustify: true } : line,
+        );
       start = breakIdx + 1;
       isFirst = false;
       lineIdx++;
