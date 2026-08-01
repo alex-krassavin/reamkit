@@ -854,11 +854,28 @@ function macroButtonText(instr: string): string | undefined {
 // switches (\* MERGEFORMAT …) are ignored. Anything else stays a cached
 // result (REF, TOC, DATE, … render their stored text exactly as before).
 function parseFieldInstr(instr: string | undefined): 'PAGE' | 'NUMPAGES' | undefined {
-  if (!instr) return undefined;
-  const m = /^\s*([A-Za-z]+)/.exec(instr);
-  const kw = m?.[1]?.toUpperCase();
+  const kw = fieldKeyword(instr);
   return kw === 'PAGE' ? 'PAGE' : kw === 'NUMPAGES' ? 'NUMPAGES' : undefined;
 }
+
+function fieldKeyword(instr: string | undefined): string | undefined {
+  if (instr === undefined) return undefined;
+  return /^\s*([A-Za-z]+)/.exec(instr)?.[1]?.toUpperCase();
+}
+
+// The fields §17.16.5 defines as having NO result: they do their work — bind a
+// bookmark, prompt, record an index or contents entry — and display nothing.
+// Word caches a result for them all the same, and printing it put "Praun et
+// al. 20012001" in the middle of fdo76163's bibliography, where both
+// references print nothing.
+const SILENT_FIELDS = new Set([
+  'SET', // §17.16.5.53 — binds a bookmark to a value
+  'ASK', // §17.16.5.2 — prompts, then binds
+  'XE', // §17.16.5.71 — index entry
+  'TC', // §17.16.5.63 — table-of-contents entry
+  'RD', // §17.16.5.50 — referenced document for an index/TOC
+  'PRIVATE', // §17.16.5.48 — data another format left behind
+]);
 
 // Fold a recognized field's cached-result runs into ONE field run: the cached
 // text concatenated (the per-page substitution replaces it wholesale), the
@@ -915,7 +932,10 @@ function applyFieldFsm(collected: ReadonlyArray<CollectedRun>): Array<Run> {
         continue;
       }
       const field = parseFieldInstr(st.instr);
-      if (field) out.push(synthesizeFieldRun(st.result, field));
+      const silent = SILENT_FIELDS.has(fieldKeyword(st.instr) ?? '');
+      if (silent) {
+        // The field shows nothing; its cached result is bookkeeping.
+      } else if (field) out.push(synthesizeFieldRun(st.result, field));
       else if (st.result.length > 0) out.push(...st.result);
       else {
         // §17.16.5.44 MACROBUTTON — the words a reader SEES are in the
