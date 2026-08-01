@@ -1043,6 +1043,40 @@ function emitPageContent(
         return tok.font.measure.showText(text);
       };
 
+      // §17.3.2.32 — a run's own background, painted behind its glyphs before
+      // anything else on the line. Same shape as the highlight below, but each
+      // run carries its own colour; runs that share one are painted together.
+      if (line.tokens.some((t) => t.kind === 'text' && t.resolvedRun.shadingColorHex)) {
+        if (inBT) {
+          out.push('ET');
+          inBT = false;
+        }
+        const shAscent = Math.max(lineFs, line.mathAscentPt ?? 0);
+        const shDescent = Math.max(lineFs * 0.2, line.mathDescentPt ?? 0);
+        out.push('q');
+        let sx: number = originX;
+        let painted = '';
+        for (const tok of line.tokens) {
+          const w = tok.widthPt + (tok.kind === 'text' && tok.isSpace ? extraPerSpace : 0);
+          const hex = tok.kind === 'text' ? tok.resolvedRun.shadingColorHex : undefined;
+          if (hex !== undefined) {
+            if (hex !== painted) {
+              if (painted !== '') out.push('f');
+              const [sr, sg, sb] = hexToRgb01(hex);
+              out.push(`${formatNumber(sr)} ${formatNumber(sg)} ${formatNumber(sb)} rg`);
+              painted = hex;
+            }
+            out.push(
+              `${formatNumber(sx)} ${formatNumber(baselineY - shDescent)} ` +
+                `${formatNumber(w)} ${formatNumber(shAscent + shDescent)} re`,
+            );
+          }
+          sx += w;
+        }
+        if (painted !== '') out.push('f');
+        out.push('Q');
+      }
+
       // Comment-range highlight (CM2c): a soft fill behind highlighted tokens.
       // Path ops can't sit inside a text object, so close BT first; the text
       // emit below reopens it. Gated on a highlight being present, so every line

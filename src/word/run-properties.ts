@@ -9,6 +9,7 @@ import type {
 import { halfPtToPt } from '@/core/ir';
 
 import { asElement, getAttr, getVal, parseIntAttr, parseToggle } from '@/word/xml-helpers';
+import { shadingFillHex } from '@/word/shading';
 
 const UNDERLINE_STYLES = new Set<UnderlineStyle>([
   'none',
@@ -111,6 +112,16 @@ export function parseRunProperties(rPr: unknown): RunProperties {
   if ('w:rtl' in el) {
     const v = parseToggle(el['w:rtl']);
     if (v !== undefined) out.rtl = v;
+  }
+
+  // §17.3.2.32 — the run's own background. Unlike a paragraph's, this one is
+  // usually a PATTERN over a fill (`pct15` of black on white is Word's "light
+  // shading"), so the two are blended rather than the fill taken alone:
+  // fdo65400.docx shades two words that way and we painted neither.
+  if ('w:shd' in el) {
+    const shd = el['w:shd'];
+    const hex = shadingFillHex(getVal(shd), getAttr(shd, 'color'), getAttr(shd, 'fill'));
+    if (hex !== undefined && hex !== 'FFFFFF') out.shadingColorHex = hex;
   }
 
   // ECMA-376 §17.3.2.20 — w:lang @w:val (the Latin language, e.g. "en-US").

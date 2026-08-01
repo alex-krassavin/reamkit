@@ -211,6 +211,9 @@ function mergeRun(base: ResolvedRunProperties, override: RunProperties): Resolve
     verticalAlign: override.verticalAlign ?? base.verticalAlign,
     rtl: override.rtl ?? base.rtl,
     ...(lang !== undefined ? { lang } : {}),
+    ...((override.shadingColorHex ?? base.shadingColorHex) !== undefined
+      ? { shadingColorHex: override.shadingColorHex ?? base.shadingColorHex }
+      : {}),
   };
 }
 

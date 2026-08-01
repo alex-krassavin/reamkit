@@ -43,6 +43,8 @@ export interface ResolvedRunProperties {
    * specifies one; consumed by the tagged-PDF per-element `/Lang`, never layout.
    */
   readonly lang?: string;
+  /** §17.3.2.32 — the background painted behind the run's glyphs. */
+  readonly shadingColorHex?: string;
 }
 
 /**

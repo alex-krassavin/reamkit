@@ -77,6 +77,11 @@ export interface RunProperties {
    * the tagged-PDF per-element `/Lang`; does not affect visual layout.
    */
   readonly lang?: string;
+  /**
+   * §17.3.2.32 `w:rPr/w:shd` — the background painted behind the run's own
+   * glyphs, already blended from the pattern, its colour and the fill.
+   */
+  readonly shadingColorHex?: string;
 }
 
 /**
