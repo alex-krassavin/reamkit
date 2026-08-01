@@ -1141,18 +1141,55 @@ function parseLockedCanvas(
   if (!canvas) return null;
   const raw = groupChildren(canvas, resolveColor, parseBody, resolveImage, themeLineWidths);
   if (extentCx === undefined || extentCy === undefined) return null;
-  // The members keep the offsets of the document they were copied from, and a
-  // canvas states no child space to map them out of, so its content is drawn
-  // from its OWN corner: what Word and LibreOffice both do with fdo43641.docx,
-  // whose rectangle would otherwise sit 22pt above the frame it belongs in.
-  const origin = contentOrigin(raw);
-  const children = raw.map((c) => ({ ...c, xPt: pt(c.xPt - origin.x), yPt: pt(c.yPt - origin.y) }));
+  // §20.1.7.5 — when the canvas states the space its members are written in
+  // (`a:chOff`/`a:chExt`), that space maps onto the frame the document gives
+  // it. fdo76249.docx writes its logo in a box 5.8× the frame, and drawn at
+  // face value the statue alone filled half the page.
+  const space = canvasChildSpace(canvas);
+  let children: Array<ShapeGroupChild>;
+  if (space) {
+    const sx = emuToPt(extentCx) / space.w;
+    const sy = emuToPt(extentCy) / space.h;
+    children = raw.map((c) => ({
+      shape: { ...c.shape, width: pt(c.shape.width * sx), height: pt(c.shape.height * sy) },
+      xPt: pt((c.xPt - space.x) * sx),
+      yPt: pt((c.yPt - space.y) * sy),
+    }));
+  } else {
+    // The members keep the offsets of the document they were copied from, and
+    // a canvas that states no child space is drawn from its OWN corner: what
+    // Word and LibreOffice both do with fdo43641.docx, whose rectangle would
+    // otherwise sit 22pt above the frame it belongs in.
+    const origin = contentOrigin(raw);
+    children = raw.map((c) => ({ ...c, xPt: pt(c.xPt - origin.x), yPt: pt(c.yPt - origin.y) }));
+  }
   return {
     width: emuToPt(extentCx),
     height: emuToPt(extentCy),
     ...(children.length > 0 ? { children } : {}),
     geometry: { kind: 'custom', custom: EMPTY_GEOMETRY },
     fill: { kind: 'none' },
+  };
+}
+
+// `a:grpSpPr/a:xfrm` on a locked canvas: the box its members are written in,
+// in POINTS. Undefined when the canvas states none — then the members keep the
+// size and the offsets they were copied with.
+function canvasChildSpace(
+  canvas: PoNode,
+): { x: number; y: number; w: number; h: number } | undefined {
+  const grpSpPr = poChildren(canvas).find((c) => poIsLocal(c, 'grpSpPr'));
+  const xfrm = grpSpPr ? poChildren(grpSpPr).find((c) => poIs(c, 'a:xfrm')) : undefined;
+  const chOff = xfrm ? poChildren(xfrm).find((c) => poIs(c, 'a:chOff')) : undefined;
+  const chExt = xfrm ? poChildren(xfrm).find((c) => poIs(c, 'a:chExt')) : undefined;
+  const cx = chExt ? poIntAttr(chExt, 'cx') : undefined;
+  const cy = chExt ? poIntAttr(chExt, 'cy') : undefined;
+  if (cx === undefined || cy === undefined || cx <= 0 || cy <= 0) return undefined;
+  return {
+    x: emuToPt((chOff ? poIntAttr(chOff, 'x') : undefined) ?? 0),
+    y: emuToPt((chOff ? poIntAttr(chOff, 'y') : undefined) ?? 0),
+    w: emuToPt(cx),
+    h: emuToPt(cy),
   };
 }
 
