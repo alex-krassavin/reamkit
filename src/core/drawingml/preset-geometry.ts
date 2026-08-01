@@ -130,6 +130,19 @@ export function presetPaths(
         ]),
       ];
     }
+    case 'star4':
+    case 'star5':
+    case 'star6':
+    case 'star7':
+    case 'star8':
+    case 'star10':
+    case 'star12':
+    case 'star16':
+    case 'star24':
+    case 'star32': {
+      const s = STARS.get(preset);
+      return s ? [star(w, h, s, adjust)] : null;
+    }
     case 'line':
     case 'straightConnector1':
       // Box diagonal (top-left → bottom-right in y-down ⇒ (0,h)→(w,0) here).
@@ -216,6 +229,58 @@ export function customPaths(geom: CustomGeometry, wPt: number, hPt: number): Arr
     }
   }
   return [b.build()];
+}
+
+// §20.1.10.55 star4…star32 — the star family's three published guides. `adj` is
+// the inner radius as a fraction of 50000; `hf`/`vf` stretch the vertex ellipse
+// so the outermost points land exactly on the box, which is why an odd star
+// (star5, star7) needs a different pull horizontally and vertically.
+interface StarPreset {
+  readonly points: number;
+  readonly adj: number;
+  readonly hf: number;
+  readonly vf: number;
+}
+
+const STARS: ReadonlyMap<string, StarPreset> = new Map([
+  ['star4', { points: 4, adj: 12500, hf: 100000, vf: 100000 }],
+  ['star5', { points: 5, adj: 19098, hf: 105146, vf: 110557 }],
+  ['star6', { points: 6, adj: 28868, hf: 115470, vf: 100000 }],
+  ['star7', { points: 7, adj: 34601, hf: 102572, vf: 105210 }],
+  ['star8', { points: 8, adj: 37500, hf: 100000, vf: 100000 }],
+  ['star10', { points: 10, adj: 42533, hf: 105146, vf: 100000 }],
+  ['star12', { points: 12, adj: 37500, hf: 100000, vf: 100000 }],
+  ['star16', { points: 16, adj: 37500, hf: 100000, vf: 100000 }],
+  ['star24', { points: 24, adj: 37500, hf: 100000, vf: 100000 }],
+  ['star32', { points: 32, adj: 37500, hf: 100000, vf: 100000 }],
+]);
+
+// An n-pointed star: outer vertices every 360/n° starting at the top, inner
+// vertices halfway between them at `adj/50000` of the radius. The ellipse is
+// (w/2·hf, h/2·vf) about a centre pushed to (w/2, h/2·vf), so `vf` scales the
+// whole figure about the box's TOP edge and the topmost point stays at y=0.
+function star(
+  w: number,
+  h: number,
+  preset: StarPreset,
+  adjust: ReadonlyMap<string, number>,
+): VectorPath {
+  const inner = clamp(frac(adjust, 'adj', preset.adj) * 2, 0, 1);
+  const hf = preset.hf / 100000;
+  const vf = preset.vf / 100000;
+  const pts: Array<readonly [number, number]> = [];
+  for (let i = 0; i < preset.points; i++) {
+    const out = -Math.PI / 2 + (i * 2 * Math.PI) / preset.points;
+    for (const [angle, r] of [
+      [out, 1],
+      [out + Math.PI / preset.points, inner],
+    ] as const) {
+      const x = (w / 2) * (1 + hf * r * Math.cos(angle));
+      // Path space is y-down; the local frame is y-up, hence h − y.
+      pts.push([x, h - (h / 2) * vf * (1 + r * Math.sin(angle))]);
+    }
+  }
+  return polygon(pts);
 }
 
 // Regular n-gon inscribed in the box, first vertex at the top (pointing up).

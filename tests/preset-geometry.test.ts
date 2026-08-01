@@ -24,6 +24,16 @@ const KNOWN = [
   'leftArrow',
   'upArrow',
   'downArrow',
+  'star4',
+  'star5',
+  'star6',
+  'star7',
+  'star8',
+  'star10',
+  'star12',
+  'star16',
+  'star24',
+  'star32',
 ];
 
 function coords(segs: ReadonlyArray<PathSegment>): Array<number> {
@@ -53,7 +63,24 @@ describe('presetPaths', () => {
 
   it('returns null for an unknown preset (caller falls back to rect)', () => {
     expect(presetPaths('cloudCallout', W, H, new Map())).toBeNull();
-    expect(presetPaths('star5', W, H, new Map())).toBeNull();
+    expect(presetPaths('cube', W, H, new Map())).toBeNull();
+  });
+
+  it('a star alternates outer and inner vertices and spans the box', () => {
+    const segs = presetPaths('star5', W, H, new Map())![0]!.segments;
+    // 5 outer + 5 inner points, then close.
+    expect(segs.map((s) => s.op)).toEqual(['move', ...Array<'line'>(9).fill('line'), 'close']);
+    const xs = coords(segs).filter((_, i) => i % 2 === 0);
+    const ys = coords(segs).filter((_, i) => i % 2 === 1);
+    expect(Math.min(...xs)).toBeCloseTo(0, 2);
+    expect(Math.max(...xs)).toBeCloseTo(W, 2);
+    expect(Math.min(...ys)).toBeCloseTo(0, 2);
+    expect(Math.max(...ys)).toBeCloseTo(H, 2);
+    // The first vertex is the topmost point, dead centre.
+    const first = segs[0]!;
+    if (first.op !== 'move') throw new Error('unreachable');
+    expect(first.x).toBeCloseTo(W / 2, 6);
+    expect(first.y).toBeCloseTo(H, 6);
   });
 
   it('triangle is three line segments closed', () => {
