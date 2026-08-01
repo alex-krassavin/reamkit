@@ -3,6 +3,104 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.16.0
+
+The end of a validation sweep that opened every one of 649 real `.xlsx`
+documents beside a reference conversion and compared the two rendered pages.
+Most of what follows was invisible in a text dump and obvious in a picture.
+
+### Added
+
+- **SmartArt in a spreadsheet.** A diagram is four parts of description — data,
+  layout, quick style, colours — that a reader is meant to lay out itself. The
+  producer also writes what it drew, as plain DrawingML under `dsp:`, and that
+  is what renders: shapes at the frame's corner, each label in the rectangle
+  the diagram sets aside for it. A file with no drawing fallback degrades to a
+  graceful loss rather than an empty space.
+- **Conditional formats carried in the 2009 extension.** ISO/IEC 29500 could not
+  express everything Excel 2010 wanted, so the rest lives in `<extLst>` under
+  `x14`: the range is a child `<xm:sqref>`, the formulas are `<xm:f>`, and the
+  format is written inside the rule rather than pointing at the workbook's
+  table. Nineteen corpus workbooks put rules there.
+- **Printed row and column headings** (`<printOptions headings="1">`), repeated
+  on every page and on every column band.
+- **Charts**: a secondary value axis of its own, axis titles (including one read
+  bottom-to-top), a legend key drawn per series type, data labels the author
+  typed, and an axis drawn in the number format it declares.
+- **Shape shadows** (`<a:effectRef>` and a direct `<a:outerShdw>`), and a shape's
+  fill and outline width taken from the theme's style lists.
+- **Superscript and subscript** draw off the baseline, and smaller.
+- **Every PNG colour type**, interlaced or not.
+
+### Fixed
+
+Shapes and drawings
+
+- **A turned shape draws turned.** `a:xfrm`'s rotation and flips were read
+  nowhere, so an arrow pointing up and to the right lay flat across the page. A
+  turned shape is also the one case where the anchor is not its box: Excel spans
+  from/to across the ground the shape covers once rotated and keeps the shape's
+  own size in `a:ext`.
+- **A gallery shape finds its colour.** `<a:fillRef>` and `<a:lnRef>` each wrap
+  one colour, and the reader took the reference's first *child* — which in a
+  part saved with indentation is a newline. Such shapes drew with neither fill
+  nor outline, which is to say not at all.
+- **`absoluteAnchor`** names no cell: it gives the distance from the sheet's own
+  corner in `<xdr:pos>`. Unread, every such shape piled into the corner.
+- **A group draws the shapes inside it** — `xdr:grpSp` maps its children through
+  `a:chOff`/`a:chExt` instead of being skipped.
+- **Block-arrow geometry.** §20.1.9.18 measures both the shaft and the head
+  against the *shorter* side of the box, not the direction the arrow points, so
+  a tall thin arrow now has a compact head rather than a spike two thirds down
+  the shaft.
+- **`a:hueOff` / `a:satOff`** — hue is counted in sixtieth-thousandths of a
+  degree, a different unit from every other transform in that family.
+
+Reading robustly
+
+- **An entity a DOCTYPE declares resolves** instead of printing its own spelling.
+  Nested declarations are the billion-laughs bomb, so each expands once under a
+  budget and a runaway one resolves to nothing.
+- **A style behind `mc:AlternateContent` keeps its place.** Style collections are
+  indexed by position, so a wrapper the reader skipped shifted every entry after
+  it — a form lost its table borders, its title and its column alignment
+  together.
+- **A corrupt archive entry is refused by name**, not by the inflater's crash.
+- The 2006 beta names a shared string `<sstItem>`; `_xHHHH_` escapes decode; an
+  inline string written as a single formatted run is read.
+
+The printed page
+
+- **Fit-to-page overrides the breaks drawn into the sheet.** A manual break costs
+  a page at every scale, so a sheet asking to fit on one page could never
+  satisfy it and gave up scaling altogether.
+- **A sheet that declares no row height takes the workbook's own.** The height is
+  a line height, and a workbook naming Arial 10 gets 12.75pt where Calibri 11
+  gets 15.
+- **A line feed in a cell that does not wrap leaves nothing behind** — it is a
+  control character with no width, not a space.
+- The print scale reaches the header, the footer and the drawings; a column band
+  with nothing in it is not printed; a band stops at its last row that draws
+  something.
+
+Conditional formats and number formats
+
+- **A `cellIs` rule compares words**, not only numbers: `notEqual ""` is how a
+  document asks to format every cell that holds something.
+- A data bar fades away from the axis it grows out of; a colour scale keeps its
+  gradient when a stop is a formula; a rule belongs to its cell, not to the
+  columns its text borrowed.
+- A format section may state a condition and then pick itself; a comma against
+  the last placeholder scales the number; General spells an exponent Excel's way
+  and gives up decimals in the document's unit.
+
+Charts
+
+- A line chart that asks for markers gets them; a scatter's points are the symbol
+  the file names; a chart silent about its gap takes the schema's default rather
+  than none; a ranked bar chart reads top-down; a series cycles the workbook's
+  accents rather than a built-in palette.
+
 ## 1.15.4
 
 Fixes a regression in 1.15.3 that could turn a spreadsheet into hundreds of
