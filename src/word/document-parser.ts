@@ -26,7 +26,7 @@ import type {
 } from '@/core/document-model';
 
 import type { ColorResolver } from '@/core/drawingml/colors';
-import type { Loss, ResourceId } from '@/core/ir';
+import type { Loss, Pt, ResourceId } from '@/core/ir';
 import type { PoNode } from '@/core/po-helpers';
 import type { DrawingContent, ParseDrawingText } from '@/word/drawing-parser';
 import { resolveInternalEntities } from '@/core/opc/xml-entities';
@@ -316,6 +316,7 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
   let columns: SectionColumns | undefined;
   let sectionStart: 'continuous' | 'nextPage' | undefined;
   let pageBorders: SectionProperties['pageBorders'];
+  let gridLinePitchPt: Pt | undefined;
   const headers: Array<HeaderFooterReference> = [];
   const footers: Array<HeaderFooterReference> = [];
 
@@ -386,6 +387,16 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
           offsetFrom: poAttr(child, 'offsetFrom') === 'page' ? 'page' : 'text',
         };
       }
+    } else if (poIs(child, 'w:docGrid')) {
+      // §17.6.5 — the document grid. `lines` (and `linesAndChars`) puts every
+      // line of the section's text on a grid of `@w:linePitch` twips; the
+      // default `default` sets no grid at all. fdo80902.docx rules an 18pt
+      // grid, and its two paragraphs sat a plain line height apart.
+      const type = poAttr(child, 'type') ?? 'default';
+      const pitch = poIntAttr(child, 'linePitch');
+      if ((type === 'lines' || type === 'linesAndChars') && pitch !== undefined && pitch > 0) {
+        gridLinePitchPt = twipsToPt(pitch);
+      }
     } else if (poIs(child, 'w:type')) {
       // §17.6.22 ST_SectionMark. Only `continuous` keeps the page; the
       // odd/even/column starts all begin a new one, which is what we do for
@@ -405,6 +416,7 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
     ...(columns ? { columns } : {}),
     ...(sectionStart ? { sectionStart } : {}),
     ...(pageBorders ? { pageBorders } : {}),
+    ...(gridLinePitchPt !== undefined ? { gridLinePitchPt } : {}),
   };
 }
 

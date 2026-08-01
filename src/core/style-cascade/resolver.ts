@@ -236,6 +236,7 @@ function mergePar(
   const frame = override.frame ?? base.frame;
   const sectionBreak = override.sectionBreak ?? base.sectionBreak;
   const textDirection = override.textDirection ?? base.textDirection;
+  const snapToGrid = override.snapToGrid ?? base.snapToGrid;
   return {
     alignment: override.alignment ?? base.alignment,
     spacingBefore: override.spacingBefore ?? base.spacingBefore,
@@ -260,6 +261,7 @@ function mergePar(
     ...(frame !== undefined ? { frame } : {}),
     ...(sectionBreak !== undefined ? { sectionBreak } : {}),
     ...(textDirection !== undefined ? { textDirection } : {}),
+    ...(snapToGrid !== undefined ? { snapToGrid } : {}),
   };
 }
 

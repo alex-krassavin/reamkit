@@ -163,6 +163,12 @@ export interface ParagraphProperties {
    * and is not recorded.
    */
   readonly textDirection?: 'btLr' | 'tbRl';
+  /**
+   * §17.3.1.32 `w:snapToGrid` — whether the paragraph's lines stand on the
+   * section's document grid (§17.6.5). Absent ⇒ they do; Word's header and
+   * footer styles are what usually says otherwise.
+   */
+  readonly snapToGrid?: boolean;
   readonly alignment?: Alignment;
   readonly spacingBefore?: Pt;
   readonly spacingAfter?: Pt;
@@ -1485,6 +1491,13 @@ export interface SectionProperties {
    * and the odd/even/column variants we do not distinguish) starts a page.
    */
   readonly sectionStart?: 'continuous' | 'nextPage';
+  /**
+   * §17.6.5 `w:docGrid` — the line grid a `lines`/`linesAndChars` section rules
+   * its text onto, as the pitch in points. Every line of the section's text is
+   * as tall as a whole number of these, however tall its own font makes it.
+   * Absent ⇒ no grid (`w:type="default"`, or none stated).
+   */
+  readonly gridLinePitchPt?: Pt;
 }
 
 /**

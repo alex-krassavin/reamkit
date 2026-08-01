@@ -170,6 +170,15 @@ export function parseParagraphProperties(pPr: unknown): ParagraphProperties {
     if (v === 'btLr' || v === 'tbRl') out.textDirection = v;
   }
 
+  // §17.3.1.32 `w:snapToGrid` — whether this paragraph stands on the section's
+  // document grid (§17.6.5). Word's own header and footer styles turn it off,
+  // so a gridded document's running text would otherwise be spaced like its
+  // body: cjklist30.docx says so in both.
+  if ('w:snapToGrid' in el) {
+    const v = parseToggle(el['w:snapToGrid']);
+    if (v !== undefined) out.snapToGrid = v;
+  }
+
   if ('w:contextualSpacing' in el) {
     const v = parseToggle(el['w:contextualSpacing']);
     if (v !== undefined) out.contextualSpacing = v;

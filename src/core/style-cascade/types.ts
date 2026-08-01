@@ -92,6 +92,8 @@ export interface ResolvedParagraphProperties {
   readonly frame?: FrameProperties;
   /** §17.3.1.41 — which way the paragraph's lines run (`lrTb` is not recorded). */
   readonly textDirection?: 'btLr' | 'tbRl';
+  /** §17.3.1.32 — whether these lines stand on the section's grid. Absent ⇒ they do. */
+  readonly snapToGrid?: boolean;
   /**
    * §17.6.17 — the paragraph mark carries the section break, so a paragraph
    * with no content of its own prints nothing at all.
@@ -102,6 +104,12 @@ export interface ResolvedParagraphProperties {
    * (L/LI nesting) — markers themselves are materialized by `applyNumbering`.
    */
   readonly numbering?: NumberingReference;
+  /**
+   * §17.6.5 — the line pitch of the section's document grid, in points. Not a
+   * property of the paragraph at all: the section it falls in owns it, and the
+   * layout stamps it here so a line knows the grid it stands on.
+   */
+  readonly gridLinePitchPt?: Pt;
 }
 
 /** Word's empty-document run defaults (used when `docDefaults` is absent). */

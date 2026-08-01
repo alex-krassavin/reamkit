@@ -210,6 +210,12 @@ export interface StyledRenderOptions {
    * `body[sections[N-1].endIndex..sections[N].endIndex)`).
    */
   readonly sections?: ReadonlyArray<Section>;
+  /**
+   * §17.6.5 — the pitch of the document grid the text is laid on. Set by the
+   * layout itself, per section (see {@link SectionRenderCtx.options}); callers
+   * state it on the section, not here.
+   */
+  readonly gridLinePitchPt?: Pt;
   /** Header/footer body content keyed by relationship id. */
   readonly headersFooters?: ReadonlyMap<string, ReadonlyArray<BodyElement>>;
   /**
@@ -962,11 +968,12 @@ export function layoutStyledDocument(
     const width = ctx.columns ? ctx.columns[0]!.widthPt : ctx.contentWidth;
     const box: RelativeBox = { pageWidthPt: ctx.pageWidth, pageHeightPt: ctx.pageHeight };
     const group = bodyFrames.starts.get(idx);
-    if (group) return layoutFrameBlock(group, options, fontResources, imageResources, width);
+    if (group)
+      return layoutFrameBlock(group, ctx.options ?? options, fontResources, imageResources, width);
     if (bodyFrames.continued.has(idx)) return emptyBlock(options);
     return layoutBodyElement(
       el,
-      options,
+      ctx.options ?? options,
       fontResources,
       imageResources,
       width,
@@ -1010,7 +1017,7 @@ export function layoutStyledDocument(
               const noteBlocks = substituteNoteNumber(content, n).map((el) =>
                 layoutBodyElement(
                   el,
-                  options,
+                  sectionCtx.options ?? options,
                   fontResources,
                   imageResources,
                   sectionCtx.contentWidth,
@@ -1074,7 +1081,7 @@ export function layoutStyledDocument(
         blocks.push(
           layoutBodyElement(
             el,
-            options,
+            lastCtx.options ?? options,
             fontResources,
             imageResources,
             lastCtx.contentWidth,
@@ -1242,6 +1249,13 @@ export interface SectionRenderCtx {
    * one before it stopped, rather than on a fresh one.
    */
   readonly continuous: boolean;
+  /**
+   * The render options this section's content is laid out with: `options` plus
+   * whatever the section itself decides for its text — today only §17.6.5's
+   * document grid, which is a property of the SECTION and is needed by every
+   * paragraph in it. Absent on a bare context built outside a layout run.
+   */
+  readonly options?: StyledRenderOptions;
 }
 
 // Pick the final list of sections to render. Precedence:
@@ -1270,10 +1284,16 @@ function buildSectionContext(
 ): SectionRenderCtx {
   const dims = resolvePageDimensions(options, section.properties);
   const contentWidth = dims.pageWidth - dims.marginLeft - dims.marginRight;
+  // §17.6.5 — the grid belongs to the section, and every paragraph laid out
+  // inside it stands on it (bar the ones that say `w:snapToGrid w:val="0"`).
+  const secOptions: StyledRenderOptions =
+    section.properties.gridLinePitchPt !== undefined
+      ? { ...options, gridLinePitchPt: section.properties.gridLinePitchPt }
+      : options;
   const headerSet = layoutHeaderSet(
     section.properties,
     headersFooters,
-    options,
+    secOptions,
     fontResources,
     imageResources,
     contentWidth,
@@ -1284,7 +1304,7 @@ function buildSectionContext(
   const footerSet = layoutFooterSet(
     section.properties,
     headersFooters,
-    options,
+    secOptions,
     fontResources,
     imageResources,
     contentWidth,
@@ -1321,6 +1341,7 @@ function buildSectionContext(
     titlePg: section.properties.titlePg === true,
     evenAndOddHeaders: section.properties.evenAndOddHeaders === true,
     continuous: section.properties.sectionStart === 'continuous',
+    options: secOptions,
   };
 }
 
@@ -3411,7 +3432,15 @@ function layoutParagraphBlock(
   // Float wrapping: explicit per-line widths (overrides first/other widths).
   lineWidths?: ReadonlyArray<number>,
 ): ParagraphBlock {
-  const baseResolved = resolveParagraphProperties(paragraph.properties, options.styles);
+  const cascaded = resolveParagraphProperties(paragraph.properties, options.styles);
+  // §17.6.5 / §17.3.1.32 — the section's grid, carried onto the paragraph so
+  // its lines know the pitch they stand on. A paragraph that says
+  // `w:snapToGrid w:val="0"` is off the grid — which is what Word's own header
+  // and footer styles say, and cjklist30.docx says it in both.
+  const baseResolved: ResolvedParagraphProperties =
+    options.gridLinePitchPt !== undefined && cascaded.snapToGrid !== false
+      ? { ...cascaded, gridLinePitchPt: options.gridLinePitchPt }
+      : cascaded;
   // §17.6.17 — the paragraph mark IS the section break, so a paragraph that
   // holds one and nothing else takes no room: no line, no spacing.
   if (paragraph.properties.sectionBreak === true && paragraph.runs.length === 0) {
@@ -4659,6 +4688,17 @@ function fontLeadingPt(
 }
 
 function computeLineHeight(line: Line, p: ResolvedParagraphProperties): number {
+  const natural = naturalLineHeight(line, p);
+  // §17.6.5 — on a document grid every line stands a whole number of grid
+  // lines tall, so a line taller than the pitch takes as many as it needs.
+  // fdo80902.docx rules an 18pt grid over 10.5pt text and its two paragraphs
+  // sat a bare line height apart.
+  const pitch = p.gridLinePitchPt;
+  if (pitch !== undefined && pitch > 0) return Math.ceil(natural / pitch - 1e-6) * pitch;
+  return natural;
+}
+
+function naturalLineHeight(line: Line, p: ResolvedParagraphProperties): number {
   const fontSize = line.maxFontSizePt || 12;
   // Natural single-line height: a font-metric value under a layoutProfile
   // (E-PARITY), else Ream's flat 1.2×. The spacing rules below scale it.
