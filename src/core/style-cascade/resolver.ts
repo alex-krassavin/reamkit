@@ -87,8 +87,14 @@ function computeRunProperties(
 ): ResolvedRunProperties {
   let acc = mergeRun(DEFAULT_RESOLVED_RUN, sheet.defaultRunProperties);
 
-  if (paragraphDirect.styleId) {
-    const chain = resolveStyleChain(paragraphDirect.styleId, sheet);
+  // §17.7.4.17 — a paragraph that names no style is written in the DEFAULT
+  // one, and its runs inherit that style's rPr exactly as the paragraph
+  // inherits its pPr. Read as "no style at all", defaultStyle.docx set its
+  // unstyled paragraph in 12pt body text where every reader uses the 28pt bold
+  // of the Title style the file marks default.
+  const styleId = paragraphDirect.styleId ?? defaultParagraphStyleId(sheet);
+  if (styleId) {
+    const chain = resolveStyleChain(styleId, sheet);
     acc = mergeRun(acc, chain.rPr);
   }
   if (runDirect.styleId) {
@@ -154,12 +160,13 @@ const defaultParagraphStyleCache = new WeakMap<StyleSheet, string | null>();
 function defaultParagraphStyleId(sheet: StyleSheet): string | undefined {
   const hit = defaultParagraphStyleCache.get(sheet);
   if (hit !== undefined) return hit ?? undefined;
+  // §17.7.4.17 — a document may mark several styles default, and the LAST one
+  // wins. defaultStyle.docx marks both Normal and Title, and taking the first
+  // set its unstyled paragraph in body text where every reader sets it in the
+  // title's 28pt bold.
   let found: string | null = null;
   for (const style of sheet.styles.values()) {
-    if (style.type === 'paragraph' && style.isDefault) {
-      found = style.id;
-      break;
-    }
+    if (style.type === 'paragraph' && style.isDefault) found = style.id;
   }
   defaultParagraphStyleCache.set(sheet, found);
   return found ?? undefined;

@@ -197,6 +197,26 @@ describe('a table indent from the style', () => {
   });
 });
 
+describe('the default paragraph style (§17.7.4.17)', () => {
+  it('dresses a paragraph that names no style, runs and all', () => {
+    // defaultStyle.docx marks BOTH Normal and Title default and writes an
+    // unstyled paragraph: every reader sets it in Title's 28pt bold — the last
+    // default wins, and the runs inherit that style's rPr too.
+    const stylesXml =
+      '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/>' +
+      '<w:rPr><w:sz w:val="24"/></w:rPr></w:style>' +
+      '<w:style w:type="paragraph" w:default="1" w:styleId="Title"><w:name w:val="Title"/>' +
+      '<w:rPr><w:b/><w:sz w:val="56"/></w:rPr></w:style>';
+    const { doc } = readDocx(
+      buildDocxFromBody('<w:p><w:r><w:t>plain</w:t></w:r></w:p>', { stylesXml }),
+    );
+    const p = doc.body[0];
+    const run = p?.kind === 'paragraph' ? p.paragraph.runs[0] : undefined;
+    expect(run?.properties.fontSizePt).toBe(28);
+    expect(run?.properties.bold).toBe(true);
+  });
+});
+
 describe('a conditional layer reaches the paragraph mark too', () => {
   // conditionalstyles-tbllook.docx sets its first column in 36pt: the cells
   // with a letter in them are that tall in every reader, and so are the EMPTY
