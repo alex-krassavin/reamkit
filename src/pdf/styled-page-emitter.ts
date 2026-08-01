@@ -6,7 +6,7 @@
 // pre-split renderer produced), then pages replay their PageItems, then the
 // catalog assembles OutputIntent/XMP/struct-tree/attachments as required.
 
-import type { BorderStyle, DocumentInfo } from '@/core/document-model';
+import type { BorderStyle, DocumentInfo, ImageCrop } from '@/core/document-model';
 import type { ResourceId } from '@/core/ir';
 import type { EmbeddedFont } from '@/pdf/cid-font';
 import type { PdfDict, PdfRef, PdfValue } from '@/pdf/objects';
@@ -706,9 +706,7 @@ function emitPageContent(
     // /Im1 Do       paint the XObject
     // Q             restore
     out.push('q');
-    out.push(
-      `${formatNumber(img.width)} 0 0 ${formatNumber(img.height)} ${formatNumber(img.x)} ${formatNumber(H - img.y - img.height)} cm`,
-    );
+    out.push(...placeImage(img.x, H - img.y - img.height, img.width, img.height, img.crop));
     out.push(`/${img.imageResourceName} Do`);
     out.push('Q');
   });
@@ -840,9 +838,7 @@ function emitPageContent(
         inBT = false;
       }
       out.push('q');
-      out.push(
-        `${formatNumber(tok.widthPt)} 0 0 ${formatNumber(tok.heightPt)} ${formatNumber(x)} ${formatNumber(baselineY)} cm`,
-      );
+      out.push(...placeImage(x, baselineY, tok.widthPt, tok.heightPt, tok.crop));
       out.push(`/${tok.imageResourceName} Do`);
       out.push('Q');
       // Text state is reset by ET; force re-emit on the next text token.
@@ -1226,6 +1222,40 @@ function lineVisualOrder(line: Line): Array<number> {
 
 // Extra width per space token when justifying. 0 for non-justify lines or
 // the last line of a paragraph (last line stays left-aligned by convention).
+/**
+ * The operators that put an image XObject in a box — ISO 32000-1 §8.9.5.1: the
+ * unit square scaled to the box and moved to `(x, y)`, its bottom-left corner.
+ *
+ * A `a:srcRect` crop (§20.1.8.55) cuts edges off the SOURCE and fits what is
+ * left to the same box, so the picture is drawn larger than the box and the box
+ * is made a clipping path. Ignored, ImageCrop.docx drew the whole mountain
+ * where LibreOffice shows the peak.
+ *
+ * @returns The content-stream lines, to be pushed between `q` and the `Do`.
+ */
+function placeImage(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  crop: ImageCrop | undefined,
+): Array<string> {
+  const cm = (w: number, h: number, ox: number, oy: number): string =>
+    `${formatNumber(w)} 0 0 ${formatNumber(h)} ${formatNumber(ox)} ${formatNumber(oy)} cm`;
+  if (!crop) return [cm(width, height, x, y)];
+  const kept = { w: 1 - crop.left - crop.right, h: 1 - crop.top - crop.bottom };
+  // The full picture at the scale that makes its kept part fill the box, moved
+  // so that part lands ON the box: left by the cut-away left edge, and down by
+  // the cut-away BOTTOM one (PDF's y runs up, DrawingML's crop runs down).
+  const full = { w: width / kept.w, h: height / kept.h };
+  return [
+    `${formatNumber(x)} ${formatNumber(y)} ${formatNumber(width)} ${formatNumber(height)} re`,
+    'W',
+    'n',
+    cm(full.w, full.h, x - crop.left * full.w, y - crop.bottom * full.h),
+  ];
+}
+
 function computeJustifyExtra(line: Line): number {
   if (line.resolved.alignment !== 'both') return 0;
   if (line.isLastInParagraph) return 0;

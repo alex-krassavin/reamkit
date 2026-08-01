@@ -9,6 +9,7 @@ import type {
   BodyElement,
   CustomPathCmd,
   FloatAnchor,
+  ImageCrop,
   ShapeDash,
   ShapeFill,
   ShapeGeometry,
@@ -73,6 +74,8 @@ export type DrawingContent =
       readonly imageId: string;
       readonly width: Pt;
       readonly height: Pt;
+      /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
+      readonly crop?: ImageCrop;
       /** `wp:docPr` `@descr`/`@title` — alternate text for the tagged-PDF Figure. */
       readonly altText?: string;
       readonly float?: FloatAnchor;
@@ -264,11 +267,13 @@ export function parseDrawing(
   const blip = poFindDescendant(anchor, 'a:blip');
   const rId = blip ? poAttr(blip, 'embed') : undefined;
   if (extentCx !== undefined && extentCy !== undefined && rId) {
+    const crop = parseSrcRect(poFindDescendant(anchor, 'a:srcRect'));
     return {
       kind: 'image',
       imageId: rId,
       width: emuToPt(extentCx),
       height: emuToPt(extentCy),
+      ...(crop ? { crop } : {}),
       ...alt,
     };
   }
@@ -332,6 +337,30 @@ function vmlStyleLength(shape: PoNode | undefined, prop: 'width' | 'height'): Pt
   const value = Number.parseFloat(m[1]!);
   if (!Number.isFinite(value) || value <= 0) return undefined;
   return pt(value * (VML_UNIT_TO_PT[(m[2] ?? 'px').toLowerCase()] ?? 1));
+}
+
+/**
+ * §20.1.8.55 `a:srcRect` — the picture's own edges, cut away before it is
+ * fitted to its frame. Each is a percentage in thousandths (ST_Percentage), so
+ * `l="14711"` drops the left 14.711%.
+ *
+ * @param node The `a:srcRect` element, or `undefined` when the fill declares none.
+ * @returns The crop, or `undefined` when nothing is cut away.
+ */
+function parseSrcRect(node: PoNode | undefined): ImageCrop | undefined {
+  if (!node) return undefined;
+  const edge = (name: string): number => {
+    const v = Number(poAttr(node, name));
+    // A negative srcRect pads rather than crops (the frame shows more than the
+    // picture); nothing here draws that, so it reads as no cut on that edge.
+    return Number.isFinite(v) && v > 0 ? v / 100000 : 0;
+  };
+  const crop = { left: edge('l'), top: edge('t'), right: edge('r'), bottom: edge('b') };
+  if (crop.left + crop.top + crop.right + crop.bottom === 0) return undefined;
+  // A crop that leaves nothing of either axis would divide by zero below; a
+  // file that asks for it is asking for an empty frame, which is what it gets.
+  if (crop.left + crop.right >= 1 || crop.top + crop.bottom >= 1) return undefined;
+  return crop;
 }
 
 function parseWsp(

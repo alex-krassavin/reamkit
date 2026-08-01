@@ -483,6 +483,7 @@ function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): Array<Bod
           ...(resource ? { resource } : {}),
           width: content.width,
           height: content.height,
+          ...(content.crop ? { crop: content.crop } : {}),
           paragraphProperties,
           ...(content.altText ? { altText: content.altText } : {}),
           ...(content.float ? { float: content.float } : {}),
@@ -828,6 +829,7 @@ function parseRun(
           ...(resource ? { resource } : {}),
           width: content.width,
           height: content.height,
+          ...(content.crop ? { crop: content.crop } : {}),
         };
       }
     } else if (poIs(child, 'w:pict') || poIs(child, 'w:object')) {

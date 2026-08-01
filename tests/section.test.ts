@@ -269,23 +269,29 @@ describe('Headers and footers in rendered PDF', () => {
     expect(countOf('EVEN-MARK')).toBe(1);
   });
 
-  it('falls back to default header when first variant is missing', () => {
-    // titlePg is set but no firstHeaderReference → default header on every page.
+  it('leaves the title page bare when titlePg names no first header', () => {
+    // §17.10.6 — titlePg says the first page's header is DIFFERENT, and a
+    // section that declares no `first` part means different by being empty.
+    // Read as a fallback to the default it put a header on the title page that
+    // neither Word nor LibreOffice draws: ImageCrop.docx is one page long and
+    // is that page.
+    const long = 'X '.repeat(2000);
     const body = `
-      <w:p><w:r><w:t>x</w:t></w:r></w:p>
+      <w:p><w:r><w:t>${long}</w:t></w:r></w:p>
+      <w:p><w:r><w:t>${long}</w:t></w:r></w:p>
       <w:sectPr>
         <w:headerReference r:id="rId10" w:type="default"/>
         <w:titlePg/>
         <w:pgSz w:w="11906" w:h="16838"/>
-        <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>
+        <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720"/>
       </w:sectPr>`;
     const docx = buildDocxFromBody(body, {
       headerXml: '<w:p><w:r><w:t>ONLY-MARK</w:t></w:r></w:p>',
     });
-    const pdf = convertDocxToPdfSync(docx, { fonts: FONTS });
-    const text = asLatin1(pdf);
+    const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
     const parsed = parseTtf(FONTS.regular);
-    expect(text).toMatch(showPattern(parsed, 'ONLY-MARK'));
+    // Two pages; the header prints on the second one only.
+    expect(countShown(parsed, text, 'ONLY-MARK')).toBe(1);
   });
 
   it('emits per-section MediaBox when sections have different page sizes', () => {

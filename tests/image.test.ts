@@ -26,7 +26,7 @@ const FONTS = {
 const latin1 = new TextDecoder('latin1');
 const asLatin1 = (b: Uint8Array): string => latin1.decode(b);
 
-function drawingXml(rId: string, cxEmu: number, cyEmu: number): string {
+function drawingXml(rId: string, cxEmu: number, cyEmu: number, srcRect = ''): string {
   return `<w:r><w:drawing>
     <wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
       <wp:extent cx="${cxEmu}" cy="${cyEmu}"/>
@@ -36,6 +36,7 @@ function drawingXml(rId: string, cxEmu: number, cyEmu: number): string {
           <pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
             <pic:blipFill>
               <a:blip r:embed="${rId}"/>
+              ${srcRect}
             </pic:blipFill>
             <pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cxEmu}" cy="${cyEmu}"/></a:xfrm></pic:spPr>
           </pic:pic>
@@ -282,6 +283,44 @@ describe('Image rendering end-to-end', () => {
 
     expect(text).toMatch(/\/Width 3/);
     expect(text).toMatch(/\/Height 5/);
+  });
+});
+
+describe('a cropped picture (§20.1.8.55 a:srcRect)', () => {
+  const png = buildTinyPng(2, 2, [255, 0, 0, 255]);
+  // Quarter off the left, half off the bottom: the frame shows the top-right
+  // three-eighths of the picture, so the picture is drawn 4/3 as wide and twice
+  // as tall as the frame and the frame clips it.
+  const cropped = (srcRect: string): string =>
+    asLatin1(
+      convertDocxToPdfSync(
+        buildDocxFromBody(`<w:p>${drawingXml('rId20', 914400, 914400, srcRect)}</w:p>`, {
+          images: { rId20: { contentType: 'image/png', bytes: png, extension: 'png' } },
+        }),
+        { fonts: FONTS },
+      ),
+    );
+
+  it('scales the picture up and clips the frame to it', () => {
+    const text = cropped('<a:srcRect l="25000" b="50000"/>');
+    // A clipping path the size of the frame (72pt), then the picture at 96×144.
+    expect(text).toMatch(/[\d.]+ [\d.]+ 72 72 re\nW\nn\n96 0 0 144 /u);
+    // Moved left by the quarter cut away and down by the half: 24pt and 72pt.
+    const cm = /96 0 0 144 ([\d.]+) ([\d.]+) cm/u.exec(text)!;
+    const re = /([\d.]+) ([\d.]+) 72 72 re/u.exec(text)!;
+    expect(Number(re[1]) - Number(cm[1])).toBeCloseTo(24, 3);
+    expect(Number(re[2]) - Number(cm[2])).toBeCloseTo(72, 3);
+  });
+
+  it('leaves a picture with no crop alone', () => {
+    // Every edge zero is no crop at all — no clip, and the unit square scaled
+    // straight to the frame.
+    expect(cropped('<a:srcRect l="0" t="0"/>')).toMatch(/\n72 0 0 72 /u);
+    expect(cropped('')).toMatch(/\n72 0 0 72 /u);
+  });
+
+  it('ignores a crop that would leave nothing of the picture', () => {
+    expect(cropped('<a:srcRect l="60000" r="60000"/>')).toMatch(/\n72 0 0 72 /u);
   });
 });
 

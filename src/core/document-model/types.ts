@@ -146,6 +146,8 @@ export interface InlineImage {
   readonly resource?: ResourceId;
   readonly width: Pt;
   readonly height: Pt;
+  /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
+  readonly crop?: ImageCrop;
 }
 
 /**
@@ -760,12 +762,26 @@ export interface Table {
  * ECMA-376 Part 1 §20.4.2.8 — a block-level image (`wp:inline` picture extent).
  * EMU = English Metric Units: 914400 per inch (1 pt = 12700 EMU).
  */
+/**
+ * §20.1.8.55 `a:srcRect` — how much of each edge of the source picture is cut
+ * away before it is fitted to its frame, as a fraction of the source (so 0.25
+ * on `left` drops its left quarter). Absent edges are zero.
+ */
+export interface ImageCrop {
+  readonly left: number;
+  readonly top: number;
+  readonly right: number;
+  readonly bottom: number;
+}
+
 export interface ImageBlock {
   /** §20.4.2.3 — present when the drawing is anchored (floating). */
   readonly float?: FloatAnchor;
   readonly resource?: ResourceId;
   readonly width: Pt;
   readonly height: Pt;
+  /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
+  readonly crop?: ImageCrop;
   readonly paragraphProperties: ParagraphProperties;
   /** `wp:docPr @descr/@title` — alternate text for the tagged-PDF Figure (`/Alt`). */
   readonly altText?: string;

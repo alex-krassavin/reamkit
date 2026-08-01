@@ -10,7 +10,7 @@
 // boxes inside a Line) and styling magnitudes (font/stroke sizes) stay plain
 // numbers — they are not page-frame coordinates.
 
-import type { BorderStyle } from '@/core/document-model';
+import type { BorderStyle, ImageCrop } from '@/core/document-model';
 import type { Pt, ResourceId, ResourceStore } from '@/core/ir';
 import type { FontMeasure, ParsedTtf } from '@/core/font';
 import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
@@ -90,6 +90,8 @@ export interface ImageToken {
   readonly imageResourceName: string;
   readonly widthPt: number;
   readonly heightPt: number;
+  /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
+  readonly crop?: ImageCrop;
   /** Constants kept to satisfy {@link Token} consumers — they never read these for images. */
   readonly isSpace: false;
   readonly bidiLevel: number;
@@ -254,6 +256,8 @@ export interface ImageItem extends PageItemBase {
   readonly width: Pt;
   readonly height: Pt;
   readonly imageResourceName: string;
+  /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
+  readonly crop?: ImageCrop;
 }
 
 /**

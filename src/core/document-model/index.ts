@@ -37,6 +37,7 @@ export type {
   HeaderFooterReference,
   HeaderFooterType,
   ImageBlock,
+  ImageCrop,
   InlineImage,
   MathAccent,
   MathBar,

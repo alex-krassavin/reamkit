@@ -33,6 +33,7 @@ import type {
   HeaderFooterReference,
   HeaderFooterType,
   ImageBlock,
+  ImageCrop,
   MathNode,
   Numbering,
   Paragraph,
@@ -362,6 +363,8 @@ interface ImageBlockLaidOut {
   readonly heightPt: number;
   readonly resolvedAlignment: 'left' | 'center' | 'right' | 'both' | 'distribute';
   readonly resourceName: string;
+  /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
+  readonly crop?: ImageCrop;
   readonly spacingBeforePt: number;
   readonly spacingAfterPt: number;
   readonly altText?: string;
@@ -1402,7 +1405,13 @@ function substitutePageFields(
 
 function pickBand(set: HeaderFooterSet, band: HfBand): HfBandEntry {
   const has = (e: HfBandEntry) => e.commands.length > 0 || e.renderDynamic !== undefined;
-  if (band === 'first') return has(set.first) ? set.first : set.default;
+  // §17.10.6 — `w:titlePg` says the first page's header is DIFFERENT. A section
+  // that turns it on and declares no `first` part means different by being
+  // empty: falling back to the default put a header on the title page that
+  // neither Word nor LibreOffice draws (ImageCrop.docx, whose only page is one).
+  // `w:evenAndOddHeaders` is not the same bargain — LibreOffice prints the
+  // default on even pages when the document declares no even part.
+  if (band === 'first') return set.first;
   if (band === 'even') return has(set.even) ? set.even : set.default;
   return set.default;
 }
@@ -1484,6 +1493,7 @@ function layoutImageBlock(
     heightPt,
     resolvedAlignment,
     resourceName: res?.resourceName ?? '',
+    ...(image.crop ? { crop: image.crop } : {}),
     spacingBeforePt: image.paragraphProperties.spacingBefore ?? 0,
     spacingAfterPt: image.paragraphProperties.spacingAfter ?? 0,
     ...(image.altText ? { altText: image.altText } : {}),
@@ -2043,6 +2053,7 @@ function drawBlocksSequentially(
         width: pt(block.widthPt),
         height: pt(block.heightPt),
         imageResourceName: block.resourceName,
+        ...(block.crop ? { crop: block.crop } : {}),
       });
       cursorY -= block.heightPt + block.spacingAfterPt;
       continue;
@@ -2431,6 +2442,7 @@ interface RunPlan {
   readonly imageWidthPt: number;
   readonly imageHeightPt: number;
   readonly imageResourceName: string;
+  readonly imageCrop?: ImageCrop;
   readonly math?: {
     readonly items: ReadonlyArray<ResolvedMathItem>;
     readonly widthPt: number;
@@ -2506,6 +2518,7 @@ function tokenizeParagraph(
         imageWidthPt: widthPt,
         imageHeightPt: heightPt,
         imageResourceName: res?.resourceName ?? '',
+        ...(run.inlineImage.crop ? { imageCrop: run.inlineImage.crop } : {}),
       };
     }
     if (run.math) {
@@ -2604,6 +2617,7 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         imageResourceName: plan.imageResourceName,
         widthPt: plan.imageWidthPt,
         heightPt: plan.imageHeightPt,
+        ...(plan.imageCrop ? { crop: plan.imageCrop } : {}),
         isSpace: false,
         bidiLevel: 0,
       });
@@ -2661,6 +2675,7 @@ function tokenizePlansBidi(
         imageResourceName: plan.imageResourceName,
         widthPt: plan.imageWidthPt,
         heightPt: plan.imageHeightPt,
+        ...(plan.imageCrop ? { crop: plan.imageCrop } : {}),
         isSpace: false,
         bidiLevel: realLevels[realIdx] ?? 0,
       });
@@ -4555,6 +4570,7 @@ function paginateSections(
           width: pt(block.widthPt),
           height: pt(block.heightPt),
           imageResourceName: block.resourceName,
+          ...(block.crop ? { crop: block.crop } : {}),
           ...(figId !== undefined ? { structId: figId } : {}),
         });
       };
