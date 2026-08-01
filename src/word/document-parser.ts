@@ -518,7 +518,7 @@ function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): Array<Bod
   const paragraphProperties = pPrNode ? parseParagraphProperties(poElementToFlat(pPrNode)) : {};
 
   if (drawings.length === 0) {
-    const content = parseVmlPicture(vml!);
+    const content = parseVmlPicture(vml!, parseBody);
     if (!content) return null;
     // A dangling VML <v:imagedata r:id> (referenced media absent from the
     // package) carries nothing to render; skip it so the paragraph stays empty
@@ -1034,12 +1034,22 @@ function parseRun(
       // bytes: a dangling <v:imagedata r:id> (the referenced media stripped
       // from the package, as some corpus files have) carries nothing to render,
       // so we skip the phantom rather than emit an empty picture.
-      const content = parseVmlPicture(child);
-      if (content && content.kind === 'image') {
+      const content = parseVmlPicture(child, (children) => parseBodyElements(children, ctx));
+      if (content?.float && anchored) {
+        // §14.1.2 — a POSITIONED VML drawing hangs off the paragraph, picture
+        // or shape alike: drawinglayer-pic-pos.docx sets its photo two inches
+        // down the page and we drew it in the line.
+        anchored.push(...(blocksForDrawing(content, {}, ctx) ?? []));
+      } else if (content && content.kind === 'image') {
         const resource = ctx.resolveImage?.(content.imageId);
         if (resource) {
           inlineImage = { resource, width: content.width, height: content.height };
         }
+      } else if (content && anchored) {
+        // §14.1.2 — a drawn VML shape in a run of text: a block of its own,
+        // the way an anchored drawing is. drawinglayer-pic-pos.docx frames its
+        // title in one beside the paragraph's text.
+        anchored.push(...(blocksForDrawing(content, {}, ctx) ?? []));
       }
     }
   }

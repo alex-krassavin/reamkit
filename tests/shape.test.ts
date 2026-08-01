@@ -713,6 +713,49 @@ describe('a gallery-styled shape', () => {
 // rather than in the document body. Read nowhere, WordArt.docx printed an empty
 // page. The preset path is a shapetype of formulas we do not evaluate, so the
 // words are set flat in the shape's box — which is the whole of what it says.
+describe('a legacy VML shape (§14.1.2)', () => {
+  const pictOf = (inner: string): string =>
+    asLatin1(
+      convertDocxToPdfSync(buildDocxFromBody(`<w:p><w:r><w:pict>${inner}</w:pict></w:r></w:p>`), {
+        fonts: FONTS,
+      }),
+    );
+
+  it('draws a rectangle with its fill, its outline and its words', () => {
+    // drawinglayer-pic-pos.docx frames its title in one of these, and read
+    // only for a `v:imagedata` the page came out without it.
+    const text = pictOf(
+      '<v:rect style="position:absolute;margin-left:10pt;margin-top:20pt;width:200pt;height:100pt"' +
+        ' fillcolor="#4472C4" strokecolor="red" strokeweight="2pt">' +
+        '<v:textbox><w:txbxContent><w:p><w:r><w:t>Framed</w:t></w:r></w:p></w:txbxContent></v:textbox>' +
+        '</v:rect>',
+    );
+    expect(text).toContain('0.266667 0.447059 0.768627 rg'); // 4472C4 fill
+    expect(text).toContain('1 0 0 RG'); // red outline
+    expect(text).toContain('2 w');
+    expect(text).toMatch(/<[0-9A-F]+>[^\n]*T[Jj]/u); // the words in it
+  });
+
+  it('reads a named colour and an unfilled shape', () => {
+    const text = pictOf('<v:oval style="width:50pt;height:50pt" filled="f" strokecolor="navy"/>');
+    expect(text).toContain('0 0 0.501961 RG'); // navy
+    expect(text).not.toMatch(/ rg\n/u); // nothing filled
+  });
+
+  it("places a group's members in the group's own coordinate space", () => {
+    // dml-textshape.docx draws its whole diagram inside a v:group, and read as
+    // one shape it drew nothing at all.
+    const text = pictOf(
+      '<v:group style="width:200pt;height:100pt" coordsize="2000,1000">' +
+        '<v:rect style="position:absolute;left:1000;top:500;width:1000;height:500" fillcolor="#00FF00"/>' +
+        '</v:group>',
+    );
+    // Half the group's box, at its centre: a 100×50pt rectangle.
+    expect(text).toMatch(/100 0 l/u);
+    expect(text).toContain('0 1 0 rg');
+  });
+});
+
 describe('VML WordArt', () => {
   const pict = (shapeXml: string): string =>
     asLatin1(

@@ -382,9 +382,9 @@ export function parseDrawing(
  * @param node The `w:pict` / `w:object` node.
  * @returns The picture, or `null` when there is no embedded `v:imagedata` or no usable size.
  */
-export function parseVmlPicture(node: PoNode): DrawingContent | null {
+export function parseVmlPicture(node: PoNode, parseBody?: ParseBody): DrawingContent | null {
   const imagedata = poFindDescendant(node, 'v:imagedata');
-  if (!imagedata) return parseVmlWordArt(node);
+  if (!imagedata) return parseVmlWordArt(node) ?? parseVmlShape(node, parseBody);
   // @r:id binds the embedded picture. An external @o:href/@r:href link we do
   // not embed, and an empty placeholder frame (a <v:shape> with no imagedata),
   // both leave this undefined and are skipped.
@@ -403,7 +403,325 @@ export function parseVmlPicture(node: PoNode): DrawingContent | null {
     (shape ? poAttr(shape, 'alt') : undefined)?.trim() ||
     poAttr(imagedata, 'title')?.trim() || // o:title
     undefined;
-  return { kind: 'image', imageId, width, height, ...(altText ? { altText } : {}) };
+  // §14.1.2 — a positioned VML picture floats exactly as a drawn VML shape
+  // does: drawinglayer-pic-pos.docx hangs its photo two inches down the page
+  // and we set it inline, over the frame above it.
+  const float = shape
+    ? vmlFloat(poAttr(shape, 'style') ?? '', poIntAttr(shape, 'z-index'))
+    : undefined;
+  return {
+    kind: 'image',
+    imageId,
+    width,
+    height,
+    ...(float ? { float } : {}),
+    ...(altText ? { altText } : {}),
+  };
+}
+
+/**
+ * §14.1.2 — a legacy VML shape drawn as the DrawingML one it corresponds to:
+ * `v:rect`, `v:roundrect`, `v:oval`, `v:line` and a `v:shape` we cannot resolve
+ * a path for (drawn as its box). 113 corpus documents still hold one — older
+ * Word wrote every drawing this way — and read only for its `v:imagedata`,
+ * every one of them lost the shape, its fill, its outline and the text in it:
+ * drawinglayer-pic-pos.docx frames its title in a `v:rect` and we printed the
+ * page without it.
+ *
+ * @param node       The `w:pict` / `w:object` node.
+ * @param parseBody  Body parser for a `v:textbox`'s content.
+ * @returns The shape, or `null` when nothing drawable is found.
+ */
+function parseVmlShape(node: PoNode, parseBody?: ParseBody): DrawingContent | null {
+  const shape = poChildren(node).find((c) => VML_SHAPE_TAGS.has(poTag(c) ?? ''));
+  if (!shape) return null;
+  if (poIs(shape, 'v:group')) {
+    const data = parseVmlGroup(shape, parseBody);
+    if (!data) return null;
+    const groupFloat = vmlFloat(poAttr(shape, 'style') ?? '', poIntAttr(shape, 'z-index'));
+    return {
+      kind: 'shape',
+      data,
+      ...(groupFloat ? { float: groupFloat } : {}),
+      ...(poAttr(shape, 'alt')?.trim() ? { altText: poAttr(shape, 'alt')!.trim() } : {}),
+    };
+  }
+  const tag = poTag(shape) ?? '';
+  const style = poAttr(shape, 'style') ?? '';
+  const width = vmlStyleLength(shape, 'width');
+  const height = vmlStyleLength(shape, 'height');
+  // A line states its ends rather than a box; everything else needs one.
+  const from = tag === 'v:line' ? vmlPoint(poAttr(shape, 'from')) : undefined;
+  const to = tag === 'v:line' ? vmlPoint(poAttr(shape, 'to')) : undefined;
+  const boxW = width ?? (from && to ? Math.abs(to.x - from.x) : undefined);
+  const boxH = height ?? (from && to ? Math.abs(to.y - from.y) : undefined);
+  if (boxW === undefined || boxH === undefined) return null;
+
+  const data = vmlShapeData(shape, tag, pt(Math.max(1, boxW)), pt(Math.max(1, boxH)), parseBody);
+  if (!data) return null;
+  const float = vmlFloat(style, poIntAttr(shape, 'z-index'));
+  return {
+    kind: 'shape',
+    data,
+    ...(float ? { float } : {}),
+    ...(poAttr(shape, 'alt')?.trim() ? { altText: poAttr(shape, 'alt')!.trim() } : {}),
+  };
+}
+
+/**
+ * One VML primitive as {@link ShapeData}: its preset geometry, fill, outline
+ * and the words in its text box.
+ *
+ * @param shape     The `v:rect` / `v:oval` / … node.
+ * @param tag       Its tag, which picks the preset.
+ * @param width     The box's width, already in points.
+ * @param height    Its height.
+ * @param parseBody Body parser for a `v:textbox`.
+ * @returns The shape, or `null` when it draws nothing and says nothing.
+ */
+function vmlShapeData(
+  shape: PoNode,
+  tag: string,
+  width: Pt,
+  height: Pt,
+  parseBody?: ParseBody,
+): ShapeData | null {
+  const fill = vmlFill(shape);
+  const line = vmlLine(shape);
+  const text = parseBody ? vmlTextBox(shape, parseBody) : undefined;
+  // Nothing to draw and nothing to say: a spacer, not a shape.
+  if (fill.kind === 'none' && !line && !text) return null;
+  return {
+    width,
+    height,
+    geometry: { kind: 'preset', preset: VML_PRESETS[tag] ?? 'rect', adjust: new Map() },
+    fill,
+    ...(line ? { line } : {}),
+    ...(text ? { text } : {}),
+  };
+}
+
+/**
+ * §14.1.2.7 `v:group` — a VML group: its `@style` gives the box on the page,
+ * its `@coordsize`/`@coordorigin` the space its children are positioned in.
+ * dml-textshape.docx draws its whole diagram inside one, and read as a single
+ * shape it drew nothing at all.
+ *
+ * @param group     The `v:group` node.
+ * @param parseBody Body parser for the members' text boxes.
+ * @returns The group as a shape with members, or `null` when it has no box.
+ */
+function parseVmlGroup(group: PoNode, parseBody?: ParseBody): ShapeData | null {
+  const width = vmlStyleLength(group, 'width');
+  const height = vmlStyleLength(group, 'height');
+  if (width === undefined || height === undefined) return null;
+  const size = vmlPair(poAttr(group, 'coordsize')) ?? { x: width, y: height };
+  const origin = vmlPair(poAttr(group, 'coordorigin')) ?? { x: 0, y: 0 };
+  const sx = size.x > 0 ? width / size.x : 1;
+  const sy = size.y > 0 ? height / size.y : 1;
+
+  const children: Array<ShapeGroupChild> = [];
+  for (const child of poChildren(group)) {
+    const tag = poTag(child) ?? '';
+    if (!VML_SHAPE_TAGS.has(tag)) continue;
+    // Inside a group the child's style is in the group's own coordinate units.
+    const left = vmlStyleNumber(child, 'left') ?? 0;
+    const top = vmlStyleNumber(child, 'top') ?? 0;
+    const w = vmlStyleNumber(child, 'width');
+    const h = vmlStyleNumber(child, 'height');
+    if (w === undefined || h === undefined) continue;
+    const data =
+      tag === 'v:group'
+        ? parseVmlGroup(child, parseBody)
+        : vmlShapeData(child, tag, pt(Math.max(1, w * sx)), pt(Math.max(1, h * sy)), parseBody);
+    if (!data) continue;
+    children.push({
+      shape: { ...data, paragraphProperties: {} },
+      xPt: pt((left - origin.x) * sx),
+      yPt: pt((top - origin.y) * sy),
+    });
+  }
+  if (children.length === 0) return null;
+  return {
+    width: pt(width),
+    height: pt(height),
+    children,
+    geometry: { kind: 'custom', custom: EMPTY_GEOMETRY },
+    fill: { kind: 'none' },
+  };
+}
+
+const VML_SHAPE_TAGS = new Set(['v:rect', 'v:roundrect', 'v:oval', 'v:line', 'v:shape', 'v:group']);
+
+/** A bare `x,y` attribute pair (`coordsize`, `coordorigin`). */
+function vmlPair(raw: string | undefined): { x: number; y: number } | undefined {
+  if (!raw) return undefined;
+  const [a, b] = raw.split(',');
+  const x = Number(a);
+  const y = Number(b);
+  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : undefined;
+}
+
+/** A unitless `@style` number (a child inside a group is in coord units). */
+function vmlStyleNumber(shape: PoNode, prop: string): number | undefined {
+  const style = poAttr(shape, 'style');
+  if (style === undefined) return undefined;
+  const m = new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*(-?[0-9.]+)`, 'iu').exec(style);
+  if (!m) return undefined;
+  const v = Number.parseFloat(m[1]!);
+  return Number.isFinite(v) ? v : undefined;
+}
+
+// §14.1.2 — the VML primitives, as the preset geometry each corresponds to.
+// A `v:shape` states its path in a `v:shapetype` of formulas we do not
+// evaluate, so it is drawn as the box it occupies.
+const VML_PRESETS: Readonly<Record<string, string>> = {
+  'v:rect': 'rect',
+  'v:roundrect': 'roundRect',
+  'v:oval': 'ellipse',
+  'v:line': 'line',
+  'v:shape': 'rect',
+};
+
+/** A VML `from`/`to` point ("0,0" or "10pt,20pt"), in points. */
+function vmlPoint(raw: string | undefined): { x: number; y: number } | undefined {
+  if (!raw) return undefined;
+  const parts = raw.split(',');
+  if (parts.length !== 2) return undefined;
+  const num = (t: string): number => {
+    const m = /(-?[0-9.]+)\s*(pt|in|px|cm|mm|pc)?/iu.exec(t.trim());
+    if (!m) return NaN;
+    return Number.parseFloat(m[1]!) * (VML_UNIT_TO_PT[(m[2] ?? 'px').toLowerCase()] ?? 1);
+  };
+  const x = num(parts[0]!);
+  const y = num(parts[1]!);
+  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : undefined;
+}
+
+/** §14.1.2.11 — a VML colour: `#rrggbb`, a named colour, or a system one. */
+function vmlColor(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const v = raw.trim().replace(/^#/u, '').split(' ')[0] ?? '';
+  if (/^[0-9A-Fa-f]{6}$/u.test(v)) return v.toUpperCase();
+  if (/^[0-9A-Fa-f]{3}$/u.test(v)) {
+    return [...v]
+      .map((c) => c + c)
+      .join('')
+      .toUpperCase();
+  }
+  return VML_NAMED_COLORS[v.toLowerCase()];
+}
+
+const VML_NAMED_COLORS: Readonly<Record<string, string>> = {
+  black: '000000',
+  silver: 'C0C0C0',
+  gray: '808080',
+  grey: '808080',
+  white: 'FFFFFF',
+  maroon: '800000',
+  red: 'FF0000',
+  purple: '800080',
+  fuchsia: 'FF00FF',
+  green: '008000',
+  lime: '00FF00',
+  olive: '808000',
+  yellow: 'FFFF00',
+  navy: '000080',
+  blue: '0000FF',
+  teal: '008080',
+  aqua: '00FFFF',
+  window: 'FFFFFF',
+  windowtext: '000000',
+};
+
+// §14.1.2.5 — `@filled="f"` or a `<v:fill type="none">` says the shape is not
+// filled; otherwise `@fillcolor`, defaulting to VML's own white.
+function vmlFill(shape: PoNode): ShapeFill {
+  if (poAttr(shape, 'filled') === 'f' || poAttr(shape, 'filled') === 'false') {
+    return { kind: 'none' };
+  }
+  const fillEl = poChildren(shape).find((c) => poIs(c, 'v:fill'));
+  if (fillEl && (poAttr(fillEl, 'type') === 'none' || poAttr(fillEl, 'on') === 'f')) {
+    return { kind: 'none' };
+  }
+  const colorHex =
+    vmlColor(poAttr(shape, 'fillcolor')) ??
+    (fillEl ? vmlColor(poAttr(fillEl, 'color')) : undefined);
+  return colorHex ? { kind: 'solid', colorHex } : { kind: 'none' };
+}
+
+// §14.1.2.21 — `@stroked="f"` says no outline; otherwise `@strokecolor` and
+// `@strokeweight`, defaulting to VML's own hairline black.
+function vmlLine(shape: PoNode): ShapeLine | undefined {
+  if (poAttr(shape, 'stroked') === 'f' || poAttr(shape, 'stroked') === 'false') return undefined;
+  const strokeEl = poChildren(shape).find((c) => poIs(c, 'v:stroke'));
+  if (strokeEl && poAttr(strokeEl, 'on') === 'f') return undefined;
+  const colorHex =
+    vmlColor(poAttr(shape, 'strokecolor')) ??
+    (strokeEl ? vmlColor(poAttr(strokeEl, 'color')) : undefined) ??
+    '000000';
+  const weight = poAttr(shape, 'strokeweight');
+  const m = weight ? /(-?[0-9.]+)\s*(pt|in|px|cm|mm|pc)?/iu.exec(weight) : null;
+  const widthPt = m
+    ? Number.parseFloat(m[1]!) * (VML_UNIT_TO_PT[(m[2] ?? 'px').toLowerCase()] ?? 1)
+    : 0.75;
+  return { fill: 'solid', colorHex, width: pt(Number.isFinite(widthPt) ? widthPt : 0.75) };
+}
+
+// §14.1.2.20 `v:textbox` — the shape's own words, in a `w:txbxContent`.
+function vmlTextBox(shape: PoNode, parseBody: ParseBody): ShapeTextBody | undefined {
+  const box = poChildren(shape).find((c) => poIs(c, 'v:textbox'));
+  const content = box ? poFindDescendant(box, 'w:txbxContent') : undefined;
+  if (!content) return undefined;
+  const blocks = parseBody(poChildren(content));
+  return blocks.length > 0 ? { content: blocks } : undefined;
+}
+
+/**
+ * The `@style` of a positioned VML shape as a float anchor: `position:absolute`
+ * with `margin-left`/`margin-top` (or `left`/`top`) against whatever
+ * `mso-position-*-relative` names.
+ *
+ * @param style  The shape's `@style`.
+ * @param zIndex The shape's z-index, when it has one.
+ * @returns The anchor, or `undefined` for an inline shape.
+ */
+function vmlFloat(style: string, zIndex: number | undefined): FloatAnchor | undefined {
+  if (!/position\s*:\s*absolute/iu.test(style)) return undefined;
+  const prop = (name: string): number | undefined => {
+    const m = new RegExp(`(?:^|;)\\s*${name}\\s*:\\s*(-?[0-9.]+)(pt|in|px|cm|mm|pc)?`, 'iu').exec(
+      style,
+    );
+    if (!m) return undefined;
+    const v = Number.parseFloat(m[1]!) * (VML_UNIT_TO_PT[(m[2] ?? 'px').toLowerCase()] ?? 1);
+    return Number.isFinite(v) ? v : undefined;
+  };
+  const rel = (name: string): string | undefined =>
+    new RegExp(`mso-position-${name}-relative\\s*:\\s*([a-z-]+)`, 'iu').exec(style)?.[1];
+  const hRaw = rel('horizontal');
+  const vRaw = rel('vertical');
+  const x = prop('margin-left') ?? prop('left') ?? 0;
+  const y = prop('margin-top') ?? prop('top') ?? 0;
+  return {
+    wrap: 'square',
+    ...(zIndex !== undefined && zIndex < 0 ? { behind: true } : {}),
+    ...(zIndex !== undefined ? { zOrder: Math.abs(zIndex) } : {}),
+    posH: {
+      relativeFrom: hRaw === 'page' ? 'page' : hRaw === 'margin' ? 'margin' : 'column',
+      offsetPt: pt(x),
+    },
+    posV: {
+      relativeFrom:
+        vRaw === 'page'
+          ? 'page'
+          : vRaw === 'margin'
+            ? 'margin'
+            : vRaw === 'line'
+              ? 'line'
+              : 'paragraph',
+      offsetPt: pt(y),
+    },
+  };
 }
 
 /**
