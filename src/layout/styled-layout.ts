@@ -4306,7 +4306,11 @@ function computeColumnWidths(
   // cells that ask for a fifth of the table; drawn on the grid its first
   // column was two characters wide and every column after it landed one place
   // to the left of where Word and LibreOffice draw it.
-  const declared = declaredColumnWidths(table, colCount, contentWidth);
+  // A grid too short for the rows cannot place them at all, whatever the
+  // layout mode says: fdo59273.docx grids four columns and then spans its four
+  // cells across eleven, and the two on the right fell off the table.
+  const gridShort = gridColTwips(table).length < colCount;
+  const declared = declaredColumnWidths(table, colCount, contentWidth, gridShort);
   if (declared) return declared;
 
   if (gridColTwips(table).some((w) => w > 0)) {
@@ -4378,8 +4382,11 @@ function declaredColumnWidths(
   table: Table,
   colCount: number,
   contentWidth: number,
+  // The grid does not reach every column the rows use, so it cannot be the
+  // answer whatever the layout mode says.
+  gridShort = false,
 ): Array<number> | undefined {
-  if (table.properties.layout !== 'fixed') return undefined;
+  if (table.properties.layout !== 'fixed' && !gridShort) return undefined;
   const target = totalTableTarget(table, contentWidth);
   const declaredWidth = (cell: TableCell): number | undefined => {
     const p = cell.properties;
