@@ -869,7 +869,7 @@ function emitPageContent(
             lastColor = '000000';
           }
           out.push(`1 0 0 1 ${formatNumber(originX + it.x)} ${formatNumber(baselineY + it.y)} Tm`);
-          out.push(`<${it.font.measure.encodeTextAsCidHex(it.text)}> Tj`);
+          out.push(it.font.measure.showText(it.text));
         } else if (it.kind === 'rule') {
           if (inBT) {
             out.push('ET');
@@ -1018,9 +1018,9 @@ function emitPageContent(
       const isDecorated = (tok: (typeof line.tokens)[number]): tok is TextToken =>
         tok.kind === 'text' && (tok.resolvedRun.underline !== 'none' || tok.resolvedRun.strike);
 
-      const encodeToken = (tok: TextToken): string => {
+      const showToken = (tok: TextToken): string => {
         const text = tok.bidiLevel % 2 === 1 ? reverseByCodePoint(tok.text) : tok.text;
-        return tok.font.measure.encodeTextAsCidHex(text);
+        return tok.font.measure.showText(text);
       };
 
       // Comment-range highlight (CM2c): a soft fill behind highlighted tokens.
@@ -1111,7 +1111,7 @@ function emitPageContent(
         for (const tok of line.tokens) {
           if (tok.kind !== 'text') continue;
           switchFontIfNeeded(tok);
-          out.push(`<${tok.font.measure.encodeTextAsCidHex(tok.text)}> Tj`);
+          out.push(tok.font.measure.showText(tok.text));
         }
       } else if (
         extraPerSpace > 0 ||
@@ -1146,7 +1146,7 @@ function emitPageContent(
           }
           switchFontIfNeeded(tok);
           out.push(`1 0 0 1 ${formatNumber(x)} ${formatNumber(baselineY + (tok.risePt ?? 0))} Tm`);
-          out.push(`<${encodeToken(tok)}> Tj`);
+          out.push(showToken(tok));
           const tokenX0 = x;
           x += tok.widthPt;
           if (tok.isSpace) x += extraPerSpace;
@@ -1163,8 +1163,7 @@ function emitPageContent(
         for (const tok of line.tokens) {
           if (tok.kind !== 'text') continue; // unreachable here, but TS-narrowed
           switchFontIfNeeded(tok);
-          const hex = tok.font.measure.encodeTextAsCidHex(tok.text);
-          out.push(`<${hex}> Tj`);
+          out.push(tok.font.measure.showText(tok.text));
           trackLink(tok.href, tok.anchor, tok.text, x, x + tok.widthPt);
           x += tok.widthPt;
         }

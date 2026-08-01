@@ -6,6 +6,7 @@ import { strToU8, zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 
 import { buildXlsx } from './fixtures/build-xlsx';
+import { countShown, showPattern } from './fixtures/pdf-show';
 import { decodeXstring } from '@/excel/escaped-text';
 import { convertXlsxToPdfSync } from '@/core/converter';
 import { parseTtf } from '@/core/font';
@@ -187,16 +188,11 @@ describe('convertXlsxToPdfSync end-to-end', () => {
     expect(text).toContain('/Type /Page');
 
     const parsed = parseTtf(FONTS.regular);
-    const hexOf = (s: string) =>
-      [...s]
-        .map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!))
-        .map((g) => g.toString(16).padStart(4, '0').toUpperCase())
-        .join('');
 
-    expect(text).toContain(`<${hexOf('Region')}> Tj`);
-    expect(text).toContain(`<${hexOf('Moscow')}> Tj`);
-    expect(text).toContain(`<${hexOf('1200000')}> Tj`);
-    expect(text).toContain(`<${hexOf('TRUE')}> Tj`);
+    expect(text).toMatch(showPattern(parsed, 'Region'));
+    expect(text).toMatch(showPattern(parsed, 'Moscow'));
+    expect(text).toMatch(showPattern(parsed, '1200000'));
+    expect(text).toMatch(showPattern(parsed, 'TRUE'));
   });
 
   it('skips empty cells gracefully', () => {
@@ -252,12 +248,7 @@ describe('convertXlsxToPdfSync end-to-end', () => {
     const text = asLatin1(pdf);
 
     const parsed = parseTtf(FONTS.regular);
-    const hexOf = (s: string) =>
-      [...s]
-        .map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!))
-        .map((g) => g.toString(16).padStart(4, '0').toUpperCase())
-        .join('');
-    expect(text).toContain(`<${hexOf('1,234,567')}> Tj`);
+    expect(text).toMatch(showPattern(parsed, '1,234,567'));
   });
 
   it('applies custom number format (#,##0.00) to currency-like value', () => {
@@ -280,12 +271,7 @@ describe('convertXlsxToPdfSync end-to-end', () => {
     const text = asLatin1(pdf);
 
     const parsed = parseTtf(FONTS.regular);
-    const hexOf = (s: string) =>
-      [...s]
-        .map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!))
-        .map((g) => g.toString(16).padStart(4, '0').toUpperCase())
-        .join('');
-    expect(text).toContain(`<${hexOf('50,000.50')}> Tj`);
+    expect(text).toMatch(showPattern(parsed, '50,000.50'));
   });
 
   it('paints cell background fill as a re + f rectangle', () => {
@@ -380,19 +366,14 @@ describe('convertXlsxToPdfSync end-to-end', () => {
     expect(pageCount).toBeGreaterThanOrEqual(3);
 
     const parsed = parseTtf(FONTS.regular);
-    const hexOf = (s: string) =>
-      [...s]
-        .map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!))
-        .map((g) => g.toString(16).padStart(4, '0').toUpperCase())
-        .join('');
     // Each sheet's distinct data renders (one sheet per page).
-    expect(text).toContain(`<${hexOf('100')}> Tj`);
-    expect(text).toContain(`<${hexOf('60')}> Tj`);
-    expect(text).toContain(`<${hexOf('40')}> Tj`);
+    expect(text).toMatch(showPattern(parsed, '100'));
+    expect(text).toMatch(showPattern(parsed, '60'));
+    expect(text).toMatch(showPattern(parsed, '40'));
     // The sheet NAMES are NOT printed — Calc/Excel `--convert-to pdf` emit them
     // nowhere; a synthetic title is pure extra text vs the print golden.
-    expect(text).not.toContain(`<${hexOf('Income')}> Tj`);
-    expect(text).not.toContain(`<${hexOf('Summary')}> Tj`);
+    expect(text).not.toMatch(showPattern(parsed, 'Income'));
+    expect(text).not.toMatch(showPattern(parsed, 'Summary'));
   });
 
   it('honours per-row heights from <row ht customHeight="1">', () => {
@@ -471,12 +452,7 @@ describe('convertXlsxToPdfSync end-to-end', () => {
     const text = asLatin1(pdf);
 
     const parsed = parseTtf(FONTS.regular);
-    const hexOf = (s: string) =>
-      [...s]
-        .map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!))
-        .map((g) => g.toString(16).padStart(4, '0').toUpperCase())
-        .join('');
-    expect(text).toContain(`<${hexOf('1/1/1904')}> Tj`);
+    expect(text).toMatch(showPattern(parsed, '1/1/1904'));
   });
 
   it('handles merged cells by emitting gridSpan on the origin', () => {
@@ -553,13 +529,7 @@ describe('xlsx robustness', () => {
     // (which would also exhaust memory).
     expect(stray.length).toBe(clean.length);
     const parsed = parseTtf(FONTS.regular);
-    const hexOf = (s: string) =>
-      [...s]
-        .map((c) =>
-          parsed.glyphForCodepoint(c.codePointAt(0)!).toString(16).padStart(4, '0').toUpperCase(),
-        )
-        .join('');
-    expect(text).toContain(`<${hexOf('11')}> Tj`); // real content kept
+    expect(text).toMatch(showPattern(parsed, '11')); // real content kept
   });
 
   it('caps over-long cell strings to the 32 767-char limit (DoS guard)', () => {
@@ -873,12 +843,6 @@ describe('parseTitleRowRange', () => {
 
 describe('xlsx print-model rendering', () => {
   const parsed = parseTtf(FONTS.regular);
-  const hexOf = (s: string): string =>
-    [...s]
-      .map((c) =>
-        parsed.glyphForCodepoint(c.codePointAt(0)!).toString(16).padStart(4, '0').toUpperCase(),
-      )
-      .join('');
 
   it('suppresses cell gridlines by default; draws them with printOptions gridLines="1"', () => {
     const rows = [
@@ -901,8 +865,8 @@ describe('xlsx print-model rendering', () => {
     expect(gridded).toContain(`${grey} ${grey} ${grey} RG`);
     expect(gridded).not.toContain('0 0 0 RG');
     // Cell text is identical either way.
-    expect(plain).toContain(`<${hexOf('A')}> Tj`);
-    expect(gridded).toContain(`<${hexOf('A')}> Tj`);
+    expect(plain).toMatch(showPattern(parsed, 'A'));
+    expect(gridded).toMatch(showPattern(parsed, 'A'));
   });
 
   it('decodes the _xHHHH_ escape SpreadsheetML writes for a control character', () => {
@@ -930,7 +894,7 @@ describe('xlsx print-model rendering', () => {
       definedNames: [{ name: '_xlnm.Print_Area', localSheetId: 0, value: 'Sheet1!$A$1:$B$2' }],
     });
     const text = asLatin1(convertXlsxToPdfSync(xlsx, { fonts: FONTS }));
-    const has = (s: string): boolean => text.includes(`<${hexOf(s)}> Tj`);
+    const has = (s: string): boolean => showPattern(parsed, s).test(text);
     expect(has('In1')).toBe(true);
     expect(has('In4')).toBe(true);
     expect(has('Out1')).toBe(false);
@@ -949,8 +913,7 @@ describe('xlsx print-model rendering', () => {
       definedNames: [{ name: '_xlnm.Print_Area', localSheetId: 0, value: 'Sheet1!$B$2:$C$3' }],
     });
     const text = asLatin1(convertXlsxToPdfSync(xlsx, { fonts: FONTS }));
-    const count = (s: string): number =>
-      (text.match(new RegExp(`<${hexOf(s)}> Tj`, 'g')) ?? []).length;
+    const count = (s: string): number => countShown(parsed, text, s);
     expect(count('B2')).toBe(1);
     expect(count('C2')).toBe(1);
     expect(count('B3')).toBe(1);
@@ -971,7 +934,7 @@ describe('xlsx print-model rendering', () => {
     });
     const text = asLatin1(convertXlsxToPdfSync(xlsx, { fonts: FONTS }));
     for (const v of ['P', 'Q', 'R', 'S']) {
-      expect(text.includes(`<${hexOf(v)}> Tj`)).toBe(true);
+      expect(showPattern(parsed, v).test(text)).toBe(true);
     }
   });
 
@@ -1029,8 +992,7 @@ describe('xlsx print-model rendering', () => {
     for (let i = 0; i < 90; i++) rows.push([`r${i}`, i]);
     return rows;
   };
-  const hdrCount = (pdf: Uint8Array): number =>
-    (asLatin1(pdf).match(new RegExp(`<${hexOf('HDR')}> Tj`, 'g')) ?? []).length;
+  const hdrCount = (pdf: Uint8Array): number => countShown(parsed, asLatin1(pdf), 'HDR');
 
   it('repeats _xlnm.Print_Titles header rows on every continuation page', () => {
     const pdf = convertXlsxToPdfSync(
@@ -1064,7 +1026,7 @@ describe('xlsx print-model rendering', () => {
     expect(pageCount(baseline)).toBe(1);
     expect(pageCount(broken)).toBe(2);
     // Content is preserved across the break.
-    expect(asLatin1(broken)).toContain(`<${hexOf('r2')}> Tj`);
+    expect(asLatin1(broken)).toMatch(showPattern(parsed, 'r2'));
   });
 
   it('centers the table with <printOptions horizontalCentered="1">', () => {
@@ -1115,15 +1077,15 @@ describe('xlsx print-model rendering', () => {
     });
     const text = asLatin1(convertXlsxToPdfSync(xlsx, { fonts: FONTS }));
     // A2 overflows into the empty B2 → full text kept.
-    expect(text).toContain(`<${hexOf(overflow)}> Tj`);
+    expect(text).toMatch(showPattern(parsed, overflow));
     // A1 is clipped — its full text is gone, and what survives is a prefix.
-    expect(text).not.toContain(`<${hexOf(blocked)}> Tj`);
+    expect(text).not.toMatch(showPattern(parsed, blocked));
     // How MANY characters fit is a function of the column width, the cell inset
     // and the glyph's advance; pinning an exact count here pins those three
     // together and breaks whenever any of them is corrected. What matters is
     // that a prefix survives and it is shorter than the whole.
     const prefixes = Array.from({ length: blocked.length - 1 }, (_, i) => i + 1).filter((n) =>
-      text.includes(`<${hexOf('l'.repeat(n))}> Tj`),
+      showPattern(parsed, 'l'.repeat(n)).test(text),
     );
     expect(prefixes.length).toBeGreaterThan(0);
   });

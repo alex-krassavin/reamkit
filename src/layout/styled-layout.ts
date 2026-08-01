@@ -1538,29 +1538,11 @@ function layoutShapeBlock(
         imageResources,
         innerWidth,
       );
-      // §21.1.2.2.3 — a paragraph with no runs is still a LINE: it is the blank
-      // line the author typed, and `a:endParaRPr` says how tall. Wrapping zero
-      // tokens yields no line at all, so the shape's text closed up and every
-      // paragraph after the blank one drew 14pt too high (shape-macro-ext-ref
-      // .xlsx opens its button's caption with one).
-      const lines =
-        blk.lines.length > 0
-          ? blk.lines
-          : [
-              {
-                tokens: [],
-                contentWidthPt: 0,
-                maxFontSizePt:
-                  el.paragraph.runs[0]?.properties.fontSizePt ??
-                  options.styles.defaultRunProperties.fontSizePt ??
-                  pt(11),
-                availableWidthPt: innerWidth,
-                firstLine: true,
-                resolved: blk.resolved,
-                isLastInParagraph: true,
-              },
-            ];
-      for (const line of lines) {
+      // §21.1.2.2.3 — a paragraph with no runs is still a LINE (the blank line
+      // the author typed); layoutParagraphBlock makes it, so a shape's text no
+      // longer closes up over one (shape-macro-ext-ref.xlsx opens its button's
+      // caption with a blank line and every paragraph after it drew 14pt high).
+      for (const line of blk.lines) {
         textLines.push(line);
         textHeightPt += computeLineHeight(line, blk.resolved);
       }
@@ -2317,6 +2299,46 @@ function collectFontResources(
   return out;
 }
 
+/**
+ * The one line an empty paragraph still occupies — no tokens, but as tall as
+ * the paragraph mark's own font (§17.3.1.31 `w:rPr` on the `w:pPr`, which is
+ * exactly the run properties Word keeps for a paragraph that holds no runs).
+ */
+function emptyLine(
+  paragraph: Paragraph,
+  options: StyledRenderOptions,
+  resolved: ResolvedParagraphProperties,
+  availableWidthPt: number,
+  fontResources: ReadonlyMap<string, FontResource>,
+): Line {
+  const mark = resolveRunProperties(
+    paragraph.properties.runProperties ?? {},
+    paragraph.properties,
+    options.styles,
+  );
+  const fontSizePt = mark.fontSizePt;
+  const profile = options.layoutProfile ?? 'ream';
+  const { variant } = options.registry.resolveByStyle(mark.bold, mark.italic);
+  const parsed = fontResources.get(variant)?.parsed;
+  const metric =
+    profile !== 'ream' && parsed ? fontLeadingPt(parsed, fontSizePt, profile) : undefined;
+  return {
+    tokens: [],
+    contentWidthPt: 0,
+    maxFontSizePt: fontSizePt,
+    availableWidthPt,
+    firstLine: true,
+    resolved,
+    isLastInParagraph: true,
+    ...(metric && metric.ascentPt + metric.descentPt > 0
+      ? {
+          metricHeightPt: metric.ascentPt + metric.descentPt + metric.lineGapPt,
+          metricDescentPt: metric.descentPt,
+        }
+      : {}),
+  };
+}
+
 function layoutParagraphBlock(
   paragraph: Paragraph,
   options: StyledRenderOptions,
@@ -2345,7 +2367,7 @@ function layoutParagraphBlock(
   );
   const firstLineWidth = paragraphMaxWidth(resolved, contentWidth, true);
   const otherWidth = paragraphMaxWidth(resolved, contentWidth, false);
-  const lines = wrap(
+  const wrapped = wrap(
     tokens,
     firstLineWidth,
     otherWidth,
@@ -2354,6 +2376,16 @@ function layoutParagraphBlock(
     options.layoutProfile ?? 'ream',
     lineWidths,
   );
+  // §17.3.1 — a paragraph with nothing in it is still a LINE: the blank line
+  // the author typed, as tall as the font it would have been typed in. Wrapping
+  // zero tokens yields no line, so the paragraph took no room and everything
+  // after it moved up — IllustrativeCases.docx opens each table's label column
+  // with an empty paragraph, and every label ended up beside the value of the
+  // row ABOVE it, "Gross Income" against "€" and the euro sign's own row gone.
+  const lines =
+    wrapped.length > 0
+      ? wrapped
+      : [emptyLine(paragraph, options, resolved, Math.max(firstLineWidth, 0), fontResources)];
 
   let heightPt = 0;
   for (const line of lines) heightPt += computeLineHeight(line, resolved);
@@ -3264,7 +3296,10 @@ function computeLineHeight(line: Line, p: ResolvedParagraphProperties): number {
   // hold its full ascent+descent (plus a little leading).
   const mathH = (line.mathAscentPt ?? 0) + (line.mathDescentPt ?? 0);
   const mathNeed = mathH > 0 ? mathH * 1.05 : 0;
-  if (p.spacingLineRule === 'exact' && p.spacingLine > 0) {
+  // §17.3.1.33 — "exact" means exactly that, zero included: a line told to be
+  // no tall is no tall. (Absent spacing resolves to 'auto', so this reads only
+  // a height the document actually declared.)
+  if (p.spacingLineRule === 'exact' && p.spacingLine >= 0) {
     return Math.max(p.spacingLine, mathNeed);
   }
   if (p.spacingLineRule === 'atLeast' && p.spacingLine > 0) {

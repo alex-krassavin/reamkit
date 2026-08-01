@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
+import { countShown, showPattern } from './fixtures/pdf-show';
 import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 
 import { convertDocxToPdfSync } from '@/core/converter';
@@ -144,15 +145,10 @@ describe('Headers and footers in rendered PDF', () => {
     const text = asLatin1(pdf);
 
     const parsed = parseTtf(FONTS.regular);
-    const hexOf = (s: string) =>
-      [...s]
-        .map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!))
-        .map((g) => g.toString(16).padStart(4, '0').toUpperCase())
-        .join('');
 
-    expect(text).toContain(`<${hexOf('HEADER-MARK')}> Tj`);
-    expect(text).toContain(`<${hexOf('FOOTER-MARK')}> Tj`);
-    expect(text).toContain(`<${hexOf('Body')}> Tj`);
+    expect(text).toMatch(showPattern(parsed, 'HEADER-MARK'));
+    expect(text).toMatch(showPattern(parsed, 'FOOTER-MARK'));
+    expect(text).toMatch(showPattern(parsed, 'Body'));
   });
 
   it('uses first-page header on page 1 when titlePg is set', () => {
@@ -177,12 +173,7 @@ describe('Headers and footers in rendered PDF', () => {
     const text = asLatin1(pdf);
 
     const parsed = parseTtf(FONTS.regular);
-    const hexOf = (s: string) =>
-      [...s]
-        .map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!))
-        .map((g) => g.toString(16).padStart(4, '0').toUpperCase())
-        .join('');
-    const countOf = (s: string) => (text.match(new RegExp(`<${hexOf(s)}> Tj`, 'g')) ?? []).length;
+    const countOf = (s: string) => countShown(parsed, text, s);
 
     // FIRST-MARK exactly once (page 1), DEFAULT-MARK exactly once (page 2).
     expect(countOf('FIRST-MARK')).toBe(1);
@@ -206,12 +197,7 @@ describe('Headers and footers in rendered PDF', () => {
     });
     const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
     const parsed = parseTtf(FONTS.regular);
-    const hexOf = (s: string) =>
-      [...s]
-        .map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!))
-        .map((g) => g.toString(16).padStart(4, '0').toUpperCase())
-        .join('');
-    const countOf = (s: string) => (text.match(new RegExp(`<${hexOf(s)}> Tj`, 'g')) ?? []).length;
+    const countOf = (s: string) => countShown(parsed, text, s);
 
     // Header renders once per page → exactly 2 pages means the break worked.
     expect(countOf('HMARK')).toBe(2);
@@ -235,12 +221,7 @@ describe('Headers and footers in rendered PDF', () => {
     });
     const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
     const parsed = parseTtf(FONTS.regular);
-    const hexOf = (s: string) =>
-      [...s]
-        .map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!))
-        .map((g) => g.toString(16).padStart(4, '0').toUpperCase())
-        .join('');
-    expect(text).toContain(`<${hexOf('ONLYHEADER')}> Tj`);
+    expect(text).toMatch(showPattern(parsed, 'ONLYHEADER'));
   });
 
   it('applies per-section orientation (portrait section 1, landscape section 2)', () => {
@@ -282,12 +263,7 @@ describe('Headers and footers in rendered PDF', () => {
     const text = asLatin1(pdf);
 
     const parsed = parseTtf(FONTS.regular);
-    const hexOf = (s: string) =>
-      [...s]
-        .map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!))
-        .map((g) => g.toString(16).padStart(4, '0').toUpperCase())
-        .join('');
-    const countOf = (s: string) => (text.match(new RegExp(`<${hexOf(s)}> Tj`, 'g')) ?? []).length;
+    const countOf = (s: string) => countShown(parsed, text, s);
 
     expect(countOf('ODD-MARK')).toBe(1);
     expect(countOf('EVEN-MARK')).toBe(1);
@@ -309,12 +285,7 @@ describe('Headers and footers in rendered PDF', () => {
     const pdf = convertDocxToPdfSync(docx, { fonts: FONTS });
     const text = asLatin1(pdf);
     const parsed = parseTtf(FONTS.regular);
-    const hexOf = (s: string) =>
-      [...s]
-        .map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!))
-        .map((g) => g.toString(16).padStart(4, '0').toUpperCase())
-        .join('');
-    expect(text).toContain(`<${hexOf('ONLY-MARK')}> Tj`);
+    expect(text).toMatch(showPattern(parsed, 'ONLY-MARK'));
   });
 
   it('emits per-section MediaBox when sections have different page sizes', () => {

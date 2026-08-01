@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
 import { buildIndexedPng, buildTinyPng } from './fixtures/build-png';
+import { countShown, showPattern } from './fixtures/pdf-show';
 import { defaultColorResolver } from '@/core/drawingml/colors';
 import { ResourceStore, eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 import { convertDocxToPdfSync } from '@/core/converter';
@@ -260,15 +261,10 @@ describe('Image rendering end-to-end', () => {
     const text = asLatin1(pdf);
 
     const parsed = parseTtf(FONTS.regular);
-    const hexOf = (s: string) =>
-      [...s]
-        .map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!))
-        .map((g) => g.toString(16).padStart(4, '0').toUpperCase())
-        .join('');
 
     // Both text segments must be present (not lost to image-block collapse).
-    expect(text).toContain(`<${hexOf('Before')}> Tj`);
-    expect(text).toContain(`<${hexOf('After')}> Tj`);
+    expect(text).toMatch(showPattern(parsed, 'Before'));
+    expect(text).toMatch(showPattern(parsed, 'After'));
     // Image XObject is also drawn.
     expect(text).toMatch(/\/Im\d+ Do/);
     // ET / BT sequence indicates we left text mode for the inline image.

@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody, buildRichDocx } from './fixtures/build-docx';
+import { countShown, showPattern } from './fixtures/pdf-show';
 import type { FamilyKey } from '@/core/fonts';
 import { convertDocxToPdfSync } from '@/core/converter';
 import { FontRegistry, parseTtf } from '@/core/font';
@@ -242,14 +243,10 @@ describe('Styled rendering: rPr + pPr → PDF', () => {
     const pdf = convertDocxToPdfSync(docx, { fonts: FONTS });
 
     const parsed = parseTtf(FONTS.regular);
-    const hidden = [...'ShouldBeHidden'].map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!));
-    const start = [...'StartCell'].map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!));
     const text = asLatin1(pdf);
 
-    const hiddenHex = hidden.map((g) => g.toString(16).padStart(4, '0').toUpperCase()).join('');
-    const startHex = start.map((g) => g.toString(16).padStart(4, '0').toUpperCase()).join('');
-    expect(text).toContain(`<${startHex}> Tj`);
-    expect(text).not.toContain(`<${hiddenHex}> Tj`);
+    expect(text).toMatch(showPattern(parsed, 'StartCell'));
+    expect(text).not.toMatch(showPattern(parsed, 'ShouldBeHidden'));
   });
 
   it('does not over-justify a short single-line paragraph (last line stays left)', () => {
@@ -297,14 +294,9 @@ describe('Styled rendering: rPr + pPr → PDF', () => {
     expect(pageCount).toBeGreaterThan(1);
 
     const parsed = parseTtf(FONTS.regular);
-    const hexOf = (s: string) =>
-      [...s]
-        .map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!))
-        .map((g) => g.toString(16).padStart(4, '0').toUpperCase())
-        .join('');
     // First and last lines must both render (row split, not clipping).
-    expect(text).toContain(`<${hexOf('Line0')}> Tj`);
-    expect(text).toContain(`<${hexOf('Line79')}> Tj`);
+    expect(text).toMatch(showPattern(parsed, 'Line0'));
+    expect(text).toMatch(showPattern(parsed, 'Line79'));
   });
 
   it('honors paragraph alignment center and right', () => {
@@ -360,15 +352,9 @@ describe('Styled rendering: rPr + pPr → PDF', () => {
       </w:tbl>`;
     const text = asLatin1(convertDocxToPdfSync(buildDocxFromBody(body), { fonts: FONTS }));
     const parsed = parseTtf(FONTS.regular);
-    const hexOf = (s: string) =>
-      [...s]
-        .map((c) =>
-          parsed.glyphForCodepoint(c.codePointAt(0)!).toString(16).padStart(4, '0').toUpperCase(),
-        )
-        .join('');
-    expect(text).toContain(`<${hexOf('OUTERCELL')}> Tj`); // outer cell paragraph
-    expect(text).toContain(`<${hexOf('NESTEDA')}> Tj`); // nested cell 1 (was lost)
-    expect(text).toContain(`<${hexOf('NESTEDB')}> Tj`); // nested cell 2 (was lost)
+    expect(text).toMatch(showPattern(parsed, 'OUTERCELL')); // outer cell paragraph
+    expect(text).toMatch(showPattern(parsed, 'NESTEDA')); // nested cell 1 (was lost)
+    expect(text).toMatch(showPattern(parsed, 'NESTEDB')); // nested cell 2 (was lost)
   });
 
   it('measures table auto-layout with per-family fonts (was: bare-variant lookup crash)', () => {

@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
+import { countShown, showPattern } from './fixtures/pdf-show';
 import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 
 import { convertDocxToPdfSync } from '@/core/converter';
@@ -411,16 +412,11 @@ describe('text in shape (wps:txbx)', () => {
     const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
 
     const parsed = parseTtf(FONTS.regular);
-    const hexOf = (s: string): string =>
-      [...s]
-        .map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!))
-        .map((g) => g.toString(16).padStart(4, '0').toUpperCase())
-        .join('');
 
-    const labelTj = `<${hexOf('Label')}> Tj`;
-    expect(text).toContain(labelTj); // text-box content rendered
+    const label = text.search(showPattern(parsed, 'Label'));
+    expect(label).toBeGreaterThan(-1); // text-box content rendered
     // Shape fill paints (f) before the text pass (BT) → text on top.
     expect(text.indexOf('\nf\n')).toBeLessThan(text.indexOf('BT'));
-    expect(text.indexOf('BT')).toBeLessThan(text.indexOf(labelTj));
+    expect(text.indexOf('BT')).toBeLessThan(label);
   });
 });
