@@ -89,6 +89,16 @@ export interface ShapeData {
 export type ParseBody = (children: ReadonlyArray<PoNode>) => Array<BodyElement>;
 
 /**
+ * §21.1.2 `a:txBody` — the DrawingML text body a shape may carry instead of a
+ * `wps:txbx`. Supplied by the caller (the reader owns the PresentationML text
+ * reader that knows how to walk it), so this module stays free of it.
+ */
+export type ParseDrawingText = (
+  txBody: PoNode,
+  resolveColor: ColorResolver,
+) => ShapeTextBody | undefined;
+
+/**
  * The result of parsing a `<w:drawing>` (or legacy VML picture): an embedded
  * picture, a DrawingML shape, a chart reference, or a SmartArt diagram. Each
  * variant carries optional alternate text and a float anchor.
@@ -310,6 +320,8 @@ export function parseDrawing(
   resolveChartPart?: (relId: string) => string | undefined,
   // §20.1.4.2.19 — `a:lnStyleLst` widths, indexed by a gallery style's `a:lnRef`.
   themeLineWidths?: ReadonlyArray<number>,
+  // §21.1.2 — the DrawingML text reader, for a shape that carries an `a:txBody`.
+  parseDrawingText?: ParseDrawingText,
 ): DrawingContent | null {
   const anchor =
     poChildren(drawing).find((c) => poIs(c, 'wp:inline')) ??
@@ -348,6 +360,7 @@ export function parseDrawing(
       parseBody,
       resolveImage,
       themeLineWidths,
+      parseDrawingText,
     );
     if (!data) return null;
     return { kind: 'shape', data: { ...data, ...(relativeSize ? { relativeSize } : {}) }, ...alt };
@@ -362,6 +375,7 @@ export function parseDrawing(
       parseBody,
       resolveImage,
       themeLineWidths,
+      parseDrawingText,
     );
     if (!data) return null;
     return { kind: 'shape', data: { ...data, ...(relativeSize ? { relativeSize } : {}) }, ...alt };
@@ -379,6 +393,7 @@ export function parseDrawing(
       parseBody,
       resolveImage,
       themeLineWidths,
+      parseDrawingText,
     );
     if (!data) return null;
     return { kind: 'shape', data: { ...data, ...(relativeSize ? { relativeSize } : {}) }, ...alt };
@@ -390,7 +405,14 @@ export function parseDrawing(
   if (graphicData && uri === WPC_URI) {
     const canvas = expandMcChildren(poChildren(graphicData)).find((c) => poIsLocal(c, 'wpc'));
     if (!canvas || extentCx === undefined || extentCy === undefined) return null;
-    const children = groupChildren(canvas, resolveColor, parseBody, resolveImage, themeLineWidths);
+    const children = groupChildren(
+      canvas,
+      resolveColor,
+      parseBody,
+      resolveImage,
+      themeLineWidths,
+      parseDrawingText,
+    );
     const data: ShapeData = {
       width: emuToPt(extentCx),
       height: emuToPt(extentCy),
@@ -1339,12 +1361,20 @@ function parseLockedCanvas(
   parseBody?: ParseBody,
   resolveImage?: (relId: string) => ResourceId | undefined,
   themeLineWidths?: ReadonlyArray<number>,
+  parseDrawingText?: ParseDrawingText,
 ): ShapeData | null {
   const canvas = expandMcChildren(poChildren(graphicData)).find((c) =>
     poIsLocal(c, 'lockedCanvas'),
   );
   if (!canvas) return null;
-  const raw = groupChildren(canvas, resolveColor, parseBody, resolveImage, themeLineWidths);
+  const raw = groupChildren(
+    canvas,
+    resolveColor,
+    parseBody,
+    resolveImage,
+    themeLineWidths,
+    parseDrawingText,
+  );
   if (extentCx === undefined || extentCy === undefined) return null;
   // §20.1.7.5 — when the canvas states the space its members are written in
   // (`a:chOff`/`a:chExt`), that space maps onto the frame the document gives
@@ -1406,10 +1436,18 @@ function parseWgp(
   parseBody?: ParseBody,
   resolveImage?: (relId: string) => ResourceId | undefined,
   themeLineWidths?: ReadonlyArray<number>,
+  parseDrawingText?: ParseDrawingText,
 ): ShapeData | null {
   const wgp = expandMcChildren(poChildren(graphicData)).find((c) => poIs(c, 'wpg:wgp'));
   if (!wgp) return null;
-  const children = groupChildren(wgp, resolveColor, parseBody, resolveImage, themeLineWidths);
+  const children = groupChildren(
+    wgp,
+    resolveColor,
+    parseBody,
+    resolveImage,
+    themeLineWidths,
+    parseDrawingText,
+  );
   const grpSpPr = poChildren(wgp).find((c) => poIs(c, 'wpg:grpSpPr'));
   const ext = grpSpPr
     ? poChildren(poChildren(grpSpPr).find((c) => poIs(c, 'a:xfrm')) ?? grpSpPr).find((c) =>
@@ -1438,6 +1476,7 @@ function groupChildren(
   parseBody: ParseBody | undefined,
   resolveImage?: (relId: string) => ResourceId | undefined,
   themeLineWidths?: ReadonlyArray<number>,
+  parseDrawingText?: ParseDrawingText,
 ): Array<ShapeGroupChild> {
   // A locked canvas (§20.3) spells its children in the plain DrawingML
   // namespace — `a:sp`/`a:grpSp`/`a:pic` beside a WordprocessingGroup's
@@ -1483,10 +1522,28 @@ function groupChildren(
     const cy = cExt ? poIntAttr(cExt, 'cy') : undefined;
     if (cx === undefined || cy === undefined) continue;
     const data = nested
-      ? parseNestedGroup(child, cx, cy, resolveColor, parseBody, resolveImage, themeLineWidths)
+      ? parseNestedGroup(
+          child,
+          cx,
+          cy,
+          resolveColor,
+          parseBody,
+          resolveImage,
+          themeLineWidths,
+          parseDrawingText,
+        )
       : picture
         ? parseGroupPicture(child, cx, cy, resolveImage)
-        : parseWspNode(child, cx, cy, resolveColor, parseBody, resolveImage, themeLineWidths);
+        : parseWspNode(
+            child,
+            cx,
+            cy,
+            resolveColor,
+            parseBody,
+            resolveImage,
+            themeLineWidths,
+            parseDrawingText,
+          );
     if (!data) continue;
     const x = (poIntAttr(cOff, 'x') ?? 0) - chOff.x;
     const y = (poIntAttr(cOff, 'y') ?? 0) - chOff.y;
@@ -1583,8 +1640,16 @@ function parseNestedGroup(
   parseBody: ParseBody | undefined,
   resolveImage?: (relId: string) => ResourceId | undefined,
   themeLineWidths?: ReadonlyArray<number>,
+  parseDrawingText?: ParseDrawingText,
 ): ShapeData {
-  const children = groupChildren(grpSp, resolveColor, parseBody, resolveImage, themeLineWidths);
+  const children = groupChildren(
+    grpSp,
+    resolveColor,
+    parseBody,
+    resolveImage,
+    themeLineWidths,
+    parseDrawingText,
+  );
   return {
     width: emuToPt(widthEmu),
     height: emuToPt(heightEmu),
@@ -1623,6 +1688,7 @@ function parseWsp(
   parseBody?: ParseBody,
   resolveImage?: (relId: string) => ResourceId | undefined,
   themeLineWidths?: ReadonlyArray<number>,
+  parseDrawingText?: ParseDrawingText,
 ): ShapeData | null {
   // wps:wsp is normally a direct child, but a nested mc:AlternateContent can
   // wrap it — expand first so either layout is found.
@@ -1649,6 +1715,7 @@ function parseWspNode(
   parseBody?: ParseBody,
   resolveImage?: (relId: string) => ResourceId | undefined,
   themeLineWidths?: ReadonlyArray<number>,
+  parseDrawingText?: ParseDrawingText,
 ): ShapeData | null {
   const spPr = poChildren(wsp).find((c) => poIsLocal(c, 'spPr'));
 
@@ -1679,7 +1746,18 @@ function parseWspNode(
     line = parseLine(spPr, resolveColor);
   }
 
-  const text = parseBody ? parseTextBox(wsp, parseBody) : undefined;
+  // §21.1.2 — a member of a group or a locked canvas states its words in an
+  // `a:txBody`, not a `wps:txbx`. fdo78658.docx labels every box of its diagram
+  // that way, and we drew the boxes empty.
+  // …which a shape may wrap in an `a:txSp` (§20.1.2.2.41), as Word does for
+  // the WordArt it writes in DrawingML.
+  const txSp = poChildren(wsp).find((c) => poIs(c, 'a:txSp'));
+  const txBody =
+    poChildren(wsp).find((c) => poIs(c, 'a:txBody')) ??
+    (txSp ? poChildren(txSp).find((c) => poIs(c, 'a:txBody')) : undefined);
+  const text =
+    (parseBody ? parseTextBox(wsp, parseBody) : undefined) ??
+    (txBody && parseDrawingText ? parseDrawingText(txBody, resolveColor) : undefined);
   // §20.1.4.2.19/20.1.4.2.10 — a shape drawn from a gallery style keeps its
   // fill and outline in `<wps:style>` and carries none in `spPr` at all; read
   // alone, spPr says the shape has neither. TextEffects_Groupshapes.docx's

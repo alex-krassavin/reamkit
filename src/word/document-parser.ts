@@ -28,13 +28,18 @@ import type {
 import type { ColorResolver } from '@/core/drawingml/colors';
 import type { Loss, ResourceId } from '@/core/ir';
 import type { PoNode } from '@/core/po-helpers';
-import type { DrawingContent } from '@/word/drawing-parser';
+import type { DrawingContent, ParseDrawingText } from '@/word/drawing-parser';
 import { resolveInternalEntities } from '@/core/opc/xml-entities';
 import { emuToPt, pt, twipsToPt } from '@/core/ir';
 import { parseOMath } from '@/word/omml-parser';
 import { defaultColorResolver } from '@/core/drawingml/colors';
 import { expandMcChildren, parseDrawing, parseVmlPicture } from '@/word/drawing-parser';
-import { diagramTransform, noDiagramOverrideLoss, parseDiagramNodes } from '@/pptx/slide-parser';
+import {
+  diagramTransform,
+  noDiagramOverrideLoss,
+  parseDiagramNodes,
+  parseTxBody,
+} from '@/pptx/slide-parser';
 import { parseParagraphProperties } from '@/word/paragraph-properties';
 import {
   poAttr,
@@ -52,6 +57,13 @@ import { parseRunProperties } from '@/word/run-properties';
 import { parseBorders, parseTable } from '@/word/table-parser';
 
 const decoder = new TextDecoder('utf-8');
+
+// §21.1.2 — the DrawingML text reader a drawing needs for an `a:txBody`. It
+// lives with the PresentationML shapes, which is the other place a shape may
+// carry one; the drawing parser takes it as a parameter rather than import it,
+// so the two stay independent of one another.
+const drawingTextParser: ParseDrawingText = (txBody, resolveColor) =>
+  parseTxBody(txBody, undefined, undefined, resolveColor, undefined);
 
 const parser = new XMLParser({
   // §4.1 of XML 1.0: a numeric character reference is not an entity — `&#10;`
@@ -642,6 +654,7 @@ function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): Array<Bod
       ctx.resolveImage,
       ctx.resolveChartPart,
       ctx.themeLineWidths,
+      drawingTextParser,
     );
     if (!content) continue;
     out.push(...(blocksForDrawing(content, paragraphProperties, ctx) ?? []));
@@ -1278,6 +1291,7 @@ function parseRun(
         ctx.resolveImage,
         ctx.resolveChartPart,
         ctx.themeLineWidths,
+        drawingTextParser,
       );
       // §20.4.2.3 — an ANCHORED drawing is not in the line: it hangs off the
       // paragraph at a position of its own, and the text flows past it. Read as
