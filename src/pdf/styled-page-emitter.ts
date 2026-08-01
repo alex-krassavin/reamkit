@@ -1097,11 +1097,46 @@ function emitPageContent(
               // §17.3.2.40 — the rule carries its own colour when the run gives
               // it one; the strike below always takes the text's.
               if (tok.resolvedRun.underlineColorHex) paint(tok.resolvedRun.underlineColorHex);
-              const y = baselineY - tok.fontSizePt * 0.12 - thickness;
-              out.push(
-                `${formatNumber(dx)} ${formatNumber(y)} ` +
-                  `${formatNumber(w)} ${formatNumber(thickness)} re f`,
-              );
+              // §17.18.99 — the style says how the rule is drawn, not just that
+              // it is: a `thick` one is twice the weight and a `double` is two.
+              // fdo56679.docx rules its sentence thick and red and we drew the
+              // hairline every other style got.
+              const style = tok.resolvedRun.underline;
+              const heavy = style === 'thick' || style === 'dottedHeavy' || style === 'dashHeavy';
+              const t = heavy ? thickness * 2 : thickness;
+              const y = baselineY - tok.fontSizePt * 0.12 - t;
+              const dashed =
+                style === 'dotted' || style === 'dottedHeavy'
+                  ? [t, t * 2]
+                  : style === 'dash' || style === 'dashHeavy'
+                    ? [t * 4, t * 3]
+                    : undefined;
+              if (dashed) {
+                // A pattern has to be STROKED — a filled rectangle has no dash.
+                out.push(`${formatNumber(t)} w`);
+                out.push(`[${dashed.map((n) => formatNumber(n)).join(' ')}] 0 d`);
+                const [r, g, b] = hexToRgb01(
+                  tok.resolvedRun.underlineColorHex ?? tok.resolvedRun.colorHex,
+                );
+                out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} RG`);
+                out.push(
+                  `${formatNumber(dx)} ${formatNumber(y + t / 2)} m ` +
+                    `${formatNumber(dx + w)} ${formatNumber(y + t / 2)} l S`,
+                );
+                out.push('[] 0 d');
+              } else {
+                out.push(
+                  `${formatNumber(dx)} ${formatNumber(y)} ` +
+                    `${formatNumber(w)} ${formatNumber(t)} re f`,
+                );
+                // The second rule of a `double`, a rule's width below the first.
+                if (style === 'double') {
+                  out.push(
+                    `${formatNumber(dx)} ${formatNumber(y - t * 2)} ` +
+                      `${formatNumber(w)} ${formatNumber(t)} re f`,
+                  );
+                }
+              }
               if (tok.resolvedRun.underlineColorHex) paint(tok.resolvedRun.colorHex);
             }
             if (tok.resolvedRun.strike) {
