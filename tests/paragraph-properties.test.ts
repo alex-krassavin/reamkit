@@ -206,6 +206,26 @@ describe('paragraph borders (§17.3.1.24)', () => {
     expect(p.borders?.right?.style).toBe('single');
   });
 
+  it('draws a pattern it cannot spell as a solid rule', () => {
+    // §17.18.2 names some hundred and eighty patterns. Rejecting the ones we
+    // cannot draw exactly lost SdtContent.docx the `thickThinSmallGap` rule
+    // under its header; a solid rule of the stated width is far closer.
+    expect(
+      parseParagraphProperties(
+        parsePpr(
+          '<w:pPr><w:pBdr><w:bottom w:val="thickThinSmallGap" w:sz="24" w:color="622423"/></w:pBdr></w:pPr>',
+        ),
+      ).borders?.bottom,
+    ).toEqual({ style: 'single', width: eighthPtToPt(24), colorHex: '622423' });
+  });
+
+  it('reads nil as no rule at all', () => {
+    expect(
+      parseParagraphProperties(parsePpr('<w:pPr><w:pBdr><w:top w:val="nil"/></w:pBdr></w:pPr>'))
+        .borders,
+    ).toBeUndefined();
+  });
+
   it('ignores an edge with no style, and an auto colour', () => {
     expect(
       parseParagraphProperties(parsePpr('<w:pPr><w:pBdr><w:top w:sz="4"/></w:pBdr></w:pPr>'))

@@ -169,6 +169,21 @@ const BORDER_STYLES = new Set<BorderStyle>([
 ]);
 
 /**
+ * §17.18.2 ST_Border — the rule's pattern, of which the standard names some
+ * hundred and eighty. The handful we draw pass through; `nil` and `none` are no
+ * rule at all; everything else is a rule we cannot draw exactly, and a solid
+ * one of the stated width and colour is far closer than none. Rejected
+ * outright, SdtContent.docx lost the `thickThinSmallGap` rule under its header.
+ *
+ * @param val The `w:val` attribute.
+ * @returns The style to draw, or `undefined` when there is nothing to draw.
+ */
+function borderStyleOf(val: string | undefined): BorderStyle | undefined {
+  if (!val || val === 'nil' || val === 'none') return undefined;
+  return BORDER_STYLES.has(val as BorderStyle) ? (val as BorderStyle) : 'single';
+}
+
+/**
  * §17.3.1.24 `w:pBdr` — the rules around a paragraph. Spelled exactly as a
  * cell's `w:tcBorders` is, but reached through the flat parse shape this module
  * works in, and with the `w:space` a cell border does not have.
@@ -183,8 +198,8 @@ function parseParagraphBorders(node: unknown): CellBorders | undefined {
     const found = names.map((n) => el[n]).find((v) => v !== undefined);
     const b = asElement(found);
     if (!b) return undefined;
-    const style = getVal(b);
-    if (!style || !BORDER_STYLES.has(style as BorderStyle)) return undefined;
+    const style = borderStyleOf(getVal(b));
+    if (!style) return undefined;
     const sz = parseIntAttr(b, 'sz');
     const space = parseIntAttr(b, 'space');
     const color = getAttr(b, 'color');

@@ -2097,6 +2097,10 @@ function drawBlocksSequentially(
     }
     if (block.kind !== 'paragraph') continue;
     cursorY -= block.spacingBeforePt;
+    // §17.3.1.24/31 — a band's paragraphs are framed and shaded like any
+    // other. SdtContent.docx keeps its whole page in a header whose one
+    // paragraph is ruled off underneath, and we drew the words alone.
+    const bandTopY = cursorY;
     for (const line of block.lines) {
       const h = computeLineHeight(line, block.resolved);
       cursorY -= h;
@@ -2115,7 +2119,67 @@ function drawBlocksSequentially(
         ...(structId !== undefined ? { structId } : {}),
       });
     }
+    out.push(
+      ...paragraphDecoration(
+        block.resolved,
+        startX + block.resolved.indentLeft,
+        startX + contentWidth - block.resolved.indentRight,
+        bandTopY,
+        cursorY,
+        pageHeight,
+      ),
+    );
     cursorY -= block.spacingAfterPt;
+  }
+  return out;
+}
+
+/**
+ * §17.3.1.31 `w:shd` and §17.3.1.24 `w:pBdr` — the band behind a paragraph and
+ * the rules around it, for a paragraph occupying `topY`…`bottomY` (both in the
+ * y-up page frame) between `x0` and `x1`.
+ *
+ * @returns The fill and border items, in paint order.
+ */
+function paragraphDecoration(
+  resolved: ResolvedParagraphProperties,
+  x0: number,
+  x1: number,
+  topY: number,
+  bottomY: number,
+  pageHeight: number,
+): Array<PageItem> {
+  const out: Array<PageItem> = [];
+  const width = Math.max(0, x1 - x0);
+  if (resolved.shading) {
+    out.push({
+      type: 'fill',
+      x: pt(x0),
+      y: pt(pageHeight - topY),
+      width: pt(width),
+      height: pt(Math.max(0, topY - bottomY)),
+      fillColorHex: resolved.shading.colorHex,
+    });
+  }
+  const borders = resolved.borders;
+  if (!borders) return out;
+  for (const side of ['top', 'bottom', 'left', 'right'] as const) {
+    const edge = borders[side];
+    if (!edge || edge.style === 'none') continue;
+    const gap = edge.spacePt ?? 0;
+    const top = topY + gap;
+    const bottom = bottomY - gap;
+    out.push({
+      type: 'border',
+      side,
+      x: pt(x0),
+      y: pt(pageHeight - top),
+      width: pt(width),
+      height: pt(Math.max(0, top - bottom)),
+      borderSizePt: edge.width ?? DEFAULT_BORDER_SIZE_EIGHTH * EIGHTH_PT,
+      borderColorHex: edge.colorHex ?? '000000',
+      ...(edge.style !== 'single' ? { borderStyle: edge.style } : {}),
+    });
   }
   return out;
 }
@@ -4671,43 +4735,21 @@ function paginateSections(
       // `w:space` points off the text it frames. Drawn only when the paragraph
       // stayed on one page: a rule around a fragment is a rule in the wrong
       // place, and one drawn nowhere is what a bordered paragraph got before.
-      // §17.3.1.31 — the paragraph's own background, painted behind its lines.
-      // The fill group of the paint plan sits under everything, so pushing it
-      // after the lines still puts it beneath them.
-      if (pb.resolved.shading && asm.pages.length === borderPage) {
-        asm.current.push({
-          type: 'fill',
-          x: pt(asm.colLeft() + pb.resolved.indentLeft),
-          y: pt(asm.ctx.pageHeight - borderTopY),
-          width: pt(Math.max(0, asm.colWidth() - pb.resolved.indentLeft - pb.resolved.indentRight)),
-          height: pt(Math.max(0, borderTopY - asm.cursorY)),
-          fillColorHex: pb.resolved.shading.colorHex,
-        });
-      }
-      if (pb.resolved.borders && asm.pages.length === borderPage) {
-        const b = pb.resolved.borders;
-        const x0 = asm.colLeft() + pb.resolved.indentLeft;
-        const x1 = asm.colLeft() + asm.colWidth() - pb.resolved.indentRight;
-        const rule = (side: 'top' | 'bottom' | 'left' | 'right', edge: Border): void => {
-          const gap = edge.spacePt ?? 0;
-          const top = borderTopY + gap;
-          const bottom = asm.cursorY - gap;
-          asm.current.push({
-            type: 'border',
-            side,
-            x: pt(x0),
-            y: pt(asm.ctx.pageHeight - top),
-            width: pt(Math.max(0, x1 - x0)),
-            height: pt(Math.max(0, top - bottom)),
-            borderSizePt: edge.width ?? DEFAULT_BORDER_SIZE_EIGHTH * EIGHTH_PT,
-            borderColorHex: edge.colorHex ?? '000000',
-            ...(edge.style !== 'single' ? { borderStyle: edge.style } : {}),
-          });
-        };
-        if (b.top && b.top.style !== 'none') rule('top', b.top);
-        if (b.bottom && b.bottom.style !== 'none') rule('bottom', b.bottom);
-        if (b.left && b.left.style !== 'none') rule('left', b.left);
-        if (b.right && b.right.style !== 'none') rule('right', b.right);
+      // §17.3.1.31 / §17.3.1.24 — the band behind the paragraph and the rules
+      // around it. Drawn only when the paragraph stayed on one page: a rule
+      // around a fragment is a rule in the wrong place, and nothing drawn is
+      // what a bordered paragraph got before either existed.
+      if (asm.pages.length === borderPage) {
+        asm.current.push(
+          ...paragraphDecoration(
+            pb.resolved,
+            asm.colLeft() + pb.resolved.indentLeft,
+            asm.colLeft() + asm.colWidth() - pb.resolved.indentRight,
+            borderTopY,
+            asm.cursorY,
+            asm.ctx.pageHeight,
+          ),
+        );
       }
       asm.cursorY -= pb.spacingAfterPt;
       if (pb.pageBreakAfter) asm.pendingPageBreak = true;
