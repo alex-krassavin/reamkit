@@ -1505,12 +1505,11 @@ function layoutFooterSet(
     if (!content) return { commands: [] };
     const render = (c: ReadonlyArray<BodyElement>): Array<PageItem> => {
       const blocks = laidOutBlocksFor(c, options, fontResources, contentWidth, imageResources);
-      const totalHeight = blocks.reduce(
-        (sum, b) =>
-          sum +
-          (b.kind === 'paragraph' ? b.spacingBeforePt + b.heightPt + b.spacingAfterPt : b.heightPt),
-        0,
-      );
+      // §17.6.11 — `w:pgMar @w:footer` is the distance up from the page edge to
+      // the BOTTOM of the band, so the band's own height is what puts its top.
+      // An anchored drawing adds nothing to that height (blocksHeight): counted,
+      // fdo80895.docx's footer ellipse lifted the whole band 26pt off the floor.
+      const totalHeight = blocksHeight(blocks);
       return markPagination(
         drawBlocksSequentially(
           blocks,
