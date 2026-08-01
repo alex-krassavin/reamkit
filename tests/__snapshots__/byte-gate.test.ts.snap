@@ -10,7 +10,7 @@ exports[`byte gate: images and PDF/A emit paths > images.docx (plain: SMask kept
 
 exports[`byte gate: static fixtures > header-footer.docx 1`] = `"bd8b0ea852bf6ef6f21ef0fbaa02caa6c856a731d52f688c2e49a23cd7defdc4"`;
 
-exports[`byte gate: static fixtures > list-basic.docx 1`] = `"85d81cd0f1f3dd2296fd4243f020944aaba3bb00fde4829d52796f3b656effe6"`;
+exports[`byte gate: static fixtures > list-basic.docx 1`] = `"c9660e341450bc5da70bc0b6fe72a77d19a61a9ad389f84ea08c3b7ad3e9fef5"`;
 
 exports[`byte gate: static fixtures > sheet-basic.xlsx 1`] = `"c4169dda9d85dba57c515903558907ce99222a83999174444ac242f53eaa0ff9"`;
 

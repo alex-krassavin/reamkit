@@ -2589,6 +2589,7 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         kind: 'text',
         text: t.text,
         isSpace: t.isSpace,
+        ...(t.tab ? { tab: true as const } : {}),
         ...(plan.run.href !== undefined ? { href: plan.run.href } : {}),
         ...(plan.run.footnoteRef !== undefined ? { footnoteRef: plan.run.footnoteRef } : {}),
         ...(plan.run.anchor !== undefined ? { anchor: plan.run.anchor } : {}),
@@ -2715,19 +2716,23 @@ function paragraphMaxWidth(
   return Math.max(1, contentWidth - indentLeft - indentRight - firstLineExtra);
 }
 
-function tokenizeText(text: string): Array<{ text: string; isSpace: boolean }> {
-  const out: Array<{ text: string; isSpace: boolean }> = [];
+function tokenizeText(text: string): Array<{ text: string; isSpace: boolean; tab?: true }> {
+  const out: Array<{ text: string; isSpace: boolean; tab?: true }> = [];
   if (text.length === 0) return out;
-  const re = /(\s+)|(\S+)/g;
+  // §17.3.1.38 — a tab is not whitespace that happens to be wide: it advances
+  // to a POSITION, so it gets a token of its own to be measured against the
+  // stops once the line is known.
+  const re = /(\t)|(\s+)|(\S+)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
-    if (m[1] !== undefined) out.push({ text: m[1], isSpace: true });
-    else if (m[2] !== undefined) {
+    if (m[1] !== undefined) out.push({ text: '', isSpace: true, tab: true });
+    else if (m[2] !== undefined) out.push({ text: m[2], isSpace: true });
+    else if (m[3] !== undefined) {
       // CJK runs carry no whitespace, so split them into per-ideograph pieces —
       // each becomes its own box and a wrap opportunity opens between them
       // (see paragraphItemStream). A segment with no CJK is returned unchanged,
       // so Latin tokenization stays byte-identical.
-      for (const piece of splitCjkSegment(m[2])) out.push({ text: piece, isSpace: false });
+      for (const piece of splitCjkSegment(m[3])) out.push({ text: piece, isSpace: false });
     }
   }
   return out;
@@ -2900,6 +2905,97 @@ function paragraphItemStream(
   return entries;
 }
 
+/** Word's own default when a document names none (§17.15.1.25): half an inch. */
+const DEFAULT_TAB_STOP_PT = 36;
+
+const TAB_LEADER_CHARS: ReadonlyMap<string, string> = new Map([
+  ['dot', '.'],
+  ['hyphen', '-'],
+  ['underscore', '_'],
+  ['middleDot', '\u00b7'],
+]);
+
+/**
+ * Give each tab on a line the width that carries it to its stop, and the
+ * leader that fills the way there.
+ *
+ * §17.3.1.37 — a tab advances to a POSITION, not by a fixed amount, and where
+ * that position is depends on how far the line has already run. Measured as
+ * ordinary whitespace it collapsed to a space: the page numbers of
+ * FDO77715.docx's index sat against their titles with no dot leader between,
+ * and its header ran its left and right halves together on one line.
+ *
+ * A `right`, `center` or `decimal` stop positions the text AFTER the tab, so
+ * each is resolved against the segment that follows it.
+ *
+ * @param tokens   The line's tokens, replaced in place.
+ * @param resolved The paragraph's resolved properties: the stops and indents.
+ * @param isFirst  Whether this is the paragraph's first line.
+ */
+function resolveTabs(
+  tokens: Array<Token>,
+  resolved: ResolvedParagraphProperties,
+  isFirst: boolean,
+): void {
+  const stops = resolved.tabs;
+  let x = resolved.indentLeft + (isFirst ? resolved.indentFirstLine : 0);
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    if (!tok) continue;
+    if (!(tok.kind === 'text' && tok.tab === true)) {
+      x += tok.widthPt;
+      continue;
+    }
+    // The run of tokens up to the next tab: what this stop has to place.
+    let segment = 0;
+    let decimalAt = 0;
+    let seenDecimal = false;
+    for (let j = i + 1; j < tokens.length; j++) {
+      const next = tokens[j]!;
+      if (next.kind === 'text' && next.tab === true) break;
+      if (!seenDecimal && next.kind === 'text') {
+        const dot = next.text.indexOf('.');
+        if (dot >= 0) {
+          decimalAt =
+            segment + next.font.measure.textWidthPt(next.text.slice(0, dot), next.fontSizePt);
+          seenDecimal = true;
+        }
+      }
+      segment += next.widthPt;
+    }
+    // Two tabs in a row and one stop between them: the first places nothing,
+    // so it claims nothing and the stop falls to the second. FDO77715.docx's
+    // header is written that way — two tabs against a single right stop at the
+    // margin — and letting the first take it drove the title off the page.
+    const after = tokens[i + 1];
+    if (segment === 0 && after?.kind === 'text' && after.tab === true) {
+      tokens[i] = { ...tok, widthPt: 0, text: '' };
+      continue;
+    }
+    const stop = stops.find((sp) => sp.positionPt > x + 0.01);
+    const position = stop
+      ? stop.positionPt
+      : (Math.floor(x / DEFAULT_TAB_STOP_PT) + 1) * DEFAULT_TAB_STOP_PT;
+    const alignment = stop?.alignment ?? 'left';
+    let target = position;
+    if (alignment === 'right') target = position - segment;
+    else if (alignment === 'center') target = position - segment / 2;
+    else if (alignment === 'decimal') target = position - (seenDecimal ? decimalAt : segment);
+    const width = Math.max(0, target - x);
+    const leaderChar = stop?.leader === undefined ? undefined : TAB_LEADER_CHARS.get(stop.leader);
+    const text = leaderChar === undefined ? '' : fillLeader(tok, leaderChar, width);
+    tokens[i] = { ...tok, widthPt: width, text };
+    x += width;
+  }
+}
+
+/** As many leader characters as fit the gap, measured in the tab's own font. */
+function fillLeader(tab: TextToken, leader: string, widthPt: number): string {
+  const unit = tab.font.measure.textWidthPt(leader, tab.fontSizePt);
+  if (!(unit > 0)) return '';
+  return leader.repeat(Math.max(0, Math.floor(widthPt / unit)));
+}
+
 /**
  * Cut an unbreakable word into the widest pieces that fit `widthPt`, measured
  * with the token's own font. Each piece keeps the run's formatting, so the line
@@ -3000,6 +3096,8 @@ function lineFromRange(
     const ft = entries[i]!.token;
     if (ft) lineTokens.push(ft);
   }
+
+  resolveTabs(lineTokens, resolved, isFirst);
 
   // If the chosen break is at a hyphenation penalty, fold the hyphen glyph
   // onto the last text token of the line.

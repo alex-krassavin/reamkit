@@ -1,10 +1,10 @@
 // ECMA-376 Part 1 §17.3.1 — Paragraph Properties (pPr).
 
-import type { Alignment, ParagraphProperties } from '@/core/document-model';
+import type { Alignment, ParagraphProperties, TabStop } from '@/core/document-model';
 import { twipsToPt } from '@/core/ir';
 
 import { parseRunProperties } from '@/word/run-properties';
-import { asElement, getAttr, getVal, parseIntAttr, parseToggle } from '@/word/xml-helpers';
+import { asArray, asElement, getAttr, getVal, parseIntAttr, parseToggle } from '@/word/xml-helpers';
 
 const ALIGNMENTS = new Set<Alignment>(['left', 'right', 'center', 'both', 'distribute']);
 const LINE_RULES = new Set<'auto' | 'exact' | 'atLeast'>(['auto', 'exact', 'atLeast']);
@@ -63,6 +63,11 @@ export function parseParagraphProperties(pPr: unknown): ParagraphProperties {
     else if (hanging !== undefined) out.indentFirstLine = twipsToPt(-hanging);
   }
 
+  if ('w:tabs' in el) {
+    const stops = parseTabs(el['w:tabs']);
+    if (stops.length > 0) out.tabs = stops;
+  }
+
   if ('w:contextualSpacing' in el) {
     const v = parseToggle(el['w:contextualSpacing']);
     if (v !== undefined) out.contextualSpacing = v;
@@ -114,3 +119,43 @@ export function parseParagraphProperties(pPr: unknown): ParagraphProperties {
 }
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+
+// §17.18.90 ST_TabJc. `bar` draws a rule and advances nothing, and `clear`
+// removes an inherited stop; neither places text, so neither becomes a stop.
+const TAB_ALIGNMENTS: ReadonlyMap<string, TabStop['alignment']> = new Map([
+  ['left', 'left'],
+  ['start', 'left'],
+  ['center', 'center'],
+  ['right', 'right'],
+  ['end', 'right'],
+  ['decimal', 'decimal'],
+]);
+
+const TAB_LEADERS: ReadonlySet<string> = new Set(['dot', 'hyphen', 'underscore', 'middleDot']);
+
+/**
+ * §17.3.1.37 `w:tabs` — the paragraph's own stops, in ascending position.
+ *
+ * @param node The `w:tabs` element.
+ * @returns The stops that place text, sorted; `[]` when it declares none.
+ */
+function parseTabs(node: unknown): Array<TabStop> {
+  const out: Array<TabStop> = [];
+  for (const raw of asArray(asElement(node)?.['w:tab'])) {
+    const el = asElement(raw);
+    if (!el) continue;
+    const pos = parseIntAttr(el, 'pos');
+    if (pos === undefined) continue;
+    const alignment = TAB_ALIGNMENTS.get(getAttr(el, 'val') ?? 'left');
+    if (!alignment) continue;
+    const leader = getAttr(el, 'leader');
+    out.push({
+      positionPt: twipsToPt(pos),
+      alignment,
+      ...(leader !== undefined && TAB_LEADERS.has(leader)
+        ? { leader: leader as NonNullable<TabStop['leader']> }
+        : {}),
+    });
+  }
+  return out.sort((a, b) => a.positionPt - b.positionPt);
+}

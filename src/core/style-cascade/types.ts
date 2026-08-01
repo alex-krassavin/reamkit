@@ -6,6 +6,7 @@ import type {
   Alignment,
   FontFamilyMap,
   NumberingReference,
+  TabStop,
   UnderlineStyle,
   VerticalAlign,
 } from '@/core/document-model';
@@ -50,6 +51,8 @@ export interface ResolvedParagraphProperties {
   readonly pageBreakBefore: boolean;
   /** §17.3.1.9 — drop the space between this paragraph and a same-styled neighbour. */
   readonly contextualSpacing: boolean;
+  /** §17.3.1.37 — the paragraph's tab stops, in ascending position order. */
+  readonly tabs: ReadonlyArray<TabStop>;
   readonly bidi: boolean;
   /**
    * ECMA-376 §17.3.1.20 — resolved outline level (0–8). Undefined = body text.
@@ -93,5 +96,6 @@ export const DEFAULT_RESOLVED_PARAGRAPH: ResolvedParagraphProperties = {
   indentFirstLine: twipsToPt(0),
   pageBreakBefore: false,
   contextualSpacing: false,
+  tabs: [],
   bidi: false,
 };

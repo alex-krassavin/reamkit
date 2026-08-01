@@ -1005,6 +1005,12 @@ function emitPageContent(
       const hasImageToken = line.tokens.some((t) => t.kind === 'image');
       const hasMathToken = line.tokens.some((t) => t.kind === 'math');
       const hasRtl = line.tokens.some((t) => t.bidiLevel % 2 === 1);
+      // §17.3.1.38 — a tab's width is a DISTANCE, not the advance of the glyphs
+      // it draws: with no leader it draws none at all. The simple path below
+      // sets the text matrix once and lets the font's own advances carry the
+      // cursor, which loses that distance entirely — a numbered list printed
+      // "1.First item". Position such a line token by token instead.
+      const hasTab = line.tokens.some((t) => t.kind === 'text' && t.tab === true);
 
       // Encode a token's text, reversing code points for RTL (odd-level) runs
       // so glyphs lay out right-to-left as our cursor advances left-to-right.
@@ -1107,7 +1113,14 @@ function emitPageContent(
           switchFontIfNeeded(tok);
           out.push(`<${tok.font.measure.encodeTextAsCidHex(tok.text)}> Tj`);
         }
-      } else if (extraPerSpace > 0 || hasImageToken || hasMathToken || hasRtl || hasRise) {
+      } else if (
+        extraPerSpace > 0 ||
+        hasImageToken ||
+        hasMathToken ||
+        hasRtl ||
+        hasRise ||
+        hasTab
+      ) {
         // Per-token absolute positioning. Required for justify (inter-word
         // slack), inline images (text-mode exits), and BiDi (visual order
         // differs from logical order). Tokens are emitted in visual order.

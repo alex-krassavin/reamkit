@@ -108,3 +108,62 @@ describe('parseParagraphProperties', () => {
     });
   });
 });
+
+// ECMA-376 Part 1 §17.3.1.37 `w:tabs` — a tab advances to a POSITION, not by a
+// fixed amount. Measured as ordinary whitespace it collapsed to a space: the
+// page numbers of FDO77715.docx's index sat against their titles with no dot
+// leader between, and its header ran its left and right halves together.
+describe('tab stops (§17.3.1.37)', () => {
+  it('reads a stop’s position, alignment and leader', () => {
+    expect(
+      parseParagraphProperties(
+        parsePpr(
+          '<w:pPr><w:tabs><w:tab w:val="right" w:pos="9360" w:leader="dot"/></w:tabs></w:pPr>',
+        ),
+      ).tabs,
+    ).toEqual([{ positionPt: twipsToPt(9360), alignment: 'right', leader: 'dot' }]);
+  });
+
+  it('sorts the stops by position, whatever order they are written in', () => {
+    expect(
+      parseParagraphProperties(
+        parsePpr(
+          '<w:pPr><w:tabs><w:tab w:val="right" w:pos="9360"/>' +
+            '<w:tab w:val="center" w:pos="4680"/></w:tabs></w:pPr>',
+        ),
+      ).tabs?.map((t) => t.positionPt),
+    ).toEqual([twipsToPt(4680), twipsToPt(9360)]);
+  });
+
+  it('keeps only the stops that place text', () => {
+    // §17.18.90 — `bar` draws a rule and advances nothing; `clear` removes an
+    // inherited stop. Neither positions anything, so neither becomes one.
+    expect(
+      parseParagraphProperties(
+        parsePpr(
+          '<w:pPr><w:tabs><w:tab w:val="bar" w:pos="1440"/>' +
+            '<w:tab w:val="clear" w:pos="2880"/>' +
+            '<w:tab w:val="left" w:pos="720"/></w:tabs></w:pPr>',
+        ),
+      ).tabs,
+    ).toEqual([{ positionPt: twipsToPt(720), alignment: 'left' }]);
+  });
+
+  it('ignores a stop that names no position', () => {
+    expect(
+      parseParagraphProperties(parsePpr('<w:pPr><w:tabs><w:tab w:val="left"/></w:tabs></w:pPr>'))
+        .tabs,
+    ).toBeUndefined();
+  });
+
+  it('takes `start` and `end` as the left and right they are', () => {
+    expect(
+      parseParagraphProperties(
+        parsePpr(
+          '<w:pPr><w:tabs><w:tab w:val="start" w:pos="720"/>' +
+            '<w:tab w:val="end" w:pos="1440"/></w:tabs></w:pPr>',
+        ),
+      ).tabs?.map((t) => t.alignment),
+    ).toEqual(['left', 'right']);
+  });
+});

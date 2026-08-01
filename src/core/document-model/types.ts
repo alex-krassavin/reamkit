@@ -80,6 +80,20 @@ export interface RunProperties {
  * indent of 360 twips becomes `indentFirstLine = -18pt` — the first line ends up
  * 360 twips to the left of `indentLeft`).
  */
+/**
+ * §17.3.1.38 `w:tab` — one stop in a paragraph's tab list: where the text after
+ * a tab character goes, how it sits against that position, and what fills the
+ * gap on the way there.
+ */
+export interface TabStop {
+  /** Distance from the text margin, in points (`w:pos`, twips). */
+  readonly positionPt: Pt;
+  /** §17.18.90 ST_TabJc — how the text after the tab sits against the stop. */
+  readonly alignment: 'left' | 'center' | 'right' | 'decimal';
+  /** §17.18.89 ST_TabTlc — the character drawn across the gap. */
+  readonly leader?: 'dot' | 'hyphen' | 'underscore' | 'middleDot';
+}
+
 export interface ParagraphProperties {
   readonly styleId?: string;
   readonly alignment?: Alignment;
@@ -94,6 +108,8 @@ export interface ParagraphProperties {
    * whole keeps its space from the text around it.
    */
   readonly contextualSpacing?: boolean;
+  /** ECMA-376 Part 1 §17.3.1.37 — the paragraph's own `w:tabs` stops. */
+  readonly tabs?: ReadonlyArray<TabStop>;
   readonly indentLeft?: Pt;
   readonly indentRight?: Pt;
   readonly indentFirstLine?: Pt;
