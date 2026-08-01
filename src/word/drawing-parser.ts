@@ -308,7 +308,7 @@ export function parseDrawing(
  */
 export function parseVmlPicture(node: PoNode): DrawingContent | null {
   const imagedata = poFindDescendant(node, 'v:imagedata');
-  if (!imagedata) return null;
+  if (!imagedata) return parseVmlWordArt(node);
   // @r:id binds the embedded picture. An external @o:href/@r:href link we do
   // not embed, and an empty placeholder frame (a <v:shape> with no imagedata),
   // both leave this undefined and are skipped.
@@ -328,6 +328,73 @@ export function parseVmlPicture(node: PoNode): DrawingContent | null {
     poAttr(imagedata, 'title')?.trim() || // o:title
     undefined;
   return { kind: 'image', imageId, width, height, ...(altText ? { altText } : {}) };
+}
+
+/**
+ * §14.1.2.22 `v:textpath` — legacy WordArt: text bent along a preset path, whose
+ * STRING lives in an attribute rather than in the document body. The path is a
+ * `v:shapetype` of formulas we do not evaluate, so the words are set flat in
+ * the shape's box — which is the whole of what the page says. Read nowhere,
+ * WordArt.docx printed an empty page.
+ *
+ * @param node The `w:pict` / `w:object` node.
+ * @returns The shape, or `null` when there is no textpath or no usable size.
+ */
+function parseVmlWordArt(node: PoNode): DrawingContent | null {
+  // The `v:shapetype` template beside the shape carries a `v:textpath` of its
+  // own, with no string on it — the words live on the SHAPE's.
+  const shape = poFindDescendant(node, 'v:shape');
+  const textpath = shape ? poFindDescendant(shape, 'v:textpath') : undefined;
+  const string = textpath ? poAttr(textpath, 'string') : undefined;
+  if (string === undefined || string === '') return null;
+  const width = vmlStyleLength(shape, 'width');
+  const height = vmlStyleLength(shape, 'height');
+  if (width === undefined || height === undefined) return null;
+  const fill = poAttr(shape, 'fillcolor');
+  const colorHex =
+    fill && /^#?[0-9A-Fa-f]{6}$/u.test(fill) ? fill.replace('#', '').toUpperCase() : undefined;
+  // WordArt fills its box, and the parser has no font metrics to fit it with.
+  // Half the height per line is close for a line of capitals; the width has
+  // the last word, since a size that overflows it wraps and "WORD-ART" comes
+  // out as "WORD-A / RT". A bold capital averages about 0.62em wide.
+  const lines = string.split(/\r\n|[\r\n]/u);
+  const longest = Math.max(1, ...lines.map((l) => l.length));
+  const fontSizePt = pt(
+    Math.max(1, Math.min((height / lines.length) * 0.5, width / (longest * 0.62))),
+  );
+  return {
+    kind: 'shape',
+    data: {
+      width,
+      height,
+      geometry: { kind: 'preset', preset: 'rect', adjust: new Map() },
+      fill: { kind: 'none' },
+      text: {
+        content: lines.map((line) => ({
+          kind: 'paragraph' as const,
+          paragraph: {
+            properties: { alignment: 'center' as const },
+            runs: [
+              {
+                text: line,
+                properties: {
+                  fontSizePt,
+                  bold: true,
+                  ...(colorHex ? { colorHex } : {}),
+                },
+              },
+            ],
+          },
+        })),
+        anchor: 'ctr' as const,
+        insetLeft: pt(0),
+        insetRight: pt(0),
+        insetTop: pt(0),
+        insetBottom: pt(0),
+      },
+    },
+    ...(poAttr(shape, 'alt')?.trim() ? { altText: poAttr(shape, 'alt')!.trim() } : {}),
+  };
 }
 
 // A VML @style length, normalised to points. VML inherits CSS units; Word

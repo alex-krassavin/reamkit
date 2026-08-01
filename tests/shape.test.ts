@@ -580,3 +580,54 @@ describe('a gallery-styled shape', () => {
     expect(text).not.toMatch(/0\.356863 0\.607843 0\.835294 rg/u);
   });
 });
+
+// §14.1.2.22 `v:textpath` — legacy WordArt, whose words live in an attribute
+// rather than in the document body. Read nowhere, WordArt.docx printed an empty
+// page. The preset path is a shapetype of formulas we do not evaluate, so the
+// words are set flat in the shape's box — which is the whole of what it says.
+describe('VML WordArt', () => {
+  const pict = (shapeXml: string): string =>
+    asLatin1(
+      convertDocxToPdfSync(
+        buildDocxFromBody(`<w:p><w:r><w:pict>${shapeXml}</w:pict></w:r></w:p>`),
+        {
+          fonts: FONTS,
+        },
+      ),
+    );
+  // The shapetype template beside the shape carries a textpath of its own, with
+  // no string on it — the words are on the SHAPE's.
+  const SHAPETYPE =
+    '<v:shapetype id="_x0000_t144" o:spt="144"><v:textpath on="t" fitpath="t"/></v:shapetype>';
+
+  it('sets the string the textpath carries', () => {
+    const text = pict(
+      `${SHAPETYPE}<v:shape id="s" type="#_x0000_t144" style="width:286.45pt;height:134.8pt" fillcolor="black">` +
+        '<v:textpath style="font-family:&quot;Arial Black&quot;" string="WORD-ART"/></v:shape>',
+    );
+    const parsed = parseTtf(FONTS.regular);
+    expect(text).toMatch(showPattern(parsed, 'WORD-ART'));
+  });
+
+  it('sizes it to the box it is given, width included', () => {
+    // Half the height per line is close for a line of capitals, but a size
+    // that overflows the width wraps: "WORD-ART" came out as "WORD-A / RT".
+    const text = pict(
+      `${SHAPETYPE}<v:shape id="s" type="#_x0000_t144" style="width:286.45pt;height:134.8pt">` +
+        '<v:textpath string="WORD-ART"/></v:shape>',
+    );
+    const size = /\/F\d+ ([\d.]+) Tf/u.exec(text);
+    expect(size).not.toBeNull();
+    // 286.45 / (8 × 0.62) = 57.8pt, under the 67.4pt the height alone allows.
+    expect(Number(size![1])).toBeCloseTo(57.75, 0);
+  });
+
+  it('ignores a shape that names no string or no size', () => {
+    expect(pict(`${SHAPETYPE}<v:shape id="s" style="width:100pt;height:50pt"/>`)).not.toContain(
+      ' Tj',
+    );
+    expect(pict(`${SHAPETYPE}<v:shape id="s"><v:textpath string="X"/></v:shape>`)).not.toContain(
+      ' Tj',
+    );
+  });
+});

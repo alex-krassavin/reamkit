@@ -431,11 +431,18 @@ function scanForLoneDrawing(container: PoNode, acc: LoneDrawingScan): void {
         if (poIs(rc, 'w:drawing')) {
           acc.drawings.push(rc);
         } else if (poIs(rc, 'w:pict') || poIs(rc, 'w:object')) {
-          // Only a VML node that actually bears a picture (<v:imagedata>) is a
-          // candidate — an empty frame or a bare ActiveX/OLE control object is
-          // ignored, so a paragraph that pairs a picture run with a control run
-          // still collapses on the picture.
-          if (!acc.vml && poFindDescendant(rc, 'v:imagedata') !== undefined) acc.vml = rc;
+          // Only a VML node that actually bears something to draw is a
+          // candidate — a picture (`v:imagedata`) or §14.1.2.22 WordArt
+          // (`v:textpath`). An empty frame or a bare ActiveX/OLE control object
+          // is ignored, so a paragraph that pairs a picture run with a control
+          // run still collapses on the picture.
+          if (
+            !acc.vml &&
+            (poFindDescendant(rc, 'v:imagedata') ?? poFindDescendant(rc, 'v:textpath')) !==
+              undefined
+          ) {
+            acc.vml = rc;
+          }
         } else if (poIs(rc, 'w:t') && poText(rc).length > 0) {
           acc.hasOther = true;
         } else if (
@@ -484,11 +491,11 @@ function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): Array<Bod
 
   if (drawings.length === 0) {
     const content = parseVmlPicture(vml!);
-    if (!content || content.kind !== 'image') return null;
+    if (!content) return null;
     // A dangling VML <v:imagedata r:id> (referenced media absent from the
     // package) carries nothing to render; skip it so the paragraph stays empty
     // on both read passes rather than materialising an un-writable phantom.
-    if (ctx.resolveImage?.(content.imageId) === undefined) return null;
+    if (content.kind === 'image' && ctx.resolveImage?.(content.imageId) === undefined) return null;
     return blocksForDrawing(content, paragraphProperties, ctx);
   }
 
