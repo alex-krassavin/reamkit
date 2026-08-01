@@ -4257,6 +4257,27 @@ function lineFromRange(
   };
 }
 
+// The paragraph's LEADING tabs, each carrying the width that takes it to its
+// stop on the first line. Only the leading run: every other tab's stop depends
+// on where its line starts, which is what the breaker is deciding.
+function withLeadingTabWidths(
+  tokens: ReadonlyArray<Token>,
+  resolved: ResolvedParagraphProperties,
+  firstLineWidth: number,
+): ReadonlyArray<Token> {
+  const first = tokens[0];
+  if (!(first?.kind === 'text' && first.tab === true)) return tokens;
+  const probe = tokens.map((t) => ({ ...t }));
+  resolveTabs(probe, resolved, true, firstLineWidth);
+  const out = tokens.slice();
+  for (let i = 0; i < out.length; i++) {
+    const tok = out[i]!;
+    if (!(tok.kind === 'text' && tok.tab === true)) break;
+    out[i] = { ...tok, widthPt: probe[i]!.widthPt };
+  }
+  return out;
+}
+
 function wrap(
   tokens: ReadonlyArray<Token>,
   firstLineWidth: number,
@@ -4273,10 +4294,17 @@ function wrap(
   if (tokens.length === 0) return [];
 
   const widths = lineWidths ?? [firstLineWidth, otherWidth];
+  // A tab is measured against its stop only AFTER the line is known, so the
+  // breaker sees it as zero-width glue. For a tab that OPENS the paragraph —
+  // Word's own way of indenting a first line — that is half an inch the first
+  // line does not know it has spent, and FDO76248.docx runs its Malthus
+  // paragraph a tab-stop past the right margin. Those tabs get their width up
+  // front; `resolveTabs` still settles every tab per line afterwards.
+  const measured = withLeadingTabWidths(tokens, resolved, widths[0] ?? firstLineWidth);
   // The WIDEST line the paragraph will be broken to: a word that fits one of
   // them can be placed, and only a word too wide for all of them has to break
   // inside itself.
-  const entries = paragraphItemStream(tokens, hyphenator, Math.max(0, ...widths));
+  const entries = paragraphItemStream(measured, hyphenator, Math.max(0, ...widths));
   const items = entries.map((e) => e.item);
   // E-PARITY FP3: a renderer-compat profile breaks lines greedily (first-fit,
   // like Word/LibreOffice); the default 'ream' keeps Knuth-Plass total-fit.
