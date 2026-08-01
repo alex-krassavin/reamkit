@@ -179,7 +179,14 @@ function cellLayer(
   look: TableLook,
   pos: CellPosition,
 ): TableStyleLayer | undefined {
-  const layers: Array<TableStyleLayer | undefined> = [folded.base];
+  // §17.7.6 — the style's WHOLE-TABLE borders are a table-level default, and
+  // the table's own `w:tblBorders` beat them (applyTableStyle back-fills them
+  // onto the table when it declares none). Pushed down onto every cell they
+  // beat the table's instead: all_gaps_word.docx spells its TableGrid away
+  // edge by edge and we boxed every one of its 54 cells.
+  const { borders: _tableWide, ...withoutBorders } = folded.base;
+  const base: TableStyleLayer = withoutBorders;
+  const layers: Array<TableStyleLayer | undefined> = [base];
   const cond = (t: TableStyleConditionType) => folded.conditions.get(t);
 
   if (!pos.noVBand && pos.colBand >= 0) {

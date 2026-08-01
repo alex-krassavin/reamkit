@@ -219,11 +219,13 @@ describe('paragraph borders (§17.3.1.24)', () => {
     ).toEqual({ style: 'single', width: eighthPtToPt(24), colorHex: '622423' });
   });
 
-  it('reads nil as no rule at all', () => {
+  it('records nil as a rule that is explicitly absent', () => {
+    // Not "unspecified": an edge spelled `nil` overrides the one a style would
+    // otherwise lend it, and the drawing skips a `none` as it always has.
     expect(
       parseParagraphProperties(parsePpr('<w:pPr><w:pBdr><w:top w:val="nil"/></w:pBdr></w:pPr>'))
-        .borders,
-    ).toBeUndefined();
+        .borders?.top,
+    ).toEqual({ style: 'none' });
   });
 
   it('ignores an edge with no style, and an auto colour', () => {

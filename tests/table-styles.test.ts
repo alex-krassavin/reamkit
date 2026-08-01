@@ -132,3 +132,46 @@ describe('table styles (§17.7.6)', () => {
     expect(table.rows[0]!.cells[0]!.properties.shading).toBeUndefined();
   });
 });
+
+// §17.7.6 — a table style's WHOLE-TABLE borders are a table-level default, and
+// the table's own `w:tblBorders` beat them. Pushed down onto every cell they
+// beat the table's instead: all_gaps_word.docx spells its TableGrid away edge
+// by edge and we boxed every one of its cells.
+describe('a table style’s borders against the table’s own', () => {
+  const STYLE =
+    '<w:style w:type="table" w:styleId="Grid"><w:name w:val="Grid"/><w:tblPr><w:tblBorders>' +
+    '<w:top w:val="single" w:sz="4"/><w:left w:val="single" w:sz="4"/>' +
+    '<w:bottom w:val="single" w:sz="4"/><w:right w:val="single" w:sz="4"/>' +
+    '<w:insideH w:val="single" w:sz="4"/><w:insideV w:val="single" w:sz="4"/>' +
+    '</w:tblBorders></w:tblPr></w:style>';
+
+  const tableOf = (tblPrInner: string) => {
+    const body =
+      `<w:tbl><w:tblPr><w:tblStyle w:val="Grid"/>${tblPrInner}</w:tblPr>` +
+      '<w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>' +
+      '<w:tr><w:tc><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc>' +
+      '<w:tc><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc></w:tr></w:tbl>';
+    const el = Ream.parse(buildDocxFromBody(body, { stylesXml: STYLE })).flow.body.find(
+      (b) => b.kind === 'table',
+    );
+    if (el?.kind !== 'table') throw new Error('expected a table');
+    return el.table;
+  };
+
+  it('leaves the style’s grid off the cells so the table can spell it away', () => {
+    const t = tableOf(
+      '<w:tblBorders><w:top w:val="double" w:sz="4"/><w:left w:val="none"/>' +
+        '<w:right w:val="none"/><w:bottom w:val="none"/>' +
+        '<w:insideH w:val="none"/><w:insideV w:val="none"/></w:tblBorders>',
+    );
+    expect(t.properties.borders?.top?.style).toBe('double');
+    expect(t.properties.borders?.insideV?.style).toBe('none');
+    // No cell carries the style's grid of its own.
+    expect(t.rows[0]!.cells[0]!.properties.borders?.left).toBeUndefined();
+  });
+
+  it('still lends the grid to a table that declares none', () => {
+    const t = tableOf('');
+    expect(t.properties.borders?.insideV?.style).toBe('single');
+  });
+});

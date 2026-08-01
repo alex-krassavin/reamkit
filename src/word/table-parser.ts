@@ -366,11 +366,14 @@ export function parseBorders(node: PoNode | undefined): CellBorders | undefined 
 function parseBorder(node: PoNode | undefined): Border | undefined {
   if (!node) return undefined;
   const raw = poVal(node);
+  if (!raw) return undefined;
   // §17.18.2 names some hundred and eighty patterns and we draw six. `nil` and
-  // `none` are no rule; anything else we cannot spell is far closer to a solid
-  // rule of the stated width than to nothing at all.
-  if (!raw || raw === 'nil' || raw === 'none') return undefined;
-  const val = BORDER_STYLES.has(raw as BorderStyle) ? raw : 'single';
+  // `none` are a rule that is explicitly ABSENT — recorded, so it overrides the
+  // one a table or style would otherwise lend the edge; all_gaps_word.docx
+  // spells its grid away that way and dropping the edge boxed every cell.
+  // Anything else we cannot spell is far closer to a solid rule of the stated
+  // width than to nothing at all.
+  const val = raw === 'nil' ? 'none' : BORDER_STYLES.has(raw as BorderStyle) ? raw : 'single';
   const sz = poIntAttr(node, 'sz');
   const color = poAttr(node, 'color');
   const out: Mutable<Border> = { style: val as BorderStyle };

@@ -179,7 +179,10 @@ const BORDER_STYLES = new Set<BorderStyle>([
  * @returns The style to draw, or `undefined` when there is nothing to draw.
  */
 function borderStyleOf(val: string | undefined): BorderStyle | undefined {
-  if (!val || val === 'nil' || val === 'none') return undefined;
+  if (!val) return undefined;
+  // `nil` and `none` are a rule that is explicitly ABSENT: recorded as such, so
+  // it overrides the one a style would otherwise lend the edge.
+  if (val === 'nil' || val === 'none') return 'none';
   return BORDER_STYLES.has(val as BorderStyle) ? (val as BorderStyle) : 'single';
 }
 
