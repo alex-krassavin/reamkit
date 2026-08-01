@@ -380,6 +380,31 @@ describe('Headers and footers in rendered PDF', () => {
     expect(text).toMatch(/\n46\.85 [\d.]+ m\n/u);
   });
 
+  it('balances a continuous multi-column band (§17.6.4)', () => {
+    // Word evens out the columns of a continuous section whose content fits the
+    // page rather than filling the first to the bottom. IndexFieldFlagF.docx
+    // sets its index that way and we filled column one and left the rest empty.
+    const items = Array.from(
+      { length: 6 },
+      (_, i) => `<w:p><w:r><w:t>E${i}</w:t></w:r></w:p>`,
+    ).join('');
+    const body =
+      '<w:p><w:pPr><w:sectPr><w:type w:val="continuous"/>' +
+      '<w:pgSz w:w="11906" w:h="16838"/>' +
+      '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>' +
+      '</w:sectPr></w:pPr><w:r><w:t>HEAD</w:t></w:r></w:p>' +
+      items +
+      '<w:sectPr><w:type w:val="continuous"/><w:cols w:num="3" w:space="720"/>' +
+      '<w:pgSz w:w="11906" w:h="16838"/>' +
+      '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>';
+    const text = asLatin1(convertDocxToPdfSync(buildDocxFromBody(body), { fonts: FONTS }));
+    // One page, and the six entries stand in three columns of two rather than
+    // six down the first: three distinct x origins for the body lines.
+    expect((text.match(/\/Type \/Page[^s]/gu) ?? []).length).toBe(1);
+    const xs = new Set([...text.matchAll(/1 0 0 1 ([\d.]+) [\d.]+ Tm/gu)].map((m) => m[1]));
+    expect(xs.size).toBeGreaterThanOrEqual(3);
+  });
+
   it('emits per-section MediaBox when sections have different page sizes', () => {
     // Section 1: A4 portrait (596×842). Section 2: Letter landscape (792×612).
     // Section break is on para 1 → page 1 is portrait, page 2 is landscape.

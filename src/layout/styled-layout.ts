@@ -1332,6 +1332,24 @@ function layoutHeaderSet(
   return { default: band('default'), first: band('first'), even: band('even') };
 }
 
+/**
+ * §17.6.4 — the height each column of a BALANCED band is given: the band's
+ * share, but never more than the page has room for, and never so little that
+ * the band could not fit the columns at all.
+ *
+ * @param bandHeightPt The band's whole laid-out height.
+ * @param colCount     How many columns it has to share.
+ * @param roomPt       What the page has left below the band's top.
+ * @returns The per-column height, or 0 when the band should just fill.
+ */
+function balancedColumnHeight(bandHeightPt: number, colCount: number, roomPt: number): number {
+  if (bandHeightPt <= 0 || colCount < 2 || roomPt <= 0) return 0;
+  // A band taller than its columns can hold spills whatever we do; filling
+  // column after column is what it did before and is no worse.
+  if (bandHeightPt > roomPt * colCount) return 0;
+  return Math.min(roomPt, bandHeightPt / colCount);
+}
+
 /** Total laid-out height of a run of blocks, paragraph spacing included. */
 function blocksHeight(blocks: ReadonlyArray<LaidOutBlock>): number {
   return blocks.reduce(
@@ -4291,6 +4309,12 @@ class PageAssembler {
       this.colStartLen = this.current.length;
       this.cursorY = this.bandTopY;
       this.colStartY = this.cursorY;
+      // The next column of a balanced band gets the same share — except the
+      // LAST, which takes whatever the rounding left over rather than spilling
+      // onto a page of its own.
+      const isLast = this.colIdx + 1 >= (this.ctx.columns?.length ?? 1);
+      this.balanceBottomY =
+        this.balanceHeightPt > 0 && !isLast ? this.cursorY - this.balanceHeightPt : undefined;
     } else {
       this.flushPage();
     }
@@ -4302,7 +4326,7 @@ class PageAssembler {
    *
    * @param next The section to continue into.
    */
-  startBandSection = (next: SectionRenderCtx): void => {
+  startBandSection = (next: SectionRenderCtx, bandHeightPt: number): void => {
     this.secIdx++;
     this.ctx = next;
     this.colIdx = 0;
@@ -4312,6 +4336,14 @@ class PageAssembler {
     this.cursorY = Math.min(this.cursorY, next.pageHeight - next.marginTop);
     this.bandTopY = this.cursorY;
     this.colStartY = this.cursorY;
+    // §17.6.4 — balance the band when it has columns to share and its content
+    // fits them. A band too tall for the page fills column after column as
+    // before; there is nothing to even out when it will spill anyway.
+    const colCount = next.columns?.length ?? 1;
+    const room = this.cursorY - (next.marginBottom + this.noteReserve);
+    const share = colCount > 1 ? balancedColumnHeight(bandHeightPt, colCount, room) : 0;
+    this.balanceHeightPt = share;
+    this.balanceBottomY = share > 0 ? this.cursorY - share : undefined;
   };
 
   /**
@@ -4374,7 +4406,26 @@ class PageAssembler {
   noteReserve = 0;
   readonly placedNotes = new Set<string>();
   /** The page's usable bottom: the margin plus whatever the notes band has claimed so far. */
-  bottomLimit = (): number => this.ctx.marginBottom + this.noteReserve;
+  /**
+   * §17.6.4 — where the current column must stop. Normally the page's bottom
+   * margin (plus any footnote reserve); inside a BALANCED band it is the line
+   * the band's share of the height reaches, so the columns come out even.
+   */
+  bottomLimit = (): number =>
+    Math.max(
+      this.ctx.marginBottom + this.noteReserve,
+      this.balanceBottomY ?? Number.NEGATIVE_INFINITY,
+    );
+
+  /**
+   * §17.6.4 — a `continuous` section of several columns whose content fits the
+   * page is BALANCED: Word evens the columns out rather than filling the first
+   * to the bottom. Set while such a band is being laid out; the height each
+   * column is given is `balanceHeightPt`. IndexFieldFlagF.docx sets its index
+   * that way and we filled column one and left the rest empty.
+   */
+  balanceBottomY: number | undefined;
+  balanceHeightPt = 0;
 
   /**
    * The first exclusion a line spanning `[yTop-h, yTop]` collides with in the
@@ -4583,6 +4634,8 @@ class PageAssembler {
     this.cursorY = this.ctx.pageHeight - this.ctx.marginTop;
     this.colStartY = this.cursorY;
     this.bandTopY = this.cursorY;
+    this.balanceBottomY = undefined;
+    this.balanceHeightPt = 0;
   };
 
   /**
@@ -4644,6 +4697,8 @@ class PageAssembler {
     this.cursorY = this.ctx.pageHeight - this.ctx.marginTop;
     this.colStartY = this.cursorY;
     this.bandTopY = this.cursorY;
+    this.balanceBottomY = undefined;
+    this.balanceHeightPt = 0;
   };
 }
 
@@ -4682,7 +4737,10 @@ function paginateSections(
         next.pageWidth === asm.ctx.pageWidth &&
         next.pageHeight === asm.ctx.pageHeight;
       if (staysOnPage) {
-        asm.startBandSection(next);
+        // §17.6.4 — the band's whole height, so a multi-column one can be
+        // balanced: every block from here to the section's end.
+        const end = Math.min(next.endIndex, blocks.length);
+        asm.startBandSection(next, blocksHeight(blocks.slice(blockIdx, end)));
         continue;
       }
       // Forced: a section owns a page even when the body it holds draws
