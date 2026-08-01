@@ -53,6 +53,8 @@ export interface RunProperties {
   readonly bold?: boolean;
   readonly italic?: boolean;
   readonly underline?: UnderlineStyle;
+  /** §17.3.2.40 `w:u @w:color` — the underline's own colour, when it has one. */
+  readonly underlineColorHex?: string;
   readonly strike?: boolean;
   readonly fontSizePt?: Pt;
   readonly colorHex?: string;

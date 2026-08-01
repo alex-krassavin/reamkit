@@ -63,6 +63,12 @@ export function parseRunProperties(rPr: unknown): RunProperties {
     if (v && UNDERLINE_STYLES.has(v as UnderlineStyle)) {
       out.underline = v as UnderlineStyle;
     }
+    // §17.3.2.40 — the rule under the text has a colour of its own. A themed
+    // one is written alongside the RESOLVED hex it stands for (`w:color`), so
+    // reading that is enough: Test_CharUnderlineThemeColor.docx asks for a gold
+    // rule under black text and we drew it black.
+    const c = getAttr(el['w:u'], 'color');
+    if (c && /^[0-9A-Fa-f]{6}$/u.test(c)) out.underlineColorHex = c.toUpperCase();
   }
 
   if ('w:sz' in el) {

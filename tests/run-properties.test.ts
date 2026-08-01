@@ -56,6 +56,21 @@ describe('parseRunProperties', () => {
     });
   });
 
+  it('gives the underline its own colour (§17.3.2.40)', () => {
+    // A themed colour is written alongside the resolved hex it stands for, so
+    // reading `w:color` is enough. Ignored, Test_CharUnderlineThemeColor.docx
+    // drew a gold rule under black text in black.
+    expect(
+      parseRunProperties(
+        parseRpr('<w:rPr><w:u w:val="single" w:color="C49A00" w:themeColor="accent1"/></w:rPr>'),
+      ),
+    ).toEqual({ underline: 'single', underlineColorHex: 'C49A00' });
+    // "auto" is the text's own colour, which is what an absent one means.
+    expect(
+      parseRunProperties(parseRpr('<w:rPr><w:u w:val="single" w:color="auto"/></w:rPr>')),
+    ).toEqual({ underline: 'single' });
+  });
+
   it('rejects malformed color values', () => {
     expect(parseRunProperties(parseRpr('<w:rPr><w:color w:val="auto"/></w:rPr>'))).toEqual({});
     expect(parseRunProperties(parseRpr('<w:rPr><w:color w:val="ZZZZZZ"/></w:rPr>'))).toEqual({});

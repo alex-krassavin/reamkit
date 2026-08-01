@@ -1064,15 +1064,22 @@ function emitPageContent(
         for (const tok of line.tokens) {
           const w = tok.widthPt + (tok.kind === 'text' && tok.isSpace ? extraPerSpace : 0);
           if (isDecorated(tok)) {
-            const [r, g, b] = hexToRgb01(tok.resolvedRun.colorHex);
             const thickness = Math.max(0.4, tok.fontSizePt * 0.06);
-            out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} rg`);
+            const paint = (hex: string): void => {
+              const [r, g, b] = hexToRgb01(hex);
+              out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} rg`);
+            };
+            paint(tok.resolvedRun.colorHex);
             if (tok.resolvedRun.underline !== 'none') {
+              // §17.3.2.40 — the rule carries its own colour when the run gives
+              // it one; the strike below always takes the text's.
+              if (tok.resolvedRun.underlineColorHex) paint(tok.resolvedRun.underlineColorHex);
               const y = baselineY - tok.fontSizePt * 0.12 - thickness;
               out.push(
                 `${formatNumber(dx)} ${formatNumber(y)} ` +
                   `${formatNumber(w)} ${formatNumber(thickness)} re f`,
               );
+              if (tok.resolvedRun.underlineColorHex) paint(tok.resolvedRun.colorHex);
             }
             if (tok.resolvedRun.strike) {
               const y = baselineY + tok.fontSizePt * 0.26;

@@ -22,6 +22,8 @@ export interface ResolvedRunProperties {
   readonly bold: boolean;
   readonly italic: boolean;
   readonly underline: UnderlineStyle;
+  /** §17.3.2.40 `w:u @w:color` — the underline's own colour; absent means the text's. */
+  readonly underlineColorHex?: string;
   readonly strike: boolean;
   readonly fontSizePt: Pt;
   readonly colorHex: string;

@@ -191,6 +191,9 @@ function mergeRun(base: ResolvedRunProperties, override: RunProperties): Resolve
     bold: override.bold ?? base.bold,
     italic: override.italic ?? base.italic,
     underline: override.underline ?? base.underline,
+    ...((override.underlineColorHex ?? base.underlineColorHex)
+      ? { underlineColorHex: override.underlineColorHex ?? base.underlineColorHex }
+      : {}),
     strike: override.strike ?? base.strike,
     fontSizePt: override.fontSizePt ?? base.fontSizePt,
     colorHex: override.colorHex ?? base.colorHex,
