@@ -216,3 +216,46 @@ describe('a deleted table row', () => {
     expect(textOf(rowsOf(body)[0]!.cells[1]!.content)).toBe('stays');
   });
 });
+
+describe('row height and cell vertical alignment', () => {
+  const tbl = (trPr: string, tcPr: string) =>
+    parse(
+      `<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>` +
+        `<w:tr>${trPr}<w:tc>${tcPr}<w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc></w:tr></w:tbl>`,
+    );
+  const rowOf = (body: ReturnType<typeof tbl>) => {
+    const el = body.find((b) => b.kind === 'table');
+    if (el?.kind !== 'table') throw new Error('expected a table');
+    return el.table.rows[0]!;
+  };
+
+  it('reads a height with no hRule as a minimum (§17.4.81)', () => {
+    // The schema default is `auto`, but a row that says how tall it is is not
+    // asking to be measured — Word and LibreOffice both take it as at-least.
+    // Read as auto, TestTableCellAlign.docx's tall rows collapsed to one line.
+    const p = rowOf(tbl('<w:trPr><w:trHeight w:val="1340"/></w:trPr>', '')).properties;
+    expect(p.height).toBe(twipsToPt(1340));
+    expect(p.heightRule).toBe('atLeast');
+  });
+
+  it('keeps an hRule the row states', () => {
+    const p = rowOf(
+      tbl('<w:trPr><w:trHeight w:val="1340" w:hRule="exact"/></w:trPr>', ''),
+    ).properties;
+    expect(p.heightRule).toBe('exact');
+  });
+
+  it('reads w:vAlign (§17.4.84)', () => {
+    for (const v of ['top', 'center', 'bottom'] as const) {
+      expect(
+        rowOf(tbl('', `<w:tcPr><w:vAlign w:val="${v}"/></w:tcPr>`)).cells[0]!.properties
+          .verticalAlign,
+      ).toBe(v);
+    }
+    // `both` spreads the lines out; with no such mode the cell keeps its top.
+    expect(
+      rowOf(tbl('', '<w:tcPr><w:vAlign w:val="both"/></w:tcPr>')).cells[0]!.properties
+        .verticalAlign,
+    ).toBeUndefined();
+  });
+});

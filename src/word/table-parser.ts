@@ -269,6 +269,14 @@ function parseRowProperties(trPr: PoNode | undefined): RowProperties {
     if (val !== undefined) out.height = twipsToPt(val);
     if (rule && HEIGHT_RULES.has(rule as 'auto' | 'atLeast' | 'exact')) {
       out.heightRule = rule as 'auto' | 'atLeast' | 'exact';
+    } else if (val !== undefined) {
+      // §17.4.81 — a height stated with no `hRule` is a MINIMUM. (The schema
+      // default is `auto`, but a row that says how tall it is is not asking to
+      // be measured; Word and LibreOffice both read it this way.) Ignored, the
+      // tall rows of TestTableCellAlign.docx collapsed to one line each and
+      // took their cells' vertical alignment down with them — nothing to be
+      // bottom OF.
+      out.heightRule = 'atLeast';
     }
   }
   if (poFirstChild(trPr, 'w:cantSplit'))
@@ -320,6 +328,13 @@ function parseCellProperties(tcPr: PoNode | undefined): {
       out.shading = { colorHex: fill.toUpperCase() };
     }
   }
+  // §17.4.84 `w:vAlign` — where the cell's content sits in a row taller than
+  // it. TestTableCellAlign.docx is two rows of exactly that and we drew all
+  // four cells from the top. `both` (justified) spreads the lines out; with no
+  // such mode the closest honest reading is the top it already sat at.
+  const vAlign = poVal(poFirstChild(tcPr, 'w:vAlign'));
+  if (vAlign === 'center' || vAlign === 'bottom' || vAlign === 'top') out.verticalAlign = vAlign;
+
   return { properties: out, ...(rawVMerge ? { vMerge: rawVMerge } : {}) };
 }
 
