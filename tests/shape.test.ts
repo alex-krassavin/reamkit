@@ -510,3 +510,60 @@ describe('a drawing group', () => {
     expect(text).toContain('1 0 0 rg');
   });
 });
+
+// §20.1.4.2.13/19 — a shape drawn from a gallery style keeps its fill and its
+// outline in `<wps:style>` and carries neither in `spPr`. Read alone, spPr says
+// the shape has none: TextEffects_Groupshapes.docx drew its caption on white
+// where LibreOffice fills an accent-blue rectangle behind it.
+describe('a gallery-styled shape', () => {
+  const styled = (styleXml: string, spPrInner: string): string =>
+    asLatin1(
+      convertDocxToPdfSync(
+        buildDocxFromBody(`<w:p><w:r><w:drawing>
+          <wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+            <wp:extent cx="1828800" cy="914400"/><wp:docPr id="1" name="S"/>
+            <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+              <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+                <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+                  <wps:spPr>
+                    <a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/></a:xfrm>
+                    ${spPrInner}
+                  </wps:spPr>
+                  ${styleXml}
+                  <wps:bodyPr/>
+                </wps:wsp>
+              </a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`),
+        { fonts: FONTS },
+      ),
+    );
+  const RECT = '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>';
+
+  it('takes the fill and outline the style names', () => {
+    const text = styled(
+      '<wps:style><a:lnRef idx="2"><a:srgbClr val="2E75B6"/></a:lnRef>' +
+        '<a:fillRef idx="1"><a:srgbClr val="5B9BD5"/></a:fillRef></wps:style>',
+      RECT,
+    );
+    // 0x5B/255, 0x9B/255, 0xD5/255 — filled …
+    expect(text).toMatch(/0\.356863 0\.607843 0\.835294 rg/u);
+    // … and stroked in 0x2E/0x75/0xB6.
+    expect(text).toMatch(/0\.180392 0\.458824 0\.713725 RG/u);
+  });
+
+  it('keeps a fill the shape states for itself', () => {
+    const text = styled(
+      '<wps:style><a:fillRef idx="1"><a:srgbClr val="5B9BD5"/></a:fillRef></wps:style>',
+      `${RECT}<a:solidFill><a:srgbClr val="FF0000"/></a:solidFill>`,
+    );
+    expect(text).toContain('1 0 0 rg');
+    expect(text).not.toMatch(/0\.356863 0\.607843 0\.835294 rg/u);
+  });
+
+  it('reads idx="0" as naming nothing', () => {
+    const text = styled(
+      '<wps:style><a:fillRef idx="0"><a:srgbClr val="5B9BD5"/></a:fillRef></wps:style>',
+      RECT,
+    );
+    expect(text).not.toMatch(/0\.356863 0\.607843 0\.835294 rg/u);
+  });
+});

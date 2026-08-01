@@ -549,6 +549,13 @@ function parseWspNode(
   }
 
   const text = parseBody ? parseTextBox(wsp, parseBody) : undefined;
+  // §20.1.4.2.19/20.1.4.2.10 — a shape drawn from a gallery style keeps its
+  // fill and outline in `<wps:style>` and carries none in `spPr` at all; read
+  // alone, spPr says the shape has neither. TextEffects_Groupshapes.docx's
+  // rectangle asks for accent1 that way and we drew its caption on white.
+  const style = poChildren(wsp).find((c) => poIs(c, 'wps:style'));
+  if (style && fill.kind === 'none') fill = styleRefFill(style, resolveColor);
+  if (style && !line) line = styleRefLine(style, resolveColor);
 
   if (widthEmu === undefined || heightEmu === undefined) return null;
   return {
@@ -564,6 +571,28 @@ function parseWspNode(
 
 // wps:txbx/w:txbxContent (the text body) + wps:bodyPr (insets + vertical
 // anchor). Returns undefined when the shape carries no text.
+// §20.1.4.2.13 `<a:fillRef>` — the fill a gallery style names. The theme's own
+// `a:fillStyleLst` slot (which could make it a gradient) is out of reach here;
+// the colour the reference names is what both references draw.
+function styleRefFill(style: PoNode, resolveColor: ColorResolver): ShapeFill {
+  const ref = poChildren(style).find((c) => poIs(c, 'a:fillRef'));
+  if (!ref || poAttr(ref, 'idx') === '0') return { kind: 'none' };
+  const child = poChildren(ref).find((c) => poTag(c) !== '#text');
+  const colorHex = child ? resolveColorNode(child, resolveColor) : undefined;
+  return colorHex === undefined ? { kind: 'none' } : { kind: 'solid', colorHex };
+}
+
+// §20.1.4.2.19 `<a:lnRef>` — the outline a gallery style names. Its width lives
+// in the theme's `a:lnStyleLst`, which is not reachable from here; the hairline
+// below is what a shape with no stated width already draws.
+function styleRefLine(style: PoNode, resolveColor: ColorResolver): ShapeLine | undefined {
+  const ref = poChildren(style).find((c) => poIs(c, 'a:lnRef'));
+  if (!ref || poAttr(ref, 'idx') === '0') return undefined;
+  const child = poChildren(ref).find((c) => poTag(c) !== '#text');
+  const colorHex = child ? resolveColorNode(child, resolveColor) : undefined;
+  return colorHex === undefined ? undefined : { fill: 'solid', colorHex, width: pt(0.75) };
+}
+
 function parseTextBox(wsp: PoNode, parseBody: ParseBody): ShapeTextBody | undefined {
   const txbx = poChildren(wsp).find((c) => poIs(c, 'wps:txbx'));
   if (!txbx) return undefined;
