@@ -219,6 +219,7 @@ function mergePar(
   // The paragraph mark's own formatting: the higher-priority one wins whole,
   // the way a paragraph's tabs do.
   const runProperties = override.runProperties ?? base.runProperties;
+  const frame = override.frame ?? base.frame;
   return {
     alignment: override.alignment ?? base.alignment,
     spacingBefore: override.spacingBefore ?? base.spacingBefore,
@@ -240,6 +241,7 @@ function mergePar(
     ...(styleId !== undefined ? { styleId } : {}),
     ...(numbering !== undefined ? { numbering } : {}),
     ...(runProperties !== undefined ? { runProperties } : {}),
+    ...(frame !== undefined ? { frame } : {}),
   };
 }
 

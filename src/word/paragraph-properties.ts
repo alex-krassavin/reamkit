@@ -6,9 +6,11 @@ import type {
   BorderStyle,
   CellBorders,
   CellShading,
+  FrameProperties,
   ParagraphProperties,
   TabStop,
 } from '@/core/document-model';
+import type { Pt } from '@/core/ir';
 import { eighthPtToPt, pt, twipsToPt } from '@/core/ir';
 
 import { parseRunProperties } from '@/word/run-properties';
@@ -16,6 +18,58 @@ import { asArray, asElement, getAttr, getVal, parseIntAttr, parseToggle } from '
 
 const ALIGNMENTS = new Set<Alignment>(['left', 'right', 'center', 'both', 'distribute']);
 const LINE_RULES = new Set<'auto' | 'exact' | 'atLeast'>(['auto', 'exact', 'atLeast']);
+
+const X_ALIGNS = new Set(['left', 'center', 'right', 'inside', 'outside']);
+const Y_ALIGNS = new Set(['top', 'center', 'bottom', 'inside', 'outside']);
+const ANCHORS = new Set(['text', 'margin', 'page']);
+const WRAPS = new Set(['auto', 'around', 'none', 'notBeside', 'tight', 'through']);
+
+/**
+ * §17.3.1.11 `w:framePr` — the box a floating text frame takes and where it
+ * hangs. Lengths are twips; the alignments and anchors are read only when they
+ * name a value the spec defines.
+ *
+ * @param node The `w:framePr` element in flat shape.
+ * @returns The frame, or `undefined` when the element says nothing usable.
+ */
+function parseFramePr(node: unknown): FrameProperties | undefined {
+  const el = asElement(node);
+  if (!el) return undefined;
+  const twips = (name: string): Pt | undefined => {
+    const v = parseIntAttr(node, name);
+    return v === undefined ? undefined : twipsToPt(v);
+  };
+  const pick = <T extends string>(name: string, allowed: ReadonlySet<string>): T | undefined => {
+    const v = getAttr(node, name);
+    return v !== undefined && allowed.has(v) ? (v as T) : undefined;
+  };
+  const rule = getAttr(node, 'hRule');
+  const out: Mutable<FrameProperties> = {};
+  const w = twips('w');
+  const h = twips('h');
+  const x = twips('x');
+  const y = twips('y');
+  const hSpace = twips('hSpace');
+  const vSpace = twips('vSpace');
+  if (w !== undefined) out.widthPt = w;
+  if (h !== undefined) out.heightPt = h;
+  if (rule === 'auto' || rule === 'exact' || rule === 'atLeast') out.heightRule = rule;
+  if (x !== undefined) out.xPt = x;
+  if (y !== undefined) out.yPt = y;
+  if (hSpace !== undefined) out.hSpacePt = hSpace;
+  if (vSpace !== undefined) out.vSpacePt = vSpace;
+  const xAlign = pick<NonNullable<FrameProperties['xAlign']>>('xAlign', X_ALIGNS);
+  const yAlign = pick<NonNullable<FrameProperties['yAlign']>>('yAlign', Y_ALIGNS);
+  const hAnchor = pick<NonNullable<FrameProperties['hAnchor']>>('hAnchor', ANCHORS);
+  const vAnchor = pick<NonNullable<FrameProperties['vAnchor']>>('vAnchor', ANCHORS);
+  const wrap = pick<NonNullable<FrameProperties['wrap']>>('wrap', WRAPS);
+  if (xAlign) out.xAlign = xAlign;
+  if (yAlign) out.yAlign = yAlign;
+  if (hAnchor) out.hAnchor = hAnchor;
+  if (vAnchor) out.vAnchor = vAnchor;
+  if (wrap) out.wrap = wrap;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
 
 /**
  * Parse a `w:pPr` element (ECMA-376 Part 1 §17.3.1) into {@link ParagraphProperties}.
@@ -69,6 +123,12 @@ export function parseParagraphProperties(pPr: unknown): ParagraphProperties {
     if (right !== undefined) out.indentRight = twipsToPt(right);
     if (firstLine !== undefined) out.indentFirstLine = twipsToPt(firstLine);
     else if (hanging !== undefined) out.indentFirstLine = twipsToPt(-hanging);
+  }
+
+  // §17.3.1.11 — the paragraph is a floating text frame, not part of the flow.
+  if ('w:framePr' in el) {
+    const frame = parseFramePr(el['w:framePr']);
+    if (frame) out.frame = frame;
   }
 
   if ('w:tabs' in el) {

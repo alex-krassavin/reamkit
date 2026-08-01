@@ -112,8 +112,35 @@ export interface TabStop {
   readonly leader?: 'dot' | 'hyphen' | 'underscore' | 'middleDot';
 }
 
+/**
+ * §17.3.1.11 `w:framePr` — the paragraph is a floating TEXT FRAME: it leaves
+ * the flow, takes the box this describes, and the body text wraps around it.
+ * Consecutive paragraphs carrying the same frame are one frame together.
+ */
+export interface FrameProperties {
+  /** `w:w` — the frame's width. Absent ⇒ as wide as the text needs. */
+  readonly widthPt?: Pt;
+  /** `w:h` with `w:hRule` — `exact` pins the height, anything else fits the text. */
+  readonly heightPt?: Pt;
+  readonly heightRule?: 'auto' | 'exact' | 'atLeast';
+  /** `w:x`/`w:y` — the offset from whatever `hAnchor`/`vAnchor` names. */
+  readonly xPt?: Pt;
+  readonly yPt?: Pt;
+  /** `w:xAlign`/`w:yAlign` — an alignment instead of an offset. */
+  readonly xAlign?: 'left' | 'center' | 'right' | 'inside' | 'outside';
+  readonly yAlign?: 'top' | 'center' | 'bottom' | 'inside' | 'outside';
+  readonly hAnchor?: 'text' | 'margin' | 'page';
+  readonly vAnchor?: 'text' | 'margin' | 'page';
+  /** §17.18.104 ST_Wrap — how the body text runs past the frame. */
+  readonly wrap?: 'auto' | 'around' | 'none' | 'notBeside' | 'tight' | 'through';
+  readonly hSpacePt?: Pt;
+  readonly vSpacePt?: Pt;
+}
+
 export interface ParagraphProperties {
   readonly styleId?: string;
+  /** §17.3.1.11 — the paragraph floats as a text frame. */
+  readonly frame?: FrameProperties;
   readonly alignment?: Alignment;
   readonly spacingBefore?: Pt;
   readonly spacingAfter?: Pt;

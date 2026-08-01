@@ -30,6 +30,7 @@ import type {
   Comment,
   DocumentInfo,
   FloatAnchor,
+  FrameProperties,
   HeaderFooterReference,
   HeaderFooterType,
   ImageBlock,
@@ -897,11 +898,16 @@ export function layoutStyledDocument(
 
   // Layout each body block within its owning section's content width.
   let sectionIdx = 0;
+  const bodyFrames = frameGroups(numberedBody);
   const blocks: Array<LaidOutBlock> = numberedBody.map((el, idx) => {
     while (sectionIdx < sectionCtxs.length - 1 && idx >= sectionCtxs[sectionIdx]!.endIndex) {
       sectionIdx++;
     }
     const ctx = sectionCtxs[sectionIdx]!;
+    const width = ctx.columns ? ctx.columns[0]!.widthPt : ctx.contentWidth;
+    const group = bodyFrames.starts.get(idx);
+    if (group) return layoutFrameBlock(group, options, fontResources, imageResources, width);
+    if (bodyFrames.continued.has(idx)) return emptyBlock(options);
     return layoutBodyElement(
       el,
       options,
@@ -1482,6 +1488,143 @@ function bandForPage(
   return 'default';
 }
 
+/**
+ * §17.3.1.11 — the runs of consecutive paragraphs that carry the SAME frame.
+ * Word treats them as one floating text frame, so they lay out together in one
+ * box; the entries after the first become empty blocks, which keeps every
+ * caller's element indexing (and its section bounds) intact.
+ *
+ * @param elements The body elements, in order.
+ * @returns `starts`: the index each frame begins at → its paragraphs;
+ *          `continued`: the indices swallowed by a frame that began earlier.
+ */
+function frameGroups(elements: ReadonlyArray<BodyElement>): {
+  starts: Map<number, ReadonlyArray<Paragraph>>;
+  continued: Set<number>;
+} {
+  const starts = new Map<number, ReadonlyArray<Paragraph>>();
+  const continued = new Set<number>();
+  const key = (p: Paragraph): string | undefined =>
+    p.properties.frame ? JSON.stringify(p.properties.frame) : undefined;
+  let i = 0;
+  while (i < elements.length) {
+    const el = elements[i]!;
+    const k = el.kind === 'paragraph' ? key(el.paragraph) : undefined;
+    if (k === undefined) {
+      i++;
+      continue;
+    }
+    const members: Array<Paragraph> = [(el as { paragraph: Paragraph }).paragraph];
+    let j = i + 1;
+    while (j < elements.length) {
+      const next = elements[j]!;
+      if (next.kind !== 'paragraph' || key(next.paragraph) !== k) break;
+      members.push(next.paragraph);
+      continued.add(j);
+      j++;
+    }
+    starts.set(i, members);
+    i = j;
+  }
+  return { starts, continued };
+}
+
+/** A block that occupies no space at all — the tail of a frame group. */
+function emptyBlock(options: StyledRenderOptions): ParagraphBlock {
+  return {
+    kind: 'paragraph',
+    resolved: resolveParagraphProperties({}, options.styles),
+    lines: [],
+    heightPt: 0,
+    spacingBeforePt: 0,
+    spacingAfterPt: 0,
+  };
+}
+
+/**
+ * A text frame as the floating box it is: the paragraphs inside it lay out at
+ * the frame's width, the box takes the height the frame states or the text
+ * needs, and the body flows past it as its `w:wrap` says.
+ *
+ * @param paragraphs   The frame's paragraphs, in order.
+ * @param options      Render options.
+ * @param fontResources Fonts by variant.
+ * @param imageResources Images by resource id.
+ * @param contentWidth The width available where the frame is anchored.
+ * @returns The laid-out frame.
+ */
+function layoutFrameBlock(
+  paragraphs: ReadonlyArray<Paragraph>,
+  options: StyledRenderOptions,
+  fontResources: ReadonlyMap<string, FontResource>,
+  imageResources: ReadonlyMap<ResourceId, ImageResource> | undefined,
+  contentWidth: number,
+): LaidOutBlock {
+  const frame = paragraphs[0]!.properties.frame!;
+  const exact = frame.heightRule === 'exact' && frame.heightPt !== undefined;
+  const build = (widthPt: number): LaidOutBlock =>
+    layoutShapeBlock(
+      frameShape(frame, paragraphs, widthPt, exact),
+      options,
+      fontResources,
+      imageResources,
+      contentWidth,
+    );
+  if (frame.widthPt !== undefined) return build(frame.widthPt);
+  // A frame that states no width is as wide as its text needs (§17.3.1.11):
+  // laid out at the full width, CT-with-frame.docx's four-digit marginal note
+  // excluded the whole column and pushed the paragraph beside it off the page.
+  const measured = build(contentWidth);
+  const natural =
+    measured.kind === 'shape'
+      ? Math.max(1, ...measured.textLines.map((l) => l.contentWidthPt))
+      : contentWidth;
+  return build(Math.min(contentWidth, natural));
+}
+
+function frameShape(
+  frame: FrameProperties,
+  paragraphs: ReadonlyArray<Paragraph>,
+  widthPt: number,
+  exact: boolean,
+): ShapeBlock {
+  return {
+    width: pt(widthPt),
+    height: pt(exact ? (frame.heightPt ?? 0) : 0),
+    geometry: { kind: 'custom', custom: { pathWidth: 0, pathHeight: 0, commands: [] } },
+    fill: { kind: 'none' },
+    float: frameFloat(frame),
+    paragraphProperties: {},
+    text: {
+      content: paragraphs.map((paragraph) => ({ kind: 'paragraph' as const, paragraph })),
+      // A frame has no inset: its text starts at its own edge.
+      insetLeft: pt(0),
+      insetRight: pt(0),
+      insetTop: pt(0),
+      insetBottom: pt(0),
+      ...(exact ? {} : { autoFit: true as const }),
+    },
+  };
+}
+
+/** §17.3.1.11 → §20.4.2.3: the frame's anchor, in the terms floats are placed in. */
+function frameFloat(frame: FrameProperties): FloatAnchor {
+  const wrap: FloatAnchor['wrap'] =
+    frame.wrap === 'none' ? 'none' : frame.wrap === 'notBeside' ? 'topAndBottom' : 'square';
+  const hRel = frame.hAnchor === 'page' ? 'page' : frame.hAnchor === 'margin' ? 'margin' : 'column';
+  const vRel =
+    frame.vAnchor === 'page' ? 'page' : frame.vAnchor === 'margin' ? 'margin' : 'paragraph';
+  const align =
+    frame.xAlign === 'left' || frame.xAlign === 'center' || frame.xAlign === 'right'
+      ? frame.xAlign
+      : undefined;
+  return {
+    wrap,
+    posH: { relativeFrom: hRel, ...(align ? { align } : { offsetPt: frame.xPt ?? pt(0) }) },
+    posV: { relativeFrom: vRel, offsetPt: frame.yPt ?? pt(0) },
+  };
+}
+
 function laidOutBlocksFor(
   elements: ReadonlyArray<BodyElement>,
   options: StyledRenderOptions,
@@ -1489,9 +1632,13 @@ function laidOutBlocksFor(
   contentWidth: number,
   imageResources?: ReadonlyMap<ResourceId, ImageResource>,
 ): Array<LaidOutBlock> {
-  return elements.map((el) =>
-    layoutBodyElement(el, options, fontResources, imageResources, contentWidth),
-  );
+  const frames = frameGroups(elements);
+  return elements.map((el, idx) => {
+    const group = frames.starts.get(idx);
+    if (group) return layoutFrameBlock(group, options, fontResources, imageResources, contentWidth);
+    if (frames.continued.has(idx)) return emptyBlock(options);
+    return layoutBodyElement(el, options, fontResources, imageResources, contentWidth);
+  });
 }
 
 function layoutBodyElement(

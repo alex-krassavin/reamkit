@@ -7,6 +7,7 @@ import type {
   CellBorders,
   CellShading,
   FontFamilyMap,
+  FrameProperties,
   NumberingReference,
   RunProperties,
   TabStop,
@@ -83,6 +84,8 @@ export interface ResolvedParagraphProperties {
    * a 36pt empty cell to a line of body text (conditionalstyles-tbllook.docx).
    */
   readonly runProperties?: RunProperties;
+  /** §17.3.1.11 — the paragraph floats as a text frame. */
+  readonly frame?: FrameProperties;
   /**
    * §17.9 list reference, carried through for tagged-PDF list structure
    * (L/LI nesting) — markers themselves are materialized by `applyNumbering`.

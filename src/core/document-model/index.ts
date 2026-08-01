@@ -63,6 +63,7 @@ export type {
   PageSize,
   Paragraph,
   ParagraphProperties,
+  FrameProperties,
   TabStop,
   Run,
   RunProperties,

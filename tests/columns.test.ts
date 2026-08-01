@@ -110,3 +110,78 @@ describe('a column break (§17.3.3.1 w:br w:type="column")', () => {
     expect(lineXs(laid.pages[1]!.commands)[0]).toBeCloseTo(36, 0);
   });
 });
+
+describe('a text frame (§17.3.1.11 w:framePr)', () => {
+  const framed = (framePr: string, text = 'Name', after = '') =>
+    buildDocxFromBody(
+      '<w:p><w:r><w:t>first</w:t></w:r></w:p>' +
+        `<w:p><w:pPr>${framePr}</w:pPr><w:r><w:t>${text}</w:t></w:r></w:p>` +
+        after +
+        '<w:p><w:r><w:t>last</w:t></w:r></w:p>' +
+        '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>' +
+        '<w:pgMar w:top="1418" w:right="1134" w:bottom="1134" w:left="1366"/></w:sectPr>',
+    );
+
+  it('leaves the flow and lands where the frame says', () => {
+    // content-control-grab-bag.docx hangs its frame off the page at
+    // x=6561/y=2705 twips; read inline it sat between "first" and "last".
+    const laid = layoutOf(
+      framed(
+        '<w:framePr w:w="3969" w:h="2382" w:hRule="exact" w:wrap="around"' +
+          ' w:vAnchor="page" w:hAnchor="page" w:x="6561" w:y="2705"/>',
+      ),
+    );
+    const lines = laid.pages[0]!.commands.filter((c) => c.type === 'line');
+    const texts = lines.map((c) =>
+      (c as unknown as { line: { tokens: ReadonlyArray<{ text?: string }> } }).line.tokens
+        .map((t) => t.text ?? '')
+        .join(''),
+    );
+    const xs = lineXs(laid.pages[0]!.commands);
+    const idx = texts.indexOf('Name');
+    expect(idx).toBeGreaterThanOrEqual(0);
+    // 6561 twips = 328.05pt from the page's left edge.
+    expect(xs[idx]).toBeCloseTo(328.05, 1);
+    // …and the two body paragraphs sit together at the text margin.
+    expect(xs[texts.indexOf('first')]).toBeCloseTo(68.3, 1);
+    expect(xs[texts.indexOf('last')]).toBeCloseTo(68.3, 1);
+  });
+
+  it('is as wide as its text when it states no width', () => {
+    // CT-with-frame.docx's marginal note states none: taken as the full column
+    // it excluded the whole of it and pushed the paragraph beside it away.
+    const laid = layoutOf(
+      framed('<w:framePr w:wrap="around" w:vAnchor="text" w:hAnchor="page" w:y="1"/>', '0123'),
+    );
+    const body = laid.pages[0]!.commands.filter((c) => c.type === 'line')
+      .map(
+        (c) =>
+          c as unknown as { originX: number; line: { tokens: ReadonlyArray<{ text?: string }> } },
+      )
+      .filter((c) => c.line.tokens.map((t) => t.text ?? '').join('') === 'last');
+    expect(body[0]!.originX).toBeCloseTo(68.3, 1);
+  });
+
+  it('holds consecutive paragraphs of the same frame together', () => {
+    const laid = layoutOf(
+      framed(
+        '<w:framePr w:w="2000" w:wrap="around" w:vAnchor="page" w:hAnchor="page" w:x="6000" w:y="3000"/>',
+        'one',
+        '<w:p><w:pPr><w:framePr w:w="2000" w:wrap="around" w:vAnchor="page" w:hAnchor="page" w:x="6000" w:y="3000"/></w:pPr><w:r><w:t>two</w:t></w:r></w:p>',
+      ),
+    );
+    const lines = laid.pages[0]!.commands.filter((c) => c.type === 'line').map(
+      (c) =>
+        c as unknown as {
+          originX: number;
+          baselineY: number;
+          line: { tokens: ReadonlyArray<{ text?: string }> };
+        },
+    );
+    const one = lines.find((l) => l.line.tokens.map((t) => t.text ?? '').join('') === 'one')!;
+    const two = lines.find((l) => l.line.tokens.map((t) => t.text ?? '').join('') === 'two')!;
+    // Same box, one under the other — not two frames at the same spot.
+    expect(two.originX).toBeCloseTo(one.originX, 1);
+    expect(two.baselineY).toBeGreaterThan(one.baselineY);
+  });
+});
