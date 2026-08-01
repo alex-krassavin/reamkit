@@ -30,6 +30,7 @@ import { readColorMods, resolveColorNode } from '@/core/drawingml/colors';
 import { emuToPt, pt } from '@/core/ir';
 import {
   poAttr,
+  poAttrLocal,
   poChildren,
   poFindDescendant,
   poIntAttr,
@@ -613,7 +614,18 @@ function vmlShapeData(
   return {
     width,
     height,
-    geometry: { kind: 'preset', preset: VML_PRESETS[tag] ?? 'rect', adjust: new Map() },
+    geometry: {
+      kind: 'preset',
+      // §14.1.2.19 — a `v:shape` is whatever its shapetype draws. The straight
+      // connector (`o:spt="32"`) is a LINE, and drawn as the rectangle every
+      // other `v:shape` degrades to, fdo67737.docx's arrow came out as a long
+      // thin box with the arrowhead on the wrong corner.
+      preset:
+        (shapeType && VML_SPT_PRESETS[poAttrLocal(shapeType, 'spt') ?? '']) ??
+        VML_PRESETS[tag] ??
+        'rect',
+      adjust: new Map(),
+    },
     fill,
     ...(line ? { line } : {}),
     ...(text ? { text } : {}),
@@ -705,6 +717,13 @@ function vmlStyleNumber(shape: PoNode, prop: string): number | undefined {
 // §14.1.2 — the VML primitives, as the preset geometry each corresponds to.
 // A `v:shape` states its path in a `v:shapetype` of formulas we do not
 // evaluate, so it is drawn as the box it occupies.
+// §14.1.2.19 `o:spt` — the shapetype's own kind, for the few whose geometry is
+// not the box they occupy.
+const VML_SPT_PRESETS: Readonly<Record<string, string>> = {
+  '20': 'line', // straight connector
+  '32': 'line', // straight ARROW connector
+};
+
 const VML_PRESETS: Readonly<Record<string, string>> = {
   'v:rect': 'rect',
   'v:roundrect': 'roundRect',
@@ -797,13 +816,49 @@ function vmlLine(shape: PoNode, shapeType?: PoNode): ShapeLine | undefined {
     vmlColor(poAttr(shape, 'strokecolor')) ??
     (strokeEl ? vmlColor(poAttr(strokeEl, 'color')) : undefined) ??
     '000000';
+  // §14.1.2.21 `@startarrow`/`@endarrow` — VML's own arrowheads, spelled with
+  // the same five shapes DrawingML names. fdo67737.docx ends its connector
+  // with an open arrow and we drew a bare line.
+  const arrow = (kind: 'start' | 'end'): LineEnd | undefined => {
+    const type = VML_ARROWS.get(poAttr(strokeEl, `${kind}arrow`) ?? '');
+    if (type === undefined) return undefined;
+    const w = VML_ARROW_SIZES.get(poAttr(strokeEl, `${kind}arrowwidth`) ?? '');
+    const len = VML_ARROW_SIZES.get(poAttr(strokeEl, `${kind}arrowlength`) ?? '');
+    return { type, ...(w ? { width: w } : {}), ...(len ? { length: len } : {}) };
+  };
+  const headEnd = arrow('start');
+  const tailEnd = arrow('end');
   const weight = poAttr(shape, 'strokeweight');
   const m = weight ? /(-?[0-9.]+)\s*(pt|in|px|cm|mm|pc)?/iu.exec(weight) : null;
   const widthPt = m
     ? Number.parseFloat(m[1]!) * (VML_UNIT_TO_PT[(m[2] ?? 'px').toLowerCase()] ?? 1)
     : 0.75;
-  return { fill: 'solid', colorHex, width: pt(Number.isFinite(widthPt) ? widthPt : 0.75) };
+  return {
+    fill: 'solid',
+    colorHex,
+    width: pt(Number.isFinite(widthPt) ? widthPt : 0.75),
+    ...(headEnd ? { headEnd } : {}),
+    ...(tailEnd ? { tailEnd } : {}),
+  };
 }
+
+// §14.1.2.21 ST_StrokeArrowType → the DrawingML end this reader already draws.
+const VML_ARROWS: ReadonlyMap<string, LineEnd['type']> = new Map([
+  ['block', 'triangle'],
+  ['classic', 'stealth'],
+  ['diamond', 'diamond'],
+  ['oval', 'oval'],
+  ['open', 'arrow'],
+]);
+
+// §14.1.2.21 ST_StrokeArrowWidth / ST_StrokeArrowLength.
+const VML_ARROW_SIZES: ReadonlyMap<string, 'sm' | 'med' | 'lg'> = new Map([
+  ['narrow', 'sm'],
+  ['short', 'sm'],
+  ['medium', 'med'],
+  ['wide', 'lg'],
+  ['long', 'lg'],
+]);
 
 // §14.1.2.20 `v:textbox` — the shape's own words, in a `w:txbxContent`.
 function vmlTextBox(shape: PoNode, parseBody: ParseBody): ShapeTextBody | undefined {
