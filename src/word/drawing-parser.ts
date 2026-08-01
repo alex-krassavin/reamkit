@@ -354,7 +354,15 @@ export function parseDrawing(
   }
 
   if (graphicData && uri === WPG_URI) {
-    const data = parseWgp(graphicData, extentCx, extentCy, resolveColor, parseBody, resolveImage);
+    const data = parseWgp(
+      graphicData,
+      extentCx,
+      extentCy,
+      resolveColor,
+      parseBody,
+      resolveImage,
+      themeLineWidths,
+    );
     if (!data) return null;
     return { kind: 'shape', data: { ...data, ...(relativeSize ? { relativeSize } : {}) }, ...alt };
   }
@@ -370,6 +378,7 @@ export function parseDrawing(
       resolveColor,
       parseBody,
       resolveImage,
+      themeLineWidths,
     );
     if (!data) return null;
     return { kind: 'shape', data: { ...data, ...(relativeSize ? { relativeSize } : {}) }, ...alt };
@@ -381,7 +390,7 @@ export function parseDrawing(
   if (graphicData && uri === WPC_URI) {
     const canvas = expandMcChildren(poChildren(graphicData)).find((c) => poIsLocal(c, 'wpc'));
     if (!canvas || extentCx === undefined || extentCy === undefined) return null;
-    const children = groupChildren(canvas, resolveColor, parseBody, resolveImage);
+    const children = groupChildren(canvas, resolveColor, parseBody, resolveImage, themeLineWidths);
     const data: ShapeData = {
       width: emuToPt(extentCx),
       height: emuToPt(extentCy),
@@ -1063,12 +1072,13 @@ function parseLockedCanvas(
   resolveColor: ColorResolver,
   parseBody?: ParseBody,
   resolveImage?: (relId: string) => ResourceId | undefined,
+  themeLineWidths?: ReadonlyArray<number>,
 ): ShapeData | null {
   const canvas = expandMcChildren(poChildren(graphicData)).find((c) =>
     poIsLocal(c, 'lockedCanvas'),
   );
   if (!canvas) return null;
-  const raw = groupChildren(canvas, resolveColor, parseBody, resolveImage);
+  const raw = groupChildren(canvas, resolveColor, parseBody, resolveImage, themeLineWidths);
   if (extentCx === undefined || extentCy === undefined) return null;
   // The members keep the offsets of the document they were copied from, and a
   // canvas states no child space to map them out of, so its content is drawn
@@ -1092,10 +1102,11 @@ function parseWgp(
   resolveColor: ColorResolver,
   parseBody?: ParseBody,
   resolveImage?: (relId: string) => ResourceId | undefined,
+  themeLineWidths?: ReadonlyArray<number>,
 ): ShapeData | null {
   const wgp = expandMcChildren(poChildren(graphicData)).find((c) => poIs(c, 'wpg:wgp'));
   if (!wgp) return null;
-  const children = groupChildren(wgp, resolveColor, parseBody, resolveImage);
+  const children = groupChildren(wgp, resolveColor, parseBody, resolveImage, themeLineWidths);
   const grpSpPr = poChildren(wgp).find((c) => poIs(c, 'wpg:grpSpPr'));
   const ext = grpSpPr
     ? poChildren(poChildren(grpSpPr).find((c) => poIs(c, 'a:xfrm')) ?? grpSpPr).find((c) =>
@@ -1123,6 +1134,7 @@ function groupChildren(
   resolveColor: ColorResolver,
   parseBody: ParseBody | undefined,
   resolveImage?: (relId: string) => ResourceId | undefined,
+  themeLineWidths?: ReadonlyArray<number>,
 ): Array<ShapeGroupChild> {
   // A locked canvas (§20.3) spells its children in the plain DrawingML
   // namespace — `a:sp`/`a:grpSp`/`a:pic` beside a WordprocessingGroup's
@@ -1168,10 +1180,10 @@ function groupChildren(
     const cy = cExt ? poIntAttr(cExt, 'cy') : undefined;
     if (cx === undefined || cy === undefined) continue;
     const data = nested
-      ? parseNestedGroup(child, cx, cy, resolveColor, parseBody, resolveImage)
+      ? parseNestedGroup(child, cx, cy, resolveColor, parseBody, resolveImage, themeLineWidths)
       : picture
         ? parseGroupPicture(child, cx, cy, resolveImage)
-        : parseWspNode(child, cx, cy, resolveColor, parseBody);
+        : parseWspNode(child, cx, cy, resolveColor, parseBody, resolveImage, themeLineWidths);
     if (!data) continue;
     const x = (poIntAttr(cOff, 'x') ?? 0) - chOff.x;
     const y = (poIntAttr(cOff, 'y') ?? 0) - chOff.y;
@@ -1267,8 +1279,9 @@ function parseNestedGroup(
   resolveColor: ColorResolver,
   parseBody: ParseBody | undefined,
   resolveImage?: (relId: string) => ResourceId | undefined,
+  themeLineWidths?: ReadonlyArray<number>,
 ): ShapeData {
-  const children = groupChildren(grpSp, resolveColor, parseBody, resolveImage);
+  const children = groupChildren(grpSp, resolveColor, parseBody, resolveImage, themeLineWidths);
   return {
     width: emuToPt(widthEmu),
     height: emuToPt(heightEmu),
