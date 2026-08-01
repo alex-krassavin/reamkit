@@ -8,6 +8,7 @@ import type {
   CellMargins,
   CellMerge,
   CellProperties,
+  FloatAnchor,
   RowConditionalFormat,
   RowProperties,
   Table,
@@ -64,6 +65,41 @@ const MULTI_LINE_BORDERS = new Set([
 
 const WIDTH_TYPES = new Set<'auto' | 'dxa' | 'pct' | 'nil'>(['auto', 'dxa', 'pct', 'nil']);
 const HEIGHT_RULES = new Set<'auto' | 'atLeast' | 'exact'>(['auto', 'atLeast', 'exact']);
+
+// §17.4.58 `w:tblpPr` → the anchor a drawing would state. `w:horzAnchor` and
+// `w:vertAnchor` name the frame; `w:tblpX`/`w:tblpY` an offset in twips, and
+// `w:tblpXSpec`/`w:tblpYSpec` an alignment instead. The four `…FromText`
+// attributes are the standoff the wrapped text keeps.
+function parseTablePosition(tblpPr: PoNode): FloatAnchor {
+  const horz = poAttr(tblpPr, 'horzAnchor');
+  const vert = poAttr(tblpPr, 'vertAnchor');
+  const hRel = horz === 'page' ? 'page' : horz === 'margin' ? 'margin' : 'column';
+  const vRel = vert === 'page' ? 'page' : vert === 'margin' ? 'margin' : 'paragraph';
+  const xSpec = poAttr(tblpPr, 'tblpXSpec');
+  const align =
+    xSpec === 'center'
+      ? 'center'
+      : xSpec === 'right'
+        ? 'right'
+        : xSpec === 'left'
+          ? 'left'
+          : undefined;
+  const x = poIntAttr(tblpPr, 'tblpX');
+  const y = poIntAttr(tblpPr, 'tblpY');
+  const dist = (name: string): Pt => twipsToPt(poIntAttr(tblpPr, name) ?? 0);
+  return {
+    // A floating table always has text beside it — `w:tblpPr` IS the wrap.
+    wrap: 'square',
+    posH: { relativeFrom: hRel, ...(align ? { align } : { offsetPt: twipsToPt(x ?? 0) }) },
+    posV: { relativeFrom: vRel, offsetPt: twipsToPt(y ?? 0) },
+    wrapDist: {
+      topPt: dist('topFromText'),
+      bottomPt: dist('bottomFromText'),
+      leftPt: dist('leftFromText'),
+      rightPt: dist('rightFromText'),
+    },
+  };
+}
 
 /**
  * Parse a `w:tbl` (ECMA-376 Part 1 §17.4) in preserveOrder shape into the typed
@@ -204,6 +240,13 @@ function parseTableProperties(tblPr: PoNode | undefined): TableProperties {
     const type = poAttr(tblInd, 'type');
     if (w !== undefined && (type === undefined || type === 'dxa')) out.indentPt = twipsToPt(w);
   }
+
+  // §17.4.58 `w:tblpPr` — the table floats: it is placed at an anchor of its
+  // own and the text runs past it. Read nowhere, fdo77887.docx's floating form
+  // sat in the flow, taller than the page it should have shared, and left the
+  // first page blank.
+  const tblpPr = poFirstChild(tblPr, 'w:tblpPr');
+  if (tblpPr) out.float = parseTablePosition(tblpPr);
 
   const tblLayout = poFirstChild(tblPr, 'w:tblLayout');
   if (tblLayout) {

@@ -541,6 +541,8 @@ interface RowLayout {
 
 interface TableBlock {
   readonly kind: 'table';
+  /** §17.4.58 `w:tblpPr` — present when the table floats at an anchor. */
+  readonly float?: FloatAnchor;
   readonly rows: ReadonlyArray<RowLayout>;
   readonly heightPt: number;
   readonly totalWidthPt: number;
@@ -4577,7 +4579,15 @@ function layoutTableBlock(
   const xOffsetPt =
     (table.properties.indentPt ?? 0) +
     tableXOffset(table.properties.alignment, contentWidth, totalWidthPt);
-  return { kind: 'table', rows, heightPt, totalWidthPt, colCount, xOffsetPt };
+  return {
+    kind: 'table',
+    ...(table.properties.float ? { float: table.properties.float } : {}),
+    rows,
+    heightPt,
+    totalWidthPt,
+    colCount,
+    xOffsetPt,
+  };
 }
 
 /**
@@ -6308,6 +6318,33 @@ function paginateSections(
           ),
         0,
       );
+      // §17.4.58 — a FLOATING table stands at its own anchor, whole, and the
+      // flow runs past it. fdo77887.docx anchors a form to the top of the page
+      // and we laid it out in the flow, where its first row alone is taller
+      // than the space left and pushed the whole page down to the next one.
+      // …but only when it FITS the page it is anchored to. A float is emitted
+      // whole, and a table taller than the page would lose every row past the
+      // bottom edge; laid out in the flow it is merely in the wrong place, and
+      // all of it is there. Word and LibreOffice break a floating table across
+      // pages, which the float sinks have no way to express.
+      const anchorY = isOutOfFlowFloat(block.float) ? asm.floatTopYUp(block.float) : 0;
+      if (isOutOfFlowFloat(block.float) && anchorY - block.heightPt >= asm.ctx.marginBottom) {
+        const fx = asm.floatX(block.float, block.totalWidthPt);
+        const fy = anchorY;
+        const sink = PageAssembler.zSink(
+          block.float.behind ? asm.floatsBehind : asm.floatsFront,
+          block.float.zOrder,
+        );
+        let rowY = fy;
+        for (const row of block.rows) {
+          emitRowChunk(sink, row, fx, rowY, asm.ctx.pageHeight, colCount);
+          rowY -= row.heightPt;
+        }
+        if (block.float.wrap !== 'none') {
+          asm.excludeFloat(block.float, fx, fy, block.totalWidthPt, block.heightPt);
+        }
+        continue;
+      }
       // Leading header rows (w:tblHeader / _xlnm.Print_Titles) repeat at the top
       // of every continuation page. Only the maximal leading prefix repeats —
       // a header flagged mid-table is not a repeating title.

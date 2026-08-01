@@ -883,6 +883,12 @@ export interface TableProperties {
    */
   readonly indentPt?: Pt;
   /**
+   * §17.4.58 `w:tblpPr` — the table FLOATS: it is placed at an anchor of its
+   * own and the text runs past it, exactly as an anchored drawing does. Read
+   * into the same {@link FloatAnchor} the drawings use.
+   */
+  readonly float?: FloatAnchor;
+  /**
    * A sticky-pane hint from a frozen worksheet view (E-SHEET SE3): the first
    * `rows` rows / `cols` columns stay pinned while the rest scrolls. Consumed
    * only by the HTML writer (an interactive target); PDF/SVG ignore it.
