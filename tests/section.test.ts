@@ -294,6 +294,56 @@ describe('Headers and footers in rendered PDF', () => {
     expect(countShown(parsed, text, 'ONLY-MARK')).toBe(1);
   });
 
+  it('keeps a continuous section on the page it starts in (§17.6.22)', () => {
+    // A `continuous` break starts the next section where the last one stopped.
+    // Ending the page instead gave every section its own: IndexFieldFlagF.docx
+    // writes its index as five continuous sections and printed five pages of a
+    // line each, where LibreOffice fits the lot on one.
+    const body = `
+      <w:p><w:pPr><w:sectPr><w:type w:val="continuous"/>
+        <w:pgSz w:w="11906" w:h="16838"/>
+        <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>
+      </w:sectPr></w:pPr><w:r><w:t>SECONE</w:t></w:r></w:p>
+      <w:p><w:r><w:t>SECTWO</w:t></w:r></w:p>
+      <w:sectPr><w:type w:val="continuous"/>
+        <w:pgSz w:w="11906" w:h="16838"/>
+        <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>
+      </w:sectPr>`;
+    const text = asLatin1(convertDocxToPdfSync(buildDocxFromBody(body), { fonts: FONTS }));
+    expect((text.match(/\/Type \/Page[^s]/gu) ?? []).length).toBe(1);
+  });
+
+  it('starts a new page for a section break that is not continuous', () => {
+    const body = `
+      <w:p><w:pPr><w:sectPr>
+        <w:pgSz w:w="11906" w:h="16838"/>
+        <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>
+      </w:sectPr></w:pPr><w:r><w:t>SECONE</w:t></w:r></w:p>
+      <w:p><w:r><w:t>SECTWO</w:t></w:r></w:p>
+      <w:sectPr>
+        <w:pgSz w:w="11906" w:h="16838"/>
+        <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>
+      </w:sectPr>`;
+    const text = asLatin1(convertDocxToPdfSync(buildDocxFromBody(body), { fonts: FONTS }));
+    expect((text.match(/\/Type \/Page[^s]/gu) ?? []).length).toBe(2);
+  });
+
+  it('breaks the page anyway when a continuous section changes the paper', () => {
+    // A page has one size, so Word turns the break into a page break.
+    const body = `
+      <w:p><w:pPr><w:sectPr><w:type w:val="continuous"/>
+        <w:pgSz w:w="11906" w:h="16838"/>
+        <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>
+      </w:sectPr></w:pPr><w:r><w:t>SECONE</w:t></w:r></w:p>
+      <w:p><w:r><w:t>SECTWO</w:t></w:r></w:p>
+      <w:sectPr><w:type w:val="continuous"/>
+        <w:pgSz w:w="15840" w:h="12240"/>
+        <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>
+      </w:sectPr>`;
+    const text = asLatin1(convertDocxToPdfSync(buildDocxFromBody(body), { fonts: FONTS }));
+    expect((text.match(/\/Type \/Page[^s]/gu) ?? []).length).toBe(2);
+  });
+
   it('emits per-section MediaBox when sections have different page sizes', () => {
     // Section 1: A4 portrait (596×842). Section 2: Letter landscape (792×612).
     // Section break is on para 1 → page 1 is portrait, page 2 is landscape.

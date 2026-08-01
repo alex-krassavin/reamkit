@@ -1180,6 +1180,12 @@ export interface SectionProperties {
   readonly evenAndOddHeaders?: boolean;
   /** §17.6.4 `w:cols` — multi-column section layout. */
   readonly columns?: SectionColumns;
+  /**
+   * §17.6.22 `w:type` — where the section starts. `continuous` starts it on the
+   * page already in hand rather than a fresh one; everything else (nextPage,
+   * and the odd/even/column variants we do not distinguish) starts a page.
+   */
+  readonly sectionStart?: 'continuous' | 'nextPage';
 }
 
 /**

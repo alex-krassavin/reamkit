@@ -231,6 +231,7 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
   let margins: PageMargins | undefined;
   let titlePg = false;
   let columns: SectionColumns | undefined;
+  let sectionStart: 'continuous' | 'nextPage' | undefined;
   const headers: Array<HeaderFooterReference> = [];
   const footers: Array<HeaderFooterReference> = [];
 
@@ -272,6 +273,11 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
       titlePg = val === undefined || val === '' || (val !== '0' && val !== 'false');
     } else if (poIs(child, 'w:cols')) {
       columns = parseColumns(child);
+    } else if (poIs(child, 'w:type')) {
+      // §17.6.22 ST_SectionMark. Only `continuous` keeps the page; the
+      // odd/even/column starts all begin a new one, which is what we do for
+      // every section anyway.
+      sectionStart = poAttr(child, 'val') === 'continuous' ? 'continuous' : 'nextPage';
     }
   }
 
@@ -282,6 +288,7 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
     footers,
     ...(titlePg ? { titlePg: true } : {}),
     ...(columns ? { columns } : {}),
+    ...(sectionStart ? { sectionStart } : {}),
   };
 }
 

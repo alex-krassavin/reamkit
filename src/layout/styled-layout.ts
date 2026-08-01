@@ -1123,6 +1123,11 @@ export interface SectionRenderCtx {
   readonly footerSet: HeaderFooterSet;
   readonly titlePg: boolean;
   readonly evenAndOddHeaders: boolean;
+  /**
+   * §17.6.22 — the section begins on the page already in hand, at the point the
+   * one before it stopped, rather than on a fresh one.
+   */
+  readonly continuous: boolean;
 }
 
 // Pick the final list of sections to render. Precedence:
@@ -1201,6 +1206,7 @@ function buildSectionContext(
     footerSet,
     titlePg: section.properties.titlePg === true,
     evenAndOddHeaders: section.properties.evenAndOddHeaders === true,
+    continuous: section.properties.sectionStart === 'continuous',
   };
 }
 
@@ -4031,6 +4037,7 @@ class PageAssembler {
     this.ctx = sectionCtxs[0]!;
     this.cursorY = this.ctx.pageHeight - this.ctx.marginTop;
     this.colStartY = this.cursorY;
+    this.bandTopY = this.cursorY;
   }
 
   readonly pages: Array<LaidOutPage> = [];
@@ -4053,6 +4060,12 @@ class PageAssembler {
   colStartLen = 0;
   /** The cursor's y at the top of the current column — see {@link colHasContent}. */
   colStartY: number;
+  /**
+   * Where this page's column band begins. The top margin on an ordinary page;
+   * further down when a §17.6.22 `continuous` section started mid-page, whose
+   * columns run beside each other from there, not from the paper's top.
+   */
+  bandTopY: number;
   /** The current column's left edge (`marginLeft` plus the column x-offset). */
   colLeft = (): number => this.ctx.marginLeft + (this.ctx.columns?.[this.colIdx]?.xOffsetPt ?? 0);
   /** The current column's width (the section content width when single-column). */
@@ -4086,11 +4099,29 @@ class PageAssembler {
     if (this.ctx.columns && this.colIdx + 1 < this.ctx.columns.length) {
       this.colIdx++;
       this.colStartLen = this.current.length;
-      this.cursorY = this.ctx.pageHeight - this.ctx.marginTop;
+      this.cursorY = this.bandTopY;
       this.colStartY = this.cursorY;
     } else {
       this.flushPage();
     }
+  };
+
+  /**
+   * §17.6.22 — start a `continuous` section on the page in hand: its columns
+   * begin where the section does, not at the top of the paper.
+   *
+   * @param next The section to continue into.
+   */
+  startBandSection = (next: SectionRenderCtx): void => {
+    this.secIdx++;
+    this.ctx = next;
+    this.colIdx = 0;
+    this.colStartLen = this.current.length;
+    // The section's own top margin still governs an empty page — it is the
+    // first thing on the paper — but past that the cursor is where it is.
+    this.cursorY = Math.min(this.cursorY, next.pageHeight - next.marginTop);
+    this.bandTopY = this.cursorY;
+    this.colStartY = this.cursorY;
   };
 
   /**
@@ -4360,6 +4391,7 @@ class PageAssembler {
     this.globalPageIdx++;
     this.cursorY = this.ctx.pageHeight - this.ctx.marginTop;
     this.colStartY = this.cursorY;
+    this.bandTopY = this.cursorY;
   };
 
   /**
@@ -4381,6 +4413,7 @@ class PageAssembler {
     this.colStartLen = 0;
     this.cursorY = this.ctx.pageHeight - this.ctx.marginTop;
     this.colStartY = this.cursorY;
+    this.bandTopY = this.cursorY;
   };
 }
 
@@ -4407,6 +4440,21 @@ function paginateSections(
     // Advance to the section that owns this block. A section boundary forces
     // a page break before the next section's first block.
     while (asm.secIdx < sectionCtxs.length - 1 && blockIdx >= asm.ctx.endIndex) {
+      const next = sectionCtxs[asm.secIdx + 1]!;
+      // §17.6.22 — a `continuous` section starts on the page in hand, where the
+      // one before it stopped. Ending the page instead put every section on its
+      // own: IndexFieldFlagF.docx writes its index as five continuous sections
+      // of differing column counts and printed five pages of one line each,
+      // where LibreOffice fits the lot on one. Word makes the break a page
+      // break anyway when the paper changes, since a page has one size.
+      const staysOnPage =
+        next.continuous &&
+        next.pageWidth === asm.ctx.pageWidth &&
+        next.pageHeight === asm.ctx.pageHeight;
+      if (staysOnPage) {
+        asm.startBandSection(next);
+        continue;
+      }
       // Forced: a section owns a page even when the body it holds draws
       // nothing. A title page is written exactly that way — one empty
       // paragraph carrying the sectPr, everything visible living in the

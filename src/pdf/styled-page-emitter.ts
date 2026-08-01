@@ -512,6 +512,7 @@ function defaultPageCtx(): SectionRenderCtx {
     footerSet: { default: { commands: [] }, first: { commands: [] }, even: { commands: [] } },
     titlePg: false,
     evenAndOddHeaders: false,
+    continuous: false,
   };
 }
 
