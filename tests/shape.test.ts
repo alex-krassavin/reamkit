@@ -188,16 +188,17 @@ describe('shape edge cases', () => {
     expect(Number(m![2])).toBeGreaterThanOrEqual(-1);
   });
 
-  it('drops a shape in a mixed text+shape run but keeps the text', () => {
+  it('draws a shape in a mixed text+shape run ahead of the paragraph', () => {
     const inner = `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
       <a:solidFill><a:srgbClr val="4472C4"/></a:solidFill>`;
     const body = `<w:p><w:r><w:t>Hello</w:t></w:r>${shapeRun(inner)}</w:p>`;
     const docx = buildDocxFromBody(body);
     const parsed = parseDocument(OpcPackage.open(docx).getMainDocument().data);
-    expect(parsed[0]!.kind).toBe('paragraph'); // not collapsed to a shape
+    // The shape leaves the run for a block of its own; the paragraph keeps
+    // its text (the line model carries pictures, not shapes).
+    expect(parsed.map((el) => el.kind)).toEqual(['shape', 'paragraph']);
     const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
-    // The shape fill (4472C4) is dropped; only the text renders.
-    expect(text).not.toContain('0.266667 0.447059 0.768627 rg');
+    expect(text).toContain('0.266667 0.447059 0.768627 rg');
   });
 });
 

@@ -1313,10 +1313,15 @@ function parseRun(
       // sets "AB" beside it.
       if (content?.float && anchored) {
         anchored.push(...(blocksForDrawing(content, {}, ctx) ?? []));
-      } else if (content?.kind === 'chart' && anchored) {
+      } else if ((content?.kind === 'chart' || content?.kind === 'shape') && anchored) {
         // A chart is block-sized: it takes a line of its own, so it leaves the
         // run and becomes a block ahead of the paragraph. chart-dupe.docx sets
         // one beside a trailing space, and keeping it in the run dropped it.
+        // A DRAWN shape in a run of text goes the same way. The line model
+        // carries pictures and nothing else, so the alternative is to lose it:
+        // fdo82492.docx sets an ellipse beside its title and we printed the
+        // title alone. It stands a line above where Word draws it, and it is
+        // there.
         anchored.push(...(blocksForDrawing(content, {}, ctx) ?? []));
       } else if (content && content.kind === 'image') {
         const resource = ctx.resolveImage?.(content.imageId);
