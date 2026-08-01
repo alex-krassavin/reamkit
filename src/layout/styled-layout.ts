@@ -856,7 +856,7 @@ export function layoutStyledDocument(
 
   // Pre-compute per-section render context (geometry + header/footer bands).
   const sectionCtxs: Array<SectionRenderCtx> = sectionList.map((s) =>
-    buildSectionContext(s, options, numberedHeadersFooters, fontResources),
+    buildSectionContext(s, options, numberedHeadersFooters, fontResources, imageResources),
   );
 
   // Layout each body block within its owning section's content width.
@@ -1125,6 +1125,7 @@ function buildSectionContext(
   options: StyledRenderOptions,
   headersFooters: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
   fontResources: ReadonlyMap<string, FontResource>,
+  imageResources: ReadonlyMap<ResourceId, ImageResource>,
 ): SectionRenderCtx {
   const dims = resolvePageDimensions(options, section.properties);
   const contentWidth = dims.pageWidth - dims.marginLeft - dims.marginRight;
@@ -1133,6 +1134,7 @@ function buildSectionContext(
     headersFooters,
     options,
     fontResources,
+    imageResources,
     contentWidth,
     dims.marginLeft,
     dims.pageHeight,
@@ -1143,6 +1145,7 @@ function buildSectionContext(
     headersFooters,
     options,
     fontResources,
+    imageResources,
     contentWidth,
     dims.marginLeft,
     dims.pageHeight,
@@ -1247,6 +1250,7 @@ function layoutHeaderSet(
   headersFooters: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
   options: StyledRenderOptions,
   fontResources: ReadonlyMap<string, FontResource>,
+  imageResources: ReadonlyMap<ResourceId, ImageResource> | undefined,
   contentWidth: number,
   marginLeft: number,
   pageHeight: number,
@@ -1259,10 +1263,16 @@ function layoutHeaderSet(
     if (!content) return { commands: [] };
     let measured = 0;
     const render = (c: ReadonlyArray<BodyElement>): Array<PageItem> => {
-      const blocks = laidOutBlocksFor(c, options, fontResources, contentWidth);
+      const blocks = laidOutBlocksFor(c, options, fontResources, contentWidth, imageResources);
       measured = blocksHeight(blocks);
       return markPagination(
-        drawBlocksSequentially(blocks, marginLeft, pageHeight - headerOffsetPt, pageHeight),
+        drawBlocksSequentially(
+          blocks,
+          marginLeft,
+          pageHeight - headerOffsetPt,
+          pageHeight,
+          contentWidth,
+        ),
       );
     };
     if (contentHasPageFields(content)) {
@@ -1296,6 +1306,7 @@ function layoutFooterSet(
   headersFooters: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
   options: StyledRenderOptions,
   fontResources: ReadonlyMap<string, FontResource>,
+  imageResources: ReadonlyMap<ResourceId, ImageResource> | undefined,
   contentWidth: number,
   marginLeft: number,
   pageHeight: number,
@@ -1307,7 +1318,7 @@ function layoutFooterSet(
     const content = headersFooters.get(ref.relationshipId);
     if (!content) return { commands: [] };
     const render = (c: ReadonlyArray<BodyElement>): Array<PageItem> => {
-      const blocks = laidOutBlocksFor(c, options, fontResources, contentWidth);
+      const blocks = laidOutBlocksFor(c, options, fontResources, contentWidth, imageResources);
       const totalHeight = blocks.reduce(
         (sum, b) =>
           sum +
@@ -1315,7 +1326,13 @@ function layoutFooterSet(
         0,
       );
       return markPagination(
-        drawBlocksSequentially(blocks, marginLeft, footerOffsetPt + totalHeight, pageHeight),
+        drawBlocksSequentially(
+          blocks,
+          marginLeft,
+          footerOffsetPt + totalHeight,
+          pageHeight,
+          contentWidth,
+        ),
       );
     };
     if (contentHasPageFields(content)) {
@@ -1391,9 +1408,10 @@ function laidOutBlocksFor(
   options: StyledRenderOptions,
   fontResources: ReadonlyMap<string, FontResource>,
   contentWidth: number,
+  imageResources?: ReadonlyMap<ResourceId, ImageResource>,
 ): Array<LaidOutBlock> {
   return elements.map((el) =>
-    layoutBodyElement(el, options, fontResources, undefined, contentWidth),
+    layoutBodyElement(el, options, fontResources, imageResources, contentWidth),
   );
 }
 
@@ -1990,6 +2008,7 @@ function drawBlocksSequentially(
   startX: number,
   startY: number,
   pageHeight: number,
+  contentWidth: number,
   // Tagged PDF: stamp every emitted line with this structure node (used by
   // the footnote band; header/footer bands stay artifact-marked instead).
   structId?: number,
@@ -1997,6 +2016,36 @@ function drawBlocksSequentially(
   const out: Array<PageItem> = [];
   let cursorY = startY;
   for (const block of blocks) {
+    // A header is not only paragraphs. A letterhead is very often ONE TABLE —
+    // logo in the left cell, institute in the right — and the band drew
+    // paragraphs alone, so such a document lost its header and its footer
+    // whole: 090716_Studentische_Arbeit_VWS.docx prints a green crest and two
+    // rules across every one of its six pages and we printed none of it.
+    // No pagination here and no tagging: a band is one page's worth by
+    // construction, and its contents are artifacts.
+    if (block.kind === 'table') {
+      const tableX = startX + block.xOffsetPt;
+      for (const row of block.rows) {
+        emitRowChunk(out, row, tableX, cursorY, pageHeight, block.colCount);
+        cursorY -= row.heightPt;
+      }
+      continue;
+    }
+    // …and a first-page header is very often nothing BUT the crest.
+    if (block.kind === 'image') {
+      cursorY -= block.spacingBeforePt;
+      const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, contentWidth);
+      out.push({
+        type: 'image',
+        x: pt(startX + offset),
+        y: pt(pageHeight - cursorY),
+        width: pt(block.widthPt),
+        height: pt(block.heightPt),
+        imageResourceName: block.resourceName,
+      });
+      cursorY -= block.heightPt + block.spacingAfterPt;
+      continue;
+    }
     if (block.kind !== 'paragraph') continue;
     cursorY -= block.spacingBeforePt;
     for (const line of block.lines) {
@@ -4014,6 +4063,7 @@ class PageAssembler {
           this.ctx.marginLeft,
           cursor,
           this.ctx.pageHeight,
+          this.ctx.contentWidth,
           structId,
         ),
       );

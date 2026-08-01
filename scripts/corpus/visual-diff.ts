@@ -97,14 +97,28 @@ const DPI = Number(arg('--dpi') ?? 100);
 const LABEL_H = 26;
 const GAP = 12;
 
+/** The corpus directories a bare fixture name is looked for in, in order. */
+const CORPUS_DIRS: ReadonlyArray<string> = [
+  'tests/fixtures/real',
+  'corpus/inputs',
+  'corpus/external/lo-xlsx',
+  'corpus/external/poi-xlsx',
+  'corpus/external/lo-docx-import',
+  'corpus/external/lo-docx-export',
+  'corpus/external/poi-docx',
+];
+
+/** The extensions a bare name may carry. Both readers convert to PDF the same way. */
+const CORPUS_EXTS: ReadonlyArray<string> = ['.xlsx', '.docx'];
+
 /** Resolve a bare fixture name, a corpus-relative path, or an absolute one. */
 function resolveInput(nameOrPath: string): string {
   const candidates = [
     nameOrPath,
     resolve(root, nameOrPath),
-    resolve(root, 'tests/fixtures/real', `${nameOrPath}.xlsx`),
-    resolve(root, 'corpus/external/lo-xlsx', `${nameOrPath}.xlsx`),
-    resolve(root, 'corpus/external/poi-xlsx', `${nameOrPath}.xlsx`),
+    ...CORPUS_DIRS.flatMap((dir) =>
+      CORPUS_EXTS.map((ext) => resolve(root, dir, `${nameOrPath}${ext}`)),
+    ),
   ];
   const hit = candidates.find((c) => existsSync(c));
   if (!hit) throw new Error(`not found: ${nameOrPath}`);
@@ -141,7 +155,7 @@ function label(text: string, width: number): Buffer {
 
 async function main(): Promise<void> {
   const input = resolveInput(process.argv[2] ?? '');
-  const name = basename(input).replace(/\.xlsx$/i, '');
+  const name = basename(input).replace(/\.(?:xlsx|docx)$/iu, '');
   const only = arg('--pages')
     ?.split(',')
     .map((n) => Number(n.trim()));
