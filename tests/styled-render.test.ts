@@ -262,6 +262,34 @@ describe('Styled rendering: rPr + pPr → PDF', () => {
     expect(tmInBt).toBe(1);
   });
 
+  it('pulls an over-full justified line back to the measure', () => {
+    // The breaker weighs a line knowing it may SHRINK each space by up to 30%
+    // of its width, so it will choose one whose natural width is over the
+    // measure. Drawn at that natural width the line ran into the right margin —
+    // IllustrativeCases.docx put three of its four opening lines 1 to 10pt past
+    // it while the fourth sat short, which reads as no justification at all.
+    // Every full line of a justified paragraph is placed token by token, the
+    // slack (of either sign) shared out between its spaces; a line emitted with
+    // a single Tm is one that was drawn at its natural width.
+    const words = 'alpha be gamma d epsilon zeta et theta iota kappa lam mu nu xi'.split(' ');
+    const body = Array.from({ length: 200 }, (_, i) => words[i % words.length]!).join(' ');
+    const docx = buildRichDocx([
+      { pPrXml: '<w:pPr><w:jc w:val="both"/></w:pPr>', runs: [{ text: body }] },
+    ]);
+    const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
+
+    // One BT spans the whole page, so lines are told apart by their baseline —
+    // the y of each `Tm`. A line placed token by token has several.
+    const perBaseline = new Map<string, number>();
+    for (const m of text.matchAll(/1 0 0 1 [\d.]+ ([\d.]+) Tm/gu)) {
+      perBaseline.set(m[1]!, (perBaseline.get(m[1]!) ?? 0) + 1);
+    }
+    const counts = [...perBaseline.values()];
+    expect(counts.length).toBeGreaterThan(8);
+    // All but the last line of the paragraph — the last one stays left-aligned.
+    expect(counts.slice(0, -1).every((tms) => tms > 1)).toBe(true);
+  });
+
   it('splits a table row taller than the page into chunks across pages', () => {
     // 80 paragraphs in one cell exceeds A4 content height (~698pt) at typical
     // 14pt line height. Expect at least two pages with continuation borders.

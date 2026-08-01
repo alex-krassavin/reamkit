@@ -28,7 +28,7 @@ exports[`byte gate: static fixtures > table-basic.docx 1`] = `"ee19b2990a6babfec
 
 exports[`byte gate: static fixtures > text-basic.docx 1`] = `"0e409ca1265ccc9e822377e23ab7fea1e44a025216bf99dc445b2431f1130b8d"`;
 
-exports[`byte gate: static fixtures > text-justified.docx 1`] = `"2141fd727dcb8c5347100214a44ff80fabe38c127470138fe2dd6bb63098a037"`;
+exports[`byte gate: static fixtures > text-justified.docx 1`] = `"d1253c4a3d8f371636aa3be59aa1a321187262495b765d34edb0597688d485e1"`;
 
 exports[`byte gate: static fixtures > text-styled.docx 1`] = `"2012970e019f1fdeb48fd891085f6006827e9b00ad44073b7124b75b4fed39f4"`;
 

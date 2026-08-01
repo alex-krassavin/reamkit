@@ -305,6 +305,12 @@ export type { DocumentInfo } from '@/core/document-model';
 export const A4_WIDTH = 595;
 /** A4 page height in points (the page-geometry fallback). */
 export const A4_HEIGHT = 842;
+/**
+ * How far a space may be squeezed below its natural width — the shrink the
+ * line breaker offers when it weighs a line, and therefore the shrink the
+ * emitter owes it back when it draws one.
+ */
+export const GLUE_SHRINK_RATIO = 0.3;
 const TWIP_TO_PT = 1 / 20;
 const EIGHTH_PT = 1 / 8;
 const DEFAULT_CELL_PADDING_TWIPS = 108;
@@ -2840,7 +2846,7 @@ function paragraphItemStream(
               type: 'glue',
               width: tok.widthPt,
               stretch: tok.widthPt * 0.6,
-              shrink: tok.widthPt * 0.3,
+              shrink: tok.widthPt * GLUE_SHRINK_RATIO,
             }
           : { type: 'box', width: tok.widthPt },
         token: tok,

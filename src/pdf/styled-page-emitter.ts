@@ -33,7 +33,7 @@ import type { BuildOptions, PdfDocument } from '@/pdf/writer';
 import type { PdfEncryptOptions } from '@/pdf/encryption';
 import { preparePdfEncryption } from '@/pdf/encryption';
 import { paintPlan } from '@/layout/page-doc';
-import { A4_HEIGHT, A4_WIDTH } from '@/layout/styled-layout';
+import { A4_HEIGHT, A4_WIDTH, GLUE_SHRINK_RATIO } from '@/layout/styled-layout';
 import { emitVectorShape } from '@/pdf/vector-graphics';
 import { buildGradientPattern, shapeBbox } from '@/pdf/shading';
 import { reorderVisual, reverseByCodePoint } from '@/core/bidi';
@@ -1114,7 +1114,7 @@ function emitPageContent(
           out.push(tok.font.measure.showText(tok.text));
         }
       } else if (
-        extraPerSpace > 0 ||
+        extraPerSpace !== 0 ||
         hasImageToken ||
         hasMathToken ||
         hasRtl ||
@@ -1229,12 +1229,31 @@ function lineVisualOrder(line: Line): Array<number> {
 function computeJustifyExtra(line: Line): number {
   if (line.resolved.alignment !== 'both') return 0;
   if (line.isLastInParagraph) return 0;
+  // A space at the END of a line justifies nothing: there is no glyph after it
+  // to push, and counted in it left the line short of the measure by its own
+  // width. Word and LibreOffice both hang it past the margin instead.
+  let last = line.tokens.length - 1;
+  while (last >= 0 && line.tokens[last]!.kind === 'text' && line.tokens[last]!.isSpace) last--;
   let spaces = 0;
-  for (const tok of line.tokens) if (tok.isSpace) spaces++;
+  let narrowest = Infinity;
+  let contentWidthPt = 0;
+  for (let i = 0; i <= last; i++) {
+    const tok = line.tokens[i]!;
+    contentWidthPt += tok.widthPt;
+    if (!tok.isSpace) continue;
+    spaces++;
+    if (tok.widthPt < narrowest) narrowest = tok.widthPt;
+  }
   if (spaces === 0) return 0;
-  const extra = line.availableWidthPt - line.contentWidthPt;
-  if (extra <= 0) return 0;
-  return extra / spaces;
+  // Both ways. A line's spaces stretch to fill it out, and they SHRINK to pull
+  // it in — the breaker weighs a line knowing it may squeeze each space by up
+  // to {@link GLUE_SHRINK_RATIO}, so a line it packed that tight is one whose
+  // natural width is over the measure. Drawn at that natural width it ran past
+  // the right margin: IllustrativeCases.docx put three of its four opening
+  // lines 1 to 10pt into the margin while the fourth sat short of it, which
+  // reads as no justification at all.
+  const extra = (line.availableWidthPt - contentWidthPt) / spaces;
+  return extra < 0 ? Math.max(extra, -narrowest * GLUE_SHRINK_RATIO) : extra;
 }
 
 function hexToRgb01(hex: string): readonly [number, number, number] {
