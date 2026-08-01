@@ -246,6 +246,7 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
   let margins: PageMargins | undefined;
   let titlePg = false;
   let pageNumberStart: number | undefined;
+  let lineNumbering: SectionProperties['lineNumbering'];
   let columns: SectionColumns | undefined;
   let sectionStart: 'continuous' | 'nextPage' | undefined;
   let pageBorders: SectionProperties['pageBorders'];
@@ -288,6 +289,20 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
     } else if (poIs(child, 'w:titlePg')) {
       const val = poAttr(child, 'val');
       titlePg = val === undefined || val === '' || (val !== '0' && val !== 'false');
+    } else if (poIs(child, 'w:lnNumType')) {
+      // §17.6.8 — line numbers in the margin. fdo66543.docx counts by three and
+      // we printed none of them.
+      const countBy = poIntAttr(child, 'countBy') ?? 1;
+      const start = poIntAttr(child, 'start') ?? 1;
+      const distance = poIntAttr(child, 'distance');
+      const restartRaw = poAttr(child, 'restart');
+      lineNumbering = {
+        countBy: countBy > 0 ? countBy : 1,
+        start,
+        ...(distance !== undefined ? { distancePt: twipsToPt(distance) } : {}),
+        restart:
+          restartRaw === 'newSection' || restartRaw === 'continuous' ? restartRaw : 'newPage',
+      };
     } else if (poIs(child, 'w:pgNumType')) {
       // §17.6.12 — the number this section's first page carries.
       // fdo44689_start_page_0.docx asks for 0 and its footer printed 1.
@@ -320,6 +335,7 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
     footers,
     ...(titlePg ? { titlePg: true } : {}),
     ...(pageNumberStart !== undefined ? { pageNumberStart } : {}),
+    ...(lineNumbering ? { lineNumbering } : {}),
     ...(columns ? { columns } : {}),
     ...(sectionStart ? { sectionStart } : {}),
     ...(pageBorders ? { pageBorders } : {}),

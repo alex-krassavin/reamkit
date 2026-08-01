@@ -1389,6 +1389,17 @@ export interface SectionProperties {
    * printed with. Absent ⇒ the count carries on from the section before.
    */
   readonly pageNumberStart?: number;
+  /** §17.6.8 `w:lnNumType` — line numbers printed in the margin beside the text. */
+  readonly lineNumbering?: {
+    /** Print every `countBy`-th line (default 1). */
+    readonly countBy: number;
+    /** The number the count starts at (default 1). */
+    readonly start: number;
+    /** How far the number stands off the text (`w:distance`); absent ⇒ Word's quarter inch. */
+    readonly distancePt?: Pt;
+    /** §17.18.55 — where the count restarts. */
+    readonly restart: 'newPage' | 'newSection' | 'continuous';
+  };
   /**
    * ECMA-376 §17.15.1.36 — `w:evenAndOddHeaders` toggle in `word/settings.xml`
    * (document-wide, not per-section). When true even-numbered pages use the

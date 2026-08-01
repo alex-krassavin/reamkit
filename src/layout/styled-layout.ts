@@ -594,6 +594,10 @@ const FOOTNOTE_RULE_PT = 0.75;
 const FOOTNOTE_RULE_GAP_ABOVE = 4;
 const FOOTNOTE_SEPARATOR_HEIGHT = 10;
 
+// §17.6.8 — how far a line number stands off the text when the section states
+// no `w:distance`: Word's own quarter inch.
+const LINE_NUMBER_GAP_PT = 18;
+
 // Float text wrapping: the gap between a side-wrapped float and the text
 // flowing beside it, and the floor below which line narrowing stops.
 const FLOAT_TEXT_GAP = 6;
@@ -2890,6 +2894,17 @@ function collectFontResources(
     }
   };
   visit(body);
+  // §17.6.8 — a section numbering its lines draws digits that may appear
+  // nowhere else in the document; the number is set in the line's own font, so
+  // ask for the digits in every font the body uses.
+  if ((options.sections ?? []).some((sec) => sec.properties.lineNumbering)) {
+    visit([
+      {
+        kind: 'paragraph',
+        paragraph: { properties: {}, runs: [{ text: '0123456789', properties: {} }] },
+      },
+    ]);
+  }
   for (const hf of headersFooters.values()) visit(hf);
   for (const note of options.footnotes?.values() ?? []) visit(note);
   for (const note of options.endnotes?.values() ?? []) visit(note);
@@ -5094,6 +5109,54 @@ class PageAssembler {
   };
 
   /**
+   * §17.6.8 — the running line count for the margin numbers. Reset by the
+   * section's own `w:restart` rule.
+   */
+  lineNumber = 0;
+
+  /**
+   * §17.6.8 — the margin number for the body line just placed, if the section
+   * asks for one at this count. Pushed at the line's own baseline, right-
+   * aligned a quarter inch off the text.
+   *
+   * @param baselineY The line's baseline, in page (y-down) coordinates.
+   * @param line      The line being numbered — its font draws the digits.
+   */
+  emitLineNumber = (baselineY: number, line: Line): void => {
+    const ln = this.ctx.properties.lineNumbering;
+    if (!ln) return;
+    this.lineNumber++;
+    const n = ln.start + this.lineNumber - 1;
+    if ((n - ln.start + 1) % ln.countBy !== 0) return;
+    // The number is set in the line's own first font, so a line of nothing but
+    // a picture carries none.
+    const token = line.tokens.find((t): t is TextToken => t.kind === 'text');
+    if (!token) return;
+    const text = String(n);
+    const sizePt = token.fontSizePt;
+    const widthPt = token.font.measure.textWidthPt(text, sizePt);
+    // A token of the line's own font and size, carrying nothing else it had —
+    // no link, no tab, no note reference.
+    const digits: TextToken = {
+      kind: 'text',
+      text,
+      isSpace: false,
+      resolvedRun: token.resolvedRun,
+      font: token.font,
+      fontSizePt: sizePt,
+      widthPt,
+      bidiLevel: 0,
+    };
+    const numbered: Line = { ...line, tokens: [digits], contentWidthPt: widthPt };
+    this.current.push({
+      type: 'line',
+      line: numbered,
+      originX: pt(this.colLeft() - (ln.distancePt ?? LINE_NUMBER_GAP_PT) - widthPt),
+      baselineY: pt(baselineY),
+    });
+  };
+
+  /**
    * §17.6.12 — a section that names its own first page number restarts the
    * count there; one that names none carries on from the section before.
    *
@@ -5102,6 +5165,10 @@ class PageAssembler {
   restartPageNumbers = (next: SectionRenderCtx): void => {
     const start = next.properties.pageNumberStart;
     if (start !== undefined) this.pageNumber = start;
+    // §17.6.8 — a section that restarts its line count does so here too.
+    if ((next.properties.lineNumbering?.restart ?? 'newPage') !== 'continuous') {
+      this.lineNumber = 0;
+    }
   };
 
   /**
@@ -5481,6 +5548,11 @@ class PageAssembler {
     this.pageInSection++;
     this.globalPageIdx++;
     this.pageNumber++;
+    // §17.6.8 — the count starts again on each page unless the section says
+    // otherwise.
+    if ((this.ctx.properties.lineNumbering?.restart ?? 'newPage') === 'newPage') {
+      this.lineNumber = 0;
+    }
     this.cursorY = this.ctx.pageHeight - this.ctx.marginTop;
     this.colStartY = this.cursorY;
     this.bandTopY = this.cursorY;
@@ -5775,6 +5847,7 @@ function paginateSections(
             ...(structId !== undefined ? { structId } : {}),
           });
         }
+        asm.emitLineNumber(baselineY, line);
       }
       // §17.3.1.24 `w:pBdr` — the rules around the paragraph, each standing
       // `w:space` points off the text it frames. Drawn only when the paragraph
