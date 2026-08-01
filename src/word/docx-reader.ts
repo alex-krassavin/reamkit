@@ -34,7 +34,7 @@ import {
 import { FEATURES, ResourceStore } from '@/core/ir';
 import { parseChart, withChartColorStyle } from '@/core/drawingml/chart-parser';
 import { DEFAULT_THEME_PALETTE, makeColorResolver } from '@/core/drawingml/colors';
-import { parseTheme } from '@/core/drawingml/theme-parser';
+import { parseTheme, parseThemeLineWidths } from '@/core/drawingml/theme-parser';
 import { OpcPackage, isOoxmlRel, parseCoreProperties } from '@/core/opc';
 import {
   EMPTY_NUMBERING,
@@ -86,6 +86,10 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
   // Theme-backed colour resolver (schemeClr → hex); falls back to the built-in
   // Office palette when there is no theme part.
   const resolveColor = buildColorResolver(pkg);
+  // §20.1.4.2.19 — the theme's own line weights, which a gallery-styled shape
+  // indexes by `a:lnRef idx` for its outline.
+  const themeData = loadTheme(pkg);
+  const themeLineWidths = themeData ? parseThemeLineWidths(themeData) : undefined;
   // Content-addressed store for binary resources; the image resolver fills it
   // lazily as the parsers meet drawing relationships (identical bytes dedupe).
   const resources = new ResourceStore();
@@ -97,6 +101,7 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
   const losses: Array<Loss> = [];
   const ctx: ParseContext = {
     resolveColor,
+    ...(themeLineWidths && themeLineWidths.length > 0 ? { themeLineWidths } : {}),
     resolveImage,
     resolveHyperlink,
     resolveDiagram: makeDiagramResolver(pkg, MAIN_DOCUMENT_PART),

@@ -124,6 +124,11 @@ export interface ParseContext {
    */
   readonly resolveChartPart?: (relId: string) => string | undefined;
   /**
+   * §20.1.4.2.19 — the theme's `a:lnStyleLst` widths in points, which a
+   * gallery-styled shape's `a:lnRef idx` indexes for its outline weight.
+   */
+  readonly themeLineWidths?: ReadonlyArray<number>;
+  /**
    * Sink for graceful-degradation notices (E-SMARTART SA3): a SmartArt with no
    * drawing override records a dropped-feature {@link Loss} rather than vanishing.
    */
@@ -561,6 +566,7 @@ function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): Array<Bod
       parseBody,
       ctx.resolveImage,
       ctx.resolveChartPart,
+      ctx.themeLineWidths,
     );
     if (!content) continue;
     out.push(...(blocksForDrawing(content, paragraphProperties, ctx) ?? []));
@@ -1027,6 +1033,7 @@ function parseRun(
         (children) => parseBodyElements(children, ctx),
         ctx.resolveImage,
         ctx.resolveChartPart,
+        ctx.themeLineWidths,
       );
       // §20.4.2.3 — an ANCHORED drawing is not in the line: it hangs off the
       // paragraph at a position of its own, and the text flows past it. Read as

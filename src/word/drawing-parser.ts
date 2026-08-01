@@ -307,6 +307,8 @@ export function parseDrawing(
   // §21.2 a chart's r:id → its part path, the key the reader files charts
   // under; rel ids alone collide between the body and a header/footer.
   resolveChartPart?: (relId: string) => string | undefined,
+  // §20.1.4.2.19 — `a:lnStyleLst` widths, indexed by a gallery style's `a:lnRef`.
+  themeLineWidths?: ReadonlyArray<number>,
 ): DrawingContent | null {
   const anchor =
     poChildren(drawing).find((c) => poIs(c, 'wp:inline')) ??
@@ -337,7 +339,15 @@ export function parseDrawing(
   const uri = graphicData ? poAttr(graphicData, 'uri') : undefined;
 
   if (graphicData && uri === WPS_URI) {
-    const data = parseWsp(graphicData, extentCx, extentCy, resolveColor, parseBody, resolveImage);
+    const data = parseWsp(
+      graphicData,
+      extentCx,
+      extentCy,
+      resolveColor,
+      parseBody,
+      resolveImage,
+      themeLineWidths,
+    );
     if (!data) return null;
     return { kind: 'shape', data: { ...data, ...(relativeSize ? { relativeSize } : {}) }, ...alt };
   }
@@ -1241,12 +1251,21 @@ function parseWsp(
   resolveColor: ColorResolver,
   parseBody?: ParseBody,
   resolveImage?: (relId: string) => ResourceId | undefined,
+  themeLineWidths?: ReadonlyArray<number>,
 ): ShapeData | null {
   // wps:wsp is normally a direct child, but a nested mc:AlternateContent can
   // wrap it — expand first so either layout is found.
   const wsp = expandMcChildren(poChildren(graphicData)).find((c) => poIs(c, 'wps:wsp'));
   if (!wsp) return null;
-  return parseWspNode(wsp, extentCx, extentCy, resolveColor, parseBody, resolveImage);
+  return parseWspNode(
+    wsp,
+    extentCx,
+    extentCy,
+    resolveColor,
+    parseBody,
+    resolveImage,
+    themeLineWidths,
+  );
 }
 
 // One `wps:wsp`, given its box in EMU (from the drawing's wp:extent, or from
@@ -1258,6 +1277,7 @@ function parseWspNode(
   resolveColor: ColorResolver,
   parseBody?: ParseBody,
   resolveImage?: (relId: string) => ResourceId | undefined,
+  themeLineWidths?: ReadonlyArray<number>,
 ): ShapeData | null {
   const spPr = poChildren(wsp).find((c) => poIsLocal(c, 'spPr'));
 
@@ -1298,7 +1318,7 @@ function parseWspNode(
   // §20.1.4.2.19 — a shape may state a WIDTH or a dash of its own and take its
   // COLOUR from the gallery style: dashed_line_custdash_percentage.docx rules a
   // 4.5pt accent-blue line that way and we drew a black hairline.
-  const styleLine = style ? styleRefLine(style, resolveColor) : undefined;
+  const styleLine = style ? styleRefLine(style, resolveColor, themeLineWidths) : undefined;
   if (styleLine) {
     const own = line;
     line = own
@@ -1342,12 +1362,23 @@ function styleRefFill(style: PoNode, resolveColor: ColorResolver): ShapeFill {
 // §20.1.4.2.19 `<a:lnRef>` — the outline a gallery style names. Its width lives
 // in the theme's `a:lnStyleLst`, which is not reachable from here; the hairline
 // below is what a shape with no stated width already draws.
-function styleRefLine(style: PoNode, resolveColor: ColorResolver): ShapeLine | undefined {
+function styleRefLine(
+  style: PoNode,
+  resolveColor: ColorResolver,
+  themeLineWidths?: ReadonlyArray<number>,
+): ShapeLine | undefined {
   const ref = poChildren(style).find((c) => poIs(c, 'a:lnRef'));
   if (!ref || poAttr(ref, 'idx') === '0') return undefined;
   const child = firstElementChild(ref);
   const colorHex = child ? resolveColorNode(child, resolveColor) : undefined;
-  return colorHex === undefined ? undefined : { fill: 'solid', colorHex, width: pt(0.75) };
+  if (colorHex === undefined) return undefined;
+  // §20.1.4.2.19 — `@idx` is a 1-based index into the theme's `a:lnStyleLst`,
+  // which is where the WIDTH lives; the reference itself carries only the
+  // colour. fdo66929.docx asks for the second style — 2pt in the standard
+  // theme — and we drew every gallery outline as a 0.75pt hairline.
+  const idx = poIntAttr(ref, 'idx');
+  const width = idx !== undefined && idx > 0 ? themeLineWidths?.[idx - 1] : undefined;
+  return { fill: 'solid', colorHex, width: pt(width ?? 0.75) };
 }
 
 // §20.1.4.2.14 — give every run that names no colour of its own the one the
