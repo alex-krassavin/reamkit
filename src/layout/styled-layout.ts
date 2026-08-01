@@ -2949,6 +2949,9 @@ function paragraphItemStream(
   // Last code point of the previous text box, for CJK wrap-opportunity detection;
   // reset at spaces / images / math (a break is already present or not wanted).
   let prevBoxEndCp: number | null = null;
+  // Whether the previous item was an inline picture (a break opportunity opens
+  // between two of them).
+  let prevWasImage = false;
   for (const tok of tokens) {
     // §17.3.3.1 `<w:br/>` — a soft line break, which the reader carries as a
     // newline inside the run's text. Left to the whitespace path it became
@@ -2972,6 +2975,18 @@ function paragraphItemStream(
       continue;
     }
     if (tok.isSpace || tok.kind === 'image' || tok.kind === 'math') {
+      // A line may break BETWEEN two inline pictures: each is a character of
+      // its own, and a run of them with no space between is not one long word.
+      // Without the opportunity, VariousPictures.docx's five pictures were one
+      // unbreakable box 739pt wide on a 468pt line, and the two we could draw
+      // ran off the right edge of the paper.
+      if (tok.kind === 'image' && prevWasImage) {
+        entries.push({
+          item: { type: 'penalty', width: 0, penalty: 0, flagged: false },
+          token: null,
+        });
+      }
+      prevWasImage = tok.kind === 'image';
       // Spaces are glue; images and math boxes are atomic (un-hyphenatable) boxes.
       entries.push({
         item: tok.isSpace
@@ -2998,6 +3013,7 @@ function paragraphItemStream(
         token: null,
       });
     }
+    prevWasImage = false;
     prevBoxEndCp = lastCodePoint(tok.text);
     // Try hyphenation; if no breaks (or too short), one box covers the whole word.
     const positions = hyphenator ? hyphenator.hyphenate(tok.text) : [];

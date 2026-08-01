@@ -324,6 +324,28 @@ describe('a cropped picture (§20.1.8.55 a:srcRect)', () => {
   });
 });
 
+describe('a run of inline pictures', () => {
+  it('may break a line between two of them', () => {
+    // Each inline picture is a character of its own; a run of them with no
+    // space between is not one long word. Without the opportunity,
+    // VariousPictures.docx's five pictures were one unbreakable box 739pt wide
+    // on a 468pt line and the ones we could draw ran off the paper.
+    const png = buildTinyPng(2, 2, [255, 0, 0, 255]);
+    // Four pictures of 144pt on a 451pt line: two per line, never five across.
+    const runs = Array.from({ length: 4 }, () => drawingXml('rId20', 1828800, 914400)).join('');
+    const docx = buildDocxFromBody(`<w:p>${runs}</w:p>`, {
+      images: { rId20: { contentType: 'image/png', bytes: png, extension: 'png' } },
+    });
+    const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
+    const xs = [...text.matchAll(/\n([\d.]+) 0 0 [\d.]+ ([\d.]+) [\d.]+ cm\n\/Im\d+ Do/gu)].map(
+      (m) => Number(m[2]),
+    );
+    expect(xs).toHaveLength(4);
+    // Every picture starts within the page, not past its right edge.
+    expect(Math.max(...xs)).toBeLessThan(400);
+  });
+});
+
 describe('image robustness', () => {
   it('skips an unsupported/corrupt image instead of crashing the document', () => {
     // Garbage bytes labelled as PNG — embedImage throws; the document must still
