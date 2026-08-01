@@ -4151,6 +4151,27 @@ class PageAssembler {
     this.cursorY = this.ctx.pageHeight - this.ctx.marginTop;
     this.colStartY = this.cursorY;
   };
+
+  /**
+   * Throw the in-progress page away and reset for the next one.
+   *
+   * A section boundary reached with a page that draws nothing is the one place
+   * this is wanted: {@link flushPage} keeps such a page whenever the cursor
+   * moved at all, which is right in the middle of a flow and wrong at a
+   * boundary, where the space consumed was the section break itself.
+   */
+  dropPage = (): void => {
+    this.current = [];
+    this.floatsBehind = [];
+    this.floatsFront = [];
+    this.exclusions = [];
+    this.pageNotes = [];
+    this.noteReserve = 0;
+    this.colIdx = 0;
+    this.colStartLen = 0;
+    this.cursorY = this.ctx.pageHeight - this.ctx.marginTop;
+    this.colStartY = this.cursorY;
+  };
 }
 
 function paginateSections(
@@ -4176,7 +4197,16 @@ function paginateSections(
     // Advance to the section that owns this block. A section boundary forces
     // a page break before the next section's first block.
     while (asm.secIdx < sectionCtxs.length - 1 && blockIdx >= asm.ctx.endIndex) {
-      asm.flushPage();
+      // Forced: a section owns a page even when the body it holds draws
+      // nothing. A title page is written exactly that way — one empty
+      // paragraph carrying the sectPr, everything visible living in the
+      // header — and letting the page go took the header with it.
+      // 090716_Studentische_Arbeit_VWS.docx lost the crest off its first page
+      // while keeping it on the rest. Only when the section has produced no
+      // page yet, though: past that an empty tail is an empty tail, and the
+      // page it would make is thrown away rather than printed blank.
+      if (asm.pageHasContent() || asm.pageInSection === 0) asm.flushPage(true);
+      else asm.dropPage();
       asm.secIdx++;
       asm.ctx = sectionCtxs[asm.secIdx]!;
       asm.pageInSection = 0;
