@@ -72,6 +72,32 @@ describe('multi-column sections (§17.6.4)', () => {
   });
 });
 
+describe('a section that ends at a continuous break (§17.6.4)', () => {
+  it('evens out its columns', () => {
+    // default-sect-break-cols.docx sets two words in two columns and follows
+    // them with a continuous break: both references put one beside the other,
+    // and we stacked them in the first column.
+    const laid = layoutOf(
+      buildDocxFromBody(
+        '<w:p><w:r><w:t>First.</w:t></w:r></w:p>' +
+          '<w:p><w:r><w:t>Second.</w:t></w:r></w:p>' +
+          '<w:p><w:pPr><w:sectPr><w:pgSz w:w="12240" w:h="15840"/>' +
+          '<w:pgMar w:top="1296" w:right="1008" w:bottom="1296" w:left="1008"/>' +
+          '<w:cols w:num="2" w:space="720"/></w:sectPr></w:pPr></w:p>' +
+          '<w:p><w:r><w:t>After.</w:t></w:r></w:p>' +
+          '<w:sectPr><w:type w:val="continuous"/><w:pgSz w:w="12240" w:h="15840"/>' +
+          '<w:pgMar w:top="1296" w:right="1008" w:bottom="1296" w:left="1008"/>' +
+          '<w:cols w:space="720"/></w:sectPr>',
+      ),
+    );
+    const xs = lineXs(laid.pages[0]!.commands);
+    expect(laid.pages).toHaveLength(1);
+    // Column one at the left margin (1008 twips = 50.4pt), column two past it.
+    expect(xs[0]).toBeCloseTo(50.4, 1);
+    expect(xs[1]).toBeGreaterThan(200);
+  });
+});
+
 describe('a column break (§17.3.3.1 w:br w:type="column")', () => {
   const twoCols = (bodyXml: string) =>
     buildDocxFromBody(

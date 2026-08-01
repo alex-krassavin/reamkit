@@ -4725,8 +4725,20 @@ class PageAssembler {
     // §17.6.4 — balance the band when it has columns to share and its content
     // fits them. A band too tall for the page fills column after column as
     // before; there is nothing to even out when it will spill anyway.
-    const colCount = next.columns?.length ?? 1;
-    const room = this.cursorY - (next.marginBottom + this.noteReserve);
+    this.beginBalancedBand(bandHeightPt);
+  };
+
+  /**
+   * §17.6.4 — even the columns of the band that starts at the cursor: each gets
+   * the same share of `bandHeightPt`. A band too tall for the page fills column
+   * after column as before; there is nothing to even out when it will spill
+   * anyway.
+   *
+   * @param bandHeightPt The height of everything the band holds.
+   */
+  beginBalancedBand = (bandHeightPt: number): void => {
+    const colCount = this.ctx.columns?.length ?? 1;
+    const room = this.cursorY - (this.ctx.marginBottom + this.noteReserve);
     const share = colCount > 1 ? balancedColumnHeight(bandHeightPt, colCount, room) : 0;
     this.balanceHeightPt = share;
     this.balanceBottomY = share > 0 ? this.cursorY - share : undefined;
@@ -5107,6 +5119,22 @@ function paginateSections(
   if (sectionCtxs.length === 0) return [];
   const asm = new PageAssembler(sectionCtxs, builder, notes, bookmarkPositions);
 
+  // §17.6.4 — a multi-column section that ENDS at a continuous break has its
+  // columns evened out: the break says "carry on down this page", so the
+  // section's content is a band with a bottom. default-sect-break-cols.docx
+  // sets two words in two columns that way, one beside the other, and we
+  // stacked both in the first column.
+  const balanceIfEndsContinuous = (fromBlock: number): void => {
+    const here = asm.ctx;
+    const next = sectionCtxs[asm.secIdx + 1];
+    if ((here.columns?.length ?? 1) < 2) return;
+    if (!next?.continuous) return;
+    if (next.pageWidth !== here.pageWidth || next.pageHeight !== here.pageHeight) return;
+    const end = Math.min(here.endIndex, blocks.length);
+    asm.beginBalancedBand(blocksHeight(blocks.slice(fromBlock, end)));
+  };
+  balanceIfEndsContinuous(0);
+
   for (let blockIdx = 0; blockIdx < blocks.length; blockIdx++) {
     // Advance to the section that owns this block. A section boundary forces
     // a page break before the next section's first block.
@@ -5143,6 +5171,7 @@ function paginateSections(
       asm.ctx = sectionCtxs[asm.secIdx]!;
       asm.pageInSection = 0;
       asm.cursorY = asm.ctx.pageHeight - asm.ctx.marginTop;
+      balanceIfEndsContinuous(blockIdx);
     }
 
     const block = blocks[blockIdx]!;
