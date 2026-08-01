@@ -33,6 +33,7 @@ import {
   poFindDescendant,
   poIntAttr,
   poIs,
+  poIsLocal,
   poTag,
   poText,
 } from '@/core/po-helpers';
@@ -41,6 +42,9 @@ const WPS_URI = 'http://schemas.microsoft.com/office/word/2010/wordprocessingSha
 const CHART_URI = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
 const DIAGRAM_URI = 'http://schemas.openxmlformats.org/drawingml/2006/diagram';
 const WPG_URI = 'http://schemas.microsoft.com/office/word/2010/wordprocessingGroup';
+// §20.3 — a canvas of shapes, written in the plain DrawingML namespace. Word
+// exports a pasted PowerPoint group this way.
+const LOCKED_CANVAS_URI = 'http://schemas.openxmlformats.org/drawingml/2006/lockedCanvas';
 
 // A group's own "geometry": no commands, so its box paints nothing.
 const EMPTY_GEOMETRY = { pathWidth: 0, pathHeight: 0, commands: [] };
@@ -333,6 +337,22 @@ export function parseDrawing(
 
   if (graphicData && uri === WPG_URI) {
     const data = parseWgp(graphicData, extentCx, extentCy, resolveColor, parseBody, resolveImage);
+    if (!data) return null;
+    return { kind: 'shape', data: { ...data, ...(relativeSize ? { relativeSize } : {}) }, ...alt };
+  }
+
+  // §20.3 `lc:lockedCanvas` — a group by another name: the same members, in the
+  // `a:` namespace. fdo43641.docx draws its rectangle and arrow inside one and
+  // we rendered an empty page.
+  if (graphicData && uri === LOCKED_CANVAS_URI) {
+    const data = parseLockedCanvas(
+      graphicData,
+      extentCx,
+      extentCy,
+      resolveColor,
+      parseBody,
+      resolveImage,
+    );
     if (!data) return null;
     return { kind: 'shape', data: { ...data, ...(relativeSize ? { relativeSize } : {}) }, ...alt };
   }
@@ -886,6 +906,41 @@ function parseSrcRect(node: PoNode | undefined): ImageCrop | undefined {
  *
  * @returns The group as a shape with children, or `null` when it states no size.
  */
+/**
+ * §20.3 — a `lc:lockedCanvas`: the same content model as a group, so it lays
+ * out as one. Its own `a:grpSpPr/a:xfrm` states the child coordinate space the
+ * members are placed in; the drawing's `wp:extent` states the box that space
+ * is drawn into.
+ */
+function parseLockedCanvas(
+  graphicData: PoNode,
+  extentCx: number | undefined,
+  extentCy: number | undefined,
+  resolveColor: ColorResolver,
+  parseBody?: ParseBody,
+  resolveImage?: (relId: string) => ResourceId | undefined,
+): ShapeData | null {
+  const canvas = expandMcChildren(poChildren(graphicData)).find((c) =>
+    poIsLocal(c, 'lockedCanvas'),
+  );
+  if (!canvas) return null;
+  const raw = groupChildren(canvas, resolveColor, parseBody, resolveImage);
+  if (extentCx === undefined || extentCy === undefined) return null;
+  // The members keep the offsets of the document they were copied from, and a
+  // canvas states no child space to map them out of, so its content is drawn
+  // from its OWN corner: what Word and LibreOffice both do with fdo43641.docx,
+  // whose rectangle would otherwise sit 22pt above the frame it belongs in.
+  const origin = contentOrigin(raw);
+  const children = raw.map((c) => ({ ...c, xPt: pt(c.xPt - origin.x), yPt: pt(c.yPt - origin.y) }));
+  return {
+    width: emuToPt(extentCx),
+    height: emuToPt(extentCy),
+    ...(children.length > 0 ? { children } : {}),
+    geometry: { kind: 'custom', custom: EMPTY_GEOMETRY },
+    fill: { kind: 'none' },
+  };
+}
+
 function parseWgp(
   graphicData: PoNode,
   extentCx: number | undefined,
@@ -925,7 +980,10 @@ function groupChildren(
   parseBody: ParseBody | undefined,
   resolveImage?: (relId: string) => ResourceId | undefined,
 ): Array<ShapeGroupChild> {
-  const grpSpPr = poChildren(wgp).find((c) => poIs(c, 'wpg:grpSpPr'));
+  // A locked canvas (§20.3) spells its children in the plain DrawingML
+  // namespace — `a:sp`/`a:grpSp`/`a:pic` beside a WordprocessingGroup's
+  // `wps:wsp`/`wpg:grpSp`/`pic:pic` — so members are matched by local name.
+  const grpSpPr = poChildren(wgp).find((c) => poIsLocal(c, 'grpSpPr'));
   const xfrm = grpSpPr ? poChildren(grpSpPr).find((c) => poIs(c, 'a:xfrm')) : undefined;
   const at = (
     tag: string,
@@ -938,20 +996,27 @@ function groupChildren(
     return x !== undefined && y !== undefined ? { x, y } : undefined;
   };
   const ext = at('a:ext', 'cx', 'cy');
-  const chOff = at('a:chOff', 'x', 'y') ?? { x: 0, y: 0 };
   const chExt = at('a:chExt', 'cx', 'cy');
   // With no child space declared the two are the same space, scale 1.
   const sx = ext && chExt && chExt.x > 0 ? ext.x / chExt.x : 1;
   const sy = ext && chExt && chExt.y > 0 ? ext.y / chExt.y : 1;
+  // A canvas whose own transform is all zeros (fdo43641.docx writes
+  // `a:ext`/`a:chExt` of 0×0) states no child space at all, and its members
+  // keep the absolute offsets they had in the document they were copied from.
+  // Word and LibreOffice both draw such a canvas from its content's own corner,
+  // which is what taking the topmost-leftmost member as the origin does.
+  const declared = at('a:chOff', 'x', 'y');
+  const chOff =
+    !chExt || chExt.x <= 0 || chExt.y <= 0
+      ? memberOrigin(wgp, declared ?? { x: 0, y: 0 })
+      : (declared ?? { x: 0, y: 0 });
 
   const out: Array<ShapeGroupChild> = [];
   for (const child of expandMcChildren(poChildren(wgp))) {
-    const nested = poIs(child, 'wpg:grpSp');
-    const picture = poIs(child, 'pic:pic');
-    if (!poIs(child, 'wps:wsp') && !nested && !picture) continue;
-    const spPr = poChildren(child).find((c) =>
-      poIs(c, nested ? 'wpg:grpSpPr' : picture ? 'pic:spPr' : 'wps:spPr'),
-    );
+    const nested = poIsLocal(child, 'grpSp');
+    const picture = poIsLocal(child, 'pic');
+    if (!isGroupMember(child)) continue;
+    const spPr = poChildren(child).find((c) => poIsLocal(c, nested ? 'grpSpPr' : 'spPr'));
     const childXfrm = spPr ? poChildren(spPr).find((c) => poIs(c, 'a:xfrm')) : undefined;
     const cOff = childXfrm ? poChildren(childXfrm).find((c) => poIs(c, 'a:off')) : undefined;
     const cExt = childXfrm ? poChildren(childXfrm).find((c) => poIs(c, 'a:ext')) : undefined;
@@ -979,6 +1044,74 @@ function groupChildren(
     });
   }
   return out;
+}
+
+/**
+ * The top-left corner the drawn content actually occupies, in the group's own
+ * coordinates — nested members counted at their absolute position.
+ *
+ * @param children The group's members.
+ * @returns The minimum x/y over the whole tree (0,0 when it is empty).
+ */
+function contentOrigin(children: ReadonlyArray<ShapeGroupChild>): { x: number; y: number } {
+  let minX = Infinity;
+  let minY = Infinity;
+  const walk = (list: ReadonlyArray<ShapeGroupChild>, ox: number, oy: number): void => {
+    for (const c of list) {
+      const x = ox + c.xPt;
+      const y = oy + c.yPt;
+      // A group paints nothing itself — only what its members occupy counts.
+      if (c.shape.children && c.shape.children.length > 0) {
+        walk(c.shape.children, x, y);
+        continue;
+      }
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+    }
+  };
+  walk(children, 0, 0);
+  return { x: Number.isFinite(minX) ? minX : 0, y: Number.isFinite(minY) ? minY : 0 };
+}
+
+/** A node that is a group MEMBER: a shape, a connector, a picture, or a nested group. */
+function isGroupMember(node: PoNode): boolean {
+  return (
+    poIsLocal(node, 'wsp') ||
+    poIsLocal(node, 'sp') ||
+    // `a:cxnSp` is a connector: a shape whose geometry is a line.
+    poIsLocal(node, 'cxnSp') ||
+    poIsLocal(node, 'grpSp') ||
+    poIsLocal(node, 'pic')
+  );
+}
+
+/**
+ * The top-left corner of a group's members, in the child coordinate space —
+ * the origin to use when the group declares no child space of its own.
+ *
+ * @param wgp      The group / canvas node.
+ * @param fallback What to return when no member states an offset.
+ * @returns The minimum `a:off` over the members.
+ */
+function memberOrigin(wgp: PoNode, fallback: { x: number; y: number }): { x: number; y: number } {
+  let minX = Infinity;
+  let minY = Infinity;
+  for (const child of expandMcChildren(poChildren(wgp))) {
+    // Members only — the group's OWN `grpSpPr` sits among them and its
+    // transform is the one we are trying to work around.
+    if (!isGroupMember(child)) continue;
+    const spPr = poChildren(child).find((c) => poIsLocal(c, 'spPr') || poIsLocal(c, 'grpSpPr'));
+    const xfrm = poChildren(spPr).find((c) => poIs(c, 'a:xfrm'));
+    const off = xfrm ? poChildren(xfrm).find((c) => poIs(c, 'a:off')) : undefined;
+    const x = poIntAttr(off, 'x');
+    const y = poIntAttr(off, 'y');
+    if (x !== undefined && x < minX) minX = x;
+    if (y !== undefined && y < minY) minY = y;
+  }
+  return {
+    x: Number.isFinite(minX) ? minX : fallback.x,
+    y: Number.isFinite(minY) ? minY : fallback.y,
+  };
 }
 
 // A `wpg:grpSp` — a group inside a group. Same shape as the top-level one, but
@@ -1047,7 +1180,7 @@ function parseWspNode(
   parseBody?: ParseBody,
   resolveImage?: (relId: string) => ResourceId | undefined,
 ): ShapeData | null {
-  const spPr = poChildren(wsp).find((c) => poIs(c, 'wps:spPr'));
+  const spPr = poChildren(wsp).find((c) => poIsLocal(c, 'spPr'));
 
   let geometry: ShapeGeometry = { kind: 'preset', preset: 'rect', adjust: new Map() };
   let fill: ShapeFill = { kind: 'none' };
@@ -1081,7 +1214,7 @@ function parseWspNode(
   // fill and outline in `<wps:style>` and carries none in `spPr` at all; read
   // alone, spPr says the shape has neither. TextEffects_Groupshapes.docx's
   // rectangle asks for accent1 that way and we drew its caption on white.
-  const style = poChildren(wsp).find((c) => poIs(c, 'wps:style'));
+  const style = poChildren(wsp).find((c) => poIsLocal(c, 'style'));
   if (style && fill.kind === 'none') fill = styleRefFill(style, resolveColor);
   // §20.1.4.2.19 — a shape may state a WIDTH or a dash of its own and take its
   // COLOUR from the gallery style: dashed_line_custdash_percentage.docx rules a
