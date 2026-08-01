@@ -516,7 +516,7 @@ describe('a drawing group', () => {
 // the shape has none: TextEffects_Groupshapes.docx drew its caption on white
 // where LibreOffice fills an accent-blue rectangle behind it.
 describe('a gallery-styled shape', () => {
-  const styled = (styleXml: string, spPrInner: string): string =>
+  const styled = (styleXml: string, spPrInner: string, extra = ''): string =>
     asLatin1(
       convertDocxToPdfSync(
         buildDocxFromBody(`<w:p><w:r><w:drawing>
@@ -530,6 +530,7 @@ describe('a gallery-styled shape', () => {
                     ${spPrInner}
                   </wps:spPr>
                   ${styleXml}
+                  ${extra}
                   <wps:bodyPr/>
                 </wps:wsp>
               </a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`),
@@ -557,6 +558,18 @@ describe('a gallery-styled shape', () => {
     );
     expect(text).toContain('1 0 0 rg');
     expect(text).not.toMatch(/0\.356863 0\.607843 0\.835294 rg/u);
+  });
+
+  it('gives the text the colour the style names', () => {
+    // §20.1.4.2.14 — a run with no colour of its own takes the fontRef's.
+    // LineStyle_DashType.docx asks for white on seven blue rectangles.
+    const text = styled(
+      '<wps:style><a:fillRef idx="1"><a:srgbClr val="4472C4"/></a:fillRef>' +
+        '<a:fontRef idx="minor"><a:srgbClr val="FFFFFF"/></a:fontRef></wps:style>',
+      `${RECT}`,
+      '<wps:txbx><w:txbxContent><w:p><w:r><w:t>Caption</w:t></w:r></w:p></w:txbxContent></wps:txbx>',
+    );
+    expect(text).toContain('1 1 1 rg');
   });
 
   it('reads idx="0" as naming nothing', () => {

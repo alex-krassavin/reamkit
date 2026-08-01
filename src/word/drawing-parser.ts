@@ -556,6 +556,11 @@ function parseWspNode(
   const style = poChildren(wsp).find((c) => poIs(c, 'wps:style'));
   if (style && fill.kind === 'none') fill = styleRefFill(style, resolveColor);
   if (style && !line) line = styleRefLine(style, resolveColor);
+  // §20.1.4.2.14 `<a:fontRef>` carries the colour the shape's text takes when
+  // its own runs name none — on a gallery-drawn shape that is where the colour
+  // IS. LineStyle_DashType.docx asks for `lt1` on seven blue rectangles and we
+  // drew black on blue.
+  const styled = style && text ? withStyleFontColor(text, style, resolveColor) : text;
 
   if (widthEmu === undefined || heightEmu === undefined) return null;
   return {
@@ -565,7 +570,7 @@ function parseWspNode(
     fill,
     ...(line ? { line } : {}),
     ...(transform ? { transform } : {}),
-    ...(text ? { text } : {}),
+    ...(styled ? { text: styled } : {}),
   };
 }
 
@@ -591,6 +596,37 @@ function styleRefLine(style: PoNode, resolveColor: ColorResolver): ShapeLine | u
   const child = poChildren(ref).find((c) => poTag(c) !== '#text');
   const colorHex = child ? resolveColorNode(child, resolveColor) : undefined;
   return colorHex === undefined ? undefined : { fill: 'solid', colorHex, width: pt(0.75) };
+}
+
+// §20.1.4.2.14 — give every run that names no colour of its own the one the
+// gallery style's `a:fontRef` names.
+function withStyleFontColor(
+  text: ShapeTextBody,
+  style: PoNode,
+  resolveColor: ColorResolver,
+): ShapeTextBody {
+  const ref = poChildren(style).find((c) => poIs(c, 'a:fontRef'));
+  const child = ref ? poChildren(ref).find((c) => poTag(c) !== '#text') : undefined;
+  const colorHex = child ? resolveColorNode(child, resolveColor) : undefined;
+  if (colorHex === undefined) return text;
+  return {
+    ...text,
+    content: text.content.map((block) =>
+      block.kind === 'paragraph'
+        ? {
+            ...block,
+            paragraph: {
+              ...block.paragraph,
+              runs: block.paragraph.runs.map((run) =>
+                run.properties.colorHex === undefined
+                  ? { ...run, properties: { ...run.properties, colorHex } }
+                  : run,
+              ),
+            },
+          }
+        : block,
+    ),
+  };
 }
 
 function parseTextBox(wsp: PoNode, parseBody: ParseBody): ShapeTextBody | undefined {

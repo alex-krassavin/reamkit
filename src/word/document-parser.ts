@@ -16,6 +16,7 @@ import type {
   PageMargins,
   PageSize,
   Paragraph,
+  ParagraphProperties,
   Run,
   Section,
   SectionColumns,
@@ -25,6 +26,7 @@ import type {
 import type { ColorResolver } from '@/core/drawingml/colors';
 import type { Loss, ResourceId } from '@/core/ir';
 import type { PoNode } from '@/core/po-helpers';
+import type { DrawingContent } from '@/word/drawing-parser';
 import { resolveInternalEntities } from '@/core/opc/xml-entities';
 import { emuToPt, twipsToPt } from '@/core/ir';
 import { parseOMath } from '@/word/omml-parser';
@@ -406,7 +408,12 @@ const COLLAPSE_TRANSPARENT_TAGS = new Set([
 ]);
 
 interface LoneDrawingScan {
-  drawing?: PoNode;
+  /**
+   * Every drawing in the paragraph, in order. A paragraph may anchor several —
+   * LineStyle_DashType.docx hangs all seven of its rectangles off one — and
+   * keeping only the first dropped the other six on the floor.
+   */
+  drawings: Array<PoNode>;
   vml?: PoNode;
   hasOther: boolean;
 }
@@ -421,7 +428,7 @@ function scanForLoneDrawing(container: PoNode, acc: LoneDrawingScan): void {
     if (poIs(child, 'w:r')) {
       for (const rc of expandMcChildren(poChildren(child))) {
         if (poIs(rc, 'w:drawing')) {
-          if (!acc.drawing) acc.drawing = rc;
+          acc.drawings.push(rc);
         } else if (poIs(rc, 'w:pict') || poIs(rc, 'w:object')) {
           // Only a VML node that actually bears a picture (<v:imagedata>) is a
           // candidate — an empty frame or a bare ActiveX/OLE control object is
@@ -452,10 +459,10 @@ function scanForLoneDrawing(container: PoNode, acc: LoneDrawingScan): void {
 }
 
 function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): Array<BodyElement> | null {
-  const scan: LoneDrawingScan = { hasOther: false };
+  const scan: LoneDrawingScan = { hasOther: false, drawings: [] };
   scanForLoneDrawing(p, scan);
-  const { drawing, vml } = scan;
-  if (scan.hasOther || (!drawing && !vml)) return null;
+  const { drawings, vml } = scan;
+  if (scan.hasOther || (drawings.length === 0 && !vml)) return null;
 
   // Inject parseBodyElements (bound to this context) so a shape's text box is
   // parsed without a module cycle. A modern <w:drawing> takes precedence over a
@@ -464,23 +471,48 @@ function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): Array<Bod
   // re-emits a block image as its own lone-drawing paragraph, which a re-read
   // collapses again — so the FIRST read must collapse too, or paragraph counts
   // drift by one on every standalone VML image.
-  const fromVml = drawing === undefined;
   const parseBody = (children: ReadonlyArray<PoNode>): Array<BodyElement> =>
     parseBodyElements(children, ctx);
-  const content = fromVml
-    ? parseVmlPicture(vml!)
-    : parseDrawing(drawing, ctx.resolveColor, parseBody);
-  if (!content) return null;
-  // A dangling VML <v:imagedata r:id> (referenced media absent from the
-  // package) carries nothing to render; skip it so the paragraph stays empty
-  // on both read passes rather than materialising an un-writable phantom.
-  if (fromVml && content.kind === 'image' && ctx.resolveImage?.(content.imageId) === undefined) {
-    return null;
-  }
-
   const pPrNode = poChildren(p).find((c) => poIs(c, 'w:pPr'));
   const paragraphProperties = pPrNode ? parseParagraphProperties(poElementToFlat(pPrNode)) : {};
 
+  if (drawings.length === 0) {
+    const content = parseVmlPicture(vml!);
+    if (!content || content.kind !== 'image') return null;
+    // A dangling VML <v:imagedata r:id> (referenced media absent from the
+    // package) carries nothing to render; skip it so the paragraph stays empty
+    // on both read passes rather than materialising an un-writable phantom.
+    if (ctx.resolveImage?.(content.imageId) === undefined) return null;
+    return blocksForDrawing(content, paragraphProperties, ctx);
+  }
+
+  // Every drawing the paragraph holds, in order — not just the first. They are
+  // anchored floats, so each places itself, and a paragraph carrying one
+  // behaves exactly as it did.
+  const out: Array<BodyElement> = [];
+  for (const d of drawings) {
+    const content = parseDrawing(d, ctx.resolveColor, parseBody);
+    if (!content) continue;
+    out.push(...(blocksForDrawing(content, paragraphProperties, ctx) ?? []));
+  }
+  return out.length > 0 ? out : null;
+}
+
+/**
+ * One parsed drawing as the body elements it becomes: a picture, a chart, a
+ * shape, or the several shapes a SmartArt diagram draws.
+ *
+ * @param content              The parsed drawing.
+ * @param paragraphProperties  The owning paragraph's properties, which a block
+ *                             carries for its spacing and alignment.
+ * @param ctx                  The document-wide parse context.
+ * @returns The blocks, or `null` when the drawing renders nothing.
+ */
+function blocksForDrawing(
+  content: DrawingContent,
+  paragraphProperties: ParagraphProperties,
+  ctx: ParseContext,
+): Array<BodyElement> | null {
   if (content.kind === 'image') {
     const resource = ctx.resolveImage?.(content.imageId);
     return [
