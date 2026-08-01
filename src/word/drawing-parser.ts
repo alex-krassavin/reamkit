@@ -815,8 +815,12 @@ function vmlFill(shape: PoNode, shapeType?: PoNode): ShapeFill {
   }
   const colorHex =
     vmlColor(poAttr(shape, 'fillcolor')) ??
-    (fillEl ? vmlColor(poAttr(fillEl, 'color')) : undefined);
-  return colorHex ? { kind: 'solid', colorHex } : { kind: 'none' };
+    (fillEl ? vmlColor(poAttr(fillEl, 'color')) : undefined) ??
+    vmlColor(shapeType ? poAttr(shapeType, 'fillcolor') : undefined);
+  // §14.1.2.5 — a filled shape that names no colour is WHITE, not transparent.
+  // fdo73215.docx draws its diagram as plain `v:rect`s inside a yellow one and
+  // every unstated box let the yellow through.
+  return { kind: 'solid', colorHex: colorHex ?? 'FFFFFF' };
 }
 
 // §14.1.2.21 — `@stroked="f"` says no outline; otherwise `@strokecolor` and
