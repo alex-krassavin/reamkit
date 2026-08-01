@@ -2542,6 +2542,173 @@ function chartPageItems(
 
 // Sequential, non-paginated draw used for header/footer bands. Tables in
 // headers/footers are uncommon in practice and skipped here for simplicity.
+// Shape text: laid out axis-aligned, anchored vertically within the inset
+// rect, emitted as ordinary line commands so it rides the text pass on
+// top of the fill. (Rotated text boxes keep upright text.)
+function emitShapeText(
+  sh: ShapeBlockLaidOut,
+  x: number,
+  bottomYUp: number,
+  sink: Array<PageItem>,
+  pageHeight: number,
+  figId: number | undefined,
+): void {
+  if (sh.textLines.length === 0) return;
+  // §20.1.10.83 — vertical text runs along the box's height and its lines
+  // stack across its width. A quarter turn puts each line's local +x on
+  // the page's +y (`vert270`, bottom-to-top) or -y (`vert`).
+  if (sh.vertical) {
+    const up = sh.vertical === 'vert270';
+    const innerHeight = Math.max(1, sh.heightPt - sh.insetTopPt - sh.insetBottomPt);
+    // Where the stack of lines begins across the width, by the same
+    // anchor rule the horizontal case uses along the height.
+    let across =
+      sh.anchor === 'b'
+        ? sh.widthPt - sh.insetRightPt - sh.textHeightPt
+        : sh.anchor === 'ctr'
+          ? (sh.widthPt - sh.textHeightPt) / 2
+          : sh.insetLeftPt;
+    for (const line of sh.textLines) {
+      const h = computeLineHeight(line, line.resolved);
+      const lineOffset = alignmentOffset(line.resolved.alignment, line.contentWidthPt, innerHeight);
+      // The baseline sits `descent` in from the line's far edge, which a
+      // quarter turn puts across the box rather than down it.
+      const baselineAcross = up ? across + h - lineDescent(line) : across + lineDescent(line);
+      sink.push({
+        type: 'line',
+        line,
+        originX: pt(up ? x + baselineAcross : x + sh.widthPt - baselineAcross),
+        baselineY: pt(
+          pageHeight -
+            (up
+              ? bottomYUp + sh.insetBottomPt + lineOffset
+              : bottomYUp + sh.heightPt - sh.insetTopPt - lineOffset),
+        ),
+        rotationDeg: up ? 90 : -90,
+        ...(figId !== undefined ? { structId: figId } : {}),
+      });
+      across += h;
+    }
+    return;
+  }
+  const shapeTop = bottomYUp + sh.heightPt;
+  const innerWidth = Math.max(1, sh.widthPt - sh.insetLeftPt - sh.insetRightPt);
+  let textY: number;
+  if (sh.anchor === 'b') {
+    textY = bottomYUp + sh.insetBottomPt + sh.textHeightPt;
+  } else if (sh.anchor === 'ctr') {
+    textY = bottomYUp + (sh.heightPt + sh.textHeightPt) / 2;
+  } else {
+    textY = shapeTop - sh.insetTopPt;
+  }
+  sh.textLines.forEach((line, i) => {
+    textY -= computeLineHeight(line, line.resolved);
+    const lineOffset = alignmentOffset(line.resolved.alignment, line.contentWidthPt, innerWidth);
+    const nested = sh.textCharts?.get(i);
+    if (nested) {
+      sink.push(
+        ...chartPageItems(nested, x + sh.insetLeftPt + lineOffset, textY, pageHeight, figId),
+      );
+      return;
+    }
+    sink.push({
+      type: 'line',
+      line,
+      originX: pt(x + sh.insetLeftPt + lineOffset),
+      baselineY: pt(pageHeight - (textY + lineDescent(line))),
+      ...(figId !== undefined ? { structId: figId } : {}),
+    });
+    textY -= sh.textLineGaps?.get(i) ?? 0;
+  });
+}
+// One shape, `bottomYUp` being its own bottom edge. §20.5.2.17 — a group
+// draws nothing itself and then draws its members, each at the corner it
+// holds within the group's box.
+function emitShapeItems(
+  sh: ShapeBlockLaidOut,
+  x: number,
+  bottomYUp: number,
+  sink: Array<PageItem>,
+  pageHeight: number,
+  figId: number | undefined,
+): void {
+  // §20.1.8.14 — a picture fill is the shape's box painted with an image.
+  if (sh.fillImageResourceName) {
+    sink.push({
+      type: 'image',
+      x: pt(x),
+      y: pt(pageHeight - (bottomYUp + sh.heightPt)),
+      width: pt(sh.widthPt),
+      height: pt(sh.heightPt),
+      imageResourceName: sh.fillImageResourceName,
+      ...(sh.fillImageCrop ? { crop: sh.fillImageCrop } : {}),
+      ...(figId !== undefined ? { structId: figId } : {}),
+    });
+  }
+  // The arrowheads ride the same placement as the shape, filled in the
+  // stroke's own colour: a decoration is a shape, not a pen.
+  if (sh.markerPaths && sh.stroke) {
+    sink.push({
+      type: 'shape',
+      shape: {
+        paths: sh.markerPaths,
+        fillColorHex: sh.stroke.colorHex,
+        transform: flipTransform(
+          buildShapeTransform(
+            x,
+            bottomYUp,
+            sh.widthPt,
+            sh.heightPt,
+            sh.rotation60k,
+            sh.flipH,
+            sh.flipV,
+          ),
+          pageHeight,
+        ),
+      },
+      ...(figId !== undefined ? { structId: figId } : {}),
+    });
+  }
+  if (sh.paths.some((path) => path.segments.length > 0)) {
+    sink.push({
+      type: 'shape',
+      shape: {
+        paths: sh.paths,
+        ...(sh.fillColorHex ? { fillColorHex: sh.fillColorHex } : {}),
+        ...(sh.fillGradient ? { fillGradient: sh.fillGradient } : {}),
+        ...(sh.stroke ? { stroke: sh.stroke } : {}),
+        ...(sh.shadow ? { shadow: sh.shadow } : {}),
+        transform: flipTransform(
+          buildShapeTransform(
+            x,
+            bottomYUp,
+            sh.widthPt,
+            sh.heightPt,
+            sh.rotation60k,
+            sh.flipH,
+            sh.flipV,
+          ),
+          pageHeight,
+        ),
+      },
+      ...(figId !== undefined ? { structId: figId } : {}),
+    });
+  }
+  for (const child of sh.children ?? []) {
+    // A child's y runs DOWN from the group's top; the page frame here
+    // runs up, so the group's height turns one into the other.
+    emitShapeItems(
+      child.laid,
+      x + child.xPt,
+      bottomYUp + sh.heightPt - child.yPt - child.laid.heightPt,
+      sink,
+      pageHeight,
+      figId,
+    );
+  }
+  emitShapeText(sh, x, bottomYUp, sink, pageHeight, figId);
+}
+
 // `startY` is in the internal y-up frame the band math works in; the emitted
 // items carry top-left coordinates like everything else on a page.
 function drawBlocksSequentially(
@@ -2599,7 +2766,26 @@ function drawBlocksSequentially(
       cursorY -= block.heightPt + block.spacingAfterPt;
       continue;
     }
-    if (block.kind !== 'paragraph') continue;
+    // A shape — in a band that is nearly always §17.3.1.11's framed paragraph,
+    // the page number Word parks at one edge of the header. Placed at its own
+    // anchor across the band's width, since that is the whole point of the
+    // frame: FDO73546 numbers its pages this way and we numbered none.
+    if (block.kind === 'shape') {
+      cursorY -= block.spacingBeforePt;
+      const align = block.float?.posH?.align;
+      const offset =
+        align === 'right'
+          ? contentWidth - block.widthPt
+          : align === 'center'
+            ? (contentWidth - block.widthPt) / 2
+            : align === 'left'
+              ? 0
+              : (block.float?.posH?.offsetPt ??
+                alignmentOffset(block.resolvedAlignment, block.widthPt, contentWidth));
+      emitShapeItems(block, startX + offset, cursorY - block.heightPt, out, pageHeight, structId);
+      cursorY -= block.heightPt + block.spacingAfterPt;
+      continue;
+    }
     cursorY -= block.spacingBeforePt;
     // §17.3.1.24/31 — a band's paragraphs are framed and shaded like any
     // other. SdtContent.docx keeps its whole page in a header whose one
@@ -5931,182 +6117,8 @@ function paginateSections(
     } else if (block.kind === 'shape') {
       // Shapes are atomic — never split across asm.pages.
       const figId = builder ? createFigure(builder, block.altText, 'Shape') : undefined;
-      // Shape text: laid out axis-aligned, anchored vertically within the inset
-      // rect, emitted as ordinary line commands so it rides the text pass on
-      // top of the fill. (Rotated text boxes keep upright text.)
-      const emitShapeText = (
-        sh: ShapeBlockLaidOut,
-        x: number,
-        bottomYUp: number,
-        sink: Array<PageItem>,
-      ) => {
-        if (sh.textLines.length === 0) return;
-        // §20.1.10.83 — vertical text runs along the box's height and its lines
-        // stack across its width. A quarter turn puts each line's local +x on
-        // the page's +y (`vert270`, bottom-to-top) or -y (`vert`).
-        if (sh.vertical) {
-          const up = sh.vertical === 'vert270';
-          const innerHeight = Math.max(1, sh.heightPt - sh.insetTopPt - sh.insetBottomPt);
-          // Where the stack of lines begins across the width, by the same
-          // anchor rule the horizontal case uses along the height.
-          let across =
-            sh.anchor === 'b'
-              ? sh.widthPt - sh.insetRightPt - sh.textHeightPt
-              : sh.anchor === 'ctr'
-                ? (sh.widthPt - sh.textHeightPt) / 2
-                : sh.insetLeftPt;
-          for (const line of sh.textLines) {
-            const h = computeLineHeight(line, line.resolved);
-            const lineOffset = alignmentOffset(
-              line.resolved.alignment,
-              line.contentWidthPt,
-              innerHeight,
-            );
-            // The baseline sits `descent` in from the line's far edge, which a
-            // quarter turn puts across the box rather than down it.
-            const baselineAcross = up ? across + h - lineDescent(line) : across + lineDescent(line);
-            sink.push({
-              type: 'line',
-              line,
-              originX: pt(up ? x + baselineAcross : x + sh.widthPt - baselineAcross),
-              baselineY: pt(
-                asm.ctx.pageHeight -
-                  (up
-                    ? bottomYUp + sh.insetBottomPt + lineOffset
-                    : bottomYUp + sh.heightPt - sh.insetTopPt - lineOffset),
-              ),
-              rotationDeg: up ? 90 : -90,
-              ...(figId !== undefined ? { structId: figId } : {}),
-            });
-            across += h;
-          }
-          return;
-        }
-        const shapeTop = bottomYUp + sh.heightPt;
-        const innerWidth = Math.max(1, sh.widthPt - sh.insetLeftPt - sh.insetRightPt);
-        let textY: number;
-        if (sh.anchor === 'b') {
-          textY = bottomYUp + sh.insetBottomPt + sh.textHeightPt;
-        } else if (sh.anchor === 'ctr') {
-          textY = bottomYUp + (sh.heightPt + sh.textHeightPt) / 2;
-        } else {
-          textY = shapeTop - sh.insetTopPt;
-        }
-        sh.textLines.forEach((line, i) => {
-          textY -= computeLineHeight(line, line.resolved);
-          const lineOffset = alignmentOffset(
-            line.resolved.alignment,
-            line.contentWidthPt,
-            innerWidth,
-          );
-          const nested = sh.textCharts?.get(i);
-          if (nested) {
-            sink.push(
-              ...chartPageItems(
-                nested,
-                x + sh.insetLeftPt + lineOffset,
-                textY,
-                asm.ctx.pageHeight,
-                figId,
-              ),
-            );
-            return;
-          }
-          sink.push({
-            type: 'line',
-            line,
-            originX: pt(x + sh.insetLeftPt + lineOffset),
-            baselineY: pt(asm.ctx.pageHeight - (textY + lineDescent(line))),
-            ...(figId !== undefined ? { structId: figId } : {}),
-          });
-          textY -= sh.textLineGaps?.get(i) ?? 0;
-        });
-      };
-      // One shape, `bottomYUp` being its own bottom edge. §20.5.2.17 — a group
-      // draws nothing itself and then draws its members, each at the corner it
-      // holds within the group's box.
-      const emitOneAt = (
-        sh: ShapeBlockLaidOut,
-        x: number,
-        bottomYUp: number,
-        sink: Array<PageItem>,
-      ): void => {
-        // §20.1.8.14 — a picture fill is the shape's box painted with an image.
-        if (sh.fillImageResourceName) {
-          sink.push({
-            type: 'image',
-            x: pt(x),
-            y: pt(asm.ctx.pageHeight - (bottomYUp + sh.heightPt)),
-            width: pt(sh.widthPt),
-            height: pt(sh.heightPt),
-            imageResourceName: sh.fillImageResourceName,
-            ...(sh.fillImageCrop ? { crop: sh.fillImageCrop } : {}),
-            ...(figId !== undefined ? { structId: figId } : {}),
-          });
-        }
-        // The arrowheads ride the same placement as the shape, filled in the
-        // stroke's own colour: a decoration is a shape, not a pen.
-        if (sh.markerPaths && sh.stroke) {
-          sink.push({
-            type: 'shape',
-            shape: {
-              paths: sh.markerPaths,
-              fillColorHex: sh.stroke.colorHex,
-              transform: flipTransform(
-                buildShapeTransform(
-                  x,
-                  bottomYUp,
-                  sh.widthPt,
-                  sh.heightPt,
-                  sh.rotation60k,
-                  sh.flipH,
-                  sh.flipV,
-                ),
-                asm.ctx.pageHeight,
-              ),
-            },
-            ...(figId !== undefined ? { structId: figId } : {}),
-          });
-        }
-        if (sh.paths.some((path) => path.segments.length > 0)) {
-          sink.push({
-            type: 'shape',
-            shape: {
-              paths: sh.paths,
-              ...(sh.fillColorHex ? { fillColorHex: sh.fillColorHex } : {}),
-              ...(sh.fillGradient ? { fillGradient: sh.fillGradient } : {}),
-              ...(sh.stroke ? { stroke: sh.stroke } : {}),
-              ...(sh.shadow ? { shadow: sh.shadow } : {}),
-              transform: flipTransform(
-                buildShapeTransform(
-                  x,
-                  bottomYUp,
-                  sh.widthPt,
-                  sh.heightPt,
-                  sh.rotation60k,
-                  sh.flipH,
-                  sh.flipV,
-                ),
-                asm.ctx.pageHeight,
-              ),
-            },
-            ...(figId !== undefined ? { structId: figId } : {}),
-          });
-        }
-        for (const child of sh.children ?? []) {
-          // A child's y runs DOWN from the group's top; the page frame here
-          // runs up, so the group's height turns one into the other.
-          emitOneAt(
-            child.laid,
-            x + child.xPt,
-            bottomYUp + sh.heightPt - child.yPt - child.laid.heightPt,
-            sink,
-          );
-        }
-        emitShapeText(sh, x, bottomYUp, sink);
-      };
       const emitShapeAt = (x: number, bottomYUp: number, sink: Array<PageItem>) =>
-        emitOneAt(block, x, bottomYUp, sink);
+        emitShapeItems(block, x, bottomYUp, sink, asm.ctx.pageHeight, figId);
       if (isOutOfFlowFloat(block.float)) {
         const fx = asm.floatX(block.float, block.widthPt);
         const fy = asm.floatTopYUp(block.float);
