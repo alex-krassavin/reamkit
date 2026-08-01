@@ -750,9 +750,13 @@ function parseTextBox(wsp: PoNode, parseBody: ParseBody): ShapeTextBody | undefi
   const vertical: ShapeTextBody['vertical'] | undefined =
     v === 'vert270' ? 'vert270' : v !== undefined && v !== 'horz' ? 'vert' : undefined;
 
+  // §20.1.10.28 — the shape follows its text rather than the stated box.
+  const autoFit = bodyPr !== undefined && poChildren(bodyPr).some((c) => poIs(c, 'a:spAutoFit'));
+
   return {
     content,
     ...(vertical ? { vertical } : {}),
+    ...(autoFit ? { autoFit: true } : {}),
     ...(lIns !== undefined ? { insetLeft: emuToPt(lIns) } : {}),
     ...(tIns !== undefined ? { insetTop: emuToPt(tIns) } : {}),
     ...(rIns !== undefined ? { insetRight: emuToPt(rIns) } : {}),

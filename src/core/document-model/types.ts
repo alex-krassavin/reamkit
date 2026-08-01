@@ -929,6 +929,11 @@ export interface ShapeTextBody {
    * quarter clockwise), `vert270` bottom-to-top.
    */
   readonly vertical?: 'vert' | 'vert270';
+  /**
+   * §20.1.10.28 `a:spAutoFit` — the SHAPE follows its text: its height is
+   * whatever the text needs, whatever the stated box says.
+   */
+  readonly autoFit?: boolean;
 }
 
 /**

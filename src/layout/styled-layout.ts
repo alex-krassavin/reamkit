@@ -1563,7 +1563,7 @@ function layoutShapeBlock(
     widthPt *= scale;
     heightPt = maxHeight;
   }
-  const paths = buildShapePaths(shape.geometry, widthPt, heightPt);
+
   const fillGradient = shape.fill.kind === 'gradient' ? shape.fill.gradient : undefined;
   // §20.1.8.14 — a picture fill needs the resource NAME the page will bind it
   // under, which only the resource table knows.
@@ -1647,6 +1647,15 @@ function layoutShapeBlock(
       textHeightPt += blk.spacingAfterPt;
     }
   }
+
+  // §20.1.10.28 `a:spAutoFit` — the shape follows its text: the box it states
+  // is a starting size, and the height is whatever the text needs. Ignored,
+  // autofit.docx drew its one-line box as tall as the box beside it. The
+  // geometry is built after, so the outline follows the height it settles on.
+  if (text?.autoFit && !vertical && textLines.length > 0) {
+    heightPt = textHeightPt + insetTopPt + insetBottomPt;
+  }
+  const paths = buildShapePaths(shape.geometry, widthPt, heightPt);
 
   // §20.5.2.17 — a group's members ride the same clamp its box did, so the
   // group keeps its shape when the page is narrower than the drawing.

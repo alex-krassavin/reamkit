@@ -664,3 +664,34 @@ describe('vertical text in a shape', () => {
     expect(vertical('horz')).toMatch(/\n1 0 0 1 [\d.]+ [\d.]+ Tm\n/u);
   });
 });
+
+// §20.1.10.28 `a:spAutoFit` — the shape follows its text: the box it states is
+// a starting size and the height is whatever the text needs. Ignored,
+// autofit.docx drew its one-line box as tall as the four-line box beside it.
+describe('a shape that fits itself to its text', () => {
+  const boxed = (bodyPr: string): string => {
+    const body = `<w:p><w:r><w:drawing>
+      <wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+        <wp:extent cx="2743200" cy="1828800"/><wp:docPr id="1" name="S"/>
+        <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+          <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+            <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2743200" cy="1828800"/></a:xfrm>
+                <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+                <a:ln><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln></wps:spPr>
+              <wps:txbx><w:txbxContent><w:p><w:r><w:t>One line.</w:t></w:r></w:p></w:txbxContent></wps:txbx>
+              ${bodyPr}
+            </wps:wsp>
+          </a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`;
+    return asLatin1(convertDocxToPdfSync(buildDocxFromBody(body), { fonts: FONTS }));
+  };
+  // The outline's own path says how tall the shape came out.
+  const heightOf = (text: string): number =>
+    Number(/0 0 m\n[\d.]+ 0 l\n[\d.]+ ([\d.]+) l/u.exec(text)![1]);
+
+  it('shrinks the box to the text it holds', () => {
+    // 144pt as stated, against one 11pt line plus the default 3.6pt insets.
+    expect(heightOf(boxed('<wps:bodyPr/>'))).toBeCloseTo(144, 0);
+    expect(heightOf(boxed('<wps:bodyPr><a:spAutoFit/></wps:bodyPr>'))).toBeLessThan(30);
+  });
+});
