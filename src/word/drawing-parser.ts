@@ -620,6 +620,15 @@ function vmlShapeData(
   const text = parseBody ? vmlTextBox(shape, parseBody) : undefined;
   // Nothing to draw and nothing to say: a spacer, not a shape.
   if (fill.kind === 'none' && !line && !text) return null;
+  // §14.1.2.19 `style="rotation:N"` — VML turns a shape in whole degrees,
+  // clockwise, the way `a:xfrm @rot` does in sixtieths of a thousandth.
+  // fdo70838.docx stacks four rectangles at 75°, 105°, 255° and 285°, and
+  // drawn square they came out as one wide box.
+  const rotationDeg = vmlStyleNumber(shape, 'rotation');
+  const transform =
+    rotationDeg !== undefined && rotationDeg % 360 !== 0
+      ? { rotation60k: Math.round(rotationDeg * 60000) }
+      : undefined;
   return {
     width,
     height,
@@ -637,6 +646,7 @@ function vmlShapeData(
     },
     fill,
     ...(line ? { line } : {}),
+    ...(transform ? { transform } : {}),
     ...(text ? { text } : {}),
   };
 }
