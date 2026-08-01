@@ -881,6 +881,22 @@ function emitPageContent(
       );
       out.push(`/${tok.imageResourceName} Do`);
       out.push('Q');
+      // §20.1.2.2.24 — the picture's own frame, stroked around the box it was
+      // just drawn in. tdf125657.docx borders its inline screenshot and we drew
+      // the picture bare.
+      const frame = tok.outline;
+      if (frame) {
+        const [fr, fg, fb] = hexToRgb01(frame.colorHex);
+        out.push('q');
+        out.push(`${formatNumber(frame.widthPt)} w`);
+        out.push(`${formatNumber(fr)} ${formatNumber(fg)} ${formatNumber(fb)} RG`);
+        out.push(
+          `${formatNumber(x + (b?.dxPt ?? 0))} ${formatNumber(baselineY + (b?.dyPt ?? 0))} ` +
+            `${formatNumber(b?.widthPt ?? tok.widthPt)} ${formatNumber(b?.heightPt ?? tok.heightPt)} re`,
+        );
+        out.push('S');
+        out.push('Q');
+      }
       // Text state is reset by ET; force re-emit on the next text token.
       lastFont = '';
       lastSize = -1;

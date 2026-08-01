@@ -684,6 +684,7 @@ function blocksForDrawing(
         kind: 'image',
         image: {
           ...(resource ? { resource } : {}),
+          ...(content.outline ? { outline: content.outline } : {}),
           width: content.width,
           height: content.height,
           ...(content.crop ? { crop: content.crop } : {}),
@@ -1309,6 +1310,7 @@ function parseRun(
         const resource = ctx.resolveImage?.(content.imageId);
         inlineImage = {
           ...(resource ? { resource } : {}),
+          ...(content.outline ? { outline: content.outline } : {}),
           width: content.width,
           height: content.height,
           ...(content.crop ? { crop: content.crop } : {}),
@@ -1333,7 +1335,12 @@ function parseRun(
       } else if (content && content.kind === 'image') {
         const resource = ctx.resolveImage?.(content.imageId);
         if (resource) {
-          inlineImage = { resource, width: content.width, height: content.height };
+          inlineImage = {
+            resource,
+            ...(content.outline ? { outline: content.outline } : {}),
+            width: content.width,
+            height: content.height,
+          };
         }
       } else if (content && anchored) {
         // §14.1.2 — a drawn VML shape in a run of text: a block of its own,

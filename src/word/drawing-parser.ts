@@ -12,6 +12,7 @@ import type {
   ImageCrop,
   InlineImage,
   LineEnd,
+  PictureOutline,
   RelativeSize,
   ShapeDash,
   ShapeFill,
@@ -26,6 +27,7 @@ import type { ColorMod, ColorResolver } from '@/core/drawingml/colors';
 import type { PoNode } from '@/core/po-helpers';
 import type { Pt, ResourceId } from '@/core/ir';
 import type { GradientStop, ShapeGradient } from '@/core/vector';
+import { buildStroke } from '@/core/drawingml/shape-render';
 import { readColorMods, resolveColorNode } from '@/core/drawingml/colors';
 import { emuToPt, pt } from '@/core/ir';
 import {
@@ -109,6 +111,8 @@ export type DrawingContent =
       readonly imageId: string;
       readonly width: Pt;
       readonly height: Pt;
+      /** §20.1.2.2.24 `a:ln` on `pic:spPr` / VML `@stroked` — the picture's frame. */
+      readonly outline?: PictureOutline;
       /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
       readonly crop?: ImageCrop;
       /** §20.1.7.6 `a:xfrm @rot` — the picture's rotation (1/60000°, clockwise). */
@@ -469,11 +473,17 @@ export function parseDrawing(
       emuToPt(effect ? Math.max(0, poIntAttr(effect, name) ?? 0) : 0);
     const box = { leftPt: side('l'), topPt: side('t'), rightPt: side('r'), bottomPt: side('b') };
     const effectExtent = Object.values(box).some((v) => v > 0) ? box : undefined;
+    // §20.1.2.2.24 — Word's "Picture Border" is an `a:ln` on the picture's own
+    // `pic:spPr`. tdf125657.docx frames its screenshot that way and we drew the
+    // picture bare.
+    const spPr = poFindDescendant(anchor, 'pic:spPr');
+    const outline = spPr ? pictureOutline(parseLine(spPr, resolveColor)) : undefined;
     return {
       kind: 'image',
       imageId: rId,
       width: emuToPt(extentCx),
       height: emuToPt(extentCy),
+      ...(outline ? { outline } : {}),
       ...(crop ? { crop } : {}),
       ...(rot ? { rotation60k: rot } : {}),
       ...(relativeSize ? { relativeSize } : {}),
@@ -528,11 +538,19 @@ export function parseVmlPicture(node: PoNode, parseBody?: ParseBody): DrawingCon
   const float = shape
     ? vmlFloat(poAttr(shape, 'style') ?? '', poIntAttr(shape, 'z-index'))
     : undefined;
+  // §14.1.2.21 — a picture is framed by its own shape's stroke. The picture
+  // shapetype `_x0000_t75` declares `stroked="f"`, so only a shape that says
+  // otherwise draws one: fdo79915.docx's diagram is `stroked="t"` against that
+  // default and we drew it without its frame.
+  const typeRef = shape ? poAttr(shape, 'type')?.replace(/^#/u, '') : undefined;
+  const shapeType = typeRef !== undefined ? vmlShapeTypes(node).get(typeRef) : undefined;
+  const outline = shape ? pictureOutline(vmlLine(shape, shapeType)) : undefined;
   return {
     kind: 'image',
     imageId,
     width,
     height,
+    ...(outline ? { outline } : {}),
     ...(float ? { float } : {}),
     ...(altText ? { altText } : {}),
   };
@@ -2263,6 +2281,20 @@ export function parseLine(spPr: PoNode, resolveColor: ColorResolver): ShapeLine 
     ...(headEnd ? { headEnd } : {}),
     ...(tailEnd ? { tailEnd } : {}),
   };
+}
+
+/**
+ * A picture's frame from the line its `pic:spPr` (or its VML shape) states —
+ * colour and width only, since a picture border is a rule around the box and
+ * carries none of a shape outline's ends or joins.
+ *
+ * @param line The parsed line, or `undefined`.
+ * @returns The outline, or `undefined` when the picture is drawn bare.
+ */
+function pictureOutline(line: ShapeLine | undefined): PictureOutline | undefined {
+  const stroke = buildStroke(line);
+  if (!stroke || stroke.widthPt <= 0) return undefined;
+  return { colorHex: stroke.colorHex, widthPt: pt(stroke.widthPt) };
 }
 
 const LINE_END_TYPES = new Set(['triangle', 'stealth', 'diamond', 'oval', 'arrow']);

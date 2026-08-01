@@ -10,7 +10,7 @@
 // boxes inside a Line) and styling magnitudes (font/stroke sizes) stay plain
 // numbers — they are not page-frame coordinates.
 
-import type { BorderStyle, ImageCrop } from '@/core/document-model';
+import type { BorderStyle, ImageCrop, PictureOutline } from '@/core/document-model';
 import type { Pt, ResourceId, ResourceStore } from '@/core/ir';
 import type { FontMeasure, ParsedTtf } from '@/core/font';
 import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
@@ -95,6 +95,8 @@ export interface ImageToken {
   readonly imageResourceName: string;
   readonly widthPt: number;
   readonly heightPt: number;
+  /** §20.1.2.2.24 — the frame the picture is drawn with, when it has one. */
+  readonly outline?: PictureOutline;
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
   readonly crop?: ImageCrop;
   /** §20.1.7.6 — degrees clockwise about the box's centre. */

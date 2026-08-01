@@ -38,6 +38,7 @@ import type {
   MathNode,
   Numbering,
   Paragraph,
+  PictureOutline,
   RelativeSize,
   Run,
   Section,
@@ -375,6 +376,8 @@ interface ImageBlockLaidOut {
   readonly heightPt: number;
   readonly resolvedAlignment: 'left' | 'center' | 'right' | 'both' | 'distribute';
   readonly resourceName: string;
+  /** §20.1.2.2.24 — the frame the picture is drawn with, when it has one. */
+  readonly outline?: PictureOutline;
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
   readonly crop?: ImageCrop;
   /** §20.1.7.6 — degrees clockwise about the box's centre. */
@@ -1902,6 +1905,7 @@ function layoutImageBlock(
     heightPt,
     resolvedAlignment,
     resourceName: res?.resourceName ?? '',
+    ...(image.outline ? { outline: image.outline } : {}),
     ...(image.crop ? { crop: image.crop } : {}),
     ...(image.rotation60k ? { rotationDeg: image.rotation60k / 60000 } : {}),
     ...(drawInset ? { drawInset } : {}),
@@ -2864,6 +2868,40 @@ function emitShapeItems(
   emitShapeText(sh, x, bottomYUp, sink, pageHeight, figId);
 }
 
+/**
+ * §20.1.2.2.24 — the four rules of a picture's own frame, around the box the
+ * picture is drawn in. Borders paint after images and before shapes, so the
+ * frame lands on top of the picture the way Word draws it.
+ *
+ * @param outline  The picture's frame.
+ * @param x        Left edge of the picture box.
+ * @param topY     Distance from the page TOP down to the box's top edge.
+ * @param widthPt  Box width.
+ * @param heightPt Box height.
+ * @param structId Tagged-PDF structure node the picture belongs to.
+ * @returns One {@link BorderItem} per side.
+ */
+function pictureOutlineItems(
+  outline: PictureOutline,
+  x: number,
+  topY: number,
+  widthPt: number,
+  heightPt: number,
+  structId: number | undefined,
+): Array<PageItem> {
+  return (['top', 'bottom', 'left', 'right'] as const).map((side) => ({
+    type: 'border' as const,
+    side,
+    x: pt(x),
+    y: pt(topY),
+    width: pt(widthPt),
+    height: pt(heightPt),
+    borderSizePt: outline.widthPt,
+    borderColorHex: outline.colorHex,
+    ...(structId !== undefined ? { structId } : {}),
+  }));
+}
+
 // §20.4.2.3 — where an anchored drawing sits across a header or footer band:
 // the alignment its anchor names, or the offset it states. Undefined when the
 // drawing is not anchored at all, and so flows with the band's other content.
@@ -2937,6 +2975,18 @@ function drawBlocksSequentially(
         ...(block.crop ? { crop: block.crop } : {}),
         ...(block.rotationDeg ? { rotationDeg: block.rotationDeg } : {}),
       });
+      if (block.outline) {
+        out.push(
+          ...pictureOutlineItems(
+            block.outline,
+            startX + offset,
+            pageHeight - top,
+            block.widthPt,
+            block.heightPt,
+            structId,
+          ),
+        );
+      }
       // An ANCHORED drawing is out of the flow: it takes no band height, or the
       // two logos FDO78292.docx anchors side by side in its footer stack up
       // instead, each pushing the other off the bottom of the page.
@@ -3495,6 +3545,8 @@ interface RunPlan {
   readonly imageWidthPt: number;
   readonly imageHeightPt: number;
   readonly imageResourceName: string;
+  /** §20.1.2.2.24 — the frame the picture is drawn with, when it has one. */
+  readonly imageOutline?: PictureOutline;
   readonly imageCrop?: ImageCrop;
   /** §20.1.7.6 — the picture's rotation, in degrees clockwise. */
   readonly imageRotationDeg?: number;
@@ -3649,6 +3701,7 @@ function tokenizeParagraph(
         imageWidthPt: widthPt,
         imageHeightPt: heightPt,
         imageResourceName: res?.resourceName ?? '',
+        ...(run.inlineImage.outline ? { imageOutline: run.inlineImage.outline } : {}),
         ...(run.inlineImage.crop ? { imageCrop: run.inlineImage.crop } : {}),
         ...(run.inlineImage.rotation60k
           ? { imageRotationDeg: run.inlineImage.rotation60k / 60000 }
@@ -3768,6 +3821,7 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         imageResourceName: plan.imageResourceName,
         widthPt: plan.imageWidthPt,
         heightPt: plan.imageHeightPt,
+        ...(plan.imageOutline ? { outline: plan.imageOutline } : {}),
         ...(plan.imageCrop ? { crop: plan.imageCrop } : {}),
         ...(plan.imageRotationDeg ? { rotationDeg: plan.imageRotationDeg } : {}),
         ...(plan.imageDrawBox ? { drawBox: plan.imageDrawBox } : {}),
@@ -3844,6 +3898,7 @@ function tokenizePlansBidi(
         imageResourceName: plan.imageResourceName,
         widthPt: plan.imageWidthPt,
         heightPt: plan.imageHeightPt,
+        ...(plan.imageOutline ? { outline: plan.imageOutline } : {}),
         ...(plan.imageCrop ? { crop: plan.imageCrop } : {}),
         ...(plan.imageRotationDeg ? { rotationDeg: plan.imageRotationDeg } : {}),
         ...(plan.imageDrawBox ? { drawBox: plan.imageDrawBox } : {}),
@@ -6353,6 +6408,18 @@ function paginateSections(
           ...(block.rotationDeg ? { rotationDeg: block.rotationDeg } : {}),
           ...(figId !== undefined ? { structId: figId } : {}),
         });
+        if (block.outline) {
+          sink.push(
+            ...pictureOutlineItems(
+              block.outline,
+              x + (ins?.dxPt ?? 0),
+              asm.ctx.pageHeight - (topYUp - (ins?.dyTopPt ?? 0)),
+              ins?.widthPt ?? block.widthPt,
+              ins?.heightPt ?? block.heightPt,
+              figId,
+            ),
+          );
+        }
       };
       if (isOutOfFlowFloat(block.float)) {
         const fx = asm.floatX(block.float, block.widthPt);

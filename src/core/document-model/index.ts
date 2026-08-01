@@ -59,6 +59,7 @@ export type {
   NumberingInstance,
   NumberingLevel,
   PictureBullet,
+  PictureOutline,
   NumberingReference,
   PageMargins,
   PageSize,

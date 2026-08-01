@@ -212,12 +212,24 @@ export interface ParagraphProperties {
  * {@link Run} alongside (or instead of) `text` so layout can position the image
  * as if it were a glyph in the line box.
  */
+/**
+ * §20.1.2.2.24 `a:ln` on a `pic:spPr` (VML: `@stroked`/`v:stroke`) — the frame
+ * a picture is drawn with. Word's "Picture Border": a rule around the picture
+ * box, not part of the image itself.
+ */
+export interface PictureOutline {
+  readonly colorHex: string;
+  readonly widthPt: Pt;
+}
+
 export interface InlineImage {
   /**
    * Content-addressed bytes in the document's `ResourceStore`; absent when the
    * source relationship did not resolve (the layout box still reserves space).
    */
   readonly resource?: ResourceId;
+  /** The picture's own frame, when it has one (see {@link PictureOutline}). */
+  readonly outline?: PictureOutline;
   readonly width: Pt;
   readonly height: Pt;
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
@@ -945,6 +957,8 @@ export interface ImageBlock {
   /** §20.4.2.3 — present when the drawing is anchored (floating). */
   readonly float?: FloatAnchor;
   readonly resource?: ResourceId;
+  /** The picture's own frame, when it has one (see {@link PictureOutline}). */
+  readonly outline?: PictureOutline;
   readonly width: Pt;
   readonly height: Pt;
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
