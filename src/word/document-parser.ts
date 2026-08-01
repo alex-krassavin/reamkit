@@ -521,7 +521,7 @@ function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): Array<Bod
   // behaves exactly as it did.
   const out: Array<BodyElement> = [];
   for (const d of drawings) {
-    const content = parseDrawing(d, ctx.resolveColor, parseBody);
+    const content = parseDrawing(d, ctx.resolveColor, parseBody, ctx.resolveImage);
     if (!content) continue;
     out.push(...(blocksForDrawing(content, paragraphProperties, ctx) ?? []));
   }

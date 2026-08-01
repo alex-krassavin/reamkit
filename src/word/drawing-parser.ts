@@ -21,7 +21,7 @@ import type {
 } from '@/core/document-model';
 import type { ColorMod, ColorResolver } from '@/core/drawingml/colors';
 import type { PoNode } from '@/core/po-helpers';
-import type { Pt } from '@/core/ir';
+import type { Pt, ResourceId } from '@/core/ir';
 import type { GradientStop, ShapeGradient } from '@/core/vector';
 import { readColorMods, resolveColorNode } from '@/core/drawingml/colors';
 import { emuToPt, pt } from '@/core/ir';
@@ -216,6 +216,9 @@ export function parseDrawing(
   drawing: PoNode,
   resolveColor: ColorResolver,
   parseBody?: ParseBody,
+  // §20.1.8.14 — a group may hold a `pic:pic`, which is a shape with a picture
+  // fill; resolving it needs the package's image resolver.
+  resolveImage?: (relId: string) => ResourceId | undefined,
 ): DrawingContent | null {
   const anchor =
     poChildren(drawing).find((c) => poIs(c, 'wp:inline')) ??
@@ -247,7 +250,7 @@ export function parseDrawing(
   }
 
   if (graphicData && uri === WPG_URI) {
-    const data = parseWgp(graphicData, extentCx, extentCy, resolveColor, parseBody);
+    const data = parseWgp(graphicData, extentCx, extentCy, resolveColor, parseBody, resolveImage);
     return data ? { kind: 'shape', data, ...alt } : null;
   }
 
@@ -462,10 +465,11 @@ function parseWgp(
   extentCy: number | undefined,
   resolveColor: ColorResolver,
   parseBody?: ParseBody,
+  resolveImage?: (relId: string) => ResourceId | undefined,
 ): ShapeData | null {
   const wgp = expandMcChildren(poChildren(graphicData)).find((c) => poIs(c, 'wpg:wgp'));
   if (!wgp) return null;
-  const children = groupChildren(wgp, resolveColor, parseBody);
+  const children = groupChildren(wgp, resolveColor, parseBody, resolveImage);
   const grpSpPr = poChildren(wgp).find((c) => poIs(c, 'wpg:grpSpPr'));
   const ext = grpSpPr
     ? poChildren(poChildren(grpSpPr).find((c) => poIs(c, 'a:xfrm')) ?? grpSpPr).find((c) =>
@@ -492,6 +496,7 @@ function groupChildren(
   wgp: PoNode,
   resolveColor: ColorResolver,
   parseBody: ParseBody | undefined,
+  resolveImage?: (relId: string) => ResourceId | undefined,
 ): Array<ShapeGroupChild> {
   const grpSpPr = poChildren(wgp).find((c) => poIs(c, 'wpg:grpSpPr'));
   const xfrm = grpSpPr ? poChildren(grpSpPr).find((c) => poIs(c, 'a:xfrm')) : undefined;
@@ -515,8 +520,11 @@ function groupChildren(
   const out: Array<ShapeGroupChild> = [];
   for (const child of expandMcChildren(poChildren(wgp))) {
     const nested = poIs(child, 'wpg:grpSp');
-    if (!poIs(child, 'wps:wsp') && !nested) continue;
-    const spPr = poChildren(child).find((c) => poIs(c, nested ? 'wpg:grpSpPr' : 'wps:spPr'));
+    const picture = poIs(child, 'pic:pic');
+    if (!poIs(child, 'wps:wsp') && !nested && !picture) continue;
+    const spPr = poChildren(child).find((c) =>
+      poIs(c, nested ? 'wpg:grpSpPr' : picture ? 'pic:spPr' : 'wps:spPr'),
+    );
     const childXfrm = spPr ? poChildren(spPr).find((c) => poIs(c, 'a:xfrm')) : undefined;
     const cOff = childXfrm ? poChildren(childXfrm).find((c) => poIs(c, 'a:off')) : undefined;
     const cExt = childXfrm ? poChildren(childXfrm).find((c) => poIs(c, 'a:ext')) : undefined;
@@ -524,8 +532,10 @@ function groupChildren(
     const cy = cExt ? poIntAttr(cExt, 'cy') : undefined;
     if (cx === undefined || cy === undefined) continue;
     const data = nested
-      ? parseNestedGroup(child, cx, cy, resolveColor, parseBody)
-      : parseWspNode(child, cx, cy, resolveColor, parseBody);
+      ? parseNestedGroup(child, cx, cy, resolveColor, parseBody, resolveImage)
+      : picture
+        ? parseGroupPicture(child, cx, cy, resolveImage)
+        : parseWspNode(child, cx, cy, resolveColor, parseBody);
     if (!data) continue;
     const x = (poIntAttr(cOff, 'x') ?? 0) - chOff.x;
     const y = (poIntAttr(cOff, 'y') ?? 0) - chOff.y;
@@ -552,14 +562,36 @@ function parseNestedGroup(
   heightEmu: number,
   resolveColor: ColorResolver,
   parseBody: ParseBody | undefined,
+  resolveImage?: (relId: string) => ResourceId | undefined,
 ): ShapeData {
-  const children = groupChildren(grpSp, resolveColor, parseBody);
+  const children = groupChildren(grpSp, resolveColor, parseBody, resolveImage);
   return {
     width: emuToPt(widthEmu),
     height: emuToPt(heightEmu),
     ...(children.length > 0 ? { children } : {}),
     geometry: { kind: 'custom', custom: EMPTY_GEOMETRY },
     fill: { kind: 'none' },
+  };
+}
+
+// §20.1.8.14 — a `pic:pic` group member: a rectangle whose fill IS the picture.
+// Left unread, WPGbodyPr.docx's group drew its three circles and lost the image
+// standing inside them.
+function parseGroupPicture(
+  pic: PoNode,
+  widthEmu: number,
+  heightEmu: number,
+  resolveImage: ((relId: string) => ResourceId | undefined) | undefined,
+): ShapeData | null {
+  const blip = poFindDescendant(pic, 'a:blip');
+  const relId = blip ? poAttr(blip, 'embed') : undefined;
+  const resource = relId !== undefined ? resolveImage?.(relId) : undefined;
+  if (resource === undefined) return null;
+  return {
+    width: emuToPt(widthEmu),
+    height: emuToPt(heightEmu),
+    geometry: { kind: 'preset', preset: 'rect', adjust: new Map() },
+    fill: { kind: 'picture', imageResource: resource },
   };
 }
 

@@ -398,6 +398,37 @@ describe('an anchored drawing beside text', () => {
   });
 });
 
+// A picture standing alone in a text box is a paragraph the reader collapsed to
+// an image BLOCK. Skipped with the tables and nested shapes, it vanished:
+// WPGbodyPr.docx sets one inside its outer circle and we drew the circle and the
+// words and nothing between them.
+describe('a picture inside a shape’s text box', () => {
+  it('is drawn, on a line of its own', () => {
+    const png = buildTinyPng(2, 2, [0, 0, 255, 255]);
+    const inner =
+      '<w:p><w:r><w:t>Caption</w:t></w:r></w:p>' +
+      `<w:p>${drawingXml('rId20', 914400, 457200)}</w:p>`;
+    const shape = `<w:r><w:drawing>
+      <wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+        <wp:extent cx="2743200" cy="1828800"/><wp:docPr id="1" name="S"/>
+        <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+          <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+            <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2743200" cy="1828800"/></a:xfrm>
+                <a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr>
+              <wps:txbx><w:txbxContent>${inner}</w:txbxContent></wps:txbx>
+              <wps:bodyPr/>
+            </wps:wsp>
+          </a:graphicData></a:graphic></wp:inline></w:drawing></w:r>`;
+    const docx = buildDocxFromBody(`<w:p>${shape}</w:p>`, {
+      images: { rId20: { contentType: 'image/png', bytes: png, extension: 'png' } },
+    });
+    const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
+    expect(text).toContain('/Subtype /Image');
+    expect(text).toMatch(/\/Im\d+ Do/u);
+  });
+});
+
 describe('image robustness', () => {
   it('skips an unsupported/corrupt image instead of crashing the document', () => {
     // Garbage bytes labelled as PNG — embedImage throws; the document must still

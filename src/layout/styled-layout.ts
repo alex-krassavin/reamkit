@@ -393,6 +393,8 @@ interface ShapeBlockLaidOut {
   readonly paths: ReadonlyArray<VectorPath>;
   readonly fillColorHex?: string;
   readonly fillGradient?: ShapeGradient;
+  /** §20.1.8.14 `a:blipFill` — the picture painted across the shape's box. */
+  readonly fillImageResourceName?: string;
   readonly stroke?: StrokeStyle;
   readonly shadow?: ShapeShadow;
   readonly rotation60k: number;
@@ -1543,6 +1545,12 @@ function layoutShapeBlock(
   }
   const paths = buildShapePaths(shape.geometry, widthPt, heightPt);
   const fillGradient = shape.fill.kind === 'gradient' ? shape.fill.gradient : undefined;
+  // §20.1.8.14 — a picture fill needs the resource NAME the page will bind it
+  // under, which only the resource table knows.
+  const fillImageResourceName =
+    shape.fill.kind === 'picture' && shape.fill.imageResource !== undefined
+      ? imageResources?.get(shape.fill.imageResource)?.resourceName
+      : undefined;
   const fillColorHex =
     shape.fill.kind === 'solid'
       ? shape.fill.colorHex
@@ -1563,6 +1571,37 @@ function layoutShapeBlock(
   if (text && text.content.length > 0) {
     const innerWidth = Math.max(1, widthPt - insetLeftPt - insetRightPt);
     for (const el of text.content) {
+      // A picture standing alone in a text box is a paragraph the reader
+      // collapsed to an image BLOCK. Skipped with the tables, it vanished:
+      // WPGbodyPr.docx sets one inside its outer circle and we drew the
+      // circle and the words and nothing between them. It becomes a line of
+      // its own holding one image token — which is what an inline picture in
+      // a text box already is, and the emitter draws it the same way.
+      if (el.kind === 'image') {
+        const res = el.image.resource ? imageResources?.get(el.image.resource) : undefined;
+        const scaled = Math.min(1, innerWidth / Math.max(1, el.image.width));
+        const line: Line = {
+          tokens: [
+            {
+              kind: 'image',
+              imageResourceName: res?.resourceName ?? '',
+              widthPt: el.image.width * scaled,
+              heightPt: el.image.height * scaled,
+              isSpace: false,
+              bidiLevel: 0,
+            },
+          ],
+          contentWidthPt: el.image.width * scaled,
+          maxFontSizePt: el.image.height * scaled,
+          availableWidthPt: innerWidth,
+          firstLine: true,
+          resolved: resolveParagraphProperties(el.image.paragraphProperties, options.styles),
+          isLastInParagraph: true,
+        };
+        textLines.push(line);
+        textHeightPt += computeLineHeight(line, line.resolved);
+        continue;
+      }
       if (el.kind !== 'paragraph') continue; // tables/nested shapes in a text box: out of scope
       const blk = layoutParagraphBlock(
         el.paragraph,
@@ -1608,6 +1647,7 @@ function layoutShapeBlock(
     heightPt,
     ...(children.length > 0 ? { children } : {}),
     paths,
+    ...(fillImageResourceName ? { fillImageResourceName } : {}),
     ...(fillColorHex ? { fillColorHex } : {}),
     ...(fillGradient ? { fillGradient } : {}),
     ...(stroke ? { stroke } : {}),
@@ -2014,7 +2054,15 @@ function collectImageResources(
           for (const cell of row.cells) visit(cell.content);
         }
       } else if (el.kind === 'shape') {
-        if (el.shape.text) visit(el.shape.text.content);
+        // §20.5.2.17 — including every member of a group, however deep, and the
+        // picture a shape may be FILLED with (§20.1.8.14). Missed, the picture
+        // inside WPGbodyPr.docx's outer circle had no resource to draw from.
+        const shapeImages = (sh: ShapeBlock): void => {
+          if (sh.fill.imageResource) seen.add(sh.fill.imageResource);
+          if (sh.text) visit(sh.text.content);
+          for (const child of sh.children ?? []) shapeImages(child.shape);
+        };
+        shapeImages(el.shape);
       }
     }
   };
@@ -4891,6 +4939,18 @@ function paginateSections(
         bottomYUp: number,
         sink: Array<PageItem>,
       ): void => {
+        // §20.1.8.14 — a picture fill is the shape's box painted with an image.
+        if (sh.fillImageResourceName) {
+          sink.push({
+            type: 'image',
+            x: pt(x),
+            y: pt(asm.ctx.pageHeight - (bottomYUp + sh.heightPt)),
+            width: pt(sh.widthPt),
+            height: pt(sh.heightPt),
+            imageResourceName: sh.fillImageResourceName,
+            ...(figId !== undefined ? { structId: figId } : {}),
+          });
+        }
         if (sh.paths.some((path) => path.segments.length > 0)) {
           sink.push({
             type: 'shape',

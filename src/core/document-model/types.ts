@@ -864,14 +864,20 @@ export interface ShapeGeometry {
   readonly custom?: CustomGeometry; // kind==='custom'
 }
 
-/** A shape's fill mode (`a:noFill`/`a:solidFill`/`a:gradFill`). */
-export type ShapeFillKind = 'none' | 'solid' | 'gradient';
+/** A shape's fill mode (`a:noFill`/`a:solidFill`/`a:gradFill`/`a:blipFill`). */
+export type ShapeFillKind = 'none' | 'solid' | 'gradient' | 'picture';
 
-/** A shape's fill: none, a solid colour, or a {@link ShapeGradient}. */
+/** A shape's fill: none, a solid colour, a {@link ShapeGradient}, or a picture. */
 export interface ShapeFill {
   readonly kind: ShapeFillKind;
   readonly colorHex?: string; // resolved 6-hex (kind==='solid')
   readonly gradient?: ShapeGradient; // kind==='gradient' (a:gradFill, EP16)
+  /**
+   * §20.1.8.14 `a:blipFill` — the picture painted across the shape's box. A
+   * DrawingML picture IS a shape with one of these, which is how a `pic:pic`
+   * inside a group reaches the page.
+   */
+  readonly imageResource?: ResourceId;
 }
 
 /** §20.1.10.49 ST_PresetLineDashVal — a shape outline's preset dash pattern. */
