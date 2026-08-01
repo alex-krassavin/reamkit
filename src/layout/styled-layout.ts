@@ -115,10 +115,10 @@ import {
   DEFAULT_INSET_LR_PT,
   DEFAULT_INSET_TB_PT,
   buildShapePaths,
-  lineEndPaths,
   buildShapeTransform,
   buildStroke,
   gradientToSolid,
+  lineEndPaths,
 } from '@/core/drawingml/shape-render';
 import { StructTreeBuilder } from '@/pdf/struct-tree';
 
@@ -4995,6 +4995,7 @@ class PageAssembler {
     readonly bookmarkPositions: Map<string, BookmarkPosition> | undefined,
   ) {
     this.ctx = sectionCtxs[0]!;
+    this.pageNumber = this.ctx.properties.pageNumberStart ?? 1;
     this.cursorY = this.ctx.pageHeight - this.ctx.marginTop;
     this.colStartY = this.cursorY;
     this.bandTopY = this.cursorY;
@@ -5006,6 +5007,11 @@ class PageAssembler {
   secIdx = 0;
   pageInSection = 0;
   globalPageIdx = 0;
+  /**
+   * §17.6.12 — the number the NEXT page prints for a PAGE field. Counts up with
+   * the pages and restarts wherever a section names a `w:pgNumType w:start`.
+   */
+  pageNumber = 1;
   current: Array<PageItem> = [];
   pendingPageBreak = false;
   cursorY: number;
@@ -5073,6 +5079,17 @@ class PageAssembler {
   };
 
   /**
+   * §17.6.12 — a section that names its own first page number restarts the
+   * count there; one that names none carries on from the section before.
+   *
+   * @param next The section being entered.
+   */
+  restartPageNumbers = (next: SectionRenderCtx): void => {
+    const start = next.properties.pageNumberStart;
+    if (start !== undefined) this.pageNumber = start;
+  };
+
+  /**
    * §17.6.22 — start a `continuous` section on the page in hand: its columns
    * begin where the section does, not at the top of the paper.
    *
@@ -5081,6 +5098,7 @@ class PageAssembler {
   startBandSection = (next: SectionRenderCtx, bandHeightPt: number): void => {
     this.secIdx++;
     this.ctx = next;
+    this.restartPageNumbers(next);
     this.colIdx = 0;
     this.colStartLen = this.current.length;
     // The section's own top margin still governs an empty page — it is the
@@ -5411,7 +5429,7 @@ class PageAssembler {
     if (header.renderDynamic) {
       this.dynBands.push({
         pageIdx: this.pages.length,
-        pageNumber: this.globalPageIdx + 1,
+        pageNumber: this.pageNumber,
         position: 'header',
         render: header.renderDynamic,
       });
@@ -5419,7 +5437,7 @@ class PageAssembler {
     if (footer.renderDynamic) {
       this.dynBands.push({
         pageIdx: this.pages.length,
-        pageNumber: this.globalPageIdx + 1,
+        pageNumber: this.pageNumber,
         position: 'footer',
         render: footer.renderDynamic,
       });
@@ -5447,6 +5465,7 @@ class PageAssembler {
     this.colStartLen = 0;
     this.pageInSection++;
     this.globalPageIdx++;
+    this.pageNumber++;
     this.cursorY = this.ctx.pageHeight - this.ctx.marginTop;
     this.colStartY = this.cursorY;
     this.bandTopY = this.cursorY;
@@ -5587,6 +5606,7 @@ function paginateSections(
       else asm.dropPage();
       asm.secIdx++;
       asm.ctx = sectionCtxs[asm.secIdx]!;
+      asm.restartPageNumbers(asm.ctx);
       asm.pageInSection = 0;
       asm.cursorY = asm.ctx.pageHeight - asm.ctx.marginTop;
       balanceIfEndsContinuous(blockIdx);

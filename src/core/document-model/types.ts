@@ -1380,6 +1380,11 @@ export interface SectionProperties {
    */
   readonly titlePg?: boolean;
   /**
+   * §17.6.12 `w:pgNumType w:start` — the number the section's first page is
+   * printed with. Absent ⇒ the count carries on from the section before.
+   */
+  readonly pageNumberStart?: number;
+  /**
    * ECMA-376 §17.15.1.36 — `w:evenAndOddHeaders` toggle in `word/settings.xml`
    * (document-wide, not per-section). When true even-numbered pages use the
    * `even` header/footer references.

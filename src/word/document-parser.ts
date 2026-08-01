@@ -245,6 +245,7 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
   let pageSize: PageSize | undefined;
   let margins: PageMargins | undefined;
   let titlePg = false;
+  let pageNumberStart: number | undefined;
   let columns: SectionColumns | undefined;
   let sectionStart: 'continuous' | 'nextPage' | undefined;
   let pageBorders: SectionProperties['pageBorders'];
@@ -287,6 +288,11 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
     } else if (poIs(child, 'w:titlePg')) {
       const val = poAttr(child, 'val');
       titlePg = val === undefined || val === '' || (val !== '0' && val !== 'false');
+    } else if (poIs(child, 'w:pgNumType')) {
+      // §17.6.12 — the number this section's first page carries.
+      // fdo44689_start_page_0.docx asks for 0 and its footer printed 1.
+      const start = poIntAttr(child, 'start');
+      if (start !== undefined) pageNumberStart = start;
     } else if (poIs(child, 'w:cols')) {
       columns = parseColumns(child);
     } else if (poIs(child, 'w:pgBorders')) {
@@ -313,6 +319,7 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
     headers,
     footers,
     ...(titlePg ? { titlePg: true } : {}),
+    ...(pageNumberStart !== undefined ? { pageNumberStart } : {}),
     ...(columns ? { columns } : {}),
     ...(sectionStart ? { sectionStart } : {}),
     ...(pageBorders ? { pageBorders } : {}),
