@@ -442,6 +442,12 @@ interface ShapeBlockLaidOut {
    */
   readonly textCharts?: ReadonlyMap<number, ChartBlockLaidOut>;
   /**
+   * §20.3 — a text box may hold a DRAWING of its own, which the reader
+   * collapses to a shape block the way it does a lone picture. Keyed by the
+   * line it stands on, like the charts.
+   */
+  readonly textShapes?: ReadonlyMap<number, ShapeBlockLaidOut>;
+  /**
    * §17.3.1.33 — the paragraph spacing to leave after the line at each index.
    * The box's height counts it; the emitter has to leave it on the page too.
    */
@@ -1902,6 +1908,7 @@ function layoutShapeBlock(
   const insetBottomPt = text?.insetBottom ?? DEFAULT_INSET_TB_PT;
   const textLines: Array<Line> = [];
   const textCharts = new Map<number, ChartBlockLaidOut>();
+  const textShapes = new Map<number, ShapeBlockLaidOut>();
   // Extra space to leave AFTER the line at each index (paragraph spacing).
   const textLineGaps = new Map<number, number>();
   let textHeightPt = 0;
@@ -1964,7 +1971,26 @@ function layoutShapeBlock(
         textHeightPt += computeLineHeight(line, line.resolved);
         continue;
       }
-      if (el.kind !== 'paragraph') continue; // tables/nested shapes in a text box: out of scope
+      // §20.3 — and a DRAWING in a text box: fdo76249.docx puts a locked
+      // canvas of its logo inside one, the paragraph collapses to a shape
+      // block, and skipping it left the whole page blank.
+      if (el.kind === 'shape') {
+        const laid = layoutShapeBlock(el.shape, options, fontResources, imageResources, innerWidth);
+        const line: Line = {
+          tokens: [],
+          contentWidthPt: laid.widthPt,
+          maxFontSizePt: laid.heightPt,
+          availableWidthPt: innerWidth,
+          firstLine: true,
+          resolved: resolveParagraphProperties(el.shape.paragraphProperties, options.styles),
+          isLastInParagraph: true,
+        };
+        textShapes.set(textLines.length, laid);
+        textLines.push(line);
+        textHeightPt += computeLineHeight(line, line.resolved);
+        continue;
+      }
+      if (el.kind !== 'paragraph') continue; // tables in a text box: out of scope
       const blk = layoutParagraphBlock(
         el.paragraph,
         options,
@@ -2050,6 +2076,7 @@ function layoutShapeBlock(
     spacingAfterPt: pp.spacingAfter ?? 0,
     textLines,
     ...(textCharts.size > 0 ? { textCharts } : {}),
+    ...(textShapes.size > 0 ? { textShapes } : {}),
     ...(textLineGaps.size > 0 ? { textLineGaps } : {}),
     textHeightPt,
     insetLeftPt,
@@ -2609,6 +2636,11 @@ function emitShapeText(
       sink.push(
         ...chartPageItems(nested, x + sh.insetLeftPt + lineOffset, textY, pageHeight, figId),
       );
+      return;
+    }
+    const drawing = sh.textShapes?.get(i);
+    if (drawing) {
+      emitShapeItems(drawing, x + sh.insetLeftPt + lineOffset, textY, sink, pageHeight, figId);
       return;
     }
     sink.push({
