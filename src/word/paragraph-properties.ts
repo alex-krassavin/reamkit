@@ -68,6 +68,14 @@ function parseFramePr(node: unknown): FrameProperties | undefined {
   if (hAnchor) out.hAnchor = hAnchor;
   if (vAnchor) out.vAnchor = vAnchor;
   if (wrap) out.wrap = wrap;
+  // §17.3.1.11 — a frame is a BOX, and one of zero width and zero height is
+  // not a frame at all. fdo70812.docx writes exactly that in its document
+  // defaults (`w:w="0" w:h="0" w:hRule="exact"`), which every paragraph then
+  // inherited: each was laid out as a frame with no room in it, and "Sample
+  // pages document." came out one word per line.
+  const sized = (w !== undefined && w > 0) || (h !== undefined && h > 0);
+  const placed = x !== undefined || y !== undefined || xAlign !== undefined || yAlign !== undefined;
+  if (!sized && !(placed && (x ?? 0) + (y ?? 0) !== 0)) return undefined;
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
