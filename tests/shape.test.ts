@@ -420,3 +420,93 @@ describe('text in shape (wps:txbx)', () => {
     expect(text.indexOf('BT')).toBeLessThan(label);
   });
 });
+
+// §20.5.2.17 `wpg:wgp` — a drawing group: a box holding shapes of its own, in
+// its own coordinate space. Left unread, Tdf147485.docx — whose whole picture
+// is one — printed an empty page, because the mc:Fallback beside it is VML.
+describe('a drawing group', () => {
+  const member = (x: number, y: number, cx: number, cy: number, hex: string): string =>
+    `<wps:wsp><wps:spPr>
+       <a:xfrm><a:off x="${x}" y="${y}"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>
+       <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+       <a:solidFill><a:srgbClr val="${hex}"/></a:solidFill>
+     </wps:spPr><wps:bodyPr/></wps:wsp>`;
+
+  const groupDocx = (grpXfrm: string, members: string): Uint8Array =>
+    buildDocxFromBody(`<w:p><w:r><w:drawing>
+      <wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+        <wp:extent cx="1828800" cy="914400"/>
+        <wp:docPr id="1" name="Group 1"/>
+        <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+          <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup">
+            <wpg:wgp xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup"
+                     xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wpg:grpSpPr><a:xfrm>${grpXfrm}</a:xfrm></wpg:grpSpPr>
+              ${members}
+            </wpg:wgp>
+          </a:graphicData>
+        </a:graphic>
+      </wp:inline>
+    </w:drawing></w:r></w:p>`);
+
+  const IDENTITY =
+    '<a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/>' +
+    '<a:chOff x="0" y="0"/><a:chExt cx="1828800" cy="914400"/>';
+
+  it('draws every member of the group', () => {
+    const text = asLatin1(
+      convertDocxToPdfSync(
+        groupDocx(
+          IDENTITY,
+          member(0, 0, 914400, 457200, 'FF0000') + member(914400, 457200, 914400, 457200, '00FF00'),
+        ),
+        { fonts: FONTS },
+      ),
+    );
+    // One fill each, in the colours the members name (1.0 0 0 and 0 1.0 0).
+    expect(text).toContain('1 0 0 rg');
+    expect(text).toContain('0 1 0 rg');
+  });
+
+  it('maps a member out of the group’s child coordinate space', () => {
+    // The child space is half the size of the box, so a member at (0, 0) of
+    // 457200×228600 fills the same quarter as one at (0, 0) of 914400×457200
+    // would in an identity space: 72pt × 36pt.
+    const halved =
+      '<a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/>' +
+      '<a:chOff x="0" y="0"/><a:chExt cx="914400" cy="457200"/>';
+    const text = asLatin1(
+      convertDocxToPdfSync(groupDocx(halved, member(0, 0, 457200, 228600, 'FF0000')), {
+        fonts: FONTS,
+      }),
+    );
+    expect(text).toMatch(/0 0 m\n72 0 l\n72 36 l\n0 36 l/u);
+  });
+
+  it('offsets a member by the child origin, not the page’s', () => {
+    const shifted =
+      '<a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/>' +
+      '<a:chOff x="914400" y="457200"/><a:chExt cx="1828800" cy="914400"/>';
+    // A member sitting AT the child origin is at the group's own corner.
+    const text = asLatin1(
+      convertDocxToPdfSync(groupDocx(shifted, member(914400, 457200, 914400, 457200, 'FF0000')), {
+        fonts: FONTS,
+      }),
+    );
+    // Its transform translates by the group's corner, no further.
+    expect(text).toMatch(/1 0 0 1 72 \d/u);
+  });
+
+  it('skips a member that states no size', () => {
+    const text = asLatin1(
+      convertDocxToPdfSync(
+        groupDocx(
+          IDENTITY,
+          '<wps:wsp><wps:spPr/><wps:bodyPr/></wps:wsp>' + member(0, 0, 914400, 457200, 'FF0000'),
+        ),
+        { fonts: FONTS },
+      ),
+    );
+    expect(text).toContain('1 0 0 rg');
+  });
+});

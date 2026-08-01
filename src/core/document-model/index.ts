@@ -77,6 +77,7 @@ export type {
   ShapeFill,
   ShapeFillKind,
   ShapeGeometry,
+  ShapeGroupChild,
   ShapeLine,
   ShapeTextBody,
   ShapeTransform,

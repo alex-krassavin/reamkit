@@ -13,6 +13,7 @@ import type {
   ShapeDash,
   ShapeFill,
   ShapeGeometry,
+  ShapeGroupChild,
   ShapeLine,
   ShapeShadow,
   ShapeTextBody,
@@ -37,9 +38,15 @@ import {
 const WPS_URI = 'http://schemas.microsoft.com/office/word/2010/wordprocessingShape';
 const CHART_URI = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
 const DIAGRAM_URI = 'http://schemas.openxmlformats.org/drawingml/2006/diagram';
+const WPG_URI = 'http://schemas.microsoft.com/office/word/2010/wordprocessingGroup';
 
-// Namespaces whose <mc:Choice> we can render. 'wps' = wordprocessingShape.
-const UNDERSTOOD_NS = new Set(['wps']);
+// A group's own "geometry": no commands, so its box paints nothing.
+const EMPTY_GEOMETRY = { pathWidth: 0, pathHeight: 0, commands: [] };
+
+// Namespaces whose <mc:Choice> we can render. 'wps' = wordprocessingShape,
+// 'wpg' = wordprocessingGroup. The VML in the Fallback is a different geometry
+// language altogether, so a Choice we can read is always the better branch.
+const UNDERSTOOD_NS = new Set(['wps', 'wpg']);
 
 /**
  * A parsed DrawingML shape without the owning paragraph's properties (attached by
@@ -49,6 +56,8 @@ const UNDERSTOOD_NS = new Set(['wps']);
 export interface ShapeData {
   readonly width: Pt;
   readonly height: Pt;
+  /** §20.5.2.17 — the shapes a `wpg:wgp` group holds, placed in its own box. */
+  readonly children?: ReadonlyArray<ShapeGroupChild>;
   readonly geometry: ShapeGeometry;
   readonly fill: ShapeFill;
   readonly line?: ShapeLine;
@@ -237,6 +246,11 @@ export function parseDrawing(
     return data ? { kind: 'shape', data, ...alt } : null;
   }
 
+  if (graphicData && uri === WPG_URI) {
+    const data = parseWgp(graphicData, extentCx, extentCy, resolveColor, parseBody);
+    return data ? { kind: 'shape', data, ...alt } : null;
+  }
+
   if (graphicData && uri === CHART_URI) {
     const cChart = poFindDescendant(graphicData, 'c:chart');
     const chartRelId = cChart ? poAttr(cChart, 'id') : undefined; // r:id
@@ -363,6 +377,125 @@ function parseSrcRect(node: PoNode | undefined): ImageCrop | undefined {
   return crop;
 }
 
+/**
+ * §20.5.2.17 `wpg:wgp` — a drawing group: a box holding shapes of its own, in
+ * its own coordinate space. `a:xfrm` gives the box (`a:off`/`a:ext`) and the
+ * space its members are written in (`a:chOff`/`a:chExt`); a member at (x, y) in
+ * that space lands at `off + (x − chOff) · ext / chExt` in the group's.
+ *
+ * The group draws nothing itself. Left unread, Tdf147485.docx — whose whole
+ * picture is one — printed an empty page: the `mc:Fallback` beside the group is
+ * VML, a geometry language of its own that we do not read either.
+ *
+ * @returns The group as a shape with children, or `null` when it states no size.
+ */
+function parseWgp(
+  graphicData: PoNode,
+  extentCx: number | undefined,
+  extentCy: number | undefined,
+  resolveColor: ColorResolver,
+  parseBody?: ParseBody,
+): ShapeData | null {
+  const wgp = expandMcChildren(poChildren(graphicData)).find((c) => poIs(c, 'wpg:wgp'));
+  if (!wgp) return null;
+  const children = groupChildren(wgp, resolveColor, parseBody);
+  const grpSpPr = poChildren(wgp).find((c) => poIs(c, 'wpg:grpSpPr'));
+  const ext = grpSpPr
+    ? poChildren(poChildren(grpSpPr).find((c) => poIs(c, 'a:xfrm')) ?? grpSpPr).find((c) =>
+        poIs(c, 'a:ext'),
+      )
+    : undefined;
+  const widthEmu = extentCx ?? (ext ? poIntAttr(ext, 'cx') : undefined);
+  const heightEmu = extentCy ?? (ext ? poIntAttr(ext, 'cy') : undefined);
+  if (widthEmu === undefined || heightEmu === undefined) return null;
+  return {
+    width: emuToPt(widthEmu),
+    height: emuToPt(heightEmu),
+    ...(children.length > 0 ? { children } : {}),
+    // A group is a container: no geometry of its own — an empty command list,
+    // so nothing is painted for the box itself.
+    geometry: { kind: 'custom', custom: EMPTY_GEOMETRY },
+    fill: { kind: 'none' },
+  };
+}
+
+// The group's members, each mapped out of the child coordinate space into the
+// group's own box. Nested groups recurse; a member without a size is skipped.
+function groupChildren(
+  wgp: PoNode,
+  resolveColor: ColorResolver,
+  parseBody: ParseBody | undefined,
+): Array<ShapeGroupChild> {
+  const grpSpPr = poChildren(wgp).find((c) => poIs(c, 'wpg:grpSpPr'));
+  const xfrm = grpSpPr ? poChildren(grpSpPr).find((c) => poIs(c, 'a:xfrm')) : undefined;
+  const at = (
+    tag: string,
+    ax: 'x' | 'cx',
+    ay: 'y' | 'cy',
+  ): { x: number; y: number } | undefined => {
+    const n = xfrm ? poChildren(xfrm).find((c) => poIs(c, tag)) : undefined;
+    const x = n ? poIntAttr(n, ax) : undefined;
+    const y = n ? poIntAttr(n, ay) : undefined;
+    return x !== undefined && y !== undefined ? { x, y } : undefined;
+  };
+  const ext = at('a:ext', 'cx', 'cy');
+  const chOff = at('a:chOff', 'x', 'y') ?? { x: 0, y: 0 };
+  const chExt = at('a:chExt', 'cx', 'cy');
+  // With no child space declared the two are the same space, scale 1.
+  const sx = ext && chExt && chExt.x > 0 ? ext.x / chExt.x : 1;
+  const sy = ext && chExt && chExt.y > 0 ? ext.y / chExt.y : 1;
+
+  const out: Array<ShapeGroupChild> = [];
+  for (const child of expandMcChildren(poChildren(wgp))) {
+    const nested = poIs(child, 'wpg:grpSp');
+    if (!poIs(child, 'wps:wsp') && !nested) continue;
+    const spPr = poChildren(child).find((c) => poIs(c, nested ? 'wpg:grpSpPr' : 'wps:spPr'));
+    const childXfrm = spPr ? poChildren(spPr).find((c) => poIs(c, 'a:xfrm')) : undefined;
+    const cOff = childXfrm ? poChildren(childXfrm).find((c) => poIs(c, 'a:off')) : undefined;
+    const cExt = childXfrm ? poChildren(childXfrm).find((c) => poIs(c, 'a:ext')) : undefined;
+    const cx = cExt ? poIntAttr(cExt, 'cx') : undefined;
+    const cy = cExt ? poIntAttr(cExt, 'cy') : undefined;
+    if (cx === undefined || cy === undefined) continue;
+    const data = nested
+      ? parseNestedGroup(child, cx, cy, resolveColor, parseBody)
+      : parseWspNode(child, cx, cy, resolveColor, parseBody);
+    if (!data) continue;
+    const x = (poIntAttr(cOff, 'x') ?? 0) - chOff.x;
+    const y = (poIntAttr(cOff, 'y') ?? 0) - chOff.y;
+    out.push({
+      // Relative to the group's own corner, so `off` cancels out.
+      shape: {
+        ...data,
+        width: emuToPt(cx * sx),
+        height: emuToPt(cy * sy),
+        paragraphProperties: {},
+      },
+      xPt: emuToPt(x * sx),
+      yPt: emuToPt(y * sy),
+    });
+  }
+  return out;
+}
+
+// A `wpg:grpSp` — a group inside a group. Same shape as the top-level one, but
+// its box comes from its own a:xfrm rather than the drawing's wp:extent.
+function parseNestedGroup(
+  grpSp: PoNode,
+  widthEmu: number,
+  heightEmu: number,
+  resolveColor: ColorResolver,
+  parseBody: ParseBody | undefined,
+): ShapeData {
+  const children = groupChildren(grpSp, resolveColor, parseBody);
+  return {
+    width: emuToPt(widthEmu),
+    height: emuToPt(heightEmu),
+    ...(children.length > 0 ? { children } : {}),
+    geometry: { kind: 'custom', custom: EMPTY_GEOMETRY },
+    fill: { kind: 'none' },
+  };
+}
+
 function parseWsp(
   graphicData: PoNode,
   extentCx: number | undefined,
@@ -374,6 +507,18 @@ function parseWsp(
   // wrap it — expand first so either layout is found.
   const wsp = expandMcChildren(poChildren(graphicData)).find((c) => poIs(c, 'wps:wsp'));
   if (!wsp) return null;
+  return parseWspNode(wsp, extentCx, extentCy, resolveColor, parseBody);
+}
+
+// One `wps:wsp`, given its box in EMU (from the drawing's wp:extent, or from
+// the group member's own a:ext).
+function parseWspNode(
+  wsp: PoNode,
+  extentCx: number | undefined,
+  extentCy: number | undefined,
+  resolveColor: ColorResolver,
+  parseBody?: ParseBody,
+): ShapeData | null {
   const spPr = poChildren(wsp).find((c) => poIs(c, 'wps:spPr'));
 
   let geometry: ShapeGeometry = { kind: 'preset', preset: 'rect', adjust: new Map() };

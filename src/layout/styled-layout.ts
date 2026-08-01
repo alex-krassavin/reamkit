@@ -379,6 +379,16 @@ interface ShapeBlockLaidOut {
   readonly float?: FloatAnchor;
   readonly widthPt: number;
   readonly heightPt: number;
+  /**
+   * §20.5.2.17 — the members of a drawing group, laid out in the group's own
+   * box: each with its own paths and the corner it is drawn at, measured from
+   * the group's top-left.
+   */
+  readonly children?: ReadonlyArray<{
+    readonly laid: ShapeBlockLaidOut;
+    readonly xPt: number;
+    readonly yPt: number;
+  }>;
   readonly paths: ReadonlyArray<VectorPath>;
   readonly fillColorHex?: string;
   readonly fillGradient?: ShapeGradient;
@@ -1572,10 +1582,30 @@ function layoutShapeBlock(
     }
   }
 
+  // §20.5.2.17 — a group's members ride the same clamp its box did, so the
+  // group keeps its shape when the page is narrower than the drawing.
+  const scale = shape.width > 0 ? widthPt / shape.width : 1;
+  const children = (shape.children ?? []).map((child) => ({
+    laid: layoutShapeBlock(
+      {
+        ...child.shape,
+        width: pt(child.shape.width * scale),
+        height: pt(child.shape.height * scale),
+      },
+      options,
+      fontResources,
+      imageResources,
+      Number.POSITIVE_INFINITY,
+    ),
+    xPt: child.xPt * scale,
+    yPt: child.yPt * scale,
+  }));
+
   return {
     kind: 'shape',
     widthPt,
     heightPt,
+    ...(children.length > 0 ? { children } : {}),
     paths,
     ...(fillColorHex ? { fillColorHex } : {}),
     ...(fillGradient ? { fillGradient } : {}),
@@ -2244,7 +2274,14 @@ function collectFontResources(
           }
         }
       } else if (el.kind === 'shape') {
-        if (el.shape.text) visit(el.shape.text.content);
+        // §20.5.2.17 — including the text of every member of a group, however
+        // deep. Missed, the group's captions were drawn with glyph ids the
+        // subset never reserved: Tdf147485.docx's logo read "<NQQNFRX IHPJ".
+        const shapeText = (sh: ShapeBlock): void => {
+          if (sh.text) visit(sh.text.content);
+          for (const child of sh.children ?? []) shapeText(child.shape);
+        };
+        shapeText(el.shape);
       } else if (el.kind === 'chart') {
         const chart = options.charts?.get(el.chart.chartRelId);
         if (chart) {
@@ -4655,64 +4692,90 @@ function paginateSections(
     } else if (block.kind === 'shape') {
       // Shapes are atomic — never split across asm.pages.
       const figId = builder ? createFigure(builder, block.altText, 'Shape') : undefined;
-      const emitShapeAt = (x: number, bottomYUp: number, sink: Array<PageItem>) => {
-        const transform = flipTransform(
-          buildShapeTransform(
-            x,
-            bottomYUp,
-            block.widthPt,
-            block.heightPt,
-            block.rotation60k,
-            block.flipH,
-            block.flipV,
-          ),
-          asm.ctx.pageHeight,
-        );
-        sink.push({
-          type: 'shape',
-          shape: {
-            paths: block.paths,
-            ...(block.fillColorHex ? { fillColorHex: block.fillColorHex } : {}),
-            ...(block.fillGradient ? { fillGradient: block.fillGradient } : {}),
-            ...(block.stroke ? { stroke: block.stroke } : {}),
-            ...(block.shadow ? { shadow: block.shadow } : {}),
-            transform,
-          },
-          ...(figId !== undefined ? { structId: figId } : {}),
-        });
-        // Shape text: laid out axis-aligned, anchored vertically within the
-        // inset rect, emitted as ordinary line commands so it rides the text
-        // pass on top of the fill. (Rotated text boxes keep upright text.)
-        if (block.textLines.length > 0) {
-          const shapeBottom = bottomYUp;
-          const shapeTop = bottomYUp + block.heightPt;
-          const innerWidth = Math.max(1, block.widthPt - block.insetLeftPt - block.insetRightPt);
-          let textY: number;
-          if (block.anchor === 'b') {
-            textY = shapeBottom + block.insetBottomPt + block.textHeightPt;
-          } else if (block.anchor === 'ctr') {
-            textY = shapeBottom + (block.heightPt + block.textHeightPt) / 2;
-          } else {
-            textY = shapeTop - block.insetTopPt;
-          }
-          for (const line of block.textLines) {
-            const h = computeLineHeight(line, line.resolved);
-            textY -= h;
-            const lineOffset = alignmentOffset(
-              line.resolved.alignment,
-              line.contentWidthPt,
-              innerWidth,
-            );
-            sink.push({
-              type: 'line',
-              line,
-              originX: pt(x + block.insetLeftPt + lineOffset),
-              baselineY: pt(asm.ctx.pageHeight - (textY + lineDescent(line))),
-              ...(figId !== undefined ? { structId: figId } : {}),
-            });
-          }
+      // Shape text: laid out axis-aligned, anchored vertically within the inset
+      // rect, emitted as ordinary line commands so it rides the text pass on
+      // top of the fill. (Rotated text boxes keep upright text.)
+      const emitShapeText = (
+        sh: ShapeBlockLaidOut,
+        x: number,
+        bottomYUp: number,
+        sink: Array<PageItem>,
+      ) => {
+        if (sh.textLines.length === 0) return;
+        const shapeTop = bottomYUp + sh.heightPt;
+        const innerWidth = Math.max(1, sh.widthPt - sh.insetLeftPt - sh.insetRightPt);
+        let textY: number;
+        if (sh.anchor === 'b') {
+          textY = bottomYUp + sh.insetBottomPt + sh.textHeightPt;
+        } else if (sh.anchor === 'ctr') {
+          textY = bottomYUp + (sh.heightPt + sh.textHeightPt) / 2;
+        } else {
+          textY = shapeTop - sh.insetTopPt;
+        }
+        for (const line of sh.textLines) {
+          textY -= computeLineHeight(line, line.resolved);
+          const lineOffset = alignmentOffset(
+            line.resolved.alignment,
+            line.contentWidthPt,
+            innerWidth,
+          );
+          sink.push({
+            type: 'line',
+            line,
+            originX: pt(x + sh.insetLeftPt + lineOffset),
+            baselineY: pt(asm.ctx.pageHeight - (textY + lineDescent(line))),
+            ...(figId !== undefined ? { structId: figId } : {}),
+          });
         }
       };
+      // One shape, `bottomYUp` being its own bottom edge. §20.5.2.17 — a group
+      // draws nothing itself and then draws its members, each at the corner it
+      // holds within the group's box.
+      const emitOneAt = (
+        sh: ShapeBlockLaidOut,
+        x: number,
+        bottomYUp: number,
+        sink: Array<PageItem>,
+      ): void => {
+        if (sh.paths.some((path) => path.segments.length > 0)) {
+          sink.push({
+            type: 'shape',
+            shape: {
+              paths: sh.paths,
+              ...(sh.fillColorHex ? { fillColorHex: sh.fillColorHex } : {}),
+              ...(sh.fillGradient ? { fillGradient: sh.fillGradient } : {}),
+              ...(sh.stroke ? { stroke: sh.stroke } : {}),
+              ...(sh.shadow ? { shadow: sh.shadow } : {}),
+              transform: flipTransform(
+                buildShapeTransform(
+                  x,
+                  bottomYUp,
+                  sh.widthPt,
+                  sh.heightPt,
+                  sh.rotation60k,
+                  sh.flipH,
+                  sh.flipV,
+                ),
+                asm.ctx.pageHeight,
+              ),
+            },
+            ...(figId !== undefined ? { structId: figId } : {}),
+          });
+        }
+        for (const child of sh.children ?? []) {
+          // A child's y runs DOWN from the group's top; the page frame here
+          // runs up, so the group's height turns one into the other.
+          emitOneAt(
+            child.laid,
+            x + child.xPt,
+            bottomYUp + sh.heightPt - child.yPt - child.laid.heightPt,
+            sink,
+          );
+        }
+        emitShapeText(sh, x, bottomYUp, sink);
+      };
+      const emitShapeAt = (x: number, bottomYUp: number, sink: Array<PageItem>) =>
+        emitOneAt(block, x, bottomYUp, sink);
       if (isOutOfFlowFloat(block.float)) {
         const fx = asm.floatX(block.float, block.widthPt);
         const fy = asm.floatTopYUp(block.float);

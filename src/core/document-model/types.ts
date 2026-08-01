@@ -913,11 +913,24 @@ export interface ShapeShadow {
   readonly alpha: number;
 }
 
+/**
+ * §20.5.2.17 `wpg:wgp` — one member of a drawing group, and where it sits: the
+ * offsets are from the group's own top-left corner, already mapped out of the
+ * group's child coordinate space.
+ */
+export interface ShapeGroupChild {
+  readonly shape: ShapeBlock;
+  readonly xPt: Pt;
+  readonly yPt: Pt;
+}
+
 export interface ShapeBlock {
   /** §20.4.2.3 — present when the drawing is anchored (floating). */
   readonly float?: FloatAnchor;
   readonly width: Pt; // wp:extent cx (fallback a:ext cx)
   readonly height: Pt; // wp:extent cy
+  /** §20.5.2.17 — the shapes a group holds, drawn inside its own box. */
+  readonly children?: ReadonlyArray<ShapeGroupChild>;
   readonly geometry: ShapeGeometry;
   readonly fill: ShapeFill;
   readonly line?: ShapeLine;
