@@ -55,16 +55,37 @@ export function applyNumbering(
     const abstractNum = instance ? numbering.abstractNums.get(instance.abstractNumId) : undefined;
     const level = abstractNum?.levels.get(ref.ilvl);
 
-    const markerRun: Run = {
-      text: `${marker}\t`,
-      properties: level?.runProperties ?? {},
-      listMarker: true,
-    };
+    // §17.9.9 — a level whose bullet is a PICTURE puts the image where the
+    // glyph would go; the `w:lvlText` character beside it is only Word's
+    // fallback. FDO74215 draws a bordered square and we drew a dot with the
+    // level's double underline running out under the tab.
+    const pic = level?.picBullet;
+    const markerRuns: Array<Run> = pic
+      ? [
+          {
+            text: '',
+            properties: {},
+            listMarker: true,
+            inlineImage: {
+              ...(pic.resource !== undefined ? { resource: pic.resource } : {}),
+              width: pic.widthPt,
+              height: pic.heightPt,
+            },
+          },
+          { text: '\t', properties: {}, listMarker: true },
+        ]
+      : [
+          {
+            text: `${marker}\t`,
+            properties: level?.runProperties ?? {},
+            listMarker: true,
+          },
+        ];
     const newProps: ParagraphProperties = mergeIndentFromLevel(
       p.properties,
       level?.paragraphProperties,
     );
-    return { ...p, properties: newProps, runs: [markerRun, ...p.runs] };
+    return { ...p, properties: newProps, runs: [...markerRuns, ...p.runs] };
   };
 
   const visit = (el: BodyElement): BodyElement => {

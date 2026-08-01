@@ -117,7 +117,10 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
   const styles = stylesData ? parseStyles(stylesData) : EMPTY_STYLE_SHEET;
 
   const numberingData = pkg.getPart(NUMBERING_PART);
-  const numbering = numberingData ? parseNumbering(numberingData) : EMPTY_NUMBERING;
+  // §17.9.21 — a picture bullet's image is a relationship of the NUMBERING part.
+  const numbering = numberingData
+    ? parseNumbering(numberingData, makeImageResolver(pkg, resources, NUMBERING_PART))
+    : EMPTY_NUMBERING;
 
   // §17.11 notes: parsed with per-part resolvers (their rels own their
   // images/links), then run through the same FlowDoc transforms as the body.

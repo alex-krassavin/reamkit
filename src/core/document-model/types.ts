@@ -522,8 +522,22 @@ export interface NumberingLevel {
   readonly format: NumberingFormat;
   /** §17.9.11 `w:lvlText` — the marker template (e.g. `"%1."`). */
   readonly lvlText: string;
+  /**
+   * §17.9.9 `w:lvlPicBulletId` → §17.9.21 `w:numPicBullet` — the level's bullet
+   * is a PICTURE, not a character, and the `w:lvlText` is only the fallback
+   * glyph Word writes beside it.
+   */
+  readonly picBullet?: PictureBullet;
   readonly paragraphProperties: ParagraphProperties;
   readonly runProperties: RunProperties;
+}
+
+/** §17.9.21 `w:numPicBullet` — the image a level uses in place of a bullet. */
+export interface PictureBullet {
+  /** Content-addressed bytes; absent when the relationship did not resolve. */
+  readonly resource?: ResourceId;
+  readonly widthPt: Pt;
+  readonly heightPt: Pt;
 }
 
 /** §17.9.1 `w:abstractNum` — a reusable list definition keyed by level. */

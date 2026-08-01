@@ -14,7 +14,10 @@ import type {
   NumberingFormat,
   NumberingInstance,
   NumberingLevel,
+  PictureBullet,
 } from '@/core/document-model';
+import type { ResourceId } from '@/core/ir';
+import { pt } from '@/core/ir';
 
 import { parseParagraphProperties } from '@/word/paragraph-properties';
 import { parseRunProperties } from '@/word/run-properties';
@@ -82,11 +85,17 @@ export const EMPTY_NUMBERING: Numbering = {
  * @param data The raw `numbering.xml` bytes.
  * @returns The parsed numbering, or {@link EMPTY_NUMBERING} when the root is absent.
  */
-export function parseNumbering(data: Uint8Array): Numbering {
+export function parseNumbering(
+  data: Uint8Array,
+  resolveImage?: (relId: string) => ResourceId | undefined,
+): Numbering {
   const xml = decoder.decode(data);
   const tree = parser.parse(xml) as Record<string, unknown>;
   const root = asElement(tree['w:numbering']);
   if (!root) return EMPTY_NUMBERING;
+
+  // §17.9.21 — the picture bullets, by id, before the levels that name them.
+  const picBullets = parsePicBullets(root, resolveImage);
 
   const abstractNums = new Map<string, AbstractNumbering>();
   for (const a of asArray(root['w:abstractNum'])) {
@@ -112,12 +121,15 @@ export function parseNumbering(data: Uint8Array): Numbering {
         ? (fmtStr as NumberingFormat)
         : 'decimal';
       const lvlText = getValVal(lvlEl['w:lvlText']) ?? '';
+      const picId = getValVal(lvlEl['w:lvlPicBulletId']);
+      const picBullet = picId !== undefined ? picBullets.get(picId) : undefined;
 
       levels.set(ilvl, {
         ilvl,
         start: Number.isFinite(start) ? start : 1,
         format,
         lvlText,
+        ...(picBullet ? { picBullet } : {}),
         paragraphProperties: parseParagraphProperties(lvlEl['w:pPr']),
         runProperties: parseRunProperties(lvlEl['w:rPr']),
       });
@@ -137,6 +149,58 @@ export function parseNumbering(data: Uint8Array): Numbering {
   }
 
   return { abstractNums, numInstances };
+}
+
+// §17.9.21 `w:numPicBullet` — each holds a `w:pict/v:shape` sized in CSS units
+// by its `style`, wrapping the `v:imagedata` that names the image. Keyed by
+// `@w:numPicBulletId`, which a level's `w:lvlPicBulletId` points at.
+function parsePicBullets(
+  root: Record<string, unknown>,
+  resolveImage?: (relId: string) => ResourceId | undefined,
+): Map<string, PictureBullet> {
+  const out = new Map<string, PictureBullet>();
+  for (const node of asArray(root['w:numPicBullet'])) {
+    const el = asElement(node);
+    if (!el) continue;
+    const id = getAttr(el, 'numPicBulletId');
+    if (id === undefined) continue;
+    const pict = asElement(el['w:pict']);
+    const shape = pict ? asElement(pict['v:shape']) : undefined;
+    if (!shape) continue;
+    const data = asElement(shape['v:imagedata']);
+    const relId = data ? (getAttr(data, 'id') ?? getAttr(data, 'r:id')) : undefined;
+    const style = getAttr(shape, 'style') ?? '';
+    const widthPt = cssLengthPt(/(?:^|;)\s*width\s*:\s*([^;]+)/u.exec(style)?.[1]);
+    const heightPt = cssLengthPt(/(?:^|;)\s*height\s*:\s*([^;]+)/u.exec(style)?.[1]);
+    if (widthPt === undefined || heightPt === undefined) continue;
+    const resource = relId !== undefined ? resolveImage?.(relId) : undefined;
+    out.set(id, {
+      ...(resource !== undefined ? { resource } : {}),
+      widthPt: pt(widthPt),
+      heightPt: pt(heightPt),
+    });
+  }
+  return out;
+}
+
+// A VML `style` length — `11.25pt`, `3in`, `24px`, a bare number of points.
+const CSS_UNITS: ReadonlyMap<string, number> = new Map([
+  ['pt', 1],
+  ['in', 72],
+  ['cm', 72 / 2.54],
+  ['mm', 72 / 25.4],
+  ['pc', 12],
+  ['px', 0.75],
+]);
+
+function cssLengthPt(raw: string | undefined): number | undefined {
+  const m = raw !== undefined ? /^\s*(-?[\d.]+)\s*([a-z%]*)\s*$/u.exec(raw) : null;
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n)) return undefined;
+  const unit = m[2] === '' ? 'pt' : m[2]!;
+  const scale = CSS_UNITS.get(unit);
+  return scale === undefined ? undefined : n * scale;
 }
 
 function getValVal(node: unknown): string | undefined {

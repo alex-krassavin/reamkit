@@ -19,6 +19,29 @@ function parse(xml: string): Numbering {
 }
 
 describe('parseNumbering', () => {
+  it('a level whose bullet is a picture carries the image and its size', () => {
+    // §17.9.9 / §17.9.21 — the `w:lvlText` glyph is only the fallback beside it.
+    const numbering = parse(`
+      <w:numPicBullet w:numPicBulletId="3">
+        <w:pict>
+          <v:shape style="width:11.25pt;height:0.25in" o:bullet="t">
+            <v:imagedata r:id="rId7"/>
+          </v:shape>
+        </w:pict>
+      </w:numPicBullet>
+      <w:abstractNum w:abstractNumId="0">
+        <w:lvl w:ilvl="0">
+          <w:numFmt w:val="bullet"/>
+          <w:lvlText w:val="&#xF0B7;"/>
+          <w:lvlPicBulletId w:val="3"/>
+        </w:lvl>
+      </w:abstractNum>
+      <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>`);
+    const lvl = numbering.abstractNums.get('0')!.levels.get(0)!;
+    expect(lvl.picBullet?.widthPt).toBeCloseTo(11.25, 6);
+    expect(lvl.picBullet?.heightPt).toBeCloseTo(18, 6); // 0.25in
+  });
+
   it('parses a single-level decimal abstractNum + num link', () => {
     const numbering = parse(`
       <w:abstractNum w:abstractNumId="0">
