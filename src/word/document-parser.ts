@@ -528,14 +528,13 @@ export function parseBodyElements(
       // wrapper is chrome — its sdtContent children are ordinary body flow.
       const content = poChildren(child).find((c) => poIs(c, 'w:sdtContent'));
       if (content) {
-        out.push(
-          ...parseBodyElements(
-            poChildren(content),
-            ctx,
-            blocks,
-            sdtRunProperties(child) ?? sdtRunProps,
-          ),
-        );
+        // §17.5.2.28 — a BLOCK-level control's `w:sdtPr/w:rPr` is the placeholder
+        // it shows when empty, not the formatting of the paragraphs inside it:
+        // those keep their own styles. fdo83044.docx wraps its cover page in a
+        // `Cover Pages` docPartObj that states 16pt italic, and lending that to
+        // the contents set the title in it — where Word and LibreOffice print
+        // the large bold face the CoverPage style asks for.
+        out.push(...parseBodyElements(poChildren(content), ctx, blocks, sdtRunProps));
       }
     }
   }
