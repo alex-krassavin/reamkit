@@ -1132,6 +1132,8 @@ export interface ChartLineStyle {
   readonly none?: boolean;
   readonly colorHex?: string;
   readonly widthPt?: number;
+  /** §20.1.10.49 `a:prstDash` — the rule's dash pattern, when it names one. */
+  readonly dash?: ShapeDash;
 }
 
 /** A parsed chart (§21.2): its type, title, categories, series and rendering options. */
@@ -1198,6 +1200,16 @@ export interface Chart {
    */
   readonly frameFillHex?: string;
   readonly frameLineHex?: string;
+  /** The frame rule's width and dash, when it states them. */
+  readonly frameLineWidthPt?: number;
+  readonly frameLineDash?: ShapeDash;
+  /**
+   * §21.2.2.145 `c:plotArea/c:spPr` — the plot rectangle's own fill and rule,
+   * which sit inside the frame. Chart_Plot_BorderLine_Style.docx rules its plot
+   * in a heavy orange dash-dot.
+   */
+  readonly plotFillHex?: string;
+  readonly plotLine?: ChartLineStyle;
   /**
    * §21.2.2.121 `c:valAx/c:numFmt@formatCode` — the number format the value
    * axis's tick labels and the data labels are drawn in, in the same code

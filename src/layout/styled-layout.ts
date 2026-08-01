@@ -1802,6 +1802,7 @@ function buildChartLayout(
   // the plotted data over both. Gridlines drawn after the bars ruled white
   // lines straight across every one of them (123233_charts.xlsx).
   if (scene.background) shapes.push(rectPrim(scene.background));
+  if (scene.plotBackground) shapes.push(rectPrim(scene.plotBackground));
   for (const g of scene.gridlines ?? []) shapes.push(polylinePrim(g));
   for (const pg of scene.polygons ?? []) shapes.push(polygonPrim(pg));
   for (const r of scene.rects) shapes.push(rectPrim(r));
@@ -2012,11 +2013,24 @@ function circlePath(cx: number, cy: number, r: number): VectorPath {
     .build();
 }
 
+// A rect's own outline, as the stroke a prim carries: the chart model states a
+// colour, a width and a preset dash, and buildStroke turns the dash into the
+// pattern the emitter draws.
+function strokeOfRect(r: ChartRect): { stroke?: StrokeStyle } {
+  if (!r.strokeHex) return {};
+  const stroke = buildStroke({
+    colorHex: r.strokeHex,
+    width: pt(r.strokeWidthPt ?? 1),
+    ...(r.strokeDash ? { dash: r.strokeDash } : {}),
+  });
+  return stroke ? { stroke } : {};
+}
+
 function rectPrim(r: ChartRect): ChartShapePrim {
   return {
     paths: [rectAtPath(r.x, r.y, r.w, r.h)],
     ...(r.fillHex ? { fillColorHex: r.fillHex } : {}),
-    ...(r.strokeHex ? { stroke: { colorHex: r.strokeHex, widthPt: r.strokeWidthPt ?? 1 } } : {}),
+    ...strokeOfRect(r),
   };
 }
 

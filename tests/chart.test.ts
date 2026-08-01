@@ -135,6 +135,50 @@ describe('parseChart', () => {
     expect(bare!.frameLineHex).toBeUndefined();
   });
 
+  it('reads the frame rule width and dash, and the plot rectangle (§21.2.2.145)', () => {
+    // Chart_Plot_BorderLine_Style.docx rules its chart in a heavy blue sysDash
+    // and its PLOT in an orange lgDashDot, over no fill at all. We drew a thin
+    // solid frame, no plot rule, and painted the plot in the colour of the rule
+    // we were not drawing.
+    const ruled = BAR_CHART.replace(
+      '<c:plotArea>',
+      '<c:plotArea><c:spPr><a:noFill/><a:ln w="38100"><a:solidFill><a:srgbClr val="ED9B60"/></a:solidFill>' +
+        '<a:prstDash val="lgDashDot"/></a:ln></c:spPr>',
+    ).replace(
+      '<c:chart>',
+      '<c:spPr><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill>' +
+        '<a:ln w="57150"><a:solidFill><a:srgbClr val="2E74B5"/></a:solidFill>' +
+        '<a:prstDash val="sysDash"/></a:ln></c:spPr><c:chart>',
+    );
+    const chart = parseChart(enc.encode(ruled), defaultColorResolver);
+    expect(chart!.frameLineWidthPt).toBeCloseTo(4.5);
+    expect(chart!.frameLineDash).toBe('sysDash');
+    expect(chart!.plotFillHex).toBeUndefined();
+    expect(chart!.plotLine).toMatchObject({ colorHex: 'ED9B60', dash: 'lgDashDot' });
+    expect(chart!.plotLine?.widthPt).toBeCloseTo(3);
+  });
+
+  it("outlines a bar in its series' own rule (§21.2.2.198)", () => {
+    // Chart_BorderLine_Style.docx outlines each series in a colour and dash of
+    // its own, and bars drawn unstroked lost all of it.
+    const outlined = BAR_CHART.replace(
+      '<c:spPr><a:solidFill><a:srgbClr val="4472C4"/></a:solidFill></c:spPr>',
+      '<c:spPr><a:solidFill><a:srgbClr val="4472C4"/></a:solidFill>' +
+        '<a:ln w="28575"><a:solidFill><a:srgbClr val="70AD47"/></a:solidFill>' +
+        '<a:prstDash val="dash"/></a:ln></c:spPr>',
+    );
+    const chart = parseChart(enc.encode(outlined), defaultColorResolver);
+    expect(chart!.series[0]?.line).toMatchObject({ colorHex: '70AD47', dash: 'dash' });
+    const text = asLatin1(
+      convertDocxToPdfSync(
+        buildDocxFromBody(chartDrawing('rId5'), { charts: { rId5: outlined } }),
+        { fonts: FONTS },
+      ),
+    );
+    expect(text).toContain('0.439216 0.678431 0.278431 RG'); // 70AD47 stroke
+    expect(text).toMatch(/\[[\d.]+ [\d.]+\] 0 d/); // a dash pattern
+  });
+
   it('takes a gradient-filled series from its first stop, not from its outline', () => {
     // §20.1.8.33 — a series filled with a gradient still has a colour, and the
     // scene model carries one per series. Falling through to the outline
