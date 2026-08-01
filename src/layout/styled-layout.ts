@@ -3735,9 +3735,21 @@ function resolveTabs(
           ? availableWidthPt
           : sp.positionPt;
     const stop = stops.find((sp) => stopAt(sp) > x + 0.01);
-    const position = stop
-      ? stopAt(stop)
-      : (Math.floor(x / DEFAULT_TAB_STOP_PT) + 1) * DEFAULT_TAB_STOP_PT;
+    // A hanging indent is itself a tab stop (§17.3.1.12): the first line starts
+    // out at the negative offset and the tab after the marker brings the text
+    // back to the body indent. dont-add-new-styles.docx numbers three levels
+    // that way — `w:ind w:left="360" w:hanging="360"` and no stop of its own —
+    // and sending the tab to the default half-inch grid instead put every
+    // caption 18pt past where Word and LibreOffice place it.
+    const hangingStop =
+      isFirst && resolved.indentFirstLine < 0 && resolved.indentLeft > x + 0.01
+        ? resolved.indentLeft
+        : undefined;
+    const explicitAt = stop ? stopAt(stop) : undefined;
+    const position =
+      explicitAt !== undefined && (hangingStop === undefined || explicitAt <= hangingStop)
+        ? explicitAt
+        : (hangingStop ?? (Math.floor(x / DEFAULT_TAB_STOP_PT) + 1) * DEFAULT_TAB_STOP_PT);
     const alignment = stop?.alignment ?? 'left';
     let target = position;
     if (alignment === 'right') target = position - segment;
