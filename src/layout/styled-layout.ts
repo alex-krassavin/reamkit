@@ -4196,6 +4196,7 @@ function layoutTableBlock(
         : rl,
     );
   }
+  growRowsForMerges(rows);
   const heightPt = rows.reduce((s, r) => s + r.heightPt, 0);
   const totalWidthPt = columnWidthsPt.reduce((s, w) => s + w, 0);
   // §17.4.65 — the table's own indent from the text margin, before the slack a
@@ -4204,6 +4205,33 @@ function layoutTableBlock(
     (table.properties.indentPt ?? 0) +
     tableXOffset(table.properties.alignment, contentWidth, totalWidthPt);
   return { kind: 'table', rows, heightPt, totalWidthPt, colCount, xOffsetPt };
+}
+
+/**
+ * §17.4.85 `w:vMerge` — make every vertical merge fit. Each row is already as
+ * tall as its own (unmerged) cells; a merge that needs more than its rows add
+ * up to grows the LAST row of the run, which is where Word puts the slack.
+ *
+ * @param rows The table's laid-out rows, adjusted in place.
+ */
+function growRowsForMerges(rows: Array<RowLayout>): void {
+  for (let r = 0; r < rows.length; r++) {
+    for (const cell of rows[r]!.cells) {
+      if (cell.mergeRole !== 'start') continue;
+      // The run reaches down while the column below carries a continuation.
+      let last = r;
+      for (let k = r + 1; k < rows.length; k++) {
+        const below = rows[k]!.cells.find((c) => c.colStart === cell.colStart);
+        if (!below || (below.mergeRole !== 'middle' && below.mergeRole !== 'end')) break;
+        last = k;
+        if (below.mergeRole === 'end') break;
+      }
+      let have = 0;
+      for (let k = r; k <= last; k++) have += rows[k]!.heightPt;
+      const deficit = cell.totalHeightPt - have;
+      if (deficit > 0.01) rows[last] = { ...rows[last]!, heightPt: rows[last]!.heightPt + deficit };
+    }
+  }
 }
 
 // ECMA-376 §17.4.27 (w:jc) — horizontal placement of a table narrower than the
@@ -4546,7 +4574,15 @@ function layoutTableRow(
     colIdx += span;
   }
   let heightPt = 0;
-  for (const c of cells) if (c.totalHeightPt > heightPt) heightPt = c.totalHeightPt;
+  // A cell that starts a vertical merge is as tall as its content, but that
+  // content has EVERY row of the merge to sit in — the row it starts in does
+  // not have to hold it alone. Counting it here made fdo38414.docx's first row
+  // six lines deep and pushed the rest of the table half a page down; the
+  // table pass below grows the merge's LAST row if the run comes up short.
+  for (const c of cells) {
+    if (c.mergeRole === 'start') continue;
+    if (c.totalHeightPt > heightPt) heightPt = c.totalHeightPt;
+  }
   if (row.properties.height && row.properties.heightRule === 'exact') {
     heightPt = row.properties.height;
     // A row pinned to a height keeps it, and what does not fit is CUT — Excel
