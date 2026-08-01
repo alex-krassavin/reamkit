@@ -4507,6 +4507,7 @@ class PageAssembler {
     }
     this.pages.push({
       commands: [
+        ...this.pageBorderItems(),
         ...header.commands,
         ...this.floatsBehind,
         ...this.current,
@@ -4530,6 +4531,45 @@ class PageAssembler {
     this.cursorY = this.ctx.pageHeight - this.ctx.marginTop;
     this.colStartY = this.cursorY;
     this.bandTopY = this.cursorY;
+  };
+
+  /**
+   * §17.6.10 `w:pgBorders` — the rules around the page. `@w:offsetFrom` says
+   * what each edge's space is measured from: the paper's own edge, or the text
+   * margin the rule stands outside of. a4andborders.docx frames every page and
+   * we drew nothing.
+   *
+   * @returns The border items for this page, in paint order.
+   */
+  pageBorderItems = (): Array<PageItem> => {
+    const pg = this.ctx.properties.pageBorders;
+    if (!pg) return [];
+    const H = this.ctx.pageHeight;
+    const W = this.ctx.pageWidth;
+    const out: Array<PageItem> = [];
+    for (const side of ['top', 'bottom', 'left', 'right'] as const) {
+      const edge = pg.borders[side];
+      if (!edge || edge.style === 'none') continue;
+      const gap = edge.spacePt ?? 0;
+      // From the paper's edge the space is an inset; from the text it is an
+      // OUTSET of the margin, so the rule stands clear of the words.
+      const x0 = pg.offsetFrom === 'page' ? gap : this.ctx.marginLeft - gap;
+      const x1 = pg.offsetFrom === 'page' ? W - gap : W - this.ctx.marginLeft + gap;
+      const yTop = pg.offsetFrom === 'page' ? gap : this.ctx.marginTop - gap;
+      const yBottom = pg.offsetFrom === 'page' ? H - gap : H - this.ctx.marginBottom + gap;
+      out.push({
+        type: 'border',
+        side,
+        x: pt(Math.max(0, x0)),
+        y: pt(Math.max(0, yTop)),
+        width: pt(Math.max(0, x1 - x0)),
+        height: pt(Math.max(0, yBottom - yTop)),
+        borderSizePt: edge.width ?? DEFAULT_BORDER_SIZE_EIGHTH * EIGHTH_PT,
+        borderColorHex: edge.colorHex ?? '000000',
+        ...(edge.style !== 'single' ? { borderStyle: edge.style } : {}),
+      });
+    }
+    return out;
   };
 
   /**

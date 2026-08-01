@@ -338,7 +338,14 @@ function parseCellProperties(tcPr: PoNode | undefined): {
   return { properties: out, ...(rawVMerge ? { vMerge: rawVMerge } : {}) };
 }
 
-function parseBorders(node: PoNode | undefined): CellBorders | undefined {
+/**
+ * A `w:tcBorders` / `w:tblBorders` / §17.6.10 `w:pgBorders` element: the rule on
+ * each edge. Every one of them is spelled the same way.
+ *
+ * @param node The borders element, or `undefined`.
+ * @returns The edges that name a rule, or `undefined` when none do.
+ */
+export function parseBorders(node: PoNode | undefined): CellBorders | undefined {
   if (!node) return undefined;
   const out: Mutable<CellBorders> = {};
   const top = parseBorder(poFirstChild(node, 'w:top'));
@@ -358,8 +365,12 @@ function parseBorders(node: PoNode | undefined): CellBorders | undefined {
 
 function parseBorder(node: PoNode | undefined): Border | undefined {
   if (!node) return undefined;
-  const val = poVal(node);
-  if (!val || !BORDER_STYLES.has(val as BorderStyle)) return undefined;
+  const raw = poVal(node);
+  // §17.18.2 names some hundred and eighty patterns and we draw six. `nil` and
+  // `none` are no rule; anything else we cannot spell is far closer to a solid
+  // rule of the stated width than to nothing at all.
+  if (!raw || raw === 'nil' || raw === 'none') return undefined;
+  const val = BORDER_STYLES.has(raw as BorderStyle) ? raw : 'single';
   const sz = poIntAttr(node, 'sz');
   const color = poAttr(node, 'color');
   const out: Mutable<Border> = { style: val as BorderStyle };

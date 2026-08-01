@@ -1214,6 +1214,15 @@ export interface SectionProperties {
   /** §17.6.4 `w:cols` — multi-column section layout. */
   readonly columns?: SectionColumns;
   /**
+   * §17.6.10 `w:pgBorders` — the rules drawn around the page. `offsetFrom`
+   * says what each edge's `spacePt` is measured from: the paper's edge, or the
+   * text margin it stands outside of.
+   */
+  readonly pageBorders?: {
+    readonly borders: CellBorders;
+    readonly offsetFrom: 'page' | 'text';
+  };
+  /**
    * §17.6.22 `w:type` — where the section starts. `continuous` starts it on the
    * page already in hand rather than a fresh one; everything else (nextPage,
    * and the odd/even/column variants we do not distinguish) starts a page.

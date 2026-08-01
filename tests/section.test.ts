@@ -344,6 +344,42 @@ describe('Headers and footers in rendered PDF', () => {
     expect((text.match(/\/Type \/Page[^s]/gu) ?? []).length).toBe(2);
   });
 
+  it('draws the page border a section declares (§17.6.10)', () => {
+    // a4andborders.docx frames every page and we drew nothing at all.
+    const body = `
+      <w:p><w:r><w:t>x</w:t></w:r></w:p>
+      <w:sectPr>
+        <w:pgSz w:w="11906" w:h="16838"/>
+        <w:pgMar w:top="1417" w:right="1417" w:bottom="1417" w:left="1417"/>
+        <w:pgBorders w:offsetFrom="page">
+          <w:top w:val="single" w:sz="8" w:space="24" w:color="auto"/>
+          <w:left w:val="single" w:sz="8" w:space="24" w:color="auto"/>
+          <w:bottom w:val="single" w:sz="8" w:space="24" w:color="auto"/>
+          <w:right w:val="single" w:sz="8" w:space="24" w:color="auto"/>
+        </w:pgBorders>
+      </w:sectPr>`;
+    const text = asLatin1(convertDocxToPdfSync(buildDocxFromBody(body), { fonts: FONTS }));
+    // Four strokes, each 1pt (8 eighths), inset 24pt from the paper's edge.
+    expect((text.match(/\n1 w\n/gu) ?? []).length).toBeGreaterThan(0);
+    expect(text).toMatch(/\n24 (?:24|[\d.]+) m\n/u);
+  });
+
+  it('measures the border from the text margin when told to', () => {
+    // §17.18.65 — `offsetFrom="text"` puts the rule OUTSIDE the margin, so a
+    // 24pt space on a 1417-twip (70.85pt) margin lands at 46.85pt.
+    const body = `
+      <w:p><w:r><w:t>x</w:t></w:r></w:p>
+      <w:sectPr>
+        <w:pgSz w:w="11906" w:h="16838"/>
+        <w:pgMar w:top="1417" w:right="1417" w:bottom="1417" w:left="1417"/>
+        <w:pgBorders w:offsetFrom="text">
+          <w:left w:val="single" w:sz="8" w:space="24"/>
+        </w:pgBorders>
+      </w:sectPr>`;
+    const text = asLatin1(convertDocxToPdfSync(buildDocxFromBody(body), { fonts: FONTS }));
+    expect(text).toMatch(/\n46\.85 [\d.]+ m\n/u);
+  });
+
   it('emits per-section MediaBox when sections have different page sizes', () => {
     // Section 1: A4 portrait (596×842). Section 2: Letter landscape (792×612).
     // Section break is on para 1 → page 1 is portrait, page 2 is landscape.

@@ -33,6 +33,7 @@ import { emuToPt, pt, twipsToPt } from '@/core/ir';
 import { parseOMath } from '@/word/omml-parser';
 import { defaultColorResolver } from '@/core/drawingml/colors';
 import { expandMcChildren, parseDrawing, parseVmlPicture } from '@/word/drawing-parser';
+import { parseBorders } from '@/word/table-parser';
 import { diagramTransform, noDiagramOverrideLoss, parseDiagramDrawing } from '@/pptx/slide-parser';
 import { parseParagraphProperties } from '@/word/paragraph-properties';
 import {
@@ -235,6 +236,7 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
   let titlePg = false;
   let columns: SectionColumns | undefined;
   let sectionStart: 'continuous' | 'nextPage' | undefined;
+  let pageBorders: SectionProperties['pageBorders'];
   const headers: Array<HeaderFooterReference> = [];
   const footers: Array<HeaderFooterReference> = [];
 
@@ -276,6 +278,16 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
       titlePg = val === undefined || val === '' || (val !== '0' && val !== 'false');
     } else if (poIs(child, 'w:cols')) {
       columns = parseColumns(child);
+    } else if (poIs(child, 'w:pgBorders')) {
+      // §17.6.10 — the rules around the page, spelled exactly as a cell's are.
+      // `@w:offsetFrom` defaults to the text margin (§17.18.65 ST_PageBorderOffset).
+      const borders = parseBorders(child);
+      if (borders) {
+        pageBorders = {
+          borders,
+          offsetFrom: poAttr(child, 'offsetFrom') === 'page' ? 'page' : 'text',
+        };
+      }
     } else if (poIs(child, 'w:type')) {
       // §17.6.22 ST_SectionMark. Only `continuous` keeps the page; the
       // odd/even/column starts all begin a new one, which is what we do for
@@ -292,6 +304,7 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
     ...(titlePg ? { titlePg: true } : {}),
     ...(columns ? { columns } : {}),
     ...(sectionStart ? { sectionStart } : {}),
+    ...(pageBorders ? { pageBorders } : {}),
   };
 }
 
