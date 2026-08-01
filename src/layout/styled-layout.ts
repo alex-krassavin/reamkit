@@ -4224,15 +4224,6 @@ function resolveTabs(
       }
       segment += next.widthPt;
     }
-    // Two tabs in a row and one stop between them: the first places nothing,
-    // so it claims nothing and the stop falls to the second. FDO77715.docx's
-    // header is written that way — two tabs against a single right stop at the
-    // margin — and letting the first take it drove the title off the page.
-    const after = tokens[i + 1];
-    if (segment === 0 && after?.kind === 'text' && after.tab === true) {
-      tokens[i] = { ...tok, widthPt: 0, text: '' };
-      continue;
-    }
     // §17.3.3.15 — an absolute-position tab has no distance of its own: it
     // reaches for the middle or the far side of the column, wherever those
     // fall. Everything else is a distance from the text margin.
@@ -4259,6 +4250,21 @@ function resolveTabs(
         ? explicitAt
         : (hangingStop ?? (Math.floor(x / DEFAULT_TAB_STOP_PT) + 1) * DEFAULT_TAB_STOP_PT);
     const alignment = stop?.alignment ?? 'left';
+    // A right/centre/decimal stop places the segment AFTER the tab against the
+    // stop, so a tab with nothing to place claims nothing and the stop falls to
+    // the tab behind it. FDO77715.docx's header is written that way — two tabs
+    // against a single right stop at the margin — and letting the first take it
+    // drove the title off the page. A LEFT stop (and the default grid, which is
+    // left) is a position in its own right: each of fdo79915.docx's six tabs
+    // advances one stop of the half-inch grid, and collapsing them put "Name:"
+    // five stops short of where Word and LibreOffice write it.
+    if (segment === 0 && alignment !== 'left') {
+      const after = tokens[i + 1];
+      if (after?.kind === 'text' && after.tab === true) {
+        tokens[i] = { ...tok, widthPt: 0, text: '' };
+        continue;
+      }
+    }
     let target = position;
     if (alignment === 'right') target = position - segment;
     else if (alignment === 'center') target = position - segment / 2;
