@@ -114,6 +114,12 @@ export function parseRunProperties(rPr: unknown): RunProperties {
     const v = getVal(el['w:color']);
     if (v && /^[0-9A-Fa-f]{6}$/.test(v)) {
       out.colorHex = v.toUpperCase();
+    } else if (v === 'auto') {
+      // §17.3.2.6 — `auto` is a COLOUR, the automatic one, and a run that names
+      // it overrides whatever its style lends: fdo77887.docx writes its Normal
+      // style in blue and every run back to auto, and we printed the whole
+      // form blue where the reference prints it black.
+      out.colorHex = '000000';
     }
   }
 

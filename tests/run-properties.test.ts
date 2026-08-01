@@ -83,8 +83,15 @@ describe('parseRunProperties', () => {
   });
 
   it('rejects malformed color values', () => {
-    expect(parseRunProperties(parseRpr('<w:rPr><w:color w:val="auto"/></w:rPr>'))).toEqual({});
     expect(parseRunProperties(parseRpr('<w:rPr><w:color w:val="ZZZZZZ"/></w:rPr>'))).toEqual({});
+  });
+
+  it('§17.3.2.6 — `auto` is the automatic colour, and overrides the style', () => {
+    // Not "inherit": a run that names it takes black back from a style that
+    // lends it something else.
+    expect(parseRunProperties(parseRpr('<w:rPr><w:color w:val="auto"/></w:rPr>'))).toEqual({
+      colorHex: '000000',
+    });
   });
 
   it('parses rFonts ascii + hAnsi', () => {
