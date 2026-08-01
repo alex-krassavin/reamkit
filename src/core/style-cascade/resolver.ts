@@ -16,6 +16,7 @@ import type {
   Paragraph,
   ParagraphProperties,
   RunProperties,
+  ShapeBlock,
   StyleSheet,
 } from '@/core/document-model';
 
@@ -356,8 +357,16 @@ export function resolveBodyStyles(
           for (const child of cell.content) visit(child);
         }
       }
-    } else if (el.kind === 'shape' && el.shape.text) {
-      for (const child of el.shape.text.content) visit(child);
+    } else if (el.kind === 'shape') {
+      // §20.5.2.17 — a group's MEMBERS carry text of their own, and theirs
+      // needs the cascade exactly as much: the caption of every grouped shape
+      // in dml-groupshape-capitalization.docx kept the document's raw defaults,
+      // so its paragraphs lost the 10pt they are spaced by.
+      const shapeText = (sh: ShapeBlock): void => {
+        for (const child of sh.text?.content ?? []) visit(child);
+        for (const member of sh.children ?? []) shapeText(member.shape);
+      };
+      shapeText(el.shape);
     }
     // image, chart, textless shape: nothing to resolve
   };

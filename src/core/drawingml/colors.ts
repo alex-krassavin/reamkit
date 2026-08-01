@@ -8,7 +8,7 @@
 
 // A colour transform child (§20.1.2.3): lumMod/lumOff modulate luminance,
 // shade darkens toward black, tint lightens toward white. `val` is normalised to
-// 0..1 (the XML stores thousandths of a percent). alpha is parsed but ignored
+// 0..1 (the XML stores thousandths of a percent). alpha composites over white
 // (solid fills emit no transparency).
 // ---------------------------------------------------------------------------
 // Shared colour-node parsing (§20.1.2.3) — one owner for chart-parser and the
@@ -21,7 +21,7 @@ import { poAttr, poChildren, poIntAttr, poIs } from '@/core/po-helpers';
 /**
  * A colour transform child (§20.1.2.3): `lumMod`/`lumOff` modulate luminance,
  * `shade` darkens toward black, `tint` lightens toward white. `val` is normalised
- * to 0..1 (the XML stores thousandths of a percent). `alpha` is parsed but ignored
+ * to 0..1 (the XML stores thousandths of a percent). `alpha` composites over white
  * (solid fills emit no transparency).
  */
 export interface ColorMod {
@@ -117,8 +117,16 @@ export function applyColorMods(hex: string, mods: ReadonlyArray<ColorMod>): stri
       // §20.1.2.3.27 — the saturation twin, an offset rather than a factor.
       const [h, sat, l] = rgbToHsl(r, g, b);
       [r, g, b] = hslToRgb(h, clamp01(sat + m.val), l);
-    } else if (m.kind === 'satMod') {
-      // §20.1.2.3.32 — saturation modulation. The Office theme's gradients are
+    } else if (m.kind === 'alpha') {
+      // §20.1.2.3.1 — the colour is drawn at `val` opacity. Composited over a
+      // white page that is a tint of itself, which is what both references
+      // show: dml-groupshape-childposition.docx draws eleven of its strokes at
+      // 20% and we drew them all in full dark navy.
+      r = r * m.val + (1 - m.val);
+      g = g * m.val + (1 - m.val);
+      b = b * m.val + (1 - m.val);
+    } else {
+      // §20.1.2.3.32 `satMod` — saturation modulation. The Office theme's gradients are
       // built from it (`<a:shade val="51000"/><a:satMod val="130000"/>`), and
       // dropping it drew every gallery shape a shade duller than either
       // reference: 47504.xlsx's rectangle came out grey-blue.

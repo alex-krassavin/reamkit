@@ -416,6 +416,11 @@ interface ShapeBlockLaidOut {
    * chart's own primitives from that line's corner.
    */
   readonly textCharts?: ReadonlyMap<number, ChartBlockLaidOut>;
+  /**
+   * §17.3.1.33 — the paragraph spacing to leave after the line at each index.
+   * The box's height counts it; the emitter has to leave it on the page too.
+   */
+  readonly textLineGaps?: ReadonlyMap<number, number>;
   readonly textHeightPt: number;
   readonly insetLeftPt: number;
   readonly insetRightPt: number;
@@ -1715,7 +1720,11 @@ function layoutShapeBlock(
   let widthPt: number = shape.width;
   let heightPt: number = shape.height;
   // Clamp width to the content area like images, scaling height to keep aspect.
-  if (widthPt > contentWidth && widthPt > 0) {
+  // §20.4.2.3 — a FLOATING drawing is not in the text column and may hang past
+  // it into the margins, which is what both references draw:
+  // dml-groupshape-capitalization.docx anchors a 547pt group on a 454pt column
+  // and shrinking it to fit set every word inside at 83%.
+  if (!shape.float && widthPt > contentWidth && widthPt > 0) {
     const scale = contentWidth / widthPt;
     widthPt = contentWidth;
     heightPt *= scale;
@@ -1752,6 +1761,8 @@ function layoutShapeBlock(
   const insetBottomPt = text?.insetBottom ?? DEFAULT_INSET_TB_PT;
   const textLines: Array<Line> = [];
   const textCharts = new Map<number, ChartBlockLaidOut>();
+  // Extra space to leave AFTER the line at each index (paragraph spacing).
+  const textLineGaps = new Map<number, number>();
   let textHeightPt = 0;
   // §20.1.10.83 — text set along the box's long axis wraps to its HEIGHT, and
   // its lines stack across the width. btlr-textbox.docx reads bottom-to-top and
@@ -1824,9 +1835,23 @@ function layoutShapeBlock(
       // the author typed); layoutParagraphBlock makes it, so a shape's text no
       // longer closes up over one (shape-macro-ext-ref.xlsx opens its button's
       // caption with a blank line and every paragraph after it drew 14pt high).
+      // §17.3.1.33 — the space before a paragraph is the gap after the line
+      // above it. Counted in the box's height but never left on the page, the
+      // paragraphs of dml-groupshape-capitalization.docx's caption ran together
+      // where both references space them out.
+      const before = textLines.length > 0 ? blk.spacingBeforePt : 0;
+      if (before > 0) {
+        const last = textLines.length - 1;
+        textLineGaps.set(last, (textLineGaps.get(last) ?? 0) + before);
+        textHeightPt += before;
+      }
       for (const line of blk.lines) {
         textLines.push(line);
         textHeightPt += computeLineHeight(line, blk.resolved);
+      }
+      if (blk.spacingAfterPt > 0) {
+        const last = textLines.length - 1;
+        textLineGaps.set(last, (textLineGaps.get(last) ?? 0) + blk.spacingAfterPt);
       }
       textHeightPt += blk.spacingAfterPt;
     }
@@ -1882,6 +1907,7 @@ function layoutShapeBlock(
     spacingAfterPt: pp.spacingAfter ?? 0,
     textLines,
     ...(textCharts.size > 0 ? { textCharts } : {}),
+    ...(textLineGaps.size > 0 ? { textLineGaps } : {}),
     textHeightPt,
     insetLeftPt,
     insetRightPt,
@@ -5463,6 +5489,7 @@ function paginateSections(
             baselineY: pt(asm.ctx.pageHeight - (textY + lineDescent(line))),
             ...(figId !== undefined ? { structId: figId } : {}),
           });
+          textY -= sh.textLineGaps?.get(i) ?? 0;
         });
       };
       // One shape, `bottomYUp` being its own bottom edge. §20.5.2.17 — a group

@@ -131,6 +131,14 @@ describe('colour transforms (§20.1.2.3)', () => {
     expect(applyColorMods('000000', [{ kind: 'tint', val: 0.5 }])).toBe('808080');
   });
 
+  it('alpha composites the colour over the white page', () => {
+    // §20.1.2.3.1 — dml-groupshape-childposition.docx draws eleven of its
+    // strokes at 20% opacity, which every reader shows as a pale tint; ignored,
+    // they came out in full dark navy.
+    expect(applyColorMods('000000', [{ kind: 'alpha', val: 0.2 }])).toBe('CCCCCC');
+    expect(applyColorMods('4472C4', [{ kind: 'alpha', val: 1 }])).toBe('4472C4');
+  });
+
   it('no transforms is an identity', () => {
     expect(applyColorMods('4472C4', [])).toBe('4472C4');
   });
@@ -799,5 +807,57 @@ describe('a shape that fits itself to its text', () => {
     // 144pt as stated, against one 11pt line plus the default 3.6pt insets.
     expect(heightOf(boxed('<wps:bodyPr/>'))).toBeCloseTo(144, 0);
     expect(heightOf(boxed('<wps:bodyPr><a:spAutoFit/></wps:bodyPr>'))).toBeLessThan(30);
+  });
+});
+
+describe('a floating drawing and the text column', () => {
+  const anchored = (cxEmu: number, inner: string): string =>
+    `<w:p><w:r><w:drawing>
+      <wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+                 distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="1"
+                 behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">
+        <wp:simplePos x="0" y="0"/>
+        <wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH>
+        <wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>
+        <wp:extent cx="${cxEmu}" cy="914400"/><wp:wrapNone/><wp:docPr id="1" name="S"/>
+        <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+          <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+            <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cxEmu}" cy="914400"/></a:xfrm>
+                <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+                <a:solidFill><a:srgbClr val="4472C4"/></a:solidFill></wps:spPr>
+              ${inner}
+              <wps:bodyPr/>
+            </wps:wsp>
+          </a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>`;
+
+  it('keeps the width it states, past the column', () => {
+    // §20.4.2.3 — a float is not in the text column and may hang into the
+    // margins: dml-groupshape-capitalization.docx anchors a 547pt group on a
+    // 454pt column, and shrinking it to fit set every word inside at 83%.
+    const wide = 6858000; // 540pt, wider than the 468pt column of a letter page
+    const text = asLatin1(
+      convertDocxToPdfSync(buildDocxFromBody(anchored(wide, '')), { fonts: FONTS }),
+    );
+    // The fill path spans the full 540pt.
+    expect(text).toMatch(/540 0 l/u);
+  });
+
+  it('leaves the paragraph spacing inside a text box on the page', () => {
+    // The box's height counted the space between its paragraphs but the
+    // emitter never left it, so dml-groupshape-capitalization.docx's caption
+    // ran its four paragraphs together.
+    const two =
+      '<wps:txbx><w:txbxContent>' +
+      '<w:p><w:pPr><w:spacing w:after="400"/></w:pPr><w:r><w:t>one</w:t></w:r></w:p>' +
+      '<w:p><w:r><w:t>two</w:t></w:r></w:p>' +
+      '</w:txbxContent></wps:txbx>';
+    const text = asLatin1(
+      convertDocxToPdfSync(buildDocxFromBody(anchored(2743200, two)), { fonts: FONTS }),
+    );
+    const ys = [...text.matchAll(/1 0 0 1 [\d.]+ ([\d.]+) Tm/gu)].map((m) => Number(m[1]));
+    expect(ys).toHaveLength(2);
+    // 20pt of spacing plus the line's own height — well past a bare line.
+    expect(ys[0]! - ys[1]!).toBeGreaterThan(25);
   });
 });
