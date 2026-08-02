@@ -615,6 +615,11 @@ interface RowLayout {
   readonly isHeader?: boolean;
   // xlsx manual <rowBreaks> — force a page break before this row.
   readonly breakBefore?: boolean;
+  /**
+   * §17.4.6 `w:cantSplit` — the row is drawn whole or not at all: what will not
+   * fit on the page moves to the next rather than breaking across the two.
+   */
+  readonly cantSplit?: boolean;
 }
 
 interface TableBlock {
@@ -5901,11 +5906,19 @@ function layoutTableRow(
       columnXOffsets,
       rowIdx,
       rowCount,
+      ...(row.properties.cantSplit ? { cantSplit: true } : {}),
     };
   } else if (row.properties.height && row.properties.heightRule === 'atLeast') {
     heightPt = Math.max(heightPt, row.properties.height);
   }
-  return { heightPt, cells, columnXOffsets, rowIdx, rowCount };
+  return {
+    heightPt,
+    cells,
+    columnXOffsets,
+    rowIdx,
+    rowCount,
+    ...(row.properties.cantSplit ? { cantSplit: true } : {}),
+  };
 }
 
 /**
@@ -7581,10 +7594,21 @@ function paginateSections(
             return b.create('P', cellNode).id;
           });
         }
+        // §17.4.6 — a row that will not fit is BROKEN at the page's edge, not
+        // moved whole: Word splits a row unless `w:cantSplit` forbids it. The
+        // first piece takes the room left here and the rest a page apiece, so
+        // table-row-data-displayed-twice.docx's one 713pt row now ends where
+        // the page does instead of printing over what follows.
+        const room = asm.cursorY - asm.bottomLimit();
+        const page = asm.ctx.pageContentHeight;
         const chunks =
-          row.heightPt > asm.ctx.pageContentHeight
-            ? splitRowIntoChunks(row, asm.ctx.pageContentHeight)
-            : [row];
+          !row.cantSplit && row.heightPt > room && asm.colHasContent() && room > 0
+            ? splitRowIntoChunks(row, room, page)
+            : row.heightPt > page
+              ? // Taller than any page: chunked whatever the row says, because
+                // the alternative is losing everything past the first page.
+                splitRowIntoChunks(row, page)
+              : [row];
 
         for (let ci = 0; ci < chunks.length; ci++) {
           const chunk = chunks[ci]!;
@@ -8120,12 +8144,19 @@ function emitRowChunk(
 //   - last chunk keeps padBottom and the bottom border
 //   - middle chunks have no top/bottom padding or borders
 // Left/right borders and shading are kept on every chunk.
-function splitRowIntoChunks(row: RowLayout, capacity: number): Array<RowLayout> {
+function splitRowIntoChunks(
+  row: RowLayout,
+  capacity: number,
+  restCapacity = capacity,
+): Array<RowLayout> {
   // A cell containing a nested table is not split across pages — the nested
   // layout would be duplicated into every chunk. Keep such a row whole.
   if (row.cells.some((c) => c.nestedTables && c.nestedTables.length > 0)) return [row];
-  type Queue = { remaining: Array<Line>; template: CellLayout };
-  const queues: Array<Queue> = row.cells.map((c) => ({ remaining: [...c.lines], template: c }));
+  type Queue = { remaining: Array<{ line: Line; gapPt: number }>; template: CellLayout };
+  const queues: Array<Queue> = row.cells.map((c) => ({
+    remaining: c.lines.map((line, i) => ({ line, gapPt: c.lineGaps?.get(i) ?? 0 })),
+    template: c,
+  }));
 
   const anyHasLines = () =>
     queues.some((q) =>
@@ -8150,12 +8181,16 @@ function splitRowIntoChunks(row: RowLayout, capacity: number): Array<RowLayout> 
         continue;
       }
       const padTop = isFirst ? tpl.padTopPt : 0;
-      const capacityForLines = Math.max(0, capacity - padTop);
-      const taken: Array<Line> = [];
+      const capacityForLines = Math.max(0, (isFirst ? capacity : restCapacity) - padTop);
+      const taken: Array<{ line: Line; gapPt: number }> = [];
       let takenHeight = 0;
       while (q.remaining.length > 0) {
         const next = q.remaining[0]!;
-        const lh = computeLineHeight(next, next.resolved);
+        // §17.3.1.33 — the gap the line's paragraph keeps from the one above is
+        // height the page has to give it too. Counted nowhere, a chunk measured
+        // 518pt where its own lines needed 713 and ran off the bottom of the
+        // page (table-row-data-displayed-twice.docx).
+        const lh = computeLineHeight(next.line, next.line.resolved) + next.gapPt;
         // Always take at least one line per chunk to guarantee forward progress
         // even when a single line is taller than capacity.
         if (taken.length > 0 && takenHeight + lh > capacityForLines) break;
@@ -8164,11 +8199,22 @@ function splitRowIntoChunks(row: RowLayout, capacity: number): Array<RowLayout> 
         q.remaining.shift();
       }
       const cellHeight = padTop + takenHeight;
+      const gaps = new Map<number, number>();
+      taken.forEach((t, li) => {
+        if (t.gapPt > 0) gaps.set(li, t.gapPt);
+      });
+      // The gaps are keyed BY LINE INDEX, so a chunk that keeps some of the
+      // lines needs its own map; a drawing beside them belongs to the chunk
+      // that holds the line it stands after, which is the first.
+      const { lineGaps: _g, shapes: _s, floats: _f, ...restOfCell } = tpl;
       const chunkCell: CellLayout = {
-        ...tpl,
+        ...restOfCell,
+        ...(isFirst && tpl.shapes ? { shapes: tpl.shapes } : {}),
+        ...(isFirst && tpl.floats ? { floats: tpl.floats } : {}),
+        ...(gaps.size > 0 ? { lineGaps: gaps } : {}),
         padTopPt: padTop,
         padBottomPt: 0,
-        lines: taken,
+        lines: taken.map((t) => t.line),
         contentHeightPt: takenHeight,
         totalHeightPt: cellHeight,
       };
@@ -8212,6 +8258,7 @@ function splitRowIntoChunks(row: RowLayout, capacity: number): Array<RowLayout> 
       columnXOffsets: row.columnXOffsets,
       rowIdx: row.rowIdx,
       rowCount: row.rowCount,
+      ...(row.isHeader ? { isHeader: true } : {}),
     });
     isFirst = false;
   }

@@ -1836,6 +1836,11 @@ export function worksheetToBody(
       absR >= print.titleRows.startRow &&
       absR <= print.titleRows.endRow;
     const rowProps = {
+      // §17.4.6 `w:cantSplit` — a SHEET row is never broken across pages: what
+      // will not fit moves whole to the next, which is what Excel and
+      // LibreOffice both print. A word-processing table splits by default, and
+      // the two share this layout.
+      cantSplit: true,
       ...(rowHeightTwips !== undefined
         ? {
             height: twipsToPt(rowHeightTwips),
@@ -3062,7 +3067,7 @@ export function slicerTable(slicer: SheetSlicer): Table {
     width: eighthPtToPt(2),
     colorHex: PRINT_GRIDLINE_HEX,
   };
-  const rowProps = { height: pt(SLICER_ROW_PT), heightRule: 'atLeast' as const };
+  const rowProps = { height: pt(SLICER_ROW_PT), heightRule: 'atLeast' as const, cantSplit: true };
   const rows: Array<TableRow> = [];
 
   // Caption header spanning all columns.
