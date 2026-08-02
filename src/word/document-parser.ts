@@ -895,6 +895,8 @@ interface CollectedRun {
   readonly run: Run;
   readonly fldChar?: 'begin' | 'separate' | 'end';
   readonly instrText?: string;
+  /** §17.16.5.20 — a FORMCHECKBOX field's state, carried on its `begin`. */
+  readonly checkBox?: boolean;
 }
 
 /**
@@ -928,6 +930,11 @@ function fieldKeyword(instr: string | undefined): string | undefined {
 // Word caches a result for them all the same, and printing it put "Praun et
 // al. 20012001" in the middle of fdo76163's bibliography, where both
 // references print nothing.
+// §17.16.5.20 — what a form checkbox looks like: BALLOT BOX and BALLOT BOX
+// WITH X, the pair Word and LibreOffice both draw one of.
+const CHECKBOX_CLEAR = '\u2610';
+const CHECKBOX_CHECKED = '\u2612';
+
 const SILENT_FIELDS = new Set([
   'SET', // §17.16.5.53 — binds a bookmark to a value
   'ASK', // §17.16.5.2 — prompts, then binds
@@ -961,8 +968,14 @@ function synthesizeFieldRun(
 // zero-glyph marker runs were never rendered, so dropping them is inert).
 function applyFieldFsm(collected: ReadonlyArray<CollectedRun>): Array<Run> {
   const out: Array<Run> = [];
-  let st: { phase: 'instr' | 'result'; instr: string; result: Array<Run>; depth: number } | null =
-    null;
+  let st: {
+    phase: 'instr' | 'result';
+    instr: string;
+    result: Array<Run>;
+    depth: number;
+    checkBox?: boolean;
+    properties?: Run['properties'];
+  } | null = null;
   for (const c of collected) {
     if (c.fldChar === 'begin') {
       if (st) {
@@ -974,7 +987,14 @@ function applyFieldFsm(collected: ReadonlyArray<CollectedRun>): Array<Run> {
           st = { phase: 'instr', instr: '', result: [], depth: 0 };
         }
       } else {
-        st = { phase: 'instr', instr: '', result: [], depth: 0 };
+        st = {
+          phase: 'instr',
+          instr: '',
+          result: [],
+          depth: 0,
+          ...(c.checkBox !== undefined ? { checkBox: c.checkBox } : {}),
+          properties: c.run.properties,
+        };
       }
       continue;
     }
@@ -1003,7 +1023,17 @@ function applyFieldFsm(collected: ReadonlyArray<CollectedRun>): Array<Run> {
         // of its own. Unsupportedtextfields.docx asks for "contacts  ssss" and
         // we printed a blank line where LibreOffice prints them.
         const shown = macroButtonText(st.instr);
+        // §17.16.5.20 FORMCHECKBOX — the box IS the field: it caches no result
+        // and Word draws it from the state on the opening character. Read
+        // nowhere, checkboxes.docx printed a form with no boxes at all.
+        const box =
+          fieldKeyword(st.instr) === 'FORMCHECKBOX' && st.checkBox !== undefined
+            ? st.checkBox
+              ? CHECKBOX_CHECKED
+              : CHECKBOX_CLEAR
+            : undefined;
         if (shown !== undefined) out.push({ text: shown, properties: {} });
+        else if (box !== undefined) out.push({ text: box, properties: st.properties ?? {} });
       }
       st = null;
       continue;
@@ -1065,6 +1095,7 @@ function collectRuns(
         run,
         ...(parsed.fldChar ? { fldChar: parsed.fldChar } : {}),
         ...(parsed.instrText !== undefined ? { instrText: parsed.instrText } : {}),
+        ...(parsed.checkBox !== undefined ? { checkBox: parsed.checkBox } : {}),
       });
       continue;
     }
@@ -1236,7 +1267,7 @@ function parseRun(
   // §20.4.2.3 — out-param: the ANCHORED drawings this run carries. They are not
   // part of the line at all; the caller emits them as blocks of their own.
   anchored?: Array<BodyElement>,
-): { run: Run; fldChar?: 'begin' | 'separate' | 'end'; instrText?: string } {
+): { run: Run; fldChar?: 'begin' | 'separate' | 'end'; instrText?: string; checkBox?: boolean } {
   const rPr = poChildren(r).find((c) => poIs(c, 'w:rPr'));
   const properties = parseRunProperties(rPr ? poElementToFlat(rPr) : undefined);
   let text = '';
@@ -1245,6 +1276,7 @@ function parseRun(
   let inlineImage: InlineImage | undefined;
   let fldChar: 'begin' | 'separate' | 'end' | undefined;
   let instrText: string | undefined;
+  let checkBox: boolean | undefined;
   let footnoteRef: string | undefined;
   let endnoteRef: string | undefined;
   let commentRef: string | undefined;
@@ -1254,6 +1286,9 @@ function parseRun(
     if (poIs(child, 'w:fldChar')) {
       const t = poAttr(child, 'fldCharType');
       if (t === 'begin' || t === 'separate' || t === 'end') fldChar = t;
+      // §17.16.32 `w:ffData/w:checkBox` — a form checkbox's state rides on the
+      // field's OPENING character, not on its (absent) result.
+      if (t === 'begin') checkBox = fieldCheckBoxState(child);
       continue;
     }
     if (poIs(child, 'w:instrText')) {
@@ -1400,7 +1435,29 @@ function parseRun(
     },
     ...(fldChar ? { fldChar } : {}),
     ...(instrText !== undefined ? { instrText } : {}),
+    ...(checkBox !== undefined ? { checkBox } : {}),
   };
+}
+
+/**
+ * §17.16.32 `w:fldChar/w:ffData/w:checkBox` — whether a form checkbox is
+ * ticked: its current `w:checked` if it states one, else the `w:default` it was
+ * created with, else clear.
+ *
+ * @param fldChar The field's `w:fldChar` (only a `begin` carries `w:ffData`).
+ * @returns The state, or undefined when this is not a checkbox field.
+ */
+function fieldCheckBoxState(fldChar: PoNode): boolean | undefined {
+  const ffData = poChildren(fldChar).find((c) => poIs(c, 'w:ffData'));
+  const box = ffData ? poChildren(ffData).find((c) => poIs(c, 'w:checkBox')) : undefined;
+  if (!box) return undefined;
+  const flag = (name: string): boolean | undefined => {
+    const el = poChildren(box).find((c) => poIs(c, name));
+    if (!el) return undefined;
+    const val = poAttr(el, 'val');
+    return val === undefined || val === '' || (val !== '0' && val !== 'false');
+  };
+  return flag('w:checked') ?? flag('w:default') ?? false;
 }
 
 function elementTag(node: PoNode): string | undefined {
