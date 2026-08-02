@@ -1366,13 +1366,16 @@ function buildSectionContext(
   // `w:evenAndOddHeaders` does. issue_51265_3.docx keeps a four-picture EVEN
   // header it never shows, and counting it put the top margin 1390pt down a
   // 842pt page — every page of the body was drawn off the paper.
-  const headerBottom =
-    dims.headerOffsetPt +
-    Math.max(
-      headerSet.default.heightPt ?? 0,
-      section.properties.titlePg === true ? (headerSet.first.heightPt ?? 0) : 0,
-      section.properties.evenAndOddHeaders === true ? (headerSet.even.heightPt ?? 0) : 0,
-    );
+  const headerHeight = Math.max(
+    headerSet.default.heightPt ?? 0,
+    section.properties.titlePg === true ? (headerSet.first.heightPt ?? 0) : 0,
+    section.properties.evenAndOddHeaders === true ? (headerSet.even.heightPt ?? 0) : 0,
+  );
+  // …and a section with NO header to show is not pushed down by the offset the
+  // header WOULD have had. tdf105490_negativeMargins.docx sets its top margin
+  // at −1pt and declares no header at all, and the bare `w:header` of 35pt
+  // moved its body 36pt down a 297pt page — two pages for the reference's one.
+  const headerBottom = headerHeight > 0 ? dims.headerOffsetPt + headerHeight : 0;
   const marginTop = Math.max(dims.marginTop, headerBottom);
   return {
     endIndex: section.endIndex,
