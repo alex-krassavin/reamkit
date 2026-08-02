@@ -28,7 +28,7 @@ import type { PoNode } from '@/core/po-helpers';
 import type { Pt, ResourceId } from '@/core/ir';
 import type { GradientStop, ShapeGradient } from '@/core/vector';
 import { buildStroke } from '@/core/drawingml/shape-render';
-import { readColorMods, resolveColorNode } from '@/core/drawingml/colors';
+import { applyColorMods, readColorMods, resolveColorNode } from '@/core/drawingml/colors';
 import { emuToPt, pt } from '@/core/ir';
 import {
   poAttr,
@@ -121,6 +121,8 @@ export type DrawingContent =
       readonly height: Pt;
       /** §20.1.2.2.24 `a:ln` on `pic:spPr` / VML `@stroked` — the picture's frame. */
       readonly outline?: PictureOutline;
+      /** §20.1.8.40 `a:outerShdw` on the same `pic:spPr` — the picture's shadow. */
+      readonly shadow?: ShapeShadow;
       /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
       readonly crop?: ImageCrop;
       /** §20.1.7.6 `a:xfrm @rot` — the picture's rotation (1/60000°, clockwise). */
@@ -355,6 +357,7 @@ export function parseDrawing(
   resolveChartPart?: (relId: string) => string | undefined,
   // §20.1.4.2.19 — `a:lnStyleLst` widths, indexed by a gallery style's `a:lnRef`.
   themeLineWidths?: ReadonlyArray<number>,
+  themeEffectStyles?: ReadonlyArray<PoNode>,
   // §21.1.2 — the DrawingML text reader, for a shape that carries an `a:txBody`.
   parseDrawingText?: ParseDrawingText,
 ): DrawingContent | null {
@@ -395,6 +398,7 @@ export function parseDrawing(
       parseBody,
       resolveImage,
       themeLineWidths,
+      themeEffectStyles,
       parseDrawingText,
     );
     if (!data) return null;
@@ -410,6 +414,7 @@ export function parseDrawing(
       parseBody,
       resolveImage,
       themeLineWidths,
+      themeEffectStyles,
       parseDrawingText,
     );
     if (!data) return null;
@@ -428,6 +433,7 @@ export function parseDrawing(
       parseBody,
       resolveImage,
       themeLineWidths,
+      themeEffectStyles,
       parseDrawingText,
     );
     if (!data) return null;
@@ -446,6 +452,7 @@ export function parseDrawing(
       parseBody,
       resolveImage,
       themeLineWidths,
+      themeEffectStyles,
       parseDrawingText,
     );
     const data: ShapeData = {
@@ -513,12 +520,16 @@ export function parseDrawing(
     // picture bare.
     const spPr = poFindDescendant(anchor, 'pic:spPr');
     const outline = spPr ? pictureOutline(parseLine(spPr, resolveColor)) : undefined;
+    // §20.1.8.40 — and the shadow on that same `pic:spPr`, which is how Word
+    // writes the drop shadow of a pasted screenshot (imgshadow.docx).
+    const shadow = spPr ? parseShadow(spPr, resolveColor) : undefined;
     return {
       kind: 'image',
       imageId: rId,
       width: emuToPt(extentCx),
       height: emuToPt(extentCy),
       ...(outline ? { outline } : {}),
+      ...(shadow ? { shadow } : {}),
       ...(crop ? { crop } : {}),
       ...(rot ? { rotation60k: rot } : {}),
       ...(on('flipH') ? { flipH: true } : {}),
@@ -1589,6 +1600,7 @@ function parseLockedCanvas(
   parseBody?: ParseBody,
   resolveImage?: (relId: string) => ResourceId | undefined,
   themeLineWidths?: ReadonlyArray<number>,
+  themeEffectStyles?: ReadonlyArray<PoNode>,
   parseDrawingText?: ParseDrawingText,
 ): ShapeData | null {
   const canvas = expandMcChildren(poChildren(graphicData)).find((c) =>
@@ -1601,6 +1613,7 @@ function parseLockedCanvas(
     parseBody,
     resolveImage,
     themeLineWidths,
+    themeEffectStyles,
     parseDrawingText,
   );
   if (extentCx === undefined || extentCy === undefined) return null;
@@ -1664,6 +1677,7 @@ function parseWgp(
   parseBody?: ParseBody,
   resolveImage?: (relId: string) => ResourceId | undefined,
   themeLineWidths?: ReadonlyArray<number>,
+  themeEffectStyles?: ReadonlyArray<PoNode>,
   parseDrawingText?: ParseDrawingText,
 ): ShapeData | null {
   const wgp = expandMcChildren(poChildren(graphicData)).find((c) => poIs(c, 'wpg:wgp'));
@@ -1674,6 +1688,7 @@ function parseWgp(
     parseBody,
     resolveImage,
     themeLineWidths,
+    themeEffectStyles,
     parseDrawingText,
   );
   const grpSpPr = poChildren(wgp).find((c) => poIs(c, 'wpg:grpSpPr'));
@@ -1710,6 +1725,7 @@ function groupChildren(
   parseBody: ParseBody | undefined,
   resolveImage?: (relId: string) => ResourceId | undefined,
   themeLineWidths?: ReadonlyArray<number>,
+  themeEffectStyles?: ReadonlyArray<PoNode>,
   parseDrawingText?: ParseDrawingText,
   unitScale: { readonly x: number; readonly y: number } = { x: 1, y: 1 },
 ): Array<ShapeGroupChild> {
@@ -1765,6 +1781,7 @@ function groupChildren(
           parseBody,
           resolveImage,
           themeLineWidths,
+          themeEffectStyles,
           parseDrawingText,
           { x: sx, y: sy },
         )
@@ -1778,6 +1795,7 @@ function groupChildren(
             parseBody,
             resolveImage,
             themeLineWidths,
+            themeEffectStyles,
             parseDrawingText,
           );
     if (!data) continue;
@@ -1876,6 +1894,7 @@ function parseNestedGroup(
   parseBody: ParseBody | undefined,
   resolveImage?: (relId: string) => ResourceId | undefined,
   themeLineWidths?: ReadonlyArray<number>,
+  themeEffectStyles?: ReadonlyArray<PoNode>,
   parseDrawingText?: ParseDrawingText,
   unitScale?: { readonly x: number; readonly y: number },
 ): ShapeData {
@@ -1885,6 +1904,7 @@ function parseNestedGroup(
     parseBody,
     resolveImage,
     themeLineWidths,
+    themeEffectStyles,
     parseDrawingText,
     unitScale,
   );
@@ -1926,6 +1946,7 @@ function parseWsp(
   parseBody?: ParseBody,
   resolveImage?: (relId: string) => ResourceId | undefined,
   themeLineWidths?: ReadonlyArray<number>,
+  themeEffectStyles?: ReadonlyArray<PoNode>,
   parseDrawingText?: ParseDrawingText,
 ): ShapeData | null {
   // wps:wsp is normally a direct child, but a nested mc:AlternateContent can
@@ -1940,6 +1961,7 @@ function parseWsp(
     parseBody,
     resolveImage,
     themeLineWidths,
+    themeEffectStyles,
   );
 }
 
@@ -1953,6 +1975,7 @@ function parseWspNode(
   parseBody?: ParseBody,
   resolveImage?: (relId: string) => ResourceId | undefined,
   themeLineWidths?: ReadonlyArray<number>,
+  themeEffectStyles?: ReadonlyArray<PoNode>,
   parseDrawingText?: ParseDrawingText,
 ): ShapeData | null {
   const spPr = poChildren(wsp).find((c) => poIsLocal(c, 'spPr'));
@@ -2026,6 +2049,13 @@ function parseWspNode(
   // IS. LineStyle_DashType.docx asks for `lt1` on seven blue rectangles and we
   // drew black on blue.
   const styled = style && text ? withStyleFontColor(text, style, resolveColor) : text;
+  // §20.1.8.40 — the shadow the shape casts: its own `a:effectLst`, or the one
+  // the gallery style names through `a:effectRef` (§20.1.4.2.8). Word draws it
+  // under every shape that asks; we read neither, so imgshadow.docx and
+  // fdo78957.docx's boxes stood on the page with nothing under them.
+  const shadow =
+    (spPr ? parseShadow(spPr, resolveColor) : undefined) ??
+    (style ? styleRefShadow(style, resolveColor, themeEffectStyles) : undefined);
 
   if (widthEmu === undefined || heightEmu === undefined) return null;
   return {
@@ -2034,9 +2064,45 @@ function parseWspNode(
     geometry,
     fill,
     ...(line ? { line } : {}),
+    ...(shadow ? { shadow } : {}),
     ...(transform ? { transform } : {}),
     ...(styled ? { text: styled } : {}),
   };
+}
+
+/**
+ * §20.1.4.2.8 `<a:effectRef>` — the shadow a gallery style names: a 1-based
+ * index into the theme's `a:effectStyleLst`, plus the colour to put wherever
+ * that style says `phClr`. The same mechanism as the fill and the outline
+ * beside it.
+ *
+ * @param style             The shape's `<wps:style>` node.
+ * @param resolveColor      The document's colour resolver.
+ * @param themeEffectStyles The theme's effect styles, in list order.
+ * @returns The shadow, or undefined when the style names none.
+ */
+function styleRefShadow(
+  style: PoNode,
+  resolveColor: ColorResolver,
+  themeEffectStyles?: ReadonlyArray<PoNode>,
+): ShapeShadow | undefined {
+  const ref = poChildren(style).find((c) => poIs(c, 'a:effectRef'));
+  const idx = ref ? Number(poAttr(ref, 'idx') ?? '') : NaN;
+  if (!ref || !Number.isFinite(idx) || idx < 1) return undefined;
+  const slot = themeEffectStyles?.[idx - 1];
+  const list = slot ? poChildren(slot).find((c) => poIs(c, 'a:effectLst')) : undefined;
+  const shdw = list ? poChildren(list).find((c) => poIs(c, 'a:outerShdw')) : undefined;
+  if (!shdw) return undefined;
+  const child = firstElementChild(ref);
+  const phHex = child ? resolveColorNode(child, resolveColor) : undefined;
+  return shadowFromOuterShdw(shdw, phHex ? placeholderColors(resolveColor, phHex) : resolveColor);
+}
+
+// §20.1.2.3.32 `phClr` — the colour the reference hands the style to use
+// wherever the style itself says "the placeholder".
+function placeholderColors(base: ColorResolver, phHex: string): ColorResolver {
+  return (raw) =>
+    'scheme' in raw && raw.scheme === 'phClr' ? applyColorMods(phHex, raw.mods ?? []) : base(raw);
 }
 
 // wps:txbx/w:txbxContent (the text body) + wps:bodyPr (insets + vertical

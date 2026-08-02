@@ -271,6 +271,12 @@ export interface InlineImage {
   readonly resource?: ResourceId;
   /** The picture's own frame, when it has one (see {@link PictureOutline}). */
   readonly outline?: PictureOutline;
+  /**
+   * §20.1.8.40 `a:outerShdw` — the drop shadow under the picture. Word writes
+   * one on every screenshot pasted with a style; drawn nowhere, imgshadow.docx's
+   * six stood flat on the page where both references lift them off it.
+   */
+  readonly shadow?: ShapeShadow;
   readonly width: Pt;
   readonly height: Pt;
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
@@ -1036,6 +1042,12 @@ export interface ImageBlock {
   readonly resource?: ResourceId;
   /** The picture's own frame, when it has one (see {@link PictureOutline}). */
   readonly outline?: PictureOutline;
+  /**
+   * §20.1.8.40 `a:outerShdw` — the drop shadow under the picture. Word writes
+   * one on every screenshot pasted with a style; drawn nowhere, imgshadow.docx's
+   * six stood flat on the page where both references lift them off it.
+   */
+  readonly shadow?: ShapeShadow;
   readonly width: Pt;
   readonly height: Pt;
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */

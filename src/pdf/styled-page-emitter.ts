@@ -168,15 +168,23 @@ function assembleStyledPdf(
   // One state per distinct alpha, shared by every shadow that wants it.
   const alphaStateNames = new Map<number, string>();
   const extGStateEntries: Record<string, PdfValue> = {};
+  const wantAlpha = (alpha: number | undefined): void => {
+    if (alpha === undefined || alpha >= 1) return;
+    const key = Math.round(alpha * 1000) / 1000;
+    if (alphaStateNames.has(key)) return;
+    const nm = `GSa${alphaStateNames.size}`;
+    alphaStateNames.set(key, nm);
+    extGStateEntries[nm] = dict({ ca: key, CA: key });
+  };
   for (const page of renderedPages) {
-    for (const item of paintPlan(page.commands).shapes) {
-      const alpha = item.shape.shadow?.alpha;
-      if (alpha === undefined || alpha >= 1) continue;
-      const key = Math.round(alpha * 1000) / 1000;
-      if (alphaStateNames.has(key)) continue;
-      const nm = `GSa${alphaStateNames.size}`;
-      alphaStateNames.set(key, nm);
-      extGStateEntries[nm] = dict({ ca: key, CA: key });
+    const plan = paintPlan(page.commands);
+    for (const item of plan.shapes) wantAlpha(item.shape.shadow?.alpha);
+    // …and the shadow an inline PICTURE casts, which rides its token rather
+    // than a shape of its own (imgshadow.docx).
+    for (const line of plan.lines) {
+      for (const tok of line.line.tokens) {
+        if (tok.kind === 'image') wantAlpha(tok.shadow?.alpha);
+      }
     }
   }
   const resourcesDict = dict({
@@ -863,6 +871,28 @@ function emitPageContent(
       if (inBT) {
         out.push('ET');
         inBT = false;
+      }
+      // §20.1.8.40 — the shadow the picture casts, drawn first so the picture
+      // covers it: the same box, offset, in the shadow's own colour and at the
+      // transparency it asks for. imgshadow.docx lifts six screenshots off the
+      // page this way and we drew them flat.
+      const shdw = tok.shadow;
+      if (shdw) {
+        const bx = tok.drawBox;
+        const [shr, shg, shb] = hexToRgb01(shdw.colorHex);
+        const state =
+          shdw.alpha < 1 ? alphaStateNames?.get(Math.round(shdw.alpha * 1000) / 1000) : undefined;
+        out.push('q');
+        if (state) out.push(`/${state} gs`);
+        out.push(`${formatNumber(shr)} ${formatNumber(shg)} ${formatNumber(shb)} rg`);
+        out.push(
+          `${formatNumber(x + (bx?.dxPt ?? 0) + shdw.dxPt)} ` +
+            `${formatNumber(baselineY + (bx?.dyPt ?? 0) - shdw.dyPt)} ` +
+            `${formatNumber(bx?.widthPt ?? tok.widthPt)} ` +
+            `${formatNumber(bx?.heightPt ?? tok.heightPt)} re`,
+        );
+        out.push('f');
+        out.push('Q');
       }
       out.push('q');
       // §20.4.2.6 — the reserved box may be larger than the picture (the

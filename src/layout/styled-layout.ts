@@ -3805,6 +3805,8 @@ interface RunPlan {
   readonly imageResourceName: string;
   /** §20.1.2.2.24 — the frame the picture is drawn with, when it has one. */
   readonly imageOutline?: PictureOutline;
+  /** §20.1.8.40 — the shadow the inline picture casts. */
+  readonly imageShadow?: ShapeShadow;
   readonly imageCrop?: ImageCrop;
   /** §20.1.7.6 — the picture's rotation, in degrees clockwise. */
   readonly imageRotationDeg?: number;
@@ -3971,6 +3973,7 @@ function tokenizeParagraph(
         imageHeightPt: heightPt,
         imageResourceName: res?.resourceName ?? '',
         ...(run.inlineImage.outline ? { imageOutline: run.inlineImage.outline } : {}),
+        ...(run.inlineImage.shadow ? { imageShadow: run.inlineImage.shadow } : {}),
         ...(run.inlineImage.crop ? { imageCrop: run.inlineImage.crop } : {}),
         ...(run.inlineImage.rotation60k
           ? { imageRotationDeg: run.inlineImage.rotation60k / 60000 }
@@ -4093,6 +4096,7 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         widthPt: plan.imageWidthPt,
         heightPt: plan.imageHeightPt,
         ...(plan.imageOutline ? { outline: plan.imageOutline } : {}),
+        ...(plan.imageShadow ? { shadow: plan.imageShadow } : {}),
         ...(plan.imageCrop ? { crop: plan.imageCrop } : {}),
         ...(plan.imageRotationDeg ? { rotationDeg: plan.imageRotationDeg } : {}),
         ...(plan.imageFlipH ? { flipH: true } : {}),
@@ -4172,6 +4176,7 @@ function tokenizePlansBidi(
         widthPt: plan.imageWidthPt,
         heightPt: plan.imageHeightPt,
         ...(plan.imageOutline ? { outline: plan.imageOutline } : {}),
+        ...(plan.imageShadow ? { shadow: plan.imageShadow } : {}),
         ...(plan.imageCrop ? { crop: plan.imageCrop } : {}),
         ...(plan.imageRotationDeg ? { rotationDeg: plan.imageRotationDeg } : {}),
         ...(plan.imageFlipH ? { flipH: true } : {}),

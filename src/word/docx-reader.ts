@@ -33,7 +33,11 @@ import {
 import { FEATURES, ResourceStore } from '@/core/ir';
 import { parseChart, withChartColorStyle } from '@/core/drawingml/chart-parser';
 import { DEFAULT_THEME_PALETTE, makeColorResolver } from '@/core/drawingml/colors';
-import { parseTheme, parseThemeLineWidths } from '@/core/drawingml/theme-parser';
+import {
+  parseTheme,
+  parseThemeEffectStyles,
+  parseThemeLineWidths,
+} from '@/core/drawingml/theme-parser';
 import { OpcPackage, isOoxmlRel, parseCoreProperties } from '@/core/opc';
 import {
   EMPTY_NUMBERING,
@@ -99,6 +103,7 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
   // indexes by `a:lnRef idx` for its outline.
   const themeData = loadTheme(pkg, main.path);
   const themeLineWidths = themeData ? parseThemeLineWidths(themeData) : undefined;
+  const themeEffectStyles = themeData ? parseThemeEffectStyles(themeData) : undefined;
   // Content-addressed store for binary resources; the image resolver fills it
   // lazily as the parsers meet drawing relationships (identical bytes dedupe).
   const resources = new ResourceStore();
@@ -116,6 +121,7 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
     resolveColor,
     ...(settings.compatibilityMode === undefined ? { autoSpacingPt: HTML_AUTO_SPACING_PT } : {}),
     ...(themeLineWidths && themeLineWidths.length > 0 ? { themeLineWidths } : {}),
+    ...(themeEffectStyles && themeEffectStyles.length > 0 ? { themeEffectStyles } : {}),
     resolveImage,
     resolveHyperlink,
     resolveDiagram: makeDiagramResolver(pkg, main.path, resources),

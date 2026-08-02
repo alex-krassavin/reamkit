@@ -153,6 +153,11 @@ export interface ParseContext {
    */
   readonly themeLineWidths?: ReadonlyArray<number>;
   /**
+   * §20.1.4.1.15 `a:effectStyleLst` — the theme's effect styles, which an
+   * `a:effectRef idx` indexes for the shadow a gallery-drawn shape wears.
+   */
+  readonly themeEffectStyles?: ReadonlyArray<PoNode>;
+  /**
    * Sink for graceful-degradation notices (E-SMARTART SA3): a SmartArt with no
    * drawing override records a dropped-feature {@link Loss} rather than vanishing.
    */
@@ -799,6 +804,7 @@ function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): Array<Bod
         ctx.resolveImage,
         ctx.resolveChartPart,
         ctx.themeLineWidths,
+        ctx.themeEffectStyles,
         drawingTextParser,
       ),
     )
@@ -834,6 +840,7 @@ function blocksForDrawing(
         image: {
           ...(resource ? { resource } : {}),
           ...(content.outline ? { outline: content.outline } : {}),
+          ...(content.shadow ? { shadow: content.shadow } : {}),
           width: content.width,
           height: content.height,
           ...(content.crop ? { crop: content.crop } : {}),
@@ -1481,6 +1488,7 @@ function parseRun(
         ctx.resolveImage,
         ctx.resolveChartPart,
         ctx.themeLineWidths,
+        ctx.themeEffectStyles,
         drawingTextParser,
       );
       // §20.4.2.3 — an ANCHORED drawing is not in the line: it hangs off the
@@ -1510,6 +1518,7 @@ function parseRun(
         inlineImage = {
           ...(resource ? { resource } : {}),
           ...(content.outline ? { outline: content.outline } : {}),
+          ...(content.shadow ? { shadow: content.shadow } : {}),
           width: content.width,
           height: content.height,
           ...(content.crop ? { crop: content.crop } : {}),
@@ -1539,6 +1548,7 @@ function parseRun(
           inlineImage = {
             resource,
             ...(content.outline ? { outline: content.outline } : {}),
+            ...(content.shadow ? { shadow: content.shadow } : {}),
             width: content.width,
             height: content.height,
           };

@@ -197,6 +197,26 @@ export function makeColorResolver(palette: ReadonlyMap<string, string>): ColorRe
 /** A {@link ColorResolver} backed by the {@link DEFAULT_THEME_PALETTE}. */
 export const defaultColorResolver: ColorResolver = makeColorResolver(DEFAULT_THEME_PALETTE);
 
+// §20.1.10.47 ST_PresetColorVal — the handful of names a `a:prstClr` uses in
+// practice. The full table runs to 140 CSS names; these are the ones Word
+// writes for shadows and outlines.
+const PRESET_COLORS: ReadonlyMap<string, string> = new Map([
+  ['black', '000000'],
+  ['white', 'FFFFFF'],
+  ['gray', '808080'],
+  ['grey', '808080'],
+  ['darkGray'.toLowerCase(), 'A9A9A9'],
+  ['lightGray'.toLowerCase(), 'D3D3D3'],
+  ['red', 'FF0000'],
+  ['green', '008000'],
+  ['blue', '0000FF'],
+  ['yellow', 'FFFF00'],
+  ['cyan', '00FFFF'],
+  ['magenta', 'FF00FF'],
+  ['dkGray'.toLowerCase(), 'A9A9A9'],
+  ['ltGray'.toLowerCase(), 'D3D3D3'],
+]);
+
 /**
  * Read the colour transform children ({@link ColorMod}s) under an `a:srgbClr` /
  * `a:schemeClr` node, normalising each `val` from thousandths-of-a-percent to 0..1.
@@ -267,6 +287,16 @@ export function resolveColorNode(c: PoNode, resolveColor: ColorResolver): string
     const last = poAttr(c, 'lastClr');
     if (last && /^[0-9A-Fa-f]{6}$/.test(last)) return last.toUpperCase();
     return SYSTEM_COLORS.get(poAttr(c, 'val') ?? '');
+  }
+  // §20.1.2.3.22 `a:prstClr` — a colour NAMED rather than referenced, out of
+  // the preset table. Word writes the shadow under a picture as
+  // `<a:prstClr val="black"><a:alpha val="40000"/>`, and unread the shadow had
+  // no colour to be drawn in at all (imgshadow.docx's six screenshots).
+  if (poIs(c, 'a:prstClr')) {
+    const hex = PRESET_COLORS.get((poAttr(c, 'val') ?? '').toLowerCase());
+    if (hex === undefined) return undefined;
+    const presetMods = readColorMods(c);
+    return presetMods.length > 0 ? applyColorMods(hex, presetMods) : hex;
   }
   const isSrgb = poIs(c, 'a:srgbClr');
   if (!isSrgb && !poIs(c, 'a:schemeClr')) return undefined;
