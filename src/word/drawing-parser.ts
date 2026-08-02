@@ -1857,7 +1857,13 @@ function parseWspNode(
   // alone, spPr says the shape has neither. TextEffects_Groupshapes.docx's
   // rectangle asks for accent1 that way and we drew its caption on white.
   const style = poChildren(wsp).find((c) => poIsLocal(c, 'style'));
-  if (style && fill.kind === 'none') fill = styleRefFill(style, resolveColor);
+  // …but a fill the shape states ITSELF wins, and `a:noFill` is a statement:
+  // §20.1.4.1.9's own properties override the reference. ShapeOverlappingWithSdt
+  // spells `a:noFill` beside a `fillRef` and we painted its rectangle accent
+  // blue, over the heading it is drawn around.
+  if (style && fill.kind === 'none' && !statesFill(spPr)) {
+    fill = styleRefFill(style, resolveColor);
+  }
   // §20.1.4.2.19 — a shape may state a WIDTH or a dash of its own and take its
   // COLOUR from the gallery style: dashed_line_custdash_percentage.docx rules a
   // 4.5pt accent-blue line that way and we drew a black hairline.
@@ -1891,6 +1897,21 @@ function parseWspNode(
 
 // wps:txbx/w:txbxContent (the text body) + wps:bodyPr (insets + vertical
 // anchor). Returns undefined when the shape carries no text.
+// Whether `spPr` states a fill of its own at all — including `a:noFill`, which
+// is a shape saying it has none rather than saying nothing.
+const FILL_TAGS: ReadonlySet<string> = new Set([
+  'a:noFill',
+  'a:solidFill',
+  'a:gradFill',
+  'a:blipFill',
+  'a:pattFill',
+  'a:grpFill',
+]);
+
+function statesFill(spPr: PoNode | undefined): boolean {
+  return spPr !== undefined && poChildren(spPr).some((c) => FILL_TAGS.has(poTag(c) ?? ''));
+}
+
 // §20.1.4.2.13 `<a:fillRef>` — the fill a gallery style names. The theme's own
 // `a:fillStyleLst` slot (which could make it a gradient) is out of reach here;
 // the colour the reference names is what both references draw.
