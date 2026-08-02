@@ -554,7 +554,16 @@ export function parseBodyElements(
   // Body-level w:bookmarkStart (between block elements) anchors to the NEXT
   // paragraph.
   let pendingBookmarks: Array<string> | undefined;
+  // §17.3.3.1 — a `w:br` belongs in a RUN, but producers do write one straight
+  // into the body, and both references honour it. tdf108714.docx separates its
+  // paragraphs with body-level page breaks and nothing else, so read as
+  // unknown chrome its four pages came out as one.
+  let pendingPageBreak = false;
   for (const child of children) {
+    if (poIs(child, 'w:br')) {
+      if (poAttr(child, 'type') === 'page') pendingPageBreak = true;
+      continue;
+    }
     if (poIs(child, 'w:bookmarkStart')) {
       const bookmarkName = poAttr(child, 'name');
       if (bookmarkName !== undefined && bookmarkName !== '' && bookmarkName !== '_GoBack') {
@@ -567,7 +576,11 @@ export function parseBodyElements(
         mark(drawings.length);
       } else {
         const anchored: Array<BodyElement> = [];
-        const paragraph = parseParagraph(child, ctx, pendingBookmarks, anchored, sdtRunProps);
+        const parsed = parseParagraph(child, ctx, pendingBookmarks, anchored, sdtRunProps);
+        const paragraph = pendingPageBreak
+          ? { ...parsed, properties: { ...parsed.properties, pageBreakBefore: true } }
+          : parsed;
+        pendingPageBreak = false;
         // The floats first: each places itself against the paragraph it hangs
         // off, and one emitted after it would hang off whatever follows.
         out.push(...anchored, { kind: 'paragraph', paragraph });
