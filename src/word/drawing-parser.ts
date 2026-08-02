@@ -2778,7 +2778,37 @@ function parseGradient(grad: PoNode, resolveColor: ColorResolver): ShapeGradient
   }
   if (stops.length === 0) return undefined;
   stops.sort((a, b) => a.offset - b.offset);
-  if (poChildren(grad).some((c) => poIs(c, 'a:path'))) return { kind: 'radial', stops };
+  // §20.1.8.46 `a:path` — a radial sweep, and it says both WHAT SHAPE its
+  // contours are (`circle` / `rect` / `shape`) and WHERE it starts: the
+  // `a:fillToRect` is the rectangle the FIRST stop fills, in the box's own
+  // hundred-thousandths. The standard theme's background sweep starts a fifth
+  // in from the left and halfway down, and centred it lit the wrong quarter of
+  // fdo78957.docx's cover.
+  const path = poChildren(grad).find((c) => poIs(c, 'a:path'));
+  if (path) {
+    const rect = poChildren(path).find((c) => poIs(c, 'a:fillToRect'));
+    const side = (name: string): number | undefined => {
+      const v = rect ? poIntAttr(rect, name) : undefined;
+      return v === undefined ? undefined : v / 100000;
+    };
+    const l = side('l');
+    const r = side('r');
+    const t = side('t');
+    const b = side('b');
+    const center =
+      l !== undefined || r !== undefined || t !== undefined || b !== undefined
+        ? {
+            x: clampUnit(((l ?? 0) + 1 - (r ?? 0)) / 2),
+            y: clampUnit(((t ?? 0) + 1 - (b ?? 0)) / 2),
+          }
+        : undefined;
+    return {
+      kind: 'radial',
+      stops,
+      ...(poAttr(path, 'path') === 'rect' ? { sweep: 'rect' as const } : {}),
+      ...(center ? { center } : {}),
+    };
+  }
   const lin = poChildren(grad).find((c) => poIs(c, 'a:lin'));
   const ang = lin ? poIntAttr(lin, 'ang') : undefined;
   const angle = ang !== undefined ? (ang / 60000) % 360 : 0;
