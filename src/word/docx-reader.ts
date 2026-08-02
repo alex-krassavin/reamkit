@@ -65,6 +65,11 @@ const PEOPLE_PART = 'word/people.xml';
 const NUMBERING_PART = 'word/numbering.xml';
 const SETTINGS_PART = 'word/settings.xml';
 const CORE_PROPS_PART = 'docProps/core.xml';
+// OPC §11.1 names the main document part through the package's `officeDocument`
+// relationship, not by a fixed path — `word/document.xml` is only what every
+// producer happens to choose. tdf104713_undefinedStyles.docx calls its
+// `word/trial.xml` and hangs its footer off that part's own .rels, so every
+// lookup keyed on the conventional name came back empty.
 const MAIN_DOCUMENT_PART = 'word/document.xml';
 
 const REL_HYPERLINK =
@@ -88,16 +93,16 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
   const main = pkg.getMainDocument();
   // Theme-backed colour resolver (schemeClr → hex); falls back to the built-in
   // Office palette when there is no theme part.
-  const resolveColor = buildColorResolver(pkg);
+  const resolveColor = buildColorResolver(pkg, main.path);
   // §20.1.4.2.19 — the theme's own line weights, which a gallery-styled shape
   // indexes by `a:lnRef idx` for its outline.
-  const themeData = loadTheme(pkg);
+  const themeData = loadTheme(pkg, main.path);
   const themeLineWidths = themeData ? parseThemeLineWidths(themeData) : undefined;
   // Content-addressed store for binary resources; the image resolver fills it
   // lazily as the parsers meet drawing relationships (identical bytes dedupe).
   const resources = new ResourceStore();
-  const resolveImage = makeImageResolver(pkg, resources);
-  const resolveHyperlink = makeHyperlinkResolver(pkg);
+  const resolveImage = makeImageResolver(pkg, resources, main.path);
+  const resolveHyperlink = makeHyperlinkResolver(pkg, main.path);
   // Graceful-degradation notices recorded while parsing the body (E-SMARTART
   // SA3: a SmartArt with no drawing override). Headers/footers and notes don't
   // resolve diagrams, so the sink rides only on the main-body context.
@@ -112,8 +117,8 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
     ...(themeLineWidths && themeLineWidths.length > 0 ? { themeLineWidths } : {}),
     resolveImage,
     resolveHyperlink,
-    resolveDiagram: makeDiagramResolver(pkg, MAIN_DOCUMENT_PART, resources),
-    resolveChartPart: makeChartResolver(pkg, MAIN_DOCUMENT_PART),
+    resolveDiagram: makeDiagramResolver(pkg, main.path, resources),
+    resolveChartPart: makeChartResolver(pkg, main.path),
     onLoss: (loss) => losses.push(loss),
     // Tracks open comment ranges across the body so runs carry commentRangeRefs.
     openCommentRanges: new Set<string>(),
@@ -185,8 +190,8 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
         ],
   ) as Array<Section>;
 
-  const headersFooters = loadHeadersFootersForSections(pkg, sections, ctx, resources);
-  const charts = loadCharts(pkg, resolveColor, chartOwningParts(pkg, sections));
+  const headersFooters = loadHeadersFootersForSections(pkg, sections, ctx, resources, main.path);
+  const charts = loadCharts(pkg, resolveColor, chartOwningParts(pkg, sections, main.path));
   // The document's own embedded fonts (de-obfuscated). A run whose w:ascii
   // matches one renders with the real font instead of a substitute.
   const embeddedFonts = loadEmbeddedFonts(pkg);
@@ -263,11 +268,22 @@ export const docxReader: DocumentReader<FlowDoc> = {
     FEATURES.trackedChanges,
     FEATURES.fontsEmbedding,
   ]),
-  // A docx is a ZIP whose central directory names word/document.xml — the part
-  // names sit as plain bytes in the container, so a substring probe is cheap
-  // and reliable without unzipping.
+  // A docx is a ZIP whose central directory names the WordprocessingML parts —
+  // the part names sit as plain bytes in the container, so a substring probe is
+  // cheap and reliable without unzipping.
+  //
+  // The MAIN part's name is not fixed: OPC names it through the package's
+  // `officeDocument` relationship, which the reader already follows.
+  // tdf104713_undefinedStyles.docx calls it `word/trial.xml`, and a probe for
+  // `word/document.xml` alone refused a file the reader behind it reads.
+  // `word/styles.xml` is what every producer writes beside it, and neither an
+  // xlsx (`xl/`) nor a pptx (`ppt/`) has anything under `word/`.
   sniff: (bytes) =>
-    bytes[0] === 0x50 && bytes[1] === 0x4b && bytesIncludePartName(bytes, 'word/document.xml'),
+    bytes[0] === 0x50 &&
+    bytes[1] === 0x4b &&
+    (bytesIncludePartName(bytes, 'word/document.xml') ||
+      bytesIncludePartName(bytes, 'word/styles.xml') ||
+      bytesIncludePartName(bytes, 'word/_rels/')),
   read: (bytes) => readDocx(bytes),
 };
 
@@ -458,18 +474,18 @@ function makeChartResolver(
 // Theme colour resolver: merge the document's theme palette (if any) over the
 // built-in Office defaults, so schemeClr references resolve to the document's
 // actual accent colours and unspecified slots still have sensible values.
-function buildColorResolver(pkg: OpcPackage): ColorResolver {
-  const themeData = loadTheme(pkg);
+function buildColorResolver(pkg: OpcPackage, mainPart: string): ColorResolver {
+  const themeData = loadTheme(pkg, mainPart);
   if (!themeData) return makeColorResolver(DEFAULT_THEME_PALETTE);
   const palette = new Map(DEFAULT_THEME_PALETTE);
   for (const [slot, hex] of parseTheme(themeData)) palette.set(slot, hex);
   return makeColorResolver(palette);
 }
 
-function loadTheme(pkg: OpcPackage): Uint8Array | undefined {
-  for (const rel of pkg.getPartRelationships(MAIN_DOCUMENT_PART)) {
+function loadTheme(pkg: OpcPackage, mainPart: string): Uint8Array | undefined {
+  for (const rel of pkg.getPartRelationships(mainPart)) {
     if (!isOoxmlRel(rel.type, 'theme')) continue;
-    const resolved = pkg.resolveRelatedPart(MAIN_DOCUMENT_PART, rel);
+    const resolved = pkg.resolveRelatedPart(mainPart, rel);
     if (resolved) return resolved.data;
   }
   return pkg.getPart(THEME_PART);
@@ -517,6 +533,7 @@ function loadHeadersFootersForSections(
   sections: ReadonlyArray<Section>,
   ctx: ParseContext,
   store: ResourceStore,
+  mainPart: string,
 ): ReadonlyMap<string, ReadonlyArray<BodyElement>> {
   const wanted = new Set<string>();
   for (const s of sections) {
@@ -524,14 +541,14 @@ function loadHeadersFootersForSections(
     for (const f of s.properties.footers) wanted.add(f.relationshipId);
   }
   if (wanted.size === 0) return new Map();
-  const rels = pkg.getPartRelationships(MAIN_DOCUMENT_PART);
+  const rels = pkg.getPartRelationships(mainPart);
   if (rels.length === 0) return new Map();
 
   const out = new Map<string, ReadonlyArray<BodyElement>>();
   for (const rel of rels) {
     if (!wanted.has(rel.id)) continue;
     if (!isOoxmlRel(rel.type, 'header') && !isOoxmlRel(rel.type, 'footer')) continue;
-    const resolved = pkg.resolveRelatedPart(MAIN_DOCUMENT_PART, rel);
+    const resolved = pkg.resolveRelatedPart(mainPart, rel);
     if (!resolved) continue;
     const hfCtx: ParseContext = {
       resolveColor: ctx.resolveColor,
@@ -546,17 +563,21 @@ function loadHeadersFootersForSections(
 
 // The parts whose relationships may point at a chart: the body plus every
 // header/footer the sections actually use.
-function chartOwningParts(pkg: OpcPackage, sections: ReadonlyArray<Section>): Array<string> {
+function chartOwningParts(
+  pkg: OpcPackage,
+  sections: ReadonlyArray<Section>,
+  mainPart: string,
+): Array<string> {
   const wanted = new Set<string>();
   for (const s of sections) {
     for (const h of s.properties.headers) wanted.add(h.relationshipId);
     for (const f of s.properties.footers) wanted.add(f.relationshipId);
   }
-  const parts = [MAIN_DOCUMENT_PART];
-  for (const rel of pkg.getPartRelationships(MAIN_DOCUMENT_PART)) {
+  const parts = [mainPart];
+  for (const rel of pkg.getPartRelationships(mainPart)) {
     if (!wanted.has(rel.id)) continue;
     if (!isOoxmlRel(rel.type, 'header') && !isOoxmlRel(rel.type, 'footer')) continue;
-    const resolved = pkg.resolveRelatedPart(MAIN_DOCUMENT_PART, rel);
+    const resolved = pkg.resolveRelatedPart(mainPart, rel);
     if (resolved) parts.push(resolved.path);
   }
   return parts;
