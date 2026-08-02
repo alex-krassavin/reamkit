@@ -1578,6 +1578,11 @@ export interface FloatAnchor {
      */
     readonly relativeFrom: 'margin' | 'page' | 'paragraph' | 'line' | 'topMargin' | 'bottomMargin';
     readonly offsetPt?: Pt;
+    /**
+     * §20.4.3.1 `wp:align` (VML: `mso-position-vertical`) — a KEYWORD rather
+     * than an offset, which is how Word centres a watermark in its page.
+     */
+    readonly align?: 'top' | 'center' | 'bottom';
   };
   /**
    * §20.4.2.3 `wp:anchor @distT/@distB/@distL/@distR` — how far the wrapped

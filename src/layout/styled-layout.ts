@@ -1326,6 +1326,7 @@ function buildSectionContext(
     dims.marginLeft,
     dims.pageHeight,
     dims.headerOffsetPt,
+    { top: dims.marginTop, bottom: dims.marginBottom },
   );
   const footerSet = layoutFooterSet(
     section.properties,
@@ -1337,6 +1338,7 @@ function buildSectionContext(
     dims.marginLeft,
     dims.pageHeight,
     dims.footerOffsetPt,
+    { top: dims.marginTop, bottom: dims.marginBottom },
   );
   const columns = buildColumnGeometry(section.properties.columns, contentWidth);
   // A header band taller than the gap between its own offset and the top margin
@@ -1449,6 +1451,8 @@ function layoutHeaderSet(
   marginLeft: number,
   pageHeight: number,
   headerOffsetPt: number,
+  // §20.4.3.1 — the margin box a keyword-positioned drawing centres itself in.
+  bandMargins: { readonly top: number; readonly bottom: number },
 ): HeaderFooterSet {
   const band = (type: HeaderFooterType): HfBandEntry => {
     const ref = refByType(section.headers, type);
@@ -1466,6 +1470,8 @@ function layoutHeaderSet(
           pageHeight - headerOffsetPt,
           pageHeight,
           contentWidth,
+          undefined,
+          bandMargins,
         ),
       );
     };
@@ -1532,6 +1538,8 @@ function layoutFooterSet(
   marginLeft: number,
   pageHeight: number,
   footerOffsetPt: number,
+  // §20.4.3.1 — the margin box a keyword-positioned drawing centres itself in.
+  bandMargins: { readonly top: number; readonly bottom: number },
 ): HeaderFooterSet {
   const band = (type: HeaderFooterType): HfBandEntry => {
     const ref = refByType(section.footers, type);
@@ -1552,6 +1560,8 @@ function layoutFooterSet(
           footerOffsetPt + totalHeight,
           pageHeight,
           contentWidth,
+          undefined,
+          bandMargins,
         ),
       );
     };
@@ -2993,7 +3003,25 @@ function bandAnchor(
  * @param pageHeight The page height.
  * @returns The drawing's top edge, y-up.
  */
-function bandAnchorTop(float: FloatAnchor, cursorY: number, pageHeight: number): number {
+function bandAnchorTop(
+  float: FloatAnchor,
+  cursorY: number,
+  pageHeight: number,
+  heightPt = 0,
+  margins?: { readonly top: number; readonly bottom: number },
+): number {
+  // §20.4.3.1 — a KEYWORD rather than an offset: Word centres a watermark in
+  // the page (or in the margin box) this way, and pinned to the band's cursor
+  // pictureWatermark.docx printed its penguins in the top corner.
+  const align = float.posV?.align;
+  if (align !== undefined) {
+    const page = float.posV?.relativeFrom === 'page' || !margins;
+    const topYUp = page ? pageHeight : pageHeight - margins.top;
+    const bottomYUp = page ? 0 : margins.bottom;
+    if (align === 'top') return topYUp;
+    if (align === 'bottom') return bottomYUp + heightPt;
+    return bottomYUp + (topYUp - bottomYUp + heightPt) / 2;
+  }
   const offset = float.posV?.offsetPt ?? 0;
   return float.posV?.relativeFrom === 'page' ? pageHeight - offset : cursorY - offset;
 }
@@ -3009,6 +3037,8 @@ function drawBlocksSequentially(
   // Tagged PDF: stamp every emitted line with this structure node (used by
   // the footnote band; header/footer bands stay artifact-marked instead).
   structId?: number,
+  // §20.4.3.1 — the margin box a keyword-positioned drawing centres itself in.
+  bandMargins?: { readonly top: number; readonly bottom: number },
 ): Array<PageItem> {
   const out: Array<PageItem> = [];
   let cursorY = startY;
@@ -3047,7 +3077,7 @@ function drawBlocksSequentially(
       const top =
         anchored === undefined || !block.float
           ? cursorY
-          : bandAnchorTop(block.float, cursorY, pageHeight);
+          : bandAnchorTop(block.float, cursorY, pageHeight, block.heightPt, bandMargins);
       out.push({
         type: 'image',
         x: pt(startX + offset),
@@ -3091,7 +3121,7 @@ function drawBlocksSequentially(
       const top =
         anchored === undefined || !block.float
           ? cursorY
-          : bandAnchorTop(block.float, cursorY, pageHeight);
+          : bandAnchorTop(block.float, cursorY, pageHeight, block.heightPt, bandMargins);
       emitShapeItems(block, startX + offset, top - block.heightPt, out, pageHeight, structId);
       if (anchored === undefined) cursorY -= block.heightPt;
       cursorY -= block.spacingAfterPt;
@@ -6041,9 +6071,18 @@ class PageAssembler {
    * The drawing's TOP in the y-up cursor frame. Paragraph/line-relative offsets
    * hang off the anchoring paragraph's current position.
    */
-  floatTopYUp = (f: FloatAnchor): number => {
+  floatTopYUp = (f: FloatAnchor, heightPt = 0): number => {
     const v = f.posV;
     if (!v) return this.cursorY;
+    // §20.4.3.1 — a keyword position: within the page or the margin box.
+    if (v.align !== undefined) {
+      const page = v.relativeFrom === 'page';
+      const topYUp = page ? this.ctx.pageHeight : this.ctx.pageHeight - this.ctx.marginTop;
+      const bottomYUp = page ? 0 : this.ctx.marginBottom;
+      if (v.align === 'top') return topYUp;
+      if (v.align === 'bottom') return bottomYUp + heightPt;
+      return bottomYUp + (topYUp - bottomYUp + heightPt) / 2;
+    }
     // §20.4.3.4 — the TOP margin band starts at the page's own top edge; the
     // BOTTOM one starts where the text area ends.
     if (v.relativeFrom === 'page' || v.relativeFrom === 'topMargin')
@@ -6735,7 +6774,7 @@ function paginateSections(
       };
       if (isOutOfFlowFloat(block.float)) {
         const fx = asm.floatX(block.float, block.widthPt);
-        const fy = asm.floatTopYUp(block.float);
+        const fy = asm.floatTopYUp(block.float, block.heightPt);
         emitImageAt(
           fx,
           fy,
@@ -6767,7 +6806,7 @@ function paginateSections(
         emitShapeItems(block, x, bottomYUp, sink, asm.ctx.pageHeight, figId);
       if (isOutOfFlowFloat(block.float)) {
         const fx = asm.floatX(block.float, block.widthPt);
-        const fy = asm.floatTopYUp(block.float);
+        const fy = asm.floatTopYUp(block.float, block.heightPt);
         emitShapeAt(
           fx,
           fy - block.heightPt,
@@ -6799,7 +6838,7 @@ function paginateSections(
       };
       if (isOutOfFlowFloat(block.float)) {
         const fx = asm.floatX(block.float, block.widthPt);
-        const fy = asm.floatTopYUp(block.float);
+        const fy = asm.floatTopYUp(block.float, block.heightPt);
         emitChartAt(
           fx,
           fy - block.heightPt,
@@ -6838,7 +6877,9 @@ function paginateSections(
       // bottom edge; laid out in the flow it is merely in the wrong place, and
       // all of it is there. Word and LibreOffice break a floating table across
       // pages, which the float sinks have no way to express.
-      const anchorY = isOutOfFlowFloat(block.float) ? asm.floatTopYUp(block.float) : 0;
+      const anchorY = isOutOfFlowFloat(block.float)
+        ? asm.floatTopYUp(block.float, block.heightPt)
+        : 0;
       if (isOutOfFlowFloat(block.float) && anchorY - block.heightPt >= asm.ctx.marginBottom) {
         const fx = asm.floatX(block.float, block.totalWidthPt);
         const fy = anchorY;

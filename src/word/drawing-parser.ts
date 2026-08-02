@@ -202,6 +202,7 @@ function parseFloatAnchor(anchor: PoNode): FloatAnchor | undefined {
 }
 
 const ANCHOR_ALIGNS = new Set(['left', 'center', 'right']);
+const ANCHOR_V_ALIGNS = new Set(['top', 'center', 'bottom']);
 
 /**
  * `wp14:sizeRelH` / `wp14:sizeRelV` — the drawing's width and height as
@@ -271,6 +272,8 @@ function parseAnchorPos(
     relativeFrom,
     ...(Number.isFinite(offsetRaw) ? { offsetPt: emuToPt(offsetRaw) } : {}),
     ...(tag === 'wp:positionH' && ANCHOR_ALIGNS.has(alignRaw) ? { align: alignRaw } : {}),
+    // §20.4.3.1 — the vertical keywords are their own set.
+    ...(tag === 'wp:positionV' && ANCHOR_V_ALIGNS.has(alignRaw) ? { align: alignRaw } : {}),
   };
 }
 
@@ -1271,6 +1274,14 @@ function vmlFloat(style: string, zIndex: number | undefined): FloatAnchor | unde
     | 'right'
     | 'left'
     | undefined;
+  // …and so may the vertical one: a Word watermark is a header picture centred
+  // in the page this way, and pinned to the band's cursor instead it printed in
+  // the top corner (pictureWatermark.docx).
+  const vAlign = /mso-position-vertical\s*:\s*(center|top|bottom)/iu.exec(style)?.[1] as
+    | 'center'
+    | 'top'
+    | 'bottom'
+    | undefined;
   const x = prop('margin-left') ?? prop('left') ?? 0;
   const y = prop('margin-top') ?? prop('top') ?? 0;
   return {
@@ -1290,6 +1301,7 @@ function vmlFloat(style: string, zIndex: number | undefined): FloatAnchor | unde
             : vRaw === 'line'
               ? 'line'
               : 'paragraph',
+      ...(vAlign ? { align: vAlign } : {}),
       offsetPt: pt(y),
     },
   };
