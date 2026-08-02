@@ -4754,8 +4754,16 @@ function lineFromRange(
   let metricAscent = 0;
   let metricDescent = 0;
   let metricLineGap = 0;
+  // §17.3.1.33 — a line stands as tall as what PRINTS on it. Word measures the
+  // spaces of a line at the size of its text, not their own: tdf117988.docx
+  // says so in its own words — "The height of 72pt spaces is ignored?" — and
+  // sets a line of 9pt words between 72pt spaces, which we drew 72pt tall and
+  // spilled onto a second page. A line that is NOTHING but spaces keeps its
+  // own size: there is nothing else to measure it by.
+  const prints = lineTokens.some((t) => !t.isSpace);
   for (const t of lineTokens) {
     contentWidth += t.widthPt;
+    if (prints && t.isSpace) continue;
     const sz = tokenLineSize(t);
     if (sz > maxSize) maxSize = sz;
     if (t.kind === 'math') {
