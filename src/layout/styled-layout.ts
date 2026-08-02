@@ -1738,14 +1738,24 @@ function layoutFrameBlock(
 ): LaidOutBlock {
   const frame = paragraphs[0]!.properties.frame!;
   const exact = frame.heightRule === 'exact' && frame.heightPt !== undefined;
-  const build = (widthPt: number): LaidOutBlock =>
+  const raw = (widthPt: number, pin: boolean): LaidOutBlock =>
     layoutShapeBlock(
-      frameShape(frame, paragraphs, widthPt, exact),
+      frameShape(frame, paragraphs, widthPt, pin),
       options,
       fontResources,
       imageResources,
       contentWidth,
     );
+  // §17.3.1.11 — a `w:h` that names no `w:hRule` is the height the frame was
+  // DRAWN at, and the text only fills it: the box is at least that tall.
+  // Dropped for want of a rule, tdf103544.docx's framed note came out at the
+  // height of its one line, half the box every reader draws.
+  const atLeast =
+    !exact && frame.heightPt !== undefined && frame.heightRule !== 'auto' ? frame.heightPt : 0;
+  const build = (widthPt: number): LaidOutBlock => {
+    const laid = raw(widthPt, exact);
+    return laid.kind === 'shape' && atLeast > laid.heightPt ? raw(widthPt, true) : laid;
+  };
   if (frame.widthPt !== undefined) return build(frame.widthPt);
   // A frame that states no width is as wide as its text needs (§17.3.1.11):
   // laid out at the full width, CT-with-frame.docx's four-digit marginal note
