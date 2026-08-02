@@ -185,11 +185,17 @@ function parseFloatAnchor(anchor: PoNode): FloatAnchor | undefined {
   const behindRaw = poAttr(anchor, 'behindDoc');
   const behind = behindRaw === '1' || behindRaw === 'true';
   let wrap: FloatAnchor['wrap'] = 'none';
+  // §20.4.2.3 `@wrapText` — which side(s) the text may stand on. `bothSides`
+  // is the default, and the one that fills the gap on EACH side of a drawing.
+  let wrapSide: FloatAnchor['wrapSide'];
   for (const child of poChildren(anchor)) {
     if (poIs(child, 'wp:wrapSquare')) wrap = 'square';
     else if (poIs(child, 'wp:wrapTight')) wrap = 'tight';
     else if (poIs(child, 'wp:wrapThrough')) wrap = 'through';
     else if (poIs(child, 'wp:wrapTopAndBottom')) wrap = 'topAndBottom';
+    else continue;
+    const side = poAttr(child, 'wrapText');
+    wrapSide = side === 'left' || side === 'right' || side === 'largest' ? side : 'bothSides';
   }
   const zOrder = poIntAttr(anchor, 'relativeHeight');
   // §20.4.3.3 — `leftMargin`/`rightMargin` name the margin band on that side,
@@ -231,6 +237,7 @@ function parseFloatAnchor(anchor: PoNode): FloatAnchor | undefined {
   const inCell = !(inCellRaw === '0' || inCellRaw === 'false');
   return {
     wrap,
+    ...(wrapSide ? { wrapSide } : {}),
     ...(inCell ? {} : { inCell: false }),
     ...(behind ? { behind: true } : {}),
     ...(zOrder !== undefined ? { zOrder } : {}),

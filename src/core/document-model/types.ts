@@ -1668,6 +1668,12 @@ export interface FloatAnchor {
     readonly align?: 'top' | 'center' | 'bottom';
   };
   /**
+   * §20.4.2.3 `@wrapText` on the wrap element — which side(s) of the drawing
+   * text may stand on. `bothSides` is the default and the only value that
+   * fills BOTH gaps; `left`/`right` name one, `largest` the wider.
+   */
+  readonly wrapSide?: 'bothSides' | 'left' | 'right' | 'largest';
+  /**
    * §20.4.2.3 `wp:anchor @layoutInCell` (VML `o:allowincell`) — present and
    * false when a drawing anchored inside a TABLE CELL is placed against the
    * page rather than against the cell. Absent means the default: the cell is

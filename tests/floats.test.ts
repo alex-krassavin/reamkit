@@ -153,6 +153,48 @@ describe('floating drawings (wp:anchor, §20.4.2.3)', () => {
     expect(cmds.some((c) => c.type === 'shape')).toBe(true);
   });
 
+  it('fills BOTH gaps beside a float at one baseline (§20.4.2.3 bothSides)', () => {
+    // A 144pt box in the MIDDLE of the measure: text stands to its left and
+    // carries on to its right at the same height. Taking the wider side alone
+    // left fdo65718.docx's narrow column blank down the whole float.
+    const pos =
+      '<wp:positionH relativeFrom="margin"><wp:posOffset>1524000</wp:posOffset></wp:positionH>' +
+      '<wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>' +
+      '<wp:wrapSquare wrapText="bothSides"/>';
+    const words = Array.from({ length: 120 }, (_, i) => `w${String(i)}`).join(' ');
+    const laid = layoutOf(
+      buildDocxFromBody(anchoredShape(pos) + `<w:p><w:r><w:t>${words}</w:t></w:r></w:p>`),
+    );
+    const lines = laid.pages[0]!.commands.filter((c) => c.type === 'line').map(
+      (c) => c as unknown as { originX: number; baselineY: number },
+    );
+    // Two segments share a baseline, one each side of the box.
+    const byBaseline = new Map<number, Array<number>>();
+    for (const l of lines) {
+      const at = byBaseline.get(Math.round(l.baselineY)) ?? [];
+      at.push(l.originX);
+      byBaseline.set(Math.round(l.baselineY), at);
+    }
+    const pairs = [...byBaseline.values()].filter((xs) => xs.length === 2);
+    expect(pairs.length).toBeGreaterThan(0);
+    for (const [a, b] of pairs) expect(Math.abs(a! - b!)).toBeGreaterThan(144);
+  });
+
+  it('keeps one side when the anchor names one (§20.4.2.3 wrapText="right")', () => {
+    const pos =
+      '<wp:positionH relativeFrom="margin"><wp:posOffset>1524000</wp:posOffset></wp:positionH>' +
+      '<wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>' +
+      '<wp:wrapSquare wrapText="right"/>';
+    const words = Array.from({ length: 120 }, (_, i) => `w${String(i)}`).join(' ');
+    const laid = layoutOf(
+      buildDocxFromBody(anchoredShape(pos) + `<w:p><w:r><w:t>${words}</w:t></w:r></w:p>`),
+    );
+    const baselines = laid.pages[0]!.commands.filter((c) => c.type === 'line').map((c) =>
+      Math.round((c as unknown as { baselineY: number }).baselineY),
+    );
+    expect(new Set(baselines).size).toBe(baselines.length);
+  });
+
   it('side-wrapped floats no longer consume vertical flow space', () => {
     const pos =
       '<wp:positionH relativeFrom="margin"><wp:posOffset>0</wp:posOffset></wp:positionH>' +

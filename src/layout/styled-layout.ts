@@ -6635,7 +6635,14 @@ class PageAssembler {
    * Side-wrapping floats (wrapSquare/tight/through): rectangles the body text
    * must flow around. Page-scoped, like the float graphics.
    */
-  exclusions: Array<{ x0: number; x1: number; topYUp: number; bottomYUp: number }> = [];
+  exclusions: Array<{
+    x0: number;
+    x1: number;
+    topYUp: number;
+    bottomYUp: number;
+    /** §20.4.2.3 `@wrapText` — whether text may stand on BOTH sides of it. */
+    wrapBothSides?: boolean;
+  }> = [];
   /**
    * Claim the area a side-wrapping float keeps to itself: its own box grown by
    * the §20.4.2.3 `distT/B/L/R` stand-off the anchor asks for.
@@ -6650,6 +6657,7 @@ class PageAssembler {
       x1: wide ? this.colLeft() + this.colWidth() : x + w + (d?.rightPt ?? 0),
       topYUp: topYUp + (d?.topPt ?? 0),
       bottomYUp: topYUp - h - (d?.bottomPt ?? 0),
+      ...(f.wrapSide === 'bothSides' ? { wrapBothSides: true } : {}),
     });
   };
   /** The frame a float anchored in the body flow is resolved against. */
@@ -6718,7 +6726,9 @@ class PageAssembler {
   exclusionAt = (
     yTop: number,
     h: number,
-  ): { x0: number; x1: number; topYUp: number; bottomYUp: number } | undefined => {
+  ):
+    | { x0: number; x1: number; topYUp: number; bottomYUp: number; wrapBothSides?: boolean }
+    | undefined => {
     const cl = this.colLeft();
     const cr = cl + this.colWidth();
     for (const e of this.exclusions) {
@@ -6736,7 +6746,16 @@ class PageAssembler {
   lineGeometryAt = (
     yTop: number,
     h: number,
-  ): { width: number; xOffset: number; blockedUntilYUp?: number } => {
+  ): {
+    width: number;
+    xOffset: number;
+    blockedUntilYUp?: number;
+    /**
+     * §20.4.2.3 `wrapText="bothSides"` — the OTHER side of the float, filled at
+     * the same baseline once this one is full.
+     */
+    pair?: { width: number; xOffset: number };
+  } => {
     const full = this.colWidth();
     const e = this.exclusionAt(yTop, h);
     if (!e) return { width: full, xOffset: 0 };
@@ -6749,6 +6768,13 @@ class PageAssembler {
     // spanning the whole measure and carries the paragraph's tail underneath.
     if (Math.max(leftRoom, rightRoom) < MIN_WRAP_WIDTH) {
       return { width: full, xOffset: 0, blockedUntilYUp: e.bottomYUp };
+    }
+    // Room on BOTH sides: the text fills the left gap and carries on in the
+    // right one at the same baseline, which is what `bothSides` asks for and
+    // what fdo65718.docx sets its paragraph around a plane icon to do. Taking
+    // the wider side alone left the narrow one blank.
+    if (leftRoom >= MIN_WRAP_WIDTH && rightRoom >= MIN_WRAP_WIDTH && e.wrapBothSides) {
+      return { width: leftRoom, xOffset: 0, pair: { width: rightRoom, xOffset: full - rightRoom } };
     }
     if (rightRoom >= leftRoom) return { width: rightRoom, xOffset: full - rightRoom };
     return { width: leftRoom, xOffset: 0 };
@@ -6781,6 +6807,8 @@ class PageAssembler {
         continue;
       }
       widths.push(g.width);
+      // The pair is the same baseline's other half: both widths, one step down.
+      if (g.pair) widths.push(g.pair.width);
       if (g.width < this.colWidth()) narrowed = true;
       // The scan stops at the first full-width line PAST the float — stopping
       // at any full-width line gave up before ever reaching one anchored part
@@ -7276,6 +7304,9 @@ function paginateSections(
         if (lang && lang !== defaultLang) builder.node(structId).lang = lang;
       }
       let firstLineOfBlock = true;
+      // The x of the far side of a float, when the line before this one filled
+      // the near side of it and left this one its other half.
+      let pairPending: number | undefined;
       for (const [lineIdx, line] of pb.lines.entries()) {
         // §17.3.3.1 — the line after a column break starts the next column,
         // even when this one has room to spare.
@@ -7309,15 +7340,22 @@ function paginateSections(
             }
           }
         }
-        // A float that leaves no room beside it pushes the line under itself.
-        // Two of them stacked push twice, so the walk repeats — bounded, since
-        // each step lands strictly below the exclusion it cleared.
-        for (let guard = 0; guard < 8 && asm.exclusions.length > 0; guard++) {
-          const blocked = asm.lineGeometryAt(asm.cursorY, h).blockedUntilYUp;
-          if (blocked === undefined || blocked >= asm.cursorY) break;
-          asm.cursorY = blocked;
+        // §20.4.2.3 `bothSides` — this line is the RIGHT half of the baseline
+        // the last one opened, on the far side of the float between them: it
+        // stands at that same baseline rather than a line below it.
+        const pairedNow = pairPending;
+        pairPending = undefined;
+        if (pairedNow === undefined) {
+          // A float that leaves no room beside it pushes the line under itself.
+          // Two of them stacked push twice, so the walk repeats — bounded, since
+          // each step lands strictly below the exclusion it cleared.
+          for (let guard = 0; guard < 8 && asm.exclusions.length > 0; guard++) {
+            const blocked = asm.lineGeometryAt(asm.cursorY, h).blockedUntilYUp;
+            if (blocked === undefined || blocked >= asm.cursorY) break;
+            asm.cursorY = blocked;
+          }
+          asm.cursorY -= h;
         }
-        asm.cursorY -= h;
         const indentLeft =
           pb.resolved.indentLeft + (line.firstLine ? pb.resolved.indentFirstLine : 0);
         const offset = alignmentOffset(
@@ -7328,8 +7366,18 @@ function paginateSections(
         const baselineY = pt(
           asm.ctx.pageHeight - (asm.cursorY + lineBaselineOffset(line, pb.resolved)),
         );
-        const exclusionShift =
-          asm.exclusions.length > 0 ? asm.lineGeometryAt(asm.cursorY + h, h).xOffset : 0;
+        const geometry =
+          asm.exclusions.length > 0 ? asm.lineGeometryAt(asm.cursorY + h, h) : undefined;
+        const exclusionShift = pairedNow ?? geometry?.xOffset ?? 0;
+        // …and if the float here leaves room on both sides, the NEXT line fills
+        // the other one at this same baseline.
+        if (
+          pairedNow === undefined &&
+          geometry?.pair &&
+          Math.abs(line.availableWidthPt - geometry.width) < 1
+        ) {
+          pairPending = geometry.pair.xOffset;
+        }
         const originX = asm.colLeft() + indentLeft + offset + exclusionShift;
         if (markerLblId !== undefined && line === firstLine) {
           // Marker glyphs → Lbl, the rest of the line → P. Both segments keep
