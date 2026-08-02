@@ -2014,7 +2014,12 @@ function layoutShapeBlock(
   }
   // Clamp height to the page content area so an oversized shape stays on one
   // page (shapes are atomic). Scale width with it to preserve aspect.
-  if (maxHeight !== undefined && heightPt > maxHeight && heightPt > 0) {
+  // A FLOAT is exempt for the same reason it is exempt from the width clamp
+  // above: it is not in the text column and may cover the whole sheet.
+  // relorientation.docx anchors a full-page side band to the page and shrinking
+  // it to the text height also took a fifth off its width, so the band stood
+  // 45pt clear of the edge it is flush with.
+  if (!shape.float && maxHeight !== undefined && heightPt > maxHeight && heightPt > 0) {
     const scale = maxHeight / heightPt;
     widthPt *= scale;
     heightPt = maxHeight;
