@@ -560,9 +560,15 @@ function parseCellMargins(node: PoNode | undefined): CellMargins | undefined {
   const bottom = poIntAttr(poFirstChild(node, 'w:bottom'), 'w');
   const left = poIntAttr(poFirstChild(node, 'w:left') ?? poFirstChild(node, 'w:start'), 'w');
   const right = poIntAttr(poFirstChild(node, 'w:right') ?? poFirstChild(node, 'w:end'), 'w');
-  if (top !== undefined) out.top = twipsToPt(top);
-  if (bottom !== undefined) out.bottom = twipsToPt(bottom);
-  if (left !== undefined) out.left = twipsToPt(left);
-  if (right !== undefined) out.right = twipsToPt(right);
+  // §17.4.42 `w:tcMar` measures an INSET, and `w:w` is a signed type only
+  // because ST_TblWidth is shared with the widths. A negative one is not a
+  // narrower cell but a nonsense inset, and both references read it as none:
+  // negative-cell-margin-twips.docx insets two of its three cells by −6160 and
+  // −8800 twips, and taken at face value it drew their text 300pt off the left
+  // edge of the page — the two cells came out empty.
+  if (top !== undefined) out.top = twipsToPt(Math.max(0, top));
+  if (bottom !== undefined) out.bottom = twipsToPt(Math.max(0, bottom));
+  if (left !== undefined) out.left = twipsToPt(Math.max(0, left));
+  if (right !== undefined) out.right = twipsToPt(Math.max(0, right));
   return Object.keys(out).length > 0 ? out : undefined;
 }
