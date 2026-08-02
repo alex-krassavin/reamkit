@@ -1984,16 +1984,41 @@ function frameShape(
 }
 
 /** §17.3.1.11 → §20.4.2.3: the frame's anchor, in the terms floats are placed in. */
+/**
+ * §17.3.1.11 — whether the frame is placed DOWN THE PAGE by itself, rather than
+ * where the flow has reached. `w:vAnchor="text"` (the default) measures `w:y`
+ * from the paragraph's own position, so such frames stack as paragraphs do —
+ * and a float takes no flow space, so lifting them out puts every one of them
+ * on the same line: tdf105035_framePrB.docx writes its title and its author
+ * line as text-anchored frames and both landed on the cursor, one over the
+ * other. Only a frame anchored to the page or the margin, or aligned by
+ * keyword, truly stands somewhere of its own.
+ */
+function framePositioned(frame: FrameProperties): boolean {
+  return frame.yAlign !== undefined || (frame.vAnchor !== undefined && frame.vAnchor !== 'text');
+}
+
 function frameFloat(frame: FrameProperties): FloatAnchor {
-  // §17.18.104 — `notBeside` keeps TEXT from standing beside the frame, which
-  // is the band a top-and-bottom wrap makes. The frame's own `w:x`/`w:y` go
-  // with it (the band is placed in the flow), so two frames written side by
-  // side stack instead — tdf100075.docx draws them across the page. Read as a
-  // square wrap they land right and the text runs up beside them, which is the
-  // one thing `notBeside` forbids: tdf104394_lostTextbox.docx then fits on one
-  // page where every reader takes two.
+  // §17.18.104 — `notBeside` is a mode of its own: the frame stands where its
+  // `w:x`/`w:y` put it, and no text may stand BESIDE it. Read as a top-and-
+  // bottom wrap it went back into the flow and lost its x, so two frames
+  // written side by side stacked (tdf100075.docx draws them across the page);
+  // read as a square wrap it landed right and the text ran up beside it, which
+  // is the one thing the mode forbids (tdf104394_lostTextbox.docx then fits on
+  // one page where every reader takes two).
+  // …and a frame that states no position at all is not placed anywhere: its
+  // `w:x`/`w:y` default to the paragraph's own corner, which is the flow. Read
+  // as positioned, two such frames both land on the cursor and print over each
+  // other — tdf105035_framePrB.docx writes its title and its author line that
+  // way, one under the other.
   const wrap: FloatAnchor['wrap'] =
-    frame.wrap === 'none' ? 'none' : frame.wrap === 'notBeside' ? 'topAndBottom' : 'square';
+    frame.wrap === 'none'
+      ? 'none'
+      : frame.wrap === 'notBeside'
+        ? framePositioned(frame)
+          ? 'notBeside'
+          : 'topAndBottom'
+        : 'square';
   const hRel = frame.hAnchor === 'page' ? 'page' : frame.hAnchor === 'margin' ? 'margin' : 'column';
   const vRel =
     frame.vAnchor === 'page' ? 'page' : frame.vAnchor === 'margin' ? 'margin' : 'paragraph';
@@ -6493,9 +6518,12 @@ class PageAssembler {
    */
   excludeFloat = (f: FloatAnchor, x: number, topYUp: number, w: number, h: number): void => {
     const d = f.wrapDist;
+    // §17.18.104 `notBeside` — the band is the whole COLUMN, however narrow the
+    // frame is: what the mode forbids is text beside it, not text near it.
+    const wide = f.wrap === 'notBeside';
     this.exclusions.push({
-      x0: x - (d?.leftPt ?? 0),
-      x1: x + w + (d?.rightPt ?? 0),
+      x0: wide ? this.colLeft() : x - (d?.leftPt ?? 0),
+      x1: wide ? this.colLeft() + this.colWidth() : x + w + (d?.rightPt ?? 0),
       topYUp: topYUp + (d?.topPt ?? 0),
       bottomYUp: topYUp - h - (d?.bottomPt ?? 0),
     });

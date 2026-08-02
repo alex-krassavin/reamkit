@@ -1621,7 +1621,12 @@ export interface SectionProperties {
  * modes (square/tight/through) and `topAndBottom` stay in flow as blocks.
  */
 export interface FloatAnchor {
-  readonly wrap: 'none' | 'square' | 'tight' | 'through' | 'topAndBottom';
+  /**
+   * §20.4.2.3 / §17.18.104 — how body text runs past the drawing. `notBeside`
+   * is the FRAME's own mode: the drawing keeps the place its anchor names, but
+   * no text may stand beside it, so its band spans the whole column.
+   */
+  readonly wrap: 'none' | 'square' | 'tight' | 'through' | 'topAndBottom' | 'notBeside';
   readonly behind?: boolean; // wp:anchor @behindDoc
   /**
    * §20.4.2.3 `wp:anchor @relativeHeight` — the z-order among the floats on the

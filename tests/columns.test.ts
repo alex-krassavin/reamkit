@@ -210,4 +210,71 @@ describe('a text frame (§17.3.1.11 w:framePr)', () => {
     expect(two.originX).toBeCloseTo(one.originX, 1);
     expect(two.baselineY).toBeGreaterThan(one.baselineY);
   });
+
+  // §17.18.104 `notBeside`: the frame keeps its own place and no text stands
+  // beside it — the band is the whole column however narrow the frame is.
+  const NOT_BESIDE = (x: number) =>
+    `<w:framePr w:w="2253" w:h="1724" w:wrap="notBeside"` +
+    ` w:vAnchor="page" w:hAnchor="page" w:x="${String(x)}" w:y="1691"/>`;
+
+  it('places two notBeside frames side by side, where their anchors put them', () => {
+    // tdf100075.docx writes exactly this pair; read as a top-and-bottom wrap
+    // they went back into the flow, lost their x and stacked.
+    const laid = layoutOf(
+      framed(
+        NOT_BESIDE(1815),
+        'one',
+        `<w:p><w:pPr>${NOT_BESIDE(4815)}</w:pPr><w:r><w:t>two</w:t></w:r></w:p>`,
+      ),
+    );
+    const lines = laid.pages[0]!.commands.filter((c) => c.type === 'line').map(
+      (c) =>
+        c as unknown as {
+          originX: number;
+          baselineY: number;
+          line: { tokens: ReadonlyArray<{ text?: string }> };
+        },
+    );
+    const at = (t: string) =>
+      lines.find((l) => l.line.tokens.map((k) => k.text ?? '').join('') === t)!;
+    // 1815 and 4815 twips from the page's left edge.
+    expect(at('one').originX).toBeCloseTo(90.75, 1);
+    expect(at('two').originX).toBeCloseTo(240.75, 1);
+    expect(at('two').baselineY).toBeCloseTo(at('one').baselineY, 1);
+  });
+
+  it('lets no body text stand beside a notBeside frame', () => {
+    const laid = layoutOf(framed(NOT_BESIDE(1815), 'one'));
+    const lines = laid.pages[0]!.commands.filter((c) => c.type === 'line').map(
+      (c) =>
+        c as unknown as {
+          originX: number;
+          baselineY: number;
+          line: { tokens: ReadonlyArray<{ text?: string }> };
+        },
+    );
+    const at = (t: string) =>
+      lines.find((l) => l.line.tokens.map((k) => k.text ?? '').join('') === t)!;
+    // The frame is 113pt wide with room to spare beside it; "last" goes under
+    // it all the same, which is the whole of what the mode asks for.
+    expect(at('last').baselineY).toBeGreaterThan(at('one').baselineY + 86);
+    expect(at('last').originX).toBeCloseTo(68.3, 1);
+  });
+
+  it('keeps a TEXT-anchored frame in the flow — it has nowhere else to stand', () => {
+    // tdf105035_framePrB.docx styles its title and its author line as
+    // text-anchored notBeside frames. Lifted out of the flow both landed on
+    // the same cursor and printed over each other.
+    const inFlow = '<w:framePr w:wrap="notBeside" w:vAnchor="text" w:hAnchor="page"/>';
+    const laid = layoutOf(
+      framed(inFlow, 'one', `<w:p><w:pPr>${inFlow}</w:pPr><w:r><w:t>two</w:t></w:r></w:p>`),
+    );
+    const lines = laid.pages[0]!.commands.filter((c) => c.type === 'line').map(
+      (c) =>
+        c as unknown as { baselineY: number; line: { tokens: ReadonlyArray<{ text?: string }> } },
+    );
+    const at = (t: string) =>
+      lines.find((l) => l.line.tokens.map((k) => k.text ?? '').join('') === t)!;
+    expect(at('two').baselineY).toBeGreaterThan(at('one').baselineY);
+  });
 });
