@@ -1850,6 +1850,13 @@ function frameShape(
 
 /** §17.3.1.11 → §20.4.2.3: the frame's anchor, in the terms floats are placed in. */
 function frameFloat(frame: FrameProperties): FloatAnchor {
+  // §17.18.104 — `notBeside` keeps TEXT from standing beside the frame, which
+  // is the band a top-and-bottom wrap makes. The frame's own `w:x`/`w:y` go
+  // with it (the band is placed in the flow), so two frames written side by
+  // side stack instead — tdf100075.docx draws them across the page. Read as a
+  // square wrap they land right and the text runs up beside them, which is the
+  // one thing `notBeside` forbids: tdf104394_lostTextbox.docx then fits on one
+  // page where every reader takes two.
   const wrap: FloatAnchor['wrap'] =
     frame.wrap === 'none' ? 'none' : frame.wrap === 'notBeside' ? 'topAndBottom' : 'square';
   const hRel = frame.hAnchor === 'page' ? 'page' : frame.hAnchor === 'margin' ? 'margin' : 'column';
@@ -1859,10 +1866,22 @@ function frameFloat(frame: FrameProperties): FloatAnchor {
     frame.xAlign === 'left' || frame.xAlign === 'center' || frame.xAlign === 'right'
       ? frame.xAlign
       : undefined;
+  // §17.3.1.11 `w:yAlign` — a KEYWORD down the page instead of an offset, and
+  // it is what tells a frame to sit at the top of the page rather than where
+  // its paragraph happens to stand. Ignored, tdf104394_lostTextbox.docx's
+  // floating table and the paragraph beside it followed the tall frame above
+  // them onto page 2, where every reader draws them on page 1.
+  const vAlign =
+    frame.yAlign === 'top' || frame.yAlign === 'center' || frame.yAlign === 'bottom'
+      ? frame.yAlign
+      : undefined;
   return {
     wrap,
     posH: { relativeFrom: hRel, ...(align ? { align } : { offsetPt: frame.xPt ?? pt(0) }) },
-    posV: { relativeFrom: vRel, offsetPt: frame.yPt ?? pt(0) },
+    posV: {
+      relativeFrom: vRel,
+      ...(vAlign ? { align: vAlign } : { offsetPt: frame.yPt ?? pt(0) }),
+    },
   };
 }
 
