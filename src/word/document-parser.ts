@@ -189,9 +189,28 @@ export function parseDocument(
   // here, and a reference to something we will not fetch simply drops.
   const xml = resolveInternalEntities(decoder.decode(documentXml));
   const tree = parser.parse(xml) as Array<PoNode>;
-  const body = poFindByPath(tree, ['w:document', 'w:body']);
-  if (!body) return [];
-  return parseBodyElements(poChildren(body), ctx, blocks);
+  const children = documentBodyChildren(tree);
+  if (children.length === 0) return [];
+  return parseBodyElements(children, ctx, blocks);
+}
+
+/**
+ * §17.2.2 — the `w:document`'s body content. The schema allows one `w:body`
+ * and producers have written several: MultipleBodyBug.docx carries three, and
+ * reading only the first printed one paragraph of its three. They are read as
+ * the one body they stand for, in order.
+ *
+ * @param tree The parsed `document.xml`.
+ * @returns Every body's children, concatenated.
+ */
+function documentBodyChildren(tree: ReadonlyArray<PoNode>): Array<PoNode> {
+  const doc = poFindByPath(tree, ['w:document']);
+  if (!doc) return [];
+  const out: Array<PoNode> = [];
+  for (const child of poChildren(doc)) {
+    if (poIs(child, 'w:body')) out.push(...poChildren(child));
+  }
+  return out;
 }
 
 /**
@@ -282,10 +301,9 @@ export function parseSection(documentXml: Uint8Array): SectionProperties {
 export function parseSections(documentXml: Uint8Array): Array<Section> {
   const xml = resolveInternalEntities(decoder.decode(documentXml));
   const tree = parser.parse(xml) as Array<PoNode>;
-  const body = poFindByPath(tree, ['w:document', 'w:body']);
-  if (!body) return [];
+  const children = documentBodyChildren(tree);
+  if (children.length === 0) return [];
 
-  const children = poChildren(body);
   const sections: Array<Section> = [];
   let bodyIdx = 0;
 
