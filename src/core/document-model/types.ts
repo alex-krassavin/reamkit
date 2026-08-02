@@ -852,6 +852,11 @@ export interface RowProperties {
   readonly cantSplit?: boolean;
   readonly isHeader?: boolean;
   /**
+   * §17.4.14 `w:gridBefore` — how many grid columns the row leaves empty
+   * before its first cell, which is how a row starts part-way across a table.
+   */
+  readonly gridBefore?: number;
+  /**
    * Force this row to begin a new page (xlsx manual `<rowBreaks>`). The renderer
    * flushes the page before the row, then repeats any leading header rows.
    */

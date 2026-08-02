@@ -413,6 +413,11 @@ function parseRowProperties(trPr: PoNode | undefined): RowProperties {
   if (poFirstChild(trPr, 'w:tblHeader')) {
     out.isHeader = poToggle(poFirstChild(trPr, 'w:tblHeader')) ?? true;
   }
+  // §17.4.14 — the row's cells begin this many grid columns in. gridbefore.docx
+  // puts its one cell in the third column of a three-column grid, and read as a
+  // first cell it landed under the row below's.
+  const before = poIntAttr(poFirstChild(trPr, 'w:gridBefore'), 'val');
+  if (before !== undefined && before > 0) out.gridBefore = before;
   const cnf = parseRowConditional(poFirstChild(trPr, 'w:cnfStyle'));
   if (cnf) out.conditional = cnf;
   return out;

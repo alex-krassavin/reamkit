@@ -4843,7 +4843,7 @@ function layoutTableBlock(
       aboveBordersByCol,
     );
     const nextAbove: Array<CellBorders | undefined> = [];
-    let ci = 0;
+    let ci = table.rows[r]!.properties.gridBefore ?? 0;
     for (const cell of table.rows[r]!.cells) {
       const span = Math.max(1, cell.properties.colSpan ?? 1);
       for (let k = 0; k < span; k++) nextAbove[ci + k] = cell.properties.borders;
@@ -4931,7 +4931,7 @@ function computeColumnWidths(
 ): Array<number> {
   let colCount = table.grid.length;
   for (const row of table.rows) {
-    let rowCols = 0;
+    let rowCols = row.properties.gridBefore ?? 0;
     for (const cell of row.cells) rowCols += Math.max(1, cell.properties.colSpan ?? 1);
     if (rowCols > colCount) colCount = rowCols;
   }
@@ -4964,7 +4964,7 @@ function computeColumnWidths(
 
   const colNaturalWidths = new Array<number>(colCount).fill(0);
   for (const row of table.rows) {
-    let colIdx = 0;
+    let colIdx = row.properties.gridBefore ?? 0;
     for (let i = 0; i < row.cells.length; i++) {
       const cell = row.cells[i]!;
       const span = Math.max(1, cell.properties.colSpan ?? 1);
@@ -5049,13 +5049,13 @@ function declaredColumnWidths(
   let reach = 0;
   for (const row of table.rows) {
     if (row.cells.length < 2) continue;
-    let span = 0;
+    let span = row.properties.gridBefore ?? 0;
     for (const cell of row.cells) span += Math.max(1, cell.properties.colSpan ?? 1);
     if (span > reach) reach = span;
   }
   const phantomFrom = reach > 0 && reach < colCount ? reach : colCount;
   for (const row of table.rows) {
-    let colIdx = 0;
+    let colIdx = row.properties.gridBefore ?? 0;
     for (const cell of row.cells) {
       const span = Math.max(1, cell.properties.colSpan ?? 1);
       const widthPt = declaredWidth(cell);
@@ -5214,8 +5214,12 @@ function layoutTableRow(
 ): RowLayout {
   const cells: Array<CellLayout> = [];
   const columnXOffsets: Array<number> = [];
-  let cursorX = 0;
-  let colIdx = 0;
+  // §17.4.14 `w:gridBefore` — the row starts this many grid columns in, and
+  // those columns hold nothing at all. gridbefore.docx puts its one cell in the
+  // third column of three, and started at the first it sat over the row below.
+  const skip = Math.min(Math.max(0, row.properties.gridBefore ?? 0), columnWidthsPt.length);
+  let cursorX = columnWidthsPt.slice(0, skip).reduce((sum, w) => sum + w, 0);
+  let colIdx = skip;
   for (let cellIdx = 0; cellIdx < row.cells.length; cellIdx++) {
     const cell = row.cells[cellIdx]!;
     const span = Math.max(1, cell.properties.colSpan ?? 1);
