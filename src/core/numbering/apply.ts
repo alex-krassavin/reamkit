@@ -15,8 +15,13 @@ import type {
   Run,
   StyleSheet,
 } from '@/core/document-model';
+import { pt } from '@/core/ir';
 import { NumberingState, effectiveAbstract } from '@/core/numbering/state';
 import { resolveParagraphProperties } from '@/core/style-cascade';
+
+/** The height a picture bullet takes when neither the level nor the paragraph
+ * mark states a font size — Word's own default text size. */
+const DEFAULT_BULLET_HEIGHT_PT = 11;
 
 /**
  * Apply list numbering to a body as a FlowDoc transform (§17.9): walk the
@@ -67,13 +72,27 @@ export function applyNumbering(
     // fallback. FDO74215 draws a bordered square and we drew a dot with the
     // level's double underline running out under the tab.
     const pic = level?.picBullet;
+    // §17.9.21 — the size a `w:numPicBullet` states is the PICTURE's, not the
+    // bullet's: Word writes 3in for one it draws at the height of the text
+    // beside it, and both references draw a small mark whatever the file says.
+    // Taken at face value, tdf106606.docx's 235×281pt penguin stood beside every
+    // item of its list and turned one page into seven.
+    const bulletCapPt =
+      level?.runProperties.fontSizePt ??
+      p.properties.runProperties?.fontSizePt ??
+      DEFAULT_BULLET_HEIGHT_PT;
+    const bulletScale = pic ? Math.min(1, bulletCapPt / Math.max(1, pic.heightPt)) : 1;
     const markerRuns: Array<Run> = pic
       ? [
           {
             text: '',
             properties: {},
             listMarker: true,
-            inlineImage: { resource: pic.resource, width: pic.widthPt, height: pic.heightPt },
+            inlineImage: {
+              resource: pic.resource,
+              width: pt(pic.widthPt * bulletScale),
+              height: pt(pic.heightPt * bulletScale),
+            },
           },
           { text: '\t', properties: {}, listMarker: true },
         ]
