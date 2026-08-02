@@ -23,6 +23,9 @@ import { resolveParagraphProperties } from '@/core/style-cascade';
  * mark states a font size — Word's own default text size. */
 const DEFAULT_BULLET_HEIGHT_PT = 11;
 
+/** SOFT HYPHEN, which a `w:lvlText` may spell a dash bullet with (§17.9.11). */
+const SOFT_HYPHEN = '­';
+
 /**
  * Apply list numbering to a body as a FlowDoc transform (§17.9): walk the
  * elements (recursing into table cells), advancing list counters and prepending
@@ -98,7 +101,12 @@ export function applyNumbering(
         ]
       : [
           {
-            text: `${marker}\t`,
+            // §17.9.11 — the label is a whole word of its own; nothing breaks
+            // inside it, so a SOFT HYPHEN written there is not an optional
+            // break but the dash the author meant. Dropped as a break would be
+            // (the page never takes one), tdf101626.docx's every bullet
+            // vanished and its list read as unmarked text.
+            text: `${marker.replaceAll(SOFT_HYPHEN, '-')}\t`,
             // §17.9.6 — the marker is formatted like the PARAGRAPH MARK, with
             // the level's own `w:rPr` on top. Taking the level's alone left the
             // marker at whatever size the paragraph's STYLE lends: fdo78420's
