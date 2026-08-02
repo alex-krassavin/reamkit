@@ -173,12 +173,13 @@ function parsePicBullets(
     const widthPt = cssLengthPt(/(?:^|;)\s*width\s*:\s*([^;]+)/u.exec(style)?.[1]);
     const heightPt = cssLengthPt(/(?:^|;)\s*height\s*:\s*([^;]+)/u.exec(style)?.[1]);
     if (widthPt === undefined || heightPt === undefined) continue;
+    // §17.9.21 — a picture bullet with no picture is not a bullet: Word falls
+    // back to the level's own `w:lvlText` glyph. lvlPicBulletId.docx declares a
+    // three-INCH `v:shape` with no `v:imagedata` at all, and reserving that box
+    // for every item of its contents list stretched one page into six.
     const resource = relId !== undefined ? resolveImage?.(relId) : undefined;
-    out.set(id, {
-      ...(resource !== undefined ? { resource } : {}),
-      widthPt: pt(widthPt),
-      heightPt: pt(heightPt),
-    });
+    if (resource === undefined) continue;
+    out.set(id, { resource, widthPt: pt(widthPt), heightPt: pt(heightPt) });
   }
   return out;
 }

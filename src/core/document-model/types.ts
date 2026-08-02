@@ -561,8 +561,8 @@ export interface NumberingLevel {
 
 /** §17.9.21 `w:numPicBullet` — the image a level uses in place of a bullet. */
 export interface PictureBullet {
-  /** Content-addressed bytes; absent when the relationship did not resolve. */
-  readonly resource?: ResourceId;
+  /** Content-addressed bytes. A bullet whose picture does not resolve is not one. */
+  readonly resource: ResourceId;
   readonly widthPt: Pt;
   readonly heightPt: Pt;
 }

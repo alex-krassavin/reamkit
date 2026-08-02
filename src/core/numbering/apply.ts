@@ -66,11 +66,7 @@ export function applyNumbering(
             text: '',
             properties: {},
             listMarker: true,
-            inlineImage: {
-              ...(pic.resource !== undefined ? { resource: pic.resource } : {}),
-              width: pic.widthPt,
-              height: pic.heightPt,
-            },
+            inlineImage: { resource: pic.resource, width: pic.widthPt, height: pic.heightPt },
           },
           { text: '\t', properties: {}, listMarker: true },
         ]

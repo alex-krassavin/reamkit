@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
 import type { Numbering } from '@/core/document-model';
+import type { ResourceId } from '@/core/ir';
 import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 
 import { parseNumbering } from '@/word';
@@ -10,18 +11,20 @@ import { readDocx } from '@/word/docx-reader';
 
 const encoder = new TextEncoder();
 
-function parse(xml: string): Numbering {
+function parse(xml: string, resolveImage?: (relId: string) => ResourceId | undefined): Numbering {
   return parseNumbering(
     encoder.encode(
       `<?xml version="1.0" encoding="UTF-8"?>\n<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">${xml}</w:numbering>`,
     ),
+    resolveImage,
   );
 }
 
 describe('parseNumbering', () => {
   it('a level whose bullet is a picture carries the image and its size', () => {
     // §17.9.9 / §17.9.21 — the `w:lvlText` glyph is only the fallback beside it.
-    const numbering = parse(`
+    const numbering = parse(
+      `
       <w:numPicBullet w:numPicBulletId="3">
         <w:pict>
           <v:shape style="width:11.25pt;height:0.25in" o:bullet="t">
@@ -36,10 +39,30 @@ describe('parseNumbering', () => {
           <w:lvlPicBulletId w:val="3"/>
         </w:lvl>
       </w:abstractNum>
-      <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>`);
+      <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>`,
+      (relId) => (relId === 'rId7' ? ('res-1' as ResourceId) : undefined),
+    );
     const lvl = numbering.abstractNums.get('0')!.levels.get(0)!;
     expect(lvl.picBullet?.widthPt).toBeCloseTo(11.25, 6);
     expect(lvl.picBullet?.heightPt).toBeCloseTo(18, 6); // 0.25in
+  });
+
+  it('a picture bullet with no picture is not a bullet', () => {
+    // §17.9.21 — lvlPicBulletId.docx declares a three-inch `v:shape` with no
+    // `v:imagedata`; the level's own glyph is what Word draws.
+    const numbering = parse(`
+      <w:numPicBullet w:numPicBulletId="3">
+        <w:pict><v:shape style="width:3in;height:3in" o:bullet="t"/></w:pict>
+      </w:numPicBullet>
+      <w:abstractNum w:abstractNumId="0">
+        <w:lvl w:ilvl="0">
+          <w:numFmt w:val="bullet"/>
+          <w:lvlText w:val="&#xF0B7;"/>
+          <w:lvlPicBulletId w:val="3"/>
+        </w:lvl>
+      </w:abstractNum>
+      <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>`);
+    expect(numbering.abstractNums.get('0')!.levels.get(0)!.picBullet).toBeUndefined();
   });
 
   it('parses a single-level decimal abstractNum + num link', () => {
