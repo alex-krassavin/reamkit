@@ -135,6 +135,8 @@ export type DrawingContent =
       readonly outline?: PictureOutline;
       /** §20.1.8.40 `a:outerShdw` on the same `pic:spPr` — the picture's shadow. */
       readonly shadow?: ShapeShadow;
+      /** §14.1.2.10 `@gain`/`@blacklevel` — the wash the picture is drawn through. */
+      readonly wash?: { readonly gain: number; readonly black: number };
       /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
       readonly crop?: ImageCrop;
       /** §20.1.7.6 `a:xfrm @rot` — the picture's rotation (1/60000°, clockwise). */
@@ -630,12 +632,19 @@ export function parseVmlPicture(node: PoNode, parseBody?: ParseBody): DrawingCon
     shape && (stroked === 't' || stroked === 'true')
       ? pictureOutline(vmlLine(shape, shapeType))
       : undefined;
+  // §14.1.2.10 — Word washes a watermark out with `@gain` (contrast) and
+  // `@blacklevel` (brightness), each a fraction, a percentage or the
+  // 1/65536ths it writes. pictureWatermark.docx prints its penguins at 30%
+  // contrast lifted 35%, and drawn at full strength the photograph sat behind
+  // the text instead of a ghost of it.
+  const wash = vmlWash(imagedata);
   return {
     kind: 'image',
     imageId,
     width,
     height,
     ...(outline ? { outline } : {}),
+    ...(wash ? { wash } : {}),
     ...(float ? { float } : {}),
     ...(altText ? { altText } : {}),
   };
@@ -1266,6 +1275,27 @@ function vmlFocusStops(
     { offset: f, colorHex: color2 },
     { offset: 1, colorHex: base },
   ];
+}
+
+// §14.1.2.10 `@gain`/`@blacklevel` — the contrast and brightness a picture is
+// drawn through, as `out = (in - 0.5) * gain + 0.5 + black`.
+function vmlWash(imagedata: PoNode): { gain: number; black: number } | undefined {
+  const gain = vmlFraction(poAttr(imagedata, 'gain'));
+  const black = vmlFraction(poAttr(imagedata, 'blacklevel'));
+  if (gain === undefined && black === undefined) return undefined;
+  const g = Math.max(0, gain ?? 1);
+  const b = black ?? 0;
+  return Math.abs(g - 1) < 0.01 && Math.abs(b) < 0.01 ? undefined : { gain: g, black: b };
+}
+
+// A VML fraction: "0.5", "50%", or the 1/65536ths Word writes ("19661f").
+function vmlFraction(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const t = raw.trim();
+  const pct = t.endsWith('%');
+  const n = Number.parseFloat(pct ? t.slice(0, -1) : t.replace(/f$/iu, ''));
+  if (!Number.isFinite(n)) return undefined;
+  return pct ? n / 100 : Math.abs(n) > 1 ? n / 65536 : n;
 }
 
 // §14.1.2.5 `@opacity` — "0.5" or "50%" or the 1/65536ths Word writes.

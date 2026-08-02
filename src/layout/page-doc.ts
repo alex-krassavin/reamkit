@@ -99,6 +99,8 @@ export interface ImageToken {
   readonly outline?: PictureOutline;
   /** §20.1.8.40 — the drop shadow under the picture, when it casts one. */
   readonly shadow?: ShapeShadow;
+  /** §14.1.2.10 — the contrast/brightness wash the picture is drawn through. */
+  readonly wash?: { readonly gain: number; readonly black: number };
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
   readonly crop?: ImageCrop;
   /** §20.1.7.6 — degrees clockwise about the box's centre. */
@@ -294,6 +296,8 @@ export interface ImageItem extends PageItemBase {
   readonly imageResourceName: string;
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
   readonly crop?: ImageCrop;
+  /** §14.1.2.10 — the contrast/brightness wash the picture is drawn through. */
+  readonly wash?: { readonly gain: number; readonly black: number };
   /** §20.1.7.6 — degrees clockwise about the box's centre. */
   readonly rotationDeg?: number;
   /** §20.1.7.6 — the picture drawn mirrored in its box. */

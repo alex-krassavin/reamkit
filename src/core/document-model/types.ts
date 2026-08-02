@@ -277,6 +277,12 @@ export interface InlineImage {
    * six stood flat on the page where both references lift them off it.
    */
   readonly shadow?: ShapeShadow;
+  /**
+   * §14.1.2.10 `@gain`/`@blacklevel` — the contrast and brightness the picture
+   * is drawn through, about mid grey: `out = (in - 0.5) * gain + 0.5 + black`.
+   * Word washes a watermark out this way.
+   */
+  readonly wash?: { readonly gain: number; readonly black: number };
   readonly width: Pt;
   readonly height: Pt;
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
@@ -1048,6 +1054,12 @@ export interface ImageBlock {
    * six stood flat on the page where both references lift them off it.
    */
   readonly shadow?: ShapeShadow;
+  /**
+   * §14.1.2.10 `@gain`/`@blacklevel` — the contrast and brightness the picture
+   * is drawn through, about mid grey: `out = (in - 0.5) * gain + 0.5 + black`.
+   * Word washes a watermark out this way.
+   */
+  readonly wash?: { readonly gain: number; readonly black: number };
   readonly width: Pt;
   readonly height: Pt;
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */

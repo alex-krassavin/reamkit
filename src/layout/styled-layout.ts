@@ -400,6 +400,8 @@ interface ImageBlockLaidOut {
   readonly resourceName: string;
   /** §20.1.2.2.24 — the frame the picture is drawn with, when it has one. */
   readonly outline?: PictureOutline;
+  /** §14.1.2.10 — the contrast/brightness wash the picture is drawn through. */
+  readonly wash?: { readonly gain: number; readonly black: number };
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
   readonly crop?: ImageCrop;
   /** §20.1.7.6 — degrees clockwise about the box's centre. */
@@ -2105,6 +2107,7 @@ function layoutImageBlock(
     resolvedAlignment,
     resourceName: res?.resourceName ?? '',
     ...(image.outline ? { outline: image.outline } : {}),
+    ...(image.wash ? { wash: image.wash } : {}),
     ...(image.crop ? { crop: image.crop } : {}),
     ...(image.rotation60k ? { rotationDeg: image.rotation60k / 60000 } : {}),
     ...(image.flipH ? { flipH: true } : {}),
@@ -3288,6 +3291,7 @@ function drawBlocksSequentially(
         height: pt(block.heightPt),
         imageResourceName: block.resourceName,
         ...(block.crop ? { crop: block.crop } : {}),
+        ...(block.wash ? { wash: block.wash } : {}),
         ...(block.rotationDeg ? { rotationDeg: block.rotationDeg } : {}),
         ...(block.flipH ? { flipH: true } : {}),
         ...(block.flipV ? { flipV: true } : {}),
@@ -3895,6 +3899,8 @@ interface RunPlan {
   readonly imageOutline?: PictureOutline;
   /** §20.1.8.40 — the shadow the inline picture casts. */
   readonly imageShadow?: ShapeShadow;
+  /** §14.1.2.10 — the wash the inline picture is drawn through. */
+  readonly imageWash?: { readonly gain: number; readonly black: number };
   readonly imageCrop?: ImageCrop;
   /** §20.1.7.6 — the picture's rotation, in degrees clockwise. */
   readonly imageRotationDeg?: number;
@@ -4062,6 +4068,7 @@ function tokenizeParagraph(
         imageResourceName: res?.resourceName ?? '',
         ...(run.inlineImage.outline ? { imageOutline: run.inlineImage.outline } : {}),
         ...(run.inlineImage.shadow ? { imageShadow: run.inlineImage.shadow } : {}),
+        ...(run.inlineImage.wash ? { imageWash: run.inlineImage.wash } : {}),
         ...(run.inlineImage.crop ? { imageCrop: run.inlineImage.crop } : {}),
         ...(run.inlineImage.rotation60k
           ? { imageRotationDeg: run.inlineImage.rotation60k / 60000 }
@@ -4185,6 +4192,7 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         heightPt: plan.imageHeightPt,
         ...(plan.imageOutline ? { outline: plan.imageOutline } : {}),
         ...(plan.imageShadow ? { shadow: plan.imageShadow } : {}),
+        ...(plan.imageWash ? { wash: plan.imageWash } : {}),
         ...(plan.imageCrop ? { crop: plan.imageCrop } : {}),
         ...(plan.imageRotationDeg ? { rotationDeg: plan.imageRotationDeg } : {}),
         ...(plan.imageFlipH ? { flipH: true } : {}),
@@ -4265,6 +4273,7 @@ function tokenizePlansBidi(
         heightPt: plan.imageHeightPt,
         ...(plan.imageOutline ? { outline: plan.imageOutline } : {}),
         ...(plan.imageShadow ? { shadow: plan.imageShadow } : {}),
+        ...(plan.imageWash ? { wash: plan.imageWash } : {}),
         ...(plan.imageCrop ? { crop: plan.imageCrop } : {}),
         ...(plan.imageRotationDeg ? { rotationDeg: plan.imageRotationDeg } : {}),
         ...(plan.imageFlipH ? { flipH: true } : {}),
@@ -5644,6 +5653,7 @@ function imageRun(image: ImageBlock): Paragraph['runs'][number] {
     inlineImage: {
       ...(image.resource ? { resource: image.resource } : {}),
       ...(image.outline ? { outline: image.outline } : {}),
+      ...(image.wash ? { wash: image.wash } : {}),
       width: image.width,
       height: image.height,
       ...(image.crop ? { crop: image.crop } : {}),
@@ -7077,6 +7087,7 @@ function paginateSections(
           height: pt(ins?.heightPt ?? block.heightPt),
           imageResourceName: block.resourceName,
           ...(block.crop ? { crop: block.crop } : {}),
+          ...(block.wash ? { wash: block.wash } : {}),
           ...(block.rotationDeg ? { rotationDeg: block.rotationDeg } : {}),
           ...(block.flipH ? { flipH: true } : {}),
           ...(block.flipV ? { flipV: true } : {}),

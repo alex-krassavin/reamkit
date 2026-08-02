@@ -644,3 +644,39 @@ describe('a GIF picture', () => {
     expect([...unzlibSync(prepared.data)].slice(3, 6)).toEqual([255, 255, 255]);
   });
 });
+
+describe('a washed picture (§14.1.2.10 @gain/@blacklevel)', () => {
+  const png = buildTinyPng(2, 2, [0, 0, 255, 255]);
+  // Word's "Washout": 30% contrast lifted 35%, written as 1/65536ths. Read as
+  // brightness/contrast about mid grey, `out = (in - 0.5) * 0.3 + 0.5 + 0.35`,
+  // which is white painted at 70% — the veil the emitter lays over the picture.
+  const washed = (attrs: string): string =>
+    asLatin1(
+      convertDocxToPdfSync(
+        buildDocxFromBody(
+          '<w:p><w:r><w:pict xmlns:v="urn:schemas-microsoft-com:vml">' +
+            '<v:shape style="width:72pt;height:72pt">' +
+            `<v:imagedata r:id="rId20" ${attrs}/></v:shape></w:pict></w:r></w:p>`,
+          { images: { rId20: { contentType: 'image/png', bytes: png, extension: 'png' } } },
+        ),
+        { fonts: FONTS },
+      ),
+    );
+
+  it('lays a white veil over the picture at the opacity the wash means', () => {
+    const text = washed('gain="19661f" blacklevel="22938f"');
+    expect(text).toMatch(/\/Im\d+ Do\n\/GS\w+ gs\n1 1 1 rg\n0 0 1 1 re\nf\nQ/u);
+    expect(text).toMatch(/\/ca 0?\.7\b/u);
+  });
+
+  it('paints the veil in the unit square the placement matrix maps onto it', () => {
+    // Not the picture's page rectangle: inside its own `cm` the box IS 0 0 1 1,
+    // so the wash follows the picture however it is cropped, rotated or flipped.
+    expect(washed('gain="50%" blacklevel="0"')).toContain('0 0 1 1 re');
+  });
+
+  it('leaves a picture that states the neutral wash alone', () => {
+    const text = washed('gain="65536f" blacklevel="0f"');
+    expect(text).not.toContain('0 0 1 1 re');
+  });
+});
