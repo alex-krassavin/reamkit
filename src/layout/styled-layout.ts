@@ -5292,6 +5292,29 @@ function clipCellToHeight(cell: CellLayout, heightPt: number): CellLayout {
   return { ...cell, lines: kept, contentHeightPt: used };
 }
 
+/**
+ * The one run a picture BLOCK is made of, so a context that lays out paragraphs
+ * (a table cell) can draw it without a block path of its own.
+ *
+ * @param image The image block.
+ * @returns A run carrying it as an inline picture.
+ */
+function imageRun(image: ImageBlock): Paragraph['runs'][number] {
+  return {
+    text: '',
+    properties: {},
+    inlineImage: {
+      ...(image.resource ? { resource: image.resource } : {}),
+      ...(image.outline ? { outline: image.outline } : {}),
+      width: image.width,
+      height: image.height,
+      ...(image.crop ? { crop: image.crop } : {}),
+      ...(image.rotation60k ? { rotation60k: image.rotation60k } : {}),
+      ...(image.effectExtent ? { effectExtent: image.effectExtent } : {}),
+    },
+  };
+}
+
 function layoutTableCell(
   cell: TableCell,
   tableProps: TableProperties,
@@ -5385,8 +5408,29 @@ function layoutTableCell(
         // every table after every line printed the two the wrong way round.
         nestedTables.push({ block: nested, afterLine: lines.length });
         contentHeightPt += nested.heightPt;
+      } else if (el.kind === 'image' && !isOutOfFlowFloat(el.image.float)) {
+        // A lone picture in a cell reaches the layout as an image BLOCK — the
+        // reader collapses a paragraph whose only content is a drawing. A cell
+        // lays out paragraphs, so it is laid out as the paragraph it came
+        // from: one run holding the picture, which reserves its height on the
+        // line and draws exactly as a picture beside text does.
+        // form_footnotes.docx opens its visa form with a crest in the first
+        // cell of the header table, and we printed the form without it.
+        const block = layoutParagraphBlock(
+          { properties: el.image.paragraphProperties, runs: [imageRun(el.image)] },
+          options,
+          fontResources,
+          imageResources,
+          innerWidth,
+        );
+        for (const line of block.lines) {
+          lines.push(line);
+          contentHeightPt += computeLineHeight(line, block.resolved);
+        }
+        contentHeightPt += block.spacingAfterPt;
       }
-      // image/shape/chart inside a cell are not yet rendered (skipped).
+      // A shape, a chart, or a FLOATING picture inside a cell is not yet
+      // rendered (skipped).
     }
   }
   const colEnd = colStart + colSpan - 1;
