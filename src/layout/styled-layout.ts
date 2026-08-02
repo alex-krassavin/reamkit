@@ -3741,8 +3741,16 @@ function layoutParagraphBlock(
   // every word of the paragraph moves the paragraph itself to the next page;
   // any other sends what FOLLOWS the paragraph there.
   const breakIdx = paragraph.runs.findIndex((r) => r.pageBreak === true);
+  // A run that carries a PICTURE is not nothing, however empty its text: the
+  // break after it sends what FOLLOWS to the next page, it does not move the
+  // paragraph. Counted as empty, tdf125657.docx — a full-page image and then a
+  // break — kept the break's page to itself and lost the one the mark after it
+  // stands on.
   const leadingPageBreak =
-    breakIdx >= 0 && paragraph.runs.slice(0, breakIdx + 1).every((r) => r.text === '');
+    breakIdx >= 0 &&
+    paragraph.runs
+      .slice(0, breakIdx + 1)
+      .every((r) => r.text === '' && r.inlineImage === undefined);
   const trailingPageBreak = paragraph.runs.some(
     (r, i) => r.pageBreak === true && (!leadingPageBreak || i > breakIdx),
   );
