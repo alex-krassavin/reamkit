@@ -133,6 +133,17 @@ export function parseTable(tbl: PoNode, ctx: ParseContext = DEFAULT_PARSE_CONTEX
       return merge ? { ...d.cell, properties: { ...d.cell.properties, merge } } : d.cell;
     }),
   }));
+  // §17.4.1 `w:bidiVisual` — the table reads RIGHT TO LEFT: its first cell is
+  // the RIGHTMOST one. Reversing the row here (and the grid with it) leaves
+  // every span, border and width resolving in the order they are drawn, so
+  // table-rtl.docx's B column stands where the reference puts it, first.
+  if (poFirstChild(poFirstChild(tbl, 'w:tblPr'), 'w:bidiVisual')) {
+    return {
+      properties,
+      grid: [...grid].reverse(),
+      rows: rows.map((row) => ({ ...row, cells: [...row.cells].reverse() })),
+    };
+  }
   return { properties, grid, rows };
 }
 
