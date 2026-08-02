@@ -181,6 +181,7 @@ function assembleStyledPdf(
     for (const item of plan.shapes) {
       const s = item.shape.shadow;
       if (s) wantAlpha(shadowBlurLayers(s).alpha);
+      wantAlpha(item.shape.fillAlpha);
     }
     // …and the shadow an inline PICTURE casts, which rides its token rather
     // than a shape of its own (imgshadow.docx).
@@ -831,7 +832,17 @@ function emitPageContent(
       shadowLayer && shadowLayer.alpha < 1
         ? alphaStateNames?.get(Math.round(shadowLayer.alpha * 1000) / 1000)
         : undefined;
-    for (const op of emitVectorShape(shape, gradientNames?.get(sh.shape), alphaState)) {
+    const fillAlpha = sh.shape.fillAlpha;
+    const fillAlphaState =
+      fillAlpha !== undefined && fillAlpha < 1
+        ? alphaStateNames?.get(Math.round(fillAlpha * 1000) / 1000)
+        : undefined;
+    for (const op of emitVectorShape(
+      shape,
+      gradientNames?.get(sh.shape),
+      alphaState,
+      fillAlphaState,
+    )) {
       out.push(op);
     }
   });

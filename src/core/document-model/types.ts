@@ -1142,6 +1142,12 @@ export interface ShapeFill {
    * of the picture the box shows, as the fractions cut from each side.
    */
   readonly imageCrop?: ImageCrop;
+  /**
+   * §20.1.2.3.1 `a:alpha` / §14.1.2.5 `@opacity` — how opaque the fill is,
+   * `0..1`. Absent is opaque. The colour above is the fill's own, NOT composited
+   * over the paper: what is behind the shape shows through it.
+   */
+  readonly alpha?: number;
 }
 
 /** §20.1.10.49 ST_PresetLineDashVal — a shape outline's preset dash pattern. */

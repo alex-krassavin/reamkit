@@ -450,6 +450,8 @@ interface ShapeBlockLaidOut {
   readonly markerPaths?: ReadonlyArray<VectorPath>;
   readonly fillColorHex?: string;
   readonly fillGradient?: ShapeGradient;
+  /** §20.1.2.3.1 — the fill's opacity, when it is not opaque. */
+  readonly fillAlpha?: number;
   /** §20.1.8.14 `a:blipFill` — the picture painted across the shape's box. */
   readonly fillImageResourceName?: string;
   /** §20.1.8.30 — the part of that picture the box shows. */
@@ -2404,6 +2406,9 @@ function layoutShapeBlock(
       : {}),
     ...(fillColorHex ? { fillColorHex } : {}),
     ...(fillGradient ? { fillGradient } : {}),
+    ...(shape.fill.alpha !== undefined && shape.fill.alpha < 1
+      ? { fillAlpha: shape.fill.alpha }
+      : {}),
     ...(stroke ? { stroke } : {}),
     ...(shape.shadow ? { shadow: shape.shadow } : {}),
     rotation60k: t?.rotation60k ?? 0,
@@ -3089,6 +3094,7 @@ function emitShapeItems(
         paths: sh.paths,
         ...(sh.fillColorHex ? { fillColorHex: sh.fillColorHex } : {}),
         ...(sh.fillGradient ? { fillGradient: sh.fillGradient } : {}),
+        ...(sh.fillAlpha !== undefined ? { fillAlpha: sh.fillAlpha } : {}),
         ...(sh.stroke ? { stroke: sh.stroke } : {}),
         ...(sh.shadow ? { shadow: sh.shadow } : {}),
         transform: flipTransform(

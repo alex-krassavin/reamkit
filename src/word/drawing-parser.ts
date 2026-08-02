@@ -1189,7 +1189,12 @@ export function vmlFill(
   if (picture !== undefined) return { kind: 'picture', imageResource: picture };
   const gradient = fillEl ? vmlGradient(fillEl, base) : undefined;
   if (gradient) return { kind: 'gradient', gradient };
-  return { kind: 'solid', colorHex: base };
+  // §14.1.2.5 `@opacity` — VML's own transparency, written as a fraction or a
+  // percentage.
+  const opacity = vmlOpacity(
+    poAttr(shape, 'opacity') ?? (fillEl ? poAttr(fillEl, 'opacity') : undefined),
+  );
+  return { kind: 'solid', colorHex: base, ...(opacity !== undefined ? { alpha: opacity } : {}) };
 }
 
 // §14.1.2.5 — a `v:fill` of type `gradient` / `gradientRadial`. VML measures
@@ -1261,6 +1266,16 @@ function vmlFocusStops(
     { offset: f, colorHex: color2 },
     { offset: 1, colorHex: base },
   ];
+}
+
+// §14.1.2.5 `@opacity` — "0.5" or "50%" or the 1/65536ths Word writes.
+function vmlOpacity(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const pct = raw.trim().endsWith('%');
+  const n = Number.parseFloat(pct ? raw.trim().slice(0, -1) : raw.replace(/f$/iu, ''));
+  if (!Number.isFinite(n)) return undefined;
+  const v = pct ? n / 100 : n > 1 ? n / 65536 : n;
+  return v >= 1 ? undefined : Math.max(0, v);
 }
 
 // §14.1.2.5 `@colors` — the stops BETWEEN the two the fill names, as
@@ -2465,7 +2480,22 @@ function fillFromNode(
     }
     if (poIs(child, 'a:solidFill')) {
       const hex = colorFromContainer(child, resolveColor);
-      return hex ? { kind: 'solid', colorHex: hex } : { kind: 'none' };
+      // §20.1.2.3.1 — the transparency is the fill's, not the colour's: read
+      // off here it is drawn as transparency, and what is behind the shape
+      // shows through. Left to the colour resolver it composites over white,
+      // which is right only on white paper.
+      const alpha = containerAlpha(child);
+      return hex
+        ? {
+            kind: 'solid',
+            // The resolver has already composited the colour over white for the
+            // writers that cannot draw transparency; drawing THAT at the same
+            // transparency would fade it twice. The compositing is linear, so
+            // it undoes exactly.
+            colorHex: alpha === undefined ? hex : unblendWhite(hex, alpha),
+            ...(alpha !== undefined ? { alpha } : {}),
+          }
+        : { kind: 'none' };
     }
     // §20.1.8.37 `a:pattFill` — a hatch of the foreground colour over the
     // background one. Drawn as the two blended by how much ink the pattern
@@ -2749,6 +2779,30 @@ function normalizeDash(v: string | undefined): ShapeDash | undefined {
 }
 
 // First a:srgbClr / a:schemeClr child → resolved hex (with colour transforms).
+// The colour that, composited over white at `alpha`, gives `hex` back.
+function unblendWhite(hex: string, alpha: number): string {
+  if (alpha <= 0.004) return hex;
+  const n = parseInt(hex, 16);
+  if (Number.isNaN(n)) return hex;
+  const ch = (shift: number): string => {
+    const v = ((n >> shift) & 255) / 255;
+    const raw = (v - (1 - alpha)) / alpha;
+    return Math.round(Math.max(0, Math.min(1, raw)) * 255)
+      .toString(16)
+      .padStart(2, '0');
+  };
+  return (ch(16) + ch(8) + ch(0)).toUpperCase();
+}
+
+// §20.1.2.3.1 — the `a:alpha` on the colour a fill container wraps, as 0..1.
+function containerAlpha(parent: PoNode): number | undefined {
+  for (const c of poChildren(parent)) {
+    const mod = readColorMods(c).find((m) => m.kind === 'alpha');
+    if (mod) return Math.max(0, Math.min(1, mod.val));
+  }
+  return undefined;
+}
+
 function colorFromContainer(parent: PoNode, resolveColor: ColorResolver): string | undefined {
   for (const c of poChildren(parent)) {
     const hex = resolveColorNode(c, resolveColor);
