@@ -159,6 +159,16 @@ export function presetPaths(
       // Box diagonal (top-left → bottom-right in y-down ⇒ (0,h)→(w,0) here).
       // Open path: a connector is stroked, never filled.
       return [new PathBuilder().moveTo(0, h).lineTo(w, 0).build()];
+    case 'bentConnector2':
+      // §20.1.10.55 — one right-angle: along the top, then down the far side.
+      return [new PathBuilder().moveTo(0, h).lineTo(w, h).lineTo(w, 0).build()];
+    case 'bentConnector3': {
+      // …and two, with the upright standing where `adj1` puts it across the box
+      // (half way by default). VML's bent connector (`o:spt="34"`) is the same
+      // shape: groupshape-child-rotation.docx joins its two boxes with one.
+      const bx = clamp(frac(adjust, 'adj1', 50000), 0, 1) * w;
+      return [new PathBuilder().moveTo(0, h).lineTo(bx, h).lineTo(bx, 0).lineTo(w, 0).build()];
+    }
     case 'rightArrow':
       return [blockArrow(w, h, adjust, 'right')];
     case 'leftArrow':

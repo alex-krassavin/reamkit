@@ -681,9 +681,21 @@ function vmlShapeData(
   // fdo70838.docx stacks four rectangles at 75°, 105°, 255° and 285°, and
   // drawn square they came out as one wide box.
   const rotationDeg = vmlStyleNumber(shape, 'rotation');
+  // §14.1.2.19 `style="flip:x|y|xy"` — and mirrors it about one axis or both,
+  // which is how a connector is made to run the other way:
+  // groupshape-child-rotation.docx turns its bent connector 180° and flips it
+  // back in y, and drawn without the flip it ran from the wrong corner.
+  const flip = vmlStyleValue(shape, 'flip')?.toLowerCase() ?? '';
+  const flipH = flip.includes('x');
+  const flipV = flip.includes('y');
+  const spun = rotationDeg !== undefined && rotationDeg % 360 !== 0 ? rotationDeg : undefined;
   const transform =
-    rotationDeg !== undefined && rotationDeg % 360 !== 0
-      ? { rotation60k: Math.round(rotationDeg * 60000) }
+    spun !== undefined || flipH || flipV
+      ? {
+          ...(spun !== undefined ? { rotation60k: Math.round(spun * 60000) } : {}),
+          ...(flipH ? { flipH: true } : {}),
+          ...(flipV ? { flipV: true } : {}),
+        }
       : undefined;
   // §14.1.2.22 — a shape with a `v:textpath` is WordArt, wherever it sits: its
   // words are what it draws, not the box they were written in. FDO78590.docx
@@ -936,6 +948,14 @@ function vmlPair(raw: string | undefined): { x: number; y: number } | undefined 
 }
 
 /** A unitless `@style` number (a child inside a group is in coord units). */
+/** §14.1.2.19 — a CSS-like `@style` property's raw value ("flip:xy" → "xy"). */
+function vmlStyleValue(shape: PoNode, prop: string): string | undefined {
+  const style = poAttr(shape, 'style');
+  if (style === undefined) return undefined;
+  const m = new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([^;]+)`, 'iu').exec(style);
+  return m?.[1]?.trim();
+}
+
 function vmlStyleNumber(shape: PoNode, prop: string): number | undefined {
   const style = poAttr(shape, 'style');
   if (style === undefined) return undefined;
@@ -966,6 +986,8 @@ const VML_SPT_PRESETS: Readonly<Record<string, string>> = {
   '13': 'rightArrow',
   '20': 'line', // straight connector
   '32': 'line', // straight ARROW connector
+  '33': 'bentConnector2',
+  '34': 'bentConnector3',
   '56': 'pentagon',
   '58': 'star8',
   '59': 'star16',
