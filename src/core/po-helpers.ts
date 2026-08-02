@@ -103,7 +103,29 @@ export function poIntAttr(node: PoNode | undefined, name: string): number | unde
   const v = poAttr(node, name);
   if (v === undefined) return undefined;
   const n = Number(v);
-  return Number.isFinite(n) ? n : undefined;
+  if (Number.isFinite(n)) return n;
+  // §22.9.2.14 ST_TwipsMeasure — a measurement may also be written as a number
+  // with a UNIT ("28.35pt", "1cm"), and producers do: tdf116410.docx states its
+  // whole page geometry that way, and read as nothing it fell back to a letter
+  // page with inch margins.
+  return universalMeasureTwips(v);
+}
+
+// The universal measures §22.9.2.15 allows, in twips (1/1440").
+const MEASURE_TWIPS: ReadonlyMap<string, number> = new Map([
+  ['pt', 20],
+  ['pc', 240],
+  ['pi', 240],
+  ['in', 1440],
+  ['cm', 1440 / 2.54],
+  ['mm', 144 / 2.54],
+]);
+
+function universalMeasureTwips(raw: string): number | undefined {
+  const m = /^\s*(-?[0-9]+(?:\.[0-9]+)?)(pt|pc|pi|in|cm|mm)\s*$/iu.exec(raw);
+  if (!m) return undefined;
+  const per = MEASURE_TWIPS.get(m[2]!.toLowerCase());
+  return per === undefined ? undefined : Number(m[1]) * per;
 }
 
 /** Shorthand for the `val` attribute (`@w:val`/…). */
