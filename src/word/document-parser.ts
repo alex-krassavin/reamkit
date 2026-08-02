@@ -720,6 +720,8 @@ function blocksForDrawing(
           height: content.height,
           ...(content.crop ? { crop: content.crop } : {}),
           ...(content.rotation60k ? { rotation60k: content.rotation60k } : {}),
+          ...(content.flipH ? { flipH: true } : {}),
+          ...(content.flipV ? { flipV: true } : {}),
           ...(content.relativeSize ? { relativeSize: content.relativeSize } : {}),
           ...(content.effectExtent ? { effectExtent: content.effectExtent } : {}),
           paragraphProperties,
@@ -1386,6 +1388,8 @@ function parseRun(
           height: content.height,
           ...(content.crop ? { crop: content.crop } : {}),
           ...(content.rotation60k ? { rotation60k: content.rotation60k } : {}),
+          ...(content.flipH ? { flipH: true } : {}),
+          ...(content.flipV ? { flipV: true } : {}),
           ...(content.effectExtent ? { effectExtent: content.effectExtent } : {}),
         };
       }

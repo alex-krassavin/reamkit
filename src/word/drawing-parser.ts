@@ -117,6 +117,9 @@ export type DrawingContent =
       readonly crop?: ImageCrop;
       /** §20.1.7.6 `a:xfrm @rot` — the picture's rotation (1/60000°, clockwise). */
       readonly rotation60k?: number;
+      /** §20.1.7.6 `a:xfrm @flipH/@flipV` — the picture drawn mirrored. */
+      readonly flipH?: boolean;
+      readonly flipV?: boolean;
       /** `wp14:sizeRelH/V` — a size stated as a share of the page or margins. */
       readonly relativeSize?: RelativeSize;
       /** §20.4.2.6 `wp:effectExtent` on an INLINE drawing: space reserved around it. */
@@ -462,6 +465,10 @@ export function parseDrawing(
     // its cover by 10.7° and we set it square.
     const xfrm = poFindDescendant(anchor, 'a:xfrm');
     const rot = xfrm ? poIntAttr(xfrm, 'rot') : undefined;
+    // §20.1.7.6 — …and mirrored in its frame. graphic-object-fliph.docx turns
+    // its folded corner to the other side and we drew it unflipped.
+    const on = (name: string): boolean =>
+      xfrm !== undefined && (poAttr(xfrm, name) === '1' || poAttr(xfrm, name) === 'true');
     // §20.4.2.6 — an inline drawing reserves its effect extent on the line:
     // effect-extent-inline.docx turns its cover 40° and states the 46pt the
     // corners need on each side, without which the picture sat 48pt to the
@@ -486,6 +493,8 @@ export function parseDrawing(
       ...(outline ? { outline } : {}),
       ...(crop ? { crop } : {}),
       ...(rot ? { rotation60k: rot } : {}),
+      ...(on('flipH') ? { flipH: true } : {}),
+      ...(on('flipV') ? { flipV: true } : {}),
       ...(relativeSize ? { relativeSize } : {}),
       ...(effectExtent ? { effectExtent } : {}),
       ...alt,

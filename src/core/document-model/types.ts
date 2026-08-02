@@ -242,6 +242,9 @@ export interface InlineImage {
   readonly crop?: ImageCrop;
   /** §20.1.7.6 `a:xfrm @rot` — the picture's own rotation (1/60000°, clockwise). */
   readonly rotation60k?: number;
+  /** §20.1.7.6 `a:xfrm @flipH/@flipV` — the picture drawn mirrored. */
+  readonly flipH?: boolean;
+  readonly flipV?: boolean;
   /**
    * §20.4.2.6 `wp:effectExtent` — space the drawing needs BEYOND its extent,
    * for what a rotation or an effect throws outside the frame. The line box
@@ -971,6 +974,9 @@ export interface ImageBlock {
   readonly crop?: ImageCrop;
   /** §20.1.7.6 `a:xfrm @rot` — the picture's own rotation (1/60000°, clockwise). */
   readonly rotation60k?: number;
+  /** §20.1.7.6 `a:xfrm @flipH/@flipV` — the picture drawn mirrored. */
+  readonly flipH?: boolean;
+  readonly flipV?: boolean;
   /** `wp14:sizeRelH/V` — a size stated as a share of the page or margins. */
   readonly relativeSize?: RelativeSize;
   /** §20.4.2.6 `wp:effectExtent` — space reserved around the picture (see {@link InlineImage}). */

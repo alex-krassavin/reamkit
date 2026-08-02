@@ -101,6 +101,9 @@ export interface ImageToken {
   readonly crop?: ImageCrop;
   /** §20.1.7.6 — degrees clockwise about the box's centre. */
   readonly rotationDeg?: number;
+  /** §20.1.7.6 — the picture drawn mirrored in its box. */
+  readonly flipH?: boolean;
+  readonly flipV?: boolean;
   /**
    * §20.4.2.6 — where the picture itself sits inside the reserved box when the
    * drawing asked for an effect extent: offsets from the box's left edge and
@@ -291,6 +294,9 @@ export interface ImageItem extends PageItemBase {
   readonly crop?: ImageCrop;
   /** §20.1.7.6 — degrees clockwise about the box's centre. */
   readonly rotationDeg?: number;
+  /** §20.1.7.6 — the picture drawn mirrored in its box. */
+  readonly flipH?: boolean;
+  readonly flipV?: boolean;
   /**
    * §20.1.8.14 — a picture FILL is the shape's outline painted with a picture,
    * so it is clipped to that outline: the paths in the shape's local frame and

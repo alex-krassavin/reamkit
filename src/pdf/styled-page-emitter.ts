@@ -722,6 +722,8 @@ function emitPageContent(
         img.height,
         img.crop,
         img.rotationDeg,
+        img.flipH,
+        img.flipV,
       ),
     );
     out.push(`/${img.imageResourceName} Do`);
@@ -876,8 +878,19 @@ function emitPageContent(
               b.heightPt,
               tok.crop,
               tok.rotationDeg,
+              tok.flipH,
+              tok.flipV,
             )
-          : placeImage(x, baselineY, tok.widthPt, tok.heightPt, tok.crop, tok.rotationDeg)),
+          : placeImage(
+              x,
+              baselineY,
+              tok.widthPt,
+              tok.heightPt,
+              tok.crop,
+              tok.rotationDeg,
+              tok.flipH,
+              tok.flipV,
+            )),
       );
       out.push(`/${tok.imageResourceName} Do`);
       out.push('Q');
@@ -1375,6 +1388,8 @@ function placeImage(
   height: number,
   crop: ImageCrop | undefined,
   rotationDeg?: number,
+  flipH?: boolean,
+  flipV?: boolean,
 ): Array<string> {
   const cm = (w: number, h: number, ox: number, oy: number): string =>
     `${formatNumber(w)} 0 0 ${formatNumber(h)} ${formatNumber(ox)} ${formatNumber(oy)} cm`;
@@ -1384,6 +1399,17 @@ function placeImage(
   const spin = rotationDeg
     ? [rotateAboutCm(x + width / 2, y + height / 2, -rotationDeg)]
     : ([] as Array<string>);
+  // §20.1.7.6 `@flipH`/`@flipV` — mirrored about the same centre, before the
+  // box is filled, so everything after it works in the mirrored frame.
+  if (flipH === true || flipV === true) {
+    const sx = flipH === true ? -1 : 1;
+    const sy = flipV === true ? -1 : 1;
+    spin.push(
+      `${formatNumber(sx)} 0 0 ${formatNumber(sy)} ` +
+        `${formatNumber(sx === -1 ? 2 * x + width : 0)} ` +
+        `${formatNumber(sy === -1 ? 2 * y + height : 0)} cm`,
+    );
+  }
   if (!crop) return [...spin, cm(width, height, x, y)];
   const kept = { w: 1 - crop.left - crop.right, h: 1 - crop.top - crop.bottom };
   // The full picture at the scale that makes its kept part fill the box, moved

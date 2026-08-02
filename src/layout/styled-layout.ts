@@ -393,6 +393,9 @@ interface ImageBlockLaidOut {
   readonly crop?: ImageCrop;
   /** §20.1.7.6 — degrees clockwise about the box's centre. */
   readonly rotationDeg?: number;
+  /** §20.1.7.6 — the picture drawn mirrored in its box. */
+  readonly flipH?: boolean;
+  readonly flipV?: boolean;
   /**
    * §20.4.2.6 — where the picture is drawn inside the reserved box when the
    * drawing states an effect extent: offsets from the box's left and TOP edges
@@ -1933,6 +1936,8 @@ function layoutImageBlock(
     ...(image.outline ? { outline: image.outline } : {}),
     ...(image.crop ? { crop: image.crop } : {}),
     ...(image.rotation60k ? { rotationDeg: image.rotation60k / 60000 } : {}),
+    ...(image.flipH ? { flipH: true } : {}),
+    ...(image.flipV ? { flipV: true } : {}),
     ...(drawInset ? { drawInset } : {}),
     spacingBeforePt: image.paragraphProperties.spacingBefore ?? 0,
     spacingAfterPt: image.paragraphProperties.spacingAfter ?? 0,
@@ -3000,6 +3005,8 @@ function drawBlocksSequentially(
         imageResourceName: block.resourceName,
         ...(block.crop ? { crop: block.crop } : {}),
         ...(block.rotationDeg ? { rotationDeg: block.rotationDeg } : {}),
+        ...(block.flipH ? { flipH: true } : {}),
+        ...(block.flipV ? { flipV: true } : {}),
       });
       if (block.outline) {
         out.push(
@@ -3584,6 +3591,9 @@ interface RunPlan {
   readonly imageCrop?: ImageCrop;
   /** §20.1.7.6 — the picture's rotation, in degrees clockwise. */
   readonly imageRotationDeg?: number;
+  /** §20.1.7.6 — the picture drawn mirrored. */
+  readonly imageFlipH?: boolean;
+  readonly imageFlipV?: boolean;
   /** §20.4.2.6 — the picture's own rect inside the reserved (effect-extended) box. */
   readonly imageDrawBox?: ImageToken['drawBox'];
   readonly math?: {
@@ -3748,6 +3758,8 @@ function tokenizeParagraph(
         ...(run.inlineImage.rotation60k
           ? { imageRotationDeg: run.inlineImage.rotation60k / 60000 }
           : {}),
+        ...(run.inlineImage.flipH ? { imageFlipH: true } : {}),
+        ...(run.inlineImage.flipV ? { imageFlipV: true } : {}),
         ...(drawBox ? { imageDrawBox: drawBox } : {}),
       };
     }
@@ -3866,6 +3878,8 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         ...(plan.imageOutline ? { outline: plan.imageOutline } : {}),
         ...(plan.imageCrop ? { crop: plan.imageCrop } : {}),
         ...(plan.imageRotationDeg ? { rotationDeg: plan.imageRotationDeg } : {}),
+        ...(plan.imageFlipH ? { flipH: true } : {}),
+        ...(plan.imageFlipV ? { flipV: true } : {}),
         ...(plan.imageDrawBox ? { drawBox: plan.imageDrawBox } : {}),
         isSpace: false,
         bidiLevel: 0,
@@ -3943,6 +3957,8 @@ function tokenizePlansBidi(
         ...(plan.imageOutline ? { outline: plan.imageOutline } : {}),
         ...(plan.imageCrop ? { crop: plan.imageCrop } : {}),
         ...(plan.imageRotationDeg ? { rotationDeg: plan.imageRotationDeg } : {}),
+        ...(plan.imageFlipH ? { flipH: true } : {}),
+        ...(plan.imageFlipV ? { flipV: true } : {}),
         ...(plan.imageDrawBox ? { drawBox: plan.imageDrawBox } : {}),
         isSpace: false,
         bidiLevel: realLevels[realIdx] ?? 0,
@@ -5310,6 +5326,8 @@ function imageRun(image: ImageBlock): Paragraph['runs'][number] {
       height: image.height,
       ...(image.crop ? { crop: image.crop } : {}),
       ...(image.rotation60k ? { rotation60k: image.rotation60k } : {}),
+      ...(image.flipH ? { flipH: true } : {}),
+      ...(image.flipV ? { flipV: true } : {}),
       ...(image.effectExtent ? { effectExtent: image.effectExtent } : {}),
     },
   };
@@ -6557,6 +6575,10 @@ function paginateSections(
           imageResourceName: block.resourceName,
           ...(block.crop ? { crop: block.crop } : {}),
           ...(block.rotationDeg ? { rotationDeg: block.rotationDeg } : {}),
+          ...(block.flipH ? { flipH: true } : {}),
+          ...(block.flipV ? { flipV: true } : {}),
+          ...(block.flipH ? { flipH: true } : {}),
+          ...(block.flipV ? { flipV: true } : {}),
           ...(figId !== undefined ? { structId: figId } : {}),
         });
         if (block.outline) {
