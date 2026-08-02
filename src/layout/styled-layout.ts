@@ -1504,7 +1504,11 @@ function blocksHeight(blocks: ReadonlyArray<LaidOutBlock>): number {
     // offset and grows nothing. Counted, it made fdo78420's header band 400pt
     // tall — two text boxes anchored over the page — and the body began a third
     // of the way down every page, in 41 pages against the reference's 23.
-    if (b.kind !== 'paragraph' && isOutOfFlowFloat(b.float)) return sum;
+    // A floating TABLE is not in that class: `drawBlocksSequentially` walks its
+    // rows down the band's cursor like any other, so the height must agree or
+    // the band starts too low — PageSpecificHeadFoot.docx anchors its page-number
+    // table in the footer and pushed the paragraph after it off the page edge.
+    if (b.kind !== 'paragraph' && b.kind !== 'table' && isOutOfFlowFloat(b.float)) return sum;
     return (
       sum +
       (b.kind === 'paragraph' ? b.spacingBeforePt + b.heightPt + b.spacingAfterPt : b.heightPt)
