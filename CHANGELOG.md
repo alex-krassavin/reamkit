@@ -3,6 +3,91 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.17.0
+
+The `.docx` half of the same sweep: every one of 1121 real Word documents opened
+beside a reference conversion, the pages compared as pictures rather than as
+text, and then ranked by how many pixels differ so the worst page was always the
+next one to open. Nothing below was visible in a text dump.
+
+### Added
+
+- **The page background Word actually paints.** `<w:background w:color>` is only
+  the flat fallback; the `<v:background>` beside it carries a gradient or a
+  picture. Both render now — including the stops a VML gradient lists between
+  its two named colours, the band an `@focus` puts the second colour in, the
+  corner a radial sweep starts from, and the rectangular contours VML draws it
+  with (a PDF calculator function, since no shading type describes them).
+- **Shadows.** A shape's own `<a:outerShdw>`, the one a gallery style names
+  through `<a:effectRef>`, and the one a picture carries on its `pic:spPr` —
+  which rides the image so an inline picture gets it too. `blurRad` draws as a
+  soft edge rather than a cut one.
+- **A table inside a text box**, which is what a title page usually is: one box
+  holding one table.
+- **A gallery fill is the theme's whole fill** — a solid, a gradient, a picture —
+  including the background fill styles an `<a:fillRef>` reaches past index 1000,
+  where Word's cover pages live. A path gradient starts where its
+  `<a:fillToRect>` says.
+- **Drawings placed and sized as the document asks**: a keyword position
+  (`<wp:align>`), an anchor or a relative size against a margin BAND rather than
+  the text area, a share of the page, the room a rotation needs, and the
+  distance text keeps from a float.
+- **Numbering**: `chicago` reference marks, legal numbering in arabic, ideographs,
+  a picture bullet at the size of the text beside it, an instance that redefines
+  a level or starts it elsewhere, and a heading numbered by its style.
+- **Text frames** (`w:framePr`) float where they say, at the height they state.
+- **Legacy VML shapes and locked canvases** draw; so do pattern fills, arrowheads,
+  underline styles, GIFs, and a shape written inside a table cell.
+- **Sections**: a rule between columns, a column break, pages printed from the
+  number the section names, and a table that reads right to left.
+- **Charts** are drawn with the rules they state.
+
+### Fixed
+
+The style cascade
+
+- **A table style ranks under the style a paragraph is written in** (§17.7.2), on
+  the paragraph side and the run side both. Written on as if the document had
+  stated them, a table style's spacing packed the headings of a styled cell
+  together and its 8pt blue overwrote every colour and size the text named.
+- **A paragraph that names no style is written in the default one**, and
+  automatic spacing is a property of its own rather than a length that any
+  literal beats.
+- **A cell counts the space between its paragraphs once** — twice over, a 685pt
+  cell measured 991pt and was split where no reader splits it.
+- **A gallery shape lends its text the colour it names**, at the rank a theme
+  colour holds: under every style the text itself names.
+
+The page and its sections
+
+- **A document that states no page size is on US Letter**, which is what both
+  references use, not the library's own A4 fallback.
+- **A measurement may name its unit** (`"28.35pt"`, `"1cm"`): a whole page
+  geometry written that way had been read as nothing at all.
+- **The body carries one section break, and it closes the body**; a section with
+  no header of its own is not pushed down by a header it does not show.
+- **A line stands as tall as what prints on it** — Word measures a line's spaces
+  at the size of its text, not their own.
+
+Drawings
+
+- **A header's drawing keeps its size and its place in the stack**: an anchored
+  picture may hang into the margins, and `@behindDoc` puts it behind everything
+  in the band whatever order it was written in.
+- **A paragraph that anchors a drawing keeps its own line** — the drawing leaves
+  the flow, the paragraph mark does not.
+- **A run that carries a picture is not an empty run**, so a break after one
+  sends what follows to the next page instead of moving the picture.
+- **A VML shape wraps text only where it says so**, keeps the z-order its style
+  states, and a group nested in a group is scaled by both coordinate spaces.
+
+Reading robustly
+
+- **The main document part is whatever the package says it is** — a file naming
+  it anything but `word/document.xml` had been refused outright.
+- **A document of nested tables, several bodies, or Strict-namespace charts and
+  diagrams is read** rather than partly dropped.
+
 ## 1.16.0
 
 The end of a validation sweep that opened every one of 649 real `.xlsx`
