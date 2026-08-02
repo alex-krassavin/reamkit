@@ -2331,11 +2331,20 @@ function withStyleFontColor(
 
 function parseTextBox(wsp: PoNode, parseBody: ParseBody): ShapeTextBody | undefined {
   const txbx = poChildren(wsp).find((c) => poIs(c, 'wps:txbx'));
-  if (!txbx) return undefined;
-  const txContent = poChildren(txbx).find((c) => poIs(c, 'w:txbxContent'));
-  if (!txContent) return undefined;
-  const content = parseBody(poChildren(txContent));
-  if (content.length === 0) return undefined;
+  // A box that CONTINUES another carries `wps:linkedTxbx` in place of the text:
+  // the words live in the chain's first box, and what will not fit there is
+  // drawn here (LinkedTextBoxes.docx sets a newsletter in two such columns).
+  const linked = poChildren(wsp).find((c) => poIs(c, 'wps:linkedTxbx'));
+  const chainId = poAttr(txbx, 'id') ?? poAttr(linked, 'id');
+  const chain =
+    chainId === undefined
+      ? undefined
+      : { id: chainId, seq: linked ? (poIntAttr(linked, 'seq') ?? 1) : 0 };
+  if (!txbx && !linked) return undefined;
+  const txContent = txbx ? poChildren(txbx).find((c) => poIs(c, 'w:txbxContent')) : undefined;
+  if (txbx && !txContent) return undefined;
+  const content = txContent ? parseBody(poChildren(txContent)) : [];
+  if (content.length === 0 && !linked) return undefined;
 
   const bodyPr = poChildren(wsp).find((c) => poIs(c, 'wps:bodyPr'));
   const lIns = bodyPr ? poIntAttr(bodyPr, 'lIns') : undefined;
@@ -2356,6 +2365,7 @@ function parseTextBox(wsp: PoNode, parseBody: ParseBody): ShapeTextBody | undefi
 
   return {
     content,
+    ...(chain ? { chain } : {}),
     ...(vertical ? { vertical } : {}),
     ...(autoFit ? { autoFit: true } : {}),
     ...(lIns !== undefined ? { insetLeft: emuToPt(lIns) } : {}),

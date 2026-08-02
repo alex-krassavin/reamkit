@@ -492,6 +492,11 @@ interface ShapeBlockLaidOut {
    */
   readonly textLineGaps?: ReadonlyMap<number, number>;
   readonly textHeightPt: number;
+  /**
+   * `wps:txbx @id` / `wps:linkedTxbx @seq` — the chain of boxes this one is
+   * part of, and its place in it. What will not fit here is drawn in the next.
+   */
+  readonly textChain?: { readonly id: string; readonly seq: number };
   readonly insetLeftPt: number;
   readonly insetRightPt: number;
   readonly insetTopPt: number;
@@ -1142,6 +1147,8 @@ export function layoutStyledDocument(
     if (here.resolved.contextualSpacing) blocks[i] = { ...here, spacingAfterPt: 0 };
     if (next.resolved.contextualSpacing) blocks[i + 1] = { ...next, spacingBeforePt: 0 };
   }
+
+  flowLinkedTextBoxes(blocks);
 
   // Footnote plan: per-section lazily-cached layout of each note's content at
   // that section's width (notes referenced only from tables/shape text flow
@@ -1985,6 +1992,103 @@ function frameShape(
 
 /** §17.3.1.11 → §20.4.2.3: the frame's anchor, in the terms floats are placed in. */
 /**
+ * `wps:linkedTxbx` — carry each chain's overflow from one box to the next.
+ * The words all live in the chain's FIRST box; a box shows as many of its lines
+ * as its height holds and hands the rest on, so LinkedTextBoxes.docx reads down
+ * one column and continues at the top of the other. A box that ends a chain
+ * keeps whatever is left, overflowing as it would have anyway.
+ *
+ * The lines are broken at the first box's width, so a chain of boxes of
+ * different widths sets its later columns to the wrong measure; re-breaking
+ * needs the source paragraphs split at the carry point, which the laid-out
+ * lines no longer know.
+ */
+function flowLinkedTextBoxes(blocks: Array<LaidOutBlock>): void {
+  const chains = new Map<string, Array<number>>();
+  blocks.forEach((b, i) => {
+    if (b.kind !== 'shape' || !b.textChain) return;
+    const at = chains.get(b.textChain.id) ?? [];
+    at.push(i);
+    chains.set(b.textChain.id, at);
+  });
+  for (const indices of chains.values()) {
+    if (indices.length < 2) continue;
+    // Document order is not chain order: a continuation may be written first.
+    indices.sort((a, b) => {
+      const sa = (blocks[a] as ShapeBlockLaidOut).textChain?.seq ?? 0;
+      const sb = (blocks[b] as ShapeBlockLaidOut).textChain?.seq ?? 0;
+      return sa - sb;
+    });
+    let carried: Array<LineWithExtras> = [];
+    indices.forEach((idx, n) => {
+      const box = blocks[idx] as ShapeBlockLaidOut;
+      const all = n === 0 ? boxLines(box) : carried;
+      const last = n === indices.length - 1;
+      const room = box.heightPt - box.insetTopPt - box.insetBottomPt;
+      const kept: Array<LineWithExtras> = [];
+      let used = 0;
+      for (const l of all) {
+        const h = computeLineHeight(l.line, l.line.resolved) + l.gapPt;
+        if (!last && kept.length > 0 && used + h > room) break;
+        kept.push(l);
+        used += h;
+      }
+      carried = all.slice(kept.length);
+      blocks[idx] = rebuildBoxLines(box, kept);
+    });
+  }
+}
+
+/** One of a text box's laid-out lines with everything keyed to its index. */
+interface LineWithExtras {
+  readonly line: Line;
+  readonly gapPt: number;
+  readonly chart?: ChartBlockLaidOut;
+  readonly shape?: ShapeBlockLaidOut;
+  readonly table?: TableBlock;
+}
+
+function boxLines(box: ShapeBlockLaidOut): Array<LineWithExtras> {
+  return box.textLines.map((line, i) => ({
+    line,
+    gapPt: box.textLineGaps?.get(i) ?? 0,
+    ...(box.textCharts?.get(i) ? { chart: box.textCharts.get(i)! } : {}),
+    ...(box.textShapes?.get(i) ? { shape: box.textShapes.get(i)! } : {}),
+    ...(box.textTables?.get(i) ? { table: box.textTables.get(i)! } : {}),
+  }));
+}
+
+function rebuildBoxLines(
+  box: ShapeBlockLaidOut,
+  lines: ReadonlyArray<LineWithExtras>,
+): ShapeBlockLaidOut {
+  const charts = new Map<number, ChartBlockLaidOut>();
+  const shapes = new Map<number, ShapeBlockLaidOut>();
+  const tables = new Map<number, TableBlock>();
+  const gaps = new Map<number, number>();
+  let height = 0;
+  lines.forEach((l, i) => {
+    if (l.chart) charts.set(i, l.chart);
+    if (l.shape) shapes.set(i, l.shape);
+    if (l.table) tables.set(i, l.table);
+    if (l.gapPt > 0) gaps.set(i, l.gapPt);
+    height += computeLineHeight(l.line, l.line.resolved) + l.gapPt;
+  });
+  // The maps are keyed BY LINE INDEX, so a box that keeps a different set of
+  // lines needs them rebuilt rather than carried over.
+  const { textCharts: _c, textShapes: _s, textTables: _t, textLineGaps: _g, ...rest } = box;
+  return {
+    ...rest,
+    textLines: lines.map((l) => l.line),
+    ...(charts.size > 0 ? { textCharts: charts } : {}),
+    ...(shapes.size > 0 ? { textShapes: shapes } : {}),
+    ...(tables.size > 0 ? { textTables: tables } : {}),
+    ...(gaps.size > 0 ? { textLineGaps: gaps } : {}),
+    textHeightPt: height,
+  };
+}
+
+/**
  * §17.3.1.11 — whether the frame is placed DOWN THE PAGE by itself, rather than
  * where the flow has reached. `w:vAnchor="text"` (the default) measures `w:y`
  * from the paragraph's own position, so such frames stack as paragraphs do —
@@ -2541,6 +2645,7 @@ function layoutShapeBlock(
     ...(textTables.size > 0 ? { textTables } : {}),
     ...(textLineGaps.size > 0 ? { textLineGaps } : {}),
     textHeightPt,
+    ...(text?.chain ? { textChain: text.chain } : {}),
     insetLeftPt,
     insetRightPt,
     insetTopPt,

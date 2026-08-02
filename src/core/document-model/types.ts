@@ -1252,6 +1252,13 @@ export interface ShapeTextBody {
    * WordArt is set at whatever size fills the box it was drawn in.
    */
   readonly fitToBox?: boolean;
+  /**
+   * `wps:txbx @id` / `wps:linkedTxbx @id @seq` — the chain of boxes this one
+   * belongs to. Text that overruns a box continues in the next of its chain;
+   * `seq` 0 is the box that holds the words, and the rest carry none of their
+   * own.
+   */
+  readonly chain?: { readonly id: string; readonly seq: number };
 }
 
 /**

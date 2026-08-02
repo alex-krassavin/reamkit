@@ -224,3 +224,87 @@ describe('a drawing anchored inside a table cell (§20.4.2.4)', () => {
     expect(lineY(withFloat)).toBeCloseTo(lineY(bare), 4);
   });
 });
+
+// Two boxes of one chain: the first holds the words (`wps:txbx id`), the second
+// only says it continues them (`wps:linkedTxbx id seq`).
+const chained = (heightEmu: number, text: string) =>
+  buildDocxFromBody(
+    `<w:p><w:r><w:drawing>
+      <wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+        <wp:extent cx="1828800" cy="${String(heightEmu)}"/>
+        <wp:positionH relativeFrom="page"><wp:posOffset>635000</wp:posOffset></wp:positionH>
+        <wp:positionV relativeFrom="page"><wp:posOffset>635000</wp:posOffset></wp:positionV>
+        <wp:wrapNone/>
+        <wp:docPr id="1" name="Box 1"/>
+        <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+          <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+            <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="${String(heightEmu)}"/></a:xfrm>
+                <a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr>
+              <wps:txbx id="7"><w:txbxContent>${text}</w:txbxContent></wps:txbx>
+              <wps:bodyPr lIns="0" tIns="0" rIns="0" bIns="0"/>
+            </wps:wsp>
+          </a:graphicData>
+        </a:graphic>
+      </wp:anchor>
+    </w:drawing></w:r></w:p>` +
+      `<w:p><w:r><w:drawing>
+      <wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+        <wp:extent cx="1828800" cy="3657600"/>
+        <wp:positionH relativeFrom="page"><wp:posOffset>3175000</wp:posOffset></wp:positionH>
+        <wp:positionV relativeFrom="page"><wp:posOffset>635000</wp:posOffset></wp:positionV>
+        <wp:wrapNone/>
+        <wp:docPr id="2" name="Box 2"/>
+        <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+          <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+            <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="3657600"/></a:xfrm>
+                <a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr>
+              <wps:linkedTxbx id="7" seq="1"/>
+              <wps:bodyPr lIns="0" tIns="0" rIns="0" bIns="0"/>
+            </wps:wsp>
+          </a:graphicData>
+        </a:graphic>
+      </wp:anchor>
+    </w:drawing></w:r></w:p>`,
+  );
+
+const PARAS = Array.from(
+  { length: 8 },
+  (_, i) => `<w:p><w:r><w:t>line ${String(i)}</w:t></w:r></w:p>`,
+).join('');
+
+// The x of every line that carries words, by the text on it — the two body
+// paragraphs the drawings hang off draw an empty line each.
+const linesByText = (laid: ReturnType<typeof layoutOf>) =>
+  laid.pages[0]!.commands.filter((c) => c.type === 'line')
+    .map(
+      (c) =>
+        c as unknown as { originX: number; line: { tokens: ReadonlyArray<{ text?: string }> } },
+    )
+    .map((c) => ({ x: c.originX, text: c.line.tokens.map((t) => t.text ?? '').join('') }))
+    .filter((d) => d.text !== '');
+
+describe('linked text boxes (wps:linkedTxbx)', () => {
+  it('continues what will not fit in the next box of the chain', () => {
+    // A box 36pt tall holds three 12pt lines; the rest belong to box 2, which
+    // stands 200pt to its right.
+    const laid = layoutOf(chained(457200, PARAS));
+    const drawn = linesByText(laid);
+    expect(drawn.map((d) => d.text)).toEqual(PARAS.match(/line \d/gu));
+    const first = drawn[0]!.x;
+    const carried = drawn.filter((d) => d.x > first + 100);
+    expect(carried.length).toBeGreaterThan(0);
+    expect(drawn.filter((d) => d.x === first).length).toBeGreaterThan(0);
+    // Every carried line comes AFTER every kept one: one chain, read in order.
+    const lastKept = drawn.map((d) => d.x === first).lastIndexOf(true);
+    expect(lastKept).toBeLessThan(drawn.indexOf(carried[0]!));
+  });
+
+  it('leaves a box that holds its whole text alone', () => {
+    const laid = layoutOf(chained(3657600, PARAS));
+    const drawn = linesByText(laid);
+    const first = drawn[0]!.x;
+    expect(drawn.every((d) => d.x === first)).toBe(true);
+  });
+});
