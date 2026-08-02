@@ -596,6 +596,12 @@ export interface NumberingInstance {
    * when the instance takes the abstract starts unchanged.
    */
   readonly startOverrides?: ReadonlyMap<number, number>;
+  /**
+   * §17.9.27 `w:lvlOverride/w:lvl` — a level this instance REDEFINES whole,
+   * shadowing the abstract definition's. NumberingWOverrides.docx rewrites all
+   * nine levels of one instance this way.
+   */
+  readonly levelOverrides?: ReadonlyMap<number, NumberingLevel>;
 }
 
 /** The parsed `word/numbering.xml`: abstract definitions + their instances. */

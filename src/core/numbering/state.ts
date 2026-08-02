@@ -9,9 +9,37 @@ import type {
   AbstractNumbering,
   Numbering,
   NumberingFormat,
+  NumberingInstance,
   NumberingLevel,
   NumberingReference,
 } from '@/core/document-model';
+
+/**
+ * §17.9.27 — the levels an INSTANCE actually numbers by: its abstract
+ * definition's, with any `w:lvlOverride/w:lvl` shadowing them. Cached per
+ * instance, since every list paragraph asks for it.
+ *
+ * @param numbering The parsed numbering definitions.
+ * @param instance  The `w:num` the paragraph refers to.
+ * @returns The effective abstract numbering, or `undefined` when the instance
+ *          names one that is not there.
+ */
+export function effectiveAbstract(
+  numbering: Numbering,
+  instance: NumberingInstance,
+): AbstractNumbering | undefined {
+  const base = numbering.abstractNums.get(instance.abstractNumId);
+  if (!base || !instance.levelOverrides || instance.levelOverrides.size === 0) return base;
+  const hit = effectiveCache.get(instance);
+  if (hit) return hit;
+  const levels = new Map(base.levels);
+  for (const [ilvl, lvl] of instance.levelOverrides) levels.set(ilvl, lvl);
+  const merged: AbstractNumbering = { id: base.id, levels };
+  effectiveCache.set(instance, merged);
+  return merged;
+}
+
+const effectiveCache = new WeakMap<NumberingInstance, AbstractNumbering>();
 
 /**
  * Mutable list-counter state for one numbering scope (e.g. a body or a single
@@ -19,10 +47,21 @@ import type {
  * paragraphs are visited in order.
  */
 export class NumberingState {
-  // numId → counters indexed by ilvl (0..8). An empty slot means "not yet
-  // started" — a sentinel of 0 could not, since §17.9.25 lets a level START at
-  // zero and the second item would then seed itself again.
+  // ABSTRACT numbering id → counters indexed by ilvl (0..8). An empty slot
+  // means "not yet started" — a sentinel of 0 could not, since §17.9.25 lets a
+  // level START at zero and the second item would then seed itself again.
+  //
+  // §17.9.23 — the counter belongs to the abstract definition, not the
+  // instance: two `w:num`s pointing at the same `w:abstractNumId` are ONE list
+  // carried on, which is the whole point of `w:lvlOverride`. Counting per
+  // instance numbered NumberingWOverrides.docx's items 1, A, B, A, B, 2 where
+  // their own text reads 1, B, C, A, B, 4.
   private readonly counters = new Map<string, Array<number | undefined>>();
+
+  // `numId:ilvl` pairs whose `w:startOverride` has already been honoured: the
+  // override RESTARTS the shared counter, once, where the instance first
+  // appears — it is not a floor the level is held at.
+  private readonly restarted = new Set<string>();
 
   /**
    * Advance the counter for `ref` (resetting deeper levels) and format its
@@ -37,15 +76,15 @@ export class NumberingState {
   resolveMarker(numbering: Numbering, ref: NumberingReference): string | null {
     const instance = numbering.numInstances.get(ref.numId);
     if (!instance) return null;
-    const abstractNum = numbering.abstractNums.get(instance.abstractNumId);
+    const abstractNum = effectiveAbstract(numbering, instance);
     if (!abstractNum) return null;
     const level = abstractNum.levels.get(ref.ilvl);
     if (!level) return null;
 
-    let arr = this.counters.get(ref.numId);
+    let arr = this.counters.get(instance.abstractNumId);
     if (!arr) {
       arr = new Array<number | undefined>(9).fill(undefined);
-      this.counters.set(ref.numId, arr);
+      this.counters.set(instance.abstractNumId, arr);
     }
 
     // Deeper levels reset whenever a shallower level advances.
@@ -55,8 +94,15 @@ export class NumberingState {
     const startAt = (i: number, fallback: number | undefined): number =>
       instance.startOverrides?.get(i) ?? fallback ?? 0;
 
-    const current = arr[ref.ilvl];
-    arr[ref.ilvl] = current === undefined ? startAt(ref.ilvl, level.start) : current + 1;
+    const restartKey = `${ref.numId}:${String(ref.ilvl)}`;
+    const override = instance.startOverrides?.get(ref.ilvl);
+    if (override !== undefined && !this.restarted.has(restartKey)) {
+      this.restarted.add(restartKey);
+      arr[ref.ilvl] = override;
+    } else {
+      const current = arr[ref.ilvl];
+      arr[ref.ilvl] = current === undefined ? startAt(ref.ilvl, level.start) : current + 1;
+    }
 
     // A level that has not been reached yet still numbers the levels ABOVE it
     // in a multi-level marker; an unstarted one counts as its own start.

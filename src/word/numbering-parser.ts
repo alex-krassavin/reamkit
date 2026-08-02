@@ -105,39 +105,8 @@ export function parseNumbering(
     if (!id) continue;
     const levels = new Map<number, NumberingLevel>();
     for (const lvlNode of asArray(el['w:lvl'])) {
-      const lvlEl = asElement(lvlNode);
-      if (!lvlEl) continue;
-      const ilvlStr = getAttr(lvlEl, 'ilvl');
-      if (!ilvlStr) continue;
-      const ilvl = Number(ilvlStr);
-      if (!Number.isFinite(ilvl)) continue;
-
-      // §17.9.25 — a level that states no `w:start` starts at ZERO, not one.
-      // FDO74105.docx omits it and LibreOffice numbers its list from 0.
-      const startAttr = getValVal(lvlEl['w:start']);
-      const start = startAttr !== undefined ? Number(startAttr) : 0;
-      const fmtStr = getValVal(lvlEl['w:numFmt']) ?? 'decimal';
-      const format: NumberingFormat = FORMATS.has(fmtStr as NumberingFormat)
-        ? (fmtStr as NumberingFormat)
-        : 'decimal';
-      const lvlText = getValVal(lvlEl['w:lvlText']) ?? '';
-      const picId = getValVal(lvlEl['w:lvlPicBulletId']);
-      const picBullet = picId !== undefined ? picBullets.get(picId) : undefined;
-      // §17.9.10 `w:isLgl` — legal numbering: every level of this level's
-      // marker prints in decimal. listWithLgl.docx numbers its chapters in
-      // Roman and its sections "Sect 1.01"; we wrote "Sect I.01".
-      const isLegal = 'w:isLgl' in lvlEl && getValVal(lvlEl['w:isLgl']) !== '0';
-
-      levels.set(ilvl, {
-        ilvl,
-        start: Number.isFinite(start) ? start : 1,
-        format,
-        lvlText,
-        ...(isLegal ? { isLegal: true } : {}),
-        ...(picBullet ? { picBullet } : {}),
-        paragraphProperties: parseParagraphProperties(lvlEl['w:pPr']),
-        runProperties: parseRunProperties(lvlEl['w:rPr']),
-      });
+      const lvl = parseLevel(lvlNode, picBullets);
+      if (lvl) levels.set(lvl.ilvl, lvl);
     }
     abstractNums.set(id, { id, levels });
   }
@@ -155,21 +124,71 @@ export function parseNumbering(
     // level at three, and the abstract start alone numbered its one heading
     // "1.1" where its own text reads "This should be 1.3".
     const startOverrides = new Map<number, number>();
+    // …and §17.9.27 lets it redefine the level WHOLE. NumberingWOverrides.docx
+    // rewrites all nine levels of one instance, and reading the abstract's
+    // instead numbered its "B" and "C" items 1 and 2 at the wrong level.
+    const levelOverrides = new Map<number, NumberingLevel>();
     for (const o of asArray(el['w:lvlOverride'])) {
       const ovr = asElement(o);
       if (!ovr) continue;
       const ilvl = Number(getAttr(ovr, 'ilvl'));
+      if (!Number.isFinite(ilvl)) continue;
       const start = Number(getValVal(ovr['w:startOverride']));
-      if (Number.isFinite(ilvl) && Number.isFinite(start)) startOverrides.set(ilvl, start);
+      if (Number.isFinite(start)) startOverrides.set(ilvl, start);
+      const lvl = parseLevel(ovr['w:lvl'], picBullets);
+      if (lvl) levelOverrides.set(ilvl, lvl);
     }
     numInstances.set(numId, {
       numId,
       abstractNumId,
       ...(startOverrides.size > 0 ? { startOverrides } : {}),
+      ...(levelOverrides.size > 0 ? { levelOverrides } : {}),
     });
   }
 
   return { abstractNums, numInstances };
+}
+
+// §17.9.6 `w:lvl` — one level of a list: where it starts, how it counts, the
+// template it prints and the indent/run properties it lends the paragraph.
+// Spelled the same inside an abstract definition and inside a `w:lvlOverride`.
+function parseLevel(
+  node: unknown,
+  picBullets: ReadonlyMap<string, PictureBullet>,
+): NumberingLevel | undefined {
+  const lvlEl = asElement(node);
+  if (!lvlEl) return undefined;
+  const ilvlStr = getAttr(lvlEl, 'ilvl');
+  if (!ilvlStr) return undefined;
+  const ilvl = Number(ilvlStr);
+  if (!Number.isFinite(ilvl)) return undefined;
+
+  // §17.9.25 — a level that states no `w:start` starts at ZERO, not one.
+  // FDO74105.docx omits it and LibreOffice numbers its list from 0.
+  const startAttr = getValVal(lvlEl['w:start']);
+  const start = startAttr !== undefined ? Number(startAttr) : 0;
+  const fmtStr = getValVal(lvlEl['w:numFmt']) ?? 'decimal';
+  const format: NumberingFormat = FORMATS.has(fmtStr as NumberingFormat)
+    ? (fmtStr as NumberingFormat)
+    : 'decimal';
+  const lvlText = getValVal(lvlEl['w:lvlText']) ?? '';
+  const picId = getValVal(lvlEl['w:lvlPicBulletId']);
+  const picBullet = picId !== undefined ? picBullets.get(picId) : undefined;
+  // §17.9.10 `w:isLgl` — legal numbering: every level of this level's marker
+  // prints in decimal. listWithLgl.docx numbers its chapters in Roman and its
+  // sections "Sect 1.01"; we wrote "Sect I.01".
+  const isLegal = 'w:isLgl' in lvlEl && getValVal(lvlEl['w:isLgl']) !== '0';
+
+  return {
+    ilvl,
+    start: Number.isFinite(start) ? start : 1,
+    format,
+    lvlText,
+    ...(isLegal ? { isLegal: true } : {}),
+    ...(picBullet ? { picBullet } : {}),
+    paragraphProperties: parseParagraphProperties(lvlEl['w:pPr']),
+    runProperties: parseRunProperties(lvlEl['w:rPr']),
+  };
 }
 
 // §17.9.21 `w:numPicBullet` — each holds a `w:pict/v:shape` sized in CSS units

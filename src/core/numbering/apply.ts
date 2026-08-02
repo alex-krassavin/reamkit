@@ -15,7 +15,7 @@ import type {
   Run,
   StyleSheet,
 } from '@/core/document-model';
-import { NumberingState } from '@/core/numbering/state';
+import { NumberingState, effectiveAbstract } from '@/core/numbering/state';
 import { resolveParagraphProperties } from '@/core/style-cascade';
 
 /**
@@ -52,7 +52,9 @@ export function applyNumbering(
     const marker = state.resolveMarker(numbering, ref);
     if (marker === null) return p;
     const instance = numbering.numInstances.get(ref.numId);
-    const abstractNum = instance ? numbering.abstractNums.get(instance.abstractNumId) : undefined;
+    // §17.9.27 — an instance may redefine a level whole, and the marker's font
+    // and indent come from the level it actually numbers by.
+    const abstractNum = instance ? effectiveAbstract(numbering, instance) : undefined;
     const level = abstractNum?.levels.get(ref.ilvl);
 
     // §17.9.9 — a level whose bullet is a PICTURE puts the image where the
