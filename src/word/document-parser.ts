@@ -312,12 +312,18 @@ export function parseSections(documentXml: Uint8Array): Array<Section> {
 
   const sections: Array<Section> = [];
   let bodyIdx = 0;
+  let trailing: SectionProperties | undefined;
 
   const walk = (nodes: ReadonlyArray<PoNode>): void => {
     for (const child of nodes) {
       if (poIs(child, 'w:sectPr')) {
-        // Final body-level sectPr: applies to remaining body elements.
-        sections.push({ properties: parseSectPrNode(child), endIndex: bodyIdx });
+        // §17.6.17 — the body carries ONE sectPr, and it describes the section
+        // holding everything after the last break, wherever the element itself
+        // sits. tdf108849.docx writes two of them in the MIDDLE of its body:
+        // taken as sections in their own right they became a portrait page of
+        // nothing and pushed the last paragraph onto a fourth, A4 page. Only
+        // the last one counts, and it closes at the end of the body.
+        trailing = parseSectPrNode(child);
         continue;
       }
       if (poIs(child, 'w:p')) {
@@ -349,6 +355,7 @@ export function parseSections(documentXml: Uint8Array): Array<Section> {
   };
   walk(children);
 
+  if (trailing) sections.push({ properties: trailing, endIndex: bodyIdx });
   if (sections.length === 0 || sections[sections.length - 1]!.endIndex < bodyIdx) {
     sections.push({ properties: EMPTY_SECTION, endIndex: bodyIdx });
   }
