@@ -1,12 +1,12 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`byte gate: images and PDF/A emit paths > images.docx (PDF/A-1a: tagged structure tree) 1`] = `"bae38cdb3d5bfc23e929dac62e2881a326896164f9d460f060a8c9d42b95baf7"`;
+exports[`byte gate: images and PDF/A emit paths > images.docx (PDF/A-1a: tagged structure tree) 1`] = `"d3f10afc6db9fc5de7377ca0c7e364f082f1e05e7bc19cea5c6907e5d2618145"`;
 
-exports[`byte gate: images and PDF/A emit paths > images.docx (PDF/A-1b: alpha flattened) 1`] = `"3bd8a0e092bd3d726f811762d5ec68e6eb3dab4190256d32006b697b45cfe50e"`;
+exports[`byte gate: images and PDF/A emit paths > images.docx (PDF/A-1b: alpha flattened) 1`] = `"95a7f45f0ab3f03c21345a6ebe41c24f64930965d0cde2b9dc52038020af4686"`;
 
-exports[`byte gate: images and PDF/A emit paths > images.docx (PDF/A-2b: transparency group) 1`] = `"bfda0f4d5767271346baf05db75386a548b7f496c96ea1ea4b65ab16fad08d73"`;
+exports[`byte gate: images and PDF/A emit paths > images.docx (PDF/A-2b: transparency group) 1`] = `"2612d46f89428f54d3afc3a0ba8f4abaacb9d186bd3e8a504b6e4eafd32952df"`;
 
-exports[`byte gate: images and PDF/A emit paths > images.docx (plain: SMask kept) 1`] = `"3d635ed093c7141a60d980bc0e25dadac0fb67b980350d652e0dbf251d9a0266"`;
+exports[`byte gate: images and PDF/A emit paths > images.docx (plain: SMask kept) 1`] = `"0a2dd18ab5569b57bf98aecd0ae54eb0bed880fe9ac3df73d440ae309e278121"`;
 
 exports[`byte gate: static fixtures > header-footer.docx 1`] = `"a145426946598ae3ff7f9b33d71a9b85906c3b4e2c22e7e66f7f28de5b197fb9"`;
 

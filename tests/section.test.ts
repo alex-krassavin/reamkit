@@ -71,7 +71,9 @@ describe('parseSections (multi-section)', () => {
 describe('parseSection', () => {
   it('returns empty section when no sectPr present', () => {
     const s = sectionOf('<w:p><w:r><w:t>Hi</w:t></w:r></w:p>');
-    expect(s.pageSize).toBeUndefined();
+    // §17.6.13 — no `w:sectPr` at all still means a page, and it is the one
+    // Word makes a document on: US Letter, 12240×15840 twips.
+    expect(s.pageSize).toEqual({ width: 612, height: 792 });
     expect(s.margins).toBeUndefined();
     expect(s.headers).toEqual([]);
     expect(s.footers).toEqual([]);

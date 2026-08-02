@@ -271,8 +271,13 @@ export function bodyIndexForBlock(blocks: BlockCounter, blockEnd: number): numbe
 
 const HF_TYPES = new Set<HeaderFooterType>(['default', 'first', 'even']);
 
-/** The empty {@link SectionProperties} fallback (no headers/footers). */
+/**
+ * The empty {@link SectionProperties} fallback (no headers/footers). §17.6.13 —
+ * on the page a document with no `w:sectPr` of its own is made on, which is the
+ * same US Letter a section with no `w:pgSz` gets.
+ */
 export const EMPTY_SECTION: SectionProperties = {
+  pageSize: { width: twipsToPt(12240), height: twipsToPt(15840) },
   headers: [],
   footers: [],
 };
@@ -363,7 +368,12 @@ export function parseSections(documentXml: Uint8Array): Array<Section> {
 }
 
 function parseSectPrNode(sectPr: PoNode): SectionProperties {
-  let pageSize: PageSize | undefined;
+  // §17.6.13 — a section that states no `w:pgSz` is on the page Word makes a
+  // document on: US Letter, 12240×15840 twips. Left to the library's own A4
+  // fallback, every hand-written fixture that omits the element — 39 of the
+  // corpus, tdf104713_undefinedStyles.docx among them — came out on a page
+  // 30pt narrower and 50pt taller than both references draw.
+  let pageSize: PageSize | undefined = { width: twipsToPt(12240), height: twipsToPt(15840) };
   let margins: PageMargins | undefined;
   let titlePg = false;
   let pageNumberStart: number | undefined;
@@ -465,7 +475,7 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
   }
 
   return {
-    ...(pageSize ? { pageSize } : {}),
+    pageSize,
     ...(margins ? { margins } : {}),
     headers,
     footers,
