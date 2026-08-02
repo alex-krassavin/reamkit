@@ -500,6 +500,13 @@ interface ParagraphBlock {
   // w:type="page"); subsequent blocks start on a new page.
   readonly pageBreakAfter?: boolean;
   /**
+   * §17.3.3.1 — …and the break may stand BEFORE the paragraph's first word, in
+   * which case the paragraph itself starts the new page. style-inheritance.docx
+   * opens "Heading 4" with such a run and we printed it under Heading 3, on a
+   * page its own table of contents says it is not on.
+   */
+  readonly pageBreakBefore?: boolean;
+  /**
    * §17.3.3.1 — the indices of the lines that a `w:br w:type="column"` sends to
    * the next column. Pagination advances the column before drawing one.
    */
@@ -3649,6 +3656,15 @@ function layoutParagraphBlock(
   let heightPt = 0;
   for (const line of lines) heightPt += computeLineHeight(line, resolved);
   const numbering = paragraph.properties.numbering;
+  // §17.3.3.1 — a forced break happens WHERE IT STANDS. One that precedes
+  // every word of the paragraph moves the paragraph itself to the next page;
+  // any other sends what FOLLOWS the paragraph there.
+  const breakIdx = paragraph.runs.findIndex((r) => r.pageBreak === true);
+  const leadingPageBreak =
+    breakIdx >= 0 && paragraph.runs.slice(0, breakIdx + 1).every((r) => r.text === '');
+  const trailingPageBreak = paragraph.runs.some(
+    (r, i) => r.pageBreak === true && (!leadingPageBreak || i > breakIdx),
+  );
   return {
     kind: 'paragraph',
     resolved,
@@ -3657,7 +3673,8 @@ function layoutParagraphBlock(
     spacingBeforePt: resolved.spacingBefore,
     spacingAfterPt: resolved.spacingAfter,
     ...(numbering ? { list: { numId: numbering.numId, level: numbering.ilvl } } : {}),
-    ...(paragraph.runs.some((r) => r.pageBreak) ? { pageBreakAfter: true } : {}),
+    ...(leadingPageBreak ? { pageBreakBefore: true } : {}),
+    ...(trailingPageBreak ? { pageBreakAfter: true } : {}),
     ...(columnBreakLines.size > 0 ? { columnBreakLines } : {}),
     ...(paragraph.bookmarks && paragraph.bookmarks.length > 0
       ? { bookmarks: paragraph.bookmarks }
@@ -6612,7 +6629,9 @@ function paginateSections(
     // A non-list-item block ends any open list run (tagged PDF).
     if (builder && !(block.kind === 'paragraph' && block.list)) asm.listStack.length = 0;
     if (block.kind === 'paragraph') {
-      if (block.resolved.pageBreakBefore && asm.pageHasContent()) asm.flushPage();
+      if ((block.resolved.pageBreakBefore || block.pageBreakBefore) && asm.pageHasContent()) {
+        asm.flushPage();
+      }
       asm.cursorY -= block.spacingBeforePt;
       // Float text wrapping: when the paragraph overlaps an exclusion, re-wrap
       // it with per-line widths (the source paragraph re-lays at the column
