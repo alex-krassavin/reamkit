@@ -5639,10 +5639,13 @@ function layoutTableCell(
           lines.push(line);
           if (!markOnly) contentHeightPt += computeLineHeight(line, block.resolved);
         }
-        if (!markOnly) {
-          contentHeightPt += block.spacingAfterPt;
-          pendingGapPt = block.spacingAfterPt;
-        }
+        // The space AFTER is the gap before whatever follows — `openParagraph`
+        // adds it there, together with that paragraph's own space before.
+        // Added here as well, every gap inside a cell counted twice:
+        // tdf119054.docx's 18pt-after headings made a 685pt cell 991pt tall,
+        // more than the page it fits on, and the row was split where no reader
+        // splits it.
+        if (!markOnly) pendingGapPt = block.spacingAfterPt;
       } else if (el.kind === 'table') {
         // Nested table (a w:tbl inside this w:tc): lay it out within the cell's
         // inner width; it renders below the cell's paragraph lines.
@@ -5695,11 +5698,14 @@ function layoutTableCell(
         );
         openParagraph(block.spacingBeforePt);
         cellShapes.push({ block, afterLine: lines.length });
-        contentHeightPt += block.heightPt + block.spacingAfterPt;
+        contentHeightPt += block.heightPt;
         pendingGapPt = block.spacingAfterPt;
       }
       // A chart or a FLOATING picture inside a cell is not yet rendered.
     }
+    // …and the space after the LAST paragraph, which nothing follows to claim
+    // it: the cell is that much taller, even though no line stands there.
+    contentHeightPt += pendingGapPt;
   }
   const colEnd = colStart + colSpan - 1;
   const borders = resolveCellBorders(
