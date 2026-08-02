@@ -73,7 +73,7 @@ export function buildGradientPattern(
   const fnRef = doc.add(buildRamp(gradient.stops));
   const shading =
     gradient.kind === 'radial'
-      ? radialShading(bbox, fnRef)
+      ? radialShading(bbox, fnRef, gradient.center)
       : axialShading(gradient.angle ?? 0, bbox, fnRef);
   return doc.add(
     dict({ Type: name('Pattern'), PatternType: 2, Shading: shading, Matrix: [...ctm] }),
@@ -118,9 +118,18 @@ function axialShading(angleDeg: number, b: Bbox, fnRef: PdfRef): PdfDict {
 
 // §8.7.4.5.4 radial shading: a point at the centre (r=0) growing to a circle at
 // half the bbox diagonal. Param 0 (first stop) is the centre, matching a:path.
-function radialShading(b: Bbox, fnRef: PdfRef): PdfDict {
-  const cx = (b.minX + b.maxX) / 2;
-  const cy = (b.minY + b.maxY) / 2;
+function radialShading(
+  b: Bbox,
+  fnRef: PdfRef,
+  center?: { readonly x: number; readonly y: number },
+): PdfDict {
+  // The centre is given in the box's own fractions, y DOWN (a `0,0` centre is
+  // the top-left corner); this frame is y-up.
+  const cx = center ? b.minX + center.x * (b.maxX - b.minX) : (b.minX + b.maxX) / 2;
+  const cy = center ? b.maxY - center.y * (b.maxY - b.minY) : (b.minY + b.maxY) / 2;
+  // Half the diagonal, wherever the centre sits: the sweep out of a corner
+  // reaches the middle of the box and the last stop holds the rest, which is
+  // what both references draw for fill.docx.
   const r = Math.hypot(b.maxX - b.minX, b.maxY - b.minY) / 2;
   return dict({
     ShadingType: 3,

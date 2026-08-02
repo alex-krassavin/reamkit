@@ -1162,12 +1162,35 @@ function vmlGradient(fillEl: PoNode, base: string): ShapeGradient | undefined {
   if (color2 === undefined) return undefined;
   const raw = Number.parseFloat(poAttr(fillEl, 'angle') ?? '');
   const angle = (90 + (Number.isFinite(raw) ? raw : 0)) % 360;
+  const center =
+    type === 'gradientRadial' ? vmlRadialCenter(raw, poAttr(fillEl, 'focus')) : undefined;
   return {
     kind: type === 'gradientRadial' ? 'radial' : 'linear',
     ...(type === 'gradientRadial' ? {} : { angle }),
+    ...(center ? { center } : {}),
     stops:
       vmlStops(poAttr(fillEl, 'colors')) ?? vmlFocusStops(poAttr(fillEl, 'focus'), base, color2),
   };
+}
+
+// §14.1.2.5 — a RADIAL fill at full focus starts in a CORNER, not the middle:
+// `@angle` says which one, counting clockwise from twelve o'clock. fill.docx
+// sweeps out of its top-left corner (-135°) and, centred, our page ran navy
+// through the middle where both references keep it in that corner alone.
+function vmlRadialCenter(
+  angleRaw: number,
+  focus: string | undefined,
+): { x: number; y: number } | undefined {
+  const pct = Number.parseFloat((focus ?? '').replace('%', ''));
+  if (!Number.isFinite(pct) || Math.abs(pct) < 99) return undefined;
+  const deg = Number.isFinite(angleRaw) ? angleRaw : 0;
+  const rad = (deg * Math.PI) / 180;
+  // Clockwise from up, in the box's own y-DOWN fractions: at 0° the sweep
+  // starts at the top edge, at 180° at the bottom.
+  const dx = Math.sin(rad);
+  const dy = Math.cos(rad);
+  const snap = (v: number): number => (v > 0.5 ? 1 : v < -0.5 ? 0 : 0.5);
+  return { x: snap(dx), y: snap(dy) };
 }
 
 // §14.1.2.5 `@focus` — where the SECOND colour sits along the sweep. At 0 the

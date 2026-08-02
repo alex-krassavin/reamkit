@@ -91,7 +91,18 @@ export function gradientSvgDef(id: string, g: ShapeGradient): string {
   const stops = g.stops
     .map((s) => `<stop offset="${n(s.offset)}" stop-color="#${s.colorHex}"/>`)
     .join('');
-  if (g.kind === 'radial') return `<radialGradient id="${id}">${stops}</radialGradient>`;
+  if (g.kind === 'radial') {
+    // The centre is in the box's own fractions, which is exactly what SVG's
+    // objectBoundingBox units are; the sweep reaches half the diagonal, as the
+    // centred case does.
+    const c = g.center;
+    if (!c) return `<radialGradient id="${id}">${stops}</radialGradient>`;
+    const r = Math.SQRT2 / 2;
+    return (
+      `<radialGradient id="${id}" cx="${n(c.x)}" cy="${n(c.y)}" r="${n(r)}">` +
+      `${stops}</radialGradient>`
+    );
+  }
   const rad = (-(g.angle ?? 0) * Math.PI) / 180;
   const dx = Math.cos(rad) / 2;
   const dy = Math.sin(rad) / 2;

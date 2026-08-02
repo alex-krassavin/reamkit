@@ -25,11 +25,6 @@
   "aligned": true
  },
  {
-  "name": "fdo77725.docx",
-  "score": 0.6964,
-  "aligned": true
- },
- {
   "name": "tdf123054.docx",
   "score": 0.5118,
   "aligned": false
@@ -42,11 +37,6 @@
  {
   "name": "tdf123324_testRelativeAnchorHeightFromTopMarginNoHeader.docx",
   "score": 0.3943,
-  "aligned": true
- },
- {
-  "name": "tdf126533_noPageBitmap.docx",
-  "score": 0.3932,
   "aligned": true
  },
  {
@@ -1277,6 +1267,11 @@
  {
   "name": "tdf123382.docx",
   "score": 0.0064,
+  "aligned": true
+ },
+ {
+  "name": "fdo77725.docx",
+  "score": 0.0063,
   "aligned": true
  },
  {
@@ -4161,6 +4156,11 @@
  },
  {
   "name": "tdf124399_SingleCellTableBorders.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "tdf126533_noPageBitmap.docx",
   "score": 0,
   "aligned": true
  },
