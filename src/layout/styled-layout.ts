@@ -6688,7 +6688,12 @@ function paginateSections(
         if (asm.cursorY - block.heightPt < asm.bottomLimit() && asm.colHasContent())
           asm.advanceColumn();
         asm.cursorY -= block.heightPt;
-        emitImageAt(asm.colLeft(), asm.cursorY + block.heightPt, asm.current);
+        // §17.3.1.13 — a picture standing on its own line is placed by its
+        // paragraph's alignment, exactly as a shape below is.
+        // n764745-alignment.docx right-aligns its banner and we drew it against
+        // the left margin.
+        const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, asm.colWidth());
+        emitImageAt(asm.colLeft() + offset, asm.cursorY + block.heightPt, asm.current);
         asm.cursorY -= block.spacingAfterPt;
       }
     } else if (block.kind === 'shape') {
