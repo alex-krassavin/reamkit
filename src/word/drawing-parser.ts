@@ -565,7 +565,7 @@ export function parseVmlPicture(node: PoNode, parseBody?: ParseBody): DrawingCon
   // does: drawinglayer-pic-pos.docx hangs its photo two inches down the page
   // and we set it inline, over the frame above it.
   const float = shape
-    ? vmlFloat(poAttr(shape, 'style') ?? '', poIntAttr(shape, 'z-index'))
+    ? vmlFloat(poAttr(shape, 'style') ?? '', poIntAttr(shape, 'z-index'), shape)
     : undefined;
   // §14.1.2.21 — a picture is framed only when it SAYS so. The picture
   // shapetype `_x0000_t75` is `stroked="f"`, and a `v:shape` that names it
@@ -611,7 +611,7 @@ function parseVmlShape(node: PoNode, parseBody?: ParseBody): DrawingContent | nu
   if (poIs(shape, 'v:group')) {
     const data = parseVmlGroup(shape, parseBody, vmlShapeTypes(node));
     if (!data) return null;
-    const groupFloat = vmlFloat(poAttr(shape, 'style') ?? '', poIntAttr(shape, 'z-index'));
+    const groupFloat = vmlFloat(poAttr(shape, 'style') ?? '', poIntAttr(shape, 'z-index'), shape);
     return {
       kind: 'shape',
       data,
@@ -639,7 +639,7 @@ function parseVmlShape(node: PoNode, parseBody?: ParseBody): DrawingContent | nu
     vmlShapeTypes(node),
   );
   if (!data) return null;
-  const float = vmlFloat(style, poIntAttr(shape, 'z-index'));
+  const float = vmlFloat(style, poIntAttr(shape, 'z-index'), shape);
   return {
     kind: 'shape',
     data,
@@ -1260,7 +1260,21 @@ function vmlTextBox(shape: PoNode, parseBody: ParseBody): ShapeTextBody | undefi
  * @param zIndex The shape's z-index, when it has one.
  * @returns The anchor, or `undefined` for an inline shape.
  */
-function vmlFloat(style: string, zIndex: number | undefined): FloatAnchor | undefined {
+// §14.3.2 — the wrap a `w10:wrap` names, or none when the shape states none.
+function vmlWrap(shape: PoNode | undefined): FloatAnchor['wrap'] {
+  const w = shape ? poChildren(shape).find((c) => poIsLocal(c, 'wrap')) : undefined;
+  if (!w) return 'none';
+  const type = poAttr(w, 'type');
+  if (type === 'topAndBottom') return 'topAndBottom';
+  if (type === 'none') return 'none';
+  return 'square';
+}
+
+function vmlFloat(
+  style: string,
+  zIndexAttr: number | undefined,
+  shape?: PoNode,
+): FloatAnchor | undefined {
   if (!/position\s*:\s*absolute/iu.test(style)) return undefined;
   const prop = (name: string): number | undefined => {
     const m = new RegExp(`(?:^|;)\\s*${name}\\s*:\\s*(-?[0-9.]+)(pt|in|px|cm|mm|pc)?`, 'iu').exec(
@@ -1292,8 +1306,17 @@ function vmlFloat(style: string, zIndex: number | undefined): FloatAnchor | unde
     | undefined;
   const x = prop('margin-left') ?? prop('left') ?? 0;
   const y = prop('margin-top') ?? prop('top') ?? 0;
+  // §14.1.2.19 — the z-order lives in the shape's STYLE, not in an attribute of
+  // its own; read as one it was always absent, so no VML shape was ever behind
+  // the text.
+  const zIndex = prop('z-index') ?? zIndexAttr;
   return {
-    wrap: 'square',
+    // §14.3.2 `w10:wrap` — a positioned VML shape wraps text only where it SAYS
+    // so; with no `w10:wrap` it sits over or behind the text and the flow does
+    // not see it. Wrapped square regardless, tdf108973_backgroundTextbox.docx's
+    // box squeezed the sentence it is meant to sit behind into a column two
+    // words wide, over two pages.
+    wrap: vmlWrap(shape),
     ...(zIndex !== undefined && zIndex < 0 ? { behind: true } : {}),
     ...(zIndex !== undefined ? { zOrder: Math.abs(zIndex) } : {}),
     posH: {
