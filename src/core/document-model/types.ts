@@ -555,6 +555,12 @@ export interface NumberingLevel {
    * glyph Word writes beside it.
    */
   readonly picBullet?: PictureBullet;
+  /**
+   * §17.9.10 `w:isLgl` — every level of this level's marker is printed in
+   * DECIMAL, whatever format the level it names asks for. Word calls it legal
+   * numbering: "Sect I.01" becomes "Sect 1.01".
+   */
+  readonly isLegal?: boolean;
   readonly paragraphProperties: ParagraphProperties;
   readonly runProperties: RunProperties;
 }

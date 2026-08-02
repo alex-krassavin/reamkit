@@ -73,7 +73,11 @@ export function formatLevelMarker(
     const lvlIdx = Number(n) - 1;
     const level = abstractNum.levels.get(lvlIdx);
     const counter = counters[lvlIdx] ?? 0;
-    const fmt = level?.format ?? 'decimal';
+    // §17.9.10 — a LEGAL level prints the levels ABOVE it in decimal, whatever
+    // format each asks for, and keeps its own: listWithLgl.docx numbers its
+    // chapters in Roman and its sections "Sect 1.01", not "Sect I.01".
+    const legal = currentLevel.isLegal === true && lvlIdx !== currentLevel.ilvl;
+    const fmt = legal ? 'decimal' : (level?.format ?? 'decimal');
     return formatCounter(fmt, counter);
   });
 }

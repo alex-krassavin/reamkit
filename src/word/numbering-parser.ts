@@ -123,12 +123,17 @@ export function parseNumbering(
       const lvlText = getValVal(lvlEl['w:lvlText']) ?? '';
       const picId = getValVal(lvlEl['w:lvlPicBulletId']);
       const picBullet = picId !== undefined ? picBullets.get(picId) : undefined;
+      // §17.9.10 `w:isLgl` — legal numbering: every level of this level's
+      // marker prints in decimal. listWithLgl.docx numbers its chapters in
+      // Roman and its sections "Sect 1.01"; we wrote "Sect I.01".
+      const isLegal = 'w:isLgl' in lvlEl && getValVal(lvlEl['w:isLgl']) !== '0';
 
       levels.set(ilvl, {
         ilvl,
         start: Number.isFinite(start) ? start : 1,
         format,
         lvlText,
+        ...(isLegal ? { isLegal: true } : {}),
         ...(picBullet ? { picBullet } : {}),
         paragraphProperties: parseParagraphProperties(lvlEl['w:pPr']),
         runProperties: parseRunProperties(lvlEl['w:rPr']),
