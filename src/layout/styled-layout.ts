@@ -531,6 +531,12 @@ interface CellLayout {
   // A data-validation `list` cell paints a dropdown button at the right edge.
   readonly dropdown?: boolean;
   readonly lines: ReadonlyArray<Line>;
+  /**
+   * §17.3.1.33 — extra space to leave BEFORE the line at this index: the gap
+   * the paragraph it opens keeps from the one above (its `w:before` plus that
+   * paragraph's `w:after`). Absent for a cell whose paragraphs are all flush.
+   */
+  readonly lineGaps?: ReadonlyMap<number, number>;
   // Nested tables (a w:tbl inside this cell) rendered below the lines.
   /**
    * Tables nested inside this cell (§17.4.38), each with the number of the
@@ -5422,8 +5428,22 @@ function layoutTableCell(
   const innerWidth = Math.max(1, widthPt - padLeftPt - padRightPt);
   const lines: Array<Line> = [];
   const nestedTables: Array<{ block: TableBlock; afterLine: number }> = [];
+  // §17.3.1.33 — the gap a paragraph keeps from the one above it, by the index
+  // of the line it opens with. A cell's lines are one flat list, so the gaps
+  // ride beside them: counted in the height but never drawn, the two paragraphs
+  // in each cell of negative-cell-margin-twips.docx ran together and the space
+  // they should have been given piled up under the last one.
+  const lineGaps = new Map<number, number>();
   let contentHeightPt = 0;
   let clipped = false;
+  let pendingGapPt = 0;
+  const openParagraph = (spacingBeforePt: number): void => {
+    const gap = pendingGapPt + spacingBeforePt;
+    pendingGapPt = 0;
+    if (gap <= 0) return;
+    lineGaps.set(lines.length, (lineGaps.get(lines.length) ?? 0) + gap);
+    contentHeightPt += gap;
+  };
   // Continuation cells (vMerge=continue) render no content — their text lives
   // in the 'start' cell above.
   if (mergeRole !== 'middle' && mergeRole !== 'end') {
@@ -5463,11 +5483,15 @@ function layoutTableCell(
         // height for an EMPTY paragraph: the mark is all such a line holds.
         const markOnly =
           cell.properties.hideMark === true && el.paragraph.runs.every((r) => r.text === '');
+        if (!markOnly) openParagraph(block.spacingBeforePt);
         for (const line of keep) {
           lines.push(line);
           if (!markOnly) contentHeightPt += computeLineHeight(line, block.resolved);
         }
-        if (!markOnly) contentHeightPt += block.spacingAfterPt;
+        if (!markOnly) {
+          contentHeightPt += block.spacingAfterPt;
+          pendingGapPt = block.spacingAfterPt;
+        }
       } else if (el.kind === 'table') {
         // Nested table (a w:tbl inside this w:tc): lay it out within the cell's
         // inner width; it renders below the cell's paragraph lines.
@@ -5498,11 +5522,13 @@ function layoutTableCell(
           imageResources,
           innerWidth,
         );
+        openParagraph(block.spacingBeforePt);
         for (const line of block.lines) {
           lines.push(line);
           contentHeightPt += computeLineHeight(line, block.resolved);
         }
         contentHeightPt += block.spacingAfterPt;
+        pendingGapPt = block.spacingAfterPt;
       }
       // A shape, a chart, or a FLOATING picture inside a cell is not yet
       // rendered (skipped).
@@ -5537,6 +5563,7 @@ function layoutTableCell(
     ...(cell.properties.icon ? { icon: cell.properties.icon } : {}),
     ...(cell.properties.sparkline ? { sparkline: cell.properties.sparkline } : {}),
     lines,
+    ...(lineGaps.size > 0 ? { lineGaps } : {}),
     ...(nestedTables.length > 0 ? { nestedTables } : {}),
     contentHeightPt,
     totalHeightPt,
@@ -7294,6 +7321,7 @@ function emitRowChunk(
     };
     for (const [lineIdx, line] of cell.lines.entries()) {
       drawNestedBefore(lineIdx);
+      textY -= cell.lineGaps?.get(lineIdx) ?? 0;
       const h = computeLineHeight(line, line.resolved);
       textY -= h;
       const offset = alignmentOffset(
