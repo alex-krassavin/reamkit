@@ -677,21 +677,28 @@ function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): Array<Bod
     return blocksForDrawing(content, paragraphProperties, ctx);
   }
 
-  // Every drawing the paragraph holds, in order — not just the first. They are
-  // anchored floats, so each places itself, and a paragraph carrying one
-  // behaves exactly as it did.
+  // Every drawing the paragraph holds, in order — not just the first. Each
+  // becomes a block of its own, which is right for a drawing that PLACES
+  // itself (an anchored float) and for the lone inline picture the writer
+  // re-emits as its own paragraph. Several INLINE drawings share a line, and
+  // blocks cannot: issue_51265_3.docx sets four pictures in one paragraph and
+  // we stacked them down the page where two fit across it.
+  const contents = drawings
+    .map((d) =>
+      parseDrawing(
+        d,
+        ctx.resolveColor,
+        parseBody,
+        ctx.resolveImage,
+        ctx.resolveChartPart,
+        ctx.themeLineWidths,
+        drawingTextParser,
+      ),
+    )
+    .filter((c): c is DrawingContent => c !== null);
+  if (contents.length > 1 && contents.some((c) => !c.float)) return null;
   const out: Array<BodyElement> = [];
-  for (const d of drawings) {
-    const content = parseDrawing(
-      d,
-      ctx.resolveColor,
-      parseBody,
-      ctx.resolveImage,
-      ctx.resolveChartPart,
-      ctx.themeLineWidths,
-      drawingTextParser,
-    );
-    if (!content) continue;
+  for (const content of contents) {
     out.push(...(blocksForDrawing(content, paragraphProperties, ctx) ?? []));
   }
   return out.length > 0 ? out : null;
