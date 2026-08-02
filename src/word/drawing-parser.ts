@@ -1564,6 +1564,12 @@ function parseWgp(
 
 // The group's members, each mapped out of the child coordinate space into the
 // group's own box. Nested groups recurse; a member without a size is skipped.
+//
+// §20.1.7.5 — `unitScale` is EMU per unit of the space THIS group's `a:ext` is
+// written in: 1 for a top-level group, whose `a:ext` is already EMU, and the
+// parent's own scale for a nested one, whose `a:ext` is in the parent's CHILD
+// units. Left at 1 all the way down, relorientation.docx's nested group scaled
+// its two rectangles to a third of a point and the page came out blank.
 function groupChildren(
   wgp: PoNode,
   resolveColor: ColorResolver,
@@ -1571,6 +1577,7 @@ function groupChildren(
   resolveImage?: (relId: string) => ResourceId | undefined,
   themeLineWidths?: ReadonlyArray<number>,
   parseDrawingText?: ParseDrawingText,
+  unitScale: { readonly x: number; readonly y: number } = { x: 1, y: 1 },
 ): Array<ShapeGroupChild> {
   // A locked canvas (§20.3) spells its children in the plain DrawingML
   // namespace — `a:sp`/`a:grpSp`/`a:pic` beside a WordprocessingGroup's
@@ -1590,8 +1597,8 @@ function groupChildren(
   const ext = at('a:ext', 'cx', 'cy');
   const chExt = at('a:chExt', 'cx', 'cy');
   // With no child space declared the two are the same space, scale 1.
-  const sx = ext && chExt && chExt.x > 0 ? ext.x / chExt.x : 1;
-  const sy = ext && chExt && chExt.y > 0 ? ext.y / chExt.y : 1;
+  const sx = (ext && chExt && chExt.x > 0 ? ext.x / chExt.x : 1) * unitScale.x;
+  const sy = (ext && chExt && chExt.y > 0 ? ext.y / chExt.y : 1) * unitScale.y;
   // A canvas whose own transform is all zeros (fdo43641.docx writes
   // `a:ext`/`a:chExt` of 0×0) states no child space at all, and its members
   // keep the absolute offsets they had in the document they were copied from.
@@ -1618,13 +1625,14 @@ function groupChildren(
     const data = nested
       ? parseNestedGroup(
           child,
-          cx,
-          cy,
+          cx * sx,
+          cy * sy,
           resolveColor,
           parseBody,
           resolveImage,
           themeLineWidths,
           parseDrawingText,
+          { x: sx, y: sy },
         )
       : picture
         ? parseGroupPicture(child, cx, cy, resolveImage)
@@ -1735,6 +1743,7 @@ function parseNestedGroup(
   resolveImage?: (relId: string) => ResourceId | undefined,
   themeLineWidths?: ReadonlyArray<number>,
   parseDrawingText?: ParseDrawingText,
+  unitScale?: { readonly x: number; readonly y: number },
 ): ShapeData {
   const children = groupChildren(
     grpSp,
@@ -1743,6 +1752,7 @@ function parseNestedGroup(
     resolveImage,
     themeLineWidths,
     parseDrawingText,
+    unitScale,
   );
   return {
     width: emuToPt(widthEmu),
