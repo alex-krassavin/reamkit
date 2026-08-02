@@ -34,7 +34,7 @@ import type { PdfEncryptOptions } from '@/pdf/encryption';
 import { preparePdfEncryption } from '@/pdf/encryption';
 import { paintPlan } from '@/layout/page-doc';
 import { A4_HEIGHT, A4_WIDTH, GLUE_SHRINK_RATIO } from '@/layout/styled-layout';
-import { emitClipPath, emitVectorShape } from '@/pdf/vector-graphics';
+import { emitClipPath, emitVectorShape, shadowBlurLayers } from '@/pdf/vector-graphics';
 import { buildGradientPattern, shapeBbox } from '@/pdf/shading';
 import { reorderVisual, reverseByCodePoint } from '@/core/bidi';
 import { sanitizeHref } from '@/core/links';
@@ -178,12 +178,15 @@ function assembleStyledPdf(
   };
   for (const page of renderedPages) {
     const plan = paintPlan(page.commands);
-    for (const item of plan.shapes) wantAlpha(item.shape.shadow?.alpha);
+    for (const item of plan.shapes) {
+      const s = item.shape.shadow;
+      if (s) wantAlpha(shadowBlurLayers(s).alpha);
+    }
     // …and the shadow an inline PICTURE casts, which rides its token rather
     // than a shape of its own (imgshadow.docx).
     for (const line of plan.lines) {
       for (const tok of line.line.tokens) {
-        if (tok.kind === 'image') wantAlpha(tok.shadow?.alpha);
+        if (tok.kind === 'image' && tok.shadow) wantAlpha(shadowBlurLayers(tok.shadow).alpha);
       }
     }
   }
@@ -823,10 +826,10 @@ function emitPageContent(
       ...sh.shape,
       transform: [t[0], -t[1], t[2], -t[3], t[4], H - t[5]],
     };
-    const alpha = sh.shape.shadow?.alpha;
+    const shadowLayer = sh.shape.shadow ? shadowBlurLayers(sh.shape.shadow) : undefined;
     const alphaState =
-      alpha !== undefined && alpha < 1
-        ? alphaStateNames?.get(Math.round(alpha * 1000) / 1000)
+      shadowLayer && shadowLayer.alpha < 1
+        ? alphaStateNames?.get(Math.round(shadowLayer.alpha * 1000) / 1000)
         : undefined;
     for (const op of emitVectorShape(shape, gradientNames?.get(sh.shape), alphaState)) {
       out.push(op);
@@ -880,18 +883,31 @@ function emitPageContent(
       if (shdw) {
         const bx = tok.drawBox;
         const [shr, shg, shb] = hexToRgb01(shdw.colorHex);
+        const layers = shadowBlurLayers(shdw);
         const state =
-          shdw.alpha < 1 ? alphaStateNames?.get(Math.round(shdw.alpha * 1000) / 1000) : undefined;
+          layers.alpha < 1
+            ? alphaStateNames?.get(Math.round(layers.alpha * 1000) / 1000)
+            : undefined;
+        const sx = x + (bx?.dxPt ?? 0) + shdw.dxPt;
+        const sy = baselineY + (bx?.dyPt ?? 0) - shdw.dyPt;
+        const sw = bx?.widthPt ?? tok.widthPt;
+        const sh = bx?.heightPt ?? tok.heightPt;
         out.push('q');
         if (state) out.push(`/${state} gs`);
         out.push(`${formatNumber(shr)} ${formatNumber(shg)} ${formatNumber(shb)} rg`);
-        out.push(
-          `${formatNumber(x + (bx?.dxPt ?? 0) + shdw.dxPt)} ` +
-            `${formatNumber(baselineY + (bx?.dyPt ?? 0) - shdw.dyPt)} ` +
-            `${formatNumber(bx?.widthPt ?? tok.widthPt)} ` +
-            `${formatNumber(bx?.heightPt ?? tok.heightPt)} re`,
-        );
-        out.push('f');
+        // §20.1.8.40 `blurRad` — the soft edge, as boxes growing through the
+        // blur's width at a fraction of the transparency each (see
+        // shadowBlurLayers).
+        for (let i = 0; i < layers.count; i++) {
+          const grow =
+            layers.count > 1 ? -shdw.blurPt / 2 + ((i + 0.5) * shdw.blurPt) / layers.count : 0;
+          out.push(
+            `${formatNumber(sx - grow)} ${formatNumber(sy - grow)} ` +
+              `${formatNumber(Math.max(sw + 2 * grow, 0))} ` +
+              `${formatNumber(Math.max(sh + 2 * grow, 0))} re`,
+          );
+          out.push('f');
+        }
         out.push('Q');
       }
       out.push('q');

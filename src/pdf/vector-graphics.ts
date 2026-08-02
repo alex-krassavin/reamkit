@@ -22,6 +22,49 @@ export { PathBuilder } from '@/core/vector';
  *   named `/ExtGState` (its constant alpha) from the page's resources.
  * @returns The content-stream operator lines.
  */
+/**
+ * §20.1.8.40 `blurRad` — how a blurred shadow is drawn: as `count` copies of
+ * the silhouette, each at `alpha` transparency, growing through the blur's
+ * width. Shared with the emitter that registers the /ExtGState for it, so the
+ * alpha it registers is the one the layers are drawn at.
+ *
+ * @param shadow The shadow (its `blurPt` and `alpha` are read).
+ * @returns The number of layers and the transparency of each.
+ */
+export function shadowBlurLayers(shadow: { readonly blurPt: number; readonly alpha: number }): {
+  count: number;
+  alpha: number;
+} {
+  // A hard shadow is one copy at its own alpha. Past that, one layer per two
+  // points of blur — enough for the eye at any size a document asks for, and
+  // few enough that a page of shadowed shapes stays small.
+  if (!(shadow.blurPt > 0)) return { count: 1, alpha: shadow.alpha };
+  const count = Math.min(8, Math.max(2, Math.round(shadow.blurPt / 2)));
+  return { count, alpha: shadow.alpha / count };
+}
+
+// The local-space bounds of the shape's paths — the frame the blur grows in.
+function shadowBbox(
+  shape: VectorShape,
+): { minX: number; minY: number; maxX: number; maxY: number } | undefined {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const path of shape.paths) {
+    for (const seg of path.segments) {
+      if (seg.op === 'close') continue;
+      minX = Math.min(minX, seg.x);
+      minY = Math.min(minY, seg.y);
+      maxX = Math.max(maxX, seg.x);
+      maxY = Math.max(maxY, seg.y);
+    }
+  }
+  return Number.isFinite(minX) && maxX > minX && maxY > minY
+    ? { minX, minY, maxX, maxY }
+    : undefined;
+}
+
 export function emitVectorShape(
   shape: VectorShape,
   patternName?: string,
@@ -35,23 +78,46 @@ export function emitVectorShape(
   // the colour and the transparency are the source's own.
   const shadow = shape.shadow;
   if (shadow) {
-    out.push('q');
-    if (alphaStateName !== undefined) out.push(`/${alphaStateName} gs`);
-    // The stored CTM maps the shape's local frame onto a y-UP page, so a shadow
-    // that falls DOWN the page moves in -y.
-    out.push(
-      `${num(a)} ${num(b)} ${num(c)} ${num(d)} ` +
-        `${num(e + shadow.dxPt)} ${num(f - shadow.dyPt)} cm`,
-    );
     const [sr, sg, sb] = hexToRgb01(shadow.colorHex);
-    out.push(`${num(sr)} ${num(sg)} ${num(sb)} rg`);
-    let shadowEvenodd = false;
-    for (const path of shape.paths) {
-      if (path.fillRule === 'evenodd') shadowEvenodd = true;
-      for (const seg of path.segments) out.push(emitSegment(seg));
+    // §20.1.8.40 `blurRad` — the soft edge, built as a stack of copies of the
+    // same silhouette growing through the blur's width, each drawn at a
+    // fraction of the shadow's transparency: where they overlap the colour
+    // builds back up to what the shadow asked for, and the rim fades out over
+    // the radius. PDF has no blur operator short of a soft-masked image.
+    const bbox = shadowBbox(shape);
+    const scale = Math.sqrt(Math.abs(a * d - b * c)) || 1;
+    const { count } = shadowBlurLayers(shadow);
+    for (let i = 0; i < count; i++) {
+      out.push('q');
+      if (alphaStateName !== undefined) out.push(`/${alphaStateName} gs`);
+      // The stored CTM maps the shape's local frame onto a y-UP page, so a
+      // shadow that falls DOWN the page moves in -y.
+      out.push(
+        `${num(a)} ${num(b)} ${num(c)} ${num(d)} ` +
+          `${num(e + shadow.dxPt)} ${num(f - shadow.dyPt)} cm`,
+      );
+      if (count > 1 && bbox) {
+        // Grow the silhouette about its own centre, from half the blur inside
+        // to half outside, in the shape's local units.
+        const local = shadow.blurPt / scale;
+        const grow = -local / 2 + ((i + 0.5) * local) / count;
+        const halfW = Math.max((bbox.maxX - bbox.minX) / 2, 1e-6);
+        const halfH = Math.max((bbox.maxY - bbox.minY) / 2, 1e-6);
+        const cx = (bbox.minX + bbox.maxX) / 2;
+        const cy = (bbox.minY + bbox.maxY) / 2;
+        const sx = Math.max((halfW + grow) / halfW, 0);
+        const sy = Math.max((halfH + grow) / halfH, 0);
+        out.push(`${num(sx)} 0 0 ${num(sy)} ${num(cx * (1 - sx))} ${num(cy * (1 - sy))} cm`);
+      }
+      out.push(`${num(sr)} ${num(sg)} ${num(sb)} rg`);
+      let shadowEvenodd = false;
+      for (const path of shape.paths) {
+        if (path.fillRule === 'evenodd') shadowEvenodd = true;
+        for (const seg of path.segments) out.push(emitSegment(seg));
+      }
+      out.push(shadowEvenodd ? 'f*' : 'f');
+      out.push('Q');
     }
-    out.push(shadowEvenodd ? 'f*' : 'f');
-    out.push('Q');
   }
   out.push('q');
   out.push(`${num(a)} ${num(b)} ${num(c)} ${num(d)} ${num(e)} ${num(f)} cm`);
