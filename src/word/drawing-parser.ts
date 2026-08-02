@@ -169,7 +169,16 @@ function parseFloatAnchor(anchor: PoNode): FloatAnchor | undefined {
   }
   const zOrder = poIntAttr(anchor, 'relativeHeight');
   const posH = parseAnchorPos(anchor, 'wp:positionH', ['margin', 'page', 'column']);
-  const posV = parseAnchorPos(anchor, 'wp:positionV', ['margin', 'page', 'paragraph', 'line']);
+  // §20.4.3.4 — `insideMargin`/`outsideMargin` are the top/bottom margin on a
+  // page that is not part of a facing pair, which is how Word writes them.
+  const posV = parseAnchorPos(anchor, 'wp:positionV', [
+    'margin',
+    'page',
+    'paragraph',
+    'line',
+    'topMargin',
+    'bottomMargin',
+  ]);
   // §20.4.2.3 — the stand-off the wrapped text keeps from each edge. Ignoring
   // it let effect-extent-line-width.docx fill its paragraph right down to the
   // text box's top edge, where Word and LibreOffice both stop a line earlier

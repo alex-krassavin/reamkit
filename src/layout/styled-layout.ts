@@ -6044,7 +6044,11 @@ class PageAssembler {
   floatTopYUp = (f: FloatAnchor): number => {
     const v = f.posV;
     if (!v) return this.cursorY;
-    if (v.relativeFrom === 'page') return this.ctx.pageHeight - (v.offsetPt ?? 0);
+    // §20.4.3.4 — the TOP margin band starts at the page's own top edge; the
+    // BOTTOM one starts where the text area ends.
+    if (v.relativeFrom === 'page' || v.relativeFrom === 'topMargin')
+      return this.ctx.pageHeight - (v.offsetPt ?? 0);
+    if (v.relativeFrom === 'bottomMargin') return this.ctx.marginBottom - (v.offsetPt ?? 0);
     if (v.relativeFrom === 'margin')
       return this.ctx.pageHeight - this.ctx.marginTop - (v.offsetPt ?? 0);
     return this.cursorY - (v.offsetPt ?? 0);

@@ -1570,7 +1570,13 @@ export interface FloatAnchor {
     readonly align?: 'left' | 'center' | 'right'; // wp:align
   };
   readonly posV?: {
-    readonly relativeFrom: 'margin' | 'page' | 'paragraph' | 'line';
+    /**
+     * §20.4.3.4 ST_RelFromV. `topMargin`/`bottomMargin` measure from the top
+     * edge of the margin BAND they name — page-content-bottom.docx hangs a
+     * square 312pt above the bottom margin, and read as plain `margin` it went
+     * off the top of the page.
+     */
+    readonly relativeFrom: 'margin' | 'page' | 'paragraph' | 'line' | 'topMargin' | 'bottomMargin';
     readonly offsetPt?: Pt;
   };
   /**
