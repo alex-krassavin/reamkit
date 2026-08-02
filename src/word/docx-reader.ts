@@ -39,6 +39,7 @@ import {
   EMPTY_NUMBERING,
   EMPTY_SECTION,
   EMPTY_SETTINGS,
+  HTML_AUTO_SPACING_PT,
   applyAuthorIds,
   bodyIndexForBlock,
   loadEmbeddedFonts,
@@ -101,8 +102,13 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
   // SA3: a SmartArt with no drawing override). Headers/footers and notes don't
   // resolve diagrams, so the sink rides only on the main-body context.
   const losses: Array<Loss> = [];
+  // settings.xml is read before the body because §17.3.1.1's automatic
+  // paragraph spacing depends on the document's compatibility mode.
+  const settingsData = pkg.getPart(SETTINGS_PART);
+  const settings = settingsData ? parseSettings(settingsData) : EMPTY_SETTINGS;
   const ctx: ParseContext = {
     resolveColor,
+    ...(settings.compatibilityMode === undefined ? { autoSpacingPt: HTML_AUTO_SPACING_PT } : {}),
     ...(themeLineWidths && themeLineWidths.length > 0 ? { themeLineWidths } : {}),
     resolveImage,
     resolveHyperlink,
@@ -158,9 +164,6 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
   if (rawComments && peopleData) {
     rawComments = applyAuthorIds(rawComments, parsePeople(peopleData));
   }
-
-  const settingsData = pkg.getPart(SETTINGS_PART);
-  const settings = settingsData ? parseSettings(settingsData) : EMPTY_SETTINGS;
 
   // evenAndOddHeaders lives in settings.xml; replicate the flag onto every
   // section so the renderer sees a per-section view of header bands.

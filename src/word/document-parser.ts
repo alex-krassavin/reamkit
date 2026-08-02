@@ -163,6 +163,12 @@ export interface ParseContext {
    * reference is readonly; its contents mutate during the walk (CM2c).
    */
   readonly openCommentRanges?: Set<string>;
+  /**
+   * §17.3.1.1/§17.3.1.3 — what `w:beforeAutospacing`/`w:afterAutospacing`
+   * resolve to for THIS document: 14pt when it states no compatibility mode,
+   * and nothing (the default) for every Word 2007-or-later one.
+   */
+  readonly autoSpacingPt?: number;
 }
 
 /** The default {@link ParseContext} — just the default colour resolver. */
@@ -691,7 +697,9 @@ function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): Array<Bod
   const parseBody = (children: ReadonlyArray<PoNode>): Array<BodyElement> =>
     parseBodyElements(children, ctx);
   const pPrNode = poChildren(p).find((c) => poIs(c, 'w:pPr'));
-  const paragraphProperties = pPrNode ? parseParagraphProperties(poElementToFlat(pPrNode)) : {};
+  const paragraphProperties = pPrNode
+    ? parseParagraphProperties(poElementToFlat(pPrNode), ctx.autoSpacingPt)
+    : {};
 
   if (drawings.length === 0) {
     const content = parseVmlPicture(vml!, parseBody);
@@ -862,7 +870,10 @@ function parseParagraph(
     }
   }
   const pPr = poChildren(p).find((c) => poIs(c, 'w:pPr'));
-  let properties = parseParagraphProperties(pPr ? poElementToFlat(pPr) : undefined);
+  let properties = parseParagraphProperties(
+    pPr ? poElementToFlat(pPr) : undefined,
+    ctx.autoSpacingPt,
+  );
   // §17.6.17 — a `w:sectPr` in the paragraph mark makes this paragraph the last
   // of its section, and the mark itself the break. An otherwise empty one is
   // therefore not a blank line: fdo73596_RunInStyle brackets its index with two

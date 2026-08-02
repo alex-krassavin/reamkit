@@ -24,7 +24,7 @@ export {
   EMPTY_SECTION,
 } from '@/word/document-parser';
 export { parseRunProperties } from '@/word/run-properties';
-export { parseParagraphProperties } from '@/word/paragraph-properties';
+export { HTML_AUTO_SPACING_PT, parseParagraphProperties } from '@/word/paragraph-properties';
 export { parseStyles } from '@/word/styles-parser';
 export { parseTable } from '@/word/table-parser';
 export { loadEmbeddedFonts, deobfuscateEmbeddedFont, parseFontTable } from '@/word/font-table';

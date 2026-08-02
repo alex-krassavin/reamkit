@@ -49,6 +49,13 @@ export interface DocumentSettings {
    * @w:gutter`) is added to the TOP margin rather than the left.
    */
   readonly gutterAtTop: boolean;
+  /**
+   * `w:compat/w:compatSetting @w:name="compatibilityMode"` — the Word version
+   * the document was saved for. Absent means the file predates the setting,
+   * which is the only case where §17.3.1.1's automatic paragraph spacing is
+   * still HTML's 14pt rather than nothing.
+   */
+  readonly compatibilityMode?: number;
 }
 
 /** The all-defaults {@link DocumentSettings}, returned when no `w:settings` root is found. */
@@ -76,6 +83,7 @@ export function parseSettings(data: Uint8Array): DocumentSettings {
   let doNotExpandShiftReturn = false;
   let displayBackgroundShape = false;
   let gutterAtTop = false;
+  let compatibilityMode: number | undefined;
   for (const child of poChildren(settings)) {
     if (poIs(child, 'w:evenAndOddHeaders')) {
       evenAndOddHeaders = onOff(child);
@@ -89,10 +97,20 @@ export function parseSettings(data: Uint8Array): DocumentSettings {
     } else if (poIs(child, 'w:compat')) {
       for (const flag of poChildren(child)) {
         if (poIs(flag, 'w:doNotExpandShiftReturn')) doNotExpandShiftReturn = onOff(flag);
+        else if (poIs(flag, 'w:compatSetting') && poAttr(flag, 'name') === 'compatibilityMode') {
+          const n = Number(poAttr(flag, 'val'));
+          if (Number.isFinite(n)) compatibilityMode = n;
+        }
       }
     }
   }
-  return { evenAndOddHeaders, doNotExpandShiftReturn, displayBackgroundShape, gutterAtTop };
+  return {
+    evenAndOddHeaders,
+    doNotExpandShiftReturn,
+    displayBackgroundShape,
+    gutterAtTop,
+    ...(compatibilityMode !== undefined ? { compatibilityMode } : {}),
+  };
 }
 
 /** §17.17.4 ST_OnOff: an absent or empty `w:val` means on; `0`/`false` mean off. */

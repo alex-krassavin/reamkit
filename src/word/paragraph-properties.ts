@@ -19,6 +19,21 @@ import { asArray, asElement, getAttr, getVal, parseIntAttr, parseToggle } from '
 const ALIGNMENTS = new Set<Alignment>(['left', 'right', 'center', 'both', 'distribute']);
 const LINE_RULES = new Set<'auto' | 'exact' | 'atLeast'>(['auto', 'exact', 'atLeast']);
 
+/**
+ * §17.3.1.1/§17.3.1.3 — the gap `w:*Autospacing` asks the consumer for. Word's
+ * own automatic value is HTML's 14pt, and only a document old enough to state
+ * no `w:compatSetting compatibilityMode` still gets it: from Word 2007 on the
+ * automatic value is nothing at all, which is what both references leave.
+ */
+export const HTML_AUTO_SPACING_PT = 14;
+
+// The autospacing flags are ST_OnOff ATTRIBUTES of `w:spacing`, not toggle
+// elements: absent means "not asked for", never "on".
+function isAutospacing(node: unknown, name: string): boolean {
+  const v = getAttr(node, name);
+  return v !== undefined && v !== 'false' && v !== '0' && v !== 'off';
+}
+
 const X_ALIGNS = new Set(['left', 'center', 'right', 'inside', 'outside']);
 const Y_ALIGNS = new Set(['top', 'center', 'bottom', 'inside', 'outside']);
 const ANCHORS = new Set(['text', 'margin', 'page']);
@@ -87,9 +102,12 @@ function parseFramePr(node: unknown): FrameProperties | undefined {
  *
  * @param pPr The `w:pPr` element in flat (fast-xml-parser) shape, or anything
  *   non-element (yielding an empty result).
+ * @param autoSpacingPt What `w:beforeAutospacing`/`w:afterAutospacing` resolve
+ *   to — {@link HTML_AUTO_SPACING_PT} for a document that states no
+ *   compatibility mode, and 0 (the default) for every Word 2007-or-later one.
  * @returns The extracted properties; an empty object when `pPr` is absent.
  */
-export function parseParagraphProperties(pPr: unknown): ParagraphProperties {
+export function parseParagraphProperties(pPr: unknown, autoSpacingPt = 0): ParagraphProperties {
   const el = asElement(pPr);
   if (!el) return {};
 
@@ -113,8 +131,15 @@ export function parseParagraphProperties(pPr: unknown): ParagraphProperties {
     const after = parseIntAttr(node, 'after');
     const line = parseIntAttr(node, 'line');
     const lineRule = getAttr(node, 'lineRule');
-    if (before !== undefined) out.spacingBefore = twipsToPt(before);
-    if (after !== undefined) out.spacingAfter = twipsToPt(after);
+    // §17.3.1.3/§17.3.1.1 `w:beforeAutospacing`/`w:afterAutospacing` — the gap
+    // is the consumer's own, and the stated `w:before`/`w:after` is IGNORED.
+    // Read as nothing at all whatever the document's vintage, the paragraphs
+    // of negative-cell-margin-twips.docx ran together where the reference
+    // leaves 14pt between them.
+    if (isAutospacing(node, 'beforeAutospacing')) out.spacingBefore = pt(autoSpacingPt);
+    else if (before !== undefined) out.spacingBefore = twipsToPt(before);
+    if (isAutospacing(node, 'afterAutospacing')) out.spacingAfter = pt(autoSpacingPt);
+    else if (after !== undefined) out.spacingAfter = twipsToPt(after);
     if (line !== undefined) out.spacingLine = twipsToPt(line);
     if (lineRule && LINE_RULES.has(lineRule as 'auto' | 'exact' | 'atLeast')) {
       out.spacingLineRule = lineRule as 'auto' | 'exact' | 'atLeast';
