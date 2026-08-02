@@ -1334,12 +1334,17 @@ function buildSectionContext(
   // would otherwise be drawn straight over the first rows of the body. Excel and
   // Word both push the body down instead; a multi-line header is ordinary (a
   // spreadsheet header region may carry a literal line break).
+  // …but only over the bands the section can actually SHOW: §17.10.1's `first`
+  // is drawn when `w:titlePg` says so and §17.15.1.36's `even` when
+  // `w:evenAndOddHeaders` does. issue_51265_3.docx keeps a four-picture EVEN
+  // header it never shows, and counting it put the top margin 1390pt down a
+  // 842pt page — every page of the body was drawn off the paper.
   const headerBottom =
     dims.headerOffsetPt +
     Math.max(
       headerSet.default.heightPt ?? 0,
-      headerSet.first.heightPt ?? 0,
-      headerSet.even.heightPt ?? 0,
+      section.properties.titlePg === true ? (headerSet.first.heightPt ?? 0) : 0,
+      section.properties.evenAndOddHeaders === true ? (headerSet.even.heightPt ?? 0) : 0,
     );
   const marginTop = Math.max(dims.marginTop, headerBottom);
   return {
