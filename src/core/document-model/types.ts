@@ -1656,6 +1656,13 @@ export interface FloatAnchor {
     readonly align?: 'top' | 'center' | 'bottom';
   };
   /**
+   * §20.4.2.3 `wp:anchor @layoutInCell` (VML `o:allowincell`) — present and
+   * false when a drawing anchored inside a TABLE CELL is placed against the
+   * page rather than against the cell. Absent means the default: the cell is
+   * the frame every `relativeFrom` is measured in.
+   */
+  readonly inCell?: boolean;
+  /**
    * §20.4.2.3 `wp:anchor @distT/@distB/@distL/@distR` — how far the wrapped
    * text stands off each edge of the drawing. Absent sides are 0.
    */

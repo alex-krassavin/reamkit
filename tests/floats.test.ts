@@ -169,3 +169,58 @@ describe('floating drawings (wp:anchor, §20.4.2.3)', () => {
     expect(lines[0]!.originX).toBeGreaterThan(200);
   });
 });
+
+// A one-cell table whose only paragraph carries an anchored shape (§20.4.2.4).
+const cellFloat = (posAndWrap: string, attrs = '') =>
+  `<w:tbl>
+    <w:tblPr><w:tblW w:w="5000" w:type="dxa"/></w:tblPr>
+    <w:tblGrid><w:gridCol w:w="5000"/></w:tblGrid>
+    <w:tr><w:tc>
+      <w:tcPr><w:tcW w:w="5000" w:type="dxa"/></w:tcPr>
+      ${anchoredShape(posAndWrap, attrs)}
+    </w:tc></w:tr>
+  </w:tbl>${TEXT}`;
+
+const shapeX = (laid: ReturnType<typeof layoutOf>): number => {
+  const shape = laid.pages[0]!.commands.find((c) => c.type === 'shape');
+  if (!shape) throw new Error('the anchored shape was not drawn');
+  return (shape as unknown as { shape: { transform: ReadonlyArray<number> } }).shape.transform[4]!;
+};
+
+describe('a drawing anchored inside a table cell (§20.4.2.4)', () => {
+  // The table starts at the left margin (72pt) and the cell keeps Word's
+  // default 5.4pt of padding, so a cell-relative offset lands 77.4pt further
+  // right than the same offset read against the page.
+  const AT_100 =
+    '<wp:positionH relativeFrom="page"><wp:posOffset>1270000</wp:posOffset></wp:positionH>' +
+    '<wp:positionV relativeFrom="page"><wp:posOffset>635000</wp:posOffset></wp:positionV>' +
+    '<wp:wrapNone/>';
+
+  it('is drawn at all — it used to be dropped for having nowhere to stand', () => {
+    const laid = layoutOf(buildDocxFromBody(cellFloat(AT_100)));
+    expect(laid.pages[0]!.commands.some((c) => c.type === 'shape')).toBe(true);
+  });
+
+  it('measures its position in the CELL, which is what layoutInCell means', () => {
+    expect(shapeX(layoutOf(buildDocxFromBody(cellFloat(AT_100))))).toBeCloseTo(177.4, 0);
+  });
+
+  it('…and reaches past the table to the page when layoutInCell is off', () => {
+    const laid = layoutOf(buildDocxFromBody(cellFloat(AT_100, 'layoutInCell="0"')));
+    expect(shapeX(laid)).toBeCloseTo(100, 0);
+  });
+
+  it('takes no room in the cell it is anchored in', () => {
+    const withFloat = layoutOf(buildDocxFromBody(cellFloat(AT_100)));
+    const bare = layoutOf(
+      buildDocxFromBody(cellFloat(AT_100).replace(anchoredShape(AT_100), '<w:p/>')),
+    );
+    const lineY = (l: ReturnType<typeof layoutOf>) =>
+      (
+        l.pages[0]!.commands.filter((c) => c.type === 'line').at(-1) as unknown as {
+          baselineY: number;
+        }
+      ).baselineY;
+    expect(lineY(withFloat)).toBeCloseTo(lineY(bare), 4);
+  });
+});

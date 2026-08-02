@@ -537,6 +537,12 @@ interface ParagraphBlock {
 
 type MergeRole = 'standalone' | 'start' | 'middle' | 'end';
 
+/** One drawing anchored inside a cell, with the line it hangs off. */
+interface CellFloat {
+  readonly block: ImageBlockLaidOut | ShapeBlockLaidOut;
+  readonly afterLine: number;
+}
+
 interface CellLayout {
   readonly widthPt: number;
   readonly padTopPt: number;
@@ -573,6 +579,12 @@ interface CellLayout {
     readonly block: ShapeBlockLaidOut;
     readonly afterLine: number;
   }>;
+  /**
+   * §20.4.2.4 — drawings ANCHORED in this cell (`layoutInCell`): out of its
+   * flow, so they take no room in it, each with the number of the cell's lines
+   * that come before the paragraph it hangs off.
+   */
+  readonly floats?: ReadonlyArray<CellFloat>;
   readonly contentHeightPt: number;
   readonly totalHeightPt: number;
   readonly verticalAlign?: 'top' | 'center' | 'bottom';
@@ -678,6 +690,84 @@ const MIN_WRAP_WIDTH = 36;
 function isOutOfFlowFloat(f: FloatAnchor | undefined): f is FloatAnchor {
   return f !== undefined && f.wrap !== 'topAndBottom';
 }
+
+/**
+ * §20.4.3.3/§20.4.3.4 — the boxes an anchor's `relativeFrom` names, in page
+ * coordinates (y-up). Normally they are the page, its margins and the text
+ * column; for a drawing anchored inside a table cell they are all that cell,
+ * which is what `@layoutInCell` asks for.
+ */
+interface FloatFrame {
+  /** The `page` box. */
+  readonly pageLeft: number;
+  readonly pageWidth: number;
+  readonly pageTopYUp: number;
+  readonly pageBottomYUp: number;
+  /** The `margin` box — the text area. */
+  readonly marginLeft: number;
+  readonly contentWidth: number;
+  readonly marginTopYUp: number;
+  readonly marginBottomYUp: number;
+  /** The `column` box. */
+  readonly columnLeft: number;
+  readonly columnWidth: number;
+  /** The anchoring paragraph's top, y-up. */
+  readonly anchorY: number;
+}
+
+/** The float's left edge, resolved from its horizontal anchor (§20.4.3.3). */
+function floatXIn(frame: FloatFrame, f: FloatAnchor, widthPt: number): number {
+  const h = f.posH;
+  if (!h) return frame.columnLeft;
+  // §20.4.3.3 — the margin BANDS: the strip between the page edge and the
+  // text area on that side, which is where a marginal note is placed.
+  const textRight = frame.marginLeft + frame.contentWidth;
+  const pageRight = frame.pageLeft + frame.pageWidth;
+  const base =
+    h.relativeFrom === 'page' || h.relativeFrom === 'leftMargin'
+      ? frame.pageLeft
+      : h.relativeFrom === 'column'
+        ? frame.columnLeft
+        : h.relativeFrom === 'rightMargin'
+          ? textRight
+          : frame.marginLeft;
+  const span =
+    h.relativeFrom === 'page'
+      ? frame.pageWidth
+      : h.relativeFrom === 'column'
+        ? frame.columnWidth
+        : h.relativeFrom === 'leftMargin'
+          ? frame.marginLeft - frame.pageLeft
+          : h.relativeFrom === 'rightMargin'
+            ? pageRight - textRight
+            : frame.contentWidth;
+  if (h.align === 'center') return base + (span - widthPt) / 2;
+  if (h.align === 'right') return base + span - widthPt;
+  return base + (h.offsetPt ?? 0);
+}
+
+/** The float's TOP, y-up, resolved from its vertical anchor (§20.4.3.4). */
+function floatTopYUpIn(frame: FloatFrame, f: FloatAnchor, heightPt = 0): number {
+  const v = f.posV;
+  if (!v) return frame.anchorY;
+  // §20.4.3.1 — a keyword position: within the page or the margin box.
+  if (v.align !== undefined) {
+    const page = v.relativeFrom === 'page';
+    const topYUp = page ? frame.pageTopYUp : frame.marginTopYUp;
+    const bottomYUp = page ? frame.pageBottomYUp : frame.marginBottomYUp;
+    if (v.align === 'top') return topYUp;
+    if (v.align === 'bottom') return bottomYUp + heightPt;
+    return bottomYUp + (topYUp - bottomYUp + heightPt) / 2;
+  }
+  // §20.4.3.4 — the TOP margin band starts at the page's own top edge; the
+  // BOTTOM one starts where the text area ends.
+  if (v.relativeFrom === 'page' || v.relativeFrom === 'topMargin')
+    return frame.pageTopYUp - (v.offsetPt ?? 0);
+  if (v.relativeFrom === 'bottomMargin') return frame.marginBottomYUp - (v.offsetPt ?? 0);
+  if (v.relativeFrom === 'margin') return frame.marginTopYUp - (v.offsetPt ?? 0);
+  return frame.anchorY - (v.offsetPt ?? 0);
+}
+
 const FOOTNOTE_RULE_WIDTH = 144; // Word's ~2" short separator
 
 // Assign sequential numbers to note references in reading order (§17.11:
@@ -3028,6 +3118,81 @@ function emitShapeText(
 // One shape, `bottomYUp` being its own bottom edge. §20.5.2.17 — a group
 // draws nothing itself and then draws its members, each at the corner it
 // holds within the group's box.
+/**
+ * §20.4.2.4 — what a cell needs to place a drawing anchored inside it: the
+ * page's float layers to draw into, the page boxes an anchor may name, and the
+ * exclusion the wrapped ones claim from the body text.
+ */
+interface CellAnchorCtx {
+  /** The layer a float of this z-order belongs in, behind or in front. */
+  readonly sink: (behind: boolean, zOrder: number | undefined) => Array<PageItem>;
+  /** The page and margin boxes; the column and anchor are replaced per cell. */
+  readonly frame: FloatFrame;
+  readonly exclude: (
+    f: FloatAnchor,
+    x: number,
+    topYUp: number,
+    widthPt: number,
+    heightPt: number,
+  ) => void;
+  readonly pageHeight: number;
+}
+
+/** The page a table is being drawn onto, as a cell's floats need to see it. */
+function cellAnchorCtx(asm: PageAssembler): CellAnchorCtx {
+  return {
+    sink: (behind, zOrder) =>
+      PageAssembler.zSink(behind ? asm.floatsBehind : asm.floatsFront, zOrder),
+    frame: asm.floatFrame(),
+    exclude: (f, x, topYUp, widthPt, heightPt) => {
+      asm.excludeFloat(f, x, topYUp, widthPt, heightPt);
+    },
+    pageHeight: asm.ctx.pageHeight,
+  };
+}
+
+// One drawing anchored in a cell, drawn at the place its anchor names.
+function emitCellFloat(cf: CellFloat, ctx: CellAnchorCtx, frame: FloatFrame): void {
+  const float = cf.block.float;
+  if (!float) return;
+  const x = floatXIn(frame, float, cf.block.widthPt);
+  const topYUp = floatTopYUpIn(frame, float, cf.block.heightPt);
+  const sink = ctx.sink(float.behind === true, float.zOrder);
+  if (cf.block.kind === 'shape') {
+    emitShapeItems(cf.block, x, topYUp - cf.block.heightPt, sink, ctx.pageHeight, undefined);
+  } else {
+    const ins = cf.block.drawInset;
+    sink.push({
+      type: 'image',
+      x: pt(x + (ins?.dxPt ?? 0)),
+      y: pt(ctx.pageHeight - (topYUp - (ins?.dyTopPt ?? 0))),
+      width: pt(ins?.widthPt ?? cf.block.widthPt),
+      height: pt(ins?.heightPt ?? cf.block.heightPt),
+      imageResourceName: cf.block.resourceName,
+      ...(cf.block.crop ? { crop: cf.block.crop } : {}),
+      ...(cf.block.wash ? { wash: cf.block.wash } : {}),
+      ...(cf.block.rotationDeg ? { rotationDeg: cf.block.rotationDeg } : {}),
+      ...(cf.block.flipH ? { flipH: true } : {}),
+      ...(cf.block.flipV ? { flipV: true } : {}),
+    });
+    if (cf.block.outline) {
+      sink.push(
+        ...pictureOutlineItems(
+          cf.block.outline,
+          x + (ins?.dxPt ?? 0),
+          ctx.pageHeight - (topYUp - (ins?.dyTopPt ?? 0)),
+          ins?.widthPt ?? cf.block.widthPt,
+          ins?.heightPt ?? cf.block.heightPt,
+          undefined,
+        ),
+      );
+    }
+  }
+  if (float.wrap !== 'none') {
+    ctx.exclude(float, x, topYUp, cf.block.widthPt, cf.block.heightPt);
+  }
+}
+
 function emitShapeItems(
   sh: ShapeBlockLaidOut,
   x: number,
@@ -5702,6 +5867,7 @@ function layoutTableCell(
   const lines: Array<Line> = [];
   const nestedTables: Array<{ block: TableBlock; afterLine: number }> = [];
   const cellShapes: Array<{ block: ShapeBlockLaidOut; afterLine: number }> = [];
+  const cellFloats: Array<CellFloat> = [];
   // §17.3.1.33 — the gap a paragraph keeps from the one above it, by the index
   // of the line it opens with. A cell's lines are one flat list, so the gaps
   // ride beside them: counted in the height but never drawn, the two paragraphs
@@ -5824,7 +5990,24 @@ function layoutTableCell(
         contentHeightPt += block.heightPt;
         pendingGapPt = block.spacingAfterPt;
       }
-      // A chart or a FLOATING picture inside a cell is not yet rendered.
+      // §20.4.2.4 with `layoutInCell` — a drawing ANCHORED in the cell rather
+      // than standing in its flow. It keeps its own place, so it takes no room
+      // in the cell and is drawn from the cell's box at pagination, where the
+      // page position is known: fdo68607.docx hangs its title over the first
+      // cell of the glossary and tdf129888dml.docx its page number over the
+      // last, and both were dropped for having nowhere to stand.
+      else if (el.kind === 'image' && isOutOfFlowFloat(el.image.float)) {
+        cellFloats.push({
+          block: layoutImageBlock(el.image, imageResources, innerWidth),
+          afterLine: lines.length,
+        });
+      } else if (el.kind === 'shape' && isOutOfFlowFloat(el.shape.float)) {
+        cellFloats.push({
+          block: layoutShapeBlock(el.shape, options, fontResources, imageResources, innerWidth),
+          afterLine: lines.length,
+        });
+      }
+      // A chart inside a cell is not yet rendered.
     }
     // …and the space after the LAST paragraph, which nothing follows to claim
     // it: the cell is that much taller, even though no line stands there.
@@ -5862,6 +6045,7 @@ function layoutTableCell(
     ...(lineGaps.size > 0 ? { lineGaps } : {}),
     ...(nestedTables.length > 0 ? { nestedTables } : {}),
     ...(cellShapes.length > 0 ? { shapes: cellShapes } : {}),
+    ...(cellFloats.length > 0 ? { floats: cellFloats } : {}),
     contentHeightPt,
     totalHeightPt,
     ...(cell.properties.verticalAlign ? { verticalAlign: cell.properties.verticalAlign } : {}),
@@ -6316,60 +6500,28 @@ class PageAssembler {
       bottomYUp: topYUp - h - (d?.bottomPt ?? 0),
     });
   };
+  /** The frame a float anchored in the body flow is resolved against. */
+  floatFrame = (): FloatFrame => ({
+    pageLeft: 0,
+    pageWidth: this.ctx.pageWidth,
+    pageTopYUp: this.ctx.pageHeight,
+    pageBottomYUp: 0,
+    marginLeft: this.ctx.marginLeft,
+    contentWidth: this.ctx.contentWidth,
+    marginTopYUp: this.ctx.pageHeight - this.ctx.marginTop,
+    marginBottomYUp: this.ctx.marginBottom,
+    columnLeft: this.colLeft(),
+    columnWidth: this.colWidth(),
+    anchorY: this.cursorY,
+  });
   /** The float's left edge on the page, resolved from its horizontal anchor. */
-  floatX = (f: FloatAnchor, widthPt: number): number => {
-    const h = f.posH;
-    if (!h) return this.colLeft();
-    // §20.4.3.3 — the margin BANDS: the strip between the page edge and the
-    // text area on that side, which is where a marginal note is placed.
-    const textRight = this.ctx.marginLeft + this.ctx.contentWidth;
-    const base =
-      h.relativeFrom === 'page' || h.relativeFrom === 'leftMargin'
-        ? 0
-        : h.relativeFrom === 'column'
-          ? this.colLeft()
-          : h.relativeFrom === 'rightMargin'
-            ? textRight
-            : this.ctx.marginLeft;
-    const span =
-      h.relativeFrom === 'page'
-        ? this.ctx.pageWidth
-        : h.relativeFrom === 'column'
-          ? this.colWidth()
-          : h.relativeFrom === 'leftMargin'
-            ? this.ctx.marginLeft
-            : h.relativeFrom === 'rightMargin'
-              ? this.ctx.pageWidth - textRight
-              : this.ctx.contentWidth;
-    if (h.align === 'center') return base + (span - widthPt) / 2;
-    if (h.align === 'right') return base + span - widthPt;
-    return base + (h.offsetPt ?? 0);
-  };
+  floatX = (f: FloatAnchor, widthPt: number): number => floatXIn(this.floatFrame(), f, widthPt);
   /**
    * The drawing's TOP in the y-up cursor frame. Paragraph/line-relative offsets
    * hang off the anchoring paragraph's current position.
    */
-  floatTopYUp = (f: FloatAnchor, heightPt = 0): number => {
-    const v = f.posV;
-    if (!v) return this.cursorY;
-    // §20.4.3.1 — a keyword position: within the page or the margin box.
-    if (v.align !== undefined) {
-      const page = v.relativeFrom === 'page';
-      const topYUp = page ? this.ctx.pageHeight : this.ctx.pageHeight - this.ctx.marginTop;
-      const bottomYUp = page ? 0 : this.ctx.marginBottom;
-      if (v.align === 'top') return topYUp;
-      if (v.align === 'bottom') return bottomYUp + heightPt;
-      return bottomYUp + (topYUp - bottomYUp + heightPt) / 2;
-    }
-    // §20.4.3.4 — the TOP margin band starts at the page's own top edge; the
-    // BOTTOM one starts where the text area ends.
-    if (v.relativeFrom === 'page' || v.relativeFrom === 'topMargin')
-      return this.ctx.pageHeight - (v.offsetPt ?? 0);
-    if (v.relativeFrom === 'bottomMargin') return this.ctx.marginBottom - (v.offsetPt ?? 0);
-    if (v.relativeFrom === 'margin')
-      return this.ctx.pageHeight - this.ctx.marginTop - (v.offsetPt ?? 0);
-    return this.cursorY - (v.offsetPt ?? 0);
-  };
+  floatTopYUp = (f: FloatAnchor, heightPt = 0): number =>
+    floatTopYUpIn(this.floatFrame(), f, heightPt);
   /**
    * Tagged PDF: the stack of open list levels (for L/LI/LBody nesting). Cleared
    * whenever a non-list-item block interrupts the run of list paragraphs.
@@ -7225,7 +7377,17 @@ function paginateSections(
         );
         let rowY = fy;
         for (const row of block.rows) {
-          emitRowChunk(sink, row, fx, rowY, asm.ctx.pageHeight, colCount);
+          emitRowChunk(
+            sink,
+            row,
+            fx,
+            rowY,
+            asm.ctx.pageHeight,
+            colCount,
+            undefined,
+            undefined,
+            cellAnchorCtx(asm),
+          );
           rowY -= row.heightPt;
         }
         if (block.float.wrap !== 'none') {
@@ -7327,6 +7489,7 @@ function paginateSections(
             colCount,
             cellStructIds,
             mergedHeights,
+            cellAnchorCtx(asm),
           );
           asm.cursorY -= chunk.heightPt;
           // Only the table's last row paints its bottom edge — every other
@@ -7476,6 +7639,10 @@ function emitRowChunk(
   colCount: number,
   cellStructIds?: ReadonlyArray<number | undefined>,
   mergedHeights?: ReadonlyArray<number | undefined>,
+  // §20.4.2.4 — where a drawing ANCHORED in a cell goes, and the page boxes it
+  // is placed against. Absent for the paths that have no page to place one on
+  // (a spreadsheet's cells, a nested row already inside one).
+  anchored?: CellAnchorCtx,
 ): void {
   const rowTop = cursorY;
   const rowBottom = cursorY - row.heightPt;
@@ -7695,7 +7862,17 @@ function emitRowChunk(
         if (nt.afterLine !== n) continue;
         for (const nrow of nt.block.rows) {
           const nestedIds = structId !== undefined ? nrow.cells.map(() => structId) : undefined;
-          emitRowChunk(out, nrow, nestedX, textY, pageHeight, nt.block.colCount, nestedIds);
+          emitRowChunk(
+            out,
+            nrow,
+            nestedX,
+            textY,
+            pageHeight,
+            nt.block.colCount,
+            nestedIds,
+            undefined,
+            anchored,
+          );
           textY -= nrow.heightPt;
         }
       }
@@ -7708,6 +7885,38 @@ function emitRowChunk(
         );
         textY -= cs.block.heightPt;
         emitShapeItems(cs.block, nestedX + offset, textY, out, pageHeight, structId);
+      }
+      // §20.4.2.4 `layoutInCell` — a drawing anchored in the cell. Its COLUMN
+      // is the cell's content box and its paragraph is the line it hangs off;
+      // page- and margin-relative anchors reach past the table to the page, as
+      // they do anywhere else.
+      for (const cf of cell.floats ?? []) {
+        if (cf.afterLine !== n || !anchored) continue;
+        const inner = cell.widthPt - cell.padLeftPt - cell.padRightPt;
+        const cellTop = rowTop - cell.padTopPt;
+        const cellBottom = rowTop - (mergedHeights?.[i] ?? row.heightPt) + cell.padBottomPt;
+        // §20.4.2.3 `@layoutInCell` — with it (the default) every box the
+        // anchor can name IS this cell; without it the drawing reaches past
+        // the table to the page's own boxes.
+        const own = cf.block.float?.inCell !== false;
+        emitCellFloat(cf, anchored, {
+          ...anchored.frame,
+          ...(own
+            ? {
+                pageLeft: nestedX,
+                pageWidth: inner,
+                pageTopYUp: cellTop,
+                pageBottomYUp: cellBottom,
+                marginLeft: nestedX,
+                contentWidth: inner,
+                marginTopYUp: cellTop,
+                marginBottomYUp: cellBottom,
+              }
+            : {}),
+          columnLeft: nestedX,
+          columnWidth: inner,
+          anchorY: textY,
+        });
       }
     };
     for (const [lineIdx, line] of cell.lines.entries()) {

@@ -223,8 +223,15 @@ function parseFloatAnchor(anchor: PoNode): FloatAnchor | undefined {
     rightPt: dist('distR'),
   };
   const anyDist = Object.values(wrapDist).some((v) => v > 0);
+  // §20.4.2.3 `@layoutInCell` — inside a table cell, the cell is the frame the
+  // position is measured in. Turned off (tdf129888dml.docx) the object reaches
+  // past the table to the page it names, which is how a page number ends up in
+  // the corner of the paper rather than the corner of a cell.
+  const inCellRaw = poAttr(anchor, 'layoutInCell');
+  const inCell = !(inCellRaw === '0' || inCellRaw === 'false');
   return {
     wrap,
+    ...(inCell ? {} : { inCell: false }),
     ...(behind ? { behind: true } : {}),
     ...(zOrder !== undefined ? { zOrder } : {}),
     ...(anyDist ? { wrapDist } : {}),
@@ -1506,6 +1513,10 @@ function vmlFloat(
     // box squeezed the sentence it is meant to sit behind into a column two
     // words wide, over two pages.
     wrap: vmlWrap(shape),
+    // §14.1.2.2 `o:allowincell` — VML's spelling of `layoutInCell`: off, the
+    // shape is placed against the page it names rather than the cell it sits
+    // in (tdf129888vml.docx rules the page edge from inside a cell).
+    ...(poAttrLocal(shape, 'allowincell') === 'f' ? { inCell: false } : {}),
     ...(zIndex !== undefined && zIndex < 0 ? { behind: true } : {}),
     ...(zIndex !== undefined ? { zOrder: Math.abs(zIndex) } : {}),
     posH: {
