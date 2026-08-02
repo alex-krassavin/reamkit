@@ -6162,18 +6162,27 @@ class PageAssembler {
   floatX = (f: FloatAnchor, widthPt: number): number => {
     const h = f.posH;
     if (!h) return this.colLeft();
+    // §20.4.3.3 — the margin BANDS: the strip between the page edge and the
+    // text area on that side, which is where a marginal note is placed.
+    const textRight = this.ctx.marginLeft + this.ctx.contentWidth;
     const base =
-      h.relativeFrom === 'page'
+      h.relativeFrom === 'page' || h.relativeFrom === 'leftMargin'
         ? 0
         : h.relativeFrom === 'column'
           ? this.colLeft()
-          : this.ctx.marginLeft;
+          : h.relativeFrom === 'rightMargin'
+            ? textRight
+            : this.ctx.marginLeft;
     const span =
       h.relativeFrom === 'page'
         ? this.ctx.pageWidth
         : h.relativeFrom === 'column'
           ? this.colWidth()
-          : this.ctx.contentWidth;
+          : h.relativeFrom === 'leftMargin'
+            ? this.ctx.marginLeft
+            : h.relativeFrom === 'rightMargin'
+              ? this.ctx.pageWidth - textRight
+              : this.ctx.contentWidth;
     if (h.align === 'center') return base + (span - widthPt) / 2;
     if (h.align === 'right') return base + span - widthPt;
     return base + (h.offsetPt ?? 0);

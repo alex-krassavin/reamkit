@@ -176,7 +176,15 @@ function parseFloatAnchor(anchor: PoNode): FloatAnchor | undefined {
     else if (poIs(child, 'wp:wrapTopAndBottom')) wrap = 'topAndBottom';
   }
   const zOrder = poIntAttr(anchor, 'relativeHeight');
-  const posH = parseAnchorPos(anchor, 'wp:positionH', ['margin', 'page', 'column']);
+  // §20.4.3.3 — `leftMargin`/`rightMargin` name the margin band on that side,
+  // the place a marginal note belongs.
+  const posH = parseAnchorPos(anchor, 'wp:positionH', [
+    'margin',
+    'page',
+    'column',
+    'leftMargin',
+    'rightMargin',
+  ]);
   // §20.4.3.4 — `insideMargin`/`outsideMargin` are the top/bottom margin on a
   // page that is not part of a facing pair, which is how Word writes them.
   const posV = parseAnchorPos(anchor, 'wp:positionV', [

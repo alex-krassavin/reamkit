@@ -1578,7 +1578,13 @@ export interface FloatAnchor {
    */
   readonly zOrder?: number;
   readonly posH?: {
-    readonly relativeFrom: 'margin' | 'page' | 'column';
+    /**
+     * §20.4.3.3 ST_RelFromH. `leftMargin`/`rightMargin` are the margin BANDS
+     * beside the text area, which is where a marginal note is placed:
+     * tdf103573.docx centres one box in each, and read as plain `margin` they
+     * both landed in the middle of the text and printed over each other.
+     */
+    readonly relativeFrom: 'margin' | 'page' | 'column' | 'leftMargin' | 'rightMargin';
     readonly offsetPt?: Pt; // wp:posOffset
     readonly align?: 'left' | 'center' | 'right'; // wp:align
   };
