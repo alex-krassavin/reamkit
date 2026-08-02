@@ -18,3 +18,6 @@ corpus/report*.md
 # side-by-side page renders from corpus:visual (regenerate on demand)
 corpus/.visual/
 corpus/.visual-work-*/
+# pixel-scout's LibreOffice cache and its per-run scratch
+corpus/.lo-cache/
+corpus/.pixel-scout-*/
