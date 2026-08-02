@@ -540,6 +540,7 @@ export type NumberingFormat =
   | 'hebrew2'
   /** ①②③… up to twenty, then plain digits. */
   | 'decimalEnclosedCircle'
+  | 'chicago'
   | 'bullet'
   | 'none';
 

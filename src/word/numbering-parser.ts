@@ -65,6 +65,7 @@ const FORMATS = new Set<NumberingFormat>([
   'hebrew1',
   'hebrew2',
   'decimalEnclosedCircle',
+  'chicago',
   'bullet',
   'none',
 ]);

@@ -180,6 +180,13 @@ function formatCounter(format: NumberingFormat, n: number): string {
     case 'decimalEnclosedCircle':
       // U+2460 ① … U+2473 ⑳; past twenty Word prints the number plainly.
       return n >= 1 && n <= 20 ? String.fromCodePoint(0x245f + n) : String(n);
+    // §17.18.59 `chicago` — the traditional footnote marks, doubled each time
+    // the four of them run out: * † ‡ § ** †† ‡‡ §§ *** …
+    case 'chicago': {
+      if (n < 1) return '';
+      const mark = CHICAGO_MARKS[(n - 1) % CHICAGO_MARKS.length]!;
+      return mark.repeat(Math.floor((n - 1) / CHICAGO_MARKS.length) + 1);
+    }
     case 'bullet':
     case 'none':
     default:
@@ -238,6 +245,9 @@ function toHebrewNumeral(n: number): string {
   // of the number here.
   return out;
 }
+
+// §17.18.59 `chicago` — the four traditional reference marks, in order.
+const CHICAGO_MARKS = ['*', '\u2020', '\u2021', '\u00A7'] as const;
 
 // §17.18.59 ideograph number formats. `IDEOGRAPH_DIGITS[0]` is the zero the
 // digit-by-digit formats print (LibreOffice writes 10 as 一零).
