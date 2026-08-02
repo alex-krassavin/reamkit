@@ -544,6 +544,15 @@ interface CellLayout {
    * in whatever order it likes.
    */
   readonly nestedTables?: ReadonlyArray<{ readonly block: TableBlock; readonly afterLine: number }>;
+  /**
+   * Shapes written in this cell (§20.4.2.4), each with the number of the cell's
+   * own lines that come BEFORE it — a drawing that is a group or a text box has
+   * no inline form, so it rides beside the lines rather than on one.
+   */
+  readonly shapes?: ReadonlyArray<{
+    readonly block: ShapeBlockLaidOut;
+    readonly afterLine: number;
+  }>;
   readonly contentHeightPt: number;
   readonly totalHeightPt: number;
   readonly verticalAlign?: 'top' | 'center' | 'bottom';
@@ -5463,6 +5472,7 @@ function layoutTableCell(
   const innerWidth = Math.max(1, widthPt - padLeftPt - padRightPt);
   const lines: Array<Line> = [];
   const nestedTables: Array<{ block: TableBlock; afterLine: number }> = [];
+  const cellShapes: Array<{ block: ShapeBlockLaidOut; afterLine: number }> = [];
   // §17.3.1.33 — the gap a paragraph keeps from the one above it, by the index
   // of the line it opens with. A cell's lines are one flat list, so the gaps
   // ride beside them: counted in the height but never drawn, the two paragraphs
@@ -5564,9 +5574,25 @@ function layoutTableCell(
         }
         contentHeightPt += block.spacingAfterPt;
         pendingGapPt = block.spacingAfterPt;
+      } else if (el.kind === 'shape' && !isOutOfFlowFloat(el.shape.float)) {
+        // …and a lone SHAPE in a cell reaches the layout the same way. It is
+        // not a run — a drawing that is a group or a text box has no inline
+        // form — so it rides beside the cell's lines the way a nested table
+        // does. shape-in-floattable.docx puts its whole diagram in one cell
+        // and we printed an empty page.
+        const block = layoutShapeBlock(
+          el.shape,
+          options,
+          fontResources,
+          imageResources,
+          innerWidth,
+        );
+        openParagraph(block.spacingBeforePt);
+        cellShapes.push({ block, afterLine: lines.length });
+        contentHeightPt += block.heightPt + block.spacingAfterPt;
+        pendingGapPt = block.spacingAfterPt;
       }
-      // A shape, a chart, or a FLOATING picture inside a cell is not yet
-      // rendered (skipped).
+      // A chart or a FLOATING picture inside a cell is not yet rendered.
     }
   }
   const colEnd = colStart + colSpan - 1;
@@ -5600,6 +5626,7 @@ function layoutTableCell(
     lines,
     ...(lineGaps.size > 0 ? { lineGaps } : {}),
     ...(nestedTables.length > 0 ? { nestedTables } : {}),
+    ...(cellShapes.length > 0 ? { shapes: cellShapes } : {}),
     contentHeightPt,
     totalHeightPt,
     ...(cell.properties.verticalAlign ? { verticalAlign: cell.properties.verticalAlign } : {}),
@@ -7367,6 +7394,16 @@ function emitRowChunk(
           emitRowChunk(out, nrow, nestedX, textY, pageHeight, nt.block.colCount, nestedIds);
           textY -= nrow.heightPt;
         }
+      }
+      for (const cs of cell.shapes ?? []) {
+        if (cs.afterLine !== n) continue;
+        const offset = alignmentOffset(
+          cs.block.resolvedAlignment,
+          cs.block.widthPt,
+          cell.widthPt - cell.padLeftPt - cell.padRightPt,
+        );
+        textY -= cs.block.heightPt;
+        emitShapeItems(cs.block, nestedX + offset, textY, out, pageHeight, structId);
       }
     };
     for (const [lineIdx, line] of cell.lines.entries()) {
