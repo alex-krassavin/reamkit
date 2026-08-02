@@ -1441,6 +1441,11 @@ export interface PageMargins {
   readonly left: Pt;
   readonly header?: Pt;
   readonly footer?: Pt;
+  /**
+   * §17.6.11 `w:gutter` — the binding space, added to the left margin (or to
+   * the top, when `w:settings/w:gutterAtTop` says so).
+   */
+  readonly gutter?: Pt;
 }
 
 /** §17.10 — which page class a header/footer reference applies to. */

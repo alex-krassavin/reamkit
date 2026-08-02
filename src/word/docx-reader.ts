@@ -233,6 +233,7 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
     ...(settings.displayBackgroundShape && backgroundColorHex
       ? { pageBackgroundColorHex: backgroundColorHex }
       : {}),
+    ...(settings.gutterAtTop ? { gutterAtTop: true } : {}),
   };
   return { doc, losses };
 }

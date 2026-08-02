@@ -361,6 +361,9 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
       const left = poIntAttr(child, 'left');
       const header = poIntAttr(child, 'header');
       const footer = poIntAttr(child, 'footer');
+      // §17.6.11 — the binding space. gutter-left.docx asks for half an inch
+      // of it and we set its text flush against the plain margin.
+      const gutter = poIntAttr(child, 'gutter');
       margins = {
         top: twipsToPt(top ?? 1440),
         right: twipsToPt(right ?? 1440),
@@ -368,6 +371,7 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
         left: twipsToPt(left ?? 1440),
         ...(header !== undefined ? { header: twipsToPt(header) } : {}),
         ...(footer !== undefined ? { footer: twipsToPt(footer) } : {}),
+        ...(gutter !== undefined && gutter > 0 ? { gutter: twipsToPt(gutter) } : {}),
       };
     } else if (poIs(child, 'w:headerReference')) {
       pushHeaderFooter(child, headers);

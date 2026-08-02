@@ -302,6 +302,11 @@ export interface StyledRenderOptions {
    */
   readonly pageBackgroundColorHex?: string;
   /**
+   * ECMA-376 §17.15.1.38 `w:gutterAtTop` — the binding space belongs to the
+   * TOP margin, not the left.
+   */
+  readonly gutterAtTop?: boolean;
+  /**
    * §7.6 PDF encryption (AES-256, R6). Only honoured on the ASYNC conversion
    * path (WebCrypto); mutually exclusive with `pdfA` (ISO 19005 forbids
    * `/Encrypt`) and with signatures (v1).
@@ -1209,15 +1214,19 @@ function resolvePageDimensions(
   const sectionRight = section?.margins?.right !== undefined ? section.margins.right : undefined;
   const sectionTop = section?.margins?.top !== undefined ? section.margins.top : undefined;
   const sectionBottom = section?.margins?.bottom !== undefined ? section.margins.bottom : undefined;
+  const gutter = section?.margins?.gutter ?? 0;
+  const atTop = options.gutterAtTop === true;
   const headerOffsetPt = section?.margins?.header ?? 720 * TWIP_TO_PT;
   const footerOffsetPt = section?.margins?.footer ?? 720 * TWIP_TO_PT;
 
   return {
     pageWidth: options.pageWidth ?? sectionPageWidth ?? A4_WIDTH,
     pageHeight: options.pageHeight ?? sectionPageHeight ?? A4_HEIGHT,
-    marginLeft: options.marginLeft ?? sectionLeft ?? 72,
+    // §17.6.11 — the binding space widens the left margin, or the top one when
+    // §17.15.1.38 `w:gutterAtTop` says the pages are bound along their heads.
+    marginLeft: (options.marginLeft ?? sectionLeft ?? 72) + (atTop ? 0 : gutter),
     marginRight: options.marginRight ?? sectionRight ?? 72,
-    marginTop: options.marginTop ?? sectionTop ?? 72,
+    marginTop: (options.marginTop ?? sectionTop ?? 72) + (atTop ? gutter : 0),
     marginBottom: options.marginBottom ?? sectionBottom ?? 72,
     headerOffsetPt,
     footerOffsetPt,

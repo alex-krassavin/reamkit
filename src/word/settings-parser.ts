@@ -44,6 +44,11 @@ export interface DocumentSettings {
    * keeps the colour but prints white.
    */
   readonly displayBackgroundShape: boolean;
+  /**
+   * ECMA-376 §17.15.1.38 — `w:gutterAtTop`. The binding space (`w:pgMar
+   * @w:gutter`) is added to the TOP margin rather than the left.
+   */
+  readonly gutterAtTop: boolean;
 }
 
 /** The all-defaults {@link DocumentSettings}, returned when no `w:settings` root is found. */
@@ -51,6 +56,7 @@ export const EMPTY_SETTINGS: DocumentSettings = {
   evenAndOddHeaders: false,
   doNotExpandShiftReturn: false,
   displayBackgroundShape: false,
+  gutterAtTop: false,
 };
 
 /**
@@ -69,11 +75,14 @@ export function parseSettings(data: Uint8Array): DocumentSettings {
   let evenAndOddHeaders = false;
   let doNotExpandShiftReturn = false;
   let displayBackgroundShape = false;
+  let gutterAtTop = false;
   for (const child of poChildren(settings)) {
     if (poIs(child, 'w:evenAndOddHeaders')) {
       evenAndOddHeaders = onOff(child);
     } else if (poIs(child, 'w:displayBackgroundShape')) {
       displayBackgroundShape = onOff(child);
+    } else if (poIs(child, 'w:gutterAtTop')) {
+      gutterAtTop = onOff(child);
       // §17.15.1.35 lives one level down, inside w:compat — and a file may
       // carry more than one of those (fdo106029.docx writes the flag in the
       // first and an empty second one), so every compat block is read.
@@ -83,7 +92,7 @@ export function parseSettings(data: Uint8Array): DocumentSettings {
       }
     }
   }
-  return { evenAndOddHeaders, doNotExpandShiftReturn, displayBackgroundShape };
+  return { evenAndOddHeaders, doNotExpandShiftReturn, displayBackgroundShape, gutterAtTop };
 }
 
 /** §17.17.4 ST_OnOff: an absent or empty `w:val` means on; `0`/`false` mean off. */

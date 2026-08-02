@@ -81,4 +81,9 @@ export interface FlowDoc {
    * to draw it.
    */
   readonly pageBackgroundColorHex?: string;
+  /**
+   * ECMA-376 §17.15.1.38 `w:gutterAtTop` — the binding space `w:pgMar
+   * @w:gutter` reserves belongs to the TOP margin rather than the left.
+   */
+  readonly gutterAtTop?: boolean;
 }
