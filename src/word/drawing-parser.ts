@@ -889,9 +889,12 @@ function parseVmlGroup(
   group: PoNode,
   parseBody?: ParseBody,
   shapeTypes?: ReadonlyMap<string, PoNode>,
+  // A NESTED group's `@style` width/height are its parent's coordinate units,
+  // not a CSS length: the caller has already scaled them to points.
+  sizePt?: { readonly w: number; readonly h: number },
 ): ShapeData | null {
-  const width = vmlStyleLength(group, 'width');
-  const height = vmlStyleLength(group, 'height');
+  const width = sizePt?.w ?? vmlStyleLength(group, 'width');
+  const height = sizePt?.h ?? vmlStyleLength(group, 'height');
   if (width === undefined || height === undefined) return null;
   const size = vmlPair(poAttr(group, 'coordsize')) ?? { x: width, y: height };
   const origin = vmlPair(poAttr(group, 'coordorigin')) ?? { x: 0, y: 0 };
@@ -903,14 +906,28 @@ function parseVmlGroup(
     const tag = poTag(child) ?? '';
     if (!VML_SHAPE_TAGS.has(tag)) continue;
     // Inside a group the child's style is in the group's own coordinate units.
-    const left = vmlStyleNumber(child, 'left') ?? 0;
-    const top = vmlStyleNumber(child, 'top') ?? 0;
-    const w = vmlStyleNumber(child, 'width');
-    const h = vmlStyleNumber(child, 'height');
+    // §14.1.2.10 — a LINE states its ends instead of a box, and inside a group
+    // it usually states nothing else at all: groupshape-line.docx nests one two
+    // groups deep with only `from`/`to`, and read for a width it was dropped.
+    // …and its ends are plain numbers in that space, not the CSS lengths a
+    // top-level line writes: read as points they came out three quarters the
+    // size and three quarters of the way along.
+    const ends =
+      tag === 'v:line'
+        ? { from: vmlPair(poAttr(child, 'from')), to: vmlPair(poAttr(child, 'to')) }
+        : undefined;
+    const span = ends?.from && ends.to ? ends : undefined;
+    const left = span ? Math.min(span.from!.x, span.to!.x) : (vmlStyleNumber(child, 'left') ?? 0);
+    const top = span ? Math.min(span.from!.y, span.to!.y) : (vmlStyleNumber(child, 'top') ?? 0);
+    const w = span ? Math.abs(span.to!.x - span.from!.x) : vmlStyleNumber(child, 'width');
+    const h = span ? Math.abs(span.to!.y - span.from!.y) : vmlStyleNumber(child, 'height');
     if (w === undefined || h === undefined) continue;
     const data =
       tag === 'v:group'
-        ? parseVmlGroup(child, parseBody, shapeTypes)
+        ? parseVmlGroup(child, parseBody, shapeTypes, {
+            w: Math.max(1, w * sx),
+            h: Math.max(1, h * sy),
+          })
         : vmlShapeData(
             child,
             tag,
