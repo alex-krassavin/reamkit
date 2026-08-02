@@ -246,8 +246,10 @@ function mergePar(
   const snapToGrid = override.snapToGrid ?? base.snapToGrid;
   return {
     alignment: override.alignment ?? base.alignment,
-    spacingBefore: override.spacingBefore ?? base.spacingBefore,
-    spacingAfter: override.spacingAfter ?? base.spacingAfter,
+    // §17.3.1.1/§17.3.1.3 — an autospacing flag at this layer beats the length
+    // beside it and anything inherited.
+    spacingBefore: override.spacingBeforeAuto ?? override.spacingBefore ?? base.spacingBefore,
+    spacingAfter: override.spacingAfterAuto ?? override.spacingAfter ?? base.spacingAfter,
     spacingLine: override.spacingLine ?? base.spacingLine,
     spacingLineRule: override.spacingLineRule ?? base.spacingLineRule,
     indentLeft: override.indentLeft ?? base.indentLeft,

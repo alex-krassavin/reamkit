@@ -195,6 +195,18 @@ export interface ParagraphProperties {
   readonly indentFirstLine?: Pt;
   /** The implicit default run properties for runs in this paragraph (`w:pPr/w:rPr`). */
   readonly runProperties?: RunProperties;
+  /**
+   * §17.3.1.3/§17.3.1.1 — the gap `w:beforeAutospacing`/`w:afterAutospacing`
+   * asks the consumer for, already resolved to a length by the reader (it
+   * depends on the document's compatibility mode). Present only when the
+   * autospacing flag is ON, and it beats the `w:before`/`w:after` beside it.
+   * A separate property because style inheritance is per ATTRIBUTE: a style
+   * based on one that says `beforeAutospacing` inherits the flag even when it
+   * states a `w:before` of its own — which is how tdf104354_firstParaInSection
+   * gets its 75pt before, and taking that literally spread one page over four.
+   */
+  readonly spacingBeforeAuto?: Pt;
+  readonly spacingAfterAuto?: Pt;
   readonly numbering?: NumberingReference;
   /**
    * §17.9.4 — a `w:numPr` that names a LEVEL and no `w:numId`: the instance is

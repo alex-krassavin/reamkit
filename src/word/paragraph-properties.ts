@@ -136,10 +136,13 @@ export function parseParagraphProperties(pPr: unknown, autoSpacingPt = 0): Parag
     // Read as nothing at all whatever the document's vintage, the paragraphs
     // of negative-cell-margin-twips.docx ran together where the reference
     // leaves 14pt between them.
-    if (isAutospacing(node, 'beforeAutospacing')) out.spacingBefore = pt(autoSpacingPt);
-    else if (before !== undefined) out.spacingBefore = twipsToPt(before);
-    if (isAutospacing(node, 'afterAutospacing')) out.spacingAfter = pt(autoSpacingPt);
-    else if (after !== undefined) out.spacingAfter = twipsToPt(after);
+    // …and it is a property of its OWN: a style based on one that asks for
+    // autospacing inherits the flag even when it states a `w:before` beside it,
+    // so the two travel separately and the cascade decides which wins.
+    if (isAutospacing(node, 'beforeAutospacing')) out.spacingBeforeAuto = pt(autoSpacingPt);
+    if (isAutospacing(node, 'afterAutospacing')) out.spacingAfterAuto = pt(autoSpacingPt);
+    if (before !== undefined) out.spacingBefore = twipsToPt(before);
+    if (after !== undefined) out.spacingAfter = twipsToPt(after);
     if (line !== undefined) out.spacingLine = twipsToPt(line);
     if (lineRule && LINE_RULES.has(lineRule as 'auto' | 'exact' | 'atLeast')) {
       out.spacingLineRule = lineRule as 'auto' | 'exact' | 'atLeast';
