@@ -22,6 +22,7 @@ import type {
   Section,
   SectionColumns,
   SectionProperties,
+  ShapeFill,
   TabStop,
 } from '@/core/document-model';
 
@@ -33,7 +34,7 @@ import { resolveInternalEntities } from '@/core/opc/xml-entities';
 import { emuToPt, pt, twipsToPt } from '@/core/ir';
 import { parseOMath } from '@/word/omml-parser';
 import { defaultColorResolver } from '@/core/drawingml/colors';
-import { expandMcChildren, parseDrawing, parseVmlPicture } from '@/word/drawing-parser';
+import { expandMcChildren, parseDrawing, parseVmlPicture, vmlFill } from '@/word/drawing-parser';
 import {
   diagramTransform,
   noDiagramOverrideLoss,
@@ -229,14 +230,43 @@ function documentBodyChildren(tree: ReadonlyArray<PoNode>): Array<PoNode> {
  * @returns The colour, or undefined when the document names none.
  */
 export function parseBackgroundColor(documentXml: Uint8Array): string | undefined {
-  const tree = parser.parse(resolveInternalEntities(decoder.decode(documentXml))) as Array<PoNode>;
-  const doc = poFindByPath(tree, ['w:document']);
-  const bg = doc ? poChildren(doc).find((c) => poIs(c, 'w:background')) : undefined;
+  const bg = backgroundNode(documentXml);
   if (!bg) return undefined;
   const vml = poChildren(bg).find((c) => poIs(c, 'v:background'));
   const raw = poAttr(bg, 'color') ?? (vml ? poAttr(vml, 'fillcolor') : undefined);
   const hex = raw?.replace(/^#/u, '');
   return hex !== undefined && /^[0-9A-Fa-f]{6}$/u.test(hex) ? hex.toUpperCase() : undefined;
+}
+
+/**
+ * §17.2.1 — the page background as the FILL it is. `@w:color` is only the flat
+ * fallback: the `v:background` beside it carries the gradient or the picture
+ * Word actually paints, and both references draw those. fill.docx runs a
+ * five-stop radial sweep where we painted its fallback navy, and
+ * tdf126533_pageBitmap.docx papers the page with an image.
+ *
+ * @param documentXml  The raw `document.xml` bytes.
+ * @param resolveImage Resolver for a picture background's `r:id`.
+ * @returns The fill, or undefined when the document names no background.
+ */
+export function parseBackgroundFill(
+  documentXml: Uint8Array,
+  resolveImage?: (relId: string) => ResourceId | undefined,
+): ShapeFill | undefined {
+  const bg = backgroundNode(documentXml);
+  const vml = bg ? poChildren(bg).find((c) => poIs(c, 'v:background')) : undefined;
+  if (!vml) return undefined;
+  const fill = vmlFill(vml, undefined, resolveImage);
+  // A flat fill says nothing `@w:color` has not said already; the caller keeps
+  // using the colour for that, so the writers that know only a colour still see
+  // one.
+  return fill.kind === 'gradient' || fill.kind === 'picture' ? fill : undefined;
+}
+
+function backgroundNode(documentXml: Uint8Array): PoNode | undefined {
+  const tree = parser.parse(resolveInternalEntities(decoder.decode(documentXml))) as Array<PoNode>;
+  const doc = poFindByPath(tree, ['w:document']);
+  return doc ? poChildren(doc).find((c) => poIs(c, 'w:background')) : undefined;
 }
 
 /**

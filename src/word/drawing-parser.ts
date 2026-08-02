@@ -1101,9 +1101,22 @@ const VML_NAMED_COLORS: Readonly<Record<string, string>> = {
   windowtext: '000000',
 };
 
-// §14.1.2.5 — `@filled="f"` or a `<v:fill type="none">` says the shape is not
-// filled; otherwise `@fillcolor`, defaulting to VML's own white.
-function vmlFill(shape: PoNode, shapeType?: PoNode): ShapeFill {
+/**
+ * §14.1.2.5 — `@filled="f"` or a `<v:fill type="none">` says the shape is not
+ * filled; otherwise `@fillcolor`, defaulting to VML's own white. Exported
+ * because §17.2.1's page background is a `v:background` with exactly this fill
+ * on it — the same gradients and the same pictures.
+ *
+ * @param shape       The VML element carrying the fill.
+ * @param shapeType   Its `v:shapetype`, for the attributes it does not state.
+ * @param resolveImage Resolver for a `v:fill` that paints a PICTURE (`@r:id`).
+ * @returns The fill.
+ */
+export function vmlFill(
+  shape: PoNode,
+  shapeType?: PoNode,
+  resolveImage?: (id: string) => ResourceId | undefined,
+): ShapeFill {
   const filled = poAttr(shape, 'filled') ?? (shapeType ? poAttr(shapeType, 'filled') : undefined);
   if (filled === 'f' || filled === 'false') {
     return { kind: 'none' };
@@ -1123,6 +1136,12 @@ function vmlFill(shape: PoNode, shapeType?: PoNode): ShapeFill {
   // §14.1.2.5 `@type` — the fill may be a GRADIENT between `fillcolor` and the
   // fill's own `@color2`, running top to bottom unless `@angle` says otherwise.
   // fdo76016.docx shades its arrow that way, and we painted it flat.
+  // §14.1.2.5 `@type="frame"|"tile"|"pattern"` — the fill is a PICTURE, named
+  // by the relationship on the fill itself. tdf126533_pageBitmap.docx papers
+  // its page with one and we painted the flat fallback colour.
+  const fillRelId = fillEl ? poAttr(fillEl, 'r:id') : undefined;
+  const picture = fillRelId !== undefined ? resolveImage?.(fillRelId) : undefined;
+  if (picture !== undefined) return { kind: 'picture', imageResource: picture };
   const gradient = fillEl ? vmlGradient(fillEl, base) : undefined;
   if (gradient) return { kind: 'gradient', gradient };
   return { kind: 'solid', colorHex: base };
@@ -1142,11 +1161,57 @@ function vmlGradient(fillEl: PoNode, base: string): ShapeGradient | undefined {
   return {
     kind: type === 'gradientRadial' ? 'radial' : 'linear',
     ...(type === 'gradientRadial' ? {} : { angle }),
-    stops: [
+    stops:
+      vmlStops(poAttr(fillEl, 'colors')) ?? vmlFocusStops(poAttr(fillEl, 'focus'), base, color2),
+  };
+}
+
+// §14.1.2.5 `@focus` — where the SECOND colour sits along the sweep. At 0 the
+// gradient runs plainly from one colour to the other; anywhere between, the
+// second colour is a band inside and the first stands at BOTH ends, which is
+// the axial gradient Word's own dialog calls it. tdf126533_axialAngle.docx
+// asks for 50% — fuchsia, lime, fuchsia — and we drew a plain fuchsia→lime
+// sweep with no way back.
+function vmlFocusStops(
+  raw: string | undefined,
+  base: string,
+  color2: string,
+): ShapeGradient['stops'] {
+  const pct = Number.parseFloat((raw ?? '').replace('%', ''));
+  const f = Number.isFinite(pct) ? Math.abs(pct) / 100 : 0;
+  if (f <= 0.01 || f >= 0.99) {
+    return [
       { offset: 0, colorHex: base },
       { offset: 1, colorHex: color2 },
-    ],
-  };
+    ];
+  }
+  return [
+    { offset: 0, colorHex: base },
+    { offset: f, colorHex: color2 },
+    { offset: 1, colorHex: base },
+  ];
+}
+
+// §14.1.2.5 `@colors` — the stops BETWEEN the two the fill names, as
+// "position colour" pairs. A position is a fraction, a percentage, or the
+// 1/65536ths Word writes ("19661f"). fill.docx runs navy → purple → magenta →
+// red → orange in five of them and, read as the two endpoints alone, its page
+// lost every colour in the middle.
+function vmlStops(raw: string | undefined): ShapeGradient['stops'] | undefined {
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const stops: Array<{ offset: number; colorHex: string }> = [];
+  for (const part of raw.split(';')) {
+    const [posRaw, colorRaw] = part.trim().split(/\s+/u);
+    const colorHex = vmlColor(colorRaw);
+    if (posRaw === undefined || colorHex === undefined) continue;
+    const pct = posRaw.endsWith('%');
+    const n = Number.parseFloat(pct ? posRaw.slice(0, -1) : posRaw.replace(/f$/iu, ''));
+    if (!Number.isFinite(n)) continue;
+    const offset = pct ? n / 100 : n > 1 ? n / 65536 : n;
+    stops.push({ offset: Math.min(1, Math.max(0, offset)), colorHex });
+  }
+  if (stops.length < 2) return undefined;
+  return stops.sort((a, b) => a.offset - b.offset);
 }
 
 // §14.1.2.21 — `@stroked="f"` says no outline; otherwise `@strokecolor` and

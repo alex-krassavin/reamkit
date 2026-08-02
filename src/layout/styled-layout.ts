@@ -45,6 +45,7 @@ import type {
   SectionColumns,
   SectionProperties,
   ShapeBlock,
+  ShapeFill,
   ShapeShadow,
   ShapeTextBody,
   StyleSheet,
@@ -301,6 +302,8 @@ export interface StyledRenderOptions {
    * anything else is drawn on it. Absent ⇒ the paper's own white.
    */
   readonly pageBackgroundColorHex?: string;
+  /** §17.2.1 — the background's gradient or picture, when it has one. */
+  readonly pageBackgroundFill?: ShapeFill;
   /**
    * ECMA-376 §17.15.1.38 `w:gutterAtTop` — the binding space belongs to the
    * TOP margin, not the left.
@@ -1196,6 +1199,9 @@ export function layoutStyledDocument(
     notePlan,
     bookmarks,
     reflowParagraph,
+    options.pageBackgroundFill?.imageResource !== undefined
+      ? imageResources.get(options.pageBackgroundFill.imageResource)?.resourceName
+      : undefined,
   );
 
   return {
@@ -2762,6 +2768,12 @@ function collectImageResources(
     }
   };
   visit(body);
+  // §17.2.1 — and the picture the PAGE is papered with, which is in no body at
+  // all: unseen here it has no resource name, and nothing would be drawn for it
+  // (tdf126533_pageBitmap.docx).
+  if (options.pageBackgroundFill?.imageResource !== undefined) {
+    seen.add(options.pageBackgroundFill.imageResource);
+  }
   for (const hf of headersFooters.values()) visit(hf);
   for (const note of options.footnotes?.values() ?? []) visit(note);
   for (const note of options.endnotes?.values() ?? []) visit(note);
@@ -5966,6 +5978,8 @@ class PageAssembler {
     readonly builder: StructTreeBuilder | undefined,
     readonly notes: NotePlan | undefined,
     readonly bookmarkPositions: Map<string, BookmarkPosition> | undefined,
+    /** §17.2.1 — the resource name of a PICTURE page background, if any. */
+    readonly backgroundImageName?: string,
   ) {
     this.ctx = sectionCtxs[0]!;
     this.pageStartCtx = this.ctx;
@@ -6493,18 +6507,7 @@ class PageAssembler {
     this.pages.push({
       commands: [
         // §17.2.1 — the page background is under everything, paper and all.
-        ...(this.ctx.options?.pageBackgroundColorHex !== undefined
-          ? [
-              {
-                type: 'fill' as const,
-                x: pt(0),
-                y: pt(0),
-                width: pt(this.ctx.pageWidth),
-                height: pt(this.ctx.pageHeight),
-                fillColorHex: this.ctx.options.pageBackgroundColorHex,
-              },
-            ]
-          : []),
+        ...this.pageBackgroundItems(),
         ...this.pageBorderItems(),
         ...this.columnSeparatorItems(),
         ...header.commands,
@@ -6596,6 +6599,63 @@ class PageAssembler {
    *
    * @returns The border items for this page, in paint order.
    */
+  /**
+   * §17.2.1 — what the page is painted before anything is drawn on it: the
+   * `v:background`'s PICTURE or GRADIENT when it has one, else the flat
+   * `w:background @w:color`. Read as the colour alone, fill.docx's five-stop
+   * sweep came out the navy of its fallback and tdf126533_pageBitmap.docx's
+   * paper came out plain.
+   *
+   * @returns The background items for this page (at most one).
+   */
+  pageBackgroundItems = (): Array<PageItem> => {
+    const options = this.ctx.options;
+    const w = this.ctx.pageWidth;
+    const h = this.ctx.pageHeight;
+    const fill = options?.pageBackgroundFill;
+    if (fill?.kind === 'picture' && this.backgroundImageName !== undefined) {
+      return [
+        {
+          type: 'image',
+          x: pt(0),
+          y: pt(0),
+          width: pt(w),
+          height: pt(h),
+          imageResourceName: this.backgroundImageName,
+        },
+      ];
+    }
+    if (fill?.kind === 'gradient' && fill.gradient) {
+      return [
+        {
+          type: 'shape',
+          shape: {
+            paths: [rectAtPath(0, 0, w, h)],
+            // The flat approximation stays beside the gradient: PDF/A has no
+            // device colour space for a shading pattern to live in, and the
+            // writers that know only solid fills read this one.
+            fillColorHex: gradientToSolid(fill.gradient),
+            fillGradient: fill.gradient,
+            transform: flipTransform([1, 0, 0, 1, 0, 0], h),
+          },
+        },
+      ];
+    }
+    if (options?.pageBackgroundColorHex !== undefined) {
+      return [
+        {
+          type: 'fill',
+          x: pt(0),
+          y: pt(0),
+          width: pt(w),
+          height: pt(h),
+          fillColorHex: options.pageBackgroundColorHex,
+        },
+      ];
+    }
+    return [];
+  };
+
   pageBorderItems = (): Array<PageItem> => {
     const pg = this.ctx.properties.pageBorders;
     if (!pg) return [];
@@ -6667,9 +6727,18 @@ function paginateSections(
     width: number,
     widths: ReadonlyArray<number>,
   ) => ParagraphBlock,
+  // §17.2.1 — the resource name of a PICTURE page background: the resource
+  // table is the only thing that knows it, and it lives a caller away.
+  backgroundImageName?: string,
 ): Array<LaidOutPage> {
   if (sectionCtxs.length === 0) return [];
-  const asm = new PageAssembler(sectionCtxs, builder, notes, bookmarkPositions);
+  const asm = new PageAssembler(
+    sectionCtxs,
+    builder,
+    notes,
+    bookmarkPositions,
+    backgroundImageName,
+  );
 
   // §17.6.4 — a multi-column section that ENDS at a continuous break has its
   // columns evened out: the break says "carry on down this page", so the

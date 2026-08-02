@@ -42,6 +42,7 @@ export function flowRenderOptions(flow: FlowDoc): FlowRenderOptions {
     ...(flow.language ? { language: flow.language } : {}),
     ...(flow.doNotExpandShiftReturn ? { doNotExpandShiftReturn: true } : {}),
     ...(flow.pageBackgroundColorHex ? { pageBackgroundColorHex: flow.pageBackgroundColorHex } : {}),
+    ...(flow.pageBackgroundFill ? { pageBackgroundFill: flow.pageBackgroundFill } : {}),
     ...(flow.gutterAtTop ? { gutterAtTop: true } : {}),
   };
 }

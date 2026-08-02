@@ -9,6 +9,7 @@ export { extractParagraphs } from '@/word/text-extractor';
 export {
   parseDocument,
   parseBackgroundColor,
+  parseBackgroundFill,
   parseBodyElements,
   parseSection,
   parseSections,
