@@ -1437,8 +1437,13 @@ function rotateAboutCm(cx: number, cy: number, deg: number): string {
 }
 
 function computeJustifyExtra(line: Line): number {
-  if (line.resolved.alignment !== 'both') return 0;
-  if (line.isLastInParagraph || line.noJustify === true) return 0;
+  const alignment = line.resolved.alignment;
+  if (alignment !== 'both' && alignment !== 'distribute') return 0;
+  // §17.3.1.13 — `distribute` justifies EVERY line, the last one included;
+  // `both` leaves the last alone. para-adjust-distribute.docx sets one of each
+  // and we wrote both flush left.
+  if (line.noJustify === true) return 0;
+  if (line.isLastInParagraph && alignment !== 'distribute') return 0;
   // A space at the END of a line justifies nothing: there is no glyph after it
   // to push, and counted in it left the line short of the measure by its own
   // width. Word and LibreOffice both hang it past the margin instead.
