@@ -254,7 +254,12 @@ export function parseBackgroundFill(
   resolveImage?: (relId: string) => ResourceId | undefined,
 ): ShapeFill | undefined {
   const bg = backgroundNode(documentXml);
-  const vml = bg ? poChildren(bg).find((c) => poIs(c, 'v:background')) : undefined;
+  // §17.2.1 — the shape is drawn only when the element carries `@w:color` too.
+  // The pair tdf126533_pageBitmap / _noPageBitmap differ in nothing else: same
+  // `v:fill type="frame"`, same picture, same `w:displayBackgroundShape`, and
+  // the one without the attribute is the one no reader paints.
+  if (!bg || poAttr(bg, 'color') === undefined) return undefined;
+  const vml = poChildren(bg).find((c) => poIs(c, 'v:background'));
   if (!vml) return undefined;
   const fill = vmlFill(vml, undefined, resolveImage);
   // A flat fill says nothing `@w:color` has not said already; the caller keeps

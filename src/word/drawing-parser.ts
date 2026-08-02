@@ -1136,10 +1136,14 @@ export function vmlFill(
   // §14.1.2.5 `@type` — the fill may be a GRADIENT between `fillcolor` and the
   // fill's own `@color2`, running top to bottom unless `@angle` says otherwise.
   // fdo76016.docx shades its arrow that way, and we painted it flat.
-  // §14.1.2.5 `@type="frame"|"tile"|"pattern"` — the fill is a PICTURE, named
-  // by the relationship on the fill itself. tdf126533_pageBitmap.docx papers
-  // its page with one and we painted the flat fallback colour.
-  const fillRelId = fillEl ? poAttr(fillEl, 'r:id') : undefined;
+  // §14.1.2.5 `@type="frame"` — the fill is a PICTURE stretched over the box,
+  // named by the relationship on the fill itself. tdf126533_pageBitmap.docx
+  // papers its page with one and we painted the flat fallback colour.
+  // `tile` and `pattern` are NOT that: a pattern is a two-colour tile at its
+  // own tiny scale, and stretched over the shape it is a black slab —
+  // fdo77725.docx's 5% dotted rectangle came out solid black.
+  const fillRelId =
+    fillEl && poAttr(fillEl, 'type') === 'frame' ? poAttr(fillEl, 'r:id') : undefined;
   const picture = fillRelId !== undefined ? resolveImage?.(fillRelId) : undefined;
   if (picture !== undefined) return { kind: 'picture', imageResource: picture };
   const gradient = fillEl ? vmlGradient(fillEl, base) : undefined;
