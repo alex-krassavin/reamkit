@@ -705,11 +705,36 @@ function parseVmlShape(node: PoNode, parseBody?: ParseBody): DrawingContent | nu
   );
   if (!data) return null;
   const float = vmlFloat(style, poIntAttr(shape, 'z-index'), shape);
+  // §14.1.2.13 — a LINE states its ends, and those ends are where it is: its
+  // style carries no `left`/`top` to place it by. tdf129888vml.docx rules a
+  // margin line from 191pt across, and placed at the anchor's own zero it ran
+  // down the very edge of the paper.
+  const placed = float && from && to ? vmlLinePlaced(float, from, to) : float;
   return {
     kind: 'shape',
     data,
-    ...(float ? { float } : {}),
+    ...(placed ? { float: placed } : {}),
     ...(poAttr(shape, 'alt')?.trim() ? { altText: poAttr(shape, 'alt')!.trim() } : {}),
+  };
+}
+
+// The anchor a `v:line` is really at: its top-left corner, which its ends give
+// and its style does not.
+function vmlLinePlaced(
+  float: FloatAnchor,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+): FloatAnchor {
+  const x = Math.min(from.x, to.x);
+  const y = Math.min(from.y, to.y);
+  return {
+    ...float,
+    ...(float.posH?.align === undefined
+      ? { posH: { ...(float.posH ?? { relativeFrom: 'column' as const }), offsetPt: pt(x) } }
+      : {}),
+    ...(float.posV?.align === undefined
+      ? { posV: { ...(float.posV ?? { relativeFrom: 'paragraph' as const }), offsetPt: pt(y) } }
+      : {}),
   };
 }
 
