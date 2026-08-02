@@ -56,9 +56,42 @@ describe('parseRunProperties', () => {
     });
   });
 
+  it('gives the underline its own colour (§17.3.2.40)', () => {
+    // A themed colour is written alongside the resolved hex it stands for, so
+    // reading `w:color` is enough. Ignored, Test_CharUnderlineThemeColor.docx
+    // drew a gold rule under black text in black.
+    expect(
+      parseRunProperties(
+        parseRpr('<w:rPr><w:u w:val="single" w:color="C49A00" w:themeColor="accent1"/></w:rPr>'),
+      ),
+    ).toEqual({ underline: 'single', underlineColorHex: 'C49A00' });
+    // "auto" is the text's own colour, which is what an absent one means.
+    expect(
+      parseRunProperties(parseRpr('<w:rPr><w:u w:val="single" w:color="auto"/></w:rPr>')),
+    ).toEqual({ underline: 'single' });
+  });
+
+  it('reads the capitals toggles (§17.3.2.5 / §17.3.2.33)', () => {
+    expect(parseRunProperties(parseRpr('<w:rPr><w:caps/></w:rPr>'))).toEqual({ caps: true });
+    expect(parseRunProperties(parseRpr('<w:rPr><w:smallCaps/></w:rPr>'))).toEqual({
+      smallCaps: true,
+    });
+    // §17.17.4 — an explicit off is off, not "inherit".
+    expect(parseRunProperties(parseRpr('<w:rPr><w:caps w:val="0"/></w:rPr>'))).toEqual({
+      caps: false,
+    });
+  });
+
   it('rejects malformed color values', () => {
-    expect(parseRunProperties(parseRpr('<w:rPr><w:color w:val="auto"/></w:rPr>'))).toEqual({});
     expect(parseRunProperties(parseRpr('<w:rPr><w:color w:val="ZZZZZZ"/></w:rPr>'))).toEqual({});
+  });
+
+  it('§17.3.2.6 — `auto` is the automatic colour, and overrides the style', () => {
+    // Not "inherit": a run that names it takes black back from a style that
+    // lends it something else.
+    expect(parseRunProperties(parseRpr('<w:rPr><w:color w:val="auto"/></w:rPr>'))).toEqual({
+      colorHex: '000000',
+    });
   });
 
   it('parses rFonts ascii + hAnsi', () => {

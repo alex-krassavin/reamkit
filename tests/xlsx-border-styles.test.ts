@@ -64,8 +64,9 @@ describe('border styles (§18.18.3)', () => {
     expect(by('mediumDashDot')).toMatchObject({ style: 'dashDot', width: 1.5 });
     expect(by('slantDashDot')).toMatchObject({ style: 'dashDot', width: 1.5 });
     expect(by('mediumDashDotDot')).toMatchObject({ style: 'dashDotDot', width: 1.5 });
-    // A thin rule keeps its weight and its own pattern too.
-    expect(by('dashed')).toMatchObject({ style: 'dashed', width: 0.75 });
+    // A thin rule keeps its weight and its own pattern too — and a thin
+    // `dashed` is the SHORT-gap dash, not the long one `mediumDashed` draws.
+    expect(by('dashed')).toMatchObject({ style: 'dashSmallGap', width: 0.75 });
     expect(by('dashDot')).toMatchObject({ style: 'dashDot', width: 0.75 });
     expect(by('dashDotDot')).toMatchObject({ style: 'dashDotDot', width: 0.75 });
   });

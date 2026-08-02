@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody, buildRichDocx } from './fixtures/build-docx';
+import { countShown, showPattern } from './fixtures/pdf-show';
 import type { FamilyKey } from '@/core/fonts';
 import { convertDocxToPdfSync } from '@/core/converter';
 import { FontRegistry, parseTtf } from '@/core/font';
@@ -242,14 +243,10 @@ describe('Styled rendering: rPr + pPr → PDF', () => {
     const pdf = convertDocxToPdfSync(docx, { fonts: FONTS });
 
     const parsed = parseTtf(FONTS.regular);
-    const hidden = [...'ShouldBeHidden'].map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!));
-    const start = [...'StartCell'].map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!));
     const text = asLatin1(pdf);
 
-    const hiddenHex = hidden.map((g) => g.toString(16).padStart(4, '0').toUpperCase()).join('');
-    const startHex = start.map((g) => g.toString(16).padStart(4, '0').toUpperCase()).join('');
-    expect(text).toContain(`<${startHex}> Tj`);
-    expect(text).not.toContain(`<${hiddenHex}> Tj`);
+    expect(text).toMatch(showPattern(parsed, 'StartCell'));
+    expect(text).not.toMatch(showPattern(parsed, 'ShouldBeHidden'));
   });
 
   it('does not over-justify a short single-line paragraph (last line stays left)', () => {
@@ -263,6 +260,130 @@ describe('Styled rendering: rPr + pPr → PDF', () => {
     expect(btMatch).not.toBeNull();
     const tmInBt = (btMatch![1]!.match(/Tm/g) ?? []).length;
     expect(tmInBt).toBe(1);
+  });
+
+  it('pulls an over-full justified line back to the measure', () => {
+    // The breaker weighs a line knowing it may SHRINK each space by up to 30%
+    // of its width, so it will choose one whose natural width is over the
+    // measure. Drawn at that natural width the line ran into the right margin —
+    // IllustrativeCases.docx put three of its four opening lines 1 to 10pt past
+    // it while the fourth sat short, which reads as no justification at all.
+    // Every full line of a justified paragraph is placed token by token, the
+    // slack (of either sign) shared out between its spaces; a line emitted with
+    // a single Tm is one that was drawn at its natural width.
+    const words = 'alpha be gamma d epsilon zeta et theta iota kappa lam mu nu xi'.split(' ');
+    const body = Array.from({ length: 200 }, (_, i) => words[i % words.length]!).join(' ');
+    const docx = buildRichDocx([
+      { pPrXml: '<w:pPr><w:jc w:val="both"/></w:pPr>', runs: [{ text: body }] },
+    ]);
+    const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
+
+    // One BT spans the whole page, so lines are told apart by their baseline —
+    // the y of each `Tm`. A line placed token by token has several.
+    const perBaseline = new Map<string, number>();
+    for (const m of text.matchAll(/1 0 0 1 [\d.]+ ([\d.]+) Tm/gu)) {
+      perBaseline.set(m[1]!, (perBaseline.get(m[1]!) ?? 0) + 1);
+    }
+    const counts = [...perBaseline.values()];
+    expect(counts.length).toBeGreaterThan(8);
+    // All but the last line of the paragraph — the last one stays left-aligned.
+    expect(counts.slice(0, -1).every((tms) => tms > 1)).toBe(true);
+  });
+
+  it('embeds the glyph a tab leader draws with (§17.3.1.38)', () => {
+    // A leader's characters are made by the layout, from the stop, long after
+    // the subset is chosen from the runs. Left out of it, the subset had no
+    // glyph for them: TOC_field_b.docx drew its dot leader as a row of
+    // missing-glyph boxes running past the right margin.
+    const docx = buildRichDocx([
+      {
+        pPrXml:
+          '<w:pPr><w:tabs><w:tab w:val="right" w:leader="dot" w:pos="9016"/></w:tabs></w:pPr>',
+        runs: [{ text: 'Heading\t1' }],
+      },
+    ]);
+    const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
+    const parsed = parseTtf(FONTS.regular);
+    // The leader is drawn as a long run of the dot's own glyph. Pruned from the
+    // subset, the same run came out as the missing-glyph id 0.
+    const dot = parsed.glyphForCodepoint('.'.codePointAt(0)!).toString(16).padStart(4, '0');
+    expect(dot).not.toBe('0000');
+    expect(text).toMatch(new RegExp(`(?:${dot}){40,}`, 'iu'));
+  });
+
+  it('draws the rules a paragraph asks for around itself', () => {
+    // §17.3.1.24 — one stroked rule per declared edge, each in its own colour.
+    const docx = buildRichDocx([
+      {
+        pPrXml:
+          '<w:pPr><w:pBdr>' +
+          '<w:top w:val="single" w:sz="48" w:space="1" w:color="DE81E1"/>' +
+          '<w:bottom w:val="single" w:sz="48" w:space="1" w:color="90ABF0"/>' +
+          '</w:pBdr></w:pPr>',
+        runs: [{ text: 'Sample Text' }],
+      },
+    ]);
+    const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
+    // 0xDE/255 = 0.871, 0x81/255 = 0.506, 0xE1/255 = 0.882 — the top rule.
+    expect(text).toMatch(/0\.871 0\.506 0\.882 RG/u);
+    // 0x90/255 = 0.565, 0xAB/255 = 0.671, 0xF0/255 = 0.941 — the bottom one.
+    expect(text).toMatch(/0\.565 0\.671 0\.941 RG/u);
+    // 48 eighths of a point = 6pt wide.
+    expect(text).toMatch(/\n6 w\n/u);
+  });
+
+  it('paints the background a paragraph asks for behind it', () => {
+    const docx = buildRichDocx([
+      { pPrXml: '<w:pPr><w:shd w:val="clear" w:fill="F4E7D3"/></w:pPr>', runs: [{ text: 'Band' }] },
+    ]);
+    const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
+    // 0xF4/255 = 0.957, 0xE7/255 = 0.906, 0xD3/255 = 0.827.
+    expect(text).toMatch(/0\.957 0\.906 0\.827 rg/u);
+    // …and it is a fill under the text, not a stroke around it.
+    expect(text).toMatch(/0\.957 0\.906 0\.827 rg\n[\d.]+ [\d.]+ [\d.]+ [\d.]+ re\nf/u);
+  });
+
+  it('sends an absolute-position tab to the middle and the far side (§17.3.3.15)', () => {
+    // A `w:ptab` has no distance of its own: it reaches for an edge of the
+    // column. Read nowhere, SimpleHeadThreeColFoot.docx printed its three
+    // footer regions as "Footer LeftFooter MiddleFooter Right".
+    const docx = buildDocxFromBody(
+      '<w:p>' +
+        '<w:r><w:t>L</w:t></w:r>' +
+        '<w:r><w:ptab w:relativeTo="margin" w:alignment="center" w:leader="none"/></w:r>' +
+        '<w:r><w:t>M</w:t></w:r>' +
+        '<w:r><w:ptab w:relativeTo="margin" w:alignment="right" w:leader="none"/></w:r>' +
+        '<w:r><w:t>R</w:t></w:r>' +
+        '</w:p>',
+    );
+    const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
+    const xs = [...text.matchAll(/1 0 0 1 ([\d.]+) [\d.]+ Tm/gu)].map((m) => Number(m[1]));
+    expect(xs.length).toBeGreaterThan(2);
+    // A4 less 1in margins is 451pt of column, so the centre tab lands near
+    // 72 + 451/2 and the right one carries its letter to the far margin.
+    expect(Math.max(...xs)).toBeGreaterThan(500);
+    expect(xs.some((x) => x > 280 && x < 310)).toBe(true);
+  });
+
+  it('draws a run set in capitals in capitals (§17.3.2.5)', () => {
+    // capitalized.docx prints its word in lower case where every other reader
+    // shouts it — and the subset has to carry the glyphs that are DRAWN, not
+    // the ones the run stores, or the same word comes out as missing glyphs.
+    const docx = buildRichDocx([{ runs: [{ text: 'shout', rPrXml: '<w:rPr><w:caps/></w:rPr>' }] }]);
+    const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
+    const parsed = parseTtf(FONTS.regular);
+    expect(text).toMatch(showPattern(parsed, 'SHOUT'));
+    expect(text).not.toMatch(showPattern(parsed, 'shout'));
+  });
+
+  it('sets the lower case of a small-capitals run smaller (§17.3.2.33)', () => {
+    const docx = buildRichDocx([
+      { runs: [{ text: 'Ab', rPrXml: '<w:rPr><w:smallCaps/><w:sz w:val="40"/></w:rPr>' }] },
+    ]);
+    const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
+    // 20pt for the letter that was already a capital, four fifths for the other.
+    expect(text).toMatch(/\/F\d+ 20 Tf/u);
+    expect(text).toMatch(/\/F\d+ 16 Tf/u);
   });
 
   it('splits a table row taller than the page into chunks across pages', () => {
@@ -297,14 +418,9 @@ describe('Styled rendering: rPr + pPr → PDF', () => {
     expect(pageCount).toBeGreaterThan(1);
 
     const parsed = parseTtf(FONTS.regular);
-    const hexOf = (s: string) =>
-      [...s]
-        .map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!))
-        .map((g) => g.toString(16).padStart(4, '0').toUpperCase())
-        .join('');
     // First and last lines must both render (row split, not clipping).
-    expect(text).toContain(`<${hexOf('Line0')}> Tj`);
-    expect(text).toContain(`<${hexOf('Line79')}> Tj`);
+    expect(text).toMatch(showPattern(parsed, 'Line0'));
+    expect(text).toMatch(showPattern(parsed, 'Line79'));
   });
 
   it('honors paragraph alignment center and right', () => {
@@ -360,15 +476,9 @@ describe('Styled rendering: rPr + pPr → PDF', () => {
       </w:tbl>`;
     const text = asLatin1(convertDocxToPdfSync(buildDocxFromBody(body), { fonts: FONTS }));
     const parsed = parseTtf(FONTS.regular);
-    const hexOf = (s: string) =>
-      [...s]
-        .map((c) =>
-          parsed.glyphForCodepoint(c.codePointAt(0)!).toString(16).padStart(4, '0').toUpperCase(),
-        )
-        .join('');
-    expect(text).toContain(`<${hexOf('OUTERCELL')}> Tj`); // outer cell paragraph
-    expect(text).toContain(`<${hexOf('NESTEDA')}> Tj`); // nested cell 1 (was lost)
-    expect(text).toContain(`<${hexOf('NESTEDB')}> Tj`); // nested cell 2 (was lost)
+    expect(text).toMatch(showPattern(parsed, 'OUTERCELL')); // outer cell paragraph
+    expect(text).toMatch(showPattern(parsed, 'NESTEDA')); // nested cell 1 (was lost)
+    expect(text).toMatch(showPattern(parsed, 'NESTEDB')); // nested cell 2 (was lost)
   });
 
   it('measures table auto-layout with per-family fonts (was: bare-variant lookup crash)', () => {

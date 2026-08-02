@@ -20,6 +20,7 @@ import type {
   Numbering,
   Section,
   SectionProperties,
+  ShapeFill,
   StyleSheet,
 } from '@/core/document-model';
 import type { FontRegistry } from '@/core/font';
@@ -70,4 +71,26 @@ export interface FlowDoc {
   readonly info?: DocumentInfo;
   /** Document natural language hint (BCP-47), e.g. for tagged-PDF /Lang. */
   readonly language?: string;
+  /**
+   * ECMA-376 §17.15.1.35 `w:doNotExpandShiftReturn` — a justified line that
+   * ends at a soft line break keeps its natural width.
+   */
+  readonly doNotExpandShiftReturn?: boolean;
+  /**
+   * ECMA-376 §17.2.1 `w:background` — the colour every page is painted, when
+   * the document asks for one AND §17.15.1.28 `w:displayBackgroundShape` says
+   * to draw it.
+   */
+  readonly pageBackgroundColorHex?: string;
+  /**
+   * ECMA-376 §17.2.1 — the same background as the FILL it is, when that is more
+   * than a flat colour: the `v:background`'s gradient or picture. The colour
+   * above stays the flat fallback, for writers that paint only colours.
+   */
+  readonly pageBackgroundFill?: ShapeFill;
+  /**
+   * ECMA-376 §17.15.1.38 `w:gutterAtTop` — the binding space `w:pgMar
+   * @w:gutter` reserves belongs to the TOP margin rather than the left.
+   */
+  readonly gutterAtTop?: boolean;
 }

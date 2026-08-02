@@ -40,5 +40,9 @@ export function flowRenderOptions(flow: FlowDoc): FlowRenderOptions {
     ...(flow.charts ? { charts: flow.charts } : {}),
     ...(flow.embeddedFonts ? { embeddedFonts: flow.embeddedFonts } : {}),
     ...(flow.language ? { language: flow.language } : {}),
+    ...(flow.doNotExpandShiftReturn ? { doNotExpandShiftReturn: true } : {}),
+    ...(flow.pageBackgroundColorHex ? { pageBackgroundColorHex: flow.pageBackgroundColorHex } : {}),
+    ...(flow.pageBackgroundFill ? { pageBackgroundFill: flow.pageBackgroundFill } : {}),
+    ...(flow.gutterAtTop ? { gutterAtTop: true } : {}),
   };
 }

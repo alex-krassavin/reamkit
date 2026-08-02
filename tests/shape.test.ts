@@ -5,6 +5,8 @@ import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
+import { buildTinyPng } from './fixtures/build-png';
+import { countShown, showPattern } from './fixtures/pdf-show';
 import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 
 import { convertDocxToPdfSync } from '@/core/converter';
@@ -129,6 +131,14 @@ describe('colour transforms (§20.1.2.3)', () => {
     expect(applyColorMods('000000', [{ kind: 'tint', val: 0.5 }])).toBe('808080');
   });
 
+  it('alpha composites the colour over the white page', () => {
+    // §20.1.2.3.1 — dml-groupshape-childposition.docx draws eleven of its
+    // strokes at 20% opacity, which every reader shows as a pale tint; ignored,
+    // they came out in full dark navy.
+    expect(applyColorMods('000000', [{ kind: 'alpha', val: 0.2 }])).toBe('CCCCCC');
+    expect(applyColorMods('4472C4', [{ kind: 'alpha', val: 1 }])).toBe('4472C4');
+  });
+
   it('no transforms is an identity', () => {
     expect(applyColorMods('4472C4', [])).toBe('4472C4');
   });
@@ -178,16 +188,17 @@ describe('shape edge cases', () => {
     expect(Number(m![2])).toBeGreaterThanOrEqual(-1);
   });
 
-  it('drops a shape in a mixed text+shape run but keeps the text', () => {
+  it('draws a shape in a mixed text+shape run ahead of the paragraph', () => {
     const inner = `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
       <a:solidFill><a:srgbClr val="4472C4"/></a:solidFill>`;
     const body = `<w:p><w:r><w:t>Hello</w:t></w:r>${shapeRun(inner)}</w:p>`;
     const docx = buildDocxFromBody(body);
     const parsed = parseDocument(OpcPackage.open(docx).getMainDocument().data);
-    expect(parsed[0]!.kind).toBe('paragraph'); // not collapsed to a shape
+    // The shape leaves the run for a block of its own; the paragraph keeps
+    // its text (the line model carries pictures, not shapes).
+    expect(parsed.map((el) => el.kind)).toEqual(['shape', 'paragraph']);
     const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
-    // The shape fill (4472C4) is dropped; only the text renders.
-    expect(text).not.toContain('0.266667 0.447059 0.768627 rg');
+    expect(text).toContain('0.266667 0.447059 0.768627 rg');
   });
 });
 
@@ -411,16 +422,568 @@ describe('text in shape (wps:txbx)', () => {
     const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
 
     const parsed = parseTtf(FONTS.regular);
-    const hexOf = (s: string): string =>
-      [...s]
-        .map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!))
-        .map((g) => g.toString(16).padStart(4, '0').toUpperCase())
-        .join('');
 
-    const labelTj = `<${hexOf('Label')}> Tj`;
-    expect(text).toContain(labelTj); // text-box content rendered
+    const label = text.search(showPattern(parsed, 'Label'));
+    expect(label).toBeGreaterThan(-1); // text-box content rendered
     // Shape fill paints (f) before the text pass (BT) → text on top.
     expect(text.indexOf('\nf\n')).toBeLessThan(text.indexOf('BT'));
-    expect(text.indexOf('BT')).toBeLessThan(text.indexOf(labelTj));
+    expect(text.indexOf('BT')).toBeLessThan(label);
+  });
+});
+
+// §20.5.2.17 `wpg:wgp` — a drawing group: a box holding shapes of its own, in
+// its own coordinate space. Left unread, Tdf147485.docx — whose whole picture
+// is one — printed an empty page, because the mc:Fallback beside it is VML.
+describe('a drawing group', () => {
+  const member = (x: number, y: number, cx: number, cy: number, hex: string): string =>
+    `<wps:wsp><wps:spPr>
+       <a:xfrm><a:off x="${x}" y="${y}"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>
+       <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+       <a:solidFill><a:srgbClr val="${hex}"/></a:solidFill>
+     </wps:spPr><wps:bodyPr/></wps:wsp>`;
+
+  const groupDocx = (grpXfrm: string, members: string): Uint8Array =>
+    buildDocxFromBody(`<w:p><w:r><w:drawing>
+      <wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+        <wp:extent cx="1828800" cy="914400"/>
+        <wp:docPr id="1" name="Group 1"/>
+        <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+          <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup">
+            <wpg:wgp xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup"
+                     xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wpg:grpSpPr><a:xfrm>${grpXfrm}</a:xfrm></wpg:grpSpPr>
+              ${members}
+            </wpg:wgp>
+          </a:graphicData>
+        </a:graphic>
+      </wp:inline>
+    </w:drawing></w:r></w:p>`);
+
+  const IDENTITY =
+    '<a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/>' +
+    '<a:chOff x="0" y="0"/><a:chExt cx="1828800" cy="914400"/>';
+
+  it('draws every member of the group', () => {
+    const text = asLatin1(
+      convertDocxToPdfSync(
+        groupDocx(
+          IDENTITY,
+          member(0, 0, 914400, 457200, 'FF0000') + member(914400, 457200, 914400, 457200, '00FF00'),
+        ),
+        { fonts: FONTS },
+      ),
+    );
+    // One fill each, in the colours the members name (1.0 0 0 and 0 1.0 0).
+    expect(text).toContain('1 0 0 rg');
+    expect(text).toContain('0 1 0 rg');
+  });
+
+  it('maps a member out of the group’s child coordinate space', () => {
+    // The child space is half the size of the box, so a member at (0, 0) of
+    // 457200×228600 fills the same quarter as one at (0, 0) of 914400×457200
+    // would in an identity space: 72pt × 36pt.
+    const halved =
+      '<a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/>' +
+      '<a:chOff x="0" y="0"/><a:chExt cx="914400" cy="457200"/>';
+    const text = asLatin1(
+      convertDocxToPdfSync(groupDocx(halved, member(0, 0, 457200, 228600, 'FF0000')), {
+        fonts: FONTS,
+      }),
+    );
+    expect(text).toMatch(/0 0 m\n72 0 l\n72 36 l\n0 36 l/u);
+  });
+
+  it('offsets a member by the child origin, not the page’s', () => {
+    const shifted =
+      '<a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/>' +
+      '<a:chOff x="914400" y="457200"/><a:chExt cx="1828800" cy="914400"/>';
+    // A member sitting AT the child origin is at the group's own corner.
+    const text = asLatin1(
+      convertDocxToPdfSync(groupDocx(shifted, member(914400, 457200, 914400, 457200, 'FF0000')), {
+        fonts: FONTS,
+      }),
+    );
+    // Its transform translates by the group's corner, no further.
+    expect(text).toMatch(/1 0 0 1 72 \d/u);
+  });
+
+  it('skips a member that states no size', () => {
+    const text = asLatin1(
+      convertDocxToPdfSync(
+        groupDocx(
+          IDENTITY,
+          '<wps:wsp><wps:spPr/><wps:bodyPr/></wps:wsp>' + member(0, 0, 914400, 457200, 'FF0000'),
+        ),
+        { fonts: FONTS },
+      ),
+    );
+    expect(text).toContain('1 0 0 rg');
+  });
+});
+
+// §20.1.4.2.13/19 — a shape drawn from a gallery style keeps its fill and its
+// outline in `<wps:style>` and carries neither in `spPr`. Read alone, spPr says
+// the shape has none: TextEffects_Groupshapes.docx drew its caption on white
+// where LibreOffice fills an accent-blue rectangle behind it.
+describe('a shape filled with a picture (§20.1.8.14)', () => {
+  const png = buildTinyPng(2, 2, [255, 0, 0, 255]);
+  const filled = (blipFill: string): string =>
+    asLatin1(
+      convertDocxToPdfSync(
+        buildDocxFromBody(
+          `<w:p><w:r><w:drawing>
+          <wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+            <wp:extent cx="1828800" cy="914400"/><wp:docPr id="1" name="S"/>
+            <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+              <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+                <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+                  <wps:spPr>
+                    <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+                    ${blipFill}
+                  </wps:spPr>
+                  <wps:style><a:fillRef idx="1"><a:srgbClr val="ED7D31"/></a:fillRef></wps:style>
+                  <wps:bodyPr/>
+                </wps:wsp>
+              </a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`,
+          { images: { rId9: { bytes: png, extension: 'png', contentType: 'image/png' } } },
+        ),
+        { fonts: FONTS },
+      ),
+    );
+
+  it('draws the picture, not the gallery colour beneath it', () => {
+    // crop-roundtrip.docx fills a rectangle with a photo; read as no fill at
+    // all, the shape fell through to its style and drew a plain orange box.
+    const text = filled(
+      '<a:blipFill><a:blip r:embed="rId9"/><a:stretch><a:fillRect/></a:stretch></a:blipFill>',
+    );
+    expect(text).toContain(' Do'); // the image XObject is painted
+    expect(text).not.toMatch(/0\.929412 0\.490196 0\.192157 rg/u); // …and ED7D31 is not
+  });
+
+  it('shows the part a negative fillRect frames', () => {
+    // §20.1.8.30 — a negative inset pushes the picture's edge outside the box,
+    // so what remains inside is a zoomed-in part of it: the emitter clips.
+    const text = filled(
+      '<a:blipFill><a:blip r:embed="rId9"/>' +
+        '<a:stretch><a:fillRect t="-100000" b="0"/></a:stretch></a:blipFill>',
+    );
+    expect(text).toMatch(/re\nW\nn/u); // a clip path around the box
+  });
+});
+
+describe('a gallery-styled shape', () => {
+  const styled = (styleXml: string, spPrInner: string, extra = ''): string =>
+    asLatin1(
+      convertDocxToPdfSync(
+        buildDocxFromBody(`<w:p><w:r><w:drawing>
+          <wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+            <wp:extent cx="1828800" cy="914400"/><wp:docPr id="1" name="S"/>
+            <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+              <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+                <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+                  <wps:spPr>
+                    <a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/></a:xfrm>
+                    ${spPrInner}
+                  </wps:spPr>
+                  ${styleXml}
+                  ${extra}
+                  <wps:bodyPr/>
+                </wps:wsp>
+              </a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`),
+        { fonts: FONTS },
+      ),
+    );
+  const RECT = '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>';
+
+  it('takes the fill and outline the style names', () => {
+    const text = styled(
+      '<wps:style><a:lnRef idx="2"><a:srgbClr val="2E75B6"/></a:lnRef>' +
+        '<a:fillRef idx="1"><a:srgbClr val="5B9BD5"/></a:fillRef></wps:style>',
+      RECT,
+    );
+    // 0x5B/255, 0x9B/255, 0xD5/255 — filled …
+    expect(text).toMatch(/0\.356863 0\.607843 0\.835294 rg/u);
+    // … and stroked in 0x2E/0x75/0xB6.
+    expect(text).toMatch(/0\.180392 0\.458824 0\.713725 RG/u);
+  });
+
+  it('draws a pattern fill as the ink it lays down', () => {
+    // §20.1.8.37 — dml-shape-fillpattern.docx rules twelve rectangles with
+    // `a:pattFill` and we drew twelve empty boxes. A tile is beyond a vector
+    // fill; the two colours blended by the pattern's coverage is much nearer
+    // than nothing at all.
+    const text = styled(
+      '',
+      `${RECT}<a:pattFill prst="ltHorz"><a:fgClr><a:srgbClr val="00FF00"/></a:fgClr>` +
+        '<a:bgClr><a:srgbClr val="FFFFFF"/></a:bgClr></a:pattFill>',
+    );
+    // 15% of pure green over white.
+    expect(text).toContain('0.85098 1 0.85098 rg');
+  });
+
+  it('keeps a fill the shape states for itself', () => {
+    const text = styled(
+      '<wps:style><a:fillRef idx="1"><a:srgbClr val="5B9BD5"/></a:fillRef></wps:style>',
+      `${RECT}<a:solidFill><a:srgbClr val="FF0000"/></a:solidFill>`,
+    );
+    expect(text).toContain('1 0 0 rg');
+    expect(text).not.toMatch(/0\.356863 0\.607843 0\.835294 rg/u);
+  });
+
+  it('gives the text the colour the style names', () => {
+    // §20.1.4.2.14 — a run with no colour of its own takes the fontRef's.
+    // LineStyle_DashType.docx asks for white on seven blue rectangles.
+    const text = styled(
+      '<wps:style><a:fillRef idx="1"><a:srgbClr val="4472C4"/></a:fillRef>' +
+        '<a:fontRef idx="minor"><a:srgbClr val="FFFFFF"/></a:fontRef></wps:style>',
+      `${RECT}`,
+      '<wps:txbx><w:txbxContent><w:p><w:r><w:t>Caption</w:t></w:r></w:p></w:txbxContent></wps:txbx>',
+    );
+    expect(text).toContain('1 1 1 rg');
+  });
+
+  it("leaves a run that inherits a colour with the style's", () => {
+    // §17.7.2 — the theme's font colour is the FLOOR of the cascade, not the
+    // top of it. ColorOverwritten.docx writes its arrow's two lines in a "red"
+    // and a "green" paragraph style, and stamping the theme's white over them
+    // left the shape looking blank.
+    const body = `<w:p><w:r><w:drawing>
+      <wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+        <wp:extent cx="1828800" cy="914400"/><wp:docPr id="1" name="S"/>
+        <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+          <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+            <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wps:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr>
+              <wps:style><a:fontRef idx="minor"><a:srgbClr val="FFFFFF"/></a:fontRef></wps:style>
+              <wps:txbx><w:txbxContent>
+                <w:p><w:pPr><w:pStyle w:val="red"/></w:pPr><w:r><w:t>Ausgang</w:t></w:r></w:p>
+                <w:p><w:r><w:t>plain</w:t></w:r></w:p>
+              </w:txbxContent></wps:txbx>
+              <wps:bodyPr/>
+            </wps:wsp>
+          </a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`;
+    const text = asLatin1(
+      convertDocxToPdfSync(
+        buildDocxFromBody(body, {
+          stylesXml:
+            '<w:style w:type="paragraph" w:styleId="red"><w:name w:val="red"/>' +
+            '<w:rPr><w:color w:val="FF0000"/></w:rPr></w:style>',
+        }),
+        { fonts: FONTS },
+      ),
+    );
+    expect(text).toContain('1 0 0 rg'); // the style's red survives
+    expect(text).toContain('1 1 1 rg'); // …and the plain paragraph takes white
+  });
+
+  it('takes the style colour under a rule that states only a width', () => {
+    // §20.1.4.2.19 — the shape's own `a:ln` says how THICK and how dashed, the
+    // gallery style says what COLOUR. dashed_line_custdash_percentage.docx
+    // rules a 4.5pt accent-blue line that way and we drew a black hairline.
+    const text = styled(
+      '<wps:style><a:lnRef idx="1"><a:srgbClr val="4472C4"/></a:lnRef></wps:style>',
+      `${RECT}<a:ln w="57150"><a:custDash><a:ds d="800000" sp="300000"/></a:custDash></a:ln>`,
+    );
+    expect(text).toContain('0.266667 0.447059 0.768627 RG'); // 4472C4
+    expect(text).toContain('4.5 w');
+    // §20.1.8.21 — dash 800% and space 300% of a 4.5pt rule.
+    expect(text).toContain('[36 13.5] 0 d');
+  });
+
+  it('finds the colour inside a pretty-printed reference', () => {
+    // A text node between the elements is not the element: the "not #text"
+    // test took the indentation and read no colour at all.
+    const text = styled(
+      '<wps:style>\n  <a:fillRef idx="1">\n    <a:srgbClr val="5B9BD5"/>\n  </a:fillRef>\n</wps:style>',
+      RECT,
+    );
+    expect(text).toContain('0.356863 0.607843 0.835294 rg');
+  });
+
+  it('reads idx="0" as naming nothing', () => {
+    const text = styled(
+      '<wps:style><a:fillRef idx="0"><a:srgbClr val="5B9BD5"/></a:fillRef></wps:style>',
+      RECT,
+    );
+    expect(text).not.toMatch(/0\.356863 0\.607843 0\.835294 rg/u);
+  });
+});
+
+// §14.1.2.22 `v:textpath` — legacy WordArt, whose words live in an attribute
+// rather than in the document body. Read nowhere, WordArt.docx printed an empty
+// page. The preset path is a shapetype of formulas we do not evaluate, so the
+// words are set flat in the shape's box — which is the whole of what it says.
+describe('a legacy VML shape (§14.1.2)', () => {
+  const pictOf = (inner: string): string =>
+    asLatin1(
+      convertDocxToPdfSync(buildDocxFromBody(`<w:p><w:r><w:pict>${inner}</w:pict></w:r></w:p>`), {
+        fonts: FONTS,
+      }),
+    );
+
+  it('draws a rectangle with its fill, its outline and its words', () => {
+    // drawinglayer-pic-pos.docx frames its title in one of these, and read
+    // only for a `v:imagedata` the page came out without it.
+    const text = pictOf(
+      '<v:rect style="position:absolute;margin-left:10pt;margin-top:20pt;width:200pt;height:100pt"' +
+        ' fillcolor="#4472C4" strokecolor="red" strokeweight="2pt">' +
+        '<v:textbox><w:txbxContent><w:p><w:r><w:t>Framed</w:t></w:r></w:p></w:txbxContent></v:textbox>' +
+        '</v:rect>',
+    );
+    expect(text).toContain('0.266667 0.447059 0.768627 rg'); // 4472C4 fill
+    expect(text).toContain('1 0 0 RG'); // red outline
+    expect(text).toContain('2 w');
+    expect(text).toMatch(/<[0-9A-F]+>[^\n]*T[Jj]/u); // the words in it
+  });
+
+  it('reads a named colour and an unfilled shape', () => {
+    const text = pictOf('<v:oval style="width:50pt;height:50pt" filled="f" strokecolor="navy"/>');
+    expect(text).toContain('0 0 0.501961 RG'); // navy
+    expect(text).not.toMatch(/ rg\n/u); // nothing filled
+  });
+
+  it("places a group's members in the group's own coordinate space", () => {
+    // dml-textshape.docx draws its whole diagram inside a v:group, and read as
+    // one shape it drew nothing at all.
+    const text = pictOf(
+      '<v:group style="width:200pt;height:100pt" coordsize="2000,1000">' +
+        '<v:rect style="position:absolute;left:1000;top:500;width:1000;height:500" fillcolor="#00FF00"/>' +
+        '</v:group>',
+    );
+    // Half the group's box, at its centre: a 100×50pt rectangle.
+    expect(text).toMatch(/100 0 l/u);
+    expect(text).toContain('0 1 0 rg');
+  });
+});
+
+describe('VML WordArt', () => {
+  const pict = (shapeXml: string): string =>
+    asLatin1(
+      convertDocxToPdfSync(
+        buildDocxFromBody(`<w:p><w:r><w:pict>${shapeXml}</w:pict></w:r></w:p>`),
+        {
+          fonts: FONTS,
+        },
+      ),
+    );
+  // The shapetype template beside the shape carries a textpath of its own, with
+  // no string on it — the words are on the SHAPE's.
+  const SHAPETYPE =
+    '<v:shapetype id="_x0000_t144" o:spt="144"><v:textpath on="t" fitpath="t"/></v:shapetype>';
+
+  it('sets the string the textpath carries', () => {
+    const text = pict(
+      `${SHAPETYPE}<v:shape id="s" type="#_x0000_t144" style="width:286.45pt;height:134.8pt" fillcolor="black">` +
+        '<v:textpath style="font-family:&quot;Arial Black&quot;" string="WORD-ART"/></v:shape>',
+    );
+    const parsed = parseTtf(FONTS.regular);
+    expect(text).toMatch(showPattern(parsed, 'WORD-ART'));
+  });
+
+  it('sizes it to the box it is given, width included', () => {
+    // Half the height per line is close for a line of capitals, but a size
+    // that overflows the width wraps: "WORD-ART" came out as "WORD-A / RT".
+    const text = pict(
+      `${SHAPETYPE}<v:shape id="s" type="#_x0000_t144" style="width:286.45pt;height:134.8pt">` +
+        '<v:textpath string="WORD-ART"/></v:shape>',
+    );
+    const size = /\/F\d+ ([\d.]+) Tf/u.exec(text);
+    expect(size).not.toBeNull();
+    // 286.45 / (8 × 0.62) = 57.8pt, under the 67.4pt the height alone allows.
+    expect(Number(size![1])).toBeCloseTo(57.75, 0);
+  });
+
+  it('ignores a shape that names no string or no size', () => {
+    expect(pict(`${SHAPETYPE}<v:shape id="s" style="width:100pt;height:50pt"/>`)).not.toContain(
+      ' Tj',
+    );
+    expect(pict(`${SHAPETYPE}<v:shape id="s"><v:textpath string="X"/></v:shape>`)).not.toContain(
+      ' Tj',
+    );
+  });
+});
+
+// §20.1.10.83 `a:bodyPr @vert` — text set along the box's long axis rather than
+// across it. btlr-textbox.docx reads bottom-to-top and we set it flat, so it
+// ran out of the box the wrong way.
+describe('vertical text in a shape', () => {
+  const vertical = (vert: string): string => {
+    const inner = '<w:p><w:r><w:t>Sideways</w:t></w:r></w:p>';
+    const body = `<w:p><w:r><w:drawing>
+      <wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+        <wp:extent cx="2743200" cy="1828800"/><wp:docPr id="1" name="S"/>
+        <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+          <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+            <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2743200" cy="1828800"/></a:xfrm>
+                <a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr>
+              <wps:txbx><w:txbxContent>${inner}</w:txbxContent></wps:txbx>
+              <wps:bodyPr vert="${vert}"/>
+            </wps:wsp>
+          </a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`;
+    return asLatin1(convertDocxToPdfSync(buildDocxFromBody(body), { fonts: FONTS }));
+  };
+
+  it('turns the line a quarter, one way for each mode', () => {
+    // A quarter turn is a text matrix of (0 1 -1 0) or its opposite, not the
+    // (1 0 0 1) a flat line uses.
+    expect(vertical('vert270')).toMatch(/\n0 1 -1 0 [\d.]+ [\d.]+ Tm\n/u);
+    expect(vertical('vert')).toMatch(/\n0 -1 1 0 [\d.]+ [\d.]+ Tm\n/u);
+  });
+
+  it('leaves horizontal text flat', () => {
+    expect(vertical('horz')).toMatch(/\n1 0 0 1 [\d.]+ [\d.]+ Tm\n/u);
+  });
+});
+
+// §20.1.10.28 `a:spAutoFit` — the shape follows its text: the box it states is
+// a starting size and the height is whatever the text needs. Ignored,
+// autofit.docx drew its one-line box as tall as the four-line box beside it.
+describe('a shape that fits itself to its text', () => {
+  const boxed = (bodyPr: string): string => {
+    const body = `<w:p><w:r><w:drawing>
+      <wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+        <wp:extent cx="2743200" cy="1828800"/><wp:docPr id="1" name="S"/>
+        <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+          <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+            <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2743200" cy="1828800"/></a:xfrm>
+                <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+                <a:ln><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln></wps:spPr>
+              <wps:txbx><w:txbxContent><w:p><w:r><w:t>One line.</w:t></w:r></w:p></w:txbxContent></wps:txbx>
+              ${bodyPr}
+            </wps:wsp>
+          </a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`;
+    return asLatin1(convertDocxToPdfSync(buildDocxFromBody(body), { fonts: FONTS }));
+  };
+  // The outline's own path says how tall the shape came out.
+  const heightOf = (text: string): number =>
+    Number(/0 0 m\n[\d.]+ 0 l\n[\d.]+ ([\d.]+) l/u.exec(text)![1]);
+
+  it('shrinks the box to the text it holds', () => {
+    // 144pt as stated, against one 11pt line plus the default 3.6pt insets.
+    expect(heightOf(boxed('<wps:bodyPr/>'))).toBeCloseTo(144, 0);
+    expect(heightOf(boxed('<wps:bodyPr><a:spAutoFit/></wps:bodyPr>'))).toBeLessThan(30);
+  });
+});
+
+describe('a floating drawing and the text column', () => {
+  const anchored = (cxEmu: number, inner: string): string =>
+    `<w:p><w:r><w:drawing>
+      <wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+                 distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="1"
+                 behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">
+        <wp:simplePos x="0" y="0"/>
+        <wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH>
+        <wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>
+        <wp:extent cx="${cxEmu}" cy="914400"/><wp:wrapNone/><wp:docPr id="1" name="S"/>
+        <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+          <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+            <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cxEmu}" cy="914400"/></a:xfrm>
+                <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+                <a:solidFill><a:srgbClr val="4472C4"/></a:solidFill></wps:spPr>
+              ${inner}
+              <wps:bodyPr/>
+            </wps:wsp>
+          </a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>`;
+
+  it('draws the floats in the z-order they state', () => {
+    // §20.4.2.3 `relativeHeight` — dml-rectangle-relsize.docx writes its blue
+    // bar FIRST and gives it the higher z, so it belongs over the white
+    // rectangle that follows; drawn in document order the rectangle hid it.
+    const float = (z: number, hex: string, cy: number): string =>
+      `<w:p><w:r><w:drawing>
+        <wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+                   distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="${z}"
+                   behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">
+          <wp:simplePos x="0" y="0"/>
+          <wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH>
+          <wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>
+          <wp:extent cx="914400" cy="${cy}"/><wp:wrapNone/><wp:docPr id="1" name="S"/>
+          <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+            <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+                <wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="${cy}"/></a:xfrm>
+                  <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+                  <a:solidFill><a:srgbClr val="${hex}"/></a:solidFill></wps:spPr>
+                <wps:bodyPr/>
+              </wps:wsp>
+            </a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>`;
+    const text = asLatin1(
+      convertDocxToPdfSync(
+        // The taller white one is written second but sits BELOW.
+        buildDocxFromBody(float(20, 'FF0000', 114300) + float(10, 'FFFFFF', 914400)),
+        { fonts: FONTS },
+      ),
+    );
+    expect(text.indexOf('1 1 1 rg')).toBeLessThan(text.indexOf('1 0 0 rg'));
+  });
+
+  it('takes a size stated as a share of the margins', () => {
+    // `wp14:sizeRelH/V` — dml-shape-relsize.docx asks for 40% of the margin
+    // width and 20% of its height; read as nothing, the shape came out at the
+    // fallback extent, less than half as wide.
+    const relative =
+      `<w:p><w:r><w:drawing>
+        <wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+                   xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing"
+                   distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="1"
+                   behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">
+          <wp:simplePos x="0" y="0"/>
+          <wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH>
+          <wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>
+          <wp:extent cx="914400" cy="457200"/><wp:wrapNone/><wp:docPr id="1" name="S"/>
+          <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+            <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+                <wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="457200"/></a:xfrm>
+                  <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+                  <a:solidFill><a:srgbClr val="4472C4"/></a:solidFill></wps:spPr>
+                <wps:bodyPr/>
+              </wps:wsp>
+            </a:graphicData></a:graphic>
+          <wp14:sizeRelH relativeFrom="margin"><wp14:pctWidth>50000</wp14:pctWidth></wp14:sizeRelH>
+        </wp:anchor></w:drawing></w:r></w:p>` +
+      '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>' +
+      '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>';
+    const text = asLatin1(convertDocxToPdfSync(buildDocxFromBody(relative), { fonts: FONTS }));
+    // Half of the 468pt column, and the height follows to keep the shape square.
+    expect(text).toMatch(/234 0 l/u);
+    expect(text).toMatch(/234 117 l/u);
+  });
+
+  it('keeps the width it states, past the column', () => {
+    // §20.4.2.3 — a float is not in the text column and may hang into the
+    // margins: dml-groupshape-capitalization.docx anchors a 547pt group on a
+    // 454pt column, and shrinking it to fit set every word inside at 83%.
+    const wide = 6858000; // 540pt, wider than the 468pt column of a letter page
+    const text = asLatin1(
+      convertDocxToPdfSync(buildDocxFromBody(anchored(wide, '')), { fonts: FONTS }),
+    );
+    // The fill path spans the full 540pt.
+    expect(text).toMatch(/540 0 l/u);
+  });
+
+  it('leaves the paragraph spacing inside a text box on the page', () => {
+    // The box's height counted the space between its paragraphs but the
+    // emitter never left it, so dml-groupshape-capitalization.docx's caption
+    // ran its four paragraphs together.
+    const two =
+      '<wps:txbx><w:txbxContent>' +
+      '<w:p><w:pPr><w:spacing w:after="400"/></w:pPr><w:r><w:t>one</w:t></w:r></w:p>' +
+      '<w:p><w:r><w:t>two</w:t></w:r></w:p>' +
+      '</w:txbxContent></wps:txbx>';
+    const text = asLatin1(
+      convertDocxToPdfSync(buildDocxFromBody(anchored(2743200, two)), { fonts: FONTS }),
+    );
+    const ys = [...text.matchAll(/1 0 0 1 [\d.]+ ([\d.]+) Tm/gu)].map((m) => Number(m[1]));
+    // Three positions, two of them the box's: the first is the empty line the
+    // paragraph the drawing is ANCHORED to stands on (§20.4.2.3 — the drawing
+    // leaves the flow, the paragraph mark does not). Nothing is drawn there.
+    expect(ys).toHaveLength(3);
+    // 20pt of spacing plus the line's own height — well past a bare line.
+    expect(ys[1]! - ys[2]!).toBeGreaterThan(25);
   });
 });

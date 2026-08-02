@@ -1,8 +1,15 @@
-export type { HyperlinkResolver, ImageResolver, ParseContext } from '@/word/document-parser';
-export type { CommentExtension } from '@/word/document-parser';
+export type {
+  HyperlinkResolver,
+  ImageResolver,
+  ParseContext,
+  ResolvedDiagram,
+} from '@/word/document-parser';
+export type { BlockCounter, CommentExtension } from '@/word/document-parser';
 export { extractParagraphs } from '@/word/text-extractor';
 export {
   parseDocument,
+  parseBackgroundColor,
+  parseBackgroundFill,
   parseBodyElements,
   parseSection,
   parseSections,
@@ -13,10 +20,12 @@ export {
   parseCommentsExtended,
   parsePeople,
   applyAuthorIds,
+  bodyIndexForBlock,
+  newBlockCounter,
   EMPTY_SECTION,
 } from '@/word/document-parser';
 export { parseRunProperties } from '@/word/run-properties';
-export { parseParagraphProperties } from '@/word/paragraph-properties';
+export { HTML_AUTO_SPACING_PT, parseParagraphProperties } from '@/word/paragraph-properties';
 export { parseStyles } from '@/word/styles-parser';
 export { parseTable } from '@/word/table-parser';
 export { loadEmbeddedFonts, deobfuscateEmbeddedFont, parseFontTable } from '@/word/font-table';

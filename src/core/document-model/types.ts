@@ -53,7 +53,16 @@ export interface RunProperties {
   readonly bold?: boolean;
   readonly italic?: boolean;
   readonly underline?: UnderlineStyle;
+  /** §17.3.2.40 `w:u @w:color` — the underline's own colour, when it has one. */
+  readonly underlineColorHex?: string;
   readonly strike?: boolean;
+  /** §17.3.2.5 `w:caps` — the run is DISPLAYED in capitals, whatever it stores. */
+  readonly caps?: boolean;
+  /**
+   * §17.3.2.33 `w:smallCaps` — displayed in capitals, with the letters that
+   * were lower case set smaller.
+   */
+  readonly smallCaps?: boolean;
   readonly fontSizePt?: Pt;
   readonly colorHex?: string;
   readonly fontFamily?: FontFamilyMap;
@@ -68,6 +77,16 @@ export interface RunProperties {
    * the tagged-PDF per-element `/Lang`; does not affect visual layout.
    */
   readonly lang?: string;
+  /**
+   * §17.3.2.32 `w:rPr/w:shd` — the background painted behind the run's own
+   * glyphs, already blended from the pattern, its colour and the fill.
+   */
+  readonly shadingColorHex?: string;
+  /**
+   * §17.3.2.35 `w:rPr/w:spacing` — extra space between the run's characters
+   * (negative tightens). Word states it in twentieths of a point.
+   */
+  readonly letterSpacingPt?: Pt;
 }
 
 /**
@@ -80,19 +99,138 @@ export interface RunProperties {
  * indent of 360 twips becomes `indentFirstLine = -18pt` — the first line ends up
  * 360 twips to the left of `indentLeft`).
  */
+/**
+ * §17.3.1.38 `w:tab` — one stop in a paragraph's tab list: where the text after
+ * a tab character goes, how it sits against that position, and what fills the
+ * gap on the way there.
+ */
+export interface TabStop {
+  /**
+   * Distance from the text margin, in points (`w:pos`, twips). Ignored when
+   * {@link relativeTo} names an edge — a §17.3.3.15 `w:ptab` positions against
+   * the column itself, whose width only the layout knows.
+   */
+  readonly positionPt: Pt;
+  /**
+   * §17.3.3.15 `w:ptab` — an ABSOLUTE position tab, which goes to the middle
+   * or the far side of the text column rather than to a stated distance.
+   */
+  readonly relativeTo?: 'center' | 'right';
+  /** §17.18.90 ST_TabJc — how the text after the tab sits against the stop. */
+  readonly alignment: 'left' | 'center' | 'right' | 'decimal';
+  /** §17.18.89 ST_TabTlc — the character drawn across the gap. */
+  readonly leader?: 'dot' | 'hyphen' | 'underscore' | 'middleDot';
+}
+
+/**
+ * §17.3.1.11 `w:framePr` — the paragraph is a floating TEXT FRAME: it leaves
+ * the flow, takes the box this describes, and the body text wraps around it.
+ * Consecutive paragraphs carrying the same frame are one frame together.
+ */
+export interface FrameProperties {
+  /** `w:w` — the frame's width. Absent ⇒ as wide as the text needs. */
+  readonly widthPt?: Pt;
+  /** `w:h` with `w:hRule` — `exact` pins the height, anything else fits the text. */
+  readonly heightPt?: Pt;
+  readonly heightRule?: 'auto' | 'exact' | 'atLeast';
+  /** `w:x`/`w:y` — the offset from whatever `hAnchor`/`vAnchor` names. */
+  readonly xPt?: Pt;
+  readonly yPt?: Pt;
+  /** `w:xAlign`/`w:yAlign` — an alignment instead of an offset. */
+  readonly xAlign?: 'left' | 'center' | 'right' | 'inside' | 'outside';
+  readonly yAlign?: 'top' | 'center' | 'bottom' | 'inside' | 'outside';
+  readonly hAnchor?: 'text' | 'margin' | 'page';
+  readonly vAnchor?: 'text' | 'margin' | 'page';
+  /** §17.18.104 ST_Wrap — how the body text runs past the frame. */
+  readonly wrap?: 'auto' | 'around' | 'none' | 'notBeside' | 'tight' | 'through';
+  readonly hSpacePt?: Pt;
+  readonly vSpacePt?: Pt;
+}
+
 export interface ParagraphProperties {
   readonly styleId?: string;
+  /**
+   * §17.7.2 — the `w:pPr` of the TABLE STYLE the paragraph's cell is formatted
+   * by. It is not the paragraph's own formatting: the cascade puts it under the
+   * paragraph's style (docDefaults < table style < numbering < paragraph style
+   * < character style < direct), so it is carried apart from the direct
+   * properties rather than merged into them.
+   */
+  readonly tableStyle?: ParagraphProperties;
+  /**
+   * §17.7.2 — a run layer that ranks BELOW the paragraph's own style and below
+   * the character style a run names: the `w:rPr` of the table style the cell is
+   * formatted by, or the `a:fontRef` colour a gallery-drawn shape lends the
+   * text inside it (§20.1.4.2.14). Carried on the paragraph because every run
+   * of it — and its MARK — reads the same layer.
+   */
+  readonly inheritedRun?: RunProperties;
+  /**
+   * §17.6.17 — the paragraph's mark carries a `w:sectPr`: it is the last
+   * paragraph of its section, and the mark IS the section break. One with no
+   * content of its own therefore prints nothing, not an empty line.
+   */
+  readonly sectionBreak?: boolean;
+  /** §17.3.1.11 — the paragraph floats as a text frame. */
+  readonly frame?: FrameProperties;
+  /**
+   * §17.3.1.41 `w:textDirection` — which way the paragraph's lines run.
+   * `btLr` reads bottom-to-top, `tbRl` top-to-bottom; `lrTb` is the default
+   * and is not recorded.
+   */
+  readonly textDirection?: 'btLr' | 'tbRl';
+  /**
+   * §17.3.1.32 `w:snapToGrid` — whether the paragraph's lines stand on the
+   * section's document grid (§17.6.5). Absent ⇒ they do; Word's header and
+   * footer styles are what usually says otherwise.
+   */
+  readonly snapToGrid?: boolean;
   readonly alignment?: Alignment;
   readonly spacingBefore?: Pt;
   readonly spacingAfter?: Pt;
   readonly spacingLine?: Pt;
   readonly spacingLineRule?: 'auto' | 'exact' | 'atLeast';
+  /**
+   * ECMA-376 Part 1 §17.3.1.9 — `w:contextualSpacing`. The space before and
+   * after is dropped where the neighbour is a paragraph of the SAME style: a
+   * list is written this way, so its items sit together while the list as a
+   * whole keeps its space from the text around it.
+   */
+  readonly contextualSpacing?: boolean;
+  /** ECMA-376 Part 1 §17.3.1.37 — the paragraph's own `w:tabs` stops. */
+  readonly tabs?: ReadonlyArray<TabStop>;
+  /**
+   * §17.3.1.24 `w:pBdr` — rules drawn around the paragraph. `w:space` is the
+   * gap each keeps from the text, carried on the {@link Border} as `spacePt`.
+   */
+  readonly borders?: CellBorders;
+  /** §17.3.1.31 `w:pPr/w:shd` — the paragraph's own background fill. */
+  readonly shading?: CellShading;
   readonly indentLeft?: Pt;
   readonly indentRight?: Pt;
   readonly indentFirstLine?: Pt;
   /** The implicit default run properties for runs in this paragraph (`w:pPr/w:rPr`). */
   readonly runProperties?: RunProperties;
+  /**
+   * §17.3.1.3/§17.3.1.1 — the gap `w:beforeAutospacing`/`w:afterAutospacing`
+   * asks the consumer for, already resolved to a length by the reader (it
+   * depends on the document's compatibility mode). Present only when the
+   * autospacing flag is ON, and it beats the `w:before`/`w:after` beside it.
+   * A separate property because style inheritance is per ATTRIBUTE: a style
+   * based on one that says `beforeAutospacing` inherits the flag even when it
+   * states a `w:before` of its own — which is how tdf104354_firstParaInSection
+   * gets its 75pt before, and taking that literally spread one page over four.
+   */
+  readonly spacingBeforeAuto?: Pt;
+  readonly spacingAfterAuto?: Pt;
   readonly numbering?: NumberingReference;
+  /**
+   * §17.9.4 — a `w:numPr` that names a LEVEL and no `w:numId`: the instance is
+   * whatever the style this one is based on refers to. Word's own Heading 2
+   * says exactly this, and dropped it numbered num-parent-style.docx's headings
+   * 1, 2, 3, 4 where its own text says they should read 1, 1.1, 2, 2.1.
+   */
+  readonly numberingLevel?: number;
   /**
    * ECMA-376 Part 1 §17.3.1.21 — `w:pageBreakBefore`. When true, the paragraph
    * starts on a fresh page even if there is room on the current one.
@@ -115,14 +253,50 @@ export interface ParagraphProperties {
  * {@link Run} alongside (or instead of) `text` so layout can position the image
  * as if it were a glyph in the line box.
  */
+/**
+ * §20.1.2.2.24 `a:ln` on a `pic:spPr` (VML: `@stroked`/`v:stroke`) — the frame
+ * a picture is drawn with. Word's "Picture Border": a rule around the picture
+ * box, not part of the image itself.
+ */
+export interface PictureOutline {
+  readonly colorHex: string;
+  readonly widthPt: Pt;
+}
+
 export interface InlineImage {
   /**
    * Content-addressed bytes in the document's `ResourceStore`; absent when the
    * source relationship did not resolve (the layout box still reserves space).
    */
   readonly resource?: ResourceId;
+  /** The picture's own frame, when it has one (see {@link PictureOutline}). */
+  readonly outline?: PictureOutline;
+  /**
+   * §20.1.8.40 `a:outerShdw` — the drop shadow under the picture. Word writes
+   * one on every screenshot pasted with a style; drawn nowhere, imgshadow.docx's
+   * six stood flat on the page where both references lift them off it.
+   */
+  readonly shadow?: ShapeShadow;
   readonly width: Pt;
   readonly height: Pt;
+  /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
+  readonly crop?: ImageCrop;
+  /** §20.1.7.6 `a:xfrm @rot` — the picture's own rotation (1/60000°, clockwise). */
+  readonly rotation60k?: number;
+  /** §20.1.7.6 `a:xfrm @flipH/@flipV` — the picture drawn mirrored. */
+  readonly flipH?: boolean;
+  readonly flipV?: boolean;
+  /**
+   * §20.4.2.6 `wp:effectExtent` — space the drawing needs BEYOND its extent,
+   * for what a rotation or an effect throws outside the frame. The line box
+   * reserves it; the picture itself is drawn inset by it.
+   */
+  readonly effectExtent?: {
+    readonly leftPt: Pt;
+    readonly topPt: Pt;
+    readonly rightPt: Pt;
+    readonly bottomPt: Pt;
+  };
 }
 
 /**
@@ -322,6 +496,11 @@ export interface Run {
    * paragraph's following content starts on a new page.
    */
   readonly pageBreak?: boolean;
+  /**
+   * §17.3.3.1 `w:br w:type="column"` — the text after this run continues in the
+   * NEXT column of the section (or, past the last, on the next page).
+   */
+  readonly columnBreak?: boolean;
 }
 
 /** ECMA-376 Part 1 §17.3.1 — a paragraph: its {@link ParagraphProperties} and runs. */
@@ -366,10 +545,36 @@ export interface Comment {
 /** ECMA-376 Part 1 §17.9 — `w:numFmt` list marker format. */
 export type NumberingFormat =
   | 'decimal'
+  | 'decimalZero'
+  | 'decimalFullWidth'
+  | 'ordinal'
   | 'lowerLetter'
   | 'upperLetter'
   | 'lowerRoman'
   | 'upperRoman'
+  /** §17.18.59 — the ten heavenly stems 甲乙丙…, then plain digits. */
+  | 'ideographTraditional'
+  /** The twelve earthly branches 子丑寅…, then plain digits. */
+  | 'ideographZodiac'
+  /** The formal (anti-fraud) numerals 壹貳參…, composed with 拾佰仟. */
+  | 'ideographLegalTraditional'
+  /** Digit-by-digit ideographs: 10 is 一零, not 十. */
+  | 'ideographDigital'
+  | 'koreanDigital2'
+  /** Counting ideographs: 10 is 十, 11 is 十一, 21 is 二十一. */
+  | 'chineseCounting'
+  | 'chineseCountingThousand'
+  | 'japaneseCounting'
+  | 'koreanCounting'
+  | 'taiwaneseCounting'
+  | 'taiwaneseCountingThousand'
+  /** §17.18.59 — Hebrew numerals (gematria): א, ב, … ט״ו, ט״ז, י״ז … */
+  | 'hebrew1'
+  /** The Hebrew alphabet as a plain sequence, cycling past ת. */
+  | 'hebrew2'
+  /** ①②③… up to twenty, then plain digits. */
+  | 'decimalEnclosedCircle'
+  | 'chicago'
   | 'bullet'
   | 'none';
 
@@ -386,8 +591,28 @@ export interface NumberingLevel {
   readonly format: NumberingFormat;
   /** §17.9.11 `w:lvlText` — the marker template (e.g. `"%1."`). */
   readonly lvlText: string;
+  /**
+   * §17.9.9 `w:lvlPicBulletId` → §17.9.21 `w:numPicBullet` — the level's bullet
+   * is a PICTURE, not a character, and the `w:lvlText` is only the fallback
+   * glyph Word writes beside it.
+   */
+  readonly picBullet?: PictureBullet;
+  /**
+   * §17.9.10 `w:isLgl` — every level of this level's marker is printed in
+   * DECIMAL, whatever format the level it names asks for. Word calls it legal
+   * numbering: "Sect I.01" becomes "Sect 1.01".
+   */
+  readonly isLegal?: boolean;
   readonly paragraphProperties: ParagraphProperties;
   readonly runProperties: RunProperties;
+}
+
+/** §17.9.21 `w:numPicBullet` — the image a level uses in place of a bullet. */
+export interface PictureBullet {
+  /** Content-addressed bytes. A bullet whose picture does not resolve is not one. */
+  readonly resource: ResourceId;
+  readonly widthPt: Pt;
+  readonly heightPt: Pt;
 }
 
 /** §17.9.1 `w:abstractNum` — a reusable list definition keyed by level. */
@@ -400,6 +625,18 @@ export interface AbstractNumbering {
 export interface NumberingInstance {
   readonly numId: string;
   readonly abstractNumId: string;
+  /**
+   * §17.9.27/§17.9.28 `w:lvlOverride/w:startOverride` — where THIS instance
+   * starts a level, by `w:ilvl`, whatever the abstract definition says. Absent
+   * when the instance takes the abstract starts unchanged.
+   */
+  readonly startOverrides?: ReadonlyMap<number, number>;
+  /**
+   * §17.9.27 `w:lvlOverride/w:lvl` — a level this instance REDEFINES whole,
+   * shadowing the abstract definition's. NumberingWOverrides.docx rewrites all
+   * nine levels of one instance this way.
+   */
+  readonly levelOverrides?: ReadonlyMap<number, NumberingLevel>;
 }
 
 /** The parsed `word/numbering.xml`: abstract definitions + their instances. */
@@ -420,6 +657,8 @@ export type StyleType = 'paragraph' | 'character' | 'table' | 'numbering';
 export interface TableStyleLayer {
   readonly borders?: CellBorders;
   readonly cellMargins?: CellMargins;
+  /** §17.4.65 `w:tblInd` — the table indent a whole-table layer declares. */
+  readonly indentPt?: Pt;
   readonly shading?: CellShading;
   readonly runProperties?: RunProperties;
   readonly paragraphProperties?: ParagraphProperties;
@@ -488,6 +727,10 @@ export type BorderStyle =
   | 'thick'
   | 'dotted'
   | 'dashed'
+  // …and the same dash over a SHORTER gap, which both references draw as a
+  // pattern of its own: `w:val="dashSmallGap"` in a document, a thin `dashed`
+  // rule in a spreadsheet.
+  | 'dashSmallGap'
   // §18.18.3 — the dash-DOT family. A dash and a dot alternate, which is what
   // tells these apart from `dashed` on the page: cell-borders.xlsx names five
   // of them and we drew a uniform dash for every one.
@@ -499,6 +742,8 @@ export interface Border {
   readonly style: BorderStyle;
   readonly width?: Pt;
   readonly colorHex?: string;
+  /** §17.3.1.24 `w:space` — how far a paragraph rule stands off its text. */
+  readonly spacePt?: Pt;
 }
 
 /** §17.4.39 `w:tcBorders` — the per-edge borders of a cell (or table). */
@@ -607,6 +852,14 @@ export type CellMerge = 'start' | 'middle' | 'end';
 /** §17.4.30 `w:tcPr` — a cell's properties: span/merge, chrome, and CF overlays. */
 export interface CellProperties {
   readonly width?: Pt;
+  /**
+   * §17.4.72 `w:tcW w:type="pct"` — the cell's preferred width as a share of
+   * the table (`w`/5000). Held apart from {@link width} because a percentage
+   * cannot be resolved until the table's own width is known.
+   */
+  readonly widthFraction?: number;
+  /** §17.18.90 ST_TblWidth — which of the two above the cell actually declared. */
+  readonly widthType?: 'auto' | 'dxa' | 'pct' | 'nil';
   readonly colSpan?: number;
   readonly merge?: CellMerge;
   readonly borders?: CellBorders;
@@ -640,6 +893,11 @@ export interface CellProperties {
    */
   readonly noWrap?: boolean;
   /**
+   * §17.4.20 `w:hideMark` — the cell's end-of-cell mark is not counted when the
+   * row's height is measured, so an EMPTY cell that says so adds nothing at all.
+   */
+  readonly hideMark?: boolean;
+  /**
    * The cell holds a NUMBER under a format of its own, so it may not be shown
    * truncated: a date cut to "4/30/201" is not a shorter date, it is the wrong
    * one. Excel and LibreOffice fill such a cell with `#` instead, which says
@@ -663,10 +921,27 @@ export interface RowProperties {
   readonly cantSplit?: boolean;
   readonly isHeader?: boolean;
   /**
+   * §17.4.14 `w:gridBefore` — how many grid columns the row leaves empty
+   * before its first cell, which is how a row starts part-way across a table.
+   */
+  readonly gridBefore?: number;
+  /**
    * Force this row to begin a new page (xlsx manual `<rowBreaks>`). The renderer
    * flushes the page before the row, then repeats any leading header rows.
    */
   readonly pageBreakBefore?: boolean;
+  /**
+   * §17.4.7 `w:cnfStyle` — the conditional formats of the table style this row
+   * takes, whatever its position says. Word's calendar templates give a SECOND
+   * header row `w:firstRow="1"` so it is painted like the first.
+   */
+  readonly conditional?: RowConditionalFormat;
+}
+
+/** §17.4.7 — the row-level conditional-format flags a `w:cnfStyle` declares. */
+export interface RowConditionalFormat {
+  readonly firstRow?: boolean;
+  readonly lastRow?: boolean;
 }
 
 /**
@@ -703,6 +978,18 @@ export interface TableProperties {
    */
   readonly alignment?: 'left' | 'center' | 'right';
   /**
+   * §17.4.65 `w:tblInd` — how far the table's leading edge stands in from the
+   * text margin. Distinct from {@link alignment}, which shares out the slack a
+   * narrow table leaves.
+   */
+  readonly indentPt?: Pt;
+  /**
+   * §17.4.58 `w:tblpPr` — the table FLOATS: it is placed at an anchor of its
+   * own and the text runs past it, exactly as an anchored drawing does. Read
+   * into the same {@link FloatAnchor} the drawings use.
+   */
+  readonly float?: FloatAnchor;
+  /**
    * A sticky-pane hint from a frozen worksheet view (E-SHEET SE3): the first
    * `rows` rows / `cols` columns stay pinned while the rest scrolls. Consumed
    * only by the HTML writer (an interactive target); PDF/SVG ignore it.
@@ -737,12 +1024,43 @@ export interface Table {
  * ECMA-376 Part 1 §20.4.2.8 — a block-level image (`wp:inline` picture extent).
  * EMU = English Metric Units: 914400 per inch (1 pt = 12700 EMU).
  */
+/**
+ * §20.1.8.55 `a:srcRect` — how much of each edge of the source picture is cut
+ * away before it is fitted to its frame, as a fraction of the source (so 0.25
+ * on `left` drops its left quarter). Absent edges are zero.
+ */
+export interface ImageCrop {
+  readonly left: number;
+  readonly top: number;
+  readonly right: number;
+  readonly bottom: number;
+}
+
 export interface ImageBlock {
   /** §20.4.2.3 — present when the drawing is anchored (floating). */
   readonly float?: FloatAnchor;
   readonly resource?: ResourceId;
+  /** The picture's own frame, when it has one (see {@link PictureOutline}). */
+  readonly outline?: PictureOutline;
+  /**
+   * §20.1.8.40 `a:outerShdw` — the drop shadow under the picture. Word writes
+   * one on every screenshot pasted with a style; drawn nowhere, imgshadow.docx's
+   * six stood flat on the page where both references lift them off it.
+   */
+  readonly shadow?: ShapeShadow;
   readonly width: Pt;
   readonly height: Pt;
+  /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
+  readonly crop?: ImageCrop;
+  /** §20.1.7.6 `a:xfrm @rot` — the picture's own rotation (1/60000°, clockwise). */
+  readonly rotation60k?: number;
+  /** §20.1.7.6 `a:xfrm @flipH/@flipV` — the picture drawn mirrored. */
+  readonly flipH?: boolean;
+  readonly flipV?: boolean;
+  /** `wp14:sizeRelH/V` — a size stated as a share of the page or margins. */
+  readonly relativeSize?: RelativeSize;
+  /** §20.4.2.6 `wp:effectExtent` — space reserved around the picture (see {@link InlineImage}). */
+  readonly effectExtent?: InlineImage['effectExtent'];
   readonly paragraphProperties: ParagraphProperties;
   /** `wp:docPr @descr/@title` — alternate text for the tagged-PDF Figure (`/Alt`). */
   readonly altText?: string;
@@ -805,14 +1123,25 @@ export interface ShapeGeometry {
   readonly custom?: CustomGeometry; // kind==='custom'
 }
 
-/** A shape's fill mode (`a:noFill`/`a:solidFill`/`a:gradFill`). */
-export type ShapeFillKind = 'none' | 'solid' | 'gradient';
+/** A shape's fill mode (`a:noFill`/`a:solidFill`/`a:gradFill`/`a:blipFill`). */
+export type ShapeFillKind = 'none' | 'solid' | 'gradient' | 'picture';
 
-/** A shape's fill: none, a solid colour, or a {@link ShapeGradient}. */
+/** A shape's fill: none, a solid colour, a {@link ShapeGradient}, or a picture. */
 export interface ShapeFill {
   readonly kind: ShapeFillKind;
   readonly colorHex?: string; // resolved 6-hex (kind==='solid')
   readonly gradient?: ShapeGradient; // kind==='gradient' (a:gradFill, EP16)
+  /**
+   * §20.1.8.14 `a:blipFill` — the picture painted across the shape's box. A
+   * DrawingML picture IS a shape with one of these, which is how a `pic:pic`
+   * inside a group reaches the page.
+   */
+  readonly imageResource?: ResourceId;
+  /**
+   * §20.1.8.30 `a:stretch/a:fillRect` (or an `a:srcRect` beside it) — the part
+   * of the picture the box shows, as the fractions cut from each side.
+   */
+  readonly imageCrop?: ImageCrop;
 }
 
 /** §20.1.10.49 ST_PresetLineDashVal — a shape outline's preset dash pattern. */
@@ -831,8 +1160,47 @@ export interface ShapeLine {
   readonly width?: Pt; // a:ln @w; default 0.75pt
   readonly colorHex?: string; // resolved 6-hex
   readonly dash?: ShapeDash; // a:prstDash @val
+  /**
+   * §20.1.8.21 `a:custDash` — the author's own pattern: dash/space lengths as
+   * MULTIPLES of the line width, in the order they are drawn.
+   */
+  readonly customDash?: ReadonlyArray<number>;
   readonly cap?: 'flat' | 'round' | 'square'; // a:ln @cap (flat=butt)
   readonly fill?: 'solid' | 'none'; // a:ln/a:noFill ⇒ no visible stroke
+  /** §20.1.8.24 `a:headEnd` — the decoration at the line's first point. */
+  readonly headEnd?: LineEnd;
+  /** §20.1.8.42 `a:tailEnd` — the decoration at the line's last point. */
+  readonly tailEnd?: LineEnd;
+}
+
+/**
+ * §20.1.8.24 / §20.1.8.42 — an arrowhead (or other decoration) at one end of a
+ * line: its shape plus the width and length steps `ST_LineEndWidth` /
+ * `ST_LineEndLength` name.
+ */
+export interface LineEnd {
+  readonly type: 'triangle' | 'stealth' | 'diamond' | 'oval' | 'arrow';
+  readonly width?: 'sm' | 'med' | 'lg';
+  readonly length?: 'sm' | 'med' | 'lg';
+}
+
+/**
+ * `wp14:sizeRelH` / `wp14:sizeRelV` — the drawing's size as a PERCENTAGE of
+ * the page or the margins rather than the extent beside it. Word 2010 writes
+ * it in the `wp14` namespace, with the extent as the fallback for readers that
+ * do not know it.
+ */
+export interface RelativeSize {
+  readonly widthPct?: number; // 0..1
+  /**
+   * §20.4.3.6 ST_SizeRelFromH — what the percentage is OF. `margin` is the text
+   * area; the rest are the bands around it, and a drawing sized against one is
+   * a fraction of that band alone (tdf123324 asks for 150% of the top margin).
+   */
+  readonly widthFrom?: 'margin' | 'page' | 'leftMargin' | 'rightMargin';
+  readonly heightPct?: number;
+  /** §20.4.3.7 ST_SizeRelFromV — the vertical twin. */
+  readonly heightFrom?: 'margin' | 'page' | 'topMargin' | 'bottomMargin';
 }
 
 /** §20.1.7.6 `a:xfrm` — a shape's rotation (1/60000°, clockwise) + flips. */
@@ -850,6 +1218,22 @@ export interface ShapeTextBody {
   readonly insetRight?: Pt;
   readonly insetBottom?: Pt;
   readonly anchor?: 't' | 'ctr' | 'b'; // vertical anchor
+  /**
+   * §20.1.10.83 ST_TextVerticalType (`a:bodyPr @vert`) — text set along the
+   * box's long axis rather than across it. `vert` reads top-to-bottom (turned a
+   * quarter clockwise), `vert270` bottom-to-top.
+   */
+  readonly vertical?: 'vert' | 'vert270';
+  /**
+   * §20.1.10.28 `a:spAutoFit` — the SHAPE follows its text: its height is
+   * whatever the text needs, whatever the stated box says.
+   */
+  readonly autoFit?: boolean;
+  /**
+   * §14.1.2.22 `v:textpath @fitshape` — the TEXT follows the shape: legacy
+   * WordArt is set at whatever size fills the box it was drawn in.
+   */
+  readonly fitToBox?: boolean;
 }
 
 /**
@@ -874,15 +1258,30 @@ export interface ShapeShadow {
   readonly alpha: number;
 }
 
+/**
+ * §20.5.2.17 `wpg:wgp` — one member of a drawing group, and where it sits: the
+ * offsets are from the group's own top-left corner, already mapped out of the
+ * group's child coordinate space.
+ */
+export interface ShapeGroupChild {
+  readonly shape: ShapeBlock;
+  readonly xPt: Pt;
+  readonly yPt: Pt;
+}
+
 export interface ShapeBlock {
   /** §20.4.2.3 — present when the drawing is anchored (floating). */
   readonly float?: FloatAnchor;
   readonly width: Pt; // wp:extent cx (fallback a:ext cx)
   readonly height: Pt; // wp:extent cy
+  /** §20.5.2.17 — the shapes a group holds, drawn inside its own box. */
+  readonly children?: ReadonlyArray<ShapeGroupChild>;
   readonly geometry: ShapeGeometry;
   readonly fill: ShapeFill;
   readonly line?: ShapeLine;
   readonly transform?: ShapeTransform;
+  /** `wp14:sizeRelH/V` — a size stated as a share of the page or margins. */
+  readonly relativeSize?: RelativeSize;
   readonly text?: ShapeTextBody;
   /** §20.1.8.40 — the shape's drop shadow, direct or from its style reference. */
   readonly shadow?: ShapeShadow;
@@ -997,6 +1396,8 @@ export interface ChartLineStyle {
   readonly none?: boolean;
   readonly colorHex?: string;
   readonly widthPt?: number;
+  /** §20.1.10.49 `a:prstDash` — the rule's dash pattern, when it names one. */
+  readonly dash?: ShapeDash;
 }
 
 /** A parsed chart (§21.2): its type, title, categories, series and rendering options. */
@@ -1063,6 +1464,16 @@ export interface Chart {
    */
   readonly frameFillHex?: string;
   readonly frameLineHex?: string;
+  /** The frame rule's width and dash, when it states them. */
+  readonly frameLineWidthPt?: number;
+  readonly frameLineDash?: ShapeDash;
+  /**
+   * §21.2.2.145 `c:plotArea/c:spPr` — the plot rectangle's own fill and rule,
+   * which sit inside the frame. Chart_Plot_BorderLine_Style.docx rules its plot
+   * in a heavy orange dash-dot.
+   */
+  readonly plotFillHex?: string;
+  readonly plotLine?: ChartLineStyle;
   /**
    * §21.2.2.121 `c:valAx/c:numFmt@formatCode` — the number format the value
    * axis's tick labels and the data labels are drawn in, in the same code
@@ -1111,6 +1522,11 @@ export interface PageMargins {
   readonly left: Pt;
   readonly header?: Pt;
   readonly footer?: Pt;
+  /**
+   * §17.6.11 `w:gutter` — the binding space, added to the left margin (or to
+   * the top, when `w:settings/w:gutterAtTop` says so).
+   */
+  readonly gutter?: Pt;
 }
 
 /** §17.10 — which page class a header/footer reference applies to. */
@@ -1134,6 +1550,22 @@ export interface SectionProperties {
    */
   readonly titlePg?: boolean;
   /**
+   * §17.6.12 `w:pgNumType w:start` — the number the section's first page is
+   * printed with. Absent ⇒ the count carries on from the section before.
+   */
+  readonly pageNumberStart?: number;
+  /** §17.6.8 `w:lnNumType` — line numbers printed in the margin beside the text. */
+  readonly lineNumbering?: {
+    /** Print every `countBy`-th line (default 1). */
+    readonly countBy: number;
+    /** The number the count starts at (default 1). */
+    readonly start: number;
+    /** How far the number stands off the text (`w:distance`); absent ⇒ Word's quarter inch. */
+    readonly distancePt?: Pt;
+    /** §17.18.55 — where the count restarts. */
+    readonly restart: 'newPage' | 'newSection' | 'continuous';
+  };
+  /**
    * ECMA-376 §17.15.1.36 — `w:evenAndOddHeaders` toggle in `word/settings.xml`
    * (document-wide, not per-section). When true even-numbered pages use the
    * `even` header/footer references.
@@ -1141,6 +1573,28 @@ export interface SectionProperties {
   readonly evenAndOddHeaders?: boolean;
   /** §17.6.4 `w:cols` — multi-column section layout. */
   readonly columns?: SectionColumns;
+  /**
+   * §17.6.10 `w:pgBorders` — the rules drawn around the page. `offsetFrom`
+   * says what each edge's `spacePt` is measured from: the paper's edge, or the
+   * text margin it stands outside of.
+   */
+  readonly pageBorders?: {
+    readonly borders: CellBorders;
+    readonly offsetFrom: 'page' | 'text';
+  };
+  /**
+   * §17.6.22 `w:type` — where the section starts. `continuous` starts it on the
+   * page already in hand rather than a fresh one; everything else (nextPage,
+   * and the odd/even/column variants we do not distinguish) starts a page.
+   */
+  readonly sectionStart?: 'continuous' | 'nextPage';
+  /**
+   * §17.6.5 `w:docGrid` — the line grid a `lines`/`linesAndChars` section rules
+   * its text onto, as the pitch in points. Every line of the section's text is
+   * as tall as a whole number of these, however tall its own font makes it.
+   * Absent ⇒ no grid (`w:type="default"`, or none stated).
+   */
+  readonly gridLinePitchPt?: Pt;
 }
 
 /**
@@ -1151,14 +1605,47 @@ export interface SectionProperties {
 export interface FloatAnchor {
   readonly wrap: 'none' | 'square' | 'tight' | 'through' | 'topAndBottom';
   readonly behind?: boolean; // wp:anchor @behindDoc
+  /**
+   * §20.4.2.3 `wp:anchor @relativeHeight` — the z-order among the floats on the
+   * page: the higher number is drawn over the lower, whatever their order in
+   * the document.
+   */
+  readonly zOrder?: number;
   readonly posH?: {
-    readonly relativeFrom: 'margin' | 'page' | 'column';
+    /**
+     * §20.4.3.3 ST_RelFromH. `leftMargin`/`rightMargin` are the margin BANDS
+     * beside the text area, which is where a marginal note is placed:
+     * tdf103573.docx centres one box in each, and read as plain `margin` they
+     * both landed in the middle of the text and printed over each other.
+     */
+    readonly relativeFrom: 'margin' | 'page' | 'column' | 'leftMargin' | 'rightMargin';
     readonly offsetPt?: Pt; // wp:posOffset
     readonly align?: 'left' | 'center' | 'right'; // wp:align
   };
   readonly posV?: {
-    readonly relativeFrom: 'margin' | 'page' | 'paragraph' | 'line';
+    /**
+     * §20.4.3.4 ST_RelFromV. `topMargin`/`bottomMargin` measure from the top
+     * edge of the margin BAND they name — page-content-bottom.docx hangs a
+     * square 312pt above the bottom margin, and read as plain `margin` it went
+     * off the top of the page.
+     */
+    readonly relativeFrom: 'margin' | 'page' | 'paragraph' | 'line' | 'topMargin' | 'bottomMargin';
     readonly offsetPt?: Pt;
+    /**
+     * §20.4.3.1 `wp:align` (VML: `mso-position-vertical`) — a KEYWORD rather
+     * than an offset, which is how Word centres a watermark in its page.
+     */
+    readonly align?: 'top' | 'center' | 'bottom';
+  };
+  /**
+   * §20.4.2.3 `wp:anchor @distT/@distB/@distL/@distR` — how far the wrapped
+   * text stands off each edge of the drawing. Absent sides are 0.
+   */
+  readonly wrapDist?: {
+    readonly topPt: Pt;
+    readonly bottomPt: Pt;
+    readonly leftPt: Pt;
+    readonly rightPt: Pt;
   };
 }
 
@@ -1170,6 +1657,8 @@ export interface SectionColumns {
   readonly count: number;
   readonly spacePt: number;
   readonly explicit?: ReadonlyArray<{ readonly widthPt: number; readonly spacePt: number }>;
+  /** §17.6.4 `w:sep` — a vertical rule drawn down the middle of every gutter. */
+  readonly separator?: boolean;
 }
 
 /**

@@ -119,3 +119,39 @@ describe('&F — the workbook file name (§18.3.1.34)', () => {
     expect(text(buildHeaderFooterContent('&Cx&F', 'Sheet1', 1, 10, 'a.xlsx'))).toBe('xa.xlsx');
   });
 });
+
+// §17.16.5.44 MACROBUTTON — the words a reader SEES are in the instruction,
+// after the macro's name, and the field caches no result of its own.
+// Unsupportedtextfields.docx asks for "contacts  ssss" and we printed a blank
+// line where LibreOffice prints them.
+describe('MACROBUTTON (§17.16.5.44)', () => {
+  const runsOf = (instr: string): string => {
+    const body =
+      '<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>' +
+      `<w:r><w:instrText xml:space="preserve">${instr}</w:instrText></w:r>` +
+      '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>';
+    const el = Ream.parse(buildDocxFromBody(body)).flow.body[0] as BodyElement;
+    if (el.kind !== 'paragraph') throw new Error('expected a paragraph');
+    return el.paragraph.runs.map((r) => r.text).join('');
+  };
+
+  it('shows the display text past the macro name', () => {
+    expect(runsOf(' MACROBUTTON  AddToContacts contacts  ssss ')).toBe('contacts  ssss');
+  });
+
+  it('shows nothing when the field names only a macro', () => {
+    expect(runsOf(' MACROBUTTON AddToContacts ')).toBe('');
+  });
+
+  it('leaves a field that caches its own result alone', () => {
+    const body =
+      '<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>' +
+      '<w:r><w:instrText xml:space="preserve"> MACROBUTTON M shown </w:instrText></w:r>' +
+      '<w:r><w:fldChar w:fldCharType="separate"/></w:r>' +
+      '<w:r><w:t>cached</w:t></w:r>' +
+      '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>';
+    const el = Ream.parse(buildDocxFromBody(body)).flow.body[0] as BodyElement;
+    if (el.kind !== 'paragraph') throw new Error('expected a paragraph');
+    expect(el.paragraph.runs.map((r) => r.text).join('')).toBe('cached');
+  });
+});

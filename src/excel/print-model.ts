@@ -2345,8 +2345,10 @@ function mapBorderStyle(style: XlsxBorderStyleName): { style: BorderStyle; sizeE
       return { style: 'dashDotDot', sizeEighthPt: 12 };
     case 'thick':
       return { style: 'thick', sizeEighthPt: 18 };
+    // A thin `dashed` rule is the SHORT-gap pattern; only `mediumDashed` above
+    // strokes the long one. Both references draw them at 3/1 and 8/2.5.
     case 'dashed':
-      return { style: 'dashed', sizeEighthPt: 6 };
+      return { style: 'dashSmallGap', sizeEighthPt: 6 };
     case 'dashDot':
       return { style: 'dashDot', sizeEighthPt: 6 };
     case 'dashDotDot':

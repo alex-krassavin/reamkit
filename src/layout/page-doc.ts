@@ -10,11 +10,11 @@
 // boxes inside a Line) and styling magnitudes (font/stroke sizes) stay plain
 // numbers — they are not page-frame coordinates.
 
-import type { BorderStyle } from '@/core/document-model';
+import type { BorderStyle, ImageCrop, PictureOutline, ShapeShadow } from '@/core/document-model';
 import type { Pt, ResourceId, ResourceStore } from '@/core/ir';
 import type { FontMeasure, ParsedTtf } from '@/core/font';
 import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
-import type { PathSegment, VectorShape } from '@/core/vector';
+import type { PathSegment, VectorPath, VectorShape } from '@/core/vector';
 import type { PreparedImage } from '@/core/images';
 
 /** A font bound into a {@link LaidOutDocument}: the parsed face plus what layout/emit need from it. */
@@ -57,6 +57,17 @@ export interface TextToken {
    */
   readonly listMarker?: true;
   /**
+   * §17.3.3.1 — the token is the break of a `w:br w:type="column"`: what
+   * follows it belongs in the next column.
+   */
+  readonly columnBreak?: true;
+  /**
+   * §17.3.1.38 — the token IS a tab: its width is the distance to the stop it
+   * advances to, resolved once the line is known, and its text is whatever
+   * leader fills that gap.
+   */
+  readonly tab?: true;
+  /**
    * The token falls inside a comment range (`commentRangeRefs`): the emitter
    * fills a soft highlight behind it (E-COMMENTS CM2c).
    */
@@ -84,6 +95,28 @@ export interface ImageToken {
   readonly imageResourceName: string;
   readonly widthPt: number;
   readonly heightPt: number;
+  /** §20.1.2.2.24 — the frame the picture is drawn with, when it has one. */
+  readonly outline?: PictureOutline;
+  /** §20.1.8.40 — the drop shadow under the picture, when it casts one. */
+  readonly shadow?: ShapeShadow;
+  /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
+  readonly crop?: ImageCrop;
+  /** §20.1.7.6 — degrees clockwise about the box's centre. */
+  readonly rotationDeg?: number;
+  /** §20.1.7.6 — the picture drawn mirrored in its box. */
+  readonly flipH?: boolean;
+  readonly flipV?: boolean;
+  /**
+   * §20.4.2.6 — where the picture itself sits inside the reserved box when the
+   * drawing asked for an effect extent: offsets from the box's left edge and
+   * from the baseline, plus the drawn size. Absent ⇒ the picture fills the box.
+   */
+  readonly drawBox?: {
+    readonly dxPt: number;
+    readonly dyPt: number;
+    readonly widthPt: number;
+    readonly heightPt: number;
+  };
   /** Constants kept to satisfy {@link Token} consumers — they never read these for images. */
   readonly isSpace: false;
   readonly bidiLevel: number;
@@ -144,6 +177,12 @@ export interface Line {
   readonly resolved: ResolvedParagraphProperties;
   isLastInParagraph: boolean;
   /**
+   * ECMA-376 §17.15.1.35 — the line ends at a soft line break in a document
+   * that asked for `w:doNotExpandShiftReturn`, so justification leaves it at
+   * its natural width (as the paragraph's own last line is left).
+   */
+  readonly noJustify?: boolean;
+  /**
    * Max ascent/descent contributed by math tokens (0 when none) — they straddle
    * the baseline, so the line height/descent must grow to fit them.
    */
@@ -178,6 +217,11 @@ export interface ImageResource {
  * numbers — they are not page-frame coordinates.
  */
 export interface PageItemBase {
+  /**
+   * §20.4.2.3 — the float's `relativeHeight`. Items with one are sorted by it
+   * inside their layer before the page is written; the rest keep their order.
+   */
+  readonly z?: number;
   /**
    * Tagged PDF (§14.8): the logical structure node this item's content belongs
    * to. Set only on body content in tagged mode; undefined text in the line pass
@@ -248,6 +292,22 @@ export interface ImageItem extends PageItemBase {
   readonly width: Pt;
   readonly height: Pt;
   readonly imageResourceName: string;
+  /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
+  readonly crop?: ImageCrop;
+  /** §20.1.7.6 — degrees clockwise about the box's centre. */
+  readonly rotationDeg?: number;
+  /** §20.1.7.6 — the picture drawn mirrored in its box. */
+  readonly flipH?: boolean;
+  readonly flipV?: boolean;
+  /**
+   * §20.1.8.14 — a picture FILL is the shape's outline painted with a picture,
+   * so it is clipped to that outline: the paths in the shape's local frame and
+   * the matrix that maps them onto the page.
+   */
+  readonly clip?: {
+    readonly paths: ReadonlyArray<VectorPath>;
+    readonly transform: readonly [number, number, number, number, number, number];
+  };
 }
 
 /**

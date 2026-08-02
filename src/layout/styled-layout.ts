@@ -30,19 +30,26 @@ import type {
   Comment,
   DocumentInfo,
   FloatAnchor,
+  FrameProperties,
   HeaderFooterReference,
   HeaderFooterType,
   ImageBlock,
+  ImageCrop,
   MathNode,
   Numbering,
   Paragraph,
+  PictureOutline,
+  RelativeSize,
   Run,
   Section,
   SectionColumns,
   SectionProperties,
   ShapeBlock,
+  ShapeFill,
   ShapeShadow,
+  ShapeTextBody,
   StyleSheet,
+  TabStop,
   Table,
   TableCell,
   TableProperties,
@@ -67,6 +74,7 @@ import type { MathDrawItem, MathVariant, MeasureMath } from '@/layout/math-layou
 import type {
   FontResource,
   ImageResource,
+  ImageToken,
   LaidOutDocument,
   LaidOutPage,
   Line,
@@ -113,6 +121,7 @@ import {
   buildShapeTransform,
   buildStroke,
   gradientToSolid,
+  lineEndPaths,
 } from '@/core/drawingml/shape-render';
 import { StructTreeBuilder } from '@/pdf/struct-tree';
 
@@ -202,6 +211,12 @@ export interface StyledRenderOptions {
    * `body[sections[N-1].endIndex..sections[N].endIndex)`).
    */
   readonly sections?: ReadonlyArray<Section>;
+  /**
+   * §17.6.5 — the pitch of the document grid the text is laid on. Set by the
+   * layout itself, per section (see {@link SectionRenderCtx.options}); callers
+   * state it on the section, not here.
+   */
+  readonly gridLinePitchPt?: Pt;
   /** Header/footer body content keyed by relationship id. */
   readonly headersFooters?: ReadonlyMap<string, ReadonlyArray<BodyElement>>;
   /**
@@ -277,6 +292,24 @@ export interface StyledRenderOptions {
    */
   readonly language?: string;
   /**
+   * ECMA-376 §17.15.1.35 `w:doNotExpandShiftReturn` — when set, a justified
+   * line that ends at a soft line break (`w:br`) is drawn at its natural width
+   * instead of being stretched out to the measure.
+   */
+  readonly doNotExpandShiftReturn?: boolean;
+  /**
+   * ECMA-376 §17.2.1 `w:background` — the colour every page is painted before
+   * anything else is drawn on it. Absent ⇒ the paper's own white.
+   */
+  readonly pageBackgroundColorHex?: string;
+  /** §17.2.1 — the background's gradient or picture, when it has one. */
+  readonly pageBackgroundFill?: ShapeFill;
+  /**
+   * ECMA-376 §17.15.1.38 `w:gutterAtTop` — the binding space belongs to the
+   * TOP margin, not the left.
+   */
+  readonly gutterAtTop?: boolean;
+  /**
    * §7.6 PDF encryption (AES-256, R6). Only honoured on the ASYNC conversion
    * path (WebCrypto); mutually exclusive with `pdfA` (ISO 19005 forbids
    * `/Encrypt`) and with signatures (v1).
@@ -301,10 +334,19 @@ export interface StyledRenderOptions {
 // Re-exported from the document model (moved there so FlowDoc can carry it).
 export type { DocumentInfo } from '@/core/document-model';
 
+/** §17.6.4 — how heavy Word draws the rule between columns. */
+const COLUMN_SEPARATOR_PT = 0.5;
+
 /** A4 page width in points (the page-geometry fallback). */
 export const A4_WIDTH = 595;
 /** A4 page height in points (the page-geometry fallback). */
 export const A4_HEIGHT = 842;
+/**
+ * How far a space may be squeezed below its natural width — the shrink the
+ * line breaker offers when it weighs a line, and therefore the shrink the
+ * emitter owes it back when it draws one.
+ */
+export const GLUE_SHRINK_RATIO = 0.3;
 const TWIP_TO_PT = 1 / 20;
 const EIGHTH_PT = 1 / 8;
 const DEFAULT_CELL_PADDING_TWIPS = 108;
@@ -356,6 +398,26 @@ interface ImageBlockLaidOut {
   readonly heightPt: number;
   readonly resolvedAlignment: 'left' | 'center' | 'right' | 'both' | 'distribute';
   readonly resourceName: string;
+  /** §20.1.2.2.24 — the frame the picture is drawn with, when it has one. */
+  readonly outline?: PictureOutline;
+  /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
+  readonly crop?: ImageCrop;
+  /** §20.1.7.6 — degrees clockwise about the box's centre. */
+  readonly rotationDeg?: number;
+  /** §20.1.7.6 — the picture drawn mirrored in its box. */
+  readonly flipH?: boolean;
+  readonly flipV?: boolean;
+  /**
+   * §20.4.2.6 — where the picture is drawn inside the reserved box when the
+   * drawing states an effect extent: offsets from the box's left and TOP edges
+   * plus the drawn size. Absent ⇒ the picture fills the box.
+   */
+  readonly drawInset?: {
+    readonly dxPt: number;
+    readonly dyTopPt: number;
+    readonly widthPt: number;
+    readonly heightPt: number;
+  };
   readonly spacingBeforePt: number;
   readonly spacingAfterPt: number;
   readonly altText?: string;
@@ -370,9 +432,28 @@ interface ShapeBlockLaidOut {
   readonly float?: FloatAnchor;
   readonly widthPt: number;
   readonly heightPt: number;
+  /**
+   * §20.5.2.17 — the members of a drawing group, laid out in the group's own
+   * box: each with its own paths and the corner it is drawn at, measured from
+   * the group's top-left.
+   */
+  readonly children?: ReadonlyArray<{
+    readonly laid: ShapeBlockLaidOut;
+    readonly xPt: number;
+    readonly yPt: number;
+  }>;
   readonly paths: ReadonlyArray<VectorPath>;
+  /**
+   * §20.1.8.24 / §20.1.8.42 — the arrowheads at the line's ends, drawn FILLED
+   * in the stroke's own colour (they are shapes, not part of the stroke).
+   */
+  readonly markerPaths?: ReadonlyArray<VectorPath>;
   readonly fillColorHex?: string;
   readonly fillGradient?: ShapeGradient;
+  /** §20.1.8.14 `a:blipFill` — the picture painted across the shape's box. */
+  readonly fillImageResourceName?: string;
+  /** §20.1.8.30 — the part of that picture the box shows. */
+  readonly fillImageCrop?: ImageCrop;
   readonly stroke?: StrokeStyle;
   readonly shadow?: ShapeShadow;
   readonly rotation60k: number;
@@ -383,12 +464,37 @@ interface ShapeBlockLaidOut {
   readonly spacingAfterPt: number;
   // Text box (wps:txbx) laid out within the inset rect, anchored vertically.
   readonly textLines: ReadonlyArray<Line>;
+  /**
+   * A chart inside the text box, by the index of the (token-less) line that
+   * stands in for it. The line reserves the height; the emitter draws the
+   * chart's own primitives from that line's corner.
+   */
+  readonly textCharts?: ReadonlyMap<number, ChartBlockLaidOut>;
+  /**
+   * §20.3 — a text box may hold a DRAWING of its own, which the reader
+   * collapses to a shape block the way it does a lone picture. Keyed by the
+   * line it stands on, like the charts.
+   */
+  readonly textShapes?: ReadonlyMap<number, ShapeBlockLaidOut>;
+  /**
+   * §17.3.1 — a text box holds body content, and a TABLE is body content:
+   * a title page is very often one table inside one box. Keyed by the line it
+   * stands on, like the charts and the drawings.
+   */
+  readonly textTables?: ReadonlyMap<number, TableBlock>;
+  /**
+   * §17.3.1.33 — the paragraph spacing to leave after the line at each index.
+   * The box's height counts it; the emitter has to leave it on the page too.
+   */
+  readonly textLineGaps?: ReadonlyMap<number, number>;
   readonly textHeightPt: number;
   readonly insetLeftPt: number;
   readonly insetRightPt: number;
   readonly insetTopPt: number;
   readonly insetBottomPt: number;
   readonly anchor: 't' | 'ctr' | 'b';
+  /** §20.1.10.83 — text set along the box's long axis. */
+  readonly vertical?: 'vert' | 'vert270';
   readonly altText?: string;
 }
 
@@ -402,6 +508,18 @@ interface ParagraphBlock {
   // ECMA-376 §17.3.3.1 — the paragraph carries a forced page break (w:br
   // w:type="page"); subsequent blocks start on a new page.
   readonly pageBreakAfter?: boolean;
+  /**
+   * §17.3.3.1 — …and the break may stand BEFORE the paragraph's first word, in
+   * which case the paragraph itself starts the new page. style-inheritance.docx
+   * opens "Heading 4" with such a run and we printed it under Heading 3, on a
+   * page its own table of contents says it is not on.
+   */
+  readonly pageBreakBefore?: boolean;
+  /**
+   * §17.3.3.1 — the indices of the lines that a `w:br w:type="column"` sends to
+   * the next column. Pagination advances the column before drawing one.
+   */
+  readonly columnBreakLines?: ReadonlySet<number>;
   // Tagged PDF: when this paragraph is a list item (w:numPr), its list id and
   // nesting level (w:ilvl) so pagination can build the L/LI/LBody structure.
   readonly list?: { readonly numId: string; readonly level: number };
@@ -429,8 +547,28 @@ interface CellLayout {
   // A data-validation `list` cell paints a dropdown button at the right edge.
   readonly dropdown?: boolean;
   readonly lines: ReadonlyArray<Line>;
+  /**
+   * §17.3.1.33 — extra space to leave BEFORE the line at this index: the gap
+   * the paragraph it opens keeps from the one above (its `w:before` plus that
+   * paragraph's `w:after`). Absent for a cell whose paragraphs are all flush.
+   */
+  readonly lineGaps?: ReadonlyMap<number, number>;
   // Nested tables (a w:tbl inside this cell) rendered below the lines.
-  readonly nestedTables?: ReadonlyArray<TableBlock>;
+  /**
+   * Tables nested inside this cell (§17.4.38), each with the number of the
+   * cell's own lines that come BEFORE it — a cell writes paragraphs and tables
+   * in whatever order it likes.
+   */
+  readonly nestedTables?: ReadonlyArray<{ readonly block: TableBlock; readonly afterLine: number }>;
+  /**
+   * Shapes written in this cell (§20.4.2.4), each with the number of the cell's
+   * own lines that come BEFORE it — a drawing that is a group or a text box has
+   * no inline form, so it rides beside the lines rather than on one.
+   */
+  readonly shapes?: ReadonlyArray<{
+    readonly block: ShapeBlockLaidOut;
+    readonly afterLine: number;
+  }>;
   readonly contentHeightPt: number;
   readonly totalHeightPt: number;
   readonly verticalAlign?: 'top' | 'center' | 'bottom';
@@ -460,6 +598,8 @@ interface RowLayout {
 
 interface TableBlock {
   readonly kind: 'table';
+  /** §17.4.58 `w:tblpPr` — present when the table floats at an anchor. */
+  readonly float?: FloatAnchor;
   readonly rows: ReadonlyArray<RowLayout>;
   readonly heightPt: number;
   readonly totalWidthPt: number;
@@ -518,6 +658,10 @@ export interface LaidOutPdfDocument extends LaidOutDocument {
 const FOOTNOTE_RULE_PT = 0.75;
 const FOOTNOTE_RULE_GAP_ABOVE = 4;
 const FOOTNOTE_SEPARATOR_HEIGHT = 10;
+
+// §17.6.8 — how far a line number stands off the text when the section states
+// no `w:distance`: Word's own quarter inch.
+const LINE_NUMBER_GAP_PT = 18;
 
 // Float text wrapping: the gap between a side-wrapped float and the text
 // flowing beside it, and the floor below which line narrowing stops.
@@ -836,13 +980,14 @@ export function layoutStyledDocument(
   const sectionList = resolveSectionList(body, options);
 
   const noteAssigned = assignNoteNumbers(
-    applyNumbering(body, options.numbering),
+    applyNumbering(body, options.numbering, options.styles),
     options.comments ? new Set(options.comments.keys()) : undefined,
   );
   const numberedBody = noteAssigned.body;
   const numberedHeadersFooters = applyNumberingToHeadersFooters(
     options.headersFooters,
     options.numbering,
+    options.styles,
   );
 
   // Tagged PDF (ISO 32000-1 §14.8) — implied by PDF/A-1a. When on, paginate
@@ -856,25 +1001,53 @@ export function layoutStyledDocument(
 
   // Pre-compute per-section render context (geometry + header/footer bands).
   const sectionCtxs: Array<SectionRenderCtx> = sectionList.map((s) =>
-    buildSectionContext(s, options, numberedHeadersFooters, fontResources),
+    buildSectionContext(s, options, numberedHeadersFooters, fontResources, imageResources),
   );
 
   // Layout each body block within its owning section's content width.
   let sectionIdx = 0;
+  const bodyFrames = frameGroups(numberedBody);
   const blocks: Array<LaidOutBlock> = numberedBody.map((el, idx) => {
     while (sectionIdx < sectionCtxs.length - 1 && idx >= sectionCtxs[sectionIdx]!.endIndex) {
       sectionIdx++;
     }
     const ctx = sectionCtxs[sectionIdx]!;
+    const width = ctx.columns ? ctx.columns[0]!.widthPt : ctx.contentWidth;
+    const box: RelativeBox = {
+      pageWidthPt: ctx.pageWidth,
+      pageHeightPt: ctx.pageHeight,
+      marginLeftPt: ctx.marginLeft,
+      marginRightPt: ctx.pageWidth - ctx.marginLeft - ctx.contentWidth,
+      marginTopPt: ctx.marginTop,
+      marginBottomPt: ctx.marginBottom,
+    };
+    const group = bodyFrames.starts.get(idx);
+    if (group)
+      return layoutFrameBlock(group, ctx.options ?? options, fontResources, imageResources, width);
+    if (bodyFrames.continued.has(idx)) return emptyBlock(options);
     return layoutBodyElement(
       el,
-      options,
+      ctx.options ?? options,
       fontResources,
       imageResources,
-      ctx.columns ? ctx.columns[0]!.widthPt : ctx.contentWidth,
+      width,
       ctx.pageContentHeight,
+      box,
     );
   });
+
+  // §17.3.1.9 `w:contextualSpacing` — the space between two paragraphs of the
+  // SAME style is dropped, which is how a list sits together while keeping its
+  // distance from the text around it. Read nowhere, every item of
+  // ComplexNumberedLists.docx stood ten points from the next.
+  for (let i = 0; i < blocks.length; i++) {
+    const here = blocks[i];
+    const next = blocks[i + 1];
+    if (here?.kind !== 'paragraph' || next?.kind !== 'paragraph') continue;
+    if (here.source?.properties.styleId !== next.source?.properties.styleId) continue;
+    if (here.resolved.contextualSpacing) blocks[i] = { ...here, spacingAfterPt: 0 };
+    if (next.resolved.contextualSpacing) blocks[i + 1] = { ...next, spacingBeforePt: 0 };
+  }
 
   // Footnote plan: per-section lazily-cached layout of each note's content at
   // that section's width (notes referenced only from tables/shape text flow
@@ -898,7 +1071,7 @@ export function layoutStyledDocument(
               const noteBlocks = substituteNoteNumber(content, n).map((el) =>
                 layoutBodyElement(
                   el,
-                  options,
+                  sectionCtx.options ?? options,
                   fontResources,
                   imageResources,
                   sectionCtx.contentWidth,
@@ -933,12 +1106,36 @@ export function layoutStyledDocument(
       const content = options.endnotes?.get(id);
       if (content) tailNotes.push({ content, n });
     }
+    // §17.11.6 — the notes after the body are led by the same short rule the
+    // footnote band draws, which is how a reader tells them from the text
+    // above: endnotes.docx ends with one in both references and we ran the
+    // note straight on from the last paragraph.
+    if (tailNotes.length > 0) {
+      blocks.push(
+        layoutShapeBlock(
+          {
+            width: pt(FOOTNOTE_RULE_WIDTH),
+            height: pt(FOOTNOTE_RULE_PT),
+            geometry: { kind: 'preset', preset: 'rect', adjust: new Map() },
+            fill: { kind: 'solid', colorHex: '000000' },
+            paragraphProperties: {
+              spacingBefore: pt(FOOTNOTE_SEPARATOR_HEIGHT),
+              spacingAfter: pt(FOOTNOTE_RULE_GAP_ABOVE),
+            },
+          },
+          options,
+          fontResources,
+          imageResources,
+          lastCtx.contentWidth,
+        ),
+      );
+    }
     for (const note of tailNotes.sort((a, b) => a.n - b.n)) {
       for (const el of substituteNoteNumber(note.content, note.n)) {
         blocks.push(
           layoutBodyElement(
             el,
-            options,
+            lastCtx.options ?? options,
             fontResources,
             imageResources,
             lastCtx.contentWidth,
@@ -1009,6 +1206,9 @@ export function layoutStyledDocument(
     notePlan,
     bookmarks,
     reflowParagraph,
+    options.pageBackgroundFill?.imageResource !== undefined
+      ? imageResources.get(options.pageBackgroundFill.imageResource)?.resourceName
+      : undefined,
   );
 
   return {
@@ -1058,15 +1258,19 @@ function resolvePageDimensions(
   const sectionRight = section?.margins?.right !== undefined ? section.margins.right : undefined;
   const sectionTop = section?.margins?.top !== undefined ? section.margins.top : undefined;
   const sectionBottom = section?.margins?.bottom !== undefined ? section.margins.bottom : undefined;
+  const gutter = section?.margins?.gutter ?? 0;
+  const atTop = options.gutterAtTop === true;
   const headerOffsetPt = section?.margins?.header ?? 720 * TWIP_TO_PT;
   const footerOffsetPt = section?.margins?.footer ?? 720 * TWIP_TO_PT;
 
   return {
     pageWidth: options.pageWidth ?? sectionPageWidth ?? A4_WIDTH,
     pageHeight: options.pageHeight ?? sectionPageHeight ?? A4_HEIGHT,
-    marginLeft: options.marginLeft ?? sectionLeft ?? 72,
+    // §17.6.11 — the binding space widens the left margin, or the top one when
+    // §17.15.1.38 `w:gutterAtTop` says the pages are bound along their heads.
+    marginLeft: (options.marginLeft ?? sectionLeft ?? 72) + (atTop ? 0 : gutter),
     marginRight: options.marginRight ?? sectionRight ?? 72,
-    marginTop: options.marginTop ?? sectionTop ?? 72,
+    marginTop: (options.marginTop ?? sectionTop ?? 72) + (atTop ? gutter : 0),
     marginBottom: options.marginBottom ?? sectionBottom ?? 72,
     headerOffsetPt,
     footerOffsetPt,
@@ -1101,6 +1305,18 @@ export interface SectionRenderCtx {
   readonly footerSet: HeaderFooterSet;
   readonly titlePg: boolean;
   readonly evenAndOddHeaders: boolean;
+  /**
+   * §17.6.22 — the section begins on the page already in hand, at the point the
+   * one before it stopped, rather than on a fresh one.
+   */
+  readonly continuous: boolean;
+  /**
+   * The render options this section's content is laid out with: `options` plus
+   * whatever the section itself decides for its text — today only §17.6.5's
+   * document grid, which is a property of the SECTION and is needed by every
+   * paragraph in it. Absent on a bare context built outside a layout run.
+   */
+  readonly options?: StyledRenderOptions;
 }
 
 // Pick the final list of sections to render. Precedence:
@@ -1125,41 +1341,70 @@ function buildSectionContext(
   options: StyledRenderOptions,
   headersFooters: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
   fontResources: ReadonlyMap<string, FontResource>,
+  imageResources: ReadonlyMap<ResourceId, ImageResource>,
 ): SectionRenderCtx {
   const dims = resolvePageDimensions(options, section.properties);
   const contentWidth = dims.pageWidth - dims.marginLeft - dims.marginRight;
+  // §17.6.5 — the grid belongs to the section, and every paragraph laid out
+  // inside it stands on it (bar the ones that say `w:snapToGrid w:val="0"`).
+  const secOptions: StyledRenderOptions =
+    section.properties.gridLinePitchPt !== undefined
+      ? { ...options, gridLinePitchPt: section.properties.gridLinePitchPt }
+      : options;
+  const relativeBox: RelativeBox = {
+    pageWidthPt: dims.pageWidth,
+    pageHeightPt: dims.pageHeight,
+    marginLeftPt: dims.marginLeft,
+    marginRightPt: dims.marginRight,
+    marginTopPt: dims.marginTop,
+    marginBottomPt: dims.marginBottom,
+  };
   const headerSet = layoutHeaderSet(
     section.properties,
     headersFooters,
-    options,
+    secOptions,
     fontResources,
+    imageResources,
     contentWidth,
     dims.marginLeft,
     dims.pageHeight,
     dims.headerOffsetPt,
+    { top: dims.marginTop, bottom: dims.marginBottom },
+    relativeBox,
   );
   const footerSet = layoutFooterSet(
     section.properties,
     headersFooters,
-    options,
+    secOptions,
     fontResources,
+    imageResources,
     contentWidth,
     dims.marginLeft,
     dims.pageHeight,
     dims.footerOffsetPt,
+    { top: dims.marginTop, bottom: dims.marginBottom },
+    relativeBox,
   );
   const columns = buildColumnGeometry(section.properties.columns, contentWidth);
   // A header band taller than the gap between its own offset and the top margin
   // would otherwise be drawn straight over the first rows of the body. Excel and
   // Word both push the body down instead; a multi-line header is ordinary (a
   // spreadsheet header region may carry a literal line break).
-  const headerBottom =
-    dims.headerOffsetPt +
-    Math.max(
-      headerSet.default.heightPt ?? 0,
-      headerSet.first.heightPt ?? 0,
-      headerSet.even.heightPt ?? 0,
-    );
+  // …but only over the bands the section can actually SHOW: §17.10.1's `first`
+  // is drawn when `w:titlePg` says so and §17.15.1.36's `even` when
+  // `w:evenAndOddHeaders` does. issue_51265_3.docx keeps a four-picture EVEN
+  // header it never shows, and counting it put the top margin 1390pt down a
+  // 842pt page — every page of the body was drawn off the paper.
+  const headerHeight = Math.max(
+    headerSet.default.heightPt ?? 0,
+    section.properties.titlePg === true ? (headerSet.first.heightPt ?? 0) : 0,
+    section.properties.evenAndOddHeaders === true ? (headerSet.even.heightPt ?? 0) : 0,
+  );
+  // …and a section with NO header to show is not pushed down by the offset the
+  // header WOULD have had. tdf105490_negativeMargins.docx sets its top margin
+  // at −1pt and declares no header at all, and the bare `w:header` of 35pt
+  // moved its body 36pt down a 297pt page — two pages for the reference's one.
+  const headerBottom = headerHeight > 0 ? dims.headerOffsetPt + headerHeight : 0;
   const marginTop = Math.max(dims.marginTop, headerBottom);
   return {
     endIndex: section.endIndex,
@@ -1176,6 +1421,8 @@ function buildSectionContext(
     footerSet,
     titlePg: section.properties.titlePg === true,
     evenAndOddHeaders: section.properties.evenAndOddHeaders === true,
+    continuous: section.properties.sectionStart === 'continuous',
+    options: secOptions,
   };
 }
 
@@ -1247,10 +1494,15 @@ function layoutHeaderSet(
   headersFooters: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
   options: StyledRenderOptions,
   fontResources: ReadonlyMap<string, FontResource>,
+  imageResources: ReadonlyMap<ResourceId, ImageResource> | undefined,
   contentWidth: number,
   marginLeft: number,
   pageHeight: number,
   headerOffsetPt: number,
+  // §20.4.3.1 — the margin box a keyword-positioned drawing centres itself in.
+  bandMargins: { readonly top: number; readonly bottom: number },
+  // §20.4.3.6 — the page a band's drawing may be sized as a share of.
+  relativeBox?: RelativeBox,
 ): HeaderFooterSet {
   const band = (type: HeaderFooterType): HfBandEntry => {
     const ref = refByType(section.headers, type);
@@ -1259,10 +1511,25 @@ function layoutHeaderSet(
     if (!content) return { commands: [] };
     let measured = 0;
     const render = (c: ReadonlyArray<BodyElement>): Array<PageItem> => {
-      const blocks = laidOutBlocksFor(c, options, fontResources, contentWidth);
+      const blocks = laidOutBlocksFor(
+        c,
+        options,
+        fontResources,
+        contentWidth,
+        imageResources,
+        relativeBox,
+      );
       measured = blocksHeight(blocks);
       return markPagination(
-        drawBlocksSequentially(blocks, marginLeft, pageHeight - headerOffsetPt, pageHeight),
+        drawBlocksSequentially(
+          blocks,
+          marginLeft,
+          pageHeight - headerOffsetPt,
+          pageHeight,
+          contentWidth,
+          undefined,
+          bandMargins,
+        ),
       );
     };
     if (contentHasPageFields(content)) {
@@ -1281,14 +1548,41 @@ function layoutHeaderSet(
   return { default: band('default'), first: band('first'), even: band('even') };
 }
 
+/**
+ * §17.6.4 — the height each column of a BALANCED band is given: the band's
+ * share, but never more than the page has room for, and never so little that
+ * the band could not fit the columns at all.
+ *
+ * @param bandHeightPt The band's whole laid-out height.
+ * @param colCount     How many columns it has to share.
+ * @param roomPt       What the page has left below the band's top.
+ * @returns The per-column height, or 0 when the band should just fill.
+ */
+function balancedColumnHeight(bandHeightPt: number, colCount: number, roomPt: number): number {
+  if (bandHeightPt <= 0 || colCount < 2 || roomPt <= 0) return 0;
+  // A band taller than its columns can hold spills whatever we do; filling
+  // column after column is what it did before and is no worse.
+  if (bandHeightPt > roomPt * colCount) return 0;
+  return Math.min(roomPt, bandHeightPt / colCount);
+}
+
 /** Total laid-out height of a run of blocks, paragraph spacing included. */
 function blocksHeight(blocks: ReadonlyArray<LaidOutBlock>): number {
-  return blocks.reduce(
-    (sum, b) =>
+  return blocks.reduce((sum, b) => {
+    // §20.4.2.3 — an ANCHORED drawing is out of the flow: it sits at its own
+    // offset and grows nothing. Counted, it made fdo78420's header band 400pt
+    // tall — two text boxes anchored over the page — and the body began a third
+    // of the way down every page, in 41 pages against the reference's 23.
+    // A floating TABLE is not in that class: `drawBlocksSequentially` walks its
+    // rows down the band's cursor like any other, so the height must agree or
+    // the band starts too low — PageSpecificHeadFoot.docx anchors its page-number
+    // table in the footer and pushed the paragraph after it off the page edge.
+    if (b.kind !== 'paragraph' && b.kind !== 'table' && isOutOfFlowFloat(b.float)) return sum;
+    return (
       sum +
-      (b.kind === 'paragraph' ? b.spacingBeforePt + b.heightPt + b.spacingAfterPt : b.heightPt),
-    0,
-  );
+      (b.kind === 'paragraph' ? b.spacingBeforePt + b.heightPt + b.spacingAfterPt : b.heightPt)
+    );
+  }, 0);
 }
 
 function layoutFooterSet(
@@ -1296,10 +1590,15 @@ function layoutFooterSet(
   headersFooters: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
   options: StyledRenderOptions,
   fontResources: ReadonlyMap<string, FontResource>,
+  imageResources: ReadonlyMap<ResourceId, ImageResource> | undefined,
   contentWidth: number,
   marginLeft: number,
   pageHeight: number,
   footerOffsetPt: number,
+  // §20.4.3.1 — the margin box a keyword-positioned drawing centres itself in.
+  bandMargins: { readonly top: number; readonly bottom: number },
+  // §20.4.3.6 — the page a band's drawing may be sized as a share of.
+  relativeBox?: RelativeBox,
 ): HeaderFooterSet {
   const band = (type: HeaderFooterType): HfBandEntry => {
     const ref = refByType(section.footers, type);
@@ -1307,15 +1606,29 @@ function layoutFooterSet(
     const content = headersFooters.get(ref.relationshipId);
     if (!content) return { commands: [] };
     const render = (c: ReadonlyArray<BodyElement>): Array<PageItem> => {
-      const blocks = laidOutBlocksFor(c, options, fontResources, contentWidth);
-      const totalHeight = blocks.reduce(
-        (sum, b) =>
-          sum +
-          (b.kind === 'paragraph' ? b.spacingBeforePt + b.heightPt + b.spacingAfterPt : b.heightPt),
-        0,
+      const blocks = laidOutBlocksFor(
+        c,
+        options,
+        fontResources,
+        contentWidth,
+        imageResources,
+        relativeBox,
       );
+      // §17.6.11 — `w:pgMar @w:footer` is the distance up from the page edge to
+      // the BOTTOM of the band, so the band's own height is what puts its top.
+      // An anchored drawing adds nothing to that height (blocksHeight): counted,
+      // fdo80895.docx's footer ellipse lifted the whole band 26pt off the floor.
+      const totalHeight = blocksHeight(blocks);
       return markPagination(
-        drawBlocksSequentially(blocks, marginLeft, footerOffsetPt + totalHeight, pageHeight),
+        drawBlocksSequentially(
+          blocks,
+          marginLeft,
+          footerOffsetPt + totalHeight,
+          pageHeight,
+          contentWidth,
+          undefined,
+          bandMargins,
+        ),
       );
     };
     if (contentHasPageFields(content)) {
@@ -1366,7 +1679,13 @@ function substitutePageFields(
 
 function pickBand(set: HeaderFooterSet, band: HfBand): HfBandEntry {
   const has = (e: HfBandEntry) => e.commands.length > 0 || e.renderDynamic !== undefined;
-  if (band === 'first') return has(set.first) ? set.first : set.default;
+  // §17.10.6 — `w:titlePg` says the first page's header is DIFFERENT. A section
+  // that turns it on and declares no `first` part means different by being
+  // empty: falling back to the default put a header on the title page that
+  // neither Word nor LibreOffice draws (ImageCrop.docx, whose only page is one).
+  // `w:evenAndOddHeaders` is not the same bargain — LibreOffice prints the
+  // default on even pages when the document declares no even part.
+  if (band === 'first') return set.first;
   if (band === 'even') return has(set.even) ? set.even : set.default;
   return set.default;
 }
@@ -1386,15 +1705,309 @@ function bandForPage(
   return 'default';
 }
 
+/**
+ * §17.3.1.11 — the runs of consecutive paragraphs that carry the SAME frame.
+ * Word treats them as one floating text frame, so they lay out together in one
+ * box; the entries after the first become empty blocks, which keeps every
+ * caller's element indexing (and its section bounds) intact.
+ *
+ * @param elements The body elements, in order.
+ * @returns `starts`: the index each frame begins at → its paragraphs;
+ *          `continued`: the indices swallowed by a frame that began earlier.
+ */
+function frameGroups(elements: ReadonlyArray<BodyElement>): {
+  starts: Map<number, ReadonlyArray<Paragraph>>;
+  continued: Set<number>;
+} {
+  const starts = new Map<number, ReadonlyArray<Paragraph>>();
+  const continued = new Set<number>();
+  const key = (p: Paragraph): string | undefined =>
+    p.properties.frame ? JSON.stringify(p.properties.frame) : undefined;
+  let i = 0;
+  while (i < elements.length) {
+    const el = elements[i]!;
+    const k = el.kind === 'paragraph' ? key(el.paragraph) : undefined;
+    if (k === undefined) {
+      i++;
+      continue;
+    }
+    const members: Array<Paragraph> = [(el as { paragraph: Paragraph }).paragraph];
+    let j = i + 1;
+    while (j < elements.length) {
+      const next = elements[j]!;
+      if (next.kind !== 'paragraph' || key(next.paragraph) !== k) break;
+      members.push(next.paragraph);
+      continued.add(j);
+      j++;
+    }
+    starts.set(i, members);
+    i = j;
+  }
+  return { starts, continued };
+}
+
+/** A block that occupies no space at all — the tail of a frame group. */
+function emptyBlock(options: StyledRenderOptions): ParagraphBlock {
+  return {
+    kind: 'paragraph',
+    resolved: resolveParagraphProperties({}, options.styles),
+    lines: [],
+    heightPt: 0,
+    spacingBeforePt: 0,
+    spacingAfterPt: 0,
+  };
+}
+
+/**
+ * A text frame as the floating box it is: the paragraphs inside it lay out at
+ * the frame's width, the box takes the height the frame states or the text
+ * needs, and the body flows past it as its `w:wrap` says.
+ *
+ * @param paragraphs   The frame's paragraphs, in order.
+ * @param options      Render options.
+ * @param fontResources Fonts by variant.
+ * @param imageResources Images by resource id.
+ * @param contentWidth The width available where the frame is anchored.
+ * @returns The laid-out frame.
+ */
+function layoutFrameBlock(
+  paragraphs: ReadonlyArray<Paragraph>,
+  options: StyledRenderOptions,
+  fontResources: ReadonlyMap<string, FontResource>,
+  imageResources: ReadonlyMap<ResourceId, ImageResource> | undefined,
+  contentWidth: number,
+): LaidOutBlock {
+  const frame = paragraphs[0]!.properties.frame!;
+  const exact = frame.heightRule === 'exact' && frame.heightPt !== undefined;
+  const raw = (widthPt: number, pin: boolean): LaidOutBlock =>
+    layoutShapeBlock(
+      frameShape(frame, paragraphs, widthPt, pin),
+      options,
+      fontResources,
+      imageResources,
+      contentWidth,
+    );
+  // §17.3.1.11 — a `w:h` that names no `w:hRule` is the height the frame was
+  // DRAWN at, and the text only fills it: the box is at least that tall.
+  // Dropped for want of a rule, tdf103544.docx's framed note came out at the
+  // height of its one line, half the box every reader draws.
+  const atLeast =
+    !exact && frame.heightPt !== undefined && frame.heightRule !== 'auto' ? frame.heightPt : 0;
+  const build = (widthPt: number): LaidOutBlock => {
+    const laid = raw(widthPt, exact);
+    return laid.kind === 'shape' && atLeast > laid.heightPt ? raw(widthPt, true) : laid;
+  };
+  if (frame.widthPt !== undefined) return build(frame.widthPt);
+  // A frame that states no width is as wide as its text needs (§17.3.1.11):
+  // laid out at the full width, CT-with-frame.docx's four-digit marginal note
+  // excluded the whole column and pushed the paragraph beside it off the page.
+  const measured = build(contentWidth);
+  const natural =
+    measured.kind === 'shape'
+      ? Math.max(1, ...measured.textLines.map((l) => l.contentWidthPt))
+      : contentWidth;
+  return build(Math.min(contentWidth, natural));
+}
+
+// How many times the WordArt fit may re-measure before it is taken as settled.
+const MAX_FIT_PASSES = 4;
+
+// A text body with every run's size multiplied by `k`. The fit flag stays: the
+// next pass measures the scaled text, which may no longer wrap.
+function scaleTextBody(text: ShapeTextBody, k: number): ShapeTextBody {
+  return {
+    ...text,
+    content: text.content.map((el: BodyElement) =>
+      el.kind === 'paragraph'
+        ? {
+            ...el,
+            paragraph: {
+              ...el.paragraph,
+              runs: el.paragraph.runs.map((run: Run) => ({
+                ...run,
+                properties: {
+                  ...run.properties,
+                  fontSizePt: pt((run.properties.fontSizePt ?? 11) * k),
+                },
+              })),
+            },
+          }
+        : el,
+    ),
+  };
+}
+
+function frameShape(
+  frame: FrameProperties,
+  paragraphs: ReadonlyArray<Paragraph>,
+  widthPt: number,
+  exact: boolean,
+): ShapeBlock {
+  // §17.3.1.31/24/41 — a frame is a box, and what its FIRST paragraph says
+  // about the box is the box's: the shading behind it, the rule around it, and
+  // the direction its lines run. fdo76979.docx's side tab is one paragraph of
+  // white-on-black reading bottom-to-top, and we drew it flat and unshaded.
+  const lead = paragraphs[0]?.properties;
+  const edge = lead?.borders?.top ?? lead?.borders?.left;
+  const vertical =
+    lead?.textDirection === 'btLr'
+      ? 'vert270'
+      : lead?.textDirection === 'tbRl'
+        ? 'vert'
+        : undefined;
+  const painted = lead?.shading !== undefined || (edge !== undefined && edge.style !== 'none');
+  return {
+    width: pt(widthPt),
+    height: pt(exact ? (frame.heightPt ?? 0) : 0),
+    // A frame draws nothing of its own unless its paragraph asks for a fill or
+    // a rule; then the box IS the rectangle they describe.
+    geometry: painted
+      ? { kind: 'preset', preset: 'rect', adjust: new Map() }
+      : { kind: 'custom', custom: { pathWidth: 0, pathHeight: 0, commands: [] } },
+    fill: lead?.shading ? { kind: 'solid', colorHex: lead.shading.colorHex } : { kind: 'none' },
+    ...(edge && edge.style !== 'none'
+      ? {
+          line: {
+            fill: 'solid' as const,
+            colorHex: edge.colorHex ?? '000000',
+            width: edge.width ?? pt(0.75),
+          },
+        }
+      : {}),
+    float: frameFloat(frame),
+    paragraphProperties: {},
+    text: {
+      content: paragraphs.map((paragraph) => ({ kind: 'paragraph' as const, paragraph })),
+      // A frame has no inset: its text starts at its own edge.
+      insetLeft: pt(0),
+      insetRight: pt(0),
+      insetTop: pt(0),
+      insetBottom: pt(0),
+      ...(vertical ? { vertical } : {}),
+      ...(exact ? {} : { autoFit: true as const }),
+    },
+  };
+}
+
+/** §17.3.1.11 → §20.4.2.3: the frame's anchor, in the terms floats are placed in. */
+function frameFloat(frame: FrameProperties): FloatAnchor {
+  // §17.18.104 — `notBeside` keeps TEXT from standing beside the frame, which
+  // is the band a top-and-bottom wrap makes. The frame's own `w:x`/`w:y` go
+  // with it (the band is placed in the flow), so two frames written side by
+  // side stack instead — tdf100075.docx draws them across the page. Read as a
+  // square wrap they land right and the text runs up beside them, which is the
+  // one thing `notBeside` forbids: tdf104394_lostTextbox.docx then fits on one
+  // page where every reader takes two.
+  const wrap: FloatAnchor['wrap'] =
+    frame.wrap === 'none' ? 'none' : frame.wrap === 'notBeside' ? 'topAndBottom' : 'square';
+  const hRel = frame.hAnchor === 'page' ? 'page' : frame.hAnchor === 'margin' ? 'margin' : 'column';
+  const vRel =
+    frame.vAnchor === 'page' ? 'page' : frame.vAnchor === 'margin' ? 'margin' : 'paragraph';
+  const align =
+    frame.xAlign === 'left' || frame.xAlign === 'center' || frame.xAlign === 'right'
+      ? frame.xAlign
+      : undefined;
+  // §17.3.1.11 `w:yAlign` — a KEYWORD down the page instead of an offset, and
+  // it is what tells a frame to sit at the top of the page rather than where
+  // its paragraph happens to stand. Ignored, tdf104394_lostTextbox.docx's
+  // floating table and the paragraph beside it followed the tall frame above
+  // them onto page 2, where every reader draws them on page 1.
+  const vAlign =
+    frame.yAlign === 'top' || frame.yAlign === 'center' || frame.yAlign === 'bottom'
+      ? frame.yAlign
+      : undefined;
+  return {
+    wrap,
+    posH: { relativeFrom: hRel, ...(align ? { align } : { offsetPt: frame.xPt ?? pt(0) }) },
+    posV: {
+      relativeFrom: vRel,
+      ...(vAlign ? { align: vAlign } : { offsetPt: frame.yPt ?? pt(0) }),
+    },
+  };
+}
+
+/** The page and margin box a `wp14` relative size is a share of. */
+interface RelativeBox {
+  readonly pageWidthPt: number;
+  readonly pageHeightPt: number;
+  /** §20.4.3.6/§20.4.3.7 — the margin BANDS a relative size may be a share of. */
+  readonly marginLeftPt: number;
+  readonly marginRightPt: number;
+  readonly marginTopPt: number;
+  readonly marginBottomPt: number;
+}
+
+/**
+ * A drawing's width when it states one as a share of the page or the margins.
+ *
+ * @param rel     The relative size, if any.
+ * @param content The margin box's width.
+ * @param box     The page box, when the caller knows it.
+ * @returns The width in points, or `undefined` when none is stated.
+ */
+function relativeWidth(
+  rel: RelativeSize | undefined,
+  content: number,
+  box: RelativeBox | undefined,
+): number | undefined {
+  if (!rel?.widthPct) return undefined;
+  const from = rel.widthFrom;
+  const base =
+    box === undefined || from === undefined || from === 'margin'
+      ? content
+      : from === 'page'
+        ? box.pageWidthPt
+        : from === 'leftMargin'
+          ? box.marginLeftPt
+          : box.marginRightPt;
+  return base * rel.widthPct;
+}
+
+/** The height twin of {@link relativeWidth}; the margin box's height is the page's content height. */
+function relativeHeight(
+  rel: RelativeSize | undefined,
+  contentHeight: number | undefined,
+  box: RelativeBox | undefined,
+): number | undefined {
+  if (!rel?.heightPct) return undefined;
+  const from = rel.heightFrom;
+  const base =
+    box === undefined || from === undefined || from === 'margin'
+      ? contentHeight
+      : from === 'page'
+        ? box.pageHeightPt
+        : from === 'topMargin'
+          ? box.marginTopPt
+          : box.marginBottomPt;
+  return base === undefined ? undefined : base * rel.heightPct;
+}
+
 function laidOutBlocksFor(
   elements: ReadonlyArray<BodyElement>,
   options: StyledRenderOptions,
   fontResources: ReadonlyMap<string, FontResource>,
   contentWidth: number,
+  imageResources?: ReadonlyMap<ResourceId, ImageResource>,
+  // §20.4.3.6 — the page and its margin bands, for a drawing sized as a share
+  // of one. A band's drawings ask for that as often as the body's do:
+  // fdo78957.docx sizes its header backdrop against the whole page.
+  box?: RelativeBox,
 ): Array<LaidOutBlock> {
-  return elements.map((el) =>
-    layoutBodyElement(el, options, fontResources, undefined, contentWidth),
-  );
+  const frames = frameGroups(elements);
+  return elements.map((el, idx) => {
+    const group = frames.starts.get(idx);
+    if (group) return layoutFrameBlock(group, options, fontResources, imageResources, contentWidth);
+    if (frames.continued.has(idx)) return emptyBlock(options);
+    return layoutBodyElement(
+      el,
+      options,
+      fontResources,
+      imageResources,
+      contentWidth,
+      undefined,
+      box,
+    );
+  });
 }
 
 function layoutBodyElement(
@@ -1404,6 +2017,7 @@ function layoutBodyElement(
   imageResources: ReadonlyMap<string, ImageResource> | undefined,
   contentWidth: number,
   maxHeight?: number,
+  box?: RelativeBox,
 ): LaidOutBlock {
   if (el.kind === 'paragraph') {
     return layoutParagraphBlock(el.paragraph, options, fontResources, imageResources, contentWidth);
@@ -1412,7 +2026,7 @@ function layoutBodyElement(
     return layoutTableBlock(el.table, options, fontResources, imageResources, contentWidth);
   }
   if (el.kind === 'image') {
-    return layoutImageBlock(el.image, imageResources, contentWidth);
+    return layoutImageBlock(el.image, imageResources, contentWidth, maxHeight, box);
   }
   if (el.kind === 'chart') {
     return layoutChartBlock(el.chart, options, fontResources, contentWidth, maxHeight);
@@ -1424,6 +2038,7 @@ function layoutBodyElement(
     imageResources,
     contentWidth,
     maxHeight,
+    box,
   );
 }
 
@@ -1431,13 +2046,53 @@ function layoutImageBlock(
   image: ImageBlock,
   imageResources: ReadonlyMap<string, ImageResource> | undefined,
   contentWidth: number,
+  maxHeight?: number,
+  box?: RelativeBox,
 ): ImageBlockLaidOut {
-  let widthPt: number = image.width;
-  let heightPt: number = image.height;
-  if (widthPt > contentWidth) {
+  let widthPt: number = relativeWidth(image.relativeSize, contentWidth, box) ?? image.width;
+  let heightPt: number =
+    relativeHeight(image.relativeSize, maxHeight, box) ??
+    (image.relativeSize?.widthPct && image.width > 0
+      ? image.height * (widthPt / image.width)
+      : image.height);
+  // §20.4.2.3 — a picture IN THE FLOW cannot be wider than the column, but an
+  // ANCHORED one is not in the column at all and may hang into the margins:
+  // tdf120760_ZOrderInHeader.docx papers its header with a page-wide picture
+  // and, shrunk to the text width, it covered three quarters of the page.
+  if (widthPt > contentWidth && !image.float) {
     const scale = contentWidth / widthPt;
     widthPt = contentWidth;
     heightPt = heightPt * scale;
+  }
+  // §20.4.2.6 — the block reserves the picture PLUS the extent its rotation or
+  // effects need outside the frame, and the picture is drawn inset by it.
+  // effect-extent-inline.docx turns its cover 40° and states 46pt a side.
+  let drawInset: ImageBlockLaidOut['drawInset'];
+  const eff = image.effectExtent;
+  if (eff) {
+    const s = image.width > 0 ? widthPt / image.width : 1;
+    let box = {
+      dxPt: eff.leftPt * s,
+      dyTopPt: eff.topPt * s,
+      widthPt,
+      heightPt,
+    };
+    let reservedW = widthPt + (eff.leftPt + eff.rightPt) * s;
+    let reservedH = heightPt + (eff.topPt + eff.bottomPt) * s;
+    if (reservedW > contentWidth) {
+      const k = contentWidth / reservedW;
+      reservedW = contentWidth;
+      reservedH *= k;
+      box = {
+        dxPt: box.dxPt * k,
+        dyTopPt: box.dyTopPt * k,
+        widthPt: box.widthPt * k,
+        heightPt: box.heightPt * k,
+      };
+    }
+    widthPt = reservedW;
+    heightPt = reservedH;
+    drawInset = box;
   }
   const res = image.resource ? imageResources?.get(image.resource) : undefined;
   const resolvedAlignment = image.paragraphProperties.alignment ?? 'left';
@@ -1447,6 +2102,12 @@ function layoutImageBlock(
     heightPt,
     resolvedAlignment,
     resourceName: res?.resourceName ?? '',
+    ...(image.outline ? { outline: image.outline } : {}),
+    ...(image.crop ? { crop: image.crop } : {}),
+    ...(image.rotation60k ? { rotationDeg: image.rotation60k / 60000 } : {}),
+    ...(image.flipH ? { flipH: true } : {}),
+    ...(image.flipV ? { flipV: true } : {}),
+    ...(drawInset ? { drawInset } : {}),
     spacingBeforePt: image.paragraphProperties.spacingBefore ?? 0,
     spacingAfterPt: image.paragraphProperties.spacingAfter ?? 0,
     ...(image.altText ? { altText: image.altText } : {}),
@@ -1461,24 +2122,48 @@ function layoutShapeBlock(
   imageResources: ReadonlyMap<string, ImageResource> | undefined,
   contentWidth: number,
   maxHeight?: number,
+  // The page box a `wp14:sizeRelH/V` percentage is measured against.
+  box?: RelativeBox,
+  // §14.1.2.22 — how many fit passes this call is already the result of.
+  fitPass = 0,
 ): ShapeBlockLaidOut {
-  let widthPt: number = shape.width;
-  let heightPt: number = shape.height;
+  let widthPt: number = relativeWidth(shape.relativeSize, contentWidth, box) ?? shape.width;
+  let heightPt: number =
+    relativeHeight(shape.relativeSize, maxHeight, box) ??
+    (shape.relativeSize?.widthPct && shape.width > 0
+      ? // Only the width is stated: the shape keeps its proportions.
+        shape.height * (widthPt / shape.width)
+      : shape.height);
   // Clamp width to the content area like images, scaling height to keep aspect.
-  if (widthPt > contentWidth && widthPt > 0) {
+  // §20.4.2.3 — a FLOATING drawing is not in the text column and may hang past
+  // it into the margins, which is what both references draw:
+  // dml-groupshape-capitalization.docx anchors a 547pt group on a 454pt column
+  // and shrinking it to fit set every word inside at 83%.
+  if (!shape.float && widthPt > contentWidth && widthPt > 0) {
     const scale = contentWidth / widthPt;
     widthPt = contentWidth;
     heightPt *= scale;
   }
   // Clamp height to the page content area so an oversized shape stays on one
   // page (shapes are atomic). Scale width with it to preserve aspect.
-  if (maxHeight !== undefined && heightPt > maxHeight && heightPt > 0) {
+  // A FLOAT is exempt for the same reason it is exempt from the width clamp
+  // above: it is not in the text column and may cover the whole sheet.
+  // relorientation.docx anchors a full-page side band to the page and shrinking
+  // it to the text height also took a fifth off its width, so the band stood
+  // 45pt clear of the edge it is flush with.
+  if (!shape.float && maxHeight !== undefined && heightPt > maxHeight && heightPt > 0) {
     const scale = maxHeight / heightPt;
     widthPt *= scale;
     heightPt = maxHeight;
   }
-  const paths = buildShapePaths(shape.geometry, widthPt, heightPt);
+
   const fillGradient = shape.fill.kind === 'gradient' ? shape.fill.gradient : undefined;
+  // §20.1.8.14 — a picture fill needs the resource NAME the page will bind it
+  // under, which only the resource table knows.
+  const fillImageResourceName =
+    shape.fill.kind === 'picture' && shape.fill.imageResource !== undefined
+      ? imageResources?.get(shape.fill.imageResource)?.resourceName
+      : undefined;
   const fillColorHex =
     shape.fill.kind === 'solid'
       ? shape.fill.colorHex
@@ -1495,11 +2180,114 @@ function layoutShapeBlock(
   const insetTopPt = text?.insetTop ?? DEFAULT_INSET_TB_PT;
   const insetBottomPt = text?.insetBottom ?? DEFAULT_INSET_TB_PT;
   const textLines: Array<Line> = [];
+  const textCharts = new Map<number, ChartBlockLaidOut>();
+  const textShapes = new Map<number, ShapeBlockLaidOut>();
+  const textTables = new Map<number, TableBlock>();
+  // Extra space to leave AFTER the line at each index (paragraph spacing).
+  const textLineGaps = new Map<number, number>();
   let textHeightPt = 0;
+  // §20.1.10.83 — text set along the box's long axis wraps to its HEIGHT, and
+  // its lines stack across the width. btlr-textbox.docx reads bottom-to-top and
+  // we set it flat, so it ran out of the box the wrong way.
+  const vertical = text?.vertical;
   if (text && text.content.length > 0) {
-    const innerWidth = Math.max(1, widthPt - insetLeftPt - insetRightPt);
+    const innerWidth = vertical
+      ? Math.max(1, heightPt - insetTopPt - insetBottomPt)
+      : Math.max(1, widthPt - insetLeftPt - insetRightPt);
     for (const el of text.content) {
-      if (el.kind !== 'paragraph') continue; // tables/nested shapes in a text box: out of scope
+      // A picture standing alone in a text box is a paragraph the reader
+      // collapsed to an image BLOCK. Skipped with the tables, it vanished:
+      // WPGbodyPr.docx sets one inside its outer circle and we drew the
+      // circle and the words and nothing between them. It becomes a line of
+      // its own holding one image token — which is what an inline picture in
+      // a text box already is, and the emitter draws it the same way.
+      if (el.kind === 'image') {
+        const res = el.image.resource ? imageResources?.get(el.image.resource) : undefined;
+        const scaled = Math.min(1, innerWidth / Math.max(1, el.image.width));
+        const line: Line = {
+          tokens: [
+            {
+              kind: 'image',
+              imageResourceName: res?.resourceName ?? '',
+              widthPt: el.image.width * scaled,
+              heightPt: el.image.height * scaled,
+              isSpace: false,
+              bidiLevel: 0,
+            },
+          ],
+          contentWidthPt: el.image.width * scaled,
+          maxFontSizePt: el.image.height * scaled,
+          availableWidthPt: innerWidth,
+          firstLine: true,
+          resolved: resolveParagraphProperties(el.image.paragraphProperties, options.styles),
+          isLastInParagraph: true,
+        };
+        textLines.push(line);
+        textHeightPt += computeLineHeight(line, line.resolved);
+        continue;
+      }
+      // …and a chart in a text box is the same story: a line of its own, as
+      // tall as the chart, drawn from the line's corner. chart-size.docx sets
+      // one between its "Before." and its "After." and we drew an empty frame.
+      if (el.kind === 'chart') {
+        const laid = layoutChartBlock(el.chart, options, fontResources, innerWidth);
+        const line: Line = {
+          tokens: [],
+          contentWidthPt: laid.widthPt,
+          maxFontSizePt: laid.heightPt,
+          availableWidthPt: innerWidth,
+          firstLine: true,
+          resolved: resolveParagraphProperties(el.chart.paragraphProperties, options.styles),
+          isLastInParagraph: true,
+        };
+        textCharts.set(textLines.length, laid);
+        textLines.push(line);
+        textHeightPt += computeLineHeight(line, line.resolved);
+        continue;
+      }
+      // §20.3 — and a DRAWING in a text box: fdo76249.docx puts a locked
+      // canvas of its logo inside one, the paragraph collapses to a shape
+      // block, and skipping it left the whole page blank.
+      if (el.kind === 'shape') {
+        const laid = layoutShapeBlock(el.shape, options, fontResources, imageResources, innerWidth);
+        const line: Line = {
+          tokens: [],
+          contentWidthPt: laid.widthPt,
+          maxFontSizePt: laid.heightPt,
+          availableWidthPt: innerWidth,
+          firstLine: true,
+          resolved: resolveParagraphProperties(el.shape.paragraphProperties, options.styles),
+          isLastInParagraph: true,
+        };
+        textShapes.set(textLines.length, laid);
+        textLines.push(line);
+        textHeightPt += computeLineHeight(line, line.resolved);
+        continue;
+      }
+      // §17.3.1 — and a TABLE, which is what a title page usually is: one box
+      // holding one table. Skipped, tdf102466.docx's whole first page — its
+      // title, its subtitle and its logo — came out blank.
+      if (el.kind === 'table') {
+        const laid = layoutTableBlock(el.table, options, fontResources, imageResources, innerWidth);
+        const line: Line = {
+          tokens: [],
+          contentWidthPt: laid.totalWidthPt,
+          maxFontSizePt: laid.heightPt,
+          // The table's own height, exactly: a line stands 1.2× its font size
+          // and a table stands as tall as its rows.
+          metricHeightPt: laid.heightPt,
+          availableWidthPt: innerWidth,
+          firstLine: true,
+          resolved: resolveParagraphProperties({}, options.styles),
+          isLastInParagraph: true,
+        };
+        textTables.set(textLines.length, laid);
+        textLines.push(line);
+        textHeightPt += computeLineHeight(line, line.resolved);
+        continue;
+      }
+      // Everything a text box may hold is now placed; what is left is a
+      // paragraph.
       const blk = layoutParagraphBlock(
         el.paragraph,
         options,
@@ -1507,41 +2295,113 @@ function layoutShapeBlock(
         imageResources,
         innerWidth,
       );
-      // §21.1.2.2.3 — a paragraph with no runs is still a LINE: it is the blank
-      // line the author typed, and `a:endParaRPr` says how tall. Wrapping zero
-      // tokens yields no line at all, so the shape's text closed up and every
-      // paragraph after the blank one drew 14pt too high (shape-macro-ext-ref
-      // .xlsx opens its button's caption with one).
-      const lines =
-        blk.lines.length > 0
-          ? blk.lines
-          : [
-              {
-                tokens: [],
-                contentWidthPt: 0,
-                maxFontSizePt:
-                  el.paragraph.runs[0]?.properties.fontSizePt ??
-                  options.styles.defaultRunProperties.fontSizePt ??
-                  pt(11),
-                availableWidthPt: innerWidth,
-                firstLine: true,
-                resolved: blk.resolved,
-                isLastInParagraph: true,
-              },
-            ];
-      for (const line of lines) {
+      // §21.1.2.2.3 — a paragraph with no runs is still a LINE (the blank line
+      // the author typed); layoutParagraphBlock makes it, so a shape's text no
+      // longer closes up over one (shape-macro-ext-ref.xlsx opens its button's
+      // caption with a blank line and every paragraph after it drew 14pt high).
+      // §17.3.1.33 — the space before a paragraph is the gap after the line
+      // above it. Counted in the box's height but never left on the page, the
+      // paragraphs of dml-groupshape-capitalization.docx's caption ran together
+      // where both references space them out.
+      const before = textLines.length > 0 ? blk.spacingBeforePt : 0;
+      if (before > 0) {
+        const last = textLines.length - 1;
+        textLineGaps.set(last, (textLineGaps.get(last) ?? 0) + before);
+        textHeightPt += before;
+      }
+      for (const line of blk.lines) {
         textLines.push(line);
         textHeightPt += computeLineHeight(line, blk.resolved);
+      }
+      if (blk.spacingAfterPt > 0) {
+        const last = textLines.length - 1;
+        textLineGaps.set(last, (textLineGaps.get(last) ?? 0) + blk.spacingAfterPt);
       }
       textHeightPt += blk.spacingAfterPt;
     }
   }
 
+  // §20.1.10.28 `a:spAutoFit` — the shape follows its text: the box it states
+  // is a starting size, and the height is whatever the text needs. Ignored,
+  // autofit.docx drew its one-line box as tall as the box beside it. The
+  // geometry is built after, so the outline follows the height it settles on.
+  if (text?.autoFit && !vertical && textLines.length > 0) {
+    heightPt = textHeightPt + insetTopPt + insetBottomPt;
+  }
+  // §14.1.2.22 `@fitshape` — the other way round: the TEXT follows the shape.
+  // Legacy WordArt states a size the parser guessed without metrics; now that
+  // the lines are measured, the size that FILLS the box is known, so the body
+  // is laid out once more at it.
+  if (text?.fitToBox === true && textLines.length > 0 && fitPass < MAX_FIT_PASSES) {
+    const innerW = Math.max(1, widthPt - insetLeftPt - insetRightPt);
+    const innerH = Math.max(1, heightPt - insetTopPt - insetBottomPt);
+    // WordArt does not wrap: each source line is one line, however wide. So
+    // the size is measured against what a paragraph would be UNBROKEN — the
+    // sum of the widths the breaker gave it — and against as many lines as
+    // there are paragraphs. Measured against the broken lines instead, the
+    // scale oscillates: WordArt.docx settles at "WORD- / ART" where both
+    // references keep it whole.
+    let widest = 0;
+    let running = 0;
+    let paragraphs = 0;
+    for (const l of textLines) {
+      running += l.contentWidthPt;
+      if (l.isLastInParagraph) {
+        widest = Math.max(widest, running);
+        running = 0;
+        paragraphs++;
+      }
+    }
+    widest = Math.max(1, widest, running);
+    const perLine = textHeightPt / Math.max(1, textLines.length);
+    const naturalHeight = Math.max(1, perLine * Math.max(1, paragraphs || textLines.length));
+    const k = Math.min(innerW / widest, innerH / naturalHeight);
+    if (Number.isFinite(k) && k > 0.05 && k < 20 && Math.abs(k - 1) > 0.02) {
+      return layoutShapeBlock(
+        { ...shape, text: scaleTextBody(text, k) },
+        options,
+        fontResources,
+        imageResources,
+        contentWidth,
+        maxHeight,
+        box,
+        fitPass + 1,
+      );
+    }
+  }
+  const paths = buildShapePaths(shape.geometry, widthPt, heightPt);
+  const markerPaths = lineEndPaths(paths, shape.line, stroke?.widthPt ?? 0);
+
+  // §20.5.2.17 — a group's members ride the same clamp its box did, so the
+  // group keeps its shape when the page is narrower than the drawing.
+  const scale = shape.width > 0 ? widthPt / shape.width : 1;
+  const children = (shape.children ?? []).map((child) => ({
+    laid: layoutShapeBlock(
+      {
+        ...child.shape,
+        width: pt(child.shape.width * scale),
+        height: pt(child.shape.height * scale),
+      },
+      options,
+      fontResources,
+      imageResources,
+      Number.POSITIVE_INFINITY,
+    ),
+    xPt: child.xPt * scale,
+    yPt: child.yPt * scale,
+  }));
+
   return {
     kind: 'shape',
     widthPt,
     heightPt,
+    ...(children.length > 0 ? { children } : {}),
     paths,
+    ...(markerPaths.length > 0 ? { markerPaths } : {}),
+    ...(fillImageResourceName ? { fillImageResourceName } : {}),
+    ...(fillImageResourceName && shape.fill.imageCrop
+      ? { fillImageCrop: shape.fill.imageCrop }
+      : {}),
     ...(fillColorHex ? { fillColorHex } : {}),
     ...(fillGradient ? { fillGradient } : {}),
     ...(stroke ? { stroke } : {}),
@@ -1553,12 +2413,17 @@ function layoutShapeBlock(
     spacingBeforePt: pp.spacingBefore ?? 0,
     spacingAfterPt: pp.spacingAfter ?? 0,
     textLines,
+    ...(textCharts.size > 0 ? { textCharts } : {}),
+    ...(textShapes.size > 0 ? { textShapes } : {}),
+    ...(textTables.size > 0 ? { textTables } : {}),
+    ...(textLineGaps.size > 0 ? { textLineGaps } : {}),
     textHeightPt,
     insetLeftPt,
     insetRightPt,
     insetTopPt,
     insetBottomPt,
     anchor: text?.anchor ?? 't',
+    ...(vertical ? { vertical } : {}),
     ...(shape.altText ? { altText: shape.altText } : {}),
     ...(shape.float ? { float: shape.float } : {}),
   };
@@ -1632,6 +2497,7 @@ function buildChartLayout(
   // the plotted data over both. Gridlines drawn after the bars ruled white
   // lines straight across every one of them (123233_charts.xlsx).
   if (scene.background) shapes.push(rectPrim(scene.background));
+  if (scene.plotBackground) shapes.push(rectPrim(scene.plotBackground));
   for (const g of scene.gridlines ?? []) shapes.push(polylinePrim(g));
   for (const pg of scene.polygons ?? []) shapes.push(polygonPrim(pg));
   for (const r of scene.rects) shapes.push(rectPrim(r));
@@ -1842,11 +2708,24 @@ function circlePath(cx: number, cy: number, r: number): VectorPath {
     .build();
 }
 
+// A rect's own outline, as the stroke a prim carries: the chart model states a
+// colour, a width and a preset dash, and buildStroke turns the dash into the
+// pattern the emitter draws.
+function strokeOfRect(r: ChartRect): { stroke?: StrokeStyle } {
+  if (!r.strokeHex) return {};
+  const stroke = buildStroke({
+    colorHex: r.strokeHex,
+    width: pt(r.strokeWidthPt ?? 1),
+    ...(r.strokeDash ? { dash: r.strokeDash } : {}),
+  });
+  return stroke ? { stroke } : {};
+}
+
 function rectPrim(r: ChartRect): ChartShapePrim {
   return {
     paths: [rectAtPath(r.x, r.y, r.w, r.h)],
     ...(r.fillHex ? { fillColorHex: r.fillHex } : {}),
-    ...(r.strokeHex ? { stroke: { colorHex: r.strokeHex, widthPt: r.strokeWidthPt ?? 1 } } : {}),
+    ...strokeOfRect(r),
   };
 }
 
@@ -1948,11 +2827,25 @@ function collectImageResources(
           for (const cell of row.cells) visit(cell.content);
         }
       } else if (el.kind === 'shape') {
-        if (el.shape.text) visit(el.shape.text.content);
+        // §20.5.2.17 — including every member of a group, however deep, and the
+        // picture a shape may be FILLED with (§20.1.8.14). Missed, the picture
+        // inside WPGbodyPr.docx's outer circle had no resource to draw from.
+        const shapeImages = (sh: ShapeBlock): void => {
+          if (sh.fill.imageResource) seen.add(sh.fill.imageResource);
+          if (sh.text) visit(sh.text.content);
+          for (const child of sh.children ?? []) shapeImages(child.shape);
+        };
+        shapeImages(el.shape);
       }
     }
   };
   visit(body);
+  // §17.2.1 — and the picture the PAGE is papered with, which is in no body at
+  // all: unseen here it has no resource name, and nothing would be drawn for it
+  // (tdf126533_pageBitmap.docx).
+  if (options.pageBackgroundFill?.imageResource !== undefined) {
+    seen.add(options.pageBackgroundFill.imageResource);
+  }
   for (const hf of headersFooters.values()) visit(hf);
   for (const note of options.footnotes?.values() ?? []) visit(note);
   for (const note of options.endnotes?.values() ?? []) visit(note);
@@ -1981,8 +2874,344 @@ function collectImageResources(
   return out;
 }
 
+// A laid-out chart's primitives as page items, drawn from the box's
+// bottom-left corner. The primitives live in a local y-up frame; the page flip
+// composes with the corner, so every caller — body pagination, a header band,
+// a text box holding one — places a chart the same way.
+function chartPageItems(
+  laid: ChartBlockLaidOut,
+  x: number,
+  bottomYUp: number,
+  pageHeight: number,
+  structId?: number,
+): Array<PageItem> {
+  const fig = structId !== undefined ? { structId } : {};
+  const out: Array<PageItem> = [];
+  for (const sh of laid.layout.shapes) {
+    out.push({
+      type: 'shape',
+      shape: {
+        paths: sh.paths,
+        ...(sh.fillColorHex ? { fillColorHex: sh.fillColorHex } : {}),
+        ...(sh.stroke ? { stroke: sh.stroke } : {}),
+        transform: flipTransform([1, 0, 0, 1, x, bottomYUp], pageHeight),
+      },
+      ...fig,
+    });
+  }
+  for (const t of laid.layout.texts) {
+    out.push({
+      type: 'line',
+      line: t.line,
+      originX: pt(x + t.x),
+      baselineY: pt(pageHeight - (bottomYUp + t.y)),
+      ...(t.rotationDeg ? { rotationDeg: t.rotationDeg } : {}),
+      ...fig,
+    });
+  }
+  return out;
+}
+
 // Sequential, non-paginated draw used for header/footer bands. Tables in
 // headers/footers are uncommon in practice and skipped here for simplicity.
+// Shape text: laid out axis-aligned, anchored vertically within the inset
+// rect, emitted as ordinary line commands so it rides the text pass on
+// top of the fill. (Rotated text boxes keep upright text.)
+function emitShapeText(
+  sh: ShapeBlockLaidOut,
+  x: number,
+  bottomYUp: number,
+  sink: Array<PageItem>,
+  pageHeight: number,
+  figId: number | undefined,
+): void {
+  if (sh.textLines.length === 0) return;
+  // §20.1.10.83 — vertical text runs along the box's height and its lines
+  // stack across its width. A quarter turn puts each line's local +x on
+  // the page's +y (`vert270`, bottom-to-top) or -y (`vert`).
+  if (sh.vertical) {
+    const up = sh.vertical === 'vert270';
+    const innerHeight = Math.max(1, sh.heightPt - sh.insetTopPt - sh.insetBottomPt);
+    // Where the stack of lines begins across the width, by the same
+    // anchor rule the horizontal case uses along the height.
+    let across =
+      sh.anchor === 'b'
+        ? sh.widthPt - sh.insetRightPt - sh.textHeightPt
+        : sh.anchor === 'ctr'
+          ? (sh.widthPt - sh.textHeightPt) / 2
+          : sh.insetLeftPt;
+    for (const line of sh.textLines) {
+      const h = computeLineHeight(line, line.resolved);
+      const lineOffset = alignmentOffset(line.resolved.alignment, line.contentWidthPt, innerHeight);
+      // The baseline sits `descent` in from the line's far edge, which a
+      // quarter turn puts across the box rather than down it.
+      const off = lineBaselineOffset(line, line.resolved);
+      const baselineAcross = up ? across + h - off : across + off;
+      sink.push({
+        type: 'line',
+        line,
+        originX: pt(up ? x + baselineAcross : x + sh.widthPt - baselineAcross),
+        baselineY: pt(
+          pageHeight -
+            (up
+              ? bottomYUp + sh.insetBottomPt + lineOffset
+              : bottomYUp + sh.heightPt - sh.insetTopPt - lineOffset),
+        ),
+        rotationDeg: up ? 90 : -90,
+        ...(figId !== undefined ? { structId: figId } : {}),
+      });
+      across += h;
+    }
+    return;
+  }
+  const shapeTop = bottomYUp + sh.heightPt;
+  const innerWidth = Math.max(1, sh.widthPt - sh.insetLeftPt - sh.insetRightPt);
+  let textY: number;
+  if (sh.anchor === 'b') {
+    textY = bottomYUp + sh.insetBottomPt + sh.textHeightPt;
+  } else if (sh.anchor === 'ctr') {
+    textY = bottomYUp + (sh.heightPt + sh.textHeightPt) / 2;
+  } else {
+    textY = shapeTop - sh.insetTopPt;
+  }
+  sh.textLines.forEach((line, i) => {
+    textY -= computeLineHeight(line, line.resolved);
+    const lineOffset = alignmentOffset(line.resolved.alignment, line.contentWidthPt, innerWidth);
+    const nested = sh.textCharts?.get(i);
+    if (nested) {
+      sink.push(
+        ...chartPageItems(nested, x + sh.insetLeftPt + lineOffset, textY, pageHeight, figId),
+      );
+      return;
+    }
+    const drawing = sh.textShapes?.get(i);
+    if (drawing) {
+      emitShapeItems(drawing, x + sh.insetLeftPt + lineOffset, textY, sink, pageHeight, figId);
+      return;
+    }
+    const table = sh.textTables?.get(i);
+    if (table) {
+      // The line reserved the table's height, so its rows run from the line's
+      // TOP down, the way the band and the page draw a table.
+      let rowY = textY + table.heightPt;
+      for (const row of table.rows) {
+        emitRowChunk(
+          sink,
+          row,
+          x + sh.insetLeftPt + lineOffset + table.xOffsetPt,
+          rowY,
+          pageHeight,
+          table.colCount,
+        );
+        rowY -= row.heightPt;
+      }
+      return;
+    }
+    sink.push({
+      type: 'line',
+      line,
+      originX: pt(x + sh.insetLeftPt + lineOffset),
+      baselineY: pt(pageHeight - (textY + lineBaselineOffset(line, line.resolved))),
+      ...(figId !== undefined ? { structId: figId } : {}),
+    });
+    textY -= sh.textLineGaps?.get(i) ?? 0;
+  });
+}
+// One shape, `bottomYUp` being its own bottom edge. §20.5.2.17 — a group
+// draws nothing itself and then draws its members, each at the corner it
+// holds within the group's box.
+function emitShapeItems(
+  sh: ShapeBlockLaidOut,
+  x: number,
+  bottomYUp: number,
+  sink: Array<PageItem>,
+  pageHeight: number,
+  figId: number | undefined,
+): void {
+  // §20.1.8.14 — a picture fill is the shape's OUTLINE painted with an image,
+  // so it is clipped to that outline: fdo77718.docx fills the round nodes of
+  // its diagram with photographs and we drew each one as a square.
+  if (sh.fillImageResourceName) {
+    sink.push({
+      type: 'image',
+      x: pt(x),
+      y: pt(pageHeight - (bottomYUp + sh.heightPt)),
+      width: pt(sh.widthPt),
+      height: pt(sh.heightPt),
+      imageResourceName: sh.fillImageResourceName,
+      ...(sh.fillImageCrop ? { crop: sh.fillImageCrop } : {}),
+      clip: {
+        paths: sh.paths,
+        transform: flipTransform(
+          buildShapeTransform(
+            x,
+            bottomYUp,
+            sh.widthPt,
+            sh.heightPt,
+            sh.rotation60k,
+            sh.flipH,
+            sh.flipV,
+          ),
+          pageHeight,
+        ),
+      },
+      ...(figId !== undefined ? { structId: figId } : {}),
+    });
+  }
+  // The arrowheads ride the same placement as the shape, filled in the
+  // stroke's own colour: a decoration is a shape, not a pen.
+  if (sh.markerPaths && sh.stroke) {
+    sink.push({
+      type: 'shape',
+      shape: {
+        paths: sh.markerPaths,
+        fillColorHex: sh.stroke.colorHex,
+        transform: flipTransform(
+          buildShapeTransform(
+            x,
+            bottomYUp,
+            sh.widthPt,
+            sh.heightPt,
+            sh.rotation60k,
+            sh.flipH,
+            sh.flipV,
+          ),
+          pageHeight,
+        ),
+      },
+      ...(figId !== undefined ? { structId: figId } : {}),
+    });
+  }
+  if (sh.paths.some((path) => path.segments.length > 0)) {
+    sink.push({
+      type: 'shape',
+      shape: {
+        paths: sh.paths,
+        ...(sh.fillColorHex ? { fillColorHex: sh.fillColorHex } : {}),
+        ...(sh.fillGradient ? { fillGradient: sh.fillGradient } : {}),
+        ...(sh.stroke ? { stroke: sh.stroke } : {}),
+        ...(sh.shadow ? { shadow: sh.shadow } : {}),
+        transform: flipTransform(
+          buildShapeTransform(
+            x,
+            bottomYUp,
+            sh.widthPt,
+            sh.heightPt,
+            sh.rotation60k,
+            sh.flipH,
+            sh.flipV,
+          ),
+          pageHeight,
+        ),
+      },
+      ...(figId !== undefined ? { structId: figId } : {}),
+    });
+  }
+  for (const child of sh.children ?? []) {
+    // A child's y runs DOWN from the group's top; the page frame here
+    // runs up, so the group's height turns one into the other.
+    emitShapeItems(
+      child.laid,
+      x + child.xPt,
+      bottomYUp + sh.heightPt - child.yPt - child.laid.heightPt,
+      sink,
+      pageHeight,
+      figId,
+    );
+  }
+  emitShapeText(sh, x, bottomYUp, sink, pageHeight, figId);
+}
+
+/**
+ * §20.1.2.2.24 — the four rules of a picture's own frame, around the box the
+ * picture is drawn in. Borders paint after images and before shapes, so the
+ * frame lands on top of the picture the way Word draws it.
+ *
+ * @param outline  The picture's frame.
+ * @param x        Left edge of the picture box.
+ * @param topY     Distance from the page TOP down to the box's top edge.
+ * @param widthPt  Box width.
+ * @param heightPt Box height.
+ * @param structId Tagged-PDF structure node the picture belongs to.
+ * @returns One {@link BorderItem} per side.
+ */
+function pictureOutlineItems(
+  outline: PictureOutline,
+  x: number,
+  topY: number,
+  widthPt: number,
+  heightPt: number,
+  structId: number | undefined,
+): Array<PageItem> {
+  return (['top', 'bottom', 'left', 'right'] as const).map((side) => ({
+    type: 'border' as const,
+    side,
+    x: pt(x),
+    y: pt(topY),
+    width: pt(widthPt),
+    height: pt(heightPt),
+    borderSizePt: outline.widthPt,
+    borderColorHex: outline.colorHex,
+    ...(structId !== undefined ? { structId } : {}),
+  }));
+}
+
+// §20.4.2.3 — where an anchored drawing sits across a header or footer band:
+// the alignment its anchor names, or the offset it states. Undefined when the
+// drawing is not anchored at all, and so flows with the band's other content.
+function bandAnchor(
+  float: FloatAnchor | undefined,
+  widthPt: number,
+  contentWidth: number,
+  // Where the band's own left edge sits on the page, so an offset measured
+  // from the PAGE can be expressed as one from the band.
+  bandLeftPt = 0,
+): number | undefined {
+  if (!float) return undefined;
+  const align = float.posH?.align;
+  if (align === 'right') return contentWidth - widthPt;
+  if (align === 'center') return (contentWidth - widthPt) / 2;
+  if (align === 'left') return 0;
+  const offset = float.posH?.offsetPt ?? 0;
+  return float.posH?.relativeFrom === 'page' ? offset - bandLeftPt : offset;
+}
+
+/**
+ * §20.4.2.3 — how far DOWN the page a band's anchored drawing starts, in the
+ * band emitter's y-UP frame. A `page`-relative anchor is measured from the
+ * paper's own top edge, whatever the band's cursor has reached: n773061.docx
+ * hangs its header text box 92pt down the page and, measured from the header's
+ * first paragraph, it landed 60pt lower than Word and LibreOffice put it.
+ *
+ * @param float      The anchor.
+ * @param cursorY    The band's cursor (y-up), where a paragraph-relative
+ *                   anchor is measured from.
+ * @param pageHeight The page height.
+ * @returns The drawing's top edge, y-up.
+ */
+function bandAnchorTop(
+  float: FloatAnchor,
+  cursorY: number,
+  pageHeight: number,
+  heightPt = 0,
+  margins?: { readonly top: number; readonly bottom: number },
+): number {
+  // §20.4.3.1 — a KEYWORD rather than an offset: Word centres a watermark in
+  // the page (or in the margin box) this way, and pinned to the band's cursor
+  // pictureWatermark.docx printed its penguins in the top corner.
+  const align = float.posV?.align;
+  if (align !== undefined) {
+    const page = float.posV?.relativeFrom === 'page' || !margins;
+    const topYUp = page ? pageHeight : pageHeight - margins.top;
+    const bottomYUp = page ? 0 : margins.bottom;
+    if (align === 'top') return topYUp;
+    if (align === 'bottom') return bottomYUp + heightPt;
+    return bottomYUp + (topYUp - bottomYUp + heightPt) / 2;
+  }
+  const offset = float.posV?.offsetPt ?? 0;
+  return float.posV?.relativeFrom === 'page' ? pageHeight - offset : cursorY - offset;
+}
+
 // `startY` is in the internal y-up frame the band math works in; the emitted
 // items carry top-left coordinates like everything else on a page.
 function drawBlocksSequentially(
@@ -1990,15 +3219,115 @@ function drawBlocksSequentially(
   startX: number,
   startY: number,
   pageHeight: number,
+  contentWidth: number,
   // Tagged PDF: stamp every emitted line with this structure node (used by
   // the footnote band; header/footer bands stay artifact-marked instead).
   structId?: number,
+  // §20.4.3.1 — the margin box a keyword-positioned drawing centres itself in.
+  bandMargins?: { readonly top: number; readonly bottom: number },
 ): Array<PageItem> {
   const out: Array<PageItem> = [];
   let cursorY = startY;
-  for (const block of blocks) {
-    if (block.kind !== 'paragraph') continue;
+  // §20.4.2.3 `@behindDoc` — a drawing that sits BEHIND the text sits behind
+  // everything else in the band too, whatever order it was written in. Such a
+  // drawing is out of the flow, so drawing it first costs the cursor nothing.
+  // tdf120760_ZOrderInHeader.docx papers its header with one and hangs a red
+  // stamp above it; taken in document order the paper covered the stamp.
+  const isBehind = (b: LaidOutBlock): boolean =>
+    'float' in b && (b as { readonly float?: FloatAnchor }).float?.behind === true;
+  const ordered = blocks.some(isBehind)
+    ? [...blocks.filter(isBehind), ...blocks.filter((b) => !isBehind(b))]
+    : blocks;
+  for (const block of ordered) {
+    // A header is not only paragraphs. A letterhead is very often ONE TABLE —
+    // logo in the left cell, institute in the right — and the band drew
+    // paragraphs alone, so such a document lost its header and its footer
+    // whole: 090716_Studentische_Arbeit_VWS.docx prints a green crest and two
+    // rules across every one of its six pages and we printed none of it.
+    // No pagination here and no tagging: a band is one page's worth by
+    // construction, and its contents are artifacts.
+    if (block.kind === 'table') {
+      const tableX = startX + block.xOffsetPt;
+      for (const row of block.rows) {
+        emitRowChunk(out, row, tableX, cursorY, pageHeight, block.colCount);
+        cursorY -= row.heightPt;
+      }
+      continue;
+    }
+    // A chart is a band's content too: chart-in-footer.docx puts one in its
+    // footer and we printed an empty page. Its primitives live in a local y-up
+    // frame, the same one the body's pagination places.
+    if (block.kind === 'chart') {
+      cursorY -= block.spacingBeforePt + block.heightPt;
+      const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, contentWidth);
+      out.push(...chartPageItems(block, startX + offset, cursorY, pageHeight, structId));
+      cursorY -= block.spacingAfterPt;
+      continue;
+    }
+    // …and a first-page header is very often nothing BUT the crest.
+    if (block.kind === 'image') {
+      cursorY -= block.spacingBeforePt;
+      const anchored = bandAnchor(block.float, block.widthPt, contentWidth, startX);
+      const offset =
+        anchored ?? alignmentOffset(block.resolvedAlignment, block.widthPt, contentWidth);
+      const top =
+        anchored === undefined || !block.float
+          ? cursorY
+          : bandAnchorTop(block.float, cursorY, pageHeight, block.heightPt, bandMargins);
+      out.push({
+        type: 'image',
+        x: pt(startX + offset),
+        y: pt(pageHeight - top),
+        width: pt(block.widthPt),
+        height: pt(block.heightPt),
+        imageResourceName: block.resourceName,
+        ...(block.crop ? { crop: block.crop } : {}),
+        ...(block.rotationDeg ? { rotationDeg: block.rotationDeg } : {}),
+        ...(block.flipH ? { flipH: true } : {}),
+        ...(block.flipV ? { flipV: true } : {}),
+      });
+      if (block.outline) {
+        out.push(
+          ...pictureOutlineItems(
+            block.outline,
+            startX + offset,
+            pageHeight - top,
+            block.widthPt,
+            block.heightPt,
+            structId,
+          ),
+        );
+      }
+      // An ANCHORED drawing is out of the flow: it takes no band height, or the
+      // two logos FDO78292.docx anchors side by side in its footer stack up
+      // instead, each pushing the other off the bottom of the page.
+      if (anchored === undefined) cursorY -= block.heightPt;
+      cursorY -= block.spacingAfterPt;
+      continue;
+    }
+    // A shape — in a band that is nearly always §17.3.1.11's framed paragraph,
+    // the page number Word parks at one edge of the header. Placed at its own
+    // anchor across the band's width, since that is the whole point of the
+    // frame: FDO73546 numbers its pages this way and we numbered none.
+    if (block.kind === 'shape') {
+      cursorY -= block.spacingBeforePt;
+      const anchored = bandAnchor(block.float, block.widthPt, contentWidth, startX);
+      const offset =
+        anchored ?? alignmentOffset(block.resolvedAlignment, block.widthPt, contentWidth);
+      const top =
+        anchored === undefined || !block.float
+          ? cursorY
+          : bandAnchorTop(block.float, cursorY, pageHeight, block.heightPt, bandMargins);
+      emitShapeItems(block, startX + offset, top - block.heightPt, out, pageHeight, structId);
+      if (anchored === undefined) cursorY -= block.heightPt;
+      cursorY -= block.spacingAfterPt;
+      continue;
+    }
     cursorY -= block.spacingBeforePt;
+    // §17.3.1.24/31 — a band's paragraphs are framed and shaded like any
+    // other. SdtContent.docx keeps its whole page in a header whose one
+    // paragraph is ruled off underneath, and we drew the words alone.
+    const bandTopY = cursorY;
     for (const line of block.lines) {
       const h = computeLineHeight(line, block.resolved);
       cursorY -= h;
@@ -2013,11 +3342,71 @@ function drawBlocksSequentially(
         type: 'line',
         line,
         originX: pt(startX + indentLeft + offset),
-        baselineY: pt(pageHeight - (cursorY + lineDescent(line))),
+        baselineY: pt(pageHeight - (cursorY + lineBaselineOffset(line, block.resolved))),
         ...(structId !== undefined ? { structId } : {}),
       });
     }
+    out.push(
+      ...paragraphDecoration(
+        block.resolved,
+        startX + block.resolved.indentLeft,
+        startX + contentWidth - block.resolved.indentRight,
+        bandTopY,
+        cursorY,
+        pageHeight,
+      ),
+    );
     cursorY -= block.spacingAfterPt;
+  }
+  return out;
+}
+
+/**
+ * §17.3.1.31 `w:shd` and §17.3.1.24 `w:pBdr` — the band behind a paragraph and
+ * the rules around it, for a paragraph occupying `topY`…`bottomY` (both in the
+ * y-up page frame) between `x0` and `x1`.
+ *
+ * @returns The fill and border items, in paint order.
+ */
+function paragraphDecoration(
+  resolved: ResolvedParagraphProperties,
+  x0: number,
+  x1: number,
+  topY: number,
+  bottomY: number,
+  pageHeight: number,
+): Array<PageItem> {
+  const out: Array<PageItem> = [];
+  const width = Math.max(0, x1 - x0);
+  if (resolved.shading) {
+    out.push({
+      type: 'fill',
+      x: pt(x0),
+      y: pt(pageHeight - topY),
+      width: pt(width),
+      height: pt(Math.max(0, topY - bottomY)),
+      fillColorHex: resolved.shading.colorHex,
+    });
+  }
+  const borders = resolved.borders;
+  if (!borders) return out;
+  for (const side of ['top', 'bottom', 'left', 'right'] as const) {
+    const edge = borders[side];
+    if (!edge || edge.style === 'none') continue;
+    const gap = edge.spacePt ?? 0;
+    const top = topY + gap;
+    const bottom = bottomY - gap;
+    out.push({
+      type: 'border',
+      side,
+      x: pt(x0),
+      y: pt(pageHeight - top),
+      width: pt(width),
+      height: pt(Math.max(0, top - bottom)),
+      borderSizePt: edge.width ?? DEFAULT_BORDER_SIZE_EIGHTH * EIGHTH_PT,
+      borderColorHex: edge.colorHex ?? '000000',
+      ...(edge.style !== 'single' ? { borderStyle: edge.style } : {}),
+    });
   }
   return out;
 }
@@ -2105,6 +3494,16 @@ function collectFontResources(
       parsed.joiningForms,
     );
     for (const g of shaped.gids) bucket.gids.add(g);
+    // §17.3.1.38 — a tab's leader characters are drawn but written nowhere: the
+    // layout makes them, from the stop, long after the subset is chosen from
+    // the runs. Left out, the subset had no glyph for them and TOC_field_b
+    // .docx drew its dot leader as a row of missing-glyph boxes.
+    if (run.text.includes('\t')) {
+      for (const stop of resolveParagraphProperties(para.properties, options.styles).tabs) {
+        const ch = stop.leader === undefined ? undefined : TAB_LEADER_CHARS.get(stop.leader);
+        if (ch !== undefined) bucket.gids.add(parsed.glyphForCodepoint(ch.codePointAt(0)!));
+      }
+    }
   };
 
   // Inline math glyphs go to the variant the layout engine will use (italic for
@@ -2125,7 +3524,11 @@ function collectFontResources(
   const visit = (elements: ReadonlyArray<BodyElement>) => {
     for (const el of elements) {
       if (el.kind === 'paragraph') {
-        for (const run of el.paragraph.runs) {
+        // §17.3.2.5/33 — a run set in capitals is DRAWN in them, so those are
+        // the glyphs the subset needs. Collected from the stored text instead,
+        // capitalized.docx asked for "capitalized" and drew "CAPITALIZED" out
+        // of a subset that had only the lower-case letters in it.
+        for (const run of displayCapsRuns(el.paragraph, options)) {
           if (run.math) {
             addMath(run.math);
             continue;
@@ -2167,7 +3570,14 @@ function collectFontResources(
           }
         }
       } else if (el.kind === 'shape') {
-        if (el.shape.text) visit(el.shape.text.content);
+        // §20.5.2.17 — including the text of every member of a group, however
+        // deep. Missed, the group's captions were drawn with glyph ids the
+        // subset never reserved: Tdf147485.docx's logo read "<NQQNFRX IHPJ".
+        const shapeText = (sh: ShapeBlock): void => {
+          if (sh.text) visit(sh.text.content);
+          for (const child of sh.children ?? []) shapeText(child.shape);
+        };
+        shapeText(el.shape);
       } else if (el.kind === 'chart') {
         const chart = options.charts?.get(el.chart.chartRelId);
         if (chart) {
@@ -2207,6 +3617,17 @@ function collectFontResources(
     }
   };
   visit(body);
+  // §17.6.8 — a section numbering its lines draws digits that may appear
+  // nowhere else in the document; the number is set in the line's own font, so
+  // ask for the digits in every font the body uses.
+  if ((options.sections ?? []).some((sec) => sec.properties.lineNumbering)) {
+    visit([
+      {
+        kind: 'paragraph',
+        paragraph: { properties: {}, runs: [{ text: '0123456789', properties: {} }] },
+      },
+    ]);
+  }
   for (const hf of headersFooters.values()) visit(hf);
   for (const note of options.footnotes?.values() ?? []) visit(note);
   for (const note of options.endnotes?.values() ?? []) visit(note);
@@ -2255,6 +3676,46 @@ function collectFontResources(
   return out;
 }
 
+/**
+ * The one line an empty paragraph still occupies — no tokens, but as tall as
+ * the paragraph mark's own font (§17.3.1.31 `w:rPr` on the `w:pPr`, which is
+ * exactly the run properties Word keeps for a paragraph that holds no runs).
+ */
+function emptyLine(
+  paragraph: Paragraph,
+  options: StyledRenderOptions,
+  resolved: ResolvedParagraphProperties,
+  availableWidthPt: number,
+  fontResources: ReadonlyMap<string, FontResource>,
+): Line {
+  const mark = resolveRunProperties(
+    paragraph.properties.runProperties ?? {},
+    paragraph.properties,
+    options.styles,
+  );
+  const fontSizePt = mark.fontSizePt;
+  const profile = options.layoutProfile ?? 'ream';
+  const { variant } = options.registry.resolveByStyle(mark.bold, mark.italic);
+  const parsed = fontResources.get(variant)?.parsed;
+  const metric =
+    profile !== 'ream' && parsed ? fontLeadingPt(parsed, fontSizePt, profile) : undefined;
+  return {
+    tokens: [],
+    contentWidthPt: 0,
+    maxFontSizePt: fontSizePt,
+    availableWidthPt,
+    firstLine: true,
+    resolved,
+    isLastInParagraph: true,
+    ...(metric && metric.ascentPt + metric.descentPt > 0
+      ? {
+          metricHeightPt: metric.ascentPt + metric.descentPt + metric.lineGapPt,
+          metricDescentPt: metric.descentPt,
+        }
+      : {}),
+  };
+}
+
 function layoutParagraphBlock(
   paragraph: Paragraph,
   options: StyledRenderOptions,
@@ -2264,15 +3725,50 @@ function layoutParagraphBlock(
   // Float wrapping: explicit per-line widths (overrides first/other widths).
   lineWidths?: ReadonlyArray<number>,
 ): ParagraphBlock {
-  const baseResolved = resolveParagraphProperties(paragraph.properties, options.styles);
+  const cascaded = resolveParagraphProperties(paragraph.properties, options.styles);
+  // §17.6.5 / §17.3.1.32 — the section's grid, carried onto the paragraph so
+  // its lines know the pitch they stand on. A paragraph that says
+  // `w:snapToGrid w:val="0"` is off the grid — which is what Word's own header
+  // and footer styles say, and cjklist30.docx says it in both.
+  const baseResolved: ResolvedParagraphProperties =
+    options.gridLinePitchPt !== undefined && cascaded.snapToGrid !== false
+      ? { ...cascaded, gridLinePitchPt: options.gridLinePitchPt }
+      : cascaded;
+  // §17.6.17 — the paragraph mark IS the section break, so a paragraph that
+  // holds one and nothing else takes no room: no line, no spacing.
+  if (paragraph.properties.sectionBreak === true && paragraph.runs.length === 0) {
+    return {
+      kind: 'paragraph',
+      resolved: baseResolved,
+      lines: [],
+      heightPt: 0,
+      spacingBeforePt: 0,
+      spacingAfterPt: 0,
+    };
+  }
   const baseDir = paragraphBaseDirection(paragraph, baseResolved);
-  // RTL paragraphs default to right alignment. We only override the cascade's
-  // 'left' default (which is also what an absent jc collapses to) — explicit
-  // center/right/justify are preserved.
+  // §17.3.1.13 / §17.3.1.12 — in a `w:bidi` paragraph "left" and "right" are
+  // the START and END of the line, not sides of the page, so both the
+  // alignment and the indents swap. fdo43093.docx names its paragraphs after
+  // where they should land: "RTL Left" asks for `w:jc="right"` and belongs at
+  // the left margin, and "RTL Right", indented a inch from its start, keeps
+  // that inch on the right. We flipped neither.
+  const swapAlign = (a: ResolvedParagraphProperties['alignment']) =>
+    a === 'left' ? 'right' : a === 'right' ? 'left' : a;
   const resolved: ResolvedParagraphProperties =
-    baseDir === 'rtl' && baseResolved.alignment === 'left'
-      ? { ...baseResolved, alignment: 'right' }
-      : baseResolved;
+    baseResolved.bidi === true
+      ? {
+          ...baseResolved,
+          alignment: swapAlign(baseResolved.alignment),
+          indentLeft: baseResolved.indentRight,
+          indentRight: baseResolved.indentLeft,
+        }
+      : // A paragraph the READER only guesses is RTL (its text is, its
+        // properties say nothing) keeps its literal alignment; all that moves
+        // is the 'left' the cascade defaults to.
+        baseDir === 'rtl' && baseResolved.alignment === 'left'
+        ? { ...baseResolved, alignment: 'right' }
+        : baseResolved;
   const tokens = tokenizeParagraph(
     paragraph,
     options,
@@ -2283,19 +3779,75 @@ function layoutParagraphBlock(
   );
   const firstLineWidth = paragraphMaxWidth(resolved, contentWidth, true);
   const otherWidth = paragraphMaxWidth(resolved, contentWidth, false);
-  const lines = wrap(
-    tokens,
-    firstLineWidth,
-    otherWidth,
-    resolved,
-    options.hyphenator,
-    options.layoutProfile ?? 'ream',
-    lineWidths,
-  );
+  const runWrap = (
+    part: ReadonlyArray<Token>,
+    firstWidth: number,
+    widths: ReadonlyArray<number> | undefined,
+  ): Array<Line> =>
+    wrap(
+      part,
+      firstWidth,
+      otherWidth,
+      resolved,
+      options.hyphenator,
+      options.layoutProfile ?? 'ream',
+      options.doNotExpandShiftReturn === true,
+      widths,
+    );
+  // §17.3.3.1 — a `w:br w:type="column"` splits the paragraph's own flow: what
+  // follows it belongs in the NEXT column. Wrapping the parts one at a time is
+  // what tells pagination which line that is; columnbreak.docx sets one
+  // mid-paragraph and both halves came out in the first column.
+  const parts = splitAtColumnBreaks(tokens);
+  const columnBreakLines = new Set<number>();
+  let wrapped: Array<Line>;
+  if (parts.length === 1) {
+    wrapped = runWrap(tokens, firstLineWidth, lineWidths);
+  } else {
+    wrapped = [];
+    for (const [i, part] of parts.entries()) {
+      // A continuation is not a first line: it keeps the body indent, not the
+      // first-line one, and the float widths carry on where they left off.
+      const lines = runWrap(
+        part,
+        i === 0 ? firstLineWidth : otherWidth,
+        lineWidths?.slice(wrapped.length),
+      );
+      if (i > 0 && lines.length > 0) columnBreakLines.add(wrapped.length);
+      wrapped.push(...(i === 0 ? lines : lines.map((l) => ({ ...l, firstLine: false }))));
+    }
+  }
+  // §17.3.1 — a paragraph with nothing in it is still a LINE: the blank line
+  // the author typed, as tall as the font it would have been typed in. Wrapping
+  // zero tokens yields no line, so the paragraph took no room and everything
+  // after it moved up — IllustrativeCases.docx opens each table's label column
+  // with an empty paragraph, and every label ended up beside the value of the
+  // row ABOVE it, "Gross Income" against "€" and the euro sign's own row gone.
+  const lines =
+    wrapped.length > 0
+      ? wrapped
+      : [emptyLine(paragraph, options, resolved, Math.max(firstLineWidth, 0), fontResources)];
 
   let heightPt = 0;
   for (const line of lines) heightPt += computeLineHeight(line, resolved);
   const numbering = paragraph.properties.numbering;
+  // §17.3.3.1 — a forced break happens WHERE IT STANDS. One that precedes
+  // every word of the paragraph moves the paragraph itself to the next page;
+  // any other sends what FOLLOWS the paragraph there.
+  const breakIdx = paragraph.runs.findIndex((r) => r.pageBreak === true);
+  // A run that carries a PICTURE is not nothing, however empty its text: the
+  // break after it sends what FOLLOWS to the next page, it does not move the
+  // paragraph. Counted as empty, tdf125657.docx — a full-page image and then a
+  // break — kept the break's page to itself and lost the one the mark after it
+  // stands on.
+  const leadingPageBreak =
+    breakIdx >= 0 &&
+    paragraph.runs
+      .slice(0, breakIdx + 1)
+      .every((r) => r.text === '' && r.inlineImage === undefined);
+  const trailingPageBreak = paragraph.runs.some(
+    (r, i) => r.pageBreak === true && (!leadingPageBreak || i > breakIdx),
+  );
   return {
     kind: 'paragraph',
     resolved,
@@ -2304,7 +3856,9 @@ function layoutParagraphBlock(
     spacingBeforePt: resolved.spacingBefore,
     spacingAfterPt: resolved.spacingAfter,
     ...(numbering ? { list: { numId: numbering.numId, level: numbering.ilvl } } : {}),
-    ...(paragraph.runs.some((r) => r.pageBreak) ? { pageBreakAfter: true } : {}),
+    ...(leadingPageBreak ? { pageBreakBefore: true } : {}),
+    ...(trailingPageBreak ? { pageBreakAfter: true } : {}),
+    ...(columnBreakLines.size > 0 ? { columnBreakLines } : {}),
     ...(paragraph.bookmarks && paragraph.bookmarks.length > 0
       ? { bookmarks: paragraph.bookmarks }
       : {}),
@@ -2331,6 +3885,18 @@ interface RunPlan {
   readonly imageWidthPt: number;
   readonly imageHeightPt: number;
   readonly imageResourceName: string;
+  /** §20.1.2.2.24 — the frame the picture is drawn with, when it has one. */
+  readonly imageOutline?: PictureOutline;
+  /** §20.1.8.40 — the shadow the inline picture casts. */
+  readonly imageShadow?: ShapeShadow;
+  readonly imageCrop?: ImageCrop;
+  /** §20.1.7.6 — the picture's rotation, in degrees clockwise. */
+  readonly imageRotationDeg?: number;
+  /** §20.1.7.6 — the picture drawn mirrored. */
+  readonly imageFlipH?: boolean;
+  readonly imageFlipV?: boolean;
+  /** §20.4.2.6 — the picture's own rect inside the reserved (effect-extended) box. */
+  readonly imageDrawBox?: ImageToken['drawBox'];
   readonly math?: {
     readonly items: ReadonlyArray<ResolvedMathItem>;
     readonly widthPt: number;
@@ -2368,6 +3934,69 @@ function resolveMathItems(
   });
 }
 
+/**
+ * §17.3.2.5 `w:caps` / §17.3.2.33 `w:smallCaps` — the paragraph's runs as they
+ * are DISPLAYED. A capitals run is upper-cased; a small-capitals run is too,
+ * and the letters that were lower case are split out to be set smaller.
+ *
+ * @param paragraph The paragraph.
+ * @param options   The render options (for the style cascade).
+ * @returns The runs to lay out — the same array when none asks for capitals.
+ */
+function displayCapsRuns(
+  paragraph: Paragraph,
+  options: StyledRenderOptions,
+): ReadonlyArray<Paragraph['runs'][number]> {
+  let any = false;
+  const out: Array<Paragraph['runs'][number]> = [];
+  for (const raw of paragraph.runs) {
+    // §17.3.3.29 `w:softHyphen` — an OPTIONAL hyphen. It marks a place a word
+    // may break and prints only if the break is taken there; we do not break
+    // inside a word, so it prints nowhere. Kept in the model (the text is what
+    // the document holds) and dropped here, where the page is made:
+    // floatingtbl_with_formula.docx marks "E­­x²" twice and we drew "E--x²".
+    const run = raw.text.includes(SOFT_HYPHEN)
+      ? ((any = true), { ...raw, text: raw.text.replaceAll(SOFT_HYPHEN, '') })
+      : raw;
+    const resolved =
+      run.text.length > 0
+        ? resolveRunProperties(run.properties, paragraph.properties, options.styles)
+        : undefined;
+    if (!resolved || (!resolved.caps && !resolved.smallCaps)) {
+      out.push(run);
+      continue;
+    }
+    any = true;
+    if (resolved.caps) {
+      out.push({ ...run, text: run.text.toUpperCase() });
+      continue;
+    }
+    // Small capitals: one segment per stretch that was, or was not, lower case.
+    // Word sets the former at about four fifths of the size, which is what
+    // LibreOffice draws too.
+    let start = 0;
+    const wasLower = (i: number): boolean => {
+      const ch = run.text[i]!;
+      return ch.toLowerCase() === ch && ch.toUpperCase() !== ch;
+    };
+    for (let i = 1; i <= run.text.length; i++) {
+      if (i < run.text.length && wasLower(i) === wasLower(start)) continue;
+      const segment = run.text.slice(start, i).toUpperCase();
+      out.push(
+        wasLower(start)
+          ? {
+              ...run,
+              text: segment,
+              properties: { ...run.properties, fontSizePt: pt(resolved.fontSizePt * 0.8) },
+            }
+          : { ...run, text: segment },
+      );
+      start = i;
+    }
+  }
+  return any ? out : paragraph.runs;
+}
+
 function tokenizeParagraph(
   paragraph: Paragraph,
   options: StyledRenderOptions,
@@ -2376,13 +4005,32 @@ function tokenizeParagraph(
   contentWidth: number,
   baseDir: 'ltr' | 'rtl',
 ): Array<Token> {
+  // §17.3.2.5 / §17.3.2.33 — a run set in capitals is DISPLAYED in them,
+  // whatever it stores, and small capitals set what was lower case smaller. The
+  // change belongs before the plans are built: everything downstream measures
+  // and draws the text it is given.
+  const runs = displayCapsRuns(paragraph, options);
   // First pass — resolve each run's style and decide image vs text.
-  const plans: Array<RunPlan> = paragraph.runs.map((run) => {
+  const plans: Array<RunPlan> = runs.map((run) => {
     if (run.inlineImage) {
-      const naturalW = run.inlineImage.width;
+      // §20.4.2.6 — the line reserves the picture PLUS its effect extent, and
+      // the picture is drawn inset by it. Both shrink together when the box is
+      // wider than the column.
+      const eff = run.inlineImage.effectExtent;
+      const padW = (eff?.leftPt ?? 0) + (eff?.rightPt ?? 0);
+      const padH = (eff?.topPt ?? 0) + (eff?.bottomPt ?? 0);
+      const naturalW = run.inlineImage.width + padW;
       const widthPt = Math.min(naturalW, contentWidth);
       const scale = naturalW > 0 ? widthPt / naturalW : 1;
-      const heightPt = run.inlineImage.height * scale;
+      const heightPt = (run.inlineImage.height + padH) * scale;
+      const drawBox = eff
+        ? {
+            dxPt: eff.leftPt * scale,
+            dyPt: eff.bottomPt * scale,
+            widthPt: run.inlineImage.width * scale,
+            heightPt: run.inlineImage.height * scale,
+          }
+        : undefined;
       const res = run.inlineImage.resource
         ? imageResources?.get(run.inlineImage.resource)
         : undefined;
@@ -2406,6 +4054,15 @@ function tokenizeParagraph(
         imageWidthPt: widthPt,
         imageHeightPt: heightPt,
         imageResourceName: res?.resourceName ?? '',
+        ...(run.inlineImage.outline ? { imageOutline: run.inlineImage.outline } : {}),
+        ...(run.inlineImage.shadow ? { imageShadow: run.inlineImage.shadow } : {}),
+        ...(run.inlineImage.crop ? { imageCrop: run.inlineImage.crop } : {}),
+        ...(run.inlineImage.rotation60k
+          ? { imageRotationDeg: run.inlineImage.rotation60k / 60000 }
+          : {}),
+        ...(run.inlineImage.flipH ? { imageFlipH: true } : {}),
+        ...(run.inlineImage.flipV ? { imageFlipV: true } : {}),
+        ...(drawBox ? { imageDrawBox: drawBox } : {}),
       };
     }
     if (run.math) {
@@ -2494,6 +4151,22 @@ function tokenizeParagraph(
   return tokenizePlansBidi(plans, realLevels);
 }
 
+/**
+ * Split a paragraph's tokens at every §17.3.3.1 column break, dropping the
+ * break token itself (its line ends there anyway). One part ⇒ no break.
+ *
+ * @param tokens The paragraph's tokens in order.
+ * @returns The parts, in order; always at least one.
+ */
+function splitAtColumnBreaks(tokens: ReadonlyArray<Token>): Array<Array<Token>> {
+  const parts: Array<Array<Token>> = [[]];
+  for (const t of tokens) {
+    if (t.kind === 'text' && t.columnBreak) parts.push([]);
+    else parts[parts.length - 1]!.push(t);
+  }
+  return parts.filter((p, i) => i === 0 || p.length > 0);
+}
+
 // Fast LTR tokenization — splits each run on whitespace only.
 function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
   const tokens: Array<Token> = [];
@@ -2504,6 +4177,13 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         imageResourceName: plan.imageResourceName,
         widthPt: plan.imageWidthPt,
         heightPt: plan.imageHeightPt,
+        ...(plan.imageOutline ? { outline: plan.imageOutline } : {}),
+        ...(plan.imageShadow ? { shadow: plan.imageShadow } : {}),
+        ...(plan.imageCrop ? { crop: plan.imageCrop } : {}),
+        ...(plan.imageRotationDeg ? { rotationDeg: plan.imageRotationDeg } : {}),
+        ...(plan.imageFlipH ? { flipH: true } : {}),
+        ...(plan.imageFlipV ? { flipV: true } : {}),
+        ...(plan.imageDrawBox ? { drawBox: plan.imageDrawBox } : {}),
         isSpace: false,
         bidiLevel: 0,
       });
@@ -2527,21 +4207,38 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         kind: 'text',
         text: t.text,
         isSpace: t.isSpace,
+        ...(t.tab ? { tab: true as const } : {}),
         ...(plan.run.href !== undefined ? { href: plan.run.href } : {}),
         ...(plan.run.footnoteRef !== undefined ? { footnoteRef: plan.run.footnoteRef } : {}),
         ...(plan.run.anchor !== undefined ? { anchor: plan.run.anchor } : {}),
         ...(plan.run.listMarker ? { listMarker: true } : {}),
+        ...(plan.run.columnBreak ? { columnBreak: true as const } : {}),
         ...(highlight ? { highlight: true } : {}),
         resolvedRun: plan.resolvedRun,
         font: plan.font,
         fontSizePt: plan.fontSizePt,
         ...(plan.risePt !== undefined ? { risePt: plan.risePt } : {}),
-        widthPt: plan.font.measure.textWidthPt(t.text, plan.fontSizePt),
+        widthPt: measureRunText(plan, t.text),
         bidiLevel: 0,
       });
     }
   }
   return tokens;
+}
+
+/**
+ * §17.3.2.35 — a run's text measured with the space it puts between its
+ * characters. PDF adds the same amount per glyph through `Tc`, so the width the
+ * line is broken at and the width the page draws agree.
+ *
+ * @param plan The run being tokenized.
+ * @param text The token's text.
+ * @returns The advance width in points.
+ */
+function measureRunText(plan: RunPlan, text: string): number {
+  const base = plan.font.measure.textWidthPt(text, plan.fontSizePt);
+  const extra = plan.resolvedRun.letterSpacingPt;
+  return extra === undefined || extra === 0 ? base : base + extra * [...text].length;
 }
 
 // BiDi-aware tokenization — splits each run on whitespace boundaries AND on
@@ -2560,6 +4257,13 @@ function tokenizePlansBidi(
         imageResourceName: plan.imageResourceName,
         widthPt: plan.imageWidthPt,
         heightPt: plan.imageHeightPt,
+        ...(plan.imageOutline ? { outline: plan.imageOutline } : {}),
+        ...(plan.imageShadow ? { shadow: plan.imageShadow } : {}),
+        ...(plan.imageCrop ? { crop: plan.imageCrop } : {}),
+        ...(plan.imageRotationDeg ? { rotationDeg: plan.imageRotationDeg } : {}),
+        ...(plan.imageFlipH ? { flipH: true } : {}),
+        ...(plan.imageFlipV ? { flipV: true } : {}),
+        ...(plan.imageDrawBox ? { drawBox: plan.imageDrawBox } : {}),
         isSpace: false,
         bidiLevel: realLevels[realIdx] ?? 0,
       });
@@ -2595,12 +4299,13 @@ function tokenizePlansBidi(
         ...(plan.run.footnoteRef !== undefined ? { footnoteRef: plan.run.footnoteRef } : {}),
         ...(plan.run.anchor !== undefined ? { anchor: plan.run.anchor } : {}),
         ...(plan.run.listMarker ? { listMarker: true } : {}),
+        ...(plan.run.columnBreak ? { columnBreak: true as const } : {}),
         ...((plan.run.commentRangeRefs?.length ?? 0) > 0 ? { highlight: true } : {}),
         resolvedRun: plan.resolvedRun,
         font: plan.font,
         fontSizePt: plan.fontSizePt,
         ...(plan.risePt !== undefined ? { risePt: plan.risePt } : {}),
-        widthPt: plan.font.measure.textWidthPt(text, plan.fontSizePt),
+        widthPt: measureRunText(plan, text),
         bidiLevel: curLevel,
       });
     };
@@ -2635,6 +4340,10 @@ function paragraphBaseDirection(
   if (resolved.bidi) return 'rtl';
   let text = '';
   for (const run of paragraph.runs) {
+    // The list marker is synthesised from the numbering definition, not typed
+    // by the author: a Hebrew numeral (§17.18.59 `hebrew1`) would otherwise
+    // turn a plain English list right-to-left, marker and text and all.
+    if (run.listMarker === true) continue;
     if (!run.inlineImage) text += run.text;
     if (text.length > 64) break; // first strong char is near the start
   }
@@ -2653,19 +4362,30 @@ function paragraphMaxWidth(
   return Math.max(1, contentWidth - indentLeft - indentRight - firstLineExtra);
 }
 
-function tokenizeText(text: string): Array<{ text: string; isSpace: boolean }> {
-  const out: Array<{ text: string; isSpace: boolean }> = [];
+// UAX #14 class BA — the hyphens a line may break just after. The soft hyphen
+// (U+00AD) is not here: it is the hyphenator's own, and shows only when used.
+const HYPHENS = new Set([0x2d, 0x2010, 0x2013, 0x2014]);
+
+/** §17.3.3.29 — the optional hyphen, printed only where a line breaks on it. */
+const SOFT_HYPHEN = '\u00AD';
+
+function tokenizeText(text: string): Array<{ text: string; isSpace: boolean; tab?: true }> {
+  const out: Array<{ text: string; isSpace: boolean; tab?: true }> = [];
   if (text.length === 0) return out;
-  const re = /(\s+)|(\S+)/g;
+  // §17.3.1.38 — a tab is not whitespace that happens to be wide: it advances
+  // to a POSITION, so it gets a token of its own to be measured against the
+  // stops once the line is known.
+  const re = /(\t)|(\s+)|(\S+)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
-    if (m[1] !== undefined) out.push({ text: m[1], isSpace: true });
-    else if (m[2] !== undefined) {
+    if (m[1] !== undefined) out.push({ text: '', isSpace: true, tab: true });
+    else if (m[2] !== undefined) out.push({ text: m[2], isSpace: true });
+    else if (m[3] !== undefined) {
       // CJK runs carry no whitespace, so split them into per-ideograph pieces —
       // each becomes its own box and a wrap opportunity opens between them
       // (see paragraphItemStream). A segment with no CJK is returned unchanged,
       // so Latin tokenization stays byte-identical.
-      for (const piece of splitCjkSegment(m[2])) out.push({ text: piece, isSpace: false });
+      for (const piece of splitCjkSegment(m[3])) out.push({ text: piece, isSpace: false });
     }
   }
   return out;
@@ -2689,6 +4409,8 @@ interface StreamEntry {
   readonly item: Item;
   readonly token: Token | null;
   readonly hyphenWidthPt?: number;
+  /** The forced break here is a soft line break (`w:br`), not the paragraph's end. */
+  readonly softBreak?: boolean;
 }
 
 // Tokens → the Knuth–Plass item stream: spaces become glue, images/math are
@@ -2711,8 +4433,48 @@ function paragraphItemStream(
   // Last code point of the previous text box, for CJK wrap-opportunity detection;
   // reset at spaces / images / math (a break is already present or not wanted).
   let prevBoxEndCp: number | null = null;
+  // Whether the previous item was an inline picture (a break opportunity opens
+  // between two of them).
+  let prevWasImage = false;
   for (const tok of tokens) {
+    // §17.3.3.1 `<w:br/>` — a soft line break, which the reader carries as a
+    // newline inside the run's text. Left to the whitespace path it became
+    // glue, and the line builder drew the glue's own characters: a newline has
+    // no glyph, so each break printed as a replacement box. 60329.docx puts 85
+    // of them inside its table cells and every paragraph in there ran on with
+    // a pair of them mid-sentence. The pair below — stretchy glue, then a
+    // forced penalty — is the same one that ends a paragraph.
+    const breaks = tok.isSpace ? (tok.text.match(/\r\n|[\r\n]/gu)?.length ?? 0) : 0;
+    if (breaks > 0) {
+      // One break per newline, so the two the author typed leave the blank
+      // line between paragraphs that they asked for.
+      for (let i = 0; i < breaks; i++) {
+        entries.push({ item: { type: 'glue', width: 0, stretch: 1e6, shrink: 0 }, token: null });
+        entries.push({
+          item: { type: 'penalty', width: 0, penalty: FORCED_BREAK, flagged: false },
+          token: null,
+          softBreak: true,
+        });
+      }
+      prevBoxEndCp = null;
+      continue;
+    }
     if (tok.isSpace || tok.kind === 'image' || tok.kind === 'math') {
+      // A line may break BEFORE an inline picture: it is a character of its
+      // own, and text with a picture stuck to it is not one long word. Without
+      // the opportunity, VariousPictures.docx's five pictures were one
+      // unbreakable box 739pt wide on a 468pt line, and the two we could draw
+      // ran off the right edge of the paper; fdo82123.docx writes "Test file"
+      // against a 102pt picture in a 135pt cell and we broke the WORDS apart
+      // to keep the picture with "file", where Word and LibreOffice break
+      // between the text and the picture.
+      if (tok.kind === 'image' && (prevWasImage || prevBoxEndCp !== null)) {
+        entries.push({
+          item: { type: 'penalty', width: 0, penalty: 0, flagged: false },
+          token: null,
+        });
+      }
+      prevWasImage = tok.kind === 'image';
       // Spaces are glue; images and math boxes are atomic (un-hyphenatable) boxes.
       entries.push({
         item: tok.isSpace
@@ -2720,7 +4482,7 @@ function paragraphItemStream(
               type: 'glue',
               width: tok.widthPt,
               stretch: tok.widthPt * 0.6,
-              shrink: tok.widthPt * 0.3,
+              shrink: tok.widthPt * GLUE_SHRINK_RATIO,
             }
           : { type: 'box', width: tok.widthPt },
         token: tok,
@@ -2733,12 +4495,14 @@ function paragraphItemStream(
     // mark it with a zero-width, zero-cost penalty. `cjkBreakBetween` is false for
     // non-CJK boundaries, so Latin item streams stay byte-identical.
     const startCp = tok.text.codePointAt(0) ?? 0;
-    if (prevBoxEndCp !== null && cjkBreakBetween(prevBoxEndCp, startCp)) {
+    // …and AFTER one, for the same reason.
+    if (prevWasImage || (prevBoxEndCp !== null && cjkBreakBetween(prevBoxEndCp, startCp))) {
       entries.push({
         item: { type: 'penalty', width: 0, penalty: 0, flagged: false },
         token: null,
       });
     }
+    prevWasImage = false;
     prevBoxEndCp = lastCodePoint(tok.text);
     // Try hyphenation; if no breaks (or too short), one box covers the whole word.
     const positions = hyphenator ? hyphenator.hyphenate(tok.text) : [];
@@ -2756,10 +4520,18 @@ function paragraphItemStream(
       // for the WORKBOOK's font — narrower than the face we draw with — broke
       // across two lines on every one of no_drawing_patriarch.xlsx's 7 465
       // rows.
+      // UAX #14 (BA) — a hyphen is a break opportunity, and a far better one
+      // than the mid-character split below: a word too wide for its line breaks
+      // after its hyphens first. fdo76316.docx's case number `24F-1422-10/2011`
+      // is wider than the cell it sits in and ran into the one beside it, where
+      // both references break it after `1422-`.
+      const tooWide = maxLineWidthPt !== undefined && maxLineWidthPt > 0;
+      const hyphenated = tooWide && tok.widthPt > maxLineWidthPt ? splitAtHyphens(tok) : undefined;
       const chunks =
-        maxLineWidthPt !== undefined && maxLineWidthPt > 0 && tok.widthPt > maxLineWidthPt * 1.1
+        hyphenated ??
+        (tooWide && tok.widthPt > maxLineWidthPt * 1.1
           ? splitToWidth(tok, maxLineWidthPt)
-          : undefined;
+          : undefined);
       if (chunks) {
         chunks.forEach((chunk, ci) => {
           if (ci > 0) {
@@ -2817,6 +4589,125 @@ function paragraphItemStream(
   return entries;
 }
 
+/** Word's own default when a document names none (§17.15.1.25): half an inch. */
+const DEFAULT_TAB_STOP_PT = 36;
+
+const TAB_LEADER_CHARS: ReadonlyMap<string, string> = new Map([
+  ['dot', '.'],
+  ['hyphen', '-'],
+  ['underscore', '_'],
+  ['middleDot', '\u00b7'],
+]);
+
+/**
+ * Give each tab on a line the width that carries it to its stop, and the
+ * leader that fills the way there.
+ *
+ * §17.3.1.37 — a tab advances to a POSITION, not by a fixed amount, and where
+ * that position is depends on how far the line has already run. Measured as
+ * ordinary whitespace it collapsed to a space: the page numbers of
+ * FDO77715.docx's index sat against their titles with no dot leader between,
+ * and its header ran its left and right halves together on one line.
+ *
+ * A `right`, `center` or `decimal` stop positions the text AFTER the tab, so
+ * each is resolved against the segment that follows it.
+ *
+ * @param tokens   The line's tokens, replaced in place.
+ * @param resolved The paragraph's resolved properties: the stops and indents.
+ * @param isFirst  Whether this is the paragraph's first line.
+ */
+function resolveTabs(
+  tokens: Array<Token>,
+  resolved: ResolvedParagraphProperties,
+  isFirst: boolean,
+  availableWidthPt: number,
+): void {
+  const stops = resolved.tabs;
+  let x = resolved.indentLeft + (isFirst ? resolved.indentFirstLine : 0);
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    if (!tok) continue;
+    if (!(tok.kind === 'text' && tok.tab === true)) {
+      x += tok.widthPt;
+      continue;
+    }
+    // The run of tokens up to the next tab: what this stop has to place.
+    let segment = 0;
+    let decimalAt = 0;
+    let seenDecimal = false;
+    for (let j = i + 1; j < tokens.length; j++) {
+      const next = tokens[j]!;
+      if (next.kind === 'text' && next.tab === true) break;
+      if (!seenDecimal && next.kind === 'text') {
+        const dot = next.text.indexOf('.');
+        if (dot >= 0) {
+          decimalAt =
+            segment + next.font.measure.textWidthPt(next.text.slice(0, dot), next.fontSizePt);
+          seenDecimal = true;
+        }
+      }
+      segment += next.widthPt;
+    }
+    // §17.3.3.15 — an absolute-position tab has no distance of its own: it
+    // reaches for the middle or the far side of the column, wherever those
+    // fall. Everything else is a distance from the text margin.
+    const stopAt = (sp: TabStop): number =>
+      sp.relativeTo === 'center'
+        ? availableWidthPt / 2
+        : sp.relativeTo === 'right'
+          ? availableWidthPt
+          : sp.positionPt;
+    const stop = stops.find((sp) => stopAt(sp) > x + 0.01);
+    // A hanging indent is itself a tab stop (§17.3.1.12): the first line starts
+    // out at the negative offset and the tab after the marker brings the text
+    // back to the body indent. dont-add-new-styles.docx numbers three levels
+    // that way — `w:ind w:left="360" w:hanging="360"` and no stop of its own —
+    // and sending the tab to the default half-inch grid instead put every
+    // caption 18pt past where Word and LibreOffice place it.
+    const hangingStop =
+      isFirst && resolved.indentFirstLine < 0 && resolved.indentLeft > x + 0.01
+        ? resolved.indentLeft
+        : undefined;
+    const explicitAt = stop ? stopAt(stop) : undefined;
+    const position =
+      explicitAt !== undefined && (hangingStop === undefined || explicitAt <= hangingStop)
+        ? explicitAt
+        : (hangingStop ?? (Math.floor(x / DEFAULT_TAB_STOP_PT) + 1) * DEFAULT_TAB_STOP_PT);
+    const alignment = stop?.alignment ?? 'left';
+    // A right/centre/decimal stop places the segment AFTER the tab against the
+    // stop, so a tab with nothing to place claims nothing and the stop falls to
+    // the tab behind it. FDO77715.docx's header is written that way — two tabs
+    // against a single right stop at the margin — and letting the first take it
+    // drove the title off the page. A LEFT stop (and the default grid, which is
+    // left) is a position in its own right: each of fdo79915.docx's six tabs
+    // advances one stop of the half-inch grid, and collapsing them put "Name:"
+    // five stops short of where Word and LibreOffice write it.
+    if (segment === 0 && alignment !== 'left') {
+      const after = tokens[i + 1];
+      if (after?.kind === 'text' && after.tab === true) {
+        tokens[i] = { ...tok, widthPt: 0, text: '' };
+        continue;
+      }
+    }
+    let target = position;
+    if (alignment === 'right') target = position - segment;
+    else if (alignment === 'center') target = position - segment / 2;
+    else if (alignment === 'decimal') target = position - (seenDecimal ? decimalAt : segment);
+    const width = Math.max(0, target - x);
+    const leaderChar = stop?.leader === undefined ? undefined : TAB_LEADER_CHARS.get(stop.leader);
+    const text = leaderChar === undefined ? '' : fillLeader(tok, leaderChar, width);
+    tokens[i] = { ...tok, widthPt: width, text };
+    x += width;
+  }
+}
+
+/** As many leader characters as fit the gap, measured in the tab's own font. */
+function fillLeader(tab: TextToken, leader: string, widthPt: number): string {
+  const unit = tab.font.measure.textWidthPt(leader, tab.fontSizePt);
+  if (!(unit > 0)) return '';
+  return leader.repeat(Math.max(0, Math.floor(widthPt / unit)));
+}
+
 /**
  * Cut an unbreakable word into the widest pieces that fit `widthPt`, measured
  * with the token's own font. Each piece keeps the run's formatting, so the line
@@ -2827,6 +4718,29 @@ function paragraphItemStream(
  * @returns The pieces in order, or undefined when even one character overruns
  *          (nothing can be gained by splitting then).
  */
+// A word broken just AFTER each of its hyphens, as tokens of its own — the
+// break the line breaker then has between them is UAX #14's BA opportunity.
+// Undefined when the word carries no usable hyphen (a leading or a trailing
+// one is not a break: there would be nothing on one side of it).
+function splitAtHyphens(tok: Token): Array<Token> | undefined {
+  if (tok.kind !== 'text') return undefined;
+  const parts: Array<string> = [];
+  let start = 0;
+  for (let i = 0; i < tok.text.length; i++) {
+    if (!HYPHENS.has(tok.text.codePointAt(i) ?? 0)) continue;
+    if (i === start || i === tok.text.length - 1) continue;
+    parts.push(tok.text.slice(start, i + 1));
+    start = i + 1;
+  }
+  if (parts.length === 0) return undefined;
+  parts.push(tok.text.slice(start));
+  return parts.map((text) => ({
+    ...tok,
+    text,
+    widthPt: tok.font.measure.textWidthPt(text, tok.fontSizePt),
+  }));
+}
+
 function splitToWidth(tok: Token, widthPt: number): Array<Token> | undefined {
   if (tok.kind !== 'text') return undefined;
   const chars = [...tok.text];
@@ -2874,6 +4788,7 @@ function lineFromRange(
   isFirst: boolean,
   resolved: ResolvedParagraphProperties,
   profile: LayoutProfile,
+  allowEmpty = false,
 ): Line | null {
   let st = start;
   let et = breakIdx;
@@ -2905,13 +4820,19 @@ function lineFromRange(
   ) {
     et--;
   }
-  if (st >= et) return null;
+  // An empty range is a line with nothing on it. At the end of a paragraph
+  // that is the final forced break and there is no line to draw; in the MIDDLE
+  // it is the blank line two `<w:br/>` in a row ask for, and dropping it ran
+  // the paragraphs of 60329.docx's table cells together.
+  if (st >= et && !allowEmpty) return null;
 
   const lineTokens: Array<Token> = [];
   for (let i = st; i < et; i++) {
     const ft = entries[i]!.token;
     if (ft) lineTokens.push(ft);
   }
+
+  resolveTabs(lineTokens, resolved, isFirst, availableWidthPt);
 
   // If the chosen break is at a hyphenation penalty, fold the hyphen glyph
   // onto the last text token of the line.
@@ -2940,8 +4861,16 @@ function lineFromRange(
   let metricAscent = 0;
   let metricDescent = 0;
   let metricLineGap = 0;
+  // §17.3.1.33 — a line stands as tall as what PRINTS on it. Word measures the
+  // spaces of a line at the size of its text, not their own: tdf117988.docx
+  // says so in its own words — "The height of 72pt spaces is ignored?" — and
+  // sets a line of 9pt words between 72pt spaces, which we drew 72pt tall and
+  // spilled onto a second page. A line that is NOTHING but spaces keeps its
+  // own size: there is nothing else to measure it by.
+  const prints = lineTokens.some((t) => !t.isSpace);
   for (const t of lineTokens) {
     contentWidth += t.widthPt;
+    if (prints && t.isSpace) continue;
     const sz = tokenLineSize(t);
     if (sz > maxSize) maxSize = sz;
     if (t.kind === 'math') {
@@ -2974,6 +4903,27 @@ function lineFromRange(
   };
 }
 
+// The paragraph's LEADING tabs, each carrying the width that takes it to its
+// stop on the first line. Only the leading run: every other tab's stop depends
+// on where its line starts, which is what the breaker is deciding.
+function withLeadingTabWidths(
+  tokens: ReadonlyArray<Token>,
+  resolved: ResolvedParagraphProperties,
+  firstLineWidth: number,
+): ReadonlyArray<Token> {
+  const first = tokens[0];
+  if (!(first?.kind === 'text' && first.tab === true)) return tokens;
+  const probe = tokens.map((t) => ({ ...t }));
+  resolveTabs(probe, resolved, true, firstLineWidth);
+  const out = tokens.slice();
+  for (let i = 0; i < out.length; i++) {
+    const tok = out[i]!;
+    if (!(tok.kind === 'text' && tok.tab === true)) break;
+    out[i] = { ...tok, widthPt: probe[i]!.widthPt };
+  }
+  return out;
+}
+
 function wrap(
   tokens: ReadonlyArray<Token>,
   firstLineWidth: number,
@@ -2981,6 +4931,8 @@ function wrap(
   resolved: ResolvedParagraphProperties,
   hyphenator: Hyphenator | undefined,
   profile: LayoutProfile,
+  // §17.15.1.35: leave a line that ends at a soft break unstretched.
+  noExpandShiftReturn: boolean,
   // Float text wrapping: explicit per-line widths (the last reuses for the
   // tail, the Knuth-Plass convention). Overrides first/other when given.
   lineWidths?: ReadonlyArray<number>,
@@ -2988,10 +4940,17 @@ function wrap(
   if (tokens.length === 0) return [];
 
   const widths = lineWidths ?? [firstLineWidth, otherWidth];
+  // A tab is measured against its stop only AFTER the line is known, so the
+  // breaker sees it as zero-width glue. For a tab that OPENS the paragraph —
+  // Word's own way of indenting a first line — that is half an inch the first
+  // line does not know it has spent, and FDO76248.docx runs its Malthus
+  // paragraph a tab-stop past the right margin. Those tabs get their width up
+  // front; `resolveTabs` still settles every tab per line afterwards.
+  const measured = withLeadingTabWidths(tokens, resolved, widths[0] ?? firstLineWidth);
   // The WIDEST line the paragraph will be broken to: a word that fits one of
   // them can be placed, and only a word too wide for all of them has to break
   // inside itself.
-  const entries = paragraphItemStream(tokens, hyphenator, Math.max(0, ...widths));
+  const entries = paragraphItemStream(measured, hyphenator, Math.max(0, ...widths));
   const items = entries.map((e) => e.item);
   // E-PARITY FP3: a renderer-compat profile breaks lines greedily (first-fit,
   // like Word/LibreOffice); the default 'ream' keeps Knuth-Plass total-fit.
@@ -3003,10 +4962,26 @@ function wrap(
     let start = 0;
     let isFirst = true;
     let lineIdx = 0;
-    for (const breakIdx of at) {
+    for (const [i, breakIdx] of at.entries()) {
       const width = lineIdx < widths.length ? widths[lineIdx]! : widths[widths.length - 1]!;
-      const line = lineFromRange(entries, start, breakIdx, width, isFirst, resolved, profile);
-      if (line) out.push(line);
+      const line = lineFromRange(
+        entries,
+        start,
+        breakIdx,
+        width,
+        isFirst,
+        resolved,
+        profile,
+        i < at.length - 1,
+      );
+      // §17.15.1.35 — the compat flag fdo106029.docx sets: a line the author
+      // ended with Shift+Enter is not the paragraph's last, but it reads like
+      // one, and stretching "Lorem ipsum … elit." across the whole measure is
+      // what the flag exists to stop.
+      if (line)
+        out.push(
+          noExpandShiftReturn && entries[breakIdx]?.softBreak ? { ...line, noJustify: true } : line,
+        );
       start = breakIdx + 1;
       isFirst = false;
       lineIdx++;
@@ -3061,6 +5036,17 @@ function fontLeadingPt(
 }
 
 function computeLineHeight(line: Line, p: ResolvedParagraphProperties): number {
+  const natural = naturalLineHeight(line, p);
+  // §17.6.5 — on a document grid every line stands a whole number of grid
+  // lines tall, so a line taller than the pitch takes as many as it needs.
+  // fdo80902.docx rules an 18pt grid over 10.5pt text and its two paragraphs
+  // sat a bare line height apart.
+  const pitch = p.gridLinePitchPt;
+  if (pitch !== undefined && pitch > 0) return Math.ceil(natural / pitch - 1e-6) * pitch;
+  return natural;
+}
+
+function naturalLineHeight(line: Line, p: ResolvedParagraphProperties): number {
   const fontSize = line.maxFontSizePt || 12;
   // Natural single-line height: a font-metric value under a layoutProfile
   // (E-PARITY), else Ream's flat 1.2×. The spacing rules below scale it.
@@ -3069,7 +5055,10 @@ function computeLineHeight(line: Line, p: ResolvedParagraphProperties): number {
   // hold its full ascent+descent (plus a little leading).
   const mathH = (line.mathAscentPt ?? 0) + (line.mathDescentPt ?? 0);
   const mathNeed = mathH > 0 ? mathH * 1.05 : 0;
-  if (p.spacingLineRule === 'exact' && p.spacingLine > 0) {
+  // §17.3.1.33 — "exact" means exactly that, zero included: a line told to be
+  // no tall is no tall. (Absent spacing resolves to 'auto', so this reads only
+  // a height the document actually declared.)
+  if (p.spacingLineRule === 'exact' && p.spacingLine >= 0) {
     return Math.max(p.spacingLine, mathNeed);
   }
   if (p.spacingLineRule === 'atLeast' && p.spacingLine > 0) {
@@ -3088,6 +5077,38 @@ function lineDescent(line: Line): number {
   // Metric descent under a layoutProfile (E-PARITY), else the flat 0.2×.
   const base = line.metricDescentPt ?? fs * 0.2;
   return Math.max(base, line.mathDescentPt ?? 0);
+}
+
+/**
+ * §17.3.1.33 — how far the baseline stands above the BOTTOM of the line box,
+ * which is what says where the extra height of a spaced-out line goes.
+ *
+ * A line given a fixed height (`exact`, `atLeast`) hangs from the bottom of its
+ * box: the space a taller `w:line` asks for opens ABOVE the text, which is what
+ * makes "at least 24pt" push a heading down its own line.
+ *
+ * `auto` — Word's "Multiple", the 1.15 every modern template sets — scales the
+ * line instead, and the space it gains falls BELOW: the first line of a spaced
+ * paragraph starts exactly where a single-spaced one does. Read the other way
+ * round, fdo80800.docx's 1.5-line cells sat 6.6pt under the plain cell beside
+ * them, where Word and LibreOffice write all three on one baseline.
+ *
+ * §17.6.5 — the extra a document GRID adds is not the paragraph's at all, and
+ * is split evenly: the line is centred on its grid row.
+ *
+ * @param line The laid-out line.
+ * @param p    The owning paragraph's resolved properties.
+ * @returns The distance from the line box's bottom edge up to the baseline.
+ */
+function lineBaselineOffset(line: Line, p: ResolvedParagraphProperties): number {
+  const descent = lineDescent(line);
+  const natural = naturalLineHeight(line, p);
+  // What this line would stand at spacing 1 — its font's own height, or the
+  // math box that outgrows it. Whatever the multiple adds on top of that is
+  // the space that falls below the text.
+  const singled = naturalLineHeight(line, { ...p, spacingLineRule: 'auto', spacingLine: pt(0) });
+  const extraBelow = p.spacingLineRule === 'auto' ? Math.max(0, natural - singled) : 0;
+  return descent + extraBelow + (computeLineHeight(line, p) - natural) / 2;
 }
 
 function alignmentOffset(
@@ -3134,7 +5155,7 @@ function layoutTableBlock(
       aboveBordersByCol,
     );
     const nextAbove: Array<CellBorders | undefined> = [];
-    let ci = 0;
+    let ci = table.rows[r]!.properties.gridBefore ?? 0;
     for (const cell of table.rows[r]!.cells) {
       const span = Math.max(1, cell.properties.colSpan ?? 1);
       for (let k = 0; k < span; k++) nextAbove[ci + k] = cell.properties.borders;
@@ -3152,10 +5173,50 @@ function layoutTableBlock(
         : rl,
     );
   }
+  growRowsForMerges(rows);
   const heightPt = rows.reduce((s, r) => s + r.heightPt, 0);
   const totalWidthPt = columnWidthsPt.reduce((s, w) => s + w, 0);
-  const xOffsetPt = tableXOffset(table.properties.alignment, contentWidth, totalWidthPt);
-  return { kind: 'table', rows, heightPt, totalWidthPt, colCount, xOffsetPt };
+  // §17.4.65 — the table's own indent from the text margin, before the slack a
+  // narrow table's alignment shares out.
+  const xOffsetPt =
+    (table.properties.indentPt ?? 0) +
+    tableXOffset(table.properties.alignment, contentWidth, totalWidthPt);
+  return {
+    kind: 'table',
+    ...(table.properties.float ? { float: table.properties.float } : {}),
+    rows,
+    heightPt,
+    totalWidthPt,
+    colCount,
+    xOffsetPt,
+  };
+}
+
+/**
+ * §17.4.85 `w:vMerge` — make every vertical merge fit. Each row is already as
+ * tall as its own (unmerged) cells; a merge that needs more than its rows add
+ * up to grows the LAST row of the run, which is where Word puts the slack.
+ *
+ * @param rows The table's laid-out rows, adjusted in place.
+ */
+function growRowsForMerges(rows: Array<RowLayout>): void {
+  for (let r = 0; r < rows.length; r++) {
+    for (const cell of rows[r]!.cells) {
+      if (cell.mergeRole !== 'start') continue;
+      // The run reaches down while the column below carries a continuation.
+      let last = r;
+      for (let k = r + 1; k < rows.length; k++) {
+        const below = rows[k]!.cells.find((c) => c.colStart === cell.colStart);
+        if (!below || (below.mergeRole !== 'middle' && below.mergeRole !== 'end')) break;
+        last = k;
+        if (below.mergeRole === 'end') break;
+      }
+      let have = 0;
+      for (let k = r; k <= last; k++) have += rows[k]!.heightPt;
+      const deficit = cell.totalHeightPt - have;
+      if (deficit > 0.01) rows[last] = { ...rows[last]!, heightPt: rows[last]!.heightPt + deficit };
+    }
+  }
 }
 
 // ECMA-376 §17.4.27 (w:jc) — horizontal placement of a table narrower than the
@@ -3182,19 +5243,40 @@ function computeColumnWidths(
 ): Array<number> {
   let colCount = table.grid.length;
   for (const row of table.rows) {
-    let rowCols = 0;
+    let rowCols = row.properties.gridBefore ?? 0;
     for (const cell of row.cells) rowCols += Math.max(1, cell.properties.colSpan ?? 1);
     if (rowCols > colCount) colCount = rowCols;
   }
   if (colCount === 0) return [];
 
-  if (table.properties.layout === 'fixed') {
+  // §17.4.49 `w:tblGrid` is the document's own answer, not a hint. Word writes
+  // the grid it last laid the table out at, and every reader — Word reopening
+  // the file included — draws it at those widths; autofit only ever recomputes
+  // them when the user edits. Refitting to the natural width of the text
+  // instead shrank a table to its words: 2_table_doc.docx declares two 221pt
+  // columns across the page and we drew a 100pt box in the corner.
+  //
+  // The measured autofit stays for a table that brings no grid at all.
+  // §17.4.53 `w:tblLayout w:type="fixed"` — the preferred widths ARE the
+  // layout, and where they disagree with the grid it is the grid that is
+  // stale. fdo38414.docx writes a grid whose first column is 132 twips and
+  // cells that ask for a fifth of the table; drawn on the grid its first
+  // column was two characters wide and every column after it landed one place
+  // to the left of where Word and LibreOffice draw it.
+  // A grid too short for the rows cannot place them at all, whatever the
+  // layout mode says: fdo59273.docx grids four columns and then spans its four
+  // cells across eleven, and the two on the right fell off the table.
+  const gridShort = gridColTwips(table).length < colCount;
+  const declared = declaredColumnWidths(table, colCount, contentWidth, gridShort);
+  if (declared) return declared;
+
+  if (gridColTwips(table).some((w) => w > 0)) {
     return gridWidthsScaled(table, contentWidth, colCount);
   }
 
   const colNaturalWidths = new Array<number>(colCount).fill(0);
   for (const row of table.rows) {
-    let colIdx = 0;
+    let colIdx = row.properties.gridBefore ?? 0;
     for (let i = 0; i < row.cells.length; i++) {
       const cell = row.cells[i]!;
       const span = Math.max(1, cell.properties.colSpan ?? 1);
@@ -3244,6 +5326,110 @@ function computeColumnWidths(
 // would drift in the last ulp and break the byte-identical gate.
 function gridColTwips(table: Table): Array<number> {
   return table.grid.map((w) => Math.round(w * 20));
+}
+
+/**
+ * §17.4.53 — column widths taken from the cells' own `w:tcW` for a table laid
+ * out `fixed`. Each cell shares its preferred width over the columns it spans
+ * and the widest claim wins; a column nobody declares keeps its grid share.
+ * Returns `undefined` (⇒ the grid decides) unless the table says `fixed` and
+ * enough of it is declared to trust.
+ */
+function declaredColumnWidths(
+  table: Table,
+  colCount: number,
+  contentWidth: number,
+  // The grid does not reach every column the rows use, so it cannot be the
+  // answer whatever the layout mode says.
+  gridShort = false,
+): Array<number> | undefined {
+  if (table.properties.layout !== 'fixed' && !gridShort) return undefined;
+  const target = totalTableTarget(table, contentWidth);
+  const declaredWidth = (cell: TableCell): number | undefined => {
+    const p = cell.properties;
+    if (p.widthFraction !== undefined) return p.widthFraction * target;
+    if (p.width !== undefined && p.widthType !== 'auto' && p.widthType !== 'nil') return p.width;
+    return undefined;
+  };
+  const claimed = new Array<number>(colCount).fill(0);
+  const spanning: Array<{ start: number; span: number; widthPt: number }> = [];
+  let anyDeclared = false;
+  // How far the rows that actually divide the table reach. A grid column past
+  // that is Word's own bookkeeping, touched only by a caption row spanning the
+  // lot: fdo38414.docx carries a twelfth of an inch of it, and giving it width
+  // hung that one row out past every other.
+  let reach = 0;
+  for (const row of table.rows) {
+    if (row.cells.length < 2) continue;
+    let span = row.properties.gridBefore ?? 0;
+    for (const cell of row.cells) span += Math.max(1, cell.properties.colSpan ?? 1);
+    if (span > reach) reach = span;
+  }
+  const phantomFrom = reach > 0 && reach < colCount ? reach : colCount;
+  for (const row of table.rows) {
+    let colIdx = row.properties.gridBefore ?? 0;
+    for (const cell of row.cells) {
+      const span = Math.max(1, cell.properties.colSpan ?? 1);
+      const widthPt = declaredWidth(cell);
+      if (widthPt !== undefined && widthPt > 0) {
+        anyDeclared = true;
+        // A cell that spans columns says nothing about any ONE of them — only
+        // about their sum. Sharing it out per column instead let the full-width
+        // caption row of fdo38414.docx overrule every column above it.
+        if (span === 1) {
+          if (widthPt > claimed[colIdx]!) claimed[colIdx] = widthPt;
+        } else {
+          spanning.push({ start: colIdx, span, widthPt });
+        }
+      }
+      colIdx += span;
+    }
+  }
+  if (!anyDeclared) return undefined;
+  // A span's width is a floor under the columns it covers: whatever it asks for
+  // beyond what they already claim goes to the ones still undecided, or is
+  // shared out when every one of them is settled.
+  for (const s of spanning) {
+    const end = Math.min(s.start + s.span, phantomFrom);
+    let have = 0;
+    const blank: Array<number> = [];
+    for (let i = s.start; i < end; i++) {
+      have += claimed[i]!;
+      if (claimed[i]! === 0) blank.push(i);
+    }
+    const deficit = s.widthPt - have;
+    if (deficit <= 0) continue;
+    if (blank.length > 0) {
+      const each = deficit / blank.length;
+      for (const i of blank) claimed[i] = each;
+    } else if (have > 0) {
+      for (let i = s.start; i < end; i++) claimed[i] = claimed[i]! * (s.widthPt / have);
+    }
+  }
+  // Columns still undeclared take their grid share of whatever the table has
+  // left over, so a partly-declared table keeps its overall width.
+  const gridTwips = gridColTwips(table);
+  const rest: Array<number> = [];
+  let claimedTotal = 0;
+  for (let i = 0; i < phantomFrom; i++) {
+    if (claimed[i]! > 0) claimedTotal += claimed[i]!;
+    else rest.push(i);
+  }
+  if (rest.length > 0) {
+    const leftover = Math.max(0, target - claimedTotal);
+    const restGrid = rest.reduce((s, i) => s + (gridTwips[i] ?? 0), 0);
+    for (const i of rest) {
+      claimed[i] =
+        restGrid > 0 ? ((gridTwips[i] ?? 0) / restGrid) * leftover : leftover / rest.length;
+    }
+  }
+  const total = claimed.reduce((s, w) => s + w, 0);
+  if (total <= 0) return undefined;
+  // Declared widths are taken as authored: only a table that asks for more than
+  // it has is pulled in, and one that asks for less keeps the gap the author
+  // left rather than being stretched to the margin.
+  const scale = total > target ? target / total : 1;
+  return claimed.map((w) => w * scale);
 }
 
 function gridWidthsScaled(table: Table, contentWidth: number, colCount: number): Array<number> {
@@ -3340,8 +5526,12 @@ function layoutTableRow(
 ): RowLayout {
   const cells: Array<CellLayout> = [];
   const columnXOffsets: Array<number> = [];
-  let cursorX = 0;
-  let colIdx = 0;
+  // §17.4.14 `w:gridBefore` — the row starts this many grid columns in, and
+  // those columns hold nothing at all. gridbefore.docx puts its one cell in the
+  // third column of three, and started at the first it sat over the row below.
+  const skip = Math.min(Math.max(0, row.properties.gridBefore ?? 0), columnWidthsPt.length);
+  let cursorX = columnWidthsPt.slice(0, skip).reduce((sum, w) => sum + w, 0);
+  let colIdx = skip;
   for (let cellIdx = 0; cellIdx < row.cells.length; cellIdx++) {
     const cell = row.cells[cellIdx]!;
     const span = Math.max(1, cell.properties.colSpan ?? 1);
@@ -3380,7 +5570,15 @@ function layoutTableRow(
     colIdx += span;
   }
   let heightPt = 0;
-  for (const c of cells) if (c.totalHeightPt > heightPt) heightPt = c.totalHeightPt;
+  // A cell that starts a vertical merge is as tall as its content, but that
+  // content has EVERY row of the merge to sit in — the row it starts in does
+  // not have to hold it alone. Counting it here made fdo38414.docx's first row
+  // six lines deep and pushed the rest of the table half a page down; the
+  // table pass below grows the merge's LAST row if the run comes up short.
+  for (const c of cells) {
+    if (c.mergeRole === 'start') continue;
+    if (c.totalHeightPt > heightPt) heightPt = c.totalHeightPt;
+  }
   if (row.properties.height && row.properties.heightRule === 'exact') {
     heightPt = row.properties.height;
     // A row pinned to a height keeps it, and what does not fit is CUT — Excel
@@ -3426,6 +5624,31 @@ function clipCellToHeight(cell: CellLayout, heightPt: number): CellLayout {
   return { ...cell, lines: kept, contentHeightPt: used };
 }
 
+/**
+ * The one run a picture BLOCK is made of, so a context that lays out paragraphs
+ * (a table cell) can draw it without a block path of its own.
+ *
+ * @param image The image block.
+ * @returns A run carrying it as an inline picture.
+ */
+function imageRun(image: ImageBlock): Paragraph['runs'][number] {
+  return {
+    text: '',
+    properties: {},
+    inlineImage: {
+      ...(image.resource ? { resource: image.resource } : {}),
+      ...(image.outline ? { outline: image.outline } : {}),
+      width: image.width,
+      height: image.height,
+      ...(image.crop ? { crop: image.crop } : {}),
+      ...(image.rotation60k ? { rotation60k: image.rotation60k } : {}),
+      ...(image.flipH ? { flipH: true } : {}),
+      ...(image.flipV ? { flipV: true } : {}),
+      ...(image.effectExtent ? { effectExtent: image.effectExtent } : {}),
+    },
+  };
+}
+
 function layoutTableCell(
   cell: TableCell,
   tableProps: TableProperties,
@@ -3461,9 +5684,24 @@ function layoutTableCell(
 
   const innerWidth = Math.max(1, widthPt - padLeftPt - padRightPt);
   const lines: Array<Line> = [];
-  const nestedTables: Array<TableBlock> = [];
+  const nestedTables: Array<{ block: TableBlock; afterLine: number }> = [];
+  const cellShapes: Array<{ block: ShapeBlockLaidOut; afterLine: number }> = [];
+  // §17.3.1.33 — the gap a paragraph keeps from the one above it, by the index
+  // of the line it opens with. A cell's lines are one flat list, so the gaps
+  // ride beside them: counted in the height but never drawn, the two paragraphs
+  // in each cell of negative-cell-margin-twips.docx ran together and the space
+  // they should have been given piled up under the last one.
+  const lineGaps = new Map<number, number>();
   let contentHeightPt = 0;
   let clipped = false;
+  let pendingGapPt = 0;
+  const openParagraph = (spacingBeforePt: number): void => {
+    const gap = pendingGapPt + spacingBeforePt;
+    pendingGapPt = 0;
+    if (gap <= 0) return;
+    lineGaps.set(lines.length, (lineGaps.get(lines.length) ?? 0) + gap);
+    contentHeightPt += gap;
+  };
   // Continuation cells (vMerge=continue) render no content — their text lives
   // in the 'start' cell above.
   if (mergeRole !== 'middle' && mergeRole !== 'end') {
@@ -3499,11 +5737,22 @@ function layoutTableCell(
         const keep = noWrap
           ? clipLineToWidth(block.lines, cutAt, cell.properties.hashOnOverflow === true)
           : block.lines;
+        // §17.4.20 — a cell that hides its end-of-cell mark contributes no
+        // height for an EMPTY paragraph: the mark is all such a line holds.
+        const markOnly =
+          cell.properties.hideMark === true && el.paragraph.runs.every((r) => r.text === '');
+        if (!markOnly) openParagraph(block.spacingBeforePt);
         for (const line of keep) {
           lines.push(line);
-          contentHeightPt += computeLineHeight(line, block.resolved);
+          if (!markOnly) contentHeightPt += computeLineHeight(line, block.resolved);
         }
-        contentHeightPt += block.spacingAfterPt;
+        // The space AFTER is the gap before whatever follows — `openParagraph`
+        // adds it there, together with that paragraph's own space before.
+        // Added here as well, every gap inside a cell counted twice:
+        // tdf119054.docx's 18pt-after headings made a 685pt cell 991pt tall,
+        // more than the page it fits on, and the row was split where no reader
+        // splits it.
+        if (!markOnly) pendingGapPt = block.spacingAfterPt;
       } else if (el.kind === 'table') {
         // Nested table (a w:tbl inside this w:tc): lay it out within the cell's
         // inner width; it renders below the cell's paragraph lines.
@@ -3514,11 +5763,56 @@ function layoutTableCell(
           imageResources,
           innerWidth,
         );
-        nestedTables.push(nested);
+        // Where it sits among the cell's lines: fdo53985.docx opens a cell
+        // with a nested table and follows it with a paragraph, and drawing
+        // every table after every line printed the two the wrong way round.
+        nestedTables.push({ block: nested, afterLine: lines.length });
         contentHeightPt += nested.heightPt;
+      } else if (el.kind === 'image' && !isOutOfFlowFloat(el.image.float)) {
+        // A lone picture in a cell reaches the layout as an image BLOCK — the
+        // reader collapses a paragraph whose only content is a drawing. A cell
+        // lays out paragraphs, so it is laid out as the paragraph it came
+        // from: one run holding the picture, which reserves its height on the
+        // line and draws exactly as a picture beside text does.
+        // form_footnotes.docx opens its visa form with a crest in the first
+        // cell of the header table, and we printed the form without it.
+        const block = layoutParagraphBlock(
+          { properties: el.image.paragraphProperties, runs: [imageRun(el.image)] },
+          options,
+          fontResources,
+          imageResources,
+          innerWidth,
+        );
+        openParagraph(block.spacingBeforePt);
+        for (const line of block.lines) {
+          lines.push(line);
+          contentHeightPt += computeLineHeight(line, block.resolved);
+        }
+        contentHeightPt += block.spacingAfterPt;
+        pendingGapPt = block.spacingAfterPt;
+      } else if (el.kind === 'shape' && !isOutOfFlowFloat(el.shape.float)) {
+        // …and a lone SHAPE in a cell reaches the layout the same way. It is
+        // not a run — a drawing that is a group or a text box has no inline
+        // form — so it rides beside the cell's lines the way a nested table
+        // does. shape-in-floattable.docx puts its whole diagram in one cell
+        // and we printed an empty page.
+        const block = layoutShapeBlock(
+          el.shape,
+          options,
+          fontResources,
+          imageResources,
+          innerWidth,
+        );
+        openParagraph(block.spacingBeforePt);
+        cellShapes.push({ block, afterLine: lines.length });
+        contentHeightPt += block.heightPt;
+        pendingGapPt = block.spacingAfterPt;
       }
-      // image/shape/chart inside a cell are not yet rendered (skipped).
+      // A chart or a FLOATING picture inside a cell is not yet rendered.
     }
+    // …and the space after the LAST paragraph, which nothing follows to claim
+    // it: the cell is that much taller, even though no line stands there.
+    contentHeightPt += pendingGapPt;
   }
   const colEnd = colStart + colSpan - 1;
   const borders = resolveCellBorders(
@@ -3549,7 +5843,9 @@ function layoutTableCell(
     ...(cell.properties.icon ? { icon: cell.properties.icon } : {}),
     ...(cell.properties.sparkline ? { sparkline: cell.properties.sparkline } : {}),
     lines,
+    ...(lineGaps.size > 0 ? { lineGaps } : {}),
     ...(nestedTables.length > 0 ? { nestedTables } : {}),
+    ...(cellShapes.length > 0 ? { shapes: cellShapes } : {}),
     contentHeightPt,
     totalHeightPt,
     ...(cell.properties.verticalAlign ? { verticalAlign: cell.properties.verticalAlign } : {}),
@@ -3576,6 +5872,7 @@ const BORDER_STYLE_RANK: Readonly<Record<BorderStyle, number>> = {
   thick: 4,
   single: 3,
   dashed: 2,
+  dashSmallGap: 2,
   dashDot: 2,
   dashDotDot: 2,
   dotted: 1,
@@ -3768,10 +6065,15 @@ class PageAssembler {
     readonly builder: StructTreeBuilder | undefined,
     readonly notes: NotePlan | undefined,
     readonly bookmarkPositions: Map<string, BookmarkPosition> | undefined,
+    /** §17.2.1 — the resource name of a PICTURE page background, if any. */
+    readonly backgroundImageName?: string,
   ) {
     this.ctx = sectionCtxs[0]!;
+    this.pageStartCtx = this.ctx;
+    this.pageNumber = this.ctx.properties.pageNumberStart ?? 1;
     this.cursorY = this.ctx.pageHeight - this.ctx.marginTop;
     this.colStartY = this.cursorY;
+    this.bandTopY = this.cursorY;
   }
 
   readonly pages: Array<LaidOutPage> = [];
@@ -3780,6 +6082,11 @@ class PageAssembler {
   secIdx = 0;
   pageInSection = 0;
   globalPageIdx = 0;
+  /**
+   * §17.6.12 — the number the NEXT page prints for a PAGE field. Counts up with
+   * the pages and restarts wherever a section names a `w:pgNumType w:start`.
+   */
+  pageNumber = 1;
   current: Array<PageItem> = [];
   pendingPageBreak = false;
   cursorY: number;
@@ -3794,6 +6101,12 @@ class PageAssembler {
   colStartLen = 0;
   /** The cursor's y at the top of the current column — see {@link colHasContent}. */
   colStartY: number;
+  /**
+   * Where this page's column band begins. The top margin on an ordinary page;
+   * further down when a §17.6.22 `continuous` section started mid-page, whose
+   * columns run beside each other from there, not from the paper's top.
+   */
+  bandTopY: number;
   /** The current column's left edge (`marginLeft` plus the column x-offset). */
   colLeft = (): number => this.ctx.marginLeft + (this.ctx.columns?.[this.colIdx]?.xOffsetPt ?? 0);
   /** The current column's width (the section content width when single-column). */
@@ -3827,11 +6140,119 @@ class PageAssembler {
     if (this.ctx.columns && this.colIdx + 1 < this.ctx.columns.length) {
       this.colIdx++;
       this.colStartLen = this.current.length;
-      this.cursorY = this.ctx.pageHeight - this.ctx.marginTop;
+      this.cursorY = this.bandTopY;
       this.colStartY = this.cursorY;
+      // The next column of a balanced band gets the same share — except the
+      // LAST, which takes whatever the rounding left over rather than spilling
+      // onto a page of its own.
+      const isLast = this.colIdx + 1 >= this.ctx.columns.length;
+      this.balanceBottomY =
+        this.balanceHeightPt > 0 && !isLast ? this.cursorY - this.balanceHeightPt : undefined;
     } else {
       this.flushPage();
     }
+  };
+
+  /**
+   * §17.6.8 — the running line count for the margin numbers. Reset by the
+   * section's own `w:restart` rule.
+   */
+  lineNumber = 0;
+
+  /**
+   * §17.6.8 — the margin number for the body line just placed, if the section
+   * asks for one at this count. Pushed at the line's own baseline, right-
+   * aligned a quarter inch off the text.
+   *
+   * @param baselineY The line's baseline, in page (y-down) coordinates.
+   * @param line      The line being numbered — its font draws the digits.
+   */
+  emitLineNumber = (baselineY: number, line: Line): void => {
+    const ln = this.ctx.properties.lineNumbering;
+    if (!ln) return;
+    this.lineNumber++;
+    const n = ln.start + this.lineNumber - 1;
+    if ((n - ln.start + 1) % ln.countBy !== 0) return;
+    // The number is set in the line's own first font, so a line of nothing but
+    // a picture carries none.
+    const token = line.tokens.find((t): t is TextToken => t.kind === 'text');
+    if (!token) return;
+    const text = String(n);
+    const sizePt = token.fontSizePt;
+    const widthPt = token.font.measure.textWidthPt(text, sizePt);
+    // A token of the line's own font and size, carrying nothing else it had —
+    // no link, no tab, no note reference.
+    const digits: TextToken = {
+      kind: 'text',
+      text,
+      isSpace: false,
+      resolvedRun: token.resolvedRun,
+      font: token.font,
+      fontSizePt: sizePt,
+      widthPt,
+      bidiLevel: 0,
+    };
+    const numbered: Line = { ...line, tokens: [digits], contentWidthPt: widthPt };
+    this.current.push({
+      type: 'line',
+      line: numbered,
+      originX: pt(this.colLeft() - (ln.distancePt ?? LINE_NUMBER_GAP_PT) - widthPt),
+      baselineY: pt(baselineY),
+    });
+  };
+
+  /**
+   * §17.6.12 — a section that names its own first page number restarts the
+   * count there; one that names none carries on from the section before.
+   *
+   * @param next The section being entered.
+   */
+  restartPageNumbers = (next: SectionRenderCtx): void => {
+    const start = next.properties.pageNumberStart;
+    if (start !== undefined) this.pageNumber = start;
+    // §17.6.8 — a section that restarts its line count does so here too.
+    if ((next.properties.lineNumbering?.restart ?? 'newPage') !== 'continuous') {
+      this.lineNumber = 0;
+    }
+  };
+
+  /**
+   * §17.6.22 — start a `continuous` section on the page in hand: its columns
+   * begin where the section does, not at the top of the paper.
+   *
+   * @param next The section to continue into.
+   */
+  startBandSection = (next: SectionRenderCtx, bandHeightPt: number): void => {
+    this.secIdx++;
+    this.ctx = next;
+    this.restartPageNumbers(next);
+    this.colIdx = 0;
+    this.colStartLen = this.current.length;
+    // The section's own top margin still governs an empty page — it is the
+    // first thing on the paper — but past that the cursor is where it is.
+    this.cursorY = Math.min(this.cursorY, next.pageHeight - next.marginTop);
+    this.bandTopY = this.cursorY;
+    this.colStartY = this.cursorY;
+    // §17.6.4 — balance the band when it has columns to share and its content
+    // fits them. A band too tall for the page fills column after column as
+    // before; there is nothing to even out when it will spill anyway.
+    this.beginBalancedBand(bandHeightPt);
+  };
+
+  /**
+   * §17.6.4 — even the columns of the band that starts at the cursor: each gets
+   * the same share of `bandHeightPt`. A band too tall for the page fills column
+   * after column as before; there is nothing to even out when it will spill
+   * anyway.
+   *
+   * @param bandHeightPt The height of everything the band holds.
+   */
+  beginBalancedBand = (bandHeightPt: number): void => {
+    const colCount = this.ctx.columns?.length ?? 1;
+    const room = this.cursorY - (this.ctx.marginBottom + this.noteReserve);
+    const share = colCount > 1 ? balancedColumnHeight(bandHeightPt, colCount, room) : 0;
+    this.balanceHeightPt = share;
+    this.balanceBottomY = share > 0 ? this.cursorY - share : undefined;
   };
 
   /**
@@ -3839,6 +6260,26 @@ class PageAssembler {
    * position without moving the cursor. `behindDoc` sinks below the body text,
    * everything else above it; both flush with the page.
    */
+  /**
+   * §20.4.2.3 — a float layer, drawn in `relativeHeight` order. A stable sort
+   * by z leaves the ones that state none where the document put them:
+   * dml-rectangle-relsize.docx writes its blue bar first and gives it the
+   * higher z, and drawn in document order the white rectangle covered it.
+   */
+  /** A float layer that stamps each item it takes with the float's z-order. */
+  static readonly zSink = (target: Array<PageItem>, z: number | undefined): Array<PageItem> =>
+    z === undefined
+      ? target
+      : ({
+          push: (...items: Array<PageItem>): number =>
+            target.push(...items.map((i) => ({ ...i, z }))),
+        } as unknown as Array<PageItem>);
+
+  static readonly byZ = (items: ReadonlyArray<PageItem>): Array<PageItem> =>
+    items.every((i) => i.z === undefined)
+      ? [...items]
+      : [...items].sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
+
   floatsBehind: Array<PageItem> = [];
   floatsFront: Array<PageItem> = [];
   /**
@@ -3846,22 +6287,44 @@ class PageAssembler {
    * must flow around. Page-scoped, like the float graphics.
    */
   exclusions: Array<{ x0: number; x1: number; topYUp: number; bottomYUp: number }> = [];
+  /**
+   * Claim the area a side-wrapping float keeps to itself: its own box grown by
+   * the §20.4.2.3 `distT/B/L/R` stand-off the anchor asks for.
+   */
+  excludeFloat = (f: FloatAnchor, x: number, topYUp: number, w: number, h: number): void => {
+    const d = f.wrapDist;
+    this.exclusions.push({
+      x0: x - (d?.leftPt ?? 0),
+      x1: x + w + (d?.rightPt ?? 0),
+      topYUp: topYUp + (d?.topPt ?? 0),
+      bottomYUp: topYUp - h - (d?.bottomPt ?? 0),
+    });
+  };
   /** The float's left edge on the page, resolved from its horizontal anchor. */
   floatX = (f: FloatAnchor, widthPt: number): number => {
     const h = f.posH;
     if (!h) return this.colLeft();
+    // §20.4.3.3 — the margin BANDS: the strip between the page edge and the
+    // text area on that side, which is where a marginal note is placed.
+    const textRight = this.ctx.marginLeft + this.ctx.contentWidth;
     const base =
-      h.relativeFrom === 'page'
+      h.relativeFrom === 'page' || h.relativeFrom === 'leftMargin'
         ? 0
         : h.relativeFrom === 'column'
           ? this.colLeft()
-          : this.ctx.marginLeft;
+          : h.relativeFrom === 'rightMargin'
+            ? textRight
+            : this.ctx.marginLeft;
     const span =
       h.relativeFrom === 'page'
         ? this.ctx.pageWidth
         : h.relativeFrom === 'column'
           ? this.colWidth()
-          : this.ctx.contentWidth;
+          : h.relativeFrom === 'leftMargin'
+            ? this.ctx.marginLeft
+            : h.relativeFrom === 'rightMargin'
+              ? this.ctx.pageWidth - textRight
+              : this.ctx.contentWidth;
     if (h.align === 'center') return base + (span - widthPt) / 2;
     if (h.align === 'right') return base + span - widthPt;
     return base + (h.offsetPt ?? 0);
@@ -3870,10 +6333,23 @@ class PageAssembler {
    * The drawing's TOP in the y-up cursor frame. Paragraph/line-relative offsets
    * hang off the anchoring paragraph's current position.
    */
-  floatTopYUp = (f: FloatAnchor): number => {
+  floatTopYUp = (f: FloatAnchor, heightPt = 0): number => {
     const v = f.posV;
     if (!v) return this.cursorY;
-    if (v.relativeFrom === 'page') return this.ctx.pageHeight - (v.offsetPt ?? 0);
+    // §20.4.3.1 — a keyword position: within the page or the margin box.
+    if (v.align !== undefined) {
+      const page = v.relativeFrom === 'page';
+      const topYUp = page ? this.ctx.pageHeight : this.ctx.pageHeight - this.ctx.marginTop;
+      const bottomYUp = page ? 0 : this.ctx.marginBottom;
+      if (v.align === 'top') return topYUp;
+      if (v.align === 'bottom') return bottomYUp + heightPt;
+      return bottomYUp + (topYUp - bottomYUp + heightPt) / 2;
+    }
+    // §20.4.3.4 — the TOP margin band starts at the page's own top edge; the
+    // BOTTOM one starts where the text area ends.
+    if (v.relativeFrom === 'page' || v.relativeFrom === 'topMargin')
+      return this.ctx.pageHeight - (v.offsetPt ?? 0);
+    if (v.relativeFrom === 'bottomMargin') return this.ctx.marginBottom - (v.offsetPt ?? 0);
     if (v.relativeFrom === 'margin')
       return this.ctx.pageHeight - this.ctx.marginTop - (v.offsetPt ?? 0);
     return this.cursorY - (v.offsetPt ?? 0);
@@ -3894,7 +6370,26 @@ class PageAssembler {
   noteReserve = 0;
   readonly placedNotes = new Set<string>();
   /** The page's usable bottom: the margin plus whatever the notes band has claimed so far. */
-  bottomLimit = (): number => this.ctx.marginBottom + this.noteReserve;
+  /**
+   * §17.6.4 — where the current column must stop. Normally the page's bottom
+   * margin (plus any footnote reserve); inside a BALANCED band it is the line
+   * the band's share of the height reaches, so the columns come out even.
+   */
+  bottomLimit = (): number =>
+    Math.max(
+      this.ctx.marginBottom + this.noteReserve,
+      this.balanceBottomY ?? Number.NEGATIVE_INFINITY,
+    );
+
+  /**
+   * §17.6.4 — a `continuous` section of several columns whose content fits the
+   * page is BALANCED: Word evens the columns out rather than filling the first
+   * to the bottom. Set while such a band is being laid out; the height each
+   * column is given is `balanceHeightPt`. IndexFieldFlagF.docx sets its index
+   * that way and we filled column one and left the rest empty.
+   */
+  balanceBottomY: number | undefined;
+  balanceHeightPt = 0;
 
   /**
    * The first exclusion a line spanning `[yTop-h, yTop]` collides with in the
@@ -3918,18 +6413,25 @@ class PageAssembler {
    * Per-line geometry beside an exclusion: the narrowed width and the x shift.
    * Text goes on the WIDER side of the float (one side per line, v1).
    */
-  lineGeometryAt = (yTop: number, h: number): { width: number; xOffset: number } => {
+  lineGeometryAt = (
+    yTop: number,
+    h: number,
+  ): { width: number; xOffset: number; blockedUntilYUp?: number } => {
     const full = this.colWidth();
     const e = this.exclusionAt(yTop, h);
     if (!e) return { width: full, xOffset: 0 };
     const cl = this.colLeft();
     const leftRoom = e.x0 - FLOAT_TEXT_GAP - cl;
     const rightRoom = cl + full - (e.x1 + FLOAT_TEXT_GAP);
-    if (rightRoom >= leftRoom) {
-      const w = Math.max(MIN_WRAP_WIDTH, rightRoom);
-      return { width: w, xOffset: full - w };
+    // A float as wide as the column leaves no side to flow down: the line
+    // belongs BELOW it, not squeezed into a 36pt gutter that would print on
+    // top of the drawing. effect-extent-line-width.docx anchors a text box
+    // spanning the whole measure and carries the paragraph's tail underneath.
+    if (Math.max(leftRoom, rightRoom) < MIN_WRAP_WIDTH) {
+      return { width: full, xOffset: 0, blockedUntilYUp: e.bottomYUp };
     }
-    return { width: Math.max(MIN_WRAP_WIDTH, leftRoom), xOffset: 0 };
+    if (rightRoom >= leftRoom) return { width: rightRoom, xOffset: full - rightRoom };
+    return { width: leftRoom, xOffset: 0 };
   };
 
   /**
@@ -3950,9 +6452,21 @@ class PageAssembler {
     let y = startY;
     for (let i = 0; i < 200; i++) {
       const g = this.lineGeometryAt(y, h0);
+      // A blocked line is not narrowed — it moves below the float whole, and
+      // the placement loop is what moves it.
+      if (g.blockedUntilYUp !== undefined) {
+        widths.push(this.colWidth());
+        y = g.blockedUntilYUp - h0;
+        if (y < this.bottomLimit()) break;
+        continue;
+      }
       widths.push(g.width);
       if (g.width < this.colWidth()) narrowed = true;
-      else if (i > 0) break; // first full-width line after the float ends the scan
+      // The scan stops at the first full-width line PAST the float — stopping
+      // at any full-width line gave up before ever reaching one anchored part
+      // way down the paragraph (effect-extent-line-width.docx puts its box
+      // 109pt below the paragraph's own top).
+      else if (narrowed) break;
       y -= h0;
       if (y < this.bottomLimit()) break;
     }
@@ -4014,6 +6528,7 @@ class PageAssembler {
           this.ctx.marginLeft,
           cursor,
           this.ctx.pageHeight,
+          this.ctx.contentWidth,
           structId,
         ),
       );
@@ -4063,7 +6578,7 @@ class PageAssembler {
     if (header.renderDynamic) {
       this.dynBands.push({
         pageIdx: this.pages.length,
-        pageNumber: this.globalPageIdx + 1,
+        pageNumber: this.pageNumber,
         position: 'header',
         render: header.renderDynamic,
       });
@@ -4071,17 +6586,21 @@ class PageAssembler {
     if (footer.renderDynamic) {
       this.dynBands.push({
         pageIdx: this.pages.length,
-        pageNumber: this.globalPageIdx + 1,
+        pageNumber: this.pageNumber,
         position: 'footer',
         render: footer.renderDynamic,
       });
     }
     this.pages.push({
       commands: [
+        // §17.2.1 — the page background is under everything, paper and all.
+        ...this.pageBackgroundItems(),
+        ...this.pageBorderItems(),
+        ...this.columnSeparatorItems(),
         ...header.commands,
-        ...this.floatsBehind,
+        ...PageAssembler.byZ(this.floatsBehind),
         ...this.current,
-        ...this.floatsFront,
+        ...PageAssembler.byZ(this.floatsFront),
         ...this.renderNotesBand(),
         ...footer.commands,
       ],
@@ -4098,8 +6617,185 @@ class PageAssembler {
     this.colStartLen = 0;
     this.pageInSection++;
     this.globalPageIdx++;
+    this.pageNumber++;
+    // §17.6.8 — the count starts again on each page unless the section says
+    // otherwise.
+    if ((this.ctx.properties.lineNumbering?.restart ?? 'newPage') === 'newPage') {
+      this.lineNumber = 0;
+    }
     this.cursorY = this.ctx.pageHeight - this.ctx.marginTop;
     this.colStartY = this.cursorY;
+    this.bandTopY = this.cursorY;
+    this.balanceBottomY = undefined;
+    this.balanceHeightPt = 0;
+    this.pageStartCtx = this.ctx;
+  };
+
+  /**
+   * §17.6.4 `w:cols w:sep` — the rule down the middle of every gutter, run the
+   * height of the text area. multi-column-separator-with-line.docx asks for one
+   * and we drew its two columns with nothing between them.
+   *
+   * @returns One border item per gutter, or none when the section asks for no rule.
+   */
+  columnSeparatorItems = (): Array<PageItem> => {
+    // The section the page STARTED in: a continuous break can hand the same
+    // page to a section with a different column setup part-way down, and the
+    // rules belong to the one that owns the page's top.
+    const ctx = this.pageStartCtx;
+    const cols = ctx.columns;
+    if (!cols || cols.length < 2 || ctx.properties.columns?.separator !== true) return [];
+    // As far down as the page's own content reaches, not to the bottom margin:
+    // a rule the height of the text area under one line of text is a rule down
+    // an empty page.
+    let deepest = ctx.marginTop;
+    for (const item of this.current) {
+      const bottom =
+        item.type === 'line' ? item.baselineY : item.type === 'shape' ? 0 : item.y + item.height;
+      if (bottom > deepest) deepest = bottom;
+    }
+    const height = Math.min(deepest, ctx.pageHeight - ctx.marginBottom) - ctx.marginTop;
+    if (height <= 0) return [];
+    const out: Array<PageItem> = [];
+    for (let i = 1; i < cols.length; i++) {
+      const left = cols[i - 1]!;
+      const right = cols[i]!;
+      const x = ctx.marginLeft + (left.xOffsetPt + left.widthPt + right.xOffsetPt) / 2;
+      out.push({
+        type: 'border',
+        side: 'left',
+        x: pt(x),
+        y: pt(ctx.marginTop),
+        width: pt(0),
+        height: pt(height),
+        borderSizePt: COLUMN_SEPARATOR_PT,
+        borderColorHex: '000000',
+      });
+    }
+    return out;
+  };
+
+  /** The section context the CURRENT page began in (see {@link columnSeparatorItems}). */
+  pageStartCtx: SectionRenderCtx;
+
+  /**
+   * §17.6.10 `w:pgBorders` — the rules around the page. `@w:offsetFrom` says
+   * what each edge's space is measured from: the paper's own edge, or the text
+   * margin the rule stands outside of. a4andborders.docx frames every page and
+   * we drew nothing.
+   *
+   * @returns The border items for this page, in paint order.
+   */
+  /**
+   * §17.2.1 — what the page is painted before anything is drawn on it: the
+   * `v:background`'s PICTURE or GRADIENT when it has one, else the flat
+   * `w:background @w:color`. Read as the colour alone, fill.docx's five-stop
+   * sweep came out the navy of its fallback and tdf126533_pageBitmap.docx's
+   * paper came out plain.
+   *
+   * @returns The background items for this page (at most one).
+   */
+  pageBackgroundItems = (): Array<PageItem> => {
+    const options = this.ctx.options;
+    const w = this.ctx.pageWidth;
+    const h = this.ctx.pageHeight;
+    const fill = options?.pageBackgroundFill;
+    if (fill?.kind === 'picture' && this.backgroundImageName !== undefined) {
+      return [
+        {
+          type: 'image',
+          x: pt(0),
+          y: pt(0),
+          width: pt(w),
+          height: pt(h),
+          imageResourceName: this.backgroundImageName,
+        },
+      ];
+    }
+    if (fill?.kind === 'gradient' && fill.gradient) {
+      return [
+        {
+          type: 'shape',
+          shape: {
+            paths: [rectAtPath(0, 0, w, h)],
+            // The flat approximation stays beside the gradient: PDF/A has no
+            // device colour space for a shading pattern to live in, and the
+            // writers that know only solid fills read this one.
+            fillColorHex: gradientToSolid(fill.gradient),
+            fillGradient: fill.gradient,
+            transform: flipTransform([1, 0, 0, 1, 0, 0], h),
+          },
+        },
+      ];
+    }
+    if (options?.pageBackgroundColorHex !== undefined) {
+      return [
+        {
+          type: 'fill',
+          x: pt(0),
+          y: pt(0),
+          width: pt(w),
+          height: pt(h),
+          fillColorHex: options.pageBackgroundColorHex,
+        },
+      ];
+    }
+    return [];
+  };
+
+  pageBorderItems = (): Array<PageItem> => {
+    const pg = this.ctx.properties.pageBorders;
+    if (!pg) return [];
+    const H = this.ctx.pageHeight;
+    const W = this.ctx.pageWidth;
+    const out: Array<PageItem> = [];
+    for (const side of ['top', 'bottom', 'left', 'right'] as const) {
+      const edge = pg.borders[side];
+      if (!edge || edge.style === 'none') continue;
+      const gap = edge.spacePt ?? 0;
+      // From the paper's edge the space is an inset; from the text it is an
+      // OUTSET of the margin, so the rule stands clear of the words.
+      const x0 = pg.offsetFrom === 'page' ? gap : this.ctx.marginLeft - gap;
+      const x1 = pg.offsetFrom === 'page' ? W - gap : W - this.ctx.marginLeft + gap;
+      const yTop = pg.offsetFrom === 'page' ? gap : this.ctx.marginTop - gap;
+      const yBottom = pg.offsetFrom === 'page' ? H - gap : H - this.ctx.marginBottom + gap;
+      out.push({
+        type: 'border',
+        side,
+        x: pt(Math.max(0, x0)),
+        y: pt(Math.max(0, yTop)),
+        width: pt(Math.max(0, x1 - x0)),
+        height: pt(Math.max(0, yBottom - yTop)),
+        borderSizePt: edge.width ?? DEFAULT_BORDER_SIZE_EIGHTH * EIGHTH_PT,
+        borderColorHex: edge.colorHex ?? '000000',
+        ...(edge.style !== 'single' ? { borderStyle: edge.style } : {}),
+      });
+    }
+    return out;
+  };
+
+  /**
+   * Throw the in-progress page away and reset for the next one.
+   *
+   * A section boundary reached with a page that draws nothing is the one place
+   * this is wanted: {@link flushPage} keeps such a page whenever the cursor
+   * moved at all, which is right in the middle of a flow and wrong at a
+   * boundary, where the space consumed was the section break itself.
+   */
+  dropPage = (): void => {
+    this.current = [];
+    this.floatsBehind = [];
+    this.floatsFront = [];
+    this.exclusions = [];
+    this.pageNotes = [];
+    this.noteReserve = 0;
+    this.colIdx = 0;
+    this.colStartLen = 0;
+    this.cursorY = this.ctx.pageHeight - this.ctx.marginTop;
+    this.colStartY = this.cursorY;
+    this.bandTopY = this.cursorY;
+    this.balanceBottomY = undefined;
+    this.balanceHeightPt = 0;
   };
 }
 
@@ -4118,19 +6814,73 @@ function paginateSections(
     width: number,
     widths: ReadonlyArray<number>,
   ) => ParagraphBlock,
+  // §17.2.1 — the resource name of a PICTURE page background: the resource
+  // table is the only thing that knows it, and it lives a caller away.
+  backgroundImageName?: string,
 ): Array<LaidOutPage> {
   if (sectionCtxs.length === 0) return [];
-  const asm = new PageAssembler(sectionCtxs, builder, notes, bookmarkPositions);
+  const asm = new PageAssembler(
+    sectionCtxs,
+    builder,
+    notes,
+    bookmarkPositions,
+    backgroundImageName,
+  );
+
+  // §17.6.4 — a multi-column section that ENDS at a continuous break has its
+  // columns evened out: the break says "carry on down this page", so the
+  // section's content is a band with a bottom. default-sect-break-cols.docx
+  // sets two words in two columns that way, one beside the other, and we
+  // stacked both in the first column.
+  const balanceIfEndsContinuous = (fromBlock: number): void => {
+    const here = asm.ctx;
+    const next = sectionCtxs[asm.secIdx + 1];
+    if ((here.columns?.length ?? 1) < 2) return;
+    if (!next?.continuous) return;
+    if (next.pageWidth !== here.pageWidth || next.pageHeight !== here.pageHeight) return;
+    const end = Math.min(here.endIndex, blocks.length);
+    asm.beginBalancedBand(blocksHeight(blocks.slice(fromBlock, end)));
+  };
+  balanceIfEndsContinuous(0);
 
   for (let blockIdx = 0; blockIdx < blocks.length; blockIdx++) {
     // Advance to the section that owns this block. A section boundary forces
     // a page break before the next section's first block.
     while (asm.secIdx < sectionCtxs.length - 1 && blockIdx >= asm.ctx.endIndex) {
-      asm.flushPage();
+      const next = sectionCtxs[asm.secIdx + 1]!;
+      // §17.6.22 — a `continuous` section starts on the page in hand, where the
+      // one before it stopped. Ending the page instead put every section on its
+      // own: IndexFieldFlagF.docx writes its index as five continuous sections
+      // of differing column counts and printed five pages of one line each,
+      // where LibreOffice fits the lot on one. Word makes the break a page
+      // break anyway when the paper changes, since a page has one size.
+      const staysOnPage =
+        next.continuous &&
+        next.pageWidth === asm.ctx.pageWidth &&
+        next.pageHeight === asm.ctx.pageHeight;
+      if (staysOnPage) {
+        // §17.6.4 — the band's whole height, so a multi-column one can be
+        // balanced: every block from here to the section's end.
+        const end = Math.min(next.endIndex, blocks.length);
+        asm.startBandSection(next, blocksHeight(blocks.slice(blockIdx, end)));
+        continue;
+      }
+      // Forced: a section owns a page even when the body it holds draws
+      // nothing. A title page is written exactly that way — one empty
+      // paragraph carrying the sectPr, everything visible living in the
+      // header — and letting the page go took the header with it.
+      // 090716_Studentische_Arbeit_VWS.docx lost the crest off its first page
+      // while keeping it on the rest. Only when the section has produced no
+      // page yet, though: past that an empty tail is an empty tail, and the
+      // page it would make is thrown away rather than printed blank.
+      if (asm.pageHasContent() || asm.pageInSection === 0) asm.flushPage(true);
+      else asm.dropPage();
       asm.secIdx++;
       asm.ctx = sectionCtxs[asm.secIdx]!;
+      asm.restartPageNumbers(asm.ctx);
       asm.pageInSection = 0;
       asm.cursorY = asm.ctx.pageHeight - asm.ctx.marginTop;
+      balanceIfEndsContinuous(blockIdx);
     }
 
     const block = blocks[blockIdx]!;
@@ -4138,12 +6888,18 @@ function paginateSections(
     // start this block on a fresh page.
     if (asm.pendingPageBreak) {
       asm.pendingPageBreak = false;
-      if (asm.current.length > 0) asm.flushPage();
+      // Forced: a break on a page that holds nothing still ends it. Two breaks
+      // in a row are how a document asks for a blank page — 60293.docx does
+      // exactly that and prints three, of which we printed two, collapsing the
+      // pair into one.
+      asm.flushPage(true);
     }
     // A non-list-item block ends any open list run (tagged PDF).
     if (builder && !(block.kind === 'paragraph' && block.list)) asm.listStack.length = 0;
     if (block.kind === 'paragraph') {
-      if (block.resolved.pageBreakBefore && asm.pageHasContent()) asm.flushPage();
+      if ((block.resolved.pageBreakBefore || block.pageBreakBefore) && asm.pageHasContent()) {
+        asm.flushPage();
+      }
       asm.cursorY -= block.spacingBeforePt;
       // Float text wrapping: when the paragraph overlaps an exclusion, re-wrap
       // it with per-line widths (the source paragraph re-lays at the column
@@ -4156,6 +6912,9 @@ function paginateSections(
       // Tagged PDF: a plain paragraph → one P (or heading) element; a list item
       // → an L/LI/LBody/P built on the nesting stack. Its lines all reference
       // the resulting leaf by MCID.
+      // Where the paragraph's own rules would go, and the page it started on.
+      const borderTopY = asm.cursorY;
+      const borderPage = asm.pages.length;
       let structId: number | undefined;
       let markerLblId: number | undefined;
       // §14.8.4.3.3 Lbl: the first line's leading marker tokens split into
@@ -4186,7 +6945,10 @@ function paginateSections(
         if (lang && lang !== defaultLang) builder.node(structId).lang = lang;
       }
       let firstLineOfBlock = true;
-      for (const line of pb.lines) {
+      for (const [lineIdx, line] of pb.lines.entries()) {
+        // §17.3.3.1 — the line after a column break starts the next column,
+        // even when this one has room to spare.
+        if (pb.columnBreakLines?.has(lineIdx) && asm.colHasContent()) asm.advanceColumn();
         const h = computeLineHeight(line, pb.resolved);
         let newNotes = asm.lineFootnotes(line);
         const addedReserve = (sub: typeof newNotes) =>
@@ -4216,6 +6978,14 @@ function paginateSections(
             }
           }
         }
+        // A float that leaves no room beside it pushes the line under itself.
+        // Two of them stacked push twice, so the walk repeats — bounded, since
+        // each step lands strictly below the exclusion it cleared.
+        for (let guard = 0; guard < 8 && asm.exclusions.length > 0; guard++) {
+          const blocked = asm.lineGeometryAt(asm.cursorY, h).blockedUntilYUp;
+          if (blocked === undefined || blocked >= asm.cursorY) break;
+          asm.cursorY = blocked;
+        }
         asm.cursorY -= h;
         const indentLeft =
           pb.resolved.indentLeft + (line.firstLine ? pb.resolved.indentFirstLine : 0);
@@ -4224,7 +6994,9 @@ function paginateSections(
           line.contentWidthPt,
           line.availableWidthPt,
         );
-        const baselineY = pt(asm.ctx.pageHeight - (asm.cursorY + lineDescent(line)));
+        const baselineY = pt(
+          asm.ctx.pageHeight - (asm.cursorY + lineBaselineOffset(line, pb.resolved)),
+        );
         const exclusionShift =
           asm.exclusions.length > 0 ? asm.lineGeometryAt(asm.cursorY + h, h).xOffset : 0;
         const originX = asm.colLeft() + indentLeft + offset + exclusionShift;
@@ -4263,118 +7035,107 @@ function paginateSections(
             ...(structId !== undefined ? { structId } : {}),
           });
         }
+        asm.emitLineNumber(baselineY, line);
+      }
+      // §17.3.1.24 `w:pBdr` — the rules around the paragraph, each standing
+      // `w:space` points off the text it frames. Drawn only when the paragraph
+      // stayed on one page: a rule around a fragment is a rule in the wrong
+      // place, and one drawn nowhere is what a bordered paragraph got before.
+      // §17.3.1.31 / §17.3.1.24 — the band behind the paragraph and the rules
+      // around it. Drawn only when the paragraph stayed on one page: a rule
+      // around a fragment is a rule in the wrong place, and nothing drawn is
+      // what a bordered paragraph got before either existed.
+      if (asm.pages.length === borderPage) {
+        asm.current.push(
+          ...paragraphDecoration(
+            pb.resolved,
+            asm.colLeft() + pb.resolved.indentLeft,
+            asm.colLeft() + asm.colWidth() - pb.resolved.indentRight,
+            borderTopY,
+            asm.cursorY,
+            asm.ctx.pageHeight,
+          ),
+        );
       }
       asm.cursorY -= pb.spacingAfterPt;
       if (pb.pageBreakAfter) asm.pendingPageBreak = true;
     } else if (block.kind === 'image') {
       const figId = builder ? createFigure(builder, block.altText, 'Image') : undefined;
       const emitImageAt = (x: number, topYUp: number, sink: Array<PageItem>) => {
+        const ins = block.drawInset;
         sink.push({
           type: 'image',
-          x: pt(x),
-          y: pt(asm.ctx.pageHeight - topYUp),
-          width: pt(block.widthPt),
-          height: pt(block.heightPt),
+          x: pt(x + (ins?.dxPt ?? 0)),
+          y: pt(asm.ctx.pageHeight - (topYUp - (ins?.dyTopPt ?? 0))),
+          width: pt(ins?.widthPt ?? block.widthPt),
+          height: pt(ins?.heightPt ?? block.heightPt),
           imageResourceName: block.resourceName,
+          ...(block.crop ? { crop: block.crop } : {}),
+          ...(block.rotationDeg ? { rotationDeg: block.rotationDeg } : {}),
+          ...(block.flipH ? { flipH: true } : {}),
+          ...(block.flipV ? { flipV: true } : {}),
+          ...(block.flipH ? { flipH: true } : {}),
+          ...(block.flipV ? { flipV: true } : {}),
           ...(figId !== undefined ? { structId: figId } : {}),
         });
+        if (block.outline) {
+          sink.push(
+            ...pictureOutlineItems(
+              block.outline,
+              x + (ins?.dxPt ?? 0),
+              asm.ctx.pageHeight - (topYUp - (ins?.dyTopPt ?? 0)),
+              ins?.widthPt ?? block.widthPt,
+              ins?.heightPt ?? block.heightPt,
+              figId,
+            ),
+          );
+        }
       };
       if (isOutOfFlowFloat(block.float)) {
         const fx = asm.floatX(block.float, block.widthPt);
-        const fy = asm.floatTopYUp(block.float);
-        emitImageAt(fx, fy, block.float.behind ? asm.floatsBehind : asm.floatsFront);
+        const fy = asm.floatTopYUp(block.float, block.heightPt);
+        emitImageAt(
+          fx,
+          fy,
+          PageAssembler.zSink(
+            block.float.behind ? asm.floatsBehind : asm.floatsFront,
+            block.float.zOrder,
+          ),
+        );
         if (block.float.wrap !== 'none') {
-          asm.exclusions.push({
-            x0: fx,
-            x1: fx + block.widthPt,
-            topYUp: fy,
-            bottomYUp: fy - block.heightPt,
-          });
+          asm.excludeFloat(block.float, fx, fy, block.widthPt, block.heightPt);
         }
       } else {
         asm.cursorY -= block.spacingBeforePt;
         if (asm.cursorY - block.heightPt < asm.bottomLimit() && asm.colHasContent())
           asm.advanceColumn();
         asm.cursorY -= block.heightPt;
-        emitImageAt(asm.colLeft(), asm.cursorY + block.heightPt, asm.current);
+        // §17.3.1.13 — a picture standing on its own line is placed by its
+        // paragraph's alignment, exactly as a shape below is.
+        // n764745-alignment.docx right-aligns its banner and we drew it against
+        // the left margin.
+        const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, asm.colWidth());
+        emitImageAt(asm.colLeft() + offset, asm.cursorY + block.heightPt, asm.current);
         asm.cursorY -= block.spacingAfterPt;
       }
     } else if (block.kind === 'shape') {
       // Shapes are atomic — never split across asm.pages.
       const figId = builder ? createFigure(builder, block.altText, 'Shape') : undefined;
-      const emitShapeAt = (x: number, bottomYUp: number, sink: Array<PageItem>) => {
-        const transform = flipTransform(
-          buildShapeTransform(
-            x,
-            bottomYUp,
-            block.widthPt,
-            block.heightPt,
-            block.rotation60k,
-            block.flipH,
-            block.flipV,
-          ),
-          asm.ctx.pageHeight,
-        );
-        sink.push({
-          type: 'shape',
-          shape: {
-            paths: block.paths,
-            ...(block.fillColorHex ? { fillColorHex: block.fillColorHex } : {}),
-            ...(block.fillGradient ? { fillGradient: block.fillGradient } : {}),
-            ...(block.stroke ? { stroke: block.stroke } : {}),
-            ...(block.shadow ? { shadow: block.shadow } : {}),
-            transform,
-          },
-          ...(figId !== undefined ? { structId: figId } : {}),
-        });
-        // Shape text: laid out axis-aligned, anchored vertically within the
-        // inset rect, emitted as ordinary line commands so it rides the text
-        // pass on top of the fill. (Rotated text boxes keep upright text.)
-        if (block.textLines.length > 0) {
-          const shapeBottom = bottomYUp;
-          const shapeTop = bottomYUp + block.heightPt;
-          const innerWidth = Math.max(1, block.widthPt - block.insetLeftPt - block.insetRightPt);
-          let textY: number;
-          if (block.anchor === 'b') {
-            textY = shapeBottom + block.insetBottomPt + block.textHeightPt;
-          } else if (block.anchor === 'ctr') {
-            textY = shapeBottom + (block.heightPt + block.textHeightPt) / 2;
-          } else {
-            textY = shapeTop - block.insetTopPt;
-          }
-          for (const line of block.textLines) {
-            const h = computeLineHeight(line, line.resolved);
-            textY -= h;
-            const lineOffset = alignmentOffset(
-              line.resolved.alignment,
-              line.contentWidthPt,
-              innerWidth,
-            );
-            sink.push({
-              type: 'line',
-              line,
-              originX: pt(x + block.insetLeftPt + lineOffset),
-              baselineY: pt(asm.ctx.pageHeight - (textY + lineDescent(line))),
-              ...(figId !== undefined ? { structId: figId } : {}),
-            });
-          }
-        }
-      };
+      const emitShapeAt = (x: number, bottomYUp: number, sink: Array<PageItem>) =>
+        emitShapeItems(block, x, bottomYUp, sink, asm.ctx.pageHeight, figId);
       if (isOutOfFlowFloat(block.float)) {
         const fx = asm.floatX(block.float, block.widthPt);
-        const fy = asm.floatTopYUp(block.float);
+        const fy = asm.floatTopYUp(block.float, block.heightPt);
         emitShapeAt(
           fx,
           fy - block.heightPt,
-          block.float.behind ? asm.floatsBehind : asm.floatsFront,
+          PageAssembler.zSink(
+            block.float.behind ? asm.floatsBehind : asm.floatsFront,
+            block.float.zOrder,
+          ),
         );
         if (block.float.wrap !== 'none') {
-          asm.exclusions.push({
-            x0: fx,
-            x1: fx + block.widthPt,
-            topYUp: fy,
-            bottomYUp: fy - block.heightPt,
-          });
+          asm.excludeFloat(block.float, fx, fy, block.widthPt, block.heightPt);
         }
       } else {
         asm.cursorY -= block.spacingBeforePt;
@@ -4391,46 +7152,22 @@ function paginateSections(
       // internal y-up cursor frame) composed with the page flip. The whole
       // chart is one Figure (alt = its title); its shapes + labels carry that id.
       const figId = builder ? createFigure(builder, block.altText, 'Chart') : undefined;
-      const fig = figId !== undefined ? { structId: figId } : {};
       const emitChartAt = (x: number, bottomYUp: number, sink: Array<PageItem>) => {
-        for (const s of block.layout.shapes) {
-          sink.push({
-            type: 'shape',
-            shape: {
-              paths: s.paths,
-              ...(s.fillColorHex ? { fillColorHex: s.fillColorHex } : {}),
-              ...(s.stroke ? { stroke: s.stroke } : {}),
-              transform: flipTransform([1, 0, 0, 1, x, bottomYUp], asm.ctx.pageHeight),
-            },
-            ...fig,
-          });
-        }
-        for (const t of block.layout.texts) {
-          sink.push({
-            type: 'line',
-            line: t.line,
-            originX: pt(x + t.x),
-            baselineY: pt(asm.ctx.pageHeight - (bottomYUp + t.y)),
-            ...(t.rotationDeg ? { rotationDeg: t.rotationDeg } : {}),
-            ...fig,
-          });
-        }
+        sink.push(...chartPageItems(block, x, bottomYUp, asm.ctx.pageHeight, figId));
       };
       if (isOutOfFlowFloat(block.float)) {
         const fx = asm.floatX(block.float, block.widthPt);
-        const fy = asm.floatTopYUp(block.float);
+        const fy = asm.floatTopYUp(block.float, block.heightPt);
         emitChartAt(
           fx,
           fy - block.heightPt,
-          block.float.behind ? asm.floatsBehind : asm.floatsFront,
+          PageAssembler.zSink(
+            block.float.behind ? asm.floatsBehind : asm.floatsFront,
+            block.float.zOrder,
+          ),
         );
         if (block.float.wrap !== 'none') {
-          asm.exclusions.push({
-            x0: fx,
-            x1: fx + block.widthPt,
-            topYUp: fy,
-            bottomYUp: fy - block.heightPt,
-          });
+          asm.excludeFloat(block.float, fx, fy, block.widthPt, block.heightPt);
         }
       } else {
         asm.cursorY -= block.spacingBeforePt;
@@ -4450,6 +7187,35 @@ function paginateSections(
           ),
         0,
       );
+      // §17.4.58 — a FLOATING table stands at its own anchor, whole, and the
+      // flow runs past it. fdo77887.docx anchors a form to the top of the page
+      // and we laid it out in the flow, where its first row alone is taller
+      // than the space left and pushed the whole page down to the next one.
+      // …but only when it FITS the page it is anchored to. A float is emitted
+      // whole, and a table taller than the page would lose every row past the
+      // bottom edge; laid out in the flow it is merely in the wrong place, and
+      // all of it is there. Word and LibreOffice break a floating table across
+      // pages, which the float sinks have no way to express.
+      const anchorY = isOutOfFlowFloat(block.float)
+        ? asm.floatTopYUp(block.float, block.heightPt)
+        : 0;
+      if (isOutOfFlowFloat(block.float) && anchorY - block.heightPt >= asm.ctx.marginBottom) {
+        const fx = asm.floatX(block.float, block.totalWidthPt);
+        const fy = anchorY;
+        const sink = PageAssembler.zSink(
+          block.float.behind ? asm.floatsBehind : asm.floatsFront,
+          block.float.zOrder,
+        );
+        let rowY = fy;
+        for (const row of block.rows) {
+          emitRowChunk(sink, row, fx, rowY, asm.ctx.pageHeight, colCount);
+          rowY -= row.heightPt;
+        }
+        if (block.float.wrap !== 'none') {
+          asm.excludeFloat(block.float, fx, fy, block.totalWidthPt, block.heightPt);
+        }
+        continue;
+      }
       // Leading header rows (w:tblHeader / _xlnm.Print_Titles) repeat at the top
       // of every continuation page. Only the maximal leading prefix repeats —
       // a header flagged mid-table is not a repeating title.
@@ -4905,7 +7671,31 @@ function emitRowChunk(
             ? slack / 2
             : 0;
     let textY = rowTop - cell.padTopPt - vOffset;
-    for (const line of cell.lines) {
+    const nestedX = cellX + cell.padLeftPt;
+    // Draw the nested tables that belong before line `n`, in document order.
+    const drawNestedBefore = (n: number): void => {
+      for (const nt of cell.nestedTables ?? []) {
+        if (nt.afterLine !== n) continue;
+        for (const nrow of nt.block.rows) {
+          const nestedIds = structId !== undefined ? nrow.cells.map(() => structId) : undefined;
+          emitRowChunk(out, nrow, nestedX, textY, pageHeight, nt.block.colCount, nestedIds);
+          textY -= nrow.heightPt;
+        }
+      }
+      for (const cs of cell.shapes ?? []) {
+        if (cs.afterLine !== n) continue;
+        const offset = alignmentOffset(
+          cs.block.resolvedAlignment,
+          cs.block.widthPt,
+          cell.widthPt - cell.padLeftPt - cell.padRightPt,
+        );
+        textY -= cs.block.heightPt;
+        emitShapeItems(cs.block, nestedX + offset, textY, out, pageHeight, structId);
+      }
+    };
+    for (const [lineIdx, line] of cell.lines.entries()) {
+      drawNestedBefore(lineIdx);
+      textY -= cell.lineGaps?.get(lineIdx) ?? 0;
       const h = computeLineHeight(line, line.resolved);
       textY -= h;
       const offset = alignmentOffset(
@@ -4923,7 +7713,7 @@ function emitRowChunk(
         type: 'line',
         line,
         originX: pt(cellX + cell.padLeftPt + indentLeft + offset),
-        baselineY: pt(pageHeight - (textY + lineDescent(line))),
+        baselineY: pt(pageHeight - (textY + lineBaselineOffset(line, line.resolved))),
         // The cell's own box. For a vertical merge that is the MERGED height,
         // not this row's: the text is centred over the whole box (see
         // mergedHeights), so a one-row clip would fall entirely above it.
@@ -4940,19 +7730,10 @@ function emitRowChunk(
         ...(structId !== undefined ? { structId } : {}),
       });
     }
-    // Nested tables render below the cell's paragraph lines, inset to the
-    // cell's content box. Each nested row reuses emitRowChunk; when tagged, its
-    // content is marked under the parent cell's structId.
-    if (cell.nestedTables) {
-      const nestedX = cellX + cell.padLeftPt;
-      for (const nt of cell.nestedTables) {
-        for (const nrow of nt.rows) {
-          const nestedIds = structId !== undefined ? nrow.cells.map(() => structId) : undefined;
-          emitRowChunk(out, nrow, nestedX, textY, pageHeight, nt.colCount, nestedIds);
-          textY -= nrow.heightPt;
-        }
-      }
-    }
+    // Whatever is left goes after the last line, inset to the cell's content
+    // box. Each nested row reuses emitRowChunk; when tagged, its content is
+    // marked under the parent cell's structId.
+    drawNestedBefore(cell.lines.length);
   }
 }
 

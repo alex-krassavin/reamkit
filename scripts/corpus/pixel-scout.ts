@@ -20,6 +20,7 @@
 // Usage:
 //   npx tsx scripts/corpus/pixel-scout.ts corpus/external/lo-xlsx [limit] [offset]
 //   npx tsx scripts/corpus/pixel-scout.ts corpus/external/poi-xlsx 500 0 --dpi 72
+//   npx tsx scripts/corpus/pixel-scout.ts corpus/external/lo-docx-import
 
 import { createHash } from 'node:crypto';
 import {
@@ -91,7 +92,8 @@ async function main(): Promise<void> {
   mkdirSync(work, { recursive: true });
 
   const files = readdirSync(dir)
-    .filter((f) => f.toLowerCase().endsWith('.xlsx'))
+    // Both halves of the corpus: the sweep this ranks for is the docx one too.
+    .filter((f) => /\.(?:xlsx|docx)$/iu.test(f))
     .sort()
     .slice(offset, offset + limit);
 

@@ -126,6 +126,7 @@ const RASTER_MEDIA: Readonly<Record<string, { ext: string; contentType: string }
   png: { ext: 'png', contentType: 'image/png' },
   jpeg: { ext: 'jpeg', contentType: 'image/jpeg' },
   jpeg2000: { ext: 'jp2', contentType: 'image/jp2' },
+  gif: { ext: 'gif', contentType: 'image/gif' },
 };
 
 // The writer round-trips a docx; it transfers image bytes verbatim, so it
@@ -1033,7 +1034,13 @@ function cellXml(
 
 function tcPrXml(p: CellProperties): string {
   const out: Array<string> = [];
-  if (p.width !== undefined) out.push(`<w:tcW w:w="${twips(p.width)}" w:type="dxa"/>`);
+  // §17.4.72 — a percentage width goes back as one (fiftieths of a percent);
+  // re-spelling it in twips would move the cell on the next read.
+  if (p.widthFraction !== undefined) {
+    out.push(`<w:tcW w:w="${Math.round(p.widthFraction * 5000)}" w:type="pct"/>`);
+  } else if (p.width !== undefined) {
+    out.push(`<w:tcW w:w="${twips(p.width)}" w:type="dxa"/>`);
+  }
   if (p.colSpan !== undefined && p.colSpan > 1) {
     out.push(`<w:gridSpan w:val="${p.colSpan}"/>`);
   }

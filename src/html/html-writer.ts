@@ -198,10 +198,15 @@ function collectReferencedAnchors(body: ReadonlyArray<BodyElement>): ReadonlySet
         }
       } else if (el.kind === 'table') {
         for (const row of el.table.rows) for (const cell of row.cells) visit(cell.content);
-      } else if (el.kind === 'shape' && el.shape.text) {
-        visit(el.shape.text.content);
+      } else if (el.kind === 'shape') {
+        visitShape(el.shape);
       }
     }
+  };
+  // §20.5.2.17 — a group's members carry text of their own, however deep.
+  const visitShape = (shape: ShapeBlock): void => {
+    if (shape.text) visit(shape.text.content);
+    for (const child of shape.children ?? []) visitShape(child.shape);
   };
   visit(body);
   return out;
@@ -229,10 +234,14 @@ function collectNoteNumbers(flow: FlowDoc): EmitCtx['notes'] {
         }
       } else if (el.kind === 'table') {
         for (const row of el.table.rows) for (const cell of row.cells) visit(cell.content);
-      } else if (el.kind === 'shape' && el.shape.text) {
-        visit(el.shape.text.content);
+      } else if (el.kind === 'shape') {
+        visitShape(el.shape);
       }
     }
+  };
+  const visitShape = (shape: ShapeBlock): void => {
+    if (shape.text) visit(shape.text.content);
+    for (const child of shape.children ?? []) visitShape(child.shape);
   };
   visit(flow.body);
   return { footnotes, endnotes, comments };
@@ -462,7 +471,22 @@ function hexToRgbCss(hex: string): string {
   return `${String((n >> 16) & 255)},${String((n >> 8) & 255)},${String(n & 255)}`;
 }
 
+// §20.5.2.17 — a group draws nothing of its own and then draws its members.
+// HTML has no canvas to place them on, so they follow the group in reading
+// order; a group that is nothing BUT a container (a SmartArt diagram, a Word
+// drawing canvas) contributes no figure of its own.
 function emitShapeBlock(out: Array<string>, shape: ShapeBlock, ctx: EmitCtx): void {
+  const children = shape.children ?? [];
+  const bare =
+    children.length > 0 &&
+    shape.fill.kind === 'none' &&
+    shape.line === undefined &&
+    (shape.text?.content.length ?? 0) === 0;
+  if (!bare) emitOneShape(out, shape, ctx);
+  for (const child of children) emitShapeBlock(out, child.shape, ctx);
+}
+
+function emitOneShape(out: Array<string>, shape: ShapeBlock, ctx: EmitCtx): void {
   const w = shape.width;
   const h = shape.height;
   const paths = buildShapePaths(shape.geometry, w, h);
@@ -1016,7 +1040,7 @@ function pushBorder(css: Array<string>, side: string, border: Border | undefined
       ? 'double'
       : border.style === 'dotted'
         ? 'dotted'
-        : border.style === 'dashed'
+        : border.style === 'dashed' || border.style === 'dashSmallGap'
           ? 'dashed'
           : 'solid'; // single + thick
   css.push(`border-${side}:${fmt(width)}pt ${style} #${border.colorHex ?? '000000'}`);
@@ -1051,6 +1075,7 @@ const MIME_BY_FORMAT = {
   jpeg: 'image/jpeg',
   png: 'image/png',
   jpeg2000: 'image/jp2',
+  gif: 'image/gif',
 } as const;
 
 function dataUri(resource: ResourceId | undefined, store: ResourceStore): string | undefined {

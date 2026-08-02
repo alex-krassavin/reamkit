@@ -37,8 +37,23 @@ import type { PlaceholderRef, ShapeBoxEmu } from '@/pptx/sp-helpers';
 
 import { defaultColorResolver, resolveColorNode } from '@/core/drawingml/colors';
 import { FEATURES, emuToPt, pt } from '@/core/ir';
-import { poAttr, poChildren, poFindDescendant, poIntAttr, poIs, poText } from '@/core/po-helpers';
-import { parseCustGeom, parseFill, parseLine, parsePrstGeom } from '@/word/drawing-parser';
+import {
+  poAttr,
+  poChildren,
+  poFindDescendant,
+  poIntAttr,
+  poIs,
+  poTag,
+  poText,
+} from '@/core/po-helpers';
+import {
+  parseCustGeom,
+  parseFill,
+  parseLine,
+  parsePrstGeom,
+  parseShadow,
+  parseXfrm,
+} from '@/word/drawing-parser';
 import { boxFromXfrm, parsePh, parseXfrmBox, rPrToRunProps } from '@/pptx/sp-helpers';
 
 const CHART_URI = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
@@ -319,16 +334,109 @@ export function noDiagramOverrideLoss(where?: string): Loss {
   };
 }
 
+/** One SmartArt node: the box it occupies in the target space, and its shape. */
+export interface DiagramNode {
+  readonly box: ShapeBoxEmu;
+  readonly shape: ShapeBlock;
+}
+
 /**
- * Render a SmartArt drawing override (a `dsp:spTree`) into floating shapes. The
- * `dsp:` wrapper holds an ordinary `a:` `spPr`/`txBody`, so the shared DrawingML
+ * Read a SmartArt drawing override (a `dsp:spTree`) into its nodes. The `dsp:`
+ * wrapper holds an ordinary `a:` `spPr`/`txBody`, so the shared DrawingML
  * readers apply unchanged. Shared by pptx and docx (E-SMARTART); diagrams carry
  * no placeholder cascade.
  *
+ * @param spTree       The diagram drawing's `dsp:spTree`.
+ * @param transform    Maps each shape's diagram-space box to the target space.
+ * @param colors       The colour resolver for the shapes' fills/strokes/text.
+ * @param resolveLink  A run hyperlink resolver, or `undefined`.
+ * @param resolveImage Resolves a picture fill's `r:embed` against the DRAWING
+ *                     part's own relationships, or `undefined`.
+ * @returns The diagram's visible nodes, in drawing order.
+ */
+export function parseDiagramNodes(
+  spTree: PoNode,
+  transform: GroupTransform,
+  colors: ColorResolver,
+  resolveLink: LinkResolver,
+  resolveImage?: (relId: string) => ResourceId | undefined,
+): Array<DiagramNode> {
+  const out: Array<DiagramNode> = [];
+  for (const sp of poChildren(spTree)) {
+    if (!poIs(sp, 'dsp:sp')) continue;
+    const spPr = poChildren(sp).find((c) => poIs(c, 'dsp:spPr'));
+    const own = parseXfrmBox(spPr);
+    if (!own) continue;
+    const box = transform(own);
+
+    const txBody = poChildren(sp).find((c) => poIs(c, 'dsp:txBody'));
+    const parsed = txBody
+      ? parseTxBody(txBody, undefined, undefined, colors, resolveLink)
+      : undefined;
+    // §20.1.4.2.14 — a diagram node states its text colour nowhere in the runs;
+    // it is in the node's `dsp:style/a:fontRef`, and for the stock SmartArt
+    // galleries that is `lt1`. smartart.docx puts white labels on three blue
+    // boxes and we drew them black.
+    const text = parsed ? withDiagramFontColor(parsed, sp, colors) : undefined;
+
+    const geometry = parseGeometry(spPr);
+    const fill: ShapeFill = spPr ? parseFill(spPr, colors, resolveImage) : { kind: 'none' };
+    const line = spPr ? parseLine(spPr, colors) : undefined;
+    const shadow = spPr ? parseShadow(spPr, colors) : undefined;
+    const visibleLine = line !== undefined && line.fill !== 'none';
+    if (!text && fill.kind === 'none' && !visibleLine) continue;
+
+    // §20.1.7.6 — a node may be turned in its box. fdo87488 stands one panel on
+    // end with `rot="5400000"` and we drew it lying down, twice as wide as the
+    // page. The LABEL does not turn with it: Word states the text's own frame
+    // in `dsp:txXfrm` precisely so it stays upright, so a turned node hands its
+    // text to a second, unturned box.
+    const xfrm = spPr ? poChildren(spPr).find((c) => poIs(c, 'a:xfrm')) : undefined;
+    const spin = xfrm ? parseXfrm(xfrm) : undefined;
+    const turned = (spin?.rotation60k ?? 0) % 21600000 !== 0;
+    const txBox = turned
+      ? boxFromXfrm(poChildren(sp).find((c) => poIs(c, 'dsp:txXfrm')))
+      : undefined;
+
+    out.push({
+      box,
+      shape: {
+        width: emuToPt(box.cx),
+        height: emuToPt(box.cy),
+        geometry,
+        fill,
+        ...(line ? { line } : {}),
+        ...(text && !txBox ? { text } : {}),
+        ...(spin && Object.keys(spin).length > 0 ? { transform: spin } : {}),
+        ...(shadow ? { shadow } : {}),
+        paragraphProperties: {},
+      },
+    });
+    if (text && txBox) {
+      const placed = transform(txBox);
+      out.push({
+        box: placed,
+        shape: {
+          width: emuToPt(placed.cx),
+          height: emuToPt(placed.cy),
+          geometry: RECT_GEOMETRY,
+          fill: { kind: 'none' },
+          text,
+          paragraphProperties: {},
+        },
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * The same nodes as free-standing floating shapes — what a slide wants, where
+ * every shape is anchored to the page.
+ *
  * @param spTree      The diagram drawing's `dsp:spTree`.
  * @param transform   Maps each shape's diagram-space box to the target space.
- * @param makeFloat   Anchors a box — page-relative for a slide, column/paragraph-
- *                    relative for an inline docx diagram.
+ * @param makeFloat   Anchors a node's box.
  * @param colors      The colour resolver for the shapes' fills/strokes/text.
  * @param resolveLink A run hyperlink resolver, or `undefined`.
  * @returns The diagram's visible shapes as positioned {@link ShapeBlock}s.
@@ -340,37 +448,42 @@ export function parseDiagramDrawing(
   colors: ColorResolver,
   resolveLink: LinkResolver,
 ): Array<ShapeBlock> {
-  const out: Array<ShapeBlock> = [];
-  for (const sp of poChildren(spTree)) {
-    if (!poIs(sp, 'dsp:sp')) continue;
-    const spPr = poChildren(sp).find((c) => poIs(c, 'dsp:spPr'));
-    const own = parseXfrmBox(spPr);
-    if (!own) continue;
-    const box = transform(own);
+  return parseDiagramNodes(spTree, transform, colors, resolveLink).map(({ box, shape }) => ({
+    ...shape,
+    float: makeFloat(box),
+  }));
+}
 
-    const txBody = poChildren(sp).find((c) => poIs(c, 'dsp:txBody'));
-    const text = txBody
-      ? parseTxBody(txBody, undefined, undefined, colors, resolveLink)
-      : undefined;
-
-    const geometry = parseGeometry(spPr);
-    const fill: ShapeFill = spPr ? parseFill(spPr, colors) : { kind: 'none' };
-    const line = spPr ? parseLine(spPr, colors) : undefined;
-    const visibleLine = line !== undefined && line.fill !== 'none';
-    if (!text && fill.kind === 'none' && !visibleLine) continue;
-
-    out.push({
-      float: makeFloat(box),
-      width: emuToPt(box.cx),
-      height: emuToPt(box.cy),
-      geometry,
-      fill,
-      ...(line ? { line } : {}),
-      ...(text ? { text } : {}),
-      paragraphProperties: {},
-    });
-  }
-  return out;
+// The text body with the node's `dsp:style/a:fontRef` colour filled in wherever
+// a run declares none.
+function withDiagramFontColor(
+  text: ShapeTextBody,
+  sp: PoNode,
+  colors: ColorResolver,
+): ShapeTextBody {
+  const style = poChildren(sp).find((c) => poIs(c, 'dsp:style'));
+  const ref = style ? poChildren(style).find((c) => poIs(c, 'a:fontRef')) : undefined;
+  const child = ref ? poChildren(ref).find((c) => poTag(c) !== undefined) : undefined;
+  const colorHex = child ? resolveColorNode(child, colors) : undefined;
+  if (colorHex === undefined) return text;
+  return {
+    ...text,
+    content: text.content.map((block) =>
+      block.kind === 'paragraph'
+        ? {
+            ...block,
+            paragraph: {
+              ...block.paragraph,
+              runs: block.paragraph.runs.map((run) =>
+                run.properties.colorHex === undefined
+                  ? { ...run, properties: { ...run.properties, colorHex } }
+                  : run,
+              ),
+            },
+          }
+        : block,
+    ),
+  };
 }
 
 /**

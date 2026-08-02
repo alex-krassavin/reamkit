@@ -5,7 +5,13 @@
 // to draw commands (rects/polylines/wedges via the vector layer, labels via the
 // text pass).
 
-import type { Chart, ChartLineStyle, ChartMarker, ChartSeries } from '@/core/document-model';
+import type {
+  Chart,
+  ChartLineStyle,
+  ChartMarker,
+  ChartSeries,
+  ShapeDash,
+} from '@/core/document-model';
 
 import { applyNumberFormat } from '@/core/number-format';
 
@@ -21,6 +27,8 @@ export interface ChartRect {
   readonly fillHex?: string;
   readonly strokeHex?: string;
   readonly strokeWidthPt?: number;
+  /** §20.1.10.49 — the outline's preset dash, when it names one. */
+  readonly strokeDash?: ShapeDash;
 }
 /** An open stroked polyline: line-chart series, gridlines and axis lines. */
 export interface ChartPolyline {
@@ -83,6 +91,11 @@ export interface ChartScene {
   readonly polygons?: ReadonlyArray<ChartPolygon>;
   /** §21.2.2.198 chart-space fill + outline: drawn under everything else. */
   readonly background?: ChartRect;
+  /**
+   * §21.2.2.145 the PLOT rectangle's own fill + outline, drawn over the chart
+   * frame and under the gridlines.
+   */
+  readonly plotBackground?: ChartRect;
   /**
    * Major gridlines, drawn UNDER the plotted data. Kept apart from the other
    * polylines because z-order is the whole point: gridlines over the bars strip
@@ -235,6 +248,8 @@ interface CartesianFrame {
   readonly polylines: Array<ChartPolyline>;
   /** Gridlines, kept apart so they draw UNDER the plotted data. */
   readonly gridlines: Array<ChartPolyline>;
+  /** §21.2.2.145 — the plot rectangle's own fill/rule, drawn under both. */
+  readonly plotBackground?: ChartRect;
   readonly labels: Array<ChartLabel>;
 }
 
@@ -431,11 +446,7 @@ function buildFrame(
   // the secondary takes the nice range of its own data.
   const scale2 =
     vals2.length > 0
-      ? niceScale(
-          Math.min(0, ...vals2),
-          Math.max(0, ...vals2),
-          Math.min(10, Math.max(4, Math.round(hPt / 24))),
-        )
+      ? niceScale(Math.min(0, ...vals2), Math.max(0, ...vals2), tickBudget(hPt))
       : undefined;
   const tickVals2 = scale2 ? ticks(scale2) : [];
 
@@ -463,6 +474,27 @@ function buildFrame(
   const valueOffset = (v: number): number =>
     ((v - scale.min) / (scale.max - scale.min)) * (horizontal ? plotW : plotH);
   const zeroOffset = valueOffset(0);
+
+  // §21.2.2.145 — the plot rectangle's own fill and rule, drawn UNDER the
+  // gridlines and the data. Chart_Plot_BorderLine_Style.docx rules its plot in
+  // a heavy orange dash-dot and we drew nothing around it at all.
+  const plotBackground: ChartRect | undefined =
+    (chart.plotFillHex ?? chart.plotLine?.colorHex)
+      ? {
+          x: x0,
+          y: y0,
+          w: plotW,
+          h: plotH,
+          ...(chart.plotFillHex ? { fillHex: chart.plotFillHex } : {}),
+          ...(chart.plotLine?.colorHex
+            ? {
+                strokeHex: chart.plotLine.colorHex,
+                strokeWidthPt: chart.plotLine.widthPt ?? 0.75,
+                ...(chart.plotLine.dash ? { strokeDash: chart.plotLine.dash } : {}),
+              }
+            : {}),
+        }
+      : undefined;
 
   pushChartTitle(labels, chart, wPt, hPt);
   // Axis titles. A value-axis title reads bottom-to-top, in the gutter outside
@@ -613,6 +645,7 @@ function buildFrame(
     rects,
     polylines,
     gridlines,
+    ...(plotBackground ? { plotBackground } : {}),
     labels,
   };
 }
@@ -700,6 +733,25 @@ function chartValueFormatter(chart: Chart): ((v: number) => string) | undefined 
  * @param measure Text measurer used to size labels and reserve axis gutters.
  * @returns The positioned scene primitives.
  */
+/**
+ * §21.2.2.198 `c:ser/c:spPr/a:ln` — a bar's own outline, as the stroke fields a
+ * {@link ChartRect} carries. Chart_BorderLine_Style.docx outlines each of its
+ * series in a colour and dash of its own, and drawing bars unstroked lost all
+ * of it.
+ *
+ * @param series The series the bar belongs to.
+ * @returns The stroke fields, or an empty object when the series has no rule.
+ */
+function barOutline(series: ChartSeries): Partial<ChartRect> {
+  const ln = series.line;
+  if (!ln || ln.none === true || !ln.colorHex) return {};
+  return {
+    strokeHex: ln.colorHex,
+    strokeWidthPt: ln.widthPt ?? 0.75,
+    ...(ln.dash && ln.dash !== 'solid' ? { strokeDash: ln.dash } : {}),
+  };
+}
+
 export function buildBarScene(
   chart: Chart,
   wPt: number,
@@ -740,8 +792,10 @@ export function buildBarScene(
         const lo = Math.min(o0, o1);
         const span = Math.abs(o1 - o0);
         const color = pointColor(series, c) ?? seriesColor(series, s, chart.seriesColorCycle);
-        if (horizontal) f.rects.push({ x: f.x0 + lo, y: along, w: span, h: barW, fillHex: color });
-        else f.rects.push({ x: along, y: f.y0 + lo, w: barW, h: span, fillHex: color });
+        const outline = barOutline(series);
+        if (horizontal)
+          f.rects.push({ x: f.x0 + lo, y: along, w: span, h: barW, fillHex: color, ...outline });
+        else f.rects.push({ x: along, y: f.y0 + lo, w: barW, h: span, fillHex: color, ...outline });
         if (chart.showValues && span > CHART_LABEL_PT) {
           const raw = series.values[c] ?? 0;
           if (horizontal)
@@ -762,6 +816,8 @@ export function buildBarScene(
       rects: f.rects,
       polylines: f.polylines,
       gridlines: f.gridlines,
+      ...(f.plotBackground ? { plotBackground: f.plotBackground } : {}),
+      ...(f.plotBackground ? { plotBackground: f.plotBackground } : {}),
       wedges: [],
       labels: f.labels,
     };
@@ -787,12 +843,13 @@ export function buildBarScene(
       const len = f.valueOffset(series.values[c] ?? 0) - f.zeroOffset; // signed from zero line
       const color = pointColor(series, c) ?? seriesColor(series, s, chart.seriesColorCycle);
       const along = slotStart + b * barW;
+      const outline = barOutline(series);
       if (horizontal) {
         const bx = f.x0 + f.zeroOffset + Math.min(0, len);
-        f.rects.push({ x: bx, y: along, w: Math.abs(len), h: barW, fillHex: color });
+        f.rects.push({ x: bx, y: along, w: Math.abs(len), h: barW, fillHex: color, ...outline });
       } else {
         const by = f.y0 + f.zeroOffset + Math.min(0, len);
-        f.rects.push({ x: along, y: by, w: barW, h: Math.abs(len), fillHex: color });
+        f.rects.push({ x: along, y: by, w: barW, h: Math.abs(len), fillHex: color, ...outline });
       }
       if (chart.showValues) {
         const raw = series.values[c] ?? 0;
@@ -821,6 +878,7 @@ export function buildBarScene(
     rects: f.rects,
     polylines: f.polylines,
     gridlines: f.gridlines,
+    ...(f.plotBackground ? { plotBackground: f.plotBackground } : {}),
     wedges: [],
     labels: f.labels,
   };
@@ -937,6 +995,7 @@ export function buildAreaScene(
     rects: f.rects,
     polylines: f.polylines,
     gridlines: f.gridlines,
+    ...(f.plotBackground ? { plotBackground: f.plotBackground } : {}),
     wedges: [],
     labels: f.labels,
     polygons,
@@ -1070,9 +1129,13 @@ function autoRange(vals: ReadonlyArray<number>): [number, number] {
   return [lo > 0 && lo < (5 / 6) * hi ? 0 : lo, hi];
 }
 
-/** Ticks that fit along an axis `extentPt` long (mirrors {@link axisScale}). */
+/**
+ * Ticks that fit along an axis `extentPt` long (mirrors {@link axisScale}).
+ * A tick every 32pt is what both references draw: at 24 a 250pt plot carried
+ * eleven of them (0, 0.5, 1 … 5.5) where both label 0…6 in whole numbers.
+ */
 const tickBudget = (extentPt: number): number =>
-  Math.min(10, Math.max(4, Math.round(extentPt / 24)));
+  Math.min(10, Math.max(4, Math.round(extentPt / 32)));
 
 /** Side (points) of the square stamped for a series that names no symbol. */
 const DEFAULT_MARKER_PT = 4;
@@ -1127,9 +1190,15 @@ export function buildLineScene(
 ): ChartScene {
   // Line charts auto-min: the value axis need not include 0 when the data sits
   // far from it (unlike bars/areas, which need a meaningful baseline at 0).
+  // "Far" is the rule both references apply — the smallest value more than
+  // five sixths of the largest. Cutting the axis off whenever the data merely
+  // starts above zero drew chartex.docx's 1.8…5 line chart on a 1.5…5.5 axis
+  // where both references draw 0…6.
   const allVals = chart.series.flatMap((s) => s.values);
+  const lo = allVals.length > 0 ? Math.min(...allVals) : 0;
+  const hi = allVals.length > 0 ? Math.max(...allVals) : 1;
   const range: readonly [number, number] =
-    allVals.length > 0 ? [Math.min(...allVals), Math.max(...allVals)] : [0, 1];
+    lo > 0 && lo > (5 / 6) * hi ? [lo, hi] : [Math.min(0, lo), Math.max(0, hi)];
   // …and the axis's own number format applies here exactly as it does to a bar
   // chart's: 123233_charts.xlsx labels every one of its four charts in currency
   // and only the line chart came out in bare digits.
@@ -1165,6 +1234,7 @@ export function buildLineScene(
     rects: f.rects,
     polylines: f.polylines,
     gridlines: f.gridlines,
+    ...(f.plotBackground ? { plotBackground: f.plotBackground } : {}),
     wedges,
     labels: f.labels,
   };
@@ -1468,7 +1538,13 @@ function withFrame(scene: ChartScene, chart: Chart, wPt: number, hPt: number): C
     w: wPt,
     h: hPt,
     ...(chart.frameFillHex ? { fillHex: chart.frameFillHex } : {}),
-    ...(chart.frameLineHex ? { strokeHex: chart.frameLineHex, strokeWidthPt: 0.75 } : {}),
+    ...(chart.frameLineHex
+      ? {
+          strokeHex: chart.frameLineHex,
+          strokeWidthPt: chart.frameLineWidthPt ?? 0.75,
+          ...(chart.frameLineDash ? { strokeDash: chart.frameLineDash } : {}),
+        }
+      : {}),
   };
   return { ...scene, background: frame };
 }

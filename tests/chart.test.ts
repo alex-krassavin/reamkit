@@ -13,6 +13,7 @@ import { buildChartScene } from '@/core/drawingml/chart-geometry';
 import { parseChart } from '@/core/drawingml/chart-parser';
 import { OpcPackage } from '@/core/opc';
 import { parseDocument } from '@/word';
+import { readDocx } from '@/word/docx-reader';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FONTS = {
@@ -120,10 +121,62 @@ describe('parseChart', () => {
     const chart = parseChart(enc.encode(framed), defaultColorResolver);
     expect(chart!.frameFillHex).toBe('FFFFFF');
     expect(chart!.frameLineHex).toBe('D9D9D9');
-    // A chart that declares neither keeps none.
+    // A chart that states no frame at all gets the one both references draw
+    // around a plain chart: white inside a light grey rule (chart-prop.docx).
     const plain = parseChart(enc.encode(BAR_CHART), defaultColorResolver);
-    expect(plain!.frameFillHex).toBeUndefined();
-    expect(plain!.frameLineHex).toBeUndefined();
+    expect(plain!.frameFillHex).toBe('FFFFFF');
+    expect(plain!.frameLineHex).toBe('D9D9D9');
+    // …but a chart that asks for neither gets neither (chart-dupe.docx).
+    const bare = parseChart(
+      enc.encode(BAR_CHART.replace('<c:chart>', '<c:spPr><a:noFill/></c:spPr><c:chart>')),
+      defaultColorResolver,
+    );
+    expect(bare!.frameFillHex).toBeUndefined();
+    expect(bare!.frameLineHex).toBeUndefined();
+  });
+
+  it('reads the frame rule width and dash, and the plot rectangle (§21.2.2.145)', () => {
+    // Chart_Plot_BorderLine_Style.docx rules its chart in a heavy blue sysDash
+    // and its PLOT in an orange lgDashDot, over no fill at all. We drew a thin
+    // solid frame, no plot rule, and painted the plot in the colour of the rule
+    // we were not drawing.
+    const ruled = BAR_CHART.replace(
+      '<c:plotArea>',
+      '<c:plotArea><c:spPr><a:noFill/><a:ln w="38100"><a:solidFill><a:srgbClr val="ED9B60"/></a:solidFill>' +
+        '<a:prstDash val="lgDashDot"/></a:ln></c:spPr>',
+    ).replace(
+      '<c:chart>',
+      '<c:spPr><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill>' +
+        '<a:ln w="57150"><a:solidFill><a:srgbClr val="2E74B5"/></a:solidFill>' +
+        '<a:prstDash val="sysDash"/></a:ln></c:spPr><c:chart>',
+    );
+    const chart = parseChart(enc.encode(ruled), defaultColorResolver);
+    expect(chart!.frameLineWidthPt).toBeCloseTo(4.5);
+    expect(chart!.frameLineDash).toBe('sysDash');
+    expect(chart!.plotFillHex).toBeUndefined();
+    expect(chart!.plotLine).toMatchObject({ colorHex: 'ED9B60', dash: 'lgDashDot' });
+    expect(chart!.plotLine?.widthPt).toBeCloseTo(3);
+  });
+
+  it("outlines a bar in its series' own rule (§21.2.2.198)", () => {
+    // Chart_BorderLine_Style.docx outlines each series in a colour and dash of
+    // its own, and bars drawn unstroked lost all of it.
+    const outlined = BAR_CHART.replace(
+      '<c:spPr><a:solidFill><a:srgbClr val="4472C4"/></a:solidFill></c:spPr>',
+      '<c:spPr><a:solidFill><a:srgbClr val="4472C4"/></a:solidFill>' +
+        '<a:ln w="28575"><a:solidFill><a:srgbClr val="70AD47"/></a:solidFill>' +
+        '<a:prstDash val="dash"/></a:ln></c:spPr>',
+    );
+    const chart = parseChart(enc.encode(outlined), defaultColorResolver);
+    expect(chart!.series[0]?.line).toMatchObject({ colorHex: '70AD47', dash: 'dash' });
+    const text = asLatin1(
+      convertDocxToPdfSync(
+        buildDocxFromBody(chartDrawing('rId5'), { charts: { rId5: outlined } }),
+        { fonts: FONTS },
+      ),
+    );
+    expect(text).toContain('0.439216 0.678431 0.278431 RG'); // 70AD47 stroke
+    expect(text).toMatch(/\[[\d.]+ [\d.]+\] 0 d/); // a dash pattern
   });
 
   it('takes a gradient-filled series from its first stop, not from its outline', () => {
@@ -373,6 +426,119 @@ describe('column chart rendering (end-to-end)', () => {
     expect(text).toContain('0.34902 0.34902 0.34902 RG');
     // Labels (categories / ticks / title) rendered as text.
     expect(text).toMatch(/<[0-9A-F]+> Tj/);
+  });
+});
+
+describe('a text box anchored beside text (chart-size.docx)', () => {
+  // The box shares its paragraph with a run of body text, so the drawing is
+  // read from the run — which used to parse it with no body parser and no
+  // image resolver at all. The box came out empty: no "Before.", no chart, no
+  // "After.".
+  const boxed =
+    `<w:p><w:r><w:drawing>` +
+    `<wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="1" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">` +
+    `<wp:simplePos x="0" y="0"/>` +
+    `<wp:positionH relativeFrom="column"><wp:posOffset>1000000</wp:posOffset></wp:positionH>` +
+    `<wp:positionV relativeFrom="paragraph"><wp:posOffset>100000</wp:posOffset></wp:positionV>` +
+    `<wp:extent cx="3943350" cy="1404620"/><wp:wrapNone/><wp:docPr id="2" name="Text Box 2"/>` +
+    `<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">` +
+    `<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">` +
+    `<wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">` +
+    `<wps:cNvSpPr txBox="1"/>` +
+    `<wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="3943350" cy="1404620"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr>` +
+    `<wps:txbx><w:txbxContent>` +
+    `<w:p><w:r><w:t>Before.</w:t></w:r></w:p>` +
+    chartDrawing('rId5', 2162810, 1297940) +
+    `<w:p><w:r><w:t>After.</w:t></w:r></w:p>` +
+    `</w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp>` +
+    `</a:graphicData></a:graphic></wp:anchor>` +
+    `</w:drawing></w:r><w:r><w:t>Body text.</w:t></w:r></w:p>`;
+
+  it('parses the box with everything in it', () => {
+    const { doc } = readDocx(buildDocxFromBody(boxed, { charts: { rId5: BAR_CHART } }));
+    const shape = doc.body.find((b) => b.kind === 'shape');
+    expect(
+      shape?.kind === 'shape' ? shape.shape.text?.content.map((c) => c.kind) : undefined,
+    ).toEqual(['paragraph', 'chart', 'paragraph']);
+  });
+
+  it('draws the chart inside it', () => {
+    const text = asLatin1(
+      convertDocxToPdfSync(buildDocxFromBody(boxed, { charts: { rId5: BAR_CHART } }), {
+        fonts: FONTS,
+      }),
+    );
+    expect(text).toContain('0.266667 0.447059 0.768627 rg'); // 4472C4 bars
+    expect(text).toContain('0.929412 0.490196 0.192157 rg'); // ED7D31 bars
+  });
+});
+
+describe('a chart in a paragraph that holds text too (chart-dupe.docx)', () => {
+  // A lone drawing collapses to a block; anything else in the paragraph kept
+  // the drawing in the run, where only pictures render — the chart was
+  // dropped. chart-dupe.docx sets one beside a trailing space.
+  const body = chartDrawing('rId5').replace(
+    '</w:r></w:p>',
+    `</w:r><w:r><w:t xml:space="preserve"> </w:t></w:r></w:p>`,
+  );
+
+  it('keeps the chart, as the block it is, and the paragraph beside it', () => {
+    const { doc } = readDocx(buildDocxFromBody(body, { charts: { rId5: BAR_CHART } }));
+    expect(doc.body.map((b) => b.kind)).toEqual(['chart', 'paragraph']);
+    const first = doc.body[0];
+    expect(first?.kind === 'chart' ? first.chart.chartRelId : undefined).toBe(
+      'word/charts/chart1.xml',
+    );
+  });
+
+  it('draws it', () => {
+    const text = asLatin1(
+      convertDocxToPdfSync(buildDocxFromBody(body, { charts: { rId5: BAR_CHART } }), {
+        fonts: FONTS,
+      }),
+    );
+    expect(text).toContain('0.266667 0.447059 0.768627 rg'); // 4472C4 bars
+    expect(text).toMatch(/\nh\nf\n/);
+  });
+});
+
+describe('a chart anchored in a footer (chart-in-footer.docx)', () => {
+  // Charts were collected from the main document's rels only, and the band
+  // renderer drew paragraphs, tables and images but not charts — a document
+  // whose only content is a footer chart came out blank. Relationship ids are
+  // scoped to their owning part (OPC §9.3), so the footer's rId5 here is a
+  // different chart from the body's.
+  const docx = buildDocxFromBody(
+    `<w:p><w:r><w:t>body</w:t></w:r></w:p>` +
+      `<w:sectPr><w:footerReference w:type="default" r:id="rId11"/></w:sectPr>`,
+    {
+      footerXml: chartDrawing('rId5'),
+      footerCharts: { rId5: BAR_CHART },
+      charts: { rId5: PIE_CHART },
+    },
+  );
+
+  it('draws the footer chart on every page', () => {
+    const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
+    expect(text).toContain('0.266667 0.447059 0.768627 rg'); // 4472C4 bars
+    expect(text).toContain('0.929412 0.490196 0.192157 rg'); // ED7D31 bars
+    expect(text).toMatch(/\nh\nf\n/); // a filled bar rect
+  });
+
+  it('keeps the body and the footer rId5 apart', () => {
+    const { doc } = readDocx(docx);
+    // Two chart parts, filed under their part paths rather than a shared id.
+    expect([...(doc.charts?.keys() ?? [])].sort()).toEqual([
+      'word/charts/chart1.xml',
+      'word/charts/chart2.xml',
+    ]);
+    const footer = doc.headersFooters?.get('rId11');
+    const block = footer?.find((b) => b.kind === 'chart');
+    expect(block?.kind === 'chart' ? block.chart.chartRelId : undefined).toBe(
+      'word/charts/chart2.xml',
+    );
+    expect(doc.charts?.get('word/charts/chart2.xml')?.type).toBe('bar');
   });
 });
 

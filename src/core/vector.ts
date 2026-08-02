@@ -64,6 +64,20 @@ export interface ShapeGradient {
   readonly kind: 'linear' | 'radial';
   /** Linear only: gradient direction in degrees clockwise (0 = left→right). */
   readonly angle?: number; // linear only: degrees clockwise, 0 = left→right
+  /**
+   * Radial only: where the first stop sits inside the box, as fractions of it
+   * (`{x: 0, y: 0}` is the top-left corner). Absent means the middle, which is
+   * where DrawingML's own `a:path` puts it; VML aims it at a corner instead
+   * (`@focus` with an `@angle`), and fill.docx's page sweep starts in one.
+   */
+  readonly center?: { readonly x: number; readonly y: number };
+  /**
+   * Radial only: the shape of the sweep's contours. Circles by default, which
+   * is what DrawingML's `a:path path="circle"` draws; VML's `gradientRadial`
+   * grows RECTANGLES out to the box instead, and so does the page background
+   * of fill.docx.
+   */
+  readonly sweep?: 'circle' | 'rect';
   readonly stops: ReadonlyArray<GradientStop>;
 }
 

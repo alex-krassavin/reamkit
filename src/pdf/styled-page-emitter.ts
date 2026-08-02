@@ -6,7 +6,7 @@
 // pre-split renderer produced), then pages replay their PageItems, then the
 // catalog assembles OutputIntent/XMP/struct-tree/attachments as required.
 
-import type { BorderStyle, DocumentInfo } from '@/core/document-model';
+import type { BorderStyle, DocumentInfo, ImageCrop } from '@/core/document-model';
 import type { ResourceId } from '@/core/ir';
 import type { EmbeddedFont } from '@/pdf/cid-font';
 import type { PdfDict, PdfRef, PdfValue } from '@/pdf/objects';
@@ -33,8 +33,8 @@ import type { BuildOptions, PdfDocument } from '@/pdf/writer';
 import type { PdfEncryptOptions } from '@/pdf/encryption';
 import { preparePdfEncryption } from '@/pdf/encryption';
 import { paintPlan } from '@/layout/page-doc';
-import { A4_HEIGHT, A4_WIDTH } from '@/layout/styled-layout';
-import { emitVectorShape } from '@/pdf/vector-graphics';
+import { A4_HEIGHT, A4_WIDTH, GLUE_SHRINK_RATIO } from '@/layout/styled-layout';
+import { emitClipPath, emitVectorShape, shadowBlurLayers } from '@/pdf/vector-graphics';
 import { buildGradientPattern, shapeBbox } from '@/pdf/shading';
 import { reorderVisual, reverseByCodePoint } from '@/core/bidi';
 import { sanitizeHref } from '@/core/links';
@@ -168,15 +168,26 @@ function assembleStyledPdf(
   // One state per distinct alpha, shared by every shadow that wants it.
   const alphaStateNames = new Map<number, string>();
   const extGStateEntries: Record<string, PdfValue> = {};
+  const wantAlpha = (alpha: number | undefined): void => {
+    if (alpha === undefined || alpha >= 1) return;
+    const key = Math.round(alpha * 1000) / 1000;
+    if (alphaStateNames.has(key)) return;
+    const nm = `GSa${alphaStateNames.size}`;
+    alphaStateNames.set(key, nm);
+    extGStateEntries[nm] = dict({ ca: key, CA: key });
+  };
   for (const page of renderedPages) {
-    for (const item of paintPlan(page.commands).shapes) {
-      const alpha = item.shape.shadow?.alpha;
-      if (alpha === undefined || alpha >= 1) continue;
-      const key = Math.round(alpha * 1000) / 1000;
-      if (alphaStateNames.has(key)) continue;
-      const nm = `GSa${alphaStateNames.size}`;
-      alphaStateNames.set(key, nm);
-      extGStateEntries[nm] = dict({ ca: key, CA: key });
+    const plan = paintPlan(page.commands);
+    for (const item of plan.shapes) {
+      const s = item.shape.shadow;
+      if (s) wantAlpha(shadowBlurLayers(s).alpha);
+    }
+    // …and the shadow an inline PICTURE casts, which rides its token rather
+    // than a shape of its own (imgshadow.docx).
+    for (const line of plan.lines) {
+      for (const tok of line.line.tokens) {
+        if (tok.kind === 'image' && tok.shadow) wantAlpha(shadowBlurLayers(tok.shadow).alpha);
+      }
     }
   }
   const resourcesDict = dict({
@@ -512,6 +523,7 @@ function defaultPageCtx(): SectionRenderCtx {
     footerSet: { default: { commands: [] }, first: { commands: [] }, even: { commands: [] } },
     titlePg: false,
     evenAndOddHeaders: false,
+    continuous: false,
   };
 }
 
@@ -627,31 +639,30 @@ interface LinkRegion {
 }
 
 /**
- * The PDF dash array for a §18.18.3 border style, in points.
+ * The dash array for a §18.18.3 / §17.18.2 border style, in points.
  *
- * Excel's dashes are proportional to the rule's weight; LibreOffice draws a
- * `thin` dashed edge as 3pt on / 1pt off, which is 4× / 1.33× its 0.75pt width.
- * An empty string means a solid rule.
+ * A pattern is a pattern, not a weight: Word and Excel both draw the same
+ * dashes on a hairline and on a 3pt rule, and both references agree on the
+ * lengths — a `dashed` page border strokes `8 2.5` whether its `w:sz` is 4 or
+ * 24. Scaling them by the width instead drew page-borders-export-case-2.docx's
+ * half-point frame as a row of specks a quarter the length it should be.
  */
-function dashPatternFor(style: BorderStyle | undefined, widthPt: number): string {
-  const u = Math.max(0.25, widthPt);
-  switch (style) {
-    case 'dashed':
-      return `[${formatNumber(u * 4)} ${formatNumber(u * 1.33)}]`;
-    // …and a dash-dot alternates the two, which is the whole difference
-    // between it and a dash on the page (cell-borders.xlsx names five of them).
-    case 'dashDot':
-      return `[${formatNumber(u * 4)} ${formatNumber(u * 1.33)} ${formatNumber(u)} ${formatNumber(u * 1.33)}]`;
-    case 'dashDotDot':
-      return (
-        `[${formatNumber(u * 4)} ${formatNumber(u * 1.33)} ${formatNumber(u)} ` +
-        `${formatNumber(u * 1.33)} ${formatNumber(u)} ${formatNumber(u * 1.33)}]`
-      );
-    case 'dotted':
-      return `[${formatNumber(u)} ${formatNumber(u * 1.33)}]`;
-    default:
-      return '';
-  }
+const BORDER_DASHES: ReadonlyMap<BorderStyle, ReadonlyArray<number>> = new Map([
+  ['dashed', [8, 2.5]],
+  // The SMALL-gap dash is a pattern of its own — Word spells it
+  // `dashSmallGap`, Excel calls the same thing a thin `dashed` rule.
+  ['dashSmallGap', [3, 1]],
+  ['dotted', [0.5, 1]],
+  // …and a dash-dot alternates the two, which is the whole difference
+  // between it and a dash on the page (cell-borders.xlsx names five of them).
+  ['dashDot', [8, 2.5, 2.5, 2.5]],
+  ['dashDotDot', [8, 2.5, 2.5, 2.5, 2.5, 2.5]],
+]);
+
+/** The PDF dash array for a border style; an empty string means a solid rule. */
+function dashPatternFor(style: BorderStyle | undefined): string {
+  const pattern = style !== undefined ? BORDER_DASHES.get(style) : undefined;
+  return pattern ? `[${pattern.map(formatNumber).join(' ')}]` : '';
 }
 
 function emitPageContent(
@@ -706,8 +717,24 @@ function emitPageContent(
     // /Im1 Do       paint the XObject
     // Q             restore
     out.push('q');
+    // §20.1.8.14 — a picture FILL is clipped to the shape it fills. The stored
+    // matrix is the top-left one; the page flip (an involution) recovers the
+    // y-up CTM the clip is emitted under, exactly as a shape's is.
+    if (img.clip) {
+      const t = img.clip.transform;
+      out.push(...emitClipPath(img.clip.paths, [t[0], -t[1], t[2], -t[3], t[4], H - t[5]]));
+    }
     out.push(
-      `${formatNumber(img.width)} 0 0 ${formatNumber(img.height)} ${formatNumber(img.x)} ${formatNumber(H - img.y - img.height)} cm`,
+      ...placeImage(
+        img.x,
+        H - img.y - img.height,
+        img.width,
+        img.height,
+        img.crop,
+        img.rotationDeg,
+        img.flipH,
+        img.flipV,
+      ),
     );
     out.push(`/${img.imageResourceName} Do`);
     out.push('Q');
@@ -736,7 +763,7 @@ function emitPageContent(
       // twelve continuous edges. The projecting cap set above would lengthen
       // every dash by half a width at each end and close the gaps, so a
       // patterned rule reverts to the butt cap §8.4.3.3 starts with.
-      const dash = dashPatternFor(b.borderStyle, width);
+      const dash = dashPatternFor(b.borderStyle);
       if (dash !== lastDash) {
         out.push(dash === '' ? '[] 0 d 2 J' : `${dash} 0 d 0 J`);
         lastDash = dash;
@@ -799,10 +826,10 @@ function emitPageContent(
       ...sh.shape,
       transform: [t[0], -t[1], t[2], -t[3], t[4], H - t[5]],
     };
-    const alpha = sh.shape.shadow?.alpha;
+    const shadowLayer = sh.shape.shadow ? shadowBlurLayers(sh.shape.shadow) : undefined;
     const alphaState =
-      alpha !== undefined && alpha < 1
-        ? alphaStateNames?.get(Math.round(alpha * 1000) / 1000)
+      shadowLayer && shadowLayer.alpha < 1
+        ? alphaStateNames?.get(Math.round(shadowLayer.alpha * 1000) / 1000)
         : undefined;
     for (const op of emitVectorShape(shape, gradientNames?.get(sh.shape), alphaState)) {
       out.push(op);
@@ -813,6 +840,7 @@ function emitPageContent(
   if (lines.length > 0) {
     let inBT = false;
     let lastFont = '';
+    let lastTc = 0;
     let lastSize = -1;
     let lastColor = '';
     const switchFontIfNeeded = (tok: TextToken) => {
@@ -821,6 +849,14 @@ function emitPageContent(
         out.push(`/${fontKey} ${formatNumber(tok.fontSizePt)} Tf`);
         lastFont = fontKey;
         lastSize = tok.fontSizePt;
+      }
+      // §17.3.2.35 — the run's own character spacing, which PDF applies per
+      // glyph through `Tc` (ISO 32000-1 §9.3.2). Set only when it changes, and
+      // cleared for the runs that ask for none.
+      const tc = tok.resolvedRun.letterSpacingPt ?? 0;
+      if (tc !== lastTc) {
+        out.push(`${formatNumber(tc)} Tc`);
+        lastTc = tc;
       }
       if (tok.resolvedRun.colorHex !== lastColor) {
         const [r, g, b] = hexToRgb01(tok.resolvedRun.colorHex);
@@ -839,16 +875,91 @@ function emitPageContent(
         out.push('ET');
         inBT = false;
       }
+      // §20.1.8.40 — the shadow the picture casts, drawn first so the picture
+      // covers it: the same box, offset, in the shadow's own colour and at the
+      // transparency it asks for. imgshadow.docx lifts six screenshots off the
+      // page this way and we drew them flat.
+      const shdw = tok.shadow;
+      if (shdw) {
+        const bx = tok.drawBox;
+        const [shr, shg, shb] = hexToRgb01(shdw.colorHex);
+        const layers = shadowBlurLayers(shdw);
+        const state =
+          layers.alpha < 1
+            ? alphaStateNames?.get(Math.round(layers.alpha * 1000) / 1000)
+            : undefined;
+        const sx = x + (bx?.dxPt ?? 0) + shdw.dxPt;
+        const sy = baselineY + (bx?.dyPt ?? 0) - shdw.dyPt;
+        const sw = bx?.widthPt ?? tok.widthPt;
+        const sh = bx?.heightPt ?? tok.heightPt;
+        out.push('q');
+        if (state) out.push(`/${state} gs`);
+        out.push(`${formatNumber(shr)} ${formatNumber(shg)} ${formatNumber(shb)} rg`);
+        // §20.1.8.40 `blurRad` — the soft edge, as boxes growing through the
+        // blur's width at a fraction of the transparency each (see
+        // shadowBlurLayers).
+        for (let i = 0; i < layers.count; i++) {
+          const grow =
+            layers.count > 1 ? -shdw.blurPt / 2 + ((i + 0.5) * shdw.blurPt) / layers.count : 0;
+          out.push(
+            `${formatNumber(sx - grow)} ${formatNumber(sy - grow)} ` +
+              `${formatNumber(Math.max(sw + 2 * grow, 0))} ` +
+              `${formatNumber(Math.max(sh + 2 * grow, 0))} re`,
+          );
+          out.push('f');
+        }
+        out.push('Q');
+      }
       out.push('q');
+      // §20.4.2.6 — the reserved box may be larger than the picture (the
+      // effect extent a rotation needs); the picture sits inside it.
+      const b = tok.drawBox;
       out.push(
-        `${formatNumber(tok.widthPt)} 0 0 ${formatNumber(tok.heightPt)} ${formatNumber(x)} ${formatNumber(baselineY)} cm`,
+        ...(b
+          ? placeImage(
+              x + b.dxPt,
+              baselineY + b.dyPt,
+              b.widthPt,
+              b.heightPt,
+              tok.crop,
+              tok.rotationDeg,
+              tok.flipH,
+              tok.flipV,
+            )
+          : placeImage(
+              x,
+              baselineY,
+              tok.widthPt,
+              tok.heightPt,
+              tok.crop,
+              tok.rotationDeg,
+              tok.flipH,
+              tok.flipV,
+            )),
       );
       out.push(`/${tok.imageResourceName} Do`);
       out.push('Q');
+      // §20.1.2.2.24 — the picture's own frame, stroked around the box it was
+      // just drawn in. tdf125657.docx borders its inline screenshot and we drew
+      // the picture bare.
+      const frame = tok.outline;
+      if (frame) {
+        const [fr, fg, fb] = hexToRgb01(frame.colorHex);
+        out.push('q');
+        out.push(`${formatNumber(frame.widthPt)} w`);
+        out.push(`${formatNumber(fr)} ${formatNumber(fg)} ${formatNumber(fb)} RG`);
+        out.push(
+          `${formatNumber(x + (b?.dxPt ?? 0))} ${formatNumber(baselineY + (b?.dyPt ?? 0))} ` +
+            `${formatNumber(b?.widthPt ?? tok.widthPt)} ${formatNumber(b?.heightPt ?? tok.heightPt)} re`,
+        );
+        out.push('S');
+        out.push('Q');
+      }
       // Text state is reset by ET; force re-emit on the next text token.
       lastFont = '';
       lastSize = -1;
       lastColor = '';
+      lastTc = 0;
     };
     // Emit an inline math box: glyph items in text mode, rule/path items in
     // graphics mode. All positions are box-local, offset by the box origin.
@@ -869,7 +980,7 @@ function emitPageContent(
             lastColor = '000000';
           }
           out.push(`1 0 0 1 ${formatNumber(originX + it.x)} ${formatNumber(baselineY + it.y)} Tm`);
-          out.push(`<${it.font.measure.encodeTextAsCidHex(it.text)}> Tj`);
+          out.push(it.font.measure.showText(it.text));
         } else if (it.kind === 'rule') {
           if (inBT) {
             out.push('ET');
@@ -926,6 +1037,7 @@ function emitPageContent(
       lastFont = '';
       lastSize = -1;
       lastColor = '';
+      lastTc = 0;
       out.push('BT');
       inBT = true;
       body(cmd);
@@ -938,6 +1050,7 @@ function emitPageContent(
       lastFont = '';
       lastSize = -1;
       lastColor = '';
+      lastTc = 0;
     };
     const emitOneLine = (cmd: TextLineItem) => {
       const line = cmd.line;
@@ -1005,6 +1118,12 @@ function emitPageContent(
       const hasImageToken = line.tokens.some((t) => t.kind === 'image');
       const hasMathToken = line.tokens.some((t) => t.kind === 'math');
       const hasRtl = line.tokens.some((t) => t.bidiLevel % 2 === 1);
+      // §17.3.1.38 — a tab's width is a DISTANCE, not the advance of the glyphs
+      // it draws: with no leader it draws none at all. The simple path below
+      // sets the text matrix once and lets the font's own advances carry the
+      // cursor, which loses that distance entirely — a numbered list printed
+      // "1.First item". Position such a line token by token instead.
+      const hasTab = line.tokens.some((t) => t.kind === 'text' && t.tab === true);
 
       // Encode a token's text, reversing code points for RTL (odd-level) runs
       // so glyphs lay out right-to-left as our cursor advances left-to-right.
@@ -1012,10 +1131,44 @@ function emitPageContent(
       const isDecorated = (tok: (typeof line.tokens)[number]): tok is TextToken =>
         tok.kind === 'text' && (tok.resolvedRun.underline !== 'none' || tok.resolvedRun.strike);
 
-      const encodeToken = (tok: TextToken): string => {
+      const showToken = (tok: TextToken): string => {
         const text = tok.bidiLevel % 2 === 1 ? reverseByCodePoint(tok.text) : tok.text;
-        return tok.font.measure.encodeTextAsCidHex(text);
+        return tok.font.measure.showText(text);
       };
+
+      // §17.3.2.32 — a run's own background, painted behind its glyphs before
+      // anything else on the line. Same shape as the highlight below, but each
+      // run carries its own colour; runs that share one are painted together.
+      if (line.tokens.some((t) => t.kind === 'text' && t.resolvedRun.shadingColorHex)) {
+        if (inBT) {
+          out.push('ET');
+          inBT = false;
+        }
+        const shAscent = Math.max(lineFs, line.mathAscentPt ?? 0);
+        const shDescent = Math.max(lineFs * 0.2, line.mathDescentPt ?? 0);
+        out.push('q');
+        let sx: number = originX;
+        let painted = '';
+        for (const tok of line.tokens) {
+          const w = tok.widthPt + (tok.kind === 'text' && tok.isSpace ? extraPerSpace : 0);
+          const hex = tok.kind === 'text' ? tok.resolvedRun.shadingColorHex : undefined;
+          if (hex !== undefined) {
+            if (hex !== painted) {
+              if (painted !== '') out.push('f');
+              const [sr, sg, sb] = hexToRgb01(hex);
+              out.push(`${formatNumber(sr)} ${formatNumber(sg)} ${formatNumber(sb)} rg`);
+              painted = hex;
+            }
+            out.push(
+              `${formatNumber(sx)} ${formatNumber(baselineY - shDescent)} ` +
+                `${formatNumber(w)} ${formatNumber(shAscent + shDescent)} re`,
+            );
+          }
+          sx += w;
+        }
+        if (painted !== '') out.push('f');
+        out.push('Q');
+      }
 
       // Comment-range highlight (CM2c): a soft fill behind highlighted tokens.
       // Path ops can't sit inside a text object, so close BT first; the text
@@ -1061,15 +1214,57 @@ function emitPageContent(
         for (const tok of line.tokens) {
           const w = tok.widthPt + (tok.kind === 'text' && tok.isSpace ? extraPerSpace : 0);
           if (isDecorated(tok)) {
-            const [r, g, b] = hexToRgb01(tok.resolvedRun.colorHex);
             const thickness = Math.max(0.4, tok.fontSizePt * 0.06);
-            out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} rg`);
+            const paint = (hex: string): void => {
+              const [r, g, b] = hexToRgb01(hex);
+              out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} rg`);
+            };
+            paint(tok.resolvedRun.colorHex);
             if (tok.resolvedRun.underline !== 'none') {
-              const y = baselineY - tok.fontSizePt * 0.12 - thickness;
-              out.push(
-                `${formatNumber(dx)} ${formatNumber(y)} ` +
-                  `${formatNumber(w)} ${formatNumber(thickness)} re f`,
-              );
+              // §17.3.2.40 — the rule carries its own colour when the run gives
+              // it one; the strike below always takes the text's.
+              if (tok.resolvedRun.underlineColorHex) paint(tok.resolvedRun.underlineColorHex);
+              // §17.18.99 — the style says how the rule is drawn, not just that
+              // it is: a `thick` one is twice the weight and a `double` is two.
+              // fdo56679.docx rules its sentence thick and red and we drew the
+              // hairline every other style got.
+              const style = tok.resolvedRun.underline;
+              const heavy = style === 'thick' || style === 'dottedHeavy' || style === 'dashHeavy';
+              const t = heavy ? thickness * 2 : thickness;
+              const y = baselineY - tok.fontSizePt * 0.12 - t;
+              const dashed =
+                style === 'dotted' || style === 'dottedHeavy'
+                  ? [t, t * 2]
+                  : style === 'dash' || style === 'dashHeavy'
+                    ? [t * 4, t * 3]
+                    : undefined;
+              if (dashed) {
+                // A pattern has to be STROKED — a filled rectangle has no dash.
+                out.push(`${formatNumber(t)} w`);
+                out.push(`[${dashed.map((n) => formatNumber(n)).join(' ')}] 0 d`);
+                const [r, g, b] = hexToRgb01(
+                  tok.resolvedRun.underlineColorHex ?? tok.resolvedRun.colorHex,
+                );
+                out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} RG`);
+                out.push(
+                  `${formatNumber(dx)} ${formatNumber(y + t / 2)} m ` +
+                    `${formatNumber(dx + w)} ${formatNumber(y + t / 2)} l S`,
+                );
+                out.push('[] 0 d');
+              } else {
+                out.push(
+                  `${formatNumber(dx)} ${formatNumber(y)} ` +
+                    `${formatNumber(w)} ${formatNumber(t)} re f`,
+                );
+                // The second rule of a `double`, a rule's width below the first.
+                if (style === 'double') {
+                  out.push(
+                    `${formatNumber(dx)} ${formatNumber(y - t * 2)} ` +
+                      `${formatNumber(w)} ${formatNumber(t)} re f`,
+                  );
+                }
+              }
+              if (tok.resolvedRun.underlineColorHex) paint(tok.resolvedRun.colorHex);
             }
             if (tok.resolvedRun.strike) {
               const y = baselineY + tok.fontSizePt * 0.26;
@@ -1105,9 +1300,16 @@ function emitPageContent(
         for (const tok of line.tokens) {
           if (tok.kind !== 'text') continue;
           switchFontIfNeeded(tok);
-          out.push(`<${tok.font.measure.encodeTextAsCidHex(tok.text)}> Tj`);
+          out.push(tok.font.measure.showText(tok.text));
         }
-      } else if (extraPerSpace > 0 || hasImageToken || hasMathToken || hasRtl || hasRise) {
+      } else if (
+        extraPerSpace !== 0 ||
+        hasImageToken ||
+        hasMathToken ||
+        hasRtl ||
+        hasRise ||
+        hasTab
+      ) {
         // Per-token absolute positioning. Required for justify (inter-word
         // slack), inline images (text-mode exits), and BiDi (visual order
         // differs from logical order). Tokens are emitted in visual order.
@@ -1133,7 +1335,7 @@ function emitPageContent(
           }
           switchFontIfNeeded(tok);
           out.push(`1 0 0 1 ${formatNumber(x)} ${formatNumber(baselineY + (tok.risePt ?? 0))} Tm`);
-          out.push(`<${encodeToken(tok)}> Tj`);
+          out.push(showToken(tok));
           const tokenX0 = x;
           x += tok.widthPt;
           if (tok.isSpace) x += extraPerSpace;
@@ -1150,8 +1352,7 @@ function emitPageContent(
         for (const tok of line.tokens) {
           if (tok.kind !== 'text') continue; // unreachable here, but TS-narrowed
           switchFontIfNeeded(tok);
-          const hex = tok.font.measure.encodeTextAsCidHex(tok.text);
-          out.push(`<${hex}> Tj`);
+          out.push(tok.font.measure.showText(tok.text));
           trackLink(tok.href, tok.anchor, tok.text, x, x + tok.widthPt);
           x += tok.widthPt;
         }
@@ -1214,15 +1415,105 @@ function lineVisualOrder(line: Line): Array<number> {
 
 // Extra width per space token when justifying. 0 for non-justify lines or
 // the last line of a paragraph (last line stays left-aligned by convention).
+/**
+ * The operators that put an image XObject in a box — ISO 32000-1 §8.9.5.1: the
+ * unit square scaled to the box and moved to `(x, y)`, its bottom-left corner.
+ *
+ * A `a:srcRect` crop (§20.1.8.55) cuts edges off the SOURCE and fits what is
+ * left to the same box, so the picture is drawn larger than the box and the box
+ * is made a clipping path. Ignored, ImageCrop.docx drew the whole mountain
+ * where LibreOffice shows the peak.
+ *
+ * @returns The content-stream lines, to be pushed between `q` and the `Do`.
+ */
+function placeImage(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  crop: ImageCrop | undefined,
+  rotationDeg?: number,
+  flipH?: boolean,
+  flipV?: boolean,
+): Array<string> {
+  const cm = (w: number, h: number, ox: number, oy: number): string =>
+    `${formatNumber(w)} 0 0 ${formatNumber(h)} ${formatNumber(ox)} ${formatNumber(oy)} cm`;
+  // §20.1.7.6 — a picture turned in its frame turns about the frame's CENTRE,
+  // and the clip and scale below then work in the turned frame exactly as they
+  // do in an upright one. DrawingML measures clockwise, PDF counter-clockwise.
+  const spin = rotationDeg
+    ? [rotateAboutCm(x + width / 2, y + height / 2, -rotationDeg)]
+    : ([] as Array<string>);
+  // §20.1.7.6 `@flipH`/`@flipV` — mirrored about the same centre, before the
+  // box is filled, so everything after it works in the mirrored frame.
+  if (flipH === true || flipV === true) {
+    const sx = flipH === true ? -1 : 1;
+    const sy = flipV === true ? -1 : 1;
+    spin.push(
+      `${formatNumber(sx)} 0 0 ${formatNumber(sy)} ` +
+        `${formatNumber(sx === -1 ? 2 * x + width : 0)} ` +
+        `${formatNumber(sy === -1 ? 2 * y + height : 0)} cm`,
+    );
+  }
+  if (!crop) return [...spin, cm(width, height, x, y)];
+  const kept = { w: 1 - crop.left - crop.right, h: 1 - crop.top - crop.bottom };
+  // The full picture at the scale that makes its kept part fill the box, moved
+  // so that part lands ON the box: left by the cut-away left edge, and down by
+  // the cut-away BOTTOM one (PDF's y runs up, DrawingML's crop runs down).
+  const full = { w: width / kept.w, h: height / kept.h };
+  return [
+    ...spin,
+    `${formatNumber(x)} ${formatNumber(y)} ${formatNumber(width)} ${formatNumber(height)} re`,
+    'W',
+    'n',
+    cm(full.w, full.h, x - crop.left * full.w, y - crop.bottom * full.h),
+  ];
+}
+
+/** A `cm` that turns the frame `deg` counter-clockwise about `(cx, cy)`. */
+function rotateAboutCm(cx: number, cy: number, deg: number): string {
+  const rad = (deg * Math.PI) / 180;
+  const c = Math.cos(rad);
+  const s = Math.sin(rad);
+  return (
+    `${formatNumber(c)} ${formatNumber(s)} ${formatNumber(-s)} ${formatNumber(c)} ` +
+    `${formatNumber(cx - cx * c + cy * s)} ${formatNumber(cy - cx * s - cy * c)} cm`
+  );
+}
+
 function computeJustifyExtra(line: Line): number {
-  if (line.resolved.alignment !== 'both') return 0;
-  if (line.isLastInParagraph) return 0;
+  const alignment = line.resolved.alignment;
+  if (alignment !== 'both' && alignment !== 'distribute') return 0;
+  // §17.3.1.13 — `distribute` justifies EVERY line, the last one included;
+  // `both` leaves the last alone. para-adjust-distribute.docx sets one of each
+  // and we wrote both flush left.
+  if (line.noJustify === true) return 0;
+  if (line.isLastInParagraph && alignment !== 'distribute') return 0;
+  // A space at the END of a line justifies nothing: there is no glyph after it
+  // to push, and counted in it left the line short of the measure by its own
+  // width. Word and LibreOffice both hang it past the margin instead.
+  let last = line.tokens.length - 1;
+  while (last >= 0 && line.tokens[last]!.kind === 'text' && line.tokens[last]!.isSpace) last--;
   let spaces = 0;
-  for (const tok of line.tokens) if (tok.isSpace) spaces++;
+  let narrowest = Infinity;
+  let contentWidthPt = 0;
+  for (let i = 0; i <= last; i++) {
+    const tok = line.tokens[i]!;
+    contentWidthPt += tok.widthPt;
+    if (!tok.isSpace) continue;
+    spaces++;
+    if (tok.widthPt < narrowest) narrowest = tok.widthPt;
+  }
   if (spaces === 0) return 0;
-  const extra = line.availableWidthPt - line.contentWidthPt;
-  if (extra <= 0) return 0;
-  return extra / spaces;
+  // Both ways. A line's spaces stretch to fill it out, and they SHRINK to pull
+  // it in — the breaker weighs a line knowing it may squeeze each space by up
+  // to {@link GLUE_SHRINK_RATIO}, so a line it packed that tight is one whose
+  // natural width is over the measure. Drawn at that natural width it ran past
+  // the right margin: IllustrativeCases.docx put three of its four opening
+  // lines 1 to 10pt into the margin while the fourth sat short of it, which
+  // reads as no justification at all.
+  const extra = (line.availableWidthPt - contentWidthPt) / spaces;
+  return extra < 0 ? Math.max(extra, -narrowest * GLUE_SHRINK_RATIO) : extra;
 }
 
 function hexToRgb01(hex: string): readonly [number, number, number] {

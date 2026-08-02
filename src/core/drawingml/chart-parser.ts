@@ -15,6 +15,7 @@ import type {
   ChartMarkerSymbol,
   ChartSeries,
   ChartType,
+  ShapeDash,
 } from '@/core/document-model';
 import type { OpcPackage } from '@/core/opc';
 import type { ColorMod, ColorResolver } from '@/core/drawingml/colors';
@@ -209,9 +210,22 @@ export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): C
   // §21.2.2.198 — the chart-space frame sits beside <c:chart>, not inside it.
   const chartSpace = tree.find((c) => poIs(c, 'c:chartSpace'));
   const spaceSpPr = poChildren(chartSpace).find((c) => poIs(c, 'c:spPr'));
-  const frameFillHex = fillColorOf(spaceSpPr, resolveColor);
   const frameLine = spaceSpPr ? poChildren(spaceSpPr).find((c) => poIs(c, 'a:ln')) : undefined;
-  const frameLineHex = frameLine ? fillColorOf(frameLine, resolveColor) : undefined;
+  // A chart that states no frame at all is not a chart without one: both
+  // references draw plain charts on white inside a light grey rule (chart-prop
+  // .docx, chart-size.docx). A chart that DOES state one is taken at its word,
+  // `<a:noFill/>` included — chart-dupe.docx asks for neither and gets neither.
+  const frameStyle = lineStyleOf(chartSpace, resolveColor);
+  const frameFillHex = spaceSpPr ? frameFillOf(spaceSpPr, resolveColor) : 'FFFFFF';
+  // §21.2.2.145 — the plot rectangle carries its own fill and rule.
+  const plotSpPr = poChildren(plotArea).find((c) => poIs(c, 'c:spPr'));
+  const plotFillHex = plotSpPr ? frameFillOf(plotSpPr, resolveColor) : undefined;
+  const plotLine = lineStyleOf(plotArea, resolveColor);
+  const frameLineHex = spaceSpPr
+    ? frameLine
+      ? frameFillOf(frameLine, resolveColor)
+      : undefined
+    : 'D9D9D9';
   const numberFormat = valueFormatCode(plotArea);
 
   const legend = poChildren(chart).find((c) => poIs(c, 'c:legend'));
@@ -261,6 +275,10 @@ export function parseChart(chartXml: Uint8Array, resolveColor: ColorResolver): C
     ...(valAxisMax !== undefined ? { valAxisMax } : {}),
     ...(frameFillHex ? { frameFillHex } : {}),
     ...(frameLineHex ? { frameLineHex } : {}),
+    ...(frameStyle?.widthPt !== undefined ? { frameLineWidthPt: frameStyle.widthPt } : {}),
+    ...(frameStyle?.dash ? { frameLineDash: frameStyle.dash } : {}),
+    ...(plotFillHex ? { plotFillHex } : {}),
+    ...(plotLine && plotLine.none !== true ? { plotLine } : {}),
     ...(numberFormat ? { numberFormat } : {}),
   };
 }
@@ -378,6 +396,23 @@ function dataPointColors(ser: PoNode, resolveColor: ColorResolver): Array<ChartD
 
 // Series colour from a c:spPr: the fill (direct a:solidFill, used by bars/pie)
 // or, failing that, the outline (a:ln/a:solidFill, used by line charts).
+/**
+ * The BACKGROUND fill of a frame (the chart space, the plot rectangle): its own
+ * `a:solidFill` and nothing else. Unlike a series, a frame that states
+ * `<a:noFill/>` is not filled in the colour of its own rule —
+ * Chart_Plot_BorderLine_Style.docx rules its plot in orange and we painted the
+ * whole plot orange.
+ *
+ * @param spPr         The frame's `c:spPr`, or `undefined`.
+ * @param resolveColor Maps a DrawingML colour reference to 6-hex.
+ * @returns The fill colour, or `undefined` when the frame states none.
+ */
+function frameFillOf(spPr: PoNode | undefined, resolveColor: ColorResolver): string | undefined {
+  if (!spPr) return undefined;
+  const solid = poChildren(spPr).find((c) => poIs(c, 'a:solidFill'));
+  return solid ? colorFromSolidFill(solid, resolveColor) : undefined;
+}
+
 function fillColorOf(spPr: PoNode | undefined, resolveColor: ColorResolver): string | undefined {
   if (!spPr) return undefined;
   const directFill = poChildren(spPr).find((c) => poIs(c, 'a:solidFill'));
@@ -521,6 +556,17 @@ function axisScaling(plotArea: PoNode, tag: 'c:min' | 'c:max'): number | undefin
  * @param resolveColor Maps a DrawingML colour reference to 6 hex digits.
  * @returns The rule, or undefined when the node says nothing about it.
  */
+const DASHES = new Set<string>([
+  'solid',
+  'dot',
+  'dash',
+  'dashDot',
+  'lgDash',
+  'lgDashDot',
+  'sysDash',
+  'sysDot',
+]);
+
 function lineStyleOf(
   owner: PoNode | undefined,
   resolveColor: ColorResolver,
@@ -534,8 +580,17 @@ function lineStyleOf(
   // §20.1.2.1 `w` is in EMU; 12 700 to the point.
   const emu = Number(poAttr(ln, 'w'));
   const widthPt = Number.isFinite(emu) && emu > 0 ? emu / 12700 : undefined;
-  if (!colorHex && widthPt === undefined) return undefined;
-  return { ...(colorHex ? { colorHex } : {}), ...(widthPt !== undefined ? { widthPt } : {}) };
+  // §20.1.10.49 — a preset dash on the rule; Chart_BorderLine_Style.docx
+  // outlines each of its bars in a different one.
+  const prst = poChildren(ln).find((c) => poIs(c, 'a:prstDash'));
+  const dashVal = prst ? poAttr(prst, 'val') : undefined;
+  const dash = dashVal !== undefined && DASHES.has(dashVal) ? (dashVal as ShapeDash) : undefined;
+  if (!colorHex && widthPt === undefined && !dash) return undefined;
+  return {
+    ...(colorHex ? { colorHex } : {}),
+    ...(widthPt !== undefined ? { widthPt } : {}),
+    ...(dash ? { dash } : {}),
+  };
 }
 
 function valueFormatCode(plotArea: PoNode): string | undefined {

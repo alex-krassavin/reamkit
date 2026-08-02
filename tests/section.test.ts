@@ -5,6 +5,8 @@ import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
+import { countShown, showPattern } from './fixtures/pdf-show';
+import { readDocx } from '@/word/docx-reader';
 import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 
 import { convertDocxToPdfSync } from '@/core/converter';
@@ -69,7 +71,9 @@ describe('parseSections (multi-section)', () => {
 describe('parseSection', () => {
   it('returns empty section when no sectPr present', () => {
     const s = sectionOf('<w:p><w:r><w:t>Hi</w:t></w:r></w:p>');
-    expect(s.pageSize).toBeUndefined();
+    // §17.6.13 — no `w:sectPr` at all still means a page, and it is the one
+    // Word makes a document on: US Letter, 12240×15840 twips.
+    expect(s.pageSize).toEqual({ width: 612, height: 792 });
     expect(s.margins).toBeUndefined();
     expect(s.headers).toEqual([]);
     expect(s.footers).toEqual([]);
@@ -127,6 +131,31 @@ describe('parseSection', () => {
   });
 });
 
+describe('a section that names no band of its own (§17.10.1)', () => {
+  it('takes the header, the footer and the titlePg of the one before it', () => {
+    // endingSectionProps.docx puts its references on the FIRST section and
+    // ends with a continuous one that states none: read alone, that section
+    // left the page with no header and no footer at all.
+    const body =
+      '<w:p><w:pPr><w:sectPr>' +
+      '<w:headerReference w:type="default" r:id="rId10"/>' +
+      '<w:footerReference w:type="first" r:id="rId13"/>' +
+      '<w:titlePg/></w:sectPr></w:pPr><w:r><w:t>one</w:t></w:r></w:p>' +
+      '<w:p><w:r><w:t>two</w:t></w:r></w:p>' +
+      '<w:sectPr><w:type w:val="continuous"/></w:sectPr>';
+    const { doc } = readDocx(
+      buildDocxFromBody(body, {
+        headerXml: '<w:p><w:r><w:t>GENERAL HEADER</w:t></w:r></w:p>',
+        firstFooterXml: '<w:p><w:r><w:t>FIRST FOOTER</w:t></w:r></w:p>',
+      }),
+    );
+    const last = doc.sections[doc.sections.length - 1]!;
+    expect(last.properties.headers.map((h) => h.relationshipId)).toEqual(['rId10']);
+    expect(last.properties.footers.map((f) => f.relationshipId)).toEqual(['rId13']);
+    expect(last.properties.titlePg).toBe(true);
+  });
+});
+
 describe('Headers and footers in rendered PDF', () => {
   it('renders header text on the page when document references a header part', () => {
     const headerXml = '<w:p><w:r><w:t>HEADER-MARK</w:t></w:r></w:p>';
@@ -144,15 +173,10 @@ describe('Headers and footers in rendered PDF', () => {
     const text = asLatin1(pdf);
 
     const parsed = parseTtf(FONTS.regular);
-    const hexOf = (s: string) =>
-      [...s]
-        .map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!))
-        .map((g) => g.toString(16).padStart(4, '0').toUpperCase())
-        .join('');
 
-    expect(text).toContain(`<${hexOf('HEADER-MARK')}> Tj`);
-    expect(text).toContain(`<${hexOf('FOOTER-MARK')}> Tj`);
-    expect(text).toContain(`<${hexOf('Body')}> Tj`);
+    expect(text).toMatch(showPattern(parsed, 'HEADER-MARK'));
+    expect(text).toMatch(showPattern(parsed, 'FOOTER-MARK'));
+    expect(text).toMatch(showPattern(parsed, 'Body'));
   });
 
   it('uses first-page header on page 1 when titlePg is set', () => {
@@ -177,12 +201,7 @@ describe('Headers and footers in rendered PDF', () => {
     const text = asLatin1(pdf);
 
     const parsed = parseTtf(FONTS.regular);
-    const hexOf = (s: string) =>
-      [...s]
-        .map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!))
-        .map((g) => g.toString(16).padStart(4, '0').toUpperCase())
-        .join('');
-    const countOf = (s: string) => (text.match(new RegExp(`<${hexOf(s)}> Tj`, 'g')) ?? []).length;
+    const countOf = (s: string) => countShown(parsed, text, s);
 
     // FIRST-MARK exactly once (page 1), DEFAULT-MARK exactly once (page 2).
     expect(countOf('FIRST-MARK')).toBe(1);
@@ -206,12 +225,7 @@ describe('Headers and footers in rendered PDF', () => {
     });
     const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
     const parsed = parseTtf(FONTS.regular);
-    const hexOf = (s: string) =>
-      [...s]
-        .map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!))
-        .map((g) => g.toString(16).padStart(4, '0').toUpperCase())
-        .join('');
-    const countOf = (s: string) => (text.match(new RegExp(`<${hexOf(s)}> Tj`, 'g')) ?? []).length;
+    const countOf = (s: string) => countShown(parsed, text, s);
 
     // Header renders once per page → exactly 2 pages means the break worked.
     expect(countOf('HMARK')).toBe(2);
@@ -235,12 +249,7 @@ describe('Headers and footers in rendered PDF', () => {
     });
     const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
     const parsed = parseTtf(FONTS.regular);
-    const hexOf = (s: string) =>
-      [...s]
-        .map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!))
-        .map((g) => g.toString(16).padStart(4, '0').toUpperCase())
-        .join('');
-    expect(text).toContain(`<${hexOf('ONLYHEADER')}> Tj`);
+    expect(text).toMatch(showPattern(parsed, 'ONLYHEADER'));
   });
 
   it('applies per-section orientation (portrait section 1, landscape section 2)', () => {
@@ -282,39 +291,146 @@ describe('Headers and footers in rendered PDF', () => {
     const text = asLatin1(pdf);
 
     const parsed = parseTtf(FONTS.regular);
-    const hexOf = (s: string) =>
-      [...s]
-        .map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!))
-        .map((g) => g.toString(16).padStart(4, '0').toUpperCase())
-        .join('');
-    const countOf = (s: string) => (text.match(new RegExp(`<${hexOf(s)}> Tj`, 'g')) ?? []).length;
+    const countOf = (s: string) => countShown(parsed, text, s);
 
     expect(countOf('ODD-MARK')).toBe(1);
     expect(countOf('EVEN-MARK')).toBe(1);
   });
 
-  it('falls back to default header when first variant is missing', () => {
-    // titlePg is set but no firstHeaderReference → default header on every page.
+  it('leaves the title page bare when titlePg names no first header', () => {
+    // §17.10.6 — titlePg says the first page's header is DIFFERENT, and a
+    // section that declares no `first` part means different by being empty.
+    // Read as a fallback to the default it put a header on the title page that
+    // neither Word nor LibreOffice draws: ImageCrop.docx is one page long and
+    // is that page.
+    const long = 'X '.repeat(2000);
     const body = `
-      <w:p><w:r><w:t>x</w:t></w:r></w:p>
+      <w:p><w:r><w:t>${long}</w:t></w:r></w:p>
+      <w:p><w:r><w:t>${long}</w:t></w:r></w:p>
       <w:sectPr>
         <w:headerReference r:id="rId10" w:type="default"/>
         <w:titlePg/>
         <w:pgSz w:w="11906" w:h="16838"/>
-        <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>
+        <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720"/>
       </w:sectPr>`;
     const docx = buildDocxFromBody(body, {
       headerXml: '<w:p><w:r><w:t>ONLY-MARK</w:t></w:r></w:p>',
     });
-    const pdf = convertDocxToPdfSync(docx, { fonts: FONTS });
-    const text = asLatin1(pdf);
+    const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
     const parsed = parseTtf(FONTS.regular);
-    const hexOf = (s: string) =>
-      [...s]
-        .map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!))
-        .map((g) => g.toString(16).padStart(4, '0').toUpperCase())
-        .join('');
-    expect(text).toContain(`<${hexOf('ONLY-MARK')}> Tj`);
+    // Two pages; the header prints on the second one only.
+    expect(countShown(parsed, text, 'ONLY-MARK')).toBe(1);
+  });
+
+  it('keeps a continuous section on the page it starts in (§17.6.22)', () => {
+    // A `continuous` break starts the next section where the last one stopped.
+    // Ending the page instead gave every section its own: IndexFieldFlagF.docx
+    // writes its index as five continuous sections and printed five pages of a
+    // line each, where LibreOffice fits the lot on one.
+    const body = `
+      <w:p><w:pPr><w:sectPr><w:type w:val="continuous"/>
+        <w:pgSz w:w="11906" w:h="16838"/>
+        <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>
+      </w:sectPr></w:pPr><w:r><w:t>SECONE</w:t></w:r></w:p>
+      <w:p><w:r><w:t>SECTWO</w:t></w:r></w:p>
+      <w:sectPr><w:type w:val="continuous"/>
+        <w:pgSz w:w="11906" w:h="16838"/>
+        <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>
+      </w:sectPr>`;
+    const text = asLatin1(convertDocxToPdfSync(buildDocxFromBody(body), { fonts: FONTS }));
+    expect((text.match(/\/Type \/Page[^s]/gu) ?? []).length).toBe(1);
+  });
+
+  it('starts a new page for a section break that is not continuous', () => {
+    const body = `
+      <w:p><w:pPr><w:sectPr>
+        <w:pgSz w:w="11906" w:h="16838"/>
+        <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>
+      </w:sectPr></w:pPr><w:r><w:t>SECONE</w:t></w:r></w:p>
+      <w:p><w:r><w:t>SECTWO</w:t></w:r></w:p>
+      <w:sectPr>
+        <w:pgSz w:w="11906" w:h="16838"/>
+        <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>
+      </w:sectPr>`;
+    const text = asLatin1(convertDocxToPdfSync(buildDocxFromBody(body), { fonts: FONTS }));
+    expect((text.match(/\/Type \/Page[^s]/gu) ?? []).length).toBe(2);
+  });
+
+  it('breaks the page anyway when a continuous section changes the paper', () => {
+    // A page has one size, so Word turns the break into a page break.
+    const body = `
+      <w:p><w:pPr><w:sectPr><w:type w:val="continuous"/>
+        <w:pgSz w:w="11906" w:h="16838"/>
+        <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>
+      </w:sectPr></w:pPr><w:r><w:t>SECONE</w:t></w:r></w:p>
+      <w:p><w:r><w:t>SECTWO</w:t></w:r></w:p>
+      <w:sectPr><w:type w:val="continuous"/>
+        <w:pgSz w:w="15840" w:h="12240"/>
+        <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>
+      </w:sectPr>`;
+    const text = asLatin1(convertDocxToPdfSync(buildDocxFromBody(body), { fonts: FONTS }));
+    expect((text.match(/\/Type \/Page[^s]/gu) ?? []).length).toBe(2);
+  });
+
+  it('draws the page border a section declares (§17.6.10)', () => {
+    // a4andborders.docx frames every page and we drew nothing at all.
+    const body = `
+      <w:p><w:r><w:t>x</w:t></w:r></w:p>
+      <w:sectPr>
+        <w:pgSz w:w="11906" w:h="16838"/>
+        <w:pgMar w:top="1417" w:right="1417" w:bottom="1417" w:left="1417"/>
+        <w:pgBorders w:offsetFrom="page">
+          <w:top w:val="single" w:sz="8" w:space="24" w:color="auto"/>
+          <w:left w:val="single" w:sz="8" w:space="24" w:color="auto"/>
+          <w:bottom w:val="single" w:sz="8" w:space="24" w:color="auto"/>
+          <w:right w:val="single" w:sz="8" w:space="24" w:color="auto"/>
+        </w:pgBorders>
+      </w:sectPr>`;
+    const text = asLatin1(convertDocxToPdfSync(buildDocxFromBody(body), { fonts: FONTS }));
+    // Four strokes, each 1pt (8 eighths), inset 24pt from the paper's edge.
+    expect((text.match(/\n1 w\n/gu) ?? []).length).toBeGreaterThan(0);
+    expect(text).toMatch(/\n24 (?:24|[\d.]+) m\n/u);
+  });
+
+  it('measures the border from the text margin when told to', () => {
+    // §17.18.65 — `offsetFrom="text"` puts the rule OUTSIDE the margin, so a
+    // 24pt space on a 1417-twip (70.85pt) margin lands at 46.85pt.
+    const body = `
+      <w:p><w:r><w:t>x</w:t></w:r></w:p>
+      <w:sectPr>
+        <w:pgSz w:w="11906" w:h="16838"/>
+        <w:pgMar w:top="1417" w:right="1417" w:bottom="1417" w:left="1417"/>
+        <w:pgBorders w:offsetFrom="text">
+          <w:left w:val="single" w:sz="8" w:space="24"/>
+        </w:pgBorders>
+      </w:sectPr>`;
+    const text = asLatin1(convertDocxToPdfSync(buildDocxFromBody(body), { fonts: FONTS }));
+    expect(text).toMatch(/\n46\.85 [\d.]+ m\n/u);
+  });
+
+  it('balances a continuous multi-column band (§17.6.4)', () => {
+    // Word evens out the columns of a continuous section whose content fits the
+    // page rather than filling the first to the bottom. IndexFieldFlagF.docx
+    // sets its index that way and we filled column one and left the rest empty.
+    const items = Array.from(
+      { length: 6 },
+      (_, i) => `<w:p><w:r><w:t>E${i}</w:t></w:r></w:p>`,
+    ).join('');
+    const body =
+      '<w:p><w:pPr><w:sectPr><w:type w:val="continuous"/>' +
+      '<w:pgSz w:w="11906" w:h="16838"/>' +
+      '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>' +
+      '</w:sectPr></w:pPr><w:r><w:t>HEAD</w:t></w:r></w:p>' +
+      items +
+      '<w:sectPr><w:type w:val="continuous"/><w:cols w:num="3" w:space="720"/>' +
+      '<w:pgSz w:w="11906" w:h="16838"/>' +
+      '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>';
+    const text = asLatin1(convertDocxToPdfSync(buildDocxFromBody(body), { fonts: FONTS }));
+    // One page, and the six entries stand in three columns of two rather than
+    // six down the first: three distinct x origins for the body lines.
+    expect((text.match(/\/Type \/Page[^s]/gu) ?? []).length).toBe(1);
+    const xs = new Set([...text.matchAll(/1 0 0 1 ([\d.]+) [\d.]+ Tm/gu)].map((m) => m[1]));
+    expect(xs.size).toBeGreaterThanOrEqual(3);
   });
 
   it('emits per-section MediaBox when sections have different page sizes', () => {
@@ -364,6 +480,27 @@ describe('Headers and footers in rendered PDF', () => {
       (m) => !m.includes('Pages'),
     ).length;
     expect(pageCount).toBe(2);
+  });
+
+  it('an empty paragraph that only carries the section break takes no room', () => {
+    // §17.6.17 — the paragraph MARK is the break, so the paragraph prints
+    // nothing: the two lines land where they would with the break absent.
+    const withBreak = `
+      <w:p><w:r><w:t>ONE</w:t></w:r></w:p>
+      <w:p>
+        <w:pPr><w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr></w:pPr>
+      </w:p>
+      <w:p><w:r><w:t>TWO</w:t></w:r></w:p>
+      <w:sectPr><w:type w:val="continuous"/><w:pgSz w:w="11906" w:h="16838"/></w:sectPr>`;
+    const without = `
+      <w:p><w:r><w:t>ONE</w:t></w:r></w:p>
+      <w:p><w:r><w:t>TWO</w:t></w:r></w:p>
+      <w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr>`;
+    const baselines = (body: string): Array<number> => {
+      const text = asLatin1(convertDocxToPdfSync(buildDocxFromBody(body), { fonts: FONTS }));
+      return [...text.matchAll(/1 0 0 1 [\d.]+ ([\d.]+) Tm/g)].map((m) => Number(m[1]));
+    };
+    expect(baselines(withBreak)).toEqual(baselines(without));
   });
 
   it('uses pgSz from sectPr to set MediaBox', () => {

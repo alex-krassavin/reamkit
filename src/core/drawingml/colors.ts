@@ -8,7 +8,7 @@
 
 // A colour transform child (§20.1.2.3): lumMod/lumOff modulate luminance,
 // shade darkens toward black, tint lightens toward white. `val` is normalised to
-// 0..1 (the XML stores thousandths of a percent). alpha is parsed but ignored
+// 0..1 (the XML stores thousandths of a percent). alpha composites over white
 // (solid fills emit no transparency).
 // ---------------------------------------------------------------------------
 // Shared colour-node parsing (§20.1.2.3) — one owner for chart-parser and the
@@ -21,7 +21,7 @@ import { poAttr, poChildren, poIntAttr, poIs } from '@/core/po-helpers';
 /**
  * A colour transform child (§20.1.2.3): `lumMod`/`lumOff` modulate luminance,
  * `shade` darkens toward black, `tint` lightens toward white. `val` is normalised
- * to 0..1 (the XML stores thousandths of a percent). `alpha` is parsed but ignored
+ * to 0..1 (the XML stores thousandths of a percent). `alpha` composites over white
  * (solid fills emit no transparency).
  */
 export interface ColorMod {
@@ -117,8 +117,16 @@ export function applyColorMods(hex: string, mods: ReadonlyArray<ColorMod>): stri
       // §20.1.2.3.27 — the saturation twin, an offset rather than a factor.
       const [h, sat, l] = rgbToHsl(r, g, b);
       [r, g, b] = hslToRgb(h, clamp01(sat + m.val), l);
-    } else if (m.kind === 'satMod') {
-      // §20.1.2.3.32 — saturation modulation. The Office theme's gradients are
+    } else if (m.kind === 'alpha') {
+      // §20.1.2.3.1 — the colour is drawn at `val` opacity. Composited over a
+      // white page that is a tint of itself, which is what both references
+      // show: dml-groupshape-childposition.docx draws eleven of its strokes at
+      // 20% and we drew them all in full dark navy.
+      r = r * m.val + (1 - m.val);
+      g = g * m.val + (1 - m.val);
+      b = b * m.val + (1 - m.val);
+    } else {
+      // §20.1.2.3.32 `satMod` — saturation modulation. The Office theme's gradients are
       // built from it (`<a:shade val="51000"/><a:satMod val="130000"/>`), and
       // dropping it drew every gallery shape a shade duller than either
       // reference: 47504.xlsx's rectangle came out grey-blue.
@@ -188,6 +196,26 @@ export function makeColorResolver(palette: ReadonlyMap<string, string>): ColorRe
 
 /** A {@link ColorResolver} backed by the {@link DEFAULT_THEME_PALETTE}. */
 export const defaultColorResolver: ColorResolver = makeColorResolver(DEFAULT_THEME_PALETTE);
+
+// §20.1.10.47 ST_PresetColorVal — the handful of names a `a:prstClr` uses in
+// practice. The full table runs to 140 CSS names; these are the ones Word
+// writes for shadows and outlines.
+const PRESET_COLORS: ReadonlyMap<string, string> = new Map([
+  ['black', '000000'],
+  ['white', 'FFFFFF'],
+  ['gray', '808080'],
+  ['grey', '808080'],
+  ['darkGray'.toLowerCase(), 'A9A9A9'],
+  ['lightGray'.toLowerCase(), 'D3D3D3'],
+  ['red', 'FF0000'],
+  ['green', '008000'],
+  ['blue', '0000FF'],
+  ['yellow', 'FFFF00'],
+  ['cyan', '00FFFF'],
+  ['magenta', 'FF00FF'],
+  ['dkGray'.toLowerCase(), 'A9A9A9'],
+  ['ltGray'.toLowerCase(), 'D3D3D3'],
+]);
 
 /**
  * Read the colour transform children ({@link ColorMod}s) under an `a:srgbClr` /
@@ -259,6 +287,16 @@ export function resolveColorNode(c: PoNode, resolveColor: ColorResolver): string
     const last = poAttr(c, 'lastClr');
     if (last && /^[0-9A-Fa-f]{6}$/.test(last)) return last.toUpperCase();
     return SYSTEM_COLORS.get(poAttr(c, 'val') ?? '');
+  }
+  // §20.1.2.3.22 `a:prstClr` — a colour NAMED rather than referenced, out of
+  // the preset table. Word writes the shadow under a picture as
+  // `<a:prstClr val="black"><a:alpha val="40000"/>`, and unread the shadow had
+  // no colour to be drawn in at all (imgshadow.docx's six screenshots).
+  if (poIs(c, 'a:prstClr')) {
+    const hex = PRESET_COLORS.get((poAttr(c, 'val') ?? '').toLowerCase());
+    if (hex === undefined) return undefined;
+    const presetMods = readColorMods(c);
+    return presetMods.length > 0 ? applyColorMods(hex, presetMods) : hex;
   }
   const isSrgb = poIs(c, 'a:srgbClr');
   if (!isSrgb && !poIs(c, 'a:schemeClr')) return undefined;

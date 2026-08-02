@@ -1,7 +1,7 @@
 // E-SMARTART SA2/SA3 — a SmartArt diagram inline in a docx paragraph. The reader
 // follows the data relationship (dgm:relIds @r:dm) → diagrams/data1.xml →
-// diagrams/drawing1.xml and renders the override's dsp:sp nodes as floating
-// shapes anchored to the paragraph's column origin. SA3 adds scheme-colour
+// diagrams/drawing1.xml and renders the override's dsp:sp nodes as the members
+// of one block the size of the drawing. SA3 adds scheme-colour
 // resolution through the document theme, an explicit loss when no override
 // ships, and an end-to-end render (PDF + HTML).
 
@@ -11,6 +11,7 @@ import { zipSync } from 'fflate';
 
 import { describe, expect, it } from 'vitest';
 
+import type { ShapeGroupChild } from '@/core/document-model';
 import { Ream } from '@/core/converter/ream';
 import { PdfFile } from '@/pdf-reader/document';
 import { extractPageText } from '@/pdf-reader/text';
@@ -110,22 +111,31 @@ function shapeText(shape: { text?: { content: ReadonlyArray<unknown> } }): strin
     .join('');
 }
 
+// The diagram's nodes: the members of the one block the drawing becomes.
+function diagramNodes(docx: Uint8Array): ReadonlyArray<ShapeGroupChild> {
+  const blocks = Ream.parse(docx).flow.body.filter((e) => e.kind === 'shape');
+  expect(blocks).toHaveLength(1);
+  return blocks[0]!.shape.children ?? [];
+}
+
 describe('SmartArt diagrams in docx (E-SMARTART SA2/SA3)', () => {
-  it('renders the drawing-override nodes as floating shapes', () => {
-    const shapes = Ream.parse(smartArtDocx()).flow.body.filter((e) => e.kind === 'shape');
-    const texts = shapes.map((s) => shapeText(s.shape));
+  it('renders the drawing-override nodes as the members of one block', () => {
+    const texts = diagramNodes(smartArtDocx()).map((c) => shapeText(c.shape));
     expect(texts).toContain('NodeA');
     expect(texts).toContain('NodeB');
   });
 
-  it('anchors each node column-relative at its diagram offset', () => {
-    const shapes = Ream.parse(smartArtDocx()).flow.body.filter((e) => e.kind === 'shape');
-    const xs = shapes
-      .map((s) => Math.round(s.shape.float?.posH?.offsetPt ?? -1))
+  it('the block reserves the drawing extent and holds each node at its offset', () => {
+    const blocks = Ream.parse(smartArtDocx()).flow.body.filter((e) => e.kind === 'shape');
+    // wp:extent 5486400 × 2743200 EMU = 432 × 216pt, the space an INLINE
+    // diagram takes in the flow.
+    expect(Math.round(blocks[0]!.shape.width)).toBe(432);
+    expect(Math.round(blocks[0]!.shape.height)).toBe(216);
+    const xs = (blocks[0]!.shape.children ?? [])
+      .map((c) => Math.round(c.xPt))
       .sort((a, b) => a - b);
-    // NodeA at 0; NodeB at 2743200 EMU = 216pt, both relative to the column.
+    // NodeA at 0; NodeB at 2743200 EMU = 216pt inside the diagram's box.
     expect(xs).toEqual([0, 216]);
-    expect(shapes.every((s) => s.shape.float?.posH?.relativeFrom === 'column')).toBe(true);
   });
 
   it('resolves a node scheme-colour fill through the document theme (SA3)', () => {
@@ -135,8 +145,7 @@ describe('SmartArt diagrams in docx (E-SMARTART SA2/SA3)', () => {
       fillA: SCHEME_ACCENT1,
       theme: `<a:accent1><a:srgbClr val="FF8800"/></a:accent1>`,
     });
-    const shapes = Ream.parse(docx).flow.body.filter((e) => e.kind === 'shape');
-    const nodeA = shapes.find((s) => shapeText(s.shape) === 'NodeA');
+    const nodeA = diagramNodes(docx).find((c) => shapeText(c.shape) === 'NodeA');
     expect(nodeA?.shape.fill.colorHex).toBe('FF8800'); // the theme accent1, not the default 4472C4
   });
 

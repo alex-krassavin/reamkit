@@ -98,8 +98,9 @@ describe('floating drawings (wp:anchor, §20.4.2.3)', () => {
     const shape = laid.pages[0]!.commands.find((c) => c.type === 'shape') as unknown as {
       shape: { transform: ReadonlyArray<number> };
     };
-    // A4 + 1" margins: content right edge at 523.3pt; 144pt wide → x = 379.3.
-    expect(shape.shape.transform[4]).toBeCloseTo(595.276 - 72 - 144, 0);
+    // Letter (the page a docx with no `w:pgSz` is on) + 1" margins: content
+    // right edge at 540pt; 144pt wide → x = 396.
+    expect(shape.shape.transform[4]).toBeCloseTo(612 - 72 - 144, 0);
   });
 
   it('side-wrapping floats keep the text at its height (no vertical push)', () => {

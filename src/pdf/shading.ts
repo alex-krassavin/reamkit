@@ -13,7 +13,7 @@ import type { ShapeGradient, VectorShape } from '@/core/vector';
 import type { PdfDict, PdfRef, PdfValue } from '@/pdf/objects';
 import type { PdfDocument } from '@/pdf/writer';
 
-import { dict, name, ref } from '@/pdf/objects';
+import { dict, name, ref, stream } from '@/pdf/objects';
 
 interface Bbox {
   readonly minX: number;
@@ -70,11 +70,12 @@ export function buildGradientPattern(
   bbox: Bbox,
   ctm: readonly [number, number, number, number, number, number],
 ): PdfRef {
-  const fnRef = doc.add(buildRamp(gradient.stops));
   const shading =
-    gradient.kind === 'radial'
-      ? radialShading(bbox, fnRef)
-      : axialShading(gradient.angle ?? 0, bbox, fnRef);
+    gradient.kind === 'radial' && gradient.sweep === 'rect'
+      ? rectShading(doc, bbox, gradient.stops, gradient.center)
+      : gradient.kind === 'radial'
+        ? radialShading(bbox, doc.add(buildRamp(gradient.stops)), gradient.center)
+        : axialShading(gradient.angle ?? 0, bbox, doc.add(buildRamp(gradient.stops)));
   return doc.add(
     dict({ Type: name('Pattern'), PatternType: 2, Shading: shading, Matrix: [...ctm] }),
   );
@@ -118,9 +119,18 @@ function axialShading(angleDeg: number, b: Bbox, fnRef: PdfRef): PdfDict {
 
 // §8.7.4.5.4 radial shading: a point at the centre (r=0) growing to a circle at
 // half the bbox diagonal. Param 0 (first stop) is the centre, matching a:path.
-function radialShading(b: Bbox, fnRef: PdfRef): PdfDict {
-  const cx = (b.minX + b.maxX) / 2;
-  const cy = (b.minY + b.maxY) / 2;
+function radialShading(
+  b: Bbox,
+  fnRef: PdfRef,
+  center?: { readonly x: number; readonly y: number },
+): PdfDict {
+  // The centre is given in the box's own fractions, y DOWN (a `0,0` centre is
+  // the top-left corner); this frame is y-up.
+  const cx = center ? b.minX + center.x * (b.maxX - b.minX) : (b.minX + b.maxX) / 2;
+  const cy = center ? b.maxY - center.y * (b.maxY - b.minY) : (b.minY + b.maxY) / 2;
+  // Half the diagonal, wherever the centre sits: the sweep out of a corner
+  // reaches the middle of the box and the last stop holds the rest, which is
+  // what both references draw for fill.docx.
   const r = Math.hypot(b.maxX - b.minX, b.maxY - b.minY) / 2;
   return dict({
     ShadingType: 3,
@@ -129,6 +139,106 @@ function radialShading(b: Bbox, fnRef: PdfRef): PdfDict {
     Function: ref(fnRef.id),
     Extend: [true, true],
   });
+}
+
+// §8.7.4.5.2 function-based shading — the sweep VML asks for, whose contours
+// are RECTANGLES growing out of the focus until they cover the box. PDF has no
+// shading type for it (2 is a line, 3 is a circle), so the field is written out
+// as a calculator function: the parameter at a point is how far it stands from
+// the focus along whichever axis is further, and the ramp is evaluated on that.
+function rectShading(
+  doc: PdfDocument,
+  b: Bbox,
+  stopsIn: ShapeGradient['stops'],
+  center?: { readonly x: number; readonly y: number },
+): PdfDict {
+  // The centre is given in the box's own fractions, y DOWN; this frame is y-up.
+  const cx = center ? b.minX + center.x * (b.maxX - b.minX) : (b.minX + b.maxX) / 2;
+  const cy = center ? b.maxY - center.y * (b.maxY - b.minY) : (b.minY + b.maxY) / 2;
+  // The rectangle reaches its last stop half a box from the focus, wherever
+  // that focus sits — the same reach the centred circle has always had, and
+  // the extent both references draw for fill.docx's corner sweep.
+  const halfW = Math.max((b.maxX - b.minX) / 2, 1e-6);
+  const halfH = Math.max((b.maxY - b.minY) / 2, 1e-6);
+  const domain = [b.minX, b.maxX, b.minY, b.maxY];
+  const fn = doc.add(
+    stream(
+      { FunctionType: 4, Domain: domain, Range: [0, 1, 0, 1, 0, 1] },
+      new TextEncoder().encode(rectSweepProgram(cx, cy, 1 / halfW, 1 / halfH, stopsIn)),
+    ),
+  );
+  return dict({
+    ShadingType: 1,
+    ColorSpace: name('DeviceRGB'),
+    Domain: domain,
+    Function: ref(fn.id),
+  });
+}
+
+// The calculator program (§7.10.5): x y in, r g b out. Written by hand rather
+// than sampled, so the stops stay exact.
+function rectSweepProgram(
+  cx: number,
+  cy: number,
+  sx: number,
+  sy: number,
+  stopsIn: ShapeGradient['stops'],
+): string {
+  const stops = normalizeStops(stopsIn);
+  const body = [
+    '{',
+    // x y → the distance from the focus along each axis, in units of the far
+    // side, then the larger of the two (that is the rectangle the point is on).
+    `${ps(cy)} sub abs ${ps(sy)} mul`,
+    `exch ${ps(cx)} sub abs ${ps(sx)} mul`,
+    '2 copy lt { exch } if pop',
+    'dup 1 gt { pop 1 } if',
+    rampProgram(stops, 0),
+    '}',
+  ];
+  return body.join('\n');
+}
+
+// The ramp as nested conditionals over the stop offsets: `t` on the stack in,
+// three colour components out.
+function rampProgram(
+  stops: ReadonlyArray<{ offset: number; colorHex: string }>,
+  i: number,
+): string {
+  const last = i >= stops.length - 2;
+  const a = stops[i]!;
+  const b = stops[i + 1]!;
+  const seg = segmentProgram(a, b);
+  if (last) return seg;
+  return `dup ${ps(b.offset)} le { ${seg} } { ${rampProgram(stops, i + 1)} } ifelse`;
+}
+
+// One linear segment: `t` in, the colour between the two stops out.
+function segmentProgram(
+  a: { offset: number; colorHex: string },
+  b: { offset: number; colorHex: string },
+): string {
+  const c0 = rgb01(a.colorHex);
+  const c1 = rgb01(b.colorHex);
+  const span = b.offset - a.offset;
+  if (span <= 1e-9) return `pop ${c1.map(ps).join(' ')}`;
+  return [
+    `${ps(a.offset)} sub ${ps(1 / span)} mul`,
+    'dup 0 lt { pop 0 } if dup 1 gt { pop 1 } if',
+    'dup dup',
+    `${ps(c1[0]! - c0[0]!)} mul ${ps(c0[0]!)} add`,
+    '3 1 roll',
+    `${ps(c1[1]! - c0[1]!)} mul ${ps(c0[1]!)} add`,
+    'exch',
+    `${ps(c1[2]! - c0[2]!)} mul ${ps(c0[2]!)} add`,
+  ].join(' ');
+}
+
+// A number the calculator will read: fixed notation, never an exponent.
+function ps(n: number): string {
+  if (!Number.isFinite(n)) return '0';
+  const s = n.toFixed(6).replace(/0+$/u, '').replace(/\.$/u, '');
+  return s === '' || s === '-0' ? '0' : s;
 }
 
 // §7.10.4 — the colour ramp. One stop → a constant type-2 function; otherwise a

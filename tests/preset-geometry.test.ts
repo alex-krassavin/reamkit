@@ -24,6 +24,23 @@ const KNOWN = [
   'leftArrow',
   'upArrow',
   'downArrow',
+  'star4',
+  'star5',
+  'star6',
+  'star7',
+  'star8',
+  'star10',
+  'star12',
+  'star16',
+  'star24',
+  'star32',
+  'round1Rect',
+  'round2SameRect',
+  'round2DiagRect',
+  'snip1Rect',
+  'snip2SameRect',
+  'snip2DiagRect',
+  'snipRoundRect',
 ];
 
 function coords(segs: ReadonlyArray<PathSegment>): Array<number> {
@@ -53,7 +70,48 @@ describe('presetPaths', () => {
 
   it('returns null for an unknown preset (caller falls back to rect)', () => {
     expect(presetPaths('cloudCallout', W, H, new Map())).toBeNull();
-    expect(presetPaths('star5', W, H, new Map())).toBeNull();
+    expect(presetPaths('cube', W, H, new Map())).toBeNull();
+  });
+
+  it('a star alternates outer and inner vertices and spans the box', () => {
+    const segs = presetPaths('star5', W, H, new Map())![0]!.segments;
+    // 5 outer + 5 inner points, then close.
+    expect(segs.map((s) => s.op)).toEqual(['move', ...Array<'line'>(9).fill('line'), 'close']);
+    const xs = coords(segs).filter((_, i) => i % 2 === 0);
+    const ys = coords(segs).filter((_, i) => i % 2 === 1);
+    expect(Math.min(...xs)).toBeCloseTo(0, 2);
+    expect(Math.max(...xs)).toBeCloseTo(W, 2);
+    expect(Math.min(...ys)).toBeCloseTo(0, 2);
+    expect(Math.max(...ys)).toBeCloseTo(H, 2);
+    // The first vertex is the topmost point, dead centre.
+    const first = segs[0]!;
+    if (first.op !== 'move') throw new Error('unreachable');
+    expect(first.x).toBeCloseTo(W / 2, 6);
+    expect(first.y).toBeCloseTo(H, 6);
+  });
+
+  it('a snipped corner cuts the corner off and leaves the rest square', () => {
+    // adj1 (default 16667) cuts the TOP pair; adj2 defaults to 0, so the bottom
+    // corners stay square. The cut is that fraction of the SHORTER side (60).
+    const segs = presetPaths('snip2SameRect', W, H, new Map())![0]!.segments;
+    expect(segs.map((s) => s.op)).toEqual([
+      'move',
+      'line',
+      'line',
+      'line',
+      'line',
+      'line',
+      'close',
+    ]);
+    const want = [0, 50, 10, 60, 90, 60, 100, 50, 100, 0, 0, 0];
+    coords(segs).forEach((v, i) => expect(v).toBeCloseTo(want[i]!, 3));
+  });
+
+  it('a rounded corner arcs where a snipped one cuts', () => {
+    const snip = presetPaths('snip1Rect', W, H, new Map())![0]!.segments;
+    const round = presetPaths('round1Rect', W, H, new Map())![0]!.segments;
+    expect(snip.map((s) => s.op)).toEqual(['move', 'line', 'line', 'line', 'line', 'close']);
+    expect(round.map((s) => s.op)).toEqual(['move', 'line', 'cubic', 'line', 'line', 'close']);
   });
 
   it('triangle is three line segments closed', () => {

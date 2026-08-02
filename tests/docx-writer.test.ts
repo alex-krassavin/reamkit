@@ -282,13 +282,19 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     expect(el.image.altText).toBe('a red square');
   });
 
-  it('round-trips non-raster image formats (GIF, EMF) by magic number, not extension', () => {
+  it('round-trips GIF and EMF media by magic number, not extension', () => {
     // The reader stores any blip bytes verbatim; the writer must recognise the
     // format from the magic number and pick the right media extension and
     // content type. A GIF89a header and an EMF EMR_HEADER (" EMF" at byte 40)
     // exercise the two detection paths beyond the raster set detectImageFormat
     // knows. The bytes need not be a full valid image — only the signature.
-    const gif = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x00]);
+    // A whole 2×2 GIF89a: since the reader decodes GIF, a header alone is a
+    // corrupt picture rather than an opaque blob.
+    const gif = new Uint8Array([
+      0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x02, 0x00, 0x02, 0x00, 0xf0, 0x00, 0x00, 0xff, 0x00,
+      0x00, 0x00, 0xff, 0x00, 0x2c, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x02, 0x00, 0x00, 0x02,
+      0x03, 0x44, 0x02, 0x05, 0x00, 0x3b,
+    ]);
     const emf = new Uint8Array(88);
     emf.set([0x01, 0x00, 0x00, 0x00], 0); // iType = EMR_HEADER
     emf.set([0x20, 0x45, 0x4d, 0x46], 40); // " EMF" signature

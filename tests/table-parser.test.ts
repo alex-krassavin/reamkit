@@ -161,3 +161,172 @@ describe('parseTable + body ordering', () => {
     expect(cell.content[0]!.table.grid).toEqual([twipsToPt(2000)]);
   });
 });
+
+// §17.13.5.15 — a row taken away by a tracked change, under the reader's
+// accept-all reading of revisions (the one that already drops `w:del` runs).
+describe('a deleted table row', () => {
+  const row = (cells: string) => `<w:tr>${cells}</w:tr>`;
+  const cell = (inner: string) => `<w:tc><w:tcPr/><w:p>${inner}</w:p></w:tc>`;
+  const MOVED = '<w:pPr><w:rPr><w:moveFrom w:id="1" w:author="a" w:date="d"/></w:rPr></w:pPr>';
+  const tbl = (rows: string) =>
+    parse(`<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>${rows}</w:tbl>`);
+  const rowsOf = (body: ReturnType<typeof tbl>) => {
+    const el = body.find((b) => b.kind === 'table');
+    if (el?.kind !== 'table') throw new Error('expected a table');
+    return el.table.rows;
+  };
+
+  it('drops a row whose trPr says it was deleted', () => {
+    const body = tbl(
+      row(
+        '<w:trPr><w:del w:id="1" w:author="a" w:date="d"/></w:trPr>' +
+          cell('<w:r><w:t>gone</w:t></w:r>'),
+      ) + row(cell('<w:r><w:t>kept</w:t></w:r>')),
+    );
+    expect(rowsOf(body)).toHaveLength(1);
+    expect(textOf(rowsOf(body)[0]!.cells[0]!.content)).toBe('kept');
+  });
+
+  it('drops a row whose every paragraph mark was moved away', () => {
+    // How a producer writes a row whose CONTENT was taken: the runs go into
+    // w:moveFrom and each paragraph MARK is marked too. Accepting only the runs
+    // left TC-table-DnD-move.docx a ghost of empty bordered rows where Word and
+    // LibreOffice leave nothing.
+    const body = tbl(
+      row(cell(MOVED + '<w:moveFrom w:id="2"><w:r><w:t>A1</w:t></w:r></w:moveFrom>')) +
+        row(cell('<w:r><w:t>kept</w:t></w:r>')),
+    );
+    expect(rowsOf(body)).toHaveLength(1);
+    expect(textOf(rowsOf(body)[0]!.cells[0]!.content)).toBe('kept');
+  });
+
+  it('keeps a row that merely happens to be empty', () => {
+    // No revision mark anywhere: an empty row is a row the author wanted.
+    expect(rowsOf(tbl(row(cell('')) + row(cell('<w:r><w:t>x</w:t></w:r>'))))).toHaveLength(2);
+  });
+
+  it('keeps a row where one paragraph mark survives', () => {
+    const body = tbl(
+      row(
+        cell(MOVED + '<w:moveFrom w:id="2"><w:r><w:t>A1</w:t></w:r></w:moveFrom>') +
+          cell('<w:r><w:t>stays</w:t></w:r>'),
+      ),
+    );
+    expect(rowsOf(body)).toHaveLength(1);
+    expect(textOf(rowsOf(body)[0]!.cells[1]!.content)).toBe('stays');
+  });
+});
+
+describe('row height and cell vertical alignment', () => {
+  const tbl = (trPr: string, tcPr: string) =>
+    parse(
+      `<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>` +
+        `<w:tr>${trPr}<w:tc>${tcPr}<w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc></w:tr></w:tbl>`,
+    );
+  const rowOf = (body: ReturnType<typeof tbl>) => {
+    const el = body.find((b) => b.kind === 'table');
+    if (el?.kind !== 'table') throw new Error('expected a table');
+    return el.table.rows[0]!;
+  };
+
+  it('reads a height with no hRule as a minimum (§17.4.81)', () => {
+    // The schema default is `auto`, but a row that says how tall it is is not
+    // asking to be measured — Word and LibreOffice both take it as at-least.
+    // Read as auto, TestTableCellAlign.docx's tall rows collapsed to one line.
+    const p = rowOf(tbl('<w:trPr><w:trHeight w:val="1340"/></w:trPr>', '')).properties;
+    expect(p.height).toBe(twipsToPt(1340));
+    expect(p.heightRule).toBe('atLeast');
+  });
+
+  it('keeps an hRule the row states', () => {
+    const p = rowOf(
+      tbl('<w:trPr><w:trHeight w:val="1340" w:hRule="exact"/></w:trPr>', ''),
+    ).properties;
+    expect(p.heightRule).toBe('exact');
+  });
+
+  it('reads w:vAlign (§17.4.84)', () => {
+    for (const v of ['top', 'center', 'bottom'] as const) {
+      expect(
+        rowOf(tbl('', `<w:tcPr><w:vAlign w:val="${v}"/></w:tcPr>`)).cells[0]!.properties
+          .verticalAlign,
+      ).toBe(v);
+    }
+    // `both` spreads the lines out; with no such mode the cell keeps its top.
+    expect(
+      rowOf(tbl('', '<w:tcPr><w:vAlign w:val="both"/></w:tcPr>')).cells[0]!.properties
+        .verticalAlign,
+    ).toBeUndefined();
+  });
+});
+
+// §17.4.65 `w:tblInd` — how far the table's leading edge stands in from the text
+// margin. Read nowhere, a table that declares one was drawn flush to the margin:
+// NumberedList.docx indents its procedure table through its table style.
+describe('table indent (§17.4.65)', () => {
+  const propsOf = (tblPrInner: string) => {
+    const el = parse(
+      `<w:tbl><w:tblPr>${tblPrInner}</w:tblPr>` +
+        '<w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>' +
+        '<w:tr><w:tc><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc></w:tr></w:tbl>',
+    ).find((b) => b.kind === 'table');
+    if (el?.kind !== 'table') throw new Error('expected a table');
+    return el.table.properties;
+  };
+
+  it('reads a dxa indent', () => {
+    expect(propsOf('<w:tblInd w:w="360" w:type="dxa"/>').indentPt).toBe(twipsToPt(360));
+    // A bare w:tblInd is twips too (the type attribute is optional).
+    expect(propsOf('<w:tblInd w:w="720"/>').indentPt).toBe(twipsToPt(720));
+  });
+
+  it('ignores an indent stated in units it does not measure', () => {
+    expect(propsOf('<w:tblInd w:w="50" w:type="pct"/>').indentPt).toBeUndefined();
+  });
+});
+
+describe('a content control around rows or cells (§17.5.2)', () => {
+  // cell-sdt-redline.docx wraps its only cell in a `w:sdt`; read as a plain
+  // child list the wrapper hid it and the table came out with no cells.
+  const cellsOf = (bodyXml: string) => {
+    const el = parse(bodyXml).find((b) => b.kind === 'table');
+    if (el?.kind !== 'table') throw new Error('expected a table');
+    return el.table.rows.map((r) => r.cells.map((c) => textOf(c.content)));
+  };
+  const grid = '<w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>';
+  const cell = (t: string) => `<w:tc><w:p><w:r><w:t>${t}</w:t></w:r></w:p></w:tc>`;
+
+  it('reads a cell the control wraps', () => {
+    expect(
+      cellsOf(
+        `<w:tbl>${grid}<w:tr><w:sdt><w:sdtContent>${cell('A1')}</w:sdtContent></w:sdt>` +
+          `${cell('B1')}</w:tr></w:tbl>`,
+      ),
+    ).toEqual([['A1', 'B1']]);
+  });
+
+  it('reads a row the control wraps', () => {
+    expect(
+      cellsOf(
+        `<w:tbl>${grid}<w:sdt><w:sdtContent><w:tr>${cell('A1')}</w:tr></w:sdtContent></w:sdt>` +
+          `<w:tr>${cell('A2')}</w:tr></w:tbl>`,
+      ),
+    ).toEqual([['A1'], ['A2']]);
+  });
+});
+
+describe('a deeply nested table', () => {
+  it('parses past the XML parser’s own nesting guard', () => {
+    // deep-table-cell.docx nests 5000 tables; the guard's default of 100 tags
+    // is about twelve, so an ordinary document of nested tables went unread
+    // whole. The bound stays — it is there for pathological input — but it is
+    // now deeper than any word processor writes.
+    let inner = '<w:p><w:r><w:t>deep</w:t></w:r></w:p>';
+    for (let i = 0; i < 60; i++) {
+      inner = `<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc>${inner}</w:tc></w:tr></w:tbl>`;
+    }
+    const els = parse(inner);
+    expect(els).toHaveLength(1);
+    expect(els[0]!.kind).toBe('table');
+  });
+});

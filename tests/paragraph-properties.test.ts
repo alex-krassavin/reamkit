@@ -108,3 +108,157 @@ describe('parseParagraphProperties', () => {
     });
   });
 });
+
+// ECMA-376 Part 1 §17.3.1.37 `w:tabs` — a tab advances to a POSITION, not by a
+// fixed amount. Measured as ordinary whitespace it collapsed to a space: the
+// page numbers of FDO77715.docx's index sat against their titles with no dot
+// leader between, and its header ran its left and right halves together.
+describe('tab stops (§17.3.1.37)', () => {
+  it('reads a stop’s position, alignment and leader', () => {
+    expect(
+      parseParagraphProperties(
+        parsePpr(
+          '<w:pPr><w:tabs><w:tab w:val="right" w:pos="9360" w:leader="dot"/></w:tabs></w:pPr>',
+        ),
+      ).tabs,
+    ).toEqual([{ positionPt: twipsToPt(9360), alignment: 'right', leader: 'dot' }]);
+  });
+
+  it('sorts the stops by position, whatever order they are written in', () => {
+    expect(
+      parseParagraphProperties(
+        parsePpr(
+          '<w:pPr><w:tabs><w:tab w:val="right" w:pos="9360"/>' +
+            '<w:tab w:val="center" w:pos="4680"/></w:tabs></w:pPr>',
+        ),
+      ).tabs?.map((t) => t.positionPt),
+    ).toEqual([twipsToPt(4680), twipsToPt(9360)]);
+  });
+
+  it('keeps only the stops that place text', () => {
+    // §17.18.90 — `bar` draws a rule and advances nothing; `clear` removes an
+    // inherited stop. Neither positions anything, so neither becomes one.
+    expect(
+      parseParagraphProperties(
+        parsePpr(
+          '<w:pPr><w:tabs><w:tab w:val="bar" w:pos="1440"/>' +
+            '<w:tab w:val="clear" w:pos="2880"/>' +
+            '<w:tab w:val="left" w:pos="720"/></w:tabs></w:pPr>',
+        ),
+      ).tabs,
+    ).toEqual([{ positionPt: twipsToPt(720), alignment: 'left' }]);
+  });
+
+  it('ignores a stop that names no position', () => {
+    expect(
+      parseParagraphProperties(parsePpr('<w:pPr><w:tabs><w:tab w:val="left"/></w:tabs></w:pPr>'))
+        .tabs,
+    ).toBeUndefined();
+  });
+
+  it('takes `start` and `end` as the left and right they are', () => {
+    expect(
+      parseParagraphProperties(
+        parsePpr(
+          '<w:pPr><w:tabs><w:tab w:val="start" w:pos="720"/>' +
+            '<w:tab w:val="end" w:pos="1440"/></w:tabs></w:pPr>',
+        ),
+      ).tabs?.map((t) => t.alignment),
+    ).toEqual(['left', 'right']);
+  });
+});
+
+// §17.3.1.24 `w:pBdr` — rules around the paragraph, spelled exactly as a cell's
+// are but with a `w:space` in POINTS. Read nowhere, Test_ThemeBorderColor.docx
+// lost the two coloured rules that are the whole of its page.
+describe('paragraph borders (§17.3.1.24)', () => {
+  it('reads each edge with its width, colour and standoff', () => {
+    const p = parseParagraphProperties(
+      parsePpr(
+        '<w:pPr><w:pBdr>' +
+          '<w:top w:val="single" w:sz="48" w:space="1" w:color="DE81E1"/>' +
+          '<w:bottom w:val="double" w:sz="8" w:space="4" w:color="90ABF0"/>' +
+          '</w:pBdr></w:pPr>',
+      ),
+    );
+    expect(p.borders?.top).toEqual({
+      style: 'single',
+      width: eighthPtToPt(48),
+      spacePt: 1,
+      colorHex: 'DE81E1',
+    });
+    expect(p.borders?.bottom).toEqual({
+      style: 'double',
+      width: eighthPtToPt(8),
+      spacePt: 4,
+      colorHex: '90ABF0',
+    });
+    expect(p.borders?.left).toBeUndefined();
+  });
+
+  it('takes start and end as the left and right they are', () => {
+    const p = parseParagraphProperties(
+      parsePpr(
+        '<w:pPr><w:pBdr><w:start w:val="single" w:sz="4"/><w:end w:val="single" w:sz="4"/></w:pBdr></w:pPr>',
+      ),
+    );
+    expect(p.borders?.left?.style).toBe('single');
+    expect(p.borders?.right?.style).toBe('single');
+  });
+
+  it('draws a pattern it cannot spell as a solid rule', () => {
+    // §17.18.2 names some hundred and eighty patterns. Rejecting the ones we
+    // cannot draw exactly lost SdtContent.docx the `thickThinSmallGap` rule
+    // under its header; a solid rule of the stated width is far closer.
+    expect(
+      parseParagraphProperties(
+        parsePpr(
+          '<w:pPr><w:pBdr><w:bottom w:val="thickThinSmallGap" w:sz="24" w:color="622423"/></w:pBdr></w:pPr>',
+        ),
+      ).borders?.bottom,
+    ).toEqual({ style: 'single', width: eighthPtToPt(24), colorHex: '622423' });
+  });
+
+  it('records nil as a rule that is explicitly absent', () => {
+    // Not "unspecified": an edge spelled `nil` overrides the one a style would
+    // otherwise lend it, and the drawing skips a `none` as it always has.
+    expect(
+      parseParagraphProperties(parsePpr('<w:pPr><w:pBdr><w:top w:val="nil"/></w:pBdr></w:pPr>'))
+        .borders?.top,
+    ).toEqual({ style: 'none' });
+  });
+
+  it('ignores an edge with no style, and an auto colour', () => {
+    expect(
+      parseParagraphProperties(parsePpr('<w:pPr><w:pBdr><w:top w:sz="4"/></w:pBdr></w:pPr>'))
+        .borders,
+    ).toBeUndefined();
+    expect(
+      parseParagraphProperties(
+        parsePpr('<w:pPr><w:pBdr><w:top w:val="single" w:color="auto"/></w:pBdr></w:pPr>'),
+      ).borders?.top?.colorHex,
+    ).toBeUndefined();
+  });
+});
+
+// §17.3.1.31 `w:pPr/w:shd` — the paragraph's own background. Read nowhere,
+// Test_ThemeTextParaBackgroundColor.docx printed three bare lines where
+// LibreOffice fills three bands behind them.
+describe('paragraph shading (§17.3.1.31)', () => {
+  it('reads a direct fill', () => {
+    expect(
+      parseParagraphProperties(parsePpr('<w:pPr><w:shd w:val="clear" w:fill="F4E7D3"/></w:pPr>'))
+        .shading,
+    ).toEqual({ colorHex: 'F4E7D3' });
+  });
+
+  it('leaves an auto or absent fill unshaded', () => {
+    expect(
+      parseParagraphProperties(parsePpr('<w:pPr><w:shd w:val="clear" w:fill="auto"/></w:pPr>'))
+        .shading,
+    ).toBeUndefined();
+    expect(
+      parseParagraphProperties(parsePpr('<w:pPr><w:shd w:val="pct25"/></w:pPr>')).shading,
+    ).toBeUndefined();
+  });
+});

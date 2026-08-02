@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
 import { buildIndexedPng, buildTinyPng } from './fixtures/build-png';
+import { countShown, showPattern } from './fixtures/pdf-show';
 import { defaultColorResolver } from '@/core/drawingml/colors';
 import { ResourceStore, eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 import { convertDocxToPdfSync } from '@/core/converter';
@@ -25,7 +26,7 @@ const FONTS = {
 const latin1 = new TextDecoder('latin1');
 const asLatin1 = (b: Uint8Array): string => latin1.decode(b);
 
-function drawingXml(rId: string, cxEmu: number, cyEmu: number): string {
+function drawingXml(rId: string, cxEmu: number, cyEmu: number, srcRect = ''): string {
   return `<w:r><w:drawing>
     <wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
       <wp:extent cx="${cxEmu}" cy="${cyEmu}"/>
@@ -35,6 +36,7 @@ function drawingXml(rId: string, cxEmu: number, cyEmu: number): string {
           <pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
             <pic:blipFill>
               <a:blip r:embed="${rId}"/>
+              ${srcRect}
             </pic:blipFill>
             <pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cxEmu}" cy="${cyEmu}"/></a:xfrm></pic:spPr>
           </pic:pic>
@@ -260,15 +262,10 @@ describe('Image rendering end-to-end', () => {
     const text = asLatin1(pdf);
 
     const parsed = parseTtf(FONTS.regular);
-    const hexOf = (s: string) =>
-      [...s]
-        .map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!))
-        .map((g) => g.toString(16).padStart(4, '0').toUpperCase())
-        .join('');
 
     // Both text segments must be present (not lost to image-block collapse).
-    expect(text).toContain(`<${hexOf('Before')}> Tj`);
-    expect(text).toContain(`<${hexOf('After')}> Tj`);
+    expect(text).toMatch(showPattern(parsed, 'Before'));
+    expect(text).toMatch(showPattern(parsed, 'After'));
     // Image XObject is also drawn.
     expect(text).toMatch(/\/Im\d+ Do/);
     // ET / BT sequence indicates we left text mode for the inline image.
@@ -286,6 +283,149 @@ describe('Image rendering end-to-end', () => {
 
     expect(text).toMatch(/\/Width 3/);
     expect(text).toMatch(/\/Height 5/);
+  });
+});
+
+describe('a cropped picture (§20.1.8.55 a:srcRect)', () => {
+  const png = buildTinyPng(2, 2, [255, 0, 0, 255]);
+  // Quarter off the left, half off the bottom: the frame shows the top-right
+  // three-eighths of the picture, so the picture is drawn 4/3 as wide and twice
+  // as tall as the frame and the frame clips it.
+  const cropped = (srcRect: string): string =>
+    asLatin1(
+      convertDocxToPdfSync(
+        buildDocxFromBody(`<w:p>${drawingXml('rId20', 914400, 914400, srcRect)}</w:p>`, {
+          images: { rId20: { contentType: 'image/png', bytes: png, extension: 'png' } },
+        }),
+        { fonts: FONTS },
+      ),
+    );
+
+  it('scales the picture up and clips the frame to it', () => {
+    const text = cropped('<a:srcRect l="25000" b="50000"/>');
+    // A clipping path the size of the frame (72pt), then the picture at 96×144.
+    expect(text).toMatch(/[\d.]+ [\d.]+ 72 72 re\nW\nn\n96 0 0 144 /u);
+    // Moved left by the quarter cut away and down by the half: 24pt and 72pt.
+    const cm = /96 0 0 144 ([\d.]+) ([\d.]+) cm/u.exec(text)!;
+    const re = /([\d.]+) ([\d.]+) 72 72 re/u.exec(text)!;
+    expect(Number(re[1]) - Number(cm[1])).toBeCloseTo(24, 3);
+    expect(Number(re[2]) - Number(cm[2])).toBeCloseTo(72, 3);
+  });
+
+  it('leaves a picture with no crop alone', () => {
+    // Every edge zero is no crop at all — no clip, and the unit square scaled
+    // straight to the frame.
+    expect(cropped('<a:srcRect l="0" t="0"/>')).toMatch(/\n72 0 0 72 /u);
+    expect(cropped('')).toMatch(/\n72 0 0 72 /u);
+  });
+
+  it('ignores a crop that would leave nothing of the picture', () => {
+    expect(cropped('<a:srcRect l="60000" r="60000"/>')).toMatch(/\n72 0 0 72 /u);
+  });
+});
+
+describe('a run of inline pictures', () => {
+  it('may break a line between two of them', () => {
+    // Each inline picture is a character of its own; a run of them with no
+    // space between is not one long word. Without the opportunity,
+    // VariousPictures.docx's five pictures were one unbreakable box 739pt wide
+    // on a 468pt line and the ones we could draw ran off the paper.
+    const png = buildTinyPng(2, 2, [255, 0, 0, 255]);
+    // Four pictures of 144pt on a 451pt line: two per line, never five across.
+    const runs = Array.from({ length: 4 }, () => drawingXml('rId20', 1828800, 914400)).join('');
+    const docx = buildDocxFromBody(`<w:p>${runs}</w:p>`, {
+      images: { rId20: { contentType: 'image/png', bytes: png, extension: 'png' } },
+    });
+    const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
+    const xs = [...text.matchAll(/\n([\d.]+) 0 0 [\d.]+ ([\d.]+) [\d.]+ cm\n\/Im\d+ Do/gu)].map(
+      (m) => Number(m[2]),
+    );
+    expect(xs).toHaveLength(4);
+    // Every picture starts within the page, not past its right edge.
+    expect(Math.max(...xs)).toBeLessThan(400);
+  });
+});
+
+describe('an anchored drawing beside text', () => {
+  // §20.4.2.3 — an anchored drawing is not in the line: it hangs off the
+  // paragraph at a position of its own and the text flows past it. Read as an
+  // inline picture it split the line it sat in: anchor-position.docx put its
+  // picture between the "A" and the "B" where every other reader sets "AB"
+  // beside it.
+  const anchored = (wrap: string): string => {
+    const png = buildTinyPng(2, 2, [255, 0, 0, 255]);
+    const drawing = `<w:drawing>
+      <wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+                 distT="0" distB="0" distL="0" distR="0" behindDoc="0" locked="0"
+                 layoutInCell="1" allowOverlap="1" simplePos="0" relativeHeight="1">
+        <wp:simplePos x="0" y="0"/>
+        <wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH>
+        <wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>
+        <wp:extent cx="650240" cy="650240"/>
+        ${wrap}
+        <wp:docPr id="1" name="Picture 1"/>
+        <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+          <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+            <pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+              <pic:blipFill><a:blip r:embed="rId20"/></pic:blipFill>
+              <pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="650240" cy="650240"/></a:xfrm></pic:spPr>
+            </pic:pic>
+          </a:graphicData>
+        </a:graphic>
+      </wp:anchor>
+    </w:drawing>`;
+    const body = `<w:p><w:r><w:t>A</w:t></w:r><w:r>${drawing}</w:r><w:r><w:t>B</w:t></w:r></w:p>`;
+    return asLatin1(
+      convertDocxToPdfSync(
+        buildDocxFromBody(body, {
+          images: { rId20: { contentType: 'image/png', bytes: png, extension: 'png' } },
+        }),
+        { fonts: FONTS },
+      ),
+    );
+  };
+
+  it('leaves the line it hangs off unbroken', () => {
+    // An inline picture leaves text mode mid-line — `ET … Do … BT`. An
+    // anchored one is a block of its own, so the line is never interrupted.
+    expect(anchored('<wp:wrapSquare wrapText="bothSides"/>')).not.toMatch(
+      /ET\nq\n[^\n]+cm\n\/Im\d+ Do\nQ\nBT/u,
+    );
+  });
+
+  it('still draws the picture', () => {
+    expect(anchored('<wp:wrapNone/>')).toMatch(/\/Im\d+ Do/u);
+  });
+});
+
+// A picture standing alone in a text box is a paragraph the reader collapsed to
+// an image BLOCK. Skipped with the tables and nested shapes, it vanished:
+// WPGbodyPr.docx sets one inside its outer circle and we drew the circle and the
+// words and nothing between them.
+describe('a picture inside a shape’s text box', () => {
+  it('is drawn, on a line of its own', () => {
+    const png = buildTinyPng(2, 2, [0, 0, 255, 255]);
+    const inner =
+      '<w:p><w:r><w:t>Caption</w:t></w:r></w:p>' +
+      `<w:p>${drawingXml('rId20', 914400, 457200)}</w:p>`;
+    const shape = `<w:r><w:drawing>
+      <wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+        <wp:extent cx="2743200" cy="1828800"/><wp:docPr id="1" name="S"/>
+        <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+          <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+            <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2743200" cy="1828800"/></a:xfrm>
+                <a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr>
+              <wps:txbx><w:txbxContent>${inner}</w:txbxContent></wps:txbx>
+              <wps:bodyPr/>
+            </wps:wsp>
+          </a:graphicData></a:graphic></wp:inline></w:drawing></w:r>`;
+    const docx = buildDocxFromBody(`<w:p>${shape}</w:p>`, {
+      images: { rId20: { contentType: 'image/png', bytes: png, extension: 'png' } },
+    });
+    const text = asLatin1(convertDocxToPdfSync(docx, { fonts: FONTS }));
+    expect(text).toContain('/Subtype /Image');
+    expect(text).toMatch(/\/Im\d+ Do/u);
   });
 });
 
@@ -386,5 +526,121 @@ describe('PNG colour types beyond 8-bit RGB', () => {
     const plain = decode(buildIndexedPng(2, 2, 8, [BLACK, YELLOW], indices));
     const woven = decode(buildIndexedPng(2, 2, 8, [BLACK, YELLOW], indices, { interlaced: true }));
     expect(woven.rgb).toEqual(plain.rgb);
+  });
+});
+
+describe('a rotated picture (§20.1.7.6 a:xfrm @rot)', () => {
+  const png = buildTinyPng(2, 2, [255, 0, 0, 255]);
+  const turned = (rot: string): string =>
+    asLatin1(
+      convertDocxToPdfSync(
+        buildDocxFromBody(
+          `<w:p><w:r><w:drawing>
+            <wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+              <wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Picture 1"/>
+              <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+                <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+                  <pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+                    <pic:blipFill><a:blip r:embed="rId20"/></pic:blipFill>
+                    <pic:spPr><a:xfrm ${rot}><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm></pic:spPr>
+                  </pic:pic>
+                </a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`,
+          { images: { rId20: { contentType: 'image/png', bytes: png, extension: 'png' } } },
+        ),
+        { fonts: FONTS },
+      ),
+    );
+
+  it('turns the picture about its centre', () => {
+    // crop-pixel.docx tilts its cover by 641099/60000 = 10.685°, clockwise;
+    // PDF measures the other way, so the matrix carries -10.685°.
+    const text = turned('rot="641099"');
+    const m = /([\d.-]+) ([\d.-]+) ([\d.-]+) ([\d.-]+) [\d.-]+ [\d.-]+ cm\n72 0 0 72 /u.exec(text);
+    expect(m).not.toBeNull();
+    const rad = (-10.685 * Math.PI) / 180;
+    expect(Number(m![1])).toBeCloseTo(Math.cos(rad), 3);
+    expect(Number(m![2])).toBeCloseTo(Math.sin(rad), 3);
+  });
+
+  it('leaves an unturned picture with no matrix of its own', () => {
+    expect(turned('')).not.toMatch(
+      /[\d.-]+ [\d.-]+ [\d.-]+ [\d.-]+ [\d.-]+ [\d.-]+ cm\n72 0 0 72 /u,
+    );
+  });
+});
+
+describe('a GIF picture', () => {
+  // A 2×2 GIF89a: red, green / green, red, with the LZW stream written by hand
+  // — clear, four literals, end, the last two already four bits wide because
+  // the table reached eight entries — so the fixture exercises the real
+  // decoder, code-width step and all.
+  const gif = (transparent: boolean): Uint8Array =>
+    new Uint8Array([
+      0x47,
+      0x49,
+      0x46,
+      0x38,
+      0x39,
+      0x61, // "GIF89a"
+      0x02,
+      0x00,
+      0x02,
+      0x00,
+      0xf0,
+      0x00,
+      0x00, // 2×2, global table of 2
+      0xff,
+      0x00,
+      0x00,
+      0x00,
+      0xff,
+      0x00, // red, green
+      ...(transparent
+        ? [0x21, 0xf9, 0x04, 0x01, 0x00, 0x00, 0x01, 0x00] // GCE: index 1 clear
+        : []),
+      0x2c,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x02,
+      0x00,
+      0x02,
+      0x00,
+      0x00, // image descriptor
+      0x02,
+      0x03,
+      0x44,
+      0x02,
+      0x05,
+      0x00, // LZW min 2, one 3-byte block
+      0x3b, // trailer
+    ]);
+
+  it('decodes to raw pixels, since PDF has no GIF filter', () => {
+    // dml-picture-in-textframe.docx (and seventeen more) drew an empty box.
+    const prepared = prepareImage(gif(false));
+    expect(prepared).toMatchObject({
+      format: 'gif',
+      mimeType: 'image/gif',
+      widthPx: 2,
+      heightPx: 2,
+      colorSpace: 'DeviceRGB',
+      bitsPerComponent: 8,
+      filter: 'FlateDecode',
+    });
+    expect([...unzlibSync(prepared.data)]).toEqual([255, 0, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0]);
+    expect(prepared.smaskData).toBeUndefined();
+  });
+
+  it('turns a transparent index into a soft mask', () => {
+    const prepared = prepareImage(gif(true));
+    expect([...unzlibSync(prepared.smaskData!)]).toEqual([255, 0, 0, 255]);
+  });
+
+  it('paints the see-through pixels white when PDF/A-1 forbids the mask', () => {
+    const prepared = prepareImage(gif(true), { flattenAlpha: true });
+    expect(prepared.smaskData).toBeUndefined();
+    expect([...unzlibSync(prepared.data)].slice(3, 6)).toEqual([255, 255, 255]);
   });
 });

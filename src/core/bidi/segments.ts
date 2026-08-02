@@ -55,7 +55,12 @@ export function segmentLevels(
 
   for (const seg of segments) {
     const isObject = seg.object === true;
-    const wrap = seg.rtl ? RLE : baseDir === 'rtl' && !isObject ? LRE : 0;
+    // Only a run that STATES its direction overrides the algorithm. Wrapping
+    // every unmarked run of an RTL paragraph in LRE…PDF made its neutrals part
+    // of the Latin run: fdo43093b.docx ends "in M$" inside an RTL paragraph,
+    // and Word and LibreOffice both carry that trailing `$` to the far side of
+    // the line, where the paragraph's own direction puts it.
+    const wrap = seg.rtl === true ? RLE : 0;
     if (wrap) {
       bidiCps.push(wrap);
       realIndexOfBidi.push(-1);

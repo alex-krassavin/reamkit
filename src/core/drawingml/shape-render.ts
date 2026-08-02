@@ -4,7 +4,7 @@
 // no pagination.
 
 import type { ShapeDash, ShapeGeometry, ShapeLine } from '@/core/document-model';
-import type { ShapeGradient, StrokeStyle, VectorPath } from '@/core/vector';
+import type { PathSegment, ShapeGradient, StrokeStyle, VectorPath } from '@/core/vector';
 
 import { customPaths, presetPaths, rectPath } from '@/core/drawingml/preset-geometry';
 
@@ -91,7 +91,18 @@ export function gradientSvgDef(id: string, g: ShapeGradient): string {
   const stops = g.stops
     .map((s) => `<stop offset="${n(s.offset)}" stop-color="#${s.colorHex}"/>`)
     .join('');
-  if (g.kind === 'radial') return `<radialGradient id="${id}">${stops}</radialGradient>`;
+  if (g.kind === 'radial') {
+    // The centre is in the box's own fractions, which is exactly what SVG's
+    // objectBoundingBox units are; the sweep reaches half the diagonal, as the
+    // centred case does.
+    const c = g.center;
+    if (!c) return `<radialGradient id="${id}">${stops}</radialGradient>`;
+    const r = Math.SQRT2 / 2;
+    return (
+      `<radialGradient id="${id}" cx="${n(c.x)}" cy="${n(c.y)}" r="${n(r)}">` +
+      `${stops}</radialGradient>`
+    );
+  }
   const rad = (-(g.angle ?? 0) * Math.PI) / 180;
   const dx = Math.cos(rad) / 2;
   const dy = Math.sin(rad) / 2;
@@ -99,6 +110,124 @@ export function gradientSvgDef(id: string, g: ShapeGradient): string {
     `<linearGradient id="${id}" x1="${n(0.5 - dx)}" y1="${n(0.5 - dy)}" ` +
     `x2="${n(0.5 + dx)}" y2="${n(0.5 + dy)}">${stops}</linearGradient>`
   );
+}
+
+// §20.1.10.34/§20.1.10.35 — the three size steps an end decoration comes in,
+// as multiples of the pen. A hairline arrow drawn at 3× a 0.75pt pen is a
+// speck, so the pen is taken as at least a point: the head then lands near the
+// 4-5pt Word draws, well short of LibreOffice's 9.
+const LINE_END_STEPS: Record<'sm' | 'med' | 'lg', number> = { sm: 3, med: 4.5, lg: 6 };
+const MIN_LINE_END_PEN_PT = 1;
+
+/**
+ * §20.1.8.24 / §20.1.8.42 — the arrowheads a line asks for at its ends, as
+ * filled paths in the same local frame as the shape's own geometry. The head
+ * rides the first point of the first subpath and the tail the last point of
+ * the last one, each turned along the segment that reaches it.
+ *
+ * @param paths        The shape's geometry paths.
+ * @param line         The parsed line (its `headEnd`/`tailEnd` are read).
+ * @param strokeWidthPt The pen width the decorations are sized against.
+ * @returns The decoration paths (empty when the line asks for none).
+ */
+export function lineEndPaths(
+  paths: ReadonlyArray<VectorPath>,
+  line: ShapeLine | undefined,
+  strokeWidthPt: number,
+): Array<VectorPath> {
+  if (!line || (!line.headEnd && !line.tailEnd) || line.fill === 'none') return [];
+  const pts = pathPoints(paths);
+  if (pts.length < 2) return [];
+  const out: Array<VectorPath> = [];
+  const pen = Math.max(strokeWidthPt, MIN_LINE_END_PEN_PT);
+  if (line.headEnd) {
+    const p = pts[0]!;
+    const q = pts[1]!;
+    const path = endPath(line.headEnd, p, q, pen);
+    if (path) out.push(path);
+  }
+  if (line.tailEnd) {
+    const p = pts[pts.length - 1]!;
+    const q = pts[pts.length - 2]!;
+    const path = endPath(line.tailEnd, p, q, pen);
+    if (path) out.push(path);
+  }
+  return out;
+}
+
+// The path's points in order, ignoring which operator produced them: enough to
+// know where a line starts and ends and which way it is going there.
+function pathPoints(paths: ReadonlyArray<VectorPath>): Array<{ x: number; y: number }> {
+  const out: Array<{ x: number; y: number }> = [];
+  for (const path of paths) {
+    for (const seg of path.segments) {
+      if (seg.op === 'close') continue;
+      out.push({ x: seg.x, y: seg.y });
+    }
+  }
+  return out;
+}
+
+// One decoration at `tip`, pointing away from `from`.
+function endPath(
+  end: NonNullable<ShapeLine['headEnd']>,
+  tip: { x: number; y: number },
+  from: { x: number; y: number },
+  pen: number,
+): VectorPath | undefined {
+  const dx = tip.x - from.x;
+  const dy = tip.y - from.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-6) return undefined;
+  // Unit vector along the line (ux, uy) and its normal (nx, ny).
+  const ux = dx / len;
+  const uy = dy / len;
+  const nx = -uy;
+  const ny = ux;
+  const L = LINE_END_STEPS[end.length ?? 'med'] * pen;
+  const W = LINE_END_STEPS[end.width ?? 'med'] * pen;
+  const at = (along: number, across: number): { x: number; y: number } => ({
+    x: tip.x - ux * along + nx * across,
+    y: tip.y - uy * along + ny * across,
+  });
+  const segments: Array<PathSegment> = [];
+  const move = (p: { x: number; y: number }): void => {
+    segments.push({ op: 'move', x: p.x, y: p.y });
+  };
+  const line2 = (p: { x: number; y: number }): void => {
+    segments.push({ op: 'line', x: p.x, y: p.y });
+  };
+  if (end.type === 'diamond') {
+    move(at(0, 0));
+    line2(at(L / 2, W / 2));
+    line2(at(L, 0));
+    line2(at(L / 2, -W / 2));
+  } else if (end.type === 'oval') {
+    // A circle centred half a length back, drawn as four arcs' worth of
+    // Béziers would be exact; the octagon below is within a pen width of it.
+    const r = W / 2;
+    const c = at(L / 2, 0);
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * 2 * Math.PI;
+      const p = { x: c.x + r * Math.cos(a), y: c.y + r * Math.sin(a) };
+      if (i === 0) move(p);
+      else line2(p);
+    }
+  } else if (end.type === 'stealth') {
+    // A triangle with its back notched forward — the concave arrowhead.
+    move(at(0, 0));
+    line2(at(L, W / 2));
+    line2(at(L * 0.6, 0));
+    line2(at(L, -W / 2));
+  } else {
+    // 'triangle' and 'arrow' both draw as a filled triangle; Word's open
+    // `arrow` is two strokes, which at these sizes reads the same.
+    move(at(0, 0));
+    line2(at(L, W / 2));
+    line2(at(L, -W / 2));
+  }
+  segments.push({ op: 'close' });
+  return { segments };
 }
 
 /**
@@ -112,7 +241,11 @@ export function gradientSvgDef(id: string, g: ShapeGradient): string {
 export function buildStroke(line: ShapeLine | undefined): StrokeStyle | undefined {
   if (!line || line.fill === 'none') return undefined;
   const widthPt = line.width ?? DEFAULT_LINE_WIDTH_EMU / EMU_PER_PT;
-  const dash = line.dash && line.dash !== 'solid' ? dashPattern(line.dash, widthPt) : undefined;
+  // §20.1.8.21 — the author's own pattern states its lengths as multiples of
+  // the line's width, and it wins over any preset beside it.
+  const custom = line.customDash?.map((n) => Math.max(0.01, n * widthPt));
+  const dash =
+    custom ?? (line.dash && line.dash !== 'solid' ? dashPattern(line.dash, widthPt) : undefined);
   // DrawingML 'flat' cap is PDF butt; round/square map straight through.
   const cap: StrokeStyle['cap'] | undefined = line.cap === 'flat' ? 'butt' : line.cap;
   return {

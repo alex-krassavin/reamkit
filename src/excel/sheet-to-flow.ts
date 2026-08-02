@@ -47,6 +47,16 @@ import {
 const HEADER_REL = '_xlsxHeaderDefault';
 const FOOTER_REL = '_xlsxFooterDefault';
 
+// A page break with nothing on it. An empty paragraph is a blank LINE in a
+// word-processing document (§17.3.1) and the layout gives it one, but here the
+// paragraph is only a device to start a page: the sheet below it must begin at
+// the top margin, not a line down. §17.3.1.33 has the words for that — a line
+// of exactly zero height.
+const PAGE_BREAK_PARAGRAPH = {
+  properties: { pageBreakBefore: true, spacingLine: pt(0), spacingLineRule: 'exact' as const },
+  runs: [],
+};
+
 /**
  * Projection knobs (E-SHEET W9).
  */
@@ -207,12 +217,9 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
 
     // Each sheet after the first starts on its own PDF page. We do NOT print the
     // sheet name (Calc/Excel `--convert-to pdf` emit it nowhere), so the page
-    // break is an empty page-break-only paragraph (no runs ⇒ no glyphs).
+    // break is an empty page-break-only paragraph.
     if (printed > 0) {
-      body.push({
-        kind: 'paragraph',
-        paragraph: { properties: { pageBreakBefore: true }, runs: [] },
-      });
+      body.push({ kind: 'paragraph', paragraph: PAGE_BREAK_PARAGRAPH });
     }
 
     // The sheet's drawings go in BEFORE its grid. They are out-of-flow floats,
@@ -300,10 +307,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
         : [controlBlocks];
     for (let band = 0; band < drawingBands.length; band++) {
       if (band > 0) {
-        drawings.push({
-          kind: 'paragraph',
-          paragraph: { properties: { pageBreakBefore: true }, runs: [] },
-        });
+        drawings.push({ kind: 'paragraph', paragraph: PAGE_BREAK_PARAGRAPH });
       }
       for (const shape of drawingBands[band]!) {
         drawings.push({

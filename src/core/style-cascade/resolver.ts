@@ -16,6 +16,7 @@ import type {
   Paragraph,
   ParagraphProperties,
   RunProperties,
+  ShapeBlock,
   StyleSheet,
 } from '@/core/document-model';
 
@@ -86,9 +87,18 @@ function computeRunProperties(
   sheet: StyleSheet,
 ): ResolvedRunProperties {
   let acc = mergeRun(DEFAULT_RESOLVED_RUN, sheet.defaultRunProperties);
+  // §17.7.2 — the table style sits between the document defaults and the
+  // paragraph's own style, on the run side as on the paragraph side.
+  if (paragraphDirect.inheritedRun) acc = mergeRun(acc, paragraphDirect.inheritedRun);
 
-  if (paragraphDirect.styleId) {
-    const chain = resolveStyleChain(paragraphDirect.styleId, sheet);
+  // §17.7.4.17 — a paragraph that names no style is written in the DEFAULT
+  // one, and its runs inherit that style's rPr exactly as the paragraph
+  // inherits its pPr. Read as "no style at all", defaultStyle.docx set its
+  // unstyled paragraph in 12pt body text where every reader uses the 28pt bold
+  // of the Title style the file marks default.
+  const styleId = paragraphDirect.styleId ?? defaultParagraphStyleId(sheet);
+  if (styleId) {
+    const chain = resolveStyleChain(styleId, sheet);
     acc = mergeRun(acc, chain.rPr);
   }
   if (runDirect.styleId) {
@@ -136,11 +146,48 @@ function computeParagraphProperties(
   sheet: StyleSheet,
 ): ResolvedParagraphProperties {
   let acc = mergePar(DEFAULT_RESOLVED_PARAGRAPH, sheet.defaultParagraphProperties);
-  if (paragraphDirect.styleId) {
-    const chain = resolveStyleChain(paragraphDirect.styleId, sheet);
+  // §17.7.2 — the table style ranks between the document defaults and the
+  // paragraph's own style. Applied over the style instead, a table style's
+  // `w:spacing` overruled the heading the cell is written in: tdf119054.docx
+  // sets 18pt after every Heading 2 and its table style sets none, and we
+  // packed the headings together.
+  // The mark's own formatting comes from the same layer: an empty cell has
+  // nothing but its mark, and the row is as tall as the mark is
+  // (conditionalstyles-tbllook.docx sets its first column in 36pt).
+  if (paragraphDirect.tableStyle ?? paragraphDirect.inheritedRun) {
+    acc = mergePar(acc, {
+      ...paragraphDirect.tableStyle,
+      ...(paragraphDirect.inheritedRun ? { runProperties: paragraphDirect.inheritedRun } : {}),
+    });
+  }
+  // §17.7.4.17 `w:default="1"` — the style a paragraph that names none is
+  // written in. Skipping it left such a paragraph with the document defaults
+  // alone: Bug51170.docx sets ten points after every paragraph in its Normal
+  // style, and reading none of it packed a seven-page deed into four.
+  const styleId = paragraphDirect.styleId ?? defaultParagraphStyleId(sheet);
+  if (styleId) {
+    const chain = resolveStyleChain(styleId, sheet);
     acc = mergePar(acc, chain.pPr);
   }
   return mergePar(acc, paragraphDirect);
+}
+
+/** The id of the `w:default="1"` paragraph style, cached per sheet. */
+const defaultParagraphStyleCache = new WeakMap<StyleSheet, string | null>();
+
+function defaultParagraphStyleId(sheet: StyleSheet): string | undefined {
+  const hit = defaultParagraphStyleCache.get(sheet);
+  if (hit !== undefined) return hit ?? undefined;
+  // §17.7.4.17 — a document may mark several styles default, and the LAST one
+  // wins. defaultStyle.docx marks both Normal and Title, and taking the first
+  // set its unstyled paragraph in body text where every reader sets it in the
+  // title's 28pt bold.
+  let found: string | null = null;
+  for (const style of sheet.styles.values()) {
+    if (style.type === 'paragraph' && style.isDefault) found = style.id;
+  }
+  defaultParagraphStyleCache.set(sheet, found);
+  return found ?? undefined;
 }
 
 function resolveStyleChain(styleId: string, sheet: StyleSheet): StyleChainResult {
@@ -169,13 +216,24 @@ function mergeRun(base: ResolvedRunProperties, override: RunProperties): Resolve
     bold: override.bold ?? base.bold,
     italic: override.italic ?? base.italic,
     underline: override.underline ?? base.underline,
+    ...((override.underlineColorHex ?? base.underlineColorHex)
+      ? { underlineColorHex: override.underlineColorHex ?? base.underlineColorHex }
+      : {}),
     strike: override.strike ?? base.strike,
+    caps: override.caps ?? base.caps,
+    smallCaps: override.smallCaps ?? base.smallCaps,
     fontSizePt: override.fontSizePt ?? base.fontSizePt,
     colorHex: override.colorHex ?? base.colorHex,
     fontFamily: override.fontFamily ?? base.fontFamily,
     verticalAlign: override.verticalAlign ?? base.verticalAlign,
     rtl: override.rtl ?? base.rtl,
     ...(lang !== undefined ? { lang } : {}),
+    ...((override.shadingColorHex ?? base.shadingColorHex) !== undefined
+      ? { shadingColorHex: override.shadingColorHex ?? base.shadingColorHex }
+      : {}),
+    ...((override.letterSpacingPt ?? base.letterSpacingPt) !== undefined
+      ? { letterSpacingPt: override.letterSpacingPt ?? base.letterSpacingPt }
+      : {}),
   };
 }
 
@@ -188,21 +246,48 @@ function mergePar(
   // (exactOptionalPropertyTypes).
   const outlineLevel = override.outlineLevel ?? base.outlineLevel;
   const styleId = override.styleId ?? base.styleId;
-  const numbering = override.numbering ?? base.numbering;
+  // §17.9.4 — a `w:numPr` naming only a LEVEL keeps the instance it inherits
+  // and changes the level alone (Word's Heading 2 is based on Heading 1 and
+  // says exactly that).
+  const numbering =
+    override.numbering ??
+    (override.numberingLevel !== undefined && base.numbering !== undefined
+      ? { ...base.numbering, ilvl: override.numberingLevel }
+      : base.numbering);
+  // The paragraph mark's own formatting: the higher-priority one wins whole,
+  // the way a paragraph's tabs do.
+  const runProperties = override.runProperties ?? base.runProperties;
+  const frame = override.frame ?? base.frame;
+  const sectionBreak = override.sectionBreak ?? base.sectionBreak;
+  const textDirection = override.textDirection ?? base.textDirection;
+  const snapToGrid = override.snapToGrid ?? base.snapToGrid;
   return {
     alignment: override.alignment ?? base.alignment,
-    spacingBefore: override.spacingBefore ?? base.spacingBefore,
-    spacingAfter: override.spacingAfter ?? base.spacingAfter,
+    // §17.3.1.1/§17.3.1.3 — an autospacing flag at this layer beats the length
+    // beside it and anything inherited.
+    spacingBefore: override.spacingBeforeAuto ?? override.spacingBefore ?? base.spacingBefore,
+    spacingAfter: override.spacingAfterAuto ?? override.spacingAfter ?? base.spacingAfter,
     spacingLine: override.spacingLine ?? base.spacingLine,
     spacingLineRule: override.spacingLineRule ?? base.spacingLineRule,
     indentLeft: override.indentLeft ?? base.indentLeft,
     indentRight: override.indentRight ?? base.indentRight,
     indentFirstLine: override.indentFirstLine ?? base.indentFirstLine,
     pageBreakBefore: override.pageBreakBefore ?? base.pageBreakBefore,
+    contextualSpacing: override.contextualSpacing ?? base.contextualSpacing,
+    // A paragraph's own stops REPLACE the style's — they are not merged.
+    tabs: override.tabs ?? base.tabs,
     bidi: override.bidi ?? base.bidi,
+    // …and so does a paragraph's own border set (§17.3.1.24).
+    ...((override.borders ?? base.borders) ? { borders: override.borders ?? base.borders } : {}),
+    ...((override.shading ?? base.shading) ? { shading: override.shading ?? base.shading } : {}),
     ...(outlineLevel !== undefined ? { outlineLevel } : {}),
     ...(styleId !== undefined ? { styleId } : {}),
     ...(numbering !== undefined ? { numbering } : {}),
+    ...(runProperties !== undefined ? { runProperties } : {}),
+    ...(frame !== undefined ? { frame } : {}),
+    ...(sectionBreak !== undefined ? { sectionBreak } : {}),
+    ...(textDirection !== undefined ? { textDirection } : {}),
+    ...(snapToGrid !== undefined ? { snapToGrid } : {}),
   };
 }
 
@@ -214,7 +299,16 @@ function mergeParPartial(
   base: ParagraphProperties,
   override: ParagraphProperties,
 ): ParagraphProperties {
-  return copyDefined(base, override);
+  const out = copyDefined(base, override);
+  // §17.9.4 — the derived style states a LEVEL and no instance, so it takes the
+  // one it is based on and moves down a level. Word's Heading 2 is written this
+  // way; without it num-parent-style.docx numbered every heading at level 0.
+  if (override.numbering === undefined && override.numberingLevel !== undefined) {
+    if (base.numbering !== undefined) {
+      return { ...out, numbering: { ...base.numbering, ilvl: override.numberingLevel } };
+    }
+  }
+  return out;
 }
 
 function copyDefined<T extends object>(base: T, override: T): T {
@@ -310,8 +404,16 @@ export function resolveBodyStyles(
           for (const child of cell.content) visit(child);
         }
       }
-    } else if (el.kind === 'shape' && el.shape.text) {
-      for (const child of el.shape.text.content) visit(child);
+    } else if (el.kind === 'shape') {
+      // §20.5.2.17 — a group's MEMBERS carry text of their own, and theirs
+      // needs the cascade exactly as much: the caption of every grouped shape
+      // in dml-groupshape-capitalization.docx kept the document's raw defaults,
+      // so its paragraphs lost the 10pt they are spaced by.
+      const shapeText = (sh: ShapeBlock): void => {
+        for (const child of sh.text?.content ?? []) visit(child);
+        for (const member of sh.children ?? []) shapeText(member.shape);
+      };
+      shapeText(el.shape);
     }
     // image, chart, textless shape: nothing to resolve
   };

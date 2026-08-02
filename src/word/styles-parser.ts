@@ -25,7 +25,7 @@ import { eighthPtToPt, twipsToPt } from '@/core/ir';
 
 import { parseParagraphProperties } from '@/word/paragraph-properties';
 import { parseRunProperties } from '@/word/run-properties';
-import { asArray, asElement, getAttr, getVal } from '@/word/xml-helpers';
+import { asArray, asElement, getAttr, getVal, parseIntAttr } from '@/word/xml-helpers';
 
 const decoder = new TextDecoder('utf-8');
 
@@ -169,6 +169,14 @@ function parseTableStyleLayer(el: Record<string, unknown>): TableStyleLayer | un
     parseFlatBorders(tblPr ? asElement(tblPr['w:tblBorders']) : undefined) ??
     parseFlatBorders(tcPr ? asElement(tcPr['w:tcBorders']) : undefined);
   const cellMargins = parseFlatCellMargins(tblPr ? asElement(tblPr['w:tblCellMar']) : undefined);
+  // §17.4.65 `w:tblInd` — the table indent a whole-table layer declares.
+  const tblInd = tblPr ? asElement(tblPr['w:tblInd']) : undefined;
+  const indW = tblInd ? parseIntAttr(tblInd, 'w') : undefined;
+  const indType = tblInd ? getAttr(tblInd, 'type') : undefined;
+  const indentPt =
+    indW !== undefined && (indType === undefined || indType === 'dxa')
+      ? twipsToPt(indW)
+      : undefined;
   const shading = parseFlatShading(tcPr ? tcPr['w:shd'] : undefined);
   const runProperties = parseRunProperties(el['w:rPr']);
   const paragraphProperties = parseParagraphProperties(el['w:pPr']);
@@ -176,6 +184,7 @@ function parseTableStyleLayer(el: Record<string, unknown>): TableStyleLayer | un
   const layer: TableStyleLayer = {
     ...(borders ? { borders } : {}),
     ...(cellMargins ? { cellMargins } : {}),
+    ...(indentPt !== undefined ? { indentPt } : {}),
     ...(shading ? { shading } : {}),
     ...(Object.keys(runProperties).length > 0 ? { runProperties } : {}),
     ...(Object.keys(paragraphProperties).length > 0 ? { paragraphProperties } : {}),
@@ -190,6 +199,7 @@ const FLAT_BORDER_STYLES = new Set<BorderStyle>([
   'thick',
   'dotted',
   'dashed',
+  'dashSmallGap',
 ]);
 
 function parseFlatBorder(node: unknown): Border | undefined {
