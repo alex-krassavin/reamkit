@@ -2957,13 +2957,35 @@ function bandAnchor(
   float: FloatAnchor | undefined,
   widthPt: number,
   contentWidth: number,
+  // Where the band's own left edge sits on the page, so an offset measured
+  // from the PAGE can be expressed as one from the band.
+  bandLeftPt = 0,
 ): number | undefined {
   if (!float) return undefined;
   const align = float.posH?.align;
   if (align === 'right') return contentWidth - widthPt;
   if (align === 'center') return (contentWidth - widthPt) / 2;
   if (align === 'left') return 0;
-  return float.posH?.offsetPt ?? 0;
+  const offset = float.posH?.offsetPt ?? 0;
+  return float.posH?.relativeFrom === 'page' ? offset - bandLeftPt : offset;
+}
+
+/**
+ * §20.4.2.3 — how far DOWN the page a band's anchored drawing starts, in the
+ * band emitter's y-UP frame. A `page`-relative anchor is measured from the
+ * paper's own top edge, whatever the band's cursor has reached: n773061.docx
+ * hangs its header text box 92pt down the page and, measured from the header's
+ * first paragraph, it landed 60pt lower than Word and LibreOffice put it.
+ *
+ * @param float      The anchor.
+ * @param cursorY    The band's cursor (y-up), where a paragraph-relative
+ *                   anchor is measured from.
+ * @param pageHeight The page height.
+ * @returns The drawing's top edge, y-up.
+ */
+function bandAnchorTop(float: FloatAnchor, cursorY: number, pageHeight: number): number {
+  const offset = float.posV?.offsetPt ?? 0;
+  return float.posV?.relativeFrom === 'page' ? pageHeight - offset : cursorY - offset;
 }
 
 // `startY` is in the internal y-up frame the band math works in; the emitted
@@ -3009,10 +3031,13 @@ function drawBlocksSequentially(
     // …and a first-page header is very often nothing BUT the crest.
     if (block.kind === 'image') {
       cursorY -= block.spacingBeforePt;
-      const anchored = bandAnchor(block.float, block.widthPt, contentWidth);
+      const anchored = bandAnchor(block.float, block.widthPt, contentWidth, startX);
       const offset =
         anchored ?? alignmentOffset(block.resolvedAlignment, block.widthPt, contentWidth);
-      const top = anchored === undefined ? cursorY : cursorY - (block.float?.posV?.offsetPt ?? 0);
+      const top =
+        anchored === undefined || !block.float
+          ? cursorY
+          : bandAnchorTop(block.float, cursorY, pageHeight);
       out.push({
         type: 'image',
         x: pt(startX + offset),
@@ -3050,10 +3075,13 @@ function drawBlocksSequentially(
     // frame: FDO73546 numbers its pages this way and we numbered none.
     if (block.kind === 'shape') {
       cursorY -= block.spacingBeforePt;
-      const anchored = bandAnchor(block.float, block.widthPt, contentWidth);
+      const anchored = bandAnchor(block.float, block.widthPt, contentWidth, startX);
       const offset =
         anchored ?? alignmentOffset(block.resolvedAlignment, block.widthPt, contentWidth);
-      const top = anchored === undefined ? cursorY : cursorY - (block.float?.posV?.offsetPt ?? 0);
+      const top =
+        anchored === undefined || !block.float
+          ? cursorY
+          : bandAnchorTop(block.float, cursorY, pageHeight);
       emitShapeItems(block, startX + offset, top - block.heightPt, out, pageHeight, structId);
       if (anchored === undefined) cursorY -= block.heightPt;
       cursorY -= block.spacingAfterPt;
