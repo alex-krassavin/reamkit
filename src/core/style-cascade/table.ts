@@ -9,14 +9,13 @@
 // bands → first/last column → first/last row → corner cells; the basedOn
 // chain folds root-first within each region.
 //
-// The style's run/paragraph properties are applied as a FALLBACK under each
-// run's/paragraph's direct properties. Strictly, §17.7.6.6 slots the table
-// style between docDefaults and the paragraph style; when a cell paragraph
-// carries its own styleId AND the table style contests the same field, the
-// table style wins here where the spec says the paragraph style should — a
-// deliberate v1 simplification (the combination is rare; revisit if a corpus
-// document disagrees). Mutates in place — the reader owns the tree
-// (resolveBodyStyles sets the precedent).
+// The style's run/paragraph properties are carried on the cell's paragraphs as
+// the layer §17.7.6.6 makes them: between docDefaults and the paragraph's own
+// style, which the cascade merges in at that rank. Written onto the paragraph
+// and its runs instead — as if the document had stated them there — the table
+// style outranked every style a cell's text names, and tdf119054.docx's
+// headings lost the 18pt their style leaves after each of them. Mutates in
+// place — the reader owns the tree (resolveBodyStyles sets the precedent).
 
 import type {
   BodyElement,
@@ -202,7 +201,7 @@ function applyLayerToCell(
         // tbllook.docx sets its first column in 36pt).
         p.properties = {
           ...p.properties,
-          tableStyleRun: { ...p.properties.tableStyleRun, ...layer.runProperties },
+          inheritedRun: { ...p.properties.inheritedRun, ...layer.runProperties },
         };
       }
     }

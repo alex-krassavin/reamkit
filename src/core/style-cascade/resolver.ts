@@ -89,7 +89,7 @@ function computeRunProperties(
   let acc = mergeRun(DEFAULT_RESOLVED_RUN, sheet.defaultRunProperties);
   // §17.7.2 — the table style sits between the document defaults and the
   // paragraph's own style, on the run side as on the paragraph side.
-  if (paragraphDirect.tableStyleRun) acc = mergeRun(acc, paragraphDirect.tableStyleRun);
+  if (paragraphDirect.inheritedRun) acc = mergeRun(acc, paragraphDirect.inheritedRun);
 
   // §17.7.4.17 — a paragraph that names no style is written in the DEFAULT
   // one, and its runs inherit that style's rPr exactly as the paragraph
@@ -154,10 +154,10 @@ function computeParagraphProperties(
   // The mark's own formatting comes from the same layer: an empty cell has
   // nothing but its mark, and the row is as tall as the mark is
   // (conditionalstyles-tbllook.docx sets its first column in 36pt).
-  if (paragraphDirect.tableStyle ?? paragraphDirect.tableStyleRun) {
+  if (paragraphDirect.tableStyle ?? paragraphDirect.inheritedRun) {
     acc = mergePar(acc, {
       ...paragraphDirect.tableStyle,
-      ...(paragraphDirect.tableStyleRun ? { runProperties: paragraphDirect.tableStyleRun } : {}),
+      ...(paragraphDirect.inheritedRun ? { runProperties: paragraphDirect.inheritedRun } : {}),
     });
   }
   // §17.7.4.17 `w:default="1"` — the style a paragraph that names none is

@@ -2018,13 +2018,16 @@ function withStyleFontColor(
             ...block,
             paragraph: {
               ...block.paragraph,
-              runs: block.paragraph.runs.map((run) =>
-                run.properties.colorHex === undefined &&
-                run.properties.styleId === undefined &&
-                block.paragraph.properties.styleId === undefined
-                  ? { ...run, properties: { ...run.properties, colorHex } }
-                  : run,
-              ),
+              // Carried at the rank the theme's colour holds — under every
+              // style the text names — instead of stamped on the runs that
+              // happen to state nothing. Stamped, a run whose PARAGRAPH is
+              // styled had to be skipped whether or not that style named a
+              // colour, and tdf113258.docx's ellipse, whose Heading 1 names
+              // none, drew black on blue where both references draw white.
+              properties: {
+                ...block.paragraph.properties,
+                inheritedRun: { ...block.paragraph.properties.inheritedRun, colorHex },
+              },
             },
           }
         : block,

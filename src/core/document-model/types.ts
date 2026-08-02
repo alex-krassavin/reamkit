@@ -158,11 +158,13 @@ export interface ParagraphProperties {
    */
   readonly tableStyle?: ParagraphProperties;
   /**
-   * §17.7.2 — the `w:rPr` of that same table style, which ranks under the
-   * paragraph's style and under the character style a run names. Carried on the
-   * paragraph because every run of it (and its MARK) reads the same layer.
+   * §17.7.2 — a run layer that ranks BELOW the paragraph's own style and below
+   * the character style a run names: the `w:rPr` of the table style the cell is
+   * formatted by, or the `a:fontRef` colour a gallery-drawn shape lends the
+   * text inside it (§20.1.4.2.14). Carried on the paragraph because every run
+   * of it — and its MARK — reads the same layer.
    */
-  readonly tableStyleRun?: RunProperties;
+  readonly inheritedRun?: RunProperties;
   /**
    * §17.6.17 — the paragraph's mark carries a `w:sectPr`: it is the last
    * paragraph of its section, and the mark IS the section break. One with no
