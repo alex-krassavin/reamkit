@@ -87,6 +87,9 @@ function computeRunProperties(
   sheet: StyleSheet,
 ): ResolvedRunProperties {
   let acc = mergeRun(DEFAULT_RESOLVED_RUN, sheet.defaultRunProperties);
+  // §17.7.2 — the table style sits between the document defaults and the
+  // paragraph's own style, on the run side as on the paragraph side.
+  if (paragraphDirect.tableStyleRun) acc = mergeRun(acc, paragraphDirect.tableStyleRun);
 
   // §17.7.4.17 — a paragraph that names no style is written in the DEFAULT
   // one, and its runs inherit that style's rPr exactly as the paragraph
@@ -143,6 +146,20 @@ function computeParagraphProperties(
   sheet: StyleSheet,
 ): ResolvedParagraphProperties {
   let acc = mergePar(DEFAULT_RESOLVED_PARAGRAPH, sheet.defaultParagraphProperties);
+  // §17.7.2 — the table style ranks between the document defaults and the
+  // paragraph's own style. Applied over the style instead, a table style's
+  // `w:spacing` overruled the heading the cell is written in: tdf119054.docx
+  // sets 18pt after every Heading 2 and its table style sets none, and we
+  // packed the headings together.
+  // The mark's own formatting comes from the same layer: an empty cell has
+  // nothing but its mark, and the row is as tall as the mark is
+  // (conditionalstyles-tbllook.docx sets its first column in 36pt).
+  if (paragraphDirect.tableStyle ?? paragraphDirect.tableStyleRun) {
+    acc = mergePar(acc, {
+      ...paragraphDirect.tableStyle,
+      ...(paragraphDirect.tableStyleRun ? { runProperties: paragraphDirect.tableStyleRun } : {}),
+    });
+  }
   // §17.7.4.17 `w:default="1"` — the style a paragraph that names none is
   // written in. Skipping it left such a paragraph with the document defaults
   // alone: Bug51170.docx sets ten points after every paragraph in its Normal

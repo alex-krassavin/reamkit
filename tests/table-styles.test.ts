@@ -236,6 +236,8 @@ describe('a conditional layer reaches the paragraph mark too', () => {
     );
     const table = firstTable(docx);
     const p = table.rows[0]!.cells[0]!.content[0];
+    // §17.7.2 — the layer reaches the mark through the cascade (it ranks under
+    // the paragraph's own style), not by being written onto it.
     expect(
       p?.kind === 'paragraph' ? p.paragraph.properties.runProperties?.fontSizePt : undefined,
     ).toBe(36);

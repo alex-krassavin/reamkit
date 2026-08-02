@@ -181,26 +181,28 @@ function applyLayerToCell(
         runs: ReadonlyArray<{ properties: RunProperties }>;
       };
       if (layer.paragraphProperties) {
-        p.properties = { ...layer.paragraphProperties, ...definedOnly(p.properties) };
-      }
-      if (layer.runProperties) {
-        for (const run of p.runs) {
-          run.properties = {
-            ...layer.runProperties,
-            ...definedOnly(run.properties),
-          };
-        }
-        // …and the paragraph MARK carries the layer too. A cell with no runs
-        // still has one, and its size is the row's height: conditionalstyles-
-        // tbllook.docx sets its first column in 36pt, and rows whose first cell
-        // is empty collapsed to a line of body text where both references keep
-        // them as tall as the lettering beside them.
+        // §17.7.2 — carried apart from the direct properties, because the
+        // cascade ranks it UNDER the paragraph's own style; merged in as if
+        // the paragraph stated it, a table style's `w:spacing` beat the
+        // heading style of the cell's text (tdf119054, tdf118947_tableStyle).
         p.properties = {
           ...p.properties,
-          runProperties: {
-            ...layer.runProperties,
-            ...definedOnly(p.properties.runProperties ?? {}),
-          },
+          tableStyle: { ...p.properties.tableStyle, ...layer.paragraphProperties },
+        };
+      }
+      if (layer.runProperties) {
+        // §17.7.2 again, on the run side: the table style ranks under the
+        // paragraph's style AND under the character style a run names, so it
+        // is carried on the paragraph rather than pushed onto each run.
+        // Pushed on, tdf118812_tableStyles-comprehensive.docx's every cell
+        // came out in the table style's 8pt blue where both references keep
+        // the colour and size of the style each paragraph is written in.
+        // The paragraph MARK reads the same carrier: a cell with no runs still
+        // has one, and its size is the row's height (conditionalstyles-
+        // tbllook.docx sets its first column in 36pt).
+        p.properties = {
+          ...p.properties,
+          tableStyleRun: { ...p.properties.tableStyleRun, ...layer.runProperties },
         };
       }
     }
