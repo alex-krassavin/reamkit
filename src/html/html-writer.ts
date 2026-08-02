@@ -1040,7 +1040,7 @@ function pushBorder(css: Array<string>, side: string, border: Border | undefined
       ? 'double'
       : border.style === 'dotted'
         ? 'dotted'
-        : border.style === 'dashed'
+        : border.style === 'dashed' || border.style === 'dashSmallGap'
           ? 'dashed'
           : 'solid'; // single + thick
   css.push(`border-${side}:${fmt(width)}pt ${style} #${border.colorHex ?? '000000'}`);

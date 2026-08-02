@@ -628,31 +628,30 @@ interface LinkRegion {
 }
 
 /**
- * The PDF dash array for a §18.18.3 border style, in points.
+ * The dash array for a §18.18.3 / §17.18.2 border style, in points.
  *
- * Excel's dashes are proportional to the rule's weight; LibreOffice draws a
- * `thin` dashed edge as 3pt on / 1pt off, which is 4× / 1.33× its 0.75pt width.
- * An empty string means a solid rule.
+ * A pattern is a pattern, not a weight: Word and Excel both draw the same
+ * dashes on a hairline and on a 3pt rule, and both references agree on the
+ * lengths — a `dashed` page border strokes `8 2.5` whether its `w:sz` is 4 or
+ * 24. Scaling them by the width instead drew page-borders-export-case-2.docx's
+ * half-point frame as a row of specks a quarter the length it should be.
  */
-function dashPatternFor(style: BorderStyle | undefined, widthPt: number): string {
-  const u = Math.max(0.25, widthPt);
-  switch (style) {
-    case 'dashed':
-      return `[${formatNumber(u * 4)} ${formatNumber(u * 1.33)}]`;
-    // …and a dash-dot alternates the two, which is the whole difference
-    // between it and a dash on the page (cell-borders.xlsx names five of them).
-    case 'dashDot':
-      return `[${formatNumber(u * 4)} ${formatNumber(u * 1.33)} ${formatNumber(u)} ${formatNumber(u * 1.33)}]`;
-    case 'dashDotDot':
-      return (
-        `[${formatNumber(u * 4)} ${formatNumber(u * 1.33)} ${formatNumber(u)} ` +
-        `${formatNumber(u * 1.33)} ${formatNumber(u)} ${formatNumber(u * 1.33)}]`
-      );
-    case 'dotted':
-      return `[${formatNumber(u)} ${formatNumber(u * 1.33)}]`;
-    default:
-      return '';
-  }
+const BORDER_DASHES: ReadonlyMap<BorderStyle, ReadonlyArray<number>> = new Map([
+  ['dashed', [8, 2.5]],
+  // The SMALL-gap dash is a pattern of its own — Word spells it
+  // `dashSmallGap`, Excel calls the same thing a thin `dashed` rule.
+  ['dashSmallGap', [3, 1]],
+  ['dotted', [0.5, 1]],
+  // …and a dash-dot alternates the two, which is the whole difference
+  // between it and a dash on the page (cell-borders.xlsx names five of them).
+  ['dashDot', [8, 2.5, 2.5, 2.5]],
+  ['dashDotDot', [8, 2.5, 2.5, 2.5, 2.5, 2.5]],
+]);
+
+/** The PDF dash array for a border style; an empty string means a solid rule. */
+function dashPatternFor(style: BorderStyle | undefined): string {
+  const pattern = style !== undefined ? BORDER_DASHES.get(style) : undefined;
+  return pattern ? `[${pattern.map(formatNumber).join(' ')}]` : '';
 }
 
 function emitPageContent(
@@ -753,7 +752,7 @@ function emitPageContent(
       // twelve continuous edges. The projecting cap set above would lengthen
       // every dash by half a width at each end and close the gaps, so a
       // patterned rule reverts to the butt cap §8.4.3.3 starts with.
-      const dash = dashPatternFor(b.borderStyle, width);
+      const dash = dashPatternFor(b.borderStyle);
       if (dash !== lastDash) {
         out.push(dash === '' ? '[] 0 d 2 J' : `${dash} 0 d 0 J`);
         lastDash = dash;

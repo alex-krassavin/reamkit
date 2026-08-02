@@ -121,10 +121,12 @@ function emitPage(
       // emitter's dashPatternFor).
       `<line x1="${fmt(ax)}" y1="${fmt(ay)}" x2="${fmt(bx)}" y2="${fmt(by)}" stroke="#${b.borderColorHex}" stroke-width="${fmt(b.borderSizePt)}"${
         b.borderStyle === 'dashed'
-          ? ` stroke-dasharray="${fmt(b.borderSizePt * 4)} ${fmt(b.borderSizePt * 1.33)}"`
-          : b.borderStyle === 'dotted'
-            ? ` stroke-dasharray="${fmt(b.borderSizePt)} ${fmt(b.borderSizePt * 1.33)}"`
-            : ''
+          ? ' stroke-dasharray="8 2.5"'
+          : b.borderStyle === 'dashSmallGap'
+            ? ' stroke-dasharray="3 1"'
+            : b.borderStyle === 'dotted'
+              ? ' stroke-dasharray="0.5 1"'
+              : ''
       }/>`,
     );
   }

@@ -673,6 +673,10 @@ export type BorderStyle =
   | 'thick'
   | 'dotted'
   | 'dashed'
+  // …and the same dash over a SHORTER gap, which both references draw as a
+  // pattern of its own: `w:val="dashSmallGap"` in a document, a thin `dashed`
+  // rule in a spreadsheet.
+  | 'dashSmallGap'
   // §18.18.3 — the dash-DOT family. A dash and a dot alternate, which is what
   // tells these apart from `dashed` on the page: cell-borders.xlsx names five
   // of them and we drew a uniform dash for every one.

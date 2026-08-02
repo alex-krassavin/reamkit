@@ -5560,6 +5560,7 @@ const BORDER_STYLE_RANK: Readonly<Record<BorderStyle, number>> = {
   thick: 4,
   single: 3,
   dashed: 2,
+  dashSmallGap: 2,
   dashDot: 2,
   dashDotDot: 2,
   dotted: 1,

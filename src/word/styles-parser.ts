@@ -199,6 +199,7 @@ const FLAT_BORDER_STYLES = new Set<BorderStyle>([
   'thick',
   'dotted',
   'dashed',
+  'dashSmallGap',
 ]);
 
 function parseFlatBorder(node: unknown): Border | undefined {

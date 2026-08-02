@@ -44,6 +44,7 @@ const BORDER_STYLES = new Set<BorderStyle>([
   'thick',
   'dotted',
   'dashed',
+  'dashSmallGap',
 ]);
 
 // §17.18.2 — the patterns drawn as more than one parallel line. Each becomes a

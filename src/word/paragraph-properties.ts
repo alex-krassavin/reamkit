@@ -251,6 +251,7 @@ const BORDER_STYLES = new Set<BorderStyle>([
   'thick',
   'dotted',
   'dashed',
+  'dashSmallGap',
 ]);
 
 /**
