@@ -481,6 +481,11 @@ function parseCellProperties(tcPr: PoNode | undefined): {
   // such mode the closest honest reading is the top it already sat at.
   const vAlign = poVal(poFirstChild(tcPr, 'w:vAlign'));
   if (vAlign === 'center' || vAlign === 'bottom' || vAlign === 'top') out.verticalAlign = vAlign;
+  // §17.4.20 `w:hideMark` — the end-of-cell mark does not count towards the
+  // row's height. hidemark.docx's second row holds nothing but the marks, and
+  // measured with them it stood a full line tall where Word and LibreOffice
+  // draw a hairline strip.
+  if (poFirstChild(tcPr, 'w:hideMark')) out.hideMark = true;
 
   return { properties: out, ...(rawVMerge ? { vMerge: rawVMerge } : {}) };
 }

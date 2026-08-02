@@ -5419,11 +5419,15 @@ function layoutTableCell(
         const keep = noWrap
           ? clipLineToWidth(block.lines, cutAt, cell.properties.hashOnOverflow === true)
           : block.lines;
+        // §17.4.20 — a cell that hides its end-of-cell mark contributes no
+        // height for an EMPTY paragraph: the mark is all such a line holds.
+        const markOnly =
+          cell.properties.hideMark === true && el.paragraph.runs.every((r) => r.text === '');
         for (const line of keep) {
           lines.push(line);
-          contentHeightPt += computeLineHeight(line, block.resolved);
+          if (!markOnly) contentHeightPt += computeLineHeight(line, block.resolved);
         }
-        contentHeightPt += block.spacingAfterPt;
+        if (!markOnly) contentHeightPt += block.spacingAfterPt;
       } else if (el.kind === 'table') {
         // Nested table (a w:tbl inside this w:tc): lay it out within the cell's
         // inner width; it renders below the cell's paragraph lines.

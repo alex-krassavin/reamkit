@@ -829,6 +829,11 @@ export interface CellProperties {
    */
   readonly noWrap?: boolean;
   /**
+   * §17.4.20 `w:hideMark` — the cell's end-of-cell mark is not counted when the
+   * row's height is measured, so an EMPTY cell that says so adds nothing at all.
+   */
+  readonly hideMark?: boolean;
+  /**
    * The cell holds a NUMBER under a format of its own, so it may not be shown
    * truncated: a date cut to "4/30/201" is not a shorter date, it is the wrong
    * one. Excel and LibreOffice fill such a cell with `#` instead, which says
