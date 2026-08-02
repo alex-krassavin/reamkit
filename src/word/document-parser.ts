@@ -307,37 +307,41 @@ export function parseSections(documentXml: Uint8Array): Array<Section> {
   const sections: Array<Section> = [];
   let bodyIdx = 0;
 
-  for (const child of children) {
-    if (poIs(child, 'w:sectPr')) {
-      // Final body-level sectPr: applies to remaining body elements.
-      sections.push({ properties: parseSectPrNode(child), endIndex: bodyIdx });
-      continue;
-    }
-    if (poIs(child, 'w:p')) {
-      // Mid-document section break: sectPr inside pPr ends the section at the
-      // *end* of this paragraph (paragraph belongs to the closing section).
-      const pPrNode = poChildren(child).find((c) => poIs(c, 'w:pPr'));
-      const sectPrInPPr = pPrNode
-        ? poChildren(pPrNode).find((c) => poIs(c, 'w:sectPr'))
-        : undefined;
-      // tryExtractImageFromParagraph and parseTable count toward bodyIdx
-      // identically — we mirror parseBodyElements' "one BodyElement per w:p
-      // or w:tbl" semantics here.
-      bodyIdx++;
-      if (sectPrInPPr) {
-        sections.push({ properties: parseSectPrNode(sectPrInPPr), endIndex: bodyIdx });
+  const walk = (nodes: ReadonlyArray<PoNode>): void => {
+    for (const child of nodes) {
+      if (poIs(child, 'w:sectPr')) {
+        // Final body-level sectPr: applies to remaining body elements.
+        sections.push({ properties: parseSectPrNode(child), endIndex: bodyIdx });
+        continue;
       }
-    } else if (poIs(child, 'w:tbl')) {
-      bodyIdx++;
-    } else if (poIs(child, 'w:sdt')) {
-      // A block-level content control is chrome: its children are body flow,
-      // and parseBodyElements counts them, so this must too.
-      const content = poChildren(child).find((c) => poIs(c, 'w:sdtContent'));
-      for (const inner of content ? poChildren(content) : []) {
-        if (poIs(inner, 'w:p') || poIs(inner, 'w:tbl')) bodyIdx++;
+      if (poIs(child, 'w:p')) {
+        // Mid-document section break: sectPr inside pPr ends the section at the
+        // *end* of this paragraph (paragraph belongs to the closing section).
+        const pPrNode = poChildren(child).find((c) => poIs(c, 'w:pPr'));
+        const sectPrInPPr = pPrNode
+          ? poChildren(pPrNode).find((c) => poIs(c, 'w:sectPr'))
+          : undefined;
+        // tryExtractImageFromParagraph and parseTable count toward bodyIdx
+        // identically — we mirror parseBodyElements' "one BodyElement per w:p
+        // or w:tbl" semantics here.
+        bodyIdx++;
+        if (sectPrInPPr) {
+          sections.push({ properties: parseSectPrNode(sectPrInPPr), endIndex: bodyIdx });
+        }
+      } else if (poIs(child, 'w:tbl')) {
+        bodyIdx++;
+      } else if (poIs(child, 'w:sdt')) {
+        // A block-level content control is chrome: its children are body flow,
+        // and parseBodyElements counts them, so this must too — section breaks
+        // included. multi-page-toc.docx ends its table of contents, control and
+        // all, with the break that starts the chapters on a page of their own,
+        // and counted without looking inside we drew the whole document on one.
+        const content = poChildren(child).find((c) => poIs(c, 'w:sdtContent'));
+        walk(content ? poChildren(content) : []);
       }
     }
-  }
+  };
+  walk(children);
 
   if (sections.length === 0 || sections[sections.length - 1]!.endIndex < bodyIdx) {
     sections.push({ properties: EMPTY_SECTION, endIndex: bodyIdx });
