@@ -65,6 +65,31 @@ describe('multi-column sections (§17.6.4)', () => {
     expect(xs.some((x) => Math.abs(x - 222) < 1)).toBe(true);
   });
 
+  it('re-breaks what lands in a column of another width', () => {
+    // §17.6.4 `w:equalWidth="0"`: a narrow column beside a wide one. Every
+    // block is broken at the FIRST column's measure, so the wide column was
+    // set narrow — fdo77812.docx took two pages for LibreOffice's one.
+    const wide = layoutOf(
+      docx(
+        '<w:cols w:equalWidth="0"><w:col w:w="1200" w:space="720"/><w:col w:w="4680"/></w:cols>',
+        60,
+      ),
+    );
+    const lines = wide.pages[0]!.commands.filter((c) => c.type === 'line').map(
+      (c) => c as unknown as { originX: number; line: { availableWidthPt: number } },
+    );
+    // col1 = 1200tw = 60pt at x=36; col2 = 4680tw = 234pt at 36+60+36 = 132pt.
+    const col1 = lines.filter((l) => Math.abs(l.originX - 36) < 1);
+    const col2 = lines.filter((l) => Math.abs(l.originX - 132) < 1);
+    expect(col1.length).toBeGreaterThan(0);
+    expect(col2.length).toBeGreaterThan(0);
+    expect(col1[0]!.line.availableWidthPt).toBeCloseTo(60, 0);
+    // The paragraph that CROSSES the boundary keeps the measure it began with
+    // — re-breaking a half-placed paragraph is a different job — so the check
+    // is on the ones that start in the wide column.
+    expect(col2.at(-1)!.line.availableWidthPt).toBeCloseTo(234, 0);
+  });
+
   it('single-column documents are untouched by the column machinery', () => {
     const laid = layoutOf(docx('', 5));
     const xs = lineXs(laid.pages[0]!.commands);

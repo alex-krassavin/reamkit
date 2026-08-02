@@ -1297,7 +1297,7 @@ export function layoutStyledDocument(
   // Float text wrapping: pagination re-wraps an overlapped paragraph with
   // per-line widths; the closure re-runs the paragraph layout at the given
   // column width with those widths.
-  const reflowParagraph = (paragraph: Paragraph, width: number, widths: ReadonlyArray<number>) =>
+  const reflowParagraph = (paragraph: Paragraph, width: number, widths?: ReadonlyArray<number>) =>
     layoutParagraphBlock(paragraph, options, fontResources, imageResources, width, widths);
   const pages = paginateSections(
     blocks,
@@ -6442,6 +6442,12 @@ class PageAssembler {
   /** The current column's width (the section content width when single-column). */
   colWidth = (): number => this.ctx.columns?.[this.colIdx]?.widthPt ?? this.ctx.contentWidth;
   /**
+   * The measure the section's blocks were BROKEN at — the first column's, since
+   * that is all the block pass can know. A column of another width has to
+   * re-break what lands in it.
+   */
+  builtWidth = (): number => this.ctx.columns?.[0]?.widthPt ?? this.ctx.contentWidth;
+  /**
    * Whether the current column is already in use.
    *
    * This gates every overflow break, so that a block too tall for an empty page
@@ -7109,11 +7115,12 @@ function paginateSections(
   // §17.13.6.2 — out-param: bookmark name → its destination (the page and
   // y-up top of the anchoring paragraph's first line).
   bookmarkPositions?: Map<string, BookmarkPosition>,
-  // Float text wrapping: re-runs a paragraph's layout with per-line widths.
+  // Re-runs a paragraph's layout at a given measure — with per-line widths for
+  // float wrapping, or with none to simply re-break it at another width.
   reflowParagraph?: (
     paragraph: Paragraph,
     width: number,
-    widths: ReadonlyArray<number>,
+    widths?: ReadonlyArray<number>,
   ) => ParagraphBlock,
   // §17.2.1 — the resource name of a PICTURE page background: the resource
   // table is the only thing that knows it, and it lives a caller away.
@@ -7206,9 +7213,19 @@ function paginateSections(
       // it with per-line widths (the source paragraph re-lays at the column
       // width); the line loop below adds the matching x offsets.
       let pb = block;
+      // §17.6.4 `w:equalWidth="0"` — the blocks were all broken at the FIRST
+      // column's measure, because nothing knows which column a block lands in
+      // until it is placed. In a section whose columns differ, a paragraph that
+      // begins in another one is re-broken at ITS width: fdo77812.docx sets a
+      // 132pt column beside a 300pt one and we set the wide one narrow, which
+      // cost a page.
+      const colW = asm.colWidth();
+      if (reflowParagraph && pb.source && Math.abs(colW - asm.builtWidth()) > 0.5) {
+        pb = reflowParagraph(pb.source, colW);
+      }
       if (reflowParagraph && pb.source && asm.exclusions.length > 0) {
-        const widths = asm.lineWidthsFor(block, asm.cursorY);
-        if (widths) pb = reflowParagraph(pb.source, asm.colWidth(), widths);
+        const widths = asm.lineWidthsFor(pb, asm.cursorY);
+        if (widths) pb = reflowParagraph(pb.source, colW, widths);
       }
       // Tagged PDF: a plain paragraph → one P (or heading) element; a list item
       // → an L/LI/LBody/P built on the nesting stack. Its lines all reference
