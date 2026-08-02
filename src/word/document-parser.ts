@@ -29,7 +29,7 @@ import type {
 import type { ColorResolver } from '@/core/drawingml/colors';
 import type { Loss, Pt, ResourceId } from '@/core/ir';
 import type { PoNode } from '@/core/po-helpers';
-import type { DrawingContent, ParseDrawingText } from '@/word/drawing-parser';
+import type { DrawingContent, ParseDrawingText, ThemeStyles } from '@/word/drawing-parser';
 import { resolveInternalEntities } from '@/core/opc/xml-entities';
 import { emuToPt, pt, twipsToPt } from '@/core/ir';
 import { parseOMath } from '@/word/omml-parser';
@@ -153,10 +153,11 @@ export interface ParseContext {
    */
   readonly themeLineWidths?: ReadonlyArray<number>;
   /**
-   * §20.1.4.1.15 `a:effectStyleLst` — the theme's effect styles, which an
-   * `a:effectRef idx` indexes for the shadow a gallery-drawn shape wears.
+   * §20.1.4.1.14/§20.1.4.1.15 — the theme's format scheme: the fill, background
+   * fill and effect styles a `<wps:style>` reference indexes for the fill and
+   * the shadow a gallery-drawn shape wears.
    */
-  readonly themeEffectStyles?: ReadonlyArray<PoNode>;
+  readonly themeStyles?: ThemeStyles;
   /**
    * Sink for graceful-degradation notices (E-SMARTART SA3): a SmartArt with no
    * drawing override records a dropped-feature {@link Loss} rather than vanishing.
@@ -804,7 +805,7 @@ function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): Array<Bod
         ctx.resolveImage,
         ctx.resolveChartPart,
         ctx.themeLineWidths,
-        ctx.themeEffectStyles,
+        ctx.themeStyles,
         drawingTextParser,
       ),
     )
@@ -1488,7 +1489,7 @@ function parseRun(
         ctx.resolveImage,
         ctx.resolveChartPart,
         ctx.themeLineWidths,
-        ctx.themeEffectStyles,
+        ctx.themeStyles,
         drawingTextParser,
       );
       // §20.4.2.3 — an ANCHORED drawing is not in the line: it hangs off the

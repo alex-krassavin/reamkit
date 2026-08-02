@@ -1013,7 +1013,14 @@ export function layoutStyledDocument(
     }
     const ctx = sectionCtxs[sectionIdx]!;
     const width = ctx.columns ? ctx.columns[0]!.widthPt : ctx.contentWidth;
-    const box: RelativeBox = { pageWidthPt: ctx.pageWidth, pageHeightPt: ctx.pageHeight };
+    const box: RelativeBox = {
+      pageWidthPt: ctx.pageWidth,
+      pageHeightPt: ctx.pageHeight,
+      marginLeftPt: ctx.marginLeft,
+      marginRightPt: ctx.pageWidth - ctx.marginLeft - ctx.contentWidth,
+      marginTopPt: ctx.marginTop,
+      marginBottomPt: ctx.marginBottom,
+    };
     const group = bodyFrames.starts.get(idx);
     if (group)
       return layoutFrameBlock(group, ctx.options ?? options, fontResources, imageResources, width);
@@ -1344,6 +1351,14 @@ function buildSectionContext(
     section.properties.gridLinePitchPt !== undefined
       ? { ...options, gridLinePitchPt: section.properties.gridLinePitchPt }
       : options;
+  const relativeBox: RelativeBox = {
+    pageWidthPt: dims.pageWidth,
+    pageHeightPt: dims.pageHeight,
+    marginLeftPt: dims.marginLeft,
+    marginRightPt: dims.marginRight,
+    marginTopPt: dims.marginTop,
+    marginBottomPt: dims.marginBottom,
+  };
   const headerSet = layoutHeaderSet(
     section.properties,
     headersFooters,
@@ -1355,6 +1370,7 @@ function buildSectionContext(
     dims.pageHeight,
     dims.headerOffsetPt,
     { top: dims.marginTop, bottom: dims.marginBottom },
+    relativeBox,
   );
   const footerSet = layoutFooterSet(
     section.properties,
@@ -1367,6 +1383,7 @@ function buildSectionContext(
     dims.pageHeight,
     dims.footerOffsetPt,
     { top: dims.marginTop, bottom: dims.marginBottom },
+    relativeBox,
   );
   const columns = buildColumnGeometry(section.properties.columns, contentWidth);
   // A header band taller than the gap between its own offset and the top margin
@@ -1484,6 +1501,8 @@ function layoutHeaderSet(
   headerOffsetPt: number,
   // §20.4.3.1 — the margin box a keyword-positioned drawing centres itself in.
   bandMargins: { readonly top: number; readonly bottom: number },
+  // §20.4.3.6 — the page a band's drawing may be sized as a share of.
+  relativeBox?: RelativeBox,
 ): HeaderFooterSet {
   const band = (type: HeaderFooterType): HfBandEntry => {
     const ref = refByType(section.headers, type);
@@ -1492,7 +1511,14 @@ function layoutHeaderSet(
     if (!content) return { commands: [] };
     let measured = 0;
     const render = (c: ReadonlyArray<BodyElement>): Array<PageItem> => {
-      const blocks = laidOutBlocksFor(c, options, fontResources, contentWidth, imageResources);
+      const blocks = laidOutBlocksFor(
+        c,
+        options,
+        fontResources,
+        contentWidth,
+        imageResources,
+        relativeBox,
+      );
       measured = blocksHeight(blocks);
       return markPagination(
         drawBlocksSequentially(
@@ -1571,6 +1597,8 @@ function layoutFooterSet(
   footerOffsetPt: number,
   // §20.4.3.1 — the margin box a keyword-positioned drawing centres itself in.
   bandMargins: { readonly top: number; readonly bottom: number },
+  // §20.4.3.6 — the page a band's drawing may be sized as a share of.
+  relativeBox?: RelativeBox,
 ): HeaderFooterSet {
   const band = (type: HeaderFooterType): HfBandEntry => {
     const ref = refByType(section.footers, type);
@@ -1578,7 +1606,14 @@ function layoutFooterSet(
     const content = headersFooters.get(ref.relationshipId);
     if (!content) return { commands: [] };
     const render = (c: ReadonlyArray<BodyElement>): Array<PageItem> => {
-      const blocks = laidOutBlocksFor(c, options, fontResources, contentWidth, imageResources);
+      const blocks = laidOutBlocksFor(
+        c,
+        options,
+        fontResources,
+        contentWidth,
+        imageResources,
+        relativeBox,
+      );
       // §17.6.11 — `w:pgMar @w:footer` is the distance up from the page edge to
       // the BOTTOM of the band, so the band's own height is what puts its top.
       // An anchored drawing adds nothing to that height (blocksHeight): counted,
@@ -1895,6 +1930,11 @@ function frameFloat(frame: FrameProperties): FloatAnchor {
 interface RelativeBox {
   readonly pageWidthPt: number;
   readonly pageHeightPt: number;
+  /** §20.4.3.6/§20.4.3.7 — the margin BANDS a relative size may be a share of. */
+  readonly marginLeftPt: number;
+  readonly marginRightPt: number;
+  readonly marginTopPt: number;
+  readonly marginBottomPt: number;
 }
 
 /**
@@ -1911,7 +1951,15 @@ function relativeWidth(
   box: RelativeBox | undefined,
 ): number | undefined {
   if (!rel?.widthPct) return undefined;
-  const base = rel.widthFrom === 'page' && box ? box.pageWidthPt : content;
+  const from = rel.widthFrom;
+  const base =
+    box === undefined || from === undefined || from === 'margin'
+      ? content
+      : from === 'page'
+        ? box.pageWidthPt
+        : from === 'leftMargin'
+          ? box.marginLeftPt
+          : box.marginRightPt;
   return base * rel.widthPct;
 }
 
@@ -1922,7 +1970,15 @@ function relativeHeight(
   box: RelativeBox | undefined,
 ): number | undefined {
   if (!rel?.heightPct) return undefined;
-  const base = rel.heightFrom === 'page' && box ? box.pageHeightPt : contentHeight;
+  const from = rel.heightFrom;
+  const base =
+    box === undefined || from === undefined || from === 'margin'
+      ? contentHeight
+      : from === 'page'
+        ? box.pageHeightPt
+        : from === 'topMargin'
+          ? box.marginTopPt
+          : box.marginBottomPt;
   return base === undefined ? undefined : base * rel.heightPct;
 }
 
@@ -1932,13 +1988,25 @@ function laidOutBlocksFor(
   fontResources: ReadonlyMap<string, FontResource>,
   contentWidth: number,
   imageResources?: ReadonlyMap<ResourceId, ImageResource>,
+  // §20.4.3.6 — the page and its margin bands, for a drawing sized as a share
+  // of one. A band's drawings ask for that as often as the body's do:
+  // fdo78957.docx sizes its header backdrop against the whole page.
+  box?: RelativeBox,
 ): Array<LaidOutBlock> {
   const frames = frameGroups(elements);
   return elements.map((el, idx) => {
     const group = frames.starts.get(idx);
     if (group) return layoutFrameBlock(group, options, fontResources, imageResources, contentWidth);
     if (frames.continued.has(idx)) return emptyBlock(options);
-    return layoutBodyElement(el, options, fontResources, imageResources, contentWidth);
+    return layoutBodyElement(
+      el,
+      options,
+      fontResources,
+      imageResources,
+      contentWidth,
+      undefined,
+      box,
+    );
   });
 }
 

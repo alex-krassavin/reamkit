@@ -120,6 +120,26 @@ export function parseThemeFillStyles(themeXml: Uint8Array): Array<PoNode> {
 }
 
 /**
+ * Parse a theme's BACKGROUND fill styles (§20.1.4.1.7 `a:bgFillStyleLst`), as
+ * the raw nodes. An `<a:fillRef>` reaches them with an index past 1000 — slot
+ * 1001 is the first — and that is where the page-sized backdrops Word's cover
+ * pages are built from live (fdo78957.docx).
+ *
+ * @param themeXml The raw theme part bytes, UTF-8.
+ * @returns The fill children in list order; empty when the theme declares none.
+ */
+export function parseThemeBgFillStyles(themeXml: Uint8Array): Array<PoNode> {
+  const tree = parser.parse(decoder.decode(themeXml)) as Array<PoNode>;
+  const list = poFindByPath(tree, [
+    'a:theme',
+    'a:themeElements',
+    'a:fmtScheme',
+    'a:bgFillStyleLst',
+  ]);
+  return list ? [...poChildren(list)] : [];
+}
+
+/**
  * Parse a theme's effect styles (§20.1.4.1.15 `a:effectStyleLst`), as the raw
  * nodes. `<a:effectRef idx="N">` is a 1-based index into this list, exactly as
  * the fill and line references index theirs.

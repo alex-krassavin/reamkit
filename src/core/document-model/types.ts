@@ -1192,9 +1192,15 @@ export interface LineEnd {
  */
 export interface RelativeSize {
   readonly widthPct?: number; // 0..1
-  readonly widthFrom?: 'margin' | 'page';
+  /**
+   * §20.4.3.6 ST_SizeRelFromH — what the percentage is OF. `margin` is the text
+   * area; the rest are the bands around it, and a drawing sized against one is
+   * a fraction of that band alone (tdf123324 asks for 150% of the top margin).
+   */
+  readonly widthFrom?: 'margin' | 'page' | 'leftMargin' | 'rightMargin';
   readonly heightPct?: number;
-  readonly heightFrom?: 'margin' | 'page';
+  /** §20.4.3.7 ST_SizeRelFromV — the vertical twin. */
+  readonly heightFrom?: 'margin' | 'page' | 'topMargin' | 'bottomMargin';
 }
 
 /** §20.1.7.6 `a:xfrm` — a shape's rotation (1/60000°, clockwise) + flips. */

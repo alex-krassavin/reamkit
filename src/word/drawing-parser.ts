@@ -109,6 +109,18 @@ export type ParseDrawingText = (
 ) => ShapeTextBody | undefined;
 
 /**
+ * §20.1.4.1.14/§20.1.4.1.15 — the theme's format scheme, as the raw nodes a
+ * `<wps:style>` reference indexes: the fill styles (`a:fillStyleLst`), the
+ * BACKGROUND fill styles (`a:bgFillStyleLst`, which an `a:fillRef` reaches with
+ * an index past 1000) and the effect styles (`a:effectStyleLst`).
+ */
+export interface ThemeStyles {
+  readonly fills?: ReadonlyArray<PoNode>;
+  readonly bgFills?: ReadonlyArray<PoNode>;
+  readonly effects?: ReadonlyArray<PoNode>;
+}
+
+/**
  * The result of parsing a `<w:drawing>` (or legacy VML picture): an embedded
  * picture, a DrawingML shape, a chart reference, or a SmartArt diagram. Each
  * variant carries optional alternate text and a float anchor.
@@ -233,24 +245,42 @@ const ANCHOR_V_ALIGNS = new Set(['top', 'center', 'bottom']);
  * @returns The relative size, or `undefined` when the anchor states none.
  */
 function parseRelativeSize(anchor: PoNode): RelativeSize | undefined {
-  const read = (
-    tag: string,
-    pctTag: string,
-  ): { pct: number; from: 'margin' | 'page' } | undefined => {
+  const read = (tag: string, pctTag: string): { pct: number; from: string } | undefined => {
     const node = expandMcChildren(poChildren(anchor)).find((c) => poIs(c, tag));
     if (!node) return undefined;
     const pctNode = poChildren(node).find((c) => poIs(c, pctTag));
     const raw = pctNode ? Number(poText(pctNode).trim()) : NaN;
     if (!Number.isFinite(raw) || raw <= 0) return undefined;
-    return { pct: raw / 100000, from: poAttr(node, 'relativeFrom') === 'page' ? 'page' : 'margin' };
+    // §20.4.3.6/§20.4.3.7 — `insideMargin`/`outsideMargin` are the left/top
+    // margin on a page that is not part of a facing pair, which is how Word
+    // writes them.
+    const from = poAttr(node, 'relativeFrom') ?? 'margin';
+    return { pct: raw / 100000, from };
   };
   const h = read('wp14:sizeRelH', 'wp14:pctWidth');
   const v = read('wp14:sizeRelV', 'wp14:pctHeight');
   if (!h && !v) return undefined;
   return {
-    ...(h ? { widthPct: h.pct, widthFrom: h.from } : {}),
-    ...(v ? { heightPct: v.pct, heightFrom: v.from } : {}),
+    ...(h ? { widthPct: h.pct, widthFrom: relFromH(h.from) } : {}),
+    ...(v ? { heightPct: v.pct, heightFrom: relFromV(v.from) } : {}),
   };
+}
+
+// §20.4.3.6 ST_SizeRelFromH — the bases we place a width against; anything
+// else (a character, a gutter) falls back to the text area.
+function relFromH(raw: string): NonNullable<RelativeSize['widthFrom']> {
+  if (raw === 'page') return 'page';
+  if (raw === 'leftMargin' || raw === 'insideMargin') return 'leftMargin';
+  if (raw === 'rightMargin' || raw === 'outsideMargin') return 'rightMargin';
+  return 'margin';
+}
+
+// §20.4.3.7 ST_SizeRelFromV — the same for a height.
+function relFromV(raw: string): NonNullable<RelativeSize['heightFrom']> {
+  if (raw === 'page') return 'page';
+  if (raw === 'topMargin' || raw === 'insideMargin') return 'topMargin';
+  if (raw === 'bottomMargin' || raw === 'outsideMargin') return 'bottomMargin';
+  return 'margin';
 }
 
 /**
@@ -357,7 +387,7 @@ export function parseDrawing(
   resolveChartPart?: (relId: string) => string | undefined,
   // §20.1.4.2.19 — `a:lnStyleLst` widths, indexed by a gallery style's `a:lnRef`.
   themeLineWidths?: ReadonlyArray<number>,
-  themeEffectStyles?: ReadonlyArray<PoNode>,
+  themeStyles?: ThemeStyles,
   // §21.1.2 — the DrawingML text reader, for a shape that carries an `a:txBody`.
   parseDrawingText?: ParseDrawingText,
 ): DrawingContent | null {
@@ -398,7 +428,7 @@ export function parseDrawing(
       parseBody,
       resolveImage,
       themeLineWidths,
-      themeEffectStyles,
+      themeStyles,
       parseDrawingText,
     );
     if (!data) return null;
@@ -414,7 +444,7 @@ export function parseDrawing(
       parseBody,
       resolveImage,
       themeLineWidths,
-      themeEffectStyles,
+      themeStyles,
       parseDrawingText,
     );
     if (!data) return null;
@@ -433,7 +463,7 @@ export function parseDrawing(
       parseBody,
       resolveImage,
       themeLineWidths,
-      themeEffectStyles,
+      themeStyles,
       parseDrawingText,
     );
     if (!data) return null;
@@ -452,7 +482,7 @@ export function parseDrawing(
       parseBody,
       resolveImage,
       themeLineWidths,
-      themeEffectStyles,
+      themeStyles,
       parseDrawingText,
     );
     const data: ShapeData = {
@@ -1600,7 +1630,7 @@ function parseLockedCanvas(
   parseBody?: ParseBody,
   resolveImage?: (relId: string) => ResourceId | undefined,
   themeLineWidths?: ReadonlyArray<number>,
-  themeEffectStyles?: ReadonlyArray<PoNode>,
+  themeStyles?: ThemeStyles,
   parseDrawingText?: ParseDrawingText,
 ): ShapeData | null {
   const canvas = expandMcChildren(poChildren(graphicData)).find((c) =>
@@ -1613,7 +1643,7 @@ function parseLockedCanvas(
     parseBody,
     resolveImage,
     themeLineWidths,
-    themeEffectStyles,
+    themeStyles,
     parseDrawingText,
   );
   if (extentCx === undefined || extentCy === undefined) return null;
@@ -1677,7 +1707,7 @@ function parseWgp(
   parseBody?: ParseBody,
   resolveImage?: (relId: string) => ResourceId | undefined,
   themeLineWidths?: ReadonlyArray<number>,
-  themeEffectStyles?: ReadonlyArray<PoNode>,
+  themeStyles?: ThemeStyles,
   parseDrawingText?: ParseDrawingText,
 ): ShapeData | null {
   const wgp = expandMcChildren(poChildren(graphicData)).find((c) => poIs(c, 'wpg:wgp'));
@@ -1688,7 +1718,7 @@ function parseWgp(
     parseBody,
     resolveImage,
     themeLineWidths,
-    themeEffectStyles,
+    themeStyles,
     parseDrawingText,
   );
   const grpSpPr = poChildren(wgp).find((c) => poIs(c, 'wpg:grpSpPr'));
@@ -1725,7 +1755,7 @@ function groupChildren(
   parseBody: ParseBody | undefined,
   resolveImage?: (relId: string) => ResourceId | undefined,
   themeLineWidths?: ReadonlyArray<number>,
-  themeEffectStyles?: ReadonlyArray<PoNode>,
+  themeStyles?: ThemeStyles,
   parseDrawingText?: ParseDrawingText,
   unitScale: { readonly x: number; readonly y: number } = { x: 1, y: 1 },
 ): Array<ShapeGroupChild> {
@@ -1781,7 +1811,7 @@ function groupChildren(
           parseBody,
           resolveImage,
           themeLineWidths,
-          themeEffectStyles,
+          themeStyles,
           parseDrawingText,
           { x: sx, y: sy },
         )
@@ -1795,7 +1825,7 @@ function groupChildren(
             parseBody,
             resolveImage,
             themeLineWidths,
-            themeEffectStyles,
+            themeStyles,
             parseDrawingText,
           );
     if (!data) continue;
@@ -1894,7 +1924,7 @@ function parseNestedGroup(
   parseBody: ParseBody | undefined,
   resolveImage?: (relId: string) => ResourceId | undefined,
   themeLineWidths?: ReadonlyArray<number>,
-  themeEffectStyles?: ReadonlyArray<PoNode>,
+  themeStyles?: ThemeStyles,
   parseDrawingText?: ParseDrawingText,
   unitScale?: { readonly x: number; readonly y: number },
 ): ShapeData {
@@ -1904,7 +1934,7 @@ function parseNestedGroup(
     parseBody,
     resolveImage,
     themeLineWidths,
-    themeEffectStyles,
+    themeStyles,
     parseDrawingText,
     unitScale,
   );
@@ -1946,7 +1976,7 @@ function parseWsp(
   parseBody?: ParseBody,
   resolveImage?: (relId: string) => ResourceId | undefined,
   themeLineWidths?: ReadonlyArray<number>,
-  themeEffectStyles?: ReadonlyArray<PoNode>,
+  themeStyles?: ThemeStyles,
   parseDrawingText?: ParseDrawingText,
 ): ShapeData | null {
   // wps:wsp is normally a direct child, but a nested mc:AlternateContent can
@@ -1961,7 +1991,7 @@ function parseWsp(
     parseBody,
     resolveImage,
     themeLineWidths,
-    themeEffectStyles,
+    themeStyles,
   );
 }
 
@@ -1975,7 +2005,7 @@ function parseWspNode(
   parseBody?: ParseBody,
   resolveImage?: (relId: string) => ResourceId | undefined,
   themeLineWidths?: ReadonlyArray<number>,
-  themeEffectStyles?: ReadonlyArray<PoNode>,
+  themeStyles?: ThemeStyles,
   parseDrawingText?: ParseDrawingText,
 ): ShapeData | null {
   const spPr = poChildren(wsp).find((c) => poIsLocal(c, 'spPr'));
@@ -2029,7 +2059,7 @@ function parseWspNode(
   // spells `a:noFill` beside a `fillRef` and we painted its rectangle accent
   // blue, over the heading it is drawn around.
   if (style && fill.kind === 'none' && !statesFill(spPr)) {
-    fill = styleRefFill(style, resolveColor);
+    fill = styleRefFill(style, resolveColor, themeStyles);
   }
   // §20.1.4.2.19 — a shape may state a WIDTH or a dash of its own and take its
   // COLOUR from the gallery style: dashed_line_custdash_percentage.docx rules a
@@ -2055,7 +2085,7 @@ function parseWspNode(
   // fdo78957.docx's boxes stood on the page with nothing under them.
   const shadow =
     (spPr ? parseShadow(spPr, resolveColor) : undefined) ??
-    (style ? styleRefShadow(style, resolveColor, themeEffectStyles) : undefined);
+    (style ? styleRefShadow(style, resolveColor, themeStyles?.effects) : undefined);
 
   if (widthEmu === undefined || heightEmu === undefined) return null;
   return {
@@ -2125,11 +2155,33 @@ function statesFill(spPr: PoNode | undefined): boolean {
 // §20.1.4.2.13 `<a:fillRef>` — the fill a gallery style names. The theme's own
 // `a:fillStyleLst` slot (which could make it a gradient) is out of reach here;
 // the colour the reference names is what both references draw.
-function styleRefFill(style: PoNode, resolveColor: ColorResolver): ShapeFill {
+function styleRefFill(
+  style: PoNode,
+  resolveColor: ColorResolver,
+  themeStyles?: ThemeStyles,
+): ShapeFill {
   const ref = poChildren(style).find((c) => poIs(c, 'a:fillRef'));
   if (!ref || poAttr(ref, 'idx') === '0') return { kind: 'none' };
   const child = firstElementChild(ref);
   const colorHex = child ? resolveColorNode(child, resolveColor) : undefined;
+  // §20.1.4.1.14 — `@idx` names a slot of the theme's format scheme, and what
+  // stands there is a whole FILL: the standard theme's slots are a solid, a
+  // subtle gradient and a stronger one, and past 1000 the BACKGROUND fills.
+  // Read as the reference's colour alone, fdo78957.docx's page-sized backdrop
+  // — background slot 2, a white-to-grey sweep — came out flat white on white
+  // paper, which is to say invisible.
+  const idx = Number(poAttr(ref, 'idx') ?? '');
+  const slot =
+    Number.isFinite(idx) && idx >= 1001
+      ? themeStyles?.bgFills?.[idx - 1001]
+      : Number.isFinite(idx) && idx >= 1
+        ? themeStyles?.fills?.[idx - 1]
+        : undefined;
+  if (slot) {
+    const resolver = colorHex ? placeholderColors(resolveColor, colorHex) : resolveColor;
+    const fill = fillFromNode(slot, resolver);
+    if (fill) return fill;
+  }
   return colorHex === undefined ? { kind: 'none' } : { kind: 'solid', colorHex };
 }
 
@@ -2373,6 +2425,28 @@ export function parseFill(
   resolveImage?: (relId: string) => ResourceId | undefined,
 ): ShapeFill {
   for (const child of poChildren(spPr)) {
+    const own = fillFromNode(child, resolveColor, resolveImage);
+    if (own) return own;
+  }
+  return { kind: 'none' };
+}
+
+/**
+ * One fill ELEMENT — `a:noFill` / `a:solidFill` / `a:gradFill` / `a:blipFill` —
+ * as a {@link ShapeFill}. The same reader serves a shape's own `a:spPr` and the
+ * theme slot a `<a:fillRef>` names, which is a fill in its own right.
+ *
+ * @param child        The candidate node (anything else returns undefined).
+ * @param resolveColor The colour resolver (with `phClr` bound, for a theme slot).
+ * @param resolveImage Resolver for a picture fill's relationship.
+ * @returns The fill, or undefined when the node is not one.
+ */
+function fillFromNode(
+  child: PoNode,
+  resolveColor: ColorResolver,
+  resolveImage?: (relId: string) => ResourceId | undefined,
+): ShapeFill | undefined {
+  {
     if (poIs(child, 'a:noFill')) return { kind: 'none' };
     // §20.1.8.14 — the shape is filled with a PICTURE. Unread, the shape fell
     // through to its gallery style's colour: crop-roundtrip.docx's photo came
@@ -2415,7 +2489,7 @@ export function parseFill(
       return gradient ? { kind: 'gradient', gradient } : { kind: 'none' };
     }
   }
-  return { kind: 'none' };
+  return undefined;
 }
 
 /**
