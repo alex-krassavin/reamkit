@@ -43,12 +43,20 @@ import {
 } from '@/core/po-helpers';
 
 const WPS_URI = 'http://schemas.microsoft.com/office/word/2010/wordprocessingShape';
-const CHART_URI = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
-const DIAGRAM_URI = 'http://schemas.openxmlformats.org/drawingml/2006/diagram';
+// ISO 29500 STRICT writes the same DrawingML part URIs under purl.oclc.org,
+// which is why strict.docx's chart and SmartArt reached the page as nothing at
+// all while its picture — matched by element name, not by URI — came through.
+const DRAWINGML_URI_BASES = [
+  'http://schemas.openxmlformats.org/drawingml/2006/',
+  'http://purl.oclc.org/ooxml/drawingml/',
+] as const;
+
+function isDrawingMlUri(uri: string | undefined, name: string): boolean {
+  return uri !== undefined && DRAWINGML_URI_BASES.some((base) => uri === base + name);
+}
 const WPG_URI = 'http://schemas.microsoft.com/office/word/2010/wordprocessingGroup';
 // §20.3 — a canvas of shapes, written in the plain DrawingML namespace. Word
 // exports a pasted PowerPoint group this way.
-const LOCKED_CANVAS_URI = 'http://schemas.openxmlformats.org/drawingml/2006/lockedCanvas';
 // Word's own drawing canvas: the same members (`pic:pic`, `wps:wsp`, `wpg:wgp`)
 // placed by their own `a:xfrm` inside the frame `wp:extent` gives.
 const WPC_URI = 'http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas';
@@ -403,7 +411,7 @@ export function parseDrawing(
   // §20.3 `lc:lockedCanvas` — a group by another name: the same members, in the
   // `a:` namespace. fdo43641.docx draws its rectangle and arrow inside one and
   // we rendered an empty page.
-  if (graphicData && uri === LOCKED_CANVAS_URI) {
+  if (graphicData && isDrawingMlUri(uri, 'lockedCanvas')) {
     const data = parseLockedCanvas(
       graphicData,
       extentCx,
@@ -442,7 +450,7 @@ export function parseDrawing(
     return { kind: 'shape', data: { ...data, ...(relativeSize ? { relativeSize } : {}) }, ...alt };
   }
 
-  if (graphicData && uri === CHART_URI) {
+  if (graphicData && isDrawingMlUri(uri, 'chart')) {
     const cChart = poFindDescendant(graphicData, 'c:chart');
     const chartRelId = cChart ? poAttr(cChart, 'id') : undefined; // r:id
     if (chartRelId && extentCx !== undefined && extentCy !== undefined) {
@@ -459,7 +467,7 @@ export function parseDrawing(
 
   // SmartArt diagram: keep the data-part rel id; the reader resolves the drawing
   // override and renders its shapes (E-SMARTART SA2).
-  if (graphicData && uri === DIAGRAM_URI) {
+  if (graphicData && isDrawingMlUri(uri, 'diagram')) {
     const relIds = poFindDescendant(graphicData, 'dgm:relIds');
     const dmRelId = relIds ? poAttr(relIds, 'dm') : undefined; // r:dm → data part
     if (dmRelId && extentCx !== undefined && extentCy !== undefined) {
