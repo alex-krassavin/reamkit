@@ -331,6 +331,9 @@ export interface StyledRenderOptions {
 // Re-exported from the document model (moved there so FlowDoc can carry it).
 export type { DocumentInfo } from '@/core/document-model';
 
+/** §17.6.4 — how heavy Word draws the rule between columns. */
+const COLUMN_SEPARATOR_PT = 0.5;
+
 /** A4 page width in points (the page-geometry fallback). */
 export const A4_WIDTH = 595;
 /** A4 page height in points (the page-geometry fallback). */
@@ -5723,6 +5726,7 @@ class PageAssembler {
     readonly bookmarkPositions: Map<string, BookmarkPosition> | undefined,
   ) {
     this.ctx = sectionCtxs[0]!;
+    this.pageStartCtx = this.ctx;
     this.pageNumber = this.ctx.properties.pageNumberStart ?? 1;
     this.cursorY = this.ctx.pageHeight - this.ctx.marginTop;
     this.colStartY = this.cursorY;
@@ -6238,6 +6242,7 @@ class PageAssembler {
             ]
           : []),
         ...this.pageBorderItems(),
+        ...this.columnSeparatorItems(),
         ...header.commands,
         ...PageAssembler.byZ(this.floatsBehind),
         ...this.current,
@@ -6269,7 +6274,55 @@ class PageAssembler {
     this.bandTopY = this.cursorY;
     this.balanceBottomY = undefined;
     this.balanceHeightPt = 0;
+    this.pageStartCtx = this.ctx;
   };
+
+  /**
+   * §17.6.4 `w:cols w:sep` — the rule down the middle of every gutter, run the
+   * height of the text area. multi-column-separator-with-line.docx asks for one
+   * and we drew its two columns with nothing between them.
+   *
+   * @returns One border item per gutter, or none when the section asks for no rule.
+   */
+  columnSeparatorItems = (): Array<PageItem> => {
+    // The section the page STARTED in: a continuous break can hand the same
+    // page to a section with a different column setup part-way down, and the
+    // rules belong to the one that owns the page's top.
+    const ctx = this.pageStartCtx;
+    const cols = ctx.columns;
+    if (!cols || cols.length < 2 || ctx.properties.columns?.separator !== true) return [];
+    // As far down as the page's own content reaches, not to the bottom margin:
+    // a rule the height of the text area under one line of text is a rule down
+    // an empty page.
+    let deepest = ctx.marginTop;
+    for (const item of this.current) {
+      const bottom =
+        item.type === 'line' ? item.baselineY : item.type === 'shape' ? 0 : item.y + item.height;
+      if (bottom > deepest) deepest = bottom;
+    }
+    const height = Math.min(deepest, ctx.pageHeight - ctx.marginBottom) - ctx.marginTop;
+    if (height <= 0) return [];
+    const out: Array<PageItem> = [];
+    for (let i = 1; i < cols.length; i++) {
+      const left = cols[i - 1]!;
+      const right = cols[i]!;
+      const x = ctx.marginLeft + (left.xOffsetPt + left.widthPt + right.xOffsetPt) / 2;
+      out.push({
+        type: 'border',
+        side: 'left',
+        x: pt(x),
+        y: pt(ctx.marginTop),
+        width: pt(0),
+        height: pt(height),
+        borderSizePt: COLUMN_SEPARATOR_PT,
+        borderColorHex: '000000',
+      });
+    }
+    return out;
+  };
+
+  /** The section context the CURRENT page began in (see {@link columnSeparatorItems}). */
+  pageStartCtx: SectionRenderCtx;
 
   /**
    * §17.6.10 `w:pgBorders` — the rules around the page. `@w:offsetFrom` says

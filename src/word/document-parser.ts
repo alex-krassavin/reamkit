@@ -469,6 +469,9 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
 // §17.6.4 w:cols: @w:num equal-width columns separated by @w:space, OR
 // explicit w:col children each with their own width/trailing space.
 function parseColumns(cols: PoNode): SectionColumns | undefined {
+  // §17.6.4 `w:sep` — the rule Word draws down each gutter.
+  const sepRaw = poAttr(cols, 'sep');
+  const separator = sepRaw !== undefined && sepRaw !== '0' && sepRaw !== 'false';
   const explicit: Array<{ widthPt: number; spacePt: number }> = [];
   for (const col of poChildren(cols)) {
     if (!poIs(col, 'w:col')) continue;
@@ -483,6 +486,7 @@ function parseColumns(cols: PoNode): SectionColumns | undefined {
     count,
     spacePt: twipsToPt(poIntAttr(cols, 'space') ?? 720),
     ...(explicit.length > 0 ? { explicit } : {}),
+    ...(separator ? { separator: true } : {}),
   };
 }
 

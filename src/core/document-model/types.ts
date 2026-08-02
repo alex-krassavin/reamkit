@@ -1564,6 +1564,8 @@ export interface SectionColumns {
   readonly count: number;
   readonly spacePt: number;
   readonly explicit?: ReadonlyArray<{ readonly widthPt: number; readonly spacePt: number }>;
+  /** §17.6.4 `w:sep` — a vertical rule drawn down the middle of every gutter. */
+  readonly separator?: boolean;
 }
 
 /**
