@@ -474,6 +474,12 @@ interface ShapeBlockLaidOut {
    */
   readonly textShapes?: ReadonlyMap<number, ShapeBlockLaidOut>;
   /**
+   * §17.3.1 — a text box holds body content, and a TABLE is body content:
+   * a title page is very often one table inside one box. Keyed by the line it
+   * stands on, like the charts and the drawings.
+   */
+  readonly textTables?: ReadonlyMap<number, TableBlock>;
+  /**
    * §17.3.1.33 — the paragraph spacing to leave after the line at each index.
    * The box's height counts it; the emitter has to leave it on the page too.
    */
@@ -2069,6 +2075,7 @@ function layoutShapeBlock(
   const textLines: Array<Line> = [];
   const textCharts = new Map<number, ChartBlockLaidOut>();
   const textShapes = new Map<number, ShapeBlockLaidOut>();
+  const textTables = new Map<number, TableBlock>();
   // Extra space to leave AFTER the line at each index (paragraph spacing).
   const textLineGaps = new Map<number, number>();
   let textHeightPt = 0;
@@ -2150,7 +2157,30 @@ function layoutShapeBlock(
         textHeightPt += computeLineHeight(line, line.resolved);
         continue;
       }
-      if (el.kind !== 'paragraph') continue; // tables in a text box: out of scope
+      // §17.3.1 — and a TABLE, which is what a title page usually is: one box
+      // holding one table. Skipped, tdf102466.docx's whole first page — its
+      // title, its subtitle and its logo — came out blank.
+      if (el.kind === 'table') {
+        const laid = layoutTableBlock(el.table, options, fontResources, imageResources, innerWidth);
+        const line: Line = {
+          tokens: [],
+          contentWidthPt: laid.totalWidthPt,
+          maxFontSizePt: laid.heightPt,
+          // The table's own height, exactly: a line stands 1.2× its font size
+          // and a table stands as tall as its rows.
+          metricHeightPt: laid.heightPt,
+          availableWidthPt: innerWidth,
+          firstLine: true,
+          resolved: resolveParagraphProperties({}, options.styles),
+          isLastInParagraph: true,
+        };
+        textTables.set(textLines.length, laid);
+        textLines.push(line);
+        textHeightPt += computeLineHeight(line, line.resolved);
+        continue;
+      }
+      // Everything a text box may hold is now placed; what is left is a
+      // paragraph.
       const blk = layoutParagraphBlock(
         el.paragraph,
         options,
@@ -2278,6 +2308,7 @@ function layoutShapeBlock(
     textLines,
     ...(textCharts.size > 0 ? { textCharts } : {}),
     ...(textShapes.size > 0 ? { textShapes } : {}),
+    ...(textTables.size > 0 ? { textTables } : {}),
     ...(textLineGaps.size > 0 ? { textLineGaps } : {}),
     textHeightPt,
     insetLeftPt,
@@ -2843,6 +2874,24 @@ function emitShapeText(
     const drawing = sh.textShapes?.get(i);
     if (drawing) {
       emitShapeItems(drawing, x + sh.insetLeftPt + lineOffset, textY, sink, pageHeight, figId);
+      return;
+    }
+    const table = sh.textTables?.get(i);
+    if (table) {
+      // The line reserved the table's height, so its rows run from the line's
+      // TOP down, the way the band and the page draw a table.
+      let rowY = textY + table.heightPt;
+      for (const row of table.rows) {
+        emitRowChunk(
+          sink,
+          row,
+          x + sh.insetLeftPt + lineOffset + table.xOffsetPt,
+          rowY,
+          pageHeight,
+          table.colCount,
+        );
+        rowY -= row.heightPt;
+      }
       return;
     }
     sink.push({
