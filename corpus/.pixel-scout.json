@@ -20,11 +20,6 @@
   "aligned": false
  },
  {
-  "name": "fill.docx",
-  "score": 0.9989,
-  "aligned": true
- },
- {
   "name": "tdf123054.docx",
   "score": 0.5118,
   "aligned": false
@@ -32,6 +27,11 @@
  {
   "name": "tdf120760_ZOrderInHeader.docx",
   "score": 0.4468,
+  "aligned": true
+ },
+ {
+  "name": "fill.docx",
+  "score": 0.396,
   "aligned": true
  },
  {

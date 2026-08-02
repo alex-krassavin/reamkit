@@ -1166,7 +1166,10 @@ function vmlGradient(fillEl: PoNode, base: string): ShapeGradient | undefined {
     type === 'gradientRadial' ? vmlRadialCenter(raw, poAttr(fillEl, 'focus')) : undefined;
   return {
     kind: type === 'gradientRadial' ? 'radial' : 'linear',
-    ...(type === 'gradientRadial' ? {} : { angle }),
+    // §14.1.2.5 — VML's radial sweep grows RECTANGLES out to the box, not
+    // circles: fill.docx's corner sweep reads as a square-cornered wash in
+    // both references and we drew a disc.
+    ...(type === 'gradientRadial' ? { sweep: 'rect' as const } : { angle }),
     ...(center ? { center } : {}),
     stops:
       vmlStops(poAttr(fillEl, 'colors')) ?? vmlFocusStops(poAttr(fillEl, 'focus'), base, color2),

@@ -71,6 +71,13 @@ export interface ShapeGradient {
    * (`@focus` with an `@angle`), and fill.docx's page sweep starts in one.
    */
   readonly center?: { readonly x: number; readonly y: number };
+  /**
+   * Radial only: the shape of the sweep's contours. Circles by default, which
+   * is what DrawingML's `a:path path="circle"` draws; VML's `gradientRadial`
+   * grows RECTANGLES out to the box instead, and so does the page background
+   * of fill.docx.
+   */
+  readonly sweep?: 'circle' | 'rect';
   readonly stops: ReadonlyArray<GradientStop>;
 }
 
