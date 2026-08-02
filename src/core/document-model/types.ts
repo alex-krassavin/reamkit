@@ -197,6 +197,13 @@ export interface ParagraphProperties {
   readonly runProperties?: RunProperties;
   readonly numbering?: NumberingReference;
   /**
+   * §17.9.4 — a `w:numPr` that names a LEVEL and no `w:numId`: the instance is
+   * whatever the style this one is based on refers to. Word's own Heading 2
+   * says exactly this, and dropped it numbered num-parent-style.docx's headings
+   * 1, 2, 3, 4 where its own text says they should read 1, 1.1, 2, 2.1.
+   */
+  readonly numberingLevel?: number;
+  /**
    * ECMA-376 Part 1 §17.3.1.21 — `w:pageBreakBefore`. When true, the paragraph
    * starts on a fresh page even if there is room on the current one.
    */

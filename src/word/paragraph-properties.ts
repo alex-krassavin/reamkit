@@ -236,12 +236,14 @@ export function parseParagraphProperties(pPr: unknown, autoSpacingPt = 0): Parag
         typeof numIdVal === 'object' && numIdVal !== null ? getAttr(numIdVal, 'val') : undefined;
       const ilvlAttr =
         typeof ilvlVal === 'object' && ilvlVal !== null ? getAttr(ilvlVal, 'val') : undefined;
+      const ilvlNum = ilvlAttr !== undefined ? Number(ilvlAttr) : 0;
+      const ilvl = Number.isFinite(ilvlNum) ? ilvlNum : 0;
       if (numIdAttr !== undefined) {
-        const ilvlNum = ilvlAttr !== undefined ? Number(ilvlAttr) : 0;
-        out.numbering = {
-          numId: numIdAttr,
-          ilvl: Number.isFinite(ilvlNum) ? ilvlNum : 0,
-        };
+        out.numbering = { numId: numIdAttr, ilvl };
+        // §17.9.4 — a level and NO instance: the instance is the one the style
+        // this is based on names, and only the level is being changed here.
+      } else if (ilvlAttr !== undefined) {
+        out.numberingLevel = ilvl;
       }
     }
   }

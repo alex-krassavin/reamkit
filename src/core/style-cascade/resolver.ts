@@ -229,7 +229,14 @@ function mergePar(
   // (exactOptionalPropertyTypes).
   const outlineLevel = override.outlineLevel ?? base.outlineLevel;
   const styleId = override.styleId ?? base.styleId;
-  const numbering = override.numbering ?? base.numbering;
+  // §17.9.4 — a `w:numPr` naming only a LEVEL keeps the instance it inherits
+  // and changes the level alone (Word's Heading 2 is based on Heading 1 and
+  // says exactly that).
+  const numbering =
+    override.numbering ??
+    (override.numberingLevel !== undefined && base.numbering !== undefined
+      ? { ...base.numbering, ilvl: override.numberingLevel }
+      : base.numbering);
   // The paragraph mark's own formatting: the higher-priority one wins whole,
   // the way a paragraph's tabs do.
   const runProperties = override.runProperties ?? base.runProperties;
@@ -273,7 +280,16 @@ function mergeParPartial(
   base: ParagraphProperties,
   override: ParagraphProperties,
 ): ParagraphProperties {
-  return copyDefined(base, override);
+  const out = copyDefined(base, override);
+  // §17.9.4 — the derived style states a LEVEL and no instance, so it takes the
+  // one it is based on and moves down a level. Word's Heading 2 is written this
+  // way; without it num-parent-style.docx numbered every heading at level 0.
+  if (override.numbering === undefined && override.numberingLevel !== undefined) {
+    if (base.numbering !== undefined) {
+      return { ...out, numbering: { ...base.numbering, ilvl: override.numberingLevel } };
+    }
+  }
+  return out;
 }
 
 function copyDefined<T extends object>(base: T, override: T): T {
