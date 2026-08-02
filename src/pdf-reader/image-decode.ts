@@ -21,6 +21,7 @@ import type { PngColor } from './png-encode';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 
 import type { PdfFile } from './document';
+import { lzwDecodeMsb } from '@/core/lzw';
 import { PDF_NULL, PdfHexString, PdfName, PdfStream } from '@/pdf/objects';
 
 /**
@@ -424,9 +425,7 @@ function decodeChain(
         return undefined;
       }
     } else if (f === 'LZWDecode' || f === 'LZW') {
-      const dec = lzwDecode(data, lzwEarlyChange(file, stream.dict));
-      if (!dec) return undefined;
-      data = dec;
+      data = lzwDecode(data, lzwEarlyChange(file, stream.dict));
       mayPredict = true;
     } else if (f === 'RunLengthDecode' || f === 'RL') {
       data = runLengthDecode(data);
@@ -451,7 +450,7 @@ function applyChainExceptLast(filters: ReadonlyArray<string>, raw: Uint8Array): 
       } catch {
         /* leave undecoded */
       }
-    } else if (f === 'LZWDecode' || f === 'LZW') data = lzwDecode(data, 1) ?? data;
+    } else if (f === 'LZWDecode' || f === 'LZW') data = lzwDecode(data, 1);
     else if (f === 'RunLengthDecode' || f === 'RL') data = runLengthDecode(data);
     else if (f === 'ASCII85Decode' || f === 'A85') data = ascii85Decode(data);
     else if (f === 'ASCIIHexDecode' || f === 'AHx') data = asciiHexDecode(data);
@@ -474,92 +473,14 @@ function applyPredictor(file: PdfFile, d: PdfDict, data: Uint8Array): Uint8Array
   });
 }
 
-// §7.4.4.2 — the PDF/TIFF variant of LZW. Variable-width codes 9→12 bits, a
-// clear-table code (256) and an end-of-data code (257); /EarlyChange (default 1)
-// widens the code one step before the table fills. The KwKwK case (a code not
-// yet in the table) repeats the previous string plus its own first byte. Output
-// is bounded by the per-image pixel guard to cap a decompression bomb.
+// §7.4.4.2 — LZW, the coder TIFF and PDF share (core/lzw). Output is bounded by
+// the per-image pixel guard to cap a decompression bomb.
 const MAX_LZW_OUT = MAX_PIXELS * 4;
 
-function lzwDecode(data: Uint8Array, earlyChange: number): Uint8Array | undefined {
-  let out = new Uint8Array(1 << 12); // grows by doubling
-  let outLen = 0;
-  const emit = (e: Uint8Array): boolean => {
-    if (outLen + e.length > MAX_LZW_OUT) return false;
-    if (outLen + e.length > out.length) {
-      let cap = out.length * 2;
-      while (cap < outLen + e.length) cap *= 2;
-      const grown = new Uint8Array(cap);
-      grown.set(out.subarray(0, outLen));
-      out = grown;
-    }
-    out.set(e, outLen);
-    outLen += e.length;
-    return true;
-  };
-
-  let bitBuffer = 0;
-  let bitCount = 0;
-  let pos = 0;
-  let codeLength = 9;
-  const readCode = (): number => {
-    while (bitCount < codeLength) {
-      if (pos >= data.length) return -1;
-      bitBuffer = ((bitBuffer << 8) | data[pos++]!) >>> 0;
-      bitCount += 8;
-    }
-    bitCount -= codeLength;
-    return (bitBuffer >>> bitCount) & ((1 << codeLength) - 1);
-  };
-
-  const dict = new Array<Uint8Array>(4096);
-  let nextCode = 258;
-  let prev = -1;
-  const reset = (): void => {
-    for (let i = 0; i < 256; i++) dict[i] = Uint8Array.of(i);
-    nextCode = 258;
-    codeLength = 9;
-    prev = -1;
-  };
-  reset();
-
-  for (;;) {
-    const code = readCode();
-    if (code < 0 || code === 257) break; // out of data / end-of-data
-    if (code === 256) {
-      reset();
-      continue;
-    }
-    if (prev < 0) {
-      const first = dict[code];
-      if (!first || !emit(first)) break;
-      prev = code;
-      continue;
-    }
-    const prevEntry = dict[prev]!;
-    // A known code uses its entry; an as-yet-unassigned code is KwKwK.
-    let entry = code < nextCode ? dict[code] : undefined;
-    if (!entry) {
-      entry = new Uint8Array(prevEntry.length + 1);
-      entry.set(prevEntry);
-      entry[prevEntry.length] = prevEntry[0]!;
-    }
-    if (!emit(entry)) break;
-    if (nextCode < 4096) {
-      const added = new Uint8Array(prevEntry.length + 1);
-      added.set(prevEntry);
-      added[prevEntry.length] = entry[0]!;
-      dict[nextCode++] = added;
-      if (nextCode + earlyChange === 512) codeLength = 10;
-      else if (nextCode + earlyChange === 1024) codeLength = 11;
-      else if (nextCode + earlyChange === 2048) codeLength = 12;
-    }
-    prev = code;
-  }
-  return out.subarray(0, outLen);
+function lzwDecode(data: Uint8Array, earlyChange: number): Uint8Array {
+  return lzwDecodeMsb(data, { earlyChange, limit: MAX_LZW_OUT });
 }
 
-// /DecodeParms /EarlyChange — 1 (the default) or 0; absent means 1.
 function lzwEarlyChange(file: PdfFile, d: PdfDict): number {
   const parms = decodeParmsOf(file, d);
   const ec = parms?.get('EarlyChange');
