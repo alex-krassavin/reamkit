@@ -706,6 +706,14 @@ function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): Array<Bod
   scanForLoneDrawing(p, scan);
   const { drawings, vml } = scan;
   if (scan.hasOther || (drawings.length === 0 && !vml)) return null;
+  // §20.4.2.3 — an ANCHORED drawing leaves the flow; the paragraph it hangs
+  // off does not. Its mark still stands on a line of its own, so a paragraph
+  // that holds nothing else is an EMPTY line with a drawing beside it — which
+  // is what the collapse below throws away. tdf101627.docx anchors its page
+  // number in the footer that way and the band, measured as nothing, sat a
+  // line lower than the footer margin puts it. An INLINE drawing still
+  // collapses: it IS the line, and the writer re-emits it as one.
+  if (!vml && drawings.every((d) => poChildren(d).some((c) => poIs(c, 'wp:anchor')))) return null;
 
   // Inject parseBodyElements (bound to this context) so a shape's text box is
   // parsed without a module cycle. A modern <w:drawing> takes precedence over a

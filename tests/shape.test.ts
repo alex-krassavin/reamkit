@@ -979,8 +979,11 @@ describe('a floating drawing and the text column', () => {
       convertDocxToPdfSync(buildDocxFromBody(anchored(2743200, two)), { fonts: FONTS }),
     );
     const ys = [...text.matchAll(/1 0 0 1 [\d.]+ ([\d.]+) Tm/gu)].map((m) => Number(m[1]));
-    expect(ys).toHaveLength(2);
+    // Three positions, two of them the box's: the first is the empty line the
+    // paragraph the drawing is ANCHORED to stands on (§20.4.2.3 — the drawing
+    // leaves the flow, the paragraph mark does not). Nothing is drawn there.
+    expect(ys).toHaveLength(3);
     // 20pt of spacing plus the line's own height — well past a bare line.
-    expect(ys[0]! - ys[1]!).toBeGreaterThan(25);
+    expect(ys[1]! - ys[2]!).toBeGreaterThan(25);
   });
 });
