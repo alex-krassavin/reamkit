@@ -51,12 +51,16 @@ export class NumberingState {
     // Deeper levels reset whenever a shallower level advances.
     for (let k = ref.ilvl + 1; k < arr.length; k++) arr[k] = undefined;
 
+    // §17.9.28 — where THIS instance starts the level, if it says.
+    const startAt = (i: number, fallback: number | undefined): number =>
+      instance.startOverrides?.get(i) ?? fallback ?? 0;
+
     const current = arr[ref.ilvl];
-    arr[ref.ilvl] = current === undefined ? level.start : current + 1;
+    arr[ref.ilvl] = current === undefined ? startAt(ref.ilvl, level.start) : current + 1;
 
     // A level that has not been reached yet still numbers the levels ABOVE it
     // in a multi-level marker; an unstarted one counts as its own start.
-    const counts = arr.map((n, i) => n ?? abstractNum.levels.get(i)?.start ?? 0);
+    const counts = arr.map((n, i) => n ?? startAt(i, abstractNum.levels.get(i)?.start));
     return formatLevelMarker(abstractNum, level, counts);
   }
 }

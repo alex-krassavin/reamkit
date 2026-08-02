@@ -150,7 +150,23 @@ export function parseNumbering(
     if (!numId) continue;
     const abstractNumId = getValVal(el['w:abstractNumId']);
     if (!abstractNumId) continue;
-    numInstances.set(numId, { numId, abstractNumId });
+    // §17.9.27/§17.9.28 — the instance may start a level somewhere other than
+    // the abstract definition does. num-override-start.docx starts its second
+    // level at three, and the abstract start alone numbered its one heading
+    // "1.1" where its own text reads "This should be 1.3".
+    const startOverrides = new Map<number, number>();
+    for (const o of asArray(el['w:lvlOverride'])) {
+      const ovr = asElement(o);
+      if (!ovr) continue;
+      const ilvl = Number(getAttr(ovr, 'ilvl'));
+      const start = Number(getValVal(ovr['w:startOverride']));
+      if (Number.isFinite(ilvl) && Number.isFinite(start)) startOverrides.set(ilvl, start);
+    }
+    numInstances.set(numId, {
+      numId,
+      abstractNumId,
+      ...(startOverrides.size > 0 ? { startOverrides } : {}),
+    });
   }
 
   return { abstractNums, numInstances };

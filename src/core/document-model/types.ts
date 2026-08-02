@@ -590,6 +590,12 @@ export interface AbstractNumbering {
 export interface NumberingInstance {
   readonly numId: string;
   readonly abstractNumId: string;
+  /**
+   * §17.9.27/§17.9.28 `w:lvlOverride/w:startOverride` — where THIS instance
+   * starts a level, by `w:ilvl`, whatever the abstract definition says. Absent
+   * when the instance takes the abstract starts unchanged.
+   */
+  readonly startOverrides?: ReadonlyMap<number, number>;
 }
 
 /** The parsed `word/numbering.xml`: abstract definitions + their instances. */
