@@ -1987,7 +1987,11 @@ function layoutImageBlock(
     (image.relativeSize?.widthPct && image.width > 0
       ? image.height * (widthPt / image.width)
       : image.height);
-  if (widthPt > contentWidth) {
+  // §20.4.2.3 — a picture IN THE FLOW cannot be wider than the column, but an
+  // ANCHORED one is not in the column at all and may hang into the margins:
+  // tdf120760_ZOrderInHeader.docx papers its header with a page-wide picture
+  // and, shrunk to the text width, it covered three quarters of the page.
+  if (widthPt > contentWidth && !image.float) {
     const scale = contentWidth / widthPt;
     widthPt = contentWidth;
     heightPt = heightPt * scale;
@@ -3156,7 +3160,17 @@ function drawBlocksSequentially(
 ): Array<PageItem> {
   const out: Array<PageItem> = [];
   let cursorY = startY;
-  for (const block of blocks) {
+  // §20.4.2.3 `@behindDoc` — a drawing that sits BEHIND the text sits behind
+  // everything else in the band too, whatever order it was written in. Such a
+  // drawing is out of the flow, so drawing it first costs the cursor nothing.
+  // tdf120760_ZOrderInHeader.docx papers its header with one and hangs a red
+  // stamp above it; taken in document order the paper covered the stamp.
+  const isBehind = (b: LaidOutBlock): boolean =>
+    'float' in b && (b as { readonly float?: FloatAnchor }).float?.behind === true;
+  const ordered = blocks.some(isBehind)
+    ? [...blocks.filter(isBehind), ...blocks.filter((b) => !isBehind(b))]
+    : blocks;
+  for (const block of ordered) {
     // A header is not only paragraphs. A letterhead is very often ONE TABLE —
     // logo in the left cell, institute in the right — and the band drew
     // paragraphs alone, so such a document lost its header and its footer
