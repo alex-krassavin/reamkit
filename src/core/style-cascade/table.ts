@@ -79,6 +79,10 @@ function applyTableStyle(table: Table, sheet: StyleSheet): void {
     defaultCellMargins?: TableStyleLayer['cellMargins'];
     indentPt?: TableStyleLayer['indentPt'];
   };
+  // §17.7.6 — the table's OWN `w:tblBorders` outrank the style's conditional
+  // regions too, so which sides it states has to be known before they are
+  // back-filled from the style below.
+  const directBorders = tp.borders;
   if (!tp.borders && folded.base.borders) tp.borders = folded.base.borders;
   if (!tp.defaultCellMargins && folded.base.cellMargins) {
     tp.defaultCellMargins = folded.base.cellMargins;
@@ -112,9 +116,15 @@ function applyTableStyle(table: Table, sheet: StyleSheet): void {
         noHBand: look.noHBand === true,
         noVBand: look.noVBand === true,
       });
+      const pos = {
+        firstRow: r === 0 || row.properties.conditional?.firstRow === true,
+        lastRow: r === rows.length - 1 || row.properties.conditional?.lastRow === true,
+        firstCol: colStart === 0,
+        lastCol: colStart + span >= colCount,
+      };
       colStart += span;
       if (!layer) continue;
-      applyLayerToCell(cell, layer);
+      applyLayerToCell(cell, layer, directBorders, pos);
     }
   }
 }
@@ -128,14 +138,39 @@ interface MutableCell {
   content: ReadonlyArray<BodyElement>;
 }
 
-function applyLayerToCell(tableCell: TableCell, layer: TableStyleLayer): void {
+function applyLayerToCell(
+  tableCell: TableCell,
+  layer: TableStyleLayer,
+  // §17.7.6 — the sides the table states in its OWN `w:tblBorders`, which the
+  // style's conditional regions do not get to overrule, and where this cell
+  // sits (which decides whether an edge answers to `top`/`bottom`/`left`/
+  // `right` or to `insideH`/`insideV`).
+  directBorders: CellBorders | undefined,
+  pos: { firstRow: boolean; lastRow: boolean; firstCol: boolean; lastCol: boolean },
+): void {
   const cell = tableCell as unknown as MutableCell;
   if (layer.shading && !cell.properties.shading) cell.properties.shading = layer.shading;
   if (layer.cellMargins && !cell.properties.margins) cell.properties.margins = layer.cellMargins;
   if (layer.borders) {
     // Per-side fallback: a direct tcBorders side always wins over the style's.
     const own = cell.properties.borders ?? {};
-    const merged: CellBorders = { ...layer.borders, ...definedOnly(own) };
+    // …and so does a side the TABLE states. table-style-border.docx rules a
+    // black grid in its `w:tblPr` over a style whose corner regions spell the
+    // same edges away, and taking the region's word for it left the table with
+    // no right edge, no bottom and no rule between its two rows.
+    const fromStyle = { ...layer.borders };
+    if (directBorders) {
+      const stated = (side: 'top' | 'bottom' | 'left' | 'right', outer: boolean): boolean =>
+        (outer
+          ? directBorders[side]
+          : directBorders[side === 'top' || side === 'bottom' ? 'insideH' : 'insideV']) !==
+        undefined;
+      if (stated('top', pos.firstRow)) delete fromStyle.top;
+      if (stated('bottom', pos.lastRow)) delete fromStyle.bottom;
+      if (stated('left', pos.firstCol)) delete fromStyle.left;
+      if (stated('right', pos.lastCol)) delete fromStyle.right;
+    }
+    const merged: CellBorders = { ...fromStyle, ...definedOnly(own) };
     cell.properties.borders = merged;
   }
   if (layer.runProperties || layer.paragraphProperties) {
