@@ -47,6 +47,11 @@ export function applyNumbering(
     (styles ? resolveParagraphProperties(p.properties, styles).numbering : undefined);
 
   const transformParagraph = (p: Paragraph): Paragraph => {
+    // §17.6.17 — a paragraph whose mark carries the `w:sectPr` and nothing else
+    // IS the section break; it is not an item of the list its properties name.
+    // Numbered anyway it also took a counter, so section_break_numbering.docx's
+    // one real item came out "2." where every reader numbers it 1.
+    if (p.properties.sectionBreak === true && p.runs.every((r) => r.text === '')) return p;
     const ref = numberingOf(p);
     if (!ref) return p;
     const marker = state.resolveMarker(numbering, ref);
