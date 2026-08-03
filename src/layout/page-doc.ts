@@ -14,8 +14,9 @@ import type { BorderStyle, ImageCrop, PictureOutline, ShapeShadow } from '@/core
 import type { Pt, ResourceId, ResourceStore } from '@/core/ir';
 import type { FontMeasure, ParsedTtf } from '@/core/font';
 import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
-import type { PathSegment, VectorPath, VectorShape } from '@/core/vector';
+import type { PathSegment, StrokeStyle, VectorPath, VectorShape } from '@/core/vector';
 import type { PreparedImage } from '@/core/images';
+import type { MetaPicture } from '@/core/metafile/picture';
 
 /** A font bound into a {@link LaidOutDocument}: the parsed face plus what layout/emit need from it. */
 export interface FontResource {
@@ -99,6 +100,14 @@ export interface ImageToken {
   readonly outline?: PictureOutline;
   /** §20.1.8.40 — the drop shadow under the picture, when it casts one. */
   readonly shadow?: ShapeShadow;
+  /** §14.1.2.10 — the contrast/brightness wash the picture is drawn through. */
+  readonly wash?: { readonly gain: number; readonly black: number };
+  /**
+   * MS-EMF / MS-WMF — the picture to DRAW in this token's box, for an inline
+   * metafile: it has no raster to place, so the emitter plays its primitives
+   * where the token stands.
+   */
+  readonly metafile?: MetafileDrawing;
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
   readonly crop?: ImageCrop;
   /** §20.1.7.6 — degrees clockwise about the box's centre. */
@@ -198,13 +207,40 @@ export interface Line {
 }
 
 /** An image bound into a {@link LaidOutDocument}: its resource name plus the decoded/validated bytes. */
+/**
+ * MS-EMF / MS-WMF — a metafile picture, ready to draw: paths and words in a
+ * local y-up frame whose origin is the picture box's bottom-left corner. The
+ * same vocabulary a chart's layout carries, because a metafile draws the same
+ * two things.
+ */
+export interface MetafileDrawing {
+  readonly shapes: ReadonlyArray<{
+    readonly paths: ReadonlyArray<VectorPath>;
+    readonly fillColorHex?: string;
+    readonly stroke?: StrokeStyle;
+  }>;
+  readonly texts: ReadonlyArray<{
+    readonly line: Line;
+    readonly x: number;
+    readonly y: number;
+    readonly rotationDeg?: number;
+  }>;
+}
+
 export interface ImageResource {
   readonly resourceName: string;
   /**
    * Decoded/validated at layout time (the probe); the emit phase replays it
-   * without touching the source bytes again.
+   * without touching the source bytes again. Absent for a METAFILE, which has
+   * no raster to embed: it is drawn as the primitives `metafile` holds.
    */
-  readonly prepared: PreparedImage;
+  readonly prepared?: PreparedImage;
+  /**
+   * MS-EMF / MS-WMF — the picture read out of the resource, in its own logical
+   * units. A metafile is a little drawing program, not a raster; the layout
+   * turns these into the same primitives a chart is made of.
+   */
+  readonly metafile?: MetaPicture;
 }
 
 /**
@@ -294,6 +330,8 @@ export interface ImageItem extends PageItemBase {
   readonly imageResourceName: string;
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
   readonly crop?: ImageCrop;
+  /** §14.1.2.10 — the contrast/brightness wash the picture is drawn through. */
+  readonly wash?: { readonly gain: number; readonly black: number };
   /** §20.1.7.6 — degrees clockwise about the box's centre. */
   readonly rotationDeg?: number;
   /** §20.1.7.6 — the picture drawn mirrored in its box. */

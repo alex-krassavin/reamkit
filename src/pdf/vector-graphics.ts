@@ -69,6 +69,7 @@ export function emitVectorShape(
   shape: VectorShape,
   patternName?: string,
   alphaStateName?: string,
+  fillAlphaStateName?: string,
 ): Array<string> {
   const out: Array<string> = [];
   const [a, b, c, d, e, f] = shape.transform;
@@ -120,6 +121,10 @@ export function emitVectorShape(
     }
   }
   out.push('q');
+  // §20.1.2.3.1 — a fill the document made TRANSPARENT is drawn transparent,
+  // not composited over the paper: what stands behind the shape shows through
+  // it, which is the whole point of the fill saying so.
+  if (fillAlphaStateName !== undefined) out.push(`/${fillAlphaStateName} gs`);
   out.push(`${num(a)} ${num(b)} ${num(c)} ${num(d)} ${num(e)} ${num(f)} cm`);
 
   const stroke = shape.stroke;

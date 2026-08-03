@@ -135,6 +135,8 @@ export type DrawingContent =
       readonly outline?: PictureOutline;
       /** §20.1.8.40 `a:outerShdw` on the same `pic:spPr` — the picture's shadow. */
       readonly shadow?: ShapeShadow;
+      /** §14.1.2.10 `@gain`/`@blacklevel` — the wash the picture is drawn through. */
+      readonly wash?: { readonly gain: number; readonly black: number };
       /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
       readonly crop?: ImageCrop;
       /** §20.1.7.6 `a:xfrm @rot` — the picture's rotation (1/60000°, clockwise). */
@@ -183,11 +185,17 @@ function parseFloatAnchor(anchor: PoNode): FloatAnchor | undefined {
   const behindRaw = poAttr(anchor, 'behindDoc');
   const behind = behindRaw === '1' || behindRaw === 'true';
   let wrap: FloatAnchor['wrap'] = 'none';
+  // §20.4.2.3 `@wrapText` — which side(s) the text may stand on. `bothSides`
+  // is the default, and the one that fills the gap on EACH side of a drawing.
+  let wrapSide: FloatAnchor['wrapSide'];
   for (const child of poChildren(anchor)) {
     if (poIs(child, 'wp:wrapSquare')) wrap = 'square';
     else if (poIs(child, 'wp:wrapTight')) wrap = 'tight';
     else if (poIs(child, 'wp:wrapThrough')) wrap = 'through';
     else if (poIs(child, 'wp:wrapTopAndBottom')) wrap = 'topAndBottom';
+    else continue;
+    const side = poAttr(child, 'wrapText');
+    wrapSide = side === 'left' || side === 'right' || side === 'largest' ? side : 'bothSides';
   }
   const zOrder = poIntAttr(anchor, 'relativeHeight');
   // §20.4.3.3 — `leftMargin`/`rightMargin` name the margin band on that side,
@@ -221,8 +229,16 @@ function parseFloatAnchor(anchor: PoNode): FloatAnchor | undefined {
     rightPt: dist('distR'),
   };
   const anyDist = Object.values(wrapDist).some((v) => v > 0);
+  // §20.4.2.3 `@layoutInCell` — inside a table cell, the cell is the frame the
+  // position is measured in. Turned off (tdf129888dml.docx) the object reaches
+  // past the table to the page it names, which is how a page number ends up in
+  // the corner of the paper rather than the corner of a cell.
+  const inCellRaw = poAttr(anchor, 'layoutInCell');
+  const inCell = !(inCellRaw === '0' || inCellRaw === 'false');
   return {
     wrap,
+    ...(wrapSide ? { wrapSide } : {}),
+    ...(inCell ? {} : { inCell: false }),
     ...(behind ? { behind: true } : {}),
     ...(zOrder !== undefined ? { zOrder } : {}),
     ...(anyDist ? { wrapDist } : {}),
@@ -630,12 +646,19 @@ export function parseVmlPicture(node: PoNode, parseBody?: ParseBody): DrawingCon
     shape && (stroked === 't' || stroked === 'true')
       ? pictureOutline(vmlLine(shape, shapeType))
       : undefined;
+  // §14.1.2.10 — Word washes a watermark out with `@gain` (contrast) and
+  // `@blacklevel` (brightness), each a fraction, a percentage or the
+  // 1/65536ths it writes. pictureWatermark.docx prints its penguins at 30%
+  // contrast lifted 35%, and drawn at full strength the photograph sat behind
+  // the text instead of a ghost of it.
+  const wash = vmlWash(imagedata);
   return {
     kind: 'image',
     imageId,
     width,
     height,
     ...(outline ? { outline } : {}),
+    ...(wash ? { wash } : {}),
     ...(float ? { float } : {}),
     ...(altText ? { altText } : {}),
   };
@@ -689,11 +712,36 @@ function parseVmlShape(node: PoNode, parseBody?: ParseBody): DrawingContent | nu
   );
   if (!data) return null;
   const float = vmlFloat(style, poIntAttr(shape, 'z-index'), shape);
+  // §14.1.2.13 — a LINE states its ends, and those ends are where it is: its
+  // style carries no `left`/`top` to place it by. tdf129888vml.docx rules a
+  // margin line from 191pt across, and placed at the anchor's own zero it ran
+  // down the very edge of the paper.
+  const placed = float && from && to ? vmlLinePlaced(float, from, to) : float;
   return {
     kind: 'shape',
     data,
-    ...(float ? { float } : {}),
+    ...(placed ? { float: placed } : {}),
     ...(poAttr(shape, 'alt')?.trim() ? { altText: poAttr(shape, 'alt')!.trim() } : {}),
+  };
+}
+
+// The anchor a `v:line` is really at: its top-left corner, which its ends give
+// and its style does not.
+function vmlLinePlaced(
+  float: FloatAnchor,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+): FloatAnchor {
+  const x = Math.min(from.x, to.x);
+  const y = Math.min(from.y, to.y);
+  return {
+    ...float,
+    ...(float.posH?.align === undefined
+      ? { posH: { ...(float.posH ?? { relativeFrom: 'column' as const }), offsetPt: pt(x) } }
+      : {}),
+    ...(float.posV?.align === undefined
+      ? { posV: { ...(float.posV ?? { relativeFrom: 'paragraph' as const }), offsetPt: pt(y) } }
+      : {}),
   };
 }
 
@@ -1189,7 +1237,12 @@ export function vmlFill(
   if (picture !== undefined) return { kind: 'picture', imageResource: picture };
   const gradient = fillEl ? vmlGradient(fillEl, base) : undefined;
   if (gradient) return { kind: 'gradient', gradient };
-  return { kind: 'solid', colorHex: base };
+  // §14.1.2.5 `@opacity` — VML's own transparency, written as a fraction or a
+  // percentage.
+  const opacity = vmlOpacity(
+    poAttr(shape, 'opacity') ?? (fillEl ? poAttr(fillEl, 'opacity') : undefined),
+  );
+  return { kind: 'solid', colorHex: base, ...(opacity !== undefined ? { alpha: opacity } : {}) };
 }
 
 // §14.1.2.5 — a `v:fill` of type `gradient` / `gradientRadial`. VML measures
@@ -1261,6 +1314,37 @@ function vmlFocusStops(
     { offset: f, colorHex: color2 },
     { offset: 1, colorHex: base },
   ];
+}
+
+// §14.1.2.10 `@gain`/`@blacklevel` — the contrast and brightness a picture is
+// drawn through, as `out = (in - 0.5) * gain + 0.5 + black`.
+function vmlWash(imagedata: PoNode): { gain: number; black: number } | undefined {
+  const gain = vmlFraction(poAttr(imagedata, 'gain'));
+  const black = vmlFraction(poAttr(imagedata, 'blacklevel'));
+  if (gain === undefined && black === undefined) return undefined;
+  const g = Math.max(0, gain ?? 1);
+  const b = black ?? 0;
+  return Math.abs(g - 1) < 0.01 && Math.abs(b) < 0.01 ? undefined : { gain: g, black: b };
+}
+
+// A VML fraction: "0.5", "50%", or the 1/65536ths Word writes ("19661f").
+function vmlFraction(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const t = raw.trim();
+  const pct = t.endsWith('%');
+  const n = Number.parseFloat(pct ? t.slice(0, -1) : t.replace(/f$/iu, ''));
+  if (!Number.isFinite(n)) return undefined;
+  return pct ? n / 100 : Math.abs(n) > 1 ? n / 65536 : n;
+}
+
+// §14.1.2.5 `@opacity` — "0.5" or "50%" or the 1/65536ths Word writes.
+function vmlOpacity(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const pct = raw.trim().endsWith('%');
+  const n = Number.parseFloat(pct ? raw.trim().slice(0, -1) : raw.replace(/f$/iu, ''));
+  if (!Number.isFinite(n)) return undefined;
+  const v = pct ? n / 100 : n > 1 ? n / 65536 : n;
+  return v >= 1 ? undefined : Math.max(0, v);
 }
 
 // §14.1.2.5 `@colors` — the stops BETWEEN the two the fill names, as
@@ -1461,6 +1545,10 @@ function vmlFloat(
     // box squeezed the sentence it is meant to sit behind into a column two
     // words wide, over two pages.
     wrap: vmlWrap(shape),
+    // §14.1.2.2 `o:allowincell` — VML's spelling of `layoutInCell`: off, the
+    // shape is placed against the page it names rather than the cell it sits
+    // in (tdf129888vml.docx rules the page edge from inside a cell).
+    ...(poAttrLocal(shape, 'allowincell') === 'f' ? { inCell: false } : {}),
     ...(zIndex !== undefined && zIndex < 0 ? { behind: true } : {}),
     ...(zIndex !== undefined ? { zOrder: Math.abs(zIndex) } : {}),
     posH: {
@@ -2250,11 +2338,20 @@ function withStyleFontColor(
 
 function parseTextBox(wsp: PoNode, parseBody: ParseBody): ShapeTextBody | undefined {
   const txbx = poChildren(wsp).find((c) => poIs(c, 'wps:txbx'));
-  if (!txbx) return undefined;
-  const txContent = poChildren(txbx).find((c) => poIs(c, 'w:txbxContent'));
-  if (!txContent) return undefined;
-  const content = parseBody(poChildren(txContent));
-  if (content.length === 0) return undefined;
+  // A box that CONTINUES another carries `wps:linkedTxbx` in place of the text:
+  // the words live in the chain's first box, and what will not fit there is
+  // drawn here (LinkedTextBoxes.docx sets a newsletter in two such columns).
+  const linked = poChildren(wsp).find((c) => poIs(c, 'wps:linkedTxbx'));
+  const chainId = poAttr(txbx, 'id') ?? poAttr(linked, 'id');
+  const chain =
+    chainId === undefined
+      ? undefined
+      : { id: chainId, seq: linked ? (poIntAttr(linked, 'seq') ?? 1) : 0 };
+  if (!txbx && !linked) return undefined;
+  const txContent = txbx ? poChildren(txbx).find((c) => poIs(c, 'w:txbxContent')) : undefined;
+  if (txbx && !txContent) return undefined;
+  const content = txContent ? parseBody(poChildren(txContent)) : [];
+  if (content.length === 0 && !linked) return undefined;
 
   const bodyPr = poChildren(wsp).find((c) => poIs(c, 'wps:bodyPr'));
   const lIns = bodyPr ? poIntAttr(bodyPr, 'lIns') : undefined;
@@ -2275,6 +2372,7 @@ function parseTextBox(wsp: PoNode, parseBody: ParseBody): ShapeTextBody | undefi
 
   return {
     content,
+    ...(chain ? { chain } : {}),
     ...(vertical ? { vertical } : {}),
     ...(autoFit ? { autoFit: true } : {}),
     ...(lIns !== undefined ? { insetLeft: emuToPt(lIns) } : {}),
@@ -2465,7 +2563,22 @@ function fillFromNode(
     }
     if (poIs(child, 'a:solidFill')) {
       const hex = colorFromContainer(child, resolveColor);
-      return hex ? { kind: 'solid', colorHex: hex } : { kind: 'none' };
+      // §20.1.2.3.1 — the transparency is the fill's, not the colour's: read
+      // off here it is drawn as transparency, and what is behind the shape
+      // shows through. Left to the colour resolver it composites over white,
+      // which is right only on white paper.
+      const alpha = containerAlpha(child);
+      return hex
+        ? {
+            kind: 'solid',
+            // The resolver has already composited the colour over white for the
+            // writers that cannot draw transparency; drawing THAT at the same
+            // transparency would fade it twice. The compositing is linear, so
+            // it undoes exactly.
+            colorHex: alpha === undefined ? hex : unblendWhite(hex, alpha),
+            ...(alpha !== undefined ? { alpha } : {}),
+          }
+        : { kind: 'none' };
     }
     // §20.1.8.37 `a:pattFill` — a hatch of the foreground colour over the
     // background one. Drawn as the two blended by how much ink the pattern
@@ -2749,6 +2862,30 @@ function normalizeDash(v: string | undefined): ShapeDash | undefined {
 }
 
 // First a:srgbClr / a:schemeClr child → resolved hex (with colour transforms).
+// The colour that, composited over white at `alpha`, gives `hex` back.
+function unblendWhite(hex: string, alpha: number): string {
+  if (alpha <= 0.004) return hex;
+  const n = parseInt(hex, 16);
+  if (Number.isNaN(n)) return hex;
+  const ch = (shift: number): string => {
+    const v = ((n >> shift) & 255) / 255;
+    const raw = (v - (1 - alpha)) / alpha;
+    return Math.round(Math.max(0, Math.min(1, raw)) * 255)
+      .toString(16)
+      .padStart(2, '0');
+  };
+  return (ch(16) + ch(8) + ch(0)).toUpperCase();
+}
+
+// §20.1.2.3.1 — the `a:alpha` on the colour a fill container wraps, as 0..1.
+function containerAlpha(parent: PoNode): number | undefined {
+  for (const c of poChildren(parent)) {
+    const mod = readColorMods(c).find((m) => m.kind === 'alpha');
+    if (mod) return Math.max(0, Math.min(1, mod.val));
+  }
+  return undefined;
+}
+
 function colorFromContainer(parent: PoNode, resolveColor: ColorResolver): string | undefined {
   for (const c of poChildren(parent)) {
     const hex = resolveColorNode(c, resolveColor);

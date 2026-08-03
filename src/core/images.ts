@@ -15,8 +15,10 @@
 
 import { unzlibSync, zlibSync } from 'fflate';
 
+import { decodeTiff, isTiff } from '@/core/tiff';
+
 /** The raster formats this module recognizes and can prepare for embedding. */
-export type ImageFormat = 'jpeg' | 'png' | 'jpeg2000' | 'gif';
+export type ImageFormat = 'jpeg' | 'png' | 'jpeg2000' | 'gif' | 'tiff';
 
 /**
  * Sniff the raster format from a file's leading magic bytes (JPEG SOI, the PNG
@@ -80,6 +82,8 @@ export function detectImageFormat(bytes: Uint8Array): ImageFormat | null {
   ) {
     return 'gif';
   }
+  // TIFF 6.0 §2 — "II*\0" (little-endian) or "MM\0*" (big-endian).
+  if (isTiff(bytes)) return 'tiff';
   return null;
 }
 
@@ -102,7 +106,7 @@ export interface EmbedImageOptions {
  */
 export interface PreparedImage {
   readonly format: ImageFormat;
-  readonly mimeType: 'image/jp2' | 'image/jpeg' | 'image/png' | 'image/gif';
+  readonly mimeType: 'image/jp2' | 'image/jpeg' | 'image/png' | 'image/gif' | 'image/tiff';
   readonly widthPx: number;
   readonly heightPx: number;
   /**
@@ -131,6 +135,7 @@ export function prepareImage(bytes: Uint8Array, options: EmbedImageOptions = {})
   if (format === 'png') return preparePng(bytes, options);
   if (format === 'jpeg2000') return prepareJpeg2000(bytes);
   if (format === 'gif') return prepareGif(bytes, options);
+  if (format === 'tiff') return prepareTiff(bytes, options);
   throw new Error('Unsupported image format');
 }
 
@@ -309,6 +314,54 @@ function prepareGif(bytes: Uint8Array, options: EmbedImageOptions = {}): Prepare
     data: zlibSync(rgb),
     ...(alpha && !options.flattenAlpha ? { smaskData: zlibSync(alpha) } : {}),
   };
+}
+
+// TIFF has no PDF filter of its own — /TIFFDecode does not exist — so the file
+// is decoded to samples here and embedded Flate-compressed, the same shape the
+// GIF and PNG paths take. CMYK becomes RGB on the way: PDF paints DeviceCMYK
+// natively, but only an OutputIntent for a CMYK device makes one valid PDF/A,
+// and every profile this writer emits is sRGB.
+function prepareTiff(bytes: Uint8Array, options: EmbedImageOptions = {}): PreparedImage {
+  const img = decodeTiff(bytes);
+  const channels = img.channels === 4 ? 3 : img.channels;
+  const data = img.channels === 4 ? cmykToRgb(img.data) : img.data.slice();
+  const alpha = img.alpha;
+  // PDF/A-1 forbids transparency: composite the see-through pixels onto white
+  // rather than dropping the mask and painting them black.
+  if (alpha && options.flattenAlpha) {
+    for (let i = 0; i < alpha.length; i++) {
+      if (alpha[i] === 255) continue;
+      const a = alpha[i]! / 255;
+      for (let c = 0; c < channels; c++) {
+        const at = i * channels + c;
+        data[at] = Math.round(data[at]! * a + 255 * (1 - a));
+      }
+    }
+  }
+  return {
+    format: 'tiff',
+    mimeType: 'image/tiff',
+    widthPx: img.width,
+    heightPx: img.height,
+    colorSpace: channels === 3 ? 'DeviceRGB' : 'DeviceGray',
+    bitsPerComponent: 8,
+    filter: 'FlateDecode',
+    data: zlibSync(data),
+    ...(alpha && !options.flattenAlpha ? { smaskData: zlibSync(alpha.slice()) } : {}),
+  };
+}
+
+// The conversion every reader without an ICC profile makes: each ink subtracts
+// from white, and black subtracts from what is left.
+function cmykToRgb(cmyk: Uint8Array): Uint8Array {
+  const out = new Uint8Array((cmyk.length / 4) * 3);
+  for (let i = 0; i * 4 + 3 < cmyk.length; i++) {
+    const k = 255 - cmyk[i * 4 + 3]!;
+    out[i * 3] = ((255 - cmyk[i * 4]!) * k) / 255;
+    out[i * 3 + 1] = ((255 - cmyk[i * 4 + 1]!) * k) / 255;
+    out[i * 3 + 2] = ((255 - cmyk[i * 4 + 2]!) * k) / 255;
+  }
+  return out;
 }
 
 interface GifFrame {

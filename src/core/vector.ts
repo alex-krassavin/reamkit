@@ -99,6 +99,11 @@ export interface VectorShape {
    * over `fillColorHex`.
    */
   readonly fillGradient?: ShapeGradient;
+  /**
+   * §20.1.2.3.1 — the fill's opacity, `0..1`. Absent is opaque. Writers without
+   * transparency paint `fillColorHex` at full strength.
+   */
+  readonly fillAlpha?: number;
   /** Stroke description. Omitted = no stroke. */
   readonly stroke?: StrokeStyle;
   /**

@@ -277,6 +277,12 @@ export interface InlineImage {
    * six stood flat on the page where both references lift them off it.
    */
   readonly shadow?: ShapeShadow;
+  /**
+   * §14.1.2.10 `@gain`/`@blacklevel` — the contrast and brightness the picture
+   * is drawn through, about mid grey: `out = (in - 0.5) * gain + 0.5 + black`.
+   * Word washes a watermark out this way.
+   */
+  readonly wash?: { readonly gain: number; readonly black: number };
   readonly width: Pt;
   readonly height: Pt;
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
@@ -1048,6 +1054,12 @@ export interface ImageBlock {
    * six stood flat on the page where both references lift them off it.
    */
   readonly shadow?: ShapeShadow;
+  /**
+   * §14.1.2.10 `@gain`/`@blacklevel` — the contrast and brightness the picture
+   * is drawn through, about mid grey: `out = (in - 0.5) * gain + 0.5 + black`.
+   * Word washes a watermark out this way.
+   */
+  readonly wash?: { readonly gain: number; readonly black: number };
   readonly width: Pt;
   readonly height: Pt;
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
@@ -1142,6 +1154,12 @@ export interface ShapeFill {
    * of the picture the box shows, as the fractions cut from each side.
    */
   readonly imageCrop?: ImageCrop;
+  /**
+   * §20.1.2.3.1 `a:alpha` / §14.1.2.5 `@opacity` — how opaque the fill is,
+   * `0..1`. Absent is opaque. The colour above is the fill's own, NOT composited
+   * over the paper: what is behind the shape shows through it.
+   */
+  readonly alpha?: number;
 }
 
 /** §20.1.10.49 ST_PresetLineDashVal — a shape outline's preset dash pattern. */
@@ -1234,6 +1252,13 @@ export interface ShapeTextBody {
    * WordArt is set at whatever size fills the box it was drawn in.
    */
   readonly fitToBox?: boolean;
+  /**
+   * `wps:txbx @id` / `wps:linkedTxbx @id @seq` — the chain of boxes this one
+   * belongs to. Text that overruns a box continues in the next of its chain;
+   * `seq` 0 is the box that holds the words, and the rest carry none of their
+   * own.
+   */
+  readonly chain?: { readonly id: string; readonly seq: number };
 }
 
 /**
@@ -1603,7 +1628,12 @@ export interface SectionProperties {
  * modes (square/tight/through) and `topAndBottom` stay in flow as blocks.
  */
 export interface FloatAnchor {
-  readonly wrap: 'none' | 'square' | 'tight' | 'through' | 'topAndBottom';
+  /**
+   * §20.4.2.3 / §17.18.104 — how body text runs past the drawing. `notBeside`
+   * is the FRAME's own mode: the drawing keeps the place its anchor names, but
+   * no text may stand beside it, so its band spans the whole column.
+   */
+  readonly wrap: 'none' | 'square' | 'tight' | 'through' | 'topAndBottom' | 'notBeside';
   readonly behind?: boolean; // wp:anchor @behindDoc
   /**
    * §20.4.2.3 `wp:anchor @relativeHeight` — the z-order among the floats on the
@@ -1637,6 +1667,19 @@ export interface FloatAnchor {
      */
     readonly align?: 'top' | 'center' | 'bottom';
   };
+  /**
+   * §20.4.2.3 `@wrapText` on the wrap element — which side(s) of the drawing
+   * text may stand on. `bothSides` is the default and the only value that
+   * fills BOTH gaps; `left`/`right` name one, `largest` the wider.
+   */
+  readonly wrapSide?: 'bothSides' | 'left' | 'right' | 'largest';
+  /**
+   * §20.4.2.3 `wp:anchor @layoutInCell` (VML `o:allowincell`) — present and
+   * false when a drawing anchored inside a TABLE CELL is placed against the
+   * page rather than against the cell. Absent means the default: the cell is
+   * the frame every `relativeFrom` is measured in.
+   */
+  readonly inCell?: boolean;
   /**
    * §20.4.2.3 `wp:anchor @distT/@distB/@distL/@distR` — how far the wrapped
    * text stands off each edge of the drawing. Absent sides are 0.

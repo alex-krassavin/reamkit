@@ -842,6 +842,7 @@ function blocksForDrawing(
           ...(resource ? { resource } : {}),
           ...(content.outline ? { outline: content.outline } : {}),
           ...(content.shadow ? { shadow: content.shadow } : {}),
+          ...(content.wash ? { wash: content.wash } : {}),
           width: content.width,
           height: content.height,
           ...(content.crop ? { crop: content.crop } : {}),
@@ -1520,6 +1521,7 @@ function parseRun(
           ...(resource ? { resource } : {}),
           ...(content.outline ? { outline: content.outline } : {}),
           ...(content.shadow ? { shadow: content.shadow } : {}),
+          ...(content.wash ? { wash: content.wash } : {}),
           width: content.width,
           height: content.height,
           ...(content.crop ? { crop: content.crop } : {}),
@@ -1550,6 +1552,7 @@ function parseRun(
             resource,
             ...(content.outline ? { outline: content.outline } : {}),
             ...(content.shadow ? { shadow: content.shadow } : {}),
+            ...(content.wash ? { wash: content.wash } : {}),
             width: content.width,
             height: content.height,
           };

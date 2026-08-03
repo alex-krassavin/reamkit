@@ -78,6 +78,7 @@ import type {
   LaidOutDocument,
   LaidOutPage,
   Line,
+  MetafileDrawing,
   PageItem,
   ResolvedMathItem,
   TextToken,
@@ -89,10 +90,13 @@ import type { SignaturePlaceholder } from '@/pdf/signature';
 import type { PdfEncryptOptions } from '@/pdf/encryption';
 import type { StructNode, StructType } from '@/pdf/struct-tree';
 
+import type { MetaPicture } from '@/core/metafile/picture';
 import { ResourceStore, halfPtToPt, pt } from '@/core/ir';
 import { createFontMeasure, shapeText } from '@/core/font';
 import { resolveFamilyKey } from '@/core/fonts';
 import { prepareImage } from '@/core/images';
+import { isEmf, readEmf } from '@/core/metafile/emf';
+import { isWmf, readWmf } from '@/core/metafile/wmf';
 import { analyzeString, hasBidiCharacters, segmentLevels } from '@/core/bidi';
 import {
   FORCED_BREAK,
@@ -381,6 +385,12 @@ interface ChartLayout {
 }
 interface ChartBlockLaidOut {
   readonly kind: 'chart';
+  /**
+   * What a tagged PDF should call this Figure when the drawing carries no
+   * description of its own. A metafile picture rides this block, and it is a
+   * picture, not a chart.
+   */
+  readonly figureRole?: string;
   readonly float?: FloatAnchor;
   readonly widthPt: number;
   readonly heightPt: number;
@@ -400,6 +410,8 @@ interface ImageBlockLaidOut {
   readonly resourceName: string;
   /** §20.1.2.2.24 — the frame the picture is drawn with, when it has one. */
   readonly outline?: PictureOutline;
+  /** §14.1.2.10 — the contrast/brightness wash the picture is drawn through. */
+  readonly wash?: { readonly gain: number; readonly black: number };
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
   readonly crop?: ImageCrop;
   /** §20.1.7.6 — degrees clockwise about the box's centre. */
@@ -450,6 +462,8 @@ interface ShapeBlockLaidOut {
   readonly markerPaths?: ReadonlyArray<VectorPath>;
   readonly fillColorHex?: string;
   readonly fillGradient?: ShapeGradient;
+  /** §20.1.2.3.1 — the fill's opacity, when it is not opaque. */
+  readonly fillAlpha?: number;
   /** §20.1.8.14 `a:blipFill` — the picture painted across the shape's box. */
   readonly fillImageResourceName?: string;
   /** §20.1.8.30 — the part of that picture the box shows. */
@@ -488,6 +502,11 @@ interface ShapeBlockLaidOut {
    */
   readonly textLineGaps?: ReadonlyMap<number, number>;
   readonly textHeightPt: number;
+  /**
+   * `wps:txbx @id` / `wps:linkedTxbx @seq` — the chain of boxes this one is
+   * part of, and its place in it. What will not fit here is drawn in the next.
+   */
+  readonly textChain?: { readonly id: string; readonly seq: number };
   readonly insetLeftPt: number;
   readonly insetRightPt: number;
   readonly insetTopPt: number;
@@ -533,6 +552,12 @@ interface ParagraphBlock {
 
 type MergeRole = 'standalone' | 'start' | 'middle' | 'end';
 
+/** One drawing anchored inside a cell, with the line it hangs off. */
+interface CellFloat {
+  readonly block: ImageBlockLaidOut | ShapeBlockLaidOut;
+  readonly afterLine: number;
+}
+
 interface CellLayout {
   readonly widthPt: number;
   readonly padTopPt: number;
@@ -569,6 +594,12 @@ interface CellLayout {
     readonly block: ShapeBlockLaidOut;
     readonly afterLine: number;
   }>;
+  /**
+   * §20.4.2.4 — drawings ANCHORED in this cell (`layoutInCell`): out of its
+   * flow, so they take no room in it, each with the number of the cell's lines
+   * that come before the paragraph it hangs off.
+   */
+  readonly floats?: ReadonlyArray<CellFloat>;
   readonly contentHeightPt: number;
   readonly totalHeightPt: number;
   readonly verticalAlign?: 'top' | 'center' | 'bottom';
@@ -594,6 +625,11 @@ interface RowLayout {
   readonly isHeader?: boolean;
   // xlsx manual <rowBreaks> — force a page break before this row.
   readonly breakBefore?: boolean;
+  /**
+   * §17.4.6 `w:cantSplit` — the row is drawn whole or not at all: what will not
+   * fit on the page moves to the next rather than breaking across the two.
+   */
+  readonly cantSplit?: boolean;
 }
 
 interface TableBlock {
@@ -674,6 +710,84 @@ const MIN_WRAP_WIDTH = 36;
 function isOutOfFlowFloat(f: FloatAnchor | undefined): f is FloatAnchor {
   return f !== undefined && f.wrap !== 'topAndBottom';
 }
+
+/**
+ * §20.4.3.3/§20.4.3.4 — the boxes an anchor's `relativeFrom` names, in page
+ * coordinates (y-up). Normally they are the page, its margins and the text
+ * column; for a drawing anchored inside a table cell they are all that cell,
+ * which is what `@layoutInCell` asks for.
+ */
+interface FloatFrame {
+  /** The `page` box. */
+  readonly pageLeft: number;
+  readonly pageWidth: number;
+  readonly pageTopYUp: number;
+  readonly pageBottomYUp: number;
+  /** The `margin` box — the text area. */
+  readonly marginLeft: number;
+  readonly contentWidth: number;
+  readonly marginTopYUp: number;
+  readonly marginBottomYUp: number;
+  /** The `column` box. */
+  readonly columnLeft: number;
+  readonly columnWidth: number;
+  /** The anchoring paragraph's top, y-up. */
+  readonly anchorY: number;
+}
+
+/** The float's left edge, resolved from its horizontal anchor (§20.4.3.3). */
+function floatXIn(frame: FloatFrame, f: FloatAnchor, widthPt: number): number {
+  const h = f.posH;
+  if (!h) return frame.columnLeft;
+  // §20.4.3.3 — the margin BANDS: the strip between the page edge and the
+  // text area on that side, which is where a marginal note is placed.
+  const textRight = frame.marginLeft + frame.contentWidth;
+  const pageRight = frame.pageLeft + frame.pageWidth;
+  const base =
+    h.relativeFrom === 'page' || h.relativeFrom === 'leftMargin'
+      ? frame.pageLeft
+      : h.relativeFrom === 'column'
+        ? frame.columnLeft
+        : h.relativeFrom === 'rightMargin'
+          ? textRight
+          : frame.marginLeft;
+  const span =
+    h.relativeFrom === 'page'
+      ? frame.pageWidth
+      : h.relativeFrom === 'column'
+        ? frame.columnWidth
+        : h.relativeFrom === 'leftMargin'
+          ? frame.marginLeft - frame.pageLeft
+          : h.relativeFrom === 'rightMargin'
+            ? pageRight - textRight
+            : frame.contentWidth;
+  if (h.align === 'center') return base + (span - widthPt) / 2;
+  if (h.align === 'right') return base + span - widthPt;
+  return base + (h.offsetPt ?? 0);
+}
+
+/** The float's TOP, y-up, resolved from its vertical anchor (§20.4.3.4). */
+function floatTopYUpIn(frame: FloatFrame, f: FloatAnchor, heightPt = 0): number {
+  const v = f.posV;
+  if (!v) return frame.anchorY;
+  // §20.4.3.1 — a keyword position: within the page or the margin box.
+  if (v.align !== undefined) {
+    const page = v.relativeFrom === 'page';
+    const topYUp = page ? frame.pageTopYUp : frame.marginTopYUp;
+    const bottomYUp = page ? frame.pageBottomYUp : frame.marginBottomYUp;
+    if (v.align === 'top') return topYUp;
+    if (v.align === 'bottom') return bottomYUp + heightPt;
+    return bottomYUp + (topYUp - bottomYUp + heightPt) / 2;
+  }
+  // §20.4.3.4 — the TOP margin band starts at the page's own top edge; the
+  // BOTTOM one starts where the text area ends.
+  if (v.relativeFrom === 'page' || v.relativeFrom === 'topMargin')
+    return frame.pageTopYUp - (v.offsetPt ?? 0);
+  if (v.relativeFrom === 'bottomMargin') return frame.marginBottomYUp - (v.offsetPt ?? 0);
+  if (v.relativeFrom === 'margin') return frame.marginTopYUp - (v.offsetPt ?? 0);
+  return frame.anchorY - (v.offsetPt ?? 0);
+}
+
 const FOOTNOTE_RULE_WIDTH = 144; // Word's ~2" short separator
 
 // Assign sequential numbers to note references in reading order (§17.11:
@@ -996,8 +1110,15 @@ export function layoutStyledDocument(
   const tagged =
     options.tagged === true || options.pdfUA === true || (pdfaProfile?.tagged ?? false);
   const structBuilder = tagged ? new StructTreeBuilder() : undefined;
-  const fontResources = collectFontResources(numberedBody, numberedHeadersFooters, options);
+  // The images come first: a METAFILE carries words of its own, and the font
+  // walk has to ask for their glyphs like any other text's.
   const imageResources = collectImageResources(numberedBody, numberedHeadersFooters, options);
+  const fontResources = collectFontResources(
+    numberedBody,
+    numberedHeadersFooters,
+    options,
+    imageResources,
+  );
 
   // Pre-compute per-section render context (geometry + header/footer bands).
   const sectionCtxs: Array<SectionRenderCtx> = sectionList.map((s) =>
@@ -1048,6 +1169,8 @@ export function layoutStyledDocument(
     if (here.resolved.contextualSpacing) blocks[i] = { ...here, spacingAfterPt: 0 };
     if (next.resolved.contextualSpacing) blocks[i + 1] = { ...next, spacingBeforePt: 0 };
   }
+
+  flowLinkedTextBoxes(blocks);
 
   // Footnote plan: per-section lazily-cached layout of each note's content at
   // that section's width (notes referenced only from tables/shape text flow
@@ -1196,7 +1319,7 @@ export function layoutStyledDocument(
   // Float text wrapping: pagination re-wraps an overlapped paragraph with
   // per-line widths; the closure re-runs the paragraph layout at the given
   // column width with those widths.
-  const reflowParagraph = (paragraph: Paragraph, width: number, widths: ReadonlyArray<number>) =>
+  const reflowParagraph = (paragraph: Paragraph, width: number, widths?: ReadonlyArray<number>) =>
     layoutParagraphBlock(paragraph, options, fontResources, imageResources, width, widths);
   const pages = paginateSections(
     blocks,
@@ -1890,16 +2013,138 @@ function frameShape(
 }
 
 /** §17.3.1.11 → §20.4.2.3: the frame's anchor, in the terms floats are placed in. */
+/**
+ * `wps:linkedTxbx` — carry each chain's overflow from one box to the next.
+ * The words all live in the chain's FIRST box; a box shows as many of its lines
+ * as its height holds and hands the rest on, so LinkedTextBoxes.docx reads down
+ * one column and continues at the top of the other. A box that ends a chain
+ * keeps whatever is left, overflowing as it would have anyway.
+ *
+ * The lines are broken at the first box's width, so a chain of boxes of
+ * different widths sets its later columns to the wrong measure; re-breaking
+ * needs the source paragraphs split at the carry point, which the laid-out
+ * lines no longer know.
+ */
+function flowLinkedTextBoxes(blocks: Array<LaidOutBlock>): void {
+  const chains = new Map<string, Array<number>>();
+  blocks.forEach((b, i) => {
+    if (b.kind !== 'shape' || !b.textChain) return;
+    const at = chains.get(b.textChain.id) ?? [];
+    at.push(i);
+    chains.set(b.textChain.id, at);
+  });
+  for (const indices of chains.values()) {
+    if (indices.length < 2) continue;
+    // Document order is not chain order: a continuation may be written first.
+    indices.sort((a, b) => {
+      const sa = (blocks[a] as ShapeBlockLaidOut).textChain?.seq ?? 0;
+      const sb = (blocks[b] as ShapeBlockLaidOut).textChain?.seq ?? 0;
+      return sa - sb;
+    });
+    let carried: Array<LineWithExtras> = [];
+    indices.forEach((idx, n) => {
+      const box = blocks[idx] as ShapeBlockLaidOut;
+      const all = n === 0 ? boxLines(box) : carried;
+      const last = n === indices.length - 1;
+      const room = box.heightPt - box.insetTopPt - box.insetBottomPt;
+      const kept: Array<LineWithExtras> = [];
+      let used = 0;
+      for (const l of all) {
+        const h = computeLineHeight(l.line, l.line.resolved) + l.gapPt;
+        if (!last && kept.length > 0 && used + h > room) break;
+        kept.push(l);
+        used += h;
+      }
+      carried = all.slice(kept.length);
+      blocks[idx] = rebuildBoxLines(box, kept);
+    });
+  }
+}
+
+/** One of a text box's laid-out lines with everything keyed to its index. */
+interface LineWithExtras {
+  readonly line: Line;
+  readonly gapPt: number;
+  readonly chart?: ChartBlockLaidOut;
+  readonly shape?: ShapeBlockLaidOut;
+  readonly table?: TableBlock;
+}
+
+function boxLines(box: ShapeBlockLaidOut): Array<LineWithExtras> {
+  return box.textLines.map((line, i) => ({
+    line,
+    gapPt: box.textLineGaps?.get(i) ?? 0,
+    ...(box.textCharts?.get(i) ? { chart: box.textCharts.get(i)! } : {}),
+    ...(box.textShapes?.get(i) ? { shape: box.textShapes.get(i)! } : {}),
+    ...(box.textTables?.get(i) ? { table: box.textTables.get(i)! } : {}),
+  }));
+}
+
+function rebuildBoxLines(
+  box: ShapeBlockLaidOut,
+  lines: ReadonlyArray<LineWithExtras>,
+): ShapeBlockLaidOut {
+  const charts = new Map<number, ChartBlockLaidOut>();
+  const shapes = new Map<number, ShapeBlockLaidOut>();
+  const tables = new Map<number, TableBlock>();
+  const gaps = new Map<number, number>();
+  let height = 0;
+  lines.forEach((l, i) => {
+    if (l.chart) charts.set(i, l.chart);
+    if (l.shape) shapes.set(i, l.shape);
+    if (l.table) tables.set(i, l.table);
+    if (l.gapPt > 0) gaps.set(i, l.gapPt);
+    height += computeLineHeight(l.line, l.line.resolved) + l.gapPt;
+  });
+  // The maps are keyed BY LINE INDEX, so a box that keeps a different set of
+  // lines needs them rebuilt rather than carried over.
+  const { textCharts: _c, textShapes: _s, textTables: _t, textLineGaps: _g, ...rest } = box;
+  return {
+    ...rest,
+    textLines: lines.map((l) => l.line),
+    ...(charts.size > 0 ? { textCharts: charts } : {}),
+    ...(shapes.size > 0 ? { textShapes: shapes } : {}),
+    ...(tables.size > 0 ? { textTables: tables } : {}),
+    ...(gaps.size > 0 ? { textLineGaps: gaps } : {}),
+    textHeightPt: height,
+  };
+}
+
+/**
+ * §17.3.1.11 — whether the frame is placed DOWN THE PAGE by itself, rather than
+ * where the flow has reached. `w:vAnchor="text"` (the default) measures `w:y`
+ * from the paragraph's own position, so such frames stack as paragraphs do —
+ * and a float takes no flow space, so lifting them out puts every one of them
+ * on the same line: tdf105035_framePrB.docx writes its title and its author
+ * line as text-anchored frames and both landed on the cursor, one over the
+ * other. Only a frame anchored to the page or the margin, or aligned by
+ * keyword, truly stands somewhere of its own.
+ */
+function framePositioned(frame: FrameProperties): boolean {
+  return frame.yAlign !== undefined || (frame.vAnchor !== undefined && frame.vAnchor !== 'text');
+}
+
 function frameFloat(frame: FrameProperties): FloatAnchor {
-  // §17.18.104 — `notBeside` keeps TEXT from standing beside the frame, which
-  // is the band a top-and-bottom wrap makes. The frame's own `w:x`/`w:y` go
-  // with it (the band is placed in the flow), so two frames written side by
-  // side stack instead — tdf100075.docx draws them across the page. Read as a
-  // square wrap they land right and the text runs up beside them, which is the
-  // one thing `notBeside` forbids: tdf104394_lostTextbox.docx then fits on one
-  // page where every reader takes two.
+  // §17.18.104 — `notBeside` is a mode of its own: the frame stands where its
+  // `w:x`/`w:y` put it, and no text may stand BESIDE it. Read as a top-and-
+  // bottom wrap it went back into the flow and lost its x, so two frames
+  // written side by side stacked (tdf100075.docx draws them across the page);
+  // read as a square wrap it landed right and the text ran up beside it, which
+  // is the one thing the mode forbids (tdf104394_lostTextbox.docx then fits on
+  // one page where every reader takes two).
+  // …and a frame that states no position at all is not placed anywhere: its
+  // `w:x`/`w:y` default to the paragraph's own corner, which is the flow. Read
+  // as positioned, two such frames both land on the cursor and print over each
+  // other — tdf105035_framePrB.docx writes its title and its author line that
+  // way, one under the other.
   const wrap: FloatAnchor['wrap'] =
-    frame.wrap === 'none' ? 'none' : frame.wrap === 'notBeside' ? 'topAndBottom' : 'square';
+    frame.wrap === 'none'
+      ? 'none'
+      : frame.wrap === 'notBeside'
+        ? framePositioned(frame)
+          ? 'notBeside'
+          : 'topAndBottom'
+        : 'square';
   const hRel = frame.hAnchor === 'page' ? 'page' : frame.hAnchor === 'margin' ? 'margin' : 'column';
   const vRel =
     frame.vAnchor === 'page' ? 'page' : frame.vAnchor === 'margin' ? 'margin' : 'paragraph';
@@ -2026,7 +2271,10 @@ function layoutBodyElement(
     return layoutTableBlock(el.table, options, fontResources, imageResources, contentWidth);
   }
   if (el.kind === 'image') {
-    return layoutImageBlock(el.image, imageResources, contentWidth, maxHeight, box);
+    const meta = el.image.resource ? imageResources?.get(el.image.resource)?.metafile : undefined;
+    return meta
+      ? layoutMetafileBlock(el.image, meta, options, fontResources, contentWidth, maxHeight, box)
+      : layoutImageBlock(el.image, imageResources, contentWidth, maxHeight, box);
   }
   if (el.kind === 'chart') {
     return layoutChartBlock(el.chart, options, fontResources, contentWidth, maxHeight);
@@ -2103,6 +2351,7 @@ function layoutImageBlock(
     resolvedAlignment,
     resourceName: res?.resourceName ?? '',
     ...(image.outline ? { outline: image.outline } : {}),
+    ...(image.wash ? { wash: image.wash } : {}),
     ...(image.crop ? { crop: image.crop } : {}),
     ...(image.rotation60k ? { rotationDeg: image.rotation60k / 60000 } : {}),
     ...(image.flipH ? { flipH: true } : {}),
@@ -2404,6 +2653,9 @@ function layoutShapeBlock(
       : {}),
     ...(fillColorHex ? { fillColorHex } : {}),
     ...(fillGradient ? { fillGradient } : {}),
+    ...(shape.fill.alpha !== undefined && shape.fill.alpha < 1
+      ? { fillAlpha: shape.fill.alpha }
+      : {}),
     ...(stroke ? { stroke } : {}),
     ...(shape.shadow ? { shadow: shape.shadow } : {}),
     rotation60k: t?.rotation60k ?? 0,
@@ -2418,6 +2670,7 @@ function layoutShapeBlock(
     ...(textTables.size > 0 ? { textTables } : {}),
     ...(textLineGaps.size > 0 ? { textLineGaps } : {}),
     textHeightPt,
+    ...(text?.chain ? { textChain: text.chain } : {}),
     insetLeftPt,
     insetRightPt,
     insetTopPt,
@@ -2431,6 +2684,164 @@ function layoutShapeBlock(
 
 // Build the `cm` matrix that places a shape's local y-up frame on the page at
 // bottom-left (pageX, pageY), rotated about its centre and optionally flipped.
+
+/**
+ * MS-EMF / MS-WMF — a metafile picture as the primitives a chart is made of,
+ * scaled from its own logical box into the box the drawing reserves.
+ *
+ * A metafile IS a little drawing program, and what it draws is paths and words:
+ * the same two things a chart's layout carries, placed in the same local y-up
+ * frame. So one is turned into the other rather than growing a block kind, a
+ * pagination arm and an emitter of its own.
+ */
+function layoutMetafileBlock(
+  image: ImageBlock,
+  pic: MetaPicture,
+  options: StyledRenderOptions,
+  fontResources: ReadonlyMap<string, FontResource>,
+  contentWidth: number,
+  maxHeight?: number,
+  box?: RelativeBox,
+): ChartBlockLaidOut {
+  const placed = layoutImageBlock(image, undefined, contentWidth, maxHeight, box);
+  const widthPt = placed.widthPt;
+  const heightPt = placed.heightPt;
+  const layout = rotateDrawing(
+    metafileDrawing(pic, widthPt, heightPt, options, fontResources),
+    // §20.1.7.6 `a:xfrm @rot` — the drawing's own turn, clockwise. A chart
+    // block has no rotation of its own, so the primitives take it: tdf103001
+    // .docx leans two of its three cliparts and we stood all three upright.
+    (image.rotation60k ?? 0) / 60000,
+    widthPt / 2,
+    heightPt / 2,
+  );
+  const pp = image.paragraphProperties;
+  return {
+    kind: 'chart',
+    widthPt,
+    heightPt,
+    layout,
+    resolvedAlignment: pp.alignment ?? 'left',
+    spacingBeforePt: pp.spacingBefore ?? 0,
+    spacingAfterPt: pp.spacingAfter ?? 0,
+    figureRole: 'Image',
+    ...(image.altText ? { altText: image.altText } : {}),
+    ...(image.float ? { float: image.float } : {}),
+  };
+}
+
+/** The same primitives, turned `deg` CLOCKWISE about a point of the local frame. */
+function rotateDrawing(layout: ChartLayout, deg: number, cx: number, cy: number): ChartLayout {
+  if (!deg) return layout;
+  // The frame is y-up, so a clockwise turn on the page is a negative angle here.
+  const a = (-deg * Math.PI) / 180;
+  const cos = Math.cos(a);
+  const sin = Math.sin(a);
+  const at = (x: number, y: number): { x: number; y: number } => ({
+    x: cx + (x - cx) * cos - (y - cy) * sin,
+    y: cy + (x - cx) * sin + (y - cy) * cos,
+  });
+  return {
+    shapes: layout.shapes.map((sh) => ({
+      ...sh,
+      paths: sh.paths.map((path) => ({
+        ...path,
+        segments: path.segments.map((seg) => {
+          if (seg.op === 'close') return seg;
+          if (seg.op === 'cubic') {
+            const c1 = at(seg.x1, seg.y1);
+            const c2 = at(seg.x2, seg.y2);
+            const e = at(seg.x, seg.y);
+            return { op: 'cubic' as const, x1: c1.x, y1: c1.y, x2: c2.x, y2: c2.y, x: e.x, y: e.y };
+          }
+          const p = at(seg.x, seg.y);
+          return { op: seg.op, x: p.x, y: p.y };
+        }),
+      })),
+    })),
+    texts: layout.texts.map((t) => {
+      const p = at(t.x, t.y);
+      return { ...t, x: p.x, y: p.y, rotationDeg: (t.rotationDeg ?? 0) - deg };
+    }),
+  };
+}
+
+/**
+ * A metafile's primitives, scaled from its own logical box into a `widthPt` ×
+ * `heightPt` one and turned y-up about its bottom-left corner — the frame both
+ * a chart block and an inline picture token are drawn in.
+ */
+function metafileDrawing(
+  pic: MetaPicture,
+  widthPt: number,
+  heightPt: number,
+  options: StyledRenderOptions,
+  fontResources: ReadonlyMap<string, FontResource>,
+): ChartLayout {
+  const sx = widthPt / pic.width;
+  const sy = heightPt / pic.height;
+  // The metafile's y runs DOWN from its own top; the primitives' frame runs UP
+  // from the box's bottom-left corner.
+  const mapX = (x: number): number => (x - pic.left) * sx;
+  const mapY = (y: number): number => heightPt - (y - pic.top) * sy;
+
+  const shapes: Array<ChartShapePrim> = [];
+  const texts: Array<ChartTextPrim> = [];
+  for (const prim of pic.prims) {
+    if (prim.kind === 'path') {
+      shapes.push({
+        paths: prim.paths.map((path) => ({
+          ...path,
+          segments: path.segments.map((seg) =>
+            seg.op === 'close'
+              ? seg
+              : seg.op === 'cubic'
+                ? {
+                    op: 'cubic' as const,
+                    x1: mapX(seg.x1),
+                    y1: mapY(seg.y1),
+                    x2: mapX(seg.x2),
+                    y2: mapY(seg.y2),
+                    x: mapX(seg.x),
+                    y: mapY(seg.y),
+                  }
+                : { op: seg.op, x: mapX(seg.x), y: mapY(seg.y) },
+          ),
+        })),
+        ...(prim.fillColorHex !== undefined ? { fillColorHex: prim.fillColorHex } : {}),
+        ...(prim.stroke
+          ? { stroke: { ...prim.stroke, widthPt: Math.max(0.25, prim.stroke.widthPt * sx) } }
+          : {}),
+      });
+      continue;
+    }
+    if (prim.kind !== 'text') continue;
+    const { variant } = options.registry.resolveByStyle(prim.bold === true, prim.italic === true);
+    const font = fontResources.get(variant);
+    if (!font) continue;
+    const sizePt = Math.max(1, prim.sizeLu * sy);
+    const line = makeChartLabelLine(prim.text, font, sizePt, prim.colorHex);
+    const shift =
+      prim.alignH === 'center'
+        ? -line.contentWidthPt / 2
+        : prim.alignH === 'right'
+          ? -line.contentWidthPt
+          : 0;
+    // §2.1.2.4 — the point is the text's TOP unless TA_BASELINE says otherwise,
+    // and a baseline sits about four fifths of the em below the top.
+    const baselineY = mapY(prim.y) - (prim.alignBaseline ? 0 : sizePt * 0.8);
+    texts.push({
+      line,
+      x: mapX(prim.x) + shift,
+      y: baselineY,
+      // The escapement turns the text about its own origin, in tenths of a
+      // degree counter-clockwise — the same direction a chart's labels turn.
+      ...(prim.escapement ? { rotationDeg: prim.escapement / 10 } : {}),
+    });
+  }
+
+  return { shapes, texts };
+}
 
 function layoutChartBlock(
   block: ChartBlock,
@@ -2862,6 +3273,20 @@ function collectImageResources(
     // box still reserves space). prepareImage is the pure decode/validate
     // expert; the emit phase replays its result, so skip semantics match by
     // construction.
+    // MS-EMF / MS-WMF — a drawing program, not a raster. It is read here into
+    // the primitives the layout draws; nothing embeds it, so it takes no
+    // resource name.
+    if (isEmf(bytes) || isWmf(bytes)) {
+      try {
+        out.set(resourceId, {
+          resourceName: '',
+          metafile: isEmf(bytes) ? readEmf(bytes) : readWmf(bytes),
+        });
+      } catch {
+        // A malformed metafile is one that draws nothing, as before.
+      }
+      continue;
+    }
     let prepared: PreparedImage;
     try {
       prepared = prepareImage(bytes, { flattenAlpha });
@@ -3020,6 +3445,81 @@ function emitShapeText(
 // One shape, `bottomYUp` being its own bottom edge. §20.5.2.17 — a group
 // draws nothing itself and then draws its members, each at the corner it
 // holds within the group's box.
+/**
+ * §20.4.2.4 — what a cell needs to place a drawing anchored inside it: the
+ * page's float layers to draw into, the page boxes an anchor may name, and the
+ * exclusion the wrapped ones claim from the body text.
+ */
+interface CellAnchorCtx {
+  /** The layer a float of this z-order belongs in, behind or in front. */
+  readonly sink: (behind: boolean, zOrder: number | undefined) => Array<PageItem>;
+  /** The page and margin boxes; the column and anchor are replaced per cell. */
+  readonly frame: FloatFrame;
+  readonly exclude: (
+    f: FloatAnchor,
+    x: number,
+    topYUp: number,
+    widthPt: number,
+    heightPt: number,
+  ) => void;
+  readonly pageHeight: number;
+}
+
+/** The page a table is being drawn onto, as a cell's floats need to see it. */
+function cellAnchorCtx(asm: PageAssembler): CellAnchorCtx {
+  return {
+    sink: (behind, zOrder) =>
+      PageAssembler.zSink(behind ? asm.floatsBehind : asm.floatsFront, zOrder),
+    frame: asm.floatFrame(),
+    exclude: (f, x, topYUp, widthPt, heightPt) => {
+      asm.excludeFloat(f, x, topYUp, widthPt, heightPt);
+    },
+    pageHeight: asm.ctx.pageHeight,
+  };
+}
+
+// One drawing anchored in a cell, drawn at the place its anchor names.
+function emitCellFloat(cf: CellFloat, ctx: CellAnchorCtx, frame: FloatFrame): void {
+  const float = cf.block.float;
+  if (!float) return;
+  const x = floatXIn(frame, float, cf.block.widthPt);
+  const topYUp = floatTopYUpIn(frame, float, cf.block.heightPt);
+  const sink = ctx.sink(float.behind === true, float.zOrder);
+  if (cf.block.kind === 'shape') {
+    emitShapeItems(cf.block, x, topYUp - cf.block.heightPt, sink, ctx.pageHeight, undefined);
+  } else {
+    const ins = cf.block.drawInset;
+    sink.push({
+      type: 'image',
+      x: pt(x + (ins?.dxPt ?? 0)),
+      y: pt(ctx.pageHeight - (topYUp - (ins?.dyTopPt ?? 0))),
+      width: pt(ins?.widthPt ?? cf.block.widthPt),
+      height: pt(ins?.heightPt ?? cf.block.heightPt),
+      imageResourceName: cf.block.resourceName,
+      ...(cf.block.crop ? { crop: cf.block.crop } : {}),
+      ...(cf.block.wash ? { wash: cf.block.wash } : {}),
+      ...(cf.block.rotationDeg ? { rotationDeg: cf.block.rotationDeg } : {}),
+      ...(cf.block.flipH ? { flipH: true } : {}),
+      ...(cf.block.flipV ? { flipV: true } : {}),
+    });
+    if (cf.block.outline) {
+      sink.push(
+        ...pictureOutlineItems(
+          cf.block.outline,
+          x + (ins?.dxPt ?? 0),
+          ctx.pageHeight - (topYUp - (ins?.dyTopPt ?? 0)),
+          ins?.widthPt ?? cf.block.widthPt,
+          ins?.heightPt ?? cf.block.heightPt,
+          undefined,
+        ),
+      );
+    }
+  }
+  if (float.wrap !== 'none') {
+    ctx.exclude(float, x, topYUp, cf.block.widthPt, cf.block.heightPt);
+  }
+}
+
 function emitShapeItems(
   sh: ShapeBlockLaidOut,
   x: number,
@@ -3089,6 +3589,7 @@ function emitShapeItems(
         paths: sh.paths,
         ...(sh.fillColorHex ? { fillColorHex: sh.fillColorHex } : {}),
         ...(sh.fillGradient ? { fillGradient: sh.fillGradient } : {}),
+        ...(sh.fillAlpha !== undefined ? { fillAlpha: sh.fillAlpha } : {}),
         ...(sh.stroke ? { stroke: sh.stroke } : {}),
         ...(sh.shadow ? { shadow: sh.shadow } : {}),
         transform: flipTransform(
@@ -3282,6 +3783,7 @@ function drawBlocksSequentially(
         height: pt(block.heightPt),
         imageResourceName: block.resourceName,
         ...(block.crop ? { crop: block.crop } : {}),
+        ...(block.wash ? { wash: block.wash } : {}),
         ...(block.rotationDeg ? { rotationDeg: block.rotationDeg } : {}),
         ...(block.flipH ? { flipH: true } : {}),
         ...(block.flipV ? { flipV: true } : {}),
@@ -3463,6 +3965,7 @@ function collectFontResources(
   body: ReadonlyArray<BodyElement>,
   headersFooters: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
   options: StyledRenderOptions,
+  imageResources: ReadonlyMap<string, ImageResource>,
 ): Map<string, FontResource> {
   const used = new Map<string, { parsed: ParsedTtf; gids: Set<number> }>();
   const addRun = (
@@ -3521,9 +4024,28 @@ function collectFontResources(
     }
   };
 
+  // MS-EMF / MS-WMF — the metafile's own words. Left out of the walk they were
+  // drawn with glyph ids the subset never reserved, which is to say not drawn
+  // at all: embedded-xlsx.docx's preview lost every label and mathtype.docx
+  // its whole equation.
+  const addMetafile = (resource: string | undefined): void => {
+    const pic = resource ? imageResources.get(resource)?.metafile : undefined;
+    for (const prim of pic?.prims ?? []) {
+      if (prim.kind !== 'text') continue;
+      const reg = options.registry.resolveByStyle(prim.bold === true, prim.italic === true);
+      let bucket = used.get(reg.variant);
+      if (!bucket) {
+        bucket = { parsed: reg.parsed, gids: new Set<number>() };
+        used.set(reg.variant, bucket);
+      }
+      for (const ch of prim.text) bucket.gids.add(reg.parsed.glyphForCodepoint(ch.codePointAt(0)!));
+    }
+  };
+
   const visit = (elements: ReadonlyArray<BodyElement>) => {
     for (const el of elements) {
       if (el.kind === 'paragraph') {
+        for (const run of el.paragraph.runs) addMetafile(run.inlineImage?.resource);
         // §17.3.2.5/33 — a run set in capitals is DRAWN in them, so those are
         // the glyphs the subset needs. Collected from the stored text instead,
         // capitalized.docx asked for "capitalized" and drew "CAPITALIZED" out
@@ -3578,7 +4100,10 @@ function collectFontResources(
           for (const child of sh.children ?? []) shapeText(child.shape);
         };
         shapeText(el.shape);
-      } else if (el.kind === 'chart') {
+      } else if (el.kind === 'image') {
+        addMetafile(el.image.resource);
+      } else {
+        // …and what is left is a chart.
         const chart = options.charts?.get(el.chart.chartRelId);
         if (chart) {
           const reg = options.registry.resolveByStyle(false, false);
@@ -3889,6 +4414,10 @@ interface RunPlan {
   readonly imageOutline?: PictureOutline;
   /** §20.1.8.40 — the shadow the inline picture casts. */
   readonly imageShadow?: ShapeShadow;
+  /** §14.1.2.10 — the wash the inline picture is drawn through. */
+  readonly imageWash?: { readonly gain: number; readonly black: number };
+  /** MS-EMF / MS-WMF — the primitives an inline metafile picture draws. */
+  readonly imageMetafile?: MetafileDrawing;
   readonly imageCrop?: ImageCrop;
   /** §20.1.7.6 — the picture's rotation, in degrees clockwise. */
   readonly imageRotationDeg?: number;
@@ -4054,8 +4583,22 @@ function tokenizeParagraph(
         imageWidthPt: widthPt,
         imageHeightPt: heightPt,
         imageResourceName: res?.resourceName ?? '',
+        // MS-EMF / MS-WMF — an inline metafile has no raster to place: it
+        // carries the primitives the emitter plays inside the token's box.
+        ...(res?.metafile
+          ? {
+              imageMetafile: metafileDrawing(
+                res.metafile,
+                drawBox?.widthPt ?? widthPt,
+                drawBox?.heightPt ?? heightPt,
+                options,
+                fontResources,
+              ),
+            }
+          : {}),
         ...(run.inlineImage.outline ? { imageOutline: run.inlineImage.outline } : {}),
         ...(run.inlineImage.shadow ? { imageShadow: run.inlineImage.shadow } : {}),
+        ...(run.inlineImage.wash ? { imageWash: run.inlineImage.wash } : {}),
         ...(run.inlineImage.crop ? { imageCrop: run.inlineImage.crop } : {}),
         ...(run.inlineImage.rotation60k
           ? { imageRotationDeg: run.inlineImage.rotation60k / 60000 }
@@ -4179,6 +4722,8 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         heightPt: plan.imageHeightPt,
         ...(plan.imageOutline ? { outline: plan.imageOutline } : {}),
         ...(plan.imageShadow ? { shadow: plan.imageShadow } : {}),
+        ...(plan.imageWash ? { wash: plan.imageWash } : {}),
+        ...(plan.imageMetafile ? { metafile: plan.imageMetafile } : {}),
         ...(plan.imageCrop ? { crop: plan.imageCrop } : {}),
         ...(plan.imageRotationDeg ? { rotationDeg: plan.imageRotationDeg } : {}),
         ...(plan.imageFlipH ? { flipH: true } : {}),
@@ -4259,6 +4804,8 @@ function tokenizePlansBidi(
         heightPt: plan.imageHeightPt,
         ...(plan.imageOutline ? { outline: plan.imageOutline } : {}),
         ...(plan.imageShadow ? { shadow: plan.imageShadow } : {}),
+        ...(plan.imageWash ? { wash: plan.imageWash } : {}),
+        ...(plan.imageMetafile ? { metafile: plan.imageMetafile } : {}),
         ...(plan.imageCrop ? { crop: plan.imageCrop } : {}),
         ...(plan.imageRotationDeg ? { rotationDeg: plan.imageRotationDeg } : {}),
         ...(plan.imageFlipH ? { flipH: true } : {}),
@@ -5591,11 +6138,19 @@ function layoutTableRow(
       columnXOffsets,
       rowIdx,
       rowCount,
+      ...(row.properties.cantSplit ? { cantSplit: true } : {}),
     };
   } else if (row.properties.height && row.properties.heightRule === 'atLeast') {
     heightPt = Math.max(heightPt, row.properties.height);
   }
-  return { heightPt, cells, columnXOffsets, rowIdx, rowCount };
+  return {
+    heightPt,
+    cells,
+    columnXOffsets,
+    rowIdx,
+    rowCount,
+    ...(row.properties.cantSplit ? { cantSplit: true } : {}),
+  };
 }
 
 /**
@@ -5638,6 +6193,7 @@ function imageRun(image: ImageBlock): Paragraph['runs'][number] {
     inlineImage: {
       ...(image.resource ? { resource: image.resource } : {}),
       ...(image.outline ? { outline: image.outline } : {}),
+      ...(image.wash ? { wash: image.wash } : {}),
       width: image.width,
       height: image.height,
       ...(image.crop ? { crop: image.crop } : {}),
@@ -5686,6 +6242,7 @@ function layoutTableCell(
   const lines: Array<Line> = [];
   const nestedTables: Array<{ block: TableBlock; afterLine: number }> = [];
   const cellShapes: Array<{ block: ShapeBlockLaidOut; afterLine: number }> = [];
+  const cellFloats: Array<CellFloat> = [];
   // §17.3.1.33 — the gap a paragraph keeps from the one above it, by the index
   // of the line it opens with. A cell's lines are one flat list, so the gaps
   // ride beside them: counted in the height but never drawn, the two paragraphs
@@ -5808,7 +6365,24 @@ function layoutTableCell(
         contentHeightPt += block.heightPt;
         pendingGapPt = block.spacingAfterPt;
       }
-      // A chart or a FLOATING picture inside a cell is not yet rendered.
+      // §20.4.2.4 with `layoutInCell` — a drawing ANCHORED in the cell rather
+      // than standing in its flow. It keeps its own place, so it takes no room
+      // in the cell and is drawn from the cell's box at pagination, where the
+      // page position is known: fdo68607.docx hangs its title over the first
+      // cell of the glossary and tdf129888dml.docx its page number over the
+      // last, and both were dropped for having nowhere to stand.
+      else if (el.kind === 'image' && isOutOfFlowFloat(el.image.float)) {
+        cellFloats.push({
+          block: layoutImageBlock(el.image, imageResources, innerWidth),
+          afterLine: lines.length,
+        });
+      } else if (el.kind === 'shape' && isOutOfFlowFloat(el.shape.float)) {
+        cellFloats.push({
+          block: layoutShapeBlock(el.shape, options, fontResources, imageResources, innerWidth),
+          afterLine: lines.length,
+        });
+      }
+      // A chart inside a cell is not yet rendered.
     }
     // …and the space after the LAST paragraph, which nothing follows to claim
     // it: the cell is that much taller, even though no line stands there.
@@ -5846,6 +6420,7 @@ function layoutTableCell(
     ...(lineGaps.size > 0 ? { lineGaps } : {}),
     ...(nestedTables.length > 0 ? { nestedTables } : {}),
     ...(cellShapes.length > 0 ? { shapes: cellShapes } : {}),
+    ...(cellFloats.length > 0 ? { floats: cellFloats } : {}),
     contentHeightPt,
     totalHeightPt,
     ...(cell.properties.verticalAlign ? { verticalAlign: cell.properties.verticalAlign } : {}),
@@ -6112,6 +6687,12 @@ class PageAssembler {
   /** The current column's width (the section content width when single-column). */
   colWidth = (): number => this.ctx.columns?.[this.colIdx]?.widthPt ?? this.ctx.contentWidth;
   /**
+   * The measure the section's blocks were BROKEN at — the first column's, since
+   * that is all the block pass can know. A column of another width has to
+   * re-break what lands in it.
+   */
+  builtWidth = (): number => this.ctx.columns?.[0]?.widthPt ?? this.ctx.contentWidth;
+  /**
    * Whether the current column is already in use.
    *
    * This gates every overflow break, so that a block too tall for an empty page
@@ -6286,74 +6867,53 @@ class PageAssembler {
    * Side-wrapping floats (wrapSquare/tight/through): rectangles the body text
    * must flow around. Page-scoped, like the float graphics.
    */
-  exclusions: Array<{ x0: number; x1: number; topYUp: number; bottomYUp: number }> = [];
+  exclusions: Array<{
+    x0: number;
+    x1: number;
+    topYUp: number;
+    bottomYUp: number;
+    /** §20.4.2.3 `@wrapText` — whether text may stand on BOTH sides of it. */
+    wrapBothSides?: boolean;
+  }> = [];
   /**
    * Claim the area a side-wrapping float keeps to itself: its own box grown by
    * the §20.4.2.3 `distT/B/L/R` stand-off the anchor asks for.
    */
   excludeFloat = (f: FloatAnchor, x: number, topYUp: number, w: number, h: number): void => {
     const d = f.wrapDist;
+    // §17.18.104 `notBeside` — the band is the whole COLUMN, however narrow the
+    // frame is: what the mode forbids is text beside it, not text near it.
+    const wide = f.wrap === 'notBeside';
     this.exclusions.push({
-      x0: x - (d?.leftPt ?? 0),
-      x1: x + w + (d?.rightPt ?? 0),
+      x0: wide ? this.colLeft() : x - (d?.leftPt ?? 0),
+      x1: wide ? this.colLeft() + this.colWidth() : x + w + (d?.rightPt ?? 0),
       topYUp: topYUp + (d?.topPt ?? 0),
       bottomYUp: topYUp - h - (d?.bottomPt ?? 0),
+      ...(f.wrapSide === 'bothSides' ? { wrapBothSides: true } : {}),
     });
   };
+  /** The frame a float anchored in the body flow is resolved against. */
+  floatFrame = (): FloatFrame => ({
+    pageLeft: 0,
+    pageWidth: this.ctx.pageWidth,
+    pageTopYUp: this.ctx.pageHeight,
+    pageBottomYUp: 0,
+    marginLeft: this.ctx.marginLeft,
+    contentWidth: this.ctx.contentWidth,
+    marginTopYUp: this.ctx.pageHeight - this.ctx.marginTop,
+    marginBottomYUp: this.ctx.marginBottom,
+    columnLeft: this.colLeft(),
+    columnWidth: this.colWidth(),
+    anchorY: this.cursorY,
+  });
   /** The float's left edge on the page, resolved from its horizontal anchor. */
-  floatX = (f: FloatAnchor, widthPt: number): number => {
-    const h = f.posH;
-    if (!h) return this.colLeft();
-    // §20.4.3.3 — the margin BANDS: the strip between the page edge and the
-    // text area on that side, which is where a marginal note is placed.
-    const textRight = this.ctx.marginLeft + this.ctx.contentWidth;
-    const base =
-      h.relativeFrom === 'page' || h.relativeFrom === 'leftMargin'
-        ? 0
-        : h.relativeFrom === 'column'
-          ? this.colLeft()
-          : h.relativeFrom === 'rightMargin'
-            ? textRight
-            : this.ctx.marginLeft;
-    const span =
-      h.relativeFrom === 'page'
-        ? this.ctx.pageWidth
-        : h.relativeFrom === 'column'
-          ? this.colWidth()
-          : h.relativeFrom === 'leftMargin'
-            ? this.ctx.marginLeft
-            : h.relativeFrom === 'rightMargin'
-              ? this.ctx.pageWidth - textRight
-              : this.ctx.contentWidth;
-    if (h.align === 'center') return base + (span - widthPt) / 2;
-    if (h.align === 'right') return base + span - widthPt;
-    return base + (h.offsetPt ?? 0);
-  };
+  floatX = (f: FloatAnchor, widthPt: number): number => floatXIn(this.floatFrame(), f, widthPt);
   /**
    * The drawing's TOP in the y-up cursor frame. Paragraph/line-relative offsets
    * hang off the anchoring paragraph's current position.
    */
-  floatTopYUp = (f: FloatAnchor, heightPt = 0): number => {
-    const v = f.posV;
-    if (!v) return this.cursorY;
-    // §20.4.3.1 — a keyword position: within the page or the margin box.
-    if (v.align !== undefined) {
-      const page = v.relativeFrom === 'page';
-      const topYUp = page ? this.ctx.pageHeight : this.ctx.pageHeight - this.ctx.marginTop;
-      const bottomYUp = page ? 0 : this.ctx.marginBottom;
-      if (v.align === 'top') return topYUp;
-      if (v.align === 'bottom') return bottomYUp + heightPt;
-      return bottomYUp + (topYUp - bottomYUp + heightPt) / 2;
-    }
-    // §20.4.3.4 — the TOP margin band starts at the page's own top edge; the
-    // BOTTOM one starts where the text area ends.
-    if (v.relativeFrom === 'page' || v.relativeFrom === 'topMargin')
-      return this.ctx.pageHeight - (v.offsetPt ?? 0);
-    if (v.relativeFrom === 'bottomMargin') return this.ctx.marginBottom - (v.offsetPt ?? 0);
-    if (v.relativeFrom === 'margin')
-      return this.ctx.pageHeight - this.ctx.marginTop - (v.offsetPt ?? 0);
-    return this.cursorY - (v.offsetPt ?? 0);
-  };
+  floatTopYUp = (f: FloatAnchor, heightPt = 0): number =>
+    floatTopYUpIn(this.floatFrame(), f, heightPt);
   /**
    * Tagged PDF: the stack of open list levels (for L/LI/LBody nesting). Cleared
    * whenever a non-list-item block interrupts the run of list paragraphs.
@@ -6398,7 +6958,9 @@ class PageAssembler {
   exclusionAt = (
     yTop: number,
     h: number,
-  ): { x0: number; x1: number; topYUp: number; bottomYUp: number } | undefined => {
+  ):
+    | { x0: number; x1: number; topYUp: number; bottomYUp: number; wrapBothSides?: boolean }
+    | undefined => {
     const cl = this.colLeft();
     const cr = cl + this.colWidth();
     for (const e of this.exclusions) {
@@ -6416,7 +6978,16 @@ class PageAssembler {
   lineGeometryAt = (
     yTop: number,
     h: number,
-  ): { width: number; xOffset: number; blockedUntilYUp?: number } => {
+  ): {
+    width: number;
+    xOffset: number;
+    blockedUntilYUp?: number;
+    /**
+     * §20.4.2.3 `wrapText="bothSides"` — the OTHER side of the float, filled at
+     * the same baseline once this one is full.
+     */
+    pair?: { width: number; xOffset: number };
+  } => {
     const full = this.colWidth();
     const e = this.exclusionAt(yTop, h);
     if (!e) return { width: full, xOffset: 0 };
@@ -6429,6 +7000,13 @@ class PageAssembler {
     // spanning the whole measure and carries the paragraph's tail underneath.
     if (Math.max(leftRoom, rightRoom) < MIN_WRAP_WIDTH) {
       return { width: full, xOffset: 0, blockedUntilYUp: e.bottomYUp };
+    }
+    // Room on BOTH sides: the text fills the left gap and carries on in the
+    // right one at the same baseline, which is what `bothSides` asks for and
+    // what fdo65718.docx sets its paragraph around a plane icon to do. Taking
+    // the wider side alone left the narrow one blank.
+    if (leftRoom >= MIN_WRAP_WIDTH && rightRoom >= MIN_WRAP_WIDTH && e.wrapBothSides) {
+      return { width: leftRoom, xOffset: 0, pair: { width: rightRoom, xOffset: full - rightRoom } };
     }
     if (rightRoom >= leftRoom) return { width: rightRoom, xOffset: full - rightRoom };
     return { width: leftRoom, xOffset: 0 };
@@ -6461,6 +7039,8 @@ class PageAssembler {
         continue;
       }
       widths.push(g.width);
+      // The pair is the same baseline's other half: both widths, one step down.
+      if (g.pair) widths.push(g.pair.width);
       if (g.width < this.colWidth()) narrowed = true;
       // The scan stops at the first full-width line PAST the float — stopping
       // at any full-width line gave up before ever reaching one anchored part
@@ -6808,11 +7388,12 @@ function paginateSections(
   // §17.13.6.2 — out-param: bookmark name → its destination (the page and
   // y-up top of the anchoring paragraph's first line).
   bookmarkPositions?: Map<string, BookmarkPosition>,
-  // Float text wrapping: re-runs a paragraph's layout with per-line widths.
+  // Re-runs a paragraph's layout at a given measure — with per-line widths for
+  // float wrapping, or with none to simply re-break it at another width.
   reflowParagraph?: (
     paragraph: Paragraph,
     width: number,
-    widths: ReadonlyArray<number>,
+    widths?: ReadonlyArray<number>,
   ) => ParagraphBlock,
   // §17.2.1 — the resource name of a PICTURE page background: the resource
   // table is the only thing that knows it, and it lives a caller away.
@@ -6905,9 +7486,19 @@ function paginateSections(
       // it with per-line widths (the source paragraph re-lays at the column
       // width); the line loop below adds the matching x offsets.
       let pb = block;
+      // §17.6.4 `w:equalWidth="0"` — the blocks were all broken at the FIRST
+      // column's measure, because nothing knows which column a block lands in
+      // until it is placed. In a section whose columns differ, a paragraph that
+      // begins in another one is re-broken at ITS width: fdo77812.docx sets a
+      // 132pt column beside a 300pt one and we set the wide one narrow, which
+      // cost a page.
+      const colW = asm.colWidth();
+      if (reflowParagraph && pb.source && Math.abs(colW - asm.builtWidth()) > 0.5) {
+        pb = reflowParagraph(pb.source, colW);
+      }
       if (reflowParagraph && pb.source && asm.exclusions.length > 0) {
-        const widths = asm.lineWidthsFor(block, asm.cursorY);
-        if (widths) pb = reflowParagraph(pb.source, asm.colWidth(), widths);
+        const widths = asm.lineWidthsFor(pb, asm.cursorY);
+        if (widths) pb = reflowParagraph(pb.source, colW, widths);
       }
       // Tagged PDF: a plain paragraph → one P (or heading) element; a list item
       // → an L/LI/LBody/P built on the nesting stack. Its lines all reference
@@ -6945,6 +7536,9 @@ function paginateSections(
         if (lang && lang !== defaultLang) builder.node(structId).lang = lang;
       }
       let firstLineOfBlock = true;
+      // The x of the far side of a float, when the line before this one filled
+      // the near side of it and left this one its other half.
+      let pairPending: number | undefined;
       for (const [lineIdx, line] of pb.lines.entries()) {
         // §17.3.3.1 — the line after a column break starts the next column,
         // even when this one has room to spare.
@@ -6978,15 +7572,22 @@ function paginateSections(
             }
           }
         }
-        // A float that leaves no room beside it pushes the line under itself.
-        // Two of them stacked push twice, so the walk repeats — bounded, since
-        // each step lands strictly below the exclusion it cleared.
-        for (let guard = 0; guard < 8 && asm.exclusions.length > 0; guard++) {
-          const blocked = asm.lineGeometryAt(asm.cursorY, h).blockedUntilYUp;
-          if (blocked === undefined || blocked >= asm.cursorY) break;
-          asm.cursorY = blocked;
+        // §20.4.2.3 `bothSides` — this line is the RIGHT half of the baseline
+        // the last one opened, on the far side of the float between them: it
+        // stands at that same baseline rather than a line below it.
+        const pairedNow = pairPending;
+        pairPending = undefined;
+        if (pairedNow === undefined) {
+          // A float that leaves no room beside it pushes the line under itself.
+          // Two of them stacked push twice, so the walk repeats — bounded, since
+          // each step lands strictly below the exclusion it cleared.
+          for (let guard = 0; guard < 8 && asm.exclusions.length > 0; guard++) {
+            const blocked = asm.lineGeometryAt(asm.cursorY, h).blockedUntilYUp;
+            if (blocked === undefined || blocked >= asm.cursorY) break;
+            asm.cursorY = blocked;
+          }
+          asm.cursorY -= h;
         }
-        asm.cursorY -= h;
         const indentLeft =
           pb.resolved.indentLeft + (line.firstLine ? pb.resolved.indentFirstLine : 0);
         const offset = alignmentOffset(
@@ -6997,8 +7598,18 @@ function paginateSections(
         const baselineY = pt(
           asm.ctx.pageHeight - (asm.cursorY + lineBaselineOffset(line, pb.resolved)),
         );
-        const exclusionShift =
-          asm.exclusions.length > 0 ? asm.lineGeometryAt(asm.cursorY + h, h).xOffset : 0;
+        const geometry =
+          asm.exclusions.length > 0 ? asm.lineGeometryAt(asm.cursorY + h, h) : undefined;
+        const exclusionShift = pairedNow ?? geometry?.xOffset ?? 0;
+        // …and if the float here leaves room on both sides, the NEXT line fills
+        // the other one at this same baseline.
+        if (
+          pairedNow === undefined &&
+          geometry?.pair &&
+          Math.abs(line.availableWidthPt - geometry.width) < 1
+        ) {
+          pairPending = geometry.pair.xOffset;
+        }
         const originX = asm.colLeft() + indentLeft + offset + exclusionShift;
         if (markerLblId !== undefined && line === firstLine) {
           // Marker glyphs → Lbl, the rest of the line → P. Both segments keep
@@ -7071,6 +7682,7 @@ function paginateSections(
           height: pt(ins?.heightPt ?? block.heightPt),
           imageResourceName: block.resourceName,
           ...(block.crop ? { crop: block.crop } : {}),
+          ...(block.wash ? { wash: block.wash } : {}),
           ...(block.rotationDeg ? { rotationDeg: block.rotationDeg } : {}),
           ...(block.flipH ? { flipH: true } : {}),
           ...(block.flipV ? { flipV: true } : {}),
@@ -7151,7 +7763,9 @@ function paginateSections(
       // stored transform translates to the chart box's bottom-left (x, y in the
       // internal y-up cursor frame) composed with the page flip. The whole
       // chart is one Figure (alt = its title); its shapes + labels carry that id.
-      const figId = builder ? createFigure(builder, block.altText, 'Chart') : undefined;
+      const figId = builder
+        ? createFigure(builder, block.altText, block.figureRole ?? 'Chart')
+        : undefined;
       const emitChartAt = (x: number, bottomYUp: number, sink: Array<PageItem>) => {
         sink.push(...chartPageItems(block, x, bottomYUp, asm.ctx.pageHeight, figId));
       };
@@ -7208,7 +7822,17 @@ function paginateSections(
         );
         let rowY = fy;
         for (const row of block.rows) {
-          emitRowChunk(sink, row, fx, rowY, asm.ctx.pageHeight, colCount);
+          emitRowChunk(
+            sink,
+            row,
+            fx,
+            rowY,
+            asm.ctx.pageHeight,
+            colCount,
+            undefined,
+            undefined,
+            cellAnchorCtx(asm),
+          );
           rowY -= row.heightPt;
         }
         if (block.float.wrap !== 'none') {
@@ -7252,10 +7876,21 @@ function paginateSections(
             return b.create('P', cellNode).id;
           });
         }
+        // §17.4.6 — a row that will not fit is BROKEN at the page's edge, not
+        // moved whole: Word splits a row unless `w:cantSplit` forbids it. The
+        // first piece takes the room left here and the rest a page apiece, so
+        // table-row-data-displayed-twice.docx's one 713pt row now ends where
+        // the page does instead of printing over what follows.
+        const room = asm.cursorY - asm.bottomLimit();
+        const page = asm.ctx.pageContentHeight;
         const chunks =
-          row.heightPt > asm.ctx.pageContentHeight
-            ? splitRowIntoChunks(row, asm.ctx.pageContentHeight)
-            : [row];
+          !row.cantSplit && row.heightPt > room && asm.colHasContent() && room > 0
+            ? splitRowIntoChunks(row, room, page)
+            : row.heightPt > page
+              ? // Taller than any page: chunked whatever the row says, because
+                // the alternative is losing everything past the first page.
+                splitRowIntoChunks(row, page)
+              : [row];
 
         for (let ci = 0; ci < chunks.length; ci++) {
           const chunk = chunks[ci]!;
@@ -7310,6 +7945,7 @@ function paginateSections(
             colCount,
             cellStructIds,
             mergedHeights,
+            cellAnchorCtx(asm),
           );
           asm.cursorY -= chunk.heightPt;
           // Only the table's last row paints its bottom edge — every other
@@ -7459,6 +8095,10 @@ function emitRowChunk(
   colCount: number,
   cellStructIds?: ReadonlyArray<number | undefined>,
   mergedHeights?: ReadonlyArray<number | undefined>,
+  // §20.4.2.4 — where a drawing ANCHORED in a cell goes, and the page boxes it
+  // is placed against. Absent for the paths that have no page to place one on
+  // (a spreadsheet's cells, a nested row already inside one).
+  anchored?: CellAnchorCtx,
 ): void {
   const rowTop = cursorY;
   const rowBottom = cursorY - row.heightPt;
@@ -7678,7 +8318,17 @@ function emitRowChunk(
         if (nt.afterLine !== n) continue;
         for (const nrow of nt.block.rows) {
           const nestedIds = structId !== undefined ? nrow.cells.map(() => structId) : undefined;
-          emitRowChunk(out, nrow, nestedX, textY, pageHeight, nt.block.colCount, nestedIds);
+          emitRowChunk(
+            out,
+            nrow,
+            nestedX,
+            textY,
+            pageHeight,
+            nt.block.colCount,
+            nestedIds,
+            undefined,
+            anchored,
+          );
           textY -= nrow.heightPt;
         }
       }
@@ -7691,6 +8341,38 @@ function emitRowChunk(
         );
         textY -= cs.block.heightPt;
         emitShapeItems(cs.block, nestedX + offset, textY, out, pageHeight, structId);
+      }
+      // §20.4.2.4 `layoutInCell` — a drawing anchored in the cell. Its COLUMN
+      // is the cell's content box and its paragraph is the line it hangs off;
+      // page- and margin-relative anchors reach past the table to the page, as
+      // they do anywhere else.
+      for (const cf of cell.floats ?? []) {
+        if (cf.afterLine !== n || !anchored) continue;
+        const inner = cell.widthPt - cell.padLeftPt - cell.padRightPt;
+        const cellTop = rowTop - cell.padTopPt;
+        const cellBottom = rowTop - (mergedHeights?.[i] ?? row.heightPt) + cell.padBottomPt;
+        // §20.4.2.3 `@layoutInCell` — with it (the default) every box the
+        // anchor can name IS this cell; without it the drawing reaches past
+        // the table to the page's own boxes.
+        const own = cf.block.float?.inCell !== false;
+        emitCellFloat(cf, anchored, {
+          ...anchored.frame,
+          ...(own
+            ? {
+                pageLeft: nestedX,
+                pageWidth: inner,
+                pageTopYUp: cellTop,
+                pageBottomYUp: cellBottom,
+                marginLeft: nestedX,
+                contentWidth: inner,
+                marginTopYUp: cellTop,
+                marginBottomYUp: cellBottom,
+              }
+            : {}),
+          columnLeft: nestedX,
+          columnWidth: inner,
+          anchorY: textY,
+        });
       }
     };
     for (const [lineIdx, line] of cell.lines.entries()) {
@@ -7744,12 +8426,19 @@ function emitRowChunk(
 //   - last chunk keeps padBottom and the bottom border
 //   - middle chunks have no top/bottom padding or borders
 // Left/right borders and shading are kept on every chunk.
-function splitRowIntoChunks(row: RowLayout, capacity: number): Array<RowLayout> {
+function splitRowIntoChunks(
+  row: RowLayout,
+  capacity: number,
+  restCapacity = capacity,
+): Array<RowLayout> {
   // A cell containing a nested table is not split across pages — the nested
   // layout would be duplicated into every chunk. Keep such a row whole.
   if (row.cells.some((c) => c.nestedTables && c.nestedTables.length > 0)) return [row];
-  type Queue = { remaining: Array<Line>; template: CellLayout };
-  const queues: Array<Queue> = row.cells.map((c) => ({ remaining: [...c.lines], template: c }));
+  type Queue = { remaining: Array<{ line: Line; gapPt: number }>; template: CellLayout };
+  const queues: Array<Queue> = row.cells.map((c) => ({
+    remaining: c.lines.map((line, i) => ({ line, gapPt: c.lineGaps?.get(i) ?? 0 })),
+    template: c,
+  }));
 
   const anyHasLines = () =>
     queues.some((q) =>
@@ -7774,12 +8463,16 @@ function splitRowIntoChunks(row: RowLayout, capacity: number): Array<RowLayout> 
         continue;
       }
       const padTop = isFirst ? tpl.padTopPt : 0;
-      const capacityForLines = Math.max(0, capacity - padTop);
-      const taken: Array<Line> = [];
+      const capacityForLines = Math.max(0, (isFirst ? capacity : restCapacity) - padTop);
+      const taken: Array<{ line: Line; gapPt: number }> = [];
       let takenHeight = 0;
       while (q.remaining.length > 0) {
         const next = q.remaining[0]!;
-        const lh = computeLineHeight(next, next.resolved);
+        // §17.3.1.33 — the gap the line's paragraph keeps from the one above is
+        // height the page has to give it too. Counted nowhere, a chunk measured
+        // 518pt where its own lines needed 713 and ran off the bottom of the
+        // page (table-row-data-displayed-twice.docx).
+        const lh = computeLineHeight(next.line, next.line.resolved) + next.gapPt;
         // Always take at least one line per chunk to guarantee forward progress
         // even when a single line is taller than capacity.
         if (taken.length > 0 && takenHeight + lh > capacityForLines) break;
@@ -7788,11 +8481,22 @@ function splitRowIntoChunks(row: RowLayout, capacity: number): Array<RowLayout> 
         q.remaining.shift();
       }
       const cellHeight = padTop + takenHeight;
+      const gaps = new Map<number, number>();
+      taken.forEach((t, li) => {
+        if (t.gapPt > 0) gaps.set(li, t.gapPt);
+      });
+      // The gaps are keyed BY LINE INDEX, so a chunk that keeps some of the
+      // lines needs its own map; a drawing beside them belongs to the chunk
+      // that holds the line it stands after, which is the first.
+      const { lineGaps: _g, shapes: _s, floats: _f, ...restOfCell } = tpl;
       const chunkCell: CellLayout = {
-        ...tpl,
+        ...restOfCell,
+        ...(isFirst && tpl.shapes ? { shapes: tpl.shapes } : {}),
+        ...(isFirst && tpl.floats ? { floats: tpl.floats } : {}),
+        ...(gaps.size > 0 ? { lineGaps: gaps } : {}),
         padTopPt: padTop,
         padBottomPt: 0,
-        lines: taken,
+        lines: taken.map((t) => t.line),
         contentHeightPt: takenHeight,
         totalHeightPt: cellHeight,
       };
@@ -7836,6 +8540,7 @@ function splitRowIntoChunks(row: RowLayout, capacity: number): Array<RowLayout> 
       columnXOffsets: row.columnXOffsets,
       rowIdx: row.rowIdx,
       rowCount: row.rowCount,
+      ...(row.isHeader ? { isHeader: true } : {}),
     });
     isFirst = false;
   }

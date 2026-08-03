@@ -1076,6 +1076,7 @@ const MIME_BY_FORMAT = {
   png: 'image/png',
   jpeg2000: 'image/jp2',
   gif: 'image/gif',
+  tiff: 'image/tiff',
 } as const;
 
 function dataUri(resource: ResourceId | undefined, store: ResourceStore): string | undefined {

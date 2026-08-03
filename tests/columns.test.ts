@@ -65,6 +65,31 @@ describe('multi-column sections (§17.6.4)', () => {
     expect(xs.some((x) => Math.abs(x - 222) < 1)).toBe(true);
   });
 
+  it('re-breaks what lands in a column of another width', () => {
+    // §17.6.4 `w:equalWidth="0"`: a narrow column beside a wide one. Every
+    // block is broken at the FIRST column's measure, so the wide column was
+    // set narrow — fdo77812.docx took two pages for LibreOffice's one.
+    const wide = layoutOf(
+      docx(
+        '<w:cols w:equalWidth="0"><w:col w:w="1200" w:space="720"/><w:col w:w="4680"/></w:cols>',
+        60,
+      ),
+    );
+    const lines = wide.pages[0]!.commands.filter((c) => c.type === 'line').map(
+      (c) => c as unknown as { originX: number; line: { availableWidthPt: number } },
+    );
+    // col1 = 1200tw = 60pt at x=36; col2 = 4680tw = 234pt at 36+60+36 = 132pt.
+    const col1 = lines.filter((l) => Math.abs(l.originX - 36) < 1);
+    const col2 = lines.filter((l) => Math.abs(l.originX - 132) < 1);
+    expect(col1.length).toBeGreaterThan(0);
+    expect(col2.length).toBeGreaterThan(0);
+    expect(col1[0]!.line.availableWidthPt).toBeCloseTo(60, 0);
+    // The paragraph that CROSSES the boundary keeps the measure it began with
+    // — re-breaking a half-placed paragraph is a different job — so the check
+    // is on the ones that start in the wide column.
+    expect(col2.at(-1)!.line.availableWidthPt).toBeCloseTo(234, 0);
+  });
+
   it('single-column documents are untouched by the column machinery', () => {
     const laid = layoutOf(docx('', 5));
     const xs = lineXs(laid.pages[0]!.commands);
@@ -209,5 +234,72 @@ describe('a text frame (§17.3.1.11 w:framePr)', () => {
     // Same box, one under the other — not two frames at the same spot.
     expect(two.originX).toBeCloseTo(one.originX, 1);
     expect(two.baselineY).toBeGreaterThan(one.baselineY);
+  });
+
+  // §17.18.104 `notBeside`: the frame keeps its own place and no text stands
+  // beside it — the band is the whole column however narrow the frame is.
+  const NOT_BESIDE = (x: number) =>
+    `<w:framePr w:w="2253" w:h="1724" w:wrap="notBeside"` +
+    ` w:vAnchor="page" w:hAnchor="page" w:x="${String(x)}" w:y="1691"/>`;
+
+  it('places two notBeside frames side by side, where their anchors put them', () => {
+    // tdf100075.docx writes exactly this pair; read as a top-and-bottom wrap
+    // they went back into the flow, lost their x and stacked.
+    const laid = layoutOf(
+      framed(
+        NOT_BESIDE(1815),
+        'one',
+        `<w:p><w:pPr>${NOT_BESIDE(4815)}</w:pPr><w:r><w:t>two</w:t></w:r></w:p>`,
+      ),
+    );
+    const lines = laid.pages[0]!.commands.filter((c) => c.type === 'line').map(
+      (c) =>
+        c as unknown as {
+          originX: number;
+          baselineY: number;
+          line: { tokens: ReadonlyArray<{ text?: string }> };
+        },
+    );
+    const at = (t: string) =>
+      lines.find((l) => l.line.tokens.map((k) => k.text ?? '').join('') === t)!;
+    // 1815 and 4815 twips from the page's left edge.
+    expect(at('one').originX).toBeCloseTo(90.75, 1);
+    expect(at('two').originX).toBeCloseTo(240.75, 1);
+    expect(at('two').baselineY).toBeCloseTo(at('one').baselineY, 1);
+  });
+
+  it('lets no body text stand beside a notBeside frame', () => {
+    const laid = layoutOf(framed(NOT_BESIDE(1815), 'one'));
+    const lines = laid.pages[0]!.commands.filter((c) => c.type === 'line').map(
+      (c) =>
+        c as unknown as {
+          originX: number;
+          baselineY: number;
+          line: { tokens: ReadonlyArray<{ text?: string }> };
+        },
+    );
+    const at = (t: string) =>
+      lines.find((l) => l.line.tokens.map((k) => k.text ?? '').join('') === t)!;
+    // The frame is 113pt wide with room to spare beside it; "last" goes under
+    // it all the same, which is the whole of what the mode asks for.
+    expect(at('last').baselineY).toBeGreaterThan(at('one').baselineY + 86);
+    expect(at('last').originX).toBeCloseTo(68.3, 1);
+  });
+
+  it('keeps a TEXT-anchored frame in the flow — it has nowhere else to stand', () => {
+    // tdf105035_framePrB.docx styles its title and its author line as
+    // text-anchored notBeside frames. Lifted out of the flow both landed on
+    // the same cursor and printed over each other.
+    const inFlow = '<w:framePr w:wrap="notBeside" w:vAnchor="text" w:hAnchor="page"/>';
+    const laid = layoutOf(
+      framed(inFlow, 'one', `<w:p><w:pPr>${inFlow}</w:pPr><w:r><w:t>two</w:t></w:r></w:p>`),
+    );
+    const lines = laid.pages[0]!.commands.filter((c) => c.type === 'line').map(
+      (c) =>
+        c as unknown as { baselineY: number; line: { tokens: ReadonlyArray<{ text?: string }> } },
+    );
+    const at = (t: string) =>
+      lines.find((l) => l.line.tokens.map((k) => k.text ?? '').join('') === t)!;
+    expect(at('two').baselineY).toBeGreaterThan(at('one').baselineY);
   });
 });

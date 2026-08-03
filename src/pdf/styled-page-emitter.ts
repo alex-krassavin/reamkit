@@ -48,6 +48,39 @@ import { buildXmpPacket } from '@/pdf/xmp';
 
 const encoder = new TextEncoder();
 
+// §14.1.2.10 — the wash a picture is drawn through, as the flat veil it is.
+// `gain`/`blacklevel` are contrast and brightness about mid grey, so a source
+// value `in` prints as `(in - 0.5) * gain + 0.5 + black` — and painting a
+// colour `c` at opacity `a` gives `in * (1 - a) + c * a`, the same line with
+// `a = 1 - gain`. Exact for every wash a document can state, and it needs no
+// decoder: a JPEG goes in verbatim, so its pixels are not ours to rewrite.
+function washVeil(
+  wash: { readonly gain: number; readonly black: number } | undefined,
+): { alpha: number; grey: number } | undefined {
+  if (!wash) return undefined;
+  const alpha = 1 - wash.gain;
+  if (!(alpha > 0.004)) return undefined;
+  const offset = 0.5 * (1 - wash.gain) + wash.black;
+  return { alpha: Math.min(1, alpha), grey: Math.max(0, Math.min(1, offset / alpha)) };
+}
+
+/**
+ * The veil operators for a washed picture, to follow its own `/Im Do`: the
+ * placement matrix maps the unit square onto the picture as drawn, so the wash
+ * covers exactly it — cropped, rotated and flipped along with it.
+ */
+function washItems(
+  wash: { readonly gain: number; readonly black: number } | undefined,
+  alphaStateNames: ReadonlyMap<number, string> | undefined,
+): Array<string> {
+  const veil = washVeil(wash);
+  if (!veil) return [];
+  const g = formatNumber(veil.grey);
+  const state =
+    veil.alpha < 1 ? alphaStateNames?.get(Math.round(veil.alpha * 1000) / 1000) : undefined;
+  return [...(state === undefined ? [] : [`/${state} gs`]), `${g} ${g} ${g} rg`, '0 0 1 1 re', 'f'];
+}
+
 // The emit phase sees only the laid-out document plus these output-side
 // options — never the layout options (oop-design §4.1: the seam must not leak).
 type EmitOptions = Pick<
@@ -181,12 +214,15 @@ function assembleStyledPdf(
     for (const item of plan.shapes) {
       const s = item.shape.shadow;
       if (s) wantAlpha(shadowBlurLayers(s).alpha);
+      wantAlpha(item.shape.fillAlpha);
     }
+    for (const img of plan.images) wantAlpha(washVeil(img.wash)?.alpha);
     // …and the shadow an inline PICTURE casts, which rides its token rather
     // than a shape of its own (imgshadow.docx).
     for (const line of plan.lines) {
       for (const tok of line.line.tokens) {
         if (tok.kind === 'image' && tok.shadow) wantAlpha(shadowBlurLayers(tok.shadow).alpha);
+        if (tok.kind === 'image') wantAlpha(washVeil(tok.wash)?.alpha);
       }
     }
   }
@@ -531,6 +567,9 @@ function defaultPageCtx(): SectionRenderCtx {
 function embedImageResources(doc: PdfDocument, laid: LaidOutDocument): Map<ResourceId, PdfRef> {
   const out = new Map<ResourceId, PdfRef>();
   for (const [resourceId, res] of laid.imageResources) {
+    // A metafile has no raster of its own: the layout has already turned it
+    // into primitives, and there is nothing here to embed.
+    if (!res.prepared) continue;
     out.set(resourceId, addImage(doc, res.prepared).ref);
   }
   return out;
@@ -737,6 +776,7 @@ function emitPageContent(
       ),
     );
     out.push(`/${img.imageResourceName} Do`);
+    out.push(...washItems(img.wash, alphaStateNames));
     out.push('Q');
   });
 
@@ -831,7 +871,17 @@ function emitPageContent(
       shadowLayer && shadowLayer.alpha < 1
         ? alphaStateNames?.get(Math.round(shadowLayer.alpha * 1000) / 1000)
         : undefined;
-    for (const op of emitVectorShape(shape, gradientNames?.get(sh.shape), alphaState)) {
+    const fillAlpha = sh.shape.fillAlpha;
+    const fillAlphaState =
+      fillAlpha !== undefined && fillAlpha < 1
+        ? alphaStateNames?.get(Math.round(fillAlpha * 1000) / 1000)
+        : undefined;
+    for (const op of emitVectorShape(
+      shape,
+      gradientNames?.get(sh.shape),
+      alphaState,
+      fillAlphaState,
+    )) {
       out.push(op);
     }
   });
@@ -865,6 +915,43 @@ function emitPageContent(
       }
     };
     const emitImageToken = (tok: ImageToken, x: number, baselineY: number) => {
+      // MS-EMF / MS-WMF — an inline metafile draws itself: its primitives live
+      // in a y-up frame whose origin is this box's bottom-left corner, which
+      // is exactly where the token stands. VariousPictures.docx sets three of
+      // them in one line beside two rasters.
+      const meta = tok.metafile;
+      if (meta) {
+        if (inBT) {
+          out.push('ET');
+          inBT = false;
+        }
+        const b = tok.drawBox;
+        const ox = x + (b?.dxPt ?? 0);
+        const oy = baselineY + (b?.dyPt ?? 0);
+        for (const sh of meta.shapes) {
+          for (const op of emitVectorShape({ ...sh, transform: [1, 0, 0, 1, ox, oy] })) {
+            out.push(op);
+          }
+        }
+        for (const t of meta.texts) {
+          // The metafile's own words: one token per line, set where the
+          // picture puts it rather than where the paragraph's flow would.
+          const first = t.line.tokens.find((k) => k.kind === 'text');
+          if (!first) continue;
+          const [r, g, bl] = hexToRgb01(first.resolvedRun.colorHex);
+          out.push('BT');
+          out.push(`/${first.font.resourceName} ${formatNumber(first.fontSizePt)} Tf`);
+          out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(bl)} rg`);
+          out.push(`1 0 0 1 ${formatNumber(ox + t.x)} ${formatNumber(oy + t.y)} Tm`);
+          out.push(first.font.measure.showText(first.text));
+          out.push('ET');
+        }
+        // The shared text state is no longer what the line loop left it.
+        lastFont = '';
+        lastSize = -1;
+        lastColor = '';
+        return;
+      }
       // Skip an inline image whose resource failed to embed (the caller still
       // advances x, so its box stays reserved).
       if (!tok.imageResourceName) return;
@@ -938,6 +1025,7 @@ function emitPageContent(
             )),
       );
       out.push(`/${tok.imageResourceName} Do`);
+      out.push(...washItems(tok.wash, alphaStateNames));
       out.push('Q');
       // §20.1.2.2.24 — the picture's own frame, stroked around the box it was
       // just drawn in. tdf125657.docx borders its inline screenshot and we drew

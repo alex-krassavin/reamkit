@@ -3,6 +3,85 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.18.0
+
+What the pixel ranking said was left after 1.17.0, taken in order: the picture
+formats a document may embed that nothing here could read, the drawings that
+had nowhere to stand, and the places where a page breaks.
+
+### Added
+
+- **EMF and WMF are read and drawn.** The picture format Word writes for
+  anything it draws itself — the preview of an embedded workbook, a legacy
+  clipart, an ActiveX control's face, an equation — was carried through the
+  package and never rendered: the box was reserved and left blank in forty
+  corpus documents. Both formats are one device interface (a context with a
+  pen, a brush, a font and a current point), so one reader vocabulary serves
+  both: the state records, the window/viewport and world-transform mapping, and
+  the drawing ones — lines, polygons, polylines, Béziers, rectangles, ellipses,
+  path brackets, both text records, and the brush blits a WMF uses for every
+  rule and panel. What needs a raster or a region — bitmap blits, gradients,
+  flood fills, palettes — is named as a loss rather than drawn wrong. A picture
+  draws in the flow, floating, in a header, inside a cell, and inline in a line
+  of text, and turns with its drawing's own rotation.
+- **TIFF.** A `.docx` embeds one as plainly as a PNG and PDF has no filter that
+  carries one, so it is decoded to samples: both byte orders, WhiteIsZero /
+  BlackIsZero / RGB / palette / CMYK, 1/2/4/8/16-bit, uncompressed, LZW,
+  PackBits and Deflate, horizontal differencing, strips and tiles, and an
+  ExtraSamples channel as the soft mask.
+- **A drawing anchored inside a table cell** — a title over the first cell of a
+  glossary, logos in the corner of a form, a page number in a footer table.
+  Which box its position is measured in is `@layoutInCell` (VML
+  `o:allowincell`), now read: by default the CELL is every box the anchor can
+  name, and turned off the drawing reaches past the table to the paper.
+- **Linked text boxes.** `wps:linkedTxbx`: the chain's first box holds the
+  words and each box shows as much as its height allows, the rest carried on by
+  `@seq` — not by document order, since a continuation may be written first.
+- **Text on BOTH sides of a float.** Where a drawing leaves room either side,
+  a line runs down one gap and continues in the other at the same baseline;
+  `left`, `right` and `largest` keep to one side, as they say.
+- **A picture's washout** (`@gain`/`@blacklevel`): contrast and brightness about
+  mid grey, drawn as the flat veil that arithmetic is — exact for every wash a
+  document can state, and it rewrites no pixels, which matters because a JPEG is
+  embedded verbatim.
+- **A transparent fill is transparent.** `<a:alpha>` and VML `@opacity` belong
+  to the fill, not to its colour: composited over white, a translucent shape
+  drawn over anything else was simply the wrong colour.
+
+### Fixed
+
+- **A table row breaks where the page ends** (§17.4.6). A row was split only
+  when it was taller than a whole page, so one that merely outgrew the space
+  left was drawn where it stood and ran off the bottom, over whatever followed.
+  Under that, the chunk sizer measured lines and not the space between their
+  paragraphs, so a cell reported 518pt where it drew 713 and everything past
+  the first piece was silently dropped. A sheet row still moves whole: Excel
+  and LibreOffice never break one.
+- **A column of another width re-breaks what lands in it.** Every block is
+  broken at the first column's measure, because nothing knows which column it
+  will land in; a section of unequal columns set its wide column narrow and took
+  two pages for one.
+- **A frame that forbids text beside it** (`w:wrap="notBeside"`) stands where
+  its `w:x` and `w:y` name and excludes the whole column for its height. Read as
+  a top-and-bottom wrap it went back into the flow and lost its x; read as a
+  square wrap it let text run up beside it, which is the one thing the mode
+  forbids. A frame anchored to the TEXT stays in the flow — that is the only
+  place it names.
+- **A VML line stands where its ends put it.** `v:line` states `from` and `to`
+  rather than a box, and its style carries no position for the anchor to read;
+  a margin rule was drawn down the very edge of the paper.
+
+### Internals
+
+- The anchor arithmetic (§20.4.3.3/§20.4.3.4) moved out of the page assembler
+  into two functions over an explicit frame, so a table cell resolves a
+  drawing's position by exactly the same rules the body does, with its own
+  boxes.
+- LZW is one coder now (`core/lzw`), shared by the TIFF reader and the PDF one
+  rather than kept in step as two copies.
+- An image resource may carry a metafile picture instead of a prepared raster:
+  a metafile has nothing to embed and takes no resource name.
+
 ## 1.17.0
 
 The `.docx` half of the same sweep: every one of 1121 real Word documents opened
