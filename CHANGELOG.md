@@ -3,6 +3,29 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.20.0
+
+### Added
+
+- **A password-protected document opens with its password.** An encrypted
+  `.docx`/`.xlsx` is not a zip at all — ECMA-376 §2.3 puts the whole OPC
+  package in the `EncryptedPackage` stream of an OLE container — so every
+  reader declined it and the caller was told to re-save without a password.
+  Pass the password to `Ream.parse` and it opens: both MS-OFFCRYPTO schemes
+  are read, the standard one (AES-ECB under a key spun from 50 000 SHA-1
+  rounds, Office 2007 and LibreOffice) and the agile one (an XML descriptor
+  naming its own hash and cipher, the package cut into 4096-byte segments,
+  Office 2010 and later). A wrong password is refused as a wrong password —
+  each scheme carries a verifier — rather than yielding rubbish.
+
+### Fixed
+
+- **SHA-512 is sixteen times faster.** It was written in BigInt, which is the
+  clear way to write it and forty times the cost of 32-bit pairs; an agile
+  encrypted document spins the hash a hundred thousand times, so 3.7 seconds
+  of key derivation became 0.23. The digests are checked against Node's for
+  every message length around the block boundaries.
+
 ## 1.19.0
 
 A second pass of the pixel ranking over all 1121 corpus documents, taken from

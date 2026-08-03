@@ -12,7 +12,7 @@ import {
   sha256,
   sha384,
   sha512,
-} from '@/pdf-reader/crypto';
+} from '@/core/crypto/primitives';
 
 const hex = (b: Uint8Array): string => [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
 const bytes = (h: string): Uint8Array =>

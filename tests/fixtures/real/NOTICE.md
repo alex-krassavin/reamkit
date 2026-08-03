@@ -10,6 +10,15 @@ file with `npx tsx scripts/corpus/sync-real-fixtures.ts --adopt`.
 
 ## LibreOffice/core — MPL-2.0
 
+Upstream path: `sw/qa/extras/ooxmlexport/data` (ref `master`).
+
+| File | sha256 (16) | Why it is here |
+|---|---|---|
+| `Encrypted_LO_Standard_abc.docx` | `d6b55065e5c8e6de` | MS-OFFCRYPTO standard encryption (EncryptionInfo 3.2): AES-ECB under a key spun from 50 000 SHA-1 rounds. Password `abc`. |
+| `Encrypted_MSO2013_abc.docx` | `2db365c48e5f3b03` | MS-OFFCRYPTO agile encryption (4.4) as Office 2013 writes it — SHA-512, AES-CBC, and a certificate key encryptor beside the password one. Password `abc`. |
+
+## LibreOffice/core — MPL-2.0
+
 Upstream path: `sc/qa/unit/data/xlsx` (ref `master`).
 
 | File | sha256 (16) | Why it is here |
@@ -43,4 +52,5 @@ Upstream path: `test-data/spreadsheet` (ref `trunk`).
 | `AverageTaxRates.xlsx` | `094b2facaf85870a` | fitToPage scaling plus manual breaks across three sheets. |
 | `RepeatingRowsCols.xlsx` | `ff67241b278977c9` | Print_Titles across four sheets — the header rows must repeat on every continuation page. |
 | `simple-monthly-budget.xlsx` | `cae00c6894b95743` | An ordinary real-world workbook (landscape, fitToPage) rather than a bug reproduction. |
+| `protected_passtika.xlsx` | `e58713895915de62` | An encrypted WORKBOOK — the same container question as the two documents above, on the other reader. Password `tika`. |
 | `duplicate-filename.xlsx` | `5aa65f91139a76cd` | Declares t="inlineStr" but writes the text into <v>; also ships two ZIP entries for the same part name. |

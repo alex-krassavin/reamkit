@@ -94,6 +94,21 @@ const ADOPTED: ReadonlyArray<Adopted> = [
     why: 'An ordinary real-world workbook (landscape, fitToPage) rather than a bug reproduction.',
   },
   {
+    file: 'Encrypted_LO_Standard_abc.docx',
+    source: 'lo-docx-export',
+    why: 'MS-OFFCRYPTO standard encryption (EncryptionInfo 3.2): AES-ECB under a key spun from 50 000 SHA-1 rounds. Password `abc`.',
+  },
+  {
+    file: 'Encrypted_MSO2013_abc.docx',
+    source: 'lo-docx-export',
+    why: 'MS-OFFCRYPTO agile encryption (4.4) as Office 2013 writes it — SHA-512, AES-CBC, and a certificate key encryptor beside the password one. Password `abc`.',
+  },
+  {
+    file: 'protected_passtika.xlsx',
+    source: 'poi-xlsx',
+    why: 'An encrypted WORKBOOK — the same container question as the two documents above, on the other reader. Password `tika`.',
+  },
+  {
     file: 'tdf100034.xlsx',
     source: 'lo-xlsx',
     why: 'Letter paper (size 1) with a print area over two sheets — guards the A4-vs-Letter default.',
