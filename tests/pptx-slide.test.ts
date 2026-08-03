@@ -492,17 +492,27 @@ describe("pptx colour map — what a deck's bg1 and tx1 mean (§19.3.1.6)", () =
     expect(firstShape(doc)?.fill.colorHex).toBe('273943'); // the layout's word, not the master's
   });
 
-  it("lets a single slide override it, leaving its neighbour on the master's", () => {
+  it("lets a slide override the map for its OWN content, not for the master's", () => {
+    // §19.3.1.7 — the override governs the slide. What the master draws keeps
+    // reading under the master's map: chart_pt_color_bg1 flips bg1 to dk1 for
+    // its chart and its white deck came out black when the flip reached the
+    // master's background too.
+    const shape =
+      `<p:sp><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+      `<a:solidFill><a:schemeClr val="bg1"/></a:solidFill></p:spPr></p:sp>`;
     const doc = Ream.parse(
-      buildPptx(['', ''], {
+      buildPptx([shape, shape], {
         layoutMaster: { theme: THEME, masterBg: SCHEME_BG, clrMap: 'bg1="dk2"' },
         slideClrMapOvr: [undefined, 'bg1="lt1"'],
       }),
     );
-    const backdrops = doc.flow.body.flatMap((el) =>
+    const fills = doc.flow.body.flatMap((el) =>
       el.kind === 'shape' ? [el.shape.fill.colorHex] : [],
     );
-    expect(backdrops).toEqual(['0066CC', 'FFFF00']);
+    // Per slide: the master's backdrop (blue either way) then the slide's own
+    // shape — blue on the first, yellow on the one that overrides.
+    expect(fills).toEqual(['0066CC', '0066CC', '0066CC', 'FFFF00']);
   });
 
   it('paints a real deck the colour its map names', () => {
@@ -815,6 +825,73 @@ describe("pptx inherited shapes — the deck's own decoration (E-PPTX PX5d)", ()
     );
     // Per slide: the backdrop first, then the inherited shape over it.
     expect(fills(doc)).toEqual(['445566', '111111', '445566', '111111']);
+  });
+});
+
+describe('what a placeholder inherits from its prototype', () => {
+  const protoRect =
+    `<p:sp><p:nvSpPr><p:cNvPr id="9" name="body"/><p:cNvSpPr/><p:nvPr><p:ph idx="13"/></p:nvPr></p:nvSpPr>` +
+    `<p:spPr><a:xfrm><a:off x="228600" y="800100"/><a:ext cx="4572000" cy="2286000"/></a:xfrm>` +
+    `<a:prstGeom prst="roundRect"><a:avLst/></a:prstGeom>` +
+    `<a:solidFill><a:srgbClr val="76BF3D"/></a:solidFill>` +
+    `<a:ln w="19050"><a:solidFill><a:srgbClr val="112233"/></a:solidFill></a:ln></p:spPr>` +
+    `<p:txBody><a:bodyPr/><a:p/></p:txBody></p:sp>`;
+  const slidePh =
+    `<p:sp><p:nvSpPr><p:cNvPr id="2" name="b"/><p:cNvSpPr/><p:nvPr><p:ph idx="13"/></p:nvPr></p:nvSpPr>` +
+    `<p:spPr/><p:txBody><a:bodyPr/><a:p><a:r><a:rPr lang="en"/><a:t>Test</a:t></a:r></a:p></p:txBody></p:sp>`;
+
+  it('takes the fill, the outline and the geometry it does not state', () => {
+    // tdf95932 — "Test inheritance of shape properties from slide master": the
+    // green panel is the layout's, and the word on it is white, so without the
+    // panel the slide read as blank paper.
+    const doc = Ream.parse(buildPptx([slidePh], { layoutMaster: { layoutSpTree: protoRect } }));
+    const shape = doc.flow.body.flatMap((e) =>
+      e.kind === 'shape' && e.shape.text ? [e.shape] : [],
+    )[0];
+    expect(shape?.fill.colorHex).toBe('76BF3D');
+    expect(shape?.geometry.kind === 'preset' ? shape.geometry.preset : '').toBe('roundRect');
+    expect(shape?.line?.colorHex).toBe('112233');
+  });
+
+  it('…but what the slide states itself still wins', () => {
+    const own = slidePh.replace(
+      '<p:spPr/>',
+      `<p:spPr><a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom>` +
+        `<a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></p:spPr>`,
+    );
+    const doc = Ream.parse(buildPptx([own], { layoutMaster: { layoutSpTree: protoRect } }));
+    const shape = doc.flow.body.flatMap((e) =>
+      e.kind === 'shape' && e.shape.text ? [e.shape] : [],
+    )[0];
+    expect(shape?.fill.colorHex).toBe('FF0000');
+    expect(shape?.geometry.kind === 'preset' ? shape.geometry.preset : '').toBe('ellipse');
+  });
+});
+
+describe('a shape drawn from a gallery style (§20.1.4.2)', () => {
+  it('takes its fill, outline and text colour from p:style', () => {
+    // customGeo's title banner and the ellipse under it carry no fill in their
+    // spPr at all — both are a theme slot named by `a:fillRef`.
+    const themeFmt =
+      `<a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst>` +
+      `<a:lnStyleLst><a:ln w="12700"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln></a:lnStyleLst>`;
+    const sp =
+      `<p:sp><p:nvSpPr><p:cNvPr id="3" name="g"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>` +
+      `<p:style><a:lnRef idx="1"><a:srgbClr val="223344"/></a:lnRef>` +
+      `<a:fillRef idx="1"><a:srgbClr val="4488CC"/></a:fillRef>` +
+      `<a:effectRef idx="0"><a:srgbClr val="000000"/></a:effectRef>` +
+      `<a:fontRef idx="minor"><a:srgbClr val="FFFFFF"/></a:fontRef></p:style>` +
+      `<p:txBody><a:bodyPr/><a:p><a:r><a:rPr lang="en"/><a:t>Hi</a:t></a:r></a:p></p:txBody></p:sp>`;
+    const doc = Ream.parse(buildPptx([sp], { layoutMaster: { themeFmt } }));
+    const shape = doc.flow.body.flatMap((e) => (e.kind === 'shape' ? [e.shape] : []))[0];
+    expect(shape?.fill.colorHex).toBe('4488CC');
+    expect(shape?.line?.colorHex).toBe('223344');
+    const run = shape?.text?.content.flatMap((c) =>
+      c.kind === 'paragraph' ? c.paragraph.runs : [],
+    )[0];
+    expect(run?.properties.colorHex).toBe('FFFFFF');
   });
 });
 

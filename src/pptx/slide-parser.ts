@@ -55,6 +55,10 @@ import {
   parsePrstGeom,
   parseShadow,
   parseXfrm,
+  statesFill,
+  styleRefFill,
+  styleRefLine,
+  withStyleFontColor,
 } from '@/word/drawing-parser';
 import { boxFromXfrm, parsePh, parseXfrmBox, rPrToRunProps } from '@/pptx/sp-helpers';
 
@@ -76,6 +80,8 @@ export interface SlideContext {
   readonly resolveImage?: (relId: string) => ResourceId | undefined;
   /** The deck theme's fill style lists, for a `p:bgRef` on this slide. */
   readonly themeFills?: ThemeFillStyles;
+  /** §20.1.4.1.21 `a:lnStyleLst` — the widths an `a:lnRef` indexes, in points. */
+  readonly themeLineWidths?: ReadonlyArray<number>;
   /**
    * §19.3.1.43 — the slide's own background fill, which a shape marked
    * `useBgFill` is painted with.
@@ -238,29 +244,64 @@ function parseSp(sp: PoNode, ctx: SlideContext, transform: GroupTransform): Shap
 
   // Geometry/fill/stroke from p:spPr via the shared DrawingML readers, resolving
   // colours through the deck's theme palette (PX5).
-  const geometry = parseGeometry(spPr);
+  // A placeholder inherits what it does not state — its geometry, its fill and
+  // its outline — from the prototype in the layout, else the master.
+  // tdf95932's slide holds one placeholder with a word in it; the green
+  // rounded panel it sits on, and the white the word is written in, are both
+  // the layout's, and without the panel the word was white on white.
+  const proto = ph && ctx.cascade ? ctx.cascade.shapePropsFor(ph) : undefined;
+  const geomFrom = spPr && statesGeometry(spPr) ? spPr : (proto ?? spPr);
+  const geometry = parseGeometry(geomFrom);
   // §19.3.1.43 `p:sp@useBgFill` — the shape is filled with the SLIDE's
   // background, which is how a deck cuts a hole in the decoration above it:
   // tdf93868's master lays a white rectangle over the whole slide and then a
   // rounded one on top that lets the slide's black gradient back through.
   const useBgFill = poAttr(sp, 'useBgFill') === '1';
+  const fillFrom = statesFill(spPr) ? spPr : (proto ?? spPr);
   const fill: ShapeFill = useBgFill
     ? (ctx.backgroundFill ?? { kind: 'none' })
-    : spPr
-      ? parseFill(spPr, colors, ctx.resolveImage)
+    : fillFrom
+      ? parseFill(fillFrom, colors, ctx.resolveImage)
       : { kind: 'none' };
-  const line = spPr ? parseLine(spPr, colors) : undefined;
+  const lineFrom = spPr && poChildren(spPr).some((c) => poIs(c, 'a:ln')) ? spPr : (proto ?? spPr);
+  let line = lineFrom ? parseLine(lineFrom, colors) : undefined;
+  // §20.1.4.2.10/§20.1.4.2.19 — a shape drawn from a gallery keeps its fill and
+  // its outline in `p:style` and carries neither in `spPr`: customGeo's title
+  // banner and the ellipse under it are a theme gradient each, and read from
+  // `spPr` alone they were an empty outline and nothing at all.
+  const style = poChildren(sp).find((c) => poIs(c, 'p:style'));
+  const themeStyles = ctx.themeFills
+    ? { fills: ctx.themeFills.fills, bgFills: ctx.themeFills.backgrounds }
+    : undefined;
+  const styled: ShapeFill =
+    style && fill.kind === 'none' && !statesFill(fillFrom)
+      ? styleRefFill(style, colors, themeStyles)
+      : fill;
+  if (style) {
+    const fromStyle = styleRefLine(style, colors, ctx.themeLineWidths);
+    if (fromStyle) {
+      line = line
+        ? {
+            ...fromStyle,
+            ...Object.fromEntries(Object.entries(line).filter(([, v]) => v !== undefined)),
+          }
+        : fromStyle;
+    }
+  }
   const visibleLine = line !== undefined && line.fill !== 'none';
-  if (!text && fill.kind === 'none' && !visibleLine) return undefined;
+  if (!text && styled.kind === 'none' && !visibleLine) return undefined;
 
+  // §20.1.4.2.14 — and the colour a gallery style writes its text in, where the
+  // runs name none.
+  const withStyleText = style && text ? withStyleFontColor(text, style, colors) : text;
   return {
     float: floatAt(box),
     width: emuToPt(box.cx),
     height: emuToPt(box.cy),
     geometry,
-    fill,
+    fill: styled,
     ...(line ? { line } : {}),
-    ...(text ? { text } : {}),
+    ...(withStyleText ? { text: withStyleText } : {}),
     paragraphProperties: {},
   };
 }
@@ -680,6 +721,11 @@ export function backdropElement(fill: ShapeFill, widthPt: Pt, heightPt: Pt): Bod
  * rect. Exported for sheet shapes (E-SHEET W2), whose `xdr:spPr` carries the same
  * `a:` children.
  */
+/** Whether an `spPr` states a geometry of its own, rather than inheriting one. */
+function statesGeometry(spPr: PoNode): boolean {
+  return poChildren(spPr).some((c) => poIs(c, 'a:prstGeom') || poIs(c, 'a:custGeom'));
+}
+
 export function parseGeometry(spPr: PoNode | undefined): ShapeGeometry {
   if (!spPr) return RECT_GEOMETRY;
   const prst = poChildren(spPr).find((c) => poIs(c, 'a:prstGeom'));

@@ -1,10 +1,5 @@
 [
  {
-  "name": "tdf113163.pptx",
-  "score": 1,
-  "aligned": true
- },
- {
   "name": "chart_pt_color_bg1.pptx",
   "score": 0.8514,
   "aligned": true
@@ -1916,6 +1911,11 @@
  },
  {
   "name": "tdf112633.pptx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "tdf113163.pptx",
   "score": 0,
   "aligned": true
  },

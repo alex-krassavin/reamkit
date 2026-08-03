@@ -2238,14 +2238,22 @@ const FILL_TAGS: ReadonlySet<string> = new Set([
   'a:grpFill',
 ]);
 
-function statesFill(spPr: PoNode | undefined): boolean {
+/**
+ * Whether an `spPr` states a fill AT ALL — including `a:noFill`, which is a
+ * shape saying it has none rather than saying nothing. A placeholder that says
+ * nothing inherits its prototype's.
+ *
+ * @param spPr The shape properties, or undefined.
+ * @returns Whether a fill element is present.
+ */
+export function statesFill(spPr: PoNode | undefined): boolean {
   return spPr !== undefined && poChildren(spPr).some((c) => FILL_TAGS.has(poTag(c) ?? ''));
 }
 
 // §20.1.4.2.13 `<a:fillRef>` — the fill a gallery style names. The theme's own
 // `a:fillStyleLst` slot (which could make it a gradient) is out of reach here;
 // the colour the reference names is what both references draw.
-function styleRefFill(
+export function styleRefFill(
   style: PoNode,
   resolveColor: ColorResolver,
   themeStyles?: ThemeStyles,
@@ -2278,7 +2286,7 @@ function styleRefFill(
 // §20.1.4.2.19 `<a:lnRef>` — the outline a gallery style names. Its width lives
 // in the theme's `a:lnStyleLst`, which is not reachable from here; the hairline
 // below is what a shape with no stated width already draws.
-function styleRefLine(
+export function styleRefLine(
   style: PoNode,
   resolveColor: ColorResolver,
   themeLineWidths?: ReadonlyArray<number>,
@@ -2304,7 +2312,7 @@ function styleRefLine(
 // ColorOverwritten.docx writes its arrow's two lines in a "red" and a "green"
 // paragraph style, and stamping the theme's white over them left the shape
 // blank.
-function withStyleFontColor(
+export function withStyleFontColor(
   text: ShapeTextBody,
   style: PoNode,
   resolveColor: ColorResolver,

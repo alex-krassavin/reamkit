@@ -34,6 +34,7 @@ import {
   parseTheme,
   parseThemeBgFillStyles,
   parseThemeFillStyles,
+  parseThemeLineWidths,
 } from '@/core/drawingml/theme-parser';
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
 import { OpcPackage } from '@/core/opc';
@@ -189,6 +190,7 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
         colors: styles.colors,
         ...(styles.background ? { backgroundFill: styles.background } : {}),
         ...(styles.themeFills ? { themeFills: styles.themeFills } : {}),
+        ...(styles.themeLineWidths ? { themeLineWidths: styles.themeLineWidths } : {}),
         resolveImage: makeSlideImageResolver(pkg, part.path, resources),
         resolveChart: makeSlideChartResolver(pkg, part.path, charts, styles.colors),
         resolveHyperlink: makeHyperlinkResolver(pkg, part.path),
@@ -461,6 +463,8 @@ interface SlideStyles {
   readonly inheritedShapes?: ReadonlyArray<BodyElement>;
   /** The deck theme's `a:fillStyleLst`/`a:bgFillStyleLst`, for a `p:bgRef`. */
   readonly themeFills?: ThemeFillStyles;
+  /** §20.1.4.1.21 — the widths an `a:lnRef` indexes, in points. */
+  readonly themeLineWidths?: ReadonlyArray<number>;
   // The inherited background fill (layout, else master) for slides that have no
   // p:bg of their own (PX5b).
   readonly background?: ShapeFill;
@@ -496,13 +500,19 @@ function slideStylesFor(
   const masterTree = master ? parseXml(master.data) : undefined;
   // §19.3.1.6/§19.3.1.7 — the master states which theme slot each of bg1/tx1/
   // bg2/tx2 means, and a layout or a slide may override that mapping. The
-  // nearest one wins, and it governs EVERY colour resolved for this slide.
-  const alias =
-    slideAlias ??
-    overrideAlias(layoutTree, 'p:sldLayout') ??
-    (masterTree ? masterAlias(masterTree) : undefined);
+  // nearest one wins.
+  //
+  // A slide's override governs the SLIDE, though, not the design it sits on:
+  // what the master and the layout draw keeps reading under their own map.
+  // chart_pt_color_bg1 flips bg1 to dk1 for its own content, and applied to
+  // the master's background as well it turned a white deck black.
+  const inheritedAlias =
+    overrideAlias(layoutTree, 'p:sldLayout') ?? (masterTree ? masterAlias(masterTree) : undefined);
+  const alias = slideAlias ?? inheritedAlias;
   const theme = master ? themePart(pkg, master.path) : undefined;
   const colors = master ? deckColorResolver(theme?.data, alias) : defaultColorResolver;
+  const inheritedColors =
+    slideAlias === undefined || !master ? colors : deckColorResolver(theme?.data, inheritedAlias);
   const themeFills = theme
     ? {
         fills: parseThemeFillStyles(theme.data),
@@ -510,6 +520,7 @@ function slideStylesFor(
         resolveImage: makeSlideImageResolver(pkg, theme.path, resources),
       }
     : undefined;
+  const themeLineWidths = theme ? parseThemeLineWidths(theme.data) : undefined;
   const cascade = buildPlaceholderCascade(
     layoutTree,
     masterTree,
@@ -520,7 +531,7 @@ function slideStylesFor(
     partBackground(
       layoutTree,
       'p:sldLayout',
-      colors,
+      inheritedColors,
       makeSlideImageResolver(pkg, layout.path, resources),
       themeFills,
     ) ??
@@ -528,7 +539,7 @@ function slideStylesFor(
       ? partBackground(
           masterTree,
           'p:sldMaster',
-          colors,
+          inheritedColors,
           makeSlideImageResolver(pkg, master.path, resources),
           themeFills,
         )
@@ -536,10 +547,12 @@ function slideStylesFor(
   // The background is resolved FIRST: a shape among the inherited ones may be
   // painted with it (§19.3.1.43 `useBgFill`).
   const deps: PartDeps = {
-    colors,
+    colors: inheritedColors,
     resources,
     charts,
     onLoss,
+    ...(themeFills ? { themeFills } : {}),
+    ...(themeLineWidths && themeLineWidths.length > 0 ? { themeLineWidths } : {}),
     ...(background ? { background } : {}),
   };
   // §19.3.1.38 `@showMasterSp` — the decoration a deck states once and every
@@ -554,6 +567,7 @@ function slideStylesFor(
     cascade,
     colors,
     ...(themeFills ? { themeFills } : {}),
+    ...(themeLineWidths && themeLineWidths.length > 0 ? { themeLineWidths } : {}),
     ...(background ? { background } : {}),
     ...(inheritedShapes.length > 0 ? { inheritedShapes } : {}),
   };
@@ -580,6 +594,8 @@ function partShapes(
   if (!spTree) return [];
   const ctx: SlideContext = {
     colors: deps.colors,
+    ...(deps.themeFills ? { themeFills: deps.themeFills } : {}),
+    ...(deps.themeLineWidths ? { themeLineWidths: deps.themeLineWidths } : {}),
     ...(deps.background ? { backgroundFill: deps.background } : {}),
     resolveImage: makeSlideImageResolver(pkg, path, deps.resources),
     resolveChart: makeSlideChartResolver(pkg, path, deps.charts, deps.colors),
@@ -593,6 +609,8 @@ function partShapes(
 /** What {@link partShapes} needs from the document being read. */
 interface PartDeps {
   readonly colors: ColorResolver;
+  readonly themeFills?: ThemeFillStyles;
+  readonly themeLineWidths?: ReadonlyArray<number>;
   /** The background these shapes sit on, for a `useBgFill` one among them. */
   readonly background?: ShapeFill;
   readonly resources: ResourceStore;

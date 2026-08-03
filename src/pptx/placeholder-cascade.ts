@@ -49,6 +49,12 @@ export interface PlaceholderCascade {
    * the layout's before the master's, for a shape that states none itself.
    */
   readonly anchorFor: (ph: PlaceholderRef) => 't' | 'ctr' | 'b' | undefined;
+  /**
+   * The prototype's own `p:spPr`, for the properties a slide placeholder
+   * inherits rather than states: its fill, its outline, its geometry. The
+   * layout's before the master's.
+   */
+  readonly shapePropsFor: (ph: PlaceholderRef) => PoNode | undefined;
 }
 
 /** One level of a text style: how its paragraphs sit and how their runs read. */
@@ -62,6 +68,8 @@ type StyleCategory = 'title' | 'body' | 'other';
 interface ParsedPlaceholder {
   readonly ref: PlaceholderRef;
   readonly box?: ShapeBoxEmu;
+  /** The prototype's `p:spPr` — its fill, outline and geometry. */
+  readonly spPr?: PoNode;
   /** The prototype's own `a:lstStyle`, per level. */
   readonly levels: ReadonlyArray<LevelStyle>;
   /** `a:bodyPr@anchor` — where the text sits vertically in the box. */
@@ -124,6 +132,9 @@ export function buildPlaceholderCascade(
     },
     anchorFor(ph) {
       return matchPlaceholder(layoutPhs, ph)?.anchor ?? matchPlaceholder(masterPhs, ph)?.anchor;
+    },
+    shapePropsFor(ph) {
+      return matchPlaceholder(layoutPhs, ph)?.spPr ?? matchPlaceholder(masterPhs, ph)?.spPr;
     },
   };
 }
@@ -233,6 +244,7 @@ function collectPlaceholders(
     out.push({
       ref,
       ...(box ? { box } : {}),
+      ...(spPr ? { spPr } : {}),
       levels: parseLevelStyles(lstStyle, colors),
       ...(anchor ? { anchor } : {}),
     });
