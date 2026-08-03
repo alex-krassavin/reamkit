@@ -285,12 +285,22 @@ export function visualDiff(our: Ppm, ref: Ppm, tol = 24, slack = 0): VisualDiff 
  * with the wrong bars — every one of those moves this, and a page of shifted
  * text does not.
  *
+ * Colours that land in NEIGHBOURING buckets are treated as the same colour.
+ * Two rasterisations of the same flat fill differ by a unit or so — ours wrote
+ * `0 0.615686 0.941176 rg` and came back (0,156,239) against the reference's
+ * (0,157,240) — and a hard bucket edge between them scored a slide painted
+ * exactly right as a total mismatch, which put half a dozen perfect pages at
+ * the top of the ranking. So surplus in one bucket cancels against a deficit
+ * beside it before anything is counted: a colour that moved less than a
+ * quantisation step is the rasteriser rounding, not a difference.
+ *
  * @param our  Our raster.
  * @param ref  The reference raster.
- * @param bits Bits kept per channel (4 ⇒ a 4096-bucket histogram).
+ * @param bits Bits kept per channel (5 ⇒ a 32 768-bucket histogram, one step
+ * being 8 of 255 — the neighbourhood that cancels is one step wide).
  * @returns 0…1, the share of pixels whose colour has no counterpart.
  */
-export function colorDiff(our: Ppm, ref: Ppm, bits = 4): number {
+export function colorDiff(our: Ppm, ref: Ppm, bits = 5): number {
   const shift = 8 - bits;
   const buckets = 1 << (bits * 3);
   const hist = (p: Ppm): { counts: Float64Array; total: number } => {
@@ -311,10 +321,36 @@ export function colorDiff(our: Ppm, ref: Ppm, bits = 4): number {
   if (a.total === 0 || b.total === 0) return 1;
   // Normalised to shares, so two pages of different pixel dimensions still
   // compare (a page is a page whatever the paper).
-  let sum = 0;
-  for (let i = 0; i < buckets; i++) {
-    sum += Math.abs(a.counts[i]! / a.total - b.counts[i]! / b.total);
+  const diff = new Float64Array(buckets);
+  for (let i = 0; i < buckets; i++) diff[i] = a.counts[i]! / a.total - b.counts[i]! / b.total;
+
+  // One hop of transport: a surplus pays off the deficits touching it in the
+  // colour cube. What is left has moved further than the grid can blame.
+  const side = 1 << bits;
+  const at = (r: number, g: number, bl: number): number => (r << (bits * 2)) | (g << bits) | bl;
+  for (let r = 0; r < side; r++) {
+    for (let g = 0; g < side; g++) {
+      for (let bl = 0; bl < side; bl++) {
+        const i = at(r, g, bl);
+        if (diff[i]! <= 0) continue;
+        for (let dr = -1; dr <= 1 && diff[i]! > 0; dr++) {
+          for (let dg = -1; dg <= 1 && diff[i]! > 0; dg++) {
+            for (let db = -1; db <= 1 && diff[i]! > 0; db++) {
+              const [nr, ng, nb] = [r + dr, g + dg, bl + db];
+              if (nr < 0 || ng < 0 || nb < 0 || nr >= side || ng >= side || nb >= side) continue;
+              const j = at(nr, ng, nb);
+              if (diff[j]! >= 0) continue;
+              const moved = Math.min(diff[i]!, -diff[j]!);
+              diff[i]! -= moved;
+              diff[j]! += moved;
+            }
+          }
+        }
+      }
+    }
   }
+  let sum = 0;
+  for (let i = 0; i < buckets; i++) sum += Math.abs(diff[i]!);
   return sum / 2;
 }
 
