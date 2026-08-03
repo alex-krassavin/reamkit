@@ -7,11 +7,12 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- **`WrongPasswordError` is exported.** The wrong password for a protected
-  document has thrown this since 1.20.0, but the class itself stayed inside,
-  so the one thing a caller wants to do with it — tell a wrong password from a
-  broken file and ask again — meant matching `err.name` against a string.
-  It is on the package now, and `err instanceof WrongPasswordError` says it.
+- **A protected document is answerable for from outside.** 1.20.0 opens one
+  with its password but kept the two things a caller needs to ask around it
+  inside: `isEncryptedPackage(bytes)` says a file wants a password BEFORE the
+  parse throws — so an interface can put up the prompt instead of an error —
+  and `WrongPasswordError`, thrown all along, is now a class to catch by type
+  rather than an `err.name` string to match. Both are on the package.
 
 ## 1.20.0
 
