@@ -57,6 +57,36 @@ const out = await doc.convert('xlsx');
 // `out` is a fresh, valid .xlsx — normalize, sanitize, or re-parse it.
 ```
 
+## Password-protected Word and Excel documents
+
+A password-protected `.docx` / `.xlsx` is not a zip at all — ECMA-376 §2.3 puts
+the whole package inside an OLE container as ciphertext — so it has to be
+decrypted before any reader sees it. The same `password` option does that, for
+both Office schemes (the 2007 standard one and the agile one 2010 and later
+write):
+
+```ts
+const doc = Ream.parse(docxBytes, { password: 'letmein' });
+const pdf = await doc.convert('pdf');
+```
+
+Unlike a PDF, here a wrong password is an **error**, not a loss: every scheme
+stores a verifier, so the file can say the password is wrong instead of handing
+back rubbish. The error names itself, so you can tell it from a corrupt file:
+
+```ts
+try {
+  Ream.parse(bytes, { password });
+} catch (e) {
+  if (e instanceof Error && e.name === 'WrongPasswordError') promptAgain();
+  else throw e; // not a password problem
+}
+```
+
+A document that needs a password and gets none throws too, naming the option to
+pass. Decryption only: Ream never writes an encrypted package, so `convert`
+output is always in the clear.
+
 ## pdf → html / docx: read a PDF back
 
 `Ream.parse` also accepts a **PDF** — including a modern compressed one

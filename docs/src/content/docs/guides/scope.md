@@ -44,6 +44,18 @@ back. The xlsx round-trip preserves the whole grid surface — cells, styles,
 merges, the print model, conditional formatting, sparklines, tables and embedded
 charts — and is byte-stable across a read↔write loop.
 
+**Password-protected packages (ECMA-376 §2.3, MS-OFFCRYPTO)**
+- An encrypted `.docx` / `.xlsx` / `.pptx` is not a zip at all: the whole OPC
+  package is ciphertext inside an OLE container. Given the password
+  (`Ream.parse(bytes, { password })`) it is decrypted and read like any other
+  document. Both schemes in the wild are supported — the **standard** one
+  (Office 2007 and LibreOffice: AES-ECB under a key spun from 50 000 SHA-1
+  rounds) and the **agile** one (Office 2010 and later: an XML descriptor
+  naming its own hash and cipher, the package cut into 4096-byte segments with
+  an IV each). Each carries a verifier, so a **wrong password is refused**
+  (`err.name === 'WrongPasswordError'`) rather than yielding rubbish. Decryption
+  only — Ream never writes an encrypted package.
+
 **WordprocessingML (§17)**
 - Text, runs and the full style cascade (`docDefaults` → styles → direct formatting).
 - Tables — auto / fixed layout, §17.4 border-conflict resolution, cell shading,
@@ -114,7 +126,8 @@ charts — and is byte-stable across a read↔write loop.
   "iii." or the bullet glyph, from the `LST` / `LVL` / `LFO` tables. So an old `.doc`
   renders to PDF/SVG/HTML and re-writes to `.docx`. Legacy drawing shapes / text
   boxes and comments are not read (re-save as `.docx` for full fidelity); an
-  encrypted file yields no text.
+  encrypted `.doc` yields no text — the binary formats lock themselves with the
+  older RC4 scheme, which is not the OOXML one above.
   The shared CFB reader
   (`src/core/ole`) is the same keystone `.xls` uses.
 
