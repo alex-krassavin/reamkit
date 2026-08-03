@@ -60,6 +60,34 @@
     </div>
   </label>
 
+  <!-- password (revealed only when the document asks for one) -->
+  <form class="rk-pass" id="rk-pass" hidden>
+    <svg
+      class="rk-pass-icon"
+      width="17"
+      height="17"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.8"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="4" y="10" width="16" height="10" rx="2"></rect>
+      <path d="M8 10V7a4 4 0 0 1 8 0v3"></path>
+    </svg>
+    <label class="rk-pass-label" for="rk-pass-input">This document is protected</label>
+    <input
+      class="rk-pass-input"
+      id="rk-pass-input"
+      type="password"
+      autocomplete="off"
+      placeholder="Password"
+    />
+    <button class="rk-pass-go" id="rk-pass-go" type="submit">Open</button>
+  </form>
+
   <!-- controls (revealed once a file parses) -->
   <div class="rk-controls" id="rk-controls" hidden>
     <div class="rk-controls-row">
@@ -368,6 +396,55 @@
     box-shadow: none;
   }
 
+  /* password */
+  .rk-pass {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 18px;
+    padding: 12px 14px;
+    background: var(--rk-soft);
+    border: 1px solid var(--rk-border-soft);
+    border-radius: 12px;
+  }
+  .rk-pass-icon {
+    flex: none;
+    color: var(--rk-terra);
+  }
+  .rk-pass-label {
+    font-size: 14.5px;
+    color: var(--rk-muted);
+    margin-right: auto;
+  }
+  .rk-pass-input {
+    width: 190px;
+    font-family: var(--rk-mono, 'IBM Plex Mono', monospace);
+    font-size: 13.5px;
+    color: inherit;
+    background: #fff;
+    border: 1px solid var(--rk-border-soft);
+    border-radius: 9px;
+    padding: 8px 11px;
+  }
+  .rk-pass-input:focus {
+    outline: none;
+    border-color: var(--rk-terra);
+  }
+  .rk-pass-go {
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    color: #fff;
+    background: var(--rk-terra);
+    border-radius: 9px;
+    padding: 9px 16px;
+  }
+  .rk-pass-go:hover {
+    background: var(--rk-terra-deep);
+  }
+
   /* status */
   .rk-status {
     display: flex;
@@ -641,9 +718,13 @@
     const noPreview = $('rk-nopreview');
     const lossesEl = $('rk-losses');
     const downloadEl = $<HTMLAnchorElement>('rk-download');
+    const passForm = $<HTMLFormElement>('rk-pass');
+    const passInput = $<HTMLInputElement>('rk-pass-input');
+    const passLabel = passForm.querySelector<HTMLElement>('.rk-pass-label')!;
 
     let ReamCtor: typeof Ream | null = null;
     let doc: Ream | null = null;
+    let pending: File | null = null;
     let baseName = 'document';
     let target: Target = 'pdf';
     let blobUrl: string | null = null;
@@ -683,7 +764,27 @@
       clearResult();
     }
 
+    // A protected document throws for the password (OOXML, which carries a
+    // verifier) or reads as empty and says so in its losses (PDF, which does
+    // not throw). Either way the answer is the same: ask, and open it again.
+    const askedForPassword = (err: unknown) =>
+      err instanceof Error && (err.name === 'WrongPasswordError' || /password/iu.test(err.message));
+    const lockedPdf = (ream: Ream) => ream.losses.some((l) => /encrypted pdf/iu.test(l.detail));
+
+    function askPassword(prompt: string) {
+      passLabel.textContent = prompt;
+      passForm.hidden = false;
+      passInput.value = '';
+      passInput.focus();
+    }
+
     async function onFile(file: File) {
+      pending = file;
+      passForm.hidden = true;
+      await openFile(file);
+    }
+
+    async function openFile(file: File, password?: string) {
       clearResult();
       clearStatus();
       setStatus('Reading & sniffing the format…');
@@ -691,15 +792,34 @@
       try {
         bytes = new Uint8Array(await file.arrayBuffer());
         const Ream = await loadReam();
-        doc = Ream.parse(bytes);
-      } catch {
+        doc = Ream.parse(bytes, password === undefined ? {} : { password });
+      } catch (err) {
         doc = null;
+        controls.hidden = true;
+        clearStatus();
+        if (askedForPassword(err)) {
+          askPassword(
+            password === undefined
+              ? 'This document is protected — enter its password'
+              : 'That password did not open it — try again',
+          );
+          return;
+        }
         setStatus(
           'Could not recognise that file. Supported inputs: .docx .xlsx .pptx .pdf .doc .xls .ppt',
           true,
         );
-        controls.hidden = true;
         return;
+      }
+      // The PDF handler hands back an empty document rather than throwing.
+      if (lockedPdf(doc)) {
+        askPassword(
+          password === undefined
+            ? 'This PDF is protected — enter its password'
+            : 'That password did not open it — try again',
+        );
+      } else {
+        passForm.hidden = true;
       }
       clearStatus();
       baseName = file.name.replace(/\.[^./\\]+$/, '') || 'document';
@@ -809,6 +929,11 @@
       if (btn && !btn.disabled) selectTarget(btn.dataset.fmt as Target);
     });
     go.addEventListener('click', () => void convert());
+    passForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const password = passInput.value;
+      if (pending && password) void openFile(pending, password);
+    });
   }
 
   function escapeHtml(s: string): string {

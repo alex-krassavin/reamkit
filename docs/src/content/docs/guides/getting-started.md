@@ -45,6 +45,34 @@ const url = URL.createObjectURL(new Blob([pdf], { type: 'application/pdf' }));
 window.open(url);
 ```
 
+## Open a password-protected document
+
+An encrypted `.docx`/`.xlsx` is not a zip: ECMA-376 §2.3 puts the whole package
+inside an OLE container, so it has to be decrypted before anything can read it.
+Pass the password to `parse` and that happens for you — both Office schemes
+(the 2007 standard one and the agile one 2010 and later write), and the same
+option carries a PDF's user password:
+
+```ts
+const doc = Ream.parse(bytes, { password: 'letmein' });
+const pdf = await doc.convert('pdf');
+```
+
+Every scheme stores a verifier, so a wrong password is refused rather than
+producing rubbish. The error names itself, so you can tell it from a corrupt
+file and ask again:
+
+```ts
+try {
+  Ream.parse(bytes, { password });
+} catch (e) {
+  if (e instanceof Error && e.name === 'WrongPasswordError') promptAgain();
+  else throw e;
+}
+```
+
+A document that needs a password and gets none throws as well, saying so.
+
 ## Bring your own fonts (no network)
 
 To embed specific fonts — or to avoid the network entirely — pass the font
