@@ -205,6 +205,69 @@ describe('pptx placeholder cascade (E-PPTX PX2)', () => {
     expect(runs[0]?.listMarker).toBe(true);
     expect(runs[0]?.text.trim()).toBe('–');
     expect(runs[1]?.text).toBe('With a solid fill');
+    // §17.3.1.12 — a hanging indent is itself a tab stop, and the tab after the
+    // marker is what carries the text out to the body indent (marL 285750).
+    expect(runs[0]?.text).toBe('–\t');
+  });
+
+  // The page, the band and a table cell all apply a paragraph's indent; a TEXT
+  // BOX did not, so a slide's bullets stood in the margin and their words began
+  // wherever the dot ended.
+  it('stands the bulleted text at the indent its paragraph asks for', async () => {
+    const body =
+      `<p:txStyles><p:titleStyle/>` +
+      `<p:bodyStyle><a:lvl1pPr marL="914400" indent="-914400">` +
+      `<a:buChar char="•"/><a:defRPr sz="1800"/></a:lvl1pPr></p:bodyStyle>` +
+      `<p:otherStyle/></p:txStyles>`;
+    const slide =
+      `<p:sp><p:nvSpPr><p:cNvPr id="3" name="Body 2"/><p:cNvSpPr/>` +
+      `<p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5486400" cy="914400"/></a:xfrm></p:spPr>` +
+      `<p:txBody><a:bodyPr lIns="0"/><a:p><a:r><a:rPr lang="en"/><a:t>Indented</a:t></a:r>` +
+      `</a:p></p:txBody></p:sp>`;
+    const pptx = buildPptx([slide], { layoutMaster: { txStyles: body } });
+    const file = PdfFile.parse(await Ream.parse(pptx).convert('pdf', { fonts: FONTS }));
+    const runs = extractPageText(file, file.pages()[0]!);
+    const word = runs.find((r) => r.text.replace(/\s/gu, '').includes('Indented'));
+    // marL 914400 EMU = 72 pt from the box's left edge (which is the page's).
+    expect(word?.x).toBeGreaterThan(66);
+    expect(word?.x).toBeLessThan(78);
+    // …and the dot itself stands out in front of it, at the box's edge.
+    const dot = runs.find((r) => r.text.includes('•'));
+    expect(dot?.x).toBeLessThan(6);
+  });
+
+  // §21.1.2.4.2/.3 — a bullet is drawn at the size of the TEXT IT LEADS,
+  // scaled by `a:buSzPct`. Drawn at the level's inherited size instead,
+  // ArtisticEffectSample's dots came out 48pt in front of 18pt text and every
+  // line stood three times too tall.
+  it('sizes the bullet by the run it leads, not by the level default', () => {
+    const body =
+      `<p:txStyles><p:titleStyle/>` +
+      `<p:bodyStyle><a:lvl1pPr><a:buChar char="•"/><a:defRPr sz="4800"/></a:lvl1pPr>` +
+      `</p:bodyStyle><p:otherStyle/></p:txStyles>`;
+    const slide = (pPr: string): string =>
+      `<p:sp><p:nvSpPr><p:cNvPr id="3" name="Body 2"/><p:cNvSpPr/>` +
+      `<p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5486400" cy="914400"/></a:xfrm></p:spPr>` +
+      `<p:txBody><a:bodyPr/><a:p>${pPr}<a:r><a:rPr lang="en" sz="1800"/><a:t>Small</a:t></a:r>` +
+      `</a:p></p:txBody></p:sp>`;
+    const marker = (pPr: string) => {
+      const doc = Ream.parse(buildPptx([slide(pPr)], { layoutMaster: { txStyles: body } }));
+      return doc.flow.body.flatMap((el) =>
+        el.kind === 'shape' && el.shape.text
+          ? el.shape.text.content.flatMap((c) =>
+              c.kind === 'paragraph' ? c.paragraph.runs.filter((r) => r.listMarker) : [],
+            )
+          : [],
+      )[0];
+    };
+    expect(marker('')?.properties.fontSizePt).toBe(18); // the run's, not 48
+    expect(marker('<a:pPr><a:buSzPct val="50000"/></a:pPr>')?.properties.fontSizePt).toBe(9);
+    expect(marker('<a:pPr><a:buSzPts val="1200"/></a:pPr>')?.properties.fontSizePt).toBe(12);
+    expect(
+      marker('<a:pPr><a:buClr><a:srgbClr val="FF0000"/></a:buClr></a:pPr>')?.properties.colorHex,
+    ).toBe('FF0000');
   });
 
   // §20.1.4.2.14 — a gallery style's `a:fontRef` colour belongs UNDER the run's
@@ -278,11 +341,50 @@ describe('pptx slide images (E-PPTX PX3)', () => {
     expect(img.altText).toBe('a red square'); // p:cNvPr @descr
   });
 
+  // §20.1.8.4 `a:alphaModFix` — how opaque the picture is DRAWN. A layout that
+  // lays a photograph behind its title sets it low (ArtisticEffectSample's
+  // cover shows one at 52%), and drawn full-strength the words on it are lost.
+  it('draws a picture at the transparency its blip fixes', () => {
+    const pic =
+      `<p:pic><p:nvPicPr><p:cNvPr id="5" name="p"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>` +
+      `<p:blipFill><a:blip r:embed="rId7"><a:alphaModFix amt="52000"/></a:blip>` +
+      `<a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`;
+    const doc = Ream.parse(
+      buildPptx([pic], {
+        media: { 'ppt/media/image1.png': buildTinyPng(2, 2, [255, 0, 0, 255]) },
+        slideRels: [`<Relationship Id="rId7" Type="${IMAGE_REL}" Target="../media/image1.png"/>`],
+      }),
+    );
+    const el = doc.flow.body.find((e) => e.kind === 'image');
+    expect(el?.kind === 'image' && el.image.alpha).toBeCloseTo(0.52, 5);
+  });
+
   it('embeds the slide image into the rendered PDF', async () => {
     const pdf = await Ream.parse(picDeck()).convert('pdf', { fonts: FONTS });
     expect(PdfFile.parse(pdf).pages().length).toBe(1);
     // An image XObject made it into the PDF.
     expect(latin1.decode(pdf)).toContain('/Image');
+  });
+});
+
+describe('what a slide shape states about its own box', () => {
+  // §20.1.7.6 — a shape may be turned in its box, and a slide says so on the
+  // same `a:xfrm` its position comes from. Unread, the blue triangle
+  // ArtisticEffectSample's layout stands on its side pointed up, not right.
+  it('turns and mirrors a shape the way its a:xfrm says', () => {
+    const sp = (attrs: string): string =>
+      `<p:sp><p:spPr><a:xfrm ${attrs}><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+      `<a:prstGeom prst="triangle"><a:avLst/></a:prstGeom>` +
+      `<a:solidFill><a:srgbClr val="1F7ABF"/></a:solidFill></p:spPr></p:sp>`;
+    const shape = (attrs: string) => {
+      const el = Ream.parse(buildPptx([sp(attrs)])).flow.body.find((e) => e.kind === 'shape');
+      return el?.kind === 'shape' ? el.shape : undefined;
+    };
+    expect(shape('rot="5400000"')?.transform?.rotation60k).toBe(5400000);
+    expect(shape('flipH="1"')?.transform?.flipH).toBe(true);
+    expect(shape('')?.transform).toBeUndefined();
   });
 });
 
@@ -397,6 +499,45 @@ describe('pptx slide charts (E-PPTX PX4)', () => {
   it('renders the slide chart into the PDF', async () => {
     const pdf = await Ream.parse(chartDeck()).convert('pdf', { fonts: FONTS });
     expect(PdfFile.parse(pdf).pages().length).toBe(1);
+  });
+
+  // §20.1.8.14 — a chart may be papered with a PICTURE rather than filled with
+  // a colour, and the blip is named through the CHART part's own relationships.
+  // chart-texture-bg.pptx tiles a woven cloth over its whole frame, and a chart
+  // on white is a different chart.
+  it('papers a chart with the picture its frame is filled with', async () => {
+    const textured = BAR_CHART.replace(
+      '</c:chart>',
+      '</c:chart><c:spPr><a:blipFill><a:blip r:embed="rIdTex"/>' +
+        '<a:tile tx="0" ty="0" sx="100000" sy="100000"/></a:blipFill></c:spPr>',
+    ).replace(
+      '<c:chartSpace ',
+      '<c:chartSpace xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ',
+    );
+    const gf =
+      `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="6" name="Chart 5"/>` +
+      `<p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>` +
+      `<p:xfrm><a:off x="0" y="0"/><a:ext cx="5486400" cy="3200400"/></p:xfrm>` +
+      `<a:graphic><a:graphicData uri="${CHART_NS}">` +
+      `<c:chart xmlns:c="${CHART_NS}" r:id="rId8"/></a:graphicData></a:graphic></p:graphicFrame>`;
+    const pptx = buildPptx([gf], {
+      media: {
+        'ppt/charts/chart1.xml': new TextEncoder().encode(textured),
+        'ppt/charts/_rels/chart1.xml.rels': new TextEncoder()
+          .encode(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rIdTex" Type="${IMAGE_REL}" Target="../media/tex.png"/></Relationships>`),
+        'ppt/media/tex.png': buildTinyPng(2, 2, [200, 170, 100, 255]),
+      },
+      slideRels: [`<Relationship Id="rId8" Type="${CHART_REL}" Target="../charts/chart1.xml"/>`],
+    });
+    const doc = Ream.parse(pptx);
+    const chart = [...(doc.flow.charts?.values() ?? [])][0];
+    expect(chart?.frameFillImage?.tiled).toBe(true);
+    expect(chart?.frameFillImage?.resource).toBeDefined();
+    // …and the picture reaches the page: an XObject is drawn for it.
+    const pdf = await Ream.parse(pptx).convert('pdf', { fonts: FONTS });
+    expect(latin1.decode(pdf)).toContain('/Image');
   });
 });
 

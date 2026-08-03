@@ -200,7 +200,7 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
         ...(styles.themeFills ? { themeFills: styles.themeFills } : {}),
         ...(styles.themeLineWidths ? { themeLineWidths: styles.themeLineWidths } : {}),
         resolveImage: makeSlideImageResolver(pkg, part.path, resources),
-        resolveChart: makeSlideChartResolver(pkg, part.path, charts, styles.colors),
+        resolveChart: makeSlideChartResolver(pkg, part.path, charts, styles.colors, resources),
         resolveHyperlink: makeHyperlinkResolver(pkg, part.path),
         resolveDiagram: makeSlideDiagramResolver(pkg, part.path),
         resolveOlePreview: makeOlePreviewResolver(pkg, part.path, resources),
@@ -407,13 +407,18 @@ function makeSlideChartResolver(
   slidePath: string,
   charts: Map<string, Chart>,
   colors: ColorResolver,
+  resources: ResourceStore,
 ): (relId: string) => string | undefined {
   const cache = new Map<string, string | undefined>();
   return (relId) => {
     if (cache.has(relId)) return cache.get(relId);
     const rel = pkg.getPartRelationships(slidePath).find((r) => r.id === relId);
     const resolved = rel ? pkg.resolveRelatedPart(slidePath, rel) : undefined;
-    const chart = resolved ? parseChart(resolved.data, colors) : null;
+    // A picture the chart paints itself with is named through the CHART part's
+    // own relationships, not the slide's (chart-texture-bg.pptx).
+    const chart = resolved
+      ? parseChart(resolved.data, colors, makeSlideImageResolver(pkg, resolved.path, resources))
+      : null;
     let key: string | undefined;
     if (chart && resolved) {
       key = `${slidePath}!${relId}`;
@@ -653,7 +658,7 @@ function partShapes(
     ...(deps.background ? { backgroundFill: deps.background } : {}),
     slideSize: deps.slideSize,
     resolveImage: makeSlideImageResolver(pkg, path, deps.resources),
-    resolveChart: makeSlideChartResolver(pkg, path, deps.charts, deps.colors),
+    resolveChart: makeSlideChartResolver(pkg, path, deps.charts, deps.colors, deps.resources),
     resolveHyperlink: makeHyperlinkResolver(pkg, path),
     resolveDiagram: makeSlideDiagramResolver(pkg, path),
     onLoss: deps.onLoss,

@@ -397,6 +397,15 @@ interface ChartLayout {
 interface ChartBlockLaidOut {
   readonly kind: 'chart';
   /**
+   * §20.1.8.14 — the picture the chart's frame is filled with, already resolved
+   * to a page resource. `tile` is the picture's own size, when it repeats at it
+   * rather than stretching over the box.
+   */
+  readonly background?: {
+    readonly resourceName: string;
+    readonly tile?: { readonly widthPt: number; readonly heightPt: number };
+  };
+  /**
    * What a tagged PDF should call this Figure when the drawing carries no
    * description of its own. A metafile picture rides this block, and it is a
    * picture, not a chart.
@@ -423,6 +432,8 @@ interface ImageBlockLaidOut {
   readonly outline?: PictureOutline;
   /** §14.1.2.10 — the contrast/brightness wash the picture is drawn through. */
   readonly wash?: { readonly gain: number; readonly black: number };
+  /** §20.1.8.4 `a:alphaModFix` — how opaque the picture is drawn, `0..1`. */
+  readonly alpha?: number;
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
   readonly crop?: ImageCrop;
   /** §20.1.7.6 — degrees clockwise about the box's centre. */
@@ -2300,7 +2311,14 @@ function layoutBodyElement(
       : layoutImageBlock(el.image, imageResources, contentWidth, maxHeight, box);
   }
   if (el.kind === 'chart') {
-    return layoutChartBlock(el.chart, options, fontResources, contentWidth, maxHeight);
+    return layoutChartBlock(
+      el.chart,
+      options,
+      fontResources,
+      contentWidth,
+      maxHeight,
+      imageResources,
+    );
   }
   return layoutShapeBlock(
     el.shape,
@@ -2375,6 +2393,7 @@ function layoutImageBlock(
     resourceName: res?.resourceName ?? '',
     ...(image.outline ? { outline: image.outline } : {}),
     ...(image.wash ? { wash: image.wash } : {}),
+    ...(image.alpha !== undefined && image.alpha < 1 ? { alpha: image.alpha } : {}),
     ...(image.crop ? { crop: image.crop } : {}),
     ...(image.rotation60k ? { rotationDeg: image.rotation60k / 60000 } : {}),
     ...(image.flipH ? { flipH: true } : {}),
@@ -2512,7 +2531,14 @@ function layoutShapeBlock(
       // tall as the chart, drawn from the line's corner. chart-size.docx sets
       // one between its "Before." and its "After." and we drew an empty frame.
       if (el.kind === 'chart') {
-        const laid = layoutChartBlock(el.chart, options, fontResources, innerWidth);
+        const laid = layoutChartBlock(
+          el.chart,
+          options,
+          fontResources,
+          innerWidth,
+          undefined,
+          imageResources,
+        );
         const line: Line = {
           tokens: [],
           contentWidthPt: laid.widthPt,
@@ -2923,6 +2949,7 @@ function layoutChartBlock(
   fontResources: ReadonlyMap<string, FontResource>,
   contentWidth: number,
   maxHeight?: number,
+  imageResources?: ReadonlyMap<string, ImageResource>,
 ): ChartBlockLaidOut {
   let widthPt: number = block.width;
   let heightPt: number = block.height;
@@ -2944,11 +2971,26 @@ function layoutChartBlock(
   const pp = block.paragraphProperties;
   // Figure alt text: the drawing's docPr description, else the chart's own title.
   const altText = block.altText ?? chart?.title;
+  // §20.1.8.14 — a chart papered with a picture rather than filled with a
+  // colour: chart-texture-bg.pptx tiles a woven cloth over the whole frame.
+  const bgRes = chart?.frameFillImage
+    ? imageResources?.get(chart.frameFillImage.resource)
+    : undefined;
+  const bgTile =
+    chart?.frameFillImage?.tiled === true && bgRes?.prepared
+      ? {
+          widthPt: (bgRes.prepared.widthPx * 72) / 96,
+          heightPt: (bgRes.prepared.heightPx * 72) / 96,
+        }
+      : undefined;
   return {
     kind: 'chart',
     widthPt,
     heightPt,
     layout,
+    ...(bgRes
+      ? { background: { resourceName: bgRes.resourceName, ...(bgTile ? { tile: bgTile } : {}) } }
+      : {}),
     resolvedAlignment: pp.alignment ?? 'left',
     spacingBeforePt: pp.spacingBefore ?? 0,
     spacingAfterPt: pp.spacingAfter ?? 0,
@@ -3344,6 +3386,11 @@ function collectImageResources(
     }
   };
   visit(body);
+  // §20.1.8.14 — and the picture a CHART is papered with, which hangs off the
+  // chart rather than off any element in the body (chart-texture-bg.pptx).
+  for (const chart of options.charts?.values() ?? []) {
+    if (chart.frameFillImage) seen.add(chart.frameFillImage.resource);
+  }
   // §17.2.1 — and the picture the PAGE is papered with, which is in no body at
   // all: unseen here it has no resource name, and nothing would be drawn for it
   // (tdf126533_pageBitmap.docx).
@@ -3408,6 +3455,40 @@ function chartPageItems(
   // thing, in that order, rather than every shape and then every label.
   const ordered = laid.layout.shapes.some((sh) => sh.seq !== undefined);
   const picture = ordered ? { pictureId: nextPictureId++ } : {};
+  // §20.1.8.14 — the picture the frame is papered with, under every primitive.
+  const backdrop: Array<PageItem> = [];
+  if (laid.background) {
+    const box = {
+      x,
+      y: pageHeight - (bottomYUp + laid.heightPt),
+      width: laid.widthPt,
+      height: laid.heightPt,
+    };
+    const tile = laid.background.tile;
+    // A tiled fill lays whole copies from the corner, so the last row and
+    // column hang past the frame: the box clips them back, exactly as a shape's
+    // own outline clips the picture it is filled with.
+    const clip = {
+      paths: [rectPath(laid.widthPt, laid.heightPt)],
+      transform: flipTransform([1, 0, 0, 1, x, bottomYUp], pageHeight),
+    };
+    const items = tile
+      ? PageAssembler.tileItems(laid.background.resourceName, tile, box)
+      : [
+          {
+            type: 'image' as const,
+            x: pt(box.x),
+            y: pt(box.y),
+            width: pt(box.width),
+            height: pt(box.height),
+            imageResourceName: laid.background.resourceName,
+          },
+        ];
+    for (const item of items) {
+      if (item.type !== 'image') continue;
+      backdrop.push({ ...item, clip, ...fig, ...picture });
+    }
+  }
   const shapes: Array<PageItem & { readonly seq: number }> = laid.layout.shapes.map((sh) => ({
     type: 'shape',
     shape: {
@@ -3432,7 +3513,7 @@ function chartPageItems(
   }));
   const all = [...shapes, ...texts];
   if (ordered) all.sort((a, b) => a.seq - b.seq);
-  return all.map(({ seq: _seq, ...item }) => item);
+  return [...backdrop, ...all.map(({ seq: _seq, ...item }) => item)];
 }
 
 // Pictures need only be told apart within one page; a running count does that.
@@ -3533,10 +3614,16 @@ function emitShapeText(
       }
       return;
     }
+    // §17.3.1.12 — the paragraph's indent, which the page, the band and a table
+    // cell all apply and a text box did not: the bullets of a slide stood in
+    // the margin and their text began wherever the dot ended
+    // (ArtisticEffectSample's list hangs its text 40pt in).
+    const indentLeft =
+      line.resolved.indentLeft + (line.firstLine ? line.resolved.indentFirstLine : 0);
     sink.push({
       type: 'line',
       line,
-      originX: pt(x + sh.insetLeftPt + lineOffset),
+      originX: pt(x + sh.insetLeftPt + indentLeft + lineOffset),
       baselineY: pt(pageHeight - (textY + lineBaselineOffset(line, line.resolved))),
       ...(figId !== undefined ? { structId: figId } : {}),
     });
@@ -3599,6 +3686,7 @@ function emitCellFloat(cf: CellFloat, ctx: CellAnchorCtx, frame: FloatFrame): vo
       imageResourceName: cf.block.resourceName,
       ...(cf.block.crop ? { crop: cf.block.crop } : {}),
       ...(cf.block.wash ? { wash: cf.block.wash } : {}),
+      ...(cf.block.alpha !== undefined ? { alpha: cf.block.alpha } : {}),
       ...(cf.block.rotationDeg ? { rotationDeg: cf.block.rotationDeg } : {}),
       ...(cf.block.flipH ? { flipH: true } : {}),
       ...(cf.block.flipV ? { flipV: true } : {}),
@@ -3933,6 +4021,7 @@ function drawBlocksSequentially(
         imageResourceName: block.resourceName,
         ...(block.crop ? { crop: block.crop } : {}),
         ...(block.wash ? { wash: block.wash } : {}),
+        ...(block.alpha !== undefined ? { alpha: block.alpha } : {}),
         ...(block.rotationDeg ? { rotationDeg: block.rotationDeg } : {}),
         ...(block.flipH ? { flipH: true } : {}),
         ...(block.flipV ? { flipV: true } : {}),
@@ -7914,6 +8003,7 @@ function paginateSections(
           imageResourceName: block.resourceName,
           ...(block.crop ? { crop: block.crop } : {}),
           ...(block.wash ? { wash: block.wash } : {}),
+          ...(block.alpha !== undefined ? { alpha: block.alpha } : {}),
           ...(block.rotationDeg ? { rotationDeg: block.rotationDeg } : {}),
           ...(block.flipH ? { flipH: true } : {}),
           ...(block.flipV ? { flipV: true } : {}),

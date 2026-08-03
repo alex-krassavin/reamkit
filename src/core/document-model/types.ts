@@ -1072,6 +1072,13 @@ export interface ImageBlock {
    */
   readonly wash?: { readonly gain: number; readonly black: number };
   /**
+   * §20.1.8.4 `a:alphaModFix` — how opaque the picture is DRAWN, `0..1`; absent
+   * is opaque. A layout that lays a photograph behind its text sets it low
+   * (ArtisticEffectSample's cover shows one at 52%), and drawn full-strength
+   * the words on it are unreadable.
+   */
+  readonly alpha?: number;
+  /**
    * §20.1.8.16 `a:clrChange` — one colour of the picture replaced by another,
    * or knocked out entirely when the destination states `a:alpha` at zero.
    */
@@ -1535,6 +1542,12 @@ export interface Chart {
    * creates, and both references draw them.
    */
   readonly frameFillHex?: string;
+  /**
+   * §20.1.8.14 `a:blipFill` — the PICTURE the frame is filled with, when it is
+   * filled with one rather than a colour. chart-texture-bg.pptx papers its
+   * whole chart with a woven cloth, and a chart on white is a different chart.
+   */
+  readonly frameFillImage?: { readonly resource: ResourceId; readonly tiled?: boolean };
   readonly frameLineHex?: string;
   /** The frame rule's width and dash, when it states them. */
   readonly frameLineWidthPt?: number;

@@ -315,6 +315,13 @@ function parseSp(sp: PoNode, ctx: SlideContext, transform: GroupTransform): Shap
   const visibleLine = line !== undefined && line.fill !== 'none';
   if (!text && styled.kind === 'none' && !visibleLine) return undefined;
 
+  // §20.1.7.6 — a shape may be turned or mirrored in its box, and a slide says
+  // so on the same `a:xfrm` its position comes from. Unread, the blue triangle
+  // ArtisticEffectSample's layout stands on its side (`rot="5400000"`) pointed
+  // up instead of right.
+  const xfrm = spPr ? poChildren(spPr).find((c) => poIs(c, 'a:xfrm')) : undefined;
+  const spin = xfrm ? parseXfrm(xfrm) : undefined;
+
   return {
     float: floatAt(box),
     width: emuToPt(box.cx),
@@ -322,6 +329,7 @@ function parseSp(sp: PoNode, ctx: SlideContext, transform: GroupTransform): Shap
     geometry,
     fill: styled,
     ...(line ? { line } : {}),
+    ...(spin && Object.keys(spin).length > 0 ? { transform: spin } : {}),
     ...(text ? { text } : {}),
     paragraphProperties: {},
   };
@@ -837,12 +845,19 @@ function parsePic(
   // §20.1.8.16 — a picture may declare one of its colours away, which is how a
   // logo drawn on white sits on a dark slide.
   const colorChange = blip ? colorChangeOf(blip, ctx.colors ?? defaultColorResolver) : undefined;
+  // §20.1.8.4 `a:alphaModFix` — how opaque the picture is DRAWN. A layout that
+  // lays a photograph behind its title sets it low (ArtisticEffectSample's
+  // cover shows one at 52%), and drawn full-strength the words are unreadable.
+  const fixed = blip ? poChildren(blip).find((c) => poIs(c, 'a:alphaModFix')) : undefined;
+  const amt = fixed ? poIntAttr(fixed, 'amt') : undefined;
+  const alpha = amt === undefined ? undefined : Math.min(1, Math.max(0, amt / 100000));
 
   const altText = picAltText(pic);
   return {
     float: floatAt(box),
     ...(resource !== undefined ? { resource } : {}),
     ...(colorChange ? { colorChange } : {}),
+    ...(alpha !== undefined && alpha < 1 ? { alpha } : {}),
     width: emuToPt(box.cx),
     height: emuToPt(box.cy),
     paragraphProperties: {},
@@ -952,13 +967,34 @@ function parseSlideParagraph(
   const alignment = algn !== undefined ? ALGN_TO_ALIGNMENT[algn] : undefined;
 
   const runs: Array<Run> = [];
-  const marker = bulletMarker(pPr, level, counters, cascade?.bulletFor(ph, level));
-  if (marker !== undefined) runs.push({ text: marker, properties: defaults, listMarker: true });
   for (const child of poChildren(aP)) {
     if (poIs(child, 'a:r') || poIs(child, 'a:fld')) {
       const run = parseSlideRun(child, defaults, colors, resolveLink);
       if (run) runs.push(run);
     }
+  }
+  // §21.1.2.2.7 — marL is the text's left margin, @indent the first-line/hang.
+  // Absent: indent nested levels by a default 0.5" per level (457200 EMU).
+  const marL = pPr ? poIntAttr(pPr, 'marL') : undefined;
+  const indent = pPr ? poIntAttr(pPr, 'indent') : undefined;
+  const indentLeft =
+    marL !== undefined ? emuToPt(marL) : level > 0 ? emuToPt(level * 457200) : undefined;
+  const hanging = (indent !== undefined ? emuToPt(indent) : (inherited.indentFirstLine ?? 0)) < 0;
+  const marker = bulletMarker(pPr, level, counters, cascade?.bulletFor(ph, level));
+  if (marker !== undefined) {
+    // §21.1.2.4.2/.3 — a bullet is drawn at the size of the TEXT IT LEADS,
+    // scaled by `a:buSzPct` or overruled by `a:buSzPts`. Drawn at the level's
+    // inherited size instead, ArtisticEffectSample's dots came out 48pt in
+    // front of 18pt text and every line stood three times too tall.
+    const base = runs[0]?.properties ?? defaults;
+    runs.unshift({
+      // §17.3.1.12 — a hanging indent is itself a tab stop, and the tab after
+      // the marker is what carries the text out to the body indent. Written as
+      // two spaces the words began wherever the dot happened to end.
+      text: marker + (hanging ? '\t' : '  '),
+      properties: bulletProps(base, pPr, colors),
+      listMarker: true,
+    });
   }
 
   // §21.1.2.2.3 `a:endParaRPr` — the properties of the paragraph MARK. On a
@@ -975,12 +1011,6 @@ function parseSlideParagraph(
     }
   }
 
-  // §21.1.2.2.7 — marL is the text's left margin, @indent the first-line/hang.
-  // Absent: indent nested levels by a default 0.5" per level (457200 EMU).
-  const marL = pPr ? poIntAttr(pPr, 'marL') : undefined;
-  const indent = pPr ? poIntAttr(pPr, 'indent') : undefined;
-  const indentLeft =
-    marL !== undefined ? emuToPt(marL) : level > 0 ? emuToPt(level * 457200) : undefined;
   return {
     properties: {
       ...inherited,
@@ -992,9 +1022,41 @@ function parseSlideParagraph(
   };
 }
 
-// a:pPr bullet → the marker text to prepend (with trailing spacing), or
-// undefined for no bullet. a:buNone suppresses; a:buChar is literal; a:buAutoNum
-// advances the per-level counter and formats it (PX6b).
+// §21.1.2.4 — the marker's own formatting: the size of the text it leads (a
+// percentage of it, or a size stated outright) and the colour the paragraph
+// gives it.
+function bulletProps(
+  base: RunProperties,
+  pPr: PoNode | undefined,
+  colors: ColorResolver,
+): RunProperties {
+  const child = (tag: string): PoNode | undefined =>
+    pPr ? poChildren(pPr).find((c) => poIs(c, tag)) : undefined;
+  const pct = poIntAttr(child('a:buSzPct'), 'val');
+  const pts = poIntAttr(child('a:buSzPts'), 'val');
+  const clr = child('a:buClr');
+  const colorHex = clr
+    ? poChildren(clr)
+        .map((c) => resolveColorNode(c, colors))
+        .find((hex) => hex !== undefined)
+    : undefined;
+  const sizePt =
+    pts !== undefined
+      ? pts / 100
+      : pct !== undefined && base.fontSizePt !== undefined
+        ? (base.fontSizePt * pct) / 100000
+        : undefined;
+  return {
+    ...base,
+    ...(sizePt !== undefined ? { fontSizePt: pt(sizePt) } : {}),
+    ...(colorHex !== undefined ? { colorHex } : {}),
+  };
+}
+
+// a:pPr bullet → the marker text to prepend, or undefined for no bullet (the
+// gap after it is the caller's, since only a hanging indent earns a tab).
+// a:buNone suppresses; a:buChar is literal; a:buAutoNum advances the per-level
+// counter and formats it (PX6b).
 function bulletMarker(
   pPr: PoNode | undefined,
   level: number,
@@ -1009,12 +1071,12 @@ function bulletMarker(
   // levels up).
   const bullet = parseBullet(pPr) ?? inherited;
   if (!bullet || bullet.kind === 'none') return undefined;
-  if (bullet.kind === 'char') return `${bullet.char}  `;
+  if (bullet.kind === 'char') return bullet.char;
   const prev = counters[level];
   const n = (prev === undefined ? bullet.startAt - 1 : prev) + 1;
   counters[level] = n;
   counters.length = level + 1; // deeper levels restart
-  return `${n}${autoNumSuffix(bullet.type)}  `;
+  return `${n}${autoNumSuffix(bullet.type)}`;
 }
 
 // The trailing punctuation of an a:buAutoNum type (…Period → '.', …ParenR/Both →

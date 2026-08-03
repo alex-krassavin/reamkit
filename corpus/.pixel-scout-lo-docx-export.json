@@ -970,6 +970,11 @@
   "aligned": true
  },
  {
+  "name": "tdf123636_newlinePageBreak2.docx",
+  "score": 0.0072,
+  "aligned": true
+ },
+ {
   "name": "tdf121670_columnsInSectionsOnly.docx",
   "score": 0.0072,
   "aligned": true
@@ -1056,11 +1061,6 @@
  },
  {
   "name": "fdo38414.docx",
-  "score": 0.0064,
-  "aligned": true
- },
- {
-  "name": "tdf123636_newlinePageBreak2.docx",
   "score": 0.0064,
   "aligned": true
  },
@@ -3620,11 +3620,6 @@
   "aligned": true
  },
  {
-  "name": "content-control-grab-bag.docx",
-  "score": 0.0001,
-  "aligned": true
- },
- {
   "name": "tdf105095.docx",
   "score": 0.0001,
   "aligned": true
@@ -3666,6 +3661,11 @@
  },
  {
   "name": "author-property.docx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "content-control-grab-bag.docx",
   "score": 0.0001,
   "aligned": true
  },

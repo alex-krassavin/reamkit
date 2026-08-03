@@ -56,7 +56,7 @@
  },
  {
   "name": "themes.pptx",
-  "score": 0.9833,
+  "score": 0.9832,
   "aligned": true
  },
  {
@@ -65,38 +65,23 @@
   "aligned": false
  },
  {
-  "name": "ArtisticEffectSample.pptx",
-  "score": 0.4538,
-  "aligned": true
- },
- {
-  "name": "chart-texture-bg.pptx",
-  "score": 0.4173,
-  "aligned": true
- },
- {
-  "name": "chart-picture-bg.pptx",
-  "score": 0.4066,
-  "aligned": true
- },
- {
-  "name": "45541_Footer.pptx",
+  "name": "45541_Header.pptx",
   "score": 0.3991,
   "aligned": true
  },
  {
-  "name": "45541_Header.pptx",
-  "score": 0.399,
+  "name": "45541_Footer.pptx",
+  "score": 0.3989,
   "aligned": true
  },
  {
   "name": "45545_Comment.pptx",
-  "score": 0.3978,
+  "score": 0.3977,
   "aligned": true
  },
  {
   "name": "backgrounds.pptx",
-  "score": 0.3817,
+  "score": 0.3818,
   "aligned": true
  },
  {
@@ -151,7 +136,7 @@
  },
  {
   "name": "au.asn.aes.www_conferences_2011_presentations_Fri_20Room4Level4_20930_20Maloney.pptx",
-  "score": 0.0929,
+  "score": 0.0928,
   "aligned": true
  },
  {
@@ -185,8 +170,18 @@
   "aligned": true
  },
  {
+  "name": "chart-texture-bg.pptx",
+  "score": 0.0542,
+  "aligned": true
+ },
+ {
   "name": "crash-57308ca363f5b71763c489d1b432aff009d4bc4f.pptx",
   "score": 0.0529,
+  "aligned": true
+ },
+ {
+  "name": "chart-picture-bg.pptx",
+  "score": 0.0502,
   "aligned": true
  },
  {
@@ -211,7 +206,7 @@
  },
  {
   "name": "at.ecodesign.www_downloads_Vertiefungsvortrag_elektronik.pptx",
-  "score": 0.0387,
+  "score": 0.0386,
   "aligned": true
  },
  {
@@ -221,12 +216,17 @@
  },
  {
   "name": "pptx2svg.pptx",
-  "score": 0.0356,
+  "score": 0.0345,
   "aligned": true
  },
  {
   "name": "bug62513.pptx",
-  "score": 0.0313,
+  "score": 0.0312,
+  "aligned": true
+ },
+ {
+  "name": "ArtisticEffectSample.pptx",
+  "score": 0.0288,
   "aligned": true
  },
  {
@@ -256,7 +256,7 @@
  },
  {
   "name": "ececapstonespring2012.pptx",
-  "score": 0.0156,
+  "score": 0.0154,
   "aligned": true
  },
  {
@@ -340,11 +340,6 @@
   "aligned": true
  },
  {
-  "name": "sample_pptx_grouping_issues.pptx",
-  "score": 0.0051,
-  "aligned": true
- },
- {
   "name": "bug65228.pptx",
   "score": 0.0045,
   "aligned": true
@@ -370,13 +365,18 @@
   "aligned": true
  },
  {
+  "name": "bug64693.pptx",
+  "score": 0.0033,
+  "aligned": true
+ },
+ {
   "name": "present1.pptx",
   "score": 0.0032,
   "aligned": true
  },
  {
-  "name": "bug64693.pptx",
-  "score": 0.0029,
+  "name": "OverlappingRelations.pptx",
+  "score": 0.0028,
   "aligned": true
  },
  {
@@ -385,18 +385,13 @@
   "aligned": true
  },
  {
-  "name": "OverlappingRelations.pptx",
-  "score": 0.0026,
-  "aligned": true
- },
- {
   "name": "KEY02.pptx",
   "score": 0.0026,
   "aligned": true
  },
  {
-  "name": "picture-transparency.pptx",
-  "score": 0.0016,
+  "name": "sample_pptx_grouping_issues.pptx",
+  "score": 0.0025,
   "aligned": true
  },
  {
@@ -471,6 +466,11 @@
  },
  {
   "name": "61515.pptx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "picture-transparency.pptx",
   "score": 0,
   "aligned": true
  }
