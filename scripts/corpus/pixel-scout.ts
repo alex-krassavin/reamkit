@@ -210,8 +210,10 @@ async function main(): Promise<void> {
   // question and usually its own cause (a band we trim, a row we fit).
   console.log('\n── pagination differs (pixel score not comparable) ──');
   for (const r of sorted.filter((x) => !x.aligned)) console.log(r.line);
+  // One ranking per corpus directory: a sweep of the decks must not overwrite
+  // the record of the documents, and the name says which set it ranked.
   writeFileSync(
-    resolve('corpus/.pixel-scout.json'),
+    resolve(`corpus/.pixel-scout-${basename(resolve(dir))}.json`),
     JSON.stringify(
       sorted.map((r) => ({ name: r.name, score: Number(r.score.toFixed(4)), aligned: r.aligned })),
       null,
