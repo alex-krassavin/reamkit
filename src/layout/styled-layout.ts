@@ -368,6 +368,8 @@ type LaidOutBlock =
 // bottom-left, y-up). Pagination translates these to the page position. Vector
 // primitives reuse the shape pass; text primitives reuse the text (line) pass.
 interface ChartShapePrim {
+  /** Where this shape stands in the drawing's own order (see {@link ChartLayout}). */
+  readonly seq?: number;
   readonly paths: ReadonlyArray<VectorPath>;
   readonly fillColorHex?: string;
   readonly stroke?: StrokeStyle;
@@ -378,7 +380,16 @@ interface ChartTextPrim {
   readonly y: number;
   /** Counter-clockwise degrees about the origin (rotated axis titles). */
   readonly rotationDeg?: number;
+  /** Where this text stands in the drawing's own order (see {@link ChartLayout}). */
+  readonly seq?: number;
 }
+/**
+ * A drawing's primitives. A CHART builds its shapes and its labels separately
+ * and the labels belong on top, so they carry no order. A METAFILE is a list of
+ * drawing orders where the two interleave — a panel may bury a label written
+ * before it — so those carry `seq`, and a layout that has them paints as one
+ * picture in that order.
+ */
 interface ChartLayout {
   readonly shapes: ReadonlyArray<ChartShapePrim>;
   readonly texts: ReadonlyArray<ChartTextPrim>;
@@ -2767,6 +2778,7 @@ function rotateDrawing(layout: ChartLayout, deg: number, cx: number, cy: number)
   });
   return {
     shapes: layout.shapes.map((sh) => ({
+      ...(sh.seq !== undefined ? { seq: sh.seq } : {}),
       ...sh,
       paths: sh.paths.map((path) => ({
         ...path,
@@ -2811,9 +2823,13 @@ function metafileDrawing(
 
   const shapes: Array<ChartShapePrim> = [];
   const texts: Array<ChartTextPrim> = [];
+  // The picture's own order, kept so the page can paint it back (a label the
+  // drawing buries under a later panel must stay buried).
+  let seq = 0;
   for (const prim of pic.prims) {
     if (prim.kind === 'path') {
       shapes.push({
+        seq: seq++,
         paths: prim.paths.map((path) => ({
           ...path,
           segments: path.segments.map((seg) =>
@@ -2855,6 +2871,7 @@ function metafileDrawing(
     // and a baseline sits about four fifths of the em below the top.
     const baselineY = mapY(prim.y) - (prim.alignBaseline ? 0 : sizePt * 0.8);
     texts.push({
+      seq: seq++,
       line,
       x: mapX(prim.x) + shift,
       y: baselineY,
@@ -3354,31 +3371,39 @@ function chartPageItems(
   structId?: number,
 ): Array<PageItem> {
   const fig = structId !== undefined ? { structId } : {};
-  const out: Array<PageItem> = [];
-  for (const sh of laid.layout.shapes) {
-    out.push({
-      type: 'shape',
-      shape: {
-        paths: sh.paths,
-        ...(sh.fillColorHex ? { fillColorHex: sh.fillColorHex } : {}),
-        ...(sh.stroke ? { stroke: sh.stroke } : {}),
-        transform: flipTransform([1, 0, 0, 1, x, bottomYUp], pageHeight),
-      },
-      ...fig,
-    });
-  }
-  for (const t of laid.layout.texts) {
-    out.push({
-      type: 'line',
-      line: t.line,
-      originX: pt(x + t.x),
-      baselineY: pt(pageHeight - (bottomYUp + t.y)),
-      ...(t.rotationDeg ? { rotationDeg: t.rotationDeg } : {}),
-      ...fig,
-    });
-  }
-  return out;
+  // A drawing whose primitives carry an order is a PICTURE: it paints as one
+  // thing, in that order, rather than every shape and then every label.
+  const ordered = laid.layout.shapes.some((sh) => sh.seq !== undefined);
+  const picture = ordered ? { pictureId: nextPictureId++ } : {};
+  const shapes: Array<PageItem & { readonly seq: number }> = laid.layout.shapes.map((sh) => ({
+    type: 'shape',
+    shape: {
+      paths: sh.paths,
+      ...(sh.fillColorHex ? { fillColorHex: sh.fillColorHex } : {}),
+      ...(sh.stroke ? { stroke: sh.stroke } : {}),
+      transform: flipTransform([1, 0, 0, 1, x, bottomYUp], pageHeight),
+    },
+    ...fig,
+    ...picture,
+    seq: sh.seq ?? 0,
+  }));
+  const texts: Array<PageItem & { readonly seq: number }> = laid.layout.texts.map((t) => ({
+    type: 'line',
+    line: t.line,
+    originX: pt(x + t.x),
+    baselineY: pt(pageHeight - (bottomYUp + t.y)),
+    ...(t.rotationDeg ? { rotationDeg: t.rotationDeg } : {}),
+    ...fig,
+    ...picture,
+    seq: t.seq ?? Number.MAX_SAFE_INTEGER,
+  }));
+  const all = [...shapes, ...texts];
+  if (ordered) all.sort((a, b) => a.seq - b.seq);
+  return all.map(({ seq: _seq, ...item }) => item);
 }
+
+// Pictures need only be told apart within one page; a running count does that.
+let nextPictureId = 1;
 
 // Sequential, non-paginated draw used for header/footer bands. Tables in
 // headers/footers are uncommon in practice and skipped here for simplicity.

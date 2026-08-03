@@ -135,6 +135,23 @@ function emitPage(
     emitShape(out, sh.shape, idc);
   }
 
+  // A picture paints as one thing, in its own order: a metafile buries a label
+  // under a panel it draws afterwards, and the passes above would lift it out.
+  for (const picture of plan.pictures) {
+    for (const item of picture) {
+      if (item.type === 'shape') emitShape(out, item.shape, idc);
+      else if (item.type === 'line') emitTextLine(out, item, losses, idc);
+      else if (item.type === 'image') {
+        const href = imageHref(item.imageResourceName, laid);
+        if (href) {
+          out.push(
+            `<image x="${fmt(item.x)}" y="${fmt(item.y)}" width="${fmt(item.width)}" height="${fmt(item.height)}" href="${href}" preserveAspectRatio="none"/>`,
+          );
+        }
+      }
+    }
+  }
+
   for (const t of plan.lines) {
     emitTextLine(out, t, losses, idc);
   }

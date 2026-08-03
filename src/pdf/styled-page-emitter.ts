@@ -897,6 +897,61 @@ function emitPageContent(
     }
   });
 
+  // A PICTURE paints as one thing, in the order it draws: a metafile writes a
+  // label, lays a panel over it and writes the label again as its own shadow,
+  // so the buried copy must stay buried. Its text is set the way an inline
+  // metafile's is — one run at a point, no tabs, links or bidi to carry.
+  for (const picture of plan.pictures) {
+    if (tagging) out.push('/Artifact BMC');
+    for (const item of picture) {
+      if (item.type === 'shape') {
+        const t = item.shape.transform;
+        for (const op of emitVectorShape({
+          ...item.shape,
+          transform: [t[0], -t[1], t[2], -t[3], t[4], H - t[5]],
+        })) {
+          out.push(op);
+        }
+        continue;
+      }
+      if (item.type === 'image') {
+        out.push('q');
+        out.push(
+          ...placeImage(
+            item.x,
+            H - item.y - item.height,
+            item.width,
+            item.height,
+            item.crop,
+            item.rotationDeg,
+            item.flipH,
+            item.flipV,
+          ),
+        );
+        out.push(`/${item.imageResourceName} Do`);
+        out.push('Q');
+        continue;
+      }
+      if (item.type !== 'line') continue;
+      const tok = item.line.tokens.find((k) => k.kind === 'text');
+      if (!tok) continue;
+      const [r, g, b] = hexToRgb01(tok.resolvedRun.colorHex);
+      const rad = ((item.rotationDeg ?? 0) * Math.PI) / 180;
+      const [cos, sin] = [Math.cos(rad), Math.sin(rad)];
+      const [ox, oy] = [item.originX, H - item.baselineY];
+      out.push('BT');
+      out.push(`/${tok.font.resourceName} ${formatNumber(tok.fontSizePt)} Tf`);
+      out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} rg`);
+      out.push(
+        `${formatNumber(cos)} ${formatNumber(sin)} ${formatNumber(-sin)} ${formatNumber(cos)} ` +
+          `${formatNumber(ox)} ${formatNumber(oy)} Tm`,
+      );
+      out.push(tok.font.measure.showText(tok.text));
+      out.push('ET');
+    }
+    if (tagging) out.push('EMC');
+  }
+
   const lines = plan.lines;
   if (lines.length > 0) {
     let inBT = false;

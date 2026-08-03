@@ -1,6 +1,12 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import type { MetaPicture, PicturePath, PictureText } from '@/core/metafile/picture';
+import { FontRegistry } from '@/core/font';
+import { ResourceStore, pt } from '@/core/ir';
+import { paintPlan } from '@/layout/page-doc';
+import { layoutStyledDocument } from '@/layout/styled-layout';
 import { isEmf, readEmf } from '@/core/metafile/emf';
 import { isWmf, readWmf } from '@/core/metafile/wmf';
 
@@ -400,6 +406,47 @@ describe('WMF (MS-WMF)', () => {
     // One em wide, and round: four quadrant curves.
     const segs = shape?.paths[0]?.segments ?? [];
     expect(segs.filter((sg) => sg.op === 'cubic').length).toBe(4);
+  });
+
+  it('paints as ONE picture, in the order the metafile draws', () => {
+    // A metafile writes a label, lays a panel over it and writes it again as a
+    // drop shadow; painted as "every shape, then every line" the buried copy
+    // would show through — 45541_Footer's rotated headers came out doubled.
+    const panel = new Bytes().i16(30).i16(60).i16(0).i16(0).build(); // b,r,t,l
+    const bytes = wmf(
+      [
+        meta(0x0521, new Bytes().u16(2).ascii('hi').i16(20).i16(4).build()), // TEXTOUT
+        meta(0x02fc, new Bytes().u16(0).u32(0x00ff00).u16(0).build()), // CREATEBRUSH — green
+        meta(0x012d, new Bytes().u16(0).build()), // SELECTOBJECT
+        meta(0x041b, panel), // RECTANGLE over it
+      ],
+      [0, 0, 100, 50],
+    );
+    const store = new ResourceStore();
+    const resource = store.put(bytes);
+    const laid = layoutStyledDocument(
+      [
+        {
+          kind: 'image',
+          image: { resource, width: pt(100), height: pt(50), paragraphProperties: {} },
+        },
+      ],
+      {
+        registry: FontRegistry.fromBytes({
+          regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
+        }),
+        resources: store,
+        styles: { defaultRunProperties: {}, defaultParagraphProperties: {}, styles: new Map() },
+      },
+    );
+    const items = laid.pages[0]!.commands.filter((c) => c.pictureId !== undefined);
+    expect(items.map((c) => c.type)).toEqual(['line', 'shape']); // the text FIRST
+    expect(new Set(items.map((c) => c.pictureId)).size).toBe(1);
+    // …and the plan keeps them out of the passes that would reorder them.
+    const plan = paintPlan(laid.pages[0]!.commands);
+    expect(plan.pictures).toHaveLength(1);
+    expect(plan.shapes).toHaveLength(0);
+    expect(plan.lines).toHaveLength(0);
   });
 
   it('draws a polygon closed and a polyline open', () => {

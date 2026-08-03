@@ -265,6 +265,16 @@ export interface PageItemBase {
    */
   readonly structId?: number;
   /**
+   * The picture this item belongs to, when it is part of one. A metafile is a
+   * list of drawing orders, and text among them is BOTH over what came before
+   * and under what comes after: an embedded diagram writes a label, lays a
+   * panel over it and writes the label again, offset, as its own drop shadow.
+   * Painted in the ordinary passes — every shape, then every line — the buried
+   * copy would show through the panel. Items sharing this id are held out of
+   * those passes and painted together, in list order.
+   */
+  readonly pictureId?: number;
+  /**
    * Tagged PDF: explicitly mark this item as a pagination artifact (running
    * header/footer, §14.8.2.2.2). Distinguishes header/footer text from
    * not-yet-tagged body content so it is typed `/Artifact /Pagination`, never a P.
@@ -375,6 +385,11 @@ export interface PagePaintPlan {
   readonly borders: ReadonlyArray<BorderItem>;
   readonly shapes: ReadonlyArray<ShapeItem>;
   readonly lines: ReadonlyArray<TextLineItem>;
+  /**
+   * Pictures, each as its own list in the order the picture draws — one entry
+   * per {@link PageItemBase.pictureId}. They paint where the shape pass does.
+   */
+  readonly pictures: ReadonlyArray<ReadonlyArray<PageItem>>;
 }
 
 export function paintPlan(commands: ReadonlyArray<PageItem>): PagePaintPlan {
@@ -383,7 +398,16 @@ export function paintPlan(commands: ReadonlyArray<PageItem>): PagePaintPlan {
   const borders: Array<BorderItem> = [];
   const shapes: Array<ShapeItem> = [];
   const lines: Array<TextLineItem> = [];
+  // A PICTURE paints as one thing, in its own order (see `pictureId`), so its
+  // items leave the passes below and travel together.
+  const pictures = new Map<number, Array<PageItem>>();
   for (const c of commands) {
+    if (c.pictureId !== undefined) {
+      const group = pictures.get(c.pictureId);
+      if (group) group.push(c);
+      else pictures.set(c.pictureId, [c]);
+      continue;
+    }
     switch (c.type) {
       case 'fill':
         fills.push(c);
@@ -404,7 +428,7 @@ export function paintPlan(commands: ReadonlyArray<PageItem>): PagePaintPlan {
         assertNeverPageItem(c);
     }
   }
-  return { fills, images, borders, shapes, lines };
+  return { fills, images, borders, shapes, lines, pictures: [...pictures.values()] };
 }
 
 function assertNeverPageItem(item: never): never {
