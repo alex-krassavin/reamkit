@@ -392,24 +392,59 @@ function makeSlideDiagramResolver(
     let spTree: PoNode | undefined;
     const dataRel = pkg.getPartRelationships(slidePath).find((r) => r.id === relId);
     const data = dataRel ? pkg.resolveRelatedPart(slidePath, dataRel) : undefined;
-    if (data) {
-      const drawRel = pkg
-        .getPartRelationships(data.path)
-        .find((r) => r.type.endsWith('/diagramDrawing'));
-      const draw = drawRel ? pkg.resolveRelatedPart(data.path, drawRel) : undefined;
-      if (draw) {
-        for (const root of parseXml(draw.data)) {
-          const found = poFindDescendant(root, 'dsp:spTree');
-          if (found) {
-            spTree = found;
-            break;
-          }
+    const draw = data ? drawingPart(pkg, slidePath, data) : undefined;
+    if (draw) {
+      for (const root of parseXml(draw.data)) {
+        const found = poFindDescendant(root, 'dsp:spTree');
+        if (found) {
+          spTree = found;
+          break;
         }
       }
     }
     cache.set(relId, spTree);
     return spTree;
   };
+}
+
+/**
+ * The pre-rendered drawing a diagram's data part points at.
+ *
+ * PowerPoint names it from INSIDE the data: `<dsp:dataModelExt relId>` in the
+ * data's extension list, and that id is a relationship of the SLIDE, not of the
+ * data part. Looked for on the data part alone — where some producers do put it
+ * — two corpus decks with a `drawing1.xml` sitting right there reported having
+ * no drawing at all and rendered nothing (smartart-missing-bullet,
+ * tdf145528_SmartArt_Matrix).
+ *
+ * @param pkg       The package.
+ * @param slidePath The slide the diagram is on.
+ * @param data      The resolved `dgm:relIds@r:dm` data part.
+ * @returns The drawing part, or undefined when the deck ships none.
+ */
+function drawingPart(
+  pkg: OpcPackage,
+  slidePath: string,
+  data: { readonly path: string; readonly data: Uint8Array },
+): { readonly path: string; readonly data: Uint8Array } | undefined {
+  const ext = poFindDescendant(parseXml(data.data)[0] ?? {}, 'dsp:dataModelExt');
+  const extRelId = ext ? poAttr(ext, 'relId') : undefined;
+  const bySlide =
+    extRelId !== undefined
+      ? pkg.getPartRelationships(slidePath).find((r) => r.id === extRelId)
+      : undefined;
+  if (bySlide) {
+    const part = pkg.resolveRelatedPart(slidePath, bySlide);
+    if (part) return part;
+  }
+  const own = pkg.getPartRelationships(data.path).find((r) => r.type.endsWith('/diagramDrawing'));
+  if (own) return pkg.resolveRelatedPart(data.path, own);
+  // Last resort: the slide's own drawing relationship, for a deck with one
+  // diagram and no extension naming it.
+  const onSlide = pkg
+    .getPartRelationships(slidePath)
+    .find((r) => r.type.endsWith('/diagramDrawing'));
+  return onSlide ? pkg.resolveRelatedPart(slidePath, onSlide) : undefined;
 }
 
 // The placeholder cascade + colour resolver for a slide, derived from its

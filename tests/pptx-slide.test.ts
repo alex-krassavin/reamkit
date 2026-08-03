@@ -1095,7 +1095,12 @@ const srgbFill = (hex: string): string => `<a:solidFill><a:srgbClr val="${hex}"/
 const SCHEME_ACCENT1_FILL = `<a:solidFill><a:schemeClr val="accent1"/></a:solidFill>`;
 
 function smartArtDeck(
-  opts: { readonly fillA?: string; readonly build?: Parameters<typeof buildPptx>[1] } = {},
+  opts: {
+    readonly fillA?: string;
+    readonly build?: Parameters<typeof buildPptx>[1];
+    /** Omit the data part's own .rels, as PowerPoint does. */
+    readonly dropDataRels?: boolean;
+  } = {},
 ): Uint8Array {
   const frame =
     `<p:graphicFrame>` +
@@ -1128,18 +1133,22 @@ function smartArtDeck(
     `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
     `<Relationship Id="rId1" Type="${DIAGRAM_DRAWING_REL}" Target="drawing1.xml"/>` +
     `</Relationships>`;
+  const parts: Record<string, Uint8Array> = {
+    'ppt/diagrams/data1.xml': enc.encode(
+      `<?xml version="1.0"?>\n<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram"/>`,
+    ),
+    'ppt/diagrams/drawing1.xml': enc.encode(drawing),
+    ...(opts.dropDataRels === true
+      ? {}
+      : { 'ppt/diagrams/_rels/data1.xml.rels': enc.encode(rels) }),
+  };
+  const { media, slideRels, ...rest } = opts.build ?? {};
   return buildPptx([frame], {
-    slideRels: [
+    slideRels: slideRels ?? [
       `<Relationship Id="rId100" Type="${DIAGRAM_DATA_REL}" Target="../diagrams/data1.xml"/>`,
     ],
-    media: {
-      'ppt/diagrams/data1.xml': enc.encode(
-        `<?xml version="1.0"?>\n<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram"/>`,
-      ),
-      'ppt/diagrams/_rels/data1.xml.rels': enc.encode(rels),
-      'ppt/diagrams/drawing1.xml': enc.encode(drawing),
-    },
-    ...opts.build,
+    media: { ...parts, ...media },
+    ...rest,
   });
 }
 
@@ -1180,6 +1189,45 @@ describe('SmartArt diagrams (E-SMARTART SA0)', () => {
       .replace(/\s/g, '');
     expect(text).toContain('NodeA');
     expect(text).toContain('NodeB');
+  });
+
+  it('finds the drawing PowerPoint names from inside the data (dsp:dataModelExt)', () => {
+    // The drawing's relationship is the SLIDE's, and the data part points at it
+    // by id from its own extension list. Looked for on the data part alone, two
+    // corpus decks with a drawing sitting right there rendered nothing
+    // (smartart-missing-bullet, tdf145528_SmartArt_Matrix).
+    const deck = smartArtDeck({
+      build: {
+        slideRels: [
+          `<Relationship Id="rId100" Type="${DIAGRAM_DATA_REL}" Target="../diagrams/data1.xml"/>` +
+            `<Relationship Id="rId7" Type="${DIAGRAM_DRAWING_REL}" Target="../diagrams/drawing1.xml"/>`,
+        ],
+        media: {
+          // The data names the drawing by a relationship of the SLIDE…
+          'ppt/diagrams/data1.xml': new TextEncoder().encode(
+            `<?xml version="1.0"?>\n<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram">` +
+              `<dgm:extLst><a:ext xmlns:a="${A_MAIN}" uri="{x}">` +
+              `<dsp:dataModelExt xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" relId="rId7"/>` +
+              `</a:ext></dgm:extLst></dgm:dataModel>`,
+          ),
+        },
+      },
+      // …and the data part carries no relationships of its own.
+      dropDataRels: true,
+    });
+    expect(shapeTexts(Ream.parse(deck))).toContain('NodeA');
+  });
+
+  it('says so when the drawing override holds no shapes at all', () => {
+    const stub =
+      `<?xml version="1.0"?>\n<dsp:drawing xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" ` +
+      `xmlns:a="${A_MAIN}"><dsp:spTree/></dsp:drawing>`;
+    const deck = smartArtDeck({
+      build: { media: { 'ppt/diagrams/drawing1.xml': new TextEncoder().encode(stub) } },
+    });
+    const doc = Ream.parse(deck);
+    expect(doc.flow.body.some((e) => e.kind === 'shape')).toBe(false);
+    expect(doc.losses.some((l) => /drawing override/u.test(l.detail))).toBe(true);
   });
 
   it('resolves a node scheme-colour fill through the deck theme (SA3)', () => {

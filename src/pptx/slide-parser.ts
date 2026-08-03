@@ -351,13 +351,17 @@ function parseGraphicFrame(
       if (dmRelId !== undefined) ctx.onLoss?.(noDiagramOverrideLoss());
       return [];
     }
-    return parseDiagramDrawing(
+    const drawn = parseDiagramDrawing(
       spTree,
       diagramTransform(spTree, box),
       floatAt,
       ctx.colors ?? defaultColorResolver,
       ctx.resolveHyperlink,
-    ).map((shape) => ({ kind: 'shape', shape }));
+    );
+    // A drawing override that holds no shapes is a stub — the producer left the
+    // layout to the reader, which is the same position as having none at all.
+    if (drawn.length === 0) ctx.onLoss?.(noDiagramOverrideLoss());
+    return drawn.map((shape) => ({ kind: 'shape', shape }));
   }
   return [];
 }
