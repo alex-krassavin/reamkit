@@ -5,26 +5,6 @@
   "aligned": false
  },
  {
-  "name": "bar-chart.pptx",
-  "score": 99,
-  "aligned": false
- },
- {
-  "name": "chart-picture-bg.pptx",
-  "score": 99,
-  "aligned": false
- },
- {
-  "name": "chart-slide-bg.pptx",
-  "score": 99,
-  "aligned": false
- },
- {
-  "name": "chart-texture-bg.pptx",
-  "score": 99,
-  "aligned": false
- },
- {
   "name": "clusterfuzz-testcase-minimized-POIFuzzer-5205835528404992.pptx",
   "score": 99,
   "aligned": false
@@ -75,68 +55,33 @@
   "aligned": false
  },
  {
-  "name": "line-chart.pptx",
-  "score": 99,
-  "aligned": false
- },
- {
-  "name": "pie-chart.pptx",
-  "score": 99,
-  "aligned": false
- },
- {
-  "name": "radar-chart.pptx",
-  "score": 99,
-  "aligned": false
- },
- {
-  "name": "scatter-chart.pptx",
-  "score": 99,
-  "aligned": false
- },
- {
   "name": "45541_Footer.pptx",
-  "score": 1,
+  "score": 0.9987,
   "aligned": true
  },
  {
   "name": "45541_Header.pptx",
-  "score": 1,
+  "score": 0.9987,
   "aligned": true
  },
  {
   "name": "45545_Comment.pptx",
-  "score": 1,
-  "aligned": true
- },
- {
-  "name": "themes.pptx",
-  "score": 0.9999,
+  "score": 0.9987,
   "aligned": true
  },
  {
   "name": "ececapstonespring2012.pptx",
-  "score": 0.9925,
+  "score": 0.9919,
   "aligned": true
  },
  {
-  "name": "ca.ubc.cs.people_~emhill_presentations_HowWeRefactor.pptx",
-  "score": 0.9907,
-  "aligned": true
- },
- {
-  "name": "keyframes.pptx",
-  "score": 0.9875,
+  "name": "themes.pptx",
+  "score": 0.9905,
   "aligned": true
  },
  {
   "name": "ae.ac.uaeu.faculty_nafaachbili_GeomLec1.pptx",
-  "score": 0.9736,
-  "aligned": true
- },
- {
-  "name": "KEY02.pptx",
-  "score": 0.9676,
+  "score": 0.9711,
   "aligned": true
  },
  {
@@ -145,13 +90,28 @@
   "aligned": true
  },
  {
+  "name": "KEY02.pptx",
+  "score": 0.9594,
+  "aligned": true
+ },
+ {
   "name": "aptia.pptx",
-  "score": 0.9506,
+  "score": 0.9494,
+  "aligned": true
+ },
+ {
+  "name": "keyframes.pptx",
+  "score": 0.9323,
   "aligned": true
  },
  {
   "name": "pptx2svg.pptx",
-  "score": 0.9481,
+  "score": 0.9159,
+  "aligned": true
+ },
+ {
+  "name": "chart-slide-bg.pptx",
+  "score": 0.8948,
   "aligned": true
  },
  {
@@ -161,47 +121,57 @@
  },
  {
   "name": "bug68703.pptx",
-  "score": 0.7615,
+  "score": 0.7583,
   "aligned": true
  },
  {
   "name": "backgrounds.pptx",
-  "score": 0.7546,
+  "score": 0.7069,
   "aligned": true
  },
  {
   "name": "ArtisticEffectSample.pptx",
-  "score": 0.5972,
+  "score": 0.5971,
   "aligned": true
  },
  {
   "name": "table_test2.pptx",
-  "score": 0.5779,
+  "score": 0.5708,
   "aligned": true
  },
  {
   "name": "aascu.org_workarea_downloadasset.aspx_id=5864.pptx",
-  "score": 0.5217,
+  "score": 0.5107,
   "aligned": true
  },
  {
   "name": "au.asn.aes.www_conferences_2011_presentations_Fri_20Room4Level4_20930_20Maloney.pptx",
-  "score": 0.5187,
-  "aligned": true
- },
- {
-  "name": "LIBRE_OFFICE-100610-0.pptx",
-  "score": 0.5094,
+  "score": 0.5084,
   "aligned": true
  },
  {
   "name": "alterman_security.pptx",
-  "score": 0.4613,
+  "score": 0.4611,
+  "aligned": true
+ },
+ {
+  "name": "chart-texture-bg.pptx",
+  "score": 0.4173,
+  "aligned": true
+ },
+ {
+  "name": "chart-picture-bg.pptx",
+  "score": 0.4066,
+  "aligned": true
+ },
+ {
+  "name": "LIBRE_OFFICE-100610-0.pptx",
+  "score": 0.4032,
   "aligned": true
  },
  {
   "name": "63200.pptx",
-  "score": 0.377,
+  "score": 0.3767,
   "aligned": true
  },
  {
@@ -211,17 +181,17 @@
  },
  {
   "name": "bug60993.pptx",
-  "score": 0.3052,
+  "score": 0.3042,
   "aligned": true
  },
  {
   "name": "60810.pptx",
-  "score": 0.2861,
+  "score": 0.2858,
   "aligned": true
  },
  {
   "name": "smartart-simple.pptx",
-  "score": 0.2783,
+  "score": 0.2757,
   "aligned": true
  },
  {
@@ -241,17 +211,22 @@
  },
  {
   "name": "shapes.pptx",
-  "score": 0.2166,
+  "score": 0.2126,
+  "aligned": true
+ },
+ {
+  "name": "ca.ubc.cs.people_~emhill_presentations_HowWeRefactor.pptx",
+  "score": 0.1988,
   "aligned": true
  },
  {
   "name": "54542_cropped_bitmap.pptx",
-  "score": 0.1944,
+  "score": 0.1942,
   "aligned": true
  },
  {
   "name": "layouts.pptx",
-  "score": 0.1916,
+  "score": 0.1908,
   "aligned": true
  },
  {
@@ -261,7 +236,7 @@
  },
  {
   "name": "2411-Performance_Up.pptx",
-  "score": 0.1576,
+  "score": 0.1571,
   "aligned": true
  },
  {
@@ -270,28 +245,23 @@
   "aligned": true
  },
  {
-  "name": "sample_pptx_grouping_issues.pptx",
-  "score": 0.1478,
-  "aligned": true
- },
- {
-  "name": "table-with-different-font-colors.pptx",
-  "score": 0.1406,
-  "aligned": true
- },
- {
   "name": "EmbeddedVideo.pptx",
   "score": 0.1401,
   "aligned": true
  },
  {
+  "name": "table-with-different-font-colors.pptx",
+  "score": 0.14,
+  "aligned": true
+ },
+ {
   "name": "highlight-test-case.pptx",
-  "score": 0.0918,
+  "score": 0.0914,
   "aligned": true
  },
  {
   "name": "minimal-gradient-fill-issue.pptx",
-  "score": 0.0917,
+  "score": 0.0911,
   "aligned": true
  },
  {
@@ -320,11 +290,6 @@
   "aligned": true
  },
  {
-  "name": "bug62513.pptx",
-  "score": 0.0337,
-  "aligned": true
- },
- {
   "name": "bug65523.pptx",
   "score": 0.0322,
   "aligned": true
@@ -335,8 +300,23 @@
   "aligned": true
  },
  {
+  "name": "bug62513.pptx",
+  "score": 0.0277,
+  "aligned": true
+ },
+ {
+  "name": "bar-chart.pptx",
+  "score": 0.0276,
+  "aligned": true
+ },
+ {
+  "name": "pie-chart.pptx",
+  "score": 0.0262,
+  "aligned": true
+ },
+ {
   "name": "text-highlight.pptx",
-  "score": 0.0239,
+  "score": 0.0237,
   "aligned": true
  },
  {
@@ -345,23 +325,38 @@
   "aligned": true
  },
  {
+  "name": "scatter-chart.pptx",
+  "score": 0.0201,
+  "aligned": true
+ },
+ {
   "name": "with_japanese.pptx",
-  "score": 0.0183,
+  "score": 0.0181,
   "aligned": true
  },
  {
   "name": "WithMaster.pptx",
-  "score": 0.0167,
+  "score": 0.0166,
   "aligned": true
  },
  {
   "name": "testPPT.pptx",
-  "score": 0.0142,
+  "score": 0.014,
   "aligned": true
  },
  {
   "name": "placeholder-layout-color.pptx",
   "score": 0.0134,
+  "aligned": true
+ },
+ {
+  "name": "line-chart.pptx",
+  "score": 0.013,
+  "aligned": true
+ },
+ {
+  "name": "sample_pptx_grouping_issues.pptx",
+  "score": 0.011,
   "aligned": true
  },
  {
@@ -380,7 +375,7 @@
   "aligned": true
  },
  {
-  "name": "SampleShow.pptx",
+  "name": "radar-chart.pptx",
   "score": 0.0084,
   "aligned": true
  },
@@ -390,8 +385,13 @@
   "aligned": true
  },
  {
+  "name": "SampleShow.pptx",
+  "score": 0.0083,
+  "aligned": true
+ },
+ {
   "name": "bug63290.pptx",
-  "score": 0.0077,
+  "score": 0.0074,
   "aligned": true
  },
  {
@@ -401,37 +401,37 @@
  },
  {
   "name": "bug65228.pptx",
-  "score": 0.006,
-  "aligned": true
- },
- {
-  "name": "49386-null_dates.pptx",
   "score": 0.0059,
   "aligned": true
  },
  {
-  "name": "sample.pptx",
+  "name": "49386-null_dates.pptx",
   "score": 0.0058,
   "aligned": true
  },
  {
+  "name": "sample.pptx",
+  "score": 0.0056,
+  "aligned": true
+ },
+ {
   "name": "prProps.pptx",
-  "score": 0.0044,
+  "score": 0.004,
   "aligned": true
  },
  {
   "name": "bug64693.pptx",
-  "score": 0.0039,
+  "score": 0.0033,
   "aligned": true
  },
  {
   "name": "OverlappingRelations.pptx",
-  "score": 0.003,
+  "score": 0.0028,
   "aligned": true
  },
  {
   "name": "bug65673.pptx",
-  "score": 0.0028,
+  "score": 0.0027,
   "aligned": true
  },
  {
@@ -460,17 +460,17 @@
   "aligned": true
  },
  {
+  "name": "missing-blip-fill.pptx",
+  "score": 0,
+  "aligned": true
+ },
+ {
   "name": "60042.pptx",
   "score": 0,
   "aligned": true
  },
  {
   "name": "61515.pptx",
-  "score": 0,
-  "aligned": true
- },
- {
-  "name": "missing-blip-fill.pptx",
   "score": 0,
   "aligned": true
  }
