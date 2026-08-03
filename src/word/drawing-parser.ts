@@ -28,7 +28,7 @@ import type { PoNode } from '@/core/po-helpers';
 import type { Pt, ResourceId } from '@/core/ir';
 import type { GradientStop, ShapeGradient } from '@/core/vector';
 import { buildStroke } from '@/core/drawingml/shape-render';
-import { applyColorMods, readColorMods, resolveColorNode } from '@/core/drawingml/colors';
+import { placeholderColors, readColorMods, resolveColorNode } from '@/core/drawingml/colors';
 import { emuToPt, pt } from '@/core/ir';
 import {
   poAttr,
@@ -2225,13 +2225,6 @@ function styleRefShadow(
   return shadowFromOuterShdw(shdw, phHex ? placeholderColors(resolveColor, phHex) : resolveColor);
 }
 
-// §20.1.2.3.32 `phClr` — the colour the reference hands the style to use
-// wherever the style itself says "the placeholder".
-function placeholderColors(base: ColorResolver, phHex: string): ColorResolver {
-  return (raw) =>
-    'scheme' in raw && raw.scheme === 'phClr' ? applyColorMods(phHex, raw.mods ?? []) : base(raw);
-}
-
 // wps:txbx/w:txbxContent (the text body) + wps:bodyPr (insets + vertical
 // anchor). Returns undefined when the shape carries no text.
 // Whether `spPr` states a fill of its own at all — including `a:noFill`, which
@@ -2569,11 +2562,19 @@ function fillFromNode(
       // NoFillAttrInImagedata.docx papers two text boxes with a texture that
       // way, and stretched it came out a brown blur.
       const tiled = poChildren(child).some((c) => poIs(c, 'a:tile'));
+      // §20.1.8.4 `a:alphaModFix` — how opaque the PICTURE is drawn, stated on
+      // the blip rather than on a colour. A slide backed by a photo at 70 %
+      // showed it at full strength, which on tdf146223 is a saturated red
+      // quadrant where the reference has a pale one.
+      const fixed = blip ? poChildren(blip).find((c) => poIs(c, 'a:alphaModFix')) : undefined;
+      const amt = fixed ? poIntAttr(fixed, 'amt') : undefined;
+      const alpha = amt === undefined ? undefined : Math.min(1, Math.max(0, amt / 100000));
       return {
         kind: 'picture',
         imageResource: resource,
         ...(tiled ? { tiled: true } : {}),
         ...(crop ? { imageCrop: crop } : {}),
+        ...(alpha !== undefined && alpha < 1 ? { alpha } : {}),
       };
     }
     if (poIs(child, 'a:solidFill')) {

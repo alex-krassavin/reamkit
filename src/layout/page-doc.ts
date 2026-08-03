@@ -332,6 +332,11 @@ export interface ImageItem extends PageItemBase {
   readonly crop?: ImageCrop;
   /** §14.1.2.10 — the contrast/brightness wash the picture is drawn through. */
   readonly wash?: { readonly gain: number; readonly black: number };
+  /**
+   * §20.1.8.4 `a:alphaModFix` — how opaque the picture is drawn, 0…1. A slide
+   * backed by a photograph at 70 % shows a pale wash of it, not the photograph.
+   */
+  readonly alpha?: number;
   /** §20.1.7.6 — degrees clockwise about the box's centre. */
   readonly rotationDeg?: number;
   /** §20.1.7.6 — the picture drawn mirrored in its box. */

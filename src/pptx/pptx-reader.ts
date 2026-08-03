@@ -18,7 +18,7 @@ import type { Loss, Pt, ResourceId } from '@/core/ir';
 import type { PoNode } from '@/core/po-helpers';
 import type { Relationship } from '@/core/opc';
 import type { PlaceholderCascade } from '@/pptx/placeholder-cascade';
-import type { SlideContext } from '@/pptx/slide-parser';
+import type { SlideContext, ThemeFillStyles } from '@/pptx/slide-parser';
 
 import type { ColorResolver, SchemeAliases } from '@/core/drawingml/colors';
 
@@ -30,7 +30,11 @@ import {
   defaultColorResolver,
   makeColorResolver,
 } from '@/core/drawingml/colors';
-import { parseTheme } from '@/core/drawingml/theme-parser';
+import {
+  parseTheme,
+  parseThemeBgFillStyles,
+  parseThemeFillStyles,
+} from '@/core/drawingml/theme-parser';
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
 import { OpcPackage } from '@/core/opc';
 import { poAttr, poChildren, poFindDescendant, poIntAttr, poIs } from '@/core/po-helpers';
@@ -169,11 +173,13 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
         pkg,
         part.path,
         stylesByLayout,
+        resources,
         overrideAlias(slideTree, 'p:sld'),
       );
       const ctx: SlideContext = {
         ...(styles.cascade ? { cascade: styles.cascade } : {}),
         colors: styles.colors,
+        ...(styles.themeFills ? { themeFills: styles.themeFills } : {}),
         resolveImage: makeSlideImageResolver(pkg, part.path, resources),
         resolveChart: makeSlideChartResolver(pkg, part.path, charts, styles.colors),
         resolveHyperlink: makeHyperlinkResolver(pkg, part.path),
@@ -228,7 +234,10 @@ function parseSlide(
   const cSld = sld ? poChildren(sld).find((c) => poIs(c, 'p:cSld')) : undefined;
   const colors = ctx.colors ?? defaultColorResolver;
   const bgNode = cSld ? poChildren(cSld).find((c) => poIs(c, 'p:bg')) : undefined;
-  const bg = (bgNode ? parseBackgroundFill(bgNode, colors) : undefined) ?? inheritedBg;
+  const own = bgNode
+    ? parseBackgroundFill(bgNode, colors, ctx.resolveImage, ctx.themeFills)
+    : undefined;
+  const bg = own ?? inheritedBg;
   const spTree = cSld ? poChildren(cSld).find((c) => poIs(c, 'p:spTree')) : undefined;
 
   const out: Array<BodyElement> = [];
@@ -237,16 +246,20 @@ function parseSlide(
   return out;
 }
 
-// A layout's or master's p:cSld/p:bg → its background fill (PX5b).
+// A layout's or master's p:cSld/p:bg → its background fill (PX5b). A picture
+// background names its blip through the relationships of the part it is
+// written in, which is why the resolver is bound to that part and not the slide.
 function partBackground(
   tree: ReadonlyArray<PoNode>,
   root: 'p:sldLayout' | 'p:sldMaster',
   colors: ColorResolver,
+  resolveImage: (relId: string) => ResourceId | undefined,
+  themeFills: ThemeFillStyles | undefined,
 ): ShapeFill | undefined {
   const sld = tree.find((n) => poIs(n, root));
   const cSld = sld ? poChildren(sld).find((c) => poIs(c, 'p:cSld')) : undefined;
   const bg = cSld ? poChildren(cSld).find((c) => poIs(c, 'p:bg')) : undefined;
-  return bg ? parseBackgroundFill(bg, colors) : undefined;
+  return bg ? parseBackgroundFill(bg, colors, resolveImage, themeFills) : undefined;
 }
 
 // An image resolver scoped to one slide: a blip relationship id (a:blip
@@ -349,6 +362,8 @@ function makeSlideDiagramResolver(
 interface SlideStyles {
   readonly cascade?: PlaceholderCascade;
   readonly colors: ColorResolver;
+  /** The deck theme's `a:fillStyleLst`/`a:bgFillStyleLst`, for a `p:bgRef`. */
+  readonly themeFills?: ThemeFillStyles;
   // The inherited background fill (layout, else master) for slides that have no
   // p:bg of their own (PX5b).
   readonly background?: ShapeFill;
@@ -358,6 +373,7 @@ function slideStylesFor(
   pkg: OpcPackage,
   slidePath: string,
   cache: Map<string, SlideStyles>,
+  resources: ResourceStore,
   slideAlias?: SchemeAliases,
 ): SlideStyles {
   const layoutRel = pkg
@@ -385,12 +401,35 @@ function slideStylesFor(
     slideAlias ??
     overrideAlias(layoutTree, 'p:sldLayout') ??
     (masterTree ? masterAlias(masterTree) : undefined);
-  const colors = master ? deckColorResolver(pkg, master.path, alias) : defaultColorResolver;
+  const theme = master ? themePart(pkg, master.path) : undefined;
+  const colors = master ? deckColorResolver(theme, alias) : defaultColorResolver;
+  const themeFills = theme
+    ? { fills: parseThemeFillStyles(theme), backgrounds: parseThemeBgFillStyles(theme) }
+    : undefined;
   const cascade = buildPlaceholderCascade(layoutTree, masterTree, colors);
   const background =
-    partBackground(layoutTree, 'p:sldLayout', colors) ??
-    (masterTree ? partBackground(masterTree, 'p:sldMaster', colors) : undefined);
-  const styles: SlideStyles = { cascade, colors, ...(background ? { background } : {}) };
+    partBackground(
+      layoutTree,
+      'p:sldLayout',
+      colors,
+      makeSlideImageResolver(pkg, layout.path, resources),
+      themeFills,
+    ) ??
+    (masterTree && master
+      ? partBackground(
+          masterTree,
+          'p:sldMaster',
+          colors,
+          makeSlideImageResolver(pkg, master.path, resources),
+          themeFills,
+        )
+      : undefined);
+  const styles: SlideStyles = {
+    cascade,
+    colors,
+    ...(themeFills ? { themeFills } : {}),
+    ...(background ? { background } : {}),
+  };
   cache.set(key, styles);
   return styles;
 }
@@ -439,17 +478,17 @@ function aliasKey(alias: SchemeAliases): string {
 // Office palette with the deck's scheme colours merged over it (mirrors the
 // docx/xlsx readers). The Office palette stands in when there is no theme, and
 // `alias` is the deck's own reading of the bg/tx names.
-function deckColorResolver(
-  pkg: OpcPackage,
-  masterPath: string,
-  alias: SchemeAliases | undefined,
-): ColorResolver {
-  const themeRel = pkg.getPartRelationships(masterPath).find((r) => r.type.endsWith('/theme'));
-  const theme = themeRel ? pkg.resolveRelatedPart(masterPath, themeRel) : undefined;
+function deckColorResolver(theme: Uint8Array | undefined, alias: SchemeAliases | undefined) {
   const palette = new Map(DEFAULT_THEME_PALETTE);
-  if (theme) for (const [slot, hex] of parseTheme(theme.data)) palette.set(slot, hex);
+  if (theme) for (const [slot, hex] of parseTheme(theme)) palette.set(slot, hex);
   if (!theme && !alias) return defaultColorResolver;
   return makeColorResolver(palette, { ...DEFAULT_SCHEME_ALIAS, ...alias });
+}
+
+/** The master's theme part bytes, if it has one. */
+function themePart(pkg: OpcPackage, masterPath: string): Uint8Array | undefined {
+  const rel = pkg.getPartRelationships(masterPath).find((r) => r.type.endsWith('/theme'));
+  return rel ? pkg.resolveRelatedPart(masterPath, rel)?.data : undefined;
 }
 
 /**

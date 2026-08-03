@@ -509,6 +509,91 @@ describe("pptx colour map — what a deck's bg1 and tx1 mean (§19.3.1.6)", () =
   });
 });
 
+describe('pptx background — a reference and a picture (E-PPTX PX5b)', () => {
+  const BG_STYLES =
+    `<a:fillStyleLst><a:solidFill><a:srgbClr val="112233"/></a:solidFill></a:fillStyleLst>` +
+    `<a:bgFillStyleLst>` +
+    `<a:solidFill><a:schemeClr val="phClr"/></a:solidFill>` +
+    `<a:solidFill><a:srgbClr val="00FF00"/></a:solidFill>` +
+    `</a:bgFillStyleLst>`;
+  const bgRef = (idx: number, inner: string): string =>
+    `<p:bg><p:bgRef idx="${String(idx)}">${inner}</p:bgRef></p:bg>`;
+
+  it('reads a p:bgRef as the theme fill it indexes, with phClr bound', () => {
+    // §19.3.1.2 — 1001 is the first background style, and the colour on the
+    // reference is what the style means by `phClr`.
+    const doc = Ream.parse(
+      buildPptx([''], {
+        slideBg: [bgRef(1001, '<a:srgbClr val="AABBCC"/>')],
+        layoutMaster: { themeFmt: BG_STYLES },
+      }),
+    );
+    expect(firstShape(doc)?.fill.colorHex).toBe('AABBCC');
+  });
+
+  it('takes the slot itself when the slot names its own colour', () => {
+    const doc = Ream.parse(
+      buildPptx([''], {
+        slideBg: [bgRef(1002, '<a:srgbClr val="AABBCC"/>')],
+        layoutMaster: { themeFmt: BG_STYLES },
+      }),
+    );
+    expect(firstShape(doc)?.fill.colorHex).toBe('00FF00'); // the style, not the reference
+  });
+
+  it('indexes the ordinary fill styles below 1000', () => {
+    const doc = Ream.parse(
+      buildPptx([''], {
+        slideBg: [bgRef(1, '<a:srgbClr val="AABBCC"/>')],
+        layoutMaster: { themeFmt: BG_STYLES },
+      }),
+    );
+    expect(firstShape(doc)?.fill.colorHex).toBe('112233');
+  });
+
+  it('falls back to the reference colour when the theme has no such slot', () => {
+    const doc = Ream.parse(
+      buildPptx([''], { slideBg: [bgRef(1001, '<a:srgbClr val="AABBCC"/>')] }),
+    );
+    expect(firstShape(doc)?.fill.colorHex).toBe('AABBCC');
+  });
+
+  it('paints a picture background, at the opacity the blip fixes', () => {
+    // §20.1.8.4 `a:alphaModFix` — tdf146223 backs a slide with a photo at 70 %.
+    const png = buildTinyPng(2, 2, [255, 0, 0, 255]);
+    const doc = Ream.parse(
+      buildPptx([''], {
+        slideBg: [
+          `<p:bg><p:bgPr><a:blipFill><a:blip r:embed="rIdBg">` +
+            `<a:alphaModFix amt="70000"/></a:blip><a:tile/></a:blipFill></p:bgPr></p:bg>`,
+        ],
+        slideRels: [`<Relationship Id="rIdBg" Type="${IMAGE_REL}" Target="../media/bg.png"/>`],
+        media: { 'ppt/media/bg.png': png },
+      }),
+    );
+    const fill = firstShape(doc)?.fill;
+    expect(fill?.kind).toBe('picture');
+    expect(fill?.imageResource).toBeDefined();
+    expect(fill?.tiled).toBe(true);
+    expect(fill?.alpha).toBeCloseTo(0.7, 5);
+  });
+
+  it("resolves the MASTER's background picture through the master's own rels", () => {
+    // The blip's relationship id is scoped to the part the background is
+    // written in, so a master background cannot be resolved against the slide.
+    const doc = Ream.parse(
+      buildPptx([''], {
+        layoutMaster: {
+          masterBg: `<p:bg><p:bgPr><a:blipFill><a:blip r:embed="rIdM"/></a:blipFill></p:bgPr></p:bg>`,
+          masterRels: `<Relationship Id="rIdM" Type="${IMAGE_REL}" Target="../media/m.png"/>`,
+        },
+        media: { 'ppt/media/m.png': buildTinyPng(2, 2, [0, 0, 255, 255]) },
+      }),
+    );
+    expect(firstShape(doc)?.fill.kind).toBe('picture');
+  });
+});
+
 // A p:grpSp whose child shape (filled `hex`) sits at child-box (cx,cy,ex,ey),
 // inside the group transform off/ext (chOff 0, chExt = `chExt`).
 function groupDeck(opts: {

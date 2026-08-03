@@ -3593,7 +3593,12 @@ function emitShapeItems(
         height: sh.heightPt,
       })) {
         if (item.type !== 'image') continue;
-        sink.push({ ...item, clip, ...fig });
+        sink.push({
+          ...item,
+          clip,
+          ...fig,
+          ...(sh.fillAlpha !== undefined ? { alpha: sh.fillAlpha } : {}),
+        });
       }
     } else {
       sink.push({
@@ -3604,6 +3609,7 @@ function emitShapeItems(
         height: pt(sh.heightPt),
         imageResourceName: sh.fillImageResourceName,
         ...(sh.fillImageCrop ? { crop: sh.fillImageCrop } : {}),
+        ...(sh.fillAlpha !== undefined ? { alpha: sh.fillAlpha } : {}),
         clip,
         ...fig,
       });

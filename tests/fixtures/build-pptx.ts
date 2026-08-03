@@ -29,6 +29,13 @@ export interface BuildPptxLayoutMaster {
   readonly txStyles?: string;
   /** Inner XML of the theme's `<a:clrScheme>` (slot colours); wires master → theme. */
   readonly theme?: string;
+  /**
+   * Inner XML of the theme's `<a:fmtScheme>` — the fill/line/effect style
+   * lists a `p:bgRef` or an `a:fillRef` indexes into. Implies a theme part.
+   */
+  readonly themeFmt?: string;
+  /** Extra `<Relationship/>` XML for the master's .rels (e.g. a background image). */
+  readonly masterRels?: string;
   /** The master's `<p:bg>…</p:bg>` (placed in p:cSld before the spTree). */
   readonly masterBg?: string;
   /**
@@ -107,7 +114,9 @@ export function buildPptx(
       ? `<Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="${LAYOUT_CT}"/>` +
         `<Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="${MASTER_CT}"/>`
       : '') +
-    (lm?.theme ? `<Override PartName="/ppt/theme/theme1.xml" ContentType="${THEME_CT}"/>` : '') +
+    (lm?.theme !== undefined || lm?.themeFmt !== undefined || lm?.masterRels !== undefined
+      ? `<Override PartName="/ppt/theme/theme1.xml" ContentType="${THEME_CT}"/>`
+      : '') +
     `</Types>`;
 
   const rootRels =
@@ -191,17 +200,19 @@ export function buildPptx(
         (lm.clrMap ? `<p:clrMap ${lm.clrMap}/>` : '') +
         `${lm.txStyles ?? ''}</p:sldMaster>`,
     );
-    if (lm.theme) {
+    if (lm.theme !== undefined || lm.themeFmt !== undefined || lm.masterRels !== undefined) {
       files['ppt/slideMasters/_rels/slideMaster1.xml.rels'] = encoder.encode(
         `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
           `<Relationships xmlns="${PKG_REL_NS}">` +
           `<Relationship Id="rId1" Type="${R_NS}/theme" Target="../theme/theme1.xml"/>` +
+          (lm.masterRels ?? '') +
           `</Relationships>`,
       );
       files['ppt/theme/theme1.xml'] = encoder.encode(
         `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
           `<a:theme xmlns:a="${A_NS}" name="deck"><a:themeElements>` +
-          `<a:clrScheme name="deck">${lm.theme}</a:clrScheme>` +
+          `<a:clrScheme name="deck">${lm.theme ?? ''}</a:clrScheme>` +
+          (lm.themeFmt ? `<a:fmtScheme name="deck">${lm.themeFmt}</a:fmtScheme>` : '') +
           `</a:themeElements></a:theme>`,
       );
     }

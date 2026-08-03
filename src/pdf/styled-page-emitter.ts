@@ -216,7 +216,10 @@ function assembleStyledPdf(
       if (s) wantAlpha(shadowBlurLayers(s).alpha);
       wantAlpha(item.shape.fillAlpha);
     }
-    for (const img of plan.images) wantAlpha(washVeil(img.wash)?.alpha);
+    for (const img of plan.images) {
+      wantAlpha(washVeil(img.wash)?.alpha);
+      wantAlpha(img.alpha);
+    }
     // …and the shadow an inline PICTURE casts, which rides its token rather
     // than a shape of its own (imgshadow.docx).
     for (const line of plan.lines) {
@@ -763,6 +766,14 @@ function emitPageContent(
       const t = img.clip.transform;
       out.push(...emitClipPath(img.clip.paths, [t[0], -t[1], t[2], -t[3], t[4], H - t[5]]));
     }
+    // §20.1.8.4 — a picture the document draws at less than full opacity is
+    // painted through a constant-alpha state, so what stands behind it shows
+    // through: a slide backed by a photograph at 70 % is a wash of it.
+    const state =
+      img.alpha !== undefined && img.alpha < 1
+        ? alphaStateNames?.get(Math.round(img.alpha * 1000) / 1000)
+        : undefined;
+    if (state !== undefined) out.push(`/${state} gs`);
     out.push(
       ...placeImage(
         img.x,

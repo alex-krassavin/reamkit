@@ -232,6 +232,20 @@ export function makeColorResolver(
   };
 }
 
+/**
+ * §20.1.4.2.10 `phClr` — inside a theme's style list the colours are written as
+ * "the placeholder", and the reference that reaches the style says which colour
+ * that is. Everything else resolves as it always did.
+ *
+ * @param base  The document's own resolver.
+ * @param phHex The colour the reference carries (`a:fillRef`, `p:bgRef`, …).
+ * @returns A resolver that answers `phClr` with that colour, transforms and all.
+ */
+export function placeholderColors(base: ColorResolver, phHex: string): ColorResolver {
+  return (raw) =>
+    'scheme' in raw && raw.scheme === 'phClr' ? applyColorMods(phHex, raw.mods ?? []) : base(raw);
+}
+
 /** A {@link ColorResolver} backed by the {@link DEFAULT_THEME_PALETTE}. */
 export const defaultColorResolver: ColorResolver = makeColorResolver(DEFAULT_THEME_PALETTE);
 

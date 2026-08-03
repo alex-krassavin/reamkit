@@ -20,7 +20,7 @@ import type { ParsedWorksheet } from '@/core/spreadsheet-model';
 import type { PoNode } from '@/core/po-helpers';
 
 import { emuToPt, pt } from '@/core/ir';
-import { applyColorMods, resolveColorNode } from '@/core/drawingml/colors';
+import { placeholderColors, resolveColorNode } from '@/core/drawingml/colors';
 import {
   poAttr,
   poChildren,
@@ -534,19 +534,6 @@ function styleFill(
   // reference names (§20.1.4.2.10).
   const themed = parseFill({ 'a:spPr': [slot] }, placeholderColors(colors, colorHex));
   return themed.kind === 'none' ? { kind: 'solid', colorHex } : themed;
-}
-
-/**
- * §20.1.4.2.10 — inside a theme's style list, `phClr` stands for "the colour the
- * reference names". Every other colour resolves as it always did.
- *
- * @param colors The workbook's own resolver.
- * @param phHex  The colour the `a:fillRef` / `a:lnRef` carries.
- * @returns A resolver that answers `phClr` with that colour, transforms and all.
- */
-function placeholderColors(colors: ColorResolver, phHex: string): ColorResolver {
-  return (raw) =>
-    'scheme' in raw && raw.scheme === 'phClr' ? applyColorMods(phHex, raw.mods ?? []) : colors(raw);
 }
 
 /**

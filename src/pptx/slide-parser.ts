@@ -35,7 +35,7 @@ import type { PoNode } from '@/core/po-helpers';
 import type { PlaceholderCascade } from '@/pptx/placeholder-cascade';
 import type { PlaceholderRef, ShapeBoxEmu } from '@/pptx/sp-helpers';
 
-import { defaultColorResolver, resolveColorNode } from '@/core/drawingml/colors';
+import { defaultColorResolver, placeholderColors, resolveColorNode } from '@/core/drawingml/colors';
 import { FEATURES, emuToPt, pt } from '@/core/ir';
 import {
   poAttr,
@@ -71,6 +71,8 @@ export interface SlideContext {
   readonly cascade?: PlaceholderCascade;
   /** A slide-scoped blip relationship id (`a:blip @r:embed`) → a stored resource (PX3a). */
   readonly resolveImage?: (relId: string) => ResourceId | undefined;
+  /** The deck theme's fill style lists, for a `p:bgRef` on this slide. */
+  readonly themeFills?: ThemeFillStyles;
   /** A chart relationship id (`c:chart @r:id`) → its document-unique key (PX4a). */
   readonly resolveChart?: (relId: string) => string | undefined;
   /**
@@ -487,26 +489,69 @@ function withDiagramFontColor(
 }
 
 /**
- * `p:bg` → the background fill, or `undefined` when none/unsupported. `p:bgPr`
- * carries the fill directly (`a:solidFill`/`a:gradFill` — the same children
- * `parseFill` reads; a picture background is not yet supported); `p:bgRef` (a
- * theme fill-style index) is approximated by its colour child as a solid fill.
- * Used for the slide's own background and the inherited layout/master one (PX5b).
+ * The theme fill styles a `p:bgRef` indexes into (§19.3.1.2), as the raw nodes
+ * the fill readers take.
  */
-export function parseBackgroundFill(bg: PoNode, colors: ColorResolver): ShapeFill | undefined {
+export interface ThemeFillStyles {
+  /** `a:fillStyleLst` — what an index of 1…999 names. */
+  readonly fills: ReadonlyArray<PoNode>;
+  /** `a:bgFillStyleLst` — what an index past 1000 names, 1001 being the first. */
+  readonly backgrounds: ReadonlyArray<PoNode>;
+}
+
+/**
+ * `p:bg` → the background fill, or `undefined` when it declares none.
+ *
+ * Two spellings. `p:bgPr` carries the fill itself — solid, gradient, or a
+ * PICTURE, which needs the owning part's image resolver since the blip's
+ * relationship is scoped to the part the background is written in. `p:bgRef`
+ * (§19.3.1.2) carries no fill at all: an index into the theme's style lists and
+ * the colour to put wherever that style says `phClr`. Read as its colour alone
+ * — which is all this did — a deck whose theme opens with a black-to-grey
+ * gradient came out flat, and one whose first background slot is a picture came
+ * out a single colour.
+ *
+ * Used for the slide's own background and the inherited layout/master one (PX5b).
+ *
+ * @param bg           The `p:bg` node.
+ * @param colors       The deck's colour resolver.
+ * @param resolveImage Resolver for a picture background's relationship, scoped
+ *                     to the part this `p:bg` is written in.
+ * @param theme        The theme's fill style lists, for a `p:bgRef`.
+ */
+export function parseBackgroundFill(
+  bg: PoNode,
+  colors: ColorResolver,
+  resolveImage?: (relId: string) => ResourceId | undefined,
+  theme?: ThemeFillStyles,
+): ShapeFill | undefined {
   const bgPr = poChildren(bg).find((c) => poIs(c, 'p:bgPr'));
   if (bgPr) {
-    const fill = parseFill(bgPr, colors);
+    const fill = parseFill(bgPr, colors, resolveImage);
     return fill.kind !== 'none' ? fill : undefined;
   }
   const bgRef = poChildren(bg).find((c) => poIs(c, 'p:bgRef'));
-  if (bgRef) {
-    for (const c of poChildren(bgRef)) {
-      const hex = resolveColorNode(c, colors);
-      if (hex) return { kind: 'solid', colorHex: hex };
-    }
+  if (!bgRef) return undefined;
+  const child = poChildren(bgRef).find((c) => poTag(c) !== undefined);
+  const hex = child ? resolveColorNode(child, colors) : undefined;
+  const idx = poIntAttr(bgRef, 'idx');
+  const slot =
+    idx === undefined
+      ? undefined
+      : idx > 1000
+        ? theme?.backgrounds[idx - 1001]
+        : theme?.fills[idx - 1];
+  if (slot) {
+    // The slot is a whole fill in the theme's own vocabulary; read it with the
+    // shared reader, under a resolver where `phClr` is the colour named here.
+    const themed = parseFill(
+      { 'a:spPr': [slot] },
+      hex === undefined ? colors : placeholderColors(colors, hex),
+      resolveImage,
+    );
+    if (themed.kind !== 'none') return themed;
   }
-  return undefined;
+  return hex === undefined ? undefined : { kind: 'solid', colorHex: hex };
 }
 
 /**
