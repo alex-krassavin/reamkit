@@ -15,6 +15,7 @@ import type { DeviceContext, MetaObject, MetaPicture, PicturePrim } from '@/core
 import { PathBuilder } from '@/core/vector';
 import { cloneDc, colorRef, newDeviceContext } from '@/core/metafile/picture';
 import { ellipseSegments } from '@/core/metafile/emf';
+import { fromSymbolFont, symbolGeometryOf, symbolOutline } from '@/core/metafile/symbol-fonts';
 
 const PLACEABLE_KEY = 0x9ac6cdd7;
 
@@ -314,14 +315,23 @@ function pushText(
   y: number,
 ): void {
   if (text.trim() === '') return;
+  const em = Math.abs(dc.font?.heightLu ?? 12);
+  // A symbol font's letters are not letters: Webdings `n` is a filled circle,
+  // and no substitute font has one either — so the plain shapes are DRAWN.
+  const drawn = symbolPrims(text, dc, x, y, em);
+  if (drawn) {
+    prims.push(...drawn);
+    return;
+  }
   prims.push({
     kind: 'text',
-    text,
+    // The rest are translated to the Unicode that means the same thing.
+    text: fromSymbolFont(text, dc.font?.family),
     x,
     y,
     alignH: dc.alignH,
     alignBaseline: dc.alignBaseline,
-    sizeLu: Math.abs(dc.font?.heightLu ?? 12),
+    sizeLu: em,
     colorHex: dc.textColorHex,
     ...(dc.font?.family ? { fontFamily: dc.font.family } : {}),
     ...(dc.font?.bold ? { bold: true } : {}),
@@ -396,4 +406,39 @@ function polySegments(
   for (let i = 1; i < pts.length; i++) segs.push({ op: 'line', x: pts[i]!.x, y: pts[i]!.y });
   if (closed) segs.push({ op: 'close' });
   return segs;
+}
+
+/**
+ * The symbols a text record draws, as filled outlines, or `undefined` when the
+ * string is not one the shapes cover.
+ *
+ * Both fonts advance one em per symbol and fill that em, sitting from 0.2 em
+ * below the baseline to 0.8 em above it — measured off Webdings itself.
+ *
+ * @param text The string as stored.
+ * @param dc   The device context (font, colour, alignment).
+ * @param x    The reference point's x, in logical units.
+ * @param y    Its y — the text's top unless the context says baseline.
+ * @param em   The font's height in logical units.
+ * @returns One filled path per character, or `undefined`.
+ */
+function symbolPrims(
+  text: string,
+  dc: DeviceContext,
+  x: number,
+  y: number,
+  em: number,
+): Array<PicturePrim> | undefined {
+  const shapes = symbolGeometryOf(text, dc.font?.family);
+  if (!shapes) return undefined;
+  const width = em * shapes.length;
+  const left = dc.alignH === 'center' ? x - width / 2 : dc.alignH === 'right' ? x - width : x;
+  // The em box the glyph fills: below the baseline by a fifth, or straight down
+  // from the top when the point names the top.
+  const top = dc.alignBaseline ? y - em * 0.8 : y;
+  return shapes.map((shape, i) => ({
+    kind: 'path' as const,
+    paths: [symbolOutline(shape, left + i * em, top, em)],
+    fillColorHex: dc.textColorHex,
+  }));
 }

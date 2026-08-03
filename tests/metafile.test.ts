@@ -369,6 +369,39 @@ describe('WMF (MS-WMF)', () => {
     expect(t?.colorHex).toBe('FF0000');
   });
 
+  it('draws a symbol font\'s circle rather than spelling it "n"', () => {
+    // The bullets in an embedded diagram are Webdings `n`, which is a filled
+    // circle — and no substitute font has one either, so it is DRAWN.
+    // MS-WMF §2.2.1.2 LogFont: height, width, escapement, orientation, weight,
+    // then eight bytes of flags before the 32-byte face name.
+    const font = new Bytes()
+      .i16(-20) // height
+      .i16(0)
+      .i16(0) // escapement
+      .i16(0)
+      .i16(400) // weight
+      .ascii('\u0000'.repeat(8))
+      .ascii('Webdings', 32)
+      .build();
+    const pic = readWmf(
+      wmf(
+        [
+          meta(0x02fb, font), // CREATEFONTINDIRECT
+          meta(0x012d, new Bytes().u16(0).build()), // SELECTOBJECT
+          meta(0x0209, new Bytes().u32(0x800000).build()), // SETTEXTCOLOR — blue
+          meta(0x0521, new Bytes().u16(1).ascii('n\u0000').i16(40).i16(10).build()), // TEXTOUT
+        ],
+        [0, 0, 100, 50],
+      ),
+    );
+    expect(texts(pic.prims)).toEqual([]); // nothing spelled
+    const [shape] = paths(pic.prims);
+    expect(shape?.fillColorHex).toBe('000080');
+    // One em wide, and round: four quadrant curves.
+    const segs = shape?.paths[0]?.segments ?? [];
+    expect(segs.filter((sg) => sg.op === 'cubic').length).toBe(4);
+  });
+
   it('draws a polygon closed and a polyline open', () => {
     const pts = new Bytes().u16(3).i16(0).i16(0).i16(10).i16(0).i16(10).i16(10).build();
     const poly = readWmf(wmf([meta(0x0324, pts)], [0, 0, 20, 20]));
