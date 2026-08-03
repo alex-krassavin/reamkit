@@ -72,20 +72,33 @@ const pdf = await doc.convert('pdf');
 
 Unlike a PDF, here a wrong password is an **error**, not a loss: every scheme
 stores a verifier, so the file can say the password is wrong instead of handing
-back rubbish. The error names itself, so you can tell it from a corrupt file:
+back rubbish. It comes as `WrongPasswordError` — a class, so a corrupt file is
+not mistaken for a bad password:
 
 ```ts
+import { Ream, WrongPasswordError } from 'reamkit';
+
 try {
   Ream.parse(bytes, { password });
 } catch (e) {
-  if (e instanceof Error && e.name === 'WrongPasswordError') promptAgain();
+  if (e instanceof WrongPasswordError) promptAgain();
   else throw e; // not a password problem
 }
 ```
 
 A document that needs a password and gets none throws too, naming the option to
-pass. Decryption only: Ream never writes an encrypted package, so `convert`
-output is always in the clear.
+pass. An interface usually wants to know before that — to show a password field
+rather than an error — and `isEncryptedPackage` answers from the bytes:
+
+```ts
+import { Ream, isEncryptedPackage } from 'reamkit';
+
+const password = isEncryptedPackage(bytes) ? await askTheUser() : undefined;
+const doc = Ream.parse(bytes, { password });
+```
+
+Decryption only: Ream never writes an encrypted package, so `convert` output is
+always in the clear.
 
 ## pdf → html / docx: read a PDF back
 

@@ -59,19 +59,30 @@ const pdf = await doc.convert('pdf');
 ```
 
 Every scheme stores a verifier, so a wrong password is refused rather than
-producing rubbish. The error names itself, so you can tell it from a corrupt
-file and ask again:
+producing rubbish — as `WrongPasswordError`, which you can catch by type and
+so tell apart from a corrupt file:
 
 ```ts
+import { Ream, WrongPasswordError } from 'reamkit';
+
 try {
   Ream.parse(bytes, { password });
 } catch (e) {
-  if (e instanceof Error && e.name === 'WrongPasswordError') promptAgain();
+  if (e instanceof WrongPasswordError) promptAgain();
   else throw e;
 }
 ```
 
-A document that needs a password and gets none throws as well, saying so.
+A document that needs a password and gets none throws as well, saying so. To
+ask before that happens — to put up a password prompt instead of an error —
+`isEncryptedPackage` answers from the bytes alone:
+
+```ts
+import { isEncryptedPackage } from 'reamkit';
+
+const password = isEncryptedPackage(bytes) ? await promptForPassword() : undefined;
+const doc = Ream.parse(bytes, { password });
+```
 
 ## Bring your own fonts (no network)
 
