@@ -200,11 +200,6 @@
   "aligned": true
  },
  {
-  "name": "tdf149551_SmartArt_Gear.pptx",
-  "score": 0.2064,
-  "aligned": true
- },
- {
   "name": "smartart-text.pptx",
   "score": 0.2012,
   "aligned": true
@@ -252,11 +247,6 @@
  {
   "name": "smartart-cycle-matrix.pptx",
   "score": 0.1676,
-  "aligned": true
- },
- {
-  "name": "tdf149551_SmartArt_Pie.pptx",
-  "score": 0.1553,
   "aligned": true
  },
  {
@@ -430,16 +420,6 @@
   "aligned": true
  },
  {
-  "name": "bnc862510_5.pptx",
-  "score": 0.0792,
-  "aligned": true
- },
- {
-  "name": "tdf93830.pptx",
-  "score": 0.0787,
-  "aligned": true
- },
- {
   "name": "tdf135843_export.pptx",
   "score": 0.0786,
   "aligned": true
@@ -485,12 +465,22 @@
   "aligned": true
  },
  {
+  "name": "bnc862510_5.pptx",
+  "score": 0.0717,
+  "aligned": true
+ },
+ {
   "name": "tdf152335.pptx",
   "score": 0.0662,
   "aligned": true
  },
  {
   "name": "tdf111884.pptx",
+  "score": 0.0631,
+  "aligned": true
+ },
+ {
+  "name": "tdf93830.pptx",
   "score": 0.0631,
   "aligned": true
  },
@@ -685,11 +675,6 @@
   "aligned": true
  },
  {
-  "name": "tdf135953_SmartArt_textposition.pptx",
-  "score": 0.0332,
-  "aligned": true
- },
- {
   "name": "tdf136830.pptx",
   "score": 0.0323,
   "aligned": true
@@ -732,11 +717,6 @@
  {
   "name": "tdf149124.pptx",
   "score": 0.0283,
-  "aligned": true
- },
- {
-  "name": "tdf141058-1.pptx",
-  "score": 0.0275,
   "aligned": true
  },
  {
@@ -785,6 +765,11 @@
   "aligned": true
  },
  {
+  "name": "tdf135953_SmartArt_textposition.pptx",
+  "score": 0.0213,
+  "aligned": true
+ },
+ {
   "name": "tdf140714.pptx",
   "score": 0.021,
   "aligned": true
@@ -810,8 +795,8 @@
   "aligned": true
  },
  {
-  "name": "tdf165321.pptx",
-  "score": 0.0184,
+  "name": "tdf141058-1.pptx",
+  "score": 0.019,
   "aligned": true
  },
  {
@@ -867,6 +852,11 @@
  {
   "name": "tdf128684.pptx",
   "score": 0.0157,
+  "aligned": true
+ },
+ {
+  "name": "tdf149551_SmartArt_Gear.pptx",
+  "score": 0.0154,
   "aligned": true
  },
  {
@@ -980,11 +970,6 @@
   "aligned": true
  },
  {
-  "name": "bnc862510_6.pptx",
-  "score": 0.0086,
-  "aligned": true
- },
- {
   "name": "activex_fontproperties.pptx",
   "score": 0.0082,
   "aligned": true
@@ -1045,11 +1030,6 @@
   "aligned": true
  },
  {
-  "name": "tdf128952.pptx",
-  "score": 0.0074,
-  "aligned": true
- },
- {
   "name": "tablescale.pptx",
   "score": 0.0068,
   "aligned": true
@@ -1067,6 +1047,11 @@
  {
   "name": "tdf149803.pptx",
   "score": 0.0065,
+  "aligned": true
+ },
+ {
+  "name": "tdf149551_SmartArt_Pie.pptx",
+  "score": 0.0064,
   "aligned": true
  },
  {
@@ -1175,6 +1160,11 @@
   "aligned": true
  },
  {
+  "name": "tdf128952.pptx",
+  "score": 0.0042,
+  "aligned": true
+ },
+ {
   "name": "tdf103800.pptx",
   "score": 0.0042,
   "aligned": true
@@ -1196,6 +1186,11 @@
  },
  {
   "name": "tdf145528_SmartArt_Matrix.pptx",
+  "score": 0.004,
+  "aligned": true
+ },
+ {
+  "name": "bnc862510_6.pptx",
   "score": 0.004,
   "aligned": true
  },
@@ -1571,6 +1566,11 @@
  },
  {
   "name": "tdf156808.pptx",
+  "score": 0.001,
+  "aligned": true
+ },
+ {
+  "name": "tdf165321.pptx",
   "score": 0.001,
   "aligned": true
  },

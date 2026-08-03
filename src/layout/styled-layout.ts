@@ -2747,7 +2747,7 @@ function layoutMetafileBlock(
   const widthPt = placed.widthPt;
   const heightPt = placed.heightPt;
   const layout = rotateDrawing(
-    metafileDrawing(pic, widthPt, heightPt, options, fontResources),
+    metafileDrawing(pic, widthPt, heightPt, options, fontResources, image.colorChange),
     // §20.1.7.6 `a:xfrm @rot` — the drawing's own turn, clockwise. A chart
     // block has no rotation of its own, so the primitives take it: tdf103001
     // .docx leans two of its three cliparts and we stood all three upright.
@@ -2818,7 +2818,17 @@ function metafileDrawing(
   heightPt: number,
   options: StyledRenderOptions,
   fontResources: ReadonlyMap<string, FontResource>,
+  colorChange?: ImageBlock['colorChange'],
 ): ChartLayout {
+  // §20.1.8.16 — the colour the picture declares away. In a metafile that is
+  // not a pixel operation: a primitive painted in it is either repainted or
+  // not drawn at all, which is how tdf113163's white ground disappears and
+  // lets the black slide through.
+  const recolour = (hex: string | undefined): string | undefined | null => {
+    if (hex === undefined || colorChange === undefined) return hex;
+    if (hex.toUpperCase() !== colorChange.fromHex.toUpperCase()) return hex;
+    return colorChange.transparent ? null : colorChange.toHex;
+  };
   const sx = widthPt / pic.width;
   const sy = heightPt / pic.height;
   // The metafile's y runs DOWN from its own top; the primitives' frame runs UP
@@ -2833,6 +2843,13 @@ function metafileDrawing(
   let seq = 0;
   for (const prim of pic.prims) {
     if (prim.kind === 'path') {
+      const fill = recolour(prim.fillColorHex);
+      const strokeHex = recolour(prim.stroke?.colorHex);
+      // Nothing left to paint: the primitive was the colour that goes away.
+      if (fill === null && (prim.stroke === undefined || strokeHex === null)) {
+        seq++;
+        continue;
+      }
       shapes.push({
         seq: seq++,
         paths: prim.paths.map((path) => ({
@@ -2853,9 +2870,15 @@ function metafileDrawing(
                 : { op: seg.op, x: mapX(seg.x), y: mapY(seg.y) },
           ),
         })),
-        ...(prim.fillColorHex !== undefined ? { fillColorHex: prim.fillColorHex } : {}),
-        ...(prim.stroke
-          ? { stroke: { ...prim.stroke, widthPt: Math.max(0.25, prim.stroke.widthPt * sx) } }
+        ...(fill !== undefined && fill !== null ? { fillColorHex: fill } : {}),
+        ...(prim.stroke && strokeHex !== null
+          ? {
+              stroke: {
+                ...prim.stroke,
+                ...(strokeHex !== undefined ? { colorHex: strokeHex } : {}),
+                widthPt: Math.max(0.25, prim.stroke.widthPt * sx),
+              },
+            }
           : {}),
       });
       continue;
@@ -2865,7 +2888,12 @@ function metafileDrawing(
     const font = fontResources.get(variant);
     if (!font) continue;
     const sizePt = Math.max(1, prim.sizeLu * sy);
-    const line = makeChartLabelLine(prim.text, font, sizePt, prim.colorHex);
+    const textHex = recolour(prim.colorHex);
+    if (textHex === null) {
+      seq++;
+      continue;
+    }
+    const line = makeChartLabelLine(prim.text, font, sizePt, textHex ?? prim.colorHex);
     const shift =
       prim.alignH === 'center'
         ? -line.contentWidthPt / 2

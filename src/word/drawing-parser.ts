@@ -2703,6 +2703,43 @@ function fillRectCrop(blipFill: PoNode): ImageCrop | undefined {
 }
 
 /**
+ * §20.1.8.16 `a:clrChange` — the colour a picture declares away, and what it
+ * becomes. `useA` (default true) says the destination's alpha counts, so a
+ * destination at zero alpha knocks the colour OUT rather than replacing it.
+ *
+ * @param blip         The `a:blip` node.
+ * @param resolveColor The colour resolver.
+ * @returns The change, or `undefined` when the blip declares none.
+ */
+export function colorChangeOf(
+  blip: PoNode,
+  resolveColor: ColorResolver,
+): { readonly fromHex: string; readonly toHex: string; readonly transparent: boolean } | undefined {
+  const change = poChildren(blip).find((c) => poIs(c, 'a:clrChange'));
+  if (!change) return undefined;
+  const side = (tag: string): PoNode | undefined => poChildren(change).find((c) => poIs(c, tag));
+  const from = side('a:clrFrom');
+  const to = side('a:clrTo');
+  const inner = (holder: PoNode | undefined): PoNode | undefined =>
+    holder ? poChildren(holder).find((c) => poTag(c) !== undefined) : undefined;
+  const fromNode = inner(from);
+  const toNode = inner(to);
+  const fromHex = fromNode ? resolveColorNode(fromNode, resolveColor) : undefined;
+  if (fromHex === undefined) return undefined;
+  const toHex = (toNode ? resolveColorNode(toNode, resolveColor) : undefined) ?? fromHex;
+  const useA = poAttr(change, 'useA') !== '0';
+  const alpha = toNode ? nodeAlpha(toNode) : undefined;
+  return { fromHex, toHex, transparent: useA && alpha !== undefined && alpha <= 0.001 };
+}
+
+/** §20.1.2.3.1 — a colour node's own `a:alpha`, as a fraction. */
+function nodeAlpha(color: PoNode): number | undefined {
+  const alpha = poChildren(color).find((c) => poIs(c, 'a:alpha'));
+  const val = alpha ? poIntAttr(alpha, 'val') : undefined;
+  return val === undefined ? undefined : val / 100000;
+}
+
+/**
  * §20.1.8.23 `a:duotone` — the two colours a picture is recoloured between,
  * dark end first. Both are ordinary colour containers, so a theme's `phClr`
  * resolves through whatever resolver the caller bound.

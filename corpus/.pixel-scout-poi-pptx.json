@@ -206,7 +206,7 @@
  },
  {
   "name": "ca.ubc.cs.people_~emhill_presentations_HowWeRefactor.pptx",
-  "score": 0.0534,
+  "score": 0.0555,
   "aligned": true
  },
  {
@@ -295,11 +295,6 @@
   "aligned": true
  },
  {
-  "name": "sample_pptx_grouping_issues.pptx",
-  "score": 0.011,
-  "aligned": true
- },
- {
   "name": "2411-Performance_Up.pptx",
   "score": 0.0104,
   "aligned": true
@@ -335,11 +330,6 @@
   "aligned": true
  },
  {
-  "name": "bug65228.pptx",
-  "score": 0.0072,
-  "aligned": true
- },
- {
   "name": "EmbeddedAudio.pptx",
   "score": 0.0067,
   "aligned": true
@@ -357,6 +347,16 @@
  {
   "name": "WithMaster.pptx",
   "score": 0.0057,
+  "aligned": true
+ },
+ {
+  "name": "sample_pptx_grouping_issues.pptx",
+  "score": 0.0051,
+  "aligned": true
+ },
+ {
+  "name": "bug65228.pptx",
+  "score": 0.0045,
   "aligned": true
  },
  {

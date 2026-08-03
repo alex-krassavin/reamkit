@@ -283,6 +283,17 @@ export interface InlineImage {
    * Word washes a watermark out this way.
    */
   readonly wash?: { readonly gain: number; readonly black: number };
+  /**
+   * §20.1.8.16 `a:clrChange` — one colour of the picture replaced by another,
+   * or knocked out entirely when the destination states `a:alpha` at zero. A
+   * logo on a white card goes onto a dark slide that way (corpus: tdf113163,
+   * whose whole slide is a metafile with its white ground declared away).
+   */
+  readonly colorChange?: {
+    readonly fromHex: string;
+    readonly toHex: string;
+    readonly transparent: boolean;
+  };
   readonly width: Pt;
   readonly height: Pt;
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
@@ -1060,6 +1071,15 @@ export interface ImageBlock {
    * Word washes a watermark out this way.
    */
   readonly wash?: { readonly gain: number; readonly black: number };
+  /**
+   * §20.1.8.16 `a:clrChange` — one colour of the picture replaced by another,
+   * or knocked out entirely when the destination states `a:alpha` at zero.
+   */
+  readonly colorChange?: {
+    readonly fromHex: string;
+    readonly toHex: string;
+    readonly transparent: boolean;
+  };
   readonly width: Pt;
   readonly height: Pt;
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */

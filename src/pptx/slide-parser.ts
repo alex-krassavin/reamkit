@@ -48,6 +48,7 @@ import {
   poText,
 } from '@/core/po-helpers';
 import {
+  colorChangeOf,
   parseCustGeom,
   parseFill,
   parseLine,
@@ -705,11 +706,15 @@ function parsePic(
   const blip = blipFill ? poChildren(blipFill).find((c) => poIs(c, 'a:blip')) : undefined;
   const relId = blip ? poAttr(blip, 'embed') : undefined;
   const resource = relId !== undefined ? ctx.resolveImage?.(relId) : undefined;
+  // §20.1.8.16 — a picture may declare one of its colours away, which is how a
+  // logo drawn on white sits on a dark slide.
+  const colorChange = blip ? colorChangeOf(blip, ctx.colors ?? defaultColorResolver) : undefined;
 
   const altText = picAltText(pic);
   return {
     float: floatAt(box),
     ...(resource !== undefined ? { resource } : {}),
+    ...(colorChange ? { colorChange } : {}),
     width: emuToPt(box.cx),
     height: emuToPt(box.cy),
     paragraphProperties: {},

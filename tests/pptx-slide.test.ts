@@ -660,6 +660,46 @@ describe('pptx background — a reference and a picture (E-PPTX PX5b)', () => {
   });
 });
 
+describe('a picture that declares a colour away (§20.1.8.16)', () => {
+  it('reads a:clrChange off the blip, and whether it knocks the colour out', () => {
+    const pic = (change: string): string =>
+      `<p:pic><p:nvPicPr><p:cNvPr id="5" name="p"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>` +
+      `<p:blipFill><a:blip r:embed="rIdImg">${change}</a:blip><a:stretch/></p:blipFill>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`;
+    const deck = (change: string): ReturnType<typeof Ream.parse> =>
+      Ream.parse(
+        buildPptx([pic(change)], {
+          slideRels: [`<Relationship Id="rIdImg" Type="${IMAGE_REL}" Target="../media/i.png"/>`],
+          media: { 'ppt/media/i.png': buildTinyPng(2, 2, [255, 255, 255, 255]) },
+        }),
+      );
+    const image = (doc: ReturnType<typeof Ream.parse>) =>
+      doc.flow.body.flatMap((e) => (e.kind === 'image' ? [e.image] : []))[0];
+    // Zero alpha on the destination: the colour goes.
+    const gone = deck(
+      `<a:clrChange><a:clrFrom><a:srgbClr val="FFFFFF"/></a:clrFrom>` +
+        `<a:clrTo><a:srgbClr val="FFFFFF"><a:alpha val="0"/></a:srgbClr></a:clrTo></a:clrChange>`,
+    );
+    expect(image(gone)?.colorChange).toEqual({
+      fromHex: 'FFFFFF',
+      toHex: 'FFFFFF',
+      transparent: true,
+    });
+    // A destination with no alpha of its own repaints instead.
+    const swapped = deck(
+      `<a:clrChange><a:clrFrom><a:srgbClr val="FFFFFF"/></a:clrFrom>` +
+        `<a:clrTo><a:srgbClr val="112233"/></a:clrTo></a:clrChange>`,
+    );
+    expect(image(swapped)?.colorChange).toEqual({
+      fromHex: 'FFFFFF',
+      toHex: '112233',
+      transparent: false,
+    });
+    expect(image(deck(''))?.colorChange).toBeUndefined();
+  });
+});
+
 describe('what a slide puts behind its content', () => {
   it("paints the backdrop before the slide's own picture, not over it", () => {
     // Every shape paints after every image in the ordinary passes, so a white

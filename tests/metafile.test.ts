@@ -408,6 +408,64 @@ describe('WMF (MS-WMF)', () => {
     expect(segs.filter((sg) => sg.op === 'cubic').length).toBe(4);
   });
 
+  it('drops what a picture declares transparent (a:clrChange)', () => {
+    // §20.1.8.16 — tdf113163's whole slide is a metafile whose white ground is
+    // declared away, so the black slide shows through. Drawn as stored, the
+    // slide is a white sheet.
+    const white = new Bytes().i16(20).i16(80).i16(0).i16(0).build(); // b,r,t,l
+    const red = new Bytes().i16(20).i16(40).i16(0).i16(0).build();
+    const bytes = wmf(
+      [
+        meta(0x02fc, new Bytes().u16(0).u32(0xffffff).u16(0).build()), // white brush
+        meta(0x012d, new Bytes().u16(0).build()),
+        meta(0x041b, white),
+        meta(0x02fc, new Bytes().u16(0).u32(0x0000ff).u16(0).build()), // red brush
+        meta(0x012d, new Bytes().u16(1).build()),
+        meta(0x041b, red),
+      ],
+      [0, 0, 100, 50],
+    );
+    const store = new ResourceStore();
+    const resource = store.put(bytes);
+    const lay = (colorChange?: { fromHex: string; toHex: string; transparent: boolean }) =>
+      layoutStyledDocument(
+        [
+          {
+            kind: 'image',
+            image: {
+              resource,
+              width: pt(100),
+              height: pt(50),
+              paragraphProperties: {},
+              ...(colorChange ? { colorChange } : {}),
+            },
+          },
+        ],
+        {
+          registry: FontRegistry.fromBytes({
+            regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
+          }),
+          resources: store,
+          styles: { defaultRunProperties: {}, defaultParagraphProperties: {}, styles: new Map() },
+        },
+      );
+    const fills = (laid: ReturnType<typeof lay>): Array<string | undefined> =>
+      laid.pages[0]!.commands.flatMap((c) => (c.type === 'shape' ? [c.shape.fillColorHex] : []));
+    expect(fills(lay())).toEqual(['FFFFFF', 'FF0000']);
+    // The white FILL goes; the rectangle's black outline is another colour and
+    // stays. The corpus deck draws its ground with a null pen, so there the
+    // primitive disappears completely.
+    expect(fills(lay({ fromHex: 'FFFFFF', toHex: 'FFFFFF', transparent: true }))).toEqual([
+      undefined,
+      'FF0000',
+    ]);
+    // …and a change that names another colour repaints instead of dropping.
+    expect(fills(lay({ fromHex: 'FFFFFF', toHex: '00FF00', transparent: false }))).toEqual([
+      '00FF00',
+      'FF0000',
+    ]);
+  });
+
   it('paints as ONE picture, in the order the metafile draws', () => {
     // A metafile writes a label, lays a panel over it and writes it again as a
     // drop shadow; painted as "every shape, then every line" the buried copy
