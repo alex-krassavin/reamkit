@@ -1699,11 +1699,11 @@ function blocksHeight(blocks: ReadonlyArray<LaidOutBlock>): number {
     // offset and grows nothing. Counted, it made fdo78420's header band 400pt
     // tall — two text boxes anchored over the page — and the body began a third
     // of the way down every page, in 41 pages against the reference's 23.
-    // A floating TABLE is not in that class: `drawBlocksSequentially` walks its
-    // rows down the band's cursor like any other, so the height must agree or
-    // the band starts too low — PageSpecificHeadFoot.docx anchors its page-number
-    // table in the footer and pushed the paragraph after it off the page edge.
-    if (b.kind !== 'paragraph' && b.kind !== 'table' && isOutOfFlowFloat(b.float)) return sum;
+    // A floating TABLE is in that class too, now that the band draws one at its
+    // anchor rather than down the cursor: counted, the band kept the room its
+    // banner does not take and tdf105688.docx's body began 75pt below where
+    // both references start it.
+    if (b.kind !== 'paragraph' && isOutOfFlowFloat(b.float)) return sum;
     return (
       sum +
       (b.kind === 'paragraph' ? b.spacingBeforePt + b.heightPt + b.spacingAfterPt : b.heightPt)
@@ -3799,6 +3799,22 @@ function drawBlocksSequentially(
     // No pagination here and no tagging: a band is one page's worth by
     // construction, and its contents are artifacts.
     if (block.kind === 'table') {
+      // §17.4.58 — a floating table in a BAND stands at its anchor like any
+      // other float, and takes no room in the band's flow. Drawn in flow, the
+      // banner tdf105688.docx pins across the top of its page sat inside the
+      // margins and 78pt too low, because a `w:tblpPr` was read everywhere but
+      // here.
+      const anchored = isOutOfFlowFloat(block.float)
+        ? bandAnchor(block.float, block.totalWidthPt, contentWidth, startX)
+        : undefined;
+      if (anchored !== undefined && block.float) {
+        let rowY = bandAnchorTop(block.float, cursorY, pageHeight, block.heightPt, bandMargins);
+        for (const row of block.rows) {
+          emitRowChunk(out, row, startX + anchored, rowY, pageHeight, block.colCount);
+          rowY -= row.heightPt;
+        }
+        continue;
+      }
       const tableX = startX + block.xOffsetPt;
       for (const row of block.rows) {
         emitRowChunk(out, row, tableX, cursorY, pageHeight, block.colCount);
