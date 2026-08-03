@@ -98,7 +98,19 @@ export function rPrToRunProps(rPr: PoNode | undefined, colors: ColorResolver): R
     ...(sz !== undefined ? { fontSizePt: pt(sz / 100) } : {}),
     ...(colorHex ? { colorHex } : {}),
     ...(typeface ? { fontFamily: { ascii: typeface } } : {}),
+    ...capsOf(poAttr(rPr, 'cap')),
   };
+}
+
+// §21.1.2.2.7 `@cap` — the text is DISPLAYED in capitals, whatever it stores.
+// Stated once in a master's title style it reaches every slide (themes.pptx's
+// last title is "Trade show" in the file and TRADE SHOW on the screen), so a
+// run that says `none` has to be able to take it back off.
+function capsOf(cap: string | undefined): Pick<RunProperties, 'caps' | 'smallCaps'> {
+  if (cap === 'all') return { caps: true };
+  if (cap === 'small') return { smallCaps: true };
+  if (cap === 'none') return { caps: false, smallCaps: false };
+  return {};
 }
 
 // a:solidFill → resolved 6-hex (no '#'), via the deck's colour resolver so both

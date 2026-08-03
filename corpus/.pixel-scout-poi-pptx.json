@@ -80,18 +80,18 @@
   "aligned": true
  },
  {
-  "name": "45541_Header.pptx",
-  "score": 0.3995,
+  "name": "45541_Footer.pptx",
+  "score": 0.3991,
   "aligned": true
  },
  {
-  "name": "45541_Footer.pptx",
-  "score": 0.3994,
+  "name": "45541_Header.pptx",
+  "score": 0.399,
   "aligned": true
  },
  {
   "name": "45545_Comment.pptx",
-  "score": 0.3981,
+  "score": 0.3978,
   "aligned": true
  },
  {
@@ -116,7 +116,7 @@
  },
  {
   "name": "bug68703.pptx",
-  "score": 0.2534,
+  "score": 0.2037,
   "aligned": true
  },
  {
@@ -140,28 +140,28 @@
   "aligned": true
  },
  {
-  "name": "ae.ac.uaeu.faculty_nafaachbili_GeomLec1.pptx",
-  "score": 0.1192,
-  "aligned": true
- },
- {
   "name": "smartart-simple.pptx",
   "score": 0.1095,
   "aligned": true
  },
  {
-  "name": "keyframes.pptx",
-  "score": 0.098,
-  "aligned": true
- },
- {
-  "name": "minimal-gradient-fill-issue.pptx",
+  "name": "ae.ac.uaeu.faculty_nafaachbili_GeomLec1.pptx",
   "score": 0.093,
   "aligned": true
  },
  {
   "name": "au.asn.aes.www_conferences_2011_presentations_Fri_20Room4Level4_20930_20Maloney.pptx",
   "score": 0.0929,
+  "aligned": true
+ },
+ {
+  "name": "keyframes.pptx",
+  "score": 0.0926,
+  "aligned": true
+ },
+ {
+  "name": "minimal-gradient-fill-issue.pptx",
+  "score": 0.0875,
   "aligned": true
  },
  {
@@ -186,7 +186,7 @@
  },
  {
   "name": "crash-57308ca363f5b71763c489d1b432aff009d4bc4f.pptx",
-  "score": 0.0528,
+  "score": 0.0529,
   "aligned": true
  },
  {
@@ -206,7 +206,7 @@
  },
  {
   "name": "60810.pptx",
-  "score": 0.0398,
+  "score": 0.0399,
   "aligned": true
  },
  {
@@ -221,12 +221,12 @@
  },
  {
   "name": "pptx2svg.pptx",
-  "score": 0.0359,
+  "score": 0.0356,
   "aligned": true
  },
  {
   "name": "bug62513.pptx",
-  "score": 0.03,
+  "score": 0.0313,
   "aligned": true
  },
  {
@@ -310,11 +310,6 @@
   "aligned": true
  },
  {
-  "name": "bug60715.pptx",
-  "score": 0.0073,
-  "aligned": true
- },
- {
   "name": "bug63290.pptx",
   "score": 0.0073,
   "aligned": true
@@ -326,7 +321,7 @@
  },
  {
   "name": "49386-null_dates.pptx",
-  "score": 0.0058,
+  "score": 0.0059,
   "aligned": true
  },
  {
@@ -337,6 +332,11 @@
  {
   "name": "WithMaster.pptx",
   "score": 0.0057,
+  "aligned": true
+ },
+ {
+  "name": "bug60715.pptx",
+  "score": 0.0056,
   "aligned": true
  },
  {
@@ -376,17 +376,17 @@
  },
  {
   "name": "bug64693.pptx",
-  "score": 0.0031,
-  "aligned": true
- },
- {
-  "name": "OverlappingRelations.pptx",
-  "score": 0.0028,
+  "score": 0.0029,
   "aligned": true
  },
  {
   "name": "bug62736.pptx",
   "score": 0.0027,
+  "aligned": true
+ },
+ {
+  "name": "OverlappingRelations.pptx",
+  "score": 0.0026,
   "aligned": true
  },
  {
@@ -450,6 +450,11 @@
   "aligned": true
  },
  {
+  "name": "60042.pptx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
   "name": "bug65551.pptx",
   "score": 0.0001,
   "aligned": true
@@ -461,11 +466,6 @@
  },
  {
   "name": "missing-blip-fill.pptx",
-  "score": 0,
-  "aligned": true
- },
- {
-  "name": "60042.pptx",
   "score": 0,
   "aligned": true
  },

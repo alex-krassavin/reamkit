@@ -2305,6 +2305,19 @@ export function styleRefLine(
   return { fill: 'solid', colorHex, width: pt(width ?? 0.75) };
 }
 
+/**
+ * §20.1.4.2.14 `a:fontRef` — the colour a gallery style writes its text in.
+ *
+ * @param style        The shape's `p:style`/`wps:style` node.
+ * @param resolveColor The document's colour resolver.
+ * @returns The 6-hex colour, or `undefined` when the style names none.
+ */
+export function styleRefFontColor(style: PoNode, resolveColor: ColorResolver): string | undefined {
+  const ref = poChildren(style).find((c) => poIs(c, 'a:fontRef'));
+  const child = firstElementChild(ref);
+  return child ? resolveColorNode(child, resolveColor) : undefined;
+}
+
 // §20.1.4.2.14 — give every run that names no colour of its own the one the
 // gallery style's `a:fontRef` names. The theme's colour is the FLOOR of the
 // cascade (§17.7.2), so a run that could inherit one — through its own
@@ -2317,9 +2330,7 @@ export function withStyleFontColor(
   style: PoNode,
   resolveColor: ColorResolver,
 ): ShapeTextBody {
-  const ref = poChildren(style).find((c) => poIs(c, 'a:fontRef'));
-  const child = firstElementChild(ref);
-  const colorHex = child ? resolveColorNode(child, resolveColor) : undefined;
+  const colorHex = styleRefFontColor(style, resolveColor);
   if (colorHex === undefined) return text;
   return {
     ...text,

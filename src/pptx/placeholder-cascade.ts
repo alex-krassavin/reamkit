@@ -44,6 +44,8 @@ export interface PlaceholderCascade {
     ph: PlaceholderRef | undefined,
     level: number,
   ) => ParagraphProperties;
+  /** The bullet that level inherits, which a paragraph states only to change. */
+  readonly bulletFor: (ph: PlaceholderRef | undefined, level: number) => LevelBullet | undefined;
   /**
    * The vertical anchor the placeholder's prototype states (`a:bodyPr@anchor`),
    * the layout's before the master's, for a shape that states none itself.
@@ -61,6 +63,38 @@ export interface PlaceholderCascade {
 interface LevelStyle {
   readonly run: RunProperties;
   readonly paragraph: ParagraphProperties;
+  readonly bullet?: LevelBullet;
+}
+
+/**
+ * §21.1.2.4.4/.5/.6 — the bullet a level declares: none at all, a literal
+ * character, or a number that counts. A slide paragraph states one only where
+ * it differs from this: themes.pptx's second slide writes one bare line, and
+ * the dot in front of it is the master's body style, nine levels up.
+ */
+export type LevelBullet =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'char'; readonly char: string }
+  | { readonly kind: 'autoNum'; readonly type: string; readonly startAt: number };
+
+/**
+ * The bullet an `a:pPr` (or an `a:lvlNpPr`, the same vocabulary) states.
+ *
+ * @param pPr The paragraph-properties node.
+ * @returns The bullet, or `undefined` when the node states none and inherits.
+ */
+export function parseBullet(pPr: PoNode | undefined): LevelBullet | undefined {
+  if (!pPr) return undefined;
+  if (poChildren(pPr).some((c) => poIs(c, 'a:buNone'))) return { kind: 'none' };
+  const buChar = poChildren(pPr).find((c) => poIs(c, 'a:buChar'));
+  if (buChar) return { kind: 'char', char: poAttr(buChar, 'char') ?? '•' };
+  const buAuto = poChildren(pPr).find((c) => poIs(c, 'a:buAutoNum'));
+  if (!buAuto) return undefined;
+  return {
+    kind: 'autoNum',
+    type: poAttr(buAuto, 'type') ?? 'arabicPeriod',
+    startAt: poIntAttr(buAuto, 'startAt') ?? 1,
+  };
 }
 
 type StyleCategory = 'title' | 'body' | 'other';
@@ -130,6 +164,9 @@ export function buildPlaceholderCascade(
     paragraphDefaultsFor(ph, level) {
       return styleAt(ph, level).paragraph;
     },
+    bulletFor(ph, level) {
+      return styleAt(ph, level).bullet;
+    },
     anchorFor(ph) {
       return matchPlaceholder(layoutPhs, ph)?.anchor ?? matchPlaceholder(masterPhs, ph)?.anchor;
     },
@@ -149,9 +186,11 @@ function at(levels: ReadonlyArray<LevelStyle>, level: number): LevelStyle {
 
 /** `next` over `base` — a layer states only what it changes. */
 function mergeLevels(base: LevelStyle, next: LevelStyle): LevelStyle {
+  const bullet = next.bullet ?? base.bullet;
   return {
     run: { ...base.run, ...next.run },
     paragraph: { ...base.paragraph, ...next.paragraph },
+    ...(bullet ? { bullet } : {}),
   };
 }
 
@@ -174,7 +213,12 @@ export function parseLevelStyles(
   for (let lvl = 1; lvl <= 9; lvl++) {
     const lvlPr = poChildren(list).find((c) => poIs(c, `a:lvl${String(lvl)}pPr`));
     const defRPr = lvlPr ? poChildren(lvlPr).find((c) => poIs(c, 'a:defRPr')) : undefined;
-    out.push({ run: rPrToRunProps(defRPr, colors), paragraph: pPrToParagraphProps(lvlPr) });
+    const bullet = parseBullet(lvlPr);
+    out.push({
+      run: rPrToRunProps(defRPr, colors),
+      paragraph: pPrToParagraphProps(lvlPr),
+      ...(bullet ? { bullet } : {}),
+    });
   }
   return out;
 }

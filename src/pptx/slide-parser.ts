@@ -35,7 +35,7 @@ import type {
 import type { ColorResolver } from '@/core/drawingml/colors';
 import type { Loss, Pt, ResourceId } from '@/core/ir';
 import type { PoNode } from '@/core/po-helpers';
-import type { PlaceholderCascade } from '@/pptx/placeholder-cascade';
+import type { LevelBullet, PlaceholderCascade } from '@/pptx/placeholder-cascade';
 import type { PlaceholderRef, ShapeBoxEmu } from '@/pptx/sp-helpers';
 
 import { defaultColorResolver, placeholderColors, resolveColorNode } from '@/core/drawingml/colors';
@@ -59,9 +59,10 @@ import {
   parseXfrm,
   statesFill,
   styleRefFill,
+  styleRefFontColor,
   styleRefLine,
-  withStyleFontColor,
 } from '@/word/drawing-parser';
+import { parseBullet } from '@/pptx/placeholder-cascade';
 import { boxFromXfrm, parsePh, parseXfrmBox, rPrToRunProps } from '@/pptx/sp-helpers';
 import {
   cellStyle,
@@ -252,9 +253,20 @@ function parseSp(sp: PoNode, ctx: SlideContext, transform: GroupTransform): Shap
   if (!own) return undefined;
   const box = transform(own);
 
+  // §20.1.4.2.10/§20.1.4.2.19/§20.1.4.2.14 — a shape drawn from a gallery keeps
+  // its fill, its outline and the colour of its TEXT in `p:style` and carries
+  // none of them in `spPr`: customGeo's title banner and the ellipse under it
+  // are a theme gradient each, and read from `spPr` alone they were an empty
+  // outline and nothing at all.
+  const style = poChildren(sp).find((c) => poIs(c, 'p:style'));
   const txBody = poChildren(sp).find((c) => poIs(c, 'p:txBody'));
+  // The style's colour is read BEFORE the text, because it belongs UNDER the
+  // run's own and OVER the deck's default: themes.pptx's green box asks for
+  // `lt1`, and stamped on afterwards it lost to the `tx1` every run inherits
+  // from `p:defaultTextStyle` — white text drawn black on green.
+  const styleColor = style ? styleRefFontColor(style, colors) : undefined;
   const text = txBody
-    ? parseTxBody(txBody, ph, ctx.cascade, colors, ctx.resolveHyperlink)
+    ? parseTxBody(txBody, ph, ctx.cascade, colors, ctx.resolveHyperlink, styleColor)
     : undefined;
 
   // Geometry/fill/stroke from p:spPr via the shared DrawingML readers, resolving
@@ -280,11 +292,6 @@ function parseSp(sp: PoNode, ctx: SlideContext, transform: GroupTransform): Shap
       : { kind: 'none' };
   const lineFrom = spPr && poChildren(spPr).some((c) => poIs(c, 'a:ln')) ? spPr : (proto ?? spPr);
   let line = lineFrom ? parseLine(lineFrom, colors) : undefined;
-  // §20.1.4.2.10/§20.1.4.2.19 — a shape drawn from a gallery keeps its fill and
-  // its outline in `p:style` and carries neither in `spPr`: customGeo's title
-  // banner and the ellipse under it are a theme gradient each, and read from
-  // `spPr` alone they were an empty outline and nothing at all.
-  const style = poChildren(sp).find((c) => poIs(c, 'p:style'));
   const themeStyles = ctx.themeFills
     ? { fills: ctx.themeFills.fills, bgFills: ctx.themeFills.backgrounds }
     : undefined;
@@ -306,9 +313,6 @@ function parseSp(sp: PoNode, ctx: SlideContext, transform: GroupTransform): Shap
   const visibleLine = line !== undefined && line.fill !== 'none';
   if (!text && styled.kind === 'none' && !visibleLine) return undefined;
 
-  // §20.1.4.2.14 — and the colour a gallery style writes its text in, where the
-  // runs name none.
-  const withStyleText = style && text ? withStyleFontColor(text, style, colors) : text;
   return {
     float: floatAt(box),
     width: emuToPt(box.cx),
@@ -316,7 +320,7 @@ function parseSp(sp: PoNode, ctx: SlideContext, transform: GroupTransform): Shap
     geometry,
     fill: styled,
     ...(line ? { line } : {}),
-    ...(withStyleText ? { text: withStyleText } : {}),
+    ...(text ? { text } : {}),
     paragraphProperties: {},
   };
 }
@@ -738,6 +742,35 @@ export function backdropElement(fill: ShapeFill, widthPt: Pt, heightPt: Pt): Bod
 }
 
 /**
+ * The same element, painted BEHIND the slide's own content.
+ *
+ * §19.3.1 — a slide's shape tree is drawn over its layout's, and that over the
+ * master's; nothing a deck states once can bury what a slide puts on it. Our
+ * page paints by KIND (every image, then every shape), so without this a
+ * layout's white card landed on top of the photograph the slide is made of —
+ * themes.pptx's fifth slide is one picture and it vanished under the card.
+ *
+ * @param el The inherited element.
+ * @returns The element with its float sunk to the backdrop layer.
+ */
+export function asBackdrop(el: BodyElement): BodyElement {
+  const sink = <T extends { readonly float?: FloatAnchor }>(item: T): T =>
+    item.float ? { ...item, float: { ...item.float, behind: true } } : item;
+  switch (el.kind) {
+    case 'shape':
+      return { ...el, shape: sink(el.shape) };
+    case 'image':
+      return { ...el, image: sink(el.image) };
+    case 'table':
+      return { ...el, table: { ...el.table, properties: sink(el.table.properties) } };
+    case 'chart':
+      return { ...el, chart: sink(el.chart) };
+    default:
+      return el;
+  }
+}
+
+/**
  * `p:spPr` geometry: `a:prstGeom` (preset) or `a:custGeom` (custom path), default
  * rect. Exported for sheet shapes (E-SHEET W2), whose `xdr:spPr` carries the same
  * `a:` children.
@@ -807,6 +840,7 @@ function txBodyParagraphs(
   cascade: PlaceholderCascade | undefined,
   colors: ColorResolver,
   resolveLink: LinkResolver,
+  styleColor?: string,
 ): Array<BodyElement> {
   const content: Array<BodyElement> = [];
   const counters: Array<number> = []; // per-level a:buAutoNum counters (PX6b)
@@ -814,7 +848,7 @@ function txBodyParagraphs(
     if (!poIs(child, 'a:p')) continue;
     content.push({
       kind: 'paragraph',
-      paragraph: parseSlideParagraph(child, ph, cascade, colors, resolveLink, counters),
+      paragraph: parseSlideParagraph(child, ph, cascade, colors, resolveLink, counters, styleColor),
     });
   }
   return content;
@@ -839,8 +873,9 @@ export function parseTxBody(
   cascade: PlaceholderCascade | undefined,
   colors: ColorResolver,
   resolveLink: LinkResolver,
+  styleColor?: string,
 ): ShapeTextBody | undefined {
-  const content = txBodyParagraphs(txBody, ph, cascade, colors, resolveLink);
+  const content = txBodyParagraphs(txBody, ph, cascade, colors, resolveLink, styleColor);
   if (content.length === 0) return undefined;
 
   const bodyPr = poChildren(txBody).find((c) => poIs(c, 'a:bodyPr'));
@@ -874,10 +909,14 @@ function parseSlideParagraph(
   colors: ColorResolver,
   resolveLink: LinkResolver,
   counters: Array<number>,
+  styleColor?: string,
 ): Paragraph {
   const pPr = poChildren(aP).find((c) => poIs(c, 'a:pPr'));
   const level = (pPr ? poIntAttr(pPr, 'lvl') : undefined) ?? 0;
-  const defaults: RunProperties = cascade ? cascade.defaultsFor(ph, level) : {};
+  const defaults: RunProperties = {
+    ...(cascade ? cascade.defaultsFor(ph, level) : {}),
+    ...(styleColor !== undefined ? { colorHex: styleColor } : {}),
+  };
   // What the deck, the master and the prototypes say this paragraph looks like
   // — the paragraph's own pPr states only where it differs.
   const inherited: ParagraphProperties = cascade ? cascade.paragraphDefaultsFor(ph, level) : {};
@@ -885,7 +924,7 @@ function parseSlideParagraph(
   const alignment = algn !== undefined ? ALGN_TO_ALIGNMENT[algn] : undefined;
 
   const runs: Array<Run> = [];
-  const marker = bulletMarker(pPr, level, counters);
+  const marker = bulletMarker(pPr, level, counters, cascade?.bulletFor(ph, level));
   if (marker !== undefined) runs.push({ text: marker, properties: defaults, listMarker: true });
   for (const child of poChildren(aP)) {
     if (poIs(child, 'a:r') || poIs(child, 'a:fld')) {
@@ -932,20 +971,22 @@ function bulletMarker(
   pPr: PoNode | undefined,
   level: number,
   counters: Array<number>,
+  inherited: LevelBullet | undefined,
 ): string | undefined {
-  if (!pPr) return undefined;
-  if (poChildren(pPr).some((c) => poIs(c, 'a:buNone'))) return undefined;
-  const buChar = poChildren(pPr).find((c) => poIs(c, 'a:buChar'));
-  if (buChar) return `${poAttr(buChar, 'char') ?? '•'}  `;
-  const buAuto = poChildren(pPr).find((c) => poIs(c, 'a:buAutoNum'));
-  if (!buAuto) return undefined;
-  const type = poAttr(buAuto, 'type') ?? 'arabicPeriod';
-  const startAt = poIntAttr(buAuto, 'startAt') ?? 1;
+  // A paragraph states a bullet only where it differs from the one its level
+  // already carries — from the prototype, the master's family style or the
+  // deck's default. Read as "no bullet unless this paragraph draws one", every
+  // list that leaves its dot to the master came out flat (themes.pptx writes
+  // one bare line on its second slide and the dot in front of it is nine
+  // levels up).
+  const bullet = parseBullet(pPr) ?? inherited;
+  if (!bullet || bullet.kind === 'none') return undefined;
+  if (bullet.kind === 'char') return `${bullet.char}  `;
   const prev = counters[level];
-  const n = (prev === undefined ? startAt - 1 : prev) + 1;
+  const n = (prev === undefined ? bullet.startAt - 1 : prev) + 1;
   counters[level] = n;
   counters.length = level + 1; // deeper levels restart
-  return `${n}${autoNumSuffix(type)}  `;
+  return `${n}${autoNumSuffix(bullet.type)}  `;
 }
 
 // The trailing punctuation of an a:buAutoNum type (…Period → '.', …ParenR/Both →

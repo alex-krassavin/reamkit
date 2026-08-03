@@ -844,6 +844,609 @@ function emitPageContent(
   // In tagged PDFs they are layout decoration → wrapped as an /Artifact so no
   // page content sits outside the structure tree (PDF/A-1a §6.3.2).
   const plan = paintPlan(commands);
+  const lines = plan.lines;
+  let inBT = false;
+  let lastFont = '';
+  let lastTc = 0;
+  let lastSize = -1;
+  let lastColor = '';
+  const switchFontIfNeeded = (tok: TextToken) => {
+    const fontKey = tok.font.resourceName;
+    if (fontKey !== lastFont || tok.fontSizePt !== lastSize) {
+      out.push(`/${fontKey} ${formatNumber(tok.fontSizePt)} Tf`);
+      lastFont = fontKey;
+      lastSize = tok.fontSizePt;
+    }
+    // §17.3.2.35 — the run's own character spacing, which PDF applies per
+    // glyph through `Tc` (ISO 32000-1 §9.3.2). Set only when it changes, and
+    // cleared for the runs that ask for none.
+    const tc = tok.resolvedRun.letterSpacingPt ?? 0;
+    if (tc !== lastTc) {
+      out.push(`${formatNumber(tc)} Tc`);
+      lastTc = tc;
+    }
+    if (tok.resolvedRun.colorHex !== lastColor) {
+      const [r, g, b] = hexToRgb01(tok.resolvedRun.colorHex);
+      out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} rg`);
+      lastColor = tok.resolvedRun.colorHex;
+    }
+  };
+  const emitImageToken = (tok: ImageToken, x: number, baselineY: number) => {
+    // MS-EMF / MS-WMF — an inline metafile draws itself: its primitives live
+    // in a y-up frame whose origin is this box's bottom-left corner, which
+    // is exactly where the token stands. VariousPictures.docx sets three of
+    // them in one line beside two rasters.
+    const meta = tok.metafile;
+    if (meta) {
+      if (inBT) {
+        out.push('ET');
+        inBT = false;
+      }
+      const b = tok.drawBox;
+      const ox = x + (b?.dxPt ?? 0);
+      const oy = baselineY + (b?.dyPt ?? 0);
+      for (const sh of meta.shapes) {
+        for (const op of emitVectorShape({ ...sh, transform: [1, 0, 0, 1, ox, oy] })) {
+          out.push(op);
+        }
+      }
+      for (const t of meta.texts) {
+        // The metafile's own words: one token per line, set where the
+        // picture puts it rather than where the paragraph's flow would.
+        const first = t.line.tokens.find((k) => k.kind === 'text');
+        if (!first) continue;
+        const [r, g, bl] = hexToRgb01(first.resolvedRun.colorHex);
+        out.push('BT');
+        out.push(`/${first.font.resourceName} ${formatNumber(first.fontSizePt)} Tf`);
+        out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(bl)} rg`);
+        out.push(`1 0 0 1 ${formatNumber(ox + t.x)} ${formatNumber(oy + t.y)} Tm`);
+        out.push(first.font.measure.showText(first.text));
+        out.push('ET');
+      }
+      // The shared text state is no longer what the line loop left it.
+      lastFont = '';
+      lastSize = -1;
+      lastColor = '';
+      return;
+    }
+    // Skip an inline image whose resource failed to embed (the caller still
+    // advances x, so its box stays reserved).
+    if (!tok.imageResourceName) return;
+    // ET out of text mode, place the image XObject, then BT back in. Image
+    // bottom-left sits on the text baseline so the image hangs above the
+    // baseline like an inline glyph.
+    if (inBT) {
+      out.push('ET');
+      inBT = false;
+    }
+    // §20.1.8.40 — the shadow the picture casts, drawn first so the picture
+    // covers it: the same box, offset, in the shadow's own colour and at the
+    // transparency it asks for. imgshadow.docx lifts six screenshots off the
+    // page this way and we drew them flat.
+    const shdw = tok.shadow;
+    if (shdw) {
+      const bx = tok.drawBox;
+      const [shr, shg, shb] = hexToRgb01(shdw.colorHex);
+      const layers = shadowBlurLayers(shdw);
+      const state =
+        layers.alpha < 1 ? alphaStateNames?.get(Math.round(layers.alpha * 1000) / 1000) : undefined;
+      const sx = x + (bx?.dxPt ?? 0) + shdw.dxPt;
+      const sy = baselineY + (bx?.dyPt ?? 0) - shdw.dyPt;
+      const sw = bx?.widthPt ?? tok.widthPt;
+      const sh = bx?.heightPt ?? tok.heightPt;
+      out.push('q');
+      if (state) out.push(`/${state} gs`);
+      out.push(`${formatNumber(shr)} ${formatNumber(shg)} ${formatNumber(shb)} rg`);
+      // §20.1.8.40 `blurRad` — the soft edge, as boxes growing through the
+      // blur's width at a fraction of the transparency each (see
+      // shadowBlurLayers).
+      for (let i = 0; i < layers.count; i++) {
+        const grow =
+          layers.count > 1 ? -shdw.blurPt / 2 + ((i + 0.5) * shdw.blurPt) / layers.count : 0;
+        out.push(
+          `${formatNumber(sx - grow)} ${formatNumber(sy - grow)} ` +
+            `${formatNumber(Math.max(sw + 2 * grow, 0))} ` +
+            `${formatNumber(Math.max(sh + 2 * grow, 0))} re`,
+        );
+        out.push('f');
+      }
+      out.push('Q');
+    }
+    out.push('q');
+    // §20.4.2.6 — the reserved box may be larger than the picture (the
+    // effect extent a rotation needs); the picture sits inside it.
+    const b = tok.drawBox;
+    out.push(
+      ...(b
+        ? placeImage(
+            x + b.dxPt,
+            baselineY + b.dyPt,
+            b.widthPt,
+            b.heightPt,
+            tok.crop,
+            tok.rotationDeg,
+            tok.flipH,
+            tok.flipV,
+          )
+        : placeImage(
+            x,
+            baselineY,
+            tok.widthPt,
+            tok.heightPt,
+            tok.crop,
+            tok.rotationDeg,
+            tok.flipH,
+            tok.flipV,
+          )),
+    );
+    out.push(`/${tok.imageResourceName} Do`);
+    out.push(...washItems(tok.wash, alphaStateNames));
+    out.push('Q');
+    // §20.1.2.2.24 — the picture's own frame, stroked around the box it was
+    // just drawn in. tdf125657.docx borders its inline screenshot and we drew
+    // the picture bare.
+    const frame = tok.outline;
+    if (frame) {
+      const [fr, fg, fb] = hexToRgb01(frame.colorHex);
+      out.push('q');
+      out.push(`${formatNumber(frame.widthPt)} w`);
+      out.push(`${formatNumber(fr)} ${formatNumber(fg)} ${formatNumber(fb)} RG`);
+      out.push(
+        `${formatNumber(x + (b?.dxPt ?? 0))} ${formatNumber(baselineY + (b?.dyPt ?? 0))} ` +
+          `${formatNumber(b?.widthPt ?? tok.widthPt)} ${formatNumber(b?.heightPt ?? tok.heightPt)} re`,
+      );
+      out.push('S');
+      out.push('Q');
+    }
+    // Text state is reset by ET; force re-emit on the next text token.
+    lastFont = '';
+    lastSize = -1;
+    lastColor = '';
+    lastTc = 0;
+  };
+  // Emit an inline math box: glyph items in text mode, rule/path items in
+  // graphics mode. All positions are box-local, offset by the box origin.
+  const emitMathToken = (tok: MathToken, originX: number, baselineY: number) => {
+    for (const it of tok.items) {
+      if (it.kind === 'glyph') {
+        if (!inBT) {
+          out.push('BT');
+          inBT = true;
+        }
+        if (it.font.resourceName !== lastFont || it.sizePt !== lastSize) {
+          out.push(`/${it.font.resourceName} ${formatNumber(it.sizePt)} Tf`);
+          lastFont = it.font.resourceName;
+          lastSize = it.sizePt;
+        }
+        if (lastColor !== '000000') {
+          out.push('0 0 0 rg');
+          lastColor = '000000';
+        }
+        out.push(`1 0 0 1 ${formatNumber(originX + it.x)} ${formatNumber(baselineY + it.y)} Tm`);
+        out.push(it.font.measure.showText(it.text));
+      } else if (it.kind === 'rule') {
+        if (inBT) {
+          out.push('ET');
+          inBT = false;
+        }
+        out.push('q');
+        out.push('0 0 0 rg');
+        out.push(
+          `${formatNumber(originX + it.x)} ${formatNumber(baselineY + it.y)} ${formatNumber(it.w)} ${formatNumber(it.h)} re`,
+        );
+        out.push('f');
+        out.push('Q');
+        lastFont = '';
+        lastSize = -1;
+        lastColor = '';
+      } else {
+        if (inBT) {
+          out.push('ET');
+          inBT = false;
+        }
+        const shape: VectorShape = {
+          paths: [{ segments: it.segments }],
+          ...(it.fill ? { fillColorHex: '000000' } : {}),
+          ...(it.strokeWidthPt !== undefined
+            ? { stroke: { colorHex: '000000', widthPt: it.strokeWidthPt } }
+            : {}),
+          transform: [1, 0, 0, 1, originX, baselineY],
+        };
+        for (const op of emitVectorShape(shape)) out.push(op);
+        lastFont = '';
+        lastSize = -1;
+        lastColor = '';
+      }
+    }
+  };
+
+  // Emit one line command's glyphs/images/math. Manages BT/ET through the
+  // shared `inBT` state; produces operator-for-operator the same output as
+  // before tagging existed, so the non-tagged path stays byte-identical.
+  const emitClipped = (cmd: TextLineItem, body: (c: TextLineItem) => void) => {
+    const clip = cmd.clip;
+    if (!clip) {
+      body(cmd);
+      return;
+    }
+    if (inBT) {
+      out.push('ET');
+      inBT = false;
+    }
+    out.push('q');
+    out.push(
+      `${formatNumber(clip.x)} ${formatNumber(H - clip.y - clip.height)} ${formatNumber(clip.width)} ${formatNumber(clip.height)} re W n`,
+    );
+    lastFont = '';
+    lastSize = -1;
+    lastColor = '';
+    lastTc = 0;
+    out.push('BT');
+    inBT = true;
+    body(cmd);
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- `body` may close text mode through a closure; flow analysis cannot see it.
+    if (inBT) {
+      out.push('ET');
+      inBT = false;
+    }
+    out.push('Q');
+    lastFont = '';
+    lastSize = -1;
+    lastColor = '';
+    lastTc = 0;
+  };
+  const emitOneLine = (cmd: TextLineItem) => {
+    const line = cmd.line;
+    const originX = cmd.originX;
+    const baselineY = H - cmd.baselineY; // top-left frame → PDF y-up
+    const rotationDeg = cmd.rotationDeg ?? 0;
+    // Link regions (ISO 32000-1 §12.5.6.5): contiguous tokens sharing an
+    // href become one clickable rect per line. The box mirrors the layout's
+    // line metrics (ascent: font size vs math ascent; descent: lineDescent's
+    // 0.2·fs rule). Schemes are allowlisted here (core/links); the PDF path
+    // has no loss channel, so a disallowed scheme simply stays plain text —
+    // the same fallback the HTML writer reports as a degraded loss.
+    const lineFs = line.maxFontSizePt || 12;
+    const linkAscent = Math.max(lineFs, line.mathAscentPt ?? 0);
+    const linkDescent = Math.max(lineFs * 0.2, line.mathDescentPt ?? 0);
+    let linkHref: string | undefined;
+    let linkAnchor: string | undefined;
+    let linkText = '';
+    let linkX0 = 0;
+    let linkX1 = 0;
+    const flushLink = () => {
+      if (linkHref === undefined && linkAnchor === undefined) return;
+      // External targets pass the scheme allowlist; an anchor is a bookmark
+      // name, not a URL — no scheme to sanitize.
+      const safe = linkHref !== undefined ? sanitizeHref(linkHref) : undefined;
+      const target =
+        safe !== undefined
+          ? { href: safe }
+          : linkAnchor !== undefined
+            ? { anchor: linkAnchor }
+            : undefined;
+      if (target) {
+        links.push({
+          ...target,
+          text: linkText.trim(),
+          rect: [linkX0, baselineY - linkDescent, linkX1, baselineY + linkAscent],
+          ...(cmd.structId !== undefined ? { structId: cmd.structId } : {}),
+        });
+      }
+      linkHref = undefined;
+      linkAnchor = undefined;
+      linkText = '';
+    };
+    const trackLink = (
+      href: string | undefined,
+      anchor: string | undefined,
+      text: string,
+      x0: number,
+      x1: number,
+    ) => {
+      if (href !== linkHref || anchor !== linkAnchor) {
+        flushLink();
+        if (href !== undefined || anchor !== undefined) {
+          linkHref = href;
+          linkAnchor = anchor;
+          linkX0 = x0;
+        }
+      }
+      if (href !== undefined || anchor !== undefined) {
+        linkX1 = x1;
+        linkText += text;
+      }
+    };
+    const extraPerSpace = computeJustifyExtra(line);
+    const hasImageToken = line.tokens.some((t) => t.kind === 'image');
+    const hasMathToken = line.tokens.some((t) => t.kind === 'math');
+    const hasRtl = line.tokens.some((t) => t.bidiLevel % 2 === 1);
+    // §17.3.1.38 — a tab's width is a DISTANCE, not the advance of the glyphs
+    // it draws: with no leader it draws none at all. The simple path below
+    // sets the text matrix once and lets the font's own advances carry the
+    // cursor, which loses that distance entirely — a numbered list printed
+    // "1.First item". Position such a line token by token instead.
+    const hasTab = line.tokens.some((t) => t.kind === 'text' && t.tab === true);
+
+    // Encode a token's text, reversing code points for RTL (odd-level) runs
+    // so glyphs lay out right-to-left as our cursor advances left-to-right.
+    /** A text token carrying underline or strikethrough. */
+    const isDecorated = (tok: (typeof line.tokens)[number]): tok is TextToken =>
+      tok.kind === 'text' && (tok.resolvedRun.underline !== 'none' || tok.resolvedRun.strike);
+
+    const showToken = (tok: TextToken): string => {
+      const text = tok.bidiLevel % 2 === 1 ? reverseByCodePoint(tok.text) : tok.text;
+      return tok.font.measure.showText(text);
+    };
+
+    // §17.3.2.32 — a run's own background, painted behind its glyphs before
+    // anything else on the line. Same shape as the highlight below, but each
+    // run carries its own colour; runs that share one are painted together.
+    if (line.tokens.some((t) => t.kind === 'text' && t.resolvedRun.shadingColorHex)) {
+      if (inBT) {
+        out.push('ET');
+        inBT = false;
+      }
+      const shAscent = Math.max(lineFs, line.mathAscentPt ?? 0);
+      const shDescent = Math.max(lineFs * 0.2, line.mathDescentPt ?? 0);
+      out.push('q');
+      let sx: number = originX;
+      let painted = '';
+      for (const tok of line.tokens) {
+        const w = tok.widthPt + (tok.kind === 'text' && tok.isSpace ? extraPerSpace : 0);
+        const hex = tok.kind === 'text' ? tok.resolvedRun.shadingColorHex : undefined;
+        if (hex !== undefined) {
+          if (hex !== painted) {
+            if (painted !== '') out.push('f');
+            const [sr, sg, sb] = hexToRgb01(hex);
+            out.push(`${formatNumber(sr)} ${formatNumber(sg)} ${formatNumber(sb)} rg`);
+            painted = hex;
+          }
+          out.push(
+            `${formatNumber(sx)} ${formatNumber(baselineY - shDescent)} ` +
+              `${formatNumber(w)} ${formatNumber(shAscent + shDescent)} re`,
+          );
+        }
+        sx += w;
+      }
+      if (painted !== '') out.push('f');
+      out.push('Q');
+    }
+
+    // Comment-range highlight (CM2c): a soft fill behind highlighted tokens.
+    // Path ops can't sit inside a text object, so close BT first; the text
+    // emit below reopens it. Gated on a highlight being present, so every line
+    // in a document with no comment ranges emits byte-identically.
+    if (line.tokens.some((t) => t.kind === 'text' && t.highlight === true)) {
+      if (inBT) {
+        out.push('ET');
+        inBT = false;
+      }
+      const hlAscent = Math.max(lineFs, line.mathAscentPt ?? 0);
+      const hlDescent = Math.max(lineFs * 0.2, line.mathDescentPt ?? 0);
+      const [hr, hg, hb] = hexToRgb01('fff3a3');
+      out.push('q');
+      out.push(`${formatNumber(hr)} ${formatNumber(hg)} ${formatNumber(hb)} rg`);
+      let hx: number = originX;
+      for (const tok of line.tokens) {
+        const w = tok.widthPt + (tok.kind === 'text' && tok.isSpace ? extraPerSpace : 0);
+        if (tok.kind === 'text' && tok.highlight === true) {
+          out.push(
+            `${formatNumber(hx)} ${formatNumber(baselineY - hlDescent)} ` +
+              `${formatNumber(w)} ${formatNumber(hlAscent + hlDescent)} re`,
+          );
+        }
+        hx += w;
+      }
+      out.push('f');
+      out.push('Q');
+    }
+
+    // §17.3.2.40 `w:u` / §17.3.2.9 `w:strike` — decoration is a path, not a
+    // glyph, so like the highlight above it is drawn with the text object
+    // closed. Trailing spaces are decorated too, which is what a run of them
+    // under an underline is for. Gated on a decorated token being present, so
+    // a document with none emits byte-identically.
+    if (line.tokens.some(isDecorated)) {
+      if (inBT) {
+        out.push('ET');
+        inBT = false;
+      }
+      out.push('q');
+      let dx: number = originX;
+      for (const tok of line.tokens) {
+        const w = tok.widthPt + (tok.kind === 'text' && tok.isSpace ? extraPerSpace : 0);
+        if (isDecorated(tok)) {
+          const thickness = Math.max(0.4, tok.fontSizePt * 0.06);
+          const paint = (hex: string): void => {
+            const [r, g, b] = hexToRgb01(hex);
+            out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} rg`);
+          };
+          paint(tok.resolvedRun.colorHex);
+          if (tok.resolvedRun.underline !== 'none') {
+            // §17.3.2.40 — the rule carries its own colour when the run gives
+            // it one; the strike below always takes the text's.
+            if (tok.resolvedRun.underlineColorHex) paint(tok.resolvedRun.underlineColorHex);
+            // §17.18.99 — the style says how the rule is drawn, not just that
+            // it is: a `thick` one is twice the weight and a `double` is two.
+            // fdo56679.docx rules its sentence thick and red and we drew the
+            // hairline every other style got.
+            const style = tok.resolvedRun.underline;
+            const heavy = style === 'thick' || style === 'dottedHeavy' || style === 'dashHeavy';
+            const t = heavy ? thickness * 2 : thickness;
+            const y = baselineY - tok.fontSizePt * 0.12 - t;
+            const dashed =
+              style === 'dotted' || style === 'dottedHeavy'
+                ? [t, t * 2]
+                : style === 'dash' || style === 'dashHeavy'
+                  ? [t * 4, t * 3]
+                  : undefined;
+            if (dashed) {
+              // A pattern has to be STROKED — a filled rectangle has no dash.
+              out.push(`${formatNumber(t)} w`);
+              out.push(`[${dashed.map((n) => formatNumber(n)).join(' ')}] 0 d`);
+              const [r, g, b] = hexToRgb01(
+                tok.resolvedRun.underlineColorHex ?? tok.resolvedRun.colorHex,
+              );
+              out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} RG`);
+              out.push(
+                `${formatNumber(dx)} ${formatNumber(y + t / 2)} m ` +
+                  `${formatNumber(dx + w)} ${formatNumber(y + t / 2)} l S`,
+              );
+              out.push('[] 0 d');
+            } else {
+              out.push(
+                `${formatNumber(dx)} ${formatNumber(y)} ` +
+                  `${formatNumber(w)} ${formatNumber(t)} re f`,
+              );
+              // The second rule of a `double`, a rule's width below the first.
+              if (style === 'double') {
+                out.push(
+                  `${formatNumber(dx)} ${formatNumber(y - t * 2)} ` +
+                    `${formatNumber(w)} ${formatNumber(t)} re f`,
+                );
+              }
+            }
+            if (tok.resolvedRun.underlineColorHex) paint(tok.resolvedRun.colorHex);
+          }
+          if (tok.resolvedRun.strike) {
+            const y = baselineY + tok.fontSizePt * 0.26;
+            out.push(
+              `${formatNumber(dx)} ${formatNumber(y)} ` +
+                `${formatNumber(w)} ${formatNumber(thickness)} re f`,
+            );
+          }
+        }
+        dx += w;
+      }
+      out.push('Q');
+    }
+
+    // A super/subscript draws off the baseline, so the line can no longer be
+    // one Tm and a run of Tj — each token needs its own placement.
+    const hasRise = line.tokens.some((t) => t.kind === 'text' && t.risePt !== undefined);
+    // A rotated line advances its glyphs along the ROTATED axis, which one text
+    // matrix already does for free — but only on the single-Tm path, where the
+    // advance is the font's and not one this emitter computes in page space.
+    if (rotationDeg !== 0 && !hasImageToken && !hasMathToken) {
+      if (!inBT) {
+        out.push('BT');
+        inBT = true;
+      }
+      const rad = (rotationDeg * Math.PI) / 180;
+      const cos = formatNumber(Math.cos(rad));
+      const sin = formatNumber(Math.sin(rad));
+      out.push(
+        `${cos} ${sin} ${formatNumber(-Math.sin(rad))} ${cos} ` +
+          `${formatNumber(originX)} ${formatNumber(baselineY)} Tm`,
+      );
+      for (const tok of line.tokens) {
+        if (tok.kind !== 'text') continue;
+        switchFontIfNeeded(tok);
+        out.push(tok.font.measure.showText(tok.text));
+      }
+    } else if (
+      extraPerSpace !== 0 ||
+      hasImageToken ||
+      hasMathToken ||
+      hasRtl ||
+      hasRise ||
+      hasTab
+    ) {
+      // Per-token absolute positioning. Required for justify (inter-word
+      // slack), inline images (text-mode exits), and BiDi (visual order
+      // differs from logical order). Tokens are emitted in visual order.
+      const order = hasRtl ? lineVisualOrder(line) : line.tokens.map((_, i) => i);
+      let x: number = originX;
+      for (const ti of order) {
+        const tok = line.tokens[ti]!;
+        if (tok.kind === 'image') {
+          flushLink();
+          emitImageToken(tok, x, baselineY);
+          x += tok.widthPt;
+          continue;
+        }
+        if (tok.kind === 'math') {
+          flushLink();
+          emitMathToken(tok, x, baselineY);
+          x += tok.widthPt;
+          continue;
+        }
+        if (!inBT) {
+          out.push('BT');
+          inBT = true;
+        }
+        switchFontIfNeeded(tok);
+        out.push(`1 0 0 1 ${formatNumber(x)} ${formatNumber(baselineY + (tok.risePt ?? 0))} Tm`);
+        out.push(showToken(tok));
+        const tokenX0 = x;
+        x += tok.widthPt;
+        if (tok.isSpace) x += extraPerSpace;
+        trackLink(tok.href, tok.anchor, tok.text, tokenX0, x);
+      }
+      flushLink();
+    } else {
+      if (!inBT) {
+        out.push('BT');
+        inBT = true;
+      }
+      out.push(`1 0 0 1 ${formatNumber(originX)} ${formatNumber(baselineY)} Tm`);
+      let x: number = originX;
+      for (const tok of line.tokens) {
+        if (tok.kind !== 'text') continue; // unreachable here, but TS-narrowed
+        switchFontIfNeeded(tok);
+        out.push(tok.font.measure.showText(tok.text));
+        trackLink(tok.href, tok.anchor, tok.text, x, x + tok.widthPt);
+        x += tok.widthPt;
+      }
+      flushLink();
+    }
+  };
+
+  // The text pass, defined with the emitters above and RUN where it stood —
+  // after everything that paints under it.
+  const emitLinesPass = (): void => {
+    if (lines.length === 0) return;
+    if (tagging) {
+      // Tagged PDF: each line is its own marked-content sequence. A body line
+      // (carrying a structId) becomes /P <</MCID n>> BDC … EMC and registers its
+      // MCID with the owning structure node; a line without a structId (header/
+      // footer text) is a pagination artifact. The BDC/EMC bracket cleanly wraps
+      // the line's own BT…ET (and any inline-image/math q…Q), which is legal —
+      // marked-content brackets nest independently of BT/ET and q/Q (§14.6.1).
+      for (const cmd of lines) {
+        if (inBT) {
+          out.push('ET');
+          inBT = false;
+        }
+        const sid = cmd.structId;
+        if (sid !== undefined) {
+          const mcid = tagging.next++;
+          tagging.assigned = true;
+          tagging.record(sid, mcid);
+          out.push(`/${tagging.tagFor(sid)} <</MCID ${mcid}>> BDC`);
+        } else if (cmd.artifact === 'pagination') {
+          out.push('/Artifact <</Type /Pagination>> BDC');
+        } else {
+          out.push('/Artifact BMC');
+        }
+        emitClipped(cmd, emitOneLine);
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- emitOneLine may leave text mode open (inBT true) via a closure; flow analysis can't track it.
+        if (inBT) {
+          out.push('ET');
+          inBT = false;
+        }
+        out.push('EMC');
+      }
+    } else {
+      out.push('BT');
+      inBT = true;
+      for (const cmd of lines) emitClipped(cmd, emitOneLine);
+      // Ensure we exit text mode if the last line ended on an image token.
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- emitOneLine toggles inBT via a closure; flow analysis can't see it and assumes it stays true.
+      if (inBT) out.push('ET');
+    }
+  };
   // One item of a run that paints in its own order — a picture's primitives, or
   // what the page puts behind its content. Text is set the way an inline
   // metafile's is: one run at a point.
@@ -891,21 +1494,16 @@ function emitPageContent(
       return;
     }
     if (item.type !== 'line') return;
-    const tok = item.line.tokens.find((k) => k.kind === 'text');
-    if (!tok) return;
-    const [r, g, b] = hexToRgb01(tok.resolvedRun.colorHex);
-    const rad = ((item.rotationDeg ?? 0) * Math.PI) / 180;
-    const [cos, sin] = [Math.cos(rad), Math.sin(rad)];
-    const [ox, oy] = [item.originX, H - item.baselineY];
-    out.push('BT');
-    out.push(`/${tok.font.resourceName} ${formatNumber(tok.fontSizePt)} Tf`);
-    out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} rg`);
-    out.push(
-      `${formatNumber(cos)} ${formatNumber(sin)} ${formatNumber(-sin)} ${formatNumber(cos)} ` +
-        `${formatNumber(ox)} ${formatNumber(oy)} Tm`,
-    );
-    out.push(tok.font.measure.showText(tok.text));
-    out.push('ET');
+    // Set with the SAME emitter the page's own text uses: a line is a line
+    // wherever it paints. Written here as "the first token at a point" — which
+    // is all a metafile's label ever is — a master's caption lost every word
+    // after its first (WithMaster.pptx: "This" for "This text comes from the
+    // Master Slide").
+    emitClipped(item, emitOneLine);
+    if (inBT) {
+      out.push('ET');
+      inBT = false;
+    }
   };
 
   // §20.4.2.3 — what the page puts BEHIND its content paints before all of it,
@@ -922,13 +1520,13 @@ function emitPageContent(
   if (fills.length > 0) {
     if (tagging) out.push('/Artifact BMC');
     out.push('q');
-    let lastColor = '';
+    let lastFill = '';
     for (const f of fills) {
       const color = f.fillColorHex;
-      if (color !== lastColor) {
+      if (color !== lastFill) {
         const [r, g, b] = hexToRgb01(color);
         out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} rg`);
-        lastColor = color;
+        lastFill = color;
       }
       out.push(
         `${formatNumber(f.x)} ${formatNumber(H - f.y - f.height)} ${formatNumber(f.width)} ${formatNumber(f.height)} re`,
@@ -985,7 +1583,7 @@ function emitPageContent(
     // the same result by overshooting each run by exactly half a width.
     out.push('2 J');
     let lastWidth = -1;
-    let lastColor = '';
+    let lastStroke = '';
     let lastDash = '';
     for (const b of borders) {
       const width = b.borderSizePt;
@@ -1006,10 +1604,10 @@ function emitPageContent(
         out.push(`${formatNumber(strokeW)} w`);
         lastWidth = strokeW;
       }
-      if (color !== lastColor) {
+      if (color !== lastStroke) {
         const [r, g, bl] = hexToRgb01(color);
         out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(bl)} RG`);
-        lastColor = color;
+        lastStroke = color;
       }
       const x = b.x;
       const y = H - b.y - b.height; // box bottom edge in PDF's y-up frame
@@ -1089,609 +1687,7 @@ function emitPageContent(
     if (tagging) out.push('EMC');
   }
 
-  const lines = plan.lines;
-  if (lines.length > 0) {
-    let inBT = false;
-    let lastFont = '';
-    let lastTc = 0;
-    let lastSize = -1;
-    let lastColor = '';
-    const switchFontIfNeeded = (tok: TextToken) => {
-      const fontKey = tok.font.resourceName;
-      if (fontKey !== lastFont || tok.fontSizePt !== lastSize) {
-        out.push(`/${fontKey} ${formatNumber(tok.fontSizePt)} Tf`);
-        lastFont = fontKey;
-        lastSize = tok.fontSizePt;
-      }
-      // §17.3.2.35 — the run's own character spacing, which PDF applies per
-      // glyph through `Tc` (ISO 32000-1 §9.3.2). Set only when it changes, and
-      // cleared for the runs that ask for none.
-      const tc = tok.resolvedRun.letterSpacingPt ?? 0;
-      if (tc !== lastTc) {
-        out.push(`${formatNumber(tc)} Tc`);
-        lastTc = tc;
-      }
-      if (tok.resolvedRun.colorHex !== lastColor) {
-        const [r, g, b] = hexToRgb01(tok.resolvedRun.colorHex);
-        out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} rg`);
-        lastColor = tok.resolvedRun.colorHex;
-      }
-    };
-    const emitImageToken = (tok: ImageToken, x: number, baselineY: number) => {
-      // MS-EMF / MS-WMF — an inline metafile draws itself: its primitives live
-      // in a y-up frame whose origin is this box's bottom-left corner, which
-      // is exactly where the token stands. VariousPictures.docx sets three of
-      // them in one line beside two rasters.
-      const meta = tok.metafile;
-      if (meta) {
-        if (inBT) {
-          out.push('ET');
-          inBT = false;
-        }
-        const b = tok.drawBox;
-        const ox = x + (b?.dxPt ?? 0);
-        const oy = baselineY + (b?.dyPt ?? 0);
-        for (const sh of meta.shapes) {
-          for (const op of emitVectorShape({ ...sh, transform: [1, 0, 0, 1, ox, oy] })) {
-            out.push(op);
-          }
-        }
-        for (const t of meta.texts) {
-          // The metafile's own words: one token per line, set where the
-          // picture puts it rather than where the paragraph's flow would.
-          const first = t.line.tokens.find((k) => k.kind === 'text');
-          if (!first) continue;
-          const [r, g, bl] = hexToRgb01(first.resolvedRun.colorHex);
-          out.push('BT');
-          out.push(`/${first.font.resourceName} ${formatNumber(first.fontSizePt)} Tf`);
-          out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(bl)} rg`);
-          out.push(`1 0 0 1 ${formatNumber(ox + t.x)} ${formatNumber(oy + t.y)} Tm`);
-          out.push(first.font.measure.showText(first.text));
-          out.push('ET');
-        }
-        // The shared text state is no longer what the line loop left it.
-        lastFont = '';
-        lastSize = -1;
-        lastColor = '';
-        return;
-      }
-      // Skip an inline image whose resource failed to embed (the caller still
-      // advances x, so its box stays reserved).
-      if (!tok.imageResourceName) return;
-      // ET out of text mode, place the image XObject, then BT back in. Image
-      // bottom-left sits on the text baseline so the image hangs above the
-      // baseline like an inline glyph.
-      if (inBT) {
-        out.push('ET');
-        inBT = false;
-      }
-      // §20.1.8.40 — the shadow the picture casts, drawn first so the picture
-      // covers it: the same box, offset, in the shadow's own colour and at the
-      // transparency it asks for. imgshadow.docx lifts six screenshots off the
-      // page this way and we drew them flat.
-      const shdw = tok.shadow;
-      if (shdw) {
-        const bx = tok.drawBox;
-        const [shr, shg, shb] = hexToRgb01(shdw.colorHex);
-        const layers = shadowBlurLayers(shdw);
-        const state =
-          layers.alpha < 1
-            ? alphaStateNames?.get(Math.round(layers.alpha * 1000) / 1000)
-            : undefined;
-        const sx = x + (bx?.dxPt ?? 0) + shdw.dxPt;
-        const sy = baselineY + (bx?.dyPt ?? 0) - shdw.dyPt;
-        const sw = bx?.widthPt ?? tok.widthPt;
-        const sh = bx?.heightPt ?? tok.heightPt;
-        out.push('q');
-        if (state) out.push(`/${state} gs`);
-        out.push(`${formatNumber(shr)} ${formatNumber(shg)} ${formatNumber(shb)} rg`);
-        // §20.1.8.40 `blurRad` — the soft edge, as boxes growing through the
-        // blur's width at a fraction of the transparency each (see
-        // shadowBlurLayers).
-        for (let i = 0; i < layers.count; i++) {
-          const grow =
-            layers.count > 1 ? -shdw.blurPt / 2 + ((i + 0.5) * shdw.blurPt) / layers.count : 0;
-          out.push(
-            `${formatNumber(sx - grow)} ${formatNumber(sy - grow)} ` +
-              `${formatNumber(Math.max(sw + 2 * grow, 0))} ` +
-              `${formatNumber(Math.max(sh + 2 * grow, 0))} re`,
-          );
-          out.push('f');
-        }
-        out.push('Q');
-      }
-      out.push('q');
-      // §20.4.2.6 — the reserved box may be larger than the picture (the
-      // effect extent a rotation needs); the picture sits inside it.
-      const b = tok.drawBox;
-      out.push(
-        ...(b
-          ? placeImage(
-              x + b.dxPt,
-              baselineY + b.dyPt,
-              b.widthPt,
-              b.heightPt,
-              tok.crop,
-              tok.rotationDeg,
-              tok.flipH,
-              tok.flipV,
-            )
-          : placeImage(
-              x,
-              baselineY,
-              tok.widthPt,
-              tok.heightPt,
-              tok.crop,
-              tok.rotationDeg,
-              tok.flipH,
-              tok.flipV,
-            )),
-      );
-      out.push(`/${tok.imageResourceName} Do`);
-      out.push(...washItems(tok.wash, alphaStateNames));
-      out.push('Q');
-      // §20.1.2.2.24 — the picture's own frame, stroked around the box it was
-      // just drawn in. tdf125657.docx borders its inline screenshot and we drew
-      // the picture bare.
-      const frame = tok.outline;
-      if (frame) {
-        const [fr, fg, fb] = hexToRgb01(frame.colorHex);
-        out.push('q');
-        out.push(`${formatNumber(frame.widthPt)} w`);
-        out.push(`${formatNumber(fr)} ${formatNumber(fg)} ${formatNumber(fb)} RG`);
-        out.push(
-          `${formatNumber(x + (b?.dxPt ?? 0))} ${formatNumber(baselineY + (b?.dyPt ?? 0))} ` +
-            `${formatNumber(b?.widthPt ?? tok.widthPt)} ${formatNumber(b?.heightPt ?? tok.heightPt)} re`,
-        );
-        out.push('S');
-        out.push('Q');
-      }
-      // Text state is reset by ET; force re-emit on the next text token.
-      lastFont = '';
-      lastSize = -1;
-      lastColor = '';
-      lastTc = 0;
-    };
-    // Emit an inline math box: glyph items in text mode, rule/path items in
-    // graphics mode. All positions are box-local, offset by the box origin.
-    const emitMathToken = (tok: MathToken, originX: number, baselineY: number) => {
-      for (const it of tok.items) {
-        if (it.kind === 'glyph') {
-          if (!inBT) {
-            out.push('BT');
-            inBT = true;
-          }
-          if (it.font.resourceName !== lastFont || it.sizePt !== lastSize) {
-            out.push(`/${it.font.resourceName} ${formatNumber(it.sizePt)} Tf`);
-            lastFont = it.font.resourceName;
-            lastSize = it.sizePt;
-          }
-          if (lastColor !== '000000') {
-            out.push('0 0 0 rg');
-            lastColor = '000000';
-          }
-          out.push(`1 0 0 1 ${formatNumber(originX + it.x)} ${formatNumber(baselineY + it.y)} Tm`);
-          out.push(it.font.measure.showText(it.text));
-        } else if (it.kind === 'rule') {
-          if (inBT) {
-            out.push('ET');
-            inBT = false;
-          }
-          out.push('q');
-          out.push('0 0 0 rg');
-          out.push(
-            `${formatNumber(originX + it.x)} ${formatNumber(baselineY + it.y)} ${formatNumber(it.w)} ${formatNumber(it.h)} re`,
-          );
-          out.push('f');
-          out.push('Q');
-          lastFont = '';
-          lastSize = -1;
-          lastColor = '';
-        } else {
-          if (inBT) {
-            out.push('ET');
-            inBT = false;
-          }
-          const shape: VectorShape = {
-            paths: [{ segments: it.segments }],
-            ...(it.fill ? { fillColorHex: '000000' } : {}),
-            ...(it.strokeWidthPt !== undefined
-              ? { stroke: { colorHex: '000000', widthPt: it.strokeWidthPt } }
-              : {}),
-            transform: [1, 0, 0, 1, originX, baselineY],
-          };
-          for (const op of emitVectorShape(shape)) out.push(op);
-          lastFont = '';
-          lastSize = -1;
-          lastColor = '';
-        }
-      }
-    };
-
-    // Emit one line command's glyphs/images/math. Manages BT/ET through the
-    // shared `inBT` state; produces operator-for-operator the same output as
-    // before tagging existed, so the non-tagged path stays byte-identical.
-    const emitClipped = (cmd: TextLineItem, body: (c: TextLineItem) => void) => {
-      const clip = cmd.clip;
-      if (!clip) {
-        body(cmd);
-        return;
-      }
-      if (inBT) {
-        out.push('ET');
-        inBT = false;
-      }
-      out.push('q');
-      out.push(
-        `${formatNumber(clip.x)} ${formatNumber(H - clip.y - clip.height)} ${formatNumber(clip.width)} ${formatNumber(clip.height)} re W n`,
-      );
-      lastFont = '';
-      lastSize = -1;
-      lastColor = '';
-      lastTc = 0;
-      out.push('BT');
-      inBT = true;
-      body(cmd);
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- `body` may close text mode through a closure; flow analysis cannot see it.
-      if (inBT) {
-        out.push('ET');
-        inBT = false;
-      }
-      out.push('Q');
-      lastFont = '';
-      lastSize = -1;
-      lastColor = '';
-      lastTc = 0;
-    };
-    const emitOneLine = (cmd: TextLineItem) => {
-      const line = cmd.line;
-      const originX = cmd.originX;
-      const baselineY = H - cmd.baselineY; // top-left frame → PDF y-up
-      const rotationDeg = cmd.rotationDeg ?? 0;
-      // Link regions (ISO 32000-1 §12.5.6.5): contiguous tokens sharing an
-      // href become one clickable rect per line. The box mirrors the layout's
-      // line metrics (ascent: font size vs math ascent; descent: lineDescent's
-      // 0.2·fs rule). Schemes are allowlisted here (core/links); the PDF path
-      // has no loss channel, so a disallowed scheme simply stays plain text —
-      // the same fallback the HTML writer reports as a degraded loss.
-      const lineFs = line.maxFontSizePt || 12;
-      const linkAscent = Math.max(lineFs, line.mathAscentPt ?? 0);
-      const linkDescent = Math.max(lineFs * 0.2, line.mathDescentPt ?? 0);
-      let linkHref: string | undefined;
-      let linkAnchor: string | undefined;
-      let linkText = '';
-      let linkX0 = 0;
-      let linkX1 = 0;
-      const flushLink = () => {
-        if (linkHref === undefined && linkAnchor === undefined) return;
-        // External targets pass the scheme allowlist; an anchor is a bookmark
-        // name, not a URL — no scheme to sanitize.
-        const safe = linkHref !== undefined ? sanitizeHref(linkHref) : undefined;
-        const target =
-          safe !== undefined
-            ? { href: safe }
-            : linkAnchor !== undefined
-              ? { anchor: linkAnchor }
-              : undefined;
-        if (target) {
-          links.push({
-            ...target,
-            text: linkText.trim(),
-            rect: [linkX0, baselineY - linkDescent, linkX1, baselineY + linkAscent],
-            ...(cmd.structId !== undefined ? { structId: cmd.structId } : {}),
-          });
-        }
-        linkHref = undefined;
-        linkAnchor = undefined;
-        linkText = '';
-      };
-      const trackLink = (
-        href: string | undefined,
-        anchor: string | undefined,
-        text: string,
-        x0: number,
-        x1: number,
-      ) => {
-        if (href !== linkHref || anchor !== linkAnchor) {
-          flushLink();
-          if (href !== undefined || anchor !== undefined) {
-            linkHref = href;
-            linkAnchor = anchor;
-            linkX0 = x0;
-          }
-        }
-        if (href !== undefined || anchor !== undefined) {
-          linkX1 = x1;
-          linkText += text;
-        }
-      };
-      const extraPerSpace = computeJustifyExtra(line);
-      const hasImageToken = line.tokens.some((t) => t.kind === 'image');
-      const hasMathToken = line.tokens.some((t) => t.kind === 'math');
-      const hasRtl = line.tokens.some((t) => t.bidiLevel % 2 === 1);
-      // §17.3.1.38 — a tab's width is a DISTANCE, not the advance of the glyphs
-      // it draws: with no leader it draws none at all. The simple path below
-      // sets the text matrix once and lets the font's own advances carry the
-      // cursor, which loses that distance entirely — a numbered list printed
-      // "1.First item". Position such a line token by token instead.
-      const hasTab = line.tokens.some((t) => t.kind === 'text' && t.tab === true);
-
-      // Encode a token's text, reversing code points for RTL (odd-level) runs
-      // so glyphs lay out right-to-left as our cursor advances left-to-right.
-      /** A text token carrying underline or strikethrough. */
-      const isDecorated = (tok: (typeof line.tokens)[number]): tok is TextToken =>
-        tok.kind === 'text' && (tok.resolvedRun.underline !== 'none' || tok.resolvedRun.strike);
-
-      const showToken = (tok: TextToken): string => {
-        const text = tok.bidiLevel % 2 === 1 ? reverseByCodePoint(tok.text) : tok.text;
-        return tok.font.measure.showText(text);
-      };
-
-      // §17.3.2.32 — a run's own background, painted behind its glyphs before
-      // anything else on the line. Same shape as the highlight below, but each
-      // run carries its own colour; runs that share one are painted together.
-      if (line.tokens.some((t) => t.kind === 'text' && t.resolvedRun.shadingColorHex)) {
-        if (inBT) {
-          out.push('ET');
-          inBT = false;
-        }
-        const shAscent = Math.max(lineFs, line.mathAscentPt ?? 0);
-        const shDescent = Math.max(lineFs * 0.2, line.mathDescentPt ?? 0);
-        out.push('q');
-        let sx: number = originX;
-        let painted = '';
-        for (const tok of line.tokens) {
-          const w = tok.widthPt + (tok.kind === 'text' && tok.isSpace ? extraPerSpace : 0);
-          const hex = tok.kind === 'text' ? tok.resolvedRun.shadingColorHex : undefined;
-          if (hex !== undefined) {
-            if (hex !== painted) {
-              if (painted !== '') out.push('f');
-              const [sr, sg, sb] = hexToRgb01(hex);
-              out.push(`${formatNumber(sr)} ${formatNumber(sg)} ${formatNumber(sb)} rg`);
-              painted = hex;
-            }
-            out.push(
-              `${formatNumber(sx)} ${formatNumber(baselineY - shDescent)} ` +
-                `${formatNumber(w)} ${formatNumber(shAscent + shDescent)} re`,
-            );
-          }
-          sx += w;
-        }
-        if (painted !== '') out.push('f');
-        out.push('Q');
-      }
-
-      // Comment-range highlight (CM2c): a soft fill behind highlighted tokens.
-      // Path ops can't sit inside a text object, so close BT first; the text
-      // emit below reopens it. Gated on a highlight being present, so every line
-      // in a document with no comment ranges emits byte-identically.
-      if (line.tokens.some((t) => t.kind === 'text' && t.highlight === true)) {
-        if (inBT) {
-          out.push('ET');
-          inBT = false;
-        }
-        const hlAscent = Math.max(lineFs, line.mathAscentPt ?? 0);
-        const hlDescent = Math.max(lineFs * 0.2, line.mathDescentPt ?? 0);
-        const [hr, hg, hb] = hexToRgb01('fff3a3');
-        out.push('q');
-        out.push(`${formatNumber(hr)} ${formatNumber(hg)} ${formatNumber(hb)} rg`);
-        let hx: number = originX;
-        for (const tok of line.tokens) {
-          const w = tok.widthPt + (tok.kind === 'text' && tok.isSpace ? extraPerSpace : 0);
-          if (tok.kind === 'text' && tok.highlight === true) {
-            out.push(
-              `${formatNumber(hx)} ${formatNumber(baselineY - hlDescent)} ` +
-                `${formatNumber(w)} ${formatNumber(hlAscent + hlDescent)} re`,
-            );
-          }
-          hx += w;
-        }
-        out.push('f');
-        out.push('Q');
-      }
-
-      // §17.3.2.40 `w:u` / §17.3.2.9 `w:strike` — decoration is a path, not a
-      // glyph, so like the highlight above it is drawn with the text object
-      // closed. Trailing spaces are decorated too, which is what a run of them
-      // under an underline is for. Gated on a decorated token being present, so
-      // a document with none emits byte-identically.
-      if (line.tokens.some(isDecorated)) {
-        if (inBT) {
-          out.push('ET');
-          inBT = false;
-        }
-        out.push('q');
-        let dx: number = originX;
-        for (const tok of line.tokens) {
-          const w = tok.widthPt + (tok.kind === 'text' && tok.isSpace ? extraPerSpace : 0);
-          if (isDecorated(tok)) {
-            const thickness = Math.max(0.4, tok.fontSizePt * 0.06);
-            const paint = (hex: string): void => {
-              const [r, g, b] = hexToRgb01(hex);
-              out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} rg`);
-            };
-            paint(tok.resolvedRun.colorHex);
-            if (tok.resolvedRun.underline !== 'none') {
-              // §17.3.2.40 — the rule carries its own colour when the run gives
-              // it one; the strike below always takes the text's.
-              if (tok.resolvedRun.underlineColorHex) paint(tok.resolvedRun.underlineColorHex);
-              // §17.18.99 — the style says how the rule is drawn, not just that
-              // it is: a `thick` one is twice the weight and a `double` is two.
-              // fdo56679.docx rules its sentence thick and red and we drew the
-              // hairline every other style got.
-              const style = tok.resolvedRun.underline;
-              const heavy = style === 'thick' || style === 'dottedHeavy' || style === 'dashHeavy';
-              const t = heavy ? thickness * 2 : thickness;
-              const y = baselineY - tok.fontSizePt * 0.12 - t;
-              const dashed =
-                style === 'dotted' || style === 'dottedHeavy'
-                  ? [t, t * 2]
-                  : style === 'dash' || style === 'dashHeavy'
-                    ? [t * 4, t * 3]
-                    : undefined;
-              if (dashed) {
-                // A pattern has to be STROKED — a filled rectangle has no dash.
-                out.push(`${formatNumber(t)} w`);
-                out.push(`[${dashed.map((n) => formatNumber(n)).join(' ')}] 0 d`);
-                const [r, g, b] = hexToRgb01(
-                  tok.resolvedRun.underlineColorHex ?? tok.resolvedRun.colorHex,
-                );
-                out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} RG`);
-                out.push(
-                  `${formatNumber(dx)} ${formatNumber(y + t / 2)} m ` +
-                    `${formatNumber(dx + w)} ${formatNumber(y + t / 2)} l S`,
-                );
-                out.push('[] 0 d');
-              } else {
-                out.push(
-                  `${formatNumber(dx)} ${formatNumber(y)} ` +
-                    `${formatNumber(w)} ${formatNumber(t)} re f`,
-                );
-                // The second rule of a `double`, a rule's width below the first.
-                if (style === 'double') {
-                  out.push(
-                    `${formatNumber(dx)} ${formatNumber(y - t * 2)} ` +
-                      `${formatNumber(w)} ${formatNumber(t)} re f`,
-                  );
-                }
-              }
-              if (tok.resolvedRun.underlineColorHex) paint(tok.resolvedRun.colorHex);
-            }
-            if (tok.resolvedRun.strike) {
-              const y = baselineY + tok.fontSizePt * 0.26;
-              out.push(
-                `${formatNumber(dx)} ${formatNumber(y)} ` +
-                  `${formatNumber(w)} ${formatNumber(thickness)} re f`,
-              );
-            }
-          }
-          dx += w;
-        }
-        out.push('Q');
-      }
-
-      // A super/subscript draws off the baseline, so the line can no longer be
-      // one Tm and a run of Tj — each token needs its own placement.
-      const hasRise = line.tokens.some((t) => t.kind === 'text' && t.risePt !== undefined);
-      // A rotated line advances its glyphs along the ROTATED axis, which one text
-      // matrix already does for free — but only on the single-Tm path, where the
-      // advance is the font's and not one this emitter computes in page space.
-      if (rotationDeg !== 0 && !hasImageToken && !hasMathToken) {
-        if (!inBT) {
-          out.push('BT');
-          inBT = true;
-        }
-        const rad = (rotationDeg * Math.PI) / 180;
-        const cos = formatNumber(Math.cos(rad));
-        const sin = formatNumber(Math.sin(rad));
-        out.push(
-          `${cos} ${sin} ${formatNumber(-Math.sin(rad))} ${cos} ` +
-            `${formatNumber(originX)} ${formatNumber(baselineY)} Tm`,
-        );
-        for (const tok of line.tokens) {
-          if (tok.kind !== 'text') continue;
-          switchFontIfNeeded(tok);
-          out.push(tok.font.measure.showText(tok.text));
-        }
-      } else if (
-        extraPerSpace !== 0 ||
-        hasImageToken ||
-        hasMathToken ||
-        hasRtl ||
-        hasRise ||
-        hasTab
-      ) {
-        // Per-token absolute positioning. Required for justify (inter-word
-        // slack), inline images (text-mode exits), and BiDi (visual order
-        // differs from logical order). Tokens are emitted in visual order.
-        const order = hasRtl ? lineVisualOrder(line) : line.tokens.map((_, i) => i);
-        let x: number = originX;
-        for (const ti of order) {
-          const tok = line.tokens[ti]!;
-          if (tok.kind === 'image') {
-            flushLink();
-            emitImageToken(tok, x, baselineY);
-            x += tok.widthPt;
-            continue;
-          }
-          if (tok.kind === 'math') {
-            flushLink();
-            emitMathToken(tok, x, baselineY);
-            x += tok.widthPt;
-            continue;
-          }
-          if (!inBT) {
-            out.push('BT');
-            inBT = true;
-          }
-          switchFontIfNeeded(tok);
-          out.push(`1 0 0 1 ${formatNumber(x)} ${formatNumber(baselineY + (tok.risePt ?? 0))} Tm`);
-          out.push(showToken(tok));
-          const tokenX0 = x;
-          x += tok.widthPt;
-          if (tok.isSpace) x += extraPerSpace;
-          trackLink(tok.href, tok.anchor, tok.text, tokenX0, x);
-        }
-        flushLink();
-      } else {
-        if (!inBT) {
-          out.push('BT');
-          inBT = true;
-        }
-        out.push(`1 0 0 1 ${formatNumber(originX)} ${formatNumber(baselineY)} Tm`);
-        let x: number = originX;
-        for (const tok of line.tokens) {
-          if (tok.kind !== 'text') continue; // unreachable here, but TS-narrowed
-          switchFontIfNeeded(tok);
-          out.push(tok.font.measure.showText(tok.text));
-          trackLink(tok.href, tok.anchor, tok.text, x, x + tok.widthPt);
-          x += tok.widthPt;
-        }
-        flushLink();
-      }
-    };
-
-    if (tagging) {
-      // Tagged PDF: each line is its own marked-content sequence. A body line
-      // (carrying a structId) becomes /P <</MCID n>> BDC … EMC and registers its
-      // MCID with the owning structure node; a line without a structId (header/
-      // footer text) is a pagination artifact. The BDC/EMC bracket cleanly wraps
-      // the line's own BT…ET (and any inline-image/math q…Q), which is legal —
-      // marked-content brackets nest independently of BT/ET and q/Q (§14.6.1).
-      for (const cmd of lines) {
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- inBT is toggled inside the emit* closures; the type-checker's flow analysis can't see those mutations and treats it as constant.
-        if (inBT) {
-          out.push('ET');
-          inBT = false;
-        }
-        const sid = cmd.structId;
-        if (sid !== undefined) {
-          const mcid = tagging.next++;
-          tagging.assigned = true;
-          tagging.record(sid, mcid);
-          out.push(`/${tagging.tagFor(sid)} <</MCID ${mcid}>> BDC`);
-        } else if (cmd.artifact === 'pagination') {
-          out.push('/Artifact <</Type /Pagination>> BDC');
-        } else {
-          out.push('/Artifact BMC');
-        }
-        emitClipped(cmd, emitOneLine);
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- emitOneLine may leave text mode open (inBT true) via a closure; flow analysis can't track it.
-        if (inBT) {
-          out.push('ET');
-          inBT = false;
-        }
-        out.push('EMC');
-      }
-    } else {
-      out.push('BT');
-      inBT = true;
-      for (const cmd of lines) emitClipped(cmd, emitOneLine);
-      // Ensure we exit text mode if the last line ended on an image token.
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- emitOneLine toggles inBT via a closure; flow analysis can't see it and assumes it stays true.
-      if (inBT) out.push('ET');
-    }
-  }
+  emitLinesPass();
 
   return { content: encoder.encode(out.join('\n')), links };
 }

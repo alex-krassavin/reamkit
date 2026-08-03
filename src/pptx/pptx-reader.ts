@@ -42,7 +42,12 @@ import { poAttr, poChildren, poFindDescendant, poIntAttr, poIs } from '@/core/po
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 import { buildPlaceholderCascade, parseLevelStyles } from '@/pptx/placeholder-cascade';
 import { normalizeSpid, parseVmlImageRels } from '@/pptx/ole-preview';
-import { backdropElement, parseBackgroundFill, parseSlideShapes } from '@/pptx/slide-parser';
+import {
+  asBackdrop,
+  backdropElement,
+  parseBackgroundFill,
+  parseSlideShapes,
+} from '@/pptx/slide-parser';
 
 const EMU_PER_PT = 12700;
 // §19.2.1.39 sldSz default — a 4:3 deck (10" × 7.5"); real decks always declare it.
@@ -261,7 +266,9 @@ function parseSlide(
 
   const out: Array<BodyElement> = [];
   if (bg) out.push(backdropElement(bg, pageW, pageH));
-  out.push(...inheritedShapes);
+  // The deck's decoration paints UNDER everything the slide itself puts on the
+  // page, whatever KIND each of them is (§19.3.1).
+  out.push(...inheritedShapes.map(asBackdrop));
   if (spTree) out.push(...parseSlideShapes(spTree, shapeCtx));
   return out;
 }

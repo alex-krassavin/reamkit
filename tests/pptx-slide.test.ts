@@ -158,6 +158,78 @@ describe('pptx placeholder cascade (E-PPTX PX2)', () => {
     expect(run?.properties.bold).toBe(true);
   });
 
+  // §21.1.2.2.7 `@cap` — the text is DISPLAYED in capitals whatever it stores.
+  // Stated in a master's title style it reaches every slide: themes.pptx writes
+  // "Trade show" and shows TRADE SHOW.
+  it('takes the capitals its master states, and gives them back on cap="none"', () => {
+    const caps =
+      `<p:txStyles><p:titleStyle><a:lvl1pPr><a:defRPr cap="all"/></a:lvl1pPr></p:titleStyle>` +
+      `<p:bodyStyle/><p:otherStyle/></p:txStyles>`;
+    const deck = (rPr: string): ReturnType<typeof Ream.parse> =>
+      Ream.parse(
+        buildPptx(
+          [
+            `<p:sp><p:nvSpPr><p:cNvPr id="2" name="Title 1"/><p:cNvSpPr/>` +
+              `<p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr><p:spPr/>` +
+              `<p:txBody><a:bodyPr/><a:p><a:r>${rPr}<a:t>Trade show</a:t></a:r></a:p>` +
+              `</p:txBody></p:sp>`,
+          ],
+          { layoutMaster: { layoutSpTree: LAYOUT_TITLE, txStyles: caps } },
+        ),
+      );
+    expect(firstShapeRun(deck('<a:rPr lang="en"/>'))?.properties.caps).toBe(true);
+    expect(firstShapeRun(deck('<a:rPr lang="en" cap="none"/>'))?.properties.caps).toBe(false);
+    expect(firstShapeRun(deck('<a:rPr lang="en" cap="small"/>'))?.properties.smallCaps).toBe(true);
+  });
+
+  // §21.1.2.4.x — a paragraph states a bullet only where it differs from the
+  // one its level already carries.
+  it("draws the bullet the master's body style names, without one on the slide", () => {
+    const body =
+      `<p:txStyles><p:titleStyle/>` +
+      `<p:bodyStyle><a:lvl1pPr marL="285750" indent="-285750">` +
+      `<a:buChar char="–"/><a:defRPr sz="1800"/></a:lvl1pPr></p:bodyStyle>` +
+      `<p:otherStyle/></p:txStyles>`;
+    const slide =
+      `<p:sp><p:nvSpPr><p:cNvPr id="3" name="Body 2"/><p:cNvSpPr/>` +
+      `<p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5486400" cy="914400"/></a:xfrm></p:spPr>` +
+      `<p:txBody><a:bodyPr/><a:p><a:r><a:rPr lang="en"/><a:t>With a solid fill</a:t></a:r>` +
+      `</a:p></p:txBody></p:sp>`;
+    const doc = Ream.parse(buildPptx([slide], { layoutMaster: { txStyles: body } }));
+    const runs = doc.flow.body.flatMap((el) =>
+      el.kind === 'shape' && el.shape.text
+        ? el.shape.text.content.flatMap((c) => (c.kind === 'paragraph' ? c.paragraph.runs : []))
+        : [],
+    );
+    expect(runs[0]?.listMarker).toBe(true);
+    expect(runs[0]?.text.trim()).toBe('–');
+    expect(runs[1]?.text).toBe('With a solid fill');
+  });
+
+  // §20.1.4.2.14 — a gallery style's `a:fontRef` colour belongs UNDER the run's
+  // own and OVER the deck's default. Stamped on afterwards it lost to the `tx1`
+  // every run inherits from `p:defaultTextStyle`: themes.pptx's green box asks
+  // for `lt1` and drew its white caption black.
+  it("writes a styled shape's text in the colour its style names", () => {
+    const shape =
+      `<p:sp><p:nvSpPr><p:cNvPr id="5" name="Rectangle 4"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2971800" cy="1752600"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>` +
+      `<p:style><a:fillRef idx="1"><a:schemeClr val="accent1"/></a:fillRef>` +
+      `<a:fontRef idx="minor"><a:srgbClr val="FFFFFF"/></a:fontRef></p:style>` +
+      `<p:txBody><a:bodyPr/><a:p><a:r><a:rPr lang="en"/><a:t>white</a:t></a:r></a:p></p:txBody>` +
+      `</p:sp>`;
+    const doc = Ream.parse(
+      buildPptx([shape], {
+        defaultTextStyle:
+          `<a:lvl1pPr><a:defRPr sz="1800"><a:solidFill>` +
+          `<a:srgbClr val="000000"/></a:solidFill></a:defRPr></a:lvl1pPr>`,
+      }),
+    );
+    expect(firstShapeRun(doc)?.properties.colorHex).toBe('FFFFFF');
+  });
+
   it("lets a run's own a:rPr override the master default size", () => {
     const pptx = buildPptx([titlePlaceholder('Big', 6000)], {
       layoutMaster: { layoutSpTree: LAYOUT_TITLE, txStyles: TX_STYLES },
@@ -949,6 +1021,51 @@ describe("pptx inherited shapes — the deck's own decoration (E-PPTX PX5d)", ()
     );
     // Per slide: the backdrop first, then the inherited shape over it.
     expect(fills(doc)).toEqual(['445566', '111111', '445566', '111111']);
+  });
+
+  // The backdrop layer paints in its own order, which the emitter once wrote as
+  // "the first token at a point" — enough for a metafile's label and nothing
+  // like a sentence. WithMaster.pptx printed "This" for its master's caption.
+  it('sets every word of the text one of them carries', async () => {
+    const caption =
+      `<p:sp><p:nvSpPr><p:cNvPr id="8" name="cap"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5486400" cy="457200"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>` +
+      `<p:txBody><a:bodyPr/><a:p><a:r><a:rPr lang="en" sz="1800"/>` +
+      `<a:t>This text comes from the Master Slide</a:t></a:r></a:p></p:txBody></p:sp>`;
+    const pptx = buildPptx([''], { layoutMaster: { masterSpTree: caption } });
+    const file = PdfFile.parse(await Ream.parse(pptx).convert('pdf', { fonts: FONTS }));
+    const text = extractPageText(file, file.pages()[0]!)
+      .map((r) => r.text)
+      .join(' ')
+      .replace(/\s+/gu, ' ');
+    expect(text).toContain('This');
+    expect(text).toContain('Master');
+    expect(text).toContain('Slide');
+  });
+
+  // §19.3.1 — the page paints by KIND (every image, then every shape), so a
+  // layout's card would land on top of the photograph a slide puts on it.
+  it("sinks them BEHIND the slide's own content, whatever kind that is", () => {
+    const doc = Ream.parse(
+      buildPptx(
+        [
+          `<p:pic><p:nvPicPr><p:cNvPr id="5" name="p"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>` +
+            `<p:blipFill><a:blip r:embed="rIdImg"/><a:stretch/></p:blipFill>` +
+            `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+            `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`,
+        ],
+        {
+          layoutMaster: { masterSpTree: rect('111111') },
+          media: { 'ppt/media/i.png': buildTinyPng(2, 2, [255, 0, 0, 255]) },
+          slideRels: [`<Relationship Id="rIdImg" Type="${IMAGE_REL}" Target="../media/i.png"/>`],
+        },
+      ),
+    );
+    const inheritedShape = doc.flow.body.find((el) => el.kind === 'shape');
+    const slidePicture = doc.flow.body.find((el) => el.kind === 'image');
+    expect(inheritedShape?.kind === 'shape' && inheritedShape.shape.float?.behind).toBe(true);
+    expect(slidePicture?.kind === 'image' && slidePicture.image.float?.behind).toBeUndefined();
   });
 });
 
