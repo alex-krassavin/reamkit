@@ -172,9 +172,13 @@ try {
 
 `Ream.parse` also accepts a **PowerPoint** `.pptx`. Each slide becomes a page at
 the deck size, its shapes read as positioned content — text boxes, placeholders,
-pictures, shapes, tables, charts, theme colours, backgrounds, groups and
-hyperlinks. The result is an ordinary `FlowDoc`, so it converts onward like any
-other source:
+pictures, shapes, tables, charts, embedded objects, groups and hyperlinks. What
+a deck states once reaches every slide that relies on it: the master's and the
+layouts' own decoration (drawn under the slide's content), the background —
+solid, gradient, picture or a theme reference — the deck's colour map, the text
+style its `p:defaultTextStyle` and `p:txStyles` set, and the table styles in
+`tableStyles.xml`. The result is an ordinary `FlowDoc`, so it converts onward
+like any other source:
 
 ```ts
 import { Ream } from 'reamkit';
