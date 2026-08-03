@@ -1,6 +1,7 @@
 // Helpers for reading the tree produced by fast-xml-parser with
 // attributeNamePrefix '@_' and textNodeName '#text'.
 
+import { universalMeasureTwips } from '@/core/po-helpers';
 /** The value of a parsed XML attribute (always a string in this flat tree). */
 export type XmlAttrValue = string;
 /** A parsed XML element: attributes (`@_`-prefixed) and child tags keyed by name. */
@@ -62,8 +63,12 @@ export function parseIntAttr(node: unknown, name: string): number | undefined {
   const v = getAttr(node, name);
   if (v === undefined) return undefined;
   const n = Number(v);
-  if (!Number.isFinite(n)) return undefined;
-  return n;
+  if (Number.isFinite(n)) return n;
+  // §22.9.2.15 — the value may name its UNIT instead of being a count of
+  // twips, and producers do: tdf116410.docx writes its tab stops, indents and
+  // spacing as "85.05pt" and every one of them was read as nothing, so the
+  // paragraph lost the stop its dot leader hangs on.
+  return universalMeasureTwips(v);
 }
 
 /**
