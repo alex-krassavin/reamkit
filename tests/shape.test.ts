@@ -123,12 +123,15 @@ describe('DrawingML shape parsing', () => {
 });
 
 describe('colour transforms (§20.1.2.3)', () => {
-  it('shade darkens toward black', () => {
-    expect(applyColorMods('4472C4', [{ kind: 'shade', val: 0.5 }])).toBe('223962');
+  it('shade darkens toward black, on LINEAR light', () => {
+    // §20.1.2.3.31 — the fraction is of the light the colour stands for, not of
+    // the byte that encodes it. Taken on the byte, half of the Office accent
+    // came out 223962, a shade both references draw as 2F528F.
+    expect(applyColorMods('4472C4', [{ kind: 'shade', val: 0.5 }])).toBe('2F528F');
   });
 
-  it('tint lightens toward white', () => {
-    expect(applyColorMods('000000', [{ kind: 'tint', val: 0.5 }])).toBe('808080');
+  it('tint lightens toward white, on the same light', () => {
+    expect(applyColorMods('000000', [{ kind: 'tint', val: 0.5 }])).toBe('BCBCBC');
   });
 
   it('alpha composites the colour over the white page', () => {

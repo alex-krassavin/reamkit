@@ -41,22 +41,17 @@
  },
  {
   "name": "tdf116410.docx",
-  "score": 0.1804,
+  "score": 0.179,
   "aligned": true
- },
- {
-  "name": "fdo74605.docx",
-  "score": 0.1715,
-  "aligned": false
  },
  {
   "name": "tdf128207.docx",
-  "score": 0.1644,
+  "score": 0.1612,
   "aligned": true
  },
  {
-  "name": "fdo78957.docx",
-  "score": 0.1616,
+  "name": "tdf105688.docx",
+  "score": 0.1591,
   "aligned": true
  },
  {
@@ -65,18 +60,18 @@
   "aligned": true
  },
  {
-  "name": "tdf105688.docx",
-  "score": 0.1511,
+  "name": "fdo74605.docx",
+  "score": 0.1551,
+  "aligned": false
+ },
+ {
+  "name": "fdo78957.docx",
+  "score": 0.1455,
   "aligned": true
  },
  {
   "name": "fdo68607.docx",
   "score": 0.1357,
-  "aligned": true
- },
- {
-  "name": "tdf123104.docx",
-  "score": 0.1198,
   "aligned": true
  },
  {
@@ -90,11 +85,6 @@
   "aligned": false
  },
  {
-  "name": "NoFillAttrInImagedata.docx",
-  "score": 0.095,
-  "aligned": true
- },
- {
   "name": "tdf128913.docx",
   "score": 0.0939,
   "aligned": true
@@ -103,6 +93,11 @@
   "name": "dml-shape-fillpattern.docx",
   "score": 0.0889,
   "aligned": false
+ },
+ {
+  "name": "NoFillAttrInImagedata.docx",
+  "score": 0.0873,
+  "aligned": true
  },
  {
   "name": "tdf125324.docx",
@@ -122,6 +117,11 @@
  {
   "name": "chart-prop.docx",
   "score": 0.0709,
+  "aligned": true
+ },
+ {
+  "name": "tdf123104.docx",
+  "score": 0.0688,
   "aligned": true
  },
  {
@@ -205,7 +205,7 @@
   "aligned": true
  },
  {
-  "name": "shape-3d-effect-preservation.docx",
+  "name": "tdf120760_ZOrderInHeader.docx",
   "score": 0.0431,
   "aligned": true
  },
@@ -225,8 +225,8 @@
   "aligned": false
  },
  {
-  "name": "tdf120760_ZOrderInHeader.docx",
-  "score": 0.0419,
+  "name": "shape-3d-effect-preservation.docx",
+  "score": 0.0415,
   "aligned": true
  },
  {
@@ -237,11 +237,6 @@
  {
   "name": "tdf104420_lostParagraph.docx",
   "score": 0.0396,
-  "aligned": true
- },
- {
-  "name": "fdo66688.docx",
-  "score": 0.0395,
   "aligned": true
  },
  {
@@ -285,12 +280,12 @@
   "aligned": false
  },
  {
-  "name": "drawinglayer-pic-pos.docx",
-  "score": 0.0369,
+  "name": "fdo66688.docx",
+  "score": 0.0375,
   "aligned": true
  },
  {
-  "name": "dml-gradientfill-theme.docx",
+  "name": "drawinglayer-pic-pos.docx",
   "score": 0.0369,
   "aligned": true
  },
@@ -340,11 +335,6 @@
   "aligned": true
  },
  {
-  "name": "smartart.docx",
-  "score": 0.0296,
-  "aligned": true
- },
- {
   "name": "TC-table-rowDND-front.docx",
   "score": 0.0289,
   "aligned": true
@@ -360,13 +350,13 @@
   "aligned": true
  },
  {
-  "name": "picture-effects-preservation.docx",
-  "score": 0.0282,
+  "name": "smartart.docx",
+  "score": 0.0283,
   "aligned": true
  },
  {
-  "name": "shape-effect-preservation.docx",
-  "score": 0.0276,
+  "name": "picture-effects-preservation.docx",
+  "score": 0.0282,
   "aligned": true
  },
  {
@@ -410,11 +400,6 @@
   "aligned": true
  },
  {
-  "name": "gradient-fill-preservation.docx",
-  "score": 0.026,
-  "aligned": true
- },
- {
   "name": "alphabeticalIndex_AutoColumn.docx",
   "score": 0.026,
   "aligned": true
@@ -432,11 +417,6 @@
  {
   "name": "tdf102466.docx",
   "score": 0.0257,
-  "aligned": true
- },
- {
-  "name": "fdo65295.docx",
-  "score": 0.0256,
   "aligned": true
  },
  {
@@ -482,11 +462,6 @@
  {
   "name": "tdf119760_tableInTablePosition.docx",
   "score": 0.0235,
-  "aligned": true
- },
- {
-  "name": "fdo73247.docx",
-  "score": 0.0232,
   "aligned": true
  },
  {
@@ -545,6 +520,16 @@
   "aligned": true
  },
  {
+  "name": "shape-effect-preservation.docx",
+  "score": 0.0208,
+  "aligned": true
+ },
+ {
+  "name": "fdo73247.docx",
+  "score": 0.0201,
+  "aligned": true
+ },
+ {
   "name": "n705956-1.docx",
   "score": 0.02,
   "aligned": true
@@ -585,8 +570,8 @@
   "aligned": true
  },
  {
-  "name": "tdf109184.docx",
-  "score": 0.0185,
+  "name": "gradient-fill-preservation.docx",
+  "score": 0.0186,
   "aligned": true
  },
  {
@@ -602,11 +587,6 @@
  {
   "name": "tdf108493.docx",
   "score": 0.0182,
-  "aligned": true
- },
- {
-  "name": "tdf119201.docx",
-  "score": 0.0175,
   "aligned": true
  },
  {
@@ -633,6 +613,11 @@
   "name": "inheritFirstHeader.docx",
   "score": 0.0172,
   "aligned": false
+ },
+ {
+  "name": "fdo65295.docx",
+  "score": 0.017,
+  "aligned": true
  },
  {
   "name": "tdf116084.docx",
@@ -675,6 +660,11 @@
   "aligned": true
  },
  {
+  "name": "tdf119201.docx",
+  "score": 0.0163,
+  "aligned": true
+ },
+ {
   "name": "tdf105485.docx",
   "score": 0.0162,
   "aligned": true
@@ -695,6 +685,11 @@
   "aligned": true
  },
  {
+  "name": "tdf109184.docx",
+  "score": 0.016,
+  "aligned": true
+ },
+ {
   "name": "fdo78663.docx",
   "score": 0.016,
   "aligned": true
@@ -711,11 +706,6 @@
  },
  {
   "name": "FDO76312.docx",
-  "score": 0.0157,
-  "aligned": true
- },
- {
-  "name": "ColorOverwritten.docx",
   "score": 0.0157,
   "aligned": true
  },
@@ -755,11 +745,6 @@
   "aligned": false
  },
  {
-  "name": "dml-groupshape-capitalization.docx",
-  "score": 0.0142,
-  "aligned": true
- },
- {
   "name": "tdf108350_noFontdefaults.docx",
   "score": 0.0142,
   "aligned": true
@@ -775,27 +760,17 @@
   "aligned": true
  },
  {
-  "name": "dml-groupshape-paraspacing.docx",
-  "score": 0.014,
-  "aligned": true
- },
- {
   "name": "fdo73215.docx",
   "score": 0.0139,
   "aligned": true
  },
  {
-  "name": "image_through_shape.docx",
-  "score": 0.0136,
+  "name": "strict.docx",
+  "score": 0.0139,
   "aligned": true
  },
  {
   "name": "n592908-frame.docx",
-  "score": 0.0134,
-  "aligned": true
- },
- {
-  "name": "strict.docx",
   "score": 0.0134,
   "aligned": true
  },
@@ -820,11 +795,6 @@
   "aligned": true
  },
  {
-  "name": "shape-theme-preservation.docx",
-  "score": 0.0128,
-  "aligned": true
- },
- {
   "name": "tdf123460.docx",
   "score": 0.0128,
   "aligned": true
@@ -841,6 +811,11 @@
  },
  {
   "name": "tableCurrupt.docx",
+  "score": 0.0124,
+  "aligned": true
+ },
+ {
+  "name": "shape-theme-preservation.docx",
   "score": 0.0124,
   "aligned": true
  },
@@ -873,11 +848,6 @@
   "name": "fdo78939.docx",
   "score": 0.0118,
   "aligned": false
- },
- {
-  "name": "preset-shape.docx",
-  "score": 0.0114,
-  "aligned": true
  },
  {
   "name": "fdo83048.docx",
@@ -925,6 +895,11 @@
   "aligned": true
  },
  {
+  "name": "image_through_shape.docx",
+  "score": 0.011,
+  "aligned": true
+ },
+ {
   "name": "FDO74774.docx",
   "score": 0.011,
   "aligned": true
@@ -942,6 +917,11 @@
  {
   "name": "n779834.docx",
   "score": 0.0109,
+  "aligned": true
+ },
+ {
+  "name": "preset-shape.docx",
+  "score": 0.0108,
   "aligned": true
  },
  {
@@ -1015,22 +995,12 @@
   "aligned": true
  },
  {
-  "name": "dml-shape-fillbitmapcrop.docx",
-  "score": 0.0096,
-  "aligned": true
- },
- {
   "name": "tdf131561_necessaryBorder.docx",
   "score": 0.0095,
   "aligned": true
  },
  {
   "name": "tdf123636_newlinePageBreak4.docx",
-  "score": 0.0094,
-  "aligned": true
- },
- {
-  "name": "dml-textframe-vertadjust.docx",
   "score": 0.0094,
   "aligned": true
  },
@@ -1080,11 +1050,6 @@
   "aligned": true
  },
  {
-  "name": "dml-groupshape-relsize.docx",
-  "score": 0.0085,
-  "aligned": true
- },
- {
   "name": "fdo64350.docx",
   "score": 0.0085,
   "aligned": true
@@ -1102,11 +1067,6 @@
  {
   "name": "fdo71302.docx",
   "score": 0.0083,
-  "aligned": true
- },
- {
-  "name": "dml-groupshape-runfonts.docx",
-  "score": 0.0082,
   "aligned": true
  },
  {
@@ -1180,6 +1140,11 @@
   "aligned": true
  },
  {
+  "name": "dml-groupshape-capitalization.docx",
+  "score": 0.0073,
+  "aligned": true
+ },
+ {
   "name": "tdf103651.docx",
   "score": 0.0072,
   "aligned": true
@@ -1216,6 +1181,11 @@
  },
  {
   "name": "Chart_Plot_BorderLine_Style.docx",
+  "score": 0.0069,
+  "aligned": true
+ },
+ {
+  "name": "dml-groupshape-relsize.docx",
   "score": 0.0069,
   "aligned": true
  },
@@ -1285,22 +1255,12 @@
   "aligned": true
  },
  {
-  "name": "tdf121659_loseColumnBrNextToShape.docx",
-  "score": 0.0061,
-  "aligned": true
- },
- {
   "name": "tdf115212.docx",
   "score": 0.0061,
   "aligned": true
  },
  {
   "name": "IndexFieldFlagF.docx",
-  "score": 0.0061,
-  "aligned": true
- },
- {
-  "name": "tdf112103_tablebgnofill.docx",
   "score": 0.0061,
   "aligned": true
  },
@@ -1336,6 +1296,11 @@
  },
  {
   "name": "n780563.docx",
+  "score": 0.0058,
+  "aligned": true
+ },
+ {
+  "name": "tdf112103_tablebgnofill.docx",
   "score": 0.0058,
   "aligned": true
  },
@@ -1390,6 +1355,21 @@
   "aligned": true
  },
  {
+  "name": "dml-shape-fillbitmapcrop.docx",
+  "score": 0.0055,
+  "aligned": true
+ },
+ {
+  "name": "tdf121659_loseColumnBrNextToShape.docx",
+  "score": 0.0055,
+  "aligned": true
+ },
+ {
+  "name": "ColorOverwritten.docx",
+  "score": 0.0054,
+  "aligned": true
+ },
+ {
   "name": "FDO78590.docx",
   "score": 0.0054,
   "aligned": true
@@ -1411,6 +1391,11 @@
  },
  {
   "name": "tdf123757.docx",
+  "score": 0.0053,
+  "aligned": true
+ },
+ {
+  "name": "dml-groupshape-paraspacing.docx",
   "score": 0.0053,
   "aligned": true
  },
@@ -1465,11 +1450,6 @@
   "aligned": true
  },
  {
-  "name": "dml-solidfill-alpha.docx",
-  "score": 0.0048,
-  "aligned": true
- },
- {
   "name": "effectextent-margin.docx",
   "score": 0.0047,
   "aligned": true
@@ -1486,6 +1466,11 @@
  },
  {
   "name": "tdf129575-docDefault.docx",
+  "score": 0.0047,
+  "aligned": true
+ },
+ {
+  "name": "dml-gradientfill-theme.docx",
   "score": 0.0047,
   "aligned": true
  },
@@ -1580,6 +1565,11 @@
   "aligned": true
  },
  {
+  "name": "dml-solidfill-alpha.docx",
+  "score": 0.0044,
+  "aligned": true
+ },
+ {
   "name": "crop-pixel.docx",
   "score": 0.0043,
   "aligned": true
@@ -1590,17 +1580,7 @@
   "aligned": true
  },
  {
-  "name": "rot180-flipv.docx",
-  "score": 0.0043,
-  "aligned": true
- },
- {
   "name": "tdf124637_sectionMargin.docx",
-  "score": 0.0043,
-  "aligned": true
- },
- {
-  "name": "LineStyle_DashType_VML.docx",
   "score": 0.0043,
   "aligned": true
  },
@@ -1620,11 +1600,6 @@
   "aligned": true
  },
  {
-  "name": "dml-shape-relsize.docx",
-  "score": 0.0042,
-  "aligned": true
- },
- {
   "name": "n764005.docx",
   "score": 0.0042,
   "aligned": true
@@ -1636,11 +1611,6 @@
  },
  {
   "name": "n783638.docx",
-  "score": 0.0041,
-  "aligned": true
- },
- {
-  "name": "Shape.docx",
   "score": 0.0041,
   "aligned": true
  },
@@ -1681,11 +1651,6 @@
  },
  {
   "name": "2_table_doc.docx",
-  "score": 0.004,
-  "aligned": true
- },
- {
-  "name": "fdo73227.docx",
   "score": 0.004,
   "aligned": true
  },
@@ -1755,7 +1720,7 @@
   "aligned": true
  },
  {
-  "name": "TextEffects_Groupshapes.docx",
+  "name": "dml-textframe-vertadjust.docx",
   "score": 0.0035,
   "aligned": true
  },
@@ -1772,11 +1737,6 @@
  {
   "name": "pagerelsize.docx",
   "score": 0.0035,
-  "aligned": true
- },
- {
-  "name": "rot270-flipv.docx",
-  "score": 0.0034,
   "aligned": true
  },
  {
@@ -1800,17 +1760,17 @@
   "aligned": true
  },
  {
-  "name": "groupshape-trackedchanges.docx",
-  "score": 0.0033,
-  "aligned": true
- },
- {
   "name": "n779941.docx",
   "score": 0.0033,
   "aligned": true
  },
  {
   "name": "fdo72560e.docx",
+  "score": 0.0033,
+  "aligned": true
+ },
+ {
+  "name": "fdo73227.docx",
   "score": 0.0033,
   "aligned": true
  },
@@ -1828,6 +1788,11 @@
   "name": "mixednumberings.docx",
   "score": 0.0032,
   "aligned": false
+ },
+ {
+  "name": "TextEffects_Groupshapes.docx",
+  "score": 0.0032,
+  "aligned": true
  },
  {
   "name": "fdo80410.docx",
@@ -1901,11 +1866,6 @@
  },
  {
   "name": "empty-annotation-mark.docx",
-  "score": 0.0029,
-  "aligned": true
- },
- {
-  "name": "fdo80895.docx",
   "score": 0.0029,
   "aligned": true
  },
@@ -2025,12 +1985,12 @@
   "aligned": true
  },
  {
-  "name": "behinddoc.docx",
+  "name": "fdo69616.docx",
   "score": 0.0026,
   "aligned": true
  },
  {
-  "name": "fdo69616.docx",
+  "name": "dml-groupshape-runfonts.docx",
   "score": 0.0026,
   "aligned": true
  },
@@ -2070,16 +2030,6 @@
   "aligned": true
  },
  {
-  "name": "fdo70942.docx",
-  "score": 0.0025,
-  "aligned": true
- },
- {
-  "name": "drawingml-flipv.docx",
-  "score": 0.0025,
-  "aligned": true
- },
- {
   "name": "fdo56679.docx",
   "score": 0.0025,
   "aligned": true
@@ -2096,11 +2046,6 @@
  },
  {
   "name": "fdo69644.docx",
-  "score": 0.0024,
-  "aligned": true
- },
- {
-  "name": "tdf113183.docx",
   "score": 0.0024,
   "aligned": true
  },
@@ -2165,6 +2110,11 @@
   "aligned": true
  },
  {
+  "name": "rot180-flipv.docx",
+  "score": 0.0021,
+  "aligned": true
+ },
+ {
   "name": "FigureAsLabelPicture.docx",
   "score": 0.0021,
   "aligned": true
@@ -2185,11 +2135,6 @@
   "aligned": true
  },
  {
-  "name": "tdf113258_noBeforeAutospacing.docx",
-  "score": 0.0021,
-  "aligned": true
- },
- {
   "name": "table-style-parprop.docx",
   "score": 0.0021,
   "aligned": true
@@ -2206,11 +2151,6 @@
  },
  {
   "name": "2120112713.docx",
-  "score": 0.0021,
-  "aligned": true
- },
- {
-  "name": "inline-groupshape.docx",
   "score": 0.0021,
   "aligned": true
  },
@@ -2295,16 +2235,6 @@
   "aligned": true
  },
  {
-  "name": "tdf113258.docx",
-  "score": 0.0019,
-  "aligned": true
- },
- {
-  "name": "rot90-fliph.docx",
-  "score": 0.0019,
-  "aligned": true
- },
- {
   "name": "table-black_fill.docx",
   "score": 0.0019,
   "aligned": true
@@ -2325,6 +2255,16 @@
   "aligned": true
  },
  {
+  "name": "Shape.docx",
+  "score": 0.0018,
+  "aligned": true
+ },
+ {
+  "name": "rot270-flipv.docx",
+  "score": 0.0018,
+  "aligned": true
+ },
+ {
   "name": "fdo77129.docx",
   "score": 0.0018,
   "aligned": true
@@ -2341,11 +2281,6 @@
  },
  {
   "name": "frame-wrap-auto.docx",
-  "score": 0.0017,
-  "aligned": true
- },
- {
-  "name": "fdo74401.docx",
   "score": 0.0017,
   "aligned": true
  },
@@ -2375,12 +2310,7 @@
   "aligned": true
  },
  {
-  "name": "tdf123324_testRelativeAnchorHeightFromTopMarginHasHeader.docx",
-  "score": 0.0016,
-  "aligned": true
- },
- {
-  "name": "tdf123324_testRelativeAnchorHeightFromTopMarginNoHeader.docx",
+  "name": "dml-shape-relsize.docx",
   "score": 0.0016,
   "aligned": true
  },
@@ -2470,12 +2400,12 @@
   "aligned": true
  },
  {
-  "name": "fdo65632.docx",
+  "name": "tdf123324_testRelativeAnchorHeightFromTopMarginNoHeader.docx",
   "score": 0.0013,
   "aligned": true
  },
  {
-  "name": "nestedAlternateContent.docx",
+  "name": "fdo65632.docx",
   "score": 0.0013,
   "aligned": true
  },
@@ -2615,6 +2545,11 @@
   "aligned": true
  },
  {
+  "name": "groupshape-trackedchanges.docx",
+  "score": 0.0012,
+  "aligned": true
+ },
+ {
   "name": "tdf103975_notPageBreakD.docx",
   "score": 0.0012,
   "aligned": true
@@ -2640,17 +2575,7 @@
   "aligned": true
  },
  {
-  "name": "ShapeOverlappingWithSdt.docx",
-  "score": 0.0011,
-  "aligned": true
- },
- {
   "name": "activex_textbox.docx",
-  "score": 0.0011,
-  "aligned": true
- },
- {
-  "name": "grouped_link.docx",
   "score": 0.0011,
   "aligned": true
  },
@@ -2665,13 +2590,18 @@
   "aligned": true
  },
  {
-  "name": "fdo82492.docx",
+  "name": "fdo72560d.docx",
   "score": 0.0011,
   "aligned": true
  },
  {
-  "name": "fdo72560d.docx",
+  "name": "drawingml-flipv.docx",
   "score": 0.0011,
+  "aligned": true
+ },
+ {
+  "name": "LineStyle_DashType_VML.docx",
+  "score": 0.001,
   "aligned": true
  },
  {
@@ -2706,11 +2636,6 @@
  },
  {
   "name": "file_crash.docx",
-  "score": 0.001,
-  "aligned": true
- },
- {
-  "name": "mce.docx",
   "score": 0.001,
   "aligned": true
  },
@@ -2760,6 +2685,11 @@
   "aligned": true
  },
  {
+  "name": "rot90-fliph.docx",
+  "score": 0.0009,
+  "aligned": true
+ },
+ {
   "name": "fdo47669.docx",
   "score": 0.0009,
   "aligned": true
@@ -2770,12 +2700,32 @@
   "aligned": true
  },
  {
+  "name": "fdo74401.docx",
+  "score": 0.0009,
+  "aligned": true
+ },
+ {
+  "name": "nestedAlternateContent.docx",
+  "score": 0.0009,
+  "aligned": true
+ },
+ {
+  "name": "tdf113258_noBeforeAutospacing.docx",
+  "score": 0.0009,
+  "aligned": true
+ },
+ {
   "name": "fdo68787.docx",
   "score": 0.0009,
   "aligned": true
  },
  {
   "name": "simple-sdts.docx",
+  "score": 0.0009,
+  "aligned": true
+ },
+ {
+  "name": "tdf113258.docx",
   "score": 0.0009,
   "aligned": true
  },
@@ -2795,6 +2745,11 @@
   "aligned": true
  },
  {
+  "name": "tdf123324_testRelativeAnchorHeightFromTopMarginHasHeader.docx",
+  "score": 0.0008,
+  "aligned": true
+ },
+ {
   "name": "fdo79591.docx",
   "score": 0.0008,
   "aligned": true
@@ -2810,12 +2765,22 @@
   "aligned": true
  },
  {
+  "name": "ShapeOverlappingWithSdt.docx",
+  "score": 0.0008,
+  "aligned": true
+ },
+ {
   "name": "tdf128245.docx",
   "score": 0.0008,
   "aligned": true
  },
  {
   "name": "open-as-read-only.docx",
+  "score": 0.0008,
+  "aligned": true
+ },
+ {
+  "name": "mce.docx",
   "score": 0.0008,
   "aligned": true
  },
@@ -2865,11 +2830,6 @@
   "aligned": true
  },
  {
-  "name": "dml-shape-title.docx",
-  "score": 0.0007,
-  "aligned": true
- },
- {
   "name": "paragraph-mark.docx",
   "score": 0.0007,
   "aligned": true
@@ -2901,6 +2861,11 @@
  },
  {
   "name": "math-d.docx",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
+  "name": "behinddoc.docx",
   "score": 0.0007,
   "aligned": true
  },
@@ -3020,17 +2985,17 @@
   "aligned": true
  },
  {
+  "name": "fdo70942.docx",
+  "score": 0.0005,
+  "aligned": true
+ },
+ {
   "name": "tdf126768.docx",
   "score": 0.0005,
   "aligned": true
  },
  {
   "name": "tdf120412_400PercentSubscript.docx",
-  "score": 0.0005,
-  "aligned": true
- },
- {
-  "name": "ooxml-triangle.docx",
   "score": 0.0005,
   "aligned": true
  },
@@ -3086,6 +3051,11 @@
  },
  {
   "name": "fdo74153.docx",
+  "score": 0.0005,
+  "aligned": true
+ },
+ {
+  "name": "grouped_link.docx",
   "score": 0.0005,
   "aligned": true
  },
@@ -3175,6 +3145,11 @@
   "aligned": true
  },
  {
+  "name": "tdf113183.docx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
   "name": "sdt-before-field.docx",
   "score": 0.0004,
   "aligned": true
@@ -3195,12 +3170,12 @@
   "aligned": true
  },
  {
-  "name": "fdo77117.docx",
+  "name": "tdf130814.docx",
   "score": 0.0004,
   "aligned": true
  },
  {
-  "name": "tdf130814.docx",
+  "name": "fdo77117.docx",
   "score": 0.0004,
   "aligned": true
  },
@@ -3245,6 +3220,11 @@
   "aligned": true
  },
  {
+  "name": "inline-groupshape.docx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
   "name": "TextEffects_Glow_Shadow_Reflection.docx",
   "score": 0.0004,
   "aligned": true
@@ -3256,6 +3236,11 @@
  },
  {
   "name": "fdo66781.docx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "fdo80895.docx",
   "score": 0.0003,
   "aligned": true
  },
@@ -3316,6 +3301,11 @@
  },
  {
   "name": "tdf114703.docx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "ooxml-triangle.docx",
   "score": 0.0003,
   "aligned": true
  },
@@ -3445,6 +3435,11 @@
   "aligned": true
  },
  {
+  "name": "dml-shape-title.docx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
   "name": "inline-sdt-header.docx",
   "score": 0.0003,
   "aligned": true
@@ -3511,6 +3506,11 @@
  },
  {
   "name": "math-placeholders.docx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "fdo82492.docx",
   "score": 0.0002,
   "aligned": true
  },

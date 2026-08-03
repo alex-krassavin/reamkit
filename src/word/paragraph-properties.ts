@@ -151,8 +151,11 @@ export function parseParagraphProperties(pPr: unknown, autoSpacingPt = 0): Parag
 
   if ('w:ind' in el) {
     const node = el['w:ind'];
-    const left = parseIntAttr(node, 'left');
-    const right = parseIntAttr(node, 'right');
+    // §17.3.1.12 — ISO 29500 Strict names the sides `start`/`end`, and that is
+    // what a Strict producer writes: tdf116410.docx indents its whole test
+    // paragraph with `w:start` and we read no indent at all.
+    const left = parseIntAttr(node, 'left') ?? parseIntAttr(node, 'start');
+    const right = parseIntAttr(node, 'right') ?? parseIntAttr(node, 'end');
     const firstLine = parseIntAttr(node, 'firstLine');
     const hanging = parseIntAttr(node, 'hanging');
     if (left !== undefined) out.indentLeft = twipsToPt(left);

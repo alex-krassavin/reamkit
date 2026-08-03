@@ -303,3 +303,40 @@ describe('a text frame (§17.3.1.11 w:framePr)', () => {
     expect(at('two').baselineY).toBeGreaterThan(at('one').baselineY);
   });
 });
+
+describe('a measurement that names its unit (§22.9.2.15)', () => {
+  it('is read wherever a count of twips would be', () => {
+    // tdf116410.docx writes its tab stop, its indent and its spacing as
+    // "85.05pt" / "-13.8pt" / "18pt". Read as plain numbers they were nothing
+    // at all, so the paragraph lost the stop its dot leader hangs on.
+    const docx = buildDocxFromBody(
+      '<w:p><w:pPr>' +
+        '<w:tabs><w:tab w:val="start" w:leader="dot" w:pos="85.05pt"/></w:tabs>' +
+        '<w:ind w:start="-13.80pt"/><w:spacing w:before="18pt"/>' +
+        '</w:pPr><w:r><w:t>A</w:t></w:r><w:r><w:tab/><w:t>B</w:t></w:r></w:p>' +
+        '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>' +
+        '<w:pgMar w:top="1418" w:right="1134" w:bottom="1134" w:left="1366"/></w:sectPr>',
+    );
+    const line = layoutOf(docx).pages[0]!.commands.find((c) => c.type === 'line') as unknown as {
+      originX: number;
+      line: { tokens: ReadonlyArray<{ text?: string }> };
+    };
+    // The indent is -13.8pt from the 68.3pt margin…
+    expect(line.originX).toBeCloseTo(68.3 - 13.8, 1);
+    // …and the tab reached its stop through a leader of dots.
+    expect(line.line.tokens.map((t) => t.text ?? '').join('')).toMatch(/^A\.+B$/u);
+  });
+
+  it('is read in the unit the attribute is written in, not always twips', () => {
+    // §17.3.2.38 — `w:sz` is HALF-POINTS, and its universal form is points:
+    // tdf108408.docx asks for `w:val="20pt"` and read as twips it set the
+    // sample text two hundred points tall.
+    const docx = buildDocxFromBody(
+      '<w:p><w:r><w:rPr><w:sz w:val="20pt"/></w:rPr><w:t>Sample text</w:t></w:r></w:p>',
+    );
+    const line = layoutOf(docx).pages[0]!.commands.find((c) => c.type === 'line') as unknown as {
+      line: { maxFontSizePt: number };
+    };
+    expect(line.line.maxFontSizePt).toBeCloseTo(20, 1);
+  });
+});

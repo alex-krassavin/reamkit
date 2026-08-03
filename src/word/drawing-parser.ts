@@ -1228,13 +1228,22 @@ export function vmlFill(
   // §14.1.2.5 `@type="frame"` — the fill is a PICTURE stretched over the box,
   // named by the relationship on the fill itself. tdf126533_pageBitmap.docx
   // papers its page with one and we painted the flat fallback colour.
-  // `tile` and `pattern` are NOT that: a pattern is a two-colour tile at its
-  // own tiny scale, and stretched over the shape it is a black slab —
-  // fdo77725.docx's 5% dotted rectangle came out solid black.
+  // §14.1.2.5 `@type="tile"` — the same picture REPEATED at its own size, which
+  // is how a texture is laid: bib-chernigovka…docx papers its pages with a
+  // 128-pixel parchment. `pattern` is NOT either of those — a two-colour tile
+  // at its own tiny scale, which stretched over the shape is a black slab
+  // (fdo77725.docx's 5 % dotted rectangle came out solid black).
+  const fillType = fillEl ? poAttr(fillEl, 'type') : undefined;
   const fillRelId =
-    fillEl && poAttr(fillEl, 'type') === 'frame' ? poAttr(fillEl, 'r:id') : undefined;
+    fillType === 'frame' || fillType === 'tile' ? poAttr(fillEl, 'r:id') : undefined;
   const picture = fillRelId !== undefined ? resolveImage?.(fillRelId) : undefined;
-  if (picture !== undefined) return { kind: 'picture', imageResource: picture };
+  if (picture !== undefined) {
+    return {
+      kind: 'picture',
+      imageResource: picture,
+      ...(fillType === 'tile' ? { tiled: true } : {}),
+    };
+  }
   const gradient = fillEl ? vmlGradient(fillEl, base) : undefined;
   if (gradient) return { kind: 'gradient', gradient };
   // §14.1.2.5 `@opacity` — VML's own transparency, written as a fraction or a
@@ -2555,9 +2564,15 @@ function fillFromNode(
       const resource = relId !== undefined ? resolveImage?.(relId) : undefined;
       if (resource === undefined) return { kind: 'none' };
       const crop = parseSrcRect(poFindDescendant(child, 'a:srcRect')) ?? fillRectCrop(child);
+      // §20.1.8.58 `a:tile` — the picture REPEATS at its own size instead of
+      // being stretched over the box (§20.1.8.56 `a:stretch`).
+      // NoFillAttrInImagedata.docx papers two text boxes with a texture that
+      // way, and stretched it came out a brown blur.
+      const tiled = poChildren(child).some((c) => poIs(c, 'a:tile'));
       return {
         kind: 'picture',
         imageResource: resource,
+        ...(tiled ? { tiled: true } : {}),
         ...(crop ? { imageCrop: crop } : {}),
       };
     }

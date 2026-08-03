@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
+import { buildTinyPng } from './fixtures/build-png';
 import { Ream } from '@/core/converter/ream';
 import { FontRegistry } from '@/core/font';
 import { flowRenderOptions } from '@/core/converter/project';
@@ -348,5 +349,61 @@ describe('linked text boxes (wps:linkedTxbx)', () => {
     const drawn = linesByText(laid);
     const first = drawn[0]!.x;
     expect(drawn.every((d) => d.x === first)).toBe(true);
+  });
+});
+
+describe('a tiled picture fill (§14.1.2.5 type="tile" / §20.1.8.58 a:tile)', () => {
+  // A 2x2 PNG is 1.5pt square at the 96 dpi Office measures a picture in, so a
+  // 144x72pt shape is papered with 96 x 48 copies of it rather than one blur.
+  const tiled = (fill: string) =>
+    buildDocxFromBody(
+      `<w:p><w:r><w:drawing>
+        <wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+          <wp:extent cx="1828800" cy="914400"/>
+          <wp:positionH relativeFrom="page"><wp:posOffset>635000</wp:posOffset></wp:positionH>
+          <wp:positionV relativeFrom="page"><wp:posOffset>635000</wp:posOffset></wp:positionV>
+          <wp:wrapNone/>
+          <wp:docPr id="9" name="Papered"/>
+          <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+            <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+                <wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/></a:xfrm>
+                  <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+                  ${fill}
+                </wps:spPr>
+                <wps:bodyPr/>
+              </wps:wsp>
+            </a:graphicData>
+          </a:graphic>
+        </wp:anchor>
+      </w:drawing></w:r></w:p>`,
+      {
+        images: {
+          rId20: {
+            contentType: 'image/png',
+            bytes: buildTinyPng(2, 2, [0, 0, 255, 255]),
+            extension: 'png',
+          },
+        },
+      },
+    );
+  const blip = (inner: string) => `<a:blipFill><a:blip r:embed="rId20"/>${inner}</a:blipFill>`;
+  const images = (docx: Uint8Array) =>
+    layoutOf(docx).pages[0]!.commands.filter((c) => c.type === 'image');
+
+  it('repeats the picture over the box instead of stretching it', () => {
+    const drawn = images(tiled(blip('<a:tile tx="0" ty="0" sx="100000" sy="100000"/>')));
+    expect(drawn.length).toBeGreaterThan(100);
+    const first = drawn[0] as unknown as { width: number; height: number };
+    expect(first.width).toBeCloseTo(1.5, 1);
+    expect(first.height).toBeCloseTo(1.5, 1);
+  });
+
+  it('…and a stretched one is still the single picture it was', () => {
+    const drawn = images(tiled(blip('<a:stretch><a:fillRect/></a:stretch>')));
+    expect(drawn.length).toBe(1);
+    const only = drawn[0] as unknown as { width: number; height: number };
+    expect(only.width).toBeCloseTo(144, 0);
+    expect(only.height).toBeCloseTo(72, 0);
   });
 });

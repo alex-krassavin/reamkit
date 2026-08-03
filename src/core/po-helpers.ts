@@ -121,7 +121,15 @@ const MEASURE_TWIPS: ReadonlyMap<string, number> = new Map([
   ['mm', 144 / 2.54],
 ]);
 
-function universalMeasureTwips(raw: string): number | undefined {
+/**
+ * §22.9.2.15 ST_UniversalMeasure — a number with a UNIT (`"28.35pt"`, `"1cm"`)
+ * as twips. Producers write whole page geometries, tab stops and indents this
+ * way; read as a plain number they are nothing at all.
+ *
+ * @param raw The attribute value.
+ * @returns The measure in twips, or undefined when it names no unit.
+ */
+export function universalMeasureTwips(raw: string): number | undefined {
   const m = /^\s*(-?[0-9]+(?:\.[0-9]+)?)(pt|pc|pi|in|cm|mm)\s*$/iu.exec(raw);
   if (!m) return undefined;
   const per = MEASURE_TWIPS.get(m[2]!.toLowerCase());
