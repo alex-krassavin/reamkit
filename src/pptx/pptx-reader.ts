@@ -40,6 +40,7 @@ import { OpcPackage } from '@/core/opc';
 import { poAttr, poChildren, poFindDescendant, poIntAttr, poIs } from '@/core/po-helpers';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 import { buildPlaceholderCascade, parseLevelStyles } from '@/pptx/placeholder-cascade';
+import { normalizeSpid, parseVmlImageRels } from '@/pptx/ole-preview';
 import { backdropElement, parseBackgroundFill, parseSlideShapes } from '@/pptx/slide-parser';
 
 const EMU_PER_PT = 12700;
@@ -192,6 +193,7 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
         resolveChart: makeSlideChartResolver(pkg, part.path, charts, styles.colors),
         resolveHyperlink: makeHyperlinkResolver(pkg, part.path),
         resolveDiagram: makeSlideDiagramResolver(pkg, part.path),
+        resolveOlePreview: makeOlePreviewResolver(pkg, part.path, resources),
         onLoss: (loss) => losses.push(loss.where ? loss : { ...loss, where: `slide ${i + 1}` }),
       };
       // The deck's own decoration goes under the slide's content, over its
@@ -292,6 +294,46 @@ function makeSlideImageResolver(
     const resolved = rel ? pkg.resolveRelatedPart(slidePath, rel) : undefined;
     const id = resolved ? resources.put(resolved.data) : undefined;
     cache.set(relId, id);
+    return id;
+  };
+}
+
+/**
+ * The preview picture resolver for one slide's embedded objects: a `p:oleObj`
+ * `@spid` → the media the slide's legacy VML drawing hangs off that shape.
+ *
+ * Two relationship hops, and neither is the slide's own: the slide names the
+ * VML part, and the VML part names the picture. The whole part is read once,
+ * lazily — most slides have no embedded object at all.
+ */
+function makeOlePreviewResolver(
+  pkg: OpcPackage,
+  slidePath: string,
+  resources: ResourceStore,
+): (spid: string) => ResourceId | undefined {
+  let byShape: Map<string, string> | undefined;
+  let vmlPath: string | undefined;
+  const cache = new Map<string, ResourceId | undefined>();
+  return (spid) => {
+    const key = normalizeSpid(spid);
+    if (cache.has(key)) return cache.get(key);
+    if (byShape === undefined) {
+      const rel = pkg
+        .getPartRelationships(slidePath)
+        .find((r) => r.type.endsWith('/vmlDrawing') || r.type.endsWith('/legacyDrawing'));
+      const part = rel ? pkg.resolveRelatedPart(slidePath, rel) : undefined;
+      byShape = part ? parseVmlImageRels(part.data) : new Map();
+      vmlPath = part?.path;
+    }
+    const relId = byShape.get(key);
+    const imgRel =
+      relId !== undefined && vmlPath !== undefined
+        ? pkg.getPartRelationships(vmlPath).find((r) => r.id === relId)
+        : undefined;
+    const media =
+      imgRel && vmlPath !== undefined ? pkg.resolveRelatedPart(vmlPath, imgRel) : undefined;
+    const id = media ? resources.put(media.data) : undefined;
+    cache.set(key, id);
     return id;
   };
 }

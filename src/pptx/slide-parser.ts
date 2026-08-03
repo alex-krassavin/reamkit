@@ -58,6 +58,7 @@ import {
 import { boxFromXfrm, parsePh, parseXfrmBox, rPrToRunProps } from '@/pptx/sp-helpers';
 
 const CHART_URI = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
+const OLE_URI = 'http://schemas.openxmlformats.org/presentationml/2006/ole';
 const TABLE_URI = 'http://schemas.openxmlformats.org/drawingml/2006/table';
 const DIAGRAM_URI = 'http://schemas.openxmlformats.org/drawingml/2006/diagram';
 
@@ -79,6 +80,11 @@ export interface SlideContext {
    * `useBgFill` is painted with.
    */
   readonly backgroundFill?: ShapeFill;
+  /**
+   * §19.3.2.4 — the picture an embedded object shows, by the `@spid` of its
+   * shape in the slide's legacy VML drawing.
+   */
+  readonly resolveOlePreview?: (spid: string) => ResourceId | undefined;
   /** A chart relationship id (`c:chart @r:id`) → its document-unique key (PX4a). */
   readonly resolveChart?: (relId: string) => string | undefined;
   /**
@@ -296,6 +302,41 @@ function parseGraphicFrame(
     return tbl
       ? [{ kind: 'table', table: parseTable(tbl, ctx.colors ?? defaultColorResolver) }]
       : [];
+  }
+
+  // §19.3.2.4 — an embedded OLE object shows a snapshot of itself. Modern decks
+  // put a `p:pic` inside the `p:oleObj`; older ones point at a shape in the
+  // slide's VML drawing with `@spid`, and the picture hangs off that.
+  if (uri === OLE_URI) {
+    const oleObj = poFindDescendant(gf, 'p:oleObj');
+    if (!oleObj) return [];
+    const pic = poChildren(oleObj).find((c) => poIs(c, 'p:pic'));
+    if (pic) {
+      const image = parsePic(pic, ctx, transform);
+      return image ? [{ kind: 'image', image }] : [];
+    }
+    const spid = poAttr(oleObj, 'spid');
+    const resource = spid !== undefined ? ctx.resolveOlePreview?.(spid) : undefined;
+    if (resource === undefined) {
+      ctx.onLoss?.({
+        severity: 'dropped',
+        feature: FEATURES.images,
+        detail: 'embedded object with no preview picture — the object is not drawn',
+      });
+      return [];
+    }
+    return [
+      {
+        kind: 'image',
+        image: {
+          float: floatAt(box),
+          resource,
+          width: emuToPt(box.cx),
+          height: emuToPt(box.cy),
+          paragraphProperties: {},
+        },
+      },
+    ];
   }
 
   // SmartArt: render the pre-rendered drawing override (dsp:spTree) as floating

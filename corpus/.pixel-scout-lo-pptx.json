@@ -26,7 +26,7 @@
  },
  {
   "name": "tdf123684.pptx",
-  "score": 0.9886,
+  "score": 0.9888,
   "aligned": true
  },
  {
@@ -46,7 +46,7 @@
  },
  {
   "name": "tdf95932.pptx",
-  "score": 0.7902,
+  "score": 0.7937,
   "aligned": true
  },
  {
@@ -131,7 +131,7 @@
  },
  {
   "name": "tdf114848.pptx",
-  "score": 0.3884,
+  "score": 0.3877,
   "aligned": true
  },
  {
@@ -196,7 +196,7 @@
  },
  {
   "name": "bnc904423.pptx",
-  "score": 0.2745,
+  "score": 0.2747,
   "aligned": true
  },
  {
@@ -266,7 +266,7 @@
  },
  {
   "name": "crop-position.pptx",
-  "score": 0.2357,
+  "score": 0.2336,
   "aligned": true
  },
  {
@@ -345,13 +345,13 @@
   "aligned": true
  },
  {
-  "name": "effectOrder.pptx",
-  "score": 0.1731,
+  "name": "ShapeLineProperties.pptx",
+  "score": 0.1735,
   "aligned": true
  },
  {
-  "name": "ShapeLineProperties.pptx",
-  "score": 0.1711,
+  "name": "effectOrder.pptx",
+  "score": 0.1731,
   "aligned": true
  },
  {
@@ -385,11 +385,6 @@
   "aligned": true
  },
  {
-  "name": "ooxtheme.pptx",
-  "score": 0.1479,
-  "aligned": true
- },
- {
   "name": "cshapes.pptx",
   "score": 0.1477,
   "aligned": true
@@ -397,6 +392,11 @@
  {
   "name": "vertical-bracket-list.pptx",
   "score": 0.1466,
+  "aligned": true
+ },
+ {
+  "name": "ooxtheme.pptx",
+  "score": 0.1457,
   "aligned": true
  },
  {
@@ -431,7 +431,7 @@
  },
  {
   "name": "shape-text-glow-effect.pptx",
-  "score": 0.1317,
+  "score": 0.1316,
   "aligned": true
  },
  {
@@ -451,7 +451,7 @@
  },
  {
   "name": "tdf100065.pptx",
-  "score": 0.1219,
+  "score": 0.1216,
   "aligned": true
  },
  {
@@ -466,7 +466,7 @@
  },
  {
   "name": "testShapeAutofit.pptx",
-  "score": 0.1112,
+  "score": 0.1111,
   "aligned": true
  },
  {
@@ -485,13 +485,13 @@
   "aligned": true
  },
  {
-  "name": "tdf114845_rotateShape.pptx",
-  "score": 0.1074,
+  "name": "tdf93830.pptx",
+  "score": 0.1073,
   "aligned": true
  },
  {
-  "name": "tdf93830.pptx",
-  "score": 0.1073,
+  "name": "tdf114845_rotateShape.pptx",
+  "score": 0.1071,
   "aligned": true
  },
  {
@@ -670,13 +670,13 @@
   "aligned": true
  },
  {
-  "name": "tdf140865Wordart3D.pptx",
-  "score": 0.052,
+  "name": "activex_spinbutton.pptx",
+  "score": 0.0515,
   "aligned": true
  },
  {
-  "name": "activex_spinbutton.pptx",
-  "score": 0.0515,
+  "name": "tdf140865Wordart3D.pptx",
+  "score": 0.0512,
   "aligned": true
  },
  {
@@ -735,11 +735,6 @@
   "aligned": true
  },
  {
-  "name": "3columns.pptx",
-  "score": 0.0431,
-  "aligned": true
- },
- {
   "name": "activex_label.pptx",
   "score": 0.0413,
   "aligned": true
@@ -770,6 +765,11 @@
   "aligned": true
  },
  {
+  "name": "group.pptx",
+  "score": 0.0397,
+  "aligned": true
+ },
+ {
   "name": "tdf156718.pptx",
   "score": 0.0395,
   "aligned": true
@@ -780,18 +780,13 @@
   "aligned": true
  },
  {
-  "name": "group.pptx",
-  "score": 0.0391,
-  "aligned": true
- },
- {
   "name": "tdf154858.pptx",
   "score": 0.039,
   "aligned": true
  },
  {
   "name": "tdf157216.pptx",
-  "score": 0.0386,
+  "score": 0.0385,
   "aligned": true
  },
  {
@@ -801,7 +796,7 @@
  },
  {
   "name": "tdf113198.pptx",
-  "score": 0.0362,
+  "score": 0.0357,
   "aligned": true
  },
  {
@@ -825,6 +820,11 @@
   "aligned": true
  },
  {
+  "name": "3columns.pptx",
+  "score": 0.0313,
+  "aligned": true
+ },
+ {
   "name": "tdf107608.pptx",
   "score": 0.0312,
   "aligned": true
@@ -841,7 +841,7 @@
  },
  {
   "name": "tdf125573_FontWorkScaleX.pptx",
-  "score": 0.03,
+  "score": 0.0293,
   "aligned": true
  },
  {
@@ -865,18 +865,13 @@
   "aligned": true
  },
  {
-  "name": "tdf149961-autofitIndentation.pptx",
-  "score": 0.0259,
-  "aligned": true
- },
- {
   "name": "bnc870233_2.pptx",
   "score": 0.0245,
   "aligned": true
  },
  {
-  "name": "ShapeTextInflateTop.pptx",
-  "score": 0.0238,
+  "name": "tdf93868.pptx",
+  "score": 0.0244,
   "aligned": true
  },
  {
@@ -905,23 +900,23 @@
   "aligned": true
  },
  {
-  "name": "tdf93868.pptx",
-  "score": 0.0219,
-  "aligned": true
- },
- {
   "name": "tdf98603.pptx",
   "score": 0.0219,
   "aligned": true
  },
  {
   "name": "font-scale.pptx",
-  "score": 0.0216,
+  "score": 0.0218,
   "aligned": true
  },
  {
   "name": "bnc862510_6.pptx",
-  "score": 0.0207,
+  "score": 0.0218,
+  "aligned": true
+ },
+ {
+  "name": "tdf149961-autofitIndentation.pptx",
+  "score": 0.0208,
   "aligned": true
  },
  {
@@ -945,6 +940,11 @@
   "aligned": true
  },
  {
+  "name": "ShapeTextInflateTop.pptx",
+  "score": 0.0188,
+  "aligned": true
+ },
+ {
   "name": "tdf165321.pptx",
   "score": 0.0184,
   "aligned": true
@@ -960,11 +960,6 @@
   "aligned": true
  },
  {
-  "name": "master-slides.pptx",
-  "score": 0.018,
-  "aligned": true
- },
- {
   "name": "slide-sections.pptx",
   "score": 0.018,
   "aligned": true
@@ -977,11 +972,6 @@
  {
   "name": "tdf98477grow.pptx",
   "score": 0.0165,
-  "aligned": true
- },
- {
-  "name": "tdf89928-blackWhiteEffectThreshold.pptx",
-  "score": 0.0162,
   "aligned": true
  },
  {
@@ -1030,6 +1020,11 @@
   "aligned": true
  },
  {
+  "name": "tdf116350-texteffects.pptx",
+  "score": 0.0134,
+  "aligned": true
+ },
+ {
   "name": "tdf114821.pptx",
   "score": 0.0129,
   "aligned": true
@@ -1037,11 +1032,6 @@
  {
   "name": "tdf147459.pptx",
   "score": 0.0128,
-  "aligned": true
- },
- {
-  "name": "tdf132282.pptx",
-  "score": 0.0125,
   "aligned": true
  },
  {
@@ -1060,6 +1050,16 @@
   "aligned": true
  },
  {
+  "name": "tdf169524.pptx",
+  "score": 0.0107,
+  "aligned": true
+ },
+ {
+  "name": "tdf120028.pptx",
+  "score": 0.0106,
+  "aligned": true
+ },
+ {
   "name": "tdf142648.pptx",
   "score": 0.0104,
   "aligned": true
@@ -1067,11 +1067,6 @@
  {
   "name": "tdf137675.pptx",
   "score": 0.0102,
-  "aligned": true
- },
- {
-  "name": "tdf157529.pptx",
-  "score": 0.0099,
   "aligned": true
  },
  {
@@ -1095,6 +1090,11 @@
   "aligned": true
  },
  {
+  "name": "tdf89928-blackWhiteEffectThreshold.pptx",
+  "score": 0.0095,
+  "aligned": true
+ },
+ {
   "name": "tdf169694.pptx",
   "score": 0.0094,
   "aligned": true
@@ -1110,16 +1110,6 @@
   "aligned": true
  },
  {
-  "name": "tdf111789.pptx",
-  "score": 0.0088,
-  "aligned": true
- },
- {
-  "name": "formatting-bullet-indent.pptx",
-  "score": 0.0086,
-  "aligned": true
- },
- {
   "name": "activex_fontproperties.pptx",
   "score": 0.0082,
   "aligned": true
@@ -1131,6 +1121,11 @@
  },
  {
   "name": "tdf134210.pptx",
+  "score": 0.0081,
+  "aligned": true
+ },
+ {
+  "name": "tdf111789.pptx",
   "score": 0.0081,
   "aligned": true
  },
@@ -1165,33 +1160,28 @@
   "aligned": true
  },
  {
+  "name": "tdf157529.pptx",
+  "score": 0.0075,
+  "aligned": true
+ },
+ {
   "name": "tdf128952.pptx",
   "score": 0.0074,
   "aligned": true
  },
  {
-  "name": "tdf116350-texteffects.pptx",
-  "score": 0.0073,
-  "aligned": true
- },
- {
   "name": "tdf128206.pptx",
-  "score": 0.0073,
+  "score": 0.0066,
   "aligned": true
  },
  {
-  "name": "bnc870233_1.pptx",
-  "score": 0.0068,
+  "name": "master-slides.pptx",
+  "score": 0.0066,
   "aligned": true
  },
  {
   "name": "tdf149803.pptx",
   "score": 0.0065,
-  "aligned": true
- },
- {
-  "name": "tdf154363.pptx",
-  "score": 0.0061,
   "aligned": true
  },
  {
@@ -1215,13 +1205,13 @@
   "aligned": true
  },
  {
-  "name": "tdf169524.pptx",
-  "score": 0.0059,
+  "name": "slide-section-test.pptx",
+  "score": 0.0056,
   "aligned": true
  },
  {
-  "name": "slide-section-test.pptx",
-  "score": 0.0056,
+  "name": "formatting-bullet-indent.pptx",
+  "score": 0.0055,
   "aligned": true
  },
  {
@@ -1230,38 +1220,23 @@
   "aligned": true
  },
  {
-  "name": "tdf157285.pptx",
-  "score": 0.0053,
-  "aligned": true
- },
- {
-  "name": "tdf128212.pptx",
-  "score": 0.0053,
-  "aligned": true
- },
- {
-  "name": "tdf128213-shaperot.pptx",
-  "score": 0.0053,
-  "aligned": true
- },
- {
-  "name": "tdf128213.pptx",
-  "score": 0.0053,
-  "aligned": true
- },
- {
   "name": "tdf151767.pptx",
   "score": 0.0052,
   "aligned": true
  },
  {
-  "name": "tdf160490.pptx",
+  "name": "tdf123090.pptx",
   "score": 0.0051,
   "aligned": true
  },
  {
-  "name": "tdf123090.pptx",
+  "name": "tdf157285.pptx",
   "score": 0.0051,
+  "aligned": true
+ },
+ {
+  "name": "tdf154363.pptx",
+  "score": 0.005,
   "aligned": true
  },
  {
@@ -1285,18 +1260,23 @@
   "aligned": true
  },
  {
-  "name": "tdf120028.pptx",
-  "score": 0.0046,
-  "aligned": true
- },
- {
-  "name": "tdf115394-zero.pptx",
-  "score": 0.0044,
-  "aligned": true
- },
- {
   "name": "tdf160591.pptx",
   "score": 0.0044,
+  "aligned": true
+ },
+ {
+  "name": "tdf128212.pptx",
+  "score": 0.0043,
+  "aligned": true
+ },
+ {
+  "name": "tdf128213-shaperot.pptx",
+  "score": 0.0043,
+  "aligned": true
+ },
+ {
+  "name": "tdf128213.pptx",
+  "score": 0.0043,
   "aligned": true
  },
  {
@@ -1315,7 +1295,7 @@
   "aligned": true
  },
  {
-  "name": "tdf126234.pptx",
+  "name": "tdf160490.pptx",
   "score": 0.004,
   "aligned": true
  },
@@ -1325,8 +1305,13 @@
   "aligned": true
  },
  {
-  "name": "tdf146223.pptx",
-  "score": 0.0036,
+  "name": "tdf137367.pptx",
+  "score": 0.0038,
+  "aligned": true
+ },
+ {
+  "name": "tdf128550.pptx",
+  "score": 0.0037,
   "aligned": true
  },
  {
@@ -1345,33 +1330,18 @@
   "aligned": true
  },
  {
-  "name": "tdf128550.pptx",
-  "score": 0.0035,
-  "aligned": true
- },
- {
-  "name": "tdf137367.pptx",
+  "name": "tdf113818-swivel.pptx",
   "score": 0.0034,
   "aligned": true
  },
  {
-  "name": "tdf113818-swivel.pptx",
+  "name": "tdf146223.pptx",
   "score": 0.0034,
   "aligned": true
  },
  {
   "name": "tdf125360_1.pptx",
   "score": 0.0032,
-  "aligned": true
- },
- {
-  "name": "n828390.pptx",
-  "score": 0.0032,
-  "aligned": true
- },
- {
-  "name": "tdf92222.pptx",
-  "score": 0.0031,
   "aligned": true
  },
  {
@@ -1395,12 +1365,22 @@
   "aligned": true
  },
  {
-  "name": "bullet-indent.pptx",
+  "name": "tdf126234.pptx",
+  "score": 0.003,
+  "aligned": true
+ },
+ {
+  "name": "bnc862510_7.pptx",
   "score": 0.0029,
   "aligned": true
  },
  {
   "name": "n862510_4.pptx",
+  "score": 0.0029,
+  "aligned": true
+ },
+ {
+  "name": "tdf115394-zero.pptx",
   "score": 0.0029,
   "aligned": true
  },
@@ -1435,18 +1415,8 @@
   "aligned": true
  },
  {
-  "name": "bnc862510_7.pptx",
-  "score": 0.0028,
-  "aligned": true
- },
- {
   "name": "tdf145162.pptx",
   "score": 0.0028,
-  "aligned": true
- },
- {
-  "name": "bnc584721_4.pptx",
-  "score": 0.0027,
   "aligned": true
  },
  {
@@ -1460,17 +1430,12 @@
   "aligned": true
  },
  {
+  "name": "tdf92222.pptx",
+  "score": 0.0025,
+  "aligned": true
+ },
+ {
   "name": "tdf51340.pptx",
-  "score": 0.0024,
-  "aligned": true
- },
- {
-  "name": "tdf127129.pptx",
-  "score": 0.0024,
-  "aligned": true
- },
- {
-  "name": "tdf165341.pptx",
   "score": 0.0024,
   "aligned": true
  },
@@ -1490,12 +1455,22 @@
   "aligned": true
  },
  {
+  "name": "bullet-indent.pptx",
+  "score": 0.0023,
+  "aligned": true
+ },
+ {
   "name": "n90223RT.pptx",
   "score": 0.0023,
   "aligned": true
  },
  {
   "name": "n90223.pptx",
+  "score": 0.0023,
+  "aligned": true
+ },
+ {
+  "name": "tdf127129.pptx",
   "score": 0.0023,
   "aligned": true
  },
@@ -1510,12 +1485,22 @@
   "aligned": true
  },
  {
+  "name": "tdf132282.pptx",
+  "score": 0.002,
+  "aligned": true
+ },
+ {
   "name": "tdf90626.pptx",
   "score": 0.0019,
   "aligned": true
  },
  {
-  "name": "tdf150719.pptx",
+  "name": "tdf118776.pptx",
+  "score": 0.0019,
+  "aligned": true
+ },
+ {
+  "name": "tdf106638.pptx",
   "score": 0.0019,
   "aligned": true
  },
@@ -1535,17 +1520,17 @@
   "aligned": true
  },
  {
+  "name": "numfmt.pptx",
+  "score": 0.0019,
+  "aligned": true
+ },
+ {
   "name": "tdf119087.pptx",
   "score": 0.0018,
   "aligned": true
  },
  {
   "name": "tdf96061.pptx",
-  "score": 0.0017,
-  "aligned": true
- },
- {
-  "name": "n83889.pptx",
   "score": 0.0017,
   "aligned": true
  },
@@ -1565,21 +1550,6 @@
   "aligned": true
  },
  {
-  "name": "tdf142645.pptx",
-  "score": 0.0016,
-  "aligned": true
- },
- {
-  "name": "tdf59323.pptx",
-  "score": 0.0015,
-  "aligned": true
- },
- {
-  "name": "bulletColor.pptx",
-  "score": 0.0015,
-  "aligned": true
- },
- {
   "name": "n778859.pptx",
   "score": 0.0015,
   "aligned": true
@@ -1590,17 +1560,17 @@
   "aligned": true
  },
  {
-  "name": "n90255.pptx",
-  "score": 0.0014,
-  "aligned": true
- },
- {
-  "name": "bulletMarginAndIndent.pptx",
+  "name": "bnc870233_1.pptx",
   "score": 0.0013,
   "aligned": true
  },
  {
   "name": "n828390_3.pptx",
+  "score": 0.0013,
+  "aligned": true
+ },
+ {
+  "name": "tdf150719.pptx",
   "score": 0.0013,
   "aligned": true
  },
@@ -1615,7 +1585,12 @@
   "aligned": true
  },
  {
-  "name": "tdf153036_resizedConnectorL.pptx",
+  "name": "bnc584721_4.pptx",
+  "score": 0.0011,
+  "aligned": true
+ },
+ {
+  "name": "bulletColor.pptx",
   "score": 0.0011,
   "aligned": true
  },
@@ -1630,47 +1605,22 @@
   "aligned": true
  },
  {
-  "name": "tdf125071.pptx",
+  "name": "tdf165341.pptx",
   "score": 0.001,
   "aligned": true
  },
  {
-  "name": "tdf131390.pptx",
+  "name": "n83889.pptx",
   "score": 0.001,
   "aligned": true
  },
  {
-  "name": "tdf142913.pptx",
+  "name": "n90255.pptx",
   "score": 0.001,
-  "aligned": true
- },
- {
-  "name": "tdf102261_testParaTabStopDefaultDistance.pptx",
-  "score": 0.001,
-  "aligned": true
- },
- {
-  "name": "tdf138148.pptx",
-  "score": 0.0009,
-  "aligned": true
- },
- {
-  "name": "n828390_2.pptx",
-  "score": 0.0009,
   "aligned": true
  },
  {
   "name": "tdf114913.pptx",
-  "score": 0.0009,
-  "aligned": true
- },
- {
-  "name": "tdf165732.pptx",
-  "score": 0.0009,
-  "aligned": true
- },
- {
-  "name": "n862510_1.pptx",
   "score": 0.0009,
   "aligned": true
  },
@@ -1685,7 +1635,22 @@
   "aligned": true
  },
  {
-  "name": "tdf118776.pptx",
+  "name": "tdf165732.pptx",
+  "score": 0.0008,
+  "aligned": true
+ },
+ {
+  "name": "tdf153036_resizedConnectorL.pptx",
+  "score": 0.0008,
+  "aligned": true
+ },
+ {
+  "name": "n862510_1.pptx",
+  "score": 0.0008,
+  "aligned": true
+ },
+ {
+  "name": "tdf142645.pptx",
   "score": 0.0008,
   "aligned": true
  },
@@ -1695,7 +1660,32 @@
   "aligned": true
  },
  {
+  "name": "n828390.pptx",
+  "score": 0.0008,
+  "aligned": true
+ },
+ {
+  "name": "tdf125071.pptx",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
+  "name": "tdf131390.pptx",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
+  "name": "tdf142913.pptx",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
   "name": "tdf129686.pptx",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
+  "name": "customxml.pptx",
   "score": 0.0007,
   "aligned": true
  },
@@ -1705,17 +1695,7 @@
   "aligned": true
  },
  {
-  "name": "numfmt.pptx",
-  "score": 0.0007,
-  "aligned": true
- },
- {
   "name": "tdf111786.pptx",
-  "score": 0.0006,
-  "aligned": true
- },
- {
-  "name": "tdf106638.pptx",
   "score": 0.0006,
   "aligned": true
  },
@@ -1725,12 +1705,12 @@
   "aligned": true
  },
  {
-  "name": "bnc584721_1_2.pptx",
-  "score": 0.0005,
+  "name": "n828390_2.pptx",
+  "score": 0.0006,
   "aligned": true
  },
  {
-  "name": "tdf112334.pptx",
+  "name": "bnc584721_1_2.pptx",
   "score": 0.0005,
   "aligned": true
  },
@@ -1740,7 +1720,12 @@
   "aligned": true
  },
  {
-  "name": "multiplelayoutfooter.pptx",
+  "name": "tdf138148.pptx",
+  "score": 0.0005,
+  "aligned": true
+ },
+ {
+  "name": "bulletMarginAndIndent.pptx",
   "score": 0.0005,
   "aligned": true
  },
@@ -1756,21 +1741,6 @@
  },
  {
   "name": "tdf91378.pptx",
-  "score": 0.0004,
-  "aligned": true
- },
- {
-  "name": "paraMarginAndIndentation.pptx",
-  "score": 0.0004,
-  "aligned": true
- },
- {
-  "name": "tdf142590.pptx",
-  "score": 0.0004,
-  "aligned": true
- },
- {
-  "name": "customxml.pptx",
   "score": 0.0004,
   "aligned": true
  },
@@ -1795,7 +1765,7 @@
   "aligned": true
  },
  {
-  "name": "rightToLeftParagraph.pptx",
+  "name": "paraMarginAndIndentation.pptx",
   "score": 0.0003,
   "aligned": true
  },
@@ -1805,7 +1775,7 @@
   "aligned": true
  },
  {
-  "name": "tdf147121.pptx",
+  "name": "rightToLeftParagraph.pptx",
   "score": 0.0003,
   "aligned": true
  },
@@ -1815,7 +1785,22 @@
   "aligned": true
  },
  {
+  "name": "tdf112334.pptx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "tdf147121.pptx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
   "name": "tdf142716.pptx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "tdf102261_testParaTabStopDefaultDistance.pptx",
   "score": 0.0002,
   "aligned": true
  },
@@ -1845,6 +1830,16 @@
   "aligned": true
  },
  {
+  "name": "tdf59323.pptx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "tdf142590.pptx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
   "name": "tdf142915.pptx",
   "score": 0.0001,
   "aligned": true
@@ -1860,13 +1855,18 @@
   "aligned": true
  },
  {
+  "name": "slidenum_field.pptx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
   "name": "tdf112633.pptx",
   "score": 0.0001,
   "aligned": true
  },
  {
-  "name": "slidenum_field.pptx",
-  "score": 0,
+  "name": "multiplelayoutfooter.pptx",
+  "score": 0.0001,
   "aligned": true
  },
  {

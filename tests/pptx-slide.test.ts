@@ -781,6 +781,75 @@ describe('pptx inherited text — what a slide is written in (E-PPTX PX2)', () =
   });
 });
 
+describe('pptx embedded objects — the picture they show (E-PPTX PX4c)', () => {
+  const OLE_URI = 'http://schemas.openxmlformats.org/presentationml/2006/ole';
+  const VML_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing';
+  const frame = (inner: string): string =>
+    `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="7" name="Object 1"/>` +
+    `<p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>` +
+    `<p:xfrm><a:off x="0" y="0"/><a:ext cx="9144000" cy="6858000"/></p:xfrm>` +
+    `<a:graphic><a:graphicData uri="${OLE_URI}">${inner}</a:graphicData></a:graphic></p:graphicFrame>`;
+  const enc = (t: string): Uint8Array => new TextEncoder().encode(t);
+  const firstImage = (doc: ReturnType<typeof Ream.parse>) =>
+    doc.flow.body.flatMap((el) => (el.kind === 'image' ? [el.image] : []))[0];
+
+  it("draws the preview a legacy object keeps in the slide's VML drawing", () => {
+    // 45541_Footer's eighth slide is one embedded deck and nothing else: the
+    // `@spid` names a VML shape whose `v:imagedata` is the snapshot.
+    const doc = Ream.parse(
+      buildPptx(
+        [frame('<p:oleObj spid="_x0000_s1026" name="Slide" r:id="rIdOle"><p:embed/></p:oleObj>')],
+        {
+          slideRels: [
+            `<Relationship Id="rIdVml" Type="${VML_REL}" Target="../drawings/vmlDrawing1.vml"/>`,
+          ],
+          media: {
+            'ppt/drawings/vmlDrawing1.vml': enc(
+              `<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">` +
+                `<v:shape id="_x0000_s1026" type="#_x0000_t75" style="width:10in;height:540pt">` +
+                `<v:imagedata o:relid="rId1" o:title=""/></v:shape></xml>`,
+            ),
+            'ppt/drawings/_rels/vmlDrawing1.vml.rels': enc(
+              `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+                `<Relationship Id="rId1" Type="${IMAGE_REL}" Target="../media/prev.png"/></Relationships>`,
+            ),
+            'ppt/media/prev.png': buildTinyPng(2, 2, [0, 128, 255, 255]),
+          },
+        },
+      ),
+    );
+    const img = firstImage(doc);
+    expect(img?.resource).toBeDefined();
+    expect(Math.round(img?.width ?? 0)).toBe(720); // the frame, 10in wide
+    expect(Math.round(img?.height ?? 0)).toBe(540);
+  });
+
+  it('draws the p:pic a modern object carries inside itself', () => {
+    const pic =
+      `<p:pic><p:nvPicPr><p:cNvPr id="8" name="p"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>` +
+      `<p:blipFill><a:blip r:embed="rIdImg"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
+      `<p:spPr><a:xfrm><a:off x="914400" y="914400"/><a:ext cx="1828800" cy="914400"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`;
+    const doc = Ream.parse(
+      buildPptx([frame(`<p:oleObj spid="_x0000_s1027" r:id="rIdOle">${pic}</p:oleObj>`)], {
+        slideRels: [`<Relationship Id="rIdImg" Type="${IMAGE_REL}" Target="../media/p.png"/>`],
+        media: { 'ppt/media/p.png': buildTinyPng(2, 2, [255, 0, 0, 255]) },
+      }),
+    );
+    const img = firstImage(doc);
+    expect(img?.resource).toBeDefined();
+    expect(Math.round(img?.width ?? 0)).toBe(144); // the pic's own box, 2in
+  });
+
+  it('says so when an embedded object shows no picture at all', () => {
+    const doc = Ream.parse(
+      buildPptx([frame('<p:oleObj spid="_x0000_s1028" r:id="rIdOle"><p:embed/></p:oleObj>')]),
+    );
+    expect(firstImage(doc)).toBeUndefined();
+    expect(doc.losses.some((l) => /embedded object/u.test(l.detail))).toBe(true);
+  });
+});
+
 // A p:grpSp whose child shape (filled `hex`) sits at child-box (cx,cy,ex,ey),
 // inside the group transform off/ext (chOff 0, chExt = `chExt`).
 function groupDeck(opts: {
