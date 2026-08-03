@@ -496,7 +496,7 @@
  },
  {
   "name": "ole.pptx",
-  "score": 0.1033,
+  "score": 0.1015,
   "aligned": true
  },
  {
@@ -641,7 +641,7 @@
  },
  {
   "name": "ole-emf_min.pptx",
-  "score": 0.0562,
+  "score": 0.056,
   "aligned": true
  },
  {
@@ -955,13 +955,13 @@
   "aligned": true
  },
  {
-  "name": "tdf169088.pptx",
-  "score": 0.0183,
+  "name": "slide-sections.pptx",
+  "score": 0.018,
   "aligned": true
  },
  {
-  "name": "slide-sections.pptx",
-  "score": 0.018,
+  "name": "tdf169088.pptx",
+  "score": 0.0179,
   "aligned": true
  },
  {
@@ -1092,11 +1092,6 @@
  {
   "name": "tdf89928-blackWhiteEffectThreshold.pptx",
   "score": 0.0095,
-  "aligned": true
- },
- {
-  "name": "tdf169694.pptx",
-  "score": 0.0094,
   "aligned": true
  },
  {
@@ -1431,6 +1426,11 @@
  },
  {
   "name": "tdf92222.pptx",
+  "score": 0.0025,
+  "aligned": true
+ },
+ {
+  "name": "tdf169694.pptx",
   "score": 0.0025,
   "aligned": true
  },

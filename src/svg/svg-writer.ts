@@ -11,7 +11,7 @@
 
 import type { DocumentWriter, WriteResult } from '@/core/ir/adapters';
 import type { Loss } from '@/core/ir';
-import type { LaidOutDocument, LaidOutPage, TextLineItem } from '@/layout/page-doc';
+import type { LaidOutDocument, LaidOutPage, PageItem, TextLineItem } from '@/layout/page-doc';
 import type { PathSegment, VectorShape } from '@/core/vector';
 import { svgPathData } from '@/core/vector';
 
@@ -90,6 +90,9 @@ function emitPage(
   // coordinates are already top-left/y-down: SVG's native frame.
   const plan = paintPlan(page.commands);
 
+  // What the page puts behind its content, in its own order.
+  for (const item of plan.behind) emitPageItem(out, item, laid, losses, idc);
+
   for (const f of plan.fills) {
     out.push(
       `<rect x="${fmt(f.x)}" y="${fmt(f.y)}" width="${fmt(f.width)}" height="${fmt(f.height)}" fill="#${f.fillColorHex}"/>`,
@@ -138,22 +141,53 @@ function emitPage(
   // A picture paints as one thing, in its own order: a metafile buries a label
   // under a panel it draws afterwards, and the passes above would lift it out.
   for (const picture of plan.pictures) {
-    for (const item of picture) {
-      if (item.type === 'shape') emitShape(out, item.shape, idc);
-      else if (item.type === 'line') emitTextLine(out, item, losses, idc);
-      else if (item.type === 'image') {
-        const href = imageHref(item.imageResourceName, laid);
-        if (href) {
-          out.push(
-            `<image x="${fmt(item.x)}" y="${fmt(item.y)}" width="${fmt(item.width)}" height="${fmt(item.height)}" href="${href}" preserveAspectRatio="none"/>`,
-          );
-        }
-      }
-    }
+    for (const item of picture) emitPageItem(out, item, laid, losses, idc);
   }
 
   for (const t of plan.lines) {
     emitTextLine(out, t, losses, idc);
+  }
+}
+
+/**
+ * One page item, whatever its kind — for the runs that paint in their own order
+ * (what stands behind the content, and a picture's own primitives) rather than
+ * in the by-kind passes.
+ *
+ * @param out    The SVG fragment sink.
+ * @param item   The item to draw.
+ * @param laid   The laid-out document, for image resources.
+ * @param losses Where an unrenderable item records itself.
+ * @param idc    The shared id counter for generated defs.
+ */
+function emitPageItem(
+  out: Array<string>,
+  item: PageItem,
+  laid: LaidOutDocument,
+  losses: Array<Loss>,
+  idc: { n: number },
+): void {
+  if (item.type === 'shape') {
+    emitShape(out, item.shape, idc);
+    return;
+  }
+  if (item.type === 'line') {
+    emitTextLine(out, item, losses, idc);
+    return;
+  }
+  if (item.type === 'image') {
+    const href = imageHref(item.imageResourceName, laid);
+    if (href) {
+      out.push(
+        `<image x="${fmt(item.x)}" y="${fmt(item.y)}" width="${fmt(item.width)}" height="${fmt(item.height)}" href="${href}" preserveAspectRatio="none"/>`,
+      );
+    }
+    return;
+  }
+  if (item.type === 'fill') {
+    out.push(
+      `<rect x="${fmt(item.x)}" y="${fmt(item.y)}" width="${fmt(item.width)}" height="${fmt(item.height)}" fill="#${item.fillColorHex}"/>`,
+    );
   }
 }
 

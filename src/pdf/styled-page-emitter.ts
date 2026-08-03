@@ -180,7 +180,12 @@ function assembleStyledPdf(
   if (!pdfaProfile) {
     for (const page of renderedPages) {
       const ph = page.height;
-      for (const item of paintPlan(page.commands).shapes) {
+      const plan = paintPlan(page.commands);
+      const shapesNeedingPatterns = [
+        ...plan.shapes,
+        ...[...plan.behind, ...plan.pictures.flat()].filter((i) => i.type === 'shape'),
+      ];
+      for (const item of shapesNeedingPatterns) {
         const gradient = item.shape.fillGradient;
         if (!gradient) continue;
         const bbox = shapeBbox(item.shape);
@@ -219,6 +224,18 @@ function assembleStyledPdf(
     for (const img of plan.images) {
       wantAlpha(washVeil(img.wash)?.alpha);
       wantAlpha(img.alpha);
+    }
+    // The runs that paint in their own order carry the same needs.
+    for (const item of [...plan.behind, ...plan.pictures.flat()]) {
+      if (item.type === 'image') {
+        wantAlpha(washVeil(item.wash)?.alpha);
+        wantAlpha(item.alpha);
+      }
+      if (item.type === 'shape') {
+        const s = item.shape.shadow;
+        if (s) wantAlpha(shadowBlurLayers(s).alpha);
+        wantAlpha(item.shape.fillAlpha);
+      }
     }
     // …and the shadow an inline PICTURE casts, which rides its token rather
     // than a shape of its own (imgshadow.docx).
@@ -725,6 +742,92 @@ function emitPageContent(
   // In tagged PDFs they are layout decoration → wrapped as an /Artifact so no
   // page content sits outside the structure tree (PDF/A-1a §6.3.2).
   const plan = paintPlan(commands);
+  // One item of a run that paints in its own order — a picture's primitives, or
+  // what the page puts behind its content. Text is set the way an inline
+  // metafile's is: one run at a point.
+  const emitInOrder = (item: PageItem): void => {
+    if (item.type === 'shape') {
+      const t = item.shape.transform;
+      const fillAlpha = item.shape.fillAlpha;
+      for (const op of emitVectorShape(
+        { ...item.shape, transform: [t[0], -t[1], t[2], -t[3], t[4], H - t[5]] },
+        gradientNames?.get(item.shape),
+        undefined,
+        fillAlpha !== undefined && fillAlpha < 1
+          ? alphaStateNames?.get(Math.round(fillAlpha * 1000) / 1000)
+          : undefined,
+      )) {
+        out.push(op);
+      }
+      return;
+    }
+    if (item.type === 'image') {
+      if (item.imageResourceName === '') return;
+      out.push('q');
+      if (item.clip) {
+        const t = item.clip.transform;
+        out.push(...emitClipPath(item.clip.paths, [t[0], -t[1], t[2], -t[3], t[4], H - t[5]]));
+      }
+      const state =
+        item.alpha !== undefined && item.alpha < 1
+          ? alphaStateNames?.get(Math.round(item.alpha * 1000) / 1000)
+          : undefined;
+      if (state !== undefined) out.push(`/${state} gs`);
+      out.push(
+        ...placeImage(
+          item.x,
+          H - item.y - item.height,
+          item.width,
+          item.height,
+          item.crop,
+          item.rotationDeg,
+          item.flipH,
+          item.flipV,
+        ),
+      );
+      out.push(`/${item.imageResourceName} Do`);
+      out.push(...washItems(item.wash, alphaStateNames));
+      out.push('Q');
+      return;
+    }
+    if (item.type === 'fill') {
+      const [r, g, b] = hexToRgb01(item.fillColorHex);
+      out.push(
+        `${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} rg`,
+        `${formatNumber(item.x)} ${formatNumber(H - item.y - item.height)} ` +
+          `${formatNumber(item.width)} ${formatNumber(item.height)} re`,
+        'f',
+      );
+      return;
+    }
+    if (item.type !== 'line') return;
+    const tok = item.line.tokens.find((k) => k.kind === 'text');
+    if (!tok) return;
+    const [r, g, b] = hexToRgb01(tok.resolvedRun.colorHex);
+    const rad = ((item.rotationDeg ?? 0) * Math.PI) / 180;
+    const [cos, sin] = [Math.cos(rad), Math.sin(rad)];
+    const [ox, oy] = [item.originX, H - item.baselineY];
+    out.push('BT');
+    out.push(`/${tok.font.resourceName} ${formatNumber(tok.fontSizePt)} Tf`);
+    out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} rg`);
+    out.push(
+      `${formatNumber(cos)} ${formatNumber(sin)} ${formatNumber(-sin)} ${formatNumber(cos)} ` +
+        `${formatNumber(ox)} ${formatNumber(oy)} Tm`,
+    );
+    out.push(tok.font.measure.showText(tok.text));
+    out.push('ET');
+  };
+
+  // §20.4.2.3 — what the page puts BEHIND its content paints before all of it,
+  // in its own order. Riding the passes below, a slide's white backdrop landed
+  // on top of the photograph the slide is made of: every shape paints after
+  // every image there (corpus: tdf156808, tdf157635, tdf156856).
+  if (plan.behind.length > 0) {
+    if (tagging) out.push('/Artifact BMC');
+    for (const item of plan.behind) emitInOrder(item);
+    if (tagging) out.push('EMC');
+  }
+
   const fills = plan.fills;
   if (fills.length > 0) {
     if (tagging) out.push('/Artifact BMC');
@@ -897,58 +1000,14 @@ function emitPageContent(
     }
   });
 
-  // A PICTURE paints as one thing, in the order it draws: a metafile writes a
-  // label, lays a panel over it and writes the label again as its own shadow,
-  // so the buried copy must stay buried. Its text is set the way an inline
-  // metafile's is — one run at a point, no tabs, links or bidi to carry.
-  for (const picture of plan.pictures) {
+  // A PICTURE paints in its OWN order: a metafile writes a label, lays a panel
+  // over it and writes the label again as its own shadow, so the buried copy
+  // must stay buried. Its text is set the way an inline metafile's is — one run
+  // at a point, no tabs or links to carry.
+  for (const run of plan.pictures) {
+    if (run.length === 0) continue;
     if (tagging) out.push('/Artifact BMC');
-    for (const item of picture) {
-      if (item.type === 'shape') {
-        const t = item.shape.transform;
-        for (const op of emitVectorShape({
-          ...item.shape,
-          transform: [t[0], -t[1], t[2], -t[3], t[4], H - t[5]],
-        })) {
-          out.push(op);
-        }
-        continue;
-      }
-      if (item.type === 'image') {
-        out.push('q');
-        out.push(
-          ...placeImage(
-            item.x,
-            H - item.y - item.height,
-            item.width,
-            item.height,
-            item.crop,
-            item.rotationDeg,
-            item.flipH,
-            item.flipV,
-          ),
-        );
-        out.push(`/${item.imageResourceName} Do`);
-        out.push('Q');
-        continue;
-      }
-      if (item.type !== 'line') continue;
-      const tok = item.line.tokens.find((k) => k.kind === 'text');
-      if (!tok) continue;
-      const [r, g, b] = hexToRgb01(tok.resolvedRun.colorHex);
-      const rad = ((item.rotationDeg ?? 0) * Math.PI) / 180;
-      const [cos, sin] = [Math.cos(rad), Math.sin(rad)];
-      const [ox, oy] = [item.originX, H - item.baselineY];
-      out.push('BT');
-      out.push(`/${tok.font.resourceName} ${formatNumber(tok.fontSizePt)} Tf`);
-      out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} rg`);
-      out.push(
-        `${formatNumber(cos)} ${formatNumber(sin)} ${formatNumber(-sin)} ${formatNumber(cos)} ` +
-          `${formatNumber(ox)} ${formatNumber(oy)} Tm`,
-      );
-      out.push(tok.font.measure.showText(tok.text));
-      out.push('ET');
-    }
+    for (const item of run) emitInOrder(item);
     if (tagging) out.push('EMC');
   }
 

@@ -9,6 +9,9 @@ import { describe, expect, it } from 'vitest';
 
 import { buildPptx } from './fixtures/build-pptx';
 import { buildTinyPng } from './fixtures/build-png';
+import { FontRegistry } from '@/core/font';
+import { paintPlan } from '@/layout/page-doc';
+import { layoutStyledDocument } from '@/layout/styled-layout';
 import { Ream } from '@/core/converter/ream';
 import { PdfFile } from '@/pdf-reader/document';
 import { extractPageText } from '@/pdf-reader/text';
@@ -613,6 +616,37 @@ describe('pptx background — a reference and a picture (E-PPTX PX5b)', () => {
       }),
     );
     expect(firstShape(doc)?.fill.kind).toBe('picture');
+  });
+});
+
+describe('what a slide puts behind its content', () => {
+  it("paints the backdrop before the slide's own picture, not over it", () => {
+    // Every shape paints after every image in the ordinary passes, so a white
+    // backdrop landed on top of the photograph the slide is made of
+    // (corpus: tdf156808, tdf157635, tdf156856 — three dark slides drawn
+    // blank). What the page puts behind its content paints first instead.
+    const pic =
+      `<p:pic><p:nvPicPr><p:cNvPr id="4" name="p"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>` +
+      `<p:blipFill><a:blip r:embed="rIdImg"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="12192000" cy="6858000"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`;
+    const doc = Ream.parse(
+      buildPptx([pic], {
+        layoutMaster: { masterBg: bgFill('FFFFFF') },
+        slideRels: [`<Relationship Id="rIdImg" Type="${IMAGE_REL}" Target="../media/i.png"/>`],
+        media: { 'ppt/media/i.png': buildTinyPng(2, 2, [0, 0, 0, 255]) },
+      }),
+    );
+    const laid = layoutStyledDocument(doc.flow.body, {
+      registry: FontRegistry.fromBytes({ regular: FONTS.regular }),
+      resources: doc.flow.resources,
+      ...(doc.flow.section ? { section: doc.flow.section } : {}),
+      styles: doc.flow.styles,
+    });
+    const plan = paintPlan(laid.pages[0]!.commands);
+    expect(plan.behind.map((c) => c.type)).toEqual(['shape']); // the backdrop
+    expect(plan.images).toHaveLength(1); // …and the picture over it
+    expect(plan.shapes).toHaveLength(0);
   });
 });
 

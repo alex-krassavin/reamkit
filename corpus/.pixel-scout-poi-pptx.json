@@ -55,21 +55,6 @@
   "aligned": false
  },
  {
-  "name": "45541_Footer.pptx",
-  "score": 0.9987,
-  "aligned": true
- },
- {
-  "name": "45541_Header.pptx",
-  "score": 0.9987,
-  "aligned": true
- },
- {
-  "name": "45545_Comment.pptx",
-  "score": 0.9987,
-  "aligned": true
- },
- {
   "name": "themes.pptx",
   "score": 0.9833,
   "aligned": true
@@ -127,6 +112,21 @@
  {
   "name": "LIBRE_OFFICE-100610-0.pptx",
   "score": 0.4032,
+  "aligned": true
+ },
+ {
+  "name": "45541_Header.pptx",
+  "score": 0.3995,
+  "aligned": true
+ },
+ {
+  "name": "45541_Footer.pptx",
+  "score": 0.3994,
+  "aligned": true
+ },
+ {
+  "name": "45545_Comment.pptx",
+  "score": 0.3981,
   "aligned": true
  },
  {
@@ -235,13 +235,13 @@
   "aligned": true
  },
  {
-  "name": "bug54570.pptx",
-  "score": 0.0702,
+  "name": "bug60715.pptx",
+  "score": 0.0696,
   "aligned": true
  },
  {
-  "name": "bug60715.pptx",
-  "score": 0.0696,
+  "name": "bug54570.pptx",
+  "score": 0.0617,
   "aligned": true
  },
  {
@@ -405,13 +405,13 @@
   "aligned": true
  },
  {
-  "name": "bug64693.pptx",
-  "score": 0.0035,
+  "name": "bug58144-headers-footers-2007.pptx",
+  "score": 0.0034,
   "aligned": true
  },
  {
-  "name": "bug58144-headers-footers-2007.pptx",
-  "score": 0.0034,
+  "name": "bug64693.pptx",
+  "score": 0.0031,
   "aligned": true
  },
  {

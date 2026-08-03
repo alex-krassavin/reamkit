@@ -7343,7 +7343,10 @@ class PageAssembler {
         ...this.pageBorderItems(),
         ...this.columnSeparatorItems(),
         ...header.commands,
-        ...PageAssembler.byZ(this.floatsBehind),
+        // §20.4.2.3 — what the page puts behind its content paints before all
+        // of it, in this order, rather than riding the passes where every
+        // shape lands on top of every image.
+        ...PageAssembler.byZ(this.floatsBehind).map((item) => ({ ...item, behind: true })),
         ...this.current,
         ...PageAssembler.byZ(this.floatsFront),
         ...this.renderNotesBand(),
