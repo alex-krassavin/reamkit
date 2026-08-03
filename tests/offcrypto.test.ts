@@ -2,6 +2,10 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
+import {
+  WrongPasswordError as PublicWrongPasswordError,
+  isEncryptedPackage as publicIsEncryptedPackage,
+} from '@/index';
 import { Ream } from '@/core/converter/ream';
 import { WrongPasswordError, decryptPackage, isEncryptedPackage } from '@/core/crypto/offcrypto';
 import { sha1 } from '@/core/crypto/primitives';
@@ -86,5 +90,24 @@ describe('Ream.parse on an encrypted source', () => {
 
   it('…and reports a wrong one as a wrong password', () => {
     expect(() => Ream.parse(real(STANDARD), { password: 'nope' })).toThrow(WrongPasswordError);
+  });
+
+  it('can be asked about before parsing, through the package', () => {
+    // A caller that means to prompt for a password wants to know BEFORE the
+    // parse throws — the same answer the reader uses to decide to decrypt.
+    expect(publicIsEncryptedPackage).toBe(isEncryptedPackage);
+    expect(publicIsEncryptedPackage(real(AGILE))).toBe(true);
+    expect(publicIsEncryptedPackage(real('Spill.xlsx'))).toBe(false);
+  });
+
+  it('throws the error the package exports, so a caller can catch it by type', () => {
+    expect(PublicWrongPasswordError).toBe(WrongPasswordError);
+    try {
+      Ream.parse(real(AGILE), { password: 'nope' });
+      expect.unreachable('a wrong password must throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(PublicWrongPasswordError);
+      expect((err as Error).name).toBe('WrongPasswordError');
+    }
   });
 });

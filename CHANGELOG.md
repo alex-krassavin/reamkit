@@ -3,6 +3,16 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.21.0
+
+### Added
+
+- **`WrongPasswordError` is exported.** The wrong password for a protected
+  document has thrown this since 1.20.0, but the class itself stayed inside,
+  so the one thing a caller wants to do with it — tell a wrong password from a
+  broken file and ask again — meant matching `err.name` against a string.
+  It is on the package now, and `err instanceof WrongPasswordError` says it.
+
 ## 1.20.0
 
 ### Added

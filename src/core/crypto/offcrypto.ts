@@ -26,6 +26,7 @@ import {
 
 /** Thrown when the bytes are encrypted and the password does not open them. */
 export class WrongPasswordError extends Error {
+  /** @param message The message to carry; the default states the failure. */
   constructor(message = 'Wrong password for this document') {
     super(message);
     this.name = 'WrongPasswordError';

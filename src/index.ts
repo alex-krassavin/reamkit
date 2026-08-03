@@ -90,6 +90,9 @@ export { xlsxReader, readXlsx } from '@/excel/xlsx-reader';
 // The object face: parse once into the FlowDoc interlayer, convert many.
 export { Ream } from '@/core/converter/ream';
 export type { ReamConvertOptions, ReamParseOptions, ReamTarget } from '@/core/converter/ream';
+// A protected document, from the outside: ask before parsing whether the bytes
+// need a password, and catch by type when the one given does not open them.
+export { isEncryptedPackage, WrongPasswordError } from '@/core/crypto/offcrypto';
 export { createConverter } from '@/core/converter/facade';
 export type {
   Converter,
