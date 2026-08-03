@@ -429,8 +429,14 @@ function drawingPart(
   slidePath: string,
   data: { readonly path: string; readonly data: Uint8Array },
 ): { readonly path: string; readonly data: Uint8Array } | undefined {
-  const ext = poFindDescendant(parseXml(data.data)[0] ?? {}, 'dsp:dataModelExt');
-  const extRelId = ext ? poAttr(ext, 'relId') : undefined;
+  // Every root, not just the first: with `preserveOrder` the XML declaration is
+  // a node of its own, so a search that starts at [0] finds nothing and every
+  // diagram on the slide fell through to the same fallback drawing —
+  // tdf125551 has four and drew one of them four times.
+  const extRelId = parseXml(data.data)
+    .map((root) => poFindDescendant(root, 'dsp:dataModelExt'))
+    .map((ext) => (ext ? poAttr(ext, 'relId') : undefined))
+    .find((id) => id !== undefined);
   const bySlide =
     extRelId !== undefined
       ? pkg.getPartRelationships(slidePath).find((r) => r.id === extRelId)
@@ -441,12 +447,14 @@ function drawingPart(
   }
   const own = pkg.getPartRelationships(data.path).find((r) => r.type.endsWith('/diagramDrawing'));
   if (own) return pkg.resolveRelatedPart(data.path, own);
-  // Last resort: the slide's own drawing relationship, for a deck with one
-  // diagram and no extension naming it.
+  // Last resort: the slide's own drawing relationship — but only when there is
+  // exactly ONE, since with several there is nothing to say which is whose.
   const onSlide = pkg
     .getPartRelationships(slidePath)
-    .find((r) => r.type.endsWith('/diagramDrawing'));
-  return onSlide ? pkg.resolveRelatedPart(slidePath, onSlide) : undefined;
+    .filter((r) => r.type.endsWith('/diagramDrawing'));
+  return onSlide.length === 1 && onSlide[0]
+    ? pkg.resolveRelatedPart(slidePath, onSlide[0])
+    : undefined;
 }
 
 // The placeholder cascade + colour resolver for a slide, derived from its

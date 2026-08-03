@@ -1335,6 +1335,53 @@ describe('SmartArt diagrams (E-SMARTART SA0)', () => {
     expect(shapeTexts(Ream.parse(deck))).toContain('NodeA');
   });
 
+  it('gives each diagram on the slide ITS drawing, not the first one', () => {
+    // tdf125551 carries four, each naming its own through `dsp:dataModelExt`.
+    // Resolved by a slide-wide fallback they were one diagram drawn four times.
+    const frame = (dm: string): string =>
+      `<p:graphicFrame>` +
+      `<p:xfrm><a:off x="0" y="0"/><a:ext cx="2743200" cy="1371600"/></p:xfrm>` +
+      `<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram">` +
+      `<dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" ` +
+      `r:dm="${dm}" r:lo="rIdLo" r:qs="rIdQs" r:cs="rIdCs"/>` +
+      `</a:graphicData></a:graphic></p:graphicFrame>`;
+    const enc = new TextEncoder();
+    const drawing = (text: string): Uint8Array =>
+      enc.encode(
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+          `<dsp:drawing xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" xmlns:a="${A_MAIN}">` +
+          `<dsp:spTree><dsp:sp><dsp:spPr>` +
+          `<a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+          `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>${srgbFill('4472C4')}</dsp:spPr>` +
+          `<dsp:txBody><a:bodyPr/><a:p><a:r><a:t>${text}</a:t></a:r></a:p></dsp:txBody>` +
+          `</dsp:sp></dsp:spTree></dsp:drawing>`,
+      );
+    const data = (relId: string): Uint8Array =>
+      enc.encode(
+        `<?xml version="1.0"?>\n<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram">` +
+          `<dgm:extLst><a:ext xmlns:a="${A_MAIN}" uri="{x}">` +
+          `<dsp:dataModelExt xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" relId="${relId}"/>` +
+          `</a:ext></dgm:extLst></dgm:dataModel>`,
+      );
+    const doc = Ream.parse(
+      buildPptx([frame('rIdD1') + frame('rIdD2')], {
+        slideRels: [
+          `<Relationship Id="rIdD1" Type="${DIAGRAM_DATA_REL}" Target="../diagrams/data1.xml"/>` +
+            `<Relationship Id="rIdD2" Type="${DIAGRAM_DATA_REL}" Target="../diagrams/data2.xml"/>` +
+            `<Relationship Id="rIdW1" Type="${DIAGRAM_DRAWING_REL}" Target="../diagrams/drawing1.xml"/>` +
+            `<Relationship Id="rIdW2" Type="${DIAGRAM_DRAWING_REL}" Target="../diagrams/drawing2.xml"/>`,
+        ],
+        media: {
+          'ppt/diagrams/data1.xml': data('rIdW1'),
+          'ppt/diagrams/data2.xml': data('rIdW2'),
+          'ppt/diagrams/drawing1.xml': drawing('First'),
+          'ppt/diagrams/drawing2.xml': drawing('Second'),
+        },
+      }),
+    );
+    expect(shapeTexts(doc).sort()).toEqual(['First', 'Second']);
+  });
+
   it('says so when the drawing override holds no shapes at all', () => {
     const stub =
       `<?xml version="1.0"?>\n<dsp:drawing xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" ` +

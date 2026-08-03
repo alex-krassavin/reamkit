@@ -65,11 +65,6 @@
   "aligned": true
  },
  {
-  "name": "customGeo.pptx",
-  "score": 0.5189,
-  "aligned": true
- },
- {
   "name": "aascu.org_workarea_downloadasset.aspx_id=5864.pptx",
   "score": 0.5097,
   "aligned": true
@@ -115,13 +110,18 @@
   "aligned": true
  },
  {
-  "name": "63200.pptx",
-  "score": 0.3767,
+  "name": "bug68703.pptx",
+  "score": 0.3446,
   "aligned": true
  },
  {
-  "name": "bug68703.pptx",
-  "score": 0.3446,
+  "name": "customGeo.pptx",
+  "score": 0.3379,
+  "aligned": true
+ },
+ {
+  "name": "63200.pptx",
+  "score": 0.2994,
   "aligned": true
  },
  {
@@ -132,11 +132,6 @@
  {
   "name": "table_test.pptx",
   "score": 0.2728,
-  "aligned": true
- },
- {
-  "name": "keyframes.pptx",
-  "score": 0.2526,
   "aligned": true
  },
  {
@@ -151,17 +146,17 @@
  },
  {
   "name": "aascu.org_hbcu_leadershipsummit_cooper_.pptx",
-  "score": 0.1976,
-  "aligned": true
- },
- {
-  "name": "54542_cropped_bitmap.pptx",
-  "score": 0.194,
+  "score": 0.1965,
   "aligned": true
  },
  {
   "name": "layouts.pptx",
   "score": 0.1929,
+  "aligned": true
+ },
+ {
+  "name": "54542_cropped_bitmap.pptx",
+  "score": 0.1909,
   "aligned": true
  },
  {
@@ -182,6 +177,11 @@
  {
   "name": "bug60993.pptx",
   "score": 0.1072,
+  "aligned": true
+ },
+ {
+  "name": "keyframes.pptx",
+  "score": 0.098,
   "aligned": true
  },
  {
@@ -215,11 +215,6 @@
   "aligned": true
  },
  {
-  "name": "60810.pptx",
-  "score": 0.0479,
-  "aligned": true
- },
- {
   "name": "chart-slide-bg.pptx",
   "score": 0.0479,
   "aligned": true
@@ -227,6 +222,11 @@
  {
   "name": "table-with-theme.pptx",
   "score": 0.0403,
+  "aligned": true
+ },
+ {
+  "name": "60810.pptx",
+  "score": 0.0398,
   "aligned": true
  },
  {
@@ -241,7 +241,7 @@
  },
  {
   "name": "pptx2svg.pptx",
-  "score": 0.0365,
+  "score": 0.0359,
   "aligned": true
  },
  {
@@ -296,7 +296,7 @@
  },
  {
   "name": "2411-Performance_Up.pptx",
-  "score": 0.0104,
+  "score": 0.012,
   "aligned": true
  },
  {
