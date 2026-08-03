@@ -1,42 +1,52 @@
 [
  {
-  "name": "tdf105688.docx",
-  "score": 0.1591,
+  "name": "conditionalstyles-tbllook.docx",
+  "score": 0.159,
   "aligned": true
  },
  {
-  "name": "fdo78420.docx",
-  "score": 0.0469,
-  "aligned": false
- },
- {
-  "name": "floatingtbl_with_formula.docx",
-  "score": 0.0079,
+  "name": "tdf123104.docx",
+  "score": 0.0688,
   "aligned": true
  },
  {
-  "name": "table-floating.docx",
-  "score": 0.0057,
+  "name": "tdf119760_positionCellBorder.docx",
+  "score": 0.0402,
   "aligned": true
  },
  {
-  "name": "PageSpecificHeadFoot.docx",
-  "score": 0.0053,
+  "name": "tdf118812_tableStyles-comprehensive.docx",
+  "score": 0.0173,
   "aligned": true
  },
  {
-  "name": "floating-table-position.docx",
-  "score": 0.0014,
+  "name": "tdf112103_tablebgnofill.docx",
+  "score": 0.0058,
   "aligned": true
  },
  {
-  "name": "tdf101627.docx",
-  "score": 0.0001,
+  "name": "tdf129888dml.docx",
+  "score": 0.0019,
   "aligned": true
  },
  {
-  "name": "tblppr-shape.docx",
-  "score": 0,
+  "name": "table-black_fill.docx",
+  "score": 0.0019,
+  "aligned": true
+ },
+ {
+  "name": "hidemark.docx",
+  "score": 0.0015,
+  "aligned": true
+ },
+ {
+  "name": "table-style-cell-back-color.docx",
+  "score": 0.0006,
+  "aligned": true
+ },
+ {
+  "name": "gridbefore.docx",
+  "score": 0.0004,
   "aligned": true
  }
 ]

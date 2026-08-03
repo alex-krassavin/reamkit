@@ -5735,6 +5735,55 @@ function alignmentOffset(
   return 0;
 }
 
+/**
+ * §17.4.85 `w:vMerge` — a vertical merge is ONE cell, so its continuation rows
+ * are painted with the START cell's shading. Word writes the fill on the cell
+ * that opens the merge and nothing on the rest; painting only what is written,
+ * tdf123104.docx's three-row banner came out a staircase of yellow with white
+ * notches where every merged cell continued.
+ */
+function withMergedShading(table: Table, roles: ReadonlyArray<ReadonlyArray<MergeRole>>): Table {
+  // A merge runs down a COLUMN, and rows hold different numbers of cells, so
+  // the walk up is by column position — not by the cell's place in its row.
+  const columnOf = table.rows.map((row) => {
+    const at: Array<number> = [];
+    let col = row.properties.gridBefore ?? 0;
+    for (const cell of row.cells) {
+      at.push(col);
+      col += Math.max(1, cell.properties.colSpan ?? 1);
+    }
+    return at;
+  });
+  let changed = false;
+  const rows = table.rows.map((row, r) => {
+    const cells = row.cells.map((cell, c) => {
+      const role = roles[r]?.[c] ?? 'standalone';
+      if (role !== 'middle' && role !== 'end') return cell;
+      if (cell.properties.shading?.colorHex) return cell;
+      const col = columnOf[r]?.[c];
+      if (col === undefined) return cell;
+      for (let up = r - 1; up >= 0; up--) {
+        const idx = columnOf[up]?.indexOf(col) ?? -1;
+        if (idx < 0) break;
+        const above = table.rows[up]?.cells[idx];
+        const aboveRole = roles[up]?.[idx] ?? 'standalone';
+        if (!above) break;
+        if (aboveRole === 'start') {
+          const shading = above.properties.shading;
+          if (!shading?.colorHex) break;
+          changed = true;
+          return { ...cell, properties: { ...cell.properties, shading } };
+        }
+        if (aboveRole !== 'middle') break;
+      }
+      return cell;
+    });
+    return { ...row, cells };
+  });
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- `changed` is set inside the map callback; flow analysis cannot see it.
+  return changed ? { ...table, rows } : table;
+}
+
 function layoutTableBlock(
   table: Table,
   options: StyledRenderOptions,
@@ -5748,6 +5797,7 @@ function layoutTableBlock(
   const mergeRoles: Array<Array<MergeRole>> = table.rows.map((r) =>
     r.cells.map((c) => c.properties.merge ?? 'standalone'),
   );
+  table = withMergedShading(table, mergeRoles);
 
   const rows: Array<RowLayout> = [];
   const colCount = columnWidthsPt.length;
