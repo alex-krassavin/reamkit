@@ -77,6 +77,18 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   return [r + m, g + m, b + m];
 }
 
+// IEC 61966-2-1 — the sRGB transfer function and its inverse. `shade` and
+// `tint` are defined on the light a colour stands for, not on the byte that
+// encodes it.
+function toLinear(c: number): number {
+  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+
+function toSrgb(c: number): number {
+  const v = clamp01(c);
+  return v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
+}
+
 /**
  * Apply DrawingML colour transforms ({@link ColorMod}s) to a 6-hex value,
  * returning a 6-hex value. `shade`/`tint` scale in RGB; `lumMod`/`lumOff` adjust
@@ -94,13 +106,19 @@ export function applyColorMods(hex: string, mods: ReadonlyArray<ColorMod>): stri
   let b = (n & 255) / 255;
   for (const m of mods) {
     if (m.kind === 'shade') {
-      r *= m.val;
-      g *= m.val;
-      b *= m.val;
+      // §20.1.2.3.31 — a shade is a fraction of the input colour, and the
+      // fraction is taken on LINEAR light, not on the gamma-encoded byte. Done
+      // on the byte, the 51 % shade the Office theme builds its gradients from
+      // came out near-black where both references draw a medium red
+      // (fdo87488.docx's diagram).
+      r = toSrgb(toLinear(r) * m.val);
+      g = toSrgb(toLinear(g) * m.val);
+      b = toSrgb(toLinear(b) * m.val);
     } else if (m.kind === 'tint') {
-      r = r * m.val + (1 - m.val);
-      g = g * m.val + (1 - m.val);
-      b = b * m.val + (1 - m.val);
+      // §20.1.2.3.34 — its twin toward white, on the same linear light.
+      r = toSrgb(toLinear(r) * m.val + (1 - m.val));
+      g = toSrgb(toLinear(g) * m.val + (1 - m.val));
+      b = toSrgb(toLinear(b) * m.val + (1 - m.val));
     } else if (m.kind === 'lumMod' || m.kind === 'lumOff') {
       const [h, s, l] = rgbToHsl(r, g, b);
       const l2 = m.kind === 'lumMod' ? l * m.val : clamp01(l + m.val);
