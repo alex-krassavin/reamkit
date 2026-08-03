@@ -2706,7 +2706,15 @@ function layoutMetafileBlock(
   const placed = layoutImageBlock(image, undefined, contentWidth, maxHeight, box);
   const widthPt = placed.widthPt;
   const heightPt = placed.heightPt;
-  const layout = metafileDrawing(pic, widthPt, heightPt, options, fontResources);
+  const layout = rotateDrawing(
+    metafileDrawing(pic, widthPt, heightPt, options, fontResources),
+    // §20.1.7.6 `a:xfrm @rot` — the drawing's own turn, clockwise. A chart
+    // block has no rotation of its own, so the primitives take it: tdf103001
+    // .docx leans two of its three cliparts and we stood all three upright.
+    (image.rotation60k ?? 0) / 60000,
+    widthPt / 2,
+    heightPt / 2,
+  );
   const pp = image.paragraphProperties;
   return {
     kind: 'chart',
@@ -2719,6 +2727,42 @@ function layoutMetafileBlock(
     figureRole: 'Image',
     ...(image.altText ? { altText: image.altText } : {}),
     ...(image.float ? { float: image.float } : {}),
+  };
+}
+
+/** The same primitives, turned `deg` CLOCKWISE about a point of the local frame. */
+function rotateDrawing(layout: ChartLayout, deg: number, cx: number, cy: number): ChartLayout {
+  if (!deg) return layout;
+  // The frame is y-up, so a clockwise turn on the page is a negative angle here.
+  const a = (-deg * Math.PI) / 180;
+  const cos = Math.cos(a);
+  const sin = Math.sin(a);
+  const at = (x: number, y: number): { x: number; y: number } => ({
+    x: cx + (x - cx) * cos - (y - cy) * sin,
+    y: cy + (x - cx) * sin + (y - cy) * cos,
+  });
+  return {
+    shapes: layout.shapes.map((sh) => ({
+      ...sh,
+      paths: sh.paths.map((path) => ({
+        ...path,
+        segments: path.segments.map((seg) => {
+          if (seg.op === 'close') return seg;
+          if (seg.op === 'cubic') {
+            const c1 = at(seg.x1, seg.y1);
+            const c2 = at(seg.x2, seg.y2);
+            const e = at(seg.x, seg.y);
+            return { op: 'cubic' as const, x1: c1.x, y1: c1.y, x2: c2.x, y2: c2.y, x: e.x, y: e.y };
+          }
+          const p = at(seg.x, seg.y);
+          return { op: seg.op, x: p.x, y: p.y };
+        }),
+      })),
+    })),
+    texts: layout.texts.map((t) => {
+      const p = at(t.x, t.y);
+      return { ...t, x: p.x, y: p.y, rotationDeg: (t.rotationDeg ?? 0) - deg };
+    }),
   };
 }
 
