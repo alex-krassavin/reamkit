@@ -1125,11 +1125,6 @@
   "aligned": true
  },
  {
-  "name": "cjklist44.docx",
-  "score": 0.0058,
-  "aligned": false
- },
- {
   "name": "n780563.docx",
   "score": 0.0058,
   "aligned": true
@@ -1183,11 +1178,6 @@
   "name": "sdt-picture-databinding.docx",
   "score": 0.0054,
   "aligned": true
- },
- {
-  "name": "cjklist35.docx",
-  "score": 0.0054,
-  "aligned": false
  },
  {
   "name": "tdf123355.docx",
@@ -1295,6 +1285,11 @@
   "aligned": true
  },
  {
+  "name": "chtoutline.docx",
+  "score": 0.0046,
+  "aligned": true
+ },
+ {
   "name": "tdf123351_UnderlineGroupSapeText.docx",
   "score": 0.0046,
   "aligned": true
@@ -1320,23 +1315,13 @@
   "aligned": true
  },
  {
+  "name": "cjklist44.docx",
+  "score": 0.0045,
+  "aligned": false
+ },
+ {
   "name": "Chart_Plot_BorderLine_Style.docx",
   "score": 0.0045,
-  "aligned": true
- },
- {
-  "name": "cjklist30.docx",
-  "score": 0.0044,
-  "aligned": true
- },
- {
-  "name": "chtoutline.docx",
-  "score": 0.0044,
-  "aligned": true
- },
- {
-  "name": "cjklist31.docx",
-  "score": 0.0043,
   "aligned": true
  },
  {
@@ -1363,6 +1348,11 @@
   "name": "n764005.docx",
   "score": 0.0042,
   "aligned": true
+ },
+ {
+  "name": "cjklist35.docx",
+  "score": 0.0042,
+  "aligned": false
  },
  {
   "name": "fdo77718.docx",
@@ -1415,6 +1405,11 @@
   "aligned": true
  },
  {
+  "name": "cjklist30.docx",
+  "score": 0.0039,
+  "aligned": true
+ },
+ {
   "name": "tdf121659_loseColumnBrNextToShape.docx",
   "score": 0.0039,
   "aligned": true
@@ -1450,9 +1445,9 @@
   "aligned": true
  },
  {
-  "name": "cjklist34.docx",
+  "name": "cjklist31.docx",
   "score": 0.0038,
-  "aligned": false
+  "aligned": true
  },
  {
   "name": "IndexFieldFlagF.docx",
@@ -1488,6 +1483,11 @@
   "name": "fdo77727.docx",
   "score": 0.0037,
   "aligned": true
+ },
+ {
+  "name": "cjklist34.docx",
+  "score": 0.0037,
+  "aligned": false
  },
  {
   "name": "tdf131728.docx",
@@ -2780,11 +2780,6 @@
   "aligned": true
  },
  {
-  "name": "FDO74106.docx",
-  "score": 0.0006,
-  "aligned": true
- },
- {
   "name": "tdf113258_noBeforeAutospacing.docx",
   "score": 0.0006,
   "aligned": true
@@ -2811,6 +2806,11 @@
  },
  {
   "name": "table-style-cell-back-color.docx",
+  "score": 0.0006,
+  "aligned": true
+ },
+ {
+  "name": "FDO74106.docx",
   "score": 0.0006,
   "aligned": true
  },

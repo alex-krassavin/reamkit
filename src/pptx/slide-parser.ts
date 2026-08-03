@@ -980,7 +980,13 @@ function parseSlideParagraph(
   const indentLeft =
     marL !== undefined ? emuToPt(marL) : level > 0 ? emuToPt(level * 457200) : undefined;
   const hanging = (indent !== undefined ? emuToPt(indent) : (inherited.indentFirstLine ?? 0)) < 0;
-  const marker = bulletMarker(pPr, level, counters, cascade?.bulletFor(ph, level));
+  // Each part of a bullet inherits on its own: the paragraph may restate the
+  // size and leave the character to its level.
+  const bullet: LevelBullet | undefined = {
+    ...cascade?.bulletFor(ph, level),
+    ...parseBullet(pPr, colors),
+  };
+  const marker = bulletMarker(bullet, level, counters);
   if (marker !== undefined) {
     // §21.1.2.4.2/.3 — a bullet is drawn at the size of the TEXT IT LEADS,
     // scaled by `a:buSzPct` or overruled by `a:buSzPts`. Drawn at the level's
@@ -992,7 +998,7 @@ function parseSlideParagraph(
       // the marker is what carries the text out to the body indent. Written as
       // two spaces the words began wherever the dot happened to end.
       text: marker + (hanging ? '\t' : '  '),
-      properties: bulletProps(base, pPr, colors),
+      properties: bulletProps(base, bullet),
       listMarker: true,
     });
   }
@@ -1025,31 +1031,16 @@ function parseSlideParagraph(
 // §21.1.2.4 — the marker's own formatting: the size of the text it leads (a
 // percentage of it, or a size stated outright) and the colour the paragraph
 // gives it.
-function bulletProps(
-  base: RunProperties,
-  pPr: PoNode | undefined,
-  colors: ColorResolver,
-): RunProperties {
-  const child = (tag: string): PoNode | undefined =>
-    pPr ? poChildren(pPr).find((c) => poIs(c, tag)) : undefined;
-  const pct = poIntAttr(child('a:buSzPct'), 'val');
-  const pts = poIntAttr(child('a:buSzPts'), 'val');
-  const clr = child('a:buClr');
-  const colorHex = clr
-    ? poChildren(clr)
-        .map((c) => resolveColorNode(c, colors))
-        .find((hex) => hex !== undefined)
-    : undefined;
+function bulletProps(base: RunProperties, bullet: LevelBullet): RunProperties {
   const sizePt =
-    pts !== undefined
-      ? pts / 100
-      : pct !== undefined && base.fontSizePt !== undefined
-        ? (base.fontSizePt * pct) / 100000
-        : undefined;
+    bullet.sizePts ??
+    (bullet.sizePct !== undefined && base.fontSizePt !== undefined
+      ? base.fontSizePt * bullet.sizePct
+      : undefined);
   return {
     ...base,
     ...(sizePt !== undefined ? { fontSizePt: pt(sizePt) } : {}),
-    ...(colorHex !== undefined ? { colorHex } : {}),
+    ...(bullet.colorHex !== undefined ? { colorHex: bullet.colorHex } : {}),
   };
 }
 
@@ -1058,10 +1049,9 @@ function bulletProps(
 // a:buNone suppresses; a:buChar is literal; a:buAutoNum advances the per-level
 // counter and formats it (PX6b).
 function bulletMarker(
-  pPr: PoNode | undefined,
+  bullet: LevelBullet | undefined,
   level: number,
   counters: Array<number>,
-  inherited: LevelBullet | undefined,
 ): string | undefined {
   // A paragraph states a bullet only where it differs from the one its level
   // already carries — from the prototype, the master's family style or the
@@ -1069,14 +1059,13 @@ function bulletMarker(
   // list that leaves its dot to the master came out flat (themes.pptx writes
   // one bare line on its second slide and the dot in front of it is nine
   // levels up).
-  const bullet = parseBullet(pPr) ?? inherited;
-  if (!bullet || bullet.kind === 'none') return undefined;
-  if (bullet.kind === 'char') return bullet.char;
+  if (!bullet || bullet.kind === 'none' || bullet.kind === undefined) return undefined;
+  if (bullet.kind === 'char') return bullet.char ?? '•';
   const prev = counters[level];
-  const n = (prev === undefined ? bullet.startAt - 1 : prev) + 1;
+  const n = (prev === undefined ? (bullet.startAt ?? 1) - 1 : prev) + 1;
   counters[level] = n;
   counters.length = level + 1; // deeper levels restart
-  return `${n}${autoNumSuffix(bullet.type)}`;
+  return `${n}${autoNumSuffix(bullet.type ?? 'arabicPeriod')}`;
 }
 
 // The trailing punctuation of an a:buAutoNum type (…Period → '.', …ParenR/Both →

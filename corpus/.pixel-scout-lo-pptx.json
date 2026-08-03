@@ -680,11 +680,6 @@
   "aligned": true
  },
  {
-  "name": "tdf169524.pptx",
-  "score": 0.0108,
-  "aligned": true
- },
- {
   "name": "group.pptx",
   "score": 0.0107,
   "aligned": true
@@ -745,12 +740,12 @@
   "aligned": true
  },
  {
-  "name": "accent-color.pptx",
+  "name": "tdf131905.pptx",
   "score": 0.0087,
   "aligned": true
  },
  {
-  "name": "tdf131905.pptx",
+  "name": "accent-color.pptx",
   "score": 0.0087,
   "aligned": true
  },
@@ -805,11 +800,6 @@
   "aligned": true
  },
  {
-  "name": "ShapeLineProperties.pptx",
-  "score": 0.0074,
-  "aligned": true
- },
- {
   "name": "master-slides.pptx",
   "score": 0.0066,
   "aligned": true
@@ -850,8 +840,18 @@
   "aligned": true
  },
  {
+  "name": "tdf169524.pptx",
+  "score": 0.0059,
+  "aligned": true
+ },
+ {
   "name": "formatting-bullet-indent.pptx",
   "score": 0.0057,
+  "aligned": true
+ },
+ {
+  "name": "ShapeLineProperties.pptx",
+  "score": 0.0055,
   "aligned": true
  },
  {
@@ -937,11 +937,6 @@
  {
   "name": "tdf160487.pptx",
   "score": 0.0041,
-  "aligned": true
- },
- {
-  "name": "tdf128550.pptx",
-  "score": 0.004,
   "aligned": true
  },
  {
@@ -1105,6 +1100,11 @@
   "aligned": true
  },
  {
+  "name": "tdf126234.pptx",
+  "score": 0.0026,
+  "aligned": true
+ },
+ {
   "name": "tdf128212.pptx",
   "score": 0.0026,
   "aligned": true
@@ -1135,22 +1135,17 @@
   "aligned": true
  },
  {
-  "name": "tdf126234.pptx",
-  "score": 0.0024,
-  "aligned": true
- },
- {
   "name": "layout-clrmap-override.pptx",
   "score": 0.0024,
   "aligned": true
  },
  {
-  "name": "tdf115394.pptx",
+  "name": "tdf168835.pptx",
   "score": 0.0024,
   "aligned": true
  },
  {
-  "name": "tdf168835.pptx",
+  "name": "tdf115394.pptx",
   "score": 0.0024,
   "aligned": true
  },
@@ -1161,6 +1156,11 @@
  },
  {
   "name": "tdf103473.pptx",
+  "score": 0.0023,
+  "aligned": true
+ },
+ {
+  "name": "tdf128550.pptx",
   "score": 0.0023,
   "aligned": true
  },
@@ -1260,12 +1260,12 @@
   "aligned": true
  },
  {
-  "name": "tdf106638.pptx",
+  "name": "NumberedList-12ab-ab-34.pptx",
   "score": 0.0018,
   "aligned": true
  },
  {
-  "name": "NumberedList-12ab-ab-34.pptx",
+  "name": "tdf106638.pptx",
   "score": 0.0018,
   "aligned": true
  },
@@ -1410,11 +1410,6 @@
   "aligned": true
  },
  {
-  "name": "tdf79082.pptx",
-  "score": 0.0011,
-  "aligned": true
- },
- {
   "name": "tdf119649.pptx",
   "score": 0.0011,
   "aligned": true
@@ -1427,6 +1422,11 @@
  {
   "name": "bnc591147.pptx",
   "score": 0.0011,
+  "aligned": true
+ },
+ {
+  "name": "tdf79082.pptx",
+  "score": 0.001,
   "aligned": true
  },
  {
@@ -1470,11 +1470,6 @@
   "aligned": true
  },
  {
-  "name": "n83889.pptx",
-  "score": 0.001,
-  "aligned": true
- },
- {
   "name": "hyperlinkOnImage.pptx",
   "score": 0.001,
   "aligned": true
@@ -1486,6 +1481,11 @@
  },
  {
   "name": "tdf114913.pptx",
+  "score": 0.0009,
+  "aligned": true
+ },
+ {
+  "name": "bulletColor.pptx",
   "score": 0.0009,
   "aligned": true
  },
@@ -1585,11 +1585,6 @@
   "aligned": true
  },
  {
-  "name": "bulletColor.pptx",
-  "score": 0.0006,
-  "aligned": true
- },
- {
   "name": "tdf111786.pptx",
   "score": 0.0006,
   "aligned": true
@@ -1600,12 +1595,12 @@
   "aligned": true
  },
  {
-  "name": "bulletMarginAndIndent.pptx",
+  "name": "tdf62255.pptx",
   "score": 0.0006,
   "aligned": true
  },
  {
-  "name": "tdf62255.pptx",
+  "name": "n83889.pptx",
   "score": 0.0006,
   "aligned": true
  },
@@ -1671,6 +1666,11 @@
  },
  {
   "name": "tdf131554.pptx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "bulletMarginAndIndent.pptx",
   "score": 0.0004,
   "aligned": true
  },
@@ -1785,6 +1785,11 @@
   "aligned": true
  },
  {
+  "name": "tdf148810_PARA_OUTLLEVEL.pptx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
   "name": "arc-validiert.pptx",
   "score": 0.0002,
   "aligned": true
@@ -1802,11 +1807,6 @@
  {
   "name": "presLeftAlign.pptx",
   "score": 0.0002,
-  "aligned": true
- },
- {
-  "name": "tdf148810_PARA_OUTLLEVEL.pptx",
-  "score": 0.0001,
   "aligned": true
  },
  {

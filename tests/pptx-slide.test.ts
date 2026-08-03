@@ -158,6 +158,34 @@ describe('pptx placeholder cascade (E-PPTX PX2)', () => {
     expect(run?.properties.bold).toBe(true);
   });
 
+  // A run states bold/italic/underline to turn them OFF as much as on:
+  // 45541_Header's master body style is bold and every slide's own runs say
+  // `b="0"`, so read as "bold when true, silent otherwise" the deck came out
+  // bold from end to end.
+  it('lets a run turn OFF the bold its master states', () => {
+    const styles =
+      `<p:txStyles><p:titleStyle><a:lvl1pPr><a:defRPr b="1" i="1" u="sng"/></a:lvl1pPr>` +
+      `</p:titleStyle><p:bodyStyle/><p:otherStyle/></p:txStyles>`;
+    const deck = (rPr: string) =>
+      firstShapeRun(
+        Ream.parse(
+          buildPptx(
+            [
+              `<p:sp><p:nvSpPr><p:cNvPr id="2" name="Title 1"/><p:cNvSpPr/>` +
+                `<p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr><p:spPr/>` +
+                `<p:txBody><a:bodyPr/><a:p><a:r>${rPr}<a:t>Plain</a:t></a:r></a:p>` +
+                `</p:txBody></p:sp>`,
+            ],
+            { layoutMaster: { layoutSpTree: LAYOUT_TITLE, txStyles: styles } },
+          ),
+        ),
+      );
+    expect(deck('<a:rPr lang="en"/>')?.properties.bold).toBe(true);
+    expect(deck('<a:rPr lang="en" b="0"/>')?.properties.bold).toBe(false);
+    expect(deck('<a:rPr lang="en" i="0"/>')?.properties.italic).toBe(false);
+    expect(deck('<a:rPr lang="en" u="none"/>')?.properties.underline).toBe('none');
+  });
+
   // §21.1.2.2.7 `@cap` — the text is DISPLAYED in capitals whatever it stores.
   // Stated in a master's title style it reaches every slide: themes.pptx writes
   // "Trade show" and shows TRADE SHOW.
@@ -208,6 +236,44 @@ describe('pptx placeholder cascade (E-PPTX PX2)', () => {
     // §17.3.1.12 — a hanging indent is itself a tab stop, and the tab after the
     // marker is what carries the text out to the body indent (marL 285750).
     expect(runs[0]?.text).toBe('–\t');
+  });
+
+  // §21.1.2.4.5 `a:buFont` — the character is stated IN THAT FACE, and the
+  // symbol faces are not alphabets: Wingdings `l` is a filled circle. Read as a
+  // letter it printed a column of `l`s down all eleven slides of 45541_Header.
+  // Its size and colour come from the level too, not only from the paragraph.
+  it('reads a symbol-font bullet, and takes its size and colour from the level', async () => {
+    const body =
+      `<p:txStyles><p:titleStyle/>` +
+      `<p:bodyStyle><a:lvl1pPr marL="342900" indent="-342900">` +
+      `<a:buClr><a:srgbClr val="00B0F0"/></a:buClr><a:buSzPct val="80000"/>` +
+      `<a:buFont typeface="Wingdings"/><a:buChar char="l"/>` +
+      `<a:defRPr sz="3200"/></a:lvl1pPr></p:bodyStyle><p:otherStyle/></p:txStyles>`;
+    const slide =
+      `<p:sp><p:nvSpPr><p:cNvPr id="3" name="Body 2"/><p:cNvSpPr/>` +
+      `<p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5486400" cy="914400"/></a:xfrm></p:spPr>` +
+      `<p:txBody><a:bodyPr/><a:p><a:r><a:rPr lang="en"/><a:t>Donors</a:t></a:r></a:p>` +
+      `</p:txBody></p:sp>`;
+    const pptx = buildPptx([slide], { layoutMaster: { txStyles: body } });
+    const marker = Ream.parse(pptx).flow.body.flatMap((el) =>
+      el.kind === 'shape' && el.shape.text
+        ? el.shape.text.content.flatMap((c) =>
+            c.kind === 'paragraph' ? c.paragraph.runs.filter((r) => r.listMarker) : [],
+          )
+        : [],
+    )[0];
+    expect(marker?.text.trim()).toBe('●'); // Wingdings `l` is a black circle
+    expect(marker?.properties.colorHex).toBe('00B0F0');
+    expect(marker?.properties.fontSizePt).toBeCloseTo(25.6, 5); // 80% of 32pt
+    // …and the font a document is RENDERED with may have no such glyph, which
+    // prints a box. The dot every text font carries says the same thing.
+    const file = PdfFile.parse(await Ream.parse(pptx).convert('pdf', { fonts: FONTS }));
+    const drawn = extractPageText(file, file.pages()[0]!)
+      .map((r) => r.text)
+      .join('');
+    expect(drawn).toContain('•');
+    expect(drawn).not.toContain('●');
   });
 
   // The page, the band and a table cell all apply a paragraph's indent; a TEXT

@@ -65,18 +65,18 @@
   "aligned": false
  },
  {
+  "name": "45541_Footer.pptx",
+  "score": 0.3991,
+  "aligned": true
+ },
+ {
   "name": "45541_Header.pptx",
   "score": 0.3991,
   "aligned": true
  },
  {
-  "name": "45541_Footer.pptx",
-  "score": 0.3989,
-  "aligned": true
- },
- {
   "name": "45545_Comment.pptx",
-  "score": 0.3977,
+  "score": 0.3978,
   "aligned": true
  },
  {
@@ -196,7 +196,7 @@
  },
  {
   "name": "table-with-theme.pptx",
-  "score": 0.0403,
+  "score": 0.0404,
   "aligned": true
  },
  {
@@ -216,7 +216,7 @@
  },
  {
   "name": "pptx2svg.pptx",
-  "score": 0.0345,
+  "score": 0.0347,
   "aligned": true
  },
  {
@@ -271,7 +271,7 @@
  },
  {
   "name": "table-with-different-font-colors.pptx",
-  "score": 0.0132,
+  "score": 0.0133,
   "aligned": true
  },
  {

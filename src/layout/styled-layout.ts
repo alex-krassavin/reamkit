@@ -4207,7 +4207,11 @@ function collectFontResources(
 ): Map<string, FontResource> {
   const used = new Map<string, { parsed: ParsedTtf; gids: Set<number> }>();
   const addRun = (
-    run: { text: string; properties: { bold?: boolean; italic?: boolean; styleId?: string } },
+    run: {
+      text: string;
+      properties: { bold?: boolean; italic?: boolean; styleId?: string };
+      listMarker?: boolean;
+    },
     para: Paragraph,
   ) => {
     const resolved = resolveRunProperties(run.properties, para.properties, options.styles);
@@ -4226,8 +4230,10 @@ function collectFontResources(
     // emit phase encodes — otherwise a ligature glyph (e.g. fi) would be
     // rendered but pruned from the subset / absent from the /CIDSet and
     // /ToUnicode (PDF/A §6.3.5 / §6.3.8).
+    // A marker whose glyph the font lacks is drawn as another character
+    // (see {@link markerText}), so the subset must reserve THAT one.
     const shaped = shapeText(
-      run.text,
+      run.listMarker === true ? markerText(run.text, parsed) : run.text,
       parsed.glyphForCodepoint,
       parsed.advanceWidths,
       parsed.ligatures,
@@ -4986,9 +4992,10 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
     }
     const highlight = (plan.run.commentRangeRefs?.length ?? 0) > 0;
     for (const t of tokenizeText(plan.run.text)) {
+      const text = plan.run.listMarker === true ? markerText(t.text, plan.font.parsed) : t.text;
       tokens.push({
         kind: 'text',
-        text: t.text,
+        text,
         isSpace: t.isSpace,
         ...(t.tab ? { tab: true as const } : {}),
         ...(plan.run.href !== undefined ? { href: plan.run.href } : {}),
@@ -5001,12 +5008,37 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         font: plan.font,
         fontSizePt: plan.fontSizePt,
         ...(plan.risePt !== undefined ? { risePt: plan.risePt } : {}),
-        widthPt: measureRunText(plan, t.text),
+        widthPt: measureRunText(plan, text),
         bidiLevel: 0,
       });
     }
   }
   return tokens;
+}
+
+/**
+ * A LIST MARKER the font has no glyph for, swapped for the dot every text font
+ * carries.
+ *
+ * §21.1.2.4.5 — a bullet is stated in a face of its own, and the symbol faces
+ * are not alphabets: Wingdings `l` is a filled circle, U+25CF once translated.
+ * The font a document is RENDERED with may have no such character — Roboto does
+ * not — and a missing glyph is a box: 45541_Header wore a row of them down
+ * eleven slides. The marker is the one place where the shape matters more than
+ * the code point, so it takes the nearest thing the font can draw.
+ *
+ * @param text The marker's text.
+ * @param font The font it is set in.
+ * @returns The text to draw.
+ */
+function markerText(text: string, parsed: ParsedTtf): string {
+  let out = '';
+  for (const ch of text) {
+    const cp = ch.codePointAt(0) ?? 0;
+    const missing = cp > 0x7f && parsed.glyphForCodepoint(cp) === 0;
+    out += missing && parsed.glyphForCodepoint(0x2022) !== 0 ? '\u2022' : ch;
+  }
+  return out;
 }
 
 /**
@@ -5075,7 +5107,8 @@ function tokenizePlansBidi(
     let curLevel = -1;
     const flush = (endExclusive: number) => {
       if (endExclusive <= bufStart) return;
-      const text = chars.slice(bufStart, endExclusive).join('');
+      const raw = chars.slice(bufStart, endExclusive).join('');
+      const text = plan.run.listMarker === true ? markerText(raw, plan.font.parsed) : raw;
       tokens.push({
         kind: 'text',
         text,

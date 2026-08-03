@@ -91,10 +91,20 @@ export function rPrToRunProps(rPr: PoNode | undefined, colors: ColorResolver): R
   const colorHex = solidFillColor(rPr, colors);
   const latin = poChildren(rPr).find((c) => poIs(c, 'a:latin'));
   const typeface = latin ? poAttr(latin, 'typeface')?.trim() : undefined;
+  // A run states these to turn them OFF as much as on: the body style of
+  // 45541_Header's master is bold and every slide's own runs say `b="0"`, so
+  // read as "bold when true, silent otherwise" the whole deck came out bold.
+  const flag = (name: string): boolean | undefined => {
+    const v = poAttr(rPr, name);
+    return v === undefined ? undefined : isTrue(v);
+  };
+  const [b, i] = [flag('b'), flag('i')];
   return {
-    ...(isTrue(poAttr(rPr, 'b')) ? { bold: true } : {}),
-    ...(isTrue(poAttr(rPr, 'i')) ? { italic: true } : {}),
-    ...(u !== undefined && u !== 'none' ? { underline: 'single' as const } : {}),
+    ...(b !== undefined ? { bold: b } : {}),
+    ...(i !== undefined ? { italic: i } : {}),
+    ...(u !== undefined
+      ? { underline: u === 'none' ? ('none' as const) : ('single' as const) }
+      : {}),
     ...(sz !== undefined ? { fontSizePt: pt(sz / 100) } : {}),
     ...(colorHex ? { colorHex } : {}),
     ...(typeface ? { fontFamily: { ascii: typeface } } : {}),

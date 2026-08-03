@@ -21,7 +21,9 @@ import type { PoNode } from '@/core/po-helpers';
 import type { PlaceholderRef, ShapeBoxEmu } from '@/pptx/sp-helpers';
 
 import { emuToPt, pt } from '@/core/ir';
+import { resolveColorNode } from '@/core/drawingml/colors';
 import { poAttr, poChildren, poIntAttr, poIs } from '@/core/po-helpers';
+import { fromSymbolFont } from '@/core/metafile/symbol-fonts';
 import { parsePh, parseXfrmBox, rPrToRunProps } from '@/pptx/sp-helpers';
 
 /**
@@ -72,29 +74,75 @@ interface LevelStyle {
  * it differs from this: themes.pptx's second slide writes one bare line, and
  * the dot in front of it is the master's body style, nine levels up.
  */
-export type LevelBullet =
-  | { readonly kind: 'none' }
-  | { readonly kind: 'char'; readonly char: string }
-  | { readonly kind: 'autoNum'; readonly type: string; readonly startAt: number };
+export interface LevelBullet {
+  /** What it draws: nothing at all, a character, or a number that counts. */
+  readonly kind?: 'none' | 'char' | 'autoNum';
+  /** `a:buChar` — the character, already read out of the face that states it. */
+  readonly char?: string;
+  /** `a:buAutoNum @type`/`@startAt` — the numbering and where it starts. */
+  readonly type?: string;
+  readonly startAt?: number;
+  /** §21.1.2.4.2/.3 — its size, as a fraction of the text or in points. */
+  readonly sizePct?: number;
+  readonly sizePts?: number;
+  /** §21.1.2.4.1 `a:buClr` — the colour it is drawn in, when it has its own. */
+  readonly colorHex?: string;
+}
 
 /**
- * The bullet an `a:pPr` (or an `a:lvlNpPr`, the same vocabulary) states.
+ * What an `a:pPr` (or an `a:lvlNpPr`, the same vocabulary) says about its
+ * bullet — each part on its own, because a paragraph may restate the SIZE and
+ * leave the character to its level.
  *
- * @param pPr The paragraph-properties node.
- * @returns The bullet, or `undefined` when the node states none and inherits.
+ * @param pPr    The paragraph-properties node.
+ * @param colors The colour resolver, for `a:buClr`.
+ * @returns What it states, or `undefined` when it says nothing about bullets.
  */
-export function parseBullet(pPr: PoNode | undefined): LevelBullet | undefined {
+export function parseBullet(
+  pPr: PoNode | undefined,
+  colors?: ColorResolver,
+): LevelBullet | undefined {
   if (!pPr) return undefined;
-  if (poChildren(pPr).some((c) => poIs(c, 'a:buNone'))) return { kind: 'none' };
-  const buChar = poChildren(pPr).find((c) => poIs(c, 'a:buChar'));
-  if (buChar) return { kind: 'char', char: poAttr(buChar, 'char') ?? '•' };
-  const buAuto = poChildren(pPr).find((c) => poIs(c, 'a:buAutoNum'));
-  if (!buAuto) return undefined;
-  return {
-    kind: 'autoNum',
-    type: poAttr(buAuto, 'type') ?? 'arabicPeriod',
-    startAt: poIntAttr(buAuto, 'startAt') ?? 1,
+  const child = (tag: string): PoNode | undefined => poChildren(pPr).find((c) => poIs(c, tag));
+  const pct = poIntAttr(child('a:buSzPct'), 'val');
+  const pts = poIntAttr(child('a:buSzPts'), 'val');
+  const clr = child('a:buClr');
+  const colorHex =
+    clr && colors
+      ? poChildren(clr)
+          .map((c) => resolveColorNode(c, colors))
+          .find((hex) => hex !== undefined)
+      : undefined;
+  const size: LevelBullet = {
+    ...(pct !== undefined ? { sizePct: pct / 100000 } : {}),
+    ...(pts !== undefined ? { sizePts: pts / 100 } : {}),
+    ...(colorHex !== undefined ? { colorHex } : {}),
   };
+  const buChar = child('a:buChar');
+  const buAuto = child('a:buAutoNum');
+  const kind: LevelBullet | undefined = poChildren(pPr).some((c) => poIs(c, 'a:buNone'))
+    ? { kind: 'none' }
+    : buChar
+      ? // §21.1.2.4.5 `a:buFont` — the character is stated IN THAT FACE, and the
+        // symbol faces are not alphabets: Wingdings `l` is a filled circle, not
+        // a letter. 45541_Header's every bullet is one, and drawn in the text's
+        // own font it printed a column of `l`s down the slide.
+        {
+          kind: 'char',
+          char: fromSymbolFont(
+            poAttr(buChar, 'char') ?? '•',
+            poAttr(child('a:buFont'), 'typeface'),
+          ),
+        }
+      : buAuto
+        ? {
+            kind: 'autoNum',
+            type: poAttr(buAuto, 'type') ?? 'arabicPeriod',
+            startAt: poIntAttr(buAuto, 'startAt') ?? 1,
+          }
+        : undefined;
+  const out = { ...size, ...kind };
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 type StyleCategory = 'title' | 'body' | 'other';
@@ -186,7 +234,9 @@ function at(levels: ReadonlyArray<LevelStyle>, level: number): LevelStyle {
 
 /** `next` over `base` — a layer states only what it changes. */
 function mergeLevels(base: LevelStyle, next: LevelStyle): LevelStyle {
-  const bullet = next.bullet ?? base.bullet;
+  // Each PART of a bullet inherits on its own: a level may restate the size and
+  // leave the character to the one above it.
+  const bullet = base.bullet || next.bullet ? { ...base.bullet, ...next.bullet } : undefined;
   return {
     run: { ...base.run, ...next.run },
     paragraph: { ...base.paragraph, ...next.paragraph },
@@ -213,7 +263,7 @@ export function parseLevelStyles(
   for (let lvl = 1; lvl <= 9; lvl++) {
     const lvlPr = poChildren(list).find((c) => poIs(c, `a:lvl${String(lvl)}pPr`));
     const defRPr = lvlPr ? poChildren(lvlPr).find((c) => poIs(c, 'a:defRPr')) : undefined;
-    const bullet = parseBullet(lvlPr);
+    const bullet = parseBullet(lvlPr, colors);
     out.push({
       run: rPrToRunProps(defRPr, colors),
       paragraph: pPrToParagraphProps(lvlPr),
