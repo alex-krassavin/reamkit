@@ -466,6 +466,11 @@ interface ShapeBlockLaidOut {
   readonly fillAlpha?: number;
   /** §20.1.8.14 `a:blipFill` — the picture painted across the shape's box. */
   readonly fillImageResourceName?: string;
+  /**
+   * §14.1.2.5 `@type="tile"` — the size one tile of that picture is drawn at,
+   * when it repeats over the box rather than stretching across it.
+   */
+  readonly fillImageTile?: { readonly widthPt: number; readonly heightPt: number };
   /** §20.1.8.30 — the part of that picture the box shows. */
   readonly fillImageCrop?: ImageCrop;
   readonly stroke?: StrokeStyle;
@@ -1329,9 +1334,7 @@ export function layoutStyledDocument(
     notePlan,
     bookmarks,
     reflowParagraph,
-    options.pageBackgroundFill?.imageResource !== undefined
-      ? imageResources.get(options.pageBackgroundFill.imageResource)?.resourceName
-      : undefined,
+    backgroundImageOf(options, imageResources),
   );
 
   return {
@@ -2409,9 +2412,19 @@ function layoutShapeBlock(
   const fillGradient = shape.fill.kind === 'gradient' ? shape.fill.gradient : undefined;
   // §20.1.8.14 — a picture fill needs the resource NAME the page will bind it
   // under, which only the resource table knows.
-  const fillImageResourceName =
+  const fillImage =
     shape.fill.kind === 'picture' && shape.fill.imageResource !== undefined
-      ? imageResources?.get(shape.fill.imageResource)?.resourceName
+      ? imageResources?.get(shape.fill.imageResource)
+      : undefined;
+  const fillImageResourceName = fillImage?.resourceName;
+  // §14.1.2.5 — a TILED fill repeats the picture at its own size (96 dpi, the
+  // resolution Office measures one in) instead of stretching it over the box.
+  const fillImageTile =
+    shape.fill.kind === 'picture' && shape.fill.tiled === true && fillImage?.prepared
+      ? {
+          widthPt: (fillImage.prepared.widthPx * 72) / 96,
+          heightPt: (fillImage.prepared.heightPx * 72) / 96,
+        }
       : undefined;
   const fillColorHex =
     shape.fill.kind === 'solid'
@@ -2648,6 +2661,7 @@ function layoutShapeBlock(
     paths,
     ...(markerPaths.length > 0 ? { markerPaths } : {}),
     ...(fillImageResourceName ? { fillImageResourceName } : {}),
+    ...(fillImageTile ? { fillImageTile } : {}),
     ...(fillImageResourceName && shape.fill.imageCrop
       ? { fillImageCrop: shape.fill.imageCrop }
       : {}),
@@ -3216,6 +3230,25 @@ function makeChartLabelLine(
   };
 }
 
+/**
+ * §17.2.1 — the page background's picture, with the size a TILE of it is drawn
+ * at: the picture's own pixels read at 96 dpi, which is the resolution Office
+ * measures a picture in.
+ */
+function backgroundImageOf(
+  options: StyledRenderOptions,
+  imageResources: ReadonlyMap<string, ImageResource>,
+): { name: string; widthPt: number; heightPt: number } | undefined {
+  const id = options.pageBackgroundFill?.imageResource;
+  const res = id === undefined ? undefined : imageResources.get(id);
+  if (!res?.resourceName || !res.prepared) return undefined;
+  return {
+    name: res.resourceName,
+    widthPt: (res.prepared.widthPx * 72) / 96,
+    heightPt: (res.prepared.heightPx * 72) / 96,
+  };
+}
+
 function collectImageResources(
   body: ReadonlyArray<BodyElement>,
   headersFooters: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
@@ -3532,31 +3565,49 @@ function emitShapeItems(
   // so it is clipped to that outline: fdo77718.docx fills the round nodes of
   // its diagram with photographs and we drew each one as a square.
   if (sh.fillImageResourceName) {
-    sink.push({
-      type: 'image',
-      x: pt(x),
-      y: pt(pageHeight - (bottomYUp + sh.heightPt)),
-      width: pt(sh.widthPt),
-      height: pt(sh.heightPt),
-      imageResourceName: sh.fillImageResourceName,
-      ...(sh.fillImageCrop ? { crop: sh.fillImageCrop } : {}),
-      clip: {
-        paths: sh.paths,
-        transform: flipTransform(
-          buildShapeTransform(
-            x,
-            bottomYUp,
-            sh.widthPt,
-            sh.heightPt,
-            sh.rotation60k,
-            sh.flipH,
-            sh.flipV,
-          ),
-          pageHeight,
+    const clip = {
+      paths: sh.paths,
+      transform: flipTransform(
+        buildShapeTransform(
+          x,
+          bottomYUp,
+          sh.widthPt,
+          sh.heightPt,
+          sh.rotation60k,
+          sh.flipH,
+          sh.flipV,
         ),
-      },
-      ...(figId !== undefined ? { structId: figId } : {}),
-    });
+        pageHeight,
+      ),
+    };
+    const fig = figId !== undefined ? { structId: figId } : {};
+    // §14.1.2.5 — a tiled fill is the same picture laid over the box at its own
+    // size, each copy clipped to the shape: NoFillAttrInImagedata.docx papers
+    // two text boxes with a texture and stretched it came out a brown blur.
+    const tile = sh.fillImageTile;
+    if (tile) {
+      for (const item of PageAssembler.tileItems(sh.fillImageResourceName, tile, {
+        x,
+        y: pageHeight - (bottomYUp + sh.heightPt),
+        width: sh.widthPt,
+        height: sh.heightPt,
+      })) {
+        if (item.type !== 'image') continue;
+        sink.push({ ...item, clip, ...fig });
+      }
+    } else {
+      sink.push({
+        type: 'image',
+        x: pt(x),
+        y: pt(pageHeight - (bottomYUp + sh.heightPt)),
+        width: pt(sh.widthPt),
+        height: pt(sh.heightPt),
+        imageResourceName: sh.fillImageResourceName,
+        ...(sh.fillImageCrop ? { crop: sh.fillImageCrop } : {}),
+        clip,
+        ...fig,
+      });
+    }
   }
   // The arrowheads ride the same placement as the shape, filled in the
   // stroke's own colour: a decoration is a shape, not a pen.
@@ -6641,7 +6692,7 @@ class PageAssembler {
     readonly notes: NotePlan | undefined,
     readonly bookmarkPositions: Map<string, BookmarkPosition> | undefined,
     /** §17.2.1 — the resource name of a PICTURE page background, if any. */
-    readonly backgroundImageName?: string,
+    readonly backgroundImage?: { name: string; widthPt: number; heightPt: number },
   ) {
     this.ctx = sectionCtxs[0]!;
     this.pageStartCtx = this.ctx;
@@ -7275,22 +7326,57 @@ class PageAssembler {
    *
    * @returns The background items for this page (at most one).
    */
+  /**
+   * §14.1.2.5 `@type="tile"` — the picture repeated over a box at its own size,
+   * as image items. A tile is a texture, so its natural size is what makes it
+   * one: stretched over the page it is a blur, and its 128 pixels are 96 points
+   * at the resolution Office measures a picture in.
+   */
+  static readonly tileItems = (
+    resourceName: string,
+    natural: { widthPt: number; heightPt: number },
+    box: { x: number; y: number; width: number; height: number },
+  ): Array<PageItem> => {
+    const tw = Math.max(1, natural.widthPt);
+    const th = Math.max(1, natural.heightPt);
+    const cols = Math.min(200, Math.ceil(box.width / tw));
+    const rows = Math.min(200, Math.ceil(box.height / th));
+    const out: Array<PageItem> = [];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        out.push({
+          type: 'image',
+          x: pt(box.x + c * tw),
+          y: pt(box.y + r * th),
+          width: pt(tw),
+          height: pt(th),
+          imageResourceName: resourceName,
+        });
+      }
+    }
+    return out;
+  };
+
   pageBackgroundItems = (): Array<PageItem> => {
     const options = this.ctx.options;
     const w = this.ctx.pageWidth;
     const h = this.ctx.pageHeight;
     const fill = options?.pageBackgroundFill;
-    if (fill?.kind === 'picture' && this.backgroundImageName !== undefined) {
-      return [
-        {
-          type: 'image',
-          x: pt(0),
-          y: pt(0),
-          width: pt(w),
-          height: pt(h),
-          imageResourceName: this.backgroundImageName,
-        },
-      ];
+    if (fill?.kind === 'picture' && this.backgroundImage !== undefined) {
+      const bg = this.backgroundImage;
+      // A tiled background papers the page; a framed one is stretched over it.
+      return fill.tiled
+        ? PageAssembler.tileItems(bg.name, bg, { x: 0, y: 0, width: w, height: h })
+        : [
+            {
+              type: 'image',
+              x: pt(0),
+              y: pt(0),
+              width: pt(w),
+              height: pt(h),
+              imageResourceName: bg.name,
+            },
+          ];
     }
     if (fill?.kind === 'gradient' && fill.gradient) {
       return [
@@ -7397,16 +7483,10 @@ function paginateSections(
   ) => ParagraphBlock,
   // §17.2.1 — the resource name of a PICTURE page background: the resource
   // table is the only thing that knows it, and it lives a caller away.
-  backgroundImageName?: string,
+  backgroundImage?: { name: string; widthPt: number; heightPt: number },
 ): Array<LaidOutPage> {
   if (sectionCtxs.length === 0) return [];
-  const asm = new PageAssembler(
-    sectionCtxs,
-    builder,
-    notes,
-    bookmarkPositions,
-    backgroundImageName,
-  );
+  const asm = new PageAssembler(sectionCtxs, builder, notes, bookmarkPositions, backgroundImage);
 
   // §17.6.4 — a multi-column section that ENDS at a continuous break has its
   // columns evened out: the break says "carry on down this page", so the

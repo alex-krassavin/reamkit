@@ -1144,6 +1144,12 @@ export interface ShapeFill {
   readonly colorHex?: string; // resolved 6-hex (kind==='solid')
   readonly gradient?: ShapeGradient; // kind==='gradient' (a:gradFill, EP16)
   /**
+   * §14.1.2.5 `@type="tile"` — the picture REPEATS at its own size rather than
+   * stretching over the box. A parchment behind a page, a texture behind a
+   * text box: stretched, such a fill is a blur where it should be a pattern.
+   */
+  readonly tiled?: boolean;
+  /**
    * §20.1.8.14 `a:blipFill` — the picture painted across the shape's box. A
    * DrawingML picture IS a shape with one of these, which is how a `pic:pic`
    * inside a group reaches the page.
