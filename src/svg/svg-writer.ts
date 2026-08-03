@@ -256,7 +256,7 @@ function imageHref(resourceName: string, laid: LaidOutDocument): string | undefi
   for (const [resourceId, res] of laid.imageResources) {
     if (res.resourceName !== resourceName) continue;
     const bytes = laid.resources.get(resourceId);
-    if (!bytes) return undefined;
+    if (!bytes || !res.prepared) return undefined;
     return `data:${res.prepared.mimeType};base64,${toBase64(bytes)}`;
   }
   return undefined;

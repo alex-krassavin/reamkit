@@ -16,6 +16,7 @@ import type { FontMeasure, ParsedTtf } from '@/core/font';
 import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
 import type { PathSegment, VectorPath, VectorShape } from '@/core/vector';
 import type { PreparedImage } from '@/core/images';
+import type { MetaPicture } from '@/core/metafile/picture';
 
 /** A font bound into a {@link LaidOutDocument}: the parsed face plus what layout/emit need from it. */
 export interface FontResource {
@@ -204,9 +205,16 @@ export interface ImageResource {
   readonly resourceName: string;
   /**
    * Decoded/validated at layout time (the probe); the emit phase replays it
-   * without touching the source bytes again.
+   * without touching the source bytes again. Absent for a METAFILE, which has
+   * no raster to embed: it is drawn as the primitives `metafile` holds.
    */
-  readonly prepared: PreparedImage;
+  readonly prepared?: PreparedImage;
+  /**
+   * MS-EMF / MS-WMF — the picture read out of the resource, in its own logical
+   * units. A metafile is a little drawing program, not a raster; the layout
+   * turns these into the same primitives a chart is made of.
+   */
+  readonly metafile?: MetaPicture;
 }
 
 /**

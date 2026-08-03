@@ -89,10 +89,13 @@ import type { SignaturePlaceholder } from '@/pdf/signature';
 import type { PdfEncryptOptions } from '@/pdf/encryption';
 import type { StructNode, StructType } from '@/pdf/struct-tree';
 
+import type { MetaPicture } from '@/core/metafile/picture';
 import { ResourceStore, halfPtToPt, pt } from '@/core/ir';
 import { createFontMeasure, shapeText } from '@/core/font';
 import { resolveFamilyKey } from '@/core/fonts';
 import { prepareImage } from '@/core/images';
+import { isEmf, readEmf } from '@/core/metafile/emf';
+import { isWmf, readWmf } from '@/core/metafile/wmf';
 import { analyzeString, hasBidiCharacters, segmentLevels } from '@/core/bidi';
 import {
   FORCED_BREAK,
@@ -381,6 +384,12 @@ interface ChartLayout {
 }
 interface ChartBlockLaidOut {
   readonly kind: 'chart';
+  /**
+   * What a tagged PDF should call this Figure when the drawing carries no
+   * description of its own. A metafile picture rides this block, and it is a
+   * picture, not a chart.
+   */
+  readonly figureRole?: string;
   readonly float?: FloatAnchor;
   readonly widthPt: number;
   readonly heightPt: number;
@@ -1100,8 +1109,15 @@ export function layoutStyledDocument(
   const tagged =
     options.tagged === true || options.pdfUA === true || (pdfaProfile?.tagged ?? false);
   const structBuilder = tagged ? new StructTreeBuilder() : undefined;
-  const fontResources = collectFontResources(numberedBody, numberedHeadersFooters, options);
+  // The images come first: a METAFILE carries words of its own, and the font
+  // walk has to ask for their glyphs like any other text's.
   const imageResources = collectImageResources(numberedBody, numberedHeadersFooters, options);
+  const fontResources = collectFontResources(
+    numberedBody,
+    numberedHeadersFooters,
+    options,
+    imageResources,
+  );
 
   // Pre-compute per-section render context (geometry + header/footer bands).
   const sectionCtxs: Array<SectionRenderCtx> = sectionList.map((s) =>
@@ -2254,7 +2270,10 @@ function layoutBodyElement(
     return layoutTableBlock(el.table, options, fontResources, imageResources, contentWidth);
   }
   if (el.kind === 'image') {
-    return layoutImageBlock(el.image, imageResources, contentWidth, maxHeight, box);
+    const meta = el.image.resource ? imageResources?.get(el.image.resource)?.metafile : undefined;
+    return meta
+      ? layoutMetafileBlock(el.image, meta, options, fontResources, contentWidth, maxHeight, box)
+      : layoutImageBlock(el.image, imageResources, contentWidth, maxHeight, box);
   }
   if (el.kind === 'chart') {
     return layoutChartBlock(el.chart, options, fontResources, contentWidth, maxHeight);
@@ -2664,6 +2683,104 @@ function layoutShapeBlock(
 
 // Build the `cm` matrix that places a shape's local y-up frame on the page at
 // bottom-left (pageX, pageY), rotated about its centre and optionally flipped.
+
+/**
+ * MS-EMF / MS-WMF — a metafile picture as the primitives a chart is made of,
+ * scaled from its own logical box into the box the drawing reserves.
+ *
+ * A metafile IS a little drawing program, and what it draws is paths and words:
+ * the same two things a chart's layout carries, placed in the same local y-up
+ * frame. So one is turned into the other rather than growing a block kind, a
+ * pagination arm and an emitter of its own.
+ */
+function layoutMetafileBlock(
+  image: ImageBlock,
+  pic: MetaPicture,
+  options: StyledRenderOptions,
+  fontResources: ReadonlyMap<string, FontResource>,
+  contentWidth: number,
+  maxHeight?: number,
+  box?: RelativeBox,
+): ChartBlockLaidOut {
+  const placed = layoutImageBlock(image, undefined, contentWidth, maxHeight, box);
+  const widthPt = placed.widthPt;
+  const heightPt = placed.heightPt;
+  const sx = widthPt / pic.width;
+  const sy = heightPt / pic.height;
+  // The metafile's y runs DOWN from its own top; the primitives' frame runs UP
+  // from the box's bottom-left corner.
+  const mapX = (x: number): number => (x - pic.left) * sx;
+  const mapY = (y: number): number => heightPt - (y - pic.top) * sy;
+
+  const shapes: Array<ChartShapePrim> = [];
+  const texts: Array<ChartTextPrim> = [];
+  for (const prim of pic.prims) {
+    if (prim.kind === 'path') {
+      shapes.push({
+        paths: prim.paths.map((path) => ({
+          ...path,
+          segments: path.segments.map((seg) =>
+            seg.op === 'close'
+              ? seg
+              : seg.op === 'cubic'
+                ? {
+                    op: 'cubic' as const,
+                    x1: mapX(seg.x1),
+                    y1: mapY(seg.y1),
+                    x2: mapX(seg.x2),
+                    y2: mapY(seg.y2),
+                    x: mapX(seg.x),
+                    y: mapY(seg.y),
+                  }
+                : { op: seg.op, x: mapX(seg.x), y: mapY(seg.y) },
+          ),
+        })),
+        ...(prim.fillColorHex !== undefined ? { fillColorHex: prim.fillColorHex } : {}),
+        ...(prim.stroke
+          ? { stroke: { ...prim.stroke, widthPt: Math.max(0.25, prim.stroke.widthPt * sx) } }
+          : {}),
+      });
+      continue;
+    }
+    if (prim.kind !== 'text') continue;
+    const { variant } = options.registry.resolveByStyle(prim.bold === true, prim.italic === true);
+    const font = fontResources.get(variant);
+    if (!font) continue;
+    const sizePt = Math.max(1, prim.sizeLu * sy);
+    const line = makeChartLabelLine(prim.text, font, sizePt, prim.colorHex);
+    const shift =
+      prim.alignH === 'center'
+        ? -line.contentWidthPt / 2
+        : prim.alignH === 'right'
+          ? -line.contentWidthPt
+          : 0;
+    // §2.1.2.4 — the point is the text's TOP unless TA_BASELINE says otherwise,
+    // and a baseline sits about four fifths of the em below the top.
+    const baselineY = mapY(prim.y) - (prim.alignBaseline ? 0 : sizePt * 0.8);
+    texts.push({
+      line,
+      x: mapX(prim.x) + shift,
+      y: baselineY,
+      // The escapement turns the text about its own origin, in tenths of a
+      // degree counter-clockwise — the same direction a chart's labels turn.
+      ...(prim.escapement ? { rotationDeg: prim.escapement / 10 } : {}),
+    });
+  }
+
+  const pp = image.paragraphProperties;
+  return {
+    kind: 'chart',
+    widthPt,
+    heightPt,
+    layout: { shapes, texts },
+    resolvedAlignment: pp.alignment ?? 'left',
+    spacingBeforePt: pp.spacingBefore ?? 0,
+    spacingAfterPt: pp.spacingAfter ?? 0,
+    figureRole: 'Image',
+    ...(image.altText ? { altText: image.altText } : {}),
+    ...(image.float ? { float: image.float } : {}),
+  };
+}
 
 function layoutChartBlock(
   block: ChartBlock,
@@ -3095,6 +3212,20 @@ function collectImageResources(
     // box still reserves space). prepareImage is the pure decode/validate
     // expert; the emit phase replays its result, so skip semantics match by
     // construction.
+    // MS-EMF / MS-WMF — a drawing program, not a raster. It is read here into
+    // the primitives the layout draws; nothing embeds it, so it takes no
+    // resource name.
+    if (isEmf(bytes) || isWmf(bytes)) {
+      try {
+        out.set(resourceId, {
+          resourceName: '',
+          metafile: isEmf(bytes) ? readEmf(bytes) : readWmf(bytes),
+        });
+      } catch {
+        // A malformed metafile is one that draws nothing, as before.
+      }
+      continue;
+    }
     let prepared: PreparedImage;
     try {
       prepared = prepareImage(bytes, { flattenAlpha });
@@ -3773,6 +3904,7 @@ function collectFontResources(
   body: ReadonlyArray<BodyElement>,
   headersFooters: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
   options: StyledRenderOptions,
+  imageResources: ReadonlyMap<string, ImageResource>,
 ): Map<string, FontResource> {
   const used = new Map<string, { parsed: ParsedTtf; gids: Set<number> }>();
   const addRun = (
@@ -3888,7 +4020,25 @@ function collectFontResources(
           for (const child of sh.children ?? []) shapeText(child.shape);
         };
         shapeText(el.shape);
-      } else if (el.kind === 'chart') {
+      } else if (el.kind === 'image') {
+        // MS-EMF / MS-WMF — the metafile's own words. Left out of the walk they
+        // were drawn with glyph ids the subset never reserved, which is to say
+        // not drawn at all: embedded-xlsx.docx's preview lost every label.
+        const pic = el.image.resource ? imageResources.get(el.image.resource)?.metafile : undefined;
+        for (const prim of pic?.prims ?? []) {
+          if (prim.kind !== 'text') continue;
+          const reg = options.registry.resolveByStyle(prim.bold === true, prim.italic === true);
+          let bucket = used.get(reg.variant);
+          if (!bucket) {
+            bucket = { parsed: reg.parsed, gids: new Set<number>() };
+            used.set(reg.variant, bucket);
+          }
+          for (const ch of prim.text) {
+            bucket.gids.add(reg.parsed.glyphForCodepoint(ch.codePointAt(0)!));
+          }
+        }
+      } else {
+        // …and what is left is a chart.
         const chart = options.charts?.get(el.chart.chartRelId);
         if (chart) {
           const reg = options.registry.resolveByStyle(false, false);
@@ -7531,7 +7681,9 @@ function paginateSections(
       // stored transform translates to the chart box's bottom-left (x, y in the
       // internal y-up cursor frame) composed with the page flip. The whole
       // chart is one Figure (alt = its title); its shapes + labels carry that id.
-      const figId = builder ? createFigure(builder, block.altText, 'Chart') : undefined;
+      const figId = builder
+        ? createFigure(builder, block.altText, block.figureRole ?? 'Chart')
+        : undefined;
       const emitChartAt = (x: number, bottomYUp: number, sink: Array<PageItem>) => {
         sink.push(...chartPageItems(block, x, bottomYUp, asm.ctx.pageHeight, figId));
       };

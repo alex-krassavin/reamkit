@@ -567,6 +567,9 @@ function defaultPageCtx(): SectionRenderCtx {
 function embedImageResources(doc: PdfDocument, laid: LaidOutDocument): Map<ResourceId, PdfRef> {
   const out = new Map<ResourceId, PdfRef>();
   for (const [resourceId, res] of laid.imageResources) {
+    // A metafile has no raster of its own: the layout has already turned it
+    // into primitives, and there is nothing here to embed.
+    if (!res.prepared) continue;
     out.set(resourceId, addImage(doc, res.prepared).ref);
   }
   return out;

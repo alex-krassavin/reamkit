@@ -193,20 +193,23 @@ export function readEmf(bytes: Uint8Array): MetaPicture {
           else if (obj?.kind === 'font') dc.font = obj;
         }
         break;
-      case 38: // EMR_CREATEPEN
+      case 38: // EMR_CREATEPEN — the LOGPEN's width is a POINT, so its colour
+        // sits a whole point past the style, not half of one.
         objects.set(u(8), {
           kind: 'pen',
-          colorHex: colorRef(u(20)),
+          colorHex: colorRef(u(24)),
           widthLu: at(16),
           style: penStyle(u(12)),
         });
         break;
-      case 95: // EMR_EXTCREATEPEN
+      case 95: // EMR_EXTCREATEPEN — the EXTLOGPEN sits past the pen's own
+        // bitmap fields: style, width, BRUSH style, then the colour.
         objects.set(u(8), {
           kind: 'pen',
-          colorHex: colorRef(u(36)),
+          colorHex: colorRef(u(40)),
           widthLu: at(32),
-          style: penStyle(u(28)),
+          // A pen whose brush is BS_NULL paints nothing, whatever its style.
+          style: u(36) === 1 ? 'none' : penStyle(u(28)),
         });
         break;
       case 39: // EMR_CREATEBRUSHINDIRECT
