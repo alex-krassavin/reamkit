@@ -89,4 +89,22 @@ describe('hue and saturation offsets (§20.1.2.3.15)', () => {
   it('offsets saturation as well', () => {
     expect(shifted('<a:satOff val="-40777"/>')).not.toBe('FFC000');
   });
+
+  // §20.1.2.3.14 `a:hueMod` — the hue MULTIPLIED rather than offset. The Ion
+  // theme builds its backdrop from one dark teal and a 108% hueMod, which turns
+  // it navy; ignored, tdf123684's whole slide came out teal.
+  it('multiplies the hue when the theme asks for a hueMod', () => {
+    const teal = (xml: string): string => {
+      const node = parseXml(new TextEncoder().encode(`<a:schemeClr>${xml}</a:schemeClr>`))[0];
+      return applyColorMods('1E5155', node ? readColorMods(node) : []);
+    };
+    expect(teal('')).toBe('1E5155');
+    // 184.4° × 1.08 = 199.2° — teal round to blue, with nothing else touched.
+    const moved = teal('<a:hueMod val="108000"/>');
+    expect(moved).not.toBe('1E5155');
+    const [r, g, b] = [0, 2, 4].map((i) => parseInt(moved.slice(i, i + 2), 16));
+    expect(b).toBeGreaterThan(g!); // …and blue is now the strongest channel
+    expect(g).toBeGreaterThan(r!);
+    expect(teal('<a:hueMod val="100000"/>')).toBe('1E5155'); // a no-op factor
+  });
 });

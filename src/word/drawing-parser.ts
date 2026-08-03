@@ -2638,7 +2638,9 @@ function fillFromNode(
     }
     if (poIs(child, 'a:gradFill')) {
       const gradient = parseGradient(child, resolveColor);
-      return gradient ? { kind: 'gradient', gradient } : { kind: 'none' };
+      if (!gradient) return { kind: 'none' };
+      const alpha = gradientAlpha(gradient.stops);
+      return { kind: 'gradient', gradient, ...(alpha !== undefined ? { alpha } : {}) };
     }
   }
   return undefined;
@@ -3016,6 +3018,40 @@ function colorFromContainer(parent: PoNode, resolveColor: ColorResolver): string
   return undefined;
 }
 
+/**
+ * §20.1.2.3.1 — a gradient's stop transparencies, settled.
+ *
+ * A page paints a gradient at ONE transparency, so only a gradient whose every
+ * stop is translucent can carry it: the strongest stop decides whether the
+ * shape is there at all, which is the question a 7%-and-fading glow asks
+ * (tdf123684's master draws one over a dark slide, and composited over the
+ * paper instead it was an opaque white disc).
+ *
+ * A gradient that mixes a translucent stop with an opaque one has no such
+ * answer, so it keeps the colours the resolver already washed toward the paper
+ * — an approximation, but the one that has always been drawn: smartart-simple's
+ * cyan-to-purple sweep sets 75% on its purple end alone.
+ */
+function normalizeStopAlpha(stops: Array<GradientStop>): void {
+  if (gradientAlpha(stops) === undefined) {
+    // No such answer: drop the transparency and keep the washed colours.
+    for (const [i, s] of stops.entries()) {
+      if (s.alpha !== undefined) stops[i] = { offset: s.offset, colorHex: s.colorHex };
+    }
+    return;
+  }
+  // Every stop is translucent: give each its own colour back, unwashed.
+  for (const [i, s] of stops.entries()) {
+    stops[i] = { ...s, colorHex: unblendWhite(s.colorHex, s.alpha ?? 1) };
+  }
+}
+
+/** The one transparency a gradient can be drawn at; see {@link normalizeStopAlpha}. */
+function gradientAlpha(stops: ReadonlyArray<GradientStop>): number | undefined {
+  const strongest = Math.max(...stops.map((s) => s.alpha ?? 1));
+  return strongest < 1 ? strongest : undefined;
+}
+
 // a:gradFill → a gradient fill (EP16). Reads the a:gsLst/a:gs stops (each with a
 // @pos in 1000ths of a percent and a colour child), and the direction from a:lin
 // (@ang in 60000ths of a degree, clockwise) or a:path (a radial/path gradient).
@@ -3033,10 +3069,12 @@ function parseGradient(grad: PoNode, resolveColor: ColorResolver): ShapeGradient
     if (!hex) continue;
     const pos = poIntAttr(gs, 'pos');
     const offset = pos !== undefined ? clampUnit(pos / 100000) : stops.length === 0 ? 0 : 1;
-    stops.push({ offset, colorHex: hex });
+    const alpha = containerAlpha(gs);
+    stops.push({ offset, colorHex: hex, ...(alpha !== undefined ? { alpha } : {}) });
   }
   if (stops.length === 0) return undefined;
   stops.sort((a, b) => a.offset - b.offset);
+  normalizeStopAlpha(stops);
   // §20.1.8.46 `a:path` — a radial sweep, and it says both WHAT SHAPE its
   // contours are (`circle` / `rect` / `shape`) and WHERE it starts: the
   // `a:fillToRect` is the rectangle the FIRST stop fills, in the box's own

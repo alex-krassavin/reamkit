@@ -1,10 +1,5 @@
 [
  {
-  "name": "tdf123684.pptx",
-  "score": 0.8425,
-  "aligned": true
- },
- {
   "name": "smartart-missing-bullet.pptx",
   "score": 0.5725,
   "aligned": true
@@ -160,11 +155,6 @@
   "aligned": true
  },
  {
-  "name": "subtitle-animation-save.pptx",
-  "score": 0.1678,
-  "aligned": true
- },
- {
   "name": "smartart-cycle-matrix.pptx",
   "score": 0.1676,
   "aligned": true
@@ -252,6 +242,11 @@
  {
   "name": "effectOrder.pptx",
   "score": 0.1078,
+  "aligned": true
+ },
+ {
+  "name": "subtitle-animation-save.pptx",
+  "score": 0.1045,
   "aligned": true
  },
  {
@@ -376,7 +371,7 @@
  },
  {
   "name": "tdf158512.pptx",
-  "score": 0.0543,
+  "score": 0.0546,
   "aligned": true
  },
  {
@@ -980,6 +975,11 @@
   "aligned": true
  },
  {
+  "name": "tdf123684.pptx",
+  "score": 0.0036,
+  "aligned": true
+ },
+ {
   "name": "tdf152434.pptx",
   "score": 0.0036,
   "aligned": true
@@ -1560,6 +1560,11 @@
   "aligned": true
  },
  {
+  "name": "tdf125554.pptx",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
   "name": "tdf125346_2.pptx",
   "score": 0.0007,
   "aligned": true
@@ -1637,11 +1642,6 @@
  {
   "name": "tdf113818-swivel.pptx",
   "score": 0.0005,
-  "aligned": true
- },
- {
-  "name": "tdf125554.pptx",
-  "score": 0.0004,
   "aligned": true
  },
  {

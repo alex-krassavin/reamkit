@@ -1013,6 +1013,38 @@ describe("pptx inherited shapes — the deck's own decoration (E-PPTX PX5d)", ()
     expect(fills(doc)).toEqual(['102030', 'FFFFFF', '102030']);
   });
 
+  // §19.3.1.43 + §20.1.8.30 — a PICTURE background is stretched over the whole
+  // slide, so a shape that wears it wears the piece under itself. Squeezed into
+  // the box instead, tdf123684's text box drew a little copy of the slide's own
+  // diagonal inside itself.
+  it('gives a useBgFill shape the piece of a picture background under it', () => {
+    const bgFilled =
+      `<p:sp useBgFill="1"><p:spPr>` +
+      `<a:xfrm><a:off x="3048000" y="1714500"/><a:ext cx="3048000" cy="1714500"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:sp>`;
+    const doc = Ream.parse(
+      buildPptx([bgFilled], {
+        cx: 12192000,
+        cy: 6858000,
+        slideBg: [
+          `<p:bg><p:bgPr><a:blipFill><a:blip r:embed="rIdBg"/>` +
+            `<a:stretch><a:fillRect/></a:stretch></a:blipFill></p:bgPr></p:bg>`,
+        ],
+        slideRels: [`<Relationship Id="rIdBg" Type="${IMAGE_REL}" Target="../media/bg.png"/>`],
+        media: { 'ppt/media/bg.png': buildTinyPng(2, 2, [10, 20, 30, 255]) },
+      }),
+    );
+    // The backdrop is the first shape; the second is the one wearing it.
+    const fill = doc.flow.body.flatMap((el) => (el.kind === 'shape' ? [el.shape.fill] : []))[1];
+    expect(fill?.kind).toBe('picture');
+    // The box is a quarter of the slide, a quarter in: the picture's rect
+    // reaches one box-width left and up, and one right and down.
+    expect(fill?.imageFillRect?.left).toBeCloseTo(-1, 5);
+    expect(fill?.imageFillRect?.top).toBeCloseTo(-1, 5);
+    expect(fill?.imageFillRect?.right).toBeCloseTo(-2, 5);
+    expect(fill?.imageFillRect?.bottom).toBeCloseTo(-2, 5);
+  });
+
   it('draws them on every slide of the layout, and behind the background', () => {
     const doc = Ream.parse(
       buildPptx(['', ''], {

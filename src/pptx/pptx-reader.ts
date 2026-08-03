@@ -189,12 +189,14 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
         charts,
         (loss) => losses.push(loss.where ? loss : { ...loss, where: `slide ${i + 1}` }),
         defaultTextStyle,
+        { widthPt: pageW, heightPt: pageH },
         overrideAlias(slideTree, 'p:sld'),
       );
       const ctx: SlideContext = {
         ...(styles.cascade ? { cascade: styles.cascade } : {}),
         colors: styles.colors,
         ...(styles.background ? { backgroundFill: styles.background } : {}),
+        slideSize: { widthPt: pageW, heightPt: pageH },
         ...(styles.themeFills ? { themeFills: styles.themeFills } : {}),
         ...(styles.themeLineWidths ? { themeLineWidths: styles.themeLineWidths } : {}),
         resolveImage: makeSlideImageResolver(pkg, part.path, resources),
@@ -528,6 +530,7 @@ function slideStylesFor(
   charts: Map<string, Chart>,
   onLoss: (loss: Loss) => void,
   deckDefaultTextStyle: PoNode | undefined,
+  slideSize: { readonly widthPt: Pt; readonly heightPt: Pt },
   slideAlias?: SchemeAliases,
 ): SlideStyles {
   const layoutRel = pkg
@@ -601,6 +604,7 @@ function slideStylesFor(
     resources,
     charts,
     onLoss,
+    slideSize,
     ...(themeFills ? { themeFills } : {}),
     ...(themeLineWidths && themeLineWidths.length > 0 ? { themeLineWidths } : {}),
     ...(background ? { background } : {}),
@@ -647,6 +651,7 @@ function partShapes(
     ...(deps.themeFills ? { themeFills: deps.themeFills } : {}),
     ...(deps.themeLineWidths ? { themeLineWidths: deps.themeLineWidths } : {}),
     ...(deps.background ? { backgroundFill: deps.background } : {}),
+    slideSize: deps.slideSize,
     resolveImage: makeSlideImageResolver(pkg, path, deps.resources),
     resolveChart: makeSlideChartResolver(pkg, path, deps.charts, deps.colors),
     resolveHyperlink: makeHyperlinkResolver(pkg, path),
@@ -663,6 +668,8 @@ interface PartDeps {
   readonly themeLineWidths?: ReadonlyArray<number>;
   /** The background these shapes sit on, for a `useBgFill` one among them. */
   readonly background?: ShapeFill;
+  /** The slide's size, which says where that background lies under a shape. */
+  readonly slideSize: { readonly widthPt: Pt; readonly heightPt: Pt };
   readonly resources: ResourceStore;
   readonly charts: Map<string, Chart>;
   readonly onLoss: (loss: Loss) => void;

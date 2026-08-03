@@ -25,7 +25,16 @@ import { poAttr, poChildren, poIntAttr, poIs } from '@/core/po-helpers';
  * (solid fills emit no transparency).
  */
 export interface ColorMod {
-  readonly kind: 'lumMod' | 'lumOff' | 'shade' | 'tint' | 'alpha' | 'satMod' | 'hueOff' | 'satOff';
+  readonly kind:
+    | 'lumMod'
+    | 'lumOff'
+    | 'shade'
+    | 'tint'
+    | 'alpha'
+    | 'satMod'
+    | 'hueMod'
+    | 'hueOff'
+    | 'satOff';
   readonly val: number;
 }
 
@@ -123,6 +132,13 @@ export function applyColorMods(hex: string, mods: ReadonlyArray<ColorMod>): stri
       const [h, s, l] = rgbToHsl(r, g, b);
       const l2 = m.kind === 'lumMod' ? l * m.val : clamp01(l + m.val);
       [r, g, b] = hslToRgb(h, s, l2);
+    } else if (m.kind === 'hueMod') {
+      // §20.1.2.3.14 — the hue MULTIPLIED, around the wheel. The Ion theme
+      // builds its backdrop from one dark teal and a `hueMod` of 108%, which
+      // turns it navy; ignored, tdf123684's whole slide came out teal where
+      // both references draw deep blue.
+      const [h, sat, l] = rgbToHsl(r, g, b);
+      [r, g, b] = hslToRgb((((h * m.val) % 360) + 360) % 360, sat, l);
     } else if (m.kind === 'hueOff') {
       // §20.1.2.3.15 — a hue OFFSET, in degrees around the wheel. SmartArt is
       // built on it: one accent colour and a `hueOff` per node is how a diagram
@@ -283,6 +299,7 @@ export function readColorMods(colorNode: PoNode): Array<ColorMod> {
       'tint',
       'alpha',
       'satMod',
+      'hueMod',
       'satOff',
     ] as const) {
       if (poIs(c, `a:${kind}`)) {

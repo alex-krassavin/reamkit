@@ -98,6 +98,8 @@ export interface SlideContext {
    * `useBgFill` is painted with.
    */
   readonly backgroundFill?: ShapeFill;
+  /** The slide's size, which says WHERE that background lies under a shape. */
+  readonly slideSize?: { readonly widthPt: Pt; readonly heightPt: Pt };
   /**
    * §19.3.2.4 — the picture an embedded object shows, by the `@spid` of its
    * shape in the slide's legacy VML drawing.
@@ -286,7 +288,7 @@ function parseSp(sp: PoNode, ctx: SlideContext, transform: GroupTransform): Shap
   const useBgFill = poAttr(sp, 'useBgFill') === '1';
   const fillFrom = statesFill(spPr) ? spPr : (proto ?? spPr);
   const fill: ShapeFill = useBgFill
-    ? (ctx.backgroundFill ?? { kind: 'none' })
+    ? backgroundThrough(ctx.backgroundFill, box, ctx.slideSize)
     : fillFrom
       ? parseFill(fillFrom, colors, ctx.resolveImage)
       : { kind: 'none' };
@@ -737,6 +739,32 @@ export function backdropElement(fill: ShapeFill, widthPt: Pt, heightPt: Pt): Bod
       geometry: RECT_GEOMETRY,
       fill,
       paragraphProperties: {},
+    },
+  };
+}
+
+// §19.3.1.43 — a shape that wears the slide's background wears the PIECE of it
+// that lies under the shape, not a copy squeezed into its box. A picture
+// background is stretched over the whole slide, so the destination rect is the
+// SLIDE stated in fractions of the shape (§20.1.8.30 `a:fillRect`, where a
+// negative inset reaches outside the box and the shape's own outline clips it
+// back). Squeezed, tdf123684's text box drew a little diagonal of its own.
+function backgroundThrough(
+  bg: ShapeFill | undefined,
+  box: ShapeBoxEmu,
+  slide: { readonly widthPt: Pt; readonly heightPt: Pt } | undefined,
+): ShapeFill {
+  if (!bg) return { kind: 'none' };
+  if (bg.kind !== 'picture' || !slide || box.cx <= 0 || box.cy <= 0) return bg;
+  const [x, y] = [emuToPt(box.x), emuToPt(box.y)];
+  const [w, h] = [emuToPt(box.cx), emuToPt(box.cy)];
+  return {
+    ...bg,
+    imageFillRect: {
+      left: -x / w,
+      top: -y / h,
+      right: -(slide.widthPt - x - w) / w,
+      bottom: -(slide.heightPt - y - h) / h,
     },
   };
 }
