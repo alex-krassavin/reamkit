@@ -484,6 +484,8 @@ interface ShapeBlockLaidOut {
     readonly right: number;
     readonly bottom: number;
   };
+  /** §20.1.8.23 — the two colours the fill picture is painted between. */
+  readonly fillImageDuotone?: { readonly shadowHex: string; readonly highlightHex: string };
   /**
    * §14.1.2.5 `@type="tile"` — the size one tile of that picture is drawn at,
    * when it repeats over the box rather than stretching across it.
@@ -2686,6 +2688,9 @@ function layoutShapeBlock(
     ...(fillImageResourceName && shape.fill.imageFillRect
       ? { fillImageRect: shape.fill.imageFillRect }
       : {}),
+    ...(fillImageResourceName && shape.fill.duotone
+      ? { fillImageDuotone: shape.fill.duotone }
+      : {}),
     ...(fillColorHex ? { fillColorHex } : {}),
     ...(fillGradient ? { fillGradient } : {}),
     ...(shape.fill.alpha !== undefined && shape.fill.alpha < 1
@@ -3652,6 +3657,7 @@ function emitShapeItems(
         imageResourceName: sh.fillImageResourceName,
         ...(sh.fillImageCrop ? { crop: sh.fillImageCrop } : {}),
         ...(sh.fillAlpha !== undefined ? { alpha: sh.fillAlpha } : {}),
+        ...(sh.fillImageDuotone ? { duotone: sh.fillImageDuotone } : {}),
         clip,
         ...fig,
       });

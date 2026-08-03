@@ -1168,6 +1168,13 @@ export interface ShapeFill {
    * other case entirely — the picture zooming past the box — and read as a
    * crop of the source.
    */
+  /**
+   * §20.1.8.23 `a:duotone` — the picture recoloured into two tones: its dark
+   * end becomes the first colour, its light end the second. An Office theme
+   * that ships a photograph tints it this way, so a deck whose background is a
+   * brown ridged texture is stored as a grey one (corpus: themes.pptx).
+   */
+  readonly duotone?: { readonly shadowHex: string; readonly highlightHex: string };
   readonly imageFillRect?: {
     readonly left: number;
     readonly top: number;

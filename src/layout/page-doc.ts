@@ -355,6 +355,11 @@ export interface ImageItem extends PageItemBase {
    * backed by a photograph at 70 % shows a pale wash of it, not the photograph.
    */
   readonly alpha?: number;
+  /**
+   * §20.1.8.23 `a:duotone` — the picture painted between two colours instead of
+   * its own: its dark end is the first, its light end the second.
+   */
+  readonly duotone?: { readonly shadowHex: string; readonly highlightHex: string };
   /** §20.1.7.6 — degrees clockwise about the box's centre. */
   readonly rotationDeg?: number;
   /** §20.1.7.6 — the picture drawn mirrored in its box. */

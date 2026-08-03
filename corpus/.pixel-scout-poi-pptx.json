@@ -56,7 +56,7 @@
  },
  {
   "name": "themes.pptx",
-  "score": 0.9833,
+  "score": 0.9883,
   "aligned": true
  },
  {
@@ -65,23 +65,8 @@
   "aligned": true
  },
  {
-  "name": "backgrounds.pptx",
-  "score": 0.7073,
-  "aligned": true
- },
- {
-  "name": "keyframes.pptx",
-  "score": 0.6325,
-  "aligned": true
- },
- {
   "name": "table_test2.pptx",
-  "score": 0.5708,
-  "aligned": true
- },
- {
-  "name": "ArtisticEffectSample.pptx",
-  "score": 0.5494,
+  "score": 0.5667,
   "aligned": true
  },
  {
@@ -91,12 +76,12 @@
  },
  {
   "name": "au.asn.aes.www_conferences_2011_presentations_Fri_20Room4Level4_20930_20Maloney.pptx",
-  "score": 0.5085,
+  "score": 0.5048,
   "aligned": true
  },
  {
-  "name": "aascu.org_hbcu_leadershipsummit_cooper_.pptx",
-  "score": 0.4884,
+  "name": "ArtisticEffectSample.pptx",
+  "score": 0.4538,
   "aligned": true
  },
  {
@@ -107,11 +92,6 @@
  {
   "name": "chart-picture-bg.pptx",
   "score": 0.4066,
-  "aligned": true
- },
- {
-  "name": "LIBRE_OFFICE-100610-0.pptx",
-  "score": 0.4032,
   "aligned": true
  },
  {
@@ -130,13 +110,13 @@
   "aligned": true
  },
  {
-  "name": "63200.pptx",
-  "score": 0.3767,
+  "name": "backgrounds.pptx",
+  "score": 0.3817,
   "aligned": true
  },
  {
-  "name": "at.ecodesign.www_downloads_Vertiefungsvortrag_elektronik.pptx",
-  "score": 0.376,
+  "name": "63200.pptx",
+  "score": 0.3767,
   "aligned": true
  },
  {
@@ -146,12 +126,7 @@
  },
  {
   "name": "alterman_security.pptx",
-  "score": 0.3204,
-  "aligned": true
- },
- {
-  "name": "bug60993.pptx",
-  "score": 0.3042,
+  "score": 0.2829,
   "aligned": true
  },
  {
@@ -165,18 +140,18 @@
   "aligned": true
  },
  {
-  "name": "60810.pptx",
-  "score": 0.2707,
-  "aligned": true
- },
- {
-  "name": "tika-2605.pptx",
-  "score": 0.2669,
-  "aligned": true
- },
- {
   "name": "SmartArt.pptx",
   "score": 0.2624,
+  "aligned": true
+ },
+ {
+  "name": "keyframes.pptx",
+  "score": 0.2526,
+  "aligned": true
+ },
+ {
+  "name": "LIBRE_OFFICE-100610-0.pptx",
+  "score": 0.2254,
   "aligned": true
  },
  {
@@ -185,18 +160,13 @@
   "aligned": true
  },
  {
-  "name": "ae.ac.uaeu.faculty_nafaachbili_GeomLec1.pptx",
-  "score": 0.2105,
-  "aligned": true
- },
- {
-  "name": "ca.ubc.cs.people_~emhill_presentations_HowWeRefactor.pptx",
-  "score": 0.1993,
+  "name": "aascu.org_hbcu_leadershipsummit_cooper_.pptx",
+  "score": 0.1976,
   "aligned": true
  },
  {
   "name": "54542_cropped_bitmap.pptx",
-  "score": 0.1942,
+  "score": 0.194,
   "aligned": true
  },
  {
@@ -210,18 +180,18 @@
   "aligned": true
  },
  {
-  "name": "bug60499.pptx",
-  "score": 0.1539,
-  "aligned": true
- },
- {
-  "name": "EmbeddedVideo.pptx",
-  "score": 0.1401,
-  "aligned": true
- },
- {
   "name": "table-with-different-font-colors.pptx",
   "score": 0.14,
+  "aligned": true
+ },
+ {
+  "name": "ae.ac.uaeu.faculty_nafaachbili_GeomLec1.pptx",
+  "score": 0.1192,
+  "aligned": true
+ },
+ {
+  "name": "bug60993.pptx",
+  "score": 0.1072,
   "aligned": true
  },
  {
@@ -235,8 +205,8 @@
   "aligned": true
  },
  {
-  "name": "bug60715.pptx",
-  "score": 0.0696,
+  "name": "tika-2605.pptx",
+  "score": 0.0674,
   "aligned": true
  },
  {
@@ -245,8 +215,18 @@
   "aligned": true
  },
  {
+  "name": "ca.ubc.cs.people_~emhill_presentations_HowWeRefactor.pptx",
+  "score": 0.0534,
+  "aligned": true
+ },
+ {
   "name": "crash-57308ca363f5b71763c489d1b432aff009d4bc4f.pptx",
   "score": 0.0528,
+  "aligned": true
+ },
+ {
+  "name": "60810.pptx",
+  "score": 0.0479,
   "aligned": true
  },
  {
@@ -257,6 +237,11 @@
  {
   "name": "table-with-theme.pptx",
   "score": 0.0403,
+  "aligned": true
+ },
+ {
+  "name": "at.ecodesign.www_downloads_Vertiefungsvortrag_elektronik.pptx",
+  "score": 0.0387,
   "aligned": true
  },
  {
@@ -275,18 +260,8 @@
   "aligned": true
  },
  {
-  "name": "bug65523.pptx",
-  "score": 0.0319,
-  "aligned": true
- },
- {
-  "name": "56812.pptx",
-  "score": 0.0279,
-  "aligned": true
- },
- {
   "name": "bug62513.pptx",
-  "score": 0.0276,
+  "score": 0.03,
   "aligned": true
  },
  {
@@ -307,11 +282,6 @@
  {
   "name": "scatter-chart.pptx",
   "score": 0.0201,
-  "aligned": true
- },
- {
-  "name": "bug62736.pptx",
-  "score": 0.0195,
   "aligned": true
  },
  {
@@ -340,11 +310,6 @@
   "aligned": true
  },
  {
-  "name": "crop-to-0.pptx",
-  "score": 0.0108,
-  "aligned": true
- },
- {
   "name": "2411-Performance_Up.pptx",
   "score": 0.0104,
   "aligned": true
@@ -365,6 +330,11 @@
   "aligned": true
  },
  {
+  "name": "bug60715.pptx",
+  "score": 0.0073,
+  "aligned": true
+ },
+ {
   "name": "bug63290.pptx",
   "score": 0.0073,
   "aligned": true
@@ -376,7 +346,7 @@
  },
  {
   "name": "EmbeddedAudio.pptx",
-  "score": 0.007,
+  "score": 0.0067,
   "aligned": true
  },
  {
@@ -400,6 +370,11 @@
   "aligned": true
  },
  {
+  "name": "56812.pptx",
+  "score": 0.0041,
+  "aligned": true
+ },
+ {
   "name": "prProps.pptx",
   "score": 0.004,
   "aligned": true
@@ -420,6 +395,11 @@
   "aligned": true
  },
  {
+  "name": "bug62736.pptx",
+  "score": 0.0027,
+  "aligned": true
+ },
+ {
   "name": "KEY02.pptx",
   "score": 0.0026,
   "aligned": true
@@ -430,18 +410,28 @@
   "aligned": true
  },
  {
+  "name": "EmbeddedVideo.pptx",
+  "score": 0.0016,
+  "aligned": true
+ },
+ {
+  "name": "bug65523.pptx",
+  "score": 0.0014,
+  "aligned": true
+ },
+ {
   "name": "copy-slide-demo.pptx",
   "score": 0.0012,
   "aligned": true
  },
  {
   "name": "bug65673.pptx",
-  "score": 0.0012,
+  "score": 0.0007,
   "aligned": true
  },
  {
-  "name": "51187.pptx",
-  "score": 0.0006,
+  "name": "crop-to-0.pptx",
+  "score": 0.0007,
   "aligned": true
  },
  {
@@ -455,8 +445,18 @@
   "aligned": true
  },
  {
+  "name": "bug60499.pptx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
   "name": "bug65551.pptx",
   "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "51187.pptx",
+  "score": 0,
   "aligned": true
  },
  {

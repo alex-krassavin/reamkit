@@ -2558,6 +2558,7 @@ function fillFromNode(
       if (resource === undefined) return { kind: 'none' };
       const crop = parseSrcRect(poFindDescendant(child, 'a:srcRect')) ?? fillRectCrop(child);
       const rect = fillRectBox(child);
+      const duotone = blip ? duotoneOf(blip, resolveColor) : undefined;
       // §20.1.8.58 `a:tile` — the picture REPEATS at its own size instead of
       // being stretched over the box (§20.1.8.56 `a:stretch`).
       // NoFillAttrInImagedata.docx papers two text boxes with a texture that
@@ -2576,6 +2577,7 @@ function fillFromNode(
         ...(tiled ? { tiled: true } : {}),
         ...(crop ? { imageCrop: crop } : {}),
         ...(rect ? { imageFillRect: rect } : {}),
+        ...(duotone ? { duotone } : {}),
         ...(alpha !== undefined && alpha < 1 ? { alpha } : {}),
       };
     }
@@ -2698,6 +2700,30 @@ function fillRectCrop(blipFill: PoNode): ImageCrop | undefined {
     right: clamp(-r / spanX),
     bottom: clamp(-b / spanY),
   };
+}
+
+/**
+ * §20.1.8.23 `a:duotone` — the two colours a picture is recoloured between,
+ * dark end first. Both are ordinary colour containers, so a theme's `phClr`
+ * resolves through whatever resolver the caller bound.
+ *
+ * @param blip         The `a:blip` node.
+ * @param resolveColor The colour resolver.
+ * @returns The pair, or `undefined` when the blip states no duotone.
+ */
+function duotoneOf(
+  blip: PoNode,
+  resolveColor: ColorResolver,
+): { readonly shadowHex: string; readonly highlightHex: string } | undefined {
+  const duotone = poChildren(blip).find((c) => poIs(c, 'a:duotone'));
+  if (!duotone) return undefined;
+  const colors = poChildren(duotone)
+    .map((c) => resolveColorNode(c, resolveColor))
+    .filter((hex): hex is string => hex !== undefined);
+  const [shadowHex, highlightHex] = colors;
+  return shadowHex !== undefined && highlightHex !== undefined
+    ? { shadowHex, highlightHex }
+    : undefined;
 }
 
 /**

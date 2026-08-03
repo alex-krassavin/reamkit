@@ -581,6 +581,47 @@ describe('pptx background — a reference and a picture (E-PPTX PX5b)', () => {
     expect(fill?.alpha).toBeCloseTo(0.7, 5);
   });
 
+  it('recolours a picture between the two tones a duotone names', () => {
+    // §20.1.8.23 — an Office theme ships a grey photograph and tints it; the
+    // deck whose background is a brown ridged texture stores a grey one
+    // (corpus: themes.pptx).
+    const doc = Ream.parse(
+      buildPptx([''], {
+        slideBg: [
+          `<p:bg><p:bgPr><a:blipFill><a:blip r:embed="rIdBg">` +
+            `<a:duotone><a:srgbClr val="1A0F00"/><a:srgbClr val="E8C9A0"/></a:duotone>` +
+            `</a:blip><a:stretch><a:fillRect/></a:stretch></a:blipFill></p:bgPr></p:bg>`,
+        ],
+        slideRels: [`<Relationship Id="rIdBg" Type="${IMAGE_REL}" Target="../media/bg.png"/>`],
+        media: { 'ppt/media/bg.png': buildTinyPng(2, 2, [128, 128, 128, 255]) },
+      }),
+    );
+    expect(firstShape(doc)?.fill.duotone).toEqual({
+      shadowHex: '1A0F00',
+      highlightHex: 'E8C9A0',
+    });
+  });
+
+  it('paints a duotone through the picture, as a luminosity mask', async () => {
+    const doc = Ream.parse(
+      buildPptx([''], {
+        slideBg: [
+          `<p:bg><p:bgPr><a:blipFill><a:blip r:embed="rIdBg">` +
+            `<a:duotone><a:srgbClr val="000000"/><a:srgbClr val="FF0000"/></a:duotone>` +
+            `</a:blip><a:stretch><a:fillRect/></a:stretch></a:blipFill></p:bgPr></p:bg>`,
+        ],
+        slideRels: [`<Relationship Id="rIdBg" Type="${IMAGE_REL}" Target="../media/bg.png"/>`],
+        media: { 'ppt/media/bg.png': buildTinyPng(2, 2, [200, 200, 200, 255]) },
+      }),
+    );
+    const pdf = await doc.convert('pdf', { fonts: FONTS });
+    const bytes = latin1.decode(pdf);
+    // The picture is not painted at all: it masks the light colour over the
+    // dark one (ISO 32000-1 §11.6.5.2), which is the two-tone map itself.
+    expect(bytes).toContain('/Luminosity');
+    expect(bytes).toContain('/SMask');
+  });
+
   it('stretches a background picture into the fill rect, not across the slide', () => {
     // §20.1.8.30 — POSITIVE insets say where the picture goes IN the box.
     // tdf153466 insets one 55 % from the left and 56 % from the top; drawn

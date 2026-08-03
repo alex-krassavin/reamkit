@@ -12,6 +12,7 @@ import type { EmbeddedFont } from '@/pdf/cid-font';
 import type { PdfDict, PdfRef, PdfValue } from '@/pdf/objects';
 import type {
   FontResource,
+  ImageItem,
   ImageResource,
   ImageToken,
   LaidOutDocument,
@@ -172,6 +173,13 @@ function assembleStyledPdf(
   let annotParentCount = 0;
   const fontResourceDict = buildFontResourceDict(laid.fontResources, embeddedFonts);
   const xobjectResourceDict = buildXObjectResourceDict(laid.imageResources, embeddedImages);
+  // A duotone's soft mask draws the picture inside its own form, so it needs
+  // the XObject by the name the page knows it under.
+  const imageRefByName = new Map<string, PdfRef>();
+  for (const [resourceId, res] of laid.imageResources) {
+    const r = embeddedImages.get(resourceId);
+    if (r) imageRefByName.set(res.resourceName, r);
+  }
   // EP16b — gradient-fill shapes become shading patterns. PDF/A keeps the solid
   // fallback (a DeviceRGB shading would need OutputIntent juggling). The map is
   // keyed by VectorShape identity, which the per-page paintPlan preserves.
@@ -201,6 +209,54 @@ function assembleStyledPdf(
       }
     }
   }
+  // §20.1.8.23 `a:duotone` — the picture is not painted at all: it becomes a
+  // LUMINOSITY soft mask (ISO 32000-1 §11.6.5.2) through which the light colour
+  // is laid over the dark one, which is exactly the two-tone map the spec
+  // states — shadow where the picture is black, highlight where it is white.
+  // That needs no pixels, which matters: every duotone in the corpus is a JPEG,
+  // and recolouring one would mean decoding it.
+  const duotoneStates = new Map<string, string>();
+  const wantDuotone = (item: ImageItem, pageHeight: number): string | undefined => {
+    if (!item.duotone || item.imageResourceName === '' || pdfaProfile) return undefined;
+    // The mask form is placed by its own matrix, so a picture drawn twice in
+    // two places needs two of them.
+    const key = [
+      item.imageResourceName,
+      Math.round(item.x * 100),
+      Math.round(item.y * 100),
+      Math.round(item.width * 100),
+      Math.round(item.height * 100),
+    ].join('|');
+    const known = duotoneStates.get(key);
+    if (known !== undefined) return known;
+    // The mask form draws the picture alone, in a group whose blending space is
+    // grey — its luminosity IS the picture's.
+    const imageRef = imageRefByName.get(item.imageResourceName);
+    if (!imageRef) return undefined;
+    const form = doc.add(
+      stream(
+        {
+          Type: name('XObject'),
+          Subtype: name('Form'),
+          BBox: [0, 0, item.width, item.height],
+          Matrix: [1, 0, 0, 1, item.x, pageHeight - item.y - item.height],
+          Group: dict({ S: name('Transparency'), CS: name('DeviceGray') }),
+          Resources: dict({ XObject: dict({ [item.imageResourceName]: ref(imageRef.id) }) }),
+        },
+        encoder.encode(
+          `q ${formatNumber(item.width)} 0 0 ${formatNumber(item.height)} 0 0 cm ` +
+            `/${item.imageResourceName} Do Q`,
+        ),
+      ),
+    );
+    const nm = `GSd${duotoneStates.size}`;
+    duotoneStates.set(key, nm);
+    extGStateEntries[nm] = dict({
+      SMask: dict({ S: name('Luminosity'), G: ref(form.id), BC: [0] }),
+    });
+    return nm;
+  };
+
   // §20.1.8.40 — a shadow is drawn at the transparency its colour asks for,
   // which in PDF is a constant alpha in an /ExtGState (ISO 32000-1 §11.6.4.4).
   // One state per distinct alpha, shared by every shadow that wants it.
@@ -224,12 +280,14 @@ function assembleStyledPdf(
     for (const img of plan.images) {
       wantAlpha(washVeil(img.wash)?.alpha);
       wantAlpha(img.alpha);
+      wantDuotone(img, page.height);
     }
     // The runs that paint in their own order carry the same needs.
     for (const item of [...plan.behind, ...plan.pictures.flat()]) {
       if (item.type === 'image') {
         wantAlpha(washVeil(item.wash)?.alpha);
         wantAlpha(item.alpha);
+        wantDuotone(item, page.height);
       }
       if (item.type === 'shape') {
         const s = item.shape.shadow;
@@ -290,6 +348,7 @@ function assembleStyledPdf(
       pageTagging,
       gradientNames,
       alphaStateNames,
+      wantDuotone,
     );
     const contentsRef = doc.add(stream({}, contentBytes));
     const pageEntries: Record<string, PdfValue> = {
@@ -626,6 +685,48 @@ function buildFontResourceDict(
   return dict(entries);
 }
 
+/**
+ * The operators that paint one picture: normally the XObject itself, but for a
+ * §20.1.8.23 duotone the two colours it is recoloured between, composited
+ * through the picture's own luminosity (`state` is that soft-mask ExtGState).
+ *
+ * @param item  The image to paint.
+ * @param yUp   Its bottom edge in the page's y-up frame.
+ * @param state The duotone's soft-mask state name, when it has one.
+ * @returns The operators, without the surrounding `q`/`Q`.
+ */
+function paintImageBody(item: ImageItem, yUp: number, state: string | undefined): Array<string> {
+  const place = placeImage(
+    item.x,
+    yUp,
+    item.width,
+    item.height,
+    item.crop,
+    item.rotationDeg,
+    item.flipH,
+    item.flipV,
+  );
+  if (state === undefined || !item.duotone) {
+    return [...place, `/${item.imageResourceName} Do`];
+  }
+  const rect =
+    `${formatNumber(item.x)} ${formatNumber(yUp)} ` +
+    `${formatNumber(item.width)} ${formatNumber(item.height)} re`;
+  const [sr, sg, sb] = hexToRgb01(item.duotone.shadowHex);
+  const [hr, hg, hb] = hexToRgb01(item.duotone.highlightHex);
+  return [
+    // The dark end everywhere…
+    `${formatNumber(sr)} ${formatNumber(sg)} ${formatNumber(sb)} rg`,
+    rect,
+    'f',
+    // …and the light end wherever the picture is light.
+    `/${state} gs`,
+    `${formatNumber(hr)} ${formatNumber(hg)} ${formatNumber(hb)} rg`,
+    rect,
+    'f',
+  ];
+}
+
 function buildXObjectResourceDict(
   resources: ReadonlyMap<ResourceId, ImageResource>,
   embedded: ReadonlyMap<ResourceId, PdfRef>,
@@ -729,6 +830,7 @@ function emitPageContent(
   tagging?: PageTagging,
   gradientNames?: ReadonlyMap<VectorShape, string>,
   alphaStateNames?: ReadonlyMap<number, string>,
+  duotoneStateFor?: (item: ImageItem, pageHeight: number) => string | undefined,
 ): { content: Uint8Array; links: Array<LinkRegion> } {
   const commands = page.commands;
   const links: Array<LinkRegion> = [];
@@ -773,19 +875,7 @@ function emitPageContent(
           ? alphaStateNames?.get(Math.round(item.alpha * 1000) / 1000)
           : undefined;
       if (state !== undefined) out.push(`/${state} gs`);
-      out.push(
-        ...placeImage(
-          item.x,
-          H - item.y - item.height,
-          item.width,
-          item.height,
-          item.crop,
-          item.rotationDeg,
-          item.flipH,
-          item.flipV,
-        ),
-      );
-      out.push(`/${item.imageResourceName} Do`);
+      out.push(...paintImageBody(item, H - item.y - item.height, duotoneStateFor?.(item, H)));
       out.push(...washItems(item.wash, alphaStateNames));
       out.push('Q');
       return;
@@ -877,19 +967,7 @@ function emitPageContent(
         ? alphaStateNames?.get(Math.round(img.alpha * 1000) / 1000)
         : undefined;
     if (state !== undefined) out.push(`/${state} gs`);
-    out.push(
-      ...placeImage(
-        img.x,
-        H - img.y - img.height,
-        img.width,
-        img.height,
-        img.crop,
-        img.rotationDeg,
-        img.flipH,
-        img.flipV,
-      ),
-    );
-    out.push(`/${img.imageResourceName} Do`);
+    out.push(...paintImageBody(img, H - img.y - img.height, duotoneStateFor?.(img, H)));
     out.push(...washItems(img.wash, alphaStateNames));
     out.push('Q');
   });
