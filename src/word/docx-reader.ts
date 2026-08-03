@@ -21,7 +21,7 @@ import type { CoreProperties } from '@/core/opc';
 import type { HyperlinkResolver, ImageResolver, ParseContext, ResolvedDiagram } from '@/word';
 import { poFindDescendant } from '@/core/po-helpers';
 import { parseXml } from '@/pptx/pptx-reader';
-import { bytesIncludePartName } from '@/core/bytes';
+import { packageHasPart } from '@/core/bytes';
 import { applyNumbering, applyNumberingToHeadersFooters } from '@/core/numbering';
 import {
   EMPTY_STYLE_SHEET,
@@ -287,9 +287,9 @@ export const docxReader: DocumentReader<FlowDoc> = {
     FEATURES.trackedChanges,
     FEATURES.fontsEmbedding,
   ]),
-  // A docx is a ZIP whose central directory names the WordprocessingML parts —
-  // the part names sit as plain bytes in the container, so a substring probe is
-  // cheap and reliable without unzipping.
+  // A docx is a ZIP whose central directory names the WordprocessingML parts,
+  // so the directory is what gets asked — cheap, and it cannot be fooled by a
+  // part name that belongs to a document EMBEDDED in this one.
   //
   // The MAIN part's name is not fixed: OPC names it through the package's
   // `officeDocument` relationship, which the reader already follows.
@@ -300,9 +300,9 @@ export const docxReader: DocumentReader<FlowDoc> = {
   sniff: (bytes) =>
     bytes[0] === 0x50 &&
     bytes[1] === 0x4b &&
-    (bytesIncludePartName(bytes, 'word/document.xml') ||
-      bytesIncludePartName(bytes, 'word/styles.xml') ||
-      bytesIncludePartName(bytes, 'word/_rels/')),
+    (packageHasPart(bytes, 'word/document.xml') ||
+      packageHasPart(bytes, 'word/styles.xml') ||
+      packageHasPart(bytes, 'word/_rels/')),
   read: (bytes) => readDocx(bytes),
 };
 

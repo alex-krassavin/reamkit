@@ -7,8 +7,11 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildPptx } from './fixtures/build-pptx';
+import { bytesIncludePartName, packageHasPart } from '@/core/bytes';
 import { Ream } from '@/core/converter/ream';
+import { xlsxReader } from '@/excel/xlsx-reader';
 import { PdfFile } from '@/pdf-reader/document';
+import { pptxReader } from '@/pptx/pptx-reader';
 
 const FONTS = {
   regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
@@ -18,6 +21,18 @@ const FONTS = {
 describe('pptx reader seam (E-PPTX PX0)', () => {
   it('sniffs a pptx and reports the format', () => {
     expect(Ream.parse(buildPptx(['', ''])).format).toBe('pptx');
+  });
+
+  it('is not mistaken for the workbook its chart embeds', () => {
+    // A chart keeps its data as a whole .xlsx under ppt/embeddings, STORED —
+    // so `xl/workbook.xml` lies in this deck's bytes without being a part of
+    // it. Thirteen corpus decks went to the xlsx reader and threw there.
+    const deck = new Uint8Array(readFileSync('tests/fixtures/real/bar-chart.pptx'));
+    expect(bytesIncludePartName(deck, 'xl/workbook.xml')).toBe(true); // the trap
+    expect(packageHasPart(deck, 'xl/workbook.xml')).toBe(false); // not a part
+    expect(xlsxReader.sniff(deck)).toBe(false);
+    expect(pptxReader.sniff(deck)).toBe(true);
+    expect(Ream.parse(deck).format).toBe('pptx');
   });
 
   it('renders one PDF page per slide at the 16:9 deck size', async () => {

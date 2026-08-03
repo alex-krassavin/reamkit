@@ -22,7 +22,7 @@ import type { SlideContext } from '@/pptx/slide-parser';
 
 import type { ColorResolver } from '@/core/drawingml/colors';
 
-import { bytesIncludePartName } from '@/core/bytes';
+import { packageHasPart } from '@/core/bytes';
 import { parseChart, withChartColorStyle } from '@/core/drawingml/chart-parser';
 import {
   DEFAULT_THEME_PALETTE,
@@ -404,9 +404,9 @@ export const pptxReader: DocumentReader<FlowDoc> = {
     FEATURES.charts,
     FEATURES.tables,
   ]),
-  // A pptx is a ZIP whose parts include ppt/presentation.xml — a cheap substring
-  // probe of the container bytes, no unzip needed (mirrors the docx/xlsx sniff).
+  // A pptx is a ZIP whose parts include ppt/presentation.xml — read off the
+  // archive's own directory, no unzip needed (mirrors the docx/xlsx sniff).
   sniff: (bytes) =>
-    bytes[0] === 0x50 && bytes[1] === 0x4b && bytesIncludePartName(bytes, 'ppt/presentation.xml'),
+    bytes[0] === 0x50 && bytes[1] === 0x4b && packageHasPart(bytes, 'ppt/presentation.xml'),
   read: (bytes) => readPptx(bytes),
 };

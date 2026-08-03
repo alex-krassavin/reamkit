@@ -40,6 +40,14 @@ Upstream path: `sc/qa/unit/data/xlsx` (ref `master`).
 
 ## apache/poi — Apache-2.0
 
+Upstream path: `test-data/slideshow` (ref `trunk`).
+
+| File | sha256 (16) | Why it is here |
+|---|---|---|
+| `bar-chart.pptx` | `79e1d218bfb2903e` | A deck whose chart carries its data as `ppt/embeddings/Microsoft_Excel_Worksheet1.xlsx`, STORED — so the embedded workbook's own `xl/workbook.xml` lies in the outer file's bytes, where a substring sniff read it as a workbook. |
+
+## apache/poi — Apache-2.0
+
 Upstream path: `test-data/spreadsheet` (ref `trunk`).
 
 | File | sha256 (16) | Why it is here |

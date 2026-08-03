@@ -104,6 +104,11 @@ const ADOPTED: ReadonlyArray<Adopted> = [
     why: 'MS-OFFCRYPTO agile encryption (4.4) as Office 2013 writes it — SHA-512, AES-CBC, and a certificate key encryptor beside the password one. Password `abc`.',
   },
   {
+    file: 'bar-chart.pptx',
+    source: 'poi-pptx',
+    why: "A deck whose chart carries its data as `ppt/embeddings/Microsoft_Excel_Worksheet1.xlsx`, STORED — so the embedded workbook's own `xl/workbook.xml` lies in the outer file's bytes, where a substring sniff read it as a workbook.",
+  },
+  {
     file: 'protected_passtika.xlsx',
     source: 'poi-xlsx',
     why: 'An encrypted WORKBOOK — the same container question as the two documents above, on the other reader. Password `tika`.',
