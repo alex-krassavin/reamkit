@@ -21,6 +21,7 @@
 //   npx tsx scripts/corpus/pixel-scout.ts corpus/external/lo-xlsx [limit] [offset]
 //   npx tsx scripts/corpus/pixel-scout.ts corpus/external/poi-xlsx 500 0 --dpi 72
 //   npx tsx scripts/corpus/pixel-scout.ts corpus/external/lo-docx-import
+//   npx tsx scripts/corpus/pixel-scout.ts corpus/external/lo-pptx
 
 import { createHash } from 'node:crypto';
 import {
@@ -48,7 +49,8 @@ const FONTS: FontBytesByVariant = {
 // Enough to see a missing block, a wrong fill or a shifted column; not enough
 // to rank on anti-aliasing. A4 at 60 dpi is ~500×700.
 const DEFAULT_DPI = 60;
-// A 278-page workbook does not need 278 comparisons to say whether it differs.
+// A 278-page workbook, or a 60-slide deck, does not need that many comparisons
+// to say whether it differs — see samplePages for which ones it gets.
 const MAX_PAGES = 8;
 
 const CACHE_DIR = resolve('corpus/.lo-cache');
@@ -62,6 +64,17 @@ function cachedReference(src: string, work: string): string {
   const produced = referenceToPdf(src, work);
   copyFileSync(produced, cached);
   return cached;
+}
+
+/**
+ * Which page indices to compare out of `count`, at most {@link MAX_PAGES} of
+ * them, spread evenly from the first to the last. Everything shorter than the
+ * cap is compared whole, which is nearly every document in the corpus.
+ */
+function samplePages(count: number): Array<number> {
+  if (count <= MAX_PAGES) return Array.from({ length: count }, (_, i) => i);
+  const step = (count - 1) / (MAX_PAGES - 1);
+  return Array.from({ length: MAX_PAGES }, (_, i) => Math.round(i * step));
 }
 
 interface Row {
@@ -92,8 +105,9 @@ async function main(): Promise<void> {
   mkdirSync(work, { recursive: true });
 
   const files = readdirSync(dir)
-    // Both halves of the corpus: the sweep this ranks for is the docx one too.
-    .filter((f) => /\.(?:xlsx|docx)$/iu.test(f))
+    // Every OOXML input the sweep covers. A deck ranks like a document: one
+    // slide is one page on both sides, so the same comparison reads it.
+    .filter((f) => /\.(?:xlsx|docx|pptx)$/iu.test(f))
     .sort()
     .slice(offset, offset + limit);
 
@@ -151,12 +165,14 @@ async function main(): Promise<void> {
     }
 
     // The worst page carries the file: one wrong page among twenty is exactly
-    // the case worth opening, and averaging hides it.
-    const compared = Math.min(ourPages.length, refPages.length, MAX_PAGES);
+    // the case worth opening, and averaging hides it. Which pages get looked at
+    // is spread over the whole document rather than taken off the front — a
+    // deck opens on a title slide and keeps its charts and tables in the
+    // middle, so the first eight of forty are the eight least worth ranking on.
     let worst = 0;
     let worstPage = 0;
     let worstColor = 0;
-    for (let i = 0; i < compared; i++) {
+    for (const i of samplePages(Math.min(ourPages.length, refPages.length))) {
       const ourPpm = parsePpm(new Uint8Array(readFileSync(ourPages[i]!)));
       const refPpm = parsePpm(new Uint8Array(readFileSync(refPages[i]!)));
       // Two pixels of slack: enough that a glyph landing a hair to the left is

@@ -106,10 +106,12 @@ const CORPUS_DIRS: ReadonlyArray<string> = [
   'corpus/external/lo-docx-import',
   'corpus/external/lo-docx-export',
   'corpus/external/poi-docx',
+  'corpus/external/lo-pptx',
+  'corpus/external/poi-pptx',
 ];
 
-/** The extensions a bare name may carry. Both readers convert to PDF the same way. */
-const CORPUS_EXTS: ReadonlyArray<string> = ['.xlsx', '.docx'];
+/** The extensions a bare name may carry. Every reader converts to PDF the same way. */
+const CORPUS_EXTS: ReadonlyArray<string> = ['.xlsx', '.docx', '.pptx'];
 
 /** Resolve a bare fixture name, a corpus-relative path, or an absolute one. */
 function resolveInput(nameOrPath: string): string {
