@@ -578,6 +578,28 @@ describe('pptx background — a reference and a picture (E-PPTX PX5b)', () => {
     expect(fill?.alpha).toBeCloseTo(0.7, 5);
   });
 
+  it('stretches a background picture into the fill rect, not across the slide', () => {
+    // §20.1.8.30 — POSITIVE insets say where the picture goes IN the box.
+    // tdf153466 insets one 55 % from the left and 56 % from the top; drawn
+    // over the whole slide it is a triangle five times its size.
+    const doc = Ream.parse(
+      buildPptx([''], {
+        slideBg: [
+          `<p:bg><p:bgPr><a:blipFill><a:blip r:embed="rIdBg"/>` +
+            `<a:stretch><a:fillRect l="55000" t="56000"/></a:stretch></a:blipFill></p:bgPr></p:bg>`,
+        ],
+        slideRels: [`<Relationship Id="rIdBg" Type="${IMAGE_REL}" Target="../media/bg.png"/>`],
+        media: { 'ppt/media/bg.png': buildTinyPng(2, 2, [255, 0, 0, 255]) },
+      }),
+    );
+    expect(firstShape(doc)?.fill.imageFillRect).toEqual({
+      left: 0.55,
+      top: 0.56,
+      right: 0,
+      bottom: 0,
+    });
+  });
+
   it("resolves the MASTER's background picture through the master's own rels", () => {
     // The blip's relationship id is scoped to the part the background is
     // written in, so a master background cannot be resolved against the slide.

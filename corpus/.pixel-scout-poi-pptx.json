@@ -70,33 +70,8 @@
   "aligned": true
  },
  {
-  "name": "ececapstonespring2012.pptx",
-  "score": 0.9919,
-  "aligned": true
- },
- {
   "name": "themes.pptx",
   "score": 0.9905,
-  "aligned": true
- },
- {
-  "name": "ae.ac.uaeu.faculty_nafaachbili_GeomLec1.pptx",
-  "score": 0.9711,
-  "aligned": true
- },
- {
-  "name": "aascu.org_hbcu_leadershipsummit_cooper_.pptx",
-  "score": 0.9641,
-  "aligned": true
- },
- {
-  "name": "KEY02.pptx",
-  "score": 0.9594,
-  "aligned": true
- },
- {
-  "name": "aptia.pptx",
-  "score": 0.9494,
   "aligned": true
  },
  {
@@ -105,23 +80,8 @@
   "aligned": true
  },
  {
-  "name": "pptx2svg.pptx",
-  "score": 0.9159,
-  "aligned": true
- },
- {
-  "name": "chart-slide-bg.pptx",
-  "score": 0.8948,
-  "aligned": true
- },
- {
   "name": "customGeo.pptx",
   "score": 0.8016,
-  "aligned": true
- },
- {
-  "name": "bug68703.pptx",
-  "score": 0.7583,
   "aligned": true
  },
  {
@@ -150,8 +110,18 @@
   "aligned": true
  },
  {
+  "name": "aascu.org_hbcu_leadershipsummit_cooper_.pptx",
+  "score": 0.4884,
+  "aligned": true
+ },
+ {
   "name": "alterman_security.pptx",
   "score": 0.4611,
+  "aligned": true
+ },
+ {
+  "name": "bug68703.pptx",
+  "score": 0.4577,
   "aligned": true
  },
  {
@@ -210,6 +180,11 @@
   "aligned": true
  },
  {
+  "name": "ae.ac.uaeu.faculty_nafaachbili_GeomLec1.pptx",
+  "score": 0.2503,
+  "aligned": true
+ },
+ {
   "name": "shapes.pptx",
   "score": 0.2126,
   "aligned": true
@@ -232,11 +207,6 @@
  {
   "name": "smartart-rotated-text.pptx",
   "score": 0.1795,
-  "aligned": true
- },
- {
-  "name": "2411-Performance_Up.pptx",
-  "score": 0.1571,
   "aligned": true
  },
  {
@@ -275,6 +245,16 @@
   "aligned": true
  },
  {
+  "name": "chart-slide-bg.pptx",
+  "score": 0.0479,
+  "aligned": true
+ },
+ {
+  "name": "KEY02.pptx",
+  "score": 0.0472,
+  "aligned": true
+ },
+ {
   "name": "crash-57308ca363f5b71763c489d1b432aff009d4bc4f.pptx",
   "score": 0.0465,
   "aligned": true
@@ -282,6 +262,16 @@
  {
   "name": "table-with-theme.pptx",
   "score": 0.0403,
+  "aligned": true
+ },
+ {
+  "name": "aptia.pptx",
+  "score": 0.038,
+  "aligned": true
+ },
+ {
+  "name": "pptx2svg.pptx",
+  "score": 0.0367,
   "aligned": true
  },
  {
@@ -340,6 +330,11 @@
   "aligned": true
  },
  {
+  "name": "ececapstonespring2012.pptx",
+  "score": 0.0156,
+  "aligned": true
+ },
+ {
   "name": "testPPT.pptx",
   "score": 0.014,
   "aligned": true
@@ -372,6 +367,11 @@
  {
   "name": "bug65551.pptx",
   "score": 0.0108,
+  "aligned": true
+ },
+ {
+  "name": "2411-Performance_Up.pptx",
+  "score": 0.0104,
   "aligned": true
  },
  {

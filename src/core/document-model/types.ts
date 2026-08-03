@@ -1161,6 +1161,20 @@ export interface ShapeFill {
    */
   readonly imageCrop?: ImageCrop;
   /**
+   * §20.1.8.30 `a:stretch/a:fillRect` with POSITIVE insets — the part of the
+   * shape's box the picture is stretched into, as fractions of that box. A
+   * slide backed by a picture inset 55 % from the left shows it in the corner,
+   * not across the slide (corpus: tdf153466.pptx). Negative insets are the
+   * other case entirely — the picture zooming past the box — and read as a
+   * crop of the source.
+   */
+  readonly imageFillRect?: {
+    readonly left: number;
+    readonly top: number;
+    readonly right: number;
+    readonly bottom: number;
+  };
+  /**
    * §20.1.2.3.1 `a:alpha` / §14.1.2.5 `@opacity` — how opaque the fill is,
    * `0..1`. Absent is opaque. The colour above is the fill's own, NOT composited
    * over the paper: what is behind the shape shows through it.

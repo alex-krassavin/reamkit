@@ -5,11 +5,6 @@
   "aligned": true
  },
  {
-  "name": "page_transparent_bitmap.pptx",
-  "score": 1,
-  "aligned": true
- },
- {
   "name": "tdf113163.pptx",
   "score": 1,
   "aligned": true
@@ -25,13 +20,13 @@
   "aligned": true
  },
  {
-  "name": "tdf152070.pptx",
+  "name": "tdf156808.pptx",
   "score": 0.999,
   "aligned": true
  },
  {
-  "name": "tdf156808.pptx",
-  "score": 0.999,
+  "name": "tdf123684.pptx",
+  "score": 0.998,
   "aligned": true
  },
  {
@@ -40,23 +35,8 @@
   "aligned": true
  },
  {
-  "name": "tdf158512.pptx",
-  "score": 0.9784,
-  "aligned": true
- },
- {
-  "name": "tdf123684.pptx",
-  "score": 0.9767,
-  "aligned": true
- },
- {
   "name": "tdf157793.pptx",
   "score": 0.9744,
-  "aligned": true
- },
- {
-  "name": "tdf169781.pptx",
-  "score": 0.9591,
   "aligned": true
  },
  {
@@ -75,8 +55,8 @@
   "aligned": true
  },
  {
-  "name": "n821567.pptx",
-  "score": 0.6371,
+  "name": "tdf153466.pptx",
+  "score": 0.7711,
   "aligned": true
  },
  {
@@ -325,11 +305,6 @@
   "aligned": true
  },
  {
-  "name": "tdf153466.pptx",
-  "score": 0.2311,
-  "aligned": true
- },
- {
   "name": "smartart-linear-rule-vert.pptx",
   "score": 0.2276,
   "aligned": true
@@ -425,6 +400,11 @@
   "aligned": true
  },
  {
+  "name": "n821567.pptx",
+  "score": 0.1648,
+  "aligned": true
+ },
+ {
   "name": "tdf149551_SmartArt_Pie.pptx",
   "score": 0.1633,
   "aligned": true
@@ -517,6 +497,11 @@
  {
   "name": "slide-sections.pptx",
   "score": 0.1195,
+  "aligned": true
+ },
+ {
+  "name": "tdf158512.pptx",
+  "score": 0.1151,
   "aligned": true
  },
  {
@@ -680,6 +665,11 @@
   "aligned": true
  },
  {
+  "name": "tdf169781.pptx",
+  "score": 0.0615,
+  "aligned": true
+ },
+ {
   "name": "tdf104786.pptx",
   "score": 0.0608,
   "aligned": true
@@ -805,6 +795,11 @@
   "aligned": true
  },
  {
+  "name": "page_transparent_bitmap.pptx",
+  "score": 0.0404,
+  "aligned": true
+ },
+ {
   "name": "activex_textbox.pptx",
   "score": 0.0403,
   "aligned": true
@@ -907,6 +902,11 @@
  {
   "name": "tdf112280.pptx",
   "score": 0.0272,
+  "aligned": true
+ },
+ {
+  "name": "tdf152070.pptx",
+  "score": 0.0268,
   "aligned": true
  },
  {

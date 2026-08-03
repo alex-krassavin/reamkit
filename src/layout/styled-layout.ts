@@ -466,6 +466,13 @@ interface ShapeBlockLaidOut {
   readonly fillAlpha?: number;
   /** §20.1.8.14 `a:blipFill` — the picture painted across the shape's box. */
   readonly fillImageResourceName?: string;
+  /** §20.1.8.30 — the part of the box the fill picture is stretched into. */
+  readonly fillImageRect?: {
+    readonly left: number;
+    readonly top: number;
+    readonly right: number;
+    readonly bottom: number;
+  };
   /**
    * §14.1.2.5 `@type="tile"` — the size one tile of that picture is drawn at,
    * when it repeats over the box rather than stretching across it.
@@ -2665,6 +2672,9 @@ function layoutShapeBlock(
     ...(fillImageResourceName && shape.fill.imageCrop
       ? { fillImageCrop: shape.fill.imageCrop }
       : {}),
+    ...(fillImageResourceName && shape.fill.imageFillRect
+      ? { fillImageRect: shape.fill.imageFillRect }
+      : {}),
     ...(fillColorHex ? { fillColorHex } : {}),
     ...(fillGradient ? { fillGradient } : {}),
     ...(shape.fill.alpha !== undefined && shape.fill.alpha < 1
@@ -3601,12 +3611,19 @@ function emitShapeItems(
         });
       }
     } else {
+      // §20.1.8.30 — the picture is stretched into the fill rect, which is the
+      // whole box unless the fill insets it.
+      const r = sh.fillImageRect;
+      const boxX = x + (r ? r.left * sh.widthPt : 0);
+      const boxW = sh.widthPt * (r ? 1 - r.left - r.right : 1);
+      const boxH = sh.heightPt * (r ? 1 - r.top - r.bottom : 1);
+      const boxTop = pageHeight - (bottomYUp + sh.heightPt) + (r ? r.top * sh.heightPt : 0);
       sink.push({
         type: 'image',
-        x: pt(x),
-        y: pt(pageHeight - (bottomYUp + sh.heightPt)),
-        width: pt(sh.widthPt),
-        height: pt(sh.heightPt),
+        x: pt(boxX),
+        y: pt(boxTop),
+        width: pt(boxW),
+        height: pt(boxH),
         imageResourceName: sh.fillImageResourceName,
         ...(sh.fillImageCrop ? { crop: sh.fillImageCrop } : {}),
         ...(sh.fillAlpha !== undefined ? { alpha: sh.fillAlpha } : {}),

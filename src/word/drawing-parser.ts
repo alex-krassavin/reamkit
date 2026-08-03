@@ -2557,6 +2557,7 @@ function fillFromNode(
       const resource = relId !== undefined ? resolveImage?.(relId) : undefined;
       if (resource === undefined) return { kind: 'none' };
       const crop = parseSrcRect(poFindDescendant(child, 'a:srcRect')) ?? fillRectCrop(child);
+      const rect = fillRectBox(child);
       // §20.1.8.58 `a:tile` — the picture REPEATS at its own size instead of
       // being stretched over the box (§20.1.8.56 `a:stretch`).
       // NoFillAttrInImagedata.docx papers two text boxes with a texture that
@@ -2574,6 +2575,7 @@ function fillFromNode(
         imageResource: resource,
         ...(tiled ? { tiled: true } : {}),
         ...(crop ? { imageCrop: crop } : {}),
+        ...(rect ? { imageFillRect: rect } : {}),
         ...(alpha !== undefined && alpha < 1 ? { alpha } : {}),
       };
     }
@@ -2696,6 +2698,28 @@ function fillRectCrop(blipFill: PoNode): ImageCrop | undefined {
     right: clamp(-r / spanX),
     bottom: clamp(-b / spanY),
   };
+}
+
+/**
+ * §20.1.8.30 `a:stretch/a:fillRect` with POSITIVE insets — the part of the box
+ * the picture is stretched INTO. The negative case is the zoom {@link
+ * fillRectCrop} reads; this is the other one, and unread it drew a background
+ * picture inset into the corner of a slide across the whole of it
+ * (tdf153466.pptx: a triangle five times its size).
+ *
+ * @param blipFill The `a:blipFill` node.
+ * @returns The rect as fractions of the box, or `undefined` when every inset
+ *          is zero or negative.
+ */
+function fillRectBox(blipFill: PoNode): ShapeFill['imageFillRect'] {
+  const stretch = poChildren(blipFill).find((c) => poIs(c, 'a:stretch'));
+  const rect = stretch ? poChildren(stretch).find((c) => poIs(c, 'a:fillRect')) : undefined;
+  if (!rect) return undefined;
+  const side = (name: string): number => Math.max(0, (poIntAttr(rect, name) ?? 0) / 100000);
+  const [left, top, right, bottom] = [side('l'), side('t'), side('r'), side('b')];
+  if (left + top + right + bottom === 0) return undefined;
+  if (left + right >= 1 || top + bottom >= 1) return undefined;
+  return { left, top, right, bottom };
 }
 
 /**
