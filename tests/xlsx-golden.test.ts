@@ -83,10 +83,16 @@ describe('golden page geometry (real spreadsheets)', () => {
     // duplicate-filename.xlsx and tdf76115.xlsx are absent by design: soffice
     // refuses both, so no reference exists. tdf76115 is the sharper case — we
     // read 7118 cells out of a document LibreOffice will not open at all.
+    // protected_passtika.xlsx is absent for a different reason: it is
+    // encrypted, and a golden render would have to carry its password.
     const adopted = readdirSync(fixtureDir).filter((f) => f.endsWith('.xlsx'));
     const withGolden = new Set(goldens.map((g) => g.file));
     const without = adopted.filter((f) => !withGolden.has(f)).sort();
-    expect(without).toEqual(['duplicate-filename.xlsx', 'tdf76115.xlsx']);
+    expect(without).toEqual([
+      'duplicate-filename.xlsx',
+      'protected_passtika.xlsx',
+      'tdf76115.xlsx',
+    ]);
   });
 
   for (const golden of goldens) {

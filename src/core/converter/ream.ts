@@ -30,7 +30,7 @@ import { flowRenderOptions } from '@/core/converter/project';
 import { FontRegistry, createFontMeasure } from '@/core/font';
 import { fetchFontSet } from '@/core/fonts';
 import { ConversionLossError } from '@/core/ir';
-import { isCfb, openCfb } from '@/core/ole/cfb';
+import { decryptPackage, isEncryptedPackage } from '@/core/crypto/offcrypto';
 import { writeDocx } from '@/word/docx-writer';
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
 import { writeXlsx } from '@/excel/xlsx-writer';
@@ -54,8 +54,10 @@ export interface ReamParseOptions {
   /** Reader registry override; defaults to the built-in docx + xlsx readers. */
   readonly readers?: ReadonlyArray<DocumentReader<SourceDoc>>;
   /**
-   * The user password for an encrypted PDF source (ISO 32000 §7.6). Defaults to
-   * the empty string, which opens the common permissions-only encryption (EP14).
+   * The password an encrypted source is opened with: a PDF's user password
+   * (ISO 32000 §7.6) or an OOXML package's (ECMA-376 §2.3, MS-OFFCRYPTO).
+   * Defaults to the empty string, which opens a PDF's common permissions-only
+   * encryption (EP14); an encrypted OOXML package always names a password.
    */
   readonly password?: string;
 }
@@ -161,23 +163,26 @@ export class Ream {
    */
   static parse(bytes: Uint8Array, options: ReamParseOptions = {}): Ream {
     const readers = options.readers ?? DEFAULT_READERS;
-    const reader = readers.find((r) => r.sniff(bytes));
-    if (!reader) {
-      // A password-protected OOXML document is not an unknown format — it is one
-      // we recognise and cannot open. ECMA-376 §2.3 wraps the whole OPC package
-      // in an OLE container, which every reader correctly declines, and the
-      // caller was then told their .xlsx was unrecognizable (58616.xlsx).
-      if (isEncryptedOoxml(bytes)) {
+    // ECMA-376 §2.3 — an encrypted package is an OLE container holding the whole
+    // OPC zip as ciphertext, which every reader correctly declines. Given the
+    // password it opens here, and what comes out is an ordinary document.
+    let source = bytes;
+    if (isEncryptedPackage(bytes)) {
+      if (options.password === undefined) {
         throw new Error(
           'Password-protected OOXML document (ECMA-376 §2.3 EncryptedPackage) — ' +
-            're-save it without a password',
+            'pass the password as `password`',
         );
       }
+      source = decryptPackage(bytes, options.password);
+    }
+    const reader = readers.find((r) => r.sniff(source));
+    if (!reader) {
       throw new Error(
         `Unrecognized document format (readers: ${readers.map((r) => r.id).join(', ')})`,
       );
     }
-    const { doc, losses } = reader.read(bytes, { password: options.password });
+    const { doc, losses } = reader.read(source, { password: options.password });
     // The reader's native tree — a SheetDoc for spreadsheets — is projected to
     // the FlowDoc the render path consumes; the SheetDoc is kept for inspection.
     const sheet = doc.kind === 'sheet' ? doc : undefined;
@@ -390,16 +395,5 @@ export class Ream {
    */
   private enforceStrict(options: ReamConvertOptions, losses: ReadonlyArray<Loss>): void {
     if (options.strict && losses.length > 0) throw new ConversionLossError(losses[0]!);
-  }
-}
-
-// ECMA-376 §2.3 — an encrypted OPC package is an OLE compound file holding the
-// ciphertext in `EncryptedPackage` beside its `EncryptionInfo`.
-function isEncryptedOoxml(bytes: Uint8Array): boolean {
-  if (!isCfb(bytes)) return false;
-  try {
-    return openCfb(bytes).hasStream('EncryptedPackage');
-  } catch {
-    return false;
   }
 }

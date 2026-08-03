@@ -1,7 +1,9 @@
-// E-PDF EP9 — synchronous cryptographic primitives for reading encrypted PDFs.
-// The reader contract is synchronous (handoff v1 §4), which rules out WebCrypto
-// (async) — so the Standard security handler's primitives are hand-rolled here:
-// MD5 + RC4 (legacy V1/V2/V4), and SHA-256/384/512 + AES-CBC (V5/R6, AES-256).
+// Synchronous cryptographic primitives for READING encrypted documents — a PDF
+// under its Standard security handler (E-PDF EP9) and an OOXML package under
+// MS-OFFCRYPTO. Both readers are synchronous (handoff v1 §4), which rules out
+// WebCrypto, so the primitives are hand-rolled: MD5, SHA-1 and SHA-256/384/512,
+// RC4, and AES in CBC and ECB.
+//
 // These are used ONLY to decrypt content the document already contains; nothing
 // here generates keys or signs. Inputs are small (keys, passwords, salts), so
 // clarity is preferred over speed.
@@ -122,6 +124,68 @@ const SHA256_K = [
   0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ];
 
+// --- SHA-1 (FIPS 180-4) -----------------------------------------------------
+
+/**
+ * SHA-1. Used by MS-OFFCRYPTO's standard encryption for its key derivation and
+ * password verifier, and by agile encryption when the descriptor names it.
+ */
+export function sha1(input: Uint8Array): Uint8Array {
+  const ml = input.length * 8;
+  const withPad = new Uint8Array((((input.length + 8) >> 6) << 6) + 64);
+  withPad.set(input);
+  withPad[input.length] = 0x80;
+  const view = new DataView(withPad.buffer);
+  view.setUint32(withPad.length - 4, ml >>> 0, false);
+  view.setUint32(withPad.length - 8, Math.floor(ml / 0x100000000), false);
+  let h0 = 0x67452301;
+  let h1 = 0xefcdab89;
+  let h2 = 0x98badcfe;
+  let h3 = 0x10325476;
+  let h4 = 0xc3d2e1f0;
+  const w = new Uint32Array(80);
+  for (let off = 0; off < withPad.length; off += 64) {
+    for (let i = 0; i < 16; i++) w[i] = view.getUint32(off + i * 4, false);
+    for (let i = 16; i < 80; i++) {
+      const x = w[i - 3]! ^ w[i - 8]! ^ w[i - 14]! ^ w[i - 16]!;
+      w[i] = (x << 1) | (x >>> 31);
+    }
+    let a = h0;
+    let b = h1;
+    let c = h2;
+    let d = h3;
+    let e = h4;
+    for (let i = 0; i < 80; i++) {
+      const [f, k] =
+        i < 20
+          ? [(b & c) | (~b & d), 0x5a827999]
+          : i < 40
+            ? [b ^ c ^ d, 0x6ed9eba1]
+            : i < 60
+              ? [(b & c) | (b & d) | (c & d), 0x8f1bbcdc]
+              : [b ^ c ^ d, 0xca62c1d6];
+      const t = (((a << 5) | (a >>> 27)) + f + e + k + w[i]!) >>> 0;
+      e = d;
+      d = c;
+      c = ((b << 30) | (b >>> 2)) >>> 0;
+      b = a;
+      a = t;
+    }
+    h0 = (h0 + a) >>> 0;
+    h1 = (h1 + b) >>> 0;
+    h2 = (h2 + c) >>> 0;
+    h3 = (h3 + d) >>> 0;
+    h4 = (h4 + e) >>> 0;
+  }
+  const out = new Uint8Array(20);
+  new DataView(out.buffer).setUint32(0, h0, false);
+  new DataView(out.buffer).setUint32(4, h1, false);
+  new DataView(out.buffer).setUint32(8, h2, false);
+  new DataView(out.buffer).setUint32(12, h3, false);
+  new DataView(out.buffer).setUint32(16, h4, false);
+  return out;
+}
+
 export function sha256(input: Uint8Array): Uint8Array {
   const h = [
     0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
@@ -179,7 +243,6 @@ export function sha256(input: Uint8Array): Uint8Array {
 
 // --- SHA-512 / SHA-384 (FIPS 180-4), BigInt for the 64-bit words ------------
 
-const MASK64 = (1n << 64n) - 1n;
 const SHA512_K: Array<bigint> = [
   0x428a2f98d728ae22n,
   0x7137449123ef65cdn,
@@ -263,64 +326,154 @@ const SHA512_K: Array<bigint> = [
   0x6c44198c4a475817n,
 ];
 
+// The 64-bit words as HI/LO pairs of 32-bit ints. BigInt is the clear way to
+// write SHA-512 and forty times the cost of this one, which matters: opening an
+// agile-encrypted document spins the hash a hundred thousand times.
+const SHA512_KH = new Int32Array(80);
+const SHA512_KL = new Int32Array(80);
+for (let i = 0; i < 80; i++) {
+  SHA512_KH[i] = Number((SHA512_K[i]! >> 32n) & 0xffffffffn) | 0;
+  SHA512_KL[i] = Number(SHA512_K[i]! & 0xffffffffn) | 0;
+}
+
 function sha512Core(iv: Array<bigint>, input: Uint8Array, outLen: number): Uint8Array {
-  const rotr = (x: bigint, n: bigint): bigint => ((x >> n) | (x << (64n - n))) & MASK64;
-  const h = [...iv];
+  const hh = new Int32Array(8);
+  const hl = new Int32Array(8);
+  for (let i = 0; i < 8; i++) {
+    hh[i] = Number((iv[i]! >> 32n) & 0xffffffffn) | 0;
+    hl[i] = Number(iv[i]! & 0xffffffffn) | 0;
+  }
   const len = input.length;
   const blocks = ((len + 16) >> 7) + 1;
   const msg = new Uint8Array(blocks * 128);
   msg.set(input);
   msg[len] = 0x80;
-  let bitLen = BigInt(len) * 8n;
-  for (let i = 0; i < 16; i++) {
-    msg[msg.length - 1 - i] = Number(bitLen & 0xffn);
-    bitLen >>= 8n;
-  }
-  const w = new Array<bigint>(80);
+  const view = new DataView(msg.buffer);
+  const bits = len * 8;
+  view.setUint32(msg.length - 4, bits >>> 0, false);
+  view.setUint32(msg.length - 8, Math.floor(bits / 0x100000000), false);
+
+  const wh = new Int32Array(80);
+  const wl = new Int32Array(80);
   for (let off = 0; off < msg.length; off += 128) {
     for (let i = 0; i < 16; i++) {
-      let v = 0n;
-      for (let b = 0; b < 8; b++) v = (v << 8n) | BigInt(msg[off + i * 8 + b]!);
-      w[i] = v;
+      wh[i] = view.getInt32(off + i * 8, false);
+      wl[i] = view.getInt32(off + i * 8 + 4, false);
     }
     for (let i = 16; i < 80; i++) {
-      const s0 = rotr(w[i - 15]!, 1n) ^ rotr(w[i - 15]!, 8n) ^ (w[i - 15]! >> 7n);
-      const s1 = rotr(w[i - 2]!, 19n) ^ rotr(w[i - 2]!, 61n) ^ (w[i - 2]! >> 6n);
-      w[i] = (w[i - 16]! + s0 + w[i - 7]! + s1) & MASK64;
+      // σ0(w[i-15]) — rotr 1, rotr 8, shr 7
+      const x15h = wh[i - 15]!;
+      const x15l = wl[i - 15]!;
+      const s0h = ((x15h >>> 1) | (x15l << 31)) ^ ((x15h >>> 8) | (x15l << 24)) ^ (x15h >>> 7);
+      const s0l =
+        ((x15l >>> 1) | (x15h << 31)) ^
+        ((x15l >>> 8) | (x15h << 24)) ^
+        ((x15l >>> 7) | (x15h << 25));
+      // σ1(w[i-2]) — rotr 19, rotl 3 (= rotr 61), shr 6
+      const x2h = wh[i - 2]!;
+      const x2l = wl[i - 2]!;
+      const s1h = ((x2h >>> 19) | (x2l << 13)) ^ ((x2l >>> 29) | (x2h << 3)) ^ (x2h >>> 6);
+      const s1l =
+        ((x2l >>> 19) | (x2h << 13)) ^ ((x2h >>> 29) | (x2l << 3)) ^ ((x2l >>> 6) | (x2h << 26));
+      // w[i] = w[i-16] + σ0 + w[i-7] + σ1, added as one 64-bit value
+      let lo = (wl[i - 16]! >>> 0) + (s0l >>> 0);
+      let hi = (wh[i - 16]! >>> 0) + (s0h >>> 0) + (lo > 0xffffffff ? 1 : 0);
+      lo = (lo >>> 0) + (wl[i - 7]! >>> 0);
+      hi = hi + (wh[i - 7]! >>> 0) + (lo > 0xffffffff ? 1 : 0);
+      lo = (lo >>> 0) + (s1l >>> 0);
+      hi = hi + (s1h >>> 0) + (lo > 0xffffffff ? 1 : 0);
+      wh[i] = hi | 0;
+      wl[i] = lo | 0;
     }
-    let [a, b, c, d, e, f, g, hh] = h;
+
+    let ah = hh[0]!;
+    let al = hl[0]!;
+    let bh = hh[1]!;
+    let bl = hl[1]!;
+    let ch = hh[2]!;
+    let cl = hl[2]!;
+    let dh = hh[3]!;
+    let dl = hl[3]!;
+    let eh = hh[4]!;
+    let el = hl[4]!;
+    let fh = hh[5]!;
+    let fl = hl[5]!;
+    let gh = hh[6]!;
+    let gl = hl[6]!;
+    let xh = hh[7]!;
+    let xl = hl[7]!;
+
     for (let i = 0; i < 80; i++) {
-      const S1 = rotr(e!, 14n) ^ rotr(e!, 18n) ^ rotr(e!, 41n);
-      const ch = (e! & f!) ^ (~e! & MASK64 & g!);
-      const t1 = (hh! + S1 + ch + SHA512_K[i]! + w[i]!) & MASK64;
-      const S0 = rotr(a!, 28n) ^ rotr(a!, 34n) ^ rotr(a!, 39n);
-      const maj = (a! & b!) ^ (a! & c!) ^ (b! & c!);
-      const t2 = (S0 + maj) & MASK64;
-      hh = g;
-      g = f;
-      f = e;
-      e = (d! + t1) & MASK64;
-      d = c;
-      c = b;
-      b = a;
-      a = (t1 + t2) & MASK64;
+      // Σ1(e) — rotr 14, rotr 18, rotl 23 (= rotr 41)
+      const S1h =
+        ((eh >>> 14) | (el << 18)) ^ ((eh >>> 18) | (el << 14)) ^ ((el >>> 9) | (eh << 23));
+      const S1l =
+        ((el >>> 14) | (eh << 18)) ^ ((el >>> 18) | (eh << 14)) ^ ((eh >>> 9) | (el << 23));
+      const chh = (eh & fh) ^ (~eh & gh);
+      const chl = (el & fl) ^ (~el & gl);
+      // Σ0(a) — rotr 28, rotl 30 (= rotr 34), rotl 25 (= rotr 39)
+      const S0h = ((ah >>> 28) | (al << 4)) ^ ((al >>> 2) | (ah << 30)) ^ ((al >>> 7) | (ah << 25));
+      const S0l = ((al >>> 28) | (ah << 4)) ^ ((ah >>> 2) | (al << 30)) ^ ((ah >>> 7) | (al << 25));
+      const majh = (ah & bh) ^ (ah & ch) ^ (bh & ch);
+      const majl = (al & bl) ^ (al & cl) ^ (bl & cl);
+
+      // t1 = h + Σ1 + ch + K[i] + w[i]
+      let lo = (xl >>> 0) + (S1l >>> 0);
+      let hi = (xh >>> 0) + (S1h >>> 0) + (lo > 0xffffffff ? 1 : 0);
+      lo = (lo >>> 0) + (chl >>> 0);
+      hi = hi + (chh >>> 0) + (lo > 0xffffffff ? 1 : 0);
+      lo = (lo >>> 0) + (SHA512_KL[i]! >>> 0);
+      hi = hi + (SHA512_KH[i]! >>> 0) + (lo > 0xffffffff ? 1 : 0);
+      lo = (lo >>> 0) + (wl[i]! >>> 0);
+      hi = hi + (wh[i]! >>> 0) + (lo > 0xffffffff ? 1 : 0);
+      const t1h = hi | 0;
+      const t1l = lo | 0;
+      // t2 = Σ0 + maj
+      const lo2 = (S0l >>> 0) + (majl >>> 0);
+      const t2h = ((S0h >>> 0) + (majh >>> 0) + (lo2 > 0xffffffff ? 1 : 0)) | 0;
+      const t2l = lo2 | 0;
+
+      xh = gh;
+      xl = gl;
+      gh = fh;
+      gl = fl;
+      fh = eh;
+      fl = el;
+      lo = (dl >>> 0) + (t1l >>> 0);
+      eh = ((dh >>> 0) + (t1h >>> 0) + (lo > 0xffffffff ? 1 : 0)) | 0;
+      el = lo | 0;
+      dh = ch;
+      dl = cl;
+      ch = bh;
+      cl = bl;
+      bh = ah;
+      bl = al;
+      lo = (t1l >>> 0) + (t2l >>> 0);
+      ah = ((t1h >>> 0) + (t2h >>> 0) + (lo > 0xffffffff ? 1 : 0)) | 0;
+      al = lo | 0;
     }
-    h[0] = (h[0]! + a!) & MASK64;
-    h[1] = (h[1]! + b!) & MASK64;
-    h[2] = (h[2]! + c!) & MASK64;
-    h[3] = (h[3]! + d!) & MASK64;
-    h[4] = (h[4]! + e!) & MASK64;
-    h[5] = (h[5]! + f!) & MASK64;
-    h[6] = (h[6]! + g!) & MASK64;
-    h[7] = (h[7]! + hh!) & MASK64;
+
+    const add = (i: number, addH: number, addL: number): void => {
+      const lo = (hl[i]! >>> 0) + (addL >>> 0);
+      hh[i] = ((hh[i]! >>> 0) + (addH >>> 0) + (lo > 0xffffffff ? 1 : 0)) | 0;
+      hl[i] = lo | 0;
+    };
+    add(0, ah, al);
+    add(1, bh, bl);
+    add(2, ch, cl);
+    add(3, dh, dl);
+    add(4, eh, el);
+    add(5, fh, fl);
+    add(6, gh, gl);
+    add(7, xh, xl);
   }
-  const out = new Uint8Array(h.length * 8);
-  h.forEach((v, i) => {
-    for (let b = 7; b >= 0; b--) {
-      out[i * 8 + b] = Number(v & 0xffn);
-      v >>= 8n;
-    }
-  });
+
+  const out = new Uint8Array(64);
+  const ov = new DataView(out.buffer);
+  for (let i = 0; i < 8; i++) {
+    ov.setInt32(i * 8, hh[i]!, false);
+    ov.setInt32(i * 8 + 4, hl[i]!, false);
+  }
   return out.slice(0, outLen);
 }
 
@@ -497,6 +650,21 @@ export function aesCbcDecrypt(
   if (!stripPad || out.length === 0) return out;
   const pad = out[out.length - 1]!;
   return pad >= 1 && pad <= 16 && pad <= out.length ? out.subarray(0, out.length - pad) : out;
+}
+
+/**
+ * AES-ECB decrypt — every block on its own key, no chaining. MS-OFFCRYPTO's
+ * standard encryption uses it for both the verifier and the package.
+ */
+export function aesEcbDecrypt(key: Uint8Array, data: Uint8Array): Uint8Array {
+  const w = expandKey(key);
+  const nr = key.length / 4 + 6;
+  const blocks = Math.floor(data.length / 16);
+  const out = new Uint8Array(blocks * 16);
+  for (let i = 0; i < blocks; i++) {
+    decryptBlock(data.subarray(i * 16, i * 16 + 16), w, nr, out, i * 16);
+  }
+  return out;
 }
 
 // The forward cipher is needed only by the R6 key-derivation hash (Algorithm

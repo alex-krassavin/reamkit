@@ -6,8 +6,16 @@
 // AES-256 (V5/R6 /AESV3), decrypting each string and stream with its per-object
 // key.
 
-import { aesCbcDecrypt, aesCbcEncrypt, md5, rc4, sha256, sha384, sha512 } from './crypto';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
+import {
+  aesCbcDecrypt,
+  aesCbcEncrypt,
+  md5,
+  rc4,
+  sha256,
+  sha384,
+  sha512,
+} from '@/core/crypto/primitives';
 
 import { PdfHexString, PdfName, PdfStream } from '@/pdf/objects';
 
