@@ -402,8 +402,13 @@ describe('a slide table wears its style and stands in its frame', () => {
     expect(t?.properties.float?.posV?.offsetPt).toBe(144);
   });
 
+  // §20.1.4.2.24 — a table wears the style it NAMES; the flags say which of its
+  // conditional parts reach the cells.
+  const named = (flags: string): string =>
+    `<a:tblPr ${flags}><a:tableStyleId>${GUID}</a:tableStyleId></a:tblPr>`;
+
   it('takes the fills, the rules and the bold its style names', () => {
-    const t = table(deck('<a:tblPr firstRow="1" bandRow="1"/>'));
+    const t = table(deck(named('firstRow="1" bandRow="1"')));
     const shading = (r: number, c: number): string | undefined =>
       t?.rows[r]?.cells[c]?.properties.shading?.colorHex;
     expect(shading(0, 0)).toBe('4472C4'); // the header row
@@ -418,8 +423,52 @@ describe('a slide table wears its style and stands in its frame', () => {
   });
 
   it('leaves the style alone when the table asks for no part of it', () => {
-    const t = table(deck('<a:tblPr firstRow="0" bandRow="0"/>'));
+    const t = table(deck(named('firstRow="0" bandRow="0"')));
     expect(t?.rows[0]?.cells[0]?.properties.shading?.colorHex).toBe('DDDDDD');
+  });
+
+  // The list's `@def` is the style PowerPoint applies when a table is INSERTED,
+  // and the table then records that GUID itself — it is not a fallback for one
+  // that names nothing (table-with-no-theme is two bare rows, not blue banding).
+  it('wears nothing when it names no style, whatever the list defaults to', () => {
+    const t = table(deck('<a:tblPr firstRow="1" bandRow="1"/>'));
+    expect(t?.rows[0]?.cells[0]?.properties.shading).toBeUndefined();
+    expect(t?.rows[2]?.cells[1]?.properties.shading?.colorHex).toBe('FF0000');
+  });
+
+  // §21.1.3.17 — the cell's own word about its fill and its four rules.
+  it('keeps a cell transparent when the cell itself says a:noFill', () => {
+    const t = table(
+      Ream.parse(
+        buildPptx(
+          [
+            `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="6" name="t"/>` +
+              `<p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>` +
+              `<p:xfrm><a:off x="0" y="0"/><a:ext cx="5486400" cy="914400"/></p:xfrm>` +
+              `<a:graphic><a:graphicData uri="${TABLE_NS}"><a:tbl>${named('firstRow="1"')}` +
+              `<a:tblGrid><a:gridCol w="2743200"/><a:gridCol w="2743200"/></a:tblGrid><a:tr h="457200">` +
+              tc(
+                'bare',
+                '<a:lnL w="38100"><a:solidFill><a:srgbClr val="2670C9"><a:alpha val="0"/>' +
+                  '</a:srgbClr></a:solidFill></a:lnL><a:lnB w="38100"><a:solidFill>' +
+                  '<a:srgbClr val="2670C9"/></a:solidFill></a:lnB><a:noFill/>',
+              ) +
+              tc('styled') +
+              `</a:tr></a:tbl></a:graphicData></a:graphic></p:graphicFrame>`,
+          ],
+          {
+            presentationRels: `<Relationship Id="rIdTs" Type="${TABLE_STYLES_REL}" Target="tableStyles.xml"/>`,
+            media: { 'ppt/tableStyles.xml': new TextEncoder().encode(styles) },
+          },
+        ),
+      ),
+    );
+    const bare = t?.rows[0]?.cells[0];
+    expect(bare?.properties.shading).toBeUndefined(); // the style's header fill is off
+    expect(bare?.properties.borders?.left?.style).toBe('none'); // alpha 0 draws nothing
+    expect(bare?.properties.borders?.bottom?.colorHex).toBe('2670C9');
+    expect(bare?.properties.borders?.bottom?.width).toBe(3); // 38100 EMU
+    expect(t?.rows[0]?.cells[1]?.properties.shading?.colorHex).toBe('4472C4');
   });
 
   it('keeps each row as tall as it asks (a:tr@h is a minimum)', () => {

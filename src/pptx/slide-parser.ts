@@ -14,6 +14,8 @@
 import type {
   Alignment,
   BodyElement,
+  Border,
+  CellBorders,
   CellMerge,
   ChartBlock,
   FloatAnchor,
@@ -61,7 +63,14 @@ import {
   withStyleFontColor,
 } from '@/word/drawing-parser';
 import { boxFromXfrm, parsePh, parseXfrmBox, rPrToRunProps } from '@/pptx/sp-helpers';
-import { cellStyle, tableStyleFlags, tableStyleId, withCellStyle } from '@/pptx/table-style';
+import {
+  cellStyle,
+  lineBorder,
+  tableStyleFlags,
+  tableStyleId,
+  withCellStyle,
+  withoutFill,
+} from '@/pptx/table-style';
 
 const CHART_URI = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
 const OLE_URI = 'http://schemas.openxmlformats.org/presentationml/2006/ole';
@@ -95,7 +104,7 @@ export interface SlideContext {
   readonly resolveOlePreview?: (spid: string) => ResourceId | undefined;
   /**
    * §20.1.4.2.24 — the `a:tblStyle` a table names by GUID, from the deck's
-   * `tableStyles.xml`; without a GUID, the deck's default style.
+   * `tableStyles.xml`. A table that names none wears none.
    */
   readonly resolveTableStyle?: (styleId: string | undefined) => PoNode | undefined;
   /** A chart relationship id (`c:chart @r:id`) → its document-unique key (PX4a). */
@@ -985,8 +994,14 @@ function parseTable(
     }
   }
   const rows: Array<TableRow> = [];
+  // The cells kept beside the parsed rows: the style a cell wears depends on
+  // what the cell's own `a:tcPr` says, which the FlowDoc cell no longer carries.
+  const sources: Array<Array<PoNode>> = [];
   for (const tr of poChildren(tbl)) {
-    if (poIs(tr, 'a:tr')) rows.push(parseTableRow(tr, colors));
+    if (!poIs(tr, 'a:tr')) continue;
+    const cells = rowCells(tr);
+    sources.push(cells);
+    rows.push(parseTableRow(tr, cells, colors));
   }
   // §20.1.4.2.24 — almost everything a table LOOKS like is in the style it
   // names: the header's fill, the banding, the rules between the cells.
@@ -996,39 +1011,32 @@ function parseTable(
   const flags = tableStyleFlags(tblPr);
   const styled = rows.map((row, r) => ({
     ...row,
-    cells: row.cells.map((cell, c) =>
-      withCellStyle(
-        cell,
-        cellStyle(
-          style,
-          flags,
-          { row: r, rowCount: rows.length, col: c, colCount: grid.length },
-          colors,
-        ),
-      ),
-    ),
+    cells: row.cells.map((cell, c) => {
+      const at = { row: r, rowCount: rows.length, col: c, colCount: grid.length };
+      const part = cellStyle(style, flags, at, colors);
+      const tc = sources[r]?.[c];
+      return withCellStyle(cell, tc && cellSaysNoFill(tc) ? withoutFill(part) : part);
+    }),
   }));
   return { properties: {}, grid, rows: styled };
 }
 
-function parseTableRow(tr: PoNode, colors: ColorResolver): TableRow {
+// The cells a row HAS: a horizontal-merge continuation is covered by the
+// gridSpan origin, so it is dropped and the origin's colSpan carries the width
+// (the FlowDoc model omits placeholder cells for spanned columns).
+function rowCells(tr: PoNode): Array<PoNode> {
+  return poChildren(tr).filter((tc) => poIs(tc, 'a:tc') && poAttr(tc, 'hMerge') !== '1');
+}
+
+function parseTableRow(tr: PoNode, cells: Array<PoNode>, colors: ColorResolver): TableRow {
   const h = poIntAttr(tr, 'h');
-  const cells: Array<TableCell> = [];
-  for (const tc of poChildren(tr)) {
-    if (!poIs(tc, 'a:tc')) continue;
-    // Horizontal-merge continuation cells are covered by the gridSpan origin —
-    // drop them so the origin's colSpan carries the width (the FlowDoc model
-    // omits placeholder cells for spanned columns).
-    if (poAttr(tc, 'hMerge') === '1') continue;
-    cells.push(parseTableCell(tc, colors));
-  }
   // §21.1.3.18 `a:tr@h` — the height the row asks for, which it keeps unless
   // its own text needs more. Stated without a rule it was ignored entirely, and
   // every slide table came out as tight as its text (table_test2's rows are
   // 36pt, 29pt, 15pt and we drew four equal thin ones).
   return {
     properties: { ...(h !== undefined ? { height: emuToPt(h), heightRule: 'atLeast' } : {}) },
-    cells,
+    cells: cells.map((tc) => parseTableCell(tc, colors)),
   };
 }
 
@@ -1047,14 +1055,43 @@ function parseTableCell(tc: PoNode, colors: ColorResolver): TableCell {
         : undefined;
   const tcPr = poChildren(tc).find((c) => poIs(c, 'a:tcPr'));
   const shadingHex = tcPr ? cellFillHex(tcPr, colors) : undefined;
+  const borders = tcPr ? cellOwnBorders(tcPr, colors) : undefined;
   return {
     properties: {
       ...(gridSpan !== undefined && gridSpan > 1 ? { colSpan: gridSpan } : {}),
       ...(merge ? { merge } : {}),
       ...(shadingHex ? { shading: { colorHex: shadingHex } } : {}),
+      ...(borders ? { borders } : {}),
     },
     content,
   };
+}
+
+// §21.1.3.17 — a cell states its own four rules as `a:lnL`/`a:lnR`/`a:lnT`/
+// `a:lnB`, each an ordinary `a:ln`, and they beat the table style's. tdf164936
+// is one empty cell with three blue rules and a fourth at zero alpha.
+const CELL_LINES: ReadonlyArray<readonly [string, keyof CellBorders]> = [
+  ['a:lnL', 'left'],
+  ['a:lnR', 'right'],
+  ['a:lnT', 'top'],
+  ['a:lnB', 'bottom'],
+];
+
+function cellOwnBorders(tcPr: PoNode, colors: ColorResolver): CellBorders | undefined {
+  const out: { -readonly [K in keyof CellBorders]?: Border } = {};
+  for (const [tag, side] of CELL_LINES) {
+    const ln = poChildren(tcPr).find((c) => poIs(c, tag));
+    if (ln) out[side] = lineBorder(ln, colors);
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// §20.1.8.44 `a:noFill` on the cell — the cell is transparent BY ITS OWN WORD,
+// which is not the same as saying nothing: the table style's fill applies to
+// the silent one and not to this one.
+function cellSaysNoFill(tc: PoNode): boolean {
+  const tcPr = poChildren(tc).find((c) => poIs(c, 'a:tcPr'));
+  return tcPr !== undefined && poChildren(tcPr).some((c) => poIs(c, 'a:noFill'));
 }
 
 // a:tcPr/a:solidFill → the cell background hex (srgb or theme scheme colour).

@@ -343,9 +343,12 @@ function makeOlePreviewResolver(
 }
 
 /**
- * §20.1.4.2.24 — the deck's table styles, by the GUID a table names. A table
- * that names none takes the list's own `@def`, which is what PowerPoint applies
- * when a table is inserted and never restyled.
+ * §20.1.4.2.24 — the deck's table styles, by the GUID a table names.
+ *
+ * The list's own `@def` is NOT a fallback: it is the style PowerPoint applies
+ * when a table is INSERTED, and the table then records that GUID itself. A
+ * table that names none wears none — table-with-no-theme's two rows are bare
+ * text in a plain frame, not the blue banding `@def` points at.
  *
  * The part is read once, on the first table in the deck.
  */
@@ -354,7 +357,6 @@ function makeTableStyleResolver(
   presPath: string,
 ): (styleId: string | undefined) => PoNode | undefined {
   let byId: Map<string, PoNode> | undefined;
-  let def: string | undefined;
   return (styleId) => {
     if (byId === undefined) {
       byId = new Map();
@@ -363,15 +365,13 @@ function makeTableStyleResolver(
       for (const root of part ? parseXml(part.data) : []) {
         const list = poIs(root, 'a:tblStyleLst') ? root : poFindDescendant(root, 'a:tblStyleLst');
         if (!list) continue;
-        def = poAttr(list, 'def');
         for (const style of poChildren(list)) {
           const id = poIs(style, 'a:tblStyle') ? poAttr(style, 'styleId') : undefined;
           if (id !== undefined) byId.set(id, style);
         }
       }
     }
-    const key = styleId ?? def;
-    return key === undefined ? undefined : byId.get(key);
+    return styleId === undefined ? undefined : byId.get(styleId);
   };
 }
 

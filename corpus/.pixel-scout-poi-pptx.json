@@ -60,19 +60,9 @@
   "aligned": true
  },
  {
-  "name": "table_test2.pptx",
-  "score": 0.5667,
-  "aligned": true
- },
- {
   "name": "aascu.org_workarea_downloadasset.aspx_id=5864.pptx",
-  "score": 0.5097,
-  "aligned": true
- },
- {
-  "name": "au.asn.aes.www_conferences_2011_presentations_Fri_20Room4Level4_20930_20Maloney.pptx",
-  "score": 0.5048,
-  "aligned": true
+  "score": 0.5586,
+  "aligned": false
  },
  {
   "name": "ArtisticEffectSample.pptx",
@@ -110,8 +100,8 @@
   "aligned": true
  },
  {
-  "name": "bug68703.pptx",
-  "score": 0.3446,
+  "name": "table_test2.pptx",
+  "score": 0.3437,
   "aligned": true
  },
  {
@@ -125,23 +115,8 @@
   "aligned": true
  },
  {
-  "name": "table_test.pptx",
-  "score": 0.2728,
-  "aligned": true
- },
- {
-  "name": "LIBRE_OFFICE-100610-0.pptx",
-  "score": 0.2254,
-  "aligned": true
- },
- {
-  "name": "shapes.pptx",
-  "score": 0.2126,
-  "aligned": true
- },
- {
-  "name": "aascu.org_hbcu_leadershipsummit_cooper_.pptx",
-  "score": 0.1965,
+  "name": "bug68703.pptx",
+  "score": 0.2534,
   "aligned": true
  },
  {
@@ -155,8 +130,13 @@
   "aligned": true
  },
  {
-  "name": "table-with-different-font-colors.pptx",
-  "score": 0.14,
+  "name": "LIBRE_OFFICE-100610-0.pptx",
+  "score": 0.1357,
+  "aligned": true
+ },
+ {
+  "name": "aascu.org_hbcu_leadershipsummit_cooper_.pptx",
+  "score": 0.1298,
   "aligned": true
  },
  {
@@ -170,11 +150,6 @@
   "aligned": true
  },
  {
-  "name": "bug60993.pptx",
-  "score": 0.1072,
-  "aligned": true
- },
- {
   "name": "keyframes.pptx",
   "score": 0.098,
   "aligned": true
@@ -185,8 +160,8 @@
   "aligned": true
  },
  {
-  "name": "highlight-test-case.pptx",
-  "score": 0.0905,
+  "name": "au.asn.aes.www_conferences_2011_presentations_Fri_20Room4Level4_20930_20Maloney.pptx",
+  "score": 0.0929,
   "aligned": true
  },
  {
@@ -205,8 +180,8 @@
   "aligned": true
  },
  {
-  "name": "ca.ubc.cs.people_~emhill_presentations_HowWeRefactor.pptx",
-  "score": 0.0555,
+  "name": "highlight-test-case.pptx",
+  "score": 0.0572,
   "aligned": true
  },
  {
@@ -217,6 +192,11 @@
  {
   "name": "chart-slide-bg.pptx",
   "score": 0.0479,
+  "aligned": true
+ },
+ {
+  "name": "ca.ubc.cs.people_~emhill_presentations_HowWeRefactor.pptx",
+  "score": 0.0438,
   "aligned": true
  },
  {
@@ -245,11 +225,6 @@
   "aligned": true
  },
  {
-  "name": "present1.pptx",
-  "score": 0.0343,
-  "aligned": true
- },
- {
   "name": "bug62513.pptx",
   "score": 0.03,
   "aligned": true
@@ -275,8 +250,8 @@
   "aligned": true
  },
  {
-  "name": "with_japanese.pptx",
-  "score": 0.0181,
+  "name": "bug60993.pptx",
+  "score": 0.0175,
   "aligned": true
  },
  {
@@ -290,6 +265,16 @@
   "aligned": true
  },
  {
+  "name": "shapes.pptx",
+  "score": 0.0137,
+  "aligned": true
+ },
+ {
+  "name": "table-with-different-font-colors.pptx",
+  "score": 0.0132,
+  "aligned": true
+ },
+ {
   "name": "line-chart.pptx",
   "score": 0.0129,
   "aligned": true
@@ -297,6 +282,11 @@
  {
   "name": "2411-Performance_Up.pptx",
   "score": 0.012,
+  "aligned": true
+ },
+ {
+  "name": "with_japanese.pptx",
+  "score": 0.0117,
   "aligned": true
  },
  {
@@ -380,6 +370,11 @@
   "aligned": true
  },
  {
+  "name": "present1.pptx",
+  "score": 0.0032,
+  "aligned": true
+ },
+ {
   "name": "bug64693.pptx",
   "score": 0.0031,
   "aligned": true
@@ -401,6 +396,11 @@
  },
  {
   "name": "picture-transparency.pptx",
+  "score": 0.0016,
+  "aligned": true
+ },
+ {
+  "name": "table_test.pptx",
   "score": 0.0016,
   "aligned": true
  },

@@ -16,8 +16,8 @@ import type { ColorResolver } from '@/core/drawingml/colors';
 import type { PoNode } from '@/core/po-helpers';
 
 import { pt } from '@/core/ir';
-import { resolveColorNode } from '@/core/drawingml/colors';
-import { poAttr, poChildren, poIntAttr, poIs, poTag } from '@/core/po-helpers';
+import { readColorMods, resolveColorNode } from '@/core/drawingml/colors';
+import { poAttr, poChildren, poIntAttr, poIs, poTag, poText } from '@/core/po-helpers';
 
 /** Which conditional parts of a style a table asks for (`a:tblPr` flags). */
 export interface TableStyleFlags {
@@ -63,7 +63,7 @@ export function tableStyleFlags(tblPr: PoNode | undefined): TableStyleFlags {
 /** The GUID a table names, if it names one (`a:tblPr/a:tableStyleId`). */
 export function tableStyleId(tblPr: PoNode | undefined): string | undefined {
   const id = tblPr ? poChildren(tblPr).find((c) => poIs(c, 'a:tableStyleId')) : undefined;
-  return id ? textOf(id).trim() || undefined : undefined;
+  return id ? poText(id).trim() || undefined : undefined;
 }
 
 /**
@@ -139,22 +139,49 @@ function partBorders(bdr: PoNode, colors: ColorResolver): CellBorders | undefine
   for (const [tag, side] of SIDES) {
     const holder = poChildren(bdr).find((c) => poIs(c, tag));
     const ln = holder ? poChildren(holder).find((c) => poIs(c, 'a:ln')) : undefined;
-    if (!ln) continue;
-    // An `a:noFill` outline is a border the style REMOVES, not one it draws.
-    if (poChildren(ln).some((c) => poIs(c, 'a:noFill'))) {
-      out[side] = { style: 'none' };
-      continue;
-    }
-    const colorHex = colorOf(ln, colors);
-    const w = poIntAttr(ln, 'w');
-    out[side] = {
-      style: 'single',
-      ...(colorHex ? { colorHex } : {}),
-      // §20.1.2.1 — `@w` is EMU, and a border's width is points.
-      ...(w !== undefined ? { width: pt(Math.max(0.25, w / 12700)) } : {}),
-    };
+    if (ln) out[side] = lineBorder(ln, colors);
   }
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * §20.1.2.1 `a:ln` → the rule it draws on one side of a cell.
+ *
+ * Shared with the cell's OWN `a:lnL`/`a:lnR`/`a:lnT`/`a:lnB`, which are the
+ * same element under a different name.
+ *
+ * @param ln     The line node.
+ * @param colors The deck's colour resolver.
+ * @returns The border, `none` when the line is one that draws nothing.
+ */
+export function lineBorder(ln: PoNode, colors: ColorResolver): Border {
+  // An `a:noFill` outline is a border that is REMOVED, not one that is drawn —
+  // and so is a colour at zero alpha: tdf164936's left rule is `2670C9` with
+  // `<a:alpha val="0"/>`, and the cell has three sides, not four.
+  if (poChildren(ln).some((c) => poIs(c, 'a:noFill')) || isTransparent(ln)) {
+    return { style: 'none' };
+  }
+  const colorHex = colorOf(ln, colors);
+  const w = poIntAttr(ln, 'w');
+  return {
+    style: 'single',
+    ...(colorHex ? { colorHex } : {}),
+    // §20.1.2.1 — `@w` is EMU, and a border's width is points.
+    ...(w !== undefined ? { width: pt(Math.max(0.25, w / 12700)) } : {}),
+  };
+}
+
+function isTransparent(ln: PoNode): boolean {
+  const fill = poChildren(ln).find((c) => poIs(c, 'a:solidFill'));
+  const color = fill ? poChildren(fill).find((c) => poTag(c) !== undefined) : undefined;
+  const alpha = color ? readColorMods(color).find((m) => m.kind === 'alpha') : undefined;
+  return alpha !== undefined && alpha.val <= 0.001;
+}
+
+/** The same part with the style's fill dropped, for a cell that says `a:noFill`. */
+export function withoutFill(part: TableStylePart): TableStylePart {
+  const { shadingHex: _fill, ...rest } = part;
+  return rest;
 }
 
 // The first colour anywhere under a node — a fill, an outline and a text style
@@ -167,16 +194,6 @@ function colorOf(node: PoNode, colors: ColorResolver): string | undefined {
     if (deeper !== undefined) return deeper;
   }
   return undefined;
-}
-
-function textOf(node: PoNode): string {
-  const kids = poChildren(node);
-  let out = '';
-  for (const k of kids) {
-    const text = (k as unknown as Record<string, unknown>)['#text'];
-    if (typeof text === 'string') out += text;
-  }
-  return out;
 }
 
 /** A cell with the style's fill, borders and run properties filled in under its own. */
@@ -203,12 +220,18 @@ export function withCellStyle(cell: TableCell, part: TableStylePart): TableCell 
               }
             : block,
         );
+  // Borders compose SIDE BY SIDE: a cell that states only its bottom rule keeps
+  // the style's other three, which a whole-object override would throw away.
+  const borders =
+    part.borders || cell.properties.borders
+      ? { ...part.borders, ...cell.properties.borders }
+      : undefined;
   return {
     ...cell,
     properties: {
       ...(part.shadingHex !== undefined ? { shading: { colorHex: part.shadingHex } } : {}),
-      ...(part.borders ? { borders: part.borders } : {}),
       ...cell.properties,
+      ...(borders ? { borders } : {}),
     },
     content,
   };
