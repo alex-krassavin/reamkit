@@ -174,6 +174,8 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
         part.path,
         stylesByLayout,
         resources,
+        charts,
+        (loss) => losses.push(loss.where ? loss : { ...loss, where: `slide ${i + 1}` }),
         overrideAlias(slideTree, 'p:sld'),
       );
       const ctx: SlideContext = {
@@ -186,7 +188,10 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
         resolveDiagram: makeSlideDiagramResolver(pkg, part.path),
         onLoss: (loss) => losses.push(loss.where ? loss : { ...loss, where: `slide ${i + 1}` }),
       };
-      body.push(...parseSlide(slideTree, ctx, styles.background, pageW, pageH));
+      // The deck's own decoration goes under the slide's content, over its
+      // background — unless this slide says it shows none (§19.3.1.38).
+      const inherited = showMasterShapes(slideTree, 'p:sld') ? (styles.inheritedShapes ?? []) : [];
+      body.push(...parseSlide(slideTree, ctx, styles.background, pageW, pageH, inherited));
     }
   }
 
@@ -229,6 +234,7 @@ function parseSlide(
   inheritedBg: ShapeFill | undefined,
   pageW: Pt,
   pageH: Pt,
+  inheritedShapes: ReadonlyArray<BodyElement> = [],
 ): Array<BodyElement> {
   const sld = tree.find((n) => poIs(n, 'p:sld'));
   const cSld = sld ? poChildren(sld).find((c) => poIs(c, 'p:cSld')) : undefined;
@@ -242,6 +248,7 @@ function parseSlide(
 
   const out: Array<BodyElement> = [];
   if (bg) out.push(backdropElement(bg, pageW, pageH));
+  out.push(...inheritedShapes);
   if (spTree) out.push(...parseSlideShapes(spTree, ctx));
   return out;
 }
@@ -362,6 +369,12 @@ function makeSlideDiagramResolver(
 interface SlideStyles {
   readonly cascade?: PlaceholderCascade;
   readonly colors: ColorResolver;
+  /**
+   * §19.3.1.38 — the shapes a slide inherits: the master's, then the layout's,
+   * both without their placeholders, in the order they are drawn UNDER the
+   * slide's own content.
+   */
+  readonly inheritedShapes?: ReadonlyArray<BodyElement>;
   /** The deck theme's `a:fillStyleLst`/`a:bgFillStyleLst`, for a `p:bgRef`. */
   readonly themeFills?: ThemeFillStyles;
   // The inherited background fill (layout, else master) for slides that have no
@@ -374,6 +387,8 @@ function slideStylesFor(
   slidePath: string,
   cache: Map<string, SlideStyles>,
   resources: ResourceStore,
+  charts: Map<string, Chart>,
+  onLoss: (loss: Loss) => void,
   slideAlias?: SchemeAliases,
 ): SlideStyles {
   const layoutRel = pkg
@@ -407,6 +422,15 @@ function slideStylesFor(
     ? { fills: parseThemeFillStyles(theme), backgrounds: parseThemeBgFillStyles(theme) }
     : undefined;
   const cascade = buildPlaceholderCascade(layoutTree, masterTree, colors);
+  const deps: PartDeps = { colors, resources, charts, onLoss };
+  // §19.3.1.38 `@showMasterSp` — the decoration a deck states once and every
+  // slide carries: rules, bands, a logo. A layout may refuse the master's, and
+  // a slide may refuse both (read at the slide, below).
+  const inheritedShapes: Array<BodyElement> = [];
+  if (masterTree && master && showMasterShapes(layoutTree, 'p:sldLayout')) {
+    inheritedShapes.push(...partShapes(pkg, master.path, masterTree, 'p:sldMaster', deps));
+  }
+  inheritedShapes.push(...partShapes(pkg, layout.path, layoutTree, 'p:sldLayout', deps));
   const background =
     partBackground(
       layoutTree,
@@ -429,9 +453,55 @@ function slideStylesFor(
     colors,
     ...(themeFills ? { themeFills } : {}),
     ...(background ? { background } : {}),
+    ...(inheritedShapes.length > 0 ? { inheritedShapes } : {}),
   };
   cache.set(key, styles);
   return styles;
+}
+
+/**
+ * A master's or layout's own drawn shapes — everything in its `p:spTree` that
+ * is not a placeholder, read with resolvers bound to THAT part: a logo's image
+ * relationship, a chart's, a hyperlink's are all scoped to the part that names
+ * them.
+ */
+function partShapes(
+  pkg: OpcPackage,
+  path: string,
+  tree: ReadonlyArray<PoNode>,
+  root: 'p:sldLayout' | 'p:sldMaster',
+  deps: PartDeps,
+): Array<BodyElement> {
+  const part = tree.find((n) => poIs(n, root));
+  const cSld = part ? poChildren(part).find((c) => poIs(c, 'p:cSld')) : undefined;
+  const spTree = cSld ? poChildren(cSld).find((c) => poIs(c, 'p:spTree')) : undefined;
+  if (!spTree) return [];
+  const ctx: SlideContext = {
+    colors: deps.colors,
+    resolveImage: makeSlideImageResolver(pkg, path, deps.resources),
+    resolveChart: makeSlideChartResolver(pkg, path, deps.charts, deps.colors),
+    resolveHyperlink: makeHyperlinkResolver(pkg, path),
+    resolveDiagram: makeSlideDiagramResolver(pkg, path),
+    onLoss: deps.onLoss,
+  };
+  return parseSlideShapes(spTree, ctx, undefined, true);
+}
+
+/** What {@link partShapes} needs from the document being read. */
+interface PartDeps {
+  readonly colors: ColorResolver;
+  readonly resources: ResourceStore;
+  readonly charts: Map<string, Chart>;
+  readonly onLoss: (loss: Loss) => void;
+}
+
+/**
+ * §19.3.1.38/§19.3.1.39 `@showMasterSp` — whether this part draws the shapes it
+ * inherits. Absent, it does.
+ */
+function showMasterShapes(tree: ReadonlyArray<PoNode>, root: 'p:sldLayout' | 'p:sld'): boolean {
+  const part = tree.find((n) => poIs(n, root));
+  return part === undefined || poAttr(part, 'showMasterSp') !== '0';
 }
 
 /** The master's `p:clrMap` (§19.3.1.6) as a scheme-alias table. */

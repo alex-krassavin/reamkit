@@ -129,9 +129,15 @@ export function parseSlideShapes(
   container: PoNode,
   ctx: SlideContext = {},
   transform: GroupTransform = IDENTITY_TRANSFORM,
+  skipPlaceholders = false,
 ): Array<BodyElement> {
   const out: Array<BodyElement> = [];
   for (const child of poChildren(container)) {
+    // On a master or a layout, a placeholder is a PROTOTYPE — the geometry and
+    // text properties a slide's own placeholder inherits (PX2), and its text is
+    // the prompt PowerPoint shows while editing. Drawn as a shape it would put
+    // "Click to edit Master title style" on every slide.
+    if (skipPlaceholders && isPlaceholder(child)) continue;
     if (poIs(child, 'p:sp')) {
       const shape = parseSp(child, ctx, transform);
       if (shape) out.push({ kind: 'shape', shape });
@@ -141,10 +147,23 @@ export function parseSlideShapes(
     } else if (poIs(child, 'p:graphicFrame')) {
       out.push(...parseGraphicFrame(child, ctx, transform));
     } else if (poIs(child, 'p:grpSp')) {
-      out.push(...parseSlideShapes(child, ctx, composeGroupTransform(child, transform)));
+      out.push(
+        ...parseSlideShapes(child, ctx, composeGroupTransform(child, transform), skipPlaceholders),
+      );
     }
   }
   return out;
+}
+
+/**
+ * Whether a shape is a placeholder — `p:ph` in its OWN non-visual properties.
+ * Read as "anywhere below", a group holding one would take the whole group
+ * with it.
+ */
+function isPlaceholder(shape: PoNode): boolean {
+  const nv = poChildren(shape).find((c) => poTag(c)?.startsWith('p:nv') === true);
+  const nvPr = nv ? poChildren(nv).find((c) => poIs(c, 'p:nvPr')) : undefined;
+  return nvPr !== undefined && poChildren(nvPr).some((c) => poIs(c, 'p:ph'));
 }
 
 // p:grpSpPr/a:xfrm → a child→slide transform composed under the parent's. No (or

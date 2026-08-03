@@ -616,6 +616,75 @@ describe('pptx background — a reference and a picture (E-PPTX PX5b)', () => {
   });
 });
 
+describe("pptx inherited shapes — the deck's own decoration (E-PPTX PX5d)", () => {
+  const rect = (hex: string): string =>
+    `<p:sp><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+    `<a:solidFill><a:srgbClr val="${hex}"/></a:solidFill></p:spPr></p:sp>`;
+  // A placeholder on a master is a prototype, not a drawn shape.
+  const phRect = (hex: string): string =>
+    `<p:sp><p:nvSpPr><p:cNvPr id="9" name="ph"/><p:cNvSpPr/><p:nvPr><p:ph type="title"/></p:nvPr>` +
+    `</p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+    `<a:solidFill><a:srgbClr val="${hex}"/></a:solidFill></p:spPr></p:sp>`;
+  const fills = (doc: ReturnType<typeof Ream.parse>): Array<string | undefined> =>
+    doc.flow.body.flatMap((el) => (el.kind === 'shape' ? [el.shape.fill.colorHex] : []));
+
+  it("draws the master's shapes, then the layout's, under the slide's own", () => {
+    const doc = Ream.parse(
+      buildPptx([rect('333333')], {
+        layoutMaster: { masterSpTree: rect('111111'), layoutSpTree: rect('222222') },
+      }),
+    );
+    expect(fills(doc)).toEqual(['111111', '222222', '333333']);
+  });
+
+  it('leaves the placeholders behind — they are prototypes, not decoration', () => {
+    const doc = Ream.parse(
+      buildPptx([''], {
+        layoutMaster: {
+          masterSpTree: phRect('111111') + rect('AAAAAA'),
+          layoutSpTree: phRect('222222'),
+        },
+      }),
+    );
+    expect(fills(doc)).toEqual(['AAAAAA']);
+  });
+
+  it('shows none of them on a slide that says showMasterSp="0" (§19.3.1.38)', () => {
+    const doc = Ream.parse(
+      buildPptx([rect('333333')], {
+        layoutMaster: { masterSpTree: rect('111111'), layoutSpTree: rect('222222') },
+        hideMasterShapes: [true],
+      }),
+    );
+    expect(fills(doc)).toEqual(['333333']);
+  });
+
+  it("…and only the master's on a LAYOUT that says so (§19.3.1.39)", () => {
+    const doc = Ream.parse(
+      buildPptx([rect('333333')], {
+        layoutMaster: {
+          masterSpTree: rect('111111'),
+          layoutSpTree: rect('222222'),
+          hideMasterShapes: true,
+        },
+      }),
+    );
+    expect(fills(doc)).toEqual(['222222', '333333']);
+  });
+
+  it('draws them on every slide of the layout, and behind the background', () => {
+    const doc = Ream.parse(
+      buildPptx(['', ''], {
+        layoutMaster: { masterSpTree: rect('111111'), masterBg: bgFill('445566') },
+      }),
+    );
+    // Per slide: the backdrop first, then the inherited shape over it.
+    expect(fills(doc)).toEqual(['445566', '111111', '445566', '111111']);
+  });
+});
+
 // A p:grpSp whose child shape (filled `hex`) sits at child-box (cx,cy,ex,ey),
 // inside the group transform off/ext (chOff 0, chExt = `chExt`).
 function groupDeck(opts: {

@@ -36,6 +36,8 @@ export interface BuildPptxLayoutMaster {
   readonly themeFmt?: string;
   /** Extra `<Relationship/>` XML for the master's .rels (e.g. a background image). */
   readonly masterRels?: string;
+  /** §19.3.1.39 — emit `p:sldLayout@showMasterSp="0"` (the layout hides the master's shapes). */
+  readonly hideMasterShapes?: boolean;
   /** The master's `<p:bg>…</p:bg>` (placed in p:cSld before the spTree). */
   readonly masterBg?: string;
   /**
@@ -66,6 +68,8 @@ export interface BuildPptxOptions {
   readonly hiddenSlides?: ReadonlyArray<boolean>;
   /** Per-slide `<p:clrMapOvr>` attributes — that slide's own colour map. */
   readonly slideClrMapOvr?: ReadonlyArray<string | undefined>;
+  /** §19.3.1.38 — per-slide `p:sld@showMasterSp="0"` (the slide shows no inherited shapes). */
+  readonly hideMasterShapes?: ReadonlyArray<boolean>;
 }
 
 const NS = `xmlns:p="${P_NS}" xmlns:a="${A_NS}" xmlns:r="${R_NS}"`;
@@ -152,9 +156,10 @@ export function buildPptx(
   };
   for (let i = 0; i < n; i++) {
     const show = options.hiddenSlides?.[i] ? ' show="0"' : '';
+    const masterSp = options.hideMasterShapes?.[i] ? ' showMasterSp="0"' : '';
     const slide =
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
-      `<p:sld ${NS}${show}>` +
+      `<p:sld ${NS}${show}${masterSp}>` +
       `<p:cSld>${options.slideBg?.[i] ?? ''}<p:spTree>${slides[i] ?? ''}</p:spTree></p:cSld>` +
       (options.slideClrMapOvr?.[i]
         ? `<p:clrMapOvr><a:overrideClrMapping ${options.slideClrMapOvr[i]}/></p:clrMapOvr>`
@@ -182,7 +187,8 @@ export function buildPptx(
   if (lm) {
     files['ppt/slideLayouts/slideLayout1.xml'] = encoder.encode(
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
-        `<p:sldLayout ${NS}><p:cSld><p:spTree>${lm.layoutSpTree ?? ''}</p:spTree></p:cSld>` +
+        `<p:sldLayout ${NS}${lm.hideMasterShapes ? ' showMasterSp="0"' : ''}>` +
+        `<p:cSld><p:spTree>${lm.layoutSpTree ?? ''}</p:spTree></p:cSld>` +
         (lm.layoutClrMapOvr
           ? `<p:clrMapOvr><a:overrideClrMapping ${lm.layoutClrMapOvr}/></p:clrMapOvr>`
           : '') +
