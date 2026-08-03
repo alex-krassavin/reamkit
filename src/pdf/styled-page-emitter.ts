@@ -915,6 +915,43 @@ function emitPageContent(
       }
     };
     const emitImageToken = (tok: ImageToken, x: number, baselineY: number) => {
+      // MS-EMF / MS-WMF — an inline metafile draws itself: its primitives live
+      // in a y-up frame whose origin is this box's bottom-left corner, which
+      // is exactly where the token stands. VariousPictures.docx sets three of
+      // them in one line beside two rasters.
+      const meta = tok.metafile;
+      if (meta) {
+        if (inBT) {
+          out.push('ET');
+          inBT = false;
+        }
+        const b = tok.drawBox;
+        const ox = x + (b?.dxPt ?? 0);
+        const oy = baselineY + (b?.dyPt ?? 0);
+        for (const sh of meta.shapes) {
+          for (const op of emitVectorShape({ ...sh, transform: [1, 0, 0, 1, ox, oy] })) {
+            out.push(op);
+          }
+        }
+        for (const t of meta.texts) {
+          // The metafile's own words: one token per line, set where the
+          // picture puts it rather than where the paragraph's flow would.
+          const first = t.line.tokens.find((k) => k.kind === 'text');
+          if (!first) continue;
+          const [r, g, bl] = hexToRgb01(first.resolvedRun.colorHex);
+          out.push('BT');
+          out.push(`/${first.font.resourceName} ${formatNumber(first.fontSizePt)} Tf`);
+          out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(bl)} rg`);
+          out.push(`1 0 0 1 ${formatNumber(ox + t.x)} ${formatNumber(oy + t.y)} Tm`);
+          out.push(first.font.measure.showText(first.text));
+          out.push('ET');
+        }
+        // The shared text state is no longer what the line loop left it.
+        lastFont = '';
+        lastSize = -1;
+        lastColor = '';
+        return;
+      }
       // Skip an inline image whose resource failed to embed (the caller still
       // advances x, so its box stays reserved).
       if (!tok.imageResourceName) return;

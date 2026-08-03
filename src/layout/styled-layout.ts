@@ -78,6 +78,7 @@ import type {
   LaidOutDocument,
   LaidOutPage,
   Line,
+  MetafileDrawing,
   PageItem,
   ResolvedMathItem,
   TextToken,
@@ -2705,6 +2706,34 @@ function layoutMetafileBlock(
   const placed = layoutImageBlock(image, undefined, contentWidth, maxHeight, box);
   const widthPt = placed.widthPt;
   const heightPt = placed.heightPt;
+  const layout = metafileDrawing(pic, widthPt, heightPt, options, fontResources);
+  const pp = image.paragraphProperties;
+  return {
+    kind: 'chart',
+    widthPt,
+    heightPt,
+    layout,
+    resolvedAlignment: pp.alignment ?? 'left',
+    spacingBeforePt: pp.spacingBefore ?? 0,
+    spacingAfterPt: pp.spacingAfter ?? 0,
+    figureRole: 'Image',
+    ...(image.altText ? { altText: image.altText } : {}),
+    ...(image.float ? { float: image.float } : {}),
+  };
+}
+
+/**
+ * A metafile's primitives, scaled from its own logical box into a `widthPt` ×
+ * `heightPt` one and turned y-up about its bottom-left corner — the frame both
+ * a chart block and an inline picture token are drawn in.
+ */
+function metafileDrawing(
+  pic: MetaPicture,
+  widthPt: number,
+  heightPt: number,
+  options: StyledRenderOptions,
+  fontResources: ReadonlyMap<string, FontResource>,
+): ChartLayout {
   const sx = widthPt / pic.width;
   const sy = heightPt / pic.height;
   // The metafile's y runs DOWN from its own top; the primitives' frame runs UP
@@ -2767,19 +2796,7 @@ function layoutMetafileBlock(
     });
   }
 
-  const pp = image.paragraphProperties;
-  return {
-    kind: 'chart',
-    widthPt,
-    heightPt,
-    layout: { shapes, texts },
-    resolvedAlignment: pp.alignment ?? 'left',
-    spacingBeforePt: pp.spacingBefore ?? 0,
-    spacingAfterPt: pp.spacingAfter ?? 0,
-    figureRole: 'Image',
-    ...(image.altText ? { altText: image.altText } : {}),
-    ...(image.float ? { float: image.float } : {}),
-  };
+  return { shapes, texts };
 }
 
 function layoutChartBlock(
@@ -3963,9 +3980,28 @@ function collectFontResources(
     }
   };
 
+  // MS-EMF / MS-WMF — the metafile's own words. Left out of the walk they were
+  // drawn with glyph ids the subset never reserved, which is to say not drawn
+  // at all: embedded-xlsx.docx's preview lost every label and mathtype.docx
+  // its whole equation.
+  const addMetafile = (resource: string | undefined): void => {
+    const pic = resource ? imageResources.get(resource)?.metafile : undefined;
+    for (const prim of pic?.prims ?? []) {
+      if (prim.kind !== 'text') continue;
+      const reg = options.registry.resolveByStyle(prim.bold === true, prim.italic === true);
+      let bucket = used.get(reg.variant);
+      if (!bucket) {
+        bucket = { parsed: reg.parsed, gids: new Set<number>() };
+        used.set(reg.variant, bucket);
+      }
+      for (const ch of prim.text) bucket.gids.add(reg.parsed.glyphForCodepoint(ch.codePointAt(0)!));
+    }
+  };
+
   const visit = (elements: ReadonlyArray<BodyElement>) => {
     for (const el of elements) {
       if (el.kind === 'paragraph') {
+        for (const run of el.paragraph.runs) addMetafile(run.inlineImage?.resource);
         // §17.3.2.5/33 — a run set in capitals is DRAWN in them, so those are
         // the glyphs the subset needs. Collected from the stored text instead,
         // capitalized.docx asked for "capitalized" and drew "CAPITALIZED" out
@@ -4021,22 +4057,7 @@ function collectFontResources(
         };
         shapeText(el.shape);
       } else if (el.kind === 'image') {
-        // MS-EMF / MS-WMF — the metafile's own words. Left out of the walk they
-        // were drawn with glyph ids the subset never reserved, which is to say
-        // not drawn at all: embedded-xlsx.docx's preview lost every label.
-        const pic = el.image.resource ? imageResources.get(el.image.resource)?.metafile : undefined;
-        for (const prim of pic?.prims ?? []) {
-          if (prim.kind !== 'text') continue;
-          const reg = options.registry.resolveByStyle(prim.bold === true, prim.italic === true);
-          let bucket = used.get(reg.variant);
-          if (!bucket) {
-            bucket = { parsed: reg.parsed, gids: new Set<number>() };
-            used.set(reg.variant, bucket);
-          }
-          for (const ch of prim.text) {
-            bucket.gids.add(reg.parsed.glyphForCodepoint(ch.codePointAt(0)!));
-          }
-        }
+        addMetafile(el.image.resource);
       } else {
         // …and what is left is a chart.
         const chart = options.charts?.get(el.chart.chartRelId);
@@ -4351,6 +4372,8 @@ interface RunPlan {
   readonly imageShadow?: ShapeShadow;
   /** §14.1.2.10 — the wash the inline picture is drawn through. */
   readonly imageWash?: { readonly gain: number; readonly black: number };
+  /** MS-EMF / MS-WMF — the primitives an inline metafile picture draws. */
+  readonly imageMetafile?: MetafileDrawing;
   readonly imageCrop?: ImageCrop;
   /** §20.1.7.6 — the picture's rotation, in degrees clockwise. */
   readonly imageRotationDeg?: number;
@@ -4516,6 +4539,19 @@ function tokenizeParagraph(
         imageWidthPt: widthPt,
         imageHeightPt: heightPt,
         imageResourceName: res?.resourceName ?? '',
+        // MS-EMF / MS-WMF — an inline metafile has no raster to place: it
+        // carries the primitives the emitter plays inside the token's box.
+        ...(res?.metafile
+          ? {
+              imageMetafile: metafileDrawing(
+                res.metafile,
+                drawBox?.widthPt ?? widthPt,
+                drawBox?.heightPt ?? heightPt,
+                options,
+                fontResources,
+              ),
+            }
+          : {}),
         ...(run.inlineImage.outline ? { imageOutline: run.inlineImage.outline } : {}),
         ...(run.inlineImage.shadow ? { imageShadow: run.inlineImage.shadow } : {}),
         ...(run.inlineImage.wash ? { imageWash: run.inlineImage.wash } : {}),
@@ -4643,6 +4679,7 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         ...(plan.imageOutline ? { outline: plan.imageOutline } : {}),
         ...(plan.imageShadow ? { shadow: plan.imageShadow } : {}),
         ...(plan.imageWash ? { wash: plan.imageWash } : {}),
+        ...(plan.imageMetafile ? { metafile: plan.imageMetafile } : {}),
         ...(plan.imageCrop ? { crop: plan.imageCrop } : {}),
         ...(plan.imageRotationDeg ? { rotationDeg: plan.imageRotationDeg } : {}),
         ...(plan.imageFlipH ? { flipH: true } : {}),
@@ -4724,6 +4761,7 @@ function tokenizePlansBidi(
         ...(plan.imageOutline ? { outline: plan.imageOutline } : {}),
         ...(plan.imageShadow ? { shadow: plan.imageShadow } : {}),
         ...(plan.imageWash ? { wash: plan.imageWash } : {}),
+        ...(plan.imageMetafile ? { metafile: plan.imageMetafile } : {}),
         ...(plan.imageCrop ? { crop: plan.imageCrop } : {}),
         ...(plan.imageRotationDeg ? { rotationDeg: plan.imageRotationDeg } : {}),
         ...(plan.imageFlipH ? { flipH: true } : {}),
