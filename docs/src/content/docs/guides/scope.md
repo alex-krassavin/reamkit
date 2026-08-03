@@ -52,8 +52,9 @@ charts — and is byte-stable across a read↔write loop.
   (Office 2007 and LibreOffice: AES-ECB under a key spun from 50 000 SHA-1
   rounds) and the **agile** one (Office 2010 and later: an XML descriptor
   naming its own hash and cipher, the package cut into 4096-byte segments with
-  an IV each). Each carries a verifier, so a **wrong password is refused**
-  (`err.name === 'WrongPasswordError'`) rather than yielding rubbish. Decryption
+  an IV each). `isEncryptedPackage(bytes)` says a file wants a password before
+  the parse does, and each scheme carries a verifier, so a **wrong password is
+  refused** (`WrongPasswordError`) rather than yielding rubbish. Decryption
   only — Ream never writes an encrypted package.
 
 **WordprocessingML (§17)**

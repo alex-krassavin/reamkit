@@ -683,6 +683,8 @@
 <script>
   import type { Ream } from 'reamkit';
 
+  type RK = typeof import('reamkit');
+
   type Target = 'pdf' | 'svg' | 'html' | 'docx' | 'xlsx';
 
   const MIME: Record<Target, string> = {
@@ -722,16 +724,17 @@
     const passInput = $<HTMLInputElement>('rk-pass-input');
     const passLabel = passForm.querySelector<HTMLElement>('.rk-pass-label')!;
 
-    let ReamCtor: typeof Ream | null = null;
+    let rk: RK | null = null;
     let doc: Ream | null = null;
     let pending: File | null = null;
+    let pendingBytes: Uint8Array | null = null;
     let baseName = 'document';
     let target: Target = 'pdf';
     let blobUrl: string | null = null;
 
-    async function loadReam(): Promise<typeof Ream> {
-      if (!ReamCtor) ReamCtor = (await import('reamkit')).Ream;
-      return ReamCtor;
+    async function loadReam(): Promise<RK> {
+      if (!rk) rk = await import('reamkit');
+      return rk;
     }
 
     const fmtKB = (n: number) =>
@@ -764,11 +767,8 @@
       clearResult();
     }
 
-    // A protected document throws for the password (OOXML, which carries a
-    // verifier) or reads as empty and says so in its losses (PDF, which does
-    // not throw). Either way the answer is the same: ask, and open it again.
-    const askedForPassword = (err: unknown) =>
-      err instanceof Error && (err.name === 'WrongPasswordError' || /password/iu.test(err.message));
+    // A locked PDF does not throw: it reads as an empty document and says why
+    // in its losses, so that is where the prompt comes from for one.
     const lockedPdf = (ream: Ream) => ream.losses.some((l) => /encrypted pdf/iu.test(l.detail));
 
     function askPassword(prompt: string) {
@@ -780,29 +780,43 @@
 
     async function onFile(file: File) {
       pending = file;
+      pendingBytes = null;
       passForm.hidden = true;
-      await openFile(file);
-    }
-
-    async function openFile(file: File, password?: string) {
       clearResult();
       clearStatus();
       setStatus('Reading & sniffing the format…');
       let bytes: Uint8Array;
       try {
         bytes = new Uint8Array(await file.arrayBuffer());
-        const Ream = await loadReam();
+      } catch {
+        setStatus('Could not read that file.', true);
+        return;
+      }
+      pendingBytes = bytes;
+      // An encrypted package answers for itself from the bytes, so the prompt
+      // goes up before the parse rather than out of its error.
+      const { isEncryptedPackage } = await loadReam();
+      if (isEncryptedPackage(bytes)) {
+        clearStatus();
+        controls.hidden = true;
+        askPassword('This document is protected — enter its password');
+        return;
+      }
+      await openBytes(file, bytes);
+    }
+
+    async function openBytes(file: File, bytes: Uint8Array, password?: string) {
+      clearResult();
+      setStatus('Reading & sniffing the format…');
+      const { Ream, WrongPasswordError } = await loadReam();
+      try {
         doc = Ream.parse(bytes, password === undefined ? {} : { password });
       } catch (err) {
         doc = null;
         controls.hidden = true;
         clearStatus();
-        if (askedForPassword(err)) {
-          askPassword(
-            password === undefined
-              ? 'This document is protected — enter its password'
-              : 'That password did not open it — try again',
-          );
+        if (err instanceof WrongPasswordError) {
+          askPassword('That password did not open it — try again');
           return;
         }
         setStatus(
@@ -811,7 +825,6 @@
         );
         return;
       }
-      // The PDF handler hands back an empty document rather than throwing.
       if (lockedPdf(doc)) {
         askPassword(
           password === undefined
@@ -932,7 +945,7 @@
     passForm.addEventListener('submit', (e) => {
       e.preventDefault();
       const password = passInput.value;
-      if (pending && password) void openFile(pending, password);
+      if (pending && pendingBytes && password) void openBytes(pending, pendingBytes, password);
     });
   }
 
