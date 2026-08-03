@@ -3,6 +3,68 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.20.0
+
+### Added
+
+- **A password-protected document opens with its password.** An encrypted
+  `.docx`/`.xlsx` is not a zip at all — ECMA-376 §2.3 puts the whole OPC
+  package in the `EncryptedPackage` stream of an OLE container — so every
+  reader declined it and the caller was told to re-save without a password.
+  Pass the password to `Ream.parse` and it opens: both MS-OFFCRYPTO schemes
+  are read, the standard one (AES-ECB under a key spun from 50 000 SHA-1
+  rounds, Office 2007 and LibreOffice) and the agile one (an XML descriptor
+  naming its own hash and cipher, the package cut into 4096-byte segments,
+  Office 2010 and later). A wrong password is refused as a wrong password —
+  each scheme carries a verifier — rather than yielding rubbish.
+
+### Fixed
+
+- **SHA-512 is sixteen times faster.** It was written in BigInt, which is the
+  clear way to write it and forty times the cost of 32-bit pairs; an agile
+  encrypted document spins the hash a hundred thousand times, so 3.7 seconds
+  of key derivation became 0.23. The digests are checked against Node's for
+  every message length around the block boundaries.
+
+## 1.19.0
+
+A second pass of the pixel ranking over all 1121 corpus documents, taken from
+the top. Six changes, and what is left above 0.09 is either a recorded
+difference of judgement or a font metric.
+
+### Added
+
+- **A tiled picture fill is laid, not stretched.** `@type="tile"` (VML) and
+  `<a:tile>` (DrawingML) repeat the picture over the box at its own size —
+  the pixels read at 96 dpi, the resolution Office measures a picture in.
+  Read as nothing, a page papered with a texture fell back to its flat colour;
+  read as a stretch, the texture became one blurred picture across the shape.
+  A pattern fill is still not this: a two-colour tile at its own tiny scale,
+  which stretched over a shape is a black slab.
+
+### Fixed
+
+- **A shade is a fraction of light, not of the byte.** `<a:shade>` and
+  `<a:tint>` take their percentage on LINEAR values; taken on the gamma-encoded
+  byte, every shade came out far too dark — the 51 % the Office theme builds
+  its gradients from turned a medium red into a near-black maroon. Half of the
+  Office accent blue is now 2F528F, the neighbourhood Word's own "darker"
+  palette lives in.
+- **A vertical merge is painted as the one cell it is.** Word writes the fill
+  on the cell that OPENS a `<w:vMerge>` and nothing on the rows continuing it;
+  painting only what is written left a white notch under every merged cell.
+- **A floating table in a header stands at its anchor.** `<w:tblpPr>` was read
+  everywhere but the band emitter, which walked the table's rows down the
+  header's cursor — a banner pinned across the top of the page sat inside the
+  margins and 78pt too low. It leaves the band's flow with that, so the band
+  stops reserving room for it and the body starts where it should.
+- **A measurement may name its unit** — `"85.05pt"`, `"1cm"` — wherever a count
+  of twips is expected, not only in the page geometry: a document that writes
+  its tab stops, indents and spacing that way lost every one of them, and with
+  the tab stop went the dot leader hanging on it. A font size is read in ITS
+  own unit (`<w:sz>` counts half-points), and an indent accepts the Strict
+  `start`/`end` spelling of its sides.
+
 ## 1.18.0
 
 What the pixel ranking said was left after 1.17.0, taken in order: the picture
