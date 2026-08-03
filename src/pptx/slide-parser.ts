@@ -73,6 +73,11 @@ export interface SlideContext {
   readonly resolveImage?: (relId: string) => ResourceId | undefined;
   /** The deck theme's fill style lists, for a `p:bgRef` on this slide. */
   readonly themeFills?: ThemeFillStyles;
+  /**
+   * §19.3.1.43 — the slide's own background fill, which a shape marked
+   * `useBgFill` is painted with.
+   */
+  readonly backgroundFill?: ShapeFill;
   /** A chart relationship id (`c:chart @r:id`) → its document-unique key (PX4a). */
   readonly resolveChart?: (relId: string) => string | undefined;
   /**
@@ -226,7 +231,16 @@ function parseSp(sp: PoNode, ctx: SlideContext, transform: GroupTransform): Shap
   // Geometry/fill/stroke from p:spPr via the shared DrawingML readers, resolving
   // colours through the deck's theme palette (PX5).
   const geometry = parseGeometry(spPr);
-  const fill: ShapeFill = spPr ? parseFill(spPr, colors) : { kind: 'none' };
+  // §19.3.1.43 `p:sp@useBgFill` — the shape is filled with the SLIDE's
+  // background, which is how a deck cuts a hole in the decoration above it:
+  // tdf93868's master lays a white rectangle over the whole slide and then a
+  // rounded one on top that lets the slide's black gradient back through.
+  const useBgFill = poAttr(sp, 'useBgFill') === '1';
+  const fill: ShapeFill = useBgFill
+    ? (ctx.backgroundFill ?? { kind: 'none' })
+    : spPr
+      ? parseFill(spPr, colors, ctx.resolveImage)
+      : { kind: 'none' };
   const line = spPr ? parseLine(spPr, colors) : undefined;
   const visibleLine = line !== undefined && line.fill !== 'none';
   if (!text && fill.kind === 'none' && !visibleLine) return undefined;

@@ -75,11 +75,6 @@
   "aligned": true
  },
  {
-  "name": "keyframes.pptx",
-  "score": 0.9323,
-  "aligned": true
- },
- {
   "name": "customGeo.pptx",
   "score": 0.8016,
   "aligned": true
@@ -90,13 +85,18 @@
   "aligned": true
  },
  {
-  "name": "ArtisticEffectSample.pptx",
-  "score": 0.5971,
+  "name": "keyframes.pptx",
+  "score": 0.639,
   "aligned": true
  },
  {
   "name": "table_test2.pptx",
   "score": 0.5708,
+  "aligned": true
+ },
+ {
+  "name": "ArtisticEffectSample.pptx",
+  "score": 0.5506,
   "aligned": true
  },
  {
@@ -112,16 +112,6 @@
  {
   "name": "aascu.org_hbcu_leadershipsummit_cooper_.pptx",
   "score": 0.4884,
-  "aligned": true
- },
- {
-  "name": "alterman_security.pptx",
-  "score": 0.4611,
-  "aligned": true
- },
- {
-  "name": "bug68703.pptx",
-  "score": 0.4577,
   "aligned": true
  },
  {
@@ -147,6 +137,16 @@
  {
   "name": "at.ecodesign.www_downloads_Vertiefungsvortrag_elektronik.pptx",
   "score": 0.3759,
+  "aligned": true
+ },
+ {
+  "name": "bug68703.pptx",
+  "score": 0.3446,
+  "aligned": true
+ },
+ {
+  "name": "alterman_security.pptx",
+  "score": 0.3192,
   "aligned": true
  },
  {
@@ -181,7 +181,7 @@
  },
  {
   "name": "ae.ac.uaeu.faculty_nafaachbili_GeomLec1.pptx",
-  "score": 0.2503,
+  "score": 0.2146,
   "aligned": true
  },
  {
@@ -235,13 +235,18 @@
   "aligned": true
  },
  {
-  "name": "bug60715.pptx",
-  "score": 0.0726,
+  "name": "bug54570.pptx",
+  "score": 0.0702,
   "aligned": true
  },
  {
-  "name": "bug54570.pptx",
-  "score": 0.0702,
+  "name": "bug60715.pptx",
+  "score": 0.0696,
+  "aligned": true
+ },
+ {
+  "name": "crash-57308ca363f5b71763c489d1b432aff009d4bc4f.pptx",
+  "score": 0.0528,
   "aligned": true
  },
  {
@@ -251,12 +256,7 @@
  },
  {
   "name": "KEY02.pptx",
-  "score": 0.0472,
-  "aligned": true
- },
- {
-  "name": "crash-57308ca363f5b71763c489d1b432aff009d4bc4f.pptx",
-  "score": 0.0465,
+  "score": 0.0453,
   "aligned": true
  },
  {
@@ -325,11 +325,6 @@
   "aligned": true
  },
  {
-  "name": "WithMaster.pptx",
-  "score": 0.0166,
-  "aligned": true
- },
- {
   "name": "ececapstonespring2012.pptx",
   "score": 0.0156,
   "aligned": true
@@ -365,13 +360,13 @@
   "aligned": true
  },
  {
-  "name": "bug65551.pptx",
-  "score": 0.0108,
+  "name": "2411-Performance_Up.pptx",
+  "score": 0.0104,
   "aligned": true
  },
  {
-  "name": "2411-Performance_Up.pptx",
-  "score": 0.0104,
+  "name": "WithMaster.pptx",
+  "score": 0.0093,
   "aligned": true
  },
  {
@@ -395,13 +390,13 @@
   "aligned": true
  },
  {
-  "name": "EmbeddedAudio.pptx",
-  "score": 0.007,
+  "name": "bug65228.pptx",
+  "score": 0.0072,
   "aligned": true
  },
  {
-  "name": "bug65228.pptx",
-  "score": 0.0059,
+  "name": "EmbeddedAudio.pptx",
+  "score": 0.007,
   "aligned": true
  },
  {
@@ -421,7 +416,7 @@
  },
  {
   "name": "bug64693.pptx",
-  "score": 0.0033,
+  "score": 0.0034,
   "aligned": true
  },
  {
@@ -457,6 +452,11 @@
  {
   "name": "copy-slide-demo.pptx",
   "score": 0.0005,
+  "aligned": true
+ },
+ {
+  "name": "bug65551.pptx",
+  "score": 0.0001,
   "aligned": true
  },
  {

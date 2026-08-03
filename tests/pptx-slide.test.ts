@@ -674,6 +674,24 @@ describe("pptx inherited shapes — the deck's own decoration (E-PPTX PX5d)", ()
     expect(fills(doc)).toEqual(['222222', '333333']);
   });
 
+  it('paints a useBgFill shape with the slide background it stands on', () => {
+    // §19.3.1.43 — tdf93868's master lays a white rectangle over the whole
+    // slide, then a rounded one marked `useBgFill` that lets the background
+    // back through. Read without it the deck is a blank white page.
+    const bgFilled =
+      `<p:sp useBgFill="1"><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+      `<a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill></p:spPr></p:sp>`;
+    const doc = Ream.parse(
+      buildPptx([''], {
+        layoutMaster: { masterBg: bgFill('102030'), masterSpTree: rect('FFFFFF') + bgFilled },
+      }),
+    );
+    // The backdrop, the white rectangle over it, and the shape that is the
+    // background again — not the white its own fill states.
+    expect(fills(doc)).toEqual(['102030', 'FFFFFF', '102030']);
+  });
+
   it('draws them on every slide of the layout, and behind the background', () => {
     const doc = Ream.parse(
       buildPptx(['', ''], {

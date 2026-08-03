@@ -181,6 +181,7 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
       const ctx: SlideContext = {
         ...(styles.cascade ? { cascade: styles.cascade } : {}),
         colors: styles.colors,
+        ...(styles.background ? { backgroundFill: styles.background } : {}),
         ...(styles.themeFills ? { themeFills: styles.themeFills } : {}),
         resolveImage: makeSlideImageResolver(pkg, part.path, resources),
         resolveChart: makeSlideChartResolver(pkg, part.path, charts, styles.colors),
@@ -245,11 +246,12 @@ function parseSlide(
     : undefined;
   const bg = own ?? inheritedBg;
   const spTree = cSld ? poChildren(cSld).find((c) => poIs(c, 'p:spTree')) : undefined;
+  const shapeCtx: SlideContext = own ? { ...ctx, backgroundFill: own } : ctx;
 
   const out: Array<BodyElement> = [];
   if (bg) out.push(backdropElement(bg, pageW, pageH));
   out.push(...inheritedShapes);
-  if (spTree) out.push(...parseSlideShapes(spTree, ctx));
+  if (spTree) out.push(...parseSlideShapes(spTree, shapeCtx));
   return out;
 }
 
@@ -422,15 +424,6 @@ function slideStylesFor(
     ? { fills: parseThemeFillStyles(theme), backgrounds: parseThemeBgFillStyles(theme) }
     : undefined;
   const cascade = buildPlaceholderCascade(layoutTree, masterTree, colors);
-  const deps: PartDeps = { colors, resources, charts, onLoss };
-  // §19.3.1.38 `@showMasterSp` — the decoration a deck states once and every
-  // slide carries: rules, bands, a logo. A layout may refuse the master's, and
-  // a slide may refuse both (read at the slide, below).
-  const inheritedShapes: Array<BodyElement> = [];
-  if (masterTree && master && showMasterShapes(layoutTree, 'p:sldLayout')) {
-    inheritedShapes.push(...partShapes(pkg, master.path, masterTree, 'p:sldMaster', deps));
-  }
-  inheritedShapes.push(...partShapes(pkg, layout.path, layoutTree, 'p:sldLayout', deps));
   const background =
     partBackground(
       layoutTree,
@@ -448,6 +441,23 @@ function slideStylesFor(
           themeFills,
         )
       : undefined);
+  // The background is resolved FIRST: a shape among the inherited ones may be
+  // painted with it (§19.3.1.43 `useBgFill`).
+  const deps: PartDeps = {
+    colors,
+    resources,
+    charts,
+    onLoss,
+    ...(background ? { background } : {}),
+  };
+  // §19.3.1.38 `@showMasterSp` — the decoration a deck states once and every
+  // slide carries: rules, bands, a logo. A layout may refuse the master's, and
+  // a slide may refuse both (read at the slide, below).
+  const inheritedShapes: Array<BodyElement> = [];
+  if (masterTree && master && showMasterShapes(layoutTree, 'p:sldLayout')) {
+    inheritedShapes.push(...partShapes(pkg, master.path, masterTree, 'p:sldMaster', deps));
+  }
+  inheritedShapes.push(...partShapes(pkg, layout.path, layoutTree, 'p:sldLayout', deps));
   const styles: SlideStyles = {
     cascade,
     colors,
@@ -478,6 +488,7 @@ function partShapes(
   if (!spTree) return [];
   const ctx: SlideContext = {
     colors: deps.colors,
+    ...(deps.background ? { backgroundFill: deps.background } : {}),
     resolveImage: makeSlideImageResolver(pkg, path, deps.resources),
     resolveChart: makeSlideChartResolver(pkg, path, deps.charts, deps.colors),
     resolveHyperlink: makeHyperlinkResolver(pkg, path),
@@ -490,6 +501,8 @@ function partShapes(
 /** What {@link partShapes} needs from the document being read. */
 interface PartDeps {
   readonly colors: ColorResolver;
+  /** The background these shapes sit on, for a `useBgFill` one among them. */
+  readonly background?: ShapeFill;
   readonly resources: ResourceStore;
   readonly charts: Map<string, Chart>;
   readonly onLoss: (loss: Loss) => void;
