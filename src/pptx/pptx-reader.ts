@@ -39,7 +39,7 @@ import { FEATURES, ResourceStore, pt } from '@/core/ir';
 import { OpcPackage } from '@/core/opc';
 import { poAttr, poChildren, poFindDescendant, poIntAttr, poIs } from '@/core/po-helpers';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
-import { buildPlaceholderCascade } from '@/pptx/placeholder-cascade';
+import { buildPlaceholderCascade, parseLevelStyles } from '@/pptx/placeholder-cascade';
 import { backdropElement, parseBackgroundFill, parseSlideShapes } from '@/pptx/slide-parser';
 
 const EMU_PER_PT = 12700;
@@ -100,11 +100,15 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
 
   let cx = DEFAULT_CX;
   let cy = DEFAULT_CY;
+  // §19.2.1.8 — the deck's own default text style, which is what a plain text
+  // box on a slide is written in when it says nothing itself.
+  let defaultTextStyle: PoNode | undefined;
   const slideParts: Array<{ path: string; data: Uint8Array }> = [];
   if (presData) {
     const tree = parser.parse(decoder.decode(presData)) as Array<PoNode>;
     const pres = tree.find((n) => poIs(n, 'p:presentation'));
     const kids = pres ? poChildren(pres) : [];
+    defaultTextStyle = kids.find((c) => poIs(c, 'p:defaultTextStyle'));
     const sldSz = kids.find((c) => poIs(c, 'p:sldSz'));
     cx = (sldSz ? poIntAttr(sldSz, 'cx') : undefined) || DEFAULT_CX;
     cy = (sldSz ? poIntAttr(sldSz, 'cy') : undefined) || DEFAULT_CY;
@@ -176,6 +180,7 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
         resources,
         charts,
         (loss) => losses.push(loss.where ? loss : { ...loss, where: `slide ${i + 1}` }),
+        defaultTextStyle,
         overrideAlias(slideTree, 'p:sld'),
       );
       const ctx: SlideContext = {
@@ -391,6 +396,7 @@ function slideStylesFor(
   resources: ResourceStore,
   charts: Map<string, Chart>,
   onLoss: (loss: Loss) => void,
+  deckDefaultTextStyle: PoNode | undefined,
   slideAlias?: SchemeAliases,
 ): SlideStyles {
   const layoutRel = pkg
@@ -423,7 +429,12 @@ function slideStylesFor(
   const themeFills = theme
     ? { fills: parseThemeFillStyles(theme), backgrounds: parseThemeBgFillStyles(theme) }
     : undefined;
-  const cascade = buildPlaceholderCascade(layoutTree, masterTree, colors);
+  const cascade = buildPlaceholderCascade(
+    layoutTree,
+    masterTree,
+    colors,
+    parseLevelStyles(deckDefaultTextStyle, colors),
+  );
   const background =
     partBackground(
       layoutTree,

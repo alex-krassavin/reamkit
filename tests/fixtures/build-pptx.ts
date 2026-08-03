@@ -70,6 +70,11 @@ export interface BuildPptxOptions {
   readonly slideClrMapOvr?: ReadonlyArray<string | undefined>;
   /** §19.3.1.38 — per-slide `p:sld@showMasterSp="0"` (the slide shows no inherited shapes). */
   readonly hideMasterShapes?: ReadonlyArray<boolean>;
+  /**
+   * §19.2.1.8 — inner XML of the presentation's `<p:defaultTextStyle>`: the
+   * `a:lvl1pPr`… levels an ordinary text box is written in.
+   */
+  readonly defaultTextStyle?: string;
 }
 
 const NS = `xmlns:p="${P_NS}" xmlns:a="${A_NS}" xmlns:r="${R_NS}"`;
@@ -136,6 +141,9 @@ export function buildPptx(
     Array.from({ length: n }, (_, i) => `<p:sldId id="${256 + i}" r:id="rId${i + 1}"/>`).join('') +
     `</p:sldIdLst>` +
     `<p:sldSz cx="${cx}" cy="${cy}"/>` +
+    (options.defaultTextStyle
+      ? `<p:defaultTextStyle>${options.defaultTextStyle}</p:defaultTextStyle>`
+      : '') +
     `</p:presentation>`;
 
   const presRels =

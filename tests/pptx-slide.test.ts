@@ -703,6 +703,84 @@ describe("pptx inherited shapes — the deck's own decoration (E-PPTX PX5d)", ()
   });
 });
 
+describe('pptx inherited text — what a slide is written in (E-PPTX PX2)', () => {
+  const textBox = (text: string): string =>
+    `<p:sp><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5486400" cy="914400"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>` +
+    `<p:txBody><a:bodyPr/><a:p><a:r><a:rPr lang="en"/><a:t>${text}</a:t></a:r></a:p></p:txBody></p:sp>`;
+  const titlePh = (text: string): string =>
+    `<p:sp><p:nvSpPr><p:cNvPr id="2" name="t"/><p:cNvSpPr/><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr>` +
+    `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5486400" cy="914400"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>` +
+    `<p:txBody><a:bodyPr/><a:p><a:r><a:rPr lang="en"/><a:t>${text}</a:t></a:r></a:p></p:txBody></p:sp>`;
+  const shapeOf = (doc: ReturnType<typeof Ream.parse>) =>
+    doc.flow.body.flatMap((el) => (el.kind === 'shape' && el.shape.text ? [el.shape] : []))[0];
+  const firstParagraph = (doc: ReturnType<typeof Ream.parse>) => {
+    const c = shapeOf(doc)?.text?.content[0];
+    return c?.kind === 'paragraph' ? c.paragraph : undefined;
+  };
+
+  it("writes a plain text box in the deck's default text style (§19.2.1.8)", () => {
+    // tdf93868's only shape is a text box with no colour of its own; the deck
+    // says tx1, its map says tx1 is lt1, and its lt1 is white — so the slide
+    // reads white on black, not black on black.
+    const doc = Ream.parse(
+      buildPptx([textBox('plain')], {
+        defaultTextStyle:
+          `<a:lvl1pPr algn="ctr"><a:defRPr sz="2800">` +
+          `<a:solidFill><a:schemeClr val="tx1"/></a:solidFill></a:defRPr></a:lvl1pPr>`,
+        layoutMaster: { theme: THEME, clrMap: 'tx1="lt1"' },
+      }),
+    );
+    const p = firstParagraph(doc);
+    expect(p?.runs[0]?.properties.colorHex).toBe('FFFF00'); // lt1 through the map
+    expect(p?.runs[0]?.properties.fontSizePt).toBe(28);
+    expect(p?.properties.alignment).toBe('center');
+  });
+
+  it("takes a placeholder's alignment from the master's text styles", () => {
+    const doc = Ream.parse(
+      buildPptx([titlePh('Title')], {
+        layoutMaster: {
+          txStyles: `<p:txStyles><p:titleStyle><a:lvl1pPr algn="ctr"><a:defRPr sz="4400"/></a:lvl1pPr></p:titleStyle></p:txStyles>`,
+        },
+      }),
+    );
+    expect(firstParagraph(doc)?.properties.alignment).toBe('center');
+    expect(firstParagraph(doc)?.runs[0]?.properties.fontSizePt).toBe(44);
+  });
+
+  it("lets the layout's own prototype override the master's family style", () => {
+    const doc = Ream.parse(
+      buildPptx([titlePh('Title')], {
+        layoutMaster: {
+          txStyles: `<p:txStyles><p:titleStyle><a:lvl1pPr algn="ctr"><a:defRPr sz="4400"/></a:lvl1pPr></p:titleStyle></p:txStyles>`,
+          layoutSpTree:
+            `<p:sp><p:nvSpPr><p:cNvPr id="8" name="t"/><p:cNvSpPr/><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr>` +
+            `<p:spPr/><p:txBody><a:bodyPr anchor="b"/>` +
+            `<a:lstStyle><a:lvl1pPr algn="r"><a:defRPr sz="2000"/></a:lvl1pPr></a:lstStyle>` +
+            `<a:p/></p:txBody></p:sp>`,
+        },
+      }),
+    );
+    expect(firstParagraph(doc)?.properties.alignment).toBe('right'); // the layout's word
+    expect(firstParagraph(doc)?.runs[0]?.properties.fontSizePt).toBe(20);
+    // …and the prototype's vertical anchor comes with it.
+    expect(shapeOf(doc)?.text?.anchor).toBe('b');
+  });
+
+  it("keeps the paragraph's own properties over everything inherited", () => {
+    const doc = Ream.parse(
+      buildPptx([titlePh('Title').replace('<a:p>', '<a:p><a:pPr algn="l"/>')], {
+        layoutMaster: {
+          txStyles: `<p:txStyles><p:titleStyle><a:lvl1pPr algn="ctr"><a:defRPr sz="4400"/></a:lvl1pPr></p:titleStyle></p:txStyles>`,
+        },
+      }),
+    );
+    expect(firstParagraph(doc)?.properties.alignment).toBe('left');
+  });
+});
+
 // A p:grpSp whose child shape (filled `hex`) sits at child-box (cx,cy,ex,ey),
 // inside the group transform off/ext (chOff 0, chExt = `chExt`).
 function groupDeck(opts: {

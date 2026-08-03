@@ -19,6 +19,7 @@ import type {
   FloatAnchor,
   ImageBlock,
   Paragraph,
+  ParagraphProperties,
   Run,
   RunProperties,
   ShapeBlock,
@@ -717,8 +718,10 @@ export function parseTxBody(
   const rIns = bodyPr ? poIntAttr(bodyPr, 'rIns') : undefined;
   const bIns = bodyPr ? poIntAttr(bodyPr, 'bIns') : undefined;
   const a = bodyPr ? poAttr(bodyPr, 'anchor') : undefined;
+  // A placeholder that states no anchor of its own sits where its prototype
+  // says: a master title anchored `ctr` centres the slide's title in its box.
   const anchor: ShapeTextBody['anchor'] | undefined =
-    a === 'ctr' ? 'ctr' : a === 'b' ? 'b' : a === 't' ? 't' : undefined;
+    a === 'ctr' || a === 'b' || a === 't' ? a : ph && cascade ? cascade.anchorFor(ph) : undefined;
   return {
     content,
     ...(lIns !== undefined ? { insetLeft: emuToPt(lIns) } : {}),
@@ -743,7 +746,10 @@ function parseSlideParagraph(
 ): Paragraph {
   const pPr = poChildren(aP).find((c) => poIs(c, 'a:pPr'));
   const level = (pPr ? poIntAttr(pPr, 'lvl') : undefined) ?? 0;
-  const defaults: RunProperties = ph && cascade ? cascade.defaultsFor(ph, level) : {};
+  const defaults: RunProperties = cascade ? cascade.defaultsFor(ph, level) : {};
+  // What the deck, the master and the prototypes say this paragraph looks like
+  // — the paragraph's own pPr states only where it differs.
+  const inherited: ParagraphProperties = cascade ? cascade.paragraphDefaultsFor(ph, level) : {};
   const algn = pPr ? poAttr(pPr, 'algn') : undefined;
   const alignment = algn !== undefined ? ALGN_TO_ALIGNMENT[algn] : undefined;
 
@@ -779,6 +785,7 @@ function parseSlideParagraph(
     marL !== undefined ? emuToPt(marL) : level > 0 ? emuToPt(level * 457200) : undefined;
   return {
     properties: {
+      ...inherited,
       ...(alignment ? { alignment } : {}),
       ...(indentLeft !== undefined ? { indentLeft } : {}),
       ...(indent !== undefined ? { indentFirstLine: emuToPt(indent) } : {}),
