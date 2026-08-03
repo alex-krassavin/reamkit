@@ -75,6 +75,8 @@ export interface BuildPptxOptions {
    * `a:lvl1pPr`… levels an ordinary text box is written in.
    */
   readonly defaultTextStyle?: string;
+  /** Extra `<Relationship/>` XML for the presentation's .rels (e.g. tableStyles). */
+  readonly presentationRels?: string;
 }
 
 const NS = `xmlns:p="${P_NS}" xmlns:a="${A_NS}" xmlns:r="${R_NS}"`;
@@ -154,6 +156,7 @@ export function buildPptx(
       (_, i) =>
         `<Relationship Id="rId${i + 1}" Type="${R_NS}/slide" Target="slides/slide${i + 1}.xml"/>`,
     ).join('') +
+    (options.presentationRels ?? '') +
     `</Relationships>`;
 
   const files: Record<string, Uint8Array> = {

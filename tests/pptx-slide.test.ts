@@ -354,6 +354,81 @@ function firstTable(doc: ReturnType<typeof Ream.parse>) {
   return el?.kind === 'table' ? el.table : undefined;
 }
 
+describe('a slide table wears its style and stands in its frame', () => {
+  const TABLE_STYLES_REL =
+    'http://schemas.openxmlformats.org/officeDocument/2006/relationships/tableStyles';
+  const GUID = '{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}';
+  const styles =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+    `<a:tblStyleLst xmlns:a="${A_MAIN}" def="${GUID}"><a:tblStyle styleId="${GUID}" styleName="s">` +
+    `<a:wholeTbl><a:tcStyle><a:tcBdr><a:insideH><a:ln w="12700">` +
+    `<a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill></a:ln></a:insideH></a:tcBdr>` +
+    `<a:fill><a:solidFill><a:srgbClr val="DDDDDD"/></a:solidFill></a:fill></a:tcStyle></a:wholeTbl>` +
+    `<a:band1H><a:tcStyle><a:fill><a:solidFill><a:srgbClr val="BBCCEE"/></a:solidFill></a:fill>` +
+    `</a:tcStyle></a:band1H>` +
+    `<a:firstRow><a:tcTxStyle b="on"><a:srgbClr val="FFFFFF"/></a:tcTxStyle>` +
+    `<a:tcStyle><a:fill><a:solidFill><a:srgbClr val="4472C4"/></a:solidFill></a:fill>` +
+    `</a:tcStyle></a:firstRow></a:tblStyle></a:tblStyleLst>`;
+  const tc = (text: string, own = ''): string =>
+    `<a:tc><a:txBody><a:bodyPr/><a:p><a:r><a:rPr lang="en"/><a:t>${text}</a:t></a:r></a:p>` +
+    `</a:txBody><a:tcPr>${own}</a:tcPr></a:tc>`;
+  const deck = (tblPr: string): ReturnType<typeof Ream.parse> =>
+    Ream.parse(
+      buildPptx(
+        [
+          `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="6" name="t"/><p:cNvGraphicFramePr/>` +
+            `<p:nvPr/></p:nvGraphicFramePr>` +
+            `<p:xfrm><a:off x="914400" y="1828800"/><a:ext cx="5486400" cy="1828800"/></p:xfrm>` +
+            `<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">` +
+            `<a:tbl>${tblPr}<a:tblGrid><a:gridCol w="2743200"/><a:gridCol w="2743200"/></a:tblGrid>` +
+            `<a:tr h="457200">${tc('H1')}${tc('H2')}</a:tr>` +
+            `<a:tr h="457200">${tc('a')}${tc('b')}</a:tr>` +
+            `<a:tr h="457200">${tc('c')}` +
+            tc('own', '<a:solidFill><a:srgbClr val="FF0000"/></a:solidFill>') +
+            `</a:tr></a:tbl></a:graphicData></a:graphic></p:graphicFrame>`,
+        ],
+        {
+          presentationRels: `<Relationship Id="rIdTs" Type="${TABLE_STYLES_REL}" Target="tableStyles.xml"/>`,
+          media: { 'ppt/tableStyles.xml': new TextEncoder().encode(styles) },
+        },
+      ),
+    );
+  const table = (doc: ReturnType<typeof Ream.parse>) =>
+    doc.flow.body.flatMap((el) => (el.kind === 'table' ? [el.table] : []))[0];
+
+  it('stands at the frame its slide puts it in', () => {
+    const t = table(deck('<a:tblPr/>'));
+    expect(t?.properties.float?.posH?.offsetPt).toBe(72); // 914400 EMU
+    expect(t?.properties.float?.posV?.offsetPt).toBe(144);
+  });
+
+  it('takes the fills, the rules and the bold its style names', () => {
+    const t = table(deck('<a:tblPr firstRow="1" bandRow="1"/>'));
+    const shading = (r: number, c: number): string | undefined =>
+      t?.rows[r]?.cells[c]?.properties.shading?.colorHex;
+    expect(shading(0, 0)).toBe('4472C4'); // the header row
+    expect(shading(1, 0)).toBe('BBCCEE'); // …the first band under it
+    expect(shading(2, 0)).toBe('DDDDDD'); // …and the whole-table fill on the next
+    expect(shading(2, 1)).toBe('FF0000'); // a cell's OWN fill beats the style
+    expect(t?.rows[0]?.cells[0]?.properties.borders?.insideH?.colorHex).toBe('FFFFFF');
+    const run = t?.rows[0]?.cells[0]?.content.flatMap((b) =>
+      b.kind === 'paragraph' ? b.paragraph.runs : [],
+    )[0];
+    expect(run?.properties.bold).toBe(true);
+  });
+
+  it('leaves the style alone when the table asks for no part of it', () => {
+    const t = table(deck('<a:tblPr firstRow="0" bandRow="0"/>'));
+    expect(t?.rows[0]?.cells[0]?.properties.shading?.colorHex).toBe('DDDDDD');
+  });
+
+  it('keeps each row as tall as it asks (a:tr@h is a minimum)', () => {
+    const t = table(deck('<a:tblPr/>'));
+    expect(t?.rows[0]?.properties.height).toBe(36); // 457200 EMU
+    expect(t?.rows[0]?.properties.heightRule).toBe('atLeast');
+  });
+});
+
 describe('pptx slide tables (E-PPTX PX4)', () => {
   it('reads an a:tbl graphicFrame into a FlowDoc table', () => {
     const tbl = firstTable(

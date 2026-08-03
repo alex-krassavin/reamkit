@@ -115,11 +115,6 @@
   "aligned": true
  },
  {
-  "name": "customGeo.pptx",
-  "score": 0.3379,
-  "aligned": true
- },
- {
   "name": "63200.pptx",
   "score": 0.2994,
   "aligned": true
@@ -197,6 +192,11 @@
  {
   "name": "tika-2605.pptx",
   "score": 0.0674,
+  "aligned": true
+ },
+ {
+  "name": "customGeo.pptx",
+  "score": 0.0637,
   "aligned": true
  },
  {

@@ -61,6 +61,7 @@ import {
   withStyleFontColor,
 } from '@/word/drawing-parser';
 import { boxFromXfrm, parsePh, parseXfrmBox, rPrToRunProps } from '@/pptx/sp-helpers';
+import { cellStyle, tableStyleFlags, tableStyleId, withCellStyle } from '@/pptx/table-style';
 
 const CHART_URI = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
 const OLE_URI = 'http://schemas.openxmlformats.org/presentationml/2006/ole';
@@ -92,6 +93,11 @@ export interface SlideContext {
    * shape in the slide's legacy VML drawing.
    */
   readonly resolveOlePreview?: (spid: string) => ResourceId | undefined;
+  /**
+   * §20.1.4.2.24 — the `a:tblStyle` a table names by GUID, from the deck's
+   * `tableStyles.xml`; without a GUID, the deck's default style.
+   */
+  readonly resolveTableStyle?: (styleId: string | undefined) => PoNode | undefined;
   /** A chart relationship id (`c:chart @r:id`) → its document-unique key (PX4a). */
   readonly resolveChart?: (relId: string) => string | undefined;
   /**
@@ -337,13 +343,19 @@ function parseGraphicFrame(
   }
 
   if (uri === TABLE_URI) {
-    // A FlowDoc Table has no float, so a slide table flows in-block (the reader
-    // zeroes the slide margins so it sits at the top-left). Its exact frame
-    // position is a later refinement.
+    // §19.3.1.19 — a slide table stands where its FRAME says, like every other
+    // graphic on the slide: the same float anchor a docx floating table uses.
+    // Flowing it in-block put every table on the corpus at the top-left corner,
+    // over the title (table_test2, and two conference decks besides).
     const tbl = poFindDescendant(gf, 'a:tbl');
-    return tbl
-      ? [{ kind: 'table', table: parseTable(tbl, ctx.colors ?? defaultColorResolver) }]
-      : [];
+    if (!tbl) return [];
+    const table = parseTable(tbl, ctx.colors ?? defaultColorResolver, ctx.resolveTableStyle);
+    return [
+      {
+        kind: 'table',
+        table: { ...table, properties: { ...table.properties, float: floatAt(box) } },
+      },
+    ];
   }
 
   // §19.3.2.4 — an embedded OLE object shows a snapshot of itself. Modern decks
@@ -960,7 +972,11 @@ function parseSlideRun(
 
 // §21.1.3 a:tbl → a FlowDoc Table: grid column widths (a:tblGrid/a:gridCol @w),
 // rows (a:tr) and cells (a:tc) with their text and merge state.
-function parseTable(tbl: PoNode, colors: ColorResolver): Table {
+function parseTable(
+  tbl: PoNode,
+  colors: ColorResolver,
+  resolveTableStyle?: (styleId: string | undefined) => PoNode | undefined,
+): Table {
   const grid: Array<Pt> = [];
   const tblGrid = poChildren(tbl).find((c) => poIs(c, 'a:tblGrid'));
   if (tblGrid) {
@@ -972,7 +988,27 @@ function parseTable(tbl: PoNode, colors: ColorResolver): Table {
   for (const tr of poChildren(tbl)) {
     if (poIs(tr, 'a:tr')) rows.push(parseTableRow(tr, colors));
   }
-  return { properties: {}, grid, rows };
+  // §20.1.4.2.24 — almost everything a table LOOKS like is in the style it
+  // names: the header's fill, the banding, the rules between the cells.
+  const tblPr = poChildren(tbl).find((c) => poIs(c, 'a:tblPr'));
+  const style = resolveTableStyle?.(tableStyleId(tblPr));
+  if (!style) return { properties: {}, grid, rows };
+  const flags = tableStyleFlags(tblPr);
+  const styled = rows.map((row, r) => ({
+    ...row,
+    cells: row.cells.map((cell, c) =>
+      withCellStyle(
+        cell,
+        cellStyle(
+          style,
+          flags,
+          { row: r, rowCount: rows.length, col: c, colCount: grid.length },
+          colors,
+        ),
+      ),
+    ),
+  }));
+  return { properties: {}, grid, rows: styled };
 }
 
 function parseTableRow(tr: PoNode, colors: ColorResolver): TableRow {
@@ -986,7 +1022,14 @@ function parseTableRow(tr: PoNode, colors: ColorResolver): TableRow {
     if (poAttr(tc, 'hMerge') === '1') continue;
     cells.push(parseTableCell(tc, colors));
   }
-  return { properties: { ...(h !== undefined ? { height: emuToPt(h) } : {}) }, cells };
+  // §21.1.3.18 `a:tr@h` — the height the row asks for, which it keeps unless
+  // its own text needs more. Stated without a rule it was ignored entirely, and
+  // every slide table came out as tight as its text (table_test2's rows are
+  // 36pt, 29pt, 15pt and we drew four equal thin ones).
+  return {
+    properties: { ...(h !== undefined ? { height: emuToPt(h), heightRule: 'atLeast' } : {}) },
+    cells,
+  };
 }
 
 function parseTableCell(tc: PoNode, colors: ColorResolver): TableCell {

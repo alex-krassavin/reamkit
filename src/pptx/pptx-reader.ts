@@ -96,6 +96,7 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
   const losses: Array<Loss> = [];
   const pkg = OpcPackage.open(bytes);
   const presPath = pkg.getMainDocumentPath();
+  const tableStyles = makeTableStyleResolver(pkg, presPath);
   const presData = pkg.getPart(presPath);
   const resources = new ResourceStore();
   const charts = new Map<string, Chart>();
@@ -196,6 +197,7 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
         resolveHyperlink: makeHyperlinkResolver(pkg, part.path),
         resolveDiagram: makeSlideDiagramResolver(pkg, part.path),
         resolveOlePreview: makeOlePreviewResolver(pkg, part.path, resources),
+        resolveTableStyle: tableStyles,
         onLoss: (loss) => losses.push(loss.where ? loss : { ...loss, where: `slide ${i + 1}` }),
       };
       // The deck's own decoration goes under the slide's content, over its
@@ -337,6 +339,39 @@ function makeOlePreviewResolver(
     const id = media ? resources.put(media.data) : undefined;
     cache.set(key, id);
     return id;
+  };
+}
+
+/**
+ * §20.1.4.2.24 — the deck's table styles, by the GUID a table names. A table
+ * that names none takes the list's own `@def`, which is what PowerPoint applies
+ * when a table is inserted and never restyled.
+ *
+ * The part is read once, on the first table in the deck.
+ */
+function makeTableStyleResolver(
+  pkg: OpcPackage,
+  presPath: string,
+): (styleId: string | undefined) => PoNode | undefined {
+  let byId: Map<string, PoNode> | undefined;
+  let def: string | undefined;
+  return (styleId) => {
+    if (byId === undefined) {
+      byId = new Map();
+      const rel = pkg.getPartRelationships(presPath).find((r) => r.type.endsWith('/tableStyles'));
+      const part = rel ? pkg.resolveRelatedPart(presPath, rel) : undefined;
+      for (const root of part ? parseXml(part.data) : []) {
+        const list = poIs(root, 'a:tblStyleLst') ? root : poFindDescendant(root, 'a:tblStyleLst');
+        if (!list) continue;
+        def = poAttr(list, 'def');
+        for (const style of poChildren(list)) {
+          const id = poIs(style, 'a:tblStyle') ? poAttr(style, 'styleId') : undefined;
+          if (id !== undefined) byId.set(id, style);
+        }
+      }
+    }
+    const key = styleId ?? def;
+    return key === undefined ? undefined : byId.get(key);
   };
 }
 

@@ -15,11 +15,6 @@
   "aligned": true
  },
  {
-  "name": "tdf125551.pptx",
-  "score": 0.5023,
-  "aligned": true
- },
- {
   "name": "fill-color-list.pptx",
   "score": 0.4813,
   "aligned": true
@@ -460,6 +455,11 @@
   "aligned": true
  },
  {
+  "name": "tdf125551.pptx",
+  "score": 0.0418,
+  "aligned": true
+ },
+ {
   "name": "activex_label.pptx",
   "score": 0.0413,
   "aligned": true
@@ -537,11 +537,6 @@
  {
   "name": "activex_togglebutton.pptx",
   "score": 0.0303,
-  "aligned": true
- },
- {
-  "name": "bnc870233_2.pptx",
-  "score": 0.0299,
   "aligned": true
  },
  {
@@ -1057,6 +1052,11 @@
  {
   "name": "tdf149697.pptx",
   "score": 0.0033,
+  "aligned": true
+ },
+ {
+  "name": "bnc870233_2.pptx",
+  "score": 0.0032,
   "aligned": true
  },
  {
