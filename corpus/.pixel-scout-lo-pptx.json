@@ -800,6 +800,11 @@
   "aligned": true
  },
  {
+  "name": "tdf125554.pptx",
+  "score": 0.0074,
+  "aligned": true
+ },
+ {
   "name": "master-slides.pptx",
   "score": 0.0066,
   "aligned": true
@@ -812,6 +817,11 @@
  {
   "name": "tdf135843.pptx",
   "score": 0.0063,
+  "aligned": true
+ },
+ {
+  "name": "tdf123684.pptx",
+  "score": 0.0062,
   "aligned": true
  },
  {
@@ -961,11 +971,6 @@
  },
  {
   "name": "bnc870237.pptx",
-  "score": 0.0036,
-  "aligned": true
- },
- {
-  "name": "tdf123684.pptx",
   "score": 0.0036,
   "aligned": true
  },
@@ -1552,11 +1557,6 @@
  {
   "name": "tdf149124.pptx",
   "score": 0.0008,
-  "aligned": true
- },
- {
-  "name": "tdf125554.pptx",
-  "score": 0.0007,
   "aligned": true
  },
  {

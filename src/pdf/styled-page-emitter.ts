@@ -36,7 +36,7 @@ import { preparePdfEncryption } from '@/pdf/encryption';
 import { paintPlan } from '@/layout/page-doc';
 import { A4_HEIGHT, A4_WIDTH, GLUE_SHRINK_RATIO } from '@/layout/styled-layout';
 import { emitClipPath, emitVectorShape, shadowBlurLayers } from '@/pdf/vector-graphics';
-import { buildGradientPattern, shapeBbox } from '@/pdf/shading';
+import { buildGradientAlphaMask, buildGradientPattern, shapeBbox } from '@/pdf/shading';
 import { reorderVisual, reverseByCodePoint } from '@/core/bidi';
 import { sanitizeHref } from '@/core/links';
 import { embedTtfFont } from '@/pdf/cid-font';
@@ -184,7 +184,9 @@ function assembleStyledPdf(
   // fallback (a DeviceRGB shading would need OutputIntent juggling). The map is
   // keyed by VectorShape identity, which the per-page paintPlan preserves.
   const gradientNames = new Map<VectorShape, string>();
+  const gradientMaskNames = new Map<VectorShape, string>();
   const patternEntries: Record<string, PdfValue> = {};
+  const extGStateEntries: Record<string, PdfValue> = {};
   if (!pdfaProfile) {
     for (const page of renderedPages) {
       const ph = page.height;
@@ -206,6 +208,16 @@ function assembleStyledPdf(
         const nm = `Sh${gradientNames.size}`;
         patternEntries[nm] = ref(buildGradientPattern(doc, gradient, bbox, ctm).id);
         gradientNames.set(item.shape, nm);
+        // §11.6.5.2 — a gradient whose stops fade out is painted through a
+        // luminosity mask of the same sweep (see buildGradientAlphaMask).
+        const mask = buildGradientAlphaMask(doc, gradient, bbox, ctm);
+        if (mask) {
+          const gs = `GSm${gradientMaskNames.size}`;
+          gradientMaskNames.set(item.shape, gs);
+          extGStateEntries[gs] = dict({
+            SMask: dict({ S: name('Luminosity'), G: ref(mask.id), BC: [0] }),
+          });
+        }
       }
     }
   }
@@ -261,7 +273,6 @@ function assembleStyledPdf(
   // which in PDF is a constant alpha in an /ExtGState (ISO 32000-1 §11.6.4.4).
   // One state per distinct alpha, shared by every shadow that wants it.
   const alphaStateNames = new Map<number, string>();
-  const extGStateEntries: Record<string, PdfValue> = {};
   const wantAlpha = (alpha: number | undefined): void => {
     if (alpha === undefined || alpha >= 1) return;
     const key = Math.round(alpha * 1000) / 1000;
@@ -349,6 +360,7 @@ function assembleStyledPdf(
       gradientNames,
       alphaStateNames,
       wantDuotone,
+      gradientMaskNames,
     );
     const contentsRef = doc.add(stream({}, contentBytes));
     const pageEntries: Record<string, PdfValue> = {
@@ -831,6 +843,7 @@ function emitPageContent(
   gradientNames?: ReadonlyMap<VectorShape, string>,
   alphaStateNames?: ReadonlyMap<number, string>,
   duotoneStateFor?: (item: ImageItem, pageHeight: number) => string | undefined,
+  gradientMaskNames?: ReadonlyMap<VectorShape, string>,
 ): { content: Uint8Array; links: Array<LinkRegion> } {
   const commands = page.commands;
   const links: Array<LinkRegion> = [];
@@ -1458,9 +1471,10 @@ function emitPageContent(
         { ...item.shape, transform: [t[0], -t[1], t[2], -t[3], t[4], H - t[5]] },
         gradientNames?.get(item.shape),
         undefined,
-        fillAlpha !== undefined && fillAlpha < 1
-          ? alphaStateNames?.get(Math.round(fillAlpha * 1000) / 1000)
-          : undefined,
+        gradientMaskNames?.get(item.shape) ??
+          (fillAlpha !== undefined && fillAlpha < 1
+            ? alphaStateNames?.get(Math.round(fillAlpha * 1000) / 1000)
+            : undefined),
       )) {
         out.push(op);
       }
@@ -1663,9 +1677,10 @@ function emitPageContent(
         : undefined;
     const fillAlpha = sh.shape.fillAlpha;
     const fillAlphaState =
-      fillAlpha !== undefined && fillAlpha < 1
+      gradientMaskNames?.get(sh.shape) ??
+      (fillAlpha !== undefined && fillAlpha < 1
         ? alphaStateNames?.get(Math.round(fillAlpha * 1000) / 1000)
-        : undefined;
+        : undefined);
     for (const op of emitVectorShape(
       shape,
       gradientNames?.get(sh.shape),

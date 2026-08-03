@@ -140,6 +140,29 @@ describe('gradient fills (E-PDF EP16)', () => {
     }
   });
 
+  // §11.6.5.2 — a PDF shading has one colour per point and no alpha, so a
+  // gradient that FADES OUT is painted through a luminosity mask of the same
+  // sweep: white where the stop is opaque, black where it is clear. Painted
+  // flat, tdf123684's 7%-and-fading glow was an opaque disc on a dark slide.
+  it('paints a fading gradient through a luminosity soft mask', async () => {
+    const faint =
+      '<a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom>' +
+      '<a:gradFill><a:gsLst>' +
+      '<a:gs pos="0"><a:srgbClr val="80C0FF"><a:alpha val="7000"/></a:srgbClr></a:gs>' +
+      '<a:gs pos="100000"><a:srgbClr val="80C0FF"><a:alpha val="0"/></a:srgbClr></a:gs>' +
+      '</a:gsLst><a:path path="circle"/></a:gradFill>';
+    const pdf = await Ream.parse(buildDocxFromBody(`<w:p>${shapeRun(faint)}</w:p>`)).convert(
+      'pdf',
+      { fonts: FONTS },
+    );
+    const text = new TextDecoder('latin1').decode(pdf);
+    expect(text).toContain('/Luminosity');
+    expect(text).toMatch(/\/SMask/u);
+    // …and an opaque gradient needs none.
+    const plain = await Ream.parse(gradientDocx()).convert('pdf', { fonts: FONTS });
+    expect(new TextDecoder('latin1').decode(plain)).not.toContain('/Luminosity');
+  });
+
   it('keeps the solid fallback under PDF/A (no shading pattern)', async () => {
     const pdf = await Ream.parse(gradientDocx()).convert('pdf', {
       fonts: FONTS,
