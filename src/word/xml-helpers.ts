@@ -59,6 +59,26 @@ export function getVal(node: unknown): string | undefined {
  * @param name The local attribute name.
  * @returns The parsed number, or `undefined` when absent or not finite.
  */
+/**
+ * §17.3.2.38 ST_HpsMeasure — a size in HALF-POINTS, or the same universal
+ * measure with a unit on it ("20pt"). The two units differ by a factor of ten
+ * from the twips a length is written in, so a size is read here rather than
+ * through {@link parseIntAttr}: tdf108408.docx writes `w:sz w:val="20pt"` and
+ * read as twips it set its sample text 200 points tall.
+ *
+ * @param node The element carrying the attribute.
+ * @param name The attribute name.
+ * @returns The size in half-points, or undefined.
+ */
+export function parseHalfPointAttr(node: unknown, name: string): number | undefined {
+  const v = getAttr(node, name);
+  if (v === undefined) return undefined;
+  const n = Number(v);
+  if (Number.isFinite(n)) return n;
+  const twips = universalMeasureTwips(v);
+  return twips === undefined ? undefined : twips / 10;
+}
+
 export function parseIntAttr(node: unknown, name: string): number | undefined {
   const v = getAttr(node, name);
   if (v === undefined) return undefined;

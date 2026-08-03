@@ -8,7 +8,7 @@ import type {
 } from '@/core/document-model';
 import { halfPtToPt, twipsToPt } from '@/core/ir';
 
-import { asElement, getAttr, getVal, parseIntAttr, parseToggle } from '@/word/xml-helpers';
+import { asElement, getAttr, getVal, parseHalfPointAttr, parseToggle } from '@/word/xml-helpers';
 import { shadingFillHex } from '@/word/shading';
 
 const UNDERLINE_STYLES = new Set<UnderlineStyle>([
@@ -106,7 +106,7 @@ export function parseRunProperties(rPr: unknown): RunProperties {
   }
 
   if ('w:sz' in el) {
-    const v = parseIntAttr(el['w:sz'], 'val');
+    const v = parseHalfPointAttr(el['w:sz'], 'val');
     if (v !== undefined) out.fontSizePt = halfPtToPt(v);
   }
 

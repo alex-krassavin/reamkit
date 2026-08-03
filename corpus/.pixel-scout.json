@@ -1,52 +1,17 @@
 [
  {
-  "name": "conditionalstyles-tbllook.docx",
-  "score": 0.159,
+  "name": "tdf116410.docx",
+  "score": 0.179,
   "aligned": true
  },
  {
-  "name": "tdf123104.docx",
-  "score": 0.0688,
+  "name": "fdo87488.docx",
+  "score": 0.0578,
   "aligned": true
  },
  {
-  "name": "tdf119760_positionCellBorder.docx",
-  "score": 0.0402,
-  "aligned": true
- },
- {
-  "name": "tdf118812_tableStyles-comprehensive.docx",
-  "score": 0.0173,
-  "aligned": true
- },
- {
-  "name": "tdf112103_tablebgnofill.docx",
-  "score": 0.0058,
-  "aligned": true
- },
- {
-  "name": "tdf129888dml.docx",
-  "score": 0.0019,
-  "aligned": true
- },
- {
-  "name": "table-black_fill.docx",
-  "score": 0.0019,
-  "aligned": true
- },
- {
-  "name": "hidemark.docx",
-  "score": 0.0015,
-  "aligned": true
- },
- {
-  "name": "table-style-cell-back-color.docx",
-  "score": 0.0006,
-  "aligned": true
- },
- {
-  "name": "gridbefore.docx",
-  "score": 0.0004,
+  "name": "tdf108408.docx",
+  "score": 0.0003,
   "aligned": true
  }
 ]

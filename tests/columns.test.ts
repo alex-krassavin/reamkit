@@ -326,4 +326,17 @@ describe('a measurement that names its unit (§22.9.2.15)', () => {
     // …and the tab reached its stop through a leader of dots.
     expect(line.line.tokens.map((t) => t.text ?? '').join('')).toMatch(/^A\.+B$/u);
   });
+
+  it('is read in the unit the attribute is written in, not always twips', () => {
+    // §17.3.2.38 — `w:sz` is HALF-POINTS, and its universal form is points:
+    // tdf108408.docx asks for `w:val="20pt"` and read as twips it set the
+    // sample text two hundred points tall.
+    const docx = buildDocxFromBody(
+      '<w:p><w:r><w:rPr><w:sz w:val="20pt"/></w:rPr><w:t>Sample text</w:t></w:r></w:p>',
+    );
+    const line = layoutOf(docx).pages[0]!.commands.find((c) => c.type === 'line') as unknown as {
+      line: { maxFontSizePt: number };
+    };
+    expect(line.line.maxFontSizePt).toBeCloseTo(20, 1);
+  });
 });
