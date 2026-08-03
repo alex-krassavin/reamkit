@@ -1,0 +1,1467 @@
+[
+ {
+  "name": "forcepoint107.xlsx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "forum-mso-en4-134670.xlsx",
+  "score": 98,
+  "aligned": false
+ },
+ {
+  "name": "forum-mso-en4-145327.xlsx",
+  "score": 98,
+  "aligned": false
+ },
+ {
+  "name": "freezePaneStartCell.xlsx",
+  "score": 98,
+  "aligned": false
+ },
+ {
+  "name": "functions-excel-2010.xlsx",
+  "score": 98,
+  "aligned": false
+ },
+ {
+  "name": "groupShape.xlsx",
+  "score": 98,
+  "aligned": false
+ },
+ {
+  "name": "tdf131575.xlsx",
+  "score": 98,
+  "aligned": false
+ },
+ {
+  "name": "tdf76115.xlsx",
+  "score": 98,
+  "aligned": false
+ },
+ {
+  "name": "column-style-autofilter.xlsx",
+  "score": 0.32,
+  "aligned": false
+ },
+ {
+  "name": "pivottable_invalid_formats.xlsx",
+  "score": 0.3023,
+  "aligned": true
+ },
+ {
+  "name": "tdf131380.xlsx",
+  "score": 0.2471,
+  "aligned": false
+ },
+ {
+  "name": "tdf171828_fail_to_import_file.xlsx",
+  "score": 0.1314,
+  "aligned": false
+ },
+ {
+  "name": "forum-mso-de-104083.xlsx",
+  "score": 0.1312,
+  "aligned": false
+ },
+ {
+  "name": "tdf167689_x15_namespace.xlsx",
+  "score": 0.1118,
+  "aligned": true
+ },
+ {
+  "name": "tdf113271.xlsx",
+  "score": 0.0832,
+  "aligned": true
+ },
+ {
+  "name": "tdf100034.xlsx",
+  "score": 0.0664,
+  "aligned": true
+ },
+ {
+  "name": "tdf151755_stylesLostOnXLSXExport.xlsx",
+  "score": 0.0658,
+  "aligned": true
+ },
+ {
+  "name": "tdf122471.xlsx",
+  "score": 0.0583,
+  "aligned": true
+ },
+ {
+  "name": "pivot_table_first_header_row.xlsx",
+  "score": 0.0575,
+  "aligned": false
+ },
+ {
+  "name": "orderOfCNumFmtElements.xlsx",
+  "score": 0.0519,
+  "aligned": true
+ },
+ {
+  "name": "tdf139934.xlsx",
+  "score": 0.0394,
+  "aligned": false
+ },
+ {
+  "name": "tdf136721_letter_sized_paper.xlsx",
+  "score": 0.0328,
+  "aligned": true
+ },
+ {
+  "name": "tdf167019.xlsx",
+  "score": 0.0325,
+  "aligned": true
+ },
+ {
+  "name": "tdf105272.xlsx",
+  "score": 0.0303,
+  "aligned": true
+ },
+ {
+  "name": "pivot_dark1.xlsx",
+  "score": 0.0296,
+  "aligned": false
+ },
+ {
+  "name": "chart_hyperlink.xlsx",
+  "score": 0.0288,
+  "aligned": true
+ },
+ {
+  "name": "tdf131424.xlsx",
+  "score": 0.0283,
+  "aligned": true
+ },
+ {
+  "name": "tdf162093.xlsx",
+  "score": 0.026,
+  "aligned": true
+ },
+ {
+  "name": "tdf118668.xlsx",
+  "score": 0.0238,
+  "aligned": true
+ },
+ {
+  "name": "colorscale_num_with_ref.xlsx",
+  "score": 0.023,
+  "aligned": true
+ },
+ {
+  "name": "cell-anchored-hidden-shapes.xlsx",
+  "score": 0.022,
+  "aligned": true
+ },
+ {
+  "name": "tdfSheetProts.xlsx",
+  "score": 0.0205,
+  "aligned": true
+ },
+ {
+  "name": "tdf110440.xlsx",
+  "score": 0.0202,
+  "aligned": true
+ },
+ {
+  "name": "tdf107586.xlsx",
+  "score": 0.0199,
+  "aligned": true
+ },
+ {
+  "name": "TableStyleTest.xlsx",
+  "score": 0.0198,
+  "aligned": true
+ },
+ {
+  "name": "tdf83671_SmartArt_import.xlsx",
+  "score": 0.0184,
+  "aligned": true
+ },
+ {
+  "name": "ceiling-floor.xlsx",
+  "score": 0.0177,
+  "aligned": true
+ },
+ {
+  "name": "tdf58243.xlsx",
+  "score": 0.0161,
+  "aligned": true
+ },
+ {
+  "name": "MissingPathExternal.xlsx",
+  "score": 0.0159,
+  "aligned": true
+ },
+ {
+  "name": "cond_format_theme_color3.xlsx",
+  "score": 0.0158,
+  "aligned": true
+ },
+ {
+  "name": "tdf169379.xlsx",
+  "score": 0.0157,
+  "aligned": true
+ },
+ {
+  "name": "tdf134769.xlsx",
+  "score": 0.0155,
+  "aligned": true
+ },
+ {
+  "name": "tdf142881.xlsx",
+  "score": 0.0151,
+  "aligned": false
+ },
+ {
+  "name": "shape-macro-ext-ref.xlsx",
+  "score": 0.015,
+  "aligned": true
+ },
+ {
+  "name": "tdf83672.xlsx",
+  "score": 0.0146,
+  "aligned": false
+ },
+ {
+  "name": "tdf85617.xlsx",
+  "score": 0.0145,
+  "aligned": true
+ },
+ {
+  "name": "tdf165503.xlsx",
+  "score": 0.0133,
+  "aligned": true
+ },
+ {
+  "name": "tdf66668.xlsx",
+  "score": 0.0131,
+  "aligned": true
+ },
+ {
+  "name": "testShapeRotationImport.xlsx",
+  "score": 0.0128,
+  "aligned": false
+ },
+ {
+  "name": "testShapeDisplacementOnRotationImport.xlsx",
+  "score": 0.0126,
+  "aligned": true
+ },
+ {
+  "name": "invalid_ext_data_validation.xlsx",
+  "score": 0.0116,
+  "aligned": true
+ },
+ {
+  "name": "tablerefsnamed.xlsx",
+  "score": 0.0113,
+  "aligned": true
+ },
+ {
+  "name": "totalsRowFunction.xlsx",
+  "score": 0.0111,
+  "aligned": true
+ },
+ {
+  "name": "pivottable_tabular_mode.xlsx",
+  "score": 0.0105,
+  "aligned": true
+ },
+ {
+  "name": "pivottable_duplicated_member_filter.xlsx",
+  "score": 0.0104,
+  "aligned": true
+ },
+ {
+  "name": "tdf153767.xlsx",
+  "score": 0.0103,
+  "aligned": true
+ },
+ {
+  "name": "pivottable_outline_mode.xlsx",
+  "score": 0.0096,
+  "aligned": true
+ },
+ {
+  "name": "condformat_theme_color.xlsx",
+  "score": 0.0086,
+  "aligned": true
+ },
+ {
+  "name": "tdf156814.xlsx",
+  "score": 0.0086,
+  "aligned": true
+ },
+ {
+  "name": "tdf123026_optimalRowHeight.xlsx",
+  "score": 0.0085,
+  "aligned": true
+ },
+ {
+  "name": "tdf112106.xlsx",
+  "score": 0.0083,
+  "aligned": true
+ },
+ {
+  "name": "tdf91332.xlsx",
+  "score": 0.0083,
+  "aligned": true
+ },
+ {
+  "name": "tdf66377.xlsx",
+  "score": 0.0082,
+  "aligned": true
+ },
+ {
+  "name": "hiddenButton.xlsx",
+  "score": 0.0081,
+  "aligned": true
+ },
+ {
+  "name": "tdf112936.xlsx",
+  "score": 0.0079,
+  "aligned": true
+ },
+ {
+  "name": "PivotTable_CachedDefinitionAndDataInSync.xlsx",
+  "score": 0.0078,
+  "aligned": true
+ },
+ {
+  "name": "PivotTable_CachedDefinitionAndDataNotInSync_SheetColumnsRemoved_WithCacheData.xlsx",
+  "score": 0.0078,
+  "aligned": true
+ },
+ {
+  "name": "PivotTable_CachedDefinitionAndDataNotInSync_SheetColumnsRemoved_WithoutCacheData.xlsx",
+  "score": 0.0078,
+  "aligned": true
+ },
+ {
+  "name": "tdf119565.xlsx",
+  "score": 0.0077,
+  "aligned": true
+ },
+ {
+  "name": "Sparklines.xlsx",
+  "score": 0.0077,
+  "aligned": true
+ },
+ {
+  "name": "tdf162963_TableWithTotalsEnabled.xlsx",
+  "score": 0.0076,
+  "aligned": true
+ },
+ {
+  "name": "tdf170298.xlsx",
+  "score": 0.0074,
+  "aligned": false
+ },
+ {
+  "name": "tdf145057.xlsx",
+  "score": 0.0072,
+  "aligned": true
+ },
+ {
+  "name": "twoCellAnchor_editAs_oneCell.xlsx",
+  "score": 0.0072,
+  "aligned": true
+ },
+ {
+  "name": "tdf89139_pivot_table.xlsx",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "colorscale.xlsx",
+  "score": 0.007,
+  "aligned": true
+ },
+ {
+  "name": "tdf124525.xlsx",
+  "score": 0.0069,
+  "aligned": false
+ },
+ {
+  "name": "testShapeAutofit.xlsx",
+  "score": 0.0069,
+  "aligned": false
+ },
+ {
+  "name": "tdf161301.xlsx",
+  "score": 0.0068,
+  "aligned": false
+ },
+ {
+  "name": "tdf82984_zip64XLSXImport.xlsx",
+  "score": 0.0067,
+  "aligned": true
+ },
+ {
+  "name": "xf_default_values.xlsx",
+  "score": 0.0065,
+  "aligned": false
+ },
+ {
+  "name": "pivottable_error_item_filter.xlsx",
+  "score": 0.0064,
+  "aligned": true
+ },
+ {
+  "name": "tdf119190.xlsx",
+  "score": 0.0062,
+  "aligned": true
+ },
+ {
+  "name": "empty_ext_defined_name.xlsx",
+  "score": 0.0061,
+  "aligned": true
+ },
+ {
+  "name": "databar.xlsx",
+  "score": 0.0058,
+  "aligned": false
+ },
+ {
+  "name": "pivottable_double_field_filter.xlsx",
+  "score": 0.0052,
+  "aligned": true
+ },
+ {
+  "name": "underlineColor.xlsx",
+  "score": 0.0043,
+  "aligned": true
+ },
+ {
+  "name": "bnc762542.xlsx",
+  "score": 0.0043,
+  "aligned": true
+ },
+ {
+  "name": "pivottable_long_text.xlsx",
+  "score": 0.004,
+  "aligned": false
+ },
+ {
+  "name": "pivottable_1s_difference.xlsx",
+  "score": 0.0039,
+  "aligned": true
+ },
+ {
+  "name": "tdf167689_tableType.xlsx",
+  "score": 0.0037,
+  "aligned": true
+ },
+ {
+  "name": "tdf151818_SmartartThemeFontColor.xlsx",
+  "score": 0.0037,
+  "aligned": true
+ },
+ {
+  "name": "tdf70455.xlsx",
+  "score": 0.0036,
+  "aligned": true
+ },
+ {
+  "name": "tdf76047_externalLink.xlsx",
+  "score": 0.0035,
+  "aligned": true
+ },
+ {
+  "name": "pivottable_rowcolpage_field_filter.xlsx",
+  "score": 0.0035,
+  "aligned": true
+ },
+ {
+  "name": "pivottable_date_field_filter.xlsx",
+  "score": 0.0035,
+  "aligned": false
+ },
+ {
+  "name": "tdf134553.xlsx",
+  "score": 0.0034,
+  "aligned": true
+ },
+ {
+  "name": "tdf148820.xlsx",
+  "score": 0.0033,
+  "aligned": true
+ },
+ {
+  "name": "cond_format_theme_color2.xlsx",
+  "score": 0.0032,
+  "aligned": true
+ },
+ {
+  "name": "sortconditionref2.xlsx",
+  "score": 0.0031,
+  "aligned": true
+ },
+ {
+  "name": "tdf167689_xmlMaps_and_xmlColumnPr.xlsx",
+  "score": 0.0031,
+  "aligned": true
+ },
+ {
+  "name": "pivottable_string_field_filter.xlsx",
+  "score": 0.003,
+  "aligned": true
+ },
+ {
+  "name": "tdf98481.xlsx",
+  "score": 0.0028,
+  "aligned": false
+ },
+ {
+  "name": "tdf155046.xlsx",
+  "score": 0.0028,
+  "aligned": true
+ },
+ {
+  "name": "subtotal-above.xlsx",
+  "score": 0.0027,
+  "aligned": true
+ },
+ {
+  "name": "new_cond_format_test.xlsx",
+  "score": 0.0027,
+  "aligned": true
+ },
+ {
+  "name": "new_cond_format_test_export.xlsx",
+  "score": 0.0027,
+  "aligned": true
+ },
+ {
+  "name": "textbox-CharKerningSpace.xlsx",
+  "score": 0.0027,
+  "aligned": false
+ },
+ {
+  "name": "textbox-CondensedCharacterSpace.xlsx",
+  "score": 0.0027,
+  "aligned": false
+ },
+ {
+  "name": "tdf165655.xlsx",
+  "score": 0.0026,
+  "aligned": true
+ },
+ {
+  "name": "totalsRowShown.xlsx",
+  "score": 0.0026,
+  "aligned": true
+ },
+ {
+  "name": "cell-borders.xlsx",
+  "score": 0.0025,
+  "aligned": true
+ },
+ {
+  "name": "tdf100709.xlsx",
+  "score": 0.0025,
+  "aligned": true
+ },
+ {
+  "name": "tdf130104_indent.xlsx",
+  "score": 0.0024,
+  "aligned": true
+ },
+ {
+  "name": "complex_icon_set.xlsx",
+  "score": 0.0024,
+  "aligned": true
+ },
+ {
+  "name": "hyperlinks.xlsx",
+  "score": 0.0023,
+  "aligned": false
+ },
+ {
+  "name": "tdf133595.xlsx",
+  "score": 0.0023,
+  "aligned": false
+ },
+ {
+  "name": "test_115192.xlsx",
+  "score": 0.0022,
+  "aligned": true
+ },
+ {
+  "name": "Book1_custom.xlsx",
+  "score": 0.0022,
+  "aligned": true
+ },
+ {
+  "name": "image_hyperlink.xlsx",
+  "score": 0.0021,
+  "aligned": true
+ },
+ {
+  "name": "dataValidity.xlsx",
+  "score": 0.0021,
+  "aligned": true
+ },
+ {
+  "name": "tdf138741_externalLinkSkipUnusedsCrash.xlsx",
+  "score": 0.0021,
+  "aligned": true
+ },
+ {
+  "name": "tdf138601.xlsx",
+  "score": 0.0021,
+  "aligned": true
+ },
+ {
+  "name": "column_style.xlsx",
+  "score": 0.002,
+  "aligned": true
+ },
+ {
+  "name": "tdf111980_radioButtons.xlsx",
+  "score": 0.0019,
+  "aligned": true
+ },
+ {
+  "name": "tdf144642_RowHeight_28.35pt_SavedByExcel.xlsx",
+  "score": 0.0019,
+  "aligned": false
+ },
+ {
+  "name": "conditional_fmt_checkpriority.xlsx",
+  "score": 0.0018,
+  "aligned": true
+ },
+ {
+  "name": "pivottable_bool_field_filter.xlsx",
+  "score": 0.0018,
+  "aligned": true
+ },
+ {
+  "name": "tdf119292.xlsx",
+  "score": 0.0018,
+  "aligned": true
+ },
+ {
+  "name": "tdf91251_missingOverflowRoundtrip.xlsx",
+  "score": 0.0018,
+  "aligned": true
+ },
+ {
+  "name": "tdf162948.xlsx",
+  "score": 0.0017,
+  "aligned": true
+ },
+ {
+  "name": "tdf122336.xlsx",
+  "score": 0.0016,
+  "aligned": false
+ },
+ {
+  "name": "tdf144642_RowHeight_10mm_SavedByCalc.xlsx",
+  "score": 0.0016,
+  "aligned": true
+ },
+ {
+  "name": "tdf156028.xlsx",
+  "score": 0.0016,
+  "aligned": true
+ },
+ {
+  "name": "tdf134392.xlsx",
+  "score": 0.0015,
+  "aligned": false
+ },
+ {
+  "name": "enhanced-protection.xlsx",
+  "score": 0.0015,
+  "aligned": true
+ },
+ {
+  "name": "hyperlink_export.xlsx",
+  "score": 0.0015,
+  "aligned": true
+ },
+ {
+  "name": "tdf41722.xlsx",
+  "score": 0.0015,
+  "aligned": true
+ },
+ {
+  "name": "condFormat_cellis.xlsx",
+  "score": 0.0015,
+  "aligned": true
+ },
+ {
+  "name": "tdf163554.xlsx",
+  "score": 0.0014,
+  "aligned": true
+ },
+ {
+  "name": "sortconditionref.xlsx",
+  "score": 0.0013,
+  "aligned": true
+ },
+ {
+  "name": "tdf139763ShapeAnchor.xlsx",
+  "score": 0.0012,
+  "aligned": true
+ },
+ {
+  "name": "tdf137543.xlsx",
+  "score": 0.0012,
+  "aligned": true
+ },
+ {
+  "name": "tdf147955.xlsx",
+  "score": 0.0012,
+  "aligned": true
+ },
+ {
+  "name": "tdf123139_applyAlignment.xlsx",
+  "score": 0.0012,
+  "aligned": true
+ },
+ {
+  "name": "NamedSheetViews.xlsx",
+  "score": 0.0011,
+  "aligned": true
+ },
+ {
+  "name": "Test_ThemeColor_Text_Background_Border.xlsx",
+  "score": 0.0011,
+  "aligned": true
+ },
+ {
+  "name": "tdf144397.xlsx",
+  "score": 0.0011,
+  "aligned": true
+ },
+ {
+  "name": "XlStartupExternal.xlsx",
+  "score": 0.001,
+  "aligned": true
+ },
+ {
+  "name": "tdf160371.xlsx",
+  "score": 0.001,
+  "aligned": true
+ },
+ {
+  "name": "tdf165886.xlsx",
+  "score": 0.001,
+  "aligned": true
+ },
+ {
+  "name": "tdf161365.xlsx",
+  "score": 0.001,
+  "aligned": true
+ },
+ {
+  "name": "autofilter-colors-fg.xlsx",
+  "score": 0.001,
+  "aligned": true
+ },
+ {
+  "name": "tdf145054.xlsx",
+  "score": 0.001,
+  "aligned": true
+ },
+ {
+  "name": "tdf155402.xlsx",
+  "score": 0.001,
+  "aligned": false
+ },
+ {
+  "name": "fontSize.xlsx",
+  "score": 0.0009,
+  "aligned": true
+ },
+ {
+  "name": "tdf131536.xlsx",
+  "score": 0.0009,
+  "aligned": true
+ },
+ {
+  "name": "tdf111876.xlsx",
+  "score": 0.0009,
+  "aligned": true
+ },
+ {
+  "name": "user_defined_function.xlsx",
+  "score": 0.0008,
+  "aligned": false
+ },
+ {
+  "name": "database.xlsx",
+  "score": 0.0008,
+  "aligned": true
+ },
+ {
+  "name": "value-in-column-2000.xlsx",
+  "score": 0.0008,
+  "aligned": false
+ },
+ {
+  "name": "tdf106197_import_upright.xlsx",
+  "score": 0.0008,
+  "aligned": true
+ },
+ {
+  "name": "tdf137000_export_upright.xlsx",
+  "score": 0.0008,
+  "aligned": true
+ },
+ {
+  "name": "enhancedProtectionRangeShorthand.xlsx",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
+  "name": "formats.xlsx",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
+  "name": "tdf165180_date1904.xlsx",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
+  "name": "tdf122102.xlsx",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
+  "name": "named-ranges-hidden.xlsx",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
+  "name": "tdf120749.xlsx",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
+  "name": "Spill.xlsx",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
+  "name": "tdf147014.xlsx",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
+  "name": "tdf141644.xlsx",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
+  "name": "conditional_fmt_origin.xlsx",
+  "score": 0.0006,
+  "aligned": true
+ },
+ {
+  "name": "129969-min.xlsx",
+  "score": 0.0006,
+  "aligned": true
+ },
+ {
+  "name": "tdf81939.xlsx",
+  "score": 0.0006,
+  "aligned": true
+ },
+ {
+  "name": "tdf166413.xlsx",
+  "score": 0.0005,
+  "aligned": true
+ },
+ {
+  "name": "tdf141495.xlsx",
+  "score": 0.0005,
+  "aligned": true
+ },
+ {
+  "name": "tdf113013.xlsx",
+  "score": 0.0005,
+  "aligned": true
+ },
+ {
+  "name": "tdf120168.xlsx",
+  "score": 0.0005,
+  "aligned": true
+ },
+ {
+  "name": "tdf134455.xlsx",
+  "score": 0.0005,
+  "aligned": true
+ },
+ {
+  "name": "activex_checkbox.xlsx",
+  "score": 0.0005,
+  "aligned": true
+ },
+ {
+  "name": "tdf139394.xlsx",
+  "score": 0.0005,
+  "aligned": true
+ },
+ {
+  "name": "tdf152581_bordercolorNotExportedToXLSX.xlsx",
+  "score": 0.0005,
+  "aligned": true
+ },
+ {
+  "name": "open-as-read-only.xlsx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "cond_format_formula_listener.xlsx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "cell-multi-line.xlsx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "tdf137091.xlsx",
+  "score": 0.0004,
+  "aligned": false
+ },
+ {
+  "name": "tdf139021.xlsx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "writingMode.xlsx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "miscrowheights.xlsx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "tdf145129_DefaultRowHeight_28.35pt_SavedByExcel.xlsx",
+  "score": 0.0004,
+  "aligned": false
+ },
+ {
+  "name": "escape-unicode.xlsx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "customxml.xlsx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "autofilter-colors.xlsx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "named-ranges-global.xlsx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "tdf169496_hidden_graphic.xlsx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "tdf121715.xlsx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "autofilter.xlsx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "bug-fixes.xlsx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "tdf139928.xlsx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "tdf113621.xlsx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "tdf136364.xlsx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "tdf139167.xlsx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "tdf129985.xlsx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "CalcThemeTest.xlsx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "built-in_ranges.xlsx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "check-boolean.xlsx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "strike-through.xlsx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "tdf169326_ignore_line_breaks_in_referenced_cells.xlsx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "page_scale.xlsx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "dateAutofilter.xlsx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "tdf164417.xlsx",
+  "score": 0.0003,
+  "aligned": false
+ },
+ {
+  "name": "external-refs.xlsx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "cell-value.xlsx",
+  "score": 0.0002,
+  "aligned": false
+ },
+ {
+  "name": "tdf159581_optimalRowHeight.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "tdf170201.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "row-index-1-based.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "cond_parent.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "textbox-hyperlink.xlsx",
+  "score": 0.0002,
+  "aligned": false
+ },
+ {
+  "name": "tdf115022.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "singlecontrol.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "tdf83779.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "tdf164895.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "ProtecteSheet1234Pass.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "tdf130959.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "hyperlink_formula.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "preserve_space.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "matrix-multiplication.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "cell-note.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "universal-content-strict.xlsx",
+  "score": 0.0002,
+  "aligned": false
+ },
+ {
+  "name": "autofilterShowButton.xlsx",
+  "score": 0.0002,
+  "aligned": false
+ },
+ {
+  "name": "tdf73063.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "tdf104310.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "universal-content.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "textLengthDataValidity.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "tdf104310-2.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "seconds-without-truncate-and-decimals.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "hidden_sheets.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "tdf134817_HeaderFooterTextWith2Section.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "tdf157689.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "tdf118990.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "empty-noconf.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "change-tracking.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "tdf41425.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "tdf95640.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "empty.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "tdf143068_top10filter.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "tdf155321.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "tdf120301_xmlSpaceParsing.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "tdf109061.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "TextColor.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "tdf142905.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "too-many-cols-rows.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "hyperlink.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "tdf123353.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "tdf166724_cellAnchor.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "tdf79972.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "tdf134826.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "tdf60673.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "autofilternamedrange.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "tdf117287_comment.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "tdf142929.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "different-column-width-excel2010.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "tdf122716_font_with_charset.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "tdf134459_HeaderFooterColor.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "tdf122191.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "testDeleteCircles.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "tdf115159.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "tdf97598_scenarios.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "embedded-text-in-decimal.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "checkbox-form-control.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "tdf135828_Shape_Rect.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "ref_string.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "preserve-whitespace.xlsx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "queryTableExport.xlsx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "tdf100154.xlsx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "tdf121887.xlsx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "testDrawCircleInMergeCells.xlsx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "tdf55417.xlsx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "RowImportCellStyleIssue.xlsx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "TableEmptyHeaders.xlsx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "button-form-control.xlsx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "column-style.xlsx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "condformat_databar.xlsx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "hiddenShape.xlsx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "sheet-names.xlsx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "sheet-tab-color.xlsx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "tdf105840_allRowsHidden.xlsx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "tdf112567.xlsx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "tdf166712.xlsx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "tdf169072_illegalDates.xlsx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "tdf90104.xlsx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "threadedComment.xlsx",
+  "score": 0,
+  "aligned": true
+ }
+]
