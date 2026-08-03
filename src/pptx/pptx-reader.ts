@@ -20,11 +20,12 @@ import type { Relationship } from '@/core/opc';
 import type { PlaceholderCascade } from '@/pptx/placeholder-cascade';
 import type { SlideContext } from '@/pptx/slide-parser';
 
-import type { ColorResolver } from '@/core/drawingml/colors';
+import type { ColorResolver, SchemeAliases } from '@/core/drawingml/colors';
 
 import { packageHasPart } from '@/core/bytes';
 import { parseChart, withChartColorStyle } from '@/core/drawingml/chart-parser';
 import {
+  DEFAULT_SCHEME_ALIAS,
   DEFAULT_THEME_PALETTE,
   defaultColorResolver,
   makeColorResolver,
@@ -163,7 +164,13 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
     });
     const part = slideParts[i];
     if (part) {
-      const styles = slideStylesFor(pkg, part.path, stylesByLayout);
+      const slideTree = parseXml(part.data);
+      const styles = slideStylesFor(
+        pkg,
+        part.path,
+        stylesByLayout,
+        overrideAlias(slideTree, 'p:sld'),
+      );
       const ctx: SlideContext = {
         ...(styles.cascade ? { cascade: styles.cascade } : {}),
         colors: styles.colors,
@@ -173,7 +180,7 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
         resolveDiagram: makeSlideDiagramResolver(pkg, part.path),
         onLoss: (loss) => losses.push(loss.where ? loss : { ...loss, where: `slide ${i + 1}` }),
       };
-      body.push(...parseSlide(part.data, ctx, styles.background, pageW, pageH));
+      body.push(...parseSlide(slideTree, ctx, styles.background, pageW, pageH));
     }
   }
 
@@ -211,13 +218,12 @@ export function parseXml(data: Uint8Array): Array<PoNode> {
 // shapes/images/frames. The background is the slide's own p:bg, else the
 // inherited layout/master one.
 function parseSlide(
-  data: Uint8Array,
+  tree: ReadonlyArray<PoNode>,
   ctx: SlideContext,
   inheritedBg: ShapeFill | undefined,
   pageW: Pt,
   pageH: Pt,
 ): Array<BodyElement> {
-  const tree = parseXml(data);
   const sld = tree.find((n) => poIs(n, 'p:sld'));
   const cSld = sld ? poChildren(sld).find((c) => poIs(c, 'p:cSld')) : undefined;
   const colors = ctx.colors ?? defaultColorResolver;
@@ -352,41 +358,98 @@ function slideStylesFor(
   pkg: OpcPackage,
   slidePath: string,
   cache: Map<string, SlideStyles>,
+  slideAlias?: SchemeAliases,
 ): SlideStyles {
   const layoutRel = pkg
     .getPartRelationships(slidePath)
     .find((r) => r.type.endsWith('/slideLayout'));
   const layout = layoutRel ? pkg.resolveRelatedPart(slidePath, layoutRel) : undefined;
   if (!layout) return { colors: defaultColorResolver };
-  const cached = cache.get(layout.path);
+  // Slides sharing a layout share everything below — unless one of them states
+  // a colour map of its own, which makes every colour in the chain read
+  // differently, so that slide gets its own entry.
+  const key = slideAlias ? `${layout.path}|${aliasKey(slideAlias)}` : layout.path;
+  const cached = cache.get(key);
   if (cached) return cached;
 
   const masterRel = pkg
     .getPartRelationships(layout.path)
     .find((r) => r.type.endsWith('/slideMaster'));
   const master = masterRel ? pkg.resolveRelatedPart(layout.path, masterRel) : undefined;
-  const colors = master ? deckColorResolver(pkg, master.path) : defaultColorResolver;
   const layoutTree = parseXml(layout.data);
   const masterTree = master ? parseXml(master.data) : undefined;
+  // §19.3.1.6/§19.3.1.7 — the master states which theme slot each of bg1/tx1/
+  // bg2/tx2 means, and a layout or a slide may override that mapping. The
+  // nearest one wins, and it governs EVERY colour resolved for this slide.
+  const alias =
+    slideAlias ??
+    overrideAlias(layoutTree, 'p:sldLayout') ??
+    (masterTree ? masterAlias(masterTree) : undefined);
+  const colors = master ? deckColorResolver(pkg, master.path, alias) : defaultColorResolver;
   const cascade = buildPlaceholderCascade(layoutTree, masterTree, colors);
   const background =
     partBackground(layoutTree, 'p:sldLayout', colors) ??
     (masterTree ? partBackground(masterTree, 'p:sldMaster', colors) : undefined);
   const styles: SlideStyles = { cascade, colors, ...(background ? { background } : {}) };
-  cache.set(layout.path, styles);
+  cache.set(key, styles);
   return styles;
+}
+
+/** The master's `p:clrMap` (§19.3.1.6) as a scheme-alias table. */
+function masterAlias(masterTree: ReadonlyArray<PoNode>): SchemeAliases | undefined {
+  const master = masterTree.find((n) => poIs(n, 'p:sldMaster'));
+  const map = master ? poChildren(master).find((c) => poIs(c, 'p:clrMap')) : undefined;
+  return map ? aliasFromAttrs(map) : undefined;
+}
+
+/**
+ * A layout's or slide's `p:clrMapOvr` (§19.3.1.7) as a scheme-alias table, or
+ * `undefined` when it holds `a:masterClrMapping` — which says "the master's",
+ * i.e. nothing of its own.
+ */
+function overrideAlias(
+  tree: ReadonlyArray<PoNode>,
+  root: 'p:sldLayout' | 'p:sld',
+): SchemeAliases | undefined {
+  const part = tree.find((n) => poIs(n, root));
+  const ovr = part ? poChildren(part).find((c) => poIs(c, 'p:clrMapOvr')) : undefined;
+  const own = ovr ? poChildren(ovr).find((c) => poIs(c, 'a:overrideClrMapping')) : undefined;
+  return own ? aliasFromAttrs(own) : undefined;
+}
+
+// Both spellings of the map carry the same twelve attributes: name → theme slot.
+function aliasFromAttrs(node: PoNode): SchemeAliases {
+  const alias: Record<string, string> = {};
+  for (const name of ['bg1', 'tx1', 'bg2', 'tx2']) {
+    const slot = poAttr(node, name);
+    if (slot !== undefined) alias[name] = slot;
+  }
+  return alias;
+}
+
+/** A stable key for an alias table, so the per-layout cache can include it. */
+function aliasKey(alias: SchemeAliases): string {
+  return Object.entries(alias)
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([k, v]) => `${k}=${v}`)
+    .join(',');
 }
 
 // The slide master's theme part (a:clrScheme) → a ColorResolver: the built-in
 // Office palette with the deck's scheme colours merged over it (mirrors the
-// docx/xlsx readers). The Office palette stands in when there is no theme.
-function deckColorResolver(pkg: OpcPackage, masterPath: string): ColorResolver {
+// docx/xlsx readers). The Office palette stands in when there is no theme, and
+// `alias` is the deck's own reading of the bg/tx names.
+function deckColorResolver(
+  pkg: OpcPackage,
+  masterPath: string,
+  alias: SchemeAliases | undefined,
+): ColorResolver {
   const themeRel = pkg.getPartRelationships(masterPath).find((r) => r.type.endsWith('/theme'));
   const theme = themeRel ? pkg.resolveRelatedPart(masterPath, themeRel) : undefined;
-  if (!theme) return defaultColorResolver;
   const palette = new Map(DEFAULT_THEME_PALETTE);
-  for (const [slot, hex] of parseTheme(theme.data)) palette.set(slot, hex);
-  return makeColorResolver(palette);
+  if (theme) for (const [slot, hex] of parseTheme(theme.data)) palette.set(slot, hex);
+  if (!theme && !alias) return defaultColorResolver;
+  return makeColorResolver(palette, { ...DEFAULT_SCHEME_ALIAS, ...alias });
 }
 
 /**

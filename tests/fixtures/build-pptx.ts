@@ -31,6 +31,16 @@ export interface BuildPptxLayoutMaster {
   readonly theme?: string;
   /** The master's `<p:bg>…</p:bg>` (placed in p:cSld before the spTree). */
   readonly masterBg?: string;
+  /**
+   * The master's `<p:clrMap/>` attributes (§19.3.1.6) — which theme slot each
+   * of `bg1`/`tx1`/`bg2`/`tx2` names, e.g. `'bg1="dk2" tx1="lt1"'`.
+   */
+  readonly clrMap?: string;
+  /**
+   * The layout's `<p:clrMapOvr>` attributes (§19.3.1.7) — the same map, stated
+   * again for slides on this layout.
+   */
+  readonly layoutClrMapOvr?: string;
 }
 
 export interface BuildPptxOptions {
@@ -47,6 +57,8 @@ export interface BuildPptxOptions {
   readonly slideBg?: ReadonlyArray<string>;
   /** Per-slide hidden flag → emits `p:sld@show="0"` on that slide. */
   readonly hiddenSlides?: ReadonlyArray<boolean>;
+  /** Per-slide `<p:clrMapOvr>` attributes — that slide's own colour map. */
+  readonly slideClrMapOvr?: ReadonlyArray<string | undefined>;
 }
 
 const NS = `xmlns:p="${P_NS}" xmlns:a="${A_NS}" xmlns:r="${R_NS}"`;
@@ -135,6 +147,9 @@ export function buildPptx(
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
       `<p:sld ${NS}${show}>` +
       `<p:cSld>${options.slideBg?.[i] ?? ''}<p:spTree>${slides[i] ?? ''}</p:spTree></p:cSld>` +
+      (options.slideClrMapOvr?.[i]
+        ? `<p:clrMapOvr><a:overrideClrMapping ${options.slideClrMapOvr[i]}/></p:clrMapOvr>`
+        : '') +
       `</p:sld>`;
     files[`ppt/slides/slide${i + 1}.xml`] = encoder.encode(slide);
     // Slide .rels: the layout link (when a layout/master is present) plus any
@@ -158,7 +173,11 @@ export function buildPptx(
   if (lm) {
     files['ppt/slideLayouts/slideLayout1.xml'] = encoder.encode(
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
-        `<p:sldLayout ${NS}><p:cSld><p:spTree>${lm.layoutSpTree ?? ''}</p:spTree></p:cSld></p:sldLayout>`,
+        `<p:sldLayout ${NS}><p:cSld><p:spTree>${lm.layoutSpTree ?? ''}</p:spTree></p:cSld>` +
+        (lm.layoutClrMapOvr
+          ? `<p:clrMapOvr><a:overrideClrMapping ${lm.layoutClrMapOvr}/></p:clrMapOvr>`
+          : '') +
+        `</p:sldLayout>`,
     );
     files['ppt/slideLayouts/_rels/slideLayout1.xml.rels'] = encoder.encode(
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
@@ -169,6 +188,7 @@ export function buildPptx(
     files['ppt/slideMasters/slideMaster1.xml'] = encoder.encode(
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
         `<p:sldMaster ${NS}><p:cSld>${lm.masterBg ?? ''}<p:spTree>${lm.masterSpTree ?? ''}</p:spTree></p:cSld>` +
+        (lm.clrMap ? `<p:clrMap ${lm.clrMap}/>` : '') +
         `${lm.txStyles ?? ''}</p:sldMaster>`,
     );
     if (lm.theme) {

@@ -19,6 +19,14 @@ Upstream path: `sw/qa/extras/ooxmlexport/data` (ref `master`).
 
 ## LibreOffice/core — MPL-2.0
 
+Upstream path: `sd/qa/unit/data/pptx` (ref `master`).
+
+| File | sha256 (16) | Why it is here |
+|---|---|---|
+| `master-bg-color.pptx` | `88cba9c63fdb464b` | A master background of `schemeClr bg1` under a map that says bg1 means dk2 — the deck is blue, and read without the map it is white. |
+
+## LibreOffice/core — MPL-2.0
+
 Upstream path: `sc/qa/unit/data/xlsx` (ref `master`).
 
 | File | sha256 (16) | Why it is here |

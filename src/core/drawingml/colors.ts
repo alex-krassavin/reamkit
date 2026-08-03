@@ -178,9 +178,15 @@ export const DEFAULT_THEME_PALETTE: ReadonlyMap<string, string> = new Map([
   ['folHlink', '954F72'],
 ]);
 
+/**
+ * Which theme slot each `schemeClr` name stands for. Only the text/background
+ * aliases are ever remapped; anything absent resolves under its own name.
+ */
+export type SchemeAliases = Readonly<Record<string, string>>;
+
 // schemeClr uses text/background aliases that map onto the dk/lt slots
 // (§20.1.2.3.29). phClr (placeholder) is contextual and unresolved here.
-const SCHEME_ALIAS: Readonly<Record<string, string>> = {
+export const DEFAULT_SCHEME_ALIAS: SchemeAliases = {
   tx1: 'dk1',
   bg1: 'lt1',
   tx2: 'dk2',
@@ -190,9 +196,17 @@ const SCHEME_ALIAS: Readonly<Record<string, string>> = {
 /**
  * Resolve a `schemeClr` text/background alias (`tx1`/`bg1`/`tx2`/`bg2`,
  * §20.1.2.3.29) to its underlying `dk`/`lt` slot name; other names pass through.
+ *
+ * @param name  The `schemeClr` value.
+ * @param alias The mapping to read it under — a presentation states its own in
+ * the master's `p:clrMap` (§19.3.1.6), where `bg1` may well mean `dk2`.
+ * @returns The theme slot to look up.
  */
-export function resolveSchemeName(name: string): string {
-  return SCHEME_ALIAS[name] ?? name;
+export function resolveSchemeName(
+  name: string,
+  alias: SchemeAliases = DEFAULT_SCHEME_ALIAS,
+): string {
+  return alias[name] ?? name;
 }
 
 /**
@@ -201,12 +215,18 @@ export function resolveSchemeName(name: string): string {
  * (via {@link resolveSchemeName}) then looked up; colour transforms are applied.
  *
  * @param palette The scheme-name → RRGGBB map (e.g. {@link DEFAULT_THEME_PALETTE}).
+ * @param alias   How the bg/tx aliases map onto the theme's slots; the default
+ * is the fixed DrawingML one, which is what a document without a colour map of
+ * its own (docx, xlsx) uses.
  * @returns A resolver that maps a {@link RawColor} to a hex string or `undefined`.
  */
-export function makeColorResolver(palette: ReadonlyMap<string, string>): ColorResolver {
+export function makeColorResolver(
+  palette: ReadonlyMap<string, string>,
+  alias: SchemeAliases = DEFAULT_SCHEME_ALIAS,
+): ColorResolver {
   return (raw) => {
     const base =
-      'srgb' in raw ? raw.srgb.toUpperCase() : palette.get(resolveSchemeName(raw.scheme));
+      'srgb' in raw ? raw.srgb.toUpperCase() : palette.get(resolveSchemeName(raw.scheme, alias));
     if (base === undefined) return undefined;
     return raw.mods && raw.mods.length > 0 ? applyColorMods(base, raw.mods) : base;
   };

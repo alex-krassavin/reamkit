@@ -456,6 +456,59 @@ describe('pptx slide backgrounds (E-PPTX PX5b)', () => {
   });
 });
 
+const THEME = // dk2 is the blue this deck calls its background
+  `<a:dk1><a:srgbClr val="000000"/></a:dk1><a:lt1><a:srgbClr val="FFFF00"/></a:lt1>` +
+  `<a:dk2><a:srgbClr val="0066CC"/></a:dk2><a:lt2><a:srgbClr val="273943"/></a:lt2>`;
+const SCHEME_BG =
+  // a background painted with the bg1 ALIAS, not a slot
+  `<p:bg><p:bgPr><a:solidFill><a:schemeClr val="bg1"/></a:solidFill></p:bgPr></p:bg>`;
+
+describe("pptx colour map — what a deck's bg1 and tx1 mean (§19.3.1.6)", () => {
+  it("reads bg1 through the master's map, not the fixed DrawingML alias", () => {
+    // Without the map, `bg1` means lt1 — here yellow, and a deck that is blue
+    // in PowerPoint came out yellow across every slide.
+    const mapped = buildPptx([''], {
+      layoutMaster: { theme: THEME, masterBg: SCHEME_BG, clrMap: 'bg1="dk2" tx1="lt1"' },
+    });
+    expect(firstShape(Ream.parse(mapped))?.fill.colorHex).toBe('0066CC');
+    const unmapped = buildPptx([''], { layoutMaster: { theme: THEME, masterBg: SCHEME_BG } });
+    expect(firstShape(Ream.parse(unmapped))?.fill.colorHex).toBe('FFFF00');
+  });
+
+  it('lets a layout override the map for the slides on it (§19.3.1.7)', () => {
+    const doc = Ream.parse(
+      buildPptx([''], {
+        layoutMaster: {
+          theme: THEME,
+          masterBg: SCHEME_BG,
+          clrMap: 'bg1="dk2"',
+          layoutClrMapOvr: 'bg1="lt2"',
+        },
+      }),
+    );
+    expect(firstShape(doc)?.fill.colorHex).toBe('273943'); // the layout's word, not the master's
+  });
+
+  it("lets a single slide override it, leaving its neighbour on the master's", () => {
+    const doc = Ream.parse(
+      buildPptx(['', ''], {
+        layoutMaster: { theme: THEME, masterBg: SCHEME_BG, clrMap: 'bg1="dk2"' },
+        slideClrMapOvr: [undefined, 'bg1="lt1"'],
+      }),
+    );
+    const backdrops = doc.flow.body.flatMap((el) =>
+      el.kind === 'shape' ? [el.shape.fill.colorHex] : [],
+    );
+    expect(backdrops).toEqual(['0066CC', 'FFFF00']);
+  });
+
+  it('paints a real deck the colour its map names', () => {
+    // corpus: the master's bg is `schemeClr bg1` and its map says bg1 = dk2.
+    const deck = new Uint8Array(readFileSync('tests/fixtures/real/master-bg-color.pptx'));
+    expect(firstShape(Ream.parse(deck))?.fill.colorHex).toBe('009DF0');
+  });
+});
+
 // A p:grpSp whose child shape (filled `hex`) sits at child-box (cx,cy,ex,ey),
 // inside the group transform off/ext (chOff 0, chExt = `chExt`).
 function groupDeck(opts: {
