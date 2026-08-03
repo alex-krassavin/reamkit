@@ -572,6 +572,13 @@ export interface ThemeFillStyles {
   readonly fills: ReadonlyArray<PoNode>;
   /** `a:bgFillStyleLst` — what an index past 1000 names, 1001 being the first. */
   readonly backgrounds: ReadonlyArray<PoNode>;
+  /**
+   * A picture named inside a style belongs to the THEME part: the Office
+   * "Berlin" background is a photograph the theme carries and its `r:embed`
+   * means nothing in the master's relationships (corpus: tdf123684, where it
+   * resolved to a different image entirely).
+   */
+  readonly resolveImage?: (relId: string) => ResourceId | undefined;
 }
 
 /**
@@ -622,7 +629,7 @@ export function parseBackgroundFill(
     const themed = parseFill(
       { 'a:spPr': [slot] },
       hex === undefined ? colors : placeholderColors(colors, hex),
-      resolveImage,
+      theme?.resolveImage ?? resolveImage,
     );
     if (themed.kind !== 'none') return themed;
   }

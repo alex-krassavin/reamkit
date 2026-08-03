@@ -467,9 +467,13 @@ function slideStylesFor(
     overrideAlias(layoutTree, 'p:sldLayout') ??
     (masterTree ? masterAlias(masterTree) : undefined);
   const theme = master ? themePart(pkg, master.path) : undefined;
-  const colors = master ? deckColorResolver(theme, alias) : defaultColorResolver;
+  const colors = master ? deckColorResolver(theme?.data, alias) : defaultColorResolver;
   const themeFills = theme
-    ? { fills: parseThemeFillStyles(theme), backgrounds: parseThemeBgFillStyles(theme) }
+    ? {
+        fills: parseThemeFillStyles(theme.data),
+        backgrounds: parseThemeBgFillStyles(theme.data),
+        resolveImage: makeSlideImageResolver(pkg, theme.path, resources),
+      }
     : undefined;
   const cascade = buildPlaceholderCascade(
     layoutTree,
@@ -621,10 +625,13 @@ function deckColorResolver(theme: Uint8Array | undefined, alias: SchemeAliases |
   return makeColorResolver(palette, { ...DEFAULT_SCHEME_ALIAS, ...alias });
 }
 
-/** The master's theme part bytes, if it has one. */
-function themePart(pkg: OpcPackage, masterPath: string): Uint8Array | undefined {
+/** The master's theme part, if it has one — its path names its own pictures. */
+function themePart(
+  pkg: OpcPackage,
+  masterPath: string,
+): { readonly path: string; readonly data: Uint8Array } | undefined {
   const rel = pkg.getPartRelationships(masterPath).find((r) => r.type.endsWith('/theme'));
-  return rel ? pkg.resolveRelatedPart(masterPath, rel)?.data : undefined;
+  return rel ? pkg.resolveRelatedPart(masterPath, rel) : undefined;
 }
 
 /**
