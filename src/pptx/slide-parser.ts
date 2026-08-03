@@ -458,10 +458,9 @@ export function parseDiagramNodes(
     // it is in the node's `dsp:style/a:fontRef`, and for the stock SmartArt
     // galleries that is `lt1`. smartart.docx puts white labels on three blue
     // boxes and we drew them black.
-    const text = parsed ? withDiagramFontColor(parsed, sp, colors) : undefined;
-
     const geometry = parseGeometry(spPr);
     const fill: ShapeFill = spPr ? parseFill(spPr, colors, resolveImage) : { kind: 'none' };
+    const text = parsed ? withDiagramFontColor(parsed, sp, colors, fill) : undefined;
     const line = spPr ? parseLine(spPr, colors) : undefined;
     const shadow = spPr ? parseShadow(spPr, colors) : undefined;
     const visibleLine = line !== undefined && line.fill !== 'none';
@@ -537,16 +536,24 @@ export function parseDiagramDrawing(
 
 // The text body with the node's `dsp:style/a:fontRef` colour filled in wherever
 // a run declares none.
+//
+// The font reference belongs to the STYLE, and its colour is chosen to sit on
+// the fill the style's `a:fillRef` names — white lettering for a filled node.
+// A node that paints itself something else keeps the colour anyway, EXCEPT
+// where the two are the same: tdf149551's gears state a white fill and a white
+// font reference, and the labels inside them were white on white.
 function withDiagramFontColor(
   text: ShapeTextBody,
   sp: PoNode,
   colors: ColorResolver,
+  fill: ShapeFill,
 ): ShapeTextBody {
   const style = poChildren(sp).find((c) => poIs(c, 'dsp:style'));
   const ref = style ? poChildren(style).find((c) => poIs(c, 'a:fontRef')) : undefined;
   const child = ref ? poChildren(ref).find((c) => poTag(c) !== undefined) : undefined;
   const colorHex = child ? resolveColorNode(child, colors) : undefined;
   if (colorHex === undefined) return text;
+  if (fill.kind === 'solid' && fill.colorHex === colorHex) return text;
   return {
     ...text,
     content: text.content.map((block) =>

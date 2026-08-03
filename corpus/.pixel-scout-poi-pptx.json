@@ -60,13 +60,13 @@
   "aligned": true
  },
  {
-  "name": "customGeo.pptx",
-  "score": 0.8016,
+  "name": "table_test2.pptx",
+  "score": 0.5667,
   "aligned": true
  },
  {
-  "name": "table_test2.pptx",
-  "score": 0.5667,
+  "name": "customGeo.pptx",
+  "score": 0.5189,
   "aligned": true
  },
  {
@@ -130,18 +130,8 @@
   "aligned": true
  },
  {
-  "name": "smartart-simple.pptx",
-  "score": 0.2757,
-  "aligned": true
- },
- {
   "name": "table_test.pptx",
   "score": 0.2728,
-  "aligned": true
- },
- {
-  "name": "SmartArt.pptx",
-  "score": 0.2624,
   "aligned": true
  },
  {
@@ -175,11 +165,6 @@
   "aligned": true
  },
  {
-  "name": "smartart-rotated-text.pptx",
-  "score": 0.1795,
-  "aligned": true
- },
- {
   "name": "table-with-different-font-colors.pptx",
   "score": 0.14,
   "aligned": true
@@ -187,6 +172,11 @@
  {
   "name": "ae.ac.uaeu.faculty_nafaachbili_GeomLec1.pptx",
   "score": 0.1192,
+  "aligned": true
+ },
+ {
+  "name": "smartart-simple.pptx",
+  "score": 0.1095,
   "aligned": true
  },
  {
@@ -330,6 +320,11 @@
   "aligned": true
  },
  {
+  "name": "smartart-rotated-text.pptx",
+  "score": 0.0083,
+  "aligned": true
+ },
+ {
   "name": "bug60715.pptx",
   "score": 0.0073,
   "aligned": true
@@ -412,6 +407,11 @@
  {
   "name": "EmbeddedVideo.pptx",
   "score": 0.0016,
+  "aligned": true
+ },
+ {
+  "name": "SmartArt.pptx",
+  "score": 0.0015,
   "aligned": true
  },
  {

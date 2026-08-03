@@ -177,6 +177,370 @@ export function presetPaths(
       return [blockArrow(w, h, adjust, 'up')];
     case 'downArrow':
       return [blockArrow(w, h, adjust, 'down')];
+    case 'leftRightArrow': {
+      // A shaft with a head at each end, both measured against the short side.
+      const ss = Math.min(w, h);
+      const t = clamp(frac(adjust, 'adj1', 50000), 0, 1) * ss;
+      const hl = clamp(frac(adjust, 'adj2', 50000), 0, 1) * ss;
+      const [sb, st] = [(h - t) / 2, (h + t) / 2];
+      return [
+        polygon([
+          [0, h / 2],
+          [hl, h],
+          [hl, st],
+          [w - hl, st],
+          [w - hl, h],
+          [w, h / 2],
+          [w - hl, 0],
+          [w - hl, sb],
+          [hl, sb],
+          [hl, 0],
+        ]),
+      ];
+    }
+    case 'notchedRightArrow': {
+      // A right arrow whose tail is cut back into a V — the notch is as deep as
+      // the head is long, which is what makes it read as a ribbon.
+      const ss = Math.min(w, h);
+      const t = clamp(frac(adjust, 'adj1', 50000), 0, 1) * ss;
+      const hl = clamp(frac(adjust, 'adj2', 50000), 0, 1) * ss;
+      const [sb, st] = [(h - t) / 2, (h + t) / 2];
+      const notch = Math.min(hl, w / 2);
+      return [
+        polygon([
+          [0, sb],
+          [w - hl, sb],
+          [w - hl, 0],
+          [w, h / 2],
+          [w - hl, h],
+          [w - hl, st],
+          [0, st],
+          [notch, h / 2],
+        ]),
+      ];
+    }
+    case 'stripedRightArrow': {
+      // The same arrow behind two bars: a thin one at the very tail and a
+      // wider one beside it, both a slice of the short side (§20.1.10.55).
+      const ss = Math.min(w, h);
+      const t = clamp(frac(adjust, 'adj1', 50000), 0, 1) * ss;
+      const hl = clamp(frac(adjust, 'adj2', 50000), 0, 1) * ss;
+      const [sb, st] = [(h - t) / 2, (h + t) / 2];
+      const unit = ss / 12;
+      return [
+        polygon([
+          [0, sb],
+          [unit, sb],
+          [unit, st],
+          [0, st],
+        ]),
+        polygon([
+          [unit * 2, sb],
+          [unit * 4, sb],
+          [unit * 4, st],
+          [unit * 2, st],
+        ]),
+        polygon([
+          [unit * 5, sb],
+          [w - hl, sb],
+          [w - hl, 0],
+          [w, h / 2],
+          [w - hl, h],
+          [w - hl, st],
+          [unit * 5, st],
+        ]),
+      ];
+    }
+    case 'bentUpArrow': {
+      // An L standing on its long arm, with the head at the top of the short
+      // one: the corner a flow turns at.
+      const ss = Math.min(w, h);
+      const t = clamp(frac(adjust, 'adj2', 25000), 0, 1) * ss;
+      const hw = clamp(frac(adjust, 'adj3', 25000), 0, 1) * ss * 2;
+      const hh = Math.min(hw, h);
+      const cx = w - hw / 2;
+      return [
+        polygon([
+          [0, 0],
+          [cx + t / 2, 0],
+          [cx + t / 2, h - hh],
+          [w, h - hh],
+          [cx, h],
+          [cx - hw / 2, h - hh],
+          [cx - t / 2, h - hh],
+          [cx - t / 2, t],
+          [0, t],
+        ]),
+      ];
+    }
+    case 'chevron':
+    case 'homePlate': {
+      // A block that points: the same pentagon, with the chevron notched at the
+      // back so a row of them interlocks.
+      const ss = Math.min(w, h);
+      const x = Math.min(clamp(frac(adjust, 'adj', 50000), 0, 1) * ss, w);
+      const points: Array<readonly [number, number]> = [
+        [0, 0],
+        [w - x, 0],
+        [w, h / 2],
+        [w - x, h],
+        [0, h],
+      ];
+      if (preset === 'chevron') points.push([x, h / 2]);
+      return [polygon(points)];
+    }
+    case 'corner': {
+      // §20.1.10.55 — an L: `adj1` is the thickness of the horizontal arm,
+      // `adj2` of the vertical one, both against the short side.
+      const ss = Math.min(w, h);
+      const th = clamp(frac(adjust, 'adj1', 50000), 0, 1) * ss;
+      const tw = clamp(frac(adjust, 'adj2', 50000), 0, 1) * ss;
+      return [
+        polygon([
+          [0, 0],
+          [w, 0],
+          [w, th],
+          [tw, th],
+          [tw, h],
+          [0, h],
+        ]),
+      ];
+    }
+    case 'pie':
+    case 'blockArc': {
+      // Angles are 60 000ths of a degree, clockwise from due east in the
+      // y-DOWN frame the spec measures in — negated here, as custGeom's arcs
+      // are. A pie closes through its centre; a block arc closes through the
+      // inner arc `adj3` names.
+      const [rx, ry] = [w / 2, h / 2];
+      const start = -((adjust.get('adj1') ?? 0) / 60000) * (Math.PI / 180);
+      const end =
+        -((adjust.get('adj2') ?? (preset === 'pie' ? 16200000 : 10800000)) / 60000) *
+        (Math.PI / 180);
+      let sweep = end - start;
+      if (sweep > 0) sweep -= 2 * Math.PI;
+      const at = (a: number, r: number): readonly [number, number] => [
+        rx + rx * r * Math.cos(a),
+        ry + ry * r * Math.sin(a),
+      ];
+      const b = new PathBuilder();
+      const [sx0, sy0] = at(start, 1);
+      b.moveTo(sx0, sy0).append(arcToBeziers(rx, ry, rx, ry, start, sweep));
+      if (preset === 'pie') return [b.lineTo(rx, ry).close().build()];
+      const inner = 1 - clamp(frac(adjust, 'adj3', 25000), 0, 1);
+      const [ix, iy] = at(start + sweep, inner);
+      return [
+        b
+          .lineTo(ix, iy)
+          .append(arcToBeziers(rx, ry, rx * inner, ry * inner, start + sweep, -sweep))
+          .close()
+          .build(),
+      ];
+    }
+    case 'gear6':
+    case 'gear9': {
+      // A gear is a circle with N square teeth — the tooth depth and half-width
+      // are what `adj1`/`adj2` name, against the short side.
+      const teeth = preset === 'gear6' ? 6 : 9;
+      const ss = Math.min(w, h);
+      const depth = clamp(frac(adjust, 'adj1', 15000), 0, 0.4) * ss;
+      const [cx, cy] = [w / 2, h / 2];
+      const outer = Math.min(w, h) / 2;
+      const root = outer - depth;
+      const half = Math.PI / teeth / 2.6; // half a tooth, in radians
+      const pts: Array<readonly [number, number]> = [];
+      for (let i = 0; i < teeth; i++) {
+        const a = (i * 2 * Math.PI) / teeth;
+        const gap = Math.PI / teeth;
+        pts.push([cx + root * Math.cos(a - gap + half), cy + root * Math.sin(a - gap + half)]);
+        pts.push([cx + outer * Math.cos(a - half), cy + outer * Math.sin(a - half)]);
+        pts.push([cx + outer * Math.cos(a + half), cy + outer * Math.sin(a + half)]);
+        pts.push([cx + root * Math.cos(a + gap - half), cy + root * Math.sin(a + gap - half)]);
+      }
+      return [polygon(pts)];
+    }
+    case 'circularArrow':
+    case 'leftCircularArrow': {
+      // A band of arc with a head on it — the arrow a cycle diagram turns on.
+      // Angles are 60 000ths of a degree in the spec's y-DOWN frame, so they
+      // negate here; `adj1` is the band's thickness against the short side.
+      const ss = Math.min(w, h);
+      const t = clamp(frac(adjust, 'adj1', 12500), 0.02, 0.45) * ss;
+      // The head stands a thickness proud of the band on each side, so the band
+      // is inset by that much: the arrow fills its box and no more.
+      const [rx, ry] = [Math.max(t, w / 2 - t), Math.max(t, h / 2 - t)];
+      const [cx, cy] = [w / 2, h / 2];
+      const deg = (v: number): number => -(v / 60000) * (Math.PI / 180);
+      const tail = deg(adjust.get('adj3') ?? (preset === 'circularArrow' ? 20457681 : 12500000));
+      const head = deg(adjust.get('adj2') ?? (preset === 'circularArrow' ? 1142319 : 1142319));
+      let sweep = head - tail;
+      // Keep the shorter way round, in the direction the preset turns.
+      const turn = preset === 'circularArrow' ? -1 : 1;
+      while (sweep * turn < 0) sweep += turn * 2 * Math.PI;
+      while (Math.abs(sweep) > 2 * Math.PI) sweep -= turn * 2 * Math.PI;
+      // The head eats the last stretch of the band and stands t/2 proud of it.
+      const headSweep = turn * Math.min(Math.abs(sweep) / 3, 0.35);
+      const bandEnd = tail + sweep - headSweep;
+      // Everything is clamped to the box: an arc's Bézier control points ride a
+      // little outside the curve, and a head that overshoots is a head drawn
+      // over its neighbour.
+      const at = (a: number, r: number): readonly [number, number] => [
+        clamp(cx + (rx + r) * Math.cos(a), 0, w),
+        clamp(cy + (ry + r) * Math.sin(a), 0, h),
+      ];
+      const b = new PathBuilder();
+      const [ox, oy] = at(tail, t / 2);
+      b.moveTo(ox, oy).append(
+        arcToBeziers(cx, cy, rx + t / 2, ry + t / 2, tail, bandEnd - tail).map((seg) =>
+          seg.op === 'cubic'
+            ? {
+                op: 'cubic' as const,
+                x1: clamp(seg.x1, 0, w),
+                y1: clamp(seg.y1, 0, h),
+                x2: clamp(seg.x2, 0, w),
+                y2: clamp(seg.y2, 0, h),
+                x: clamp(seg.x, 0, w),
+                y: clamp(seg.y, 0, h),
+              }
+            : seg,
+        ),
+      );
+      const [hx1, hy1] = at(bandEnd, t);
+      const [tipX, tipY] = at(tail + sweep, 0);
+      const [hx2, hy2] = at(bandEnd, -t);
+      const [ix, iy] = at(bandEnd, -t / 2);
+      return [
+        b
+          .lineTo(hx1, hy1)
+          .lineTo(tipX, tipY)
+          .lineTo(hx2, hy2)
+          .lineTo(ix, iy)
+          .append(arcToBeziers(cx, cy, rx - t / 2, ry - t / 2, bandEnd, tail - bandEnd))
+          .close()
+          .build(),
+      ];
+    }
+    case 'actionButtonBlank':
+      return [{ segments: roundRectSegments(w, h, Math.min(w, h) * 0.1) }];
+    case 'flowChartMerge':
+      return [
+        polygon([
+          [0, h],
+          [w, h],
+          [w / 2, 0],
+        ]),
+      ];
+    case 'flowChartExtract':
+      return [
+        polygon([
+          [0, 0],
+          [w, 0],
+          [w / 2, h],
+        ]),
+      ];
+    case 'flowChartDelay': {
+      // A rectangle whose right end is a half-circle.
+      const b = new PathBuilder().moveTo(0, 0).lineTo(w / 2, 0);
+      return [
+        b
+          .append(arcToBeziers(w / 2, h / 2, w / 2, h / 2, -Math.PI / 2, Math.PI))
+          .lineTo(0, h)
+          .close()
+          .build(),
+      ];
+    }
+    case 'flowChartMagneticDisk': {
+      // A cylinder seen from the side: an ellipse for the lid, straight sides,
+      // and the front half of an ellipse for the base.
+      const ry = h / 6;
+      const b = new PathBuilder().moveTo(0, h - ry);
+      return [
+        b
+          .append(arcToBeziers(w / 2, h - ry, w / 2, ry, Math.PI, -2 * Math.PI))
+          .moveTo(0, h - ry)
+          .lineTo(0, ry)
+          .append(arcToBeziers(w / 2, ry, w / 2, ry, Math.PI, -Math.PI))
+          .lineTo(w, h - ry)
+          .build(),
+      ];
+    }
+    case 'flowChartMagneticTape': {
+      // A circle with a short foot out of its bottom right. Drawn as the two
+      // shapes it reads as, which keeps every control point inside the box.
+      const foot = h / 8;
+      return [
+        { segments: ellipseSegments(w, h) },
+        polygon([
+          [w / 2, 0],
+          [w, 0],
+          [w, foot],
+          [w / 2, foot],
+        ]),
+      ];
+    }
+    case 'flowChartPunchedTape': {
+      // A rectangle with a wave along the top and the bottom.
+      const wave = h / 5;
+      const b = new PathBuilder().moveTo(0, wave);
+      return [
+        b
+          .cubicTo(w / 4, wave * 2, (w * 3) / 4, 0, w, wave)
+          .lineTo(w, h - wave)
+          .cubicTo((w * 3) / 4, h - wave * 2, w / 4, h, 0, h - wave)
+          .close()
+          .build(),
+      ];
+    }
+    case 'wedgeRoundRectCallout': {
+      // A rounded rectangle with a tail run out to the point `adj1`/`adj2`
+      // name, as fractions of the box measured from its CENTRE.
+      const r = clamp(frac(adjust, 'adj3', 16667), 0, 0.5) * Math.min(w, h);
+      const tipX = w / 2 + frac(adjust, 'adj1', -20833) * w;
+      const tipY = h / 2 - frac(adjust, 'adj2', 62500) * h;
+      const [cx, cy] = [w / 2, h / 2];
+      const len = Math.hypot(tipX - cx, tipY - cy) || 1;
+      const [ux, uy] = [(tipX - cx) / len, (tipY - cy) / len];
+      const base = Math.min(w, h) / 6;
+      return [
+        { segments: roundRectSegments(w, h, r) },
+        polygon([
+          [cx - uy * base, cy + ux * base],
+          [cx + uy * base, cy - ux * base],
+          [tipX, tipY],
+        ]),
+      ];
+    }
+    case 'leftBracket':
+    case 'rightBracket':
+    case 'leftBrace':
+    case 'rightBrace': {
+      // Stroked, never filled: an open path. A bracket turns at its two
+      // corners; a brace turns again at the middle, where its point is.
+      const brace = preset === 'leftBrace' || preset === 'rightBrace';
+      const r = Math.min(clamp(frac(adjust, 'adj1', 8333), 0, 0.5) * h, brace ? w / 2 : w);
+      const mirrored = preset === 'rightBracket' || preset === 'rightBrace';
+      const x = (v: number): number => (mirrored ? w - v : v);
+      // A brace's spine stands a corner in from the edge so its middle point
+      // can reach the edge; a bracket's spine IS the edge.
+      const spine = brace ? r : 0;
+      const b = new PathBuilder()
+        .moveTo(x(w), 0)
+        .lineTo(x(spine + r), 0)
+        .lineTo(x(spine), r);
+      if (brace) {
+        const mid = clamp(frac(adjust, 'adj2', 50000), 0, 1) * h;
+        b.lineTo(x(spine), Math.max(r, mid - r))
+          .lineTo(x(0), mid)
+          .lineTo(x(spine), Math.min(h - r, mid + r));
+      }
+      return [
+        b
+          .lineTo(x(spine), h - r)
+          .lineTo(x(spine + r), h)
+          .lineTo(x(w), h)
+          .build(),
+      ];
+    }
     default:
       return null;
   }

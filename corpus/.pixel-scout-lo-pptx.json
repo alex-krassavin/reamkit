@@ -20,11 +20,6 @@
   "aligned": true
  },
  {
-  "name": "tdf145528_SmartArt_Matrix.pptx",
-  "score": 0.6142,
-  "aligned": true
- },
- {
   "name": "smartart-missing-bullet.pptx",
   "score": 0.5725,
   "aligned": true
@@ -35,13 +30,8 @@
   "aligned": true
  },
  {
-  "name": "n862510_2.pptx",
-  "score": 0.524,
-  "aligned": true
- },
- {
-  "name": "smartart-rotation2.pptx",
-  "score": 0.4872,
+  "name": "tdf125551.pptx",
+  "score": 0.5023,
   "aligned": true
  },
  {
@@ -65,16 +55,6 @@
   "aligned": true
  },
  {
-  "name": "tdf150789.pptx",
-  "score": 0.4135,
-  "aligned": true
- },
- {
-  "name": "tdf125551.pptx",
-  "score": 0.4129,
-  "aligned": true
- },
- {
   "name": "accent-color.pptx",
   "score": 0.4107,
   "aligned": true
@@ -92,11 +72,6 @@
  {
   "name": "tdf114848.pptx",
   "score": 0.3877,
-  "aligned": true
- },
- {
-  "name": "smartart-background-drawingml-fallback.pptx",
-  "score": 0.3797,
   "aligned": true
  },
  {
@@ -160,11 +135,6 @@
   "aligned": true
  },
  {
-  "name": "tdf132302_SmartArt_rightArrow.pptx",
-  "score": 0.2744,
-  "aligned": true
- },
- {
   "name": "tdf144092-tableHeight.pptx",
   "score": 0.2701,
   "aligned": true
@@ -182,11 +152,6 @@
  {
   "name": "smartart-vertical-block-list.pptx",
   "score": 0.2619,
-  "aligned": true
- },
- {
-  "name": "smartart-interopgrabbag.pptx",
-  "score": 0.259,
   "aligned": true
  },
  {
@@ -210,33 +175,13 @@
   "aligned": true
  },
  {
-  "name": "tdf104792-smart-art-animation.pptx",
-  "score": 0.2434,
-  "aligned": true
- },
- {
   "name": "tdf131553.pptx",
   "score": 0.2366,
   "aligned": true
  },
  {
-  "name": "tdf149551_SmartArt_Venn.pptx",
-  "score": 0.2312,
-  "aligned": true
- },
- {
   "name": "smartart-linear-rule-vert.pptx",
   "score": 0.2276,
-  "aligned": true
- },
- {
-  "name": "tdf168755_anim_on_SmartArt.pptx",
-  "score": 0.2266,
-  "aligned": true
- },
- {
-  "name": "tdf149551_SmartArt_Pyramid.pptx",
-  "score": 0.221,
   "aligned": true
  },
  {
@@ -252,6 +197,11 @@
  {
   "name": "smartart-linear-rule.pptx",
   "score": 0.2066,
+  "aligned": true
+ },
+ {
+  "name": "tdf149551_SmartArt_Gear.pptx",
+  "score": 0.2064,
   "aligned": true
  },
  {
@@ -295,11 +245,6 @@
   "aligned": true
  },
  {
-  "name": "smartart-preserve.pptx",
-  "score": 0.1687,
-  "aligned": true
- },
- {
   "name": "subtitle-animation-save.pptx",
   "score": 0.1678,
   "aligned": true
@@ -311,12 +256,7 @@
  },
  {
   "name": "tdf149551_SmartArt_Pie.pptx",
-  "score": 0.1633,
-  "aligned": true
- },
- {
-  "name": "bnc870237.pptx",
-  "score": 0.1623,
+  "score": 0.1553,
   "aligned": true
  },
  {
@@ -332,6 +272,11 @@
  {
   "name": "vertical-bracket-list.pptx",
   "score": 0.1466,
+  "aligned": true
+ },
+ {
+  "name": "tdf150789.pptx",
+  "score": 0.1459,
   "aligned": true
  },
  {
@@ -360,11 +305,6 @@
   "aligned": true
  },
  {
-  "name": "smartart-tdf134221.pptx",
-  "score": 0.135,
-  "aligned": true
- },
- {
   "name": "smartart-maxdepth.pptx",
   "score": 0.1332,
   "aligned": true
@@ -377,11 +317,6 @@
  {
   "name": "smartart-accent-process.pptx",
   "score": 0.1283,
-  "aligned": true
- },
- {
-  "name": "bnc880763.pptx",
-  "score": 0.128,
   "aligned": true
  },
  {
@@ -400,11 +335,6 @@
   "aligned": true
  },
  {
-  "name": "tdf84205.pptx",
-  "score": 0.1211,
-  "aligned": true
- },
- {
   "name": "testShapeAutofit.pptx",
   "score": 0.1111,
   "aligned": true
@@ -412,11 +342,6 @@
  {
   "name": "tdf152606.pptx",
   "score": 0.1105,
-  "aligned": true
- },
- {
-  "name": "tdf93830.pptx",
-  "score": 0.1073,
   "aligned": true
  },
  {
@@ -435,18 +360,8 @@
   "aligned": true
  },
  {
-  "name": "tdf141058-1.pptx",
-  "score": 0.0992,
-  "aligned": true
- },
- {
   "name": "tdf144918.pptx",
   "score": 0.0985,
-  "aligned": true
- },
- {
-  "name": "tdf148921.pptx",
-  "score": 0.097,
   "aligned": true
  },
  {
@@ -515,6 +430,16 @@
   "aligned": true
  },
  {
+  "name": "bnc862510_5.pptx",
+  "score": 0.0792,
+  "aligned": true
+ },
+ {
+  "name": "tdf93830.pptx",
+  "score": 0.0787,
+  "aligned": true
+ },
+ {
   "name": "tdf135843_export.pptx",
   "score": 0.0786,
   "aligned": true
@@ -525,6 +450,11 @@
   "aligned": true
  },
  {
+  "name": "tdf149551_SmartArt_Pyramid.pptx",
+  "score": 0.0763,
+  "aligned": true
+ },
+ {
   "name": "smartart-center-cycle.pptx",
   "score": 0.0756,
   "aligned": true
@@ -532,6 +462,11 @@
  {
   "name": "activex_commandbutton.pptx",
   "score": 0.0738,
+  "aligned": true
+ },
+ {
+  "name": "smartart-background-drawingml-fallback.pptx",
+  "score": 0.0732,
   "aligned": true
  },
  {
@@ -560,6 +495,11 @@
   "aligned": true
  },
  {
+  "name": "tdf148921.pptx",
+  "score": 0.0626,
+  "aligned": true
+ },
+ {
   "name": "tdf169781.pptx",
   "score": 0.0615,
   "aligned": true
@@ -572,11 +512,6 @@
  {
   "name": "tdf109067.pptx",
   "score": 0.0596,
-  "aligned": true
- },
- {
-  "name": "bnc862510_5.pptx",
-  "score": 0.0592,
   "aligned": true
  },
  {
@@ -670,11 +605,6 @@
   "aligned": true
  },
  {
-  "name": "tdf135953_SmartArt_textposition.pptx",
-  "score": 0.0443,
-  "aligned": true
- },
- {
   "name": "tdf112088.pptx",
   "score": 0.0431,
   "aligned": true
@@ -755,6 +685,11 @@
   "aligned": true
  },
  {
+  "name": "tdf135953_SmartArt_textposition.pptx",
+  "score": 0.0332,
+  "aligned": true
+ },
+ {
   "name": "tdf136830.pptx",
   "score": 0.0323,
   "aligned": true
@@ -780,6 +715,11 @@
   "aligned": true
  },
  {
+  "name": "bnc870233_2.pptx",
+  "score": 0.0299,
+  "aligned": true
+ },
+ {
   "name": "tdf157793.pptx",
   "score": 0.0299,
   "aligned": true
@@ -795,8 +735,8 @@
   "aligned": true
  },
  {
-  "name": "tdf148665.pptx",
-  "score": 0.0274,
+  "name": "tdf141058-1.pptx",
+  "score": 0.0275,
   "aligned": true
  },
  {
@@ -810,18 +750,13 @@
   "aligned": true
  },
  {
-  "name": "bnc870233_2.pptx",
-  "score": 0.0245,
+  "name": "tdf84205.pptx",
+  "score": 0.0262,
   "aligned": true
  },
  {
   "name": "tdf93868.pptx",
   "score": 0.0244,
-  "aligned": true
- },
- {
-  "name": "tdf149551_SmartArt_Gear.pptx",
-  "score": 0.0237,
   "aligned": true
  },
  {
@@ -841,11 +776,6 @@
  },
  {
   "name": "font-scale.pptx",
-  "score": 0.0218,
-  "aligned": true
- },
- {
-  "name": "bnc862510_6.pptx",
   "score": 0.0218,
   "aligned": true
  },
@@ -887,6 +817,11 @@
  {
   "name": "trigger.pptx",
   "score": 0.0183,
+  "aligned": true
+ },
+ {
+  "name": "bnc880763.pptx",
+  "score": 0.0181,
   "aligned": true
  },
  {
@@ -995,6 +930,11 @@
   "aligned": true
  },
  {
+  "name": "tdf132302_SmartArt_rightArrow.pptx",
+  "score": 0.0104,
+  "aligned": true
+ },
+ {
   "name": "tdf142648.pptx",
   "score": 0.0104,
   "aligned": true
@@ -1040,6 +980,11 @@
   "aligned": true
  },
  {
+  "name": "bnc862510_6.pptx",
+  "score": 0.0086,
+  "aligned": true
+ },
+ {
   "name": "activex_fontproperties.pptx",
   "score": 0.0082,
   "aligned": true
@@ -1072,6 +1017,11 @@
  {
   "name": "lineStyle.pptx",
   "score": 0.0079,
+  "aligned": true
+ },
+ {
+  "name": "smartart-preserve.pptx",
+  "score": 0.0078,
   "aligned": true
  },
  {
@@ -1155,6 +1105,11 @@
   "aligned": true
  },
  {
+  "name": "tdf149551_SmartArt_Venn.pptx",
+  "score": 0.0051,
+  "aligned": true
+ },
+ {
   "name": "tdf123090.pptx",
   "score": 0.0051,
   "aligned": true
@@ -1187,6 +1142,16 @@
  {
   "name": "bnc480256-2.pptx",
   "score": 0.0046,
+  "aligned": true
+ },
+ {
+  "name": "n862510_2.pptx",
+  "score": 0.0046,
+  "aligned": true
+ },
+ {
+  "name": "smartart-tdf134221.pptx",
+  "score": 0.0045,
   "aligned": true
  },
  {
@@ -1230,6 +1195,11 @@
   "aligned": true
  },
  {
+  "name": "tdf145528_SmartArt_Matrix.pptx",
+  "score": 0.004,
+  "aligned": true
+ },
+ {
   "name": "tdf113822underline.pptx",
   "score": 0.004,
   "aligned": true
@@ -1247,6 +1217,11 @@
  {
   "name": "tdf128550.pptx",
   "score": 0.0037,
+  "aligned": true
+ },
+ {
+  "name": "bnc870237.pptx",
+  "score": 0.0036,
   "aligned": true
  },
  {
@@ -1535,6 +1510,11 @@
   "aligned": true
  },
  {
+  "name": "tdf104792-smart-art-animation.pptx",
+  "score": 0.0013,
+  "aligned": true
+ },
+ {
   "name": "n828390_3.pptx",
   "score": 0.0013,
   "aligned": true
@@ -1550,6 +1530,11 @@
   "aligned": true
  },
  {
+  "name": "tdf168755_anim_on_SmartArt.pptx",
+  "score": 0.0012,
+  "aligned": true
+ },
+ {
   "name": "tdf79082.pptx",
   "score": 0.0012,
   "aligned": true
@@ -1561,6 +1546,11 @@
  },
  {
   "name": "bulletColor.pptx",
+  "score": 0.0011,
+  "aligned": true
+ },
+ {
+  "name": "smartart-rotation2.pptx",
   "score": 0.0011,
   "aligned": true
  },
@@ -1591,6 +1581,11 @@
  },
  {
   "name": "tdf134210.pptx",
+  "score": 0.001,
+  "aligned": true
+ },
+ {
+  "name": "smartart-interopgrabbag.pptx",
   "score": 0.001,
   "aligned": true
  },
@@ -1681,6 +1676,11 @@
  },
  {
   "name": "arc-validiert.pptx",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
+  "name": "tdf148665.pptx",
   "score": 0.0007,
   "aligned": true
  },
