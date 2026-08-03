@@ -3,6 +3,94 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.22.0
+
+A release about presentations. A deck was read but barely drawn: its slides
+came out as the text on them, over white, with the design the deck states once
+and every slide relies on left in the master. Measured against LibreOffice over
+473 real decks, the pixel distance summed to 74.7 with 33 files rendering
+almost nothing recognisable; it now sums to 22.1 with one, and 409 of the 472
+comparable decks sit within a tenth of the reference.
+
+### Added
+
+- **A deck's own decoration reaches every slide.** The rules, bands, logos and
+  panels a master and its layouts carry are drawn — under the slide's own
+  content, where §19.3.1 puts them — and a slide or a layout that asks for
+  none (`@showMasterSp`) gets none. The background comes with them: a solid
+  fill, a theme reference (`p:bgRef` into the theme's background fill styles),
+  a gradient or a picture, and a shape marked `useBgFill` is painted with the
+  piece of it that lies under the shape.
+
+- **A slide table stands where it is put and wears its style.** A slide table
+  states almost nothing about how it looks: its `a:tblPr` names a style by GUID
+  in `tableStyles.xml` and switches on the parts of it that apply — a header
+  row, banded rows, a first column. Those are read and composed in the spec's
+  order, with the cell's own `a:tcPr` over them: its fill, its `a:noFill`, its
+  four rules and the row heights it asks for.
+
+- **A slide is written in the style its deck states.** The presentation's
+  `p:defaultTextStyle`, the master's three text families and each prototype's
+  own list carry a slide's type: its sizes, its colours, its alignment and
+  anchor, its bullets (character, colour and size, read out of the symbol face
+  that states them) and `cap="all"`. A slide's own runs state only where they
+  differ — including where they turn something OFF.
+
+- **An embedded object shows the picture it keeps.** A `p:oleObj` is another
+  document on a slide, and what the slide shows of it is the snapshot beside
+  it: the modern spelling as a `p:pic`, the legacy one through the slide's VML
+  drawing. A deck whose eighth slide is one embedded presentation is no longer
+  a blank page.
+
+- **A picture is painted the way the file recolours it.** `a:duotone` (through
+  a luminosity soft mask, so a JPEG is never decoded), `a:clrChange` (one
+  colour replaced or knocked out), `a:alphaModFix` (how opaque the picture is
+  drawn) and `a:blipFill` on a chart's own frame, tiled at its natural size or
+  stretched over it.
+
+- **A gradient that fades out fades out.** Its stops' transparency is read as
+  transparency, and in PDF the sweep is painted through a luminosity mask built
+  from the same geometry — a shading carries no alpha of its own.
+
+- **Twenty-five more preset shapes**, including the arrows, callouts, brackets
+  and the flowchart family that slides are built from, plus the symbol fonts
+  (Wingdings, Webdings, Symbol) whose letters are not letters.
+
+### Fixed
+
+- **Thirteen decks would not open at all.** A package was sniffed by scanning
+  its bytes for a part name, and a deck that merely mentions `xl/workbook.xml`
+  somewhere in a compressed stream was read as a workbook. The ZIP's own
+  directory is asked instead.
+
+- **A deck says for itself what `bg1` and `tx1` mean.** §19.3.1.6 `p:clrMap`
+  maps the four background/text slots onto theme colours, and a layout or a
+  slide may override it. Ignored, every deck whose master swaps light and dark
+  came out inverted — dark text on dark paper.
+
+- **The hue a theme multiplies.** §20.1.2.3.14 `a:hueMod` was not read at all,
+  so the Ion theme's backdrop — one dark teal and a 108% hue — stayed teal
+  where both references draw deep blue.
+
+- **What stands behind the content paints before it.** The page paints by kind,
+  every image and then every shape, so a slide's white backdrop landed on top
+  of the photograph it stands on and a layout's card buried the picture the
+  slide put on it. What a page puts behind now paints first, in its own order,
+  and its text is set with the same emitter as the page's own — 112 documents
+  in the Word corpus draw closer for that alone, the watermarks and header
+  drawings most of all.
+
+- **A text box applies the paragraph's indent**, which the page, the band and a
+  table cell each already did. Slides' bullets stood in the margin with their
+  text against them.
+
+- **A SmartArt drawing is found where PowerPoint names it**, and each diagram
+  on a slide gets its own: a deck with four of them drew the first one four
+  times.
+
+- **A picture fill's `a:fillRect` says where the picture goes**, not how far to
+  zoom it, and a shape turned by `a:xfrm@rot` is turned.
+
 ## 1.21.0
 
 ### Added
