@@ -1,6 +1,12 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import type { MetaPicture, PicturePath, PictureText } from '@/core/metafile/picture';
+import { FontRegistry } from '@/core/font';
+import { ResourceStore, pt } from '@/core/ir';
+import { paintPlan } from '@/layout/page-doc';
+import { layoutStyledDocument } from '@/layout/styled-layout';
 import { isEmf, readEmf } from '@/core/metafile/emf';
 import { isWmf, readWmf } from '@/core/metafile/wmf';
 
@@ -367,6 +373,138 @@ describe('WMF (MS-WMF)', () => {
     expect(t?.text).toBe('hi');
     expect([t?.x, t?.y]).toEqual([4, 9]);
     expect(t?.colorHex).toBe('FF0000');
+  });
+
+  it('draws a symbol font\'s circle rather than spelling it "n"', () => {
+    // The bullets in an embedded diagram are Webdings `n`, which is a filled
+    // circle — and no substitute font has one either, so it is DRAWN.
+    // MS-WMF §2.2.1.2 LogFont: height, width, escapement, orientation, weight,
+    // then eight bytes of flags before the 32-byte face name.
+    const font = new Bytes()
+      .i16(-20) // height
+      .i16(0)
+      .i16(0) // escapement
+      .i16(0)
+      .i16(400) // weight
+      .ascii('\u0000'.repeat(8))
+      .ascii('Webdings', 32)
+      .build();
+    const pic = readWmf(
+      wmf(
+        [
+          meta(0x02fb, font), // CREATEFONTINDIRECT
+          meta(0x012d, new Bytes().u16(0).build()), // SELECTOBJECT
+          meta(0x0209, new Bytes().u32(0x800000).build()), // SETTEXTCOLOR — blue
+          meta(0x0521, new Bytes().u16(1).ascii('n\u0000').i16(40).i16(10).build()), // TEXTOUT
+        ],
+        [0, 0, 100, 50],
+      ),
+    );
+    expect(texts(pic.prims)).toEqual([]); // nothing spelled
+    const [shape] = paths(pic.prims);
+    expect(shape?.fillColorHex).toBe('000080');
+    // One em wide, and round: four quadrant curves.
+    const segs = shape?.paths[0]?.segments ?? [];
+    expect(segs.filter((sg) => sg.op === 'cubic').length).toBe(4);
+  });
+
+  it('drops what a picture declares transparent (a:clrChange)', () => {
+    // §20.1.8.16 — tdf113163's whole slide is a metafile whose white ground is
+    // declared away, so the black slide shows through. Drawn as stored, the
+    // slide is a white sheet.
+    const white = new Bytes().i16(20).i16(80).i16(0).i16(0).build(); // b,r,t,l
+    const red = new Bytes().i16(20).i16(40).i16(0).i16(0).build();
+    const bytes = wmf(
+      [
+        meta(0x02fc, new Bytes().u16(0).u32(0xffffff).u16(0).build()), // white brush
+        meta(0x012d, new Bytes().u16(0).build()),
+        meta(0x041b, white),
+        meta(0x02fc, new Bytes().u16(0).u32(0x0000ff).u16(0).build()), // red brush
+        meta(0x012d, new Bytes().u16(1).build()),
+        meta(0x041b, red),
+      ],
+      [0, 0, 100, 50],
+    );
+    const store = new ResourceStore();
+    const resource = store.put(bytes);
+    const lay = (colorChange?: { fromHex: string; toHex: string; transparent: boolean }) =>
+      layoutStyledDocument(
+        [
+          {
+            kind: 'image',
+            image: {
+              resource,
+              width: pt(100),
+              height: pt(50),
+              paragraphProperties: {},
+              ...(colorChange ? { colorChange } : {}),
+            },
+          },
+        ],
+        {
+          registry: FontRegistry.fromBytes({
+            regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
+          }),
+          resources: store,
+          styles: { defaultRunProperties: {}, defaultParagraphProperties: {}, styles: new Map() },
+        },
+      );
+    const fills = (laid: ReturnType<typeof lay>): Array<string | undefined> =>
+      laid.pages[0]!.commands.flatMap((c) => (c.type === 'shape' ? [c.shape.fillColorHex] : []));
+    expect(fills(lay())).toEqual(['FFFFFF', 'FF0000']);
+    // The white FILL goes; the rectangle's black outline is another colour and
+    // stays. The corpus deck draws its ground with a null pen, so there the
+    // primitive disappears completely.
+    expect(fills(lay({ fromHex: 'FFFFFF', toHex: 'FFFFFF', transparent: true }))).toEqual([
+      undefined,
+      'FF0000',
+    ]);
+    // …and a change that names another colour repaints instead of dropping.
+    expect(fills(lay({ fromHex: 'FFFFFF', toHex: '00FF00', transparent: false }))).toEqual([
+      '00FF00',
+      'FF0000',
+    ]);
+  });
+
+  it('paints as ONE picture, in the order the metafile draws', () => {
+    // A metafile writes a label, lays a panel over it and writes it again as a
+    // drop shadow; painted as "every shape, then every line" the buried copy
+    // would show through — 45541_Footer's rotated headers came out doubled.
+    const panel = new Bytes().i16(30).i16(60).i16(0).i16(0).build(); // b,r,t,l
+    const bytes = wmf(
+      [
+        meta(0x0521, new Bytes().u16(2).ascii('hi').i16(20).i16(4).build()), // TEXTOUT
+        meta(0x02fc, new Bytes().u16(0).u32(0x00ff00).u16(0).build()), // CREATEBRUSH — green
+        meta(0x012d, new Bytes().u16(0).build()), // SELECTOBJECT
+        meta(0x041b, panel), // RECTANGLE over it
+      ],
+      [0, 0, 100, 50],
+    );
+    const store = new ResourceStore();
+    const resource = store.put(bytes);
+    const laid = layoutStyledDocument(
+      [
+        {
+          kind: 'image',
+          image: { resource, width: pt(100), height: pt(50), paragraphProperties: {} },
+        },
+      ],
+      {
+        registry: FontRegistry.fromBytes({
+          regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
+        }),
+        resources: store,
+        styles: { defaultRunProperties: {}, defaultParagraphProperties: {}, styles: new Map() },
+      },
+    );
+    const items = laid.pages[0]!.commands.filter((c) => c.pictureId !== undefined);
+    expect(items.map((c) => c.type)).toEqual(['line', 'shape']); // the text FIRST
+    expect(new Set(items.map((c) => c.pictureId)).size).toBe(1);
+    // …and the plan keeps them out of the passes that would reorder them.
+    const plan = paintPlan(laid.pages[0]!.commands);
+    expect(plan.pictures).toHaveLength(1);
+    expect(plan.shapes).toHaveLength(0);
+    expect(plan.lines).toHaveLength(0);
   });
 
   it('draws a polygon closed and a polyline open', () => {

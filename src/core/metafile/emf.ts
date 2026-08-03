@@ -15,6 +15,7 @@ import type { PathSegment, StrokeStyle, VectorPath } from '@/core/vector';
 import type { DeviceContext, MetaObject, MetaPicture, PicturePrim } from '@/core/metafile/picture';
 import { PathBuilder } from '@/core/vector';
 import { applyTransform, cloneDc, colorRef, newDeviceContext } from '@/core/metafile/picture';
+import { fromSymbolFont } from '@/core/metafile/symbol-fonts';
 
 /** Whether the bytes open with an EMF header (MS-EMF §2.3.4.2: type 1 + " EMF"). */
 export function isEmf(bytes: Uint8Array): boolean {
@@ -373,7 +374,8 @@ export function readEmf(bytes: Uint8Array): MetaPicture {
             const font = dc.font;
             prims.push({
               kind: 'text',
-              text,
+              // A symbol font's letters are not letters (see symbol-fonts).
+              text: fromSymbolFont(text, font?.family),
               x: p.x,
               y: p.y,
               alignH: dc.alignH,

@@ -283,6 +283,17 @@ export interface InlineImage {
    * Word washes a watermark out this way.
    */
   readonly wash?: { readonly gain: number; readonly black: number };
+  /**
+   * §20.1.8.16 `a:clrChange` — one colour of the picture replaced by another,
+   * or knocked out entirely when the destination states `a:alpha` at zero. A
+   * logo on a white card goes onto a dark slide that way (corpus: tdf113163,
+   * whose whole slide is a metafile with its white ground declared away).
+   */
+  readonly colorChange?: {
+    readonly fromHex: string;
+    readonly toHex: string;
+    readonly transparent: boolean;
+  };
   readonly width: Pt;
   readonly height: Pt;
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
@@ -1060,6 +1071,22 @@ export interface ImageBlock {
    * Word washes a watermark out this way.
    */
   readonly wash?: { readonly gain: number; readonly black: number };
+  /**
+   * §20.1.8.4 `a:alphaModFix` — how opaque the picture is DRAWN, `0..1`; absent
+   * is opaque. A layout that lays a photograph behind its text sets it low
+   * (ArtisticEffectSample's cover shows one at 52%), and drawn full-strength
+   * the words on it are unreadable.
+   */
+  readonly alpha?: number;
+  /**
+   * §20.1.8.16 `a:clrChange` — one colour of the picture replaced by another,
+   * or knocked out entirely when the destination states `a:alpha` at zero.
+   */
+  readonly colorChange?: {
+    readonly fromHex: string;
+    readonly toHex: string;
+    readonly transparent: boolean;
+  };
   readonly width: Pt;
   readonly height: Pt;
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
@@ -1160,6 +1187,27 @@ export interface ShapeFill {
    * of the picture the box shows, as the fractions cut from each side.
    */
   readonly imageCrop?: ImageCrop;
+  /**
+   * §20.1.8.30 `a:stretch/a:fillRect` with POSITIVE insets — the part of the
+   * shape's box the picture is stretched into, as fractions of that box. A
+   * slide backed by a picture inset 55 % from the left shows it in the corner,
+   * not across the slide (corpus: tdf153466.pptx). Negative insets are the
+   * other case entirely — the picture zooming past the box — and read as a
+   * crop of the source.
+   */
+  /**
+   * §20.1.8.23 `a:duotone` — the picture recoloured into two tones: its dark
+   * end becomes the first colour, its light end the second. An Office theme
+   * that ships a photograph tints it this way, so a deck whose background is a
+   * brown ridged texture is stored as a grey one (corpus: themes.pptx).
+   */
+  readonly duotone?: { readonly shadowHex: string; readonly highlightHex: string };
+  readonly imageFillRect?: {
+    readonly left: number;
+    readonly top: number;
+    readonly right: number;
+    readonly bottom: number;
+  };
   /**
    * §20.1.2.3.1 `a:alpha` / §14.1.2.5 `@opacity` — how opaque the fill is,
    * `0..1`. Absent is opaque. The colour above is the fill's own, NOT composited
@@ -1494,6 +1542,12 @@ export interface Chart {
    * creates, and both references draw them.
    */
   readonly frameFillHex?: string;
+  /**
+   * §20.1.8.14 `a:blipFill` — the PICTURE the frame is filled with, when it is
+   * filled with one rather than a colour. chart-texture-bg.pptx papers its
+   * whole chart with a woven cloth, and a chart on white is a different chart.
+   */
+  readonly frameFillImage?: { readonly resource: ResourceId; readonly tiled?: boolean };
   readonly frameLineHex?: string;
   /** The frame rule's width and dash, when it states them. */
   readonly frameLineWidthPt?: number;

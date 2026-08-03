@@ -2,10 +2,56 @@ import { zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
+import { bytesIncludePartName, packageHasPart } from '@/core/bytes';
 import { OpcPackage } from '@/core/opc';
 import { parseRelationships } from '@/core/opc/relationships';
 
 const REL_NS = 'http://schemas.openxmlformats.org/package/2006/relationships';
+
+describe('packageHasPart — what the archive holds, not what its bytes contain', () => {
+  const enc = (t: string): Uint8Array => new TextEncoder().encode(t);
+
+  it('finds a part by name and refuses one that is only text inside another', () => {
+    // The same trap the corpus decks fell into, in miniature: an entry whose
+    // CONTENT names a part of some other package.
+    const zip = zipSync({
+      'ppt/presentation.xml': enc('<p:presentation/>'),
+      // STORED, as PowerPoint writes an embedded workbook: its bytes go in
+      // verbatim, so what they say is readable from the outside.
+      'ppt/embeddings/book.xlsx': [enc('PK...xl/workbook.xml...'), { level: 0 }],
+    });
+    expect(packageHasPart(zip, 'ppt/presentation.xml')).toBe(true);
+    expect(bytesIncludePartName(zip, 'xl/workbook.xml')).toBe(true); // the old probe
+    expect(packageHasPart(zip, 'xl/workbook.xml')).toBe(false);
+  });
+
+  it('matches a directory prefix, the backslash spelling, and any case', () => {
+    const zip = zipSync({ 'word/_rels/document.xml.rels': enc('<Relationships/>') });
+    expect(packageHasPart(zip, 'word/_rels/')).toBe(true);
+    expect(packageHasPart(zip, 'word/')).toBe(true);
+    expect(packageHasPart(zip, 'xl/')).toBe(false);
+    // OPC compares part names without case (§9.1.1.1), as does the reader.
+    const odd = zipSync({ 'Word\\Document.xml': enc('<w:document/>') });
+    expect(packageHasPart(odd, 'word/document.xml')).toBe(true);
+  });
+
+  it('falls back to the byte probe when there is no directory to read', () => {
+    // Truncated to the first entry: no end record, so nothing to walk. The old
+    // answer stands and the reader behind the sniff reports the real problem.
+    const zip = zipSync({ 'xl/workbook.xml': enc('<workbook/>') });
+    // Enough for the first local header — which carries the entry's name.
+    const truncated = zip.subarray(0, 60);
+    expect(packageHasPart(truncated, 'xl/workbook.xml')).toBe(true);
+    expect(packageHasPart(new Uint8Array(8), 'xl/workbook.xml')).toBe(false);
+  });
+
+  it('reads the directory of a real package', () => {
+    const docx = buildDocxFromBody('<w:p/>');
+    expect(packageHasPart(docx, 'word/document.xml')).toBe(true);
+    expect(packageHasPart(docx, '[Content_Types].xml')).toBe(true);
+    expect(packageHasPart(docx, 'ppt/presentation.xml')).toBe(false);
+  });
+});
 
 describe('parseRelationships — namespace prefix (corpus: 58760.xlsx)', () => {
   it('parses relationships whose elements carry a namespace prefix', () => {

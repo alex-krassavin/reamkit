@@ -91,14 +91,36 @@ export function rPrToRunProps(rPr: PoNode | undefined, colors: ColorResolver): R
   const colorHex = solidFillColor(rPr, colors);
   const latin = poChildren(rPr).find((c) => poIs(c, 'a:latin'));
   const typeface = latin ? poAttr(latin, 'typeface')?.trim() : undefined;
+  // A run states these to turn them OFF as much as on: the body style of
+  // 45541_Header's master is bold and every slide's own runs say `b="0"`, so
+  // read as "bold when true, silent otherwise" the whole deck came out bold.
+  const flag = (name: string): boolean | undefined => {
+    const v = poAttr(rPr, name);
+    return v === undefined ? undefined : isTrue(v);
+  };
+  const [b, i] = [flag('b'), flag('i')];
   return {
-    ...(isTrue(poAttr(rPr, 'b')) ? { bold: true } : {}),
-    ...(isTrue(poAttr(rPr, 'i')) ? { italic: true } : {}),
-    ...(u !== undefined && u !== 'none' ? { underline: 'single' as const } : {}),
+    ...(b !== undefined ? { bold: b } : {}),
+    ...(i !== undefined ? { italic: i } : {}),
+    ...(u !== undefined
+      ? { underline: u === 'none' ? ('none' as const) : ('single' as const) }
+      : {}),
     ...(sz !== undefined ? { fontSizePt: pt(sz / 100) } : {}),
     ...(colorHex ? { colorHex } : {}),
     ...(typeface ? { fontFamily: { ascii: typeface } } : {}),
+    ...capsOf(poAttr(rPr, 'cap')),
   };
+}
+
+// §21.1.2.2.7 `@cap` — the text is DISPLAYED in capitals, whatever it stores.
+// Stated once in a master's title style it reaches every slide (themes.pptx's
+// last title is "Trade show" in the file and TRADE SHOW on the screen), so a
+// run that says `none` has to be able to take it back off.
+function capsOf(cap: string | undefined): Pick<RunProperties, 'caps' | 'smallCaps'> {
+  if (cap === 'all') return { caps: true };
+  if (cap === 'small') return { smallCaps: true };
+  if (cap === 'none') return { caps: false, smallCaps: false };
+  return {};
 }
 
 // a:solidFill → resolved 6-hex (no '#'), via the deck's colour resolver so both

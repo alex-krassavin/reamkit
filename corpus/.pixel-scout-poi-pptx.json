@@ -1,0 +1,477 @@
+[
+ {
+  "name": "Divino_Revelado.pptx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "clusterfuzz-testcase-minimized-POIFuzzer-5205835528404992.pptx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "clusterfuzz-testcase-minimized-POIXSLFFuzzer-4838644450394112.pptx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "clusterfuzz-testcase-minimized-POIXSLFFuzzer-4986044400861184.pptx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "clusterfuzz-testcase-minimized-POIXSLFFuzzer-5463285576892416.pptx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "clusterfuzz-testcase-minimized-POIXSLFFuzzer-5471515212382208.pptx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "clusterfuzz-testcase-minimized-POIXSLFFuzzer-5611274456596480.pptx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "clusterfuzz-testcase-minimized-POIXSLFFuzzer-6071540680032256.pptx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "clusterfuzz-testcase-minimized-POIXSLFFuzzer-6254434927378432.pptx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "clusterfuzz-testcase-minimized-POIXSLFFuzzer-6372932378820608.pptx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "clusterfuzz-testcase-minimized-POIXSLFFuzzer-6435650376957952.pptx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "themes.pptx",
+  "score": 0.9832,
+  "aligned": true
+ },
+ {
+  "name": "aascu.org_workarea_downloadasset.aspx_id=5864.pptx",
+  "score": 0.5586,
+  "aligned": false
+ },
+ {
+  "name": "45541_Footer.pptx",
+  "score": 0.3991,
+  "aligned": true
+ },
+ {
+  "name": "45541_Header.pptx",
+  "score": 0.3991,
+  "aligned": true
+ },
+ {
+  "name": "45545_Comment.pptx",
+  "score": 0.3978,
+  "aligned": true
+ },
+ {
+  "name": "backgrounds.pptx",
+  "score": 0.3818,
+  "aligned": true
+ },
+ {
+  "name": "table_test2.pptx",
+  "score": 0.3437,
+  "aligned": true
+ },
+ {
+  "name": "63200.pptx",
+  "score": 0.2994,
+  "aligned": true
+ },
+ {
+  "name": "alterman_security.pptx",
+  "score": 0.2829,
+  "aligned": true
+ },
+ {
+  "name": "bug68703.pptx",
+  "score": 0.2037,
+  "aligned": true
+ },
+ {
+  "name": "layouts.pptx",
+  "score": 0.1929,
+  "aligned": true
+ },
+ {
+  "name": "54542_cropped_bitmap.pptx",
+  "score": 0.1909,
+  "aligned": true
+ },
+ {
+  "name": "LIBRE_OFFICE-100610-0.pptx",
+  "score": 0.1357,
+  "aligned": true
+ },
+ {
+  "name": "aascu.org_hbcu_leadershipsummit_cooper_.pptx",
+  "score": 0.1298,
+  "aligned": true
+ },
+ {
+  "name": "smartart-simple.pptx",
+  "score": 0.1095,
+  "aligned": true
+ },
+ {
+  "name": "ae.ac.uaeu.faculty_nafaachbili_GeomLec1.pptx",
+  "score": 0.093,
+  "aligned": true
+ },
+ {
+  "name": "au.asn.aes.www_conferences_2011_presentations_Fri_20Room4Level4_20930_20Maloney.pptx",
+  "score": 0.0928,
+  "aligned": true
+ },
+ {
+  "name": "keyframes.pptx",
+  "score": 0.0926,
+  "aligned": true
+ },
+ {
+  "name": "minimal-gradient-fill-issue.pptx",
+  "score": 0.0875,
+  "aligned": true
+ },
+ {
+  "name": "tika-2605.pptx",
+  "score": 0.0674,
+  "aligned": true
+ },
+ {
+  "name": "customGeo.pptx",
+  "score": 0.0637,
+  "aligned": true
+ },
+ {
+  "name": "bug54570.pptx",
+  "score": 0.0617,
+  "aligned": true
+ },
+ {
+  "name": "highlight-test-case.pptx",
+  "score": 0.0572,
+  "aligned": true
+ },
+ {
+  "name": "chart-texture-bg.pptx",
+  "score": 0.0542,
+  "aligned": true
+ },
+ {
+  "name": "crash-57308ca363f5b71763c489d1b432aff009d4bc4f.pptx",
+  "score": 0.0529,
+  "aligned": true
+ },
+ {
+  "name": "chart-picture-bg.pptx",
+  "score": 0.0502,
+  "aligned": true
+ },
+ {
+  "name": "chart-slide-bg.pptx",
+  "score": 0.0479,
+  "aligned": true
+ },
+ {
+  "name": "ca.ubc.cs.people_~emhill_presentations_HowWeRefactor.pptx",
+  "score": 0.0438,
+  "aligned": true
+ },
+ {
+  "name": "table-with-theme.pptx",
+  "score": 0.0404,
+  "aligned": true
+ },
+ {
+  "name": "60810.pptx",
+  "score": 0.0399,
+  "aligned": true
+ },
+ {
+  "name": "at.ecodesign.www_downloads_Vertiefungsvortrag_elektronik.pptx",
+  "score": 0.0386,
+  "aligned": true
+ },
+ {
+  "name": "aptia.pptx",
+  "score": 0.038,
+  "aligned": true
+ },
+ {
+  "name": "pptx2svg.pptx",
+  "score": 0.0347,
+  "aligned": true
+ },
+ {
+  "name": "bug62513.pptx",
+  "score": 0.0312,
+  "aligned": true
+ },
+ {
+  "name": "ArtisticEffectSample.pptx",
+  "score": 0.0288,
+  "aligned": true
+ },
+ {
+  "name": "bar-chart.pptx",
+  "score": 0.0276,
+  "aligned": true
+ },
+ {
+  "name": "pie-chart.pptx",
+  "score": 0.0264,
+  "aligned": true
+ },
+ {
+  "name": "text-highlight.pptx",
+  "score": 0.021,
+  "aligned": true
+ },
+ {
+  "name": "scatter-chart.pptx",
+  "score": 0.0201,
+  "aligned": true
+ },
+ {
+  "name": "bug60993.pptx",
+  "score": 0.0175,
+  "aligned": true
+ },
+ {
+  "name": "ececapstonespring2012.pptx",
+  "score": 0.0154,
+  "aligned": true
+ },
+ {
+  "name": "testPPT.pptx",
+  "score": 0.014,
+  "aligned": true
+ },
+ {
+  "name": "shapes.pptx",
+  "score": 0.0137,
+  "aligned": true
+ },
+ {
+  "name": "table-with-different-font-colors.pptx",
+  "score": 0.0133,
+  "aligned": true
+ },
+ {
+  "name": "line-chart.pptx",
+  "score": 0.0129,
+  "aligned": true
+ },
+ {
+  "name": "2411-Performance_Up.pptx",
+  "score": 0.012,
+  "aligned": true
+ },
+ {
+  "name": "with_japanese.pptx",
+  "score": 0.0117,
+  "aligned": true
+ },
+ {
+  "name": "radar-chart.pptx",
+  "score": 0.0085,
+  "aligned": true
+ },
+ {
+  "name": "table-with-no-theme.pptx",
+  "score": 0.0084,
+  "aligned": true
+ },
+ {
+  "name": "placeholder-layout-color.pptx",
+  "score": 0.0083,
+  "aligned": true
+ },
+ {
+  "name": "smartart-rotated-text.pptx",
+  "score": 0.0083,
+  "aligned": true
+ },
+ {
+  "name": "bug63290.pptx",
+  "score": 0.0073,
+  "aligned": true
+ },
+ {
+  "name": "EmbeddedAudio.pptx",
+  "score": 0.0067,
+  "aligned": true
+ },
+ {
+  "name": "49386-null_dates.pptx",
+  "score": 0.0059,
+  "aligned": true
+ },
+ {
+  "name": "sample.pptx",
+  "score": 0.0057,
+  "aligned": true
+ },
+ {
+  "name": "WithMaster.pptx",
+  "score": 0.0057,
+  "aligned": true
+ },
+ {
+  "name": "bug60715.pptx",
+  "score": 0.0056,
+  "aligned": true
+ },
+ {
+  "name": "bug65228.pptx",
+  "score": 0.0045,
+  "aligned": true
+ },
+ {
+  "name": "SampleShow.pptx",
+  "score": 0.0044,
+  "aligned": true
+ },
+ {
+  "name": "56812.pptx",
+  "score": 0.0041,
+  "aligned": true
+ },
+ {
+  "name": "prProps.pptx",
+  "score": 0.004,
+  "aligned": true
+ },
+ {
+  "name": "bug58144-headers-footers-2007.pptx",
+  "score": 0.0034,
+  "aligned": true
+ },
+ {
+  "name": "bug64693.pptx",
+  "score": 0.0033,
+  "aligned": true
+ },
+ {
+  "name": "present1.pptx",
+  "score": 0.0032,
+  "aligned": true
+ },
+ {
+  "name": "OverlappingRelations.pptx",
+  "score": 0.0028,
+  "aligned": true
+ },
+ {
+  "name": "bug62736.pptx",
+  "score": 0.0027,
+  "aligned": true
+ },
+ {
+  "name": "KEY02.pptx",
+  "score": 0.0026,
+  "aligned": true
+ },
+ {
+  "name": "sample_pptx_grouping_issues.pptx",
+  "score": 0.0025,
+  "aligned": true
+ },
+ {
+  "name": "table_test.pptx",
+  "score": 0.0016,
+  "aligned": true
+ },
+ {
+  "name": "EmbeddedVideo.pptx",
+  "score": 0.0016,
+  "aligned": true
+ },
+ {
+  "name": "SmartArt.pptx",
+  "score": 0.0015,
+  "aligned": true
+ },
+ {
+  "name": "bug65523.pptx",
+  "score": 0.0014,
+  "aligned": true
+ },
+ {
+  "name": "copy-slide-demo.pptx",
+  "score": 0.0012,
+  "aligned": true
+ },
+ {
+  "name": "bug65673.pptx",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
+  "name": "crop-to-0.pptx",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
+  "name": "rain.pptx",
+  "score": 0.0006,
+  "aligned": true
+ },
+ {
+  "name": "templatePPTWithOnlyOneText.pptx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "bug60499.pptx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "60042.pptx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "bug65551.pptx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "51187.pptx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "missing-blip-fill.pptx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "61515.pptx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "picture-transparency.pptx",
+  "score": 0,
+  "aligned": true
+ }
+]

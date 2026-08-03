@@ -84,7 +84,7 @@ export function buildGradientPattern(
 // §8.7.4.5.3 axial shading. The local frame is y-up, so a DrawingML angle θ
 // (clockwise from +x in a y-down frame) points along (cos θ, −sin θ). The axis
 // spans the bbox: project its corners onto the direction for the extent.
-function axialShading(angleDeg: number, b: Bbox, fnRef: PdfRef): PdfDict {
+function axialShading(angleDeg: number, b: Bbox, fnRef: PdfRef, cs = 'DeviceRGB'): PdfDict {
   const rad = (angleDeg * Math.PI) / 180;
   const dx = Math.cos(rad);
   const dy = -Math.sin(rad);
@@ -105,7 +105,7 @@ function axialShading(angleDeg: number, b: Bbox, fnRef: PdfRef): PdfDict {
   }
   return dict({
     ShadingType: 2,
-    ColorSpace: name('DeviceRGB'),
+    ColorSpace: name(cs),
     Coords: [
       cx + (tmin - cproj) * dx,
       cy + (tmin - cproj) * dy,
@@ -123,6 +123,7 @@ function radialShading(
   b: Bbox,
   fnRef: PdfRef,
   center?: { readonly x: number; readonly y: number },
+  cs = 'DeviceRGB',
 ): PdfDict {
   // The centre is given in the box's own fractions, y DOWN (a `0,0` centre is
   // the top-left corner); this frame is y-up.
@@ -134,7 +135,7 @@ function radialShading(
   const r = Math.hypot(b.maxX - b.minX, b.maxY - b.minY) / 2;
   return dict({
     ShadingType: 3,
-    ColorSpace: name('DeviceRGB'),
+    ColorSpace: name(cs),
     Coords: [cx, cy, 0, cx, cy, r],
     Function: ref(fnRef.id),
     Extend: [true, true],
@@ -241,6 +242,92 @@ function ps(n: number): string {
   return s === '' || s === '-0' ? '0' : s;
 }
 
+/**
+ * §11.6.5.2 — the luminosity soft mask a gradient with per-stop TRANSPARENCY is
+ * painted through.
+ *
+ * A PDF shading has one colour per point and no alpha, so a gradient that fades
+ * out is drawn as the colour shading masked by a second shading of the same
+ * geometry whose GREY is the transparency: white where the stop is opaque,
+ * black where it is clear. 45541_Footer's master lays a white band down the
+ * left of every slide that starts half transparent, and painted flat it covered
+ * the artwork behind it.
+ *
+ * @param doc      The document to add the objects to.
+ * @param gradient The gradient fill.
+ * @param bbox     The shape's local-space bounding box.
+ * @param ctm      The shape's CTM, as the form's `/Matrix`.
+ * @returns The mask form XObject, or `undefined` when every stop is opaque or
+ *          the sweep has no shading type that can carry a mask.
+ */
+export function buildGradientAlphaMask(
+  doc: PdfDocument,
+  gradient: ShapeGradient,
+  bbox: Bbox,
+  ctm: readonly [number, number, number, number, number, number],
+): PdfRef | undefined {
+  if (!gradient.stops.some((s) => (s.alpha ?? 1) < 1)) return undefined;
+  // A `rect` sweep is a calculator function over RGB; masking it would mean a
+  // second one over grey, which no corpus file has asked for.
+  if (gradient.kind === 'radial' && gradient.sweep === 'rect') return undefined;
+  const fn = doc.add(buildAlphaRamp(gradient.stops));
+  const shading =
+    gradient.kind === 'radial'
+      ? radialShading(bbox, fn, gradient.center, 'DeviceGray')
+      : axialShading(gradient.angle ?? 0, bbox, fn, 'DeviceGray');
+  return doc.add(
+    stream(
+      {
+        Type: name('XObject'),
+        Subtype: name('Form'),
+        BBox: [bbox.minX, bbox.minY, bbox.maxX, bbox.maxY],
+        Matrix: [...ctm],
+        Group: dict({ S: name('Transparency'), CS: name('DeviceGray') }),
+        Resources: dict({ Shading: dict({ Sm: doc.add(shading) }) }),
+      },
+      new TextEncoder().encode('q /Sm sh Q'),
+    ),
+  );
+}
+
+// The same stitching as the colour ramp, over one grey component: the stop's
+// own transparency.
+function buildAlphaRamp(stopsIn: ShapeGradient['stops']): PdfDict {
+  const stops = normalizeStops(stopsIn);
+  if (stops.length <= 2) {
+    return dict({
+      FunctionType: 2,
+      Domain: [0, 1],
+      C0: [stops[0]!.alpha],
+      C1: [stops[stops.length - 1]!.alpha],
+      N: 1,
+    });
+  }
+  const functions: Array<PdfValue> = [];
+  const bounds: Array<number> = [];
+  const encode: Array<number> = [];
+  for (let i = 0; i < stops.length - 1; i++) {
+    functions.push(
+      dict({
+        FunctionType: 2,
+        Domain: [0, 1],
+        C0: [stops[i]!.alpha],
+        C1: [stops[i + 1]!.alpha],
+        N: 1,
+      }),
+    );
+    if (i > 0) bounds.push(stops[i]!.offset);
+    encode.push(0, 1);
+  }
+  return dict({
+    FunctionType: 3,
+    Domain: [0, 1],
+    Functions: functions,
+    Bounds: bounds,
+    Encode: encode,
+  });
+}
+
 // §7.10.4 — the colour ramp. One stop → a constant type-2 function; otherwise a
 // type-3 stitching function over type-2 (linear) segments between the stops.
 function buildRamp(stopsIn: ShapeGradient['stops']): PdfDict {
@@ -284,13 +371,17 @@ function buildRamp(stopsIn: ShapeGradient['stops']): PdfDict {
 // so the function domain is fully covered.
 function normalizeStops(
   stops: ShapeGradient['stops'],
-): Array<{ offset: number; colorHex: string }> {
+): Array<{ offset: number; colorHex: string; alpha: number }> {
   const out = stops
-    .map((s) => ({ offset: Math.max(0, Math.min(1, s.offset)), colorHex: s.colorHex }))
+    .map((s) => ({
+      offset: Math.max(0, Math.min(1, s.offset)),
+      colorHex: s.colorHex,
+      alpha: Math.max(0, Math.min(1, s.alpha ?? 1)),
+    }))
     .sort((a, b) => a.offset - b.offset);
-  if (out.length === 0) return [{ offset: 0, colorHex: '000000' }];
-  out[0] = { offset: 0, colorHex: out[0]!.colorHex };
-  out[out.length - 1] = { offset: 1, colorHex: out[out.length - 1]!.colorHex };
+  if (out.length === 0) return [{ offset: 0, colorHex: '000000', alpha: 1 }];
+  out[0] = { ...out[0]!, offset: 0 };
+  out[out.length - 1] = { ...out[out.length - 1]!, offset: 1 };
   return out;
 }
 

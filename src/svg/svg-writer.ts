@@ -11,7 +11,13 @@
 
 import type { DocumentWriter, WriteResult } from '@/core/ir/adapters';
 import type { Loss } from '@/core/ir';
-import type { LaidOutDocument, LaidOutPage, TextLineItem } from '@/layout/page-doc';
+import type {
+  ImageItem,
+  LaidOutDocument,
+  LaidOutPage,
+  PageItem,
+  TextLineItem,
+} from '@/layout/page-doc';
 import type { PathSegment, VectorShape } from '@/core/vector';
 import { svgPathData } from '@/core/vector';
 
@@ -90,19 +96,16 @@ function emitPage(
   // coordinates are already top-left/y-down: SVG's native frame.
   const plan = paintPlan(page.commands);
 
+  // What the page puts behind its content, in its own order.
+  for (const item of plan.behind) emitPageItem(out, item, laid, losses, idc);
+
   for (const f of plan.fills) {
     out.push(
       `<rect x="${fmt(f.x)}" y="${fmt(f.y)}" width="${fmt(f.width)}" height="${fmt(f.height)}" fill="#${f.fillColorHex}"/>`,
     );
   }
 
-  for (const img of plan.images) {
-    const href = imageHref(img.imageResourceName, laid);
-    if (!href) continue;
-    out.push(
-      `<image x="${fmt(img.x)}" y="${fmt(img.y)}" width="${fmt(img.width)}" height="${fmt(img.height)}" href="${href}" preserveAspectRatio="none"/>`,
-    );
-  }
+  for (const img of plan.images) emitImage(out, img, laid, idc);
 
   for (const b of plan.borders) {
     const x2 = b.x + b.width;
@@ -135,8 +138,92 @@ function emitPage(
     emitShape(out, sh.shape, idc);
   }
 
+  // A picture paints as one thing, in its own order: a metafile buries a label
+  // under a panel it draws afterwards, and the passes above would lift it out.
+  for (const picture of plan.pictures) {
+    for (const item of picture) emitPageItem(out, item, laid, losses, idc);
+  }
+
   for (const t of plan.lines) {
     emitTextLine(out, t, losses, idc);
+  }
+}
+
+/**
+ * One picture. §20.1.8.23 `a:duotone` recolours it between two colours — its
+ * dark end and its light end — which is a luminance-to-two-tone map, and SVG
+ * states exactly that: luminance into every channel, then a two-entry transfer
+ * table per channel.
+ *
+ * @param out  The SVG fragment sink.
+ * @param img  The image item.
+ * @param laid The laid-out document, for the image's data URI.
+ * @param idc  The shared id counter, for the filter's id.
+ */
+function emitImage(
+  out: Array<string>,
+  img: ImageItem,
+  laid: LaidOutDocument,
+  idc: { n: number },
+): void {
+  const href = imageHref(img.imageResourceName, laid);
+  if (!href) return;
+  let filter = '';
+  if (img.duotone) {
+    const id = `duo${String(idc.n++)}`;
+    const chan = (hex: string, at: number): number => parseInt(hex.slice(at, at + 2), 16) / 255;
+    const table = (at: number): string =>
+      `${fmt(chan(img.duotone!.shadowHex, at))} ${fmt(chan(img.duotone!.highlightHex, at))}`;
+    out.push(
+      `<filter id="${id}" color-interpolation-filters="sRGB">` +
+        `<feColorMatrix type="matrix" values="0.2126 0.7152 0.0722 0 0 0.2126 0.7152 0.0722 0 0 0.2126 0.7152 0.0722 0 0 0 0 0 1 0"/>` +
+        `<feComponentTransfer>` +
+        `<feFuncR type="table" tableValues="${table(0)}"/>` +
+        `<feFuncG type="table" tableValues="${table(2)}"/>` +
+        `<feFuncB type="table" tableValues="${table(4)}"/>` +
+        `</feComponentTransfer></filter>`,
+    );
+    filter = ` filter="url(#${id})"`;
+  }
+  out.push(
+    `<image x="${fmt(img.x)}" y="${fmt(img.y)}" width="${fmt(img.width)}" height="${fmt(img.height)}" href="${href}" preserveAspectRatio="none"${filter}/>`,
+  );
+}
+
+/**
+ * One page item, whatever its kind — for the runs that paint in their own order
+ * (what stands behind the content, and a picture's own primitives) rather than
+ * in the by-kind passes.
+ *
+ * @param out    The SVG fragment sink.
+ * @param item   The item to draw.
+ * @param laid   The laid-out document, for image resources.
+ * @param losses Where an unrenderable item records itself.
+ * @param idc    The shared id counter for generated defs.
+ */
+function emitPageItem(
+  out: Array<string>,
+  item: PageItem,
+  laid: LaidOutDocument,
+  losses: Array<Loss>,
+  idc: { n: number },
+): void {
+  if (item.type === 'shape') {
+    emitShape(out, item.shape, idc);
+    return;
+  }
+  if (item.type === 'line') {
+    emitTextLine(out, item, losses, idc);
+    return;
+  }
+  if (item.type === 'image') {
+    emitImage(out, item, laid, idc);
+    return;
+  }
+  if (item.type === 'fill') {
+    out.push(
+      `<rect x="${fmt(item.x)}" y="${fmt(item.y)}" width="${fmt(item.width)}" height="${fmt(item.height)}" fill="#${item.fillColorHex}"/>`,
+    );
   }
 }
 

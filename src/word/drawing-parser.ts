@@ -28,7 +28,7 @@ import type { PoNode } from '@/core/po-helpers';
 import type { Pt, ResourceId } from '@/core/ir';
 import type { GradientStop, ShapeGradient } from '@/core/vector';
 import { buildStroke } from '@/core/drawingml/shape-render';
-import { applyColorMods, readColorMods, resolveColorNode } from '@/core/drawingml/colors';
+import { placeholderColors, readColorMods, resolveColorNode } from '@/core/drawingml/colors';
 import { emuToPt, pt } from '@/core/ir';
 import {
   poAttr,
@@ -2225,13 +2225,6 @@ function styleRefShadow(
   return shadowFromOuterShdw(shdw, phHex ? placeholderColors(resolveColor, phHex) : resolveColor);
 }
 
-// §20.1.2.3.32 `phClr` — the colour the reference hands the style to use
-// wherever the style itself says "the placeholder".
-function placeholderColors(base: ColorResolver, phHex: string): ColorResolver {
-  return (raw) =>
-    'scheme' in raw && raw.scheme === 'phClr' ? applyColorMods(phHex, raw.mods ?? []) : base(raw);
-}
-
 // wps:txbx/w:txbxContent (the text body) + wps:bodyPr (insets + vertical
 // anchor). Returns undefined when the shape carries no text.
 // Whether `spPr` states a fill of its own at all — including `a:noFill`, which
@@ -2245,14 +2238,22 @@ const FILL_TAGS: ReadonlySet<string> = new Set([
   'a:grpFill',
 ]);
 
-function statesFill(spPr: PoNode | undefined): boolean {
+/**
+ * Whether an `spPr` states a fill AT ALL — including `a:noFill`, which is a
+ * shape saying it has none rather than saying nothing. A placeholder that says
+ * nothing inherits its prototype's.
+ *
+ * @param spPr The shape properties, or undefined.
+ * @returns Whether a fill element is present.
+ */
+export function statesFill(spPr: PoNode | undefined): boolean {
   return spPr !== undefined && poChildren(spPr).some((c) => FILL_TAGS.has(poTag(c) ?? ''));
 }
 
 // §20.1.4.2.13 `<a:fillRef>` — the fill a gallery style names. The theme's own
 // `a:fillStyleLst` slot (which could make it a gradient) is out of reach here;
 // the colour the reference names is what both references draw.
-function styleRefFill(
+export function styleRefFill(
   style: PoNode,
   resolveColor: ColorResolver,
   themeStyles?: ThemeStyles,
@@ -2285,7 +2286,7 @@ function styleRefFill(
 // §20.1.4.2.19 `<a:lnRef>` — the outline a gallery style names. Its width lives
 // in the theme's `a:lnStyleLst`, which is not reachable from here; the hairline
 // below is what a shape with no stated width already draws.
-function styleRefLine(
+export function styleRefLine(
   style: PoNode,
   resolveColor: ColorResolver,
   themeLineWidths?: ReadonlyArray<number>,
@@ -2304,6 +2305,19 @@ function styleRefLine(
   return { fill: 'solid', colorHex, width: pt(width ?? 0.75) };
 }
 
+/**
+ * §20.1.4.2.14 `a:fontRef` — the colour a gallery style writes its text in.
+ *
+ * @param style        The shape's `p:style`/`wps:style` node.
+ * @param resolveColor The document's colour resolver.
+ * @returns The 6-hex colour, or `undefined` when the style names none.
+ */
+export function styleRefFontColor(style: PoNode, resolveColor: ColorResolver): string | undefined {
+  const ref = poChildren(style).find((c) => poIs(c, 'a:fontRef'));
+  const child = firstElementChild(ref);
+  return child ? resolveColorNode(child, resolveColor) : undefined;
+}
+
 // §20.1.4.2.14 — give every run that names no colour of its own the one the
 // gallery style's `a:fontRef` names. The theme's colour is the FLOOR of the
 // cascade (§17.7.2), so a run that could inherit one — through its own
@@ -2311,14 +2325,12 @@ function styleRefLine(
 // ColorOverwritten.docx writes its arrow's two lines in a "red" and a "green"
 // paragraph style, and stamping the theme's white over them left the shape
 // blank.
-function withStyleFontColor(
+export function withStyleFontColor(
   text: ShapeTextBody,
   style: PoNode,
   resolveColor: ColorResolver,
 ): ShapeTextBody {
-  const ref = poChildren(style).find((c) => poIs(c, 'a:fontRef'));
-  const child = firstElementChild(ref);
-  const colorHex = child ? resolveColorNode(child, resolveColor) : undefined;
+  const colorHex = styleRefFontColor(style, resolveColor);
   if (colorHex === undefined) return text;
   return {
     ...text,
@@ -2564,16 +2576,28 @@ function fillFromNode(
       const resource = relId !== undefined ? resolveImage?.(relId) : undefined;
       if (resource === undefined) return { kind: 'none' };
       const crop = parseSrcRect(poFindDescendant(child, 'a:srcRect')) ?? fillRectCrop(child);
+      const rect = fillRectBox(child);
+      const duotone = blip ? duotoneOf(blip, resolveColor) : undefined;
       // §20.1.8.58 `a:tile` — the picture REPEATS at its own size instead of
       // being stretched over the box (§20.1.8.56 `a:stretch`).
       // NoFillAttrInImagedata.docx papers two text boxes with a texture that
       // way, and stretched it came out a brown blur.
       const tiled = poChildren(child).some((c) => poIs(c, 'a:tile'));
+      // §20.1.8.4 `a:alphaModFix` — how opaque the PICTURE is drawn, stated on
+      // the blip rather than on a colour. A slide backed by a photo at 70 %
+      // showed it at full strength, which on tdf146223 is a saturated red
+      // quadrant where the reference has a pale one.
+      const fixed = blip ? poChildren(blip).find((c) => poIs(c, 'a:alphaModFix')) : undefined;
+      const amt = fixed ? poIntAttr(fixed, 'amt') : undefined;
+      const alpha = amt === undefined ? undefined : Math.min(1, Math.max(0, amt / 100000));
       return {
         kind: 'picture',
         imageResource: resource,
         ...(tiled ? { tiled: true } : {}),
         ...(crop ? { imageCrop: crop } : {}),
+        ...(rect ? { imageFillRect: rect } : {}),
+        ...(duotone ? { duotone } : {}),
+        ...(alpha !== undefined && alpha < 1 ? { alpha } : {}),
       };
     }
     if (poIs(child, 'a:solidFill')) {
@@ -2614,7 +2638,9 @@ function fillFromNode(
     }
     if (poIs(child, 'a:gradFill')) {
       const gradient = parseGradient(child, resolveColor);
-      return gradient ? { kind: 'gradient', gradient } : { kind: 'none' };
+      if (!gradient) return { kind: 'none' };
+      const alpha = gradientAlpha(gradient.stops);
+      return { kind: 'gradient', gradient, ...(alpha !== undefined ? { alpha } : {}) };
     }
   }
   return undefined;
@@ -2695,6 +2721,89 @@ function fillRectCrop(blipFill: PoNode): ImageCrop | undefined {
     right: clamp(-r / spanX),
     bottom: clamp(-b / spanY),
   };
+}
+
+/**
+ * §20.1.8.16 `a:clrChange` — the colour a picture declares away, and what it
+ * becomes. `useA` (default true) says the destination's alpha counts, so a
+ * destination at zero alpha knocks the colour OUT rather than replacing it.
+ *
+ * @param blip         The `a:blip` node.
+ * @param resolveColor The colour resolver.
+ * @returns The change, or `undefined` when the blip declares none.
+ */
+export function colorChangeOf(
+  blip: PoNode,
+  resolveColor: ColorResolver,
+): { readonly fromHex: string; readonly toHex: string; readonly transparent: boolean } | undefined {
+  const change = poChildren(blip).find((c) => poIs(c, 'a:clrChange'));
+  if (!change) return undefined;
+  const side = (tag: string): PoNode | undefined => poChildren(change).find((c) => poIs(c, tag));
+  const from = side('a:clrFrom');
+  const to = side('a:clrTo');
+  const inner = (holder: PoNode | undefined): PoNode | undefined =>
+    holder ? poChildren(holder).find((c) => poTag(c) !== undefined) : undefined;
+  const fromNode = inner(from);
+  const toNode = inner(to);
+  const fromHex = fromNode ? resolveColorNode(fromNode, resolveColor) : undefined;
+  if (fromHex === undefined) return undefined;
+  const toHex = (toNode ? resolveColorNode(toNode, resolveColor) : undefined) ?? fromHex;
+  const useA = poAttr(change, 'useA') !== '0';
+  const alpha = toNode ? nodeAlpha(toNode) : undefined;
+  return { fromHex, toHex, transparent: useA && alpha !== undefined && alpha <= 0.001 };
+}
+
+/** §20.1.2.3.1 — a colour node's own `a:alpha`, as a fraction. */
+function nodeAlpha(color: PoNode): number | undefined {
+  const alpha = poChildren(color).find((c) => poIs(c, 'a:alpha'));
+  const val = alpha ? poIntAttr(alpha, 'val') : undefined;
+  return val === undefined ? undefined : val / 100000;
+}
+
+/**
+ * §20.1.8.23 `a:duotone` — the two colours a picture is recoloured between,
+ * dark end first. Both are ordinary colour containers, so a theme's `phClr`
+ * resolves through whatever resolver the caller bound.
+ *
+ * @param blip         The `a:blip` node.
+ * @param resolveColor The colour resolver.
+ * @returns The pair, or `undefined` when the blip states no duotone.
+ */
+function duotoneOf(
+  blip: PoNode,
+  resolveColor: ColorResolver,
+): { readonly shadowHex: string; readonly highlightHex: string } | undefined {
+  const duotone = poChildren(blip).find((c) => poIs(c, 'a:duotone'));
+  if (!duotone) return undefined;
+  const colors = poChildren(duotone)
+    .map((c) => resolveColorNode(c, resolveColor))
+    .filter((hex): hex is string => hex !== undefined);
+  const [shadowHex, highlightHex] = colors;
+  return shadowHex !== undefined && highlightHex !== undefined
+    ? { shadowHex, highlightHex }
+    : undefined;
+}
+
+/**
+ * §20.1.8.30 `a:stretch/a:fillRect` with POSITIVE insets — the part of the box
+ * the picture is stretched INTO. The negative case is the zoom {@link
+ * fillRectCrop} reads; this is the other one, and unread it drew a background
+ * picture inset into the corner of a slide across the whole of it
+ * (tdf153466.pptx: a triangle five times its size).
+ *
+ * @param blipFill The `a:blipFill` node.
+ * @returns The rect as fractions of the box, or `undefined` when every inset
+ *          is zero or negative.
+ */
+function fillRectBox(blipFill: PoNode): ShapeFill['imageFillRect'] {
+  const stretch = poChildren(blipFill).find((c) => poIs(c, 'a:stretch'));
+  const rect = stretch ? poChildren(stretch).find((c) => poIs(c, 'a:fillRect')) : undefined;
+  if (!rect) return undefined;
+  const side = (name: string): number => Math.max(0, (poIntAttr(rect, name) ?? 0) / 100000);
+  const [left, top, right, bottom] = [side('l'), side('t'), side('r'), side('b')];
+  if (left + top + right + bottom === 0) return undefined;
+  if (left + right >= 1 || top + bottom >= 1) return undefined;
+  return { left, top, right, bottom };
 }
 
 /**
@@ -2909,6 +3018,40 @@ function colorFromContainer(parent: PoNode, resolveColor: ColorResolver): string
   return undefined;
 }
 
+/**
+ * §20.1.2.3.1 — a gradient's stop transparencies, settled.
+ *
+ * A page paints a gradient at ONE transparency, so only a gradient whose every
+ * stop is translucent can carry it: the strongest stop decides whether the
+ * shape is there at all, which is the question a 7%-and-fading glow asks
+ * (tdf123684's master draws one over a dark slide, and composited over the
+ * paper instead it was an opaque white disc).
+ *
+ * A gradient that mixes a translucent stop with an opaque one has no such
+ * answer, so it keeps the colours the resolver already washed toward the paper
+ * — an approximation, but the one that has always been drawn: smartart-simple's
+ * cyan-to-purple sweep sets 75% on its purple end alone.
+ */
+function normalizeStopAlpha(stops: Array<GradientStop>): void {
+  if (gradientAlpha(stops) === undefined) {
+    // No such answer: drop the transparency and keep the washed colours.
+    for (const [i, s] of stops.entries()) {
+      if (s.alpha !== undefined) stops[i] = { offset: s.offset, colorHex: s.colorHex };
+    }
+    return;
+  }
+  // Every stop is translucent: give each its own colour back, unwashed.
+  for (const [i, s] of stops.entries()) {
+    stops[i] = { ...s, colorHex: unblendWhite(s.colorHex, s.alpha ?? 1) };
+  }
+}
+
+/** The one transparency a gradient can be drawn at; see {@link normalizeStopAlpha}. */
+function gradientAlpha(stops: ReadonlyArray<GradientStop>): number | undefined {
+  const strongest = Math.max(...stops.map((s) => s.alpha ?? 1));
+  return strongest < 1 ? strongest : undefined;
+}
+
 // a:gradFill → a gradient fill (EP16). Reads the a:gsLst/a:gs stops (each with a
 // @pos in 1000ths of a percent and a colour child), and the direction from a:lin
 // (@ang in 60000ths of a degree, clockwise) or a:path (a radial/path gradient).
@@ -2926,10 +3069,12 @@ function parseGradient(grad: PoNode, resolveColor: ColorResolver): ShapeGradient
     if (!hex) continue;
     const pos = poIntAttr(gs, 'pos');
     const offset = pos !== undefined ? clampUnit(pos / 100000) : stops.length === 0 ? 0 : 1;
-    stops.push({ offset, colorHex: hex });
+    const alpha = containerAlpha(gs);
+    stops.push({ offset, colorHex: hex, ...(alpha !== undefined ? { alpha } : {}) });
   }
   if (stops.length === 0) return undefined;
   stops.sort((a, b) => a.offset - b.offset);
+  normalizeStopAlpha(stops);
   // §20.1.8.46 `a:path` — a radial sweep, and it says both WHAT SHAPE its
   // contours are (`circle` / `rect` / `shape`) and WHERE it starts: the
   // `a:fillToRect` is the rectangle the FIRST stop fills, in the box's own

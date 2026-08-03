@@ -19,6 +19,14 @@ Upstream path: `sw/qa/extras/ooxmlexport/data` (ref `master`).
 
 ## LibreOffice/core — MPL-2.0
 
+Upstream path: `sd/qa/unit/data/pptx` (ref `master`).
+
+| File | sha256 (16) | Why it is here |
+|---|---|---|
+| `master-bg-color.pptx` | `88cba9c63fdb464b` | A master background of `schemeClr bg1` under a map that says bg1 means dk2 — the deck is blue, and read without the map it is white. |
+
+## LibreOffice/core — MPL-2.0
+
 Upstream path: `sc/qa/unit/data/xlsx` (ref `master`).
 
 | File | sha256 (16) | Why it is here |
@@ -37,6 +45,14 @@ Upstream path: `sc/qa/unit/data/xlsx` (ref `master`).
 | `tdf76115.xlsx` | `1428f774dd01d4c5` | Backslash ZIP separators, and keeps its worksheet at xl/sheet1.xml instead of xl/worksheets/. |
 | `tdf82984_zip64XLSXImport.xlsx` | `32299060140eb381` | Zip64: every entry declares the 0xFFFFFFFF size sentinel rather than its real size. |
 | `too-many-cols-rows.xlsx` | `2e0bb99477a00d8b` | A 2.5 KB sheet declaring A1:XFE16777217 — the amplification case behind the total-cell budget. |
+
+## apache/poi — Apache-2.0
+
+Upstream path: `test-data/slideshow` (ref `trunk`).
+
+| File | sha256 (16) | Why it is here |
+|---|---|---|
+| `bar-chart.pptx` | `79e1d218bfb2903e` | A deck whose chart carries its data as `ppt/embeddings/Microsoft_Excel_Worksheet1.xlsx`, STORED — so the embedded workbook's own `xl/workbook.xml` lies in the outer file's bytes, where a substring sniff read it as a workbook. |
 
 ## apache/poi — Apache-2.0
 

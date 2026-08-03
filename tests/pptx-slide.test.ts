@@ -9,6 +9,9 @@ import { describe, expect, it } from 'vitest';
 
 import { buildPptx } from './fixtures/build-pptx';
 import { buildTinyPng } from './fixtures/build-png';
+import { FontRegistry } from '@/core/font';
+import { paintPlan } from '@/layout/page-doc';
+import { layoutStyledDocument } from '@/layout/styled-layout';
 import { Ream } from '@/core/converter/ream';
 import { PdfFile } from '@/pdf-reader/document';
 import { extractPageText } from '@/pdf-reader/text';
@@ -155,6 +158,207 @@ describe('pptx placeholder cascade (E-PPTX PX2)', () => {
     expect(run?.properties.bold).toBe(true);
   });
 
+  // A run states bold/italic/underline to turn them OFF as much as on:
+  // 45541_Header's master body style is bold and every slide's own runs say
+  // `b="0"`, so read as "bold when true, silent otherwise" the deck came out
+  // bold from end to end.
+  it('lets a run turn OFF the bold its master states', () => {
+    const styles =
+      `<p:txStyles><p:titleStyle><a:lvl1pPr><a:defRPr b="1" i="1" u="sng"/></a:lvl1pPr>` +
+      `</p:titleStyle><p:bodyStyle/><p:otherStyle/></p:txStyles>`;
+    const deck = (rPr: string) =>
+      firstShapeRun(
+        Ream.parse(
+          buildPptx(
+            [
+              `<p:sp><p:nvSpPr><p:cNvPr id="2" name="Title 1"/><p:cNvSpPr/>` +
+                `<p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr><p:spPr/>` +
+                `<p:txBody><a:bodyPr/><a:p><a:r>${rPr}<a:t>Plain</a:t></a:r></a:p>` +
+                `</p:txBody></p:sp>`,
+            ],
+            { layoutMaster: { layoutSpTree: LAYOUT_TITLE, txStyles: styles } },
+          ),
+        ),
+      );
+    expect(deck('<a:rPr lang="en"/>')?.properties.bold).toBe(true);
+    expect(deck('<a:rPr lang="en" b="0"/>')?.properties.bold).toBe(false);
+    expect(deck('<a:rPr lang="en" i="0"/>')?.properties.italic).toBe(false);
+    expect(deck('<a:rPr lang="en" u="none"/>')?.properties.underline).toBe('none');
+  });
+
+  // §21.1.2.2.7 `@cap` — the text is DISPLAYED in capitals whatever it stores.
+  // Stated in a master's title style it reaches every slide: themes.pptx writes
+  // "Trade show" and shows TRADE SHOW.
+  it('takes the capitals its master states, and gives them back on cap="none"', () => {
+    const caps =
+      `<p:txStyles><p:titleStyle><a:lvl1pPr><a:defRPr cap="all"/></a:lvl1pPr></p:titleStyle>` +
+      `<p:bodyStyle/><p:otherStyle/></p:txStyles>`;
+    const deck = (rPr: string): ReturnType<typeof Ream.parse> =>
+      Ream.parse(
+        buildPptx(
+          [
+            `<p:sp><p:nvSpPr><p:cNvPr id="2" name="Title 1"/><p:cNvSpPr/>` +
+              `<p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr><p:spPr/>` +
+              `<p:txBody><a:bodyPr/><a:p><a:r>${rPr}<a:t>Trade show</a:t></a:r></a:p>` +
+              `</p:txBody></p:sp>`,
+          ],
+          { layoutMaster: { layoutSpTree: LAYOUT_TITLE, txStyles: caps } },
+        ),
+      );
+    expect(firstShapeRun(deck('<a:rPr lang="en"/>'))?.properties.caps).toBe(true);
+    expect(firstShapeRun(deck('<a:rPr lang="en" cap="none"/>'))?.properties.caps).toBe(false);
+    expect(firstShapeRun(deck('<a:rPr lang="en" cap="small"/>'))?.properties.smallCaps).toBe(true);
+  });
+
+  // §21.1.2.4.x — a paragraph states a bullet only where it differs from the
+  // one its level already carries.
+  it("draws the bullet the master's body style names, without one on the slide", () => {
+    const body =
+      `<p:txStyles><p:titleStyle/>` +
+      `<p:bodyStyle><a:lvl1pPr marL="285750" indent="-285750">` +
+      `<a:buChar char="–"/><a:defRPr sz="1800"/></a:lvl1pPr></p:bodyStyle>` +
+      `<p:otherStyle/></p:txStyles>`;
+    const slide =
+      `<p:sp><p:nvSpPr><p:cNvPr id="3" name="Body 2"/><p:cNvSpPr/>` +
+      `<p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5486400" cy="914400"/></a:xfrm></p:spPr>` +
+      `<p:txBody><a:bodyPr/><a:p><a:r><a:rPr lang="en"/><a:t>With a solid fill</a:t></a:r>` +
+      `</a:p></p:txBody></p:sp>`;
+    const doc = Ream.parse(buildPptx([slide], { layoutMaster: { txStyles: body } }));
+    const runs = doc.flow.body.flatMap((el) =>
+      el.kind === 'shape' && el.shape.text
+        ? el.shape.text.content.flatMap((c) => (c.kind === 'paragraph' ? c.paragraph.runs : []))
+        : [],
+    );
+    expect(runs[0]?.listMarker).toBe(true);
+    expect(runs[0]?.text.trim()).toBe('–');
+    expect(runs[1]?.text).toBe('With a solid fill');
+    // §17.3.1.12 — a hanging indent is itself a tab stop, and the tab after the
+    // marker is what carries the text out to the body indent (marL 285750).
+    expect(runs[0]?.text).toBe('–\t');
+  });
+
+  // §21.1.2.4.5 `a:buFont` — the character is stated IN THAT FACE, and the
+  // symbol faces are not alphabets: Wingdings `l` is a filled circle. Read as a
+  // letter it printed a column of `l`s down all eleven slides of 45541_Header.
+  // Its size and colour come from the level too, not only from the paragraph.
+  it('reads a symbol-font bullet, and takes its size and colour from the level', async () => {
+    const body =
+      `<p:txStyles><p:titleStyle/>` +
+      `<p:bodyStyle><a:lvl1pPr marL="342900" indent="-342900">` +
+      `<a:buClr><a:srgbClr val="00B0F0"/></a:buClr><a:buSzPct val="80000"/>` +
+      `<a:buFont typeface="Wingdings"/><a:buChar char="l"/>` +
+      `<a:defRPr sz="3200"/></a:lvl1pPr></p:bodyStyle><p:otherStyle/></p:txStyles>`;
+    const slide =
+      `<p:sp><p:nvSpPr><p:cNvPr id="3" name="Body 2"/><p:cNvSpPr/>` +
+      `<p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5486400" cy="914400"/></a:xfrm></p:spPr>` +
+      `<p:txBody><a:bodyPr/><a:p><a:r><a:rPr lang="en"/><a:t>Donors</a:t></a:r></a:p>` +
+      `</p:txBody></p:sp>`;
+    const pptx = buildPptx([slide], { layoutMaster: { txStyles: body } });
+    const marker = Ream.parse(pptx).flow.body.flatMap((el) =>
+      el.kind === 'shape' && el.shape.text
+        ? el.shape.text.content.flatMap((c) =>
+            c.kind === 'paragraph' ? c.paragraph.runs.filter((r) => r.listMarker) : [],
+          )
+        : [],
+    )[0];
+    expect(marker?.text.trim()).toBe('●'); // Wingdings `l` is a black circle
+    expect(marker?.properties.colorHex).toBe('00B0F0');
+    expect(marker?.properties.fontSizePt).toBeCloseTo(25.6, 5); // 80% of 32pt
+    // …and the font a document is RENDERED with may have no such glyph, which
+    // prints a box. The dot every text font carries says the same thing.
+    const file = PdfFile.parse(await Ream.parse(pptx).convert('pdf', { fonts: FONTS }));
+    const drawn = extractPageText(file, file.pages()[0]!)
+      .map((r) => r.text)
+      .join('');
+    expect(drawn).toContain('•');
+    expect(drawn).not.toContain('●');
+  });
+
+  // The page, the band and a table cell all apply a paragraph's indent; a TEXT
+  // BOX did not, so a slide's bullets stood in the margin and their words began
+  // wherever the dot ended.
+  it('stands the bulleted text at the indent its paragraph asks for', async () => {
+    const body =
+      `<p:txStyles><p:titleStyle/>` +
+      `<p:bodyStyle><a:lvl1pPr marL="914400" indent="-914400">` +
+      `<a:buChar char="•"/><a:defRPr sz="1800"/></a:lvl1pPr></p:bodyStyle>` +
+      `<p:otherStyle/></p:txStyles>`;
+    const slide =
+      `<p:sp><p:nvSpPr><p:cNvPr id="3" name="Body 2"/><p:cNvSpPr/>` +
+      `<p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5486400" cy="914400"/></a:xfrm></p:spPr>` +
+      `<p:txBody><a:bodyPr lIns="0"/><a:p><a:r><a:rPr lang="en"/><a:t>Indented</a:t></a:r>` +
+      `</a:p></p:txBody></p:sp>`;
+    const pptx = buildPptx([slide], { layoutMaster: { txStyles: body } });
+    const file = PdfFile.parse(await Ream.parse(pptx).convert('pdf', { fonts: FONTS }));
+    const runs = extractPageText(file, file.pages()[0]!);
+    const word = runs.find((r) => r.text.replace(/\s/gu, '').includes('Indented'));
+    // marL 914400 EMU = 72 pt from the box's left edge (which is the page's).
+    expect(word?.x).toBeGreaterThan(66);
+    expect(word?.x).toBeLessThan(78);
+    // …and the dot itself stands out in front of it, at the box's edge.
+    const dot = runs.find((r) => r.text.includes('•'));
+    expect(dot?.x).toBeLessThan(6);
+  });
+
+  // §21.1.2.4.2/.3 — a bullet is drawn at the size of the TEXT IT LEADS,
+  // scaled by `a:buSzPct`. Drawn at the level's inherited size instead,
+  // ArtisticEffectSample's dots came out 48pt in front of 18pt text and every
+  // line stood three times too tall.
+  it('sizes the bullet by the run it leads, not by the level default', () => {
+    const body =
+      `<p:txStyles><p:titleStyle/>` +
+      `<p:bodyStyle><a:lvl1pPr><a:buChar char="•"/><a:defRPr sz="4800"/></a:lvl1pPr>` +
+      `</p:bodyStyle><p:otherStyle/></p:txStyles>`;
+    const slide = (pPr: string): string =>
+      `<p:sp><p:nvSpPr><p:cNvPr id="3" name="Body 2"/><p:cNvSpPr/>` +
+      `<p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5486400" cy="914400"/></a:xfrm></p:spPr>` +
+      `<p:txBody><a:bodyPr/><a:p>${pPr}<a:r><a:rPr lang="en" sz="1800"/><a:t>Small</a:t></a:r>` +
+      `</a:p></p:txBody></p:sp>`;
+    const marker = (pPr: string) => {
+      const doc = Ream.parse(buildPptx([slide(pPr)], { layoutMaster: { txStyles: body } }));
+      return doc.flow.body.flatMap((el) =>
+        el.kind === 'shape' && el.shape.text
+          ? el.shape.text.content.flatMap((c) =>
+              c.kind === 'paragraph' ? c.paragraph.runs.filter((r) => r.listMarker) : [],
+            )
+          : [],
+      )[0];
+    };
+    expect(marker('')?.properties.fontSizePt).toBe(18); // the run's, not 48
+    expect(marker('<a:pPr><a:buSzPct val="50000"/></a:pPr>')?.properties.fontSizePt).toBe(9);
+    expect(marker('<a:pPr><a:buSzPts val="1200"/></a:pPr>')?.properties.fontSizePt).toBe(12);
+    expect(
+      marker('<a:pPr><a:buClr><a:srgbClr val="FF0000"/></a:buClr></a:pPr>')?.properties.colorHex,
+    ).toBe('FF0000');
+  });
+
+  // §20.1.4.2.14 — a gallery style's `a:fontRef` colour belongs UNDER the run's
+  // own and OVER the deck's default. Stamped on afterwards it lost to the `tx1`
+  // every run inherits from `p:defaultTextStyle`: themes.pptx's green box asks
+  // for `lt1` and drew its white caption black.
+  it("writes a styled shape's text in the colour its style names", () => {
+    const shape =
+      `<p:sp><p:nvSpPr><p:cNvPr id="5" name="Rectangle 4"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2971800" cy="1752600"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>` +
+      `<p:style><a:fillRef idx="1"><a:schemeClr val="accent1"/></a:fillRef>` +
+      `<a:fontRef idx="minor"><a:srgbClr val="FFFFFF"/></a:fontRef></p:style>` +
+      `<p:txBody><a:bodyPr/><a:p><a:r><a:rPr lang="en"/><a:t>white</a:t></a:r></a:p></p:txBody>` +
+      `</p:sp>`;
+    const doc = Ream.parse(
+      buildPptx([shape], {
+        defaultTextStyle:
+          `<a:lvl1pPr><a:defRPr sz="1800"><a:solidFill>` +
+          `<a:srgbClr val="000000"/></a:solidFill></a:defRPr></a:lvl1pPr>`,
+      }),
+    );
+    expect(firstShapeRun(doc)?.properties.colorHex).toBe('FFFFFF');
+  });
+
   it("lets a run's own a:rPr override the master default size", () => {
     const pptx = buildPptx([titlePlaceholder('Big', 6000)], {
       layoutMaster: { layoutSpTree: LAYOUT_TITLE, txStyles: TX_STYLES },
@@ -203,11 +407,50 @@ describe('pptx slide images (E-PPTX PX3)', () => {
     expect(img.altText).toBe('a red square'); // p:cNvPr @descr
   });
 
+  // §20.1.8.4 `a:alphaModFix` — how opaque the picture is DRAWN. A layout that
+  // lays a photograph behind its title sets it low (ArtisticEffectSample's
+  // cover shows one at 52%), and drawn full-strength the words on it are lost.
+  it('draws a picture at the transparency its blip fixes', () => {
+    const pic =
+      `<p:pic><p:nvPicPr><p:cNvPr id="5" name="p"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>` +
+      `<p:blipFill><a:blip r:embed="rId7"><a:alphaModFix amt="52000"/></a:blip>` +
+      `<a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`;
+    const doc = Ream.parse(
+      buildPptx([pic], {
+        media: { 'ppt/media/image1.png': buildTinyPng(2, 2, [255, 0, 0, 255]) },
+        slideRels: [`<Relationship Id="rId7" Type="${IMAGE_REL}" Target="../media/image1.png"/>`],
+      }),
+    );
+    const el = doc.flow.body.find((e) => e.kind === 'image');
+    expect(el?.kind === 'image' && el.image.alpha).toBeCloseTo(0.52, 5);
+  });
+
   it('embeds the slide image into the rendered PDF', async () => {
     const pdf = await Ream.parse(picDeck()).convert('pdf', { fonts: FONTS });
     expect(PdfFile.parse(pdf).pages().length).toBe(1);
     // An image XObject made it into the PDF.
     expect(latin1.decode(pdf)).toContain('/Image');
+  });
+});
+
+describe('what a slide shape states about its own box', () => {
+  // §20.1.7.6 — a shape may be turned in its box, and a slide says so on the
+  // same `a:xfrm` its position comes from. Unread, the blue triangle
+  // ArtisticEffectSample's layout stands on its side pointed up, not right.
+  it('turns and mirrors a shape the way its a:xfrm says', () => {
+    const sp = (attrs: string): string =>
+      `<p:sp><p:spPr><a:xfrm ${attrs}><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+      `<a:prstGeom prst="triangle"><a:avLst/></a:prstGeom>` +
+      `<a:solidFill><a:srgbClr val="1F7ABF"/></a:solidFill></p:spPr></p:sp>`;
+    const shape = (attrs: string) => {
+      const el = Ream.parse(buildPptx([sp(attrs)])).flow.body.find((e) => e.kind === 'shape');
+      return el?.kind === 'shape' ? el.shape : undefined;
+    };
+    expect(shape('rot="5400000"')?.transform?.rotation60k).toBe(5400000);
+    expect(shape('flipH="1"')?.transform?.flipH).toBe(true);
+    expect(shape('')?.transform).toBeUndefined();
   });
 });
 
@@ -323,6 +566,45 @@ describe('pptx slide charts (E-PPTX PX4)', () => {
     const pdf = await Ream.parse(chartDeck()).convert('pdf', { fonts: FONTS });
     expect(PdfFile.parse(pdf).pages().length).toBe(1);
   });
+
+  // §20.1.8.14 — a chart may be papered with a PICTURE rather than filled with
+  // a colour, and the blip is named through the CHART part's own relationships.
+  // chart-texture-bg.pptx tiles a woven cloth over its whole frame, and a chart
+  // on white is a different chart.
+  it('papers a chart with the picture its frame is filled with', async () => {
+    const textured = BAR_CHART.replace(
+      '</c:chart>',
+      '</c:chart><c:spPr><a:blipFill><a:blip r:embed="rIdTex"/>' +
+        '<a:tile tx="0" ty="0" sx="100000" sy="100000"/></a:blipFill></c:spPr>',
+    ).replace(
+      '<c:chartSpace ',
+      '<c:chartSpace xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ',
+    );
+    const gf =
+      `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="6" name="Chart 5"/>` +
+      `<p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>` +
+      `<p:xfrm><a:off x="0" y="0"/><a:ext cx="5486400" cy="3200400"/></p:xfrm>` +
+      `<a:graphic><a:graphicData uri="${CHART_NS}">` +
+      `<c:chart xmlns:c="${CHART_NS}" r:id="rId8"/></a:graphicData></a:graphic></p:graphicFrame>`;
+    const pptx = buildPptx([gf], {
+      media: {
+        'ppt/charts/chart1.xml': new TextEncoder().encode(textured),
+        'ppt/charts/_rels/chart1.xml.rels': new TextEncoder()
+          .encode(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rIdTex" Type="${IMAGE_REL}" Target="../media/tex.png"/></Relationships>`),
+        'ppt/media/tex.png': buildTinyPng(2, 2, [200, 170, 100, 255]),
+      },
+      slideRels: [`<Relationship Id="rId8" Type="${CHART_REL}" Target="../charts/chart1.xml"/>`],
+    });
+    const doc = Ream.parse(pptx);
+    const chart = [...(doc.flow.charts?.values() ?? [])][0];
+    expect(chart?.frameFillImage?.tiled).toBe(true);
+    expect(chart?.frameFillImage?.resource).toBeDefined();
+    // …and the picture reaches the page: an XObject is drawn for it.
+    const pdf = await Ream.parse(pptx).convert('pdf', { fonts: FONTS });
+    expect(latin1.decode(pdf)).toContain('/Image');
+  });
 });
 
 const TABLE_NS = 'http://schemas.openxmlformats.org/drawingml/2006/table';
@@ -350,6 +632,130 @@ function firstTable(doc: ReturnType<typeof Ream.parse>) {
   const el = doc.flow.body.find((e) => e.kind === 'table');
   return el?.kind === 'table' ? el.table : undefined;
 }
+
+describe('a slide table wears its style and stands in its frame', () => {
+  const TABLE_STYLES_REL =
+    'http://schemas.openxmlformats.org/officeDocument/2006/relationships/tableStyles';
+  const GUID = '{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}';
+  const styles =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+    `<a:tblStyleLst xmlns:a="${A_MAIN}" def="${GUID}"><a:tblStyle styleId="${GUID}" styleName="s">` +
+    `<a:wholeTbl><a:tcStyle><a:tcBdr><a:insideH><a:ln w="12700">` +
+    `<a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill></a:ln></a:insideH></a:tcBdr>` +
+    `<a:fill><a:solidFill><a:srgbClr val="DDDDDD"/></a:solidFill></a:fill></a:tcStyle></a:wholeTbl>` +
+    `<a:band1H><a:tcStyle><a:fill><a:solidFill><a:srgbClr val="BBCCEE"/></a:solidFill></a:fill>` +
+    `</a:tcStyle></a:band1H>` +
+    `<a:firstRow><a:tcTxStyle b="on"><a:srgbClr val="FFFFFF"/></a:tcTxStyle>` +
+    `<a:tcStyle><a:fill><a:solidFill><a:srgbClr val="4472C4"/></a:solidFill></a:fill>` +
+    `</a:tcStyle></a:firstRow></a:tblStyle></a:tblStyleLst>`;
+  const tc = (text: string, own = ''): string =>
+    `<a:tc><a:txBody><a:bodyPr/><a:p><a:r><a:rPr lang="en"/><a:t>${text}</a:t></a:r></a:p>` +
+    `</a:txBody><a:tcPr>${own}</a:tcPr></a:tc>`;
+  const deck = (tblPr: string): ReturnType<typeof Ream.parse> =>
+    Ream.parse(
+      buildPptx(
+        [
+          `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="6" name="t"/><p:cNvGraphicFramePr/>` +
+            `<p:nvPr/></p:nvGraphicFramePr>` +
+            `<p:xfrm><a:off x="914400" y="1828800"/><a:ext cx="5486400" cy="1828800"/></p:xfrm>` +
+            `<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">` +
+            `<a:tbl>${tblPr}<a:tblGrid><a:gridCol w="2743200"/><a:gridCol w="2743200"/></a:tblGrid>` +
+            `<a:tr h="457200">${tc('H1')}${tc('H2')}</a:tr>` +
+            `<a:tr h="457200">${tc('a')}${tc('b')}</a:tr>` +
+            `<a:tr h="457200">${tc('c')}` +
+            tc('own', '<a:solidFill><a:srgbClr val="FF0000"/></a:solidFill>') +
+            `</a:tr></a:tbl></a:graphicData></a:graphic></p:graphicFrame>`,
+        ],
+        {
+          presentationRels: `<Relationship Id="rIdTs" Type="${TABLE_STYLES_REL}" Target="tableStyles.xml"/>`,
+          media: { 'ppt/tableStyles.xml': new TextEncoder().encode(styles) },
+        },
+      ),
+    );
+  const table = (doc: ReturnType<typeof Ream.parse>) =>
+    doc.flow.body.flatMap((el) => (el.kind === 'table' ? [el.table] : []))[0];
+
+  it('stands at the frame its slide puts it in', () => {
+    const t = table(deck('<a:tblPr/>'));
+    expect(t?.properties.float?.posH?.offsetPt).toBe(72); // 914400 EMU
+    expect(t?.properties.float?.posV?.offsetPt).toBe(144);
+  });
+
+  // §20.1.4.2.24 — a table wears the style it NAMES; the flags say which of its
+  // conditional parts reach the cells.
+  const named = (flags: string): string =>
+    `<a:tblPr ${flags}><a:tableStyleId>${GUID}</a:tableStyleId></a:tblPr>`;
+
+  it('takes the fills, the rules and the bold its style names', () => {
+    const t = table(deck(named('firstRow="1" bandRow="1"')));
+    const shading = (r: number, c: number): string | undefined =>
+      t?.rows[r]?.cells[c]?.properties.shading?.colorHex;
+    expect(shading(0, 0)).toBe('4472C4'); // the header row
+    expect(shading(1, 0)).toBe('BBCCEE'); // …the first band under it
+    expect(shading(2, 0)).toBe('DDDDDD'); // …and the whole-table fill on the next
+    expect(shading(2, 1)).toBe('FF0000'); // a cell's OWN fill beats the style
+    expect(t?.rows[0]?.cells[0]?.properties.borders?.insideH?.colorHex).toBe('FFFFFF');
+    const run = t?.rows[0]?.cells[0]?.content.flatMap((b) =>
+      b.kind === 'paragraph' ? b.paragraph.runs : [],
+    )[0];
+    expect(run?.properties.bold).toBe(true);
+  });
+
+  it('leaves the style alone when the table asks for no part of it', () => {
+    const t = table(deck(named('firstRow="0" bandRow="0"')));
+    expect(t?.rows[0]?.cells[0]?.properties.shading?.colorHex).toBe('DDDDDD');
+  });
+
+  // The list's `@def` is the style PowerPoint applies when a table is INSERTED,
+  // and the table then records that GUID itself — it is not a fallback for one
+  // that names nothing (table-with-no-theme is two bare rows, not blue banding).
+  it('wears nothing when it names no style, whatever the list defaults to', () => {
+    const t = table(deck('<a:tblPr firstRow="1" bandRow="1"/>'));
+    expect(t?.rows[0]?.cells[0]?.properties.shading).toBeUndefined();
+    expect(t?.rows[2]?.cells[1]?.properties.shading?.colorHex).toBe('FF0000');
+  });
+
+  // §21.1.3.17 — the cell's own word about its fill and its four rules.
+  it('keeps a cell transparent when the cell itself says a:noFill', () => {
+    const t = table(
+      Ream.parse(
+        buildPptx(
+          [
+            `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="6" name="t"/>` +
+              `<p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>` +
+              `<p:xfrm><a:off x="0" y="0"/><a:ext cx="5486400" cy="914400"/></p:xfrm>` +
+              `<a:graphic><a:graphicData uri="${TABLE_NS}"><a:tbl>${named('firstRow="1"')}` +
+              `<a:tblGrid><a:gridCol w="2743200"/><a:gridCol w="2743200"/></a:tblGrid><a:tr h="457200">` +
+              tc(
+                'bare',
+                '<a:lnL w="38100"><a:solidFill><a:srgbClr val="2670C9"><a:alpha val="0"/>' +
+                  '</a:srgbClr></a:solidFill></a:lnL><a:lnB w="38100"><a:solidFill>' +
+                  '<a:srgbClr val="2670C9"/></a:solidFill></a:lnB><a:noFill/>',
+              ) +
+              tc('styled') +
+              `</a:tr></a:tbl></a:graphicData></a:graphic></p:graphicFrame>`,
+          ],
+          {
+            presentationRels: `<Relationship Id="rIdTs" Type="${TABLE_STYLES_REL}" Target="tableStyles.xml"/>`,
+            media: { 'ppt/tableStyles.xml': new TextEncoder().encode(styles) },
+          },
+        ),
+      ),
+    );
+    const bare = t?.rows[0]?.cells[0];
+    expect(bare?.properties.shading).toBeUndefined(); // the style's header fill is off
+    expect(bare?.properties.borders?.left?.style).toBe('none'); // alpha 0 draws nothing
+    expect(bare?.properties.borders?.bottom?.colorHex).toBe('2670C9');
+    expect(bare?.properties.borders?.bottom?.width).toBe(3); // 38100 EMU
+    expect(t?.rows[0]?.cells[1]?.properties.shading?.colorHex).toBe('4472C4');
+  });
+
+  it('keeps each row as tall as it asks (a:tr@h is a minimum)', () => {
+    const t = table(deck('<a:tblPr/>'));
+    expect(t?.rows[0]?.properties.height).toBe(36); // 457200 EMU
+    expect(t?.rows[0]?.properties.heightRule).toBe('atLeast');
+  });
+});
 
 describe('pptx slide tables (E-PPTX PX4)', () => {
   it('reads an a:tbl graphicFrame into a FlowDoc table', () => {
@@ -453,6 +859,666 @@ describe('pptx slide backgrounds (E-PPTX PX5b)', () => {
       }),
     );
     expect(firstShape(doc)?.fill.colorHex).toBe('112233');
+  });
+});
+
+const THEME = // dk2 is the blue this deck calls its background
+  `<a:dk1><a:srgbClr val="000000"/></a:dk1><a:lt1><a:srgbClr val="FFFF00"/></a:lt1>` +
+  `<a:dk2><a:srgbClr val="0066CC"/></a:dk2><a:lt2><a:srgbClr val="273943"/></a:lt2>`;
+const SCHEME_BG =
+  // a background painted with the bg1 ALIAS, not a slot
+  `<p:bg><p:bgPr><a:solidFill><a:schemeClr val="bg1"/></a:solidFill></p:bgPr></p:bg>`;
+
+describe("pptx colour map — what a deck's bg1 and tx1 mean (§19.3.1.6)", () => {
+  it("reads bg1 through the master's map, not the fixed DrawingML alias", () => {
+    // Without the map, `bg1` means lt1 — here yellow, and a deck that is blue
+    // in PowerPoint came out yellow across every slide.
+    const mapped = buildPptx([''], {
+      layoutMaster: { theme: THEME, masterBg: SCHEME_BG, clrMap: 'bg1="dk2" tx1="lt1"' },
+    });
+    expect(firstShape(Ream.parse(mapped))?.fill.colorHex).toBe('0066CC');
+    const unmapped = buildPptx([''], { layoutMaster: { theme: THEME, masterBg: SCHEME_BG } });
+    expect(firstShape(Ream.parse(unmapped))?.fill.colorHex).toBe('FFFF00');
+  });
+
+  it('lets a layout override the map for the slides on it (§19.3.1.7)', () => {
+    const doc = Ream.parse(
+      buildPptx([''], {
+        layoutMaster: {
+          theme: THEME,
+          masterBg: SCHEME_BG,
+          clrMap: 'bg1="dk2"',
+          layoutClrMapOvr: 'bg1="lt2"',
+        },
+      }),
+    );
+    expect(firstShape(doc)?.fill.colorHex).toBe('273943'); // the layout's word, not the master's
+  });
+
+  it("lets a slide override the map for its OWN content, not for the master's", () => {
+    // §19.3.1.7 — the override governs the slide. What the master draws keeps
+    // reading under the master's map: chart_pt_color_bg1 flips bg1 to dk1 for
+    // its chart and its white deck came out black when the flip reached the
+    // master's background too.
+    const shape =
+      `<p:sp><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+      `<a:solidFill><a:schemeClr val="bg1"/></a:solidFill></p:spPr></p:sp>`;
+    const doc = Ream.parse(
+      buildPptx([shape, shape], {
+        layoutMaster: { theme: THEME, masterBg: SCHEME_BG, clrMap: 'bg1="dk2"' },
+        slideClrMapOvr: [undefined, 'bg1="lt1"'],
+      }),
+    );
+    const fills = doc.flow.body.flatMap((el) =>
+      el.kind === 'shape' ? [el.shape.fill.colorHex] : [],
+    );
+    // Per slide: the master's backdrop (blue either way) then the slide's own
+    // shape — blue on the first, yellow on the one that overrides.
+    expect(fills).toEqual(['0066CC', '0066CC', '0066CC', 'FFFF00']);
+  });
+
+  it('paints a real deck the colour its map names', () => {
+    // corpus: the master's bg is `schemeClr bg1` and its map says bg1 = dk2.
+    const deck = new Uint8Array(readFileSync('tests/fixtures/real/master-bg-color.pptx'));
+    expect(firstShape(Ream.parse(deck))?.fill.colorHex).toBe('009DF0');
+  });
+});
+
+describe('pptx background — a reference and a picture (E-PPTX PX5b)', () => {
+  const BG_STYLES =
+    `<a:fillStyleLst><a:solidFill><a:srgbClr val="112233"/></a:solidFill></a:fillStyleLst>` +
+    `<a:bgFillStyleLst>` +
+    `<a:solidFill><a:schemeClr val="phClr"/></a:solidFill>` +
+    `<a:solidFill><a:srgbClr val="00FF00"/></a:solidFill>` +
+    `</a:bgFillStyleLst>`;
+  const bgRef = (idx: number, inner: string): string =>
+    `<p:bg><p:bgRef idx="${String(idx)}">${inner}</p:bgRef></p:bg>`;
+
+  it('reads a p:bgRef as the theme fill it indexes, with phClr bound', () => {
+    // §19.3.1.2 — 1001 is the first background style, and the colour on the
+    // reference is what the style means by `phClr`.
+    const doc = Ream.parse(
+      buildPptx([''], {
+        slideBg: [bgRef(1001, '<a:srgbClr val="AABBCC"/>')],
+        layoutMaster: { themeFmt: BG_STYLES },
+      }),
+    );
+    expect(firstShape(doc)?.fill.colorHex).toBe('AABBCC');
+  });
+
+  it('takes the slot itself when the slot names its own colour', () => {
+    const doc = Ream.parse(
+      buildPptx([''], {
+        slideBg: [bgRef(1002, '<a:srgbClr val="AABBCC"/>')],
+        layoutMaster: { themeFmt: BG_STYLES },
+      }),
+    );
+    expect(firstShape(doc)?.fill.colorHex).toBe('00FF00'); // the style, not the reference
+  });
+
+  it('indexes the ordinary fill styles below 1000', () => {
+    const doc = Ream.parse(
+      buildPptx([''], {
+        slideBg: [bgRef(1, '<a:srgbClr val="AABBCC"/>')],
+        layoutMaster: { themeFmt: BG_STYLES },
+      }),
+    );
+    expect(firstShape(doc)?.fill.colorHex).toBe('112233');
+  });
+
+  it('falls back to the reference colour when the theme has no such slot', () => {
+    const doc = Ream.parse(
+      buildPptx([''], { slideBg: [bgRef(1001, '<a:srgbClr val="AABBCC"/>')] }),
+    );
+    expect(firstShape(doc)?.fill.colorHex).toBe('AABBCC');
+  });
+
+  it('paints a picture background, at the opacity the blip fixes', () => {
+    // §20.1.8.4 `a:alphaModFix` — tdf146223 backs a slide with a photo at 70 %.
+    const png = buildTinyPng(2, 2, [255, 0, 0, 255]);
+    const doc = Ream.parse(
+      buildPptx([''], {
+        slideBg: [
+          `<p:bg><p:bgPr><a:blipFill><a:blip r:embed="rIdBg">` +
+            `<a:alphaModFix amt="70000"/></a:blip><a:tile/></a:blipFill></p:bgPr></p:bg>`,
+        ],
+        slideRels: [`<Relationship Id="rIdBg" Type="${IMAGE_REL}" Target="../media/bg.png"/>`],
+        media: { 'ppt/media/bg.png': png },
+      }),
+    );
+    const fill = firstShape(doc)?.fill;
+    expect(fill?.kind).toBe('picture');
+    expect(fill?.imageResource).toBeDefined();
+    expect(fill?.tiled).toBe(true);
+    expect(fill?.alpha).toBeCloseTo(0.7, 5);
+  });
+
+  it('recolours a picture between the two tones a duotone names', () => {
+    // §20.1.8.23 — an Office theme ships a grey photograph and tints it; the
+    // deck whose background is a brown ridged texture stores a grey one
+    // (corpus: themes.pptx).
+    const doc = Ream.parse(
+      buildPptx([''], {
+        slideBg: [
+          `<p:bg><p:bgPr><a:blipFill><a:blip r:embed="rIdBg">` +
+            `<a:duotone><a:srgbClr val="1A0F00"/><a:srgbClr val="E8C9A0"/></a:duotone>` +
+            `</a:blip><a:stretch><a:fillRect/></a:stretch></a:blipFill></p:bgPr></p:bg>`,
+        ],
+        slideRels: [`<Relationship Id="rIdBg" Type="${IMAGE_REL}" Target="../media/bg.png"/>`],
+        media: { 'ppt/media/bg.png': buildTinyPng(2, 2, [128, 128, 128, 255]) },
+      }),
+    );
+    expect(firstShape(doc)?.fill.duotone).toEqual({
+      shadowHex: '1A0F00',
+      highlightHex: 'E8C9A0',
+    });
+  });
+
+  it('paints a duotone through the picture, as a luminosity mask', async () => {
+    const doc = Ream.parse(
+      buildPptx([''], {
+        slideBg: [
+          `<p:bg><p:bgPr><a:blipFill><a:blip r:embed="rIdBg">` +
+            `<a:duotone><a:srgbClr val="000000"/><a:srgbClr val="FF0000"/></a:duotone>` +
+            `</a:blip><a:stretch><a:fillRect/></a:stretch></a:blipFill></p:bgPr></p:bg>`,
+        ],
+        slideRels: [`<Relationship Id="rIdBg" Type="${IMAGE_REL}" Target="../media/bg.png"/>`],
+        media: { 'ppt/media/bg.png': buildTinyPng(2, 2, [200, 200, 200, 255]) },
+      }),
+    );
+    const pdf = await doc.convert('pdf', { fonts: FONTS });
+    const bytes = latin1.decode(pdf);
+    // The picture is not painted at all: it masks the light colour over the
+    // dark one (ISO 32000-1 §11.6.5.2), which is the two-tone map itself.
+    expect(bytes).toContain('/Luminosity');
+    expect(bytes).toContain('/SMask');
+  });
+
+  it('stretches a background picture into the fill rect, not across the slide', () => {
+    // §20.1.8.30 — POSITIVE insets say where the picture goes IN the box.
+    // tdf153466 insets one 55 % from the left and 56 % from the top; drawn
+    // over the whole slide it is a triangle five times its size.
+    const doc = Ream.parse(
+      buildPptx([''], {
+        slideBg: [
+          `<p:bg><p:bgPr><a:blipFill><a:blip r:embed="rIdBg"/>` +
+            `<a:stretch><a:fillRect l="55000" t="56000"/></a:stretch></a:blipFill></p:bgPr></p:bg>`,
+        ],
+        slideRels: [`<Relationship Id="rIdBg" Type="${IMAGE_REL}" Target="../media/bg.png"/>`],
+        media: { 'ppt/media/bg.png': buildTinyPng(2, 2, [255, 0, 0, 255]) },
+      }),
+    );
+    expect(firstShape(doc)?.fill.imageFillRect).toEqual({
+      left: 0.55,
+      top: 0.56,
+      right: 0,
+      bottom: 0,
+    });
+  });
+
+  it("resolves the MASTER's background picture through the master's own rels", () => {
+    // The blip's relationship id is scoped to the part the background is
+    // written in, so a master background cannot be resolved against the slide.
+    const doc = Ream.parse(
+      buildPptx([''], {
+        layoutMaster: {
+          masterBg: `<p:bg><p:bgPr><a:blipFill><a:blip r:embed="rIdM"/></a:blipFill></p:bgPr></p:bg>`,
+          masterRels: `<Relationship Id="rIdM" Type="${IMAGE_REL}" Target="../media/m.png"/>`,
+        },
+        media: { 'ppt/media/m.png': buildTinyPng(2, 2, [0, 0, 255, 255]) },
+      }),
+    );
+    expect(firstShape(doc)?.fill.kind).toBe('picture');
+  });
+});
+
+describe('a picture that declares a colour away (§20.1.8.16)', () => {
+  it('reads a:clrChange off the blip, and whether it knocks the colour out', () => {
+    const pic = (change: string): string =>
+      `<p:pic><p:nvPicPr><p:cNvPr id="5" name="p"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>` +
+      `<p:blipFill><a:blip r:embed="rIdImg">${change}</a:blip><a:stretch/></p:blipFill>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`;
+    const deck = (change: string): ReturnType<typeof Ream.parse> =>
+      Ream.parse(
+        buildPptx([pic(change)], {
+          slideRels: [`<Relationship Id="rIdImg" Type="${IMAGE_REL}" Target="../media/i.png"/>`],
+          media: { 'ppt/media/i.png': buildTinyPng(2, 2, [255, 255, 255, 255]) },
+        }),
+      );
+    const image = (doc: ReturnType<typeof Ream.parse>) =>
+      doc.flow.body.flatMap((e) => (e.kind === 'image' ? [e.image] : []))[0];
+    // Zero alpha on the destination: the colour goes.
+    const gone = deck(
+      `<a:clrChange><a:clrFrom><a:srgbClr val="FFFFFF"/></a:clrFrom>` +
+        `<a:clrTo><a:srgbClr val="FFFFFF"><a:alpha val="0"/></a:srgbClr></a:clrTo></a:clrChange>`,
+    );
+    expect(image(gone)?.colorChange).toEqual({
+      fromHex: 'FFFFFF',
+      toHex: 'FFFFFF',
+      transparent: true,
+    });
+    // A destination with no alpha of its own repaints instead.
+    const swapped = deck(
+      `<a:clrChange><a:clrFrom><a:srgbClr val="FFFFFF"/></a:clrFrom>` +
+        `<a:clrTo><a:srgbClr val="112233"/></a:clrTo></a:clrChange>`,
+    );
+    expect(image(swapped)?.colorChange).toEqual({
+      fromHex: 'FFFFFF',
+      toHex: '112233',
+      transparent: false,
+    });
+    expect(image(deck(''))?.colorChange).toBeUndefined();
+  });
+});
+
+describe('what a slide puts behind its content', () => {
+  it("paints the backdrop before the slide's own picture, not over it", () => {
+    // Every shape paints after every image in the ordinary passes, so a white
+    // backdrop landed on top of the photograph the slide is made of
+    // (corpus: tdf156808, tdf157635, tdf156856 — three dark slides drawn
+    // blank). What the page puts behind its content paints first instead.
+    const pic =
+      `<p:pic><p:nvPicPr><p:cNvPr id="4" name="p"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>` +
+      `<p:blipFill><a:blip r:embed="rIdImg"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="12192000" cy="6858000"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`;
+    const doc = Ream.parse(
+      buildPptx([pic], {
+        layoutMaster: { masterBg: bgFill('FFFFFF') },
+        slideRels: [`<Relationship Id="rIdImg" Type="${IMAGE_REL}" Target="../media/i.png"/>`],
+        media: { 'ppt/media/i.png': buildTinyPng(2, 2, [0, 0, 0, 255]) },
+      }),
+    );
+    const laid = layoutStyledDocument(doc.flow.body, {
+      registry: FontRegistry.fromBytes({ regular: FONTS.regular }),
+      resources: doc.flow.resources,
+      ...(doc.flow.section ? { section: doc.flow.section } : {}),
+      styles: doc.flow.styles,
+    });
+    const plan = paintPlan(laid.pages[0]!.commands);
+    expect(plan.behind.map((c) => c.type)).toEqual(['shape']); // the backdrop
+    expect(plan.images).toHaveLength(1); // …and the picture over it
+    expect(plan.shapes).toHaveLength(0);
+  });
+});
+
+describe("pptx inherited shapes — the deck's own decoration (E-PPTX PX5d)", () => {
+  const rect = (hex: string): string =>
+    `<p:sp><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+    `<a:solidFill><a:srgbClr val="${hex}"/></a:solidFill></p:spPr></p:sp>`;
+  // A placeholder on a master is a prototype, not a drawn shape.
+  const phRect = (hex: string): string =>
+    `<p:sp><p:nvSpPr><p:cNvPr id="9" name="ph"/><p:cNvSpPr/><p:nvPr><p:ph type="title"/></p:nvPr>` +
+    `</p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+    `<a:solidFill><a:srgbClr val="${hex}"/></a:solidFill></p:spPr></p:sp>`;
+  const fills = (doc: ReturnType<typeof Ream.parse>): Array<string | undefined> =>
+    doc.flow.body.flatMap((el) => (el.kind === 'shape' ? [el.shape.fill.colorHex] : []));
+
+  it("draws the master's shapes, then the layout's, under the slide's own", () => {
+    const doc = Ream.parse(
+      buildPptx([rect('333333')], {
+        layoutMaster: { masterSpTree: rect('111111'), layoutSpTree: rect('222222') },
+      }),
+    );
+    expect(fills(doc)).toEqual(['111111', '222222', '333333']);
+  });
+
+  it('leaves the placeholders behind — they are prototypes, not decoration', () => {
+    const doc = Ream.parse(
+      buildPptx([''], {
+        layoutMaster: {
+          masterSpTree: phRect('111111') + rect('AAAAAA'),
+          layoutSpTree: phRect('222222'),
+        },
+      }),
+    );
+    expect(fills(doc)).toEqual(['AAAAAA']);
+  });
+
+  it('shows none of them on a slide that says showMasterSp="0" (§19.3.1.38)', () => {
+    const doc = Ream.parse(
+      buildPptx([rect('333333')], {
+        layoutMaster: { masterSpTree: rect('111111'), layoutSpTree: rect('222222') },
+        hideMasterShapes: [true],
+      }),
+    );
+    expect(fills(doc)).toEqual(['333333']);
+  });
+
+  it("…and only the master's on a LAYOUT that says so (§19.3.1.39)", () => {
+    const doc = Ream.parse(
+      buildPptx([rect('333333')], {
+        layoutMaster: {
+          masterSpTree: rect('111111'),
+          layoutSpTree: rect('222222'),
+          hideMasterShapes: true,
+        },
+      }),
+    );
+    expect(fills(doc)).toEqual(['222222', '333333']);
+  });
+
+  it('paints a useBgFill shape with the slide background it stands on', () => {
+    // §19.3.1.43 — tdf93868's master lays a white rectangle over the whole
+    // slide, then a rounded one marked `useBgFill` that lets the background
+    // back through. Read without it the deck is a blank white page.
+    const bgFilled =
+      `<p:sp useBgFill="1"><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+      `<a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill></p:spPr></p:sp>`;
+    const doc = Ream.parse(
+      buildPptx([''], {
+        layoutMaster: { masterBg: bgFill('102030'), masterSpTree: rect('FFFFFF') + bgFilled },
+      }),
+    );
+    // The backdrop, the white rectangle over it, and the shape that is the
+    // background again — not the white its own fill states.
+    expect(fills(doc)).toEqual(['102030', 'FFFFFF', '102030']);
+  });
+
+  // §19.3.1.43 + §20.1.8.30 — a PICTURE background is stretched over the whole
+  // slide, so a shape that wears it wears the piece under itself. Squeezed into
+  // the box instead, tdf123684's text box drew a little copy of the slide's own
+  // diagonal inside itself.
+  it('gives a useBgFill shape the piece of a picture background under it', () => {
+    const bgFilled =
+      `<p:sp useBgFill="1"><p:spPr>` +
+      `<a:xfrm><a:off x="3048000" y="1714500"/><a:ext cx="3048000" cy="1714500"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:sp>`;
+    const doc = Ream.parse(
+      buildPptx([bgFilled], {
+        cx: 12192000,
+        cy: 6858000,
+        slideBg: [
+          `<p:bg><p:bgPr><a:blipFill><a:blip r:embed="rIdBg"/>` +
+            `<a:stretch><a:fillRect/></a:stretch></a:blipFill></p:bgPr></p:bg>`,
+        ],
+        slideRels: [`<Relationship Id="rIdBg" Type="${IMAGE_REL}" Target="../media/bg.png"/>`],
+        media: { 'ppt/media/bg.png': buildTinyPng(2, 2, [10, 20, 30, 255]) },
+      }),
+    );
+    // The backdrop is the first shape; the second is the one wearing it.
+    const fill = doc.flow.body.flatMap((el) => (el.kind === 'shape' ? [el.shape.fill] : []))[1];
+    expect(fill?.kind).toBe('picture');
+    // The box is a quarter of the slide, a quarter in: the picture's rect
+    // reaches one box-width left and up, and one right and down.
+    expect(fill?.imageFillRect?.left).toBeCloseTo(-1, 5);
+    expect(fill?.imageFillRect?.top).toBeCloseTo(-1, 5);
+    expect(fill?.imageFillRect?.right).toBeCloseTo(-2, 5);
+    expect(fill?.imageFillRect?.bottom).toBeCloseTo(-2, 5);
+  });
+
+  it('draws them on every slide of the layout, and behind the background', () => {
+    const doc = Ream.parse(
+      buildPptx(['', ''], {
+        layoutMaster: { masterSpTree: rect('111111'), masterBg: bgFill('445566') },
+      }),
+    );
+    // Per slide: the backdrop first, then the inherited shape over it.
+    expect(fills(doc)).toEqual(['445566', '111111', '445566', '111111']);
+  });
+
+  // The backdrop layer paints in its own order, which the emitter once wrote as
+  // "the first token at a point" — enough for a metafile's label and nothing
+  // like a sentence. WithMaster.pptx printed "This" for its master's caption.
+  it('sets every word of the text one of them carries', async () => {
+    const caption =
+      `<p:sp><p:nvSpPr><p:cNvPr id="8" name="cap"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5486400" cy="457200"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>` +
+      `<p:txBody><a:bodyPr/><a:p><a:r><a:rPr lang="en" sz="1800"/>` +
+      `<a:t>This text comes from the Master Slide</a:t></a:r></a:p></p:txBody></p:sp>`;
+    const pptx = buildPptx([''], { layoutMaster: { masterSpTree: caption } });
+    const file = PdfFile.parse(await Ream.parse(pptx).convert('pdf', { fonts: FONTS }));
+    const text = extractPageText(file, file.pages()[0]!)
+      .map((r) => r.text)
+      .join(' ')
+      .replace(/\s+/gu, ' ');
+    expect(text).toContain('This');
+    expect(text).toContain('Master');
+    expect(text).toContain('Slide');
+  });
+
+  // §19.3.1 — the page paints by KIND (every image, then every shape), so a
+  // layout's card would land on top of the photograph a slide puts on it.
+  it("sinks them BEHIND the slide's own content, whatever kind that is", () => {
+    const doc = Ream.parse(
+      buildPptx(
+        [
+          `<p:pic><p:nvPicPr><p:cNvPr id="5" name="p"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>` +
+            `<p:blipFill><a:blip r:embed="rIdImg"/><a:stretch/></p:blipFill>` +
+            `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+            `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`,
+        ],
+        {
+          layoutMaster: { masterSpTree: rect('111111') },
+          media: { 'ppt/media/i.png': buildTinyPng(2, 2, [255, 0, 0, 255]) },
+          slideRels: [`<Relationship Id="rIdImg" Type="${IMAGE_REL}" Target="../media/i.png"/>`],
+        },
+      ),
+    );
+    const inheritedShape = doc.flow.body.find((el) => el.kind === 'shape');
+    const slidePicture = doc.flow.body.find((el) => el.kind === 'image');
+    expect(inheritedShape?.kind === 'shape' && inheritedShape.shape.float?.behind).toBe(true);
+    expect(slidePicture?.kind === 'image' && slidePicture.image.float?.behind).toBeUndefined();
+  });
+});
+
+describe('what a placeholder inherits from its prototype', () => {
+  const protoRect =
+    `<p:sp><p:nvSpPr><p:cNvPr id="9" name="body"/><p:cNvSpPr/><p:nvPr><p:ph idx="13"/></p:nvPr></p:nvSpPr>` +
+    `<p:spPr><a:xfrm><a:off x="228600" y="800100"/><a:ext cx="4572000" cy="2286000"/></a:xfrm>` +
+    `<a:prstGeom prst="roundRect"><a:avLst/></a:prstGeom>` +
+    `<a:solidFill><a:srgbClr val="76BF3D"/></a:solidFill>` +
+    `<a:ln w="19050"><a:solidFill><a:srgbClr val="112233"/></a:solidFill></a:ln></p:spPr>` +
+    `<p:txBody><a:bodyPr/><a:p/></p:txBody></p:sp>`;
+  const slidePh =
+    `<p:sp><p:nvSpPr><p:cNvPr id="2" name="b"/><p:cNvSpPr/><p:nvPr><p:ph idx="13"/></p:nvPr></p:nvSpPr>` +
+    `<p:spPr/><p:txBody><a:bodyPr/><a:p><a:r><a:rPr lang="en"/><a:t>Test</a:t></a:r></a:p></p:txBody></p:sp>`;
+
+  it('takes the fill, the outline and the geometry it does not state', () => {
+    // tdf95932 — "Test inheritance of shape properties from slide master": the
+    // green panel is the layout's, and the word on it is white, so without the
+    // panel the slide read as blank paper.
+    const doc = Ream.parse(buildPptx([slidePh], { layoutMaster: { layoutSpTree: protoRect } }));
+    const shape = doc.flow.body.flatMap((e) =>
+      e.kind === 'shape' && e.shape.text ? [e.shape] : [],
+    )[0];
+    expect(shape?.fill.colorHex).toBe('76BF3D');
+    expect(shape?.geometry.kind === 'preset' ? shape.geometry.preset : '').toBe('roundRect');
+    expect(shape?.line?.colorHex).toBe('112233');
+  });
+
+  it('…but what the slide states itself still wins', () => {
+    const own = slidePh.replace(
+      '<p:spPr/>',
+      `<p:spPr><a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom>` +
+        `<a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></p:spPr>`,
+    );
+    const doc = Ream.parse(buildPptx([own], { layoutMaster: { layoutSpTree: protoRect } }));
+    const shape = doc.flow.body.flatMap((e) =>
+      e.kind === 'shape' && e.shape.text ? [e.shape] : [],
+    )[0];
+    expect(shape?.fill.colorHex).toBe('FF0000');
+    expect(shape?.geometry.kind === 'preset' ? shape.geometry.preset : '').toBe('ellipse');
+  });
+});
+
+describe('a shape drawn from a gallery style (§20.1.4.2)', () => {
+  it('takes its fill, outline and text colour from p:style', () => {
+    // customGeo's title banner and the ellipse under it carry no fill in their
+    // spPr at all — both are a theme slot named by `a:fillRef`.
+    const themeFmt =
+      `<a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst>` +
+      `<a:lnStyleLst><a:ln w="12700"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln></a:lnStyleLst>`;
+    const sp =
+      `<p:sp><p:nvSpPr><p:cNvPr id="3" name="g"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>` +
+      `<p:style><a:lnRef idx="1"><a:srgbClr val="223344"/></a:lnRef>` +
+      `<a:fillRef idx="1"><a:srgbClr val="4488CC"/></a:fillRef>` +
+      `<a:effectRef idx="0"><a:srgbClr val="000000"/></a:effectRef>` +
+      `<a:fontRef idx="minor"><a:srgbClr val="FFFFFF"/></a:fontRef></p:style>` +
+      `<p:txBody><a:bodyPr/><a:p><a:r><a:rPr lang="en"/><a:t>Hi</a:t></a:r></a:p></p:txBody></p:sp>`;
+    const doc = Ream.parse(buildPptx([sp], { layoutMaster: { themeFmt } }));
+    const shape = doc.flow.body.flatMap((e) => (e.kind === 'shape' ? [e.shape] : []))[0];
+    expect(shape?.fill.colorHex).toBe('4488CC');
+    expect(shape?.line?.colorHex).toBe('223344');
+    const run = shape?.text?.content.flatMap((c) =>
+      c.kind === 'paragraph' ? c.paragraph.runs : [],
+    )[0];
+    expect(run?.properties.colorHex).toBe('FFFFFF');
+  });
+});
+
+describe('pptx inherited text — what a slide is written in (E-PPTX PX2)', () => {
+  const textBox = (text: string): string =>
+    `<p:sp><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5486400" cy="914400"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>` +
+    `<p:txBody><a:bodyPr/><a:p><a:r><a:rPr lang="en"/><a:t>${text}</a:t></a:r></a:p></p:txBody></p:sp>`;
+  const titlePh = (text: string): string =>
+    `<p:sp><p:nvSpPr><p:cNvPr id="2" name="t"/><p:cNvSpPr/><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr>` +
+    `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5486400" cy="914400"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>` +
+    `<p:txBody><a:bodyPr/><a:p><a:r><a:rPr lang="en"/><a:t>${text}</a:t></a:r></a:p></p:txBody></p:sp>`;
+  const shapeOf = (doc: ReturnType<typeof Ream.parse>) =>
+    doc.flow.body.flatMap((el) => (el.kind === 'shape' && el.shape.text ? [el.shape] : []))[0];
+  const firstParagraph = (doc: ReturnType<typeof Ream.parse>) => {
+    const c = shapeOf(doc)?.text?.content[0];
+    return c?.kind === 'paragraph' ? c.paragraph : undefined;
+  };
+
+  it("writes a plain text box in the deck's default text style (§19.2.1.8)", () => {
+    // tdf93868's only shape is a text box with no colour of its own; the deck
+    // says tx1, its map says tx1 is lt1, and its lt1 is white — so the slide
+    // reads white on black, not black on black.
+    const doc = Ream.parse(
+      buildPptx([textBox('plain')], {
+        defaultTextStyle:
+          `<a:lvl1pPr algn="ctr"><a:defRPr sz="2800">` +
+          `<a:solidFill><a:schemeClr val="tx1"/></a:solidFill></a:defRPr></a:lvl1pPr>`,
+        layoutMaster: { theme: THEME, clrMap: 'tx1="lt1"' },
+      }),
+    );
+    const p = firstParagraph(doc);
+    expect(p?.runs[0]?.properties.colorHex).toBe('FFFF00'); // lt1 through the map
+    expect(p?.runs[0]?.properties.fontSizePt).toBe(28);
+    expect(p?.properties.alignment).toBe('center');
+  });
+
+  it("takes a placeholder's alignment from the master's text styles", () => {
+    const doc = Ream.parse(
+      buildPptx([titlePh('Title')], {
+        layoutMaster: {
+          txStyles: `<p:txStyles><p:titleStyle><a:lvl1pPr algn="ctr"><a:defRPr sz="4400"/></a:lvl1pPr></p:titleStyle></p:txStyles>`,
+        },
+      }),
+    );
+    expect(firstParagraph(doc)?.properties.alignment).toBe('center');
+    expect(firstParagraph(doc)?.runs[0]?.properties.fontSizePt).toBe(44);
+  });
+
+  it("lets the layout's own prototype override the master's family style", () => {
+    const doc = Ream.parse(
+      buildPptx([titlePh('Title')], {
+        layoutMaster: {
+          txStyles: `<p:txStyles><p:titleStyle><a:lvl1pPr algn="ctr"><a:defRPr sz="4400"/></a:lvl1pPr></p:titleStyle></p:txStyles>`,
+          layoutSpTree:
+            `<p:sp><p:nvSpPr><p:cNvPr id="8" name="t"/><p:cNvSpPr/><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr>` +
+            `<p:spPr/><p:txBody><a:bodyPr anchor="b"/>` +
+            `<a:lstStyle><a:lvl1pPr algn="r"><a:defRPr sz="2000"/></a:lvl1pPr></a:lstStyle>` +
+            `<a:p/></p:txBody></p:sp>`,
+        },
+      }),
+    );
+    expect(firstParagraph(doc)?.properties.alignment).toBe('right'); // the layout's word
+    expect(firstParagraph(doc)?.runs[0]?.properties.fontSizePt).toBe(20);
+    // …and the prototype's vertical anchor comes with it.
+    expect(shapeOf(doc)?.text?.anchor).toBe('b');
+  });
+
+  it("keeps the paragraph's own properties over everything inherited", () => {
+    const doc = Ream.parse(
+      buildPptx([titlePh('Title').replace('<a:p>', '<a:p><a:pPr algn="l"/>')], {
+        layoutMaster: {
+          txStyles: `<p:txStyles><p:titleStyle><a:lvl1pPr algn="ctr"><a:defRPr sz="4400"/></a:lvl1pPr></p:titleStyle></p:txStyles>`,
+        },
+      }),
+    );
+    expect(firstParagraph(doc)?.properties.alignment).toBe('left');
+  });
+});
+
+describe('pptx embedded objects — the picture they show (E-PPTX PX4c)', () => {
+  const OLE_URI = 'http://schemas.openxmlformats.org/presentationml/2006/ole';
+  const VML_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing';
+  const frame = (inner: string): string =>
+    `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="7" name="Object 1"/>` +
+    `<p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>` +
+    `<p:xfrm><a:off x="0" y="0"/><a:ext cx="9144000" cy="6858000"/></p:xfrm>` +
+    `<a:graphic><a:graphicData uri="${OLE_URI}">${inner}</a:graphicData></a:graphic></p:graphicFrame>`;
+  const enc = (t: string): Uint8Array => new TextEncoder().encode(t);
+  const firstImage = (doc: ReturnType<typeof Ream.parse>) =>
+    doc.flow.body.flatMap((el) => (el.kind === 'image' ? [el.image] : []))[0];
+
+  it("draws the preview a legacy object keeps in the slide's VML drawing", () => {
+    // 45541_Footer's eighth slide is one embedded deck and nothing else: the
+    // `@spid` names a VML shape whose `v:imagedata` is the snapshot.
+    const doc = Ream.parse(
+      buildPptx(
+        [frame('<p:oleObj spid="_x0000_s1026" name="Slide" r:id="rIdOle"><p:embed/></p:oleObj>')],
+        {
+          slideRels: [
+            `<Relationship Id="rIdVml" Type="${VML_REL}" Target="../drawings/vmlDrawing1.vml"/>`,
+          ],
+          media: {
+            'ppt/drawings/vmlDrawing1.vml': enc(
+              `<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">` +
+                `<v:shape id="_x0000_s1026" type="#_x0000_t75" style="width:10in;height:540pt">` +
+                `<v:imagedata o:relid="rId1" o:title=""/></v:shape></xml>`,
+            ),
+            'ppt/drawings/_rels/vmlDrawing1.vml.rels': enc(
+              `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+                `<Relationship Id="rId1" Type="${IMAGE_REL}" Target="../media/prev.png"/></Relationships>`,
+            ),
+            'ppt/media/prev.png': buildTinyPng(2, 2, [0, 128, 255, 255]),
+          },
+        },
+      ),
+    );
+    const img = firstImage(doc);
+    expect(img?.resource).toBeDefined();
+    expect(Math.round(img?.width ?? 0)).toBe(720); // the frame, 10in wide
+    expect(Math.round(img?.height ?? 0)).toBe(540);
+  });
+
+  it('draws the p:pic a modern object carries inside itself', () => {
+    const pic =
+      `<p:pic><p:nvPicPr><p:cNvPr id="8" name="p"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>` +
+      `<p:blipFill><a:blip r:embed="rIdImg"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
+      `<p:spPr><a:xfrm><a:off x="914400" y="914400"/><a:ext cx="1828800" cy="914400"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`;
+    const doc = Ream.parse(
+      buildPptx([frame(`<p:oleObj spid="_x0000_s1027" r:id="rIdOle">${pic}</p:oleObj>`)], {
+        slideRels: [`<Relationship Id="rIdImg" Type="${IMAGE_REL}" Target="../media/p.png"/>`],
+        media: { 'ppt/media/p.png': buildTinyPng(2, 2, [255, 0, 0, 255]) },
+      }),
+    );
+    const img = firstImage(doc);
+    expect(img?.resource).toBeDefined();
+    expect(Math.round(img?.width ?? 0)).toBe(144); // the pic's own box, 2in
+  });
+
+  it('says so when an embedded object shows no picture at all', () => {
+    const doc = Ream.parse(
+      buildPptx([frame('<p:oleObj spid="_x0000_s1028" r:id="rIdOle"><p:embed/></p:oleObj>')]),
+    );
+    expect(firstImage(doc)).toBeUndefined();
+    expect(doc.losses.some((l) => /embedded object/u.test(l.detail))).toBe(true);
   });
 });
 
@@ -626,7 +1692,12 @@ const srgbFill = (hex: string): string => `<a:solidFill><a:srgbClr val="${hex}"/
 const SCHEME_ACCENT1_FILL = `<a:solidFill><a:schemeClr val="accent1"/></a:solidFill>`;
 
 function smartArtDeck(
-  opts: { readonly fillA?: string; readonly build?: Parameters<typeof buildPptx>[1] } = {},
+  opts: {
+    readonly fillA?: string;
+    readonly build?: Parameters<typeof buildPptx>[1];
+    /** Omit the data part's own .rels, as PowerPoint does. */
+    readonly dropDataRels?: boolean;
+  } = {},
 ): Uint8Array {
   const frame =
     `<p:graphicFrame>` +
@@ -659,18 +1730,22 @@ function smartArtDeck(
     `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
     `<Relationship Id="rId1" Type="${DIAGRAM_DRAWING_REL}" Target="drawing1.xml"/>` +
     `</Relationships>`;
+  const parts: Record<string, Uint8Array> = {
+    'ppt/diagrams/data1.xml': enc.encode(
+      `<?xml version="1.0"?>\n<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram"/>`,
+    ),
+    'ppt/diagrams/drawing1.xml': enc.encode(drawing),
+    ...(opts.dropDataRels === true
+      ? {}
+      : { 'ppt/diagrams/_rels/data1.xml.rels': enc.encode(rels) }),
+  };
+  const { media, slideRels, ...rest } = opts.build ?? {};
   return buildPptx([frame], {
-    slideRels: [
+    slideRels: slideRels ?? [
       `<Relationship Id="rId100" Type="${DIAGRAM_DATA_REL}" Target="../diagrams/data1.xml"/>`,
     ],
-    media: {
-      'ppt/diagrams/data1.xml': enc.encode(
-        `<?xml version="1.0"?>\n<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram"/>`,
-      ),
-      'ppt/diagrams/_rels/data1.xml.rels': enc.encode(rels),
-      'ppt/diagrams/drawing1.xml': enc.encode(drawing),
-    },
-    ...opts.build,
+    media: { ...parts, ...media },
+    ...rest,
   });
 }
 
@@ -711,6 +1786,92 @@ describe('SmartArt diagrams (E-SMARTART SA0)', () => {
       .replace(/\s/g, '');
     expect(text).toContain('NodeA');
     expect(text).toContain('NodeB');
+  });
+
+  it('finds the drawing PowerPoint names from inside the data (dsp:dataModelExt)', () => {
+    // The drawing's relationship is the SLIDE's, and the data part points at it
+    // by id from its own extension list. Looked for on the data part alone, two
+    // corpus decks with a drawing sitting right there rendered nothing
+    // (smartart-missing-bullet, tdf145528_SmartArt_Matrix).
+    const deck = smartArtDeck({
+      build: {
+        slideRels: [
+          `<Relationship Id="rId100" Type="${DIAGRAM_DATA_REL}" Target="../diagrams/data1.xml"/>` +
+            `<Relationship Id="rId7" Type="${DIAGRAM_DRAWING_REL}" Target="../diagrams/drawing1.xml"/>`,
+        ],
+        media: {
+          // The data names the drawing by a relationship of the SLIDE…
+          'ppt/diagrams/data1.xml': new TextEncoder().encode(
+            `<?xml version="1.0"?>\n<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram">` +
+              `<dgm:extLst><a:ext xmlns:a="${A_MAIN}" uri="{x}">` +
+              `<dsp:dataModelExt xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" relId="rId7"/>` +
+              `</a:ext></dgm:extLst></dgm:dataModel>`,
+          ),
+        },
+      },
+      // …and the data part carries no relationships of its own.
+      dropDataRels: true,
+    });
+    expect(shapeTexts(Ream.parse(deck))).toContain('NodeA');
+  });
+
+  it('gives each diagram on the slide ITS drawing, not the first one', () => {
+    // tdf125551 carries four, each naming its own through `dsp:dataModelExt`.
+    // Resolved by a slide-wide fallback they were one diagram drawn four times.
+    const frame = (dm: string): string =>
+      `<p:graphicFrame>` +
+      `<p:xfrm><a:off x="0" y="0"/><a:ext cx="2743200" cy="1371600"/></p:xfrm>` +
+      `<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram">` +
+      `<dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" ` +
+      `r:dm="${dm}" r:lo="rIdLo" r:qs="rIdQs" r:cs="rIdCs"/>` +
+      `</a:graphicData></a:graphic></p:graphicFrame>`;
+    const enc = new TextEncoder();
+    const drawing = (text: string): Uint8Array =>
+      enc.encode(
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+          `<dsp:drawing xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" xmlns:a="${A_MAIN}">` +
+          `<dsp:spTree><dsp:sp><dsp:spPr>` +
+          `<a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+          `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>${srgbFill('4472C4')}</dsp:spPr>` +
+          `<dsp:txBody><a:bodyPr/><a:p><a:r><a:t>${text}</a:t></a:r></a:p></dsp:txBody>` +
+          `</dsp:sp></dsp:spTree></dsp:drawing>`,
+      );
+    const data = (relId: string): Uint8Array =>
+      enc.encode(
+        `<?xml version="1.0"?>\n<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram">` +
+          `<dgm:extLst><a:ext xmlns:a="${A_MAIN}" uri="{x}">` +
+          `<dsp:dataModelExt xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" relId="${relId}"/>` +
+          `</a:ext></dgm:extLst></dgm:dataModel>`,
+      );
+    const doc = Ream.parse(
+      buildPptx([frame('rIdD1') + frame('rIdD2')], {
+        slideRels: [
+          `<Relationship Id="rIdD1" Type="${DIAGRAM_DATA_REL}" Target="../diagrams/data1.xml"/>` +
+            `<Relationship Id="rIdD2" Type="${DIAGRAM_DATA_REL}" Target="../diagrams/data2.xml"/>` +
+            `<Relationship Id="rIdW1" Type="${DIAGRAM_DRAWING_REL}" Target="../diagrams/drawing1.xml"/>` +
+            `<Relationship Id="rIdW2" Type="${DIAGRAM_DRAWING_REL}" Target="../diagrams/drawing2.xml"/>`,
+        ],
+        media: {
+          'ppt/diagrams/data1.xml': data('rIdW1'),
+          'ppt/diagrams/data2.xml': data('rIdW2'),
+          'ppt/diagrams/drawing1.xml': drawing('First'),
+          'ppt/diagrams/drawing2.xml': drawing('Second'),
+        },
+      }),
+    );
+    expect(shapeTexts(doc).sort()).toEqual(['First', 'Second']);
+  });
+
+  it('says so when the drawing override holds no shapes at all', () => {
+    const stub =
+      `<?xml version="1.0"?>\n<dsp:drawing xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" ` +
+      `xmlns:a="${A_MAIN}"><dsp:spTree/></dsp:drawing>`;
+    const deck = smartArtDeck({
+      build: { media: { 'ppt/diagrams/drawing1.xml': new TextEncoder().encode(stub) } },
+    });
+    const doc = Ream.parse(deck);
+    expect(doc.flow.body.some((e) => e.kind === 'shape')).toBe(false);
+    expect(doc.losses.some((l) => /drawing override/u.test(l.detail))).toBe(true);
   });
 
   it('resolves a node scheme-colour fill through the deck theme (SA3)', () => {

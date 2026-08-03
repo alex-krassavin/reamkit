@@ -368,6 +368,8 @@ type LaidOutBlock =
 // bottom-left, y-up). Pagination translates these to the page position. Vector
 // primitives reuse the shape pass; text primitives reuse the text (line) pass.
 interface ChartShapePrim {
+  /** Where this shape stands in the drawing's own order (see {@link ChartLayout}). */
+  readonly seq?: number;
   readonly paths: ReadonlyArray<VectorPath>;
   readonly fillColorHex?: string;
   readonly stroke?: StrokeStyle;
@@ -378,13 +380,31 @@ interface ChartTextPrim {
   readonly y: number;
   /** Counter-clockwise degrees about the origin (rotated axis titles). */
   readonly rotationDeg?: number;
+  /** Where this text stands in the drawing's own order (see {@link ChartLayout}). */
+  readonly seq?: number;
 }
+/**
+ * A drawing's primitives. A CHART builds its shapes and its labels separately
+ * and the labels belong on top, so they carry no order. A METAFILE is a list of
+ * drawing orders where the two interleave — a panel may bury a label written
+ * before it — so those carry `seq`, and a layout that has them paints as one
+ * picture in that order.
+ */
 interface ChartLayout {
   readonly shapes: ReadonlyArray<ChartShapePrim>;
   readonly texts: ReadonlyArray<ChartTextPrim>;
 }
 interface ChartBlockLaidOut {
   readonly kind: 'chart';
+  /**
+   * §20.1.8.14 — the picture the chart's frame is filled with, already resolved
+   * to a page resource. `tile` is the picture's own size, when it repeats at it
+   * rather than stretching over the box.
+   */
+  readonly background?: {
+    readonly resourceName: string;
+    readonly tile?: { readonly widthPt: number; readonly heightPt: number };
+  };
   /**
    * What a tagged PDF should call this Figure when the drawing carries no
    * description of its own. A metafile picture rides this block, and it is a
@@ -412,6 +432,8 @@ interface ImageBlockLaidOut {
   readonly outline?: PictureOutline;
   /** §14.1.2.10 — the contrast/brightness wash the picture is drawn through. */
   readonly wash?: { readonly gain: number; readonly black: number };
+  /** §20.1.8.4 `a:alphaModFix` — how opaque the picture is drawn, `0..1`. */
+  readonly alpha?: number;
   /** §20.1.8.55 `a:srcRect` — the part of the source the frame shows. */
   readonly crop?: ImageCrop;
   /** §20.1.7.6 — degrees clockwise about the box's centre. */
@@ -466,6 +488,15 @@ interface ShapeBlockLaidOut {
   readonly fillAlpha?: number;
   /** §20.1.8.14 `a:blipFill` — the picture painted across the shape's box. */
   readonly fillImageResourceName?: string;
+  /** §20.1.8.30 — the part of the box the fill picture is stretched into. */
+  readonly fillImageRect?: {
+    readonly left: number;
+    readonly top: number;
+    readonly right: number;
+    readonly bottom: number;
+  };
+  /** §20.1.8.23 — the two colours the fill picture is painted between. */
+  readonly fillImageDuotone?: { readonly shadowHex: string; readonly highlightHex: string };
   /**
    * §14.1.2.5 `@type="tile"` — the size one tile of that picture is drawn at,
    * when it repeats over the box rather than stretching across it.
@@ -2280,7 +2311,14 @@ function layoutBodyElement(
       : layoutImageBlock(el.image, imageResources, contentWidth, maxHeight, box);
   }
   if (el.kind === 'chart') {
-    return layoutChartBlock(el.chart, options, fontResources, contentWidth, maxHeight);
+    return layoutChartBlock(
+      el.chart,
+      options,
+      fontResources,
+      contentWidth,
+      maxHeight,
+      imageResources,
+    );
   }
   return layoutShapeBlock(
     el.shape,
@@ -2355,6 +2393,7 @@ function layoutImageBlock(
     resourceName: res?.resourceName ?? '',
     ...(image.outline ? { outline: image.outline } : {}),
     ...(image.wash ? { wash: image.wash } : {}),
+    ...(image.alpha !== undefined && image.alpha < 1 ? { alpha: image.alpha } : {}),
     ...(image.crop ? { crop: image.crop } : {}),
     ...(image.rotation60k ? { rotationDeg: image.rotation60k / 60000 } : {}),
     ...(image.flipH ? { flipH: true } : {}),
@@ -2492,7 +2531,14 @@ function layoutShapeBlock(
       // tall as the chart, drawn from the line's corner. chart-size.docx sets
       // one between its "Before." and its "After." and we drew an empty frame.
       if (el.kind === 'chart') {
-        const laid = layoutChartBlock(el.chart, options, fontResources, innerWidth);
+        const laid = layoutChartBlock(
+          el.chart,
+          options,
+          fontResources,
+          innerWidth,
+          undefined,
+          imageResources,
+        );
         const line: Line = {
           tokens: [],
           contentWidthPt: laid.widthPt,
@@ -2665,6 +2711,12 @@ function layoutShapeBlock(
     ...(fillImageResourceName && shape.fill.imageCrop
       ? { fillImageCrop: shape.fill.imageCrop }
       : {}),
+    ...(fillImageResourceName && shape.fill.imageFillRect
+      ? { fillImageRect: shape.fill.imageFillRect }
+      : {}),
+    ...(fillImageResourceName && shape.fill.duotone
+      ? { fillImageDuotone: shape.fill.duotone }
+      : {}),
     ...(fillColorHex ? { fillColorHex } : {}),
     ...(fillGradient ? { fillGradient } : {}),
     ...(shape.fill.alpha !== undefined && shape.fill.alpha < 1
@@ -2721,7 +2773,7 @@ function layoutMetafileBlock(
   const widthPt = placed.widthPt;
   const heightPt = placed.heightPt;
   const layout = rotateDrawing(
-    metafileDrawing(pic, widthPt, heightPt, options, fontResources),
+    metafileDrawing(pic, widthPt, heightPt, options, fontResources, image.colorChange),
     // §20.1.7.6 `a:xfrm @rot` — the drawing's own turn, clockwise. A chart
     // block has no rotation of its own, so the primitives take it: tdf103001
     // .docx leans two of its three cliparts and we stood all three upright.
@@ -2757,6 +2809,7 @@ function rotateDrawing(layout: ChartLayout, deg: number, cx: number, cy: number)
   });
   return {
     shapes: layout.shapes.map((sh) => ({
+      ...(sh.seq !== undefined ? { seq: sh.seq } : {}),
       ...sh,
       paths: sh.paths.map((path) => ({
         ...path,
@@ -2791,7 +2844,17 @@ function metafileDrawing(
   heightPt: number,
   options: StyledRenderOptions,
   fontResources: ReadonlyMap<string, FontResource>,
+  colorChange?: ImageBlock['colorChange'],
 ): ChartLayout {
+  // §20.1.8.16 — the colour the picture declares away. In a metafile that is
+  // not a pixel operation: a primitive painted in it is either repainted or
+  // not drawn at all, which is how tdf113163's white ground disappears and
+  // lets the black slide through.
+  const recolour = (hex: string | undefined): string | undefined | null => {
+    if (hex === undefined || colorChange === undefined) return hex;
+    if (hex.toUpperCase() !== colorChange.fromHex.toUpperCase()) return hex;
+    return colorChange.transparent ? null : colorChange.toHex;
+  };
   const sx = widthPt / pic.width;
   const sy = heightPt / pic.height;
   // The metafile's y runs DOWN from its own top; the primitives' frame runs UP
@@ -2801,9 +2864,20 @@ function metafileDrawing(
 
   const shapes: Array<ChartShapePrim> = [];
   const texts: Array<ChartTextPrim> = [];
+  // The picture's own order, kept so the page can paint it back (a label the
+  // drawing buries under a later panel must stay buried).
+  let seq = 0;
   for (const prim of pic.prims) {
     if (prim.kind === 'path') {
+      const fill = recolour(prim.fillColorHex);
+      const strokeHex = recolour(prim.stroke?.colorHex);
+      // Nothing left to paint: the primitive was the colour that goes away.
+      if (fill === null && (prim.stroke === undefined || strokeHex === null)) {
+        seq++;
+        continue;
+      }
       shapes.push({
+        seq: seq++,
         paths: prim.paths.map((path) => ({
           ...path,
           segments: path.segments.map((seg) =>
@@ -2822,9 +2896,15 @@ function metafileDrawing(
                 : { op: seg.op, x: mapX(seg.x), y: mapY(seg.y) },
           ),
         })),
-        ...(prim.fillColorHex !== undefined ? { fillColorHex: prim.fillColorHex } : {}),
-        ...(prim.stroke
-          ? { stroke: { ...prim.stroke, widthPt: Math.max(0.25, prim.stroke.widthPt * sx) } }
+        ...(fill !== undefined && fill !== null ? { fillColorHex: fill } : {}),
+        ...(prim.stroke && strokeHex !== null
+          ? {
+              stroke: {
+                ...prim.stroke,
+                ...(strokeHex !== undefined ? { colorHex: strokeHex } : {}),
+                widthPt: Math.max(0.25, prim.stroke.widthPt * sx),
+              },
+            }
           : {}),
       });
       continue;
@@ -2834,7 +2914,12 @@ function metafileDrawing(
     const font = fontResources.get(variant);
     if (!font) continue;
     const sizePt = Math.max(1, prim.sizeLu * sy);
-    const line = makeChartLabelLine(prim.text, font, sizePt, prim.colorHex);
+    const textHex = recolour(prim.colorHex);
+    if (textHex === null) {
+      seq++;
+      continue;
+    }
+    const line = makeChartLabelLine(prim.text, font, sizePt, textHex ?? prim.colorHex);
     const shift =
       prim.alignH === 'center'
         ? -line.contentWidthPt / 2
@@ -2845,6 +2930,7 @@ function metafileDrawing(
     // and a baseline sits about four fifths of the em below the top.
     const baselineY = mapY(prim.y) - (prim.alignBaseline ? 0 : sizePt * 0.8);
     texts.push({
+      seq: seq++,
       line,
       x: mapX(prim.x) + shift,
       y: baselineY,
@@ -2863,6 +2949,7 @@ function layoutChartBlock(
   fontResources: ReadonlyMap<string, FontResource>,
   contentWidth: number,
   maxHeight?: number,
+  imageResources?: ReadonlyMap<string, ImageResource>,
 ): ChartBlockLaidOut {
   let widthPt: number = block.width;
   let heightPt: number = block.height;
@@ -2884,11 +2971,26 @@ function layoutChartBlock(
   const pp = block.paragraphProperties;
   // Figure alt text: the drawing's docPr description, else the chart's own title.
   const altText = block.altText ?? chart?.title;
+  // §20.1.8.14 — a chart papered with a picture rather than filled with a
+  // colour: chart-texture-bg.pptx tiles a woven cloth over the whole frame.
+  const bgRes = chart?.frameFillImage
+    ? imageResources?.get(chart.frameFillImage.resource)
+    : undefined;
+  const bgTile =
+    chart?.frameFillImage?.tiled === true && bgRes?.prepared
+      ? {
+          widthPt: (bgRes.prepared.widthPx * 72) / 96,
+          heightPt: (bgRes.prepared.heightPx * 72) / 96,
+        }
+      : undefined;
   return {
     kind: 'chart',
     widthPt,
     heightPt,
     layout,
+    ...(bgRes
+      ? { background: { resourceName: bgRes.resourceName, ...(bgTile ? { tile: bgTile } : {}) } }
+      : {}),
     resolvedAlignment: pp.alignment ?? 'left',
     spacingBeforePt: pp.spacingBefore ?? 0,
     spacingAfterPt: pp.spacingAfter ?? 0,
@@ -3284,6 +3386,11 @@ function collectImageResources(
     }
   };
   visit(body);
+  // §20.1.8.14 — and the picture a CHART is papered with, which hangs off the
+  // chart rather than off any element in the body (chart-texture-bg.pptx).
+  for (const chart of options.charts?.values() ?? []) {
+    if (chart.frameFillImage) seen.add(chart.frameFillImage.resource);
+  }
   // §17.2.1 — and the picture the PAGE is papered with, which is in no body at
   // all: unseen here it has no resource name, and nothing would be drawn for it
   // (tdf126533_pageBitmap.docx).
@@ -3344,31 +3451,73 @@ function chartPageItems(
   structId?: number,
 ): Array<PageItem> {
   const fig = structId !== undefined ? { structId } : {};
-  const out: Array<PageItem> = [];
-  for (const sh of laid.layout.shapes) {
-    out.push({
-      type: 'shape',
-      shape: {
-        paths: sh.paths,
-        ...(sh.fillColorHex ? { fillColorHex: sh.fillColorHex } : {}),
-        ...(sh.stroke ? { stroke: sh.stroke } : {}),
-        transform: flipTransform([1, 0, 0, 1, x, bottomYUp], pageHeight),
-      },
-      ...fig,
-    });
+  // A drawing whose primitives carry an order is a PICTURE: it paints as one
+  // thing, in that order, rather than every shape and then every label.
+  const ordered = laid.layout.shapes.some((sh) => sh.seq !== undefined);
+  const picture = ordered ? { pictureId: nextPictureId++ } : {};
+  // §20.1.8.14 — the picture the frame is papered with, under every primitive.
+  const backdrop: Array<PageItem> = [];
+  if (laid.background) {
+    const box = {
+      x,
+      y: pageHeight - (bottomYUp + laid.heightPt),
+      width: laid.widthPt,
+      height: laid.heightPt,
+    };
+    const tile = laid.background.tile;
+    // A tiled fill lays whole copies from the corner, so the last row and
+    // column hang past the frame: the box clips them back, exactly as a shape's
+    // own outline clips the picture it is filled with.
+    const clip = {
+      paths: [rectPath(laid.widthPt, laid.heightPt)],
+      transform: flipTransform([1, 0, 0, 1, x, bottomYUp], pageHeight),
+    };
+    const items = tile
+      ? PageAssembler.tileItems(laid.background.resourceName, tile, box)
+      : [
+          {
+            type: 'image' as const,
+            x: pt(box.x),
+            y: pt(box.y),
+            width: pt(box.width),
+            height: pt(box.height),
+            imageResourceName: laid.background.resourceName,
+          },
+        ];
+    for (const item of items) {
+      if (item.type !== 'image') continue;
+      backdrop.push({ ...item, clip, ...fig, ...picture });
+    }
   }
-  for (const t of laid.layout.texts) {
-    out.push({
-      type: 'line',
-      line: t.line,
-      originX: pt(x + t.x),
-      baselineY: pt(pageHeight - (bottomYUp + t.y)),
-      ...(t.rotationDeg ? { rotationDeg: t.rotationDeg } : {}),
-      ...fig,
-    });
-  }
-  return out;
+  const shapes: Array<PageItem & { readonly seq: number }> = laid.layout.shapes.map((sh) => ({
+    type: 'shape',
+    shape: {
+      paths: sh.paths,
+      ...(sh.fillColorHex ? { fillColorHex: sh.fillColorHex } : {}),
+      ...(sh.stroke ? { stroke: sh.stroke } : {}),
+      transform: flipTransform([1, 0, 0, 1, x, bottomYUp], pageHeight),
+    },
+    ...fig,
+    ...picture,
+    seq: sh.seq ?? 0,
+  }));
+  const texts: Array<PageItem & { readonly seq: number }> = laid.layout.texts.map((t) => ({
+    type: 'line',
+    line: t.line,
+    originX: pt(x + t.x),
+    baselineY: pt(pageHeight - (bottomYUp + t.y)),
+    ...(t.rotationDeg ? { rotationDeg: t.rotationDeg } : {}),
+    ...fig,
+    ...picture,
+    seq: t.seq ?? Number.MAX_SAFE_INTEGER,
+  }));
+  const all = [...shapes, ...texts];
+  if (ordered) all.sort((a, b) => a.seq - b.seq);
+  return [...backdrop, ...all.map(({ seq: _seq, ...item }) => item)];
 }
+
+// Pictures need only be told apart within one page; a running count does that.
+let nextPictureId = 1;
 
 // Sequential, non-paginated draw used for header/footer bands. Tables in
 // headers/footers are uncommon in practice and skipped here for simplicity.
@@ -3465,10 +3614,16 @@ function emitShapeText(
       }
       return;
     }
+    // §17.3.1.12 — the paragraph's indent, which the page, the band and a table
+    // cell all apply and a text box did not: the bullets of a slide stood in
+    // the margin and their text began wherever the dot ended
+    // (ArtisticEffectSample's list hangs its text 40pt in).
+    const indentLeft =
+      line.resolved.indentLeft + (line.firstLine ? line.resolved.indentFirstLine : 0);
     sink.push({
       type: 'line',
       line,
-      originX: pt(x + sh.insetLeftPt + lineOffset),
+      originX: pt(x + sh.insetLeftPt + indentLeft + lineOffset),
       baselineY: pt(pageHeight - (textY + lineBaselineOffset(line, line.resolved))),
       ...(figId !== undefined ? { structId: figId } : {}),
     });
@@ -3531,6 +3686,7 @@ function emitCellFloat(cf: CellFloat, ctx: CellAnchorCtx, frame: FloatFrame): vo
       imageResourceName: cf.block.resourceName,
       ...(cf.block.crop ? { crop: cf.block.crop } : {}),
       ...(cf.block.wash ? { wash: cf.block.wash } : {}),
+      ...(cf.block.alpha !== undefined ? { alpha: cf.block.alpha } : {}),
       ...(cf.block.rotationDeg ? { rotationDeg: cf.block.rotationDeg } : {}),
       ...(cf.block.flipH ? { flipH: true } : {}),
       ...(cf.block.flipV ? { flipV: true } : {}),
@@ -3593,17 +3749,31 @@ function emitShapeItems(
         height: sh.heightPt,
       })) {
         if (item.type !== 'image') continue;
-        sink.push({ ...item, clip, ...fig });
+        sink.push({
+          ...item,
+          clip,
+          ...fig,
+          ...(sh.fillAlpha !== undefined ? { alpha: sh.fillAlpha } : {}),
+        });
       }
     } else {
+      // §20.1.8.30 — the picture is stretched into the fill rect, which is the
+      // whole box unless the fill insets it.
+      const r = sh.fillImageRect;
+      const boxX = x + (r ? r.left * sh.widthPt : 0);
+      const boxW = sh.widthPt * (r ? 1 - r.left - r.right : 1);
+      const boxH = sh.heightPt * (r ? 1 - r.top - r.bottom : 1);
+      const boxTop = pageHeight - (bottomYUp + sh.heightPt) + (r ? r.top * sh.heightPt : 0);
       sink.push({
         type: 'image',
-        x: pt(x),
-        y: pt(pageHeight - (bottomYUp + sh.heightPt)),
-        width: pt(sh.widthPt),
-        height: pt(sh.heightPt),
+        x: pt(boxX),
+        y: pt(boxTop),
+        width: pt(boxW),
+        height: pt(boxH),
         imageResourceName: sh.fillImageResourceName,
         ...(sh.fillImageCrop ? { crop: sh.fillImageCrop } : {}),
+        ...(sh.fillAlpha !== undefined ? { alpha: sh.fillAlpha } : {}),
+        ...(sh.fillImageDuotone ? { duotone: sh.fillImageDuotone } : {}),
         clip,
         ...fig,
       });
@@ -3851,6 +4021,7 @@ function drawBlocksSequentially(
         imageResourceName: block.resourceName,
         ...(block.crop ? { crop: block.crop } : {}),
         ...(block.wash ? { wash: block.wash } : {}),
+        ...(block.alpha !== undefined ? { alpha: block.alpha } : {}),
         ...(block.rotationDeg ? { rotationDeg: block.rotationDeg } : {}),
         ...(block.flipH ? { flipH: true } : {}),
         ...(block.flipV ? { flipV: true } : {}),
@@ -4036,7 +4207,11 @@ function collectFontResources(
 ): Map<string, FontResource> {
   const used = new Map<string, { parsed: ParsedTtf; gids: Set<number> }>();
   const addRun = (
-    run: { text: string; properties: { bold?: boolean; italic?: boolean; styleId?: string } },
+    run: {
+      text: string;
+      properties: { bold?: boolean; italic?: boolean; styleId?: string };
+      listMarker?: boolean;
+    },
     para: Paragraph,
   ) => {
     const resolved = resolveRunProperties(run.properties, para.properties, options.styles);
@@ -4055,8 +4230,10 @@ function collectFontResources(
     // emit phase encodes — otherwise a ligature glyph (e.g. fi) would be
     // rendered but pruned from the subset / absent from the /CIDSet and
     // /ToUnicode (PDF/A §6.3.5 / §6.3.8).
+    // A marker whose glyph the font lacks is drawn as another character
+    // (see {@link markerText}), so the subset must reserve THAT one.
     const shaped = shapeText(
-      run.text,
+      run.listMarker === true ? markerText(run.text, parsed) : run.text,
       parsed.glyphForCodepoint,
       parsed.advanceWidths,
       parsed.ligatures,
@@ -4815,9 +4992,10 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
     }
     const highlight = (plan.run.commentRangeRefs?.length ?? 0) > 0;
     for (const t of tokenizeText(plan.run.text)) {
+      const text = plan.run.listMarker === true ? markerText(t.text, plan.font.parsed) : t.text;
       tokens.push({
         kind: 'text',
-        text: t.text,
+        text,
         isSpace: t.isSpace,
         ...(t.tab ? { tab: true as const } : {}),
         ...(plan.run.href !== undefined ? { href: plan.run.href } : {}),
@@ -4830,12 +5008,37 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         font: plan.font,
         fontSizePt: plan.fontSizePt,
         ...(plan.risePt !== undefined ? { risePt: plan.risePt } : {}),
-        widthPt: measureRunText(plan, t.text),
+        widthPt: measureRunText(plan, text),
         bidiLevel: 0,
       });
     }
   }
   return tokens;
+}
+
+/**
+ * A LIST MARKER the font has no glyph for, swapped for the dot every text font
+ * carries.
+ *
+ * §21.1.2.4.5 — a bullet is stated in a face of its own, and the symbol faces
+ * are not alphabets: Wingdings `l` is a filled circle, U+25CF once translated.
+ * The font a document is RENDERED with may have no such character — Roboto does
+ * not — and a missing glyph is a box: 45541_Header wore a row of them down
+ * eleven slides. The marker is the one place where the shape matters more than
+ * the code point, so it takes the nearest thing the font can draw.
+ *
+ * @param text The marker's text.
+ * @param font The font it is set in.
+ * @returns The text to draw.
+ */
+function markerText(text: string, parsed: ParsedTtf): string {
+  let out = '';
+  for (const ch of text) {
+    const cp = ch.codePointAt(0) ?? 0;
+    const missing = cp > 0x7f && parsed.glyphForCodepoint(cp) === 0;
+    out += missing && parsed.glyphForCodepoint(0x2022) !== 0 ? '\u2022' : ch;
+  }
+  return out;
 }
 
 /**
@@ -4904,7 +5107,8 @@ function tokenizePlansBidi(
     let curLevel = -1;
     const flush = (endExclusive: number) => {
       if (endExclusive <= bufStart) return;
-      const text = chars.slice(bufStart, endExclusive).join('');
+      const raw = chars.slice(bufStart, endExclusive).join('');
+      const text = plan.run.listMarker === true ? markerText(raw, plan.font.parsed) : raw;
       tokens.push({
         kind: 'text',
         text,
@@ -7295,7 +7499,10 @@ class PageAssembler {
         ...this.pageBorderItems(),
         ...this.columnSeparatorItems(),
         ...header.commands,
-        ...PageAssembler.byZ(this.floatsBehind),
+        // §20.4.2.3 — what the page puts behind its content paints before all
+        // of it, in this order, rather than riding the passes where every
+        // shape lands on top of every image.
+        ...PageAssembler.byZ(this.floatsBehind).map((item) => ({ ...item, behind: true })),
         ...this.current,
         ...PageAssembler.byZ(this.floatsFront),
         ...this.renderNotesBand(),
@@ -7829,6 +8036,7 @@ function paginateSections(
           imageResourceName: block.resourceName,
           ...(block.crop ? { crop: block.crop } : {}),
           ...(block.wash ? { wash: block.wash } : {}),
+          ...(block.alpha !== undefined ? { alpha: block.alpha } : {}),
           ...(block.rotationDeg ? { rotationDeg: block.rotationDeg } : {}),
           ...(block.flipH ? { flipH: true } : {}),
           ...(block.flipV ? { flipV: true } : {}),

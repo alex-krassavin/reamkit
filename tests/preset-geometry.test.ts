@@ -41,6 +41,31 @@ const KNOWN = [
   'snip2SameRect',
   'snip2DiagRect',
   'snipRoundRect',
+  // The batch the pptx corpus asked for, most-used first.
+  'chevron',
+  'homePlate',
+  'pie',
+  'blockArc',
+  'corner',
+  'leftRightArrow',
+  'notchedRightArrow',
+  'stripedRightArrow',
+  'bentUpArrow',
+  'gear6',
+  'gear9',
+  'actionButtonBlank',
+  'flowChartMerge',
+  'flowChartExtract',
+  'flowChartDelay',
+  'flowChartMagneticDisk',
+  'flowChartMagneticTape',
+  'flowChartPunchedTape',
+  'circularArrow',
+  'leftCircularArrow',
+  'leftBracket',
+  'rightBracket',
+  'leftBrace',
+  'rightBrace',
 ];
 
 function coords(segs: ReadonlyArray<PathSegment>): Array<number> {
@@ -65,6 +90,60 @@ describe('presetPaths', () => {
         expect(v, name).toBeGreaterThanOrEqual(-0.001);
         expect(v, name).toBeLessThanOrEqual(Math.max(W, H) + 0.001);
       }
+    }
+  });
+
+  it("runs a callout's tail OUTSIDE its box, which is what a callout is", () => {
+    // The default tail points below the rectangle; only the body is in bounds.
+    const paths = presetPaths('wedgeRoundRectCallout', W, H, new Map());
+    expect(paths).toHaveLength(2);
+    const body = coords(paths![0]!.segments);
+    for (const v of body) expect(v).toBeGreaterThanOrEqual(-0.001);
+    const tail = coords(paths![1]!.segments);
+    expect(tail.some((v) => v < 0)).toBe(true);
+    for (const v of tail) expect(Number.isFinite(v)).toBe(true);
+  });
+
+  it('points a chevron and notches its back, where a home plate has none', () => {
+    // Both are the same pentagon; the chevron carries one point more, the
+    // notch that lets a row of them interlock.
+    const chevron = presetPaths('chevron', W, H, new Map())![0]!.segments;
+    const plate = presetPaths('homePlate', W, H, new Map())![0]!.segments;
+    expect(chevron.length).toBe(plate.length + 1);
+    // The tip of each sits mid-height at the right edge.
+    expect(coords(plate)).toContain(W);
+    expect(coords(chevron)).toContain(H / 2);
+  });
+
+  it('cuts a pie through its centre and a block arc through its inner edge', () => {
+    const pie = presetPaths('pie', W, H, new Map())![0]!.segments;
+    // …ending at the centre before it closes.
+    const last = pie[pie.length - 2];
+    expect(last?.op === 'line' ? [last.x, last.y] : []).toEqual([W / 2, H / 2]);
+    const arc = presetPaths('blockArc', W, H, new Map())![0]!.segments;
+    expect(arc.filter((s) => s.op === 'cubic').length).toBeGreaterThan(
+      pie.filter((s) => s.op === 'cubic').length,
+    );
+  });
+
+  it('gives a gear one tooth per name, four corners each', () => {
+    for (const [preset, teeth] of [
+      ['gear6', 6],
+      ['gear9', 9],
+    ] as const) {
+      const segs = presetPaths(preset, W, H, new Map())![0]!.segments;
+      // move + 4 points per tooth (the first is the move) + close.
+      expect(segs.length, preset).toBe(teeth * 4 + 1);
+    }
+  });
+
+  it('leaves a brace and a bracket open, so only the stroke shows', () => {
+    for (const preset of ['leftBrace', 'rightBrace', 'leftBracket', 'rightBracket']) {
+      const segs = presetPaths(preset, W, H, new Map())![0]!.segments;
+      expect(
+        segs.some((s) => s.op === 'close'),
+        preset,
+      ).toBe(false);
     }
   });
 

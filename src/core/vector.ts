@@ -52,6 +52,11 @@ export interface GradientStop {
   readonly offset: number; // 0..1
   /** Stop colour as 6-hex, no leading `#`. */
   readonly colorHex: string; // 6-hex, no leading '#'
+  /**
+   * §20.1.2.3.1 `a:alpha` — how opaque THIS stop is, `0..1`; absent is opaque.
+   * The colour beside it is the stop's own, not composited over the paper.
+   */
+  readonly alpha?: number;
 }
 
 /**

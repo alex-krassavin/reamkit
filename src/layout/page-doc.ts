@@ -265,6 +265,24 @@ export interface PageItemBase {
    */
   readonly structId?: number;
   /**
+   * §20.4.2.3 `@behindDoc` — the item is BEHIND the page's content: a
+   * watermark, a slide's backdrop. Such items paint before everything else, in
+   * their own order. Without that they rode the ordinary passes, where every
+   * shape paints after every image — so a slide's white backdrop covered the
+   * photograph the slide is made of (corpus: tdf156808, tdf157635, tdf156856).
+   */
+  readonly behind?: boolean;
+  /**
+   * The picture this item belongs to, when it is part of one. A metafile is a
+   * list of drawing orders, and text among them is BOTH over what came before
+   * and under what comes after: an embedded diagram writes a label, lays a
+   * panel over it and writes the label again, offset, as its own drop shadow.
+   * Painted in the ordinary passes — every shape, then every line — the buried
+   * copy would show through the panel. Items sharing this id are held out of
+   * those passes and painted together, in list order.
+   */
+  readonly pictureId?: number;
+  /**
    * Tagged PDF: explicitly mark this item as a pagination artifact (running
    * header/footer, §14.8.2.2.2). Distinguishes header/footer text from
    * not-yet-tagged body content so it is typed `/Artifact /Pagination`, never a P.
@@ -332,6 +350,16 @@ export interface ImageItem extends PageItemBase {
   readonly crop?: ImageCrop;
   /** §14.1.2.10 — the contrast/brightness wash the picture is drawn through. */
   readonly wash?: { readonly gain: number; readonly black: number };
+  /**
+   * §20.1.8.4 `a:alphaModFix` — how opaque the picture is drawn, 0…1. A slide
+   * backed by a photograph at 70 % shows a pale wash of it, not the photograph.
+   */
+  readonly alpha?: number;
+  /**
+   * §20.1.8.23 `a:duotone` — the picture painted between two colours instead of
+   * its own: its dark end is the first, its light end the second.
+   */
+  readonly duotone?: { readonly shadowHex: string; readonly highlightHex: string };
   /** §20.1.7.6 — degrees clockwise about the box's centre. */
   readonly rotationDeg?: number;
   /** §20.1.7.6 — the picture drawn mirrored in its box. */
@@ -365,11 +393,18 @@ export type PageItem = TextLineItem | BorderItem | FillItem | ImageItem | ShapeI
 // exhaustive, so a new PageItem kind refuses to compile until each group
 // has a home. Order within a group is the layout's emission order.
 export interface PagePaintPlan {
+  /** What sits behind the page's content, in its own order — painted first. */
+  readonly behind: ReadonlyArray<PageItem>;
   readonly fills: ReadonlyArray<FillItem>;
   readonly images: ReadonlyArray<ImageItem>;
   readonly borders: ReadonlyArray<BorderItem>;
   readonly shapes: ReadonlyArray<ShapeItem>;
   readonly lines: ReadonlyArray<TextLineItem>;
+  /**
+   * Pictures, each as its own list in the order the picture draws — one entry
+   * per {@link PageItemBase.pictureId}. They paint where the shape pass does.
+   */
+  readonly pictures: ReadonlyArray<ReadonlyArray<PageItem>>;
 }
 
 export function paintPlan(commands: ReadonlyArray<PageItem>): PagePaintPlan {
@@ -378,7 +413,22 @@ export function paintPlan(commands: ReadonlyArray<PageItem>): PagePaintPlan {
   const borders: Array<BorderItem> = [];
   const shapes: Array<ShapeItem> = [];
   const lines: Array<TextLineItem> = [];
+  // A PICTURE paints as one thing, in its own order (see `pictureId`), so its
+  // items leave the passes below and travel together. So does everything the
+  // page puts BEHIND its content, which paints first and in its own order.
+  const pictures = new Map<number, Array<PageItem>>();
+  const behind: Array<PageItem> = [];
   for (const c of commands) {
+    if (c.behind === true) {
+      behind.push(c);
+      continue;
+    }
+    if (c.pictureId !== undefined) {
+      const group = pictures.get(c.pictureId);
+      if (group) group.push(c);
+      else pictures.set(c.pictureId, [c]);
+      continue;
+    }
     switch (c.type) {
       case 'fill':
         fills.push(c);
@@ -399,7 +449,7 @@ export function paintPlan(commands: ReadonlyArray<PageItem>): PagePaintPlan {
         assertNeverPageItem(c);
     }
   }
-  return { fills, images, borders, shapes, lines };
+  return { behind, fills, images, borders, shapes, lines, pictures: [...pictures.values()] };
 }
 
 function assertNeverPageItem(item: never): never {
