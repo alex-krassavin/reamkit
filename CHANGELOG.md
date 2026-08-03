@@ -3,6 +3,17 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.21.0
+
+### Added
+
+- **A protected document is answerable for from outside.** 1.20.0 opens one
+  with its password but kept the two things a caller needs to ask around it
+  inside: `isEncryptedPackage(bytes)` says a file wants a password BEFORE the
+  parse throws — so an interface can put up the prompt instead of an error —
+  and `WrongPasswordError`, thrown all along, is now a class to catch by type
+  rather than an `err.name` string to match. Both are on the package.
+
 ## 1.20.0
 
 ### Added
