@@ -67,12 +67,27 @@ charts — and is byte-stable across a read↔write loop.
 - **SmartArt** — rendered from the diagram's pre-rendered DrawingML drawing
   (`diagrams/drawing#.xml`) as positioned shapes; a file with no drawing fallback
   degrades to a graceful loss rather than an empty space.
-- Inline and floating images (PNG / JPEG / JPEG2000), including **legacy VML
-  pictures** (`<w:pict>` / `<w:object>` — ActiveX and OLE-object previews,
-  images from older Word); floating drawings (`wp:anchor`) render outside the
-  text flow — wrap-none (incl. `behindDoc`) for watermarks/stamps/text boxes,
-  and side wrapping (`square`/`tight`/`through`) where the body text flows
-  around the exclusion area.
+- Inline and floating images (PNG / JPEG / JPEG2000 / GIF / **TIFF** — baseline
+  TIFF 6.0 is decoded to samples, since PDF has no filter that carries one),
+  including **legacy VML pictures** (`<w:pict>` / `<w:object>` — ActiveX and
+  OLE-object previews, images from older Word); floating drawings
+  (`wp:anchor`) render outside the text flow — wrap-none (incl. `behindDoc`)
+  for watermarks/stamps/text boxes, and side wrapping
+  (`square`/`tight`/`through`) where the body text flows around the exclusion
+  area, on **both sides** of it where the drawing leaves room. A drawing
+  **anchored inside a table cell** is placed against the cell (or against the
+  page, where `layoutInCell` is off), and a picture's **washout**
+  (`@gain`/`@blacklevel`) prints as the contrast and brightness it asks for.
+- **Metafiles** — EMF (MS-EMF) and WMF (MS-WMF), the format Word writes for
+  anything it draws itself: an embedded workbook's preview, a legacy clipart,
+  an ActiveX control's face, an equation. The records are played through their
+  own device context — pen, brush, font, current point, window/viewport and
+  world transform — and drawn as paths and text: lines, polygons, polylines,
+  Béziers, rectangles, ellipses, path brackets, brush blits and both text
+  records. In the flow, floating, in a header, inside a cell, or inline in a
+  line of text.
+- **Text boxes chained** with `wps:linkedTxbx`: what overruns one box continues
+  in the next of its chain.
 - Tracked changes (`w:ins` / `w:del`).
 - Reads both **Transitional and Strict** (ISO 29500) packages; block-level
   content controls (`w:sdt`) flow through.
@@ -300,6 +315,10 @@ charts — and is byte-stable across a read↔write loop.
   only to a binary `.bin` (the MorphData control family — check box / option / toggle
   / text / combo / list — and every property-bag control _are_ read, with their
   caption and value).
+- **Inside a metafile**, a raster **blit** (a DIB in the record stream — an
+  attachment icon, a pasted screenshot), a gradient fill, a flood fill and a
+  clipping region are not drawn; everything else the file draws is. Each is
+  reported as a named loss rather than guessed at.
 
 ## Validation
 
