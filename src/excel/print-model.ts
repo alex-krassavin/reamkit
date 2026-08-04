@@ -2101,6 +2101,11 @@ function runPropsFromXf(xf: XlsxCellXf, styles: XlsxStyles): RunProperties {
   if (font.strike) props.strike = true;
   if (font.sizePt !== undefined) props.fontSizePt = halfPtToPt(Math.round(font.sizePt * 2));
   if (font.colorHex) props.colorHex = font.colorHex;
+  // §18.8.29 `<name>` — the typeface itself, which the model carried for every
+  // other property of the font and not for this one. A workbook says Calibri
+  // and the substitute chooser, which reads the model, saw a document that
+  // named no font at all and set the whole book in the default sans.
+  if (font.name) props.fontFamily = { ascii: font.name };
   return props;
 }
 
