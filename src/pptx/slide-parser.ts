@@ -33,6 +33,7 @@ import type {
   TableRow,
 } from '@/core/document-model';
 import type { ColorResolver } from '@/core/drawingml/colors';
+import type { ThemeFonts } from '@/core/drawingml/theme-parser';
 import type { Loss, Pt, ResourceId } from '@/core/ir';
 import type { PoNode } from '@/core/po-helpers';
 import type { LevelBullet, PlaceholderCascade } from '@/pptx/placeholder-cascade';
@@ -91,6 +92,11 @@ export interface SlideContext {
   readonly resolveImage?: (relId: string) => ResourceId | undefined;
   /** The deck theme's fill style lists, for a `p:bgRef` on this slide. */
   readonly themeFills?: ThemeFillStyles;
+  /**
+   * §20.1.4.1.16 — the two typefaces the deck's theme names. A run states its
+   * own by TOKEN (`+mn-lt`) more often than by name.
+   */
+  readonly themeFonts?: ThemeFonts;
   /** §20.1.4.1.21 `a:lnStyleLst` — the widths an `a:lnRef` indexes, in points. */
   readonly themeLineWidths?: ReadonlyArray<number>;
   /**
@@ -268,7 +274,7 @@ function parseSp(sp: PoNode, ctx: SlideContext, transform: GroupTransform): Shap
   // from `p:defaultTextStyle` — white text drawn black on green.
   const styleColor = style ? styleRefFontColor(style, colors) : undefined;
   const text = txBody
-    ? parseTxBody(txBody, ph, ctx.cascade, colors, ctx.resolveHyperlink, styleColor)
+    ? parseTxBody(txBody, ph, ctx.cascade, colors, ctx.resolveHyperlink, styleColor, ctx.themeFonts)
     : undefined;
 
   // Geometry/fill/stroke from p:spPr via the shared DrawingML readers, resolving
@@ -884,6 +890,7 @@ function txBodyParagraphs(
   colors: ColorResolver,
   resolveLink: LinkResolver,
   styleColor?: string,
+  themeFonts?: ThemeFonts,
 ): Array<BodyElement> {
   const content: Array<BodyElement> = [];
   const counters: Array<number> = []; // per-level a:buAutoNum counters (PX6b)
@@ -891,7 +898,16 @@ function txBodyParagraphs(
     if (!poIs(child, 'a:p')) continue;
     content.push({
       kind: 'paragraph',
-      paragraph: parseSlideParagraph(child, ph, cascade, colors, resolveLink, counters, styleColor),
+      paragraph: parseSlideParagraph(
+        child,
+        ph,
+        cascade,
+        colors,
+        resolveLink,
+        counters,
+        styleColor,
+        themeFonts,
+      ),
     });
   }
   return content;
@@ -917,8 +933,17 @@ export function parseTxBody(
   colors: ColorResolver,
   resolveLink: LinkResolver,
   styleColor?: string,
+  themeFonts?: ThemeFonts,
 ): ShapeTextBody | undefined {
-  const content = txBodyParagraphs(txBody, ph, cascade, colors, resolveLink, styleColor);
+  const content = txBodyParagraphs(
+    txBody,
+    ph,
+    cascade,
+    colors,
+    resolveLink,
+    styleColor,
+    themeFonts,
+  );
   if (content.length === 0) return undefined;
 
   const bodyPr = poChildren(txBody).find((c) => poIs(c, 'a:bodyPr'));
@@ -953,6 +978,7 @@ function parseSlideParagraph(
   resolveLink: LinkResolver,
   counters: Array<number>,
   styleColor?: string,
+  themeFonts?: ThemeFonts,
 ): Paragraph {
   const pPr = poChildren(aP).find((c) => poIs(c, 'a:pPr'));
   const level = (pPr ? poIntAttr(pPr, 'lvl') : undefined) ?? 0;
@@ -969,7 +995,7 @@ function parseSlideParagraph(
   const runs: Array<Run> = [];
   for (const child of poChildren(aP)) {
     if (poIs(child, 'a:r') || poIs(child, 'a:fld')) {
-      const run = parseSlideRun(child, defaults, colors, resolveLink);
+      const run = parseSlideRun(child, defaults, colors, resolveLink, themeFonts);
       if (run) runs.push(run);
     }
   }
@@ -1084,6 +1110,7 @@ function parseSlideRun(
   defaults: RunProperties,
   colors: ColorResolver,
   resolveLink: LinkResolver,
+  themeFonts?: ThemeFonts,
 ): Run | undefined {
   const t = poChildren(node).find((c) => poIs(c, 'a:t'));
   const text = t ? poText(t) : '';
@@ -1094,7 +1121,7 @@ function parseSlideRun(
   const href = linkId !== undefined ? resolveLink?.(linkId) : undefined;
   return {
     text,
-    properties: { ...defaults, ...rPrToRunProps(rPr, colors) },
+    properties: { ...defaults, ...rPrToRunProps(rPr, colors, themeFonts) },
     ...(href ? { href } : {}),
   };
 }

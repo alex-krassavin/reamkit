@@ -34,6 +34,11 @@ export interface BuildPptxLayoutMaster {
    * lists a `p:bgRef` or an `a:fillRef` indexes into. Implies a theme part.
    */
   readonly themeFmt?: string;
+  /**
+   * §20.1.4.1.16 — the theme's `<a:fontScheme>…</a:fontScheme>` block, whole:
+   * the two typefaces a `+mj-lt`/`+mn-lt` token stands for. Implies a theme part.
+   */
+  readonly themeFonts?: string;
   /** Extra `<Relationship/>` XML for the master's .rels (e.g. a background image). */
   readonly masterRels?: string;
   /** §19.3.1.39 — emit `p:sldLayout@showMasterSp="0"` (the layout hides the master's shapes). */
@@ -217,7 +222,12 @@ export function buildPptx(
         (lm.clrMap ? `<p:clrMap ${lm.clrMap}/>` : '') +
         `${lm.txStyles ?? ''}</p:sldMaster>`,
     );
-    if (lm.theme !== undefined || lm.themeFmt !== undefined || lm.masterRels !== undefined) {
+    if (
+      lm.theme !== undefined ||
+      lm.themeFmt !== undefined ||
+      lm.themeFonts !== undefined ||
+      lm.masterRels !== undefined
+    ) {
       files['ppt/slideMasters/_rels/slideMaster1.xml.rels'] = encoder.encode(
         `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
           `<Relationships xmlns="${PKG_REL_NS}">` +
@@ -229,6 +239,7 @@ export function buildPptx(
         `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
           `<a:theme xmlns:a="${A_NS}" name="deck"><a:themeElements>` +
           `<a:clrScheme name="deck">${lm.theme ?? ''}</a:clrScheme>` +
+          (lm.themeFonts ?? '') +
           (lm.themeFmt ? `<a:fmtScheme name="deck">${lm.themeFmt}</a:fmtScheme>` : '') +
           `</a:themeElements></a:theme>`,
       );

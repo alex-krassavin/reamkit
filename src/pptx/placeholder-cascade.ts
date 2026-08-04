@@ -17,6 +17,7 @@
 
 import type { Alignment, ParagraphProperties, RunProperties } from '@/core/document-model';
 import type { ColorResolver } from '@/core/drawingml/colors';
+import type { ThemeFonts } from '@/core/drawingml/theme-parser';
 import type { PoNode } from '@/core/po-helpers';
 import type { PlaceholderRef, ShapeBoxEmu } from '@/pptx/sp-helpers';
 
@@ -175,17 +176,22 @@ function categoryOf(type: string | undefined): StyleCategory {
  * @param layoutTree The parsed `p:sldLayout` part.
  * @param masterTree The parsed `p:sldMaster` part, when present.
  * @param colors     The deck's colour resolver, for scheme colours in the text styles.
+ * @param deckDefaults The presentation's own default text style, as the floor.
+ * @param themeFonts The theme's font scheme, for the `+mn-lt` tokens.
  */
 export function buildPlaceholderCascade(
   layoutTree: ReadonlyArray<PoNode>,
   masterTree: ReadonlyArray<PoNode> | undefined,
   colors: ColorResolver,
   deckDefaults: ReadonlyArray<LevelStyle> = [],
+  themeFonts?: ThemeFonts,
 ): PlaceholderCascade {
-  const layoutPhs = collectPlaceholders(layoutTree, 'p:sldLayout', colors);
-  const masterPhs = masterTree ? collectPlaceholders(masterTree, 'p:sldMaster', colors) : [];
+  const layoutPhs = collectPlaceholders(layoutTree, 'p:sldLayout', colors, themeFonts);
+  const masterPhs = masterTree
+    ? collectPlaceholders(masterTree, 'p:sldMaster', colors, themeFonts)
+    : [];
   const txStyles = masterTree
-    ? collectTxStyles(masterTree, colors)
+    ? collectTxStyles(masterTree, colors, themeFonts)
     : { title: [], body: [], other: [] };
 
   // Nearest last: the deck's default, the master's family style, then the two
@@ -257,6 +263,7 @@ function mergeLevels(base: LevelStyle, next: LevelStyle): LevelStyle {
 export function parseLevelStyles(
   list: PoNode | undefined,
   colors: ColorResolver,
+  themeFonts?: ThemeFonts,
 ): Array<LevelStyle> {
   if (!list) return [];
   const out: Array<LevelStyle> = [];
@@ -265,7 +272,7 @@ export function parseLevelStyles(
     const defRPr = lvlPr ? poChildren(lvlPr).find((c) => poIs(c, 'a:defRPr')) : undefined;
     const bullet = parseBullet(lvlPr, colors);
     out.push({
-      run: rPrToRunProps(defRPr, colors),
+      run: rPrToRunProps(defRPr, colors, themeFonts),
       paragraph: pPrToParagraphProps(lvlPr),
       ...(bullet ? { bullet } : {}),
     });
@@ -318,6 +325,7 @@ function collectPlaceholders(
   tree: ReadonlyArray<PoNode>,
   root: 'p:sldLayout' | 'p:sldMaster',
   colors: ColorResolver,
+  themeFonts?: ThemeFonts,
 ): Array<ParsedPlaceholder> {
   const sld = tree.find((n) => poIs(n, root));
   const cSld = sld ? poChildren(sld).find((c) => poIs(c, 'p:cSld')) : undefined;
@@ -339,7 +347,7 @@ function collectPlaceholders(
       ref,
       ...(box ? { box } : {}),
       ...(spPr ? { spPr } : {}),
-      levels: parseLevelStyles(lstStyle, colors),
+      levels: parseLevelStyles(lstStyle, colors, themeFonts),
       ...(anchor ? { anchor } : {}),
     });
   }
@@ -368,11 +376,16 @@ function matchPlaceholder(
 function collectTxStyles(
   masterTree: ReadonlyArray<PoNode>,
   colors: ColorResolver,
+  themeFonts?: ThemeFonts,
 ): Record<StyleCategory, Array<LevelStyle>> {
   const sld = masterTree.find((n) => poIs(n, 'p:sldMaster'));
   const txStyles = sld ? poChildren(sld).find((c) => poIs(c, 'p:txStyles')) : undefined;
   const family = (tag: string): Array<LevelStyle> =>
-    parseLevelStyles(txStyles ? poChildren(txStyles).find((c) => poIs(c, tag)) : undefined, colors);
+    parseLevelStyles(
+      txStyles ? poChildren(txStyles).find((c) => poIs(c, tag)) : undefined,
+      colors,
+      themeFonts,
+    );
   return {
     title: family('p:titleStyle'),
     body: family('p:bodyStyle'),

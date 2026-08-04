@@ -17,6 +17,7 @@ import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss, Pt, ResourceId } from '@/core/ir';
 import type { PoNode } from '@/core/po-helpers';
 import type { Relationship } from '@/core/opc';
+import type { ThemeFonts } from '@/core/drawingml/theme-parser';
 import type { PlaceholderCascade } from '@/pptx/placeholder-cascade';
 import type { SlideContext, ThemeFillStyles } from '@/pptx/slide-parser';
 
@@ -34,6 +35,7 @@ import {
   parseTheme,
   parseThemeBgFillStyles,
   parseThemeFillStyles,
+  parseThemeFonts,
   parseThemeLineWidths,
 } from '@/core/drawingml/theme-parser';
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
@@ -197,6 +199,7 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
         colors: styles.colors,
         ...(styles.background ? { backgroundFill: styles.background } : {}),
         slideSize: { widthPt: pageW, heightPt: pageH },
+        ...(styles.themeFonts ? { themeFonts: styles.themeFonts } : {}),
         ...(styles.themeFills ? { themeFills: styles.themeFills } : {}),
         ...(styles.themeLineWidths ? { themeLineWidths: styles.themeLineWidths } : {}),
         resolveImage: makeSlideImageResolver(pkg, part.path, resources),
@@ -520,6 +523,8 @@ interface SlideStyles {
   readonly inheritedShapes?: ReadonlyArray<BodyElement>;
   /** The deck theme's `a:fillStyleLst`/`a:bgFillStyleLst`, for a `p:bgRef`. */
   readonly themeFills?: ThemeFillStyles;
+  /** §20.1.4.1.16 — the two typefaces a `+mn-lt`/`+mj-lt` token stands for. */
+  readonly themeFonts?: ThemeFonts;
   /** §20.1.4.1.21 — the widths an `a:lnRef` indexes, in points. */
   readonly themeLineWidths?: ReadonlyArray<number>;
   // The inherited background fill (layout, else master) for slides that have no
@@ -579,11 +584,15 @@ function slideStylesFor(
       }
     : undefined;
   const themeLineWidths = theme ? parseThemeLineWidths(theme.data) : undefined;
+  // §20.1.4.1.16 — the two typefaces the deck names once; a slide refers to
+  // them by token (`+mn-lt`), which is what most of its runs actually say.
+  const themeFonts = theme ? parseThemeFonts(theme.data) : undefined;
   const cascade = buildPlaceholderCascade(
     layoutTree,
     masterTree,
     colors,
-    parseLevelStyles(deckDefaultTextStyle, colors),
+    parseLevelStyles(deckDefaultTextStyle, colors, themeFonts),
+    themeFonts,
   );
   const background =
     partBackground(
@@ -625,6 +634,7 @@ function slideStylesFor(
   const styles: SlideStyles = {
     cascade,
     colors,
+    ...(themeFonts ? { themeFonts } : {}),
     ...(themeFills ? { themeFills } : {}),
     ...(themeLineWidths && themeLineWidths.length > 0 ? { themeLineWidths } : {}),
     ...(background ? { background } : {}),

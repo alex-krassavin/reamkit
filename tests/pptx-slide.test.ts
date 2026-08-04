@@ -158,6 +158,52 @@ describe('pptx placeholder cascade (E-PPTX PX2)', () => {
     expect(run?.properties.bold).toBe(true);
   });
 
+  // §20.1.4.1.14 — a slide names its typeface by TOKEN more often than by name:
+  // `+mn-lt` is "whatever the theme calls its body font". Left unresolved the
+  // token travels into the model as if it WERE a typeface, no substitution
+  // table knows it, and 45541_Header's Times deck came out in a grotesque.
+  it('resolves a +mn-lt/+mj-lt typeface through the theme font scheme', () => {
+    const fontScheme =
+      `<a:fontScheme name="t"><a:majorFont><a:latin typeface="Georgia"/>` +
+      `<a:ea typeface=""/><a:cs typeface=""/></a:majorFont>` +
+      `<a:minorFont><a:latin typeface="Times New Roman"/><a:ea typeface="MS Mincho"/>` +
+      `<a:cs typeface=""/></a:minorFont></a:fontScheme>`;
+    const styles =
+      `<p:txStyles><p:titleStyle><a:lvl1pPr><a:defRPr>` +
+      `<a:latin typeface="+mj-lt"/></a:defRPr></a:lvl1pPr></p:titleStyle>` +
+      `<p:bodyStyle/><p:otherStyle/></p:txStyles>`;
+    const run = (rPr: string) =>
+      firstShapeRun(
+        Ream.parse(
+          buildPptx(
+            [
+              `<p:sp><p:nvSpPr><p:cNvPr id="2" name="Title 1"/><p:cNvSpPr/>` +
+                `<p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr><p:spPr/>` +
+                `<p:txBody><a:bodyPr/><a:p><a:r>${rPr}<a:t>Themed</a:t></a:r></a:p>` +
+                `</p:txBody></p:sp>`,
+            ],
+            {
+              layoutMaster: {
+                layoutSpTree: LAYOUT_TITLE,
+                txStyles: styles,
+                themeFonts: fontScheme,
+              },
+            },
+          ),
+        ),
+      );
+    // The master's title style names the MAJOR font by token…
+    expect(run('<a:rPr lang="en"/>')?.properties.fontFamily?.ascii).toBe('Georgia');
+    // …and the run's own token wins over it, resolved the same way.
+    expect(
+      run('<a:rPr lang="en"><a:latin typeface="+mn-lt"/></a:rPr>')?.properties.fontFamily?.ascii,
+    ).toBe('Times New Roman');
+    // A typeface stated by NAME is untouched.
+    expect(
+      run('<a:rPr lang="en"><a:latin typeface="Verdana"/></a:rPr>')?.properties.fontFamily?.ascii,
+    ).toBe('Verdana');
+  });
+
   // A run states bold/italic/underline to turn them OFF as much as on:
   // 45541_Header's master body style is bold and every slide's own runs say
   // `b="0"`, so read as "bold when true, silent otherwise" the deck came out

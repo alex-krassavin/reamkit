@@ -45,6 +45,87 @@ const SCHEME_SLOTS = new Set([
 ]);
 
 /**
+ * §20.1.4.1.16 `a:fontScheme` — the two typefaces a theme names, each in three
+ * scripts. A document does not repeat them: it refers to them by TOKEN
+ * (`+mj-lt`, `+mn-ea`, …), which every reader is expected to resolve.
+ */
+export interface ThemeFonts {
+  /** `a:majorFont` — headings. */
+  readonly major: ThemeFontSlots;
+  /** `a:minorFont` — body text. */
+  readonly minor: ThemeFontSlots;
+}
+
+/** One font of a scheme, in the three scripts a run may pick from. */
+export interface ThemeFontSlots {
+  readonly latin?: string;
+  readonly ea?: string;
+  readonly cs?: string;
+}
+
+/**
+ * Parse a theme's font scheme (§20.1.4.1.16).
+ *
+ * @param themeXml The raw theme part bytes, UTF-8.
+ * @returns The two fonts; slots the theme leaves empty are absent.
+ */
+export function parseThemeFonts(themeXml: Uint8Array): ThemeFonts {
+  const tree = parser.parse(decoder.decode(themeXml)) as Array<PoNode>;
+  const scheme = poFindByPath(tree, ['a:theme', 'a:themeElements', 'a:fontScheme']);
+  const read = (tag: string): ThemeFontSlots => {
+    const font = scheme ? poChildren(scheme).find((c) => poIs(c, tag)) : undefined;
+    const slot = (name: string): string | undefined => {
+      const node = font ? poChildren(font).find((c) => poIs(c, name)) : undefined;
+      const face = node ? poAttr(node, 'typeface')?.trim() : undefined;
+      return face === undefined || face === '' ? undefined : face;
+    };
+    const [latin, ea, cs] = [slot('a:latin'), slot('a:ea'), slot('a:cs')];
+    return {
+      ...(latin !== undefined ? { latin } : {}),
+      ...(ea !== undefined ? { ea } : {}),
+      ...(cs !== undefined ? { cs } : {}),
+    };
+  };
+  return { major: read('a:majorFont'), minor: read('a:minorFont') };
+}
+
+// §20.1.4.1.14 — the six tokens a typeface may be written as, and the slot each
+// one stands for.
+const THEME_FONT_TOKENS: ReadonlyMap<string, readonly ['major' | 'minor', keyof ThemeFontSlots]> =
+  new Map([
+    ['+mj-lt', ['major', 'latin']],
+    ['+mn-lt', ['minor', 'latin']],
+    ['+mj-ea', ['major', 'ea']],
+    ['+mn-ea', ['minor', 'ea']],
+    ['+mj-cs', ['major', 'cs']],
+    ['+mn-cs', ['minor', 'cs']],
+  ]);
+
+/**
+ * Resolve a typeface written as a theme TOKEN to the name it stands for.
+ *
+ * A slide states its fonts as `+mn-lt` far more often than by name, and left
+ * unresolved that string travels into the model as if it WERE a typeface: no
+ * substitution table knows it, so a deck whose theme is Times came out in a
+ * grotesque (45541_Header).
+ *
+ * @param typeface The `@typeface` as the file writes it.
+ * @param fonts    The theme's font scheme, when the part was read.
+ * @returns The resolved name; the input unchanged when it is not a token, and
+ *          `undefined` when it is a token the theme leaves empty.
+ */
+export function resolveThemeFont(
+  typeface: string | undefined,
+  fonts: ThemeFonts | undefined,
+): string | undefined {
+  if (typeface === undefined || !typeface.startsWith('+')) return typeface;
+  const slot = THEME_FONT_TOKENS.get(typeface.toLowerCase());
+  if (!slot || !fonts) return undefined;
+  const [which, script] = slot;
+  return fonts[which][script];
+}
+
+/**
  * Parse a DrawingML theme part (ECMA-376 §20.1.6.2, `a:clrScheme`) into a
  * `name → hex` colour map. Reads the twelve scheme slots — `dk1`/`lt1`/`dk2`/
  * `lt2`, `accent1`–`accent6`, `hlink`/`folHlink` — taking each slot's
