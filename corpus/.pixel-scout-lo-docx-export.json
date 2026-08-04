@@ -46,7 +46,7 @@
  },
  {
   "name": "tdf128207.docx",
-  "score": 0.1532,
+  "score": 0.1542,
   "aligned": true
  },
  {
@@ -206,7 +206,7 @@
  },
  {
   "name": "chart-dupe.docx",
-  "score": 0.0361,
+  "score": 0.0366,
   "aligned": true
  },
  {
@@ -780,6 +780,11 @@
   "aligned": true
  },
  {
+  "name": "fdo76249.docx",
+  "score": 0.0105,
+  "aligned": true
+ },
+ {
   "name": "fdo79969_xlsb.docx",
   "score": 0.0103,
   "aligned": true
@@ -812,11 +817,6 @@
  {
   "name": "tdf118701.docx",
   "score": 0.0102,
-  "aligned": true
- },
- {
-  "name": "fdo76249.docx",
-  "score": 0.0101,
   "aligned": true
  },
  {
@@ -876,11 +876,6 @@
  },
  {
   "name": "tdf109310_endnoteStyleForMSO.docx",
-  "score": 0.0089,
-  "aligned": true
- },
- {
-  "name": "tdf123873.docx",
   "score": 0.0089,
   "aligned": true
  },
@@ -946,6 +941,11 @@
  },
  {
   "name": "a4andborders.docx",
+  "score": 0.0075,
+  "aligned": true
+ },
+ {
+  "name": "Chart_Plot_BorderLine_Style.docx",
   "score": 0.0075,
   "aligned": true
  },
@@ -1066,6 +1066,11 @@
  },
  {
   "name": "tdf104354-2.docx",
+  "score": 0.0064,
+  "aligned": true
+ },
+ {
+  "name": "tdf123873.docx",
   "score": 0.0064,
   "aligned": true
  },
@@ -1318,11 +1323,6 @@
   "name": "cjklist44.docx",
   "score": 0.0045,
   "aligned": false
- },
- {
-  "name": "Chart_Plot_BorderLine_Style.docx",
-  "score": 0.0045,
-  "aligned": true
  },
  {
   "name": "picture_colormode_grayscale.docx",
@@ -2600,6 +2600,11 @@
   "aligned": true
  },
  {
+  "name": "chart-size.docx",
+  "score": 0.0008,
+  "aligned": true
+ },
+ {
   "name": "TOC_field_b.docx",
   "score": 0.0008,
   "aligned": true
@@ -2611,11 +2616,6 @@
  },
  {
   "name": "fdo68787.docx",
-  "score": 0.0008,
-  "aligned": true
- },
- {
-  "name": "chart-size.docx",
   "score": 0.0008,
   "aligned": true
  },

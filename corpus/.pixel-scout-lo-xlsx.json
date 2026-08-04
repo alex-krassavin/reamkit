@@ -20,16 +20,6 @@
   "aligned": false
  },
  {
-  "name": "functions-excel-2010.xlsx",
-  "score": 98,
-  "aligned": false
- },
- {
-  "name": "groupShape.xlsx",
-  "score": 98,
-  "aligned": false
- },
- {
   "name": "tdf131575.xlsx",
   "score": 98,
   "aligned": false
@@ -165,11 +155,6 @@
   "aligned": true
  },
  {
-  "name": "tdf107586.xlsx",
-  "score": 0.0199,
-  "aligned": true
- },
- {
   "name": "TableStyleTest.xlsx",
   "score": 0.0198,
   "aligned": true
@@ -205,6 +190,11 @@
   "aligned": true
  },
  {
+  "name": "functions-excel-2010.xlsx",
+  "score": 0.0155,
+  "aligned": true
+ },
+ {
   "name": "tdf134769.xlsx",
   "score": 0.0155,
   "aligned": true
@@ -217,6 +207,11 @@
  {
   "name": "shape-macro-ext-ref.xlsx",
   "score": 0.015,
+  "aligned": true
+ },
+ {
+  "name": "tdf107586.xlsx",
+  "score": 0.0148,
   "aligned": true
  },
  {
@@ -766,6 +761,11 @@
  },
  {
   "name": "tdf145054.xlsx",
+  "score": 0.001,
+  "aligned": true
+ },
+ {
+  "name": "groupShape.xlsx",
   "score": 0.001,
   "aligned": true
  },

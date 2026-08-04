@@ -165,23 +165,8 @@
   "aligned": true
  },
  {
-  "name": "chart-texture-bg.pptx",
-  "score": 0.0542,
-  "aligned": true
- },
- {
   "name": "crash-57308ca363f5b71763c489d1b432aff009d4bc4f.pptx",
   "score": 0.0529,
-  "aligned": true
- },
- {
-  "name": "chart-picture-bg.pptx",
-  "score": 0.0502,
-  "aligned": true
- },
- {
-  "name": "chart-slide-bg.pptx",
-  "score": 0.0479,
   "aligned": true
  },
  {
@@ -215,6 +200,21 @@
   "aligned": true
  },
  {
+  "name": "chart-texture-bg.pptx",
+  "score": 0.038,
+  "aligned": true
+ },
+ {
+  "name": "chart-picture-bg.pptx",
+  "score": 0.0369,
+  "aligned": true
+ },
+ {
+  "name": "chart-slide-bg.pptx",
+  "score": 0.0322,
+  "aligned": true
+ },
+ {
   "name": "ArtisticEffectSample.pptx",
   "score": 0.0288,
   "aligned": true
@@ -240,13 +240,13 @@
   "aligned": true
  },
  {
-  "name": "scatter-chart.pptx",
-  "score": 0.0201,
+  "name": "bug60993.pptx",
+  "score": 0.0175,
   "aligned": true
  },
  {
-  "name": "bug60993.pptx",
-  "score": 0.0175,
+  "name": "scatter-chart.pptx",
+  "score": 0.0165,
   "aligned": true
  },
  {

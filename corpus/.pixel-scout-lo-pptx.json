@@ -390,11 +390,6 @@
   "aligned": true
  },
  {
-  "name": "tdf112089.pptx",
-  "score": 0.0466,
-  "aligned": true
- },
- {
   "name": "presetDashDot.pptx",
   "score": 0.0466,
   "aligned": true
@@ -467,6 +462,11 @@
  {
   "name": "smartart-rotation.pptx",
   "score": 0.0352,
+  "aligned": true
+ },
+ {
+  "name": "tdf112089.pptx",
+  "score": 0.0328,
   "aligned": true
  },
  {
