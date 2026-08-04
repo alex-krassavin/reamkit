@@ -158,6 +158,40 @@ describe('pptx placeholder cascade (E-PPTX PX2)', () => {
     expect(run?.properties.bold).toBe(true);
   });
 
+  // §21.1.2.1.2 `a:normAutofit` — the shrink PowerPoint already worked out and
+  // wrote down. Unread, the text it squeezed to 62% of its style overflowed the
+  // placeholder it was squeezed to fit.
+  it('sets the text at the scale the autofit already settled on', () => {
+    const body = (bodyPr: string): string =>
+      `<p:sp><p:nvSpPr><p:cNvPr id="3" name="Body 2"/><p:cNvSpPr/>` +
+      `<p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5486400" cy="914400"/></a:xfrm></p:spPr>` +
+      `<p:txBody>${bodyPr}<a:p><a:r><a:rPr lang="en" sz="3200"/><a:t>Squeezed</a:t></a:r></a:p>` +
+      `</p:txBody></p:sp>`;
+    const fittedPara = (bodyPr: string) => {
+      const doc = Ream.parse(buildPptx([body(bodyPr)]));
+      const el = doc.flow.body.find((e) => e.kind === 'shape');
+      const block =
+        el?.kind === 'shape'
+          ? el.shape.text?.content.find((c) => c.kind === 'paragraph')
+          : undefined;
+      return block?.kind === 'paragraph' ? block.paragraph : undefined;
+    };
+    // 62.5% of 32pt, and a fifth off the line spacing (12pt states "single").
+    const fitted = fittedPara(
+      '<a:bodyPr><a:normAutofit fontScale="62500" lnSpcReduction="20000"/></a:bodyPr>',
+    );
+    expect(fitted?.runs[0]?.properties.fontSizePt).toBeCloseTo(20, 5);
+    expect(fitted?.properties.spacingLine).toBeCloseTo(9.6, 5);
+    expect(fitted?.properties.spacingLineRule).toBe('auto');
+    // A bare normAutofit states the RULE and no result — that shrink is ours to
+    // compute, and until we do there is nothing to apply.
+    expect(
+      fittedPara('<a:bodyPr><a:normAutofit/></a:bodyPr>')?.runs[0]?.properties.fontSizePt,
+    ).toBe(32);
+    expect(fittedPara('<a:bodyPr/>')?.runs[0]?.properties.fontSizePt).toBe(32);
+  });
+
   // §20.1.4.1.14 — a slide names its typeface by TOKEN more often than by name:
   // `+mn-lt` is "whatever the theme calls its body font". Left unresolved the
   // token travels into the model as if it WERE a typeface, no substitution

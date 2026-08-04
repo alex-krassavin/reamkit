@@ -947,6 +947,12 @@ export function parseTxBody(
   if (content.length === 0) return undefined;
 
   const bodyPr = poChildren(txBody).find((c) => poIs(c, 'a:bodyPr'));
+  // §21.1.2.1.2 `a:normAutofit` — the shrink PowerPoint already worked out and
+  // wrote down: `@fontScale` is the percentage every run is set at, and
+  // `@lnSpcReduction` the percentage taken off the line spacing. A bare
+  // `<a:normAutofit/>` states the rule and no result — that shrink is ours to
+  // compute, and until we do there is nothing to apply.
+  const fitted = fitToBody(content, bodyPr);
   const lIns = bodyPr ? poIntAttr(bodyPr, 'lIns') : undefined;
   const tIns = bodyPr ? poIntAttr(bodyPr, 'tIns') : undefined;
   const rIns = bodyPr ? poIntAttr(bodyPr, 'rIns') : undefined;
@@ -957,13 +963,68 @@ export function parseTxBody(
   const anchor: ShapeTextBody['anchor'] | undefined =
     a === 'ctr' || a === 'b' || a === 't' ? a : ph && cascade ? cascade.anchorFor(ph) : undefined;
   return {
-    content,
+    content: fitted,
     ...(lIns !== undefined ? { insetLeft: emuToPt(lIns) } : {}),
     ...(tIns !== undefined ? { insetTop: emuToPt(tIns) } : {}),
     ...(rIns !== undefined ? { insetRight: emuToPt(rIns) } : {}),
     ...(bIns !== undefined ? { insetBottom: emuToPt(bIns) } : {}),
     ...(anchor ? { anchor } : {}),
   };
+}
+
+/**
+ * §21.1.2.1.2 — the body's text at the size the autofit settled on.
+ *
+ * The scale is a property of the BODY that reaches every run in it, so it is
+ * applied here rather than carried down: a run in the model already holds the
+ * size it inherited, and the shrink multiplies exactly that. Unread, the text
+ * PowerPoint squeezed to 62% of its style overflowed the placeholder it was
+ * squeezed to fit.
+ *
+ * @param content The body's paragraphs.
+ * @param bodyPr  The body's `a:bodyPr`, which carries the autofit.
+ * @returns The paragraphs, scaled; the same array when nothing is stated.
+ */
+function fitToBody(content: Array<BodyElement>, bodyPr: PoNode | undefined): Array<BodyElement> {
+  const fit = bodyPr ? poChildren(bodyPr).find((c) => poIs(c, 'a:normAutofit')) : undefined;
+  const scale = fit ? poIntAttr(fit, 'fontScale') : undefined;
+  const reduction = fit ? poIntAttr(fit, 'lnSpcReduction') : undefined;
+  const fontScale = scale !== undefined && scale > 0 ? scale / 100000 : undefined;
+  const lineScale =
+    reduction !== undefined && reduction > 0 ? 1 - Math.min(reduction, 100000) / 100000 : undefined;
+  if (fontScale === undefined && lineScale === undefined) return content;
+  return content.map((el) => {
+    if (el.kind !== 'paragraph') return el;
+    const p = el.paragraph;
+    // §17.3.1.33 — the model states "single" as 12pt under the `auto` rule
+    // (240 twips), so a fifth off the spacing is 9.6pt of the same unit.
+    const line =
+      lineScale === undefined ? undefined : pt((p.properties.spacingLine ?? 12) * lineScale);
+    return {
+      ...el,
+      paragraph: {
+        ...p,
+        properties: {
+          ...p.properties,
+          ...(line !== undefined ? { spacingLine: line, spacingLineRule: 'auto' as const } : {}),
+        },
+        runs:
+          fontScale === undefined
+            ? p.runs
+            : p.runs.map((run) =>
+                run.properties.fontSizePt === undefined
+                  ? run
+                  : {
+                      ...run,
+                      properties: {
+                        ...run.properties,
+                        fontSizePt: pt(run.properties.fontSizePt * fontScale),
+                      },
+                    },
+              ),
+      },
+    };
+  });
 }
 
 // a:p → Paragraph. The outline level (a:pPr @lvl) selects the placeholder's

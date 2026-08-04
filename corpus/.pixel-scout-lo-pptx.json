@@ -485,11 +485,6 @@
   "aligned": true
  },
  {
-  "name": "3columns.pptx",
-  "score": 0.0313,
-  "aligned": true
- },
- {
   "name": "tdf107608.pptx",
   "score": 0.0307,
   "aligned": true
@@ -510,6 +505,11 @@
   "aligned": true
  },
  {
+  "name": "font-scale.pptx",
+  "score": 0.0271,
+  "aligned": true
+ },
+ {
   "name": "tdf152070.pptx",
   "score": 0.0268,
   "aligned": true
@@ -525,17 +525,7 @@
   "aligned": true
  },
  {
-  "name": "tdf149961-autofitIndentation.pptx",
-  "score": 0.0227,
-  "aligned": true
- },
- {
   "name": "activex_scrollbar.pptx",
-  "score": 0.0225,
-  "aligned": true
- },
- {
-  "name": "font-scale.pptx",
   "score": 0.0225,
   "aligned": true
  },
@@ -602,6 +592,11 @@
  {
   "name": "tdf134053_dashdot.pptx",
   "score": 0.0176,
+  "aligned": true
+ },
+ {
+  "name": "3columns.pptx",
+  "score": 0.017,
   "aligned": true
  },
  {
@@ -682,11 +677,6 @@
  {
   "name": "group.pptx",
   "score": 0.0107,
-  "aligned": true
- },
- {
-  "name": "tdf120028.pptx",
-  "score": 0.0106,
   "aligned": true
  },
  {
@@ -787,6 +777,11 @@
  {
   "name": "lineStyle.pptx",
   "score": 0.0079,
+  "aligned": true
+ },
+ {
+  "name": "tdf120028.pptx",
+  "score": 0.0078,
   "aligned": true
  },
  {
@@ -1025,11 +1020,6 @@
   "aligned": true
  },
  {
-  "name": "trailing-paragraphs.pptx",
-  "score": 0.003,
-  "aligned": true
- },
- {
   "name": "tdf151547-transparent-white-text.pptx",
   "score": 0.003,
   "aligned": true
@@ -1096,6 +1086,11 @@
  },
  {
   "name": "tdf51340.pptx",
+  "score": 0.0026,
+  "aligned": true
+ },
+ {
+  "name": "tdf149961-autofitIndentation.pptx",
   "score": 0.0026,
   "aligned": true
  },
@@ -1557,6 +1552,11 @@
  {
   "name": "tdf149124.pptx",
   "score": 0.0008,
+  "aligned": true
+ },
+ {
+  "name": "trailing-paragraphs.pptx",
+  "score": 0.0007,
   "aligned": true
  },
  {

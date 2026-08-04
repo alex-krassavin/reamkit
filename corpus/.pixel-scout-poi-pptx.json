@@ -190,6 +190,11 @@
   "aligned": true
  },
  {
+  "name": "pptx2svg.pptx",
+  "score": 0.044,
+  "aligned": true
+ },
+ {
   "name": "ca.ubc.cs.people_~emhill_presentations_HowWeRefactor.pptx",
   "score": 0.0438,
   "aligned": true
@@ -207,21 +212,6 @@
  {
   "name": "at.ecodesign.www_downloads_Vertiefungsvortrag_elektronik.pptx",
   "score": 0.0386,
-  "aligned": true
- },
- {
-  "name": "aptia.pptx",
-  "score": 0.038,
-  "aligned": true
- },
- {
-  "name": "pptx2svg.pptx",
-  "score": 0.0347,
-  "aligned": true
- },
- {
-  "name": "bug62513.pptx",
-  "score": 0.0312,
   "aligned": true
  },
  {
@@ -245,6 +235,11 @@
   "aligned": true
  },
  {
+  "name": "bug62513.pptx",
+  "score": 0.0209,
+  "aligned": true
+ },
+ {
   "name": "scatter-chart.pptx",
   "score": 0.0201,
   "aligned": true
@@ -257,11 +252,6 @@
  {
   "name": "ececapstonespring2012.pptx",
   "score": 0.0154,
-  "aligned": true
- },
- {
-  "name": "testPPT.pptx",
-  "score": 0.014,
   "aligned": true
  },
  {
@@ -280,6 +270,11 @@
   "aligned": true
  },
  {
+  "name": "aptia.pptx",
+  "score": 0.0125,
+  "aligned": true
+ },
+ {
   "name": "2411-Performance_Up.pptx",
   "score": 0.012,
   "aligned": true
@@ -291,6 +286,11 @@
  },
  {
   "name": "radar-chart.pptx",
+  "score": 0.0085,
+  "aligned": true
+ },
+ {
+  "name": "testPPT.pptx",
   "score": 0.0085,
   "aligned": true
  },
