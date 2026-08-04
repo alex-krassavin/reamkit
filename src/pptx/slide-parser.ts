@@ -63,7 +63,12 @@ import {
   styleRefFontColor,
   styleRefLine,
 } from '@/word/drawing-parser';
-import { parseBullet } from '@/pptx/placeholder-cascade';
+import {
+  lineSpacing,
+  parseBullet,
+  spacingFractions,
+  spacingFromLineFraction,
+} from '@/pptx/placeholder-cascade';
 import { boxFromXfrm, parsePh, parseXfrmBox, rPrToRunProps } from '@/pptx/sp-helpers';
 import {
   cellStyle,
@@ -1096,13 +1101,21 @@ function parseSlideParagraph(
   // file names is the wrong height: shape-macro-ext-ref.xlsx opens its button's
   // text with an empty 14pt paragraph, and collapsing it drew the caption 12pt
   // above where both references put it.
-  if (runs.length === 0) {
-    const endRPr = poChildren(aP).find((c) => poIs(c, 'a:endParaRPr'));
-    const sz = endRPr ? poIntAttr(endRPr, 'sz') : undefined;
-    if (sz !== undefined && sz > 0) {
-      runs.push({ text: '', properties: { ...defaults, fontSizePt: pt(sz / 100) } });
-    }
-  }
+  const endRPr = poChildren(aP).find((c) => poIs(c, 'a:endParaRPr'));
+  const endSz = endRPr ? poIntAttr(endRPr, 'sz') : undefined;
+  // §21.1.2.2.3 `a:endParaRPr` — the properties of the paragraph MARK, which on
+  // a paragraph with no runs is the only thing that says how tall the line is.
+  // They belong to the PARAGRAPH (§17.3.1.31 `w:pPr/w:rPr` is the same idea):
+  // an empty run carries no token, so a blank line took the layout's 12pt
+  // default rather than the size its level gives it — and a deck that spaces
+  // its bullets with blank lines set them a third too close (GeomLec1).
+  const markProps: RunProperties | undefined =
+    runs.length > 0
+      ? undefined
+      : {
+          ...defaults,
+          ...(endSz !== undefined && endSz > 0 ? { fontSizePt: pt(endSz / 100) } : {}),
+        };
 
   return {
     properties: {
@@ -1110,8 +1123,33 @@ function parseSlideParagraph(
       ...(alignment ? { alignment } : {}),
       ...(indentLeft !== undefined ? { indentLeft } : {}),
       ...(indent !== undefined ? { indentFirstLine: emuToPt(indent) } : {}),
+      // §21.1.2.2.5/.9/.10 — the paragraph's own line height and the space
+      // around it, including the spelling that states a FRACTION of a line:
+      // that fraction is of THIS paragraph's text, whose size is settled here.
+      ...lineSpacing(pPr),
+      ...ownSpacing(pPr, runs[0]?.properties.fontSizePt ?? defaults.fontSizePt),
+      ...(markProps && markProps.fontSizePt !== undefined ? { runProperties: markProps } : {}),
     },
     runs,
+  };
+}
+
+// The paragraph's own `a:spcBef`/`a:spcAft`, whichever spelling it uses: the
+// distance as stated, the fraction resolved against the size just settled.
+function ownSpacing(pPr: PoNode | undefined, sizePt: number | undefined): ParagraphProperties {
+  const fractions = spacingFractions(pPr);
+  const before = spacingFromLineFraction(fractions?.before, sizePt);
+  const after = spacingFromLineFraction(fractions?.after, sizePt);
+  const points = (tag: string): Pt | undefined => {
+    const holder = pPr ? poChildren(pPr).find((c) => poIs(c, tag)) : undefined;
+    const node = holder ? poChildren(holder).find((c) => poIs(c, 'a:spcPts')) : undefined;
+    const val = node ? poIntAttr(node, 'val') : undefined;
+    return val === undefined ? undefined : pt(val / 100);
+  };
+  const [beforePt, afterPt] = [points('a:spcBef') ?? before, points('a:spcAft') ?? after];
+  return {
+    ...(beforePt !== undefined ? { spacingBefore: beforePt } : {}),
+    ...(afterPt !== undefined ? { spacingAfter: afterPt } : {}),
   };
 }
 

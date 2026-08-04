@@ -171,7 +171,7 @@
  },
  {
   "name": "tdf150789.pptx",
-  "score": 0.1459,
+  "score": 0.1456,
   "aligned": true
  },
  {
@@ -202,11 +202,6 @@
  {
   "name": "smartart-snake-rows.pptx",
   "score": 0.1261,
-  "aligned": true
- },
- {
-  "name": "tdf144092-emptyShapeTextProps.pptx",
-  "score": 0.1163,
   "aligned": true
  },
  {
@@ -316,7 +311,7 @@
  },
  {
   "name": "bnc862510_5.pptx",
-  "score": 0.0719,
+  "score": 0.0721,
   "aligned": true
  },
  {
@@ -326,7 +321,7 @@
  },
  {
   "name": "tdf93830.pptx",
-  "score": 0.063,
+  "score": 0.0631,
   "aligned": true
  },
  {
@@ -361,7 +356,7 @@
  },
  {
   "name": "tdf158512.pptx",
-  "score": 0.0548,
+  "score": 0.055,
   "aligned": true
  },
  {
@@ -410,13 +405,13 @@
   "aligned": true
  },
  {
-  "name": "tdf100065.pptx",
-  "score": 0.0424,
+  "name": "tdf125551.pptx",
+  "score": 0.0431,
   "aligned": true
  },
  {
-  "name": "tdf125551.pptx",
-  "score": 0.0418,
+  "name": "tdf100065.pptx",
+  "score": 0.0424,
   "aligned": true
  },
  {
@@ -540,13 +535,13 @@
   "aligned": true
  },
  {
-  "name": "croppedTo0.pptx",
-  "score": 0.0215,
+  "name": "tdf135953_SmartArt_textposition.pptx",
+  "score": 0.0216,
   "aligned": true
  },
  {
-  "name": "tdf135953_SmartArt_textposition.pptx",
-  "score": 0.0213,
+  "name": "croppedTo0.pptx",
+  "score": 0.0215,
   "aligned": true
  },
  {
@@ -580,11 +575,6 @@
   "aligned": true
  },
  {
-  "name": "bnc880763.pptx",
-  "score": 0.0181,
-  "aligned": true
- },
- {
   "name": "slide-sections.pptx",
   "score": 0.018,
   "aligned": true
@@ -602,6 +592,11 @@
  {
   "name": "3columns.pptx",
   "score": 0.017,
+  "aligned": true
+ },
+ {
+  "name": "bnc880763.pptx",
+  "score": 0.0163,
   "aligned": true
  },
  {
@@ -690,6 +685,11 @@
   "aligned": true
  },
  {
+  "name": "tdf144092-emptyShapeTextProps.pptx",
+  "score": 0.0106,
+  "aligned": true
+ },
+ {
   "name": "tdf142648.pptx",
   "score": 0.0105,
   "aligned": true
@@ -750,6 +750,11 @@
   "aligned": true
  },
  {
+  "name": "tdf132302_SmartArt_rightArrow.pptx",
+  "score": 0.0082,
+  "aligned": true
+ },
+ {
   "name": "activex_fontproperties.pptx",
   "score": 0.0082,
   "aligned": true
@@ -757,11 +762,6 @@
  {
   "name": "tdf156856.pptx",
   "score": 0.0082,
-  "aligned": true
- },
- {
-  "name": "tdf132302_SmartArt_rightArrow.pptx",
-  "score": 0.0081,
   "aligned": true
  },
  {
@@ -920,11 +920,6 @@
   "aligned": true
  },
  {
-  "name": "tdf128684.pptx",
-  "score": 0.0045,
-  "aligned": true
- },
- {
   "name": "tdf103800.pptx",
   "score": 0.0043,
   "aligned": true
@@ -1036,6 +1031,11 @@
  },
  {
   "name": "trigger.pptx",
+  "score": 0.003,
+  "aligned": true
+ },
+ {
+  "name": "tdf128684.pptx",
   "score": 0.003,
   "aligned": true
  },

@@ -158,6 +158,49 @@ describe('pptx placeholder cascade (E-PPTX PX2)', () => {
     expect(run?.properties.bold).toBe(true);
   });
 
+  // §21.1.2.2.5/.9/.10 — both spacings come in two spellings: `a:spcPts` is a
+  // distance, `a:spcPct` a FRACTION of a line. Only the distance was read, so a
+  // deck that spaces its bullets the usual way — by fraction — set them solid.
+  it('reads the line height and the space around a paragraph stated as fractions', () => {
+    const styles =
+      `<p:txStyles><p:titleStyle/><p:bodyStyle><a:lvl1pPr>` +
+      `<a:lnSpc><a:spcPct val="90000"/></a:lnSpc>` +
+      `<a:spcBef><a:spcPct val="20000"/></a:spcBef>` +
+      `<a:defRPr sz="3000"/></a:lvl1pPr></p:bodyStyle><p:otherStyle/></p:txStyles>`;
+    const slide = (pPr: string): string =>
+      `<p:sp><p:nvSpPr><p:cNvPr id="3" name="Body 2"/><p:cNvSpPr/>` +
+      `<p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5486400" cy="1828800"/></a:xfrm></p:spPr>` +
+      `<p:txBody><a:bodyPr/><a:p>${pPr}<a:r><a:rPr lang="en"/><a:t>Spaced</a:t></a:r></a:p>` +
+      `<a:p><a:endParaRPr lang="en"/></a:p></p:txBody></p:sp>`;
+    const paras = (pPr: string) => {
+      const doc = Ream.parse(buildPptx([slide(pPr)], { layoutMaster: { txStyles: styles } }));
+      const el = doc.flow.body.find((e) => e.kind === 'shape');
+      return el?.kind === 'shape'
+        ? (el.shape.text?.content.flatMap((c) => (c.kind === 'paragraph' ? [c.paragraph] : [])) ??
+            [])
+        : [];
+    };
+    // From the level: 90% of a line (12pt states "single") and 20% of one
+    // before the paragraph, resolved against the 30pt the same level gives.
+    const [first, blank] = paras('');
+    expect(first?.properties.spacingLine).toBeCloseTo(10.8, 5);
+    expect(first?.properties.spacingLineRule).toBe('auto');
+    expect(first?.properties.spacingBefore).toBeCloseTo(0.2 * 30 * 1.2, 5);
+    // §21.1.2.2.3 — a paragraph with no runs is as tall as its MARK, which
+    // takes the level's size when it states none of its own.
+    expect(blank?.runs).toHaveLength(0);
+    expect(blank?.properties.runProperties?.fontSizePt).toBe(30);
+    // The paragraph's own spelling wins, in either form.
+    const own = paras(
+      '<a:pPr><a:lnSpc><a:spcPts val="1800"/></a:lnSpc>' +
+        '<a:spcBef><a:spcPts val="600"/></a:spcBef></a:pPr>',
+    )[0];
+    expect(own?.properties.spacingLine).toBe(18);
+    expect(own?.properties.spacingLineRule).toBe('exact');
+    expect(own?.properties.spacingBefore).toBe(6);
+  });
+
   // ISO/IEC 29500-3 §10.2 — a deck writes the same shape twice: an `mc:Choice`
   // for the application whose namespace it names, and an `mc:Fallback` in plain
   // OOXML for everyone else. Reading the choice means reading markup written
