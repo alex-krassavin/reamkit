@@ -40,6 +40,7 @@ import {
 } from '@/core/drawingml/theme-parser';
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
 import { OpcPackage } from '@/core/opc';
+import { resolveAlternateContent } from '@/core/opc/alternate-content';
 import { poAttr, poChildren, poFindDescendant, poIntAttr, poIs } from '@/core/po-helpers';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 import { buildPlaceholderCascade, parseLevelStyles } from '@/pptx/placeholder-cascade';
@@ -242,9 +243,17 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
  * Parse an OOXML part's bytes into preserve-order {@link PoNode} roots with the
  * module's shared, presentation-tuned {@link XMLParser} (attributes kept, values
  * not coerced, whitespace preserved). Shared with the slide-style resolvers.
+ *
+ * ISO/IEC 29500-3 §10.2 — `mc:AlternateContent` is resolved first, to the
+ * `mc:Fallback` a reader takes when it implements none of the namespaces the
+ * choices require. A deck writes the same shape twice this way, and reading the
+ * CHOICE means reading markup written for someone else: tdf143222's whole slide
+ * is an embedded worksheet whose preview picture lives in the fallback alone,
+ * and the choice — written for VML — carries no picture at all, so the slide
+ * came out blank. 82 of the corpus's decks carry such a block.
  */
 export function parseXml(data: Uint8Array): Array<PoNode> {
-  return parser.parse(decoder.decode(data)) as Array<PoNode>;
+  return parser.parse(resolveAlternateContent(decoder.decode(data))) as Array<PoNode>;
 }
 
 // A slide part's bytes → a full-slide backdrop (PX5b) followed by its floating

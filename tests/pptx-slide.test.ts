@@ -158,6 +158,29 @@ describe('pptx placeholder cascade (E-PPTX PX2)', () => {
     expect(run?.properties.bold).toBe(true);
   });
 
+  // ISO/IEC 29500-3 §10.2 — a deck writes the same shape twice: an `mc:Choice`
+  // for the application whose namespace it names, and an `mc:Fallback` in plain
+  // OOXML for everyone else. Reading the choice means reading markup written
+  // for someone else — tdf143222's whole slide is an embedded worksheet whose
+  // preview picture lives in the fallback alone, and it came out blank.
+  it('takes the mc:Fallback of an AlternateContent, not the choice', () => {
+    const alt =
+      `<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">` +
+      `<mc:Choice xmlns:v="urn:schemas-microsoft-com:vml" Requires="v">` +
+      `<p:sp><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+      `<a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></p:spPr></p:sp>` +
+      `</mc:Choice><mc:Fallback>` +
+      `<p:sp><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+      `<a:solidFill><a:srgbClr val="00FF00"/></a:solidFill></p:spPr></p:sp>` +
+      `</mc:Fallback></mc:AlternateContent>`;
+    const fills = Ream.parse(buildPptx([alt])).flow.body.flatMap((el) =>
+      el.kind === 'shape' ? [el.shape.fill.colorHex] : [],
+    );
+    expect(fills).toEqual(['00FF00']); // the fallback's green, and only once
+  });
+
   // §21.1.2.1.2 `a:normAutofit` — the shrink PowerPoint already worked out and
   // wrote down. Unread, the text it squeezed to 62% of its style overflowed the
   // placeholder it was squeezed to fit.

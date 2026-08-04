@@ -45,11 +45,6 @@
   "aligned": true
  },
  {
-  "name": "tdf143222.pptx",
-  "score": 0.3374,
-  "aligned": true
- },
- {
   "name": "activex_picture.pptx",
   "score": 0.3344,
   "aligned": true
@@ -102,11 +97,6 @@
  {
   "name": "tdf149785.pptx",
   "score": 0.2548,
-  "aligned": true
- },
- {
-  "name": "tdf131553.pptx",
-  "score": 0.2366,
   "aligned": true
  },
  {
@@ -345,6 +335,11 @@
   "aligned": true
  },
  {
+  "name": "forum-mso-de-138303.pptx",
+  "score": 0.0615,
+  "aligned": true
+ },
+ {
   "name": "tdf169781.pptx",
   "score": 0.0615,
   "aligned": true
@@ -455,6 +450,11 @@
   "aligned": true
  },
  {
+  "name": "tdf131553.pptx",
+  "score": 0.038,
+  "aligned": true
+ },
+ {
   "name": "tdf120573.pptx",
   "score": 0.0373,
   "aligned": true
@@ -462,6 +462,11 @@
  {
   "name": "activex_listbox.pptx",
   "score": 0.0372,
+  "aligned": true
+ },
+ {
+  "name": "tdf143222.pptx",
+  "score": 0.0358,
   "aligned": true
  },
  {
@@ -722,11 +727,6 @@
  {
   "name": "chart_pt_color_bg1.pptx",
   "score": 0.0093,
-  "aligned": true
- },
- {
-  "name": "forum-mso-de-138303.pptx",
-  "score": 0.0088,
   "aligned": true
  },
  {
@@ -1800,11 +1800,6 @@
   "aligned": true
  },
  {
-  "name": "tdf129372.pptx",
-  "score": 0.0002,
-  "aligned": true
- },
- {
   "name": "presLeftAlign.pptx",
   "score": 0.0002,
   "aligned": true
@@ -1871,6 +1866,11 @@
  },
  {
   "name": "tdf104445.pptx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "tdf129372.pptx",
   "score": 0,
   "aligned": true
  },
