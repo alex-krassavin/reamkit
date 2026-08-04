@@ -20,6 +20,7 @@ import type {
 } from '@/core/document-model';
 
 import type { PoNode } from '@/core/po-helpers';
+import type { ThemeFonts } from '@/core/drawingml/theme-parser';
 import type { Pt } from '@/core/ir';
 import type { ParseContext } from '@/word/document-parser';
 import { DEFAULT_PARSE_CONTEXT, parseBodyElements, sdtRunProperties } from '@/word/document-parser';
@@ -160,12 +161,13 @@ function poChildrenThroughSdt(node: PoNode | undefined, tag: string): Array<PoNo
 function childrenThroughSdt(
   node: PoNode | undefined,
   tag: string,
+  themeFonts?: ThemeFonts,
 ): Array<{ node: PoNode; sdtRunProps?: RunProperties }> {
   const out: Array<{ node: PoNode; sdtRunProps?: RunProperties }> = [];
   for (const child of poChildren(node)) {
     if (poIs(child, tag)) out.push({ node: child });
     else if (poIs(child, 'w:sdt')) {
-      const props = sdtRunProperties(child);
+      const props = sdtRunProperties(child, themeFonts);
       for (const inner of poChildrenWith(poFirstChild(child, 'w:sdtContent'), tag)) {
         out.push({ node: inner, ...(props ? { sdtRunProps: props } : {}) });
       }
@@ -374,7 +376,7 @@ function parseTableRow(
 ): { properties: RowProperties; cells: Array<DraftCell> } {
   const properties = parseRowProperties(poFirstChild(tr, 'w:trPr'));
   const cells: Array<DraftCell> = [];
-  for (const { node, sdtRunProps } of childrenThroughSdt(tr, 'w:tc')) {
+  for (const { node, sdtRunProps } of childrenThroughSdt(tr, 'w:tc', ctx.themeFonts)) {
     cells.push(parseTableCell(node, ctx, sdtRunProps));
   }
   return { properties, cells };

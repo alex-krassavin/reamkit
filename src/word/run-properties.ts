@@ -6,9 +6,12 @@ import type {
   UnderlineStyle,
   VerticalAlign,
 } from '@/core/document-model';
+import type { ThemeFonts } from '@/core/drawingml/theme-parser';
 import { halfPtToPt, twipsToPt } from '@/core/ir';
 
 import { asElement, getAttr, getVal, parseHalfPointAttr, parseToggle } from '@/word/xml-helpers';
+import { resolveThemeFont } from '@/core/drawingml/theme-parser';
+import { resolveWordThemeFont } from '@/word/theme-fonts';
 import { shadingFillHex } from '@/word/shading';
 
 const UNDERLINE_STYLES = new Set<UnderlineStyle>([
@@ -53,10 +56,12 @@ const HIGHLIGHT_COLORS: ReadonlyMap<string, string> = new Map([
  * font family map, vertical alignment, RTL, and language; sizes convert from
  * half-points to points and colours normalize to uppercase hex.
  *
- * @param rPr The flat-tree `w:rPr` element (or `undefined`/non-element).
+ * @param rPr        The flat-tree `w:rPr` element (or `undefined`/non-element).
+ * @param themeFonts The document theme's font scheme, for the fonts a run names
+ *                   by slot rather than by name (§17.3.2.26 `w:asciiTheme`).
  * @returns The parsed properties; an empty object when `rPr` is absent.
  */
-export function parseRunProperties(rPr: unknown): RunProperties {
+export function parseRunProperties(rPr: unknown, themeFonts?: ThemeFonts): RunProperties {
   const el = asElement(rPr);
   if (!el) return {};
 
@@ -124,7 +129,7 @@ export function parseRunProperties(rPr: unknown): RunProperties {
   }
 
   if ('w:rFonts' in el) {
-    const ff = parseFontFamily(el['w:rFonts']);
+    const ff = parseFontFamily(el['w:rFonts'], themeFonts);
     if (ff) out.fontFamily = ff;
   }
 
@@ -182,12 +187,21 @@ export function parseRunProperties(rPr: unknown): RunProperties {
   return out;
 }
 
-function parseFontFamily(node: unknown): FontFamilyMap | undefined {
+function parseFontFamily(node: unknown, themeFonts?: ThemeFonts): FontFamilyMap | undefined {
   const ff: Mutable<FontFamilyMap> = {};
-  const ascii = getAttr(node, 'ascii');
-  const hAnsi = getAttr(node, 'hAnsi');
-  const cs = getAttr(node, 'cs');
-  const eastAsia = getAttr(node, 'eastAsia');
+  // §17.3.2.26 — each slot may be spelled out or pointed at in the theme, and
+  // the literal wins when a document states both (Word writes both for the
+  // benefit of readers that know no theme). A literal that is itself a
+  // DrawingML token counts as the pointer it is: fdo74605.docx writes
+  // `w:cs="+mn-cs"`, and no substitution table knows a name beginning `+`.
+  const slot = (literal: string, theme: string): string | undefined =>
+    resolveThemeFont(getAttr(node, literal), themeFonts) ??
+    resolveWordThemeFont(getAttr(node, theme), themeFonts);
+  const ascii = slot('ascii', 'asciiTheme');
+  const hAnsi = slot('hAnsi', 'hAnsiTheme');
+  // The bidi slot's attribute is the one Word spells with a small `t`.
+  const cs = slot('cs', 'cstheme');
+  const eastAsia = slot('eastAsia', 'eastAsiaTheme');
   if (ascii) ff.ascii = ascii;
   if (hAnsi) ff.hAnsi = hAnsi;
   if (cs) ff.cs = cs;

@@ -1,15 +1,19 @@
 import type { BodyElement } from '@/core/document-model';
 import type { FontBytesByVariant } from '@/core/font';
 import type { FamilyKey, FetchLike } from '@/core/fonts';
+import type { ThemeFonts } from '@/core/drawingml/theme-parser';
 import type { SignatureOptions, StyledRenderOptions } from '@/pdf';
 import { FontRegistry } from '@/core/font';
 import { fetchFontSet, resolveFamilyKey } from '@/core/fonts';
+import { parseThemeFonts } from '@/core/drawingml/theme-parser';
+import { resolveWordThemeFont } from '@/word/theme-fonts';
 import { OpcPackage } from '@/core/opc';
 import { flowRenderOptions } from '@/core/converter/project';
 import { readDocx } from '@/word/docx-reader';
 import { renderStyledPdf, renderStyledPdfEncrypted, signPdf } from '@/pdf';
 
 const STYLES_PART = 'word/styles.xml';
+const THEME_PART = 'word/theme/theme1.xml';
 const MAIN_DOCUMENT_PART = 'word/document.xml';
 
 /**
@@ -108,10 +112,11 @@ function prepareDocxStyledRender(
 }
 
 /**
- * The distinct curated font families the document references (scanning the
- * `w:ascii` of `styles.xml` + `document.xml`), always including the sans default
- * `'arimo'` as a fallback for unstyled runs / math / charts. The async path
- * fetches one substitute set per family so each run renders in the right one.
+ * The distinct curated font families the document references — the `w:ascii` of
+ * `styles.xml` + `document.xml`, and the theme slots they point at instead
+ * (§17.3.2.26) — always including the sans default `'arimo'` as a fallback for
+ * unstyled runs / math / charts. The async path fetches one substitute set per
+ * family so each run renders in the right one.
  *
  * @param docx The `.docx` bytes.
  * @returns The resolved {@link FamilyKey} set; just the default when the package
@@ -126,15 +131,30 @@ export function detectDocxFamilyKeys(docx: Uint8Array): Set<FamilyKey> {
     return keys;
   }
   const decoder = new TextDecoder('utf-8');
-  const re = /<w:rFonts[^>]*\bw:ascii="([^"]+)"/g;
+  const themeFonts = docxThemeFonts(pkg);
+  const re = /<w:rFonts[^>]*?\bw:(ascii|asciiTheme)="([^"]+)"/g;
   for (const part of [STYLES_PART, MAIN_DOCUMENT_PART]) {
     const data = pkg.getPart(part);
     if (!data) continue;
     const xml = decoder.decode(data);
     let m: RegExpExecArray | null;
-    while ((m = re.exec(xml)) !== null) keys.add(resolveFamilyKey(m[1]));
+    while ((m = re.exec(xml)) !== null) {
+      const name = m[1] === 'ascii' ? m[2] : resolveWordThemeFont(m[2], themeFonts);
+      if (name !== undefined) keys.add(resolveFamilyKey(name));
+    }
   }
   return keys;
+}
+
+/** §20.1.4.1.16 — the theme's font scheme, for the slots `w:rFonts` points at. */
+function docxThemeFonts(pkg: OpcPackage): ThemeFonts | undefined {
+  const data = pkg.getPart(THEME_PART);
+  if (!data) return undefined;
+  try {
+    return parseThemeFonts(data);
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -217,9 +237,9 @@ export async function resolveDocxAutoFonts(
 
 /**
  * Best-effort detection of the document's primary font family, used to choose a
- * substitute for auto-download. Prefers the document defaults' `w:ascii` font,
- * then falls back to the most frequent run font. A cheap regex over the XML — no
- * need to fully parse for this hint.
+ * substitute for auto-download. Prefers the document defaults' font — spelled
+ * out or pointed at in the theme — then falls back to the most frequent run
+ * font. A cheap regex over the XML: no need to fully parse for this hint.
  *
  * @param docx The `.docx` bytes.
  * @returns The detected family name, or `undefined` when none is found.
@@ -232,20 +252,25 @@ export function detectDocxFontFamily(docx: Uint8Array): string | undefined {
     return undefined;
   }
   const decoder = new TextDecoder('utf-8');
+  const themeFonts = docxThemeFonts(pkg);
+  const named = (attr: string, value: string): string | undefined =>
+    attr === 'ascii' ? value : resolveWordThemeFont(value, themeFonts);
   const styles = pkg.getPart(STYLES_PART);
   if (styles) {
     const xml = decoder.decode(styles);
-    const def = /<w:docDefaults>[\s\S]*?<w:rFonts[^>]*\bw:ascii="([^"]+)"/.exec(xml);
-    if (def?.[1]) return def[1];
+    const def = /<w:docDefaults>[\s\S]*?<w:rFonts[^>]*?\bw:(ascii|asciiTheme)="([^"]+)"/.exec(xml);
+    const from = def ? named(def[1]!, def[2]!) : undefined;
+    if (from !== undefined && from !== '') return from;
   }
   const main = pkg.getPart(MAIN_DOCUMENT_PART);
   if (main) {
     const xml = decoder.decode(main);
     const counts = new Map<string, number>();
-    const re = /<w:rFonts[^>]*\bw:ascii="([^"]+)"/g;
+    const re = /<w:rFonts[^>]*?\bw:(ascii|asciiTheme)="([^"]+)"/g;
     let m: RegExpExecArray | null;
     while ((m = re.exec(xml)) !== null) {
-      const name = m[1]!;
+      const name = named(m[1]!, m[2]!);
+      if (name === undefined) continue;
       counts.set(name, (counts.get(name) ?? 0) + 1);
     }
     let best: string | undefined;

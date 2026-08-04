@@ -29,6 +29,7 @@ import type {
 import type { ColorResolver } from '@/core/drawingml/colors';
 import type { Loss, Pt, ResourceId } from '@/core/ir';
 import type { PoNode } from '@/core/po-helpers';
+import type { ThemeFonts } from '@/core/drawingml/theme-parser';
 import type { DrawingContent, ParseDrawingText, ThemeStyles } from '@/word/drawing-parser';
 import { resolveInternalEntities } from '@/core/opc/xml-entities';
 import { emuToPt, pt, twipsToPt } from '@/core/ir';
@@ -158,6 +159,11 @@ export interface ParseContext {
    * the shadow a gallery-drawn shape wears.
    */
   readonly themeStyles?: ThemeStyles;
+  /**
+   * §20.1.4.1.16 — the theme's font scheme, for the typefaces a run names by
+   * slot (`w:asciiTheme="minorHAnsi"`) rather than by name.
+   */
+  readonly themeFonts?: ThemeFonts;
   /**
    * Sink for graceful-degradation notices (E-SMARTART SA3): a SmartArt with no
    * drawing override records a dropped-feature {@link Loss} rather than vanishing.
@@ -777,7 +783,7 @@ function tryExtractDrawingFromParagraph(p: PoNode, ctx: ParseContext): Array<Bod
     parseBodyElements(children, ctx);
   const pPrNode = poChildren(p).find((c) => poIs(c, 'w:pPr'));
   const paragraphProperties = pPrNode
-    ? parseParagraphProperties(poElementToFlat(pPrNode), ctx.autoSpacingPt)
+    ? parseParagraphProperties(poElementToFlat(pPrNode), ctx.autoSpacingPt, ctx.themeFonts)
     : {};
 
   if (drawings.length === 0) {
@@ -955,6 +961,7 @@ function parseParagraph(
   let properties = parseParagraphProperties(
     pPr ? poElementToFlat(pPr) : undefined,
     ctx.autoSpacingPt,
+    ctx.themeFonts,
   );
   // §17.6.17 — a `w:sectPr` in the paragraph mark makes this paragraph the last
   // of its section, and the mark itself the break. An otherwise empty one is
@@ -1279,7 +1286,8 @@ function collectRuns(
       // §17.5.2.28 — a content control lends its `w:sdtPr/w:rPr` to what it
       // holds. fdo78469.docx's cover date is a Date control whose only white
       // is stated there, and we drew it in the body colour on a dark red cell.
-      const childProps = tag === 'w:sdt' ? (sdtRunProperties(child) ?? sdtRunProps) : sdtRunProps;
+      const childProps =
+        tag === 'w:sdt' ? (sdtRunProperties(child, ctx.themeFonts) ?? sdtRunProps) : sdtRunProps;
       collectRuns(child, out, ctx, childHref, childAnchor, anchored, childProps);
     }
   }
@@ -1292,11 +1300,11 @@ function collectRuns(
  * @param sdt The `w:sdt` element.
  * @returns The properties, or `undefined` when the control states none.
  */
-export function sdtRunProperties(sdt: PoNode): RunProperties | undefined {
+export function sdtRunProperties(sdt: PoNode, themeFonts?: ThemeFonts): RunProperties | undefined {
   const sdtPr = poChildren(sdt).find((c) => poIs(c, 'w:sdtPr'));
   const rPr = sdtPr ? poChildren(sdtPr).find((c) => poIs(c, 'w:rPr')) : undefined;
   if (!rPr) return undefined;
-  const props = parseRunProperties(poElementToFlat(rPr));
+  const props = parseRunProperties(poElementToFlat(rPr), themeFonts);
   return Object.keys(props).length > 0 ? props : undefined;
 }
 
@@ -1401,7 +1409,7 @@ function parseRun(
   anchored?: Array<BodyElement>,
 ): { run: Run; fldChar?: 'begin' | 'separate' | 'end'; instrText?: string; checkBox?: boolean } {
   const rPr = poChildren(r).find((c) => poIs(c, 'w:rPr'));
-  const properties = parseRunProperties(rPr ? poElementToFlat(rPr) : undefined);
+  const properties = parseRunProperties(rPr ? poElementToFlat(rPr) : undefined, ctx.themeFonts);
   let text = '';
   let pageBreak = false;
   let columnBreak = false;

@@ -102,6 +102,32 @@ describe('parseRunProperties', () => {
     });
   });
 
+  // §17.3.2.26 — the slot a document points at instead of naming a font. Word
+  // writes BOTH attributes on the same element, so the literal has to win; a
+  // document that writes only the theme (414 of the corpus's docx) had no
+  // family at all and came out in the default sans.
+  it('resolves a font the run names by theme slot', () => {
+    const theme = { major: { latin: 'Cambria' }, minor: { latin: 'Calibri', ea: 'Meiryo' } };
+    expect(
+      parseRunProperties(
+        parseRpr(
+          '<w:rPr><w:rFonts w:asciiTheme="minorHAnsi" w:eastAsiaTheme="minorEastAsia"/></w:rPr>',
+        ),
+        theme,
+      ),
+    ).toEqual({ fontFamily: { ascii: 'Calibri', eastAsia: 'Meiryo' } });
+    expect(
+      parseRunProperties(
+        parseRpr('<w:rPr><w:rFonts w:ascii="Verdana" w:asciiTheme="minorHAnsi"/></w:rPr>'),
+        theme,
+      ),
+    ).toEqual({ fontFamily: { ascii: 'Verdana' } });
+    // …and with no theme part, a slot names nothing rather than itself.
+    expect(
+      parseRunProperties(parseRpr('<w:rPr><w:rFonts w:asciiTheme="minorHAnsi"/></w:rPr>')),
+    ).toEqual({});
+  });
+
   it('parses style reference and vertical align', () => {
     expect(
       parseRunProperties(

@@ -38,6 +38,7 @@ import {
   parseThemeBgFillStyles,
   parseThemeEffectStyles,
   parseThemeFillStyles,
+  parseThemeFonts,
   parseThemeLineWidths,
 } from '@/core/drawingml/theme-parser';
 import { OpcPackage, isOoxmlRel, parseCoreProperties } from '@/core/opc';
@@ -105,6 +106,10 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
   // indexes by `a:lnRef idx` for its outline.
   const themeData = loadTheme(pkg, main.path);
   const themeLineWidths = themeData ? parseThemeLineWidths(themeData) : undefined;
+  // §20.1.4.1.16 — the two typefaces the theme names. A document points at them
+  // by slot (`w:asciiTheme="minorHAnsi"`) far more often than it spells a font
+  // out: 828 of the corpus's docx do, and 414 name a font no other way.
+  const themeFonts = themeData ? parseThemeFonts(themeData) : undefined;
   const themeStyles = themeData
     ? {
         fills: parseThemeFillStyles(themeData),
@@ -130,6 +135,7 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
     ...(settings.compatibilityMode === undefined ? { autoSpacingPt: HTML_AUTO_SPACING_PT } : {}),
     ...(themeLineWidths && themeLineWidths.length > 0 ? { themeLineWidths } : {}),
     ...(themeStyles ? { themeStyles } : {}),
+    ...(themeFonts ? { themeFonts } : {}),
     resolveImage,
     resolveHyperlink,
     resolveDiagram: makeDiagramResolver(pkg, main.path, resources),
@@ -152,18 +158,19 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
   }));
 
   const stylesData = pkg.getPart(STYLES_PART);
-  const styles = stylesData ? parseStyles(stylesData) : EMPTY_STYLE_SHEET;
+  const styles = stylesData ? parseStyles(stylesData, themeFonts) : EMPTY_STYLE_SHEET;
 
   const numberingData = pkg.getPart(NUMBERING_PART);
   // §17.9.21 — a picture bullet's image is a relationship of the NUMBERING part.
   const numbering = numberingData
-    ? parseNumbering(numberingData, makeImageResolver(pkg, resources, NUMBERING_PART))
+    ? parseNumbering(numberingData, makeImageResolver(pkg, resources, NUMBERING_PART), themeFonts)
     : EMPTY_NUMBERING;
 
   // §17.11 notes: parsed with per-part resolvers (their rels own their
   // images/links), then run through the same FlowDoc transforms as the body.
   const noteCtx = (part: string): ParseContext => ({
     resolveColor,
+    ...(themeFonts ? { themeFonts } : {}),
     resolveImage: makeImageResolver(pkg, resources, part),
     resolveHyperlink: makeHyperlinkResolver(pkg, part),
   });

@@ -57,6 +57,10 @@ const FAMILIES: Record<FamilyKey, CuratedFamily> = {
 // e.g. Cambria resolves to its exact twin Caladea, not the generic serif Tinos.
 const EXACT: Record<string, FamilyKey> = {
   calibri: 'carlito',
+  // A theme's HEADING font in 240 of the corpus's documents. It is Calibri's
+  // own light weight, so Carlito is its twin too — read as an unknown name it
+  // went to the generic sans and set every heading in Arial's widths.
+  'calibri light': 'carlito',
   cambria: 'caladea',
   arial: 'arimo',
   helvetica: 'arimo',
