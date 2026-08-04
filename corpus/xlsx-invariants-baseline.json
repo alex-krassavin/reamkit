@@ -1,24 +1,14 @@
 {
-  "generated": "2026-07-28",
+  "generated": "2026-08-04",
   "totals": {
     "files": 642,
-    "violations": 21
+    "violations": 18
   },
   "violations": [
     {
       "path": "corpus/external/lo-xlsx/forcepoint107.xlsx",
       "kind": "threw",
-      "detail": "offset is out of bounds"
-    },
-    {
-      "path": "corpus/external/poi-xlsx/58325_db.xlsx",
-      "kind": "threw",
-      "detail": "Maximum nested tags exceeded"
-    },
-    {
-      "path": "corpus/external/poi-xlsx/58325_lt.xlsx",
-      "kind": "threw",
-      "detail": "Maximum nested tags exceeded"
+      "detail": "invalid zip data: offset is out of bounds"
     },
     {
       "path": "corpus/external/poi-xlsx/58616.xlsx",
@@ -38,7 +28,7 @@
     {
       "path": "corpus/external/poi-xlsx/clusterfuzz-testcase-minimized-POIXSSFFuzzer-5089447305609216.xlsx",
       "kind": "threw",
-      "detail": "invalid zip data"
+      "detail": "invalid zip data: invalid zip data"
     },
     {
       "path": "corpus/external/poi-xlsx/clusterfuzz-testcase-minimized-POIXSSFFuzzer-5185049589579776.xlsx",
@@ -48,12 +38,12 @@
     {
       "path": "corpus/external/poi-xlsx/clusterfuzz-testcase-minimized-POIXSSFFuzzer-6123461607817216.xlsx",
       "kind": "threw",
-      "detail": "invalid zip data"
+      "detail": "invalid zip data: invalid zip data"
     },
     {
       "path": "corpus/external/poi-xlsx/clusterfuzz-testcase-minimized-POIXSSFFuzzer-6419366255919104.xlsx",
       "kind": "threw",
-      "detail": "invalid zip data"
+      "detail": "invalid zip data: invalid zip data"
     },
     {
       "path": "corpus/external/poi-xlsx/clusterfuzz-testcase-minimized-POIXSSFFuzzer-6448258963341312.xlsx",
@@ -68,12 +58,12 @@
     {
       "path": "corpus/external/poi-xlsx/clusterfuzz-testcase-minimized-XLSX2CSVFuzzer-5542865479270400.xlsx",
       "kind": "threw",
-      "detail": "invalid zip data"
+      "detail": "invalid zip data: invalid zip data"
     },
     {
       "path": "corpus/external/poi-xlsx/clusterfuzz-testcase-minimized-XLSX2CSVFuzzer-5636439151607808.xlsx",
       "kind": "threw",
-      "detail": "invalid zip data"
+      "detail": "invalid zip data: invalid zip data"
     },
     {
       "path": "corpus/external/poi-xlsx/clusterfuzz-testcase-minimized-XLSX2CSVFuzzer-6504225896792064.xlsx",
@@ -83,7 +73,7 @@
     {
       "path": "corpus/external/poi-xlsx/clusterfuzz-testcase-minimized-XLSX2CSVFuzzer-6594557414080512.xlsx",
       "kind": "threw",
-      "detail": "invalid zip data"
+      "detail": "invalid zip data: invalid zip data"
     },
     {
       "path": "corpus/external/poi-xlsx/crash-274d6342e4842d61be0fb48eaadad6208ae767ae.xlsx",
@@ -98,17 +88,12 @@
     {
       "path": "corpus/external/poi-xlsx/deep-data.xlsx",
       "kind": "threw",
-      "detail": "invalid zip data"
+      "detail": "invalid zip data: invalid zip data"
     },
     {
       "path": "corpus/external/poi-xlsx/protected_passtika.xlsx",
       "kind": "threw",
       "detail": "OLE compound file: a password-protected (encrypted) OOXML document or a legacy binary .doc/.xls — re-save as an unencryp"
-    },
-    {
-      "path": "corpus/external/poi-xlsx/WithEmbeded.xlsx",
-      "kind": "threw",
-      "detail": "readTagExp returned undefined at position 3521. Context: \".X.��p�M�\u001b,���q7�\u000b�\b�\u000b�\u000b|wf\u00178��K3�Fl\u001cT�\u0006��B�$���b�<k[]�����b%�"
     }
   ]
 }
