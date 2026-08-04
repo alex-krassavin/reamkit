@@ -21,3 +21,4 @@ corpus/.visual-work-*/
 # pixel-scout's LibreOffice cache and its per-run scratch
 corpus/.lo-cache/
 corpus/.pixel-scout-*/
+corpus/.fonts/

@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { basename, dirname, resolve } from 'node:path';
 
 import { referenceToPdf } from './lib';
-import type { FontBytesByVariant } from '@/core/font';
+import { cjkFontsFor, corpusFontOptions } from './fonts';
 import { Ream } from '@/core/converter/ream';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -44,50 +44,6 @@ type Sharp = (input: Buffer | string | { create: unknown }) => {
   metadata: () => Promise<{ width?: number; height?: number }>;
 };
 const sharp = requireFromDocs('sharp') as Sharp;
-
-const FONTS: FontBytesByVariant = {
-  regular: new Uint8Array(readFileSync(resolve(root, 'tests/fixtures/fonts/Roboto-Regular.ttf'))),
-  bold: new Uint8Array(readFileSync(resolve(root, 'tests/fixtures/fonts/Roboto-Bold.ttf'))),
-  italic: new Uint8Array(readFileSync(resolve(root, 'tests/fixtures/fonts/Roboto-Italic.ttf'))),
-  boldItalic: new Uint8Array(
-    readFileSync(resolve(root, 'tests/fixtures/fonts/Roboto-BoldItalic.ttf')),
-  ),
-};
-
-// Roboto has no Hangul, Kana or Han, so a CJK document renders as a page of
-// tofu and every real difference hides behind it — 1_NoIden.xlsx is seven rows
-// of Korean. LibreOffice substitutes a system face; so do we, when the document
-// needs one and the host has one. The library itself does not: fonts come from
-// the caller and a registry is ONE family in four weights, so per-script
-// fallback is the caller's business (and, for Ream, still an open one).
-const CJK_FACES = [
-  '/System/Library/Fonts/Supplemental/AppleGothic.ttf',
-  '/System/Library/Fonts/Supplemental/AppleMyungjo.ttf',
-  '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
-];
-
-const NEEDS_CJK =
-  /[\u1100-\u11FF\u3040-\u30FF\u3130-\u318F\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF]/u;
-
-function fontsFor(input: string): FontBytesByVariant {
-  let text = '';
-  try {
-    const flow = Ream.parse(new Uint8Array(readFileSync(input))).flow;
-    text = JSON.stringify(flow.body);
-  } catch {
-    return FONTS;
-  }
-  if (!NEEDS_CJK.test(text)) return FONTS;
-  const face = CJK_FACES.find((p) => existsSync(p));
-  if (!face) {
-    process.stderr.write('note: document has CJK text and no CJK face was found on this host\n');
-    return FONTS;
-  }
-  process.stderr.write(`note: CJK text — rendering with ${basename(face)}\n`);
-  // One face for every weight: the substitute has no bold, and pairing a Latin
-  // bold with a CJK regular would measure one script in the other's metrics.
-  return { regular: new Uint8Array(readFileSync(face)) };
-}
 
 const arg = (flag: string): string | undefined => {
   const i = process.argv.indexOf(flag);
@@ -166,11 +122,14 @@ async function main(): Promise<void> {
   mkdirSync(workDir, { recursive: true });
   mkdirSync(outDir, { recursive: true });
 
+  const cjk = cjkFontsFor(input, (m) => process.stderr.write(`${m}\n`));
   const ourPdf = resolve(workDir, 'ours.pdf');
   writeFileSync(
     ourPdf,
     await Ream.parse(new Uint8Array(readFileSync(input))).convert('pdf', {
-      fonts: fontsFor(input),
+      // The document's own families (see ./fonts), except where its text is CJK
+      // and no substitute of ours has the glyphs.
+      ...(cjk ? { fonts: cjk } : corpusFontOptions()),
       fileName: basename(input),
     }),
   );

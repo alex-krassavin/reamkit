@@ -25,8 +25,7 @@ import {
   structuralDiff,
   visualDiff,
 } from './lib';
-import type { FontBytesByVariant } from '@/core/font';
-import { convertDocxToPdf } from '@/core/converter';
+import { EXPLICIT_FONTS, corpusFontOptions } from './fonts';
 import { Ream } from '@/core/converter/ream';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -43,15 +42,6 @@ const dpiArg = process.argv.indexOf('--dpi');
 const DPI = dpiArg >= 0 ? Number(process.argv[dpiArg + 1]) : 100;
 const KEEP = process.argv.includes('--keep');
 
-const FONTS: FontBytesByVariant = {
-  regular: new Uint8Array(readFileSync(resolve(root, 'tests/fixtures/fonts/Roboto-Regular.ttf'))),
-  bold: new Uint8Array(readFileSync(resolve(root, 'tests/fixtures/fonts/Roboto-Bold.ttf'))),
-  italic: new Uint8Array(readFileSync(resolve(root, 'tests/fixtures/fonts/Roboto-Italic.ttf'))),
-  boldItalic: new Uint8Array(
-    readFileSync(resolve(root, 'tests/fixtures/fonts/Roboto-BoldItalic.ttf')),
-  ),
-};
-
 // CORPUS_SANDBOX=docker sandboxes the LibreOffice reference render (see lib.ts)
 // — the main external risk. CORPUS_ISOLATE_OURS=1 ALSO runs our own parser in a
 // child process (wall-clock timeout + heap cap), for genuinely hostile input;
@@ -59,15 +49,10 @@ const FONTS: FontBytesByVariant = {
 // OpcPackage.open already caps decompression. Default: both off (fast in-process
 // path for our trusted fixtures).
 const ISOLATE_OURS = process.env.CORPUS_ISOLATE_OURS === '1';
-// CORPUS_AUTOFONT=1 renders docx with the real async font auto-substitution
-// (metric-compatible open substitutes by the document's declared family:
-// sans→Arimo, serif→Tinos, mono→Cousine, Calibri→Carlito, Cambria→Caladea)
-// instead of a fixed Roboto set — so the visual metric reflects layout fidelity
-// rather than a font mismatch. It also matches the substitutes LibreOffice picks
-// from fonts-liberation, making the comparison apples-to-apples. In-process only
-// (the per-URL font cache must persist across docs); ignored under
-// CORPUS_ISOLATE_OURS.
-const AUTOFONT = process.env.CORPUS_AUTOFONT === '1';
+// Fonts: the document's OWN families, substituted the way LibreOffice
+// substitutes them, off a disk cache (see ./fonts). CORPUS_FONTS=roboto pins the
+// old single-family render for a side-by-side. The child process reads the same
+// cache, so isolation no longer costs a download per document.
 // CORPUS_PROFILE selects a renderer-compatibility layoutProfile for OUR render
 // (E-PARITY): 'libreoffice' should track the LibreOffice golden most closely,
 // 'word' targets Word. Unset = the default 'ream' typesetter.
@@ -89,13 +74,8 @@ async function ourConvert(input: string, outPath: string): Promise<void> {
   const profileOpt = PROFILE ? { layoutProfile: PROFILE } : {};
   // The Ream facade sniffs the format from the bytes and dispatches to the right
   // reader, so one path covers all seven inputs (docx/xlsx/pptx/pdf + the legacy
-  // doc/xls/ppt). AUTOFONT stays a docx-only escape hatch: it runs the real async
-  // substitute-font auto-detection so the visual metric reflects layout fidelity
-  // rather than a font mismatch.
-  const pdf =
-    AUTOFONT && /\.docx$/i.test(input)
-      ? await convertDocxToPdf(bytes, profileOpt)
-      : await Ream.parse(bytes).convert('pdf', { fonts: FONTS, ...profileOpt });
+  // doc/xls/ppt).
+  const pdf = await Ream.parse(bytes).convert('pdf', { ...corpusFontOptions(), ...profileOpt });
   writeFileSync(outPath, pdf);
 }
 
@@ -260,7 +240,7 @@ function renderReport(rows: Array<Row>, dpi: number): string {
   lines.push('');
   lines.push(
     `Reference: LibreOffice \`soffice\` (PDF sources: the original file — a read→render roundtrip). Our profile: \`${PROFILE ?? 'ream'}\`` +
-      `${AUTOFONT ? ' (autofont)' : ''}. Raster DPI: ${dpi}. ` +
+      `${EXPLICIT_FONTS ? ' (pinned Roboto)' : ' (substituted fonts)'}. Raster DPI: ${dpi}. ` +
       `Visual = worst-page pixel mismatch ratio (lower is better). ` +
       `TextSim = LCS char similarity vs reference (higher is better). ` +
       `Drift = median baseline-y delta.`,

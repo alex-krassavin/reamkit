@@ -36,15 +36,13 @@ import {
 import { basename, resolve } from 'node:path';
 
 import { colorDiff, parsePpm, rasterize, referenceToPdf, visualDiff } from './lib';
-import type { FontBytesByVariant } from '@/core/font';
+import { corpusFontOptions } from './fonts';
 import { Ream } from '@/core/converter/ream';
 
-const FONTS: FontBytesByVariant = {
-  regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
-  bold: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Bold.ttf')),
-  italic: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Italic.ttf')),
-  boldItalic: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-BoldItalic.ttf')),
-};
+// The document's OWN families, substituted the way LibreOffice substitutes them
+// (see ./fonts) — not one pinned face, which used to skip the font pipeline
+// whole and charge the difference to layout.
+const FONT_OPTIONS = corpusFontOptions();
 
 // Enough to see a missing block, a wrong fill or a shifted column; not enough
 // to rank on anti-aliasing. A4 at 60 dpi is ~500×700.
@@ -122,7 +120,7 @@ async function main(): Promise<void> {
         // `&F`; a byte-oriented API has to be told it.
         await Ream.parse(new Uint8Array(readFileSync(src))).convert('pdf', {
           fileName: basename(src),
-          fonts: FONTS,
+          ...FONT_OPTIONS,
         }),
       );
     } catch (e) {
