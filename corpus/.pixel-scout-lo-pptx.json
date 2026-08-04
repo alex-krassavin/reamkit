@@ -265,11 +265,6 @@
   "aligned": true
  },
  {
-  "name": "tdf149206.pptx",
-  "score": 0.0797,
-  "aligned": true
- },
- {
   "name": "tdf135843_export.pptx",
   "score": 0.0786,
   "aligned": true
@@ -602,6 +597,11 @@
  {
   "name": "tdf148966.pptx",
   "score": 0.0162,
+  "aligned": true
+ },
+ {
+  "name": "tdf149206.pptx",
+  "score": 0.0158,
   "aligned": true
  },
  {

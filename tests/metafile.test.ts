@@ -2,12 +2,13 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import type { MetaPicture, PicturePath, PictureText } from '@/core/metafile/picture';
+import type { MetaPicture, PictureImage, PicturePath, PictureText } from '@/core/metafile/picture';
 import { FontRegistry } from '@/core/font';
 import { ResourceStore, pt } from '@/core/ir';
 import { paintPlan } from '@/layout/page-doc';
 import { layoutStyledDocument } from '@/layout/styled-layout';
 import { isEmf, readEmf } from '@/core/metafile/emf';
+import { readDib } from '@/core/metafile/dib';
 import { isWmf, readWmf } from '@/core/metafile/wmf';
 
 // A metafile is a list of records over a device context, so the tests build the
@@ -513,5 +514,250 @@ describe('WMF (MS-WMF)', () => {
     const line = readWmf(wmf([meta(0x0325, pts)], [0, 0, 20, 20]));
     expect(paths(poly.prims)[0]?.paths[0]!.segments.at(-1)).toEqual({ op: 'close' });
     expect(paths(line.prims)[0]?.paths[0]!.segments.at(-1)).not.toEqual({ op: 'close' });
+  });
+});
+
+// MS-WMF §2.2.2.9 — a packed DIB: a BITMAPINFOHEADER, a colour table, and the
+// rows, stored BOTTOM first and padded out to a four-byte boundary.
+const bmi = (w: number, h: number, bpp: number, clrUsed = 0): Uint8Array =>
+  new Bytes()
+    .u32(40)
+    .i32(w)
+    .i32(h)
+    .u16(1)
+    .u16(bpp)
+    .u32(0) // BI_RGB
+    .u32(0)
+    .i32(0)
+    .i32(0)
+    .u32(clrUsed)
+    .u32(0)
+    .build();
+
+/** A 24-bit DIB over `pixels`, given TOP row first as `[r, g, b]`. */
+function dib24(w: number, h: number, pixels: Array<[number, number, number]>): Uint8Array {
+  const stride = (w * 3 + 3) & ~3;
+  const bits = new Uint8Array(stride * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const [r, g, b] = pixels[(h - 1 - y) * w + x]!;
+      bits.set([b, g, r], y * stride + x * 3);
+    }
+  }
+  return concat(bmi(w, h, 24), bits);
+}
+
+/** A monochrome DIB over `on` bits, TOP row first: 0 is black, 1 is white. */
+function dib1(w: number, h: number, on: Array<number>): Uint8Array {
+  const stride = (((w + 7) >> 3) + 3) & ~3;
+  const bits = new Uint8Array(stride * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (on[(h - 1 - y) * w + x] === 1) bits[y * stride + (x >> 3)]! |= 0x80 >> (x & 7);
+    }
+  }
+  const palette = new Bytes().u32(0x000000).u32(0xffffff).build();
+  return concat(bmi(w, h, 1, 2), palette, bits);
+}
+
+/** EMR_STRETCHDIBITS (§2.3.1.7) — the whole bitmap onto the destination box. */
+const stretchDibits = (
+  dest: [number, number, number, number],
+  bitmap: Uint8Array,
+  src: [number, number, number, number],
+  rop = 0x00cc0020,
+  bmiSize = 40,
+): Uint8Array =>
+  emr(
+    81,
+    concat(
+      new Bytes()
+        .zeros(16) // Bounds
+        .i32(dest[0])
+        .i32(dest[1])
+        .i32(src[0])
+        .i32(src[1])
+        .i32(src[2])
+        .i32(src[3])
+        .u32(80) // offBmiSrc, from the record's start
+        .u32(bmiSize)
+        .u32(80 + bmiSize) // offBitsSrc
+        .u32(bitmap.length - bmiSize)
+        .u32(0) // UsageSrc
+        .u32(rop)
+        .i32(dest[2])
+        .i32(dest[3])
+        .build(),
+      bitmap,
+    ),
+  );
+
+const images = (prims: MetaPicture['prims']): Array<PictureImage> =>
+  prims.filter((p): p is PictureImage => p.kind === 'image');
+
+// A PNG's IHDR: its extent, and colour type 2 (RGB) or 6 (RGBA).
+const ihdr = (png: Uint8Array): { w: number; h: number; color: number } => {
+  const v = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  return { w: v.getUint32(16), h: v.getUint32(20), color: png[25]! };
+};
+
+describe('a blit (MS-EMF §2.3.1)', () => {
+  const red: [number, number, number] = [255, 0, 0];
+  const blue: [number, number, number] = [0, 0, 255];
+
+  it('reads a DIB bottom-up, through its padding, into the box it lands in', () => {
+    const bitmap = dib24(2, 2, [red, red, blue, blue]);
+    const pic = readEmf(
+      emf({ l: 0, t: 0, r: 100, b: 50 }, [stretchDibits([10, 20, 30, 40], bitmap, [0, 0, 2, 2])]),
+    );
+    expect(images(pic.prims)).toHaveLength(1);
+    const img = images(pic.prims)[0]!;
+    expect([img.x, img.y, img.width, img.height]).toEqual([10, 20, 30, 40]);
+    expect(ihdr(img.png)).toEqual({ w: 2, h: 2, color: 2 });
+    // The first row of the PICTURE is the LAST row of the file, and it is red.
+    const back = readDib(bitmap, 0)!;
+    expect([...back.rgba.subarray(0, 4)]).toEqual([255, 0, 0, 255]);
+    expect([...back.rgba.subarray(8, 12)]).toEqual([0, 0, 255, 255]);
+  });
+
+  it('puts an AND mask and the OR that follows it back into one picture', () => {
+    // The idiom every clipart of this age is drawn with: a monochrome mask
+    // knocks the ground out, and the picture is ORed into the hole.
+    const dest: [number, number, number, number] = [0, 0, 20, 20];
+    const src: [number, number, number, number] = [0, 0, 2, 2];
+    const pic = readEmf(
+      emf({ l: 0, t: 0, r: 100, b: 50 }, [
+        stretchDibits(dest, dib1(2, 2, [1, 1, 0, 0]), src, 0x008800c6, 48),
+        stretchDibits(dest, dib24(2, 2, [red, red, red, red]), src, 0x00ee0086),
+      ]),
+    );
+    // ONE picture, not two, and — the colour bitmap having no black of its own
+    // to key out — an alpha channel it can only have got from the mask.
+    expect(images(pic.prims)).toHaveLength(1);
+    expect(ihdr(images(pic.prims)[0]!.png).color).toBe(6);
+  });
+
+  it('keeps an OR blit’s own black transparent when no mask came with it', () => {
+    const black: [number, number, number] = [0, 0, 0];
+    const half = dib24(2, 2, [black, black, red, red]);
+    const pic = readEmf(
+      emf({ l: 0, t: 0, r: 100, b: 50 }, [
+        stretchDibits([0, 0, 20, 20], half, [0, 0, 2, 2], 0x00ee0086),
+      ]),
+    );
+    expect(ihdr(images(pic.prims)[0]!.png).color).toBe(6);
+    // …while a plain copy of the same bitmap keeps its black.
+    const copied = readEmf(
+      emf({ l: 0, t: 0, r: 100, b: 50 }, [stretchDibits([0, 0, 20, 20], half, [0, 0, 2, 2])]),
+    );
+    expect(ihdr(images(copied.prims)[0]!.png).color).toBe(2);
+  });
+
+  it('draws nothing for a mask with no picture behind it', () => {
+    const pic = readEmf(
+      emf({ l: 0, t: 0, r: 100, b: 50 }, [
+        stretchDibits([0, 0, 20, 20], dib1(2, 2, [1, 1, 0, 0]), [0, 0, 2, 2], 0x008800c6, 48),
+      ]),
+    );
+    expect(images(pic.prims)).toHaveLength(0);
+  });
+
+  it('fills the rectangle with the brush when a WMF blit carries no bitmap', () => {
+    // 288 records of the corpus are exactly this: META_DIBBITBLT with PATCOPY
+    // and no source at all, which is the brush painting a rule or a panel. The
+    // record is then TWELVE words — one more than its fields account for — and
+    // read without that reserved word the rectangle comes out of no height.
+    const pic = readWmf(
+      wmf(
+        [
+          meta(0x02fc, new Bytes().u16(0).u32(0x00ff00).u16(0).build()), // CREATEBRUSH — green
+          meta(0x012d, new Bytes().u16(0).build()), // SELECTOBJECT
+          meta(
+            0x0940,
+            new Bytes()
+              .u32(0x00f00021) // PATCOPY
+              .i16(0) // reserved
+              .i16(0) // YSrc
+              .i16(0) // XSrc
+              .i16(6) // Height
+              .i16(8) // Width
+              .i16(2) // YDest
+              .i16(3) // XDest
+              .build(),
+          ),
+        ],
+        [0, 0, 100, 50],
+      ),
+    );
+    expect(paths(pic.prims)[0]?.fillColorHex).toBe('00FF00');
+    expect(paths(pic.prims)[0]?.paths[0]!.segments).toEqual([
+      { op: 'move', x: 3, y: 2 },
+      { op: 'line', x: 11, y: 2 },
+      { op: 'line', x: 11, y: 8 },
+      { op: 'line', x: 3, y: 8 },
+      { op: 'close' },
+    ]);
+  });
+
+  it('reads the bitmap a WMF stretches into its destination rectangle', () => {
+    const bitmap = dib24(2, 1, [red, blue]);
+    const pic = readWmf(
+      wmf(
+        [
+          meta(
+            0x0b41,
+            concat(
+              new Bytes()
+                .u32(0x00cc0020)
+                .i16(1) // SrcHeight
+                .i16(2) // SrcWidth
+                .i16(0) // YSrc
+                .i16(0) // XSrc
+                .i16(30) // DestHeight
+                .i16(40) // DestWidth
+                .i16(5) // YDest
+                .i16(7) // XDest
+                .build(),
+              bitmap,
+            ),
+          ),
+        ],
+        [0, 0, 100, 50],
+      ),
+    );
+    expect(images(pic.prims)).toHaveLength(1);
+    const img = images(pic.prims)[0]!;
+    expect([img.x, img.y, img.width, img.height]).toEqual([7, 5, 40, 30]);
+  });
+
+  it('carries the bitmap on as a resource the page draws', () => {
+    const bytes = emf({ l: 0, t: 0, r: 100, b: 50 }, [
+      stretchDibits([0, 0, 100, 50], dib24(2, 2, [red, red, blue, blue]), [0, 0, 2, 2]),
+    ]);
+    const store = new ResourceStore();
+    const resource = store.put(bytes);
+    const laid = layoutStyledDocument(
+      [
+        {
+          kind: 'image',
+          image: { resource, width: pt(100), height: pt(50), paragraphProperties: {} },
+        },
+      ],
+      {
+        registry: FontRegistry.fromBytes({
+          regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
+        }),
+        resources: store,
+        styles: { defaultRunProperties: {}, defaultParagraphProperties: {}, styles: new Map() },
+      },
+    );
+    const item = laid.pages[0]!.commands.find((c) => c.type === 'image');
+    expect(item?.imageResourceName).not.toBe('');
+    // …and the picture it names is embedded, not left dangling.
+    expect(
+      [...laid.imageResources.values()].some(
+        (r) => r.resourceName === item?.imageResourceName && r.prepared !== undefined,
+      ),
+    ).toBe(true);
   });
 });

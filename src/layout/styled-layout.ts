@@ -383,6 +383,19 @@ interface ChartTextPrim {
   /** Where this text stands in the drawing's own order (see {@link ChartLayout}). */
   readonly seq?: number;
 }
+// MS-EMF §2.3.1 — a bitmap the drawing blits into itself, already a resource of
+// the page's own. `x`/`y` name the box's BOTTOM-left corner, as the local frame
+// runs y-up.
+interface ChartImagePrim {
+  readonly resourceName: string;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly rotationDeg?: number;
+  /** Where this bitmap stands in the drawing's own order (see {@link ChartLayout}). */
+  readonly seq?: number;
+}
 /**
  * A drawing's primitives. A CHART builds its shapes and its labels separately
  * and the labels belong on top, so they carry no order. A METAFILE is a list of
@@ -393,6 +406,8 @@ interface ChartTextPrim {
 interface ChartLayout {
   readonly shapes: ReadonlyArray<ChartShapePrim>;
   readonly texts: ReadonlyArray<ChartTextPrim>;
+  /** Only a metafile has these: a chart draws no bitmaps of its own. */
+  readonly images?: ReadonlyArray<ChartImagePrim>;
 }
 interface ChartBlockLaidOut {
   readonly kind: 'chart';
@@ -2305,9 +2320,19 @@ function layoutBodyElement(
     return layoutTableBlock(el.table, options, fontResources, imageResources, contentWidth);
   }
   if (el.kind === 'image') {
-    const meta = el.image.resource ? imageResources?.get(el.image.resource)?.metafile : undefined;
+    const res = el.image.resource ? imageResources?.get(el.image.resource) : undefined;
+    const meta = res?.metafile;
     return meta
-      ? layoutMetafileBlock(el.image, meta, options, fontResources, contentWidth, maxHeight, box)
+      ? layoutMetafileBlock(
+          el.image,
+          meta,
+          res.metafileImages,
+          options,
+          fontResources,
+          contentWidth,
+          maxHeight,
+          box,
+        )
       : layoutImageBlock(el.image, imageResources, contentWidth, maxHeight, box);
   }
   if (el.kind === 'chart') {
@@ -2763,6 +2788,7 @@ function layoutShapeBlock(
 function layoutMetafileBlock(
   image: ImageBlock,
   pic: MetaPicture,
+  blitted: ReadonlyArray<string> | undefined,
   options: StyledRenderOptions,
   fontResources: ReadonlyMap<string, FontResource>,
   contentWidth: number,
@@ -2773,7 +2799,7 @@ function layoutMetafileBlock(
   const widthPt = placed.widthPt;
   const heightPt = placed.heightPt;
   const layout = rotateDrawing(
-    metafileDrawing(pic, widthPt, heightPt, options, fontResources, image.colorChange),
+    metafileDrawing(pic, widthPt, heightPt, options, fontResources, image.colorChange, blitted),
     // §20.1.7.6 `a:xfrm @rot` — the drawing's own turn, clockwise. A chart
     // block has no rotation of its own, so the primitives take it: tdf103001
     // .docx leans two of its three cliparts and we stood all three upright.
@@ -2830,6 +2856,21 @@ function rotateDrawing(layout: ChartLayout, deg: number, cx: number, cy: number)
       const p = at(t.x, t.y);
       return { ...t, x: p.x, y: p.y, rotationDeg: (t.rotationDeg ?? 0) - deg };
     }),
+    // A bitmap turns about its own CENTRE, so that is the point moved: the
+    // corner it is placed by would walk the picture around the frame.
+    ...(layout.images
+      ? {
+          images: layout.images.map((img) => {
+            const c = at(img.x + img.width / 2, img.y + img.height / 2);
+            return {
+              ...img,
+              x: c.x - img.width / 2,
+              y: c.y - img.height / 2,
+              rotationDeg: (img.rotationDeg ?? 0) + deg,
+            };
+          }),
+        }
+      : {}),
   };
 }
 
@@ -2845,6 +2886,7 @@ function metafileDrawing(
   options: StyledRenderOptions,
   fontResources: ReadonlyMap<string, FontResource>,
   colorChange?: ImageBlock['colorChange'],
+  blitted?: ReadonlyArray<string>,
 ): ChartLayout {
   // §20.1.8.16 — the colour the picture declares away. In a metafile that is
   // not a pixel operation: a primitive painted in it is either repainted or
@@ -2864,10 +2906,32 @@ function metafileDrawing(
 
   const shapes: Array<ChartShapePrim> = [];
   const texts: Array<ChartTextPrim> = [];
+  const images: Array<ChartImagePrim> = [];
   // The picture's own order, kept so the page can paint it back (a label the
   // drawing buries under a later panel must stay buried).
   let seq = 0;
+  let blit = 0;
   for (const prim of pic.prims) {
+    if (prim.kind === 'image') {
+      // The blitted bitmaps were prepared in this same order, so the counter
+      // that walks them is the one that names them.
+      const resourceName = blitted?.[blit++] ?? '';
+      if (resourceName === '') {
+        seq++;
+        continue;
+      }
+      images.push({
+        seq: seq++,
+        resourceName,
+        x: mapX(prim.x),
+        // The metafile's box hangs DOWN from its corner; the local frame's
+        // origin is the bottom-left, so the picture stands on its lower edge.
+        y: mapY(prim.y + prim.height),
+        width: prim.width * sx,
+        height: prim.height * sy,
+      });
+      continue;
+    }
     if (prim.kind === 'path') {
       const fill = recolour(prim.fillColorHex);
       const strokeHex = recolour(prim.stroke?.colorHex);
@@ -2909,7 +2973,6 @@ function metafileDrawing(
       });
       continue;
     }
-    if (prim.kind !== 'text') continue;
     const { variant } = options.registry.resolveByStyle(prim.bold === true, prim.italic === true);
     const font = fontResources.get(variant);
     if (!font) continue;
@@ -2940,7 +3003,7 @@ function metafileDrawing(
     });
   }
 
-  return { shapes, texts };
+  return { shapes, texts, ...(images.length > 0 ? { images } : {}) };
 }
 
 function layoutChartBlock(
@@ -3418,9 +3481,32 @@ function collectImageResources(
     // resource name.
     if (isEmf(bytes) || isWmf(bytes)) {
       try {
+        const metafile = isEmf(bytes) ? readEmf(bytes) : readWmf(bytes);
+        // §2.3.1 — except for the bitmaps it BLITS, which are rasters like any
+        // other: each is entered as a resource of its own, so everything
+        // downstream embeds and names it without a nested channel of its own.
+        const metafileImages: Array<string> = [];
+        for (const prim of metafile.prims) {
+          if (prim.kind !== 'image') continue;
+          let blitted: PreparedImage;
+          try {
+            blitted = prepareImage(prim.png, { flattenAlpha });
+          } catch {
+            metafileImages.push('');
+            continue;
+          }
+          counter++;
+          const name = `Im${counter}`;
+          metafileImages.push(name);
+          out.set(`${resourceId}#${String(metafileImages.length)}` as ResourceId, {
+            resourceName: name,
+            prepared: blitted,
+          });
+        }
         out.set(resourceId, {
           resourceName: '',
-          metafile: isEmf(bytes) ? readEmf(bytes) : readWmf(bytes),
+          metafile,
+          ...(metafileImages.length > 0 ? { metafileImages } : {}),
         });
       } catch {
         // A malformed metafile is one that draws nothing, as before.
@@ -3453,7 +3539,8 @@ function chartPageItems(
   const fig = structId !== undefined ? { structId } : {};
   // A drawing whose primitives carry an order is a PICTURE: it paints as one
   // thing, in that order, rather than every shape and then every label.
-  const ordered = laid.layout.shapes.some((sh) => sh.seq !== undefined);
+  const ordered =
+    laid.layout.shapes.some((sh) => sh.seq !== undefined) || (laid.layout.images?.length ?? 0) > 0;
   const picture = ordered ? { pictureId: nextPictureId++ } : {};
   // §20.1.8.14 — the picture the frame is papered with, under every primitive.
   const backdrop: Array<PageItem> = [];
@@ -3511,7 +3598,23 @@ function chartPageItems(
     ...picture,
     seq: t.seq ?? Number.MAX_SAFE_INTEGER,
   }));
-  const all = [...shapes, ...texts];
+  // MS-EMF §2.3.1 — a bitmap the drawing blits, placed like any other picture:
+  // the page's frame runs DOWN from its top, and the drawing's runs up.
+  const blits: Array<PageItem & { readonly seq: number }> = (laid.layout.images ?? []).map(
+    (img) => ({
+      type: 'image',
+      x: pt(x + img.x),
+      y: pt(pageHeight - (bottomYUp + img.y + img.height)),
+      width: pt(img.width),
+      height: pt(img.height),
+      imageResourceName: img.resourceName,
+      ...(img.rotationDeg ? { rotationDeg: img.rotationDeg } : {}),
+      ...fig,
+      ...picture,
+      seq: img.seq ?? 0,
+    }),
+  );
+  const all = [...shapes, ...texts, ...blits];
   if (ordered) all.sort((a, b) => a.seq - b.seq);
   return [...backdrop, ...all.map(({ seq: _seq, ...item }) => item)];
 }
@@ -4837,6 +4940,8 @@ function tokenizeParagraph(
                 drawBox?.heightPt ?? heightPt,
                 options,
                 fontResources,
+                undefined,
+                res.metafileImages,
               ),
             }
           : {}),

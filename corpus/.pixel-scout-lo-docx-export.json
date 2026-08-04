@@ -400,6 +400,11 @@
   "aligned": true
  },
  {
+  "name": "2129393649.docx",
+  "score": 0.0188,
+  "aligned": true
+ },
+ {
   "name": "custom-styles-TOC-comma.docx",
   "score": 0.0187,
   "aligned": true
@@ -422,11 +427,6 @@
  {
   "name": "n780843b.docx",
   "score": 0.018,
-  "aligned": true
- },
- {
-  "name": "2129393649.docx",
-  "score": 0.0178,
   "aligned": true
  },
  {
@@ -630,17 +630,17 @@
   "aligned": false
  },
  {
-  "name": "activex_checkbox.docx",
-  "score": 0.0127,
-  "aligned": true
- },
- {
   "name": "tdf121661.docx",
   "score": 0.0126,
   "aligned": true
  },
  {
   "name": "tdf121176.docx",
+  "score": 0.0126,
+  "aligned": true
+ },
+ {
+  "name": "activex_checkbox.docx",
   "score": 0.0126,
   "aligned": true
  },
@@ -751,11 +751,6 @@
  },
  {
   "name": "fdo73389.docx",
-  "score": 0.0109,
-  "aligned": true
- },
- {
-  "name": "n779834.docx",
   "score": 0.0109,
   "aligned": true
  },
@@ -912,6 +907,11 @@
  {
   "name": "page-borders-export-case-2.docx",
   "score": 0.0085,
+  "aligned": true
+ },
+ {
+  "name": "n779834.docx",
+  "score": 0.0084,
   "aligned": true
  },
  {
@@ -2240,11 +2240,6 @@
   "aligned": true
  },
  {
-  "name": "fdo81381.docx",
-  "score": 0.0014,
-  "aligned": true
- },
- {
   "name": "fdo80523_pptm.docx",
   "score": 0.0014,
   "aligned": true
@@ -2355,6 +2350,11 @@
   "aligned": true
  },
  {
+  "name": "artistic_effects.docx",
+  "score": 0.0012,
+  "aligned": true
+ },
+ {
   "name": "tdf104823.docx",
   "score": 0.0012,
   "aligned": true
@@ -2366,11 +2366,6 @@
  },
  {
   "name": "fdo65265.docx",
-  "score": 0.0011,
-  "aligned": true
- },
- {
-  "name": "EmbeddedExcelChart.docx",
   "score": 0.0011,
   "aligned": true
  },
@@ -2396,6 +2391,11 @@
  },
  {
   "name": "fdo64826.docx",
+  "score": 0.0011,
+  "aligned": true
+ },
+ {
+  "name": "EmbeddedExcelChart.docx",
   "score": 0.0011,
   "aligned": true
  },
@@ -2665,11 +2665,6 @@
   "aligned": true
  },
  {
-  "name": "artistic_effects.docx",
-  "score": 0.0007,
-  "aligned": true
- },
- {
   "name": "tdf113547.docx",
   "score": 0.0007,
   "aligned": true
@@ -2740,6 +2735,11 @@
   "aligned": true
  },
  {
+  "name": "fdo81381.docx",
+  "score": 0.0006,
+  "aligned": true
+ },
+ {
   "name": "EquationWithAboveAndBelowCaption.docx",
   "score": 0.0006,
   "aligned": true
@@ -2761,11 +2761,6 @@
  },
  {
   "name": "tdf123243.docx",
-  "score": 0.0006,
-  "aligned": true
- },
- {
-  "name": "activex_option_button_group.docx",
   "score": 0.0006,
   "aligned": true
  },
@@ -2921,6 +2916,11 @@
  },
  {
   "name": "ShapeOverlappingWithSdt.docx",
+  "score": 0.0005,
+  "aligned": true
+ },
+ {
+  "name": "activex_option_button_group.docx",
   "score": 0.0005,
   "aligned": true
  },

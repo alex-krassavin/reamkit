@@ -14,6 +14,8 @@ import type { PathSegment, StrokeStyle, VectorPath } from '@/core/vector';
 import type { DeviceContext, MetaObject, MetaPicture, PicturePrim } from '@/core/metafile/picture';
 import { PathBuilder } from '@/core/vector';
 import { cloneDc, colorRef, newDeviceContext } from '@/core/metafile/picture';
+import { cropDib, readDib } from '@/core/metafile/dib';
+import { makeBlitter } from '@/core/metafile/blit';
 import { ellipseSegments } from '@/core/metafile/emf';
 import { fromSymbolFont, symbolGeometryOf, symbolOutline } from '@/core/metafile/symbol-fonts';
 
@@ -30,9 +32,6 @@ export function isWmf(bytes: Uint8Array): boolean {
 }
 
 const RECORD_NAMES: ReadonlyMap<number, string> = new Map([
-  [0x0940, 'bitmap'],
-  [0x0b41, 'bitmap'],
-  [0x0f43, 'bitmap'],
   [0x0922, 'pie'],
   [0x0830, 'chord'],
   [0x0817, 'arc'],
@@ -109,6 +108,42 @@ export function readWmf(bytes: Uint8Array): MetaPicture {
   const rectSegments = (l: number, t: number, r: number, b: number): Array<PathSegment> =>
     new PathBuilder().moveTo(l, t).lineTo(r, t).lineTo(r, b).lineTo(l, b).close().build()
       .segments as Array<PathSegment>;
+
+  const blitter = makeBlitter((prim) => prims.push(prim));
+  /**
+   * §2.3.1 — one blit record: the packed bitmap the record ends with, into the
+   * destination rectangle its fields name. A WMF's coordinates are its own
+   * logical units, which is the frame the primitives are already in.
+   */
+  const blit = (o: {
+    dibAt: number;
+    dest: { x: number; y: number; w: number; h: number };
+    src: { x: number; y: number; w: number; h: number };
+    rop: number;
+  }): void => {
+    const dib = readDib(bytes, off + o.dibAt);
+    if (!dib) {
+      skipped.add('bitmap');
+      return;
+    }
+    // The source rectangle is stated in the BITMAP's own coordinates, which run
+    // from its first row — the bottom one, the way a DIB is usually stored.
+    const s = o.src;
+    const part =
+      s.x !== 0 || s.y !== 0 || s.w !== dib.width || s.h !== dib.height
+        ? cropDib(dib, s.x, dib.bottomUp === true ? dib.height - s.y - s.h : s.y, s.w, s.h)
+        : dib;
+    blitter.blit(
+      part,
+      {
+        x: Math.min(o.dest.x, o.dest.x + o.dest.w),
+        y: Math.min(o.dest.y, o.dest.y + o.dest.h),
+        width: Math.abs(o.dest.w),
+        height: Math.abs(o.dest.h),
+      },
+      o.rop,
+    );
+  };
 
   let off = placeable ? 22 : 0;
   off += 18; // the META header itself
@@ -237,6 +272,49 @@ export function readWmf(bytes: Uint8Array): MetaPicture {
           if (hex !== undefined) dc.brush = { kind: 'brush', colorHex: hex, hollow: false };
           paint(rectSegments(x, y, x + w, y + h), true, false);
           dc.brush = brush;
+        }
+        break;
+      // §2.3.1.2 / §2.3.1.3 / §2.3.1.5 — the three records that carry a packed
+      // bitmap. Each states its raster operation first and the bitmap last, and
+      // each may leave the bitmap OUT when its operation has no use for a
+      // source: the record is then the brush painting the destination, exactly
+      // as META_PATBLT is (0x00F00021 PATCOPY, 288 records of the corpus).
+      case 0x0940: // META_DIBBITBLT
+      case 0x0b41: // META_DIBSTRETCHBLT
+      case 0x0f43: // META_STRETCHDIB
+        {
+          const rop = p32(0);
+          // Where each record keeps its fields, as parameter words. A stretch
+          // names the source extent it scales from; a plain blit takes the
+          // destination's. META_STRETCHDIB spends one word more on what its
+          // colour table means, which moves everything after it along.
+          const f =
+            fn === 0x0940
+              ? { dib: 22, srcH: 4, srcW: 5, ySrc: 2, xSrc: 3, h: 4, w: 5, y: 6, x: 7 }
+              : fn === 0x0b41
+                ? { dib: 26, srcH: 2, srcW: 3, ySrc: 4, xSrc: 5, h: 6, w: 7, y: 8, x: 9 }
+                : { dib: 28, srcH: 3, srcW: 4, ySrc: 5, xSrc: 6, h: 7, w: 8, y: 9, x: 10 };
+          if (f.dib + 12 > size * 2) {
+            // No bitmap: the brush (or the operation's own colour) fills the
+            // destination. A META_DIBBITBLT then carries a reserved word ahead
+            // of its coordinates that the form with a bitmap does not — the
+            // record is 12 words, one more than its fields account for, and
+            // read without the shift it draws a rectangle of no height.
+            const hex = rop === 0x00000042 ? '000000' : rop === 0x00ff0062 ? 'FFFFFF' : undefined;
+            const brush = dc.brush;
+            if (hex !== undefined) dc.brush = { kind: 'brush', colorHex: hex, hollow: false };
+            const shift = fn === 0x0940 ? 1 : 0;
+            const [h, w, y, x] = [p(f.h + shift), p(f.w + shift), p(f.y + shift), p(f.x + shift)];
+            paint(rectSegments(x, y, x + w, y + h), true, false);
+            dc.brush = brush;
+            break;
+          }
+          blit({
+            dibAt: f.dib,
+            dest: { x: p(f.x), y: p(f.y), w: p(f.w), h: p(f.h) },
+            src: { x: p(f.xSrc), y: p(f.ySrc), w: p(f.srcW), h: p(f.srcH) },
+            rop,
+          });
         }
         break;
       case 0x0324: // META_POLYGON

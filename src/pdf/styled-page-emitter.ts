@@ -898,6 +898,15 @@ function emitPageContent(
       const b = tok.drawBox;
       const ox = x + (b?.dxPt ?? 0);
       const oy = baselineY + (b?.dyPt ?? 0);
+      // §2.3.1 — the bitmaps it blits, under the primitives it draws over them.
+      for (const img of meta.images ?? []) {
+        if (img.resourceName === '') continue;
+        out.push('q');
+        out.push(
+          ...placeImage(ox + img.x, oy + img.y, img.width, img.height, undefined, img.rotationDeg),
+        );
+        out.push(`/${img.resourceName} Do`, 'Q');
+      }
       for (const sh of meta.shapes) {
         for (const op of emitVectorShape({ ...sh, transform: [1, 0, 0, 1, ox, oy] })) {
           out.push(op);

@@ -145,11 +145,6 @@
   "aligned": true
  },
  {
-  "name": "tika-2605.pptx",
-  "score": 0.0674,
-  "aligned": true
- },
- {
   "name": "customGeo.pptx",
   "score": 0.0645,
   "aligned": true
@@ -406,6 +401,11 @@
  },
  {
   "name": "SmartArt.pptx",
+  "score": 0.0015,
+  "aligned": true
+ },
+ {
+  "name": "tika-2605.pptx",
   "score": 0.0015,
   "aligned": true
  },

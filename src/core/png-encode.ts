@@ -1,10 +1,12 @@
-// E-PDF EP6 — a minimal PNG encoder (RFC 2083). The PDF reader decodes image
-// XObjects to raw 8-bit samples (image-decode.ts); this wraps them back into a
-// PNG file so the FlowDoc resource store carries a format every writer already
-// embeds — the HTML data-URI path and the docx media part both go through
-// `detectImageFormat`, which recognises this output. Only what the reader needs
-// is implemented: 8-bit depth, colour types 0/2/4/6, no interlacing, a single
-// IDAT and filter-none scanlines (fflate's deflate still compresses them well).
+// A minimal PNG encoder (RFC 2083), for everything in here that ends up
+// holding raw pixels: the PDF reader decodes image XObjects to 8-bit samples
+// (image-decode.ts), and a metafile's blit records carry device-independent
+// bitmaps (metafile/dib.ts). Both wrap them into a PNG file so the resource
+// store carries a format every writer already embeds — the HTML data-URI path
+// and the docx media part both go through `detectImageFormat`, which recognises
+// this output. Only what those need is implemented: 8-bit depth, colour types
+// 0/2/4/6, no interlacing, a single IDAT and filter-none scanlines (fflate's
+// deflate still compresses them well).
 
 import { zlibSync } from 'fflate';
 

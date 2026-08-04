@@ -225,6 +225,19 @@ export interface MetafileDrawing {
     readonly y: number;
     readonly rotationDeg?: number;
   }>;
+  /**
+   * MS-EMF §2.3.1 — the bitmaps the picture blits into itself, each already a
+   * page resource of its own. `x`/`y` are the box's BOTTOM-left corner, in the
+   * same local frame as the shapes.
+   */
+  readonly images?: ReadonlyArray<{
+    readonly resourceName: string;
+    readonly x: number;
+    readonly y: number;
+    readonly width: number;
+    readonly height: number;
+    readonly rotationDeg?: number;
+  }>;
 }
 
 export interface ImageResource {
@@ -241,6 +254,13 @@ export interface ImageResource {
    * turns these into the same primitives a chart is made of.
    */
   readonly metafile?: MetaPicture;
+  /**
+   * The resource name of each bitmap `metafile` blits, in the order its
+   * primitives hold them. A metafile draws its own pictures, and each is an
+   * ordinary image resource — entered under a key of its own, so the emitters
+   * embed and name it without knowing where it came from.
+   */
+  readonly metafileImages?: ReadonlyArray<string>;
 }
 
 /**
