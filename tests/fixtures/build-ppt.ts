@@ -29,6 +29,9 @@ const RT_PP_DRAWING = 0x040c;
 const RT_DRAWING_GROUP = 0x040b;
 const RT_SLIDE_ATOM = 0x03ef;
 const RT_MAIN_MASTER = 0x03f8;
+const RT_ENVIRONMENT = 0x03f2;
+const RT_FONT_COLLECTION = 0x07d5;
+const RT_FONT_ENTITY_ATOM = 0x0fb7;
 const RT_COLOR_SCHEME_ATOM = 0x07f0;
 const COLOR_SCHEME_INSTANCE = 1; // slideSchemeColorSchemeAtom (vs scheme-list 6)
 const SLIDE_FLAG_MASTER_SCHEME = 0x0002; // slideAtom.slideFlags.fMasterScheme
@@ -85,6 +88,8 @@ export interface PptStyleRun {
   readonly colorHex?: string; // 6-hex → an explicit-RGB ColorIndexStruct (index 0xFE)
   // A ColorIndexStruct naming a SCHEME slot (index 0–7) instead of an sRGB.
   readonly colorSchemeIndex?: number;
+  // An index into the deck's font collection (see BuildPptOptions.fonts).
+  readonly fontRef?: number;
 }
 
 // A paragraph run in a StyleTextPropAtom, over `length` characters.
@@ -197,6 +202,8 @@ export interface PptFreeformInput {
 export interface BuildPptOptions {
   readonly encrypted?: boolean;
   readonly slideSizeInches?: { readonly w: number; readonly h: number };
+  // §2.9.30 — the deck's typefaces, indexed by a run's `fontRef` (PPT-19).
+  readonly fonts?: ReadonlyArray<string>;
   // Drop the Current User stream, to exercise the document-scan fallback.
   readonly omitCurrentUser?: boolean;
   // Deck images, stored in the Pictures stream and referenced by slide imageRef.
@@ -211,6 +218,8 @@ export interface BuildPptOptions {
     readonly textStyles?: ReadonlyArray<{
       readonly textType: number;
       readonly sizesPt: ReadonlyArray<number>;
+      // The font-collection index every level of this style names (PPT-19).
+      readonly fontRef?: number;
     }>;
   }>;
 }
@@ -310,8 +319,10 @@ function buildStyleTextProp(
     const hasStyle = (mask & 0x3eb7) !== 0;
     if (r.sizePt) mask |= 0x00020000; // size bit
     if (r.colorHex || r.colorSchemeIndex !== undefined) mask |= 0x00040000; // color bit
+    if (r.fontRef !== undefined) mask |= 0x00010000; // typeface bit
     u32(mask);
     if (hasStyle) u16(style); // fontStyle (CFStyle)
+    if (r.fontRef !== undefined) u16(r.fontRef); // fontRef, before the size
     if (r.sizePt) u16(r.sizePt); // fontSize (points)
     if (r.colorHex) {
       const hex = r.colorHex;
@@ -385,7 +396,7 @@ export function buildPpt(
       ? rec(RT_DRAWING_GROUP, 0, true, rec(FBT_DGG_CONTAINER, 0, true, buildBStore(foDelays)))
       : new Uint8Array(0);
 
-  const docData = concat([docAtom, drawingGroup, slwt]);
+  const docData = concat([docAtom, fontCollection(opts.fonts ?? []), drawingGroup, slwt]);
   const docRec = rec(RT_DOCUMENT, 0, true, docData);
 
   // --- one SlideContainer per slide, carrying its inline drawing text and any
@@ -422,7 +433,9 @@ export function buildPpt(
       true,
       concat([
         colorSchemeAtom(m.colorScheme),
-        ...(m.textStyles ?? []).map((st) => textMasterStyleAtom(st.textType, st.sizesPt)),
+        ...(m.textStyles ?? []).map((st) =>
+          textMasterStyleAtom(st.textType, st.sizesPt, st.fontRef),
+        ),
         ...(m.boxes ?? []).map(buildShapeContainer),
       ]),
     ),
@@ -676,9 +689,28 @@ function schemeColorRef(index: number): number {
   return ((index & 0xff) | (COLORREF_FLAG_SCHEME << 24)) >>> 0;
 }
 
+// The DocumentTextInfo (RT_Environment) holding a FontCollectionContainer: one
+// FontEntityAtom per typeface, its lfFaceName 32 UTF-16 units NUL-terminated,
+// its recInstance the index a run's `fontRef` names (PPT-19).
+function fontCollection(fonts: ReadonlyArray<string>): Uint8Array {
+  if (fonts.length === 0) return new Uint8Array(0);
+  const atoms = fonts.map((name, i) => {
+    const d = new Uint8Array(68);
+    const v = new DataView(d.buffer);
+    for (let c = 0; c < Math.min(name.length, 31); c++)
+      v.setUint16(c * 2, name.charCodeAt(c), true);
+    return rec(RT_FONT_ENTITY_ATOM, i, false, d);
+  });
+  return rec(RT_ENVIRONMENT, 0, true, rec(RT_FONT_COLLECTION, 0, true, concat(atoms)));
+}
+
 // A SlideAtom (§2.4.24): a 24-byte body with masterIdRef at offset 12 and
 // slideFlags (fMasterScheme) at offset 20, so the slide follows its master's scheme.
-function textMasterStyleAtom(textType: number, sizesPt: ReadonlyArray<number>): Uint8Array {
+function textMasterStyleAtom(
+  textType: number,
+  sizesPt: ReadonlyArray<number>,
+  fontRef?: number,
+): Uint8Array {
   const parts: Array<Uint8Array> = [];
   const head = new Uint8Array(2);
   new DataView(head.buffer).setUint16(0, sizesPt.length, true); // cLevels
@@ -688,10 +720,15 @@ function textMasterStyleAtom(textType: number, sizesPt: ReadonlyArray<number>): 
     // TextPFException stating nothing and a TextCFException stating the size.
     const level = new Uint8Array(textType >= 4 ? 2 : 0);
     const pf = new Uint8Array(4); // mask 0
-    const cf = new Uint8Array(6);
+    const cf = new Uint8Array(fontRef === undefined ? 6 : 8);
     const cv = new DataView(cf.buffer);
-    cv.setUint32(0, 0x00020000, true); // TextCFExceptionMask.size
-    cv.setUint16(4, size, true);
+    // TextCFExceptionMask: size, and the typeface when one is named.
+    cv.setUint32(0, fontRef === undefined ? 0x00020000 : 0x00030000, true);
+    if (fontRef === undefined) cv.setUint16(4, size, true);
+    else {
+      cv.setUint16(4, fontRef, true); // fontRef comes before the size
+      cv.setUint16(6, size, true);
+    }
     parts.push(level, pf, cf);
   }
   return rec(RT_TEXT_MASTER_STYLE_ATOM, textType, false, concat(parts));

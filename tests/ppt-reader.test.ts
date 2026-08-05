@@ -1131,3 +1131,51 @@ describe('ppt bullets (PPT-18)', () => {
     ).toBeUndefined();
   });
 });
+
+describe('ppt typefaces (PPT-19)', () => {
+  // §2.9.30 — a run names its typeface by an INDEX into the deck's font
+  // collection, and the reader kept none of them: every `.ppt` rendered in the
+  // default face, which measures nothing like the Times a deck asks for. 23884's
+  // body text ran off the bottom of every slide it was laid on.
+  const collection = ['Times New Roman', 'Symbol', 'Helvetica'];
+
+  it('resolves a run’s font through the collection', () => {
+    const slide = extractPptContent(
+      buildPpt([{ text: 'Serif', charRuns: [{ length: 5, fontRef: 0 }] }], { fonts: collection }),
+    ).slides[0]!;
+    expect(slide.shapes[0]?.paragraphs?.[0]?.runs[0]?.fontFamily).toBe('Times New Roman');
+  });
+
+  it('takes the master’s typeface when the run names none', () => {
+    const slide = extractPptContent(
+      buildPpt(
+        [
+          {
+            masterIndex: 0,
+            outlineTexts: [{ textType: 1, text: 'Body' }],
+            boxes: [{ anchor: { x: 10, y: 10, w: 300, h: 40 }, outlineRef: 0 }],
+          },
+        ],
+        {
+          fonts: collection,
+          masters: [
+            {
+              colorScheme: [
+                'FFFFFF',
+                '000000',
+                '808080',
+                '000000',
+                'FF0000',
+                '00FF00',
+                '0000FF',
+                'FFFF00',
+              ],
+              textStyles: [{ textType: 1, sizesPt: [24], fontRef: 2 }],
+            },
+          ],
+        },
+      ),
+    ).slides[0]!;
+    expect(slide.shapes[0]?.paragraphs?.[0]?.runs[0]?.fontFamily).toBe('Helvetica');
+  });
+});

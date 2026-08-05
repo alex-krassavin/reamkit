@@ -499,6 +499,7 @@ function toRun(r: PptRun): Run {
     ...(r.italic ? { italic: true } : {}),
     ...(underline ? { underline } : {}),
     ...(r.sizePt ? { fontSizePt: pt(r.sizePt) } : {}),
+    ...(r.fontFamily ? { fontFamily: { ascii: r.fontFamily, hAnsi: r.fontFamily } } : {}),
     ...(r.colorHex ? { colorHex: r.colorHex } : {}),
   };
   return { text: r.text, properties };

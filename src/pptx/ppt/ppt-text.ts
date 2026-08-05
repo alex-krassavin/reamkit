@@ -48,6 +48,8 @@ const RT_OUTLINE_TEXT_REF_ATOM = 0x0f9e; // OutlineTextRefAtom — points at the
 const RT_TEXT_MASTER_STYLE_ATOM = 0x0fa3; // TextMasterStyleAtom — a master's per-level defaults
 const RT_SLIDE_ATOM = 0x03ef; // SlideAtom — carries masterIdRef + slideFlags (PPT-6)
 const RT_MAIN_MASTER = 0x03f8; // MainMasterContainer — its colour scheme is inherited
+const RT_FONT_COLLECTION = 0x07d5; // FontCollectionContainer — the deck's typefaces
+const RT_FONT_ENTITY_ATOM = 0x0fb7; // FontEntityAtom — one typeface, by index
 const RT_COLOR_SCHEME_ATOM = 0x07f0; // SlideSchemeColorSchemeAtom — the 8-colour scheme
 
 // OfficeArt (Escher) record types for the drawing layer (PPT-3), sharing the same
@@ -121,6 +123,8 @@ const MAX_DEPTH = 24;
 /** A run of uniformly-formatted text within a paragraph (PPT-2). */
 export interface PptRun {
   readonly text: string;
+  /** The typeface the run names, resolved through the deck's font collection. */
+  readonly fontFamily?: string;
   readonly bold?: boolean;
   readonly italic?: boolean;
   readonly underline?: boolean;
@@ -403,12 +407,12 @@ function slideShapes(
   slideData: Uint8Array,
   img: ImageContext,
   outline: ReadonlyArray<ReadonlyArray<PptParagraph>>,
-  scheme: SchemeColors | undefined,
+  env: TextEnv,
   defaults?: MasterDefaults,
 ): DrawingContent {
-  const content = collectShapes(slideData, img, scheme, outline, defaults);
+  const content = collectShapes(slideData, img, env, outline, defaults);
   if (!content.shapes.some(shapeHasText)) {
-    const inline = collectParagraphs(slideData, 0, defaults, scheme);
+    const inline = collectParagraphs(slideData, 0, defaults, env);
     const text = inline.some((p) => paragraphText(p).length > 0) ? inline : outline.flat();
     if (text.some((p) => paragraphText(p).length > 0)) content.shapes.push({ paragraphs: text });
   }
@@ -474,6 +478,7 @@ function readSlideList(
   persist: Map<number, number>,
   img: ImageContext,
 ): Array<PptSlide> {
+  const fonts = parseFontCollection(docData);
   const slwt = findChild(
     docData,
     (r) => r.type === RT_SLIDE_LIST_WITH_TEXT && r.instance === SLWT_INSTANCE_SLIDES,
@@ -499,13 +504,17 @@ function readSlideList(
     const slideRec = slideOff !== undefined ? recordAt(stream, slideOff) : undefined;
     const isSlide = slideRec !== undefined && slideRec.type === RT_SLIDE;
     const scheme = isSlide ? resolveScheme(slideRec.data, masters) : undefined;
-    const defaults = isSlide ? masterChain(slideRec.data, masters, scheme) : undefined;
+    const env: TextEnv = {
+      ...(scheme ? { scheme } : {}),
+      ...(fonts.length > 0 ? { fonts } : {}),
+    };
+    const defaults = isSlide ? masterChain(slideRec.data, masters, scheme, fonts) : undefined;
     const texts = outline.map((e) =>
-      styledParagraphs(e.rec, e.style, levelStyles(defaults, e.textType), scheme),
+      styledParagraphs(e.rec, e.style, levelStyles(defaults, e.textType), env),
     );
     const flat = texts.flat();
     const content: DrawingContent = isSlide
-      ? slideShapes(slideRec.data, img, texts, scheme, defaults)
+      ? slideShapes(slideRec.data, img, texts, env, defaults)
       : { shapes: flat.some((p) => paragraphText(p).length > 0) ? [{ paragraphs: flat }] : [] };
     // §2.4.24 fMasterBackground: the slide shows the one its MASTER states, and
     // the background shape it keeps of its own is a stale copy — 23884's slides
@@ -547,7 +556,7 @@ function collectParagraphs(
   d: Uint8Array,
   depth: number,
   defaults?: MasterDefaults,
-  scheme?: SchemeColors,
+  env?: TextEnv,
 ): Array<PptParagraph> {
   if (depth > MAX_DEPTH) return [];
   const out: Array<PptParagraph> = [];
@@ -559,15 +568,10 @@ function collectParagraphs(
       textType = rec.data.length >= 4 ? u32(rec.data, 0) : TEXT_TYPE_OTHER;
     } else if (rec.type === RT_TEXT_CHARS_ATOM || rec.type === RT_TEXT_BYTES_ATOM) {
       out.push(
-        ...styledParagraphs(
-          rec,
-          findFollowingStyle(recs, i),
-          levelStyles(defaults, textType),
-          scheme,
-        ),
+        ...styledParagraphs(rec, findFollowingStyle(recs, i), levelStyles(defaults, textType), env),
       );
     } else if (rec.isContainer) {
-      out.push(...collectParagraphs(rec.data, depth + 1, defaults, scheme));
+      out.push(...collectParagraphs(rec.data, depth + 1, defaults, env));
     }
   }
   return out;
@@ -598,11 +602,11 @@ function styledParagraphs(
   textRec: PptRecord,
   styleData: Uint8Array | undefined,
   defaults?: (level: number) => LevelStyle | undefined,
-  scheme?: SchemeColors,
+  env?: TextEnv,
 ): Array<PptParagraph> {
   const text =
     textRec.type === RT_TEXT_CHARS_ATOM ? decodeUtf16(textRec.data) : decodeCp1252(textRec.data);
-  return buildStyledParagraphs(text, styleData, defaults, scheme);
+  return buildStyledParagraphs(text, styleData, defaults, env);
 }
 
 // Last-resort slide discovery: every RT_Slide container in the stream, in stream
@@ -623,7 +627,8 @@ function collectSlides(
   if (depth > MAX_DEPTH) return;
   for (const rec of records(d)) {
     if (rec.type === RT_SLIDE) {
-      const content = slideShapes(rec.data, img, [], resolveScheme(rec.data));
+      const scheme = resolveScheme(rec.data);
+      const content = slideShapes(rec.data, img, [], scheme ? { scheme } : {});
       out.push({
         shapes: content.shapes,
         ...(content.background ? { background: content.background } : {}),
@@ -730,12 +735,12 @@ function findDescendantContainer(
 function collectShapes(
   slideData: Uint8Array,
   img: ImageContext,
-  scheme: SchemeColors | undefined,
+  env: TextEnv,
   outline: ReadonlyArray<ReadonlyArray<PptParagraph>> = [],
   defaults?: MasterDefaults,
 ): DrawingContent {
   const out: DrawingContent = { shapes: [] };
-  collectShapeContainers(slideData, img, out, 0, scheme, outline, defaults);
+  collectShapeContainers(slideData, img, out, 0, env, outline, defaults);
   return out;
 }
 
@@ -750,11 +755,12 @@ function collectShapeContainers(
   img: ImageContext,
   out: DrawingContent,
   depth: number,
-  scheme: SchemeColors | undefined,
+  env: TextEnv,
   outline: ReadonlyArray<ReadonlyArray<PptParagraph>>,
   defaults?: MasterDefaults,
   group?: GroupFrame,
 ): void {
+  const scheme = env.scheme;
   if (depth > MAX_DEPTH) return;
   for (const r of records(d)) {
     if (r.type === FBT_SPGR_CONTAINER) {
@@ -767,7 +773,7 @@ function collectShapeContainers(
         img,
         out,
         depth + 1,
-        scheme,
+        env,
         outline,
         defaults,
         groupFrame(r.data) ?? group,
@@ -798,7 +804,7 @@ function collectShapeContainers(
         else if (child.type === FBT_CLIENT_DATA)
           placeholder = findChild(child.data, (c) => c.type === RT_PLACEHOLDER_ATOM) !== undefined;
         else if (child.type === FBT_CLIENT_TEXTBOX)
-          paragraphs = clientTextboxParagraphs(child.data, outline, defaults, scheme);
+          paragraphs = clientTextboxParagraphs(child.data, outline, defaults, env);
         else if (child.type === FBT_OPT) {
           pib = optProperty(child.data, child.instance, PROP_PIB);
           // A shape states a fill colour whether or not it is filled, and a line
@@ -872,7 +878,7 @@ function collectShapeContainers(
         });
       }
     } else if (r.isContainer) {
-      collectShapeContainers(r.data, img, out, depth + 1, scheme, outline, defaults, group);
+      collectShapeContainers(r.data, img, out, depth + 1, env, outline, defaults, group);
     }
   }
 }
@@ -890,11 +896,41 @@ interface LevelStyle extends CharProps {
 /** A master's defaults, by text type (TextHeaderAtom) and indent level. */
 type MasterDefaults = (textType: number, level: number) => LevelStyle | undefined;
 
+// §2.9.30 FontCollectionContainer — the deck's typefaces, by the index a run's
+// `fontRef` names. Every `.ppt` used to render in the reader's default face,
+// which measures nothing like the Times a deck asks for: 23884's body text ran
+// off the bottom of every slide it was laid on.
+function parseFontCollection(docData: Uint8Array): Array<string> {
+  const out: Array<string> = [];
+  // The collection lives inside the DocumentTextInfo (RT_Environment), not at
+  // the top of the document container.
+  const coll = findDescendantContainer(docData, RT_FONT_COLLECTION, 0);
+  if (!coll) return out;
+  let ordinal = 0;
+  for (const rec of records(coll)) {
+    if (rec.type !== RT_FONT_ENTITY_ATOM || rec.data.length < 2) continue;
+    const index = rec.instance > 0 || ordinal === 0 ? rec.instance : ordinal;
+    // lfFaceName: 32 UTF-16 code units, NUL-terminated.
+    let name = '';
+    for (let i = 0; i < 32 && i * 2 + 1 < rec.data.length; i++) {
+      const cu = u16(rec.data, i * 2);
+      if (cu === 0) break;
+      name += String.fromCharCode(cu);
+    }
+    out[index] = name;
+    ordinal++;
+  }
+  return out;
+}
+
 // §2.9.42 TextMasterStyleAtom — one per text type (the recInstance), holding a
 // TextPFException + TextCFException per indent level. The later types prefix each
 // level with its own 2-byte index; producers disagree on where that starts, so
 // both readings are tried and the one that lands on the record's end wins.
-function parseMasterTextStyles(masterData: Uint8Array): Map<number, Array<LevelStyle>> {
+function parseMasterTextStyles(
+  masterData: Uint8Array,
+  fonts: ReadonlyArray<string> | undefined,
+): Map<number, Array<LevelStyle>> {
   const out = new Map<number, Array<LevelStyle>>();
   for (const rec of records(masterData)) {
     if (rec.type !== RT_TEXT_MASTER_STYLE_ATOM || rec.data.length < 2) continue;
@@ -902,12 +938,12 @@ function parseMasterTextStyles(masterData: Uint8Array): Map<number, Array<LevelS
     // The variants beyond `other` prefix each level with its own index; a parse
     // that does not end on the record's last byte read the wrong one, so the
     // other reading gets its turn before either is believed.
-    const first = readMasterLevels(rec.data, levels, rec.instance >= 4 ? 2 : 0);
+    const first = readMasterLevels(rec.data, levels, rec.instance >= 4 ? 2 : 0, fonts);
     const exact = (r: { styles: Array<LevelStyle>; off: number }): boolean =>
       r.styles.length === levels && r.off === rec.data.length;
     let best = first;
     if (!exact(first)) {
-      const other = readMasterLevels(rec.data, levels, rec.instance >= 4 ? 0 : 2);
+      const other = readMasterLevels(rec.data, levels, rec.instance >= 4 ? 0 : 2, fonts);
       if (exact(other)) best = other;
     }
     if (best.styles.length > 0) out.set(rec.instance, best.styles);
@@ -919,6 +955,7 @@ function readMasterLevels(
   d: Uint8Array,
   levels: number,
   prefix: number,
+  fonts: ReadonlyArray<string> | undefined,
 ): { styles: Array<LevelStyle>; off: number } {
   const styles: Array<LevelStyle> = [];
   let off = 2;
@@ -927,7 +964,7 @@ function readMasterLevels(
     if (off + 4 > d.length) break;
     const pf = readPfException(d, off);
     if (pf.off + 4 > d.length) break;
-    const cf = readCfException(d, pf.off, undefined); // the SLIDE's scheme resolves it
+    const cf = readCfException(d, pf.off, undefined, fonts); // the SLIDE's scheme resolves it
     if (cf.off > d.length) break;
     off = cf.off;
     styles.push({
@@ -1031,7 +1068,8 @@ function masterShapes(
   if (!slideFlag(slideData, SLIDE_FLAG_MASTER_OBJECTS)) return [];
   const master = masterOf(slideData, ctx);
   if (!master) return [];
-  return collectShapes(master.data, img, resolveScheme(master.data, ctx)).shapes.filter(
+  const scheme = resolveScheme(master.data, ctx);
+  return collectShapes(master.data, img, scheme ? { scheme } : {}).shapes.filter(
     (s) => s.placeholder !== true && s.rectPt !== undefined,
   );
 }
@@ -1046,7 +1084,8 @@ function masterBackground(
   if (!slideFlag(slideData, SLIDE_FLAG_MASTER_BACKGROUND)) return undefined;
   const master = masterOf(slideData, ctx);
   if (!master) return undefined;
-  return collectShapes(master.data, img, resolveScheme(master.data, ctx)).background;
+  const scheme = resolveScheme(master.data, ctx);
+  return collectShapes(master.data, img, scheme ? { scheme } : {}).background;
 }
 
 // The chain of masters a slide inherits from, nearest first: a title master is
@@ -1055,6 +1094,7 @@ function masterChain(
   slideData: Uint8Array,
   ctx: MasterContext | undefined,
   scheme: SchemeColors | undefined,
+  fonts: ReadonlyArray<string> | undefined,
 ): MasterDefaults {
   const chain: Array<Map<number, Array<LevelStyle>>> = [];
   if (!ctx) return masterDefaults(chain, scheme);
@@ -1074,7 +1114,7 @@ function masterChain(
     if (!rec || (rec.type !== RT_MAIN_MASTER && rec.type !== RT_SLIDE)) break;
     if (cached) chain.push(cached);
     else {
-      const styles = parseMasterTextStyles(rec.data);
+      const styles = parseMasterTextStyles(rec.data, fonts);
       ctx.cache.set(masterId, styles);
       chain.push(styles);
     }
@@ -1147,9 +1187,9 @@ function clientTextboxParagraphs(
   d: Uint8Array,
   outline: ReadonlyArray<ReadonlyArray<PptParagraph>>,
   defaults?: MasterDefaults,
-  scheme?: SchemeColors,
+  env?: TextEnv,
 ): Array<PptParagraph> {
-  const own = collectParagraphs(d, 0, defaults, scheme);
+  const own = collectParagraphs(d, 0, defaults, env);
   if (own.some((p) => paragraphText(p).length > 0)) return own;
   const ref = findChild(d, (r) => r.type === RT_OUTLINE_TEXT_REF_ATOM);
   if (!ref || ref.length < 4) return own;
@@ -1455,6 +1495,16 @@ function optColor(
   return undefined;
 }
 
+/**
+ * What resolving a run's formatting needs from the document around it: the
+ * colour scheme a scheme-indexed colour names, and the typefaces a `fontRef`
+ * indexes. Both are document-level and both travel with the text.
+ */
+interface TextEnv {
+  readonly scheme?: SchemeColors;
+  readonly fonts?: ReadonlyArray<string>;
+}
+
 // The eight scheme colours as 6-hex RGB, indexed by COLORREF scheme slot (0 =
 // background, 1 = text&lines, 2 = shadows, 3 = title text, 4 = fills, 5 = accent,
 // 6 = accent&hyperlink, 7 = accent&followed-hyperlink).
@@ -1524,6 +1574,9 @@ function readBlipBytes(pictures: Uint8Array, foDelay: number): Uint8Array | unde
 interface CharProps {
   /** The scheme slot the colour named, when it named one rather than an sRGB. */
   colorIndex?: number;
+  /** The index into the deck's font collection this run's typeface came from. */
+  fontRef?: number;
+  fontFamily?: string;
   bold?: boolean;
   italic?: boolean;
   underline?: boolean;
@@ -1555,9 +1608,9 @@ function buildStyledParagraphs(
   text: string,
   styleData: Uint8Array | undefined,
   defaults?: (level: number) => LevelStyle | undefined,
-  scheme?: SchemeColors,
+  env?: TextEnv,
 ): Array<PptParagraph> {
-  const style = styleData ? parseStyleTextProp(styleData, text.length, scheme) : undefined;
+  const style = styleData ? parseStyleTextProp(styleData, text.length, env) : undefined;
   const charProps = style ? expandCharProps(style.charRuns, text.length) : undefined;
   const paraRuns = style?.paraRuns ?? [];
 
@@ -1619,10 +1672,12 @@ function buildStyledParagraphs(
 function inherit(run: PptRun, lvl: LevelStyle): PptRun {
   const sizePt = run.sizePt ?? lvl.sizePt;
   const colorHex = run.colorHex ?? lvl.colorHex;
+  const fontFamily = run.fontFamily ?? lvl.fontFamily;
   return {
     ...run,
     ...(sizePt !== undefined ? { sizePt } : {}),
     ...(colorHex !== undefined ? { colorHex } : {}),
+    ...(fontFamily !== undefined ? { fontFamily } : {}),
   };
 }
 
@@ -1635,6 +1690,7 @@ function toRun(text: string, props: CharRun | undefined): PptRun {
     ...(props.underline ? { underline: true } : {}),
     ...(props.sizePt ? { sizePt: props.sizePt } : {}),
     ...(props.colorHex ? { colorHex: props.colorHex } : {}),
+    ...(props.fontFamily ? { fontFamily: props.fontFamily } : {}),
   };
 }
 
@@ -1646,7 +1702,8 @@ function sameProps(a: CharRun | undefined, b: CharRun | undefined): boolean {
     !!a.italic === !!b.italic &&
     !!a.underline === !!b.underline &&
     a.sizePt === b.sizePt &&
-    a.colorHex === b.colorHex
+    a.colorHex === b.colorHex &&
+    a.fontFamily === b.fontFamily
   );
 }
 
@@ -1670,7 +1727,7 @@ function expandCharProps(charRuns: ReadonlyArray<CharRun>, textLen: number): Arr
 function parseStyleTextProp(
   data: Uint8Array,
   textLen: number,
-  scheme: SchemeColors | undefined,
+  env: TextEnv | undefined,
 ): { paraRuns: Array<ParaRun>; charRuns: Array<CharRun> } | undefined {
   const target = textLen + 1;
   let off = 0;
@@ -1699,7 +1756,7 @@ function parseStyleTextProp(
   consumed = 0;
   while (consumed < target && off + 8 <= data.length) {
     const count = u32(data, off);
-    const cf = readCfException(data, off + 4, scheme);
+    const cf = readCfException(data, off + 4, env?.scheme, env?.fonts);
     off = cf.off;
     charRuns.push({ count, ...cf.props });
     consumed += count;
@@ -1775,6 +1832,7 @@ function readCfException(
   data: Uint8Array,
   start: number,
   scheme: SchemeColors | undefined,
+  fonts?: ReadonlyArray<string>,
 ): { off: number; props: CharProps } {
   const mask = u32(data, start);
   let off = start + 4;
@@ -1788,7 +1846,10 @@ function readCfException(
     if ((mask & 0x2) !== 0 && (style & 0x2) !== 0) props.italic = true;
     if ((mask & 0x4) !== 0 && (style & 0x4) !== 0) props.underline = true;
   }
-  if ((mask & 0x00010000) !== 0) off += 2; // fontRef
+  if ((mask & 0x00010000) !== 0) {
+    props.fontRef = u16(data, off); // an index into the deck's font collection
+    off += 2;
+  }
   if ((mask & 0x00200000) !== 0) off += 2; // oldEAFontRef
   if ((mask & 0x00400000) !== 0) off += 2; // ansiFontRef
   if ((mask & 0x00800000) !== 0) off += 2; // symbolFontRef
@@ -1815,6 +1876,10 @@ function readCfException(
     off += 4;
   }
   if ((mask & 0x00080000) !== 0) off += 2; // position
+  if (props.fontRef !== undefined) {
+    const name = fonts?.[props.fontRef];
+    if (name !== undefined && name.length > 0) props.fontFamily = name;
+  }
   return { off, props };
 }
 
