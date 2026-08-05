@@ -23,6 +23,7 @@ import type { SlideContext, ThemeFillStyles } from '@/pptx/slide-parser';
 
 import type { ColorResolver, SchemeAliases } from '@/core/drawingml/colors';
 
+import type { FontRegistry } from '@/core/font';
 import { packageHasPart } from '@/core/bytes';
 import { parseChart, withChartColorStyle } from '@/core/drawingml/chart-parser';
 import {
@@ -40,6 +41,7 @@ import {
 } from '@/core/drawingml/theme-parser';
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
 import { OpcPackage } from '@/core/opc';
+import { loadPptxEmbeddedFonts } from '@/pptx/embedded-fonts';
 import { resolveAlternateContent } from '@/core/opc/alternate-content';
 import { poAttr, poChildren, poFindDescendant, poIntAttr, poIs } from '@/core/po-helpers';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
@@ -114,10 +116,14 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
   // §19.2.1.8 — the deck's own default text style, which is what a plain text
   // box on a slide is written in when it says nothing itself.
   let defaultTextStyle: PoNode | undefined;
+  // §19.2.1.13 — the faces the deck brings with it, so it reads the same where
+  // none of them are installed.
+  let embeddedFonts = new Map<string, FontRegistry>();
   const slideParts: Array<{ path: string; data: Uint8Array }> = [];
   if (presData) {
     const tree = parser.parse(decoder.decode(presData)) as Array<PoNode>;
     const pres = tree.find((n) => poIs(n, 'p:presentation'));
+    embeddedFonts = loadPptxEmbeddedFonts(pkg, presPath, pres, (loss: Loss) => losses.push(loss));
     const kids = pres ? poChildren(pres) : [];
     defaultTextStyle = kids.find((c) => poIs(c, 'p:defaultTextStyle'));
     const sldSz = kids.find((c) => poIs(c, 'p:sldSz'));
@@ -235,6 +241,7 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
     styles: EMPTY_STYLE_SHEET,
     resources,
     ...(charts.size > 0 ? { charts } : {}),
+    ...(embeddedFonts.size > 0 ? { embeddedFonts } : {}),
   };
   return { doc, losses };
 }
