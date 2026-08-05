@@ -58,7 +58,10 @@ const FBT_OPT = 0xf00b;
 const FBT_CLIENT_TEXTBOX = 0xf00d; // OfficeArtClientTextbox — holds the PPT text atoms
 const FBT_CLIENT_ANCHOR = 0xf010; // OfficeArtClientAnchor — the slide rectangle (PPT-4)
 const PROP_PIB = 0x0104; // OPT property (low 14 bits): 1-based index into the FBSE store
+const PROP_FILL_TYPE = 0x0180; // OPT fillType — MSOFILLTYPE (PPT-9)
 const PROP_FILL_COLOR = 0x0181; // OPT fillColor (PPT-5)
+const PROP_FILL_BACK_COLOR = 0x0183; // OPT fillBackColor — the gradient's far end
+const PROP_FILL_ANGLE = 0x018b; // OPT fillAngle — 16.16 fixed degrees
 const PROP_LINE_COLOR = 0x01c0; // OPT lineColor (PPT-5)
 // Freeform geometry OPT properties (§2.3.6 / [MS-ODRAW]); the bounds are simple
 // LONGs, the vertices / segment info complex array properties (PPT-7).
@@ -174,6 +177,18 @@ export interface PptAutoShape {
   readonly fillColorHex?: string;
   /** The resolved line colour as 6-hex RGB, when present. */
   readonly lineColorHex?: string;
+  /**
+   * MS-ODRAW §2.3.7.1 — the two-colour sweep a `fillType` of 4..8 asks for.
+   * `fillColor` is one end and `fillBackColor` the other; `fillAngle` is where
+   * it runs. Read as its fillColor alone, 41246-2's title slide came out a flat
+   * teal where every reader fades it to white.
+   */
+  readonly gradient?: {
+    readonly fromHex: string;
+    readonly toHex: string;
+    readonly angleDeg: number;
+    readonly radial: boolean;
+  };
   readonly geometry?: PptCustomGeometry;
 }
 /**
@@ -623,6 +638,7 @@ function collectShapeContainers(
       let fspFlags = 0;
       let fillColorHex: string | undefined;
       let lineColorHex: string | undefined;
+      let gradient: PptAutoShape['gradient'];
       let geometry: PptCustomGeometry | undefined;
       for (const child of records(r.data)) {
         if (child.type === FBT_FSP) {
@@ -634,6 +650,7 @@ function collectShapeContainers(
           pib = optProperty(child.data, child.instance, PROP_PIB);
           fillColorHex = optColor(child.data, child.instance, PROP_FILL_COLOR, scheme);
           lineColorHex = optColor(child.data, child.instance, PROP_LINE_COLOR, scheme);
+          gradient = parseFillGradient(child.data, child.instance, fillColorHex, scheme);
           geometry = parseFreeformGeometry(child.data, child.instance);
         }
       }
@@ -660,6 +677,7 @@ function collectShapeContainers(
               shapeType,
               ...(fillColorHex ? { fillColorHex } : {}),
               ...(lineColorHex ? { lineColorHex } : {}),
+              ...(gradient ? { gradient } : {}),
               ...(geometry ? { geometry } : {}),
             }
           : undefined;
@@ -873,6 +891,37 @@ const SYS_COLORS: ReadonlyMap<number, string> = new Map([
 // colour scheme (PPT-6); a system colour (fSysIndex) resolves through the default
 // Windows scheme (PPT-8). A palette-relative colour, and any index we cannot map,
 // are skipped (missing colour, never a wrong one).
+/**
+ * MS-ODRAW §2.3.7.1 `fillType` — the sweep a shaded fill asks for, or
+ * `undefined` when the shape is filled with one flat colour (type 0) or with
+ * something this reader does not draw (a picture, a texture, a pattern).
+ *
+ * @param d      The OPT record's data.
+ * @param count  Its entry count (the record's instance).
+ * @param fromHex The resolved `fillColor` — one end of the sweep.
+ * @param scheme The slide's colour scheme, for a scheme-relative far end.
+ */
+function parseFillGradient(
+  d: Uint8Array,
+  count: number,
+  fromHex: string | undefined,
+  scheme: SchemeColors | undefined,
+): PptAutoShape['gradient'] {
+  const type = optProperty(d, count, PROP_FILL_TYPE);
+  // 4 shade, 5 shadeCenter, 6 shadeShape, 7 shadeScale, 8 shadeTitle.
+  if (type === undefined || type < 4 || type > 8) return undefined;
+  // §2.3.7.3 — `fillBackColor` defaults to WHITE, and a shaded fill states it
+  // only to say otherwise: 41246-2's title slide fades its teal to a white the
+  // file never writes down.
+  const toHex = optColor(d, count, PROP_FILL_BACK_COLOR, scheme) ?? 'FFFFFF';
+  if (fromHex === undefined) return undefined;
+  // §2.2.35 — a 16.16 fixed-point angle, measured clockwise from the shape's
+  // downward axis, which is the direction DrawingML calls 90°.
+  const raw = optProperty(d, count, PROP_FILL_ANGLE);
+  const angleDeg = raw === undefined ? 90 : 90 - (raw | 0) / 65536;
+  return { fromHex, toHex, angleDeg, radial: type === 5 || type === 6 };
+}
+
 function optColor(
   d: Uint8Array,
   count: number,

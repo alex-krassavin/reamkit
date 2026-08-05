@@ -291,8 +291,33 @@ function toCustomGeometry(g: PptCustomGeometry): CustomGeometry {
 // (or its exact freeform geometry — PPT-7) and any literal fill / line colour.
 function positionedAutoShape(rect: PptRect, auto: PptAutoShape): BodyElement {
   const line = isLineShape(auto.shapeType);
-  const fill: ShapeFill =
-    auto.fillColorHex && !line ? { kind: 'solid', colorHex: auto.fillColorHex } : { kind: 'none' };
+  // MS-ODRAW §2.3.7.1 — a shaded fill is two colours and a direction, which is
+  // the same gradient every other reader in here already draws.
+  const fill: ShapeFill = line
+    ? { kind: 'none' }
+    : auto.gradient
+      ? {
+          kind: 'gradient',
+          gradient: auto.gradient.radial
+            ? {
+                kind: 'radial',
+                stops: [
+                  { offset: 0, colorHex: auto.gradient.fromHex },
+                  { offset: 1, colorHex: auto.gradient.toHex },
+                ],
+              }
+            : {
+                kind: 'linear',
+                angle: auto.gradient.angleDeg,
+                stops: [
+                  { offset: 0, colorHex: auto.gradient.fromHex },
+                  { offset: 1, colorHex: auto.gradient.toHex },
+                ],
+              },
+        }
+      : auto.fillColorHex
+        ? { kind: 'solid', colorHex: auto.fillColorHex }
+        : { kind: 'none' };
   const stroke: ShapeLine | undefined = auto.lineColorHex
     ? { colorHex: auto.lineColorHex, fill: 'solid' }
     : line
