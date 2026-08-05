@@ -33,7 +33,6 @@ import { fileURLToPath } from 'node:url';
 
 import type { FetchLike } from '@/core/fonts';
 import type { FontBytesByVariant } from '@/core/font';
-import { Ream } from '@/core/converter/ream';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -84,48 +83,4 @@ export function cachedFontFetch(): FetchLike {
  */
 export function corpusFontOptions(): { fonts: FontBytesByVariant } | { fontFetch: FetchLike } {
   return EXPLICIT_FONTS ? { fonts: ROBOTO } : { fontFetch: cachedFontFetch() };
-}
-
-// Neither Roboto nor the curated substitutes have Hangul, Kana or Han, so a CJK
-// document renders as a page of tofu and every real difference hides behind it —
-// 1_NoIden.xlsx is seven rows of Korean. LibreOffice substitutes a system face;
-// so does the harness, when the document needs one and the host has one. The
-// library itself does not: a registry is ONE family in four weights, so
-// per-script fallback is the caller's business (and, for Ream, F4's).
-const CJK_FACES = [
-  '/System/Library/Fonts/Supplemental/AppleGothic.ttf',
-  '/System/Library/Fonts/Supplemental/AppleMyungjo.ttf',
-  '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
-];
-
-const NEEDS_CJK =
-  /[\u1100-\u11FF\u3040-\u30FF\u3130-\u318F\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF]/u;
-
-/**
- * The one face to render `input` with when its text is CJK, or `undefined` when
- * the ordinary path will do.
- *
- * @param input Path to the source document.
- * @param note  Where to say which face was chosen (the diff tool prints it).
- */
-export function cjkFontsFor(
-  input: string,
-  note?: (msg: string) => void,
-): FontBytesByVariant | undefined {
-  let text = '';
-  try {
-    text = JSON.stringify(Ream.parse(new Uint8Array(readFileSync(input))).flow.body);
-  } catch {
-    return undefined;
-  }
-  if (!NEEDS_CJK.test(text)) return undefined;
-  const face = CJK_FACES.find((p) => existsSync(p));
-  if (!face) {
-    note?.('note: document has CJK text and no CJK face was found on this host');
-    return undefined;
-  }
-  note?.(`note: CJK text — rendering with ${basename(face)}`);
-  // One face for every weight: the substitute has no bold, and pairing a Latin
-  // bold with a CJK regular would measure one script in the other's metrics.
-  return { regular: new Uint8Array(readFileSync(face)) };
 }

@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { basename, dirname, resolve } from 'node:path';
 
 import { referenceToPdf } from './lib';
-import { cjkFontsFor, corpusFontOptions } from './fonts';
+import { corpusFontOptions } from './fonts';
 import { Ream } from '@/core/converter/ream';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -122,14 +122,15 @@ async function main(): Promise<void> {
   mkdirSync(workDir, { recursive: true });
   mkdirSync(outDir, { recursive: true });
 
-  const cjk = cjkFontsFor(input, (m) => process.stderr.write(`${m}\n`));
   const ourPdf = resolve(workDir, 'ours.pdf');
   writeFileSync(
     ourPdf,
     await Ream.parse(new Uint8Array(readFileSync(input))).convert('pdf', {
-      // The document's own families (see ./fonts), except where its text is CJK
-      // and no substitute of ours has the glyphs.
-      ...(cjk ? { fonts: cjk } : corpusFontOptions()),
+      // The document's own families (see ./fonts). CJK included: the library
+      // fetches a face per SCRIPT now, which is also what pixel-scout measures —
+      // a host face substituted here instead showed a Japanese sheet in a Korean
+      // one, and read as missing glyphs the score never saw.
+      ...corpusFontOptions(),
       fileName: basename(input),
     }),
   );
