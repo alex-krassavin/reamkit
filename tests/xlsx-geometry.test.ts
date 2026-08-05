@@ -1221,6 +1221,14 @@ describe('the column-width unit is the normal style font’s digit (§18.3.1.13)
     expect(pitchWith('Arial', 11)).toBeCloseTo(10 * 6.0, 1); // 80px
   });
 
+  it('is half the em for a CJK face, whose digits are half-width', () => {
+    // 12843-1.xls is twelve-point PMingLiU: 0.5 em is 8px where the fallback's
+    // 7px made its columns 14% narrow and its workbook forty-nine pages long
+    // against the reference's seventy-eight.
+    expect(pitchWith('新細明體', 12)).toBeCloseTo(10 * 6.0, 1); // 80px
+    expect(pitchWith('MS PGothic', 11)).toBeCloseTo(10 * 5.25, 1); // 7.33px → 7
+  });
+
   it('keeps 7px for a face it cannot measure', () => {
     expect(pitchWith('Some Unknown Face', 11)).toBeCloseTo(10 * 5.25, 1);
   });
