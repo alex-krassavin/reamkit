@@ -21,7 +21,7 @@
  },
  {
   "name": "bnc480256.pptx",
-  "score": 0.4332,
+  "score": 0.4205,
   "aligned": true
  },
  {
@@ -475,11 +475,6 @@
   "aligned": true
  },
  {
-  "name": "bnc910045.pptx",
-  "score": 0.0314,
-  "aligned": true
- },
- {
   "name": "tdf107608.pptx",
   "score": 0.0307,
   "aligned": true
@@ -502,6 +497,11 @@
  {
   "name": "tdf125573_FontWorkScaleX.pptx",
   "score": 0.0297,
+  "aligned": true
+ },
+ {
+  "name": "bnc910045.pptx",
+  "score": 0.028,
   "aligned": true
  },
  {

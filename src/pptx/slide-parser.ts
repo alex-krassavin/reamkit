@@ -39,6 +39,7 @@ import type { PoNode } from '@/core/po-helpers';
 import type { LevelBullet, PlaceholderCascade } from '@/pptx/placeholder-cascade';
 import type { PlaceholderRef, ShapeBoxEmu } from '@/pptx/sp-helpers';
 
+import type { TableStyleTheme } from '@/pptx/table-style';
 import { defaultColorResolver, placeholderColors, resolveColorNode } from '@/core/drawingml/colors';
 import { FEATURES, emuToPt, pt } from '@/core/ir';
 import {
@@ -383,7 +384,10 @@ function parseGraphicFrame(
     // over the title (table_test2, and two conference decks besides).
     const tbl = poFindDescendant(gf, 'a:tbl');
     if (!tbl) return [];
-    const table = parseTable(tbl, ctx.colors ?? defaultColorResolver, ctx.resolveTableStyle);
+    const table = parseTable(tbl, ctx.colors ?? defaultColorResolver, ctx.resolveTableStyle, {
+      ...(ctx.themeFills ? { fills: ctx.themeFills.fills } : {}),
+      ...(ctx.themeLineWidths ? { lineWidths: ctx.themeLineWidths } : {}),
+    });
     return [
       {
         kind: 'table',
@@ -1231,6 +1235,7 @@ function parseTable(
   tbl: PoNode,
   colors: ColorResolver,
   resolveTableStyle?: (styleId: string | undefined) => PoNode | undefined,
+  theme?: TableStyleTheme,
 ): Table {
   const grid: Array<Pt> = [];
   const tblGrid = poChildren(tbl).find((c) => poIs(c, 'a:tblGrid'));
@@ -1259,7 +1264,7 @@ function parseTable(
     ...row,
     cells: row.cells.map((cell, c) => {
       const at = { row: r, rowCount: rows.length, col: c, colCount: grid.length };
-      const part = cellStyle(style, flags, at, colors);
+      const part = cellStyle(style, flags, at, colors, theme);
       const tc = sources[r]?.[c];
       return withCellStyle(cell, tc && cellSaysNoFill(tc) ? withoutFill(part) : part);
     }),

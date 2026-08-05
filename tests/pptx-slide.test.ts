@@ -847,6 +847,47 @@ describe('a slide table wears its style and stands in its frame', () => {
     expect(run?.properties.bold).toBe(true);
   });
 
+  // §20.1.4.2.25 / §20.1.4.2.19 — a style may POINT at the theme instead of
+  // spelling a fill or a rule out: `a:tblBg/a:fillRef` is the table's own
+  // background and `a:lnRef` is a rule whose width lives in the theme's line
+  // style list. bnc480256's every rule and every second row are written that
+  // way, and read as nothing the table came out with three pale bars and no
+  // borders at all.
+  it('resolves a background and a rule its style points at in the theme', () => {
+    const themed =
+      `<?xml version="1.0"?>\n<a:tblStyleLst xmlns:a="${A_MAIN}" def="${GUID}">` +
+      `<a:tblStyle styleId="${GUID}" styleName="s">` +
+      `<a:tblBg><a:fillRef idx="2"><a:srgbClr val="336699"/></a:fillRef></a:tblBg>` +
+      `<a:wholeTbl><a:tcStyle><a:tcBdr><a:insideH>` +
+      `<a:lnRef idx="2"><a:srgbClr val="FFCC00"/></a:lnRef>` +
+      `</a:insideH></a:tcBdr></a:tcStyle></a:wholeTbl>` +
+      `<a:band1H><a:tcStyle><a:fill><a:solidFill><a:srgbClr val="BBCCEE"/></a:solidFill>` +
+      `</a:fill></a:tcStyle></a:band1H></a:tblStyle></a:tblStyleLst>`;
+    const doc = Ream.parse(
+      buildPptx(
+        [
+          `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="6" name="t"/><p:cNvGraphicFramePr/>` +
+            `<p:nvPr/></p:nvGraphicFramePr>` +
+            `<p:xfrm><a:off x="0" y="0"/><a:ext cx="5486400" cy="1828800"/></p:xfrm>` +
+            `<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">` +
+            `<a:tbl>${named('bandRow="1"')}<a:tblGrid><a:gridCol w="2743200"/></a:tblGrid>` +
+            `<a:tr h="457200">${tc('a')}</a:tr><a:tr h="457200">${tc('b')}</a:tr>` +
+            `</a:tbl></a:graphicData></a:graphic></p:graphicFrame>`,
+        ],
+        {
+          presentationRels: `<Relationship Id="rIdTs" Type="${TABLE_STYLES_REL}" Target="tableStyles.xml"/>`,
+          media: { 'ppt/tableStyles.xml': new TextEncoder().encode(themed) },
+        },
+      ),
+    );
+    const t = table(doc);
+    // The band paints over the table's background; the row without one shows it.
+    expect(t?.rows[0]?.cells[0]?.properties.shading?.colorHex).toBe('BBCCEE');
+    expect(t?.rows[1]?.cells[0]?.properties.shading?.colorHex).toBe('336699');
+    // The rule takes its colour from the reference and its width from the theme.
+    expect(t?.rows[0]?.cells[0]?.properties.borders?.insideH?.colorHex).toBe('FFCC00');
+  });
+
   it('leaves the style alone when the table asks for no part of it', () => {
     const t = table(deck(named('firstRow="0" bandRow="0"')));
     expect(t?.rows[0]?.cells[0]?.properties.shading?.colorHex).toBe('DDDDDD');
