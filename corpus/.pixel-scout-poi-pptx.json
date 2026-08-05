@@ -60,11 +60,6 @@
   "aligned": true
  },
  {
-  "name": "backgrounds.pptx",
-  "score": 0.3812,
-  "aligned": true
- },
- {
   "name": "table_test2.pptx",
   "score": 0.3432,
   "aligned": true
@@ -105,23 +100,13 @@
   "aligned": true
  },
  {
-  "name": "45541_Footer.pptx",
-  "score": 0.1287,
-  "aligned": true
- },
- {
-  "name": "45541_Header.pptx",
-  "score": 0.1287,
-  "aligned": true
- },
- {
-  "name": "45545_Comment.pptx",
-  "score": 0.1287,
+  "name": "backgrounds.pptx",
+  "score": 0.1077,
   "aligned": true
  },
  {
   "name": "smartart-simple.pptx",
-  "score": 0.1128,
+  "score": 0.1056,
   "aligned": true
  },
  {
@@ -141,7 +126,7 @@
  },
  {
   "name": "minimal-gradient-fill-issue.pptx",
-  "score": 0.0872,
+  "score": 0.0875,
   "aligned": true
  },
  {
@@ -252,6 +237,21 @@
  {
   "name": "bug62513.pptx",
   "score": 0.0143,
+  "aligned": true
+ },
+ {
+  "name": "45541_Footer.pptx",
+  "score": 0.0139,
+  "aligned": true
+ },
+ {
+  "name": "45541_Header.pptx",
+  "score": 0.0139,
+  "aligned": true
+ },
+ {
+  "name": "45545_Comment.pptx",
+  "score": 0.0139,
   "aligned": true
  },
  {

@@ -3021,26 +3021,21 @@ function colorFromContainer(parent: PoNode, resolveColor: ColorResolver): string
 /**
  * §20.1.2.3.1 — a gradient's stop transparencies, settled.
  *
- * A page paints a gradient at ONE transparency, so only a gradient whose every
- * stop is translucent can carry it: the strongest stop decides whether the
- * shape is there at all, which is the question a 7%-and-fading glow asks
- * (tdf123684's master draws one over a dark slide, and composited over the
- * paper instead it was an opaque white disc).
+ * The resolver composites a translucent colour over the PAPER, because a solid
+ * fill has nowhere else to put the transparency. A gradient does: its stops
+ * become a luminosity soft mask of the same sweep (§11.6.5.2,
+ * `buildGradientAlphaMask`), so each stop keeps its own alpha and its own
+ * colour, and the mask decides what shows through.
  *
- * A gradient that mixes a translucent stop with an opaque one has no such
- * answer, so it keeps the colours the resolver already washed toward the paper
- * — an approximation, but the one that has always been drawn: smartart-simple's
- * cyan-to-purple sweep sets 75% on its purple end alone.
+ * That means the washing has to be undone here, on every stop — including the
+ * opaque ones, where undoing it is a no-op. It used to be undone only when
+ * EVERY stop was translucent, on the reasoning that a page paints a gradient at
+ * one transparency; the mask makes that false, and the cost of the old reading
+ * was a band that should have been half-transparent over a blue slide drawn as
+ * an opaque pale stripe (45541's layout fades the middle of its left rule to
+ * 50 %).
  */
 function normalizeStopAlpha(stops: Array<GradientStop>): void {
-  if (gradientAlpha(stops) === undefined) {
-    // No such answer: drop the transparency and keep the washed colours.
-    for (const [i, s] of stops.entries()) {
-      if (s.alpha !== undefined) stops[i] = { offset: s.offset, colorHex: s.colorHex };
-    }
-    return;
-  }
-  // Every stop is translucent: give each its own colour back, unwashed.
   for (const [i, s] of stops.entries()) {
     stops[i] = { ...s, colorHex: unblendWhite(s.colorHex, s.alpha ?? 1) };
   }

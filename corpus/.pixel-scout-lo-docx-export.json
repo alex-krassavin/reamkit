@@ -375,11 +375,6 @@
   "aligned": true
  },
  {
-  "name": "gradient-fill-preservation.docx",
-  "score": 0.0174,
-  "aligned": true
- },
- {
   "name": "dkvert.docx",
   "score": 0.0174,
   "aligned": true
@@ -675,6 +670,11 @@
   "aligned": true
  },
  {
+  "name": "gradient-fill-preservation.docx",
+  "score": 0.0097,
+  "aligned": true
+ },
+ {
   "name": "inheritFirstHeader.docx",
   "score": 0.0097,
   "aligned": false
@@ -785,6 +785,11 @@
   "aligned": true
  },
  {
+  "name": "fdo65295.docx",
+  "score": 0.0074,
+  "aligned": true
+ },
+ {
   "name": "Chart_Plot_BorderLine_Style.docx",
   "score": 0.0074,
   "aligned": true
@@ -837,11 +842,6 @@
  {
   "name": "table-ltr.docx",
   "score": 0.0066,
-  "aligned": true
- },
- {
-  "name": "fdo65295.docx",
-  "score": 0.0065,
   "aligned": true
  },
  {
