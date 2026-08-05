@@ -22,7 +22,9 @@ import { poAttr, poChildren, poIntAttr, poIs } from '@/core/po-helpers';
  * A colour transform child (§20.1.2.3): `lumMod`/`lumOff` modulate luminance,
  * `shade` darkens toward black, `tint` lightens toward white. `val` is normalised
  * to 0..1 (the XML stores thousandths of a percent). `alpha` composites over white
- * (solid fills emit no transparency).
+ * (solid fills emit no transparency). `gamma`/`invGamma` carry no value: they
+ * shift the colour into the other light and back, which changes what the
+ * transforms between them mean.
  */
 export interface ColorMod {
   readonly kind:
@@ -34,7 +36,9 @@ export interface ColorMod {
     | 'satMod'
     | 'hueMod'
     | 'hueOff'
-    | 'satOff';
+    | 'satOff'
+    | 'gamma'
+    | 'invGamma';
   readonly val: number;
 }
 
@@ -128,6 +132,16 @@ export function applyColorMods(hex: string, mods: ReadonlyArray<ColorMod>): stri
       r = toSrgb(toLinear(r) * m.val + (1 - m.val));
       g = toSrgb(toLinear(g) * m.val + (1 - m.val));
       b = toSrgb(toLinear(b) * m.val + (1 - m.val));
+    } else if (m.kind === 'gamma' || m.kind === 'invGamma') {
+      // §20.1.2.3.9 / §20.1.2.3.11 — the sRGB gamma shift and its inverse. They
+      // come in a PAIR around another transform, and what they do is change the
+      // light that transform works on: a `shade` reads its fraction off linear
+      // light (§20.1.2.3.31), so bracketing it in gamma makes the fraction land
+      // on the stored byte instead. 45541_Header's master fades its blue to
+      // `shade 46275` that way, and LibreOffice draws the bottom of that page at
+      // 46 % of the top's byte — which is what this composition gives, exactly.
+      const shift = m.kind === 'gamma' ? toSrgb : toLinear;
+      [r, g, b] = [shift(r), shift(g), shift(b)];
     } else if (m.kind === 'lumMod' || m.kind === 'lumOff') {
       const [h, s, l] = rgbToHsl(r, g, b);
       const l2 = m.kind === 'lumMod' ? l * m.val : clamp01(l + m.val);
@@ -307,6 +321,9 @@ export function readColorMods(colorNode: PoNode): Array<ColorMod> {
         if (v !== undefined) mods.push({ kind, val: v / 100000 });
       }
     }
+    // §20.1.2.3.9 / §20.1.2.3.11 — the two that carry no value at all.
+    if (poIs(c, 'a:gamma')) mods.push({ kind: 'gamma', val: 0 });
+    if (poIs(c, 'a:invGamma')) mods.push({ kind: 'invGamma', val: 0 });
     // §20.1.2.3.15 `a:hueOff` counts SIXTIETH-THOUSANDTHS OF A DEGREE, not
     // thousandths of a percent — a different unit from every other transform
     // here, and the reason it gets its own line. Kept in degrees, which is what

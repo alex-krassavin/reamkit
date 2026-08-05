@@ -60,21 +60,6 @@
   "aligned": true
  },
  {
-  "name": "45541_Footer.pptx",
-  "score": 0.3962,
-  "aligned": true
- },
- {
-  "name": "45541_Header.pptx",
-  "score": 0.3959,
-  "aligned": true
- },
- {
-  "name": "45545_Comment.pptx",
-  "score": 0.3951,
-  "aligned": true
- },
- {
   "name": "backgrounds.pptx",
   "score": 0.3812,
   "aligned": true
@@ -117,6 +102,21 @@
  {
   "name": "aascu.org_hbcu_leadershipsummit_cooper_.pptx",
   "score": 0.1307,
+  "aligned": true
+ },
+ {
+  "name": "45541_Footer.pptx",
+  "score": 0.1287,
+  "aligned": true
+ },
+ {
+  "name": "45541_Header.pptx",
+  "score": 0.1287,
+  "aligned": true
+ },
+ {
+  "name": "45545_Comment.pptx",
+  "score": 0.1287,
   "aligned": true
  },
  {
