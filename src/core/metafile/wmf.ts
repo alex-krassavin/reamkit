@@ -78,6 +78,19 @@ export function readWmf(bytes: Uint8Array): MetaPicture {
   const stack: Array<DeviceContext> = [];
   let dc = newDeviceContext();
   let win = { x: 0, y: 0, cx: 0, cy: 0 };
+  // §2.3.5.13 — SETWINDOWORG moves the frame the records AFTER it are drawn in,
+  // and a metafile may move it many times. The box below can describe only one
+  // frame, so every primitive is re-expressed in the FIRST one as it is read.
+  // Kept as the last window instead, 41246-2's coloured bands were laid out
+  // against an origin set long after they were drawn and came off the slide's
+  // left edge.
+  let origin: { x: number; y: number } | undefined;
+  const emit = (prim: PicturePrim): void => {
+    origin ??= { x: win.x, y: win.y };
+    const dx = origin.x - win.x;
+    const dy = origin.y - win.y;
+    prims.push(dx === 0 && dy === 0 ? prim : shiftPrim(prim, dx, dy));
+  };
 
   const strokeOf = (): StrokeStyle | undefined => {
     if (dc.pen.style === 'none') return undefined;
@@ -97,7 +110,7 @@ export function readWmf(bytes: Uint8Array): MetaPicture {
     const st = stroke ? strokeOf() : undefined;
     const fillHex = fill && !dc.brush.hollow ? dc.brush.colorHex : undefined;
     if (fillHex === undefined && !st) return;
-    prims.push({
+    emit({
       kind: 'path',
       paths: [path],
       ...(fillHex !== undefined ? { fillColorHex: fillHex } : {}),
@@ -109,7 +122,7 @@ export function readWmf(bytes: Uint8Array): MetaPicture {
     new PathBuilder().moveTo(l, t).lineTo(r, t).lineTo(r, b).lineTo(l, b).close().build()
       .segments as Array<PathSegment>;
 
-  const blitter = makeBlitter((prim) => prims.push(prim));
+  const blitter = makeBlitter(emit);
   /**
    * §2.3.1 — one blit record: the packed bitmap the record ends with, into the
    * destination rectangle its fields name. A WMF's coordinates are its own
@@ -353,7 +366,7 @@ export function readWmf(bytes: Uint8Array): MetaPicture {
           const count = pu(0);
           const text = readString(bytes, off + 8, count, false);
           const words = (count + 1) >> 1;
-          pushText(prims, dc, text, p(1 + words + 1), p(1 + words));
+          pushText(emit, dc, text, p(1 + words + 1), p(1 + words));
         }
         break;
       case 0x0a32: // META_EXTTEXTOUT — y, x, count, options, [rect], string
@@ -364,7 +377,7 @@ export function readWmf(bytes: Uint8Array): MetaPicture {
           const options = pu(3);
           const hasRect = (options & 0x0006) !== 0;
           const text = readString(bytes, off + 6 + (4 + (hasRect ? 4 : 0)) * 2, count, false);
-          pushText(prims, dc, text, x, y);
+          pushText(emit, dc, text, x, y);
         }
         break;
       default:
@@ -394,7 +407,7 @@ export function readWmf(bytes: Uint8Array): MetaPicture {
 }
 
 function pushText(
-  prims: Array<PicturePrim>,
+  emit: (prim: PicturePrim) => void,
   dc: DeviceContext,
   text: string,
   x: number,
@@ -406,10 +419,10 @@ function pushText(
   // and no substitute font has one either — so the plain shapes are DRAWN.
   const drawn = symbolPrims(text, dc, x, y, em);
   if (drawn) {
-    prims.push(...drawn);
+    for (const prim of drawn) emit(prim);
     return;
   }
-  prims.push({
+  emit({
     kind: 'text',
     // The rest are translated to the Unicode that means the same thing.
     text: fromSymbolFont(text, dc.font?.family),
@@ -424,6 +437,29 @@ function pushText(
     ...(dc.font?.italic ? { italic: true } : {}),
     ...(dc.font?.escapement ? { escapement: dc.font.escapement } : {}),
   });
+}
+
+// A primitive moved into another frame: the metafile's own units, y down.
+function shiftPrim(prim: PicturePrim, dx: number, dy: number): PicturePrim {
+  if (prim.kind === 'text') return { ...prim, x: prim.x + dx, y: prim.y + dy };
+  if (prim.kind === 'image') return { ...prim, x: prim.x + dx, y: prim.y + dy };
+  return {
+    ...prim,
+    paths: prim.paths.map((path) => ({
+      ...path,
+      segments: path.segments.map((sg) =>
+        'x' in sg
+          ? {
+              ...sg,
+              x: sg.x + dx,
+              y: sg.y + dy,
+              ...('x1' in sg ? { x1: sg.x1 + dx, y1: sg.y1 + dy } : {}),
+              ...('x2' in sg ? { x2: sg.x2 + dx, y2: sg.y2 + dy } : {}),
+            }
+          : sg,
+      ),
+    })),
+  };
 }
 
 function penStyle(style: number): (MetaObject & { kind: 'pen' })['style'] {

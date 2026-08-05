@@ -323,6 +323,35 @@ describe('WMF (MS-WMF)', () => {
     expect(drawn.map((pr) => pr.stroke?.colorHex)).toEqual(['FF0000']);
   });
 
+  it('re-expresses what follows a moved window origin in the first frame', () => {
+    // §2.3.5.13 — SETWINDOWORG moves the frame the records AFTER it are drawn
+    // in, and a metafile may move it many times. The picture's box can describe
+    // only one frame; kept as the LAST origin, 41246-2's coloured bands were
+    // laid out against an origin set long after they were drawn and came off
+    // the slide's left edge.
+    const box = (l: number, t: number, r: number, b: number) =>
+      new Bytes().i16(b).i16(r).i16(t).i16(l).build();
+    const pic = readWmf(
+      wmf([
+        meta(0x020c, new Bytes().i16(100).i16(200).build()), // SETWINDOWEXT y,x
+        meta(0x020b, new Bytes().i16(0).i16(0).build()), // SETWINDOWORG (0,0)
+        meta(0x02fc, new Bytes().u16(0).u32(0x0000ff).u16(0).build()), // red brush
+        meta(0x012d, new Bytes().u16(0).build()),
+        meta(0x041b, box(10, 10, 20, 20)),
+        meta(0x020b, new Bytes().i16(-50).i16(-50).build()), // origin moves to (-50,-50)
+        meta(0x041b, box(10, 10, 20, 20)), // …so this one is 50 further along
+      ]),
+    );
+    const boxes = pic.prims
+      .filter((pr): pr is PicturePath => pr.kind === 'path')
+      .map((pr) => pr.paths[0]!.segments[0]!)
+      .map((sg) => ('x' in sg ? [sg.x, sg.y] : []));
+    expect(boxes).toEqual([
+      [10, 10],
+      [60, 60],
+    ]);
+  });
+
   it('knows a metafile placeable or bare', () => {
     expect(isWmf(wmf([], [0, 0, 100, 50]))).toBe(true);
     expect(isWmf(wmf([]))).toBe(true);
