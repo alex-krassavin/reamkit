@@ -28,6 +28,7 @@
 // mirroring the `.doc`/`.xls` readers.
 
 import { isCfb, openCfb } from '@/core/ole/cfb';
+import { readEscherBlip } from '@/core/ole/escher-blip';
 
 // --- [MS-PPT] §2.13.24 record types (the ones the `.ppt` reader needs) --------
 const RT_DOCUMENT = 0x03e8;
@@ -1275,28 +1276,12 @@ function parseColorScheme(d: Uint8Array): SchemeColors | undefined {
 // finds the PNG/JPEG start regardless (mirrors the `.xls` Escher reader).
 function readBlipBytes(pictures: Uint8Array, foDelay: number): Uint8Array | undefined {
   if (foDelay < 0 || foDelay + 8 > pictures.length) return undefined;
+  const verInstance = u16(pictures, foDelay);
+  const type = u16(pictures, foDelay + 2);
   const recLen = u32(pictures, foDelay + 4);
   const start = foDelay + 8;
   const blip = pictures.subarray(start, Math.min(pictures.length, start + recLen));
-  const limit = Math.min(blip.length, 80);
-  for (let off = 0; off < limit; off++) {
-    for (const magic of IMAGE_MAGICS) {
-      if (matchesMagic(blip, off, magic)) return blip.subarray(off);
-    }
-  }
-  return undefined;
-}
-
-// PNG and JPEG signatures — the raster formats the renderer can embed.
-const IMAGE_MAGICS: ReadonlyArray<ReadonlyArray<number>> = [
-  [0x89, 0x50, 0x4e, 0x47], // PNG
-  [0xff, 0xd8, 0xff], // JPEG
-];
-
-function matchesMagic(d: Uint8Array, off: number, magic: ReadonlyArray<number>): boolean {
-  if (off + magic.length > d.length) return false;
-  for (let i = 0; i < magic.length; i++) if (d[off + i] !== magic[i]) return false;
-  return true;
+  return readEscherBlip(type, verInstance >> 4, blip);
 }
 
 // === Text + formatting (PPT-2) ===============================================

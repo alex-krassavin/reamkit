@@ -49,6 +49,8 @@ import type {
 
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
 import { isCfb, openCfb } from '@/core/ole/cfb';
+import { isEmf } from '@/core/metafile/emf';
+import { isWmf } from '@/core/metafile/wmf';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 import { extractPptContent, paragraphText } from '@/pptx/ppt/ppt-text';
 
@@ -301,7 +303,10 @@ function positionedImage(
   image: PptImage,
   resources: ResourceStore,
 ): BodyElement | undefined {
-  if (!imagePixelSize(image.bytes)) return undefined; // gate: a decodable raster
+  // A raster must decode before it is placed; a METAFILE has no pixels to
+  // count — it is a drawing program, and the anchor already says how big to
+  // draw it. Gated on pixels, every EMF/WMF on a slide vanished.
+  if (!isMetafile(image.bytes) && !imagePixelSize(image.bytes)) return undefined;
   const block: ImageBlock = {
     float: floatAt(rect),
     resource: resources.put(image.bytes),
@@ -402,6 +407,9 @@ function positionedAutoShape(rect: PptRect, auto: PptAutoShape): BodyElement {
 // from the PNG/JPEG header directly, which also gates out formats the renderer
 // cannot embed (a metafile, say).
 function inFlowImage(image: PptImage, resources: ResourceStore): BodyElement | undefined {
+  // Only a raster flows: an un-anchored metafile has neither pixels to size it
+  // nor a rectangle to place it, and every guess at a box put 23884's slides
+  // onto twice the pages the reference prints.
   const size = imagePixelSize(image.bytes);
   if (!size) return undefined;
   const block: ImageBlock = {
@@ -411,6 +419,11 @@ function inFlowImage(image: PptImage, resources: ResourceStore): BodyElement | u
     paragraphProperties: {},
   };
   return { kind: 'image', image: block };
+}
+
+// Whether the bytes are a metafile the layout can replay (MS-EMF / MS-WMF).
+function isMetafile(d: Uint8Array): boolean {
+  return isEmf(d) || isWmf(d);
 }
 
 // Intrinsic pixel dimensions from a PNG (IHDR) or JPEG (SOF) header, or undefined

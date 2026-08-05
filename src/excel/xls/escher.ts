@@ -9,6 +9,8 @@
 // Records are `[verInstance:u16][type:u16][len:u32]` then `len` bytes; a record
 // is a container (children follow) when its version nibble is 0xF.
 
+import { readEscherBlip } from '@/core/ole/escher-blip';
+
 const FBT_BSTORE_CONTAINER = 0xf001;
 const FBT_BSE = 0xf007;
 const FBT_SP_CONTAINER = 0xf004;
@@ -17,6 +19,8 @@ const FBT_CLIENT_ANCHOR = 0xf010;
 const PROP_PIB = 0x0104; // OPT property: 1-based index into the BLIP store
 
 const MAX_DEPTH = 24;
+// §2.2.32 OfficeArtFBSE — the fixed fields before the BLIP record it holds.
+const BSE_HEADER_BYTES = 36;
 
 interface EscherRecord {
   readonly type: number;
@@ -78,7 +82,16 @@ export function parseBlipStore(msoDrawingGroup: Uint8Array): Array<Uint8Array | 
   if (!store) return [];
   const out: Array<Uint8Array | undefined> = [];
   for (const r of records(store)) {
-    if (r.type === FBT_BSE) out.push(findImageBytes(r.data));
+    if (r.type !== FBT_BSE) continue;
+    // §2.2.32 — the BSE's own fields come first and the BLIP record follows;
+    // the nested record header says which kind it is, which is what a metafile
+    // needs to be unpacked rather than scanned past.
+    const nested = [...records(r.data.subarray(BSE_HEADER_BYTES))][0];
+    out.push(
+      nested
+        ? (readEscherBlip(nested.type, nested.instance, nested.data) ?? findImageBytes(r.data))
+        : findImageBytes(r.data),
+    );
   }
   return out;
 }
@@ -295,7 +308,8 @@ function parseAnchor(d: Uint8Array): EscherAnchor | undefined {
   };
 }
 
-// Image magics, scanned for inside a BSE's bytes — robust against the variable
+// A last-resort scan for a raster's signature, for a BSE whose nested record
+// header does not read. Image magics, scanned for inside a BSE's bytes — robust against the variable
 // BLIP header (1 vs 2 UIDs, metafile sub-headers). The renderer sniffs the
 // format from these same bytes. Metafiles (EMF/WMF) carry a sub-header before
 // their payload, so they are not extracted by a raw scan and are skipped.
