@@ -55,6 +55,10 @@ const CACHE_DIR = resolve('corpus/.lo-cache');
 
 /** LibreOffice's PDF for `src`, converting once and keeping it by content hash. */
 function cachedReference(src: string, work: string): string {
+  // A PDF is its own reference: asking LibreOffice to "convert" one runs it
+  // through Draw, which redraws the page rather than reporting it. What the
+  // comparison wants is the file as its author wrote it.
+  if (/\.pdf$/iu.test(src)) return src;
   mkdirSync(CACHE_DIR, { recursive: true });
   const key = createHash('sha256').update(readFileSync(src)).digest('hex').slice(0, 16);
   const cached = resolve(CACHE_DIR, `${key}.pdf`);
@@ -103,9 +107,11 @@ async function main(): Promise<void> {
   mkdirSync(work, { recursive: true });
 
   const files = readdirSync(dir)
-    // Every OOXML input the sweep covers. A deck ranks like a document: one
-    // slide is one page on both sides, so the same comparison reads it.
-    .filter((f) => /\.(?:xlsx|docx|pptx)$/iu.test(f))
+    // Every input the converter reads. A deck ranks like a document — one slide
+    // is one page on both sides — and so do the legacy binaries and a PDF read
+    // back out: 46 files of the corpus are those, and none of them had ever
+    // been compared to a picture.
+    .filter((f) => /\.(?:xlsx|docx|pptx|doc|xls|ppt|pdf)$/iu.test(f))
     .sort()
     .slice(offset, offset + limit);
 

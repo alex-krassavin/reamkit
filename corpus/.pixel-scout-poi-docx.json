@@ -1,0 +1,637 @@
+[
+ {
+  "name": "bug53475-password-is-pass.docx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "bug53475-password-is-solrcell.docx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "clusterfuzz-testcase-minimized-POIFuzzer-6709287337197568.docx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "clusterfuzz-testcase-minimized-POIXWPFFuzzer-4791943399604224.docx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "clusterfuzz-testcase-minimized-POIXWPFFuzzer-4959857092198400.docx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "clusterfuzz-testcase-minimized-POIXWPFFuzzer-4961551840247808.docx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "clusterfuzz-testcase-minimized-POIXWPFFuzzer-5166796835258368.docx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "clusterfuzz-testcase-minimized-POIXWPFFuzzer-5313273089884160.docx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "clusterfuzz-testcase-minimized-POIXWPFFuzzer-5564805011079168.docx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "clusterfuzz-testcase-minimized-POIXWPFFuzzer-5569740188549120.docx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "clusterfuzz-testcase-minimized-POIXWPFFuzzer-6061520554164224.docx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "clusterfuzz-testcase-minimized-POIXWPFFuzzer-6120975439364096.docx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "clusterfuzz-testcase-minimized-POIXWPFFuzzer-6442791109263360.docx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "crash-517626e815e0afa9decd0ebb6d1dee63fb9907dd.docx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "deep-table-cell.docx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "truncated62886.docx",
+  "score": 99,
+  "aligned": false
+ },
+ {
+  "name": "ExternalEntityInText.docx",
+  "score": 98,
+  "aligned": false
+ },
+ {
+  "name": "clusterfuzz-testcase-minimized-POIXWPFFuzzer-6733884933668864.docx",
+  "score": 98,
+  "aligned": false
+ },
+ {
+  "name": "unicode-path.docx",
+  "score": 98,
+  "aligned": false
+ },
+ {
+  "name": "bug65649.docx",
+  "score": 0.097,
+  "aligned": false
+ },
+ {
+  "name": "delins.docx",
+  "score": 0.0788,
+  "aligned": false
+ },
+ {
+  "name": "WordWithAttachments.docx",
+  "score": 0.0693,
+  "aligned": true
+ },
+ {
+  "name": "drawing.docx",
+  "score": 0.052,
+  "aligned": false
+ },
+ {
+  "name": "bib-chernigovka.netdo.ru_download_docs_17459.docx",
+  "score": 0.0508,
+  "aligned": false
+ },
+ {
+  "name": "60329.docx",
+  "score": 0.0348,
+  "aligned": false
+ },
+ {
+  "name": "form_footnotes.docx",
+  "score": 0.0322,
+  "aligned": false
+ },
+ {
+  "name": "61745.docx",
+  "score": 0.0303,
+  "aligned": true
+ },
+ {
+  "name": "bug59058.docx",
+  "score": 0.0205,
+  "aligned": true
+ },
+ {
+  "name": "Bug51170.docx",
+  "score": 0.0203,
+  "aligned": true
+ },
+ {
+  "name": "table-alignment.docx",
+  "score": 0.0144,
+  "aligned": true
+ },
+ {
+  "name": "61787.docx",
+  "score": 0.0133,
+  "aligned": true
+ },
+ {
+  "name": "chartex.docx",
+  "score": 0.0108,
+  "aligned": true
+ },
+ {
+  "name": "bug57031.docx",
+  "score": 0.0095,
+  "aligned": true
+ },
+ {
+  "name": "bug65738.docx",
+  "score": 0.0094,
+  "aligned": true
+ },
+ {
+  "name": "tika-3816.docx",
+  "score": 0.0086,
+  "aligned": true
+ },
+ {
+  "name": "IllustrativeCases.docx",
+  "score": 0.0072,
+  "aligned": false
+ },
+ {
+  "name": "MultipleBodyBug.docx",
+  "score": 0.0064,
+  "aligned": false
+ },
+ {
+  "name": "testComment.docx",
+  "score": 0.0061,
+  "aligned": true
+ },
+ {
+  "name": "59030.docx",
+  "score": 0.0058,
+  "aligned": true
+ },
+ {
+  "name": "TestTableCellAlign.docx",
+  "score": 0.0058,
+  "aligned": true
+ },
+ {
+  "name": "Bug54849.docx",
+  "score": 0.0055,
+  "aligned": true
+ },
+ {
+  "name": "checkboxes.docx",
+  "score": 0.0051,
+  "aligned": true
+ },
+ {
+  "name": "Bug55142.docx",
+  "score": 0.0048,
+  "aligned": true
+ },
+ {
+  "name": "table_footnotes.docx",
+  "score": 0.0048,
+  "aligned": true
+ },
+ {
+  "name": "60316.docx",
+  "score": 0.0045,
+  "aligned": true
+ },
+ {
+  "name": "bug69628.docx",
+  "score": 0.0043,
+  "aligned": true
+ },
+ {
+  "name": "WithGIF.docx",
+  "score": 0.0043,
+  "aligned": true
+ },
+ {
+  "name": "Bug60337.docx",
+  "score": 0.004,
+  "aligned": true
+ },
+ {
+  "name": "bug66312.docx",
+  "score": 0.0039,
+  "aligned": true
+ },
+ {
+  "name": "56392.docx",
+  "score": 0.0039,
+  "aligned": true
+ },
+ {
+  "name": "issue_51265_3.docx",
+  "score": 0.0038,
+  "aligned": true
+ },
+ {
+  "name": "TestTableColumns.docx",
+  "score": 0.0036,
+  "aligned": true
+ },
+ {
+  "name": "FancyFoot.docx",
+  "score": 0.0035,
+  "aligned": true
+ },
+ {
+  "name": "comment.docx",
+  "score": 0.0032,
+  "aligned": true
+ },
+ {
+  "name": "table-indent.docx",
+  "score": 0.0029,
+  "aligned": true
+ },
+ {
+  "name": "PageSpecificHeadFoot.docx",
+  "score": 0.0028,
+  "aligned": true
+ },
+ {
+  "name": "61991.docx",
+  "score": 0.0027,
+  "aligned": true
+ },
+ {
+  "name": "65099.docx",
+  "score": 0.0023,
+  "aligned": true
+ },
+ {
+  "name": "Bug54771b.docx",
+  "score": 0.0022,
+  "aligned": true
+ },
+ {
+  "name": "52288.docx",
+  "score": 0.0022,
+  "aligned": true
+ },
+ {
+  "name": "Bug54771a.docx",
+  "score": 0.0021,
+  "aligned": true
+ },
+ {
+  "name": "Bug66988.docx",
+  "score": 0.002,
+  "aligned": true
+ },
+ {
+  "name": "smarttag-snippet.docx",
+  "score": 0.0019,
+  "aligned": true
+ },
+ {
+  "name": "58067.docx",
+  "score": 0.0017,
+  "aligned": true
+ },
+ {
+  "name": "SampleDoc.docx",
+  "score": 0.0016,
+  "aligned": true
+ },
+ {
+  "name": "shapes-with-text.docx",
+  "score": 0.0014,
+  "aligned": true
+ },
+ {
+  "name": "57312.docx",
+  "score": 0.0013,
+  "aligned": true
+ },
+ {
+  "name": "heading123.docx",
+  "score": 0.0012,
+  "aligned": true
+ },
+ {
+  "name": "52449.docx",
+  "score": 0.0011,
+  "aligned": true
+ },
+ {
+  "name": "endnotes.docx",
+  "score": 0.001,
+  "aligned": true
+ },
+ {
+  "name": "VariousPictures.docx",
+  "score": 0.001,
+  "aligned": true
+ },
+ {
+  "name": "issue_51265_2.docx",
+  "score": 0.0009,
+  "aligned": true
+ },
+ {
+  "name": "tika-3388.docx",
+  "score": 0.0008,
+  "aligned": true
+ },
+ {
+  "name": "60293.docx",
+  "score": 0.0008,
+  "aligned": true
+ },
+ {
+  "name": "bug-paragraph-alignment.docx",
+  "score": 0.0008,
+  "aligned": true
+ },
+ {
+  "name": "capitalized.docx",
+  "score": 0.0008,
+  "aligned": true
+ },
+ {
+  "name": "EmbeddedDocument.docx",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
+  "name": "footnotes.docx",
+  "score": 0.0006,
+  "aligned": true
+ },
+ {
+  "name": "TestDocument.docx",
+  "score": 0.0006,
+  "aligned": true
+ },
+ {
+  "name": "emptyPPr.docx",
+  "score": 0.0006,
+  "aligned": true
+ },
+ {
+  "name": "bookmarks.docx",
+  "score": 0.0006,
+  "aligned": true
+ },
+ {
+  "name": "issue_51265_1.docx",
+  "score": 0.0006,
+  "aligned": true
+ },
+ {
+  "name": "sample.docx",
+  "score": 0.0005,
+  "aligned": true
+ },
+ {
+  "name": "58618.docx",
+  "score": 0.0005,
+  "aligned": true
+ },
+ {
+  "name": "61470.docx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "Numbering.docx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "HeaderFooterUnicode.docx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "DiffFirstPageHeadFoot.docx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "ThreeColFoot.docx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "ComplexNumberedLists.docx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "ThreeColHead.docx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "ThreeColHeadFoot.docx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "SimpleHeadThreeColFoot.docx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "Tika-792.docx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "55966.docx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "NoHeadFoot.docx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "Styles.docx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "NumberingWOverrides.docx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "headerFooter.docx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "documentProperties.docx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "documentProtection_forms_no_password.docx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "TestPoiXMLDocumentCorePropertiesGetKeywords.docx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "headerPic.docx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "Bug60341.docx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "FldSimple.docx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "55733.docx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "FieldCodes.docx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "protected_sample.docx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "documentProtection_trackedChanges_no_password.docx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "EmptyDocumentWithHeaderFooter.docx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "Headers.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "Bug64561.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bug56075-changeTracking_off.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bug56075-changeTracking_on.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "WithTabs.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "NumberingWithOutOfOrderId.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bug56076.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "EnforcedWith.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "documentProtection_comments_no_password.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "saut_page.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "documentProtection_readonly_no_password.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "documentProtection_no_protection.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "documentProtection_no_protection_tag_existing.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "51921-Word-Crash067.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "59378.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "Bug62859.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "zero-length.docx",
+  "score": 0,
+  "aligned": true
+ }
+]
