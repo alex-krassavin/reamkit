@@ -912,3 +912,49 @@ describe('ppt shape fills the file says are there and are not (PPT-13)', () => {
     expect(geometry(true)).toBe(4);
   });
 });
+
+describe('ppt master decoration (PPT-14)', () => {
+  // §2.4.24 fMasterObjects — the rules, logos and footer band a master draws on
+  // every slide that follows it. 37625's "teri" logo is one, and no slide of
+  // that deck carried it.
+  const scheme = ['FFFFFF', '000000', '808080', '000000', 'FF0000', '00FF00', '0000FF', 'FFFF00'];
+  const deck = (followMasterObjects: boolean): Uint8Array =>
+    buildPpt(
+      [
+        {
+          masterIndex: 0,
+          followMasterObjects,
+          boxes: [{ anchor: { x: 10, y: 10, w: 300, h: 40 }, text: 'The slide' }],
+        },
+      ],
+      {
+        masters: [
+          {
+            colorScheme: scheme,
+            boxes: [
+              // Decoration: drawn on the slide.
+              {
+                anchor: { x: 600, y: 480, w: 60, h: 40 },
+                shapeType: 1,
+                fillColorHex: 'FF6600',
+              },
+              // A prototype: its prompt text belongs to no slide.
+              { anchor: { x: 10, y: 10, w: 300, h: 40 }, text: 'Click to edit', placeholder: true },
+            ],
+          },
+        ],
+      },
+    );
+
+  it('draws the master’s shapes under the slide’s own, and not its placeholders', () => {
+    const slide = extractPptContent(deck(true)).slides[0]!;
+    expect(
+      slide.shapes.map((s) => s.autoShape?.fillColorHex ?? paragraphText(s.paragraphs![0]!)),
+    ).toEqual(['FF6600', 'The slide']);
+  });
+
+  it('…and none of them when the slide does not follow the master', () => {
+    const slide = extractPptContent(deck(false)).slides[0]!;
+    expect(slide.shapes).toHaveLength(1);
+  });
+});

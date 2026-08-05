@@ -32,6 +32,7 @@ const RT_MAIN_MASTER = 0x03f8;
 const RT_COLOR_SCHEME_ATOM = 0x07f0;
 const COLOR_SCHEME_INSTANCE = 1; // slideSchemeColorSchemeAtom (vs scheme-list 6)
 const SLIDE_FLAG_MASTER_SCHEME = 0x0002; // slideAtom.slideFlags.fMasterScheme
+const SLIDE_FLAG_MASTER_OBJECTS = 0x0001; // slideAtom.slideFlags.fMasterObjects
 const COLORREF_FLAG_SCHEME = 0x08; // OfficeArtCOLORREF fSchemeIndex flags byte
 
 // OfficeArt (Escher) record types for the picture store + picture shapes (PPT-3).
@@ -43,6 +44,8 @@ const FBT_FSP = 0xf00a;
 const FBT_OPT = 0xf00b;
 const FBT_CLIENT_TEXTBOX = 0xf00d;
 const FBT_CLIENT_ANCHOR = 0xf010;
+const FBT_CLIENT_DATA = 0xf011;
+const RT_PLACEHOLDER_ATOM = 0x0bc3;
 const FBT_BLIP_PNG = 0xf01e;
 const PROP_PIB_ID = 0x4104; // OPT property id: pib (0x0104) with the fBid flag (0x4000)
 const PROP_FILL_COLOR = 0x0181;
@@ -109,6 +112,9 @@ export interface PptSlideInput {
   // Set slideAtom.slideFlags.fMasterScheme so the slide follows the master at
   // masterIndex (default 0) for its scheme instead of its own (PPT-6).
   readonly followMasterScheme?: boolean;
+  // Set slideAtom.slideFlags.fMasterObjects, so the master's shapes are drawn
+  // under the slide's own (PPT-14).
+  readonly followMasterObjects?: boolean;
   readonly masterIndex?: number;
 }
 
@@ -130,6 +136,9 @@ export interface PptBoxInput {
   // are stated but not used.
   readonly noFill?: boolean;
   readonly noLine?: boolean;
+  // An OfficeArtClientData holding a PlaceholderAtom: on a master this shape is
+  // a prototype, not decoration (PPT-14).
+  readonly placeholder?: boolean;
   // MS-ODRAW fBackground: the shape states the SLIDE's background, not content.
   readonly background?: boolean;
   readonly lineColorHex?: string; // OPT lineColor (6-hex literal RGB)
@@ -161,6 +170,8 @@ export interface BuildPptOptions {
   // scheme — referenced by a slide's followMasterScheme + masterIndex (PPT-6).
   readonly masters?: ReadonlyArray<{
     readonly colorScheme: ReadonlyArray<string>;
+    // Decoration the master draws on every slide that follows it (PPT-14).
+    readonly boxes?: ReadonlyArray<PptBoxInput>;
     // TextMasterStyleAtoms: per text type, the font size of each indent level.
     readonly textStyles?: ReadonlyArray<{
       readonly textType: number;
@@ -338,10 +349,11 @@ export function buildPpt(
   //     picture shape (an SpContainer with the pib blip reference) -------------
   const slideRecs = slides.map((slide) => {
     const parts: Array<Uint8Array> = [];
-    if (slide.followMasterScheme || slide.masterIndex !== undefined) {
-      parts.push(
-        slideAtom(masterPersistIds[slide.masterIndex ?? 0] ?? 0, slide.followMasterScheme ?? false),
-      );
+    if (slide.followMasterScheme || slide.followMasterObjects || slide.masterIndex !== undefined) {
+      const flags =
+        (slide.followMasterScheme ? SLIDE_FLAG_MASTER_SCHEME : 0) |
+        (slide.followMasterObjects ? SLIDE_FLAG_MASTER_OBJECTS : 0);
+      parts.push(slideAtom(masterPersistIds[slide.masterIndex ?? 0] ?? 0, flags));
     }
     const block = slideTextBlock(slide);
     if (block) parts.push(slide.nested ? rec(RT_PP_DRAWING, 0, true, block) : block);
@@ -361,6 +373,7 @@ export function buildPpt(
       concat([
         colorSchemeAtom(m.colorScheme),
         ...(m.textStyles ?? []).map((st) => textMasterStyleAtom(st.textType, st.sizesPt)),
+        ...(m.boxes ?? []).map(buildShapeContainer),
       ]),
     ),
   );
@@ -510,7 +523,12 @@ function buildShapeContainer(box: PptBoxInput): Uint8Array {
     parts.push(
       rec(FBT_CLIENT_TEXTBOX, 0, true, rec(RT_TEXT_CHARS_ATOM, 0, false, encodeUtf16(box.text))),
     );
-  } else if (box.outlineRef !== undefined) {
+  }
+  if (box.placeholder) {
+    const ph = new Uint8Array(8); // position (4), placementId, size, unused
+    parts.push(rec(FBT_CLIENT_DATA, 0, true, rec(RT_PLACEHOLDER_ATOM, 0, false, ph)));
+  }
+  if (box.text === undefined && box.outlineRef !== undefined) {
     const idx = new Uint8Array(4);
     new DataView(idx.buffer).setUint32(0, box.outlineRef, true);
     parts.push(rec(FBT_CLIENT_TEXTBOX, 0, true, rec(RT_OUTLINE_TEXT_REF_ATOM, 0, false, idx)));
@@ -585,11 +603,11 @@ function textMasterStyleAtom(textType: number, sizesPt: ReadonlyArray<number>): 
   return rec(RT_TEXT_MASTER_STYLE_ATOM, textType, false, concat(parts));
 }
 
-function slideAtom(masterIdRef: number, followScheme = true): Uint8Array {
+function slideAtom(masterIdRef: number, flags = SLIDE_FLAG_MASTER_SCHEME): Uint8Array {
   const d = new Uint8Array(24);
   const dv = new DataView(d.buffer);
   dv.setUint32(12, masterIdRef, true); // masterIdRef
-  dv.setUint16(20, followScheme ? SLIDE_FLAG_MASTER_SCHEME : 0, true); // slideFlags
+  dv.setUint16(20, flags, true); // slideFlags
   return rec(RT_SLIDE_ATOM, 0, false, d);
 }
 

@@ -60,6 +60,8 @@ const FBT_FSP = 0xf00a; // OfficeArtFSP — recInstance is the shape type, body 
 const FBT_OPT = 0xf00b;
 const FBT_CLIENT_TEXTBOX = 0xf00d; // OfficeArtClientTextbox — holds the PPT text atoms
 const FBT_CLIENT_ANCHOR = 0xf010; // OfficeArtClientAnchor — the slide rectangle (PPT-4)
+const FBT_CLIENT_DATA = 0xf011; // OfficeArtClientData — holds the PlaceholderAtom
+const RT_PLACEHOLDER_ATOM = 0x0bc3; // PlaceholderAtom — this shape is a placeholder
 const PROP_PIB = 0x0104; // OPT property (low 14 bits): 1-based index into the FBSE store
 const PROP_FILL_TYPE = 0x0180; // OPT fillType — MSOFILLTYPE (PPT-9)
 const PROP_FILL_COLOR = 0x0181; // OPT fillColor (PPT-5)
@@ -210,6 +212,12 @@ export interface PptAutoShape {
  */
 export interface PptShape {
   readonly rectPt?: PptRect;
+  /**
+   * Whether the shape is a placeholder (§2.9.24). On a MASTER that means it is
+   * a prototype, not decoration: drawn on the slides that follow it, every one
+   * of them would carry "Click to edit Master title style".
+   */
+  readonly placeholder?: boolean;
   readonly paragraphs?: ReadonlyArray<PptParagraph>;
   readonly image?: PptImage;
   readonly autoShape?: PptAutoShape;
@@ -478,7 +486,12 @@ function readSlideList(
     // §2.4.24 fMasterBackground: the slide shows the one its master states.
     const background =
       content.background ?? (isSlide ? masterBackground(slideRec.data, masters, img) : undefined);
-    slides.push({ shapes: content.shapes, ...(background ? { background } : {}) });
+    // The master's decoration goes under everything the slide draws itself.
+    const decoration = isSlide ? masterShapes(slideRec.data, masters, img) : [];
+    slides.push({
+      shapes: [...decoration, ...content.shapes],
+      ...(background ? { background } : {}),
+    });
     outline = [];
     pendingRef = undefined;
   };
@@ -721,11 +734,14 @@ function collectShapeContainers(
       let geometry: PptCustomGeometry | undefined;
       let fillType: number | undefined;
       let fillBlip: number | undefined;
+      let placeholder = false;
       for (const child of records(r.data)) {
         if (child.type === FBT_FSP) {
           shapeType = child.instance;
           fspFlags = child.data.length >= 8 ? u32(child.data, 4) : 0;
         } else if (child.type === FBT_CLIENT_ANCHOR) rectPt = parseAnchor(child.data);
+        else if (child.type === FBT_CLIENT_DATA)
+          placeholder = findChild(child.data, (c) => c.type === RT_PLACEHOLDER_ATOM) !== undefined;
         else if (child.type === FBT_CLIENT_TEXTBOX)
           paragraphs = clientTextboxParagraphs(child.data, outline, defaults);
         else if (child.type === FBT_OPT) {
@@ -783,6 +799,7 @@ function collectShapeContainers(
       if (textParas || image || autoShape) {
         out.shapes.push({
           ...(rectPt ? { rectPt } : {}),
+          ...(placeholder ? { placeholder: true } : {}),
           ...(textParas ? { paragraphs: textParas } : {}),
           ...(image ? { image } : {}),
           ...(autoShape ? { autoShape } : {}),
@@ -897,9 +914,41 @@ function buildMasterIdMap(docData: Uint8Array): Map<number, number> {
   return out;
 }
 
-// §2.4.24 SlideAtom.slideFlags.fMasterBackground — the slide draws the
-// background its master states rather than one of its own.
+// §2.4.24 SlideAtom.slideFlags — what a slide takes from the master it follows.
+const SLIDE_FLAG_MASTER_OBJECTS = 0x0001;
 const SLIDE_FLAG_MASTER_BACKGROUND = 0x0004;
+
+// The container of the master a slide follows, through the slide-id map.
+function masterOf(slideData: Uint8Array, ctx: MasterContext): PptRecord | undefined {
+  const slideAtom = findChild(slideData, (r) => r.type === RT_SLIDE_ATOM);
+  if (!slideAtom || slideAtom.length < 22) return undefined;
+  const id = u32(slideAtom, 12);
+  const off = ctx.persist.get(ctx.byMasterId.get(id) ?? id);
+  const rec = off !== undefined ? recordAt(ctx.stream, off) : undefined;
+  return rec && (rec.type === RT_MAIN_MASTER || rec.type === RT_SLIDE) ? rec : undefined;
+}
+
+// Whether a slide's flags set `flag`.
+function slideFlag(slideData: Uint8Array, flag: number): boolean {
+  const slideAtom = findChild(slideData, (r) => r.type === RT_SLIDE_ATOM);
+  return slideAtom !== undefined && slideAtom.length >= 22 && (u16(slideAtom, 20) & flag) !== 0;
+}
+
+// §2.4.24 fMasterObjects — the decoration the master draws on every slide that
+// follows it: rules, logos, the footer band. Its PLACEHOLDERS are prototypes and
+// stay behind, or every slide would carry "Click to edit Master title style".
+function masterShapes(
+  slideData: Uint8Array,
+  ctx: MasterContext,
+  img: ImageContext,
+): Array<PptShape> {
+  if (!slideFlag(slideData, SLIDE_FLAG_MASTER_OBJECTS)) return [];
+  const master = masterOf(slideData, ctx);
+  if (!master) return [];
+  return collectShapes(master.data, img, resolveScheme(master.data, ctx)).shapes.filter(
+    (s) => s.placeholder !== true && s.rectPt !== undefined,
+  );
+}
 
 // The background of the master a slide follows, when the slide states none of
 // its own and its flags say to take it.
@@ -908,14 +957,10 @@ function masterBackground(
   ctx: MasterContext,
   img: ImageContext,
 ): PptBackground | undefined {
-  const slideAtom = findChild(slideData, (r) => r.type === RT_SLIDE_ATOM);
-  if (!slideAtom || slideAtom.length < 22) return undefined;
-  if ((u16(slideAtom, 20) & SLIDE_FLAG_MASTER_BACKGROUND) === 0) return undefined;
-  const id = u32(slideAtom, 12);
-  const off = ctx.persist.get(ctx.byMasterId.get(id) ?? id);
-  const rec = off !== undefined ? recordAt(ctx.stream, off) : undefined;
-  if (!rec || (rec.type !== RT_MAIN_MASTER && rec.type !== RT_SLIDE)) return undefined;
-  return collectShapes(rec.data, img, resolveScheme(rec.data, ctx)).background;
+  if (!slideFlag(slideData, SLIDE_FLAG_MASTER_BACKGROUND)) return undefined;
+  const master = masterOf(slideData, ctx);
+  if (!master) return undefined;
+  return collectShapes(master.data, img, resolveScheme(master.data, ctx)).background;
 }
 
 // The chain of masters a slide inherits from, nearest first: a title master is
