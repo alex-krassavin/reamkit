@@ -42,6 +42,8 @@ const RT_TEXT_HEADER_ATOM = 0x0f9f;
 const RT_TEXT_CHARS_ATOM = 0x0fa0;
 const RT_STYLE_TEXT_PROP_ATOM = 0x0fa1;
 const RT_TEXT_BYTES_ATOM = 0x0fa8;
+const RT_OUTLINE_TEXT_REF_ATOM = 0x0f9e; // OutlineTextRefAtom — points at the slide list's text
+const RT_TEXT_MASTER_STYLE_ATOM = 0x0fa3; // TextMasterStyleAtom — a master's per-level defaults
 const RT_SLIDE_ATOM = 0x03ef; // SlideAtom — carries masterIdRef + slideFlags (PPT-6)
 const RT_MAIN_MASTER = 0x03f8; // MainMasterContainer — its colour scheme is inherited
 const RT_COLOR_SCHEME_ATOM = 0x07f0; // SlideSchemeColorSchemeAtom — the 8-colour scheme
@@ -95,6 +97,7 @@ const TOKEN_ENCRYPTED = 0xf3d1c4df;
 // A SlideListWithText's recInstance distinguishes the three lists it can be
 // (§2.4.14.3): 0 = slides, 1 = masters, 2 = notes. PPT-1 reads the slide list.
 const SLWT_INSTANCE_SLIDES = 0;
+const SLWT_INSTANCE_MASTERS = 1;
 
 // Guard against a crafted edit chain or persist directory looping forever.
 const MAX_EDITS = 4096;
@@ -344,13 +347,14 @@ function shapeHasText(sh: PptShape): boolean {
 function slideShapes(
   slideData: Uint8Array,
   img: ImageContext,
-  outline: ReadonlyArray<PptParagraph>,
+  outline: ReadonlyArray<ReadonlyArray<PptParagraph>>,
   scheme: SchemeColors | undefined,
+  defaults?: MasterDefaults,
 ): Array<PptShape> {
-  const shapes = collectShapes(slideData, img, scheme);
+  const shapes = collectShapes(slideData, img, scheme, outline, defaults);
   if (!shapes.some(shapeHasText)) {
-    const inline = collectParagraphs(slideData, 0);
-    const text = inline.some((p) => paragraphText(p).length > 0) ? inline : outline;
+    const inline = collectParagraphs(slideData, 0, defaults);
+    const text = inline.some((p) => paragraphText(p).length > 0) ? inline : outline.flat();
     if (text.some((p) => paragraphText(p).length > 0)) shapes.push({ paragraphs: text });
   }
   return shapes;
@@ -422,18 +426,32 @@ function readSlideList(
   if (!slwt) return [];
 
   const slides: Array<PptSlide> = [];
-  let outline: Array<PptParagraph> = [];
+  // One entry per text atom, in list order: an OutlineTextRefAtom on a shape
+  // indexes into this, so the entries must stay separate and keep their places.
+  // Each keeps its TextHeaderAtom type, which decides the master style it takes.
+  let outline: Array<{ textType: number; rec: PptRecord; style: Uint8Array | undefined }> = [];
   let pendingRef: number | undefined;
+  const masters: MasterContext = {
+    persist,
+    stream,
+    byMasterId: buildMasterIdMap(docData),
+    cache: new Map(),
+  };
 
   const flush = (): void => {
     if (pendingRef === undefined) return;
     const slideOff = persist.get(pendingRef);
     const slideRec = slideOff !== undefined ? recordAt(stream, slideOff) : undefined;
     const isSlide = slideRec !== undefined && slideRec.type === RT_SLIDE;
+    const defaults = isSlide ? masterChain(slideRec.data, masters) : undefined;
+    const texts = outline.map((e) =>
+      styledParagraphs(e.rec, e.style, levelStyles(defaults, e.textType)),
+    );
+    const flat = texts.flat();
     const shapes = isSlide
-      ? slideShapes(slideRec.data, img, outline, resolveScheme(slideRec.data, persist, stream))
-      : outline.some((p) => paragraphText(p).length > 0)
-        ? [{ paragraphs: outline }]
+      ? slideShapes(slideRec.data, img, texts, resolveScheme(slideRec.data, masters), defaults)
+      : flat.some((p) => paragraphText(p).length > 0)
+        ? [{ paragraphs: flat }]
         : [];
     slides.push({ shapes });
     outline = [];
@@ -441,13 +459,16 @@ function readSlideList(
   };
 
   const recs = [...records(slwt)];
+  let textType = TEXT_TYPE_OTHER;
   for (let i = 0; i < recs.length; i++) {
     const rec = recs[i]!;
     if (rec.type === RT_SLIDE_PERSIST_ATOM) {
       flush(); // close the previous slide before starting the next
       pendingRef = rec.data.length >= 4 ? u32(rec.data, 0) : undefined;
+    } else if (rec.type === RT_TEXT_HEADER_ATOM) {
+      textType = rec.data.length >= 4 ? u32(rec.data, 0) : TEXT_TYPE_OTHER;
     } else if (rec.type === RT_TEXT_CHARS_ATOM || rec.type === RT_TEXT_BYTES_ATOM) {
-      outline.push(...styledParagraphs(rec, findFollowingStyle(recs, i)));
+      outline.push({ textType, rec, style: findFollowingStyle(recs, i) });
     }
   }
   flush();
@@ -457,20 +478,38 @@ function readSlideList(
 // Recursively gather the text atoms inside a slide container (its drawing's client
 // text boxes), in record order, pairing each with the StyleTextPropAtom that
 // follows it so runs carry their formatting.
-function collectParagraphs(d: Uint8Array, depth: number): Array<PptParagraph> {
+function collectParagraphs(
+  d: Uint8Array,
+  depth: number,
+  defaults?: MasterDefaults,
+): Array<PptParagraph> {
   if (depth > MAX_DEPTH) return [];
   const out: Array<PptParagraph> = [];
   const recs = [...records(d)];
+  let textType = TEXT_TYPE_OTHER;
   for (let i = 0; i < recs.length; i++) {
     const rec = recs[i]!;
-    if (rec.type === RT_TEXT_CHARS_ATOM || rec.type === RT_TEXT_BYTES_ATOM) {
-      out.push(...styledParagraphs(rec, findFollowingStyle(recs, i)));
+    if (rec.type === RT_TEXT_HEADER_ATOM) {
+      textType = rec.data.length >= 4 ? u32(rec.data, 0) : TEXT_TYPE_OTHER;
+    } else if (rec.type === RT_TEXT_CHARS_ATOM || rec.type === RT_TEXT_BYTES_ATOM) {
+      out.push(
+        ...styledParagraphs(rec, findFollowingStyle(recs, i), levelStyles(defaults, textType)),
+      );
     } else if (rec.isContainer) {
-      out.push(...collectParagraphs(rec.data, depth + 1));
+      out.push(...collectParagraphs(rec.data, depth + 1, defaults));
     }
   }
   return out;
 }
+
+// A plain text box states no text type; PowerPoint styles it as "other".
+const TEXT_TYPE_OTHER = 3;
+
+const levelStyles = (
+  defaults: MasterDefaults | undefined,
+  textType: number,
+): ((level: number) => LevelStyle | undefined) | undefined =>
+  defaults ? (level) => defaults(textType, level) : undefined;
 
 // The StyleTextPropAtom that applies to the text atom at index `i`: the first one
 // following it before the next text atom / text header begins.
@@ -487,10 +526,11 @@ function findFollowingStyle(recs: ReadonlyArray<PptRecord>, i: number): Uint8Arr
 function styledParagraphs(
   textRec: PptRecord,
   styleData: Uint8Array | undefined,
+  defaults?: (level: number) => LevelStyle | undefined,
 ): Array<PptParagraph> {
   const text =
     textRec.type === RT_TEXT_CHARS_ATOM ? decodeUtf16(textRec.data) : decodeCp1252(textRec.data);
-  return buildStyledParagraphs(text, styleData);
+  return buildStyledParagraphs(text, styleData, defaults);
 }
 
 // Last-resort slide discovery: every RT_Slide container in the stream, in stream
@@ -615,9 +655,11 @@ function collectShapes(
   slideData: Uint8Array,
   img: ImageContext,
   scheme: SchemeColors | undefined,
+  outline: ReadonlyArray<ReadonlyArray<PptParagraph>> = [],
+  defaults?: MasterDefaults,
 ): Array<PptShape> {
   const out: Array<PptShape> = [];
-  collectShapeContainers(slideData, img, out, 0, scheme);
+  collectShapeContainers(slideData, img, out, 0, scheme, outline, defaults);
   return out;
 }
 
@@ -627,6 +669,8 @@ function collectShapeContainers(
   out: Array<PptShape>,
   depth: number,
   scheme: SchemeColors | undefined,
+  outline: ReadonlyArray<ReadonlyArray<PptParagraph>>,
+  defaults?: MasterDefaults,
 ): void {
   if (depth > MAX_DEPTH) return;
   for (const r of records(d)) {
@@ -645,7 +689,8 @@ function collectShapeContainers(
           shapeType = child.instance;
           fspFlags = child.data.length >= 8 ? u32(child.data, 4) : 0;
         } else if (child.type === FBT_CLIENT_ANCHOR) rectPt = parseAnchor(child.data);
-        else if (child.type === FBT_CLIENT_TEXTBOX) paragraphs = collectParagraphs(child.data, 0);
+        else if (child.type === FBT_CLIENT_TEXTBOX)
+          paragraphs = clientTextboxParagraphs(child.data, outline, defaults);
         else if (child.type === FBT_OPT) {
           pib = optProperty(child.data, child.instance, PROP_PIB);
           fillColorHex = optColor(child.data, child.instance, PROP_FILL_COLOR, scheme);
@@ -690,9 +735,170 @@ function collectShapeContainers(
         });
       }
     } else if (r.isContainer) {
-      collectShapeContainers(r.data, img, out, depth + 1, scheme);
+      collectShapeContainers(r.data, img, out, depth + 1, scheme, outline, defaults);
     }
   }
+}
+
+/**
+ * One indent level of a master's text style: what a run that states nothing
+ * inherits. A `.ppt` title is 44pt because its MASTER says so — the slide's own
+ * StyleTextPropAtom usually states no size at all.
+ */
+interface LevelStyle extends CharProps {
+  align?: number;
+}
+/** A master's defaults, by text type (TextHeaderAtom) and indent level. */
+type MasterDefaults = (textType: number, level: number) => LevelStyle | undefined;
+
+// §2.9.42 TextMasterStyleAtom — one per text type (the recInstance), holding a
+// TextPFException + TextCFException per indent level. The later types prefix each
+// level with its own 2-byte index; producers disagree on where that starts, so
+// both readings are tried and the one that lands on the record's end wins.
+function parseMasterTextStyles(masterData: Uint8Array): Map<number, Array<LevelStyle>> {
+  const out = new Map<number, Array<LevelStyle>>();
+  for (const rec of records(masterData)) {
+    if (rec.type !== RT_TEXT_MASTER_STYLE_ATOM || rec.data.length < 2) continue;
+    const levels = Math.min(u16(rec.data, 0), 5);
+    // The variants beyond `other` prefix each level with its own index; a parse
+    // that does not end on the record's last byte read the wrong one, so the
+    // other reading gets its turn before either is believed.
+    const first = readMasterLevels(rec.data, levels, rec.instance >= 4 ? 2 : 0);
+    const exact = (r: { styles: Array<LevelStyle>; off: number }): boolean =>
+      r.styles.length === levels && r.off === rec.data.length;
+    let best = first;
+    if (!exact(first)) {
+      const other = readMasterLevels(rec.data, levels, rec.instance >= 4 ? 0 : 2);
+      if (exact(other)) best = other;
+    }
+    if (best.styles.length > 0) out.set(rec.instance, best.styles);
+  }
+  return out;
+}
+
+function readMasterLevels(
+  d: Uint8Array,
+  levels: number,
+  prefix: number,
+): { styles: Array<LevelStyle>; off: number } {
+  const styles: Array<LevelStyle> = [];
+  let off = 2;
+  for (let i = 0; i < levels; i++) {
+    off += prefix;
+    if (off + 4 > d.length) break;
+    const pf = readPfException(d, off);
+    if (pf.off + 4 > d.length) break;
+    const cf = readCfException(d, pf.off);
+    if (cf.off > d.length) break;
+    off = cf.off;
+    styles.push({ ...cf.props, ...(pf.align !== undefined ? { align: pf.align } : {}) });
+  }
+  return { styles, off };
+}
+
+// §2.13.33 TextTypeEnum — a type a master may not define falls back to the plain
+// title / body style it is a variant of.
+const TEXT_TYPE_FALLBACK = new Map([
+  [4, 1], // centerBody → body
+  [5, 0], // centerTitle → title
+  [6, 1], // halfBody → body
+  [7, 1], // quarterBody → body
+]);
+
+// The lookup a slide uses: its own master first, then the master that one
+// follows, and within each the exact text type before the one it varies. Merged
+// PROPERTY BY PROPERTY — a centre-title style states its alignment and nothing
+// else, and taking it whole would leave the title with no size at all.
+function masterDefaults(chain: ReadonlyArray<Map<number, Array<LevelStyle>>>): MasterDefaults {
+  return (textType, level) => {
+    const types = [textType, TEXT_TYPE_FALLBACK.get(textType)];
+    let merged: LevelStyle | undefined;
+    for (const styles of chain) {
+      for (const t of types) {
+        const levels = t === undefined ? undefined : styles.get(t);
+        const at = levels?.[Math.min(level, levels.length - 1)];
+        if (at) merged = { ...at, ...merged }; // the nearer statement wins
+      }
+    }
+    return merged;
+  };
+}
+
+// §2.4.14.2 — the masters' own SlideListWithText (recInstance 1). A slide names
+// its master by SLIDE ID, not by persist id, so this is the map between them:
+// each MasterPersistAtom shares the SlidePersistAtom layout, persist id first and
+// slide id twelve bytes in.
+function buildMasterIdMap(docData: Uint8Array): Map<number, number> {
+  const out = new Map<number, number>();
+  const slwt = findChild(
+    docData,
+    (r) => r.type === RT_SLIDE_LIST_WITH_TEXT && r.instance === SLWT_INSTANCE_MASTERS,
+  );
+  if (!slwt) return out;
+  for (const rec of records(slwt)) {
+    if (rec.type === RT_SLIDE_PERSIST_ATOM && rec.data.length >= 16) {
+      out.set(u32(rec.data, 12), u32(rec.data, 0));
+    }
+  }
+  return out;
+}
+
+// The chain of masters a slide inherits from, nearest first: a title master is
+// itself a SlideContainer that follows the main master, so the walk is a loop.
+function masterChain(slideData: Uint8Array, ctx: MasterContext | undefined): MasterDefaults {
+  const chain: Array<Map<number, Array<LevelStyle>>> = [];
+  if (!ctx) return masterDefaults(chain);
+  let data: Uint8Array | undefined = slideData;
+  const seen = new Set<number>();
+  for (let hop = 0; hop < 4 && data; hop++) {
+    const slideAtom: Uint8Array | undefined = findChild(data, (r) => r.type === RT_SLIDE_ATOM);
+    if (!slideAtom || slideAtom.length < 16) break;
+    const masterId = u32(slideAtom, 12);
+    if (seen.has(masterId)) break;
+    seen.add(masterId);
+    const cached = ctx.cache.get(masterId);
+    // The id is a SLIDE id; a file whose master list does not name it is read as
+    // the persist id it would otherwise be.
+    const off = ctx.persist.get(ctx.byMasterId.get(masterId) ?? masterId);
+    const rec = off !== undefined ? recordAt(ctx.stream, off) : undefined;
+    if (!rec || (rec.type !== RT_MAIN_MASTER && rec.type !== RT_SLIDE)) break;
+    if (cached) chain.push(cached);
+    else {
+      const styles = parseMasterTextStyles(rec.data);
+      ctx.cache.set(masterId, styles);
+      chain.push(styles);
+    }
+    data = rec.type === RT_SLIDE ? rec.data : undefined; // a main master ends the walk
+  }
+  return masterDefaults(chain);
+}
+
+// What a slide needs to reach its masters: the persist directory, the stream the
+// offsets are into, the slide-id → persist-id map, and the parsed styles so far.
+interface MasterContext {
+  readonly persist: Map<number, number>;
+  readonly stream: Uint8Array;
+  readonly byMasterId: Map<number, number>;
+  readonly cache: Map<number, Map<number, Array<LevelStyle>>>;
+}
+
+// The text of an OfficeArtClientTextbox. A placeholder normally holds its text
+// right there, but PowerPoint stores TITLE AND BODY TEXT IN THE OUTLINE — the
+// document's SlideListWithText — and leaves the shape an OutlineTextRefAtom
+// (§2.9.86) whose `index` is the 0-based place of that text among the slide's
+// entries in the list. Following it is what puts a title in its own rectangle
+// instead of in a heap at the top-left corner: without it every such deck read
+// as one un-anchored blob of reading-order text.
+function clientTextboxParagraphs(
+  d: Uint8Array,
+  outline: ReadonlyArray<ReadonlyArray<PptParagraph>>,
+  defaults?: MasterDefaults,
+): Array<PptParagraph> {
+  const own = collectParagraphs(d, 0, defaults);
+  if (own.some((p) => paragraphText(p).length > 0)) return own;
+  const ref = findChild(d, (r) => r.type === RT_OUTLINE_TEXT_REF_ATOM);
+  if (!ref || ref.length < 4) return own;
+  return [...(outline[u32(ref, 0)] ?? [])];
 }
 
 // OfficeArtClientAnchor (§2.7.1/§2.7.2) → the shape's rectangle in points. The
@@ -949,18 +1155,16 @@ type SchemeColors = ReadonlyArray<string>;
 // SlideSchemeColorSchemeAtom, unless slideAtom.slideFlags.fMasterScheme is set, in
 // which case the master's scheme is used (resolved through the persist directory).
 // Returns undefined when no scheme can be located, so a scheme colour stays dropped.
-function resolveScheme(
-  slideData: Uint8Array,
-  persist?: Map<number, number>,
-  stream?: Uint8Array,
-): SchemeColors | undefined {
+function resolveScheme(slideData: Uint8Array, ctx?: MasterContext): SchemeColors | undefined {
   let schemeData = findColorScheme(slideData);
   const slideAtom = findChild(slideData, (r) => r.type === RT_SLIDE_ATOM);
-  if (slideAtom && slideAtom.length >= 22 && persist && stream) {
+  if (slideAtom && slideAtom.length >= 22 && ctx) {
     const followMaster = (u16(slideAtom, 20) & SLIDE_FLAG_MASTER_SCHEME) !== 0;
     if (followMaster) {
-      const masterOff = persist.get(u32(slideAtom, 12)); // masterIdRef
-      const masterRec = masterOff !== undefined ? recordAt(stream, masterOff) : undefined;
+      // masterIdRef names a slide id, which the master list maps to a persist id.
+      const id = u32(slideAtom, 12);
+      const masterOff = ctx.persist.get(ctx.byMasterId.get(id) ?? id);
+      const masterRec = masterOff !== undefined ? recordAt(ctx.stream, masterOff) : undefined;
       if (masterRec && masterRec.type === RT_MAIN_MASTER) {
         const masterScheme = findColorScheme(masterRec.data);
         if (masterScheme) schemeData = masterScheme;
@@ -1023,13 +1227,16 @@ function matchesMagic(d: Uint8Array, off: number, magic: ReadonlyArray<number>):
 // === Text + formatting (PPT-2) ===============================================
 
 // One character run / paragraph run parsed out of a StyleTextPropAtom.
-interface CharRun {
-  count: number;
+/** The character formatting a TextCFException can state (PPT-2). */
+interface CharProps {
   bold?: boolean;
   italic?: boolean;
   underline?: boolean;
   sizePt?: number;
   colorHex?: string;
+}
+interface CharRun extends CharProps {
+  count: number;
 }
 interface ParaRun {
   count: number;
@@ -1049,6 +1256,7 @@ export function paragraphText(p: PptParagraph): string {
 function buildStyledParagraphs(
   text: string,
   styleData: Uint8Array | undefined,
+  defaults?: (level: number) => LevelStyle | undefined,
 ): Array<PptParagraph> {
   const style = styleData ? parseStyleTextProp(styleData, text.length) : undefined;
   const charProps = style ? expandCharProps(style.charRuns, text.length) : undefined;
@@ -1067,9 +1275,17 @@ function buildStyledParagraphs(
   const endParagraph = (): void => {
     pushRun();
     const meta = paraRuns[paraIndex];
+    // What the run did not state, the master's style for this level does —
+    // size and alignment. Not bold / italic / underline, which are stated as OFF
+    // as often as they are omitted and cannot be told apart here; and not
+    // colour, whose ColorIndexStruct may name a scheme slot this does not yet
+    // resolve — inheriting it painted 41071's title navy where every reader
+    // draws it black.
+    const lvl = defaults?.(meta?.level ?? 0);
+    const align = meta?.align ?? lvl?.align;
     paras.push({
-      runs,
-      ...(meta?.align !== undefined ? { align: meta.align } : {}),
+      runs: lvl ? runs.map((r) => inherit(r, lvl)) : runs,
+      ...(align !== undefined ? { align } : {}),
       ...(meta?.level !== undefined ? { level: meta.level } : {}),
     });
     runs = [];
@@ -1093,6 +1309,12 @@ function buildStyledParagraphs(
   // Drop a single trailing empty paragraph left by a terminating CR.
   if (paras.length > 1 && paragraphText(paras[paras.length - 1]!).length === 0) paras.pop();
   return paras;
+}
+
+// A run + the size its level's master style fills in.
+function inherit(run: PptRun, lvl: LevelStyle): PptRun {
+  const sizePt = run.sizePt ?? lvl.sizePt;
+  return { ...run, ...(sizePt !== undefined ? { sizePt } : {}) };
 }
 
 function toRun(text: string, props: CharRun | undefined): PptRun {
@@ -1149,29 +1371,9 @@ function parseStyleTextProp(
   while (consumed < target && off + 10 <= data.length) {
     const count = u32(data, off);
     const level = u16(data, off + 4);
-    const mask = u32(data, off + 6);
-    off += 10;
-    let align: number | undefined;
-    if ((mask & 0x0000000f) !== 0) off += 2; // bulletFlags
-    if ((mask & 0x00000080) !== 0) off += 2; // bulletChar
-    if ((mask & 0x00000010) !== 0) off += 2; // bulletFontRef
-    if ((mask & 0x00000040) !== 0) off += 2; // bulletSize
-    if ((mask & 0x00000020) !== 0) off += 4; // bulletColor
-    if ((mask & 0x00000800) !== 0) {
-      align = u16(data, off); // textAlignment
-      off += 2;
-    }
-    if ((mask & 0x00001000) !== 0) off += 2; // lineSpacing
-    if ((mask & 0x00002000) !== 0) off += 2; // spaceBefore
-    if ((mask & 0x00004000) !== 0) off += 2; // spaceAfter
-    if ((mask & 0x00000100) !== 0) off += 2; // leftMargin
-    if ((mask & 0x00000400) !== 0) off += 2; // indent
-    if ((mask & 0x00008000) !== 0) off += 2; // defaultTabSize
-    if ((mask & 0x00100000) !== 0) off += 2 + (off + 2 <= data.length ? u16(data, off) : 0) * 4; // tabStops
-    if ((mask & 0x00010000) !== 0) off += 2; // fontAlign
-    if ((mask & 0x000e0000) !== 0) off += 2; // wrapFlags (charWrap/wordWrap/overflow)
-    if ((mask & 0x00200000) !== 0) off += 2; // textDirection
-    paraRuns.push({ count, level, ...(align !== undefined ? { align } : {}) });
+    const pf = readPfException(data, off + 6);
+    off = pf.off;
+    paraRuns.push({ count, level, ...(pf.align !== undefined ? { align: pf.align } : {}) });
     consumed += count;
     if (count <= 0) break;
   }
@@ -1181,41 +1383,78 @@ function parseStyleTextProp(
   consumed = 0;
   while (consumed < target && off + 8 <= data.length) {
     const count = u32(data, off);
-    const mask = u32(data, off + 4);
-    off += 8;
-    const run: CharRun = { count };
-    // fontStyle (CFStyle): present if any style bit (bold/italic/underline/
-    // shadow/fehint/kumi/emboss) or the fHasStyle group (bits 10–13) is set.
-    if ((mask & 0x00003eb7) !== 0) {
-      const style = u16(data, off);
-      off += 2;
-      if ((mask & 0x1) !== 0 && (style & 0x1) !== 0) run.bold = true;
-      if ((mask & 0x2) !== 0 && (style & 0x2) !== 0) run.italic = true;
-      if ((mask & 0x4) !== 0 && (style & 0x4) !== 0) run.underline = true;
-    }
-    if ((mask & 0x00010000) !== 0) off += 2; // fontRef
-    if ((mask & 0x00200000) !== 0) off += 2; // oldEAFontRef
-    if ((mask & 0x00400000) !== 0) off += 2; // ansiFontRef
-    if ((mask & 0x00800000) !== 0) off += 2; // symbolFontRef
-    if ((mask & 0x00020000) !== 0) {
-      const sz = u16(data, off); // fontSize (points)
-      off += 2;
-      if (sz > 0) run.sizePt = sz;
-    }
-    if ((mask & 0x00040000) !== 0) {
-      // color (ColorIndexStruct: red, green, blue, index); 0xFE = explicit sRGB.
-      if (off + 4 <= data.length && data[off + 3] === 0xfe) {
-        run.colorHex = hex2(data[off]!) + hex2(data[off + 1]!) + hex2(data[off + 2]!);
-      }
-      off += 4;
-    }
-    if ((mask & 0x00080000) !== 0) off += 2; // position
-    charRuns.push(run);
+    const cf = readCfException(data, off + 4);
+    off = cf.off;
+    charRuns.push({ count, ...cf.props });
     consumed += count;
     if (count <= 0) break;
   }
 
   return paraRuns.length > 0 || charRuns.length > 0 ? { paraRuns, charRuns } : undefined;
+}
+
+// §2.9.20 TextPFException: a 4-byte mask then the fields whose bits it sets, in
+// the spec's byte order (NOT bit-ascending). Every present field is stepped over
+// even when it is dropped, or the ones after it read from the wrong place.
+function readPfException(data: Uint8Array, start: number): { off: number; align?: number } {
+  const mask = u32(data, start);
+  let off = start + 4;
+  let align: number | undefined;
+  if ((mask & 0x0000000f) !== 0) off += 2; // bulletFlags
+  if ((mask & 0x00000080) !== 0) off += 2; // bulletChar
+  if ((mask & 0x00000010) !== 0) off += 2; // bulletFontRef
+  if ((mask & 0x00000040) !== 0) off += 2; // bulletSize
+  if ((mask & 0x00000020) !== 0) off += 4; // bulletColor
+  if ((mask & 0x00000800) !== 0) {
+    align = u16(data, off); // textAlignment
+    off += 2;
+  }
+  if ((mask & 0x00001000) !== 0) off += 2; // lineSpacing
+  if ((mask & 0x00002000) !== 0) off += 2; // spaceBefore
+  if ((mask & 0x00004000) !== 0) off += 2; // spaceAfter
+  if ((mask & 0x00000100) !== 0) off += 2; // leftMargin
+  if ((mask & 0x00000400) !== 0) off += 2; // indent
+  if ((mask & 0x00008000) !== 0) off += 2; // defaultTabSize
+  if ((mask & 0x00100000) !== 0) off += 2 + (off + 2 <= data.length ? u16(data, off) : 0) * 4; // tabStops
+  if ((mask & 0x00010000) !== 0) off += 2; // fontAlign
+  if ((mask & 0x000e0000) !== 0) off += 2; // wrapFlags (charWrap/wordWrap/overflow)
+  if ((mask & 0x00200000) !== 0) off += 2; // textDirection
+  return align !== undefined ? { off, align } : { off };
+}
+
+// §2.9.11 TextCFException, read the same way: the mask, then its fields in byte
+// order. Keeps bold / italic / underline / size / explicit colour.
+function readCfException(data: Uint8Array, start: number): { off: number; props: CharProps } {
+  const mask = u32(data, start);
+  let off = start + 4;
+  const props: CharProps = {};
+  // fontStyle (CFStyle): present if any style bit (bold/italic/underline/
+  // shadow/fehint/kumi/emboss) or the fHasStyle group (bits 10–13) is set.
+  if ((mask & 0x00003eb7) !== 0) {
+    const style = u16(data, off);
+    off += 2;
+    if ((mask & 0x1) !== 0 && (style & 0x1) !== 0) props.bold = true;
+    if ((mask & 0x2) !== 0 && (style & 0x2) !== 0) props.italic = true;
+    if ((mask & 0x4) !== 0 && (style & 0x4) !== 0) props.underline = true;
+  }
+  if ((mask & 0x00010000) !== 0) off += 2; // fontRef
+  if ((mask & 0x00200000) !== 0) off += 2; // oldEAFontRef
+  if ((mask & 0x00400000) !== 0) off += 2; // ansiFontRef
+  if ((mask & 0x00800000) !== 0) off += 2; // symbolFontRef
+  if ((mask & 0x00020000) !== 0) {
+    const sz = u16(data, off); // fontSize (points)
+    off += 2;
+    if (sz > 0) props.sizePt = sz;
+  }
+  if ((mask & 0x00040000) !== 0) {
+    // color (ColorIndexStruct: red, green, blue, index); 0xFE = explicit sRGB.
+    if (off + 4 <= data.length && data[off + 3] === 0xfe) {
+      props.colorHex = hex2(data[off]!) + hex2(data[off + 1]!) + hex2(data[off + 2]!);
+    }
+    off += 4;
+  }
+  if ((mask & 0x00080000) !== 0) off += 2; // position
+  return { off, props };
 }
 
 function hex2(n: number): string {

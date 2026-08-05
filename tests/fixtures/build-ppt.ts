@@ -22,6 +22,9 @@ const RT_CURRENT_USER_ATOM = 0x0ff6;
 const RT_TEXT_CHARS_ATOM = 0x0fa0;
 const RT_STYLE_TEXT_PROP_ATOM = 0x0fa1;
 const RT_TEXT_BYTES_ATOM = 0x0fa8;
+const RT_TEXT_HEADER_ATOM = 0x0f9f;
+const RT_OUTLINE_TEXT_REF_ATOM = 0x0f9e;
+const RT_TEXT_MASTER_STYLE_ATOM = 0x0fa3;
 const RT_PP_DRAWING = 0x040c;
 const RT_DRAWING_GROUP = 0x040b;
 const RT_SLIDE_ATOM = 0x03ef;
@@ -82,6 +85,9 @@ export interface PptSlideInput {
   readonly textBytes?: string;
   // Outline text in the slide list (the fallback when a slide has no inline text).
   readonly outline?: string;
+  // Several outline texts, each with its TextHeaderAtom text type — what a shape's
+  // OutlineTextRefAtom indexes into.
+  readonly outlineTexts?: ReadonlyArray<{ readonly textType: number; readonly text: string }>;
   // Wrap the inline text in a PPDrawing container, to exercise recursive descent.
   readonly nested?: boolean;
   // A StyleTextPropAtom for the inline text: character runs and/or paragraph runs.
@@ -111,6 +117,8 @@ export interface PptBoxInput {
     readonly h: number;
   };
   readonly text?: string; // a client text box (UTF-16), paragraphs split by '\r'
+  // A client text box holding only an OutlineTextRefAtom at this 0-based index.
+  readonly outlineRef?: number;
   readonly imageRef?: number; // a picture shape (1-based pib index)
   readonly shapeType?: number; // an autoshape: the FSP recInstance (MSOSPT)
   readonly fillColorHex?: string; // OPT fillColor (6-hex literal RGB)
@@ -139,7 +147,14 @@ export interface BuildPptOptions {
   readonly images?: ReadonlyArray<Uint8Array>;
   // Slide masters, each persisted as a MainMasterContainer with its own colour
   // scheme — referenced by a slide's followMasterScheme + masterIndex (PPT-6).
-  readonly masters?: ReadonlyArray<{ readonly colorScheme: ReadonlyArray<string> }>;
+  readonly masters?: ReadonlyArray<{
+    readonly colorScheme: ReadonlyArray<string>;
+    // TextMasterStyleAtoms: per text type, the font size of each indent level.
+    readonly textStyles?: ReadonlyArray<{
+      readonly textType: number;
+      readonly sizesPt: ReadonlyArray<number>;
+    }>;
+  }>;
 }
 
 // Build an 8-byte record header + data. A container uses recVer 0xF (low nibble);
@@ -272,6 +287,12 @@ export function buildPpt(
     if (slide.outline !== undefined) {
       slwtParts.push(rec(RT_TEXT_CHARS_ATOM, 0, false, encodeUtf16(slide.outline)));
     }
+    for (const entry of slide.outlineTexts ?? []) {
+      const header = new Uint8Array(4);
+      new DataView(header.buffer).setUint32(0, entry.textType, true);
+      slwtParts.push(rec(RT_TEXT_HEADER_ATOM, 0, false, header));
+      slwtParts.push(rec(RT_TEXT_CHARS_ATOM, 0, false, encodeUtf16(entry.text)));
+    }
   });
   const slwt = rec(RT_SLIDE_LIST_WITH_TEXT, 0, true, concat(slwtParts));
 
@@ -305,8 +326,10 @@ export function buildPpt(
   //     picture shape (an SpContainer with the pib blip reference) -------------
   const slideRecs = slides.map((slide) => {
     const parts: Array<Uint8Array> = [];
-    if (slide.followMasterScheme) {
-      parts.push(slideAtom(masterPersistIds[slide.masterIndex ?? 0] ?? 0));
+    if (slide.followMasterScheme || slide.masterIndex !== undefined) {
+      parts.push(
+        slideAtom(masterPersistIds[slide.masterIndex ?? 0] ?? 0, slide.followMasterScheme ?? false),
+      );
     }
     const block = slideTextBlock(slide);
     if (block) parts.push(slide.nested ? rec(RT_PP_DRAWING, 0, true, block) : block);
@@ -319,7 +342,15 @@ export function buildPpt(
   // One MainMasterContainer per master, carrying just its colour scheme (the
   // SlideSchemeColorSchemeAtom) — enough for a slide that follows the master.
   const masterRecs = masters.map((m) =>
-    rec(RT_MAIN_MASTER, 0, true, colorSchemeAtom(m.colorScheme)),
+    rec(
+      RT_MAIN_MASTER,
+      0,
+      true,
+      concat([
+        colorSchemeAtom(m.colorScheme),
+        ...(m.textStyles ?? []).map((st) => textMasterStyleAtom(st.textType, st.sizesPt)),
+      ]),
+    ),
   );
 
   // --- assign absolute offsets: [doc][slides...][masters...][persistDir][userEdit]
@@ -459,6 +490,10 @@ function buildShapeContainer(box: PptBoxInput): Uint8Array {
     parts.push(
       rec(FBT_CLIENT_TEXTBOX, 0, true, rec(RT_TEXT_CHARS_ATOM, 0, false, encodeUtf16(box.text))),
     );
+  } else if (box.outlineRef !== undefined) {
+    const idx = new Uint8Array(4);
+    new DataView(idx.buffer).setUint32(0, box.outlineRef, true);
+    parts.push(rec(FBT_CLIENT_TEXTBOX, 0, true, rec(RT_OUTLINE_TEXT_REF_ATOM, 0, false, idx)));
   }
   return rec(FBT_SP_CONTAINER, 0, true, concat(parts));
 }
@@ -511,11 +546,30 @@ function schemeColorRef(index: number): number {
 
 // A SlideAtom (§2.4.24): a 24-byte body with masterIdRef at offset 12 and
 // slideFlags (fMasterScheme) at offset 20, so the slide follows its master's scheme.
-function slideAtom(masterIdRef: number): Uint8Array {
+function textMasterStyleAtom(textType: number, sizesPt: ReadonlyArray<number>): Uint8Array {
+  const parts: Array<Uint8Array> = [];
+  const head = new Uint8Array(2);
+  new DataView(head.buffer).setUint16(0, sizesPt.length, true); // cLevels
+  parts.push(head);
+  for (const size of sizesPt) {
+    // A level: its own index (only on the types past `other`), then a
+    // TextPFException stating nothing and a TextCFException stating the size.
+    const level = new Uint8Array(textType >= 4 ? 2 : 0);
+    const pf = new Uint8Array(4); // mask 0
+    const cf = new Uint8Array(6);
+    const cv = new DataView(cf.buffer);
+    cv.setUint32(0, 0x00020000, true); // TextCFExceptionMask.size
+    cv.setUint16(4, size, true);
+    parts.push(level, pf, cf);
+  }
+  return rec(RT_TEXT_MASTER_STYLE_ATOM, textType, false, concat(parts));
+}
+
+function slideAtom(masterIdRef: number, followScheme = true): Uint8Array {
   const d = new Uint8Array(24);
   const dv = new DataView(d.buffer);
   dv.setUint32(12, masterIdRef, true); // masterIdRef
-  dv.setUint16(20, SLIDE_FLAG_MASTER_SCHEME, true); // slideFlags.fMasterScheme
+  dv.setUint16(20, followScheme ? SLIDE_FLAG_MASTER_SCHEME : 0, true); // slideFlags
   return rec(RT_SLIDE_ATOM, 0, false, d);
 }
 

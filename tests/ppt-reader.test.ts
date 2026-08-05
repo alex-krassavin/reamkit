@@ -17,6 +17,7 @@ import { extractPptContent, paragraphText } from '@/pptx/ppt/ppt-text';
 import { pptReader, readPpt } from '@/pptx/ppt/ppt-reader';
 import { Ream } from '@/core/converter/ream';
 import { createConverter } from '@/core/converter/facade';
+import { pt } from '@/core/ir/units';
 
 const ZERO_WIDTH_SPACE = '​';
 
@@ -671,5 +672,124 @@ describe('ppt reader system colours (PPT-8)', () => {
     ).doc;
     // No resolvable colour ⇒ no autoshape is emitted (a shape needs a fill or line).
     expect(doc.body.filter((el) => el.kind === 'shape')).toHaveLength(0);
+  });
+});
+
+describe('ppt outline text (PPT-10)', () => {
+  // PowerPoint stores a slide's TITLE AND BODY in the document's slide list, not
+  // in the shape that draws it: the placeholder holds an OutlineTextRefAtom
+  // naming which of the slide's texts is its own. Read without following it, a
+  // whole deck came out as one un-anchored blob at the top-left corner.
+  const deck = (): Uint8Array =>
+    buildPpt([
+      {
+        outlineTexts: [
+          { textType: 0, text: 'The title' },
+          { textType: 1, text: 'The body' },
+        ],
+        boxes: [
+          { anchor: { x: 60, y: 40, w: 500, h: 80 }, outlineRef: 0 },
+          { anchor: { x: 60, y: 160, w: 500, h: 300 }, outlineRef: 1 },
+        ],
+      },
+    ]);
+
+  it('puts each outline text in the shape that references it', () => {
+    const slide = extractPptContent(deck()).slides[0]!;
+    expect(slide.shapes.map((s) => s.paragraphs?.map(paragraphText).join(''))).toEqual([
+      'The title',
+      'The body',
+    ]);
+    // …with the shape's own rectangle, instead of falling back to the flow.
+    expect(slide.shapes.map((s) => s.rectPt?.y)).toEqual([40, 160]);
+  });
+
+  it('renders both as positioned shapes on one page', () => {
+    const doc = readPpt(deck()).doc;
+    const boxes = doc.body.filter((el) => el.kind === 'shape');
+    expect(boxes).toHaveLength(2);
+    expect(boxes.map((b) => b.shape.float?.posV?.offsetPt)).toEqual([pt(40), pt(160)]);
+  });
+});
+
+describe('ppt master text styles (PPT-11)', () => {
+  // A `.ppt` title is 44pt because the MASTER says so — the slide's own
+  // StyleTextPropAtom usually states no size at all. §2.9.42 TextMasterStyleAtom
+  // holds one style per indent level, per text type.
+  const deck = (): Uint8Array =>
+    buildPpt(
+      [
+        {
+          masterIndex: 0,
+          outlineTexts: [
+            { textType: 0, text: 'Title' },
+            { textType: 1, text: 'First\rSecond' },
+          ],
+          boxes: [
+            { anchor: { x: 10, y: 10, w: 400, h: 60 }, outlineRef: 0 },
+            { anchor: { x: 10, y: 90, w: 400, h: 200 }, outlineRef: 1 },
+          ],
+        },
+      ],
+      {
+        masters: [
+          {
+            colorScheme: [
+              'FFFFFF',
+              '000000',
+              '808080',
+              '000000',
+              'FF0000',
+              '00FF00',
+              '0000FF',
+              'FFFF00',
+            ],
+            textStyles: [
+              { textType: 0, sizesPt: [44] },
+              { textType: 1, sizesPt: [32, 28] },
+            ],
+          },
+        ],
+      },
+    );
+
+  it('gives a run the size its level inherits from the master', () => {
+    const slide = extractPptContent(deck()).slides[0]!;
+    const sizes = slide.shapes.map((s) => s.paragraphs?.map((p) => p.runs[0]?.sizePt));
+    expect(sizes).toEqual([[44], [32, 32]]);
+  });
+
+  it('takes the centre-title variant from the plain title style it varies', () => {
+    // A master that states only the alignment of `centerTitle` still lends the
+    // title's size: the styles merge property by property, not whole.
+    const slide = extractPptContent(
+      buildPpt(
+        [
+          {
+            masterIndex: 0,
+            outlineTexts: [{ textType: 5, text: 'Centred' }],
+            boxes: [{ anchor: { x: 10, y: 10, w: 400, h: 60 }, outlineRef: 0 }],
+          },
+        ],
+        {
+          masters: [
+            {
+              colorScheme: [
+                'FFFFFF',
+                '000000',
+                '808080',
+                '000000',
+                'FF0000',
+                '00FF00',
+                '0000FF',
+                'FFFF00',
+              ],
+              textStyles: [{ textType: 0, sizesPt: [44] }],
+            },
+          ],
+        },
+      ),
+    ).slides[0]!;
+    expect(slide.shapes[0]?.paragraphs?.[0]?.runs[0]?.sizePt).toBe(44);
   });
 });
