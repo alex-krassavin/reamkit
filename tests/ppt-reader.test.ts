@@ -827,3 +827,88 @@ describe('ppt slide background (PPT-12)', () => {
     );
   });
 });
+
+describe('ppt shape fills the file says are there and are not (PPT-13)', () => {
+  const MOVE = 0x4000;
+  const LINE = 0x0001;
+  const CLOSE = 0x6001;
+
+  it('leaves a shape hollow when its boolean set clears fFilled', () => {
+    // A shape states a fill colour whether or not it is filled. 37625's chart
+    // states a red one on the outline every reader leaves hollow, and painting
+    // it put a red slab over half the plot.
+    const doc = readPpt(
+      buildPpt([
+        {
+          boxes: [
+            {
+              anchor: { x: 0, y: 0, w: 80, h: 40 },
+              shapeType: 1,
+              fillColorHex: 'FF0000',
+              lineColorHex: '000080',
+              noFill: true,
+            },
+          ],
+        },
+      ]),
+    ).doc;
+    const shape = doc.body.find((el) => el.kind === 'shape')!.shape;
+    expect(shape.fill).toEqual({ kind: 'none' });
+    expect(shape.line?.colorHex).toBe('000080'); // …and the outline still draws
+  });
+
+  it('draws neither when the set clears fLine too', () => {
+    const doc = readPpt(
+      buildPpt([
+        {
+          boxes: [
+            {
+              anchor: { x: 0, y: 0, w: 80, h: 40 },
+              shapeType: 1,
+              fillColorHex: 'FF0000',
+              lineColorHex: '000080',
+              noFill: true,
+              noLine: true,
+            },
+          ],
+        },
+      ]),
+    ).doc;
+    // Nothing left to draw ⇒ no shape at all, as for a colour that will not resolve.
+    expect(doc.body.filter((el) => el.kind === 'shape')).toHaveLength(0);
+  });
+
+  it('reads a freeform whose arrays state their length without the header', () => {
+    const geometry = (arrayLenExcludesHeader: boolean): number | undefined => {
+      const slide = extractPptContent(
+        buildPpt([
+          {
+            boxes: [
+              {
+                anchor: { x: 0, y: 0, w: 200, h: 120 },
+                shapeType: 0,
+                lineColorHex: '000080',
+                freeform: {
+                  geoRight: 200,
+                  geoBottom: 120,
+                  vertices: [
+                    [0, 0],
+                    [200, 60],
+                    [0, 120],
+                  ],
+                  segments: [MOVE, LINE, LINE, CLOSE],
+                  arrayLenExcludesHeader,
+                },
+              },
+            ],
+          },
+        ]),
+      ).slides[0]!;
+      return slide.shapes[0]?.autoShape?.geometry?.commands.length;
+    };
+    // Stated either way, the path is the same four commands: the segment array
+    // is found where the vertex array actually ends, not where its length says.
+    expect(geometry(false)).toBe(4);
+    expect(geometry(true)).toBe(4);
+  });
+});

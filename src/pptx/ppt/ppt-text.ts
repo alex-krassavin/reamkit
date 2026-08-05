@@ -67,6 +67,13 @@ const PROP_FILL_BACK_COLOR = 0x0183; // OPT fillBackColor — the gradient's far
 const PROP_FILL_ANGLE = 0x018b; // OPT fillAngle — 16.16 fixed degrees
 const PROP_FILL_BLIP = 0x0186; // OPT fillBlip — a picture fill's store index (PPT-12)
 const PROP_LINE_COLOR = 0x01c0; // OPT lineColor (PPT-5)
+// §2.3.7.43 / §2.3.8.44 — the boolean sets that say whether the colours above are
+// USED. Each holds sixteen flags in its low half and, in its high half, a bit per
+// flag saying the shape states it.
+const PROP_FILL_BOOLS = 0x01bf;
+const PROP_LINE_BOOLS = 0x01ff;
+const FILL_F_FILLED = 0x0010;
+const LINE_F_LINE = 0x0008;
 // Freeform geometry OPT properties (§2.3.6 / [MS-ODRAW]); the bounds are simple
 // LONGs, the vertices / segment info complex array properties (PPT-7).
 const PROP_GEO_LEFT = 0x0140;
@@ -723,8 +730,15 @@ function collectShapeContainers(
           paragraphs = clientTextboxParagraphs(child.data, outline, defaults);
         else if (child.type === FBT_OPT) {
           pib = optProperty(child.data, child.instance, PROP_PIB);
-          fillColorHex = optColor(child.data, child.instance, PROP_FILL_COLOR, scheme);
-          lineColorHex = optColor(child.data, child.instance, PROP_LINE_COLOR, scheme);
+          // A shape states a fill colour whether or not it is filled, and a line
+          // colour whether or not it is drawn — 37625's chart states a red fill
+          // on the outline every reader leaves hollow. The boolean set decides.
+          fillColorHex = stated(child.data, child.instance, PROP_FILL_BOOLS, FILL_F_FILLED)
+            ? optColor(child.data, child.instance, PROP_FILL_COLOR, scheme)
+            : undefined;
+          lineColorHex = stated(child.data, child.instance, PROP_LINE_BOOLS, LINE_F_LINE)
+            ? optColor(child.data, child.instance, PROP_LINE_COLOR, scheme)
+            : undefined;
           gradient = parseFillGradient(child.data, child.instance, fillColorHex, scheme);
           geometry = parseFreeformGeometry(child.data, child.instance);
           fillType = optProperty(child.data, child.instance, PROP_FILL_TYPE);
@@ -1011,6 +1025,16 @@ function parseAnchor(data: Uint8Array): PptRect | undefined {
   return { x, y, w, h };
 }
 
+// Whether a boolean property's flag is on. Absent, or stated as absent by the
+// usage bit in the high half, the flag's DEFAULT holds — and both `fFilled` and
+// `fLine` default to true, which is why a shape that says nothing is drawn.
+function stated(d: Uint8Array, count: number, propId: number, flag: number): boolean {
+  const bools = optProperty(d, count, propId);
+  if (bools === undefined) return true;
+  const used = (bools & (flag << 16)) !== 0;
+  return used ? (bools & flag) !== 0 : true;
+}
+
 // §2.3.7.2 OfficeArtFOPT — `count` properties, each a 2-byte id (low 14 bits) + a
 // 4-byte value. Returns the simple (non-complex) value of `wantId`.
 function optProperty(d: Uint8Array, count: number, wantId: number): number | undefined {
@@ -1029,13 +1053,33 @@ function optComplex(d: Uint8Array, count: number, wantId: number): Uint8Array | 
   for (let i = 0; i < count && i * 6 + 6 <= d.length; i++) {
     const id = u16(d, i * 6);
     if ((id & 0x8000) === 0) continue; // fComplex clear ⇒ no trailing data
-    const len = u32(d, i * 6 + 2);
+    const len = arrayBlobLength(d, offset, id & 0x3fff, u32(d, i * 6 + 2));
     if ((id & 0x3fff) === wantId) {
       return offset + len <= d.length && len > 0 ? d.subarray(offset, offset + len) : undefined;
     }
     offset += len;
   }
   return undefined;
+}
+
+// The array properties whose blob is an IMsoArray, and whose stated length some
+// producers write WITHOUT the 6-byte header.
+const ARRAY_PROPS = new Set([0x0145, 0x0146, 0x0147, 0x0149, 0x014a, 0x0151, 0x0152, 0x0153]);
+
+// How long an array property's blob really is. The length in the fixed entry is
+// normally the whole blob, header and all — but when it is exactly `nElems ×
+// cbElem` the header is extra, and every complex property AFTER it starts six
+// bytes further on than the entry says (Apache POI EscherArrayProperty says the
+// same, having met the same files). Read without this, 37625's chart curves were
+// read as one lineTo apiece: the vertex array came up six bytes short and the
+// segment array's header was six bytes of the previous blob.
+function arrayBlobLength(d: Uint8Array, offset: number, id: number, len: number): number {
+  if (!ARRAY_PROPS.has(id) || offset + 6 > d.length) return len;
+  const nElems = u16(d, offset);
+  const raw = u16(d, offset + 4);
+  const signed = raw >= 0x8000 ? raw - 0x10000 : raw;
+  const size = signed < 0 ? -signed >> 2 : signed;
+  return size > 0 && nElems > 0 && nElems * size === len ? len + 6 : len;
 }
 
 // An IMsoArray complex property: a 6-byte header (nElems u16, nElemsAlloc u16,

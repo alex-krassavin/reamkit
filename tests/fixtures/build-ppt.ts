@@ -47,6 +47,8 @@ const FBT_BLIP_PNG = 0xf01e;
 const PROP_PIB_ID = 0x4104; // OPT property id: pib (0x0104) with the fBid flag (0x4000)
 const PROP_FILL_COLOR = 0x0181;
 const PROP_LINE_COLOR = 0x01c0;
+const PROP_FILL_BOOLS = 0x01bf; // fill style booleans (fFilled + its usage bit)
+const PROP_LINE_BOOLS = 0x01ff; // line style booleans (fLine + its usage bit)
 const PROP_GEO_LEFT = 0x0140; // geometry bounds (simple LONGs), PPT-7
 const PROP_GEO_TOP = 0x0141;
 const PROP_GEO_RIGHT = 0x0142;
@@ -54,6 +56,7 @@ const PROP_GEO_BOTTOM = 0x0143;
 const PROP_VERTICES_COMPLEX = 0x8145; // pVertices (0x0145) with the fComplex flag (0x8000)
 const PROP_SEGMENT_INFO_COMPLEX = 0x8146; // pSegmentInfo (0x0146) with fComplex
 const FSP_FLAG_BACKGROUND = 0x0400; // OfficeArtFSP.fBackground
+const ARRAY_HEADER_BYTES = 6; // IMsoArray: nElems, nElemsAlloc, cbElem
 const MASTER_PER_POINT = 8; // 576 master units / inch ÷ 72 points / inch
 
 const TOKEN_UNENCRYPTED = 0xe391c05f;
@@ -123,6 +126,10 @@ export interface PptBoxInput {
   readonly imageRef?: number; // a picture shape (1-based pib index)
   readonly shapeType?: number; // an autoshape: the FSP recInstance (MSOSPT)
   readonly fillColorHex?: string; // OPT fillColor (6-hex literal RGB)
+  // §2.3.7.43 / §2.3.8.44 — state fFilled / fLine as OFF, so the colours above
+  // are stated but not used.
+  readonly noFill?: boolean;
+  readonly noLine?: boolean;
   // MS-ODRAW fBackground: the shape states the SLIDE's background, not content.
   readonly background?: boolean;
   readonly lineColorHex?: string; // OPT lineColor (6-hex literal RGB)
@@ -139,6 +146,8 @@ export interface PptFreeformInput {
   readonly geoBottom: number;
   readonly vertices: ReadonlyArray<readonly [number, number]>;
   readonly segments: ReadonlyArray<number>;
+  // State each array's length without its 6-byte header, as some producers do.
+  readonly arrayLenExcludesHeader?: boolean;
 }
 
 export interface BuildPptOptions {
@@ -455,6 +464,9 @@ function buildShapeContainer(box: PptBoxInput): Uint8Array {
   else if (box.fillSysColor !== undefined)
     props.push({ id: PROP_FILL_COLOR, value: ((box.fillSysColor & 0xffff) | (0x10 << 24)) >>> 0 });
   if (box.lineColorHex) props.push({ id: PROP_LINE_COLOR, value: rgbColorRef(box.lineColorHex) });
+  // The value bit clear, its usage bit set: "this shape states it is not filled".
+  if (box.noFill) props.push({ id: PROP_FILL_BOOLS, value: 0x0010 << 16 });
+  if (box.noLine) props.push({ id: PROP_LINE_BOOLS, value: 0x0008 << 16 });
   else if (box.lineSchemeIndex !== undefined)
     props.push({ id: PROP_LINE_COLOR, value: schemeColorRef(box.lineSchemeIndex) });
   if (box.freeform) {
@@ -467,8 +479,11 @@ function buildShapeContainer(box: PptBoxInput): Uint8Array {
     props.push({ id: PROP_GEO_BOTTOM, value: f.geoBottom });
     const vBlob = buildVerticesBlob(f.vertices);
     const sBlob = buildSegmentsBlob(f.segments);
-    props.push({ id: PROP_VERTICES_COMPLEX, value: vBlob.length, blob: vBlob });
-    props.push({ id: PROP_SEGMENT_INFO_COMPLEX, value: sBlob.length, blob: sBlob });
+    // Some producers state an array property's length WITHOUT its 6-byte header,
+    // which shifts every complex blob after it (Apache POI meets the same files).
+    const short = f.arrayLenExcludesHeader === true ? ARRAY_HEADER_BYTES : 0;
+    props.push({ id: PROP_VERTICES_COMPLEX, value: vBlob.length - short, blob: vBlob });
+    props.push({ id: PROP_SEGMENT_INFO_COMPLEX, value: sBlob.length - short, blob: sBlob });
   }
   if (props.length > 0) {
     // The fixed 6-byte entries first, then any complex blobs in entry order.
