@@ -42,6 +42,7 @@ import {
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
 import { OpcPackage } from '@/core/opc';
 import { loadPptxEmbeddedFonts } from '@/pptx/embedded-fonts';
+import { presetTableStyle } from '@/pptx/preset-table-styles';
 import { resolveAlternateContent } from '@/core/opc/alternate-content';
 import { poAttr, poChildren, poFindDescendant, poIntAttr, poIs } from '@/core/po-helpers';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
@@ -60,6 +61,7 @@ const DEFAULT_CX = 9144000;
 const DEFAULT_CY = 6858000;
 
 const decoder = new TextDecoder();
+const encoder = new TextEncoder();
 const parser = new XMLParser({
   // §4.1 of XML 1.0: a numeric character reference is not an entity — `&#10;`
   // IS a line feed and every parser must decode it. fast-xml-parser gates that
@@ -378,6 +380,9 @@ function makeOlePreviewResolver(
  * table that names none wears none — table-with-no-theme's two rows are bare
  * text in a plain frame, not the blue banding `@def` points at.
  *
+ * A GUID the part does not hold may still be one of the GALLERY's own, which
+ * every deck names and none ships (see `preset-table-styles`).
+ *
  * The part is read once, on the first table in the deck.
  */
 function makeTableStyleResolver(
@@ -399,7 +404,8 @@ function makeTableStyleResolver(
         }
       }
     }
-    return styleId === undefined ? undefined : byId.get(styleId);
+    if (styleId === undefined) return undefined;
+    return byId.get(styleId) ?? presetTableStyle(styleId, (xml) => parseXml(encoder.encode(xml)));
   };
 }
 

@@ -90,18 +90,8 @@
   "aligned": true
  },
  {
-  "name": "tdf149785.pptx",
-  "score": 0.2543,
-  "aligned": true
- },
- {
   "name": "smartart-linear-rule-vert.pptx",
   "score": 0.2276,
-  "aligned": true
- },
- {
-  "name": "predefined-table-style.pptx",
-  "score": 0.2101,
   "aligned": true
  },
  {
@@ -850,6 +840,11 @@
   "aligned": true
  },
  {
+  "name": "tdf149785.pptx",
+  "score": 0.0058,
+  "aligned": true
+ },
+ {
   "name": "tcPr-vert-roundtrip.pptx",
   "score": 0.0054,
   "aligned": true
@@ -935,6 +930,11 @@
   "aligned": true
  },
  {
+  "name": "predefined-table-style.pptx",
+  "score": 0.0041,
+  "aligned": true
+ },
+ {
   "name": "tdf145528_SmartArt_Matrix.pptx",
   "score": 0.0038,
   "aligned": true
@@ -986,7 +986,7 @@
  },
  {
   "name": "bnc480256-2.pptx",
-  "score": 0.0033,
+  "score": 0.0032,
   "aligned": true
  },
  {
@@ -1185,11 +1185,6 @@
   "aligned": true
  },
  {
-  "name": "tdf132472.pptx",
-  "score": 0.0019,
-  "aligned": true
- },
- {
   "name": "NumberedList-12ab-ab-34.pptx",
   "score": 0.0019,
   "aligned": true
@@ -1257,6 +1252,11 @@
  {
   "name": "tdf104792-smart-art-animation.pptx",
   "score": 0.0016,
+  "aligned": true
+ },
+ {
+  "name": "tdf132472.pptx",
+  "score": 0.0015,
   "aligned": true
  },
  {

@@ -847,6 +847,51 @@ describe('a slide table wears its style and stands in its frame', () => {
     expect(run?.properties.bold).toBe(true);
   });
 
+  // §20.1.4.2.24 — a table may name one of the GALLERY's own styles, and then
+  // the deck ships no definition at all: `tableStyles.xml` lists what a deck
+  // CUSTOMISES. Eight decks of the corpus do that, and predefined-table-style
+  // came out as bare text with no fill and no rule anywhere.
+  it('knows the styles PowerPoint has built in, which no deck ships', () => {
+    const MEDIUM2_ACCENT1 = '{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}';
+    const doc = Ream.parse(
+      buildPptx([
+        `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="6" name="t"/><p:cNvGraphicFramePr/>` +
+          `<p:nvPr/></p:nvGraphicFramePr>` +
+          `<p:xfrm><a:off x="914400" y="1828800"/><a:ext cx="5486400" cy="1828800"/></p:xfrm>` +
+          `<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">` +
+          `<a:tbl><a:tblPr firstRow="1" bandRow="1">` +
+          `<a:tableStyleId>${MEDIUM2_ACCENT1}</a:tableStyleId></a:tblPr>` +
+          `<a:tblGrid><a:gridCol w="2743200"/><a:gridCol w="2743200"/></a:tblGrid>` +
+          `<a:tr h="457200">${tc('H1')}${tc('H2')}</a:tr>` +
+          `<a:tr h="457200">${tc('a')}${tc('b')}</a:tr>` +
+          `<a:tr h="457200">${tc('c')}${tc('d')}</a:tr>` +
+          `</a:tbl></a:graphicData></a:graphic></p:graphicFrame>`,
+      ]),
+    );
+    const t = table(doc);
+    // The definition is theme-RELATIVE, so the fills are the deck's accent and
+    // its light shade, not colours baked into the style.
+    expect(t?.rows[0]?.cells[0]?.properties.shading?.colorHex).toBeDefined();
+    expect(t?.rows[1]?.cells[0]?.properties.shading?.colorHex).toBeDefined();
+    expect(t?.rows[0]?.cells[0]?.properties.shading?.colorHex).not.toBe(
+      t?.rows[1]?.cells[0]?.properties.shading?.colorHex,
+    );
+    // …and a GUID that is NOT one of them still wears nothing.
+    const none = Ream.parse(
+      buildPptx([
+        `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="6" name="t"/><p:cNvGraphicFramePr/>` +
+          `<p:nvPr/></p:nvGraphicFramePr>` +
+          `<p:xfrm><a:off x="914400" y="1828800"/><a:ext cx="5486400" cy="1828800"/></p:xfrm>` +
+          `<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">` +
+          `<a:tbl><a:tblPr firstRow="1"><a:tableStyleId>{00000000-0000-0000-0000-000000000000}` +
+          `</a:tableStyleId></a:tblPr>` +
+          `<a:tblGrid><a:gridCol w="2743200"/></a:tblGrid>` +
+          `<a:tr h="457200">${tc('H1')}</a:tr></a:tbl></a:graphicData></a:graphic></p:graphicFrame>`,
+      ]),
+    );
+    expect(table(none)?.rows[0]?.cells[0]?.properties.shading).toBeUndefined();
+  });
+
   // §20.1.4.2.25 / §20.1.4.2.19 — a style may POINT at the theme instead of
   // spelling a fill or a rule out: `a:tblBg/a:fillRef` is the table's own
   // background and `a:lnRef` is a rule whose width lives in the theme's line
