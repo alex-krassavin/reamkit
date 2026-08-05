@@ -350,11 +350,6 @@
   "aligned": true
  },
  {
-  "name": "bug64693.pptx",
-  "score": 0.0031,
-  "aligned": true
- },
- {
   "name": "sample_pptx_grouping_issues.pptx",
   "score": 0.0025,
   "aligned": true
@@ -387,6 +382,11 @@
  {
   "name": "sample.pptx",
   "score": 0.0013,
+  "aligned": true
+ },
+ {
+  "name": "bug64693.pptx",
+  "score": 0.0012,
   "aligned": true
  },
  {

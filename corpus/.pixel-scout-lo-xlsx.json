@@ -381,7 +381,7 @@
  },
  {
   "name": "tdf161301.xlsx",
-  "score": 0.0069,
+  "score": 0.0068,
   "aligned": false
  },
  {
@@ -472,11 +472,6 @@
  {
   "name": "pivottable_string_field_filter.xlsx",
   "score": 0.0034,
-  "aligned": true
- },
- {
-  "name": "tdf130104_indent.xlsx",
-  "score": 0.0033,
   "aligned": true
  },
  {
@@ -671,6 +666,11 @@
  },
  {
   "name": "sortconditionref.xlsx",
+  "score": 0.0013,
+  "aligned": true
+ },
+ {
+  "name": "tdf130104_indent.xlsx",
   "score": 0.0013,
   "aligned": true
  },

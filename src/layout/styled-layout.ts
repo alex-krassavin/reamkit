@@ -56,7 +56,7 @@ import type {
   TableRow,
 } from '@/core/document-model';
 import type { FontRegistry, FontVariant, ParsedTtf } from '@/core/font';
-import type { FamilyKey } from '@/core/fonts';
+import type { FamilyKey, SubstituteKey } from '@/core/fonts';
 import type { Hyphenator } from '@/core/hyphenation';
 import type { PreparedImage } from '@/core/images';
 import type { Item } from '@/core/line-breaker';
@@ -95,6 +95,7 @@ import type { MetaPicture } from '@/core/metafile/picture';
 import { ResourceStore, halfPtToPt, pt } from '@/core/ir';
 import { createFontMeasure, shapeText } from '@/core/font';
 import { resolveFamilyStyle } from '@/core/fonts';
+import { scriptForCodepoint } from '@/core/fonts/scripts';
 import { prepareImage } from '@/core/images';
 import { isEmf, readEmf } from '@/core/metafile/emf';
 import { isWmf, readWmf } from '@/core/metafile/wmf';
@@ -194,7 +195,7 @@ export interface StyledRenderOptions {
    * run uses `registry`), byte-identical to before. `registry` remains the
    * guaranteed fallback for math/chart/default glyphs and any missing family.
    */
-  readonly registriesByFamily?: ReadonlyMap<FamilyKey, FontRegistry>;
+  readonly registriesByFamily?: ReadonlyMap<SubstituteKey, FontRegistry>;
   /**
    * The document's OWN embedded fonts (`word/fonts/*.odttf`, de-obfuscated),
    * keyed by normalized font name. A run whose `w:ascii` matches one renders with
@@ -4311,6 +4312,50 @@ function runFontKeyAndParsed(
 }
 
 /**
+ * The face a CHARACTER falls back to when the run's own has no glyph for it.
+ *
+ * The curated substitutes are Latin families: Han, Kana, Hangul, Arabic, Thai
+ * and the geometric symbols are a notdef box in every one of them, and 2145
+ * characters of the corpus are exactly those. A face for the character's
+ * writing system is fetched when the document holds one (see `addScriptFonts`),
+ * and this is where a run reaches it — followed by every other family already
+ * loaded, because a glyph one of them happens to carry is still better than a
+ * box.
+ *
+ * Called from BOTH walks that need it — the glyph-subset collection and the
+ * tokenizer — so the face a character is measured, subset and drawn with is one
+ * decision made once.
+ *
+ * @param options The render options (the loaded registries).
+ * @param cp      The code point with no glyph in the run's own face.
+ * @param bold    Whether the run is bold…
+ * @param italic  …and whether it is italic.
+ * @returns The face to draw it with, or `undefined` when nobody has it.
+ */
+function fallbackFaceKey(
+  options: StyledRenderOptions,
+  cp: number,
+  bold: boolean,
+  italic: boolean,
+): { fontKey: string; parsed: ParsedTtf } | undefined {
+  const byFamily = options.registriesByFamily;
+  if (!byFamily || byFamily.size === 0) return undefined;
+  // Which face draws unified Han is a property of the DOCUMENT, and the answer
+  // is already in the map: the converter fetched the one its text called for.
+  const hanFace = byFamily.has('jp') ? 'jp' : byFamily.has('kr') ? 'kr' : 'sc';
+  const script = scriptForCodepoint(cp, hanFace);
+  const order: Array<SubstituteKey> = script ? [script] : [];
+  for (const key of byFamily.keys()) if (key !== script) order.push(key);
+  for (const key of order) {
+    const reg = byFamily.get(key);
+    if (!reg) continue;
+    const { variant, parsed } = reg.resolveByStyle(bold, italic);
+    if (parsed.glyphForCodepoint(cp) !== 0) return { fontKey: `${key}:${variant}`, parsed };
+  }
+  return undefined;
+}
+
+/**
  * §9.2.2 — the face a request had to settle for, and what is left to draw.
  *
  * A registry may hold one face and be asked for four: `FontBytesByVariant`
@@ -4341,6 +4386,131 @@ function syntheticFace(
       ...(widthScale !== undefined ? { widthScale } : {}),
     },
   };
+}
+
+/**
+ * `text` cut into the stretches ONE face draws — the whole string as a single
+ * piece when the run's own face covers it, which is nearly always.
+ *
+ * @param plan The run being tokenized.
+ * @param text The stretch of it to cut.
+ */
+function splitByFace(plan: RunPlan, text: string): Array<{ text: string; face: RunFace }> {
+  const first = faceOf(plan, text.codePointAt(0) ?? 0);
+  if (!plan.faceFor || plan.faceFor.size === 0) return [{ text, face: first }];
+  const out: Array<{ text: string; face: RunFace }> = [];
+  let buf = '';
+  let face = first;
+  for (const ch of text) {
+    const next = faceOf(plan, ch.codePointAt(0)!);
+    if (buf !== '' && next.font !== face.font) {
+      out.push({ text: buf, face });
+      buf = '';
+    }
+    face = next;
+    buf += ch;
+  }
+  if (buf !== '') out.push({ text: buf, face });
+  return out;
+}
+
+/**
+ * The face a character of a run is drawn with — its own, unless the run carries
+ * a fallback for that code point (see {@link facesForRun}).
+ */
+function faceOf(plan: RunPlan, cp: number): RunFace {
+  return (
+    plan.faceFor?.get(cp) ?? {
+      font: plan.font,
+      ...(plan.synthetic ? { synthetic: plan.synthetic } : {}),
+    }
+  );
+}
+
+/** One face a stretch of a run is drawn with. */
+interface RunFace {
+  readonly font: FontResource;
+  readonly synthetic?: SyntheticFace;
+}
+
+/**
+ * `text` cut into the stretches ONE face draws, by the same decision the
+ * tokenizer makes — the whole string as a single span when the run's own face
+ * covers it, which is nearly always.
+ *
+ * @param options  The render options (the loaded registries).
+ * @param primary  The run's own face.
+ * @param resolved Its resolved properties (weight and slant).
+ * @param text     The run's text.
+ */
+function faceSpans(
+  options: StyledRenderOptions,
+  primary: { fontKey: string; parsed: ParsedTtf },
+  resolved: ResolvedRunProperties,
+  text: string,
+): Array<{ fontKey: string; parsed: ParsedTtf; text: string }> {
+  const out: Array<{ fontKey: string; parsed: ParsedTtf; text: string }> = [];
+  let cur = primary;
+  let buf = '';
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    const face =
+      primary.parsed.glyphForCodepoint(cp) !== 0
+        ? primary
+        : (fallbackFaceKey(options, cp, resolved.bold, resolved.italic) ?? primary);
+    if (buf !== '' && face.fontKey !== cur.fontKey) {
+      out.push({ ...cur, text: buf });
+      buf = '';
+    }
+    cur = face;
+    buf += ch;
+  }
+  if (buf !== '') out.push({ ...cur, text: buf });
+  return out;
+}
+
+/**
+ * The face for every character of `text` the run's own cannot draw.
+ *
+ * @param options       The render options (the loaded registries).
+ * @param fontResources The faces the document embeds, by key.
+ * @param primary       The run's own face.
+ * @param resolved      Its resolved properties (weight and slant).
+ * @param text          The run's text.
+ * @returns A map from code point to face, or `undefined` when the run's own
+ *          face draws all of it.
+ */
+function facesForRun(
+  options: StyledRenderOptions,
+  fontResources: ReadonlyMap<string, FontResource>,
+  primary: ParsedTtf,
+  resolved: ResolvedRunProperties,
+  text: string,
+): ReadonlyMap<number, RunFace> | undefined {
+  let out: Map<number, RunFace> | undefined;
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    if (out?.has(cp) === true || primary.glyphForCodepoint(cp) !== 0) continue;
+    const fallback = fallbackFaceKey(options, cp, resolved.bold, resolved.italic);
+    if (!fallback) continue;
+    const font = fontResources.get(fallback.fontKey);
+    if (!font) continue;
+    out ??= new Map<number, RunFace>();
+    // A script face is fetched in the regular weight only — a bold run in it is
+    // stroked, which is what F3's synthesis is for.
+    const { variant } = { variant: fallback.fontKey.split(':')[1] ?? '' };
+    out.set(cp, {
+      font,
+      ...syntheticFace(
+        variant === 'bold' || variant === 'boldItalic' || variant === 'italic'
+          ? variant
+          : 'regular',
+        resolved.bold,
+        resolved.italic,
+      ),
+    });
+  }
+  return out;
 }
 
 // Tolerant lookup for placeholder fonts (inline-image / math outer run) whose
@@ -4382,15 +4552,30 @@ function collectFontResources(
     // /ToUnicode (PDF/A §6.3.5 / §6.3.8).
     // A marker whose glyph the font lacks is drawn as another character
     // (see {@link markerText}), so the subset must reserve THAT one.
-    const shaped = shapeText(
-      run.listMarker === true ? markerText(run.text, parsed) : run.text,
-      parsed.glyphForCodepoint,
-      parsed.advanceWidths,
-      parsed.ligatures,
-      parsed.kerning,
-      parsed.joiningForms,
-    );
-    for (const g of shaped.gids) bucket.gids.add(g);
+    const text = run.listMarker === true ? markerText(run.text, parsed) : run.text;
+    // A character this face cannot draw is drawn by ANOTHER one (see
+    // {@link fallbackFaceKey}), and its glyphs have to be reserved in THAT
+    // face's subset — the walk that measures and the walk that embeds must
+    // agree, or the page draws a glyph the font object does not carry. Each
+    // stretch is shaped by the face that draws it: an Arabic letter's medial
+    // form is a different glyph from its isolated one, so reserving the code
+    // point alone would embed the wrong ones.
+    for (const span of faceSpans(options, { fontKey, parsed }, resolved, text)) {
+      let sink = used.get(span.fontKey);
+      if (!sink) {
+        sink = { parsed: span.parsed, gids: new Set<number>() };
+        used.set(span.fontKey, sink);
+      }
+      const shaped = shapeText(
+        span.text,
+        span.parsed.glyphForCodepoint,
+        span.parsed.advanceWidths,
+        span.parsed.ligatures,
+        span.parsed.kerning,
+        span.parsed.joiningForms,
+      );
+      for (const g of shaped.gids) sink.gids.add(g);
+    }
     // §17.3.1.38 — a tab's leader characters are drawn but written nowhere: the
     // layout makes them, from the stop, long after the subset is chosen from
     // the runs. Left out, the subset had no glyph for them and TOC_field_b
@@ -4799,6 +4984,12 @@ interface RunPlan {
   readonly font: FontResource;
   /** What the chosen face lacks and the emitter has to fake. */
   readonly synthetic?: SyntheticFace;
+  /**
+   * The face each character the run's OWN cannot draw is drawn with — Han,
+   * Kana, Arabic and the geometric symbols, which no Latin substitute carries.
+   * Absent when the run's face covers all of its text, which is nearly always.
+   */
+  readonly faceFor?: ReadonlyMap<number, RunFace>;
   readonly fontSizePt: number;
   /** How far off the baseline this run draws (super/subscript), in points. */
   readonly risePt?: number;
@@ -5053,10 +5244,13 @@ function tokenizeParagraph(
     // it; the PDF layout did neither, so a footnote marker and a cell's
     // "Salary⁽²⁾" came out full size, on the line (45540_classic_Header.xlsx).
     const script = SCRIPT_OFFSET[resolvedRun.verticalAlign] ?? 0;
+    const own = lookupFont(fontResources, fontKey);
+    const faceFor = facesForRun(options, fontResources, own.parsed, resolvedRun, run.text);
     return {
       run,
       resolvedRun,
-      font: lookupFont(fontResources, fontKey),
+      font: own,
+      ...(faceFor ? { faceFor } : {}),
       ...(synthetic ? { synthetic } : {}),
       fontSizePt: script === 0 ? resolvedRun.fontSizePt : resolvedRun.fontSizePt * SCRIPT_SCALE,
       ...(script === 0 ? {} : { risePt: resolvedRun.fontSizePt * script }),
@@ -5147,26 +5341,31 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
     }
     const highlight = (plan.run.commentRangeRefs?.length ?? 0) > 0;
     for (const t of tokenizeText(plan.run.text)) {
-      const text = plan.run.listMarker === true ? markerText(t.text, plan.font.parsed) : t.text;
-      tokens.push({
-        kind: 'text',
-        text,
-        isSpace: t.isSpace,
-        ...(t.tab ? { tab: true as const } : {}),
-        ...(plan.run.href !== undefined ? { href: plan.run.href } : {}),
-        ...(plan.run.footnoteRef !== undefined ? { footnoteRef: plan.run.footnoteRef } : {}),
-        ...(plan.run.anchor !== undefined ? { anchor: plan.run.anchor } : {}),
-        ...(plan.run.listMarker ? { listMarker: true } : {}),
-        ...(plan.run.columnBreak ? { columnBreak: true as const } : {}),
-        ...(highlight ? { highlight: true } : {}),
-        resolvedRun: plan.resolvedRun,
-        font: plan.font,
-        ...(plan.synthetic ? { synthetic: plan.synthetic } : {}),
-        fontSizePt: plan.fontSizePt,
-        ...(plan.risePt !== undefined ? { risePt: plan.risePt } : {}),
-        widthPt: measureRunText(plan, text),
-        bidiLevel: 0,
-      });
+      // …and split again wherever the face changes: a token carries one font,
+      // and a Latin substitute cannot draw the Han beside it.
+      for (const piece of splitByFace(plan, t.text)) {
+        const text =
+          plan.run.listMarker === true ? markerText(piece.text, plan.font.parsed) : piece.text;
+        tokens.push({
+          kind: 'text',
+          text,
+          isSpace: t.isSpace,
+          ...(t.tab ? { tab: true as const } : {}),
+          ...(plan.run.href !== undefined ? { href: plan.run.href } : {}),
+          ...(plan.run.footnoteRef !== undefined ? { footnoteRef: plan.run.footnoteRef } : {}),
+          ...(plan.run.anchor !== undefined ? { anchor: plan.run.anchor } : {}),
+          ...(plan.run.listMarker ? { listMarker: true } : {}),
+          ...(plan.run.columnBreak ? { columnBreak: true as const } : {}),
+          ...(highlight ? { highlight: true } : {}),
+          resolvedRun: plan.resolvedRun,
+          font: piece.face.font,
+          ...(piece.face.synthetic ? { synthetic: piece.face.synthetic } : {}),
+          fontSizePt: plan.fontSizePt,
+          ...(plan.risePt !== undefined ? { risePt: plan.risePt } : {}),
+          widthPt: measureRunText(plan, text, piece.face),
+          bidiLevel: 0,
+        });
+      }
     }
   }
   return tokens;
@@ -5206,12 +5405,16 @@ function markerText(text: string, parsed: ParsedTtf): string {
  * @param text The token's text.
  * @returns The advance width in points.
  */
-function measureRunText(plan: RunPlan, text: string): number {
+function measureRunText(plan: RunPlan, text: string, face?: RunFace): number {
   // A condensed face sets narrower than the substitute we have, and the squeeze
   // decides where the line BREAKS — measured at full width, an Arial Narrow
   // column overflows by a fifth.
+  const drawn = face ?? {
+    font: plan.font,
+    ...(plan.synthetic ? { synthetic: plan.synthetic } : {}),
+  };
   const base =
-    plan.font.measure.textWidthPt(text, plan.fontSizePt) * (plan.synthetic?.widthScale ?? 1);
+    drawn.font.measure.textWidthPt(text, plan.fontSizePt) * (drawn.synthetic?.widthScale ?? 1);
   const extra = plan.resolvedRun.letterSpacingPt;
   return extra === undefined || extra === 0 ? base : base + extra * [...text].length;
 }
@@ -5260,11 +5463,14 @@ function tokenizePlansBidi(
       realIdx++;
       continue;
     }
-    // Iterate code points, grouping by (isSpace, level).
+    // Iterate code points, grouping by (isSpace, level, face) — a character the
+    // run's own face cannot draw is drawn by another one, and a token carries
+    // exactly one font.
     const chars = [...plan.run.text];
     let bufStart = 0;
     let curSpace = false;
     let curLevel = -1;
+    let curFace: RunFace = { font: plan.font };
     const flush = (endExclusive: number) => {
       if (endExclusive <= bufStart) return;
       const raw = chars.slice(bufStart, endExclusive).join('');
@@ -5280,11 +5486,11 @@ function tokenizePlansBidi(
         ...(plan.run.columnBreak ? { columnBreak: true as const } : {}),
         ...((plan.run.commentRangeRefs?.length ?? 0) > 0 ? { highlight: true } : {}),
         resolvedRun: plan.resolvedRun,
-        font: plan.font,
-        ...(plan.synthetic ? { synthetic: plan.synthetic } : {}),
+        font: curFace.font,
+        ...(curFace.synthetic ? { synthetic: curFace.synthetic } : {}),
         fontSizePt: plan.fontSizePt,
         ...(plan.risePt !== undefined ? { risePt: plan.risePt } : {}),
-        widthPt: measureRunText(plan, text),
+        widthPt: measureRunText(plan, text, curFace),
         bidiLevel: curLevel,
       });
     };
@@ -5292,14 +5498,17 @@ function tokenizePlansBidi(
       const ch = chars[c]!;
       const isSpace = /\s/.test(ch);
       const level = realLevels[realIdx] ?? 0;
+      const face = faceOf(plan, ch.codePointAt(0)!);
       if (c === 0) {
         curSpace = isSpace;
         curLevel = level;
-      } else if (isSpace !== curSpace || level !== curLevel) {
+        curFace = face;
+      } else if (isSpace !== curSpace || level !== curLevel || face.font !== curFace.font) {
         flush(c);
         bufStart = c;
         curSpace = isSpace;
         curLevel = level;
+        curFace = face;
       }
       realIdx++;
     }

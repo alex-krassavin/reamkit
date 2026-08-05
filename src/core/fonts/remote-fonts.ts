@@ -36,6 +36,58 @@ const VARIANT_SUFFIX: Record<FontVariant, string> = {
 /** A curated open substitute family (the Croscore + Carlito/Caladea set, like LibreOffice). */
 export type FamilyKey = 'arimo' | 'tinos' | 'cousine' | 'carlito' | 'caladea';
 
+/**
+ * A WRITING SYSTEM the curated five cannot draw at all. They are Latin families
+ * — Greek, Cyrillic and Hebrew ride along, everything else is a notdef box —
+ * and 2145 characters of the corpus fall outside them: Han, Kana, Hangul,
+ * Arabic, the geometric symbols a form's checkbox is made of.
+ *
+ * These are fetched only when a document actually holds such a character, and
+ * only in the regular weight: Noto Sans SC is ten megabytes, and a bold run in
+ * it is better stroked (see `SyntheticFace`) than downloaded four times over.
+ */
+export type ScriptKey = 'jp' | 'kr' | 'sc' | 'arabic' | 'hebrew' | 'thai' | 'symbols';
+
+/** Either kind of substitute — a Latin family or a per-script face. */
+export type SubstituteKey = FamilyKey | ScriptKey;
+
+interface ScriptFamily {
+  readonly pkg: string;
+  readonly file: string;
+}
+
+const SCRIPTS: Record<ScriptKey, ScriptFamily> = {
+  jp: { pkg: 'noto-sans-jp', file: 'NotoSansJP' },
+  kr: { pkg: 'noto-sans-kr', file: 'NotoSansKR' },
+  sc: { pkg: 'noto-sans-sc', file: 'NotoSansSC' },
+  arabic: { pkg: 'noto-sans-arabic', file: 'NotoSansArabic' },
+  hebrew: { pkg: 'noto-sans-hebrew', file: 'NotoSansHebrew' },
+  thai: { pkg: 'noto-sans-thai', file: 'NotoSansThai' },
+  symbols: { pkg: 'noto-sans-symbols-2', file: 'NotoSansSymbols2' },
+};
+
+/** Whether a substitute key names a writing system rather than a Latin family. */
+export function isScriptKey(key: SubstituteKey): key is ScriptKey {
+  return key in SCRIPTS;
+}
+
+/**
+ * Fetch the ONE face a writing system is drawn with.
+ *
+ * @param script The writing system.
+ * @param fetchImpl Injectable `fetch` (defaults to the global one).
+ * @returns The regular face, or `undefined` when the download fails.
+ */
+export async function fetchScriptFont(
+  script: ScriptKey,
+  fetchImpl: FetchLike = globalThis.fetch.bind(globalThis),
+): Promise<FontBytesByVariant | undefined> {
+  const family = SCRIPTS[script];
+  const url = `${CDN_BASE}/${family.pkg}/400Regular/${family.file}_400Regular.ttf`;
+  const bytes = await fetchTtf(url, fetchImpl, false);
+  return bytes ? { regular: bytes } : undefined;
+}
+
 interface CuratedFamily {
   readonly pkg: string; // @expo-google-fonts package name
   readonly file: string; // capitalised file prefix

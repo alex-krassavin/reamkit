@@ -635,11 +635,6 @@
   "aligned": true
  },
  {
-  "name": "tdf98603.pptx",
-  "score": 0.0126,
-  "aligned": true
- },
- {
   "name": "tdf79007.pptx",
   "score": 0.0124,
   "aligned": true
@@ -711,6 +706,11 @@
  },
  {
   "name": "accent-color.pptx",
+  "score": 0.0089,
+  "aligned": true
+ },
+ {
+  "name": "tdf98603.pptx",
   "score": 0.0089,
   "aligned": true
  },
@@ -1275,11 +1275,6 @@
   "aligned": true
  },
  {
-  "name": "tdf113822underline.pptx",
-  "score": 0.0014,
-  "aligned": true
- },
- {
   "name": "tdf163852.pptx",
   "score": 0.0014,
   "aligned": true
@@ -1341,6 +1336,11 @@
  },
  {
   "name": "n90223RT.pptx",
+  "score": 0.0011,
+  "aligned": true
+ },
+ {
+  "name": "tdf113822underline.pptx",
   "score": 0.0011,
   "aligned": true
  },
@@ -1540,11 +1540,6 @@
   "aligned": true
  },
  {
-  "name": "tdf113818-swivel.pptx",
-  "score": 0.0004,
-  "aligned": true
- },
- {
   "name": "tdf165341.pptx",
   "score": 0.0004,
   "aligned": true
@@ -1696,6 +1691,11 @@
  },
  {
   "name": "tdf102261_testParaTabStopDefaultDistance.pptx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "tdf113818-swivel.pptx",
   "score": 0.0002,
   "aligned": true
  },

@@ -631,7 +631,7 @@
  },
  {
   "name": "tdf119143.docx",
-  "score": 0.0104,
+  "score": 0.0105,
   "aligned": true
  },
  {
@@ -716,7 +716,7 @@
  },
  {
   "name": "2129393649.docx",
-  "score": 0.0091,
+  "score": 0.009,
   "aligned": true
  },
  {
@@ -725,19 +725,14 @@
   "aligned": false
  },
  {
-  "name": "tdf118361_RTLfootnoteSeparator.docx",
+  "name": "FDO78292.docx",
   "score": 0.0087,
-  "aligned": true
+  "aligned": false
  },
  {
   "name": "fdo79540.docx",
   "score": 0.0087,
   "aligned": true
- },
- {
-  "name": "FDO78292.docx",
-  "score": 0.0085,
-  "aligned": false
  },
  {
   "name": "fdo64350.docx",
@@ -1000,6 +995,11 @@
   "aligned": true
  },
  {
+  "name": "tdf118361_RTLfootnoteSeparator.docx",
+  "score": 0.0051,
+  "aligned": true
+ },
+ {
   "name": "fdo79062.docx",
   "score": 0.0051,
   "aligned": true
@@ -1046,11 +1046,6 @@
  },
  {
   "name": "tdf119800.docx",
-  "score": 0.0048,
-  "aligned": true
- },
- {
-  "name": "chtoutline.docx",
   "score": 0.0048,
   "aligned": true
  },
@@ -1105,11 +1100,6 @@
   "aligned": true
  },
  {
-  "name": "fdo53985.docx",
-  "score": 0.0046,
-  "aligned": true
- },
- {
   "name": "table-style-rPr-sz.docx",
   "score": 0.0046,
   "aligned": true
@@ -1121,6 +1111,11 @@
  },
  {
   "name": "tdf123388.docx",
+  "score": 0.0045,
+  "aligned": true
+ },
+ {
+  "name": "fdo53985.docx",
   "score": 0.0045,
   "aligned": true
  },
@@ -1595,11 +1590,6 @@
   "aligned": true
  },
  {
-  "name": "tdf121045.docx",
-  "score": 0.0026,
-  "aligned": true
- },
- {
   "name": "tdf128752.docx",
   "score": 0.0026,
   "aligned": true
@@ -1617,6 +1607,11 @@
  {
   "name": "AnchorId.docx",
   "score": 0.0025,
+  "aligned": true
+ },
+ {
+  "name": "tdf121045.docx",
+  "score": 0.0024,
   "aligned": true
  },
  {
@@ -1646,11 +1641,6 @@
  },
  {
   "name": "tdf125298_crossreflink_nonascii_charlimit.docx",
-  "score": 0.0024,
-  "aligned": true
- },
- {
-  "name": "tdf107359-char-pitch.docx",
   "score": 0.0024,
   "aligned": true
  },
@@ -1826,6 +1816,11 @@
  },
  {
   "name": "tdf115094v3.docx",
+  "score": 0.0019,
+  "aligned": true
+ },
+ {
+  "name": "chtoutline.docx",
   "score": 0.0019,
   "aligned": true
  },
@@ -3015,6 +3010,11 @@
   "aligned": true
  },
  {
+  "name": "tdf107359-char-pitch.docx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
   "name": "num-override-lvltext.docx",
   "score": 0.0002,
   "aligned": true
@@ -3290,6 +3290,11 @@
   "aligned": true
  },
  {
+  "name": "sdt-duplicated-id.docx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
   "name": "sdt-before-field.docx",
   "score": 0.0001,
   "aligned": true
@@ -3366,11 +3371,6 @@
  },
  {
   "name": "rprchange_closed.docx",
-  "score": 0.0001,
-  "aligned": true
- },
- {
-  "name": "sdt-duplicated-id.docx",
   "score": 0.0001,
   "aligned": true
  },
@@ -3665,6 +3665,11 @@
   "aligned": true
  },
  {
+  "name": "checkbox-control.docx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
   "name": "rhbz988516.docx",
   "score": 0.0001,
   "aligned": true
@@ -3806,11 +3811,6 @@
  },
  {
   "name": "FDO74105.docx",
-  "score": 0,
-  "aligned": true
- },
- {
-  "name": "checkbox-control.docx",
   "score": 0,
   "aligned": true
  },
