@@ -64,6 +64,7 @@ const PROP_FILL_TYPE = 0x0180; // OPT fillType — MSOFILLTYPE (PPT-9)
 const PROP_FILL_COLOR = 0x0181; // OPT fillColor (PPT-5)
 const PROP_FILL_BACK_COLOR = 0x0183; // OPT fillBackColor — the gradient's far end
 const PROP_FILL_ANGLE = 0x018b; // OPT fillAngle — 16.16 fixed degrees
+const PROP_FILL_BLIP = 0x0186; // OPT fillBlip — a picture fill's store index (PPT-12)
 const PROP_LINE_COLOR = 0x01c0; // OPT lineColor (PPT-5)
 // Freeform geometry OPT properties (§2.3.6 / [MS-ODRAW]); the bounds are simple
 // LONGs, the vertices / segment info complex array properties (PPT-7).
@@ -205,9 +206,24 @@ export interface PptShape {
   readonly image?: PptImage;
   readonly autoShape?: PptAutoShape;
 }
-/** One slide: its shapes in document order. */
+/**
+ * A slide's background (PPT-12) — the fill on the shape MS-ODRAW marks with
+ * `fBackground`. A `.ppt` states it as a shape like any other; drawn as one it
+ * would be a rectangle among the content, and dropped it leaves a black slide
+ * white.
+ */
+export interface PptBackground {
+  /** A solid fill's colour, as 6-hex RGB. */
+  readonly fillColorHex?: string;
+  /** A shaded fill, in the same terms an autoshape's is (PPT-9). */
+  readonly gradient?: PptAutoShape['gradient'];
+  /** A picture fill, stretched over the slide. */
+  readonly image?: PptImage;
+}
+/** One slide: its shapes in document order, over its background. */
 export interface PptSlide {
   readonly shapes: ReadonlyArray<PptShape>;
+  readonly background?: PptBackground;
 }
 // The document-level picture store (FBSE offsets into the Pictures stream) plus the
 // Pictures stream itself — threaded into the slide walks to resolve shape blips.
@@ -341,7 +357,7 @@ function shapeHasText(sh: PptShape): boolean {
   return sh.paragraphs?.some((p) => paragraphText(p).length > 0) ?? false;
 }
 
-// A slide's shapes: the positioned text boxes and pictures from its drawing, with
+// A slide's drawing: the positioned text boxes and pictures, its background, and
 // a reading-order text fallback (whole-slide inline text, else the outline) added
 // as an un-anchored shape when no shape carries text.
 function slideShapes(
@@ -350,14 +366,14 @@ function slideShapes(
   outline: ReadonlyArray<ReadonlyArray<PptParagraph>>,
   scheme: SchemeColors | undefined,
   defaults?: MasterDefaults,
-): Array<PptShape> {
-  const shapes = collectShapes(slideData, img, scheme, outline, defaults);
-  if (!shapes.some(shapeHasText)) {
+): DrawingContent {
+  const content = collectShapes(slideData, img, scheme, outline, defaults);
+  if (!content.shapes.some(shapeHasText)) {
     const inline = collectParagraphs(slideData, 0, defaults);
     const text = inline.some((p) => paragraphText(p).length > 0) ? inline : outline.flat();
-    if (text.some((p) => paragraphText(p).length > 0)) shapes.push({ paragraphs: text });
+    if (text.some((p) => paragraphText(p).length > 0)) content.shapes.push({ paragraphs: text });
   }
-  return shapes;
+  return content;
 }
 
 // Build the persist-id → offset map and the document's persist id. The edits form
@@ -448,12 +464,13 @@ function readSlideList(
       styledParagraphs(e.rec, e.style, levelStyles(defaults, e.textType)),
     );
     const flat = texts.flat();
-    const shapes = isSlide
+    const content: DrawingContent = isSlide
       ? slideShapes(slideRec.data, img, texts, resolveScheme(slideRec.data, masters), defaults)
-      : flat.some((p) => paragraphText(p).length > 0)
-        ? [{ paragraphs: flat }]
-        : [];
-    slides.push({ shapes });
+      : { shapes: flat.some((p) => paragraphText(p).length > 0) ? [{ paragraphs: flat }] : [] };
+    // §2.4.24 fMasterBackground: the slide shows the one its master states.
+    const background =
+      content.background ?? (isSlide ? masterBackground(slideRec.data, masters, img) : undefined);
+    slides.push({ shapes: content.shapes, ...(background ? { background } : {}) });
     outline = [];
     pendingRef = undefined;
   };
@@ -551,7 +568,11 @@ function collectSlides(
   if (depth > MAX_DEPTH) return;
   for (const rec of records(d)) {
     if (rec.type === RT_SLIDE) {
-      out.push({ shapes: slideShapes(rec.data, img, [], resolveScheme(rec.data)) });
+      const content = slideShapes(rec.data, img, [], resolveScheme(rec.data));
+      out.push({
+        shapes: content.shapes,
+        ...(content.background ? { background: content.background } : {}),
+      });
     } else if (rec.isContainer) collectSlides(rec.data, out, img, depth + 1);
   }
 }
@@ -657,16 +678,22 @@ function collectShapes(
   scheme: SchemeColors | undefined,
   outline: ReadonlyArray<ReadonlyArray<PptParagraph>> = [],
   defaults?: MasterDefaults,
-): Array<PptShape> {
-  const out: Array<PptShape> = [];
+): DrawingContent {
+  const out: DrawingContent = { shapes: [] };
   collectShapeContainers(slideData, img, out, 0, scheme, outline, defaults);
   return out;
+}
+
+/** What one drawing container holds: its shapes, and the slide's background. */
+interface DrawingContent {
+  shapes: Array<PptShape>;
+  background?: PptBackground;
 }
 
 function collectShapeContainers(
   d: Uint8Array,
   img: ImageContext,
-  out: Array<PptShape>,
+  out: DrawingContent,
   depth: number,
   scheme: SchemeColors | undefined,
   outline: ReadonlyArray<ReadonlyArray<PptParagraph>>,
@@ -684,6 +711,8 @@ function collectShapeContainers(
       let lineColorHex: string | undefined;
       let gradient: PptAutoShape['gradient'];
       let geometry: PptCustomGeometry | undefined;
+      let fillType: number | undefined;
+      let fillBlip: number | undefined;
       for (const child of records(r.data)) {
         if (child.type === FBT_FSP) {
           shapeType = child.instance;
@@ -697,13 +726,23 @@ function collectShapeContainers(
           lineColorHex = optColor(child.data, child.instance, PROP_LINE_COLOR, scheme);
           gradient = parseFillGradient(child.data, child.instance, fillColorHex, scheme);
           geometry = parseFreeformGeometry(child.data, child.instance);
+          fillType = optProperty(child.data, child.instance, PROP_FILL_TYPE);
+          fillBlip = optProperty(child.data, child.instance, PROP_FILL_BLIP);
         }
       }
-      let image: PptImage | undefined;
-      if (pib !== undefined && pib >= 1 && pib <= img.foDelays.length) {
-        const bytes = readBlipBytes(img.pictures, img.foDelays[pib - 1]!);
-        if (bytes) image = { bytes };
+      const blip = (index: number | undefined): PptImage | undefined => {
+        if (index === undefined || index < 1 || index > img.foDelays.length) return undefined;
+        const bytes = readBlipBytes(img.pictures, img.foDelays[index - 1]!);
+        return bytes ? { bytes } : undefined;
+      };
+      if ((fspFlags & FSP_FLAG_BACKGROUND) !== 0) {
+        // The background is the SLIDE's, not a shape on it: it is recorded once
+        // and the rest of this container is not content.
+        const bg = slideBackground(fillColorHex, gradient, fillType, blip(fillBlip));
+        if (bg && !out.background) out.background = bg;
+        continue;
       }
+      const image: PptImage | undefined = blip(pib);
       const textParas =
         paragraphs && paragraphs.some((p) => paragraphText(p).length > 0) ? paragraphs : undefined;
       // A decorative autoshape: an anchored shape with a preset type (or its own
@@ -727,7 +766,7 @@ function collectShapeContainers(
             }
           : undefined;
       if (textParas || image || autoShape) {
-        out.push({
+        out.shapes.push({
           ...(rectPt ? { rectPt } : {}),
           ...(textParas ? { paragraphs: textParas } : {}),
           ...(image ? { image } : {}),
@@ -843,6 +882,27 @@ function buildMasterIdMap(docData: Uint8Array): Map<number, number> {
   return out;
 }
 
+// §2.4.24 SlideAtom.slideFlags.fMasterBackground — the slide draws the
+// background its master states rather than one of its own.
+const SLIDE_FLAG_MASTER_BACKGROUND = 0x0004;
+
+// The background of the master a slide follows, when the slide states none of
+// its own and its flags say to take it.
+function masterBackground(
+  slideData: Uint8Array,
+  ctx: MasterContext,
+  img: ImageContext,
+): PptBackground | undefined {
+  const slideAtom = findChild(slideData, (r) => r.type === RT_SLIDE_ATOM);
+  if (!slideAtom || slideAtom.length < 22) return undefined;
+  if ((u16(slideAtom, 20) & SLIDE_FLAG_MASTER_BACKGROUND) === 0) return undefined;
+  const id = u32(slideAtom, 12);
+  const off = ctx.persist.get(ctx.byMasterId.get(id) ?? id);
+  const rec = off !== undefined ? recordAt(ctx.stream, off) : undefined;
+  if (!rec || (rec.type !== RT_MAIN_MASTER && rec.type !== RT_SLIDE)) return undefined;
+  return collectShapes(rec.data, img, resolveScheme(rec.data, ctx)).background;
+}
+
 // The chain of masters a slide inherits from, nearest first: a title master is
 // itself a SlideContainer that follows the main master, so the walk is a loop.
 function masterChain(slideData: Uint8Array, ctx: MasterContext | undefined): MasterDefaults {
@@ -899,6 +959,21 @@ function clientTextboxParagraphs(
   const ref = findChild(d, (r) => r.type === RT_OUTLINE_TEXT_REF_ATOM);
   if (!ref || ref.length < 4) return own;
   return [...(outline[u32(ref, 0)] ?? [])];
+}
+
+// §2.3.7.1 MSOFILLTYPE 3 is a picture stretched over the shape — for the
+// background shape, over the slide. Anything else is read as the solid colour or
+// the shade already parsed; a background that states none is left to the page.
+function slideBackground(
+  fillColorHex: string | undefined,
+  gradient: PptAutoShape['gradient'],
+  fillType: number | undefined,
+  image: PptImage | undefined,
+): PptBackground | undefined {
+  if (fillType === 3 && image) return { image };
+  if (gradient) return { gradient };
+  if (fillColorHex) return { fillColorHex };
+  return undefined;
 }
 
 // OfficeArtClientAnchor (§2.7.1/§2.7.2) → the shape's rectangle in points. The

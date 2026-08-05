@@ -793,3 +793,37 @@ describe('ppt master text styles (PPT-11)', () => {
     expect(slide.shapes[0]?.paragraphs?.[0]?.runs[0]?.sizePt).toBe(44);
   });
 });
+
+describe('ppt slide background (PPT-12)', () => {
+  // MS-ODRAW marks the background with `fBackground` on a shape like any other.
+  // Read as content it is a rectangle among the slide's shapes; dropped, as it
+  // was, a slide PowerPoint paints black comes out white — and on 41246-2 that
+  // is 95 % of the page.
+  const deck = (): Uint8Array =>
+    buildPpt([
+      {
+        boxes: [
+          { shapeType: 1, background: true, fillColorHex: '000000' },
+          { anchor: { x: 100, y: 80, w: 200, h: 60 }, text: 'Fin' },
+        ],
+      },
+    ]);
+
+  it('reads it as the slide’s background, not as a shape on the slide', () => {
+    const slide = extractPptContent(deck()).slides[0]!;
+    expect(slide.background).toEqual({ fillColorHex: '000000' });
+    expect(slide.shapes.map((s) => s.paragraphs?.map(paragraphText).join(''))).toEqual(['Fin']);
+  });
+
+  it('paints it behind the content, over the whole page', () => {
+    const doc = readPpt(deck()).doc;
+    const backdrop = doc.body.find((el) => el.kind === 'shape' && el.shape.float?.behind === true);
+    expect(backdrop?.kind === 'shape' ? backdrop.shape.fill : undefined).toEqual({
+      kind: 'solid',
+      colorHex: '000000',
+    });
+    expect(backdrop?.kind === 'shape' ? backdrop.shape.width : undefined).toEqual(
+      doc.section?.pageSize?.width,
+    );
+  });
+});

@@ -34,9 +34,11 @@ import type {
 } from '@/core/document-model';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
+import type { Pt } from '@/core/ir/units';
 import type { Loss } from '@/core/ir';
 import type {
   PptAutoShape,
+  PptBackground,
   PptContent,
   PptCustomGeometry,
   PptImage,
@@ -107,7 +109,7 @@ export function readPpt(bytes: Uint8Array): ReadResult<FlowDoc> {
   const width = pt(content.slideWidthPt ?? DEFAULT_SLIDE_W);
   const height = pt(content.slideHeightPt ?? DEFAULT_SLIDE_H);
   const resources = new ResourceStore();
-  const body = buildBody(content, resources);
+  const body = buildBody(content, resources, width, height);
 
   const doc: FlowDoc = {
     kind: 'flow',
@@ -135,12 +137,23 @@ export function readPpt(bytes: Uint8Array): ReadResult<FlowDoc> {
 // flows in reading order. The page break sits on a paragraph (the layout honors it
 // only there): an in-flow-first slide breaks on its first paragraph, a floating-
 // only slide gets a breaking anchor paragraph to force its page.
-function buildBody(content: PptContent, resources: ResourceStore): Array<BodyElement> {
+function buildBody(
+  content: PptContent,
+  resources: ResourceStore,
+  pageW: Pt,
+  pageH: Pt,
+): Array<BodyElement> {
   const body: Array<BodyElement> = [];
   content.slides.forEach((slide, slideIndex) => {
     const inFlowParas: Array<BodyElement> = [];
     const inFlowImages: Array<BodyElement> = [];
     const floats: Array<BodyElement> = [];
+    // The background is laid first and behind: everything the slide draws sits
+    // on it, and the page itself shows through only where there is none.
+    if (slide.background) {
+      const backdrop = slideBackdrop(slide.background, resources, pageW, pageH);
+      if (backdrop) floats.push(backdrop);
+    }
     for (const shape of slide.shapes) {
       if (shape.rectPt) {
         if (shape.paragraphs?.some((p) => paragraphText(p).length > 0)) {
@@ -205,6 +218,53 @@ function flowParagraph(para: PptParagraph): BodyElement {
     kind: 'paragraph',
     paragraph: { properties: toParaProperties(para, false), runs: para.runs.map(toRun) },
   };
+}
+
+// A slide's background → a page-sized shape behind the content. A picture
+// background is stretched over the whole slide, which is what `stretch` means.
+function slideBackdrop(
+  bg: PptBackground,
+  resources: ResourceStore,
+  pageW: Pt,
+  pageH: Pt,
+): BodyElement | undefined {
+  const fill = backdropFill(bg, resources);
+  if (!fill) return undefined;
+  return {
+    kind: 'shape',
+    shape: {
+      float: {
+        wrap: 'none',
+        behind: true,
+        posH: { relativeFrom: 'page', offsetPt: pt(0) },
+        posV: { relativeFrom: 'page', offsetPt: pt(0) },
+      },
+      width: pageW,
+      height: pageH,
+      geometry: { kind: 'preset', preset: 'rect', adjust: new Map() },
+      fill,
+      paragraphProperties: {},
+    },
+  };
+}
+
+function backdropFill(bg: PptBackground, resources: ResourceStore): ShapeFill | undefined {
+  if (bg.image) {
+    return { kind: 'picture', imageResource: resources.put(bg.image.bytes) };
+  }
+  if (bg.gradient) {
+    const stops = [
+      { offset: 0, colorHex: bg.gradient.fromHex },
+      { offset: 1, colorHex: bg.gradient.toHex },
+    ];
+    return {
+      kind: 'gradient',
+      gradient: bg.gradient.radial
+        ? { kind: 'radial', stops }
+        : { kind: 'linear', angle: bg.gradient.angleDeg, stops },
+    };
+  }
+  return bg.fillColorHex ? { kind: 'solid', colorHex: bg.fillColorHex } : undefined;
 }
 
 // A page-relative float anchor at the shape's slide rectangle (slide coords = page

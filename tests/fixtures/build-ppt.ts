@@ -53,6 +53,7 @@ const PROP_GEO_RIGHT = 0x0142;
 const PROP_GEO_BOTTOM = 0x0143;
 const PROP_VERTICES_COMPLEX = 0x8145; // pVertices (0x0145) with the fComplex flag (0x8000)
 const PROP_SEGMENT_INFO_COMPLEX = 0x8146; // pSegmentInfo (0x0146) with fComplex
+const FSP_FLAG_BACKGROUND = 0x0400; // OfficeArtFSP.fBackground
 const MASTER_PER_POINT = 8; // 576 master units / inch ÷ 72 points / inch
 
 const TOKEN_UNENCRYPTED = 0xe391c05f;
@@ -122,6 +123,8 @@ export interface PptBoxInput {
   readonly imageRef?: number; // a picture shape (1-based pib index)
   readonly shapeType?: number; // an autoshape: the FSP recInstance (MSOSPT)
   readonly fillColorHex?: string; // OPT fillColor (6-hex literal RGB)
+  // MS-ODRAW fBackground: the shape states the SLIDE's background, not content.
+  readonly background?: boolean;
   readonly lineColorHex?: string; // OPT lineColor (6-hex literal RGB)
   readonly fillSchemeIndex?: number; // OPT fillColor as a scheme index (0–7), PPT-6
   readonly lineSchemeIndex?: number; // OPT lineColor as a scheme index (0–7), PPT-6
@@ -440,7 +443,9 @@ function imageShapeContainer(pib: number): Uint8Array {
 function buildShapeContainer(box: PptBoxInput): Uint8Array {
   const parts: Array<Uint8Array> = [];
   if (box.shapeType !== undefined) {
-    parts.push(rec(FBT_FSP, box.shapeType, false, new Uint8Array(8))); // spid + flags (0)
+    const fsp = new Uint8Array(8); // spid + flags
+    if (box.background) new DataView(fsp.buffer).setUint32(4, FSP_FLAG_BACKGROUND, true);
+    parts.push(rec(FBT_FSP, box.shapeType, false, fsp));
   }
   const props: Array<{ id: number; value: number; blob?: Uint8Array }> = [];
   if (box.imageRef !== undefined) props.push({ id: PROP_PIB_ID, value: box.imageRef });
