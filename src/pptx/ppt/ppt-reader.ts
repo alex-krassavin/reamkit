@@ -221,8 +221,18 @@ function pushSlide(
 function flowParagraph(para: PptParagraph): BodyElement {
   return {
     kind: 'paragraph',
-    paragraph: { properties: toParaProperties(para, false), runs: para.runs.map(toRun) },
+    paragraph: { properties: toParaProperties(para, false), runs: bulletedRuns(para) },
   };
+}
+
+// §2.9.20 — a bulleted paragraph draws its bullet before its words. Stated as a
+// character rather than a list, it goes in front as one, which is what every
+// reader shows and what the outline levels are indented for.
+function bulletedRuns(para: PptParagraph): Array<Run> {
+  const runs = para.runs.map(toRun);
+  if (para.bullet === undefined) return runs;
+  const { bold: _b, italic: _i, ...rest } = runs[0]?.properties ?? {};
+  return [{ text: `${para.bullet} `, properties: rest }, ...runs];
 }
 
 // A slide's background → a page-sized shape behind the content. A picture

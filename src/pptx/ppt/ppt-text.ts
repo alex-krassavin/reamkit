@@ -27,6 +27,7 @@
 // failure — structural doubt yields missing content, never wrong content —
 // mirroring the `.doc`/`.xls` readers.
 
+import { fromSymbolFont } from '@/core/metafile/symbol-fonts';
 import { isCfb, openCfb } from '@/core/ole/cfb';
 import { readEscherBlip } from '@/core/ole/escher-blip';
 
@@ -140,6 +141,12 @@ export interface PptParagraph {
   readonly align?: number;
   /** The 0-based outline/indent level. */
   readonly level?: number;
+  /**
+   * §2.9.20 — the bullet character this paragraph is marked with, already
+   * translated out of whatever symbol font stated it. Absent when the paragraph
+   * carries none.
+   */
+  readonly bullet?: string;
 }
 /**
  * An embedded picture referenced by a slide shape — the raw image bytes pulled
@@ -877,6 +884,8 @@ function collectShapeContainers(
  */
 interface LevelStyle extends CharProps {
   align?: number;
+  bullet?: string;
+  bulletOn?: boolean;
 }
 /** A master's defaults, by text type (TextHeaderAtom) and indent level. */
 type MasterDefaults = (textType: number, level: number) => LevelStyle | undefined;
@@ -921,7 +930,12 @@ function readMasterLevels(
     const cf = readCfException(d, pf.off, undefined); // the SLIDE's scheme resolves it
     if (cf.off > d.length) break;
     off = cf.off;
-    styles.push({ ...cf.props, ...(pf.align !== undefined ? { align: pf.align } : {}) });
+    styles.push({
+      ...cf.props,
+      ...(pf.align !== undefined ? { align: pf.align } : {}),
+      ...(pf.bullet !== undefined ? { bullet: pf.bullet } : {}),
+      ...(pf.bulletOn !== undefined ? { bulletOn: pf.bulletOn } : {}),
+    });
   }
   return { styles, off };
 }
@@ -952,10 +966,11 @@ function masterDefaults(
         const at = levels?.[Math.min(level, levels.length - 1)];
         if (!at) continue;
         // A variant that the master does not define takes the plain style's
-        // METRICS, not its colour: 41071's subtitle is 36pt because its run says
-        // so, and black because no style claims it — lending the body style's
-        // navy there painted a title every reader draws in black.
-        const { colorHex: _c, colorIndex: _i, ...metrics } = at;
+        // METRICS, not its colour and not its bullet: 41071's subtitle is 36pt
+        // because its run says so, and black and unbulleted because no style
+        // claims it — lending the body style's navy and its dot there painted a
+        // title every reader draws as a plain black line.
+        const { colorHex: _c, colorIndex: _i, bullet: _b, bulletOn: _o, ...metrics } = at;
         const from = t === textType ? at : metrics;
         merged = { ...from, ...merged }; // the nearer statement wins
       }
@@ -1522,6 +1537,9 @@ interface ParaRun {
   count: number;
   align?: number;
   level?: number;
+  bullet?: string;
+  /** The paragraph states `fHasBullet` — true says draw one, false says do not. */
+  bulletOn?: boolean;
 }
 
 /** The concatenated plain text of a paragraph's runs. */
@@ -1564,10 +1582,15 @@ function buildStyledParagraphs(
     // draws it black.
     const lvl = defaults?.(meta?.level ?? 0);
     const align = meta?.align ?? lvl?.align;
+    // The paragraph decides WHETHER it is bulleted; the master decides WITH
+    // WHAT when the paragraph names no character of its own.
+    const on = meta?.bulletOn ?? lvl?.bulletOn ?? false;
+    const bullet = on ? (meta?.bullet ?? lvl?.bullet ?? '•') : undefined;
     paras.push({
       runs: lvl ? runs.map((r) => inherit(r, lvl)) : runs,
       ...(align !== undefined ? { align } : {}),
       ...(meta?.level !== undefined ? { level: meta.level } : {}),
+      ...(bullet !== undefined ? { bullet } : {}),
     });
     runs = [];
     paraIndex++;
@@ -1660,7 +1683,13 @@ function parseStyleTextProp(
     const level = u16(data, off + 4);
     const pf = readPfException(data, off + 6);
     off = pf.off;
-    paraRuns.push({ count, level, ...(pf.align !== undefined ? { align: pf.align } : {}) });
+    paraRuns.push({
+      count,
+      level,
+      ...(pf.align !== undefined ? { align: pf.align } : {}),
+      ...(pf.bullet !== undefined ? { bullet: pf.bullet } : {}),
+      ...(pf.bulletOn !== undefined ? { bulletOn: pf.bulletOn } : {}),
+    });
     consumed += count;
     if (count <= 0) break;
   }
@@ -1683,12 +1712,28 @@ function parseStyleTextProp(
 // §2.9.20 TextPFException: a 4-byte mask then the fields whose bits it sets, in
 // the spec's byte order (NOT bit-ascending). Every present field is stepped over
 // even when it is dropped, or the ones after it read from the wrong place.
-function readPfException(data: Uint8Array, start: number): { off: number; align?: number } {
+function readPfException(
+  data: Uint8Array,
+  start: number,
+): {
+  off: number;
+  align?: number;
+  bullet?: string;
+  bulletOn?: boolean;
+} {
   const mask = u32(data, start);
   let off = start + 4;
   let align: number | undefined;
-  if ((mask & 0x0000000f) !== 0) off += 2; // bulletFlags
-  if ((mask & 0x00000080) !== 0) off += 2; // bulletChar
+  let bulletOn: boolean | undefined;
+  let bullet: string | undefined;
+  if ((mask & 0x0000000f) !== 0) {
+    bulletOn = (u16(data, off) & 0x0001) !== 0; // bulletFlags.fHasBullet
+    off += 2;
+  }
+  if ((mask & 0x00000080) !== 0) {
+    bullet = bulletCharacter(u16(data, off));
+    off += 2;
+  }
   if ((mask & 0x00000010) !== 0) off += 2; // bulletFontRef
   if ((mask & 0x00000040) !== 0) off += 2; // bulletSize
   if ((mask & 0x00000020) !== 0) off += 4; // bulletColor
@@ -1706,7 +1751,22 @@ function readPfException(data: Uint8Array, start: number): { off: number; align?
   if ((mask & 0x00010000) !== 0) off += 2; // fontAlign
   if ((mask & 0x000e0000) !== 0) off += 2; // wrapFlags (charWrap/wordWrap/overflow)
   if ((mask & 0x00200000) !== 0) off += 2; // textDirection
-  return align !== undefined ? { off, align } : { off };
+  return {
+    off,
+    ...(align !== undefined ? { align } : {}),
+    ...(bullet !== undefined ? { bullet } : {}),
+    ...(bulletOn !== undefined ? { bulletOn } : {}),
+  };
+}
+
+// A bullet is stated as a CHARACTER, and most often as one from a symbol font:
+// Wingdings 0x6C is the filled circle every deck uses. Left untranslated it
+// renders as the letter `l`. A codepoint already in Unicode's own ranges is
+// taken as it stands.
+function bulletCharacter(code: number): string | undefined {
+  if (code === 0) return undefined;
+  const ch = String.fromCharCode(code);
+  return code < 0x2000 || (code >= 0xf000 && code <= 0xf0ff) ? fromSymbolFont(ch, 'Wingdings') : ch;
 }
 
 // §2.9.11 TextCFException, read the same way: the mask, then its fields in byte

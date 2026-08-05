@@ -1094,3 +1094,40 @@ describe('ppt master background precedence (PPT-17)', () => {
     });
   });
 });
+
+describe('ppt bullets (PPT-18)', () => {
+  // §2.9.20 states a bullet as a CHARACTER, and most often as one from a symbol
+  // font — Wingdings 0x6C is the filled circle every deck uses. Left alone it
+  // renders as the letter `l`; dropped, as it was, a list is a stack of lines.
+  const bulletDeck = (charCode: number, hasBullet = true): Uint8Array =>
+    buildPpt([
+      {
+        text: 'One\rTwo',
+        paraRuns: [
+          { length: 3, hasBullet, bulletChar: charCode },
+          { length: 3, hasBullet, bulletChar: charCode },
+        ],
+      },
+    ]);
+
+  it('translates a symbol-font bullet into the character it means', () => {
+    const paras = extractPptContent(bulletDeck(0x6c)).slides[0]!.shapes[0]!.paragraphs!;
+    expect(paras.map((p) => p.bullet)).toEqual(['●', '●']);
+    // …and it is drawn in front of the words.
+    const doc = readPpt(bulletDeck(0x6c)).doc;
+    const first = doc.body.find((el) => el.kind === 'paragraph');
+    expect(first?.kind === 'paragraph' ? first.paragraph.runs[0]?.text : undefined).toBe('● ');
+  });
+
+  it('keeps a bullet that is already Unicode’s own', () => {
+    expect(extractPptContent(bulletDeck(0x2022)).slides[0]!.shapes[0]!.paragraphs![0]?.bullet).toBe(
+      '•',
+    );
+  });
+
+  it('draws none when the paragraph says it has none', () => {
+    expect(
+      extractPptContent(bulletDeck(0x6c, false)).slides[0]!.shapes[0]!.paragraphs![0]?.bullet,
+    ).toBeUndefined();
+  });
+});

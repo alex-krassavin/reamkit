@@ -92,6 +92,10 @@ export interface PptParaStyleRun {
   readonly length: number;
   readonly align?: number; // TextAlignmentEnum: 0 left, 1 center, 2 right, 3 justify, 4 distribute
   readonly level?: number; // indent level 0–4
+  // §2.9.20 bulletFlags.fHasBullet + bulletChar (the character, often a symbol
+  // font's — Wingdings 0x6C is the filled circle).
+  readonly hasBullet?: boolean;
+  readonly bulletChar?: number;
 }
 
 export interface PptSlideInput {
@@ -276,8 +280,14 @@ function buildStyleTextProp(
   paraRuns.forEach((r, i) => {
     u32(r.length + (i === paraRuns.length - 1 ? 1 : 0)); // count (+ phantom terminator)
     u16(r.level ?? 0); // indentLevel
-    const mask = r.align !== undefined ? 0x00000800 : 0; // textAlignment bit
+    const mask =
+      (r.align !== undefined ? 0x00000800 : 0) | // textAlignment bit
+      (r.hasBullet !== undefined ? 0x00000001 : 0) | // bulletFlags
+      (r.bulletChar !== undefined ? 0x00000080 : 0); // bulletChar
     u32(mask);
+    // The fields follow the mask in the SPEC's byte order, not bit order.
+    if (r.hasBullet !== undefined) u16(r.hasBullet ? 0x0001 : 0);
+    if (r.bulletChar !== undefined) u16(r.bulletChar);
     if (r.align !== undefined) u16(r.align);
   });
 
