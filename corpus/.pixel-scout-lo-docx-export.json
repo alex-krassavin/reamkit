@@ -75,6 +75,11 @@
   "aligned": true
  },
  {
+  "name": "NoFillAttrInImagedata.docx",
+  "score": 0.0817,
+  "aligned": true
+ },
+ {
   "name": "tdf104061_tableSectionColumns.docx",
   "score": 0.0805,
   "aligned": true
@@ -87,11 +92,6 @@
  {
   "name": "paragraphWithComments.docx",
   "score": 0.0736,
-  "aligned": true
- },
- {
-  "name": "NoFillAttrInImagedata.docx",
-  "score": 0.0735,
   "aligned": true
  },
  {
@@ -265,11 +265,6 @@
   "aligned": true
  },
  {
-  "name": "imgshadow.docx",
-  "score": 0.0278,
-  "aligned": true
- },
- {
   "name": "TC-table-rowDND.docx",
   "score": 0.027,
   "aligned": true
@@ -365,11 +360,6 @@
   "aligned": true
  },
  {
-  "name": "shape-effect-preservation.docx",
-  "score": 0.0178,
-  "aligned": true
- },
- {
   "name": "tdf120338.docx",
   "score": 0.0177,
   "aligned": true
@@ -382,6 +372,11 @@
  {
   "name": "tdf116410.docx",
   "score": 0.0173,
+  "aligned": true
+ },
+ {
+  "name": "fdo73247.docx",
+  "score": 0.0169,
   "aligned": true
  },
  {
@@ -400,13 +395,13 @@
   "aligned": true
  },
  {
-  "name": "fdo73247.docx",
-  "score": 0.0166,
+  "name": "tdf126533_axialAngle.docx",
+  "score": 0.0162,
   "aligned": true
  },
  {
-  "name": "tdf126533_axialAngle.docx",
-  "score": 0.0162,
+  "name": "shape-effect-preservation.docx",
+  "score": 0.016,
   "aligned": true
  },
  {
@@ -450,6 +445,11 @@
   "aligned": true
  },
  {
+  "name": "gradient-fill-preservation.docx",
+  "score": 0.0151,
+  "aligned": true
+ },
+ {
   "name": "custom-styles-TOC-comma.docx",
   "score": 0.015,
   "aligned": true
@@ -487,6 +487,11 @@
  {
   "name": "fdo73215.docx",
   "score": 0.0138,
+  "aligned": true
+ },
+ {
+  "name": "imgshadow.docx",
+  "score": 0.0136,
   "aligned": true
  },
  {
@@ -670,11 +675,6 @@
   "aligned": true
  },
  {
-  "name": "gradient-fill-preservation.docx",
-  "score": 0.0097,
-  "aligned": true
- },
- {
   "name": "inheritFirstHeader.docx",
   "score": 0.0097,
   "aligned": false
@@ -755,11 +755,6 @@
   "aligned": true
  },
  {
-  "name": "tdf120760_ZOrderInHeader.docx",
-  "score": 0.0084,
-  "aligned": true
- },
- {
   "name": "tdf109184.docx",
   "score": 0.0078,
   "aligned": true
@@ -836,6 +831,11 @@
  },
  {
   "name": "tdf125546.docx",
+  "score": 0.0067,
+  "aligned": true
+ },
+ {
+  "name": "tdf120760_ZOrderInHeader.docx",
   "score": 0.0067,
   "aligned": true
  },
@@ -1350,11 +1350,6 @@
   "aligned": true
  },
  {
-  "name": "dml-gradientfill-theme.docx",
-  "score": 0.0033,
-  "aligned": true
- },
- {
   "name": "tdf129575-directAfter.docx",
   "score": 0.0032,
   "aligned": true
@@ -1441,6 +1436,11 @@
  },
  {
   "name": "TableWithAboveCaptions.docx",
+  "score": 0.0029,
+  "aligned": true
+ },
+ {
+  "name": "dml-gradientfill-theme.docx",
   "score": 0.0029,
   "aligned": true
  },
@@ -1601,11 +1601,6 @@
  },
  {
   "name": "tdf124604.docx",
-  "score": 0.0025,
-  "aligned": true
- },
- {
-  "name": "AnchorId.docx",
   "score": 0.0025,
   "aligned": true
  },
@@ -2311,6 +2306,11 @@
  },
  {
   "name": "TextEffects_StylisticSets_CntxtAlts.docx",
+  "score": 0.001,
+  "aligned": true
+ },
+ {
+  "name": "AnchorId.docx",
   "score": 0.001,
   "aligned": true
  },

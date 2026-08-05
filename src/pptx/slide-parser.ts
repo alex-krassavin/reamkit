@@ -290,29 +290,47 @@ function parseSp(sp: PoNode, ctx: SlideContext, transform: GroupTransform): Shap
   // tdf95932's slide holds one placeholder with a word in it; the green
   // rounded panel it sits on, and the white the word is written in, are both
   // the layout's, and without the panel the word was white on white.
-  const proto = ph && ctx.cascade ? ctx.cascade.shapePropsFor(ph) : undefined;
-  const geomFrom = spPr && statesGeometry(spPr) ? spPr : (proto ?? spPr);
+  const protos = ph && ctx.cascade ? ctx.cascade.shapePropsFor(ph) : [];
+  // Per PROPERTY, nearest first: the shape's own, then the layout's prototype,
+  // then the master's. A prototype that states a box and nothing else must not
+  // stop the search for a fill.
+  const from = (states: (n: PoNode) => boolean): PoNode | undefined =>
+    spPr && states(spPr) ? spPr : (protos.find(states) ?? spPr);
+  /** What the shape states ITSELF, before anything is inherited. */
+  const stated = (states: (n: PoNode) => boolean): PoNode | undefined =>
+    spPr && states(spPr) ? spPr : undefined;
+  /** …and what a prototype lends it, nearest first. */
+  const lent = (states: (n: PoNode) => boolean): PoNode | undefined => protos.find(states);
+  const geomFrom = from(statesGeometry);
   const geometry = parseGeometry(geomFrom);
   // §19.3.1.43 `p:sp@useBgFill` — the shape is filled with the SLIDE's
   // background, which is how a deck cuts a hole in the decoration above it:
   // tdf93868's master lays a white rectangle over the whole slide and then a
   // rounded one on top that lets the slide's black gradient back through.
   const useBgFill = poAttr(sp, 'useBgFill') === '1';
-  const fillFrom = statesFill(spPr) ? spPr : (proto ?? spPr);
-  const fill: ShapeFill = useBgFill
-    ? backgroundThrough(ctx.backgroundFill, box, ctx.slideSize)
-    : fillFrom
-      ? parseFill(fillFrom, colors, ctx.resolveImage)
-      : { kind: 'none' };
-  const lineFrom = spPr && poChildren(spPr).some((c) => poIs(c, 'a:ln')) ? spPr : (proto ?? spPr);
-  let line = lineFrom ? parseLine(lineFrom, colors) : undefined;
   const themeStyles = ctx.themeFills
     ? { fills: ctx.themeFills.fills, bgFills: ctx.themeFills.backgrounds }
     : undefined;
-  const styled: ShapeFill =
-    style && fill.kind === 'none' && !statesFill(fillFrom)
-      ? styleRefFill(style, colors, themeStyles)
-      : fill;
+  // §19.3.1.36 — what the shape says about itself outranks what it inherits,
+  // and its `p:style` reference is one of the things it SAYS: customGeo's title
+  // names a blue gallery fill while the master's prototype is grey, and reading
+  // the prototype first painted it grey.
+  const ownFill = stated(statesFill);
+  const styleFill = style ? styleRefFill(style, colors, themeStyles) : undefined;
+  const lentFill = lent(statesFill);
+  const styled: ShapeFill = useBgFill
+    ? backgroundThrough(ctx.backgroundFill, box, ctx.slideSize)
+    : ownFill
+      ? parseFill(ownFill, colors, ctx.resolveImage)
+      : styleFill && styleFill.kind !== 'none'
+        ? styleFill
+        : lentFill
+          ? parseFill(lentFill, colors, ctx.resolveImage)
+          : spPr
+            ? parseFill(spPr, colors, ctx.resolveImage)
+            : { kind: 'none' };
+  const lineFrom = from((n) => poChildren(n).some((c) => poIs(c, 'a:ln')));
+  let line = lineFrom ? parseLine(lineFrom, colors) : undefined;
   if (style) {
     const fromStyle = styleRefLine(style, colors, ctx.themeLineWidths);
     if (fromStyle) {
@@ -324,6 +342,12 @@ function parseSp(sp: PoNode, ctx: SlideContext, transform: GroupTransform): Shap
         : fromStyle;
     }
   }
+  // §20.1.8.40 `a:outerShdw` — the shadow a shape casts, which the pptx path
+  // read for a diagram's nodes and nowhere else: 547 of them across 37 decks
+  // went undrawn. It inherits like the fill does — tdf104015's title casts the
+  // master's.
+  const shadowFrom = from((n) => poChildren(n).some((c) => poIs(c, 'a:effectLst')));
+  const shadow = shadowFrom ? parseShadow(shadowFrom, colors) : undefined;
   const visibleLine = line !== undefined && line.fill !== 'none';
   if (!text && styled.kind === 'none' && !visibleLine) return undefined;
 
@@ -341,6 +365,7 @@ function parseSp(sp: PoNode, ctx: SlideContext, transform: GroupTransform): Shap
     geometry,
     fill: styled,
     ...(line ? { line } : {}),
+    ...(shadow ? { shadow } : {}),
     ...(spin && Object.keys(spin).length > 0 ? { transform: spin } : {}),
     ...(text ? { text } : {}),
     paragraphProperties: {},

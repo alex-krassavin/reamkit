@@ -55,6 +55,11 @@
   "aligned": false
  },
  {
+  "name": "ca.ubc.cs.people_~emhill_presentations_HowWeRefactor.pptx",
+  "score": 97,
+  "aligned": false
+ },
+ {
   "name": "themes.pptx",
   "score": 0.9824,
   "aligned": true
@@ -66,7 +71,7 @@
  },
  {
   "name": "63200.pptx",
-  "score": 0.2994,
+  "score": 0.2941,
   "aligned": true
  },
  {
@@ -130,8 +135,8 @@
   "aligned": true
  },
  {
-  "name": "customGeo.pptx",
-  "score": 0.064,
+  "name": "crash-57308ca363f5b71763c489d1b432aff009d4bc4f.pptx",
+  "score": 0.065,
   "aligned": true
  },
  {
@@ -150,8 +155,8 @@
   "aligned": true
  },
  {
-  "name": "crash-57308ca363f5b71763c489d1b432aff009d4bc4f.pptx",
-  "score": 0.0529,
+  "name": "customGeo.pptx",
+  "score": 0.0499,
   "aligned": true
  },
  {
@@ -182,11 +187,6 @@
  {
   "name": "chart-picture-bg.pptx",
   "score": 0.0369,
-  "aligned": true
- },
- {
-  "name": "ca.ubc.cs.people_~emhill_presentations_HowWeRefactor.pptx",
-  "score": 0.036,
   "aligned": true
  },
  {
@@ -321,16 +321,11 @@
  },
  {
   "name": "bug65228.pptx",
-  "score": 0.0044,
+  "score": 0.0045,
   "aligned": true
  },
  {
   "name": "56812.pptx",
-  "score": 0.0039,
-  "aligned": true
- },
- {
-  "name": "prProps.pptx",
   "score": 0.0039,
   "aligned": true
  },
@@ -377,6 +372,11 @@
  {
   "name": "tika-2605.pptx",
   "score": 0.0015,
+  "aligned": true
+ },
+ {
+  "name": "prProps.pptx",
+  "score": 0.0014,
   "aligned": true
  },
  {

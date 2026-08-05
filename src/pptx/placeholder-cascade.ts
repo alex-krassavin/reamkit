@@ -56,11 +56,17 @@ export interface PlaceholderCascade {
    */
   readonly anchorFor: (ph: PlaceholderRef) => 't' | 'ctr' | 'b' | undefined;
   /**
-   * The prototype's own `p:spPr`, for the properties a slide placeholder
-   * inherits rather than states: its fill, its outline, its geometry. The
-   * layout's before the master's.
+   * The prototypes' own `p:spPr`, nearest first — the layout's, then the
+   * master's — for the properties a slide placeholder inherits rather than
+   * states: its fill, its outline, its geometry.
+   *
+   * A CHAIN and not one node, because the inheritance is per property. The
+   * layout's prototype may state a box and nothing else, and the fill then
+   * comes from the master: tdf104015's title is red in every reader and was a
+   * bare outline here, because the layout's `p:spPr` existed and stopped the
+   * search.
    */
-  readonly shapePropsFor: (ph: PlaceholderRef) => PoNode | undefined;
+  readonly shapePropsFor: (ph: PlaceholderRef) => ReadonlyArray<PoNode>;
 }
 
 /** One level of a text style: how its paragraphs sit and how their runs read. */
@@ -233,7 +239,8 @@ export function buildPlaceholderCascade(
       return matchPlaceholder(layoutPhs, ph)?.anchor ?? matchPlaceholder(masterPhs, ph)?.anchor;
     },
     shapePropsFor(ph) {
-      return matchPlaceholder(layoutPhs, ph)?.spPr ?? matchPlaceholder(masterPhs, ph)?.spPr;
+      const chain = [matchPlaceholder(layoutPhs, ph)?.spPr, matchPlaceholder(masterPhs, ph)?.spPr];
+      return chain.filter((n): n is PoNode => n !== undefined);
     },
   };
 }

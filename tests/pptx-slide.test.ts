@@ -1520,6 +1520,29 @@ describe('what a placeholder inherits from its prototype', () => {
     expect(shape?.line?.colorHex).toBe('112233');
   });
 
+  // §19.3.1.36 — the inheritance is per PROPERTY. A layout prototype that
+  // states a box and nothing else must not stop the search: tdf104015's title
+  // is red in every reader, and the red is the MASTER's, three levels up from
+  // a slide that states only a blue outline.
+  it('keeps looking past a prototype that states only some of them', () => {
+    const layoutBoxOnly =
+      `<p:sp><p:nvSpPr><p:cNvPr id="9" name="body"/><p:cNvSpPr/><p:nvPr><p:ph idx="13"/></p:nvPr>` +
+      `</p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="4572000" cy="2286000"/></a:xfrm>` +
+      `</p:spPr><p:txBody><a:bodyPr/><a:p/></p:txBody></p:sp>`;
+    const doc = Ream.parse(
+      buildPptx([slidePh], {
+        layoutMaster: { layoutSpTree: layoutBoxOnly, masterSpTree: protoRect },
+      }),
+    );
+    const shape = doc.flow.body.flatMap((e) =>
+      e.kind === 'shape' && e.shape.text ? [e.shape] : [],
+    )[0];
+    // The box is the layout's…
+    expect(shape?.width).toBe(360); // 4572000 EMU
+    // …and the fill it never states comes from the master behind it.
+    expect(shape?.fill.colorHex).toBe('76BF3D');
+  });
+
   it('…but what the slide states itself still wins', () => {
     const own = slidePh.replace(
       '<p:spPr/>',

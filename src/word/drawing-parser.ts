@@ -2840,6 +2840,7 @@ export function shadowFromOuterShdw(
   const colorHex = colorNode ? resolveColorNode(colorNode, resolveColor) : undefined;
   if (!colorHex) return undefined;
   const alphaMod = colorNode ? readColorMods(colorNode).find((m) => m.kind === 'alpha') : undefined;
+  const alpha = alphaMod ? alphaMod.val : 1;
   const dist = emuToPt(poIntAttr(shdw, 'dist') ?? 0);
   // §20.1.10.13 ST_PositiveFixedAngle — 60 000ths of a degree.
   const dirDeg = (poIntAttr(shdw, 'dir') ?? 0) / 60000;
@@ -2848,8 +2849,13 @@ export function shadowFromOuterShdw(
     dxPt: dist * Math.cos(rad),
     dyPt: dist * Math.sin(rad),
     blurPt: emuToPt(poIntAttr(shdw, 'blurRad') ?? 0),
-    colorHex,
-    alpha: alphaMod ? alphaMod.val : 1,
+    // §20.1.2.3.1 — the resolver has already composited the transparency over
+    // the paper, and the shadow carries it a second time when it paints: black
+    // at 40 % came out as 40 % of a grey that was already 60 % white, a fringe
+    // barely darker than the page. The colour the shadow wants is the one
+    // BEFORE that wash (tdf104015's master casts exactly this).
+    colorHex: alpha < 1 ? unblendWhite(colorHex, alpha) : colorHex,
+    alpha,
   };
 }
 
