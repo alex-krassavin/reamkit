@@ -95,7 +95,19 @@ export interface MetaFont {
   readonly escapement?: number;
 }
 
-export type MetaObject = MetaPen | MetaBrush | MetaFont;
+/**
+ * An object the reader does not model — a palette, a region, a pattern brush.
+ * It still OCCUPIES a slot in the metafile's object table: handles are indices
+ * into that table, so a creation the reader passed over silently shifted every
+ * one that followed. 23884's chart selects its coloured pens by handle, and one
+ * unrecorded palette put every selection one slot back — on the black pen the
+ * pens had displaced.
+ */
+export interface MetaOther {
+  readonly kind: 'other';
+}
+
+export type MetaObject = MetaPen | MetaBrush | MetaFont | MetaOther;
 
 /** The device context: everything a record draws THROUGH. */
 export interface DeviceContext {

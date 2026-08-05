@@ -302,6 +302,27 @@ function wmf(records: Array<Uint8Array>, placeableBox?: [number, number, number,
 }
 
 describe('WMF (MS-WMF)', () => {
+  it('counts an object it does not model into the handle table', () => {
+    // §2.3.4 — a handle is an INDEX into the object table, and a palette takes a
+    // slot like anything else. Passed over silently, every object created after
+    // it landed one slot low: 23884's chart selects its coloured pens by handle
+    // and drew all 736 of its contour lines in the black pen they had displaced.
+    const line = new Bytes().i16(30).i16(90).build(); // LINETO y, x
+    const palette = new Bytes().u16(0x0300).u16(1).u32(0x00ff0000).build();
+    const bytes = wmf(
+      [
+        meta(0x00f7, palette), // CREATEPALETTE — handle 0
+        meta(0x02fa, new Bytes().u16(0).i16(3).i16(0).u32(0x0000ff).build()), // red pen → 1
+        meta(0x012d, new Bytes().u16(1).build()), // SELECTOBJECT 1
+        meta(0x0214, new Bytes().i16(10).i16(10).build()), // MOVETO
+        meta(0x0213, line),
+      ],
+      [0, 0, 100, 50],
+    );
+    const drawn = readWmf(bytes).prims.filter((pr): pr is PicturePath => pr.kind === 'path');
+    expect(drawn.map((pr) => pr.stroke?.colorHex)).toEqual(['FF0000']);
+  });
+
   it('knows a metafile placeable or bare', () => {
     expect(isWmf(wmf([], [0, 0, 100, 50]))).toBe(true);
     expect(isWmf(wmf([]))).toBe(true);

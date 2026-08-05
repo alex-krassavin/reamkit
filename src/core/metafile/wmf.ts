@@ -188,6 +188,14 @@ export function readWmf(bytes: Uint8Array): MetaPicture {
       case 0x01f0: // META_DELETEOBJECT
         objects[pu(0)] = undefined;
         break;
+      // §2.3.4 — the objects the reader does not model still take a slot, or
+      // every handle created after one of them points at the wrong object.
+      case 0x00f7: // META_CREATEPALETTE
+      case 0x0142: // META_DIBCREATEPATTERNBRUSH
+      case 0x01f9: // META_CREATEPATTERNBRUSH
+      case 0x06ff: // META_CREATEREGION
+        put({ kind: 'other' });
+        break;
       case 0x02fa: // META_CREATEPENINDIRECT — style, width (POINT16), colour
         put({
           kind: 'pen',
