@@ -61,6 +61,9 @@ const FBT_OPT = 0xf00b;
 const FBT_CLIENT_TEXTBOX = 0xf00d; // OfficeArtClientTextbox — holds the PPT text atoms
 const FBT_CLIENT_ANCHOR = 0xf010; // OfficeArtClientAnchor — the slide rectangle (PPT-4)
 const FBT_CLIENT_DATA = 0xf011; // OfficeArtClientData — holds the PlaceholderAtom
+const FBT_SPGR_CONTAINER = 0xf003; // a group: its own shape first, then its children
+const FBT_SPGR = 0xf009; // the group's coordinate space, which its children live in
+const FBT_CHILD_ANCHOR = 0xf00f; // a grouped shape's rectangle, in that space
 const RT_PLACEHOLDER_ATOM = 0x0bc3; // PlaceholderAtom — this shape is a placeholder
 const PROP_PIB = 0x0104; // OPT property (low 14 bits): 1-based index into the FBSE store
 const PROP_FILL_TYPE = 0x0180; // OPT fillType — MSOFILLTYPE (PPT-9)
@@ -203,6 +206,14 @@ export interface PptAutoShape {
     readonly angleDeg: number;
     readonly radial: boolean;
   };
+  /**
+   * §2.3.7.1 MSOFILLTYPE 3 — a picture stretched over the shape, its blip named
+   * by `fillBlip`. A `.ppt` table is a group of cell rectangles, and a cell with
+   * a picture background states it exactly this way.
+   */
+  readonly image?: PptImage;
+  /** §2.3.7.1 MSOFILLTYPE 2 — the picture REPEATS at its own size, not stretched. */
+  readonly imageTiled?: boolean;
   readonly geometry?: PptCustomGeometry;
 }
 /**
@@ -233,8 +244,9 @@ export interface PptBackground {
   readonly fillColorHex?: string;
   /** A shaded fill, in the same terms an autoshape's is (PPT-9). */
   readonly gradient?: PptAutoShape['gradient'];
-  /** A picture fill, stretched over the slide. */
+  /** A picture fill, stretched over the slide (or tiled across it). */
   readonly image?: PptImage;
+  readonly imageTiled?: boolean;
 }
 /** One slide: its shapes in document order, over its background. */
 export interface PptSlide {
@@ -719,9 +731,27 @@ function collectShapeContainers(
   scheme: SchemeColors | undefined,
   outline: ReadonlyArray<ReadonlyArray<PptParagraph>>,
   defaults?: MasterDefaults,
+  group?: GroupFrame,
 ): void {
   if (depth > MAX_DEPTH) return;
   for (const r of records(d)) {
+    if (r.type === FBT_SPGR_CONTAINER) {
+      // A grouped shape has no anchor of its own — the GROUP does, and the
+      // child's rectangle is in the group's coordinate space. A `.ppt` table IS
+      // a group of cell rectangles, so without this the five cells of 119877's
+      // tables were five un-anchored words in the corner.
+      collectShapeContainers(
+        r.data,
+        img,
+        out,
+        depth + 1,
+        scheme,
+        outline,
+        defaults,
+        groupFrame(r.data) ?? group,
+      );
+      continue;
+    }
     if (r.type === FBT_SP_CONTAINER) {
       let rectPt: PptRect | undefined;
       let paragraphs: Array<PptParagraph> | undefined;
@@ -734,12 +764,15 @@ function collectShapeContainers(
       let geometry: PptCustomGeometry | undefined;
       let fillType: number | undefined;
       let fillBlip: number | undefined;
+      let inlineFill: Uint8Array | undefined;
+      let inlinePic: Uint8Array | undefined;
       let placeholder = false;
       for (const child of records(r.data)) {
         if (child.type === FBT_FSP) {
           shapeType = child.instance;
           fspFlags = child.data.length >= 8 ? u32(child.data, 4) : 0;
         } else if (child.type === FBT_CLIENT_ANCHOR) rectPt = parseAnchor(child.data);
+        else if (child.type === FBT_CHILD_ANCHOR && group) rectPt = childRect(child.data, group);
         else if (child.type === FBT_CLIENT_DATA)
           placeholder = findChild(child.data, (c) => c.type === RT_PLACEHOLDER_ATOM) !== undefined;
         else if (child.type === FBT_CLIENT_TEXTBOX)
@@ -759,6 +792,11 @@ function collectShapeContainers(
           geometry = parseFreeformGeometry(child.data, child.instance);
           fillType = optProperty(child.data, child.instance, PROP_FILL_TYPE);
           fillBlip = optProperty(child.data, child.instance, PROP_FILL_BLIP);
+          // A blip property may name a store entry OR carry the picture itself
+          // as its complex data. 119877 has no Pictures stream at all: every
+          // one of its table cells holds its own 73 KB blip inline.
+          inlineFill = optComplex(child.data, child.instance, PROP_FILL_BLIP);
+          inlinePic = optComplex(child.data, child.instance, PROP_PIB);
         }
       }
       const blip = (index: number | undefined): PptImage | undefined => {
@@ -766,14 +804,19 @@ function collectShapeContainers(
         const bytes = readBlipBytes(img.pictures, img.foDelays[index - 1]!);
         return bytes ? { bytes } : undefined;
       };
+      // MSOFILLTYPE 2 is the same picture, repeated at its own size instead of
+      // stretched; 119877's second slide is the tiled twin of its first.
+      const tiled = fillType === 2;
+      const fillImage =
+        fillType === 2 || fillType === 3 ? (blip(fillBlip) ?? inlineBlip(inlineFill)) : undefined;
       if ((fspFlags & FSP_FLAG_BACKGROUND) !== 0) {
         // The background is the SLIDE's, not a shape on it: it is recorded once
         // and the rest of this container is not content.
-        const bg = slideBackground(fillColorHex, gradient, fillType, blip(fillBlip));
+        const bg = slideBackground(fillColorHex, gradient, fillType, fillImage, tiled);
         if (bg && !out.background) out.background = bg;
         continue;
       }
-      const image: PptImage | undefined = blip(pib);
+      const image: PptImage | undefined = blip(pib) ?? inlineBlip(inlinePic);
       const textParas =
         paragraphs && paragraphs.some((p) => paragraphText(p).length > 0) ? paragraphs : undefined;
       // A decorative autoshape: an anchored shape with a preset type (or its own
@@ -781,18 +824,21 @@ function collectShapeContainers(
       // text/picture — and not a group / patriarch / background shape.
       const decorative =
         (fspFlags & (FSP_FLAG_GROUP | FSP_FLAG_PATRIARCH | FSP_FLAG_BACKGROUND)) === 0;
+      // A picture FILL is not a picture shape: it paints the shape's own box,
+      // and the shape may carry text over it.
       const autoShape =
-        !textParas &&
         !image &&
         rectPt &&
         (shapeType > 0 || geometry) &&
         decorative &&
-        (fillColorHex || lineColorHex)
+        (fillColorHex || lineColorHex || fillImage)
           ? {
               shapeType,
               ...(fillColorHex ? { fillColorHex } : {}),
               ...(lineColorHex ? { lineColorHex } : {}),
               ...(gradient ? { gradient } : {}),
+              ...(fillImage ? { image: fillImage } : {}),
+              ...(fillImage && tiled ? { imageTiled: true } : {}),
               ...(geometry ? { geometry } : {}),
             }
           : undefined;
@@ -806,7 +852,7 @@ function collectShapeContainers(
         });
       }
     } else if (r.isContainer) {
-      collectShapeContainers(r.data, img, out, depth + 1, scheme, outline, defaults);
+      collectShapeContainers(r.data, img, out, depth + 1, scheme, outline, defaults, group);
     }
   }
 }
@@ -1002,6 +1048,50 @@ interface MasterContext {
   readonly cache: Map<number, Map<number, Array<LevelStyle>>>;
 }
 
+// Where a group sits on the slide, and the coordinate space its children's
+// ChildAnchors are measured in.
+interface GroupFrame {
+  readonly rect: PptRect;
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
+// A group container's first SpContainer is the group shape itself: its FSPGR
+// (§2.2.38) states the coordinate space, its client anchor where that space
+// lands on the slide.
+function groupFrame(spgrData: Uint8Array): GroupFrame | undefined {
+  const sp = [...records(spgrData)].find((r) => r.type === FBT_SP_CONTAINER);
+  if (!sp) return undefined;
+  let box: { x: number; y: number; w: number; h: number } | undefined;
+  let rect: PptRect | undefined;
+  for (const child of records(sp.data)) {
+    if (child.type === FBT_SPGR && child.data.length >= 16) {
+      const x = i32(child.data, 0);
+      const y = i32(child.data, 4);
+      box = { x, y, w: i32(child.data, 8) - x, h: i32(child.data, 12) - y };
+    } else if (child.type === FBT_CLIENT_ANCHOR) rect = parseAnchor(child.data);
+  }
+  if (!box || !rect || box.w <= 0 || box.h <= 0) return undefined;
+  return { rect, ...box };
+}
+
+// §2.2.39 OfficeArtChildAnchor — four LONGs in the group's space → the slide
+// rectangle they work out to.
+function childRect(d: Uint8Array, g: GroupFrame): PptRect | undefined {
+  if (d.length < 16) return undefined;
+  const x1 = g.rect.x + ((i32(d, 0) - g.x) / g.w) * g.rect.w;
+  const y1 = g.rect.y + ((i32(d, 4) - g.y) / g.h) * g.rect.h;
+  const x2 = g.rect.x + ((i32(d, 8) - g.x) / g.w) * g.rect.w;
+  const y2 = g.rect.y + ((i32(d, 12) - g.y) / g.h) * g.rect.h;
+  const w = x2 - x1;
+  const h = y2 - y1;
+  return w > 0 && h > 0 && Math.abs(x1) < 5000 && Math.abs(y1) < 5000
+    ? { x: x1, y: y1, w, h }
+    : undefined;
+}
+
 // The text of an OfficeArtClientTextbox. A placeholder normally holds its text
 // right there, but PowerPoint stores TITLE AND BODY TEXT IN THE OUTLINE — the
 // document's SlideListWithText — and leaves the shape an OutlineTextRefAtom
@@ -1021,6 +1111,14 @@ function clientTextboxParagraphs(
   return [...(outline[u32(ref, 0)] ?? [])];
 }
 
+// A blip property's complex data is the OfficeArtBlip record itself: an 8-byte
+// header and the picture behind it.
+function inlineBlip(blob: Uint8Array | undefined): PptImage | undefined {
+  if (!blob || blob.length < 8) return undefined;
+  const bytes = readEscherBlip(u16(blob, 2), u16(blob, 0) >> 4, blob.subarray(8));
+  return bytes ? { bytes } : undefined;
+}
+
 // §2.3.7.1 MSOFILLTYPE 3 is a picture stretched over the shape — for the
 // background shape, over the slide. Anything else is read as the solid colour or
 // the shade already parsed; a background that states none is left to the page.
@@ -1029,8 +1127,9 @@ function slideBackground(
   gradient: PptAutoShape['gradient'],
   fillType: number | undefined,
   image: PptImage | undefined,
+  tiled: boolean,
 ): PptBackground | undefined {
-  if (fillType === 3 && image) return { image };
+  if (image) return { image, ...(tiled ? { imageTiled: true } : {}) };
   if (gradient) return { gradient };
   if (fillColorHex) return { fillColorHex };
   return undefined;

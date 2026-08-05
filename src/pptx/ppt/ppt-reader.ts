@@ -158,14 +158,17 @@ function buildBody(
     }
     for (const shape of slide.shapes) {
       if (shape.rectPt) {
-        if (shape.paragraphs?.some((p) => paragraphText(p).length > 0)) {
-          floats.push(positionedTextShape(shape.rectPt, shape.paragraphs));
+        // The box first, then the picture, then the words on top of both.
+        if (shape.autoShape) {
+          floats.push(positionedAutoShape(shape.rectPt, shape.autoShape, resources));
         }
         if (shape.image) {
           const block = positionedImage(shape.rectPt, shape.image, resources);
           if (block) floats.push(block);
         }
-        if (shape.autoShape) floats.push(positionedAutoShape(shape.rectPt, shape.autoShape));
+        if (shape.paragraphs?.some((p) => paragraphText(p).length > 0)) {
+          floats.push(positionedTextShape(shape.rectPt, shape.paragraphs));
+        }
       } else {
         for (const para of shape.paragraphs ?? []) {
           if (paragraphText(para).length > 0) inFlowParas.push(flowParagraph(para));
@@ -252,7 +255,11 @@ function slideBackdrop(
 
 function backdropFill(bg: PptBackground, resources: ResourceStore): ShapeFill | undefined {
   if (bg.image) {
-    return { kind: 'picture', imageResource: resources.put(bg.image.bytes) };
+    return {
+      kind: 'picture',
+      imageResource: resources.put(bg.image.bytes),
+      ...(bg.imageTiled ? { tiled: true } : {}),
+    };
   }
   if (bg.gradient) {
     const stops = [
@@ -354,35 +361,45 @@ function toCustomGeometry(g: PptCustomGeometry): CustomGeometry {
 
 // A decorative autoshape → a positioned vector ShapeBlock with its preset geometry
 // (or its exact freeform geometry — PPT-7) and any literal fill / line colour.
-function positionedAutoShape(rect: PptRect, auto: PptAutoShape): BodyElement {
+function positionedAutoShape(
+  rect: PptRect,
+  auto: PptAutoShape,
+  resources: ResourceStore,
+): BodyElement {
   const line = isLineShape(auto.shapeType);
   // MS-ODRAW §2.3.7.1 — a shaded fill is two colours and a direction, which is
   // the same gradient every other reader in here already draws.
   const fill: ShapeFill = line
     ? { kind: 'none' }
-    : auto.gradient
+    : auto.image
       ? {
-          kind: 'gradient',
-          gradient: auto.gradient.radial
-            ? {
-                kind: 'radial',
-                stops: [
-                  { offset: 0, colorHex: auto.gradient.fromHex },
-                  { offset: 1, colorHex: auto.gradient.toHex },
-                ],
-              }
-            : {
-                kind: 'linear',
-                angle: auto.gradient.angleDeg,
-                stops: [
-                  { offset: 0, colorHex: auto.gradient.fromHex },
-                  { offset: 1, colorHex: auto.gradient.toHex },
-                ],
-              },
+          kind: 'picture',
+          imageResource: resources.put(auto.image.bytes),
+          ...(auto.imageTiled ? { tiled: true } : {}),
         }
-      : auto.fillColorHex
-        ? { kind: 'solid', colorHex: auto.fillColorHex }
-        : { kind: 'none' };
+      : auto.gradient
+        ? {
+            kind: 'gradient',
+            gradient: auto.gradient.radial
+              ? {
+                  kind: 'radial',
+                  stops: [
+                    { offset: 0, colorHex: auto.gradient.fromHex },
+                    { offset: 1, colorHex: auto.gradient.toHex },
+                  ],
+                }
+              : {
+                  kind: 'linear',
+                  angle: auto.gradient.angleDeg,
+                  stops: [
+                    { offset: 0, colorHex: auto.gradient.fromHex },
+                    { offset: 1, colorHex: auto.gradient.toHex },
+                  ],
+                },
+          }
+        : auto.fillColorHex
+          ? { kind: 'solid', colorHex: auto.fillColorHex }
+          : { kind: 'none' };
   const stroke: ShapeLine | undefined = auto.lineColorHex
     ? { colorHex: auto.lineColorHex, fill: 'solid' }
     : line

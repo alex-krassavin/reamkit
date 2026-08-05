@@ -958,3 +958,55 @@ describe('ppt master decoration (PPT-14)', () => {
     expect(slide.shapes).toHaveLength(1);
   });
 });
+
+describe('ppt grouped shapes and picture fills (PPT-15)', () => {
+  // A `.ppt` table IS a group of cell rectangles, each cell's rectangle stated
+  // in the GROUP's coordinate space. Read without the group, 119877's five
+  // picture-backed cells were five un-anchored words in the corner.
+  const tableDeck = (fillType: number): Uint8Array =>
+    buildPpt([
+      {
+        groups: [
+          {
+            anchor: { x: 100, y: 50, w: 400, h: 200 },
+            box: [0, 0, 1000, 1000],
+            boxes: [
+              {
+                childAnchor: [0, 0, 500, 1000],
+                shapeType: 1,
+                text: 'left',
+                pictureFill: { fillType, png: PNG_1x1 },
+              },
+              { childAnchor: [500, 0, 1000, 1000], shapeType: 1, text: 'right' },
+            ],
+          },
+        ],
+      },
+    ]);
+
+  it('gives each grouped shape the slide rectangle its group puts it at', () => {
+    const shapes = extractPptContent(tableDeck(3)).slides[0]!.shapes;
+    expect(shapes.map((s) => s.rectPt)).toEqual([
+      { x: 100, y: 50, w: 200, h: 200 },
+      { x: 300, y: 50, w: 200, h: 200 },
+    ]);
+    expect(shapes.map((s) => s.paragraphs?.map(paragraphText).join(''))).toEqual(['left', 'right']);
+  });
+
+  it('reads a picture fill carried INLINE, stretched or tiled', () => {
+    // 119877 has no Pictures stream at all: every cell holds its own blip as the
+    // fillBlip property's complex data.
+    const stretched = extractPptContent(tableDeck(3)).slides[0]!.shapes[0]?.autoShape;
+    expect(stretched?.image?.bytes.subarray(0, 4)).toEqual(PNG_1x1.subarray(0, 4));
+    expect(stretched?.imageTiled).toBeUndefined();
+    // MSOFILLTYPE 2 is the same picture, repeated at its own size.
+    expect(extractPptContent(tableDeck(2)).slides[0]!.shapes[0]?.autoShape?.imageTiled).toBe(true);
+  });
+
+  it('paints the box under the words, not over them', () => {
+    const body = readPpt(tableDeck(3)).doc.body;
+    const kinds = body.filter((el) => el.kind === 'shape').map((el) => el.shape.fill.kind);
+    // The picture-filled cell comes first, its text box after.
+    expect(kinds.slice(0, 2)).toEqual(['picture', 'none']);
+  });
+});

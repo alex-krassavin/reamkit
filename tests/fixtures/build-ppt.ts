@@ -44,6 +44,12 @@ const FBT_FSP = 0xf00a;
 const FBT_OPT = 0xf00b;
 const FBT_CLIENT_TEXTBOX = 0xf00d;
 const FBT_CLIENT_ANCHOR = 0xf010;
+const FBT_SPGR_CONTAINER = 0xf003;
+const FBT_SPGR = 0xf009;
+const FBT_CHILD_ANCHOR = 0xf00f;
+const PROP_FILL_TYPE = 0x0180;
+const PROP_FILL_BLIP_COMPLEX = 0x8186; // fillBlip with fComplex: the blip follows
+const FBT_BLIP_PNG_INLINE = 0xf01e;
 const FBT_CLIENT_DATA = 0xf011;
 const RT_PLACEHOLDER_ATOM = 0x0bc3;
 const FBT_BLIP_PNG = 0xf01e;
@@ -106,6 +112,8 @@ export interface PptSlideInput {
   // Positioned shapes: each an SpContainer with an OfficeArtClientAnchor (the
   // rectangle, given in points) and a client text box and/or a picture (PPT-4).
   readonly boxes?: ReadonlyArray<PptBoxInput>;
+  // Grouped shapes: an SpgrContainer whose first child is the group shape (PPT-15).
+  readonly groups?: ReadonlyArray<PptGroupInput>;
   // The slide's own colour scheme (8 × 6-hex RGB) — a SlideSchemeColorSchemeAtom
   // in the SlideContainer, so a shape's scheme-relative colour resolves (PPT-6).
   readonly colorScheme?: ReadonlyArray<string>;
@@ -146,6 +154,23 @@ export interface PptBoxInput {
   readonly lineSchemeIndex?: number; // OPT lineColor as a scheme index (0–7), PPT-6
   readonly fillSysColor?: number; // OPT fillColor as a Windows system-colour index, PPT-8
   readonly freeform?: PptFreeformInput; // exact custom geometry (PPT-7)
+  // A picture fill: MSOFILLTYPE (2 texture / 3 picture) plus the blip carried
+  // INLINE as the fillBlip property's complex data (PPT-15).
+  readonly pictureFill?: { readonly fillType: number; readonly png: Uint8Array };
+  // A grouped shape's rectangle, in the enclosing group's coordinate space.
+  readonly childAnchor?: readonly [number, number, number, number];
+}
+
+/** A group of shapes: where it sits on the slide, and the space its children use. */
+export interface PptGroupInput {
+  readonly anchor: {
+    readonly x: number;
+    readonly y: number;
+    readonly w: number;
+    readonly h: number;
+  };
+  readonly box: readonly [number, number, number, number]; // x, y, right, bottom
+  readonly boxes: ReadonlyArray<PptBoxInput>;
 }
 
 // A freeform shape's geometry: the bounds extent (left/top are 0) plus the raw
@@ -359,6 +384,7 @@ export function buildPpt(
     if (block) parts.push(slide.nested ? rec(RT_PP_DRAWING, 0, true, block) : block);
     if (slide.imageRef !== undefined) parts.push(imageShapeContainer(slide.imageRef));
     for (const box of slide.boxes ?? []) parts.push(buildShapeContainer(box));
+    for (const group of slide.groups ?? []) parts.push(buildGroupContainer(group));
     if (slide.colorScheme) parts.push(colorSchemeAtom(slide.colorScheme));
     return rec(RT_SLIDE, 0, true, concat(parts));
   });
@@ -462,6 +488,41 @@ function imageShapeContainer(pib: number): Uint8Array {
 // A positioned shape: an SpContainer carrying (in order) an FSP (shape type, for
 // an autoshape), an FOPT (pib / fill / line properties), an OfficeArtClientAnchor
 // (the rectangle, point coords → master units) and a client text box (PPT-4..5).
+// An SpgrContainer: the group's own SpContainer (FSPGR + client anchor) then its
+// children, each carrying a ChildAnchor instead of a client anchor (PPT-15).
+function buildGroupContainer(group: PptGroupInput): Uint8Array {
+  const box = new Uint8Array(16);
+  const bv = new DataView(box.buffer);
+  group.box.forEach((v, i) => bv.setInt32(i * 4, v, true));
+  const head = rec(
+    FBT_SP_CONTAINER,
+    0,
+    true,
+    concat([
+      rec(FBT_SPGR, 1, false, box),
+      rec(FBT_FSP, 0, false, new Uint8Array(8)),
+      clientAnchorRec(group.anchor),
+    ]),
+  );
+  return rec(FBT_SPGR_CONTAINER, 0, true, concat([head, ...group.boxes.map(buildShapeContainer)]));
+}
+
+// An OfficeArtClientAnchor for a rectangle given in points.
+function clientAnchorRec(a: {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}): Uint8Array {
+  const d = new Uint8Array(8);
+  const v = new DataView(d.buffer);
+  v.setInt16(0, Math.round(a.y * MASTER_PER_POINT), true); // top
+  v.setInt16(2, Math.round(a.x * MASTER_PER_POINT), true); // left
+  v.setInt16(4, Math.round((a.x + a.w) * MASTER_PER_POINT), true); // right
+  v.setInt16(6, Math.round((a.y + a.h) * MASTER_PER_POINT), true); // bottom
+  return rec(FBT_CLIENT_ANCHOR, 0, false, d);
+}
+
 function buildShapeContainer(box: PptBoxInput): Uint8Array {
   const parts: Array<Uint8Array> = [];
   if (box.shapeType !== undefined) {
@@ -482,6 +543,17 @@ function buildShapeContainer(box: PptBoxInput): Uint8Array {
   if (box.noLine) props.push({ id: PROP_LINE_BOOLS, value: 0x0008 << 16 });
   else if (box.lineSchemeIndex !== undefined)
     props.push({ id: PROP_LINE_COLOR, value: schemeColorRef(box.lineSchemeIndex) });
+  if (box.pictureFill) {
+    props.push({ id: PROP_FILL_TYPE, value: box.pictureFill.fillType });
+    // The complex data is the OfficeArtBlip record itself: header, UID, tag, PNG.
+    const blob = rec(
+      FBT_BLIP_PNG_INLINE,
+      0x6e0,
+      false,
+      concat([new Uint8Array(16), Uint8Array.of(0xff), box.pictureFill.png]),
+    );
+    props.push({ id: PROP_FILL_BLIP_COMPLEX, value: blob.length, blob });
+  }
   if (box.freeform) {
     const f = box.freeform;
     // The geometry bounds (simple LONGs; left/top default to 0) then the two
@@ -509,15 +581,13 @@ function buildShapeContainer(box: PptBoxInput): Uint8Array {
     const blobs = props.filter((p) => p.blob).map((p) => p.blob as Uint8Array);
     parts.push(rec(FBT_OPT, props.length, false, concat([fixed, ...blobs])));
   }
-  if (box.anchor) {
-    const { x, y, w, h } = box.anchor;
-    const a = new Uint8Array(8);
-    const av = new DataView(a.buffer);
-    av.setInt16(0, Math.round(y * MASTER_PER_POINT), true); // top
-    av.setInt16(2, Math.round(x * MASTER_PER_POINT), true); // left
-    av.setInt16(4, Math.round((x + w) * MASTER_PER_POINT), true); // right
-    av.setInt16(6, Math.round((y + h) * MASTER_PER_POINT), true); // bottom
-    parts.push(rec(FBT_CLIENT_ANCHOR, 0, false, a));
+  if (box.childAnchor) {
+    const ca = new Uint8Array(16);
+    const cv = new DataView(ca.buffer);
+    box.childAnchor.forEach((v, i) => cv.setInt32(i * 4, v, true));
+    parts.push(rec(FBT_CHILD_ANCHOR, 0, false, ca));
+  } else if (box.anchor) {
+    parts.push(clientAnchorRec(box.anchor));
   }
   if (box.text !== undefined) {
     parts.push(
