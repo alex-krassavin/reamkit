@@ -377,8 +377,12 @@ export function extractPptContent(bytes: Uint8Array): PptContent {
 
 // Whether a slide carries any readable content (text, a picture or an autoshape).
 function slideHasContent(s: PptSlide): boolean {
-  return s.shapes.some(
-    (sh) => shapeHasText(sh) || sh.image !== undefined || sh.autoShape !== undefined,
+  // A slide that is nothing but a coloured background is a slide, not a failed
+  // parse; read otherwise, a deck of them fell to the stream scan, which cannot
+  // resolve a master.
+  return (
+    s.background !== undefined ||
+    s.shapes.some((sh) => shapeHasText(sh) || sh.image !== undefined || sh.autoShape !== undefined)
   );
 }
 function shapeHasText(sh: PptShape): boolean {
@@ -496,9 +500,12 @@ function readSlideList(
     const content: DrawingContent = isSlide
       ? slideShapes(slideRec.data, img, texts, scheme, defaults)
       : { shapes: flat.some((p) => paragraphText(p).length > 0) ? [{ paragraphs: flat }] : [] };
-    // §2.4.24 fMasterBackground: the slide shows the one its master states.
-    const background =
-      content.background ?? (isSlide ? masterBackground(slideRec.data, masters, img) : undefined);
+    // §2.4.24 fMasterBackground: the slide shows the one its MASTER states, and
+    // the background shape it keeps of its own is a stale copy — 23884's slides
+    // hold a white one under a master that paints them all blue.
+    const background = isSlide
+      ? (masterBackground(slideRec.data, masters, img) ?? content.background)
+      : undefined;
     // The master's decoration goes under everything the slide draws itself.
     const decoration = isSlide ? masterShapes(slideRec.data, masters, img) : [];
     slides.push({
@@ -818,8 +825,6 @@ function collectShapeContainers(
       const fillImage =
         fillType === 2 || fillType === 3 ? (blip(fillBlip) ?? inlineBlip(inlineFill)) : undefined;
       if ((fspFlags & FSP_FLAG_BACKGROUND) !== 0) {
-        // The background is the SLIDE's, not a shape on it: it is recorded once
-        // and the rest of this container is not content.
         const bg = slideBackground(fillColorHex, gradient, fillType, fillImage, tiled);
         if (bg && !out.background) out.background = bg;
         continue;

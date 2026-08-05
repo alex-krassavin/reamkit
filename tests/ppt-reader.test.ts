@@ -1057,3 +1057,40 @@ describe('ppt scheme-coloured text (PPT-16)', () => {
   const runOf = (bytes: Uint8Array): PptRun | undefined =>
     extractPptContent(bytes).slides[0]?.shapes[0]?.paragraphs?.[0]?.runs[0];
 });
+
+describe('ppt master background precedence (PPT-17)', () => {
+  // §2.4.24 fMasterBackground: the slide shows the one its MASTER states. The
+  // background shape it keeps of its own is a stale copy — 23884's slides hold
+  // a white one under a master that paints every one of them blue.
+  const scheme = ['FFFFFF', '000000', '808080', '000000', 'FF0000', '00FF00', '0000FF', 'FFFF00'];
+  const deck = (followMasterBackground: boolean): Uint8Array =>
+    buildPpt(
+      [
+        {
+          masterIndex: 0,
+          followMasterBackground,
+          boxes: [{ shapeType: 1, background: true, fillColorHex: 'FFFFFF' }],
+        },
+      ],
+      {
+        masters: [
+          {
+            colorScheme: scheme,
+            boxes: [{ shapeType: 1, background: true, fillColorHex: '0047FF' }],
+          },
+        ],
+      },
+    );
+
+  it('takes the master’s over the copy the slide keeps', () => {
+    expect(extractPptContent(deck(true)).slides[0]?.background).toEqual({
+      fillColorHex: '0047FF',
+    });
+  });
+
+  it('…and the slide’s own when the flag does not say to follow', () => {
+    expect(extractPptContent(deck(false)).slides[0]?.background).toEqual({
+      fillColorHex: 'FFFFFF',
+    });
+  });
+});

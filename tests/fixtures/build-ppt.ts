@@ -33,6 +33,7 @@ const RT_COLOR_SCHEME_ATOM = 0x07f0;
 const COLOR_SCHEME_INSTANCE = 1; // slideSchemeColorSchemeAtom (vs scheme-list 6)
 const SLIDE_FLAG_MASTER_SCHEME = 0x0002; // slideAtom.slideFlags.fMasterScheme
 const SLIDE_FLAG_MASTER_OBJECTS = 0x0001; // slideAtom.slideFlags.fMasterObjects
+const SLIDE_FLAG_MASTER_BACKGROUND = 0x0004; // slideAtom.slideFlags.fMasterBackground
 const COLORREF_FLAG_SCHEME = 0x08; // OfficeArtCOLORREF fSchemeIndex flags byte
 
 // OfficeArt (Escher) record types for the picture store + picture shapes (PPT-3).
@@ -125,6 +126,9 @@ export interface PptSlideInput {
   // Set slideAtom.slideFlags.fMasterObjects, so the master's shapes are drawn
   // under the slide's own (PPT-14).
   readonly followMasterObjects?: boolean;
+  // Set slideAtom.slideFlags.fMasterBackground, so the slide shows the master's
+  // background rather than the one it holds of its own (PPT-12).
+  readonly followMasterBackground?: boolean;
   readonly masterIndex?: number;
 }
 
@@ -378,10 +382,16 @@ export function buildPpt(
   //     picture shape (an SpContainer with the pib blip reference) -------------
   const slideRecs = slides.map((slide) => {
     const parts: Array<Uint8Array> = [];
-    if (slide.followMasterScheme || slide.followMasterObjects || slide.masterIndex !== undefined) {
+    if (
+      slide.followMasterScheme ||
+      slide.followMasterObjects ||
+      slide.followMasterBackground ||
+      slide.masterIndex !== undefined
+    ) {
       const flags =
         (slide.followMasterScheme ? SLIDE_FLAG_MASTER_SCHEME : 0) |
-        (slide.followMasterObjects ? SLIDE_FLAG_MASTER_OBJECTS : 0);
+        (slide.followMasterObjects ? SLIDE_FLAG_MASTER_OBJECTS : 0) |
+        (slide.followMasterBackground ? SLIDE_FLAG_MASTER_BACKGROUND : 0);
       parts.push(slideAtom(masterPersistIds[slide.masterIndex ?? 0] ?? 0, flags));
     }
     const block = slideTextBlock(slide);
