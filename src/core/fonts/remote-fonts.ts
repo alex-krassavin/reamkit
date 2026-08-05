@@ -94,22 +94,115 @@ const MONO = new Set([
   'monospace',
 ]);
 
+// The words a family name ends with to say which MEMBER of the family it is —
+// a weight, a width or a slant. Each maps to what the substitute can do about
+// it: take its bold cut, take its italic, squeeze it. `none` is a face no
+// curated family ships (light, medium, thin), and the regular one is the honest
+// answer there — which is what LibreOffice does with them too.
+const WEIGHT_WORDS: ReadonlyMap<string, 'bold' | 'italic' | 'narrow' | 'none'> = new Map([
+  ['black', 'bold'],
+  ['heavy', 'bold'],
+  ['bold', 'bold'],
+  ['semibold', 'bold'],
+  ['demibold', 'bold'],
+  ['demi', 'bold'],
+  ['italic', 'italic'],
+  ['oblique', 'italic'],
+  ['light', 'none'],
+  ['thin', 'none'],
+  ['medium', 'none'],
+  ['regular', 'none'],
+  ['book', 'none'],
+  ['narrow', 'narrow'],
+  ['condensed', 'narrow'],
+  ['cond', 'narrow'],
+  ['expanded', 'none'],
+  ['extra', 'none'],
+  ['ultra', 'none'],
+  ['pro', 'none'],
+]);
+
+/** A family name, read: which substitute it maps to and what it says about the face. */
+export interface FamilyStyle {
+  readonly key: FamilyKey;
+  /** The NAME asks for a heavy face (`Arial Black`, `DIN-Bold`). */
+  readonly bold?: boolean;
+  /** …or a slanted one (`Frutiger Oblique`). */
+  readonly italic?: boolean;
+  /**
+   * …or a narrow one (`Arial Narrow`), as the fraction of the normal advance it
+   * sets at. No curated family ships a condensed cut, so the substitute is
+   * squeezed instead — Arial Narrow's own widths are 82 % of Arial's, which is
+   * also what LibreOffice's Liberation Sans Narrow reproduces.
+   */
+  readonly widthScale?: number;
+}
+
+/** Arial Narrow's advance widths, as a fraction of Arial's. */
+const NARROW_SCALE = 0.82;
+
 /**
  * Map a document-referenced font family to a curated open substitute: an exact
  * metric twin when one is known (e.g. Calibri → Carlito), otherwise a
  * serif/mono/sans style fallback.
  *
+ * The name may also carry the FACE — `Times New Roman Bold` is the Times
+ * family, and read whole it matches no twin at all and fell through to the
+ * generic sans, which is how a Times heading came out in a grotesque.
+ *
+ * @param name The referenced family name (case-insensitive); empty ⇒ Arimo.
+ * @returns The chosen family and what the name said about the face.
+ */
+export function resolveFamilyStyle(name: string | undefined): FamilyStyle {
+  if (!name) return { key: 'arimo' };
+  // PostScript spells the face with a hyphen (`CenturySchoolbook-Bold`), and a
+  // stray comma is how some producers separate it (`Arial,Bold`).
+  const words = name
+    .trim()
+    .toLowerCase()
+    .split(/[\s\-_,]+/u)
+    .filter((w) => w !== '');
+  let bold = false;
+  let italic = false;
+  let narrow = false;
+  // Strip the face words off the END — a family may be NAMED for one of them
+  // (Book Antiqua), and only a trailing word is the face.
+  while (words.length > 1) {
+    const word = WEIGHT_WORDS.get(words[words.length - 1]!);
+    if (word === undefined) break;
+    if (word === 'bold') bold = true;
+    if (word === 'italic') italic = true;
+    if (word === 'narrow') narrow = true;
+    words.pop();
+  }
+  // The whole name first, then the words a foundry prefix or a modifier may be
+  // hiding the family behind: `Adobe Garamond Pro` is a Garamond.
+  const tries = [words.join(' '), words[words.length - 1]!, words[0]!];
+  let key: FamilyKey = 'arimo';
+  for (const n of tries) {
+    const found = EXACT[n] ?? (MONO.has(n) ? 'cousine' : SERIF.has(n) ? 'tinos' : undefined);
+    if (found) {
+      key = found;
+      break;
+    }
+  }
+  return {
+    key,
+    ...(bold ? { bold } : {}),
+    ...(italic ? { italic } : {}),
+    ...(narrow ? { widthScale: NARROW_SCALE } : {}),
+  };
+}
+
+/**
+ * The curated substitute for a family name — {@link resolveFamilyStyle} without
+ * the face it also carries.
+ *
  * @param name The referenced family name (case-insensitive); empty ⇒ Arimo.
  * @returns The chosen {@link FamilyKey}.
  */
 export function resolveFamilyKey(name: string | undefined): FamilyKey {
-  if (!name) return 'arimo';
-  const n = name.trim().toLowerCase();
-  const exact = EXACT[n];
-  if (exact) return exact;
-  if (MONO.has(n)) return 'cousine';
-  if (SERIF.has(n)) return 'tinos';
-  return 'arimo';
+  return resolveFamilyStyle(name).key;
 }
 
 function fontUrl(family: CuratedFamily, variant: FontVariant): string {

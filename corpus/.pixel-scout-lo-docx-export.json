@@ -205,16 +205,6 @@
   "aligned": true
  },
  {
-  "name": "style-inheritance.docx",
-  "score": 0.0313,
-  "aligned": true
- },
- {
-  "name": "fdo69649.docx",
-  "score": 0.0313,
-  "aligned": true
- },
- {
   "name": "tdf104394_lostTextbox.docx",
   "score": 0.0311,
   "aligned": true
@@ -237,6 +227,16 @@
  {
   "name": "tdf108973_foregroundTextbox.docx",
   "score": 0.0299,
+  "aligned": true
+ },
+ {
+  "name": "style-inheritance.docx",
+  "score": 0.0297,
+  "aligned": true
+ },
+ {
+  "name": "fdo69649.docx",
+  "score": 0.0297,
   "aligned": true
  },
  {
@@ -645,11 +645,6 @@
   "aligned": true
  },
  {
-  "name": "fdo76249.docx",
-  "score": 0.0103,
-  "aligned": true
- },
- {
   "name": "fdo80897.docx",
   "score": 0.0102,
   "aligned": true
@@ -805,6 +800,11 @@
   "aligned": true
  },
  {
+  "name": "fdo76249.docx",
+  "score": 0.0073,
+  "aligned": true
+ },
+ {
   "name": "tdf123636_newlinePageBreak2.docx",
   "score": 0.0072,
   "aligned": true
@@ -910,11 +910,6 @@
   "aligned": true
  },
  {
-  "name": "1_page.docx",
-  "score": 0.0058,
-  "aligned": true
- },
- {
   "name": "fdo78284.docx",
   "score": 0.0058,
   "aligned": true
@@ -932,6 +927,11 @@
  {
   "name": "tdf112287B.docx",
   "score": 0.0057,
+  "aligned": true
+ },
+ {
+  "name": "1_page.docx",
+  "score": 0.0056,
   "aligned": true
  },
  {
@@ -1385,11 +1385,6 @@
   "aligned": true
  },
  {
-  "name": "FDO73546.docx",
-  "score": 0.0031,
-  "aligned": true
- },
- {
   "name": "mixednumberings.docx",
   "score": 0.0031,
   "aligned": false
@@ -1426,6 +1421,11 @@
  },
  {
   "name": "fdo74110.docx",
+  "score": 0.003,
+  "aligned": true
+ },
+ {
+  "name": "FDO73546.docx",
   "score": 0.003,
   "aligned": true
  },
@@ -2915,11 +2915,6 @@
   "aligned": true
  },
  {
-  "name": "tdf120344_FontTypes.docx",
-  "score": 0.0003,
-  "aligned": true
- },
- {
   "name": "tdf130814.docx",
   "score": 0.0003,
   "aligned": true
@@ -3036,6 +3031,11 @@
  },
  {
   "name": "margins_from_style.docx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "tdf120344_FontTypes.docx",
   "score": 0.0002,
   "aligned": true
  },
@@ -3485,11 +3485,6 @@
   "aligned": true
  },
  {
-  "name": "tdf115030.docx",
-  "score": 0.0001,
-  "aligned": true
- },
- {
   "name": "paragraph-mark.docx",
   "score": 0.0001,
   "aligned": true
@@ -3531,6 +3526,11 @@
  },
  {
   "name": "tdf125936_numberingSuperscript.docx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "tdf115030.docx",
   "score": 0.0001,
   "aligned": true
  },

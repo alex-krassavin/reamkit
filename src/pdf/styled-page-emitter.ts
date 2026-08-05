@@ -831,6 +831,9 @@ const BORDER_DASHES: ReadonlyMap<BorderStyle, ReadonlyArray<number>> = new Map([
   ['dashDotDot', [8, 2.5, 2.5, 2.5, 2.5, 2.5]],
 ]);
 
+// The slant of a faked italic — tan(12°), the angle a text italic leans at.
+const FAUX_ITALIC_SHEAR = 0.2126;
+
 /** The PDF dash array for a border style; an empty string means a solid rule. */
 function dashPatternFor(style: BorderStyle | undefined): string {
   const pattern = style !== undefined ? BORDER_DASHES.get(style) : undefined;
@@ -863,12 +866,36 @@ function emitPageContent(
   let lastTc = 0;
   let lastSize = -1;
   let lastColor = '';
+  // The stroke width a faked bold is drawn with, or 0 when the face is real,
+  // and the horizontal scale a faked CONDENSED face is set at. Kept beside the
+  // font because a `Q` restores text state too: every place that forgets
+  // `lastFont` must forget these with it.
+  let lastFauxWidth = 0;
+  let lastTz = 100;
   const switchFontIfNeeded = (tok: TextToken) => {
     const fontKey = tok.font.resourceName;
     if (fontKey !== lastFont || tok.fontSizePt !== lastSize) {
       out.push(`/${fontKey} ${formatNumber(tok.fontSizePt)} Tf`);
       lastFont = fontKey;
       lastSize = tok.fontSizePt;
+    }
+    // ISO 32000-1 §9.3.6 — a font set that carries no bold cut still has bold
+    // asked of it, and the page can draw the weight itself: rendering mode 2
+    // strokes the glyphs as well as filling them, and a line a thirtieth of the
+    // em wide is the usual faux-bold. Both the mode and the width are text
+    // state, so they ride every emit path the way `Tf` does.
+    const fauxWidth = tok.synthetic?.bold === true ? tok.fontSizePt * 0.03 : 0;
+    if (fauxWidth !== lastFauxWidth) {
+      out.push(fauxWidth > 0 ? `2 Tr ${formatNumber(fauxWidth)} w` : '0 Tr');
+      lastFauxWidth = fauxWidth;
+    }
+    // ISO 32000-1 §9.3.3 — horizontal scaling, which is how a condensed face is
+    // drawn when the substitute has no condensed cut. Layout measured through
+    // the same fraction, so the glyphs and the line agree.
+    const tz = Math.round((tok.synthetic?.widthScale ?? 1) * 100);
+    if (tz !== lastTz) {
+      out.push(`${formatNumber(tz)} Tz`);
+      lastTz = tz;
     }
     // §17.3.2.35 — the run's own character spacing, which PDF applies per
     // glyph through `Tc` (ISO 32000-1 §9.3.2). Set only when it changes, and
@@ -927,6 +954,8 @@ function emitPageContent(
       }
       // The shared text state is no longer what the line loop left it.
       lastFont = '';
+      lastFauxWidth = 0;
+      lastTz = 100;
       lastSize = -1;
       lastColor = '';
       return;
@@ -1022,6 +1051,8 @@ function emitPageContent(
     }
     // Text state is reset by ET; force re-emit on the next text token.
     lastFont = '';
+    lastFauxWidth = 0;
+    lastTz = 100;
     lastSize = -1;
     lastColor = '';
     lastTc = 0;
@@ -1059,6 +1090,8 @@ function emitPageContent(
         out.push('f');
         out.push('Q');
         lastFont = '';
+        lastFauxWidth = 0;
+        lastTz = 100;
         lastSize = -1;
         lastColor = '';
       } else {
@@ -1076,6 +1109,8 @@ function emitPageContent(
         };
         for (const op of emitVectorShape(shape)) out.push(op);
         lastFont = '';
+        lastFauxWidth = 0;
+        lastTz = 100;
         lastSize = -1;
         lastColor = '';
       }
@@ -1100,6 +1135,8 @@ function emitPageContent(
       `${formatNumber(clip.x)} ${formatNumber(H - clip.y - clip.height)} ${formatNumber(clip.width)} ${formatNumber(clip.height)} re W n`,
     );
     lastFont = '';
+    lastFauxWidth = 0;
+    lastTz = 100;
     lastSize = -1;
     lastColor = '';
     lastTc = 0;
@@ -1113,6 +1150,8 @@ function emitPageContent(
     }
     out.push('Q');
     lastFont = '';
+    lastFauxWidth = 0;
+    lastTz = 100;
     lastSize = -1;
     lastColor = '';
     lastTc = 0;
@@ -1347,6 +1386,12 @@ function emitPageContent(
     // A super/subscript draws off the baseline, so the line can no longer be
     // one Tm and a run of Tj — each token needs its own placement.
     const hasRise = line.tokens.some((t) => t.kind === 'text' && t.risePt !== undefined);
+    // ISO 32000-1 §9.4.2 — a faked italic is a SHEAR of the text matrix, and
+    // the matrix is per token, so a line carrying one takes the placed path
+    // exactly as a superscript does.
+    const hasFauxItalic = line.tokens.some(
+      (t) => t.kind === 'text' && t.synthetic?.italic === true,
+    );
     // A rotated line advances its glyphs along the ROTATED axis, which one text
     // matrix already does for free — but only on the single-Tm path, where the
     // advance is the font's and not one this emitter computes in page space.
@@ -1373,6 +1418,7 @@ function emitPageContent(
       hasMathToken ||
       hasRtl ||
       hasRise ||
+      hasFauxItalic ||
       hasTab
     ) {
       // Per-token absolute positioning. Required for justify (inter-word
@@ -1399,7 +1445,13 @@ function emitPageContent(
           inBT = true;
         }
         switchFontIfNeeded(tok);
-        out.push(`1 0 0 1 ${formatNumber(x)} ${formatNumber(baselineY + (tok.risePt ?? 0))} Tm`);
+        // The `c` term leans the glyphs off the baseline: a fifth of the
+        // height per unit of it, which is the slant a text italic carries.
+        const slant = tok.synthetic?.italic === true ? FAUX_ITALIC_SHEAR : 0;
+        out.push(
+          `1 0 ${formatNumber(slant)} 1 ` +
+            `${formatNumber(x)} ${formatNumber(baselineY + (tok.risePt ?? 0))} Tm`,
+        );
         out.push(showToken(tok));
         const tokenX0 = x;
         x += tok.widthPt;

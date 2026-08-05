@@ -126,7 +126,7 @@
  },
  {
   "name": "tdf162093.xlsx",
-  "score": 0.0256,
+  "score": 0.025,
   "aligned": true
  },
  {
@@ -136,12 +136,12 @@
  },
  {
   "name": "cell-anchored-hidden-shapes.xlsx",
-  "score": 0.0221,
+  "score": 0.0212,
   "aligned": true
  },
  {
   "name": "tdfSheetProts.xlsx",
-  "score": 0.0205,
+  "score": 0.0208,
   "aligned": true
  },
  {
@@ -151,7 +151,7 @@
  },
  {
   "name": "TableStyleTest.xlsx",
-  "score": 0.02,
+  "score": 0.0197,
   "aligned": true
  },
  {
@@ -281,7 +281,7 @@
  },
  {
   "name": "tdf156814.xlsx",
-  "score": 0.0086,
+  "score": 0.0085,
   "aligned": true
  },
  {
@@ -325,11 +325,6 @@
   "aligned": true
  },
  {
-  "name": "tdf162963_TableWithTotalsEnabled.xlsx",
-  "score": 0.0076,
-  "aligned": true
- },
- {
   "name": "Sparklines.xlsx",
   "score": 0.0076,
   "aligned": true
@@ -343,6 +338,11 @@
   "name": "tdf170298.xlsx",
   "score": 0.0075,
   "aligned": false
+ },
+ {
+  "name": "tdf162963_TableWithTotalsEnabled.xlsx",
+  "score": 0.0075,
+  "aligned": true
  },
  {
   "name": "xf_default_values.xlsx",
@@ -685,12 +685,12 @@
   "aligned": true
  },
  {
-  "name": "tdf123139_applyAlignment.xlsx",
+  "name": "tdf137543.xlsx",
   "score": 0.0012,
   "aligned": true
  },
  {
-  "name": "tdf137543.xlsx",
+  "name": "tdf123139_applyAlignment.xlsx",
   "score": 0.0012,
   "aligned": true
  },
@@ -710,17 +710,7 @@
   "aligned": true
  },
  {
-  "name": "tdf165180_date1904.xlsx",
-  "score": 0.001,
-  "aligned": true
- },
- {
   "name": "groupShape.xlsx",
-  "score": 0.001,
-  "aligned": true
- },
- {
-  "name": "NamedSheetViews.xlsx",
   "score": 0.001,
   "aligned": true
  },
@@ -747,6 +737,11 @@
  {
   "name": "tdf155046.xlsx",
   "score": 0.0009,
+  "aligned": true
+ },
+ {
+  "name": "NamedSheetViews.xlsx",
+  "score": 0.0008,
   "aligned": true
  },
  {
@@ -826,6 +821,11 @@
  },
  {
   "name": "enhanced-protection.xlsx",
+  "score": 0.0005,
+  "aligned": true
+ },
+ {
+  "name": "tdf165180_date1904.xlsx",
   "score": 0.0005,
   "aligned": true
  },
@@ -1100,11 +1100,6 @@
   "aligned": true
  },
  {
-  "name": "tdf157689.xlsx",
-  "score": 0.0002,
-  "aligned": true
- },
- {
   "name": "tdf104310-2.xlsx",
   "score": 0.0002,
   "aligned": true
@@ -1226,6 +1221,11 @@
  },
  {
   "name": "embedded-text-in-decimal.xlsx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "tdf157689.xlsx",
   "score": 0.0001,
   "aligned": true
  },

@@ -55,7 +55,7 @@ import type {
   TableProperties,
   TableRow,
 } from '@/core/document-model';
-import type { FontRegistry, ParsedTtf } from '@/core/font';
+import type { FontRegistry, FontVariant, ParsedTtf } from '@/core/font';
 import type { FamilyKey } from '@/core/fonts';
 import type { Hyphenator } from '@/core/hyphenation';
 import type { PreparedImage } from '@/core/images';
@@ -81,6 +81,7 @@ import type {
   MetafileDrawing,
   PageItem,
   ResolvedMathItem,
+  SyntheticFace,
   TextToken,
   Token,
 } from '@/layout/page-doc';
@@ -93,7 +94,7 @@ import type { StructNode, StructType } from '@/pdf/struct-tree';
 import type { MetaPicture } from '@/core/metafile/picture';
 import { ResourceStore, halfPtToPt, pt } from '@/core/ir';
 import { createFontMeasure, shapeText } from '@/core/font';
-import { resolveFamilyKey } from '@/core/fonts';
+import { resolveFamilyStyle } from '@/core/fonts';
 import { prepareImage } from '@/core/images';
 import { isEmf, readEmf } from '@/core/metafile/emf';
 import { isWmf, readWmf } from '@/core/metafile/wmf';
@@ -4270,7 +4271,7 @@ function runFontKeyAndParsed(
   ascii: string | undefined,
   bold: boolean,
   italic: boolean,
-): { fontKey: string; parsed: ParsedTtf } {
+): { fontKey: string; parsed: ParsedTtf; synthetic?: SyntheticFace } {
   // The document's own embedded font (word/fonts/*.odttf) — glyph-exact, takes
   // priority over any substitution.
   if (ascii && options.embeddedFonts) {
@@ -4283,17 +4284,63 @@ function runFontKeyAndParsed(
   }
   const byFamily = options.registriesByFamily;
   if (byFamily && byFamily.size > 0) {
-    let key = resolveFamilyKey(ascii);
+    // A family name may name the FACE as well (`Arial Black`, `DIN-Bold`), and
+    // that is the only place the weight is stated — the run itself is not bold.
+    const named = resolveFamilyStyle(ascii);
+    let key = named.key;
     let reg = byFamily.get(key);
     if (!reg) {
       key = byFamily.keys().next().value as FamilyKey;
       reg = byFamily.get(key)!;
     }
-    const { variant, parsed } = reg.resolveByStyle(bold, italic);
-    return { fontKey: `${key}:${variant}`, parsed };
+    const wantBold = bold || named.bold === true;
+    const wantItalic = italic || named.italic === true;
+    const { variant, parsed } = reg.resolveByStyle(wantBold, wantItalic);
+    return {
+      fontKey: `${key}:${variant}`,
+      parsed,
+      ...syntheticFace(variant, wantBold, wantItalic, named.widthScale),
+    };
   }
   const { variant, parsed } = options.registry.resolveByStyle(bold, italic);
-  return { fontKey: variant, parsed };
+  return {
+    fontKey: variant,
+    parsed,
+    ...syntheticFace(variant, bold, italic, resolveFamilyStyle(ascii).widthScale),
+  };
+}
+
+/**
+ * §9.2.2 — the face a request had to settle for, and what is left to draw.
+ *
+ * A registry may hold one face and be asked for four: `FontBytesByVariant`
+ * requires only `regular`, so a caller who supplies a single file (or a script
+ * fallback with no bold cut) had every heading drawn plain. What the file does
+ * not carry, the page draws: a stroke around the glyphs for weight, a shear for
+ * slant — the same two tricks a word processor calls faux bold and faux italic.
+ *
+ * @param variant    The face the registry actually gave.
+ * @param bold       Whether bold was asked for.
+ * @param italic     Whether italic was.
+ * @param widthScale The squeeze a condensed NAME asks for, when it does.
+ * @returns `{ synthetic }` when something is missing, `{}` when nothing is.
+ */
+function syntheticFace(
+  variant: FontVariant,
+  bold: boolean,
+  italic: boolean,
+  widthScale?: number,
+): { synthetic?: SyntheticFace } {
+  const missingBold = bold && variant !== 'bold' && variant !== 'boldItalic';
+  const missingItalic = italic && variant !== 'italic' && variant !== 'boldItalic';
+  if (!missingBold && !missingItalic && widthScale === undefined) return {};
+  return {
+    synthetic: {
+      ...(missingBold ? { bold: true as const } : {}),
+      ...(missingItalic ? { italic: true as const } : {}),
+      ...(widthScale !== undefined ? { widthScale } : {}),
+    },
+  };
 }
 
 // Tolerant lookup for placeholder fonts (inline-image / math outer run) whose
@@ -4750,6 +4797,8 @@ interface RunPlan {
   readonly run: Paragraph['runs'][number];
   readonly resolvedRun: ResolvedRunProperties;
   readonly font: FontResource;
+  /** What the chosen face lacks and the emitter has to fake. */
+  readonly synthetic?: SyntheticFace;
   readonly fontSizePt: number;
   /** How far off the baseline this run draws (super/subscript), in points. */
   readonly risePt?: number;
@@ -4993,7 +5042,7 @@ function tokenizeParagraph(
       };
     }
     const resolvedRun = resolveRunProperties(run.properties, paragraph.properties, options.styles);
-    const { fontKey } = runFontKeyAndParsed(
+    const { fontKey, synthetic } = runFontKeyAndParsed(
       options,
       resolvedRun.fontFamily.ascii,
       resolvedRun.bold,
@@ -5008,6 +5057,7 @@ function tokenizeParagraph(
       run,
       resolvedRun,
       font: lookupFont(fontResources, fontKey),
+      ...(synthetic ? { synthetic } : {}),
       fontSizePt: script === 0 ? resolvedRun.fontSizePt : resolvedRun.fontSizePt * SCRIPT_SCALE,
       ...(script === 0 ? {} : { risePt: resolvedRun.fontSizePt * script }),
       isImage: false,
@@ -5111,6 +5161,7 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         ...(highlight ? { highlight: true } : {}),
         resolvedRun: plan.resolvedRun,
         font: plan.font,
+        ...(plan.synthetic ? { synthetic: plan.synthetic } : {}),
         fontSizePt: plan.fontSizePt,
         ...(plan.risePt !== undefined ? { risePt: plan.risePt } : {}),
         widthPt: measureRunText(plan, text),
@@ -5156,7 +5207,11 @@ function markerText(text: string, parsed: ParsedTtf): string {
  * @returns The advance width in points.
  */
 function measureRunText(plan: RunPlan, text: string): number {
-  const base = plan.font.measure.textWidthPt(text, plan.fontSizePt);
+  // A condensed face sets narrower than the substitute we have, and the squeeze
+  // decides where the line BREAKS — measured at full width, an Arial Narrow
+  // column overflows by a fifth.
+  const base =
+    plan.font.measure.textWidthPt(text, plan.fontSizePt) * (plan.synthetic?.widthScale ?? 1);
   const extra = plan.resolvedRun.letterSpacingPt;
   return extra === undefined || extra === 0 ? base : base + extra * [...text].length;
 }
@@ -5226,6 +5281,7 @@ function tokenizePlansBidi(
         ...((plan.run.commentRangeRefs?.length ?? 0) > 0 ? { highlight: true } : {}),
         resolvedRun: plan.resolvedRun,
         font: plan.font,
+        ...(plan.synthetic ? { synthetic: plan.synthetic } : {}),
         fontSizePt: plan.fontSizePt,
         ...(plan.risePt !== undefined ? { risePt: plan.risePt } : {}),
         widthPt: measureRunText(plan, text),
@@ -6445,7 +6501,7 @@ function measureSingleLine(
     // base registry). The old direct registry lookup keyed fontResources by
     // bare variant — with registriesByFamily/embeddedFonts those keys do not
     // exist, so table auto-layout measured with the wrong font or crashed.
-    const { fontKey } = runFontKeyAndParsed(
+    const { fontKey, synthetic } = runFontKeyAndParsed(
       options,
       resolved.fontFamily.ascii,
       resolved.bold,
@@ -6453,7 +6509,7 @@ function measureSingleLine(
     );
     const font = lookupFont(fontResources, fontKey);
     const fontSizePt = resolved.fontSizePt;
-    total += font.measure.textWidthPt(run.text, fontSizePt);
+    total += font.measure.textWidthPt(run.text, fontSizePt) * (synthetic?.widthScale ?? 1);
   }
   return total;
 }

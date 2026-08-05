@@ -335,11 +335,6 @@
   "aligned": true
  },
  {
-  "name": "SampleShow.pptx",
-  "score": 0.0037,
-  "aligned": true
- },
- {
   "name": "WithMaster.pptx",
   "score": 0.0032,
   "aligned": true
@@ -362,6 +357,11 @@
  {
   "name": "sample_pptx_grouping_issues.pptx",
   "score": 0.0025,
+  "aligned": true
+ },
+ {
+  "name": "SampleShow.pptx",
+  "score": 0.0023,
   "aligned": true
  },
  {
