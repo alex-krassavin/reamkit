@@ -141,6 +141,9 @@ export interface EscherShape {
 
 const FBT_SP = 0xf00a;
 const FBT_CLIENT_TEXTBOX = 0xf00d;
+const FBT_SPGR_CONTAINER = 0xf003; // a group: its own shape first, then its children
+const FBT_SPGR = 0xf009; // the group's coordinate space, which its children live in
+const FBT_CHILD_ANCHOR = 0xf00f; // a grouped shape's rectangle, in that space
 const PROP_FILL_COLOR = 0x0181;
 const PROP_LINE_COLOR = 0x01c0;
 
@@ -155,9 +158,32 @@ export function parseSheetShapes(msoDrawing: Uint8Array): Array<EscherShape> {
   return out;
 }
 
-function collectShapes(d: Uint8Array, out: Array<EscherShape>, depth: number): void {
+// A group's placement: where it sits on the sheet, and the coordinate space its
+// children's ChildAnchors are measured in.
+interface GroupFrame {
+  readonly anchor: EscherAnchor;
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
+function collectShapes(
+  d: Uint8Array,
+  out: Array<EscherShape>,
+  depth: number,
+  group?: GroupFrame,
+): void {
   if (depth > MAX_DEPTH) return;
   for (const r of records(d)) {
+    if (r.type === FBT_SPGR_CONTAINER) {
+      // A grouped shape carries no cell anchor of its own — the GROUP does, and
+      // the child's rectangle is in the group's coordinate space. Read without
+      // the group, forty shapes of an engineering drawing had no anchor at all
+      // and were laid out one after another down eleven blank pages.
+      collectShapes(r.data, out, depth + 1, groupFrame(r.data) ?? group);
+      continue;
+    }
     if (r.type === FBT_SP_CONTAINER) {
       let shapeType = 0;
       let hasText = false;
@@ -173,6 +199,7 @@ function collectShapes(d: Uint8Array, out: Array<EscherShape>, depth: number): v
           fill = optColor(child.data, child.instance, PROP_FILL_COLOR);
           line = optColor(child.data, child.instance, PROP_LINE_COLOR);
         } else if (child.type === FBT_CLIENT_ANCHOR) anchor = parseAnchor(child.data);
+        else if (child.type === FBT_CHILD_ANCHOR && group) anchor = childAnchor(child.data, group);
         else if (child.type === FBT_CLIENT_TEXTBOX) hasText = true;
       }
       if (pib === undefined && shapeType !== 0) {
@@ -185,9 +212,49 @@ function collectShapes(d: Uint8Array, out: Array<EscherShape>, depth: number): v
         });
       }
     } else if (r.isContainer) {
-      collectShapes(r.data, out, depth + 1);
+      collectShapes(r.data, out, depth + 1, group);
     }
   }
+}
+
+// A group container's first SpContainer is the group shape itself: its FSPGR
+// (§2.2.38) states the coordinate space, its client anchor where that space
+// lands on the sheet.
+function groupFrame(spgrData: Uint8Array): GroupFrame | undefined {
+  const sp = [...records(spgrData)].find((r) => r.type === FBT_SP_CONTAINER);
+  if (!sp) return undefined;
+  let box: { x: number; y: number; w: number; h: number } | undefined;
+  let anchor: EscherAnchor | undefined;
+  for (const child of records(sp.data)) {
+    if (child.type === FBT_SPGR && child.data.length >= 16) {
+      const x = i32(child.data, 0);
+      const y = i32(child.data, 4);
+      box = { x, y, w: i32(child.data, 8) - x, h: i32(child.data, 12) - y };
+    } else if (child.type === FBT_CLIENT_ANCHOR) anchor = parseAnchor(child.data);
+  }
+  if (!box || !anchor || box.w <= 0 || box.h <= 0) return undefined;
+  return { anchor, ...box };
+}
+
+// A ChildAnchor (§2.2.39, four LONGs in the group's space) → the cell anchor it
+// works out to on the sheet, so a grouped shape is placed like any other.
+function childAnchor(d: Uint8Array, g: GroupFrame): EscherAnchor | undefined {
+  if (d.length < 16) return undefined;
+  const from = (v: number, lo: number, hi: number, min: number, size: number): number =>
+    lo + ((v - min) / size) * (hi - lo);
+  const x1 = g.anchor.col1 + g.anchor.dx1 / 1024;
+  const x2 = g.anchor.col2 + g.anchor.dx2 / 1024;
+  const y1 = g.anchor.row1 + g.anchor.dy1 / 1024;
+  const y2 = g.anchor.row2 + g.anchor.dy2 / 1024;
+  const cell = (v: number): [number, number] => {
+    const whole = Math.max(0, Math.min(0xffff, Math.floor(v)));
+    return [whole, Math.max(0, Math.min(1023, Math.round((v - whole) * 1024)))];
+  };
+  const [col1, dx1] = cell(from(i32(d, 0), x1, x2, g.x, g.w));
+  const [row1, dy1] = cell(from(i32(d, 4), y1, y2, g.y, g.h));
+  const [col2, dx2] = cell(from(i32(d, 8), x1, x2, g.x, g.w));
+  const [row2, dy2] = cell(from(i32(d, 12), y1, y2, g.y, g.h));
+  return { col1, dx1, row1, dy1, col2, dx2, row2, dy2 };
 }
 
 // An OPT colour property → 6-hex RGB, but only when it is a literal RGB (the
@@ -256,6 +323,10 @@ function matches(d: Uint8Array, off: number, magic: ReadonlyArray<number>): bool
   if (off + magic.length > d.length) return false;
   for (let i = 0; i < magic.length; i++) if (d[off + i] !== magic[i]) return false;
   return true;
+}
+
+function i32(d: Uint8Array, off: number): number {
+  return u32(d, off) | 0;
 }
 
 function u16(d: Uint8Array, off: number): number {
