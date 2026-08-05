@@ -150,8 +150,11 @@ const PALETTE56 = [
 ];
 
 /**
- * Build a palette-index → `"FFRRGGBB"` (8-hex ARGB, like the xlsx `rgb` attr)
- * resolver from the default 56-colour palette plus any `PALETTE` override.
+ * Build a palette-index → `"RRGGBB"` resolver from the default 56-colour palette
+ * plus any `PALETTE` override. Six hex digits, not the eight an xlsx `rgb`
+ * attribute carries: by the time styles are parsed the alpha is gone, and a
+ * colour that kept it was read from its first six characters — silver `C0C0C0`
+ * reaching the page as the pink `FFC0C0`.
  * `0x7FFF` / 64 / 65 are automatic or system colours → `undefined` (the renderer
  * default). Exported so the conditional-format reader (XLS-13) resolves its dxf
  * colours the same way.
@@ -166,8 +169,7 @@ export function buildBiffPalette(
   for (const rec of records) if (rec.type === REC_PALETTE) applyPalette(rec.data, palette);
   return (icv: number): string | undefined => {
     if (icv === 0x7fff || icv === 64 || icv === 65) return undefined;
-    const rgb = palette[icv];
-    return rgb ? `FF${rgb}` : undefined;
+    return palette[icv];
   };
 }
 
@@ -302,13 +304,17 @@ function parseXf(
   if (top) border.top = top;
   if (bottom) border.bottom = bottom;
 
-  // Fill (pattern + colours in brdbkg3): fls bits 26–31, fg bits 0–6, bg bits 7–13.
-  const fls = (brd3 >> 26) & 0x3f;
+  // Fill. §2.4.353 packs the pattern into the TOP six bits of the four bytes at
+  // 14 — which is bits 10–15 of the dword read at 16 — and the two colours into
+  // the word at 18: fg in bits 0–6, bg in bits 7–13. Read sixteen bits lower,
+  // every fill came back a black `darkUp`, and a sheet of pale-grey cells
+  // rendered as a solid black slab.
+  const fls = (brd3 >> 10) & 0x3f;
   const patternType = FILL_PATTERNS[fls];
   let fill: XlsxFill | undefined;
   if (patternType && patternType !== 'none') {
-    const fg = color(brd3 & 0x7f);
-    const bg = color((brd3 >> 7) & 0x7f);
+    const fg = color((brd3 >> 16) & 0x7f);
+    const bg = color((brd3 >> 23) & 0x7f);
     fill = { patternType, ...(fg ? { fgColorHex: fg } : {}), ...(bg ? { bgColorHex: bg } : {}) };
   }
 

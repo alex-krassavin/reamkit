@@ -38,7 +38,7 @@ describe('xls styling — parsed style table (XLS-4)', () => {
   const xf = styles.cellXfs[1]!;
 
   it('reads the font (bold, colour, size) with the index-skip honoured', () => {
-    expect(styles.fonts[1]).toMatchObject({ sizePt: 14, bold: true, colorHex: 'FFFF0000' });
+    expect(styles.fonts[1]).toMatchObject({ sizePt: 14, bold: true, colorHex: 'FF0000' });
   });
 
   it('reads a custom number format', () => {
@@ -48,10 +48,10 @@ describe('xls styling — parsed style table (XLS-4)', () => {
   it('links the XF to its font, format, fill and border', () => {
     expect(xf.fontId).toBe(1);
     expect(xf.numFmtId).toBe(164);
-    expect(styles.fills[xf.fillId]).toMatchObject({ patternType: 'solid', fgColorHex: 'FFFFFF00' });
+    expect(styles.fills[xf.fillId]).toMatchObject({ patternType: 'solid', fgColorHex: 'FFFF00' });
     expect(styles.borders[xf.borderId]?.bottom).toMatchObject({
       style: 'thin',
-      colorHex: 'FF000000',
+      colorHex: '000000',
     });
     expect(xf.alignment?.horizontal).toBe('center');
   });
@@ -80,13 +80,13 @@ describe('xls styling — resolved end to end (XLS-4)', () => {
   };
 
   it('renders the cell fill', () => {
-    expect(a1.properties.shading?.colorHex).toBe('FFFFFF00');
+    expect(a1.properties.shading?.colorHex).toBe('FFFF00');
   });
 
   it('renders the bold red 14pt font and centres the cell', () => {
     const run = firstRun(a1.content);
     expect(run.properties.bold).toBe(true);
-    expect(run.properties.colorHex).toBe('FFFF0000');
+    expect(run.properties.colorHex).toBe('FF0000');
     expect(run.properties.fontSizePt).toBe(14);
     expect(
       a1.content.some(

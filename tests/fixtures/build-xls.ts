@@ -136,9 +136,11 @@ export function xfRec(opts: {
     (((opts.top?.colorIndex ?? 0) & 0x7f) << 16) |
     (((opts.bottom?.colorIndex ?? 0) & 0x7f) << 23);
   v.setUint32(12, brd2 >>> 0, true);
+  // §2.4.353: the fill pattern is the top six bits of the four bytes at 14 —
+  // bits 10–15 of the dword written here — and the colours are the word at 18.
   const f = opts.fill;
   const brd3 = f
-    ? ((f.fg ?? 0) & 0x7f) | (((f.bg ?? 0) & 0x7f) << 7) | ((f.pattern & 0x3f) << 26)
+    ? ((f.pattern & 0x3f) << 10) | (((f.fg ?? 0) & 0x7f) << 16) | (((f.bg ?? 0) & 0x7f) << 23)
     : 0;
   v.setUint32(16, brd3 >>> 0, true);
   return rec(0x00e0, d);
