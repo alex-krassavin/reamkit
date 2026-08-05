@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { buildPpt } from './fixtures/build-ppt';
 import { buildCfb } from './fixtures/build-cfb';
 import type { FlowDoc } from '@/core/ir/flow';
+import type { PptRun } from '@/pptx/ppt/ppt-text';
 
 import { extractPptContent, paragraphText } from '@/pptx/ppt/ppt-text';
 import { pptReader, readPpt } from '@/pptx/ppt/ppt-reader';
@@ -1009,4 +1010,50 @@ describe('ppt grouped shapes and picture fills (PPT-15)', () => {
     // The picture-filled cell comes first, its text box after.
     expect(kinds.slice(0, 2)).toEqual(['picture', 'none']);
   });
+});
+
+describe('ppt scheme-coloured text (PPT-16)', () => {
+  // §2.12.2 ColorIndexStruct: index 0xFE means the three bytes ARE the colour;
+  // 0x00–0x07 name a slot in the slide's scheme. Read as "no colour", a run that
+  // says "the theme's text colour" fell through to whatever was under it.
+  const scheme = ['FFFFFF', '112233', '808080', '000000', 'FF0000', '00FF00', '0000FF', 'FFFF00'];
+
+  it('resolves a run’s colour through the slide’s scheme', () => {
+    const slide = extractPptContent(
+      buildPpt([
+        {
+          colorScheme: scheme,
+          text: 'Themed',
+          charRuns: [{ length: 6, colorSchemeIndex: 1 }],
+        },
+      ]),
+    ).slides[0]!;
+    expect(slide.shapes[0]?.paragraphs?.[0]?.runs[0]?.colorHex).toBe('112233');
+  });
+
+  it('lends a master’s colour only to the text type that states it', () => {
+    // A variant the master does not define takes the plain style's METRICS, not
+    // its colour: 41071's subtitle is 36pt because its run says so, and black
+    // because no style claims it — lending the body style's navy painted a
+    // title every reader draws in black.
+    const deck = (textType: number): Uint8Array =>
+      buildPpt(
+        [
+          {
+            masterIndex: 0,
+            outlineTexts: [{ textType, text: 'Words' }],
+            boxes: [{ anchor: { x: 10, y: 10, w: 300, h: 40 }, outlineRef: 0 }],
+          },
+        ],
+        {
+          masters: [{ colorScheme: scheme, textStyles: [{ textType: 1, sizesPt: [24] }] }],
+        },
+      );
+    // Exact type: the size comes through. The variant (4 → body) takes it too…
+    expect(runOf(deck(1))?.sizePt).toBe(24);
+    expect(runOf(deck(4))?.sizePt).toBe(24);
+  });
+
+  const runOf = (bytes: Uint8Array): PptRun | undefined =>
+    extractPptContent(bytes).slides[0]?.shapes[0]?.paragraphs?.[0]?.runs[0];
 });

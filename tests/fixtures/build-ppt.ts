@@ -82,6 +82,8 @@ export interface PptStyleRun {
   readonly underline?: boolean;
   readonly sizePt?: number;
   readonly colorHex?: string; // 6-hex → an explicit-RGB ColorIndexStruct (index 0xFE)
+  // A ColorIndexStruct naming a SCHEME slot (index 0–7) instead of an sRGB.
+  readonly colorSchemeIndex?: number;
 }
 
 // A paragraph run in a StyleTextPropAtom, over `length` characters.
@@ -293,7 +295,7 @@ function buildStyleTextProp(
     }
     const hasStyle = (mask & 0x3eb7) !== 0;
     if (r.sizePt) mask |= 0x00020000; // size bit
-    if (r.colorHex) mask |= 0x00040000; // color bit
+    if (r.colorHex || r.colorSchemeIndex !== undefined) mask |= 0x00040000; // color bit
     u32(mask);
     if (hasStyle) u16(style); // fontStyle (CFStyle)
     if (r.sizePt) u16(r.sizePt); // fontSize (points)
@@ -303,6 +305,8 @@ function buildStyleTextProp(
       const gg = parseInt(hex.slice(2, 4), 16);
       const bb = parseInt(hex.slice(4, 6), 16);
       out.push(rr, gg, bb, 0xfe); // ColorIndexStruct: red, green, blue, index 0xFE = explicit
+    } else if (r.colorSchemeIndex !== undefined) {
+      out.push(0, 0, 0, r.colorSchemeIndex); // index 0–7 = a scheme slot
     }
   });
 

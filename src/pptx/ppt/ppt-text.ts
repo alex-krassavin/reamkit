@@ -397,7 +397,7 @@ function slideShapes(
 ): DrawingContent {
   const content = collectShapes(slideData, img, scheme, outline, defaults);
   if (!content.shapes.some(shapeHasText)) {
-    const inline = collectParagraphs(slideData, 0, defaults);
+    const inline = collectParagraphs(slideData, 0, defaults, scheme);
     const text = inline.some((p) => paragraphText(p).length > 0) ? inline : outline.flat();
     if (text.some((p) => paragraphText(p).length > 0)) content.shapes.push({ paragraphs: text });
   }
@@ -487,13 +487,14 @@ function readSlideList(
     const slideOff = persist.get(pendingRef);
     const slideRec = slideOff !== undefined ? recordAt(stream, slideOff) : undefined;
     const isSlide = slideRec !== undefined && slideRec.type === RT_SLIDE;
-    const defaults = isSlide ? masterChain(slideRec.data, masters) : undefined;
+    const scheme = isSlide ? resolveScheme(slideRec.data, masters) : undefined;
+    const defaults = isSlide ? masterChain(slideRec.data, masters, scheme) : undefined;
     const texts = outline.map((e) =>
-      styledParagraphs(e.rec, e.style, levelStyles(defaults, e.textType)),
+      styledParagraphs(e.rec, e.style, levelStyles(defaults, e.textType), scheme),
     );
     const flat = texts.flat();
     const content: DrawingContent = isSlide
-      ? slideShapes(slideRec.data, img, texts, resolveScheme(slideRec.data, masters), defaults)
+      ? slideShapes(slideRec.data, img, texts, scheme, defaults)
       : { shapes: flat.some((p) => paragraphText(p).length > 0) ? [{ paragraphs: flat }] : [] };
     // §2.4.24 fMasterBackground: the slide shows the one its master states.
     const background =
@@ -532,6 +533,7 @@ function collectParagraphs(
   d: Uint8Array,
   depth: number,
   defaults?: MasterDefaults,
+  scheme?: SchemeColors,
 ): Array<PptParagraph> {
   if (depth > MAX_DEPTH) return [];
   const out: Array<PptParagraph> = [];
@@ -543,10 +545,15 @@ function collectParagraphs(
       textType = rec.data.length >= 4 ? u32(rec.data, 0) : TEXT_TYPE_OTHER;
     } else if (rec.type === RT_TEXT_CHARS_ATOM || rec.type === RT_TEXT_BYTES_ATOM) {
       out.push(
-        ...styledParagraphs(rec, findFollowingStyle(recs, i), levelStyles(defaults, textType)),
+        ...styledParagraphs(
+          rec,
+          findFollowingStyle(recs, i),
+          levelStyles(defaults, textType),
+          scheme,
+        ),
       );
     } else if (rec.isContainer) {
-      out.push(...collectParagraphs(rec.data, depth + 1, defaults));
+      out.push(...collectParagraphs(rec.data, depth + 1, defaults, scheme));
     }
   }
   return out;
@@ -577,10 +584,11 @@ function styledParagraphs(
   textRec: PptRecord,
   styleData: Uint8Array | undefined,
   defaults?: (level: number) => LevelStyle | undefined,
+  scheme?: SchemeColors,
 ): Array<PptParagraph> {
   const text =
     textRec.type === RT_TEXT_CHARS_ATOM ? decodeUtf16(textRec.data) : decodeCp1252(textRec.data);
-  return buildStyledParagraphs(text, styleData, defaults);
+  return buildStyledParagraphs(text, styleData, defaults, scheme);
 }
 
 // Last-resort slide discovery: every RT_Slide container in the stream, in stream
@@ -776,7 +784,7 @@ function collectShapeContainers(
         else if (child.type === FBT_CLIENT_DATA)
           placeholder = findChild(child.data, (c) => c.type === RT_PLACEHOLDER_ATOM) !== undefined;
         else if (child.type === FBT_CLIENT_TEXTBOX)
-          paragraphs = clientTextboxParagraphs(child.data, outline, defaults);
+          paragraphs = clientTextboxParagraphs(child.data, outline, defaults, scheme);
         else if (child.type === FBT_OPT) {
           pib = optProperty(child.data, child.instance, PROP_PIB);
           // A shape states a fill colour whether or not it is filled, and a line
@@ -905,7 +913,7 @@ function readMasterLevels(
     if (off + 4 > d.length) break;
     const pf = readPfException(d, off);
     if (pf.off + 4 > d.length) break;
-    const cf = readCfException(d, pf.off);
+    const cf = readCfException(d, pf.off, undefined); // the SLIDE's scheme resolves it
     if (cf.off > d.length) break;
     off = cf.off;
     styles.push({ ...cf.props, ...(pf.align !== undefined ? { align: pf.align } : {}) });
@@ -926,7 +934,10 @@ const TEXT_TYPE_FALLBACK = new Map([
 // follows, and within each the exact text type before the one it varies. Merged
 // PROPERTY BY PROPERTY — a centre-title style states its alignment and nothing
 // else, and taking it whole would leave the title with no size at all.
-function masterDefaults(chain: ReadonlyArray<Map<number, Array<LevelStyle>>>): MasterDefaults {
+function masterDefaults(
+  chain: ReadonlyArray<Map<number, Array<LevelStyle>>>,
+  scheme: SchemeColors | undefined,
+): MasterDefaults {
   return (textType, level) => {
     const types = [textType, TEXT_TYPE_FALLBACK.get(textType)];
     let merged: LevelStyle | undefined;
@@ -934,10 +945,19 @@ function masterDefaults(chain: ReadonlyArray<Map<number, Array<LevelStyle>>>): M
       for (const t of types) {
         const levels = t === undefined ? undefined : styles.get(t);
         const at = levels?.[Math.min(level, levels.length - 1)];
-        if (at) merged = { ...at, ...merged }; // the nearer statement wins
+        if (!at) continue;
+        // A variant that the master does not define takes the plain style's
+        // METRICS, not its colour: 41071's subtitle is 36pt because its run says
+        // so, and black because no style claims it — lending the body style's
+        // navy there painted a title every reader draws in black.
+        const { colorHex: _c, colorIndex: _i, ...metrics } = at;
+        const from = t === textType ? at : metrics;
+        merged = { ...from, ...merged }; // the nearer statement wins
       }
     }
-    return merged;
+    if (!merged || merged.colorHex !== undefined || merged.colorIndex === undefined) return merged;
+    const slot = scheme?.[merged.colorIndex];
+    return slot === undefined ? merged : { ...merged, colorHex: slot };
   };
 }
 
@@ -1011,9 +1031,13 @@ function masterBackground(
 
 // The chain of masters a slide inherits from, nearest first: a title master is
 // itself a SlideContainer that follows the main master, so the walk is a loop.
-function masterChain(slideData: Uint8Array, ctx: MasterContext | undefined): MasterDefaults {
+function masterChain(
+  slideData: Uint8Array,
+  ctx: MasterContext | undefined,
+  scheme: SchemeColors | undefined,
+): MasterDefaults {
   const chain: Array<Map<number, Array<LevelStyle>>> = [];
-  if (!ctx) return masterDefaults(chain);
+  if (!ctx) return masterDefaults(chain, scheme);
   let data: Uint8Array | undefined = slideData;
   const seen = new Set<number>();
   for (let hop = 0; hop < 4 && data; hop++) {
@@ -1036,7 +1060,7 @@ function masterChain(slideData: Uint8Array, ctx: MasterContext | undefined): Mas
     }
     data = rec.type === RT_SLIDE ? rec.data : undefined; // a main master ends the walk
   }
-  return masterDefaults(chain);
+  return masterDefaults(chain, scheme);
 }
 
 // What a slide needs to reach its masters: the persist directory, the stream the
@@ -1103,8 +1127,9 @@ function clientTextboxParagraphs(
   d: Uint8Array,
   outline: ReadonlyArray<ReadonlyArray<PptParagraph>>,
   defaults?: MasterDefaults,
+  scheme?: SchemeColors,
 ): Array<PptParagraph> {
-  const own = collectParagraphs(d, 0, defaults);
+  const own = collectParagraphs(d, 0, defaults, scheme);
   if (own.some((p) => paragraphText(p).length > 0)) return own;
   const ref = findChild(d, (r) => r.type === RT_OUTLINE_TEXT_REF_ATOM);
   if (!ref || ref.length < 4) return own;
@@ -1477,6 +1502,8 @@ function readBlipBytes(pictures: Uint8Array, foDelay: number): Uint8Array | unde
 // One character run / paragraph run parsed out of a StyleTextPropAtom.
 /** The character formatting a TextCFException can state (PPT-2). */
 interface CharProps {
+  /** The scheme slot the colour named, when it named one rather than an sRGB. */
+  colorIndex?: number;
   bold?: boolean;
   italic?: boolean;
   underline?: boolean;
@@ -1505,8 +1532,9 @@ function buildStyledParagraphs(
   text: string,
   styleData: Uint8Array | undefined,
   defaults?: (level: number) => LevelStyle | undefined,
+  scheme?: SchemeColors,
 ): Array<PptParagraph> {
-  const style = styleData ? parseStyleTextProp(styleData, text.length) : undefined;
+  const style = styleData ? parseStyleTextProp(styleData, text.length, scheme) : undefined;
   const charProps = style ? expandCharProps(style.charRuns, text.length) : undefined;
   const paraRuns = style?.paraRuns ?? [];
 
@@ -1562,7 +1590,12 @@ function buildStyledParagraphs(
 // A run + the size its level's master style fills in.
 function inherit(run: PptRun, lvl: LevelStyle): PptRun {
   const sizePt = run.sizePt ?? lvl.sizePt;
-  return { ...run, ...(sizePt !== undefined ? { sizePt } : {}) };
+  const colorHex = run.colorHex ?? lvl.colorHex;
+  return {
+    ...run,
+    ...(sizePt !== undefined ? { sizePt } : {}),
+    ...(colorHex !== undefined ? { colorHex } : {}),
+  };
 }
 
 function toRun(text: string, props: CharRun | undefined): PptRun {
@@ -1609,6 +1642,7 @@ function expandCharProps(charRuns: ReadonlyArray<CharRun>, textLen: number): Arr
 function parseStyleTextProp(
   data: Uint8Array,
   textLen: number,
+  scheme: SchemeColors | undefined,
 ): { paraRuns: Array<ParaRun>; charRuns: Array<CharRun> } | undefined {
   const target = textLen + 1;
   let off = 0;
@@ -1631,7 +1665,7 @@ function parseStyleTextProp(
   consumed = 0;
   while (consumed < target && off + 8 <= data.length) {
     const count = u32(data, off);
-    const cf = readCfException(data, off + 4);
+    const cf = readCfException(data, off + 4, scheme);
     off = cf.off;
     charRuns.push({ count, ...cf.props });
     consumed += count;
@@ -1672,7 +1706,11 @@ function readPfException(data: Uint8Array, start: number): { off: number; align?
 
 // §2.9.11 TextCFException, read the same way: the mask, then its fields in byte
 // order. Keeps bold / italic / underline / size / explicit colour.
-function readCfException(data: Uint8Array, start: number): { off: number; props: CharProps } {
+function readCfException(
+  data: Uint8Array,
+  start: number,
+  scheme: SchemeColors | undefined,
+): { off: number; props: CharProps } {
   const mask = u32(data, start);
   let off = start + 4;
   const props: CharProps = {};
@@ -1695,9 +1733,19 @@ function readCfException(data: Uint8Array, start: number): { off: number; props:
     if (sz > 0) props.sizePt = sz;
   }
   if ((mask & 0x00040000) !== 0) {
-    // color (ColorIndexStruct: red, green, blue, index); 0xFE = explicit sRGB.
-    if (off + 4 <= data.length && data[off + 3] === 0xfe) {
+    // §2.12.2 ColorIndexStruct: red, green, blue, index. 0xFE means the three
+    // bytes are the colour; 0x00–0x07 name a SCHEME slot, and read as "no
+    // colour" a run that says "the theme's text colour" fell through to whatever
+    // was under it — white-on-blue decks came out black on white.
+    const index = off + 4 <= data.length ? data[off + 3] : undefined;
+    if (index === 0xfe) {
       props.colorHex = hex2(data[off]!) + hex2(data[off + 1]!) + hex2(data[off + 2]!);
+    } else if (index !== undefined && index < 8) {
+      // A master's style keeps the SLOT: which colour it is depends on the
+      // scheme of the slide the style is being applied to, not the master's.
+      props.colorIndex = index;
+      const slot = scheme?.[index];
+      if (slot !== undefined) props.colorHex = slot;
     }
     off += 4;
   }
