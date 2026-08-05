@@ -1177,6 +1177,18 @@ export interface ShapeFill {
    */
   readonly tiled?: boolean;
   /**
+   * The size ONE copy of a tiled fill occupies, when the shape states it —
+   * MS-ODRAW §2.3.7.11/.12 `fillWidth` / `fillHeight`. Absent, a tile is the
+   * picture at its own resolution, which is the default both formats give.
+   */
+  readonly tileSizePt?: { readonly widthPt: number; readonly heightPt: number };
+  /**
+   * §20.1.8.58 `a:tile @sx @sy` — how far the picture is scaled BEFORE it is
+   * repeated, as fractions of its own size (1 = 100 %). A texture halved tiles
+   * four times as often, and read as a plain repeat it tiles once.
+   */
+  readonly tileScale?: { readonly sx: number; readonly sy: number };
+  /**
    * §20.1.8.14 `a:blipFill` — the picture painted across the shape's box. A
    * DrawingML picture IS a shape with one of these, which is how a `pic:pic`
    * inside a group reaches the page.

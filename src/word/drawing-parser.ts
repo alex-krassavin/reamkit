@@ -2582,7 +2582,12 @@ function fillFromNode(
       // being stretched over the box (§20.1.8.56 `a:stretch`).
       // NoFillAttrInImagedata.docx papers two text boxes with a texture that
       // way, and stretched it came out a brown blur.
-      const tiled = poChildren(child).some((c) => poIs(c, 'a:tile'));
+      const tile = poChildren(child).find((c) => poIs(c, 'a:tile'));
+      const tiled = tile !== undefined;
+      // §20.1.8.58 `@sx` / `@sy` — the scale applied BEFORE the repeat, in
+      // thousandths of a percent. Read as a plain repeat, a texture the file
+      // halves tiles once where it should tile four times.
+      const tileScale = tile ? tileScaleOf(tile) : undefined;
       // §20.1.8.4 `a:alphaModFix` — how opaque the PICTURE is drawn, stated on
       // the blip rather than on a colour. A slide backed by a photo at 70 %
       // showed it at full strength, which on tdf146223 is a saturated red
@@ -2594,6 +2599,7 @@ function fillFromNode(
         kind: 'picture',
         imageResource: resource,
         ...(tiled ? { tiled: true } : {}),
+        ...(tileScale ? { tileScale } : {}),
         ...(crop ? { imageCrop: crop } : {}),
         ...(rect ? { imageFillRect: rect } : {}),
         ...(duotone ? { duotone } : {}),
@@ -2795,6 +2801,18 @@ function duotoneOf(
  * @returns The rect as fractions of the box, or `undefined` when every inset
  *          is zero or negative.
  */
+// §20.1.8.58 `a:tile @sx @sy` — the scale a tile is drawn at, in thousandths of
+// a percent, before it is repeated. Absent or 100 % means the picture's own size.
+function tileScaleOf(tile: PoNode): ShapeFill['tileScale'] {
+  const pct = (name: string): number => {
+    const v = poIntAttr(tile, name);
+    return v === undefined || v <= 0 ? 1 : v / 100000;
+  };
+  const sx = pct('sx');
+  const sy = pct('sy');
+  return sx === 1 && sy === 1 ? undefined : { sx, sy };
+}
+
 function fillRectBox(blipFill: PoNode): ShapeFill['imageFillRect'] {
   const stretch = poChildren(blipFill).find((c) => poIs(c, 'a:stretch'));
   const rect = stretch ? poChildren(stretch).find((c) => poIs(c, 'a:fillRect')) : undefined;

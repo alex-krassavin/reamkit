@@ -52,6 +52,8 @@ const FBT_SPGR_CONTAINER = 0xf003;
 const FBT_SPGR = 0xf009;
 const FBT_CHILD_ANCHOR = 0xf00f;
 const PROP_FILL_TYPE = 0x0180;
+const PROP_FILL_WIDTH = 0x0189;
+const PROP_FILL_HEIGHT = 0x018a;
 const PROP_FILL_BLIP_COMPLEX = 0x8186; // fillBlip with fComplex: the blip follows
 const FBT_BLIP_PNG_INLINE = 0xf01e;
 const FBT_CLIENT_DATA = 0xf011;
@@ -171,7 +173,12 @@ export interface PptBoxInput {
   readonly freeform?: PptFreeformInput; // exact custom geometry (PPT-7)
   // A picture fill: MSOFILLTYPE (2 texture / 3 picture) plus the blip carried
   // INLINE as the fillBlip property's complex data (PPT-15).
-  readonly pictureFill?: { readonly fillType: number; readonly png: Uint8Array };
+  readonly pictureFill?: {
+    readonly fillType: number;
+    readonly png: Uint8Array;
+    // MS-ODRAW §2.3.7.11/.12 `fillWidth` / `fillHeight`, in EMU.
+    readonly tileEmu?: readonly [number, number];
+  };
   // A grouped shape's rectangle, in the enclosing group's coordinate space.
   readonly childAnchor?: readonly [number, number, number, number];
 }
@@ -582,6 +589,10 @@ function buildShapeContainer(box: PptBoxInput): Uint8Array {
     props.push({ id: PROP_LINE_COLOR, value: schemeColorRef(box.lineSchemeIndex) });
   if (box.pictureFill) {
     props.push({ id: PROP_FILL_TYPE, value: box.pictureFill.fillType });
+    if (box.pictureFill.tileEmu) {
+      props.push({ id: PROP_FILL_WIDTH, value: box.pictureFill.tileEmu[0] });
+      props.push({ id: PROP_FILL_HEIGHT, value: box.pictureFill.tileEmu[1] });
+    }
     // The complex data is the OfficeArtBlip record itself: header, UID, tag, PNG.
     const blob = rec(
       FBT_BLIP_PNG_INLINE,

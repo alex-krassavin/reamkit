@@ -2487,10 +2487,12 @@ function layoutShapeBlock(
   // resolution Office measures one in) instead of stretching it over the box.
   const fillImageTile =
     shape.fill.kind === 'picture' && shape.fill.tiled === true && fillImage?.prepared
-      ? {
-          widthPt: (fillImage.prepared.widthPx * 72) / 96,
-          heightPt: (fillImage.prepared.heightPx * 72) / 96,
-        }
+      ? // The shape may state the tile's size outright (MS-ODRAW `fillWidth` /
+        // `fillHeight`); otherwise a copy is the picture at its own resolution.
+        (shape.fill.tileSizePt ?? {
+          widthPt: ((fillImage.prepared.widthPx * 72) / 96) * (shape.fill.tileScale?.sx ?? 1),
+          heightPt: ((fillImage.prepared.heightPx * 72) / 96) * (shape.fill.tileScale?.sy ?? 1),
+        })
       : undefined;
   const fillColorHex =
     shape.fill.kind === 'solid'

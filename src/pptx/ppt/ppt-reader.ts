@@ -386,6 +386,7 @@ function positionedAutoShape(
           kind: 'picture',
           imageResource: resources.put(auto.image.bytes),
           ...(auto.imageTiled ? { tiled: true } : {}),
+          ...(auto.tileSizePt ? { tileSizePt: auto.tileSizePt } : {}),
         }
       : auto.gradient
         ? {

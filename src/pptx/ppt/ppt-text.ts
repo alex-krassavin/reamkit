@@ -74,6 +74,11 @@ const PROP_FILL_COLOR = 0x0181; // OPT fillColor (PPT-5)
 const PROP_FILL_BACK_COLOR = 0x0183; // OPT fillBackColor — the gradient's far end
 const PROP_FILL_ANGLE = 0x018b; // OPT fillAngle — 16.16 fixed degrees
 const PROP_FILL_BLIP = 0x0186; // OPT fillBlip — a picture fill's store index (PPT-12)
+// §2.3.7.11/.12 — the size ONE copy of a tiled fill occupies, in EMU. Zero (the
+// default) leaves the tile at the picture's own size.
+const PROP_FILL_WIDTH = 0x0189;
+const PROP_FILL_HEIGHT = 0x018a;
+const EMU_PER_POINT = 12700;
 const PROP_LINE_COLOR = 0x01c0; // OPT lineColor (PPT-5)
 // §2.3.7.43 / §2.3.8.44 — the boolean sets that say whether the colours above are
 // USED. Each holds sixteen flags in its low half and, in its high half, a bit per
@@ -225,6 +230,12 @@ export interface PptAutoShape {
   readonly image?: PptImage;
   /** §2.3.7.1 MSOFILLTYPE 2 — the picture REPEATS at its own size, not stretched. */
   readonly imageTiled?: boolean;
+  /**
+   * §2.3.7.11/.12 `fillWidth` / `fillHeight` — the size one copy occupies, in
+   * points, when the shape states it rather than leaving the tile at the
+   * picture's own size.
+   */
+  readonly tileSizePt?: { readonly widthPt: number; readonly heightPt: number };
   readonly geometry?: PptCustomGeometry;
 }
 /**
@@ -794,6 +805,7 @@ function collectShapeContainers(
       let fillBlip: number | undefined;
       let inlineFill: Uint8Array | undefined;
       let inlinePic: Uint8Array | undefined;
+      let tileSizePt: PptAutoShape['tileSizePt'];
       let placeholder = false;
       for (const child of records(r.data)) {
         if (child.type === FBT_FSP) {
@@ -820,6 +832,7 @@ function collectShapeContainers(
           geometry = parseFreeformGeometry(child.data, child.instance);
           fillType = optProperty(child.data, child.instance, PROP_FILL_TYPE);
           fillBlip = optProperty(child.data, child.instance, PROP_FILL_BLIP);
+          tileSizePt = parseTileSize(child.data, child.instance);
           // A blip property may name a store entry OR carry the picture itself
           // as its complex data. 119877 has no Pictures stream at all: every
           // one of its table cells holds its own 73 KB blip inline.
@@ -865,6 +878,7 @@ function collectShapeContainers(
               ...(gradient ? { gradient } : {}),
               ...(fillImage ? { image: fillImage } : {}),
               ...(fillImage && tiled ? { imageTiled: true } : {}),
+              ...(fillImage && tiled && tileSizePt ? { tileSizePt } : {}),
               ...(geometry ? { geometry } : {}),
             }
           : undefined;
@@ -1194,6 +1208,16 @@ function clientTextboxParagraphs(
   const ref = findChild(d, (r) => r.type === RT_OUTLINE_TEXT_REF_ATOM);
   if (!ref || ref.length < 4) return own;
   return [...(outline[u32(ref, 0)] ?? [])];
+}
+
+// §2.3.7.11/.12 — the tile's own size, when the shape states one. Both must be
+// positive to mean anything; zero is the default that leaves the tile at the
+// picture's size.
+function parseTileSize(d: Uint8Array, count: number): PptAutoShape['tileSizePt'] {
+  const w = signedLong(optProperty(d, count, PROP_FILL_WIDTH));
+  const h = signedLong(optProperty(d, count, PROP_FILL_HEIGHT));
+  if (w === undefined || h === undefined || w <= 0 || h <= 0) return undefined;
+  return { widthPt: w / EMU_PER_POINT, heightPt: h / EMU_PER_POINT };
 }
 
 // A blip property's complex data is the OfficeArtBlip record itself: an 8-byte

@@ -55,11 +55,6 @@
   "aligned": false
  },
  {
-  "name": "ca.ubc.cs.people_~emhill_presentations_HowWeRefactor.pptx",
-  "score": 97,
-  "aligned": false
- },
- {
   "name": "themes.pptx",
   "score": 0.9824,
   "aligned": true
@@ -91,7 +86,7 @@
  },
  {
   "name": "aascu.org_workarea_downloadasset.aspx_id=5864.pptx",
-  "score": 0.1729,
+  "score": 0.1704,
   "aligned": true
  },
  {
@@ -121,7 +116,7 @@
  },
  {
   "name": "ae.ac.uaeu.faculty_nafaachbili_GeomLec1.pptx",
-  "score": 0.0927,
+  "score": 0.0917,
   "aligned": true
  },
  {
@@ -187,6 +182,11 @@
  {
   "name": "chart-picture-bg.pptx",
   "score": 0.0369,
+  "aligned": true
+ },
+ {
+  "name": "ca.ubc.cs.people_~emhill_presentations_HowWeRefactor.pptx",
+  "score": 0.036,
   "aligned": true
  },
  {

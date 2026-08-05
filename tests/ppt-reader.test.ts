@@ -1179,3 +1179,38 @@ describe('ppt typefaces (PPT-19)', () => {
     expect(slide.shapes[0]?.paragraphs?.[0]?.runs[0]?.fontFamily).toBe('Helvetica');
   });
 });
+
+describe('ppt tile size (PPT-20)', () => {
+  // MS-ODRAW §2.3.7.11/.12 — `fillWidth` / `fillHeight` state the size ONE copy
+  // of a tiled fill occupies. Ignored, a shape that asks for a small repeat gets
+  // one copy of the picture at its own resolution and no repeat at all.
+  const deck = (tileEmu?: readonly [number, number]): Uint8Array =>
+    buildPpt([
+      {
+        boxes: [
+          {
+            anchor: { x: 0, y: 0, w: 200, h: 200 },
+            shapeType: 1,
+            pictureFill: {
+              fillType: 2,
+              png: PNG_1x1,
+              ...(tileEmu ? { tileEmu } : {}),
+            },
+          },
+        ],
+      },
+    ]);
+
+  it('reads the size the shape states for one copy', () => {
+    // 25.4mm × 12.7mm in EMU → 72pt × 36pt.
+    const auto = extractPptContent(deck([914400, 457200])).slides[0]!.shapes[0]!.autoShape;
+    expect(auto?.tileSizePt).toEqual({ widthPt: 72, heightPt: 36 });
+    expect(
+      readPpt(deck([914400, 457200])).doc.body.find((el) => el.kind === 'shape')?.shape.fill,
+    ).toMatchObject({ tiled: true, tileSizePt: { widthPt: 72, heightPt: 36 } });
+  });
+
+  it('leaves the tile at the picture’s own size when the shape states none', () => {
+    expect(extractPptContent(deck()).slides[0]!.shapes[0]!.autoShape?.tileSizePt).toBeUndefined();
+  });
+});
