@@ -150,11 +150,6 @@
   "aligned": true
  },
  {
-  "name": "subtitle-animation-save.pptx",
-  "score": 0.1045,
-  "aligned": true
- },
- {
   "name": "smartart-center-cycle.pptx",
   "score": 0.0999,
   "aligned": true
@@ -317,11 +312,6 @@
  {
   "name": "presetDashDot.pptx",
   "score": 0.0466,
-  "aligned": true
- },
- {
-  "name": "tdf112088.pptx",
-  "score": 0.0436,
   "aligned": true
  },
  {
@@ -605,6 +595,11 @@
   "aligned": true
  },
  {
+  "name": "tdf123684.pptx",
+  "score": 0.0121,
+  "aligned": true
+ },
+ {
   "name": "bnc904423.pptx",
   "score": 0.012,
   "aligned": true
@@ -652,6 +647,11 @@
  {
   "name": "tdf137675.pptx",
   "score": 0.0102,
+  "aligned": true
+ },
+ {
+  "name": "subtitle-animation-save.pptx",
+  "score": 0.0101,
   "aligned": true
  },
  {
@@ -792,11 +792,6 @@
  {
   "name": "tdf135843.pptx",
   "score": 0.0063,
-  "aligned": true
- },
- {
-  "name": "tdf123684.pptx",
-  "score": 0.0062,
   "aligned": true
  },
  {
@@ -1326,6 +1321,11 @@
  },
  {
   "name": "tablescale.pptx",
+  "score": 0.0011,
+  "aligned": true
+ },
+ {
+  "name": "tdf112088.pptx",
   "score": 0.0011,
   "aligned": true
  },
