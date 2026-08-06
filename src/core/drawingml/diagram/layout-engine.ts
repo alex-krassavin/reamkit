@@ -20,6 +20,10 @@ import { poAttr, poChildren, poIs, poTag } from '@/core/po-helpers';
 export interface LaidNode {
   readonly point: DiagramPoint;
   readonly shapeType: string;
+  /** The layout node's `styleLbl` — which run of colours the box takes. */
+  readonly styleLbl?: string;
+  /** The box's place among its siblings, which is where in that run it is. */
+  readonly index: number;
   readonly x: number;
   readonly y: number;
   readonly cx: number;
@@ -42,6 +46,7 @@ type AlgType = 'snake' | 'lin' | 'sp' | 'tx' | 'composite' | 'other';
 
 interface LayoutNode {
   readonly name: string;
+  readonly styleLbl?: string;
   /**
    * Whether the layout only lays this box out for a point that HAS children —
    * a `choose` on `func="cnt" axis="ch" ptType="node"`. The vertical block list
@@ -133,7 +138,7 @@ export function layoutDiagram(
     // shows a node's label beside its children's text nests a `linNode` whose
     // own children are two `tx` boxes, sized by ITS constraints. Laid out as
     // one box, such a row is the whole cell where it should be two.
-    const inner = splitCell(parsed, childName, point, data, cell, shapeType);
+    const inner = splitCell(parsed, childName, point, data, cell, shapeType, i);
     out.push(...inner);
   });
   return out;
@@ -162,10 +167,14 @@ function splitCell(
   data: DiagramData,
   cell: { x: number; y: number; cx: number; cy: number },
   shapeType: string,
+  index: number,
 ): Array<LaidNode> {
   const child = findNamed(parent.children, childName);
   const inner = child ? namedBoxes(child) : [];
-  if (!child || inner.length !== 2) return [{ point, shapeType, ...cell }];
+  const whole = (lbl: string | undefined): Array<LaidNode> => [
+    { point, shapeType, ...(lbl !== undefined ? { styleLbl: lbl } : {}), index, ...cell },
+  ];
+  if (!child || inner.length !== 2) return whole(child?.styleLbl);
   const kids = data.children(point.id, 'node');
 
   const widths = inner.map((b) => sizeFact(child.constrs, b.name, 'w'));
@@ -187,7 +196,9 @@ function splitCell(
     if (span > 0 && !(box.needsChildren && kids.length === 0)) {
       out.push({
         point: i === 0 ? point : gatheredText(point, kids),
-        shapeType: i === 0 ? shapeType : 'rect',
+        shapeType: i === 0 ? shapeType : (box.shapeType ?? 'rect'),
+        ...(box.styleLbl !== undefined ? { styleLbl: box.styleLbl } : {}),
+        index,
         x: across ? at : cell.x,
         y: across ? cell.y : at,
         cx: across ? span : cell.cx,
@@ -196,7 +207,7 @@ function splitCell(
     }
     at += span;
   });
-  return out.length > 0 ? out : [{ point, shapeType, ...cell }];
+  return out.length > 0 ? out : whole(child.styleLbl);
 }
 
 // Stated sizes as fractions of the whole: what is stated is kept, and what is
@@ -377,9 +388,11 @@ function parseNode(node: PoNode, ctx: LayoutContext): { kind: 'node' } & LayoutN
     if (t !== undefined && v !== undefined) params.set(t, v);
   }
   const shapeType = shape ? poAttr(shape, 'type') : undefined;
+  const styleLbl = poAttr(node, 'styleLbl');
   return {
     kind: 'node',
     name: poAttr(node, 'name') ?? '',
+    ...(styleLbl !== undefined && styleLbl !== '' ? { styleLbl } : {}),
     needsChildren: false,
     alg: algOf(alg),
     algParams: params,

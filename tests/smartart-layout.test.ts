@@ -1,13 +1,15 @@
-// ECMA-376 §21.4.3 — running a SmartArt LAYOUT part, for the files that carry
-// no cached drawing. The layout is a program, and these are the shapes of it
-// this engine answers: a flat list, a cell split in two beside itself, a cell
-// split in two above itself, and the `maxDepth` branch that decides which of
-// the last two a part means.
+// ECMA-376 §21.4.3/§21.4.5 — running a SmartArt LAYOUT part and colouring what
+// it lays out, for the files that carry no cached drawing. The layout is a
+// program, and these are the shapes of it this engine answers: a flat list, a
+// cell split in two beside itself, a cell split in two above itself, and the
+// `maxDepth` branch that decides which of the last two a part means. The
+// colours part then gives each box its place in a run of accents.
 
 import { XMLParser } from 'fast-xml-parser';
 import { describe, expect, it } from 'vitest';
 
 import type { PoNode } from '@/core/po-helpers';
+import { DiagramColors } from '@/core/drawingml/diagram/colors';
 import { DiagramData } from '@/core/drawingml/diagram/data-model';
 import { layoutDiagram } from '@/core/drawingml/diagram/layout-engine';
 
@@ -261,5 +263,51 @@ describe('a SmartArt layout with no cached drawing', () => {
   it('gives nothing for an algorithm this engine does not run', () => {
     const hierarchy = layoutXml('<dgm:alg type="hierChild"/>');
     expect(run(hierarchy, dataXml([['a', []]]))).toEqual([]);
+  });
+});
+
+const COLORS = `<dgm:colorsDef xmlns:dgm="d" xmlns:a="a" uniqueId="urn:x">
+  <dgm:styleLbl name="alignNode1">
+    <dgm:fillClrLst meth="repeat">
+      <a:schemeClr val="accent2"/><a:schemeClr val="accent3"/>
+    </dgm:fillClrLst>
+    <dgm:txFillClrLst/>
+  </dgm:styleLbl>
+  <dgm:styleLbl name="alignAccFollowNode1">
+    <dgm:fillClrLst meth="repeat">
+      <a:schemeClr val="accent2"><a:tint val="40000"/><a:alpha val="90000"/></a:schemeClr>
+      <a:schemeClr val="accent3"><a:tint val="40000"/><a:alpha val="90000"/></a:schemeClr>
+    </dgm:fillClrLst>
+    <dgm:txFillClrLst meth="repeat"><a:schemeClr val="dk1"/></dgm:txFillClrLst>
+  </dgm:styleLbl>
+</dgm:colorsDef>`;
+
+describe('the colours a SmartArt part gives its boxes', () => {
+  const colors = new DiagramColors(parse(COLORS));
+
+  it('walks the run, so siblings differ and the run starts over', () => {
+    expect(colors.fill('alignNode1', 0)).toBe(
+      '<a:solidFill><a:schemeClr val="accent2"></a:schemeClr></a:solidFill>',
+    );
+    expect(colors.fill('alignNode1', 1)).toBe(
+      '<a:solidFill><a:schemeClr val="accent3"></a:schemeClr></a:solidFill>',
+    );
+    expect(colors.fill('alignNode1', 2)).toBe(colors.fill('alignNode1', 0));
+  });
+
+  it('keeps the transforms that make a follower box a wash of the accent', () => {
+    expect(colors.fill('alignAccFollowNode1', 0)).toBe(
+      '<a:solidFill><a:schemeClr val="accent2"><a:tint val="40000"/><a:alpha val="90000"/></a:schemeClr></a:solidFill>',
+    );
+  });
+
+  it('overrides the text colour only where the part states one', () => {
+    expect(colors.textFill('alignAccFollowNode1', 0)).toBe(
+      '<a:solidFill><a:schemeClr val="dk1"></a:schemeClr></a:solidFill>',
+    );
+    // An empty list is the style's own font colour, not a colour of its own.
+    expect(colors.textFill('alignNode1', 0)).toBeUndefined();
+    expect(colors.fill('noSuchLabel', 0)).toBeUndefined();
+    expect(colors.fill(undefined, 0)).toBeUndefined();
   });
 });

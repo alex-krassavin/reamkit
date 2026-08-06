@@ -5,11 +5,6 @@
   "aligned": true
  },
  {
-  "name": "fill-color-list.pptx",
-  "score": 0.5711,
-  "aligned": true
- },
- {
   "name": "smartart-autofit-sync.pptx",
   "score": 0.4709,
   "aligned": true
@@ -90,11 +85,6 @@
   "aligned": true
  },
  {
-  "name": "smartart-vertical-block-list.pptx",
-  "score": 0.1652,
-  "aligned": true
- },
- {
   "name": "smartart-background.pptx",
   "score": 0.1597,
   "aligned": true
@@ -150,8 +140,8 @@
   "aligned": true
  },
  {
-  "name": "smartart-dir.pptx",
-  "score": 0.1161,
+  "name": "fill-color-list.pptx",
+  "score": 0.1237,
   "aligned": true
  },
  {
@@ -420,6 +410,11 @@
   "aligned": true
  },
  {
+  "name": "smartart-vertical-block-list.pptx",
+  "score": 0.0331,
+  "aligned": true
+ },
+ {
   "name": "tdf112089.pptx",
   "score": 0.0328,
   "aligned": true
@@ -457,6 +452,11 @@
  {
   "name": "tdf125573_FontWorkScaleX.pptx",
   "score": 0.0297,
+  "aligned": true
+ },
+ {
+  "name": "smartart-dir.pptx",
+  "score": 0.0282,
   "aligned": true
  },
  {

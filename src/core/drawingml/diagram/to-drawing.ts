@@ -4,6 +4,7 @@
 // its font colour, pictures — is the one already tested against files that DO
 // carry one, instead of a second renderer that would drift from it.
 
+import type { DiagramColors } from '@/core/drawingml/diagram/colors';
 import type { LaidNode } from '@/core/drawingml/diagram/layout-engine';
 import type { PoNode } from '@/core/po-helpers';
 import { poChildren, poIs, poText } from '@/core/po-helpers';
@@ -15,25 +16,31 @@ const NS =
 /**
  * A `dsp:drawing` for boxes the engine laid out.
  *
- * @param nodes The laid-out boxes, in the diagram's own EMU frame.
+ * @param nodes  The laid-out boxes, in the diagram's own EMU frame.
+ * @param frame  The frame the slide gives the diagram.
+ * @param colors The colours part, when the file carries one.
  * @returns The XML text of the drawing part.
  */
 export function diagramDrawingXml(
   nodes: ReadonlyArray<LaidNode>,
   frame: { readonly cx: number; readonly cy: number },
+  colors?: DiagramColors,
 ): string {
   const shapes = nodes
     .map((n) => {
       const off = `<a:off x="${r(n.x)}" y="${r(n.y)}"/><a:ext cx="${r(n.cx)}" cy="${r(n.cy)}"/>`;
-      // The colour lists a stock diagram ships resolve to the theme's accent
-      // run; without running them, one accent for every node is the shape the
-      // galleries take, and it is stated rather than guessed at per node.
-      const fill = '<a:solidFill><a:schemeClr val="accent1"/></a:solidFill>';
+      // §21.4.5 — the colours part names a RUN of accents per style label, so
+      // sibling boxes differ; only a file without one falls back to a single
+      // accent for the lot.
+      const fill =
+        colors?.fill(n.styleLbl, n.index) ??
+        '<a:solidFill><a:schemeClr val="accent1"/></a:solidFill>';
+      const text = colors?.textFill(n.styleLbl, n.index);
       return (
         `<dsp:sp><dsp:spPr><a:xfrm>${off}</a:xfrm>` +
         `<a:prstGeom prst="${esc(n.shapeType)}"><a:avLst/></a:prstGeom>${fill}</dsp:spPr>` +
         `<dsp:style><a:fontRef idx="minor"><a:schemeClr val="lt1"/></a:fontRef></dsp:style>` +
-        `<dsp:txBody>${bodyXml(n)}</dsp:txBody></dsp:sp>`
+        `<dsp:txBody>${bodyXml(n, text)}</dsp:txBody></dsp:sp>`
       );
     })
     .join('');
@@ -52,7 +59,7 @@ export function diagramDrawingXml(
 // The node's own text, re-emitted as the drawing part spells it. Only the runs'
 // text is carried: the size and colour a diagram's text takes come from the
 // style, not from the data part's runs.
-function bodyXml(node: LaidNode): string {
+function bodyXml(node: LaidNode, textFill?: string): string {
   const paragraphs: Array<string> = [];
   for (const p of node.point.text ? poChildren(node.point.text) : []) {
     if (!poIs(p, 'a:p')) continue;
@@ -60,7 +67,13 @@ function bodyXml(node: LaidNode): string {
     for (const r of poChildren(p)) {
       if (!poIs(r, 'a:r')) continue;
       const text = poText(poChildren(r).find((c) => poIs(c, 'a:t')));
-      if (text !== '') runs += `<a:r><a:rPr lang="en-US"/><a:t>${esc(text)}</a:t></a:r>`;
+      if (text !== '') {
+        const rPr =
+          textFill === undefined
+            ? '<a:rPr lang="en-US"/>'
+            : `<a:rPr lang="en-US">${textFill}</a:rPr>`;
+        runs += `<a:r>${rPr}<a:t>${esc(text)}</a:t></a:r>`;
+      }
     }
     if (runs !== '') paragraphs.push(`<a:p><a:pPr algn="ctr"/>${runs}</a:p>`);
   }

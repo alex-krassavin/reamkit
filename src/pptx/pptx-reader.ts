@@ -27,6 +27,7 @@ import type { FontRegistry } from '@/core/font';
 import { packageHasPart } from '@/core/bytes';
 import { DiagramData } from '@/core/drawingml/diagram/data-model';
 import { diagramDrawingXml } from '@/core/drawingml/diagram/to-drawing';
+import { DiagramColors } from '@/core/drawingml/diagram/colors';
 import { layoutDiagram } from '@/core/drawingml/diagram/layout-engine';
 import { parseChart, withChartColorStyle } from '@/core/drawingml/chart-parser';
 import {
@@ -507,7 +508,12 @@ function laidOutDiagram(
   const model = new DiagramData(parseXml(data.data));
   const nodes = layoutDiagram(parseXml(layout.data), model, frame.cx, frame.cy);
   if (nodes.length === 0) return undefined;
-  const xml = diagramDrawingXml(nodes, frame);
+  const colorRel = pkg
+    .getPartRelationships(slidePath)
+    .find((r) => r.type.endsWith('/diagramColors'));
+  const colorPart = colorRel ? pkg.resolveRelatedPart(slidePath, colorRel) : undefined;
+  const colors = colorPart ? new DiagramColors(parseXml(colorPart.data)) : undefined;
+  const xml = diagramDrawingXml(nodes, frame, colors);
   for (const root of parseXml(new TextEncoder().encode(xml))) {
     const found = poFindDescendant(root, 'dsp:spTree');
     if (found) return found;
