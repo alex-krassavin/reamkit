@@ -144,10 +144,12 @@ charts — and is byte-stable across a read↔write loop.
   **styling** — fonts, fills,
   borders, number formats and alignment from the FONT/FORMAT/XF records, with colours
   resolved through the BIFF colour palette — **embedded pictures** (from the
-  Office-Drawing/Escher BLIP store), **embedded charts** (the BIFF chart substream,
-  plotted from the worksheet cells its AI records reference) and **drawing shapes**
-  (autoshapes + text boxes, from the Escher shape records and their TXO text) are
-  read, plus **cell hyperlinks** (the HLINK record's URL moniker), the **page-setup
+  Office-Drawing/Escher BLIP store, metafiles included), **embedded charts** (the
+  BIFF chart substream, plotted from the worksheet cells its AI records reference)
+  and **drawing shapes** (autoshapes + text boxes, from the Escher shape records and
+  their TXO text) are read — each placed and sized on the sheet's own columns and
+  rows, since a `.xls` drawing anchors to cells, and a grouped shape through the
+  group that anchors it — plus **cell hyperlinks** (the HLINK record's URL moniker), the **page-setup
   print model** (orientation, scale, fit-to-page, margins, gridlines, centering,
   header/footer and manual page breaks), **defined names** (named ranges plus the
   print area and repeated titles, from the NAME records), **cell comments** (the
@@ -292,19 +294,32 @@ charts — and is byte-stable across a read↔write loop.
 - **Legacy `.ppt`** (PowerPoint 97–2003) — the binary `PowerPoint Document` stream
   inside the OLE2/CFB container, reached through the Current User → UserEditAtom →
   PersistDirectoryAtom indirection. Each slide becomes one page at the deck size
-  (the DocumentAtom slide size, in master units); the text is read from the
-  TextChars / TextBytes atoms with run formatting (bold / italic / underline / size
-  / colour from the StyleTextPropAtom) and paragraph alignment / indent level, and
-  embedded images are pulled from the Pictures stream (OfficeArtBlip referenced by a
-  shape's `pib`). A shape that carries a slide anchor (OfficeArtClientAnchor) is
-  positioned at its rectangle — text boxes and pictures become floating content,
-  like the `.pptx` reader; an un-anchored shape (e.g. a placeholder that inherits
-  master geometry) flows in reading order. Decorative autoshapes are read as vector
-  shapes — the preset type from the OfficeArtFSP (or, for a freeform, its **exact
-  custom geometry** walked from the `pVertices` / `pSegmentInfo` arrays) plus their
-  fill / line colour, whether a literal sRGB value, a system colour (the default
-  Windows scheme) or one resolved through the slide's colour scheme (the master's
-  when the slide follows it); only a palette-relative colour degrades gracefully.
+  (the DocumentAtom slide size, in master units).
+
+  A slide's **title and body come from the document's own slide list**, not from the
+  shape that draws them: the placeholder holds an `OutlineTextRefAtom` naming which
+  of the slide's texts is its, so each lands in the rectangle the file states for it.
+  Their **size, colour, typeface and bullet come from the master** — the
+  `TextMasterStyleAtom` for that text type and indent level — because a run usually
+  states none of them; a run that does states only where it differs. A colour may be
+  a literal sRGB or a slot in the slide's colour scheme, and the typeface is an index
+  into the deck's font collection, so a deck set in Times is measured in Times. A
+  bullet is a character, translated out of the symbol face that states it.
+
+  The slide is drawn on **the background it states** — a solid colour, a shade, or a
+  picture — or on its master's, when its flags say to follow it, and under **the
+  decoration the master carries**: the rules, the logo, the footer band, with the
+  master's own placeholders left behind as the prototypes they are.
+
+  Shapes are placed by their slide anchor; a **grouped** shape by the ChildAnchor its
+  group resolves, which is what makes a `.ppt` table — a group of cell rectangles —
+  read as one. Each carries its fill: a literal or scheme colour, a shade, or a
+  **picture, stretched or tiled**, including a picture stored inline on the shape
+  rather than in the deck's picture stream. A freeform carries its **exact custom
+  geometry** (the `pVertices` / `pSegmentInfo` arrays), and a piece of **WordArt** is
+  drawn as the word it is rather than as the rectangle its shape type would give.
+  A **metafile** picture (EMF / WMF, deflated inside its Escher blip) is replayed
+  like any other. Only a palette-relative colour degrades gracefully.
 
 **Graphics & math**
 - DrawingML shapes (preset and custom geometry, gradients, group shapes, theme colors).
@@ -317,6 +332,19 @@ charts — and is byte-stable across a read↔write loop.
 - Knuth–Plass line breaking, Liang hyphenation (en / ru).
 - OpenType ligatures and kerning (GSUB/GPOS), mark positioning.
 - BiDi (UAX #9), Arabic cursive joining.
+- **A face for the writing system the document is in.** The curated substitutes are
+  Latin, so text in Han, Kana, Hangul, Arabic, Hebrew, Thai or the geometric symbol
+  block reaches a Noto face for that script instead of a row of notdef boxes —
+  chosen per CHARACTER, fetched only for the scripts a document actually holds, and
+  in one weight rather than four. Unified Han is the document's call: the same
+  character is drawn differently in Japanese, Korean and Chinese, so its neighbours
+  decide which face draws it.
+- **The font a document brings with it** is used ahead of any substitute — a
+  `.docx` font-table part (de-obfuscated against the GUID in its name) or a `.pptx`
+  `p:embeddedFontLst` face. A `w:rFonts` that names a **theme** slot rather than a
+  family (`asciiTheme="minorHAnsi"`) resolves through the theme's major / minor
+  fonts, and a **narrow** family is measured at the narrow advance widths rather
+  than the regular ones.
 - **Renderer-compatibility `layoutProfile`** (`'word'` / `'libreoffice'`) — matches a
   target renderer's line-height model, line breaking and default kerning; with the
   metric-compatible open substitutes (Carlito / Caladea / Arimo / Tinos / Cousine) this
@@ -341,9 +369,10 @@ charts — and is byte-stable across a read↔write loop.
 - **A few format edge cases degrade gracefully** — re-save the original in its modern
   format for byte-exact fidelity, but each is a _missing detail, never a wrong one_:
   a legacy `.ppt` shape's
-  **palette-relative colour** (literal, scheme- and system-relative colours resolve)
-  or a rare **arc / ellipse freeform segment** (it falls back to the path's preset
-  bounds); in a legacy `.xls`, a 2007 **Excel table's** banded style / autofilter
+  **palette-relative colour** (literal, scheme- and system-relative colours resolve),
+  a rare **arc / ellipse freeform segment** (it falls back to the path's preset
+  bounds) or a piece of **WordArt's effects** — the word, its size and its face are
+  drawn, a texture through the glyphs or a stretch to the frame is not; in a legacy `.xls`, a 2007 **Excel table's** banded style / autofilter
   (its shared-feature record is one even Apache POI leaves unparsed, so the cell
   values still render — only the table's banding is absent) and a colour-scale /
   data-bar / icon-set rule (a 2007 `CF12` record) whose colour is **theme-relative**
@@ -352,10 +381,13 @@ charts — and is byte-stable across a read↔write loop.
   only to a binary `.bin` (the MorphData control family — check box / option / toggle
   / text / combo / list — and every property-bag control _are_ read, with their
   caption and value).
-- **Inside a metafile**, a raster **blit** (a DIB in the record stream — an
-  attachment icon, a pasted screenshot), a gradient fill, a flood fill and a
-  clipping region are not drawn; everything else the file draws is. Each is
-  reported as a named loss rather than guessed at.
+- **Inside a metafile**, an arc / pie / chord, a gradient fill, a flood fill and a
+  clipping region are not drawn; everything else the file draws is, including the
+  rasters it blits. Each omission is reported as a named loss rather than guessed at.
+- **A `.pptx` embedded font packed with MicroType Express.** PowerPoint wraps an
+  embedded face in an EOT container and, unlike Word's, it is compressed with a
+  codec of its own; the deck renders in a substitute and says so rather than
+  silently dropping the family.
 - **A SmartArt with no pre-rendered drawing.** PowerPoint writes the diagram's
   laid-out shapes beside its data, and that is what Ream draws; a file that
   ships only `data`/`layout`/`colors`/`quickStyle` would need the layout engine

@@ -25,7 +25,11 @@ Parse once into the format-neutral interlayer, then convert to any target.
 The format (docx/xlsx/pptx/pdf) is sniffed from the bytes. No fonts to wire up — an
 open metric-compatible substitute (Arimo for sans, Tinos for serif, Cousine for
 monospace, plus Carlito/Caladea for Calibri/Cambria — the same families LibreOffice
-substitutes) is fetched automatically based on the document's referenced fonts:
+substitutes) is fetched automatically based on the document's referenced fonts.
+Those five are Latin, so a document that holds **Japanese, Korean, Chinese,
+Arabic, Hebrew, Thai or geometric symbols** also gets a Noto face for that
+writing system — one weight, fetched only for the scripts the document actually
+uses, and a font the document **embeds** is used ahead of any of them:
 
 ```ts
 import { Ream } from 'reamkit';

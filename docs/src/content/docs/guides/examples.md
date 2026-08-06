@@ -213,6 +213,23 @@ doc.flow.comments?.get('0'); // { content, author?, date?, authorId?, parentId?,
 Comments — threads and resolved flags included — also write back through
 `convert('docx')`.
 
+## Legacy .doc / .xls / .ppt
+
+The binary Office formats parse through the same entry point and the same
+interlayer — `Ream.parse(bytes)` sniffs OLE2/CFB and picks the reader, so every
+target and every option below works on them unchanged. A legacy deck brings its
+master's decoration and background, the text its slide list holds with the
+sizes, colours, typefaces and bullets its master states, grouped shapes and
+tables, picture fills and the metafiles it draws with; a legacy workbook brings
+its styling, its drawings placed on the sheet's own grid, its charts, its print
+model and its conditional formatting.
+
+```ts
+const doc = Ream.parse(bytes);     // .doc / .xls / .ppt — sniffed like the rest
+const pdf = await doc.convert('pdf');
+const xlsx = await doc.convert('xlsx'); // a .xls re-writes as a modern workbook
+```
+
 ## Excel pivot tables
 
 A pivot table's cached output renders as an ordinary grid; on top of that Ream applies
@@ -358,7 +375,21 @@ const { bytes, losses } = await doc.convertWithReport('pdf', {
 ```
 
 Fonts embedded in the document itself (`w:embed`, including obfuscated
-`.odttf`) always win — glyph-exact, no substitution.
+`.odttf`, and a deck's `p:embeddedFontLst`) always win — glyph-exact, no
+substitution. A `w:rFonts` that names a **theme** slot rather than a family
+resolves through the theme's major / minor fonts before any of this runs.
+
+The substitute set is Latin, so a document holding another writing system is
+served separately: a Noto face is fetched per SCRIPT — Japanese, Korean,
+Chinese, Arabic, Hebrew, Thai, geometric symbols — and only for the scripts the
+document actually contains. It is chosen per character, so a paragraph that
+mixes Latin and Arabic is drawn in both faces rather than in one with holes:
+
+```ts
+// A sheet of Korean: NotoSansKR is fetched, in the regular weight only.
+// The same call on a Latin-only document downloads nothing extra.
+const pdf = await Ream.parse(bytes).convert('pdf');
+```
 
 ## Renderer parity
 
