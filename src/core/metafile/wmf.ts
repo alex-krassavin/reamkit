@@ -13,7 +13,14 @@
 import type { PathSegment, StrokeStyle, VectorPath } from '@/core/vector';
 import type { DeviceContext, MetaObject, MetaPicture, PicturePrim } from '@/core/metafile/picture';
 import { PathBuilder } from '@/core/vector';
-import { cloneDc, colorRef, newDeviceContext } from '@/core/metafile/picture';
+import {
+  clippedAway,
+  cloneDc,
+  colorRef,
+  intersectClip,
+  newDeviceContext,
+  primBounds,
+} from '@/core/metafile/picture';
 import { cropDib, readDib } from '@/core/metafile/dib';
 import { makeBlitter } from '@/core/metafile/blit';
 import { ellipseSegments } from '@/core/metafile/emf';
@@ -86,6 +93,7 @@ export function readWmf(bytes: Uint8Array): MetaPicture {
   // left edge.
   let origin: { x: number; y: number } | undefined;
   const emit = (prim: PicturePrim): void => {
+    if (clippedAway(dc, primBounds(prim))) return;
     origin ??= { x: win.x, y: win.y };
     const dx = origin.x - win.x;
     const dy = origin.y - win.y;
@@ -180,6 +188,14 @@ export function readWmf(bytes: Uint8Array): MetaPicture {
         break;
       case 0x020c: // META_SETWINDOWEXT
         win = { ...win, cx: p(1), cy: p(0) };
+        break;
+      // §2.3.2 — the clip the records after it are limited to. Only the
+      // rectangular forms are modelled; a shape wholly outside one is dropped.
+      case 0x0416: // META_INTERSECTCLIPRECT — bottom, right, top, left
+        dc = {
+          ...dc,
+          clip: intersectClip(dc, { bottom: p(0), right: p(1), top: p(2), left: p(3) }),
+        };
         break;
       case 0x001e: // META_SAVEDC
         stack.push(cloneDc(dc));

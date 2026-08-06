@@ -811,3 +811,42 @@ describe('a blit (MS-EMF §2.3.1)', () => {
     ).toBe(true);
   });
 });
+
+describe('a clip region (MS-EMF §2.3.2)', () => {
+  it('drops what falls wholly outside the rectangle the file states', () => {
+    // An embedded object's preview clips its drawing to the part it shows;
+    // unclipped, everything the metafile draws around it is painted too.
+    const inside = rect(1, 1, 4, 4);
+    const outside = rect(50, 50, 60, 60);
+    const clipped = readEmf(
+      emf({ l: 0, t: 0, r: 100, b: 100 }, [
+        createPen(1, 0, 1, 0),
+        select(1),
+        emr(30, new Bytes().i32(0).i32(0).i32(10).i32(10).build()), // INTERSECTCLIPRECT
+        inside,
+        outside,
+      ]),
+    );
+    expect(clipped.prims).toHaveLength(1);
+
+    // …and with no clip record, both are drawn.
+    const plain = readEmf(
+      emf({ l: 0, t: 0, r: 100, b: 100 }, [createPen(1, 0, 1, 0), select(1), inside, outside]),
+    );
+    expect(plain.prims).toHaveLength(2);
+  });
+
+  it('an empty region with RGN_COPY clears the clip again', () => {
+    const drawn = readEmf(
+      emf({ l: 0, t: 0, r: 100, b: 100 }, [
+        createPen(1, 0, 1, 0),
+        select(1),
+        emr(30, new Bytes().i32(0).i32(0).i32(10).i32(10).build()),
+        // EXTSELECTCLIPRGN with no region data and RGN_COPY = back to no clip.
+        emr(75, new Bytes().u32(0).u32(5).build()),
+        rect(50, 50, 60, 60),
+      ]),
+    ).prims;
+    expect(drawn).toHaveLength(1);
+  });
+});

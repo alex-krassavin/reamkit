@@ -4,7 +4,9 @@
 // a font, a current point and a logical→device mapping. This reads the records
 // that DRAW (paths, rectangles, text, bitmaps, brush blits) and the ones that
 // set the state they draw through; the rest — palettes, colour management,
-// regions — are named in `skipped` so the caller can record the loss.
+// regions — are named in `skipped`, which the reader exposes as a diagnostic:
+// the render path it is read from carries no loss channel of its own, so
+// nothing turns it into a reported Loss automatically.
 //
 // Coordinates come out in DEVICE units: the window→viewport mapping (§2.3.11)
 // is applied as the records go by, so the picture's box is the header's own
@@ -13,7 +15,15 @@
 import type { PathSegment, StrokeStyle, VectorPath } from '@/core/vector';
 import type { DeviceContext, MetaObject, MetaPicture, PicturePrim } from '@/core/metafile/picture';
 import { PathBuilder } from '@/core/vector';
-import { applyTransform, cloneDc, colorRef, newDeviceContext } from '@/core/metafile/picture';
+import {
+  applyTransform,
+  clippedAway,
+  cloneDc,
+  colorRef,
+  intersectClip,
+  newDeviceContext,
+  primBounds,
+} from '@/core/metafile/picture';
 import { cropDib, fadedDib, readDib } from '@/core/metafile/dib';
 import { makeBlitter } from '@/core/metafile/blit';
 import { fromSymbolFont } from '@/core/metafile/symbol-fonts';
@@ -81,7 +91,14 @@ export function readEmf(bytes: Uint8Array): MetaPicture {
   let building: Array<PathSegment> | undefined;
   const open = (): Array<PathSegment> => building ?? [];
 
-  const blitter = makeBlitter((prim) => prims.push(prim));
+  // §2.3.2 — the clip the records after it are limited to, kept in the same
+  // device space the primitives are stored in. A primitive wholly outside it is
+  // dropped: an embedded workbook's preview clips its sheet to the used range,
+  // and unclipped we painted the whole empty grid around it.
+  const emit = (prim: PicturePrim): void => {
+    if (!clippedAway(dc, primBounds(prim))) prims.push(prim);
+  };
+  const blitter = makeBlitter(emit);
   /**
    * §2.3.1 — one blit record: the source bitmap into the destination
    * rectangle, both stated in the record's own fields. The rectangle is mapped
@@ -161,13 +178,26 @@ export function readEmf(bytes: Uint8Array): MetaPicture {
     const st = stroke ? strokeOf() : undefined;
     const fillHex = fill && !dc.brush.hollow ? dc.brush.colorHex : undefined;
     if (fillHex === undefined && !st) return;
-    prims.push({
+    emit({
       kind: 'path',
       paths: [path],
       ...(fillHex !== undefined ? { fillColorHex: fillHex } : {}),
       ...(st ? { stroke: st } : {}),
     });
   };
+
+  /** Two mapped corners → the rectangle they bound, in either order. */
+  function rectOf(
+    a: { x: number; y: number },
+    b: { x: number; y: number },
+  ): { left: number; top: number; right: number; bottom: number } {
+    return {
+      left: Math.min(a.x, b.x),
+      top: Math.min(a.y, b.y),
+      right: Math.max(a.x, b.x),
+      bottom: Math.max(a.y, b.y),
+    };
+  }
 
   /** A closed rectangle, as the geometry records draw one. */
   const rectSegments = (l: number, t: number, r: number, b: number): Array<PathSegment> => {
@@ -213,6 +243,32 @@ export function readEmf(bytes: Uint8Array): MetaPicture {
         view = { ...view, x: at(8), y: at(12) };
         haveView = true;
         break;
+      // §2.3.2 clip records. Only the rectangular forms are modelled; an
+      // EXTSELECTCLIPRGN whose region is one rectangle is one of them, and an
+      // empty region with RGN_COPY clears the clip.
+      case 30: {
+        // EMR_INTERSECTCLIPRECT — a RECTL in logical units
+        const a = px(at(8), at(12));
+        const b = px(at(16), at(20));
+        dc = { ...dc, clip: intersectClip(dc, rectOf(a, b)) };
+        break;
+      }
+      case 75: {
+        // EMR_EXTSELECTCLIPRGN — RegionData, then the mode
+        const cbRgnData = u(8);
+        const mode = u(12);
+        if (cbRgnData === 0 && mode === 5) {
+          const { clip: _drop, ...rest } = dc;
+          dc = rest;
+        } else if (mode === 5 && cbRgnData >= 32 && u(16 + 4) === 1) {
+          // One RECTL follows the 32-byte RGNDATAHEADER.
+          const base = off + 16 + 32;
+          const a = px(v.getInt32(base, true), v.getInt32(base + 4, true));
+          const b = px(v.getInt32(base + 8, true), v.getInt32(base + 12, true));
+          dc = { ...dc, clip: rectOf(a, b) };
+        }
+        break;
+      }
       case 33: // EMR_SAVEDC
         stack.push(cloneDc(dc));
         break;
@@ -428,7 +484,7 @@ export function readEmf(bytes: Uint8Array): MetaPicture {
           if (text.trim() !== '') {
             const p = px(refX, refY);
             const font = dc.font;
-            prims.push({
+            emit({
               kind: 'text',
               // A symbol font's letters are not letters (see symbol-fonts).
               text: fromSymbolFont(text, font?.family),
