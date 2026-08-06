@@ -2665,6 +2665,35 @@ function layoutShapeBlock(
   if (text?.autoFit && !vertical && textLines.length > 0) {
     heightPt = textHeightPt + insetTopPt + insetBottomPt;
   }
+  // §20.1.10.42 `a:normAutofit` — the text shrinks until it fits, and only
+  // shrinks. Unlike `@fitshape` this text WRAPS, so the width to beat is the
+  // widest line the breaker actually made, not the paragraph unbroken — and a
+  // word too long to break is what leaves a line over the edge. The height is
+  // the one just measured. Both are re-measured on the next pass, and since
+  // the factor is never above 1 the passes settle downwards.
+  if (
+    text?.shrinkToFit === true &&
+    text.fitToBox !== true &&
+    textLines.length > 0 &&
+    fitPass < MAX_FIT_PASSES
+  ) {
+    const innerW = Math.max(1, widthPt - insetLeftPt - insetRightPt);
+    const innerH = Math.max(1, heightPt - insetTopPt - insetBottomPt);
+    const widest = textLines.reduce((a, l) => Math.max(a, l.contentWidthPt), 0);
+    const k = Math.min(1, innerW / Math.max(1, widest), innerH / Math.max(1, textHeightPt));
+    if (Number.isFinite(k) && k > 0.05 && k < 0.98) {
+      return layoutShapeBlock(
+        { ...shape, text: scaleTextBody(text, k) },
+        options,
+        fontResources,
+        imageResources,
+        contentWidth,
+        maxHeight,
+        box,
+        fitPass + 1,
+      );
+    }
+  }
   // §14.1.2.22 `@fitshape` — the other way round: the TEXT follows the shape.
   // Legacy WordArt states a size the parser guessed without metrics; now that
   // the lines are measured, the size that FILLS the box is known, so the body

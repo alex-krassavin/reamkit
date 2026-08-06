@@ -998,6 +998,10 @@ export function parseTxBody(
   const rIns = bodyPr ? poIntAttr(bodyPr, 'rIns') : undefined;
   const bIns = bodyPr ? poIntAttr(bodyPr, 'bIns') : undefined;
   const a = bodyPr ? poAttr(bodyPr, 'anchor') : undefined;
+  // §20.1.10.42 — a `normAutofit` that carries no scale of its own is a box
+  // whose text has never been fitted; the layout measures it and shrinks it.
+  const autofit = bodyPr ? poChildren(bodyPr).find((c) => poIs(c, 'a:normAutofit')) : undefined;
+  const shrink = autofit !== undefined && poIntAttr(autofit, 'fontScale') === undefined;
   // A placeholder that states no anchor of its own sits where its prototype
   // says: a master title anchored `ctr` centres the slide's title in its box.
   const anchor: ShapeTextBody['anchor'] | undefined =
@@ -1009,6 +1013,7 @@ export function parseTxBody(
     ...(rIns !== undefined ? { insetRight: emuToPt(rIns) } : {}),
     ...(bIns !== undefined ? { insetBottom: emuToPt(bIns) } : {}),
     ...(anchor ? { anchor } : {}),
+    ...(shrink ? { shrinkToFit: true } : {}),
   };
 }
 
@@ -1095,6 +1100,15 @@ function parseSlideParagraph(
 
   const runs: Array<Run> = [];
   for (const child of poChildren(aP)) {
+    // §21.1.2.2.1 `a:br` — the break the author typed inside a paragraph. Read
+    // as nothing, the two halves ran together and the box broke the result
+    // wherever it fell: smartart-font-size's node reads "Max size(65 / pt)"
+    // where every reader has "Max size / (65 pt)".
+    if (poIs(child, 'a:br')) {
+      const last = runs[runs.length - 1];
+      if (last) runs[runs.length - 1] = { ...last, text: `${last.text}\n` };
+      continue;
+    }
     if (poIs(child, 'a:r') || poIs(child, 'a:fld')) {
       const run = parseSlideRun(child, defaults, colors, resolveLink, themeFonts);
       if (run) runs.push(run);

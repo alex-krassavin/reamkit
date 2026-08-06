@@ -1319,6 +1319,14 @@ export interface ShapeTextBody {
    */
   readonly fitToBox?: boolean;
   /**
+   * §20.1.10.42 `a:normAutofit` — the text SHRINKS to fit the box, and only
+   * shrinks: a size that already fits is left alone. PowerPoint writes the
+   * scale it settled on into `@fontScale` and that is applied at parse; this
+   * is for the text that arrives without one, which is every box of a diagram
+   * laid out from its layout part rather than from a cached drawing.
+   */
+  readonly shrinkToFit?: boolean;
+  /**
    * `wps:txbx @id` / `wps:linkedTxbx @id @seq` — the chain of boxes this one
    * belongs to. Text that overruns a box continues in the next of its chain;
    * `seq` 0 is the box that holds the words, and the rest carry none of their

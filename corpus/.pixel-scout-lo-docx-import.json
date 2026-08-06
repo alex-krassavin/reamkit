@@ -105,6 +105,11 @@
   "aligned": true
  },
  {
+  "name": "tdf133448.docx",
+  "score": 0.007,
+  "aligned": true
+ },
+ {
   "name": "WordArt.docx",
   "score": 0.007,
   "aligned": true
@@ -157,11 +162,6 @@
  {
   "name": "tdf123389.docx",
   "score": 0.0053,
-  "aligned": true
- },
- {
-  "name": "tdf133448.docx",
-  "score": 0.0049,
   "aligned": true
  },
  {

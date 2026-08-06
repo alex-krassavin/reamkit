@@ -286,33 +286,24 @@ describe('the drawing part the engine writes', () => {
   const sizesIn = (xml: string): Array<number> =>
     [...xml.matchAll(/sz="(\d+)"/gu)].map((m) => Number(m[1]) / 100);
 
-  it('writes the size the layout states when the box can hold it', () => {
-    // One row in the whole frame: 236pt of height, so both boxes fit as stated.
+  it('writes the size the layout states, and asks the layout to fit it', () => {
     const xml = diagramDrawingXml(run(VERTICAL_BLOCK_LIST, dataXml([['a', ['b', 'c']]])), {
       cx: CX,
       cy: CY,
     });
     expect(sizesIn(xml)).toEqual([65, 40, 40]);
+    // The stated size is a maximum; the shrink needs glyphs, so every box asks
+    // for it rather than guessing here.
+    expect(xml.match(/<a:normAutofit\/>/gu)).toHaveLength(2);
   });
 
-  it('bounds it by what the box can hold when it cannot', () => {
-    // Three rows in the same frame: a row is 76pt, and two lines at 1.2
-    // spacing no longer fit the stated 40pt, nor one line the stated 65pt.
-    const boxes = run(
-      VERTICAL_BLOCK_LIST,
-      dataXml([
-        ['a', ['b', 'c']],
-        ['d', ['e', 'f']],
-        ['g', ['h', 'i']],
-      ]),
+  it('carries a break inside a paragraph rather than running the halves together', () => {
+    const withBreak = dataXml([['a', []]]).replace(
+      '<a:r><a:t>a</a:t></a:r>',
+      '<a:r><a:t>Max size</a:t></a:r><a:br/><a:r><a:t>(65 pt)</a:t></a:r>',
     );
-    const sizes = sizesIn(diagramDrawingXml(boxes, { cx: CX, cy: CY }));
-    expect(sizes[0]).toBeLessThan(65);
-    expect(sizes[0]).toBeGreaterThan(40);
-    // Two lines in the same box are half the height each, and the two runs of
-    // the one box share a size.
-    expect(sizes[1]).toBeCloseTo((sizes[0] ?? 0) / 2, 5);
-    expect(sizes[2]).toBe(sizes[1]);
+    const xml = diagramDrawingXml(run(VERTICAL_BLOCK_LIST, withBreak), { cx: CX, cy: CY });
+    expect(xml).toContain('<a:t>Max size</a:t></a:r><a:br/><a:r>');
   });
 
   it('bullets and ranges left only the box the layout marks', () => {

@@ -140,8 +140,11 @@ export class DiagramData {
       if (!poIs(p, 'a:p')) continue;
       let line = '';
       for (const r of poChildren(p)) {
-        if (!poIs(r, 'a:r')) continue;
-        line += poText(poChildren(r).find((c) => poIs(c, 'a:t')));
+        // A break inside a paragraph is a line of its own, as `a:p` is.
+        if (poIs(r, 'a:br')) {
+          lines.push(line);
+          line = '';
+        } else if (poIs(r, 'a:r')) line += poText(poChildren(r).find((c) => poIs(c, 'a:t')));
       }
       lines.push(line);
     }

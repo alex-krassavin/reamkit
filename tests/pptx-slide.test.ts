@@ -2157,3 +2157,45 @@ describe('SmartArt diagrams (E-SMARTART SA0)', () => {
     expect(loss?.where).toBe('slide 1');
   });
 });
+
+// §20.1.10.42 `a:normAutofit` — the text shrinks until it fits the box it is
+// in. PowerPoint usually writes the scale it settled on into `@fontScale` and
+// that is applied at parse; a box that arrives WITHOUT one has never been
+// fitted, and every box of a diagram laid out from its layout part is such a
+// box. Unfitted, "Automatically shrinked text" at the layout's stated 65pt
+// stood three lines deep and half a box wide outside the box that names it.
+describe('a shape whose text shrinks to fit it', () => {
+  // A 2in × 0.6in box holding more 65pt words than it can possibly take.
+  const boxed = (bodyPr: string): string =>
+    `<p:sp><p:spPr>` +
+    `<a:xfrm><a:off x="914400" y="914400"/><a:ext cx="1828800" cy="548640"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>` +
+    `<p:txBody>${bodyPr}<a:p><a:r><a:rPr sz="6500"/>` +
+    `<a:t>Automatically shrinked text</a:t></a:r></a:p></p:txBody></p:sp>`;
+
+  // The largest size the page sets: the deck's own empty placeholder text sets
+  // the default 11pt beside it, which is not what this box is about.
+  const sizeOf = async (bodyPr: string): Promise<number> => {
+    const pdf = await Ream.parse(buildPptx([boxed(bodyPr)])).convert('pdf', { fonts: FONTS });
+    const sizes = [...latin1.decode(pdf).matchAll(/\/[A-Za-z0-9]+ ([\d.]+) Tf/gu)].map((m) =>
+      Number(m[1]),
+    );
+    return Math.max(...sizes);
+  };
+
+  it('leaves the stated size alone without one', async () => {
+    expect(await sizeOf('<a:bodyPr/>')).toBe(65);
+  });
+
+  it('brings it down to what the box holds with one', async () => {
+    const size = await sizeOf('<a:bodyPr><a:normAutofit/></a:bodyPr>');
+    expect(size).toBeLessThan(65);
+    expect(size).toBeGreaterThan(0);
+  });
+
+  it('trusts the scale the producer already settled on', async () => {
+    // A stated `fontScale` is PowerPoint's own answer and is applied as given;
+    // measuring it again would fight the file over a box it has already fitted.
+    expect(await sizeOf('<a:bodyPr><a:normAutofit fontScale="40000"/></a:bodyPr>')).toBe(26);
+  });
+});

@@ -86,7 +86,7 @@
  },
  {
   "name": "smartart-background.pptx",
-  "score": 0.1535,
+  "score": 0.1537,
   "aligned": true
  },
  {
@@ -415,6 +415,11 @@
   "aligned": true
  },
  {
+  "name": "smartart-font-size.pptx",
+  "score": 0.0323,
+  "aligned": true
+ },
+ {
   "name": "tdf136830.pptx",
   "score": 0.0323,
   "aligned": true
@@ -461,12 +466,17 @@
  },
  {
   "name": "smartart-vertical-block-list.pptx",
-  "score": 0.0241,
+  "score": 0.024,
   "aligned": true
  },
  {
   "name": "activex_scrollbar.pptx",
   "score": 0.0225,
+  "aligned": true
+ },
+ {
+  "name": "smartart-dir.pptx",
+  "score": 0.0222,
   "aligned": true
  },
  {
@@ -500,18 +510,8 @@
   "aligned": true
  },
  {
-  "name": "smartart-dir.pptx",
-  "score": 0.0206,
-  "aligned": true
- },
- {
   "name": "n821567.pptx",
   "score": 0.0204,
-  "aligned": true
- },
- {
-  "name": "smartart-font-size.pptx",
-  "score": 0.02,
   "aligned": true
  },
  {
@@ -695,11 +695,6 @@
   "aligned": true
  },
  {
-  "name": "tdf98603.pptx",
-  "score": 0.0089,
-  "aligned": true
- },
- {
   "name": "tdf131905.pptx",
   "score": 0.0087,
   "aligned": true
@@ -760,11 +755,6 @@
   "aligned": true
  },
  {
-  "name": "tdf169524.pptx",
-  "score": 0.0072,
-  "aligned": true
- },
- {
   "name": "tdf128684.pptx",
   "score": 0.007,
   "aligned": true
@@ -796,6 +786,11 @@
  },
  {
   "name": "tdf142648.pptx",
+  "score": 0.0064,
+  "aligned": true
+ },
+ {
+  "name": "tdf169524.pptx",
   "score": 0.0064,
   "aligned": true
  },
@@ -871,6 +866,11 @@
  },
  {
   "name": "n90190.pptx",
+  "score": 0.005,
+  "aligned": true
+ },
+ {
+  "name": "tdf98603.pptx",
   "score": 0.005,
   "aligned": true
  },
@@ -1745,11 +1745,6 @@
   "aligned": true
  },
  {
-  "name": "tdf147121.pptx",
-  "score": 0.0002,
-  "aligned": true
- },
- {
   "name": "tdf134862.pptx",
   "score": 0.0002,
   "aligned": true
@@ -1766,6 +1761,11 @@
  },
  {
   "name": "glue_point_leaving_directions.pptx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "tdf147121.pptx",
   "score": 0.0001,
   "aligned": true
  },
