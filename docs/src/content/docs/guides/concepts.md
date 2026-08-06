@@ -70,7 +70,10 @@ PDF embeds the fonts it draws with, so a converter needs font bytes. Ream's mode
 **caller-supplies-fonts**: the synchronous API takes the TTF bytes you pass; the async
 API, as a convenience, fetches an open metric-compatible substitute (Arimo, Tinos,
 Cousine, plus Carlito/Caladea for Calibri/Cambria — the same families LibreOffice
-substitutes) based on the document's referenced fonts. There are
+substitutes) based on the document's referenced fonts, and a Noto face for any
+writing system those five cannot draw — Han, Kana, Hangul, Arabic, Hebrew, Thai,
+geometric symbols — asked for only when the document holds that script. A font the
+document embeds is used ahead of both. There are
 no bundled fonts on the main path — the library renders faithfully with whatever font
 you give it.
 
