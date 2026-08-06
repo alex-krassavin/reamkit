@@ -1250,3 +1250,42 @@ describe('ppt WordArt (PPT-21)', () => {
     expect(shape?.fill).toEqual({ kind: 'none' });
   });
 });
+
+describe('ppt outline bullets from the master (PPT-22)', () => {
+  // A master states its outline bullets as a CHARACTER per level, with no
+  // fHasBullet flag beside it. Requiring the flag left 23884's second-level
+  // sub-points unmarked where the reference draws a dash.
+  const scheme = ['FFFFFF', '000000', '808080', '000000', 'FF0000', '00FF00', '0000FF', 'FFFF00'];
+  const deck = (paraBullet?: { hasBullet: boolean }): Uint8Array =>
+    buildPpt(
+      [
+        {
+          masterIndex: 0,
+          text: 'Top\rSub',
+          paraRuns: [
+            { length: 3, level: 0, ...paraBullet },
+            { length: 3, level: 1, ...paraBullet },
+          ],
+        },
+      ],
+      {
+        masters: [
+          {
+            colorScheme: scheme,
+            // Wingdings 0x6C at level 0, an en dash at level 1.
+            textStyles: [{ textType: 3, sizesPt: [24, 20], bulletChars: [0x6c, 0x2013] }],
+          },
+        ],
+      },
+    );
+
+  it('takes a level’s bullet character as the statement that there is one', () => {
+    const paras = extractPptContent(deck()).slides[0]!.shapes[0]!.paragraphs!;
+    expect(paras.map((p) => p.bullet)).toEqual(['●', '–']);
+  });
+
+  it('…and draws none where the paragraph says it has none', () => {
+    const paras = extractPptContent(deck({ hasBullet: false })).slides[0]!.shapes[0]!.paragraphs!;
+    expect(paras.map((p) => p.bullet)).toEqual([undefined, undefined]);
+  });
+});

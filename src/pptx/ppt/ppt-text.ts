@@ -1721,8 +1721,12 @@ function buildStyledParagraphs(
     const align = meta?.align ?? lvl?.align;
     // The paragraph decides WHETHER it is bulleted; the master decides WITH
     // WHAT when the paragraph names no character of its own.
-    const on = meta?.bulletOn ?? lvl?.bulletOn ?? false;
-    const bullet = on ? (meta?.bullet ?? lvl?.bullet ?? '•') : undefined;
+    // `fHasBullet` decides when it is stated; when nobody states it, a stated
+    // CHARACTER is itself the statement — a master's second outline level names
+    // its dash and no flag, and 23884's sub-points went unmarked.
+    const on = meta?.bulletOn ?? lvl?.bulletOn;
+    const char = meta?.bullet ?? lvl?.bullet;
+    const bullet = on === false ? undefined : on === true ? (char ?? '•') : char;
     paras.push({
       runs: lvl ? runs.map((r) => inherit(r, lvl)) : runs,
       ...(align !== undefined ? { align } : {}),

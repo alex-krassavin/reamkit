@@ -232,6 +232,9 @@ export interface BuildPptOptions {
       readonly sizesPt: ReadonlyArray<number>;
       // The font-collection index every level of this style names (PPT-19).
       readonly fontRef?: number;
+      // A bullet CHARACTER per level, with no fHasBullet flag beside it — which
+      // is how a master states its outline bullets (PPT-18).
+      readonly bulletChars?: ReadonlyArray<number>;
     }>;
   }>;
 }
@@ -446,7 +449,7 @@ export function buildPpt(
       concat([
         colorSchemeAtom(m.colorScheme),
         ...(m.textStyles ?? []).map((st) =>
-          textMasterStyleAtom(st.textType, st.sizesPt, st.fontRef),
+          textMasterStyleAtom(st.textType, st.sizesPt, st.fontRef, st.bulletChars),
         ),
         ...(m.boxes ?? []).map(buildShapeContainer),
       ]),
@@ -743,6 +746,7 @@ function textMasterStyleAtom(
   textType: number,
   sizesPt: ReadonlyArray<number>,
   fontRef?: number,
+  bulletChars?: ReadonlyArray<number>,
 ): Uint8Array {
   const parts: Array<Uint8Array> = [];
   const head = new Uint8Array(2);
@@ -752,7 +756,15 @@ function textMasterStyleAtom(
     // A level: its own index (only on the types past `other`), then a
     // TextPFException stating nothing and a TextCFException stating the size.
     const level = new Uint8Array(textType >= 4 ? 2 : 0);
-    const pf = new Uint8Array(4); // mask 0
+    const bulletChar = bulletChars?.[parts.length === 1 ? 0 : (parts.length - 1) / 3];
+    // A TextPFException stating the bullet CHARACTER (mask bit 0x80) and nothing
+    // else — no fHasBullet flag, which is what a real master writes.
+    const pf = new Uint8Array(bulletChar === undefined ? 4 : 6);
+    if (bulletChar !== undefined) {
+      const pv = new DataView(pf.buffer);
+      pv.setUint32(0, 0x00000080, true);
+      pv.setUint16(4, bulletChar, true);
+    }
     const cf = new Uint8Array(fontRef === undefined ? 6 : 8);
     const cv = new DataView(cf.buffer);
     // TextCFExceptionMask: size, and the typeface when one is named.
