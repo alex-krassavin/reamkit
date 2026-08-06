@@ -415,6 +415,16 @@
   "aligned": true
  },
  {
+  "name": "45540_form_Header.xlsx",
+  "score": 0.0157,
+  "aligned": false
+ },
+ {
+  "name": "45540_form_Footer.xlsx",
+  "score": 0.0152,
+  "aligned": false
+ },
+ {
   "name": "61605.xlsx",
   "score": 0.0151,
   "aligned": false
@@ -475,23 +485,8 @@
   "aligned": true
  },
  {
-  "name": "45540_form_Footer.xlsx",
-  "score": 0.0103,
-  "aligned": false
- },
- {
-  "name": "45540_form_Header.xlsx",
-  "score": 0.0101,
-  "aligned": false
- },
- {
   "name": "resize_compare.xlsx",
   "score": 0.0099,
-  "aligned": true
- },
- {
-  "name": "1_NoIden.xlsx",
-  "score": 0.0098,
   "aligned": true
  },
  {
@@ -501,6 +496,11 @@
  },
  {
   "name": "47737.xlsx",
+  "score": 0.0091,
+  "aligned": false
+ },
+ {
+  "name": "1_NoIden.xlsx",
   "score": 0.0091,
   "aligned": false
  },
@@ -1140,11 +1140,6 @@
   "aligned": true
  },
  {
-  "name": "59132.xlsx",
-  "score": 0.0003,
-  "aligned": true
- },
- {
   "name": "48779.xlsx",
   "score": 0.0002,
   "aligned": true
@@ -1181,6 +1176,11 @@
  },
  {
   "name": "54034.xlsx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "59132.xlsx",
   "score": 0.0002,
   "aligned": true
  },
