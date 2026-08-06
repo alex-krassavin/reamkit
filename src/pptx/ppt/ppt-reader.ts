@@ -167,7 +167,7 @@ function buildBody(
           if (block) floats.push(block);
         }
         if (shape.paragraphs?.some((p) => paragraphText(p).length > 0)) {
-          floats.push(positionedTextShape(shape.rectPt, shape.paragraphs));
+          floats.push(positionedTextShape(shape.rectPt, shape.paragraphs, shape.wordArt === true));
         }
       } else {
         for (const para of shape.paragraphs ?? []) {
@@ -298,7 +298,11 @@ function floatAt(rect: PptRect): FloatAnchor {
 
 // A positioned text box: a borderless, fill-less ShapeBlock at the shape rectangle,
 // its paragraphs top-anchored inside.
-function positionedTextShape(rect: PptRect, paragraphs: ReadonlyArray<PptParagraph>): BodyElement {
+function positionedTextShape(
+  rect: PptRect,
+  paragraphs: ReadonlyArray<PptParagraph>,
+  centred = false,
+): BodyElement {
   const shape: ShapeBlock = {
     float: floatAt(rect),
     width: pt(rect.w),
@@ -307,7 +311,8 @@ function positionedTextShape(rect: PptRect, paragraphs: ReadonlyArray<PptParagra
     fill: { kind: 'none' },
     text: {
       content: paragraphs.filter((p) => paragraphText(p).length > 0).map(flowParagraph),
-      anchor: 't',
+      // WordArt IS its box: the word sits in the middle of it, not at the top.
+      anchor: centred ? 'ctr' : 't',
     },
     paragraphProperties: {},
   };

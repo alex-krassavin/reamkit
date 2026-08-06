@@ -76,6 +76,11 @@ const PROP_FILL_ANGLE = 0x018b; // OPT fillAngle — 16.16 fixed degrees
 const PROP_FILL_BLIP = 0x0186; // OPT fillBlip — a picture fill's store index (PPT-12)
 // §2.3.7.11/.12 — the size ONE copy of a tiled fill occupies, in EMU. Zero (the
 // default) leaves the tile at the picture's own size.
+// §2.3.22 — WordArt: the text the shape IS, the size it is set at and the face
+// it is set in. A `.ppt` states these as shape properties, not as a text box.
+const PROP_GTEXT_UNICODE = 0x00c0;
+const PROP_GTEXT_SIZE = 0x00c3;
+const PROP_GTEXT_FONT = 0x00c5;
 const PROP_FILL_WIDTH = 0x0189;
 const PROP_FILL_HEIGHT = 0x018a;
 const EMU_PER_POINT = 12700;
@@ -245,6 +250,12 @@ export interface PptAutoShape {
  */
 export interface PptShape {
   readonly rectPt?: PptRect;
+  /**
+   * §2.3.22 — the shape IS a piece of WordArt: its text is the shape, centred
+   * in its box rather than flowed from the top. Drawn as an autoshape it was a
+   * coloured rectangle where the reference has a word.
+   */
+  readonly wordArt?: boolean;
   /**
    * Whether the shape is a placeholder (§2.9.24). On a MASTER that means it is
    * a prototype, not decoration: drawn on the slides that follow it, every one
@@ -806,6 +817,7 @@ function collectShapeContainers(
       let inlineFill: Uint8Array | undefined;
       let inlinePic: Uint8Array | undefined;
       let tileSizePt: PptAutoShape['tileSizePt'];
+      let gtext: PptParagraph | undefined;
       let placeholder = false;
       for (const child of records(r.data)) {
         if (child.type === FBT_FSP) {
@@ -833,6 +845,7 @@ function collectShapeContainers(
           fillType = optProperty(child.data, child.instance, PROP_FILL_TYPE);
           fillBlip = optProperty(child.data, child.instance, PROP_FILL_BLIP);
           tileSizePt = parseTileSize(child.data, child.instance);
+          gtext = parseWordArt(child.data, child.instance, fillColorHex);
           // A blip property may name a store entry OR carry the picture itself
           // as its complex data. 119877 has no Pictures stream at all: every
           // one of its table cells holds its own 73 KB blip inline.
@@ -857,7 +870,12 @@ function collectShapeContainers(
       }
       const image: PptImage | undefined = blip(pib) ?? inlineBlip(inlinePic);
       const textParas =
-        paragraphs && paragraphs.some((p) => paragraphText(p).length > 0) ? paragraphs : undefined;
+        (gtext ??
+        (paragraphs?.some((p) => paragraphText(p).length > 0) === true ? paragraphs : undefined))
+          ? gtext
+            ? [gtext]
+            : paragraphs
+          : undefined;
       // A decorative autoshape: an anchored shape with a preset type (or its own
       // freeform geometry — PPT-7), a literal fill or line colour, and no
       // text/picture — and not a group / patriarch / background shape.
@@ -866,6 +884,7 @@ function collectShapeContainers(
       // A picture FILL is not a picture shape: it paints the shape's own box,
       // and the shape may carry text over it.
       const autoShape =
+        !gtext &&
         !image &&
         rectPt &&
         (shapeType > 0 || geometry) &&
@@ -885,6 +904,7 @@ function collectShapeContainers(
       if (textParas || image || autoShape) {
         out.shapes.push({
           ...(rectPt ? { rectPt } : {}),
+          ...(gtext ? { wordArt: true } : {}),
           ...(placeholder ? { placeholder: true } : {}),
           ...(textParas ? { paragraphs: textParas } : {}),
           ...(image ? { image } : {}),
@@ -1208,6 +1228,46 @@ function clientTextboxParagraphs(
   const ref = findChild(d, (r) => r.type === RT_OUTLINE_TEXT_REF_ATOM);
   if (!ref || ref.length < 4) return own;
   return [...(outline[u32(ref, 0)] ?? [])];
+}
+
+// §2.3.22 — WordArt as one centred paragraph: the text the shape is, at the
+// size and in the face it states, coloured by the shape's own fill. The letters
+// carry effects this does not model (a texture through the glyphs, a shadow, a
+// warp); a word in the right place at the right size is nearer than the filled
+// rectangle it used to be.
+function parseWordArt(
+  d: Uint8Array,
+  count: number,
+  colorHex: string | undefined,
+): PptParagraph | undefined {
+  const text = utf16Property(optComplex(d, count, PROP_GTEXT_UNICODE));
+  if (text === undefined || text.trim() === '') return undefined;
+  const raw = optProperty(d, count, PROP_GTEXT_SIZE);
+  const sizePt = raw === undefined ? undefined : Math.round((raw / 65536) * 10) / 10;
+  const font = utf16Property(optComplex(d, count, PROP_GTEXT_FONT));
+  return {
+    runs: [
+      {
+        text,
+        ...(sizePt !== undefined && sizePt > 0 ? { sizePt } : {}),
+        ...(colorHex ? { colorHex } : {}),
+        ...(font ? { fontFamily: font } : {}),
+      },
+    ],
+    align: 1, // WordArt is centred in its box
+  };
+}
+
+// A complex property holding a NUL-terminated UTF-16 string.
+function utf16Property(blob: Uint8Array | undefined): string | undefined {
+  if (!blob || blob.length < 2) return undefined;
+  let out = '';
+  for (let i = 0; i * 2 + 1 < blob.length; i++) {
+    const cu = u16(blob, i * 2);
+    if (cu === 0) break;
+    out += String.fromCharCode(cu);
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 // §2.3.7.11/.12 — the tile's own size, when the shape states one. Both must be

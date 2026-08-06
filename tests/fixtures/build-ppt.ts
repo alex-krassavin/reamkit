@@ -52,6 +52,9 @@ const FBT_SPGR_CONTAINER = 0xf003;
 const FBT_SPGR = 0xf009;
 const FBT_CHILD_ANCHOR = 0xf00f;
 const PROP_FILL_TYPE = 0x0180;
+const PROP_GTEXT_UNICODE_COMPLEX = 0x80c0; // gtextUNICODE with fComplex
+const PROP_GTEXT_SIZE = 0x00c3;
+const PROP_GTEXT_FONT_COMPLEX = 0x80c5; // gtextFont with fComplex
 const PROP_FILL_WIDTH = 0x0189;
 const PROP_FILL_HEIGHT = 0x018a;
 const PROP_FILL_BLIP_COMPLEX = 0x8186; // fillBlip with fComplex: the blip follows
@@ -181,6 +184,8 @@ export interface PptBoxInput {
   };
   // A grouped shape's rectangle, in the enclosing group's coordinate space.
   readonly childAnchor?: readonly [number, number, number, number];
+  // MS-ODRAW §2.3.22 WordArt: gtextUNICODE / gtextSize / gtextFont.
+  readonly wordArt?: { readonly text: string; readonly sizePt?: number; readonly font?: string };
 }
 
 /** A group of shapes: where it sits on the slide, and the space its children use. */
@@ -587,6 +592,23 @@ function buildShapeContainer(box: PptBoxInput): Uint8Array {
   if (box.noLine) props.push({ id: PROP_LINE_BOOLS, value: 0x0008 << 16 });
   else if (box.lineSchemeIndex !== undefined)
     props.push({ id: PROP_LINE_COLOR, value: schemeColorRef(box.lineSchemeIndex) });
+  if (box.wordArt) {
+    const str = (t: string): Uint8Array => {
+      const d = new Uint8Array((t.length + 1) * 2);
+      const v = new DataView(d.buffer);
+      for (let i = 0; i < t.length; i++) v.setUint16(i * 2, t.charCodeAt(i), true);
+      return d;
+    };
+    const textBlob = str(box.wordArt.text);
+    props.push({ id: PROP_GTEXT_UNICODE_COMPLEX, value: textBlob.length, blob: textBlob });
+    if (box.wordArt.sizePt !== undefined) {
+      props.push({ id: PROP_GTEXT_SIZE, value: Math.round(box.wordArt.sizePt * 65536) });
+    }
+    if (box.wordArt.font !== undefined) {
+      const fontBlob = str(box.wordArt.font);
+      props.push({ id: PROP_GTEXT_FONT_COMPLEX, value: fontBlob.length, blob: fontBlob });
+    }
+  }
   if (box.pictureFill) {
     props.push({ id: PROP_FILL_TYPE, value: box.pictureFill.fillType });
     if (box.pictureFill.tileEmu) {

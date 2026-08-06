@@ -1214,3 +1214,39 @@ describe('ppt tile size (PPT-20)', () => {
     expect(extractPptContent(deck()).slides[0]!.shapes[0]!.autoShape?.tileSizePt).toBeUndefined();
   });
 });
+
+describe('ppt WordArt (PPT-21)', () => {
+  // MS-ODRAW §2.3.22 — a piece of WordArt states its text, its size and its
+  // face as SHAPE properties, not as a text box. Read as an ordinary autoshape
+  // it is a coloured rectangle: 41246-2's closing slide says "Fin" and we drew
+  // a peach box.
+  const deck = (): Uint8Array =>
+    buildPpt([
+      {
+        boxes: [
+          {
+            anchor: { x: 276, y: 236, w: 134, h: 106 },
+            shapeType: 136, // msosptTextPlainText
+            fillColorHex: 'FFCC99',
+            wordArt: { text: 'Fin', sizePt: 54, font: 'Impact' },
+          },
+        ],
+      },
+    ]);
+
+  it('reads the word, its size and its face off the shape', () => {
+    const shape = extractPptContent(deck()).slides[0]!.shapes[0]!;
+    expect(shape.wordArt).toBe(true);
+    expect(shape.autoShape).toBeUndefined(); // …and not as a filled rectangle
+    expect(shape.paragraphs?.[0]).toEqual({
+      runs: [{ text: 'Fin', sizePt: 54, colorHex: 'FFCC99', fontFamily: 'Impact' }],
+      align: 1,
+    });
+  });
+
+  it('centres it in its box, which is what the box is for', () => {
+    const shape = readPpt(deck()).doc.body.find((el) => el.kind === 'shape')?.shape;
+    expect(shape?.text?.anchor).toBe('ctr');
+    expect(shape?.fill).toEqual({ kind: 'none' });
+  });
+});
