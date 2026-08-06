@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildPptx } from './fixtures/build-pptx';
 import { buildTinyPng } from './fixtures/build-png';
+import type { ShapeFill } from '@/core/document-model';
 import { FontRegistry } from '@/core/font';
 import { paintPlan } from '@/layout/page-doc';
 import { layoutStyledDocument } from '@/layout/styled-layout';
@@ -1627,6 +1628,47 @@ describe('a shape drawn from a gallery style (§20.1.4.2)', () => {
       c.kind === 'paragraph' ? c.paragraph.runs : [],
     )[0];
     expect(run?.properties.colorHex).toBe('FFFFFF');
+  });
+
+  // §20.1.8.33 — a `a:gradFill` holding only a direction states no colours at
+  // all: the run of them comes from the style's `a:fillRef` slot and the shape
+  // says only which way to sweep it. Counted as a fill of its own, the shape
+  // ended up with none — 63200.pptx's ellipse drew as its own SHADOW, a grey
+  // disc where every reader has the theme's blue.
+  it('takes the run of colours from the style when the shape states only a direction', () => {
+    const themeFmt =
+      `<a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill>` +
+      `<a:gradFill><a:gsLst>` +
+      `<a:gs pos="0"><a:schemeClr val="phClr"><a:tint val="60000"/></a:schemeClr></a:gs>` +
+      `<a:gs pos="100000"><a:schemeClr val="phClr"/></a:gs>` +
+      `</a:gsLst><a:lin ang="5400000"/></a:gradFill></a:fillStyleLst>` +
+      `<a:lnStyleLst><a:ln w="12700"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln></a:lnStyleLst>`;
+    const sp = (fill: string): string =>
+      `<p:sp><p:nvSpPr><p:cNvPr id="3" name="g"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+      `<a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom>${fill}</p:spPr>` +
+      `<p:style><a:lnRef idx="1"><a:srgbClr val="223344"/></a:lnRef>` +
+      `<a:fillRef idx="2"><a:srgbClr val="4488CC"/></a:fillRef>` +
+      `<a:fontRef idx="minor"><a:srgbClr val="FFFFFF"/></a:fontRef></p:style></p:sp>`;
+    const fillOf = (inner: string): ShapeFill | undefined =>
+      Ream.parse(buildPptx([sp(inner)], { layoutMaster: { themeFmt } })).flow.body.flatMap((e) =>
+        e.kind === 'shape' ? [e.shape.fill] : [],
+      )[0];
+
+    // The theme's second slot is a gradient of the reference's colour…
+    const bare = fillOf('<a:gradFill><a:lin ang="2700000"/><a:tileRect/></a:gradFill>');
+    expect(bare?.kind).toBe('gradient');
+    expect(bare?.gradient?.stops.map((stop) => stop.colorHex)).toEqual(['B0C3E2', '4488CC']);
+    // …swept the way the SHAPE asks, not the way the slot does (90°).
+    expect(bare?.gradient?.kind === 'linear' ? bare.gradient.angle : undefined).toBe(45);
+
+    // A shape that states nothing takes the slot's own direction.
+    expect(
+      (() => {
+        const f = fillOf('');
+        return f?.gradient?.kind === 'linear' ? f.gradient.angle : undefined;
+      })(),
+    ).toBe(90);
   });
 });
 

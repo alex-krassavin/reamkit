@@ -60,11 +60,6 @@
   "aligned": true
  },
  {
-  "name": "63200.pptx",
-  "score": 0.2941,
-  "aligned": true
- },
- {
   "name": "bug68703.pptx",
   "score": 0.2035,
   "aligned": true
@@ -302,6 +297,11 @@
  {
   "name": "bug63290.pptx",
   "score": 0.0076,
+  "aligned": true
+ },
+ {
+  "name": "63200.pptx",
+  "score": 0.0067,
   "aligned": true
  },
  {

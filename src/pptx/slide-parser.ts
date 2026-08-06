@@ -63,6 +63,7 @@ import {
   styleRefFill,
   styleRefFontColor,
   styleRefLine,
+  withStatedDirection,
 } from '@/word/drawing-parser';
 import {
   lineSpacing,
@@ -321,7 +322,7 @@ function parseSp(sp: PoNode, ctx: SlideContext, transform: GroupTransform): Shap
   const ownFill = stated(statesFill);
   const styleFill = style ? styleRefFill(style, colors, themeStyles) : undefined;
   const lentFill = lent(statesFill);
-  const styled: ShapeFill = useBgFill
+  const resolved: ShapeFill = useBgFill
     ? backgroundThrough(ctx.backgroundFill, box, ctx.slideSize)
     : ownFill
       ? parseFill(ownFill, colors, ctx.resolveImage)
@@ -332,6 +333,9 @@ function parseSp(sp: PoNode, ctx: SlideContext, transform: GroupTransform): Shap
           : spPr
             ? parseFill(spPr, colors, ctx.resolveImage)
             : { kind: 'none' };
+  // …and whichever of those it came from, a bare `a:gradFill` on the shape
+  // turns it: the colours are the style's, the direction is the shape's.
+  const styled = withStatedDirection(resolved, spPr);
   const lineFrom = from((n) => poChildren(n).some((c) => poIs(c, 'a:ln')));
   let line = lineFrom ? parseLine(lineFrom, colors) : undefined;
   if (style) {

@@ -2238,6 +2238,35 @@ const FILL_TAGS: ReadonlySet<string> = new Set([
   'a:grpFill',
 ]);
 
+// §20.1.8.33 — a `a:gradFill` with no `a:gsLst` states a DIRECTION and no
+// colours: the run of stops comes from the gallery style's `a:fillRef`, and the
+// shape only says which way to sweep it. Counted as a fill of its own, the
+// shape ends up with none at all — 63200.pptx's ellipse drew as its own shadow,
+// a grey disc where every reader has the theme's blue.
+function emptyGradient(node: PoNode): boolean {
+  return poIs(node, 'a:gradFill') && !poChildren(node).some((c) => poIs(c, 'a:gsLst'));
+}
+
+/**
+ * The fill with the direction the SHAPE states, where it states one and no
+ * colours: §20.1.8.33's `a:gradFill` holding only an `a:lin` says "sweep the
+ * gallery style's run of colours this way". 63200.pptx's ellipse asks for the
+ * diagonal where the theme's slot sweeps straight down.
+ *
+ * @param fill The fill resolved from the style (or anywhere else).
+ * @param spPr The shape's own properties.
+ * @returns The fill, turned; unchanged when the shape states no bare direction.
+ */
+export function withStatedDirection(fill: ShapeFill, spPr: PoNode | undefined): ShapeFill {
+  const gradient = fill.kind === 'gradient' ? fill.gradient : undefined;
+  if (gradient === undefined || gradient.kind !== 'linear' || spPr === undefined) return fill;
+  const grad = poChildren(spPr).find((c) => emptyGradient(c));
+  const lin = grad ? poChildren(grad).find((c) => poIs(c, 'a:lin')) : undefined;
+  const ang = lin ? poIntAttr(lin, 'ang') : undefined;
+  if (ang === undefined) return fill;
+  return { ...fill, gradient: { ...gradient, angle: (ang / 60000) % 360 } };
+}
+
 /**
  * Whether an `spPr` states a fill AT ALL — including `a:noFill`, which is a
  * shape saying it has none rather than saying nothing. A placeholder that says
@@ -2247,7 +2276,10 @@ const FILL_TAGS: ReadonlySet<string> = new Set([
  * @returns Whether a fill element is present.
  */
 export function statesFill(spPr: PoNode | undefined): boolean {
-  return spPr !== undefined && poChildren(spPr).some((c) => FILL_TAGS.has(poTag(c) ?? ''));
+  return (
+    spPr !== undefined &&
+    poChildren(spPr).some((c) => FILL_TAGS.has(poTag(c) ?? '') && !emptyGradient(c))
+  );
 }
 
 // §20.1.4.2.13 `<a:fillRef>` — the fill a gallery style names. The theme's own
