@@ -56,11 +56,40 @@ export function diagramDrawingXml(
 <dsp:drawing ${NS}><dsp:spTree>${grp}${shapes}</dsp:spTree></dsp:drawing>`;
 }
 
+const EMU_PER_PT = 12700;
+// A box's default vertical inset (§20.1.2.2.9): 0.05" top and bottom, which is
+// what the text actually has to fit inside.
+const INSET_Y_PT = (45720 * 2) / EMU_PER_PT;
+
+/**
+ * The point size a box's text is written at.
+ *
+ * The layout states a size and PowerPoint treats it as a MAXIMUM: its
+ * `ruleLst` shrinks the text until it fits the box. Nothing downstream of here
+ * shrinks anything — a written `fontScale` is honoured, but none is written —
+ * so the bound the box itself gives is applied here: its lines have to fit the
+ * height at the 1.2 spacing they are set with. That needs no metrics and is
+ * exact. Bounding the WIDTH the same way needs the glyphs, and estimating them
+ * at half an em came out further from LibreOffice than leaving it alone, so a
+ * long word in a narrow box still runs over until the text layout can measure
+ * it and report a scale of its own.
+ *
+ * Without the height bound a two-line descendants box set at the stated 65pt
+ * stood two thirds of the way outside itself.
+ */
+function fittedSize(node: LaidNode, lines: ReadonlyArray<string>): number | undefined {
+  const stated = node.fontSizePt;
+  if (stated === undefined || lines.length === 0) return stated;
+  const boxH = node.cy / EMU_PER_PT - INSET_Y_PT;
+  return Math.max(1, Math.min(stated, boxH / (lines.length * 1.2)));
+}
+
 // The node's own text, re-emitted as the drawing part spells it. Only the runs'
 // text is carried: the size and colour a diagram's text takes come from the
 // style, not from the data part's runs.
 function bodyXml(node: LaidNode, textFill?: string): string {
   const paragraphs: Array<string> = [];
+  const size = fittedSize(node, textLines(node));
   for (const p of node.point.text ? poChildren(node.point.text) : []) {
     if (!poIs(p, 'a:p')) continue;
     let runs = '';
@@ -68,17 +97,42 @@ function bodyXml(node: LaidNode, textFill?: string): string {
       if (!poIs(r, 'a:r')) continue;
       const text = poText(poChildren(r).find((c) => poIs(c, 'a:t')));
       if (text !== '') {
+        // §21.4.3 — the layout states the point size (`primFontSz` for a node's
+        // own label, `secFontSz` for its descendants'), and it is a large one:
+        // a diagram's text fills its box rather than sitting at the deck's
+        // default, which is why every box read small.
+        const sz = size === undefined ? '' : ` sz="${Math.round(size * 100)}"`;
         const rPr =
           textFill === undefined
-            ? '<a:rPr lang="en-US"/>'
-            : `<a:rPr lang="en-US">${textFill}</a:rPr>`;
+            ? `<a:rPr lang="en-US"${sz}/>`
+            : `<a:rPr lang="en-US"${sz}>${textFill}</a:rPr>`;
         runs += `<a:r>${rPr}<a:t>${esc(text)}</a:t></a:r>`;
       }
     }
-    if (runs !== '') paragraphs.push(`<a:p><a:pPr algn="ctr"/>${runs}</a:p>`);
+    // Bulleted text reads as the list it is: ranged left behind its bullets,
+    // where a node's own label sits centred in its box.
+    const pPr =
+      node.bulleted === true
+        ? '<a:pPr algn="l" marL="171450" indent="-171450"><a:buChar char="\u2022"/></a:pPr>'
+        : '<a:pPr algn="ctr"/>';
+    if (runs !== '') paragraphs.push(`<a:p>${pPr}${runs}</a:p>`);
   }
-  const body = '<a:bodyPr anchor="ctr"/><a:lstStyle/>';
+  const body = `<a:bodyPr anchor="ctr"${node.bulleted === true ? ' anchorCtr="0"' : ''}/><a:lstStyle/>`;
   return paragraphs.length > 0 ? body + paragraphs.join('') : `${body}<a:p/>`;
+}
+
+// The text the box will hold, one string per line, for measuring it.
+function textLines(node: LaidNode): Array<string> {
+  const out: Array<string> = [];
+  for (const p of node.point.text ? poChildren(node.point.text) : []) {
+    if (!poIs(p, 'a:p')) continue;
+    let line = '';
+    for (const r of poChildren(p)) {
+      if (poIs(r, 'a:r')) line += poText(poChildren(r).find((c) => poIs(c, 'a:t')));
+    }
+    if (line !== '') out.push(line);
+  }
+  return out;
 }
 
 /** Whether a parsed drawing part actually holds shapes to draw. */

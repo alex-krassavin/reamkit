@@ -24,6 +24,10 @@ export interface LaidNode {
   readonly styleLbl?: string;
   /** The box's place among its siblings, which is where in that run it is. */
   readonly index: number;
+  /** The point size the layout states for the box's text, when it states one. */
+  readonly fontSizePt?: number;
+  /** Whether the `tx` algorithm asks for the text to be bulleted. */
+  readonly bulleted?: boolean;
   readonly x: number;
   readonly y: number;
   readonly cx: number;
@@ -171,8 +175,27 @@ function splitCell(
 ): Array<LaidNode> {
   const child = findNamed(parent.children, childName);
   const inner = child ? namedBoxes(child) : [];
+  // A size can be stated on the box itself (no `forName`), by the node that
+  // lays it out, or by the top node for every descendant of that name.
+  const size = (
+    box: ({ kind: 'node' } & LayoutNode) | undefined,
+    type: 'primFontSz' | 'secFontSz',
+  ): number | undefined =>
+    box === undefined
+      ? undefined
+      : (fontSize(box.constrs, undefined, type) ??
+        fontSize(child?.constrs ?? [], box.name, type) ??
+        fontSize(parent.constrs, box.name, type));
   const whole = (lbl: string | undefined): Array<LaidNode> => [
-    { point, shapeType, ...(lbl !== undefined ? { styleLbl: lbl } : {}), index, ...cell },
+    {
+      point,
+      shapeType,
+      ...(lbl !== undefined ? { styleLbl: lbl } : {}),
+      ...opt('fontSizePt', size(child, 'primFontSz')),
+      ...(child !== undefined && bulleted(child) ? { bulleted: true } : {}),
+      index,
+      ...cell,
+    },
   ];
   if (!child || inner.length !== 2) return whole(child?.styleLbl);
   const kids = data.children(point.id, 'node');
@@ -198,6 +221,8 @@ function splitCell(
         point: i === 0 ? point : gatheredText(point, kids),
         shapeType: i === 0 ? shapeType : (box.shapeType ?? 'rect'),
         ...(box.styleLbl !== undefined ? { styleLbl: box.styleLbl } : {}),
+        ...opt('fontSizePt', size(box, i === 0 ? 'primFontSz' : 'secFontSz')),
+        ...(bulleted(box) ? { bulleted: true } : {}),
         index,
         x: across ? at : cell.x,
         y: across ? cell.y : at,
@@ -292,6 +317,35 @@ function sizeFact(
     }
   }
   return undefined;
+}
+
+// The point size a constraint states for a box's text. The primary size is the
+// node's own label, the secondary its descendants' — and a secondary stated
+// against the primary (`refType="primFontSz"`) is that size, whatever it is.
+function fontSize(
+  constrs: ReadonlyArray<Constraint>,
+  name: string | undefined,
+  type: 'primFontSz' | 'secFontSz',
+): number | undefined {
+  for (const k of constrs) {
+    if (k.type !== type || k.forName !== name) continue;
+    if (k.val !== undefined) return k.val;
+    if (k.refType === 'primFontSz' && k.refForName !== undefined) {
+      const from = fontSize(constrs, k.refForName, 'primFontSz');
+      if (from !== undefined) return from * (k.fact || 1);
+    }
+  }
+  return type === 'secFontSz' ? fontSize(constrs, name, 'primFontSz') : undefined;
+}
+
+// §21.4.3.2 `stBulletLvl` — the `tx` algorithm's parameter for text that starts
+// bulleted, which is how a descendants box reads as a list and not a paragraph.
+function bulleted(node: { kind: 'node' } & LayoutNode): boolean {
+  return Number(node.algParams.get('stBulletLvl') ?? '0') >= 1;
+}
+
+function opt<T extends string>(name: T, v: number | undefined): { [P in T]?: number } {
+  return (v === undefined ? {} : { [name]: v }) as { [P in T]?: number };
 }
 
 // A height the nested node does not state itself is stated for it further up,

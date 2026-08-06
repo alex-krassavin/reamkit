@@ -12,6 +12,7 @@ import type { PoNode } from '@/core/po-helpers';
 import { DiagramColors } from '@/core/drawingml/diagram/colors';
 import { DiagramData } from '@/core/drawingml/diagram/data-model';
 import { layoutDiagram } from '@/core/drawingml/diagram/layout-engine';
+import { diagramDrawingXml } from '@/core/drawingml/diagram/to-drawing';
 
 const parser = new XMLParser({
   preserveOrder: true,
@@ -69,6 +70,7 @@ const VERTICAL_BLOCK_LIST = layoutXml(
      <dgm:constr type="h" for="ch" forName="linNode" refType="h"/>
      <dgm:constr type="w" for="ch" forName="linNode" refType="w"/>
      <dgm:constr type="h" for="ch" forName="sp" refType="h" refFor="ch" refForName="linNode" fact="0.05"/>
+     <dgm:constr type="primFontSz" for="des" forName="parentText" op="equ" val="65"/>
    </dgm:constrLst>
    <dgm:forEach name="each" axis="ch" ptType="node">
      <dgm:layoutNode name="linNode">
@@ -80,7 +82,11 @@ const VERTICAL_BLOCK_LIST = layoutXml(
        <dgm:layoutNode name="parentText"><dgm:alg type="tx"/><dgm:shape type="roundRect"/></dgm:layoutNode>
        <dgm:choose name="hasKids">
          <dgm:if name="some" axis="ch" ptType="node" func="cnt" op="gte" val="1">
-           <dgm:layoutNode name="descendantText"><dgm:alg type="tx"/><dgm:shape type="rect"/></dgm:layoutNode>
+           <dgm:layoutNode name="descendantText">
+             <dgm:alg type="tx"><dgm:param type="stBulletLvl" val="1"/></dgm:alg>
+             <dgm:shape type="rect"/>
+             <dgm:constrLst><dgm:constr type="secFontSz" val="40"/></dgm:constrLst>
+           </dgm:layoutNode>
          </dgm:if>
        </dgm:choose>
      </dgm:layoutNode>
@@ -191,6 +197,16 @@ describe('a SmartArt layout with no cached drawing', () => {
     expect(boxes[2]?.x).toBe(boxes[0]?.x);
   });
 
+  it('takes the point size each box is given, and bullets what the tx algorithm marks', () => {
+    const boxes = run(VERTICAL_BLOCK_LIST, dataXml([['a', ['b', 'c']]]));
+    // The label's size is stated for every descendant of that name; the
+    // descendants box states its own, on itself, with no `forName`.
+    expect(boxes[0]?.fontSizePt).toBe(65);
+    expect(boxes[1]?.fontSizePt).toBe(40);
+    expect(boxes[0]?.bulleted).toBeUndefined();
+    expect(boxes[1]?.bulleted).toBe(true);
+  });
+
   it('leaves the second box out where the layout guards it on a child count', () => {
     const boxes = run(
       VERTICAL_BLOCK_LIST,
@@ -263,6 +279,49 @@ describe('a SmartArt layout with no cached drawing', () => {
   it('gives nothing for an algorithm this engine does not run', () => {
     const hierarchy = layoutXml('<dgm:alg type="hierChild"/>');
     expect(run(hierarchy, dataXml([['a', []]]))).toEqual([]);
+  });
+});
+
+describe('the drawing part the engine writes', () => {
+  const sizesIn = (xml: string): Array<number> =>
+    [...xml.matchAll(/sz="(\d+)"/gu)].map((m) => Number(m[1]) / 100);
+
+  it('writes the size the layout states when the box can hold it', () => {
+    // One row in the whole frame: 236pt of height, so both boxes fit as stated.
+    const xml = diagramDrawingXml(run(VERTICAL_BLOCK_LIST, dataXml([['a', ['b', 'c']]])), {
+      cx: CX,
+      cy: CY,
+    });
+    expect(sizesIn(xml)).toEqual([65, 40, 40]);
+  });
+
+  it('bounds it by what the box can hold when it cannot', () => {
+    // Three rows in the same frame: a row is 76pt, and two lines at 1.2
+    // spacing no longer fit the stated 40pt, nor one line the stated 65pt.
+    const boxes = run(
+      VERTICAL_BLOCK_LIST,
+      dataXml([
+        ['a', ['b', 'c']],
+        ['d', ['e', 'f']],
+        ['g', ['h', 'i']],
+      ]),
+    );
+    const sizes = sizesIn(diagramDrawingXml(boxes, { cx: CX, cy: CY }));
+    expect(sizes[0]).toBeLessThan(65);
+    expect(sizes[0]).toBeGreaterThan(40);
+    // Two lines in the same box are half the height each, and the two runs of
+    // the one box share a size.
+    expect(sizes[1]).toBeCloseTo((sizes[0] ?? 0) / 2, 5);
+    expect(sizes[2]).toBe(sizes[1]);
+  });
+
+  it('bullets and ranges left only the box the layout marks', () => {
+    const xml = diagramDrawingXml(run(VERTICAL_BLOCK_LIST, dataXml([['a', ['b']]])), {
+      cx: CX,
+      cy: CY,
+    });
+    expect(xml).toContain('<a:buChar char="\u2022"/>');
+    expect(xml).toContain('<a:pPr algn="ctr"/>');
   });
 });
 
