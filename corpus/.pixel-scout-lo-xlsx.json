@@ -325,6 +325,11 @@
   "aligned": true
  },
  {
+  "name": "tdf161301.xlsx",
+  "score": 0.0079,
+  "aligned": false
+ },
+ {
   "name": "Sparklines.xlsx",
   "score": 0.0076,
   "aligned": true
@@ -377,11 +382,6 @@
  {
   "name": "testShapeAutofit.xlsx",
   "score": 0.0069,
-  "aligned": false
- },
- {
-  "name": "tdf161301.xlsx",
-  "score": 0.0068,
   "aligned": false
  },
  {
