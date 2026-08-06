@@ -51,6 +51,17 @@ export class DiagramColors {
     return solid(this.pick(label, 'fill', index));
   }
 
+  /**
+   * Whether the part states this label at all.
+   *
+   * A label it names but gives no fill — `revTx`, the reversed text of a
+   * process arrow — is a box with NO fill, which is not the same as a file
+   * that ships no colours and falls back to one accent for everything.
+   */
+  knows(label: string | undefined): boolean {
+    return label !== undefined && this.byLabel.has(label);
+  }
+
   /** The `a:solidFill` for a box's TEXT, where the part overrides the style. */
   textFill(label: string | undefined, index: number): string | undefined {
     return solid(this.pick(label, 'txFill', index));

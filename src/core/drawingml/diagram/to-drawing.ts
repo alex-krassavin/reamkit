@@ -34,7 +34,9 @@ export function diagramDrawingXml(
       // accent for the lot.
       const fill =
         colors?.fill(n.styleLbl, n.index) ??
-        '<a:solidFill><a:schemeClr val="accent1"/></a:solidFill>';
+        (colors?.knows(n.styleLbl) === true
+          ? '<a:noFill/>'
+          : '<a:solidFill><a:schemeClr val="accent1"/></a:solidFill>');
       const text = colors?.textFill(n.styleLbl, n.index);
       return (
         `<dsp:sp><dsp:spPr><a:xfrm>${off}</a:xfrm>` +

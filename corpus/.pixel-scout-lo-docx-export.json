@@ -140,11 +140,6 @@
   "aligned": true
  },
  {
-  "name": "fdo79822.docx",
-  "score": 0.056,
-  "aligned": true
- },
- {
   "name": "fdo78659.docx",
   "score": 0.0524,
   "aligned": true
@@ -547,6 +542,11 @@
  {
   "name": "negative-cell-margin-twips.docx",
   "score": 0.012,
+  "aligned": true
+ },
+ {
+  "name": "fdo79822.docx",
+  "score": 0.0119,
   "aligned": true
  },
  {

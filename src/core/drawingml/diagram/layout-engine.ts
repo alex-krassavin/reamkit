@@ -95,34 +95,220 @@ export function layoutDiagram(
   const top = root ? findChild(poChildren(root), 'dgm:layoutNode') : undefined;
   if (!top || !data.root) return [];
   const parsed = parseNode(top, { maxDepth: data.depth });
-  // Only the flat list algorithms are run here; anything else is left to the
-  // caller's graceful loss rather than laid out wrongly.
-  if (parsed.alg !== 'snake' && parsed.alg !== 'lin') return [];
+  // Only the algorithms below are run; anything else is left to the caller's
+  // graceful loss rather than laid out wrongly.
+  if (parsed.alg !== 'snake' && parsed.alg !== 'lin' && parsed.alg !== 'composite') return [];
+  return layoutIn(parsed, data.root, { x: 0, y: 0, cx, cy }, data, 0);
+}
 
-  const nodes = data.children(data.root.id, 'node');
+/** A rectangle in the diagram's own frame (EMU). */
+interface Box {
+  readonly x: number;
+  readonly y: number;
+  readonly cx: number;
+  readonly cy: number;
+}
+
+/**
+ * One layout node run inside the box it was given, by whichever algorithm it
+ * names.
+ *
+ * @param node  The layout node.
+ * @param point The data point it is laying out.
+ * @param box   The rectangle it has to fill.
+ * @param data  The data part.
+ * @param index The point's place among its siblings, for the colour run.
+ */
+function layoutIn(
+  node: { kind: 'node' } & LayoutNode,
+  point: DiagramPoint,
+  box: Box,
+  data: DiagramData,
+  index: number,
+): Array<LaidNode> {
+  if (node.alg === 'composite') return compositeLayout(node, point, box, data, index);
+  if (node.alg === 'lin' || node.alg === 'snake') return listLayout(node, point, box, data);
+  // §21.4.3.2 `sp` is the space algorithm — it reserves room. It reserves it
+  // for a SHAPE when the node names one, which is how a process arrow gets
+  // drawn behind the steps standing on it; naming none, it is just the gap.
+  if (node.alg === 'sp') {
+    return node.shapeType === undefined
+      ? []
+      : [
+          {
+            point: { id: `${point.id}/${node.name}`, type: 'node' },
+            shapeType: node.shapeType,
+            ...styleOf(node),
+            index,
+            ...box,
+          },
+        ];
+  }
+  // `tx` is the leaf that sets a point's own words. Anything else — a cycle, a
+  // hierarchy, a pyramid — is an algorithm this engine does not run, and a box
+  // filling its whole share is a worse answer than none: a centre-cycle came
+  // out as one blue rectangle over the entire frame.
+  if (node.alg !== 'tx') return [];
+  return [{ point, shapeType: node.shapeType ?? 'rect', ...styleOf(node), index, ...box }];
+}
+
+// What a box takes from its own layout node, whatever laid it out.
+function styleOf(node: { kind: 'node' } & LayoutNode): {
+  styleLbl?: string;
+  fontSizePt?: number;
+  bulleted?: true;
+} {
+  const sz = fontSize(node.constrs, undefined, 'primFontSz');
+  return {
+    ...(node.styleLbl !== undefined ? { styleLbl: node.styleLbl } : {}),
+    ...opt('fontSizePt', sz),
+    ...(bulleted(node) ? { bulleted: true as const } : {}),
+  };
+}
+
+/**
+ * §21.4.3.2 `composite` — the children are not a list, they are placed: each
+ * states where its edges are against the parent's box or against a sibling's,
+ * and then runs its own algorithm inside what it was given. A process arrow
+ * across the frame with the steps standing along it is one node laid over
+ * another, which no list algorithm can express.
+ */
+function compositeLayout(
+  node: { kind: 'node' } & LayoutNode,
+  point: DiagramPoint,
+  box: Box,
+  data: DiagramData,
+  index: number,
+): Array<LaidNode> {
+  const out: Array<LaidNode> = [];
+  // In document order, because a constraint may refer to a sibling and the
+  // producer writes the one referred to first.
+  const placed = new Map<string, Box>();
+  for (const child of namedBoxes(node)) {
+    const rect = rectIn(node.constrs, child.name, box, placed);
+    placed.set(child.name, rect);
+    out.push(...layoutIn(child, point, rect, data, index));
+  }
+  return out;
+}
+
+// Whether a node's constraints say where its children GO, rather than only in
+// what order they stack.
+//
+// Every composite writes `l` and `t` zeros for its first child, and a stack
+// writes the next one's `t` against the height of the one above it — that is
+// the colour lists, whose two boxes are sized from further up and simply
+// follow each other. A composite that CENTRES a child, or hangs it off the
+// bottom or the right of its own box, is placing it, and then the placement is
+// the whole point: a circle on a line with words above it and space below.
+function places(constrs: ReadonlyArray<Constraint>): boolean {
+  return constrs.some(
+    (k) =>
+      k.type === 'ctrX' ||
+      k.type === 'ctrY' ||
+      k.type === 'r' ||
+      k.type === 'b' ||
+      ((k.type === 'l' || k.type === 't') && k.refType !== undefined && k.refForName === undefined),
+  );
+}
+
+// One child's rectangle, from the constraints its parent states for it. A
+// constraint with no `refType` states nothing to measure against and reads as
+// zero, which is how `<constr type="l" forName="arrow"/>` means the left edge.
+function rectIn(
+  constrs: ReadonlyArray<Constraint>,
+  name: string,
+  box: Box,
+  placed: ReadonlyMap<string, Box>,
+): Box {
+  let cx = box.cx;
+  let cy = box.cy;
+  let x: number | undefined;
+  let y: number | undefined;
+  const ref = (k: Constraint): number => {
+    // A size stated against ITSELF (`w refType="h" refForName` its own name) is
+    // the one being built, which is how a circle is made round.
+    const from =
+      k.refForName === undefined
+        ? box
+        : k.refForName === name
+          ? { cx, cy }
+          : (placed.get(k.refForName) ?? box);
+    const base = k.refType === 'w' ? from.cx : k.refType === 'h' ? from.cy : 0;
+    return base * k.fact;
+  };
+  for (const k of constrs) {
+    if (k.forName !== name) continue;
+    const v = ref(k);
+    switch (k.type) {
+      case 'w':
+        cx = k.op === 'lte' ? Math.min(cx, v) : v;
+        break;
+      case 'h':
+        cy = k.op === 'lte' ? Math.min(cy, v) : v;
+        break;
+      case 'l':
+        x = box.x + v;
+        break;
+      case 'r':
+        x = box.x + v - cx;
+        break;
+      case 't':
+        y = box.y + v;
+        break;
+      case 'b':
+        y = box.y + v - cy;
+        break;
+      case 'ctrX':
+        x = box.x + v - cx / 2;
+        break;
+      case 'ctrY':
+        y = box.y + v - cy / 2;
+        break;
+      default:
+        break;
+    }
+  }
+  return { x: x ?? box.x, y: y ?? box.y, cx, cy };
+}
+
+/**
+ * §21.4.3.2 `lin` / `snake` — the point's children in a row or a column, with
+ * the gap the constraints state between them. `snake` wraps; `lin` does not.
+ */
+function listLayout(
+  parsed: { kind: 'node' } & LayoutNode,
+  parent: DiagramPoint,
+  box: Box,
+  data: DiagramData,
+): Array<LaidNode> {
+  const nodes = data.children(parent.id, 'node');
   if (nodes.length === 0) return [];
 
   // The child layoutNode's own name is what the constraints refer to.
   const childName = firstNodeName(parsed.children) ?? 'node';
   const c = resolve(parsed.constrs, childName);
 
-  // §21.4.3.2 — `snake` flows the children across and WRAPS; `lin` is the one
-  // that does not. The number of columns is the one that leaves each cell
-  // closest to the shape the constraints ask for (`h` stated against `w`),
-  // which is what "fill the frame" means: five nodes in a 4:3 frame come out
-  // two across and three down, as every reader draws them.
+  // The number of columns is the one that leaves each cell closest to the shape
+  // the constraints ask for (`h` stated against `w`), which is what "fill the
+  // frame" means: five nodes in a 4:3 frame come out two across and three down,
+  // as every reader draws them.
   const shapeType = childShapeType(parsed.children) ?? 'rect';
   const vertical = isVertical(parsed);
   const n = nodes.length;
   // A column list is one box wide however much room there is beside it, and a
   // row that does not snake is one box tall: only a snake across chooses.
-  const cols = vertical ? 1 : parsed.alg === 'snake' ? bestColumns(n, cx, cy, c.aspect, c.gap) : n;
+  const cols = vertical
+    ? 1
+    : parsed.alg === 'snake'
+      ? bestColumns(n, box.cx, box.cy, c.aspect, c.gap)
+      : n;
   const rows = Math.ceil(n / cols);
 
   // Each track is a cell plus the gap that follows it, the last gap trimmed.
-  const cellW = cx / (cols + Math.max(0, cols - 1) * c.gap);
+  const cellW = box.cx / (cols + Math.max(0, cols - 1) * c.gap);
   const gapW = cellW * c.gap;
-  const cellH = cy / (rows + Math.max(0, rows - 1) * c.gap);
+  const cellH = box.cy / (rows + Math.max(0, rows - 1) * c.gap);
   const gapH = cellH * c.gap;
 
   const out: Array<LaidNode> = [];
@@ -133,10 +319,10 @@ export function layoutDiagram(
     // where PowerPoint leaves it.
     const inRow = vertical ? rows : Math.min(cols, n - row * cols);
     const rowWidth = inRow * cellW + Math.max(0, inRow - 1) * gapW;
-    const left = vertical ? 0 : (cx - rowWidth) / 2;
+    const left = vertical ? 0 : (box.cx - rowWidth) / 2;
     const cell = {
-      x: left + col * (cellW + gapW),
-      y: row * (cellH + gapH),
+      x: box.x + left + col * (cellW + gapW),
+      y: box.y + row * (cellH + gapH),
       cx: cellW,
       cy: cellH,
     };
@@ -144,8 +330,7 @@ export function layoutDiagram(
     // shows a node's label beside its children's text nests a `linNode` whose
     // own children are two `tx` boxes, sized by ITS constraints. Laid out as
     // one box, such a row is the whole cell where it should be two.
-    const inner = splitCell(parsed, childName, point, data, cell, shapeType, i);
-    out.push(...inner);
+    out.push(...splitCell(parsed, childName, point, data, cell, shapeType, i));
   });
   return out;
 }
@@ -199,6 +384,14 @@ function splitCell(
       ...cell,
     },
   ];
+  // A cell whose node PLACES its children rather than dividing them goes
+  // through the composite algorithm: three boxes to a step — the words, the
+  // circle on the line and the space opposite — is not a split of anything.
+  // A composite that states only WIDTHS places nothing: the colour lists size
+  // their two boxes from the top node, and stacking them is what that means.
+  if (child?.alg === 'composite' && inner.length > 0 && places(child.constrs)) {
+    return compositeLayout(child, point, cell, data, index);
+  }
   if (!child || inner.length !== 2) return whole(child?.styleLbl);
   const kids = data.children(point.id, 'node');
 
@@ -433,30 +626,45 @@ interface LayoutContext {
   readonly maxDepth: number;
 }
 
-function parseNode(node: PoNode, ctx: LayoutContext): { kind: 'node' } & LayoutNode {
-  const kids = poChildren(node);
-  // §21.4.3.3 — a `choose` picks one branch by a function of the data. The
-  // direction variables are left at their defaults, so those take the first
-  // `if`; `maxDepth` is answered from the model, because the branch it guards
-  // is the difference between one box in a cell and two.
-  const flattened: Array<PoNode> = [];
-  // Branches taken from a `choose` on how many children a point has: what they
-  // lay out exists only for a point that has them.
+/**
+ * §21.4.3.3 — a `choose` picks one branch by a function of the data, and what
+ * the branch holds belongs to whatever the `choose` was standing in. The
+ * direction variables are left at their defaults, so those take the first
+ * `if`; `maxDepth` is answered from the model, because the branch it guards is
+ * the difference between one box in a cell and two.
+ *
+ * @returns The children with every `choose` replaced by the branch taken, and
+ *          the ones whose branch was guarded on a child count.
+ */
+function flattenChoose(
+  kids: ReadonlyArray<PoNode>,
+  ctx: LayoutContext,
+): { flat: Array<PoNode>; guarded: Set<PoNode> } {
+  const flat: Array<PoNode> = [];
   const guarded = new Set<PoNode>();
   for (const k of kids) {
-    if (poIs(k, 'dgm:choose')) {
-      const branches = poChildren(k);
-      const taken =
-        branches.find((b) => poIs(b, 'dgm:if') && holds(b, ctx)) ??
-        branches.find((b) => poIs(b, 'dgm:else')) ??
-        branches[0];
-      const onCount = taken !== undefined && poIs(taken, 'dgm:if') && countsChildren(taken);
-      for (const inner of poChildren(taken)) {
-        flattened.push(inner);
-        if (onCount) guarded.add(inner);
-      }
-    } else flattened.push(k);
+    if (!poIs(k, 'dgm:choose')) {
+      flat.push(k);
+      continue;
+    }
+    const branches = poChildren(k);
+    const taken =
+      branches.find((b) => poIs(b, 'dgm:if') && holds(b, ctx)) ??
+      branches.find((b) => poIs(b, 'dgm:else')) ??
+      branches[0];
+    const onCount = taken !== undefined && poIs(taken, 'dgm:if') && countsChildren(taken);
+    // A branch may hold another `choose`, and a producer nests them freely.
+    const inner = flattenChoose(poChildren(taken), ctx);
+    for (const item of inner.flat) {
+      flat.push(item);
+      if (onCount || inner.guarded.has(item)) guarded.add(item);
+    }
   }
+  return { flat, guarded };
+}
+
+function parseNode(node: PoNode, ctx: LayoutContext): { kind: 'node' } & LayoutNode {
+  const { flat: flattened, guarded } = flattenChoose(poChildren(node), ctx);
   const alg = flattened.find((k) => poIs(k, 'dgm:alg'));
   const shape = flattened.find((k) => poIs(k, 'dgm:shape'));
   const constrLst = flattened.find((k) => poIs(k, 'dgm:constrLst'));
@@ -511,12 +719,16 @@ function countsChildren(branch: PoNode): boolean {
 function parseItem(node: PoNode, ctx: LayoutContext, guarded = false): Array<LayoutItem> {
   if (poIs(node, 'dgm:layoutNode')) return [{ ...parseNode(node, ctx), needsChildren: guarded }];
   if (poIs(node, 'dgm:forEach')) {
+    // A `forEach` may hold a `choose` too — a process alternates the box above
+    // the line with the one below it that way, and read as nothing the whole
+    // repetition came out empty.
+    const inner = flattenChoose(poChildren(node), ctx);
     return [
       {
         kind: 'forEach',
         axis: poAttr(node, 'axis') ?? '',
         ptType: poAttr(node, 'ptType') ?? '',
-        children: poChildren(node).flatMap((k) => parseItem(k, ctx, guarded)),
+        children: inner.flat.flatMap((k) => parseItem(k, ctx, guarded || inner.guarded.has(k))),
       },
     ];
   }

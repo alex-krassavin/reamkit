@@ -35,11 +35,6 @@
   "aligned": true
  },
  {
-  "name": "smartart-cnt.pptx",
-  "score": 0.301,
-  "aligned": true
- },
- {
   "name": "tdf112209.pptx",
   "score": 0.2644,
   "aligned": true
@@ -57,11 +52,6 @@
  {
   "name": "smartart-linear-rule.pptx",
   "score": 0.2066,
-  "aligned": true
- },
- {
-  "name": "smartart-text.pptx",
-  "score": 0.202,
   "aligned": true
  },
  {
@@ -157,6 +147,11 @@
  {
   "name": "effectOrder.pptx",
   "score": 0.1063,
+  "aligned": true
+ },
+ {
+  "name": "smartart-cnt.pptx",
+  "score": 0.1049,
   "aligned": true
  },
  {
@@ -1041,6 +1036,11 @@
  },
  {
   "name": "tdf119015.pptx",
+  "score": 0.0028,
+  "aligned": true
+ },
+ {
+  "name": "smartart-text.pptx",
   "score": 0.0028,
   "aligned": true
  },

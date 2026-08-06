@@ -161,6 +161,53 @@ const CHEVRON = layoutXml(
    </dgm:choose>`,
 );
 
+// A process arrow with the steps standing along it: the top node PLACES two
+// children — a background arrow across the middle and the row of steps over it
+// — and each step is itself placed, its words above the line and a circle on
+// it. Nothing about this is a list of boxes.
+const ARROW_PROCESS = layoutXml(
+  `<dgm:alg type="composite"/>
+   <dgm:constrLst>
+     <dgm:constr type="w" for="ch" forName="arrow" refType="w"/>
+     <dgm:constr type="h" for="ch" forName="arrow" refType="h" fact="0.4"/>
+     <dgm:constr type="ctrY" for="ch" forName="arrow" refType="h" fact="0.5"/>
+     <dgm:constr type="l" for="ch" forName="arrow"/>
+     <dgm:constr type="w" for="ch" forName="points" refType="w" fact="0.9"/>
+     <dgm:constr type="h" for="ch" forName="points" refType="h"/>
+     <dgm:constr type="t" for="ch" forName="points"/>
+     <dgm:constr type="l" for="ch" forName="points"/>
+   </dgm:constrLst>
+   <dgm:layoutNode name="arrow" styleLbl="bgShp">
+     <dgm:alg type="sp"/><dgm:shape type="notchedRightArrow"/>
+   </dgm:layoutNode>
+   <dgm:layoutNode name="points">
+     <dgm:alg type="lin"/>
+     <dgm:constrLst>
+       <dgm:constr type="w" for="ch" forName="step" refType="w"/>
+     </dgm:constrLst>
+     <dgm:forEach name="each" axis="ch" ptType="node">
+       <dgm:choose name="side">
+         <dgm:if name="odd" axis="self" ptType="node" func="posOdd" op="equ" val="1">
+           <dgm:layoutNode name="step">
+             <dgm:alg type="composite"/>
+             <dgm:constrLst>
+               <dgm:constr type="w" for="ch" forName="words" refType="w"/>
+               <dgm:constr type="h" for="ch" forName="words" refType="h" fact="0.4"/>
+               <dgm:constr type="t" for="ch" forName="words"/>
+               <dgm:constr type="h" for="ch" forName="dot" refType="h" fact="0.1"/>
+               <dgm:constr type="w" for="ch" forName="dot" refType="h" refFor="ch" refForName="dot" op="equ"/>
+               <dgm:constr type="ctrY" for="ch" forName="dot" refType="h" fact="0.5"/>
+               <dgm:constr type="ctrX" for="ch" forName="dot" refType="w" refFor="ch" refForName="words" fact="0.5"/>
+             </dgm:constrLst>
+             <dgm:layoutNode name="words"><dgm:alg type="tx"/><dgm:shape type="rect"/></dgm:layoutNode>
+             <dgm:layoutNode name="dot"><dgm:alg type="sp"/><dgm:shape type="ellipse"/></dgm:layoutNode>
+           </dgm:layoutNode>
+         </dgm:if>
+       </dgm:choose>
+     </dgm:forEach>
+   </dgm:layoutNode>`,
+);
+
 const label = (n: { readonly point: Parameters<typeof DiagramData.textOf>[0] }): string =>
   DiagramData.textOf(n.point);
 
@@ -311,6 +358,49 @@ describe('a SmartArt layout with no cached drawing', () => {
     const hierarchy = layoutXml('<dgm:alg type="hierChild"/>');
     expect(run(hierarchy, dataXml([['a', []]]))).toEqual([]);
   });
+
+  it('places what a composite places, and runs each child inside it', () => {
+    const boxes = run(
+      ARROW_PROCESS,
+      dataXml([
+        ['a', []],
+        ['b', []],
+      ]),
+    );
+    // The background arrow: the whole width, two fifths of the height, centred.
+    const arrow = boxes.find((b) => b.shapeType === 'notchedRightArrow');
+    expect(arrow).toMatchObject({ x: 0, cx: CX, cy: CY * 0.4, styleLbl: 'bgShp' });
+    expect(arrow?.y).toBeCloseTo(CY * 0.3, 3);
+    // ...and the steps over it, inside the nine tenths of the width they were
+    // given, each a `tx` box with the node's words above the line.
+    expect(boxes.filter((b) => b.shapeType === 'rect').map(label)).toEqual(['a', 'b']);
+    // Two cells and the default tenth-of-a-cell gap between them, inside the
+    // nine tenths of the width the composite gave the row.
+    const words = boxes.find((b) => b.shapeType === 'rect');
+    expect(words?.cx).toBeCloseTo((CX * 0.9) / 2.1, 3);
+    expect(words?.cy).toBeCloseTo(CY * 0.4, 3);
+    expect(words?.y).toBe(0);
+    // The dot is round — its width is stated against its own height — and sits
+    // on the line, centred under the middle of the words above it.
+    const dot = boxes.find((b) => b.shapeType === 'ellipse');
+    expect(dot?.cx).toBeCloseTo(CY * 0.1, 3);
+    expect(dot?.cy).toBeCloseTo(CY * 0.1, 3);
+    expect((dot?.y ?? 0) + (dot?.cy ?? 0) / 2).toBeCloseTo(CY * 0.5, 3);
+    expect((dot?.x ?? 0) + (dot?.cx ?? 0) / 2).toBeCloseTo((words?.cx ?? 0) / 2, 3);
+    // A shape laid out by `sp` carries no words of its own.
+    expect(label(dot as never)).toBe('');
+  });
+
+  it('leaves a box out for an algorithm it cannot run inside a composite', () => {
+    // A centre cycle is a composite of a `cycle` and its middle. Drawing the
+    // cycle's whole share as one box put a rectangle over the entire frame.
+    const centre = layoutXml(
+      `<dgm:alg type="composite"/>
+       <dgm:constrLst><dgm:constr type="w" for="ch" forName="ring" refType="w"/></dgm:constrLst>
+       <dgm:layoutNode name="ring"><dgm:alg type="cycle"/><dgm:shape type="ellipse"/></dgm:layoutNode>`,
+    );
+    expect(run(centre, dataXml([['a', []]]))).toEqual([]);
+  });
 });
 
 describe('the drawing part the engine writes', () => {
@@ -380,6 +470,23 @@ describe('the colours a SmartArt part gives its boxes', () => {
     expect(colors.fill('alignAccFollowNode1', 0)).toBe(
       '<a:solidFill><a:schemeClr val="accent2"><a:tint val="40000"/><a:alpha val="90000"/></a:schemeClr></a:solidFill>',
     );
+  });
+
+  it('gives a label it knows but leaves unfilled no fill at all', () => {
+    // `revTx` — the reversed text of a process arrow — is named with an empty
+    // fill list, which is a transparent box, not the accent a file with no
+    // colours part at all falls back to.
+    const withRevTx = new DiagramColors(
+      parse(
+        COLORS.replace(
+          '</dgm:colorsDef>',
+          '<dgm:styleLbl name="revTx"><dgm:fillClrLst/></dgm:styleLbl></dgm:colorsDef>',
+        ),
+      ),
+    );
+    expect(withRevTx.knows('revTx')).toBe(true);
+    expect(withRevTx.fill('revTx', 0)).toBeUndefined();
+    expect(withRevTx.knows('neverHeardOfIt')).toBe(false);
   });
 
   it('overrides the text colour only where the part states one', () => {
