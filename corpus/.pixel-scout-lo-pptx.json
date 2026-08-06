@@ -140,11 +140,6 @@
   "aligned": true
  },
  {
-  "name": "fill-color-list.pptx",
-  "score": 0.1169,
-  "aligned": true
- },
- {
   "name": "tdf152606.pptx",
   "score": 0.1105,
   "aligned": true
@@ -187,6 +182,11 @@
  {
   "name": "tdf44223.pptx",
   "score": 0.0904,
+  "aligned": true
+ },
+ {
+  "name": "fill-color-list.pptx",
+  "score": 0.0897,
   "aligned": true
  },
  {

@@ -39,6 +39,8 @@ interface Constraint {
   readonly type: string;
   readonly for?: string;
   readonly forName?: string;
+  /** `@op` — `lte`/`gte` make the constraint a BOUND rather than a value. */
+  readonly op?: string;
   readonly refType?: string;
   readonly refForName?: string;
   readonly fact: number;
@@ -210,6 +212,17 @@ function splitCell(
         inner.map((b) => sizeFact(child.constrs, b.name, 'h') ?? heightFact(parent, b.name)),
       );
 
+  // §21.4.3.1 — a box may state a CEILING on its own height against its width
+  // (`h refType="w" op="lte" fact="0.4"`). It is a bound, not a share: the
+  // label of a colour list is at most four tenths of its column however tall
+  // the column is, and what it does not take goes to the box below it.
+  const cap = heightCap(inner[0], across ? cell.cx * (shares[0] ?? 1) : cell.cx);
+  if (!across && cap !== undefined) {
+    const first = Math.min(cell.cy * (shares[0] ?? 0.5), cap);
+    shares[0] = first / cell.cy;
+    shares[1] = 1 - shares[0];
+  }
+
   const out: Array<LaidNode> = [];
   let at = across ? cell.x : cell.y;
   inner.forEach((box, i) => {
@@ -346,6 +359,18 @@ function bulleted(node: { kind: 'node' } & LayoutNode): boolean {
 
 function opt<T extends string>(name: T, v: number | undefined): { [P in T]?: number } {
   return (v === undefined ? {} : { [name]: v }) as { [P in T]?: number };
+}
+
+// The greatest height a box allows itself, as its own constraints state it
+// against its width.
+function heightCap(
+  box: ({ kind: 'node' } & LayoutNode) | undefined,
+  widthEmu: number,
+): number | undefined {
+  for (const k of box?.constrs ?? []) {
+    if (k.type === 'h' && k.refType === 'w' && k.op === 'lte') return widthEmu * k.fact;
+  }
+  return undefined;
 }
 
 // A height the nested node does not state itself is stated for it further up,
@@ -505,12 +530,14 @@ function parseConstraints(list: PoNode | undefined): Array<Constraint> {
     const type = poAttr(k, 'type');
     if (type === undefined) continue;
     const forName = poAttr(k, 'forName');
+    const op = poAttr(k, 'op');
     const refType = poAttr(k, 'refType');
     const refForName = poAttr(k, 'refForName');
     const val = poAttr(k, 'val');
     out.push({
       type,
       ...(forName !== undefined ? { forName } : {}),
+      ...(op !== undefined ? { op } : {}),
       ...(refType !== undefined ? { refType } : {}),
       ...(refForName !== undefined ? { refForName } : {}),
       fact: Number(poAttr(k, 'fact') ?? '1'),

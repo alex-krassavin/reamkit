@@ -110,10 +110,20 @@ const COLOUR_LIST = layoutXml(
          <dgm:constr type="w" for="ch" forName="parTx" refType="w"/>
          <dgm:constr type="w" for="ch" forName="desTx" refType="w" refFor="ch" refForName="parTx"/>
        </dgm:constrLst>
-       <dgm:layoutNode name="parTx"><dgm:alg type="tx"/><dgm:shape type="rect"/></dgm:layoutNode>
+       <dgm:layoutNode name="parTx">
+         <dgm:alg type="tx"/><dgm:shape type="rect"/>
+         <dgm:constrLst><dgm:constr type="h" refType="w" op="lte" fact="0.4"/></dgm:constrLst>
+       </dgm:layoutNode>
        <dgm:layoutNode name="desTx"><dgm:alg type="tx"/><dgm:shape type="rect"/></dgm:layoutNode>
      </dgm:layoutNode>
    </dgm:forEach>`,
+);
+
+// The same without the ceiling the label puts on its own height, to show what
+// the height constraints alone would have given it.
+const COLOUR_LIST_UNCAPPED = COLOUR_LIST.replace(
+  '<dgm:constrLst><dgm:constr type="h" refType="w" op="lte" fact="0.4"/></dgm:constrLst>',
+  '',
 );
 
 // The Chevron Process: two boxes to a cell when the nodes have children, one
@@ -224,7 +234,7 @@ describe('a SmartArt layout with no cached drawing', () => {
 
   it('splits a column into the label above its children, in the stated proportion', () => {
     const boxes = run(
-      COLOUR_LIST,
+      COLOUR_LIST_UNCAPPED,
       dataXml([
         ['a', ['b']],
         ['c', ['d']],
@@ -237,6 +247,27 @@ describe('a SmartArt layout with no cached drawing', () => {
     expect(boxes[1]?.y).toBeCloseTo(CY * 0.4, 3);
     expect(boxes[1]?.x).toBe(boxes[0]?.x);
     expect(boxes[0]?.cx).toBe(boxes[1]?.cx);
+  });
+
+  it('holds the label to the ceiling it puts on its own height', () => {
+    const boxes = run(
+      COLOUR_LIST,
+      dataXml([
+        ['a', ['b']],
+        ['c', ['d']],
+      ]),
+    );
+    // Two columns and the 0.14 gap between them: each is CX/2.14 wide, and the
+    // label is at most four tenths of that however tall the column is — where
+    // the height constraints alone would have given it two fifths of CY.
+    const w = CX / 2.14;
+    expect(boxes[0]?.cx).toBeCloseTo(w, 3);
+    expect(boxes[0]?.cy).toBeCloseTo(w * 0.4, 3);
+    expect(boxes[0]?.cy).toBeLessThan(CY * 0.4);
+    // What the label does not take goes to the box below it; the column still
+    // fills the cell.
+    expect(boxes[1]?.y).toBeCloseTo(w * 0.4, 3);
+    expect((boxes[1]?.cy ?? 0) + (boxes[0]?.cy ?? 0)).toBeCloseTo(CY, 3);
   });
 
   it('leaves the descendants box empty rather than repeating the label', () => {
