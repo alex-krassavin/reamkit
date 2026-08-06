@@ -2135,11 +2135,6 @@
   "aligned": true
  },
  {
-  "name": "tdf127085.docx",
-  "score": 0.0012,
-  "aligned": true
- },
- {
   "name": "fdo83057.docx",
   "score": 0.0012,
   "aligned": true
@@ -2176,6 +2171,11 @@
  },
  {
   "name": "frame_size_export.docx",
+  "score": 0.0012,
+  "aligned": true
+ },
+ {
+  "name": "tdf127085.docx",
   "score": 0.0012,
   "aligned": true
  },

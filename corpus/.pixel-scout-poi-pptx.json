@@ -76,7 +76,7 @@
  },
  {
   "name": "aascu.org_workarea_downloadasset.aspx_id=5864.pptx",
-  "score": 0.1704,
+  "score": 0.1724,
   "aligned": true
  },
  {
@@ -106,7 +106,7 @@
  },
  {
   "name": "ae.ac.uaeu.faculty_nafaachbili_GeomLec1.pptx",
-  "score": 0.0917,
+  "score": 0.092,
   "aligned": true
  },
  {
@@ -120,23 +120,18 @@
   "aligned": true
  },
  {
+  "name": "backgrounds.pptx",
+  "score": 0.0619,
+  "aligned": true
+ },
+ {
   "name": "bug54570.pptx",
   "score": 0.0617,
   "aligned": true
  },
  {
-  "name": "backgrounds.pptx",
-  "score": 0.0601,
-  "aligned": true
- },
- {
   "name": "highlight-test-case.pptx",
   "score": 0.0572,
-  "aligned": true
- },
- {
-  "name": "pptx2svg.pptx",
-  "score": 0.0529,
   "aligned": true
  },
  {
@@ -157,6 +152,11 @@
  {
   "name": "60810.pptx",
   "score": 0.0429,
+  "aligned": true
+ },
+ {
+  "name": "pptx2svg.pptx",
+  "score": 0.0422,
   "aligned": true
  },
  {
@@ -181,7 +181,7 @@
  },
  {
   "name": "chart-slide-bg.pptx",
-  "score": 0.0324,
+  "score": 0.032,
   "aligned": true
  },
  {

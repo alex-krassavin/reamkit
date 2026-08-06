@@ -2489,15 +2489,23 @@ function layoutShapeBlock(
       ? imageResources?.get(shape.fill.imageResource)
       : undefined;
   const fillImageResourceName = fillImage?.resourceName;
-  // §14.1.2.5 — a TILED fill repeats the picture at its own size (96 dpi, the
-  // resolution Office measures one in) instead of stretching it over the box.
+  // §14.1.2.5 — a TILED fill repeats the picture at its OWN size instead of
+  // stretching it over the box, and its own size is its pixels at the
+  // resolution IT states: 800 pixels at the 300 dpi its JFIF header carries is
+  // 192 points, not the 600 the 96-dpi default gives. Measured at 96 whatever
+  // the picture said, one tile of 119877's mountains covered a whole table
+  // column where every reader repeats it three times down.
   const fillImageTile =
     shape.fill.kind === 'picture' && shape.fill.tiled === true && fillImage?.prepared
       ? // The shape may state the tile's size outright (MS-ODRAW `fillWidth` /
         // `fillHeight`); otherwise a copy is the picture at its own resolution.
         (shape.fill.tileSizePt ?? {
-          widthPt: ((fillImage.prepared.widthPx * 72) / 96) * (shape.fill.tileScale?.sx ?? 1),
-          heightPt: ((fillImage.prepared.heightPx * 72) / 96) * (shape.fill.tileScale?.sy ?? 1),
+          widthPt:
+            ((fillImage.prepared.widthPx * 72) / (fillImage.prepared.dpiX ?? 96)) *
+            (shape.fill.tileScale?.sx ?? 1),
+          heightPt:
+            ((fillImage.prepared.heightPx * 72) / (fillImage.prepared.dpiY ?? 96)) *
+            (shape.fill.tileScale?.sy ?? 1),
         })
       : undefined;
   const fillColorHex =

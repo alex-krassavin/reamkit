@@ -430,11 +430,6 @@
   "aligned": true
  },
  {
-  "name": "tdf152070.pptx",
-  "score": 0.0278,
-  "aligned": true
- },
- {
   "name": "tdf104788.pptx",
   "score": 0.0252,
   "aligned": true
@@ -677,6 +672,11 @@
  {
   "name": "activex_combobox.pptx",
   "score": 0.0095,
+  "aligned": true
+ },
+ {
+  "name": "tdf152070.pptx",
+  "score": 0.0094,
   "aligned": true
  },
  {

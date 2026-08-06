@@ -120,6 +120,14 @@ export interface PreparedImage {
   readonly data: Uint8Array;
   /** PNG alpha channel, already FlateDecode-compressed (DeviceGray, 8 bpc). */
   readonly smaskData?: Uint8Array;
+  /**
+   * The resolution the picture states for itself, in pixels per inch, when it
+   * states one (JFIF's `Xdensity`/`Ydensity`, PNG's `pHYs`). It is what makes a
+   * picture's NATURAL size: 800 pixels at 300 dpi is 192 points wide, not the
+   * 600 the 96-dpi default would give. Absent ⇒ the reader's own default.
+   */
+  readonly dpiX?: number;
+  readonly dpiY?: number;
 }
 
 /**
@@ -213,6 +221,7 @@ function readSiz(bytes: Uint8Array, sizOffset: number): { width: number; height:
 
 function prepareJpeg(bytes: Uint8Array): PreparedImage {
   const info = readJpegInfo(bytes);
+  const density = readJfifDensity(bytes);
   return {
     format: 'jpeg',
     mimeType: 'image/jpeg',
@@ -222,7 +231,24 @@ function prepareJpeg(bytes: Uint8Array): PreparedImage {
     bitsPerComponent: info.precision,
     filter: 'DCTDecode',
     data: bytes,
+    ...(density ?? {}),
   };
+}
+
+// JFIF (ISO/IEC 10918-5 §B.1) — the APP0 segment states the picture's own
+// resolution: `units` 1 is dots per inch, 2 dots per centimetre, 0 an aspect
+// ratio with no resolution at all.
+function readJfifDensity(bytes: Uint8Array): { dpiX: number; dpiY: number } | undefined {
+  if (bytes.length < 20 || bytes[2] !== 0xff || bytes[3] !== 0xe0) return undefined;
+  const jfif = bytes[6] === 0x4a && bytes[7] === 0x46 && bytes[8] === 0x49 && bytes[9] === 0x46;
+  if (!jfif) return undefined;
+  const units = bytes[13]!;
+  const x = (bytes[14]! << 8) | bytes[15]!;
+  const y = (bytes[16]! << 8) | bytes[17]!;
+  if (x <= 0 || y <= 0) return undefined;
+  if (units === 1) return { dpiX: x, dpiY: y };
+  if (units === 2) return { dpiX: x * 2.54, dpiY: y * 2.54 };
+  return undefined;
 }
 
 interface JpegInfo {
@@ -531,6 +557,8 @@ interface DecodedPng {
   readonly colorSpace: 'DeviceRGB' | 'DeviceGray';
   readonly bitsPerComponent: number;
   readonly smaskRaw?: Uint8Array;
+  readonly dpiX?: number;
+  readonly dpiY?: number;
 }
 
 function preparePng(bytes: Uint8Array, options: EmbedImageOptions = {}): PreparedImage {
@@ -548,6 +576,9 @@ function preparePng(bytes: Uint8Array, options: EmbedImageOptions = {}): Prepare
     filter: 'FlateDecode',
     data: zlibSync(decoded.raw),
     ...(decoded.smaskRaw ? { smaskData: zlibSync(decoded.smaskRaw) } : {}),
+    ...(decoded.dpiX !== undefined && decoded.dpiY !== undefined
+      ? { dpiX: decoded.dpiX, dpiY: decoded.dpiY }
+      : {}),
   };
 }
 
@@ -561,6 +592,7 @@ function decodePng(bytes: Uint8Array): DecodedPng {
   let interlaceMethod = 0;
   let palette: Uint8Array | undefined;
   let paletteAlpha: Uint8Array | undefined;
+  let density: { dpiX: number; dpiY: number } | Record<string, never> = {};
   const idatChunks: Array<Uint8Array> = [];
   let pos = 8;
   while (pos + 12 <= bytes.length) {
@@ -580,6 +612,14 @@ function decodePng(bytes: Uint8Array): DecodedPng {
       // §11.3.2.1 — for a palette image, one alpha byte per entry (entries past
       // the end are opaque).
       paletteAlpha = bytes.subarray(dataOff, dataOff + len);
+    } else if (type === 'pHYs') {
+      // §11.3.5.3 — pixels per unit, and unit 1 is the metre. What the picture
+      // says about its own size is what makes one tile of it.
+      const perX = readU32BE(bytes, dataOff);
+      const perY = readU32BE(bytes, dataOff + 4);
+      if (bytes[dataOff + 8] === 1 && perX > 0 && perY > 0) {
+        density = { dpiX: perX * 0.0254, dpiY: perY * 0.0254 };
+      }
     } else if (type === 'IDAT') {
       idatChunks.push(bytes.subarray(dataOff, dataOff + len));
     } else if (type === 'IEND') {
@@ -610,7 +650,7 @@ function decodePng(bytes: Uint8Array): DecodedPng {
     colorType !== 3,
   );
 
-  return splitChannels(width, height, colorType, raw, palette, paletteAlpha);
+  return { ...splitChannels(width, height, colorType, raw, palette, paletteAlpha), ...density };
 }
 
 /**

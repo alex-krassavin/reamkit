@@ -355,7 +355,7 @@ describe('linked text boxes (wps:linkedTxbx)', () => {
 describe('a tiled picture fill (§14.1.2.5 type="tile" / §20.1.8.58 a:tile)', () => {
   // A 2x2 PNG is 1.5pt square at the 96 dpi Office measures a picture in, so a
   // 144x72pt shape is papered with 96 x 48 copies of it rather than one blur.
-  const tiled = (fill: string) =>
+  const tiled = (fill: string, dpi?: number) =>
     buildDocxFromBody(
       `<w:p><w:r><w:drawing>
         <wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
@@ -381,7 +381,7 @@ describe('a tiled picture fill (§14.1.2.5 type="tile" / §20.1.8.58 a:tile)', (
         images: {
           rId20: {
             contentType: 'image/png',
-            bytes: buildTinyPng(2, 2, [0, 0, 255, 255]),
+            bytes: buildTinyPng(2, 2, [0, 0, 255, 255], dpi),
             extension: 'png',
           },
         },
@@ -390,6 +390,18 @@ describe('a tiled picture fill (§14.1.2.5 type="tile" / §20.1.8.58 a:tile)', (
   const blip = (inner: string) => `<a:blipFill><a:blip r:embed="rId20"/>${inner}</a:blipFill>`;
   const images = (docx: Uint8Array) =>
     layoutOf(docx).pages[0]!.commands.filter((c) => c.type === 'image');
+
+  it('measures one copy at the resolution the picture states for itself', () => {
+    // §11.3.5.3 — the same 2x2 PNG, but saying it is 24 dpi: a pixel is then
+    // four times as wide as the 96-dpi default makes it, so one copy is 6pt
+    // square and the box holds sixteen times fewer of them. Measured at 96
+    // whatever the file said, one tile of 119877's 300-dpi mountains covered a
+    // whole table column where every reader repeats it three times down.
+    const drawn = images(tiled(blip('<a:tile tx="0" ty="0"/>'), 24));
+    const first = drawn[0] as unknown as { width: number; height: number };
+    expect(first.width).toBeCloseTo(6, 1);
+    expect(first.height).toBeCloseTo(6, 1);
+  });
 
   it('repeats the picture over the box instead of stretching it', () => {
     const drawn = images(tiled(blip('<a:tile tx="0" ty="0" sx="100000" sy="100000"/>')));
