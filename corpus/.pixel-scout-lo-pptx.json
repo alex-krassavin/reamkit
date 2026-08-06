@@ -55,11 +55,6 @@
   "aligned": true
  },
  {
-  "name": "smartart-vertical-block-list.pptx",
-  "score": 0.245,
-  "aligned": true
- },
- {
   "name": "smartart-linear-rule-vert.pptx",
   "score": 0.2276,
   "aligned": true
@@ -92,6 +87,11 @@
  {
   "name": "smartart-cycle-matrix.pptx",
   "score": 0.1676,
+  "aligned": true
+ },
+ {
+  "name": "smartart-vertical-block-list.pptx",
+  "score": 0.1652,
   "aligned": true
  },
  {
@@ -151,7 +151,7 @@
  },
  {
   "name": "smartart-dir.pptx",
-  "score": 0.1178,
+  "score": 0.1161,
   "aligned": true
  },
  {
@@ -475,6 +475,11 @@
   "aligned": true
  },
  {
+  "name": "smartart-chevron.pptx",
+  "score": 0.0244,
+  "aligned": true
+ },
+ {
   "name": "activex_scrollbar.pptx",
   "score": 0.0225,
   "aligned": true
@@ -487,6 +492,11 @@
  {
   "name": "tdf135953_SmartArt_textposition.pptx",
   "score": 0.0218,
+  "aligned": true
+ },
+ {
+  "name": "smartart-maxdepth.pptx",
+  "score": 0.0216,
   "aligned": true
  },
  {
@@ -805,11 +815,6 @@
   "aligned": true
  },
  {
-  "name": "smartart-chevron.pptx",
-  "score": 0.0062,
-  "aligned": true
- },
- {
   "name": "tdf123684.pptx",
   "score": 0.0062,
   "aligned": true
@@ -1026,11 +1031,6 @@
  },
  {
   "name": "activex_checkbox.pptx",
-  "score": 0.0029,
-  "aligned": true
- },
- {
-  "name": "smartart-maxdepth.pptx",
   "score": 0.0029,
   "aligned": true
  },

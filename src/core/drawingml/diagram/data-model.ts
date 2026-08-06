@@ -114,6 +114,24 @@ export class DiagramData {
     return out;
   }
 
+  /**
+   * How many generations of `node` points the model holds below its root.
+   *
+   * §21.4.3.3 — a layout branches on this (`func="maxDepth" op="gte" val="2"`):
+   * the same part lays a chevron out as one box when the nodes have no
+   * children and as a labelled box over a body when they do.
+   */
+  get depth(): number {
+    const walk = (id: string, seen: Set<string>): number => {
+      if (seen.has(id)) return 0;
+      seen.add(id);
+      let best = 0;
+      for (const kid of this.children(id, 'node')) best = Math.max(best, walk(kid.id, seen));
+      return best + 1;
+    };
+    return this.root ? walk(this.root.id, new Set()) - 1 : 0;
+  }
+
   /** The plain text of a point's `dgm:t`, paragraphs joined by newlines. */
   static textOf(pt: DiagramPoint | undefined): string {
     if (!pt?.text) return '';
