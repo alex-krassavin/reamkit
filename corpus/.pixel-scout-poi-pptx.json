@@ -60,11 +60,6 @@
   "aligned": true
  },
  {
-  "name": "table_test2.pptx",
-  "score": 0.3427,
-  "aligned": true
- },
- {
   "name": "63200.pptx",
   "score": 0.2941,
   "aligned": true
@@ -97,6 +92,11 @@
  {
   "name": "aascu.org_hbcu_leadershipsummit_cooper_.pptx",
   "score": 0.1311,
+  "aligned": true
+ },
+ {
+  "name": "table_test2.pptx",
+  "score": 0.1103,
   "aligned": true
  },
  {

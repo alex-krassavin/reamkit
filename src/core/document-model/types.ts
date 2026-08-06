@@ -929,6 +929,13 @@ export interface CellProperties {
    * is a word-processor table's default.
    */
   readonly verticalAlign?: 'top' | 'center' | 'bottom';
+  /**
+   * §17.4.71 `w:textDirection` / §21.1.3.17 `a:tcPr@vert` — the cell's text is
+   * turned a quarter: `vert` reads top-to-bottom (turned clockwise), `vert270`
+   * bottom-to-top. Its lines then run along the cell's HEIGHT and stack across
+   * its width, which is what makes a narrow header column readable.
+   */
+  readonly textDirection?: 'vert' | 'vert270';
 }
 
 /** §17.4.81 `w:trPr` — a table row's properties: height, split/header flags. */

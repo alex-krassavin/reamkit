@@ -1,7 +1,11 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
 import type { BodyElement } from '@/core/document-model';
+import { Ream } from '@/core/converter/ream';
+import { PdfFile } from '@/pdf-reader/document';
 
 import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 
@@ -328,5 +332,71 @@ describe('a deeply nested table', () => {
     const els = parse(inner);
     expect(els).toHaveLength(1);
     expect(els[0]!.kind).toBe('table');
+  });
+});
+
+// §17.4.71 `w:textDirection` — a cell whose text is turned a quarter. Its lines
+// then run along the cell's HEIGHT and stack across its width, so the row grows
+// to hold the longest line rather than the tallest stack. Read as nothing, a
+// narrow header column wrapped its label one letter to a line.
+describe('a table cell whose text is turned', () => {
+  const cell = (dir: string): BodyElement =>
+    parse(`
+      <w:tbl>
+        <w:tblPr><w:tblW w:w="5000" w:type="pct"/></w:tblPr>
+        <w:tblGrid><w:gridCol w:w="2500"/></w:tblGrid>
+        <w:tr><w:tc>
+          <w:tcPr>${dir}</w:tcPr>
+          <w:p><w:r><w:t>Header</w:t></w:r></w:p>
+        </w:tc></w:tr>
+      </w:tbl>`)[0]!;
+
+  const direction = (el: BodyElement): string | undefined =>
+    el.kind === 'table' ? el.table.rows[0]?.cells[0]?.properties.textDirection : undefined;
+
+  it('reads the two turns and leaves the upright spellings flat', () => {
+    expect(direction(cell('<w:textDirection w:val="btLr"/>'))).toBe('vert270');
+    expect(direction(cell('<w:textDirection w:val="tbRl"/>'))).toBe('vert');
+    // `tbRlV` stacks upright glyphs, which is not a quarter turn.
+    expect(direction(cell('<w:textDirection w:val="tbRlV"/>'))).toBeUndefined();
+    expect(direction(cell(''))).toBeUndefined();
+  });
+
+  it('turns the line a quarter and grows the row to its length', async () => {
+    const fonts = {
+      regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
+      bold: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Bold.ttf')),
+    };
+    const table = (dir: string): string =>
+      `<w:tbl>
+         <w:tblPr><w:tblBorders>
+           <w:top w:val="single" w:sz="4"/><w:bottom w:val="single" w:sz="4"/>
+         </w:tblBorders></w:tblPr>
+         <w:tblGrid><w:gridCol w:w="1000"/></w:tblGrid>
+         <w:tr><w:tc><w:tcPr>${dir}</w:tcPr>
+           <w:p><w:r><w:t>a turned label</w:t></w:r></w:p>
+         </w:tc></w:tr>
+       </w:tbl>`;
+    const content = async (dir: string): Promise<string> => {
+      const file = PdfFile.parse(
+        await Ream.parse(buildDocxFromBody(table(dir))).convert('pdf', { fonts }),
+      );
+      return new TextDecoder('latin1').decode(file.pageContent(file.pages()[0]!));
+    };
+
+    // A quarter turn is a text matrix of `0 1 -1 0` (up) — the flat case is the
+    // identity `1 0 0 1`.
+    const turned = await content('<w:textDirection w:val="btLr"/>');
+    expect(turned).toMatch(/\n0 1 -1 0 [\d.]+ [\d.]+ Tm\n/u);
+    const flat = await content('');
+    expect(flat).toMatch(/\n1 0 0 1 [\d.]+ [\d.]+ Tm\n/u);
+
+    // ...and the row is as tall as the label is LONG. The rule the table draws
+    // across its bottom says where the row ended: the turned one is several
+    // times deeper than its flat twin, whose row is one line.
+    const bottomRule = (pdf: string): number =>
+      Math.min(...[...pdf.matchAll(/\n[\d.]+ ([\d.]+) l\n/gu)].map((m) => Number(m[1])));
+    expect(Number.isFinite(bottomRule(flat))).toBe(true);
+    expect(bottomRule(flat) - bottomRule(turned)).toBeGreaterThan(20);
   });
 });

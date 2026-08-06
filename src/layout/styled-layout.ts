@@ -624,6 +624,12 @@ interface CellLayout {
   readonly sparkline?: CellSparkline;
   // A data-validation `list` cell paints a dropdown button at the right edge.
   readonly dropdown?: boolean;
+  /**
+   * §17.4.71/§21.1.3.17 — the cell's text is turned a quarter, so its lines run
+   * along the HEIGHT and stack across the width. The height it asks for is then
+   * the longest LINE, not the stack of them.
+   */
+  readonly textDirection?: 'vert' | 'vert270';
   readonly lines: ReadonlyArray<Line>;
   /**
    * §17.3.1.33 — extra space to leave BEFORE the line at this index: the gap
@@ -6960,7 +6966,15 @@ function layoutTableCell(
   // the HTML writer, which renders an interactive view rather than a page.
   const padRightPt = padRightBase;
 
+  // §17.4.71 — a turned cell's lines run along its HEIGHT, which is what the
+  // row is about to be sized from, so there is no measure to wrap them at yet:
+  // they are laid out unbroken and the row grows to hold the longest. Both
+  // references do the same — table_test2.pptx's vertical header runs off the
+  // slide in LibreOffice too.
+  const turned =
+    mergeRole === 'middle' || mergeRole === 'end' ? undefined : cell.properties.textDirection;
   const innerWidth = Math.max(1, widthPt - padLeftPt - padRightPt);
+  const measureWidth = turned ? NO_WRAP_MEASURE_WIDTH : innerWidth;
   const lines: Array<Line> = [];
   const nestedTables: Array<{ block: TableBlock; afterLine: number }> = [];
   const cellShapes: Array<{ block: ShapeBlockLaidOut; afterLine: number }> = [];
@@ -7004,7 +7018,7 @@ function layoutTableCell(
           options,
           fontResources,
           imageResources,
-          noWrap ? NO_WRAP_MEASURE_WIDTH : innerWidth,
+          noWrap ? NO_WRAP_MEASURE_WIDTH : measureWidth,
         );
         // Up to the cell's right EDGE, not to its inner box: the right padding
         // keeps wrapped text off the border, but a clip is the border. Excel and
@@ -7123,8 +7137,12 @@ function layoutTableCell(
     leftNeighborBorders,
     aboveNeighborBorders,
   );
+  // A turned cell is as tall as its longest line is long, and its stack of
+  // lines runs across the width instead.
+  const alongPt = turned ? lines.reduce((a, l) => Math.max(a, l.contentWidthPt), 0) : 0;
+  const heightPt = turned ? alongPt : contentHeightPt;
   const totalHeightPt =
-    mergeRole === 'middle' || mergeRole === 'end' ? 0 : padTopPt + contentHeightPt + padBottomPt;
+    mergeRole === 'middle' || mergeRole === 'end' ? 0 : padTopPt + heightPt + padBottomPt;
   return {
     widthPt,
     padTopPt,
@@ -7143,8 +7161,9 @@ function layoutTableCell(
     ...(nestedTables.length > 0 ? { nestedTables } : {}),
     ...(cellShapes.length > 0 ? { shapes: cellShapes } : {}),
     ...(cellFloats.length > 0 ? { floats: cellFloats } : {}),
-    contentHeightPt,
+    contentHeightPt: heightPt,
     totalHeightPt,
+    ...(turned ? { textDirection: turned } : {}),
     ...(cell.properties.verticalAlign ? { verticalAlign: cell.properties.verticalAlign } : {}),
     colStart,
     colSpan,
@@ -9130,6 +9149,38 @@ function emitRowChunk(
         });
       }
     };
+    // §17.4.71 — a turned cell: each line runs along the cell's HEIGHT and the
+    // stack of them crosses its width, so a quarter turn puts a line's local +x
+    // on the page's +y (`vert270`, reading up) or −y (`vert`, reading down).
+    // The same arithmetic a turned SHAPE's text uses, over the cell's box.
+    if (cell.textDirection !== undefined) {
+      const up = cell.textDirection === 'vert270';
+      const along = Math.max(1, boxHeightPt - cell.padTopPt - cell.padBottomPt);
+      const cellBottomYUp = rowTop - boxHeightPt;
+      let across = cell.padLeftPt;
+      for (const line of cell.lines) {
+        const h = computeLineHeight(line, line.resolved);
+        const lineOffset = alignmentOffset(line.resolved.alignment, line.contentWidthPt, along);
+        const off = lineBaselineOffset(line, line.resolved);
+        const baselineAcross = up ? across + h - off : across + off;
+        out.push({
+          type: 'line',
+          line,
+          originX: pt(up ? cellX + baselineAcross : cellX + cell.widthPt - baselineAcross),
+          baselineY: pt(
+            pageHeight -
+              (up
+                ? cellBottomYUp + cell.padBottomPt + lineOffset
+                : rowTop - cell.padTopPt - lineOffset),
+          ),
+          rotationDeg: up ? 90 : -90,
+          ...(structId !== undefined ? { structId } : {}),
+        });
+        across += h;
+      }
+      drawNestedBefore(cell.lines.length);
+      continue;
+    }
     for (const [lineIdx, line] of cell.lines.entries()) {
       drawNestedBefore(lineIdx);
       textY -= cell.lineGaps?.get(lineIdx) ?? 0;

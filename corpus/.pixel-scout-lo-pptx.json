@@ -130,16 +130,6 @@
   "aligned": true
  },
  {
-  "name": "tdf100926.pptx",
-  "score": 0.1088,
-  "aligned": true
- },
- {
-  "name": "tdf100926_ODP.pptx",
-  "score": 0.1088,
-  "aligned": true
- },
- {
   "name": "effectOrder.pptx",
   "score": 0.1063,
   "aligned": true
@@ -177,6 +167,16 @@
  {
   "name": "smartart-autoTxRot.pptx",
   "score": 0.0888,
+  "aligned": true
+ },
+ {
+  "name": "tdf100926.pptx",
+  "score": 0.086,
+  "aligned": true
+ },
+ {
+  "name": "tdf100926_ODP.pptx",
+  "score": 0.086,
   "aligned": true
  },
  {

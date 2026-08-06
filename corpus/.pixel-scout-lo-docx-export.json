@@ -1515,17 +1515,17 @@
   "aligned": true
  },
  {
-  "name": "tblr-height.docx",
-  "score": 0.0028,
-  "aligned": true
- },
- {
   "name": "tdf109063.docx",
   "score": 0.0028,
   "aligned": true
  },
  {
   "name": "empty-annotation-mark.docx",
+  "score": 0.0028,
+  "aligned": true
+ },
+ {
+  "name": "tblr-height.docx",
   "score": 0.0028,
   "aligned": true
  },
@@ -1575,11 +1575,6 @@
   "aligned": true
  },
  {
-  "name": "table-btlr-center.docx",
-  "score": 0.0026,
-  "aligned": true
- },
- {
   "name": "tbrl-textbox.docx",
   "score": 0.0026,
   "aligned": true
@@ -1601,6 +1596,11 @@
  },
  {
   "name": "tdf124604.docx",
+  "score": 0.0025,
+  "aligned": true
+ },
+ {
+  "name": "table-btlr-center.docx",
   "score": 0.0025,
   "aligned": true
  },
@@ -1676,6 +1676,11 @@
  },
  {
   "name": "Tdf147485.docx",
+  "score": 0.0022,
+  "aligned": true
+ },
+ {
+  "name": "cell-btlr.docx",
   "score": 0.0022,
   "aligned": true
  },
@@ -2095,11 +2100,6 @@
   "aligned": true
  },
  {
-  "name": "cell-btlr.docx",
-  "score": 0.0013,
-  "aligned": true
- },
- {
   "name": "tdf123636_newlinePageBreak3.docx",
   "score": 0.0013,
   "aligned": true
@@ -2320,17 +2320,17 @@
   "aligned": true
  },
  {
-  "name": "bnc865381.docx",
-  "score": 0.0009,
-  "aligned": true
- },
- {
   "name": "table-auto-nested.docx",
   "score": 0.0009,
   "aligned": true
  },
  {
   "name": "fdo70457.docx",
+  "score": 0.0009,
+  "aligned": true
+ },
+ {
+  "name": "bnc865381.docx",
   "score": 0.0009,
   "aligned": true
  },

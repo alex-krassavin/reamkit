@@ -1352,12 +1352,23 @@ function parseTableCell(tc: PoNode, colors: ColorResolver): TableCell {
   const tcPr = poChildren(tc).find((c) => poIs(c, 'a:tcPr'));
   const shadingHex = tcPr ? cellFillHex(tcPr, colors) : undefined;
   const borders = tcPr ? cellOwnBorders(tcPr, colors) : undefined;
+  // §21.1.3.17 `@vert` — the cell's text turned a quarter. `eaVert` is the East
+  // Asian spelling of the same clockwise turn; the WordArt variants stack
+  // upright glyphs, which is not a turn and is left flat.
+  const vert = tcPr ? poAttr(tcPr, 'vert') : undefined;
+  const textDirection =
+    vert === 'vert' || vert === 'eaVert' || vert === 'mongolianVert'
+      ? ('vert' as const)
+      : vert === 'vert270'
+        ? ('vert270' as const)
+        : undefined;
   return {
     properties: {
       ...(gridSpan !== undefined && gridSpan > 1 ? { colSpan: gridSpan } : {}),
       ...(merge ? { merge } : {}),
       ...(shadingHex ? { shading: { colorHex: shadingHex } } : {}),
       ...(borders ? { borders } : {}),
+      ...(textDirection ? { textDirection } : {}),
     },
     content,
   };
