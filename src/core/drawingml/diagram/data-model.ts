@@ -11,7 +11,7 @@
 // picture has to be computed. That is what this model feeds.
 
 import type { PoNode } from '@/core/po-helpers';
-import { poAttr, poChildren, poIs } from '@/core/po-helpers';
+import { poAttr, poChildren, poIs, poText } from '@/core/po-helpers';
 
 /** §21.4.2.27 `dgm:pt@type` — what a point is in the model. */
 export type PointType = 'doc' | 'node' | 'asst' | 'parTrans' | 'sibTrans' | 'pres';
@@ -123,8 +123,7 @@ export class DiagramData {
       let line = '';
       for (const r of poChildren(p)) {
         if (!poIs(r, 'a:r')) continue;
-        const t = poChildren(r).find((c) => poIs(c, 'a:t'));
-        line += t?.text ?? '';
+        line += poText(poChildren(r).find((c) => poIs(c, 'a:t')));
       }
       lines.push(line);
     }

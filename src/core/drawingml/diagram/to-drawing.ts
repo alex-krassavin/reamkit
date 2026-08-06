@@ -6,7 +6,7 @@
 
 import type { LaidNode } from '@/core/drawingml/diagram/layout-engine';
 import type { PoNode } from '@/core/po-helpers';
-import { poChildren, poIs } from '@/core/po-helpers';
+import { poChildren, poIs, poText } from '@/core/po-helpers';
 
 const NS =
   'xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" ' +
@@ -48,8 +48,7 @@ function bodyXml(node: LaidNode): string {
     let runs = '';
     for (const r of poChildren(p)) {
       if (!poIs(r, 'a:r')) continue;
-      const t = poChildren(r).find((c) => poIs(c, 'a:t'));
-      const text = typeof t?.text === 'string' ? t.text : '';
+      const text = poText(poChildren(r).find((c) => poIs(c, 'a:t')));
       if (text !== '') runs += `<a:r><a:rPr lang="en-US"/><a:t>${esc(text)}</a:t></a:r>`;
     }
     if (runs !== '') paragraphs.push(`<a:p><a:pPr algn="ctr"/>${runs}</a:p>`);
