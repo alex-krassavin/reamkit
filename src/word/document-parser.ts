@@ -140,7 +140,10 @@ export interface ParseContext {
    * pre-rendered drawing override, or `undefined` when the file ships none
    * (E-SMARTART SA2).
    */
-  readonly resolveDiagram?: (relId: string) => ResolvedDiagram | undefined;
+  readonly resolveDiagram?: (
+    relId: string,
+    frame: { readonly cx: number; readonly cy: number },
+  ) => ResolvedDiagram | undefined;
   /**
    * §21.2 a `c:chart` `@r:id` → the chart part's path, the key the reader files
    * parsed charts under. Relationship ids are scoped to their owning part, so a
@@ -882,7 +885,13 @@ function blocksForDrawing(
   if (content.kind === 'diagram') {
     // SmartArt: resolve the drawing override and render its nodes (E-SMARTART
     // SA2). No override ⇒ keep the (empty) paragraph, byte-stable.
-    const diagram = ctx.resolveDiagram?.(content.dmRelId);
+    // The frame goes with the id: a file that ships no cached drawing has its
+    // layout RUN, and a layout is a program whose answer depends on the size it
+    // is given.
+    const diagram = ctx.resolveDiagram?.(content.dmRelId, {
+      cx: content.widthEmu,
+      cy: content.heightEmu,
+    });
     if (!diagram) {
       // No drawing override shipped — record a graceful loss and keep the
       // (empty) paragraph, byte-stable (SA3).

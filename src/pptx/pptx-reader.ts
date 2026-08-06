@@ -25,10 +25,7 @@ import type { ColorResolver, SchemeAliases } from '@/core/drawingml/colors';
 
 import type { FontRegistry } from '@/core/font';
 import { packageHasPart } from '@/core/bytes';
-import { DiagramData } from '@/core/drawingml/diagram/data-model';
-import { diagramDrawingXml } from '@/core/drawingml/diagram/to-drawing';
-import { DiagramColors } from '@/core/drawingml/diagram/colors';
-import { layoutDiagram } from '@/core/drawingml/diagram/layout-engine';
+import { laidOutDiagramTree } from '@/core/drawingml/diagram/run';
 import { parseChart, withChartColorStyle } from '@/core/drawingml/chart-parser';
 import {
   DEFAULT_SCHEME_ALIAS,
@@ -500,25 +497,19 @@ function laidOutDiagram(
   data: { readonly path: string; readonly data: Uint8Array },
   frame: { readonly cx: number; readonly cy: number },
 ): PoNode | undefined {
-  const layoutRel = pkg
-    .getPartRelationships(slidePath)
-    .find((r) => r.type.endsWith('/diagramLayout'));
-  const layout = layoutRel ? pkg.resolveRelatedPart(slidePath, layoutRel) : undefined;
-  if (!layout) return undefined;
-  const model = new DiagramData(parseXml(data.data));
-  const nodes = layoutDiagram(parseXml(layout.data), model, frame.cx, frame.cy);
-  if (nodes.length === 0) return undefined;
-  const colorRel = pkg
-    .getPartRelationships(slidePath)
-    .find((r) => r.type.endsWith('/diagramColors'));
-  const colorPart = colorRel ? pkg.resolveRelatedPart(slidePath, colorRel) : undefined;
-  const colors = colorPart ? new DiagramColors(parseXml(colorPart.data)) : undefined;
-  const xml = diagramDrawingXml(nodes, frame, colors);
-  for (const root of parseXml(new TextEncoder().encode(xml))) {
-    const found = poFindDescendant(root, 'dsp:spTree');
-    if (found) return found;
-  }
-  return undefined;
+  const related = (type: string): Uint8Array | undefined => {
+    const rel = pkg.getPartRelationships(slidePath).find((r) => r.type.endsWith(type));
+    return rel ? pkg.resolveRelatedPart(slidePath, rel)?.data : undefined;
+  };
+  return laidOutDiagramTree(
+    {
+      data: data.data,
+      layout: related('/diagramLayout'),
+      colors: related('/diagramColors'),
+    },
+    frame,
+    parseXml,
+  );
 }
 
 /**

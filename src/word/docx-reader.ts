@@ -20,6 +20,7 @@ import type { Loss, ResourceId } from '@/core/ir';
 import type { CoreProperties } from '@/core/opc';
 import type { HyperlinkResolver, ImageResolver, ParseContext, ResolvedDiagram } from '@/word';
 import { poFindDescendant } from '@/core/po-helpers';
+import { laidOutDiagramTree } from '@/core/drawingml/diagram/run';
 import { parseXml } from '@/pptx/pptx-reader';
 import { packageHasPart } from '@/core/bytes';
 import { applyNumbering, applyNumberingToHeadersFooters } from '@/core/numbering';
@@ -330,15 +331,23 @@ function infoFromCore(core: CoreProperties | undefined): DocumentInfo | undefine
 // SmartArt: a data relationship id (dgm:relIds @r:dm) → the diagram's
 // pre-rendered drawing override (its dsp:spTree). Follows the doc part →
 // diagrams/data#.xml → (rel type .../diagramDrawing) → diagrams/drawing#.xml.
-// Undefined when the file ships no drawing override (E-SMARTART SA2).
+// A file that ships no drawing carries the parts to MAKE one — data, layout,
+// colours — and those are run instead, in the frame the drawing states.
+// Undefined when there is no drawing and no layout this engine runs either
+// (E-SMARTART SA2).
 function makeDiagramResolver(
   pkg: OpcPackage,
   partName: string,
   store: ResourceStore,
-): (relId: string) => ResolvedDiagram | undefined {
+): (
+  relId: string,
+  frame: { readonly cx: number; readonly cy: number },
+) => ResolvedDiagram | undefined {
   const cache = new Map<string, ResolvedDiagram | undefined>();
-  return (relId) => {
-    if (cache.has(relId)) return cache.get(relId);
+  return (relId, frame) => {
+    // The layout's answer depends on the frame, so two frames are two entries.
+    const key = `${relId}|${frame.cx}x${frame.cy}`;
+    if (cache.has(key)) return cache.get(key);
     let resolved: ResolvedDiagram | undefined;
     const dataRel = pkg.getPartRelationships(partName).find((r) => r.id === relId);
     const data = dataRel ? pkg.resolveRelatedPart(partName, dataRel) : undefined;
@@ -359,11 +368,43 @@ function makeDiagramResolver(
             break;
           }
         }
+      } else {
+        const spTree = laidOutDiagramTree(
+          {
+            data: data.data,
+            layout: siblingPart(pkg, partName, data.path, '/diagramLayout'),
+            colors: siblingPart(pkg, partName, data.path, '/diagramColors'),
+          },
+          frame,
+          parseXml,
+        );
+        // Nothing here names an image, so the drawing needs no resolver.
+        if (spTree) resolved = { spTree };
       }
     }
-    cache.set(relId, resolved);
+    cache.set(key, resolved);
     return resolved;
   };
+}
+
+// A diagram's other parts, wherever the producer hung them: off the data part
+// itself, or off the part that owns the diagram — the same split `drawingFromOwner`
+// deals with, and Word writes the layout and the colours next to the data rel
+// on the document.
+function siblingPart(
+  pkg: OpcPackage,
+  ownerPart: string,
+  dataPart: string,
+  type: string,
+): Uint8Array | undefined {
+  const own = pkg.getPartRelationships(dataPart).find((r) => r.type.endsWith(type));
+  if (own) return pkg.resolveRelatedPart(dataPart, own)?.data;
+  const index = (path: string): string => /(\d*)\.[^.]+$/u.exec(path)?.[1] ?? '';
+  const want = index(dataPart);
+  const rels = pkg.getPartRelationships(ownerPart).filter((r) => r.type.endsWith(type));
+  const rel =
+    rels.find((r) => index(r.target) === want) ?? (rels.length === 1 ? rels[0] : undefined);
+  return rel ? pkg.resolveRelatedPart(ownerPart, rel)?.data : undefined;
 }
 
 // Half the SmartArt in the corpus (5 of 9 files, fdo73227 among them) gives the

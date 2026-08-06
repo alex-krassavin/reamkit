@@ -101,6 +101,71 @@ function smartArtDocx(
   return zipSync(files);
 }
 
+// The same document, but shipping the parts a diagram is MADE from — data,
+// layout, colours — and no cached drawing, which is what a generator writes.
+function laidOutSmartArtDocx(): Uint8Array {
+  const document =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+    `<w:document xmlns:w="${W_NS}" xmlns:r="${R_NS}"><w:body><w:p><w:r>` +
+    `<w:drawing><wp:inline xmlns:wp="${WP_NS}">` +
+    `<wp:extent cx="5486400" cy="2743200"/><wp:docPr id="1" name="Diagram"/>` +
+    `<a:graphic xmlns:a="${A_NS}"><a:graphicData uri="${DGM}">` +
+    `<dgm:relIds xmlns:dgm="${DGM}" r:dm="rId100"/>` +
+    `</a:graphicData></a:graphic></wp:inline></w:drawing>` +
+    `</w:r></w:p></w:body></w:document>`;
+  const pt = (id: string, text: string): string =>
+    `<dgm:pt modelId="${id}"><dgm:t><a:p><a:r><a:t>${text}</a:t></a:r></a:p></dgm:t></dgm:pt>`;
+  const data =
+    `<?xml version="1.0"?>\n<dgm:dataModel xmlns:dgm="${DGM}" xmlns:a="${A_NS}"><dgm:ptLst>` +
+    `<dgm:pt modelId="doc" type="doc"/>${pt('a', 'NodeA')}${pt('b', 'NodeB')}</dgm:ptLst>` +
+    `<dgm:cxnLst>` +
+    `<dgm:cxn modelId="c1" srcId="doc" destId="a" srcOrd="0"/>` +
+    `<dgm:cxn modelId="c2" srcId="doc" destId="b" srcOrd="1"/>` +
+    `</dgm:cxnLst></dgm:dataModel>`;
+  // The Basic Block List: a row of boxes with a tenth of a box between them.
+  const layout =
+    `<?xml version="1.0"?>\n<dgm:layoutDef xmlns:dgm="${DGM}"><dgm:layoutNode name="top">` +
+    `<dgm:alg type="snake"/><dgm:constrLst>` +
+    `<dgm:constr type="w" for="ch" forName="node" refType="w"/>` +
+    `<dgm:constr type="w" for="ch" forName="sibTrans" refType="w" refFor="ch" refForName="node" fact="0.1"/>` +
+    `</dgm:constrLst>` +
+    `<dgm:forEach name="each" axis="ch" ptType="node">` +
+    `<dgm:layoutNode name="node" styleLbl="node1"><dgm:alg type="tx"/><dgm:shape type="rect"/></dgm:layoutNode>` +
+    `</dgm:forEach></dgm:layoutNode></dgm:layoutDef>`;
+  const colors =
+    `<?xml version="1.0"?>\n<dgm:colorsDef xmlns:dgm="${DGM}" xmlns:a="${A_NS}" uniqueId="u">` +
+    `<dgm:styleLbl name="node1"><dgm:fillClrLst meth="repeat">` +
+    `<a:srgbClr val="AA0000"/><a:srgbClr val="00AA00"/>` +
+    `</dgm:fillClrLst></dgm:styleLbl></dgm:colorsDef>`;
+  const rels = (inner: string): Uint8Array =>
+    enc.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+        `<Relationships xmlns="${PKG}">${inner}</Relationships>`,
+    );
+  return zipSync({
+    '[Content_Types].xml': enc.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
+        `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+        `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+        `<Default Extension="xml" ContentType="application/xml"/>` +
+        `<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>` +
+        `</Types>`,
+    ),
+    '_rels/.rels': rels(
+      `<Relationship Id="rId1" Type="${R_NS}/officeDocument" Target="word/document.xml"/>`,
+    ),
+    'word/document.xml': enc.encode(document),
+    'word/_rels/document.xml.rels': rels(
+      `<Relationship Id="rId100" Type="${R_NS}/diagramData" Target="diagrams/data1.xml"/>` +
+        `<Relationship Id="rId101" Type="${R_NS}/diagramLayout" Target="diagrams/layout1.xml"/>` +
+        `<Relationship Id="rId102" Type="${R_NS}/diagramColors" Target="diagrams/colors1.xml"/>`,
+    ),
+    'word/diagrams/data1.xml': enc.encode(data),
+    'word/diagrams/layout1.xml': enc.encode(layout),
+    'word/diagrams/colors1.xml': enc.encode(colors),
+  });
+}
+
 function shapeText(shape: { text?: { content: ReadonlyArray<unknown> } }): string {
   return (shape.text?.content ?? [])
     .flatMap((c) =>
@@ -164,11 +229,30 @@ describe('SmartArt diagrams in docx (E-SMARTART SA2/SA3)', () => {
     expect(text).toContain('NodeB');
   });
 
-  it('keeps the paragraph and records a loss when no drawing override ships (SA3)', () => {
+  it('keeps the paragraph and records a loss when nothing at all ships (SA3)', () => {
     const doc = Ream.parse(smartArtDocx(false));
     expect(doc.flow.body.filter((e) => e.kind === 'shape')).toHaveLength(0);
     // SA3: the dropped diagram is reported, not silently swallowed.
     const loss = doc.losses.find((l) => l.feature === 'shapes.smartArt');
     expect(loss?.severity).toBe('dropped');
+  });
+
+  // §21.4.3 — the same engine the slides use. A generator writes data, layout,
+  // colours and style and leaves the picture to the reader; before this the
+  // document reader asked only for a cached drawing and reported a loss.
+  it('runs the layout when the file ships the parts but no drawing', () => {
+    const docx = laidOutSmartArtDocx();
+    const doc = Ream.parse(docx);
+    expect(doc.losses.find((l) => l.feature === 'shapes.smartArt')).toBeUndefined();
+    const nodes = diagramNodes(docx);
+    expect(nodes.map((c) => shapeText(c.shape))).toEqual(['NodeA', 'NodeB']);
+    // Laid out in the frame the drawing states (5486400 × 2743200 EMU = 432 ×
+    // 216pt): two boxes across with a tenth of a box between them.
+    const w = 432 / 2.1;
+    expect(nodes[0]?.shape.width).toBeCloseTo(w, 1);
+    expect(nodes[1]?.xPt).toBeCloseTo(w * 1.1, 1);
+    // ...and each box takes its place in the colour part's run.
+    expect(nodes[0]?.shape.fill.colorHex).toBe('AA0000');
+    expect(nodes[1]?.shape.fill.colorHex).toBe('00AA00');
   });
 });
