@@ -1215,6 +1215,58 @@ describe('ppt tile size (PPT-20)', () => {
   });
 });
 
+// MS-ODRAW §2.3.7.6 `fillFocus` — where the FIRST colour of a shaded fill
+// peaks, as a percentage. Read as nothing, a sweep that runs out from the
+// middle reads as a plain ramp into its second colour: 23884's every slide
+// washed from blue to violet where the reference is blue across the middle and
+// dark only at the corners.
+describe('ppt gradient focus (PPT-23)', () => {
+  const deck = (focusPct?: number): Uint8Array =>
+    buildPpt([
+      {
+        boxes: [
+          {
+            anchor: { x: 0, y: 0, w: 200, h: 200 },
+            shapeType: 1,
+            fillColorHex: '0047FF',
+            gradientFill: {
+              fillType: 7,
+              backColorHex: '310080',
+              angleDeg: 0,
+              ...(focusPct !== undefined ? { focusPct } : {}),
+            },
+          },
+        ],
+      },
+    ]);
+  const stopsOf = (bytes: Uint8Array): ReadonlyArray<{ offset: number; colorHex: string }> => {
+    const fill = readPpt(bytes).doc.body.find((el) => el.kind === 'shape')?.shape.fill;
+    return fill?.kind === 'gradient' ? (fill.gradient?.stops ?? []) : [];
+  };
+
+  it('runs a plain ramp when the shape states no focus', () => {
+    expect(stopsOf(deck())).toEqual([
+      { offset: 0, colorHex: '0047FF' },
+      { offset: 1, colorHex: '310080' },
+    ]);
+  });
+
+  it('folds the sweep so the first colour peaks where the focus says', () => {
+    expect(stopsOf(deck(50))).toEqual([
+      { offset: 0, colorHex: '310080' },
+      { offset: 0.5, colorHex: '0047FF' },
+      { offset: 1, colorHex: '310080' },
+    ]);
+  });
+
+  it('turns the ramp around at the far end rather than folding it', () => {
+    expect(stopsOf(deck(100))).toEqual([
+      { offset: 0, colorHex: '310080' },
+      { offset: 1, colorHex: '0047FF' },
+    ]);
+  });
+});
+
 describe('ppt WordArt (PPT-21)', () => {
   // MS-ODRAW §2.3.22 — a piece of WordArt states its text, its size and its
   // face as SHAPE properties, not as a text box. Read as an ordinary autoshape

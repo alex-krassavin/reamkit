@@ -272,10 +272,7 @@ function backdropFill(bg: PptBackground, resources: ResourceStore): ShapeFill | 
     };
   }
   if (bg.gradient) {
-    const stops = [
-      { offset: 0, colorHex: bg.gradient.fromHex },
-      { offset: 1, colorHex: bg.gradient.toHex },
-    ];
+    const stops = gradientStops(bg.gradient);
     return {
       kind: 'gradient',
       gradient: bg.gradient.radial
@@ -376,6 +373,50 @@ function toCustomGeometry(g: PptCustomGeometry): CustomGeometry {
 
 // A decorative autoshape → a positioned vector ShapeBlock with its preset geometry
 // (or its exact freeform geometry — PPT-7) and any literal fill / line colour.
+/**
+ * §2.3.7.6 `fillFocus` — the stops a shaded fill's two colours make.
+ *
+ * A focus of zero is the plain ramp everyone expects: the first colour at one
+ * end, the second at the other. Any other value means the sweep runs OUT from
+ * one of them — a focus of 50 puts the first colour halfway along with the
+ * second at BOTH ends, which is what 23884's every slide asks for and why its
+ * background read as a flat wash into violet where the reference is blue
+ * across the middle and dark only at the corners.
+ *
+ * @param g The gradient as the `.ppt` states it.
+ * @returns The stops, in order.
+ */
+function gradientStops(g: {
+  readonly fromHex: string;
+  readonly toHex: string;
+  readonly focusPct?: number;
+}): Array<{ offset: number; colorHex: string }> {
+  const focus = g.focusPct ?? 0;
+  if (focus === 0) {
+    return [
+      { offset: 0, colorHex: g.fromHex },
+      { offset: 1, colorHex: g.toHex },
+    ];
+  }
+  // ±100 turns the ramp around rather than folding it.
+  if (Math.abs(focus) >= 100) {
+    return [
+      { offset: 0, colorHex: g.toHex },
+      { offset: 1, colorHex: g.fromHex },
+    ];
+  }
+  // The peak is the FIRST colour for a positive focus and the second for a
+  // negative one; the other colour stands at both ends.
+  const peak = focus > 0 ? g.fromHex : g.toHex;
+  const ends = focus > 0 ? g.toHex : g.fromHex;
+  const at = focus > 0 ? focus / 100 : 1 + focus / 100;
+  return [
+    { offset: 0, colorHex: ends },
+    { offset: at, colorHex: peak },
+    { offset: 1, colorHex: ends },
+  ];
+}
+
 function positionedAutoShape(
   rect: PptRect,
   auto: PptAutoShape,
@@ -397,20 +438,11 @@ function positionedAutoShape(
         ? {
             kind: 'gradient',
             gradient: auto.gradient.radial
-              ? {
-                  kind: 'radial',
-                  stops: [
-                    { offset: 0, colorHex: auto.gradient.fromHex },
-                    { offset: 1, colorHex: auto.gradient.toHex },
-                  ],
-                }
+              ? { kind: 'radial', stops: gradientStops(auto.gradient) }
               : {
                   kind: 'linear',
                   angle: auto.gradient.angleDeg,
-                  stops: [
-                    { offset: 0, colorHex: auto.gradient.fromHex },
-                    { offset: 1, colorHex: auto.gradient.toHex },
-                  ],
+                  stops: gradientStops(auto.gradient),
                 },
           }
         : auto.fillColorHex

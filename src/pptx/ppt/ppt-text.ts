@@ -73,6 +73,7 @@ const PROP_FILL_TYPE = 0x0180; // OPT fillType — MSOFILLTYPE (PPT-9)
 const PROP_FILL_COLOR = 0x0181; // OPT fillColor (PPT-5)
 const PROP_FILL_BACK_COLOR = 0x0183; // OPT fillBackColor — the gradient's far end
 const PROP_FILL_ANGLE = 0x018b; // OPT fillAngle — 16.16 fixed degrees
+const PROP_FILL_FOCUS = 0x018c; // OPT fillFocus — where the first colour peaks (%)
 const PROP_FILL_BLIP = 0x0186; // OPT fillBlip — a picture fill's store index (PPT-12)
 // §2.3.7.11/.12 — the size ONE copy of a tiled fill occupies, in EMU. Zero (the
 // default) leaves the tile at the picture's own size.
@@ -226,6 +227,12 @@ export interface PptAutoShape {
     readonly toHex: string;
     readonly angleDeg: number;
     readonly radial: boolean;
+    /**
+     * §2.3.7.6 `fillFocus` — where along the sweep the FIRST colour peaks, as a
+     * percentage. Zero is a plain ramp; 50 puts it in the middle with the
+     * second colour at both ends, which is a different picture entirely.
+     */
+    readonly focusPct?: number;
   };
   /**
    * §2.3.7.1 MSOFILLTYPE 3 — a picture stretched over the shape, its blip named
@@ -1558,7 +1565,17 @@ function parseFillGradient(
   // downward axis, which is the direction DrawingML calls 90°.
   const raw = optProperty(d, count, PROP_FILL_ANGLE);
   const angleDeg = raw === undefined ? 90 : 90 - (raw | 0) / 65536;
-  return { fromHex, toHex, angleDeg, radial: type === 5 || type === 6 };
+  // §2.3.7.6 — a signed percentage: the sweep does not have to run from one
+  // colour to the other, it may run OUT from one of them.
+  const focus = optProperty(d, count, PROP_FILL_FOCUS);
+  const focusPct = focus === undefined ? 0 : ((focus | 0) << 16) >> 16;
+  return {
+    fromHex,
+    toHex,
+    angleDeg,
+    radial: type === 5 || type === 6,
+    ...(focusPct !== 0 ? { focusPct } : {}),
+  };
 }
 
 function optColor(

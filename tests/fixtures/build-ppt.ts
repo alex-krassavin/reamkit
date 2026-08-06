@@ -64,6 +64,9 @@ const RT_PLACEHOLDER_ATOM = 0x0bc3;
 const FBT_BLIP_PNG = 0xf01e;
 const PROP_PIB_ID = 0x4104; // OPT property id: pib (0x0104) with the fBid flag (0x4000)
 const PROP_FILL_COLOR = 0x0181;
+const PROP_FILL_BACK_COLOR = 0x0183;
+const PROP_FILL_ANGLE = 0x018b;
+const PROP_FILL_FOCUS = 0x018c;
 const PROP_LINE_COLOR = 0x01c0;
 const PROP_FILL_BOOLS = 0x01bf; // fill style booleans (fFilled + its usage bit)
 const PROP_LINE_BOOLS = 0x01ff; // line style booleans (fLine + its usage bit)
@@ -181,6 +184,14 @@ export interface PptBoxInput {
     readonly png: Uint8Array;
     // MS-ODRAW §2.3.7.11/.12 `fillWidth` / `fillHeight`, in EMU.
     readonly tileEmu?: readonly [number, number];
+  };
+  // MS-ODRAW §2.3.7 — a shaded fill: `fillType` 4..8, the far colour, the
+  // 16.16 angle and the focus (§2.3.7.6, where the first colour peaks).
+  readonly gradientFill?: {
+    readonly fillType: number;
+    readonly backColorHex: string;
+    readonly angleDeg?: number;
+    readonly focusPct?: number;
   };
   // A grouped shape's rectangle, in the enclosing group's coordinate space.
   readonly childAnchor?: readonly [number, number, number, number];
@@ -610,6 +621,17 @@ function buildShapeContainer(box: PptBoxInput): Uint8Array {
     if (box.wordArt.font !== undefined) {
       const fontBlob = str(box.wordArt.font);
       props.push({ id: PROP_GTEXT_FONT_COMPLEX, value: fontBlob.length, blob: fontBlob });
+    }
+  }
+  if (box.gradientFill) {
+    props.push({ id: PROP_FILL_TYPE, value: box.gradientFill.fillType });
+    props.push({ id: PROP_FILL_BACK_COLOR, value: rgbColorRef(box.gradientFill.backColorHex) });
+    if (box.gradientFill.angleDeg !== undefined) {
+      const raw = Math.round((90 - box.gradientFill.angleDeg) * 65536);
+      props.push({ id: PROP_FILL_ANGLE, value: raw >>> 0 });
+    }
+    if (box.gradientFill.focusPct !== undefined) {
+      props.push({ id: PROP_FILL_FOCUS, value: box.gradientFill.focusPct & 0xffff });
     }
   }
   if (box.pictureFill) {
