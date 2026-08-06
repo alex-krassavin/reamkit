@@ -105,11 +105,6 @@
   "aligned": true
  },
  {
-  "name": "smartart-autoTxRot.pptx",
-  "score": 0.1391,
-  "aligned": true
- },
- {
   "name": "smartart-vertical-box-list.pptx",
   "score": 0.1389,
   "aligned": true
@@ -160,7 +155,7 @@
   "aligned": true
  },
  {
-  "name": "smartart-cycle.pptx",
+  "name": "smartart-center-cycle.pptx",
   "score": 0.0999,
   "aligned": true
  },
@@ -182,6 +177,11 @@
  {
   "name": "fill-color-list.pptx",
   "score": 0.0897,
+  "aligned": true
+ },
+ {
+  "name": "smartart-autoTxRot.pptx",
+  "score": 0.0888,
   "aligned": true
  },
  {
@@ -220,11 +220,6 @@
   "aligned": true
  },
  {
-  "name": "smartart-center-cycle.pptx",
-  "score": 0.0756,
-  "aligned": true
- },
- {
   "name": "activex_commandbutton.pptx",
   "score": 0.0738,
   "aligned": true
@@ -236,11 +231,6 @@
  },
  {
   "name": "tdf127237.pptx",
-  "score": 0.0725,
-  "aligned": true
- },
- {
-  "name": "smartart-multidirectional.pptx",
   "score": 0.0725,
   "aligned": true
  },
@@ -335,6 +325,11 @@
   "aligned": true
  },
  {
+  "name": "smartart-rotation.pptx",
+  "score": 0.0435,
+  "aligned": true
+ },
+ {
   "name": "tdf100065.pptx",
   "score": 0.0423,
   "aligned": true
@@ -387,11 +382,6 @@
  {
   "name": "tdf125551.pptx",
   "score": 0.0359,
-  "aligned": true
- },
- {
-  "name": "smartart-rotation.pptx",
-  "score": 0.0352,
   "aligned": true
  },
  {
@@ -457,6 +447,11 @@
  {
   "name": "tdf104788.pptx",
   "score": 0.0252,
+  "aligned": true
+ },
+ {
+  "name": "smartart-multidirectional.pptx",
+  "score": 0.025,
   "aligned": true
  },
  {
@@ -537,6 +532,11 @@
  {
   "name": "slide-sections.pptx",
   "score": 0.0165,
+  "aligned": true
+ },
+ {
+  "name": "smartart-cycle.pptx",
+  "score": 0.0164,
   "aligned": true
  },
  {

@@ -48,7 +48,7 @@ interface Constraint {
 }
 
 /** The algorithms this slice runs. */
-type AlgType = 'snake' | 'lin' | 'sp' | 'tx' | 'composite' | 'other';
+type AlgType = 'snake' | 'lin' | 'sp' | 'tx' | 'composite' | 'cycle' | 'other';
 
 interface LayoutNode {
   readonly name: string;
@@ -94,10 +94,17 @@ export function layoutDiagram(
   const root = findChild(layout, 'dgm:layoutDef');
   const top = root ? findChild(poChildren(root), 'dgm:layoutNode') : undefined;
   if (!top || !data.root) return [];
-  const parsed = parseNode(top, { maxDepth: data.depth });
+  const parsed = parseNode(top, { maxDepth: data.depth, data, root: data.root });
   // Only the algorithms below are run; anything else is left to the caller's
   // graceful loss rather than laid out wrongly.
-  if (parsed.alg !== 'snake' && parsed.alg !== 'lin' && parsed.alg !== 'composite') return [];
+  if (
+    parsed.alg !== 'snake' &&
+    parsed.alg !== 'lin' &&
+    parsed.alg !== 'composite' &&
+    parsed.alg !== 'cycle'
+  ) {
+    return [];
+  }
   return layoutIn(parsed, data.root, { x: 0, y: 0, cx, cy }, data, 0);
 }
 
@@ -127,6 +134,7 @@ function layoutIn(
   index: number,
 ): Array<LaidNode> {
   if (node.alg === 'composite') return compositeLayout(node, point, box, data, index);
+  if (node.alg === 'cycle') return cycleLayout(node, point, box, data);
   if (node.alg === 'lin' || node.alg === 'snake') return listLayout(node, point, box, data);
   // §21.4.3.2 `sp` is the space algorithm — it reserves room. It reserves it
   // for a SHAPE when the node names one, which is how a process arrow gets
@@ -270,6 +278,95 @@ function rectIn(
     }
   }
   return { x: x ?? box.x, y: y ?? box.y, cx, cy };
+}
+
+/**
+ * §21.4.3.2 `cycle` — the point's children around a circle, starting at
+ * `stAng` and spanning `spanAng` (both in degrees, clockwise from twelve
+ * o'clock). `ctrShpMap="fNode"` makes the FIRST child the hub in the middle
+ * and its own children the ring around it, which is what a radial cycle is.
+ */
+function cycleLayout(
+  node: { kind: 'node' } & LayoutNode,
+  point: DiagramPoint,
+  box: Box,
+  data: DiagramData,
+): Array<LaidNode> {
+  const boxes = namedBoxes(node);
+  const hubNode = node.algParams.get('ctrShpMap') === 'fNode' ? boxes[0] : undefined;
+  const ringNode = boxes[boxes.length - 1];
+  const kids = data.children(point.id, 'node');
+  const hub = hubNode ? kids[0] : undefined;
+  const ring = hub ? data.children(hub.id, 'node') : kids;
+  if (ring.length === 0 || !ringNode) return [];
+
+  const n = ring.length;
+  const stAng = Number(node.algParams.get('stAng') ?? '0');
+  const spanAng = Number(node.algParams.get('spanAng') ?? '360');
+  // A span of a full turn puts one node at each of `n` even steps; a partial
+  // one puts the last node ON its far end, so the step is one shorter.
+  const closed = Math.abs(spanAng) >= 359.5;
+  const step = spanAng / (closed ? n : Math.max(1, n - 1));
+
+  // §21.4.3.1 — a node's size is stated as a fraction of the diagram. Where it
+  // is stated as the WHOLE of it, that is a ceiling and not a size, and the
+  // size is the one that packs `n` of them round the ring: the chord between
+  // two neighbours is one node plus the space between them.
+  const stated = sizeFact(node.constrs, ringNode.name, 'w');
+  const gap = siblingSpace(node.constrs, ringNode.name);
+  const chord = Math.sin(Math.PI / Math.max(2, n));
+  const least = Math.min(box.cx, box.cy);
+  const size =
+    stated !== undefined && stated < 0.99
+      ? { cx: box.cx * stated, cy: box.cy * (sizeFact(node.constrs, ringNode.name, 'h') ?? stated) }
+      : { cx: (least * chord) / (1 + gap + chord), cy: (least * chord) / (1 + gap + chord) };
+  const radius = Math.min((box.cx - size.cx) / 2, (box.cy - size.cy) / 2);
+  const midX = box.x + box.cx / 2;
+  const midY = box.y + box.cy / 2;
+
+  const out: Array<LaidNode> = [];
+  if (hub && hubNode) {
+    out.push(
+      ...splitCell(
+        node,
+        hubNode.name,
+        hub,
+        data,
+        { x: midX - size.cx / 2, y: midY - size.cy / 2, cx: size.cx, cy: size.cy },
+        hubNode.shapeType ?? 'rect',
+        0,
+      ),
+    );
+  }
+  ring.forEach((pt, i) => {
+    const a = ((stAng + i * step) * Math.PI) / 180;
+    const cellX = midX + radius * Math.sin(a) - size.cx / 2;
+    const cellY = midY - radius * Math.cos(a) - size.cy / 2;
+    out.push(
+      ...splitCell(
+        node,
+        ringNode.name,
+        pt,
+        data,
+        { x: cellX, y: cellY, cx: size.cx, cy: size.cy },
+        ringNode.shapeType ?? 'rect',
+        i,
+      ),
+    );
+  });
+  return out;
+}
+
+// The space a node's constraints leave between two siblings, as a fraction of
+// the node's own width. A cycle may state a NEGATIVE one, and then the ring
+// overlaps itself.
+function siblingSpace(constrs: ReadonlyArray<Constraint>, childName: string): number {
+  for (const k of constrs) {
+    if (k.type === 'sibSp' && (k.refForName === childName || k.refForName === undefined)) {
+      return k.fact;
+    }
+  }
+  return 0.5;
 }
 
 /**
@@ -624,6 +721,8 @@ function childShapeType(items: ReadonlyArray<LayoutItem>): string | undefined {
 /** What a `choose` is evaluated against: the shape of the data it will lay out. */
 interface LayoutContext {
   readonly maxDepth: number;
+  readonly data: DiagramData;
+  readonly root: DiagramPoint;
 }
 
 /**
@@ -693,15 +792,57 @@ function parseNode(node: PoNode, ctx: LayoutContext): { kind: 'node' } & LayoutN
 // on a variable this engine leaves at its default, where the `if` is the branch
 // PowerPoint takes.
 function holds(branch: PoNode, ctx: LayoutContext): boolean {
-  if (poAttr(branch, 'func') !== 'maxDepth') return true;
+  const func = poAttr(branch, 'func');
+  const axis = (poAttr(branch, 'axis') ?? '').split(/\s+/u).filter((a) => a !== '');
+  if (func === 'maxDepth') return compare(ctx.maxDepth, branch, 'gte');
+  // A `cnt` over a path of SEVERAL steps is a question about the model, asked
+  // once: "how many children has the first child?" is what tells a radial
+  // cycle where to start its ring. A one-step `cnt` is about the point being
+  // laid out, which is not known here — that one is answered per point, by the
+  // guard `countsChildren` puts on the box.
+  if (func === 'cnt' && axis.length > 1) return compare(countAt(axis, branch, ctx), branch, 'gte');
+  return true;
+}
+
+// The number of points at the end of a `dgm:if`'s path: each step takes an
+// axis of the points it has so far, then the slice `st`/`cnt` names (both
+// 1-based, and a count of 0 means all of them).
+function countAt(axis: ReadonlyArray<string>, branch: PoNode, ctx: LayoutContext): number {
+  const nums = (name: string): Array<number> =>
+    (poAttr(branch, name) ?? '').split(/\s+/u).map((v) => Number(v));
+  const st = nums('st');
+  const cnt = nums('cnt');
+  const types = (poAttr(branch, 'ptType') ?? '').split(/\s+/u);
+  let at: Array<DiagramPoint> = [ctx.root];
+  axis.forEach((step, i) => {
+    if (step !== 'ch' && step !== 'des') {
+      at = [];
+      return;
+    }
+    const kind = types[i] === 'node' || types[i] === undefined ? 'node' : undefined;
+    if (kind === undefined) {
+      at = [];
+      return;
+    }
+    const next = at.flatMap((p) => ctx.data.children(p.id, 'node'));
+    const from = Math.max(0, (st[i] ?? 1) - 1);
+    const want = cnt[i];
+    const take = want === undefined || want === 0 ? next.length : want;
+    at = next.slice(from, from + take);
+  });
+  return at.length;
+}
+
+// A `dgm:if`'s comparison, whatever it is comparing.
+function compare(actual: number, branch: PoNode, fallback: string): boolean {
   const val = Number(poAttr(branch, 'val') ?? '0');
-  const op = poAttr(branch, 'op') ?? 'gte';
-  if (op === 'gte') return ctx.maxDepth >= val;
-  if (op === 'gt') return ctx.maxDepth > val;
-  if (op === 'lte') return ctx.maxDepth <= val;
-  if (op === 'lt') return ctx.maxDepth < val;
-  if (op === 'neq') return ctx.maxDepth !== val;
-  return ctx.maxDepth === val;
+  const op = poAttr(branch, 'op') ?? fallback;
+  if (op === 'gte') return actual >= val;
+  if (op === 'gt') return actual > val;
+  if (op === 'lte') return actual <= val;
+  if (op === 'lt') return actual < val;
+  if (op === 'neq') return actual !== val;
+  return actual === val;
 }
 
 // Whether a branch tests a point's child count — `func="cnt" axis="ch"
@@ -761,7 +902,12 @@ function parseConstraints(list: PoNode | undefined): Array<Constraint> {
 
 function algOf(alg: PoNode | undefined): AlgType {
   const t = alg ? poAttr(alg, 'type') : undefined;
-  return t === 'snake' || t === 'lin' || t === 'sp' || t === 'tx' || t === 'composite'
+  return t === 'snake' ||
+    t === 'lin' ||
+    t === 'sp' ||
+    t === 'tx' ||
+    t === 'composite' ||
+    t === 'cycle'
     ? t
     : 'other';
 }

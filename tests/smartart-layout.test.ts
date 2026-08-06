@@ -208,6 +208,45 @@ const ARROW_PROCESS = layoutXml(
    </dgm:layoutNode>`,
 );
 
+// A cycle: the children round a circle. The inner `choose` asks how many
+// children the FIRST child has, which is what decides where the ring starts.
+const CYCLE = layoutXml(
+  `<dgm:choose name="where">
+     <dgm:if name="hub" axis="ch ch" ptType="node node" st="1 1" cnt="1 0" func="cnt" op="lte" val="1">
+       <dgm:alg type="cycle"><dgm:param type="stAng" val="90"/><dgm:param type="spanAng" val="360"/></dgm:alg>
+     </dgm:if>
+     <dgm:else name="round">
+       <dgm:alg type="cycle"><dgm:param type="stAng" val="0"/><dgm:param type="spanAng" val="360"/></dgm:alg>
+     </dgm:else>
+   </dgm:choose>
+   <dgm:constrLst>
+     <dgm:constr type="w" for="ch" forName="node" refType="w" fact="0.25"/>
+     <dgm:constr type="h" for="ch" forName="node" refType="h" fact="0.25"/>
+   </dgm:constrLst>
+   <dgm:forEach name="each" axis="ch" ptType="node">
+     <dgm:layoutNode name="node"><dgm:alg type="tx"/><dgm:shape type="ellipse"/></dgm:layoutNode>
+   </dgm:forEach>`,
+);
+
+// The radial variant: the first child is the hub in the middle and its own
+// children are the ring around it.
+const RADIAL = layoutXml(
+  `<dgm:alg type="cycle">
+     <dgm:param type="stAng" val="0"/><dgm:param type="spanAng" val="360"/>
+     <dgm:param type="ctrShpMap" val="fNode"/>
+   </dgm:alg>
+   <dgm:constrLst>
+     <dgm:constr type="w" for="ch" forName="node" refType="w" fact="0.25"/>
+     <dgm:constr type="h" for="ch" forName="node" refType="h" fact="0.25"/>
+   </dgm:constrLst>
+   <dgm:forEach name="first" axis="ch" ptType="node" cnt="1">
+     <dgm:layoutNode name="centerShape"><dgm:alg type="tx"/><dgm:shape type="ellipse"/></dgm:layoutNode>
+   </dgm:forEach>
+   <dgm:forEach name="each" axis="ch" ptType="node">
+     <dgm:layoutNode name="node"><dgm:alg type="tx"/><dgm:shape type="ellipse"/></dgm:layoutNode>
+   </dgm:forEach>`,
+);
+
 const label = (n: { readonly point: Parameters<typeof DiagramData.textOf>[0] }): string =>
   DiagramData.textOf(n.point);
 
@@ -391,13 +430,65 @@ describe('a SmartArt layout with no cached drawing', () => {
     expect(label(dot as never)).toBe('');
   });
 
+  it('puts a cycle round a circle, starting where the layout says', () => {
+    // Four nodes, none with children of its own: the `cnt` over the first
+    // child's children is zero, the branch holds, and the ring starts at three
+    // o'clock as that branch asks.
+    const boxes = run(
+      CYCLE,
+      dataXml([
+        ['a', []],
+        ['b', []],
+        ['c', []],
+        ['d', []],
+      ]),
+    );
+    expect(boxes.map(label)).toEqual(['a', 'b', 'c', 'd']);
+    const mid = (b: (typeof boxes)[number]): [number, number] => [b.x + b.cx / 2, b.y + b.cy / 2];
+    // A quarter of the frame each, and a full turn in four steps about the
+    // middle — the ring as wide as the shorter side allows.
+    expect(boxes[0]?.cx).toBeCloseTo(CX * 0.25, 3);
+    expect(boxes[0]?.cy).toBeCloseTo(CY * 0.25, 3);
+    const r = (CY - CY * 0.25) / 2;
+    expect(mid(boxes[0]!)[0]).toBeCloseTo(CX / 2 + r, 3);
+    expect(mid(boxes[0]!)[1]).toBeCloseTo(CY / 2, 3);
+    expect(mid(boxes[1]!)[1]).toBeCloseTo(CY / 2 + r, 3);
+    expect(mid(boxes[2]!)[0]).toBeCloseTo(CX / 2 - r, 3);
+    expect(mid(boxes[3]!)[1]).toBeCloseTo(CY / 2 - r, 3);
+  });
+
+  it('answers a `cnt` over a path, which is what moves the ring round', () => {
+    // The same layout over data whose first child HAS children: the branch no
+    // longer holds, and the ring starts at twelve o'clock instead.
+    const boxes = run(
+      CYCLE,
+      dataXml([
+        ['a', ['x', 'y']],
+        ['b', []],
+      ]),
+    );
+    const first = boxes[0]!;
+    expect(first.x + first.cx / 2).toBeCloseTo(CX / 2, 3);
+    expect(first.y + first.cy / 2).toBeLessThan(CY / 2);
+  });
+
+  it('puts the hub in the middle and its own children round it', () => {
+    const boxes = run(RADIAL, dataXml([['hub', ['a', 'b']]]));
+    expect(boxes.map(label)).toEqual(['hub', 'a', 'b']);
+    // The hub sits at the centre of the frame; the ring is its children.
+    expect(boxes[0]?.x).toBeCloseTo((CX - CX * 0.25) / 2, 3);
+    expect(boxes[0]?.y).toBeCloseTo((CY - CY * 0.25) / 2, 3);
+    expect(boxes[1]?.y).toBeLessThan(boxes[0]?.y ?? 0);
+    expect(boxes[2]?.y).toBeGreaterThan(boxes[0]?.y ?? 0);
+  });
+
   it('leaves a box out for an algorithm it cannot run inside a composite', () => {
     // A centre cycle is a composite of a `cycle` and its middle. Drawing the
     // cycle's whole share as one box put a rectangle over the entire frame.
     const centre = layoutXml(
       `<dgm:alg type="composite"/>
        <dgm:constrLst><dgm:constr type="w" for="ch" forName="ring" refType="w"/></dgm:constrLst>
-       <dgm:layoutNode name="ring"><dgm:alg type="cycle"/><dgm:shape type="ellipse"/></dgm:layoutNode>`,
+       <dgm:layoutNode name="ring"><dgm:alg type="pyramid"/><dgm:shape type="ellipse"/></dgm:layoutNode>`,
     );
     expect(run(centre, dataXml([['a', []]]))).toEqual([]);
   });
