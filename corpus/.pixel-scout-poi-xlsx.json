@@ -115,19 +115,14 @@
   "aligned": false
  },
  {
-  "name": "picture.xlsx",
-  "score": 0.3414,
+  "name": "ConditionalFormattingSamples.xlsx",
+  "score": 0.3498,
   "aligned": false
  },
  {
   "name": "StructuredRefs-lots-with-lookups.xlsx",
   "score": 0.326,
   "aligned": true
- },
- {
-  "name": "ConditionalFormattingSamples.xlsx",
-  "score": 0.3007,
-  "aligned": false
  },
  {
   "name": "47668.xlsx",
@@ -138,6 +133,11 @@
   "name": "FillWithoutColor.xlsx",
   "score": 0.205,
   "aligned": false
+ },
+ {
+  "name": "picture.xlsx",
+  "score": 0.1723,
+  "aligned": true
  },
  {
   "name": "dataValidationTableRange.xlsx",
@@ -195,11 +195,6 @@
   "aligned": false
  },
  {
-  "name": "123233_charts.xlsx",
-  "score": 0.0837,
-  "aligned": true
- },
- {
   "name": "54288-ref.xlsx",
   "score": 0.0828,
   "aligned": true
@@ -207,6 +202,11 @@
  {
   "name": "54288.xlsx",
   "score": 0.0828,
+  "aligned": true
+ },
+ {
+  "name": "123233_charts.xlsx",
+  "score": 0.0778,
   "aligned": true
  },
  {

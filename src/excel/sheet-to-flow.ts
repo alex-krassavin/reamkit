@@ -714,8 +714,21 @@ function withDrawingsByBand(
   const byBand: Array<Array<BodyElement>> = lefts.map(() => []);
   for (const el of drawings) {
     const x = floatLeftPt(el);
-    const band = x === undefined ? 0 : bandOf(x);
-    byBand[band]!.push(x === undefined ? el : shiftFloatLeft(el, lefts[band]!));
+    if (x === undefined) {
+      byBand[0]!.push(el);
+      continue;
+    }
+    // A drawing WIDER than its band runs on into the next ones, and each page
+    // shows the slice that falls on it — the same picture, re-anchored to that
+    // band's left edge and clipped by the paper. Emitted once, picture.xlsx's
+    // coin ended at the first page's edge and the two pages after it, which
+    // every reader fills with the rest of it, came out blank.
+    const start = bandOf(x);
+    const right = x + (floatWidthPt(el) ?? 0);
+    for (let band = start; band < lefts.length; band++) {
+      if (band > start && right <= lefts[band]!) break;
+      byBand[band]!.push(shiftFloatLeft(el, lefts[band]!));
+    }
   }
   // AFTER the band's table, not before it: a band table breaks to its own page
   // on its FIRST ROW, so a float emitted ahead of it is still on the page
@@ -741,6 +754,14 @@ function floatLeftPt(el: BodyElement): number | undefined {
           ? el.shape.float
           : undefined;
   return float?.posH?.offsetPt;
+}
+
+/** A float's own width, for the block kinds a sheet anchors. */
+function floatWidthPt(el: BodyElement): number | undefined {
+  if (el.kind === 'chart') return el.chart.width;
+  if (el.kind === 'image') return el.image.width;
+  if (el.kind === 'shape') return el.shape.width;
+  return undefined;
 }
 
 /** The same block with its horizontal anchor measured from `by` points later. */

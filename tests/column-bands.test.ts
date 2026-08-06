@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
+import { buildTinyPng } from './fixtures/build-png';
 import { buildXlsx } from './fixtures/build-xlsx';
 import { Ream } from '@/core/converter/ream';
 import { FontRegistry } from '@/core/font';
@@ -148,5 +149,55 @@ describe('printed headings + bands (§18.3.1.70)', () => {
       expect(first.properties.pageBreakBefore ?? false).toBe(i > 0);
       expect(second?.properties.pageBreakBefore ?? false).toBe(false);
     }
+  });
+});
+
+// A drawing WIDER than a band does not stop at the band's edge: the page after
+// it shows the rest, and the one after that the rest of that. picture.xlsx
+// anchors a coin across 19 columns of a sheet that bands three ways, and
+// emitted once it ended at the first page's edge with the two pages behind it
+// blank — where every reader carries it across all three.
+describe('a drawing wider than its column band (E-SHEET SE1)', () => {
+  // Six 40-character columns band three ways; a picture anchored across all of
+  // them reaches into every band.
+  const across = buildXlsx({
+    rows: grid(3, 6),
+    columns: wideCols,
+    sheetImage: {
+      pngBytes: buildTinyPng(4, 4, [0, 0, 255, 255]),
+      anchor: { from: [0, 0], to: [6, 3] },
+    },
+  });
+  const images = (xlsx: Uint8Array): Array<number> =>
+    Ream.parse(xlsx)
+      .flow.body.filter((el) => el.kind === 'image')
+      .map((el) => el.image.float?.posH?.offsetPt ?? 0);
+
+  it('is emitted once per band it reaches, rebased to that band', () => {
+    const lefts = images(across);
+    expect(lefts.length).toBe(3);
+    // The first copy keeps the sheet's own anchor; each next one is measured
+    // from its band's left edge, so the offsets step DOWN.
+    expect(lefts[1]).toBeLessThan(lefts[0]!);
+    expect(lefts[2]).toBeLessThan(lefts[1]!);
+  });
+
+  it('leaves a drawing inside one band alone', () => {
+    const inside = buildXlsx({
+      rows: grid(3, 6),
+      columns: wideCols,
+      sheetImage: {
+        pngBytes: buildTinyPng(4, 4, [0, 0, 255, 255]),
+        anchor: { from: [0, 0], to: [1, 3] },
+      },
+    });
+    expect(images(inside)).toHaveLength(1);
+  });
+
+  it('still starts a page for the band after one that only a drawing crosses', () => {
+    // Every band's page is a page: the second and third hold no cell of their
+    // own here, and counted by their cells alone the break never fired and all
+    // three bands' drawings landed together.
+    expect(pageCount(across)).toBe(3);
   });
 });

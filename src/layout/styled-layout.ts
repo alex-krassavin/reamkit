@@ -8678,8 +8678,13 @@ function paginateSections(
           const chunk = chunks[ci]!;
           // A manual <rowBreaks> break (first chunk only) forces a new page even
           // when the row would fit; an overflow break starts one when it won't.
+          // …and a page carrying only a FLOAT is a page: a spreadsheet band
+          // whose columns hold no cells but which a drawing runs across is
+          // exactly that, and measured by `current` alone the band after it
+          // never broke — picture.xlsx's coin ran over three page-columns and
+          // the last two landed on one page, side by side.
           const forcedBreak =
-            ci === 0 && row.breakBefore && !isLeadingHeader && asm.current.length > 0;
+            ci === 0 && row.breakBefore && !isLeadingHeader && asm.pageHasContent();
           const overflow = asm.cursorY - chunk.heightPt < asm.bottomLimit() && asm.colHasContent();
           if (forcedBreak || overflow) {
             if (forcedBreak) asm.flushPage();

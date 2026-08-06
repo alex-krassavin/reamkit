@@ -115,11 +115,6 @@
   "aligned": false
  },
  {
-  "name": "chart_hyperlink.xlsx",
-  "score": 0.0288,
-  "aligned": true
- },
- {
   "name": "tdf131424.xlsx",
   "score": 0.0282,
   "aligned": true
@@ -185,6 +180,11 @@
   "aligned": true
  },
  {
+  "name": "chart_hyperlink.xlsx",
+  "score": 0.0152,
+  "aligned": true
+ },
+ {
   "name": "tdf142881.xlsx",
   "score": 0.0151,
   "aligned": false
@@ -192,11 +192,6 @@
  {
   "name": "tdf107586.xlsx",
   "score": 0.0149,
-  "aligned": true
- },
- {
-  "name": "shape-macro-ext-ref.xlsx",
-  "score": 0.0148,
   "aligned": true
  },
  {
@@ -212,11 +207,6 @@
  {
   "name": "MissingPathExternal.xlsx",
   "score": 0.0138,
-  "aligned": true
- },
- {
-  "name": "tdf165503.xlsx",
-  "score": 0.0133,
   "aligned": true
  },
  {
@@ -320,6 +310,11 @@
   "aligned": true
  },
  {
+  "name": "shape-macro-ext-ref.xlsx",
+  "score": 0.008,
+  "aligned": true
+ },
+ {
   "name": "tdf112936.xlsx",
   "score": 0.008,
   "aligned": true
@@ -398,6 +393,11 @@
   "name": "databar.xlsx",
   "score": 0.0058,
   "aligned": false
+ },
+ {
+  "name": "tdf165503.xlsx",
+  "score": 0.0056,
+  "aligned": true
  },
  {
   "name": "empty_ext_defined_name.xlsx",
