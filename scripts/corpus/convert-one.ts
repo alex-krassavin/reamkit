@@ -7,10 +7,8 @@
 // Usage: tsx convert-one.ts <input> <outPdf>
 
 import { readFileSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-import type { FontBytesByVariant } from '@/core/font';
+import { corpusFontOptions } from './fonts';
 import { Ream } from '@/core/converter/ream';
 
 const [input, outPdf] = process.argv.slice(2);
@@ -19,19 +17,11 @@ if (!input || !outPdf) {
   process.exit(2);
 }
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const font = (n: string): Uint8Array =>
-  new Uint8Array(readFileSync(resolve(root, 'tests/fixtures/fonts', n)));
-const fonts: FontBytesByVariant = {
-  regular: font('Roboto-Regular.ttf'),
-  bold: font('Roboto-Bold.ttf'),
-  italic: font('Roboto-Italic.ttf'),
-  boldItalic: font('Roboto-BoldItalic.ttf'),
-};
-
 // The Ream facade sniffs the format and dispatches — one path for every input
 // (docx/xlsx/pptx/pdf + legacy doc/xls/ppt), which is what makes this child a
 // safe universal isolator for untrusted corpus files.
 const bytes = new Uint8Array(readFileSync(input));
-const pdf = await Ream.parse(bytes).convert('pdf', { fonts });
+// The substitutes come off disk (corpus/.fonts), so a child process pays no
+// download: the cache the parent fills is the one this reads.
+const pdf = await Ream.parse(bytes).convert('pdf', corpusFontOptions());
 writeFileSync(outPdf, pdf);

@@ -15,12 +15,12 @@
 import { unzlibSync } from 'fflate';
 
 import { decodeCcitt } from './ccitt';
-import { encodePng } from './png-encode';
 import { reversePredictor } from './predictor';
-import type { PngColor } from './png-encode';
+import type { PngColor } from '@/core/png-encode';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 
 import type { PdfFile } from './document';
+import { encodePng } from '@/core/png-encode';
 import { lzwDecodeMsb } from '@/core/lzw';
 import { PDF_NULL, PdfHexString, PdfName, PdfStream } from '@/pdf/objects';
 

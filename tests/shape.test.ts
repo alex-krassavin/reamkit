@@ -130,6 +130,23 @@ describe('colour transforms (§20.1.2.3)', () => {
     expect(applyColorMods('4472C4', [{ kind: 'shade', val: 0.5 }])).toBe('2F528F');
   });
 
+  it('…unless a gamma pair moves the light it reads', () => {
+    // §20.1.2.3.9 / §20.1.2.3.11 — `a:gamma` and `a:invGamma` bracket another
+    // transform to change the space it works in, and a shade between them lands
+    // on the stored BYTE. 45541_Header's master fades its blue that way, and
+    // LibreOffice draws the bottom of the page at 46 % of the top's byte: 0xCC
+    // -> 0x5E, which is what the pair composes to.
+    expect(
+      applyColorMods('0066CC', [
+        { kind: 'gamma', val: 0 },
+        { kind: 'shade', val: 0.46275 },
+        { kind: 'invGamma', val: 0 },
+      ]),
+    ).toBe('002F5E');
+    // …and the bare shade is unchanged: it still reads linear light.
+    expect(applyColorMods('0066CC', [{ kind: 'shade', val: 0.46275 }])).toBe('004690');
+  });
+
   it('tint lightens toward white, on the same light', () => {
     expect(applyColorMods('000000', [{ kind: 'tint', val: 0.5 }])).toBe('BCBCBC');
   });

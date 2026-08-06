@@ -11,6 +11,7 @@ import type {
   TabStop,
 } from '@/core/document-model';
 import type { Pt } from '@/core/ir';
+import type { ThemeFonts } from '@/core/drawingml/theme-parser';
 import { eighthPtToPt, pt, twipsToPt } from '@/core/ir';
 
 import { parseRunProperties } from '@/word/run-properties';
@@ -107,7 +108,11 @@ function parseFramePr(node: unknown): FrameProperties | undefined {
  *   compatibility mode, and 0 (the default) for every Word 2007-or-later one.
  * @returns The extracted properties; an empty object when `pPr` is absent.
  */
-export function parseParagraphProperties(pPr: unknown, autoSpacingPt = 0): ParagraphProperties {
+export function parseParagraphProperties(
+  pPr: unknown,
+  autoSpacingPt = 0,
+  themeFonts?: ThemeFonts,
+): ParagraphProperties {
   const el = asElement(pPr);
   if (!el) return {};
 
@@ -255,7 +260,7 @@ export function parseParagraphProperties(pPr: unknown, autoSpacingPt = 0): Parag
   }
 
   if ('w:rPr' in el) {
-    const rPr = parseRunProperties(el['w:rPr']);
+    const rPr = parseRunProperties(el['w:rPr'], themeFonts);
     if (Object.keys(rPr).length > 0) out.runProperties = rPr;
   }
 

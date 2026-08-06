@@ -14,7 +14,7 @@ import { Ream } from '@/core/converter/ream';
 import { detectImageFormat, prepareImage } from '@/core/images';
 import { PdfFile } from '@/pdf-reader/document';
 import { decodePdfImage } from '@/pdf-reader/image-decode';
-import { encodePng } from '@/pdf-reader/png-encode';
+import { encodePng } from '@/core/png-encode';
 import { PdfHexString, dict, name, stream } from '@/pdf/objects';
 
 const FONTS = {

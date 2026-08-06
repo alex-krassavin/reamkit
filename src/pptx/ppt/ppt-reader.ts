@@ -34,9 +34,11 @@ import type {
 } from '@/core/document-model';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
+import type { Pt } from '@/core/ir/units';
 import type { Loss } from '@/core/ir';
 import type {
   PptAutoShape,
+  PptBackground,
   PptContent,
   PptCustomGeometry,
   PptImage,
@@ -47,6 +49,8 @@ import type {
 
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
 import { isCfb, openCfb } from '@/core/ole/cfb';
+import { isEmf } from '@/core/metafile/emf';
+import { isWmf } from '@/core/metafile/wmf';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 import { extractPptContent, paragraphText } from '@/pptx/ppt/ppt-text';
 
@@ -107,7 +111,7 @@ export function readPpt(bytes: Uint8Array): ReadResult<FlowDoc> {
   const width = pt(content.slideWidthPt ?? DEFAULT_SLIDE_W);
   const height = pt(content.slideHeightPt ?? DEFAULT_SLIDE_H);
   const resources = new ResourceStore();
-  const body = buildBody(content, resources);
+  const body = buildBody(content, resources, width, height);
 
   const doc: FlowDoc = {
     kind: 'flow',
@@ -135,22 +139,36 @@ export function readPpt(bytes: Uint8Array): ReadResult<FlowDoc> {
 // flows in reading order. The page break sits on a paragraph (the layout honors it
 // only there): an in-flow-first slide breaks on its first paragraph, a floating-
 // only slide gets a breaking anchor paragraph to force its page.
-function buildBody(content: PptContent, resources: ResourceStore): Array<BodyElement> {
+function buildBody(
+  content: PptContent,
+  resources: ResourceStore,
+  pageW: Pt,
+  pageH: Pt,
+): Array<BodyElement> {
   const body: Array<BodyElement> = [];
   content.slides.forEach((slide, slideIndex) => {
     const inFlowParas: Array<BodyElement> = [];
     const inFlowImages: Array<BodyElement> = [];
     const floats: Array<BodyElement> = [];
+    // The background is laid first and behind: everything the slide draws sits
+    // on it, and the page itself shows through only where there is none.
+    if (slide.background) {
+      const backdrop = slideBackdrop(slide.background, resources, pageW, pageH);
+      if (backdrop) floats.push(backdrop);
+    }
     for (const shape of slide.shapes) {
       if (shape.rectPt) {
-        if (shape.paragraphs?.some((p) => paragraphText(p).length > 0)) {
-          floats.push(positionedTextShape(shape.rectPt, shape.paragraphs));
+        // The box first, then the picture, then the words on top of both.
+        if (shape.autoShape) {
+          floats.push(positionedAutoShape(shape.rectPt, shape.autoShape, resources));
         }
         if (shape.image) {
           const block = positionedImage(shape.rectPt, shape.image, resources);
           if (block) floats.push(block);
         }
-        if (shape.autoShape) floats.push(positionedAutoShape(shape.rectPt, shape.autoShape));
+        if (shape.paragraphs?.some((p) => paragraphText(p).length > 0)) {
+          floats.push(positionedTextShape(shape.rectPt, shape.paragraphs, shape.wordArt === true));
+        }
       } else {
         for (const para of shape.paragraphs ?? []) {
           if (paragraphText(para).length > 0) inFlowParas.push(flowParagraph(para));
@@ -203,8 +221,69 @@ function pushSlide(
 function flowParagraph(para: PptParagraph): BodyElement {
   return {
     kind: 'paragraph',
-    paragraph: { properties: toParaProperties(para, false), runs: para.runs.map(toRun) },
+    paragraph: { properties: toParaProperties(para, false), runs: bulletedRuns(para) },
   };
+}
+
+// §2.9.20 — a bulleted paragraph draws its bullet before its words. Stated as a
+// character rather than a list, it goes in front as one, which is what every
+// reader shows and what the outline levels are indented for.
+function bulletedRuns(para: PptParagraph): Array<Run> {
+  const runs = para.runs.map(toRun);
+  if (para.bullet === undefined) return runs;
+  const { bold: _b, italic: _i, ...rest } = runs[0]?.properties ?? {};
+  return [{ text: `${para.bullet} `, properties: rest }, ...runs];
+}
+
+// A slide's background → a page-sized shape behind the content. A picture
+// background is stretched over the whole slide, which is what `stretch` means.
+function slideBackdrop(
+  bg: PptBackground,
+  resources: ResourceStore,
+  pageW: Pt,
+  pageH: Pt,
+): BodyElement | undefined {
+  const fill = backdropFill(bg, resources);
+  if (!fill) return undefined;
+  return {
+    kind: 'shape',
+    shape: {
+      float: {
+        wrap: 'none',
+        behind: true,
+        posH: { relativeFrom: 'page', offsetPt: pt(0) },
+        posV: { relativeFrom: 'page', offsetPt: pt(0) },
+      },
+      width: pageW,
+      height: pageH,
+      geometry: { kind: 'preset', preset: 'rect', adjust: new Map() },
+      fill,
+      paragraphProperties: {},
+    },
+  };
+}
+
+function backdropFill(bg: PptBackground, resources: ResourceStore): ShapeFill | undefined {
+  if (bg.image) {
+    return {
+      kind: 'picture',
+      imageResource: resources.put(bg.image.bytes),
+      ...(bg.imageTiled ? { tiled: true } : {}),
+    };
+  }
+  if (bg.gradient) {
+    const stops = [
+      { offset: 0, colorHex: bg.gradient.fromHex },
+      { offset: 1, colorHex: bg.gradient.toHex },
+    ];
+    return {
+      kind: 'gradient',
+      gradient: bg.gradient.radial
+        ? { kind: 'radial', stops }
+        : { kind: 'linear', angle: bg.gradient.angleDeg, stops },
+    };
+  }
+  return bg.fillColorHex ? { kind: 'solid', colorHex: bg.fillColorHex } : undefined;
 }
 
 // A page-relative float anchor at the shape's slide rectangle (slide coords = page
@@ -219,7 +298,11 @@ function floatAt(rect: PptRect): FloatAnchor {
 
 // A positioned text box: a borderless, fill-less ShapeBlock at the shape rectangle,
 // its paragraphs top-anchored inside.
-function positionedTextShape(rect: PptRect, paragraphs: ReadonlyArray<PptParagraph>): BodyElement {
+function positionedTextShape(
+  rect: PptRect,
+  paragraphs: ReadonlyArray<PptParagraph>,
+  centred = false,
+): BodyElement {
   const shape: ShapeBlock = {
     float: floatAt(rect),
     width: pt(rect.w),
@@ -228,7 +311,8 @@ function positionedTextShape(rect: PptRect, paragraphs: ReadonlyArray<PptParagra
     fill: { kind: 'none' },
     text: {
       content: paragraphs.filter((p) => paragraphText(p).length > 0).map(flowParagraph),
-      anchor: 't',
+      // WordArt IS its box: the word sits in the middle of it, not at the top.
+      anchor: centred ? 'ctr' : 't',
     },
     paragraphProperties: {},
   };
@@ -241,7 +325,10 @@ function positionedImage(
   image: PptImage,
   resources: ResourceStore,
 ): BodyElement | undefined {
-  if (!imagePixelSize(image.bytes)) return undefined; // gate: a decodable raster
+  // A raster must decode before it is placed; a METAFILE has no pixels to
+  // count — it is a drawing program, and the anchor already says how big to
+  // draw it. Gated on pixels, every EMF/WMF on a slide vanished.
+  if (!isMetafile(image.bytes) && !imagePixelSize(image.bytes)) return undefined;
   const block: ImageBlock = {
     float: floatAt(rect),
     resource: resources.put(image.bytes),
@@ -289,10 +376,46 @@ function toCustomGeometry(g: PptCustomGeometry): CustomGeometry {
 
 // A decorative autoshape → a positioned vector ShapeBlock with its preset geometry
 // (or its exact freeform geometry — PPT-7) and any literal fill / line colour.
-function positionedAutoShape(rect: PptRect, auto: PptAutoShape): BodyElement {
+function positionedAutoShape(
+  rect: PptRect,
+  auto: PptAutoShape,
+  resources: ResourceStore,
+): BodyElement {
   const line = isLineShape(auto.shapeType);
-  const fill: ShapeFill =
-    auto.fillColorHex && !line ? { kind: 'solid', colorHex: auto.fillColorHex } : { kind: 'none' };
+  // MS-ODRAW §2.3.7.1 — a shaded fill is two colours and a direction, which is
+  // the same gradient every other reader in here already draws.
+  const fill: ShapeFill = line
+    ? { kind: 'none' }
+    : auto.image
+      ? {
+          kind: 'picture',
+          imageResource: resources.put(auto.image.bytes),
+          ...(auto.imageTiled ? { tiled: true } : {}),
+          ...(auto.tileSizePt ? { tileSizePt: auto.tileSizePt } : {}),
+        }
+      : auto.gradient
+        ? {
+            kind: 'gradient',
+            gradient: auto.gradient.radial
+              ? {
+                  kind: 'radial',
+                  stops: [
+                    { offset: 0, colorHex: auto.gradient.fromHex },
+                    { offset: 1, colorHex: auto.gradient.toHex },
+                  ],
+                }
+              : {
+                  kind: 'linear',
+                  angle: auto.gradient.angleDeg,
+                  stops: [
+                    { offset: 0, colorHex: auto.gradient.fromHex },
+                    { offset: 1, colorHex: auto.gradient.toHex },
+                  ],
+                },
+          }
+        : auto.fillColorHex
+          ? { kind: 'solid', colorHex: auto.fillColorHex }
+          : { kind: 'none' };
   const stroke: ShapeLine | undefined = auto.lineColorHex
     ? { colorHex: auto.lineColorHex, fill: 'solid' }
     : line
@@ -317,6 +440,9 @@ function positionedAutoShape(rect: PptRect, auto: PptAutoShape): BodyElement {
 // from the PNG/JPEG header directly, which also gates out formats the renderer
 // cannot embed (a metafile, say).
 function inFlowImage(image: PptImage, resources: ResourceStore): BodyElement | undefined {
+  // Only a raster flows: an un-anchored metafile has neither pixels to size it
+  // nor a rectangle to place it, and every guess at a box put 23884's slides
+  // onto twice the pages the reference prints.
   const size = imagePixelSize(image.bytes);
   if (!size) return undefined;
   const block: ImageBlock = {
@@ -326,6 +452,11 @@ function inFlowImage(image: PptImage, resources: ResourceStore): BodyElement | u
     paragraphProperties: {},
   };
   return { kind: 'image', image: block };
+}
+
+// Whether the bytes are a metafile the layout can replay (MS-EMF / MS-WMF).
+function isMetafile(d: Uint8Array): boolean {
+  return isEmf(d) || isWmf(d);
 }
 
 // Intrinsic pixel dimensions from a PNG (IHDR) or JPEG (SOF) header, or undefined
@@ -374,6 +505,7 @@ function toRun(r: PptRun): Run {
     ...(r.italic ? { italic: true } : {}),
     ...(underline ? { underline } : {}),
     ...(r.sizePt ? { fontSizePt: pt(r.sizePt) } : {}),
+    ...(r.fontFamily ? { fontFamily: { ascii: r.fontFamily, hAnsi: r.fontFamily } } : {}),
     ...(r.colorHex ? { colorHex: r.colorHex } : {}),
   };
   return { text: r.text, properties };

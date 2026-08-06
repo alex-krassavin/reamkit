@@ -33,11 +33,13 @@ import type {
   TableRow,
 } from '@/core/document-model';
 import type { ColorResolver } from '@/core/drawingml/colors';
+import type { ThemeFonts } from '@/core/drawingml/theme-parser';
 import type { Loss, Pt, ResourceId } from '@/core/ir';
 import type { PoNode } from '@/core/po-helpers';
 import type { LevelBullet, PlaceholderCascade } from '@/pptx/placeholder-cascade';
 import type { PlaceholderRef, ShapeBoxEmu } from '@/pptx/sp-helpers';
 
+import type { TableStyleTheme } from '@/pptx/table-style';
 import { defaultColorResolver, placeholderColors, resolveColorNode } from '@/core/drawingml/colors';
 import { FEATURES, emuToPt, pt } from '@/core/ir';
 import {
@@ -62,7 +64,12 @@ import {
   styleRefFontColor,
   styleRefLine,
 } from '@/word/drawing-parser';
-import { parseBullet } from '@/pptx/placeholder-cascade';
+import {
+  lineSpacing,
+  parseBullet,
+  spacingFractions,
+  spacingFromLineFraction,
+} from '@/pptx/placeholder-cascade';
 import { boxFromXfrm, parsePh, parseXfrmBox, rPrToRunProps } from '@/pptx/sp-helpers';
 import {
   cellStyle,
@@ -91,6 +98,11 @@ export interface SlideContext {
   readonly resolveImage?: (relId: string) => ResourceId | undefined;
   /** The deck theme's fill style lists, for a `p:bgRef` on this slide. */
   readonly themeFills?: ThemeFillStyles;
+  /**
+   * §20.1.4.1.16 — the two typefaces the deck's theme names. A run states its
+   * own by TOKEN (`+mn-lt`) more often than by name.
+   */
+  readonly themeFonts?: ThemeFonts;
   /** §20.1.4.1.21 `a:lnStyleLst` — the widths an `a:lnRef` indexes, in points. */
   readonly themeLineWidths?: ReadonlyArray<number>;
   /**
@@ -268,7 +280,7 @@ function parseSp(sp: PoNode, ctx: SlideContext, transform: GroupTransform): Shap
   // from `p:defaultTextStyle` — white text drawn black on green.
   const styleColor = style ? styleRefFontColor(style, colors) : undefined;
   const text = txBody
-    ? parseTxBody(txBody, ph, ctx.cascade, colors, ctx.resolveHyperlink, styleColor)
+    ? parseTxBody(txBody, ph, ctx.cascade, colors, ctx.resolveHyperlink, styleColor, ctx.themeFonts)
     : undefined;
 
   // Geometry/fill/stroke from p:spPr via the shared DrawingML readers, resolving
@@ -278,29 +290,47 @@ function parseSp(sp: PoNode, ctx: SlideContext, transform: GroupTransform): Shap
   // tdf95932's slide holds one placeholder with a word in it; the green
   // rounded panel it sits on, and the white the word is written in, are both
   // the layout's, and without the panel the word was white on white.
-  const proto = ph && ctx.cascade ? ctx.cascade.shapePropsFor(ph) : undefined;
-  const geomFrom = spPr && statesGeometry(spPr) ? spPr : (proto ?? spPr);
+  const protos = ph && ctx.cascade ? ctx.cascade.shapePropsFor(ph) : [];
+  // Per PROPERTY, nearest first: the shape's own, then the layout's prototype,
+  // then the master's. A prototype that states a box and nothing else must not
+  // stop the search for a fill.
+  const from = (states: (n: PoNode) => boolean): PoNode | undefined =>
+    spPr && states(spPr) ? spPr : (protos.find(states) ?? spPr);
+  /** What the shape states ITSELF, before anything is inherited. */
+  const stated = (states: (n: PoNode) => boolean): PoNode | undefined =>
+    spPr && states(spPr) ? spPr : undefined;
+  /** …and what a prototype lends it, nearest first. */
+  const lent = (states: (n: PoNode) => boolean): PoNode | undefined => protos.find(states);
+  const geomFrom = from(statesGeometry);
   const geometry = parseGeometry(geomFrom);
   // §19.3.1.43 `p:sp@useBgFill` — the shape is filled with the SLIDE's
   // background, which is how a deck cuts a hole in the decoration above it:
   // tdf93868's master lays a white rectangle over the whole slide and then a
   // rounded one on top that lets the slide's black gradient back through.
   const useBgFill = poAttr(sp, 'useBgFill') === '1';
-  const fillFrom = statesFill(spPr) ? spPr : (proto ?? spPr);
-  const fill: ShapeFill = useBgFill
-    ? backgroundThrough(ctx.backgroundFill, box, ctx.slideSize)
-    : fillFrom
-      ? parseFill(fillFrom, colors, ctx.resolveImage)
-      : { kind: 'none' };
-  const lineFrom = spPr && poChildren(spPr).some((c) => poIs(c, 'a:ln')) ? spPr : (proto ?? spPr);
-  let line = lineFrom ? parseLine(lineFrom, colors) : undefined;
   const themeStyles = ctx.themeFills
     ? { fills: ctx.themeFills.fills, bgFills: ctx.themeFills.backgrounds }
     : undefined;
-  const styled: ShapeFill =
-    style && fill.kind === 'none' && !statesFill(fillFrom)
-      ? styleRefFill(style, colors, themeStyles)
-      : fill;
+  // §19.3.1.36 — what the shape says about itself outranks what it inherits,
+  // and its `p:style` reference is one of the things it SAYS: customGeo's title
+  // names a blue gallery fill while the master's prototype is grey, and reading
+  // the prototype first painted it grey.
+  const ownFill = stated(statesFill);
+  const styleFill = style ? styleRefFill(style, colors, themeStyles) : undefined;
+  const lentFill = lent(statesFill);
+  const styled: ShapeFill = useBgFill
+    ? backgroundThrough(ctx.backgroundFill, box, ctx.slideSize)
+    : ownFill
+      ? parseFill(ownFill, colors, ctx.resolveImage)
+      : styleFill && styleFill.kind !== 'none'
+        ? styleFill
+        : lentFill
+          ? parseFill(lentFill, colors, ctx.resolveImage)
+          : spPr
+            ? parseFill(spPr, colors, ctx.resolveImage)
+            : { kind: 'none' };
+  const lineFrom = from((n) => poChildren(n).some((c) => poIs(c, 'a:ln')));
+  let line = lineFrom ? parseLine(lineFrom, colors) : undefined;
   if (style) {
     const fromStyle = styleRefLine(style, colors, ctx.themeLineWidths);
     if (fromStyle) {
@@ -312,6 +342,12 @@ function parseSp(sp: PoNode, ctx: SlideContext, transform: GroupTransform): Shap
         : fromStyle;
     }
   }
+  // §20.1.8.40 `a:outerShdw` — the shadow a shape casts, which the pptx path
+  // read for a diagram's nodes and nowhere else: 547 of them across 37 decks
+  // went undrawn. It inherits like the fill does — tdf104015's title casts the
+  // master's.
+  const shadowFrom = from((n) => poChildren(n).some((c) => poIs(c, 'a:effectLst')));
+  const shadow = shadowFrom ? parseShadow(shadowFrom, colors) : undefined;
   const visibleLine = line !== undefined && line.fill !== 'none';
   if (!text && styled.kind === 'none' && !visibleLine) return undefined;
 
@@ -329,6 +365,7 @@ function parseSp(sp: PoNode, ctx: SlideContext, transform: GroupTransform): Shap
     geometry,
     fill: styled,
     ...(line ? { line } : {}),
+    ...(shadow ? { shadow } : {}),
     ...(spin && Object.keys(spin).length > 0 ? { transform: spin } : {}),
     ...(text ? { text } : {}),
     paragraphProperties: {},
@@ -372,7 +409,10 @@ function parseGraphicFrame(
     // over the title (table_test2, and two conference decks besides).
     const tbl = poFindDescendant(gf, 'a:tbl');
     if (!tbl) return [];
-    const table = parseTable(tbl, ctx.colors ?? defaultColorResolver, ctx.resolveTableStyle);
+    const table = parseTable(tbl, ctx.colors ?? defaultColorResolver, ctx.resolveTableStyle, {
+      ...(ctx.themeFills ? { fills: ctx.themeFills.fills } : {}),
+      ...(ctx.themeLineWidths ? { lineWidths: ctx.themeLineWidths } : {}),
+    });
     return [
       {
         kind: 'table',
@@ -884,6 +924,7 @@ function txBodyParagraphs(
   colors: ColorResolver,
   resolveLink: LinkResolver,
   styleColor?: string,
+  themeFonts?: ThemeFonts,
 ): Array<BodyElement> {
   const content: Array<BodyElement> = [];
   const counters: Array<number> = []; // per-level a:buAutoNum counters (PX6b)
@@ -891,7 +932,16 @@ function txBodyParagraphs(
     if (!poIs(child, 'a:p')) continue;
     content.push({
       kind: 'paragraph',
-      paragraph: parseSlideParagraph(child, ph, cascade, colors, resolveLink, counters, styleColor),
+      paragraph: parseSlideParagraph(
+        child,
+        ph,
+        cascade,
+        colors,
+        resolveLink,
+        counters,
+        styleColor,
+        themeFonts,
+      ),
     });
   }
   return content;
@@ -917,11 +967,26 @@ export function parseTxBody(
   colors: ColorResolver,
   resolveLink: LinkResolver,
   styleColor?: string,
+  themeFonts?: ThemeFonts,
 ): ShapeTextBody | undefined {
-  const content = txBodyParagraphs(txBody, ph, cascade, colors, resolveLink, styleColor);
+  const content = txBodyParagraphs(
+    txBody,
+    ph,
+    cascade,
+    colors,
+    resolveLink,
+    styleColor,
+    themeFonts,
+  );
   if (content.length === 0) return undefined;
 
   const bodyPr = poChildren(txBody).find((c) => poIs(c, 'a:bodyPr'));
+  // §21.1.2.1.2 `a:normAutofit` — the shrink PowerPoint already worked out and
+  // wrote down: `@fontScale` is the percentage every run is set at, and
+  // `@lnSpcReduction` the percentage taken off the line spacing. A bare
+  // `<a:normAutofit/>` states the rule and no result — that shrink is ours to
+  // compute, and until we do there is nothing to apply.
+  const fitted = fitToBody(content, bodyPr);
   const lIns = bodyPr ? poIntAttr(bodyPr, 'lIns') : undefined;
   const tIns = bodyPr ? poIntAttr(bodyPr, 'tIns') : undefined;
   const rIns = bodyPr ? poIntAttr(bodyPr, 'rIns') : undefined;
@@ -932,13 +997,68 @@ export function parseTxBody(
   const anchor: ShapeTextBody['anchor'] | undefined =
     a === 'ctr' || a === 'b' || a === 't' ? a : ph && cascade ? cascade.anchorFor(ph) : undefined;
   return {
-    content,
+    content: fitted,
     ...(lIns !== undefined ? { insetLeft: emuToPt(lIns) } : {}),
     ...(tIns !== undefined ? { insetTop: emuToPt(tIns) } : {}),
     ...(rIns !== undefined ? { insetRight: emuToPt(rIns) } : {}),
     ...(bIns !== undefined ? { insetBottom: emuToPt(bIns) } : {}),
     ...(anchor ? { anchor } : {}),
   };
+}
+
+/**
+ * §21.1.2.1.2 — the body's text at the size the autofit settled on.
+ *
+ * The scale is a property of the BODY that reaches every run in it, so it is
+ * applied here rather than carried down: a run in the model already holds the
+ * size it inherited, and the shrink multiplies exactly that. Unread, the text
+ * PowerPoint squeezed to 62% of its style overflowed the placeholder it was
+ * squeezed to fit.
+ *
+ * @param content The body's paragraphs.
+ * @param bodyPr  The body's `a:bodyPr`, which carries the autofit.
+ * @returns The paragraphs, scaled; the same array when nothing is stated.
+ */
+function fitToBody(content: Array<BodyElement>, bodyPr: PoNode | undefined): Array<BodyElement> {
+  const fit = bodyPr ? poChildren(bodyPr).find((c) => poIs(c, 'a:normAutofit')) : undefined;
+  const scale = fit ? poIntAttr(fit, 'fontScale') : undefined;
+  const reduction = fit ? poIntAttr(fit, 'lnSpcReduction') : undefined;
+  const fontScale = scale !== undefined && scale > 0 ? scale / 100000 : undefined;
+  const lineScale =
+    reduction !== undefined && reduction > 0 ? 1 - Math.min(reduction, 100000) / 100000 : undefined;
+  if (fontScale === undefined && lineScale === undefined) return content;
+  return content.map((el) => {
+    if (el.kind !== 'paragraph') return el;
+    const p = el.paragraph;
+    // §17.3.1.33 — the model states "single" as 12pt under the `auto` rule
+    // (240 twips), so a fifth off the spacing is 9.6pt of the same unit.
+    const line =
+      lineScale === undefined ? undefined : pt((p.properties.spacingLine ?? 12) * lineScale);
+    return {
+      ...el,
+      paragraph: {
+        ...p,
+        properties: {
+          ...p.properties,
+          ...(line !== undefined ? { spacingLine: line, spacingLineRule: 'auto' as const } : {}),
+        },
+        runs:
+          fontScale === undefined
+            ? p.runs
+            : p.runs.map((run) =>
+                run.properties.fontSizePt === undefined
+                  ? run
+                  : {
+                      ...run,
+                      properties: {
+                        ...run.properties,
+                        fontSizePt: pt(run.properties.fontSizePt * fontScale),
+                      },
+                    },
+              ),
+      },
+    };
+  });
 }
 
 // a:p → Paragraph. The outline level (a:pPr @lvl) selects the placeholder's
@@ -953,6 +1073,7 @@ function parseSlideParagraph(
   resolveLink: LinkResolver,
   counters: Array<number>,
   styleColor?: string,
+  themeFonts?: ThemeFonts,
 ): Paragraph {
   const pPr = poChildren(aP).find((c) => poIs(c, 'a:pPr'));
   const level = (pPr ? poIntAttr(pPr, 'lvl') : undefined) ?? 0;
@@ -969,7 +1090,7 @@ function parseSlideParagraph(
   const runs: Array<Run> = [];
   for (const child of poChildren(aP)) {
     if (poIs(child, 'a:r') || poIs(child, 'a:fld')) {
-      const run = parseSlideRun(child, defaults, colors, resolveLink);
+      const run = parseSlideRun(child, defaults, colors, resolveLink, themeFonts);
       if (run) runs.push(run);
     }
   }
@@ -1009,13 +1130,21 @@ function parseSlideParagraph(
   // file names is the wrong height: shape-macro-ext-ref.xlsx opens its button's
   // text with an empty 14pt paragraph, and collapsing it drew the caption 12pt
   // above where both references put it.
-  if (runs.length === 0) {
-    const endRPr = poChildren(aP).find((c) => poIs(c, 'a:endParaRPr'));
-    const sz = endRPr ? poIntAttr(endRPr, 'sz') : undefined;
-    if (sz !== undefined && sz > 0) {
-      runs.push({ text: '', properties: { ...defaults, fontSizePt: pt(sz / 100) } });
-    }
-  }
+  const endRPr = poChildren(aP).find((c) => poIs(c, 'a:endParaRPr'));
+  const endSz = endRPr ? poIntAttr(endRPr, 'sz') : undefined;
+  // §21.1.2.2.3 `a:endParaRPr` — the properties of the paragraph MARK, which on
+  // a paragraph with no runs is the only thing that says how tall the line is.
+  // They belong to the PARAGRAPH (§17.3.1.31 `w:pPr/w:rPr` is the same idea):
+  // an empty run carries no token, so a blank line took the layout's 12pt
+  // default rather than the size its level gives it — and a deck that spaces
+  // its bullets with blank lines set them a third too close (GeomLec1).
+  const markProps: RunProperties | undefined =
+    runs.length > 0
+      ? undefined
+      : {
+          ...defaults,
+          ...(endSz !== undefined && endSz > 0 ? { fontSizePt: pt(endSz / 100) } : {}),
+        };
 
   return {
     properties: {
@@ -1023,8 +1152,33 @@ function parseSlideParagraph(
       ...(alignment ? { alignment } : {}),
       ...(indentLeft !== undefined ? { indentLeft } : {}),
       ...(indent !== undefined ? { indentFirstLine: emuToPt(indent) } : {}),
+      // §21.1.2.2.5/.9/.10 — the paragraph's own line height and the space
+      // around it, including the spelling that states a FRACTION of a line:
+      // that fraction is of THIS paragraph's text, whose size is settled here.
+      ...lineSpacing(pPr),
+      ...ownSpacing(pPr, runs[0]?.properties.fontSizePt ?? defaults.fontSizePt),
+      ...(markProps && markProps.fontSizePt !== undefined ? { runProperties: markProps } : {}),
     },
     runs,
+  };
+}
+
+// The paragraph's own `a:spcBef`/`a:spcAft`, whichever spelling it uses: the
+// distance as stated, the fraction resolved against the size just settled.
+function ownSpacing(pPr: PoNode | undefined, sizePt: number | undefined): ParagraphProperties {
+  const fractions = spacingFractions(pPr);
+  const before = spacingFromLineFraction(fractions?.before, sizePt);
+  const after = spacingFromLineFraction(fractions?.after, sizePt);
+  const points = (tag: string): Pt | undefined => {
+    const holder = pPr ? poChildren(pPr).find((c) => poIs(c, tag)) : undefined;
+    const node = holder ? poChildren(holder).find((c) => poIs(c, 'a:spcPts')) : undefined;
+    const val = node ? poIntAttr(node, 'val') : undefined;
+    return val === undefined ? undefined : pt(val / 100);
+  };
+  const [beforePt, afterPt] = [points('a:spcBef') ?? before, points('a:spcAft') ?? after];
+  return {
+    ...(beforePt !== undefined ? { spacingBefore: beforePt } : {}),
+    ...(afterPt !== undefined ? { spacingAfter: afterPt } : {}),
   };
 }
 
@@ -1084,6 +1238,7 @@ function parseSlideRun(
   defaults: RunProperties,
   colors: ColorResolver,
   resolveLink: LinkResolver,
+  themeFonts?: ThemeFonts,
 ): Run | undefined {
   const t = poChildren(node).find((c) => poIs(c, 'a:t'));
   const text = t ? poText(t) : '';
@@ -1094,7 +1249,7 @@ function parseSlideRun(
   const href = linkId !== undefined ? resolveLink?.(linkId) : undefined;
   return {
     text,
-    properties: { ...defaults, ...rPrToRunProps(rPr, colors) },
+    properties: { ...defaults, ...rPrToRunProps(rPr, colors, themeFonts) },
     ...(href ? { href } : {}),
   };
 }
@@ -1105,6 +1260,7 @@ function parseTable(
   tbl: PoNode,
   colors: ColorResolver,
   resolveTableStyle?: (styleId: string | undefined) => PoNode | undefined,
+  theme?: TableStyleTheme,
 ): Table {
   const grid: Array<Pt> = [];
   const tblGrid = poChildren(tbl).find((c) => poIs(c, 'a:tblGrid'));
@@ -1133,7 +1289,7 @@ function parseTable(
     ...row,
     cells: row.cells.map((cell, c) => {
       const at = { row: r, rowCount: rows.length, col: c, colCount: grid.length };
-      const part = cellStyle(style, flags, at, colors);
+      const part = cellStyle(style, flags, at, colors, theme);
       const tc = sources[r]?.[c];
       return withCellStyle(cell, tc && cellSaysNoFill(tc) ? withoutFill(part) : part);
     }),

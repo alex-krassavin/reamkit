@@ -172,8 +172,12 @@ export function niceScale(dataMin: number, dataMax: number, maxTicks = 6): Scale
   if (lo === hi) {
     hi = lo + 1;
   }
-  const range = niceNum(hi - lo, false);
-  const step = niceNum(range / Math.max(1, maxTicks - 1), true);
+  // The step comes from the range the data actually spans. Heckbert rounds that
+  // range UP first (300 becomes 500), which then asks for a step to match: with
+  // a generous tick budget the two errors cancelled, and without one they did
+  // not — a 0…5 chart drew half-steps where Excel and LibreOffice both label
+  // 0/1/…/6 (chart-texture-bg.pptx).
+  const step = niceNum((hi - lo) / Math.max(1, maxTicks - 1), true);
   // Excel leaves the top datum room to breathe: it adds about 5% before
   // rounding up to the major unit, so a max that lands exactly on a step still
   // clears the ceiling. Without it 57362.xlsx's 12-value bar touched the plot
@@ -1130,12 +1134,18 @@ function autoRange(vals: ReadonlyArray<number>): [number, number] {
 }
 
 /**
- * Ticks that fit along an axis `extentPt` long (mirrors {@link axisScale}).
- * A tick every 32pt is what both references draw: at 24 a 250pt plot carried
- * eleven of them (0, 0.5, 1 … 5.5) where both label 0…6 in whole numbers.
+ * How many ticks an axis `extentPt` long carries (mirrors {@link axisScale}).
+ *
+ * A tall axis takes more of them — a fixed six drew 0/100/200/300 down a plot
+ * where both references fit 0/50/…/300 — but the appetite is milder than it
+ * looks: asked for one every 32pt, a 427pt chart wanted ten, and Excel labels
+ * that chart's 0…5 data 0/1/…/6 where we drew half-steps (chart-texture-bg
+ * .pptx). One per ~48pt and never more than eight satisfies both, now that
+ * {@link niceScale} measures its step against the range the data spans rather
+ * than against Heckbert's rounded-up one.
  */
 const tickBudget = (extentPt: number): number =>
-  Math.min(10, Math.max(4, Math.round(extentPt / 32)));
+  Math.min(8, Math.max(4, Math.round(extentPt / 48)));
 
 /** Side (points) of the square stamped for a series that names no symbol. */
 const DEFAULT_MARKER_PT = 4;

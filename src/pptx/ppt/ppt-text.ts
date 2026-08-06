@@ -27,7 +27,9 @@
 // failure — structural doubt yields missing content, never wrong content —
 // mirroring the `.doc`/`.xls` readers.
 
+import { fromSymbolFont } from '@/core/metafile/symbol-fonts';
 import { isCfb, openCfb } from '@/core/ole/cfb';
+import { readEscherBlip } from '@/core/ole/escher-blip';
 
 // --- [MS-PPT] §2.13.24 record types (the ones the `.ppt` reader needs) --------
 const RT_DOCUMENT = 0x03e8;
@@ -42,8 +44,12 @@ const RT_TEXT_HEADER_ATOM = 0x0f9f;
 const RT_TEXT_CHARS_ATOM = 0x0fa0;
 const RT_STYLE_TEXT_PROP_ATOM = 0x0fa1;
 const RT_TEXT_BYTES_ATOM = 0x0fa8;
+const RT_OUTLINE_TEXT_REF_ATOM = 0x0f9e; // OutlineTextRefAtom — points at the slide list's text
+const RT_TEXT_MASTER_STYLE_ATOM = 0x0fa3; // TextMasterStyleAtom — a master's per-level defaults
 const RT_SLIDE_ATOM = 0x03ef; // SlideAtom — carries masterIdRef + slideFlags (PPT-6)
 const RT_MAIN_MASTER = 0x03f8; // MainMasterContainer — its colour scheme is inherited
+const RT_FONT_COLLECTION = 0x07d5; // FontCollectionContainer — the deck's typefaces
+const RT_FONT_ENTITY_ATOM = 0x0fb7; // FontEntityAtom — one typeface, by index
 const RT_COLOR_SCHEME_ATOM = 0x07f0; // SlideSchemeColorSchemeAtom — the 8-colour scheme
 
 // OfficeArt (Escher) record types for the drawing layer (PPT-3), sharing the same
@@ -57,9 +63,35 @@ const FBT_FSP = 0xf00a; // OfficeArtFSP — recInstance is the shape type, body 
 const FBT_OPT = 0xf00b;
 const FBT_CLIENT_TEXTBOX = 0xf00d; // OfficeArtClientTextbox — holds the PPT text atoms
 const FBT_CLIENT_ANCHOR = 0xf010; // OfficeArtClientAnchor — the slide rectangle (PPT-4)
+const FBT_CLIENT_DATA = 0xf011; // OfficeArtClientData — holds the PlaceholderAtom
+const FBT_SPGR_CONTAINER = 0xf003; // a group: its own shape first, then its children
+const FBT_SPGR = 0xf009; // the group's coordinate space, which its children live in
+const FBT_CHILD_ANCHOR = 0xf00f; // a grouped shape's rectangle, in that space
+const RT_PLACEHOLDER_ATOM = 0x0bc3; // PlaceholderAtom — this shape is a placeholder
 const PROP_PIB = 0x0104; // OPT property (low 14 bits): 1-based index into the FBSE store
+const PROP_FILL_TYPE = 0x0180; // OPT fillType — MSOFILLTYPE (PPT-9)
 const PROP_FILL_COLOR = 0x0181; // OPT fillColor (PPT-5)
+const PROP_FILL_BACK_COLOR = 0x0183; // OPT fillBackColor — the gradient's far end
+const PROP_FILL_ANGLE = 0x018b; // OPT fillAngle — 16.16 fixed degrees
+const PROP_FILL_BLIP = 0x0186; // OPT fillBlip — a picture fill's store index (PPT-12)
+// §2.3.7.11/.12 — the size ONE copy of a tiled fill occupies, in EMU. Zero (the
+// default) leaves the tile at the picture's own size.
+// §2.3.22 — WordArt: the text the shape IS, the size it is set at and the face
+// it is set in. A `.ppt` states these as shape properties, not as a text box.
+const PROP_GTEXT_UNICODE = 0x00c0;
+const PROP_GTEXT_SIZE = 0x00c3;
+const PROP_GTEXT_FONT = 0x00c5;
+const PROP_FILL_WIDTH = 0x0189;
+const PROP_FILL_HEIGHT = 0x018a;
+const EMU_PER_POINT = 12700;
 const PROP_LINE_COLOR = 0x01c0; // OPT lineColor (PPT-5)
+// §2.3.7.43 / §2.3.8.44 — the boolean sets that say whether the colours above are
+// USED. Each holds sixteen flags in its low half and, in its high half, a bit per
+// flag saying the shape states it.
+const PROP_FILL_BOOLS = 0x01bf;
+const PROP_LINE_BOOLS = 0x01ff;
+const FILL_F_FILLED = 0x0010;
+const LINE_F_LINE = 0x0008;
 // Freeform geometry OPT properties (§2.3.6 / [MS-ODRAW]); the bounds are simple
 // LONGs, the vertices / segment info complex array properties (PPT-7).
 const PROP_GEO_LEFT = 0x0140;
@@ -92,6 +124,7 @@ const TOKEN_ENCRYPTED = 0xf3d1c4df;
 // A SlideListWithText's recInstance distinguishes the three lists it can be
 // (§2.4.14.3): 0 = slides, 1 = masters, 2 = notes. PPT-1 reads the slide list.
 const SLWT_INSTANCE_SLIDES = 0;
+const SLWT_INSTANCE_MASTERS = 1;
 
 // Guard against a crafted edit chain or persist directory looping forever.
 const MAX_EDITS = 4096;
@@ -100,6 +133,8 @@ const MAX_DEPTH = 24;
 /** A run of uniformly-formatted text within a paragraph (PPT-2). */
 export interface PptRun {
   readonly text: string;
+  /** The typeface the run names, resolved through the deck's font collection. */
+  readonly fontFamily?: string;
   readonly bold?: boolean;
   readonly italic?: boolean;
   readonly underline?: boolean;
@@ -120,6 +155,12 @@ export interface PptParagraph {
   readonly align?: number;
   /** The 0-based outline/indent level. */
   readonly level?: number;
+  /**
+   * §2.9.20 — the bullet character this paragraph is marked with, already
+   * translated out of whatever symbol font stated it. Absent when the paragraph
+   * carries none.
+   */
+  readonly bullet?: string;
 }
 /**
  * An embedded picture referenced by a slide shape — the raw image bytes pulled
@@ -174,6 +215,32 @@ export interface PptAutoShape {
   readonly fillColorHex?: string;
   /** The resolved line colour as 6-hex RGB, when present. */
   readonly lineColorHex?: string;
+  /**
+   * MS-ODRAW §2.3.7.1 — the two-colour sweep a `fillType` of 4..8 asks for.
+   * `fillColor` is one end and `fillBackColor` the other; `fillAngle` is where
+   * it runs. Read as its fillColor alone, 41246-2's title slide came out a flat
+   * teal where every reader fades it to white.
+   */
+  readonly gradient?: {
+    readonly fromHex: string;
+    readonly toHex: string;
+    readonly angleDeg: number;
+    readonly radial: boolean;
+  };
+  /**
+   * §2.3.7.1 MSOFILLTYPE 3 — a picture stretched over the shape, its blip named
+   * by `fillBlip`. A `.ppt` table is a group of cell rectangles, and a cell with
+   * a picture background states it exactly this way.
+   */
+  readonly image?: PptImage;
+  /** §2.3.7.1 MSOFILLTYPE 2 — the picture REPEATS at its own size, not stretched. */
+  readonly imageTiled?: boolean;
+  /**
+   * §2.3.7.11/.12 `fillWidth` / `fillHeight` — the size one copy occupies, in
+   * points, when the shape states it rather than leaving the tile at the
+   * picture's own size.
+   */
+  readonly tileSizePt?: { readonly widthPt: number; readonly heightPt: number };
   readonly geometry?: PptCustomGeometry;
 }
 /**
@@ -183,13 +250,41 @@ export interface PptAutoShape {
  */
 export interface PptShape {
   readonly rectPt?: PptRect;
+  /**
+   * §2.3.22 — the shape IS a piece of WordArt: its text is the shape, centred
+   * in its box rather than flowed from the top. Drawn as an autoshape it was a
+   * coloured rectangle where the reference has a word.
+   */
+  readonly wordArt?: boolean;
+  /**
+   * Whether the shape is a placeholder (§2.9.24). On a MASTER that means it is
+   * a prototype, not decoration: drawn on the slides that follow it, every one
+   * of them would carry "Click to edit Master title style".
+   */
+  readonly placeholder?: boolean;
   readonly paragraphs?: ReadonlyArray<PptParagraph>;
   readonly image?: PptImage;
   readonly autoShape?: PptAutoShape;
 }
-/** One slide: its shapes in document order. */
+/**
+ * A slide's background (PPT-12) — the fill on the shape MS-ODRAW marks with
+ * `fBackground`. A `.ppt` states it as a shape like any other; drawn as one it
+ * would be a rectangle among the content, and dropped it leaves a black slide
+ * white.
+ */
+export interface PptBackground {
+  /** A solid fill's colour, as 6-hex RGB. */
+  readonly fillColorHex?: string;
+  /** A shaded fill, in the same terms an autoshape's is (PPT-9). */
+  readonly gradient?: PptAutoShape['gradient'];
+  /** A picture fill, stretched over the slide (or tiled across it). */
+  readonly image?: PptImage;
+  readonly imageTiled?: boolean;
+}
+/** One slide: its shapes in document order, over its background. */
 export interface PptSlide {
   readonly shapes: ReadonlyArray<PptShape>;
+  readonly background?: PptBackground;
 }
 // The document-level picture store (FBSE offsets into the Pictures stream) plus the
 // Pictures stream itself — threaded into the slide walks to resolve shape blips.
@@ -315,30 +410,35 @@ export function extractPptContent(bytes: Uint8Array): PptContent {
 
 // Whether a slide carries any readable content (text, a picture or an autoshape).
 function slideHasContent(s: PptSlide): boolean {
-  return s.shapes.some(
-    (sh) => shapeHasText(sh) || sh.image !== undefined || sh.autoShape !== undefined,
+  // A slide that is nothing but a coloured background is a slide, not a failed
+  // parse; read otherwise, a deck of them fell to the stream scan, which cannot
+  // resolve a master.
+  return (
+    s.background !== undefined ||
+    s.shapes.some((sh) => shapeHasText(sh) || sh.image !== undefined || sh.autoShape !== undefined)
   );
 }
 function shapeHasText(sh: PptShape): boolean {
   return sh.paragraphs?.some((p) => paragraphText(p).length > 0) ?? false;
 }
 
-// A slide's shapes: the positioned text boxes and pictures from its drawing, with
+// A slide's drawing: the positioned text boxes and pictures, its background, and
 // a reading-order text fallback (whole-slide inline text, else the outline) added
 // as an un-anchored shape when no shape carries text.
 function slideShapes(
   slideData: Uint8Array,
   img: ImageContext,
-  outline: ReadonlyArray<PptParagraph>,
-  scheme: SchemeColors | undefined,
-): Array<PptShape> {
-  const shapes = collectShapes(slideData, img, scheme);
-  if (!shapes.some(shapeHasText)) {
-    const inline = collectParagraphs(slideData, 0);
-    const text = inline.some((p) => paragraphText(p).length > 0) ? inline : outline;
-    if (text.some((p) => paragraphText(p).length > 0)) shapes.push({ paragraphs: text });
+  outline: ReadonlyArray<ReadonlyArray<PptParagraph>>,
+  env: TextEnv,
+  defaults?: MasterDefaults,
+): DrawingContent {
+  const content = collectShapes(slideData, img, env, outline, defaults);
+  if (!content.shapes.some(shapeHasText)) {
+    const inline = collectParagraphs(slideData, 0, defaults, env);
+    const text = inline.some((p) => paragraphText(p).length > 0) ? inline : outline.flat();
+    if (text.some((p) => paragraphText(p).length > 0)) content.shapes.push({ paragraphs: text });
   }
-  return shapes;
+  return content;
 }
 
 // Build the persist-id → offset map and the document's persist id. The edits form
@@ -400,6 +500,7 @@ function readSlideList(
   persist: Map<number, number>,
   img: ImageContext,
 ): Array<PptSlide> {
+  const fonts = parseFontCollection(docData);
   const slwt = findChild(
     docData,
     (r) => r.type === RT_SLIDE_LIST_WITH_TEXT && r.instance === SLWT_INSTANCE_SLIDES,
@@ -407,32 +508,63 @@ function readSlideList(
   if (!slwt) return [];
 
   const slides: Array<PptSlide> = [];
-  let outline: Array<PptParagraph> = [];
+  // One entry per text atom, in list order: an OutlineTextRefAtom on a shape
+  // indexes into this, so the entries must stay separate and keep their places.
+  // Each keeps its TextHeaderAtom type, which decides the master style it takes.
+  let outline: Array<{ textType: number; rec: PptRecord; style: Uint8Array | undefined }> = [];
   let pendingRef: number | undefined;
+  const masters: MasterContext = {
+    persist,
+    stream,
+    byMasterId: buildMasterIdMap(docData),
+    cache: new Map(),
+  };
 
   const flush = (): void => {
     if (pendingRef === undefined) return;
     const slideOff = persist.get(pendingRef);
     const slideRec = slideOff !== undefined ? recordAt(stream, slideOff) : undefined;
     const isSlide = slideRec !== undefined && slideRec.type === RT_SLIDE;
-    const shapes = isSlide
-      ? slideShapes(slideRec.data, img, outline, resolveScheme(slideRec.data, persist, stream))
-      : outline.some((p) => paragraphText(p).length > 0)
-        ? [{ paragraphs: outline }]
-        : [];
-    slides.push({ shapes });
+    const scheme = isSlide ? resolveScheme(slideRec.data, masters) : undefined;
+    const env: TextEnv = {
+      ...(scheme ? { scheme } : {}),
+      ...(fonts.length > 0 ? { fonts } : {}),
+    };
+    const defaults = isSlide ? masterChain(slideRec.data, masters, scheme, fonts) : undefined;
+    const texts = outline.map((e) =>
+      styledParagraphs(e.rec, e.style, levelStyles(defaults, e.textType), env),
+    );
+    const flat = texts.flat();
+    const content: DrawingContent = isSlide
+      ? slideShapes(slideRec.data, img, texts, env, defaults)
+      : { shapes: flat.some((p) => paragraphText(p).length > 0) ? [{ paragraphs: flat }] : [] };
+    // §2.4.24 fMasterBackground: the slide shows the one its MASTER states, and
+    // the background shape it keeps of its own is a stale copy — 23884's slides
+    // hold a white one under a master that paints them all blue.
+    const background = isSlide
+      ? (masterBackground(slideRec.data, masters, img) ?? content.background)
+      : undefined;
+    // The master's decoration goes under everything the slide draws itself.
+    const decoration = isSlide ? masterShapes(slideRec.data, masters, img) : [];
+    slides.push({
+      shapes: [...decoration, ...content.shapes],
+      ...(background ? { background } : {}),
+    });
     outline = [];
     pendingRef = undefined;
   };
 
   const recs = [...records(slwt)];
+  let textType = TEXT_TYPE_OTHER;
   for (let i = 0; i < recs.length; i++) {
     const rec = recs[i]!;
     if (rec.type === RT_SLIDE_PERSIST_ATOM) {
       flush(); // close the previous slide before starting the next
       pendingRef = rec.data.length >= 4 ? u32(rec.data, 0) : undefined;
+    } else if (rec.type === RT_TEXT_HEADER_ATOM) {
+      textType = rec.data.length >= 4 ? u32(rec.data, 0) : TEXT_TYPE_OTHER;
     } else if (rec.type === RT_TEXT_CHARS_ATOM || rec.type === RT_TEXT_BYTES_ATOM) {
-      outline.push(...styledParagraphs(rec, findFollowingStyle(recs, i)));
+      outline.push({ textType, rec, style: findFollowingStyle(recs, i) });
     }
   }
   flush();
@@ -442,20 +574,39 @@ function readSlideList(
 // Recursively gather the text atoms inside a slide container (its drawing's client
 // text boxes), in record order, pairing each with the StyleTextPropAtom that
 // follows it so runs carry their formatting.
-function collectParagraphs(d: Uint8Array, depth: number): Array<PptParagraph> {
+function collectParagraphs(
+  d: Uint8Array,
+  depth: number,
+  defaults?: MasterDefaults,
+  env?: TextEnv,
+): Array<PptParagraph> {
   if (depth > MAX_DEPTH) return [];
   const out: Array<PptParagraph> = [];
   const recs = [...records(d)];
+  let textType = TEXT_TYPE_OTHER;
   for (let i = 0; i < recs.length; i++) {
     const rec = recs[i]!;
-    if (rec.type === RT_TEXT_CHARS_ATOM || rec.type === RT_TEXT_BYTES_ATOM) {
-      out.push(...styledParagraphs(rec, findFollowingStyle(recs, i)));
+    if (rec.type === RT_TEXT_HEADER_ATOM) {
+      textType = rec.data.length >= 4 ? u32(rec.data, 0) : TEXT_TYPE_OTHER;
+    } else if (rec.type === RT_TEXT_CHARS_ATOM || rec.type === RT_TEXT_BYTES_ATOM) {
+      out.push(
+        ...styledParagraphs(rec, findFollowingStyle(recs, i), levelStyles(defaults, textType), env),
+      );
     } else if (rec.isContainer) {
-      out.push(...collectParagraphs(rec.data, depth + 1));
+      out.push(...collectParagraphs(rec.data, depth + 1, defaults, env));
     }
   }
   return out;
 }
+
+// A plain text box states no text type; PowerPoint styles it as "other".
+const TEXT_TYPE_OTHER = 3;
+
+const levelStyles = (
+  defaults: MasterDefaults | undefined,
+  textType: number,
+): ((level: number) => LevelStyle | undefined) | undefined =>
+  defaults ? (level) => defaults(textType, level) : undefined;
 
 // The StyleTextPropAtom that applies to the text atom at index `i`: the first one
 // following it before the next text atom / text header begins.
@@ -472,10 +623,12 @@ function findFollowingStyle(recs: ReadonlyArray<PptRecord>, i: number): Uint8Arr
 function styledParagraphs(
   textRec: PptRecord,
   styleData: Uint8Array | undefined,
+  defaults?: (level: number) => LevelStyle | undefined,
+  env?: TextEnv,
 ): Array<PptParagraph> {
   const text =
     textRec.type === RT_TEXT_CHARS_ATOM ? decodeUtf16(textRec.data) : decodeCp1252(textRec.data);
-  return buildStyledParagraphs(text, styleData);
+  return buildStyledParagraphs(text, styleData, defaults, env);
 }
 
 // Last-resort slide discovery: every RT_Slide container in the stream, in stream
@@ -496,7 +649,12 @@ function collectSlides(
   if (depth > MAX_DEPTH) return;
   for (const rec of records(d)) {
     if (rec.type === RT_SLIDE) {
-      out.push({ shapes: slideShapes(rec.data, img, [], resolveScheme(rec.data)) });
+      const scheme = resolveScheme(rec.data);
+      const content = slideShapes(rec.data, img, [], scheme ? { scheme } : {});
+      out.push({
+        shapes: content.shapes,
+        ...(content.background ? { background: content.background } : {}),
+      });
     } else if (rec.isContainer) collectSlides(rec.data, out, img, depth + 1);
   }
 }
@@ -599,22 +757,51 @@ function findDescendantContainer(
 function collectShapes(
   slideData: Uint8Array,
   img: ImageContext,
-  scheme: SchemeColors | undefined,
-): Array<PptShape> {
-  const out: Array<PptShape> = [];
-  collectShapeContainers(slideData, img, out, 0, scheme);
+  env: TextEnv,
+  outline: ReadonlyArray<ReadonlyArray<PptParagraph>> = [],
+  defaults?: MasterDefaults,
+): DrawingContent {
+  const out: DrawingContent = { shapes: [] };
+  collectShapeContainers(slideData, img, out, 0, env, outline, defaults);
   return out;
+}
+
+/** What one drawing container holds: its shapes, and the slide's background. */
+interface DrawingContent {
+  shapes: Array<PptShape>;
+  background?: PptBackground;
 }
 
 function collectShapeContainers(
   d: Uint8Array,
   img: ImageContext,
-  out: Array<PptShape>,
+  out: DrawingContent,
   depth: number,
-  scheme: SchemeColors | undefined,
+  env: TextEnv,
+  outline: ReadonlyArray<ReadonlyArray<PptParagraph>>,
+  defaults?: MasterDefaults,
+  group?: GroupFrame,
 ): void {
+  const scheme = env.scheme;
   if (depth > MAX_DEPTH) return;
   for (const r of records(d)) {
+    if (r.type === FBT_SPGR_CONTAINER) {
+      // A grouped shape has no anchor of its own — the GROUP does, and the
+      // child's rectangle is in the group's coordinate space. A `.ppt` table IS
+      // a group of cell rectangles, so without this the five cells of 119877's
+      // tables were five un-anchored words in the corner.
+      collectShapeContainers(
+        r.data,
+        img,
+        out,
+        depth + 1,
+        env,
+        outline,
+        defaults,
+        groupFrame(r.data) ?? group,
+      );
+      continue;
+    }
     if (r.type === FBT_SP_CONTAINER) {
       let rectPt: PptRect | undefined;
       let paragraphs: Array<PptParagraph> | undefined;
@@ -623,58 +810,498 @@ function collectShapeContainers(
       let fspFlags = 0;
       let fillColorHex: string | undefined;
       let lineColorHex: string | undefined;
+      let gradient: PptAutoShape['gradient'];
       let geometry: PptCustomGeometry | undefined;
+      let fillType: number | undefined;
+      let fillBlip: number | undefined;
+      let inlineFill: Uint8Array | undefined;
+      let inlinePic: Uint8Array | undefined;
+      let tileSizePt: PptAutoShape['tileSizePt'];
+      let gtext: PptParagraph | undefined;
+      let placeholder = false;
       for (const child of records(r.data)) {
         if (child.type === FBT_FSP) {
           shapeType = child.instance;
           fspFlags = child.data.length >= 8 ? u32(child.data, 4) : 0;
         } else if (child.type === FBT_CLIENT_ANCHOR) rectPt = parseAnchor(child.data);
-        else if (child.type === FBT_CLIENT_TEXTBOX) paragraphs = collectParagraphs(child.data, 0);
+        else if (child.type === FBT_CHILD_ANCHOR && group) rectPt = childRect(child.data, group);
+        else if (child.type === FBT_CLIENT_DATA)
+          placeholder = findChild(child.data, (c) => c.type === RT_PLACEHOLDER_ATOM) !== undefined;
+        else if (child.type === FBT_CLIENT_TEXTBOX)
+          paragraphs = clientTextboxParagraphs(child.data, outline, defaults, env);
         else if (child.type === FBT_OPT) {
           pib = optProperty(child.data, child.instance, PROP_PIB);
-          fillColorHex = optColor(child.data, child.instance, PROP_FILL_COLOR, scheme);
-          lineColorHex = optColor(child.data, child.instance, PROP_LINE_COLOR, scheme);
+          // A shape states a fill colour whether or not it is filled, and a line
+          // colour whether or not it is drawn — 37625's chart states a red fill
+          // on the outline every reader leaves hollow. The boolean set decides.
+          fillColorHex = stated(child.data, child.instance, PROP_FILL_BOOLS, FILL_F_FILLED)
+            ? optColor(child.data, child.instance, PROP_FILL_COLOR, scheme)
+            : undefined;
+          lineColorHex = stated(child.data, child.instance, PROP_LINE_BOOLS, LINE_F_LINE)
+            ? optColor(child.data, child.instance, PROP_LINE_COLOR, scheme)
+            : undefined;
+          gradient = parseFillGradient(child.data, child.instance, fillColorHex, scheme);
           geometry = parseFreeformGeometry(child.data, child.instance);
+          fillType = optProperty(child.data, child.instance, PROP_FILL_TYPE);
+          fillBlip = optProperty(child.data, child.instance, PROP_FILL_BLIP);
+          tileSizePt = parseTileSize(child.data, child.instance);
+          gtext = parseWordArt(child.data, child.instance, fillColorHex);
+          // A blip property may name a store entry OR carry the picture itself
+          // as its complex data. 119877 has no Pictures stream at all: every
+          // one of its table cells holds its own 73 KB blip inline.
+          inlineFill = optComplex(child.data, child.instance, PROP_FILL_BLIP);
+          inlinePic = optComplex(child.data, child.instance, PROP_PIB);
         }
       }
-      let image: PptImage | undefined;
-      if (pib !== undefined && pib >= 1 && pib <= img.foDelays.length) {
-        const bytes = readBlipBytes(img.pictures, img.foDelays[pib - 1]!);
-        if (bytes) image = { bytes };
+      const blip = (index: number | undefined): PptImage | undefined => {
+        if (index === undefined || index < 1 || index > img.foDelays.length) return undefined;
+        const bytes = readBlipBytes(img.pictures, img.foDelays[index - 1]!);
+        return bytes ? { bytes } : undefined;
+      };
+      // MSOFILLTYPE 2 is the same picture, repeated at its own size instead of
+      // stretched; 119877's second slide is the tiled twin of its first.
+      const tiled = fillType === 2;
+      const fillImage =
+        fillType === 2 || fillType === 3 ? (blip(fillBlip) ?? inlineBlip(inlineFill)) : undefined;
+      if ((fspFlags & FSP_FLAG_BACKGROUND) !== 0) {
+        const bg = slideBackground(fillColorHex, gradient, fillType, fillImage, tiled);
+        if (bg && !out.background) out.background = bg;
+        continue;
       }
+      const image: PptImage | undefined = blip(pib) ?? inlineBlip(inlinePic);
       const textParas =
-        paragraphs && paragraphs.some((p) => paragraphText(p).length > 0) ? paragraphs : undefined;
+        (gtext ??
+        (paragraphs?.some((p) => paragraphText(p).length > 0) === true ? paragraphs : undefined))
+          ? gtext
+            ? [gtext]
+            : paragraphs
+          : undefined;
       // A decorative autoshape: an anchored shape with a preset type (or its own
       // freeform geometry — PPT-7), a literal fill or line colour, and no
       // text/picture — and not a group / patriarch / background shape.
       const decorative =
         (fspFlags & (FSP_FLAG_GROUP | FSP_FLAG_PATRIARCH | FSP_FLAG_BACKGROUND)) === 0;
+      // A picture FILL is not a picture shape: it paints the shape's own box,
+      // and the shape may carry text over it.
       const autoShape =
-        !textParas &&
+        !gtext &&
         !image &&
         rectPt &&
         (shapeType > 0 || geometry) &&
         decorative &&
-        (fillColorHex || lineColorHex)
+        (fillColorHex || lineColorHex || fillImage)
           ? {
               shapeType,
               ...(fillColorHex ? { fillColorHex } : {}),
               ...(lineColorHex ? { lineColorHex } : {}),
+              ...(gradient ? { gradient } : {}),
+              ...(fillImage ? { image: fillImage } : {}),
+              ...(fillImage && tiled ? { imageTiled: true } : {}),
+              ...(fillImage && tiled && tileSizePt ? { tileSizePt } : {}),
               ...(geometry ? { geometry } : {}),
             }
           : undefined;
       if (textParas || image || autoShape) {
-        out.push({
+        out.shapes.push({
           ...(rectPt ? { rectPt } : {}),
+          ...(gtext ? { wordArt: true } : {}),
+          ...(placeholder ? { placeholder: true } : {}),
           ...(textParas ? { paragraphs: textParas } : {}),
           ...(image ? { image } : {}),
           ...(autoShape ? { autoShape } : {}),
         });
       }
     } else if (r.isContainer) {
-      collectShapeContainers(r.data, img, out, depth + 1, scheme);
+      collectShapeContainers(r.data, img, out, depth + 1, env, outline, defaults, group);
     }
   }
+}
+
+/**
+ * One indent level of a master's text style: what a run that states nothing
+ * inherits. A `.ppt` title is 44pt because its MASTER says so — the slide's own
+ * StyleTextPropAtom usually states no size at all.
+ */
+interface LevelStyle extends CharProps {
+  align?: number;
+  bullet?: string;
+  bulletOn?: boolean;
+}
+/** A master's defaults, by text type (TextHeaderAtom) and indent level. */
+type MasterDefaults = (textType: number, level: number) => LevelStyle | undefined;
+
+// §2.9.30 FontCollectionContainer — the deck's typefaces, by the index a run's
+// `fontRef` names. Every `.ppt` used to render in the reader's default face,
+// which measures nothing like the Times a deck asks for: 23884's body text ran
+// off the bottom of every slide it was laid on.
+function parseFontCollection(docData: Uint8Array): Array<string> {
+  const out: Array<string> = [];
+  // The collection lives inside the DocumentTextInfo (RT_Environment), not at
+  // the top of the document container.
+  const coll = findDescendantContainer(docData, RT_FONT_COLLECTION, 0);
+  if (!coll) return out;
+  let ordinal = 0;
+  for (const rec of records(coll)) {
+    if (rec.type !== RT_FONT_ENTITY_ATOM || rec.data.length < 2) continue;
+    const index = rec.instance > 0 || ordinal === 0 ? rec.instance : ordinal;
+    // lfFaceName: 32 UTF-16 code units, NUL-terminated.
+    let name = '';
+    for (let i = 0; i < 32 && i * 2 + 1 < rec.data.length; i++) {
+      const cu = u16(rec.data, i * 2);
+      if (cu === 0) break;
+      name += String.fromCharCode(cu);
+    }
+    out[index] = name;
+    ordinal++;
+  }
+  return out;
+}
+
+// §2.9.42 TextMasterStyleAtom — one per text type (the recInstance), holding a
+// TextPFException + TextCFException per indent level. The later types prefix each
+// level with its own 2-byte index; producers disagree on where that starts, so
+// both readings are tried and the one that lands on the record's end wins.
+function parseMasterTextStyles(
+  masterData: Uint8Array,
+  fonts: ReadonlyArray<string> | undefined,
+): Map<number, Array<LevelStyle>> {
+  const out = new Map<number, Array<LevelStyle>>();
+  for (const rec of records(masterData)) {
+    if (rec.type !== RT_TEXT_MASTER_STYLE_ATOM || rec.data.length < 2) continue;
+    const levels = Math.min(u16(rec.data, 0), 5);
+    // The variants beyond `other` prefix each level with its own index; a parse
+    // that does not end on the record's last byte read the wrong one, so the
+    // other reading gets its turn before either is believed.
+    const first = readMasterLevels(rec.data, levels, rec.instance >= 4 ? 2 : 0, fonts);
+    const exact = (r: { styles: Array<LevelStyle>; off: number }): boolean =>
+      r.styles.length === levels && r.off === rec.data.length;
+    let best = first;
+    if (!exact(first)) {
+      const other = readMasterLevels(rec.data, levels, rec.instance >= 4 ? 0 : 2, fonts);
+      if (exact(other)) best = other;
+    }
+    if (best.styles.length > 0) out.set(rec.instance, best.styles);
+  }
+  return out;
+}
+
+function readMasterLevels(
+  d: Uint8Array,
+  levels: number,
+  prefix: number,
+  fonts: ReadonlyArray<string> | undefined,
+): { styles: Array<LevelStyle>; off: number } {
+  const styles: Array<LevelStyle> = [];
+  let off = 2;
+  for (let i = 0; i < levels; i++) {
+    off += prefix;
+    if (off + 4 > d.length) break;
+    const pf = readPfException(d, off);
+    if (pf.off + 4 > d.length) break;
+    const cf = readCfException(d, pf.off, undefined, fonts); // the SLIDE's scheme resolves it
+    if (cf.off > d.length) break;
+    off = cf.off;
+    styles.push({
+      ...cf.props,
+      ...(pf.align !== undefined ? { align: pf.align } : {}),
+      ...(pf.bullet !== undefined ? { bullet: pf.bullet } : {}),
+      ...(pf.bulletOn !== undefined ? { bulletOn: pf.bulletOn } : {}),
+    });
+  }
+  return { styles, off };
+}
+
+// §2.13.33 TextTypeEnum — a type a master may not define falls back to the plain
+// title / body style it is a variant of.
+const TEXT_TYPE_FALLBACK = new Map([
+  [4, 1], // centerBody → body
+  [5, 0], // centerTitle → title
+  [6, 1], // halfBody → body
+  [7, 1], // quarterBody → body
+]);
+
+// The lookup a slide uses: its own master first, then the master that one
+// follows, and within each the exact text type before the one it varies. Merged
+// PROPERTY BY PROPERTY — a centre-title style states its alignment and nothing
+// else, and taking it whole would leave the title with no size at all.
+function masterDefaults(
+  chain: ReadonlyArray<Map<number, Array<LevelStyle>>>,
+  scheme: SchemeColors | undefined,
+): MasterDefaults {
+  return (textType, level) => {
+    const types = [textType, TEXT_TYPE_FALLBACK.get(textType)];
+    let merged: LevelStyle | undefined;
+    for (const styles of chain) {
+      for (const t of types) {
+        const levels = t === undefined ? undefined : styles.get(t);
+        const at = levels?.[Math.min(level, levels.length - 1)];
+        if (!at) continue;
+        // A variant that the master does not define takes the plain style's
+        // METRICS, not its colour and not its bullet: 41071's subtitle is 36pt
+        // because its run says so, and black and unbulleted because no style
+        // claims it — lending the body style's navy and its dot there painted a
+        // title every reader draws as a plain black line.
+        const { colorHex: _c, colorIndex: _i, bullet: _b, bulletOn: _o, ...metrics } = at;
+        const from = t === textType ? at : metrics;
+        merged = { ...from, ...merged }; // the nearer statement wins
+      }
+    }
+    if (!merged || merged.colorHex !== undefined || merged.colorIndex === undefined) return merged;
+    const slot = scheme?.[merged.colorIndex];
+    return slot === undefined ? merged : { ...merged, colorHex: slot };
+  };
+}
+
+// §2.4.14.2 — the masters' own SlideListWithText (recInstance 1). A slide names
+// its master by SLIDE ID, not by persist id, so this is the map between them:
+// each MasterPersistAtom shares the SlidePersistAtom layout, persist id first and
+// slide id twelve bytes in.
+function buildMasterIdMap(docData: Uint8Array): Map<number, number> {
+  const out = new Map<number, number>();
+  const slwt = findChild(
+    docData,
+    (r) => r.type === RT_SLIDE_LIST_WITH_TEXT && r.instance === SLWT_INSTANCE_MASTERS,
+  );
+  if (!slwt) return out;
+  for (const rec of records(slwt)) {
+    if (rec.type === RT_SLIDE_PERSIST_ATOM && rec.data.length >= 16) {
+      out.set(u32(rec.data, 12), u32(rec.data, 0));
+    }
+  }
+  return out;
+}
+
+// §2.4.24 SlideAtom.slideFlags — what a slide takes from the master it follows.
+const SLIDE_FLAG_MASTER_OBJECTS = 0x0001;
+const SLIDE_FLAG_MASTER_BACKGROUND = 0x0004;
+
+// The container of the master a slide follows, through the slide-id map.
+function masterOf(slideData: Uint8Array, ctx: MasterContext): PptRecord | undefined {
+  const slideAtom = findChild(slideData, (r) => r.type === RT_SLIDE_ATOM);
+  if (!slideAtom || slideAtom.length < 22) return undefined;
+  const id = u32(slideAtom, 12);
+  const off = ctx.persist.get(ctx.byMasterId.get(id) ?? id);
+  const rec = off !== undefined ? recordAt(ctx.stream, off) : undefined;
+  return rec && (rec.type === RT_MAIN_MASTER || rec.type === RT_SLIDE) ? rec : undefined;
+}
+
+// Whether a slide's flags set `flag`.
+function slideFlag(slideData: Uint8Array, flag: number): boolean {
+  const slideAtom = findChild(slideData, (r) => r.type === RT_SLIDE_ATOM);
+  return slideAtom !== undefined && slideAtom.length >= 22 && (u16(slideAtom, 20) & flag) !== 0;
+}
+
+// §2.4.24 fMasterObjects — the decoration the master draws on every slide that
+// follows it: rules, logos, the footer band. Its PLACEHOLDERS are prototypes and
+// stay behind, or every slide would carry "Click to edit Master title style".
+function masterShapes(
+  slideData: Uint8Array,
+  ctx: MasterContext,
+  img: ImageContext,
+): Array<PptShape> {
+  if (!slideFlag(slideData, SLIDE_FLAG_MASTER_OBJECTS)) return [];
+  const master = masterOf(slideData, ctx);
+  if (!master) return [];
+  const scheme = resolveScheme(master.data, ctx);
+  return collectShapes(master.data, img, scheme ? { scheme } : {}).shapes.filter(
+    (s) => s.placeholder !== true && s.rectPt !== undefined,
+  );
+}
+
+// The background of the master a slide follows, when the slide states none of
+// its own and its flags say to take it.
+function masterBackground(
+  slideData: Uint8Array,
+  ctx: MasterContext,
+  img: ImageContext,
+): PptBackground | undefined {
+  if (!slideFlag(slideData, SLIDE_FLAG_MASTER_BACKGROUND)) return undefined;
+  const master = masterOf(slideData, ctx);
+  if (!master) return undefined;
+  const scheme = resolveScheme(master.data, ctx);
+  return collectShapes(master.data, img, scheme ? { scheme } : {}).background;
+}
+
+// The chain of masters a slide inherits from, nearest first: a title master is
+// itself a SlideContainer that follows the main master, so the walk is a loop.
+function masterChain(
+  slideData: Uint8Array,
+  ctx: MasterContext | undefined,
+  scheme: SchemeColors | undefined,
+  fonts: ReadonlyArray<string> | undefined,
+): MasterDefaults {
+  const chain: Array<Map<number, Array<LevelStyle>>> = [];
+  if (!ctx) return masterDefaults(chain, scheme);
+  let data: Uint8Array | undefined = slideData;
+  const seen = new Set<number>();
+  for (let hop = 0; hop < 4 && data; hop++) {
+    const slideAtom: Uint8Array | undefined = findChild(data, (r) => r.type === RT_SLIDE_ATOM);
+    if (!slideAtom || slideAtom.length < 16) break;
+    const masterId = u32(slideAtom, 12);
+    if (seen.has(masterId)) break;
+    seen.add(masterId);
+    const cached = ctx.cache.get(masterId);
+    // The id is a SLIDE id; a file whose master list does not name it is read as
+    // the persist id it would otherwise be.
+    const off = ctx.persist.get(ctx.byMasterId.get(masterId) ?? masterId);
+    const rec = off !== undefined ? recordAt(ctx.stream, off) : undefined;
+    if (!rec || (rec.type !== RT_MAIN_MASTER && rec.type !== RT_SLIDE)) break;
+    if (cached) chain.push(cached);
+    else {
+      const styles = parseMasterTextStyles(rec.data, fonts);
+      ctx.cache.set(masterId, styles);
+      chain.push(styles);
+    }
+    data = rec.type === RT_SLIDE ? rec.data : undefined; // a main master ends the walk
+  }
+  return masterDefaults(chain, scheme);
+}
+
+// What a slide needs to reach its masters: the persist directory, the stream the
+// offsets are into, the slide-id → persist-id map, and the parsed styles so far.
+interface MasterContext {
+  readonly persist: Map<number, number>;
+  readonly stream: Uint8Array;
+  readonly byMasterId: Map<number, number>;
+  readonly cache: Map<number, Map<number, Array<LevelStyle>>>;
+}
+
+// Where a group sits on the slide, and the coordinate space its children's
+// ChildAnchors are measured in.
+interface GroupFrame {
+  readonly rect: PptRect;
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
+// A group container's first SpContainer is the group shape itself: its FSPGR
+// (§2.2.38) states the coordinate space, its client anchor where that space
+// lands on the slide.
+function groupFrame(spgrData: Uint8Array): GroupFrame | undefined {
+  const sp = [...records(spgrData)].find((r) => r.type === FBT_SP_CONTAINER);
+  if (!sp) return undefined;
+  let box: { x: number; y: number; w: number; h: number } | undefined;
+  let rect: PptRect | undefined;
+  for (const child of records(sp.data)) {
+    if (child.type === FBT_SPGR && child.data.length >= 16) {
+      const x = i32(child.data, 0);
+      const y = i32(child.data, 4);
+      box = { x, y, w: i32(child.data, 8) - x, h: i32(child.data, 12) - y };
+    } else if (child.type === FBT_CLIENT_ANCHOR) rect = parseAnchor(child.data);
+  }
+  if (!box || !rect || box.w <= 0 || box.h <= 0) return undefined;
+  return { rect, ...box };
+}
+
+// §2.2.39 OfficeArtChildAnchor — four LONGs in the group's space → the slide
+// rectangle they work out to.
+function childRect(d: Uint8Array, g: GroupFrame): PptRect | undefined {
+  if (d.length < 16) return undefined;
+  const x1 = g.rect.x + ((i32(d, 0) - g.x) / g.w) * g.rect.w;
+  const y1 = g.rect.y + ((i32(d, 4) - g.y) / g.h) * g.rect.h;
+  const x2 = g.rect.x + ((i32(d, 8) - g.x) / g.w) * g.rect.w;
+  const y2 = g.rect.y + ((i32(d, 12) - g.y) / g.h) * g.rect.h;
+  const w = x2 - x1;
+  const h = y2 - y1;
+  return w > 0 && h > 0 && Math.abs(x1) < 5000 && Math.abs(y1) < 5000
+    ? { x: x1, y: y1, w, h }
+    : undefined;
+}
+
+// The text of an OfficeArtClientTextbox. A placeholder normally holds its text
+// right there, but PowerPoint stores TITLE AND BODY TEXT IN THE OUTLINE — the
+// document's SlideListWithText — and leaves the shape an OutlineTextRefAtom
+// (§2.9.86) whose `index` is the 0-based place of that text among the slide's
+// entries in the list. Following it is what puts a title in its own rectangle
+// instead of in a heap at the top-left corner: without it every such deck read
+// as one un-anchored blob of reading-order text.
+function clientTextboxParagraphs(
+  d: Uint8Array,
+  outline: ReadonlyArray<ReadonlyArray<PptParagraph>>,
+  defaults?: MasterDefaults,
+  env?: TextEnv,
+): Array<PptParagraph> {
+  const own = collectParagraphs(d, 0, defaults, env);
+  if (own.some((p) => paragraphText(p).length > 0)) return own;
+  const ref = findChild(d, (r) => r.type === RT_OUTLINE_TEXT_REF_ATOM);
+  if (!ref || ref.length < 4) return own;
+  return [...(outline[u32(ref, 0)] ?? [])];
+}
+
+// §2.3.22 — WordArt as one centred paragraph: the text the shape is, at the
+// size and in the face it states, coloured by the shape's own fill. The letters
+// carry effects this does not model (a texture through the glyphs, a shadow, a
+// warp); a word in the right place at the right size is nearer than the filled
+// rectangle it used to be.
+function parseWordArt(
+  d: Uint8Array,
+  count: number,
+  colorHex: string | undefined,
+): PptParagraph | undefined {
+  const text = utf16Property(optComplex(d, count, PROP_GTEXT_UNICODE));
+  if (text === undefined || text.trim() === '') return undefined;
+  const raw = optProperty(d, count, PROP_GTEXT_SIZE);
+  const sizePt = raw === undefined ? undefined : Math.round((raw / 65536) * 10) / 10;
+  const font = utf16Property(optComplex(d, count, PROP_GTEXT_FONT));
+  return {
+    runs: [
+      {
+        text,
+        ...(sizePt !== undefined && sizePt > 0 ? { sizePt } : {}),
+        ...(colorHex ? { colorHex } : {}),
+        ...(font ? { fontFamily: font } : {}),
+      },
+    ],
+    align: 1, // WordArt is centred in its box
+  };
+}
+
+// A complex property holding a NUL-terminated UTF-16 string.
+function utf16Property(blob: Uint8Array | undefined): string | undefined {
+  if (!blob || blob.length < 2) return undefined;
+  let out = '';
+  for (let i = 0; i * 2 + 1 < blob.length; i++) {
+    const cu = u16(blob, i * 2);
+    if (cu === 0) break;
+    out += String.fromCharCode(cu);
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+// §2.3.7.11/.12 — the tile's own size, when the shape states one. Both must be
+// positive to mean anything; zero is the default that leaves the tile at the
+// picture's size.
+function parseTileSize(d: Uint8Array, count: number): PptAutoShape['tileSizePt'] {
+  const w = signedLong(optProperty(d, count, PROP_FILL_WIDTH));
+  const h = signedLong(optProperty(d, count, PROP_FILL_HEIGHT));
+  if (w === undefined || h === undefined || w <= 0 || h <= 0) return undefined;
+  return { widthPt: w / EMU_PER_POINT, heightPt: h / EMU_PER_POINT };
+}
+
+// A blip property's complex data is the OfficeArtBlip record itself: an 8-byte
+// header and the picture behind it.
+function inlineBlip(blob: Uint8Array | undefined): PptImage | undefined {
+  if (!blob || blob.length < 8) return undefined;
+  const bytes = readEscherBlip(u16(blob, 2), u16(blob, 0) >> 4, blob.subarray(8));
+  return bytes ? { bytes } : undefined;
+}
+
+// §2.3.7.1 MSOFILLTYPE 3 is a picture stretched over the shape — for the
+// background shape, over the slide. Anything else is read as the solid colour or
+// the shade already parsed; a background that states none is left to the page.
+function slideBackground(
+  fillColorHex: string | undefined,
+  gradient: PptAutoShape['gradient'],
+  fillType: number | undefined,
+  image: PptImage | undefined,
+  tiled: boolean,
+): PptBackground | undefined {
+  if (image) return { image, ...(tiled ? { imageTiled: true } : {}) };
+  if (gradient) return { gradient };
+  if (fillColorHex) return { fillColorHex };
+  return undefined;
 }
 
 // OfficeArtClientAnchor (§2.7.1/§2.7.2) → the shape's rectangle in points. The
@@ -711,6 +1338,16 @@ function parseAnchor(data: Uint8Array): PptRect | undefined {
   return { x, y, w, h };
 }
 
+// Whether a boolean property's flag is on. Absent, or stated as absent by the
+// usage bit in the high half, the flag's DEFAULT holds — and both `fFilled` and
+// `fLine` default to true, which is why a shape that says nothing is drawn.
+function stated(d: Uint8Array, count: number, propId: number, flag: number): boolean {
+  const bools = optProperty(d, count, propId);
+  if (bools === undefined) return true;
+  const used = (bools & (flag << 16)) !== 0;
+  return used ? (bools & flag) !== 0 : true;
+}
+
 // §2.3.7.2 OfficeArtFOPT — `count` properties, each a 2-byte id (low 14 bits) + a
 // 4-byte value. Returns the simple (non-complex) value of `wantId`.
 function optProperty(d: Uint8Array, count: number, wantId: number): number | undefined {
@@ -729,13 +1366,33 @@ function optComplex(d: Uint8Array, count: number, wantId: number): Uint8Array | 
   for (let i = 0; i < count && i * 6 + 6 <= d.length; i++) {
     const id = u16(d, i * 6);
     if ((id & 0x8000) === 0) continue; // fComplex clear ⇒ no trailing data
-    const len = u32(d, i * 6 + 2);
+    const len = arrayBlobLength(d, offset, id & 0x3fff, u32(d, i * 6 + 2));
     if ((id & 0x3fff) === wantId) {
       return offset + len <= d.length && len > 0 ? d.subarray(offset, offset + len) : undefined;
     }
     offset += len;
   }
   return undefined;
+}
+
+// The array properties whose blob is an IMsoArray, and whose stated length some
+// producers write WITHOUT the 6-byte header.
+const ARRAY_PROPS = new Set([0x0145, 0x0146, 0x0147, 0x0149, 0x014a, 0x0151, 0x0152, 0x0153]);
+
+// How long an array property's blob really is. The length in the fixed entry is
+// normally the whole blob, header and all — but when it is exactly `nElems ×
+// cbElem` the header is extra, and every complex property AFTER it starts six
+// bytes further on than the entry says (Apache POI EscherArrayProperty says the
+// same, having met the same files). Read without this, 37625's chart curves were
+// read as one lineTo apiece: the vertex array came up six bytes short and the
+// segment array's header was six bytes of the previous blob.
+function arrayBlobLength(d: Uint8Array, offset: number, id: number, len: number): number {
+  if (!ARRAY_PROPS.has(id) || offset + 6 > d.length) return len;
+  const nElems = u16(d, offset);
+  const raw = u16(d, offset + 4);
+  const signed = raw >= 0x8000 ? raw - 0x10000 : raw;
+  const size = signed < 0 ? -signed >> 2 : signed;
+  return size > 0 && nElems > 0 && nElems * size === len ? len + 6 : len;
 }
 
 // An IMsoArray complex property: a 6-byte header (nElems u16, nElemsAlloc u16,
@@ -873,6 +1530,37 @@ const SYS_COLORS: ReadonlyMap<number, string> = new Map([
 // colour scheme (PPT-6); a system colour (fSysIndex) resolves through the default
 // Windows scheme (PPT-8). A palette-relative colour, and any index we cannot map,
 // are skipped (missing colour, never a wrong one).
+/**
+ * MS-ODRAW §2.3.7.1 `fillType` — the sweep a shaded fill asks for, or
+ * `undefined` when the shape is filled with one flat colour (type 0) or with
+ * something this reader does not draw (a picture, a texture, a pattern).
+ *
+ * @param d      The OPT record's data.
+ * @param count  Its entry count (the record's instance).
+ * @param fromHex The resolved `fillColor` — one end of the sweep.
+ * @param scheme The slide's colour scheme, for a scheme-relative far end.
+ */
+function parseFillGradient(
+  d: Uint8Array,
+  count: number,
+  fromHex: string | undefined,
+  scheme: SchemeColors | undefined,
+): PptAutoShape['gradient'] {
+  const type = optProperty(d, count, PROP_FILL_TYPE);
+  // 4 shade, 5 shadeCenter, 6 shadeShape, 7 shadeScale, 8 shadeTitle.
+  if (type === undefined || type < 4 || type > 8) return undefined;
+  // §2.3.7.3 — `fillBackColor` defaults to WHITE, and a shaded fill states it
+  // only to say otherwise: 41246-2's title slide fades its teal to a white the
+  // file never writes down.
+  const toHex = optColor(d, count, PROP_FILL_BACK_COLOR, scheme) ?? 'FFFFFF';
+  if (fromHex === undefined) return undefined;
+  // §2.2.35 — a 16.16 fixed-point angle, measured clockwise from the shape's
+  // downward axis, which is the direction DrawingML calls 90°.
+  const raw = optProperty(d, count, PROP_FILL_ANGLE);
+  const angleDeg = raw === undefined ? 90 : 90 - (raw | 0) / 65536;
+  return { fromHex, toHex, angleDeg, radial: type === 5 || type === 6 };
+}
+
 function optColor(
   d: Uint8Array,
   count: number,
@@ -891,6 +1579,16 @@ function optColor(
   return undefined;
 }
 
+/**
+ * What resolving a run's formatting needs from the document around it: the
+ * colour scheme a scheme-indexed colour names, and the typefaces a `fontRef`
+ * indexes. Both are document-level and both travel with the text.
+ */
+interface TextEnv {
+  readonly scheme?: SchemeColors;
+  readonly fonts?: ReadonlyArray<string>;
+}
+
 // The eight scheme colours as 6-hex RGB, indexed by COLORREF scheme slot (0 =
 // background, 1 = text&lines, 2 = shadows, 3 = title text, 4 = fills, 5 = accent,
 // 6 = accent&hyperlink, 7 = accent&followed-hyperlink).
@@ -900,18 +1598,16 @@ type SchemeColors = ReadonlyArray<string>;
 // SlideSchemeColorSchemeAtom, unless slideAtom.slideFlags.fMasterScheme is set, in
 // which case the master's scheme is used (resolved through the persist directory).
 // Returns undefined when no scheme can be located, so a scheme colour stays dropped.
-function resolveScheme(
-  slideData: Uint8Array,
-  persist?: Map<number, number>,
-  stream?: Uint8Array,
-): SchemeColors | undefined {
+function resolveScheme(slideData: Uint8Array, ctx?: MasterContext): SchemeColors | undefined {
   let schemeData = findColorScheme(slideData);
   const slideAtom = findChild(slideData, (r) => r.type === RT_SLIDE_ATOM);
-  if (slideAtom && slideAtom.length >= 22 && persist && stream) {
+  if (slideAtom && slideAtom.length >= 22 && ctx) {
     const followMaster = (u16(slideAtom, 20) & SLIDE_FLAG_MASTER_SCHEME) !== 0;
     if (followMaster) {
-      const masterOff = persist.get(u32(slideAtom, 12)); // masterIdRef
-      const masterRec = masterOff !== undefined ? recordAt(stream, masterOff) : undefined;
+      // masterIdRef names a slide id, which the master list maps to a persist id.
+      const id = u32(slideAtom, 12);
+      const masterOff = ctx.persist.get(ctx.byMasterId.get(id) ?? id);
+      const masterRec = masterOff !== undefined ? recordAt(ctx.stream, masterOff) : undefined;
       if (masterRec && masterRec.type === RT_MAIN_MASTER) {
         const masterScheme = findColorScheme(masterRec.data);
         if (masterScheme) schemeData = masterScheme;
@@ -947,45 +1643,40 @@ function parseColorScheme(d: Uint8Array): SchemeColors | undefined {
 // finds the PNG/JPEG start regardless (mirrors the `.xls` Escher reader).
 function readBlipBytes(pictures: Uint8Array, foDelay: number): Uint8Array | undefined {
   if (foDelay < 0 || foDelay + 8 > pictures.length) return undefined;
+  const verInstance = u16(pictures, foDelay);
+  const type = u16(pictures, foDelay + 2);
   const recLen = u32(pictures, foDelay + 4);
   const start = foDelay + 8;
   const blip = pictures.subarray(start, Math.min(pictures.length, start + recLen));
-  const limit = Math.min(blip.length, 80);
-  for (let off = 0; off < limit; off++) {
-    for (const magic of IMAGE_MAGICS) {
-      if (matchesMagic(blip, off, magic)) return blip.subarray(off);
-    }
-  }
-  return undefined;
-}
-
-// PNG and JPEG signatures — the raster formats the renderer can embed.
-const IMAGE_MAGICS: ReadonlyArray<ReadonlyArray<number>> = [
-  [0x89, 0x50, 0x4e, 0x47], // PNG
-  [0xff, 0xd8, 0xff], // JPEG
-];
-
-function matchesMagic(d: Uint8Array, off: number, magic: ReadonlyArray<number>): boolean {
-  if (off + magic.length > d.length) return false;
-  for (let i = 0; i < magic.length; i++) if (d[off + i] !== magic[i]) return false;
-  return true;
+  return readEscherBlip(type, verInstance >> 4, blip);
 }
 
 // === Text + formatting (PPT-2) ===============================================
 
 // One character run / paragraph run parsed out of a StyleTextPropAtom.
-interface CharRun {
-  count: number;
+/** The character formatting a TextCFException can state (PPT-2). */
+interface CharProps {
+  /** The scheme slot the colour named, when it named one rather than an sRGB. */
+  colorIndex?: number;
+  /** The index into the deck's font collection this run's typeface came from. */
+  fontRef?: number;
+  fontFamily?: string;
   bold?: boolean;
   italic?: boolean;
   underline?: boolean;
   sizePt?: number;
   colorHex?: string;
 }
+interface CharRun extends CharProps {
+  count: number;
+}
 interface ParaRun {
   count: number;
   align?: number;
   level?: number;
+  bullet?: string;
+  /** The paragraph states `fHasBullet` — true says draw one, false says do not. */
+  bulletOn?: boolean;
 }
 
 /** The concatenated plain text of a paragraph's runs. */
@@ -1000,8 +1691,10 @@ export function paragraphText(p: PptParagraph): string {
 function buildStyledParagraphs(
   text: string,
   styleData: Uint8Array | undefined,
+  defaults?: (level: number) => LevelStyle | undefined,
+  env?: TextEnv,
 ): Array<PptParagraph> {
-  const style = styleData ? parseStyleTextProp(styleData, text.length) : undefined;
+  const style = styleData ? parseStyleTextProp(styleData, text.length, env) : undefined;
   const charProps = style ? expandCharProps(style.charRuns, text.length) : undefined;
   const paraRuns = style?.paraRuns ?? [];
 
@@ -1018,10 +1711,27 @@ function buildStyledParagraphs(
   const endParagraph = (): void => {
     pushRun();
     const meta = paraRuns[paraIndex];
+    // What the run did not state, the master's style for this level does —
+    // size and alignment. Not bold / italic / underline, which are stated as OFF
+    // as often as they are omitted and cannot be told apart here; and not
+    // colour, whose ColorIndexStruct may name a scheme slot this does not yet
+    // resolve — inheriting it painted 41071's title navy where every reader
+    // draws it black.
+    const lvl = defaults?.(meta?.level ?? 0);
+    const align = meta?.align ?? lvl?.align;
+    // The paragraph decides WHETHER it is bulleted; the master decides WITH
+    // WHAT when the paragraph names no character of its own.
+    // `fHasBullet` decides when it is stated; when nobody states it, a stated
+    // CHARACTER is itself the statement — a master's second outline level names
+    // its dash and no flag, and 23884's sub-points went unmarked.
+    const on = meta?.bulletOn ?? lvl?.bulletOn;
+    const char = meta?.bullet ?? lvl?.bullet;
+    const bullet = on === false ? undefined : on === true ? (char ?? '•') : char;
     paras.push({
-      runs,
-      ...(meta?.align !== undefined ? { align: meta.align } : {}),
+      runs: lvl ? runs.map((r) => inherit(r, lvl)) : runs,
+      ...(align !== undefined ? { align } : {}),
       ...(meta?.level !== undefined ? { level: meta.level } : {}),
+      ...(bullet !== undefined ? { bullet } : {}),
     });
     runs = [];
     paraIndex++;
@@ -1046,6 +1756,19 @@ function buildStyledParagraphs(
   return paras;
 }
 
+// A run + the size its level's master style fills in.
+function inherit(run: PptRun, lvl: LevelStyle): PptRun {
+  const sizePt = run.sizePt ?? lvl.sizePt;
+  const colorHex = run.colorHex ?? lvl.colorHex;
+  const fontFamily = run.fontFamily ?? lvl.fontFamily;
+  return {
+    ...run,
+    ...(sizePt !== undefined ? { sizePt } : {}),
+    ...(colorHex !== undefined ? { colorHex } : {}),
+    ...(fontFamily !== undefined ? { fontFamily } : {}),
+  };
+}
+
 function toRun(text: string, props: CharRun | undefined): PptRun {
   if (!props) return { text };
   return {
@@ -1055,6 +1778,7 @@ function toRun(text: string, props: CharRun | undefined): PptRun {
     ...(props.underline ? { underline: true } : {}),
     ...(props.sizePt ? { sizePt: props.sizePt } : {}),
     ...(props.colorHex ? { colorHex: props.colorHex } : {}),
+    ...(props.fontFamily ? { fontFamily: props.fontFamily } : {}),
   };
 }
 
@@ -1066,7 +1790,8 @@ function sameProps(a: CharRun | undefined, b: CharRun | undefined): boolean {
     !!a.italic === !!b.italic &&
     !!a.underline === !!b.underline &&
     a.sizePt === b.sizePt &&
-    a.colorHex === b.colorHex
+    a.colorHex === b.colorHex &&
+    a.fontFamily === b.fontFamily
   );
 }
 
@@ -1090,6 +1815,7 @@ function expandCharProps(charRuns: ReadonlyArray<CharRun>, textLen: number): Arr
 function parseStyleTextProp(
   data: Uint8Array,
   textLen: number,
+  env: TextEnv | undefined,
 ): { paraRuns: Array<ParaRun>; charRuns: Array<CharRun> } | undefined {
   const target = textLen + 1;
   let off = 0;
@@ -1100,29 +1826,15 @@ function parseStyleTextProp(
   while (consumed < target && off + 10 <= data.length) {
     const count = u32(data, off);
     const level = u16(data, off + 4);
-    const mask = u32(data, off + 6);
-    off += 10;
-    let align: number | undefined;
-    if ((mask & 0x0000000f) !== 0) off += 2; // bulletFlags
-    if ((mask & 0x00000080) !== 0) off += 2; // bulletChar
-    if ((mask & 0x00000010) !== 0) off += 2; // bulletFontRef
-    if ((mask & 0x00000040) !== 0) off += 2; // bulletSize
-    if ((mask & 0x00000020) !== 0) off += 4; // bulletColor
-    if ((mask & 0x00000800) !== 0) {
-      align = u16(data, off); // textAlignment
-      off += 2;
-    }
-    if ((mask & 0x00001000) !== 0) off += 2; // lineSpacing
-    if ((mask & 0x00002000) !== 0) off += 2; // spaceBefore
-    if ((mask & 0x00004000) !== 0) off += 2; // spaceAfter
-    if ((mask & 0x00000100) !== 0) off += 2; // leftMargin
-    if ((mask & 0x00000400) !== 0) off += 2; // indent
-    if ((mask & 0x00008000) !== 0) off += 2; // defaultTabSize
-    if ((mask & 0x00100000) !== 0) off += 2 + (off + 2 <= data.length ? u16(data, off) : 0) * 4; // tabStops
-    if ((mask & 0x00010000) !== 0) off += 2; // fontAlign
-    if ((mask & 0x000e0000) !== 0) off += 2; // wrapFlags (charWrap/wordWrap/overflow)
-    if ((mask & 0x00200000) !== 0) off += 2; // textDirection
-    paraRuns.push({ count, level, ...(align !== undefined ? { align } : {}) });
+    const pf = readPfException(data, off + 6);
+    off = pf.off;
+    paraRuns.push({
+      count,
+      level,
+      ...(pf.align !== undefined ? { align: pf.align } : {}),
+      ...(pf.bullet !== undefined ? { bullet: pf.bullet } : {}),
+      ...(pf.bulletOn !== undefined ? { bulletOn: pf.bulletOn } : {}),
+    });
     consumed += count;
     if (count <= 0) break;
   }
@@ -1132,41 +1844,131 @@ function parseStyleTextProp(
   consumed = 0;
   while (consumed < target && off + 8 <= data.length) {
     const count = u32(data, off);
-    const mask = u32(data, off + 4);
-    off += 8;
-    const run: CharRun = { count };
-    // fontStyle (CFStyle): present if any style bit (bold/italic/underline/
-    // shadow/fehint/kumi/emboss) or the fHasStyle group (bits 10–13) is set.
-    if ((mask & 0x00003eb7) !== 0) {
-      const style = u16(data, off);
-      off += 2;
-      if ((mask & 0x1) !== 0 && (style & 0x1) !== 0) run.bold = true;
-      if ((mask & 0x2) !== 0 && (style & 0x2) !== 0) run.italic = true;
-      if ((mask & 0x4) !== 0 && (style & 0x4) !== 0) run.underline = true;
-    }
-    if ((mask & 0x00010000) !== 0) off += 2; // fontRef
-    if ((mask & 0x00200000) !== 0) off += 2; // oldEAFontRef
-    if ((mask & 0x00400000) !== 0) off += 2; // ansiFontRef
-    if ((mask & 0x00800000) !== 0) off += 2; // symbolFontRef
-    if ((mask & 0x00020000) !== 0) {
-      const sz = u16(data, off); // fontSize (points)
-      off += 2;
-      if (sz > 0) run.sizePt = sz;
-    }
-    if ((mask & 0x00040000) !== 0) {
-      // color (ColorIndexStruct: red, green, blue, index); 0xFE = explicit sRGB.
-      if (off + 4 <= data.length && data[off + 3] === 0xfe) {
-        run.colorHex = hex2(data[off]!) + hex2(data[off + 1]!) + hex2(data[off + 2]!);
-      }
-      off += 4;
-    }
-    if ((mask & 0x00080000) !== 0) off += 2; // position
-    charRuns.push(run);
+    const cf = readCfException(data, off + 4, env?.scheme, env?.fonts);
+    off = cf.off;
+    charRuns.push({ count, ...cf.props });
     consumed += count;
     if (count <= 0) break;
   }
 
   return paraRuns.length > 0 || charRuns.length > 0 ? { paraRuns, charRuns } : undefined;
+}
+
+// §2.9.20 TextPFException: a 4-byte mask then the fields whose bits it sets, in
+// the spec's byte order (NOT bit-ascending). Every present field is stepped over
+// even when it is dropped, or the ones after it read from the wrong place.
+function readPfException(
+  data: Uint8Array,
+  start: number,
+): {
+  off: number;
+  align?: number;
+  bullet?: string;
+  bulletOn?: boolean;
+} {
+  const mask = u32(data, start);
+  let off = start + 4;
+  let align: number | undefined;
+  let bulletOn: boolean | undefined;
+  let bullet: string | undefined;
+  if ((mask & 0x0000000f) !== 0) {
+    bulletOn = (u16(data, off) & 0x0001) !== 0; // bulletFlags.fHasBullet
+    off += 2;
+  }
+  if ((mask & 0x00000080) !== 0) {
+    bullet = bulletCharacter(u16(data, off));
+    off += 2;
+  }
+  if ((mask & 0x00000010) !== 0) off += 2; // bulletFontRef
+  if ((mask & 0x00000040) !== 0) off += 2; // bulletSize
+  if ((mask & 0x00000020) !== 0) off += 4; // bulletColor
+  if ((mask & 0x00000800) !== 0) {
+    align = u16(data, off); // textAlignment
+    off += 2;
+  }
+  if ((mask & 0x00001000) !== 0) off += 2; // lineSpacing
+  if ((mask & 0x00002000) !== 0) off += 2; // spaceBefore
+  if ((mask & 0x00004000) !== 0) off += 2; // spaceAfter
+  if ((mask & 0x00000100) !== 0) off += 2; // leftMargin
+  if ((mask & 0x00000400) !== 0) off += 2; // indent
+  if ((mask & 0x00008000) !== 0) off += 2; // defaultTabSize
+  if ((mask & 0x00100000) !== 0) off += 2 + (off + 2 <= data.length ? u16(data, off) : 0) * 4; // tabStops
+  if ((mask & 0x00010000) !== 0) off += 2; // fontAlign
+  if ((mask & 0x000e0000) !== 0) off += 2; // wrapFlags (charWrap/wordWrap/overflow)
+  if ((mask & 0x00200000) !== 0) off += 2; // textDirection
+  return {
+    off,
+    ...(align !== undefined ? { align } : {}),
+    ...(bullet !== undefined ? { bullet } : {}),
+    ...(bulletOn !== undefined ? { bulletOn } : {}),
+  };
+}
+
+// A bullet is stated as a CHARACTER, and most often as one from a symbol font:
+// Wingdings 0x6C is the filled circle every deck uses. Left untranslated it
+// renders as the letter `l`. A codepoint already in Unicode's own ranges is
+// taken as it stands.
+function bulletCharacter(code: number): string | undefined {
+  if (code === 0) return undefined;
+  const ch = String.fromCharCode(code);
+  return code < 0x2000 || (code >= 0xf000 && code <= 0xf0ff) ? fromSymbolFont(ch, 'Wingdings') : ch;
+}
+
+// §2.9.11 TextCFException, read the same way: the mask, then its fields in byte
+// order. Keeps bold / italic / underline / size / explicit colour.
+function readCfException(
+  data: Uint8Array,
+  start: number,
+  scheme: SchemeColors | undefined,
+  fonts?: ReadonlyArray<string>,
+): { off: number; props: CharProps } {
+  const mask = u32(data, start);
+  let off = start + 4;
+  const props: CharProps = {};
+  // fontStyle (CFStyle): present if any style bit (bold/italic/underline/
+  // shadow/fehint/kumi/emboss) or the fHasStyle group (bits 10–13) is set.
+  if ((mask & 0x00003eb7) !== 0) {
+    const style = u16(data, off);
+    off += 2;
+    if ((mask & 0x1) !== 0 && (style & 0x1) !== 0) props.bold = true;
+    if ((mask & 0x2) !== 0 && (style & 0x2) !== 0) props.italic = true;
+    if ((mask & 0x4) !== 0 && (style & 0x4) !== 0) props.underline = true;
+  }
+  if ((mask & 0x00010000) !== 0) {
+    props.fontRef = u16(data, off); // an index into the deck's font collection
+    off += 2;
+  }
+  if ((mask & 0x00200000) !== 0) off += 2; // oldEAFontRef
+  if ((mask & 0x00400000) !== 0) off += 2; // ansiFontRef
+  if ((mask & 0x00800000) !== 0) off += 2; // symbolFontRef
+  if ((mask & 0x00020000) !== 0) {
+    const sz = u16(data, off); // fontSize (points)
+    off += 2;
+    if (sz > 0) props.sizePt = sz;
+  }
+  if ((mask & 0x00040000) !== 0) {
+    // §2.12.2 ColorIndexStruct: red, green, blue, index. 0xFE means the three
+    // bytes are the colour; 0x00–0x07 name a SCHEME slot, and read as "no
+    // colour" a run that says "the theme's text colour" fell through to whatever
+    // was under it — white-on-blue decks came out black on white.
+    const index = off + 4 <= data.length ? data[off + 3] : undefined;
+    if (index === 0xfe) {
+      props.colorHex = hex2(data[off]!) + hex2(data[off + 1]!) + hex2(data[off + 2]!);
+    } else if (index !== undefined && index < 8) {
+      // A master's style keeps the SLOT: which colour it is depends on the
+      // scheme of the slide the style is being applied to, not the master's.
+      props.colorIndex = index;
+      const slot = scheme?.[index];
+      if (slot !== undefined) props.colorHex = slot;
+    }
+    off += 4;
+  }
+  if ((mask & 0x00080000) !== 0) off += 2; // position
+  if (props.fontRef !== undefined) {
+    const name = fonts?.[props.fontRef];
+    if (name !== undefined && name.length > 0) props.fontFamily = name;
+  }
+  return { off, props };
 }
 
 function hex2(n: number): string {

@@ -17,6 +17,7 @@ import type {
   PictureBullet,
 } from '@/core/document-model';
 import type { ResourceId } from '@/core/ir';
+import type { ThemeFonts } from '@/core/drawingml/theme-parser';
 import { pt } from '@/core/ir';
 
 import { parseParagraphProperties } from '@/word/paragraph-properties';
@@ -89,6 +90,7 @@ export const EMPTY_NUMBERING: Numbering = {
 export function parseNumbering(
   data: Uint8Array,
   resolveImage?: (relId: string) => ResourceId | undefined,
+  themeFonts?: ThemeFonts,
 ): Numbering {
   const xml = decoder.decode(data);
   const tree = parser.parse(xml) as Record<string, unknown>;
@@ -106,7 +108,7 @@ export function parseNumbering(
     if (!id) continue;
     const levels = new Map<number, NumberingLevel>();
     for (const lvlNode of asArray(el['w:lvl'])) {
-      const lvl = parseLevel(lvlNode, picBullets);
+      const lvl = parseLevel(lvlNode, picBullets, themeFonts);
       if (lvl) levels.set(lvl.ilvl, lvl);
     }
     abstractNums.set(id, { id, levels });
@@ -136,7 +138,7 @@ export function parseNumbering(
       if (!Number.isFinite(ilvl)) continue;
       const start = Number(getValVal(ovr['w:startOverride']));
       if (Number.isFinite(start)) startOverrides.set(ilvl, start);
-      const lvl = parseLevel(ovr['w:lvl'], picBullets);
+      const lvl = parseLevel(ovr['w:lvl'], picBullets, themeFonts);
       if (lvl) levelOverrides.set(ilvl, lvl);
     }
     numInstances.set(numId, {
@@ -156,6 +158,7 @@ export function parseNumbering(
 function parseLevel(
   node: unknown,
   picBullets: ReadonlyMap<string, PictureBullet>,
+  themeFonts?: ThemeFonts,
 ): NumberingLevel | undefined {
   const lvlEl = asElement(node);
   if (!lvlEl) return undefined;
@@ -187,8 +190,8 @@ function parseLevel(
     lvlText,
     ...(isLegal ? { isLegal: true } : {}),
     ...(picBullet ? { picBullet } : {}),
-    paragraphProperties: parseParagraphProperties(lvlEl['w:pPr']),
-    runProperties: parseRunProperties(lvlEl['w:rPr']),
+    paragraphProperties: parseParagraphProperties(lvlEl['w:pPr'], 0, themeFonts),
+    runProperties: parseRunProperties(lvlEl['w:rPr'], themeFonts),
   };
 }
 

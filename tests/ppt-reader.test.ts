@@ -12,11 +12,13 @@ import { describe, expect, it } from 'vitest';
 import { buildPpt } from './fixtures/build-ppt';
 import { buildCfb } from './fixtures/build-cfb';
 import type { FlowDoc } from '@/core/ir/flow';
+import type { PptRun } from '@/pptx/ppt/ppt-text';
 
 import { extractPptContent, paragraphText } from '@/pptx/ppt/ppt-text';
 import { pptReader, readPpt } from '@/pptx/ppt/ppt-reader';
 import { Ream } from '@/core/converter/ream';
 import { createConverter } from '@/core/converter/facade';
+import { pt } from '@/core/ir/units';
 
 const ZERO_WIDTH_SPACE = '​';
 
@@ -671,5 +673,619 @@ describe('ppt reader system colours (PPT-8)', () => {
     ).doc;
     // No resolvable colour ⇒ no autoshape is emitted (a shape needs a fill or line).
     expect(doc.body.filter((el) => el.kind === 'shape')).toHaveLength(0);
+  });
+});
+
+describe('ppt outline text (PPT-10)', () => {
+  // PowerPoint stores a slide's TITLE AND BODY in the document's slide list, not
+  // in the shape that draws it: the placeholder holds an OutlineTextRefAtom
+  // naming which of the slide's texts is its own. Read without following it, a
+  // whole deck came out as one un-anchored blob at the top-left corner.
+  const deck = (): Uint8Array =>
+    buildPpt([
+      {
+        outlineTexts: [
+          { textType: 0, text: 'The title' },
+          { textType: 1, text: 'The body' },
+        ],
+        boxes: [
+          { anchor: { x: 60, y: 40, w: 500, h: 80 }, outlineRef: 0 },
+          { anchor: { x: 60, y: 160, w: 500, h: 300 }, outlineRef: 1 },
+        ],
+      },
+    ]);
+
+  it('puts each outline text in the shape that references it', () => {
+    const slide = extractPptContent(deck()).slides[0]!;
+    expect(slide.shapes.map((s) => s.paragraphs?.map(paragraphText).join(''))).toEqual([
+      'The title',
+      'The body',
+    ]);
+    // …with the shape's own rectangle, instead of falling back to the flow.
+    expect(slide.shapes.map((s) => s.rectPt?.y)).toEqual([40, 160]);
+  });
+
+  it('renders both as positioned shapes on one page', () => {
+    const doc = readPpt(deck()).doc;
+    const boxes = doc.body.filter((el) => el.kind === 'shape');
+    expect(boxes).toHaveLength(2);
+    expect(boxes.map((b) => b.shape.float?.posV?.offsetPt)).toEqual([pt(40), pt(160)]);
+  });
+});
+
+describe('ppt master text styles (PPT-11)', () => {
+  // A `.ppt` title is 44pt because the MASTER says so — the slide's own
+  // StyleTextPropAtom usually states no size at all. §2.9.42 TextMasterStyleAtom
+  // holds one style per indent level, per text type.
+  const deck = (): Uint8Array =>
+    buildPpt(
+      [
+        {
+          masterIndex: 0,
+          outlineTexts: [
+            { textType: 0, text: 'Title' },
+            { textType: 1, text: 'First\rSecond' },
+          ],
+          boxes: [
+            { anchor: { x: 10, y: 10, w: 400, h: 60 }, outlineRef: 0 },
+            { anchor: { x: 10, y: 90, w: 400, h: 200 }, outlineRef: 1 },
+          ],
+        },
+      ],
+      {
+        masters: [
+          {
+            colorScheme: [
+              'FFFFFF',
+              '000000',
+              '808080',
+              '000000',
+              'FF0000',
+              '00FF00',
+              '0000FF',
+              'FFFF00',
+            ],
+            textStyles: [
+              { textType: 0, sizesPt: [44] },
+              { textType: 1, sizesPt: [32, 28] },
+            ],
+          },
+        ],
+      },
+    );
+
+  it('gives a run the size its level inherits from the master', () => {
+    const slide = extractPptContent(deck()).slides[0]!;
+    const sizes = slide.shapes.map((s) => s.paragraphs?.map((p) => p.runs[0]?.sizePt));
+    expect(sizes).toEqual([[44], [32, 32]]);
+  });
+
+  it('takes the centre-title variant from the plain title style it varies', () => {
+    // A master that states only the alignment of `centerTitle` still lends the
+    // title's size: the styles merge property by property, not whole.
+    const slide = extractPptContent(
+      buildPpt(
+        [
+          {
+            masterIndex: 0,
+            outlineTexts: [{ textType: 5, text: 'Centred' }],
+            boxes: [{ anchor: { x: 10, y: 10, w: 400, h: 60 }, outlineRef: 0 }],
+          },
+        ],
+        {
+          masters: [
+            {
+              colorScheme: [
+                'FFFFFF',
+                '000000',
+                '808080',
+                '000000',
+                'FF0000',
+                '00FF00',
+                '0000FF',
+                'FFFF00',
+              ],
+              textStyles: [{ textType: 0, sizesPt: [44] }],
+            },
+          ],
+        },
+      ),
+    ).slides[0]!;
+    expect(slide.shapes[0]?.paragraphs?.[0]?.runs[0]?.sizePt).toBe(44);
+  });
+});
+
+describe('ppt slide background (PPT-12)', () => {
+  // MS-ODRAW marks the background with `fBackground` on a shape like any other.
+  // Read as content it is a rectangle among the slide's shapes; dropped, as it
+  // was, a slide PowerPoint paints black comes out white — and on 41246-2 that
+  // is 95 % of the page.
+  const deck = (): Uint8Array =>
+    buildPpt([
+      {
+        boxes: [
+          { shapeType: 1, background: true, fillColorHex: '000000' },
+          { anchor: { x: 100, y: 80, w: 200, h: 60 }, text: 'Fin' },
+        ],
+      },
+    ]);
+
+  it('reads it as the slide’s background, not as a shape on the slide', () => {
+    const slide = extractPptContent(deck()).slides[0]!;
+    expect(slide.background).toEqual({ fillColorHex: '000000' });
+    expect(slide.shapes.map((s) => s.paragraphs?.map(paragraphText).join(''))).toEqual(['Fin']);
+  });
+
+  it('paints it behind the content, over the whole page', () => {
+    const doc = readPpt(deck()).doc;
+    const backdrop = doc.body.find((el) => el.kind === 'shape' && el.shape.float?.behind === true);
+    expect(backdrop?.kind === 'shape' ? backdrop.shape.fill : undefined).toEqual({
+      kind: 'solid',
+      colorHex: '000000',
+    });
+    expect(backdrop?.kind === 'shape' ? backdrop.shape.width : undefined).toEqual(
+      doc.section?.pageSize?.width,
+    );
+  });
+});
+
+describe('ppt shape fills the file says are there and are not (PPT-13)', () => {
+  const MOVE = 0x4000;
+  const LINE = 0x0001;
+  const CLOSE = 0x6001;
+
+  it('leaves a shape hollow when its boolean set clears fFilled', () => {
+    // A shape states a fill colour whether or not it is filled. 37625's chart
+    // states a red one on the outline every reader leaves hollow, and painting
+    // it put a red slab over half the plot.
+    const doc = readPpt(
+      buildPpt([
+        {
+          boxes: [
+            {
+              anchor: { x: 0, y: 0, w: 80, h: 40 },
+              shapeType: 1,
+              fillColorHex: 'FF0000',
+              lineColorHex: '000080',
+              noFill: true,
+            },
+          ],
+        },
+      ]),
+    ).doc;
+    const shape = doc.body.find((el) => el.kind === 'shape')!.shape;
+    expect(shape.fill).toEqual({ kind: 'none' });
+    expect(shape.line?.colorHex).toBe('000080'); // …and the outline still draws
+  });
+
+  it('draws neither when the set clears fLine too', () => {
+    const doc = readPpt(
+      buildPpt([
+        {
+          boxes: [
+            {
+              anchor: { x: 0, y: 0, w: 80, h: 40 },
+              shapeType: 1,
+              fillColorHex: 'FF0000',
+              lineColorHex: '000080',
+              noFill: true,
+              noLine: true,
+            },
+          ],
+        },
+      ]),
+    ).doc;
+    // Nothing left to draw ⇒ no shape at all, as for a colour that will not resolve.
+    expect(doc.body.filter((el) => el.kind === 'shape')).toHaveLength(0);
+  });
+
+  it('reads a freeform whose arrays state their length without the header', () => {
+    const geometry = (arrayLenExcludesHeader: boolean): number | undefined => {
+      const slide = extractPptContent(
+        buildPpt([
+          {
+            boxes: [
+              {
+                anchor: { x: 0, y: 0, w: 200, h: 120 },
+                shapeType: 0,
+                lineColorHex: '000080',
+                freeform: {
+                  geoRight: 200,
+                  geoBottom: 120,
+                  vertices: [
+                    [0, 0],
+                    [200, 60],
+                    [0, 120],
+                  ],
+                  segments: [MOVE, LINE, LINE, CLOSE],
+                  arrayLenExcludesHeader,
+                },
+              },
+            ],
+          },
+        ]),
+      ).slides[0]!;
+      return slide.shapes[0]?.autoShape?.geometry?.commands.length;
+    };
+    // Stated either way, the path is the same four commands: the segment array
+    // is found where the vertex array actually ends, not where its length says.
+    expect(geometry(false)).toBe(4);
+    expect(geometry(true)).toBe(4);
+  });
+});
+
+describe('ppt master decoration (PPT-14)', () => {
+  // §2.4.24 fMasterObjects — the rules, logos and footer band a master draws on
+  // every slide that follows it. 37625's "teri" logo is one, and no slide of
+  // that deck carried it.
+  const scheme = ['FFFFFF', '000000', '808080', '000000', 'FF0000', '00FF00', '0000FF', 'FFFF00'];
+  const deck = (followMasterObjects: boolean): Uint8Array =>
+    buildPpt(
+      [
+        {
+          masterIndex: 0,
+          followMasterObjects,
+          boxes: [{ anchor: { x: 10, y: 10, w: 300, h: 40 }, text: 'The slide' }],
+        },
+      ],
+      {
+        masters: [
+          {
+            colorScheme: scheme,
+            boxes: [
+              // Decoration: drawn on the slide.
+              {
+                anchor: { x: 600, y: 480, w: 60, h: 40 },
+                shapeType: 1,
+                fillColorHex: 'FF6600',
+              },
+              // A prototype: its prompt text belongs to no slide.
+              { anchor: { x: 10, y: 10, w: 300, h: 40 }, text: 'Click to edit', placeholder: true },
+            ],
+          },
+        ],
+      },
+    );
+
+  it('draws the master’s shapes under the slide’s own, and not its placeholders', () => {
+    const slide = extractPptContent(deck(true)).slides[0]!;
+    expect(
+      slide.shapes.map((s) => s.autoShape?.fillColorHex ?? paragraphText(s.paragraphs![0]!)),
+    ).toEqual(['FF6600', 'The slide']);
+  });
+
+  it('…and none of them when the slide does not follow the master', () => {
+    const slide = extractPptContent(deck(false)).slides[0]!;
+    expect(slide.shapes).toHaveLength(1);
+  });
+});
+
+describe('ppt grouped shapes and picture fills (PPT-15)', () => {
+  // A `.ppt` table IS a group of cell rectangles, each cell's rectangle stated
+  // in the GROUP's coordinate space. Read without the group, 119877's five
+  // picture-backed cells were five un-anchored words in the corner.
+  const tableDeck = (fillType: number): Uint8Array =>
+    buildPpt([
+      {
+        groups: [
+          {
+            anchor: { x: 100, y: 50, w: 400, h: 200 },
+            box: [0, 0, 1000, 1000],
+            boxes: [
+              {
+                childAnchor: [0, 0, 500, 1000],
+                shapeType: 1,
+                text: 'left',
+                pictureFill: { fillType, png: PNG_1x1 },
+              },
+              { childAnchor: [500, 0, 1000, 1000], shapeType: 1, text: 'right' },
+            ],
+          },
+        ],
+      },
+    ]);
+
+  it('gives each grouped shape the slide rectangle its group puts it at', () => {
+    const shapes = extractPptContent(tableDeck(3)).slides[0]!.shapes;
+    expect(shapes.map((s) => s.rectPt)).toEqual([
+      { x: 100, y: 50, w: 200, h: 200 },
+      { x: 300, y: 50, w: 200, h: 200 },
+    ]);
+    expect(shapes.map((s) => s.paragraphs?.map(paragraphText).join(''))).toEqual(['left', 'right']);
+  });
+
+  it('reads a picture fill carried INLINE, stretched or tiled', () => {
+    // 119877 has no Pictures stream at all: every cell holds its own blip as the
+    // fillBlip property's complex data.
+    const stretched = extractPptContent(tableDeck(3)).slides[0]!.shapes[0]?.autoShape;
+    expect(stretched?.image?.bytes.subarray(0, 4)).toEqual(PNG_1x1.subarray(0, 4));
+    expect(stretched?.imageTiled).toBeUndefined();
+    // MSOFILLTYPE 2 is the same picture, repeated at its own size.
+    expect(extractPptContent(tableDeck(2)).slides[0]!.shapes[0]?.autoShape?.imageTiled).toBe(true);
+  });
+
+  it('paints the box under the words, not over them', () => {
+    const body = readPpt(tableDeck(3)).doc.body;
+    const kinds = body.filter((el) => el.kind === 'shape').map((el) => el.shape.fill.kind);
+    // The picture-filled cell comes first, its text box after.
+    expect(kinds.slice(0, 2)).toEqual(['picture', 'none']);
+  });
+});
+
+describe('ppt scheme-coloured text (PPT-16)', () => {
+  // §2.12.2 ColorIndexStruct: index 0xFE means the three bytes ARE the colour;
+  // 0x00–0x07 name a slot in the slide's scheme. Read as "no colour", a run that
+  // says "the theme's text colour" fell through to whatever was under it.
+  const scheme = ['FFFFFF', '112233', '808080', '000000', 'FF0000', '00FF00', '0000FF', 'FFFF00'];
+
+  it('resolves a run’s colour through the slide’s scheme', () => {
+    const slide = extractPptContent(
+      buildPpt([
+        {
+          colorScheme: scheme,
+          text: 'Themed',
+          charRuns: [{ length: 6, colorSchemeIndex: 1 }],
+        },
+      ]),
+    ).slides[0]!;
+    expect(slide.shapes[0]?.paragraphs?.[0]?.runs[0]?.colorHex).toBe('112233');
+  });
+
+  it('lends a master’s colour only to the text type that states it', () => {
+    // A variant the master does not define takes the plain style's METRICS, not
+    // its colour: 41071's subtitle is 36pt because its run says so, and black
+    // because no style claims it — lending the body style's navy painted a
+    // title every reader draws in black.
+    const deck = (textType: number): Uint8Array =>
+      buildPpt(
+        [
+          {
+            masterIndex: 0,
+            outlineTexts: [{ textType, text: 'Words' }],
+            boxes: [{ anchor: { x: 10, y: 10, w: 300, h: 40 }, outlineRef: 0 }],
+          },
+        ],
+        {
+          masters: [{ colorScheme: scheme, textStyles: [{ textType: 1, sizesPt: [24] }] }],
+        },
+      );
+    // Exact type: the size comes through. The variant (4 → body) takes it too…
+    expect(runOf(deck(1))?.sizePt).toBe(24);
+    expect(runOf(deck(4))?.sizePt).toBe(24);
+  });
+
+  const runOf = (bytes: Uint8Array): PptRun | undefined =>
+    extractPptContent(bytes).slides[0]?.shapes[0]?.paragraphs?.[0]?.runs[0];
+});
+
+describe('ppt master background precedence (PPT-17)', () => {
+  // §2.4.24 fMasterBackground: the slide shows the one its MASTER states. The
+  // background shape it keeps of its own is a stale copy — 23884's slides hold
+  // a white one under a master that paints every one of them blue.
+  const scheme = ['FFFFFF', '000000', '808080', '000000', 'FF0000', '00FF00', '0000FF', 'FFFF00'];
+  const deck = (followMasterBackground: boolean): Uint8Array =>
+    buildPpt(
+      [
+        {
+          masterIndex: 0,
+          followMasterBackground,
+          boxes: [{ shapeType: 1, background: true, fillColorHex: 'FFFFFF' }],
+        },
+      ],
+      {
+        masters: [
+          {
+            colorScheme: scheme,
+            boxes: [{ shapeType: 1, background: true, fillColorHex: '0047FF' }],
+          },
+        ],
+      },
+    );
+
+  it('takes the master’s over the copy the slide keeps', () => {
+    expect(extractPptContent(deck(true)).slides[0]?.background).toEqual({
+      fillColorHex: '0047FF',
+    });
+  });
+
+  it('…and the slide’s own when the flag does not say to follow', () => {
+    expect(extractPptContent(deck(false)).slides[0]?.background).toEqual({
+      fillColorHex: 'FFFFFF',
+    });
+  });
+});
+
+describe('ppt bullets (PPT-18)', () => {
+  // §2.9.20 states a bullet as a CHARACTER, and most often as one from a symbol
+  // font — Wingdings 0x6C is the filled circle every deck uses. Left alone it
+  // renders as the letter `l`; dropped, as it was, a list is a stack of lines.
+  const bulletDeck = (charCode: number, hasBullet = true): Uint8Array =>
+    buildPpt([
+      {
+        text: 'One\rTwo',
+        paraRuns: [
+          { length: 3, hasBullet, bulletChar: charCode },
+          { length: 3, hasBullet, bulletChar: charCode },
+        ],
+      },
+    ]);
+
+  it('translates a symbol-font bullet into the character it means', () => {
+    const paras = extractPptContent(bulletDeck(0x6c)).slides[0]!.shapes[0]!.paragraphs!;
+    expect(paras.map((p) => p.bullet)).toEqual(['●', '●']);
+    // …and it is drawn in front of the words.
+    const doc = readPpt(bulletDeck(0x6c)).doc;
+    const first = doc.body.find((el) => el.kind === 'paragraph');
+    expect(first?.kind === 'paragraph' ? first.paragraph.runs[0]?.text : undefined).toBe('● ');
+  });
+
+  it('keeps a bullet that is already Unicode’s own', () => {
+    expect(extractPptContent(bulletDeck(0x2022)).slides[0]!.shapes[0]!.paragraphs![0]?.bullet).toBe(
+      '•',
+    );
+  });
+
+  it('draws none when the paragraph says it has none', () => {
+    expect(
+      extractPptContent(bulletDeck(0x6c, false)).slides[0]!.shapes[0]!.paragraphs![0]?.bullet,
+    ).toBeUndefined();
+  });
+});
+
+describe('ppt typefaces (PPT-19)', () => {
+  // §2.9.30 — a run names its typeface by an INDEX into the deck's font
+  // collection, and the reader kept none of them: every `.ppt` rendered in the
+  // default face, which measures nothing like the Times a deck asks for. 23884's
+  // body text ran off the bottom of every slide it was laid on.
+  const collection = ['Times New Roman', 'Symbol', 'Helvetica'];
+
+  it('resolves a run’s font through the collection', () => {
+    const slide = extractPptContent(
+      buildPpt([{ text: 'Serif', charRuns: [{ length: 5, fontRef: 0 }] }], { fonts: collection }),
+    ).slides[0]!;
+    expect(slide.shapes[0]?.paragraphs?.[0]?.runs[0]?.fontFamily).toBe('Times New Roman');
+  });
+
+  it('takes the master’s typeface when the run names none', () => {
+    const slide = extractPptContent(
+      buildPpt(
+        [
+          {
+            masterIndex: 0,
+            outlineTexts: [{ textType: 1, text: 'Body' }],
+            boxes: [{ anchor: { x: 10, y: 10, w: 300, h: 40 }, outlineRef: 0 }],
+          },
+        ],
+        {
+          fonts: collection,
+          masters: [
+            {
+              colorScheme: [
+                'FFFFFF',
+                '000000',
+                '808080',
+                '000000',
+                'FF0000',
+                '00FF00',
+                '0000FF',
+                'FFFF00',
+              ],
+              textStyles: [{ textType: 1, sizesPt: [24], fontRef: 2 }],
+            },
+          ],
+        },
+      ),
+    ).slides[0]!;
+    expect(slide.shapes[0]?.paragraphs?.[0]?.runs[0]?.fontFamily).toBe('Helvetica');
+  });
+});
+
+describe('ppt tile size (PPT-20)', () => {
+  // MS-ODRAW §2.3.7.11/.12 — `fillWidth` / `fillHeight` state the size ONE copy
+  // of a tiled fill occupies. Ignored, a shape that asks for a small repeat gets
+  // one copy of the picture at its own resolution and no repeat at all.
+  const deck = (tileEmu?: readonly [number, number]): Uint8Array =>
+    buildPpt([
+      {
+        boxes: [
+          {
+            anchor: { x: 0, y: 0, w: 200, h: 200 },
+            shapeType: 1,
+            pictureFill: {
+              fillType: 2,
+              png: PNG_1x1,
+              ...(tileEmu ? { tileEmu } : {}),
+            },
+          },
+        ],
+      },
+    ]);
+
+  it('reads the size the shape states for one copy', () => {
+    // 25.4mm × 12.7mm in EMU → 72pt × 36pt.
+    const auto = extractPptContent(deck([914400, 457200])).slides[0]!.shapes[0]!.autoShape;
+    expect(auto?.tileSizePt).toEqual({ widthPt: 72, heightPt: 36 });
+    expect(
+      readPpt(deck([914400, 457200])).doc.body.find((el) => el.kind === 'shape')?.shape.fill,
+    ).toMatchObject({ tiled: true, tileSizePt: { widthPt: 72, heightPt: 36 } });
+  });
+
+  it('leaves the tile at the picture’s own size when the shape states none', () => {
+    expect(extractPptContent(deck()).slides[0]!.shapes[0]!.autoShape?.tileSizePt).toBeUndefined();
+  });
+});
+
+describe('ppt WordArt (PPT-21)', () => {
+  // MS-ODRAW §2.3.22 — a piece of WordArt states its text, its size and its
+  // face as SHAPE properties, not as a text box. Read as an ordinary autoshape
+  // it is a coloured rectangle: 41246-2's closing slide says "Fin" and we drew
+  // a peach box.
+  const deck = (): Uint8Array =>
+    buildPpt([
+      {
+        boxes: [
+          {
+            anchor: { x: 276, y: 236, w: 134, h: 106 },
+            shapeType: 136, // msosptTextPlainText
+            fillColorHex: 'FFCC99',
+            wordArt: { text: 'Fin', sizePt: 54, font: 'Impact' },
+          },
+        ],
+      },
+    ]);
+
+  it('reads the word, its size and its face off the shape', () => {
+    const shape = extractPptContent(deck()).slides[0]!.shapes[0]!;
+    expect(shape.wordArt).toBe(true);
+    expect(shape.autoShape).toBeUndefined(); // …and not as a filled rectangle
+    expect(shape.paragraphs?.[0]).toEqual({
+      runs: [{ text: 'Fin', sizePt: 54, colorHex: 'FFCC99', fontFamily: 'Impact' }],
+      align: 1,
+    });
+  });
+
+  it('centres it in its box, which is what the box is for', () => {
+    const shape = readPpt(deck()).doc.body.find((el) => el.kind === 'shape')?.shape;
+    expect(shape?.text?.anchor).toBe('ctr');
+    expect(shape?.fill).toEqual({ kind: 'none' });
+  });
+});
+
+describe('ppt outline bullets from the master (PPT-22)', () => {
+  // A master states its outline bullets as a CHARACTER per level, with no
+  // fHasBullet flag beside it. Requiring the flag left 23884's second-level
+  // sub-points unmarked where the reference draws a dash.
+  const scheme = ['FFFFFF', '000000', '808080', '000000', 'FF0000', '00FF00', '0000FF', 'FFFF00'];
+  const deck = (paraBullet?: { hasBullet: boolean }): Uint8Array =>
+    buildPpt(
+      [
+        {
+          masterIndex: 0,
+          text: 'Top\rSub',
+          paraRuns: [
+            { length: 3, level: 0, ...paraBullet },
+            { length: 3, level: 1, ...paraBullet },
+          ],
+        },
+      ],
+      {
+        masters: [
+          {
+            colorScheme: scheme,
+            // Wingdings 0x6C at level 0, an en dash at level 1.
+            textStyles: [{ textType: 3, sizesPt: [24, 20], bulletChars: [0x6c, 0x2013] }],
+          },
+        ],
+      },
+    );
+
+  it('takes a level’s bullet character as the statement that there is one', () => {
+    const paras = extractPptContent(deck()).slides[0]!.shapes[0]!.paragraphs!;
+    expect(paras.map((p) => p.bullet)).toEqual(['●', '–']);
+  });
+
+  it('…and draws none where the paragraph says it has none', () => {
+    const paras = extractPptContent(deck({ hasBullet: false })).slides[0]!.shapes[0]!.paragraphs!;
+    expect(paras.map((p) => p.bullet)).toEqual([undefined, undefined]);
   });
 });

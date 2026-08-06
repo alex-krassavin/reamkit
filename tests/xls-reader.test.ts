@@ -584,7 +584,7 @@ describe('xls conditional formatting (XLS-13)', () => {
       },
     ]);
     expect(doc.styles.dxfs?.[0]?.fill?.patternType).toBe('solid');
-    expect(doc.styles.dxfs?.[0]?.fill?.fgColorHex).toMatch(/^FF[0-9A-F]{6}$/);
+    expect(doc.styles.dxfs?.[0]?.fill?.fgColorHex).toMatch(/^[0-9A-F]{6}$/);
   });
 
   it('shades a matching cell through the projection', () => {

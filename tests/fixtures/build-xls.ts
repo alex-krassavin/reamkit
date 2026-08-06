@@ -136,9 +136,11 @@ export function xfRec(opts: {
     (((opts.top?.colorIndex ?? 0) & 0x7f) << 16) |
     (((opts.bottom?.colorIndex ?? 0) & 0x7f) << 23);
   v.setUint32(12, brd2 >>> 0, true);
+  // §2.4.353: the fill pattern is the top six bits of the four bytes at 14 —
+  // bits 10–15 of the dword written here — and the colours are the word at 18.
   const f = opts.fill;
   const brd3 = f
-    ? ((f.fg ?? 0) & 0x7f) | (((f.bg ?? 0) & 0x7f) << 7) | ((f.pattern & 0x3f) << 26)
+    ? ((f.pattern & 0x3f) << 10) | (((f.fg ?? 0) & 0x7f) << 16) | (((f.bg ?? 0) & 0x7f) << 23)
     : 0;
   v.setUint32(16, brd3 >>> 0, true);
   return rec(0x00e0, d);
@@ -567,8 +569,28 @@ export function msoDrawingShapesRec(
     shapeType: number;
     hasText?: boolean;
     fillRgb?: [number, number, number];
+    // A two-cell ClientAnchor: [col1, row1, col2, row2] (default 0,0 → 2,3).
+    anchorCells?: [number, number, number, number];
+    // A grouped shape's ChildAnchor: [left, top, right, bottom] in the group's
+    // coordinate space. Emitted INSTEAD of a ClientAnchor.
+    childAnchor?: [number, number, number, number];
   }>,
+  // The group shape that opens the container: its coordinate space and the cells
+  // it covers, so a child's ChildAnchor resolves (XLS-5).
+  group?: {
+    box: [number, number, number, number]; // x, y, right, bottom
+    cells: [number, number, number, number]; // col1, row1, col2, row2
+  },
 ): Uint8Array {
+  const clientAnchor = (cells: [number, number, number, number]): Uint8Array => {
+    const anc = new Uint8Array(18);
+    const av = new DataView(anc.buffer);
+    av.setUint16(2, cells[0], true); // col1
+    av.setUint16(6, cells[1], true); // row1
+    av.setUint16(10, cells[2], true); // col2
+    av.setUint16(14, cells[3], true); // row2
+    return escher(0, 0, 0xf010, anc);
+  };
   const sps = shapes.map((s) => {
     const children: Array<Uint8Array> = [escher(2, s.shapeType, 0xf00a, new Uint8Array(8))]; // Sp
     if (s.fillRgb) {
@@ -578,15 +600,36 @@ export function msoDrawingShapesRec(
       v.setUint32(2, (s.fillRgb[0] | (s.fillRgb[1] << 8) | (s.fillRgb[2] << 16)) >>> 0, true);
       children.push(escher(3, 1, 0xf00b, d)); // OPT, 1 property
     }
-    const anc = new Uint8Array(18);
-    const av = new DataView(anc.buffer);
-    av.setUint16(10, 2, true); // col2
-    av.setUint16(14, 3, true); // row2
-    children.push(escher(0, 0, 0xf010, anc)); // ClientAnchor
+    if (s.childAnchor) {
+      const ca = new Uint8Array(16);
+      const cv = new DataView(ca.buffer);
+      s.childAnchor.forEach((v, i) => cv.setInt32(i * 4, v, true));
+      children.push(escher(0, 0, 0xf00f, ca)); // ChildAnchor
+    } else {
+      children.push(clientAnchor(s.anchorCells ?? [0, 0, 2, 3]));
+    }
     if (s.hasText) children.push(escher(0, 0, 0xf00d, new Uint8Array(0))); // ClientTextbox
     return escher(0xf, 0, 0xf004, concat(children)); // SpContainer
   });
-  return rec(0x00ec, escher(0xf, 0, 0xf003, concat(sps))); // SpgrContainer
+  const head: Array<Uint8Array> = [];
+  if (group) {
+    const box = new Uint8Array(16);
+    const bv = new DataView(box.buffer);
+    group.box.forEach((v, i) => bv.setInt32(i * 4, v, true));
+    head.push(
+      escher(
+        0xf,
+        0,
+        0xf004, // the group's own SpContainer: FSPGR + Sp + the cells it covers
+        concat([
+          escher(1, 0, 0xf009, box),
+          escher(2, 0, 0xf00a, new Uint8Array(8)),
+          clientAnchor(group.cells),
+        ]),
+      ),
+    );
+  }
+  return rec(0x00ec, escher(0xf, 0, 0xf003, concat([...head, ...sps]))); // SpgrContainer
 }
 
 // A TXO (0x01B6) text-object record + its CONTINUE record carrying the text.

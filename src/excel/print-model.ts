@@ -222,6 +222,23 @@ const DIGIT_EM: ReadonlyArray<readonly [RegExp, number]> = [
   [/^(times new roman|liberation serif|tinos)$/i, 1024 / 2048],
   [/^(tahoma)$/i, 1118 / 2048],
   [/^(verdana|dejavu sans)$/i, 1303 / 2048],
+  // A CJK face keeps its Latin digits HALF-WIDTH — half the em, where a Latin
+  // face's is a little over a half. Unknown, they fell back to Excel's 7px and
+  // 12843-1's twelve-point PMingLiU columns came out 14 % narrow, which is why
+  // LibreOffice printed that workbook on seventy-eight pages to our forty-nine.
+  [
+    new RegExp(
+      '^(' +
+        '新細明體|細明體|pmingliu|mingliu|標楷體|dfkai-sb' + // Traditional Chinese
+        '|宋体|新宋体|simsun|nsimsun|黑体|simhei|微软雅黑|microsoft yahei' + // Simplified
+        '|微軟正黑體|microsoft jhenghei' +
+        '|ＭＳ [Ｐ]?明朝|ＭＳ [Ｐ]?ゴシック|ms [p]?mincho|ms [p]?gothic|meiryo|メイリオ|游ゴシック|yu gothic' + // Japanese
+        '|굴림체?|gulim(che)?|돋움체?|dotum(che)?|바탕체?|batang(che)?|맑은 고딕|malgun gothic' + // Korean
+        ')$',
+      'iu',
+    ),
+    1024 / 2048,
+  ],
 ];
 
 /**
@@ -2101,6 +2118,11 @@ function runPropsFromXf(xf: XlsxCellXf, styles: XlsxStyles): RunProperties {
   if (font.strike) props.strike = true;
   if (font.sizePt !== undefined) props.fontSizePt = halfPtToPt(Math.round(font.sizePt * 2));
   if (font.colorHex) props.colorHex = font.colorHex;
+  // §18.8.29 `<name>` — the typeface itself, which the model carried for every
+  // other property of the font and not for this one. A workbook says Calibri
+  // and the substitute chooser, which reads the model, saw a document that
+  // named no font at all and set the whole book in the default sans.
+  if (font.name) props.fontFamily = { ascii: font.name };
   return props;
 }
 

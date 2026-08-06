@@ -12,6 +12,7 @@ import { buildXls, msoDrawingShapesRec, numberRec, txoRecs } from './fixtures/bu
 import { readXlsToSheetDoc } from '@/excel/xls/biff-reader';
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
 import { Ream } from '@/core/converter/ream';
+import { pt } from '@/core/ir/units';
 
 const shapeXls = (): Uint8Array =>
   buildXls({
@@ -65,5 +66,63 @@ describe('xls drawing shapes (XLS-7)', () => {
       },
     });
     expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-');
+  });
+});
+
+describe('where a .xls drawing lands (XLS-14)', () => {
+  // A cell anchor counts CELLS — a column index plus an offset in 1024ths of that
+  // column's width. Sized against a made-up 48pt column and placed nowhere at
+  // all, forty shapes of an engineering drawing flowed one below the next and
+  // turned a two-page sheet into fourteen.
+  it('measures a shape on the sheet’s own columns and rows', () => {
+    const doc = readXlsToSheetDoc(
+      buildXls({
+        sheets: [
+          {
+            name: 'S',
+            records: [
+              numberRec(0, 0, 1),
+              msoDrawingShapesRec([{ shapeType: 1, anchorCells: [1, 2, 3, 4] }]),
+            ],
+          },
+        ],
+      }),
+    );
+    const shape = doc.sheets[0]?.shapes?.[0];
+    // Two default columns across and two default rows down, starting one column
+    // and two rows in — the same tracks the grid itself is drawn on.
+    const colPt = 48;
+    const rowPt = 15;
+    expect(shape?.width).toEqual(pt(2 * colPt));
+    expect(shape?.height).toEqual(pt(2 * rowPt));
+    expect(shape?.float?.posH?.offsetPt).toEqual(pt(1 * colPt));
+    expect(shape?.float?.posV?.offsetPt).toEqual(pt(2 * rowPt));
+  });
+
+  it('places a grouped shape through the group that anchors it', () => {
+    // A shape inside a group carries a ChildAnchor in the GROUP's coordinate
+    // space, and no cell anchor of its own; the group's client anchor says where
+    // that space sits. The child here covers the right half of a group that
+    // spans columns 0–4, so it starts at column 2.
+    const doc = readXlsToSheetDoc(
+      buildXls({
+        sheets: [
+          {
+            name: 'S',
+            records: [
+              numberRec(0, 0, 1),
+              msoDrawingShapesRec([{ shapeType: 1, childAnchor: [500, 0, 1000, 1000] }], {
+                box: [0, 0, 1000, 1000],
+                cells: [0, 0, 4, 4],
+              }),
+            ],
+          },
+        ],
+      }),
+    );
+    const shape = doc.sheets[0]?.shapes?.[0];
+    expect(shape?.float?.posH?.offsetPt).toEqual(pt(2 * 48));
+    expect(shape?.width).toEqual(pt(2 * 48));
+    expect(shape?.height).toEqual(pt(4 * 15));
   });
 });

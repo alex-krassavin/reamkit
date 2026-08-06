@@ -2582,7 +2582,12 @@ function fillFromNode(
       // being stretched over the box (§20.1.8.56 `a:stretch`).
       // NoFillAttrInImagedata.docx papers two text boxes with a texture that
       // way, and stretched it came out a brown blur.
-      const tiled = poChildren(child).some((c) => poIs(c, 'a:tile'));
+      const tile = poChildren(child).find((c) => poIs(c, 'a:tile'));
+      const tiled = tile !== undefined;
+      // §20.1.8.58 `@sx` / `@sy` — the scale applied BEFORE the repeat, in
+      // thousandths of a percent. Read as a plain repeat, a texture the file
+      // halves tiles once where it should tile four times.
+      const tileScale = tile ? tileScaleOf(tile) : undefined;
       // §20.1.8.4 `a:alphaModFix` — how opaque the PICTURE is drawn, stated on
       // the blip rather than on a colour. A slide backed by a photo at 70 %
       // showed it at full strength, which on tdf146223 is a saturated red
@@ -2594,6 +2599,7 @@ function fillFromNode(
         kind: 'picture',
         imageResource: resource,
         ...(tiled ? { tiled: true } : {}),
+        ...(tileScale ? { tileScale } : {}),
         ...(crop ? { imageCrop: crop } : {}),
         ...(rect ? { imageFillRect: rect } : {}),
         ...(duotone ? { duotone } : {}),
@@ -2795,6 +2801,18 @@ function duotoneOf(
  * @returns The rect as fractions of the box, or `undefined` when every inset
  *          is zero or negative.
  */
+// §20.1.8.58 `a:tile @sx @sy` — the scale a tile is drawn at, in thousandths of
+// a percent, before it is repeated. Absent or 100 % means the picture's own size.
+function tileScaleOf(tile: PoNode): ShapeFill['tileScale'] {
+  const pct = (name: string): number => {
+    const v = poIntAttr(tile, name);
+    return v === undefined || v <= 0 ? 1 : v / 100000;
+  };
+  const sx = pct('sx');
+  const sy = pct('sy');
+  return sx === 1 && sy === 1 ? undefined : { sx, sy };
+}
+
 function fillRectBox(blipFill: PoNode): ShapeFill['imageFillRect'] {
   const stretch = poChildren(blipFill).find((c) => poIs(c, 'a:stretch'));
   const rect = stretch ? poChildren(stretch).find((c) => poIs(c, 'a:fillRect')) : undefined;
@@ -2840,6 +2858,7 @@ export function shadowFromOuterShdw(
   const colorHex = colorNode ? resolveColorNode(colorNode, resolveColor) : undefined;
   if (!colorHex) return undefined;
   const alphaMod = colorNode ? readColorMods(colorNode).find((m) => m.kind === 'alpha') : undefined;
+  const alpha = alphaMod ? alphaMod.val : 1;
   const dist = emuToPt(poIntAttr(shdw, 'dist') ?? 0);
   // §20.1.10.13 ST_PositiveFixedAngle — 60 000ths of a degree.
   const dirDeg = (poIntAttr(shdw, 'dir') ?? 0) / 60000;
@@ -2848,8 +2867,13 @@ export function shadowFromOuterShdw(
     dxPt: dist * Math.cos(rad),
     dyPt: dist * Math.sin(rad),
     blurPt: emuToPt(poIntAttr(shdw, 'blurRad') ?? 0),
-    colorHex,
-    alpha: alphaMod ? alphaMod.val : 1,
+    // §20.1.2.3.1 — the resolver has already composited the transparency over
+    // the paper, and the shadow carries it a second time when it paints: black
+    // at 40 % came out as 40 % of a grey that was already 60 % white, a fringe
+    // barely darker than the page. The colour the shadow wants is the one
+    // BEFORE that wash (tdf104015's master casts exactly this).
+    colorHex: alpha < 1 ? unblendWhite(colorHex, alpha) : colorHex,
+    alpha,
   };
 }
 
@@ -3021,26 +3045,21 @@ function colorFromContainer(parent: PoNode, resolveColor: ColorResolver): string
 /**
  * §20.1.2.3.1 — a gradient's stop transparencies, settled.
  *
- * A page paints a gradient at ONE transparency, so only a gradient whose every
- * stop is translucent can carry it: the strongest stop decides whether the
- * shape is there at all, which is the question a 7%-and-fading glow asks
- * (tdf123684's master draws one over a dark slide, and composited over the
- * paper instead it was an opaque white disc).
+ * The resolver composites a translucent colour over the PAPER, because a solid
+ * fill has nowhere else to put the transparency. A gradient does: its stops
+ * become a luminosity soft mask of the same sweep (§11.6.5.2,
+ * `buildGradientAlphaMask`), so each stop keeps its own alpha and its own
+ * colour, and the mask decides what shows through.
  *
- * A gradient that mixes a translucent stop with an opaque one has no such
- * answer, so it keeps the colours the resolver already washed toward the paper
- * — an approximation, but the one that has always been drawn: smartart-simple's
- * cyan-to-purple sweep sets 75% on its purple end alone.
+ * That means the washing has to be undone here, on every stop — including the
+ * opaque ones, where undoing it is a no-op. It used to be undone only when
+ * EVERY stop was translucent, on the reasoning that a page paints a gradient at
+ * one transparency; the mask makes that false, and the cost of the old reading
+ * was a band that should have been half-transparent over a blue slide drawn as
+ * an opaque pale stripe (45541's layout fades the middle of its left rule to
+ * 50 %).
  */
 function normalizeStopAlpha(stops: Array<GradientStop>): void {
-  if (gradientAlpha(stops) === undefined) {
-    // No such answer: drop the transparency and keep the washed colours.
-    for (const [i, s] of stops.entries()) {
-      if (s.alpha !== undefined) stops[i] = { offset: s.offset, colorHex: s.colorHex };
-    }
-    return;
-  }
-  // Every stop is translucent: give each its own colour back, unwashed.
   for (const [i, s] of stops.entries()) {
     stops[i] = { ...s, colorHex: unblendWhite(s.colorHex, s.alpha ?? 1) };
   }

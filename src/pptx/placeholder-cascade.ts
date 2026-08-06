@@ -17,9 +17,11 @@
 
 import type { Alignment, ParagraphProperties, RunProperties } from '@/core/document-model';
 import type { ColorResolver } from '@/core/drawingml/colors';
+import type { ThemeFonts } from '@/core/drawingml/theme-parser';
 import type { PoNode } from '@/core/po-helpers';
 import type { PlaceholderRef, ShapeBoxEmu } from '@/pptx/sp-helpers';
 
+import type { Pt } from '@/core/ir';
 import { emuToPt, pt } from '@/core/ir';
 import { resolveColorNode } from '@/core/drawingml/colors';
 import { poAttr, poChildren, poIntAttr, poIs } from '@/core/po-helpers';
@@ -54,11 +56,17 @@ export interface PlaceholderCascade {
    */
   readonly anchorFor: (ph: PlaceholderRef) => 't' | 'ctr' | 'b' | undefined;
   /**
-   * The prototype's own `p:spPr`, for the properties a slide placeholder
-   * inherits rather than states: its fill, its outline, its geometry. The
-   * layout's before the master's.
+   * The prototypes' own `p:spPr`, nearest first — the layout's, then the
+   * master's — for the properties a slide placeholder inherits rather than
+   * states: its fill, its outline, its geometry.
+   *
+   * A CHAIN and not one node, because the inheritance is per property. The
+   * layout's prototype may state a box and nothing else, and the fill then
+   * comes from the master: tdf104015's title is red in every reader and was a
+   * bare outline here, because the layout's `p:spPr` existed and stopped the
+   * search.
    */
-  readonly shapePropsFor: (ph: PlaceholderRef) => PoNode | undefined;
+  readonly shapePropsFor: (ph: PlaceholderRef) => ReadonlyArray<PoNode>;
 }
 
 /** One level of a text style: how its paragraphs sit and how their runs read. */
@@ -66,6 +74,12 @@ interface LevelStyle {
   readonly run: RunProperties;
   readonly paragraph: ParagraphProperties;
   readonly bullet?: LevelBullet;
+  /**
+   * §21.1.2.2.9/.10 — the space around the paragraph stated as a FRACTION of a
+   * line rather than a distance. A fraction of WHAT is only known once the
+   * levels have merged and the size is settled, so it travels this far raw.
+   */
+  readonly spacingPct?: { readonly before?: number; readonly after?: number };
 }
 
 /**
@@ -175,17 +189,22 @@ function categoryOf(type: string | undefined): StyleCategory {
  * @param layoutTree The parsed `p:sldLayout` part.
  * @param masterTree The parsed `p:sldMaster` part, when present.
  * @param colors     The deck's colour resolver, for scheme colours in the text styles.
+ * @param deckDefaults The presentation's own default text style, as the floor.
+ * @param themeFonts The theme's font scheme, for the `+mn-lt` tokens.
  */
 export function buildPlaceholderCascade(
   layoutTree: ReadonlyArray<PoNode>,
   masterTree: ReadonlyArray<PoNode> | undefined,
   colors: ColorResolver,
   deckDefaults: ReadonlyArray<LevelStyle> = [],
+  themeFonts?: ThemeFonts,
 ): PlaceholderCascade {
-  const layoutPhs = collectPlaceholders(layoutTree, 'p:sldLayout', colors);
-  const masterPhs = masterTree ? collectPlaceholders(masterTree, 'p:sldMaster', colors) : [];
+  const layoutPhs = collectPlaceholders(layoutTree, 'p:sldLayout', colors, themeFonts);
+  const masterPhs = masterTree
+    ? collectPlaceholders(masterTree, 'p:sldMaster', colors, themeFonts)
+    : [];
   const txStyles = masterTree
-    ? collectTxStyles(masterTree, colors)
+    ? collectTxStyles(masterTree, colors, themeFonts)
     : { title: [], body: [], other: [] };
 
   // Nearest last: the deck's default, the master's family style, then the two
@@ -199,7 +218,8 @@ export function buildPlaceholderCascade(
         at(matchPlaceholder(layoutPhs, ph)?.levels ?? [], level),
       );
     }
-    return layers.reduce(mergeLevels, EMPTY_LEVEL);
+    const merged = layers.reduce(mergeLevels, EMPTY_LEVEL);
+    return merged.spacingPct === undefined ? merged : withResolvedSpacing(merged);
   };
 
   return {
@@ -219,12 +239,54 @@ export function buildPlaceholderCascade(
       return matchPlaceholder(layoutPhs, ph)?.anchor ?? matchPlaceholder(masterPhs, ph)?.anchor;
     },
     shapePropsFor(ph) {
-      return matchPlaceholder(layoutPhs, ph)?.spPr ?? matchPlaceholder(masterPhs, ph)?.spPr;
+      const chain = [matchPlaceholder(layoutPhs, ph)?.spPr, matchPlaceholder(masterPhs, ph)?.spPr];
+      return chain.filter((n): n is PoNode => n !== undefined);
     },
   };
 }
 
 const EMPTY_LEVEL: LevelStyle = { run: {}, paragraph: {} };
+
+/**
+ * §21.1.2.2.9/.10 — the space a paragraph states as a FRACTION of a line, in
+ * points.
+ *
+ * A "line" here is the paragraph's own text at its natural height, which is the
+ * size times the same 1.2 the layout gives an unstated line. A level that
+ * states the fraction and leaves the size to another level is resolved once
+ * they have merged, which is why this is not read where the fraction is.
+ *
+ * @param pct      The fraction, `0..n` (20% arrives as 0.2).
+ * @param sizePt   The paragraph's resolved font size.
+ * @returns The distance, or `undefined` when the size is not known.
+ */
+export function spacingFromLineFraction(
+  pct: number | undefined,
+  sizePt: number | undefined,
+): Pt | undefined {
+  if (pct === undefined || sizePt === undefined) return undefined;
+  return pt(pct * sizePt * NATURAL_LINE);
+}
+
+/** What the layout gives a line of text with nothing said about its height. */
+const NATURAL_LINE = 1.2;
+
+// The merged level with its line-fraction spacing turned into distances. A
+// fraction the size cannot resolve is dropped rather than guessed at.
+function withResolvedSpacing(level: LevelStyle): LevelStyle {
+  const size = level.run.fontSizePt;
+  const before = spacingFromLineFraction(level.spacingPct?.before, size);
+  const after = spacingFromLineFraction(level.spacingPct?.after, size);
+  if (before === undefined && after === undefined) return level;
+  return {
+    ...level,
+    paragraph: {
+      ...level.paragraph,
+      ...(before !== undefined ? { spacingBefore: before } : {}),
+      ...(after !== undefined ? { spacingAfter: after } : {}),
+    },
+  };
+}
 
 /** The style at `level`, clamped to the list — a deeper level keeps the last. */
 function at(levels: ReadonlyArray<LevelStyle>, level: number): LevelStyle {
@@ -237,10 +299,13 @@ function mergeLevels(base: LevelStyle, next: LevelStyle): LevelStyle {
   // Each PART of a bullet inherits on its own: a level may restate the size and
   // leave the character to the one above it.
   const bullet = base.bullet || next.bullet ? { ...base.bullet, ...next.bullet } : undefined;
+  const spacingPct =
+    base.spacingPct || next.spacingPct ? { ...base.spacingPct, ...next.spacingPct } : undefined;
   return {
     run: { ...base.run, ...next.run },
     paragraph: { ...base.paragraph, ...next.paragraph },
     ...(bullet ? { bullet } : {}),
+    ...(spacingPct ? { spacingPct } : {}),
   };
 }
 
@@ -257,6 +322,7 @@ function mergeLevels(base: LevelStyle, next: LevelStyle): LevelStyle {
 export function parseLevelStyles(
   list: PoNode | undefined,
   colors: ColorResolver,
+  themeFonts?: ThemeFonts,
 ): Array<LevelStyle> {
   if (!list) return [];
   const out: Array<LevelStyle> = [];
@@ -264,10 +330,12 @@ export function parseLevelStyles(
     const lvlPr = poChildren(list).find((c) => poIs(c, `a:lvl${String(lvl)}pPr`));
     const defRPr = lvlPr ? poChildren(lvlPr).find((c) => poIs(c, 'a:defRPr')) : undefined;
     const bullet = parseBullet(lvlPr, colors);
+    const spacingPct = spacingFractions(lvlPr);
     out.push({
-      run: rPrToRunProps(defRPr, colors),
+      run: rPrToRunProps(defRPr, colors, themeFonts),
       paragraph: pPrToParagraphProps(lvlPr),
       ...(bullet ? { bullet } : {}),
+      ...(spacingPct ? { spacingPct } : {}),
     });
   }
   return out;
@@ -283,10 +351,14 @@ const ALGN: Readonly<Record<string, Alignment>> = {
 
 /**
  * A level's paragraph shape — §21.1.2.2.7 `@algn`, `@marL`/`@indent`, and the
- * space around it. `a:spcPct` is a fraction of the line rather than a distance,
- * which this model has no room for, so only the stated POINTS are read.
+ * space around and between its lines.
+ *
+ * Both spacings come in two spellings: `a:spcPts` is a distance (hundredths of
+ * a point) and `a:spcPct` a FRACTION of a line (thousandths of a percent). Only
+ * the distance was read, so a deck that spaces its bullets the usual way — by
+ * fraction — set them solid.
  */
-function pPrToParagraphProps(lvlPr: PoNode | undefined): ParagraphProperties {
+export function pPrToParagraphProps(lvlPr: PoNode | undefined): ParagraphProperties {
   if (!lvlPr) return {};
   const algn = poAttr(lvlPr, 'algn');
   const marL = poIntAttr(lvlPr, 'marL');
@@ -297,7 +369,61 @@ function pPrToParagraphProps(lvlPr: PoNode | undefined): ParagraphProperties {
     ...(indent !== undefined ? { indentFirstLine: emuToPt(indent) } : {}),
     ...spacingPt(lvlPr, 'a:spcBef', 'spacingBefore'),
     ...spacingPt(lvlPr, 'a:spcAft', 'spacingAfter'),
+    ...lineSpacing(lvlPr),
   };
+}
+
+/**
+ * §21.1.2.2.5 `a:lnSpc` — the height of each line: a fraction of the natural
+ * one (`a:spcPct`) or a distance (`a:spcPts`).
+ *
+ * The model states a multiple the way §17.3.1.33 does — 12pt under the `auto`
+ * rule IS single — so a fraction needs no font size to express, which is why
+ * this resolves here and the paragraph SPACING has to wait for the size.
+ *
+ * @param pPr The paragraph properties (a level's or a paragraph's own).
+ * @returns The line spacing, or nothing when the node states none.
+ */
+export function lineSpacing(pPr: PoNode | undefined): ParagraphProperties {
+  const holder = pPr ? poChildren(pPr).find((c) => poIs(c, 'a:lnSpc')) : undefined;
+  if (!holder) return {};
+  const pctVal = poIntAttr(
+    poChildren(holder).find((c) => poIs(c, 'a:spcPct')),
+    'val',
+  );
+  if (pctVal !== undefined && pctVal > 0) {
+    return { spacingLine: pt((pctVal / 100000) * 12), spacingLineRule: 'auto' };
+  }
+  const ptsVal = poIntAttr(
+    poChildren(holder).find((c) => poIs(c, 'a:spcPts')),
+    'val',
+  );
+  if (ptsVal !== undefined && ptsVal > 0) {
+    return { spacingLine: pt(ptsVal / 100), spacingLineRule: 'exact' };
+  }
+  return {};
+}
+
+/**
+ * §21.1.2.2.9/.10 — the fraction of a line a paragraph puts before and after
+ * itself, when it states one. The distance form is read beside it; this is what
+ * the caller must still resolve against the size.
+ *
+ * @param pPr The paragraph properties.
+ * @returns The two fractions (`0..n`), each present only when stated.
+ */
+export function spacingFractions(
+  pPr: PoNode | undefined,
+): { readonly before?: number; readonly after?: number } | undefined {
+  const frac = (tag: string): number | undefined => {
+    const holder = pPr ? poChildren(pPr).find((c) => poIs(c, tag)) : undefined;
+    const pctNode = holder ? poChildren(holder).find((c) => poIs(c, 'a:spcPct')) : undefined;
+    const val = pctNode ? poIntAttr(pctNode, 'val') : undefined;
+    return val === undefined || val < 0 ? undefined : val / 100000;
+  };
+  const [before, after] = [frac('a:spcBef'), frac('a:spcAft')];
+  if (before === undefined && after === undefined) return undefined;
+  return { ...(before !== undefined ? { before } : {}), ...(after !== undefined ? { after } : {}) };
 }
 
 // a:spcBef/a:spcAft → the points it states, when it states points.
@@ -318,6 +444,7 @@ function collectPlaceholders(
   tree: ReadonlyArray<PoNode>,
   root: 'p:sldLayout' | 'p:sldMaster',
   colors: ColorResolver,
+  themeFonts?: ThemeFonts,
 ): Array<ParsedPlaceholder> {
   const sld = tree.find((n) => poIs(n, root));
   const cSld = sld ? poChildren(sld).find((c) => poIs(c, 'p:cSld')) : undefined;
@@ -339,7 +466,7 @@ function collectPlaceholders(
       ref,
       ...(box ? { box } : {}),
       ...(spPr ? { spPr } : {}),
-      levels: parseLevelStyles(lstStyle, colors),
+      levels: parseLevelStyles(lstStyle, colors, themeFonts),
       ...(anchor ? { anchor } : {}),
     });
   }
@@ -368,11 +495,16 @@ function matchPlaceholder(
 function collectTxStyles(
   masterTree: ReadonlyArray<PoNode>,
   colors: ColorResolver,
+  themeFonts?: ThemeFonts,
 ): Record<StyleCategory, Array<LevelStyle>> {
   const sld = masterTree.find((n) => poIs(n, 'p:sldMaster'));
   const txStyles = sld ? poChildren(sld).find((c) => poIs(c, 'p:txStyles')) : undefined;
   const family = (tag: string): Array<LevelStyle> =>
-    parseLevelStyles(txStyles ? poChildren(txStyles).find((c) => poIs(c, tag)) : undefined, colors);
+    parseLevelStyles(
+      txStyles ? poChildren(txStyles).find((c) => poIs(c, tag)) : undefined,
+      colors,
+      themeFonts,
+    );
   return {
     title: family('p:titleStyle'),
     body: family('p:bodyStyle'),

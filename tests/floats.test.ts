@@ -399,6 +399,16 @@ describe('a tiled picture fill (§14.1.2.5 type="tile" / §20.1.8.58 a:tile)', (
     expect(first.height).toBeCloseTo(1.5, 1);
   });
 
+  it('scales a copy before repeating it, as `sx` / `sy` ask', () => {
+    // §20.1.8.58 — the scale is thousandths of a percent, and it applies to the
+    // picture BEFORE the repeat. Read as a plain tile, a texture the file
+    // doubles repeats four times as often as it should.
+    const drawn = images(tiled(blip('<a:tile tx="0" ty="0" sx="200000" sy="400000"/>')));
+    const first = drawn[0] as unknown as { width: number; height: number };
+    expect(first.width).toBeCloseTo(3, 1); // 1.5pt × 2
+    expect(first.height).toBeCloseTo(6, 1); // 1.5pt × 4
+  });
+
   it('…and a stretched one is still the single picture it was', () => {
     const drawn = images(tiled(blip('<a:stretch><a:fillRect/></a:stretch>')));
     expect(drawn.length).toBe(1);

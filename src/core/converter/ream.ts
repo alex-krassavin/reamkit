@@ -18,7 +18,7 @@
 
 import type { ConvertResult, SourceDoc } from '@/core/converter/facade';
 import type { FontBytesByVariant } from '@/core/font';
-import type { FetchLike } from '@/core/fonts';
+import type { FamilyKey, FetchLike, SubstituteKey } from '@/core/fonts';
 import type { FontProvider } from '@/core/fonts/provider';
 import type { Loss } from '@/core/ir';
 import type { DocumentReader } from '@/core/ir/adapters';
@@ -28,7 +28,9 @@ import type { SignatureOptions, StyledRenderOptions } from '@/pdf';
 import { DEFAULT_READERS, resolveFontsViaChain, toFlowDoc } from '@/core/converter/facade';
 import { flowRenderOptions } from '@/core/converter/project';
 import { FontRegistry, createFontMeasure } from '@/core/font';
-import { fetchFontSet } from '@/core/fonts';
+import { fetchFontSet, fetchScriptFont, resolveFamilyKey } from '@/core/fonts';
+import { scriptsInFlow } from '@/core/fonts/scripts';
+import { familiesInFlow } from '@/core/fonts/families';
 import { ConversionLossError } from '@/core/ir';
 import { decryptPackage, isEncryptedPackage } from '@/core/crypto/offcrypto';
 import { writeDocx } from '@/word/docx-writer';
@@ -38,7 +40,6 @@ import { writeHtml } from '@/html/html-writer';
 import { layoutStyledDocument } from '@/layout/styled-layout';
 import { renderStyledPdf, renderStyledPdfEncrypted, signPdf } from '@/pdf';
 import { writeSvg } from '@/svg/svg-writer';
-import { resolveDocxAutoFonts } from '@/word/docx-to-pdf';
 
 /** The output formats {@link Ream.convert} can produce. */
 export type ReamTarget = 'pdf' | 'svg' | 'html' | 'docx' | 'xlsx';
@@ -266,7 +267,7 @@ export class Ream {
       return { bytes: xlsx.bytes, losses };
     }
 
-    const { fonts, registriesByFamily } = await this.resolveFonts(options, losses);
+    const { fonts, registriesByFamily } = await this.resolveFonts(options, losses, flow);
     const registry = FontRegistry.fromBytes(fonts);
 
     // §18.3.1.13 measures a column in Maximum Digit Widths — of the font it is
@@ -361,6 +362,7 @@ export class Ream {
   private async resolveFonts(
     options: ReamConvertOptions,
     losses: Array<Loss>,
+    flow: FlowDoc,
   ): Promise<{
     fonts: FontBytesByVariant;
     registriesByFamily?: StyledRenderOptions['registriesByFamily'];
@@ -375,15 +377,63 @@ export class Ream {
       if (fonts) return { fonts };
     }
 
-    // Auto-download an open substitute set (per detected family for docx).
-    if (this.readerId === 'docx') {
-      return resolveDocxAutoFonts(this.source, options);
+    // Auto-download an open substitute set, one per family the document names
+    // (families-in-flow, so every format is served the same way — a deck whose
+    // theme is Times and whose body is Calibri gets both).
+    const fetchOpt = options.fontFetch ? { fetch: options.fontFetch } : {};
+    const keys = options.fontFamily
+      ? new Set<FamilyKey>([resolveFamilyKey(options.fontFamily)])
+      : familiesInFlow(flow);
+    if (keys.size <= 1 && scriptsInFlow(flow).scripts.size === 0) {
+      const family = keys.values().next().value;
+      return { fonts: await fetchFontSet({ ...(family ? { family } : {}), ...fetchOpt }) };
     }
-    const fetchOpt = {
-      ...(options.fontFamily ? { family: options.fontFamily } : {}),
-      ...(options.fontFetch ? { fetch: options.fontFetch } : {}),
-    };
-    return { fonts: await fetchFontSet(fetchOpt) };
+    const registriesByFamily = new Map<SubstituteKey, FontRegistry>();
+    let baseBytes: FontBytesByVariant | undefined;
+    for (const key of keys) {
+      const bytes = await fetchFontSet({ family: key, ...fetchOpt });
+      registriesByFamily.set(key, FontRegistry.fromBytes(bytes));
+      // The registry a run falls back to when its family is none of these.
+      if (key === 'arimo' || !baseBytes) baseBytes = bytes;
+    }
+    await this.addScriptFonts(registriesByFamily, flow, options, losses);
+    return { fonts: baseBytes!, registriesByFamily };
+  }
+
+  /**
+   * Fetch one face per writing system the document holds text in — the curated
+   * families are Latin, and Han, Kana, Hangul, Arabic and the geometric symbols
+   * are a notdef box in every one of them.
+   *
+   * Only the regular weight is fetched: Noto Sans SC is ten megabytes, and a
+   * bold run in it is better stroked (see `SyntheticFace`) than downloaded four
+   * times over. A face that fails to arrive is a recorded loss, not a throw —
+   * the rest of the document still renders.
+   *
+   * @param into    The registry map the run resolver looks in.
+   * @param flow    The parsed document.
+   * @param options The convert options (for the injectable `fetch`).
+   * @param losses  Where a face that could not be fetched records itself.
+   */
+  private async addScriptFonts(
+    into: Map<SubstituteKey, FontRegistry>,
+    flow: FlowDoc,
+    options: ReamConvertOptions,
+    losses: Array<Loss>,
+  ): Promise<void> {
+    const { scripts } = scriptsInFlow(flow);
+    for (const script of scripts) {
+      const bytes = await fetchScriptFont(script, options.fontFetch);
+      if (!bytes) {
+        losses.push({
+          feature: 'font',
+          detail: `no face could be fetched for the ${script} script; its text draws as boxes`,
+          severity: 'substituted',
+        });
+        continue;
+      }
+      into.set(script, FontRegistry.fromBytes(bytes));
+    }
   }
 
   /**

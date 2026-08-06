@@ -7,9 +7,11 @@
 
 import type { RunProperties } from '@/core/document-model';
 import type { ColorResolver } from '@/core/drawingml/colors';
+import type { ThemeFonts } from '@/core/drawingml/theme-parser';
 import type { PoNode } from '@/core/po-helpers';
 
 import { resolveColorNode } from '@/core/drawingml/colors';
+import { resolveThemeFont } from '@/core/drawingml/theme-parser';
 import { pt } from '@/core/ir';
 import { poAttr, poChildren, poIntAttr, poIs } from '@/core/po-helpers';
 
@@ -84,13 +86,25 @@ export function parseXfrmBox(spPr: PoNode | undefined): ShapeBoxEmu | undefined 
  * (`sz`, hundredths of a point), bold/italic/underline, solid colour and the
  * latin typeface. Scheme colours and the theme font cascade come in PX5.
  */
-export function rPrToRunProps(rPr: PoNode | undefined, colors: ColorResolver): RunProperties {
+export function rPrToRunProps(
+  rPr: PoNode | undefined,
+  colors: ColorResolver,
+  themeFonts?: ThemeFonts,
+): RunProperties {
   if (!rPr) return {};
   const sz = poIntAttr(rPr, 'sz');
   const u = poAttr(rPr, 'u');
   const colorHex = solidFillColor(rPr, colors);
   const latin = poChildren(rPr).find((c) => poIs(c, 'a:latin'));
-  const typeface = latin ? poAttr(latin, 'typeface')?.trim() : undefined;
+  // §20.1.4.1.14 — a slide names its typeface by TOKEN far more often than by
+  // name (`+mn-lt` is "whatever the theme calls its body font"). Left
+  // unresolved the token travels on as if it WERE a typeface, and no
+  // substitution table knows it: 45541_Header's Times deck came out in a
+  // grotesque.
+  const typeface = resolveThemeFont(
+    latin ? poAttr(latin, 'typeface')?.trim() : undefined,
+    themeFonts,
+  );
   // A run states these to turn them OFF as much as on: the body style of
   // 45541_Header's master is bold and every slide's own runs say `b="0"`, so
   // read as "bold when true, silent otherwise" the whole deck came out bold.

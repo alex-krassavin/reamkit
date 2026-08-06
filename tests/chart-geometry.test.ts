@@ -51,8 +51,11 @@ describe('niceScale', () => {
     // clears the plot frame. 57362.xlsx's 12-value bar touched the ceiling
     // where both references stop at 14.
     expect(niceScale(0, 95)).toEqual({ min: 0, max: 100, step: 20 });
-    expect(niceScale(0, 25)).toEqual({ min: 0, max: 30, step: 10 });
     expect(niceScale(0, 8)).toEqual({ min: 0, max: 10, step: 2 });
+    // Six ticks asked for, six delivered: the step is measured against the
+    // range the data SPANS. Measured against Heckbert's rounded-up range (25
+    // becomes 50) it came out 10, which is four labels for a budget of six.
+    expect(niceScale(0, 25)).toEqual({ min: 0, max: 30, step: 5 });
   });
 
   it('handles a flat range', () => {
@@ -133,6 +136,37 @@ describe('a crowded category axis', () => {
     expect(few).toContain('A');
     expect(few).toContain('B');
     expect(few).toContain('C');
+  });
+});
+
+describe('how many ticks an axis carries', () => {
+  // A tall axis takes more of them — a fixed six drew 0/100/200/300 down a plot
+  // where both references fit 0/50/…/300 — but not one per 32pt: at that rate a
+  // 427pt chart asked for ten, and Excel labels the same 0…5 data 0/1/…/6 where
+  // we drew half-steps (chart-texture-bg.pptx).
+  const axisLabels = (h: number, values: ReadonlyArray<number>): Array<string> =>
+    buildBarScene(
+      { ...barChart('col'), series: [{ name: 'S', values }], categories: ['A', 'B', 'C'] },
+      W,
+      h,
+      measure,
+    )
+      .labels.map((l) => l.text)
+      .filter((t) => /^[\d.]+$/.test(t));
+
+  it('gives a tall chart whole steps where the data is small', () => {
+    const tall = axisLabels(427, [1.8, 3, 5]);
+    expect(tall).toContain('6');
+    expect(tall.some((t) => t.includes('.'))).toBe(false); // no 0.5 half-steps
+  });
+
+  it('still fills a tall axis when the data is large', () => {
+    // The case the height-dependence exists for: 0/50/…/300, not 0/100/200/300.
+    expect(axisLabels(400, [120, 250, 300])).toContain('50');
+  });
+
+  it('thins out on a short axis', () => {
+    expect(axisLabels(90, [120, 250, 300]).length).toBeLessThanOrEqual(6);
   });
 });
 

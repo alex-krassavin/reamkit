@@ -1,0 +1,52 @@
+[
+ {
+  "name": "GHOSTSCRIPT-698804-1-fuzzed.pdf",
+  "score": 97,
+  "aligned": false
+ },
+ {
+  "name": "22060_A1_01_Plans.pdf",
+  "score": 0.3533,
+  "aligned": false
+ },
+ {
+  "name": "160F-2019.pdf",
+  "score": 0.2065,
+  "aligned": true
+ },
+ {
+  "name": "Brotli-Prototype-FileA.pdf",
+  "score": 0.1546,
+  "aligned": false
+ },
+ {
+  "name": "IdentityToUnicodeMap_charCodeOf.pdf",
+  "score": 0.0242,
+  "aligned": true
+ },
+ {
+  "name": "ArabicCIDTrueType.pdf",
+  "score": 0.0166,
+  "aligned": true
+ },
+ {
+  "name": "ContentStreamCycleType3insideType3.pdf",
+  "score": 0.0159,
+  "aligned": true
+ },
+ {
+  "name": "ContentStreamNoCycleType3insideType3.pdf",
+  "score": 0.0159,
+  "aligned": true
+ },
+ {
+  "name": "Embedded_font.pdf",
+  "score": 0.0057,
+  "aligned": true
+ },
+ {
+  "name": "90ms_rksj_h_sample.pdf",
+  "score": 0.0009,
+  "aligned": true
+ }
+]

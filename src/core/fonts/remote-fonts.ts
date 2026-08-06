@@ -36,6 +36,58 @@ const VARIANT_SUFFIX: Record<FontVariant, string> = {
 /** A curated open substitute family (the Croscore + Carlito/Caladea set, like LibreOffice). */
 export type FamilyKey = 'arimo' | 'tinos' | 'cousine' | 'carlito' | 'caladea';
 
+/**
+ * A WRITING SYSTEM the curated five cannot draw at all. They are Latin families
+ * — Greek, Cyrillic and Hebrew ride along, everything else is a notdef box —
+ * and 2145 characters of the corpus fall outside them: Han, Kana, Hangul,
+ * Arabic, the geometric symbols a form's checkbox is made of.
+ *
+ * These are fetched only when a document actually holds such a character, and
+ * only in the regular weight: Noto Sans SC is ten megabytes, and a bold run in
+ * it is better stroked (see `SyntheticFace`) than downloaded four times over.
+ */
+export type ScriptKey = 'jp' | 'kr' | 'sc' | 'arabic' | 'hebrew' | 'thai' | 'symbols';
+
+/** Either kind of substitute — a Latin family or a per-script face. */
+export type SubstituteKey = FamilyKey | ScriptKey;
+
+interface ScriptFamily {
+  readonly pkg: string;
+  readonly file: string;
+}
+
+const SCRIPTS: Record<ScriptKey, ScriptFamily> = {
+  jp: { pkg: 'noto-sans-jp', file: 'NotoSansJP' },
+  kr: { pkg: 'noto-sans-kr', file: 'NotoSansKR' },
+  sc: { pkg: 'noto-sans-sc', file: 'NotoSansSC' },
+  arabic: { pkg: 'noto-sans-arabic', file: 'NotoSansArabic' },
+  hebrew: { pkg: 'noto-sans-hebrew', file: 'NotoSansHebrew' },
+  thai: { pkg: 'noto-sans-thai', file: 'NotoSansThai' },
+  symbols: { pkg: 'noto-sans-symbols-2', file: 'NotoSansSymbols2' },
+};
+
+/** Whether a substitute key names a writing system rather than a Latin family. */
+export function isScriptKey(key: SubstituteKey): key is ScriptKey {
+  return key in SCRIPTS;
+}
+
+/**
+ * Fetch the ONE face a writing system is drawn with.
+ *
+ * @param script The writing system.
+ * @param fetchImpl Injectable `fetch` (defaults to the global one).
+ * @returns The regular face, or `undefined` when the download fails.
+ */
+export async function fetchScriptFont(
+  script: ScriptKey,
+  fetchImpl: FetchLike = globalThis.fetch.bind(globalThis),
+): Promise<FontBytesByVariant | undefined> {
+  const family = SCRIPTS[script];
+  const url = `${CDN_BASE}/${family.pkg}/400Regular/${family.file}_400Regular.ttf`;
+  const bytes = await fetchTtf(url, fetchImpl, false);
+  return bytes ? { regular: bytes } : undefined;
+}
+
 interface CuratedFamily {
   readonly pkg: string; // @expo-google-fonts package name
   readonly file: string; // capitalised file prefix
@@ -57,6 +109,10 @@ const FAMILIES: Record<FamilyKey, CuratedFamily> = {
 // e.g. Cambria resolves to its exact twin Caladea, not the generic serif Tinos.
 const EXACT: Record<string, FamilyKey> = {
   calibri: 'carlito',
+  // A theme's HEADING font in 240 of the corpus's documents. It is Calibri's
+  // own light weight, so Carlito is its twin too — read as an unknown name it
+  // went to the generic sans and set every heading in Arial's widths.
+  'calibri light': 'carlito',
   cambria: 'caladea',
   arial: 'arimo',
   helvetica: 'arimo',
@@ -90,22 +146,115 @@ const MONO = new Set([
   'monospace',
 ]);
 
+// The words a family name ends with to say which MEMBER of the family it is —
+// a weight, a width or a slant. Each maps to what the substitute can do about
+// it: take its bold cut, take its italic, squeeze it. `none` is a face no
+// curated family ships (light, medium, thin), and the regular one is the honest
+// answer there — which is what LibreOffice does with them too.
+const WEIGHT_WORDS: ReadonlyMap<string, 'bold' | 'italic' | 'narrow' | 'none'> = new Map([
+  ['black', 'bold'],
+  ['heavy', 'bold'],
+  ['bold', 'bold'],
+  ['semibold', 'bold'],
+  ['demibold', 'bold'],
+  ['demi', 'bold'],
+  ['italic', 'italic'],
+  ['oblique', 'italic'],
+  ['light', 'none'],
+  ['thin', 'none'],
+  ['medium', 'none'],
+  ['regular', 'none'],
+  ['book', 'none'],
+  ['narrow', 'narrow'],
+  ['condensed', 'narrow'],
+  ['cond', 'narrow'],
+  ['expanded', 'none'],
+  ['extra', 'none'],
+  ['ultra', 'none'],
+  ['pro', 'none'],
+]);
+
+/** A family name, read: which substitute it maps to and what it says about the face. */
+export interface FamilyStyle {
+  readonly key: FamilyKey;
+  /** The NAME asks for a heavy face (`Arial Black`, `DIN-Bold`). */
+  readonly bold?: boolean;
+  /** …or a slanted one (`Frutiger Oblique`). */
+  readonly italic?: boolean;
+  /**
+   * …or a narrow one (`Arial Narrow`), as the fraction of the normal advance it
+   * sets at. No curated family ships a condensed cut, so the substitute is
+   * squeezed instead — Arial Narrow's own widths are 82 % of Arial's, which is
+   * also what LibreOffice's Liberation Sans Narrow reproduces.
+   */
+  readonly widthScale?: number;
+}
+
+/** Arial Narrow's advance widths, as a fraction of Arial's. */
+const NARROW_SCALE = 0.82;
+
 /**
  * Map a document-referenced font family to a curated open substitute: an exact
  * metric twin when one is known (e.g. Calibri → Carlito), otherwise a
  * serif/mono/sans style fallback.
  *
+ * The name may also carry the FACE — `Times New Roman Bold` is the Times
+ * family, and read whole it matches no twin at all and fell through to the
+ * generic sans, which is how a Times heading came out in a grotesque.
+ *
+ * @param name The referenced family name (case-insensitive); empty ⇒ Arimo.
+ * @returns The chosen family and what the name said about the face.
+ */
+export function resolveFamilyStyle(name: string | undefined): FamilyStyle {
+  if (!name) return { key: 'arimo' };
+  // PostScript spells the face with a hyphen (`CenturySchoolbook-Bold`), and a
+  // stray comma is how some producers separate it (`Arial,Bold`).
+  const words = name
+    .trim()
+    .toLowerCase()
+    .split(/[\s\-_,]+/u)
+    .filter((w) => w !== '');
+  let bold = false;
+  let italic = false;
+  let narrow = false;
+  // Strip the face words off the END — a family may be NAMED for one of them
+  // (Book Antiqua), and only a trailing word is the face.
+  while (words.length > 1) {
+    const word = WEIGHT_WORDS.get(words[words.length - 1]!);
+    if (word === undefined) break;
+    if (word === 'bold') bold = true;
+    if (word === 'italic') italic = true;
+    if (word === 'narrow') narrow = true;
+    words.pop();
+  }
+  // The whole name first, then the words a foundry prefix or a modifier may be
+  // hiding the family behind: `Adobe Garamond Pro` is a Garamond.
+  const tries = [words.join(' '), words[words.length - 1]!, words[0]!];
+  let key: FamilyKey = 'arimo';
+  for (const n of tries) {
+    const found = EXACT[n] ?? (MONO.has(n) ? 'cousine' : SERIF.has(n) ? 'tinos' : undefined);
+    if (found) {
+      key = found;
+      break;
+    }
+  }
+  return {
+    key,
+    ...(bold ? { bold } : {}),
+    ...(italic ? { italic } : {}),
+    ...(narrow ? { widthScale: NARROW_SCALE } : {}),
+  };
+}
+
+/**
+ * The curated substitute for a family name — {@link resolveFamilyStyle} without
+ * the face it also carries.
+ *
  * @param name The referenced family name (case-insensitive); empty ⇒ Arimo.
  * @returns The chosen {@link FamilyKey}.
  */
 export function resolveFamilyKey(name: string | undefined): FamilyKey {
-  if (!name) return 'arimo';
-  const n = name.trim().toLowerCase();
-  const exact = EXACT[n];
-  if (exact) return exact;
-  if (MONO.has(n)) return 'cousine';
-  if (SERIF.has(n)) return 'tinos';
-  return 'arimo';
+  return resolveFamilyStyle(name).key;
 }
 
 function fontUrl(family: CuratedFamily, variant: FontVariant): string {

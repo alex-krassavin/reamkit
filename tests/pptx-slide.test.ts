@@ -158,6 +158,152 @@ describe('pptx placeholder cascade (E-PPTX PX2)', () => {
     expect(run?.properties.bold).toBe(true);
   });
 
+  // §21.1.2.2.5/.9/.10 — both spacings come in two spellings: `a:spcPts` is a
+  // distance, `a:spcPct` a FRACTION of a line. Only the distance was read, so a
+  // deck that spaces its bullets the usual way — by fraction — set them solid.
+  it('reads the line height and the space around a paragraph stated as fractions', () => {
+    const styles =
+      `<p:txStyles><p:titleStyle/><p:bodyStyle><a:lvl1pPr>` +
+      `<a:lnSpc><a:spcPct val="90000"/></a:lnSpc>` +
+      `<a:spcBef><a:spcPct val="20000"/></a:spcBef>` +
+      `<a:defRPr sz="3000"/></a:lvl1pPr></p:bodyStyle><p:otherStyle/></p:txStyles>`;
+    const slide = (pPr: string): string =>
+      `<p:sp><p:nvSpPr><p:cNvPr id="3" name="Body 2"/><p:cNvSpPr/>` +
+      `<p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5486400" cy="1828800"/></a:xfrm></p:spPr>` +
+      `<p:txBody><a:bodyPr/><a:p>${pPr}<a:r><a:rPr lang="en"/><a:t>Spaced</a:t></a:r></a:p>` +
+      `<a:p><a:endParaRPr lang="en"/></a:p></p:txBody></p:sp>`;
+    const paras = (pPr: string) => {
+      const doc = Ream.parse(buildPptx([slide(pPr)], { layoutMaster: { txStyles: styles } }));
+      const el = doc.flow.body.find((e) => e.kind === 'shape');
+      return el?.kind === 'shape'
+        ? (el.shape.text?.content.flatMap((c) => (c.kind === 'paragraph' ? [c.paragraph] : [])) ??
+            [])
+        : [];
+    };
+    // From the level: 90% of a line (12pt states "single") and 20% of one
+    // before the paragraph, resolved against the 30pt the same level gives.
+    const [first, blank] = paras('');
+    expect(first?.properties.spacingLine).toBeCloseTo(10.8, 5);
+    expect(first?.properties.spacingLineRule).toBe('auto');
+    expect(first?.properties.spacingBefore).toBeCloseTo(0.2 * 30 * 1.2, 5);
+    // §21.1.2.2.3 — a paragraph with no runs is as tall as its MARK, which
+    // takes the level's size when it states none of its own.
+    expect(blank?.runs).toHaveLength(0);
+    expect(blank?.properties.runProperties?.fontSizePt).toBe(30);
+    // The paragraph's own spelling wins, in either form.
+    const own = paras(
+      '<a:pPr><a:lnSpc><a:spcPts val="1800"/></a:lnSpc>' +
+        '<a:spcBef><a:spcPts val="600"/></a:spcBef></a:pPr>',
+    )[0];
+    expect(own?.properties.spacingLine).toBe(18);
+    expect(own?.properties.spacingLineRule).toBe('exact');
+    expect(own?.properties.spacingBefore).toBe(6);
+  });
+
+  // ISO/IEC 29500-3 §10.2 — a deck writes the same shape twice: an `mc:Choice`
+  // for the application whose namespace it names, and an `mc:Fallback` in plain
+  // OOXML for everyone else. Reading the choice means reading markup written
+  // for someone else — tdf143222's whole slide is an embedded worksheet whose
+  // preview picture lives in the fallback alone, and it came out blank.
+  it('takes the mc:Fallback of an AlternateContent, not the choice', () => {
+    const alt =
+      `<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">` +
+      `<mc:Choice xmlns:v="urn:schemas-microsoft-com:vml" Requires="v">` +
+      `<p:sp><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+      `<a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></p:spPr></p:sp>` +
+      `</mc:Choice><mc:Fallback>` +
+      `<p:sp><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+      `<a:solidFill><a:srgbClr val="00FF00"/></a:solidFill></p:spPr></p:sp>` +
+      `</mc:Fallback></mc:AlternateContent>`;
+    const fills = Ream.parse(buildPptx([alt])).flow.body.flatMap((el) =>
+      el.kind === 'shape' ? [el.shape.fill.colorHex] : [],
+    );
+    expect(fills).toEqual(['00FF00']); // the fallback's green, and only once
+  });
+
+  // §21.1.2.1.2 `a:normAutofit` — the shrink PowerPoint already worked out and
+  // wrote down. Unread, the text it squeezed to 62% of its style overflowed the
+  // placeholder it was squeezed to fit.
+  it('sets the text at the scale the autofit already settled on', () => {
+    const body = (bodyPr: string): string =>
+      `<p:sp><p:nvSpPr><p:cNvPr id="3" name="Body 2"/><p:cNvSpPr/>` +
+      `<p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5486400" cy="914400"/></a:xfrm></p:spPr>` +
+      `<p:txBody>${bodyPr}<a:p><a:r><a:rPr lang="en" sz="3200"/><a:t>Squeezed</a:t></a:r></a:p>` +
+      `</p:txBody></p:sp>`;
+    const fittedPara = (bodyPr: string) => {
+      const doc = Ream.parse(buildPptx([body(bodyPr)]));
+      const el = doc.flow.body.find((e) => e.kind === 'shape');
+      const block =
+        el?.kind === 'shape'
+          ? el.shape.text?.content.find((c) => c.kind === 'paragraph')
+          : undefined;
+      return block?.kind === 'paragraph' ? block.paragraph : undefined;
+    };
+    // 62.5% of 32pt, and a fifth off the line spacing (12pt states "single").
+    const fitted = fittedPara(
+      '<a:bodyPr><a:normAutofit fontScale="62500" lnSpcReduction="20000"/></a:bodyPr>',
+    );
+    expect(fitted?.runs[0]?.properties.fontSizePt).toBeCloseTo(20, 5);
+    expect(fitted?.properties.spacingLine).toBeCloseTo(9.6, 5);
+    expect(fitted?.properties.spacingLineRule).toBe('auto');
+    // A bare normAutofit states the RULE and no result — that shrink is ours to
+    // compute, and until we do there is nothing to apply.
+    expect(
+      fittedPara('<a:bodyPr><a:normAutofit/></a:bodyPr>')?.runs[0]?.properties.fontSizePt,
+    ).toBe(32);
+    expect(fittedPara('<a:bodyPr/>')?.runs[0]?.properties.fontSizePt).toBe(32);
+  });
+
+  // §20.1.4.1.14 — a slide names its typeface by TOKEN more often than by name:
+  // `+mn-lt` is "whatever the theme calls its body font". Left unresolved the
+  // token travels into the model as if it WERE a typeface, no substitution
+  // table knows it, and 45541_Header's Times deck came out in a grotesque.
+  it('resolves a +mn-lt/+mj-lt typeface through the theme font scheme', () => {
+    const fontScheme =
+      `<a:fontScheme name="t"><a:majorFont><a:latin typeface="Georgia"/>` +
+      `<a:ea typeface=""/><a:cs typeface=""/></a:majorFont>` +
+      `<a:minorFont><a:latin typeface="Times New Roman"/><a:ea typeface="MS Mincho"/>` +
+      `<a:cs typeface=""/></a:minorFont></a:fontScheme>`;
+    const styles =
+      `<p:txStyles><p:titleStyle><a:lvl1pPr><a:defRPr>` +
+      `<a:latin typeface="+mj-lt"/></a:defRPr></a:lvl1pPr></p:titleStyle>` +
+      `<p:bodyStyle/><p:otherStyle/></p:txStyles>`;
+    const run = (rPr: string) =>
+      firstShapeRun(
+        Ream.parse(
+          buildPptx(
+            [
+              `<p:sp><p:nvSpPr><p:cNvPr id="2" name="Title 1"/><p:cNvSpPr/>` +
+                `<p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr><p:spPr/>` +
+                `<p:txBody><a:bodyPr/><a:p><a:r>${rPr}<a:t>Themed</a:t></a:r></a:p>` +
+                `</p:txBody></p:sp>`,
+            ],
+            {
+              layoutMaster: {
+                layoutSpTree: LAYOUT_TITLE,
+                txStyles: styles,
+                themeFonts: fontScheme,
+              },
+            },
+          ),
+        ),
+      );
+    // The master's title style names the MAJOR font by token…
+    expect(run('<a:rPr lang="en"/>')?.properties.fontFamily?.ascii).toBe('Georgia');
+    // …and the run's own token wins over it, resolved the same way.
+    expect(
+      run('<a:rPr lang="en"><a:latin typeface="+mn-lt"/></a:rPr>')?.properties.fontFamily?.ascii,
+    ).toBe('Times New Roman');
+    // A typeface stated by NAME is untouched.
+    expect(
+      run('<a:rPr lang="en"><a:latin typeface="Verdana"/></a:rPr>')?.properties.fontFamily?.ascii,
+    ).toBe('Verdana');
+  });
+
   // A run states bold/italic/underline to turn them OFF as much as on:
   // 45541_Header's master body style is bold and every slide's own runs say
   // `b="0"`, so read as "bold when true, silent otherwise" the deck came out
@@ -699,6 +845,92 @@ describe('a slide table wears its style and stands in its frame', () => {
       b.kind === 'paragraph' ? b.paragraph.runs : [],
     )[0];
     expect(run?.properties.bold).toBe(true);
+  });
+
+  // §20.1.4.2.24 — a table may name one of the GALLERY's own styles, and then
+  // the deck ships no definition at all: `tableStyles.xml` lists what a deck
+  // CUSTOMISES. Eight decks of the corpus do that, and predefined-table-style
+  // came out as bare text with no fill and no rule anywhere.
+  it('knows the styles PowerPoint has built in, which no deck ships', () => {
+    const MEDIUM2_ACCENT1 = '{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}';
+    const doc = Ream.parse(
+      buildPptx([
+        `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="6" name="t"/><p:cNvGraphicFramePr/>` +
+          `<p:nvPr/></p:nvGraphicFramePr>` +
+          `<p:xfrm><a:off x="914400" y="1828800"/><a:ext cx="5486400" cy="1828800"/></p:xfrm>` +
+          `<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">` +
+          `<a:tbl><a:tblPr firstRow="1" bandRow="1">` +
+          `<a:tableStyleId>${MEDIUM2_ACCENT1}</a:tableStyleId></a:tblPr>` +
+          `<a:tblGrid><a:gridCol w="2743200"/><a:gridCol w="2743200"/></a:tblGrid>` +
+          `<a:tr h="457200">${tc('H1')}${tc('H2')}</a:tr>` +
+          `<a:tr h="457200">${tc('a')}${tc('b')}</a:tr>` +
+          `<a:tr h="457200">${tc('c')}${tc('d')}</a:tr>` +
+          `</a:tbl></a:graphicData></a:graphic></p:graphicFrame>`,
+      ]),
+    );
+    const t = table(doc);
+    // The definition is theme-RELATIVE, so the fills are the deck's accent and
+    // its light shade, not colours baked into the style.
+    expect(t?.rows[0]?.cells[0]?.properties.shading?.colorHex).toBeDefined();
+    expect(t?.rows[1]?.cells[0]?.properties.shading?.colorHex).toBeDefined();
+    expect(t?.rows[0]?.cells[0]?.properties.shading?.colorHex).not.toBe(
+      t?.rows[1]?.cells[0]?.properties.shading?.colorHex,
+    );
+    // …and a GUID that is NOT one of them still wears nothing.
+    const none = Ream.parse(
+      buildPptx([
+        `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="6" name="t"/><p:cNvGraphicFramePr/>` +
+          `<p:nvPr/></p:nvGraphicFramePr>` +
+          `<p:xfrm><a:off x="914400" y="1828800"/><a:ext cx="5486400" cy="1828800"/></p:xfrm>` +
+          `<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">` +
+          `<a:tbl><a:tblPr firstRow="1"><a:tableStyleId>{00000000-0000-0000-0000-000000000000}` +
+          `</a:tableStyleId></a:tblPr>` +
+          `<a:tblGrid><a:gridCol w="2743200"/></a:tblGrid>` +
+          `<a:tr h="457200">${tc('H1')}</a:tr></a:tbl></a:graphicData></a:graphic></p:graphicFrame>`,
+      ]),
+    );
+    expect(table(none)?.rows[0]?.cells[0]?.properties.shading).toBeUndefined();
+  });
+
+  // §20.1.4.2.25 / §20.1.4.2.19 — a style may POINT at the theme instead of
+  // spelling a fill or a rule out: `a:tblBg/a:fillRef` is the table's own
+  // background and `a:lnRef` is a rule whose width lives in the theme's line
+  // style list. bnc480256's every rule and every second row are written that
+  // way, and read as nothing the table came out with three pale bars and no
+  // borders at all.
+  it('resolves a background and a rule its style points at in the theme', () => {
+    const themed =
+      `<?xml version="1.0"?>\n<a:tblStyleLst xmlns:a="${A_MAIN}" def="${GUID}">` +
+      `<a:tblStyle styleId="${GUID}" styleName="s">` +
+      `<a:tblBg><a:fillRef idx="2"><a:srgbClr val="336699"/></a:fillRef></a:tblBg>` +
+      `<a:wholeTbl><a:tcStyle><a:tcBdr><a:insideH>` +
+      `<a:lnRef idx="2"><a:srgbClr val="FFCC00"/></a:lnRef>` +
+      `</a:insideH></a:tcBdr></a:tcStyle></a:wholeTbl>` +
+      `<a:band1H><a:tcStyle><a:fill><a:solidFill><a:srgbClr val="BBCCEE"/></a:solidFill>` +
+      `</a:fill></a:tcStyle></a:band1H></a:tblStyle></a:tblStyleLst>`;
+    const doc = Ream.parse(
+      buildPptx(
+        [
+          `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="6" name="t"/><p:cNvGraphicFramePr/>` +
+            `<p:nvPr/></p:nvGraphicFramePr>` +
+            `<p:xfrm><a:off x="0" y="0"/><a:ext cx="5486400" cy="1828800"/></p:xfrm>` +
+            `<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">` +
+            `<a:tbl>${named('bandRow="1"')}<a:tblGrid><a:gridCol w="2743200"/></a:tblGrid>` +
+            `<a:tr h="457200">${tc('a')}</a:tr><a:tr h="457200">${tc('b')}</a:tr>` +
+            `</a:tbl></a:graphicData></a:graphic></p:graphicFrame>`,
+        ],
+        {
+          presentationRels: `<Relationship Id="rIdTs" Type="${TABLE_STYLES_REL}" Target="tableStyles.xml"/>`,
+          media: { 'ppt/tableStyles.xml': new TextEncoder().encode(themed) },
+        },
+      ),
+    );
+    const t = table(doc);
+    // The band paints over the table's background; the row without one shows it.
+    expect(t?.rows[0]?.cells[0]?.properties.shading?.colorHex).toBe('BBCCEE');
+    expect(t?.rows[1]?.cells[0]?.properties.shading?.colorHex).toBe('336699');
+    // The rule takes its colour from the reference and its width from the theme.
+    expect(t?.rows[0]?.cells[0]?.properties.borders?.insideH?.colorHex).toBe('FFCC00');
   });
 
   it('leaves the style alone when the table asks for no part of it', () => {
@@ -1331,6 +1563,29 @@ describe('what a placeholder inherits from its prototype', () => {
     expect(shape?.fill.colorHex).toBe('76BF3D');
     expect(shape?.geometry.kind === 'preset' ? shape.geometry.preset : '').toBe('roundRect');
     expect(shape?.line?.colorHex).toBe('112233');
+  });
+
+  // §19.3.1.36 — the inheritance is per PROPERTY. A layout prototype that
+  // states a box and nothing else must not stop the search: tdf104015's title
+  // is red in every reader, and the red is the MASTER's, three levels up from
+  // a slide that states only a blue outline.
+  it('keeps looking past a prototype that states only some of them', () => {
+    const layoutBoxOnly =
+      `<p:sp><p:nvSpPr><p:cNvPr id="9" name="body"/><p:cNvSpPr/><p:nvPr><p:ph idx="13"/></p:nvPr>` +
+      `</p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="4572000" cy="2286000"/></a:xfrm>` +
+      `</p:spPr><p:txBody><a:bodyPr/><a:p/></p:txBody></p:sp>`;
+    const doc = Ream.parse(
+      buildPptx([slidePh], {
+        layoutMaster: { layoutSpTree: layoutBoxOnly, masterSpTree: protoRect },
+      }),
+    );
+    const shape = doc.flow.body.flatMap((e) =>
+      e.kind === 'shape' && e.shape.text ? [e.shape] : [],
+    )[0];
+    // The box is the layout's…
+    expect(shape?.width).toBe(360); // 4572000 EMU
+    // …and the fill it never states comes from the master behind it.
+    expect(shape?.fill.colorHex).toBe('76BF3D');
   });
 
   it('…but what the slide states itself still wins', () => {

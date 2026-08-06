@@ -66,6 +66,14 @@ export function tableStyleId(tblPr: PoNode | undefined): string | undefined {
   return id ? poText(id).trim() || undefined : undefined;
 }
 
+/** What the deck's theme lends a style that points at it instead of spelling it out. */
+export interface TableStyleTheme {
+  /** §20.1.4.1.14 `a:fillStyleLst` — the fills an `a:fillRef` indexes. */
+  readonly fills?: ReadonlyArray<PoNode>;
+  /** §20.1.4.2.19 `a:lnStyleLst` — the widths an `a:lnRef` indexes, in points. */
+  readonly lineWidths?: ReadonlyArray<number>;
+}
+
 /**
  * The style a cell wears, composed from every part that reaches it.
  *
@@ -73,6 +81,7 @@ export function tableStyleId(tblPr: PoNode | undefined): string | undefined {
  * @param flags  Which conditional parts the table asks for.
  * @param at     Where the cell sits.
  * @param colors The deck's colour resolver.
+ * @param theme  The theme's style lists, for the parts that point at them.
  * @returns The composed part, empty when the style says nothing.
  */
 export function cellStyle(
@@ -80,6 +89,7 @@ export function cellStyle(
   flags: TableStyleFlags,
   at: CellPosition,
   colors: ColorResolver,
+  theme?: TableStyleTheme,
 ): TableStylePart {
   // §20.1.4.2.24 lists them in this order and the later ones win: the whole
   // table, then the banding, then the edge rows, then the edge columns.
@@ -91,12 +101,63 @@ export function cellStyle(
   if (flags.firstRow && at.row === 0) names.push('a:firstRow');
   if (flags.lastRow && at.row === at.rowCount - 1) names.push('a:lastRow');
 
-  let out: TableStylePart = {};
+  // §20.1.4.2.25 `a:tblBg` — the fill the whole TABLE stands on, under every
+  // conditional part. The cells tile the table, so it composes as the bottom
+  // layer of each one rather than as a shape of its own: bnc480256's style
+  // paints its band at 40 % over this, and without it every second row came out
+  // white where LibreOffice draws blue.
+  let out: TableStylePart = tableBackground(style, colors, theme);
   for (const name of names) {
     const part = poChildren(style).find((c) => poIs(c, name));
-    if (part) out = { ...out, ...partStyle(part, colors) };
+    if (part) out = { ...out, ...partStyle(part, colors, theme) };
   }
   return out;
+}
+
+// The table's background fill, as a cell shading. `a:fillRef` points into the
+// theme's fill style list; a fill written out in place is read as it stands.
+function tableBackground(
+  style: PoNode,
+  colors: ColorResolver,
+  theme?: TableStyleTheme,
+): TableStylePart {
+  const bg = poChildren(style).find((c) => poIs(c, 'a:tblBg'));
+  if (!bg) return {};
+  const solid = poChildren(bg).find((c) => poIs(c, 'a:solidFill'));
+  const own = solid ? colorOf(solid, colors) : undefined;
+  const hex =
+    own ??
+    refFillColor(
+      poChildren(bg).find((c) => poIs(c, 'a:fillRef')),
+      colors,
+      theme,
+    );
+  return hex ? { shadingHex: hex } : {};
+}
+
+/**
+ * §20.1.4.1.16 `a:fillRef` — a fill named by its place in the theme's list,
+ * with the colour to put wherever that fill says `phClr`.
+ *
+ * Only its COLOUR is taken: a slot may be a gradient or a picture, and a cell's
+ * shading is one colour. The first solid colour the slot names, or the
+ * reference's own, is the nearest true answer.
+ */
+function refFillColor(
+  ref: PoNode | undefined,
+  colors: ColorResolver,
+  theme?: TableStyleTheme,
+): string | undefined {
+  if (!ref) return undefined;
+  const own = colorOf(ref, colors);
+  const idx = poIntAttr(ref, 'idx');
+  const slot = idx !== undefined && idx > 0 ? theme?.fills?.[idx - 1] : undefined;
+  if (!slot) return own;
+  const solid = poChildren(slot).find((c) => poIs(c, 'a:solidFill'));
+  // A slot that says `phClr` means "the colour the reference names", which is
+  // exactly what `own` is.
+  const slotHex = solid ? colorOf(solid, colors) : undefined;
+  return slotHex && slotHex !== 'PHCLR' ? (own ?? slotHex) : own;
 }
 
 // Bands count from the first row/column that is NOT an edge one, so a table
@@ -106,14 +167,14 @@ function bandName(index: number, edge: boolean, axis: 'H' | 'V'): string {
   return i % 2 === 0 ? `a:band1${axis}` : `a:band2${axis}`;
 }
 
-function partStyle(part: PoNode, colors: ColorResolver): TableStylePart {
+function partStyle(part: PoNode, colors: ColorResolver, theme?: TableStyleTheme): TableStylePart {
   const tcStyle = poChildren(part).find((c) => poIs(c, 'a:tcStyle'));
   const txStyle = poChildren(part).find((c) => poIs(c, 'a:tcTxStyle'));
   const fill = tcStyle ? poChildren(tcStyle).find((c) => poIs(c, 'a:fill')) : undefined;
   const solid = fill ? poChildren(fill).find((c) => poIs(c, 'a:solidFill')) : undefined;
   const shadingHex = solid ? colorOf(solid, colors) : undefined;
   const bdr = tcStyle ? poChildren(tcStyle).find((c) => poIs(c, 'a:tcBdr')) : undefined;
-  const borders = bdr ? partBorders(bdr, colors) : undefined;
+  const borders = bdr ? partBorders(bdr, colors, theme) : undefined;
   const on = (name: string): boolean => poAttr(txStyle, name) === 'on';
   const colorHex = txStyle ? colorOf(txStyle, colors) : undefined;
   return {
@@ -134,14 +195,44 @@ const SIDES: ReadonlyArray<readonly [string, keyof CellBorders]> = [
   ['a:insideV', 'insideV'],
 ];
 
-function partBorders(bdr: PoNode, colors: ColorResolver): CellBorders | undefined {
+function partBorders(
+  bdr: PoNode,
+  colors: ColorResolver,
+  theme?: TableStyleTheme,
+): CellBorders | undefined {
   const out: { -readonly [K in keyof CellBorders]?: Border } = {};
   for (const [tag, side] of SIDES) {
     const holder = poChildren(bdr).find((c) => poIs(c, tag));
     const ln = holder ? poChildren(holder).find((c) => poIs(c, 'a:ln')) : undefined;
-    if (ln) out[side] = lineBorder(ln, colors);
+    if (ln) {
+      out[side] = lineBorder(ln, colors);
+      continue;
+    }
+    // §20.1.4.2.19 — a side may point at the theme's line style list instead of
+    // spelling the rule out: the reference carries the colour, the slot the
+    // width. Every rule of bnc480256's table is written this way, and read as
+    // "no line" the table came out with none at all.
+    const border = refBorder(
+      holder ? poChildren(holder).find((c) => poIs(c, 'a:lnRef')) : undefined,
+      colors,
+      theme,
+    );
+    if (border) out[side] = border;
   }
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function refBorder(
+  ref: PoNode | undefined,
+  colors: ColorResolver,
+  theme?: TableStyleTheme,
+): Border | undefined {
+  if (!ref || poAttr(ref, 'idx') === '0') return undefined;
+  const colorHex = colorOf(ref, colors);
+  if (colorHex === undefined) return undefined;
+  const idx = poIntAttr(ref, 'idx');
+  const width = idx !== undefined && idx > 0 ? theme?.lineWidths?.[idx - 1] : undefined;
+  return { style: 'single', colorHex, width: pt(width ?? 0.75) };
 }
 
 /**

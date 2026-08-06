@@ -38,6 +38,8 @@ describe('resolveFamilyKey (font substitution)', () => {
     expect(resolveFamilyKey('Arial')).toBe('arimo');
     expect(resolveFamilyKey('Times New Roman')).toBe('tinos');
     expect(resolveFamilyKey('Courier New')).toBe('cousine');
+    // The heading font of a default Word theme is Calibri's light weight.
+    expect(resolveFamilyKey('Calibri Light')).toBe('carlito');
   });
   it('falls back by class for families without an exact twin', () => {
     expect(resolveFamilyKey('Georgia')).toBe('tinos'); // generic serif

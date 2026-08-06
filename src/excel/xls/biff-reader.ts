@@ -52,6 +52,7 @@ import type { EscherAnchor, EscherShape } from '@/excel/xls/escher';
 import { ResourceStore, pt } from '@/core/ir';
 import { parseBiffChart } from '@/excel/xls/biff-chart';
 import { buildBiffPalette, parseBiffStyles } from '@/excel/xls/biff-styles';
+import { makeColWidthPt, makeRowHeightPt } from '@/excel/sheet-drawing';
 import { parseBlipStore, parseSheetPictures, parseSheetShapes } from '@/excel/xls/escher';
 import { openCfb } from '@/core/ole/cfb';
 
@@ -461,8 +462,11 @@ function readSheet(
     ...(pane ? { pane } : {}),
   };
   const drawing = gatherDrawing(records, REC.MSODRAWING);
+  // Drawings are placed on the sheet's OWN grid: a cell anchor means nothing
+  // without the column widths and row heights it counts.
+  const place = anchorPlacer(grid);
   const images =
-    drawing.length > 0 && blips.length > 0 ? buildImages(drawing, blips, resources) : [];
+    drawing.length > 0 && blips.length > 0 ? buildImages(drawing, blips, resources, place) : [];
 
   // Embedded charts: a nested chart substream (BOF dt=0x20 … EOF) is plotted from
   // the sheet's own cells (XLS-6).
@@ -489,7 +493,9 @@ function readSheet(
   // Drawing shapes (autoshapes, text boxes): the Escher non-picture shapes, with
   // each text box's text from its TXO record, associated by order (XLS-7).
   const shapes =
-    drawing.length > 0 ? buildShapes(parseSheetShapes(drawing), gatherTxoTexts(records)) : [];
+    drawing.length > 0
+      ? buildShapes(parseSheetShapes(drawing), gatherTxoTexts(records), place)
+      : [];
 
   return { grid, images, charts, shapes, hyperlinks, comments: parseComments(records) };
 }
@@ -1502,13 +1508,19 @@ function parseComments(records: ReadonlyArray<BiffRecord>): Array<SheetComment> 
 function buildShapes(
   escherShapes: ReadonlyArray<EscherShape>,
   txoTexts: ReadonlyArray<string>,
+  place: AnchorPlacer,
 ): Array<ShapeBlock> {
   const out: Array<ShapeBlock> = [];
   let textIdx = 0;
   for (const s of escherShapes) {
     const text = s.hasText ? (txoTexts[textIdx++] ?? '') : '';
-    const { widthPt, heightPt } = anchorSize(s.anchor);
+    const { xPt, yPt, widthPt, heightPt } = place(s.anchor);
     out.push({
+      float: {
+        wrap: 'none' as const,
+        posH: { relativeFrom: 'margin' as const, offsetPt: pt(xPt) },
+        posV: { relativeFrom: 'margin' as const, offsetPt: pt(yPt) },
+      },
       width: pt(widthPt),
       height: pt(heightPt),
       geometry: { kind: 'preset', preset: shapePreset(s.shapeType) },
@@ -1567,31 +1579,67 @@ function buildImages(
   drawing: Uint8Array,
   blips: ReadonlyArray<Uint8Array | undefined>,
   resources: ResourceStore,
+  place: AnchorPlacer,
 ): Array<SheetImageRef> {
   const out: Array<SheetImageRef> = [];
   for (const pic of parseSheetPictures(drawing)) {
     const bytes = blips[pic.blipIndex - 1];
     if (!bytes) continue;
-    const { widthPt, heightPt } = anchorSize(pic.anchor);
-    out.push({ resourceId: resources.put(bytes), widthPt, heightPt });
+    const { xPt, yPt, widthPt, heightPt } = place(pic.anchor);
+    out.push({ resourceId: resources.put(bytes), widthPt, heightPt, xPt, yPt });
   }
   return out;
 }
 
-// A cell anchor → an approximate point size using default cell metrics (the
-// exact column widths / row heights are not yet threaded here). Absent anchor →
-// a default thumbnail size.
-function anchorSize(anchor: EscherAnchor | undefined): { widthPt: number; heightPt: number } {
-  if (!anchor) return { widthPt: 96, heightPt: 72 };
-  const DEFAULT_COL_PT = 48;
-  const DEFAULT_ROW_PT = 15;
-  const cols = anchor.col2 + anchor.dx2 / 1024 - (anchor.col1 + anchor.dx1 / 1024);
-  const rows = anchor.row2 + anchor.dy2 / 1024 - (anchor.row1 + anchor.dy1 / 1024);
-  return {
-    widthPt: Math.max(8, cols * DEFAULT_COL_PT),
-    heightPt: Math.max(8, rows * DEFAULT_ROW_PT),
+/** A cell anchor → the rectangle it names on the sheet, in points. */
+type AnchorPlacer = (anchor: EscherAnchor | undefined) => {
+  xPt: number;
+  yPt: number;
+  widthPt: number;
+  heightPt: number;
+};
+
+// A drawing's anchor counts CELLS — a column index plus an offset in 1024ths of
+// that column's width (§2.5.193). Measured against a made-up 48pt column, as it
+// was, every shape on a sheet of 6pt columns came out eight times too wide, and
+// none of them was placed at all: forty of them flowed one below the next and
+// turned a two-page drawing into fourteen.
+function anchorPlacer(grid: ParsedWorksheet): AnchorPlacer {
+  const colPt = makeColWidthPt(grid);
+  const rowPt = makeRowHeightPt(grid);
+  const before = (track: (i: number) => number): ((index: number) => number) => {
+    const sums = [0];
+    return (index) => {
+      const n = Math.min(Math.max(Math.trunc(index), 0), MAX_ANCHOR_TRACKS);
+      while (sums.length <= n) sums.push(sums[sums.length - 1]! + track(sums.length - 1));
+      return sums[n]!;
+    };
+  };
+  const beforeCol = before(colPt);
+  const beforeRow = before(rowPt);
+  const at = (
+    index: number,
+    off: number,
+    start: (i: number) => number,
+    track: (i: number) => number,
+  ): number => start(index) + (off / 1024) * track(index);
+  return (anchor) => {
+    if (!anchor) return { xPt: 0, yPt: 0, widthPt: 96, heightPt: 72 };
+    const x1 = at(anchor.col1, anchor.dx1, beforeCol, colPt);
+    const x2 = at(anchor.col2, anchor.dx2, beforeCol, colPt);
+    const y1 = at(anchor.row1, anchor.dy1, beforeRow, rowPt);
+    const y2 = at(anchor.row2, anchor.dy2, beforeRow, rowPt);
+    return {
+      xPt: x1,
+      yPt: y1,
+      widthPt: Math.max(1, x2 - x1),
+      heightPt: Math.max(1, y2 - y1),
+    };
   };
 }
+
+// A bogus anchor index cannot be allowed to walk a million rows per shape.
+const MAX_ANCHOR_TRACKS = 65536;
 
 function numCell(row: number, column: number, style: number, rawValue: string): WorksheetCell {
   return { column, row, type: 'n', rawValue, styleIndex: style };

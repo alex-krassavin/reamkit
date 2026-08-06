@@ -2,10 +2,9 @@
 //
 // An EMF is a list of records played through a device context: a pen, a brush,
 // a font, a current point and a logical→device mapping. This reads the records
-// that DRAW (paths, rectangles, text, brush blits) and the ones that set the
-// state they draw through; the rest — palettes, colour management, regions,
-// bitmap blits with a source — are named in `skipped` so the caller can record
-// the loss.
+// that DRAW (paths, rectangles, text, bitmaps, brush blits) and the ones that
+// set the state they draw through; the rest — palettes, colour management,
+// regions — are named in `skipped` so the caller can record the loss.
 //
 // Coordinates come out in DEVICE units: the window→viewport mapping (§2.3.11)
 // is applied as the records go by, so the picture's box is the header's own
@@ -15,6 +14,8 @@ import type { PathSegment, StrokeStyle, VectorPath } from '@/core/vector';
 import type { DeviceContext, MetaObject, MetaPicture, PicturePrim } from '@/core/metafile/picture';
 import { PathBuilder } from '@/core/vector';
 import { applyTransform, cloneDc, colorRef, newDeviceContext } from '@/core/metafile/picture';
+import { cropDib, fadedDib, readDib } from '@/core/metafile/dib';
+import { makeBlitter } from '@/core/metafile/blit';
 import { fromSymbolFont } from '@/core/metafile/symbol-fonts';
 
 /** Whether the bytes open with an EMF header (MS-EMF §2.3.4.2: type 1 + " EMF"). */
@@ -37,11 +38,6 @@ const RECORD_NAMES: ReadonlyMap<number, string> = new Map([
   [74, 'region paint'],
   [78, 'masked blit'],
   [79, 'parallelogram blit'],
-  [80, 'device bitmap'],
-  [81, 'bitmap'],
-  [76, 'bitmap'],
-  [77, 'bitmap'],
-  [114, 'alpha blit'],
   [116, 'transparent blit'],
   [118, 'gradient fill'],
 ]);
@@ -84,6 +80,66 @@ export function readEmf(bytes: Uint8Array): MetaPicture {
   // close it. Outside a path bracket the drawing records paint at once.
   let building: Array<PathSegment> | undefined;
   const open = (): Array<PathSegment> => building ?? [];
+
+  const blitter = makeBlitter((prim) => prims.push(prim));
+  /**
+   * §2.3.1 — one blit record: the source bitmap into the destination
+   * rectangle, both stated in the record's own fields. The rectangle is mapped
+   * the way every other coordinate here is, so the picture lands in the same
+   * device frame as the paths around it.
+   */
+  const blit = (o: {
+    bmiAt: number;
+    cbBmi: number;
+    bitsAt: number;
+    cbBits: number;
+    dest: { x: number; y: number; w: number; h: number };
+    src?: { x: number; y: number; w: number; h: number };
+    /** Whether the source rectangle is stated in the BITMAP's coordinates. */
+    inBitmap?: boolean;
+    /** §2.3.1.1 — the constant transparency an EMR_ALPHABLEND draws through. */
+    blend?: { alpha: number; perPixel: boolean };
+    rop: number;
+  }): void => {
+    const dib =
+      o.cbBmi > 0
+        ? readDib(bytes, off + o.bmiAt, {
+            bitsAt: off + o.bitsAt,
+            cbBits: o.cbBits,
+            ...(o.blend?.perPixel === true ? { alpha: true } : {}),
+          })
+        : undefined;
+    if (!dib) {
+      skipped.add('bitmap');
+      return;
+    }
+    // A source rectangle that is not the whole bitmap takes a part of it; the
+    // record then stretches THAT part over the destination. A bottom-up bitmap
+    // counts its rows from the bottom, so the part it names is measured there.
+    const s = o.src;
+    const part =
+      s && (s.x !== 0 || s.y !== 0 || s.w !== dib.width || s.h !== dib.height)
+        ? cropDib(
+            dib,
+            s.x,
+            o.inBitmap === true && dib.bottomUp === true ? dib.height - s.y - s.h : s.y,
+            s.w,
+            s.h,
+          )
+        : dib;
+    const a = px(o.dest.x, o.dest.y);
+    const b = px(o.dest.x + o.dest.w, o.dest.y + o.dest.h);
+    blitter.blit(
+      o.blend && o.blend.alpha < 255 ? fadedDib(part, o.blend.alpha / 255) : part,
+      {
+        x: Math.min(a.x, b.x),
+        y: Math.min(a.y, b.y),
+        width: Math.abs(b.x - a.x),
+        height: Math.abs(b.y - a.y),
+      },
+      o.rop,
+    );
+  };
 
   const strokeOf = (): StrokeStyle | undefined => {
     if (dc.pen.style === 'none') return undefined;
@@ -390,30 +446,89 @@ export function readEmf(bytes: Uint8Array): MetaPicture {
           }
         }
         break;
-      case 76: // EMR_BITBLT — with no source bitmap it is a BRUSH blit: the
-        // destination rectangle filled with the current brush, which is how a
-        // metafile paints a rule or a panel.
-        {
-          // §2.3.1.2 — offBmiSrc is at 84 and its SIZE at 88; a blit with no
-          // bitmap behind it is the brush painting the destination.
-          const cbBmiSrc = u(88);
-          const rop = u(40);
-          if (cbBmiSrc === 0) {
-            const x = at(24);
-            const y = at(28);
-            const w = at(32);
-            const h = at(36);
-            // BLACKNESS / WHITENESS paint a colour of their own; PATCOPY and
-            // its neighbours paint the brush.
-            const hex = rop === 0x00000042 ? '000000' : rop === 0x00ff0062 ? 'FFFFFF' : undefined;
-            const brush = dc.brush;
-            if (hex !== undefined) {
-              dc.brush = { kind: 'brush', colorHex: hex, hollow: false };
-            }
-            paint(rectSegments(x, y, x + w, y + h), true, false);
-            dc.brush = brush;
-          } else skipped.add('bitmap');
+      // EMR_BITBLT / EMR_STRETCHBLT — the same fields but for the source
+      // extent a stretch states. With NO source bitmap either is a BRUSH blit:
+      // the destination rectangle filled with the current brush, which is how a
+      // metafile paints a rule or a panel.
+      case 76:
+      case 77: {
+        // §2.3.1.2 — offBmiSrc is at 84 and its SIZE at 88; a blit with no
+        // bitmap behind it is the brush painting the destination.
+        const cbBmiSrc = u(88);
+        const rop = u(40);
+        const x = at(24);
+        const y = at(28);
+        const w = at(32);
+        const h = at(36);
+        if (cbBmiSrc === 0) {
+          // BLACKNESS / WHITENESS paint a colour of their own; PATCOPY and
+          // its neighbours paint the brush.
+          const hex = rop === 0x00000042 ? '000000' : rop === 0x00ff0062 ? 'FFFFFF' : undefined;
+          const brush = dc.brush;
+          if (hex !== undefined) {
+            dc.brush = { kind: 'brush', colorHex: hex, hollow: false };
+          }
+          paint(rectSegments(x, y, x + w, y + h), true, false);
+          dc.brush = brush;
+          break;
         }
+        // §2.3.1.5 — a STRETCHBLT states the source extent it scales from;
+        // a plain BITBLT takes the destination's, one pixel for one.
+        blit({
+          bmiAt: u(84),
+          cbBmi: cbBmiSrc,
+          bitsAt: u(92),
+          cbBits: u(96),
+          dest: { x, y, w, h },
+          src: {
+            x: at(44),
+            y: at(48),
+            w: type === 77 ? at(100) : w,
+            h: type === 77 ? at(104) : h,
+          },
+          rop,
+        });
+        break;
+      }
+      case 80: // EMR_SETDIBITSTODEVICE — the source bitmap, unscaled, at the
+        // destination point: its own extent is the size it lands at.
+        blit({
+          bmiAt: u(48),
+          cbBmi: u(52),
+          bitsAt: u(56),
+          cbBits: u(60),
+          dest: { x: at(24), y: at(28), w: at(40), h: at(44) },
+          src: { x: at(32), y: at(36), w: at(40), h: at(44) },
+          inBitmap: true,
+          rop: 0x00cc0020,
+        });
+        break;
+      case 81: // EMR_STRETCHDIBITS — the source rectangle scaled onto the
+        // destination one; the record that carries a picture in an EMF.
+        blit({
+          bmiAt: u(48),
+          cbBmi: u(52),
+          bitsAt: u(56),
+          cbBits: u(60),
+          dest: { x: at(24), y: at(28), w: at(72), h: at(76) },
+          src: { x: at(32), y: at(36), w: at(40), h: at(44) },
+          inBitmap: true,
+          rop: u(68),
+        });
+        break;
+      case 114: // EMR_ALPHABLEND — a STRETCHBLT whose raster operation is a
+        // BLENDFUNCTION instead: a constant transparency, and a flag saying the
+        // bitmap carries an alpha channel of its own.
+        blit({
+          bmiAt: u(84),
+          cbBmi: u(88),
+          bitsAt: u(92),
+          cbBits: u(96),
+          dest: { x: at(24), y: at(28), w: at(32), h: at(36) },
+          src: { x: at(44), y: at(48), w: at(100), h: at(104) },
+          blend: { alpha: (u(40) >>> 16) & 0xff, perPixel: u(40) >>> 24 === 1 },
+          rop: 0x00cc0020,
+        });
         break;
       default:
         {

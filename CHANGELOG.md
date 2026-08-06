@@ -3,6 +3,121 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.23.0
+
+A release about the formats that came before the XML ones. `.ppt` and `.xls`
+were read — every feature the specs list had been implemented — but no one had
+ever compared one to a picture. Measured against LibreOffice, the twelve legacy
+decks summed to 2.831 and the twelve legacy workbooks to 3.084; they now sum to
+1.362 and 0.631. The deck that sat at a flat 1.000 sits at 0.076, and the one
+whose slides overflowed onto eleven pages more than the reference prints now
+paginates 30 for 30.
+
+Two of the fixes are in the metafile reader, which every format shares.
+
+### Added
+
+- **A slide is drawn on the background it states.** A `.ppt` states its
+  background as a shape like any other, marked `fBackground`: a solid colour, a
+  shade, or a picture named by `fillBlip` — which is not the `pib` a picture
+  SHAPE uses, and was the reason a photographic background read as nothing at
+  all. A slide whose flags say `fMasterBackground` takes its master's, which is
+  the only time the master's is consulted and the only version that is not a
+  stale copy.
+
+- **The decoration a master draws on the slides that follow it** — the rules,
+  the logo, the footer band §2.4.24 `fMasterObjects` puts beneath what a slide
+  draws itself. Its placeholders stay behind: they are prototypes, and drawn,
+  every slide in a deck would carry "Click to edit Master title style".
+
+- **A grouped shape lands where its group puts it.** Its rectangle is a
+  ChildAnchor in the GROUP's coordinate space, resolved through the group's
+  own FSPGR and client anchor. A `.ppt` table IS a group of cell rectangles, so
+  this is what makes a table a table; the same correction lands in `.xls`,
+  where forty of one sheet's forty-one shapes were grouped.
+
+- **A picture fill, stretched or tiled**, including a blip carried INLINE as
+  the property's own complex data — a deck with no picture stream at all, each
+  table cell holding its own.
+
+- **A metafile inside an Escher blip is unpacked** rather than walked past. A
+  raster is its own bytes; a metafile sits behind an OfficeArtMetafileHeader
+  and is deflated, so the signature scan missed every EMF and WMF in every
+  `.ppt` and `.xls` there is. One slide whose whole content was one of them
+  drew its shape's fill colour instead — a blue rectangle over a diagram.
+
+- **A deck is set in the typefaces it names.** A run names its font by an index
+  into the deck's font collection, which nothing read, so every `.ppt` rendered
+  in whatever face the caller happened to hold. A substitute measures nothing
+  like the Times a deck asks for, and one deck's body text ran off the bottom
+  of every slide.
+
+- **Bullets.** Stated as a character, almost always one from a symbol font, and
+  translated out of it — untranslated, the circle every deck bullets with is
+  the letter `l`. The paragraph decides whether it is bulleted and the master
+  decides with what; where neither states the flag, a stated character is
+  itself the statement, which is how a master names its outline levels.
+
+- **WordArt is drawn as the word it is** — its text, size and face are shape
+  properties, not a text box, and unread the shape was a coloured rectangle.
+  The letters do not get their effects: no texture through the glyphs, no
+  stretch to the frame.
+
+- **A tiled picture repeats at the size the file asks for**: MS-ODRAW
+  `fillWidth` / `fillHeight` in a `.ppt`, `a:tile @sx @sy` in DrawingML. Both
+  default to the picture's own size, so a file that states neither renders
+  exactly as before.
+
+### Fixed
+
+- **A slide's title and body come from where PowerPoint keeps them.** Not from
+  the shape that draws them — from the document's own slide list, with the
+  placeholder holding an OutlineTextRefAtom naming which text is its. Read the
+  other way, a deck came out as one un-anchored heap of lines in the top-left
+  corner, with the rectangles the file states going unused. The size was
+  missing for the same reason: a run states none, because the master states it
+  once per text type and indent level.
+
+- **Text takes the colour the scheme names for it.** Half of what a themed deck
+  states is a slot in its colour scheme, not an sRGB, and only the sRGB spelling
+  was read — so a white-on-blue deck came out black on white. A master's slot
+  resolves against the SLIDE's scheme, and a master lends its colour only to
+  the text type that states it.
+
+- **A `.xls` cell's fill is read from the bytes that hold it.** The pattern is
+  the top six bits of the four bytes at offset 14 and the colours are the word
+  at 18; both were read sixteen bits low, so every fill in every legacy
+  workbook came back as black on black. The palette compounded it by returning
+  eight hex digits where the style model holds six: silver reached the page as
+  pink, and a red font as yellow.
+
+- **A sheet's drawings are placed on the sheet's own grid.** They anchor to
+  cells, and were sized against a made-up 48pt column and never positioned at
+  all — on a sheet of 6.75pt columns each shape came out seven times too wide,
+  and one engineering drawing flowed down eleven blank pages.
+
+- **An object a WMF creates and the reader does not model still takes a handle
+  slot.** A palette, a region, the two pattern brushes were passed over
+  silently, so everything created after one landed a slot low and every
+  selection picked its predecessor: a contour chart drew all 736 of its lines
+  in the black pen its ten coloured ones had displaced.
+
+- **A WMF that moves its window origin is read in one frame.** The origin names
+  the frame the records AFTER it are drawn in, and a file may move it as often
+  as it likes; the last one was applied to everything, so a drawing made under
+  an earlier origin came out displaced by the difference. One slide's metafile
+  moves its origin six times.
+
+- **A CJK workbook measures its columns by a half-width digit.** The table of
+  faces a column's width unit is taken from held only Latin ones, so every CJK
+  file fell back to Excel's 7px where the digit is 8: a twelve-point PMingLiU
+  workbook came out on forty-nine pages against the reference's seventy-eight.
+
+- **A freeform's path, and a fill the shape says it does not use.** The vertex
+  and segment arrays state their length without the six-byte header they carry,
+  so a curve of twenty-one points read as a single line; and a shape states a
+  fill colour whether or not it is filled, which §2.3.7.43's booleans decide.
+
 ## 1.22.0
 
 A release about presentations. A deck was read but barely drawn: its slides

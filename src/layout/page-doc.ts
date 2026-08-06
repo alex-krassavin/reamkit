@@ -31,6 +31,24 @@ export interface FontResource {
   readonly gids: ReadonlySet<number>;
 }
 
+/**
+ * The face a run asked for and the registry could not give — what the page has
+ * to draw itself. A font set carries only `regular` by contract, so a caller
+ * who supplies one file still asks for bold headings and italic quotes.
+ */
+export interface SyntheticFace {
+  /** No bold cut: the glyphs are stroked as well as filled. */
+  readonly bold?: true;
+  /** No italic cut: the glyphs are sheared. */
+  readonly italic?: true;
+  /**
+   * No condensed cut: the glyphs are set at this fraction of their advance
+   * (`Arial Narrow` is 82 % of Arial). Layout measures through it too — the
+   * squeeze decides where the line breaks, not just how it looks.
+   */
+  readonly widthScale?: number;
+}
+
 /** A run of text on a {@link Line}: the string plus its resolved font, size, width and link/tagging state. */
 export interface TextToken {
   readonly kind: 'text';
@@ -75,6 +93,8 @@ export interface TextToken {
   readonly highlight?: true;
   readonly resolvedRun: ResolvedRunProperties;
   readonly font: FontResource;
+  /** What the chosen face lacks and the emitter must fake (see {@link SyntheticFace}). */
+  readonly synthetic?: SyntheticFace;
   readonly fontSizePt: number;
   /**
    * §17.3.2.42 / §18.4.2 `vertAlign` — how far off the baseline this token
@@ -225,6 +245,19 @@ export interface MetafileDrawing {
     readonly y: number;
     readonly rotationDeg?: number;
   }>;
+  /**
+   * MS-EMF §2.3.1 — the bitmaps the picture blits into itself, each already a
+   * page resource of its own. `x`/`y` are the box's BOTTOM-left corner, in the
+   * same local frame as the shapes.
+   */
+  readonly images?: ReadonlyArray<{
+    readonly resourceName: string;
+    readonly x: number;
+    readonly y: number;
+    readonly width: number;
+    readonly height: number;
+    readonly rotationDeg?: number;
+  }>;
 }
 
 export interface ImageResource {
@@ -241,6 +274,13 @@ export interface ImageResource {
    * turns these into the same primitives a chart is made of.
    */
   readonly metafile?: MetaPicture;
+  /**
+   * The resource name of each bitmap `metafile` blits, in the order its
+   * primitives hold them. A metafile draws its own pictures, and each is an
+   * ordinary image resource — entered under a key of its own, so the emitters
+   * embed and name it without knowing where it came from.
+   */
+  readonly metafileImages?: ReadonlyArray<string>;
 }
 
 /**

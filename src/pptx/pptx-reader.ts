@@ -17,11 +17,13 @@ import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss, Pt, ResourceId } from '@/core/ir';
 import type { PoNode } from '@/core/po-helpers';
 import type { Relationship } from '@/core/opc';
+import type { ThemeFonts } from '@/core/drawingml/theme-parser';
 import type { PlaceholderCascade } from '@/pptx/placeholder-cascade';
 import type { SlideContext, ThemeFillStyles } from '@/pptx/slide-parser';
 
 import type { ColorResolver, SchemeAliases } from '@/core/drawingml/colors';
 
+import type { FontRegistry } from '@/core/font';
 import { packageHasPart } from '@/core/bytes';
 import { parseChart, withChartColorStyle } from '@/core/drawingml/chart-parser';
 import {
@@ -34,10 +36,14 @@ import {
   parseTheme,
   parseThemeBgFillStyles,
   parseThemeFillStyles,
+  parseThemeFonts,
   parseThemeLineWidths,
 } from '@/core/drawingml/theme-parser';
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
 import { OpcPackage } from '@/core/opc';
+import { loadPptxEmbeddedFonts } from '@/pptx/embedded-fonts';
+import { presetTableStyle } from '@/pptx/preset-table-styles';
+import { resolveAlternateContent } from '@/core/opc/alternate-content';
 import { poAttr, poChildren, poFindDescendant, poIntAttr, poIs } from '@/core/po-helpers';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 import { buildPlaceholderCascade, parseLevelStyles } from '@/pptx/placeholder-cascade';
@@ -55,6 +61,7 @@ const DEFAULT_CX = 9144000;
 const DEFAULT_CY = 6858000;
 
 const decoder = new TextDecoder();
+const encoder = new TextEncoder();
 const parser = new XMLParser({
   // §4.1 of XML 1.0: a numeric character reference is not an entity — `&#10;`
   // IS a line feed and every parser must decode it. fast-xml-parser gates that
@@ -111,10 +118,14 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
   // §19.2.1.8 — the deck's own default text style, which is what a plain text
   // box on a slide is written in when it says nothing itself.
   let defaultTextStyle: PoNode | undefined;
+  // §19.2.1.13 — the faces the deck brings with it, so it reads the same where
+  // none of them are installed.
+  let embeddedFonts = new Map<string, FontRegistry>();
   const slideParts: Array<{ path: string; data: Uint8Array }> = [];
   if (presData) {
     const tree = parser.parse(decoder.decode(presData)) as Array<PoNode>;
     const pres = tree.find((n) => poIs(n, 'p:presentation'));
+    embeddedFonts = loadPptxEmbeddedFonts(pkg, presPath, pres, (loss: Loss) => losses.push(loss));
     const kids = pres ? poChildren(pres) : [];
     defaultTextStyle = kids.find((c) => poIs(c, 'p:defaultTextStyle'));
     const sldSz = kids.find((c) => poIs(c, 'p:sldSz'));
@@ -197,6 +208,7 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
         colors: styles.colors,
         ...(styles.background ? { backgroundFill: styles.background } : {}),
         slideSize: { widthPt: pageW, heightPt: pageH },
+        ...(styles.themeFonts ? { themeFonts: styles.themeFonts } : {}),
         ...(styles.themeFills ? { themeFills: styles.themeFills } : {}),
         ...(styles.themeLineWidths ? { themeLineWidths: styles.themeLineWidths } : {}),
         resolveImage: makeSlideImageResolver(pkg, part.path, resources),
@@ -231,6 +243,7 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
     styles: EMPTY_STYLE_SHEET,
     resources,
     ...(charts.size > 0 ? { charts } : {}),
+    ...(embeddedFonts.size > 0 ? { embeddedFonts } : {}),
   };
   return { doc, losses };
 }
@@ -239,9 +252,17 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
  * Parse an OOXML part's bytes into preserve-order {@link PoNode} roots with the
  * module's shared, presentation-tuned {@link XMLParser} (attributes kept, values
  * not coerced, whitespace preserved). Shared with the slide-style resolvers.
+ *
+ * ISO/IEC 29500-3 §10.2 — `mc:AlternateContent` is resolved first, to the
+ * `mc:Fallback` a reader takes when it implements none of the namespaces the
+ * choices require. A deck writes the same shape twice this way, and reading the
+ * CHOICE means reading markup written for someone else: tdf143222's whole slide
+ * is an embedded worksheet whose preview picture lives in the fallback alone,
+ * and the choice — written for VML — carries no picture at all, so the slide
+ * came out blank. 82 of the corpus's decks carry such a block.
  */
 export function parseXml(data: Uint8Array): Array<PoNode> {
-  return parser.parse(decoder.decode(data)) as Array<PoNode>;
+  return parser.parse(resolveAlternateContent(decoder.decode(data))) as Array<PoNode>;
 }
 
 // A slide part's bytes → a full-slide backdrop (PX5b) followed by its floating
@@ -359,6 +380,9 @@ function makeOlePreviewResolver(
  * table that names none wears none — table-with-no-theme's two rows are bare
  * text in a plain frame, not the blue banding `@def` points at.
  *
+ * A GUID the part does not hold may still be one of the GALLERY's own, which
+ * every deck names and none ships (see `preset-table-styles`).
+ *
  * The part is read once, on the first table in the deck.
  */
 function makeTableStyleResolver(
@@ -380,7 +404,8 @@ function makeTableStyleResolver(
         }
       }
     }
-    return styleId === undefined ? undefined : byId.get(styleId);
+    if (styleId === undefined) return undefined;
+    return byId.get(styleId) ?? presetTableStyle(styleId, (xml) => parseXml(encoder.encode(xml)));
   };
 }
 
@@ -520,6 +545,8 @@ interface SlideStyles {
   readonly inheritedShapes?: ReadonlyArray<BodyElement>;
   /** The deck theme's `a:fillStyleLst`/`a:bgFillStyleLst`, for a `p:bgRef`. */
   readonly themeFills?: ThemeFillStyles;
+  /** §20.1.4.1.16 — the two typefaces a `+mn-lt`/`+mj-lt` token stands for. */
+  readonly themeFonts?: ThemeFonts;
   /** §20.1.4.1.21 — the widths an `a:lnRef` indexes, in points. */
   readonly themeLineWidths?: ReadonlyArray<number>;
   // The inherited background fill (layout, else master) for slides that have no
@@ -579,11 +606,15 @@ function slideStylesFor(
       }
     : undefined;
   const themeLineWidths = theme ? parseThemeLineWidths(theme.data) : undefined;
+  // §20.1.4.1.16 — the two typefaces the deck names once; a slide refers to
+  // them by token (`+mn-lt`), which is what most of its runs actually say.
+  const themeFonts = theme ? parseThemeFonts(theme.data) : undefined;
   const cascade = buildPlaceholderCascade(
     layoutTree,
     masterTree,
     colors,
-    parseLevelStyles(deckDefaultTextStyle, colors),
+    parseLevelStyles(deckDefaultTextStyle, colors, themeFonts),
+    themeFonts,
   );
   const background =
     partBackground(
@@ -625,6 +656,7 @@ function slideStylesFor(
   const styles: SlideStyles = {
     cascade,
     colors,
+    ...(themeFonts ? { themeFonts } : {}),
     ...(themeFills ? { themeFills } : {}),
     ...(themeLineWidths && themeLineWidths.length > 0 ? { themeLineWidths } : {}),
     ...(background ? { background } : {}),

@@ -1,0 +1,62 @@
+[
+ {
+  "name": "12843-1.xls",
+  "score": 0.3321,
+  "aligned": false
+ },
+ {
+  "name": "15228.xls",
+  "score": 0.1206,
+  "aligned": false
+ },
+ {
+  "name": "12561-2.xls",
+  "score": 0.0794,
+  "aligned": true
+ },
+ {
+  "name": "12843-2.xls",
+  "score": 0.0624,
+  "aligned": false
+ },
+ {
+  "name": "15556.xls",
+  "score": 0.0571,
+  "aligned": false
+ },
+ {
+  "name": "12561-1.xls",
+  "score": 0.035,
+  "aligned": false
+ },
+ {
+  "name": "13796.xls",
+  "score": 0.0048,
+  "aligned": true
+ },
+ {
+  "name": "14330-1.xls",
+  "score": 0.0048,
+  "aligned": true
+ },
+ {
+  "name": "14460.xls",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "15375.xls",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "14330-2.xls",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "13224.xls",
+  "score": 0,
+  "aligned": true
+ }
+]

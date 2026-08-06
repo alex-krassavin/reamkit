@@ -56,57 +56,27 @@
  },
  {
   "name": "themes.pptx",
-  "score": 0.9832,
-  "aligned": true
- },
- {
-  "name": "aascu.org_workarea_downloadasset.aspx_id=5864.pptx",
-  "score": 0.5586,
-  "aligned": false
- },
- {
-  "name": "45541_Footer.pptx",
-  "score": 0.3991,
-  "aligned": true
- },
- {
-  "name": "45541_Header.pptx",
-  "score": 0.3991,
-  "aligned": true
- },
- {
-  "name": "45545_Comment.pptx",
-  "score": 0.3978,
-  "aligned": true
- },
- {
-  "name": "backgrounds.pptx",
-  "score": 0.3818,
+  "score": 0.9824,
   "aligned": true
  },
  {
   "name": "table_test2.pptx",
-  "score": 0.3437,
+  "score": 0.3432,
   "aligned": true
  },
  {
   "name": "63200.pptx",
-  "score": 0.2994,
-  "aligned": true
- },
- {
-  "name": "alterman_security.pptx",
-  "score": 0.2829,
+  "score": 0.2941,
   "aligned": true
  },
  {
   "name": "bug68703.pptx",
-  "score": 0.2037,
+  "score": 0.2035,
   "aligned": true
  },
  {
   "name": "layouts.pptx",
-  "score": 0.1929,
+  "score": 0.1933,
   "aligned": true
  },
  {
@@ -115,33 +85,43 @@
   "aligned": true
  },
  {
+  "name": "aascu.org_workarea_downloadasset.aspx_id=5864.pptx",
+  "score": 0.1704,
+  "aligned": true
+ },
+ {
   "name": "LIBRE_OFFICE-100610-0.pptx",
-  "score": 0.1357,
+  "score": 0.1639,
   "aligned": true
  },
  {
   "name": "aascu.org_hbcu_leadershipsummit_cooper_.pptx",
-  "score": 0.1298,
+  "score": 0.1307,
+  "aligned": true
+ },
+ {
+  "name": "backgrounds.pptx",
+  "score": 0.1077,
   "aligned": true
  },
  {
   "name": "smartart-simple.pptx",
-  "score": 0.1095,
-  "aligned": true
- },
- {
-  "name": "ae.ac.uaeu.faculty_nafaachbili_GeomLec1.pptx",
-  "score": 0.093,
+  "score": 0.1056,
   "aligned": true
  },
  {
   "name": "au.asn.aes.www_conferences_2011_presentations_Fri_20Room4Level4_20930_20Maloney.pptx",
-  "score": 0.0928,
+  "score": 0.0932,
+  "aligned": true
+ },
+ {
+  "name": "ae.ac.uaeu.faculty_nafaachbili_GeomLec1.pptx",
+  "score": 0.0917,
   "aligned": true
  },
  {
   "name": "keyframes.pptx",
-  "score": 0.0926,
+  "score": 0.0881,
   "aligned": true
  },
  {
@@ -150,13 +130,8 @@
   "aligned": true
  },
  {
-  "name": "tika-2605.pptx",
-  "score": 0.0674,
-  "aligned": true
- },
- {
-  "name": "customGeo.pptx",
-  "score": 0.0637,
+  "name": "crash-57308ca363f5b71763c489d1b432aff009d4bc4f.pptx",
+  "score": 0.065,
   "aligned": true
  },
  {
@@ -170,63 +145,58 @@
   "aligned": true
  },
  {
-  "name": "chart-texture-bg.pptx",
-  "score": 0.0542,
-  "aligned": true
- },
- {
-  "name": "crash-57308ca363f5b71763c489d1b432aff009d4bc4f.pptx",
+  "name": "pptx2svg.pptx",
   "score": 0.0529,
   "aligned": true
  },
  {
-  "name": "chart-picture-bg.pptx",
-  "score": 0.0502,
+  "name": "customGeo.pptx",
+  "score": 0.0499,
   "aligned": true
  },
  {
-  "name": "chart-slide-bg.pptx",
-  "score": 0.0479,
-  "aligned": true
- },
- {
-  "name": "ca.ubc.cs.people_~emhill_presentations_HowWeRefactor.pptx",
-  "score": 0.0438,
-  "aligned": true
- },
- {
-  "name": "table-with-theme.pptx",
-  "score": 0.0404,
+  "name": "alterman_security.pptx",
+  "score": 0.0441,
   "aligned": true
  },
  {
   "name": "60810.pptx",
-  "score": 0.0399,
+  "score": 0.0429,
   "aligned": true
  },
  {
   "name": "at.ecodesign.www_downloads_Vertiefungsvortrag_elektronik.pptx",
-  "score": 0.0386,
+  "score": 0.0429,
   "aligned": true
  },
  {
-  "name": "aptia.pptx",
-  "score": 0.038,
+  "name": "chart-texture-bg.pptx",
+  "score": 0.0384,
   "aligned": true
  },
  {
-  "name": "pptx2svg.pptx",
-  "score": 0.0347,
+  "name": "table-with-theme.pptx",
+  "score": 0.0376,
   "aligned": true
  },
  {
-  "name": "bug62513.pptx",
-  "score": 0.0312,
+  "name": "chart-picture-bg.pptx",
+  "score": 0.0369,
+  "aligned": true
+ },
+ {
+  "name": "ca.ubc.cs.people_~emhill_presentations_HowWeRefactor.pptx",
+  "score": 0.036,
+  "aligned": true
+ },
+ {
+  "name": "chart-slide-bg.pptx",
+  "score": 0.0324,
   "aligned": true
  },
  {
   "name": "ArtisticEffectSample.pptx",
-  "score": 0.0288,
+  "score": 0.0292,
   "aligned": true
  },
  {
@@ -236,37 +206,52 @@
  },
  {
   "name": "pie-chart.pptx",
-  "score": 0.0264,
+  "score": 0.0256,
   "aligned": true
  },
  {
   "name": "text-highlight.pptx",
-  "score": 0.021,
-  "aligned": true
- },
- {
-  "name": "scatter-chart.pptx",
-  "score": 0.0201,
+  "score": 0.0212,
   "aligned": true
  },
  {
   "name": "bug60993.pptx",
-  "score": 0.0175,
+  "score": 0.0174,
   "aligned": true
  },
  {
-  "name": "ececapstonespring2012.pptx",
-  "score": 0.0154,
+  "name": "scatter-chart.pptx",
+  "score": 0.0164,
   "aligned": true
  },
  {
-  "name": "testPPT.pptx",
-  "score": 0.014,
+  "name": "aptia.pptx",
+  "score": 0.0146,
   "aligned": true
  },
  {
-  "name": "shapes.pptx",
-  "score": 0.0137,
+  "name": "line-chart.pptx",
+  "score": 0.0144,
+  "aligned": true
+ },
+ {
+  "name": "bug62513.pptx",
+  "score": 0.0143,
+  "aligned": true
+ },
+ {
+  "name": "45541_Footer.pptx",
+  "score": 0.0139,
+  "aligned": true
+ },
+ {
+  "name": "45541_Header.pptx",
+  "score": 0.0139,
+  "aligned": true
+ },
+ {
+  "name": "45545_Comment.pptx",
+  "score": 0.0139,
   "aligned": true
  },
  {
@@ -275,23 +260,28 @@
   "aligned": true
  },
  {
-  "name": "line-chart.pptx",
-  "score": 0.0129,
-  "aligned": true
- },
- {
-  "name": "2411-Performance_Up.pptx",
-  "score": 0.012,
+  "name": "shapes.pptx",
+  "score": 0.0131,
   "aligned": true
  },
  {
   "name": "with_japanese.pptx",
-  "score": 0.0117,
+  "score": 0.0119,
+  "aligned": true
+ },
+ {
+  "name": "2411-Performance_Up.pptx",
+  "score": 0.0119,
   "aligned": true
  },
  {
   "name": "radar-chart.pptx",
-  "score": 0.0085,
+  "score": 0.0102,
+  "aligned": true
+ },
+ {
+  "name": "ececapstonespring2012.pptx",
+  "score": 0.0097,
   "aligned": true
  },
  {
@@ -306,12 +296,12 @@
  },
  {
   "name": "smartart-rotated-text.pptx",
-  "score": 0.0083,
+  "score": 0.0082,
   "aligned": true
  },
  {
   "name": "bug63290.pptx",
-  "score": 0.0073,
+  "score": 0.0076,
   "aligned": true
  },
  {
@@ -320,22 +310,12 @@
   "aligned": true
  },
  {
-  "name": "49386-null_dates.pptx",
-  "score": 0.0059,
-  "aligned": true
- },
- {
-  "name": "sample.pptx",
-  "score": 0.0057,
-  "aligned": true
- },
- {
-  "name": "WithMaster.pptx",
-  "score": 0.0057,
-  "aligned": true
- },
- {
   "name": "bug60715.pptx",
+  "score": 0.0056,
+  "aligned": true
+ },
+ {
+  "name": "49386-null_dates.pptx",
   "score": 0.0056,
   "aligned": true
  },
@@ -345,28 +325,13 @@
   "aligned": true
  },
  {
-  "name": "SampleShow.pptx",
-  "score": 0.0044,
-  "aligned": true
- },
- {
   "name": "56812.pptx",
-  "score": 0.0041,
+  "score": 0.0039,
   "aligned": true
  },
  {
-  "name": "prProps.pptx",
-  "score": 0.004,
-  "aligned": true
- },
- {
-  "name": "bug58144-headers-footers-2007.pptx",
-  "score": 0.0034,
-  "aligned": true
- },
- {
-  "name": "bug64693.pptx",
-  "score": 0.0033,
+  "name": "WithMaster.pptx",
+  "score": 0.0032,
   "aligned": true
  },
  {
@@ -375,23 +340,18 @@
   "aligned": true
  },
  {
-  "name": "OverlappingRelations.pptx",
-  "score": 0.0028,
-  "aligned": true
- },
- {
-  "name": "bug62736.pptx",
-  "score": 0.0027,
-  "aligned": true
- },
- {
   "name": "KEY02.pptx",
-  "score": 0.0026,
+  "score": 0.0031,
   "aligned": true
  },
  {
   "name": "sample_pptx_grouping_issues.pptx",
   "score": 0.0025,
+  "aligned": true
+ },
+ {
+  "name": "SampleShow.pptx",
+  "score": 0.0023,
   "aligned": true
  },
  {
@@ -410,18 +370,28 @@
   "aligned": true
  },
  {
-  "name": "bug65523.pptx",
+  "name": "tika-2605.pptx",
+  "score": 0.0015,
+  "aligned": true
+ },
+ {
+  "name": "prProps.pptx",
   "score": 0.0014,
   "aligned": true
  },
  {
-  "name": "copy-slide-demo.pptx",
+  "name": "sample.pptx",
+  "score": 0.0013,
+  "aligned": true
+ },
+ {
+  "name": "bug64693.pptx",
   "score": 0.0012,
   "aligned": true
  },
  {
-  "name": "bug65673.pptx",
-  "score": 0.0007,
+  "name": "testPPT.pptx",
+  "score": 0.0012,
   "aligned": true
  },
  {
@@ -430,13 +400,33 @@
   "aligned": true
  },
  {
-  "name": "rain.pptx",
-  "score": 0.0006,
+  "name": "bug62736.pptx",
+  "score": 0.0005,
+  "aligned": true
+ },
+ {
+  "name": "OverlappingRelations.pptx",
+  "score": 0.0005,
+  "aligned": true
+ },
+ {
+  "name": "bug58144-headers-footers-2007.pptx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "bug65523.pptx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "60042.pptx",
+  "score": 0.0003,
   "aligned": true
  },
  {
   "name": "templatePPTWithOnlyOneText.pptx",
-  "score": 0.0004,
+  "score": 0.0002,
   "aligned": true
  },
  {
@@ -445,17 +435,27 @@
   "aligned": true
  },
  {
-  "name": "60042.pptx",
-  "score": 0.0001,
-  "aligned": true
- },
- {
   "name": "bug65551.pptx",
   "score": 0.0001,
   "aligned": true
  },
  {
+  "name": "copy-slide-demo.pptx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
   "name": "51187.pptx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bug65673.pptx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "rain.pptx",
   "score": 0,
   "aligned": true
  },

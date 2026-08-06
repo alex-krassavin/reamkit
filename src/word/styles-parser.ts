@@ -20,6 +20,7 @@ import type {
   TableStyleConditionType,
   TableStyleLayer,
 } from '@/core/document-model';
+import type { ThemeFonts } from '@/core/drawingml/theme-parser';
 import { EMPTY_STYLE_SHEET } from '@/core/style-cascade';
 import { eighthPtToPt, twipsToPt } from '@/core/ir';
 
@@ -58,7 +59,7 @@ const STYLE_TYPES = new Set<StyleType>(['paragraph', 'character', 'table', 'numb
  * @param stylesXml The raw `styles.xml` bytes.
  * @returns The parsed stylesheet, or `EMPTY_STYLE_SHEET` when the root is absent.
  */
-export function parseStyles(stylesXml: Uint8Array): StyleSheet {
+export function parseStyles(stylesXml: Uint8Array, themeFonts?: ThemeFonts): StyleSheet {
   const xml = decoder.decode(stylesXml);
   const tree = parser.parse(xml) as Record<string, unknown>;
 
@@ -70,9 +71,10 @@ export function parseStyles(stylesXml: Uint8Array): StyleSheet {
   let defaultParagraphProperties = {};
   if (docDefaults) {
     const rPrDef = asElement(docDefaults['w:rPrDefault']);
-    if (rPrDef) defaultRunProperties = parseRunProperties(rPrDef['w:rPr']);
+    if (rPrDef) defaultRunProperties = parseRunProperties(rPrDef['w:rPr'], themeFonts);
     const pPrDef = asElement(docDefaults['w:pPrDefault']);
-    if (pPrDef) defaultParagraphProperties = parseParagraphProperties(pPrDef['w:pPr']);
+    if (pPrDef)
+      defaultParagraphProperties = parseParagraphProperties(pPrDef['w:pPr'], 0, themeFonts);
   }
 
   const styles = new Map<string, Style>();
@@ -93,9 +95,9 @@ export function parseStyles(stylesXml: Uint8Array): StyleSheet {
       type,
       ...(basedOnVal ? { basedOn: basedOnVal } : {}),
       isDefault,
-      runProperties: parseRunProperties(el['w:rPr']),
-      paragraphProperties: parseParagraphProperties(el['w:pPr']),
-      ...(type === 'table' ? parseTableStyleParts(el) : {}),
+      runProperties: parseRunProperties(el['w:rPr'], themeFonts),
+      paragraphProperties: parseParagraphProperties(el['w:pPr'], 0, themeFonts),
+      ...(type === 'table' ? parseTableStyleParts(el, themeFonts) : {}),
     };
     styles.set(id, style);
   }
@@ -126,7 +128,10 @@ const CONDITION_TYPES = new Set<TableStyleConditionType>([
   'seCell',
 ]);
 
-function parseTableStyleParts(el: Record<string, unknown>): Partial<Style> {
+function parseTableStyleParts(
+  el: Record<string, unknown>,
+  themeFonts?: ThemeFonts,
+): Partial<Style> {
   const out: {
     tableLayer?: TableStyleLayer;
     tableConditions?: Array<TableStyleCondition>;
@@ -134,7 +139,7 @@ function parseTableStyleParts(el: Record<string, unknown>): Partial<Style> {
     colBandSize?: number;
   } = {};
 
-  const base = parseTableStyleLayer(el);
+  const base = parseTableStyleLayer(el, themeFonts);
   if (base) out.tableLayer = base;
 
   const tblPr = asElement(el['w:tblPr']);
@@ -151,7 +156,7 @@ function parseTableStyleParts(el: Record<string, unknown>): Partial<Style> {
     if (!cond) continue;
     const typeAttr = getAttr(cond, 'type');
     if (!typeAttr || !CONDITION_TYPES.has(typeAttr as TableStyleConditionType)) continue;
-    const layer = parseTableStyleLayer(cond);
+    const layer = parseTableStyleLayer(cond, themeFonts);
     if (layer) conditions.push({ type: typeAttr as TableStyleConditionType, layer });
   }
   if (conditions.length > 0) out.tableConditions = conditions;
@@ -161,7 +166,10 @@ function parseTableStyleParts(el: Record<string, unknown>): Partial<Style> {
 // One layer = the element's tblPr (table borders + cell margins) + tcPr
 // (region cell borders + shading) + rPr/pPr. tblBorders wins over tcBorders
 // when both appear (the base layer's table grid vs a region's own edges).
-function parseTableStyleLayer(el: Record<string, unknown>): TableStyleLayer | undefined {
+function parseTableStyleLayer(
+  el: Record<string, unknown>,
+  themeFonts?: ThemeFonts,
+): TableStyleLayer | undefined {
   const tblPr = asElement(el['w:tblPr']);
   const tcPr = asElement(el['w:tcPr']);
 
@@ -178,8 +186,8 @@ function parseTableStyleLayer(el: Record<string, unknown>): TableStyleLayer | un
       ? twipsToPt(indW)
       : undefined;
   const shading = parseFlatShading(tcPr ? tcPr['w:shd'] : undefined);
-  const runProperties = parseRunProperties(el['w:rPr']);
-  const paragraphProperties = parseParagraphProperties(el['w:pPr']);
+  const runProperties = parseRunProperties(el['w:rPr'], themeFonts);
+  const paragraphProperties = parseParagraphProperties(el['w:pPr'], 0, themeFonts);
 
   const layer: TableStyleLayer = {
     ...(borders ? { borders } : {}),
