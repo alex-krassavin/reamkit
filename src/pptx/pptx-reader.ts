@@ -25,6 +25,9 @@ import type { ColorResolver, SchemeAliases } from '@/core/drawingml/colors';
 
 import type { FontRegistry } from '@/core/font';
 import { packageHasPart } from '@/core/bytes';
+import { DiagramData } from '@/core/drawingml/diagram/data-model';
+import { diagramDrawingXml } from '@/core/drawingml/diagram/to-drawing';
+import { layoutDiagram } from '@/core/drawingml/diagram/layout-engine';
 import { parseChart, withChartColorStyle } from '@/core/drawingml/chart-parser';
 import {
   DEFAULT_SCHEME_ALIAS,
@@ -477,10 +480,40 @@ function makeSlideDiagramResolver(
           break;
         }
       }
+    } else if (data) {
+      // No cached drawing: run the layout the file DOES carry. A generator
+      // writes data, layout, colours and style and leaves the picture to the
+      // reader, which is the whole reason this engine exists.
+      spTree = laidOutDiagram(pkg, slidePath, data);
     }
     cache.set(relId, spTree);
     return spTree;
   };
+}
+
+// §21.4.3 — the layout part beside the data, run to the boxes it describes.
+// The frame is the diagram's own EMU box; the caller scales it to the shape's,
+// so a square frame keeps the proportions the layout was written for.
+const DIAGRAM_FRAME = { cx: 5486400, cy: 3200400 };
+
+function laidOutDiagram(
+  pkg: OpcPackage,
+  slidePath: string,
+  data: { readonly path: string; readonly data: Uint8Array },
+): PoNode | undefined {
+  const layoutRel = pkg
+    .getPartRelationships(slidePath)
+    .find((r) => r.type.endsWith('/diagramLayout'));
+  const layout = layoutRel ? pkg.resolveRelatedPart(slidePath, layoutRel) : undefined;
+  if (!layout) return undefined;
+  const model = new DiagramData(parseXml(data.data));
+  const nodes = layoutDiagram(parseXml(layout.data), model, DIAGRAM_FRAME.cx, DIAGRAM_FRAME.cy);
+  if (nodes.length === 0) return undefined;
+  for (const root of parseXml(new TextEncoder().encode(diagramDrawingXml(nodes)))) {
+    const found = poFindDescendant(root, 'dsp:spTree');
+    if (found) return found;
+  }
+  return undefined;
 }
 
 /**

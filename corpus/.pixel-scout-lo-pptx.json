@@ -5,13 +5,8 @@
   "aligned": true
  },
  {
-  "name": "smartart-font-size.pptx",
-  "score": 0.5553,
-  "aligned": true
- },
- {
   "name": "fill-color-list.pptx",
-  "score": 0.4813,
+  "score": 0.481,
   "aligned": true
  },
  {
@@ -35,23 +30,8 @@
   "aligned": true
  },
  {
-  "name": "smartart-children.pptx",
-  "score": 0.3741,
-  "aligned": true
- },
- {
-  "name": "smartart-background.pptx",
-  "score": 0.3707,
-  "aligned": true
- },
- {
   "name": "activex_picture.pptx",
   "score": 0.3344,
-  "aligned": true
- },
- {
-  "name": "smartart-bullet-list.pptx",
-  "score": 0.3127,
   "aligned": true
  },
  {
@@ -60,18 +40,18 @@
   "aligned": true
  },
  {
+  "name": "smartart-background.pptx",
+  "score": 0.3064,
+  "aligned": true
+ },
+ {
   "name": "smartart-cnt.pptx",
   "score": 0.301,
   "aligned": true
  },
  {
-  "name": "smartart-rightoleftblockdiagram.pptx",
-  "score": 0.2922,
-  "aligned": true
- },
- {
-  "name": "smartart1.pptx",
-  "score": 0.2922,
+  "name": "smartart-text.pptx",
+  "score": 0.2773,
   "aligned": true
  },
  {
@@ -85,8 +65,18 @@
   "aligned": true
  },
  {
-  "name": "smartart-vertical-block-list.pptx",
-  "score": 0.2619,
+  "name": "smartart-children.pptx",
+  "score": 0.245,
+  "aligned": true
+ },
+ {
+  "name": "smartart-rightoleftblockdiagram.pptx",
+  "score": 0.2428,
+  "aligned": true
+ },
+ {
+  "name": "smartart1.pptx",
+  "score": 0.2428,
   "aligned": true
  },
  {
@@ -95,28 +85,13 @@
   "aligned": true
  },
  {
-  "name": "smartart-dir.pptx",
-  "score": 0.2078,
-  "aligned": true
- },
- {
   "name": "smartart-linear-rule.pptx",
   "score": 0.2066,
   "aligned": true
  },
  {
-  "name": "smartart-text.pptx",
-  "score": 0.2012,
-  "aligned": true
- },
- {
   "name": "smartart-continuous-block-process.pptx",
   "score": 0.1956,
-  "aligned": true
- },
- {
-  "name": "smartart-chevron.pptx",
-  "score": 0.1922,
   "aligned": true
  },
  {
@@ -127,6 +102,11 @@
  {
   "name": "smartart-org-chart2.pptx",
   "score": 0.1889,
+  "aligned": true
+ },
+ {
+  "name": "smartart-font-size.pptx",
+  "score": 0.1774,
   "aligned": true
  },
  {
@@ -170,12 +150,17 @@
   "aligned": true
  },
  {
+  "name": "smartart-vertical-block-list.pptx",
+  "score": 0.1384,
+  "aligned": true
+ },
+ {
   "name": "smartart-recursion.pptx",
   "score": 0.1359,
   "aligned": true
  },
  {
-  "name": "smartart-maxdepth.pptx",
+  "name": "smartart-chevron.pptx",
   "score": 0.1332,
   "aligned": true
  },
@@ -187,6 +172,11 @@
  {
   "name": "smartart-snake-rows.pptx",
   "score": 0.1261,
+  "aligned": true
+ },
+ {
+  "name": "smartart-dir.pptx",
+  "score": 0.1142,
   "aligned": true
  },
  {
@@ -390,6 +380,11 @@
   "aligned": true
  },
  {
+  "name": "smartart-maxdepth.pptx",
+  "score": 0.0411,
+  "aligned": true
+ },
+ {
   "name": "page_transparent_bitmap.pptx",
   "score": 0.0404,
   "aligned": true
@@ -447,6 +442,11 @@
  {
   "name": "tdf112089.pptx",
   "score": 0.0328,
+  "aligned": true
+ },
+ {
+  "name": "smartart-bullet-list.pptx",
+  "score": 0.0327,
   "aligned": true
  },
  {
