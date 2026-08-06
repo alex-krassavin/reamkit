@@ -18,7 +18,10 @@ const NS =
  * @param nodes The laid-out boxes, in the diagram's own EMU frame.
  * @returns The XML text of the drawing part.
  */
-export function diagramDrawingXml(nodes: ReadonlyArray<LaidNode>): string {
+export function diagramDrawingXml(
+  nodes: ReadonlyArray<LaidNode>,
+  frame: { readonly cx: number; readonly cy: number },
+): string {
   const shapes = nodes
     .map((n) => {
       const off = `<a:off x="${r(n.x)}" y="${r(n.y)}"/><a:ext cx="${r(n.cx)}" cy="${r(n.cy)}"/>`;
@@ -34,8 +37,16 @@ export function diagramDrawingXml(nodes: ReadonlyArray<LaidNode>): string {
       );
     })
     .join('');
+  // §21.4.4 — the group's own transform states the CHILD extent the boxes are
+  // laid out in, and the reader maps that onto the graphic frame the slide
+  // gives the diagram. Without it the boxes land at their raw EMU sizes inside
+  // a frame that is a different size entirely, which is how five 80pt boxes
+  // came out at half that and floating in the corner.
+  const grp =
+    `<dsp:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${r(frame.cx)}" cy="${r(frame.cy)}"/>` +
+    `<a:chOff x="0" y="0"/><a:chExt cx="${r(frame.cx)}" cy="${r(frame.cy)}"/></a:xfrm></dsp:grpSpPr>`;
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<dsp:drawing ${NS}><dsp:spTree>${shapes}</dsp:spTree></dsp:drawing>`;
+<dsp:drawing ${NS}><dsp:spTree>${grp}${shapes}</dsp:spTree></dsp:drawing>`;
 }
 
 // The node's own text, re-emitted as the drawing part spells it. Only the runs'

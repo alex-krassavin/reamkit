@@ -464,9 +464,9 @@ function makeSlideChartResolver(
 function makeSlideDiagramResolver(
   pkg: OpcPackage,
   slidePath: string,
-): (relId: string) => PoNode | undefined {
+): (relId: string, frame: { readonly cx: number; readonly cy: number }) => PoNode | undefined {
   const cache = new Map<string, PoNode | undefined>();
-  return (relId) => {
+  return (relId, frame) => {
     if (cache.has(relId)) return cache.get(relId);
     let spTree: PoNode | undefined;
     const dataRel = pkg.getPartRelationships(slidePath).find((r) => r.id === relId);
@@ -484,22 +484,20 @@ function makeSlideDiagramResolver(
       // No cached drawing: run the layout the file DOES carry. A generator
       // writes data, layout, colours and style and leaves the picture to the
       // reader, which is the whole reason this engine exists.
-      spTree = laidOutDiagram(pkg, slidePath, data);
+      spTree = laidOutDiagram(pkg, slidePath, data, frame);
     }
     cache.set(relId, spTree);
     return spTree;
   };
 }
 
-// §21.4.3 — the layout part beside the data, run to the boxes it describes.
-// The frame is the diagram's own EMU box; the caller scales it to the shape's,
-// so a square frame keeps the proportions the layout was written for.
-const DIAGRAM_FRAME = { cx: 5486400, cy: 3200400 };
-
+// §21.4.3 — the layout part beside the data, run to the boxes it describes,
+// in the frame the slide gives the diagram.
 function laidOutDiagram(
   pkg: OpcPackage,
   slidePath: string,
   data: { readonly path: string; readonly data: Uint8Array },
+  frame: { readonly cx: number; readonly cy: number },
 ): PoNode | undefined {
   const layoutRel = pkg
     .getPartRelationships(slidePath)
@@ -507,9 +505,10 @@ function laidOutDiagram(
   const layout = layoutRel ? pkg.resolveRelatedPart(slidePath, layoutRel) : undefined;
   if (!layout) return undefined;
   const model = new DiagramData(parseXml(data.data));
-  const nodes = layoutDiagram(parseXml(layout.data), model, DIAGRAM_FRAME.cx, DIAGRAM_FRAME.cy);
+  const nodes = layoutDiagram(parseXml(layout.data), model, frame.cx, frame.cy);
   if (nodes.length === 0) return undefined;
-  for (const root of parseXml(new TextEncoder().encode(diagramDrawingXml(nodes)))) {
+  const xml = diagramDrawingXml(nodes, frame);
+  for (const root of parseXml(new TextEncoder().encode(xml))) {
     const found = poFindDescendant(root, 'dsp:spTree');
     if (found) return found;
   }

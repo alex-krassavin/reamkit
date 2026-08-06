@@ -88,33 +88,63 @@ export function layoutDiagram(
   const childName = firstNodeName(parsed.children) ?? 'node';
   const c = resolve(parsed.constrs, childName);
 
-  // §21.4.3 `snake`/`lin` with one row: the children share the frame's width,
-  // each `sp` wide gap sits between two of them. A width constraint stated as a
-  // fraction of the frame is applied; otherwise they divide it evenly.
+  // §21.4.3.2 — `snake` flows the children across and WRAPS; `lin` is the one
+  // that does not. The number of columns is the one that leaves each cell
+  // closest to the shape the constraints ask for (`h` stated against `w`),
+  // which is what "fill the frame" means: five nodes in a 4:3 frame come out
+  // two across and three down, as every reader draws them.
+  const shapeType = childShapeType(parsed.children) ?? 'rect';
   const vertical = isVertical(parsed);
-  const gapFactor = c.gap;
   const n = nodes.length;
-  const gaps = Math.max(0, n - 1);
-  const span = vertical ? cy : cx;
-  const cell = span / (n + gaps * gapFactor);
-  const gap = cell * gapFactor;
+  // A column list is one box wide however much room there is beside it, and a
+  // row that does not snake is one box tall: only a snake across chooses.
+  const cols = vertical ? 1 : parsed.alg === 'snake' ? bestColumns(n, cx, cy, c.aspect, c.gap) : n;
+  const rows = Math.ceil(n / cols);
+
+  // Each track is a cell plus the gap that follows it, the last gap trimmed.
+  const cellW = cx / (cols + Math.max(0, cols - 1) * c.gap);
+  const gapW = cellW * c.gap;
+  const cellH = cy / (rows + Math.max(0, rows - 1) * c.gap);
+  const gapH = cellH * c.gap;
 
   const out: Array<LaidNode> = [];
-  let at = 0;
-  for (const point of nodes) {
-    const w = vertical ? cx : cell;
-    const h = vertical ? cell : Math.min(cy, cell * c.aspect);
+  nodes.forEach((point, i) => {
+    const col = vertical ? Math.floor(i / rows) : i % cols;
+    const row = vertical ? i % rows : Math.floor(i / cols);
+    // A last row that is short is centred under the ones above it, which is
+    // where PowerPoint leaves it.
+    const inRow = vertical ? rows : Math.min(cols, n - row * cols);
+    const rowWidth = inRow * cellW + Math.max(0, inRow - 1) * gapW;
+    const left = vertical ? 0 : (cx - rowWidth) / 2;
     out.push({
       point,
-      shapeType: childShapeType(parsed.children) ?? 'rect',
-      x: vertical ? 0 : at,
-      y: vertical ? at : Math.max(0, (cy - h) / 2),
-      cx: w,
-      cy: h,
+      shapeType,
+      x: left + col * (cellW + gapW),
+      y: row * (cellH + gapH),
+      cx: cellW,
+      cy: cellH,
     });
-    at += cell + gap;
-  }
+  });
   return out;
+}
+
+// How many columns a snake takes: the count whose cell comes closest to the
+// aspect the constraints state for a node.
+function bestColumns(n: number, cx: number, cy: number, aspect: number, gap: number): number {
+  if (n <= 1) return 1;
+  let best = n;
+  let bestErr = Infinity;
+  for (let cols = 1; cols <= n; cols++) {
+    const rows = Math.ceil(n / cols);
+    const w = cx / (cols + Math.max(0, cols - 1) * gap);
+    const h = cy / (rows + Math.max(0, rows - 1) * gap);
+    const err = Math.abs(Math.log(h / w / (aspect || 1)));
+    if (err < bestErr - 1e-9) {
+      bestErr = err;
+      best = cols;
+    }
+  }
+  return best;
 }
 
 // The child node's aspect and the gap between siblings, read off the top

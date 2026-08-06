@@ -136,7 +136,10 @@ export interface SlideContext {
    * drawing override (its `dsp:spTree`), or `undefined` when the file ships no
    * override (E-SMARTART SA0).
    */
-  readonly resolveDiagram?: (relId: string) => PoNode | undefined;
+  readonly resolveDiagram?: (
+    relId: string,
+    frame: { readonly cx: number; readonly cy: number },
+  ) => PoNode | undefined;
   /**
    * Sink for graceful-degradation notices (E-SMARTART SA3): a SmartArt that
    * declares a diagram but ships no drawing override records a dropped-feature
@@ -461,7 +464,10 @@ function parseGraphicFrame(
   if (uri === DIAGRAM_URI) {
     const relIds = poFindDescendant(gf, 'dgm:relIds');
     const dmRelId = relIds ? poAttr(relIds, 'dm') : undefined; // r:dm → data part
-    const spTree = dmRelId !== undefined ? ctx.resolveDiagram?.(dmRelId) : undefined;
+    // The frame the slide gives the diagram is what a layout computed from the
+    // data has to fill: how many boxes fit across it is the frame's question.
+    const spTree =
+      dmRelId !== undefined ? ctx.resolveDiagram?.(dmRelId, { cx: box.cx, cy: box.cy }) : undefined;
     if (!spTree) {
       // SmartArt is declared but ships no pre-rendered drawing override; record
       // a graceful loss instead of silently dropping the diagram (SA3).
