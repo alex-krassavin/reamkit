@@ -271,6 +271,40 @@ describe('ppt reader formatting (PPT-2)', () => {
     expect(para.properties.indentFirstLine).toBe(-25.5);
     expect(para.runs[0]!.text).toBe('•\t');
   });
+
+  it('spaces the paragraphs a master states a distance between', () => {
+    // §2.9.32 ParaSpacing reads two ways by its SIGN. Negative is a distance in
+    // master units — 41246-1.ppt's five body levels state -114 … -23, which
+    // LibreOffice writes back as 14.26 … 2.87 pt. Positive is a percentage of
+    // the line's height, which lineSpacing states directly.
+    const doc = readPpt(
+      buildPpt([
+        {
+          text: 'Spaced',
+          paraRuns: [{ length: 6, spaceBefore: -46, spaceAfter: -114, lineSpacing: 95 }],
+        },
+      ]),
+    ).doc;
+    const props = firstParagraph(doc).properties;
+    expect(props.spacingBefore).toBe(5.75);
+    expect(props.spacingAfter).toBe(14.25);
+    // 95 % of a line, in the 12pt-to-the-line the `auto` rule counts in.
+    expect(props.spacingLineRule).toBe('auto');
+    expect(props.spacingLine).toBeCloseTo(11.4, 6);
+  });
+
+  it('leaves a spacing stated as a PERCENTAGE of the line alone', () => {
+    // A positive spaceBefore is a share of a line whose height is not settled
+    // until the line is set; guessed at, it would move every deck that states
+    // one. Read as nothing, the paragraph keeps whatever it would inherit.
+    const doc = readPpt(
+      buildPpt([{ text: 'Pct', paraRuns: [{ length: 3, spaceBefore: 20, spaceAfter: 50 }] }]),
+    ).doc;
+    const props = firstParagraph(doc).properties;
+    // Nothing is stated, so the paragraph sits at the model's own default.
+    expect(props.spacingBefore).toBe(0);
+    expect(props.spacingAfter).toBe(0);
+  });
 });
 
 describe('ppt reader images (PPT-3)', () => {

@@ -564,6 +564,13 @@ function toParaProperties(p: PptParagraph, breakBefore: boolean): ParagraphPrope
     ...(alignment ? { alignment } : {}),
     ...(leftPt !== undefined ? { indentLeft: pt(leftPt) } : {}),
     ...(firstPt !== undefined && firstPt !== 0 ? { indentFirstLine: pt(firstPt) } : {}),
+    ...(p.spaceBeforePt !== undefined ? { spacingBefore: pt(p.spaceBeforePt) } : {}),
+    ...(p.spaceAfterPt !== undefined ? { spacingAfter: pt(p.spaceAfterPt) } : {}),
+    // §2.9.32 — a percentage of the line's height, and the model's `auto` rule
+    // states the same thing as a multiple of the 12pt single line it counts in.
+    ...(p.lineSpacing !== undefined && p.lineSpacing > 0
+      ? { spacingLineRule: 'auto' as const, spacingLine: pt((p.lineSpacing / 100) * 12) }
+      : {}),
   };
 }
 

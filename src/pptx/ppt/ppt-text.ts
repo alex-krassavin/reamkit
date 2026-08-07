@@ -189,6 +189,11 @@ export interface PptParagraph {
   readonly leftMarginPt?: number;
   /** §2.9.20 `indent` — where its FIRST line starts. Left of the body ⇒ hanging. */
   readonly indentPt?: number;
+  /** §2.9.32 `lineSpacing`, as a PERCENTAGE of the line's height — 100 is single. */
+  readonly lineSpacing?: number;
+  /** §2.9.32 `spaceBefore` / `spaceAfter`, in points. */
+  readonly spaceBeforePt?: number;
+  readonly spaceAfterPt?: number;
 }
 /**
  * An embedded picture referenced by a slide shape — the raw image bytes pulled
@@ -1008,6 +1013,9 @@ interface LevelStyle extends CharProps {
   bulletOn?: boolean;
   leftMarginPt?: number;
   indentPt?: number;
+  lineSpacing?: number;
+  spaceBeforePt?: number;
+  spaceAfterPt?: number;
 }
 /** A master's defaults, by text type (TextHeaderAtom) and indent level. */
 type MasterDefaults = (textType: number, level: number) => LevelStyle | undefined;
@@ -1090,6 +1098,9 @@ function readMasterLevels(
       ...(pf.bulletOn !== undefined ? { bulletOn: pf.bulletOn } : {}),
       ...(pf.leftMarginPt !== undefined ? { leftMarginPt: pf.leftMarginPt } : {}),
       ...(pf.indentPt !== undefined ? { indentPt: pf.indentPt } : {}),
+      ...(pf.lineSpacing !== undefined ? { lineSpacing: pf.lineSpacing } : {}),
+      ...(pf.spaceBeforePt !== undefined ? { spaceBeforePt: pf.spaceBeforePt } : {}),
+      ...(pf.spaceAfterPt !== undefined ? { spaceAfterPt: pf.spaceAfterPt } : {}),
     });
   }
   return { styles, off };
@@ -1125,7 +1136,20 @@ function masterDefaults(
         // because its run says so, and black and unbulleted because no style
         // claims it — lending the body style's navy and its dot there painted a
         // title every reader draws as a plain black line.
-        const { colorHex: _c, colorIndex: _i, bullet: _b, bulletOn: _o, ...metrics } = at;
+        // The space AROUND a paragraph goes with them: it is the outline's own
+        // rhythm, not a metric. 119877's yellow caption is a centreBody its
+        // master never defines, and lending it the outline's 8pt before opened
+        // a gap between every line of it that no reader shows.
+        const {
+          colorHex: _c,
+          colorIndex: _i,
+          bullet: _b,
+          bulletOn: _o,
+          spaceBeforePt: _sb,
+          spaceAfterPt: _sa,
+          lineSpacing: _ls,
+          ...metrics
+        } = at;
         const from = t === textType ? at : metrics;
         merged = { ...from, ...merged }; // the nearer statement wins
       }
@@ -1968,6 +1992,10 @@ interface ParaRun {
   leftMarginPt?: number;
   /** Where its FIRST line starts — left of the body when the bullet hangs. */
   indentPt?: number;
+  /** §2.9.32 — a PERCENTAGE of the line's height, 100 being one line. */
+  lineSpacing?: number;
+  spaceBeforePt?: number;
+  spaceAfterPt?: number;
 }
 
 /** The concatenated plain text of a paragraph's runs. */
@@ -2025,6 +2053,9 @@ function buildStyledParagraphs(
     const bullet = on === false ? undefined : on === true ? (char ?? '•') : char;
     const leftMarginPt = meta?.leftMarginPt ?? lvl?.leftMarginPt;
     const indentPt = meta?.indentPt ?? lvl?.indentPt;
+    const lineSpacing = meta?.lineSpacing ?? lvl?.lineSpacing;
+    const spaceBeforePt = meta?.spaceBeforePt ?? lvl?.spaceBeforePt;
+    const spaceAfterPt = meta?.spaceAfterPt ?? lvl?.spaceAfterPt;
     paras.push({
       runs: lvl ? runs.map((r) => inherit(r, lvl)) : runs,
       ...(align !== undefined ? { align } : {}),
@@ -2032,6 +2063,9 @@ function buildStyledParagraphs(
       ...(bullet !== undefined ? { bullet } : {}),
       ...(leftMarginPt !== undefined ? { leftMarginPt } : {}),
       ...(indentPt !== undefined ? { indentPt } : {}),
+      ...(lineSpacing !== undefined ? { lineSpacing } : {}),
+      ...(spaceBeforePt !== undefined ? { spaceBeforePt } : {}),
+      ...(spaceAfterPt !== undefined ? { spaceAfterPt } : {}),
     });
     runs = [];
     paraStart = end + 1;
@@ -2149,6 +2183,9 @@ function parseStyleTextProp(
       ...(pf.bulletOn !== undefined ? { bulletOn: pf.bulletOn } : {}),
       ...(pf.leftMarginPt !== undefined ? { leftMarginPt: pf.leftMarginPt } : {}),
       ...(pf.indentPt !== undefined ? { indentPt: pf.indentPt } : {}),
+      ...(pf.lineSpacing !== undefined ? { lineSpacing: pf.lineSpacing } : {}),
+      ...(pf.spaceBeforePt !== undefined ? { spaceBeforePt: pf.spaceBeforePt } : {}),
+      ...(pf.spaceAfterPt !== undefined ? { spaceAfterPt: pf.spaceAfterPt } : {}),
     });
     consumed += count;
     if (count <= 0) break;
@@ -2169,6 +2206,18 @@ function parseStyleTextProp(
   return paraRuns.length > 0 || charRuns.length > 0 ? { paraRuns, charRuns } : undefined;
 }
 
+/**
+ * §2.9.32 ParaSpacing → points, or `undefined` when the value is a percentage.
+ *
+ * Negative states a DISTANCE in master units, 576 to the inch. Positive states
+ * a percentage of the line's height, which is not a distance this reader can
+ * work out — the line has not been set yet — so it is left for the paragraph to
+ * inherit nothing rather than guessed at.
+ */
+function spacingPt(value: number): number | undefined {
+  return value < 0 ? -value / 8 : undefined;
+}
+
 // §2.9.20 TextPFException: a 4-byte mask then the fields whose bits it sets, in
 // the spec's byte order (NOT bit-ascending). Every present field is stepped over
 // even when it is dropped, or the ones after it read from the wrong place.
@@ -2182,6 +2231,9 @@ function readPfException(
   bulletOn?: boolean;
   leftMarginPt?: number;
   indentPt?: number;
+  lineSpacing?: number;
+  spaceBeforePt?: number;
+  spaceAfterPt?: number;
 } {
   const mask = u32(data, start);
   let off = start + 4;
@@ -2190,6 +2242,9 @@ function readPfException(
   let bullet: string | undefined;
   let leftMarginPt: number | undefined;
   let indentPt: number | undefined;
+  let lineSpacing: number | undefined;
+  let spaceBeforePt: number | undefined;
+  let spaceAfterPt: number | undefined;
   if ((mask & 0x0000000f) !== 0) {
     bulletOn = (u16(data, off) & 0x0001) !== 0; // bulletFlags.fHasBullet
     off += 2;
@@ -2205,9 +2260,24 @@ function readPfException(
     align = u16(data, off); // textAlignment
     off += 2;
   }
-  if ((mask & 0x00001000) !== 0) off += 2; // lineSpacing
-  if ((mask & 0x00002000) !== 0) off += 2; // spaceBefore
-  if ((mask & 0x00004000) !== 0) off += 2; // spaceAfter
+  // §2.9.32 ParaSpacing — a SIGNED value with two readings. Negative is a
+  // distance in master units, eight to the point; positive is a percentage of
+  // the line's height. Measured against LibreOffice on 41246-1.ppt: the
+  // master's five body levels state -114, -91, -68, -46, -23 and LO writes
+  // 14.26, 11.37, 8.50, 5.75 pt after them, and a lineSpacing of 95 becomes
+  // 95 %.
+  if ((mask & 0x00001000) !== 0) {
+    lineSpacing = i16(data, off);
+    off += 2;
+  }
+  if ((mask & 0x00002000) !== 0) {
+    spaceBeforePt = spacingPt(i16(data, off));
+    off += 2;
+  }
+  if ((mask & 0x00004000) !== 0) {
+    spaceAfterPt = spacingPt(i16(data, off));
+    off += 2;
+  }
   // §2.9.20 — the indents are MASTER UNITS, 576 to the inch, so eight to the
   // point. `leftMargin` is where the paragraph's body sits and `indent` where
   // its FIRST line starts: a bullet hangs when the first line starts left of
@@ -2232,6 +2302,9 @@ function readPfException(
     ...(bulletOn !== undefined ? { bulletOn } : {}),
     ...(leftMarginPt !== undefined ? { leftMarginPt } : {}),
     ...(indentPt !== undefined ? { indentPt } : {}),
+    ...(lineSpacing !== undefined ? { lineSpacing } : {}),
+    ...(spaceBeforePt !== undefined ? { spaceBeforePt } : {}),
+    ...(spaceAfterPt !== undefined ? { spaceAfterPt } : {}),
   };
 }
 

@@ -116,6 +116,10 @@ export interface PptParaStyleRun {
   /** §2.9.20 leftMargin / indent, in MASTER UNITS — 576 to the inch, eight to the point. */
   readonly leftMargin?: number;
   readonly indent?: number;
+  /** §2.9.32 ParaSpacing — negative is master units, positive a percentage of the line. */
+  readonly lineSpacing?: number;
+  readonly spaceBefore?: number;
+  readonly spaceAfter?: number;
 }
 
 export interface PptSlideInput {
@@ -348,12 +352,18 @@ function buildStyleTextProp(
       (r.hasBullet !== undefined ? 0x00000001 : 0) | // bulletFlags
       (r.bulletChar !== undefined ? 0x00000080 : 0) | // bulletChar
       (r.leftMargin !== undefined ? 0x00000100 : 0) |
-      (r.indent !== undefined ? 0x00000400 : 0);
+      (r.indent !== undefined ? 0x00000400 : 0) |
+      (r.lineSpacing !== undefined ? 0x00001000 : 0) |
+      (r.spaceBefore !== undefined ? 0x00002000 : 0) |
+      (r.spaceAfter !== undefined ? 0x00004000 : 0);
     u32(mask);
     // The fields follow the mask in the SPEC's byte order, not bit order.
     if (r.hasBullet !== undefined) u16(r.hasBullet ? 0x0001 : 0);
     if (r.bulletChar !== undefined) u16(r.bulletChar);
     if (r.align !== undefined) u16(r.align);
+    if (r.lineSpacing !== undefined) u16(r.lineSpacing);
+    if (r.spaceBefore !== undefined) u16(r.spaceBefore);
+    if (r.spaceAfter !== undefined) u16(r.spaceAfter);
     if (r.leftMargin !== undefined) u16(r.leftMargin);
     if (r.indent !== undefined) u16(r.indent);
   });
