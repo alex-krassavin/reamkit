@@ -698,3 +698,29 @@ describe('SmartArt: an empty cached drawing is no drawing', () => {
     expect(cachedDiagramTree(bytes('<a:notADrawing xmlns:a="a"/>'), parseBytes)).toBeUndefined();
   });
 });
+
+// §21.4.5 `dgm:linClrLst` — the outline the colours part states for a label.
+describe('SmartArt: the colours part draws outlines too', () => {
+  const OUTLINED = `<dgm:colorsDef xmlns:dgm="d" xmlns:a="a">
+      <dgm:styleLbl name="conFgAcc1">
+        <dgm:fillClrLst meth="repeat"><a:schemeClr val="lt1"><a:alpha val="90000"/></a:schemeClr></dgm:fillClrLst>
+        <dgm:linClrLst meth="repeat"><a:schemeClr val="accent1"/></dgm:linClrLst>
+      </dgm:styleLbl>
+      <dgm:styleLbl name="plain"><dgm:fillClrLst><a:schemeClr val="accent2"/></dgm:fillClrLst></dgm:styleLbl>
+    </dgm:colorsDef>`;
+  const outlined = new DiagramColors(parse(OUTLINED));
+
+  it('gives a follower box its line, which is the whole of it', () => {
+    // Near-white inside an accent line: unlined it is white on white.
+    expect(outlined.fill('conFgAcc1', 0)).toContain('val="lt1"');
+    expect(outlined.line('conFgAcc1', 0)).toBe(
+      '<a:ln><a:solidFill><a:schemeClr val="accent1"></a:schemeClr></a:solidFill></a:ln>',
+    );
+  });
+
+  it('leaves a label that states no line without one', () => {
+    expect(outlined.line('plain', 0)).toBeUndefined();
+    expect(outlined.line('noSuchLabel', 0)).toBeUndefined();
+    expect(outlined.line(undefined, 0)).toBeUndefined();
+  });
+});

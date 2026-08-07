@@ -35,17 +35,21 @@ export function diagramDrawingXml(
       // §21.4.3.9 — a box whose shape hides its geometry is there for the room
       // it takes, not to be seen: the picture lists space their nodes with one,
       // and painting it drew a bar of accent colour across the top of each.
-      const fill =
+      const paint =
         n.hideGeom === true
           ? '<a:noFill/><a:ln><a:noFill/></a:ln>'
           : (colors?.fill(n.styleLbl, n.index) ??
-            (colors?.knows(n.styleLbl) === true
-              ? '<a:noFill/>'
-              : '<a:solidFill><a:schemeClr val="accent1"/></a:solidFill>'));
+              (colors?.knows(n.styleLbl) === true
+                ? '<a:noFill/>'
+                : '<a:solidFill><a:schemeClr val="accent1"/></a:solidFill>')) +
+            // §21.4.5 — `linClrLst` is the box's outline, and for the follower
+            // boxes it is the whole of them: `conFgAcc1` is `lt1` at 90% inside
+            // an `accent1` line, so unlined it is white on white.
+            (colors?.line(n.styleLbl, n.index) ?? '');
       const text = colors?.textFill(n.styleLbl, n.index);
       return (
         `<dsp:sp><dsp:spPr><a:xfrm>${off}</a:xfrm>` +
-        `<a:prstGeom prst="${esc(n.shapeType)}"><a:avLst/></a:prstGeom>${fill}</dsp:spPr>` +
+        `<a:prstGeom prst="${esc(n.shapeType)}"><a:avLst/></a:prstGeom>${paint}</dsp:spPr>` +
         `<dsp:style><a:fontRef idx="minor"><a:schemeClr val="lt1"/></a:fontRef></dsp:style>` +
         `<dsp:txBody>${bodyXml(n, text)}</dsp:txBody></dsp:sp>`
       );

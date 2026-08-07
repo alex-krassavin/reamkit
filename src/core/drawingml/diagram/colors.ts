@@ -62,6 +62,21 @@ export class DiagramColors {
     return label !== undefined && this.byLabel.has(label);
   }
 
+  /**
+   * The `a:ln` for a box's OUTLINE, where the part states one.
+   *
+   * A follower box is often a near-white wash with the node's own accent drawn
+   * round it (`conFgAcc1` is `lt1` at 90% inside an `accent1` line): without the
+   * line it is a white rectangle on a white slide and reads as nothing at all.
+   *
+   * @param label The layout node's `styleLbl`.
+   * @param index The box's place in the run of siblings.
+   */
+  line(label: string | undefined, index: number): string | undefined {
+    const fill = solid(this.pick(label, 'line', index));
+    return fill === undefined ? undefined : `<a:ln>${fill}</a:ln>`;
+  }
+
   /** The `a:solidFill` for a box's TEXT, where the part overrides the style. */
   textFill(label: string | undefined, index: number): string | undefined {
     return solid(this.pick(label, 'txFill', index));
