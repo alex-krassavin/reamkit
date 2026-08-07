@@ -25,7 +25,7 @@ import type { ColorResolver, SchemeAliases } from '@/core/drawingml/colors';
 
 import type { FontRegistry } from '@/core/font';
 import { packageHasPart } from '@/core/bytes';
-import { laidOutDiagramTree } from '@/core/drawingml/diagram/run';
+import { cachedDiagramTree, laidOutDiagramTree } from '@/core/drawingml/diagram/run';
 import { parseChart, withChartColorStyle } from '@/core/drawingml/chart-parser';
 import {
   DEFAULT_SCHEME_ALIAS,
@@ -466,19 +466,11 @@ function makeSlideDiagramResolver(
   const cache = new Map<string, PoNode | undefined>();
   return (relId, frame) => {
     if (cache.has(relId)) return cache.get(relId);
-    let spTree: PoNode | undefined;
     const dataRel = pkg.getPartRelationships(slidePath).find((r) => r.id === relId);
     const data = dataRel ? pkg.resolveRelatedPart(slidePath, dataRel) : undefined;
     const draw = data ? drawingPart(pkg, slidePath, data) : undefined;
-    if (draw) {
-      for (const root of parseXml(draw.data)) {
-        const found = poFindDescendant(root, 'dsp:spTree');
-        if (found) {
-          spTree = found;
-          break;
-        }
-      }
-    } else if (data) {
+    let spTree = draw ? cachedDiagramTree(draw.data, parseXml) : undefined;
+    if (!spTree && data) {
       // No cached drawing: run the layout the file DOES carry. A generator
       // writes data, layout, colours and style and leaves the picture to the
       // reader, which is the whole reason this engine exists.

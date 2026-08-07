@@ -7,7 +7,7 @@
 import type { DiagramColors } from '@/core/drawingml/diagram/colors';
 import type { LaidNode } from '@/core/drawingml/diagram/layout-engine';
 import type { PoNode } from '@/core/po-helpers';
-import { poChildren, poIs, poText } from '@/core/po-helpers';
+import { poAttr, poChildren, poIs, poText } from '@/core/po-helpers';
 
 const NS =
   'xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" ' +
@@ -32,11 +32,16 @@ export function diagramDrawingXml(
       // §21.4.5 — the colours part names a RUN of accents per style label, so
       // sibling boxes differ; only a file without one falls back to a single
       // accent for the lot.
+      // §21.4.3.9 — a box whose shape hides its geometry is there for the room
+      // it takes, not to be seen: the picture lists space their nodes with one,
+      // and painting it drew a bar of accent colour across the top of each.
       const fill =
-        colors?.fill(n.styleLbl, n.index) ??
-        (colors?.knows(n.styleLbl) === true
-          ? '<a:noFill/>'
-          : '<a:solidFill><a:schemeClr val="accent1"/></a:solidFill>');
+        n.hideGeom === true
+          ? '<a:noFill/><a:ln><a:noFill/></a:ln>'
+          : (colors?.fill(n.styleLbl, n.index) ??
+            (colors?.knows(n.styleLbl) === true
+              ? '<a:noFill/>'
+              : '<a:solidFill><a:schemeClr val="accent1"/></a:solidFill>'));
       const text = colors?.textFill(n.styleLbl, n.index);
       return (
         `<dsp:sp><dsp:spPr><a:xfrm>${off}</a:xfrm>` +
@@ -84,34 +89,63 @@ function bodyXml(node: LaidNode, textFill?: string): string {
         // `normAutofit` below is what brings it down to what fits.
         const sz =
           node.fontSizePt === undefined ? '' : ` sz="${Math.round(node.fontSizePt * 100)}"`;
+        // Size and colour are the style's to give, but bold and italic are the
+        // author's own emphasis — smartart-missing-bullet sets `b="1"` on its
+        // heading and nothing else in the file says so.
+        const src = poChildren(r).find((c) => poIs(c, 'a:rPr'));
+        const emph = (['b', 'i', 'u'] as const)
+          .map((a) => {
+            const v = poAttr(src, a);
+            return v === undefined ? '' : ` ${a}="${esc(v)}"`;
+          })
+          .join('');
         const rPr =
           textFill === undefined
-            ? `<a:rPr lang="en-US"${sz}/>`
-            : `<a:rPr lang="en-US"${sz}>${textFill}</a:rPr>`;
+            ? `<a:rPr lang="en-US"${sz}${emph}/>`
+            : `<a:rPr lang="en-US"${sz}${emph}>${textFill}</a:rPr>`;
         runs += `<a:r>${rPr}<a:t>${esc(text)}</a:t></a:r>`;
       }
     }
-    // Bulleted text reads as the list it is: ranged left behind its bullets,
-    // where a node's own label sits centred in its box.
-    const pPr =
-      node.bulleted === true
-        ? '<a:pPr algn="l" marL="171450" indent="-171450"><a:buChar char="\u2022"/></a:pPr>'
-        : '<a:pPr algn="ctr"/>';
-    if (runs !== '') paragraphs.push(`<a:p>${pPr}${runs}</a:p>`);
+    if (runs !== '') paragraphs.push(`<a:p>${paraPr(node, p)}${runs}</a:p>`);
   }
   // §20.1.10.42 — a `normAutofit` carrying no scale of its own asks the layout,
   // which has the glyphs, to measure this text and shrink it until it fits.
   // Nothing here can: the stated 65pt of "Automatically shrinked text" stood
   // three lines deep and half a box wide outside the box it names.
+  const anchor = node.anchor === undefined ? 'ctr' : esc(node.anchor);
   const body =
-    `<a:bodyPr anchor="ctr"${node.bulleted === true ? ' anchorCtr="0"' : ''}>` +
+    `<a:bodyPr anchor="${anchor}"${node.bulleted === true ? ' anchorCtr="0"' : ''}>` +
     `<a:normAutofit/></a:bodyPr><a:lstStyle/>`;
   return paragraphs.length > 0 ? body + paragraphs.join('') : `${body}<a:p/>`;
 }
 
-/** Whether a parsed drawing part actually holds shapes to draw. */
-export function hasShapes(tree: ReadonlyArray<PoNode>): boolean {
-  return tree.length > 0;
+/**
+ * One paragraph's properties. `bulletEnabled` on a layout node says only that
+ * bullets are ALLOWED here; which bullet a paragraph actually takes — or that it
+ * takes none — is the data part's to state, and smartart-missing-bullet is a
+ * file of exactly two paragraphs, one `a:buNone` and one `a:buChar`, that came
+ * out with the same marker on both. So a paragraph that states its own bullet or
+ * its own alignment keeps them, and only one that states neither falls back to
+ * the layout's answer: ranged left behind a bullet where the layout allows one,
+ * centred where it does not.
+ */
+function paraPr(node: LaidNode, para: PoNode): string {
+  const src = poChildren(para).find((c) => poIs(c, 'a:pPr'));
+  const kids = poChildren(src);
+  const bullet = kids.find(
+    (c) => poIs(c, 'a:buNone') || poIs(c, 'a:buChar') || poIs(c, 'a:buAutoNum'),
+  );
+  const listed = bullet === undefined ? node.bulleted === true : !poIs(bullet, 'a:buNone');
+  const algn = poAttr(src, 'algn') ?? (listed ? 'l' : 'ctr');
+  if (!listed) return `<a:pPr algn="${esc(algn)}"/>`;
+  const marL = poAttr(src, 'marL') ?? '171450';
+  const indent = poAttr(src, 'indent') ?? '-171450';
+  const char =
+    bullet !== undefined && poIs(bullet, 'a:buChar') ? poAttr(bullet, 'char') : undefined;
+  return (
+    `<a:pPr algn="${esc(algn)}" marL="${esc(marL)}" indent="${esc(indent)}">` +
+    `<a:buChar char="${esc(char ?? '•')}"/></a:pPr>`
+  );
 }
 
 const r = (v: number): number => Math.round(v);

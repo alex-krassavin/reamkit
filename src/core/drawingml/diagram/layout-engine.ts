@@ -28,6 +28,13 @@ export interface LaidNode {
   readonly fontSizePt?: number;
   /** Whether the `tx` algorithm asks for the text to be bulleted. */
   readonly bulleted?: boolean;
+  /**
+   * §21.4.3.9 `dgm:shape@hideGeom` — the box reserves its room but its outline
+   * is never drawn. The picture lists put an invisible spacer above each node.
+   */
+  readonly hideGeom?: boolean;
+  /** §21.4.3.2 `txAnchorVert` — where in its box the `tx` algorithm sits text. */
+  readonly anchor?: string;
   readonly x: number;
   readonly y: number;
   readonly cx: number;
@@ -63,6 +70,13 @@ interface LayoutNode {
   readonly alg: AlgType;
   readonly algParams: ReadonlyMap<string, string>;
   readonly shapeType?: string;
+  readonly hideGeom?: boolean;
+  /**
+   * §21.4.3.7 `dgm:presOf@axis="desOrSelf"` — the box speaks for the point AND
+   * everything under it, so a node with children shows its own label with theirs
+   * beneath it rather than dropping them.
+   */
+  readonly presOfDes?: boolean;
   readonly constrs: ReadonlyArray<Constraint>;
   readonly children: ReadonlyArray<LayoutItem>;
 }
@@ -157,7 +171,8 @@ function layoutIn(
   // filling its whole share is a worse answer than none: a centre-cycle came
   // out as one blue rectangle over the entire frame.
   if (node.alg !== 'tx') return [];
-  return [{ point, shapeType: node.shapeType ?? 'rect', ...styleOf(node), index, ...box }];
+  const spoken = node.presOfDes === true ? withDescendants(point, data) : point;
+  return [{ point: spoken, shapeType: node.shapeType ?? 'rect', ...styleOf(node), index, ...box }];
 }
 
 // What a box takes from its own layout node, whatever laid it out.
@@ -165,13 +180,34 @@ function styleOf(node: { kind: 'node' } & LayoutNode): {
   styleLbl?: string;
   fontSizePt?: number;
   bulleted?: true;
+  hideGeom?: true;
+  anchor?: string;
 } {
   const sz = fontSize(node.constrs, undefined, 'primFontSz');
+  const anchor = node.algParams.get('txAnchorVert');
   return {
     ...(node.styleLbl !== undefined ? { styleLbl: node.styleLbl } : {}),
     ...opt('fontSizePt', sz),
     ...(bulleted(node) ? { bulleted: true as const } : {}),
+    ...(node.hideGeom === true ? { hideGeom: true as const } : {}),
+    ...(anchor !== undefined && anchor !== '' ? { anchor } : {}),
   };
+}
+
+// §21.4.3.7 `desOrSelf` — the point's own paragraphs, then every descendant's
+// in depth-first order, as one text. Each descendant's paragraphs already carry
+// the level they sit at, so they indent themselves.
+function withDescendants(point: DiagramPoint, data: DiagramData): DiagramPoint {
+  const paragraphs: Array<PoNode> = point.text ? [...poChildren(point.text)] : [];
+  const walk = (id: string): void => {
+    for (const kid of data.children(id, 'node')) {
+      if (kid.text) paragraphs.push(...poChildren(kid.text));
+      walk(kid.id);
+    }
+  };
+  walk(point.id);
+  if (paragraphs.length === 0) return point;
+  return { ...point, text: { 'dgm:t': paragraphs } };
 }
 
 /**
@@ -775,6 +811,7 @@ function parseNode(node: PoNode, ctx: LayoutContext): { kind: 'node' } & LayoutN
   }
   const shapeType = shape ? poAttr(shape, 'type') : undefined;
   const styleLbl = poAttr(node, 'styleLbl');
+  const presOf = flattened.find((k) => poIs(k, 'dgm:presOf'));
   return {
     kind: 'node',
     name: poAttr(node, 'name') ?? '',
@@ -783,6 +820,8 @@ function parseNode(node: PoNode, ctx: LayoutContext): { kind: 'node' } & LayoutN
     alg: algOf(alg),
     algParams: params,
     ...(shapeType !== undefined && shapeType !== '' ? { shapeType } : {}),
+    ...(shape !== undefined && poAttr(shape, 'hideGeom') === '1' ? { hideGeom: true } : {}),
+    ...(poAttr(presOf, 'axis') === 'desOrSelf' ? { presOfDes: true } : {}),
     constrs: parseConstraints(constrLst),
     children: flattened.flatMap((k) => parseItem(k, ctx, guarded.has(k))),
   };

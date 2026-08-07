@@ -12,6 +12,7 @@ import type { PoNode } from '@/core/po-helpers';
 import { DiagramColors } from '@/core/drawingml/diagram/colors';
 import { DiagramData } from '@/core/drawingml/diagram/data-model';
 import { layoutDiagram } from '@/core/drawingml/diagram/layout-engine';
+import { cachedDiagramTree } from '@/core/drawingml/diagram/run';
 import { diagramDrawingXml } from '@/core/drawingml/diagram/to-drawing';
 
 const parser = new XMLParser({
@@ -588,5 +589,112 @@ describe('the colours a SmartArt part gives its boxes', () => {
     expect(colors.textFill('alignNode1', 0)).toBeUndefined();
     expect(colors.fill('noSuchLabel', 0)).toBeUndefined();
     expect(colors.fill(undefined, 0)).toBeUndefined();
+  });
+});
+
+// §21.4.3.7/§21.4.3.9 and §21.4.4 — what a box takes from the file rather than
+// from the layout's defaults: the descendants it speaks for, the geometry it
+// hides, the bullet its own data states, and the picture a drawing part is
+// allowed to have cached as nothing at all.
+describe('SmartArt: what the file states for itself', () => {
+  // A picture list's node: it speaks for its point and everything under it, and
+  // it is spaced by a box that reserves room without being drawn.
+  const PICTURE_LIST = layoutXml(
+    `<dgm:alg type="lin"/>
+     <dgm:constrLst>
+       <dgm:constr type="w" for="ch" forName="cell" refType="w"/>
+     </dgm:constrLst>
+     <dgm:forEach name="each" axis="ch" ptType="node">
+       <dgm:layoutNode name="cell">
+         <dgm:alg type="composite"/>
+         <dgm:constrLst>
+           <dgm:constr type="h" for="ch" forName="spacer" refType="h" fact="0.1"/>
+           <dgm:constr type="t" for="ch" forName="spacer"/>
+           <dgm:constr type="h" for="ch" forName="label" refType="h" fact="0.9"/>
+           <dgm:constr type="b" for="ch" forName="label" refType="h"/>
+         </dgm:constrLst>
+         <dgm:layoutNode name="label">
+           <dgm:varLst><dgm:bulletEnabled val="1"/></dgm:varLst>
+           <dgm:alg type="tx"><dgm:param type="txAnchorVert" val="t"/></dgm:alg>
+           <dgm:shape type="rect"/>
+           <dgm:presOf axis="desOrSelf" ptType="node"/>
+         </dgm:layoutNode>
+         <dgm:layoutNode name="spacer">
+           <dgm:alg type="sp"/>
+           <dgm:shape type="roundRect" hideGeom="1"/>
+         </dgm:layoutNode>
+       </dgm:layoutNode>
+     </dgm:forEach>`,
+  );
+
+  it('a box with presOf desOrSelf speaks for its descendants too', () => {
+    const nodes = run(PICTURE_LIST, dataXml([['Parent', ['Kid1', 'Kid2']]]));
+    const spoken = nodes.find((n) => n.point.text !== undefined);
+    const xml = diagramDrawingXml(nodes, { cx: CX, cy: CY });
+    // Its own label first, then each descendant's, in depth-first order.
+    expect(xml.indexOf('Parent')).toBeGreaterThan(-1);
+    expect(xml.indexOf('Kid1')).toBeGreaterThan(xml.indexOf('Parent'));
+    expect(xml.indexOf('Kid2')).toBeGreaterThan(xml.indexOf('Kid1'));
+    expect(spoken?.anchor).toBe('t');
+  });
+
+  it('a hidden geometry reserves its room and paints nothing', () => {
+    const nodes = run(PICTURE_LIST, dataXml([['Parent', []]]));
+    const spacer = nodes.find((n) => n.hideGeom === true);
+    expect(spacer).toBeDefined();
+    // It is a real box — the label below it starts where the spacer ends.
+    expect(spacer?.cy).toBeGreaterThan(0);
+    const xml = diagramDrawingXml(nodes, { cx: CX, cy: CY });
+    expect(xml).toContain('<a:noFill/><a:ln><a:noFill/></a:ln>');
+  });
+
+  it("a paragraph's own bullet wins over the layout's permission to have one", () => {
+    const data = dataXml([['Parent', ['Kid']]])
+      .replace('<a:p><a:r><a:t>Parent', '<a:p><a:pPr><a:buNone/></a:pPr><a:r><a:t>Parent')
+      .replace(
+        '<a:p><a:r><a:t>Kid',
+        '<a:p><a:pPr algn="l"><a:buChar char="-"/></a:pPr><a:r><a:t>Kid',
+      );
+    const xml = diagramDrawingXml(run(PICTURE_LIST, data), { cx: CX, cy: CY });
+    // The heading says it takes no bullet, so it takes none; the child names
+    // its own character rather than the engine's default.
+    expect(xml).toContain('<a:pPr algn="ctr"/><a:r><a:rPr lang="en-US"/><a:t>Parent</a:t>');
+    expect(xml).toContain('<a:buChar char="-"/>');
+    expect(xml).not.toContain('<a:buChar char="•"/>');
+  });
+
+  it("carries the author's own bold through, but not their size", () => {
+    const data = dataXml([['Parent', []]]).replace(
+      '<a:r><a:t>Parent',
+      '<a:r><a:rPr b="1" sz="900"/><a:t>Parent',
+    );
+    const xml = diagramDrawingXml(run(PICTURE_LIST, data), { cx: CX, cy: CY });
+    expect(xml).toContain(' b="1"');
+    expect(xml).not.toContain('sz="900"');
+  });
+});
+
+// §21.4.4 — the drawing part a file caches, and what it means when it caches
+// nothing. smartart-missing-bullet.pptx ships a `dsp:drawing` holding only the
+// group properties: the generator wrote the part and never filled it.
+describe('SmartArt: an empty cached drawing is no drawing', () => {
+  const EMPTY = `<dsp:drawing xmlns:dsp="s" xmlns:a="a"><dsp:spTree>
+      <dsp:nvGrpSpPr><dsp:cNvPr id="0" name=""/><dsp:cNvGrpSpPr/></dsp:nvGrpSpPr>
+      <dsp:grpSpPr/></dsp:spTree></dsp:drawing>`;
+  const DRAWN = EMPTY.replace(
+    '</dsp:spTree>',
+    '<dsp:sp><dsp:spPr/><dsp:txBody><a:p/></dsp:txBody></dsp:sp></dsp:spTree>',
+  );
+  const bytes = (xml: string): Uint8Array => new TextEncoder().encode(xml);
+  // `cachedDiagramTree` takes the reader's own parser, which reads bytes.
+  const parseBytes = (b: Uint8Array): Array<PoNode> => parse(new TextDecoder().decode(b));
+
+  it('reads a cached tree that holds shapes', () => {
+    expect(cachedDiagramTree(bytes(DRAWN), parseBytes)).toBeDefined();
+  });
+
+  it('reads a cached tree that holds none as absent, so the layout runs', () => {
+    expect(cachedDiagramTree(bytes(EMPTY), parseBytes)).toBeUndefined();
+    expect(cachedDiagramTree(bytes('<a:notADrawing xmlns:a="a"/>'), parseBytes)).toBeUndefined();
   });
 });

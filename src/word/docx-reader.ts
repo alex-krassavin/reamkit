@@ -19,8 +19,7 @@ import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss, ResourceId } from '@/core/ir';
 import type { CoreProperties } from '@/core/opc';
 import type { HyperlinkResolver, ImageResolver, ParseContext, ResolvedDiagram } from '@/word';
-import { poFindDescendant } from '@/core/po-helpers';
-import { laidOutDiagramTree } from '@/core/drawingml/diagram/run';
+import { cachedDiagramTree, laidOutDiagramTree } from '@/core/drawingml/diagram/run';
 import { parseXml } from '@/pptx/pptx-reader';
 import { packageHasPart } from '@/core/bytes';
 import { applyNumbering, applyNumberingToHeadersFooters } from '@/core/numbering';
@@ -358,16 +357,11 @@ function makeDiagramResolver(
       const draw = own
         ? pkg.resolveRelatedPart(data.path, own)
         : drawingFromOwner(pkg, partName, data.path);
-      if (draw) {
-        for (const root of parseXml(draw.data)) {
-          const spTree = poFindDescendant(root, 'dsp:spTree');
-          if (spTree) {
-            // A node's picture fill names a relationship of the DRAWING part,
-            // not of the document (fdo74792 fills four nodes with clip art).
-            resolved = { spTree, resolveImage: makeImageResolver(pkg, store, draw.path) };
-            break;
-          }
-        }
+      const cached = draw ? cachedDiagramTree(draw.data, parseXml) : undefined;
+      if (cached && draw) {
+        // A node's picture fill names a relationship of the DRAWING part,
+        // not of the document (fdo74792 fills four nodes with clip art).
+        resolved = { spTree: cached, resolveImage: makeImageResolver(pkg, store, draw.path) };
       } else {
         const spTree = laidOutDiagramTree(
           {
