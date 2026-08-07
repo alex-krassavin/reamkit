@@ -295,7 +295,48 @@ function parseSlide(
   out.push(...inheritedShapes.map(asBackdrop));
   if (spTree) out.push(...parseSlideShapes(spTree, shapeCtx));
   out.push(...parseSlideControls(cSld, shapeCtx));
-  return out;
+  return inPaintOrder(out);
+}
+
+/**
+ * §19.3.1 — a slide's shape tree IS its z-order: what stands later in it is
+ * drawn over what stands earlier, whatever KIND either of them is.
+ *
+ * The page otherwise paints kind by kind — every image, then every shape — and
+ * on a slide that is simply wrong. 54542_cropped_bitmap.pptx is six logos each
+ * standing on its own coloured panel, written panel-then-logo six times over,
+ * and painted by kind all six logos went down first and all six panels covered
+ * them.
+ *
+ * @param elements The slide's elements, in the order the tree gives them.
+ * @returns The same elements, each float carrying its place in that order.
+ */
+function inPaintOrder(elements: ReadonlyArray<BodyElement>): Array<BodyElement> {
+  return elements.map((el, z) => {
+    if (el.kind === 'shape') return { ...el, shape: withZ(el.shape, z) };
+    if (el.kind === 'image') return { ...el, image: withZ(el.image, z) };
+    if (el.kind === 'table') {
+      const anchor = el.table.properties.float;
+      return anchor
+        ? {
+            ...el,
+            table: {
+              ...el.table,
+              properties: { ...el.table.properties, float: { ...anchor, zOrder: z } },
+            },
+          }
+        : el;
+    }
+    return el;
+  });
+}
+
+/** The same block with its float carrying `z`, when it floats at all. */
+function withZ<T extends { readonly float?: { readonly zOrder?: number } }>(
+  block: T,
+  z: number,
+): T {
+  return block.float ? { ...block, float: { ...block.float, zOrder: z } } : block;
 }
 
 /**

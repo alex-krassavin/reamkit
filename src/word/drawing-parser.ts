@@ -1685,7 +1685,7 @@ function vmlStyleLength(shape: PoNode | undefined, prop: 'width' | 'height'): Pt
  * @param node The `a:srcRect` element, or `undefined` when the fill declares none.
  * @returns The crop, or `undefined` when nothing is cut away.
  */
-function parseSrcRect(node: PoNode | undefined): ImageCrop | undefined {
+export function parseSrcRect(node: PoNode | undefined): ImageCrop | undefined {
   if (!node) return undefined;
   const edge = (name: string): number => {
     const v = Number(poAttr(node, name));

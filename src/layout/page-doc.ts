@@ -472,6 +472,15 @@ export interface PagePaintPlan {
    * per {@link PageItemBase.pictureId}. They paint where the shape pass does.
    */
   readonly pictures: ReadonlyArray<ReadonlyArray<PageItem>>;
+  /**
+   * §19.3.1 — the items of a page that STATES its own paint order, each run in
+   * the order it paints, the runs sorted by the order they were given. A slide
+   * is such a page: its shape tree is a z-order, and a picture standing after a
+   * rectangle in it is drawn over that rectangle. Split by kind instead — every
+   * image, then every shape — the six logos of 54542_cropped_bitmap.pptx were
+   * painted first and the six panels they sit on were painted over them.
+   */
+  readonly ordered: ReadonlyArray<ReadonlyArray<PageItem>>;
 }
 
 export function paintPlan(commands: ReadonlyArray<PageItem>): PagePaintPlan {
@@ -485,9 +494,32 @@ export function paintPlan(commands: ReadonlyArray<PageItem>): PagePaintPlan {
   // page puts BEHIND its content, which paints first and in its own order.
   const pictures = new Map<number, Array<PageItem>>();
   const behind: Array<PageItem> = [];
+  const ordered = new Map<string, Array<PageItem>>();
+  const orderOf = new Map<string, number>();
   for (const c of commands) {
     if (c.behind === true) {
       behind.push(c);
+      continue;
+    }
+    // A page that states an order paints in it, whatever kind each item is.
+    // A picture inside such a page is still one thing: its own items keep
+    // travelling together, at the place in the order its first item names.
+    //
+    // A TABLE and the page's WORDS are the exceptions. The text pass is where a
+    // tagged PDF brackets each line in its structure element and where the
+    // page's links are collected, and nothing on a slide is drawn over its own
+    // text anyway. A table is its cell shading and its rules, and those two
+    // passes have to stay in step with each other — the rules are stroked in
+    // one batched run, and a rule pulled out of it and painted before the
+    // shading it edges simply disappears.
+    if (c.z !== undefined && c.type !== 'line' && c.type !== 'fill' && c.type !== 'border') {
+      const key = c.pictureId !== undefined ? `p${c.pictureId}` : `i${orderOf.size}`;
+      const run = ordered.get(key);
+      if (run) run.push(c);
+      else {
+        ordered.set(key, [c]);
+        orderOf.set(key, c.z);
+      }
       continue;
     }
     if (c.pictureId !== undefined) {
@@ -516,7 +548,18 @@ export function paintPlan(commands: ReadonlyArray<PageItem>): PagePaintPlan {
         assertNeverPageItem(c);
     }
   }
-  return { behind, fills, images, borders, shapes, lines, pictures: [...pictures.values()] };
+  return {
+    behind,
+    fills,
+    images,
+    borders,
+    shapes,
+    lines,
+    pictures: [...pictures.values()],
+    ordered: [...ordered.entries()]
+      .sort((a, b) => (orderOf.get(a[0]) ?? 0) - (orderOf.get(b[0]) ?? 0))
+      .map(([, run]) => run),
+  };
 }
 
 function assertNeverPageItem(item: never): never {

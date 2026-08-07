@@ -95,13 +95,13 @@
   "aligned": true
  },
  {
-  "name": "au.asn.aes.www_conferences_2011_presentations_Fri_20Room4Level4_20930_20Maloney.pptx",
-  "score": 0.0932,
+  "name": "ae.ac.uaeu.faculty_nafaachbili_GeomLec1.pptx",
+  "score": 0.092,
   "aligned": true
  },
  {
-  "name": "ae.ac.uaeu.faculty_nafaachbili_GeomLec1.pptx",
-  "score": 0.092,
+  "name": "au.asn.aes.www_conferences_2011_presentations_Fri_20Room4Level4_20930_20Maloney.pptx",
+  "score": 0.0886,
   "aligned": true
  },
  {
@@ -170,11 +170,6 @@
   "aligned": true
  },
  {
-  "name": "layouts.pptx",
-  "score": 0.0368,
-  "aligned": true
- },
- {
   "name": "ca.ubc.cs.people_~emhill_presentations_HowWeRefactor.pptx",
   "score": 0.036,
   "aligned": true
@@ -186,7 +181,7 @@
  },
  {
   "name": "ArtisticEffectSample.pptx",
-  "score": 0.0292,
+  "score": 0.0281,
   "aligned": true
  },
  {
@@ -317,6 +312,11 @@
  {
   "name": "49386-null_dates.pptx",
   "score": 0.0056,
+  "aligned": true
+ },
+ {
+  "name": "layouts.pptx",
+  "score": 0.0049,
   "aligned": true
  },
  {

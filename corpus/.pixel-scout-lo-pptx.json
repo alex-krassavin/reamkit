@@ -1,12 +1,12 @@
 [
  {
   "name": "activex_picture.pptx",
-  "score": 0.3197,
+  "score": 0.3296,
   "aligned": true
  },
  {
   "name": "control_background_color.pptx",
-  "score": 0.2683,
+  "score": 0.2675,
   "aligned": true
  },
  {
@@ -195,6 +195,11 @@
   "aligned": true
  },
  {
+  "name": "tdf143222.pptx",
+  "score": 0.0516,
+  "aligned": true
+ },
+ {
   "name": "hidden_group_shape.pptx",
   "score": 0.0488,
   "aligned": true
@@ -261,17 +266,12 @@
  },
  {
   "name": "activex_commandbutton.pptx",
-  "score": 0.0368,
+  "score": 0.0365,
   "aligned": true
  },
  {
   "name": "tdf125551.pptx",
   "score": 0.0357,
-  "aligned": true
- },
- {
-  "name": "tdf143222.pptx",
-  "score": 0.0348,
   "aligned": true
  },
  {
@@ -305,12 +305,12 @@
   "aligned": true
  },
  {
-  "name": "tdf157793.pptx",
-  "score": 0.0299,
+  "name": "activex_checkbox.pptx",
+  "score": 0.0301,
   "aligned": true
  },
  {
-  "name": "activex_checkbox.pptx",
+  "name": "tdf157793.pptx",
   "score": 0.0299,
   "aligned": true
  },
@@ -320,23 +320,18 @@
   "aligned": true
  },
  {
+  "name": "activex_togglebutton.pptx",
+  "score": 0.0276,
+  "aligned": true
+ },
+ {
   "name": "tdf112209.pptx",
   "score": 0.0273,
   "aligned": true
  },
  {
-  "name": "activex_togglebutton.pptx",
-  "score": 0.0264,
-  "aligned": true
- },
- {
   "name": "smartart-autofit-sync.pptx",
   "score": 0.0253,
-  "aligned": true
- },
- {
-  "name": "tdf104788.pptx",
-  "score": 0.0252,
   "aligned": true
  },
  {
@@ -367,6 +362,11 @@
  {
   "name": "smartart-chevron.pptx",
   "score": 0.022,
+  "aligned": true
+ },
+ {
+  "name": "tdf104788.pptx",
+  "score": 0.0219,
   "aligned": true
  },
  {
@@ -405,11 +405,6 @@
   "aligned": true
  },
  {
-  "name": "tdf164622.pptx",
-  "score": 0.0196,
-  "aligned": true
- },
- {
   "name": "smartart-recursion.pptx",
   "score": 0.019,
   "aligned": true
@@ -430,6 +425,11 @@
   "aligned": true
  },
  {
+  "name": "activex_optionbutton.pptx",
+  "score": 0.0165,
+  "aligned": true
+ },
+ {
   "name": "slide-sections.pptx",
   "score": 0.0165,
   "aligned": true
@@ -437,11 +437,6 @@
  {
   "name": "smartart-cycle.pptx",
   "score": 0.0164,
-  "aligned": true
- },
- {
-  "name": "activex_optionbutton.pptx",
-  "score": 0.0163,
   "aligned": true
  },
  {
@@ -537,11 +532,6 @@
  {
   "name": "tdf79007.pptx",
   "score": 0.0124,
-  "aligned": true
- },
- {
-  "name": "tdf123684.pptx",
-  "score": 0.0121,
   "aligned": true
  },
  {
@@ -645,11 +635,6 @@
   "aligned": true
  },
  {
-  "name": "tdf156856.pptx",
-  "score": 0.0082,
-  "aligned": true
- },
- {
   "name": "tdf105739.pptx",
   "score": 0.0081,
   "aligned": true
@@ -705,6 +690,11 @@
   "aligned": true
  },
  {
+  "name": "activex_fontproperties.pptx",
+  "score": 0.007,
+  "aligned": true
+ },
+ {
   "name": "tdf128684.pptx",
   "score": 0.007,
   "aligned": true
@@ -736,7 +726,7 @@
  },
  {
   "name": "activex_label.pptx",
-  "score": 0.0066,
+  "score": 0.0067,
   "aligned": true
  },
  {
@@ -900,6 +890,11 @@
   "aligned": true
  },
  {
+  "name": "tdf123684.pptx",
+  "score": 0.0035,
+  "aligned": true
+ },
+ {
   "name": "tdf125360_2.pptx",
   "score": 0.0035,
   "aligned": true
@@ -925,12 +920,22 @@
   "aligned": true
  },
  {
+  "name": "tdf156856.pptx",
+  "score": 0.0033,
+  "aligned": true
+ },
+ {
   "name": "tdf149697.pptx",
   "score": 0.0033,
   "aligned": true
  },
  {
   "name": "bnc480256-2.pptx",
+  "score": 0.0032,
+  "aligned": true
+ },
+ {
+  "name": "tdf169694.pptx",
   "score": 0.0032,
   "aligned": true
  },
@@ -1000,11 +1005,6 @@
   "aligned": true
  },
  {
-  "name": "tdf169694.pptx",
-  "score": 0.0026,
-  "aligned": true
- },
- {
   "name": "tdf168835.pptx",
   "score": 0.0026,
   "aligned": true
@@ -1031,11 +1031,6 @@
  },
  {
   "name": "tdf162283.pptx",
-  "score": 0.0023,
-  "aligned": true
- },
- {
-  "name": "tdf103473.pptx",
   "score": 0.0023,
   "aligned": true
  },
@@ -1205,6 +1200,11 @@
   "aligned": true
  },
  {
+  "name": "tdf163852.pptx",
+  "score": 0.0015,
+  "aligned": true
+ },
+ {
   "name": "n862510_4.pptx",
   "score": 0.0015,
   "aligned": true
@@ -1225,7 +1225,7 @@
   "aligned": true
  },
  {
-  "name": "tdf163852.pptx",
+  "name": "tdf103473.pptx",
   "score": 0.0014,
   "aligned": true
  },
@@ -1375,6 +1375,11 @@
   "aligned": true
  },
  {
+  "name": "tdf164622.pptx",
+  "score": 0.0009,
+  "aligned": true
+ },
+ {
   "name": "tdf126741.pptx",
   "score": 0.0009,
   "aligned": true
@@ -1421,11 +1426,6 @@
  },
  {
   "name": "tdf129686.pptx",
-  "score": 0.0008,
-  "aligned": true
- },
- {
-  "name": "activex_fontproperties.pptx",
   "score": 0.0008,
   "aligned": true
  },

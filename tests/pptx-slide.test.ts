@@ -1538,7 +1538,44 @@ describe('what a slide puts behind its content', () => {
     });
     const plan = paintPlan(laid.pages[0]!.commands);
     expect(plan.behind.map((c) => c.type)).toEqual(['shape']); // the backdrop
-    expect(plan.images).toHaveLength(1); // …and the picture over it
+    // …and the picture over it, in the order the slide's own tree states.
+    expect(plan.ordered.flat().map((c) => c.type)).toEqual(['image']);
+    expect(plan.images).toHaveLength(0);
+    expect(plan.shapes).toHaveLength(0);
+  });
+
+  it('paints a slide in the order its own shape tree gives, not kind by kind', () => {
+    // §19.3.1 — what stands later in the tree is drawn over what stands
+    // earlier, whatever KIND either of them is. Split by kind — every image,
+    // then every shape — 54542_cropped_bitmap.pptx painted its six logos first
+    // and then covered every one of them with the panel it stands on.
+    const rect = (id: number, x: number): string =>
+      `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="r${id}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="${x}" y="0"/><a:ext cx="2000000" cy="2000000"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+      `<a:solidFill><a:srgbClr val="3333CC"/></a:solidFill></p:spPr></p:sp>`;
+    const pic =
+      `<p:pic><p:nvPicPr><p:cNvPr id="9" name="p"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>` +
+      `<p:blipFill><a:blip r:embed="rIdImg"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
+      `<p:spPr><a:xfrm><a:off x="100000" y="100000"/><a:ext cx="1000000" cy="1000000"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`;
+    const doc = Ream.parse(
+      buildPptx([rect(2, 0) + pic + rect(3, 3000000)], {
+        slideRels: [`<Relationship Id="rIdImg" Type="${IMAGE_REL}" Target="../media/i.png"/>`],
+        media: { 'ppt/media/i.png': buildTinyPng(2, 2, [0, 0, 0, 255]) },
+      }),
+    );
+    const laid = layoutStyledDocument(doc.flow.body, {
+      registry: FontRegistry.fromBytes({ regular: FONTS.regular }),
+      resources: doc.flow.resources,
+      ...(doc.flow.section ? { section: doc.flow.section } : {}),
+      styles: doc.flow.styles,
+    });
+    const plan = paintPlan(laid.pages[0]!.commands);
+    // Rectangle, picture, rectangle — in that order, and none of them left in
+    // the kind passes.
+    expect(plan.ordered.flat().map((c) => c.type)).toEqual(['shape', 'image', 'shape']);
+    expect(plan.images).toHaveLength(0);
     expect(plan.shapes).toHaveLength(0);
   });
 });

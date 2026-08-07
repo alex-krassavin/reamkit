@@ -194,7 +194,9 @@ function assembleStyledPdf(
       const plan = paintPlan(page.commands);
       const shapesNeedingPatterns = [
         ...plan.shapes,
-        ...[...plan.behind, ...plan.pictures.flat()].filter((i) => i.type === 'shape'),
+        ...[...plan.behind, ...plan.pictures.flat(), ...plan.ordered.flat()].filter(
+          (i) => i.type === 'shape',
+        ),
       ];
       for (const item of shapesNeedingPatterns) {
         const gradient = item.shape.fillGradient;
@@ -295,7 +297,7 @@ function assembleStyledPdf(
       wantDuotone(img, page.height);
     }
     // The runs that paint in their own order carry the same needs.
-    for (const item of [...plan.behind, ...plan.pictures.flat()]) {
+    for (const item of [...plan.behind, ...plan.pictures.flat(), ...plan.ordered.flat()]) {
       if (item.type === 'image') {
         wantAlpha(washVeil(item.wash)?.alpha);
         wantAlpha(item.alpha);
@@ -1811,6 +1813,12 @@ function emitPageContent(
     if (tagging) out.push('/Artifact BMC');
     for (const item of run) emitInOrder(item);
     if (tagging) out.push('EMC');
+  }
+
+  // §19.3.1 — and a page that states its own order paints in it, kind by kind
+  // ignored. A slide's shape tree IS that order.
+  for (const run of plan.ordered) {
+    for (const item of run) emitInOrder(item);
   }
 
   emitLinesPass();

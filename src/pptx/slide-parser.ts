@@ -59,6 +59,7 @@ import {
   parseLine,
   parsePrstGeom,
   parseShadow,
+  parseSrcRect,
   parseXfrm,
   statesFill,
   styleRefFill,
@@ -950,12 +951,26 @@ function parsePic(
   const amt = fixed ? poIntAttr(fixed, 'amt') : undefined;
   const alpha = amt === undefined ? undefined : Math.min(1, Math.max(0, amt / 100000));
 
+  // §20.1.8.55 `a:srcRect` — the picture's own edges, cut away before it is
+  // stretched into its frame. Unread, every one of 54542_cropped_bitmap.pptx's
+  // six cuts of the same logo came out as the whole logo squeezed into a frame
+  // shaped for a corner of it.
+  const crop = parseSrcRect(blipFill ? poFindDescendant(blipFill, 'a:srcRect') : undefined);
+  // §20.1.7.6 — a picture turns and mirrors in its frame exactly as a shape
+  // does, and states it in the same `a:xfrm`.
+  const xfrm = spPr ? poChildren(spPr).find((c) => poIs(c, 'a:xfrm')) : undefined;
+  const rot = xfrm ? poIntAttr(xfrm, 'rot') : undefined;
+
   const altText = picAltText(pic);
   return {
     float: floatAt(box),
     ...(resource !== undefined ? { resource } : {}),
     ...(colorChange ? { colorChange } : {}),
     ...(alpha !== undefined && alpha < 1 ? { alpha } : {}),
+    ...(crop ? { crop } : {}),
+    ...(rot !== undefined && rot !== 0 ? { rotation60k: rot } : {}),
+    ...(poAttr(xfrm, 'flipH') === '1' ? { flipH: true } : {}),
+    ...(poAttr(xfrm, 'flipV') === '1' ? { flipV: true } : {}),
     width: emuToPt(box.cx),
     height: emuToPt(box.cy),
     paragraphProperties: {},

@@ -2015,11 +2015,6 @@
   "aligned": true
  },
  {
-  "name": "fdo79915.docx",
-  "score": 0.0015,
-  "aligned": true
- },
- {
   "name": "fdo65718.docx",
   "score": 0.0014,
   "aligned": true
@@ -2061,6 +2056,11 @@
  },
  {
   "name": "fdo80523_sldm.docx",
+  "score": 0.0014,
+  "aligned": true
+ },
+ {
+  "name": "fdo79915.docx",
   "score": 0.0014,
   "aligned": true
  },
@@ -2760,11 +2760,6 @@
   "aligned": true
  },
  {
-  "name": "bnc891663.docx",
-  "score": 0.0004,
-  "aligned": true
- },
- {
   "name": "tdf126590.docx",
   "score": 0.0004,
   "aligned": true
@@ -2782,6 +2777,11 @@
  {
   "name": "tdf119952_negativeMargins.docx",
   "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "bnc891663.docx",
+  "score": 0.0003,
   "aligned": true
  },
  {
