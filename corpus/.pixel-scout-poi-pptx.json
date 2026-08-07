@@ -65,18 +65,13 @@
   "aligned": true
  },
  {
-  "name": "54542_cropped_bitmap.pptx",
-  "score": 0.1909,
-  "aligned": true
- },
- {
   "name": "aascu.org_workarea_downloadasset.aspx_id=5864.pptx",
   "score": 0.1724,
   "aligned": true
  },
  {
   "name": "LIBRE_OFFICE-100610-0.pptx",
-  "score": 0.1639,
+  "score": 0.164,
   "aligned": true
  },
  {
@@ -112,6 +107,21 @@
  {
   "name": "crash-57308ca363f5b71763c489d1b432aff009d4bc4f.pptx",
   "score": 0.065,
+  "aligned": true
+ },
+ {
+  "name": "45541_Footer.pptx",
+  "score": 0.0622,
+  "aligned": true
+ },
+ {
+  "name": "45541_Header.pptx",
+  "score": 0.0622,
+  "aligned": true
+ },
+ {
+  "name": "45545_Comment.pptx",
+  "score": 0.0622,
   "aligned": true
  },
  {
@@ -162,6 +172,11 @@
  {
   "name": "table-with-theme.pptx",
   "score": 0.0376,
+  "aligned": true
+ },
+ {
+  "name": "54542_cropped_bitmap.pptx",
+  "score": 0.0375,
   "aligned": true
  },
  {
@@ -227,21 +242,6 @@
  {
   "name": "line-chart.pptx",
   "score": 0.0144,
-  "aligned": true
- },
- {
-  "name": "45541_Footer.pptx",
-  "score": 0.0139,
-  "aligned": true
- },
- {
-  "name": "45541_Header.pptx",
-  "score": 0.0139,
-  "aligned": true
- },
- {
-  "name": "45545_Comment.pptx",
-  "score": 0.0139,
   "aligned": true
  },
  {
