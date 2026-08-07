@@ -2615,7 +2615,13 @@ function fillFromNode(
       // NoFillAttrInImagedata.docx papers two text boxes with a texture that
       // way, and stretched it came out a brown blur.
       const tile = poChildren(child).find((c) => poIs(c, 'a:tile'));
-      const tiled = tile !== undefined;
+      // §20.1.8.14 — the fill MODE is optional, and a `blipFill` that names
+      // neither of them tiles rather than stretches. tdf128596 is a rounded
+      // rectangle papered with a 32×32 tick and nothing else in its fill; read
+      // as a stretch it came out as one tick blown up over the whole shape,
+      // where both references paper it.
+      const stretched = poChildren(child).some((c) => poIs(c, 'a:stretch'));
+      const tiled = tile !== undefined || !stretched;
       // §20.1.8.58 `@sx` / `@sy` — the scale applied BEFORE the repeat, in
       // thousandths of a percent. Read as a plain repeat, a texture the file
       // halves tiles once where it should tile four times.

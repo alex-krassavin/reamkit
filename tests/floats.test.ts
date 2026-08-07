@@ -391,6 +391,22 @@ describe('a tiled picture fill (§14.1.2.5 type="tile" / §20.1.8.58 a:tile)', (
   const images = (docx: Uint8Array) =>
     layoutOf(docx).pages[0]!.commands.filter((c) => c.type === 'image');
 
+  it('papers the shape when the fill names neither a tile nor a stretch', () => {
+    // §20.1.8.14 — the fill MODE is optional, and a `blipFill` that states
+    // neither tiles. tdf128596.pptx is a rounded rectangle papered with a
+    // 32x32 tick and nothing else in its fill; read as a stretch it came out
+    // as one tick blown up over the whole shape.
+    const bare = images(tiled(blip('')));
+    const asked = images(tiled(blip('<a:tile tx="0" ty="0"/>')));
+    expect(bare.length).toBe(asked.length);
+    expect(bare.length).toBeGreaterThan(1);
+  });
+
+  it('stretches the picture when the fill says so', () => {
+    const stretched = images(tiled(blip('<a:stretch><a:fillRect/></a:stretch>')));
+    expect(stretched).toHaveLength(1);
+  });
+
   it('measures one copy at the resolution the picture states for itself', () => {
     // §11.3.5.3 — the same 2x2 PNG, but saying it is 24 dpi: a pixel is then
     // four times as wide as the 96-dpi default makes it, so one copy is 6pt
