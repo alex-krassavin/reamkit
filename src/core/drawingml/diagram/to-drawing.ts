@@ -140,7 +140,7 @@ function paraPr(node: LaidNode, para: PoNode): string {
     (c) => poIs(c, 'a:buNone') || poIs(c, 'a:buChar') || poIs(c, 'a:buAutoNum'),
   );
   const listed = bullet === undefined ? node.bulleted === true : !poIs(bullet, 'a:buNone');
-  const algn = poAttr(src, 'algn') ?? (listed ? 'l' : 'ctr');
+  const algn = poAttr(src, 'algn') ?? node.align ?? (listed ? 'l' : 'ctr');
   if (!listed) return `<a:pPr algn="${esc(algn)}"/>`;
   const marL = poAttr(src, 'marL') ?? '171450';
   const indent = poAttr(src, 'indent') ?? '-171450';

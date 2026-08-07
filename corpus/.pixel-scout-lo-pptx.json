@@ -125,11 +125,6 @@
   "aligned": true
  },
  {
-  "name": "smartart-linear-rule-vert.pptx",
-  "score": 0.0898,
-  "aligned": true
- },
- {
   "name": "smartart-autoTxRot.pptx",
   "score": 0.0888,
   "aligned": true
@@ -162,11 +157,6 @@
  {
   "name": "smartart-data-follow.pptx",
   "score": 0.0797,
-  "aligned": true
- },
- {
-  "name": "smartart-vertical-box-list.pptx",
-  "score": 0.0793,
   "aligned": true
  },
  {
@@ -525,6 +515,11 @@
   "aligned": true
  },
  {
+  "name": "smartart-vertical-box-list.pptx",
+  "score": 0.0156,
+  "aligned": true
+ },
+ {
   "name": "tdf149551_SmartArt_Gear.pptx",
   "score": 0.0153,
   "aligned": true
@@ -582,6 +577,11 @@
  {
   "name": "tdf123684.pptx",
   "score": 0.0121,
+  "aligned": true
+ },
+ {
+  "name": "smartart-linear-rule-vert.pptx",
+  "score": 0.012,
   "aligned": true
  },
  {
@@ -931,7 +931,7 @@
  },
  {
   "name": "smartart-composite-infer-right.pptx",
-  "score": 0.0037,
+  "score": 0.0036,
   "aligned": true
  },
  {

@@ -35,6 +35,8 @@ export interface LaidNode {
   readonly hideGeom?: boolean;
   /** §21.4.3.2 `txAnchorVert` — where in its box the `tx` algorithm sits text. */
   readonly anchor?: string;
+  /** §21.4.3.2 `parTxLTRAlign` — how the layout ranges a node's own label. */
+  readonly align?: string;
   readonly x: number;
   readonly y: number;
   readonly cx: number;
@@ -175,6 +177,16 @@ function layoutIn(
   return [{ point: spoken, shapeType: node.shapeType ?? 'rect', ...styleOf(node), index, ...box }];
 }
 
+// §21.4.3.2 — where the `tx` algorithm puts the words inside the box it got.
+function textPlacing(node: { kind: 'node' } & LayoutNode): { anchor?: string; align?: string } {
+  const anchor = node.algParams.get('txAnchorVert');
+  const align = node.algParams.get('parTxLTRAlign');
+  return {
+    ...(anchor !== undefined && anchor !== '' ? { anchor } : {}),
+    ...(align !== undefined && align !== '' ? { align } : {}),
+  };
+}
+
 // What a box takes from its own layout node, whatever laid it out.
 function styleOf(node: { kind: 'node' } & LayoutNode): {
   styleLbl?: string;
@@ -182,15 +194,18 @@ function styleOf(node: { kind: 'node' } & LayoutNode): {
   bulleted?: true;
   hideGeom?: true;
   anchor?: string;
+  align?: string;
 } {
   const sz = fontSize(node.constrs, undefined, 'primFontSz');
   const anchor = node.algParams.get('txAnchorVert');
+  const align = node.algParams.get('parTxLTRAlign');
   return {
     ...(node.styleLbl !== undefined ? { styleLbl: node.styleLbl } : {}),
     ...opt('fontSizePt', sz),
     ...(bulleted(node) ? { bulleted: true as const } : {}),
     ...(node.hideGeom === true ? { hideGeom: true as const } : {}),
     ...(anchor !== undefined && anchor !== '' ? { anchor } : {}),
+    ...(align !== undefined && align !== '' ? { align } : {}),
   };
 }
 
@@ -536,6 +551,37 @@ function stackCell(
   return out;
 }
 
+/**
+ * The boxes a wrapper INSETS, each at the width it states and where it falls.
+ *
+ * Widths that add up to the whole are a division and belong to the split; ones
+ * that fall short are placements — a margin, then a label of seven tenths, then
+ * nothing. Undefined when the boxes do not all state a width, or when they fill
+ * the row between them.
+ */
+function insetBoxes(
+  parent: { kind: 'node' } & LayoutNode,
+  child: { kind: 'node' } & LayoutNode,
+  width: number,
+): Array<{ box: { kind: 'node' } & LayoutNode; x: number; cx: number }> | undefined {
+  const boxes = namedBoxes(child);
+  if (boxes.length < 2) return undefined;
+  const facts = boxes.map(
+    (b) => sizeFact(child.constrs, b.name, 'w') ?? sizeFact(parent.constrs, b.name, 'w'),
+  );
+  if (facts.some((v) => v === undefined)) return undefined;
+  const total = facts.reduce<number>((a, v) => a + (v ?? 0), 0);
+  if (total > 0.999) return undefined;
+  const out: Array<{ box: { kind: 'node' } & LayoutNode; x: number; cx: number }> = [];
+  let at = 0;
+  boxes.forEach((box, i) => {
+    const cx = width * (facts[i] ?? 0);
+    out.push({ box, x: at, cx });
+    at += cx;
+  });
+  return out;
+}
+
 // What one box of a stack states for its height, as a factor. A wrapper states
 // nothing itself — the box it insets does.
 function stackFact(
@@ -607,6 +653,7 @@ function splitCell(
       ...opt('fontSizePt', size(face, 'primFontSz')),
       ...(face !== undefined && bulleted(face) ? { bulleted: true } : {}),
       ...(face?.hideGeom === true ? { hideGeom: true as const } : {}),
+      ...(face === undefined ? {} : textPlacing(face)),
       index,
       ...cell,
     },
@@ -618,6 +665,29 @@ function splitCell(
   // their two boxes from the top node, and stacking them is what that means.
   if (child?.alg === 'composite' && inner.length > 0 && places(child.constrs)) {
     return compositeLayout(child, point, cell, data, index);
+  }
+  // A wrapper whose boxes state widths that do NOT fill it is INSETTING them,
+  // not sharing it out: the vertical list gives its row a margin of a twentieth
+  // and a label of seven tenths, and what is left over stays empty. Sharing the
+  // row between them instead ran the label the whole way across.
+  const inset = child ? insetBoxes(parent, child, cell.cx) : undefined;
+  if (child && inset) {
+    const out: Array<LaidNode> = [];
+    for (const { box, x, cx } of inset) {
+      if (box.alg === 'sp' && box.hideGeom === true) continue;
+      out.push(
+        ...splitCell(
+          parent,
+          box.name,
+          point,
+          data,
+          { ...cell, x: cell.x + x, cx },
+          box.shapeType ?? shapeType,
+          index,
+        ),
+      );
+    }
+    if (out.length > 0) return out;
   }
   if (!child || inner.length !== 2) return whole();
   const kids = data.children(point.id, 'node');
@@ -657,6 +727,7 @@ function splitCell(
         ...opt('fontSizePt', size(box, i === 0 ? 'primFontSz' : 'secFontSz')),
         ...(bulleted(box) ? { bulleted: true } : {}),
         ...(box.hideGeom === true ? { hideGeom: true } : {}),
+        ...textPlacing(box),
         index,
         x: across ? at : cell.x,
         y: across ? cell.y : at,

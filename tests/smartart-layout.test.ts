@@ -808,3 +808,40 @@ describe('SmartArt: a forEach body of several boxes', () => {
     expect(xml.split('<a:t>P1</a:t>')).toHaveLength(2);
   });
 });
+
+// §21.4.3.1 — widths that do not add up to the row are placements, not shares.
+describe('SmartArt: a wrapper insets its boxes', () => {
+  const INSET = layoutXml(
+    `<dgm:alg type="lin"><dgm:param type="linDir" val="fromT"/></dgm:alg>
+     <dgm:constrLst>
+       <dgm:constr type="w" for="ch" forName="row" refType="w"/>
+       <dgm:constr type="w" for="des" forName="margin" refType="w" fact="0.05"/>
+       <dgm:constr type="w" for="des" forName="label" refType="w" fact="0.7"/>
+     </dgm:constrLst>
+     <dgm:forEach name="each" axis="ch" ptType="node">
+       <dgm:layoutNode name="row">
+         <dgm:alg type="lin"><dgm:param type="linDir" val="fromL"/></dgm:alg>
+         <dgm:constrLst/>
+         <dgm:layoutNode name="margin"><dgm:alg type="sp"/><dgm:shape type="rect" hideGeom="1"/></dgm:layoutNode>
+         <dgm:layoutNode name="label" styleLbl="node1">
+           <dgm:alg type="tx"><dgm:param type="parTxLTRAlign" val="l"/></dgm:alg>
+           <dgm:shape type="roundRect"/>
+         </dgm:layoutNode>
+       </dgm:layoutNode>
+     </dgm:forEach>`,
+  );
+
+  it('places each box where its stated width puts it', () => {
+    const nodes = run(INSET, dataXml([['P1', []]]));
+    expect(nodes).toHaveLength(1);
+    // A twentieth in from the left and seven tenths across; the last quarter of
+    // the row is stated by nothing and stays empty.
+    expect(nodes[0]?.x).toBeCloseTo(CX * 0.05, 5);
+    expect(nodes[0]?.cx).toBeCloseTo(CX * 0.7, 5);
+  });
+
+  it("ranges the label the way the layout's own parameter asks", () => {
+    const xml = diagramDrawingXml(run(INSET, dataXml([['P1', []]])), { cx: CX, cy: CY });
+    expect(xml).toContain('<a:pPr algn="l"/>');
+  });
+});
