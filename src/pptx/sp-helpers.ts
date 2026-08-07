@@ -149,8 +149,34 @@ function capsOf(cap: string | undefined): Pick<RunProperties, 'caps' | 'smallCap
 // a:srgbClr and a:schemeClr (PX5 theme) work.
 function solidFillColor(rPr: PoNode, colors: ColorResolver): string | undefined {
   const solidFill = poChildren(rPr).find((c) => poIs(c, 'a:solidFill'));
-  if (!solidFill) return undefined;
-  for (const c of poChildren(solidFill)) {
+  if (solidFill) {
+    for (const c of poChildren(solidFill)) {
+      const hex = resolveColorNode(c, colors);
+      if (hex) return hex;
+    }
+    return undefined;
+  }
+  return gradientFillColor(rPr, colors);
+}
+
+/**
+ * §20.1.8.33 — a run may be filled with a GRADIENT, and WordArt always is: the
+ * text of tdf114848's second page runs through five stops of accent1. A run
+ * here wears one colour, so the gradient gives up the stop nearest its middle —
+ * the one most of the glyph is painted in. Unread, the run had no colour at all
+ * and every word came out in the default black.
+ */
+function gradientFillColor(rPr: PoNode, colors: ColorResolver): string | undefined {
+  const grad = poChildren(rPr).find((c) => poIs(c, 'a:gradFill'));
+  const list = grad ? poChildren(grad).find((c) => poIs(c, 'a:gsLst')) : undefined;
+  const stops = list ? poChildren(list).filter((c) => poIs(c, 'a:gs')) : [];
+  let best: { at: number; node: PoNode } | undefined;
+  for (const gs of stops) {
+    const at = Math.abs((poIntAttr(gs, 'pos') ?? 0) - 50000);
+    if (!best || at < best.at) best = { at, node: gs };
+  }
+  if (!best) return undefined;
+  for (const c of poChildren(best.node)) {
     const hex = resolveColorNode(c, colors);
     if (hex) return hex;
   }

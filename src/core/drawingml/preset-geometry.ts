@@ -192,7 +192,14 @@ export function presetPaths(
         .append(arcToBeziers(cx, ry, rx, ry, 0, -Math.PI))
         .close()
         .build();
-      return [body, { segments: ellipseSegments(w, 2 * ry).map(shiftY(h - 2 * ry)) }];
+      // The lid is wound the SAME way round as the body: wound the other way a
+      // nonzero fill cancels the two and the top of the can came out hollow.
+      const lid = new PathBuilder()
+        .moveTo(w, h - ry)
+        .append(arcToBeziers(cx, h - ry, rx, ry, 0, -2 * Math.PI))
+        .close()
+        .build();
+      return [body, lid];
     }
     // Two bars meeting at a mitred corner — the top-left half of a frame. Each
     // bar's thickness is a fraction of the SHORTER side, and the mitre runs at
@@ -950,20 +957,6 @@ function regularPolygon(w: number, h: number, n: number, turn = 0): VectorPath {
     pts.push([cx + rx * Math.cos(a), cy + ry * Math.sin(a)]);
   }
   return polygon(pts);
-}
-
-// A segment moved up the local frame, for a path built at the origin and set
-// somewhere else in the box.
-function shiftY(dy: number): (seg: PathSegment) => PathSegment {
-  return (seg) =>
-    seg.op === 'close'
-      ? seg
-      : {
-          ...seg,
-          y: seg.y + dy,
-          ...('y1' in seg ? { y1: seg.y1 + dy } : {}),
-          ...('y2' in seg ? { y2: seg.y2 + dy } : {}),
-        };
 }
 
 // Single-headed block arrow. adj1 = body thickness fraction (default 0.5),

@@ -315,6 +315,11 @@
   "aligned": true
  },
  {
+  "name": "tdf125573_FontWorkScaleX.pptx",
+  "score": 0.0319,
+  "aligned": true
+ },
+ {
   "name": "tdf107608.pptx",
   "score": 0.0307,
   "aligned": true
@@ -332,11 +337,6 @@
  {
   "name": "activex_checkbox.pptx",
   "score": 0.0299,
-  "aligned": true
- },
- {
-  "name": "tdf125573_FontWorkScaleX.pptx",
-  "score": 0.0297,
   "aligned": true
  },
  {
@@ -1000,11 +1000,6 @@
   "aligned": true
  },
  {
-  "name": "n862510_4.pptx",
-  "score": 0.0027,
-  "aligned": true
- },
- {
   "name": "tdf151547-transparent-white-text.pptx",
   "score": 0.0026,
   "aligned": true
@@ -1217,6 +1212,11 @@
  {
   "name": "tdf104792-smart-art-animation.pptx",
   "score": 0.0016,
+  "aligned": true
+ },
+ {
+  "name": "n862510_4.pptx",
+  "score": 0.0015,
   "aligned": true
  },
  {

@@ -1248,6 +1248,34 @@ describe('pptx background — a reference and a picture (E-PPTX PX5b)', () => {
     });
   });
 
+  it('takes a run colour from the gradient it is filled with', () => {
+    // §20.1.8.33 — WordArt is always filled with a gradient, never a solid.
+    // A run here wears one colour, so it takes the stop nearest the middle —
+    // the one most of the glyph is painted in. Unread, the run had no colour
+    // at all and every word came out in the default black (tdf114848 page 2).
+    const run =
+      `<a:r><a:rPr lang="en-US" sz="5400" b="1"><a:gradFill><a:gsLst>` +
+      `<a:gs pos="0"><a:srgbClr val="FFFFFF"/></a:gs>` +
+      `<a:gs pos="50000"><a:srgbClr val="1F4E79"/></a:gs>` +
+      `<a:gs pos="100000"><a:srgbClr val="FFFFFF"/></a:gs>` +
+      `</a:gsLst><a:lin ang="5400000"/></a:gradFill></a:rPr>` +
+      `<a:t>Wave</a:t></a:r>`;
+    const sp =
+      `<p:sp><p:nvSpPr><p:cNvPr id="2" name="W"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="4000000" cy="1000000"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>` +
+      `<p:txBody><a:bodyPr><a:prstTxWarp prst="textWave1"><a:avLst/></a:prstTxWarp></a:bodyPr>` +
+      `<a:lstStyle/><a:p>${run}</a:p></p:txBody></p:sp>`;
+    const doc = Ream.parse(buildPptx([sp]));
+    const shape = doc.flow.body.find((e) => e.kind === 'shape');
+    if (shape?.kind !== 'shape') throw new Error('no shape');
+    const block = shape.shape.text?.content[0];
+    const only = block?.kind === 'paragraph' ? block.paragraph.runs[0] : undefined;
+    expect(only?.text).toBe('Wave');
+    // The middle stop, not the default black a run with no fill falls back to.
+    expect(only?.properties.colorHex).toBe('1F4E79');
+  });
+
   it('clips a picture to the geometry it names for itself', () => {
     // §19.3.1.37 — a `p:pic` may carry a geometry of its own, and then the
     // picture is CLIPPED to it: crop-to-shape.pptx is one photograph in an

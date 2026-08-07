@@ -365,4 +365,21 @@ describe('the gallery presets that were rectangles', () => {
     expect(Math.max(...last.map((q) => q.x))).toBeCloseTo(W - t, 3);
     expect(Math.max(...last.map((q) => q.y))).toBeCloseTo(H - t, 3);
   });
+
+  it('fills the lid of a can instead of punching it out', () => {
+    // Both paths wind the same way round: wound the other way a nonzero fill
+    // cancels the two and the top of the can came out hollow.
+    const [body, lid] = presetPaths('can', W, H, new Map())!;
+    const turn = (p: { segments: ReadonlyArray<PathSegment> }): number => {
+      const pts = p.segments.flatMap((s) => ('x' in s ? [[s.x, s.y] as const] : []));
+      let a = 0;
+      for (let i = 0; i < pts.length; i++) {
+        const [x1, y1] = pts[i]!;
+        const [x2, y2] = pts[(i + 1) % pts.length]!;
+        a += x1 * y2 - x2 * y1;
+      }
+      return Math.sign(a);
+    };
+    expect(turn(body!)).toBe(turn(lid!));
+  });
 });
