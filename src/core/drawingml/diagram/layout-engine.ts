@@ -689,13 +689,27 @@ function splitCell(
     }
     if (out.length > 0) return out;
   }
-  if (!child || inner.length !== 2) return whole();
-  const kids = data.children(point.id, 'node');
-
+  // Two boxes is a label and its descendants; more is a row of several — the
+  // bracket list divides its row four ways (the label, the bracket, a gap and
+  // the descendants), and taken as one box it drew the label alone.
+  if (!child || inner.length < 2) return whole();
   const widths = inner.map((b) => sizeFact(child.constrs, b.name, 'w'));
   // A child given less than the whole width sits BESIDE its sibling; one given
   // all of it sits above, and then the heights are what divide the cell.
   const across = widths.some((v) => v !== undefined && v < 0.99);
+  // Two boxes the engine shares out from what one of them states. More than two
+  // it divides only when they are a ROW that adds up — every share stated and
+  // the row filled — which is what tells the bracket list's four columns from a
+  // node whose several full-width boxes the engine has no way to place.
+  const share = widths.reduce<number>((a, v) => a + (v ?? 0), 0);
+  if (
+    inner.length > 2 &&
+    !(across && widths.every((v) => v !== undefined) && Math.abs(share - 1) < 0.02)
+  ) {
+    return whole();
+  }
+  const kids = data.children(point.id, 'node');
+
   const shares = across
     ? fractions(widths)
     : fractions(
@@ -706,7 +720,10 @@ function splitCell(
   // (`h refType="w" op="lte" fact="0.4"`). It is a bound, not a share: the
   // label of a colour list is at most four tenths of its column however tall
   // the column is, and what it does not take goes to the box below it.
-  const cap = heightCap(inner[0], across ? cell.cx * (shares[0] ?? 1) : cell.cx);
+  const cap =
+    inner.length === 2
+      ? heightCap(inner[0], across ? cell.cx * (shares[0] ?? 1) : cell.cx)
+      : undefined;
   if (!across && cap !== undefined) {
     const first = Math.min(cell.cy * (shares[0] ?? 0.5), cap);
     shares[0] = first / cell.cy;
@@ -718,10 +735,22 @@ function splitCell(
   inner.forEach((box, i) => {
     const span = (across ? cell.cx : cell.cy) * (shares[i] ?? 0.5);
     // The first box is the node's own label; the second holds its children's,
-    // and is left out when the layout guards it and there are none.
-    if (span > 0 && !(box.needsChildren && kids.length === 0)) {
+    // and is left out when the layout guards it and there are none. A box that
+    // names the points it speaks for is taken at its word instead.
+    const spacer = box.alg === 'sp' && box.shapeType === undefined;
+    if (span > 0 && !spacer && !(box.needsChildren && kids.length === 0)) {
       out.push({
-        point: i === 0 ? point : gatheredText(point, kids),
+        // A box running the space algorithm is a shape and no words, however
+        // it was sized — the bracket between a label and its children drew a
+        // stray copy of the children's text down its own spine.
+        point:
+          box.alg === 'sp'
+            ? { id: `${point.id}/${box.name}`, type: 'node' }
+            : box.presOfAxis === undefined
+              ? i === 0
+                ? point
+                : gatheredText(point, kids)
+              : spokenFor(box, point, data),
         shapeType: i === 0 ? shapeType : (box.shapeType ?? 'rect'),
         ...(box.styleLbl !== undefined ? { styleLbl: box.styleLbl } : {}),
         ...opt('fontSizePt', size(box, i === 0 ? 'primFontSz' : 'secFontSz')),

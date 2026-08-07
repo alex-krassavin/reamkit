@@ -845,3 +845,54 @@ describe('SmartArt: a wrapper insets its boxes', () => {
     expect(xml).toContain('<a:pPr algn="l"/>');
   });
 });
+
+// §21.4.3.1 — a row of MORE than two, which only counts as a row when every
+// box states its share and the shares add up.
+describe('SmartArt: a row of several boxes', () => {
+  const BRACKET = layoutXml(
+    `<dgm:alg type="lin"><dgm:param type="linDir" val="fromT"/></dgm:alg>
+     <dgm:constrLst><dgm:constr type="w" for="ch" forName="row" refType="w"/></dgm:constrLst>
+     <dgm:forEach name="each" axis="ch" ptType="node">
+       <dgm:layoutNode name="row">
+         <dgm:alg type="lin"><dgm:param type="linDir" val="fromL"/></dgm:alg>
+         <dgm:constrLst>
+           <dgm:constr type="w" for="ch" forName="parTx" refType="w" fact="0.25"/>
+           <dgm:constr type="w" for="ch" forName="bracket" refType="w" fact="0.07"/>
+           <dgm:constr type="w" for="ch" forName="desTx" refType="w" fact="0.68"/>
+         </dgm:constrLst>
+         <dgm:layoutNode name="parTx" styleLbl="revTx"><dgm:alg type="tx"/><dgm:shape type="rect"/></dgm:layoutNode>
+         <dgm:layoutNode name="bracket" styleLbl="parChTrans1D1"><dgm:alg type="sp"/><dgm:shape type="leftBracket"/></dgm:layoutNode>
+         <dgm:layoutNode name="desTx" styleLbl="node1">
+           <dgm:alg type="tx"/><dgm:shape type="rect"/>
+           <dgm:presOf axis="des" ptType="node"/>
+         </dgm:layoutNode>
+       </dgm:layoutNode>
+     </dgm:forEach>`,
+  );
+
+  it('divides the row three ways, each at the width it states', () => {
+    const nodes = run(BRACKET, dataXml([['1', ['A']]]));
+    expect(nodes.map((n) => n.styleLbl)).toEqual(['revTx', 'parChTrans1D1', 'node1']);
+    expect(nodes[0]?.cx).toBeCloseTo(CX * 0.25, 5);
+    expect(nodes[1]?.x).toBeCloseTo(CX * 0.25, 5);
+    expect(nodes[2]?.x).toBeCloseTo(CX * 0.32, 5);
+    expect(nodes[2]?.cx).toBeCloseTo(CX * 0.68, 5);
+  });
+
+  it('leaves the words off the box that is only a shape', () => {
+    const nodes = run(BRACKET, dataXml([['1', ['A']]]));
+    // The bracket is `sp`: a shape and no words, however it was sized.
+    expect(nodes[1]?.point.text).toBeUndefined();
+    const xml = diagramDrawingXml(nodes, { cx: CX, cy: CY });
+    expect(xml.split('<a:t>A</a:t>')).toHaveLength(2);
+  });
+
+  it('takes several boxes that each claim the whole width as a stack', () => {
+    // Five boxes all `refType="w"` with no factor are not a row of five — the
+    // process-arrow layouts state their boxes that way and stack them.
+    const stacked = BRACKET.replace(/fact="0\.(25|07|68)"/gu, '');
+    const nodes = run(stacked, dataXml([['1', ['A']]]));
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0]?.cx).toBeCloseTo(CX, 5);
+  });
+});

@@ -25,11 +25,6 @@
   "aligned": true
  },
  {
-  "name": "vertical-bracket-list.pptx",
-  "score": 0.2511,
-  "aligned": true
- },
- {
   "name": "smartart-accent-process.pptx",
   "score": 0.1999,
   "aligned": true
@@ -77,6 +72,11 @@
  {
   "name": "smartart-recursion.pptx",
   "score": 0.1359,
+  "aligned": true
+ },
+ {
+  "name": "vertical-bracket-list.pptx",
+  "score": 0.134,
   "aligned": true
  },
  {
