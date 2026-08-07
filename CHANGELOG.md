@@ -3,6 +3,114 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.24.0
+
+A release about the diagrams. A SmartArt graphic keeps its own description —
+the nodes, the layout that arranges them, the colours, the text style — beside
+a drawing PowerPoint caches for readers that cannot run the layout. Ream read
+the cache and dropped the rest, so a diagram saved without one was a hole in
+the slide. The layout engine is now built: eleven algorithms, the colour and
+style parts, and the text measurement that sizes a box to what it holds.
+
+Measured against LibreOffice over the 2226 documents comparable both before and
+after, the eleven corpora summed to 37.867 and now sum to 27.309. The pptx
+regression corpus, which is where the diagrams are, went 14.688 to 6.324.
+
+The rest is the gallery of preset shapes, WordArt's warps, and more of the
+legacy work 1.23.0 began — including two metafile fixes every format shares.
+
+### Added
+
+- **A SmartArt diagram is laid out from its own parts.** `dgm:dataModel`,
+  `dgm:layoutDef`, `dgm:colorsDef` and `dgm:styleDef` describe the graphic; a
+  file that cached no drawing, or cached one a reader should not trust, used to
+  render as nothing. Implemented: the `lin`, `composite`, `cycle`, `hierChild`
+  and `hierRoot`, `snake`, `tx`, `sp` and `conn` algorithms, the `forEach` and
+  `choose`/`if` axis walks the layouts are written in, the constraint solver
+  that sizes and spaces the boxes, and the `presOf` paths that decide which of
+  the model's points a shape shows. The colour list paints the boxes and their
+  outlines, the style part their effects, and every run takes the point size
+  its own level asks for.
+
+- **The same diagrams in a `.docx`.** A Word document reaches its parts by the
+  same relationships, and now lays them out the same way.
+
+- **WordArt is bent through the curve its shape names.** §20.1.9.10
+  `a:prstTxWarp` — thirty envelope presets and the two rings, each glyph placed
+  on its own along the curve and stretched onto the shape's box.
+
+- **Twelve more preset geometries**, the last of the gallery page that used to
+  come out as plain rectangles, `halfFrame` and `bevel` among them.
+
+- **Windows bitmaps.** BMP and the headerless DIB an Escher picture store keeps,
+  in every depth from one bit to thirty-two, `BI_RLE4`/`BI_RLE8` and
+  `BI_BITFIELDS` included — and the pattern fills that are made of them.
+
+- **An EMF draws its pie, chord and arc records**, and honours the clip region
+  a file states.
+
+- **A `.ppt` draws the date, footer and slide number its deck states**
+  (§2.4.15 `RT_HeadersFooters`), and keeps the space §2.9.32 sets around each
+  paragraph.
+
+- **A cell whose text is turned a quarter is drawn turned**, and a picture is
+  clipped to the geometry it names for itself.
+
+- **A slide's ActiveX controls are drawn** from the picture they cache, and
+  text set to shrink is measured and shrunk to fit.
+
+- **A drawing wider than its column band carries on across the next ones**,
+  which is how a spreadsheet prints a picture that spans more than one page of
+  columns.
+
+### Fixed
+
+- **A metafile keeps its lines thin, its figures whole, and its last blit
+  blank.** Three faults in the EMF player, each of which every format shares. A
+  blit with no source bitmap is the brush over a rectangle, but only for the
+  raster operations that state a colour without reading the source or the
+  destination — a picture ending in the plain `DSTCOPY` no-operation was
+  painted white. A pen states its width in logical units, so the world
+  transform scales it: a writer that shrinks the world by sixteen and asks for
+  a sixteen-wide pen means one device unit, and at face value it drew every
+  rule four points thick. And a `…To` record appended to an open figure was
+  moving to the current point again, splitting one figure into three, which the
+  even-odd rule then carved a wedge out of.
+
+- **A WMF whose window runs upward is drawn the right way up.** §2.3.5.12 — a
+  negative window extent turns that axis round, so the origin names the far
+  corner. Read as the near one, a picture was laid out a full height above its
+  box and hung off the top of the slide.
+
+- **A `.ppt` paragraph keeps the style its own run states.** A
+  StyleTextPropAtom's paragraph run counts CHARACTERS, not paragraphs, and one
+  run routinely covers a whole placeholder. Read as one run per paragraph,
+  every paragraph after the first fell through to the master's style — a body
+  set flush left came out flush right because its master says so. The same
+  exception's `leftMargin` and `indent` went unread, so no bullet ever hung.
+
+- **A text box drawn on a slide is styled as one.** §2.13.33's text types skip
+  3 — `other` is 4, not 3 — so a plain text box was taken for a body variant
+  and inherited the outline's size, margins and spacing. The style it should
+  take is stated once for the whole deck, in the document's own text info, and
+  was never read at all.
+
+- **A slide paints in the order its own shape tree gives**, which is what
+  decides overlap; a pie labels its slices with what the chart asks to show;
+  and a texture's grid of copies is centred on its shape.
+
+- **A shadow falls under the picture its shape is filled with**, builds back up
+  to the transparency a blur asks for, and keeps that alpha inside a picture
+  too. A gradient stop away from the edge holds its colour there.
+
+- **A run filled with a gradient takes its colour from one**, not from black; a
+  gradient with no stops takes the gallery style's colours; a blip fill naming
+  no mode papers the shape; and a shape-path gradient sweeps the way the shape
+  runs.
+
+- **A pattern fill that names no colour is the Automatic pair**, black on
+  white, which §18.8.19 says an unstated pair means.
+
 ## 1.23.0
 
 A release about the formats that came before the XML ones. `.ppt` and `.xls`
