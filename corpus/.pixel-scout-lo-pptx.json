@@ -25,11 +25,6 @@
   "aligned": true
  },
  {
-  "name": "tdf114848.pptx",
-  "score": 0.192,
-  "aligned": true
- },
- {
   "name": "smartart-cycle-matrix.pptx",
   "score": 0.1844,
   "aligned": true
@@ -67,6 +62,11 @@
  {
   "name": "smartart-missing-bullet.pptx",
   "score": 0.1092,
+  "aligned": true
+ },
+ {
+  "name": "tdf114848.pptx",
+  "score": 0.1074,
   "aligned": true
  },
  {
@@ -980,11 +980,6 @@
   "aligned": true
  },
  {
-  "name": "trigger.pptx",
-  "score": 0.003,
-  "aligned": true
- },
- {
   "name": "tdf104789.pptx",
   "score": 0.0028,
   "aligned": true
@@ -1806,6 +1801,11 @@
  },
  {
   "name": "multiplelayoutfooter.pptx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "trigger.pptx",
   "score": 0.0001,
   "aligned": true
  },

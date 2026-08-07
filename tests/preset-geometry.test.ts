@@ -366,9 +366,15 @@ describe('the gallery presets that were rectangles', () => {
     expect(Math.max(...last.map((q) => q.y))).toBeCloseTo(H - t, 3);
   });
 
-  it('fills the lid of a can instead of punching it out', () => {
+  it('fills the lid of a cylinder instead of punching it out', () => {
     // Both paths wind the same way round: wound the other way a nonzero fill
-    // cancels the two and the top of the can came out hollow.
+    // cancels the two and the top comes out hollow — which is how the
+    // flowchart disk had been drawn all along.
+    for (const preset of ['can', 'flowChartMagneticDisk']) {
+      const [b1, l1] = presetPaths(preset, W, H, new Map())!;
+      expect(b1, preset).toBeDefined();
+      expect(l1, preset).toBeDefined();
+    }
     const [body, lid] = presetPaths('can', W, H, new Map())!;
     const turn = (p: { segments: ReadonlyArray<PathSegment> }): number => {
       const pts = p.segments.flatMap((s) => ('x' in s ? [[s.x, s.y] as const] : []));
@@ -381,5 +387,13 @@ describe('the gallery presets that were rectangles', () => {
       return Math.sign(a);
     };
     expect(turn(body!)).toBe(turn(lid!));
+  });
+
+  it("bulges a cylinder's base downwards, not up", () => {
+    const [body] = presetPaths('flowChartMagneticDisk', W, H, new Map())!;
+    const ys = body!.segments.flatMap((s) => ('y' in s ? [s.y] : []));
+    // The base reaches the very bottom of the box; drawn the other way round it
+    // arched up into the body instead.
+    expect(Math.min(...ys)).toBeCloseTo(0, 3);
   });
 });

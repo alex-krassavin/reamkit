@@ -1248,6 +1248,33 @@ describe('pptx background — a reference and a picture (E-PPTX PX5b)', () => {
     });
   });
 
+  it('sweeps a shape-path gradient the way the shape runs, not in a circle', () => {
+    // §20.1.8.46 `@path` — `circle` sweeps in circles, `rect` in rectangles,
+    // and `shape` follows the SHAPE's own outline, which for a background is a
+    // rectangle. Swept as a circle the contours reach the corners at a
+    // different rate than the sides, and tdf114848's centred glow came out as
+    // a band across the middle of the slide.
+    const bg = (path: string): string =>
+      `<p:bg><p:bgPr><a:gradFill><a:gsLst>` +
+      `<a:gs pos="0"><a:srgbClr val="FFFFFF"/></a:gs>` +
+      `<a:gs pos="100000"><a:srgbClr val="D1C39F"/></a:gs>` +
+      `</a:gsLst><a:path path="${path}"><a:fillToRect l="50000" t="50000" r="50000" b="50000"/>` +
+      `</a:path></a:gradFill></p:bgPr></p:bg>`;
+    const sweepOf = (path: string): string | undefined => {
+      const doc = Ream.parse(buildPptx([''], { slideBg: [bg(path)] }));
+      const shape = doc.flow.body.find((e) => e.kind === 'shape');
+      if (shape?.kind !== 'shape') throw new Error('no backdrop');
+      const fill = shape.shape.fill;
+      return fill.kind === 'gradient' && fill.gradient.kind === 'radial'
+        ? (fill.gradient.sweep ?? 'circle')
+        : undefined;
+    };
+    expect(sweepOf('shape')).toBe('rect');
+    expect(sweepOf('rect')).toBe('rect');
+    // A circle stays a circle.
+    expect(sweepOf('circle')).toBe('circle');
+  });
+
   it('takes a run colour from the gradient it is filled with', () => {
     // §20.1.8.33 — WordArt is always filled with a gradient, never a solid.
     // A run here wears one colour, so it takes the stop nearest the middle —

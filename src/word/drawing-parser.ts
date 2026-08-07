@@ -3166,7 +3166,15 @@ function parseGradient(grad: PoNode, resolveColor: ColorResolver): ShapeGradient
     return {
       kind: 'radial',
       stops,
-      ...(poAttr(path, 'path') === 'rect' ? { sweep: 'rect' as const } : {}),
+      // §20.1.8.46 `@path` — `circle` sweeps in circles, `rect` in rectangles,
+      // and `shape` follows the SHAPE's own outline, which for the rectangle a
+      // background or a plain box is means rectangles again. Swept as a circle
+      // instead, the contours run out to the corners at a different rate than
+      // to the sides: tdf114848's centred glow came out as a band across the
+      // middle of the slide.
+      ...(poAttr(path, 'path') === 'rect' || poAttr(path, 'path') === 'shape'
+        ? { sweep: 'rect' as const }
+        : {}),
       ...(center ? { center } : {}),
     };
   }

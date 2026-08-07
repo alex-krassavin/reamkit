@@ -181,26 +181,8 @@ export function presetPaths(
     }
     // A cylinder seen from the side: the body under an ellipse, and the ellipse
     // drawn again on top so its near edge shows.
-    case 'can': {
-      const ry = (clamp(frac(adjust, 'adj', 25000), 0, 0.5) * h) / 2;
-      const [rx, cx] = [w / 2, w / 2];
-      const body = new PathBuilder()
-        .moveTo(0, ry)
-        .lineTo(0, h - ry)
-        .append(arcToBeziers(cx, h - ry, rx, ry, Math.PI, -Math.PI))
-        .lineTo(w, ry)
-        .append(arcToBeziers(cx, ry, rx, ry, 0, -Math.PI))
-        .close()
-        .build();
-      // The lid is wound the SAME way round as the body: wound the other way a
-      // nonzero fill cancels the two and the top of the can came out hollow.
-      const lid = new PathBuilder()
-        .moveTo(w, h - ry)
-        .append(arcToBeziers(cx, h - ry, rx, ry, 0, -2 * Math.PI))
-        .close()
-        .build();
-      return [body, lid];
-    }
+    case 'can':
+      return cylinder(w, h, (clamp(frac(adjust, 'adj', 25000), 0, 0.5) * h) / 2);
     // Two bars meeting at a mitred corner — the top-left half of a frame. Each
     // bar's thickness is a fraction of the SHORTER side, and the mitre runs at
     // the box's own diagonal, so it is the thickness scaled by the aspect.
@@ -611,21 +593,9 @@ export function presetPaths(
           .build(),
       ];
     }
-    case 'flowChartMagneticDisk': {
-      // A cylinder seen from the side: an ellipse for the lid, straight sides,
-      // and the front half of an ellipse for the base.
-      const ry = h / 6;
-      const b = new PathBuilder().moveTo(0, h - ry);
-      return [
-        b
-          .append(arcToBeziers(w / 2, h - ry, w / 2, ry, Math.PI, -2 * Math.PI))
-          .moveTo(0, h - ry)
-          .lineTo(0, ry)
-          .append(arcToBeziers(w / 2, ry, w / 2, ry, Math.PI, -Math.PI))
-          .lineTo(w, h - ry)
-          .build(),
-      ];
-    }
+    // The flowchart's stored data is a cylinder too, with a fixed lid.
+    case 'flowChartMagneticDisk':
+      return cylinder(w, h, h / 6);
     case 'flowChartMagneticTape': {
       // A circle with a short foot out of its bottom right. Drawn as the two
       // shapes it reads as, which keeps every control point inside the box.
@@ -946,6 +916,33 @@ function star(
 }
 
 // Regular n-gon inscribed in the box, first vertex at the top (pointing up).
+/**
+ * A cylinder standing on its base: the body under its lid, and the lid drawn
+ * again on top so its near edge shows.
+ *
+ * Both paths are wound the SAME way round. Wound against each other a nonzero
+ * fill cancels the two and the top comes out hollow, which is how the flowchart
+ * disk of tdf114848's fifth page had been drawn all along; and the base bulges
+ * DOWN, which the same shape had going up.
+ */
+function cylinder(w: number, h: number, ry: number): Array<VectorPath> {
+  const [rx, cx] = [w / 2, w / 2];
+  const body = new PathBuilder()
+    .moveTo(0, ry)
+    .lineTo(0, h - ry)
+    .append(arcToBeziers(cx, h - ry, rx, ry, Math.PI, -Math.PI))
+    .lineTo(w, ry)
+    .append(arcToBeziers(cx, ry, rx, ry, 0, -Math.PI))
+    .close()
+    .build();
+  const lid = new PathBuilder()
+    .moveTo(w, h - ry)
+    .append(arcToBeziers(cx, h - ry, rx, ry, 0, -2 * Math.PI))
+    .close()
+    .build();
+  return [body, lid];
+}
+
 function regularPolygon(w: number, h: number, n: number, turn = 0): VectorPath {
   const cx = w / 2;
   const cy = h / 2;
