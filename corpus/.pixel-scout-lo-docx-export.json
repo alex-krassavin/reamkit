@@ -166,7 +166,7 @@
  },
  {
   "name": "NoFillAttrInImagedata.docx",
-  "score": 0.0427,
+  "score": 0.0428,
   "aligned": true
  },
  {
@@ -390,13 +390,13 @@
   "aligned": true
  },
  {
-  "name": "tdf126533_axialAngle.docx",
-  "score": 0.0162,
+  "name": "gradient-fill-preservation.docx",
+  "score": 0.0165,
   "aligned": true
  },
  {
-  "name": "shape-effect-preservation.docx",
-  "score": 0.016,
+  "name": "tdf126533_axialAngle.docx",
+  "score": 0.0162,
   "aligned": true
  },
  {
@@ -407,6 +407,11 @@
  {
   "name": "table-theme-preservation.docx",
   "score": 0.016,
+  "aligned": true
+ },
+ {
+  "name": "shape-effect-preservation.docx",
+  "score": 0.0159,
   "aligned": true
  },
  {
@@ -437,11 +442,6 @@
  {
   "name": "tdf107889.docx",
   "score": 0.0153,
-  "aligned": true
- },
- {
-  "name": "gradient-fill-preservation.docx",
-  "score": 0.0151,
   "aligned": true
  },
  {
@@ -1405,6 +1405,11 @@
   "aligned": true
  },
  {
+  "name": "dml-gradientfill-theme.docx",
+  "score": 0.003,
+  "aligned": true
+ },
+ {
   "name": "tdf108350_noFontdefaults.docx",
   "score": 0.003,
   "aligned": true
@@ -1436,11 +1441,6 @@
  },
  {
   "name": "TableWithAboveCaptions.docx",
-  "score": 0.0029,
-  "aligned": true
- },
- {
-  "name": "dml-gradientfill-theme.docx",
   "score": 0.0029,
   "aligned": true
  },
@@ -2310,11 +2310,6 @@
   "aligned": true
  },
  {
-  "name": "AnchorId.docx",
-  "score": 0.001,
-  "aligned": true
- },
- {
   "name": "tdf129242_InsideBorders.docx",
   "score": 0.001,
   "aligned": true
@@ -2396,6 +2391,11 @@
  },
  {
   "name": "tdf104354.docx",
+  "score": 0.0008,
+  "aligned": true
+ },
+ {
+  "name": "AnchorId.docx",
   "score": 0.0008,
   "aligned": true
  },

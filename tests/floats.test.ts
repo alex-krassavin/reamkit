@@ -8,6 +8,7 @@ import { Ream } from '@/core/converter/ream';
 import { FontRegistry } from '@/core/font';
 import { flowRenderOptions } from '@/core/converter/project';
 import { layoutStyledDocument } from '@/layout/styled-layout';
+import { shadowBlurLayers } from '@/pdf/vector-graphics';
 import { readDocx } from '@/word/docx-reader';
 
 const FONTS = {
@@ -489,6 +490,26 @@ describe('a shadow under a picture fill', () => {
         },
       },
     );
+
+  it('builds a blurred shadow back up to the transparency it asks for', () => {
+    // §20.1.8.40 — the soft edge is a stack of copies of the same silhouette,
+    // and where they all overlap the colour has to reach what the shadow asked
+    // for. Layers COMPOSITE rather than add, so each carries the root of what
+    // is left, not the quotient: divided instead, a 50% shadow settled at 44%
+    // in its own middle and the shape came out a step light.
+    for (const [alpha, blurPt] of [
+      [0.5, 3],
+      [0.4, 8],
+      [0.25, 16],
+    ] as const) {
+      const { count, alpha: each } = shadowBlurLayers({ blurPt, alpha });
+      expect(count, `${alpha}@${blurPt}`).toBeGreaterThan(1);
+      // n copies at `each` leave 1 - (1 - each)^n of the shadow.
+      expect(1 - (1 - each) ** count, `${alpha}@${blurPt}`).toBeCloseTo(alpha, 10);
+    }
+    // A hard shadow is one copy at its own alpha, untouched.
+    expect(shadowBlurLayers({ blurPt: 0, alpha: 0.4 })).toEqual({ count: 1, alpha: 0.4 });
+  });
 
   it('draws that shadow at the transparency it asks for, not at full strength', async () => {
     // The state that carries a shadow's alpha has to be named in the PICTURE

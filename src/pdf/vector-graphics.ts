@@ -40,7 +40,13 @@ export function shadowBlurLayers(shadow: { readonly blurPt: number; readonly alp
   // few enough that a page of shadowed shapes stays small.
   if (!(shadow.blurPt > 0)) return { count: 1, alpha: shadow.alpha };
   const count = Math.min(8, Math.max(2, Math.round(shadow.blurPt / 2)));
-  return { count, alpha: shadow.alpha / count };
+  // Layers COMPOSITE, they do not add: `n` copies at `a` leave `1 − (1 − a)^n`
+  // of the shadow, so the share each one carries is the root of what is left,
+  // not the quotient. Divided instead, the middle of a shadow never reached the
+  // transparency it asked for — a 50% shadow under tdf128596's tile settled at
+  // 44% and the shape came out a step lighter than either reference.
+  const alpha = 1 - Math.pow(1 - shadow.alpha, 1 / count);
+  return { count, alpha };
 }
 
 // The local-space bounds of the shape's paths — the frame the blur grows in.
