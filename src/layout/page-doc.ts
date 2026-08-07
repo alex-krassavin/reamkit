@@ -345,6 +345,33 @@ export interface TextLineItem extends PageItemBase {
    * the plot's own tick labels. Absent ⇒ horizontal.
    */
   readonly rotationDeg?: number;
+  /**
+   * §20.1.9.10 `a:prstTxWarp` — the line is WordArt: each glyph is placed on
+   * its own, bent through the preset's curve and stretched onto the shape's
+   * box. Absent ⇒ the line is set flat, one text matrix for the whole of it.
+   */
+  readonly warp?: TextLineWarp;
+}
+
+/**
+ * What placing a warped line needs: the preset, the shape box the warped block
+ * is stretched onto, and the box the UN-warped block occupies — both in the
+ * page's top-left frame, so a glyph's position in the second maps straight into
+ * the first.
+ */
+export interface TextLineWarp {
+  readonly preset: string;
+  readonly adjust?: number;
+  readonly boxX: Pt;
+  readonly boxY: Pt;
+  readonly boxWidth: Pt;
+  readonly boxHeight: Pt;
+  /** The un-warped block's left edge and width (its widest line). */
+  readonly srcX: Pt;
+  readonly srcWidth: Pt;
+  /** The un-warped block's ink top and total ink height. */
+  readonly srcTop: Pt;
+  readonly srcHeight: Pt;
 }
 
 /** One edge of a table-cell frame; `(x, y)` is the cell box's top-left corner. */

@@ -38,6 +38,7 @@ import { A4_HEIGHT, A4_WIDTH, GLUE_SHRINK_RATIO } from '@/layout/styled-layout';
 import { emitClipPath, emitVectorShape, shadowBlurLayers } from '@/pdf/vector-graphics';
 import { buildGradientAlphaMask, buildGradientPattern, shapeBbox } from '@/pdf/shading';
 import { reorderVisual, reverseByCodePoint } from '@/core/bidi';
+import { warpGlyphMatrix } from '@/core/drawingml/text-warp';
 import { sanitizeHref } from '@/core/links';
 import { embedTtfFont } from '@/pdf/cid-font';
 import { embedAssociatedFile } from '@/pdf/embedded-file';
@@ -1392,6 +1393,47 @@ function emitPageContent(
     const hasFauxItalic = line.tokens.some(
       (t) => t.kind === 'text' && t.synthetic?.italic === true,
     );
+    // §20.1.9.10 — WordArt. Every glyph sits at its own point on the warp's
+    // curve, where the two edges are their own distance apart and running at
+    // their own slope, so no two glyphs share a text matrix: each is placed,
+    // scaled and sheared on its own. Set flat, tdf114848's eight bent words
+    // were eight straight ones a third of the size.
+    const warp = cmd.warp;
+    if (warp) {
+      if (!inBT) {
+        out.push('BT');
+        inBT = true;
+      }
+      let cursor: number = originX;
+      for (const tok of line.tokens) {
+        if (tok.kind !== 'text' || tok.isSpace) {
+          cursor += tok.widthPt;
+          continue;
+        }
+        switchFontIfNeeded(tok);
+        // Per-glyph placement drops the shaper's kerning, which the line was
+        // measured WITH: the token's own glyphs are rescaled to the width it
+        // was measured at, so the block still ends where the layout said.
+        const chars = [...tok.text];
+        const raw = chars.map((c) => tok.font.measure.textWidthPt(c, tok.fontSizePt));
+        const total = raw.reduce((a, b) => a + b, 0);
+        const k = total > 0 ? tok.widthPt / total : 1;
+        for (let i = 0; i < chars.length; i++) {
+          const adv = raw[i]! * k;
+          const m = warpGlyphMatrix(warp, cursor, adv, cmd.baselineY);
+          cursor += adv;
+          if (!m) continue;
+          // The warp works in the page's top-left frame; PDF's is y-up, so the
+          // two terms that carry y flip and the origin reflects.
+          out.push(
+            `${formatNumber(m[0])} ${formatNumber(-m[1])} ${formatNumber(m[2])} ` +
+              `${formatNumber(-m[3])} ${formatNumber(m[4])} ${formatNumber(H - m[5])} Tm`,
+          );
+          out.push(tok.font.measure.showText(chars[i]!));
+        }
+      }
+      return;
+    }
     // A rotated line advances its glyphs along the ROTATED axis, which one text
     // matrix already does for free — but only on the single-Tm path, where the
     // advance is the font's and not one this emitter computes in page space.

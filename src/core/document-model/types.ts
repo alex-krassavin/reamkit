@@ -1326,6 +1326,15 @@ export interface ShapeTextBody {
    */
   readonly fitToBox?: boolean;
   /**
+   * §20.1.9.10 `a:prstTxWarp` — DrawingML WordArt: the preset curve the text is
+   * bent through, and the `a:avLst` `adj` guide when the file states one. The
+   * warped text does not wrap and is stretched to fill the shape's box, so the
+   * size its runs state stops deciding how large it is drawn. `textNoShape` is
+   * not carried: it is the enumeration's "no warp" member, and a body under it
+   * is an ordinary text box.
+   */
+  readonly warp?: { readonly preset: string; readonly adjust?: number };
+  /**
    * §20.1.10.42 `a:normAutofit` — the text SHRINKS to fit the box, and only
    * shrinks: a size that already fits is left alone. PowerPoint writes the
    * scale it settled on into `@fontScale` and that is applied at parse; this

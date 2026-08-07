@@ -532,6 +532,18 @@ interface ShapeBlockLaidOut {
   // Text box (wps:txbx) laid out within the inset rect, anchored vertically.
   readonly textLines: ReadonlyArray<Line>;
   /**
+   * §20.1.9.10 — the WordArt warp this box's text is bent through, and how far
+   * the un-warped block's ink reaches above its first baseline and below its
+   * last. The emitter needs the ink and not the line box: the warp stretches
+   * what is DRAWN to fill the shape.
+   */
+  readonly textWarp?: {
+    readonly preset: string;
+    readonly adjust?: number;
+    readonly inkAbovePt: number;
+    readonly inkBelowPt: number;
+  };
+  /**
    * A chart inside the text box, by the index of the (token-less) line that
    * stands in for it. The line reserves the height; the emitter draws the
    * chart's own primitives from that line's corner.
@@ -2534,10 +2546,17 @@ function layoutShapeBlock(
   // its lines stack across the width. btlr-textbox.docx reads bottom-to-top and
   // we set it flat, so it ran out of the box the wrong way.
   const vertical = text?.vertical;
+  // §20.1.9.10 — WordArt is one bent line per paragraph, stretched to the box:
+  // it never wraps, whatever the box's width, and it is not shrunk to fit
+  // either. Broken at the box's width first, tdf114848's "Text Wave 1" came out
+  // as three stacked lines that the warp then bent as a block.
+  const warp = text?.warp;
   if (text && text.content.length > 0) {
-    const innerWidth = vertical
-      ? Math.max(1, heightPt - insetTopPt - insetBottomPt)
-      : Math.max(1, widthPt - insetLeftPt - insetRightPt);
+    const innerWidth = warp
+      ? Number.MAX_SAFE_INTEGER
+      : vertical
+        ? Math.max(1, heightPt - insetTopPt - insetBottomPt)
+        : Math.max(1, widthPt - insetLeftPt - insetRightPt);
     for (const el of text.content) {
       // A picture standing alone in a text box is a paragraph the reader
       // collapsed to an image BLOCK. Skipped with the tables, it vanished:
@@ -2688,6 +2707,7 @@ function layoutShapeBlock(
   if (
     text?.shrinkToFit === true &&
     text.fitToBox !== true &&
+    warp === undefined &&
     textLines.length > 0 &&
     fitPass < MAX_FIT_PASSES
   ) {
@@ -2749,6 +2769,17 @@ function layoutShapeBlock(
       );
     }
   }
+  // §20.1.9.10 — how far the block's ink reaches past its outer baselines. The
+  // warp stretches what is DRAWN onto the box, so the line box is the wrong
+  // measure: "Can Up" is capitals only and would come out a third too small if
+  // its ascender and descender space were stretched along with its letters.
+  const warpInk =
+    warp && textLines.length > 0
+      ? {
+          above: lineInk(textLines[0]!).above,
+          below: lineInk(textLines[textLines.length - 1]!).below,
+        }
+      : undefined;
   const paths = buildShapePaths(shape.geometry, widthPt, heightPt);
   const markerPaths = lineEndPaths(paths, shape.line, stroke?.widthPt ?? 0);
 
@@ -2803,6 +2834,16 @@ function layoutShapeBlock(
     spacingBeforePt: pp.spacingBefore ?? 0,
     spacingAfterPt: pp.spacingAfter ?? 0,
     textLines,
+    ...(warp && warpInk
+      ? {
+          textWarp: {
+            preset: warp.preset,
+            ...(warp.adjust !== undefined ? { adjust: warp.adjust } : {}),
+            inkAbovePt: warpInk.above,
+            inkBelowPt: warpInk.below,
+          },
+        }
+      : {}),
     ...(textCharts.size > 0 ? { textCharts } : {}),
     ...(textShapes.size > 0 ? { textShapes } : {}),
     ...(textTables.size > 0 ? { textTables } : {}),
@@ -3721,6 +3762,14 @@ function emitShapeText(
     }
     return;
   }
+  // §20.1.9.10 — WordArt: the block is set as it stands and then bent and
+  // stretched onto the shape's box, so where its lines sit is the warp's to
+  // decide, not the anchor's. The lines are placed in the block's own frame
+  // and the emitter maps that frame through the curve.
+  if (sh.textWarp) {
+    emitWarpedText(sh, sh.textWarp, x, bottomYUp, sink, pageHeight, figId);
+    return;
+  }
   const shapeTop = bottomYUp + sh.heightPt;
   const innerWidth = Math.max(1, sh.widthPt - sh.insetLeftPt - sh.insetRightPt);
   let textY: number;
@@ -3780,6 +3829,81 @@ function emitShapeText(
     textY -= sh.textLineGaps?.get(i) ?? 0;
   });
 }
+/**
+ * §20.1.9.10 — place a WordArt body's lines in the block's own frame and hand
+ * each one the warp that maps that frame onto the shape's box.
+ *
+ * The block is laid out flat: its lines stack by their own heights, each
+ * aligned within the widest of them, and its ink starts at the box's top-left
+ * corner. Nothing here bends anything — the emitter does that, glyph by glyph,
+ * from the two frames this records.
+ *
+ * @param sh         The laid-out shape.
+ * @param warp       The shape's warp and the block's ink reach.
+ * @param x          The shape's left edge on the page.
+ * @param bottomYUp  The shape's bottom edge, y-up from the page's bottom.
+ * @param sink       Where the line items are pushed.
+ * @param pageHeight The page's height, for the y-up ⇄ top-left conversion.
+ * @param figId      The tagged-PDF Figure this text belongs to, when it has one.
+ */
+function emitWarpedText(
+  sh: ShapeBlockLaidOut,
+  warp: NonNullable<ShapeBlockLaidOut['textWarp']>,
+  x: number,
+  bottomYUp: number,
+  sink: Array<PageItem>,
+  pageHeight: number,
+  figId: number | undefined,
+): void {
+  const boxX = x + sh.insetLeftPt;
+  const boxY = pageHeight - (bottomYUp + sh.heightPt) + sh.insetTopPt;
+  const boxWidth = Math.max(1, sh.widthPt - sh.insetLeftPt - sh.insetRightPt);
+  const boxHeight = Math.max(1, sh.heightPt - sh.insetTopPt - sh.insetBottomPt);
+  // The block is as wide as its widest line; a shorter one sits inside it by
+  // its own alignment, so a centred second line stays centred once bent.
+  const srcWidth = Math.max(1, ...sh.textLines.map((l) => l.contentWidthPt));
+  // Walk the lines down the block, then shift the whole stack so its ink — not
+  // its first line box — begins at the box's top edge.
+  const baselines: Array<number> = [];
+  let top = 0;
+  sh.textLines.forEach((line, i) => {
+    const h = computeLineHeight(line, line.resolved);
+    baselines.push(top + h - lineBaselineOffset(line, line.resolved));
+    top += h + (sh.textLineGaps?.get(i) ?? 0);
+  });
+  const first = baselines[0] ?? 0;
+  const last = baselines[baselines.length - 1] ?? 0;
+  const srcTop = boxY;
+  const srcHeight = Math.max(1, last - first + warp.inkAbovePt + warp.inkBelowPt);
+  const shift = srcTop + warp.inkAbovePt - first;
+  sh.textLines.forEach((line, i) => {
+    // A warped line holds words and nothing else: a chart, a nested drawing or
+    // a table inside a WordArt body has no glyphs for the curve to bend, and
+    // the flat path already draws all three.
+    if (sh.textCharts?.has(i) === true || sh.textShapes?.has(i) === true) return;
+    if (sh.textTables?.has(i) === true) return;
+    sink.push({
+      type: 'line',
+      line,
+      originX: pt(boxX + alignmentOffset(line.resolved.alignment, line.contentWidthPt, srcWidth)),
+      baselineY: pt(baselines[i]! + shift),
+      warp: {
+        preset: warp.preset,
+        ...(warp.adjust !== undefined ? { adjust: warp.adjust } : {}),
+        boxX: pt(boxX),
+        boxY: pt(boxY),
+        boxWidth: pt(boxWidth),
+        boxHeight: pt(boxHeight),
+        srcX: pt(boxX),
+        srcWidth: pt(srcWidth),
+        srcTop: pt(srcTop),
+        srcHeight: pt(srcHeight),
+      },
+      ...(figId !== undefined ? { structId: figId } : {}),
+    });
+  });
+}
+
 // One shape, `bottomYUp` being its own bottom edge. §20.5.2.17 — a group
 // draws nothing itself and then draws its members, each at the corner it
 // holds within the group's box.
@@ -6388,6 +6512,28 @@ function alignmentOffset(
   if (alignment === 'right') return Math.max(0, available - lineWidth);
   if (alignment === 'center') return Math.max(0, (available - lineWidth) / 2);
   return 0;
+}
+
+/**
+ * How far a line's INK reaches either side of its baseline — the union of its
+ * glyphs' own bounding boxes, not the line box its font metrics describe. Only
+ * WordArt needs this: it stretches the marks it draws onto its shape, and the
+ * empty band an ascender or descender reserves is not one of them.
+ *
+ * @param line The laid-out line.
+ * @returns Points above the baseline the ink rises, and below it that it drops.
+ */
+function lineInk(line: Line): { above: number; below: number } {
+  let above = 0;
+  let below = 0;
+  for (const tok of line.tokens) {
+    if (tok.kind !== 'text' || tok.isSpace) continue;
+    const ink = tok.font.measure.textInkPt(tok.text, tok.fontSizePt);
+    const rise = tok.risePt ?? 0;
+    above = Math.max(above, ink.above + rise);
+    below = Math.max(below, ink.below - rise);
+  }
+  return { above, below };
 }
 
 /**

@@ -1302,6 +1302,38 @@ describe('pptx background — a reference and a picture (E-PPTX PX5b)', () => {
     expect(only?.properties.colorHex).toBe('1F4E79');
   });
 
+  it('reads the WordArt warp a body is bent through', () => {
+    // §20.1.9.10 `a:prstTxWarp`. `textNoShape` is the enumeration's "no warp"
+    // member and by far its most common value — two thirds of the decks that
+    // mention a warp state only this — so a body carrying it stays an ordinary
+    // text box, wrapping and anchored like any other.
+    const sp = (bodyPr: string): string =>
+      `<p:sp><p:nvSpPr><p:cNvPr id="2" name="W"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="4000000" cy="1000000"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>` +
+      `<p:txBody>${bodyPr}<a:lstStyle/><a:p><a:r><a:t>Bent</a:t></a:r></a:p></p:txBody></p:sp>`;
+    const warpOf = (bodyPr: string): { preset: string; adjust?: number } | undefined => {
+      const doc = Ream.parse(buildPptx([sp(bodyPr)]));
+      const shape = doc.flow.body.find((e) => e.kind === 'shape');
+      if (shape?.kind !== 'shape') throw new Error('no shape');
+      return shape.shape.text?.warp;
+    };
+    expect(
+      warpOf(`<a:bodyPr><a:prstTxWarp prst="textCanUp"><a:avLst/></a:prstTxWarp></a:bodyPr>`),
+    ).toEqual({ preset: 'textCanUp' });
+    // §20.1.9.10 — the `adj` guide, in hundred-thousandths.
+    expect(
+      warpOf(
+        `<a:bodyPr><a:prstTxWarp prst="textDeflate">` +
+          `<a:avLst><a:gd name="adj" fmla="val 25000"/></a:avLst></a:prstTxWarp></a:bodyPr>`,
+      ),
+    ).toEqual({ preset: 'textDeflate', adjust: 25000 });
+    expect(
+      warpOf(`<a:bodyPr><a:prstTxWarp prst="textNoShape"><a:avLst/></a:prstTxWarp></a:bodyPr>`),
+    ).toBeUndefined();
+    expect(warpOf(`<a:bodyPr/>`)).toBeUndefined();
+  });
+
   it('clips a picture to the geometry it names for itself', () => {
     // §19.3.1.37 — a `p:pic` may carry a geometry of its own, and then the
     // picture is CLIPPED to it: crop-to-shape.pptx is one photograph in an

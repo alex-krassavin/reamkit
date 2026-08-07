@@ -18,6 +18,15 @@ export interface FontMeasure {
   readonly pdfWidthForGid: (gid: number) => number;
   /** Shaped width of `text` at `fontSize`, in points. */
   readonly textWidthPt: (text: string, fontSize: number) => number;
+  /**
+   * How far this text's INK actually reaches from its baseline, in points:
+   * `above` up to its highest glyph edge, `below` down to its lowest. Not the
+   * font's line box — "HHH" reaches a cap height and no further, and only a
+   * string carrying a descender reaches under the baseline at all. WordArt
+   * stretches the ink it draws to fill its shape (§20.1.9.10), so it is the
+   * ink and not the line box that has to be measured.
+   */
+  readonly textInkPt: (text: string, fontSize: number) => { above: number; below: number };
   /** Encode `text` as a hex string of 4-digit glyph ids (Identity-H addressing). */
   readonly encodeTextAsCidHex: (text: string) => string;
   /**
@@ -118,5 +127,48 @@ export function createFontMeasure(parsed: ParsedTtf, kern = true): FontMeasure {
     return `[${parts.join(' ')}] TJ`;
   };
 
-  return { pdfWidthForGid, textWidthPt, encodeTextAsCidHex, showText };
+  // A glyph record opens with its own bounding box: numberOfContours, then
+  // xMin/yMin/xMax/yMax, all int16 (ISO/IEC 14496-22 §5.3.3). An empty record
+  // is a blank glyph — a space — and contributes no ink at all.
+  const glyf = parsed.tables.get('glyf');
+  const glyphInk = (gid: number): { yMin: number; yMax: number } | undefined => {
+    if (!glyf || gid < 0 || gid >= parsed.numGlyphs) return undefined;
+    const start = parsed.glyphOffsets[gid] ?? 0;
+    const end = parsed.glyphOffsets[gid + 1] ?? 0;
+    if (end - start < 10) return undefined;
+    const at = glyf.offset + start;
+    const i16 = (o: number): number => {
+      const v = ((parsed.raw[at + o] ?? 0) << 8) | (parsed.raw[at + o + 1] ?? 0);
+      return v >= 0x8000 ? v - 0x10000 : v;
+    };
+    return { yMin: i16(4), yMax: i16(8) };
+  };
+  const textInkPt = (text: string, fontSize: number): { above: number; below: number } => {
+    const shaped = shapeText(
+      text,
+      parsed.glyphForCodepoint,
+      parsed.advanceWidths,
+      parsed.ligatures,
+      kerning,
+      parsed.joiningForms,
+    );
+    let yMax = -Infinity;
+    let yMin = Infinity;
+    for (const gid of shaped.gids) {
+      const ink = glyphInk(gid);
+      if (!ink) continue;
+      if (ink.yMax > yMax) yMax = ink.yMax;
+      if (ink.yMin < yMin) yMin = ink.yMin;
+    }
+    // A CFF font has no `glyf` to read, and a string of nothing but spaces has
+    // no ink in any font: fall back to the metrics that always exist.
+    if (!Number.isFinite(yMax) || !Number.isFinite(yMin)) {
+      yMax = parsed.capHeight || parsed.ascender;
+      yMin = 0;
+    }
+    const k = fontSize / parsed.unitsPerEm;
+    return { above: yMax * k, below: -yMin * k };
+  };
+
+  return { pdfWidthForGid, textWidthPt, textInkPt, encodeTextAsCidHex, showText };
 }

@@ -41,6 +41,7 @@ import type { PlaceholderRef, ShapeBoxEmu } from '@/pptx/sp-helpers';
 
 import type { TableStyleTheme } from '@/pptx/table-style';
 import { defaultColorResolver, placeholderColors, resolveColorNode } from '@/core/drawingml/colors';
+import { isTextWarp } from '@/core/drawingml/text-warp';
 import { FEATURES, emuToPt, pt } from '@/core/ir';
 import {
   poAttr,
@@ -1053,6 +1054,7 @@ export function parseTxBody(
   // whose text has never been fitted; the layout measures it and shrinks it.
   const autofit = bodyPr ? poChildren(bodyPr).find((c) => poIs(c, 'a:normAutofit')) : undefined;
   const shrink = autofit !== undefined && poIntAttr(autofit, 'fontScale') === undefined;
+  const warp = bodyPr ? textWarp(bodyPr) : undefined;
   // A placeholder that states no anchor of its own sits where its prototype
   // says: a master title anchored `ctr` centres the slide's title in its box.
   const anchor: ShapeTextBody['anchor'] | undefined =
@@ -1065,6 +1067,32 @@ export function parseTxBody(
     ...(bIns !== undefined ? { insetBottom: emuToPt(bIns) } : {}),
     ...(anchor ? { anchor } : {}),
     ...(shrink ? { shrinkToFit: true } : {}),
+    ...(warp ? { warp } : {}),
+  };
+}
+
+/**
+ * §20.1.9.10 `a:prstTxWarp` — the WordArt curve a body's text is bent through,
+ * with the `a:avLst` `adj` guide when it states one. Unread, tdf114848's eight
+ * pieces of WordArt were set as eight ordinary paragraphs, each wrapped onto
+ * three lines of upright type where both references draw one bent line.
+ *
+ * @param bodyPr The body's `a:bodyPr`.
+ * @returns The preset and its adjustment, or `undefined` when the body states
+ *          no warp or states the enumeration's `textNoShape`.
+ */
+function textWarp(bodyPr: PoNode): ShapeTextBody['warp'] {
+  const node = poChildren(bodyPr).find((c) => poIs(c, 'a:prstTxWarp'));
+  const preset = node ? poAttr(node, 'prst') : undefined;
+  if (node === undefined || preset === undefined || !isTextWarp(preset)) return undefined;
+  const avLst = poChildren(node).find((c) => poIs(c, 'a:avLst'));
+  const adj = avLst
+    ? poChildren(avLst).find((c) => poIs(c, 'a:gd') && poAttr(c, 'name') === 'adj')
+    : undefined;
+  const value = adj ? /^val\s+(-?\d+)$/u.exec(poAttr(adj, 'fmla') ?? '')?.[1] : undefined;
+  return {
+    preset,
+    ...(value !== undefined ? { adjust: Number(value) } : {}),
   };
 }
 
