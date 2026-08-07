@@ -1265,9 +1265,8 @@ describe('pptx background — a reference and a picture (E-PPTX PX5b)', () => {
       const shape = doc.flow.body.find((e) => e.kind === 'shape');
       if (shape?.kind !== 'shape') throw new Error('no backdrop');
       const fill = shape.shape.fill;
-      return fill.kind === 'gradient' && fill.gradient.kind === 'radial'
-        ? (fill.gradient.sweep ?? 'circle')
-        : undefined;
+      const grad = fill.kind === 'gradient' ? fill.gradient : undefined;
+      return grad?.kind === 'radial' ? (grad.sweep ?? 'circle') : undefined;
     };
     expect(sweepOf('shape')).toBe('rect');
     expect(sweepOf('rect')).toBe('rect');

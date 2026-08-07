@@ -596,6 +596,10 @@ export function presetPaths(
     // The flowchart's stored data is a cylinder too, with a fixed lid.
     case 'flowChartMagneticDisk':
       return cylinder(w, h, h / 6);
+    // The direct-access drum is the same cylinder lying on its side, so its cap
+    // is the RIGHT end and the body's far end bulges left.
+    case 'flowChartMagneticDrum':
+      return drum(w, h, w / 6);
     case 'flowChartMagneticTape': {
       // A circle with a short foot out of its bottom right. Drawn as the two
       // shapes it reads as, which keeps every control point inside the box.
@@ -941,6 +945,30 @@ function cylinder(w: number, h: number, ry: number): Array<VectorPath> {
     .close()
     .build();
   return [body, lid];
+}
+
+/**
+ * A cylinder lying on its side: the body with a rounded end at each side, and
+ * the near cap drawn again over the right one. Wound like {@link cylinder}, and
+ * for the same reason — the two paths must turn the same way or a nonzero fill
+ * cancels them.
+ */
+function drum(w: number, h: number, rx: number): Array<VectorPath> {
+  const [ry, cy] = [h / 2, h / 2];
+  const body = new PathBuilder()
+    .moveTo(w - rx, h)
+    .lineTo(rx, h)
+    .append(arcToBeziers(rx, cy, rx, ry, Math.PI / 2, Math.PI))
+    .lineTo(w - rx, 0)
+    .append(arcToBeziers(w - rx, cy, rx, ry, -Math.PI / 2, Math.PI))
+    .close()
+    .build();
+  const cap = new PathBuilder()
+    .moveTo(w, cy)
+    .append(arcToBeziers(w - rx, cy, rx, ry, 0, 2 * Math.PI))
+    .close()
+    .build();
+  return [body, cap];
 }
 
 function regularPolygon(w: number, h: number, n: number, turn = 0): VectorPath {

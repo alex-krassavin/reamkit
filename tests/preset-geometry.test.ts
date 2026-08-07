@@ -396,4 +396,16 @@ describe('the gallery presets that were rectangles', () => {
     // arched up into the body instead.
     expect(Math.min(...ys)).toBeCloseTo(0, 3);
   });
+
+  it('lays the magnetic drum on its side, capped at the right', () => {
+    // The same cylinder turned ninety degrees: its cap is the RIGHT end, so it
+    // reaches the right edge of the box and the body's far end bulges left.
+    const [body, cap] = presetPaths('flowChartMagneticDrum', W, H, new Map())!;
+    const xs = (p: { segments: ReadonlyArray<PathSegment> }): Array<number> =>
+      p.segments.flatMap((s) => ('x' in s ? [s.x] : []));
+    expect(Math.max(...xs(cap!))).toBeCloseTo(W, 3);
+    expect(Math.min(...xs(body!))).toBeCloseTo(0, 3);
+    // Its cap is an ellipse a sixth of the box wide, not half of it.
+    expect(Math.max(...xs(cap!)) - Math.min(...xs(cap!))).toBeCloseTo(W / 3, 3);
+  });
 });
