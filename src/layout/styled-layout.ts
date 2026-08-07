@@ -3870,6 +3870,38 @@ function emitShapeItems(
   // §20.1.8.14 — a picture fill is the shape's OUTLINE painted with an image,
   // so it is clipped to that outline: fdo77718.docx fills the round nodes of
   // its diagram with photographs and we drew each one as a square.
+  // §20.1.8.40 — a shadow falls UNDER the shape it belongs to, and a picture
+  // fill leaves the passes: the image paints in the image pass and the shape in
+  // the shape pass after it, so the shadow landed on TOP of the picture and
+  // darkened it (tdf112209's photograph came out a sixth darker than either
+  // reference). The three pieces are tied into one PICTURE so they paint
+  // together, in the order they are pushed: shadow, picture, outline.
+  const castsUnderPicture = sh.fillImageResourceName !== undefined ? sh.shadow : undefined;
+  const shadowedFill = castsUnderPicture !== undefined;
+  const group = shadowedFill ? { pictureId: nextPictureId++ } : {};
+  if (castsUnderPicture) {
+    sink.push({
+      type: 'shape',
+      shape: {
+        paths: sh.paths,
+        shadow: castsUnderPicture,
+        transform: flipTransform(
+          buildShapeTransform(
+            x,
+            bottomYUp,
+            sh.widthPt,
+            sh.heightPt,
+            sh.rotation60k,
+            sh.flipH,
+            sh.flipV,
+          ),
+          pageHeight,
+        ),
+      },
+      ...group,
+      ...(figId !== undefined ? { structId: figId } : {}),
+    });
+  }
   if (sh.fillImageResourceName) {
     const clip = {
       paths: sh.paths,
@@ -3903,6 +3935,7 @@ function emitShapeItems(
           ...item,
           clip,
           ...fig,
+          ...group,
           ...(sh.fillAlpha !== undefined ? { alpha: sh.fillAlpha } : {}),
         });
       }
@@ -3926,6 +3959,7 @@ function emitShapeItems(
         ...(sh.fillImageDuotone ? { duotone: sh.fillImageDuotone } : {}),
         clip,
         ...fig,
+        ...group,
       });
     }
   }
@@ -3962,7 +3996,8 @@ function emitShapeItems(
         ...(sh.fillGradient ? { fillGradient: sh.fillGradient } : {}),
         ...(sh.fillAlpha !== undefined ? { fillAlpha: sh.fillAlpha } : {}),
         ...(sh.stroke ? { stroke: sh.stroke } : {}),
-        ...(sh.shadow ? { shadow: sh.shadow } : {}),
+        // Drawn already, under the picture, when the fill is one.
+        ...(sh.shadow && !shadowedFill ? { shadow: sh.shadow } : {}),
         transform: flipTransform(
           buildShapeTransform(
             x,
@@ -3976,6 +4011,7 @@ function emitShapeItems(
           pageHeight,
         ),
       },
+      ...group,
       ...(figId !== undefined ? { structId: figId } : {}),
     });
   }

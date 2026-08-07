@@ -75,11 +75,6 @@
   "aligned": true
  },
  {
-  "name": "NoFillAttrInImagedata.docx",
-  "score": 0.0817,
-  "aligned": true
- },
- {
   "name": "tdf104061_tableSectionColumns.docx",
   "score": 0.0805,
   "aligned": true
@@ -168,6 +163,11 @@
   "name": "tdf119054.docx",
   "score": 0.0429,
   "aligned": false
+ },
+ {
+  "name": "NoFillAttrInImagedata.docx",
+  "score": 0.0424,
+  "aligned": true
  },
  {
   "name": "tdf114308.docx",

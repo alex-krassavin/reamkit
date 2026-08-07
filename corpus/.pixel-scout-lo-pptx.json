@@ -6,17 +6,12 @@
  },
  {
   "name": "tdf128596.pptx",
-  "score": 0.2933,
+  "score": 0.3141,
   "aligned": true
  },
  {
   "name": "control_background_color.pptx",
   "score": 0.2683,
-  "aligned": true
- },
- {
-  "name": "tdf112209.pptx",
-  "score": 0.2595,
   "aligned": true
  },
  {
@@ -306,6 +301,11 @@
  },
  {
   "name": "smartart-snake-rows.pptx",
+  "score": 0.0325,
+  "aligned": true
+ },
+ {
+  "name": "tdf112209.pptx",
   "score": 0.0325,
   "aligned": true
  },

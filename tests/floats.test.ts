@@ -445,3 +445,65 @@ describe('a tiled picture fill (§14.1.2.5 type="tile" / §20.1.8.58 a:tile)', (
     expect(only.height).toBeCloseTo(72, 0);
   });
 });
+
+// §20.1.8.40 — a shadow falls UNDER the shape it belongs to, and a picture fill
+// leaves the paint passes: the image paints in one and the shape in a later
+// one, so a shadow left on the shape landed on TOP of its own picture.
+describe('a shadow under a picture fill', () => {
+  const shadowed = (withShadow: boolean) =>
+    buildDocxFromBody(
+      `<w:p><w:r><w:drawing>
+        <wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+          <wp:extent cx="1828800" cy="914400"/>
+          <wp:positionH relativeFrom="page"><wp:posOffset>635000</wp:posOffset></wp:positionH>
+          <wp:positionV relativeFrom="page"><wp:posOffset>635000</wp:posOffset></wp:positionV>
+          <wp:wrapNone/>
+          <wp:docPr id="9" name="Shadowed"/>
+          <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+            <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+                <wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/></a:xfrm>
+                  <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+                  <a:blipFill><a:blip r:embed="rId20"/><a:stretch><a:fillRect/></a:stretch></a:blipFill>
+                  ${
+                    withShadow
+                      ? `<a:effectLst><a:outerShdw blurRad="50800" dist="38100">` +
+                        `<a:prstClr val="black"><a:alpha val="40000"/></a:prstClr>` +
+                        `</a:outerShdw></a:effectLst>`
+                      : ''
+                  }
+                </wps:spPr>
+                <wps:bodyPr/>
+              </wps:wsp>
+            </a:graphicData>
+          </a:graphic>
+        </wp:anchor>
+      </w:drawing></w:r></w:p>`,
+      {
+        images: {
+          rId20: {
+            contentType: 'image/png',
+            bytes: buildTinyPng(2, 2, [0, 0, 255, 255]),
+            extension: 'png',
+          },
+        },
+      },
+    );
+
+  it('ties the shadow, the picture and the outline into one picture', () => {
+    // Without a shadow nothing is grouped and the passes stay as they were.
+    const plain = layoutOf(shadowed(false)).pages[0]!.commands;
+    expect(plain.every((c) => c.pictureId === undefined)).toBe(true);
+    // With one, all three travel together — and the shadow comes FIRST.
+    const withIt = layoutOf(shadowed(true)).pages[0]!.commands;
+    const group = withIt.filter((c) => c.pictureId !== undefined);
+    expect(group.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(group.map((c) => c.pictureId)).size).toBe(1);
+    const first = group[0];
+    expect(first?.type).toBe('shape');
+    expect(first?.type === 'shape' ? first.shape.shadow : undefined).toBeDefined();
+    expect(group.some((c) => c.type === 'image')).toBe(true);
+    // …and no other item carries the shadow a second time.
+    expect(group.filter((c) => c.type === 'shape' && c.shape.shadow !== undefined)).toHaveLength(1);
+  });
+});
