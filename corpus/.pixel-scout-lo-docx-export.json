@@ -1370,11 +1370,6 @@
   "aligned": true
  },
  {
-  "name": "fdo79968.docx",
-  "score": 0.0032,
-  "aligned": true
- },
- {
   "name": "mixednumberings.docx",
   "score": 0.0031,
   "aligned": false
@@ -2050,16 +2045,6 @@
   "aligned": true
  },
  {
-  "name": "fdo80523_pptm.docx",
-  "score": 0.0014,
-  "aligned": true
- },
- {
-  "name": "fdo80523_sldm.docx",
-  "score": 0.0014,
-  "aligned": true
- },
- {
   "name": "fdo79915.docx",
   "score": 0.0014,
   "aligned": true
@@ -2312,6 +2297,11 @@
  {
   "name": "tdf129242_InsideBorders.docx",
   "score": 0.001,
+  "aligned": true
+ },
+ {
+  "name": "fdo79968.docx",
+  "score": 0.0009,
   "aligned": true
  },
  {
@@ -2701,6 +2691,16 @@
  },
  {
   "name": "tdf121658.docx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "fdo80523_pptm.docx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "fdo80523_sldm.docx",
   "score": 0.0004,
   "aligned": true
  },

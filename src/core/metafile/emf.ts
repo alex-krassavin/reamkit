@@ -90,6 +90,14 @@ export function readEmf(bytes: Uint8Array): MetaPicture {
   // close it. Outside a path bracket the drawing records paint at once.
   let building: Array<PathSegment> | undefined;
   const open = (): Array<PathSegment> => building ?? [];
+  // Whether a FIGURE is open — the path has segments and the last is not a
+  // close. A `…To` record appended to one continues from its last point, so it
+  // must NOT move there again: a move splits one figure into two, and the
+  // even-odd rule then carves a wedge out of what should be a solid fill.
+  const inFigure = (): boolean => {
+    const tail = building?.[building.length - 1];
+    return tail !== undefined && tail.op !== 'close';
+  };
 
   // §2.3.2 — the clip the records after it are limited to, kept in the same
   // device space the primitives are stored in. A primitive wholly outside it is
@@ -160,9 +168,17 @@ export function readEmf(bytes: Uint8Array): MetaPicture {
 
   const strokeOf = (): StrokeStyle | undefined => {
     if (dc.pen.style === 'none') return undefined;
+    // §2.2.20 — a pen states its width in LOGICAL units, so the world transform
+    // in force scales it along with the coordinates it draws through. A writer
+    // that shrinks the world by sixteen and then asks for a sixteen-wide pen
+    // means one device unit; taking the width at face value draws the whole
+    // picture in fat black rules.
+    const m = dc.transform;
+    const world = Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])) || 1;
+    const lu = dc.pen.widthLu * world;
     // A pen one logical unit wide is a HAIRLINE: the thinnest line the device
     // draws, not one unit of a scaled-up world.
-    const w = dc.pen.widthLu <= 1 ? 1 : dc.pen.widthLu * Math.abs(sx());
+    const w = lu <= 1 ? 1 : lu * Math.abs(sx());
     return {
       colorHex: dc.pen.colorHex,
       widthPt: w,
@@ -377,7 +393,7 @@ export function readEmf(bytes: Uint8Array): MetaPicture {
           dc.y = at(12);
           const to = px(dc.x, dc.y);
           if (building) {
-            if (building.length === 0) building.push({ op: 'move', x: from.x, y: from.y });
+            if (!inFigure()) building.push({ op: 'move', x: from.x, y: from.y });
             building.push({ op: 'line', x: to.x, y: to.y });
           } else {
             paint(
@@ -451,7 +467,7 @@ export function readEmf(bytes: Uint8Array): MetaPicture {
           const segs = polySegments(px, pts, {
             closed,
             bezier,
-            ...(continues ? { from: { x: dc.x, y: dc.y } } : {}),
+            ...(continues ? { from: { x: dc.x, y: dc.y }, joined: inFigure() } : {}),
           });
           if (pts.length > 0) {
             dc.x = pts[pts.length - 1]!.x;
@@ -530,9 +546,14 @@ export function readEmf(bytes: Uint8Array): MetaPicture {
         const w = at(32);
         const h = at(36);
         if (cbBmiSrc === 0) {
-          // BLACKNESS / WHITENESS paint a colour of their own; PATCOPY and
-          // its neighbours paint the brush.
+          // §MS-WMF 2.1.1.31 — with no source there are only three ternary
+          // operations left that state a colour outright: BLACKNESS and
+          // WHITENESS paint one of their own, PATCOPY paints the brush.
+          // Every other one reads the destination (DSTCOPY is the plain NOP a
+          // writer ends a picture with) or the source that is not there, and
+          // paints NOTHING — taking the brush to them blanks the drawing.
           const hex = rop === 0x00000042 ? '000000' : rop === 0x00ff0062 ? 'FFFFFF' : undefined;
+          if (hex === undefined && rop !== 0x00f00021) break;
           const brush = dc.brush;
           if (hex !== undefined) {
             dc.brush = { kind: 'brush', colorHex: hex, hollow: false };
@@ -743,14 +764,19 @@ type Mapper = (x: number, y: number) => { x: number; y: number };
 function polySegments(
   map: Mapper,
   pts: ReadonlyArray<{ x: number; y: number }>,
-  o: { closed: boolean; bezier: boolean; from?: { x: number; y: number } },
+  o: { closed: boolean; bezier: boolean; from?: { x: number; y: number }; joined?: boolean },
 ): Array<PathSegment> {
   const segs: Array<PathSegment> = [];
   if (pts.length === 0) return segs;
   let i = 0;
   if (o.from) {
-    const s = map(o.from.x, o.from.y);
-    segs.push({ op: 'move', x: s.x, y: s.y });
+    // A `…To` record's points are all data — the figure starts at the current
+    // point. Appended to a figure already open that point is its last, and
+    // moving there again would split the figure; `joined` says so.
+    if (o.joined !== true) {
+      const s = map(o.from.x, o.from.y);
+      segs.push({ op: 'move', x: s.x, y: s.y });
+    }
   } else {
     const s = map(pts[0]!.x, pts[0]!.y);
     segs.push({ op: 'move', x: s.x, y: s.y });

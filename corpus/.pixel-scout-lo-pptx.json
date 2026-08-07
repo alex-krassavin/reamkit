@@ -175,11 +175,6 @@
   "aligned": true
  },
  {
-  "name": "ole-emf_min.pptx",
-  "score": 0.056,
-  "aligned": true
- },
- {
   "name": "shape-soft-edges.pptx",
   "score": 0.0529,
   "aligned": true
@@ -797,6 +792,11 @@
  {
   "name": "tdf151767.pptx",
   "score": 0.0052,
+  "aligned": true
+ },
+ {
+  "name": "ole-emf_min.pptx",
+  "score": 0.0051,
   "aligned": true
  },
  {

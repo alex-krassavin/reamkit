@@ -130,11 +130,6 @@
   "aligned": true
  },
  {
-  "name": "bug54570.pptx",
-  "score": 0.0617,
-  "aligned": true
- },
- {
   "name": "highlight-test-case.pptx",
   "score": 0.0572,
   "aligned": true
@@ -262,6 +257,11 @@
  {
   "name": "2411-Performance_Up.pptx",
   "score": 0.0119,
+  "aligned": true
+ },
+ {
+  "name": "bug54570.pptx",
+  "score": 0.0109,
   "aligned": true
  },
  {
