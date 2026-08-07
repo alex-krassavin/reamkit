@@ -2257,9 +2257,15 @@ function shadingFromXf(xf: XlsxCellXf, styles: XlsxStyles): CellShading | undefi
   if (pattern === 'solid') return fill.fgColorHex ? { colorHex: fill.fgColorHex } : undefined;
   // §18.8.20 a non-solid patternFill (E-SHEET W6) → a solid blend of fg over bg.
   // A gradientFill (no patternType) is summarised by the reader into fgColorHex.
+  //
+  // §18.8.19 — the colours are OPTIONAL, and a pattern that states neither is
+  // the Automatic pair: black on white. FillWithoutColor.xlsx is named for
+  // exactly that — four tables whose corner cell is a `lightUp` with no colour
+  // at all, which every reader draws as the quarter-strength grey the density
+  // gives and we left white.
   const density = PATTERN_DENSITY[pattern];
-  if (density === undefined || !fill.fgColorHex) return undefined;
-  const blended = blendHex(fill.fgColorHex, fill.bgColorHex ?? 'FFFFFF', density);
+  if (density === undefined) return undefined;
+  const blended = blendHex(fill.fgColorHex ?? '000000', fill.bgColorHex ?? 'FFFFFF', density);
   return blended ? { colorHex: blended } : undefined;
 }
 

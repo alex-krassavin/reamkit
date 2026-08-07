@@ -130,6 +130,11 @@
   "aligned": true
  },
  {
+  "name": "tdf110440.xlsx",
+  "score": 0.0213,
+  "aligned": true
+ },
+ {
   "name": "cell-anchored-hidden-shapes.xlsx",
   "score": 0.0212,
   "aligned": true
@@ -137,11 +142,6 @@
  {
   "name": "tdfSheetProts.xlsx",
   "score": 0.0208,
-  "aligned": true
- },
- {
-  "name": "tdf110440.xlsx",
-  "score": 0.0202,
   "aligned": true
  },
  {
@@ -310,11 +310,6 @@
   "aligned": true
  },
  {
-  "name": "shape-macro-ext-ref.xlsx",
-  "score": 0.008,
-  "aligned": true
- },
- {
   "name": "tdf112936.xlsx",
   "score": 0.008,
   "aligned": true
@@ -350,11 +345,6 @@
   "aligned": false
  },
  {
-  "name": "twoCellAnchor_editAs_oneCell.xlsx",
-  "score": 0.0072,
-  "aligned": true
- },
- {
   "name": "tdf145057.xlsx",
   "score": 0.0071,
   "aligned": true
@@ -382,6 +372,11 @@
  {
   "name": "pivottable_error_item_filter.xlsx",
   "score": 0.0065,
+  "aligned": true
+ },
+ {
+  "name": "shape-macro-ext-ref.xlsx",
+  "score": 0.0063,
   "aligned": true
  },
  {
@@ -467,6 +462,11 @@
  {
   "name": "tdf76047_externalLink.xlsx",
   "score": 0.0035,
+  "aligned": true
+ },
+ {
+  "name": "twoCellAnchor_editAs_oneCell.xlsx",
+  "score": 0.0034,
   "aligned": true
  },
  {

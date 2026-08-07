@@ -17,17 +17,18 @@ import { Ream } from '@/core/converter/ream';
 // 4 diagonal border, 5 indent=1, 6 indent=2, 7 rotation+shrink.
 const STYLES = `
   <fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>
-  <fills count="4">
+  <fills count="5">
     <fill><patternFill patternType="none"/></fill>
     <fill><patternFill patternType="gray125"/></fill>
     <fill><patternFill patternType="lightGray"><fgColor rgb="FF000000"/><bgColor rgb="FFFFFFFF"/></patternFill></fill>
     <fill><gradientFill><stop position="0"><color rgb="FFFF0000"/></stop><stop position="1"><color rgb="FF0000FF"/></stop></gradientFill></fill>
+    <fill><patternFill patternType="lightUp"/></fill>
   </fills>
   <borders count="2">
     <border/>
     <border diagonalDown="1"><diagonal style="thin"><color rgb="FF000000"/></diagonal></border>
   </borders>
-  <cellXfs count="9">
+  <cellXfs count="10">
     <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
     <xf numFmtId="0" fontId="0" fillId="0" borderId="0" applyAlignment="1"><alignment wrapText="1"/></xf>
     <xf numFmtId="0" fontId="0" fillId="2" borderId="0" applyFill="1"/>
@@ -37,6 +38,7 @@ const STYLES = `
     <xf numFmtId="0" fontId="0" fillId="0" borderId="0" applyAlignment="1"><alignment indent="2"/></xf>
     <xf numFmtId="0" fontId="0" fillId="0" borderId="0" applyAlignment="1"><alignment textRotation="90" shrinkToFit="1"/></xf>
     <xf numFmtId="0" fontId="0" fillId="0" borderId="0" applyAlignment="1"><alignment shrinkToFit="1"/></xf>
+    <xf numFmtId="0" fontId="0" fillId="4" borderId="0" applyFill="1"/>
   </cellXfs>`;
 
 function firstCell(xlsx: Uint8Array, row = 0, col = 0): TableCell {
@@ -74,6 +76,15 @@ describe('non-solid + gradient fills (E-SHEET W6)', () => {
   it('blends a lightGray pattern (black over white) to a light grey solid', () => {
     const xlsx = buildXlsx({ rows: [[{ value: 1, styleIndex: 2 }]], stylesXml: STYLES });
     // 25% of black over 75% white → ~BF grey.
+    expect(firstCell(xlsx).properties.shading?.colorHex).toBe('BFBFBF');
+  });
+
+  it('takes the Automatic pair for a pattern that names no colour at all', () => {
+    // §18.8.19 — `fgColor`/`bgColor` are optional, and a pattern stating
+    // neither is black on white. Read as "no fill", the corner cell of each of
+    // FillWithoutColor.xlsx's four tables — a `lightUp` with no colour — came
+    // out white where every reader draws the quarter-strength grey.
+    const xlsx = buildXlsx({ rows: [[{ value: 1, styleIndex: 9 }]], stylesXml: STYLES });
     expect(firstCell(xlsx).properties.shading?.colorHex).toBe('BFBFBF');
   });
 
