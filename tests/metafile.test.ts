@@ -449,6 +449,33 @@ describe('WMF (MS-WMF)', () => {
     expect([pic.left, pic.top, pic.width, pic.height]).toEqual([3, 5, 80, 40]);
   });
 
+  it('turns a window whose extent is NEGATIVE the right way up', () => {
+    // §2.3.5.12 — a negative extent inverts that axis: the origin then names
+    // the far corner and logical y grows UPWARD. 38256.ppt's clipart sets the
+    // origin at (-1031, 945) with an extent of (2000, -1838), so its top edge
+    // is at -893. Read as a top, the drawing was laid out a full height above
+    // its box and hung off the top of the slide.
+    const box = (l: number, t: number, r: number, b: number) =>
+      new Bytes().i16(b).i16(r).i16(t).i16(l).build();
+    const pic = readWmf(
+      wmf([
+        meta(0x020b, new Bytes().i16(100).i16(0).build()), // SETWINDOWORG y=100, x=0
+        meta(0x020c, new Bytes().i16(-100).i16(80).build()), // SETWINDOWEXT cy=-100, cx=80
+        meta(0x02fc, new Bytes().u16(0).u32(0x0000ff).u16(0).build()), // red brush
+        meta(0x012d, new Bytes().u16(0).build()),
+        meta(0x041b, box(10, 90, 20, 80)), // near the origin, i.e. near the BOTTOM
+      ]),
+    );
+    // The box spans y 0…100, and its stated corner is the top one.
+    expect([pic.left, pic.top, pic.width, pic.height]).toEqual([0, 0, 80, 100]);
+    // …and the rectangle, drawn at y 80…90 in a frame that grows upward, comes
+    // back as y 10…20 down from that top.
+    const ys = pic.prims
+      .filter((pr): pr is PicturePath => pr.kind === 'path')
+      .flatMap((pr) => pr.paths[0]!.segments.flatMap((sg) => ('y' in sg ? [sg.y] : [])));
+    expect([Math.min(...ys), Math.max(...ys)]).toEqual([10, 20]);
+  });
+
   it('fills the rectangle a PATBLT names with the current brush', () => {
     // The record most used in the corpus: a bar, a rule or a panel.
     const pic = readWmf(
