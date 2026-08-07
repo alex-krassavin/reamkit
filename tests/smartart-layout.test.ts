@@ -1084,3 +1084,97 @@ describe('SmartArt: the hierarchy family', () => {
     expect((b1?.y ?? 0) - (a?.y ?? 0)).toBeCloseTo((a?.cx ?? 0) * 0.7, 5);
   });
 });
+
+describe('what the data part says about one point (§21.4.2)', () => {
+  // A composite whose two children each speak for ONE of the root's children —
+  // the shape a cycle-matrix's quadrants have — plus a third that speaks for
+  // that child's own children.
+  const PICKED = layoutXml(
+    `<dgm:alg type="composite"><dgm:param type="ar" val="2"/></dgm:alg>
+     <dgm:constrLst>
+       <dgm:constr type="w" for="ch" forName="one" refType="w" fact="0.5"/>
+       <dgm:constr type="h" for="ch" forName="one" refType="h"/>
+       <dgm:constr type="w" for="ch" forName="two" refType="w" fact="0.5"/>
+       <dgm:constr type="h" for="ch" forName="two" refType="h"/>
+       <dgm:constr type="l" for="ch" forName="two" refType="w" fact="0.5"/>
+     </dgm:constrLst>
+     <dgm:layoutNode name="one">
+       <dgm:alg type="tx"/><dgm:shape type="pieWedge"/>
+       <dgm:presOf axis="ch" ptType="node" cnt="1"/>
+     </dgm:layoutNode>
+     <dgm:layoutNode name="two">
+       <dgm:alg type="tx"/><dgm:shape rot="90" type="pieWedge"/>
+       <dgm:presOf axis="ch des" ptType="node node" st="2 1" cnt="1 0"/>
+     </dgm:layoutNode>`,
+  );
+  const DATA = dataXml([
+    ['A', ['A1', 'A2']],
+    ['B', ['B1', 'B2']],
+  ]);
+
+  it('gives a box the slice of the axis path its presOf names', () => {
+    // §21.4.3.7 — `st`/`cnt` are 1-based and a count of 0 means all of them.
+    // Read as a plain axis, both boxes spoke for the root and came out blank.
+    const xml = diagramDrawingXml(run(PICKED, DATA), { cx: CX, cy: CY });
+    expect(xml).toContain('<a:t>A</a:t>');
+    // The second box is the SECOND child's descendants — both of them, and not
+    // the child's own label.
+    expect(xml).toContain('<a:t>B1</a:t>');
+    expect(xml).toContain('<a:t>B2</a:t>');
+    expect(xml).not.toContain('<a:t>B</a:t>');
+  });
+
+  it('turns a box by the angle its shape states', () => {
+    // §21.4.3.5 `dgm:shape@rot`, in degrees — the disc of a cycle-matrix is one
+    // quarter-wedge stated four times at four right angles.
+    const nodes = run(PICKED, DATA);
+    expect(nodes.map((n) => n.rotation60k)).toEqual([undefined, 90 * 60000]);
+    expect(diagramDrawingXml(nodes, { cx: CX, cy: CY })).toContain('<a:xfrm rot="5400000">');
+  });
+
+  it('fits the cell to the ratio the algorithm asks for', () => {
+    // §21.4.3.4 `ar` — measured against the width it was given, a cycle-matrix
+    // on a wide placeholder drew its disc half again too big and its four
+    // quarters overlapped in a pinwheel.
+    const nodes = run(PICKED, DATA);
+    // 6 000 000 × 3 000 000 already sits at 2:1, so nothing moves…
+    expect(nodes[0]?.cx).toBeCloseTo(CX / 2, 5);
+    // …but a taller cell is cut to the ratio and stays centred in what it had.
+    const tall = layoutDiagram(parse(PICKED), new DiagramData(parse(DATA)), CX, CY * 2);
+    expect(tall[0]?.cx).toBeCloseTo(CX / 2, 5);
+    expect(tall[0]?.cy).toBeCloseTo(CY, 5);
+    expect(tall[0]?.y).toBeCloseTo(CY / 2, 5);
+  });
+
+  it('lets the formatting an author set on a point beat the colours part', () => {
+    // §21.4.2.20 `dgm:pt/dgm:spPr`. smartart-cycle-matrix recolours one quarter
+    // of its disc and the outline of the callout beside it, and says so here
+    // and nowhere else.
+    const withFill = DATA.replace(
+      '<dgm:pt modelId="A"><dgm:t>',
+      '<dgm:pt modelId="A"><dgm:spPr><a:solidFill><a:srgbClr val="FF9900"/></a:solidFill></dgm:spPr><dgm:t>',
+    );
+    const xml = diagramDrawingXml(run(PICKED, withFill), { cx: CX, cy: CY });
+    expect(xml).toContain('<a:srgbClr val="FF9900">');
+  });
+
+  it('paints the fill the whole diagram states behind every box', () => {
+    // §21.4.2.4 `dgm:bg` — smartart-background.pptx is four blue boxes on a
+    // green panel, and the panel is stated only here.
+    const green = DATA.replace(
+      '</dgm:cxnLst>',
+      '</dgm:cxnLst><dgm:bg><a:solidFill><a:srgbClr val="339933"/></a:solidFill></dgm:bg>',
+    );
+    const data = new DiagramData(parse(green));
+    expect(data.background).toBeDefined();
+    const xml = diagramDrawingXml(
+      run(PICKED, green),
+      { cx: CX, cy: CY },
+      undefined,
+      data.background,
+    );
+    // The panel is the whole frame, and it comes FIRST so the boxes sit on it.
+    expect(xml).toContain(`<a:ext cx="${CX}" cy="${CY}"/>`);
+    expect(xml.indexOf('339933')).toBeLessThan(xml.indexOf('<a:t>A</a:t>'));
+  });
+});

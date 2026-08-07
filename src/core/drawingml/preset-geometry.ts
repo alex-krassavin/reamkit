@@ -450,6 +450,20 @@ export function presetPaths(
         ]),
       ];
     }
+    case 'pieWedge': {
+      // §20.1.10.55 — a QUARTER of an ellipse, centred on the box's
+      // bottom-right corner: from the bottom-left corner round to the top-right
+      // one, bulging towards the top-left. Four of them, each turned another
+      // quarter, are the disc a cycle-matrix diagram is built from.
+      return [
+        new PathBuilder()
+          .moveTo(0, 0)
+          .append(arcToBeziers(w, 0, w, h, Math.PI, -Math.PI / 2))
+          .lineTo(w, 0)
+          .close()
+          .build(),
+      ];
+    }
     case 'pie':
     case 'blockArc': {
       // Angles are 60 000ths of a degree, clockwise from due east in the

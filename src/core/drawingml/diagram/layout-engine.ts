@@ -40,6 +40,12 @@ export interface LaidNode {
   readonly anchor?: string;
   /** §21.4.3.2 `parTxLTRAlign` — how the layout ranges a node's own label. */
   readonly align?: string;
+  /**
+   * §21.4.3.5 `dgm:shape@rot` — how far the box's geometry is turned, in
+   * 60 000ths of a degree clockwise. The cycle-matrix layout builds its disc
+   * out of one quarter-wedge stated four times at 0°, 90°, 180° and 270°.
+   */
+  readonly rotation60k?: number;
   readonly x: number;
   readonly y: number;
   readonly cx: number;
@@ -82,6 +88,21 @@ interface LayoutNode {
    * beneath it rather than dropping them.
    */
   readonly presOfAxis?: string;
+  /**
+   * §21.4.3.7 — the same `presOf` when it names a PATH rather than one axis:
+   * `axis="ch des" ptType="node node" st="1 1" cnt="1 0"` is "the first child,
+   * then everything under it". Each step takes an axis of the points it has so
+   * far and then the slice `st`/`cnt` names — both 1-based, and a count of 0
+   * meaning all of them. This is how the cycle-matrix layout gives its four
+   * quadrants one child each and its four callouts that child's children.
+   */
+  readonly presOfPath?: {
+    readonly axis: ReadonlyArray<string>;
+    readonly st: ReadonlyArray<number>;
+    readonly cnt: ReadonlyArray<number>;
+  };
+  /** §21.4.3.5 `dgm:shape@rot` — degrees clockwise the box's geometry is turned. */
+  readonly shapeRotation?: number;
   readonly constrs: ReadonlyArray<Constraint>;
   readonly children: ReadonlyArray<LayoutItem>;
 }
@@ -161,11 +182,20 @@ function layoutIn(
   // for a SHAPE when the node names one, which is how a process arrow gets
   // drawn behind the steps standing on it; naming none, it is just the gap.
   if (node.alg === 'sp') {
+    // A space box shows no words, but it is still the point's box: whatever
+    // formatting the author set on that point is this box's too. Dropped, the
+    // orange outline a cycle-matrix's second callout was given by hand was
+    // drawn on the text box behind it and painted over by the plain one.
+    const own = spokenFor(node, point, data).spPr;
     return node.shapeType === undefined
       ? []
       : [
           {
-            point: { id: `${point.id}/${node.name}`, type: 'node' },
+            point: {
+              id: `${point.id}/${node.name}`,
+              type: 'node',
+              ...(own !== undefined ? { spPr: own } : {}),
+            },
             shapeType: node.shapeType,
             ...styleOf(node),
             index,
@@ -325,6 +355,7 @@ function styleOf(node: { kind: 'node' } & LayoutNode): {
   hideGeom?: true;
   anchor?: string;
   align?: string;
+  rotation60k?: number;
 } {
   const sz = fontSize(node.constrs, undefined, 'primFontSz');
   const anchor = node.algParams.get('txAnchorVert');
@@ -336,6 +367,7 @@ function styleOf(node: { kind: 'node' } & LayoutNode): {
     ...(node.hideGeom === true ? { hideGeom: true as const } : {}),
     ...(anchor !== undefined && anchor !== '' ? { anchor } : {}),
     ...(align !== undefined && align !== '' ? { align } : {}),
+    ...(node.shapeRotation !== undefined ? { rotation60k: node.shapeRotation * 60000 } : {}),
   };
 }
 
@@ -350,9 +382,91 @@ function spokenFor(
   point: DiagramPoint,
   data: DiagramData,
 ): DiagramPoint {
+  if (box.presOfPath) return walkPath(box.presOfPath, point, data);
   if (box.presOfAxis === 'desOrSelf') return withDescendants(point, data);
   if (box.presOfAxis === 'des') return gatheredText(point, data.children(point.id, 'node'));
   return point;
+}
+
+/**
+ * §21.4.3.7 — the `st`/`cnt` slice of a `presOf` path, read from the point the
+ * box is being laid out for.
+ *
+ * The cycle-matrix layout is the reason this exists: each of its four quadrants
+ * names ONE child (`axis="ch" st="3" cnt="1"`) and each of the four callouts
+ * beside them names that child's own children (`axis="ch des" st="3 1"
+ * cnt="1 0"`). Read as a plain axis, all eight boxes spoke for the root and the
+ * whole diagram came out blank.
+ *
+ * @param path  The parsed axis / start / count triple.
+ * @param point The point the box is laid out for.
+ * @param data  The data part, for walking children.
+ * @returns One point carrying the text of everything the path reached.
+ */
+function walkPath(
+  path: NonNullable<LayoutNode['presOfPath']>,
+  point: DiagramPoint,
+  data: DiagramData,
+): DiagramPoint {
+  let at: Array<DiagramPoint> = [point];
+  path.axis.forEach((step, i) => {
+    const next =
+      step === 'ch'
+        ? at.flatMap((p) => data.children(p.id, 'node'))
+        : step === 'des'
+          ? at.flatMap((p) => descendants(p, data))
+          : step === 'self'
+            ? at
+            : [];
+    const from = Math.max(0, (path.st[i] ?? 1) - 1);
+    const want = path.cnt[i] ?? 0;
+    at = next.slice(from, want === 0 ? next.length : from + want);
+  });
+  // One point is that point, not a copy of its words: it carries the formatting
+  // the author set on it, and a synthetic stand-in would drop it.
+  if (at.length === 1) return at[0]!;
+  const paragraphs = at.flatMap((p) => (p.text ? poChildren(p.text) : []));
+  const id = `${point.id}/${path.axis.join('.')}`;
+  if (paragraphs.length === 0) return { id, type: 'node' };
+  return { id, type: 'node', text: { 'dgm:t': paragraphs } };
+}
+
+/** Every point under `point`, depth first — the `des` axis. */
+function descendants(point: DiagramPoint, data: DiagramData): Array<DiagramPoint> {
+  const out: Array<DiagramPoint> = [];
+  const walk = (id: string): void => {
+    for (const kid of data.children(id, 'node')) {
+      out.push(kid);
+      walk(kid.id);
+    }
+  };
+  walk(point.id);
+  return out;
+}
+
+/**
+ * §21.4.3.7 — a `presOf`'s axis PATH, when it names more than one step or
+ * slices the one it names. A single unsliced axis stays with the plain
+ * `presOfAxis` reading, which the rest of the engine already answers.
+ *
+ * @param presOf The `dgm:presOf` element, when the box has one.
+ * @returns The path, or `undefined` when there is nothing to walk.
+ */
+function axisPath(presOf: PoNode | undefined): LayoutNode['presOfPath'] {
+  if (!presOf) return undefined;
+  const axis = (poAttr(presOf, 'axis') ?? '').split(/\s+/u).filter((a) => a !== '');
+  const nums = (name: string): Array<number> =>
+    (poAttr(presOf, name) ?? '')
+      .split(/\s+/u)
+      .filter((v) => v !== '')
+      .map((v) => Number(v));
+  const st = nums('st');
+  const cnt = nums('cnt');
+  if (axis.length === 0) return undefined;
+  // One step and no slice is the plain reading; anything else is a path.
+  if (axis.length === 1 && st.length === 0 && cnt.length === 0) return undefined;
+  if (!axis.every((a) => a === 'ch' || a === 'des' || a === 'self')) return undefined;
+  return { axis, st, cnt };
 }
 
 // §21.4.3.7 `desOrSelf` — the point's own paragraphs, then every descendant's
@@ -378,6 +492,27 @@ function withDescendants(point: DiagramPoint, data: DiagramData): DiagramPoint {
  * across the frame with the steps standing along it is one node laid over
  * another, which no list algorithm can express.
  */
+/**
+ * §21.4.3.4 `<dgm:param type="ar"/>` — the width-to-height ratio the algorithm
+ * wants its cell in. The cell shrinks to it on whichever axis is over, and
+ * stays centred on what it had.
+ *
+ * The cycle-matrix layout is the reason this matters: it asks for 1.3, measures
+ * its disc against the WIDTH it gets, and on a wide slide placeholder the disc
+ * came out half again too big and its four quarters overlapped in a pinwheel.
+ *
+ * @param node The layout node, for its algorithm parameters.
+ * @param box  The cell it was given.
+ * @returns The cell at the stated ratio, or unchanged when it states none.
+ */
+function aspectFitted(node: { kind: 'node' } & LayoutNode, box: Box): Box {
+  const ar = Number(node.algParams.get('ar') ?? '');
+  if (!Number.isFinite(ar) || ar <= 0 || box.cx <= 0 || box.cy <= 0) return box;
+  const cx = Math.min(box.cx, box.cy * ar);
+  const cy = Math.min(box.cy, box.cx / ar);
+  return { x: box.x + (box.cx - cx) / 2, y: box.y + (box.cy - cy) / 2, cx, cy };
+}
+
 function compositeLayout(
   node: { kind: 'node' } & LayoutNode,
   point: DiagramPoint,
@@ -387,6 +522,7 @@ function compositeLayout(
   outer: ReadonlyArray<Constraint> = [],
 ): Array<LaidNode> {
   const kids = namedBoxes(node);
+  box = aspectFitted(node, box);
   // §21.4.3.1 — a composite places its children but need not size them: the
   // accent process states only `l`, `w` and `t` for its three, and their HEIGHTS
   // come from the node above as multiples of `primFontSz` (0.8 for the words,
@@ -1262,6 +1398,8 @@ function parseNode(node: PoNode, ctx: LayoutContext): { kind: 'node' } & LayoutN
   const styleLbl = poAttr(node, 'styleLbl');
   const presOf = flattened.find((k) => poIs(k, 'dgm:presOf'));
   const presOfAxis = poAttr(presOf, 'axis');
+  const presOfPath = axisPath(presOf);
+  const shapeRot = shape ? Number(poAttr(shape, 'rot') ?? '') : NaN;
   return {
     kind: 'node',
     name: poAttr(node, 'name') ?? '',
@@ -1271,7 +1409,9 @@ function parseNode(node: PoNode, ctx: LayoutContext): { kind: 'node' } & LayoutN
     algParams: params,
     ...(shapeType !== undefined && shapeType !== '' ? { shapeType } : {}),
     ...(shape !== undefined && poAttr(shape, 'hideGeom') === '1' ? { hideGeom: true } : {}),
+    ...(Number.isFinite(shapeRot) && shapeRot !== 0 ? { shapeRotation: shapeRot } : {}),
     ...(presOfAxis !== undefined && presOfAxis !== '' ? { presOfAxis } : {}),
+    ...(presOfPath ? { presOfPath } : {}),
     constrs: parseConstraints(constrLst),
     children: flattened.flatMap((k) => parseItem(k, ctx, guarded.has(k))),
   };

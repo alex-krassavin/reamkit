@@ -46,9 +46,15 @@ export class DiagramData {
   private readonly kids = new Map<string, Array<ParentOf>>();
   /** The document point every layout starts from. */
   readonly root: DiagramPoint | undefined;
+  /** §21.4.2.4 `dgm:bg` — the fill painted behind the whole diagram. */
+  readonly background: PoNode | undefined;
 
   constructor(tree: ReadonlyArray<PoNode>) {
     const model = findDescendant(tree, 'dgm:dataModel');
+    // §21.4.2.4 `dgm:bg` — the fill behind the WHOLE diagram, which is not any
+    // one point's. smartart-background.pptx says so in its name: a green panel
+    // under four blue boxes, and unread the panel simply was not there.
+    this.background = model ? poChildren(model).find((c) => poIs(c, 'dgm:bg')) : undefined;
     const ptLst = model ? poChildren(model).find((c) => poIs(c, 'dgm:ptLst')) : undefined;
     for (const pt of ptLst ? poChildren(ptLst) : []) {
       if (!poIs(pt, 'dgm:pt')) continue;

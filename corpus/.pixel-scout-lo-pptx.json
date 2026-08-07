@@ -15,16 +15,6 @@
   "aligned": true
  },
  {
-  "name": "smartart-cycle-matrix.pptx",
-  "score": 0.1844,
-  "aligned": true
- },
- {
-  "name": "smartart-background.pptx",
-  "score": 0.1537,
-  "aligned": true
- },
- {
   "name": "cshapes.pptx",
   "score": 0.1481,
   "aligned": true
@@ -45,13 +35,18 @@
   "aligned": true
  },
  {
+  "name": "smartart-background.pptx",
+  "score": 0.122,
+  "aligned": true
+ },
+ {
   "name": "tdf152606.pptx",
   "score": 0.1105,
   "aligned": true
  },
  {
   "name": "smartart-missing-bullet.pptx",
-  "score": 0.1092,
+  "score": 0.1093,
   "aligned": true
  },
  {
@@ -290,11 +285,6 @@
   "aligned": true
  },
  {
-  "name": "smartart-snake-rows.pptx",
-  "score": 0.0325,
-  "aligned": true
- },
- {
   "name": "tdf136830.pptx",
   "score": 0.0323,
   "aligned": true
@@ -495,6 +485,11 @@
   "aligned": true
  },
  {
+  "name": "smartart-snake-rows.pptx",
+  "score": 0.0149,
+  "aligned": true
+ },
+ {
   "name": "altdescription.pptx",
   "score": 0.0142,
   "aligned": true
@@ -522,6 +517,11 @@
  {
   "name": "smartart-org-chart.pptx",
   "score": 0.0133,
+  "aligned": true
+ },
+ {
+  "name": "smartart-cycle-matrix.pptx",
+  "score": 0.0126,
   "aligned": true
  },
  {

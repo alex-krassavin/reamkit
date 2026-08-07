@@ -108,6 +108,51 @@ function run(
   return { [as]: { meth: poAttr(list, 'meth') ?? 'repeat', colors } };
 }
 
+/**
+ * §21.4.2.20 `dgm:pt/dgm:spPr` — the formatting the AUTHOR set on one point,
+ * which beats whatever the colours part gives that point's style label.
+ *
+ * A cycle-matrix whose second quarter was recoloured by hand states it here and
+ * nowhere else: read only from the colours part, all four quarters came out the
+ * one accent the label names, and the orange quarter and the orange outline
+ * round its callout both vanished.
+ *
+ * @param spPr The point's `dgm:spPr`, when it has one.
+ * @returns The fill and the outline it overrides, each as DrawingML, when it
+ *          overrides them.
+ */
+export function pointPaint(spPr: PoNode | undefined): {
+  fill?: string;
+  line?: string;
+} {
+  const kids = poChildren(spPr);
+  const fillNode = kids.find(
+    (c) => poIs(c, 'a:solidFill') || poIs(c, 'a:noFill') || poIs(c, 'a:gradFill'),
+  );
+  // A pretty-printed part puts whitespace between the elements, and that
+  // whitespace is a child like any other: taking the FIRST one as the colour
+  // read the newline before it and the override came out empty.
+  const colorIn = (node: PoNode | undefined): PoNode | undefined =>
+    poChildren(node).find((c) => poTag(c)?.endsWith('Clr') === true);
+  const fill = poIs(fillNode, 'a:noFill')
+    ? '<a:noFill/>'
+    : poIs(fillNode, 'a:solidFill')
+      ? solid(colorIn(fillNode))
+      : undefined;
+  const ln = kids.find((c) => poIs(c, 'a:ln'));
+  const lnFill = ln ? poChildren(ln).find((c) => poIs(c, 'a:solidFill')) : undefined;
+  const lnColor = solid(colorIn(lnFill));
+  const w = poAttr(ln, 'w');
+  const line =
+    ln === undefined
+      ? undefined
+      : `<a:ln${w !== undefined ? ` w="${esc(w)}"` : ''}>${lnColor ?? ''}</a:ln>`;
+  return {
+    ...(fill !== undefined ? { fill } : {}),
+    ...(line !== undefined ? { line } : {}),
+  };
+}
+
 function solid(color: PoNode | undefined): string | undefined {
   const xml = color === undefined ? '' : colorXml(color);
   return xml === '' ? undefined : `<a:solidFill>${xml}</a:solidFill>`;

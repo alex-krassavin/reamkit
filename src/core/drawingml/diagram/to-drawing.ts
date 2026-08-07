@@ -8,6 +8,7 @@ import type { DiagramColors } from '@/core/drawingml/diagram/colors';
 import type { LaidNode } from '@/core/drawingml/diagram/layout-engine';
 import type { PoNode } from '@/core/po-helpers';
 import { poAttr, poChildren, poIs, poText } from '@/core/po-helpers';
+import { pointPaint } from '@/core/drawingml/diagram/colors';
 
 const NS =
   'xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" ' +
@@ -19,13 +20,24 @@ const NS =
  * @param nodes  The laid-out boxes, in the diagram's own EMU frame.
  * @param frame  The frame the slide gives the diagram.
  * @param colors The colours part, when the file carries one.
+ * @param bg     §21.4.2.4 `dgm:bg` — the fill behind the whole diagram.
  * @returns The XML text of the drawing part.
  */
 export function diagramDrawingXml(
   nodes: ReadonlyArray<LaidNode>,
   frame: { readonly cx: number; readonly cy: number },
   colors?: DiagramColors,
+  bg?: PoNode,
 ): string {
+  // §21.4.2.4 — the whole diagram's own fill, painted under every box.
+  const back = pointPaint(bg).fill;
+  const panel =
+    back === undefined
+      ? ''
+      : `<dsp:sp><dsp:spPr><a:xfrm><a:off x="0" y="0"/>` +
+        `<a:ext cx="${r(frame.cx)}" cy="${r(frame.cy)}"/></a:xfrm>` +
+        `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>${back}<a:ln><a:noFill/></a:ln></dsp:spPr>` +
+        `<dsp:txBody><a:bodyPr/><a:lstStyle/><a:p/></dsp:txBody></dsp:sp>`;
   const shapes = nodes
     .map((n) => {
       const off = `<a:off x="${r(n.x)}" y="${r(n.y)}"/><a:ext cx="${r(n.cx)}" cy="${r(n.cy)}"/>`;
@@ -35,20 +47,24 @@ export function diagramDrawingXml(
       // §21.4.3.9 — a box whose shape hides its geometry is there for the room
       // it takes, not to be seen: the picture lists space their nodes with one,
       // and painting it drew a bar of accent colour across the top of each.
+      // §21.4.2.20 — what the AUTHOR set on this point beats the style label's
+      // run: a cycle-matrix with one quarter recoloured by hand says so here.
+      const own = pointPaint(n.point.spPr);
       const paint =
         n.hideGeom === true
           ? '<a:noFill/><a:ln><a:noFill/></a:ln>'
-          : (colors?.fill(n.styleLbl, n.index) ??
+          : (own.fill ??
+              colors?.fill(n.styleLbl, n.index) ??
               (colors?.knows(n.styleLbl) === true
                 ? '<a:noFill/>'
                 : '<a:solidFill><a:schemeClr val="accent1"/></a:solidFill>')) +
             // §21.4.5 — `linClrLst` is the box's outline, and for the follower
             // boxes it is the whole of them: `conFgAcc1` is `lt1` at 90% inside
             // an `accent1` line, so unlined it is white on white.
-            (colors?.line(n.styleLbl, n.index) ?? '');
+            (own.line ?? colors?.line(n.styleLbl, n.index) ?? '');
       const text = colors?.textFill(n.styleLbl, n.index);
       return (
-        `<dsp:sp><dsp:spPr><a:xfrm>${off}</a:xfrm>` +
+        `<dsp:sp><dsp:spPr><a:xfrm${n.rotation60k !== undefined ? ` rot="${r(n.rotation60k)}"` : ''}>${off}</a:xfrm>` +
         `<a:prstGeom prst="${esc(n.shapeType)}"><a:avLst/></a:prstGeom>${paint}</dsp:spPr>` +
         `<dsp:style><a:fontRef idx="minor"><a:schemeClr val="lt1"/></a:fontRef></dsp:style>` +
         `<dsp:txBody>${bodyXml(n, text)}</dsp:txBody></dsp:sp>`
@@ -64,7 +80,7 @@ export function diagramDrawingXml(
     `<dsp:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${r(frame.cx)}" cy="${r(frame.cy)}"/>` +
     `<a:chOff x="0" y="0"/><a:chExt cx="${r(frame.cx)}" cy="${r(frame.cy)}"/></a:xfrm></dsp:grpSpPr>`;
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<dsp:drawing ${NS}><dsp:spTree>${grp}${shapes}</dsp:spTree></dsp:drawing>`;
+<dsp:drawing ${NS}><dsp:spTree>${grp}${panel}${shapes}</dsp:spTree></dsp:drawing>`;
 }
 
 // The node's own text, re-emitted as the drawing part spells it. Only the runs'

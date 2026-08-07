@@ -64,15 +64,11 @@ export function laidOutDiagramTree(
   parse: (bytes: Uint8Array) => Array<PoNode>,
 ): PoNode | undefined {
   if (!parts.layout) return undefined;
-  const nodes = layoutDiagram(
-    parse(parts.layout),
-    new DiagramData(parse(parts.data)),
-    frame.cx,
-    frame.cy,
-  );
+  const data = new DiagramData(parse(parts.data));
+  const nodes = layoutDiagram(parse(parts.layout), data, frame.cx, frame.cy);
   if (nodes.length === 0) return undefined;
   const colors = parts.colors ? new DiagramColors(parse(parts.colors)) : undefined;
-  const xml = diagramDrawingXml(nodes, frame, colors);
+  const xml = diagramDrawingXml(nodes, frame, colors, data.background);
   for (const root of parse(new TextEncoder().encode(xml))) {
     const found = poFindDescendant(root, 'dsp:spTree');
     if (found) return found;
