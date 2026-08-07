@@ -25,11 +25,6 @@
   "aligned": true
  },
  {
-  "name": "smartart-accent-process.pptx",
-  "score": 0.1999,
-  "aligned": true
- },
- {
   "name": "tdf114848.pptx",
   "score": 0.192,
   "aligned": true
@@ -222,6 +217,11 @@
  {
   "name": "tdf109067.pptx",
   "score": 0.0598,
+  "aligned": true
+ },
+ {
+  "name": "smartart-accent-process.pptx",
+  "score": 0.0585,
   "aligned": true
  },
  {

@@ -925,3 +925,91 @@ describe('SmartArt: the run states its own size where it has one', () => {
     expect(xml).toContain('sz="6500"');
   });
 });
+
+// §21.4.3.1/§21.4.3.2 — a composite places its children but takes their heights
+// from the node above, in multiples of the font size; and the gap between two
+// cells is where the thing that joins them goes.
+describe('SmartArt: a composite with heights from above, and its connectors', () => {
+  const ACCENT = layoutXml(
+    `<dgm:alg type="lin"/>
+     <dgm:constrLst>
+       <dgm:constr type="w" for="ch" forName="composite" refType="w"/>
+       <dgm:constr type="w" for="ch" ptType="sibTrans" refType="w" refFor="ch" refForName="composite" fact="0.5"/>
+       <dgm:constr type="h" for="des" forName="parTx" refType="primFontSz" refFor="des" refForName="parTx" fact="0.8"/>
+       <dgm:constr type="h" for="des" forName="parSh" refType="primFontSz" refFor="des" refForName="parTx" fact="1.2"/>
+       <dgm:constr type="h" for="des" forName="desTx" refType="primFontSz" refFor="des" refForName="parTx" fact="1.6"/>
+     </dgm:constrLst>
+     <dgm:forEach name="each" axis="ch" ptType="node">
+       <dgm:layoutNode name="composite">
+         <dgm:alg type="composite"/>
+         <dgm:constrLst>
+           <dgm:constr type="l" for="ch" forName="parSh"/>
+           <dgm:constr type="w" for="ch" forName="parSh" refType="w" fact="0.83"/>
+           <dgm:constr type="t" for="ch" forName="parSh"/>
+           <dgm:constr type="l" for="ch" forName="parTx"/>
+           <dgm:constr type="w" for="ch" forName="parTx" refType="w" fact="0.83"/>
+           <dgm:constr type="t" for="ch" forName="parTx"/>
+           <dgm:constr type="l" for="ch" forName="desTx" refType="w" fact="0.17"/>
+           <dgm:constr type="w" for="ch" forName="desTx" refType="w" refFor="ch" refForName="parTx"/>
+           <dgm:constr type="t" for="ch" forName="desTx" refType="h" refFor="ch" refForName="parTx"/>
+         </dgm:constrLst>
+         <dgm:layoutNode name="parSh" styleLbl="node1"><dgm:alg type="sp"/><dgm:shape type="roundRect"/></dgm:layoutNode>
+         <dgm:layoutNode name="parTx"><dgm:alg type="tx"/><dgm:shape type="rect"/></dgm:layoutNode>
+         <dgm:layoutNode name="desTx" styleLbl="fgAcc1">
+           <dgm:alg type="tx"/><dgm:shape type="roundRect"/>
+           <dgm:presOf axis="des" ptType="node"/>
+         </dgm:layoutNode>
+       </dgm:layoutNode>
+       <dgm:forEach name="sibs" axis="followSib" ptType="sibTrans" cnt="1">
+         <dgm:layoutNode name="sibTrans">
+           <dgm:alg type="conn"/><dgm:shape type="conn"/>
+           <dgm:constrLst><dgm:constr type="h" refType="w" fact="0.62"/></dgm:constrLst>
+         </dgm:layoutNode>
+       </dgm:forEach>
+     </dgm:forEach>`,
+  );
+
+  it('sizes the placed children from the heights stated above them', () => {
+    const nodes = run(ACCENT, dataXml([['a', ['b']]]));
+    const at = (l: string): (typeof nodes)[number] | undefined =>
+      nodes.find((n) => n.styleLbl === l);
+    const [shape, kids] = [at('node1'), at('fgAcc1')];
+    // The words are 0.8 of the size, the shape behind them 1.2 and the
+    // descendants 1.6, and the descendants start where the words end — so the
+    // cell is 0.8 + 1.6 = 2.4 units tall.
+    expect(shape?.cy).toBeCloseTo(CY * (1.2 / 2.4), 0);
+    expect(kids?.y).toBeCloseTo(CY * (0.8 / 2.4), 0);
+    expect(kids?.cy).toBeCloseTo(CY * (1.6 / 2.4), 0);
+    // The descendants box hangs off to the right of the shape, overlapping it.
+    expect(kids?.x).toBeGreaterThan(shape?.x ?? 0);
+    expect(kids?.y).toBeLessThan((shape?.y ?? 0) + (shape?.cy ?? 0));
+  });
+
+  it('draws the transition between two cells, pointing the way the list runs', () => {
+    const nodes = run(
+      ACCENT,
+      dataXml([
+        ['a', ['b']],
+        ['c', ['d']],
+      ]),
+    );
+    const arrow = nodes.find((n) => n.shapeType === 'rightArrow');
+    expect(arrow).toBeDefined();
+    // Its own constraint sizes it against the gap it was given.
+    expect((arrow?.cy ?? 0) / (arrow?.cx ?? 1)).toBeCloseTo(0.62, 5);
+    // An unlabelled 2-D transition takes the colours part's own label for one.
+    expect(arrow?.styleLbl).toBe('sibTrans2D1');
+  });
+
+  it('draws no transition for a list whose gap has no shape', () => {
+    expect(
+      run(
+        BLOCK_LIST,
+        dataXml([
+          ['a', []],
+          ['b', []],
+        ]),
+      ).some((n) => n.shapeType.endsWith('Arrow')),
+    ).toBe(false);
+  });
+});

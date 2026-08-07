@@ -254,17 +254,47 @@ function compositeLayout(
   box: Box,
   data: DiagramData,
   index: number,
+  outer: ReadonlyArray<Constraint> = [],
 ): Array<LaidNode> {
-  const out: Array<LaidNode> = [];
-  // In document order, because a constraint may refer to a sibling and the
-  // producer writes the one referred to first.
-  const placed = new Map<string, Box>();
-  for (const child of namedBoxes(node)) {
-    const rect = rectIn(node.constrs, child.name, box, placed);
-    placed.set(child.name, rect);
-    out.push(...layoutIn(child, point, rect, data, index));
+  const kids = namedBoxes(node);
+  // §21.4.3.1 — a composite places its children but need not size them: the
+  // accent process states only `l`, `w` and `t` for its three, and their HEIGHTS
+  // come from the node above as multiples of `primFontSz` (0.8 for the words,
+  // 1.2 for the shape behind them, 1.6 for the descendants that hang below).
+  // Without those every child took the whole cell and the descendants box, set
+  // to start where the words end, was pushed clean out of the bottom.
+  const run = (fontEmu: number): Array<Box> => {
+    const placed = new Map<string, Box>();
+    return kids.map((child) => {
+      const rect = rectIn(node.constrs, child.name, box, placed, fontEmu, outer);
+      placed.set(child.name, rect);
+      return rect;
+    });
+  };
+  // The size is what makes the children fill the cell: measure them in units of
+  // it, and the deepest one states how many units tall the cell is.
+  let rects = run(0);
+  if (kids.every((c) => fontHeight(outer, c.name) !== undefined)) {
+    const units = run(1).reduce((a, r) => Math.max(a, r.y - box.y + r.cy), 0);
+    if (units > 0) rects = run(box.cy / units);
   }
+  const out: Array<LaidNode> = [];
+  kids.forEach((child, i) => {
+    const rect = rects[i];
+    if (rect) out.push(...layoutIn(child, point, rect, data, index));
+  });
   return out;
+}
+
+// The height a node states for a named descendant as a multiple of the font
+// size the layout runs at (`h refType="primFontSz"`).
+function fontHeight(constrs: ReadonlyArray<Constraint>, name: string): number | undefined {
+  for (const k of constrs) {
+    if (k.type === 'h' && k.forName === name && k.refType === 'primFontSz' && k.op === undefined) {
+      return k.fact;
+    }
+  }
+  return undefined;
 }
 
 // Whether a node's constraints say where its children GO, rather than only in
@@ -295,6 +325,8 @@ function rectIn(
   name: string,
   box: Box,
   placed: ReadonlyMap<string, Box>,
+  fontEmu = 0,
+  outer: ReadonlyArray<Constraint> = [],
 ): Box {
   let cx = box.cx;
   let cy = box.cy;
@@ -309,11 +341,20 @@ function rectIn(
         : k.refForName === name
           ? { cx, cy }
           : (placed.get(k.refForName) ?? box);
-    const base = k.refType === 'w' ? from.cx : k.refType === 'h' ? from.cy : 0;
+    const base =
+      k.refType === 'w'
+        ? from.cx
+        : k.refType === 'h'
+          ? from.cy
+          : k.refType === 'primFontSz'
+            ? fontEmu
+            : 0;
     return base * k.fact;
   };
-  for (const k of constrs) {
-    if (k.forName !== name) continue;
+  // The node ABOVE may state a descendant's height in font units while the
+  // composite itself states only where the box goes; both are its constraints.
+  const mine = [...outer, ...constrs].filter((k) => k.forName === name);
+  for (const k of mine) {
     const v = ref(k);
     switch (k.type) {
       case 'w':
@@ -462,6 +503,8 @@ function listLayout(
   // The boxes the forEach lays out per point. One is the usual case; several
   // is a stack, and each of them is a box in its own right.
   const body = namedBoxes(parsed);
+  // The shape the layout draws BETWEEN two cells, when it draws one.
+  const trans = transitionBox(parsed);
   const n = nodes.length;
   // A column list is one box wide however much room there is beside it, and a
   // row that does not snake is one box tall: only a snake across chooses.
@@ -502,8 +545,89 @@ function listLayout(
         ? stackCell(parsed, body, point, data, cell, shapeType, i, vertical)
         : splitCell(parsed, childName, point, data, cell, shapeType, i)),
     );
+    // §21.4.3.2 `conn` — the gap between two cells is where the layout puts the
+    // thing that JOINS them, and a process draws an arrow there. The engine
+    // already measured that gap and left it empty.
+    const last = vertical ? row === rows - 1 : col === inRow - 1;
+    if (trans && !last) {
+      out.push(
+        connector(
+          trans,
+          point,
+          {
+            x: vertical ? cell.x : cell.x + cellW,
+            y: vertical ? cell.y + cellH : cell.y,
+            cx: vertical ? cellW : gapW,
+            cy: vertical ? gapH : cellH,
+          },
+          vertical,
+        ),
+      );
+    }
   });
   return out;
+}
+
+/**
+ * §21.4.3.2 — the box a list draws in the gap between two cells.
+ *
+ * `dgm:shape type="conn"` is not a preset geometry, it is "whatever joins these
+ * two", and for a list laid out across that is an arrow pointing the way the
+ * list runs. Its own constraint sizes it against the gap it was given — the
+ * accent process asks for a height of 62% of its width — and it is centred in
+ * what is left.
+ */
+function connector(
+  node: { kind: 'node' } & LayoutNode,
+  point: DiagramPoint,
+  gap: Box,
+  vertical: boolean,
+): LaidNode {
+  let { cx, cy } = gap;
+  for (const k of node.constrs) {
+    if (k.forName !== undefined || k.refType === undefined) continue;
+    if (k.type === 'h' && k.refType === 'w') cy = Math.min(gap.cy, gap.cx * k.fact);
+    if (k.type === 'w' && k.refType === 'h') cx = Math.min(gap.cx, gap.cy * k.fact);
+  }
+  return {
+    point: { id: `${point.id}/${node.name}`, type: 'node' },
+    // It points the way the list runs, not the way its gap happens to be shaped:
+    // a row's gap is narrow and tall, and read off that the arrow pointed down.
+    shapeType:
+      node.shapeType === 'conn' || node.shapeType === undefined
+        ? vertical
+          ? 'downArrow'
+          : 'rightArrow'
+        : node.shapeType,
+    ...styleOf(node),
+    // §21.4.5 — a transition that draws a SHAPE and names no label of its own
+    // takes the colours part's `sibTrans2D1`, the two-dimensional sibling
+    // transition, which is the node accent at a 60% tint rather than the flat
+    // accent everything unlabelled would otherwise fall back to.
+    ...(node.styleLbl === undefined ? { styleLbl: 'sibTrans2D1' } : {}),
+    index: 0,
+    x: gap.x + (gap.cx - cx) / 2,
+    y: gap.y + (gap.cy - cy) / 2,
+    cx,
+    cy,
+  };
+}
+
+// The box a nested `forEach` over the sibling transitions lays out, when the
+// layout gives that transition a shape rather than using it as bare spacing.
+function transitionBox(
+  node: { kind: 'node' } & LayoutNode,
+): ({ kind: 'node' } & LayoutNode) | undefined {
+  for (const item of node.children) {
+    if (item.kind !== 'forEach') continue;
+    for (const inner of item.children) {
+      if (inner.kind !== 'forEach' || inner.ptType !== 'sibTrans') continue;
+      for (const box of inner.children) {
+        if (box.kind === 'node' && box.shapeType !== undefined && box.hideGeom !== true) return box;
+      }
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -664,7 +788,7 @@ function splitCell(
   // A composite that states only WIDTHS places nothing: the colour lists size
   // their two boxes from the top node, and stacking them is what that means.
   if (child?.alg === 'composite' && inner.length > 0 && places(child.constrs)) {
-    return compositeLayout(child, point, cell, data, index);
+    return compositeLayout(child, point, cell, data, index, parent.constrs);
   }
   // A wrapper whose boxes state widths that do NOT fill it is INSETTING them,
   // not sharing it out: the vertical list gives its row a margin of a twentieth
