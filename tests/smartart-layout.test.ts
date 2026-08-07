@@ -395,8 +395,10 @@ describe('a SmartArt layout with no cached drawing', () => {
   });
 
   it('gives nothing for an algorithm this engine does not run', () => {
-    const hierarchy = layoutXml('<dgm:alg type="hierChild"/>');
-    expect(run(hierarchy, dataXml([['a', []]]))).toEqual([]);
+    // A pyramid divides its frame by area, which nothing here answers; drawing
+    // one box over the whole frame is a worse answer than drawing none.
+    const pyramid = layoutXml('<dgm:alg type="pyra"/>');
+    expect(run(pyramid, dataXml([['a', []]]))).toEqual([]);
   });
 
   it('places what a composite places, and runs each child inside it', () => {
@@ -1011,5 +1013,74 @@ describe('SmartArt: a composite with heights from above, and its connectors', ()
         ]),
       ).some((n) => n.shapeType.endsWith('Arrow')),
     ).toBe(false);
+  });
+});
+
+// §21.4.3.2 `hierRoot`/`hierChild` — the hierarchy family, which is the org
+// chart: a node's box above its subtree, the subtree ranged beneath it.
+describe('SmartArt: the hierarchy family', () => {
+  const ORG = layoutXml(
+    `<dgm:alg type="hierChild"/>
+     <dgm:constrLst>
+       <dgm:constr type="w" for="des" forName="rootComposite" refType="w" fact="10"/>
+       <dgm:constr type="h" for="des" forName="rootComposite" refType="w" refFor="des" refForName="rootComposite" fact="0.5"/>
+       <dgm:constr type="sp" for="des" forName="hierRoot" refType="w" refFor="des" refForName="rootComposite" fact="0.2"/>
+       <dgm:constr type="sibSp" refType="w" refFor="des" refForName="rootComposite" fact="0.2"/>
+     </dgm:constrLst>
+     <dgm:forEach name="self" axis="self" ptType="node">
+       <dgm:layoutNode name="hierRoot">
+         <dgm:alg type="hierRoot"/>
+         <dgm:layoutNode name="rootComposite">
+           <dgm:alg type="composite"/>
+           <dgm:layoutNode name="rootText" styleLbl="node0">
+             <dgm:alg type="tx"/><dgm:shape type="rect"/>
+           </dgm:layoutNode>
+         </dgm:layoutNode>
+         <dgm:layoutNode name="hierChild2"><dgm:alg type="hierChild"/></dgm:layoutNode>
+       </dgm:layoutNode>
+     </dgm:forEach>`,
+  );
+
+  // A → B1(C1, C2) and B2 — five boxes over three levels.
+  const TREE = (() => {
+    const pts = ['<dgm:pt modelId="doc" type="doc"/>'];
+    const cxns: Array<string> = [];
+    const add = (id: string, parent: string, ord: number): void => {
+      pts.push(
+        `<dgm:pt modelId="${id}"><dgm:t><a:p><a:r><a:t>${id}</a:t></a:r></a:p></dgm:t></dgm:pt>`,
+      );
+      cxns.push(`<dgm:cxn modelId="c${id}" srcId="${parent}" destId="${id}" srcOrd="${ord}"/>`);
+    };
+    add('A', 'doc', 0);
+    add('B1', 'A', 0);
+    add('B2', 'A', 1);
+    add('C1', 'B1', 0);
+    add('C2', 'B1', 1);
+    return `<dgm:dataModel xmlns:dgm="d" xmlns:a="a"><dgm:ptLst>${pts.join('')}</dgm:ptLst><dgm:cxnLst>${cxns.join('')}</dgm:cxnLst></dgm:dataModel>`;
+  })();
+
+  it('draws one box per node, on the level its depth puts it', () => {
+    const nodes = run(ORG, TREE);
+    const xml = diagramDrawingXml(nodes, { cx: CX, cy: CY });
+    for (const t of ['A', 'B1', 'B2', 'C1', 'C2']) expect(xml).toContain(`<a:t>${t}</a:t>`);
+    // The document itself is not a node — taken for the tree's root it drew an
+    // empty box above the chart.
+    expect(nodes).toHaveLength(5);
+    const rows = [...new Set(nodes.map((n) => Math.round(n.y)))].sort((a, b) => a - b);
+    expect(rows).toHaveLength(3);
+    expect(nodes.map((n) => n.styleLbl)).toEqual(['node0', 'node1', 'node2', 'node2', 'node1']);
+  });
+
+  it('centres a box over its subtree and keeps the boxes a level apart', () => {
+    const nodes = run(ORG, TREE);
+    const at = (t: string): (typeof nodes)[number] | undefined =>
+      nodes.find((n) => diagramDrawingXml([n], { cx: CX, cy: CY }).includes(`<a:t>${t}</a:t>`));
+    const [a, b1, c1, c2] = [at('A'), at('B1'), at('C1'), at('C2')];
+    // B1 spans C1 and C2, so it sits over their midpoint.
+    const mid = (n?: { x: number; cx: number }): number => (n ? n.x + n.cx / 2 : 0);
+    expect(mid(b1)).toBeCloseTo((mid(c1) + mid(c2)) / 2, 0);
+    // A box is half as tall as it is wide, and the levels are a fifth apart.
+    expect(a?.cy).toBeCloseTo((a?.cx ?? 0) * 0.5, 5);
+    expect((b1?.y ?? 0) - (a?.y ?? 0)).toBeCloseTo((a?.cx ?? 0) * 0.7, 5);
   });
 });

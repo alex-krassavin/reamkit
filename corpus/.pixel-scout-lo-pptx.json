@@ -30,11 +30,6 @@
   "aligned": true
  },
  {
-  "name": "smartart-org-chart2.pptx",
-  "score": 0.1889,
-  "aligned": true
- },
- {
   "name": "smartart-cycle-matrix.pptx",
   "score": 0.1844,
   "aligned": true
@@ -62,11 +57,6 @@
  {
   "name": "tdf150789.pptx",
   "score": 0.1461,
-  "aligned": true
- },
- {
-  "name": "smartart-recursion.pptx",
-  "score": 0.1359,
   "aligned": true
  },
  {
@@ -145,16 +135,6 @@
   "aligned": true
  },
  {
-  "name": "smartart-org-chart.pptx",
-  "score": 0.0801,
-  "aligned": true
- },
- {
-  "name": "smartart-data-follow.pptx",
-  "score": 0.0797,
-  "aligned": true
- },
- {
   "name": "tdf135843_export.pptx",
   "score": 0.0786,
   "aligned": true
@@ -217,6 +197,11 @@
  {
   "name": "tdf109067.pptx",
   "score": 0.0598,
+  "aligned": true
+ },
+ {
+  "name": "smartart-org-chart2.pptx",
+  "score": 0.059,
   "aligned": true
  },
  {
@@ -475,6 +460,11 @@
   "aligned": true
  },
  {
+  "name": "smartart-recursion.pptx",
+  "score": 0.019,
+  "aligned": true
+ },
+ {
   "name": "tdf141058-1.pptx",
   "score": 0.0182,
   "aligned": true
@@ -562,6 +552,11 @@
  {
   "name": "tdf84205.pptx",
   "score": 0.0135,
+  "aligned": true
+ },
+ {
+  "name": "smartart-org-chart.pptx",
+  "score": 0.0133,
   "aligned": true
  },
  {
@@ -807,6 +802,11 @@
  {
   "name": "tdf54037.pptx",
   "score": 0.006,
+  "aligned": true
+ },
+ {
+  "name": "smartart-data-follow.pptx",
+  "score": 0.0059,
   "aligned": true
  },
  {

@@ -5,12 +5,15 @@
 // PowerPoint runs it and caches the result in a drawing part; a file written by
 // a generator carries no drawing part, and then this has to run it.
 //
-// This is the first slice: the list layouts, whose whole program is "put the
-// child nodes in a row or a column, with a gap between them, and set the text
-// inside each". That is the `snake` / `lin` algorithms with `sp` for the gaps
-// and `tx` for the text, and it covers the `default` layout — the Basic Block
-// List every "insert SmartArt" starts from — plus the vertical and horizontal
-// list families. The hierarchy and cycle algorithms are a separate slice.
+// It began with the list layouts, whose whole program is "put the child nodes
+// in a row or a column, with a gap between them, and set the text inside each"
+// — the `snake` / `lin` algorithms with `sp` for the gaps and `tx` for the
+// text, covering the `default` layout that every "insert SmartArt" starts from
+// plus the vertical and horizontal list families. `composite` places boxes
+// rather than sharing a cell between them, `cycle` rings them, `conn` draws
+// what joins two of them, and `hierRoot`/`hierChild` are the org chart. What is
+// left — the pyramids and the matrices — divides a frame by AREA, and a layout
+// naming one of those is still left to the caller's graceful loss.
 
 import type { PoNode } from '@/core/po-helpers';
 import type { DiagramData, DiagramPoint } from '@/core/drawingml/diagram/data-model';
@@ -57,7 +60,7 @@ interface Constraint {
 }
 
 /** The algorithms this slice runs. */
-type AlgType = 'snake' | 'lin' | 'sp' | 'tx' | 'composite' | 'cycle' | 'other';
+type AlgType = 'snake' | 'lin' | 'sp' | 'tx' | 'composite' | 'cycle' | 'hier' | 'other';
 
 interface LayoutNode {
   readonly name: string;
@@ -117,7 +120,8 @@ export function layoutDiagram(
     parsed.alg !== 'snake' &&
     parsed.alg !== 'lin' &&
     parsed.alg !== 'composite' &&
-    parsed.alg !== 'cycle'
+    parsed.alg !== 'cycle' &&
+    parsed.alg !== 'hier'
   ) {
     return [];
   }
@@ -150,6 +154,7 @@ function layoutIn(
   index: number,
 ): Array<LaidNode> {
   if (node.alg === 'composite') return compositeLayout(node, point, box, data, index);
+  if (node.alg === 'hier') return hierarchyLayout(node, point, box, data);
   if (node.alg === 'cycle') return cycleLayout(node, point, box, data);
   if (node.alg === 'lin' || node.alg === 'snake') return listLayout(node, point, box, data);
   // §21.4.3.2 `sp` is the space algorithm — it reserves room. It reserves it
@@ -175,6 +180,131 @@ function layoutIn(
   if (node.alg !== 'tx') return [];
   const spoken = spokenFor(node, point, data);
   return [{ point: spoken, shapeType: node.shapeType ?? 'rect', ...styleOf(node), index, ...box }];
+}
+
+/** One node of the data tree, with the room its whole subtree needs. */
+interface Branch {
+  readonly point: DiagramPoint;
+  readonly kids: ReadonlyArray<Branch>;
+  /** The subtree's width, in box widths. */
+  readonly units: number;
+  /** What the children take between them, which is less when the box is wider. */
+  readonly spread: number;
+}
+
+/**
+ * §21.4.3.2 `hierRoot`/`hierChild` — the hierarchy family, which is the org
+ * chart. `hierRoot` puts a node's box above its subtree and `hierChild` ranges
+ * that subtree beneath it, each child being a `hierRoot` again; the two are one
+ * tree walk written as two algorithms, and the engine runs them as one.
+ *
+ * The layout program that expresses this is deeply nested — a `choose` per
+ * branch style at every level, with the same three boxes renamed each time —
+ * but it says only one thing, and it says it in the constraints at the top: a
+ * box is `w` wide and `0.5w` tall, levels are `0.21w` apart and so are
+ * siblings. So the geometry is read from there and the shape of the tree from
+ * the DATA, which is where it actually lives.
+ *
+ * @param node  The `hierChild`/`hierRoot` node at the top of the hierarchy.
+ * @param point The data point it is rooted at.
+ * @param box   The frame the tree has to fit.
+ * @param data  The data part.
+ */
+function hierarchyLayout(
+  node: { kind: 'node' } & LayoutNode,
+  point: DiagramPoint,
+  box: Box,
+  data: DiagramData,
+): Array<LaidNode> {
+  const f = hierFactors(node.constrs);
+  const face = firstTextBox(node);
+
+  const build = (p: DiagramPoint): Branch => {
+    const kids = data.children(p.id, 'node').map(build);
+    const spread =
+      kids.length === 0 ? 0 : kids.reduce((a, k) => a + k.units, 0) + f.sibSp * (kids.length - 1);
+    return { point: p, kids, units: Math.max(1, spread), spread };
+  };
+  // The point handed in is the CONTAINER, as it is for every other algorithm
+  // here: the roots of the tree are its children. Taking it for the tree's own
+  // root drew the document itself as an empty box above the chart.
+  const roots = data.children(point.id, 'node').map(build);
+  if (roots.length === 0) return [];
+  const wide = roots.reduce((a, r) => a + r.units, 0) + f.sibSp * (roots.length - 1);
+  const rows = (t: Branch): number => 1 + t.kids.reduce((a, k) => Math.max(a, rows(k)), 0);
+  const deep = roots.reduce((a, r) => Math.max(a, rows(r)), 0);
+  // A row is a box plus the gap below it, the last gap trimmed.
+  const tall = deep * f.aspect + (deep - 1) * f.sp;
+  if (wide <= 0 || tall <= 0) return [];
+  // One box's width: whichever of the two directions runs out first.
+  const w = Math.min(box.cx / wide, box.cy / tall);
+
+  const out: Array<LaidNode> = [];
+  const top = box.y + (box.cy - tall * w) / 2;
+  const place = (t: Branch, left: number, depth: number): void => {
+    out.push({
+      point: t.point,
+      shapeType: face?.shapeType ?? 'rect',
+      // §21.4.5 — a hierarchy's colours part names one label per level.
+      styleLbl: `node${Math.min(depth, 4)}`,
+      ...(face === undefined ? {} : textPlacing(face)),
+      index: depth,
+      // The box is centred over everything below it.
+      x: left + (t.units * w - w) / 2,
+      y: top + depth * (f.aspect + f.sp) * w,
+      cx: w,
+      cy: f.aspect * w,
+    });
+    let at = left + ((t.units - t.spread) * w) / 2;
+    for (const kid of t.kids) {
+      place(kid, at, depth + 1);
+      at += (kid.units + f.sibSp) * w;
+    }
+  };
+  let at = box.x + (box.cx - wide * w) / 2;
+  for (const root of roots) {
+    place(root, at, 0);
+    at += (root.units + f.sibSp) * w;
+  }
+  return out;
+}
+
+// The three numbers a hierarchy is drawn from, each a multiple of one box's
+// width: how tall a box is, how far apart two levels are, and how far apart two
+// siblings are. The defaults are the org chart's own, for a layout that leaves
+// one of them to the reader.
+function hierFactors(constrs: ReadonlyArray<Constraint>): {
+  aspect: number;
+  sp: number;
+  sibSp: number;
+} {
+  let aspect = 0.5;
+  let sp = 0.21;
+  let sibSp = 0.21;
+  for (const k of constrs) {
+    if (k.refType !== 'w') continue;
+    // A height stated against another box's WIDTH is the box's own shape.
+    if (k.type === 'h' && k.refForName !== undefined) aspect = k.fact;
+    if (k.type === 'sp') sp = k.fact;
+    if (k.type === 'sibSp') sibSp = k.fact;
+  }
+  return { aspect, sp, sibSp };
+}
+
+// The box a hierarchy draws for each of its nodes: the first `tx` in a program
+// that renames the same three boxes at every level.
+function firstTextBox(
+  node: { kind: 'node' } & LayoutNode,
+): ({ kind: 'node' } & LayoutNode) | undefined {
+  const walk = (items: ReadonlyArray<LayoutItem>): ({ kind: 'node' } & LayoutNode) | undefined => {
+    for (const item of items) {
+      if (item.kind === 'node' && item.alg === 'tx') return item;
+      const found = walk(item.children);
+      if (found) return found;
+    }
+    return undefined;
+  };
+  return walk(node.children);
 }
 
 // §21.4.3.2 — where the `tx` algorithm puts the words inside the box it got.
@@ -1261,6 +1391,10 @@ function parseConstraints(list: PoNode | undefined): Array<Constraint> {
 
 function algOf(alg: PoNode | undefined): AlgType {
   const t = alg ? poAttr(alg, 'type') : undefined;
+  // §21.4.3.2 — `hierRoot` places a node above its subtree and `hierChild`
+  // ranges that subtree beneath it. They are two halves of one tree walk, so
+  // the engine runs them as one.
+  if (t === 'hierRoot' || t === 'hierChild') return 'hier';
   return t === 'snake' ||
     t === 'lin' ||
     t === 'sp' ||
