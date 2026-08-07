@@ -876,15 +876,19 @@ export function parseGeometry(spPr: PoNode | undefined): ShapeGeometry {
 }
 
 // p:pic → a floating image. The bytes come from p:blipFill/a:blip @r:embed,
-// resolved against the slide's relationships (PX3a); geometry from p:spPr/a:xfrm
-// (picture placeholders that inherit it from the layout wait for a later slice).
+// resolved against the slide's relationships (PX3a); geometry from p:spPr/a:xfrm,
+// or — for a picture that fills a PLACEHOLDER — from the layout, exactly as a
+// shape's does. customshape-bitmapfill-srcrect.pptx is one `p:pic` with an empty
+// `p:spPr` and it drew nothing at all.
 function parsePic(
   pic: PoNode,
   ctx: SlideContext,
   transform: GroupTransform,
 ): ImageBlock | undefined {
   const spPr = poChildren(pic).find((c) => poIs(c, 'p:spPr'));
-  const own = parseXfrmBox(spPr);
+  const ph = parsePh(pic);
+  let own = parseXfrmBox(spPr);
+  if (!own && ph && ctx.cascade) own = ctx.cascade.geometryFor(ph);
   if (!own) return undefined;
   const box = transform(own);
 

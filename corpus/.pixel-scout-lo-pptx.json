@@ -15,11 +15,6 @@
   "aligned": true
  },
  {
-  "name": "customshape-bitmapfill-srcrect.pptx",
-  "score": 0.2622,
-  "aligned": true
- },
- {
   "name": "tdf112209.pptx",
   "score": 0.2595,
   "aligned": true
@@ -871,6 +866,11 @@
  },
  {
   "name": "smartart-children.pptx",
+  "score": 0.0048,
+  "aligned": true
+ },
+ {
+  "name": "customshape-bitmapfill-srcrect.pptx",
   "score": 0.0048,
   "aligned": true
  },

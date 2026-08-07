@@ -1248,6 +1248,37 @@ describe('pptx background — a reference and a picture (E-PPTX PX5b)', () => {
     });
   });
 
+  it('places a PICTURE placeholder from the layout when it carries no transform', () => {
+    // §19.3.1.35 — a content placeholder filled with a photograph is a `p:pic`
+    // whose `p:spPr` is EMPTY: its whole geometry is the layout's. Read as a
+    // picture with no box of its own it drew nothing at all
+    // (customshape-bitmapfill-srcrect.pptx is one such picture and no more).
+    const pic =
+      `<p:pic><p:nvPicPr><p:cNvPr id="6" name="Content Placeholder"/><p:cNvPicPr/>` +
+      `<p:nvPr><p:ph idx="1"/></p:nvPr></p:nvPicPr>` +
+      `<p:blipFill><a:blip r:embed="rIdP"/><a:stretch/></p:blipFill>` +
+      `<p:spPr/></p:pic>`;
+    const layout =
+      `<p:sp><p:nvSpPr><p:cNvPr id="3" name="Content Placeholder 2"/><p:cNvSpPr/>` +
+      `<p:nvPr><p:ph idx="1"/></p:nvPr></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="6192000" y="1332000"/><a:ext cx="5493600" cy="4012789"/>` +
+      `</a:xfrm></p:spPr></p:sp>`;
+    const doc = Ream.parse(
+      buildPptx([pic], {
+        layoutMaster: { layoutSpTree: layout },
+        slideRels: [`<Relationship Id="rIdP" Type="${IMAGE_REL}" Target="../media/p.png"/>`],
+        media: { 'ppt/media/p.png': buildTinyPng(2, 2, [255, 0, 0, 255]) },
+      }),
+    );
+    const pics = doc.flow.body.filter((e) => e.kind === 'image');
+    expect(pics).toHaveLength(1);
+    const only = pics[0];
+    if (only?.kind !== 'image') throw new Error('no picture');
+    // The layout's own box, to the point.
+    expect(only.image.width).toBeCloseTo(5493600 / 12700, 4);
+    expect(only.image.float?.posH?.offsetPt).toBeCloseTo(6192000 / 12700, 4);
+  });
+
   it('reads a grayscale blip as the duotone from black to white that it is', () => {
     // §20.1.8.34 `a:grayscl` — the picture drawn in shades of grey, which is
     // what a duotone between black and white already is. tdf112209's chevron

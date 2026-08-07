@@ -65,11 +65,6 @@
   "aligned": true
  },
  {
-  "name": "layouts.pptx",
-  "score": 0.1933,
-  "aligned": true
- },
- {
   "name": "54542_cropped_bitmap.pptx",
   "score": 0.1909,
   "aligned": true
@@ -172,6 +167,11 @@
  {
   "name": "chart-picture-bg.pptx",
   "score": 0.0369,
+  "aligned": true
+ },
+ {
+  "name": "layouts.pptx",
+  "score": 0.0368,
   "aligned": true
  },
  {

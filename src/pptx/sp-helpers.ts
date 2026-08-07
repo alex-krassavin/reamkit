@@ -35,14 +35,22 @@ export interface ShapeBoxEmu {
 
 const isTrue = (v: string | undefined): boolean => v === '1' || v === 'true' || v === 'on';
 
+// §19.3.1.33/§19.3.1.34/§19.3.1.21 — the non-visual properties go by a name of
+// their own for each kind of shape, and every one of them may hold a `p:nvPr`.
+const NON_VISUAL = ['p:nvSpPr', 'p:nvPicPr', 'p:nvGraphicFramePr', 'p:nvCxnSpPr'];
+
 /**
- * `p:nvSpPr/p:nvPr/p:ph` → the placeholder reference, or `undefined` for an
- * ordinary (non-placeholder) shape. A bare `<p:ph/>` returns an empty ref (still
- * a placeholder: `type` defaults to `'obj'`).
+ * `p:nvPr/p:ph` → the placeholder reference, or `undefined` for an ordinary
+ * (non-placeholder) shape. A bare `<p:ph/>` returns an empty ref (still a
+ * placeholder: `type` defaults to `'obj'`).
+ *
+ * A PICTURE is a placeholder as readily as a shape is — a content placeholder
+ * filled with a photograph writes `p:nvPicPr/p:nvPr/p:ph` and an EMPTY `p:spPr`,
+ * leaving its whole geometry to the layout (customshape-bitmapfill-srcrect).
  */
 export function parsePh(sp: PoNode): PlaceholderRef | undefined {
-  const nvSpPr = poChildren(sp).find((c) => poIs(c, 'p:nvSpPr'));
-  const nvPr = nvSpPr ? poChildren(nvSpPr).find((c) => poIs(c, 'p:nvPr')) : undefined;
+  const nonVisual = poChildren(sp).find((c) => NON_VISUAL.some((n) => poIs(c, n)));
+  const nvPr = nonVisual ? poChildren(nonVisual).find((c) => poIs(c, 'p:nvPr')) : undefined;
   const ph = nvPr ? poChildren(nvPr).find((c) => poIs(c, 'p:ph')) : undefined;
   if (!ph) return undefined;
   const type = poAttr(ph, 'type');
