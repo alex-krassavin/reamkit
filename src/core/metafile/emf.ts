@@ -418,6 +418,19 @@ export function readEmf(bytes: Uint8Array): MetaPicture {
         // than a point at any size a document prints one.
         paint(rectSegments(at(8), at(12), at(16), at(20)), true, true);
         break;
+      case 47: // EMR_PIE
+      case 46: // EMR_CHORD
+      case 45: // EMR_ARC
+        // §2.3.5.13/.4/.2 — a bounding box and two RADIAL points: the arc runs
+        // between where the rays from the box's centre through them meet the
+        // ellipse. A pie closes through that centre and a chord straight
+        // across; an arc is only the curve, so it is stroked and never filled.
+        paint(
+          arcSegments(px, at(8), at(12), at(16), at(20), at(24), at(28), at(32), at(36), type),
+          type !== 45,
+          true,
+        );
+        break;
       case 3: // EMR_POLYGON
       case 4: // EMR_POLYLINE
       case 2: // EMR_POLYBEZIER
@@ -762,6 +775,87 @@ function polySegments(
 
 // An ellipse as four cubics — the constant is the usual circle approximation.
 const KAPPA = 0.5522847498307936;
+
+/**
+ * §2.3.5.2/.4/.13 — the wedge, chord or bare curve an `EMR_ARC`, `EMR_CHORD` or
+ * `EMR_PIE` draws.
+ *
+ * All three state the same thing: an ellipse inscribed in a box, and two points
+ * naming RAYS from its centre. The arc runs from where the first ray crosses
+ * the ellipse to where the second does, anticlockwise on the page — GDI's
+ * default direction — and the two records differ only in how they close: a pie
+ * back through the centre, a chord straight across, an arc not at all.
+ *
+ * Built in the metafile's own coordinates and mapped point by point, exactly as
+ * the ellipse and the polygons are: the mapping is affine, so a Bézier's
+ * control points survive it.
+ *
+ * @param map        The metafile's logical → page mapping.
+ * @param l,t,r,b    The box the ellipse is inscribed in.
+ * @param sx,sy      The point naming the ray the arc starts at.
+ * @param ex,ey      The point naming the ray it ends at.
+ * @param type       The record type, which decides how the figure closes.
+ * @returns The path segments, in page coordinates.
+ */
+function arcSegments(
+  map: Mapper,
+  l: number,
+  t: number,
+  r: number,
+  b: number,
+  sx: number,
+  sy: number,
+  ex: number,
+  ey: number,
+  type: number,
+): Array<PathSegment> {
+  const cx = (l + r) / 2;
+  const cy = (t + b) / 2;
+  const rx = (r - l) / 2;
+  const ry = (b - t) / 2;
+  if (!(rx > 0) || !(ry > 0)) return [];
+  // The angle of a ray, in the frame the ellipse is parametrised in. The
+  // metafile's y grows DOWN, so this angle grows clockwise on the page.
+  const angleOf = (x: number, y: number): number => Math.atan2((y - cy) / ry, (x - cx) / rx);
+  const start = angleOf(sx, sy);
+  let sweep = angleOf(ex, ey) - start;
+  // Anticlockwise on the page is the direction of DECREASING angle here; two
+  // rays that coincide name the whole ellipse, not nothing.
+  if (sweep >= 0) sweep -= 2 * Math.PI;
+  const point = (a: number): { x: number; y: number } =>
+    map(cx + rx * Math.cos(a), cy + ry * Math.sin(a));
+  const segs: Array<PathSegment> = [];
+  const from = point(start);
+  if (type === 47) {
+    // A pie opens at the centre and runs out to the arc.
+    const c = map(cx, cy);
+    segs.push({ op: 'move', x: c.x, y: c.y }, { op: 'line', x: from.x, y: from.y });
+  } else {
+    segs.push({ op: 'move', x: from.x, y: from.y });
+  }
+  // No cubic spans more than a quarter turn, which is where the approximation
+  // stays true to within a fraction of a device pixel.
+  const steps = Math.max(1, Math.ceil(Math.abs(sweep) / (Math.PI / 2)));
+  const delta = sweep / steps;
+  const alpha = (4 / 3) * Math.tan(delta / 4);
+  for (let i = 0; i < steps; i++) {
+    const a0 = start + delta * i;
+    const a1 = a0 + delta;
+    // The tangent at an angle, scaled by the handle length the arc needs.
+    const t0 = map(
+      cx + rx * Math.cos(a0) - alpha * rx * Math.sin(a0),
+      cy + ry * Math.sin(a0) + alpha * ry * Math.cos(a0),
+    );
+    const t1 = map(
+      cx + rx * Math.cos(a1) + alpha * rx * Math.sin(a1),
+      cy + ry * Math.sin(a1) - alpha * ry * Math.cos(a1),
+    );
+    const to = point(a1);
+    segs.push({ op: 'cubic', x1: t0.x, y1: t0.y, x2: t1.x, y2: t1.y, x: to.x, y: to.y });
+  }
+  if (type !== 45) segs.push({ op: 'close' });
+  return segs;
+}
 
 export function ellipseSegments(
   map: Mapper,

@@ -126,6 +126,26 @@ const createBrush = (ih: number, colorBgr: number) =>
 const createPen = (ih: number, style: number, width: number, colorBgr: number) =>
   emr(38, new Bytes().u32(ih).u32(style).i32(width).i32(0).u32(colorBgr).build());
 const select = (ih: number) => emr(37, new Bytes().u32(ih).build());
+// §2.3.5.13/.4/.2 — a box and the two points naming the rays the arc runs between.
+const wedge = (
+  type: 45 | 46 | 47,
+  box: readonly [number, number, number, number],
+  from: readonly [number, number],
+  to: readonly [number, number],
+) =>
+  emr(
+    type,
+    new Bytes()
+      .i32(box[0])
+      .i32(box[1])
+      .i32(box[2])
+      .i32(box[3])
+      .i32(from[0])
+      .i32(from[1])
+      .i32(to[0])
+      .i32(to[1])
+      .build(),
+  );
 
 const paths = (prims: MetaPicture['prims']): Array<PicturePath> =>
   prims.filter((p): p is PicturePath => p.kind === 'path');
@@ -141,6 +161,62 @@ describe('EMF (MS-EMF)', () => {
   it('reads the bounds as the picture’s box', () => {
     const pic = readEmf(emf({ l: 5, t: 7, r: 105, b: 57 }, []));
     expect([pic.left, pic.top, pic.width, pic.height]).toEqual([5, 7, 100, 50]);
+  });
+
+  it('draws the wedge a pie record asks for, closed through the centre', () => {
+    // §2.3.5.13 EMR_PIE — 37625.ppt's exploded pie chart is four of these and
+    // nothing else, and unread the slide had four labels pointing at empty
+    // space. The box is 0,0..100,100, so the centre is (50, 50); the rays are
+    // due east and due south, and GDI turns ANTICLOCKWISE on the page, so the
+    // wedge drawn is the three quarters the long way round.
+    const pic = readEmf(
+      emf({ l: 0, t: 0, r: 100, b: 100 }, [
+        createBrush(1, 0x00ff00),
+        select(1),
+        wedge(47, [0, 0, 100, 100], [100, 50], [50, 100]),
+      ]),
+    );
+    const [p] = paths(pic.prims);
+    expect(p?.fillColorHex).toBe('00FF00');
+    const segs = p!.paths[0]!.segments;
+    // It opens at the centre, runs out to the first ray, curves round and closes.
+    expect(segs[0]).toEqual({ op: 'move', x: 50, y: 50 });
+    expect(segs[1]).toEqual({ op: 'line', x: 100, y: 50 });
+    expect(segs[segs.length - 1]).toEqual({ op: 'close' });
+    // Three quarters of a turn is three cubics, none spanning more than one.
+    expect(segs.filter((sg) => sg.op === 'cubic')).toHaveLength(3);
+    // …and it ends on the second ray, due south of the centre.
+    const last = segs[segs.length - 2] as { x: number; y: number };
+    expect(last.x).toBeCloseTo(50, 3);
+    expect(last.y).toBeCloseTo(100, 3);
+  });
+
+  it('closes a chord across its arc, and leaves an arc open', () => {
+    const box = [0, 0, 100, 100] as const;
+    const chord = readEmf(
+      emf({ l: 0, t: 0, r: 100, b: 100 }, [
+        createBrush(1, 0x00ff00),
+        select(1),
+        wedge(46, box, [100, 50], [50, 100]),
+      ]),
+    );
+    const cs = paths(chord.prims)[0]!.paths[0]!.segments;
+    // No centre: a chord starts ON the arc and closes straight back across it.
+    expect(cs[0]).toEqual({ op: 'move', x: 100, y: 50 });
+    expect(cs[cs.length - 1]).toEqual({ op: 'close' });
+    // An arc is a line, not a shape: it is stroked and never filled.
+    const arc = readEmf(
+      emf({ l: 0, t: 0, r: 100, b: 100 }, [
+        createBrush(1, 0x00ff00),
+        select(1),
+        createPen(2, 0, 1, 0x000000),
+        select(2),
+        wedge(45, box, [100, 50], [50, 100]),
+      ]),
+    );
+    const a = paths(arc.prims)[0]!;
+    expect(a.fillColorHex).toBeUndefined();
+    expect(a.paths[0]!.segments.some((sg) => sg.op === 'close')).toBe(false);
   });
 
   it('fills a rectangle with the selected brush', () => {
