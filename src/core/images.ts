@@ -15,10 +15,11 @@
 
 import { unzlibSync, zlibSync } from 'fflate';
 
+import { decodeBmp, isBmp } from '@/core/bmp';
 import { decodeTiff, isTiff } from '@/core/tiff';
 
 /** The raster formats this module recognizes and can prepare for embedding. */
-export type ImageFormat = 'jpeg' | 'png' | 'jpeg2000' | 'gif' | 'tiff';
+export type ImageFormat = 'jpeg' | 'png' | 'jpeg2000' | 'gif' | 'tiff' | 'bmp';
 
 /**
  * Sniff the raster format from a file's leading magic bytes (JPEG SOI, the PNG
@@ -84,6 +85,9 @@ export function detectImageFormat(bytes: Uint8Array): ImageFormat | null {
   }
   // TIFF 6.0 §2 — "II*\0" (little-endian) or "MM\0*" (big-endian).
   if (isTiff(bytes)) return 'tiff';
+  // §BITMAPFILEHEADER — "BM". Last, because two characters is a weak signature
+  // and every format above states a longer one.
+  if (isBmp(bytes)) return 'bmp';
   return null;
 }
 
@@ -106,7 +110,13 @@ export interface EmbedImageOptions {
  */
 export interface PreparedImage {
   readonly format: ImageFormat;
-  readonly mimeType: 'image/jp2' | 'image/jpeg' | 'image/png' | 'image/gif' | 'image/tiff';
+  readonly mimeType:
+    | 'image/jp2'
+    | 'image/jpeg'
+    | 'image/png'
+    | 'image/gif'
+    | 'image/tiff'
+    | 'image/bmp';
   readonly widthPx: number;
   readonly heightPx: number;
   /**
@@ -144,6 +154,7 @@ export function prepareImage(bytes: Uint8Array, options: EmbedImageOptions = {})
   if (format === 'jpeg2000') return prepareJpeg2000(bytes);
   if (format === 'gif') return prepareGif(bytes, options);
   if (format === 'tiff') return prepareTiff(bytes, options);
+  if (format === 'bmp') return prepareBmp(bytes, options);
   throw new Error('Unsupported image format');
 }
 
@@ -374,6 +385,40 @@ function prepareTiff(bytes: Uint8Array, options: EmbedImageOptions = {}): Prepar
     filter: 'FlateDecode',
     data: zlibSync(data),
     ...(alpha && !options.flattenAlpha ? { smaskData: zlibSync(alpha.slice()) } : {}),
+  };
+}
+
+// A Windows bitmap has no PDF filter of its own either, so it takes the same
+// route TIFF does: decoded here to samples and embedded Flate-compressed. The
+// `.ppt` and `.xls` picture stores are why it is worth having — a `BlipDIB`
+// record carries one of these, and until now every such picture was dropped.
+function prepareBmp(bytes: Uint8Array, options: EmbedImageOptions = {}): PreparedImage {
+  const img = decodeBmp(bytes);
+  const data = img.data.slice();
+  const alpha = img.alpha;
+  // PDF/A-1 forbids transparency: composite the see-through pixels onto white
+  // rather than dropping the mask and painting them black.
+  if (alpha && options.flattenAlpha) {
+    for (let i = 0; i < alpha.length; i++) {
+      if (alpha[i] === 255) continue;
+      const a = alpha[i]! / 255;
+      for (let c = 0; c < 3; c++) {
+        const at = i * 3 + c;
+        data[at] = Math.round(data[at]! * a + 255 * (1 - a));
+      }
+    }
+  }
+  return {
+    format: 'bmp',
+    mimeType: 'image/bmp',
+    widthPx: img.width,
+    heightPx: img.height,
+    colorSpace: 'DeviceRGB',
+    bitsPerComponent: 8,
+    filter: 'FlateDecode',
+    data: zlibSync(data),
+    ...(alpha && !options.flattenAlpha ? { smaskData: zlibSync(alpha.slice()) } : {}),
+    ...(img.dpiX !== undefined && img.dpiY !== undefined ? { dpiX: img.dpiX, dpiY: img.dpiY } : {}),
   };
 }
 

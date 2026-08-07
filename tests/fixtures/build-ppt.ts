@@ -163,6 +163,9 @@ export interface PptBoxInput {
   readonly imageRef?: number; // a picture shape (1-based pib index)
   readonly shapeType?: number; // an autoshape: the FSP recInstance (MSOSPT)
   readonly fillColorHex?: string; // OPT fillColor (6-hex literal RGB)
+  // MS-ODRAW §2.3.7.3 fillBackColor — the far end of a shade, and the colour a
+  // PATTERN's clear bits show through to.
+  readonly backColorHex?: string;
   // §2.3.7.43 / §2.3.8.44 — state fFilled / fLine as OFF, so the colours above
   // are stated but not used.
   readonly noFill?: boolean;
@@ -602,6 +605,9 @@ function buildShapeContainer(box: PptBoxInput): Uint8Array {
     props.push({ id: PROP_FILL_COLOR, value: ((box.fillSysColor & 0xffff) | (0x10 << 24)) >>> 0 });
   if (box.lineColorHex) props.push({ id: PROP_LINE_COLOR, value: rgbColorRef(box.lineColorHex) });
   // The value bit clear, its usage bit set: "this shape states it is not filled".
+  if (box.backColorHex) {
+    props.push({ id: PROP_FILL_BACK_COLOR, value: rgbColorRef(box.backColorHex) });
+  }
   if (box.noFill) props.push({ id: PROP_FILL_BOOLS, value: 0x0010 << 16 });
   if (box.noLine) props.push({ id: PROP_LINE_BOOLS, value: 0x0008 << 16 });
   else if (box.lineSchemeIndex !== undefined)

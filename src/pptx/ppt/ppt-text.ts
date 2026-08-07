@@ -27,6 +27,8 @@
 // failure — structural doubt yields missing content, never wrong content —
 // mirroring the `.doc`/`.xls` readers.
 
+import { decodeBmp, isBmp } from '@/core/bmp';
+import { encodePng } from '@/core/png-encode';
 import { fromSymbolFont } from '@/core/metafile/symbol-fonts';
 import { isCfb, openCfb } from '@/core/ole/cfb';
 import { readEscherBlip } from '@/core/ole/escher-blip';
@@ -816,6 +818,7 @@ function collectShapeContainers(
       let shapeType = 0;
       let fspFlags = 0;
       let fillColorHex: string | undefined;
+      let backColorHex: string | undefined;
       let lineColorHex: string | undefined;
       let gradient: PptAutoShape['gradient'];
       let geometry: PptCustomGeometry | undefined;
@@ -851,6 +854,9 @@ function collectShapeContainers(
           geometry = parseFreeformGeometry(child.data, child.instance);
           fillType = optProperty(child.data, child.instance, PROP_FILL_TYPE);
           fillBlip = optProperty(child.data, child.instance, PROP_FILL_BLIP);
+          // §2.3.7.3 — the OTHER colour: the far end of a shade, and the
+          // background a pattern's clear bits show through to. White by default.
+          backColorHex = optColor(child.data, child.instance, PROP_FILL_BACK_COLOR, scheme);
           tileSizePt = parseTileSize(child.data, child.instance);
           gtext = parseWordArt(child.data, child.instance, fillColorHex);
           // A blip property may name a store entry OR carry the picture itself
@@ -867,9 +873,18 @@ function collectShapeContainers(
       };
       // MSOFILLTYPE 2 is the same picture, repeated at its own size instead of
       // stretched; 119877's second slide is the tiled twin of its first.
-      const tiled = fillType === 2;
+      // MSOFILLTYPE 1 is a PATTERN, which is also a repeated picture — an 8×8
+      // monochrome bitmap whose set bits take `fillColor` and whose clear bits
+      // take `fillBackColor`.
+      const pattern =
+        fillType === 1
+          ? patternFill(blip(fillBlip) ?? inlineBlip(inlineFill), fillColorHex, backColorHex)
+          : undefined;
+      const tiled = fillType === 2 || pattern !== undefined;
       const fillImage =
-        fillType === 2 || fillType === 3 ? (blip(fillBlip) ?? inlineBlip(inlineFill)) : undefined;
+        pattern ??
+        (fillType === 2 || fillType === 3 ? (blip(fillBlip) ?? inlineBlip(inlineFill)) : undefined);
+      if (pattern) tileSizePt = PATTERN_TILE_PT;
       if ((fspFlags & FSP_FLAG_BACKGROUND) !== 0) {
         const bg = slideBackground(fillColorHex, gradient, fillType, fillImage, tiled);
         if (bg && !out.background) out.background = bg;
@@ -1293,6 +1308,66 @@ function inlineBlip(blob: Uint8Array | undefined): PptImage | undefined {
   if (!blob || blob.length < 8) return undefined;
   const bytes = readEscherBlip(u16(blob, 2), u16(blob, 0) >> 4, blob.subarray(8));
   return bytes ? { bytes } : undefined;
+}
+
+// §2.3.7.1 MSOFILLTYPE 1 — a pattern is an 8×8 monochrome bitmap drawn one
+// pattern pixel to one DEVICE pixel, which at the 96 dpi every reader assumes
+// is three quarters of a point each way.
+const PATTERN_TILE_PT = { widthPt: (8 * 72) / 96, heightPt: (8 * 72) / 96 };
+
+/**
+ * §2.3.7.1 MSOFILLTYPE 1 — the picture a PATTERN fill repeats.
+ *
+ * The pattern itself is a one-bit bitmap in the picture store, and it carries
+ * no colour of its own: its set bits are the shape's `fillColor` and its clear
+ * bits its `fillBackColor`. So it is not a picture to be drawn but a stencil to
+ * be painted through, and the two colours are recorded nowhere else. 37625.ppt
+ * rules its every slide with a pale blue grid this way, and unread the whole
+ * deck came out on white.
+ *
+ * The result is handed back as an ordinary tiled picture: the tile path is
+ * already there and already tested, and a pattern IS a tiled picture once its
+ * two colours are in it.
+ *
+ * @param mono   The pattern bitmap from the store, when it resolves.
+ * @param fgHex  The shape's `fillColor` — what the set bits are painted in.
+ * @param bgHex  Its `fillBackColor`; white when the shape states none.
+ * @returns The recoloured tile as a PNG, or `undefined` when the blip is not a
+ *          bitmap this can read.
+ */
+function patternFill(
+  mono: PptImage | undefined,
+  fgHex: string | undefined,
+  bgHex: string | undefined,
+): PptImage | undefined {
+  if (!mono || !isBmp(mono.bytes)) return undefined;
+  let decoded;
+  try {
+    decoded = decodeBmp(mono.bytes);
+  } catch {
+    return undefined;
+  }
+  const fg = rgb(fgHex ?? '000000');
+  const bg = rgb(bgHex ?? 'FFFFFF');
+  const { width, height, data } = decoded;
+  const out = new Uint8Array(width * height * 3);
+  for (let i = 0; i < width * height; i++) {
+    // The stencil is monochrome: anything not black is a set bit. Reading the
+    // palette back would say the same thing twice — `decodeBmp` has already
+    // resolved index 0 and index 1 to their colours.
+    const on = data[i * 3]! + data[i * 3 + 1]! + data[i * 3 + 2]! < 384;
+    const c = on ? fg : bg;
+    out[i * 3] = c[0];
+    out[i * 3 + 1] = c[1];
+    out[i * 3 + 2] = c[2];
+  }
+  return { bytes: encodePng(width, height, 'rgb', out) };
+}
+
+/** `RRGGBB` → its three bytes. */
+function rgb(hex: string): readonly [number, number, number] {
+  const n = Number.parseInt(hex, 16);
+  return Number.isFinite(n) ? [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff] : [0, 0, 0];
 }
 
 // §2.3.7.1 MSOFILLTYPE 3 is a picture stretched over the shape — for the

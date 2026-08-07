@@ -7,6 +7,7 @@
 
 import { readFileSync } from 'node:fs';
 
+import { unzlibSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 
 import { buildPpt } from './fixtures/build-ppt';
@@ -16,6 +17,7 @@ import type { PptRun } from '@/pptx/ppt/ppt-text';
 
 import { extractPptContent, paragraphText } from '@/pptx/ppt/ppt-text';
 import { pptReader, readPpt } from '@/pptx/ppt/ppt-reader';
+import { prepareImage } from '@/core/images';
 import { Ream } from '@/core/converter/ream';
 import { createConverter } from '@/core/converter/facade';
 import { pt } from '@/core/ir/units';
@@ -1002,6 +1004,67 @@ describe('ppt grouped shapes and picture fills (PPT-15)', () => {
     expect(stretched?.imageTiled).toBeUndefined();
     // MSOFILLTYPE 2 is the same picture, repeated at its own size.
     expect(extractPptContent(tableDeck(2)).slides[0]!.shapes[0]?.autoShape?.imageTiled).toBe(true);
+  });
+
+  // An 8×8 one-bit bitmap, half black and half white — the shape a `.ppt`
+  // pattern blip always has. Black is palette entry 0, white entry 1.
+  const checkerBmp = (): Uint8Array => {
+    const out = new Uint8Array(14 + 40 + 8 + 8 * 4);
+    const v = new DataView(out.buffer);
+    out[0] = 0x42;
+    out[1] = 0x4d;
+    v.setUint32(2, out.length, true);
+    v.setUint32(10, 14 + 40 + 8, true);
+    v.setUint32(14, 40, true);
+    v.setInt32(18, 8, true);
+    v.setInt32(22, 8, true);
+    v.setUint16(26, 1, true);
+    v.setUint16(28, 1, true);
+    v.setUint32(46, 2, true); // biClrUsed
+    out.set([0, 0, 0, 0, 255, 255, 255, 0], 14 + 40); // black, then white
+    for (let y = 0; y < 8; y++) out[14 + 40 + 8 + y * 4] = y % 2 === 0 ? 0b1010_1010 : 0b0101_0101;
+    return out;
+  };
+
+  it('paints a PATTERN through the two colours the shape states', () => {
+    // §2.3.7.1 MSOFILLTYPE 1 — the blip is a one-bit stencil with no colour of
+    // its own: its set bits take `fillColor` and its clear bits
+    // `fillBackColor`. 37625.ppt rules every slide with a pale grid this way,
+    // and read as a plain picture the whole deck came out on flat colour.
+    const stencil = checkerBmp();
+    const slide = extractPptContent(
+      buildPpt([
+        {
+          boxes: [
+            {
+              anchor: { x: 0, y: 0, w: 200, h: 100 },
+              shapeType: 1,
+              fillColorHex: 'CFDBFD',
+              backColorHex: '112233',
+              pictureFill: { fillType: 1, png: stencil },
+            },
+          ],
+        },
+      ]),
+    ).slides[0]!;
+    const auto = slide.shapes[0]?.autoShape;
+    // A pattern repeats, always — it is a texture, never a single picture.
+    expect(auto?.imageTiled).toBe(true);
+    // …at eight pattern pixels to eight device ones, which is 6pt at 96 dpi.
+    expect(auto?.tileSizePt).toEqual({ widthPt: 6, heightPt: 6 });
+    // The tile that comes back is a PNG of the two stated colours and nothing
+    // else — the black and white of the stencil are gone.
+    const png = auto?.image?.bytes;
+    expect(png?.subarray(1, 4)).toEqual(new Uint8Array([0x50, 0x4e, 0x47]));
+    const decoded = prepareImage(png!);
+    const rgb = unzlibSync(decoded.data);
+    const seen = new Set<string>();
+    for (let i = 0; i < rgb.length; i += 3) {
+      seen.add(
+        [rgb[i], rgb[i + 1], rgb[i + 2]].map((c) => c!.toString(16).padStart(2, '0')).join(''),
+      );
+    }
+    expect([...seen].sort()).toEqual(['112233', 'cfdbfd']);
   });
 
   it('paints the box under the words, not over them', () => {

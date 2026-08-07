@@ -127,6 +127,7 @@ const RASTER_MEDIA: Readonly<Record<string, { ext: string; contentType: string }
   jpeg: { ext: 'jpeg', contentType: 'image/jpeg' },
   jpeg2000: { ext: 'jp2', contentType: 'image/jp2' },
   gif: { ext: 'gif', contentType: 'image/gif' },
+  bmp: { ext: 'bmp', contentType: 'image/bmp' },
 };
 
 // The writer round-trips a docx; it transfers image bytes verbatim, so it
