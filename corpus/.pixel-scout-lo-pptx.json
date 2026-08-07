@@ -5,13 +5,13 @@
   "aligned": true
  },
  {
-  "name": "tdf128596.pptx",
-  "score": 0.3141,
+  "name": "control_background_color.pptx",
+  "score": 0.2683,
   "aligned": true
  },
  {
-  "name": "control_background_color.pptx",
-  "score": 0.2683,
+  "name": "tdf128596.pptx",
+  "score": 0.2651,
   "aligned": true
  },
  {
@@ -305,11 +305,6 @@
   "aligned": true
  },
  {
-  "name": "tdf112209.pptx",
-  "score": 0.0325,
-  "aligned": true
- },
- {
   "name": "tdf136830.pptx",
   "score": 0.0323,
   "aligned": true
@@ -342,6 +337,11 @@
  {
   "name": "bnc910045.pptx",
   "score": 0.028,
+  "aligned": true
+ },
+ {
+  "name": "tdf112209.pptx",
+  "score": 0.0275,
   "aligned": true
  },
  {

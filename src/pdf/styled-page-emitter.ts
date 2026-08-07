@@ -1528,10 +1528,18 @@ function emitPageContent(
     if (item.type === 'shape') {
       const t = item.shape.transform;
       const fillAlpha = item.shape.fillAlpha;
+      // §20.1.8.40 — a shadow is drawn at the transparency its colour asks for,
+      // and the state that carries it has to be named here as it is in the
+      // shape pass. Left out, a shape that paints inside a PICTURE cast its
+      // shadow at full strength: tdf128596's is 50% black under a nearly
+      // transparent tile, and it came out solid black.
+      const layer = item.shape.shadow ? shadowBlurLayers(item.shape.shadow) : undefined;
       for (const op of emitVectorShape(
         { ...item.shape, transform: [t[0], -t[1], t[2], -t[3], t[4], H - t[5]] },
         gradientNames?.get(item.shape),
-        undefined,
+        layer && layer.alpha < 1
+          ? alphaStateNames?.get(Math.round(layer.alpha * 1000) / 1000)
+          : undefined,
         gradientMaskNames?.get(item.shape) ??
           (fillAlpha !== undefined && fillAlpha < 1
             ? alphaStateNames?.get(Math.round(fillAlpha * 1000) / 1000)

@@ -490,6 +490,18 @@ describe('a shadow under a picture fill', () => {
       },
     );
 
+  it('draws that shadow at the transparency it asks for, not at full strength', async () => {
+    // The state that carries a shadow's alpha has to be named in the PICTURE
+    // pass as it is in the shape pass. Left out, tdf128596's 50% black under a
+    // nearly transparent tile came out solid.
+    const pdf = await Ream.parse(shadowed(true)).convert('pdf');
+    const s = Buffer.from(pdf).toString('latin1');
+    // An /ExtGState carrying the per-layer alpha exists…
+    expect(/\/ca 0?\.\d+/u.test(s)).toBe(true);
+    // …and the content stream names one before it paints.
+    expect(/\/GSa\d+ gs/u.test(s)).toBe(true);
+  });
+
   it('ties the shadow, the picture and the outline into one picture', () => {
     // Without a shadow nothing is grouped and the passes stay as they were.
     const plain = layoutOf(shadowed(false)).pages[0]!.commands;
