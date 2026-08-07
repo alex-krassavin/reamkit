@@ -1264,6 +1264,64 @@ describe('ppt tile size (PPT-20)', () => {
       },
     ]);
 
+  it('keeps a rule, which has no area at all', () => {
+    // §2.2.39 — a vertical rule is zero wide and a horizontal one zero tall,
+    // and both are perfectly good shapes. Demanding area of every child
+    // rectangle threw out the hundred-odd rules the master of 37625.ppt draws
+    // its pale blue grid with, on all twenty-nine slides.
+    const slide = extractPptContent(
+      buildPpt([
+        {
+          groups: [
+            {
+              anchor: { x: 0, y: 0, w: 400, h: 200 },
+              box: [0, 0, 4000, 2000],
+              boxes: [
+                // A horizontal rule: the same y twice.
+                { childAnchor: [0, 1000, 4000, 1000], shapeType: 20, lineColorHex: 'CFDBFD' },
+                // …and one with no extent either way, which IS nothing.
+                { childAnchor: [500, 500, 500, 500], shapeType: 20, lineColorHex: 'CFDBFD' },
+              ],
+            },
+          ],
+        },
+      ]),
+    ).slides[0]!;
+    expect(slide.shapes.map((sh) => sh.rectPt)).toEqual([{ x: 0, y: 100, w: 400, h: 0 }]);
+  });
+
+  it('measures a nested group’s children in that group’s own space', () => {
+    // A group inside a group is anchored like any other child — by a
+    // ChildAnchor in the ENCLOSING group's space — and its own FSPGR is the
+    // space ITS children live in. Read only the client anchor, a nested group
+    // had no frame and its children were measured against their
+    // GRANDPARENT's: 37625's master nests its grid two deep and the rules came
+    // out at a fraction of their spacing.
+    const slide = extractPptContent(
+      buildPpt([
+        {
+          groups: [
+            {
+              anchor: { x: 0, y: 0, w: 400, h: 400 },
+              box: [0, 0, 4000, 4000],
+              boxes: [],
+              nested: {
+                // The right half of the outer group: 200..400pt across.
+                childAnchor: [2000, 0, 4000, 4000],
+                // …and its own space is ten times as fine.
+                box: [0, 0, 400, 400],
+                boxes: [{ childAnchor: [0, 0, 200, 400], shapeType: 1, fillColorHex: 'FF0000' }],
+              },
+            },
+          ],
+        },
+      ]),
+    ).slides[0]!;
+    // Half of the nested group, which is itself the right half of the outer
+    // one: 200..300pt across, the full 400 down.
+    expect(slide.shapes.map((sh) => sh.rectPt)).toEqual([{ x: 200, y: 0, w: 100, h: 400 }]);
+  });
+
   it('centres the grid of copies on the shape, not on its corner', () => {
     // MS-ODRAW §2.3.7.13 — a texture's origin is the shape's CENTRE, where
     // DrawingML pins the grid to the top-left corner (§20.1.8.58 `@algn`).

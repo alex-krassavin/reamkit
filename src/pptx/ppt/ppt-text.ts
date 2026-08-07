@@ -807,7 +807,7 @@ function collectShapeContainers(
         env,
         outline,
         defaults,
-        groupFrame(r.data) ?? group,
+        groupFrame(r.data, group) ?? group,
       );
       continue;
     }
@@ -1201,7 +1201,7 @@ interface GroupFrame {
 // A group container's first SpContainer is the group shape itself: its FSPGR
 // (§2.2.38) states the coordinate space, its client anchor where that space
 // lands on the slide.
-function groupFrame(spgrData: Uint8Array): GroupFrame | undefined {
+function groupFrame(spgrData: Uint8Array, parent?: GroupFrame): GroupFrame | undefined {
   const sp = [...records(spgrData)].find((r) => r.type === FBT_SP_CONTAINER);
   if (!sp) return undefined;
   let box: { x: number; y: number; w: number; h: number } | undefined;
@@ -1212,6 +1212,15 @@ function groupFrame(spgrData: Uint8Array): GroupFrame | undefined {
       const y = i32(child.data, 4);
       box = { x, y, w: i32(child.data, 8) - x, h: i32(child.data, 12) - y };
     } else if (child.type === FBT_CLIENT_ANCHOR) rect = parseAnchor(child.data);
+    // A group INSIDE a group is anchored the way any other child is — by a
+    // ChildAnchor in the enclosing group's space, not by a client anchor. Read
+    // only the client one, a nested group had no frame of its own and its
+    // children were measured against their GRANDPARENT's space: the master of
+    // 37625.ppt nests its grid two groups deep, and its rules came out at a
+    // fraction of their spacing and running off the slide.
+    else if (child.type === FBT_CHILD_ANCHOR && parent !== undefined && rect === undefined) {
+      rect = childRect(child.data, parent);
+    }
   }
   if (!box || !rect || box.w <= 0 || box.h <= 0) return undefined;
   return { rect, ...box };
@@ -1227,7 +1236,11 @@ function childRect(d: Uint8Array, g: GroupFrame): PptRect | undefined {
   const y2 = g.rect.y + ((i32(d, 12) - g.y) / g.h) * g.rect.h;
   const w = x2 - x1;
   const h = y2 - y1;
-  return w > 0 && h > 0 && Math.abs(x1) < 5000 && Math.abs(y1) < 5000
+  // A RULE has no area: a vertical one is zero wide and a horizontal one zero
+  // tall, and both are perfectly good shapes. Demanding area of every child
+  // rectangle threw out all hundred-odd rules the master of 37625.ppt draws its
+  // pale blue grid with, on all twenty-nine slides.
+  return (w > 0 || h > 0) && w >= 0 && h >= 0 && Math.abs(x1) < 5000 && Math.abs(y1) < 5000
     ? { x: x1, y: y1, w, h }
     : undefined;
 }

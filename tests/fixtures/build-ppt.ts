@@ -212,6 +212,15 @@ export interface PptGroupInput {
   };
   readonly box: readonly [number, number, number, number]; // x, y, right, bottom
   readonly boxes: ReadonlyArray<PptBoxInput>;
+  // A group INSIDE this one. It carries a ChildAnchor in this group's space
+  // rather than a client anchor of its own, which is how PowerPoint nests them.
+  readonly nested?: PptNestedGroupInput;
+}
+
+export interface PptNestedGroupInput {
+  readonly childAnchor: readonly [number, number, number, number];
+  readonly box: readonly [number, number, number, number];
+  readonly boxes: ReadonlyArray<PptBoxInput>;
 }
 
 // A freeform shape's geometry: the bounds extent (left/top are 0) plus the raw
@@ -568,6 +577,35 @@ function buildGroupContainer(group: PptGroupInput): Uint8Array {
       rec(FBT_SPGR, 1, false, box),
       rec(FBT_FSP, 0, false, new Uint8Array(8)),
       clientAnchorRec(group.anchor),
+    ]),
+  );
+  const nested = group.nested ? [buildNestedGroupContainer(group.nested)] : [];
+  return rec(
+    FBT_SPGR_CONTAINER,
+    0,
+    true,
+    concat([head, ...group.boxes.map(buildShapeContainer), ...nested]),
+  );
+}
+
+// A group inside a group: its own SpContainer states its coordinate space and a
+// ChildAnchor in the ENCLOSING group's space, which is what a client anchor
+// would be at the top level.
+function buildNestedGroupContainer(group: PptNestedGroupInput): Uint8Array {
+  const box = new Uint8Array(16);
+  const bv = new DataView(box.buffer);
+  group.box.forEach((v, i) => bv.setInt32(i * 4, v, true));
+  const anchor = new Uint8Array(16);
+  const av = new DataView(anchor.buffer);
+  group.childAnchor.forEach((v, i) => av.setInt32(i * 4, v, true));
+  const head = rec(
+    FBT_SP_CONTAINER,
+    0,
+    true,
+    concat([
+      rec(FBT_SPGR, 1, false, box),
+      rec(FBT_FSP, 0, false, new Uint8Array(8)),
+      rec(FBT_CHILD_ANCHOR, 0, false, anchor),
     ]),
   );
   return rec(FBT_SPGR_CONTAINER, 0, true, concat([head, ...group.boxes.map(buildShapeContainer)]));
