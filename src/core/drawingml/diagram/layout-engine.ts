@@ -76,7 +76,7 @@ interface LayoutNode {
    * everything under it, so a node with children shows its own label with theirs
    * beneath it rather than dropping them.
    */
-  readonly presOfDes?: boolean;
+  readonly presOfAxis?: string;
   readonly constrs: ReadonlyArray<Constraint>;
   readonly children: ReadonlyArray<LayoutItem>;
 }
@@ -171,7 +171,7 @@ function layoutIn(
   // filling its whole share is a worse answer than none: a centre-cycle came
   // out as one blue rectangle over the entire frame.
   if (node.alg !== 'tx') return [];
-  const spoken = node.presOfDes === true ? withDescendants(point, data) : point;
+  const spoken = spokenFor(node, point, data);
   return [{ point: spoken, shapeType: node.shapeType ?? 'rect', ...styleOf(node), index, ...box }];
 }
 
@@ -192,6 +192,22 @@ function styleOf(node: { kind: 'node' } & LayoutNode): {
     ...(node.hideGeom === true ? { hideGeom: true as const } : {}),
     ...(anchor !== undefined && anchor !== '' ? { anchor } : {}),
   };
+}
+
+/**
+ * §21.4.3.7 `dgm:presOf` — which points a box speaks for. `desOrSelf` is the
+ * point and everything under it; `des` is everything under it and NOT the point,
+ * which is how a list's second box holds the children's words and not a second
+ * copy of the label. Anything else is the point itself.
+ */
+function spokenFor(
+  box: { kind: 'node' } & LayoutNode,
+  point: DiagramPoint,
+  data: DiagramData,
+): DiagramPoint {
+  if (box.presOfAxis === 'desOrSelf') return withDescendants(point, data);
+  if (box.presOfAxis === 'des') return gatheredText(point, data.children(point.id, 'node'));
+  return point;
 }
 
 // §21.4.3.7 `desOrSelf` — the point's own paragraphs, then every descendant's
@@ -428,6 +444,9 @@ function listLayout(
   // as every reader draws them.
   const shapeType = childShapeType(parsed.children) ?? 'rect';
   const vertical = isVertical(parsed);
+  // The boxes the forEach lays out per point. One is the usual case; several
+  // is a stack, and each of them is a box in its own right.
+  const body = namedBoxes(parsed);
   const n = nodes.length;
   // A column list is one box wide however much room there is beside it, and a
   // row that does not snake is one box tall: only a snake across chooses.
@@ -463,9 +482,73 @@ function listLayout(
     // shows a node's label beside its children's text nests a `linNode` whose
     // own children are two `tx` boxes, sized by ITS constraints. Laid out as
     // one box, such a row is the whole cell where it should be two.
-    out.push(...splitCell(parsed, childName, point, data, cell, shapeType, i));
+    out.push(
+      ...(body.length > 1
+        ? stackCell(parsed, body, point, data, cell, shapeType, i, vertical)
+        : splitCell(parsed, childName, point, data, cell, shapeType, i)),
+    );
   });
   return out;
+}
+
+/**
+ * §21.4.3 — a `forEach` body of SEVERAL boxes is a stack, not a box.
+ *
+ * The vertical list family gives each point three: the row holding its label,
+ * a negative space, and the box its descendants' words go in. Laying out only
+ * the first of them drew the labels and dropped every descendant.
+ *
+ * What each box states for its height divides the cell between them. A space
+ * stated as negative is an overlap — one box pulled up over the one before it —
+ * which this engine does not run, so it takes no room and the rest share the
+ * cell; LibreOffice draws these layouts without the overlap too.
+ */
+function stackCell(
+  parsed: { kind: 'node' } & LayoutNode,
+  body: ReadonlyArray<{ kind: 'node' } & LayoutNode>,
+  point: DiagramPoint,
+  data: DiagramData,
+  cell: { x: number; y: number; cx: number; cy: number },
+  shapeType: string,
+  index: number,
+  vertical: boolean,
+): Array<LaidNode> {
+  const stated = body.map((b) => stackFact(parsed, b) ?? 0);
+  const total = stated.reduce((a, v) => a + Math.max(0, v), 0);
+  const shares = stated.map((v) => (total > 0 ? Math.max(0, v) / total : 1 / body.length));
+
+  const out: Array<LaidNode> = [];
+  let at = vertical ? cell.y : cell.x;
+  body.forEach((b, k) => {
+    const span = (vertical ? cell.cy : cell.cx) * (shares[k] ?? 0);
+    // A `sp` box naming no shape is space and nothing else.
+    if (span > 0 && !(b.alg === 'sp' && b.shapeType === undefined)) {
+      const slice = {
+        x: vertical ? cell.x : at,
+        y: vertical ? at : cell.y,
+        cx: vertical ? cell.cx : span,
+        cy: vertical ? span : cell.cy,
+      };
+      out.push(...splitCell(parsed, b.name, point, data, slice, b.shapeType ?? shapeType, index));
+    }
+    at += span;
+  });
+  return out;
+}
+
+// What one box of a stack states for its height, as a factor. A wrapper states
+// nothing itself — the box it insets does.
+function stackFact(
+  parsed: { kind: 'node' } & LayoutNode,
+  box: { kind: 'node' } & LayoutNode,
+): number | undefined {
+  const own = heightFact(parsed, box.name) ?? sizeFact(parsed.constrs, box.name, 'h');
+  if (own !== undefined) return own;
+  for (const inner of namedBoxes(box)) {
+    const f = heightFact(parsed, inner.name) ?? sizeFact(parsed.constrs, inner.name, 'h');
+    if (f !== undefined) return f;
+  }
+  return undefined;
 }
 
 /**
@@ -518,7 +601,7 @@ function splitCell(
   const face = inner.length === 1 ? inner[0] : child;
   const whole = (): Array<LaidNode> => [
     {
-      point,
+      point: face === undefined ? point : spokenFor(face, point, data),
       shapeType: face?.shapeType ?? shapeType,
       ...(face?.styleLbl !== undefined ? { styleLbl: face.styleLbl } : {}),
       ...opt('fontSizePt', size(face, 'primFontSz')),
@@ -824,6 +907,7 @@ function parseNode(node: PoNode, ctx: LayoutContext): { kind: 'node' } & LayoutN
   const shapeType = shape ? poAttr(shape, 'type') : undefined;
   const styleLbl = poAttr(node, 'styleLbl');
   const presOf = flattened.find((k) => poIs(k, 'dgm:presOf'));
+  const presOfAxis = poAttr(presOf, 'axis');
   return {
     kind: 'node',
     name: poAttr(node, 'name') ?? '',
@@ -833,7 +917,7 @@ function parseNode(node: PoNode, ctx: LayoutContext): { kind: 'node' } & LayoutN
     algParams: params,
     ...(shapeType !== undefined && shapeType !== '' ? { shapeType } : {}),
     ...(shape !== undefined && poAttr(shape, 'hideGeom') === '1' ? { hideGeom: true } : {}),
-    ...(poAttr(presOf, 'axis') === 'desOrSelf' ? { presOfDes: true } : {}),
+    ...(presOfAxis !== undefined && presOfAxis !== '' ? { presOfAxis } : {}),
     constrs: parseConstraints(constrLst),
     children: flattened.flatMap((k) => parseItem(k, ctx, guarded.has(k))),
   };

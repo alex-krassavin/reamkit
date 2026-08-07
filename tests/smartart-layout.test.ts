@@ -760,3 +760,51 @@ describe('SmartArt: a hidden margin is not half of a split', () => {
     expect(diagramDrawingXml(nodes, { cx: CX, cy: CY })).toContain('<a:t>P1</a:t>');
   });
 });
+
+// §21.4.3 — a forEach body of several boxes is a stack, one box per point per
+// entry, and §21.4.3.7 `presOf axis="des"` puts the descendants in the second.
+describe('SmartArt: a forEach body of several boxes', () => {
+  const STACK = layoutXml(
+    `<dgm:alg type="lin"><dgm:param type="linDir" val="fromT"/></dgm:alg>
+     <dgm:constrLst>
+       <dgm:constr type="w" for="ch" forName="row" refType="w"/>
+       <dgm:constr type="h" for="des" forName="label" refType="primFontSz" refFor="des" refForName="label" fact="0.8"/>
+       <dgm:constr type="h" for="ch" forName="gap" refType="primFontSz" refFor="des" refForName="label" fact="-0.4"/>
+       <dgm:constr type="h" for="ch" forName="kids" refType="primFontSz" refFor="des" refForName="label" fact="0.4"/>
+     </dgm:constrLst>
+     <dgm:forEach name="each" axis="ch" ptType="node">
+       <dgm:layoutNode name="row">
+         <dgm:alg type="lin"/><dgm:constrLst/>
+         <dgm:layoutNode name="label" styleLbl="node1">
+           <dgm:alg type="tx"/><dgm:shape type="roundRect"/>
+           <dgm:presOf axis="self" ptType="node"/>
+         </dgm:layoutNode>
+       </dgm:layoutNode>
+       <dgm:layoutNode name="gap"><dgm:alg type="sp"/><dgm:shape/></dgm:layoutNode>
+       <dgm:layoutNode name="kids" styleLbl="conFgAcc1">
+         <dgm:alg type="tx"/><dgm:shape type="rect"/>
+         <dgm:presOf axis="des" ptType="node"/>
+       </dgm:layoutNode>
+     </dgm:forEach>`,
+  );
+
+  it('lays out every box of the body, not only the first', () => {
+    const nodes = run(STACK, dataXml([['P1', ['K1']]]));
+    // The label and the descendants box; the negative space draws nothing.
+    expect(nodes.map((n) => n.styleLbl)).toEqual(['node1', 'conFgAcc1']);
+    const [chip, kids] = nodes;
+    // Stacked, in the proportion their heights state (0.8 and 0.4 of the
+    // stated font size); the negative space is an overlap, so it takes none.
+    expect(chip?.y).toBe(0);
+    expect(kids?.y).toBeCloseTo(CY * (0.8 / 1.2), 0);
+    expect((chip?.cy ?? 0) / (kids?.cy ?? 1)).toBeCloseTo(2, 5);
+  });
+
+  it('puts the point in the first box and its descendants in the second', () => {
+    const xml = diagramDrawingXml(run(STACK, dataXml([['P1', ['K1']]])), { cx: CX, cy: CY });
+    expect(xml.indexOf('<a:t>P1</a:t>')).toBeGreaterThan(-1);
+    // Not a second copy of the label: the descendants box holds only the kids.
+    expect(xml.indexOf('<a:t>K1</a:t>')).toBeGreaterThan(xml.indexOf('<a:t>P1</a:t>'));
+    expect(xml.split('<a:t>P1</a:t>')).toHaveLength(2);
+  });
+});
