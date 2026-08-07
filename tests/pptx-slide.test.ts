@@ -1248,6 +1248,26 @@ describe('pptx background — a reference and a picture (E-PPTX PX5b)', () => {
     });
   });
 
+  it('reads a grayscale blip as the duotone from black to white that it is', () => {
+    // §20.1.8.34 `a:grayscl` — the picture drawn in shades of grey, which is
+    // what a duotone between black and white already is. tdf112209's chevron
+    // is a colour photograph in the file and grey in every reader.
+    const doc = Ream.parse(
+      buildPptx([''], {
+        slideBg: [
+          `<p:bg><p:bgPr><a:blipFill><a:blip r:embed="rIdBg"><a:grayscl/></a:blip>` +
+            `<a:stretch><a:fillRect/></a:stretch></a:blipFill></p:bgPr></p:bg>`,
+        ],
+        slideRels: [`<Relationship Id="rIdBg" Type="${IMAGE_REL}" Target="../media/bg.png"/>`],
+        media: { 'ppt/media/bg.png': buildTinyPng(2, 2, [20, 90, 200, 255]) },
+      }),
+    );
+    expect(firstShape(doc)?.fill.duotone).toEqual({
+      shadowHex: '000000',
+      highlightHex: 'FFFFFF',
+    });
+  });
+
   it('paints a duotone through the picture, as a luminosity mask', async () => {
     const doc = Ream.parse(
       buildPptx([''], {

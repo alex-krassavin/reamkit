@@ -2817,6 +2817,13 @@ function duotoneOf(
   blip: PoNode,
   resolveColor: ColorResolver,
 ): { readonly shadowHex: string; readonly highlightHex: string } | undefined {
+  // §20.1.8.34 `a:grayscl` — the picture drawn in shades of grey. That is what
+  // a duotone from black to white already is, so it is read as one rather than
+  // grown a channel of its own: tdf112209's photographed chevron is a colour
+  // photograph in the file and grey in every reader.
+  if (poChildren(blip).some((c) => poIs(c, 'a:grayscl'))) {
+    return { shadowHex: '000000', highlightHex: 'FFFFFF' };
+  }
   const duotone = poChildren(blip).find((c) => poIs(c, 'a:duotone'));
   if (!duotone) return undefined;
   const colors = poChildren(duotone)
