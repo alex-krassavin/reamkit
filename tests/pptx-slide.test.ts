@@ -1248,6 +1248,35 @@ describe('pptx background — a reference and a picture (E-PPTX PX5b)', () => {
     });
   });
 
+  it('clips a picture to the geometry it names for itself', () => {
+    // §19.3.1.37 — a `p:pic` may carry a geometry of its own, and then the
+    // picture is CLIPPED to it: crop-to-shape.pptx is one photograph in an
+    // ellipse, and drawn as a plain rectangle the ellipse came out square.
+    const pic = (prst: string): string =>
+      `<p:pic><p:nvPicPr><p:cNvPr id="4" name="Picture 3"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>` +
+      `<p:blipFill><a:blip r:embed="rIdC"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="4000000" cy="3000000"/></a:xfrm>` +
+      `<a:prstGeom prst="${prst}"><a:avLst/></a:prstGeom></p:spPr></p:pic>`;
+    const build = (prst: string) =>
+      Ream.parse(
+        buildPptx([pic(prst)], {
+          slideRels: [`<Relationship Id="rIdC" Type="${IMAGE_REL}" Target="../media/c.png"/>`],
+          media: { 'ppt/media/c.png': buildTinyPng(2, 2, [0, 200, 0, 255]) },
+        }),
+      );
+    // An ellipse is a SHAPE wearing the picture as its fill — that is what
+    // clips it, and the shape path already draws one.
+    const round = build('ellipse').flow.body.find((e) => e.kind === 'shape');
+    expect(round?.kind).toBe('shape');
+    if (round?.kind !== 'shape') throw new Error('not a shape');
+    expect(round.shape.geometry).toMatchObject({ kind: 'preset', preset: 'ellipse' });
+    expect(round.shape.fill.kind).toBe('picture');
+    // A plain rectangle needs no clipping and stays the picture it was: the
+    // image path measures and embeds one far more directly.
+    expect(build('rect').flow.body.some((e) => e.kind === 'image')).toBe(true);
+    expect(build('rect').flow.body.some((e) => e.kind === 'shape')).toBe(false);
+  });
+
   it('places a PICTURE placeholder from the layout when it carries no transform', () => {
     // §19.3.1.35 — a content placeholder filled with a photograph is a `p:pic`
     // whose `p:spPr` is EMPTY: its whole geometry is the layout's. Read as a

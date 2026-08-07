@@ -195,8 +195,19 @@ export function parseSlideShapes(
       const shape = parseSp(child, ctx, transform);
       if (shape) out.push({ kind: 'shape', shape });
     } else if (poIs(child, 'p:pic')) {
-      const image = parsePic(child, ctx, transform);
-      if (image) out.push({ kind: 'image', image });
+      // §19.3.1.37 — a picture may name a GEOMETRY of its own, and then it is
+      // CLIPPED to it: crop-to-shape.pptx is one photograph in an ellipse. That
+      // is the same thing as a shape wearing a picture fill, and the shape path
+      // already draws one, so the picture is handed to it rather than given a
+      // clip of its own. Drawn as a plain rectangle the ellipse was square.
+      const clipped = pictureAsShape(child);
+      const shape = clipped ? parseSp(clipped, ctx, transform) : undefined;
+      if (shape) {
+        out.push({ kind: 'shape', shape });
+      } else {
+        const image = parsePic(child, ctx, transform);
+        if (image) out.push({ kind: 'image', image });
+      }
     } else if (poIs(child, 'p:graphicFrame')) {
       out.push(...parseGraphicFrame(child, ctx, transform));
     } else if (poIs(child, 'p:grpSp')) {
@@ -206,6 +217,38 @@ export function parseSlideShapes(
     }
   }
   return out;
+}
+
+/**
+ * A `p:pic` that names a geometry of its own, rewritten as the `p:sp` it is.
+ *
+ * A picture holds its `p:blipFill` BESIDE `p:spPr`; a shape holds its fill
+ * INSIDE it, under the drawing namespace. Moving the one into the other is the
+ * whole difference, and it buys the shape path entire — the geometry, the
+ * outline, the crop, the recolour — instead of a second clipper that would
+ * drift from it.
+ *
+ * @param pic The `p:pic` node.
+ * @returns The equivalent `p:sp`, or undefined when the picture is a plain
+ *          rectangle and wants no clipping at all.
+ */
+function pictureAsShape(pic: PoNode): PoNode | undefined {
+  const spPr = poChildren(pic).find((c) => poIs(c, 'p:spPr'));
+  const prst = spPr ? poChildren(spPr).find((c) => poIs(c, 'a:prstGeom')) : undefined;
+  const custom = spPr ? poChildren(spPr).find((c) => poIs(c, 'a:custGeom')) : undefined;
+  const shape = poAttr(prst, 'prst');
+  // A rectangle is what a picture is drawn in anyway, and the plain image path
+  // measures and embeds one far more directly than a filled shape would.
+  if (custom === undefined && (shape === undefined || shape === 'rect')) return undefined;
+  const blipFill = poChildren(pic).find((c) => poIs(c, 'p:blipFill'));
+  if (!blipFill || !spPr) return undefined;
+  const nv = poChildren(pic).find((c) => poIs(c, 'p:nvPicPr'));
+  return {
+    'p:sp': [
+      ...(nv ? [{ 'p:nvSpPr': poChildren(nv) } as PoNode] : []),
+      { 'p:spPr': [{ 'a:blipFill': poChildren(blipFill) } as PoNode, ...poChildren(spPr)] },
+    ],
+  };
 }
 
 /**

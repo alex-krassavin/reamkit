@@ -40,11 +40,6 @@
   "aligned": true
  },
  {
-  "name": "crop-to-shape.pptx",
-  "score": 0.1494,
-  "aligned": true
- },
- {
   "name": "cshapes.pptx",
   "score": 0.1481,
   "aligned": true
@@ -125,11 +120,6 @@
   "aligned": true
  },
  {
-  "name": "crop-position.pptx",
-  "score": 0.0851,
-  "aligned": true
- },
- {
   "name": "smartart-bullet-list.pptx",
   "score": 0.0801,
   "aligned": true
@@ -157,11 +147,6 @@
  {
   "name": "tdf127237.pptx",
   "score": 0.0725,
-  "aligned": true
- },
- {
-  "name": "tdf134174.pptx",
-  "score": 0.0724,
   "aligned": true
  },
  {
@@ -205,11 +190,6 @@
   "aligned": true
  },
  {
-  "name": "tdf153008-srcRect-smallNegBound.pptx",
-  "score": 0.0566,
-  "aligned": true
- },
- {
   "name": "ole-emf_min.pptx",
   "score": 0.056,
   "aligned": true
@@ -240,13 +220,13 @@
   "aligned": true
  },
  {
-  "name": "greysscale-graphic.pptx",
-  "score": 0.048,
+  "name": "presetDashDot.pptx",
+  "score": 0.0466,
   "aligned": true
  },
  {
-  "name": "presetDashDot.pptx",
-  "score": 0.0466,
+  "name": "tdf134174.pptx",
+  "score": 0.0448,
   "aligned": true
  },
  {
@@ -400,6 +380,11 @@
   "aligned": true
  },
  {
+  "name": "croppedTo0.pptx",
+  "score": 0.0224,
+  "aligned": true
+ },
+ {
   "name": "smartart-chevron.pptx",
   "score": 0.022,
   "aligned": true
@@ -420,16 +405,6 @@
   "aligned": true
  },
  {
-  "name": "croppedTo0.pptx",
-  "score": 0.0215,
-  "aligned": true
- },
- {
-  "name": "tdf140714.pptx",
-  "score": 0.021,
-  "aligned": true
- },
- {
   "name": "n821567.pptx",
   "score": 0.0204,
   "aligned": true
@@ -441,11 +416,6 @@
  },
  {
   "name": "activex_scrollbar.pptx",
-  "score": 0.0197,
-  "aligned": true
- },
- {
-  "name": "tdf156649.pptx",
   "score": 0.0197,
   "aligned": true
  },
@@ -840,11 +810,6 @@
   "aligned": true
  },
  {
-  "name": "mirrored-graphic.pptx",
-  "score": 0.0051,
-  "aligned": true
- },
- {
   "name": "tdf103477.pptx",
   "score": 0.0051,
   "aligned": true
@@ -1180,6 +1145,16 @@
   "aligned": true
  },
  {
+  "name": "greysscale-graphic.pptx",
+  "score": 0.0019,
+  "aligned": true
+ },
+ {
+  "name": "tdf140714.pptx",
+  "score": 0.0019,
+  "aligned": true
+ },
+ {
   "name": "tdf132282.pptx",
   "score": 0.0018,
   "aligned": true
@@ -1395,6 +1370,11 @@
   "aligned": true
  },
  {
+  "name": "mirrored-graphic.pptx",
+  "score": 0.0009,
+  "aligned": true
+ },
+ {
   "name": "tdf119118.pptx",
   "score": 0.0009,
   "aligned": true
@@ -1421,6 +1401,11 @@
  },
  {
   "name": "tdf165732.pptx",
+  "score": 0.0008,
+  "aligned": true
+ },
+ {
+  "name": "crop-to-shape.pptx",
   "score": 0.0008,
   "aligned": true
  },
@@ -1540,6 +1525,11 @@
   "aligned": true
  },
  {
+  "name": "tdf153008-srcRect-smallNegBound.pptx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
   "name": "tdf165341.pptx",
   "score": 0.0004,
   "aligned": true
@@ -1551,6 +1541,11 @@
  },
  {
   "name": "tdf115394.pptx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "tdf156649.pptx",
   "score": 0.0004,
   "aligned": true
  },
@@ -1686,6 +1681,11 @@
  },
  {
   "name": "hyperlinktest.pptx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "crop-position.pptx",
   "score": 0.0002,
   "aligned": true
  },
