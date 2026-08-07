@@ -182,6 +182,13 @@ export interface PptParagraph {
    * carries none.
    */
   readonly bullet?: string;
+  /**
+   * §2.9.20 `leftMargin` — where the paragraph's BODY sits, in points from the
+   * text box's own left edge.
+   */
+  readonly leftMarginPt?: number;
+  /** §2.9.20 `indent` — where its FIRST line starts. Left of the body ⇒ hanging. */
+  readonly indentPt?: number;
 }
 /**
  * An embedded picture referenced by a slide shape — the raw image bytes pulled
@@ -999,6 +1006,8 @@ interface LevelStyle extends CharProps {
   align?: number;
   bullet?: string;
   bulletOn?: boolean;
+  leftMarginPt?: number;
+  indentPt?: number;
 }
 /** A master's defaults, by text type (TextHeaderAtom) and indent level. */
 type MasterDefaults = (textType: number, level: number) => LevelStyle | undefined;
@@ -1079,6 +1088,8 @@ function readMasterLevels(
       ...(pf.align !== undefined ? { align: pf.align } : {}),
       ...(pf.bullet !== undefined ? { bullet: pf.bullet } : {}),
       ...(pf.bulletOn !== undefined ? { bulletOn: pf.bulletOn } : {}),
+      ...(pf.leftMarginPt !== undefined ? { leftMarginPt: pf.leftMarginPt } : {}),
+      ...(pf.indentPt !== undefined ? { indentPt: pf.indentPt } : {}),
     });
   }
   return { styles, off };
@@ -1953,6 +1964,10 @@ interface ParaRun {
   bullet?: string;
   /** The paragraph states `fHasBullet` — true says draw one, false says do not. */
   bulletOn?: boolean;
+  /** Where the paragraph's BODY sits, in points from the box's text edge. */
+  leftMarginPt?: number;
+  /** Where its FIRST line starts — left of the body when the bullet hangs. */
+  indentPt?: number;
 }
 
 /** The concatenated plain text of a paragraph's runs. */
@@ -1972,21 +1987,26 @@ function buildStyledParagraphs(
 ): Array<PptParagraph> {
   const style = styleData ? parseStyleTextProp(styleData, text.length, env) : undefined;
   const charProps = style ? expandCharProps(style.charRuns, text.length) : undefined;
-  const paraRuns = style?.paraRuns ?? [];
+  // A paragraph run's count is CHARACTERS, not paragraphs: one run routinely
+  // covers a whole placeholder's worth of them. Taken as one run per paragraph,
+  // every paragraph after the first fell through to the master's level style —
+  // 41246-1's body came out flush right because the master says so and the
+  // slide's own "left" only ever reached its first paragraph.
+  const paraProps = style ? expandParaProps(style.paraRuns, text.length) : undefined;
 
   const paras: Array<PptParagraph> = [];
   let runs: Array<PptRun> = [];
   let cur = '';
   let curProps: CharRun | undefined;
-  let paraIndex = 0;
+  let paraStart = 0;
 
   const pushRun = (): void => {
     if (cur.length > 0) runs.push(toRun(cur, curProps));
     cur = '';
   };
-  const endParagraph = (): void => {
+  const endParagraph = (end: number): void => {
     pushRun();
-    const meta = paraRuns[paraIndex];
+    const meta = paraProps?.[paraStart];
     // What the run did not state, the master's style for this level does —
     // size and alignment. Not bold / italic / underline, which are stated as OFF
     // as often as they are omitted and cannot be told apart here; and not
@@ -2003,20 +2023,24 @@ function buildStyledParagraphs(
     const on = meta?.bulletOn ?? lvl?.bulletOn;
     const char = meta?.bullet ?? lvl?.bullet;
     const bullet = on === false ? undefined : on === true ? (char ?? '•') : char;
+    const leftMarginPt = meta?.leftMarginPt ?? lvl?.leftMarginPt;
+    const indentPt = meta?.indentPt ?? lvl?.indentPt;
     paras.push({
       runs: lvl ? runs.map((r) => inherit(r, lvl)) : runs,
       ...(align !== undefined ? { align } : {}),
       ...(meta?.level !== undefined ? { level: meta.level } : {}),
       ...(bullet !== undefined ? { bullet } : {}),
+      ...(leftMarginPt !== undefined ? { leftMarginPt } : {}),
+      ...(indentPt !== undefined ? { indentPt } : {}),
     });
     runs = [];
-    paraIndex++;
+    paraStart = end + 1;
   };
 
   for (let i = 0; i < text.length; i++) {
     const c = text.charCodeAt(i);
     if (c === 0x0d) {
-      endParagraph();
+      endParagraph(i);
       continue;
     }
     const props = charProps?.[i];
@@ -2025,7 +2049,7 @@ function buildStyledParagraphs(
     if (c === 0x0b || c === 0x0a || c === 0x09) cur += ' ';
     else if (c !== 0xfeff && c >= 0x20) cur += text[i];
   }
-  endParagraph();
+  endParagraph(text.length);
 
   // Drop a single trailing empty paragraph left by a terminating CR.
   if (paras.length > 1 && paragraphText(paras[paras.length - 1]!).length === 0) paras.pop();
@@ -2082,6 +2106,19 @@ function expandCharProps(charRuns: ReadonlyArray<CharRun>, textLen: number): Arr
   return out;
 }
 
+/** The same, for the paragraph runs: the run that covers each character. */
+function expandParaProps(
+  paraRuns: ReadonlyArray<ParaRun>,
+  textLen: number,
+): Array<ParaRun | undefined> {
+  const out: Array<ParaRun | undefined> = [];
+  for (const run of paraRuns) {
+    for (let i = 0; i < run.count && out.length < textLen; i++) out.push(run);
+  }
+  while (out.length < textLen) out.push(paraRuns[paraRuns.length - 1]);
+  return out;
+}
+
 // StyleTextPropAtom (§2.9.1): a paragraph-run section then a character-run
 // section, each summing to the text length + 1 (the phantom paragraph
 // terminator). Within a run, optional fields follow the masks in the spec's byte
@@ -2110,6 +2147,8 @@ function parseStyleTextProp(
       ...(pf.align !== undefined ? { align: pf.align } : {}),
       ...(pf.bullet !== undefined ? { bullet: pf.bullet } : {}),
       ...(pf.bulletOn !== undefined ? { bulletOn: pf.bulletOn } : {}),
+      ...(pf.leftMarginPt !== undefined ? { leftMarginPt: pf.leftMarginPt } : {}),
+      ...(pf.indentPt !== undefined ? { indentPt: pf.indentPt } : {}),
     });
     consumed += count;
     if (count <= 0) break;
@@ -2141,12 +2180,16 @@ function readPfException(
   align?: number;
   bullet?: string;
   bulletOn?: boolean;
+  leftMarginPt?: number;
+  indentPt?: number;
 } {
   const mask = u32(data, start);
   let off = start + 4;
   let align: number | undefined;
   let bulletOn: boolean | undefined;
   let bullet: string | undefined;
+  let leftMarginPt: number | undefined;
+  let indentPt: number | undefined;
   if ((mask & 0x0000000f) !== 0) {
     bulletOn = (u16(data, off) & 0x0001) !== 0; // bulletFlags.fHasBullet
     off += 2;
@@ -2165,8 +2208,18 @@ function readPfException(
   if ((mask & 0x00001000) !== 0) off += 2; // lineSpacing
   if ((mask & 0x00002000) !== 0) off += 2; // spaceBefore
   if ((mask & 0x00004000) !== 0) off += 2; // spaceAfter
-  if ((mask & 0x00000100) !== 0) off += 2; // leftMargin
-  if ((mask & 0x00000400) !== 0) off += 2; // indent
+  // §2.9.20 — the indents are MASTER UNITS, 576 to the inch, so eight to the
+  // point. `leftMargin` is where the paragraph's body sits and `indent` where
+  // its FIRST line starts: a bullet hangs when the first line starts left of
+  // the body, which is how every outline level in every deck is set.
+  if ((mask & 0x00000100) !== 0) {
+    leftMarginPt = u16(data, off) / 8;
+    off += 2;
+  }
+  if ((mask & 0x00000400) !== 0) {
+    indentPt = u16(data, off) / 8;
+    off += 2;
+  }
   if ((mask & 0x00008000) !== 0) off += 2; // defaultTabSize
   if ((mask & 0x00100000) !== 0) off += 2 + (off + 2 <= data.length ? u16(data, off) : 0) * 4; // tabStops
   if ((mask & 0x00010000) !== 0) off += 2; // fontAlign
@@ -2177,6 +2230,8 @@ function readPfException(
     ...(align !== undefined ? { align } : {}),
     ...(bullet !== undefined ? { bullet } : {}),
     ...(bulletOn !== undefined ? { bulletOn } : {}),
+    ...(leftMarginPt !== undefined ? { leftMarginPt } : {}),
+    ...(indentPt !== undefined ? { indentPt } : {}),
   };
 }
 

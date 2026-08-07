@@ -232,7 +232,13 @@ function bulletedRuns(para: PptParagraph): Array<Run> {
   const runs = para.runs.map(toRun);
   if (para.bullet === undefined) return runs;
   const { bold: _b, italic: _i, ...rest } = runs[0]?.properties ?? {};
-  return [{ text: `${para.bullet} `, properties: rest }, ...runs];
+  // The bullet sits at the paragraph's FIRST-LINE indent and its words at the
+  // body indent, a TAB between them carrying the one to the other — that is
+  // what makes an outline hang, and the tab machinery already treats a hanging
+  // indent as a stop of its own. A paragraph with no hang has nowhere to tab
+  // to, so a space separates them.
+  const gap = hangs(para) ? '\t' : ' ';
+  return [{ text: `${para.bullet}${gap}`, properties: rest }, ...runs];
 }
 
 // A slide's background → a page-sized shape behind the content. A picture
@@ -548,11 +554,22 @@ function toRun(r: PptRun): Run {
 function toParaProperties(p: PptParagraph, breakBefore: boolean): ParagraphProperties {
   const alignment = p.align !== undefined ? alignmentFrom(p.align) : undefined;
   const level = p.level ?? 0;
+  // §2.9.20 — a paragraph placed by its own margins is placed by them; only one
+  // that states none (nor inherits any from its master) falls back to a flat
+  // indent per outline level.
+  const leftPt = p.leftMarginPt ?? (level > 0 ? level * LEVEL_INDENT_PT : undefined);
+  const firstPt = p.indentPt !== undefined ? p.indentPt - (leftPt ?? 0) : undefined;
   return {
     ...(breakBefore ? { pageBreakBefore: true } : {}),
     ...(alignment ? { alignment } : {}),
-    ...(level > 0 ? { indentLeft: pt(level * LEVEL_INDENT_PT) } : {}),
+    ...(leftPt !== undefined ? { indentLeft: pt(leftPt) } : {}),
+    ...(firstPt !== undefined && firstPt !== 0 ? { indentFirstLine: pt(firstPt) } : {}),
   };
+}
+
+/** Whether the paragraph's first line starts LEFT of its body — a hanging bullet. */
+function hangs(p: PptParagraph): boolean {
+  return p.indentPt !== undefined && p.leftMarginPt !== undefined && p.indentPt < p.leftMarginPt;
 }
 
 // PowerPoint TextAlignmentEnum → the document-model alignment (0 = left default).

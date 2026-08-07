@@ -229,6 +229,48 @@ describe('ppt reader formatting (PPT-2)', () => {
     expect(paras[1]!.paragraph.runs.map((r) => r.text).join('')).toBe('Body');
     expect(paras[1]!.paragraph.runs[0]!.properties.bold).toBeFalsy();
   });
+
+  it('spreads ONE paragraph run over every paragraph its characters cover', () => {
+    // §2.9.20 — a paragraph run's count is CHARACTERS, not paragraphs, and a
+    // placeholder's whole outline is routinely one run. Taken as one run per
+    // paragraph, everything after the first fell through to the master's style:
+    // 41246-1.ppt's body came out flush right because its master says so and
+    // the slide's own "left" only ever reached its opening bullet.
+    const doc = readPpt(
+      buildPpt([{ text: 'One\rTwo\rThree', paraRuns: [{ length: 13, align: 1 }] }]),
+    ).doc;
+    const paras = doc.body.filter((el) => el.kind === 'paragraph');
+    expect(paras.map((p) => p.paragraph.runs.map((r) => r.text).join(''))).toEqual([
+      'One',
+      'Two',
+      'Three',
+    ]);
+    expect(paras.map((p) => p.paragraph.properties.alignment)).toEqual([
+      'center',
+      'center',
+      'center',
+    ]);
+  });
+
+  it('hangs a bullet on the margins the paragraph states', () => {
+    // §2.9.20 leftMargin / indent, in master units — eight to the point. The
+    // body sits at 34pt and the first line starts at 8.5pt, so the bullet hangs
+    // 25.5pt out and a TAB carries the words back to the body.
+    const doc = readPpt(
+      buildPpt([
+        {
+          text: 'Hanging',
+          paraRuns: [
+            { length: 7, leftMargin: 272, indent: 68, hasBullet: true, bulletChar: 0x2022 },
+          ],
+        },
+      ]),
+    ).doc;
+    const para = firstParagraph(doc);
+    expect(para.properties.indentLeft).toBe(34);
+    expect(para.properties.indentFirstLine).toBe(-25.5);
+    expect(para.runs[0]!.text).toBe('•\t');
+  });
 });
 
 describe('ppt reader images (PPT-3)', () => {

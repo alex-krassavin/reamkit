@@ -113,6 +113,9 @@ export interface PptParaStyleRun {
   // font's — Wingdings 0x6C is the filled circle).
   readonly hasBullet?: boolean;
   readonly bulletChar?: number;
+  /** §2.9.20 leftMargin / indent, in MASTER UNITS — 576 to the inch, eight to the point. */
+  readonly leftMargin?: number;
+  readonly indent?: number;
 }
 
 export interface PptSlideInput {
@@ -343,12 +346,16 @@ function buildStyleTextProp(
     const mask =
       (r.align !== undefined ? 0x00000800 : 0) | // textAlignment bit
       (r.hasBullet !== undefined ? 0x00000001 : 0) | // bulletFlags
-      (r.bulletChar !== undefined ? 0x00000080 : 0); // bulletChar
+      (r.bulletChar !== undefined ? 0x00000080 : 0) | // bulletChar
+      (r.leftMargin !== undefined ? 0x00000100 : 0) |
+      (r.indent !== undefined ? 0x00000400 : 0);
     u32(mask);
     // The fields follow the mask in the SPEC's byte order, not bit order.
     if (r.hasBullet !== undefined) u16(r.hasBullet ? 0x0001 : 0);
     if (r.bulletChar !== undefined) u16(r.bulletChar);
     if (r.align !== undefined) u16(r.align);
+    if (r.leftMargin !== undefined) u16(r.leftMargin);
+    if (r.indent !== undefined) u16(r.indent);
   });
 
   charRuns.forEach((r, i) => {
