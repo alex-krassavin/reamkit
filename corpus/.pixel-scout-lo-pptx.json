@@ -1,12 +1,17 @@
 [
  {
   "name": "activex_picture.pptx",
-  "score": 0.3344,
+  "score": 0.3197,
   "aligned": true
  },
  {
   "name": "tdf128596.pptx",
   "score": 0.3079,
+  "aligned": true
+ },
+ {
+  "name": "control_background_color.pptx",
+  "score": 0.2683,
   "aligned": true
  },
  {
@@ -150,11 +155,6 @@
   "aligned": true
  },
  {
-  "name": "activex_commandbutton.pptx",
-  "score": 0.0738,
-  "aligned": true
- },
- {
   "name": "smartart-background-drawingml-fallback.pptx",
   "score": 0.0734,
   "aligned": true
@@ -235,11 +235,6 @@
   "aligned": true
  },
  {
-  "name": "activex_spinbutton.pptx",
-  "score": 0.0515,
-  "aligned": true
- },
- {
   "name": "tdf140865Wordart3D.pptx",
   "score": 0.0512,
   "aligned": true
@@ -270,18 +265,8 @@
   "aligned": true
  },
  {
-  "name": "activex_label.pptx",
-  "score": 0.0413,
-  "aligned": true
- },
- {
   "name": "page_transparent_bitmap.pptx",
   "score": 0.0404,
-  "aligned": true
- },
- {
-  "name": "activex_textbox.pptx",
-  "score": 0.0403,
   "aligned": true
  },
  {
@@ -292,6 +277,11 @@
  {
   "name": "tdf156718.pptx",
   "score": 0.0395,
+  "aligned": true
+ },
+ {
+  "name": "activex_textbox.pptx",
+  "score": 0.039,
   "aligned": true
  },
  {
@@ -315,8 +305,8 @@
   "aligned": true
  },
  {
-  "name": "activex_listbox.pptx",
-  "score": 0.0372,
+  "name": "activex_commandbutton.pptx",
+  "score": 0.0368,
   "aligned": true
  },
  {
@@ -360,12 +350,12 @@
   "aligned": true
  },
  {
-  "name": "activex_togglebutton.pptx",
-  "score": 0.0303,
+  "name": "tdf157793.pptx",
+  "score": 0.0299,
   "aligned": true
  },
  {
-  "name": "tdf157793.pptx",
+  "name": "activex_checkbox.pptx",
   "score": 0.0299,
   "aligned": true
  },
@@ -377,6 +367,11 @@
  {
   "name": "bnc910045.pptx",
   "score": 0.028,
+  "aligned": true
+ },
+ {
+  "name": "activex_togglebutton.pptx",
+  "score": 0.0264,
   "aligned": true
  },
  {
@@ -405,8 +400,8 @@
   "aligned": true
  },
  {
-  "name": "activex_scrollbar.pptx",
-  "score": 0.0225,
+  "name": "activex_spinbutton.pptx",
+  "score": 0.0236,
   "aligned": true
  },
  {
@@ -450,6 +445,11 @@
   "aligned": true
  },
  {
+  "name": "activex_scrollbar.pptx",
+  "score": 0.0197,
+  "aligned": true
+ },
+ {
   "name": "tdf156649.pptx",
   "score": 0.0197,
   "aligned": true
@@ -487,6 +487,11 @@
  {
   "name": "smartart-cycle.pptx",
   "score": 0.0164,
+  "aligned": true
+ },
+ {
+  "name": "activex_optionbutton.pptx",
+  "score": 0.0163,
   "aligned": true
  },
  {
@@ -600,11 +605,6 @@
   "aligned": true
  },
  {
-  "name": "control_background_color.pptx",
-  "score": 0.011,
-  "aligned": true
- },
- {
   "name": "tdf157216.pptx",
   "score": 0.0108,
   "aligned": true
@@ -660,11 +660,6 @@
   "aligned": true
  },
  {
-  "name": "activex_combobox.pptx",
-  "score": 0.0095,
-  "aligned": true
- },
- {
   "name": "tdf152070.pptx",
   "score": 0.0094,
   "aligned": true
@@ -690,8 +685,8 @@
   "aligned": true
  },
  {
-  "name": "activex_fontproperties.pptx",
-  "score": 0.0082,
+  "name": "activex_combobox.pptx",
+  "score": 0.0084,
   "aligned": true
  },
  {
@@ -772,6 +767,11 @@
  {
   "name": "tdf140852.pptx",
   "score": 0.0067,
+  "aligned": true
+ },
+ {
+  "name": "activex_label.pptx",
+  "score": 0.0066,
   "aligned": true
  },
  {
@@ -1000,11 +1000,6 @@
   "aligned": true
  },
  {
-  "name": "activex_optionbutton.pptx",
-  "score": 0.003,
-  "aligned": true
- },
- {
   "name": "tdf146731.pptx",
   "score": 0.003,
   "aligned": true
@@ -1025,12 +1020,12 @@
   "aligned": true
  },
  {
-  "name": "activex_checkbox.pptx",
-  "score": 0.0029,
+  "name": "tdf104789.pptx",
+  "score": 0.0028,
   "aligned": true
  },
  {
-  "name": "tdf104789.pptx",
+  "name": "activex_listbox.pptx",
   "score": 0.0028,
   "aligned": true
  },
@@ -1446,6 +1441,11 @@
  },
  {
   "name": "tdf129686.pptx",
+  "score": 0.0008,
+  "aligned": true
+ },
+ {
+  "name": "activex_fontproperties.pptx",
   "score": 0.0008,
   "aligned": true
  },

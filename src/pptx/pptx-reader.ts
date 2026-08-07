@@ -294,7 +294,32 @@ function parseSlide(
   // page, whatever KIND each of them is (§19.3.1).
   out.push(...inheritedShapes.map(asBackdrop));
   if (spTree) out.push(...parseSlideShapes(spTree, shapeCtx));
+  out.push(...parseSlideControls(cSld, shapeCtx));
   return out;
+}
+
+/**
+ * §19.3.1.15 `p:controls` — the ActiveX controls a slide carries.
+ *
+ * They sit BESIDE the shape tree rather than in it, so a reader that walks
+ * `p:spTree` alone never sees them. Each one's `mc:Fallback` is a `p:pic` of
+ * what the control looks like — the picture PowerPoint cached precisely so that
+ * a reader which cannot run the control still draws it — and by the time the
+ * slide is parsed the alternate content is already resolved to that fallback.
+ * activex_picture.pptx is seventeen of them over an EMPTY `p:spTree`, and it
+ * rendered as a blank page.
+ *
+ * @param cSld The slide's `p:cSld`.
+ * @param ctx  The slide's parsing context.
+ * @returns The controls' cached pictures as ordinary floating pictures.
+ */
+function parseSlideControls(cSld: PoNode | undefined, ctx: SlideContext): Array<BodyElement> {
+  const controls = cSld ? poChildren(cSld).find((c) => poIs(c, 'p:controls')) : undefined;
+  if (!controls) return [];
+  const pics = poChildren(controls).flatMap((c) =>
+    poIs(c, 'p:control') ? poChildren(c).filter((k) => poIs(k, 'p:pic')) : [],
+  );
+  return pics.length === 0 ? [] : parseSlideShapes({ 'p:spTree': pics }, ctx);
 }
 
 // A layout's or master's p:cSld/p:bg → its background fill (PX5b). A picture

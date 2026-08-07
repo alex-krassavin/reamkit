@@ -2241,3 +2241,49 @@ describe('a shape whose text shrinks to fit it', () => {
     expect(await sizeOf('<a:bodyPr><a:normAutofit fontScale="40000"/></a:bodyPr>')).toBe(26);
   });
 });
+
+// §19.3.1.15 `p:controls` — an ActiveX control sits BESIDE the shape tree, and
+// its `mc:Fallback` is the picture a reader that cannot run it should draw.
+describe('pptx slide: ActiveX controls', () => {
+  const CONTROLS =
+    `<p:controls>` +
+    `<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">` +
+    `<mc:Choice xmlns:v="urn:schemas-microsoft-com:vml" Requires="v">` +
+    `<p:control spid="1" name="CommandButton1" r:id="rId9" imgW="1828800" imgH="1085760"/>` +
+    `</mc:Choice>` +
+    `<mc:Fallback>` +
+    `<p:control name="CommandButton1" r:id="rId9" imgW="1828800" imgH="1085760">` +
+    `<p:pic><p:nvPicPr><p:cNvPr id="8" name="CommandButton1"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>` +
+    `<p:blipFill><a:blip r:embed="rIdCtl"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
+    `<p:spPr><a:xfrm><a:off x="1000000" y="500000"/><a:ext cx="1828800" cy="1085760"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>` +
+    `</p:control>` +
+    `</mc:Fallback>` +
+    `</mc:AlternateContent>` +
+    `</p:controls>`;
+
+  const deck = (): Uint8Array =>
+    buildPptx([''], {
+      slideControls: [CONTROLS],
+      media: { 'ppt/media/ctl.png': buildTinyPng(2, 2, [0, 0, 255, 255]) },
+      slideRels: [
+        `<Relationship Id="rIdCtl" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/ctl.png"/>`,
+      ],
+    });
+
+  it("draws a control's cached picture, though the shape tree is empty", () => {
+    // The control is not in `p:spTree` at all, so a reader that walks only that
+    // tree drew a blank page — activex_picture.pptx is seventeen of them over
+    // an empty tree.
+    const doc = Ream.parse(deck());
+    const pics = doc.flow.body.filter((e) => e.kind === 'image');
+    expect(pics).toHaveLength(1);
+    const only = pics[0];
+    // Placed where the fallback picture's own transform puts it, floating, as
+    // any other picture on the slide would be.
+    if (only?.kind !== 'image') throw new Error('no picture');
+    const float = only.image.float;
+    expect(float?.posH?.offsetPt).toBeCloseTo(1000000 / 12700, 5);
+    expect(float?.posV?.offsetPt).toBeCloseTo(500000 / 12700, 5);
+  });
+});
