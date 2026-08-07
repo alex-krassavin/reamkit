@@ -663,14 +663,14 @@ describe('SmartArt: what the file states for itself', () => {
     expect(xml).not.toContain('<a:buChar char="•"/>');
   });
 
-  it("carries the author's own bold through, but not their size", () => {
+  it("carries the author's own bold and their own size", () => {
     const data = dataXml([['Parent', []]]).replace(
       '<a:r><a:t>Parent',
       '<a:r><a:rPr b="1" sz="900"/><a:t>Parent',
     );
     const xml = diagramDrawingXml(run(PICTURE_LIST, data), { cx: CX, cy: CY });
     expect(xml).toContain(' b="1"');
-    expect(xml).not.toContain('sz="900"');
+    expect(xml).toContain('sz="900"');
   });
 });
 
@@ -894,5 +894,34 @@ describe('SmartArt: a row of several boxes', () => {
     const nodes = run(stacked, dataXml([['1', ['A']]]));
     expect(nodes).toHaveLength(1);
     expect(nodes[0]?.cx).toBeCloseTo(CX, 5);
+  });
+});
+
+// §21.4.3 — where a run's point size starts. The layout's `primFontSz` is the
+// answer only when the run does not give one of its own.
+describe('SmartArt: the run states its own size where it has one', () => {
+  const SIZED = layoutXml(
+    `<dgm:alg type="lin"><dgm:param type="linDir" val="fromT"/></dgm:alg>
+     <dgm:constrLst>
+       <dgm:constr type="w" for="ch" forName="node" refType="w"/>
+       <dgm:constr type="primFontSz" for="ch" forName="node" val="65"/>
+     </dgm:constrLst>
+     <dgm:forEach name="each" axis="ch" ptType="node">
+       <dgm:layoutNode name="node"><dgm:alg type="tx"/><dgm:shape type="rect"/></dgm:layoutNode>
+     </dgm:forEach>`,
+  );
+
+  it("keeps the run's own size over the layout's", () => {
+    const data = dataXml([['P1', []]]).replace('<a:r><a:t>P1', '<a:r><a:rPr sz="1600"/><a:t>P1');
+    const xml = diagramDrawingXml(run(SIZED, data), { cx: CX, cy: CY });
+    // customGeo.pptx proves the order: its data says 3600 and the drawing
+    // PowerPoint cached kept 3600 where it fitted, never 6500.
+    expect(xml).toContain('sz="1600"');
+    expect(xml).not.toContain('sz="6500"');
+  });
+
+  it("falls back to the layout's size when the run states none", () => {
+    const xml = diagramDrawingXml(run(SIZED, dataXml([['P1', []]])), { cx: CX, cy: CY });
+    expect(xml).toContain('sz="6500"');
   });
 });

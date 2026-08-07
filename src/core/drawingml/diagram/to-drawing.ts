@@ -86,17 +86,27 @@ function bodyXml(node: LaidNode, textFill?: string): string {
       if (!poIs(r, 'a:r')) continue;
       const text = poText(poChildren(r).find((c) => poIs(c, 'a:t')));
       if (text !== '') {
-        // §21.4.3 — the layout states the point size (`primFontSz` for a node's
+        const src = poChildren(r).find((c) => poIs(c, 'a:rPr'));
+        // §21.4.3 — the layout states a point size (`primFontSz` for a node's
         // own label, `secFontSz` for its descendants'), and it is a large one:
         // a diagram's text fills its box rather than sitting at the deck's
-        // default, which is why every box read small. It is a MAXIMUM — the
-        // `normAutofit` below is what brings it down to what fits.
+        // default. But it is only where the size starts when the RUN does not
+        // state one of its own, and the run usually does. The drawings
+        // PowerPoint itself cached prove it: customGeo.pptx writes `3600` in its
+        // data and PowerPoint kept 3600 where it fitted and wrote 2500 and 3100
+        // where it did not, while the files whose data names no size at all are
+        // the ones it filled with 36pt to 65pt. Imposing 65 on every run set a
+        // 16pt label three times over.
+        const stated = poAttr(src, 'sz');
         const sz =
-          node.fontSizePt === undefined ? '' : ` sz="${Math.round(node.fontSizePt * 100)}"`;
-        // Size and colour are the style's to give, but bold and italic are the
-        // author's own emphasis — smartart-missing-bullet sets `b="1"` on its
-        // heading and nothing else in the file says so.
-        const src = poChildren(r).find((c) => poIs(c, 'a:rPr'));
+          stated !== undefined
+            ? ` sz="${esc(stated)}"`
+            : node.fontSizePt === undefined
+              ? ''
+              : ` sz="${Math.round(node.fontSizePt * 100)}"`;
+        // Bold and italic are the author's own emphasis in the same way —
+        // smartart-missing-bullet sets `b="1"` on its heading and nothing else
+        // in the file says so.
         const emph = (['b', 'i', 'u'] as const)
           .map((a) => {
             const v = poAttr(src, a);

@@ -495,6 +495,11 @@
   "aligned": true
  },
  {
+  "name": "fdo79822.docx",
+  "score": 0.013,
+  "aligned": true
+ },
+ {
   "name": "custom-styles-TOC-semicolon.docx",
   "score": 0.0127,
   "aligned": true
@@ -538,11 +543,6 @@
   "name": "fdo78883.docx",
   "score": 0.012,
   "aligned": false
- },
- {
-  "name": "fdo79822.docx",
-  "score": 0.012,
-  "aligned": true
  },
  {
   "name": "negative-cell-margin-twips.docx",
