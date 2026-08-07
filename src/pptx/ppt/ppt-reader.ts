@@ -268,7 +268,9 @@ function backdropFill(bg: PptBackground, resources: ResourceStore): ShapeFill | 
     return {
       kind: 'picture',
       imageResource: resources.put(bg.image.bytes),
-      ...(bg.imageTiled ? { tiled: true } : {}),
+      // MS-ODRAW §2.3.7.13 — a texture's grid is centred on the shape, where
+      // DrawingML's is pinned to its top-left corner.
+      ...(bg.imageTiled ? { tiled: true, tileFromCentre: true } : {}),
     };
   }
   if (bg.gradient) {
@@ -431,7 +433,7 @@ function positionedAutoShape(
       ? {
           kind: 'picture',
           imageResource: resources.put(auto.image.bytes),
-          ...(auto.imageTiled ? { tiled: true } : {}),
+          ...(auto.imageTiled ? { tiled: true, tileFromCentre: true } : {}),
           ...(auto.tileSizePt ? { tileSizePt: auto.tileSizePt } : {}),
         }
       : auto.gradient

@@ -519,6 +519,8 @@ interface ShapeBlockLaidOut {
    * when it repeats over the box rather than stretching across it.
    */
   readonly fillImageTile?: { readonly widthPt: number; readonly heightPt: number };
+  /** Whether that grid of copies is centred on the box rather than cornered. */
+  readonly fillImageTileFromCentre?: boolean;
   /** §20.1.8.30 — the part of that picture the box shows. */
   readonly fillImageCrop?: ImageCrop;
   readonly stroke?: StrokeStyle;
@@ -2811,6 +2813,9 @@ function layoutShapeBlock(
     ...(markerPaths.length > 0 ? { markerPaths } : {}),
     ...(fillImageResourceName ? { fillImageResourceName } : {}),
     ...(fillImageTile ? { fillImageTile } : {}),
+    ...(fillImageTile && shape.fill.kind === 'picture' && shape.fill.tileFromCentre === true
+      ? { fillImageTileFromCentre: true }
+      : {}),
     ...(fillImageResourceName && shape.fill.imageCrop
       ? { fillImageCrop: shape.fill.imageCrop }
       : {}),
@@ -4048,12 +4053,17 @@ function emitShapeItems(
     // two text boxes with a texture and stretched it came out a brown blur.
     const tile = sh.fillImageTile;
     if (tile) {
-      for (const item of PageAssembler.tileItems(sh.fillImageResourceName, tile, {
-        x,
-        y: pageHeight - (bottomYUp + sh.heightPt),
-        width: sh.widthPt,
-        height: sh.heightPt,
-      })) {
+      for (const item of PageAssembler.tileItems(
+        sh.fillImageResourceName,
+        tile,
+        {
+          x,
+          y: pageHeight - (bottomYUp + sh.heightPt),
+          width: sh.widthPt,
+          height: sh.heightPt,
+        },
+        sh.fillImageTileFromCentre === true,
+      )) {
         if (item.type !== 'image') continue;
         sink.push({
           ...item,
@@ -8219,18 +8229,32 @@ class PageAssembler {
     resourceName: string,
     natural: { widthPt: number; heightPt: number },
     box: { x: number; y: number; width: number; height: number },
+    fromCentre = false,
   ): Array<PageItem> => {
     const tw = Math.max(1, natural.widthPt);
     const th = Math.max(1, natural.heightPt);
-    const cols = Math.min(200, Math.ceil(box.width / tw));
-    const rows = Math.min(200, Math.ceil(box.height / th));
+    // Where the FIRST copy starts. Pinned to the corner the grid simply runs
+    // from it; centred, one copy is centred on the box and the rest step out
+    // from that one, so a copy larger than the box shows the picture's MIDDLE
+    // and not its corner (119877's tiled photographs are three times the cell
+    // they paper, and cornered they came out as a patch of empty sky).
+    const first = (start: number, span: number, step: number): number => {
+      if (!fromCentre) return start;
+      let at = start + span / 2 - step / 2;
+      while (at > start) at -= step;
+      return at;
+    };
+    const x0 = first(box.x, box.width, tw);
+    const y0 = first(box.y, box.height, th);
+    const cols = Math.min(200, Math.max(1, Math.ceil((box.x + box.width - x0) / tw)));
+    const rows = Math.min(200, Math.max(1, Math.ceil((box.y + box.height - y0) / th)));
     const out: Array<PageItem> = [];
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         out.push({
           type: 'image',
-          x: pt(box.x + c * tw),
-          y: pt(box.y + r * th),
+          x: pt(x0 + c * tw),
+          y: pt(y0 + r * th),
           width: pt(tw),
           height: pt(th),
           imageResourceName: resourceName,

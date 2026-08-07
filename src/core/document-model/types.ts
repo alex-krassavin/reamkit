@@ -1196,6 +1196,16 @@ export interface ShapeFill {
    */
   readonly tileScale?: { readonly sx: number; readonly sy: number };
   /**
+   * Where the grid of copies is anchored. DrawingML pins it to the shape's
+   * top-left corner (§20.1.8.58 `a:tile @algn`, which defaults to `tl`); an
+   * MS-ODRAW texture fill (§2.3.7.13 `fillOriginX`/`fillOriginY`, both
+   * defaulting to nothing) centres it on the shape instead. It only shows when
+   * the copies do not divide the box evenly — and it shows most when ONE copy
+   * is larger than the box, where the difference is which part of the picture
+   * is visible at all.
+   */
+  readonly tileFromCentre?: boolean;
+  /**
    * §20.1.8.14 `a:blipFill` — the picture painted across the shape's box. A
    * DrawingML picture IS a shape with one of these, which is how a `pic:pic`
    * inside a group reaches the page.

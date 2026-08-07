@@ -1264,6 +1264,19 @@ describe('ppt tile size (PPT-20)', () => {
       },
     ]);
 
+  it('centres the grid of copies on the shape, not on its corner', () => {
+    // MS-ODRAW §2.3.7.13 — a texture's origin is the shape's CENTRE, where
+    // DrawingML pins the grid to the top-left corner (§20.1.8.58 `@algn`).
+    // It shows most when one copy is LARGER than the shape: cornered, the box
+    // shows the picture's corner, and 119877's tiled photographs came out as a
+    // patch of empty sky where every reader shows the middle of the picture.
+    const fill = readPpt(deck()).doc.body.flatMap((el) =>
+      el.kind === 'shape' && el.shape.fill.kind === 'picture' ? [el.shape.fill] : [],
+    )[0];
+    expect(fill?.tiled).toBe(true);
+    expect(fill?.tileFromCentre).toBe(true);
+  });
+
   it('reads the size the shape states for one copy', () => {
     // 25.4mm × 12.7mm in EMU → 72pt × 36pt.
     const auto = extractPptContent(deck([914400, 457200])).slides[0]!.shapes[0]!.autoShape;

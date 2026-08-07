@@ -438,6 +438,27 @@ describe('a tiled picture fill (§14.1.2.5 type="tile" / §20.1.8.58 a:tile)', (
     expect(first.height).toBeCloseTo(6, 1); // 1.5pt × 4
   });
 
+  it('pins a DrawingML grid to the box’s corner', () => {
+    // §20.1.8.58 `a:tile @algn` defaults to `tl`: the first copy starts where
+    // the box does, and a partial copy is left over at the far edge.
+    const drawn = images(tiled(blip('<a:tile tx="0" ty="0"/>'))) as unknown as Array<{
+      x: number;
+      y: number;
+    }>;
+    // No copy starts before the box: the grid opens exactly at its corner, and
+    // whatever does not divide evenly is left over at the FAR edge. The
+    // MS-ODRAW texture of a `.ppt` centres its grid instead, which is what
+    // turned 119877's tiled photographs from a patch of empty sky into the
+    // picture LibreOffice draws.
+    const shape = layoutOf(tiled(blip('<a:tile tx="0" ty="0"/>'))).pages[0]!.commands.find(
+      (c) => c.type === 'shape',
+    );
+    const box = shape?.type === 'shape' ? shape.shape.transform : undefined;
+    expect(box).toBeDefined();
+    expect(Math.min(...drawn.map((d) => d.x))).toBeCloseTo(box![4], 0);
+    expect(drawn.every((d) => d.x >= box![4] - 0.01)).toBe(true);
+  });
+
   it('…and a stretched one is still the single picture it was', () => {
     const drawn = images(tiled(blip('<a:stretch><a:fillRect/></a:stretch>')));
     expect(drawn.length).toBe(1);
