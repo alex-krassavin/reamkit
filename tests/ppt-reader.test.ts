@@ -1264,6 +1264,89 @@ describe('ppt tile size (PPT-20)', () => {
       },
     ]);
 
+  it('draws the date and footer the deck states, in the master’s own boxes', () => {
+    // §2.4.15 — the strings live in the DOCUMENT and the boxes that draw them
+    // are placeholders on the MASTER, so a reader with one and not the other
+    // draws an empty band. 37625.ppt signs every slide "Transport CDM
+    // Workshop" and dates it "26 August 2004" this way.
+    // mask 0x25 = fHasDate | fHasUserDate | fHasFooter — no slide number.
+    const signed = (mask: number): Uint8Array =>
+      buildPpt(
+        [{ text: 'Body', masterIndex: 0, followMasterObjects: true, followMasterScheme: true }],
+        {
+          headersFooters: { mask, userDate: '26 August 2004', footer: 'Transport CDM Workshop' },
+          masters: [
+            {
+              colorScheme: [
+                'FFFFFF',
+                '40458C',
+                '000000',
+                '000000',
+                '000000',
+                '000000',
+                '000000',
+                '000000',
+              ],
+              boxes: [
+                { anchor: { x: 6, y: 510, w: 150, h: 36 }, placeholderId: 7 },
+                { anchor: { x: 516, y: 510, w: 150, h: 36 }, placeholderId: 8 },
+                { anchor: { x: 228, y: 510, w: 228, h: 36 }, placeholderId: 9 },
+              ],
+            },
+          ],
+        },
+      );
+    const drawn = (mask: number): Array<string> =>
+      extractPptContent(signed(mask))
+        .slides[0]!.shapes.flatMap((sh) => sh.paragraphs ?? [])
+        .map((p) => paragraphText(p))
+        .filter((t) => t !== '' && t !== 'Body');
+    expect(drawn(0x25)).toEqual(['26 August 2004', 'Transport CDM Workshop']);
+    // The slide number is its own switch, and its text is the slide's ordinal.
+    expect(drawn(0x25 | 0x08)).toEqual(['26 August 2004', '1', 'Transport CDM Workshop']);
+    // A deck that shows none of them draws none of the boxes: a master's
+    // placeholder is a prototype, not decoration.
+    expect(drawn(0)).toEqual([]);
+    // …and a date the deck does NOT state for itself is the day the file is
+    // opened, which a converter must not answer — it would put a different
+    // date in the output every time it ran.
+    expect(drawn(0x01 | 0x02)).toEqual([]);
+  });
+
+  it('colours the furniture with the scheme’s own text colour', () => {
+    // §2.12.2 — slot 1 of a colour scheme IS "text and lines". The master's
+    // furniture boxes state a size and an alignment and no colour at all, so
+    // left to the default the footer came out black on a deck whose every other
+    // word is navy.
+    const content = extractPptContent(
+      buildPpt(
+        [{ text: 'Body', masterIndex: 0, followMasterObjects: true, followMasterScheme: true }],
+        {
+          headersFooters: { mask: 0x20, footer: 'Signed' },
+          masters: [
+            {
+              colorScheme: [
+                'FFFFFF',
+                '40458C',
+                '000000',
+                '000000',
+                '000000',
+                '000000',
+                '000000',
+                '000000',
+              ],
+              boxes: [{ anchor: { x: 228, y: 510, w: 228, h: 36 }, placeholderId: 9 }],
+            },
+          ],
+        },
+      ),
+    );
+    const run = content.slides[0]!.shapes.flatMap((sh) => sh.paragraphs ?? [])
+      .flatMap((p) => p.runs)
+      .find((r) => r.text === 'Signed');
+    expect(run?.colorHex).toBe('40458C');
+  });
+
   it('keeps a rule, which has no area at all', () => {
     // §2.2.39 — a vertical rule is zero wide and a horizontal one zero tall,
     // and both are perfectly good shapes. Demanding area of every child

@@ -61,6 +61,10 @@ const PROP_FILL_BLIP_COMPLEX = 0x8186; // fillBlip with fComplex: the blip follo
 const FBT_BLIP_PNG_INLINE = 0xf01e;
 const FBT_CLIENT_DATA = 0xf011;
 const RT_PLACEHOLDER_ATOM = 0x0bc3;
+const RT_HEADERS_FOOTERS = 0x0fd9;
+const RT_HEADERS_FOOTERS_ATOM = 0x0fda;
+const RT_CSTRING = 0x0fba;
+const HF_INSTANCE_SLIDES = 0x003;
 const FBT_BLIP_PNG = 0xf01e;
 const PROP_PIB_ID = 0x4104; // OPT property id: pib (0x0104) with the fBid flag (0x4000)
 const PROP_FILL_COLOR = 0x0181;
@@ -173,6 +177,8 @@ export interface PptBoxInput {
   // An OfficeArtClientData holding a PlaceholderAtom: on a master this shape is
   // a prototype, not decoration (PPT-14).
   readonly placeholder?: boolean;
+  // §2.9.51 OEPlaceholderAtom.placeholderId — 7 date, 8 slide number, 9 footer.
+  readonly placeholderId?: number;
   // MS-ODRAW fBackground: the shape states the SLIDE's background, not content.
   readonly background?: boolean;
   readonly lineColorHex?: string; // OPT lineColor (6-hex literal RGB)
@@ -243,6 +249,13 @@ export interface BuildPptOptions {
   readonly omitCurrentUser?: boolean;
   // Deck images, stored in the Pictures stream and referenced by slide imageRef.
   readonly images?: ReadonlyArray<Uint8Array>;
+  // §2.4.15 — the deck-wide HeadersFootersContainer for slides (recInstance 3):
+  // which parts are shown, plus the date and footer strings.
+  readonly headersFooters?: {
+    readonly mask: number;
+    readonly userDate?: string;
+    readonly footer?: string;
+  };
   // Slide masters, each persisted as a MainMasterContainer with its own colour
   // scheme — referenced by a slide's followMasterScheme + masterIndex (PPT-6).
   readonly masters?: ReadonlyArray<{
@@ -434,7 +447,27 @@ export function buildPpt(
       ? rec(RT_DRAWING_GROUP, 0, true, rec(FBT_DGG_CONTAINER, 0, true, buildBStore(foDelays)))
       : new Uint8Array(0);
 
-  const docData = concat([docAtom, fontCollection(opts.fonts ?? []), drawingGroup, slwt]);
+  const hf = opts.headersFooters;
+  const hfRec = hf
+    ? rec(
+        RT_HEADERS_FOOTERS,
+        HF_INSTANCE_SLIDES,
+        true,
+        concat([
+          rec(
+            RT_HEADERS_FOOTERS_ATOM,
+            0,
+            false,
+            new Uint8Array([0, 0, hf.mask & 0xff, hf.mask >> 8]),
+          ),
+          ...(hf.userDate !== undefined
+            ? [rec(RT_CSTRING, 0, false, encodeUtf16(hf.userDate))]
+            : []),
+          ...(hf.footer !== undefined ? [rec(RT_CSTRING, 2, false, encodeUtf16(hf.footer))] : []),
+        ]),
+      )
+    : new Uint8Array(0);
+  const docData = concat([docAtom, fontCollection(opts.fonts ?? []), drawingGroup, hfRec, slwt]);
   const docRec = rec(RT_DOCUMENT, 0, true, docData);
 
   // --- one SlideContainer per slide, carrying its inline drawing text and any
@@ -733,8 +766,9 @@ function buildShapeContainer(box: PptBoxInput): Uint8Array {
       rec(FBT_CLIENT_TEXTBOX, 0, true, rec(RT_TEXT_CHARS_ATOM, 0, false, encodeUtf16(box.text))),
     );
   }
-  if (box.placeholder) {
-    const ph = new Uint8Array(8); // position (4), placementId, size, unused
+  if (box.placeholder || box.placeholderId !== undefined) {
+    const ph = new Uint8Array(8); // position (4), placeholderId, size, unused
+    ph[4] = box.placeholderId ?? 0;
     parts.push(rec(FBT_CLIENT_DATA, 0, true, rec(RT_PLACEHOLDER_ATOM, 0, false, ph)));
   }
   if (box.text === undefined && box.outlineRef !== undefined) {

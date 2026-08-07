@@ -70,6 +70,24 @@ const FBT_SPGR_CONTAINER = 0xf003; // a group: its own shape first, then its chi
 const FBT_SPGR = 0xf009; // the group's coordinate space, which its children live in
 const FBT_CHILD_ANCHOR = 0xf00f; // a grouped shape's rectangle, in that space
 const RT_PLACEHOLDER_ATOM = 0x0bc3; // PlaceholderAtom — this shape is a placeholder
+const RT_HEADERS_FOOTERS = 0x0fd9; // HeadersFootersContainer (§2.4.15)
+const RT_HEADERS_FOOTERS_ATOM = 0x0fda; // HeadersFootersAtom — which parts are shown
+const RT_CSTRING = 0x0fba; // CString — one of the strings that container holds
+// §2.4.15 `rh.recInstance`: 0x000 on a slide's own container, 0x003 on the
+// deck-wide one for slides, 0x004 for notes pages.
+const HF_INSTANCE_PER_SLIDE = 0x000;
+const HF_INSTANCE_SLIDES = 0x003;
+// §2.4.16 HeadersFootersAtom.formatAndFlags.
+const HF_HAS_DATE = 0x0001;
+const HF_HAS_USER_DATE = 0x0004;
+const HF_HAS_SLIDE_NUMBER = 0x0008;
+const HF_HAS_FOOTER = 0x0020;
+// §2.13.24 PlaceholderEnum — the three a master keeps for the slide's furniture.
+const PLACEHOLDER_DATE = 7;
+const PLACEHOLDER_SLIDE_NUMBER = 8;
+const PLACEHOLDER_FOOTER = 9;
+// §2.12.2 SlideSchemeColorSchemeAtom — slot 1 is "text and lines".
+const SCHEME_TEXT_AND_LINES = 1;
 const PROP_PIB = 0x0104; // OPT property (low 14 bits): 1-based index into the FBSE store
 const PROP_FILL_TYPE = 0x0180; // OPT fillType — MSOFILLTYPE (PPT-9)
 const PROP_FILL_COLOR = 0x0181; // OPT fillColor (PPT-5)
@@ -271,6 +289,13 @@ export interface PptShape {
    * of them would carry "Click to edit Master title style".
    */
   readonly placeholder?: boolean;
+  /**
+   * §2.9.51 `OEPlaceholderAtom.placeholderId` — WHICH placeholder it is. The
+   * three a master keeps for the slide's furniture — 7 the date, 8 the slide
+   * number, 9 the footer — are the only ones whose text does not live in the
+   * shape at all (§2.4.15).
+   */
+  readonly placeholderId?: number;
   readonly paragraphs?: ReadonlyArray<PptParagraph>;
   readonly image?: PptImage;
   readonly autoShape?: PptAutoShape;
@@ -529,6 +554,8 @@ function readSlideList(
     cache: new Map(),
   };
 
+  const deckFurniture = headersFooters(docData, HF_INSTANCE_SLIDES);
+
   const flush = (): void => {
     if (pendingRef === undefined) return;
     const slideOff = persist.get(pendingRef);
@@ -553,8 +580,20 @@ function readSlideList(
     const background = isSlide
       ? (masterBackground(slideRec.data, masters, img) ?? content.background)
       : undefined;
+    // §2.4.15 — the date, number and footer the slide shows. A slide may state
+    // its own; otherwise it takes the deck's, which is the usual case.
+    const own = isSlide ? headersFooters(slideRec.data, HF_INSTANCE_PER_SLIDE) : undefined;
+    const furniture: SlideFurniture | undefined =
+      (own ?? deckFurniture)
+        ? {
+            ...((own ?? deckFurniture) as Omit<SlideFurniture, 'number'>),
+            number: slides.length + 1,
+          }
+        : undefined;
     // The master's decoration goes under everything the slide draws itself.
-    const decoration = isSlide ? masterShapes(slideRec.data, masters, img) : [];
+    const decoration = isSlide
+      ? masterShapes(slideRec.data, masters, img, furniture, defaults)
+      : [];
     slides.push({
       shapes: [...decoration, ...content.shapes],
       ...(background ? { background } : {}),
@@ -829,15 +868,18 @@ function collectShapeContainers(
       let tileSizePt: PptAutoShape['tileSizePt'];
       let gtext: PptParagraph | undefined;
       let placeholder = false;
+      let placeholderId: number | undefined;
       for (const child of records(r.data)) {
         if (child.type === FBT_FSP) {
           shapeType = child.instance;
           fspFlags = child.data.length >= 8 ? u32(child.data, 4) : 0;
         } else if (child.type === FBT_CLIENT_ANCHOR) rectPt = parseAnchor(child.data);
         else if (child.type === FBT_CHILD_ANCHOR && group) rectPt = childRect(child.data, group);
-        else if (child.type === FBT_CLIENT_DATA)
-          placeholder = findChild(child.data, (c) => c.type === RT_PLACEHOLDER_ATOM) !== undefined;
-        else if (child.type === FBT_CLIENT_TEXTBOX)
+        else if (child.type === FBT_CLIENT_DATA) {
+          const ph = findChild(child.data, (c) => c.type === RT_PLACEHOLDER_ATOM);
+          placeholder = ph !== undefined;
+          placeholderId = ph !== undefined && ph.length > 4 ? ph[4] : undefined;
+        } else if (child.type === FBT_CLIENT_TEXTBOX)
           paragraphs = clientTextboxParagraphs(child.data, outline, defaults, env);
         else if (child.type === FBT_OPT) {
           pib = optProperty(child.data, child.instance, PROP_PIB);
@@ -923,11 +965,20 @@ function collectShapeContainers(
               ...(geometry ? { geometry } : {}),
             }
           : undefined;
-      if (textParas || image || autoShape) {
+      // A furniture placeholder is kept even with nothing in it: its words are
+      // the DECK's (§2.4.15) and are filled in against the master, so a box
+      // dropped here for being empty is a footer that never appears. It draws
+      // nothing until it is filled.
+      const furnitureBox =
+        placeholderId === PLACEHOLDER_DATE ||
+        placeholderId === PLACEHOLDER_SLIDE_NUMBER ||
+        placeholderId === PLACEHOLDER_FOOTER;
+      if (textParas || image || autoShape || furnitureBox) {
         out.shapes.push({
           ...(rectPt ? { rectPt } : {}),
           ...(gtext ? { wordArt: true } : {}),
           ...(placeholder ? { placeholder: true } : {}),
+          ...(placeholderId !== undefined ? { placeholderId } : {}),
           ...(textParas ? { paragraphs: textParas } : {}),
           ...(image ? { image } : {}),
           ...(autoShape ? { autoShape } : {}),
@@ -1120,14 +1171,134 @@ function masterShapes(
   slideData: Uint8Array,
   ctx: MasterContext,
   img: ImageContext,
+  furniture?: SlideFurniture,
+  defaults?: MasterDefaults,
 ): Array<PptShape> {
   if (!slideFlag(slideData, SLIDE_FLAG_MASTER_OBJECTS)) return [];
   const master = masterOf(slideData, ctx);
   if (!master) return [];
   const scheme = resolveScheme(master.data, ctx);
-  return collectShapes(master.data, img, scheme ? { scheme } : {}).shapes.filter(
-    (s) => s.placeholder !== true && s.rectPt !== undefined,
-  );
+  // The master's own text takes the master's own styles — that is what a style
+  // IS. Its furniture boxes state a size and an alignment and no colour at all,
+  // and left to the default the footer came out black where every reader draws
+  // it in the scheme's own text colour.
+  const shapes = collectShapes(
+    master.data,
+    img,
+    scheme ? { scheme } : {},
+    [],
+    defaults,
+  ).shapes.filter((s) => s.rectPt !== undefined);
+  return shapes.flatMap((s) => {
+    // A master's placeholder is a PROTOTYPE, not decoration — drawn as it
+    // stands, every slide would carry "Click to edit Master title style".
+    if (s.placeholder !== true) return [s];
+    // …except the three that hold the slide's furniture. Their text is not in
+    // the shape at all: the box is the master's and the words are the deck's
+    // (§2.4.15), which is why reading one without the other draws nothing.
+    const text = furniture ? furnitureText(s.placeholderId, furniture) : undefined;
+    return text === undefined
+      ? []
+      : [{ ...s, paragraphs: [furnitureParagraph(s, text, scheme?.[SCHEME_TEXT_AND_LINES])] }];
+  });
+}
+
+/** What a slide shows in its date, number and footer boxes. */
+interface SlideFurniture {
+  readonly mask: number;
+  readonly userDate?: string;
+  readonly footer?: string;
+  readonly number: number;
+}
+
+/**
+ * §2.4.15/§2.4.16 — the string one furniture placeholder shows, or `undefined`
+ * when this deck does not show that one at all.
+ *
+ * A date box is only drawn when the deck states the date ITSELF: `fHasTodayDate`
+ * asks for the day the file is opened, and a converter that answered it would
+ * put a different date in the file every time it ran.
+ */
+function furnitureText(id: number | undefined, hf: SlideFurniture): string | undefined {
+  if (id === PLACEHOLDER_FOOTER) {
+    return (hf.mask & HF_HAS_FOOTER) !== 0 ? (hf.footer ?? '') || undefined : undefined;
+  }
+  if (id === PLACEHOLDER_SLIDE_NUMBER) {
+    return (hf.mask & HF_HAS_SLIDE_NUMBER) !== 0 ? String(hf.number) : undefined;
+  }
+  if (id === PLACEHOLDER_DATE) {
+    const shown = (hf.mask & HF_HAS_DATE) !== 0 && (hf.mask & HF_HAS_USER_DATE) !== 0;
+    return shown ? (hf.userDate ?? '') || undefined : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * The furniture's words, in the formatting the master's own box carries.
+ *
+ * A `.ppt` master keeps no prompt text in these boxes, so there is usually no
+ * run to copy from and the paragraph takes the master's defaults; where one IS
+ * there, its size, colour and alignment are what PowerPoint draws the footer in.
+ */
+function furnitureParagraph(
+  shape: PptShape,
+  text: string,
+  textColorHex: string | undefined,
+): PptParagraph {
+  const model = shape.paragraphs?.find((p) => p.runs.length > 0);
+  const first = model?.runs[0];
+  return {
+    ...(model ? { ...model } : {}),
+    // §2.12.2 — slot 1 of a colour scheme IS "text and lines", and it is what
+    // text that states no colour of its own is drawn in. The master's furniture
+    // boxes state a size and an alignment and stop there, so left to the
+    // default they came out black on a deck whose every other word is navy.
+    runs: [
+      { ...(textColorHex !== undefined ? { colorHex: textColorHex } : {}), ...(first ?? {}), text },
+    ],
+  };
+}
+
+/**
+ * §2.4.15 `HeadersFootersContainer` — the strings a deck shows on every slide,
+ * and which of them it shows.
+ *
+ * They live nowhere near the boxes that draw them: the geometry is a
+ * placeholder on the MASTER and the words are here, so a reader that has one
+ * without the other draws an empty band. 37625.ppt's every slide is signed
+ * "Transport CDM Workshop" and dated "26 August 2004" this way.
+ *
+ * @param data     A DocumentContainer's or SlideContainer's records.
+ * @param instance Which container to read — the deck's or the slide's own.
+ * @returns The mask and the strings, or `undefined` when there is no container.
+ */
+function headersFooters(
+  data: Uint8Array,
+  instance: number,
+): Omit<SlideFurniture, 'number'> | undefined {
+  for (const rec of records(data)) {
+    if (rec.type !== RT_HEADERS_FOOTERS || rec.instance !== instance) continue;
+    let mask = 0;
+    let userDate: string | undefined;
+    let footer: string | undefined;
+    for (const child of records(rec.data)) {
+      if (child.type === RT_HEADERS_FOOTERS_ATOM && child.data.length >= 4) {
+        mask = child.data[2]! | (child.data[3]! << 8);
+      } else if (child.type === RT_CSTRING) {
+        // §2.4.15 — the instance says which string this is: 0 the date the deck
+        // states for itself, 1 the header, 2 the footer.
+        const s = utf16Property(child.data);
+        if (child.instance === 0) userDate = s;
+        else if (child.instance === 2) footer = s;
+      }
+    }
+    return {
+      mask,
+      ...(userDate !== undefined ? { userDate } : {}),
+      ...(footer !== undefined ? { footer } : {}),
+    };
+  }
+  return undefined;
 }
 
 // The background of the master a slide follows, when the slide states none of
