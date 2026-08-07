@@ -224,8 +224,17 @@ const DIGIT_EM: ReadonlyArray<readonly [RegExp, number]> = [
   [/^(verdana|dejavu sans)$/i, 1303 / 2048],
   // A CJK face keeps its Latin digits HALF-WIDTH — half the em, where a Latin
   // face's is a little over a half. Unknown, they fell back to Excel's 7px and
-  // 12843-1's twelve-point PMingLiU columns came out 14 % narrow, which is why
-  // LibreOffice printed that workbook on seventy-eight pages to our forty-nine.
+  // 12843-1's twelve-point PMingLiU columns came out 14 % narrow.
+  //
+  // What is LEFT of that file's gap is NOT ours, and measuring it settles a
+  // question worth not re-opening: 12843-1 prints on 55 pages here and 78 in
+  // LibreOffice, and LO's every column is 1.105–1.117× ours. Solving both
+  // sides' `px = chars × MDW + padding` off two columns gives LO an MDW of
+  // 8.92px where ours is 8 — 0.5575 em at 12pt, which is Arial's digit
+  // (1139/2048), and LO's own PDF says why: it embeds ArialUnicodeMS for
+  // 新細明體, a face it does not have. Excel measures the real PMingLiU's
+  // half-width digit. Ours is Excel's number; do not widen it to chase the
+  // reference.
   [
     new RegExp(
       '^(' +

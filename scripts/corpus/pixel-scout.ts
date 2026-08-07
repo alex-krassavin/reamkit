@@ -44,6 +44,16 @@ import { Ream } from '@/core/converter/ream';
 // whole and charge the difference to layout.
 const FONT_OPTIONS = corpusFontOptions();
 
+// Which line breaker to render with. Ream's own default is Knuth-Plass
+// total-fit; Word and LibreOffice break greedily, so a tight box can break one
+// word differently for a reason that is not a fidelity gap. Set
+// CORPUS_LAYOUT_PROFILE=libreoffice to take the reference's breaker and measure
+// only what is left.
+const LAYOUT_PROFILE = ((): 'ream' | 'word' | 'libreoffice' | undefined => {
+  const v = process.env['CORPUS_LAYOUT_PROFILE'];
+  return v === 'ream' || v === 'word' || v === 'libreoffice' ? v : undefined;
+})();
+
 // Enough to see a missing block, a wrong fill or a shifted column; not enough
 // to rank on anti-aliasing. A4 at 60 dpi is ~500×700.
 const DEFAULT_DPI = 60;
@@ -127,6 +137,7 @@ async function main(): Promise<void> {
         await Ream.parse(new Uint8Array(readFileSync(src))).convert('pdf', {
           fileName: basename(src),
           ...FONT_OPTIONS,
+          ...(LAYOUT_PROFILE !== undefined ? { layoutProfile: LAYOUT_PROFILE } : {}),
         }),
       );
     } catch (e) {
