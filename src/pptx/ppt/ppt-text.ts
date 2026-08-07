@@ -50,6 +50,7 @@ const RT_OUTLINE_TEXT_REF_ATOM = 0x0f9e; // OutlineTextRefAtom — points at the
 const RT_TEXT_MASTER_STYLE_ATOM = 0x0fa3; // TextMasterStyleAtom — a master's per-level defaults
 const RT_SLIDE_ATOM = 0x03ef; // SlideAtom — carries masterIdRef + slideFlags (PPT-6)
 const RT_MAIN_MASTER = 0x03f8; // MainMasterContainer — its colour scheme is inherited
+const RT_ENVIRONMENT = 0x03f2; // DocumentTextInfoContainer — the deck-wide text defaults
 const RT_FONT_COLLECTION = 0x07d5; // FontCollectionContainer — the deck's typefaces
 const RT_FONT_ENTITY_ATOM = 0x0fb7; // FontEntityAtom — one typeface, by index
 const RT_COLOR_SCHEME_ATOM = 0x07f0; // SlideSchemeColorSchemeAtom — the 8-colour scheme
@@ -564,6 +565,7 @@ function readSlideList(
     stream,
     byMasterId: buildMasterIdMap(docData),
     cache: new Map(),
+    documentStyles: parseDocumentTextStyles(docData, fonts),
   };
 
   const deckFurniture = headersFooters(docData, HF_INSTANCE_SLIDES);
@@ -659,8 +661,12 @@ function collectParagraphs(
   return out;
 }
 
-// A plain text box states no text type; PowerPoint styles it as "other".
-const TEXT_TYPE_OTHER = 3;
+// §2.13.33 TextTypeEnum — a plain text box states no text type, and the style
+// PowerPoint gives it is "other". The enum SKIPS 3: it runs 0 title, 1 body,
+// 2 notes, then 4 other, 5 centreBody, 6 centreTitle, 7 halfBody, 8 quarterBody.
+// 38256.ppt's own master proves the numbering — it carries instances 0, 1, 2, 4,
+// 5, 6, 7 and 8, and none for 3.
+const TEXT_TYPE_OTHER = 4;
 
 const levelStyles = (
   defaults: MasterDefaults | undefined,
@@ -1048,6 +1054,27 @@ function parseFontCollection(docData: Uint8Array): Array<string> {
 }
 
 // §2.9.42 TextMasterStyleAtom — one per text type (the recInstance), holding a
+/**
+ * §2.9.3 — the DECK's own text styles, from the document's text info.
+ *
+ * A master states the styles its placeholders take; the style a TEXT BOX drawn
+ * on a slide takes — `Tx_TYPE_OTHER` — is stated once for the whole document
+ * and lives here instead. 38256.ppt's four captions are all of that kind, and
+ * without it they were set in the outline's 32pt Arial rather than the sizes
+ * and faces they were typed in.
+ *
+ * @param docData The DocumentContainer's body.
+ * @param fonts   The deck's typefaces, by the index a run names.
+ * @returns The level styles, by text type — in practice the one for `other`.
+ */
+function parseDocumentTextStyles(
+  docData: Uint8Array,
+  fonts: ReadonlyArray<string> | undefined,
+): Map<number, Array<LevelStyle>> {
+  const env = findDescendantContainer(docData, RT_ENVIRONMENT, 0);
+  return env ? parseMasterTextStyles(env, fonts) : new Map();
+}
+
 // TextPFException + TextCFException per indent level. The later types prefix each
 // level with its own 2-byte index; producers disagree on where that starts, so
 // both readings are tried and the one that lands on the record's end wins.
@@ -1107,12 +1134,15 @@ function readMasterLevels(
 }
 
 // §2.13.33 TextTypeEnum — a type a master may not define falls back to the plain
-// title / body style it is a variant of.
+// title / body style it is a VARIANT of. "Other" is not a variant of anything:
+// it is what a text box drawn on the slide gets, and lending it the outline's
+// style set 38256's four captions in the body's 32pt where every reader shows
+// the sizes they were typed at.
 const TEXT_TYPE_FALLBACK = new Map([
-  [4, 1], // centerBody → body
-  [5, 0], // centerTitle → title
-  [6, 1], // halfBody → body
-  [7, 1], // quarterBody → body
+  [5, 1], // centreBody → body
+  [6, 0], // centreTitle → title
+  [7, 1], // halfBody → body
+  [8, 1], // quarterBody → body
 ]);
 
 // The lookup a slide uses: its own master first, then the master that one
@@ -1136,10 +1166,13 @@ function masterDefaults(
         // because its run says so, and black and unbulleted because no style
         // claims it — lending the body style's navy and its dot there painted a
         // title every reader draws as a plain black line.
-        // The space AROUND a paragraph goes with them: it is the outline's own
-        // rhythm, not a metric. 119877's yellow caption is a centreBody its
-        // master never defines, and lending it the outline's 8pt before opened
-        // a gap between every line of it that no reader shows.
+        // How a paragraph is SET goes with them — its margins and the space
+        // around it are the outline's own shape, not a metric. 119877's yellow
+        // caption and all four of 38256's captions are centreBodies their
+        // masters never define; lending them the outline's 8pt-before opened a
+        // gap between every line, and its 27pt hanging indent pushed the text
+        // out of the box it is drawn in. LibreOffice reads `algn="ctr"` and
+        // nothing else for every one of them.
         const {
           colorHex: _c,
           colorIndex: _i,
@@ -1148,6 +1181,8 @@ function masterDefaults(
           spaceBeforePt: _sb,
           spaceAfterPt: _sa,
           lineSpacing: _ls,
+          leftMarginPt: _lm,
+          indentPt: _ip,
           ...metrics
         } = at;
         const from = t === textType ? at : metrics;
@@ -1360,6 +1395,9 @@ function masterChain(
 ): MasterDefaults {
   const chain: Array<Map<number, Array<LevelStyle>>> = [];
   if (!ctx) return masterDefaults(chain, scheme);
+  // The deck's own styles sit BEHIND every master's — a master that states the
+  // same thing is nearer and wins.
+  const behind = ctx.documentStyles;
   let data: Uint8Array | undefined = slideData;
   const seen = new Set<number>();
   for (let hop = 0; hop < 4 && data; hop++) {
@@ -1382,6 +1420,7 @@ function masterChain(
     }
     data = rec.type === RT_SLIDE ? rec.data : undefined; // a main master ends the walk
   }
+  if (behind.size > 0) chain.push(behind);
   return masterDefaults(chain, scheme);
 }
 
@@ -1392,6 +1431,8 @@ interface MasterContext {
   readonly stream: Uint8Array;
   readonly byMasterId: Map<number, number>;
   readonly cache: Map<number, Map<number, Array<LevelStyle>>>;
+  /** §2.9.3 — the DECK's own text styles, behind every master's. */
+  readonly documentStyles: Map<number, Array<LevelStyle>>;
 }
 
 // Where a group sits on the slide, and the coordinate space its children's

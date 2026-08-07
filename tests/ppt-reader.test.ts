@@ -846,7 +846,7 @@ describe('ppt master text styles (PPT-11)', () => {
         [
           {
             masterIndex: 0,
-            outlineTexts: [{ textType: 5, text: 'Centred' }],
+            outlineTexts: [{ textType: 6, text: 'Centred' }], // centreTitle
             boxes: [{ anchor: { x: 10, y: 10, w: 400, h: 60 }, outlineRef: 0 }],
           },
         ],
@@ -870,6 +870,35 @@ describe('ppt master text styles (PPT-11)', () => {
       ),
     ).slides[0]!;
     expect(slide.shapes[0]?.paragraphs?.[0]?.runs[0]?.sizePt).toBe(44);
+  });
+
+  it('styles a plain text box from the DECK, not from the outline', () => {
+    // §2.13.33 skips 3: the enum runs 0 title, 1 body, 2 notes, then 4 other,
+    // 5 centreBody, … 8 quarterBody. "Other" is what a text box drawn on a
+    // slide takes, and §2.9.3 keeps its style in the document's own text info,
+    // not in any master. 38256.ppt's four captions are all of that kind; read
+    // as a body variant they were set in the outline's 32pt instead of the 24
+    // they were typed at.
+    const bytes = buildPpt(
+      [
+        {
+          masterIndex: 0,
+          text: 'Caption',
+          boxes: [{ anchor: { x: 10, y: 10, w: 300, h: 40 } }],
+        },
+      ],
+      {
+        deckTextStyles: [{ textType: 4, sizesPt: [24] }],
+        masters: [
+          {
+            colorScheme: ['FFFFFF', '000000', '808080', '000000', 'F00', '0F0', '00F', 'FF0'],
+            textStyles: [{ textType: 1, sizesPt: [32] }],
+          },
+        ],
+      },
+    );
+    const para = extractPptContent(bytes).slides[0]?.shapes[0]?.paragraphs?.[0];
+    expect(para?.runs[0]?.sizePt).toBe(24);
   });
 });
 
@@ -1188,9 +1217,10 @@ describe('ppt scheme-coloured text (PPT-16)', () => {
           masters: [{ colorScheme: scheme, textStyles: [{ textType: 1, sizesPt: [24] }] }],
         },
       );
-    // Exact type: the size comes through. The variant (4 → body) takes it too…
+    // Exact type: the size comes through. The variant (5 centreBody → body)
+    // takes it too…
     expect(runOf(deck(1))?.sizePt).toBe(24);
-    expect(runOf(deck(4))?.sizePt).toBe(24);
+    expect(runOf(deck(5))?.sizePt).toBe(24);
   });
 
   const runOf = (bytes: Uint8Array): PptRun | undefined =>
@@ -1617,8 +1647,10 @@ describe('ppt outline bullets from the master (PPT-22)', () => {
         masters: [
           {
             colorScheme: scheme,
-            // Wingdings 0x6C at level 0, an en dash at level 1.
-            textStyles: [{ textType: 3, sizesPt: [24, 20], bulletChars: [0x6c, 0x2013] }],
+            // Wingdings 0x6C at level 0, an en dash at level 1. Type 4 is
+            // `other` (§2.13.33 skips 3), which is what a box with no text
+            // header takes.
+            textStyles: [{ textType: 4, sizesPt: [24, 20], bulletChars: [0x6c, 0x2013] }],
           },
         ],
       },

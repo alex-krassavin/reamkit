@@ -263,6 +263,10 @@ export interface BuildPptOptions {
     readonly userDate?: string;
     readonly footer?: string;
   };
+  // §2.9.3 — the DECK's own text styles, in the document's text info. This is
+  // where the style for `Tx_TYPE_OTHER` lives: what a text box drawn on a slide
+  // takes, which no master states.
+  readonly deckTextStyles?: PptDeckStyles;
   // Slide masters, each persisted as a MainMasterContainer with its own colour
   // scheme — referenced by a slide's followMasterScheme + masterIndex (PPT-6).
   readonly masters?: ReadonlyArray<{
@@ -281,6 +285,16 @@ export interface BuildPptOptions {
     }>;
   }>;
 }
+
+/** TextMasterStyleAtoms: per text type, the font size of each indent level. */
+type PptDeckStyles = ReadonlyArray<{
+  readonly textType: number;
+  readonly sizesPt: ReadonlyArray<number>;
+  /** The font-collection index every level of this style names (PPT-19). */
+  readonly fontRef?: number;
+  /** A bullet CHARACTER per level, with no fHasBullet flag beside it (PPT-18). */
+  readonly bulletChars?: ReadonlyArray<number>;
+}>;
 
 // Build an 8-byte record header + data. A container uses recVer 0xF (low nibble);
 // atoms use recVer 0. recInstance occupies the high 12 bits of the first u16.
@@ -484,7 +498,13 @@ export function buildPpt(
         ]),
       )
     : new Uint8Array(0);
-  const docData = concat([docAtom, fontCollection(opts.fonts ?? []), drawingGroup, hfRec, slwt]);
+  const docData = concat([
+    docAtom,
+    environment(opts.fonts ?? [], opts.deckTextStyles ?? []),
+    drawingGroup,
+    hfRec,
+    slwt,
+  ]);
   const docRec = rec(RT_DOCUMENT, 0, true, docData);
 
   // --- one SlideContainer per slide, carrying its inline drawing text and any
@@ -842,19 +862,26 @@ function schemeColorRef(index: number): number {
   return ((index & 0xff) | (COLORREF_FLAG_SCHEME << 24)) >>> 0;
 }
 
-// The DocumentTextInfo (RT_Environment) holding a FontCollectionContainer: one
+// The DocumentTextInfo (RT_Environment): a FontCollectionContainer — one
 // FontEntityAtom per typeface, its lfFaceName 32 UTF-16 units NUL-terminated,
-// its recInstance the index a run's `fontRef` names (PPT-19).
-function fontCollection(fonts: ReadonlyArray<string>): Uint8Array {
-  if (fonts.length === 0) return new Uint8Array(0);
-  const atoms = fonts.map((name, i) => {
-    const d = new Uint8Array(68);
-    const v = new DataView(d.buffer);
-    for (let c = 0; c < Math.min(name.length, 31); c++)
-      v.setUint16(c * 2, name.charCodeAt(c), true);
-    return rec(RT_FONT_ENTITY_ATOM, i, false, d);
-  });
-  return rec(RT_ENVIRONMENT, 0, true, rec(RT_FONT_COLLECTION, 0, true, concat(atoms)));
+// its recInstance the index a run's `fontRef` names (PPT-19) — and the deck-wide
+// TextMasterStyleAtoms, which is where §2.9.3 keeps the style for `Tx_TYPE_OTHER`.
+function environment(fonts: ReadonlyArray<string>, deckTextStyles: PptDeckStyles): Uint8Array {
+  const parts: Array<Uint8Array> = [];
+  if (fonts.length > 0) {
+    const atoms = fonts.map((name, i) => {
+      const d = new Uint8Array(68);
+      const v = new DataView(d.buffer);
+      for (let c = 0; c < Math.min(name.length, 31); c++)
+        v.setUint16(c * 2, name.charCodeAt(c), true);
+      return rec(RT_FONT_ENTITY_ATOM, i, false, d);
+    });
+    parts.push(rec(RT_FONT_COLLECTION, 0, true, concat(atoms)));
+  }
+  for (const st of deckTextStyles)
+    parts.push(textMasterStyleAtom(st.textType, st.sizesPt, st.fontRef, st.bulletChars));
+  if (parts.length === 0) return new Uint8Array(0);
+  return rec(RT_ENVIRONMENT, 0, true, concat(parts));
 }
 
 // A SlideAtom (§2.4.24): a 24-byte body with masterIdRef at offset 12 and
