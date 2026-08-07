@@ -117,6 +117,102 @@ export function presetPaths(
     }
     case 'pentagon':
       return [regularPolygon(w, h, 5)];
+    // §20.1.10.55 — the regular polygons the gallery names by their side count.
+    // An odd one stands on a vertex, an even one on a flat edge, which is the
+    // half-step of rotation between them.
+    case 'heptagon':
+      return [regularPolygon(w, h, 7)];
+    case 'octagon':
+      return [regularPolygon(w, h, 8, Math.PI / 8)];
+    case 'decagon':
+      return [regularPolygon(w, h, 10, Math.PI / 10)];
+    case 'dodecagon':
+      return [regularPolygon(w, h, 12, Math.PI / 12)];
+    // A ring and a rectangular frame are each one shape with a HOLE, which is
+    // an inner subpath wound the same way and filled even-odd.
+    case 'donut': {
+      const t = clamp(frac(adjust, 'adj', 25000), 0, 0.5) * Math.min(w, h);
+      const b = new PathBuilder().append(ellipseSegments(w, h));
+      const [ix, iy] = [w / 2 - t, h / 2 - t];
+      if (ix > 0 && iy > 0) {
+        b.moveTo(w / 2 + ix, h / 2).append(arcToBeziers(w / 2, h / 2, ix, iy, 0, 2 * Math.PI));
+        b.close();
+      }
+      return [b.build('evenodd')];
+    }
+    case 'frame': {
+      const t = clamp(frac(adjust, 'adj', 12500), 0, 0.5) * Math.min(w, h);
+      const b = new PathBuilder()
+        .moveTo(0, 0)
+        .lineTo(w, 0)
+        .lineTo(w, h)
+        .lineTo(0, h)
+        .close()
+        .moveTo(t, t)
+        .lineTo(w - t, t)
+        .lineTo(w - t, h - t)
+        .lineTo(t, h - t)
+        .close();
+      return [b.build('evenodd')];
+    }
+    // A band laid across the box corner to corner: the fraction it names is how
+    // far along each edge it starts.
+    case 'diagStripe': {
+      const a = clamp(frac(adjust, 'adj', 50000), 0, 1);
+      return [
+        polygon([
+          [0, h - h * a],
+          [w * a, h],
+          [w, h],
+          [0, 0],
+        ]),
+      ];
+    }
+    // A circle with one quadrant pulled out to the corner of the box.
+    case 'teardrop': {
+      const a = clamp(frac(adjust, 'adj', 100000), 0, 2);
+      const [rx, ry] = [w / 2, h / 2];
+      const b = new PathBuilder()
+        .moveTo(rx, h)
+        .append(arcToBeziers(rx, ry, rx, ry, Math.PI / 2, (3 * Math.PI) / 2))
+        .lineTo(w * (0.5 + a / 2), h * (0.5 + a / 2))
+        .close();
+      return [b.build()];
+    }
+    // A cylinder seen from the side: the body under an ellipse, and the ellipse
+    // drawn again on top so its near edge shows.
+    case 'can': {
+      const ry = (clamp(frac(adjust, 'adj', 25000), 0, 0.5) * h) / 2;
+      const [rx, cx] = [w / 2, w / 2];
+      const body = new PathBuilder()
+        .moveTo(0, ry)
+        .lineTo(0, h - ry)
+        .append(arcToBeziers(cx, h - ry, rx, ry, Math.PI, -Math.PI))
+        .lineTo(w, ry)
+        .append(arcToBeziers(cx, ry, rx, ry, 0, -Math.PI))
+        .close()
+        .build();
+      return [body, { segments: ellipseSegments(w, 2 * ry).map(shiftY(h - 2 * ry)) }];
+    }
+    // A rectangle whose corners are cut IN rather than off — the quarter circle
+    // is centred outside the shape, so it bites into it.
+    case 'plaque': {
+      const t = clamp(frac(adjust, 'adj', 16667), 0, 0.5) * Math.min(w, h);
+      // Each quarter circle is centred ON the box corner, so it bites inwards;
+      // centred inside, the same radius rounds the corner off instead.
+      const b = new PathBuilder()
+        .moveTo(t, 0)
+        .lineTo(w - t, 0)
+        .append(arcToBeziers(w, 0, t, t, Math.PI, -Math.PI / 2))
+        .lineTo(w, h - t)
+        .append(arcToBeziers(w, h, t, t, (3 * Math.PI) / 2, -Math.PI / 2))
+        .lineTo(t, h)
+        .append(arcToBeziers(0, h, t, t, 0, -Math.PI / 2))
+        .lineTo(0, t)
+        .append(arcToBeziers(0, 0, t, t, Math.PI / 2, -Math.PI / 2))
+        .close();
+      return [b.build()];
+    }
     case 'hexagon': {
       const inset = clamp(frac(adjust, 'adj', 25000) * w, 0, w / 2);
       return [
@@ -784,17 +880,31 @@ function star(
 }
 
 // Regular n-gon inscribed in the box, first vertex at the top (pointing up).
-function regularPolygon(w: number, h: number, n: number): VectorPath {
+function regularPolygon(w: number, h: number, n: number, turn = 0): VectorPath {
   const cx = w / 2;
   const cy = h / 2;
   const rx = w / 2;
   const ry = h / 2;
   const pts: Array<readonly [number, number]> = [];
   for (let i = 0; i < n; i++) {
-    const a = Math.PI / 2 + (i * 2 * Math.PI) / n;
+    const a = Math.PI / 2 + turn + (i * 2 * Math.PI) / n;
     pts.push([cx + rx * Math.cos(a), cy + ry * Math.sin(a)]);
   }
   return polygon(pts);
+}
+
+// A segment moved up the local frame, for a path built at the origin and set
+// somewhere else in the box.
+function shiftY(dy: number): (seg: PathSegment) => PathSegment {
+  return (seg) =>
+    seg.op === 'close'
+      ? seg
+      : {
+          ...seg,
+          y: seg.y + dy,
+          ...('y1' in seg ? { y1: seg.y1 + dy } : {}),
+          ...('y2' in seg ? { y2: seg.y2 + dy } : {}),
+        };
 }
 
 // Single-headed block arrow. adj1 = body thickness fraction (default 0.5),

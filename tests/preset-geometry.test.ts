@@ -279,3 +279,60 @@ describe('customPaths (custGeom)', () => {
     expect(last.y).toBeCloseTo(0, 4);
   });
 });
+
+// §20.1.10.55 — the gallery shapes a deck reaches for that used to degrade to
+// the bounding rectangle. tdf114848.pptx draws one of each.
+describe('the gallery presets that were rectangles', () => {
+  const NEW = [
+    'heptagon',
+    'octagon',
+    'decagon',
+    'dodecagon',
+    'donut',
+    'frame',
+    'diagStripe',
+    'teardrop',
+    'can',
+    'plaque',
+  ];
+
+  it('knows every one of them', () => {
+    for (const p of NEW) expect(presetPaths(p, W, H, new Map()), p).not.toBeNull();
+  });
+
+  it('gives a polygon its side count, and stands an even one on a flat edge', () => {
+    const corners = (p: string): number =>
+      presetPaths(p, W, H, new Map())![0]!.segments.filter((s) => s.op === 'line').length + 1;
+    expect(corners('heptagon')).toBe(7);
+    expect(corners('decagon')).toBe(10);
+    expect(corners('dodecagon')).toBe(12);
+    // An even polygon is turned half a step so it rests on an edge: no vertex
+    // sits at the very top, where an odd one's does.
+    const top = (p: string): number =>
+      Math.max(...presetPaths(p, W, H, new Map())![0]!.segments.map((s) => ('y' in s ? s.y : 0)));
+    expect(top('heptagon')).toBeCloseTo(H, 4);
+    expect(top('decagon')).toBeLessThan(H);
+  });
+
+  it('cuts a hole in the shapes that have one', () => {
+    for (const p of ['donut', 'frame']) {
+      const path = presetPaths(p, W, H, new Map())![0]!;
+      // Two subpaths, and the inner one only counts as a hole under even-odd.
+      expect(path.fillRule, p).toBe('evenodd');
+      expect(path.segments.filter((s) => s.op === 'move').length, p).toBe(2);
+    }
+  });
+
+  it("bites a plaque's corners inwards where a round rectangle cuts them off", () => {
+    const at = (p: string): ReadonlyArray<{ x: number; y: number }> =>
+      presetPaths(p, W, H, new Map())![0]!.segments.flatMap((s) =>
+        'x' in s ? [{ x: s.x, y: s.y }] : [],
+      );
+    // Both leave the corner alone at the same distance; the plaque's curve then
+    // runs INTO the shape, so its points stay nearer the middle than the round
+    // rectangle's, which bulge back out to the edge.
+    const near = (pts: ReadonlyArray<{ x: number; y: number }>): number =>
+      Math.min(...pts.filter((q) => q.y < H / 2).map((q) => q.x + q.y));
+    expect(near(at('plaque'))).toBeGreaterThan(near(at('roundRect')));
+  });
+});
