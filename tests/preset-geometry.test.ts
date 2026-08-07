@@ -284,6 +284,8 @@ describe('customPaths (custGeom)', () => {
 // the bounding rectangle. tdf114848.pptx draws one of each.
 describe('the gallery presets that were rectangles', () => {
   const NEW = [
+    'bevel',
+    'halfFrame',
     'heptagon',
     'octagon',
     'decagon',
@@ -334,5 +336,33 @@ describe('the gallery presets that were rectangles', () => {
     const near = (pts: ReadonlyArray<{ x: number; y: number }>): number =>
       Math.min(...pts.filter((q) => q.y < H / 2).map((q) => q.x + q.y));
     expect(near(at('plaque'))).toBeGreaterThan(near(at('roundRect')));
+  });
+
+  it('mitres a half frame where its two bars meet', () => {
+    // Two bars — the top-left half of a frame — joined at the box's own
+    // diagonal, so a wide box mitres at a shallower angle than a tall one.
+    const pts = presetPaths('halfFrame', W, H, new Map())![0]!.segments.flatMap((s) =>
+      'x' in s ? [{ x: s.x, y: s.y }] : [],
+    );
+    expect(pts).toHaveLength(6);
+    // The outer corner is the box's own, and the inner one is set in by the
+    // thickness of both bars.
+    expect(pts.some((q) => q.x === 0 && q.y === 0)).toBe(true);
+    expect(pts.some((q) => q.x === W && q.y === H)).toBe(true);
+    const inner = Math.min(...pts.filter((q) => q.x > 0).map((q) => q.x));
+    expect(inner).toBeCloseTo(Math.min(W, H) / 3, 3);
+  });
+
+  it("builds a bevel's four faces round its inner rectangle", () => {
+    // PowerPoint shades each face to make the block read as raised; a shape
+    // here takes one fill, so what carries is the structure.
+    const paths = presetPaths('bevel', W, H, new Map())!;
+    expect(paths).toHaveLength(5);
+    const t = 0.125 * Math.min(W, H);
+    const last = paths[4]!.segments.flatMap((s) => ('x' in s ? [{ x: s.x, y: s.y }] : []));
+    // The inner rectangle is inset by the chamfer on every side.
+    expect(Math.min(...last.map((q) => q.x))).toBeCloseTo(t, 3);
+    expect(Math.max(...last.map((q) => q.x))).toBeCloseTo(W - t, 3);
+    expect(Math.max(...last.map((q) => q.y))).toBeCloseTo(H - t, 3);
   });
 });

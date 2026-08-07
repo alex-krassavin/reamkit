@@ -194,6 +194,65 @@ export function presetPaths(
         .build();
       return [body, { segments: ellipseSegments(w, 2 * ry).map(shiftY(h - 2 * ry)) }];
     }
+    // Two bars meeting at a mitred corner — the top-left half of a frame. Each
+    // bar's thickness is a fraction of the SHORTER side, and the mitre runs at
+    // the box's own diagonal, so it is the thickness scaled by the aspect.
+    case 'halfFrame': {
+      const ss = Math.min(w, h);
+      const x1 = clamp(frac(adjust, 'adj2', 33333), 0, 1) * ss;
+      const y1 = clamp(frac(adjust, 'adj1', 33333), 0, 1) * ss;
+      const x2 = w - (h === 0 ? 0 : (y1 * w) / h);
+      const y2 = h - (w === 0 ? 0 : (x1 * h) / w);
+      return [
+        polygon([
+          [0, 0],
+          [0, h],
+          [w, h],
+          [x2, h - y1],
+          [x1, h - y1],
+          [x1, h - y2],
+        ]),
+      ];
+    }
+    // A rectangle with its four edges chamfered inwards. PowerPoint shades each
+    // face to make it read as a raised block; a shape here takes one fill, so
+    // what carries is the STRUCTURE — the inner rectangle and the four mitres.
+    case 'bevel': {
+      const t = clamp(frac(adjust, 'adj', 12500), 0, 0.5) * Math.min(w, h);
+      const face = (pts: ReadonlyArray<readonly [number, number]>): VectorPath => polygon(pts);
+      return [
+        face([
+          [0, h],
+          [w, h],
+          [w - t, h - t],
+          [t, h - t],
+        ]),
+        face([
+          [0, h],
+          [t, h - t],
+          [t, t],
+          [0, 0],
+        ]),
+        face([
+          [w, 0],
+          [0, 0],
+          [t, t],
+          [w - t, t],
+        ]),
+        face([
+          [w, 0],
+          [w - t, t],
+          [w - t, h - t],
+          [w, h],
+        ]),
+        polygon([
+          [t, t],
+          [w - t, t],
+          [w - t, h - t],
+          [t, h - t],
+        ]),
+      ];
+    }
     // A rectangle whose corners are cut IN rather than off — the quarter circle
     // is centred outside the shape, so it bites into it.
     case 'plaque': {
