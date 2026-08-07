@@ -494,7 +494,13 @@ function splitCell(
   index: number,
 ): Array<LaidNode> {
   const child = findNamed(parent.children, childName);
-  const inner = child ? namedBoxes(child) : [];
+  // §21.4.3.2 — a box that hides its geometry and runs the space algorithm is
+  // spacing, not content, and so is never one half of a split. The vertical
+  // list family insets its label with exactly such a margin box: split against
+  // it, the node's own words went into the invisible half and vanished.
+  const inner = (child ? namedBoxes(child) : []).filter(
+    (b) => !(b.alg === 'sp' && b.hideGeom === true),
+  );
   // A size can be stated on the box itself (no `forName`), by the node that
   // lays it out, or by the top node for every descendant of that name.
   const size = (
@@ -506,14 +512,18 @@ function splitCell(
       : (fontSize(box.constrs, undefined, type) ??
         fontSize(child?.constrs ?? [], box.name, type) ??
         fontSize(parent.constrs, box.name, type));
-  const whole = (lbl: string | undefined): Array<LaidNode> => [
+  // A cell that is not divided wears the style of the one box that fills it —
+  // the box itself when the child layoutNode IS the box, and its single content
+  // box when the child is a wrapper that only insets one.
+  const face = inner.length === 1 ? inner[0] : child;
+  const whole = (): Array<LaidNode> => [
     {
       point,
-      shapeType,
-      ...(lbl !== undefined ? { styleLbl: lbl } : {}),
-      ...opt('fontSizePt', size(child, 'primFontSz')),
-      ...(child !== undefined && bulleted(child) ? { bulleted: true } : {}),
-      ...(child?.hideGeom === true ? { hideGeom: true as const } : {}),
+      shapeType: face?.shapeType ?? shapeType,
+      ...(face?.styleLbl !== undefined ? { styleLbl: face.styleLbl } : {}),
+      ...opt('fontSizePt', size(face, 'primFontSz')),
+      ...(face !== undefined && bulleted(face) ? { bulleted: true } : {}),
+      ...(face?.hideGeom === true ? { hideGeom: true as const } : {}),
       index,
       ...cell,
     },
@@ -526,7 +536,7 @@ function splitCell(
   if (child?.alg === 'composite' && inner.length > 0 && places(child.constrs)) {
     return compositeLayout(child, point, cell, data, index);
   }
-  if (!child || inner.length !== 2) return whole(child?.styleLbl);
+  if (!child || inner.length !== 2) return whole();
   const kids = data.children(point.id, 'node');
 
   const widths = inner.map((b) => sizeFact(child.constrs, b.name, 'w'));
@@ -573,7 +583,7 @@ function splitCell(
     }
     at += span;
   });
-  return out.length > 0 ? out : whole(child.styleLbl);
+  return out.length > 0 ? out : whole();
 }
 
 // Stated sizes as fractions of the whole: what is stated is kept, and what is

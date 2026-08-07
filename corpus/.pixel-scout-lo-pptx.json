@@ -5,6 +5,11 @@
   "aligned": true
  },
  {
+  "name": "smartart-linear-rule-vert.pptx",
+  "score": 0.3388,
+  "aligned": true
+ },
+ {
   "name": "activex_picture.pptx",
   "score": 0.3344,
   "aligned": true
@@ -25,13 +30,13 @@
   "aligned": true
  },
  {
-  "name": "vertical-bracket-list.pptx",
-  "score": 0.2511,
+  "name": "smartart-vertical-box-list.pptx",
+  "score": 0.2554,
   "aligned": true
  },
  {
-  "name": "smartart-linear-rule-vert.pptx",
-  "score": 0.2494,
+  "name": "vertical-bracket-list.pptx",
+  "score": 0.2511,
   "aligned": true
  },
  {
@@ -47,11 +52,6 @@
  {
   "name": "smartart-org-chart2.pptx",
   "score": 0.1889,
-  "aligned": true
- },
- {
-  "name": "smartart-vertical-box-list.pptx",
-  "score": 0.187,
   "aligned": true
  },
  {

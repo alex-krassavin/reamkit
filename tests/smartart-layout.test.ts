@@ -724,3 +724,39 @@ describe('SmartArt: the colours part draws outlines too', () => {
     expect(outlined.line(undefined, 0)).toBeUndefined();
   });
 });
+
+// §21.4.3.2 — the vertical list family insets its label with a hidden margin
+// box, which is spacing and not one half of a two-way split.
+describe('SmartArt: a hidden margin is not half of a split', () => {
+  const INSET_LABEL = layoutXml(
+    `<dgm:alg type="lin"><dgm:param type="linDir" val="fromT"/></dgm:alg>
+     <dgm:constrLst>
+       <dgm:constr type="w" for="ch" forName="row" refType="w"/>
+       <dgm:constr type="w" for="des" forName="leftMargin" refType="w" fact="0.05"/>
+       <dgm:constr type="w" for="des" forName="label" refType="w" fact="0.7"/>
+     </dgm:constrLst>
+     <dgm:forEach name="each" axis="ch" ptType="node">
+       <dgm:layoutNode name="row">
+         <dgm:alg type="lin"><dgm:param type="linDir" val="fromL"/></dgm:alg>
+         <dgm:constrLst/>
+         <dgm:layoutNode name="leftMargin">
+           <dgm:alg type="sp"/><dgm:shape type="rect" hideGeom="1"/>
+         </dgm:layoutNode>
+         <dgm:layoutNode name="label" styleLbl="node1">
+           <dgm:alg type="tx"/><dgm:shape type="roundRect"/>
+         </dgm:layoutNode>
+       </dgm:layoutNode>
+     </dgm:forEach>`,
+  );
+
+  it('gives the cell to the one box that holds the words', () => {
+    const nodes = run(INSET_LABEL, dataXml([['P1', []]]));
+    // One box, not two: split against the margin, the label's own words went
+    // into the invisible half and the diagram came out blank.
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0]?.styleLbl).toBe('node1');
+    expect(nodes[0]?.shapeType).toBe('roundRect');
+    expect(nodes[0]?.hideGeom).toBeUndefined();
+    expect(diagramDrawingXml(nodes, { cx: CX, cy: CY })).toContain('<a:t>P1</a:t>');
+  });
+});
