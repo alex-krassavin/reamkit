@@ -38,6 +38,7 @@ import { A4_HEIGHT, A4_WIDTH, GLUE_SHRINK_RATIO } from '@/layout/styled-layout';
 import { emitClipPath, emitVectorShape, shadowBlurLayers } from '@/pdf/vector-graphics';
 import { buildGradientAlphaMask, buildGradientPattern, shapeBbox } from '@/pdf/shading';
 import { reorderVisual, reverseByCodePoint } from '@/core/bidi';
+import { warpGlyphMatrix } from '@/core/drawingml/text-warp';
 import { sanitizeHref } from '@/core/links';
 import { embedTtfFont } from '@/pdf/cid-font';
 import { embedAssociatedFile } from '@/pdf/embedded-file';
@@ -193,7 +194,9 @@ function assembleStyledPdf(
       const plan = paintPlan(page.commands);
       const shapesNeedingPatterns = [
         ...plan.shapes,
-        ...[...plan.behind, ...plan.pictures.flat()].filter((i) => i.type === 'shape'),
+        ...[...plan.behind, ...plan.pictures.flat(), ...plan.ordered.flat()].filter(
+          (i) => i.type === 'shape',
+        ),
       ];
       for (const item of shapesNeedingPatterns) {
         const gradient = item.shape.fillGradient;
@@ -294,7 +297,7 @@ function assembleStyledPdf(
       wantDuotone(img, page.height);
     }
     // The runs that paint in their own order carry the same needs.
-    for (const item of [...plan.behind, ...plan.pictures.flat()]) {
+    for (const item of [...plan.behind, ...plan.pictures.flat(), ...plan.ordered.flat()]) {
       if (item.type === 'image') {
         wantAlpha(washVeil(item.wash)?.alpha);
         wantAlpha(item.alpha);
@@ -1392,6 +1395,47 @@ function emitPageContent(
     const hasFauxItalic = line.tokens.some(
       (t) => t.kind === 'text' && t.synthetic?.italic === true,
     );
+    // §20.1.9.10 — WordArt. Every glyph sits at its own point on the warp's
+    // curve, where the two edges are their own distance apart and running at
+    // their own slope, so no two glyphs share a text matrix: each is placed,
+    // scaled and sheared on its own. Set flat, tdf114848's eight bent words
+    // were eight straight ones a third of the size.
+    const warp = cmd.warp;
+    if (warp) {
+      if (!inBT) {
+        out.push('BT');
+        inBT = true;
+      }
+      let cursor: number = originX;
+      for (const tok of line.tokens) {
+        if (tok.kind !== 'text' || tok.isSpace) {
+          cursor += tok.widthPt;
+          continue;
+        }
+        switchFontIfNeeded(tok);
+        // Per-glyph placement drops the shaper's kerning, which the line was
+        // measured WITH: the token's own glyphs are rescaled to the width it
+        // was measured at, so the block still ends where the layout said.
+        const chars = [...tok.text];
+        const raw = chars.map((c) => tok.font.measure.textWidthPt(c, tok.fontSizePt));
+        const total = raw.reduce((a, b) => a + b, 0);
+        const k = total > 0 ? tok.widthPt / total : 1;
+        for (let i = 0; i < chars.length; i++) {
+          const adv = raw[i]! * k;
+          const m = warpGlyphMatrix(warp, cursor, adv, cmd.baselineY);
+          cursor += adv;
+          if (!m) continue;
+          // The warp works in the page's top-left frame; PDF's is y-up, so the
+          // two terms that carry y flip and the origin reflects.
+          out.push(
+            `${formatNumber(m[0])} ${formatNumber(-m[1])} ${formatNumber(m[2])} ` +
+              `${formatNumber(-m[3])} ${formatNumber(m[4])} ${formatNumber(H - m[5])} Tm`,
+          );
+          out.push(tok.font.measure.showText(chars[i]!));
+        }
+      }
+      return;
+    }
     // A rotated line advances its glyphs along the ROTATED axis, which one text
     // matrix already does for free — but only on the single-Tm path, where the
     // advance is the font's and not one this emitter computes in page space.
@@ -1528,10 +1572,18 @@ function emitPageContent(
     if (item.type === 'shape') {
       const t = item.shape.transform;
       const fillAlpha = item.shape.fillAlpha;
+      // §20.1.8.40 — a shadow is drawn at the transparency its colour asks for,
+      // and the state that carries it has to be named here as it is in the
+      // shape pass. Left out, a shape that paints inside a PICTURE cast its
+      // shadow at full strength: tdf128596's is 50% black under a nearly
+      // transparent tile, and it came out solid black.
+      const layer = item.shape.shadow ? shadowBlurLayers(item.shape.shadow) : undefined;
       for (const op of emitVectorShape(
         { ...item.shape, transform: [t[0], -t[1], t[2], -t[3], t[4], H - t[5]] },
         gradientNames?.get(item.shape),
-        undefined,
+        layer && layer.alpha < 1
+          ? alphaStateNames?.get(Math.round(layer.alpha * 1000) / 1000)
+          : undefined,
         gradientMaskNames?.get(item.shape) ??
           (fillAlpha !== undefined && fillAlpha < 1
             ? alphaStateNames?.get(Math.round(fillAlpha * 1000) / 1000)
@@ -1761,6 +1813,12 @@ function emitPageContent(
     if (tagging) out.push('/Artifact BMC');
     for (const item of run) emitInOrder(item);
     if (tagging) out.push('EMC');
+  }
+
+  // §19.3.1 — and a page that states its own order paints in it, kind by kind
+  // ignored. A slide's shape tree IS that order.
+  for (const run of plan.ordered) {
+    for (const item of run) emitInOrder(item);
   }
 
   emitLinesPass();

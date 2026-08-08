@@ -13,7 +13,14 @@
 import type { PathSegment, StrokeStyle, VectorPath } from '@/core/vector';
 import type { DeviceContext, MetaObject, MetaPicture, PicturePrim } from '@/core/metafile/picture';
 import { PathBuilder } from '@/core/vector';
-import { cloneDc, colorRef, newDeviceContext } from '@/core/metafile/picture';
+import {
+  clippedAway,
+  cloneDc,
+  colorRef,
+  intersectClip,
+  newDeviceContext,
+  primBounds,
+} from '@/core/metafile/picture';
 import { cropDib, readDib } from '@/core/metafile/dib';
 import { makeBlitter } from '@/core/metafile/blit';
 import { ellipseSegments } from '@/core/metafile/emf';
@@ -86,6 +93,7 @@ export function readWmf(bytes: Uint8Array): MetaPicture {
   // left edge.
   let origin: { x: number; y: number } | undefined;
   const emit = (prim: PicturePrim): void => {
+    if (clippedAway(dc, primBounds(prim))) return;
     origin ??= { x: win.x, y: win.y };
     const dx = origin.x - win.x;
     const dy = origin.y - win.y;
@@ -180,6 +188,14 @@ export function readWmf(bytes: Uint8Array): MetaPicture {
         break;
       case 0x020c: // META_SETWINDOWEXT
         win = { ...win, cx: p(1), cy: p(0) };
+        break;
+      // §2.3.2 — the clip the records after it are limited to. Only the
+      // rectangular forms are modelled; a shape wholly outside one is dropped.
+      case 0x0416: // META_INTERSECTCLIPRECT — bottom, right, top, left
+        dc = {
+          ...dc,
+          clip: intersectClip(dc, { bottom: p(0), right: p(1), top: p(2), left: p(3) }),
+        };
         break;
       case 0x001e: // META_SAVEDC
         stack.push(cloneDc(dc));
@@ -396,12 +412,24 @@ export function readWmf(bytes: Uint8Array): MetaPicture {
     right: win.x + (win.cx || 1000),
     bottom: win.y + (win.cy || 1000),
   };
+  // §2.3.5.12 — a window EXTENT may be negative, which turns that axis round:
+  // the origin then names the far corner, not the near one, and logical y grows
+  // UPWARD. 38256.ppt's clipart sets the origin at (-1031, 945) with an extent
+  // of (2000, -1838), so its top edge is at -893 and the origin sits on its
+  // BOTTOM. Taken for the top, the whole drawing was laid out a full height
+  // above its box, and the slide showed the bottom edge of it hanging off the
+  // top of the page.
+  //
+  // A `MetaPicture`'s y runs DOWN, so an inverted axis is mirrored back here
+  // rather than carried downstream: everything past this reader sees one
+  // convention.
+  const flipped = win.cy < 0 ? prims.map((p) => mirrorPrimY(p, box.top + box.bottom)) : prims;
   return {
-    left: box.left,
-    top: box.top,
+    left: Math.min(box.left, box.right),
+    top: Math.min(box.top, box.bottom),
     width: Math.max(1, Math.abs(box.right - box.left)),
     height: Math.max(1, Math.abs(box.bottom - box.top)),
-    prims,
+    prims: flipped,
     skipped: [...skipped],
   };
 }
@@ -455,6 +483,41 @@ function shiftPrim(prim: PicturePrim, dx: number, dy: number): PicturePrim {
               y: sg.y + dy,
               ...('x1' in sg ? { x1: sg.x1 + dx, y1: sg.y1 + dy } : {}),
               ...('x2' in sg ? { x2: sg.x2 + dx, y2: sg.y2 + dy } : {}),
+            }
+          : sg,
+      ),
+    })),
+  };
+}
+
+/**
+ * A primitive mirrored about a horizontal axis, for a window whose y grows UP.
+ *
+ * Only the geometry turns over. A text run's reference point names a corner of
+ * the cell IN DEVICE SPACE — GDI never draws the glyphs themselves upside down —
+ * so the point moves and the alignment flags stay as they are. An image states
+ * the TOP of its destination rectangle, which after the mirror is where its
+ * bottom used to be.
+ *
+ * @param prim      The primitive, in the metafile's own logical units.
+ * @param twiceAxis Twice the y the mirror runs along, so `y' = twiceAxis - y`.
+ * @returns The primitive with its y coordinates turned over.
+ */
+function mirrorPrimY(prim: PicturePrim, twiceAxis: number): PicturePrim {
+  const at = (y: number): number => twiceAxis - y;
+  if (prim.kind === 'text') return { ...prim, y: at(prim.y) };
+  if (prim.kind === 'image') return { ...prim, y: at(prim.y + prim.height) };
+  return {
+    ...prim,
+    paths: prim.paths.map((path) => ({
+      ...path,
+      segments: path.segments.map((sg) =>
+        'x' in sg
+          ? {
+              ...sg,
+              y: at(sg.y),
+              ...('y1' in sg ? { y1: at(sg.y1) } : {}),
+              ...('y2' in sg ? { y2: at(sg.y2) } : {}),
             }
           : sg,
       ),

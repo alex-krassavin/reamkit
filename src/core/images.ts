@@ -15,10 +15,12 @@
 
 import { unzlibSync, zlibSync } from 'fflate';
 
+import { decodeBmp, isBmp } from '@/core/bmp';
+import { encodePng } from '@/core/png-encode';
 import { decodeTiff, isTiff } from '@/core/tiff';
 
 /** The raster formats this module recognizes and can prepare for embedding. */
-export type ImageFormat = 'jpeg' | 'png' | 'jpeg2000' | 'gif' | 'tiff';
+export type ImageFormat = 'jpeg' | 'png' | 'jpeg2000' | 'gif' | 'tiff' | 'bmp';
 
 /**
  * Sniff the raster format from a file's leading magic bytes (JPEG SOI, the PNG
@@ -84,7 +86,60 @@ export function detectImageFormat(bytes: Uint8Array): ImageFormat | null {
   }
   // TIFF 6.0 §2 — "II*\0" (little-endian) or "MM\0*" (big-endian).
   if (isTiff(bytes)) return 'tiff';
+  // §BITMAPFILEHEADER — "BM". Last, because two characters is a weak signature
+  // and every format above states a longer one.
+  if (isBmp(bytes)) return 'bmp';
   return null;
+}
+
+/**
+ * The same picture with one colour knocked out of it, as a PNG.
+ *
+ * A picture may name a colour it is drawn WITHOUT — MS-ODRAW's
+ * `pictureTransparent`, DrawingML's `a:clrChange` to nothing — which is how
+ * clip art of the pre-alpha age says "this rectangle of ground is not part of
+ * the drawing". It is a property of the USE, not of the file, so it is baked
+ * here into bytes of its own: two shapes may knock different colours out of the
+ * same blip, and a resource store that hashes content then keeps them apart by
+ * itself.
+ *
+ * 23884's satellite sits on a red field and its globe on a white one; drawn as
+ * stored, they are a red block and a white square on a blue slide.
+ *
+ * @param bytes The picture, in any format {@link prepareImage} reads.
+ * @param hex   The colour to knock out, 6-hex and no leading `#`.
+ * @returns A PNG with that colour transparent, or `undefined` when the picture
+ *   cannot be decoded to samples this can work on.
+ */
+export function knockOutColor(bytes: Uint8Array, hex: string): Uint8Array | undefined {
+  let prepared: PreparedImage;
+  try {
+    prepared = prepareImage(bytes);
+  } catch {
+    return undefined;
+  }
+  // JPEG and JPEG 2000 pass through as their own codestreams — there are no
+  // samples here to compare, and a lossy format has no exact colour to match.
+  if (prepared.filter !== 'FlateDecode' || prepared.bitsPerComponent !== 8) return undefined;
+  const key = [0, 2, 4].map((i) => Number.parseInt(hex.slice(i, i + 2), 16));
+  if (key.some((c) => !Number.isFinite(c))) return undefined;
+  const gray = prepared.colorSpace === 'DeviceGray';
+  const src = unzlibSync(prepared.data);
+  const existing = prepared.smaskData ? unzlibSync(prepared.smaskData) : undefined;
+  const { widthPx: w, heightPx: h } = prepared;
+  const channels = gray ? 1 : 3;
+  if (src.length < w * h * channels) return undefined;
+  const out = new Uint8Array(w * h * 4);
+  for (let i = 0; i < w * h; i++) {
+    const r = gray ? src[i]! : src[i * 3]!;
+    const g = gray ? src[i]! : src[i * 3 + 1]!;
+    const b = gray ? src[i]! : src[i * 3 + 2]!;
+    out[i * 4] = r;
+    out[i * 4 + 1] = g;
+    out[i * 4 + 2] = b;
+    out[i * 4 + 3] = r === key[0] && g === key[1] && b === key[2] ? 0 : (existing?.[i] ?? 255);
+  }
+  return encodePng(w, h, 'rgba', out);
 }
 
 /** Options controlling how {@link prepareImage} emits an image. */
@@ -106,7 +161,13 @@ export interface EmbedImageOptions {
  */
 export interface PreparedImage {
   readonly format: ImageFormat;
-  readonly mimeType: 'image/jp2' | 'image/jpeg' | 'image/png' | 'image/gif' | 'image/tiff';
+  readonly mimeType:
+    | 'image/jp2'
+    | 'image/jpeg'
+    | 'image/png'
+    | 'image/gif'
+    | 'image/tiff'
+    | 'image/bmp';
   readonly widthPx: number;
   readonly heightPx: number;
   /**
@@ -120,6 +181,14 @@ export interface PreparedImage {
   readonly data: Uint8Array;
   /** PNG alpha channel, already FlateDecode-compressed (DeviceGray, 8 bpc). */
   readonly smaskData?: Uint8Array;
+  /**
+   * The resolution the picture states for itself, in pixels per inch, when it
+   * states one (JFIF's `Xdensity`/`Ydensity`, PNG's `pHYs`). It is what makes a
+   * picture's NATURAL size: 800 pixels at 300 dpi is 192 points wide, not the
+   * 600 the 96-dpi default would give. Absent ⇒ the reader's own default.
+   */
+  readonly dpiX?: number;
+  readonly dpiY?: number;
 }
 
 /**
@@ -136,6 +205,7 @@ export function prepareImage(bytes: Uint8Array, options: EmbedImageOptions = {})
   if (format === 'jpeg2000') return prepareJpeg2000(bytes);
   if (format === 'gif') return prepareGif(bytes, options);
   if (format === 'tiff') return prepareTiff(bytes, options);
+  if (format === 'bmp') return prepareBmp(bytes, options);
   throw new Error('Unsupported image format');
 }
 
@@ -213,6 +283,7 @@ function readSiz(bytes: Uint8Array, sizOffset: number): { width: number; height:
 
 function prepareJpeg(bytes: Uint8Array): PreparedImage {
   const info = readJpegInfo(bytes);
+  const density = readJfifDensity(bytes);
   return {
     format: 'jpeg',
     mimeType: 'image/jpeg',
@@ -222,7 +293,24 @@ function prepareJpeg(bytes: Uint8Array): PreparedImage {
     bitsPerComponent: info.precision,
     filter: 'DCTDecode',
     data: bytes,
+    ...(density ?? {}),
   };
+}
+
+// JFIF (ISO/IEC 10918-5 §B.1) — the APP0 segment states the picture's own
+// resolution: `units` 1 is dots per inch, 2 dots per centimetre, 0 an aspect
+// ratio with no resolution at all.
+function readJfifDensity(bytes: Uint8Array): { dpiX: number; dpiY: number } | undefined {
+  if (bytes.length < 20 || bytes[2] !== 0xff || bytes[3] !== 0xe0) return undefined;
+  const jfif = bytes[6] === 0x4a && bytes[7] === 0x46 && bytes[8] === 0x49 && bytes[9] === 0x46;
+  if (!jfif) return undefined;
+  const units = bytes[13]!;
+  const x = (bytes[14]! << 8) | bytes[15]!;
+  const y = (bytes[16]! << 8) | bytes[17]!;
+  if (x <= 0 || y <= 0) return undefined;
+  if (units === 1) return { dpiX: x, dpiY: y };
+  if (units === 2) return { dpiX: x * 2.54, dpiY: y * 2.54 };
+  return undefined;
 }
 
 interface JpegInfo {
@@ -348,6 +436,40 @@ function prepareTiff(bytes: Uint8Array, options: EmbedImageOptions = {}): Prepar
     filter: 'FlateDecode',
     data: zlibSync(data),
     ...(alpha && !options.flattenAlpha ? { smaskData: zlibSync(alpha.slice()) } : {}),
+  };
+}
+
+// A Windows bitmap has no PDF filter of its own either, so it takes the same
+// route TIFF does: decoded here to samples and embedded Flate-compressed. The
+// `.ppt` and `.xls` picture stores are why it is worth having — a `BlipDIB`
+// record carries one of these, and until now every such picture was dropped.
+function prepareBmp(bytes: Uint8Array, options: EmbedImageOptions = {}): PreparedImage {
+  const img = decodeBmp(bytes);
+  const data = img.data.slice();
+  const alpha = img.alpha;
+  // PDF/A-1 forbids transparency: composite the see-through pixels onto white
+  // rather than dropping the mask and painting them black.
+  if (alpha && options.flattenAlpha) {
+    for (let i = 0; i < alpha.length; i++) {
+      if (alpha[i] === 255) continue;
+      const a = alpha[i]! / 255;
+      for (let c = 0; c < 3; c++) {
+        const at = i * 3 + c;
+        data[at] = Math.round(data[at]! * a + 255 * (1 - a));
+      }
+    }
+  }
+  return {
+    format: 'bmp',
+    mimeType: 'image/bmp',
+    widthPx: img.width,
+    heightPx: img.height,
+    colorSpace: 'DeviceRGB',
+    bitsPerComponent: 8,
+    filter: 'FlateDecode',
+    data: zlibSync(data),
+    ...(alpha && !options.flattenAlpha ? { smaskData: zlibSync(alpha.slice()) } : {}),
+    ...(img.dpiX !== undefined && img.dpiY !== undefined ? { dpiX: img.dpiX, dpiY: img.dpiY } : {}),
   };
 }
 
@@ -531,6 +653,8 @@ interface DecodedPng {
   readonly colorSpace: 'DeviceRGB' | 'DeviceGray';
   readonly bitsPerComponent: number;
   readonly smaskRaw?: Uint8Array;
+  readonly dpiX?: number;
+  readonly dpiY?: number;
 }
 
 function preparePng(bytes: Uint8Array, options: EmbedImageOptions = {}): PreparedImage {
@@ -548,6 +672,9 @@ function preparePng(bytes: Uint8Array, options: EmbedImageOptions = {}): Prepare
     filter: 'FlateDecode',
     data: zlibSync(decoded.raw),
     ...(decoded.smaskRaw ? { smaskData: zlibSync(decoded.smaskRaw) } : {}),
+    ...(decoded.dpiX !== undefined && decoded.dpiY !== undefined
+      ? { dpiX: decoded.dpiX, dpiY: decoded.dpiY }
+      : {}),
   };
 }
 
@@ -561,6 +688,7 @@ function decodePng(bytes: Uint8Array): DecodedPng {
   let interlaceMethod = 0;
   let palette: Uint8Array | undefined;
   let paletteAlpha: Uint8Array | undefined;
+  let density: { dpiX: number; dpiY: number } | Record<string, never> = {};
   const idatChunks: Array<Uint8Array> = [];
   let pos = 8;
   while (pos + 12 <= bytes.length) {
@@ -580,6 +708,14 @@ function decodePng(bytes: Uint8Array): DecodedPng {
       // §11.3.2.1 — for a palette image, one alpha byte per entry (entries past
       // the end are opaque).
       paletteAlpha = bytes.subarray(dataOff, dataOff + len);
+    } else if (type === 'pHYs') {
+      // §11.3.5.3 — pixels per unit, and unit 1 is the metre. What the picture
+      // says about its own size is what makes one tile of it.
+      const perX = readU32BE(bytes, dataOff);
+      const perY = readU32BE(bytes, dataOff + 4);
+      if (bytes[dataOff + 8] === 1 && perX > 0 && perY > 0) {
+        density = { dpiX: perX * 0.0254, dpiY: perY * 0.0254 };
+      }
     } else if (type === 'IDAT') {
       idatChunks.push(bytes.subarray(dataOff, dataOff + len));
     } else if (type === 'IEND') {
@@ -610,7 +746,7 @@ function decodePng(bytes: Uint8Array): DecodedPng {
     colorType !== 3,
   );
 
-  return splitChannels(width, height, colorType, raw, palette, paletteAlpha);
+  return { ...splitChannels(width, height, colorType, raw, palette, paletteAlpha), ...density };
 }
 
 /**

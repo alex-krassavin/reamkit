@@ -92,6 +92,37 @@ describe('gradient fills (E-PDF EP16)', () => {
     expect(content).toContain('/Sh0 scn');
   });
 
+  it('holds a stop that does not start at the edge where the file puts it', async () => {
+    // §20.1.8.36 — a ramp whose first stop sits a fifth of the way along holds
+    // its first colour flat for that fifth and only then begins. Dragged back
+    // to the edge, the whole ramp stretches over it: themes.pptx's last slide
+    // states exactly that and its background came out a bucket too dark across
+    // the middle of the page.
+    const offset =
+      '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>' +
+      '<a:gradFill><a:gsLst>' +
+      '<a:gs pos="20000"><a:srgbClr val="FF0000"/></a:gs>' +
+      '<a:gs pos="100000"><a:srgbClr val="0000FF"/></a:gs>' +
+      '</a:gsLst><a:lin ang="0"/></a:gradFill>';
+    const pdf = await Ream.parse(buildDocxFromBody(`<w:p>${shapeRun(offset)}</w:p>`)).convert(
+      'pdf',
+      { fonts: FONTS },
+    );
+    const file = PdfFile.parse(pdf);
+    const page = file.pages()[0]!;
+    const patterns = file.get(page.resources!, 'Pattern') as PdfDict;
+    const pattern = file.resolve(patterns.get('Sh0')!) as PdfDict;
+    const shading = file.resolve(pattern.get('Shading')!) as PdfDict;
+    const fn = file.resolve(shading.get('Function')!) as PdfDict;
+    // A stitching function: red held to 0.2, then red → blue over the rest.
+    expect(fn.get('FunctionType')).toBe(3);
+    expect(fn.get('Bounds')).toEqual([0.2]);
+    const parts = (fn.get('Functions') as Array<PdfValue>).map((f) => file.resolve(f) as PdfDict);
+    expect(parts[0]?.get('C0')).toEqual([1, 0, 0]);
+    expect(parts[0]?.get('C1')).toEqual([1, 0, 0]);
+    expect(parts[1]?.get('C1')).toEqual([0, 0, 1]);
+  });
+
   it('reads a PDF shading pattern back into a gradient fill (E-PDF EP16c)', async () => {
     const pdf = await Ream.parse(gradientDocx()).convert('pdf', { fonts: FONTS });
     const back = Ream.parse(pdf);

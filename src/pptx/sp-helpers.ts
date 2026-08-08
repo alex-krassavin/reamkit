@@ -35,14 +35,22 @@ export interface ShapeBoxEmu {
 
 const isTrue = (v: string | undefined): boolean => v === '1' || v === 'true' || v === 'on';
 
+// §19.3.1.33/§19.3.1.34/§19.3.1.21 — the non-visual properties go by a name of
+// their own for each kind of shape, and every one of them may hold a `p:nvPr`.
+const NON_VISUAL = ['p:nvSpPr', 'p:nvPicPr', 'p:nvGraphicFramePr', 'p:nvCxnSpPr'];
+
 /**
- * `p:nvSpPr/p:nvPr/p:ph` → the placeholder reference, or `undefined` for an
- * ordinary (non-placeholder) shape. A bare `<p:ph/>` returns an empty ref (still
- * a placeholder: `type` defaults to `'obj'`).
+ * `p:nvPr/p:ph` → the placeholder reference, or `undefined` for an ordinary
+ * (non-placeholder) shape. A bare `<p:ph/>` returns an empty ref (still a
+ * placeholder: `type` defaults to `'obj'`).
+ *
+ * A PICTURE is a placeholder as readily as a shape is — a content placeholder
+ * filled with a photograph writes `p:nvPicPr/p:nvPr/p:ph` and an EMPTY `p:spPr`,
+ * leaving its whole geometry to the layout (customshape-bitmapfill-srcrect).
  */
 export function parsePh(sp: PoNode): PlaceholderRef | undefined {
-  const nvSpPr = poChildren(sp).find((c) => poIs(c, 'p:nvSpPr'));
-  const nvPr = nvSpPr ? poChildren(nvSpPr).find((c) => poIs(c, 'p:nvPr')) : undefined;
+  const nonVisual = poChildren(sp).find((c) => NON_VISUAL.some((n) => poIs(c, n)));
+  const nvPr = nonVisual ? poChildren(nonVisual).find((c) => poIs(c, 'p:nvPr')) : undefined;
   const ph = nvPr ? poChildren(nvPr).find((c) => poIs(c, 'p:ph')) : undefined;
   if (!ph) return undefined;
   const type = poAttr(ph, 'type');
@@ -141,8 +149,34 @@ function capsOf(cap: string | undefined): Pick<RunProperties, 'caps' | 'smallCap
 // a:srgbClr and a:schemeClr (PX5 theme) work.
 function solidFillColor(rPr: PoNode, colors: ColorResolver): string | undefined {
   const solidFill = poChildren(rPr).find((c) => poIs(c, 'a:solidFill'));
-  if (!solidFill) return undefined;
-  for (const c of poChildren(solidFill)) {
+  if (solidFill) {
+    for (const c of poChildren(solidFill)) {
+      const hex = resolveColorNode(c, colors);
+      if (hex) return hex;
+    }
+    return undefined;
+  }
+  return gradientFillColor(rPr, colors);
+}
+
+/**
+ * §20.1.8.33 — a run may be filled with a GRADIENT, and WordArt always is: the
+ * text of tdf114848's second page runs through five stops of accent1. A run
+ * here wears one colour, so the gradient gives up the stop nearest its middle —
+ * the one most of the glyph is painted in. Unread, the run had no colour at all
+ * and every word came out in the default black.
+ */
+function gradientFillColor(rPr: PoNode, colors: ColorResolver): string | undefined {
+  const grad = poChildren(rPr).find((c) => poIs(c, 'a:gradFill'));
+  const list = grad ? poChildren(grad).find((c) => poIs(c, 'a:gsLst')) : undefined;
+  const stops = list ? poChildren(list).filter((c) => poIs(c, 'a:gs')) : [];
+  let best: { at: number; node: PoNode } | undefined;
+  for (const gs of stops) {
+    const at = Math.abs((poIntAttr(gs, 'pos') ?? 0) - 50000);
+    if (!best || at < best.at) best = { at, node: gs };
+  }
+  if (!best) return undefined;
+  for (const c of poChildren(best.node)) {
     const hex = resolveColorNode(c, colors);
     if (hex) return hex;
   }

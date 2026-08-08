@@ -1330,13 +1330,18 @@ export function buildPieScene(
     });
     const mid = ang + sweep / 2;
     const pct = Math.round((v / total) * 100);
+    // §21.2.2.223 `c:showVal` — a pie labels its slices with the NUMBERS when
+    // the chart asks for them, and with their share of the whole otherwise.
+    // Always a share, LIBRE_OFFICE-100610-0.pptx's five pies read 21/32/16/32%
+    // where every reader prints the 4, 6, 3 and 6 the file says to show.
+    const own = chart.showValues ? fmtDataLabel(chart, v) : `${pct}%`;
     // A label the author typed wins over the one we would compute — see
     // ChartSeries.pointLabels. It is drawn whatever the slice's size, because
     // the author put it there on purpose.
     const custom = series.pointLabels?.find((l) => l.idx === i)?.text;
-    if (custom !== undefined || pct >= 5) {
+    if (custom !== undefined || chart.showValues || pct >= 5) {
       labels.push({
-        text: custom ?? `${pct}%`,
+        text: custom ?? own,
         x: cx + Math.cos(mid) * labelR,
         y: cy + Math.sin(mid) * labelR - CHART_LABEL_PT / 3,
         sizePt: CHART_LABEL_PT,

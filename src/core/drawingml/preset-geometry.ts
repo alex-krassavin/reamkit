@@ -117,6 +117,150 @@ export function presetPaths(
     }
     case 'pentagon':
       return [regularPolygon(w, h, 5)];
+    // §20.1.10.55 — the regular polygons the gallery names by their side count.
+    // An odd one stands on a vertex, an even one on a flat edge, which is the
+    // half-step of rotation between them.
+    case 'heptagon':
+      return [regularPolygon(w, h, 7)];
+    case 'octagon':
+      return [regularPolygon(w, h, 8, Math.PI / 8)];
+    case 'decagon':
+      return [regularPolygon(w, h, 10, Math.PI / 10)];
+    case 'dodecagon':
+      return [regularPolygon(w, h, 12, Math.PI / 12)];
+    // A ring and a rectangular frame are each one shape with a HOLE, which is
+    // an inner subpath wound the same way and filled even-odd.
+    case 'donut': {
+      const t = clamp(frac(adjust, 'adj', 25000), 0, 0.5) * Math.min(w, h);
+      const b = new PathBuilder().append(ellipseSegments(w, h));
+      const [ix, iy] = [w / 2 - t, h / 2 - t];
+      if (ix > 0 && iy > 0) {
+        b.moveTo(w / 2 + ix, h / 2).append(arcToBeziers(w / 2, h / 2, ix, iy, 0, 2 * Math.PI));
+        b.close();
+      }
+      return [b.build('evenodd')];
+    }
+    case 'frame': {
+      const t = clamp(frac(adjust, 'adj', 12500), 0, 0.5) * Math.min(w, h);
+      const b = new PathBuilder()
+        .moveTo(0, 0)
+        .lineTo(w, 0)
+        .lineTo(w, h)
+        .lineTo(0, h)
+        .close()
+        .moveTo(t, t)
+        .lineTo(w - t, t)
+        .lineTo(w - t, h - t)
+        .lineTo(t, h - t)
+        .close();
+      return [b.build('evenodd')];
+    }
+    // A band laid across the box corner to corner: the fraction it names is how
+    // far along each edge it starts.
+    case 'diagStripe': {
+      const a = clamp(frac(adjust, 'adj', 50000), 0, 1);
+      return [
+        polygon([
+          [0, h - h * a],
+          [w * a, h],
+          [w, h],
+          [0, 0],
+        ]),
+      ];
+    }
+    // A circle with one quadrant pulled out to the corner of the box.
+    case 'teardrop': {
+      const a = clamp(frac(adjust, 'adj', 100000), 0, 2);
+      const [rx, ry] = [w / 2, h / 2];
+      const b = new PathBuilder()
+        .moveTo(rx, h)
+        .append(arcToBeziers(rx, ry, rx, ry, Math.PI / 2, (3 * Math.PI) / 2))
+        .lineTo(w * (0.5 + a / 2), h * (0.5 + a / 2))
+        .close();
+      return [b.build()];
+    }
+    // A cylinder seen from the side: the body under an ellipse, and the ellipse
+    // drawn again on top so its near edge shows.
+    case 'can':
+      return cylinder(w, h, (clamp(frac(adjust, 'adj', 25000), 0, 0.5) * h) / 2);
+    // Two bars meeting at a mitred corner — the top-left half of a frame. Each
+    // bar's thickness is a fraction of the SHORTER side, and the mitre runs at
+    // the box's own diagonal, so it is the thickness scaled by the aspect.
+    case 'halfFrame': {
+      const ss = Math.min(w, h);
+      const x1 = clamp(frac(adjust, 'adj2', 33333), 0, 1) * ss;
+      const y1 = clamp(frac(adjust, 'adj1', 33333), 0, 1) * ss;
+      const x2 = w - (h === 0 ? 0 : (y1 * w) / h);
+      const y2 = h - (w === 0 ? 0 : (x1 * h) / w);
+      return [
+        polygon([
+          [0, 0],
+          [0, h],
+          [w, h],
+          [x2, h - y1],
+          [x1, h - y1],
+          [x1, h - y2],
+        ]),
+      ];
+    }
+    // A rectangle with its four edges chamfered inwards. PowerPoint shades each
+    // face to make it read as a raised block; a shape here takes one fill, so
+    // what carries is the STRUCTURE — the inner rectangle and the four mitres.
+    case 'bevel': {
+      const t = clamp(frac(adjust, 'adj', 12500), 0, 0.5) * Math.min(w, h);
+      const face = (pts: ReadonlyArray<readonly [number, number]>): VectorPath => polygon(pts);
+      return [
+        face([
+          [0, h],
+          [w, h],
+          [w - t, h - t],
+          [t, h - t],
+        ]),
+        face([
+          [0, h],
+          [t, h - t],
+          [t, t],
+          [0, 0],
+        ]),
+        face([
+          [w, 0],
+          [0, 0],
+          [t, t],
+          [w - t, t],
+        ]),
+        face([
+          [w, 0],
+          [w - t, t],
+          [w - t, h - t],
+          [w, h],
+        ]),
+        polygon([
+          [t, t],
+          [w - t, t],
+          [w - t, h - t],
+          [t, h - t],
+        ]),
+      ];
+    }
+    // A rectangle whose corners are cut IN rather than off — the quarter circle
+    // is centred outside the shape, so it bites into it.
+    case 'plaque': {
+      const t = clamp(frac(adjust, 'adj', 16667), 0, 0.5) * Math.min(w, h);
+      // Each quarter circle is centred ON the box corner, so it bites inwards;
+      // centred inside, the same radius rounds the corner off instead.
+      const b = new PathBuilder()
+        .moveTo(t, 0)
+        .lineTo(w - t, 0)
+        .append(arcToBeziers(w, 0, t, t, Math.PI, -Math.PI / 2))
+        .lineTo(w, h - t)
+        .append(arcToBeziers(w, h, t, t, (3 * Math.PI) / 2, -Math.PI / 2))
+        .lineTo(t, h)
+        .append(arcToBeziers(0, h, t, t, 0, -Math.PI / 2))
+        .lineTo(0, t)
+        .append(arcToBeziers(0, 0, t, t, Math.PI / 2, -Math.PI / 2))
+        .close();
+      return [b.build()];
+    }
     case 'hexagon': {
       const inset = clamp(frac(adjust, 'adj', 25000) * w, 0, w / 2);
       return [
@@ -306,6 +450,20 @@ export function presetPaths(
         ]),
       ];
     }
+    case 'pieWedge': {
+      // §20.1.10.55 — a QUARTER of an ellipse, centred on the box's
+      // bottom-right corner: from the bottom-left corner round to the top-right
+      // one, bulging towards the top-left. Four of them, each turned another
+      // quarter, are the disc a cycle-matrix diagram is built from.
+      return [
+        new PathBuilder()
+          .moveTo(0, 0)
+          .append(arcToBeziers(w, 0, w, h, Math.PI, -Math.PI / 2))
+          .lineTo(w, 0)
+          .close()
+          .build(),
+      ];
+    }
     case 'pie':
     case 'blockArc': {
       // Angles are 60 000ths of a degree, clockwise from due east in the
@@ -449,21 +607,13 @@ export function presetPaths(
           .build(),
       ];
     }
-    case 'flowChartMagneticDisk': {
-      // A cylinder seen from the side: an ellipse for the lid, straight sides,
-      // and the front half of an ellipse for the base.
-      const ry = h / 6;
-      const b = new PathBuilder().moveTo(0, h - ry);
-      return [
-        b
-          .append(arcToBeziers(w / 2, h - ry, w / 2, ry, Math.PI, -2 * Math.PI))
-          .moveTo(0, h - ry)
-          .lineTo(0, ry)
-          .append(arcToBeziers(w / 2, ry, w / 2, ry, Math.PI, -Math.PI))
-          .lineTo(w, h - ry)
-          .build(),
-      ];
-    }
+    // The flowchart's stored data is a cylinder too, with a fixed lid.
+    case 'flowChartMagneticDisk':
+      return cylinder(w, h, h / 6);
+    // The direct-access drum is the same cylinder lying on its side, so its cap
+    // is the RIGHT end and the body's far end bulges left.
+    case 'flowChartMagneticDrum':
+      return drum(w, h, w / 6);
     case 'flowChartMagneticTape': {
       // A circle with a short foot out of its bottom right. Drawn as the two
       // shapes it reads as, which keeps every control point inside the box.
@@ -784,14 +934,65 @@ function star(
 }
 
 // Regular n-gon inscribed in the box, first vertex at the top (pointing up).
-function regularPolygon(w: number, h: number, n: number): VectorPath {
+/**
+ * A cylinder standing on its base: the body under its lid, and the lid drawn
+ * again on top so its near edge shows.
+ *
+ * Both paths are wound the SAME way round. Wound against each other a nonzero
+ * fill cancels the two and the top comes out hollow, which is how the flowchart
+ * disk of tdf114848's fifth page had been drawn all along; and the base bulges
+ * DOWN, which the same shape had going up.
+ */
+function cylinder(w: number, h: number, ry: number): Array<VectorPath> {
+  const [rx, cx] = [w / 2, w / 2];
+  const body = new PathBuilder()
+    .moveTo(0, ry)
+    .lineTo(0, h - ry)
+    .append(arcToBeziers(cx, h - ry, rx, ry, Math.PI, -Math.PI))
+    .lineTo(w, ry)
+    .append(arcToBeziers(cx, ry, rx, ry, 0, -Math.PI))
+    .close()
+    .build();
+  const lid = new PathBuilder()
+    .moveTo(w, h - ry)
+    .append(arcToBeziers(cx, h - ry, rx, ry, 0, -2 * Math.PI))
+    .close()
+    .build();
+  return [body, lid];
+}
+
+/**
+ * A cylinder lying on its side: the body with a rounded end at each side, and
+ * the near cap drawn again over the right one. Wound like {@link cylinder}, and
+ * for the same reason — the two paths must turn the same way or a nonzero fill
+ * cancels them.
+ */
+function drum(w: number, h: number, rx: number): Array<VectorPath> {
+  const [ry, cy] = [h / 2, h / 2];
+  const body = new PathBuilder()
+    .moveTo(w - rx, h)
+    .lineTo(rx, h)
+    .append(arcToBeziers(rx, cy, rx, ry, Math.PI / 2, Math.PI))
+    .lineTo(w - rx, 0)
+    .append(arcToBeziers(w - rx, cy, rx, ry, -Math.PI / 2, Math.PI))
+    .close()
+    .build();
+  const cap = new PathBuilder()
+    .moveTo(w, cy)
+    .append(arcToBeziers(w - rx, cy, rx, ry, 0, 2 * Math.PI))
+    .close()
+    .build();
+  return [body, cap];
+}
+
+function regularPolygon(w: number, h: number, n: number, turn = 0): VectorPath {
   const cx = w / 2;
   const cy = h / 2;
   const rx = w / 2;
   const ry = h / 2;
   const pts: Array<readonly [number, number]> = [];
   for (let i = 0; i < n; i++) {
-    const a = Math.PI / 2 + (i * 2 * Math.PI) / n;
+    const a = Math.PI / 2 + turn + (i * 2 * Math.PI) / n;
     pts.push([cx + rx * Math.cos(a), cy + ry * Math.sin(a)]);
   }
   return polygon(pts);

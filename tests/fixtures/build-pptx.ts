@@ -69,6 +69,8 @@ export interface BuildPptxOptions {
   readonly slideRels?: ReadonlyArray<string>;
   /** Per-slide `<p:bg>…</p:bg>` (placed in p:cSld before the spTree). */
   readonly slideBg?: ReadonlyArray<string>;
+  /** §19.3.1.15 — per-slide `<p:controls>` XML, placed in p:cSld after the spTree. */
+  readonly slideControls?: ReadonlyArray<string>;
   /** Per-slide hidden flag → emits `p:sld@show="0"` on that slide. */
   readonly hiddenSlides?: ReadonlyArray<boolean>;
   /** Per-slide `<p:clrMapOvr>` attributes — that slide's own colour map. */
@@ -176,7 +178,8 @@ export function buildPptx(
     const slide =
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
       `<p:sld ${NS}${show}${masterSp}>` +
-      `<p:cSld>${options.slideBg?.[i] ?? ''}<p:spTree>${slides[i] ?? ''}</p:spTree></p:cSld>` +
+      `<p:cSld>${options.slideBg?.[i] ?? ''}<p:spTree>${slides[i] ?? ''}</p:spTree>` +
+      `${options.slideControls?.[i] ?? ''}</p:cSld>` +
       (options.slideClrMapOvr?.[i]
         ? `<p:clrMapOvr><a:overrideClrMapping ${options.slideClrMapOvr[i]}/></p:clrMapOvr>`
         : '') +

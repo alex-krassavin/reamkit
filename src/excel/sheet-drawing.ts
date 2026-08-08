@@ -277,12 +277,17 @@ export function makeColWidthPt(ws: ParsedWorksheet): (col: number) => number {
     // shape anchor against a track the sheet does not have.
     // §18.3.1.81 — `defaultColWidth` already includes the margin and gridline
     // padding; `baseColWidth` explicitly does not, so a default derived from it
-    // takes the padding once more. The anchor tracks have to agree with the
-    // grid's columns or a drawing lands beside the cell it is anchored to.
+    // takes the padding TWICE: once to become a `defaultColWidth`, once to
+    // render it. The anchor tracks have to agree with the grid's columns or a
+    // drawing lands beside the cell it is anchored to — and the grid has
+    // counted both since `defaultColumnTwips` was written. Counting one here
+    // sized 47668.xlsx's picture at 723pt where the file caches Excel's own
+    // answer beside it: `<a:ext cx="9753600">` is 768.
     if (ws.defaultColWidthChars !== undefined) return widthPt(ws.defaultColWidthChars);
     if (ws.baseColWidthChars !== undefined) {
       return (
-        (columnTwips(ws.baseColWidthChars, TWIPS_PER_EXCEL_CHAR) + COL_PADDING_TWIPS) / TWIPS_PER_PT
+        (columnTwips(ws.baseColWidthChars, TWIPS_PER_EXCEL_CHAR) + 2 * COL_PADDING_TWIPS) /
+        TWIPS_PER_PT
       );
     }
     // DEFAULT_COL_TWIPS is 960 — Excel's 8.43 characters WITH the padding.

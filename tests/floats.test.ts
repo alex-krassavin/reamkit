@@ -8,6 +8,7 @@ import { Ream } from '@/core/converter/ream';
 import { FontRegistry } from '@/core/font';
 import { flowRenderOptions } from '@/core/converter/project';
 import { layoutStyledDocument } from '@/layout/styled-layout';
+import { shadowBlurLayers } from '@/pdf/vector-graphics';
 import { readDocx } from '@/word/docx-reader';
 
 const FONTS = {
@@ -355,7 +356,7 @@ describe('linked text boxes (wps:linkedTxbx)', () => {
 describe('a tiled picture fill (§14.1.2.5 type="tile" / §20.1.8.58 a:tile)', () => {
   // A 2x2 PNG is 1.5pt square at the 96 dpi Office measures a picture in, so a
   // 144x72pt shape is papered with 96 x 48 copies of it rather than one blur.
-  const tiled = (fill: string) =>
+  const tiled = (fill: string, dpi?: number) =>
     buildDocxFromBody(
       `<w:p><w:r><w:drawing>
         <wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
@@ -381,7 +382,7 @@ describe('a tiled picture fill (§14.1.2.5 type="tile" / §20.1.8.58 a:tile)', (
         images: {
           rId20: {
             contentType: 'image/png',
-            bytes: buildTinyPng(2, 2, [0, 0, 255, 255]),
+            bytes: buildTinyPng(2, 2, [0, 0, 255, 255], dpi),
             extension: 'png',
           },
         },
@@ -390,6 +391,34 @@ describe('a tiled picture fill (§14.1.2.5 type="tile" / §20.1.8.58 a:tile)', (
   const blip = (inner: string) => `<a:blipFill><a:blip r:embed="rId20"/>${inner}</a:blipFill>`;
   const images = (docx: Uint8Array) =>
     layoutOf(docx).pages[0]!.commands.filter((c) => c.type === 'image');
+
+  it('papers the shape when the fill names neither a tile nor a stretch', () => {
+    // §20.1.8.14 — the fill MODE is optional, and a `blipFill` that states
+    // neither tiles. tdf128596.pptx is a rounded rectangle papered with a
+    // 32x32 tick and nothing else in its fill; read as a stretch it came out
+    // as one tick blown up over the whole shape.
+    const bare = images(tiled(blip('')));
+    const asked = images(tiled(blip('<a:tile tx="0" ty="0"/>')));
+    expect(bare.length).toBe(asked.length);
+    expect(bare.length).toBeGreaterThan(1);
+  });
+
+  it('stretches the picture when the fill says so', () => {
+    const stretched = images(tiled(blip('<a:stretch><a:fillRect/></a:stretch>')));
+    expect(stretched).toHaveLength(1);
+  });
+
+  it('measures one copy at the resolution the picture states for itself', () => {
+    // §11.3.5.3 — the same 2x2 PNG, but saying it is 24 dpi: a pixel is then
+    // four times as wide as the 96-dpi default makes it, so one copy is 6pt
+    // square and the box holds sixteen times fewer of them. Measured at 96
+    // whatever the file said, one tile of 119877's 300-dpi mountains covered a
+    // whole table column where every reader repeats it three times down.
+    const drawn = images(tiled(blip('<a:tile tx="0" ty="0"/>'), 24));
+    const first = drawn[0] as unknown as { width: number; height: number };
+    expect(first.width).toBeCloseTo(6, 1);
+    expect(first.height).toBeCloseTo(6, 1);
+  });
 
   it('repeats the picture over the box instead of stretching it', () => {
     const drawn = images(tiled(blip('<a:tile tx="0" ty="0" sx="100000" sy="100000"/>')));
@@ -409,11 +438,126 @@ describe('a tiled picture fill (§14.1.2.5 type="tile" / §20.1.8.58 a:tile)', (
     expect(first.height).toBeCloseTo(6, 1); // 1.5pt × 4
   });
 
+  it('pins a DrawingML grid to the box’s corner', () => {
+    // §20.1.8.58 `a:tile @algn` defaults to `tl`: the first copy starts where
+    // the box does, and a partial copy is left over at the far edge.
+    const drawn = images(tiled(blip('<a:tile tx="0" ty="0"/>'))) as unknown as Array<{
+      x: number;
+      y: number;
+    }>;
+    // No copy starts before the box: the grid opens exactly at its corner, and
+    // whatever does not divide evenly is left over at the FAR edge. The
+    // MS-ODRAW texture of a `.ppt` centres its grid instead, which is what
+    // turned 119877's tiled photographs from a patch of empty sky into the
+    // picture LibreOffice draws.
+    const shape = layoutOf(tiled(blip('<a:tile tx="0" ty="0"/>'))).pages[0]!.commands.find(
+      (c) => c.type === 'shape',
+    );
+    const box = shape?.type === 'shape' ? shape.shape.transform : undefined;
+    expect(box).toBeDefined();
+    expect(Math.min(...drawn.map((d) => d.x))).toBeCloseTo(box![4], 0);
+    expect(drawn.every((d) => d.x >= box![4] - 0.01)).toBe(true);
+  });
+
   it('…and a stretched one is still the single picture it was', () => {
     const drawn = images(tiled(blip('<a:stretch><a:fillRect/></a:stretch>')));
     expect(drawn.length).toBe(1);
     const only = drawn[0] as unknown as { width: number; height: number };
     expect(only.width).toBeCloseTo(144, 0);
     expect(only.height).toBeCloseTo(72, 0);
+  });
+});
+
+// §20.1.8.40 — a shadow falls UNDER the shape it belongs to, and a picture fill
+// leaves the paint passes: the image paints in one and the shape in a later
+// one, so a shadow left on the shape landed on TOP of its own picture.
+describe('a shadow under a picture fill', () => {
+  const shadowed = (withShadow: boolean) =>
+    buildDocxFromBody(
+      `<w:p><w:r><w:drawing>
+        <wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+          <wp:extent cx="1828800" cy="914400"/>
+          <wp:positionH relativeFrom="page"><wp:posOffset>635000</wp:posOffset></wp:positionH>
+          <wp:positionV relativeFrom="page"><wp:posOffset>635000</wp:posOffset></wp:positionV>
+          <wp:wrapNone/>
+          <wp:docPr id="9" name="Shadowed"/>
+          <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+            <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+                <wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/></a:xfrm>
+                  <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+                  <a:blipFill><a:blip r:embed="rId20"/><a:stretch><a:fillRect/></a:stretch></a:blipFill>
+                  ${
+                    withShadow
+                      ? `<a:effectLst><a:outerShdw blurRad="50800" dist="38100">` +
+                        `<a:prstClr val="black"><a:alpha val="40000"/></a:prstClr>` +
+                        `</a:outerShdw></a:effectLst>`
+                      : ''
+                  }
+                </wps:spPr>
+                <wps:bodyPr/>
+              </wps:wsp>
+            </a:graphicData>
+          </a:graphic>
+        </wp:anchor>
+      </w:drawing></w:r></w:p>`,
+      {
+        images: {
+          rId20: {
+            contentType: 'image/png',
+            bytes: buildTinyPng(2, 2, [0, 0, 255, 255]),
+            extension: 'png',
+          },
+        },
+      },
+    );
+
+  it('builds a blurred shadow back up to the transparency it asks for', () => {
+    // §20.1.8.40 — the soft edge is a stack of copies of the same silhouette,
+    // and where they all overlap the colour has to reach what the shadow asked
+    // for. Layers COMPOSITE rather than add, so each carries the root of what
+    // is left, not the quotient: divided instead, a 50% shadow settled at 44%
+    // in its own middle and the shape came out a step light.
+    for (const [alpha, blurPt] of [
+      [0.5, 3],
+      [0.4, 8],
+      [0.25, 16],
+    ] as const) {
+      const { count, alpha: each } = shadowBlurLayers({ blurPt, alpha });
+      expect(count, `${alpha}@${blurPt}`).toBeGreaterThan(1);
+      // n copies at `each` leave 1 - (1 - each)^n of the shadow.
+      expect(1 - (1 - each) ** count, `${alpha}@${blurPt}`).toBeCloseTo(alpha, 10);
+    }
+    // A hard shadow is one copy at its own alpha, untouched.
+    expect(shadowBlurLayers({ blurPt: 0, alpha: 0.4 })).toEqual({ count: 1, alpha: 0.4 });
+  });
+
+  it('draws that shadow at the transparency it asks for, not at full strength', async () => {
+    // The state that carries a shadow's alpha has to be named in the PICTURE
+    // pass as it is in the shape pass. Left out, tdf128596's 50% black under a
+    // nearly transparent tile came out solid.
+    const pdf = await Ream.parse(shadowed(true)).convert('pdf');
+    const s = Buffer.from(pdf).toString('latin1');
+    // An /ExtGState carrying the per-layer alpha exists…
+    expect(/\/ca 0?\.\d+/u.test(s)).toBe(true);
+    // …and the content stream names one before it paints.
+    expect(/\/GSa\d+ gs/u.test(s)).toBe(true);
+  });
+
+  it('ties the shadow, the picture and the outline into one picture', () => {
+    // Without a shadow nothing is grouped and the passes stay as they were.
+    const plain = layoutOf(shadowed(false)).pages[0]!.commands;
+    expect(plain.every((c) => c.pictureId === undefined)).toBe(true);
+    // With one, all three travel together — and the shadow comes FIRST.
+    const withIt = layoutOf(shadowed(true)).pages[0]!.commands;
+    const group = withIt.filter((c) => c.pictureId !== undefined);
+    expect(group.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(group.map((c) => c.pictureId)).size).toBe(1);
+    const first = group[0];
+    expect(first?.type).toBe('shape');
+    expect(first?.type === 'shape' ? first.shape.shadow : undefined).toBeDefined();
+    expect(group.some((c) => c.type === 'image')).toBe(true);
+    // …and no other item carries the shadow a second time.
+    expect(group.filter((c) => c.type === 'shape' && c.shape.shadow !== undefined)).toHaveLength(1);
   });
 });

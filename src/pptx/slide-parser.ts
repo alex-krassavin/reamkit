@@ -41,6 +41,7 @@ import type { PlaceholderRef, ShapeBoxEmu } from '@/pptx/sp-helpers';
 
 import type { TableStyleTheme } from '@/pptx/table-style';
 import { defaultColorResolver, placeholderColors, resolveColorNode } from '@/core/drawingml/colors';
+import { isTextWarp } from '@/core/drawingml/text-warp';
 import { FEATURES, emuToPt, pt } from '@/core/ir';
 import {
   poAttr,
@@ -58,11 +59,13 @@ import {
   parseLine,
   parsePrstGeom,
   parseShadow,
+  parseSrcRect,
   parseXfrm,
   statesFill,
   styleRefFill,
   styleRefFontColor,
   styleRefLine,
+  withStatedDirection,
 } from '@/word/drawing-parser';
 import {
   lineSpacing,
@@ -136,7 +139,10 @@ export interface SlideContext {
    * drawing override (its `dsp:spTree`), or `undefined` when the file ships no
    * override (E-SMARTART SA0).
    */
-  readonly resolveDiagram?: (relId: string) => PoNode | undefined;
+  readonly resolveDiagram?: (
+    relId: string,
+    frame: { readonly cx: number; readonly cy: number },
+  ) => PoNode | undefined;
   /**
    * Sink for graceful-degradation notices (E-SMARTART SA3): a SmartArt that
    * declares a diagram but ships no drawing override records a dropped-feature
@@ -191,8 +197,19 @@ export function parseSlideShapes(
       const shape = parseSp(child, ctx, transform);
       if (shape) out.push({ kind: 'shape', shape });
     } else if (poIs(child, 'p:pic')) {
-      const image = parsePic(child, ctx, transform);
-      if (image) out.push({ kind: 'image', image });
+      // §19.3.1.37 — a picture may name a GEOMETRY of its own, and then it is
+      // CLIPPED to it: crop-to-shape.pptx is one photograph in an ellipse. That
+      // is the same thing as a shape wearing a picture fill, and the shape path
+      // already draws one, so the picture is handed to it rather than given a
+      // clip of its own. Drawn as a plain rectangle the ellipse was square.
+      const clipped = pictureAsShape(child);
+      const shape = clipped ? parseSp(clipped, ctx, transform) : undefined;
+      if (shape) {
+        out.push({ kind: 'shape', shape });
+      } else {
+        const image = parsePic(child, ctx, transform);
+        if (image) out.push({ kind: 'image', image });
+      }
     } else if (poIs(child, 'p:graphicFrame')) {
       out.push(...parseGraphicFrame(child, ctx, transform));
     } else if (poIs(child, 'p:grpSp')) {
@@ -202,6 +219,38 @@ export function parseSlideShapes(
     }
   }
   return out;
+}
+
+/**
+ * A `p:pic` that names a geometry of its own, rewritten as the `p:sp` it is.
+ *
+ * A picture holds its `p:blipFill` BESIDE `p:spPr`; a shape holds its fill
+ * INSIDE it, under the drawing namespace. Moving the one into the other is the
+ * whole difference, and it buys the shape path entire — the geometry, the
+ * outline, the crop, the recolour — instead of a second clipper that would
+ * drift from it.
+ *
+ * @param pic The `p:pic` node.
+ * @returns The equivalent `p:sp`, or undefined when the picture is a plain
+ *          rectangle and wants no clipping at all.
+ */
+function pictureAsShape(pic: PoNode): PoNode | undefined {
+  const spPr = poChildren(pic).find((c) => poIs(c, 'p:spPr'));
+  const prst = spPr ? poChildren(spPr).find((c) => poIs(c, 'a:prstGeom')) : undefined;
+  const custom = spPr ? poChildren(spPr).find((c) => poIs(c, 'a:custGeom')) : undefined;
+  const shape = poAttr(prst, 'prst');
+  // A rectangle is what a picture is drawn in anyway, and the plain image path
+  // measures and embeds one far more directly than a filled shape would.
+  if (custom === undefined && (shape === undefined || shape === 'rect')) return undefined;
+  const blipFill = poChildren(pic).find((c) => poIs(c, 'p:blipFill'));
+  if (!blipFill || !spPr) return undefined;
+  const nv = poChildren(pic).find((c) => poIs(c, 'p:nvPicPr'));
+  return {
+    'p:sp': [
+      ...(nv ? [{ 'p:nvSpPr': poChildren(nv) } as PoNode] : []),
+      { 'p:spPr': [{ 'a:blipFill': poChildren(blipFill) } as PoNode, ...poChildren(spPr)] },
+    ],
+  };
 }
 
 /**
@@ -318,7 +367,7 @@ function parseSp(sp: PoNode, ctx: SlideContext, transform: GroupTransform): Shap
   const ownFill = stated(statesFill);
   const styleFill = style ? styleRefFill(style, colors, themeStyles) : undefined;
   const lentFill = lent(statesFill);
-  const styled: ShapeFill = useBgFill
+  const resolved: ShapeFill = useBgFill
     ? backgroundThrough(ctx.backgroundFill, box, ctx.slideSize)
     : ownFill
       ? parseFill(ownFill, colors, ctx.resolveImage)
@@ -329,6 +378,9 @@ function parseSp(sp: PoNode, ctx: SlideContext, transform: GroupTransform): Shap
           : spPr
             ? parseFill(spPr, colors, ctx.resolveImage)
             : { kind: 'none' };
+  // …and whichever of those it came from, a bare `a:gradFill` on the shape
+  // turns it: the colours are the style's, the direction is the shape's.
+  const styled = withStatedDirection(resolved, spPr);
   const lineFrom = from((n) => poChildren(n).some((c) => poIs(c, 'a:ln')));
   let line = lineFrom ? parseLine(lineFrom, colors) : undefined;
   if (style) {
@@ -461,7 +513,10 @@ function parseGraphicFrame(
   if (uri === DIAGRAM_URI) {
     const relIds = poFindDescendant(gf, 'dgm:relIds');
     const dmRelId = relIds ? poAttr(relIds, 'dm') : undefined; // r:dm → data part
-    const spTree = dmRelId !== undefined ? ctx.resolveDiagram?.(dmRelId) : undefined;
+    // The frame the slide gives the diagram is what a layout computed from the
+    // data has to fill: how many boxes fit across it is the frame's question.
+    const spTree =
+      dmRelId !== undefined ? ctx.resolveDiagram?.(dmRelId, { cx: box.cx, cy: box.cy }) : undefined;
     if (!spTree) {
       // SmartArt is declared but ships no pre-rendered drawing override; record
       // a graceful loss instead of silently dropping the diagram (SA3).
@@ -866,15 +921,19 @@ export function parseGeometry(spPr: PoNode | undefined): ShapeGeometry {
 }
 
 // p:pic → a floating image. The bytes come from p:blipFill/a:blip @r:embed,
-// resolved against the slide's relationships (PX3a); geometry from p:spPr/a:xfrm
-// (picture placeholders that inherit it from the layout wait for a later slice).
+// resolved against the slide's relationships (PX3a); geometry from p:spPr/a:xfrm,
+// or — for a picture that fills a PLACEHOLDER — from the layout, exactly as a
+// shape's does. customshape-bitmapfill-srcrect.pptx is one `p:pic` with an empty
+// `p:spPr` and it drew nothing at all.
 function parsePic(
   pic: PoNode,
   ctx: SlideContext,
   transform: GroupTransform,
 ): ImageBlock | undefined {
   const spPr = poChildren(pic).find((c) => poIs(c, 'p:spPr'));
-  const own = parseXfrmBox(spPr);
+  const ph = parsePh(pic);
+  let own = parseXfrmBox(spPr);
+  if (!own && ph && ctx.cascade) own = ctx.cascade.geometryFor(ph);
   if (!own) return undefined;
   const box = transform(own);
 
@@ -892,12 +951,26 @@ function parsePic(
   const amt = fixed ? poIntAttr(fixed, 'amt') : undefined;
   const alpha = amt === undefined ? undefined : Math.min(1, Math.max(0, amt / 100000));
 
+  // §20.1.8.55 `a:srcRect` — the picture's own edges, cut away before it is
+  // stretched into its frame. Unread, every one of 54542_cropped_bitmap.pptx's
+  // six cuts of the same logo came out as the whole logo squeezed into a frame
+  // shaped for a corner of it.
+  const crop = parseSrcRect(blipFill ? poFindDescendant(blipFill, 'a:srcRect') : undefined);
+  // §20.1.7.6 — a picture turns and mirrors in its frame exactly as a shape
+  // does, and states it in the same `a:xfrm`.
+  const xfrm = spPr ? poChildren(spPr).find((c) => poIs(c, 'a:xfrm')) : undefined;
+  const rot = xfrm ? poIntAttr(xfrm, 'rot') : undefined;
+
   const altText = picAltText(pic);
   return {
     float: floatAt(box),
     ...(resource !== undefined ? { resource } : {}),
     ...(colorChange ? { colorChange } : {}),
     ...(alpha !== undefined && alpha < 1 ? { alpha } : {}),
+    ...(crop ? { crop } : {}),
+    ...(rot !== undefined && rot !== 0 ? { rotation60k: rot } : {}),
+    ...(poAttr(xfrm, 'flipH') === '1' ? { flipH: true } : {}),
+    ...(poAttr(xfrm, 'flipV') === '1' ? { flipV: true } : {}),
     width: emuToPt(box.cx),
     height: emuToPt(box.cy),
     paragraphProperties: {},
@@ -992,6 +1065,11 @@ export function parseTxBody(
   const rIns = bodyPr ? poIntAttr(bodyPr, 'rIns') : undefined;
   const bIns = bodyPr ? poIntAttr(bodyPr, 'bIns') : undefined;
   const a = bodyPr ? poAttr(bodyPr, 'anchor') : undefined;
+  // §20.1.10.42 — a `normAutofit` that carries no scale of its own is a box
+  // whose text has never been fitted; the layout measures it and shrinks it.
+  const autofit = bodyPr ? poChildren(bodyPr).find((c) => poIs(c, 'a:normAutofit')) : undefined;
+  const shrink = autofit !== undefined && poIntAttr(autofit, 'fontScale') === undefined;
+  const warp = bodyPr ? textWarp(bodyPr) : undefined;
   // A placeholder that states no anchor of its own sits where its prototype
   // says: a master title anchored `ctr` centres the slide's title in its box.
   const anchor: ShapeTextBody['anchor'] | undefined =
@@ -1003,6 +1081,33 @@ export function parseTxBody(
     ...(rIns !== undefined ? { insetRight: emuToPt(rIns) } : {}),
     ...(bIns !== undefined ? { insetBottom: emuToPt(bIns) } : {}),
     ...(anchor ? { anchor } : {}),
+    ...(shrink ? { shrinkToFit: true } : {}),
+    ...(warp ? { warp } : {}),
+  };
+}
+
+/**
+ * §20.1.9.10 `a:prstTxWarp` — the WordArt curve a body's text is bent through,
+ * with the `a:avLst` `adj` guide when it states one. Unread, tdf114848's eight
+ * pieces of WordArt were set as eight ordinary paragraphs, each wrapped onto
+ * three lines of upright type where both references draw one bent line.
+ *
+ * @param bodyPr The body's `a:bodyPr`.
+ * @returns The preset and its adjustment, or `undefined` when the body states
+ *          no warp or states the enumeration's `textNoShape`.
+ */
+function textWarp(bodyPr: PoNode): ShapeTextBody['warp'] {
+  const node = poChildren(bodyPr).find((c) => poIs(c, 'a:prstTxWarp'));
+  const preset = node ? poAttr(node, 'prst') : undefined;
+  if (node === undefined || preset === undefined || !isTextWarp(preset)) return undefined;
+  const avLst = poChildren(node).find((c) => poIs(c, 'a:avLst'));
+  const adj = avLst
+    ? poChildren(avLst).find((c) => poIs(c, 'a:gd') && poAttr(c, 'name') === 'adj')
+    : undefined;
+  const value = adj ? /^val\s+(-?\d+)$/u.exec(poAttr(adj, 'fmla') ?? '')?.[1] : undefined;
+  return {
+    preset,
+    ...(value !== undefined ? { adjust: Number(value) } : {}),
   };
 }
 
@@ -1089,6 +1194,15 @@ function parseSlideParagraph(
 
   const runs: Array<Run> = [];
   for (const child of poChildren(aP)) {
+    // §21.1.2.2.1 `a:br` — the break the author typed inside a paragraph. Read
+    // as nothing, the two halves ran together and the box broke the result
+    // wherever it fell: smartart-font-size's node reads "Max size(65 / pt)"
+    // where every reader has "Max size / (65 pt)".
+    if (poIs(child, 'a:br')) {
+      const last = runs[runs.length - 1];
+      if (last) runs[runs.length - 1] = { ...last, text: `${last.text}\n` };
+      continue;
+    }
     if (poIs(child, 'a:r') || poIs(child, 'a:fld')) {
       const run = parseSlideRun(child, defaults, colors, resolveLink, themeFonts);
       if (run) runs.push(run);
@@ -1332,12 +1446,23 @@ function parseTableCell(tc: PoNode, colors: ColorResolver): TableCell {
   const tcPr = poChildren(tc).find((c) => poIs(c, 'a:tcPr'));
   const shadingHex = tcPr ? cellFillHex(tcPr, colors) : undefined;
   const borders = tcPr ? cellOwnBorders(tcPr, colors) : undefined;
+  // §21.1.3.17 `@vert` — the cell's text turned a quarter. `eaVert` is the East
+  // Asian spelling of the same clockwise turn; the WordArt variants stack
+  // upright glyphs, which is not a turn and is left flat.
+  const vert = tcPr ? poAttr(tcPr, 'vert') : undefined;
+  const textDirection =
+    vert === 'vert' || vert === 'eaVert' || vert === 'mongolianVert'
+      ? ('vert' as const)
+      : vert === 'vert270'
+        ? ('vert270' as const)
+        : undefined;
   return {
     properties: {
       ...(gridSpan !== undefined && gridSpan > 1 ? { colSpan: gridSpan } : {}),
       ...(merge ? { merge } : {}),
       ...(shadingHex ? { shading: { colorHex: shadingHex } } : {}),
       ...(borders ? { borders } : {}),
+      ...(textDirection ? { textDirection } : {}),
     },
     content,
   };

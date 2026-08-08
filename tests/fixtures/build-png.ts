@@ -10,6 +10,7 @@ export function buildTinyPng(
   width: number,
   height: number,
   pixel: readonly [number, number, number, number],
+  dpi?: number,
 ): Uint8Array {
   // IHDR — 13 bytes
   const ihdrData = new Uint8Array(13);
@@ -40,7 +41,19 @@ export function buildTinyPng(
 
   const iendChunk = makeChunk('IEND', new Uint8Array(0));
 
-  return concat(PNG_SIGNATURE, ihdrChunk, idatChunk, iendChunk);
+  // §11.3.5.3 `pHYs` — the resolution the picture states for itself, in pixels
+  // per metre. What makes its NATURAL size, and so the size of one tile of it.
+  const physChunk = ((): Uint8Array => {
+    if (dpi === undefined) return new Uint8Array(0);
+    const perMetre = Math.round(dpi / 0.0254);
+    const data = new Uint8Array(9);
+    writeU32BE(data, 0, perMetre);
+    writeU32BE(data, 4, perMetre);
+    data[8] = 1; // unit: the metre
+    return makeChunk('pHYs', data);
+  })();
+
+  return concat(PNG_SIGNATURE, ihdrChunk, physChunk, idatChunk, iendChunk);
 }
 
 function makeChunk(type: string, data: Uint8Array): Uint8Array {

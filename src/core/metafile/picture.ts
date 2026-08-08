@@ -125,6 +125,19 @@ export interface DeviceContext {
   y: number;
   /** The world→page transform, as `[a, b, c, d, e, f]`. */
   transform: readonly [number, number, number, number, number, number];
+  /**
+   * MS-EMF §2.3.2 / MS-WMF §2.3.2 — the region drawing is limited to, in
+   * logical units, when the metafile states a RECTANGULAR one. A primitive
+   * that falls wholly outside it is not drawn: an embedded workbook's preview
+   * clips its sheet to the used range, and unclipped we painted the whole
+   * empty grid around it.
+   */
+  clip?: {
+    readonly left: number;
+    readonly top: number;
+    readonly right: number;
+    readonly bottom: number;
+  };
 }
 
 export const DEFAULT_PEN: MetaPen = {
@@ -154,6 +167,83 @@ export function newDeviceContext(): DeviceContext {
 
 export function cloneDc(dc: DeviceContext): DeviceContext {
   return { ...dc };
+}
+
+/**
+ * Whether a primitive bounded by `box` is wholly outside the device context's
+ * clip. Partial overlaps are kept whole — the reader discards what the clip
+ * excludes rather than cutting geometry, which is a missing cut, never wrong
+ * content.
+ *
+ * @param dc  The device context, for its clip.
+ * @param box The primitive's bounds in logical units.
+ * @returns `true` when nothing of it would be drawn.
+ */
+export function clippedAway(
+  dc: DeviceContext,
+  box: { left: number; top: number; right: number; bottom: number },
+): boolean {
+  const c = dc.clip;
+  if (!c) return false;
+  return box.right < c.left || box.left > c.right || box.bottom < c.top || box.top > c.bottom;
+}
+
+/** The intersection of a device context's clip with another rectangle. */
+export function intersectClip(
+  dc: DeviceContext,
+  rect: { left: number; top: number; right: number; bottom: number },
+): NonNullable<DeviceContext['clip']> {
+  const c = dc.clip;
+  if (!c) return rect;
+  return {
+    left: Math.max(c.left, rect.left),
+    top: Math.max(c.top, rect.top),
+    right: Math.min(c.right, rect.right),
+    bottom: Math.min(c.bottom, rect.bottom),
+  };
+}
+
+/**
+ * A primitive's bounds in the units it is stored in, for the clip test.
+ *
+ * @param prim The primitive.
+ * @returns Its bounding rectangle; a text run's is its reference point, since
+ *          the box it fills is not known until it is measured.
+ */
+export function primBounds(prim: PicturePrim): {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+} {
+  if (prim.kind === 'text') {
+    // A run's box is not known until it is measured; its reference point is.
+    return { left: prim.x, top: prim.y, right: prim.x, bottom: prim.y };
+  }
+  if (prim.kind === 'image') {
+    return {
+      left: prim.x,
+      top: prim.y,
+      right: prim.x + prim.width,
+      bottom: prim.y + prim.height,
+    };
+  }
+  let left = Infinity;
+  let top = Infinity;
+  let right = -Infinity;
+  let bottom = -Infinity;
+  for (const path of prim.paths) {
+    for (const sg of path.segments) {
+      if (!('x' in sg)) continue;
+      left = Math.min(left, sg.x);
+      right = Math.max(right, sg.x);
+      top = Math.min(top, sg.y);
+      bottom = Math.max(bottom, sg.y);
+    }
+  }
+  return Number.isFinite(left)
+    ? { left, top, right, bottom }
+    : { left: 0, top: 0, right: 0, bottom: 0 };
 }
 
 /** A COLORREF (`0x00bbggrr`) as the 6-hex this codebase's colours use. */

@@ -1685,7 +1685,7 @@ function vmlStyleLength(shape: PoNode | undefined, prop: 'width' | 'height'): Pt
  * @param node The `a:srcRect` element, or `undefined` when the fill declares none.
  * @returns The crop, or `undefined` when nothing is cut away.
  */
-function parseSrcRect(node: PoNode | undefined): ImageCrop | undefined {
+export function parseSrcRect(node: PoNode | undefined): ImageCrop | undefined {
   if (!node) return undefined;
   const edge = (name: string): number => {
     const v = Number(poAttr(node, name));
@@ -2238,6 +2238,35 @@ const FILL_TAGS: ReadonlySet<string> = new Set([
   'a:grpFill',
 ]);
 
+// §20.1.8.33 — a `a:gradFill` with no `a:gsLst` states a DIRECTION and no
+// colours: the run of stops comes from the gallery style's `a:fillRef`, and the
+// shape only says which way to sweep it. Counted as a fill of its own, the
+// shape ends up with none at all — 63200.pptx's ellipse drew as its own shadow,
+// a grey disc where every reader has the theme's blue.
+function emptyGradient(node: PoNode): boolean {
+  return poIs(node, 'a:gradFill') && !poChildren(node).some((c) => poIs(c, 'a:gsLst'));
+}
+
+/**
+ * The fill with the direction the SHAPE states, where it states one and no
+ * colours: §20.1.8.33's `a:gradFill` holding only an `a:lin` says "sweep the
+ * gallery style's run of colours this way". 63200.pptx's ellipse asks for the
+ * diagonal where the theme's slot sweeps straight down.
+ *
+ * @param fill The fill resolved from the style (or anywhere else).
+ * @param spPr The shape's own properties.
+ * @returns The fill, turned; unchanged when the shape states no bare direction.
+ */
+export function withStatedDirection(fill: ShapeFill, spPr: PoNode | undefined): ShapeFill {
+  const gradient = fill.kind === 'gradient' ? fill.gradient : undefined;
+  if (gradient === undefined || gradient.kind !== 'linear' || spPr === undefined) return fill;
+  const grad = poChildren(spPr).find((c) => emptyGradient(c));
+  const lin = grad ? poChildren(grad).find((c) => poIs(c, 'a:lin')) : undefined;
+  const ang = lin ? poIntAttr(lin, 'ang') : undefined;
+  if (ang === undefined) return fill;
+  return { ...fill, gradient: { ...gradient, angle: (ang / 60000) % 360 } };
+}
+
 /**
  * Whether an `spPr` states a fill AT ALL — including `a:noFill`, which is a
  * shape saying it has none rather than saying nothing. A placeholder that says
@@ -2247,7 +2276,10 @@ const FILL_TAGS: ReadonlySet<string> = new Set([
  * @returns Whether a fill element is present.
  */
 export function statesFill(spPr: PoNode | undefined): boolean {
-  return spPr !== undefined && poChildren(spPr).some((c) => FILL_TAGS.has(poTag(c) ?? ''));
+  return (
+    spPr !== undefined &&
+    poChildren(spPr).some((c) => FILL_TAGS.has(poTag(c) ?? '') && !emptyGradient(c))
+  );
 }
 
 // §20.1.4.2.13 `<a:fillRef>` — the fill a gallery style names. The theme's own
@@ -2583,7 +2615,13 @@ function fillFromNode(
       // NoFillAttrInImagedata.docx papers two text boxes with a texture that
       // way, and stretched it came out a brown blur.
       const tile = poChildren(child).find((c) => poIs(c, 'a:tile'));
-      const tiled = tile !== undefined;
+      // §20.1.8.14 — the fill MODE is optional, and a `blipFill` that names
+      // neither of them tiles rather than stretches. tdf128596 is a rounded
+      // rectangle papered with a 32×32 tick and nothing else in its fill; read
+      // as a stretch it came out as one tick blown up over the whole shape,
+      // where both references paper it.
+      const stretched = poChildren(child).some((c) => poIs(c, 'a:stretch'));
+      const tiled = tile !== undefined || !stretched;
       // §20.1.8.58 `@sx` / `@sy` — the scale applied BEFORE the repeat, in
       // thousandths of a percent. Read as a plain repeat, a texture the file
       // halves tiles once where it should tile four times.
@@ -2779,6 +2817,13 @@ function duotoneOf(
   blip: PoNode,
   resolveColor: ColorResolver,
 ): { readonly shadowHex: string; readonly highlightHex: string } | undefined {
+  // §20.1.8.34 `a:grayscl` — the picture drawn in shades of grey. That is what
+  // a duotone from black to white already is, so it is read as one rather than
+  // grown a channel of its own: tdf112209's photographed chevron is a colour
+  // photograph in the file and grey in every reader.
+  if (poChildren(blip).some((c) => poIs(c, 'a:grayscl'))) {
+    return { shadowHex: '000000', highlightHex: 'FFFFFF' };
+  }
   const duotone = poChildren(blip).find((c) => poIs(c, 'a:duotone'));
   if (!duotone) return undefined;
   const colors = poChildren(duotone)
@@ -3121,7 +3166,15 @@ function parseGradient(grad: PoNode, resolveColor: ColorResolver): ShapeGradient
     return {
       kind: 'radial',
       stops,
-      ...(poAttr(path, 'path') === 'rect' ? { sweep: 'rect' as const } : {}),
+      // §20.1.8.46 `@path` — `circle` sweeps in circles, `rect` in rectangles,
+      // and `shape` follows the SHAPE's own outline, which for the rectangle a
+      // background or a plain box is means rectangles again. Swept as a circle
+      // instead, the contours run out to the corners at a different rate than
+      // to the sides: tdf114848's centred glow came out as a band across the
+      // middle of the slide.
+      ...(poAttr(path, 'path') === 'rect' || poAttr(path, 'path') === 'shape'
+        ? { sweep: 'rect' as const }
+        : {}),
       ...(center ? { center } : {}),
     };
   }

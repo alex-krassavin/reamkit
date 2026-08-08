@@ -4,7 +4,9 @@
 // a font, a current point and a logical→device mapping. This reads the records
 // that DRAW (paths, rectangles, text, bitmaps, brush blits) and the ones that
 // set the state they draw through; the rest — palettes, colour management,
-// regions — are named in `skipped` so the caller can record the loss.
+// regions — are named in `skipped`, which the reader exposes as a diagnostic:
+// the render path it is read from carries no loss channel of its own, so
+// nothing turns it into a reported Loss automatically.
 //
 // Coordinates come out in DEVICE units: the window→viewport mapping (§2.3.11)
 // is applied as the records go by, so the picture's box is the header's own
@@ -13,7 +15,15 @@
 import type { PathSegment, StrokeStyle, VectorPath } from '@/core/vector';
 import type { DeviceContext, MetaObject, MetaPicture, PicturePrim } from '@/core/metafile/picture';
 import { PathBuilder } from '@/core/vector';
-import { applyTransform, cloneDc, colorRef, newDeviceContext } from '@/core/metafile/picture';
+import {
+  applyTransform,
+  clippedAway,
+  cloneDc,
+  colorRef,
+  intersectClip,
+  newDeviceContext,
+  primBounds,
+} from '@/core/metafile/picture';
 import { cropDib, fadedDib, readDib } from '@/core/metafile/dib';
 import { makeBlitter } from '@/core/metafile/blit';
 import { fromSymbolFont } from '@/core/metafile/symbol-fonts';
@@ -80,8 +90,23 @@ export function readEmf(bytes: Uint8Array): MetaPicture {
   // close it. Outside a path bracket the drawing records paint at once.
   let building: Array<PathSegment> | undefined;
   const open = (): Array<PathSegment> => building ?? [];
+  // Whether a FIGURE is open — the path has segments and the last is not a
+  // close. A `…To` record appended to one continues from its last point, so it
+  // must NOT move there again: a move splits one figure into two, and the
+  // even-odd rule then carves a wedge out of what should be a solid fill.
+  const inFigure = (): boolean => {
+    const tail = building?.[building.length - 1];
+    return tail !== undefined && tail.op !== 'close';
+  };
 
-  const blitter = makeBlitter((prim) => prims.push(prim));
+  // §2.3.2 — the clip the records after it are limited to, kept in the same
+  // device space the primitives are stored in. A primitive wholly outside it is
+  // dropped: an embedded workbook's preview clips its sheet to the used range,
+  // and unclipped we painted the whole empty grid around it.
+  const emit = (prim: PicturePrim): void => {
+    if (!clippedAway(dc, primBounds(prim))) prims.push(prim);
+  };
+  const blitter = makeBlitter(emit);
   /**
    * §2.3.1 — one blit record: the source bitmap into the destination
    * rectangle, both stated in the record's own fields. The rectangle is mapped
@@ -143,9 +168,17 @@ export function readEmf(bytes: Uint8Array): MetaPicture {
 
   const strokeOf = (): StrokeStyle | undefined => {
     if (dc.pen.style === 'none') return undefined;
+    // §2.2.20 — a pen states its width in LOGICAL units, so the world transform
+    // in force scales it along with the coordinates it draws through. A writer
+    // that shrinks the world by sixteen and then asks for a sixteen-wide pen
+    // means one device unit; taking the width at face value draws the whole
+    // picture in fat black rules.
+    const m = dc.transform;
+    const world = Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])) || 1;
+    const lu = dc.pen.widthLu * world;
     // A pen one logical unit wide is a HAIRLINE: the thinnest line the device
     // draws, not one unit of a scaled-up world.
-    const w = dc.pen.widthLu <= 1 ? 1 : dc.pen.widthLu * Math.abs(sx());
+    const w = lu <= 1 ? 1 : lu * Math.abs(sx());
     return {
       colorHex: dc.pen.colorHex,
       widthPt: w,
@@ -161,13 +194,26 @@ export function readEmf(bytes: Uint8Array): MetaPicture {
     const st = stroke ? strokeOf() : undefined;
     const fillHex = fill && !dc.brush.hollow ? dc.brush.colorHex : undefined;
     if (fillHex === undefined && !st) return;
-    prims.push({
+    emit({
       kind: 'path',
       paths: [path],
       ...(fillHex !== undefined ? { fillColorHex: fillHex } : {}),
       ...(st ? { stroke: st } : {}),
     });
   };
+
+  /** Two mapped corners → the rectangle they bound, in either order. */
+  function rectOf(
+    a: { x: number; y: number },
+    b: { x: number; y: number },
+  ): { left: number; top: number; right: number; bottom: number } {
+    return {
+      left: Math.min(a.x, b.x),
+      top: Math.min(a.y, b.y),
+      right: Math.max(a.x, b.x),
+      bottom: Math.max(a.y, b.y),
+    };
+  }
 
   /** A closed rectangle, as the geometry records draw one. */
   const rectSegments = (l: number, t: number, r: number, b: number): Array<PathSegment> => {
@@ -213,6 +259,32 @@ export function readEmf(bytes: Uint8Array): MetaPicture {
         view = { ...view, x: at(8), y: at(12) };
         haveView = true;
         break;
+      // §2.3.2 clip records. Only the rectangular forms are modelled; an
+      // EXTSELECTCLIPRGN whose region is one rectangle is one of them, and an
+      // empty region with RGN_COPY clears the clip.
+      case 30: {
+        // EMR_INTERSECTCLIPRECT — a RECTL in logical units
+        const a = px(at(8), at(12));
+        const b = px(at(16), at(20));
+        dc = { ...dc, clip: intersectClip(dc, rectOf(a, b)) };
+        break;
+      }
+      case 75: {
+        // EMR_EXTSELECTCLIPRGN — RegionData, then the mode
+        const cbRgnData = u(8);
+        const mode = u(12);
+        if (cbRgnData === 0 && mode === 5) {
+          const { clip: _drop, ...rest } = dc;
+          dc = rest;
+        } else if (mode === 5 && cbRgnData >= 32 && u(16 + 4) === 1) {
+          // One RECTL follows the 32-byte RGNDATAHEADER.
+          const base = off + 16 + 32;
+          const a = px(v.getInt32(base, true), v.getInt32(base + 4, true));
+          const b = px(v.getInt32(base + 8, true), v.getInt32(base + 12, true));
+          dc = { ...dc, clip: rectOf(a, b) };
+        }
+        break;
+      }
       case 33: // EMR_SAVEDC
         stack.push(cloneDc(dc));
         break;
@@ -321,7 +393,7 @@ export function readEmf(bytes: Uint8Array): MetaPicture {
           dc.y = at(12);
           const to = px(dc.x, dc.y);
           if (building) {
-            if (building.length === 0) building.push({ op: 'move', x: from.x, y: from.y });
+            if (!inFigure()) building.push({ op: 'move', x: from.x, y: from.y });
             building.push({ op: 'line', x: to.x, y: to.y });
           } else {
             paint(
@@ -362,6 +434,19 @@ export function readEmf(bytes: Uint8Array): MetaPicture {
         // than a point at any size a document prints one.
         paint(rectSegments(at(8), at(12), at(16), at(20)), true, true);
         break;
+      case 47: // EMR_PIE
+      case 46: // EMR_CHORD
+      case 45: // EMR_ARC
+        // §2.3.5.13/.4/.2 — a bounding box and two RADIAL points: the arc runs
+        // between where the rays from the box's centre through them meet the
+        // ellipse. A pie closes through that centre and a chord straight
+        // across; an arc is only the curve, so it is stroked and never filled.
+        paint(
+          arcSegments(px, at(8), at(12), at(16), at(20), at(24), at(28), at(32), at(36), type),
+          type !== 45,
+          true,
+        );
+        break;
       case 3: // EMR_POLYGON
       case 4: // EMR_POLYLINE
       case 2: // EMR_POLYBEZIER
@@ -382,7 +467,7 @@ export function readEmf(bytes: Uint8Array): MetaPicture {
           const segs = polySegments(px, pts, {
             closed,
             bezier,
-            ...(continues ? { from: { x: dc.x, y: dc.y } } : {}),
+            ...(continues ? { from: { x: dc.x, y: dc.y }, joined: inFigure() } : {}),
           });
           if (pts.length > 0) {
             dc.x = pts[pts.length - 1]!.x;
@@ -428,7 +513,7 @@ export function readEmf(bytes: Uint8Array): MetaPicture {
           if (text.trim() !== '') {
             const p = px(refX, refY);
             const font = dc.font;
-            prims.push({
+            emit({
               kind: 'text',
               // A symbol font's letters are not letters (see symbol-fonts).
               text: fromSymbolFont(text, font?.family),
@@ -461,9 +546,14 @@ export function readEmf(bytes: Uint8Array): MetaPicture {
         const w = at(32);
         const h = at(36);
         if (cbBmiSrc === 0) {
-          // BLACKNESS / WHITENESS paint a colour of their own; PATCOPY and
-          // its neighbours paint the brush.
+          // §MS-WMF 2.1.1.31 — with no source there are only three ternary
+          // operations left that state a colour outright: BLACKNESS and
+          // WHITENESS paint one of their own, PATCOPY paints the brush.
+          // Every other one reads the destination (DSTCOPY is the plain NOP a
+          // writer ends a picture with) or the source that is not there, and
+          // paints NOTHING — taking the brush to them blanks the drawing.
           const hex = rop === 0x00000042 ? '000000' : rop === 0x00ff0062 ? 'FFFFFF' : undefined;
+          if (hex === undefined && rop !== 0x00f00021) break;
           const brush = dc.brush;
           if (hex !== undefined) {
             dc.brush = { kind: 'brush', colorHex: hex, hollow: false };
@@ -674,14 +764,19 @@ type Mapper = (x: number, y: number) => { x: number; y: number };
 function polySegments(
   map: Mapper,
   pts: ReadonlyArray<{ x: number; y: number }>,
-  o: { closed: boolean; bezier: boolean; from?: { x: number; y: number } },
+  o: { closed: boolean; bezier: boolean; from?: { x: number; y: number }; joined?: boolean },
 ): Array<PathSegment> {
   const segs: Array<PathSegment> = [];
   if (pts.length === 0) return segs;
   let i = 0;
   if (o.from) {
-    const s = map(o.from.x, o.from.y);
-    segs.push({ op: 'move', x: s.x, y: s.y });
+    // A `…To` record's points are all data — the figure starts at the current
+    // point. Appended to a figure already open that point is its last, and
+    // moving there again would split the figure; `joined` says so.
+    if (o.joined !== true) {
+      const s = map(o.from.x, o.from.y);
+      segs.push({ op: 'move', x: s.x, y: s.y });
+    }
   } else {
     const s = map(pts[0]!.x, pts[0]!.y);
     segs.push({ op: 'move', x: s.x, y: s.y });
@@ -706,6 +801,87 @@ function polySegments(
 
 // An ellipse as four cubics — the constant is the usual circle approximation.
 const KAPPA = 0.5522847498307936;
+
+/**
+ * §2.3.5.2/.4/.13 — the wedge, chord or bare curve an `EMR_ARC`, `EMR_CHORD` or
+ * `EMR_PIE` draws.
+ *
+ * All three state the same thing: an ellipse inscribed in a box, and two points
+ * naming RAYS from its centre. The arc runs from where the first ray crosses
+ * the ellipse to where the second does, anticlockwise on the page — GDI's
+ * default direction — and the two records differ only in how they close: a pie
+ * back through the centre, a chord straight across, an arc not at all.
+ *
+ * Built in the metafile's own coordinates and mapped point by point, exactly as
+ * the ellipse and the polygons are: the mapping is affine, so a Bézier's
+ * control points survive it.
+ *
+ * @param map        The metafile's logical → page mapping.
+ * @param l,t,r,b    The box the ellipse is inscribed in.
+ * @param sx,sy      The point naming the ray the arc starts at.
+ * @param ex,ey      The point naming the ray it ends at.
+ * @param type       The record type, which decides how the figure closes.
+ * @returns The path segments, in page coordinates.
+ */
+function arcSegments(
+  map: Mapper,
+  l: number,
+  t: number,
+  r: number,
+  b: number,
+  sx: number,
+  sy: number,
+  ex: number,
+  ey: number,
+  type: number,
+): Array<PathSegment> {
+  const cx = (l + r) / 2;
+  const cy = (t + b) / 2;
+  const rx = (r - l) / 2;
+  const ry = (b - t) / 2;
+  if (!(rx > 0) || !(ry > 0)) return [];
+  // The angle of a ray, in the frame the ellipse is parametrised in. The
+  // metafile's y grows DOWN, so this angle grows clockwise on the page.
+  const angleOf = (x: number, y: number): number => Math.atan2((y - cy) / ry, (x - cx) / rx);
+  const start = angleOf(sx, sy);
+  let sweep = angleOf(ex, ey) - start;
+  // Anticlockwise on the page is the direction of DECREASING angle here; two
+  // rays that coincide name the whole ellipse, not nothing.
+  if (sweep >= 0) sweep -= 2 * Math.PI;
+  const point = (a: number): { x: number; y: number } =>
+    map(cx + rx * Math.cos(a), cy + ry * Math.sin(a));
+  const segs: Array<PathSegment> = [];
+  const from = point(start);
+  if (type === 47) {
+    // A pie opens at the centre and runs out to the arc.
+    const c = map(cx, cy);
+    segs.push({ op: 'move', x: c.x, y: c.y }, { op: 'line', x: from.x, y: from.y });
+  } else {
+    segs.push({ op: 'move', x: from.x, y: from.y });
+  }
+  // No cubic spans more than a quarter turn, which is where the approximation
+  // stays true to within a fraction of a device pixel.
+  const steps = Math.max(1, Math.ceil(Math.abs(sweep) / (Math.PI / 2)));
+  const delta = sweep / steps;
+  const alpha = (4 / 3) * Math.tan(delta / 4);
+  for (let i = 0; i < steps; i++) {
+    const a0 = start + delta * i;
+    const a1 = a0 + delta;
+    // The tangent at an angle, scaled by the handle length the arc needs.
+    const t0 = map(
+      cx + rx * Math.cos(a0) - alpha * rx * Math.sin(a0),
+      cy + ry * Math.sin(a0) + alpha * ry * Math.cos(a0),
+    );
+    const t1 = map(
+      cx + rx * Math.cos(a1) + alpha * rx * Math.sin(a1),
+      cy + ry * Math.sin(a1) - alpha * ry * Math.cos(a1),
+    );
+    const to = point(a1);
+    segs.push({ op: 'cubic', x1: t0.x, y1: t0.y, x2: t1.x, y2: t1.y, x: to.x, y: to.y });
+  }
+  if (type !== 45) segs.push({ op: 'close' });
+  return segs;
+}
 
 export function ellipseSegments(
   map: Mapper,

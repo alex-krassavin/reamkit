@@ -126,6 +126,26 @@ const createBrush = (ih: number, colorBgr: number) =>
 const createPen = (ih: number, style: number, width: number, colorBgr: number) =>
   emr(38, new Bytes().u32(ih).u32(style).i32(width).i32(0).u32(colorBgr).build());
 const select = (ih: number) => emr(37, new Bytes().u32(ih).build());
+// §2.3.5.13/.4/.2 — a box and the two points naming the rays the arc runs between.
+const wedge = (
+  type: 45 | 46 | 47,
+  box: readonly [number, number, number, number],
+  from: readonly [number, number],
+  to: readonly [number, number],
+) =>
+  emr(
+    type,
+    new Bytes()
+      .i32(box[0])
+      .i32(box[1])
+      .i32(box[2])
+      .i32(box[3])
+      .i32(from[0])
+      .i32(from[1])
+      .i32(to[0])
+      .i32(to[1])
+      .build(),
+  );
 
 const paths = (prims: MetaPicture['prims']): Array<PicturePath> =>
   prims.filter((p): p is PicturePath => p.kind === 'path');
@@ -141,6 +161,62 @@ describe('EMF (MS-EMF)', () => {
   it('reads the bounds as the picture’s box', () => {
     const pic = readEmf(emf({ l: 5, t: 7, r: 105, b: 57 }, []));
     expect([pic.left, pic.top, pic.width, pic.height]).toEqual([5, 7, 100, 50]);
+  });
+
+  it('draws the wedge a pie record asks for, closed through the centre', () => {
+    // §2.3.5.13 EMR_PIE — 37625.ppt's exploded pie chart is four of these and
+    // nothing else, and unread the slide had four labels pointing at empty
+    // space. The box is 0,0..100,100, so the centre is (50, 50); the rays are
+    // due east and due south, and GDI turns ANTICLOCKWISE on the page, so the
+    // wedge drawn is the three quarters the long way round.
+    const pic = readEmf(
+      emf({ l: 0, t: 0, r: 100, b: 100 }, [
+        createBrush(1, 0x00ff00),
+        select(1),
+        wedge(47, [0, 0, 100, 100], [100, 50], [50, 100]),
+      ]),
+    );
+    const [p] = paths(pic.prims);
+    expect(p?.fillColorHex).toBe('00FF00');
+    const segs = p!.paths[0]!.segments;
+    // It opens at the centre, runs out to the first ray, curves round and closes.
+    expect(segs[0]).toEqual({ op: 'move', x: 50, y: 50 });
+    expect(segs[1]).toEqual({ op: 'line', x: 100, y: 50 });
+    expect(segs[segs.length - 1]).toEqual({ op: 'close' });
+    // Three quarters of a turn is three cubics, none spanning more than one.
+    expect(segs.filter((sg) => sg.op === 'cubic')).toHaveLength(3);
+    // …and it ends on the second ray, due south of the centre.
+    const last = segs[segs.length - 2] as { x: number; y: number };
+    expect(last.x).toBeCloseTo(50, 3);
+    expect(last.y).toBeCloseTo(100, 3);
+  });
+
+  it('closes a chord across its arc, and leaves an arc open', () => {
+    const box = [0, 0, 100, 100] as const;
+    const chord = readEmf(
+      emf({ l: 0, t: 0, r: 100, b: 100 }, [
+        createBrush(1, 0x00ff00),
+        select(1),
+        wedge(46, box, [100, 50], [50, 100]),
+      ]),
+    );
+    const cs = paths(chord.prims)[0]!.paths[0]!.segments;
+    // No centre: a chord starts ON the arc and closes straight back across it.
+    expect(cs[0]).toEqual({ op: 'move', x: 100, y: 50 });
+    expect(cs[cs.length - 1]).toEqual({ op: 'close' });
+    // An arc is a line, not a shape: it is stroked and never filled.
+    const arc = readEmf(
+      emf({ l: 0, t: 0, r: 100, b: 100 }, [
+        createBrush(1, 0x00ff00),
+        select(1),
+        createPen(2, 0, 1, 0x000000),
+        select(2),
+        wedge(45, box, [100, 50], [50, 100]),
+      ]),
+    );
+    const a = paths(arc.prims)[0]!;
+    expect(a.fillColorHex).toBeUndefined();
+    expect(a.paths[0]!.segments.some((sg) => sg.op === 'close')).toBe(false);
   });
 
   it('fills a rectangle with the selected brush', () => {
@@ -371,6 +447,33 @@ describe('WMF (MS-WMF)', () => {
       ]),
     );
     expect([pic.left, pic.top, pic.width, pic.height]).toEqual([3, 5, 80, 40]);
+  });
+
+  it('turns a window whose extent is NEGATIVE the right way up', () => {
+    // §2.3.5.12 — a negative extent inverts that axis: the origin then names
+    // the far corner and logical y grows UPWARD. 38256.ppt's clipart sets the
+    // origin at (-1031, 945) with an extent of (2000, -1838), so its top edge
+    // is at -893. Read as a top, the drawing was laid out a full height above
+    // its box and hung off the top of the slide.
+    const box = (l: number, t: number, r: number, b: number) =>
+      new Bytes().i16(b).i16(r).i16(t).i16(l).build();
+    const pic = readWmf(
+      wmf([
+        meta(0x020b, new Bytes().i16(100).i16(0).build()), // SETWINDOWORG y=100, x=0
+        meta(0x020c, new Bytes().i16(-100).i16(80).build()), // SETWINDOWEXT cy=-100, cx=80
+        meta(0x02fc, new Bytes().u16(0).u32(0x0000ff).u16(0).build()), // red brush
+        meta(0x012d, new Bytes().u16(0).build()),
+        meta(0x041b, box(10, 90, 20, 80)), // near the origin, i.e. near the BOTTOM
+      ]),
+    );
+    // The box spans y 0…100, and its stated corner is the top one.
+    expect([pic.left, pic.top, pic.width, pic.height]).toEqual([0, 0, 80, 100]);
+    // …and the rectangle, drawn at y 80…90 in a frame that grows upward, comes
+    // back as y 10…20 down from that top.
+    const ys = pic.prims
+      .filter((pr): pr is PicturePath => pr.kind === 'path')
+      .flatMap((pr) => pr.paths[0]!.segments.flatMap((sg) => ('y' in sg ? [sg.y] : [])));
+    expect([Math.min(...ys), Math.max(...ys)]).toEqual([10, 20]);
   });
 
   it('fills the rectangle a PATBLT names with the current brush', () => {
@@ -642,6 +745,61 @@ const stretchDibits = (
     ),
   );
 
+/** EMR_BITBLT (§2.3.1.2) with NO source bitmap — the brush over a rectangle. */
+const brushBlit = (dest: [number, number, number, number], rop: number): Uint8Array =>
+  emr(
+    76,
+    new Bytes()
+      .zeros(16) // Bounds
+      .i32(dest[0])
+      .i32(dest[1])
+      .i32(dest[2])
+      .i32(dest[3])
+      .u32(rop)
+      .i32(0) // xSrc
+      .i32(0) // ySrc
+      .zeros(24) // XformSrc
+      .u32(0) // BkColorSrc
+      .u32(0) // UsageSrc
+      .u32(0) // offBmiSrc
+      .u32(0) // cbBmiSrc — no bitmap behind it
+      .u32(0) // offBitsSrc
+      .u32(0) // cbBitsSrc
+      .build(),
+  );
+
+/** EMR_MODIFYWORLDTRANSFORM (§2.3.12.2), MWT_RIGHTMULTIPLY, a uniform scale. */
+const modifyWorldTransform = (scale: number): Uint8Array =>
+  emr(36, new Bytes().f32(scale).f32(0).f32(0).f32(scale).f32(0).f32(0).u32(2).build());
+
+/** EMR_EXTCREATEPEN (§2.3.7.9) — the EXTLOGPEN past the pen's own bitmap fields. */
+const extCreatePen = (ih: number, style: number, width: number, colorBgr: number): Uint8Array =>
+  emr(
+    95,
+    new Bytes()
+      .u32(ih)
+      .u32(0) // offBmi
+      .u32(0) // cbBmi
+      .u32(0) // offBits
+      .u32(0) // cbBits
+      .u32(style)
+      .u32(width)
+      .u32(0) // elpBrushStyle: BS_SOLID
+      .u32(colorBgr)
+      .u32(0) // elpHatch
+      .u32(0) // elpNumEntries
+      .build(),
+  );
+
+const moveTo = (x: number, y: number) => emr(27, new Bytes().i32(x).i32(y).build());
+const lineTo = (x: number, y: number) => emr(54, new Bytes().i32(x).i32(y).build());
+/** EMR_POLYBEZIERTO16 (§2.3.5.20) — control, control, end, from the current point. */
+const polyBezierTo16 = (pts: Array<[number, number]>): Uint8Array => {
+  const b = new Bytes().zeros(16).u32(pts.length);
+  for (const [x, y] of pts) b.i16(x).i16(y);
+  return emr(88, b.build());
+};
+
 const images = (prims: MetaPicture['prims']): Array<PictureImage> =>
   prims.filter((p): p is PictureImage => p.kind === 'image');
 
@@ -809,5 +967,152 @@ describe('a blit (MS-EMF §2.3.1)', () => {
         (r) => r.resourceName === item?.imageResourceName && r.prepared !== undefined,
       ),
     ).toBe(true);
+  });
+
+  it('paints the brush for the raster operations that state a colour, and nothing for the rest', () => {
+    // §2.3.1.2 — a blit with NO source bitmap is a brush blit, but only for the
+    // ternary operations that do not read the source or the destination.
+    // 41246-1.ppt's JBOSS diagram ends with a DSTCOPY over the whole picture:
+    // a plain no-operation, which taken for a brush blit painted the drawing
+    // white and left the slide with nothing on it but its title.
+    const painted = (rop: number): Array<PicturePath> =>
+      paths(
+        readEmf(
+          emf({ l: 0, t: 0, r: 100, b: 100 }, [
+            createBrush(1, 0x00ff00),
+            select(1),
+            brushBlit([0, 0, 100, 100], rop),
+          ]),
+        ).prims,
+      );
+    expect(painted(0x00f00021)[0]?.fillColorHex).toBe('00FF00'); // PATCOPY: the brush
+    expect(painted(0x00ff0062)[0]?.fillColorHex).toBe('FFFFFF'); // WHITENESS
+    expect(painted(0x00000042)[0]?.fillColorHex).toBe('000000'); // BLACKNESS
+    expect(painted(0x00aa0029)).toEqual([]); // DSTCOPY — the no-operation
+    expect(painted(0x00550009)).toEqual([]); // DSTINVERT reads the destination
+    expect(painted(0x00cc0020)).toEqual([]); // SRCCOPY has no source to copy
+  });
+
+  it('scales a pen’s width by the world transform in force', () => {
+    // §2.2.20 — the width is in LOGICAL units. A writer that shrinks the world
+    // by sixteen and asks for a sixteen-wide pen means one device unit, and
+    // taking the width at face value drew 41246-1's whole diagram in fat rules.
+    const stroked = (scale: number, width: number): PicturePath | undefined =>
+      paths(
+        readEmf(
+          emf({ l: 0, t: 0, r: 100, b: 100 }, [
+            modifyWorldTransform(scale),
+            extCreatePen(1, 0x00010000, width, 0x000000),
+            select(1),
+            rect(0, 0, 10, 10),
+          ]),
+        ).prims,
+      )[0];
+    expect(stroked(1, 8)?.stroke?.widthPt).toBe(8);
+    expect(stroked(0.0625, 16)?.stroke?.widthPt).toBe(1);
+    expect(stroked(0.125, 8)?.stroke?.widthPt).toBe(1);
+    // Half the world and twice the pen is the same line either way round.
+    expect(stroked(0.5, 8)?.stroke?.widthPt).toBe(4);
+  });
+});
+
+describe('a path bracket (MS-EMF §2.3.10)', () => {
+  it('keeps one figure whole across the “…To” records that continue it', () => {
+    // A `…To` record draws FROM the current point, which standing alone means
+    // moving there first. Inside an open figure that point is already the
+    // figure's last: moving to it again splits one figure into three, and the
+    // even-odd rule then cancels where they overlap. 41246-1.ppt's cylinder
+    // came out with a white wedge carved across its face.
+    const pic = readEmf(
+      emf({ l: 0, t: 0, r: 100, b: 100 }, [
+        createBrush(1, 0x00ff00),
+        select(1),
+        emr(59, new Uint8Array()), // BEGINPATH
+        moveTo(50, 10),
+        polyBezierTo16([
+          [20, 10],
+          [10, 20],
+          [10, 30],
+        ]),
+        lineTo(10, 70),
+        polyBezierTo16([
+          [10, 80],
+          [20, 90],
+          [50, 90],
+        ]),
+        emr(61, new Uint8Array()), // CLOSEFIGURE
+        emr(60, new Uint8Array()), // ENDPATH
+        emr(62, new Uint8Array()), // FILLPATH
+      ]),
+    );
+    const [path] = paths(pic.prims);
+    const segs = path?.paths[0]?.segments ?? [];
+    // ONE move — the figure's own — then its curves and lines and the close.
+    expect(segs.filter((s) => s.op === 'move')).toHaveLength(1);
+    expect(segs.map((s) => s.op)).toEqual(['move', 'cubic', 'line', 'cubic', 'close']);
+  });
+
+  it('moves again for the record that opens a figure after a close', () => {
+    // A closed figure leaves the current point at its start; the next record
+    // begins a figure of its own and DOES need the move back.
+    const pic = readEmf(
+      emf({ l: 0, t: 0, r: 100, b: 100 }, [
+        createBrush(1, 0x00ff00),
+        select(1),
+        emr(59, new Uint8Array()),
+        moveTo(10, 10),
+        lineTo(20, 10),
+        emr(61, new Uint8Array()), // CLOSEFIGURE
+        lineTo(30, 30),
+        emr(60, new Uint8Array()),
+        emr(62, new Uint8Array()),
+      ]),
+    );
+    expect(paths(pic.prims)[0]?.paths[0]?.segments.map((s) => s.op)).toEqual([
+      'move',
+      'line',
+      'close',
+      'move',
+      'line',
+    ]);
+  });
+});
+
+describe('a clip region (MS-EMF §2.3.2)', () => {
+  it('drops what falls wholly outside the rectangle the file states', () => {
+    // An embedded object's preview clips its drawing to the part it shows;
+    // unclipped, everything the metafile draws around it is painted too.
+    const inside = rect(1, 1, 4, 4);
+    const outside = rect(50, 50, 60, 60);
+    const clipped = readEmf(
+      emf({ l: 0, t: 0, r: 100, b: 100 }, [
+        createPen(1, 0, 1, 0),
+        select(1),
+        emr(30, new Bytes().i32(0).i32(0).i32(10).i32(10).build()), // INTERSECTCLIPRECT
+        inside,
+        outside,
+      ]),
+    );
+    expect(clipped.prims).toHaveLength(1);
+
+    // …and with no clip record, both are drawn.
+    const plain = readEmf(
+      emf({ l: 0, t: 0, r: 100, b: 100 }, [createPen(1, 0, 1, 0), select(1), inside, outside]),
+    );
+    expect(plain.prims).toHaveLength(2);
+  });
+
+  it('an empty region with RGN_COPY clears the clip again', () => {
+    const drawn = readEmf(
+      emf({ l: 0, t: 0, r: 100, b: 100 }, [
+        createPen(1, 0, 1, 0),
+        select(1),
+        emr(30, new Bytes().i32(0).i32(0).i32(10).i32(10).build()),
+        // EXTSELECTCLIPRGN with no region data and RGN_COPY = back to no clip.
+        emr(75, new Bytes().u32(0).u32(5).build()),
+        rect(50, 50, 60, 60),
+      ]),
+    ).prims;
+    expect(drawn).toHaveLength(1);
   });
 });

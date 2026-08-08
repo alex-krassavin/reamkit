@@ -929,6 +929,13 @@ export interface CellProperties {
    * is a word-processor table's default.
    */
   readonly verticalAlign?: 'top' | 'center' | 'bottom';
+  /**
+   * §17.4.71 `w:textDirection` / §21.1.3.17 `a:tcPr@vert` — the cell's text is
+   * turned a quarter: `vert` reads top-to-bottom (turned clockwise), `vert270`
+   * bottom-to-top. Its lines then run along the cell's HEIGHT and stack across
+   * its width, which is what makes a narrow header column readable.
+   */
+  readonly textDirection?: 'vert' | 'vert270';
 }
 
 /** §17.4.81 `w:trPr` — a table row's properties: height, split/header flags. */
@@ -1189,6 +1196,16 @@ export interface ShapeFill {
    */
   readonly tileScale?: { readonly sx: number; readonly sy: number };
   /**
+   * Where the grid of copies is anchored. DrawingML pins it to the shape's
+   * top-left corner (§20.1.8.58 `a:tile @algn`, which defaults to `tl`); an
+   * MS-ODRAW texture fill (§2.3.7.13 `fillOriginX`/`fillOriginY`, both
+   * defaulting to nothing) centres it on the shape instead. It only shows when
+   * the copies do not divide the box evenly — and it shows most when ONE copy
+   * is larger than the box, where the difference is which part of the picture
+   * is visible at all.
+   */
+  readonly tileFromCentre?: boolean;
+  /**
    * §20.1.8.14 `a:blipFill` — the picture painted across the shape's box. A
    * DrawingML picture IS a shape with one of these, which is how a `pic:pic`
    * inside a group reaches the page.
@@ -1318,6 +1335,23 @@ export interface ShapeTextBody {
    * WordArt is set at whatever size fills the box it was drawn in.
    */
   readonly fitToBox?: boolean;
+  /**
+   * §20.1.9.10 `a:prstTxWarp` — DrawingML WordArt: the preset curve the text is
+   * bent through, and the `a:avLst` `adj` guide when the file states one. The
+   * warped text does not wrap and is stretched to fill the shape's box, so the
+   * size its runs state stops deciding how large it is drawn. `textNoShape` is
+   * not carried: it is the enumeration's "no warp" member, and a body under it
+   * is an ordinary text box.
+   */
+  readonly warp?: { readonly preset: string; readonly adjust?: number };
+  /**
+   * §20.1.10.42 `a:normAutofit` — the text SHRINKS to fit the box, and only
+   * shrinks: a size that already fits is left alone. PowerPoint writes the
+   * scale it settled on into `@fontScale` and that is applied at parse; this
+   * is for the text that arrives without one, which is every box of a diagram
+   * laid out from its layout part rather than from a cached drawing.
+   */
+  readonly shrinkToFit?: boolean;
   /**
    * `wps:txbx @id` / `wps:linkedTxbx @id @seq` — the chain of boxes this one
    * belongs to. Text that overruns a box continues in the next of its chain;

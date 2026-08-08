@@ -25,6 +25,7 @@ import type { ColorResolver, SchemeAliases } from '@/core/drawingml/colors';
 
 import type { FontRegistry } from '@/core/font';
 import { packageHasPart } from '@/core/bytes';
+import { cachedDiagramTree, laidOutDiagramTree } from '@/core/drawingml/diagram/run';
 import { parseChart, withChartColorStyle } from '@/core/drawingml/chart-parser';
 import {
   DEFAULT_SCHEME_ALIAS,
@@ -293,7 +294,73 @@ function parseSlide(
   // page, whatever KIND each of them is (§19.3.1).
   out.push(...inheritedShapes.map(asBackdrop));
   if (spTree) out.push(...parseSlideShapes(spTree, shapeCtx));
-  return out;
+  out.push(...parseSlideControls(cSld, shapeCtx));
+  return inPaintOrder(out);
+}
+
+/**
+ * §19.3.1 — a slide's shape tree IS its z-order: what stands later in it is
+ * drawn over what stands earlier, whatever KIND either of them is.
+ *
+ * The page otherwise paints kind by kind — every image, then every shape — and
+ * on a slide that is simply wrong. 54542_cropped_bitmap.pptx is six logos each
+ * standing on its own coloured panel, written panel-then-logo six times over,
+ * and painted by kind all six logos went down first and all six panels covered
+ * them.
+ *
+ * @param elements The slide's elements, in the order the tree gives them.
+ * @returns The same elements, each float carrying its place in that order.
+ */
+function inPaintOrder(elements: ReadonlyArray<BodyElement>): Array<BodyElement> {
+  return elements.map((el, z) => {
+    if (el.kind === 'shape') return { ...el, shape: withZ(el.shape, z) };
+    if (el.kind === 'image') return { ...el, image: withZ(el.image, z) };
+    if (el.kind === 'table') {
+      const anchor = el.table.properties.float;
+      return anchor
+        ? {
+            ...el,
+            table: {
+              ...el.table,
+              properties: { ...el.table.properties, float: { ...anchor, zOrder: z } },
+            },
+          }
+        : el;
+    }
+    return el;
+  });
+}
+
+/** The same block with its float carrying `z`, when it floats at all. */
+function withZ<T extends { readonly float?: { readonly zOrder?: number } }>(
+  block: T,
+  z: number,
+): T {
+  return block.float ? { ...block, float: { ...block.float, zOrder: z } } : block;
+}
+
+/**
+ * §19.3.1.15 `p:controls` — the ActiveX controls a slide carries.
+ *
+ * They sit BESIDE the shape tree rather than in it, so a reader that walks
+ * `p:spTree` alone never sees them. Each one's `mc:Fallback` is a `p:pic` of
+ * what the control looks like — the picture PowerPoint cached precisely so that
+ * a reader which cannot run the control still draws it — and by the time the
+ * slide is parsed the alternate content is already resolved to that fallback.
+ * activex_picture.pptx is seventeen of them over an EMPTY `p:spTree`, and it
+ * rendered as a blank page.
+ *
+ * @param cSld The slide's `p:cSld`.
+ * @param ctx  The slide's parsing context.
+ * @returns The controls' cached pictures as ordinary floating pictures.
+ */
+function parseSlideControls(cSld: PoNode | undefined, ctx: SlideContext): Array<BodyElement> {
+  const controls = cSld ? poChildren(cSld).find((c) => poIs(c, 'p:controls')) : undefined;
+  if (!controls) return [];
+  const pics = poChildren(controls).flatMap((c) =>
+    poIs(c, 'p:control') ? poChildren(c).filter((k) => poIs(k, 'p:pic')) : [],
+  );
+  return pics.length === 0 ? [] : parseSlideShapes({ 'p:spTree': pics }, ctx);
 }
 
 // A layout's or master's p:cSld/p:bg → its background fill (PX5b). A picture
@@ -461,26 +528,46 @@ function makeSlideChartResolver(
 function makeSlideDiagramResolver(
   pkg: OpcPackage,
   slidePath: string,
-): (relId: string) => PoNode | undefined {
+): (relId: string, frame: { readonly cx: number; readonly cy: number }) => PoNode | undefined {
   const cache = new Map<string, PoNode | undefined>();
-  return (relId) => {
+  return (relId, frame) => {
     if (cache.has(relId)) return cache.get(relId);
-    let spTree: PoNode | undefined;
     const dataRel = pkg.getPartRelationships(slidePath).find((r) => r.id === relId);
     const data = dataRel ? pkg.resolveRelatedPart(slidePath, dataRel) : undefined;
     const draw = data ? drawingPart(pkg, slidePath, data) : undefined;
-    if (draw) {
-      for (const root of parseXml(draw.data)) {
-        const found = poFindDescendant(root, 'dsp:spTree');
-        if (found) {
-          spTree = found;
-          break;
-        }
-      }
+    let spTree = draw ? cachedDiagramTree(draw.data, parseXml) : undefined;
+    if (!spTree && data) {
+      // No cached drawing: run the layout the file DOES carry. A generator
+      // writes data, layout, colours and style and leaves the picture to the
+      // reader, which is the whole reason this engine exists.
+      spTree = laidOutDiagram(pkg, slidePath, data, frame);
     }
     cache.set(relId, spTree);
     return spTree;
   };
+}
+
+// §21.4.3 — the layout part beside the data, run to the boxes it describes,
+// in the frame the slide gives the diagram.
+function laidOutDiagram(
+  pkg: OpcPackage,
+  slidePath: string,
+  data: { readonly path: string; readonly data: Uint8Array },
+  frame: { readonly cx: number; readonly cy: number },
+): PoNode | undefined {
+  const related = (type: string): Uint8Array | undefined => {
+    const rel = pkg.getPartRelationships(slidePath).find((r) => r.type.endsWith(type));
+    return rel ? pkg.resolveRelatedPart(slidePath, rel)?.data : undefined;
+  };
+  return laidOutDiagramTree(
+    {
+      data: data.data,
+      layout: related('/diagramLayout'),
+      colors: related('/diagramColors'),
+    },
+    frame,
+    parseXml,
+  );
 }
 
 /**

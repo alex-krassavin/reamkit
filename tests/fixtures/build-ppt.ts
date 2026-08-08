@@ -61,9 +61,16 @@ const PROP_FILL_BLIP_COMPLEX = 0x8186; // fillBlip with fComplex: the blip follo
 const FBT_BLIP_PNG_INLINE = 0xf01e;
 const FBT_CLIENT_DATA = 0xf011;
 const RT_PLACEHOLDER_ATOM = 0x0bc3;
+const RT_HEADERS_FOOTERS = 0x0fd9;
+const RT_HEADERS_FOOTERS_ATOM = 0x0fda;
+const RT_CSTRING = 0x0fba;
+const HF_INSTANCE_SLIDES = 0x003;
 const FBT_BLIP_PNG = 0xf01e;
 const PROP_PIB_ID = 0x4104; // OPT property id: pib (0x0104) with the fBid flag (0x4000)
 const PROP_FILL_COLOR = 0x0181;
+const PROP_FILL_BACK_COLOR = 0x0183;
+const PROP_FILL_ANGLE = 0x018b;
+const PROP_FILL_FOCUS = 0x018c;
 const PROP_LINE_COLOR = 0x01c0;
 const PROP_FILL_BOOLS = 0x01bf; // fill style booleans (fFilled + its usage bit)
 const PROP_LINE_BOOLS = 0x01ff; // line style booleans (fLine + its usage bit)
@@ -106,6 +113,13 @@ export interface PptParaStyleRun {
   // font's — Wingdings 0x6C is the filled circle).
   readonly hasBullet?: boolean;
   readonly bulletChar?: number;
+  /** §2.9.20 leftMargin / indent, in MASTER UNITS — 576 to the inch, eight to the point. */
+  readonly leftMargin?: number;
+  readonly indent?: number;
+  /** §2.9.32 ParaSpacing — negative is master units, positive a percentage of the line. */
+  readonly lineSpacing?: number;
+  readonly spaceBefore?: number;
+  readonly spaceAfter?: number;
 }
 
 export interface PptSlideInput {
@@ -158,8 +172,21 @@ export interface PptBoxInput {
   // A client text box holding only an OutlineTextRefAtom at this 0-based index.
   readonly outlineRef?: number;
   readonly imageRef?: number; // a picture shape (1-based pib index)
+  // §2.3.23 cropFrom* — the fraction of each edge of the SOURCE cut away, as a
+  // plain fraction here (the builder writes the 16.16 fixed-point the file uses).
+  readonly crop?: {
+    readonly left?: number;
+    readonly top?: number;
+    readonly right?: number;
+    readonly bottom?: number;
+  };
+  // §2.3.23 pictureTransparent — the colour the picture is drawn WITHOUT.
+  readonly transparentHex?: string;
   readonly shapeType?: number; // an autoshape: the FSP recInstance (MSOSPT)
   readonly fillColorHex?: string; // OPT fillColor (6-hex literal RGB)
+  // MS-ODRAW §2.3.7.3 fillBackColor — the far end of a shade, and the colour a
+  // PATTERN's clear bits show through to.
+  readonly backColorHex?: string;
   // §2.3.7.43 / §2.3.8.44 — state fFilled / fLine as OFF, so the colours above
   // are stated but not used.
   readonly noFill?: boolean;
@@ -167,6 +194,8 @@ export interface PptBoxInput {
   // An OfficeArtClientData holding a PlaceholderAtom: on a master this shape is
   // a prototype, not decoration (PPT-14).
   readonly placeholder?: boolean;
+  // §2.9.51 OEPlaceholderAtom.placeholderId — 7 date, 8 slide number, 9 footer.
+  readonly placeholderId?: number;
   // MS-ODRAW fBackground: the shape states the SLIDE's background, not content.
   readonly background?: boolean;
   readonly lineColorHex?: string; // OPT lineColor (6-hex literal RGB)
@@ -181,6 +210,14 @@ export interface PptBoxInput {
     readonly png: Uint8Array;
     // MS-ODRAW §2.3.7.11/.12 `fillWidth` / `fillHeight`, in EMU.
     readonly tileEmu?: readonly [number, number];
+  };
+  // MS-ODRAW §2.3.7 — a shaded fill: `fillType` 4..8, the far colour, the
+  // 16.16 angle and the focus (§2.3.7.6, where the first colour peaks).
+  readonly gradientFill?: {
+    readonly fillType: number;
+    readonly backColorHex: string;
+    readonly angleDeg?: number;
+    readonly focusPct?: number;
   };
   // A grouped shape's rectangle, in the enclosing group's coordinate space.
   readonly childAnchor?: readonly [number, number, number, number];
@@ -197,6 +234,15 @@ export interface PptGroupInput {
     readonly h: number;
   };
   readonly box: readonly [number, number, number, number]; // x, y, right, bottom
+  readonly boxes: ReadonlyArray<PptBoxInput>;
+  // A group INSIDE this one. It carries a ChildAnchor in this group's space
+  // rather than a client anchor of its own, which is how PowerPoint nests them.
+  readonly nested?: PptNestedGroupInput;
+}
+
+export interface PptNestedGroupInput {
+  readonly childAnchor: readonly [number, number, number, number];
+  readonly box: readonly [number, number, number, number];
   readonly boxes: ReadonlyArray<PptBoxInput>;
 }
 
@@ -220,6 +266,17 @@ export interface BuildPptOptions {
   readonly omitCurrentUser?: boolean;
   // Deck images, stored in the Pictures stream and referenced by slide imageRef.
   readonly images?: ReadonlyArray<Uint8Array>;
+  // §2.4.15 — the deck-wide HeadersFootersContainer for slides (recInstance 3):
+  // which parts are shown, plus the date and footer strings.
+  readonly headersFooters?: {
+    readonly mask: number;
+    readonly userDate?: string;
+    readonly footer?: string;
+  };
+  // §2.9.3 — the DECK's own text styles, in the document's text info. This is
+  // where the style for `Tx_TYPE_OTHER` lives: what a text box drawn on a slide
+  // takes, which no master states.
+  readonly deckTextStyles?: PptDeckStyles;
   // Slide masters, each persisted as a MainMasterContainer with its own colour
   // scheme — referenced by a slide's followMasterScheme + masterIndex (PPT-6).
   readonly masters?: ReadonlyArray<{
@@ -238,6 +295,16 @@ export interface BuildPptOptions {
     }>;
   }>;
 }
+
+/** TextMasterStyleAtoms: per text type, the font size of each indent level. */
+type PptDeckStyles = ReadonlyArray<{
+  readonly textType: number;
+  readonly sizesPt: ReadonlyArray<number>;
+  /** The font-collection index every level of this style names (PPT-19). */
+  readonly fontRef?: number;
+  /** A bullet CHARACTER per level, with no fHasBullet flag beside it (PPT-18). */
+  readonly bulletChars?: ReadonlyArray<number>;
+}>;
 
 // Build an 8-byte record header + data. A container uses recVer 0xF (low nibble);
 // atoms use recVer 0. recInstance occupies the high 12 bits of the first u16.
@@ -307,12 +374,22 @@ function buildStyleTextProp(
     const mask =
       (r.align !== undefined ? 0x00000800 : 0) | // textAlignment bit
       (r.hasBullet !== undefined ? 0x00000001 : 0) | // bulletFlags
-      (r.bulletChar !== undefined ? 0x00000080 : 0); // bulletChar
+      (r.bulletChar !== undefined ? 0x00000080 : 0) | // bulletChar
+      (r.leftMargin !== undefined ? 0x00000100 : 0) |
+      (r.indent !== undefined ? 0x00000400 : 0) |
+      (r.lineSpacing !== undefined ? 0x00001000 : 0) |
+      (r.spaceBefore !== undefined ? 0x00002000 : 0) |
+      (r.spaceAfter !== undefined ? 0x00004000 : 0);
     u32(mask);
     // The fields follow the mask in the SPEC's byte order, not bit order.
     if (r.hasBullet !== undefined) u16(r.hasBullet ? 0x0001 : 0);
     if (r.bulletChar !== undefined) u16(r.bulletChar);
     if (r.align !== undefined) u16(r.align);
+    if (r.lineSpacing !== undefined) u16(r.lineSpacing);
+    if (r.spaceBefore !== undefined) u16(r.spaceBefore);
+    if (r.spaceAfter !== undefined) u16(r.spaceAfter);
+    if (r.leftMargin !== undefined) u16(r.leftMargin);
+    if (r.indent !== undefined) u16(r.indent);
   });
 
   charRuns.forEach((r, i) => {
@@ -411,7 +488,33 @@ export function buildPpt(
       ? rec(RT_DRAWING_GROUP, 0, true, rec(FBT_DGG_CONTAINER, 0, true, buildBStore(foDelays)))
       : new Uint8Array(0);
 
-  const docData = concat([docAtom, fontCollection(opts.fonts ?? []), drawingGroup, slwt]);
+  const hf = opts.headersFooters;
+  const hfRec = hf
+    ? rec(
+        RT_HEADERS_FOOTERS,
+        HF_INSTANCE_SLIDES,
+        true,
+        concat([
+          rec(
+            RT_HEADERS_FOOTERS_ATOM,
+            0,
+            false,
+            new Uint8Array([0, 0, hf.mask & 0xff, hf.mask >> 8]),
+          ),
+          ...(hf.userDate !== undefined
+            ? [rec(RT_CSTRING, 0, false, encodeUtf16(hf.userDate))]
+            : []),
+          ...(hf.footer !== undefined ? [rec(RT_CSTRING, 2, false, encodeUtf16(hf.footer))] : []),
+        ]),
+      )
+    : new Uint8Array(0);
+  const docData = concat([
+    docAtom,
+    environment(opts.fonts ?? [], opts.deckTextStyles ?? []),
+    drawingGroup,
+    hfRec,
+    slwt,
+  ]);
   const docRec = rec(RT_DOCUMENT, 0, true, docData);
 
   // --- one SlideContainer per slide, carrying its inline drawing text and any
@@ -556,6 +659,35 @@ function buildGroupContainer(group: PptGroupInput): Uint8Array {
       clientAnchorRec(group.anchor),
     ]),
   );
+  const nested = group.nested ? [buildNestedGroupContainer(group.nested)] : [];
+  return rec(
+    FBT_SPGR_CONTAINER,
+    0,
+    true,
+    concat([head, ...group.boxes.map(buildShapeContainer), ...nested]),
+  );
+}
+
+// A group inside a group: its own SpContainer states its coordinate space and a
+// ChildAnchor in the ENCLOSING group's space, which is what a client anchor
+// would be at the top level.
+function buildNestedGroupContainer(group: PptNestedGroupInput): Uint8Array {
+  const box = new Uint8Array(16);
+  const bv = new DataView(box.buffer);
+  group.box.forEach((v, i) => bv.setInt32(i * 4, v, true));
+  const anchor = new Uint8Array(16);
+  const av = new DataView(anchor.buffer);
+  group.childAnchor.forEach((v, i) => av.setInt32(i * 4, v, true));
+  const head = rec(
+    FBT_SP_CONTAINER,
+    0,
+    true,
+    concat([
+      rec(FBT_SPGR, 1, false, box),
+      rec(FBT_FSP, 0, false, new Uint8Array(8)),
+      rec(FBT_CHILD_ANCHOR, 0, false, anchor),
+    ]),
+  );
   return rec(FBT_SPGR_CONTAINER, 0, true, concat([head, ...group.boxes.map(buildShapeContainer)]));
 }
 
@@ -584,6 +716,15 @@ function buildShapeContainer(box: PptBoxInput): Uint8Array {
   }
   const props: Array<{ id: number; value: number; blob?: Uint8Array }> = [];
   if (box.imageRef !== undefined) props.push({ id: PROP_PIB_ID, value: box.imageRef });
+  if (box.crop) {
+    const fixed = (v: number): number => (Math.round(v * 65536) | 0) >>> 0;
+    if (box.crop.top !== undefined) props.push({ id: 0x0100, value: fixed(box.crop.top) });
+    if (box.crop.bottom !== undefined) props.push({ id: 0x0101, value: fixed(box.crop.bottom) });
+    if (box.crop.left !== undefined) props.push({ id: 0x0102, value: fixed(box.crop.left) });
+    if (box.crop.right !== undefined) props.push({ id: 0x0103, value: fixed(box.crop.right) });
+  }
+  if (box.transparentHex !== undefined)
+    props.push({ id: 0x0107, value: rgbColorRef(box.transparentHex) });
   if (box.fillColorHex) props.push({ id: PROP_FILL_COLOR, value: rgbColorRef(box.fillColorHex) });
   else if (box.fillSchemeIndex !== undefined)
     props.push({ id: PROP_FILL_COLOR, value: schemeColorRef(box.fillSchemeIndex) });
@@ -591,6 +732,9 @@ function buildShapeContainer(box: PptBoxInput): Uint8Array {
     props.push({ id: PROP_FILL_COLOR, value: ((box.fillSysColor & 0xffff) | (0x10 << 24)) >>> 0 });
   if (box.lineColorHex) props.push({ id: PROP_LINE_COLOR, value: rgbColorRef(box.lineColorHex) });
   // The value bit clear, its usage bit set: "this shape states it is not filled".
+  if (box.backColorHex) {
+    props.push({ id: PROP_FILL_BACK_COLOR, value: rgbColorRef(box.backColorHex) });
+  }
   if (box.noFill) props.push({ id: PROP_FILL_BOOLS, value: 0x0010 << 16 });
   if (box.noLine) props.push({ id: PROP_LINE_BOOLS, value: 0x0008 << 16 });
   else if (box.lineSchemeIndex !== undefined)
@@ -610,6 +754,17 @@ function buildShapeContainer(box: PptBoxInput): Uint8Array {
     if (box.wordArt.font !== undefined) {
       const fontBlob = str(box.wordArt.font);
       props.push({ id: PROP_GTEXT_FONT_COMPLEX, value: fontBlob.length, blob: fontBlob });
+    }
+  }
+  if (box.gradientFill) {
+    props.push({ id: PROP_FILL_TYPE, value: box.gradientFill.fillType });
+    props.push({ id: PROP_FILL_BACK_COLOR, value: rgbColorRef(box.gradientFill.backColorHex) });
+    if (box.gradientFill.angleDeg !== undefined) {
+      const raw = Math.round((90 - box.gradientFill.angleDeg) * 65536);
+      props.push({ id: PROP_FILL_ANGLE, value: raw >>> 0 });
+    }
+    if (box.gradientFill.focusPct !== undefined) {
+      props.push({ id: PROP_FILL_FOCUS, value: box.gradientFill.focusPct & 0xffff });
     }
   }
   if (box.pictureFill) {
@@ -667,8 +822,9 @@ function buildShapeContainer(box: PptBoxInput): Uint8Array {
       rec(FBT_CLIENT_TEXTBOX, 0, true, rec(RT_TEXT_CHARS_ATOM, 0, false, encodeUtf16(box.text))),
     );
   }
-  if (box.placeholder) {
-    const ph = new Uint8Array(8); // position (4), placementId, size, unused
+  if (box.placeholder || box.placeholderId !== undefined) {
+    const ph = new Uint8Array(8); // position (4), placeholderId, size, unused
+    ph[4] = box.placeholderId ?? 0;
     parts.push(rec(FBT_CLIENT_DATA, 0, true, rec(RT_PLACEHOLDER_ATOM, 0, false, ph)));
   }
   if (box.text === undefined && box.outlineRef !== undefined) {
@@ -725,19 +881,26 @@ function schemeColorRef(index: number): number {
   return ((index & 0xff) | (COLORREF_FLAG_SCHEME << 24)) >>> 0;
 }
 
-// The DocumentTextInfo (RT_Environment) holding a FontCollectionContainer: one
+// The DocumentTextInfo (RT_Environment): a FontCollectionContainer — one
 // FontEntityAtom per typeface, its lfFaceName 32 UTF-16 units NUL-terminated,
-// its recInstance the index a run's `fontRef` names (PPT-19).
-function fontCollection(fonts: ReadonlyArray<string>): Uint8Array {
-  if (fonts.length === 0) return new Uint8Array(0);
-  const atoms = fonts.map((name, i) => {
-    const d = new Uint8Array(68);
-    const v = new DataView(d.buffer);
-    for (let c = 0; c < Math.min(name.length, 31); c++)
-      v.setUint16(c * 2, name.charCodeAt(c), true);
-    return rec(RT_FONT_ENTITY_ATOM, i, false, d);
-  });
-  return rec(RT_ENVIRONMENT, 0, true, rec(RT_FONT_COLLECTION, 0, true, concat(atoms)));
+// its recInstance the index a run's `fontRef` names (PPT-19) — and the deck-wide
+// TextMasterStyleAtoms, which is where §2.9.3 keeps the style for `Tx_TYPE_OTHER`.
+function environment(fonts: ReadonlyArray<string>, deckTextStyles: PptDeckStyles): Uint8Array {
+  const parts: Array<Uint8Array> = [];
+  if (fonts.length > 0) {
+    const atoms = fonts.map((name, i) => {
+      const d = new Uint8Array(68);
+      const v = new DataView(d.buffer);
+      for (let c = 0; c < Math.min(name.length, 31); c++)
+        v.setUint16(c * 2, name.charCodeAt(c), true);
+      return rec(RT_FONT_ENTITY_ATOM, i, false, d);
+    });
+    parts.push(rec(RT_FONT_COLLECTION, 0, true, concat(atoms)));
+  }
+  for (const st of deckTextStyles)
+    parts.push(textMasterStyleAtom(st.textType, st.sizesPt, st.fontRef, st.bulletChars));
+  if (parts.length === 0) return new Uint8Array(0);
+  return rec(RT_ENVIRONMENT, 0, true, concat(parts));
 }
 
 // A SlideAtom (§2.4.24): a 24-byte body with masterIdRef at offset 12 and

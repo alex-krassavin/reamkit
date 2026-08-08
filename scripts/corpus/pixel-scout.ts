@@ -44,6 +44,20 @@ import { Ream } from '@/core/converter/ream';
 // whole and charge the difference to layout.
 const FONT_OPTIONS = corpusFontOptions();
 
+// Which TYPOGRAPHY to render with, which is two things at once. Ream's own
+// default breaks lines by total fit and leads them at a flat 1.2×; `word` and
+// `libreoffice` break greedily and lead by the font's own ascent + descent +
+// gap. Either can differ from the reference for a reason that is not a fidelity
+// gap — 38256.ppt's captions break one word differently, and
+// tdf136952_pgBreak3.docx fits six lines where LibreOffice fits seven because
+// Times New Roman leads at 1.1499× and 1.2 crosses the line in a 99pt-tall
+// text area. Set CORPUS_LAYOUT_PROFILE=libreoffice to take the reference's
+// typography and measure only what is left.
+const LAYOUT_PROFILE = ((): 'ream' | 'word' | 'libreoffice' | undefined => {
+  const v = process.env['CORPUS_LAYOUT_PROFILE'];
+  return v === 'ream' || v === 'word' || v === 'libreoffice' ? v : undefined;
+})();
+
 // Enough to see a missing block, a wrong fill or a shifted column; not enough
 // to rank on anti-aliasing. A4 at 60 dpi is ~500×700.
 const DEFAULT_DPI = 60;
@@ -127,6 +141,7 @@ async function main(): Promise<void> {
         await Ream.parse(new Uint8Array(readFileSync(src))).convert('pdf', {
           fileName: basename(src),
           ...FONT_OPTIONS,
+          ...(LAYOUT_PROFILE !== undefined ? { layoutProfile: LAYOUT_PROFILE } : {}),
         }),
       );
     } catch (e) {

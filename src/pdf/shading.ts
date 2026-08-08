@@ -367,8 +367,12 @@ function buildRamp(stopsIn: ShapeGradient['stops']): PdfDict {
   });
 }
 
-// Sort by offset, drop NaNs, clamp into [0,1], and pin the endpoints to 0 and 1
-// so the function domain is fully covered.
+// Sort by offset, drop NaNs, clamp into [0,1], and cover the whole domain by
+// EXTENDING the end stops rather than moving them: a ramp whose first stop sits
+// at 20% holds its first colour flat for that fifth and only then begins, and
+// dragging the stop back to 0 stretches the whole ramp over it. themes.pptx's
+// last slide states exactly that, and its background came out a full bucket
+// darker than every reference across the middle of the page.
 function normalizeStops(
   stops: ShapeGradient['stops'],
 ): Array<{ offset: number; colorHex: string; alpha: number }> {
@@ -380,8 +384,10 @@ function normalizeStops(
     }))
     .sort((a, b) => a.offset - b.offset);
   if (out.length === 0) return [{ offset: 0, colorHex: '000000', alpha: 1 }];
-  out[0] = { ...out[0]!, offset: 0 };
-  out[out.length - 1] = { ...out[out.length - 1]!, offset: 1 };
+  const first = out[0]!;
+  if (first.offset > 0) out.unshift({ ...first, offset: 0 });
+  const last = out[out.length - 1]!;
+  if (last.offset < 1) out.push({ ...last, offset: 1 });
   return out;
 }
 

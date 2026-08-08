@@ -144,6 +144,12 @@ function emitPage(
     for (const item of picture) emitPageItem(out, item, laid, losses, idc);
   }
 
+  // …and a page that states its own paint order paints in it (a slide's shape
+  // tree IS that order), kind by kind ignored.
+  for (const run of plan.ordered) {
+    for (const item of run) emitPageItem(out, item, laid, losses, idc);
+  }
+
   for (const t of plan.lines) {
     emitTextLine(out, t, losses, idc);
   }

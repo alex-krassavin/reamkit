@@ -197,7 +197,20 @@ export function parseThemeLineWidths(themeXml: Uint8Array): Array<number> {
 export function parseThemeFillStyles(themeXml: Uint8Array): Array<PoNode> {
   const tree = parser.parse(decoder.decode(themeXml)) as Array<PoNode>;
   const list = poFindByPath(tree, ['a:theme', 'a:themeElements', 'a:fmtScheme', 'a:fillStyleLst']);
-  return list ? [...poChildren(list)] : [];
+  return list ? fillsOf(list) : [];
+}
+
+// A slot is counted by its place in the list, so only the FILLS may be in it.
+// A theme written one element per line puts a whitespace node between each pair
+// of them, and counted in, `a:fillRef idx="3"` reached the run of spaces after
+// the first gradient instead of the second one — bnc480256's tables came out
+// the flat accent, and every gallery-styled shape in a pretty-printed theme
+// with them.
+function fillsOf(list: PoNode): Array<PoNode> {
+  return poChildren(list).filter((c) => {
+    const tag = poTag(c);
+    return tag !== undefined && tag !== '#text';
+  });
 }
 
 /**
@@ -217,7 +230,7 @@ export function parseThemeBgFillStyles(themeXml: Uint8Array): Array<PoNode> {
     'a:fmtScheme',
     'a:bgFillStyleLst',
   ]);
-  return list ? [...poChildren(list)] : [];
+  return list ? fillsOf(list) : [];
 }
 
 /**
@@ -237,7 +250,7 @@ export function parseThemeEffectStyles(themeXml: Uint8Array): Array<PoNode> {
     'a:fmtScheme',
     'a:effectStyleLst',
   ]);
-  return list ? [...poChildren(list)] : [];
+  return list ? fillsOf(list) : [];
 }
 
 const EMU_PER_POINT = 12700;

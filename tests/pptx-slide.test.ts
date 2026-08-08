@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildPptx } from './fixtures/build-pptx';
 import { buildTinyPng } from './fixtures/build-png';
+import type { ShapeFill } from '@/core/document-model';
 import { FontRegistry } from '@/core/font';
 import { paintPlan } from '@/layout/page-doc';
 import { layoutStyledDocument } from '@/layout/styled-layout';
@@ -1247,6 +1248,172 @@ describe('pptx background — a reference and a picture (E-PPTX PX5b)', () => {
     });
   });
 
+  it('sweeps a shape-path gradient the way the shape runs, not in a circle', () => {
+    // §20.1.8.46 `@path` — `circle` sweeps in circles, `rect` in rectangles,
+    // and `shape` follows the SHAPE's own outline, which for a background is a
+    // rectangle. Swept as a circle the contours reach the corners at a
+    // different rate than the sides, and tdf114848's centred glow came out as
+    // a band across the middle of the slide.
+    const bg = (path: string): string =>
+      `<p:bg><p:bgPr><a:gradFill><a:gsLst>` +
+      `<a:gs pos="0"><a:srgbClr val="FFFFFF"/></a:gs>` +
+      `<a:gs pos="100000"><a:srgbClr val="D1C39F"/></a:gs>` +
+      `</a:gsLst><a:path path="${path}"><a:fillToRect l="50000" t="50000" r="50000" b="50000"/>` +
+      `</a:path></a:gradFill></p:bgPr></p:bg>`;
+    const sweepOf = (path: string): string | undefined => {
+      const doc = Ream.parse(buildPptx([''], { slideBg: [bg(path)] }));
+      const shape = doc.flow.body.find((e) => e.kind === 'shape');
+      if (shape?.kind !== 'shape') throw new Error('no backdrop');
+      const fill = shape.shape.fill;
+      const grad = fill.kind === 'gradient' ? fill.gradient : undefined;
+      return grad?.kind === 'radial' ? (grad.sweep ?? 'circle') : undefined;
+    };
+    expect(sweepOf('shape')).toBe('rect');
+    expect(sweepOf('rect')).toBe('rect');
+    // A circle stays a circle.
+    expect(sweepOf('circle')).toBe('circle');
+  });
+
+  it('takes a run colour from the gradient it is filled with', () => {
+    // §20.1.8.33 — WordArt is always filled with a gradient, never a solid.
+    // A run here wears one colour, so it takes the stop nearest the middle —
+    // the one most of the glyph is painted in. Unread, the run had no colour
+    // at all and every word came out in the default black (tdf114848 page 2).
+    const run =
+      `<a:r><a:rPr lang="en-US" sz="5400" b="1"><a:gradFill><a:gsLst>` +
+      `<a:gs pos="0"><a:srgbClr val="FFFFFF"/></a:gs>` +
+      `<a:gs pos="50000"><a:srgbClr val="1F4E79"/></a:gs>` +
+      `<a:gs pos="100000"><a:srgbClr val="FFFFFF"/></a:gs>` +
+      `</a:gsLst><a:lin ang="5400000"/></a:gradFill></a:rPr>` +
+      `<a:t>Wave</a:t></a:r>`;
+    const sp =
+      `<p:sp><p:nvSpPr><p:cNvPr id="2" name="W"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="4000000" cy="1000000"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>` +
+      `<p:txBody><a:bodyPr><a:prstTxWarp prst="textWave1"><a:avLst/></a:prstTxWarp></a:bodyPr>` +
+      `<a:lstStyle/><a:p>${run}</a:p></p:txBody></p:sp>`;
+    const doc = Ream.parse(buildPptx([sp]));
+    const shape = doc.flow.body.find((e) => e.kind === 'shape');
+    if (shape?.kind !== 'shape') throw new Error('no shape');
+    const block = shape.shape.text?.content[0];
+    const only = block?.kind === 'paragraph' ? block.paragraph.runs[0] : undefined;
+    expect(only?.text).toBe('Wave');
+    // The middle stop, not the default black a run with no fill falls back to.
+    expect(only?.properties.colorHex).toBe('1F4E79');
+  });
+
+  it('reads the WordArt warp a body is bent through', () => {
+    // §20.1.9.10 `a:prstTxWarp`. `textNoShape` is the enumeration's "no warp"
+    // member and by far its most common value — two thirds of the decks that
+    // mention a warp state only this — so a body carrying it stays an ordinary
+    // text box, wrapping and anchored like any other.
+    const sp = (bodyPr: string): string =>
+      `<p:sp><p:nvSpPr><p:cNvPr id="2" name="W"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="4000000" cy="1000000"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>` +
+      `<p:txBody>${bodyPr}<a:lstStyle/><a:p><a:r><a:t>Bent</a:t></a:r></a:p></p:txBody></p:sp>`;
+    const warpOf = (bodyPr: string): { preset: string; adjust?: number } | undefined => {
+      const doc = Ream.parse(buildPptx([sp(bodyPr)]));
+      const shape = doc.flow.body.find((e) => e.kind === 'shape');
+      if (shape?.kind !== 'shape') throw new Error('no shape');
+      return shape.shape.text?.warp;
+    };
+    expect(
+      warpOf(`<a:bodyPr><a:prstTxWarp prst="textCanUp"><a:avLst/></a:prstTxWarp></a:bodyPr>`),
+    ).toEqual({ preset: 'textCanUp' });
+    // §20.1.9.10 — the `adj` guide, in hundred-thousandths.
+    expect(
+      warpOf(
+        `<a:bodyPr><a:prstTxWarp prst="textDeflate">` +
+          `<a:avLst><a:gd name="adj" fmla="val 25000"/></a:avLst></a:prstTxWarp></a:bodyPr>`,
+      ),
+    ).toEqual({ preset: 'textDeflate', adjust: 25000 });
+    expect(
+      warpOf(`<a:bodyPr><a:prstTxWarp prst="textNoShape"><a:avLst/></a:prstTxWarp></a:bodyPr>`),
+    ).toBeUndefined();
+    expect(warpOf(`<a:bodyPr/>`)).toBeUndefined();
+  });
+
+  it('clips a picture to the geometry it names for itself', () => {
+    // §19.3.1.37 — a `p:pic` may carry a geometry of its own, and then the
+    // picture is CLIPPED to it: crop-to-shape.pptx is one photograph in an
+    // ellipse, and drawn as a plain rectangle the ellipse came out square.
+    const pic = (prst: string): string =>
+      `<p:pic><p:nvPicPr><p:cNvPr id="4" name="Picture 3"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>` +
+      `<p:blipFill><a:blip r:embed="rIdC"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="4000000" cy="3000000"/></a:xfrm>` +
+      `<a:prstGeom prst="${prst}"><a:avLst/></a:prstGeom></p:spPr></p:pic>`;
+    const build = (prst: string) =>
+      Ream.parse(
+        buildPptx([pic(prst)], {
+          slideRels: [`<Relationship Id="rIdC" Type="${IMAGE_REL}" Target="../media/c.png"/>`],
+          media: { 'ppt/media/c.png': buildTinyPng(2, 2, [0, 200, 0, 255]) },
+        }),
+      );
+    // An ellipse is a SHAPE wearing the picture as its fill — that is what
+    // clips it, and the shape path already draws one.
+    const round = build('ellipse').flow.body.find((e) => e.kind === 'shape');
+    expect(round?.kind).toBe('shape');
+    if (round?.kind !== 'shape') throw new Error('not a shape');
+    expect(round.shape.geometry).toMatchObject({ kind: 'preset', preset: 'ellipse' });
+    expect(round.shape.fill.kind).toBe('picture');
+    // A plain rectangle needs no clipping and stays the picture it was: the
+    // image path measures and embeds one far more directly.
+    expect(build('rect').flow.body.some((e) => e.kind === 'image')).toBe(true);
+    expect(build('rect').flow.body.some((e) => e.kind === 'shape')).toBe(false);
+  });
+
+  it('places a PICTURE placeholder from the layout when it carries no transform', () => {
+    // §19.3.1.35 — a content placeholder filled with a photograph is a `p:pic`
+    // whose `p:spPr` is EMPTY: its whole geometry is the layout's. Read as a
+    // picture with no box of its own it drew nothing at all
+    // (customshape-bitmapfill-srcrect.pptx is one such picture and no more).
+    const pic =
+      `<p:pic><p:nvPicPr><p:cNvPr id="6" name="Content Placeholder"/><p:cNvPicPr/>` +
+      `<p:nvPr><p:ph idx="1"/></p:nvPr></p:nvPicPr>` +
+      `<p:blipFill><a:blip r:embed="rIdP"/><a:stretch/></p:blipFill>` +
+      `<p:spPr/></p:pic>`;
+    const layout =
+      `<p:sp><p:nvSpPr><p:cNvPr id="3" name="Content Placeholder 2"/><p:cNvSpPr/>` +
+      `<p:nvPr><p:ph idx="1"/></p:nvPr></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="6192000" y="1332000"/><a:ext cx="5493600" cy="4012789"/>` +
+      `</a:xfrm></p:spPr></p:sp>`;
+    const doc = Ream.parse(
+      buildPptx([pic], {
+        layoutMaster: { layoutSpTree: layout },
+        slideRels: [`<Relationship Id="rIdP" Type="${IMAGE_REL}" Target="../media/p.png"/>`],
+        media: { 'ppt/media/p.png': buildTinyPng(2, 2, [255, 0, 0, 255]) },
+      }),
+    );
+    const pics = doc.flow.body.filter((e) => e.kind === 'image');
+    expect(pics).toHaveLength(1);
+    const only = pics[0];
+    if (only?.kind !== 'image') throw new Error('no picture');
+    // The layout's own box, to the point.
+    expect(only.image.width).toBeCloseTo(5493600 / 12700, 4);
+    expect(only.image.float?.posH?.offsetPt).toBeCloseTo(6192000 / 12700, 4);
+  });
+
+  it('reads a grayscale blip as the duotone from black to white that it is', () => {
+    // §20.1.8.34 `a:grayscl` — the picture drawn in shades of grey, which is
+    // what a duotone between black and white already is. tdf112209's chevron
+    // is a colour photograph in the file and grey in every reader.
+    const doc = Ream.parse(
+      buildPptx([''], {
+        slideBg: [
+          `<p:bg><p:bgPr><a:blipFill><a:blip r:embed="rIdBg"><a:grayscl/></a:blip>` +
+            `<a:stretch><a:fillRect/></a:stretch></a:blipFill></p:bgPr></p:bg>`,
+        ],
+        slideRels: [`<Relationship Id="rIdBg" Type="${IMAGE_REL}" Target="../media/bg.png"/>`],
+        media: { 'ppt/media/bg.png': buildTinyPng(2, 2, [20, 90, 200, 255]) },
+      }),
+    );
+    expect(firstShape(doc)?.fill.duotone).toEqual({
+      shadowHex: '000000',
+      highlightHex: 'FFFFFF',
+    });
+  });
+
   it('paints a duotone through the picture, as a luminosity mask', async () => {
     const doc = Ream.parse(
       buildPptx([''], {
@@ -1371,7 +1538,44 @@ describe('what a slide puts behind its content', () => {
     });
     const plan = paintPlan(laid.pages[0]!.commands);
     expect(plan.behind.map((c) => c.type)).toEqual(['shape']); // the backdrop
-    expect(plan.images).toHaveLength(1); // …and the picture over it
+    // …and the picture over it, in the order the slide's own tree states.
+    expect(plan.ordered.flat().map((c) => c.type)).toEqual(['image']);
+    expect(plan.images).toHaveLength(0);
+    expect(plan.shapes).toHaveLength(0);
+  });
+
+  it('paints a slide in the order its own shape tree gives, not kind by kind', () => {
+    // §19.3.1 — what stands later in the tree is drawn over what stands
+    // earlier, whatever KIND either of them is. Split by kind — every image,
+    // then every shape — 54542_cropped_bitmap.pptx painted its six logos first
+    // and then covered every one of them with the panel it stands on.
+    const rect = (id: number, x: number): string =>
+      `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="r${id}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="${x}" y="0"/><a:ext cx="2000000" cy="2000000"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+      `<a:solidFill><a:srgbClr val="3333CC"/></a:solidFill></p:spPr></p:sp>`;
+    const pic =
+      `<p:pic><p:nvPicPr><p:cNvPr id="9" name="p"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>` +
+      `<p:blipFill><a:blip r:embed="rIdImg"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
+      `<p:spPr><a:xfrm><a:off x="100000" y="100000"/><a:ext cx="1000000" cy="1000000"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`;
+    const doc = Ream.parse(
+      buildPptx([rect(2, 0) + pic + rect(3, 3000000)], {
+        slideRels: [`<Relationship Id="rIdImg" Type="${IMAGE_REL}" Target="../media/i.png"/>`],
+        media: { 'ppt/media/i.png': buildTinyPng(2, 2, [0, 0, 0, 255]) },
+      }),
+    );
+    const laid = layoutStyledDocument(doc.flow.body, {
+      registry: FontRegistry.fromBytes({ regular: FONTS.regular }),
+      resources: doc.flow.resources,
+      ...(doc.flow.section ? { section: doc.flow.section } : {}),
+      styles: doc.flow.styles,
+    });
+    const plan = paintPlan(laid.pages[0]!.commands);
+    // Rectangle, picture, rectangle — in that order, and none of them left in
+    // the kind passes.
+    expect(plan.ordered.flat().map((c) => c.type)).toEqual(['shape', 'image', 'shape']);
+    expect(plan.images).toHaveLength(0);
     expect(plan.shapes).toHaveLength(0);
   });
 });
@@ -1627,6 +1831,47 @@ describe('a shape drawn from a gallery style (§20.1.4.2)', () => {
       c.kind === 'paragraph' ? c.paragraph.runs : [],
     )[0];
     expect(run?.properties.colorHex).toBe('FFFFFF');
+  });
+
+  // §20.1.8.33 — a `a:gradFill` holding only a direction states no colours at
+  // all: the run of them comes from the style's `a:fillRef` slot and the shape
+  // says only which way to sweep it. Counted as a fill of its own, the shape
+  // ended up with none — 63200.pptx's ellipse drew as its own SHADOW, a grey
+  // disc where every reader has the theme's blue.
+  it('takes the run of colours from the style when the shape states only a direction', () => {
+    const themeFmt =
+      `<a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill>` +
+      `<a:gradFill><a:gsLst>` +
+      `<a:gs pos="0"><a:schemeClr val="phClr"><a:tint val="60000"/></a:schemeClr></a:gs>` +
+      `<a:gs pos="100000"><a:schemeClr val="phClr"/></a:gs>` +
+      `</a:gsLst><a:lin ang="5400000"/></a:gradFill></a:fillStyleLst>` +
+      `<a:lnStyleLst><a:ln w="12700"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln></a:lnStyleLst>`;
+    const sp = (fill: string): string =>
+      `<p:sp><p:nvSpPr><p:cNvPr id="3" name="g"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+      `<a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom>${fill}</p:spPr>` +
+      `<p:style><a:lnRef idx="1"><a:srgbClr val="223344"/></a:lnRef>` +
+      `<a:fillRef idx="2"><a:srgbClr val="4488CC"/></a:fillRef>` +
+      `<a:fontRef idx="minor"><a:srgbClr val="FFFFFF"/></a:fontRef></p:style></p:sp>`;
+    const fillOf = (inner: string): ShapeFill | undefined =>
+      Ream.parse(buildPptx([sp(inner)], { layoutMaster: { themeFmt } })).flow.body.flatMap((e) =>
+        e.kind === 'shape' ? [e.shape.fill] : [],
+      )[0];
+
+    // The theme's second slot is a gradient of the reference's colour…
+    const bare = fillOf('<a:gradFill><a:lin ang="2700000"/><a:tileRect/></a:gradFill>');
+    expect(bare?.kind).toBe('gradient');
+    expect(bare?.gradient?.stops.map((stop) => stop.colorHex)).toEqual(['B0C3E2', '4488CC']);
+    // …swept the way the SHAPE asks, not the way the slot does (90°).
+    expect(bare?.gradient?.kind === 'linear' ? bare.gradient.angle : undefined).toBe(45);
+
+    // A shape that states nothing takes the slot's own direction.
+    expect(
+      (() => {
+        const f = fillOf('');
+        return f?.gradient?.kind === 'linear' ? f.gradient.angle : undefined;
+      })(),
+    ).toBe(90);
   });
 });
 
@@ -2155,5 +2400,93 @@ describe('SmartArt diagrams (E-SMARTART SA0)', () => {
     const loss = doc.losses.find((l) => l.feature === 'shapes.smartArt');
     expect(loss?.severity).toBe('dropped');
     expect(loss?.where).toBe('slide 1');
+  });
+});
+
+// §20.1.10.42 `a:normAutofit` — the text shrinks until it fits the box it is
+// in. PowerPoint usually writes the scale it settled on into `@fontScale` and
+// that is applied at parse; a box that arrives WITHOUT one has never been
+// fitted, and every box of a diagram laid out from its layout part is such a
+// box. Unfitted, "Automatically shrinked text" at the layout's stated 65pt
+// stood three lines deep and half a box wide outside the box that names it.
+describe('a shape whose text shrinks to fit it', () => {
+  // A 2in × 0.6in box holding more 65pt words than it can possibly take.
+  const boxed = (bodyPr: string): string =>
+    `<p:sp><p:spPr>` +
+    `<a:xfrm><a:off x="914400" y="914400"/><a:ext cx="1828800" cy="548640"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>` +
+    `<p:txBody>${bodyPr}<a:p><a:r><a:rPr sz="6500"/>` +
+    `<a:t>Automatically shrinked text</a:t></a:r></a:p></p:txBody></p:sp>`;
+
+  // The largest size the page sets: the deck's own empty placeholder text sets
+  // the default 11pt beside it, which is not what this box is about.
+  const sizeOf = async (bodyPr: string): Promise<number> => {
+    const pdf = await Ream.parse(buildPptx([boxed(bodyPr)])).convert('pdf', { fonts: FONTS });
+    const sizes = [...latin1.decode(pdf).matchAll(/\/[A-Za-z0-9]+ ([\d.]+) Tf/gu)].map((m) =>
+      Number(m[1]),
+    );
+    return Math.max(...sizes);
+  };
+
+  it('leaves the stated size alone without one', async () => {
+    expect(await sizeOf('<a:bodyPr/>')).toBe(65);
+  });
+
+  it('brings it down to what the box holds with one', async () => {
+    const size = await sizeOf('<a:bodyPr><a:normAutofit/></a:bodyPr>');
+    expect(size).toBeLessThan(65);
+    expect(size).toBeGreaterThan(0);
+  });
+
+  it('trusts the scale the producer already settled on', async () => {
+    // A stated `fontScale` is PowerPoint's own answer and is applied as given;
+    // measuring it again would fight the file over a box it has already fitted.
+    expect(await sizeOf('<a:bodyPr><a:normAutofit fontScale="40000"/></a:bodyPr>')).toBe(26);
+  });
+});
+
+// §19.3.1.15 `p:controls` — an ActiveX control sits BESIDE the shape tree, and
+// its `mc:Fallback` is the picture a reader that cannot run it should draw.
+describe('pptx slide: ActiveX controls', () => {
+  const CONTROLS =
+    `<p:controls>` +
+    `<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">` +
+    `<mc:Choice xmlns:v="urn:schemas-microsoft-com:vml" Requires="v">` +
+    `<p:control spid="1" name="CommandButton1" r:id="rId9" imgW="1828800" imgH="1085760"/>` +
+    `</mc:Choice>` +
+    `<mc:Fallback>` +
+    `<p:control name="CommandButton1" r:id="rId9" imgW="1828800" imgH="1085760">` +
+    `<p:pic><p:nvPicPr><p:cNvPr id="8" name="CommandButton1"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>` +
+    `<p:blipFill><a:blip r:embed="rIdCtl"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
+    `<p:spPr><a:xfrm><a:off x="1000000" y="500000"/><a:ext cx="1828800" cy="1085760"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>` +
+    `</p:control>` +
+    `</mc:Fallback>` +
+    `</mc:AlternateContent>` +
+    `</p:controls>`;
+
+  const deck = (): Uint8Array =>
+    buildPptx([''], {
+      slideControls: [CONTROLS],
+      media: { 'ppt/media/ctl.png': buildTinyPng(2, 2, [0, 0, 255, 255]) },
+      slideRels: [
+        `<Relationship Id="rIdCtl" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/ctl.png"/>`,
+      ],
+    });
+
+  it("draws a control's cached picture, though the shape tree is empty", () => {
+    // The control is not in `p:spTree` at all, so a reader that walks only that
+    // tree drew a blank page — activex_picture.pptx is seventeen of them over
+    // an empty tree.
+    const doc = Ream.parse(deck());
+    const pics = doc.flow.body.filter((e) => e.kind === 'image');
+    expect(pics).toHaveLength(1);
+    const only = pics[0];
+    // Placed where the fallback picture's own transform puts it, floating, as
+    // any other picture on the slide would be.
+    if (only?.kind !== 'image') throw new Error('no picture');
+    const float = only.image.float;
+    expect(float?.posH?.offsetPt).toBeCloseTo(1000000 / 12700, 5);
+    expect(float?.posV?.offsetPt).toBeCloseTo(500000 / 12700, 5);
   });
 });

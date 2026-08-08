@@ -519,6 +519,8 @@ interface ShapeBlockLaidOut {
    * when it repeats over the box rather than stretching across it.
    */
   readonly fillImageTile?: { readonly widthPt: number; readonly heightPt: number };
+  /** Whether that grid of copies is centred on the box rather than cornered. */
+  readonly fillImageTileFromCentre?: boolean;
   /** §20.1.8.30 — the part of that picture the box shows. */
   readonly fillImageCrop?: ImageCrop;
   readonly stroke?: StrokeStyle;
@@ -531,6 +533,18 @@ interface ShapeBlockLaidOut {
   readonly spacingAfterPt: number;
   // Text box (wps:txbx) laid out within the inset rect, anchored vertically.
   readonly textLines: ReadonlyArray<Line>;
+  /**
+   * §20.1.9.10 — the WordArt warp this box's text is bent through, and how far
+   * the un-warped block's ink reaches above its first baseline and below its
+   * last. The emitter needs the ink and not the line box: the warp stretches
+   * what is DRAWN to fill the shape.
+   */
+  readonly textWarp?: {
+    readonly preset: string;
+    readonly adjust?: number;
+    readonly inkAbovePt: number;
+    readonly inkBelowPt: number;
+  };
   /**
    * A chart inside the text box, by the index of the (token-less) line that
    * stands in for it. The line reserves the height; the emitter draws the
@@ -624,6 +638,12 @@ interface CellLayout {
   readonly sparkline?: CellSparkline;
   // A data-validation `list` cell paints a dropdown button at the right edge.
   readonly dropdown?: boolean;
+  /**
+   * §17.4.71/§21.1.3.17 — the cell's text is turned a quarter, so its lines run
+   * along the HEIGHT and stack across the width. The height it asks for is then
+   * the longest LINE, not the stack of them.
+   */
+  readonly textDirection?: 'vert' | 'vert270';
   readonly lines: ReadonlyArray<Line>;
   /**
    * §17.3.1.33 — extra space to leave BEFORE the line at this index: the gap
@@ -2483,15 +2503,23 @@ function layoutShapeBlock(
       ? imageResources?.get(shape.fill.imageResource)
       : undefined;
   const fillImageResourceName = fillImage?.resourceName;
-  // §14.1.2.5 — a TILED fill repeats the picture at its own size (96 dpi, the
-  // resolution Office measures one in) instead of stretching it over the box.
+  // §14.1.2.5 — a TILED fill repeats the picture at its OWN size instead of
+  // stretching it over the box, and its own size is its pixels at the
+  // resolution IT states: 800 pixels at the 300 dpi its JFIF header carries is
+  // 192 points, not the 600 the 96-dpi default gives. Measured at 96 whatever
+  // the picture said, one tile of 119877's mountains covered a whole table
+  // column where every reader repeats it three times down.
   const fillImageTile =
     shape.fill.kind === 'picture' && shape.fill.tiled === true && fillImage?.prepared
       ? // The shape may state the tile's size outright (MS-ODRAW `fillWidth` /
         // `fillHeight`); otherwise a copy is the picture at its own resolution.
         (shape.fill.tileSizePt ?? {
-          widthPt: ((fillImage.prepared.widthPx * 72) / 96) * (shape.fill.tileScale?.sx ?? 1),
-          heightPt: ((fillImage.prepared.heightPx * 72) / 96) * (shape.fill.tileScale?.sy ?? 1),
+          widthPt:
+            ((fillImage.prepared.widthPx * 72) / (fillImage.prepared.dpiX ?? 96)) *
+            (shape.fill.tileScale?.sx ?? 1),
+          heightPt:
+            ((fillImage.prepared.heightPx * 72) / (fillImage.prepared.dpiY ?? 96)) *
+            (shape.fill.tileScale?.sy ?? 1),
         })
       : undefined;
   const fillColorHex =
@@ -2520,10 +2548,17 @@ function layoutShapeBlock(
   // its lines stack across the width. btlr-textbox.docx reads bottom-to-top and
   // we set it flat, so it ran out of the box the wrong way.
   const vertical = text?.vertical;
+  // §20.1.9.10 — WordArt is one bent line per paragraph, stretched to the box:
+  // it never wraps, whatever the box's width, and it is not shrunk to fit
+  // either. Broken at the box's width first, tdf114848's "Text Wave 1" came out
+  // as three stacked lines that the warp then bent as a block.
+  const warp = text?.warp;
   if (text && text.content.length > 0) {
-    const innerWidth = vertical
-      ? Math.max(1, heightPt - insetTopPt - insetBottomPt)
-      : Math.max(1, widthPt - insetLeftPt - insetRightPt);
+    const innerWidth = warp
+      ? Number.MAX_SAFE_INTEGER
+      : vertical
+        ? Math.max(1, heightPt - insetTopPt - insetBottomPt)
+        : Math.max(1, widthPt - insetLeftPt - insetRightPt);
     for (const el of text.content) {
       // A picture standing alone in a text box is a paragraph the reader
       // collapsed to an image BLOCK. Skipped with the tables, it vanished:
@@ -2665,6 +2700,36 @@ function layoutShapeBlock(
   if (text?.autoFit && !vertical && textLines.length > 0) {
     heightPt = textHeightPt + insetTopPt + insetBottomPt;
   }
+  // §20.1.10.42 `a:normAutofit` — the text shrinks until it fits, and only
+  // shrinks. Unlike `@fitshape` this text WRAPS, so the width to beat is the
+  // widest line the breaker actually made, not the paragraph unbroken — and a
+  // word too long to break is what leaves a line over the edge. The height is
+  // the one just measured. Both are re-measured on the next pass, and since
+  // the factor is never above 1 the passes settle downwards.
+  if (
+    text?.shrinkToFit === true &&
+    text.fitToBox !== true &&
+    warp === undefined &&
+    textLines.length > 0 &&
+    fitPass < MAX_FIT_PASSES
+  ) {
+    const innerW = Math.max(1, widthPt - insetLeftPt - insetRightPt);
+    const innerH = Math.max(1, heightPt - insetTopPt - insetBottomPt);
+    const widest = textLines.reduce((a, l) => Math.max(a, l.contentWidthPt), 0);
+    const k = Math.min(1, innerW / Math.max(1, widest), innerH / Math.max(1, textHeightPt));
+    if (Number.isFinite(k) && k > 0.05 && k < 0.98) {
+      return layoutShapeBlock(
+        { ...shape, text: scaleTextBody(text, k) },
+        options,
+        fontResources,
+        imageResources,
+        contentWidth,
+        maxHeight,
+        box,
+        fitPass + 1,
+      );
+    }
+  }
   // §14.1.2.22 `@fitshape` — the other way round: the TEXT follows the shape.
   // Legacy WordArt states a size the parser guessed without metrics; now that
   // the lines are measured, the size that FILLS the box is known, so the body
@@ -2706,6 +2771,17 @@ function layoutShapeBlock(
       );
     }
   }
+  // §20.1.9.10 — how far the block's ink reaches past its outer baselines. The
+  // warp stretches what is DRAWN onto the box, so the line box is the wrong
+  // measure: "Can Up" is capitals only and would come out a third too small if
+  // its ascender and descender space were stretched along with its letters.
+  const warpInk =
+    warp && textLines.length > 0
+      ? {
+          above: lineInk(textLines[0]!).above,
+          below: lineInk(textLines[textLines.length - 1]!).below,
+        }
+      : undefined;
   const paths = buildShapePaths(shape.geometry, widthPt, heightPt);
   const markerPaths = lineEndPaths(paths, shape.line, stroke?.widthPt ?? 0);
 
@@ -2737,6 +2813,9 @@ function layoutShapeBlock(
     ...(markerPaths.length > 0 ? { markerPaths } : {}),
     ...(fillImageResourceName ? { fillImageResourceName } : {}),
     ...(fillImageTile ? { fillImageTile } : {}),
+    ...(fillImageTile && shape.fill.kind === 'picture' && shape.fill.tileFromCentre === true
+      ? { fillImageTileFromCentre: true }
+      : {}),
     ...(fillImageResourceName && shape.fill.imageCrop
       ? { fillImageCrop: shape.fill.imageCrop }
       : {}),
@@ -2760,6 +2839,16 @@ function layoutShapeBlock(
     spacingBeforePt: pp.spacingBefore ?? 0,
     spacingAfterPt: pp.spacingAfter ?? 0,
     textLines,
+    ...(warp && warpInk
+      ? {
+          textWarp: {
+            preset: warp.preset,
+            ...(warp.adjust !== undefined ? { adjust: warp.adjust } : {}),
+            inkAbovePt: warpInk.above,
+            inkBelowPt: warpInk.below,
+          },
+        }
+      : {}),
     ...(textCharts.size > 0 ? { textCharts } : {}),
     ...(textShapes.size > 0 ? { textShapes } : {}),
     ...(textTables.size > 0 ? { textTables } : {}),
@@ -3678,6 +3767,14 @@ function emitShapeText(
     }
     return;
   }
+  // §20.1.9.10 — WordArt: the block is set as it stands and then bent and
+  // stretched onto the shape's box, so where its lines sit is the warp's to
+  // decide, not the anchor's. The lines are placed in the block's own frame
+  // and the emitter maps that frame through the curve.
+  if (sh.textWarp) {
+    emitWarpedText(sh, sh.textWarp, x, bottomYUp, sink, pageHeight, figId);
+    return;
+  }
   const shapeTop = bottomYUp + sh.heightPt;
   const innerWidth = Math.max(1, sh.widthPt - sh.insetLeftPt - sh.insetRightPt);
   let textY: number;
@@ -3737,6 +3834,81 @@ function emitShapeText(
     textY -= sh.textLineGaps?.get(i) ?? 0;
   });
 }
+/**
+ * §20.1.9.10 — place a WordArt body's lines in the block's own frame and hand
+ * each one the warp that maps that frame onto the shape's box.
+ *
+ * The block is laid out flat: its lines stack by their own heights, each
+ * aligned within the widest of them, and its ink starts at the box's top-left
+ * corner. Nothing here bends anything — the emitter does that, glyph by glyph,
+ * from the two frames this records.
+ *
+ * @param sh         The laid-out shape.
+ * @param warp       The shape's warp and the block's ink reach.
+ * @param x          The shape's left edge on the page.
+ * @param bottomYUp  The shape's bottom edge, y-up from the page's bottom.
+ * @param sink       Where the line items are pushed.
+ * @param pageHeight The page's height, for the y-up ⇄ top-left conversion.
+ * @param figId      The tagged-PDF Figure this text belongs to, when it has one.
+ */
+function emitWarpedText(
+  sh: ShapeBlockLaidOut,
+  warp: NonNullable<ShapeBlockLaidOut['textWarp']>,
+  x: number,
+  bottomYUp: number,
+  sink: Array<PageItem>,
+  pageHeight: number,
+  figId: number | undefined,
+): void {
+  const boxX = x + sh.insetLeftPt;
+  const boxY = pageHeight - (bottomYUp + sh.heightPt) + sh.insetTopPt;
+  const boxWidth = Math.max(1, sh.widthPt - sh.insetLeftPt - sh.insetRightPt);
+  const boxHeight = Math.max(1, sh.heightPt - sh.insetTopPt - sh.insetBottomPt);
+  // The block is as wide as its widest line; a shorter one sits inside it by
+  // its own alignment, so a centred second line stays centred once bent.
+  const srcWidth = Math.max(1, ...sh.textLines.map((l) => l.contentWidthPt));
+  // Walk the lines down the block, then shift the whole stack so its ink — not
+  // its first line box — begins at the box's top edge.
+  const baselines: Array<number> = [];
+  let top = 0;
+  sh.textLines.forEach((line, i) => {
+    const h = computeLineHeight(line, line.resolved);
+    baselines.push(top + h - lineBaselineOffset(line, line.resolved));
+    top += h + (sh.textLineGaps?.get(i) ?? 0);
+  });
+  const first = baselines[0] ?? 0;
+  const last = baselines[baselines.length - 1] ?? 0;
+  const srcTop = boxY;
+  const srcHeight = Math.max(1, last - first + warp.inkAbovePt + warp.inkBelowPt);
+  const shift = srcTop + warp.inkAbovePt - first;
+  sh.textLines.forEach((line, i) => {
+    // A warped line holds words and nothing else: a chart, a nested drawing or
+    // a table inside a WordArt body has no glyphs for the curve to bend, and
+    // the flat path already draws all three.
+    if (sh.textCharts?.has(i) === true || sh.textShapes?.has(i) === true) return;
+    if (sh.textTables?.has(i) === true) return;
+    sink.push({
+      type: 'line',
+      line,
+      originX: pt(boxX + alignmentOffset(line.resolved.alignment, line.contentWidthPt, srcWidth)),
+      baselineY: pt(baselines[i]! + shift),
+      warp: {
+        preset: warp.preset,
+        ...(warp.adjust !== undefined ? { adjust: warp.adjust } : {}),
+        boxX: pt(boxX),
+        boxY: pt(boxY),
+        boxWidth: pt(boxWidth),
+        boxHeight: pt(boxHeight),
+        srcX: pt(boxX),
+        srcWidth: pt(srcWidth),
+        srcTop: pt(srcTop),
+        srcHeight: pt(srcHeight),
+      },
+      ...(figId !== undefined ? { structId: figId } : {}),
+    });
+  });
+}
+
 // One shape, `bottomYUp` being its own bottom edge. §20.5.2.17 — a group
 // draws nothing itself and then draws its members, each at the corner it
 // holds within the group's box.
@@ -3827,6 +3999,38 @@ function emitShapeItems(
   // §20.1.8.14 — a picture fill is the shape's OUTLINE painted with an image,
   // so it is clipped to that outline: fdo77718.docx fills the round nodes of
   // its diagram with photographs and we drew each one as a square.
+  // §20.1.8.40 — a shadow falls UNDER the shape it belongs to, and a picture
+  // fill leaves the passes: the image paints in the image pass and the shape in
+  // the shape pass after it, so the shadow landed on TOP of the picture and
+  // darkened it (tdf112209's photograph came out a sixth darker than either
+  // reference). The three pieces are tied into one PICTURE so they paint
+  // together, in the order they are pushed: shadow, picture, outline.
+  const castsUnderPicture = sh.fillImageResourceName !== undefined ? sh.shadow : undefined;
+  const shadowedFill = castsUnderPicture !== undefined;
+  const group = shadowedFill ? { pictureId: nextPictureId++ } : {};
+  if (castsUnderPicture) {
+    sink.push({
+      type: 'shape',
+      shape: {
+        paths: sh.paths,
+        shadow: castsUnderPicture,
+        transform: flipTransform(
+          buildShapeTransform(
+            x,
+            bottomYUp,
+            sh.widthPt,
+            sh.heightPt,
+            sh.rotation60k,
+            sh.flipH,
+            sh.flipV,
+          ),
+          pageHeight,
+        ),
+      },
+      ...group,
+      ...(figId !== undefined ? { structId: figId } : {}),
+    });
+  }
   if (sh.fillImageResourceName) {
     const clip = {
       paths: sh.paths,
@@ -3849,17 +4053,23 @@ function emitShapeItems(
     // two text boxes with a texture and stretched it came out a brown blur.
     const tile = sh.fillImageTile;
     if (tile) {
-      for (const item of PageAssembler.tileItems(sh.fillImageResourceName, tile, {
-        x,
-        y: pageHeight - (bottomYUp + sh.heightPt),
-        width: sh.widthPt,
-        height: sh.heightPt,
-      })) {
+      for (const item of PageAssembler.tileItems(
+        sh.fillImageResourceName,
+        tile,
+        {
+          x,
+          y: pageHeight - (bottomYUp + sh.heightPt),
+          width: sh.widthPt,
+          height: sh.heightPt,
+        },
+        sh.fillImageTileFromCentre === true,
+      )) {
         if (item.type !== 'image') continue;
         sink.push({
           ...item,
           clip,
           ...fig,
+          ...group,
           ...(sh.fillAlpha !== undefined ? { alpha: sh.fillAlpha } : {}),
         });
       }
@@ -3883,6 +4093,7 @@ function emitShapeItems(
         ...(sh.fillImageDuotone ? { duotone: sh.fillImageDuotone } : {}),
         clip,
         ...fig,
+        ...group,
       });
     }
   }
@@ -3919,7 +4130,8 @@ function emitShapeItems(
         ...(sh.fillGradient ? { fillGradient: sh.fillGradient } : {}),
         ...(sh.fillAlpha !== undefined ? { fillAlpha: sh.fillAlpha } : {}),
         ...(sh.stroke ? { stroke: sh.stroke } : {}),
-        ...(sh.shadow ? { shadow: sh.shadow } : {}),
+        // Drawn already, under the picture, when the fill is one.
+        ...(sh.shadow && !shadowedFill ? { shadow: sh.shadow } : {}),
         transform: flipTransform(
           buildShapeTransform(
             x,
@@ -3933,6 +4145,7 @@ function emitShapeItems(
           pageHeight,
         ),
       },
+      ...group,
       ...(figId !== undefined ? { structId: figId } : {}),
     });
   }
@@ -6312,6 +6525,28 @@ function alignmentOffset(
 }
 
 /**
+ * How far a line's INK reaches either side of its baseline — the union of its
+ * glyphs' own bounding boxes, not the line box its font metrics describe. Only
+ * WordArt needs this: it stretches the marks it draws onto its shape, and the
+ * empty band an ascender or descender reserves is not one of them.
+ *
+ * @param line The laid-out line.
+ * @returns Points above the baseline the ink rises, and below it that it drops.
+ */
+function lineInk(line: Line): { above: number; below: number } {
+  let above = 0;
+  let below = 0;
+  for (const tok of line.tokens) {
+    if (tok.kind !== 'text' || tok.isSpace) continue;
+    const ink = tok.font.measure.textInkPt(tok.text, tok.fontSizePt);
+    const rise = tok.risePt ?? 0;
+    above = Math.max(above, ink.above + rise);
+    below = Math.max(below, ink.below - rise);
+  }
+  return { above, below };
+}
+
+/**
  * §17.4.85 `w:vMerge` — a vertical merge is ONE cell, so its continuation rows
  * are painted with the START cell's shading. Word writes the fill on the cell
  * that opens the merge and nothing on the rest; painting only what is written,
@@ -6931,7 +7166,15 @@ function layoutTableCell(
   // the HTML writer, which renders an interactive view rather than a page.
   const padRightPt = padRightBase;
 
+  // §17.4.71 — a turned cell's lines run along its HEIGHT, which is what the
+  // row is about to be sized from, so there is no measure to wrap them at yet:
+  // they are laid out unbroken and the row grows to hold the longest. Both
+  // references do the same — table_test2.pptx's vertical header runs off the
+  // slide in LibreOffice too.
+  const turned =
+    mergeRole === 'middle' || mergeRole === 'end' ? undefined : cell.properties.textDirection;
   const innerWidth = Math.max(1, widthPt - padLeftPt - padRightPt);
+  const measureWidth = turned ? NO_WRAP_MEASURE_WIDTH : innerWidth;
   const lines: Array<Line> = [];
   const nestedTables: Array<{ block: TableBlock; afterLine: number }> = [];
   const cellShapes: Array<{ block: ShapeBlockLaidOut; afterLine: number }> = [];
@@ -6975,7 +7218,7 @@ function layoutTableCell(
           options,
           fontResources,
           imageResources,
-          noWrap ? NO_WRAP_MEASURE_WIDTH : innerWidth,
+          noWrap ? NO_WRAP_MEASURE_WIDTH : measureWidth,
         );
         // Up to the cell's right EDGE, not to its inner box: the right padding
         // keeps wrapped text off the border, but a clip is the border. Excel and
@@ -7094,8 +7337,12 @@ function layoutTableCell(
     leftNeighborBorders,
     aboveNeighborBorders,
   );
+  // A turned cell is as tall as its longest line is long, and its stack of
+  // lines runs across the width instead.
+  const alongPt = turned ? lines.reduce((a, l) => Math.max(a, l.contentWidthPt), 0) : 0;
+  const heightPt = turned ? alongPt : contentHeightPt;
   const totalHeightPt =
-    mergeRole === 'middle' || mergeRole === 'end' ? 0 : padTopPt + contentHeightPt + padBottomPt;
+    mergeRole === 'middle' || mergeRole === 'end' ? 0 : padTopPt + heightPt + padBottomPt;
   return {
     widthPt,
     padTopPt,
@@ -7114,8 +7361,9 @@ function layoutTableCell(
     ...(nestedTables.length > 0 ? { nestedTables } : {}),
     ...(cellShapes.length > 0 ? { shapes: cellShapes } : {}),
     ...(cellFloats.length > 0 ? { floats: cellFloats } : {}),
-    contentHeightPt,
+    contentHeightPt: heightPt,
     totalHeightPt,
+    ...(turned ? { textDirection: turned } : {}),
     ...(cell.properties.verticalAlign ? { verticalAlign: cell.properties.verticalAlign } : {}),
     colStart,
     colSpan,
@@ -7981,18 +8229,32 @@ class PageAssembler {
     resourceName: string,
     natural: { widthPt: number; heightPt: number },
     box: { x: number; y: number; width: number; height: number },
+    fromCentre = false,
   ): Array<PageItem> => {
     const tw = Math.max(1, natural.widthPt);
     const th = Math.max(1, natural.heightPt);
-    const cols = Math.min(200, Math.ceil(box.width / tw));
-    const rows = Math.min(200, Math.ceil(box.height / th));
+    // Where the FIRST copy starts. Pinned to the corner the grid simply runs
+    // from it; centred, one copy is centred on the box and the rest step out
+    // from that one, so a copy larger than the box shows the picture's MIDDLE
+    // and not its corner (119877's tiled photographs are three times the cell
+    // they paper, and cornered they came out as a patch of empty sky).
+    const first = (start: number, span: number, step: number): number => {
+      if (!fromCentre) return start;
+      let at = start + span / 2 - step / 2;
+      while (at > start) at -= step;
+      return at;
+    };
+    const x0 = first(box.x, box.width, tw);
+    const y0 = first(box.y, box.height, th);
+    const cols = Math.min(200, Math.max(1, Math.ceil((box.x + box.width - x0) / tw)));
+    const rows = Math.min(200, Math.max(1, Math.ceil((box.y + box.height - y0) / th)));
     const out: Array<PageItem> = [];
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         out.push({
           type: 'image',
-          x: pt(box.x + c * tw),
-          y: pt(box.y + r * th),
+          x: pt(x0 + c * tw),
+          y: pt(y0 + r * th),
           width: pt(tw),
           height: pt(th),
           imageResourceName: resourceName,
@@ -8622,8 +8884,13 @@ function paginateSections(
           const chunk = chunks[ci]!;
           // A manual <rowBreaks> break (first chunk only) forces a new page even
           // when the row would fit; an overflow break starts one when it won't.
+          // …and a page carrying only a FLOAT is a page: a spreadsheet band
+          // whose columns hold no cells but which a drawing runs across is
+          // exactly that, and measured by `current` alone the band after it
+          // never broke — picture.xlsx's coin ran over three page-columns and
+          // the last two landed on one page, side by side.
           const forcedBreak =
-            ci === 0 && row.breakBefore && !isLeadingHeader && asm.current.length > 0;
+            ci === 0 && row.breakBefore && !isLeadingHeader && asm.pageHasContent();
           const overflow = asm.cursorY - chunk.heightPt < asm.bottomLimit() && asm.colHasContent();
           if (forcedBreak || overflow) {
             if (forcedBreak) asm.flushPage();
@@ -9101,6 +9368,38 @@ function emitRowChunk(
         });
       }
     };
+    // §17.4.71 — a turned cell: each line runs along the cell's HEIGHT and the
+    // stack of them crosses its width, so a quarter turn puts a line's local +x
+    // on the page's +y (`vert270`, reading up) or −y (`vert`, reading down).
+    // The same arithmetic a turned SHAPE's text uses, over the cell's box.
+    if (cell.textDirection !== undefined) {
+      const up = cell.textDirection === 'vert270';
+      const along = Math.max(1, boxHeightPt - cell.padTopPt - cell.padBottomPt);
+      const cellBottomYUp = rowTop - boxHeightPt;
+      let across = cell.padLeftPt;
+      for (const line of cell.lines) {
+        const h = computeLineHeight(line, line.resolved);
+        const lineOffset = alignmentOffset(line.resolved.alignment, line.contentWidthPt, along);
+        const off = lineBaselineOffset(line, line.resolved);
+        const baselineAcross = up ? across + h - off : across + off;
+        out.push({
+          type: 'line',
+          line,
+          originX: pt(up ? cellX + baselineAcross : cellX + cell.widthPt - baselineAcross),
+          baselineY: pt(
+            pageHeight -
+              (up
+                ? cellBottomYUp + cell.padBottomPt + lineOffset
+                : rowTop - cell.padTopPt - lineOffset),
+          ),
+          rotationDeg: up ? 90 : -90,
+          ...(structId !== undefined ? { structId } : {}),
+        });
+        across += h;
+      }
+      drawNestedBefore(cell.lines.length);
+      continue;
+    }
     for (const [lineIdx, line] of cell.lines.entries()) {
       drawNestedBefore(lineIdx);
       textY -= cell.lineGaps?.get(lineIdx) ?? 0;

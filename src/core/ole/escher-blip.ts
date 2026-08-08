@@ -15,6 +15,8 @@
 
 import { unzlibSync } from 'fflate';
 
+import { dibToBmp } from '@/core/bmp';
+
 // §2.2.23 blip record types.
 const BLIP_EMF = 0xf01a;
 const BLIP_WMF = 0xf01b;
@@ -60,18 +62,31 @@ export function readEscherBlip(
   if (type === BLIP_EMF || type === BLIP_WMF || type === BLIP_PICT) {
     return readMetafileBlip(instance, data);
   }
-  if (
-    type === BLIP_JPEG ||
-    type === BLIP_PNG ||
-    type === BLIP_DIB ||
-    type === BLIP_TIFF ||
-    type === BLIP_JPEG_CMYK
-  ) {
+  // §2.2.28 — a DIB blip is a bitmap with its 14-byte BITMAPFILEHEADER cut
+  // off, the record's own length having made it redundant. Nothing downstream
+  // can sniff that: it opens with a length field, not a signature. Scanning for
+  // one found whatever `BM` the pixels happened to contain, or nothing at all,
+  // and either way the picture was lost.
+  if (type === BLIP_DIB) return readDibBlip(instance, data) ?? scanRaster(data);
+  if (type === BLIP_JPEG || type === BLIP_PNG || type === BLIP_TIFF || type === BLIP_JPEG_CMYK) {
     return scanRaster(data);
   }
   // An unknown type still gets the scan: a producer that writes a raster under
   // a type this does not model should not lose its picture over it.
   return scanRaster(data);
+}
+
+// §2.2.28 — UID(s), a one-byte tag, then the headerless bitmap.
+function readDibBlip(instance: number, data: Uint8Array): Uint8Array | undefined {
+  const uidBytes = TWO_UID_INSTANCES.has(instance) ? 32 : 16;
+  // The tag byte is what a producer that writes two UIDs leaves out, so try the
+  // stated layout first and the one-byte-shorter one after it.
+  for (const at of [uidBytes + 1, uidBytes]) {
+    if (data.length <= at) continue;
+    const bmp = dibToBmp(data.subarray(at));
+    if (bmp) return bmp;
+  }
+  return undefined;
 }
 
 // §2.2.24/§2.2.25 — UID(s), then the metafile header, then the data. The header

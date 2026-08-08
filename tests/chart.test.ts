@@ -312,9 +312,36 @@ describe('parseChart', () => {
       (l) => l.text,
     );
     expect(texts).toContain('Big slice; 60%');
-    // The point with no label of its own keeps the computed one.
-    expect(texts).toContain('40%');
+    // The point with no label of its own keeps the computed one — and this
+    // chart asks for `showVal`, so the computed one is the NUMBER.
+    expect(texts).toContain('40');
     expect(texts).not.toContain('60%');
+  });
+
+  it('labels a pie with its numbers when the chart asks for them', () => {
+    // §21.2.2.223 `c:showVal`. Always a share of the whole,
+    // LIBRE_OFFICE-100610-0.pptx's five pies read 21/32/16/32% where every
+    // reader prints the 4, 6, 3 and 6 the file says to show.
+    const pie = (dLbls: string): string =>
+      `<c:chartSpace ${C_NS}><c:chart><c:plotArea><c:pieChart>
+      <c:ser><c:idx val="0"/>${dLbls}
+        <c:val><c:numRef><c:numCache><c:ptCount val="2"/>
+          <c:pt idx="0"><c:v>4</c:v></c:pt><c:pt idx="1"><c:v>6</c:v></c:pt>
+        </c:numCache></c:numRef></c:val>
+      </c:ser></c:pieChart></c:plotArea></c:chart></c:chartSpace>`;
+    const drawn = (dLbls: string): Array<string> =>
+      buildChartScene(
+        parseChart(enc.encode(pie(dLbls)), defaultColorResolver)!,
+        320,
+        240,
+        (t, sz) => t.length * sz * 0.5,
+      )!.labels.map((l) => l.text);
+    expect(drawn('<c:dLbls><c:showVal val="1"/></c:dLbls>')).toEqual(
+      expect.arrayContaining(['4', '6']),
+    );
+    // A chart that asks for no values keeps the share, which is what a pie
+    // with no labels of its own has always been drawn with.
+    expect(drawn('')).toEqual(expect.arrayContaining(['40%', '60%']));
   });
 
   it('flags a doughnut chart (renders as a pie with a hole)', () => {

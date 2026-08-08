@@ -27,6 +27,8 @@
 // failure — structural doubt yields missing content, never wrong content —
 // mirroring the `.doc`/`.xls` readers.
 
+import { decodeBmp, isBmp } from '@/core/bmp';
+import { encodePng } from '@/core/png-encode';
 import { fromSymbolFont } from '@/core/metafile/symbol-fonts';
 import { isCfb, openCfb } from '@/core/ole/cfb';
 import { readEscherBlip } from '@/core/ole/escher-blip';
@@ -48,6 +50,7 @@ const RT_OUTLINE_TEXT_REF_ATOM = 0x0f9e; // OutlineTextRefAtom — points at the
 const RT_TEXT_MASTER_STYLE_ATOM = 0x0fa3; // TextMasterStyleAtom — a master's per-level defaults
 const RT_SLIDE_ATOM = 0x03ef; // SlideAtom — carries masterIdRef + slideFlags (PPT-6)
 const RT_MAIN_MASTER = 0x03f8; // MainMasterContainer — its colour scheme is inherited
+const RT_ENVIRONMENT = 0x03f2; // DocumentTextInfoContainer — the deck-wide text defaults
 const RT_FONT_COLLECTION = 0x07d5; // FontCollectionContainer — the deck's typefaces
 const RT_FONT_ENTITY_ATOM = 0x0fb7; // FontEntityAtom — one typeface, by index
 const RT_COLOR_SCHEME_ATOM = 0x07f0; // SlideSchemeColorSchemeAtom — the 8-colour scheme
@@ -68,11 +71,41 @@ const FBT_SPGR_CONTAINER = 0xf003; // a group: its own shape first, then its chi
 const FBT_SPGR = 0xf009; // the group's coordinate space, which its children live in
 const FBT_CHILD_ANCHOR = 0xf00f; // a grouped shape's rectangle, in that space
 const RT_PLACEHOLDER_ATOM = 0x0bc3; // PlaceholderAtom — this shape is a placeholder
+const RT_HEADERS_FOOTERS = 0x0fd9; // HeadersFootersContainer (§2.4.15)
+const RT_HEADERS_FOOTERS_ATOM = 0x0fda; // HeadersFootersAtom — which parts are shown
+const RT_CSTRING = 0x0fba; // CString — one of the strings that container holds
+// §2.4.15 `rh.recInstance`: 0x000 on a slide's own container, 0x003 on the
+// deck-wide one for slides, 0x004 for notes pages.
+const HF_INSTANCE_PER_SLIDE = 0x000;
+const HF_INSTANCE_SLIDES = 0x003;
+// §2.4.16 HeadersFootersAtom.formatAndFlags.
+const HF_HAS_DATE = 0x0001;
+const HF_HAS_USER_DATE = 0x0004;
+const HF_HAS_SLIDE_NUMBER = 0x0008;
+const HF_HAS_FOOTER = 0x0020;
+// §2.13.24 PlaceholderEnum — the three a master keeps for the slide's furniture.
+const PLACEHOLDER_DATE = 7;
+const PLACEHOLDER_SLIDE_NUMBER = 8;
+const PLACEHOLDER_FOOTER = 9;
+// §2.12.2 SlideSchemeColorSchemeAtom — slot 1 is "text and lines".
+const SCHEME_TEXT_AND_LINES = 1;
 const PROP_PIB = 0x0104; // OPT property (low 14 bits): 1-based index into the FBSE store
+// §2.3.23 — how much of each edge of the SOURCE picture is cut away before it
+// is fitted to the shape, as a 16.16 signed fraction of the source. A negative
+// one extends instead of cutting.
+const PROP_CROP_TOP = 0x0100;
+const PROP_CROP_BOTTOM = 0x0101;
+const PROP_CROP_LEFT = 0x0102;
+const PROP_CROP_RIGHT = 0x0103;
+// §2.3.23 pictureTransparent — the colour knocked OUT of the picture, as a
+// COLORREF. 0xFFFFFFFF is the "none" the default carries.
+const PROP_PICTURE_TRANSPARENT = 0x0107;
+const PICTURE_TRANSPARENT_NONE = 0xffffffff;
 const PROP_FILL_TYPE = 0x0180; // OPT fillType — MSOFILLTYPE (PPT-9)
 const PROP_FILL_COLOR = 0x0181; // OPT fillColor (PPT-5)
 const PROP_FILL_BACK_COLOR = 0x0183; // OPT fillBackColor — the gradient's far end
 const PROP_FILL_ANGLE = 0x018b; // OPT fillAngle — 16.16 fixed degrees
+const PROP_FILL_FOCUS = 0x018c; // OPT fillFocus — where the first colour peaks (%)
 const PROP_FILL_BLIP = 0x0186; // OPT fillBlip — a picture fill's store index (PPT-12)
 // §2.3.7.11/.12 — the size ONE copy of a tiled fill occupies, in EMU. Zero (the
 // default) leaves the tile at the picture's own size.
@@ -161,6 +194,18 @@ export interface PptParagraph {
    * carries none.
    */
   readonly bullet?: string;
+  /**
+   * §2.9.20 `leftMargin` — where the paragraph's BODY sits, in points from the
+   * text box's own left edge.
+   */
+  readonly leftMarginPt?: number;
+  /** §2.9.20 `indent` — where its FIRST line starts. Left of the body ⇒ hanging. */
+  readonly indentPt?: number;
+  /** §2.9.32 `lineSpacing`, as a PERCENTAGE of the line's height — 100 is single. */
+  readonly lineSpacing?: number;
+  /** §2.9.32 `spaceBefore` / `spaceAfter`, in points. */
+  readonly spaceBeforePt?: number;
+  readonly spaceAfterPt?: number;
 }
 /**
  * An embedded picture referenced by a slide shape — the raw image bytes pulled
@@ -168,6 +213,22 @@ export interface PptParagraph {
  */
 export interface PptImage {
   readonly bytes: Uint8Array;
+  /**
+   * §2.3.23 `cropFrom*` — the fraction of each edge of the SOURCE cut away
+   * before it is fitted to the shape's box. Absent ⇒ the whole picture.
+   */
+  readonly crop?: {
+    readonly left: number;
+    readonly top: number;
+    readonly right: number;
+    readonly bottom: number;
+  };
+  /**
+   * §2.3.23 `pictureTransparent` — the colour the picture is drawn WITHOUT,
+   * 6-hex and no leading `#`. Clip art of this age states its ground here
+   * rather than carrying an alpha channel.
+   */
+  readonly transparentHex?: string;
 }
 /** A shape's rectangle on the slide, in points (from the OfficeArtClientAnchor). */
 export interface PptRect {
@@ -226,6 +287,12 @@ export interface PptAutoShape {
     readonly toHex: string;
     readonly angleDeg: number;
     readonly radial: boolean;
+    /**
+     * §2.3.7.6 `fillFocus` — where along the sweep the FIRST colour peaks, as a
+     * percentage. Zero is a plain ramp; 50 puts it in the middle with the
+     * second colour at both ends, which is a different picture entirely.
+     */
+    readonly focusPct?: number;
   };
   /**
    * §2.3.7.1 MSOFILLTYPE 3 — a picture stretched over the shape, its blip named
@@ -262,6 +329,13 @@ export interface PptShape {
    * of them would carry "Click to edit Master title style".
    */
   readonly placeholder?: boolean;
+  /**
+   * §2.9.51 `OEPlaceholderAtom.placeholderId` — WHICH placeholder it is. The
+   * three a master keeps for the slide's furniture — 7 the date, 8 the slide
+   * number, 9 the footer — are the only ones whose text does not live in the
+   * shape at all (§2.4.15).
+   */
+  readonly placeholderId?: number;
   readonly paragraphs?: ReadonlyArray<PptParagraph>;
   readonly image?: PptImage;
   readonly autoShape?: PptAutoShape;
@@ -518,7 +592,10 @@ function readSlideList(
     stream,
     byMasterId: buildMasterIdMap(docData),
     cache: new Map(),
+    documentStyles: parseDocumentTextStyles(docData, fonts),
   };
+
+  const deckFurniture = headersFooters(docData, HF_INSTANCE_SLIDES);
 
   const flush = (): void => {
     if (pendingRef === undefined) return;
@@ -544,8 +621,20 @@ function readSlideList(
     const background = isSlide
       ? (masterBackground(slideRec.data, masters, img) ?? content.background)
       : undefined;
+    // §2.4.15 — the date, number and footer the slide shows. A slide may state
+    // its own; otherwise it takes the deck's, which is the usual case.
+    const own = isSlide ? headersFooters(slideRec.data, HF_INSTANCE_PER_SLIDE) : undefined;
+    const furniture: SlideFurniture | undefined =
+      (own ?? deckFurniture)
+        ? {
+            ...((own ?? deckFurniture) as Omit<SlideFurniture, 'number'>),
+            number: slides.length + 1,
+          }
+        : undefined;
     // The master's decoration goes under everything the slide draws itself.
-    const decoration = isSlide ? masterShapes(slideRec.data, masters, img) : [];
+    const decoration = isSlide
+      ? masterShapes(slideRec.data, masters, img, furniture, defaults)
+      : [];
     slides.push({
       shapes: [...decoration, ...content.shapes],
       ...(background ? { background } : {}),
@@ -599,8 +688,12 @@ function collectParagraphs(
   return out;
 }
 
-// A plain text box states no text type; PowerPoint styles it as "other".
-const TEXT_TYPE_OTHER = 3;
+// §2.13.33 TextTypeEnum — a plain text box states no text type, and the style
+// PowerPoint gives it is "other". The enum SKIPS 3: it runs 0 title, 1 body,
+// 2 notes, then 4 other, 5 centreBody, 6 centreTitle, 7 halfBody, 8 quarterBody.
+// 38256.ppt's own master proves the numbering — it carries instances 0, 1, 2, 4,
+// 5, 6, 7 and 8, and none for 3.
+const TEXT_TYPE_OTHER = 4;
 
 const levelStyles = (
   defaults: MasterDefaults | undefined,
@@ -798,7 +891,7 @@ function collectShapeContainers(
         env,
         outline,
         defaults,
-        groupFrame(r.data) ?? group,
+        groupFrame(r.data, group) ?? group,
       );
       continue;
     }
@@ -809,6 +902,7 @@ function collectShapeContainers(
       let shapeType = 0;
       let fspFlags = 0;
       let fillColorHex: string | undefined;
+      let backColorHex: string | undefined;
       let lineColorHex: string | undefined;
       let gradient: PptAutoShape['gradient'];
       let geometry: PptCustomGeometry | undefined;
@@ -819,15 +913,20 @@ function collectShapeContainers(
       let tileSizePt: PptAutoShape['tileSizePt'];
       let gtext: PptParagraph | undefined;
       let placeholder = false;
+      let placeholderId: number | undefined;
+      let pictureCrop: PptImage['crop'];
+      let pictureTransparentHex: string | undefined;
       for (const child of records(r.data)) {
         if (child.type === FBT_FSP) {
           shapeType = child.instance;
           fspFlags = child.data.length >= 8 ? u32(child.data, 4) : 0;
         } else if (child.type === FBT_CLIENT_ANCHOR) rectPt = parseAnchor(child.data);
         else if (child.type === FBT_CHILD_ANCHOR && group) rectPt = childRect(child.data, group);
-        else if (child.type === FBT_CLIENT_DATA)
-          placeholder = findChild(child.data, (c) => c.type === RT_PLACEHOLDER_ATOM) !== undefined;
-        else if (child.type === FBT_CLIENT_TEXTBOX)
+        else if (child.type === FBT_CLIENT_DATA) {
+          const ph = findChild(child.data, (c) => c.type === RT_PLACEHOLDER_ATOM);
+          placeholder = ph !== undefined;
+          placeholderId = ph !== undefined && ph.length > 4 ? ph[4] : undefined;
+        } else if (child.type === FBT_CLIENT_TEXTBOX)
           paragraphs = clientTextboxParagraphs(child.data, outline, defaults, env);
         else if (child.type === FBT_OPT) {
           pib = optProperty(child.data, child.instance, PROP_PIB);
@@ -844,6 +943,9 @@ function collectShapeContainers(
           geometry = parseFreeformGeometry(child.data, child.instance);
           fillType = optProperty(child.data, child.instance, PROP_FILL_TYPE);
           fillBlip = optProperty(child.data, child.instance, PROP_FILL_BLIP);
+          // §2.3.7.3 — the OTHER colour: the far end of a shade, and the
+          // background a pattern's clear bits show through to. White by default.
+          backColorHex = optColor(child.data, child.instance, PROP_FILL_BACK_COLOR, scheme);
           tileSizePt = parseTileSize(child.data, child.instance);
           gtext = parseWordArt(child.data, child.instance, fillColorHex);
           // A blip property may name a store entry OR carry the picture itself
@@ -851,6 +953,17 @@ function collectShapeContainers(
           // one of its table cells holds its own 73 KB blip inline.
           inlineFill = optComplex(child.data, child.instance, PROP_FILL_BLIP);
           inlinePic = optComplex(child.data, child.instance, PROP_PIB);
+          // §2.3.23 — what the shape shows OF its picture, and the colour it
+          // shows the picture without. Clip art of this age is a rectangle of
+          // ground with the drawing somewhere inside it: 23884's globe is a
+          // ninth of its own file and its satellite sits on a red field, and
+          // taken whole they came out a white square and a red block.
+          pictureCrop = parsePictureCrop(child.data, child.instance);
+          const transparent = optProperty(child.data, child.instance, PROP_PICTURE_TRANSPARENT);
+          pictureTransparentHex =
+            transparent !== undefined && transparent !== PICTURE_TRANSPARENT_NONE
+              ? optColor(child.data, child.instance, PROP_PICTURE_TRANSPARENT, scheme)
+              : undefined;
         }
       }
       const blip = (index: number | undefined): PptImage | undefined => {
@@ -860,15 +973,33 @@ function collectShapeContainers(
       };
       // MSOFILLTYPE 2 is the same picture, repeated at its own size instead of
       // stretched; 119877's second slide is the tiled twin of its first.
-      const tiled = fillType === 2;
+      // MSOFILLTYPE 1 is a PATTERN, which is also a repeated picture — an 8×8
+      // monochrome bitmap whose set bits take `fillColor` and whose clear bits
+      // take `fillBackColor`.
+      const pattern =
+        fillType === 1
+          ? patternFill(blip(fillBlip) ?? inlineBlip(inlineFill), fillColorHex, backColorHex)
+          : undefined;
+      const tiled = fillType === 2 || pattern !== undefined;
       const fillImage =
-        fillType === 2 || fillType === 3 ? (blip(fillBlip) ?? inlineBlip(inlineFill)) : undefined;
+        pattern ??
+        (fillType === 2 || fillType === 3 ? (blip(fillBlip) ?? inlineBlip(inlineFill)) : undefined);
+      if (pattern) tileSizePt = PATTERN_TILE_PT;
       if ((fspFlags & FSP_FLAG_BACKGROUND) !== 0) {
         const bg = slideBackground(fillColorHex, gradient, fillType, fillImage, tiled);
         if (bg && !out.background) out.background = bg;
         continue;
       }
-      const image: PptImage | undefined = blip(pib) ?? inlineBlip(inlinePic);
+      const picture = blip(pib) ?? inlineBlip(inlinePic);
+      const image: PptImage | undefined = picture
+        ? {
+            ...picture,
+            ...(pictureCrop ? { crop: pictureCrop } : {}),
+            ...(pictureTransparentHex !== undefined
+              ? { transparentHex: pictureTransparentHex }
+              : {}),
+          }
+        : undefined;
       const textParas =
         (gtext ??
         (paragraphs?.some((p) => paragraphText(p).length > 0) === true ? paragraphs : undefined))
@@ -901,11 +1032,20 @@ function collectShapeContainers(
               ...(geometry ? { geometry } : {}),
             }
           : undefined;
-      if (textParas || image || autoShape) {
+      // A furniture placeholder is kept even with nothing in it: its words are
+      // the DECK's (§2.4.15) and are filled in against the master, so a box
+      // dropped here for being empty is a footer that never appears. It draws
+      // nothing until it is filled.
+      const furnitureBox =
+        placeholderId === PLACEHOLDER_DATE ||
+        placeholderId === PLACEHOLDER_SLIDE_NUMBER ||
+        placeholderId === PLACEHOLDER_FOOTER;
+      if (textParas || image || autoShape || furnitureBox) {
         out.shapes.push({
           ...(rectPt ? { rectPt } : {}),
           ...(gtext ? { wordArt: true } : {}),
           ...(placeholder ? { placeholder: true } : {}),
+          ...(placeholderId !== undefined ? { placeholderId } : {}),
           ...(textParas ? { paragraphs: textParas } : {}),
           ...(image ? { image } : {}),
           ...(autoShape ? { autoShape } : {}),
@@ -926,6 +1066,11 @@ interface LevelStyle extends CharProps {
   align?: number;
   bullet?: string;
   bulletOn?: boolean;
+  leftMarginPt?: number;
+  indentPt?: number;
+  lineSpacing?: number;
+  spaceBeforePt?: number;
+  spaceAfterPt?: number;
 }
 /** A master's defaults, by text type (TextHeaderAtom) and indent level. */
 type MasterDefaults = (textType: number, level: number) => LevelStyle | undefined;
@@ -958,6 +1103,27 @@ function parseFontCollection(docData: Uint8Array): Array<string> {
 }
 
 // §2.9.42 TextMasterStyleAtom — one per text type (the recInstance), holding a
+/**
+ * §2.9.3 — the DECK's own text styles, from the document's text info.
+ *
+ * A master states the styles its placeholders take; the style a TEXT BOX drawn
+ * on a slide takes — `Tx_TYPE_OTHER` — is stated once for the whole document
+ * and lives here instead. 38256.ppt's four captions are all of that kind, and
+ * without it they were set in the outline's 32pt Arial rather than the sizes
+ * and faces they were typed in.
+ *
+ * @param docData The DocumentContainer's body.
+ * @param fonts   The deck's typefaces, by the index a run names.
+ * @returns The level styles, by text type — in practice the one for `other`.
+ */
+function parseDocumentTextStyles(
+  docData: Uint8Array,
+  fonts: ReadonlyArray<string> | undefined,
+): Map<number, Array<LevelStyle>> {
+  const env = findDescendantContainer(docData, RT_ENVIRONMENT, 0);
+  return env ? parseMasterTextStyles(env, fonts) : new Map();
+}
+
 // TextPFException + TextCFException per indent level. The later types prefix each
 // level with its own 2-byte index; producers disagree on where that starts, so
 // both readings are tried and the one that lands on the record's end wins.
@@ -1006,18 +1172,26 @@ function readMasterLevels(
       ...(pf.align !== undefined ? { align: pf.align } : {}),
       ...(pf.bullet !== undefined ? { bullet: pf.bullet } : {}),
       ...(pf.bulletOn !== undefined ? { bulletOn: pf.bulletOn } : {}),
+      ...(pf.leftMarginPt !== undefined ? { leftMarginPt: pf.leftMarginPt } : {}),
+      ...(pf.indentPt !== undefined ? { indentPt: pf.indentPt } : {}),
+      ...(pf.lineSpacing !== undefined ? { lineSpacing: pf.lineSpacing } : {}),
+      ...(pf.spaceBeforePt !== undefined ? { spaceBeforePt: pf.spaceBeforePt } : {}),
+      ...(pf.spaceAfterPt !== undefined ? { spaceAfterPt: pf.spaceAfterPt } : {}),
     });
   }
   return { styles, off };
 }
 
 // §2.13.33 TextTypeEnum — a type a master may not define falls back to the plain
-// title / body style it is a variant of.
+// title / body style it is a VARIANT of. "Other" is not a variant of anything:
+// it is what a text box drawn on the slide gets, and lending it the outline's
+// style set 38256's four captions in the body's 32pt where every reader shows
+// the sizes they were typed at.
 const TEXT_TYPE_FALLBACK = new Map([
-  [4, 1], // centerBody → body
-  [5, 0], // centerTitle → title
-  [6, 1], // halfBody → body
-  [7, 1], // quarterBody → body
+  [5, 1], // centreBody → body
+  [6, 0], // centreTitle → title
+  [7, 1], // halfBody → body
+  [8, 1], // quarterBody → body
 ]);
 
 // The lookup a slide uses: its own master first, then the master that one
@@ -1041,7 +1215,25 @@ function masterDefaults(
         // because its run says so, and black and unbulleted because no style
         // claims it — lending the body style's navy and its dot there painted a
         // title every reader draws as a plain black line.
-        const { colorHex: _c, colorIndex: _i, bullet: _b, bulletOn: _o, ...metrics } = at;
+        // How a paragraph is SET goes with them — its margins and the space
+        // around it are the outline's own shape, not a metric. 119877's yellow
+        // caption and all four of 38256's captions are centreBodies their
+        // masters never define; lending them the outline's 8pt-before opened a
+        // gap between every line, and its 27pt hanging indent pushed the text
+        // out of the box it is drawn in. LibreOffice reads `algn="ctr"` and
+        // nothing else for every one of them.
+        const {
+          colorHex: _c,
+          colorIndex: _i,
+          bullet: _b,
+          bulletOn: _o,
+          spaceBeforePt: _sb,
+          spaceAfterPt: _sa,
+          lineSpacing: _ls,
+          leftMarginPt: _lm,
+          indentPt: _ip,
+          ...metrics
+        } = at;
         const from = t === textType ? at : metrics;
         merged = { ...from, ...merged }; // the nearer statement wins
       }
@@ -1098,14 +1290,134 @@ function masterShapes(
   slideData: Uint8Array,
   ctx: MasterContext,
   img: ImageContext,
+  furniture?: SlideFurniture,
+  defaults?: MasterDefaults,
 ): Array<PptShape> {
   if (!slideFlag(slideData, SLIDE_FLAG_MASTER_OBJECTS)) return [];
   const master = masterOf(slideData, ctx);
   if (!master) return [];
   const scheme = resolveScheme(master.data, ctx);
-  return collectShapes(master.data, img, scheme ? { scheme } : {}).shapes.filter(
-    (s) => s.placeholder !== true && s.rectPt !== undefined,
-  );
+  // The master's own text takes the master's own styles — that is what a style
+  // IS. Its furniture boxes state a size and an alignment and no colour at all,
+  // and left to the default the footer came out black where every reader draws
+  // it in the scheme's own text colour.
+  const shapes = collectShapes(
+    master.data,
+    img,
+    scheme ? { scheme } : {},
+    [],
+    defaults,
+  ).shapes.filter((s) => s.rectPt !== undefined);
+  return shapes.flatMap((s) => {
+    // A master's placeholder is a PROTOTYPE, not decoration — drawn as it
+    // stands, every slide would carry "Click to edit Master title style".
+    if (s.placeholder !== true) return [s];
+    // …except the three that hold the slide's furniture. Their text is not in
+    // the shape at all: the box is the master's and the words are the deck's
+    // (§2.4.15), which is why reading one without the other draws nothing.
+    const text = furniture ? furnitureText(s.placeholderId, furniture) : undefined;
+    return text === undefined
+      ? []
+      : [{ ...s, paragraphs: [furnitureParagraph(s, text, scheme?.[SCHEME_TEXT_AND_LINES])] }];
+  });
+}
+
+/** What a slide shows in its date, number and footer boxes. */
+interface SlideFurniture {
+  readonly mask: number;
+  readonly userDate?: string;
+  readonly footer?: string;
+  readonly number: number;
+}
+
+/**
+ * §2.4.15/§2.4.16 — the string one furniture placeholder shows, or `undefined`
+ * when this deck does not show that one at all.
+ *
+ * A date box is only drawn when the deck states the date ITSELF: `fHasTodayDate`
+ * asks for the day the file is opened, and a converter that answered it would
+ * put a different date in the file every time it ran.
+ */
+function furnitureText(id: number | undefined, hf: SlideFurniture): string | undefined {
+  if (id === PLACEHOLDER_FOOTER) {
+    return (hf.mask & HF_HAS_FOOTER) !== 0 ? (hf.footer ?? '') || undefined : undefined;
+  }
+  if (id === PLACEHOLDER_SLIDE_NUMBER) {
+    return (hf.mask & HF_HAS_SLIDE_NUMBER) !== 0 ? String(hf.number) : undefined;
+  }
+  if (id === PLACEHOLDER_DATE) {
+    const shown = (hf.mask & HF_HAS_DATE) !== 0 && (hf.mask & HF_HAS_USER_DATE) !== 0;
+    return shown ? (hf.userDate ?? '') || undefined : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * The furniture's words, in the formatting the master's own box carries.
+ *
+ * A `.ppt` master keeps no prompt text in these boxes, so there is usually no
+ * run to copy from and the paragraph takes the master's defaults; where one IS
+ * there, its size, colour and alignment are what PowerPoint draws the footer in.
+ */
+function furnitureParagraph(
+  shape: PptShape,
+  text: string,
+  textColorHex: string | undefined,
+): PptParagraph {
+  const model = shape.paragraphs?.find((p) => p.runs.length > 0);
+  const first = model?.runs[0];
+  return {
+    ...(model ? { ...model } : {}),
+    // §2.12.2 — slot 1 of a colour scheme IS "text and lines", and it is what
+    // text that states no colour of its own is drawn in. The master's furniture
+    // boxes state a size and an alignment and stop there, so left to the
+    // default they came out black on a deck whose every other word is navy.
+    runs: [
+      { ...(textColorHex !== undefined ? { colorHex: textColorHex } : {}), ...(first ?? {}), text },
+    ],
+  };
+}
+
+/**
+ * §2.4.15 `HeadersFootersContainer` — the strings a deck shows on every slide,
+ * and which of them it shows.
+ *
+ * They live nowhere near the boxes that draw them: the geometry is a
+ * placeholder on the MASTER and the words are here, so a reader that has one
+ * without the other draws an empty band. 37625.ppt's every slide is signed
+ * "Transport CDM Workshop" and dated "26 August 2004" this way.
+ *
+ * @param data     A DocumentContainer's or SlideContainer's records.
+ * @param instance Which container to read — the deck's or the slide's own.
+ * @returns The mask and the strings, or `undefined` when there is no container.
+ */
+function headersFooters(
+  data: Uint8Array,
+  instance: number,
+): Omit<SlideFurniture, 'number'> | undefined {
+  for (const rec of records(data)) {
+    if (rec.type !== RT_HEADERS_FOOTERS || rec.instance !== instance) continue;
+    let mask = 0;
+    let userDate: string | undefined;
+    let footer: string | undefined;
+    for (const child of records(rec.data)) {
+      if (child.type === RT_HEADERS_FOOTERS_ATOM && child.data.length >= 4) {
+        mask = child.data[2]! | (child.data[3]! << 8);
+      } else if (child.type === RT_CSTRING) {
+        // §2.4.15 — the instance says which string this is: 0 the date the deck
+        // states for itself, 1 the header, 2 the footer.
+        const s = utf16Property(child.data);
+        if (child.instance === 0) userDate = s;
+        else if (child.instance === 2) footer = s;
+      }
+    }
+    return {
+      mask,
+      ...(userDate !== undefined ? { userDate } : {}),
+      ...(footer !== undefined ? { footer } : {}),
+    };
+  }
+  return undefined;
 }
 
 // The background of the master a slide follows, when the slide states none of
@@ -1132,6 +1444,9 @@ function masterChain(
 ): MasterDefaults {
   const chain: Array<Map<number, Array<LevelStyle>>> = [];
   if (!ctx) return masterDefaults(chain, scheme);
+  // The deck's own styles sit BEHIND every master's — a master that states the
+  // same thing is nearer and wins.
+  const behind = ctx.documentStyles;
   let data: Uint8Array | undefined = slideData;
   const seen = new Set<number>();
   for (let hop = 0; hop < 4 && data; hop++) {
@@ -1154,6 +1469,7 @@ function masterChain(
     }
     data = rec.type === RT_SLIDE ? rec.data : undefined; // a main master ends the walk
   }
+  if (behind.size > 0) chain.push(behind);
   return masterDefaults(chain, scheme);
 }
 
@@ -1164,6 +1480,8 @@ interface MasterContext {
   readonly stream: Uint8Array;
   readonly byMasterId: Map<number, number>;
   readonly cache: Map<number, Map<number, Array<LevelStyle>>>;
+  /** §2.9.3 — the DECK's own text styles, behind every master's. */
+  readonly documentStyles: Map<number, Array<LevelStyle>>;
 }
 
 // Where a group sits on the slide, and the coordinate space its children's
@@ -1179,7 +1497,7 @@ interface GroupFrame {
 // A group container's first SpContainer is the group shape itself: its FSPGR
 // (§2.2.38) states the coordinate space, its client anchor where that space
 // lands on the slide.
-function groupFrame(spgrData: Uint8Array): GroupFrame | undefined {
+function groupFrame(spgrData: Uint8Array, parent?: GroupFrame): GroupFrame | undefined {
   const sp = [...records(spgrData)].find((r) => r.type === FBT_SP_CONTAINER);
   if (!sp) return undefined;
   let box: { x: number; y: number; w: number; h: number } | undefined;
@@ -1190,6 +1508,15 @@ function groupFrame(spgrData: Uint8Array): GroupFrame | undefined {
       const y = i32(child.data, 4);
       box = { x, y, w: i32(child.data, 8) - x, h: i32(child.data, 12) - y };
     } else if (child.type === FBT_CLIENT_ANCHOR) rect = parseAnchor(child.data);
+    // A group INSIDE a group is anchored the way any other child is — by a
+    // ChildAnchor in the enclosing group's space, not by a client anchor. Read
+    // only the client one, a nested group had no frame of its own and its
+    // children were measured against their GRANDPARENT's space: the master of
+    // 37625.ppt nests its grid two groups deep, and its rules came out at a
+    // fraction of their spacing and running off the slide.
+    else if (child.type === FBT_CHILD_ANCHOR && parent !== undefined && rect === undefined) {
+      rect = childRect(child.data, parent);
+    }
   }
   if (!box || !rect || box.w <= 0 || box.h <= 0) return undefined;
   return { rect, ...box };
@@ -1205,7 +1532,11 @@ function childRect(d: Uint8Array, g: GroupFrame): PptRect | undefined {
   const y2 = g.rect.y + ((i32(d, 12) - g.y) / g.h) * g.rect.h;
   const w = x2 - x1;
   const h = y2 - y1;
-  return w > 0 && h > 0 && Math.abs(x1) < 5000 && Math.abs(y1) < 5000
+  // A RULE has no area: a vertical one is zero wide and a horizontal one zero
+  // tall, and both are perfectly good shapes. Demanding area of every child
+  // rectangle threw out all hundred-odd rules the master of 37625.ppt draws its
+  // pale blue grid with, on all twenty-nine slides.
+  return (w > 0 || h > 0) && w >= 0 && h >= 0 && Math.abs(x1) < 5000 && Math.abs(y1) < 5000
     ? { x: x1, y: y1, w, h }
     : undefined;
 }
@@ -1288,6 +1619,66 @@ function inlineBlip(blob: Uint8Array | undefined): PptImage | undefined {
   return bytes ? { bytes } : undefined;
 }
 
+// §2.3.7.1 MSOFILLTYPE 1 — a pattern is an 8×8 monochrome bitmap drawn one
+// pattern pixel to one DEVICE pixel, which at the 96 dpi every reader assumes
+// is three quarters of a point each way.
+const PATTERN_TILE_PT = { widthPt: (8 * 72) / 96, heightPt: (8 * 72) / 96 };
+
+/**
+ * §2.3.7.1 MSOFILLTYPE 1 — the picture a PATTERN fill repeats.
+ *
+ * The pattern itself is a one-bit bitmap in the picture store, and it carries
+ * no colour of its own: its set bits are the shape's `fillColor` and its clear
+ * bits its `fillBackColor`. So it is not a picture to be drawn but a stencil to
+ * be painted through, and the two colours are recorded nowhere else. 37625.ppt
+ * rules its every slide with a pale blue grid this way, and unread the whole
+ * deck came out on white.
+ *
+ * The result is handed back as an ordinary tiled picture: the tile path is
+ * already there and already tested, and a pattern IS a tiled picture once its
+ * two colours are in it.
+ *
+ * @param mono   The pattern bitmap from the store, when it resolves.
+ * @param fgHex  The shape's `fillColor` — what the set bits are painted in.
+ * @param bgHex  Its `fillBackColor`; white when the shape states none.
+ * @returns The recoloured tile as a PNG, or `undefined` when the blip is not a
+ *          bitmap this can read.
+ */
+function patternFill(
+  mono: PptImage | undefined,
+  fgHex: string | undefined,
+  bgHex: string | undefined,
+): PptImage | undefined {
+  if (!mono || !isBmp(mono.bytes)) return undefined;
+  let decoded;
+  try {
+    decoded = decodeBmp(mono.bytes);
+  } catch {
+    return undefined;
+  }
+  const fg = rgb(fgHex ?? '000000');
+  const bg = rgb(bgHex ?? 'FFFFFF');
+  const { width, height, data } = decoded;
+  const out = new Uint8Array(width * height * 3);
+  for (let i = 0; i < width * height; i++) {
+    // The stencil is monochrome: anything not black is a set bit. Reading the
+    // palette back would say the same thing twice — `decodeBmp` has already
+    // resolved index 0 and index 1 to their colours.
+    const on = data[i * 3]! + data[i * 3 + 1]! + data[i * 3 + 2]! < 384;
+    const c = on ? fg : bg;
+    out[i * 3] = c[0];
+    out[i * 3 + 1] = c[1];
+    out[i * 3 + 2] = c[2];
+  }
+  return { bytes: encodePng(width, height, 'rgb', out) };
+}
+
+/** `RRGGBB` → its three bytes. */
+function rgb(hex: string): readonly [number, number, number] {
+  const n = Number.parseInt(hex, 16);
+  return Number.isFinite(n) ? [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff] : [0, 0, 0];
+}
+
 // §2.3.7.1 MSOFILLTYPE 3 is a picture stretched over the shape — for the
 // background shape, over the slide. Anything else is read as the solid colour or
 // the shade already parsed; a background that states none is left to the page.
@@ -1350,6 +1741,33 @@ function stated(d: Uint8Array, count: number, propId: number, flag: number): boo
 
 // §2.3.7.2 OfficeArtFOPT — `count` properties, each a 2-byte id (low 14 bits) + a
 // 4-byte value. Returns the simple (non-complex) value of `wantId`.
+/**
+ * §2.3.23 `cropFrom*` — the four edge crops, as fractions of the source.
+ *
+ * Each is a SIGNED 16.16 fixed-point fraction, so a negative one extends the
+ * picture past its box rather than cutting into it. A crop that leaves nothing
+ * of an axis is not one — 23884's globe keeps a ninth of its width and a
+ * seventh of its height, but zero would divide the fitting by nothing.
+ *
+ * @param d     The OPT record's body.
+ * @param count The number of fixed entries it declares.
+ * @returns The four fractions, or `undefined` when the shape states no crop.
+ */
+function parsePictureCrop(d: Uint8Array, count: number): PptImage['crop'] {
+  const frac = (id: number): number => {
+    const raw = optProperty(d, count, id);
+    return raw === undefined ? 0 : (raw | 0) / 65536;
+  };
+  const crop = {
+    left: frac(PROP_CROP_LEFT),
+    top: frac(PROP_CROP_TOP),
+    right: frac(PROP_CROP_RIGHT),
+    bottom: frac(PROP_CROP_BOTTOM),
+  };
+  if (crop.left === 0 && crop.top === 0 && crop.right === 0 && crop.bottom === 0) return undefined;
+  return 1 - crop.left - crop.right > 0 && 1 - crop.top - crop.bottom > 0 ? crop : undefined;
+}
+
 function optProperty(d: Uint8Array, count: number, wantId: number): number | undefined {
   for (let i = 0; i < count && i * 6 + 6 <= d.length; i++) {
     const id = u16(d, i * 6);
@@ -1558,7 +1976,17 @@ function parseFillGradient(
   // downward axis, which is the direction DrawingML calls 90°.
   const raw = optProperty(d, count, PROP_FILL_ANGLE);
   const angleDeg = raw === undefined ? 90 : 90 - (raw | 0) / 65536;
-  return { fromHex, toHex, angleDeg, radial: type === 5 || type === 6 };
+  // §2.3.7.6 — a signed percentage: the sweep does not have to run from one
+  // colour to the other, it may run OUT from one of them.
+  const focus = optProperty(d, count, PROP_FILL_FOCUS);
+  const focusPct = focus === undefined ? 0 : ((focus | 0) << 16) >> 16;
+  return {
+    fromHex,
+    toHex,
+    angleDeg,
+    radial: type === 5 || type === 6,
+    ...(focusPct !== 0 ? { focusPct } : {}),
+  };
 }
 
 function optColor(
@@ -1677,6 +2105,14 @@ interface ParaRun {
   bullet?: string;
   /** The paragraph states `fHasBullet` — true says draw one, false says do not. */
   bulletOn?: boolean;
+  /** Where the paragraph's BODY sits, in points from the box's text edge. */
+  leftMarginPt?: number;
+  /** Where its FIRST line starts — left of the body when the bullet hangs. */
+  indentPt?: number;
+  /** §2.9.32 — a PERCENTAGE of the line's height, 100 being one line. */
+  lineSpacing?: number;
+  spaceBeforePt?: number;
+  spaceAfterPt?: number;
 }
 
 /** The concatenated plain text of a paragraph's runs. */
@@ -1696,21 +2132,26 @@ function buildStyledParagraphs(
 ): Array<PptParagraph> {
   const style = styleData ? parseStyleTextProp(styleData, text.length, env) : undefined;
   const charProps = style ? expandCharProps(style.charRuns, text.length) : undefined;
-  const paraRuns = style?.paraRuns ?? [];
+  // A paragraph run's count is CHARACTERS, not paragraphs: one run routinely
+  // covers a whole placeholder's worth of them. Taken as one run per paragraph,
+  // every paragraph after the first fell through to the master's level style —
+  // 41246-1's body came out flush right because the master says so and the
+  // slide's own "left" only ever reached its first paragraph.
+  const paraProps = style ? expandParaProps(style.paraRuns, text.length) : undefined;
 
   const paras: Array<PptParagraph> = [];
   let runs: Array<PptRun> = [];
   let cur = '';
   let curProps: CharRun | undefined;
-  let paraIndex = 0;
+  let paraStart = 0;
 
   const pushRun = (): void => {
     if (cur.length > 0) runs.push(toRun(cur, curProps));
     cur = '';
   };
-  const endParagraph = (): void => {
+  const endParagraph = (end: number): void => {
     pushRun();
-    const meta = paraRuns[paraIndex];
+    const meta = paraProps?.[paraStart];
     // What the run did not state, the master's style for this level does —
     // size and alignment. Not bold / italic / underline, which are stated as OFF
     // as often as they are omitted and cannot be told apart here; and not
@@ -1727,20 +2168,30 @@ function buildStyledParagraphs(
     const on = meta?.bulletOn ?? lvl?.bulletOn;
     const char = meta?.bullet ?? lvl?.bullet;
     const bullet = on === false ? undefined : on === true ? (char ?? '•') : char;
+    const leftMarginPt = meta?.leftMarginPt ?? lvl?.leftMarginPt;
+    const indentPt = meta?.indentPt ?? lvl?.indentPt;
+    const lineSpacing = meta?.lineSpacing ?? lvl?.lineSpacing;
+    const spaceBeforePt = meta?.spaceBeforePt ?? lvl?.spaceBeforePt;
+    const spaceAfterPt = meta?.spaceAfterPt ?? lvl?.spaceAfterPt;
     paras.push({
       runs: lvl ? runs.map((r) => inherit(r, lvl)) : runs,
       ...(align !== undefined ? { align } : {}),
       ...(meta?.level !== undefined ? { level: meta.level } : {}),
       ...(bullet !== undefined ? { bullet } : {}),
+      ...(leftMarginPt !== undefined ? { leftMarginPt } : {}),
+      ...(indentPt !== undefined ? { indentPt } : {}),
+      ...(lineSpacing !== undefined ? { lineSpacing } : {}),
+      ...(spaceBeforePt !== undefined ? { spaceBeforePt } : {}),
+      ...(spaceAfterPt !== undefined ? { spaceAfterPt } : {}),
     });
     runs = [];
-    paraIndex++;
+    paraStart = end + 1;
   };
 
   for (let i = 0; i < text.length; i++) {
     const c = text.charCodeAt(i);
     if (c === 0x0d) {
-      endParagraph();
+      endParagraph(i);
       continue;
     }
     const props = charProps?.[i];
@@ -1749,7 +2200,7 @@ function buildStyledParagraphs(
     if (c === 0x0b || c === 0x0a || c === 0x09) cur += ' ';
     else if (c !== 0xfeff && c >= 0x20) cur += text[i];
   }
-  endParagraph();
+  endParagraph(text.length);
 
   // Drop a single trailing empty paragraph left by a terminating CR.
   if (paras.length > 1 && paragraphText(paras[paras.length - 1]!).length === 0) paras.pop();
@@ -1806,6 +2257,19 @@ function expandCharProps(charRuns: ReadonlyArray<CharRun>, textLen: number): Arr
   return out;
 }
 
+/** The same, for the paragraph runs: the run that covers each character. */
+function expandParaProps(
+  paraRuns: ReadonlyArray<ParaRun>,
+  textLen: number,
+): Array<ParaRun | undefined> {
+  const out: Array<ParaRun | undefined> = [];
+  for (const run of paraRuns) {
+    for (let i = 0; i < run.count && out.length < textLen; i++) out.push(run);
+  }
+  while (out.length < textLen) out.push(paraRuns[paraRuns.length - 1]);
+  return out;
+}
+
 // StyleTextPropAtom (§2.9.1): a paragraph-run section then a character-run
 // section, each summing to the text length + 1 (the phantom paragraph
 // terminator). Within a run, optional fields follow the masks in the spec's byte
@@ -1834,6 +2298,11 @@ function parseStyleTextProp(
       ...(pf.align !== undefined ? { align: pf.align } : {}),
       ...(pf.bullet !== undefined ? { bullet: pf.bullet } : {}),
       ...(pf.bulletOn !== undefined ? { bulletOn: pf.bulletOn } : {}),
+      ...(pf.leftMarginPt !== undefined ? { leftMarginPt: pf.leftMarginPt } : {}),
+      ...(pf.indentPt !== undefined ? { indentPt: pf.indentPt } : {}),
+      ...(pf.lineSpacing !== undefined ? { lineSpacing: pf.lineSpacing } : {}),
+      ...(pf.spaceBeforePt !== undefined ? { spaceBeforePt: pf.spaceBeforePt } : {}),
+      ...(pf.spaceAfterPt !== undefined ? { spaceAfterPt: pf.spaceAfterPt } : {}),
     });
     consumed += count;
     if (count <= 0) break;
@@ -1854,6 +2323,18 @@ function parseStyleTextProp(
   return paraRuns.length > 0 || charRuns.length > 0 ? { paraRuns, charRuns } : undefined;
 }
 
+/**
+ * §2.9.32 ParaSpacing → points, or `undefined` when the value is a percentage.
+ *
+ * Negative states a DISTANCE in master units, 576 to the inch. Positive states
+ * a percentage of the line's height, which is not a distance this reader can
+ * work out — the line has not been set yet — so it is left for the paragraph to
+ * inherit nothing rather than guessed at.
+ */
+function spacingPt(value: number): number | undefined {
+  return value < 0 ? -value / 8 : undefined;
+}
+
 // §2.9.20 TextPFException: a 4-byte mask then the fields whose bits it sets, in
 // the spec's byte order (NOT bit-ascending). Every present field is stepped over
 // even when it is dropped, or the ones after it read from the wrong place.
@@ -1865,12 +2346,22 @@ function readPfException(
   align?: number;
   bullet?: string;
   bulletOn?: boolean;
+  leftMarginPt?: number;
+  indentPt?: number;
+  lineSpacing?: number;
+  spaceBeforePt?: number;
+  spaceAfterPt?: number;
 } {
   const mask = u32(data, start);
   let off = start + 4;
   let align: number | undefined;
   let bulletOn: boolean | undefined;
   let bullet: string | undefined;
+  let leftMarginPt: number | undefined;
+  let indentPt: number | undefined;
+  let lineSpacing: number | undefined;
+  let spaceBeforePt: number | undefined;
+  let spaceAfterPt: number | undefined;
   if ((mask & 0x0000000f) !== 0) {
     bulletOn = (u16(data, off) & 0x0001) !== 0; // bulletFlags.fHasBullet
     off += 2;
@@ -1886,11 +2377,36 @@ function readPfException(
     align = u16(data, off); // textAlignment
     off += 2;
   }
-  if ((mask & 0x00001000) !== 0) off += 2; // lineSpacing
-  if ((mask & 0x00002000) !== 0) off += 2; // spaceBefore
-  if ((mask & 0x00004000) !== 0) off += 2; // spaceAfter
-  if ((mask & 0x00000100) !== 0) off += 2; // leftMargin
-  if ((mask & 0x00000400) !== 0) off += 2; // indent
+  // §2.9.32 ParaSpacing — a SIGNED value with two readings. Negative is a
+  // distance in master units, eight to the point; positive is a percentage of
+  // the line's height. Measured against LibreOffice on 41246-1.ppt: the
+  // master's five body levels state -114, -91, -68, -46, -23 and LO writes
+  // 14.26, 11.37, 8.50, 5.75 pt after them, and a lineSpacing of 95 becomes
+  // 95 %.
+  if ((mask & 0x00001000) !== 0) {
+    lineSpacing = i16(data, off);
+    off += 2;
+  }
+  if ((mask & 0x00002000) !== 0) {
+    spaceBeforePt = spacingPt(i16(data, off));
+    off += 2;
+  }
+  if ((mask & 0x00004000) !== 0) {
+    spaceAfterPt = spacingPt(i16(data, off));
+    off += 2;
+  }
+  // §2.9.20 — the indents are MASTER UNITS, 576 to the inch, so eight to the
+  // point. `leftMargin` is where the paragraph's body sits and `indent` where
+  // its FIRST line starts: a bullet hangs when the first line starts left of
+  // the body, which is how every outline level in every deck is set.
+  if ((mask & 0x00000100) !== 0) {
+    leftMarginPt = u16(data, off) / 8;
+    off += 2;
+  }
+  if ((mask & 0x00000400) !== 0) {
+    indentPt = u16(data, off) / 8;
+    off += 2;
+  }
   if ((mask & 0x00008000) !== 0) off += 2; // defaultTabSize
   if ((mask & 0x00100000) !== 0) off += 2 + (off + 2 <= data.length ? u16(data, off) : 0) * 4; // tabStops
   if ((mask & 0x00010000) !== 0) off += 2; // fontAlign
@@ -1901,6 +2417,11 @@ function readPfException(
     ...(align !== undefined ? { align } : {}),
     ...(bullet !== undefined ? { bullet } : {}),
     ...(bulletOn !== undefined ? { bulletOn } : {}),
+    ...(leftMarginPt !== undefined ? { leftMarginPt } : {}),
+    ...(indentPt !== undefined ? { indentPt } : {}),
+    ...(lineSpacing !== undefined ? { lineSpacing } : {}),
+    ...(spaceBeforePt !== undefined ? { spaceBeforePt } : {}),
+    ...(spaceAfterPt !== undefined ? { spaceAfterPt } : {}),
   };
 }
 

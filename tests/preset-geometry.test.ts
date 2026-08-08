@@ -279,3 +279,133 @@ describe('customPaths (custGeom)', () => {
     expect(last.y).toBeCloseTo(0, 4);
   });
 });
+
+// §20.1.10.55 — the gallery shapes a deck reaches for that used to degrade to
+// the bounding rectangle. tdf114848.pptx draws one of each.
+describe('the gallery presets that were rectangles', () => {
+  const NEW = [
+    'bevel',
+    'halfFrame',
+    'heptagon',
+    'octagon',
+    'decagon',
+    'dodecagon',
+    'donut',
+    'frame',
+    'diagStripe',
+    'teardrop',
+    'can',
+    'plaque',
+  ];
+
+  it('knows every one of them', () => {
+    for (const p of NEW) expect(presetPaths(p, W, H, new Map()), p).not.toBeNull();
+  });
+
+  it('gives a polygon its side count, and stands an even one on a flat edge', () => {
+    const corners = (p: string): number =>
+      presetPaths(p, W, H, new Map())![0]!.segments.filter((s) => s.op === 'line').length + 1;
+    expect(corners('heptagon')).toBe(7);
+    expect(corners('decagon')).toBe(10);
+    expect(corners('dodecagon')).toBe(12);
+    // An even polygon is turned half a step so it rests on an edge: no vertex
+    // sits at the very top, where an odd one's does.
+    const top = (p: string): number =>
+      Math.max(...presetPaths(p, W, H, new Map())![0]!.segments.map((s) => ('y' in s ? s.y : 0)));
+    expect(top('heptagon')).toBeCloseTo(H, 4);
+    expect(top('decagon')).toBeLessThan(H);
+  });
+
+  it('cuts a hole in the shapes that have one', () => {
+    for (const p of ['donut', 'frame']) {
+      const path = presetPaths(p, W, H, new Map())![0]!;
+      // Two subpaths, and the inner one only counts as a hole under even-odd.
+      expect(path.fillRule, p).toBe('evenodd');
+      expect(path.segments.filter((s) => s.op === 'move').length, p).toBe(2);
+    }
+  });
+
+  it("bites a plaque's corners inwards where a round rectangle cuts them off", () => {
+    const at = (p: string): ReadonlyArray<{ x: number; y: number }> =>
+      presetPaths(p, W, H, new Map())![0]!.segments.flatMap((s) =>
+        'x' in s ? [{ x: s.x, y: s.y }] : [],
+      );
+    // Both leave the corner alone at the same distance; the plaque's curve then
+    // runs INTO the shape, so its points stay nearer the middle than the round
+    // rectangle's, which bulge back out to the edge.
+    const near = (pts: ReadonlyArray<{ x: number; y: number }>): number =>
+      Math.min(...pts.filter((q) => q.y < H / 2).map((q) => q.x + q.y));
+    expect(near(at('plaque'))).toBeGreaterThan(near(at('roundRect')));
+  });
+
+  it('mitres a half frame where its two bars meet', () => {
+    // Two bars — the top-left half of a frame — joined at the box's own
+    // diagonal, so a wide box mitres at a shallower angle than a tall one.
+    const pts = presetPaths('halfFrame', W, H, new Map())![0]!.segments.flatMap((s) =>
+      'x' in s ? [{ x: s.x, y: s.y }] : [],
+    );
+    expect(pts).toHaveLength(6);
+    // The outer corner is the box's own, and the inner one is set in by the
+    // thickness of both bars.
+    expect(pts.some((q) => q.x === 0 && q.y === 0)).toBe(true);
+    expect(pts.some((q) => q.x === W && q.y === H)).toBe(true);
+    const inner = Math.min(...pts.filter((q) => q.x > 0).map((q) => q.x));
+    expect(inner).toBeCloseTo(Math.min(W, H) / 3, 3);
+  });
+
+  it("builds a bevel's four faces round its inner rectangle", () => {
+    // PowerPoint shades each face to make the block read as raised; a shape
+    // here takes one fill, so what carries is the structure.
+    const paths = presetPaths('bevel', W, H, new Map())!;
+    expect(paths).toHaveLength(5);
+    const t = 0.125 * Math.min(W, H);
+    const last = paths[4]!.segments.flatMap((s) => ('x' in s ? [{ x: s.x, y: s.y }] : []));
+    // The inner rectangle is inset by the chamfer on every side.
+    expect(Math.min(...last.map((q) => q.x))).toBeCloseTo(t, 3);
+    expect(Math.max(...last.map((q) => q.x))).toBeCloseTo(W - t, 3);
+    expect(Math.max(...last.map((q) => q.y))).toBeCloseTo(H - t, 3);
+  });
+
+  it('fills the lid of a cylinder instead of punching it out', () => {
+    // Both paths wind the same way round: wound the other way a nonzero fill
+    // cancels the two and the top comes out hollow — which is how the
+    // flowchart disk had been drawn all along.
+    for (const preset of ['can', 'flowChartMagneticDisk']) {
+      const [b1, l1] = presetPaths(preset, W, H, new Map())!;
+      expect(b1, preset).toBeDefined();
+      expect(l1, preset).toBeDefined();
+    }
+    const [body, lid] = presetPaths('can', W, H, new Map())!;
+    const turn = (p: { segments: ReadonlyArray<PathSegment> }): number => {
+      const pts = p.segments.flatMap((s) => ('x' in s ? [[s.x, s.y] as const] : []));
+      let a = 0;
+      for (let i = 0; i < pts.length; i++) {
+        const [x1, y1] = pts[i]!;
+        const [x2, y2] = pts[(i + 1) % pts.length]!;
+        a += x1 * y2 - x2 * y1;
+      }
+      return Math.sign(a);
+    };
+    expect(turn(body!)).toBe(turn(lid!));
+  });
+
+  it("bulges a cylinder's base downwards, not up", () => {
+    const [body] = presetPaths('flowChartMagneticDisk', W, H, new Map())!;
+    const ys = body!.segments.flatMap((s) => ('y' in s ? [s.y] : []));
+    // The base reaches the very bottom of the box; drawn the other way round it
+    // arched up into the body instead.
+    expect(Math.min(...ys)).toBeCloseTo(0, 3);
+  });
+
+  it('lays the magnetic drum on its side, capped at the right', () => {
+    // The same cylinder turned ninety degrees: its cap is the RIGHT end, so it
+    // reaches the right edge of the box and the body's far end bulges left.
+    const [body, cap] = presetPaths('flowChartMagneticDrum', W, H, new Map())!;
+    const xs = (p: { segments: ReadonlyArray<PathSegment> }): Array<number> =>
+      p.segments.flatMap((s) => ('x' in s ? [s.x] : []));
+    expect(Math.max(...xs(cap!))).toBeCloseTo(W, 3);
+    expect(Math.min(...xs(body!))).toBeCloseTo(0, 3);
+    // Its cap is an ellipse a sixth of the box wide, not half of it.
+    expect(Math.max(...xs(cap!)) - Math.min(...xs(cap!))).toBeCloseTo(W / 3, 3);
+  });
+});

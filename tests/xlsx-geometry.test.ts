@@ -14,6 +14,7 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
+import { buildTinyPng } from './fixtures/build-png';
 import { buildXlsx } from './fixtures/build-xlsx';
 import { FontRegistry } from '@/core/font';
 import { Ream } from '@/core/converter/ream';
@@ -494,6 +495,28 @@ describe('grid geometry', () => {
       1,
     );
     expect(pitch(narrow)).toBeCloseTo(48, 1); // Excel's 8.43-char default
+  });
+
+  it('anchors a drawing on the SAME default column the grid uses', () => {
+    // The anchor tracks and the grid's columns have to agree, or a drawing
+    // lands beside the cell it is anchored to. They did not: the grid padded a
+    // `baseColWidth` default twice and the anchor once, so every drawing on
+    // such a sheet came out 5px a column narrow — 47668.xlsx's picture at 723pt
+    // where the file caches Excel's own `<a:ext cx="9753600">`, which is 768.
+    const doc = Ream.parse(
+      buildXlsx({
+        rows: [['A', 'B']],
+        baseColWidthChars: 10,
+        sheetImage: {
+          pngBytes: buildTinyPng(4, 4, [0, 0, 255, 255]),
+          anchor: { from: [0, 0], to: [2, 1] },
+        },
+      }),
+    );
+    const image = doc.flow.body.find((el) => el.kind === 'image');
+    // Two columns of the sheet's own default: 2 × 60pt, the same 60 the grid
+    // above puts between the two cells.
+    expect(image?.image.width).toBeCloseTo(120, 1);
   });
 
   it('gives each sheet its own page geometry', () => {

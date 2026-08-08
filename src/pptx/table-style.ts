@@ -16,7 +16,7 @@ import type { ColorResolver } from '@/core/drawingml/colors';
 import type { PoNode } from '@/core/po-helpers';
 
 import { pt } from '@/core/ir';
-import { readColorMods, resolveColorNode } from '@/core/drawingml/colors';
+import { placeholderColors, readColorMods, resolveColorNode } from '@/core/drawingml/colors';
 import { poAttr, poChildren, poIntAttr, poIs, poTag, poText } from '@/core/po-helpers';
 
 /** Which conditional parts of a style a table asks for (`a:tblPr` flags). */
@@ -32,6 +32,13 @@ export interface TableStyleFlags {
 /** What one part of a table style says about a cell. */
 export interface TableStylePart {
   readonly shadingHex?: string;
+  /**
+   * §20.1.2.3.1 — how opaque that shading is, when the part asks for less than
+   * all of it. A cell's fill is a layer over the table's background, not over
+   * the page, so the two have to be composed rather than each flattened to
+   * white on its own.
+   */
+  readonly shadingAlpha?: number;
   readonly borders?: CellBorders;
   readonly bold?: boolean;
   readonly italic?: boolean;
@@ -109,9 +116,64 @@ export function cellStyle(
   let out: TableStylePart = tableBackground(style, colors, theme);
   for (const name of names) {
     const part = poChildren(style).find((c) => poIs(c, name));
-    if (part) out = { ...out, ...partStyle(part, colors, theme) };
+    if (!part) continue;
+    const next = partStyle(part, colors, theme);
+    out = { ...out, ...next, ...overFill(out.shadingHex, next) };
   }
-  return out;
+  const { shadingAlpha: _drop, ...flat } = out;
+  return flat;
+}
+
+/**
+ * A part's fill laid OVER what is already under it.
+ *
+ * A colour resolves flattened against the page, because that is what a shape's
+ * fill sits on; a table cell's sits on the table's background. Undoing the one
+ * and redoing the other needs only the alpha: bnc480256's banding is `accent1`
+ * at 40% over a background the theme's gradient makes pale, and taken against
+ * white instead it came out as the flat accent with every second row white.
+ */
+function overFill(under: string | undefined, part: TableStylePart): TableStylePart {
+  const a = part.shadingAlpha;
+  if (a === undefined || a >= 1 || part.shadingHex === undefined || under === undefined) return {};
+  const flat = rgb(part.shadingHex);
+  const back = rgb(under);
+  if (!flat || !back) return {};
+  // `flat = c·a + 1·(1 − a)`, so over `back` it is `flat − (1 − a)·(1 − back)`.
+  const mix = flat.map((v, i) => v - (1 - a) * (1 - (back[i] ?? 1)));
+  return { shadingHex: toHex(mix) };
+}
+
+// §20.1.2.3.1 — the opacity a fill's colour asks for, 1 when it asks for none.
+function alphaOf(fill: PoNode): number {
+  const walk = (node: PoNode): number | undefined => {
+    for (const child of poChildren(node)) {
+      if (poIs(child, 'a:alpha')) {
+        const v = poIntAttr(child, 'val');
+        if (v !== undefined) return Math.max(0, Math.min(1, v / 100000));
+      }
+      const deeper = walk(child);
+      if (deeper !== undefined) return deeper;
+    }
+    return undefined;
+  };
+  return walk(fill) ?? 1;
+}
+
+function rgb(h: string): Array<number> | undefined {
+  const m = /^([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})$/u.exec(h);
+  return m ? [1, 2, 3].map((i) => parseInt(m[i] ?? '0', 16) / 255) : undefined;
+}
+
+function toHex(v: ReadonlyArray<number>): string {
+  return v
+    .map((c) =>
+      Math.round(Math.max(0, Math.min(1, c)) * 255)
+        .toString(16)
+        .padStart(2, '0')
+        .toUpperCase(),
+    )
+    .join('');
 }
 
 // The table's background fill, as a cell shading. `a:fillRef` points into the
@@ -153,11 +215,24 @@ function refFillColor(
   const idx = poIntAttr(ref, 'idx');
   const slot = idx !== undefined && idx > 0 ? theme?.fills?.[idx - 1] : undefined;
   if (!slot) return own;
-  const solid = poChildren(slot).find((c) => poIs(c, 'a:solidFill'));
-  // A slot that says `phClr` means "the colour the reference names", which is
-  // exactly what `own` is.
-  const slotHex = solid ? colorOf(solid, colors) : undefined;
-  return slotHex && slotHex !== 'PHCLR' ? (own ?? slotHex) : own;
+  // A slot writes its colours as `phClr`, the placeholder the reference fills
+  // in, and it carries its OWN transforms over that: the Office theme's second
+  // and third slots are gradients of `tint`/`shade` and `satMod`, and read as
+  // the bare reference colour a table background came out the flat
+  // accent where both references draw a wash of it.
+  const named = own === undefined ? colors : placeholderColors(colors, own);
+  // The slot IS the fill, not a wrapper round one.
+  const solid = poIs(slot, 'a:solidFill') ? slot : undefined;
+  if (solid) return colorOf(solid, named) ?? own;
+  // A gradient is many colours and a cell's shading is one. The last stop is
+  // the one these slots build their body from — the first is the highlight at
+  // the very edge — and it is what LibreOffice's own rendering of bnc480256
+  // matches to the byte.
+  const grad = poIs(slot, 'a:gradFill') ? slot : undefined;
+  const list = grad ? poChildren(grad).find((c) => poIs(c, 'a:gsLst')) : undefined;
+  const stops = list ? poChildren(list).filter((c) => poIs(c, 'a:gs')) : [];
+  const last = stops[stops.length - 1];
+  return (last ? colorOf(last, named) : undefined) ?? own;
 }
 
 // Bands count from the first row/column that is NOT an edge one, so a table
@@ -173,12 +248,14 @@ function partStyle(part: PoNode, colors: ColorResolver, theme?: TableStyleTheme)
   const fill = tcStyle ? poChildren(tcStyle).find((c) => poIs(c, 'a:fill')) : undefined;
   const solid = fill ? poChildren(fill).find((c) => poIs(c, 'a:solidFill')) : undefined;
   const shadingHex = solid ? colorOf(solid, colors) : undefined;
+  const shadingAlpha = solid ? alphaOf(solid) : undefined;
   const bdr = tcStyle ? poChildren(tcStyle).find((c) => poIs(c, 'a:tcBdr')) : undefined;
   const borders = bdr ? partBorders(bdr, colors, theme) : undefined;
   const on = (name: string): boolean => poAttr(txStyle, name) === 'on';
   const colorHex = txStyle ? colorOf(txStyle, colors) : undefined;
   return {
     ...(shadingHex ? { shadingHex } : {}),
+    ...(shadingAlpha !== undefined && shadingAlpha < 1 ? { shadingAlpha } : {}),
     ...(borders ? { borders } : {}),
     ...(txStyle && on('b') ? { bold: true } : {}),
     ...(txStyle && on('i') ? { italic: true } : {}),

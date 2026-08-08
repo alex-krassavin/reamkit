@@ -48,6 +48,7 @@ import type {
 } from '@/pptx/ppt/ppt-text';
 
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
+import { knockOutColor } from '@/core/images';
 import { isCfb, openCfb } from '@/core/ole/cfb';
 import { isEmf } from '@/core/metafile/emf';
 import { isWmf } from '@/core/metafile/wmf';
@@ -232,7 +233,13 @@ function bulletedRuns(para: PptParagraph): Array<Run> {
   const runs = para.runs.map(toRun);
   if (para.bullet === undefined) return runs;
   const { bold: _b, italic: _i, ...rest } = runs[0]?.properties ?? {};
-  return [{ text: `${para.bullet} `, properties: rest }, ...runs];
+  // The bullet sits at the paragraph's FIRST-LINE indent and its words at the
+  // body indent, a TAB between them carrying the one to the other — that is
+  // what makes an outline hang, and the tab machinery already treats a hanging
+  // indent as a stop of its own. A paragraph with no hang has nowhere to tab
+  // to, so a space separates them.
+  const gap = hangs(para) ? '\t' : ' ';
+  return [{ text: `${para.bullet}${gap}`, properties: rest }, ...runs];
 }
 
 // A slide's background → a page-sized shape behind the content. A picture
@@ -268,14 +275,13 @@ function backdropFill(bg: PptBackground, resources: ResourceStore): ShapeFill | 
     return {
       kind: 'picture',
       imageResource: resources.put(bg.image.bytes),
-      ...(bg.imageTiled ? { tiled: true } : {}),
+      // MS-ODRAW §2.3.7.13 — a texture's grid is centred on the shape, where
+      // DrawingML's is pinned to its top-left corner.
+      ...(bg.imageTiled ? { tiled: true, tileFromCentre: true } : {}),
     };
   }
   if (bg.gradient) {
-    const stops = [
-      { offset: 0, colorHex: bg.gradient.fromHex },
-      { offset: 1, colorHex: bg.gradient.toHex },
-    ];
+    const stops = gradientStops(bg.gradient);
     return {
       kind: 'gradient',
       gradient: bg.gradient.radial
@@ -331,9 +337,10 @@ function positionedImage(
   if (!isMetafile(image.bytes) && !imagePixelSize(image.bytes)) return undefined;
   const block: ImageBlock = {
     float: floatAt(rect),
-    resource: resources.put(image.bytes),
+    resource: resources.put(drawnBytes(image)),
     width: pt(rect.w),
     height: pt(rect.h),
+    ...(image.crop ? { crop: image.crop } : {}),
     paragraphProperties: {},
   };
   return { kind: 'image', image: block };
@@ -376,6 +383,50 @@ function toCustomGeometry(g: PptCustomGeometry): CustomGeometry {
 
 // A decorative autoshape → a positioned vector ShapeBlock with its preset geometry
 // (or its exact freeform geometry — PPT-7) and any literal fill / line colour.
+/**
+ * §2.3.7.6 `fillFocus` — the stops a shaded fill's two colours make.
+ *
+ * A focus of zero is the plain ramp everyone expects: the first colour at one
+ * end, the second at the other. Any other value means the sweep runs OUT from
+ * one of them — a focus of 50 puts the first colour halfway along with the
+ * second at BOTH ends, which is what 23884's every slide asks for and why its
+ * background read as a flat wash into violet where the reference is blue
+ * across the middle and dark only at the corners.
+ *
+ * @param g The gradient as the `.ppt` states it.
+ * @returns The stops, in order.
+ */
+function gradientStops(g: {
+  readonly fromHex: string;
+  readonly toHex: string;
+  readonly focusPct?: number;
+}): Array<{ offset: number; colorHex: string }> {
+  const focus = g.focusPct ?? 0;
+  if (focus === 0) {
+    return [
+      { offset: 0, colorHex: g.fromHex },
+      { offset: 1, colorHex: g.toHex },
+    ];
+  }
+  // ±100 turns the ramp around rather than folding it.
+  if (Math.abs(focus) >= 100) {
+    return [
+      { offset: 0, colorHex: g.toHex },
+      { offset: 1, colorHex: g.fromHex },
+    ];
+  }
+  // The peak is the FIRST colour for a positive focus and the second for a
+  // negative one; the other colour stands at both ends.
+  const peak = focus > 0 ? g.fromHex : g.toHex;
+  const ends = focus > 0 ? g.toHex : g.fromHex;
+  const at = focus > 0 ? focus / 100 : 1 + focus / 100;
+  return [
+    { offset: 0, colorHex: ends },
+    { offset: at, colorHex: peak },
+    { offset: 1, colorHex: ends },
+  ];
+}
+
 function positionedAutoShape(
   rect: PptRect,
   auto: PptAutoShape,
@@ -390,27 +441,18 @@ function positionedAutoShape(
       ? {
           kind: 'picture',
           imageResource: resources.put(auto.image.bytes),
-          ...(auto.imageTiled ? { tiled: true } : {}),
+          ...(auto.imageTiled ? { tiled: true, tileFromCentre: true } : {}),
           ...(auto.tileSizePt ? { tileSizePt: auto.tileSizePt } : {}),
         }
       : auto.gradient
         ? {
             kind: 'gradient',
             gradient: auto.gradient.radial
-              ? {
-                  kind: 'radial',
-                  stops: [
-                    { offset: 0, colorHex: auto.gradient.fromHex },
-                    { offset: 1, colorHex: auto.gradient.toHex },
-                  ],
-                }
+              ? { kind: 'radial', stops: gradientStops(auto.gradient) }
               : {
                   kind: 'linear',
                   angle: auto.gradient.angleDeg,
-                  stops: [
-                    { offset: 0, colorHex: auto.gradient.fromHex },
-                    { offset: 1, colorHex: auto.gradient.toHex },
-                  ],
+                  stops: gradientStops(auto.gradient),
                 },
           }
         : auto.fillColorHex
@@ -446,12 +488,30 @@ function inFlowImage(image: PptImage, resources: ResourceStore): BodyElement | u
   const size = imagePixelSize(image.bytes);
   if (!size) return undefined;
   const block: ImageBlock = {
-    resource: resources.put(image.bytes),
+    resource: resources.put(drawnBytes(image)),
     width: pt(size.w * 0.75),
     height: pt(size.h * 0.75),
+    ...(image.crop ? { crop: image.crop } : {}),
     paragraphProperties: {},
   };
   return { kind: 'image', image: block };
+}
+
+/**
+ * The bytes a picture is actually DRAWN from.
+ *
+ * §2.3.23 `pictureTransparent` names a colour the picture is drawn without, and
+ * a raster carries no alpha channel to say so — so the knock-out is baked into
+ * bytes of its own. The resource store hashes content, so two shapes knocking
+ * different colours out of the same blip stay two resources by themselves, and
+ * one that knocks out nothing keeps the bytes it arrived with.
+ *
+ * @param image The picture as the shape states it.
+ * @returns The bytes to store, knocked out where the shape asks for it.
+ */
+function drawnBytes(image: PptImage): Uint8Array {
+  if (image.transparentHex === undefined || isMetafile(image.bytes)) return image.bytes;
+  return knockOutColor(image.bytes, image.transparentHex) ?? image.bytes;
 }
 
 // Whether the bytes are a metafile the layout can replay (MS-EMF / MS-WMF).
@@ -514,11 +574,29 @@ function toRun(r: PptRun): Run {
 function toParaProperties(p: PptParagraph, breakBefore: boolean): ParagraphProperties {
   const alignment = p.align !== undefined ? alignmentFrom(p.align) : undefined;
   const level = p.level ?? 0;
+  // §2.9.20 — a paragraph placed by its own margins is placed by them; only one
+  // that states none (nor inherits any from its master) falls back to a flat
+  // indent per outline level.
+  const leftPt = p.leftMarginPt ?? (level > 0 ? level * LEVEL_INDENT_PT : undefined);
+  const firstPt = p.indentPt !== undefined ? p.indentPt - (leftPt ?? 0) : undefined;
   return {
     ...(breakBefore ? { pageBreakBefore: true } : {}),
     ...(alignment ? { alignment } : {}),
-    ...(level > 0 ? { indentLeft: pt(level * LEVEL_INDENT_PT) } : {}),
+    ...(leftPt !== undefined ? { indentLeft: pt(leftPt) } : {}),
+    ...(firstPt !== undefined && firstPt !== 0 ? { indentFirstLine: pt(firstPt) } : {}),
+    ...(p.spaceBeforePt !== undefined ? { spacingBefore: pt(p.spaceBeforePt) } : {}),
+    ...(p.spaceAfterPt !== undefined ? { spacingAfter: pt(p.spaceAfterPt) } : {}),
+    // §2.9.32 — a percentage of the line's height, and the model's `auto` rule
+    // states the same thing as a multiple of the 12pt single line it counts in.
+    ...(p.lineSpacing !== undefined && p.lineSpacing > 0
+      ? { spacingLineRule: 'auto' as const, spacingLine: pt((p.lineSpacing / 100) * 12) }
+      : {}),
   };
+}
+
+/** Whether the paragraph's first line starts LEFT of its body — a hanging bullet. */
+function hangs(p: PptParagraph): boolean {
+  return p.indentPt !== undefined && p.leftMarginPt !== undefined && p.indentPt < p.leftMarginPt;
 }
 
 // PowerPoint TextAlignmentEnum → the document-model alignment (0 = left default).

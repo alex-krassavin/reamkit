@@ -7,6 +7,7 @@
 
 import { readFileSync } from 'node:fs';
 
+import { unzlibSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 
 import { buildPpt } from './fixtures/build-ppt';
@@ -16,6 +17,8 @@ import type { PptRun } from '@/pptx/ppt/ppt-text';
 
 import { extractPptContent, paragraphText } from '@/pptx/ppt/ppt-text';
 import { pptReader, readPpt } from '@/pptx/ppt/ppt-reader';
+import { prepareImage } from '@/core/images';
+import { encodePng } from '@/core/png-encode';
 import { Ream } from '@/core/converter/ream';
 import { createConverter } from '@/core/converter/facade';
 import { pt } from '@/core/ir/units';
@@ -227,6 +230,82 @@ describe('ppt reader formatting (PPT-2)', () => {
     expect(paras[1]!.paragraph.runs.map((r) => r.text).join('')).toBe('Body');
     expect(paras[1]!.paragraph.runs[0]!.properties.bold).toBeFalsy();
   });
+
+  it('spreads ONE paragraph run over every paragraph its characters cover', () => {
+    // §2.9.20 — a paragraph run's count is CHARACTERS, not paragraphs, and a
+    // placeholder's whole outline is routinely one run. Taken as one run per
+    // paragraph, everything after the first fell through to the master's style:
+    // 41246-1.ppt's body came out flush right because its master says so and
+    // the slide's own "left" only ever reached its opening bullet.
+    const doc = readPpt(
+      buildPpt([{ text: 'One\rTwo\rThree', paraRuns: [{ length: 13, align: 1 }] }]),
+    ).doc;
+    const paras = doc.body.filter((el) => el.kind === 'paragraph');
+    expect(paras.map((p) => p.paragraph.runs.map((r) => r.text).join(''))).toEqual([
+      'One',
+      'Two',
+      'Three',
+    ]);
+    expect(paras.map((p) => p.paragraph.properties.alignment)).toEqual([
+      'center',
+      'center',
+      'center',
+    ]);
+  });
+
+  it('hangs a bullet on the margins the paragraph states', () => {
+    // §2.9.20 leftMargin / indent, in master units — eight to the point. The
+    // body sits at 34pt and the first line starts at 8.5pt, so the bullet hangs
+    // 25.5pt out and a TAB carries the words back to the body.
+    const doc = readPpt(
+      buildPpt([
+        {
+          text: 'Hanging',
+          paraRuns: [
+            { length: 7, leftMargin: 272, indent: 68, hasBullet: true, bulletChar: 0x2022 },
+          ],
+        },
+      ]),
+    ).doc;
+    const para = firstParagraph(doc);
+    expect(para.properties.indentLeft).toBe(34);
+    expect(para.properties.indentFirstLine).toBe(-25.5);
+    expect(para.runs[0]!.text).toBe('•\t');
+  });
+
+  it('spaces the paragraphs a master states a distance between', () => {
+    // §2.9.32 ParaSpacing reads two ways by its SIGN. Negative is a distance in
+    // master units — 41246-1.ppt's five body levels state -114 … -23, which
+    // LibreOffice writes back as 14.26 … 2.87 pt. Positive is a percentage of
+    // the line's height, which lineSpacing states directly.
+    const doc = readPpt(
+      buildPpt([
+        {
+          text: 'Spaced',
+          paraRuns: [{ length: 6, spaceBefore: -46, spaceAfter: -114, lineSpacing: 95 }],
+        },
+      ]),
+    ).doc;
+    const props = firstParagraph(doc).properties;
+    expect(props.spacingBefore).toBe(5.75);
+    expect(props.spacingAfter).toBe(14.25);
+    // 95 % of a line, in the 12pt-to-the-line the `auto` rule counts in.
+    expect(props.spacingLineRule).toBe('auto');
+    expect(props.spacingLine).toBeCloseTo(11.4, 6);
+  });
+
+  it('leaves a spacing stated as a PERCENTAGE of the line alone', () => {
+    // A positive spaceBefore is a share of a line whose height is not settled
+    // until the line is set; guessed at, it would move every deck that states
+    // one. Read as nothing, the paragraph keeps whatever it would inherit.
+    const doc = readPpt(
+      buildPpt([{ text: 'Pct', paraRuns: [{ length: 3, spaceBefore: 20, spaceAfter: 50 }] }]),
+    ).doc;
+    const props = firstParagraph(doc).properties;
+    // Nothing is stated, so the paragraph sits at the model's own default.
+    expect(props.spacingBefore).toBe(0);
+    expect(props.spacingAfter).toBe(0);
+  });
 });
 
 describe('ppt reader images (PPT-3)', () => {
@@ -240,6 +319,88 @@ describe('ppt reader images (PPT-3)', () => {
     // The bytes round-trip through the ResourceStore.
     const stored = doc.resources.get(imgs[0]!.image.resource!);
     expect(stored && stored[0]).toBe(0x89); // PNG signature
+  });
+
+  it('shows only the part of a picture the shape crops to', () => {
+    // §2.3.23 cropFrom* — 16.16 fractions of the SOURCE cut off each edge.
+    // 23884's globe is a ninth of its own file's width and a seventh of its
+    // height, the rest white ground; drawn whole it was a white square with a
+    // speck in the middle of it.
+    const doc = readPpt(
+      buildPpt(
+        [
+          {
+            boxes: [
+              {
+                anchor: { x: 10, y: 10, w: 100, h: 80 },
+                imageRef: 1,
+                crop: { left: 0.25, top: 0.125, right: 0.5, bottom: 0.0625 },
+              },
+            ],
+          },
+        ],
+        { images: [PNG_1x1] },
+      ),
+    ).doc;
+    expect(imageBlocks(doc)[0]!.image.crop).toEqual({
+      left: 0.25,
+      top: 0.125,
+      right: 0.5,
+      bottom: 0.0625,
+    });
+  });
+
+  it('leaves a crop that states nothing, or keeps nothing, off the picture', () => {
+    const box = (crop?: { left?: number; right?: number }): Uint8Array =>
+      buildPpt(
+        [
+          {
+            boxes: [
+              { anchor: { x: 10, y: 10, w: 100, h: 80 }, imageRef: 1, ...(crop ? { crop } : {}) },
+            ],
+          },
+        ],
+        { images: [PNG_1x1] },
+      );
+    const none = readPpt(box()).doc;
+    expect(imageBlocks(none)[0]!.image.crop).toBeUndefined();
+    // Left and right together take the whole width: there is no picture left to
+    // fit, and the fitting would divide by nothing.
+    const all = readPpt(box({ left: 0.5, right: 0.5 })).doc;
+    expect(imageBlocks(all)[0]!.image.crop).toBeUndefined();
+  });
+
+  it('draws a picture without the colour it names as transparent', () => {
+    // §2.3.23 pictureTransparent — clip art of this age states its ground as a
+    // colour rather than carrying an alpha channel. 23884's satellite sits on a
+    // red field and its globe on a white one.
+    const RED_1x1 = encodePng(1, 1, 'rgb', Uint8Array.of(0xff, 0x00, 0x00));
+    const deck = (transparentHex?: string): Uint8Array =>
+      buildPpt(
+        [
+          {
+            boxes: [
+              {
+                anchor: { x: 10, y: 10, w: 100, h: 80 },
+                imageRef: 1,
+                ...(transparentHex !== undefined ? { transparentHex } : {}),
+              },
+            ],
+          },
+        ],
+        { images: [RED_1x1] },
+      );
+    const plain = readPpt(deck()).doc;
+    const keyed = readPpt(deck('FF0000')).doc;
+    const bytesOf = (d: typeof plain): Uint8Array =>
+      d.resources.get(imageBlocks(d)[0]!.image.resource!)!;
+    // The knocked-out copy is its own resource, and its one pixel is clear.
+    expect(bytesOf(keyed)).not.toEqual(bytesOf(plain));
+    const out = prepareImage(bytesOf(keyed));
+    expect(out.smaskData).toBeDefined();
+    expect([...unzlibSync(out.smaskData!)]).toEqual([0]);
+    // A picture that names no transparent colour is stored as it arrived.
+    expect(bytesOf(plain)).toEqual(RED_1x1);
   });
 
   it('emits a slide image after the slide text', () => {
@@ -768,7 +929,7 @@ describe('ppt master text styles (PPT-11)', () => {
         [
           {
             masterIndex: 0,
-            outlineTexts: [{ textType: 5, text: 'Centred' }],
+            outlineTexts: [{ textType: 6, text: 'Centred' }], // centreTitle
             boxes: [{ anchor: { x: 10, y: 10, w: 400, h: 60 }, outlineRef: 0 }],
           },
         ],
@@ -792,6 +953,35 @@ describe('ppt master text styles (PPT-11)', () => {
       ),
     ).slides[0]!;
     expect(slide.shapes[0]?.paragraphs?.[0]?.runs[0]?.sizePt).toBe(44);
+  });
+
+  it('styles a plain text box from the DECK, not from the outline', () => {
+    // §2.13.33 skips 3: the enum runs 0 title, 1 body, 2 notes, then 4 other,
+    // 5 centreBody, … 8 quarterBody. "Other" is what a text box drawn on a
+    // slide takes, and §2.9.3 keeps its style in the document's own text info,
+    // not in any master. 38256.ppt's four captions are all of that kind; read
+    // as a body variant they were set in the outline's 32pt instead of the 24
+    // they were typed at.
+    const bytes = buildPpt(
+      [
+        {
+          masterIndex: 0,
+          text: 'Caption',
+          boxes: [{ anchor: { x: 10, y: 10, w: 300, h: 40 } }],
+        },
+      ],
+      {
+        deckTextStyles: [{ textType: 4, sizesPt: [24] }],
+        masters: [
+          {
+            colorScheme: ['FFFFFF', '000000', '808080', '000000', 'F00', '0F0', '00F', 'FF0'],
+            textStyles: [{ textType: 1, sizesPt: [32] }],
+          },
+        ],
+      },
+    );
+    const para = extractPptContent(bytes).slides[0]?.shapes[0]?.paragraphs?.[0];
+    expect(para?.runs[0]?.sizePt).toBe(24);
   });
 });
 
@@ -1004,6 +1194,67 @@ describe('ppt grouped shapes and picture fills (PPT-15)', () => {
     expect(extractPptContent(tableDeck(2)).slides[0]!.shapes[0]?.autoShape?.imageTiled).toBe(true);
   });
 
+  // An 8×8 one-bit bitmap, half black and half white — the shape a `.ppt`
+  // pattern blip always has. Black is palette entry 0, white entry 1.
+  const checkerBmp = (): Uint8Array => {
+    const out = new Uint8Array(14 + 40 + 8 + 8 * 4);
+    const v = new DataView(out.buffer);
+    out[0] = 0x42;
+    out[1] = 0x4d;
+    v.setUint32(2, out.length, true);
+    v.setUint32(10, 14 + 40 + 8, true);
+    v.setUint32(14, 40, true);
+    v.setInt32(18, 8, true);
+    v.setInt32(22, 8, true);
+    v.setUint16(26, 1, true);
+    v.setUint16(28, 1, true);
+    v.setUint32(46, 2, true); // biClrUsed
+    out.set([0, 0, 0, 0, 255, 255, 255, 0], 14 + 40); // black, then white
+    for (let y = 0; y < 8; y++) out[14 + 40 + 8 + y * 4] = y % 2 === 0 ? 0b1010_1010 : 0b0101_0101;
+    return out;
+  };
+
+  it('paints a PATTERN through the two colours the shape states', () => {
+    // §2.3.7.1 MSOFILLTYPE 1 — the blip is a one-bit stencil with no colour of
+    // its own: its set bits take `fillColor` and its clear bits
+    // `fillBackColor`. 37625.ppt rules every slide with a pale grid this way,
+    // and read as a plain picture the whole deck came out on flat colour.
+    const stencil = checkerBmp();
+    const slide = extractPptContent(
+      buildPpt([
+        {
+          boxes: [
+            {
+              anchor: { x: 0, y: 0, w: 200, h: 100 },
+              shapeType: 1,
+              fillColorHex: 'CFDBFD',
+              backColorHex: '112233',
+              pictureFill: { fillType: 1, png: stencil },
+            },
+          ],
+        },
+      ]),
+    ).slides[0]!;
+    const auto = slide.shapes[0]?.autoShape;
+    // A pattern repeats, always — it is a texture, never a single picture.
+    expect(auto?.imageTiled).toBe(true);
+    // …at eight pattern pixels to eight device ones, which is 6pt at 96 dpi.
+    expect(auto?.tileSizePt).toEqual({ widthPt: 6, heightPt: 6 });
+    // The tile that comes back is a PNG of the two stated colours and nothing
+    // else — the black and white of the stencil are gone.
+    const png = auto?.image?.bytes;
+    expect(png?.subarray(1, 4)).toEqual(new Uint8Array([0x50, 0x4e, 0x47]));
+    const decoded = prepareImage(png!);
+    const rgb = unzlibSync(decoded.data);
+    const seen = new Set<string>();
+    for (let i = 0; i < rgb.length; i += 3) {
+      seen.add(
+        [rgb[i], rgb[i + 1], rgb[i + 2]].map((c) => c!.toString(16).padStart(2, '0')).join(''),
+      );
+    }
+    expect([...seen].sort()).toEqual(['112233', 'cfdbfd']);
+  });
+
   it('paints the box under the words, not over them', () => {
     const body = readPpt(tableDeck(3)).doc.body;
     const kinds = body.filter((el) => el.kind === 'shape').map((el) => el.shape.fill.kind);
@@ -1049,9 +1300,10 @@ describe('ppt scheme-coloured text (PPT-16)', () => {
           masters: [{ colorScheme: scheme, textStyles: [{ textType: 1, sizesPt: [24] }] }],
         },
       );
-    // Exact type: the size comes through. The variant (4 → body) takes it too…
+    // Exact type: the size comes through. The variant (5 centreBody → body)
+    // takes it too…
     expect(runOf(deck(1))?.sizePt).toBe(24);
-    expect(runOf(deck(4))?.sizePt).toBe(24);
+    expect(runOf(deck(5))?.sizePt).toBe(24);
   });
 
   const runOf = (bytes: Uint8Array): PptRun | undefined =>
@@ -1201,6 +1453,160 @@ describe('ppt tile size (PPT-20)', () => {
       },
     ]);
 
+  it('draws the date and footer the deck states, in the master’s own boxes', () => {
+    // §2.4.15 — the strings live in the DOCUMENT and the boxes that draw them
+    // are placeholders on the MASTER, so a reader with one and not the other
+    // draws an empty band. 37625.ppt signs every slide "Transport CDM
+    // Workshop" and dates it "26 August 2004" this way.
+    // mask 0x25 = fHasDate | fHasUserDate | fHasFooter — no slide number.
+    const signed = (mask: number): Uint8Array =>
+      buildPpt(
+        [{ text: 'Body', masterIndex: 0, followMasterObjects: true, followMasterScheme: true }],
+        {
+          headersFooters: { mask, userDate: '26 August 2004', footer: 'Transport CDM Workshop' },
+          masters: [
+            {
+              colorScheme: [
+                'FFFFFF',
+                '40458C',
+                '000000',
+                '000000',
+                '000000',
+                '000000',
+                '000000',
+                '000000',
+              ],
+              boxes: [
+                { anchor: { x: 6, y: 510, w: 150, h: 36 }, placeholderId: 7 },
+                { anchor: { x: 516, y: 510, w: 150, h: 36 }, placeholderId: 8 },
+                { anchor: { x: 228, y: 510, w: 228, h: 36 }, placeholderId: 9 },
+              ],
+            },
+          ],
+        },
+      );
+    const drawn = (mask: number): Array<string> =>
+      extractPptContent(signed(mask))
+        .slides[0]!.shapes.flatMap((sh) => sh.paragraphs ?? [])
+        .map((p) => paragraphText(p))
+        .filter((t) => t !== '' && t !== 'Body');
+    expect(drawn(0x25)).toEqual(['26 August 2004', 'Transport CDM Workshop']);
+    // The slide number is its own switch, and its text is the slide's ordinal.
+    expect(drawn(0x25 | 0x08)).toEqual(['26 August 2004', '1', 'Transport CDM Workshop']);
+    // A deck that shows none of them draws none of the boxes: a master's
+    // placeholder is a prototype, not decoration.
+    expect(drawn(0)).toEqual([]);
+    // …and a date the deck does NOT state for itself is the day the file is
+    // opened, which a converter must not answer — it would put a different
+    // date in the output every time it ran.
+    expect(drawn(0x01 | 0x02)).toEqual([]);
+  });
+
+  it('colours the furniture with the scheme’s own text colour', () => {
+    // §2.12.2 — slot 1 of a colour scheme IS "text and lines". The master's
+    // furniture boxes state a size and an alignment and no colour at all, so
+    // left to the default the footer came out black on a deck whose every other
+    // word is navy.
+    const content = extractPptContent(
+      buildPpt(
+        [{ text: 'Body', masterIndex: 0, followMasterObjects: true, followMasterScheme: true }],
+        {
+          headersFooters: { mask: 0x20, footer: 'Signed' },
+          masters: [
+            {
+              colorScheme: [
+                'FFFFFF',
+                '40458C',
+                '000000',
+                '000000',
+                '000000',
+                '000000',
+                '000000',
+                '000000',
+              ],
+              boxes: [{ anchor: { x: 228, y: 510, w: 228, h: 36 }, placeholderId: 9 }],
+            },
+          ],
+        },
+      ),
+    );
+    const run = content.slides[0]!.shapes.flatMap((sh) => sh.paragraphs ?? [])
+      .flatMap((p) => p.runs)
+      .find((r) => r.text === 'Signed');
+    expect(run?.colorHex).toBe('40458C');
+  });
+
+  it('keeps a rule, which has no area at all', () => {
+    // §2.2.39 — a vertical rule is zero wide and a horizontal one zero tall,
+    // and both are perfectly good shapes. Demanding area of every child
+    // rectangle threw out the hundred-odd rules the master of 37625.ppt draws
+    // its pale blue grid with, on all twenty-nine slides.
+    const slide = extractPptContent(
+      buildPpt([
+        {
+          groups: [
+            {
+              anchor: { x: 0, y: 0, w: 400, h: 200 },
+              box: [0, 0, 4000, 2000],
+              boxes: [
+                // A horizontal rule: the same y twice.
+                { childAnchor: [0, 1000, 4000, 1000], shapeType: 20, lineColorHex: 'CFDBFD' },
+                // …and one with no extent either way, which IS nothing.
+                { childAnchor: [500, 500, 500, 500], shapeType: 20, lineColorHex: 'CFDBFD' },
+              ],
+            },
+          ],
+        },
+      ]),
+    ).slides[0]!;
+    expect(slide.shapes.map((sh) => sh.rectPt)).toEqual([{ x: 0, y: 100, w: 400, h: 0 }]);
+  });
+
+  it('measures a nested group’s children in that group’s own space', () => {
+    // A group inside a group is anchored like any other child — by a
+    // ChildAnchor in the ENCLOSING group's space — and its own FSPGR is the
+    // space ITS children live in. Read only the client anchor, a nested group
+    // had no frame and its children were measured against their
+    // GRANDPARENT's: 37625's master nests its grid two deep and the rules came
+    // out at a fraction of their spacing.
+    const slide = extractPptContent(
+      buildPpt([
+        {
+          groups: [
+            {
+              anchor: { x: 0, y: 0, w: 400, h: 400 },
+              box: [0, 0, 4000, 4000],
+              boxes: [],
+              nested: {
+                // The right half of the outer group: 200..400pt across.
+                childAnchor: [2000, 0, 4000, 4000],
+                // …and its own space is ten times as fine.
+                box: [0, 0, 400, 400],
+                boxes: [{ childAnchor: [0, 0, 200, 400], shapeType: 1, fillColorHex: 'FF0000' }],
+              },
+            },
+          ],
+        },
+      ]),
+    ).slides[0]!;
+    // Half of the nested group, which is itself the right half of the outer
+    // one: 200..300pt across, the full 400 down.
+    expect(slide.shapes.map((sh) => sh.rectPt)).toEqual([{ x: 200, y: 0, w: 100, h: 400 }]);
+  });
+
+  it('centres the grid of copies on the shape, not on its corner', () => {
+    // MS-ODRAW §2.3.7.13 — a texture's origin is the shape's CENTRE, where
+    // DrawingML pins the grid to the top-left corner (§20.1.8.58 `@algn`).
+    // It shows most when one copy is LARGER than the shape: cornered, the box
+    // shows the picture's corner, and 119877's tiled photographs came out as a
+    // patch of empty sky where every reader shows the middle of the picture.
+    const fill = readPpt(deck()).doc.body.flatMap((el) =>
+      el.kind === 'shape' && el.shape.fill.kind === 'picture' ? [el.shape.fill] : [],
+    )[0];
+    expect(fill?.tiled).toBe(true);
+    expect(fill?.tileFromCentre).toBe(true);
+  });
+
   it('reads the size the shape states for one copy', () => {
     // 25.4mm × 12.7mm in EMU → 72pt × 36pt.
     const auto = extractPptContent(deck([914400, 457200])).slides[0]!.shapes[0]!.autoShape;
@@ -1212,6 +1618,58 @@ describe('ppt tile size (PPT-20)', () => {
 
   it('leaves the tile at the picture’s own size when the shape states none', () => {
     expect(extractPptContent(deck()).slides[0]!.shapes[0]!.autoShape?.tileSizePt).toBeUndefined();
+  });
+});
+
+// MS-ODRAW §2.3.7.6 `fillFocus` — where the FIRST colour of a shaded fill
+// peaks, as a percentage. Read as nothing, a sweep that runs out from the
+// middle reads as a plain ramp into its second colour: 23884's every slide
+// washed from blue to violet where the reference is blue across the middle and
+// dark only at the corners.
+describe('ppt gradient focus (PPT-23)', () => {
+  const deck = (focusPct?: number): Uint8Array =>
+    buildPpt([
+      {
+        boxes: [
+          {
+            anchor: { x: 0, y: 0, w: 200, h: 200 },
+            shapeType: 1,
+            fillColorHex: '0047FF',
+            gradientFill: {
+              fillType: 7,
+              backColorHex: '310080',
+              angleDeg: 0,
+              ...(focusPct !== undefined ? { focusPct } : {}),
+            },
+          },
+        ],
+      },
+    ]);
+  const stopsOf = (bytes: Uint8Array): ReadonlyArray<{ offset: number; colorHex: string }> => {
+    const fill = readPpt(bytes).doc.body.find((el) => el.kind === 'shape')?.shape.fill;
+    return fill?.kind === 'gradient' ? (fill.gradient?.stops ?? []) : [];
+  };
+
+  it('runs a plain ramp when the shape states no focus', () => {
+    expect(stopsOf(deck())).toEqual([
+      { offset: 0, colorHex: '0047FF' },
+      { offset: 1, colorHex: '310080' },
+    ]);
+  });
+
+  it('folds the sweep so the first colour peaks where the focus says', () => {
+    expect(stopsOf(deck(50))).toEqual([
+      { offset: 0, colorHex: '310080' },
+      { offset: 0.5, colorHex: '0047FF' },
+      { offset: 1, colorHex: '310080' },
+    ]);
+  });
+
+  it('turns the ramp around at the far end rather than folding it', () => {
+    expect(stopsOf(deck(100))).toEqual([
+      { offset: 0, colorHex: '310080' },
+      { offset: 1, colorHex: '0047FF' },
+    ]);
   });
 });
 
@@ -1272,8 +1730,10 @@ describe('ppt outline bullets from the master (PPT-22)', () => {
         masters: [
           {
             colorScheme: scheme,
-            // Wingdings 0x6C at level 0, an en dash at level 1.
-            textStyles: [{ textType: 3, sizesPt: [24, 20], bulletChars: [0x6c, 0x2013] }],
+            // Wingdings 0x6C at level 0, an en dash at level 1. Type 4 is
+            // `other` (§2.13.33 skips 3), which is what a box with no text
+            // header takes.
+            textStyles: [{ textType: 4, sizesPt: [24, 20], bulletChars: [0x6c, 0x2013] }],
           },
         ],
       },
