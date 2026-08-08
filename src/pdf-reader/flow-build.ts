@@ -46,6 +46,8 @@ export function paragraphBlock(text: string, outlineLevel?: number): BodyElement
 export interface TextSpan {
   readonly text: string;
   readonly href?: string;
+  /** The size the glyphs were SHOWN at (§9.3.1 Tf), so the run keeps it. */
+  readonly sizePt?: number;
 }
 
 /**
@@ -58,15 +60,19 @@ export function paragraphFromRuns(
   spans: ReadonlyArray<TextSpan>,
   outlineLevel?: number,
 ): BodyElement {
-  const merged: Array<{ text: string; href?: string }> = [];
+  const merged: Array<{ text: string; href?: string; sizePt?: number }> = [];
   for (const s of spans) {
     const last = merged[merged.length - 1];
-    if (last && last.href === s.href) last.text += s.text;
-    else if (s.href !== undefined) merged.push({ text: s.text, href: s.href });
-    else merged.push({ text: s.text });
+    if (last && last.href === s.href && last.sizePt === s.sizePt) last.text += s.text;
+    else
+      merged.push({
+        text: s.text,
+        ...(s.href !== undefined ? { href: s.href } : {}),
+        ...(s.sizePt !== undefined ? { sizePt: s.sizePt } : {}),
+      });
   }
   const runs = merged
-    .map((m) => ({ text: m.text.replace(/\s+/g, ' '), href: m.href }))
+    .map((m) => ({ ...m, text: m.text.replace(/\s+/g, ' ') }))
     .filter((m) => m.text.length > 0);
   // Trim the paragraph's outer whitespace.
   if (runs.length > 0) {
@@ -80,7 +86,13 @@ export function paragraphFromRuns(
       properties,
       runs: runs
         .filter((r) => r.text.length > 0)
-        .map((r) => ({ text: r.text, properties: {}, ...(r.href ? { href: r.href } : {}) })),
+        .map((r) => ({
+          text: r.text,
+          // §9.3.1 — the size the page showed it at. Dropped, a form set in
+          // 7pt was rebuilt at the 11pt default and grew by half again.
+          properties: r.sizePt !== undefined ? { fontSizePt: pt(r.sizePt) } : {},
+          ...(r.href ? { href: r.href } : {}),
+        })),
     },
   };
 }

@@ -27,9 +27,13 @@ import type { PdfImage } from './images';
 import type { StructNode } from './struct-tree';
 import { ResourceStore, pt } from '@/core/ir';
 
-// Printable width assumed for a synthesized table grid (6.5" — the columns are
-// equal because the structure tree carries no widths; layout auto-fits anyway).
+// Printable width assumed for a synthesized table grid (6.5"). The structure
+// tree carries no column widths, so the PROPORTIONS come from where the glyphs
+// actually sit on the page (see `gridFromLefts`) and only the total is assumed.
 const ASSUMED_CONTENT_WIDTH_PT = 468;
+
+// A column narrower than this holds no word, only a stack of single letters.
+const MIN_COLUMN_PT = 6;
 
 /**
  * Reconstruct a {@link Reconstruction} from a tagged PDF's logical structure
@@ -98,9 +102,11 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
     node.mcids.forEach(({ page, mcid }, i) => {
       if (i > 0) spans.push({ text: ' ' });
       for (const run of runsOfMcid(page, mcid)) {
-        spans.push(
-          run.href !== undefined ? { text: run.text, href: run.href } : { text: run.text },
-        );
+        spans.push({
+          text: run.text,
+          sizePt: run.fontSizePt,
+          ...(run.href !== undefined ? { href: run.href } : {}),
+        });
       }
     });
     return spans;
@@ -138,29 +144,47 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
   }
 
   function buildTable(tableNode: StructNode): BodyElement | undefined {
-    const rows: Array<TableRow> = [];
+    const raw: Array<RawRow> = [];
     const collectRows = (n: StructNode): void => {
       for (const child of n.children) {
-        if (child.type === 'TR') rows.push(buildRow(child));
+        if (child.type === 'TR') raw.push(buildRow(child));
         else if (child.type === 'THead' || child.type === 'TBody' || child.type === 'TFoot') {
           collectRows(child);
         }
       }
     };
     collectRows(tableNode);
-    if (rows.length === 0) return undefined;
-    const numCols = Math.max(
-      1,
-      ...rows.map((r) => r.cells.reduce((s, c) => s + (c.properties.colSpan ?? 1), 0)),
-    );
-    const colWidth = pt(Math.max(1, ASSUMED_CONTENT_WIDTH_PT / numCols));
-    const grid: Array<Pt> = Array.from({ length: numCols }, () => colWidth);
-    const table: Table = { properties: {}, grid, rows };
+    if (raw.length === 0) return undefined;
+    const laid = layOutColumns(raw);
+    const table: Table = { properties: {}, grid: laid.grid, rows: laid.rows };
     return { kind: 'table', table };
   }
 
-  function buildRow(trNode: StructNode): TableRow {
-    const cells: Array<TableCell> = [];
+  // A run states where it starts but not how far it reaches. Half an em per
+  // glyph is the rough average of a Latin face, and the only use here is the
+  // right edge of the LAST column — the one place the starts say nothing.
+  const MEAN_GLYPH_EM = 0.5;
+
+  /** The span of page x every glyph under a node covers, estimated. */
+  function edgesOf(node: StructNode): { left: number; right: number } | undefined {
+    let left: number | undefined;
+    let right: number | undefined;
+    const visit = (n: StructNode): void => {
+      for (const { page, mcid } of n.mcids) {
+        for (const run of runsOfMcid(page, mcid)) {
+          const end = run.x + run.text.length * run.fontSizePt * MEAN_GLYPH_EM;
+          if (left === undefined || run.x < left) left = run.x;
+          if (right === undefined || end > right) right = end;
+        }
+      }
+      for (const child of n.children) visit(child);
+    };
+    visit(node);
+    return left !== undefined && right !== undefined ? { left, right } : undefined;
+  }
+
+  function buildRow(trNode: StructNode): RawRow {
+    const cells: Array<RawCell> = [];
     let allHeader = false;
     for (const cell of trNode.children) {
       if (cell.type !== 'TH' && cell.type !== 'TD') continue;
@@ -168,11 +192,17 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
       if (cell.type !== 'TH') allHeader = false;
       const content: Array<BodyElement> = [];
       for (const child of cell.children) emit(child, content);
-      if (content.length === 0) content.push(paragraphBlock(textOf(cell), undefined));
-      const colSpan = cell.colSpan ?? 1;
-      cells.push({ properties: colSpan > 1 ? { colSpan } : {}, content });
+      // Text sitting directly on the TD, with no child element to carry it:
+      // taken as SPANS so the cell keeps its size and any link, not as bare text.
+      if (content.length === 0) content.push(paragraphFromRuns(spansOf(cell)));
+      const edges = edgesOf(cell);
+      cells.push({
+        content,
+        span: cell.colSpan ?? 1,
+        ...(edges ? { x: edges.left, right: edges.right } : {}),
+      });
     }
-    return { properties: allHeader && cells.length > 0 ? { isHeader: true } : {}, cells };
+    return { header: allHeader && cells.length > 0, cells };
   }
 
   const body: Array<BodyElement> = [];
@@ -190,6 +220,123 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
 
   if (body.length === 0) return undefined;
   return { doc: buildFlowDoc(body, resources, sectionFromPdfPages(pages)), losses: imageLosses };
+}
+
+/** A cell before its column span is known: content, the tagged span, its page x. */
+interface RawCell {
+  readonly content: Array<BodyElement>;
+  /** `/ColSpan` as the structure tree states it — a floor, never a ceiling. */
+  readonly span: number;
+  /** Leftmost glyph in page space; absent when the cell holds no text. */
+  readonly x?: number;
+  /** Where its glyphs stop, estimated — the last column has no start after it. */
+  readonly right?: number;
+}
+
+interface RawRow {
+  readonly header: boolean;
+  readonly cells: Array<RawCell>;
+}
+
+/** Two starts within this many points are the same column. */
+const COLUMN_TOLERANCE_PT = 2;
+
+/**
+ * Lay the tagged cells onto a column grid read from the page.
+ *
+ * A structure tree states no column widths, and states `/ColSpan` only when its
+ * producer bothered: 160F-2019.pdf tags twenty-six columns and then writes rows
+ * of three plain `TD`s that visually run half the page. Believed literally,
+ * those three sat in columns 0–2 while twenty-three stood empty beside them,
+ * and 153 characters were asked to fit in 7.7pt — one page reconstructed as
+ * five, a word to a line.
+ *
+ * So the grid comes from where the cells actually START. Every distinct start
+ * across the table is a column boundary; a cell runs from its own boundary to
+ * the next cell's in its row, which is its span; and the width of a column is
+ * the distance to the next boundary. The tagged `/ColSpan` still sets a floor,
+ * so a producer that did the work is never contradicted.
+ *
+ * Falls back to the tagged spans over an equal grid when the page says too
+ * little — fewer than two distinct starts, or a table whose cells hold no text.
+ *
+ * @param raw The rows as tagged, each cell carrying its page x where it has one.
+ * @returns The rows with spans resolved, and one width per column.
+ */
+function layOutColumns(raw: ReadonlyArray<RawRow>): {
+  rows: Array<TableRow>;
+  grid: Array<Pt>;
+} {
+  const bounds = columnBounds(raw);
+  if (bounds.length < 2) return equalGrid(raw);
+
+  const indexOf = (x: number): number => {
+    let best = 0;
+    for (let i = 0; i < bounds.length; i++) if (x >= bounds[i]! - COLUMN_TOLERANCE_PT) best = i;
+    return best;
+  };
+
+  const rows = raw.map(({ header, cells }) => {
+    const out: Array<TableCell> = [];
+    let col = 0;
+    cells.forEach((cell, i) => {
+      const start = cell.x !== undefined ? Math.max(col, indexOf(cell.x)) : col;
+      // The cell reaches the next cell that knows where it starts; the last of
+      // a row reaches the end of the grid, which is what fills the row out.
+      const nextX = cells.slice(i + 1).find((c) => c.x !== undefined)?.x;
+      const end = nextX !== undefined ? Math.max(start + 1, indexOf(nextX)) : bounds.length;
+      const span = Math.max(cell.span, end - start, 1);
+      out.push({ properties: span > 1 ? { colSpan: span } : {}, content: cell.content });
+      col = start + span;
+    });
+    return { properties: header ? { isHeader: true } : {}, cells: out };
+  });
+
+  // A boundary is a START, so every column but the last is measured by the one
+  // after it. The last has nothing after it and is measured to where the text
+  // stops instead — the mean of the others would make a two-column table equal
+  // however far apart its two columns actually are.
+  const widths = bounds.map((x, i) => (i + 1 < bounds.length ? bounds[i + 1]! - x : 0));
+  const tableRight = Math.max(
+    ...raw.flatMap((r) => r.cells.map((c) => c.right ?? 0)),
+    bounds[bounds.length - 1]!,
+  );
+  widths[widths.length - 1] = Math.max(0, tableRight - bounds[bounds.length - 1]!);
+
+  const total = widths.reduce((a, b) => a + Math.max(MIN_COLUMN_PT, b), 0);
+  const scale = total > 0 ? ASSUMED_CONTENT_WIDTH_PT / total : 1;
+  return { rows, grid: widths.map((w) => pt(Math.max(1, Math.max(MIN_COLUMN_PT, w) * scale))) };
+}
+
+/** Every distinct cell start across the table, ascending — the column boundaries. */
+function columnBounds(raw: ReadonlyArray<RawRow>): Array<number> {
+  const xs = raw
+    .flatMap((r) => r.cells.map((c) => c.x))
+    .filter((x): x is number => x !== undefined)
+    .sort((a, b) => a - b);
+  const bounds: Array<number> = [];
+  for (const x of xs) {
+    const last = bounds[bounds.length - 1];
+    if (last === undefined || x - last > COLUMN_TOLERANCE_PT) bounds.push(x);
+  }
+  return bounds;
+}
+
+/** The old reading: the tagged spans, over columns of equal width. */
+function equalGrid(raw: ReadonlyArray<RawRow>): { rows: Array<TableRow>; grid: Array<Pt> } {
+  const rows = raw.map(({ header, cells }) => ({
+    properties: header ? { isHeader: true } : {},
+    cells: cells.map((c) => ({
+      properties: c.span > 1 ? { colSpan: c.span } : {},
+      content: c.content,
+    })),
+  }));
+  const numCols = Math.max(
+    1,
+    ...rows.map((r) => r.cells.reduce((s, c) => s + (c.properties.colSpan ?? 1), 0)),
+  );
+  const w = pt(Math.max(1, ASSUMED_CONTENT_WIDTH_PT / numCols));
+  return { rows, grid: Array.from({ length: numCols }, () => w) };
 }
 
 function squash(text: string): string {
