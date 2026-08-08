@@ -84,6 +84,16 @@ const deck = Ream.parse(pptxBytes);
 const md = await deck.convert('md', { pageBreaks: 'rule' }); // --- between slides
 ```
 
+A workbook has the same problem and a different answer: markdown cannot tell
+one sheet from the next, so each opens with a heading carrying its tab name.
+A printed page never shows one — Excel and Calc emit it nowhere — so this is
+markdown's alone, and `{ sheetNames: false }` turns it off:
+
+```ts
+const book = Ream.parse(xlsxBytes);
+const md = await book.convert('md'); // # Revenue, then its grid; # Costs, then its
+```
+
 ## xlsx → xlsx: re-emit a workbook
 
 `convert('xlsx')` writes a spreadsheet's grid back to a valid `.xlsx`. Unlike the

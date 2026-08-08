@@ -117,6 +117,13 @@ export interface ReamConvertOptions extends Omit<StyledRenderOptions, 'registry'
    * {@link MarkdownWriteOptions}.
    */
   readonly pageBreaks?: 'rule' | 'drop';
+  /**
+   * Markdown from a SPREADSHEET only: open each sheet with a heading carrying
+   * its tab name. On by default — markdown has no pages to tell one sheet from
+   * the next by, so without them a workbook is a pile of tables with nothing to
+   * say which is which. Set `false` for the bare tables.
+   */
+  readonly sheetNames?: boolean;
 }
 
 /** OOXML / legacy MIME types by reader id, for the PDF/A-3 embedded source file. */
@@ -261,7 +268,19 @@ export class Ream {
     if (to === 'md') {
       // Flow medium as well, and the narrowest of them: markdown keeps the
       // document's structure and drops its geometry, reporting each omission.
-      const markdown = writeMarkdown(flow, {
+      //
+      // A workbook re-projects, because markdown has no pages to tell one sheet
+      // from the next by: the projection is asked for the tab NAMES, which it
+      // withholds from a printed page because Excel and Calc print none.
+      const source =
+        this.sheet && options.sheetNames !== false
+          ? projectSheetDoc(this.sheet, {
+              ...(options.now ? { now: options.now } : {}),
+              ...(options.fileName ? { fileName: options.fileName } : {}),
+              sheetHeadings: true,
+            })
+          : flow;
+      const markdown = writeMarkdown(source, {
         ...(options.images ? { images: options.images } : {}),
         ...(options.pageBreaks ? { pageBreaks: options.pageBreaks } : {}),
       });

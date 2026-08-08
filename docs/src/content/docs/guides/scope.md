@@ -56,7 +56,9 @@ and bullet lists with their real numbers and nesting, tables as GFM pipe tables
 with per-column alignment, hyperlinks (through the same scheme allowlist the
 HTML writer uses), pictures, footnotes and endnotes as GFM footnotes, review
 comments as footnotes attributed to their author, bookmarks as inline anchors,
-and the text inside shapes. Underline and super/subscript survive as `<u>` /
+and the text inside shapes. A spreadsheet opens each sheet with a heading
+carrying its tab name — markdown has no pages to tell one sheet from the next
+by, so `{ sheetNames: false }` is there for the bare tables. Underline and super/subscript survive as `<u>` /
 `<sup>` / `<sub>`, which GFM parses as inline html.
 
 Dropped, each reported once in the loss report rather than silently: alignment,

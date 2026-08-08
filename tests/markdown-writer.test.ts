@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
+import { buildXlsx } from './fixtures/build-xlsx';
+import { projectSheetDoc } from '@/excel/sheet-to-flow';
+import { readXlsxToSheetDoc } from '@/excel/xlsx-reader';
 import { createConverter } from '@/core/converter/facade';
 import { Ream } from '@/core/converter/ream';
 import { markdownWriter, writeMarkdown } from '@/markdown/markdown-writer';
@@ -564,6 +567,39 @@ describe('markdown writer — page breaks', () => {
     const docx = buildDocxFromBody(p(t('one')) + broken('two'));
     const out = decode(await Ream.parse(docx).convert('md', { pageBreaks: 'rule' }));
     expect(out).toBe('one\n\n---\n\ntwo\n');
+  });
+});
+
+describe('markdown writer — a workbook names its sheets', () => {
+  const book = buildXlsx({
+    sheets: [
+      { name: 'Revenue', rows: [['Q1', 10]] },
+      { name: 'Costs', rows: [['Q1', 4]] },
+    ],
+  });
+
+  it('opens each sheet with a heading carrying its tab name', async () => {
+    const out = decode(await Ream.parse(book).convert('md'));
+    expect(out).toContain('# Revenue');
+    expect(out).toContain('# Costs');
+    // The heading comes before its own sheet's grid, not after it.
+    expect(out.indexOf('# Revenue')).toBeLessThan(out.indexOf('| Q1 | 10 |'));
+    expect(out.indexOf('| Q1 | 10 |')).toBeLessThan(out.indexOf('# Costs'));
+  });
+
+  it('gives the bare tables when the names are turned off', async () => {
+    const out = decode(await Ream.parse(book).convert('md', { sheetNames: false }));
+    expect(out).not.toContain('#');
+    expect(out).toContain('| Q1 | 10 |');
+  });
+
+  it('leaves a printed page with no tab name on it, as Excel and Calc do', () => {
+    // The projection withholds the names by default, so the paginated targets
+    // never see one — the same flow the PDF path has always laid out.
+    const flow = projectSheetDoc(readXlsxToSheetDoc(book));
+    const text = JSON.stringify(flow.body);
+    expect(text).not.toContain('Revenue');
+    expect(text).not.toContain('Costs');
   });
 });
 
