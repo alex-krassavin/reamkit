@@ -216,6 +216,72 @@ describe('markdown writer — lists', () => {
   });
 });
 
+describe('markdown writer — emphasis that has to flank', () => {
+  it('falls back to a tag when the delimiter could not open', () => {
+    // §6.2: `1**. x**` — the `**` is preceded by a letter and followed by
+    // punctuation, so it is not left-flanking and prints as two asterisks.
+    const out = md(p(t('1') + '<w:r><w:rPr><w:b/></w:rPr><w:t>. Auksin</w:t></w:r>'));
+    expect(out).toBe('1<strong>. Auksin</strong>\n');
+  });
+
+  it('keeps the delimiter when it flanks perfectly well', () => {
+    const out = md(p(t('a ') + '<w:r><w:rPr><w:b/></w:rPr><w:t>bold</w:t></w:r>'));
+    expect(out).toBe('a **bold**\n');
+  });
+
+  it('moves a non-breaking space out of the span like any other', () => {
+    // U+00A0 is Unicode whitespace, and a closing `**` behind one cannot close.
+    const nb = '<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">Figure\u00a0</w:t></w:r>';
+    expect(md(p(nb + t('x')))).toBe('**Figure**\u00a0x\n');
+  });
+
+  it('drops a hard break at the end of a cell’s paragraph', () => {
+    const brCell =
+      '<w:tc><w:p><w:r><w:t>one</w:t><w:br/></w:r></w:p><w:p>' + t('two') + '</w:p></w:tc>';
+    const tbl2 =
+      '<w:tbl><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>' +
+      `<w:tr>${brCell}<w:tc><w:p>${t('z')}</w:p></w:tc></w:tr></w:tbl>`;
+    expect(md(tbl2)).toBe('| one<br>two | z |\n| --- | --- |\n');
+  });
+});
+
+describe('markdown writer — what counts as empty', () => {
+  const numbering =
+    '<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/>' +
+    '<w:numFmt w:val="bullet"/><w:lvlText w:val=""/></w:lvl></w:abstractNum>' +
+    '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>';
+  const li = (text: string) =>
+    `<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>${text ? t(text) : ''}</w:p>`;
+
+  it('drops a marked paragraph with nothing in it — a bullet against no words', () => {
+    const out = md(li('one') + li('') + li('two'), { numberingXml: numbering });
+    expect(out).toBe('- one\n- two\n');
+  });
+
+  it('an empty paragraph between items does not split the list', () => {
+    // A deck spaces its bullets with blank lines; split, each becomes its own list.
+    const out = md(li('one') + p('') + li('two'), { numberingXml: numbering });
+    expect(out).toBe('- one\n- two\n');
+  });
+
+  it('treats a zero-width-only paragraph as empty', () => {
+    // The .pptx reader marks a slide boundary with a U+200B paragraph.
+    const out = md(p(t('before')) + p(t('\u200b')) + p(t('after')));
+    expect(out).toBe('before\n\nafter\n');
+  });
+
+  it('moves a hard break out of an emphasis span that would not close', () => {
+    // `**text\` + newline + `**` is not right-flanking: it prints two asterisks.
+    const out = md(p('<w:r><w:rPr><w:b/></w:rPr><w:t>Title</w:t><w:br/></w:r>' + t('after')));
+    expect(out).toBe('**Title**\\\nafter\n');
+  });
+
+  it('drops a hard break with no next line to break to', () => {
+    const out = md(p('<w:r><w:rPr><w:b/></w:rPr><w:t>Title</w:t><w:br/></w:r>'));
+    expect(out).toBe('**Title**\n');
+  });
+});
+
 describe('markdown writer — tables', () => {
   const cell = (text: string, tcPr = '') =>
     `<w:tc>${tcPr ? `<w:tcPr>${tcPr}</w:tcPr>` : ''}<w:p>${t(text)}</w:p></w:tc>`;

@@ -174,8 +174,21 @@ function lose(ctx: EmitCtx, severity: LossSeverity, feature: string, detail: str
  * backslash GFM also accepts, which survives all three.
  */
 function joinBlocks(blocks: ReadonlyArray<string>): string {
-  const body = blocks.filter((b) => b.length > 0).join('\n\n');
+  const body = blocks
+    .map(trimHardBreaks)
+    .filter((b) => b.length > 0)
+    .join('\n\n');
   return body.length > 0 ? `${body.replace(/[ \t]+$/gm, '')}\n` : '';
+}
+
+/**
+ * Drop a hard break sitting at either end of a block: at the end there is no
+ * next line to break to, at the start no previous one, and either way the
+ * backslash is left standing in the text as itself. Only a break is taken —
+ * an escaped literal backslash is `\\` with no newline behind it.
+ */
+function trimHardBreaks(block: string): string {
+  return block.replace(/^(?:\\\n)+/, '').replace(/\\\n$/, '');
 }
 
 // ---------------------------------------------------------------------------
@@ -221,20 +234,25 @@ function emitParagraph(out: Array<string>, p: Paragraph, ctx: EmitCtx): void {
   // would open an INDENTED CODE BLOCK at four of them (CommonMark §4.4), and
   // the whole of its text would be typeset as source. The indent itself has no
   // markdown expression either way, and is already reported as dropped.
-  const inline = bookmarkAnchors(p, ctx) + inlineRuns(p.runs, p, ctx).replace(/^[ \t]+/, '');
+  const anchors = bookmarkAnchors(p, ctx);
+  const text = inlineRuns(p.runs, p, ctx).replace(/^[ \t]+/, '');
+  const inline = anchors + text;
   const marker = markerText(p, ctx);
   reportParagraphLosses(resolved, ctx);
+  // Nothing to say and nowhere to point: the paragraph contributes no block.
+  // An anchor alone is content — it is what an internal link lands on.
+  const empty = isBlank(text) && anchors.length === 0;
 
   // A heading outranks a list: §17.9.24 numbers Word's own Heading styles, and
   // demoting "1 Introduction" to a list item would cost the document its whole
   // outline. The chapter number rides along in the heading's text instead.
   const level = headingLevelOf(resolved);
   if (level !== undefined) {
+    if (empty) return;
     ctx.list.length = 0;
-    const text = marker !== undefined ? `${marker} ${inline}` : inline;
-    if (text.trim().length === 0) return;
+    const heading = marker !== undefined ? `${marker} ${inline}` : inline;
     // §4.2 ATX headings are single-line: a soft break inside one would end it.
-    const oneLine = text.replaceAll('\\\n', ' ').replaceAll('\n', ' ');
+    const oneLine = heading.replaceAll('\\\n', ' ').replaceAll('\n', ' ');
     // A table cell holds INLINE content only: a `#` written there is a literal
     // hash, not a heading, so inside one the heading keeps its text alone.
     if (ctx.inCell) {
@@ -247,16 +265,34 @@ function emitParagraph(out: Array<string>, p: Paragraph, ctx: EmitCtx): void {
   }
 
   if (marker !== undefined) {
-    emitListItem(out, resolved, marker, inline, ctx);
+    // A marked paragraph with nothing in it is a BLANK LINE inside a text box,
+    // which is how a deck spaces its bullets out; it is not an item of the
+    // list, and drawn as one it is a bullet standing alone against no words.
+    // The list itself carries on around it.
+    if (!empty) emitListItem(out, resolved, marker, inline, ctx);
     return;
   }
 
-  ctx.list.length = 0;
   // An empty paragraph is a line on a page and nothing at all in a flow of
-  // blocks — the blank line between blocks is markdown's own separator.
-  if (inline.trim().length === 0) return;
+  // blocks — the blank line between blocks is markdown's own separator. It
+  // does not close a list either: contributing nothing, it cannot come between
+  // two items, and a deck that spaces its bullets with blank lines would come
+  // out as one list per bullet.
+  if (empty) return;
+  ctx.list.length = 0;
   // The block-start guard is for block context; a cell has none to open.
   out.push(ctx.inCell ? inline : guardBlockStart(inline));
+}
+
+/**
+ * True when a paragraph's rendered text says nothing at all. Whitespace counts
+ * as nothing, and so do the ZERO-WIDTH characters — the `.pptx` reader marks a
+ * slide boundary with a U+200B paragraph carrying the page break, and a run of
+ * them down the left of a deck is a column of empty lines, not content.
+ */
+function isBlank(text: string): boolean {
+  // U+200B..U+200D zero-width space/non-joiner/joiner, U+FEFF zero-width no-break.
+  return /^[\s\u200B-\u200D\uFEFF]*$/u.test(text);
 }
 
 /**
@@ -480,6 +516,7 @@ function flatten(blocks: ReadonlyArray<BodyElement>, ctx: EmitCtx): string {
   ctx.list.length = 0;
   ctx.list.push(...outer);
   return rendered
+    .map(trimHardBreaks)
     .filter((b) => b.length > 0)
     .join('<br>')
     .replaceAll('\\\n', '<br>')
@@ -741,7 +778,7 @@ function cellInline(cell: TableCell, ctx: EmitCtx): string {
   ctx.list.length = 0;
   ctx.list.push(...outer);
   return blocks
-    .map((b) => b.trim())
+    .map((b) => trimHardBreaks(b).trim())
     .filter((b) => b.length > 0)
     .join('<br>')
     .replaceAll('\\\n', '<br>')
@@ -752,14 +789,24 @@ function cellInline(cell: TableCell, ctx: EmitCtx): string {
 // Runs
 // ---------------------------------------------------------------------------
 
+/** One span of the paragraph: either finished text, or text still to be dressed. */
+type Piece = { readonly literal: string } | { readonly marks: Marks; text: string };
+
+/**
+ * The paragraph's runs as one inline string.
+ *
+ * Two passes, because whether a delimiter may open or close depends on the
+ * characters on either side of it (§6.2), and those belong to the NEIGHBOURING
+ * spans: the first pass coalesces runs into spans, the second dresses each
+ * span knowing what stands beside it.
+ */
 function inlineRuns(runs: ReadonlyArray<Run>, p: Paragraph, ctx: EmitCtx): string {
-  const parts: Array<string> = [];
+  const pieces: Array<Piece> = [];
   // Consecutive runs that carry the same emphasis are one span: emitted
   // separately they would read `**a****b**` — legal, and unreadable.
   let pending: { marks: Marks; text: string } | undefined;
   const flush = (): void => {
-    if (pending && pending.text.length > 0)
-      parts.push(applyMarks(pending.text, pending.marks, ctx));
+    if (pending && pending.text.length > 0) pieces.push(pending);
     pending = undefined;
   };
 
@@ -767,7 +814,7 @@ function inlineRuns(runs: ReadonlyArray<Run>, p: Paragraph, ctx: EmitCtx): strin
     const literal = literalRun(run, ctx);
     if (literal !== undefined) {
       flush();
-      parts.push(literal);
+      if (literal.length > 0) pieces.push({ literal });
       continue;
     }
     if (run.text.length === 0) continue;
@@ -781,7 +828,43 @@ function inlineRuns(runs: ReadonlyArray<Run>, p: Paragraph, ctx: EmitCtx): strin
     }
   }
   flush();
-  return parts.join('');
+
+  let out = '';
+  for (let i = 0; i < pieces.length; i++) {
+    const piece = pieces[i]!;
+    if ('literal' in piece) {
+      out += piece.literal;
+      continue;
+    }
+    out += applyMarks(piece.text, piece.marks, ctx, out.slice(-1), leadOf(pieces, i + 1));
+  }
+  return out;
+}
+
+/**
+ * The first character the next span will contribute. A dressed span always
+ * begins with its delimiter or its html tag — both punctuation — so a marked
+ * neighbour answers without being rendered first.
+ */
+function leadOf(pieces: ReadonlyArray<Piece>, from: number): string {
+  const next = pieces[from];
+  if (!next) return '';
+  if ('literal' in next) return next.literal.slice(0, 1);
+  if (wrapped(next.marks)) return '*';
+  return escapeInline(next.text).slice(0, 1);
+}
+
+/** Whether a span carries anything that puts a delimiter or a tag in front of it. */
+function wrapped(m: Marks): boolean {
+  return (
+    m.bold ||
+    m.italic ||
+    m.strike ||
+    m.underline ||
+    m.vertical !== 'baseline' ||
+    m.href !== undefined ||
+    m.anchor !== undefined
+  );
 }
 
 /**
@@ -876,19 +959,47 @@ function sameMarks(a: Marks, b: Marks): boolean {
  * inline-html wrappers for what markdown cannot say. CommonMark §6.2 requires
  * a delimiter to hug non-whitespace, so any leading or trailing space of the
  * span moves outside the marks.
+ *
+ * A HARD BREAK at either end moves out too, and it matters more than a space
+ * does: a closing `**` that a line break stands in front of is not
+ * right-flanking, cannot close, and prints as two asterisks. A `w:br` at the
+ * end of a bold title — which every deck writes — did exactly that.
  */
-function applyMarks(text: string, marks: Marks, ctx: EmitCtx): string {
+const SPAN_EDGE = String.raw`(?:\\\n|\s)`;
+
+function applyMarks(
+  text: string,
+  marks: Marks,
+  ctx: EmitCtx,
+  before: string,
+  after: string,
+): string {
   const escaped = escapeInline(text);
-  const lead = /^[ \t]*/.exec(escaped)?.[0] ?? '';
-  const trail = /[ \t]*$/.exec(escaped)?.[0] ?? '';
+  const lead = new RegExp(`^${SPAN_EDGE}*`).exec(escaped)?.[0] ?? '';
+  const trail = new RegExp(`${SPAN_EDGE}*$`).exec(escaped)?.[0] ?? '';
   const core = escaped.slice(lead.length, escaped.length - trail.length);
   if (core.length === 0) return escaped;
 
-  const open: Array<string> = [];
-  if (marks.strike) open.push('~~');
-  if (marks.bold) open.push('**');
-  if (marks.italic) open.push('*');
-  let out = `${open.join('')}${core}${[...open].reverse().join('')}`;
+  // Whatever whitespace moved out now stands between the delimiter and the
+  // neighbour, so it — not the neighbour — is what the delimiter sees.
+  const outerBefore = lead.length > 0 ? lead[lead.length - 1]! : before;
+  const outerAfter = trail.length > 0 ? trail[0]! : after;
+
+  let out = core;
+  // Innermost first, so each level tests against what the level below emitted.
+  const levels: ReadonlyArray<readonly [boolean, string, string]> = [
+    [marks.italic, '*', 'em'],
+    [marks.bold, '**', 'strong'],
+    [marks.strike, '~~', 'del'],
+  ];
+  for (const [on, delimiter, tag] of levels) {
+    if (!on) continue;
+    const flanks = canOpen(outerBefore, out[0]!) && canClose(out[out.length - 1]!, outerAfter);
+    // A delimiter that cannot flank is not a delimiter — it prints as two
+    // asterisks and the emphasis is lost. The html tag GFM parses says the
+    // same thing and answers to no neighbour.
+    out = flanks ? `${delimiter}${out}${delimiter}` : `<${tag}>${out}</${tag}>`;
+  }
   // GFM parses markdown inside an inline html span, so these wrap the
   // already-escaped text rather than replacing the escaping regime.
   if (marks.underline) out = `<u>${out}</u>`;
@@ -897,6 +1008,21 @@ function applyMarks(text: string, marks: Marks, ctx: EmitCtx): string {
     out = `<${tag}>${out}</${tag}>`;
   }
   return `${lead}${linkify(out, marks, ctx)}${trail}`;
+}
+
+// CommonMark §2.1 counts the start and end of a line as whitespace, and its
+// "punctuation" spans the Unicode punctuation AND symbol categories.
+const isSpace = (c: string): boolean => c === '' || /\s/u.test(c);
+const isPunct = (c: string): boolean => /[\p{P}\p{S}]/u.test(c);
+
+/** §6.2 — the delimiter run is left-flanking, so it can open emphasis. */
+function canOpen(before: string, after: string): boolean {
+  return !isSpace(after) && (!isPunct(after) || isSpace(before) || isPunct(before));
+}
+
+/** §6.2 — the delimiter run is right-flanking, so it can close emphasis. */
+function canClose(before: string, after: string): boolean {
+  return !isSpace(before) && (!isPunct(before) || isSpace(after) || isPunct(after));
 }
 
 /**
