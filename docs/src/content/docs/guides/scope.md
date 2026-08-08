@@ -20,9 +20,10 @@ style the deck states once, layout/master placeholders and the decoration they
 carry, backgrounds (solid, gradient, picture or theme reference), pictures with
 their recolouring, shapes (geometry/fill/stroke/gradient), DrawingML tables with
 the style they name, embedded charts and objects, theme colours through the
-deck's colour map, grouped shapes and run hyperlinks; not read (each a graceful
-loss): text autofit shrink, a SmartArt with no pre-rendered drawing, alpha/roman
-list numbering.
+deck's colour map, grouped shapes and run hyperlinks; text set to shrink is
+measured and shrunk to fit its box, and a SmartArt is laid out from its own
+parts whether or not the file cached a drawing. Not read (a graceful loss):
+alpha/roman list numbering.
 PDF input handles classic and modern compressed files
 (cross-reference streams, object streams) and encrypted files (RC4 / AES; the
 user password is passed to `Ream.parse`, defaulting to the empty permissions-only
@@ -80,11 +81,14 @@ charts — and is byte-stable across a read↔write loop.
   flagged); the commented range (`w:commentRangeStart/End`) is highlighted; author
   identities resolve from `people.xml`. As an opt-in, comments can also be emitted as
   native PDF sticky-note annotations (`commentAnnotations`, interactive output only).
-- **SmartArt** — rendered from the diagram's pre-rendered DrawingML drawing
-  (`diagrams/drawing#.xml`) as positioned shapes; a file with no drawing fallback
-  degrades to a graceful loss rather than an empty space.
-- Inline and floating images (PNG / JPEG / JPEG2000 / GIF / **TIFF** — baseline
-  TIFF 6.0 is decoded to samples, since PDF has no filter that carries one),
+- **SmartArt** — the diagram's own parts (`data`, `layout`, `colors`,
+  `quickStyle`) are laid out by the same engine the deck reader uses, so a
+  document that cached no drawing renders rather than degrading; where a
+  pre-rendered drawing (`diagrams/drawing#.xml`) is present it is used directly.
+- Inline and floating images (PNG / JPEG / JPEG2000 / GIF / **TIFF** / **BMP** —
+  baseline TIFF 6.0 and Windows bitmaps are decoded to samples, since PDF has no
+  filter that carries either; a BMP is read at every depth from one bit to
+  thirty-two, run-length and bit-field forms included),
   including **legacy VML pictures** (`<w:pict>` / `<w:object>` — ActiveX and
   OLE-object previews, images from older Word); floating drawings
   (`wp:anchor`) render outside the text flow — wrap-none (incl. `behindDoc`)
@@ -219,10 +223,10 @@ charts — and is byte-stable across a read↔write loop.
   DrawingML shape readers). All three anchor kinds place a drawing:
   `twoCellAnchor`, `oneCellAnchor` and `absoluteAnchor`; a group (`xdr:grpSp`)
   maps its children through the group's own coordinate space.
-- **SmartArt** — rendered from the diagram's pre-rendered DrawingML drawing
-  (`diagrams/drawing#.xml`, the `dsp:` namespace) as positioned shapes, each
-  label in the rectangle the diagram sets aside for it; a file with no drawing
-  fallback degrades to a graceful loss rather than an empty space.
+- **SmartArt** — the pre-rendered drawing (`diagrams/drawing#.xml`, the `dsp:`
+  namespace) where the file caches one, and otherwise the diagram laid out from
+  its own `data`/`layout`/`colors`/`quickStyle` parts; either way each label
+  lands in the rectangle the diagram sets aside for it.
 - **Cell hyperlinks** (`<hyperlinks>`) — an external `r:id` resolves to a URL and the
   covered cell becomes a clickable link (PDF `/Link` annotation, HTML `<a>`).
 - **Header/footer text** (`<headerFooter>`) — Excel's `&`-code mini-language (`&L`/`&C`/
@@ -279,14 +283,21 @@ charts — and is byte-stable across a read↔write loop.
 - Pictures (`p:pic`) with the recolouring the file asks for — `a:duotone`,
   `a:clrChange`, `a:alphaModFix` — shapes with geometry/fill/stroke/gradient,
   and embedded charts (`c:chart`), including a chart papered with a picture.
+- **WordArt** (`a:prstTxWarp`) — the text bent through the preset curve its body
+  names and stretched onto the shape's box: thirty envelope presets and the two
+  rings, each glyph placed on its own along the curve.
 - **Tables** (`a:tbl`) — the style the table names in `tableStyles.xml` with the
   parts it switches on (header row, banding, first/last column), composed under
   the cell's own `a:tcPr` fill, `a:noFill` and four rules; row heights from
   `a:tr@h`.
 - **Embedded objects** (`p:oleObj`) — the snapshot the producer wrote beside the
   object, in either the modern (`p:pic`) or the legacy (VML drawing) spelling.
-- **SmartArt** — rendered from the diagram's pre-rendered DrawingML drawing
-  (`dsp:spTree`) as positioned shapes; no drawing fallback ⇒ a graceful loss.
+- **SmartArt** — the pre-rendered drawing (`dsp:spTree`) where the deck caches
+  one, and otherwise the diagram laid out from its own parts: eleven algorithms
+  (`lin`, `composite`, `cycle`, `hierChild`/`hierRoot`, `snake`, `tx`, `sp`,
+  `conn` among them), the `forEach`/`choose` axis walks the layouts are written
+  in, the constraint solver that sizes and spaces the boxes, and the colour and
+  style parts that paint them.
 - **Theme** colours (`a:clrScheme`) through the deck's own colour map
   (`p:clrMap`, and a layout's or slide's override), and groups (`p:grpSp`)
   mapped through their child transform.
@@ -304,7 +315,11 @@ charts — and is byte-stable across a read↔write loop.
   states none of them; a run that does states only where it differs. A colour may be
   a literal sRGB or a slot in the slide's colour scheme, and the typeface is an index
   into the deck's font collection, so a deck set in Times is measured in Times. A
-  bullet is a character, translated out of the symbol face that states it.
+  bullet is a character, translated out of the symbol face that states it, and it
+  **hangs** on the margins the paragraph or its master states — the body indent, the
+  first-line indent and the space set around each paragraph. The three furniture
+  placeholders — **date, footer and slide number** — take their text from the deck's
+  own header/footer record rather than from the shape, which holds none of it.
 
   The slide is drawn on **the background it states** — a solid colour, a shade, or a
   picture — or on its master's, when its flags say to follow it, and under **the
@@ -318,8 +333,12 @@ charts — and is byte-stable across a read↔write loop.
   rather than in the deck's picture stream. A freeform carries its **exact custom
   geometry** (the `pVertices` / `pSegmentInfo` arrays), and a piece of **WordArt** is
   drawn as the word it is rather than as the rectangle its shape type would give.
-  A **metafile** picture (EMF / WMF, deflated inside its Escher blip) is replayed
-  like any other. Only a palette-relative colour degrades gracefully.
+  A picture shows the part of itself the shape **crops** to, and drops the colour
+  the shape names as **transparent** — how clip art older than the alpha channel
+  says a rectangle of ground is not part of the drawing. A **metafile** picture
+  (EMF / WMF, deflated inside its Escher blip) is replayed like any other, and a
+  headerless **DIB** blip is read as the bitmap it is. Only a palette-relative
+  colour degrades gracefully.
 
 **Graphics & math**
 - DrawingML shapes (preset and custom geometry, gradients, group shapes, theme colors).
@@ -371,8 +390,8 @@ charts — and is byte-stable across a read↔write loop.
   a legacy `.ppt` shape's
   **palette-relative colour** (literal, scheme- and system-relative colours resolve),
   a rare **arc / ellipse freeform segment** (it falls back to the path's preset
-  bounds) or a piece of **WordArt's effects** — the word, its size and its face are
-  drawn, a texture through the glyphs or a stretch to the frame is not; in a legacy `.xls`, a 2007 **Excel table's** banded style / autofilter
+  bounds) or a **texture drawn through WordArt's glyphs** (the word, its size, its
+  face and the preset curve it is bent through are all drawn); in a legacy `.xls`, a 2007 **Excel table's** banded style / autofilter
   (its shared-feature record is one even Apache POI leaves unparsed, so the cell
   values still render — only the table's banding is absent) and a colour-scale /
   data-bar / icon-set rule (a 2007 `CF12` record) whose colour is **theme-relative**
@@ -381,19 +400,14 @@ charts — and is byte-stable across a read↔write loop.
   only to a binary `.bin` (the MorphData control family — check box / option / toggle
   / text / combo / list — and every property-bag control _are_ read, with their
   caption and value).
-- **Inside a metafile**, an arc / pie / chord, a gradient fill, a flood fill and a
-  clipping region are not drawn; everything else the file draws is, including the
-  rasters it blits. Each omission is reported as a named loss rather than guessed at.
+- **Inside a metafile**, a gradient fill and a flood fill are not drawn;
+  everything else the file draws is — the arcs, pies and chords, the clipping
+  region it limits its records to, and the rasters it blits. Each omission is
+  reported as a named loss rather than guessed at.
 - **A `.pptx` embedded font packed with MicroType Express.** PowerPoint wraps an
   embedded face in an EOT container and, unlike Word's, it is compressed with a
   codec of its own; the deck renders in a substitute and says so rather than
   silently dropping the family.
-- **A SmartArt with no pre-rendered drawing.** PowerPoint writes the diagram's
-  laid-out shapes beside its data, and that is what Ream draws; a file that
-  ships only `data`/`layout`/`colors`/`quickStyle` would need the layout engine
-  those four describe, so it reports the diagram as a loss rather than guessing
-  at it.
-
 ## Validation
 
 Development is corpus-driven: documents are converted, compared against a LibreOffice
