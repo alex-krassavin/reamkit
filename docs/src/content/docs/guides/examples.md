@@ -279,16 +279,22 @@ const html = await doc.convert('html');
 
 ## SmartArt diagrams
 
-SmartArt (DOCX and PPTX) renders from the diagram's pre-rendered DrawingML drawing
-(`diagrams/drawing#.xml`) as positioned shapes, with scheme colours resolved through
-the document or deck theme. A diagram that ships no drawing fallback degrades to a
-graceful loss rather than an empty space — surface it with `convertWithReport`:
+SmartArt (DOCX and PPTX) renders either way round. Where the file caches a
+pre-rendered DrawingML drawing (`diagrams/drawing#.xml`) that is drawn directly;
+where it does not, the diagram is laid out from its own `data`, `layout`,
+`colors` and `quickStyle` parts — the algorithms (`lin`, `composite`, `cycle`,
+the hierarchy pair, `snake` and the rest), the constraint solver that sizes and
+spaces the boxes, and the colour and style parts that paint them. Scheme colours
+resolve through the document or deck theme, and box text is measured so a box
+grows to what it holds.
+
+Nothing special is needed to get it — it is part of the ordinary conversion:
 
 ```ts
 import { Ream } from 'reamkit';
 
 const { bytes, losses } = await Ream.parse(docxBytes).convertWithReport('pdf', { fonts });
-// a SmartArt with no drawing override → { severity: 'dropped', feature: 'shapes.smartArt', … }
+// `losses` is where anything the file asks for and Ream cannot draw is reported.
 ```
 
 ## Browser: file input → PDF preview
