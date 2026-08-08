@@ -715,6 +715,11 @@ function delimiters(table: Table, cols: number): Array<string> {
  * A cell's blocks flattened to one line: a table row is a single line, so
  * every break between and inside its blocks becomes a `<br>`. The cell's own
  * lists number independently of whatever list surrounds the table.
+ *
+ * Each block is trimmed at its ends. Word carries a cell's padding as spaces in
+ * the text itself, and a pipe table already sets its own — kept, they only
+ * widen the source line, since §4.10 strips a cell's outer whitespace before
+ * rendering it anyway.
  */
 function cellInline(cell: TableCell, ctx: EmitCtx): string {
   const outer = ctx.list.splice(0);
@@ -736,6 +741,7 @@ function cellInline(cell: TableCell, ctx: EmitCtx): string {
   ctx.list.length = 0;
   ctx.list.push(...outer);
   return blocks
+    .map((b) => b.trim())
     .filter((b) => b.length > 0)
     .join('<br>')
     .replaceAll('\\\n', '<br>')

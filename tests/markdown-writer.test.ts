@@ -263,6 +263,11 @@ describe('markdown writer — tables', () => {
     expect(out).toBe('| **bold**<br>second line | plain |\n| --- | --- |\n');
   });
 
+  it('trims the padding Word carries as spaces in the cell text', () => {
+    const out = md(tbl(`<w:tr>${cell('  Cell 1 ')}${cell('b')}</w:tr>`));
+    expect(out).toBe('| Cell 1 | b |\n| --- | --- |\n');
+  });
+
   it('escapes a pipe in cell text so it cannot split the row', () => {
     const out = md(tbl(`<w:tr>${cell('a|b')}${cell('c')}</w:tr>`));
     expect(out).toBe('| a\\|b | c |\n| --- | --- |\n');
