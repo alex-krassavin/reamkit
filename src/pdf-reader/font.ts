@@ -29,7 +29,13 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
   if (tu instanceof PdfStream) {
     const parsed = parseToUnicodeCMap(file.streamData(tu));
     toUnicode = parsed.map;
-    codeBytes = parsed.codeBytes;
+    // §9.6: a SIMPLE font's glyphs are always selected by one-byte codes —
+    // only a composite Type0 font takes its code width from a CMap. The
+    // `codespacerange` of a /ToUnicode belongs to that CMap's own convention,
+    // and Distiller writes `<0000> <FFFF>` there whatever the font is. Read as
+    // two, an Arial subset's every string came apart into pairs of bytes:
+    // 160F-2019.pdf's "rémunérations brutes" arrived as "isr".
+    if (isType0) codeBytes = parsed.codeBytes;
   }
 
   const width = isType0 ? cidWidths(file, fontDict) : simpleWidths(file, fontDict);

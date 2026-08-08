@@ -42,6 +42,61 @@ describe('/ToUnicode CMap parser (E-PDF EP2)', () => {
   });
 });
 
+/**
+ * A one-page PDF holding one text-showing operator in a SIMPLE TrueType font
+ * whose `/ToUnicode` declares the two-byte codespace Distiller writes for every
+ * font, simple or not. Hand-built because Ream's own writer never emits that
+ * combination — and it is exactly the combination that broke.
+ */
+function simpleFontPdf(text: string): Uint8Array {
+  const cmap = [
+    '/CIDInit /ProcSet findresource begin 12 dict begin begincmap',
+    '1 begincodespacerange <0000> <FFFF> endcodespacerange',
+    // One entry per distinct byte of `text`, mapped to itself.
+    `${String(new Set(text).size)} beginbfchar`,
+    ...[...new Set(text)].map((c) => {
+      const hex = c.charCodeAt(0).toString(16).padStart(2, '0').toUpperCase();
+      return `<${hex}> <00${hex}>`;
+    }),
+    'endbfchar',
+    'endcmap end end',
+  ].join('\n');
+  const content = `BT /F1 12 Tf 72 720 Td (${text}) Tj ET`;
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ' +
+      '/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /TrueType /BaseFont /Arial /FirstChar 32 /LastChar 255 ' +
+      '/Encoding /WinAnsiEncoding /ToUnicode 6 0 R >>',
+    `<< /Length ${String(cmap.length)} >>\nstream\n${cmap}\nendstream`,
+  ];
+
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\n`;
+  pdf += `startxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
+describe('a simple font reads its codes one byte at a time (§9.6)', () => {
+  it('ignores the /ToUnicode codespace width, which is the CMap’s and not the font’s', () => {
+    // Read two bytes at a time, every string came apart into pairs: 160F-2019.pdf
+    // showed "rémunérations brutes" as "isr".
+    const file = PdfFile.parse(simpleFontPdf('Certificat'));
+    const runs = extractPageText(file, file.pages()[0]!);
+    expect(runs.map((r) => r.text).join('')).toBe('Certificat');
+  });
+});
+
 describe('page text extraction — real Ream output (E-PDF EP2)', () => {
   it('reads the text back out of a docx → pdf conversion', async () => {
     const docx = buildDocxFromBody('<w:p><w:r><w:t>Extract this text</w:t></w:r></w:p>');
