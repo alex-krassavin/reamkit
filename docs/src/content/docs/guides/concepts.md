@@ -45,15 +45,15 @@ bytes → reader → FlowDoc → layout → pages → writer → bytes
 `doc.convert` renders from it without re-reading the source. New formats plug
 in as `DocumentReader`/`DocumentWriter` implementations (the `@experimental`
 interfaces) instead of new end-to-end converters — the SVG preview writer
-(consuming positioned pages) and the HTML writer (consuming the FlowDoc
-directly, no layout or fonts involved) are exactly such adapters.
+(consuming positioned pages) and the HTML and Markdown writers (consuming the
+FlowDoc directly, no layout or fonts involved) are exactly such adapters.
 
 The same seam runs in reverse for **PDF input**. A PDF reader is just another
 `DocumentReader`, but inbound it _reconstructs_ a FlowDoc rather than parsing a
 clean tree: a tagged PDF is rebuilt from its logical structure tree, an untagged
 one heuristically from glyph positions (lines by baseline, paragraphs by spacing,
 a two-column page split by its central gutter). The result is an ordinary
-FlowDoc, so `Ream.parse(pdfBytes)` converts onward to HTML, docx or a re-laid PDF
+FlowDoc, so `Ream.parse(pdfBytes)` converts onward to HTML, Markdown, docx or a re-laid PDF
 like any other source.
 
 ## Bytes in, bytes out

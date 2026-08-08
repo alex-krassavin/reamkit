@@ -38,15 +38,34 @@ text, filled paths, stroked lines and shading-pattern gradients turned into
 shapes). Clipping paths and clip-bounded (`sh`) shadings are not read.
 
 **Output** — `convert('pdf')`, `convert('svg')` (a page-stack preview),
-`convert('html')` (flowed, needs no fonts), `convert('docx')` (write
-WordprocessingML back out) and `convert('xlsx')` (write SpreadsheetML back out —
-spreadsheet input only). The writers are for normalization, sanitization,
+`convert('html')` (flowed, needs no fonts), `convert('md')` (GitHub-Flavored
+Markdown), `convert('docx')` (write WordprocessingML back out) and
+`convert('xlsx')` (write SpreadsheetML back out — spreadsheet input only). The writers are for normalization, sanitization,
 in-browser editing, and round-tripping. The docx round-trip is semantic, not
 byte-exact, but complete — text, tables, images, lists, links, headers/footers,
 multi-section geometry, footnotes/endnotes, charts and OfficeMath all write
 back. The xlsx round-trip preserves the whole grid surface — cells, styles,
 merges, the print model, conditional formatting, sparklines, tables and embedded
 charts — and is byte-stable across a read↔write loop.
+
+**Markdown (`convert('md')`)** — GitHub-Flavored Markdown, a flow medium like
+HTML: no pagination, no layout, no fonts, zero I/O. It keeps what a document
+*says* and drops how it *looks*. Kept: headings (from `w:outlineLvl`, falling
+back to a `Heading N` / `Title` style id), bold, italic, strikethrough, ordered
+and bullet lists with their real numbers and nesting, tables as GFM pipe tables
+with per-column alignment, hyperlinks (through the same scheme allowlist the
+HTML writer uses), pictures, footnotes and endnotes as GFM footnotes, review
+comments as footnotes attributed to their author, bookmarks as inline anchors,
+and the text inside shapes. Underline and super/subscript survive as `<u>` /
+`<sup>` / `<sub>`, which GFM parses as inline html.
+
+Dropped, each reported once in the loss report rather than silently: alignment,
+indents, colour, font family and size, tab stops, page and column breaks,
+headers and footers, charts, shape geometry, and math. Merged cells flatten —
+markdown's table is a plain grid — and a nested table flattens into the cell
+that holds it. Pictures are inlined as `data:` URIs by default; pass
+`{ images: 'link' }` to reference them under `./media/` and write the bytes
+yourself, or `{ images: 'drop' }` to omit them.
 
 **Password-protected packages (ECMA-376 §2.3, MS-OFFCRYPTO)**
 - An encrypted `.docx` / `.xlsx` / `.pptx` is not a zip at all: the whole OPC

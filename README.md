@@ -1,10 +1,10 @@
 # Ream
 
-> Read Word, Excel, PowerPoint and PDF — and convert any of them to PDF, SVG, HTML, DOCX or XLSX. From scratch, in the browser. No LibreOffice, no headless Office, no commercial SDK.
+> Read Word, Excel, PowerPoint and PDF — and convert any of them to PDF, SVG, HTML, Markdown, DOCX or XLSX. From scratch, in the browser. No LibreOffice, no headless Office, no commercial SDK.
 
 Ream parses **seven document formats** — the modern Office Open XML trio (`.docx`,
 `.xlsx`, `.pptx`), `.pdf`, and the legacy binary `.doc` / `.xls` / `.ppt` — into one
-format-neutral interlayer, then renders that to **PDF, SVG, HTML, DOCX or XLSX**.
+format-neutral interlayer, then renders that to **PDF, SVG, HTML, Markdown, DOCX or XLSX**.
 It is implemented directly from the **ECMA-376** (OOXML), **ISO 32000 / 19005**
 (PDF / PDF/A), and Microsoft's binary-format specifications — no wrapper around
 LibreOffice, headless Office, or any commercial SDK. Pure TypeScript/JavaScript on
@@ -14,7 +14,7 @@ Node.js, serverless and edge runtimes.
 |            |                                                                                             |
 | ---------- | ------------------------------------------------------------------------------------------- |
 | **Reads**  | `.docx` · `.xlsx` · `.pptx` · `.pdf` · legacy `.doc` · `.xls` · `.ppt`                       |
-| **Writes** | `.pdf` (incl. PDF/A-1/2/3, PDF/UA-1, signed, encrypted) · `.svg` · `.html` · `.docx` · `.xlsx` |
+| **Writes** | `.pdf` (incl. PDF/A-1/2/3, PDF/UA-1, signed, encrypted) · `.svg` · `.html` · `.md` · `.docx` · `.xlsx` |
 
 ## Install
 
@@ -42,6 +42,7 @@ const doc = Ream.parse(bytes);            // docx, xlsx, pptx or pdf — sniffed
 const pdf = await doc.convert('pdf');     // async — fetches a font if needed
 const svg = await doc.convert('svg');     // same parse, different target
 const html = await doc.convert('html');   // flowed HTML — needs no fonts at all
+const md   = await doc.convert('md');     // GitHub-Flavored Markdown — same, narrower
 const docx = await doc.convert('docx');   // write WordprocessingML back out
 const xlsx = await doc.convert('xlsx');   // write SpreadsheetML back (xlsx source)
 
@@ -160,7 +161,7 @@ automatically from the document's `docProps/core.xml`), `attachments`
 
 ### Lower-level APIs
 
-- `docxReader` / `xlsxReader`, `svgWriter`, `htmlWriter`, `docxWriter` — the `@experimental`
+- `docxReader` / `xlsxReader`, `svgWriter`, `htmlWriter`, `markdownWriter`, `docxWriter` — the `@experimental`
   reader/writer interfaces of the interlayer, for building custom pipelines (and
   keeping unused formats out of your bundle); `layoutStyledDocument` produces the
   frozen page model (`PageItem` pages in a top-left `Pt` frame) the page-based
@@ -200,7 +201,7 @@ streams) and encrypted ones (RC4 / AES — the user password is passed to
 into a page at the deck size — text boxes (with run formatting, alignment,
 bullets and indents), layout/master placeholders, pictures, shapes, DrawingML
 tables, embedded charts, theme colours, slide backgrounds, grouped shapes and
-hyperlinks — then converts onward to PDF, SVG, HTML or DOCX like any source.
+hyperlinks — then converts onward to PDF, SVG, HTML, Markdown or DOCX like any source.
 
 **Reads legacy `.doc`, `.xls` and `.ppt`, too.** The binary Word / Excel /
 PowerPoint 97–2003 formats (OLE2/CFB) parse through a shared container reader: a
@@ -217,7 +218,7 @@ text (with run and paragraph formatting), embedded images, per-shape placement
 (anchored text boxes and pictures at their slide rectangles) and decorative
 autoshapes (preset or exact freeform geometry, with fill / line colours resolved
 through the slide's colour scheme), one page per slide — all convert onward to PDF,
-SVG, HTML, or back to `.docx` / `.xlsx` like any source.
+SVG, HTML, Markdown, or back to `.docx` / `.xlsx` like any source.
 
 See [`CHANGELOG.md`](./CHANGELOG.md) for the release history; the docs
 [**Scope**](https://reamkit.dev/guides/scope/) guide has the full feature matrix

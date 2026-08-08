@@ -1,6 +1,6 @@
 ---
 title: Examples
-description: Working recipes — PDF/A, digital signatures, font providers, SVG and HTML output, strict mode, the interlayer.
+description: Working recipes — PDF/A, digital signatures, font providers, SVG, HTML and Markdown output, strict mode, the interlayer.
 ---
 
 Every snippet below is runnable as-is; they all start from document bytes
@@ -19,6 +19,7 @@ const doc = Ream.parse(bytes);
 const pdf = await doc.convert('pdf', { fonts });
 const svg = await doc.convert('svg', { fonts }); // page-stack preview, no PDF involved
 const html = await doc.convert('html');          // flowed HTML — no fonts, zero I/O
+const md   = await doc.convert('md');            // GitHub-Flavored Markdown — same, narrower
 const docx = await doc.convert('docx');          // WordprocessingML back out — no fonts, no layout
 const xlsx = await doc.convert('xlsx');          // SpreadsheetML back out — from an .xlsx source
 ```
@@ -39,6 +40,38 @@ import { Ream } from 'reamkit';
 const doc = Ream.parse(bytes); // a .docx (xlsx has no docx writer)
 const out = await doc.convert('docx');
 // `out` is a fresh, valid .docx — hand it to a download, an upload, or re-parse it.
+```
+
+## docx → markdown: structure without geometry
+
+`convert('md')` writes GitHub-Flavored Markdown. Like HTML it is a flow medium —
+no pagination, no layout engine, no fonts — but a much narrower one, so it keeps
+what the document *says* and reports everything it cannot say back.
+
+```ts
+import { Ream } from 'reamkit';
+
+const doc = Ream.parse(bytes);
+const { bytes: md, losses } = await doc.convertWithReport('md');
+
+// Headings, lists (with their real numbers and nesting), GFM tables,
+// links, footnotes and the text inside shapes all survive.
+console.log(new TextDecoder().decode(md));
+
+// Everything markdown has no syntax for is reported — once each, however
+// many paragraphs it happened in:
+//   [dropped] text: paragraph alignment has no markdown expression
+//   [degraded] tables: merged cells flattened — markdown has no spans
+for (const loss of losses) console.log(loss.severity, loss.feature, loss.detail);
+```
+
+Pictures are inlined as `data:` URIs so the output is a single self-contained
+file. When you would rather write the image bytes yourself — a docs site, a
+repo — ask for links instead and the writer names them predictably:
+
+```ts
+const md = await doc.convert('md', { images: 'link' }); // ![](./media/image1.png)
+const bare = await doc.convert('md', { images: 'drop' }); // no pictures at all
 ```
 
 ## xlsx → xlsx: re-emit a workbook

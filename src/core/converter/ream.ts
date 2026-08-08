@@ -37,12 +37,13 @@ import { writeDocx } from '@/word/docx-writer';
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
 import { writeXlsx } from '@/excel/xlsx-writer';
 import { writeHtml } from '@/html/html-writer';
+import { writeMarkdown } from '@/markdown/markdown-writer';
 import { layoutStyledDocument } from '@/layout/styled-layout';
 import { renderStyledPdf, renderStyledPdfEncrypted, signPdf } from '@/pdf';
 import { writeSvg } from '@/svg/svg-writer';
 
 /** The output formats {@link Ream.convert} can produce. */
-export type ReamTarget = 'pdf' | 'svg' | 'html' | 'docx' | 'xlsx';
+export type ReamTarget = 'pdf' | 'svg' | 'html' | 'md' | 'docx' | 'xlsx';
 
 /**
  * The point size Excel's column-width unit is quoted at — its default theme
@@ -104,6 +105,12 @@ export interface ReamConvertOptions extends Omit<StyledRenderOptions, 'registry'
    * the code resolves, and omitted it is dropped exactly as before.
    */
   readonly fileName?: string;
+  /**
+   * Markdown only: how a picture reaches the output — inlined as a `data:` URI
+   * (the default), named under `./media/` for a caller that writes the bytes
+   * itself, or dropped. See {@link MarkdownWriteOptions}.
+   */
+  readonly images?: 'dataUri' | 'link' | 'drop';
 }
 
 /** OOXML / legacy MIME types by reader id, for the PDF/A-3 embedded source file. */
@@ -210,9 +217,9 @@ export class Ream {
   /**
    * Convert the parsed document to `to`, returning the output bytes together with
    * the accumulated {@link Loss} report (read-time losses plus any added while
-   * writing). HTML, DOCX and XLSX are produced straight from the interlayer — no
-   * layout, no fonts, zero I/O; SVG and PDF run the layout engine and resolve
-   * fonts first.
+   * writing). HTML, Markdown, DOCX and XLSX are produced straight from the
+   * interlayer — no layout, no fonts, zero I/O; SVG and PDF run the layout
+   * engine and resolve fonts first.
    *
    * @param to      The target format. `'xlsx'` requires a spreadsheet source.
    * @param options Font resolution and target-specific options.
@@ -243,6 +250,17 @@ export class Ream {
       losses.push(...html.losses);
       this.enforceStrict(options, losses);
       return { bytes: html.bytes, losses };
+    }
+
+    if (to === 'md') {
+      // Flow medium as well, and the narrowest of them: markdown keeps the
+      // document's structure and drops its geometry, reporting each omission.
+      const markdown = writeMarkdown(flow, {
+        ...(options.images ? { images: options.images } : {}),
+      });
+      losses.push(...markdown.losses);
+      this.enforceStrict(options, losses);
+      return { bytes: markdown.bytes, losses };
     }
 
     if (to === 'docx') {

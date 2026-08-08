@@ -25,6 +25,7 @@ import { flowRenderOptions } from '@/core/converter/project';
 import { writeDocx } from '@/word/docx-writer';
 import { writeXlsx } from '@/excel/xlsx-writer';
 import { writeHtml } from '@/html/html-writer';
+import { writeMarkdown } from '@/markdown/markdown-writer';
 import { layoutStyledDocument } from '@/layout/styled-layout';
 import { renderStyledPdf } from '@/pdf';
 import { writeSvg } from '@/svg/svg-writer';
@@ -41,10 +42,10 @@ import { pdfReader } from '@/pdf-reader/reader';
 /** Options for a {@link Converter.convert} call (extends the docx PDF options). */
 export interface ConvertOptions extends ConvertDocxOptions {
   /**
-   * Target: 'pdf' (default), 'svg' (page-stack preview), 'html'/'docx' (flowed),
-   * or 'xlsx' (the native grid writer — spreadsheet input only).
+   * Target: 'pdf' (default), 'svg' (page-stack preview), 'html'/'md'/'docx'
+   * (flowed), or 'xlsx' (the native grid writer — spreadsheet input only).
    */
-  readonly to?: 'pdf' | 'svg' | 'html' | 'docx' | 'xlsx';
+  readonly to?: 'pdf' | 'svg' | 'html' | 'md' | 'docx' | 'xlsx';
   /**
    * Strict mode (handoff v1 §5): throw ConversionLossError on the first
    * recorded loss instead of returning it in the report.
@@ -184,6 +185,21 @@ export function createConverter(opts: CreateConverterOptions = {}): Converter {
       losses.push(...html.losses);
       if (strict && losses.length > 0) throw new ConversionLossError(losses[0]!);
       return { bytes: html.bytes, losses };
+    }
+
+    if (to === 'md') {
+      // FlowDoc → markdown writer directly: the same flow medium as html,
+      // narrower — structure kept, geometry dropped and reported.
+      const { doc: flow, losses: readLosses } = readToFlow(
+        reader,
+        bytes,
+        rest.now ? { now: rest.now } : undefined,
+      );
+      losses.push(...readLosses);
+      const markdown = writeMarkdown(flow);
+      losses.push(...markdown.losses);
+      if (strict && losses.length > 0) throw new ConversionLossError(losses[0]!);
+      return { bytes: markdown.bytes, losses };
     }
 
     if (to === 'xlsx') {

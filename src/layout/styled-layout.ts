@@ -93,6 +93,7 @@ import type { StructNode, StructType } from '@/pdf/struct-tree';
 
 import type { MetaPicture } from '@/core/metafile/picture';
 import { ResourceStore, halfPtToPt, pt } from '@/core/ir';
+import { headingLevelOf } from '@/core/outline';
 import { createFontMeasure, shapeText } from '@/core/font';
 import { resolveFamilyStyle } from '@/core/fonts';
 import { scriptForCodepoint } from '@/core/fonts/scripts';
@@ -7463,19 +7464,8 @@ function resolveCellBorders(
 // style carried no outline level — from a "Heading N" / "Title" style id.
 // Everything else is body text (P).
 function paragraphStructType(resolved: ResolvedParagraphProperties): StructType {
-  const lvl = resolved.outlineLevel;
-  if (lvl !== undefined && lvl >= 0 && lvl <= 8) {
-    return `H${Math.min(lvl, 5) + 1}` as StructType;
-  }
-  return headingFromStyleId(resolved.styleId) ?? 'P';
-}
-
-function headingFromStyleId(styleId: string | undefined): StructType | null {
-  if (!styleId) return null;
-  const m = /^Heading\s*([1-9])$/i.exec(styleId);
-  if (m) return `H${Math.min(Number(m[1]), 6)}` as StructType;
-  if (/^(Title|Subtitle)$/i.test(styleId)) return 'H1';
-  return null;
+  const lvl = headingLevelOf(resolved);
+  return lvl !== undefined ? (`H${String(lvl)}` as StructType) : 'P';
 }
 
 // The dominant natural language of a paragraph's text tokens (weighted by
