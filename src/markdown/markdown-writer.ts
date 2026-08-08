@@ -59,6 +59,15 @@ export interface MarkdownWriteOptions {
    * `'drop'` omits pictures entirely.
    */
   readonly images?: 'dataUri' | 'link' | 'drop';
+  /**
+   * What a page break becomes. `'drop'` (the default) leaves it out and
+   * reports it: a paginated document breaks its pages wherever the layout
+   * needs to, and a rule at every one of them would litter the text. `'rule'`
+   * writes a `---` thematic break instead, which is what a SLIDE DECK wants —
+   * the `.pptx` and `.ppt` readers mark each slide boundary with a page break,
+   * and it is the only structure a deck has.
+   */
+  readonly pageBreaks?: 'rule' | 'drop';
 }
 
 /**
@@ -79,6 +88,7 @@ export function writeMarkdown(flow: FlowDoc, options: MarkdownWriteOptions = {})
     losses: [],
     seen: new Set<string>(),
     images: options.images ?? 'dataUri',
+    pageBreaks: options.pageBreaks ?? 'drop',
     list: [],
     inCell: false,
     resources: flow.resources,
@@ -121,6 +131,7 @@ interface EmitCtx {
   /** Keys of losses already recorded, so a recurring omission reports once. */
   readonly seen: Set<string>;
   readonly images: 'dataUri' | 'link' | 'drop';
+  readonly pageBreaks: 'rule' | 'drop';
   /** The list levels currently open, outermost first (see {@link ListLevel}). */
   readonly list: Array<ListLevel>;
   /** The document's raw numbering definitions, for the ordered/bullet decision. */
@@ -239,6 +250,7 @@ function emitParagraph(out: Array<string>, p: Paragraph, ctx: EmitCtx): void {
   const inline = anchors + text;
   const marker = markerText(p, ctx);
   reportParagraphLosses(resolved, ctx);
+  if (breaksPage(p, resolved)) emitRule(out, ctx);
   // Nothing to say and nowhere to point: the paragraph contributes no block.
   // An anchor alone is content — it is what an internal link lands on.
   const empty = isBlank(text) && anchors.length === 0;
@@ -294,6 +306,27 @@ function isBlank(text: string): boolean {
   // U+200B..U+200D zero-width space/non-joiner/joiner, U+FEFF zero-width no-break.
   return /^[\s\u200B-\u200D\uFEFF]*$/u.test(text);
 }
+
+/** Whether a page starts at this paragraph — its own break, or one in a run. */
+function breaksPage(p: Paragraph, resolved: ResolvedParagraphProperties): boolean {
+  return resolved.pageBreakBefore || p.runs.some((r) => r.pageBreak === true);
+}
+
+/**
+ * A `---` thematic break where a page ends, when the caller asked for one.
+ *
+ * Never leading and never doubled: a rule before the first block would open
+ * the document with a line, and two in a row say nothing the one does not.
+ * Never inside a cell or a note either — those hold inline content, where the
+ * three hyphens are just three hyphens.
+ */
+function emitRule(out: Array<string>, ctx: EmitCtx): void {
+  if (ctx.pageBreaks !== 'rule' || ctx.inCell) return;
+  if (out.length === 0 || out[out.length - 1] === RULE) return;
+  out.push(RULE);
+}
+
+const RULE = '---';
 
 /**
  * The marker `applyNumbering` materialized as the paragraph's leading runs
@@ -407,7 +440,7 @@ function reportParagraphLosses(r: ResolvedParagraphProperties, ctx: EmitCtx): vo
   if (r.indentLeft !== 0 || r.indentRight !== 0 || r.indentFirstLine !== 0) {
     lose(ctx, 'dropped', FEATURES.text, 'paragraph indents have no markdown expression');
   }
-  if (r.pageBreakBefore) {
+  if (r.pageBreakBefore && ctx.pageBreaks === 'drop') {
     lose(ctx, 'dropped', FEATURES.sections, 'page breaks have no markdown expression');
   }
 }
@@ -899,7 +932,7 @@ function literalRun(run: Run, ctx: EmitCtx): string | undefined {
   if (run.inlineImage !== undefined) {
     return linkify(pictureMarkdown(run.inlineImage.resource, undefined, ctx), run, ctx);
   }
-  if (run.pageBreak === true || run.columnBreak === true) {
+  if (run.columnBreak === true || (run.pageBreak === true && ctx.pageBreaks === 'drop')) {
     lose(ctx, 'dropped', FEATURES.sections, 'page breaks have no markdown expression');
   }
   return undefined;

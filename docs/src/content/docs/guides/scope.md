@@ -61,7 +61,10 @@ and the text inside shapes. Underline and super/subscript survive as `<u>` /
 
 Dropped, each reported once in the loss report rather than silently: alignment,
 indents, colour, font family and size, tab stops, page and column breaks,
-headers and footers, charts, shape geometry, and math. Merged cells flatten —
+headers and footers, charts, shape geometry, and math. A page break can be kept
+instead — `{ pageBreaks: 'rule' }` writes the `---` thematic break a slide deck
+wants, since the `.pptx` and `.ppt` readers mark each slide boundary with one
+and it is the only structure a deck has. Merged cells flatten —
 markdown's table is a plain grid — and a nested table flattens into the cell
 that holds it. Pictures are inlined as `data:` URIs by default; pass
 `{ images: 'link' }` to reference them under `./media/` and write the bytes

@@ -500,6 +500,53 @@ describe('markdown writer — notes, comments and shapes', () => {
   });
 });
 
+describe('markdown writer — page breaks', () => {
+  const broken = (text: string) => p(`<w:pPr><w:pageBreakBefore/></w:pPr>${t(text)}`);
+
+  it('drops a page break and reports it, by default', () => {
+    const { doc } = readDocx(buildDocxFromBody(p(t('one')) + broken('two')));
+    const { bytes, losses } = writeMarkdown(doc);
+    expect(decode(bytes)).toBe('one\n\ntwo\n');
+    expect(losses.some((l) => l.detail.includes('page breaks'))).toBe(true);
+  });
+
+  it('writes a thematic break instead when asked, and stops reporting it', () => {
+    const { doc } = readDocx(buildDocxFromBody(p(t('one')) + broken('two')));
+    const { bytes, losses } = writeMarkdown(doc, { pageBreaks: 'rule' });
+    expect(decode(bytes)).toBe('one\n\n---\n\ntwo\n');
+    expect(losses.some((l) => l.detail.includes('page breaks'))).toBe(false);
+  });
+
+  it('never opens the document with a rule', () => {
+    const { doc } = readDocx(buildDocxFromBody(broken('first')));
+    expect(decode(writeMarkdown(doc, { pageBreaks: 'rule' }).bytes)).toBe('first\n');
+  });
+
+  it('never writes two rules in a row', () => {
+    // The .pptx reader marks a slide boundary with an empty zero-width
+    // paragraph: the rule stands for it, and the paragraph itself is nothing.
+    const { doc } = readDocx(buildDocxFromBody(p(t('one')) + broken('\u200b') + broken('two')));
+    expect(decode(writeMarkdown(doc, { pageBreaks: 'rule' }).bytes)).toBe('one\n\n---\n\ntwo\n');
+  });
+
+  it('writes no rule inside a cell, where three hyphens are three hyphens', () => {
+    const inner = `<w:tc><w:p>${t('a')}</w:p>${broken('b')}</w:tc>`;
+    const table =
+      '<w:tbl><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>' +
+      `<w:tr>${inner}<w:tc><w:p>${t('z')}</w:p></w:tc></w:tr></w:tbl>`;
+    const { doc } = readDocx(buildDocxFromBody(table));
+    expect(decode(writeMarkdown(doc, { pageBreaks: 'rule' }).bytes)).toBe(
+      '| a<br>b | z |\n| --- | --- |\n',
+    );
+  });
+
+  it('reaches the writer through Ream.convert', async () => {
+    const docx = buildDocxFromBody(p(t('one')) + broken('two'));
+    const out = decode(await Ream.parse(docx).convert('md', { pageBreaks: 'rule' }));
+    expect(out).toBe('one\n\n---\n\ntwo\n');
+  });
+});
+
 describe('markdown writer — the md target', () => {
   it('converts through Ream with no fonts and no I/O', async () => {
     const docx = buildDocxFromBody(

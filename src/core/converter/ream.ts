@@ -111,6 +111,12 @@ export interface ReamConvertOptions extends Omit<StyledRenderOptions, 'registry'
    * itself, or dropped. See {@link MarkdownWriteOptions}.
    */
   readonly images?: 'dataUri' | 'link' | 'drop';
+  /**
+   * Markdown only: what a page break becomes — nothing (the default), or the
+   * `---` thematic break a slide deck wants between its slides. See
+   * {@link MarkdownWriteOptions}.
+   */
+  readonly pageBreaks?: 'rule' | 'drop';
 }
 
 /** OOXML / legacy MIME types by reader id, for the PDF/A-3 embedded source file. */
@@ -257,6 +263,7 @@ export class Ream {
       // document's structure and drops its geometry, reporting each omission.
       const markdown = writeMarkdown(flow, {
         ...(options.images ? { images: options.images } : {}),
+        ...(options.pageBreaks ? { pageBreaks: options.pageBreaks } : {}),
       });
       losses.push(...markdown.losses);
       this.enforceStrict(options, losses);

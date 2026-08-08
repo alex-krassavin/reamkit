@@ -74,6 +74,16 @@ const md = await doc.convert('md', { images: 'link' }); // ![](./media/image1.pn
 const bare = await doc.convert('md', { images: 'drop' }); // no pictures at all
 ```
 
+A deck's only structure is where one slide ends and the next begins, and the
+`.pptx` / `.ppt` readers carry that as a page break. Markdown has no pages, so
+by default the break is dropped and reported — ask for the rule and each slide
+gets its own section:
+
+```ts
+const deck = Ream.parse(pptxBytes);
+const md = await deck.convert('md', { pageBreaks: 'rule' }); // --- between slides
+```
+
 ## xlsx → xlsx: re-emit a workbook
 
 `convert('xlsx')` writes a spreadsheet's grid back to a valid `.xlsx`. Unlike the
