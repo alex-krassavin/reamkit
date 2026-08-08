@@ -53,6 +53,14 @@ legacy work 1.23.0 began — including two metafile fixes every format shares.
   (§2.4.15 `RT_HeadersFooters`), and keeps the space §2.9.32 sets around each
   paragraph.
 
+- **A picture shows the part of itself the shape crops to, and drops the colour
+  it is drawn without.** §2.3.23 — `cropFromTop`/`Bottom`/`Left`/`Right` cut the
+  source down before it is fitted, and `pictureTransparent` names a colour that
+  is not part of the drawing at all, which is how clip art older than the alpha
+  channel states its ground. Neither was read: a globe that is a ninth of its
+  own file's width came out as a white square with a speck in it, and a
+  satellite stored on a red field came out as a red block.
+
 - **A cell whose text is turned a quarter is drawn turned**, and a picture is
   clipped to the geometry it names for itself.
 

@@ -172,6 +172,16 @@ export interface PptBoxInput {
   // A client text box holding only an OutlineTextRefAtom at this 0-based index.
   readonly outlineRef?: number;
   readonly imageRef?: number; // a picture shape (1-based pib index)
+  // §2.3.23 cropFrom* — the fraction of each edge of the SOURCE cut away, as a
+  // plain fraction here (the builder writes the 16.16 fixed-point the file uses).
+  readonly crop?: {
+    readonly left?: number;
+    readonly top?: number;
+    readonly right?: number;
+    readonly bottom?: number;
+  };
+  // §2.3.23 pictureTransparent — the colour the picture is drawn WITHOUT.
+  readonly transparentHex?: string;
   readonly shapeType?: number; // an autoshape: the FSP recInstance (MSOSPT)
   readonly fillColorHex?: string; // OPT fillColor (6-hex literal RGB)
   // MS-ODRAW §2.3.7.3 fillBackColor — the far end of a shade, and the colour a
@@ -706,6 +716,15 @@ function buildShapeContainer(box: PptBoxInput): Uint8Array {
   }
   const props: Array<{ id: number; value: number; blob?: Uint8Array }> = [];
   if (box.imageRef !== undefined) props.push({ id: PROP_PIB_ID, value: box.imageRef });
+  if (box.crop) {
+    const fixed = (v: number): number => (Math.round(v * 65536) | 0) >>> 0;
+    if (box.crop.top !== undefined) props.push({ id: 0x0100, value: fixed(box.crop.top) });
+    if (box.crop.bottom !== undefined) props.push({ id: 0x0101, value: fixed(box.crop.bottom) });
+    if (box.crop.left !== undefined) props.push({ id: 0x0102, value: fixed(box.crop.left) });
+    if (box.crop.right !== undefined) props.push({ id: 0x0103, value: fixed(box.crop.right) });
+  }
+  if (box.transparentHex !== undefined)
+    props.push({ id: 0x0107, value: rgbColorRef(box.transparentHex) });
   if (box.fillColorHex) props.push({ id: PROP_FILL_COLOR, value: rgbColorRef(box.fillColorHex) });
   else if (box.fillSchemeIndex !== undefined)
     props.push({ id: PROP_FILL_COLOR, value: schemeColorRef(box.fillSchemeIndex) });

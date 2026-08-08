@@ -16,6 +16,8 @@ import { OpcPackage } from '@/core/opc';
 import { parseDocument } from '@/word';
 import { readDocx } from '@/word/docx-reader';
 import { detectImageFormat, embedImage, prepareImage } from '@/pdf';
+import { knockOutColor } from '@/core/images';
+import { encodePng } from '@/core/png-encode';
 import { PdfDocument } from '@/pdf/writer';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -678,5 +680,40 @@ describe('a washed picture (§14.1.2.10 @gain/@blacklevel)', () => {
   it('leaves a picture that states the neutral wash alone', () => {
     const text = washed('gain="65536f" blacklevel="0f"');
     expect(text).not.toContain('0 0 1 1 re');
+  });
+});
+
+describe('a colour knocked out of a picture', () => {
+  // MS-ODRAW §2.3.23 `pictureTransparent` and DrawingML's `a:clrChange` to
+  // nothing both name a colour a picture is drawn WITHOUT — how clip art of the
+  // pre-alpha age says "this rectangle of ground is not part of the drawing".
+  // A raster carries no alpha to say it, so it is baked into bytes of its own.
+  const rgb = (...px: Array<number>): Uint8Array => Uint8Array.from(px);
+
+  it('clears exactly the pixels that match, and leaves the rest opaque', () => {
+    // Two pixels: one red (the ground), one green (the drawing).
+    const src = encodePng(2, 1, 'rgb', rgb(0xff, 0x00, 0x00, 0x00, 0xff, 0x00));
+    const out = knockOutColor(src, 'FF0000');
+    expect(out).toBeDefined();
+    const prepared = prepareImage(out!);
+    expect(prepared.smaskData).toBeDefined();
+    expect([...unzlibSync(prepared.smaskData!)]).toEqual([0, 255]);
+    // The colours themselves are untouched — only the alpha says anything.
+    expect([...unzlibSync(prepared.data)]).toEqual([0xff, 0x00, 0x00, 0x00, 0xff, 0x00]);
+  });
+
+  it('keeps an alpha the picture already had where the colour does not match', () => {
+    // The left pixel is already half clear; knocking out red must not raise it.
+    const src = encodePng(2, 1, 'rgba', rgb(0x00, 0x00, 0xff, 0x80, 0xff, 0x00, 0x00, 0xff));
+    const prepared = prepareImage(knockOutColor(src, 'FF0000')!);
+    expect([...unzlibSync(prepared.smaskData!)]).toEqual([0x80, 0]);
+  });
+
+  it('says nothing for a picture it cannot compare samples of', () => {
+    // A JPEG is its own codestream — there are no samples here, and a lossy
+    // format has no exact colour to match anyway.
+    const jpeg = Uint8Array.of(0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00);
+    expect(knockOutColor(jpeg, 'FF0000')).toBeUndefined();
+    expect(knockOutColor(Uint8Array.of(1, 2, 3, 4), 'FF0000')).toBeUndefined();
   });
 });

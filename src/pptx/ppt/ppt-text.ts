@@ -90,6 +90,17 @@ const PLACEHOLDER_FOOTER = 9;
 // §2.12.2 SlideSchemeColorSchemeAtom — slot 1 is "text and lines".
 const SCHEME_TEXT_AND_LINES = 1;
 const PROP_PIB = 0x0104; // OPT property (low 14 bits): 1-based index into the FBSE store
+// §2.3.23 — how much of each edge of the SOURCE picture is cut away before it
+// is fitted to the shape, as a 16.16 signed fraction of the source. A negative
+// one extends instead of cutting.
+const PROP_CROP_TOP = 0x0100;
+const PROP_CROP_BOTTOM = 0x0101;
+const PROP_CROP_LEFT = 0x0102;
+const PROP_CROP_RIGHT = 0x0103;
+// §2.3.23 pictureTransparent — the colour knocked OUT of the picture, as a
+// COLORREF. 0xFFFFFFFF is the "none" the default carries.
+const PROP_PICTURE_TRANSPARENT = 0x0107;
+const PICTURE_TRANSPARENT_NONE = 0xffffffff;
 const PROP_FILL_TYPE = 0x0180; // OPT fillType — MSOFILLTYPE (PPT-9)
 const PROP_FILL_COLOR = 0x0181; // OPT fillColor (PPT-5)
 const PROP_FILL_BACK_COLOR = 0x0183; // OPT fillBackColor — the gradient's far end
@@ -202,6 +213,22 @@ export interface PptParagraph {
  */
 export interface PptImage {
   readonly bytes: Uint8Array;
+  /**
+   * §2.3.23 `cropFrom*` — the fraction of each edge of the SOURCE cut away
+   * before it is fitted to the shape's box. Absent ⇒ the whole picture.
+   */
+  readonly crop?: {
+    readonly left: number;
+    readonly top: number;
+    readonly right: number;
+    readonly bottom: number;
+  };
+  /**
+   * §2.3.23 `pictureTransparent` — the colour the picture is drawn WITHOUT,
+   * 6-hex and no leading `#`. Clip art of this age states its ground here
+   * rather than carrying an alpha channel.
+   */
+  readonly transparentHex?: string;
 }
 /** A shape's rectangle on the slide, in points (from the OfficeArtClientAnchor). */
 export interface PptRect {
@@ -887,6 +914,8 @@ function collectShapeContainers(
       let gtext: PptParagraph | undefined;
       let placeholder = false;
       let placeholderId: number | undefined;
+      let pictureCrop: PptImage['crop'];
+      let pictureTransparentHex: string | undefined;
       for (const child of records(r.data)) {
         if (child.type === FBT_FSP) {
           shapeType = child.instance;
@@ -924,6 +953,17 @@ function collectShapeContainers(
           // one of its table cells holds its own 73 KB blip inline.
           inlineFill = optComplex(child.data, child.instance, PROP_FILL_BLIP);
           inlinePic = optComplex(child.data, child.instance, PROP_PIB);
+          // §2.3.23 — what the shape shows OF its picture, and the colour it
+          // shows the picture without. Clip art of this age is a rectangle of
+          // ground with the drawing somewhere inside it: 23884's globe is a
+          // ninth of its own file and its satellite sits on a red field, and
+          // taken whole they came out a white square and a red block.
+          pictureCrop = parsePictureCrop(child.data, child.instance);
+          const transparent = optProperty(child.data, child.instance, PROP_PICTURE_TRANSPARENT);
+          pictureTransparentHex =
+            transparent !== undefined && transparent !== PICTURE_TRANSPARENT_NONE
+              ? optColor(child.data, child.instance, PROP_PICTURE_TRANSPARENT, scheme)
+              : undefined;
         }
       }
       const blip = (index: number | undefined): PptImage | undefined => {
@@ -950,7 +990,16 @@ function collectShapeContainers(
         if (bg && !out.background) out.background = bg;
         continue;
       }
-      const image: PptImage | undefined = blip(pib) ?? inlineBlip(inlinePic);
+      const picture = blip(pib) ?? inlineBlip(inlinePic);
+      const image: PptImage | undefined = picture
+        ? {
+            ...picture,
+            ...(pictureCrop ? { crop: pictureCrop } : {}),
+            ...(pictureTransparentHex !== undefined
+              ? { transparentHex: pictureTransparentHex }
+              : {}),
+          }
+        : undefined;
       const textParas =
         (gtext ??
         (paragraphs?.some((p) => paragraphText(p).length > 0) === true ? paragraphs : undefined))
@@ -1692,6 +1741,33 @@ function stated(d: Uint8Array, count: number, propId: number, flag: number): boo
 
 // §2.3.7.2 OfficeArtFOPT — `count` properties, each a 2-byte id (low 14 bits) + a
 // 4-byte value. Returns the simple (non-complex) value of `wantId`.
+/**
+ * §2.3.23 `cropFrom*` — the four edge crops, as fractions of the source.
+ *
+ * Each is a SIGNED 16.16 fixed-point fraction, so a negative one extends the
+ * picture past its box rather than cutting into it. A crop that leaves nothing
+ * of an axis is not one — 23884's globe keeps a ninth of its width and a
+ * seventh of its height, but zero would divide the fitting by nothing.
+ *
+ * @param d     The OPT record's body.
+ * @param count The number of fixed entries it declares.
+ * @returns The four fractions, or `undefined` when the shape states no crop.
+ */
+function parsePictureCrop(d: Uint8Array, count: number): PptImage['crop'] {
+  const frac = (id: number): number => {
+    const raw = optProperty(d, count, id);
+    return raw === undefined ? 0 : (raw | 0) / 65536;
+  };
+  const crop = {
+    left: frac(PROP_CROP_LEFT),
+    top: frac(PROP_CROP_TOP),
+    right: frac(PROP_CROP_RIGHT),
+    bottom: frac(PROP_CROP_BOTTOM),
+  };
+  if (crop.left === 0 && crop.top === 0 && crop.right === 0 && crop.bottom === 0) return undefined;
+  return 1 - crop.left - crop.right > 0 && 1 - crop.top - crop.bottom > 0 ? crop : undefined;
+}
+
 function optProperty(d: Uint8Array, count: number, wantId: number): number | undefined {
   for (let i = 0; i < count && i * 6 + 6 <= d.length; i++) {
     const id = u16(d, i * 6);

@@ -48,6 +48,7 @@ import type {
 } from '@/pptx/ppt/ppt-text';
 
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
+import { knockOutColor } from '@/core/images';
 import { isCfb, openCfb } from '@/core/ole/cfb';
 import { isEmf } from '@/core/metafile/emf';
 import { isWmf } from '@/core/metafile/wmf';
@@ -336,9 +337,10 @@ function positionedImage(
   if (!isMetafile(image.bytes) && !imagePixelSize(image.bytes)) return undefined;
   const block: ImageBlock = {
     float: floatAt(rect),
-    resource: resources.put(image.bytes),
+    resource: resources.put(drawnBytes(image)),
     width: pt(rect.w),
     height: pt(rect.h),
+    ...(image.crop ? { crop: image.crop } : {}),
     paragraphProperties: {},
   };
   return { kind: 'image', image: block };
@@ -486,12 +488,30 @@ function inFlowImage(image: PptImage, resources: ResourceStore): BodyElement | u
   const size = imagePixelSize(image.bytes);
   if (!size) return undefined;
   const block: ImageBlock = {
-    resource: resources.put(image.bytes),
+    resource: resources.put(drawnBytes(image)),
     width: pt(size.w * 0.75),
     height: pt(size.h * 0.75),
+    ...(image.crop ? { crop: image.crop } : {}),
     paragraphProperties: {},
   };
   return { kind: 'image', image: block };
+}
+
+/**
+ * The bytes a picture is actually DRAWN from.
+ *
+ * §2.3.23 `pictureTransparent` names a colour the picture is drawn without, and
+ * a raster carries no alpha channel to say so — so the knock-out is baked into
+ * bytes of its own. The resource store hashes content, so two shapes knocking
+ * different colours out of the same blip stay two resources by themselves, and
+ * one that knocks out nothing keeps the bytes it arrived with.
+ *
+ * @param image The picture as the shape states it.
+ * @returns The bytes to store, knocked out where the shape asks for it.
+ */
+function drawnBytes(image: PptImage): Uint8Array {
+  if (image.transparentHex === undefined || isMetafile(image.bytes)) return image.bytes;
+  return knockOutColor(image.bytes, image.transparentHex) ?? image.bytes;
 }
 
 // Whether the bytes are a metafile the layout can replay (MS-EMF / MS-WMF).

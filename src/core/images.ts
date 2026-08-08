@@ -16,6 +16,7 @@
 import { unzlibSync, zlibSync } from 'fflate';
 
 import { decodeBmp, isBmp } from '@/core/bmp';
+import { encodePng } from '@/core/png-encode';
 import { decodeTiff, isTiff } from '@/core/tiff';
 
 /** The raster formats this module recognizes and can prepare for embedding. */
@@ -89,6 +90,56 @@ export function detectImageFormat(bytes: Uint8Array): ImageFormat | null {
   // and every format above states a longer one.
   if (isBmp(bytes)) return 'bmp';
   return null;
+}
+
+/**
+ * The same picture with one colour knocked out of it, as a PNG.
+ *
+ * A picture may name a colour it is drawn WITHOUT — MS-ODRAW's
+ * `pictureTransparent`, DrawingML's `a:clrChange` to nothing — which is how
+ * clip art of the pre-alpha age says "this rectangle of ground is not part of
+ * the drawing". It is a property of the USE, not of the file, so it is baked
+ * here into bytes of its own: two shapes may knock different colours out of the
+ * same blip, and a resource store that hashes content then keeps them apart by
+ * itself.
+ *
+ * 23884's satellite sits on a red field and its globe on a white one; drawn as
+ * stored, they are a red block and a white square on a blue slide.
+ *
+ * @param bytes The picture, in any format {@link prepareImage} reads.
+ * @param hex   The colour to knock out, 6-hex and no leading `#`.
+ * @returns A PNG with that colour transparent, or `undefined` when the picture
+ *   cannot be decoded to samples this can work on.
+ */
+export function knockOutColor(bytes: Uint8Array, hex: string): Uint8Array | undefined {
+  let prepared: PreparedImage;
+  try {
+    prepared = prepareImage(bytes);
+  } catch {
+    return undefined;
+  }
+  // JPEG and JPEG 2000 pass through as their own codestreams — there are no
+  // samples here to compare, and a lossy format has no exact colour to match.
+  if (prepared.filter !== 'FlateDecode' || prepared.bitsPerComponent !== 8) return undefined;
+  const key = [0, 2, 4].map((i) => Number.parseInt(hex.slice(i, i + 2), 16));
+  if (key.some((c) => !Number.isFinite(c))) return undefined;
+  const gray = prepared.colorSpace === 'DeviceGray';
+  const src = unzlibSync(prepared.data);
+  const existing = prepared.smaskData ? unzlibSync(prepared.smaskData) : undefined;
+  const { widthPx: w, heightPx: h } = prepared;
+  const channels = gray ? 1 : 3;
+  if (src.length < w * h * channels) return undefined;
+  const out = new Uint8Array(w * h * 4);
+  for (let i = 0; i < w * h; i++) {
+    const r = gray ? src[i]! : src[i * 3]!;
+    const g = gray ? src[i]! : src[i * 3 + 1]!;
+    const b = gray ? src[i]! : src[i * 3 + 2]!;
+    out[i * 4] = r;
+    out[i * 4 + 1] = g;
+    out[i * 4 + 2] = b;
+    out[i * 4 + 3] = r === key[0] && g === key[1] && b === key[2] ? 0 : (existing?.[i] ?? 255);
+  }
+  return encodePng(w, h, 'rgba', out);
 }
 
 /** Options controlling how {@link prepareImage} emits an image. */

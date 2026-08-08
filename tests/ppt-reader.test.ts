@@ -18,6 +18,7 @@ import type { PptRun } from '@/pptx/ppt/ppt-text';
 import { extractPptContent, paragraphText } from '@/pptx/ppt/ppt-text';
 import { pptReader, readPpt } from '@/pptx/ppt/ppt-reader';
 import { prepareImage } from '@/core/images';
+import { encodePng } from '@/core/png-encode';
 import { Ream } from '@/core/converter/ream';
 import { createConverter } from '@/core/converter/facade';
 import { pt } from '@/core/ir/units';
@@ -318,6 +319,88 @@ describe('ppt reader images (PPT-3)', () => {
     // The bytes round-trip through the ResourceStore.
     const stored = doc.resources.get(imgs[0]!.image.resource!);
     expect(stored && stored[0]).toBe(0x89); // PNG signature
+  });
+
+  it('shows only the part of a picture the shape crops to', () => {
+    // §2.3.23 cropFrom* — 16.16 fractions of the SOURCE cut off each edge.
+    // 23884's globe is a ninth of its own file's width and a seventh of its
+    // height, the rest white ground; drawn whole it was a white square with a
+    // speck in the middle of it.
+    const doc = readPpt(
+      buildPpt(
+        [
+          {
+            boxes: [
+              {
+                anchor: { x: 10, y: 10, w: 100, h: 80 },
+                imageRef: 1,
+                crop: { left: 0.25, top: 0.125, right: 0.5, bottom: 0.0625 },
+              },
+            ],
+          },
+        ],
+        { images: [PNG_1x1] },
+      ),
+    ).doc;
+    expect(imageBlocks(doc)[0]!.image.crop).toEqual({
+      left: 0.25,
+      top: 0.125,
+      right: 0.5,
+      bottom: 0.0625,
+    });
+  });
+
+  it('leaves a crop that states nothing, or keeps nothing, off the picture', () => {
+    const box = (crop?: { left?: number; right?: number }): Uint8Array =>
+      buildPpt(
+        [
+          {
+            boxes: [
+              { anchor: { x: 10, y: 10, w: 100, h: 80 }, imageRef: 1, ...(crop ? { crop } : {}) },
+            ],
+          },
+        ],
+        { images: [PNG_1x1] },
+      );
+    const none = readPpt(box()).doc;
+    expect(imageBlocks(none)[0]!.image.crop).toBeUndefined();
+    // Left and right together take the whole width: there is no picture left to
+    // fit, and the fitting would divide by nothing.
+    const all = readPpt(box({ left: 0.5, right: 0.5 })).doc;
+    expect(imageBlocks(all)[0]!.image.crop).toBeUndefined();
+  });
+
+  it('draws a picture without the colour it names as transparent', () => {
+    // §2.3.23 pictureTransparent — clip art of this age states its ground as a
+    // colour rather than carrying an alpha channel. 23884's satellite sits on a
+    // red field and its globe on a white one.
+    const RED_1x1 = encodePng(1, 1, 'rgb', Uint8Array.of(0xff, 0x00, 0x00));
+    const deck = (transparentHex?: string): Uint8Array =>
+      buildPpt(
+        [
+          {
+            boxes: [
+              {
+                anchor: { x: 10, y: 10, w: 100, h: 80 },
+                imageRef: 1,
+                ...(transparentHex !== undefined ? { transparentHex } : {}),
+              },
+            ],
+          },
+        ],
+        { images: [RED_1x1] },
+      );
+    const plain = readPpt(deck()).doc;
+    const keyed = readPpt(deck('FF0000')).doc;
+    const bytesOf = (d: typeof plain): Uint8Array =>
+      d.resources.get(imageBlocks(d)[0]!.image.resource!)!;
+    // The knocked-out copy is its own resource, and its one pixel is clear.
+    expect(bytesOf(keyed)).not.toEqual(bytesOf(plain));
+    const out = prepareImage(bytesOf(keyed));
+    expect(out.smaskData).toBeDefined();
+    expect([...unzlibSync(out.smaskData!)]).toEqual([0]);
+    // A picture that names no transparent colour is stored as it arrived.
+    expect(bytesOf(plain)).toEqual(RED_1x1);
   });
 
   it('emits a slide image after the slide text', () => {
