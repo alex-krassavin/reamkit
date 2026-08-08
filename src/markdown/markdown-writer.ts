@@ -712,19 +712,55 @@ function pictureMarkdown(
  * is reported once.
  */
 function emitTable(out: Array<string>, table: Table, ctx: EmitCtx): void {
-  const cols = columnCount(table);
-  if (cols === 0 || table.rows.length === 0) return;
+  const width = columnCount(table);
+  if (width === 0 || table.rows.length === 0) return;
 
-  const rows = table.rows.map((row) => rowCells(row, cols, ctx));
+  const grid = table.rows.map((row) => rowCells(row, width, ctx));
+  const keep = usedRange(grid);
+  if (!keep) return; // every cell of it is blank: there is no table to draw
+  const rows = grid
+    .slice(keep.top, keep.bottom + 1)
+    .map((row) => row.slice(keep.left, keep.right + 1));
+
   const header = rows[0]!;
-  if (table.rows[0]!.properties.isHeader !== true) {
+  if (table.rows[keep.top]!.properties.isHeader !== true) {
     lose(ctx, 'degraded', FEATURES.tables, 'first row promoted to the header GFM tables require');
   }
 
   const line = (cells: ReadonlyArray<string>): string => `| ${cells.join(' | ')} |`;
-  const lines = [line(header), line(delimiters(table, cols))];
+  const bars = delimiters(table, width).slice(keep.left, keep.right + 1);
+  const lines = [line(header), line(bars)];
   for (const row of rows.slice(1)) lines.push(line(row));
   out.push(lines.join('\n'));
+}
+
+/**
+ * The rows and columns worth drawing: the blank ones at the EDGES go.
+ *
+ * A print region carries its whole used range, blank leading rows and trailing
+ * columns and all, because a page draws their borders and their fill. Markdown
+ * draws neither, so an edge of empty cells is a column of nothing — and a blank
+ * first row is worse than nothing, since §4.10 makes it the header. The blank
+ * rows INSIDE stay: those separate one group of data from the next, which is
+ * the one thing an empty row can still say here.
+ */
+function usedRange(
+  grid: ReadonlyArray<ReadonlyArray<string>>,
+): { top: number; bottom: number; left: number; right: number } | undefined {
+  const filled = (r: number, c: number): boolean => (grid[r]?.[c] ?? '').trim().length > 0;
+  const width = grid[0]?.length ?? 0;
+  let top = 0;
+  let bottom = grid.length - 1;
+  let left = 0;
+  let right = width - 1;
+  const rowFilled = (r: number): boolean => grid[r]!.some((_, c) => filled(r, c));
+  const colFilled = (c: number): boolean => grid.some((_, r) => filled(r, c));
+  while (top <= bottom && !rowFilled(top)) top++;
+  if (top > bottom) return undefined;
+  while (bottom > top && !rowFilled(bottom)) bottom--;
+  while (left <= right && !colFilled(left)) left++;
+  while (right > left && !colFilled(right)) right--;
+  return { top, bottom, left, right };
 }
 
 /** The widest row wins: a `w:gridSpan` may reach past the declared `w:tblGrid`. */

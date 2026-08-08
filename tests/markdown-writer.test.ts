@@ -311,6 +311,26 @@ describe('markdown writer — tables', () => {
     expect(out).toBe('| mid | end |\n| :---: | ---: |\n');
   });
 
+  it('drops the blank rows and columns at a table’s edges', () => {
+    // A print region carries its whole used range; a blank first row would
+    // become the header, and a blank last column a column of nothing.
+    const rows =
+      `<w:tr>${cell('')}${cell('')}${cell('')}</w:tr>` +
+      `<w:tr>${cell('')}${cell('Name')}${cell('')}</w:tr>` +
+      `<w:tr>${cell('')}${cell('Bob')}${cell('')}</w:tr>`;
+    expect(md(tbl(rows, 3))).toBe('| Name |\n| --- |\n| Bob |\n');
+  });
+
+  it('keeps a blank row inside — it separates one group from the next', () => {
+    const rows =
+      `<w:tr>${cell('a')}</w:tr>` + `<w:tr>${cell('')}</w:tr>` + `<w:tr>${cell('b')}</w:tr>`;
+    expect(md(tbl(rows, 1))).toBe('| a |\n| --- |\n|  |\n| b |\n');
+  });
+
+  it('draws no table at all when every cell of it is blank', () => {
+    expect(md(tbl(`<w:tr>${cell('')}${cell('')}</w:tr>`))).toBe('');
+  });
+
   it('flattens spans and vertical merges into the plain grid markdown has', () => {
     const rows =
       `<w:tr>${cell('A', '<w:gridSpan w:val="2"/>')}${cell('B', '<w:vMerge w:val="restart"/>')}</w:tr>` +
