@@ -988,6 +988,16 @@ function tableXml(table: Table, losses: Array<Loss>, state: WriteState, scope: P
   return `<w:tbl>${tblPrXml(table.properties)}<w:tblGrid>${grid}</w:tblGrid>${rows}</w:tbl>`;
 }
 
+/**
+ * §17.4.60 — `w:tblPr`. CT_Tbl declares it `minOccurs="1"`: a table states its
+ * properties even when it has none to state, and Word refuses to open a file
+ * whose `w:tbl` opens straight into its grid. Nothing else in the wild writes
+ * one without it — 5432 tables across the LibreOffice, Word and POI corpora,
+ * every one of them with a `w:tblPr` — and it went unnoticed here because a
+ * table read from a real document always carries SOMETHING (a width, a border,
+ * an alignment). One reconstructed from a PDF's glyph positions carries none of
+ * it, so `Ream.parse(pdf).convert('docx')` wrote a document Word turned away.
+ */
 function tblPrXml(p: TableProperties): string {
   const out: Array<string> = [];
   if (p.widthType !== undefined) {
@@ -1004,7 +1014,7 @@ function tblPrXml(p: TableProperties): string {
   if (borders) out.push(borders);
   const margins = cellMarginsXml('w:tblCellMar', p.defaultCellMargins);
   if (margins) out.push(margins);
-  return out.length > 0 ? `<w:tblPr>${out.join('')}</w:tblPr>` : '';
+  return `<w:tblPr>${out.join('')}</w:tblPr>`;
 }
 
 function rowXml(row: TableRow, losses: Array<Loss>, state: WriteState, scope: PartScope): string {

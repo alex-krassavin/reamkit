@@ -179,6 +179,21 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     );
   });
 
+  it('states a table’s properties even when it has none — Word requires them', () => {
+    // §17.4 CT_Tbl declares w:tblPr minOccurs="1". A table read from a real
+    // document always carries SOMETHING, so this went unseen until one was
+    // reconstructed from a PDF's glyph positions and carried nothing at all:
+    // Word turned the file away, and nothing in the report said why.
+    const bare =
+      '<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>' +
+      '<w:tr><w:tc><w:p><w:r><w:t>only text</w:t></w:r></w:p></w:tc></w:tr></w:tbl>';
+    const { doc } = readDocx(buildDocxFromBody(bare));
+    const xml = decode(OpcPackage.open(writeDocx(doc).bytes).getPart('word/document.xml')!);
+    expect(xml).toContain('<w:tbl><w:tblPr>');
+    // Every table in the output, without exception.
+    expect(/<w:tbl>(?!<w:tblPr>)/.test(xml)).toBe(false);
+  });
+
   it('round-trips a table: grid, borders, shading, header row', () => {
     const body =
       '<w:tbl><w:tblPr>' +
