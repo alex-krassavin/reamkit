@@ -35,7 +35,7 @@ import {
 } from 'node:fs';
 import { basename, resolve } from 'node:path';
 
-import { colorDiff, parsePpm, rasterize, referenceToPdf, visualDiff } from './lib';
+import { colorDiff, parseOptions, parsePpm, rasterize, referenceToPdf, visualDiff } from './lib';
 import { corpusFontOptions } from './fonts';
 import { Ream } from '@/core/converter/ream';
 
@@ -138,7 +138,7 @@ async function main(): Promise<void> {
         oursPdf,
         // LibreOffice heads a page with the file's NAME when the sheet asks for
         // `&F`; a byte-oriented API has to be told it.
-        await Ream.parse(new Uint8Array(readFileSync(src))).convert('pdf', {
+        await Ream.parse(new Uint8Array(readFileSync(src)), parseOptions(src)).convert('pdf', {
           fileName: basename(src),
           ...FONT_OPTIONS,
           ...(LAYOUT_PROFILE !== undefined ? { layoutProfile: LAYOUT_PROFILE } : {}),

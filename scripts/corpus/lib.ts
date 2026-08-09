@@ -520,3 +520,20 @@ export function listCorpus(dir: string): Array<string> {
     .sort()
     .map((f) => resolve(dir, f));
 }
+
+/**
+ * How the corpus tools read a source before re-rendering it.
+ *
+ * The measurement is a PAGE against a page: our render beside the reference's,
+ * pixel for pixel. So a PDF is read as the page it is — every line where its
+ * glyphs stand, beside the rules and fills the page paints — and not as the
+ * re-flowable document the default reading recovers for a docx or a markdown
+ * conversion. Reading a form as prose and then measuring the picture asked the
+ * scores to answer for a difference nobody was trying to remove.
+ *
+ * @param input Path to the source file.
+ * @returns The parse options for it (empty for everything that is not a PDF).
+ */
+export function parseOptions(input: string): { pdfLayout?: 'flow' | 'positional' } {
+  return /\.pdf$/i.test(input) ? { pdfLayout: 'positional' } : {};
+}

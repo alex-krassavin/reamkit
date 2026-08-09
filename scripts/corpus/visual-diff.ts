@@ -21,7 +21,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { fileURLToPath } from 'node:url';
 import { basename, dirname, resolve } from 'node:path';
 
-import { referenceToPdf } from './lib';
+import { parseOptions, referenceToPdf } from './lib';
 import { corpusFontOptions } from './fonts';
 import { Ream } from '@/core/converter/ream';
 
@@ -125,7 +125,7 @@ async function main(): Promise<void> {
   const ourPdf = resolve(workDir, 'ours.pdf');
   writeFileSync(
     ourPdf,
-    await Ream.parse(new Uint8Array(readFileSync(input))).convert('pdf', {
+    await Ream.parse(new Uint8Array(readFileSync(input)), parseOptions(input)).convert('pdf', {
       // The document's own families (see ./fonts). CJK included: the library
       // fetches a face per SCRIPT now, which is also what pixel-scout measures —
       // a host face substituted here instead showed a Japanese sheet in a Korean
