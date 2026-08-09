@@ -28,7 +28,7 @@ import type { Loss } from '@/core/ir';
 import type { TextRun } from './content';
 import type { PdfFile, PdfPage } from './document';
 import type { Reconstruction, TextSpan } from './flow-build';
-import { ResourceStore } from '@/core/ir';
+import { ResourceStore, pt } from '@/core/ir';
 
 interface Line {
   readonly y: number; // baseline (page space, y-up)
@@ -184,6 +184,19 @@ export function reconstructByLayout(
       blocks.push({ col: mark.col, top: mark.top, el: mark.make(z) });
     });
     blocks.sort((a, b) => a.col - b.col || b.top - a.top);
+    // Each source page after the first opens an output page of its own. Flowed,
+    // the layout repaginates and this hardly shows; PLACED, every mark is
+    // anchored to "the page", so without it all twenty-five pages of
+    // Brotli-Prototype-FileA.pdf stack onto one.
+    if (i > 0 && blocks.length > 0) {
+      body.push({
+        kind: 'paragraph',
+        paragraph: {
+          properties: { pageBreakBefore: true, spacingLine: pt(0), spacingLineRule: 'exact' },
+          runs: [],
+        },
+      });
+    }
     for (const block of blocks) body.push(block.el);
   });
   return {

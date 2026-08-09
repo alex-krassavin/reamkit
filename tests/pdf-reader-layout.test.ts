@@ -56,6 +56,26 @@ describe('a heuristic line keeps how it looked (E-PDF EP4)', () => {
   });
 });
 
+describe('a multi-page PDF keeps its pages (E-PDF EP4)', () => {
+  it('opens an output page for each source page after the first', async () => {
+    // Flowed, the layout repaginates and this hardly shows. PLACED, every mark
+    // is anchored to "the page", so without a break all twenty-five pages of
+    // Brotli-Prototype-FileA.pdf stacked onto one.
+    const docx = buildDocxFromBody(
+      '<w:p><w:r><w:t>PageOne</w:t></w:r></w:p>' +
+        '<w:p><w:pPr><w:pageBreakBefore/></w:pPr><w:r><w:t>PageTwo</w:t></w:r></w:p>',
+    );
+    const pdf = await Ream.parse(docx).convert('pdf', { fonts: FONTS });
+    const file = PdfFile.parse(pdf);
+    expect(file.pages().length).toBe(2);
+    const placed = reconstructByLayout(file, 'positional').doc;
+    const breaks = placed.body.filter(
+      (b) => b.kind === 'paragraph' && b.paragraph.properties.pageBreakBefore === true,
+    );
+    expect(breaks).toHaveLength(file.pages().length - 1);
+  });
+});
+
 describe('placed reconstruction (E-PDF EP4)', () => {
   it('anchors every line where its glyphs stand, instead of flowing them', async () => {
     // A form is a grid of ruled boxes with a label in each: flowed, the labels
