@@ -270,7 +270,18 @@ function lineSpans(runs: ReadonlyArray<TextRun>, fontSize: number): Array<TextSp
   let prevEnd: number | undefined;
   for (const run of runs) {
     if (prevEnd !== undefined && run.x - prevEnd > fontSize * 0.25) spans.push({ text: ' ' });
-    spans.push(run.href !== undefined ? { text: run.text, href: run.href } : { text: run.text });
+    // §9.3.1/§8.6.8 — the size and colour the page showed the glyphs at. The
+    // tagged path has carried these since it learned to; this one never did, so
+    // every line it read came back at the 11pt default in black. Placed, that
+    // is not a wrong shade but a wrong SHAPE: 160F-2019.pdf's footnotes are set
+    // in 7pt nine and a half apart, and drawn at eleven they climbed over each
+    // other.
+    spans.push({
+      text: run.text,
+      sizePt: run.fontSizePt,
+      ...(run.colorHex !== '000000' ? { colorHex: run.colorHex } : {}),
+      ...(run.href !== undefined ? { href: run.href } : {}),
+    });
     prevEnd = run.x + run.text.length * (run.fontSizePt || fontSize) * 0.5;
   }
   return spans;

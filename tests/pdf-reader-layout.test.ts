@@ -35,6 +35,27 @@ const paragraphs = (flow: { body: ReadonlyArray<{ kind: string }> }) =>
     } => b.kind === 'paragraph',
   );
 
+describe('a heuristic line keeps how it looked (E-PDF EP4)', () => {
+  it('carries each run’s size and colour, not just its letters', async () => {
+    // The tagged path has carried these since it learned to; this one never
+    // did, so every line came back at the 11pt default in black. Placed, that
+    // is not a wrong shade but a wrong SHAPE: 160F-2019.pdf's footnotes are set
+    // in 7pt nine and a half apart, and drawn at eleven they climbed over each
+    // other.
+    const docx = buildDocxFromBody(
+      '<w:p><w:r><w:rPr><w:sz w:val="14"/><w:color w:val="FF0000"/></w:rPr>' +
+        '<w:t>SmallRedText</w:t></w:r></w:p>',
+    );
+    const pdf = await Ream.parse(docx).convert('pdf', { fonts: FONTS });
+    const flow = reconstructByLayout(PdfFile.parse(pdf)).doc;
+    const runs = flow.body.flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs : []));
+    const small = runs.find((r) => r.text.includes('SmallRed'));
+    expect(small).toBeDefined();
+    expect(small!.properties.fontSizePt).toBeCloseTo(7, 0);
+    expect(small!.properties.colorHex).toBe('FF0000');
+  });
+});
+
 describe('placed reconstruction (E-PDF EP4)', () => {
   it('anchors every line where its glyphs stand, instead of flowing them', async () => {
     // A form is a grid of ruled boxes with a label in each: flowed, the labels

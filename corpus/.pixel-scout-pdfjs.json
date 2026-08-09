@@ -15,18 +15,8 @@
   "aligned": true
  },
  {
-  "name": "IdentityToUnicodeMap_charCodeOf.pdf",
-  "score": 0.0242,
-  "aligned": true
- },
- {
   "name": "160F-2019.pdf",
   "score": 0.0197,
-  "aligned": true
- },
- {
-  "name": "ArabicCIDTrueType.pdf",
-  "score": 0.0166,
   "aligned": true
  },
  {
@@ -40,13 +30,23 @@
   "aligned": true
  },
  {
+  "name": "IdentityToUnicodeMap_charCodeOf.pdf",
+  "score": 0.0111,
+  "aligned": true
+ },
+ {
+  "name": "ArabicCIDTrueType.pdf",
+  "score": 0.0027,
+  "aligned": true
+ },
+ {
   "name": "90ms_rksj_h_sample.pdf",
-  "score": 0.0009,
+  "score": 0.0006,
   "aligned": true
  },
  {
   "name": "Embedded_font.pdf",
-  "score": 0.0005,
+  "score": 0.0002,
   "aligned": true
  }
 ]
