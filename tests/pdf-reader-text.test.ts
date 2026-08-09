@@ -10,6 +10,7 @@ import { Ream } from '@/core/converter/ream';
 import { parseToUnicodeCMap } from '@/pdf-reader/cmap';
 import { PdfFile } from '@/pdf-reader/document';
 import { extractPageText } from '@/pdf-reader/text';
+import { parseTtf } from '@/core/font/ttf-parser';
 
 const FONTS = {
   regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
@@ -165,6 +166,81 @@ describe('the face a run was shown in (§9.8.1)', () => {
     expect(styleOf('Helvetica')).toEqual({ bold: undefined, italic: undefined });
     // The subset prefix is six arbitrary capitals and may spell anything.
     expect(styleOf('BOLDLY+Helvetica').bold).toBeUndefined();
+  });
+});
+
+/**
+ * A composite `Identity-H` font with NO `/ToUnicode`, embedding a real
+ * TrueType: the codes are glyph indices, and the only place their Unicode is
+ * written down is the font program's own `cmap`.
+ */
+function identityHNoToUnicodePdf(word: string): Uint8Array {
+  const face = new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf'));
+  const gidOf = parseTtf(face).glyphForCodepoint;
+  const codes = [...word].map((c) => gidOf(c.codePointAt(0)!));
+  const hex = codes.map((g) => g.toString(16).padStart(4, '0')).join('');
+  const content = `BT /F1 12 Tf 20 100 Td <${hex}> Tj ET`;
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] ' +
+      '/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /Type0 /BaseFont /Roboto /Encoding /Identity-H ' +
+      '/DescendantFonts [6 0 R] >>',
+    '<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Roboto /DW 500 ' +
+      '/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> ' +
+      '/FontDescriptor 7 0 R >>',
+    `<< /Type /FontDescriptor /FontName /Roboto /Flags 4 /FontFile2 8 0 R >>`,
+    `<< /Length ${String(face.length)} /Length1 ${String(face.length)} >>`,
+  ];
+  const parts: Array<Uint8Array> = [];
+  const push = (s: string): void => void parts.push(new TextEncoder().encode(s));
+  let at = 0;
+  const offsets: Array<number> = [];
+  const add = (s: string): void => {
+    offsets.push(at);
+    push(s);
+    at += s.length;
+  };
+  push('%PDF-1.7\n');
+  at = 9;
+  objects.forEach((body, i) => {
+    if (i === 7) {
+      offsets.push(at);
+      const head = `8 0 obj\n${body}\nstream\n`;
+      push(head);
+      parts.push(face);
+      const tail = '\nendstream\nendobj\n';
+      push(tail);
+      at += head.length + face.length + tail.length;
+      return;
+    }
+    add(`${String(i + 1)} 0 obj\n${body}\nendobj\n`);
+  });
+  const xref = at;
+  let trailer = `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) trailer += `${String(off).padStart(10, '0')} 00000 n \n`;
+  trailer += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  push(trailer);
+  const total = parts.reduce((n, p) => n + p.length, 0);
+  const out = new Uint8Array(total);
+  let cursor = 0;
+  for (const p of parts) {
+    out.set(p, cursor);
+    cursor += p.length;
+  }
+  return out;
+}
+
+describe('a composite font with no /ToUnicode (§9.10.2)', () => {
+  it('reads its glyphs’ Unicode out of the font program it embeds', () => {
+    // Brotli-Prototype-FileA.pdf sets a floor plan's room names in an
+    // Identity-H font that ships no /ToUnicode. Decoded to nothing, every run
+    // in it was dropped where it stood: "LIVING ROOM" never reached the page.
+    const file = PdfFile.parse(identityHNoToUnicodePdf('LIVING'));
+    const runs = extractPageText(file, file.pages()[0]!);
+    expect(runs.map((r) => r.text).join('')).toBe('LIVING');
   });
 });
 

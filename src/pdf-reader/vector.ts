@@ -139,10 +139,18 @@ export interface PdfVector {
 }
 
 const NO_FONTS: ReadonlyMap<string, ContentFont> = new Map();
-const MIN_SIDE = 2; // pt — skip thin filled rules
-const MIN_AREA = 16; // pt² — skip dots / hairlines
+// What counts as a mark rather than a speck.
+//
+// These were set to drop dots and hairlines, and they dropped LETTERS: a
+// program that draws its lettering as outlines writes an `I` at six points as a
+// mark 0.8pt wide and 4pt tall, which was under every one of the old bounds
+// (2pt, 16pt², 6pt). Brotli-Prototype-FileA.pdf labels its floor plans that way
+// and they came back reading "V G ROOM" and "D N NG" — the wide letters kept,
+// the narrow ones thrown out as clutter.
+const MIN_SIDE = 0.5; // pt — thinner than a hairline rule
+const MIN_AREA = 2; // pt² — smaller than the smallest letter
 const MIN_STROKE_LEN = 6; // pt — skip stroke specks (tick marks, dots)
-const MIN_RULE_LEN = 6; // pt — a filled rule shorter than this is a speck
+const MIN_RULE_LEN = 2; // pt — a filled rule shorter than this is a speck
 const MAX_VECTORS = 2000; // per-page DoS guard
 const MAX_FORM_DEPTH = 12;
 

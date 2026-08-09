@@ -7,6 +7,7 @@ import type { PdfDict, PdfValue } from '@/pdf/objects';
 import type { ContentFont } from './content';
 import type { PdfFile } from './document';
 import { PDF_NULL, PdfName, PdfStream } from '@/pdf/objects';
+import { parseTtf } from '@/core/font/ttf-parser';
 
 /**
  * Build a {@link ContentFont} (the interpreter's decode + advance hooks) from a
@@ -38,6 +39,14 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
     if (isType0) codeBytes = parsed.codeBytes;
   }
 
+  // §9.10.2 — a composite font that ships no `/ToUnicode` still says what its
+  // glyphs are, in the font program it embeds. Read as nothing, every run in it
+  // decoded to the empty string and was dropped where it stood:
+  // Brotli-Prototype-FileA.pdf sets a floor plan's room names in one, and
+  // "LIVING ROOM" and "DINING" never reached the page at all.
+  const fromProgram = isType0 && toUnicode.size === 0 ? embeddedCmap(file, fontDict) : undefined;
+  const unicode = fromProgram ?? toUnicode;
+
   const width = isType0 ? cidWidths(file, fontDict) : simpleWidths(file, fontDict);
   const bytesPerCode = codeBytes;
   const style = faceStyle(file, fontDict, isType0);
@@ -48,11 +57,75 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
     // its Latin-1 character, a composite font's to nothing (no sensible guess).
     decode: (codes) =>
       codes
-        .map((c) => toUnicode.get(c) ?? (bytesPerCode === 1 ? String.fromCharCode(c) : ''))
+        .map((c) => unicode.get(c) ?? (bytesPerCode === 1 ? String.fromCharCode(c) : ''))
         .join(''),
     width,
     ...style,
   };
+}
+
+/** The last Unicode code point in the BMP, and the surrogate block inside it. */
+const BMP_END = 0xffff;
+const SURROGATE_FIRST = 0xd800;
+const SURROGATE_LAST = 0xdfff;
+
+/**
+ * §9.10.2 — code → Unicode read out of an embedded TrueType program's `cmap`,
+ * for a composite font that states no `/ToUnicode`.
+ *
+ * A `cmap` maps the other way, code point → glyph, so it is walked once and
+ * turned round. With `Identity-H` and no `/CIDToGIDMap` a code IS a glyph
+ * index, which is the case this exists for; a `/CIDToGIDMap` stream is read
+ * where one is present.
+ *
+ * Only TrueType (`/FontFile2`) is read. A CFF program (`/FontFile3`) carries
+ * its own charset and is a separate reading; a font with neither says nothing
+ * about its glyphs and nothing is invented.
+ */
+function embeddedCmap(file: PdfFile, fontDict: PdfDict): Map<number, string> | undefined {
+  const cidFont = descendantFont(file, fontDict);
+  const descriptor = file.resolve(cidFont.get('FontDescriptor') ?? PDF_NULL);
+  if (!(descriptor instanceof Map)) return undefined;
+  const program = file.resolve(descriptor.get('FontFile2') ?? PDF_NULL);
+  if (!(program instanceof PdfStream)) return undefined;
+  let glyphOf: (cp: number) => number;
+  try {
+    glyphOf = parseTtf(file.streamData(program)).glyphForCodepoint;
+  } catch {
+    return undefined; // A font program we cannot read says nothing we can use.
+  }
+  const byGlyph = new Map<number, string>();
+  for (let cp = 0x20; cp <= BMP_END; cp++) {
+    if (cp >= SURROGATE_FIRST && cp <= SURROGATE_LAST) continue;
+    let gid = 0;
+    try {
+      gid = glyphOf(cp);
+    } catch {
+      continue;
+    }
+    // The first code point to reach a glyph wins: a face maps several onto one
+    // (a non-breaking space onto the space), and the first is the plainer.
+    if (gid > 0 && !byGlyph.has(gid)) byGlyph.set(gid, String.fromCodePoint(cp));
+  }
+  if (byGlyph.size === 0) return undefined;
+  const cidToGid = readCidToGid(file, cidFont);
+  if (!cidToGid) return byGlyph;
+  const out = new Map<number, string>();
+  cidToGid.forEach((gid, cid) => {
+    const text = byGlyph.get(gid);
+    if (text !== undefined) out.set(cid, text);
+  });
+  return out.size > 0 ? out : undefined;
+}
+
+/** §9.7.4.2 `/CIDToGIDMap` — a stream of two-byte glyph indices, CID by CID. */
+function readCidToGid(file: PdfFile, cidFont: PdfDict): Array<number> | undefined {
+  const map = file.resolve(cidFont.get('CIDToGIDMap') ?? PDF_NULL);
+  if (!(map instanceof PdfStream)) return undefined; // `/Identity`, or absent.
+  const bytes = file.streamData(map);
+  const out: Array<number> = [];
+  for (let i = 0; i + 1 < bytes.length; i += 2) out.push((bytes[i]! << 8) | bytes[i + 1]!);
+  return out;
 }
 
 /** §9.8.2 `/Flags` — bit 7 is Italic, bit 19 ForceBold (bits numbered from 1). */
