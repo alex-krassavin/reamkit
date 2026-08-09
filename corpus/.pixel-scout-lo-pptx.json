@@ -136,7 +136,7 @@
  },
  {
   "name": "tdf149588_transparentSolidFill.pptx",
-  "score": 0.0662,
+  "score": 0.0663,
   "aligned": true
  },
  {
@@ -685,11 +685,6 @@
   "aligned": true
  },
  {
-  "name": "tdf128684.pptx",
-  "score": 0.007,
-  "aligned": true
- },
- {
   "name": "tdf149551_SmartArt_Pie.pptx",
   "score": 0.007,
   "aligned": true
@@ -775,11 +770,6 @@
   "aligned": true
  },
  {
-  "name": "tdf128206.pptx",
-  "score": 0.0053,
-  "aligned": true
- },
- {
   "name": "n862510_2.pptx",
   "score": 0.0052,
   "aligned": true
@@ -787,6 +777,11 @@
  {
   "name": "tdf151767.pptx",
   "score": 0.0052,
+  "aligned": true
+ },
+ {
+  "name": "tdf128206.pptx",
+  "score": 0.0051,
   "aligned": true
  },
  {
@@ -1015,12 +1010,12 @@
   "aligned": true
  },
  {
-  "name": "shape-text-rotate.pptx",
-  "score": 0.0024,
+  "name": "tdf144918.pptx",
+  "score": 0.0023,
   "aligned": true
  },
  {
-  "name": "tdf144918.pptx",
+  "name": "shape-text-rotate.pptx",
   "score": 0.0023,
   "aligned": true
  },
@@ -1286,6 +1281,11 @@
  },
  {
   "name": "n90223RT.pptx",
+  "score": 0.0011,
+  "aligned": true
+ },
+ {
+  "name": "tdf128684.pptx",
   "score": 0.0011,
   "aligned": true
  },

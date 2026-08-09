@@ -85,38 +85,34 @@ export function reconstructByLayout(
     // column top-to-bottom, then right column.
     const blocks: Array<{ col: number; top: number; el: BodyElement }> = [];
     const addColumn = (colRuns: ReadonlyArray<TextRun>, col: number): void => {
-      const lines = groupIntoLines(colRuns, mode === 'positional').filter((l) => l.text.length > 0);
       if (mode === 'positional') {
         // Every line stands where the page set it. Lines are NOT grouped into
         // paragraphs here: a paragraph is a thing that reflows, and nothing in
         // a placed page does.
-        for (const line of lines) {
-          placed.push({
-            key: [Number.MAX_SAFE_INTEGER, placed.length],
-            col,
-            top: line.y,
-            make: (z: number): BodyElement =>
-              positionedText(
-                line.spans,
-                {
-                  x: line.x,
-                  // §9.4.4 — a baseline is not a box: the line reaches about a
-                  // fifth of its size below and the rest above.
-                  y: line.y - line.fontSize * 0.25,
-                  // To the page's edge, not to the estimated end of the words.
-                  // The box paints nothing, so its width costs nothing — but a
-                  // width that falls short makes the line WRAP, and a wrapped
-                  // line in a placed page walks down over its neighbours.
-                  width: Math.max(line.width, pageWidth - line.x),
-                  height: line.fontSize * 1.25,
-                },
-                pageFrameOf(page),
-                z,
-              ),
-          });
+        //
+        // Runs sharing a baseline make a line, and a TURNED baseline is not the
+        // upright one however close their y's fall. Each angle is grouped in
+        // its own frame and comes back carrying it: 160F-2019.pdf sets "Nature"
+        // on its side down the middle of a column, and read flat it joined the
+        // row it happened to cross.
+        for (const [angle, runs] of byAngle(colRuns)) {
+          for (const line of groupIntoLines(rotate(runs, -angle), true)) {
+            if (line.text.length === 0) continue;
+            const box = turnedBox(line, angle, pageWidth);
+            placed.push({
+              key: [Number.MAX_SAFE_INTEGER, placed.length],
+              col,
+              // The box's own top on the PAGE — `line.y` is measured in the
+              // turned frame, and the blocks are ordered by where they stand.
+              top: box.y + box.height,
+              make: (z: number): BodyElement =>
+                positionedText(line.spans, box, pageFrameOf(page), z, rotation60kOf(angle)),
+            });
+          }
         }
         return;
       }
+      const lines = groupIntoLines(colRuns).filter((l) => l.text.length > 0);
       for (const para of groupIntoParagraphs(lines)) {
         blocks.push({
           col,
@@ -248,6 +244,79 @@ function detectGutter(runs: ReadonlyArray<TextRun>, pageWidth: number): number |
  * paragraph is meant to be read across.
  */
 const COLUMN_GAP_EM = 4;
+
+/** Runs by the direction of their baseline, upright first, each angle rounded. */
+function byAngle(runs: ReadonlyArray<TextRun>): Array<[number, Array<TextRun>]> {
+  const groups = new Map<number, Array<TextRun>>();
+  for (const run of runs) {
+    // Rounded to the degree: a page that sets a label on its side sets every
+    // glyph of it at the same angle, give or take the arithmetic.
+    const angle = Math.round(run.angleDeg ?? 0);
+    const group = groups.get(angle);
+    if (group) group.push(run);
+    else groups.set(angle, [run]);
+  }
+  return [...groups].sort((a, b) => Math.abs(a[0]) - Math.abs(b[0]));
+}
+
+/** The same runs seen from a frame turned by `deg`, where their baseline is flat. */
+function rotate(runs: ReadonlyArray<TextRun>, deg: number): Array<TextRun> {
+  if (deg === 0) return [...runs];
+  const rad = (deg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  return runs.map((r) => ({
+    ...r,
+    x: r.x * cos - r.y * sin,
+    y: r.x * sin + r.y * cos,
+    endX: r.endX * cos - r.endY * sin,
+    endY: r.endX * sin + r.endY * cos,
+  }));
+}
+
+/**
+ * A turned line's page-space box: the rectangle the renderer is to place and
+ * then spin about its own centre, which is how a shape's rotation works
+ * (§20.1.7.6 `a:xfrm rot`).
+ *
+ * The box is measured in the line's own frame and only its CENTRE is carried
+ * back into page space — an axis-aligned box of the same size, centred there
+ * and turned, puts the words back along the baseline they were set on.
+ */
+function turnedBox(
+  line: Line,
+  angleDeg: number,
+  pageWidth: number,
+): { x: number; y: number; width: number; height: number } {
+  const height = line.fontSize * 1.25;
+  // §9.4.4 — a baseline is not a box: the line reaches about a fifth of its
+  // size below and the rest above.
+  const bottom = line.y - line.fontSize * 0.25;
+  // A width that falls short makes the line WRAP, and a wrapped line in a
+  // placed page walks down over its neighbours. Upright, there is a page edge
+  // to reach for; turned, the box's own size decides where the spin puts it, so
+  // the slack is a fifth of the words plus an em rather than the whole page.
+  const width =
+    angleDeg === 0 ? Math.max(line.width, pageWidth - line.x) : line.width * 1.2 + line.fontSize;
+  if (angleDeg === 0) return { x: line.x, y: bottom, width, height };
+  const rad = (angleDeg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const cu = line.x + width / 2;
+  const cv = bottom + height / 2;
+  return {
+    x: cu * cos - cv * sin - width / 2,
+    y: cu * sin + cv * cos - height / 2,
+    width,
+    height,
+  };
+}
+
+/** §20.1.7.6 — a shape turns CLOCKWISE in 1/60000°, and PDF measures the other way. */
+function rotation60kOf(angleDeg: number): number | undefined {
+  if (angleDeg === 0) return undefined;
+  return Math.round((((-angleDeg % 360) + 360) % 360) * 60000);
+}
 
 // Cluster runs that share a baseline (within half a line's height) into lines,
 // top of the page first; within a line, order by x and build link-aware spans.

@@ -108,6 +108,17 @@ const offsetBoxPdf = (): Uint8Array =>
     'BT /F1 10 Tf 20 700 Td (Hello) Tj ET 0 0 1 rg 20 100 50 30 re f',
   );
 
+/**
+ * A flat line and, a quarter turn from it, a label set on its side — the shape
+ * 160F-2019.pdf's "Nature" takes down the middle of a column. The two share a
+ * baseline y within a line's height, which is exactly the trap.
+ */
+const turnedLabelPdf = (): Uint8Array =>
+  onePagePdf(
+    '/MediaBox [0 0 400 800]',
+    'BT /F1 10 Tf 20 700 Td (Flat) Tj ET BT /F1 10 Tf 0 1 -1 0 200 698 Tm (Side) Tj ET',
+  );
+
 describe('placed reconstruction (E-PDF EP4)', () => {
   it('anchors every line where its glyphs stand, instead of flowing them', async () => {
     // A form is a grid of ruled boxes with a label in each: flowed, the labels
@@ -170,6 +181,26 @@ describe('placed reconstruction (E-PDF EP4)', () => {
     expect(text.shape.float?.posV?.offsetPt).toBeCloseTo(102, 5);
     expect(rule.shape.float?.posH?.offsetPt).toBeCloseTo(32, 5);
     expect(rule.shape.float?.posV?.offsetPt).toBeCloseTo(682, 5); // 812 − 130
+  });
+
+  it('keeps a turned baseline turned, and out of the flat line it crosses', () => {
+    // §9.4.2 — the text matrix turns as well as moves. 160F-2019.pdf sets
+    // "Nature" on its side down the middle of a column; read flat, it joined
+    // the row it happened to cross and lay across it.
+    const placed = reconstructByLayout(PdfFile.parse(turnedLabelPdf()), 'positional');
+    const shapes = placed.doc.body.filter((b) => b.kind === 'shape').map((b) => b.shape);
+    expect(shapes).toHaveLength(2);
+    const words = (s: (typeof shapes)[number]): string => {
+      const first = s.text?.content[0];
+      return first?.kind === 'paragraph' ? first.paragraph.runs.map((r) => r.text).join('') : '';
+    };
+    const flat = shapes.find((s) => words(s) === 'Flat');
+    const side = shapes.find((s) => words(s) === 'Side');
+    expect(flat).toBeDefined();
+    expect(side).toBeDefined();
+    // §20.1.7.6 — a shape turns clockwise, and this baseline runs up the page.
+    expect(flat!.transform?.rotation60k).toBeUndefined();
+    expect(side!.transform?.rotation60k).toBe(270 * 60000);
   });
 
   it('still flows by default, so a PDF reads back as a document', async () => {

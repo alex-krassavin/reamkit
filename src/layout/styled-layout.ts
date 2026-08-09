@@ -582,6 +582,8 @@ interface ShapeBlockLaidOut {
   readonly anchor: 't' | 'ctr' | 'b';
   /** §20.1.10.83 — text set along the box's long axis. */
   readonly vertical?: 'vert' | 'vert270';
+  /** §20.1.10.55 — the words stay level however far the box is turned. */
+  readonly upright?: boolean;
   readonly altText?: string;
 }
 
@@ -2549,6 +2551,7 @@ function layoutShapeBlock(
   // its lines stack across the width. btlr-textbox.docx reads bottom-to-top and
   // we set it flat, so it ran out of the box the wrong way.
   const vertical = text?.vertical;
+  const upright = text?.upright;
   // §20.1.9.10 — WordArt is one bent line per paragraph, stretched to the box:
   // it never wraps, whatever the box's width, and it is not shrunk to fit
   // either. Broken at the box's width first, tdf114848's "Text Wave 1" came out
@@ -2861,6 +2864,7 @@ function layoutShapeBlock(
     insetTopPt,
     insetBottomPt,
     anchor: text?.anchor ?? 't',
+    ...(upright ? { upright } : {}),
     ...(vertical ? { vertical } : {}),
     ...(shape.altText ? { altText: shape.altText } : {}),
     ...(shape.float ? { float: shape.float } : {}),
@@ -3720,7 +3724,9 @@ let nextPictureId = 1;
 // headers/footers are uncommon in practice and skipped here for simplicity.
 // Shape text: laid out axis-aligned, anchored vertically within the inset
 // rect, emitted as ordinary line commands so it rides the text pass on
-// top of the fill. (Rotated text boxes keep upright text.)
+// top of the fill. A shape that TURNS turns its words with it (§20.1.7.6): the
+// lines are placed in the box's own upright frame and then spun about the
+// box's centre, exactly as the outline is.
 function emitShapeText(
   sh: ShapeBlockLaidOut,
   x: number,
@@ -3730,9 +3736,27 @@ function emitShapeText(
   figId: number | undefined,
 ): void {
   if (sh.textLines.length === 0) return;
+  // §20.1.7.6 — `a:xfrm rot` turns CLOCKWISE, and the page frame here runs
+  // y-up, where a positive angle turns the other way. The outline has always
+  // taken this turn (see `buildShapeTransform`); the words did not, so a label
+  // set on its side came back lying flat across whatever it crossed.
+  // §20.1.10.55 — `upright` asks for level words in a turned box, so the turn
+  // stops at the outline: bnc762542.xlsx sets three legend labels on their side
+  // and every reader draws the words flat.
+  //
+  // A MIRRORED box keeps its words level too. §20.1.7.6's flips mirror the
+  // outline, and mirrored words are not what any reader draws: rot180-flipv.docx
+  // and rot270-flipv.docx turn a triangle and flip it back, and the reference
+  // sets "Flip Vertical" flat across both.
+  const level = sh.upright === true || sh.flipH || sh.flipV;
+  const turnDeg = level ? 0 : -(sh.rotation60k || 0) / 60000;
+  const centreX = x + sh.widthPt / 2;
+  const centreY = bottomYUp + sh.heightPt / 2;
   // §20.1.10.83 — vertical text runs along the box's height and its lines
   // stack across its width. A quarter turn puts each line's local +x on
-  // the page's +y (`vert270`, bottom-to-top) or -y (`vert`).
+  // the page's +y (`vert270`, bottom-to-top) or -y (`vert`). A box that TURNS
+  // as well adds its own turn on top: shape-text-rotate.pptx sets `vert` in a
+  // pentagon turned a half, and both together are what reads up the page.
   if (sh.vertical) {
     const up = sh.vertical === 'vert270';
     const innerHeight = Math.max(1, sh.heightPt - sh.insetTopPt - sh.insetBottomPt);
@@ -3751,17 +3775,21 @@ function emitShapeText(
       // quarter turn puts across the box rather than down it.
       const off = lineBaselineOffset(line, line.resolved);
       const baselineAcross = up ? across + h - off : across + off;
+      const origin = spinAboutCentre(
+        up ? x + baselineAcross : x + sh.widthPt - baselineAcross,
+        up
+          ? bottomYUp + sh.insetBottomPt + lineOffset
+          : bottomYUp + sh.heightPt - sh.insetTopPt - lineOffset,
+        centreX,
+        centreY,
+        turnDeg,
+      );
       sink.push({
         type: 'line',
         line,
-        originX: pt(up ? x + baselineAcross : x + sh.widthPt - baselineAcross),
-        baselineY: pt(
-          pageHeight -
-            (up
-              ? bottomYUp + sh.insetBottomPt + lineOffset
-              : bottomYUp + sh.heightPt - sh.insetTopPt - lineOffset),
-        ),
-        rotationDeg: up ? 90 : -90,
+        originX: pt(origin.x),
+        baselineY: pt(pageHeight - origin.y),
+        rotationDeg: (up ? 90 : -90) + turnDeg,
         ...(figId !== undefined ? { structId: figId } : {}),
       });
       across += h;
@@ -3825,15 +3853,49 @@ function emitShapeText(
     // (ArtisticEffectSample's list hangs its text 40pt in).
     const indentLeft =
       line.resolved.indentLeft + (line.firstLine ? line.resolved.indentFirstLine : 0);
+    const origin = spinAboutCentre(
+      x + sh.insetLeftPt + indentLeft + lineOffset,
+      textY + lineBaselineOffset(line, line.resolved),
+      centreX,
+      centreY,
+      turnDeg,
+    );
     sink.push({
       type: 'line',
       line,
-      originX: pt(x + sh.insetLeftPt + indentLeft + lineOffset),
-      baselineY: pt(pageHeight - (textY + lineBaselineOffset(line, line.resolved))),
+      originX: pt(origin.x),
+      baselineY: pt(pageHeight - origin.y),
+      ...(turnDeg !== 0 ? { rotationDeg: turnDeg } : {}),
       ...(figId !== undefined ? { structId: figId } : {}),
     });
     textY -= sh.textLineGaps?.get(i) ?? 0;
   });
+}
+
+/**
+ * A point spun about another, counter-clockwise in the y-up page frame.
+ *
+ * @param px  The point's x.
+ * @param py  The point's y (y-up).
+ * @param cx  The centre's x.
+ * @param cy  The centre's y (y-up).
+ * @param deg How far to turn, counter-clockwise; zero returns the point.
+ * @returns The turned point.
+ */
+function spinAboutCentre(
+  px: number,
+  py: number,
+  cx: number,
+  cy: number,
+  deg: number,
+): { x: number; y: number } {
+  if (deg === 0) return { x: px, y: py };
+  const rad = (deg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const dx = px - cx;
+  const dy = py - cy;
+  return { x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos };
 }
 /**
  * §20.1.9.10 — place a WordArt body's lines in the block's own frame and hand

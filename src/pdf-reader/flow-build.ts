@@ -212,10 +212,12 @@ export function imageBlock(
  * artwork is placed absolutely, so text that flows beside it lines up with none
  * of it.
  *
- * @param spans  The line's runs.
- * @param box    Its page-space rectangle (y-up, as PDF measures).
- * @param frame  The page's own corner, to measure the box off.
- * @param zOrder Its place in the page's painting order.
+ * @param spans       The line's runs.
+ * @param box         Its page-space rectangle (y-up, as PDF measures).
+ * @param frame       The page's own corner, to measure the box off.
+ * @param zOrder      Its place in the page's painting order.
+ * @param rotation60k §20.1.7.6 — how far the box turns about its own centre,
+ *                    for a baseline the page did not set flat.
  * @returns A shape carrying the text, anchored where the glyphs were.
  */
 export function positionedText(
@@ -223,6 +225,7 @@ export function positionedText(
   box: { x: number; y: number; width: number; height: number },
   frame: PageFrame,
   zOrder: number,
+  rotation60k?: number,
 ): BodyElement {
   const paragraph = paragraphFromRuns(spans);
   return {
@@ -239,6 +242,7 @@ export function positionedText(
       },
       width: pt(Math.max(1, box.width)),
       height: pt(Math.max(1, box.height)),
+      ...(rotation60k !== undefined ? { transform: { rotation60k } } : {}),
       geometry: { kind: 'preset', preset: 'rect' },
       fill: { kind: 'none' },
       // A box drawn round a line of a form would be a box the page never had:

@@ -185,11 +185,6 @@
   "aligned": true
  },
  {
-  "name": "tdf142881.xlsx",
-  "score": 0.0151,
-  "aligned": false
- },
- {
   "name": "tdf107586.xlsx",
   "score": 0.0149,
   "aligned": true
@@ -205,14 +200,14 @@
   "aligned": true
  },
  {
+  "name": "tdf142881.xlsx",
+  "score": 0.0143,
+  "aligned": false
+ },
+ {
   "name": "MissingPathExternal.xlsx",
   "score": 0.0138,
   "aligned": true
- },
- {
-  "name": "testShapeRotationImport.xlsx",
-  "score": 0.0128,
-  "aligned": false
  },
  {
   "name": "testShapeDisplacementOnRotationImport.xlsx",
@@ -228,6 +223,11 @@
   "name": "ceiling-floor.xlsx",
   "score": 0.0116,
   "aligned": true
+ },
+ {
+  "name": "testShapeRotationImport.xlsx",
+  "score": 0.0114,
+  "aligned": false
  },
  {
   "name": "pivottable_tabular_mode.xlsx",

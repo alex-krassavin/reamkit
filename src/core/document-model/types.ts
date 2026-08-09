@@ -1326,6 +1326,12 @@ export interface ShapeTextBody {
    */
   readonly vertical?: 'vert' | 'vert270';
   /**
+   * §20.1.10.55 `a:bodyPr @upright` — the words stay level however far the
+   * shape is turned. bnc762542.xlsx turns each legend label a quarter and asks
+   * for this, and every reader draws those labels lying flat.
+   */
+  readonly upright?: boolean;
+  /**
    * §20.1.10.28 `a:spAutoFit` — the SHAPE follows its text: its height is
    * whatever the text needs, whatever the stated box says.
    */

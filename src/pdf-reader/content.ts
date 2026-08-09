@@ -52,6 +52,14 @@ export interface TextRun {
    * the kind of thing a guess gets wrong.
    */
   readonly endX: number;
+  /** The pen's y after the last glyph — with {@link endX}, the whole advance. */
+  readonly endY: number;
+  /**
+   * The baseline's direction in page space, degrees counter-clockwise from
+   * left-to-right (§9.4.2 — the text matrix may turn as well as move). Absent
+   * for ordinary upright text, which is nearly all of it.
+   */
+  readonly angleDeg?: number;
   readonly fontSizePt: number;
   readonly fontKey: string;
   /** §9.8.1 — the face the glyphs were shown in is a bold one. */
@@ -220,6 +228,9 @@ const FALLBACK_FONT: ContentFont = {
   decode: (codes) => codes.map((c) => String.fromCharCode(c)).join(''),
   width: () => 500,
 };
+
+/** Below this a baseline is upright: a rounded matrix is not a turned one. */
+const UPRIGHT_TOLERANCE_DEG = 0.5;
 
 interface TextState {
   ctm: Matrix;
@@ -390,11 +401,16 @@ export function interpretContent(
     if (text.length === 0) return;
     const scaleY = Math.hypot(origin[2], origin[3]) || 1;
     const mcid = mcStack.length > 0 ? mcStack[mcStack.length - 1] : undefined;
+    // §9.4.2 — the text matrix turns as well as moves. The baseline's own
+    // direction is the first column of it; upright text leaves this at zero.
+    const angle = (Math.atan2(origin[1], origin[0]) * 180) / Math.PI;
     runs.push({
       text,
       x: origin[4],
       y: origin[5],
       endX: end[4],
+      endY: end[5],
+      ...(Math.abs(angle) > UPRIGHT_TOLERANCE_DEG ? { angleDeg: angle } : {}),
       fontSizePt: state.fontSize * scaleY,
       fontKey: state.fontKey,
       ...(state.font.bold ? { bold: true } : {}),
