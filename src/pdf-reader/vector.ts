@@ -7,7 +7,7 @@
 // and the bare `sh` operator are not captured (a documented loss).
 
 import { IDENTITY, interpretContent, multiply } from './content';
-import { buildShadingMap } from './shading';
+import { buildAlphaMap, buildShadingMap } from './shading';
 import { collectPageAppearances } from './annots';
 import type { ContentFont, ImagePlacement, Matrix, PathSeg, VectorPlacement } from './content';
 import type { ShapeGradient } from '@/core/vector';
@@ -32,6 +32,7 @@ function paintedVectors(
   file: PdfFile,
   page: PdfPage,
   shadings: ReadonlyMap<string, ShapeGradient>,
+  alphas: ReadonlyMap<string, number>,
 ): Array<VectorPlacement & { orderKey: ReadonlyArray<number> }> {
   const out: Array<VectorPlacement & { orderKey: ReadonlyArray<number> }> = [];
   const visiting = new Set<PdfStream>();
@@ -45,7 +46,7 @@ function paintedVectors(
     if (out.length >= MAX_VECTORS) return;
     const xobjects = resources ? file.get(resources, 'XObject') : PDF_NULL;
     const xobjDict = xobjects instanceof Map ? xobjects : undefined;
-    const result = interpretContent(content, NO_FONTS, baseCtm, shadings);
+    const result = interpretContent(content, NO_FONTS, baseCtm, shadings, alphas);
 
     // §8.5.3 — later marks cover earlier ones, and a form is drawn where its
     // `Do` stands, not after everything around it. Walking the stream first and
@@ -124,6 +125,8 @@ export interface PdfVector {
   readonly fillHex?: string;
   /** Present iff a shading-pattern fill survived (EP16c). */
   readonly gradient?: ShapeGradient;
+  /** §11.6.4.4 — how opaque the fill is, when the page asked for less than all. */
+  readonly alpha?: number;
   /** Present iff a qualifying stroke survived (EP11). */
   readonly strokeHex?: string;
   /** Stroke width in page-space points (EP11). */
@@ -160,12 +163,13 @@ export function collectPageVectors(
   const [px0, py0, px1, py1] = page.mediaBox;
   const pageArea = Math.max(1, Math.abs((px1 - px0) * (py1 - py0)));
   const shadings = buildShadingMap(file, page);
+  const alphas = buildAlphaMap(file, page);
   const out: Array<PdfVector> = [];
   // What the page has painted so far. White paint is invisible only over white:
   // over anything else it is the thing that HIDES it, and the caller seeds this
   // with the pictures it has already placed.
   const painted: Array<Box> = [...occupied];
-  for (const raw of paintedVectors(file, page, shadings)) {
+  for (const raw of paintedVectors(file, page, shadings, alphas)) {
     if (out.length >= MAX_VECTORS) break;
     const v = clipped(raw);
     if (!v) continue;
@@ -222,6 +226,7 @@ export function collectPageVectors(
             ? { fillHex: v.fillHex }
             : {}
         : {}),
+      ...(filled && v.alpha !== undefined ? { alpha: v.alpha } : {}),
       ...(stroked
         ? {
             strokeHex: v.strokeHex,

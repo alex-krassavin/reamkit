@@ -149,6 +149,8 @@ export interface VectorPlacement {
   readonly fillHex?: string;
   /** Shading pattern, present iff filled with one (EP16c). */
   readonly gradient?: ShapeGradient;
+  /** §11.6.4.4 `/ca` — how opaque the fill is, when the page asked for less. */
+  readonly alpha?: number;
   /**
    * §8.7.3 — the TILING pattern resource name the path is filled with. Its
    * content is a stream of its own, so what the fill actually shows is only
@@ -218,6 +220,7 @@ interface TextState {
   lineWidth: number; // current line width in user-space units (EP11)
   fillGradient: ShapeGradient | undefined; // current non-stroking shading pattern (EP16c)
   fillPattern: string | undefined; // §8.7.3 non-stroking TILING pattern resource name
+  fillAlpha: number; // §11.6.4.4 `/ca` — how opaque the non-stroking paint is
   clip: ClipRegion | undefined; // §8.5.4 the clipping region in force
 }
 
@@ -237,6 +240,7 @@ function initialState(): TextState {
     lineWidth: 1, // §8.4.3.2 default line width
     fillGradient: undefined,
     fillPattern: undefined,
+    fillAlpha: 1,
     clip: undefined,
   };
 }
@@ -253,6 +257,7 @@ function initialState(): TextState {
  *                   an unmapped key falls back to Latin-1 with a half-em advance.
  * @param initialCtm The starting CTM mapping user space to page space.
  * @param shadings   Shading patterns by name, selected by `scn`/`sc` (EP16c).
+ * @param alphas     Constant fill alphas by `/ExtGState` name, selected by `gs`.
  * @returns The extracted text runs, image placements and vector paths.
  */
 export function interpretContent(
@@ -260,6 +265,7 @@ export function interpretContent(
   fonts: ReadonlyMap<string, ContentFont>,
   initialCtm: Matrix = IDENTITY,
   shadings: ReadonlyMap<string, ShapeGradient> = new Map(),
+  alphas: ReadonlyMap<string, number> = new Map(),
 ): InterpretResult {
   const runs: Array<TextRun> = [];
   const images: Array<ImagePlacement> = [];
@@ -320,6 +326,7 @@ export function interpretContent(
         ...(state.clip ? { clip: state.clip } : {}),
         ...(fill && state.fillPattern !== undefined ? { patternName: state.fillPattern } : {}),
         ...(fill ? { fillHex: state.fillColor } : {}),
+        ...(fill && state.fillAlpha < 1 ? { alpha: state.fillAlpha } : {}),
         ...(fill && state.fillGradient ? { gradient: state.fillGradient } : {}),
         ...(stroke ? { strokeHex: state.strokeColor, lineWidth: ctmLineWidth() } : {}),
         ...(mcid !== undefined ? { mcid } : {}),
@@ -592,6 +599,14 @@ export function interpretContent(
       case 'n':
         paintPath(false, false); // end the path with no paint
         break;
+      case 'gs': {
+        // §8.4.5 — a named graphics state, of which only the constant fill
+        // alpha is read here. A band meant to be seen through is not the same
+        // mark as one that hides what it covers.
+        const nm = operands[operands.length - 1];
+        if (nm instanceof PdfName) state.fillAlpha = alphas.get(nm.value) ?? 1;
+        break;
+      }
       case 'W':
       case 'W*':
         // §8.5.4 — the current path becomes the clip once the painting

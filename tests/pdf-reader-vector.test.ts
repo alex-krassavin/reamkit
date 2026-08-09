@@ -238,6 +238,78 @@ describe('clipping paths (§8.5.4)', () => {
   });
 });
 
+/**
+ * A page that fills one band through an `/ExtGState` at `ca` 0.6 and a second
+ * one after the `Q` that pops it — the shape 22060_A1_01_Plans.pdf's evacuation
+ * routes take.
+ */
+function alphaBandsPdf(): Uint8Array {
+  const content = 'q /G0 gs 0 1 0 rg 20 20 100 60 re f Q 0 0 1 rg 20 120 100 60 re f';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+      '/Resources << /ExtGState << /G0 << /Type /ExtGState /CA 0.6 /ca 0.6 >> >> >> >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
+describe('constant fill alpha (§11.6.4.4)', () => {
+  it('reads /ca off the graphics state `gs` names, and lets `Q` take it back', () => {
+    // §8.4.5 — `gs` sets a whole state at once. 22060_A1_01_Plans.pdf marks its
+    // evacuation routes with a green band at `ca` 0.6, meant to be read
+    // THROUGH: painted solid, the floor plan under each band disappeared.
+    const { vectors } = interpretContent(
+      new TextEncoder().encode('q /G0 gs 0 1 0 rg 20 20 100 60 re f Q 0 0 1 rg 20 120 100 60 re f'),
+      NO_FONTS,
+      undefined,
+      undefined,
+      new Map([['G0', 0.6]]),
+    );
+    expect(vectors).toHaveLength(2);
+    expect(vectors[0]!.alpha).toBeCloseTo(0.6, 5);
+    expect(vectors[1]!.alpha).toBeUndefined();
+  });
+
+  it('leaves a fill opaque when the named state states no alpha', () => {
+    const { vectors } = interpretContent(
+      new TextEncoder().encode('/G9 gs 0 1 0 rg 20 20 100 60 re f'),
+      NO_FONTS,
+      undefined,
+      undefined,
+      new Map([['G0', 0.6]]),
+    );
+    expect(vectors[0]!.alpha).toBeUndefined();
+  });
+
+  it('carries the alpha from the page’s /ExtGState onto the lifted shape', () => {
+    const file = PdfFile.parse(alphaBandsPdf());
+    const [band, opaque] = collectPageVectors(file, file.pages()[0]!);
+    expect(band!.alpha).toBeCloseTo(0.6, 5);
+    expect(opaque!.alpha).toBeUndefined();
+
+    const { doc } = reconstructByLayout(file);
+    const fills = doc.body.filter((b) => b.kind === 'shape').map((s) => s.shape.fill);
+    expect(fills).toHaveLength(2);
+    expect(fills.find((f) => f.colorHex === '00FF00')).toMatchObject({
+      kind: 'solid',
+      alpha: 0.6,
+    });
+    expect(fills.find((f) => f.colorHex === '0000FF')).not.toHaveProperty('alpha');
+  });
+});
+
 describe('filled rules (E-PDF EP10)', () => {
   const fills = (stream: string) =>
     interpretContent(new TextEncoder().encode(stream), NO_FONTS).vectors;

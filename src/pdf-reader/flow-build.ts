@@ -244,11 +244,15 @@ export function shapeBlock(v: PdfVector, pageHeight?: number, zOrder?: number): 
   // A stroked line can be geometrically flat (a horizontal rule has h≈0); give
   // the shape box at least the stroke thickness so the line has room to draw.
   const thick = v.strokeHex !== undefined ? Math.max(v.lineWidth ?? 0.75, 0.5) : 0;
+  // §11.6.4.4 — a band the page meant to be read THROUGH is not the same mark
+  // as one that hides what it covers: 22060_A1_01_Plans.pdf marks its
+  // evacuation routes at `ca` 0.6 over the floor plan they run across.
+  const alpha = v.alpha !== undefined ? { alpha: v.alpha } : {};
   const fill: ShapeFill =
     v.gradient !== undefined
-      ? { kind: 'gradient', gradient: v.gradient }
+      ? { kind: 'gradient', gradient: v.gradient, ...alpha }
       : v.fillHex !== undefined
-        ? { kind: 'solid', colorHex: v.fillHex }
+        ? { kind: 'solid', colorHex: v.fillHex, ...alpha }
         : { kind: 'none' };
   const line: ShapeLine | undefined =
     v.strokeHex !== undefined

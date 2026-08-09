@@ -10,11 +10,6 @@
   "aligned": true
  },
  {
-  "name": "22060_A1_01_Plans.pdf",
-  "score": 0.0291,
-  "aligned": true
- },
- {
   "name": "160F-2019.pdf",
   "score": 0.0258,
   "aligned": true
@@ -32,6 +27,11 @@
  {
   "name": "IdentityToUnicodeMap_charCodeOf.pdf",
   "score": 0.0111,
+  "aligned": true
+ },
+ {
+  "name": "22060_A1_01_Plans.pdf",
+  "score": 0.0084,
   "aligned": true
  },
  {

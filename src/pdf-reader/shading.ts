@@ -185,3 +185,30 @@ function pushStop(stops: Array<GradientStop>, offset: number, colorHex: string):
   }
   stops.push({ offset: o, colorHex });
 }
+
+/**
+ * §11.6.4.4 — the constant fill alpha (`/ca`) of every `/ExtGState` the page
+ * names, by name.
+ *
+ * `gs` sets a whole graphics state at once, and one of the things in it is how
+ * opaque the paint is. 22060_A1_01_Plans.pdf marks its evacuation routes with
+ * a green band at `ca` 0.6, meant to be read THROUGH: painted solid, the floor
+ * plan under each band disappears.
+ *
+ * @param file The owning file.
+ * @param page The page whose `/ExtGState` resources are wanted.
+ * @returns Name → fill alpha, for the states that state one below 1.
+ */
+export function buildAlphaMap(file: PdfFile, page: PdfPage): Map<string, number> {
+  const out = new Map<string, number>();
+  if (!page.resources) return out;
+  const states = file.get(page.resources, 'ExtGState');
+  if (!(states instanceof Map)) return out;
+  for (const [name, value] of states) {
+    const state = file.resolve(value);
+    if (!(state instanceof Map)) continue;
+    const ca = file.resolve(state.get('ca') ?? PDF_NULL);
+    if (typeof ca === 'number' && ca >= 0 && ca < 1) out.set(name, ca);
+  }
+  return out;
+}
