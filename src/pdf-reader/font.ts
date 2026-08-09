@@ -5,7 +5,7 @@
 import { parseToUnicodeCMap } from './cmap';
 import { embeddedFontName } from './embedded-fonts';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
-import type { ContentFont } from './content';
+import type { ContentFont, Matrix, Type3Face } from './content';
 import type { PdfFile } from './document';
 import { PDF_NULL, PdfName, PdfStream } from '@/pdf/objects';
 import { parseTtf } from '@/core/font/ttf-parser';
@@ -48,13 +48,27 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
   const fromProgram = isType0 && toUnicode.size === 0 ? embeddedCmap(file, fontDict) : undefined;
   const unicode = fromProgram ?? toUnicode;
 
-  const width = isType0 ? cidWidths(file, fontDict) : simpleWidths(file, fontDict);
   const bytesPerCode = codeBytes;
   const style = faceStyle(file, fontDict, isType0);
   const name = embeddedFontName(file, fontDict);
+  const type3 =
+    asName(file.resolve(fontDict.get('Subtype') ?? PDF_NULL)) === 'Type3'
+      ? type3Face(file, fontDict)
+      : undefined;
+
+  const simple = simpleWidths(file, fontDict);
+  // §9.6.5 — a Type 3 font states its widths in GLYPH space, which its
+  // `/FontMatrix` maps to text space; every other font states them in
+  // thousandths. Scaling here keeps the advance arithmetic (§9.4.4) one rule.
+  const width = isType0
+    ? cidWidths(file, fontDict)
+    : type3
+      ? (code: number) => simple(code) * type3.matrix[0] * 1000
+      : simple;
 
   return {
     bytesPerCode,
+    ...(type3 ? { type3 } : {}),
     ...(name !== undefined ? { name } : {}),
     // Map each code to Unicode; an unmapped code in a simple font falls back to
     // its Latin-1 character, a composite font's to nothing (no sensible guess).
@@ -128,6 +142,58 @@ function readCidToGid(file: PdfFile, cidFont: PdfDict): Array<number> | undefine
   const bytes = file.streamData(map);
   const out: Array<number> = [];
   for (let i = 0; i + 1 < bytes.length; i += 2) out.push((bytes[i]! << 8) | bytes[i + 1]!);
+  return out;
+}
+
+/**
+ * §9.6.5 — a Type 3 font's glyphs are content streams, not outlines: what the
+ * face draws is whatever each procedure paints, in the resources the font
+ * states. `/Encoding` `/Differences` names the procedure a code selects and
+ * `/CharProcs` holds it.
+ *
+ * ContentStreamCycleType3insideType3.pdf is a page of them — a stroked square
+ * and a stroked triangle, with a second Type 3 font shown from inside the
+ * square — and with the procedures unread the page came back as two letters of
+ * substituted type an eighth of an inch tall.
+ */
+function type3Face(file: PdfFile, fontDict: PdfDict): Type3Face | undefined {
+  const procs = file.resolve(fontDict.get('CharProcs') ?? PDF_NULL);
+  if (!(procs instanceof Map)) return undefined;
+  const names = differences(file, fontDict);
+  const resourcesVal = file.resolve(fontDict.get('Resources') ?? PDF_NULL);
+  return {
+    matrix: fontMatrix(file, fontDict),
+    resources: resourcesVal instanceof Map ? resourcesVal : undefined,
+    proc: (code) => {
+      const glyph = names.get(code);
+      if (glyph === undefined) return undefined;
+      const stream = file.resolve(procs.get(glyph) ?? PDF_NULL);
+      return stream instanceof PdfStream ? stream : undefined;
+    },
+  };
+}
+
+/** §9.6.5 `/FontMatrix` — glyph space to text space; a thousandth by default. */
+function fontMatrix(file: PdfFile, fontDict: PdfDict): Matrix {
+  const m = file.resolve(fontDict.get('FontMatrix') ?? PDF_NULL);
+  if (!Array.isArray(m) || m.length !== 6) return [0.001, 0, 0, 0.001, 0, 0];
+  const n = m.map((v) => asNumber(file.resolve(v), 0));
+  return [n[0]!, n[1]!, n[2]!, n[3]!, n[4]!, n[5]!];
+}
+
+/** §9.6.6.1 `/Encoding` `/Differences` — code → glyph name, as the array runs. */
+function differences(file: PdfFile, fontDict: PdfDict): Map<number, string> {
+  const out = new Map<number, string>();
+  const encoding = file.resolve(fontDict.get('Encoding') ?? PDF_NULL);
+  if (!(encoding instanceof Map)) return out;
+  const list = file.resolve(encoding.get('Differences') ?? PDF_NULL);
+  if (!Array.isArray(list)) return out;
+  let code = 0;
+  for (const entry of list) {
+    const value = file.resolve(entry);
+    if (typeof value === 'number') code = value;
+    else if (value instanceof PdfName) out.set(code++, value.value);
+  }
   return out;
 }
 

@@ -378,6 +378,70 @@ function contentPdf(content: string): Uint8Array {
   return new TextEncoder().encode(pdf);
 }
 
+/**
+ * A page set in a Type 3 font whose one glyph strokes a square, and — from
+ * inside that glyph — shows a second Type 3 font whose glyph strokes a
+ * triangle. The shape ContentStreamCycleType3insideType3.pdf takes.
+ */
+function type3Pdf(inner: boolean): Uint8Array {
+  const outerProc =
+    '1000 0 d0 20 w 1 0 0 RG 0 0 750 750 re s' + (inner ? ' BT /FB 50 Tf (c) Tj ET' : '');
+  const innerProc = '1000 0 d0 20 w 0 1 0 RG 0 0 m 375 750 l 750 0 l s';
+  const content = 'BT /FA 200 Tf 50 50 Td (a) Tj ET';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 400] ' +
+      '/Resources << /Font << /FA 5 0 R >> >> /Contents 4 0 R >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /Type3 /FontBBox [0 0 750 750] ' +
+      '/FontMatrix [0.001 0 0 0.001 0 0] /Widths [1000] /FirstChar 97 /LastChar 97 ' +
+      '/Encoding << /Differences [97 /square] >> /CharProcs << /square 6 0 R >> ' +
+      '/Resources << /Font << /FB 7 0 R >> >> >>',
+    `<< /Length ${String(outerProc.length)} >>\nstream\n${outerProc}\nendstream`,
+    '<< /Type /Font /Subtype /Type3 /FontBBox [0 0 750 750] ' +
+      '/FontMatrix [0.01 0 0 0.01 0 0] /Widths [1000] /FirstChar 99 /LastChar 99 ' +
+      '/Encoding << /Differences [99 /tri] >> /CharProcs << /tri 8 0 R >> >>',
+    `<< /Length ${String(innerProc.length)} >>\nstream\n${innerProc}\nendstream`,
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
+describe('a Type 3 glyph is a drawing (§9.6.5)', () => {
+  const strokesOf = (bytes: Uint8Array) => {
+    const file = PdfFile.parse(bytes);
+    return collectPageVectors(file, file.pages()[0]!).vectors;
+  };
+
+  it('paints what the glyph procedure paints, where the character stands', () => {
+    // ContentStreamCycleType3insideType3.pdf is a stroked square and a stroked
+    // triangle drawn as GLYPHS. With the procedures unread the page came back
+    // as two letters of substituted type an eighth of an inch tall.
+    const vectors = strokesOf(type3Pdf(false));
+    expect(vectors).toHaveLength(1);
+    expect(vectors[0]!.strokeHex).toBe('FF0000');
+    // 750 glyph units × 0.001 × 200pt = 150pt, at the pen's 50, 50.
+    expect(vectors[0]!.minX).toBeCloseTo(50, 1);
+    expect(vectors[0]!.minY).toBeCloseTo(50, 1);
+    expect(vectors[0]!.maxX).toBeCloseTo(200, 1);
+  });
+
+  it('follows a glyph that shows a second Type 3 font from inside itself', () => {
+    const vectors = strokesOf(type3Pdf(true));
+    expect(vectors.map((v) => v.strokeHex).sort()).toEqual(['00FF00', 'FF0000']);
+  });
+});
+
 describe('white paint is invisible only over white', () => {
   const kept = (content: string) => {
     const file = PdfFile.parse(contentPdf(content));

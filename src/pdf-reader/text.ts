@@ -65,7 +65,25 @@ function collectRuns(
 ): void {
   const result = interpretContent(content, buildFonts(file, resources), baseCtm);
   out.push(...result.texts);
-  if (depth >= MAX_FORM_DEPTH || !resources) return;
+  if (depth >= MAX_FORM_DEPTH) return;
+  // §9.6.5 — a Type 3 glyph's procedure may show text of its own, and it is
+  // text the page shows. ContentStreamCycleType3insideType3.pdf sets a word
+  // inside the glyph of another word.
+  for (const glyph of result.glyphs) {
+    if (visiting.has(glyph.stream)) continue;
+    visiting.add(glyph.stream);
+    collectRuns(
+      file,
+      glyph.resources ?? resources,
+      file.streamData(glyph.stream),
+      glyph.ctm,
+      depth + 1,
+      visiting,
+      out,
+    );
+    visiting.delete(glyph.stream);
+  }
+  if (!resources) return;
   const xobjects = file.get(resources, 'XObject');
   if (!(xobjects instanceof Map)) return;
   for (const placement of result.images) {
@@ -88,7 +106,20 @@ function collectRuns(
   }
 }
 
-function buildFonts(file: PdfFile, resources: PdfDict | undefined): Map<string, ContentFont> {
+/**
+ * The `/Font` resources of one dictionary, built into interpreter fonts. Shared
+ * with the path and picture walks, which need them for one thing only: a Type 3
+ * font's glyphs are content streams (§9.6.5), and a walk that interprets with
+ * no fonts at all cannot see that there is anything to run.
+ *
+ * @param file      The owning file.
+ * @param resources The resource dictionary to read `/Font` from.
+ * @returns Resource name → font, skipping any the reader cannot build.
+ */
+export function buildFonts(
+  file: PdfFile,
+  resources: PdfDict | undefined,
+): Map<string, ContentFont> {
   const fonts = new Map<string, ContentFont>();
   if (!resources) return fonts;
   const fontContainer = file.get(resources, 'Font');

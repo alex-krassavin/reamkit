@@ -88,7 +88,11 @@ export function reconstructByLayout(
     // Blocks carry a column key so the final sort reads column-by-column: left
     // column top-to-bottom, then right column.
     const blocks: Array<{ col: number; top: number; el: BodyElement }> = [];
-    const addColumn = (colRuns: ReadonlyArray<TextRun>, col: number): void => {
+    const addColumn = (allRuns: ReadonlyArray<TextRun>, col: number): void => {
+      // §9.6.5 — a Type 3 run's marks are its glyph PROCEDURES, which the path
+      // and picture passes lift. Re-setting its codes in a substitute face
+      // would draw a second, smaller copy of a drawing.
+      const colRuns = mode === 'positional' ? allRuns.filter((r) => r.type3 !== true) : allRuns;
       if (mode === 'positional') {
         // Every line stands where the page set it. Lines are NOT grouped into
         // paragraphs here: a paragraph is a thing that reflows, and nothing in

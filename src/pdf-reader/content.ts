@@ -11,7 +11,7 @@
 
 import { Lexer } from './lexer';
 import type { ShapeGradient } from '@/core/vector';
-import type { PdfDict, PdfValue } from '@/pdf/objects';
+import type { PdfDict, PdfStream, PdfValue } from '@/pdf/objects';
 import { PDF_NULL, PdfHexString, PdfName } from '@/pdf/objects';
 
 /**
@@ -33,6 +33,22 @@ export interface ContentFont {
   readonly bold?: boolean;
   /** §9.8.1 — the face is slanted (`/ItalicAngle`, the Italic flag, or its name). */
   readonly italic?: boolean;
+  /**
+   * §9.6.5 — a Type 3 face, whose glyphs are content streams rather than
+   * outlines. What such a font draws is not type at all: it is whatever the
+   * procedure paints, in the resources the font states.
+   */
+  readonly type3?: Type3Face;
+}
+
+/** §9.6.5 — the parts of a Type 3 font a caller needs to run its glyphs. */
+export interface Type3Face {
+  /** `/FontMatrix` — glyph space to text space. */
+  readonly matrix: Matrix;
+  /** `/Encoding` + `/CharProcs` — the content stream one code draws. */
+  readonly proc: (code: number) => PdfStream | undefined;
+  /** `/Resources` the procedures draw with, when the font states its own. */
+  readonly resources: PdfDict | undefined;
 }
 
 /**
@@ -75,6 +91,12 @@ export interface TextRun {
   readonly bold?: boolean;
   /** §9.8.1 — the face the glyphs were shown in is a slanted one. */
   readonly italic?: boolean;
+  /**
+   * §9.6.5 — the face is a Type 3 one, so what the page SHOWS here is the
+   * glyph procedures, not type. The run is kept for its words; a reader that
+   * reproduces the page draws the procedures instead of re-setting it.
+   */
+  readonly type3?: boolean;
   /** §8.6.8 — the non-stroking colour the glyphs were painted in (6-hex). */
   readonly colorHex: string;
   /**
@@ -202,6 +224,20 @@ export interface InterpretResult {
   readonly texts: Array<TextRun>;
   readonly images: Array<ImagePlacement>;
   readonly vectors: Array<VectorPlacement>;
+  /** §9.6.5 — every Type 3 glyph the stream showed, with where to run it. */
+  readonly glyphs: Array<Type3Call>;
+}
+
+/**
+ * §9.6.5 — one showing of a Type 3 glyph: which procedure, and the matrix that
+ * puts glyph space on the page.
+ */
+export interface Type3Call {
+  readonly stream: PdfStream;
+  readonly resources: PdfDict | undefined;
+  readonly ctm: Matrix;
+  /** §8.5.3 — its place in the stream's painting order, as a form call has. */
+  readonly order: number;
 }
 
 /**
@@ -306,6 +342,7 @@ export function interpretContent(
   const runs: Array<TextRun> = [];
   const images: Array<ImagePlacement> = [];
   const vectors: Array<VectorPlacement> = []; // filled paths (EP10)
+  const glyphs: Array<Type3Call> = []; // §9.6.5 Type 3 glyph procedures
   const lexer = new Lexer(bytes);
   const stack: Array<TextState> = [];
   let state = initialState();
@@ -391,6 +428,22 @@ export function interpretContent(
   // Advance the text matrix for one shown glyph (§9.4.4): w0·Tfs + Tc (+ Tw for
   // the single-byte space), all scaled horizontally by Th.
   const advanceGlyph = (code: number): void => {
+    // §9.6.5 — a Type 3 glyph is a content stream, and it draws BEFORE the pen
+    // moves on. The matrix that places it is the font's own, composed onto the
+    // text-space matrix the glyph would have been set at.
+    const type3 = state.font.type3;
+    if (type3) {
+      const stream = type3.proc(code);
+      if (stream) {
+        const scale: Matrix = [state.fontSize * state.hScale, 0, 0, state.fontSize, 0, state.rise];
+        glyphs.push({
+          stream,
+          resources: type3.resources,
+          ctm: multiply(type3.matrix, multiply(scale, multiply(tm, state.ctm))),
+          order: paintOrder++,
+        });
+      }
+    }
     const w0 = state.font.width(code) / 1000;
     const isSpace = state.font.bytesPerCode === 1 && code === 0x20;
     const tx =
@@ -423,6 +476,7 @@ export function interpretContent(
       fontSizePt: state.fontSize * scaleY,
       fontKey: state.fontKey,
       ...(state.font.name !== undefined ? { fontName: state.font.name } : {}),
+      ...(state.font.type3 ? { type3: true } : {}),
       ...(state.font.bold ? { bold: true } : {}),
       ...(state.font.italic ? { italic: true } : {}),
       colorHex: state.fillColor,
@@ -701,7 +755,7 @@ export function interpretContent(
         break;
     }
   }
-  return { texts: runs, images, vectors };
+  return { texts: runs, images, vectors, glyphs };
 }
 
 // PDF colour operands (0..1 per channel) → a 6-hex sRGB string.

@@ -9,7 +9,15 @@
 import { IDENTITY, interpretContent, multiply } from './content';
 import { buildAlphaMap, buildShadingMap } from './shading';
 import { collectPageAppearances } from './annots';
-import type { ContentFont, ImagePlacement, Matrix, PathSeg, VectorPlacement } from './content';
+import { buildFonts } from './text';
+import type {
+  ContentFont,
+  ImagePlacement,
+  Matrix,
+  PathSeg,
+  Type3Call,
+  VectorPlacement,
+} from './content';
 import type { ShapeGradient } from '@/core/vector';
 import type { Loss } from '@/core/ir';
 import type { PdfDict } from '@/pdf/objects';
@@ -48,22 +56,47 @@ function paintedVectors(
     if (out.length >= MAX_VECTORS) return;
     const xobjects = resources ? file.get(resources, 'XObject') : PDF_NULL;
     const xobjDict = xobjects instanceof Map ? xobjects : undefined;
-    const result = interpretContent(content, NO_FONTS, baseCtm, shadings, alphas);
+    const result = interpretContent(
+      content,
+      buildFonts(file, resources),
+      baseCtm,
+      shadings,
+      alphas,
+    );
 
     // §8.5.3 — later marks cover earlier ones, and a form is drawn where its
     // `Do` stands, not after everything around it. Walking the stream first and
     // its forms afterwards puts every form on top: 22060_A1_01_Plans.pdf backs
     // its legend with a white box inside a form, and hoisted to the end that box
     // covered the legend's own words.
-    const events: Array<{ order: number; vector?: VectorPlacement; xobject?: ImagePlacement }> = [
+    const events: Array<{
+      order: number;
+      vector?: VectorPlacement;
+      xobject?: ImagePlacement;
+      glyph?: Type3Call;
+    }> = [
       ...result.vectors.map((vector) => ({ order: vector.order, vector })),
       ...result.images.map((xobject) => ({ order: xobject.order, xobject })),
+      ...result.glyphs.map((glyph) => ({ order: glyph.order, glyph })),
     ].sort((a, b) => a.order - b.order);
 
     for (const event of events) {
       if (out.length >= MAX_VECTORS) return;
       if (event.vector) {
         out.push({ ...event.vector, orderKey: [...prefix, event.order] });
+        continue;
+      }
+      // §9.6.5 — a Type 3 glyph is a content stream, and what it paints is
+      // what the page shows where that character stands.
+      if (event.glyph) {
+        const call = event.glyph;
+        if (depth >= MAX_FORM_DEPTH || visiting.has(call.stream)) continue;
+        visiting.add(call.stream);
+        walk(call.resources ?? resources, file.streamData(call.stream), call.ctm, depth + 1, [
+          ...prefix,
+          call.order,
+        ]);
+        visiting.delete(call.stream);
         continue;
       }
       const placement = event.xobject!;
