@@ -90,8 +90,51 @@ export type PathSeg =
  * a fill colour/gradient (EP10/EP16c) and/or a stroke colour + width (EP11),
  * plus the enclosing structure id.
  */
+/** A path's page-space bounding box, or `undefined` when it names no point. */
+function pathBox(
+  segs: ReadonlyArray<PathSeg>,
+): { minX: number; minY: number; maxX: number; maxY: number } | undefined {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  const add = (x: number, y: number): void => {
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  };
+  for (const seg of segs) {
+    if (seg.op === 'move' || seg.op === 'line') add(seg.x, seg.y);
+    else if (seg.op === 'cubic') {
+      add(seg.x1, seg.y1);
+      add(seg.x2, seg.y2);
+      add(seg.x, seg.y);
+    }
+  }
+  return Number.isFinite(minX) ? { minX, minY, maxX, maxY } : undefined;
+}
+
+/** The area of a box, for choosing the smaller of two clip regions. */
+const area = (b: { minX: number; minY: number; maxX: number; maxY: number }): number =>
+  Math.max(0, b.maxX - b.minX) * Math.max(0, b.maxY - b.minY);
+
+/**
+ * §8.5.4 — the clipping region in force when a path was painted: the path that
+ * `W`/`W*` installed, plus its page-space bounding box.
+ */
+export interface ClipRegion {
+  readonly segs: ReadonlyArray<PathSeg>;
+  readonly minX: number;
+  readonly minY: number;
+  readonly maxX: number;
+  readonly maxY: number;
+}
+
 export interface VectorPlacement {
   readonly segs: ReadonlyArray<PathSeg>;
+  /** §8.5.4 — the clip in force when it was painted, when there was one. */
+  readonly clip?: ClipRegion;
   /** Fill colour (6-hex), present iff the path is filled (`f` / `F` / `f*` / `B` / `b`). */
   readonly fillHex?: string;
   /** Shading pattern, present iff filled with one (EP16c). */
@@ -158,6 +201,7 @@ interface TextState {
   strokeColor: string; // current stroking colour (6-hex), graphics state (EP11)
   lineWidth: number; // current line width in user-space units (EP11)
   fillGradient: ShapeGradient | undefined; // current non-stroking shading pattern (EP16c)
+  clip: ClipRegion | undefined; // §8.5.4 the clipping region in force
 }
 
 function initialState(): TextState {
@@ -175,6 +219,7 @@ function initialState(): TextState {
     strokeColor: '000000',
     lineWidth: 1, // §8.4.3.2 default line width
     fillGradient: undefined,
+    clip: undefined,
   };
 }
 
@@ -208,6 +253,7 @@ export function interpretContent(
   let tm: Matrix = IDENTITY; // text matrix
   let tlm: Matrix = IDENTITY; // line matrix
   let path: Array<PathSeg> = []; // the current path under construction (page space)
+  let pendingClip = false; // §8.5.4 `W` seen; the next painting operator installs it
   let operands: Array<PdfValue> = [];
   const mcStack: Array<number | undefined> = []; // marked-content (MCID) nesting
 
@@ -251,11 +297,24 @@ export function interpretContent(
       const mcid = mcStack.length > 0 ? mcStack[mcStack.length - 1] : undefined;
       vectors.push({
         segs: path,
+        ...(state.clip ? { clip: state.clip } : {}),
         ...(fill ? { fillHex: state.fillColor } : {}),
         ...(fill && state.fillGradient ? { gradient: state.fillGradient } : {}),
         ...(stroke ? { strokeHex: state.strokeColor, lineWidth: ctmLineWidth() } : {}),
         ...(mcid !== undefined ? { mcid } : {}),
       });
+    }
+    // §8.5.4 — `W` names the clip but does not install it: the painting
+    // operator that ENDS the path does, and the path it names is this one.
+    if (pendingClip) {
+      pendingClip = false;
+      const box = pathBox(path);
+      if (box) {
+        const next: ClipRegion = { segs: path, ...box };
+        // Clips intersect. Nested ones nest, so the smaller region stands for
+        // the intersection — the whole of it, where it is the whole.
+        state.clip = state.clip && area(state.clip) <= area(next) ? state.clip : next;
+      }
     }
     path = [];
   };
@@ -497,7 +556,10 @@ export function interpretContent(
         break;
       case 'W':
       case 'W*':
-        break; // intersect clip; the painting operator that follows clears the path
+        // §8.5.4 — the current path becomes the clip once the painting
+        // operator that follows ends it.
+        pendingClip = true;
+        break;
       default:
         break; // other graphics-state / stroking operators ignored
     }

@@ -118,8 +118,10 @@ export function collectPageVectors(file: PdfFile, page: PdfPage): Array<PdfVecto
   const pageArea = Math.max(1, Math.abs((px1 - px0) * (py1 - py0)));
   const shadings = buildShadingMap(file, page);
   const out: Array<PdfVector> = [];
-  for (const v of paintedVectors(file, page, shadings)) {
+  for (const raw of paintedVectors(file, page, shadings)) {
     if (out.length >= MAX_VECTORS) break;
+    const v = clipped(raw);
+    if (!v) continue;
     const b = bbox(v.segs);
     if (!b) continue;
     const w = b.maxX - b.minX;
@@ -161,6 +163,40 @@ export function collectPageVectors(file: PdfFile, page: PdfPage): Array<PdfVecto
     });
   }
   return out;
+}
+
+/**
+ * §8.5.4 — what a painted path actually MARKS, once its clip is honoured.
+ *
+ * The mark is the intersection of the path with the clipping region, and one
+ * observation decides it without intersecting anything: where the path covers
+ * the clip, the intersection IS the clip. That is the stencil every drawing
+ * producer writes — 22060_A1_01_Plans.pdf paints four black rectangles of
+ * 397×421pt through clips cut to its floor plans, and read as rectangles they
+ * flooded two thirds of an A3 sheet in black.
+ *
+ * So the smaller region stands: a path inside its clip is itself, a path around
+ * its clip becomes the clip in the paint's own colour. Neither is a general
+ * path intersection, and where the two merely overlap the answer is the smaller
+ * of them — bounded, never larger than the truth.
+ *
+ * @param v The painted path as the interpreter saw it.
+ * @returns The path to draw, or `undefined` when the clip leaves nothing.
+ */
+function clipped(v: VectorPlacement): VectorPlacement | undefined {
+  const clip = v.clip;
+  if (!clip) return v;
+  const b = bbox(v.segs);
+  if (!b) return v;
+  // Disjoint: the clip lets none of it through.
+  if (clip.minX >= b.maxX || clip.maxX <= b.minX || clip.minY >= b.maxY || clip.maxY <= b.minY) {
+    return undefined;
+  }
+  const pathArea = Math.max(0, b.maxX - b.minX) * Math.max(0, b.maxY - b.minY);
+  const clipArea = Math.max(0, clip.maxX - clip.minX) * Math.max(0, clip.maxY - clip.minY);
+  if (clipArea >= pathArea) return v;
+  const { clip: _drop, ...rest } = v;
+  return { ...rest, segs: clip.segs };
 }
 
 function bbox(

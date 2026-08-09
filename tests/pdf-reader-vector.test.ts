@@ -64,6 +64,36 @@ describe('filled vector paths (E-PDF EP10)', () => {
   });
 });
 
+describe('clipping paths (§8.5.4)', () => {
+  const clipOf = (stream: string) =>
+    interpretContent(new TextEncoder().encode(stream), NO_FONTS).vectors;
+
+  it('installs the clip at the painting operator that ends its path', () => {
+    // `W` names the clip; `n` ends the path and installs it. The fill that
+    // follows is painted through it.
+    const [painted] = clipOf('q 100 100 50 50 re W n 0 0 0 rg 0 0 500 500 re f Q');
+    expect(painted?.clip).toBeDefined();
+    expect(painted?.clip?.minX).toBe(100);
+    expect(painted?.clip?.maxX).toBe(150);
+  });
+
+  it('leaves a path painted under no clip unclipped', () => {
+    const [painted] = clipOf('0 0 0 rg 10 20 30 40 re f');
+    expect(painted?.clip).toBeUndefined();
+  });
+
+  it('restores the clip a Q pops', () => {
+    // §8.4.2 — the clip belongs to the graphics state, so `Q` takes it back.
+    const painted = clipOf('q 0 0 10 10 re W n Q 0 0 0 rg 0 0 500 500 re f');
+    expect(painted[painted.length - 1]?.clip).toBeUndefined();
+  });
+
+  it('keeps the smaller of two nested clips', () => {
+    const [painted] = clipOf('q 0 0 400 400 re W n 10 10 20 20 re W n 0 0 0 rg 0 0 500 500 re f Q');
+    expect(painted?.clip?.maxX).toBe(30);
+  });
+});
+
 describe('stroked vector paths (E-PDF EP11)', () => {
   it('captures a stroke-only path with its colour and CTM-scaled width', () => {
     const { vectors } = interpretContent(
