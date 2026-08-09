@@ -231,7 +231,9 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
       maxX: img.x + img.widthPt,
       maxY: img.y + img.heightPt,
     }));
-    for (const v of placeVectors(collectPageVectors(file, page, covered), display)) {
+    const lifted = collectPageVectors(file, page, covered);
+    imageLosses.push(...lifted.losses);
+    for (const v of placeVectors(lifted.vectors, display)) {
       body.push(shapeBlock(v, frame, zOrder++));
     }
   });

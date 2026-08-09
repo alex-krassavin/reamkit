@@ -11,10 +11,12 @@ import { buildAlphaMap, buildShadingMap } from './shading';
 import { collectPageAppearances } from './annots';
 import type { ContentFont, ImagePlacement, Matrix, PathSeg, VectorPlacement } from './content';
 import type { ShapeGradient } from '@/core/vector';
+import type { Loss } from '@/core/ir';
 import type { PdfDict } from '@/pdf/objects';
 
 import type { PdfFile, PdfPage } from './document';
 import { PDF_NULL, PdfName, PdfStream } from '@/pdf/objects';
+import { FEATURES } from '@/core/ir';
 
 /**
  * Every vector the page paints, its FORM XOBJECTS included (§8.8).
@@ -151,7 +153,19 @@ const MIN_SIDE = 0.5; // pt — thinner than a hairline rule
 const MIN_AREA = 2; // pt² — smaller than the smallest letter
 const MIN_STROKE_LEN = 6; // pt — skip stroke specks (tick marks, dots)
 const MIN_RULE_LEN = 2; // pt — a filled rule shorter than this is a speck
-const MAX_VECTORS = 2000; // per-page DoS guard
+/**
+ * How many painted paths a page may hand over, as a guard against a file built
+ * to exhaust a reader.
+ *
+ * This was two thousand, and it was not a guard, it was a silent truncation:
+ * the busiest page of Brotli-Prototype-FileA.pdf keeps 1994 paths AFTER the
+ * de-cluttering filter, so the cap cut the page off partway and took its whole
+ * title block, the vegetation of its perspective and every hatch in its legend
+ * with it — with nothing in the report to say a thing was missing. Twenty
+ * thousand leaves room for a drawing and still bounds the work (that file's
+ * twenty-five sheets read in 420ms); reaching it is now reported.
+ */
+const MAX_VECTORS = 20000;
 const MAX_FORM_DEPTH = 12;
 
 /**
@@ -167,7 +181,7 @@ export function collectPageVectors(
   file: PdfFile,
   page: PdfPage,
   occupied: ReadonlyArray<Box> = [],
-): Array<PdfVector> {
+): PageVectors {
   const [px0, py0, px1, py1] = page.mediaBox;
   const pageArea = Math.max(1, Math.abs((px1 - px0) * (py1 - py0)));
   const shadings = buildShadingMap(file, page);
@@ -177,7 +191,8 @@ export function collectPageVectors(
   // over anything else it is the thing that HIDES it, and the caller seeds this
   // with the pictures it has already placed.
   const painted: Array<Box> = [...occupied];
-  for (const raw of paintedVectors(file, page, shadings, alphas)) {
+  const raws = paintedVectors(file, page, shadings, alphas);
+  for (const raw of raws) {
     if (out.length >= MAX_VECTORS) break;
     const v = clipped(raw);
     if (!v) continue;
@@ -245,7 +260,26 @@ export function collectPageVectors(
       ...(v.mcid !== undefined ? { mcid: v.mcid } : {}),
     });
   }
-  return out;
+  // A cap that says nothing is a cap that reads as "the page had no more".
+  const cut = out.length >= MAX_VECTORS || raws.length >= MAX_VECTORS;
+  return {
+    vectors: out,
+    losses: cut
+      ? [
+          {
+            severity: 'dropped' as const,
+            feature: FEATURES.shapes,
+            detail: `page carries more than ${String(MAX_VECTORS)} painted paths; the rest were not read`,
+          },
+        ]
+      : [],
+  };
+}
+
+/** The paths lifted off one page, plus a loss if the page ran past the cap. */
+export interface PageVectors {
+  readonly vectors: Array<PdfVector>;
+  readonly losses: ReadonlyArray<Loss>;
 }
 
 /** A page-space rectangle: what something covers. */

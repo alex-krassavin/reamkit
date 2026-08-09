@@ -133,7 +133,7 @@ describe('annotation appearances (§12.5.5)', () => {
     // border and its value all live in the widget's own appearance. Read only
     // from the page, 160F-2019.pdf gave a grid with no fields in it.
     const file = PdfFile.parse(widgetOnlyPdf());
-    const vectors = collectPageVectors(file, file.pages()[0]!);
+    const { vectors } = collectPageVectors(file, file.pages()[0]!);
     expect(vectors).toHaveLength(1);
     const [box] = vectors;
     expect(box!.fillHex).toBe('0000FF');
@@ -149,7 +149,7 @@ describe('annotation appearances (§12.5.5)', () => {
       .decode(widgetOnlyPdf())
       .replace('/Subtype /Widget', '/Subtype /Widget /F 2');
     const file = PdfFile.parse(new TextEncoder().encode(hidden));
-    expect(collectPageVectors(file, file.pages()[0]!)).toHaveLength(0);
+    expect(collectPageVectors(file, file.pages()[0]!).vectors).toHaveLength(0);
   });
 });
 
@@ -181,6 +181,52 @@ describe('painting order (§8.5.3)', () => {
     // The form's call falls BETWEEN the two fills, which is where it paints.
     expect(vectors[0]!.order).toBeLessThan(images[0]!.order);
     expect(images[0]!.order).toBeLessThan(vectors[1]!.order);
+  });
+});
+
+/** A page that paints `count` little squares, each its own path. */
+function manyPathsPdf(count: number): Uint8Array {
+  let content = '0 0 1 rg ';
+  for (let i = 0; i < count; i++) {
+    content += `${String(i % 500) + ' ' + String(Math.floor(i / 500))} 6 6 re f `;
+  }
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 600] /Contents 4 0 R >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
+describe('the guard on how much a page may paint', () => {
+  // The cap was two thousand and it was silent, so a drawing that ran past it
+  // simply arrived without its tail: Brotli-Prototype-FileA.pdf lost its whole
+  // title block, the vegetation of its perspective and every hatch in its
+  // legend, with nothing in the report to say a thing was missing.
+  it('reads a page well inside the guard with nothing to report', () => {
+    const file = PdfFile.parse(manyPathsPdf(50));
+    const lifted = collectPageVectors(file, file.pages()[0]!);
+    expect(lifted.vectors.length).toBe(50);
+    expect(lifted.losses).toHaveLength(0);
+  });
+
+  it('reports the cut once the page runs past it', () => {
+    const file = PdfFile.parse(manyPathsPdf(20_001));
+    const lifted = collectPageVectors(file, file.pages()[0]!);
+    expect(lifted.losses).toHaveLength(1);
+    expect(lifted.losses[0]!.severity).toBe('dropped');
+    expect(lifted.losses[0]!.detail).toContain('20000');
   });
 });
 
@@ -295,7 +341,7 @@ describe('constant fill alpha (§11.6.4.4)', () => {
 
   it('carries the alpha from the page’s /ExtGState onto the lifted shape', () => {
     const file = PdfFile.parse(alphaBandsPdf());
-    const [band, opaque] = collectPageVectors(file, file.pages()[0]!);
+    const [band, opaque] = collectPageVectors(file, file.pages()[0]!).vectors;
     expect(band!.alpha).toBeCloseTo(0.6, 5);
     expect(opaque!.alpha).toBeUndefined();
 

@@ -161,7 +161,9 @@ export function reconstructByLayout(
       maxX: img.x + img.widthPt,
       maxY: img.y + img.heightPt,
     }));
-    const vectors = placeVectors(collectPageVectors(file, page, covered), display);
+    const lifted = collectPageVectors(file, page, covered);
+    losses.push(...lifted.losses);
+    const vectors = placeVectors(lifted.vectors, display);
 
     // §20.4.2.3 `relativeHeight` — pictures and paths share one z-order, and
     // it is the page's own painting order (§8.5.3), not one kind before the
