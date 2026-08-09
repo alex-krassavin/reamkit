@@ -459,7 +459,8 @@ export function interpretContent(
     return state.font.decode(codes);
   };
 
-  const emitAt = (origin: Matrix, text: string, end: Matrix): void => {
+  const emitAt = (origin: Matrix, shown: string, end: Matrix): void => {
+    const text = logicalOrder(shown);
     if (text.length === 0) return;
     const scaleY = Math.hypot(origin[2], origin[3]) || 1;
     const mcid = mcStack.length > 0 ? mcStack[mcStack.length - 1] : undefined;
@@ -756,6 +757,62 @@ export function interpretContent(
     }
   }
   return { texts: runs, images, vectors, glyphs };
+}
+
+/**
+ * §9.4 — a show operator paints its glyphs along the baseline, left to right,
+ * whatever the script. For Arabic or Hebrew that means the string a PDF holds
+ * is in VISUAL order: the first character of the word is the last one shown.
+ *
+ * Every reader turns this back into logical order before handing it on, because
+ * everything downstream — a search, a markdown file, a layout engine that does
+ * its own bidi — takes logical order and reverses it again for display.
+ * ArabicCIDTrueType.pdf came out mirrored for exactly that reason: the reader
+ * passed visual order through and the layout reversed it a second time.
+ *
+ * A run is reversed only when it is wholly right-to-left. Anything mixed — a
+ * number inside an Arabic sentence runs left to right — needs the full bidi
+ * algorithm, and guessing at it would be worse than leaving it alone.
+ */
+function logicalOrder(text: string): string {
+  return isRightToLeft(text) ? [...text].reverse().join('') : text;
+}
+
+/**
+ * Whether a string is wholly right-to-left: at least one letter of an RTL
+ * script and nothing of any other, spaces and joiners aside.
+ *
+ * Anything mixed — a number inside an Arabic sentence runs left to right —
+ * needs the full bidi algorithm, and guessing at it would be worse than
+ * leaving it alone.
+ *
+ * @param text The string to judge.
+ * @returns Whether it is one run of right-to-left script.
+ */
+export function isRightToLeft(text: string): boolean {
+  let rtl = false;
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    if (isRtl(cp)) {
+      rtl = true;
+      continue;
+    }
+    if (cp !== 0x20 && cp !== 0x0a && cp !== 0x200c && cp !== 0x200d) return false;
+  }
+  return rtl;
+}
+
+/** The right-to-left blocks: Hebrew, Arabic, Syriac, Thaana, and the forms. */
+function isRtl(cp: number): boolean {
+  return (
+    (cp >= 0x0590 && cp <= 0x05ff) || // Hebrew
+    (cp >= 0x0600 && cp <= 0x06ff) || // Arabic
+    (cp >= 0x0700 && cp <= 0x074f) || // Syriac
+    (cp >= 0x0780 && cp <= 0x07bf) || // Thaana
+    (cp >= 0x08a0 && cp <= 0x08ff) || // Arabic Extended-A
+    (cp >= 0xfb1d && cp <= 0xfdff) || // Hebrew + Arabic Presentation Forms-A
+    (cp >= 0xfe70 && cp <= 0xfeff) // Arabic Presentation Forms-B
+  );
 }
 
 // PDF colour operands (0..1 per channel) → a 6-hex sRGB string.

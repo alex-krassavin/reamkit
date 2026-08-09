@@ -84,6 +84,41 @@ describe('content-stream interpreter (E-PDF EP2)', () => {
   });
 });
 
+describe('a right-to-left run comes back in logical order (§9.4)', () => {
+  /** A one-byte font mapping each code to the character `chars` gives for it. */
+  const mapping = (chars: string): ContentFont => ({
+    bytesPerCode: 1,
+    decode: (codes) => codes.map((c) => chars[c - 1] ?? '').join(''),
+    width: () => 500,
+  });
+
+  it('reverses a run that is wholly right-to-left', () => {
+    // A show operator paints left to right whatever the script, so the string a
+    // PDF holds for Arabic is in VISUAL order: the first letter of the word is
+    // the last one shown. ArabicCIDTrueType.pdf came out mirrored because the
+    // reader passed that through and the layout reversed it a second time.
+    const runs = run('BT /F1 10 Tf 0 0 Td <010203> Tj ET', new Map([['F1', mapping('اسم')]]));
+    expect(runs[0]!.text).toBe('مسا');
+  });
+
+  it('keeps a space inside the run, and reverses around it', () => {
+    const runs = run('BT /F1 10 Tf 0 0 Td <01020304> Tj ET', new Map([['F1', mapping('ا ب')]]));
+    expect(runs[0]!.text).toBe('ب ا');
+  });
+
+  it('leaves a mixed run alone, where only the bidi algorithm would do', () => {
+    // A number inside an Arabic sentence runs left to right; guessing at that
+    // would be worse than leaving it.
+    const runs = run('BT /F1 10 Tf 0 0 Td <010203> Tj ET', new Map([['F1', mapping('ا7ب')]]));
+    expect(runs[0]!.text).toBe('ا7ب');
+  });
+
+  it('leaves a left-to-right run alone', () => {
+    const runs = run('BT /F1 10 Tf 0 0 Td <010203> Tj ET', new Map([['F1', mapping('abc')]]));
+    expect(runs[0]!.text).toBe('abc');
+  });
+});
+
 describe('where a run ends (§9.4.4)', () => {
   // The reader used to guess at this — half an em per character — and a guess is
   // what tells a word space from a table column. On 160F-2019.pdf the guess was

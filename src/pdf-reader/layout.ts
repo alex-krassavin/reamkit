@@ -24,6 +24,7 @@ import { collectEmbeddedFonts } from './embedded-fonts';
 import { collectPageImages } from './images';
 import { extractPageText } from './text';
 import { collectPageVectors } from './vector';
+import { isRightToLeft } from './content';
 import type { BodyElement } from '@/core/document-model';
 import type { Loss } from '@/core/ir';
 
@@ -321,8 +322,16 @@ function turnedBox(
   // placed page walks down over its neighbours. Upright, there is a page edge
   // to reach for; turned, the box's own size decides where the spin puts it, so
   // the slack is a fifth of the words plus an em rather than the whole page.
-  const width =
-    angleDeg === 0 ? Math.max(line.width, pageWidth - line.x) : line.width * 1.2 + line.fontSize;
+  // A right-to-left line is set from the box's RIGHT edge, so slack on the
+  // right pushes it off the words it was measured from. It gets its own width
+  // and no more: ArabicCIDTrueType.pdf's every line stood a hundred and fifty
+  // points right of where the page draws it.
+  const slack = line.width * 1.2 + line.fontSize;
+  const width = isRightToLeft(line.text)
+    ? line.width
+    : angleDeg === 0
+      ? Math.max(line.width, pageWidth - line.x)
+      : slack;
   if (angleDeg === 0) return { x: line.x, y: bottom, width, height };
   const rad = (angleDeg * Math.PI) / 180;
   const cos = Math.cos(rad);
@@ -389,10 +398,15 @@ function groupIntoLines(runs: ReadonlyArray<TextRun>, split = false): Array<Line
       // and a space costs whatever the page's gap was not: a quarter of an em
       // of type standing in for one em of pen leaves everything after it three
       // quarters of an em short, and the error runs on down the line.
+      // A right-to-left piece is set from its RIGHT edge, so a piece that holds
+      // more than one word carries the whole line's width error into where the
+      // last of them lands. Each run gets its own box and its own right edge.
       const steps =
         last !== undefined &&
         (run.x - last.endX > size * SPACE_GAP_EM ||
-          Math.abs(run.y - prev[0]!.y) > size * BASELINE_STEP_EM);
+          Math.abs(run.y - prev[0]!.y) > size * BASELINE_STEP_EM ||
+          isRightToLeft(run.text) ||
+          isRightToLeft(last.text));
       if (steps) pieces.push([]);
       pieces[pieces.length - 1]!.push(run);
     }
@@ -406,7 +420,15 @@ function groupIntoLines(runs: ReadonlyArray<TextRun>, split = false): Array<Line
 
 /** One run of runs, left to right on a shared baseline, as a {@link Line}. */
 function lineOf(runs: ReadonlyArray<TextRun>, y: number, fontSize: number): Line {
-  const spans = lineSpans(runs, fontSize);
+  const ordered = lineSpans(runs, fontSize);
+  // §9.4 — the runs came off the page in the order they were PAINTED, which is
+  // left to right whatever the script. `logicalOrder` turned each run's own
+  // letters back the right way round; the runs themselves are still in visual
+  // order, and a line of them reads as the sentence backwards.
+  // ArabicCIDTrueType.pdf's every line came out with its words in reverse.
+  const spans = ordered.every((s) => s.text.trim() === '' || isRightToLeft(s.text))
+    ? [...ordered].reverse()
+    : ordered;
   const x = runs[0]!.x;
   return {
     x,
