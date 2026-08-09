@@ -357,6 +357,48 @@ describe('constant fill alpha (§11.6.4.4)', () => {
   });
 });
 
+/** A page that paints `content`, for asking what survives the de-cluttering. */
+function contentPdf(content: string): Uint8Array {
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
+describe('white paint is invisible only over white', () => {
+  const kept = (content: string) => {
+    const file = PdfFile.parse(contentPdf(content));
+    return collectPageVectors(file, file.pages()[0]!).vectors;
+  };
+
+  it('keeps a white stroke drawn over something, as it keeps a white fill', () => {
+    // 160F-2019.pdf's every form field is a tinted box with a WHITE one-point
+    // border stroked inside it. Dropped, each field came back a point wider on
+    // every side than the file draws it — seventy-six times over.
+    const vectors = kept('0 0 1 rg 50 50 100 50 re f 1 G 55 55 90 40 re s');
+    expect(vectors).toHaveLength(2);
+    expect(vectors[0]!.fillHex).toBe('0000FF');
+    expect(vectors[1]!.strokeHex).toBe('FFFFFF');
+  });
+
+  it('drops a white stroke over bare paper, which shows nothing', () => {
+    expect(kept('1 G 55 55 90 40 re s')).toHaveLength(0);
+  });
+});
+
 describe('the pen is as wide as the page says (§8.4.3.2)', () => {
   const strokeOf = (stream: string) => {
     const [v] = interpretContent(new TextEncoder().encode(stream), NO_FONTS).vectors;

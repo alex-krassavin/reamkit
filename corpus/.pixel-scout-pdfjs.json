@@ -5,11 +5,6 @@
   "aligned": false
  },
  {
-  "name": "160F-2019.pdf",
-  "score": 0.0241,
-  "aligned": true
- },
- {
   "name": "ContentStreamCycleType3insideType3.pdf",
   "score": 0.0159,
   "aligned": true
@@ -37,6 +32,11 @@
  {
   "name": "ArabicCIDTrueType.pdf",
   "score": 0.0026,
+  "aligned": true
+ },
+ {
+  "name": "160F-2019.pdf",
+  "score": 0.0007,
   "aligned": true
  },
  {

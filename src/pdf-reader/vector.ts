@@ -232,9 +232,14 @@ export function collectPageVectors(
     const isRule = long >= MIN_RULE_LEN && short > 0;
     const filled =
       (v.gradient !== undefined || solidFill) && (isBox || isRule) && area <= 0.85 * pageArea;
+    // White paint is invisible only over white — the same rule the fill above
+    // follows, which the stroke did not. 160F-2019.pdf's every form field is a
+    // tinted box with a WHITE one-point border stroked inside it, and dropping
+    // the border left each field a point wider on every side than the file
+    // draws it, seventy-six times over.
     const stroked =
       v.strokeHex !== undefined &&
-      v.strokeHex !== 'FFFFFF' &&
+      (v.strokeHex !== 'FFFFFF' || painted.some((box) => overlaps(box, b))) &&
       Math.max(w, h) >= MIN_STROKE_LEN &&
       area <= 0.85 * pageArea;
     if (!filled && !stroked) continue;
