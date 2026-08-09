@@ -13,6 +13,7 @@ import { interpretContent } from '@/pdf-reader/content';
 import { PdfFile } from '@/pdf-reader/document';
 import { reconstructByLayout } from '@/pdf-reader/layout';
 import { collectPageVectors } from '@/pdf-reader/vector';
+import { shapeBlock } from '@/pdf-reader/flow-build';
 
 const FONTS = {
   regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
@@ -353,6 +354,43 @@ describe('constant fill alpha (§11.6.4.4)', () => {
       alpha: 0.6,
     });
     expect(fills.find((f) => f.colorHex === '0000FF')).not.toHaveProperty('alpha');
+  });
+});
+
+describe('the pen is as wide as the page says (§8.4.3.2)', () => {
+  const strokeOf = (stream: string) => {
+    const [v] = interpretContent(new TextEncoder().encode(stream), NO_FONTS).vectors;
+    const el = shapeBlock({
+      orderKey: [0],
+      segs: v!.segs,
+      strokeHex: '000000',
+      ...(v?.lineWidth !== undefined ? { lineWidth: v.lineWidth } : {}),
+      minX: 0,
+      minY: 0,
+      maxX: 100,
+      maxY: 0,
+    });
+    return el.kind === 'shape' ? el.shape : undefined;
+  };
+
+  it('draws a hairline pen at the width the page set, not at a floor', () => {
+    // Brotli-Prototype-FileA.pdf draws its elevations with a 0.12pt pen, and
+    // raised to half a point every clapboard line came out four times too
+    // heavy: a drawing that reads grey in every viewer arrived black.
+    expect(strokeOf('0.12 w 0 0 m 100 0 l S')?.line?.width).toBeCloseTo(0.12, 5);
+    expect(strokeOf('2 w 0 0 m 100 0 l S')?.line?.width).toBeCloseTo(2, 5);
+  });
+
+  it('takes a width of zero for the thinnest line there is', () => {
+    const width = strokeOf('0 w 0 0 m 100 0 l S')?.line?.width ?? 0;
+    expect(width).toBeGreaterThan(0);
+    expect(width).toBeLessThan(0.25);
+  });
+
+  it('still gives a flat line a box to draw in', () => {
+    // The floor was there for a reason: a horizontal rule has no height, and a
+    // shape of no height has nowhere to put a stroke.
+    expect(strokeOf('0.12 w 0 0 m 100 0 l S')?.height).toBeCloseTo(0.5, 5);
   });
 });
 

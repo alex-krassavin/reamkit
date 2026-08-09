@@ -288,9 +288,20 @@ export function shapeBlock(v: PdfVector, frame?: PageFrame, zOrder?: number): Bo
         return { cmd: 'close' };
     }
   });
+  // §8.4.3.2 — the pen is as wide as the page says. A width of zero asks for the
+  // thinnest line the device can draw, which on a fixed page is a hairline.
+  //
+  // This used to be raised to half a point, because the same number also sized
+  // the SHAPE BOX and a flat line needs a box to draw in. The two are not the
+  // same thing: Brotli-Prototype-FileA.pdf draws its elevations with a 0.12pt
+  // pen, and at half a point every clapboard line came out four times too heavy
+  // — a drawing that reads grey in every viewer arrived black.
+  const HAIRLINE_PT = 0.1;
+  const stated = v.lineWidth ?? 0.75;
+  const pen = v.strokeHex !== undefined ? (stated > 0 ? stated : HAIRLINE_PT) : 0;
   // A stroked line can be geometrically flat (a horizontal rule has h≈0); give
-  // the shape box at least the stroke thickness so the line has room to draw.
-  const thick = v.strokeHex !== undefined ? Math.max(v.lineWidth ?? 0.75, 0.5) : 0;
+  // the shape box at least half a point so the line has room to draw.
+  const thick = v.strokeHex !== undefined ? Math.max(pen, 0.5) : 0;
   // §11.6.4.4 — a band the page meant to be read THROUGH is not the same mark
   // as one that hides what it covers: 22060_A1_01_Plans.pdf marks its
   // evacuation routes at `ca` 0.6 over the floor plan they run across.
@@ -303,7 +314,7 @@ export function shapeBlock(v: PdfVector, frame?: PageFrame, zOrder?: number): Bo
         : { kind: 'none' };
   const line: ShapeLine | undefined =
     v.strokeHex !== undefined
-      ? { width: pt(thick), colorHex: v.strokeHex, fill: 'solid' }
+      ? { width: pt(pen), colorHex: v.strokeHex, fill: 'solid' }
       : undefined;
   // §20.4.2.3 — anchored to the PAGE at the position it was drawn at, y flipped
   // from PDF's upward axis.
