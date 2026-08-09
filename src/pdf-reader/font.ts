@@ -40,6 +40,7 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
 
   const width = isType0 ? cidWidths(file, fontDict) : simpleWidths(file, fontDict);
   const bytesPerCode = codeBytes;
+  const style = faceStyle(file, fontDict, isType0);
 
   return {
     bytesPerCode,
@@ -50,7 +51,62 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
         .map((c) => toUnicode.get(c) ?? (bytesPerCode === 1 ? String.fromCharCode(c) : ''))
         .join(''),
     width,
+    ...style,
   };
+}
+
+/** §9.8.2 `/Flags` — bit 7 is Italic, bit 19 ForceBold (bits numbered from 1). */
+const FLAG_ITALIC = 1 << 6;
+const FLAG_FORCE_BOLD = 1 << 18;
+
+/** §9.8.1 `/FontWeight` — 400 is normal, 700 bold; 600 is where "bold" begins. */
+const BOLD_WEIGHT = 600;
+
+/**
+ * §9.8.1 — whether the face a run is shown in is bold or slanted.
+ *
+ * A descriptor is the witness where there is one, and the ONLY witness: it
+ * states `/FontWeight`, `/ItalicAngle` and the `/Flags` bits, so one that gives
+ * neither a weight nor the ForceBold bit is saying the face is not bold.
+ * ArabicCIDTrueType.pdf shows why that matters — two of its four faces are
+ * called `NewBasrahBold` and `DamascusBold`, which is the family's own name and
+ * not a weight, and reading the name over the descriptor set two lines heavy
+ * that no reader sets heavy.
+ *
+ * The name is read only where no descriptor exists at all, which is the
+ * standard-14 case (§9.6.2.2): `Helvetica-BoldOblique` has nothing else to go
+ * on. The subset prefix (`ISVAYD+`) is dropped first — six arbitrary capitals
+ * may spell anything.
+ */
+function faceStyle(
+  file: PdfFile,
+  fontDict: PdfDict,
+  isType0: boolean,
+): { bold?: boolean; italic?: boolean } {
+  const owner = isType0 ? descendantFont(file, fontDict) : fontDict;
+  const descriptor = file.resolve(owner.get('FontDescriptor') ?? PDF_NULL);
+  if (descriptor instanceof Map) {
+    const flags = asNumber(file.resolve(descriptor.get('Flags') ?? PDF_NULL), 0);
+    const weight = asNumber(file.resolve(descriptor.get('FontWeight') ?? PDF_NULL), 0);
+    const slant = asNumber(file.resolve(descriptor.get('ItalicAngle') ?? PDF_NULL), 0);
+    const bold = weight >= BOLD_WEIGHT || (flags & FLAG_FORCE_BOLD) !== 0;
+    const italic = slant !== 0 || (flags & FLAG_ITALIC) !== 0;
+    return { ...(bold ? { bold } : {}), ...(italic ? { italic } : {}) };
+  }
+  const name = asName(file.resolve(fontDict.get('BaseFont') ?? PDF_NULL)).replace(
+    /^[A-Z]{6}\+/u,
+    '',
+  );
+  const bold = /bold|black|heavy/iu.test(name);
+  const italic = /italic|oblique/iu.test(name);
+  return { ...(bold ? { bold } : {}), ...(italic ? { italic } : {}) };
+}
+
+/** §9.7.4 — a `/Type0` font's one descendant CIDFont, which owns the descriptor. */
+function descendantFont(file: PdfFile, fontDict: PdfDict): PdfDict {
+  const descFonts = file.resolve(fontDict.get('DescendantFonts') ?? PDF_NULL);
+  const first = Array.isArray(descFonts) ? file.resolve(descFonts[0] ?? PDF_NULL) : PDF_NULL;
+  return first instanceof Map ? first : new Map<string, PdfValue>();
 }
 
 // §9.6.2.1 — a simple font's /Widths array is indexed by (code − /FirstChar).

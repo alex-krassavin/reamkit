@@ -27,6 +27,10 @@ export interface ContentFont {
   decode: (codes: ReadonlyArray<number>) => string;
   /** Glyph advance for one code, in 1000-unit text space. */
   width: (code: number) => number;
+  /** §9.8.1 — the face is a bold one (weight, the ForceBold flag, or its name). */
+  readonly bold?: boolean;
+  /** §9.8.1 — the face is slanted (`/ItalicAngle`, the Italic flag, or its name). */
+  readonly italic?: boolean;
 }
 
 /**
@@ -50,6 +54,10 @@ export interface TextRun {
   readonly endX: number;
   readonly fontSizePt: number;
   readonly fontKey: string;
+  /** §9.8.1 — the face the glyphs were shown in is a bold one. */
+  readonly bold?: boolean;
+  /** §9.8.1 — the face the glyphs were shown in is a slanted one. */
+  readonly italic?: boolean;
   /** §8.6.8 — the non-stroking colour the glyphs were painted in (6-hex). */
   readonly colorHex: string;
   /**
@@ -389,6 +397,8 @@ export function interpretContent(
       endX: end[4],
       fontSizePt: state.fontSize * scaleY,
       fontKey: state.fontKey,
+      ...(state.font.bold ? { bold: true } : {}),
+      ...(state.font.italic ? { italic: true } : {}),
       colorHex: state.fillColor,
       ...(mcid !== undefined ? { mcid } : {}),
     });

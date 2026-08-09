@@ -315,6 +315,8 @@ function lineSpans(runs: ReadonlyArray<TextRun>, fontSize: number): Array<TextSp
       text: run.text,
       sizePt: run.fontSizePt,
       ...(run.colorHex !== '000000' ? { colorHex: run.colorHex } : {}),
+      ...(run.bold ? { bold: true } : {}),
+      ...(run.italic ? { italic: true } : {}),
       ...(run.href !== undefined ? { href: run.href } : {}),
     });
     prevEnd = run.endX;

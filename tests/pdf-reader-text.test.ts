@@ -87,6 +87,87 @@ function simpleFontPdf(text: string): Uint8Array {
   return new TextEncoder().encode(pdf);
 }
 
+/**
+ * One line of text in a font named `baseFont`. `descriptor` is the
+ * `/FontDescriptor` body, or `undefined` for a font that carries none at all —
+ * the standard-14 case (§9.6.2.2), where the name is the only witness.
+ */
+function styledFontPdf(baseFont: string, descriptor?: string): Uint8Array {
+  const content = 'BT /F1 12 Tf 72 720 Td (Styled) Tj ET';
+  const font =
+    `<< /Type /Font /Subtype /TrueType /BaseFont /${baseFont} ` +
+    `/FirstChar 32 /LastChar 255 /Encoding /WinAnsiEncoding` +
+    `${descriptor !== undefined ? ' /FontDescriptor 5 0 R' : ''} >>`;
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ' +
+      '/Resources << /Font << /F1 4 0 R >> >> /Contents 6 0 R >>',
+    font,
+    descriptor !== undefined
+      ? `<< /Type /FontDescriptor /FontName /${baseFont} ${descriptor} >>`
+      : '<< >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\n`;
+  pdf += `startxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
+const styleOf = (baseFont: string, descriptor?: string) => {
+  const file = PdfFile.parse(styledFontPdf(baseFont, descriptor));
+  const run = extractPageText(file, file.pages()[0]!)[0];
+  return { bold: run?.bold, italic: run?.italic };
+};
+
+describe('the face a run was shown in (§9.8.1)', () => {
+  it('reads the weight and the slant off the descriptor', () => {
+    // 160F-2019.pdf sets its title in Arial-BoldMT at /FontWeight 700, and
+    // rebuilt without it the whole heading came back light.
+    expect(styleOf('Arial-BoldMT', '/Flags 32 /FontWeight 700 /ItalicAngle 0')).toEqual({
+      bold: true,
+      italic: undefined,
+    });
+    expect(styleOf('ArialMT', '/Flags 32 /FontWeight 400 /ItalicAngle 0')).toEqual({
+      bold: undefined,
+      italic: undefined,
+    });
+    expect(styleOf('ArialMT', '/Flags 96 /ItalicAngle -12')).toEqual({
+      bold: undefined,
+      italic: true,
+    });
+  });
+
+  it('takes the ForceBold flag as a weight of its own', () => {
+    expect(styleOf('Whatever', '/Flags 262176').bold).toBe(true);
+  });
+
+  it('believes a descriptor that states no weight, whatever the name says', () => {
+    // "New Basrah Bold" and "Damascus Bold" are family names, not weights, and
+    // their descriptors give neither /FontWeight nor ForceBold.
+    // ArabicCIDTrueType.pdf sets two of its four lines in them, and reading the
+    // name over the descriptor set two lines heavy that no reader sets heavy.
+    expect(styleOf('NewBasrahBold', '/Flags 4 /ItalicAngle 0').bold).toBeUndefined();
+  });
+
+  it('falls back to the name only where there is no descriptor at all', () => {
+    // §9.6.2.2 — a standard-14 font carries none, so the name is all there is.
+    expect(styleOf('Helvetica-BoldOblique')).toEqual({ bold: true, italic: true });
+    expect(styleOf('Helvetica')).toEqual({ bold: undefined, italic: undefined });
+    // The subset prefix is six arbitrary capitals and may spell anything.
+    expect(styleOf('BOLDLY+Helvetica').bold).toBeUndefined();
+  });
+});
+
 describe('a simple font reads its codes one byte at a time (§9.6)', () => {
   it('ignores the /ToUnicode codespace width, which is the CMap’s and not the font’s', () => {
     // Read two bytes at a time, every string came apart into pairs: 160F-2019.pdf

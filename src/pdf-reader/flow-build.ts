@@ -81,6 +81,10 @@ export interface TextSpan {
   readonly sizePt?: number;
   /** §8.6.8 — the colour they were painted in, when it is not plain black. */
   readonly colorHex?: string;
+  /** §9.8.1 — the face was a bold one. */
+  readonly bold?: boolean;
+  /** §9.8.1 — the face was a slanted one. */
+  readonly italic?: boolean;
 }
 
 /**
@@ -93,10 +97,24 @@ export function paragraphFromRuns(
   spans: ReadonlyArray<TextSpan>,
   outlineLevel?: number,
 ): BodyElement {
-  const merged: Array<{ text: string; href?: string; sizePt?: number; colorHex?: string }> = [];
+  const merged: Array<{
+    text: string;
+    href?: string;
+    sizePt?: number;
+    colorHex?: string;
+    bold?: boolean;
+    italic?: boolean;
+  }> = [];
   for (const s of spans) {
     const last = merged[merged.length - 1];
-    if (last && last.href === s.href && last.sizePt === s.sizePt && last.colorHex === s.colorHex) {
+    if (
+      last &&
+      last.href === s.href &&
+      last.sizePt === s.sizePt &&
+      last.colorHex === s.colorHex &&
+      last.bold === s.bold &&
+      last.italic === s.italic
+    ) {
       last.text += s.text;
     } else
       merged.push({
@@ -104,6 +122,8 @@ export function paragraphFromRuns(
         ...(s.href !== undefined ? { href: s.href } : {}),
         ...(s.sizePt !== undefined ? { sizePt: s.sizePt } : {}),
         ...(s.colorHex !== undefined ? { colorHex: s.colorHex } : {}),
+        ...(s.bold !== undefined ? { bold: s.bold } : {}),
+        ...(s.italic !== undefined ? { italic: s.italic } : {}),
       });
   }
   const runs = merged
@@ -123,12 +143,16 @@ export function paragraphFromRuns(
         .filter((r) => r.text.length > 0)
         .map((r) => ({
           text: r.text,
-          // §9.3.1/§8.6.8 — the size and colour the page showed it in. Dropped,
-          // a form set in 7pt was rebuilt at the 11pt default and grew by half
-          // again, and its blue field labels and red warning came back black.
+          // §9.3.1/§8.6.8/§9.8.1 — the size, colour and face the page showed it
+          // in. Dropped, a form set in 7pt was rebuilt at the 11pt default and
+          // grew by half again, its blue field labels and red warning came back
+          // black, and 160F-2019.pdf's title, set in Arial-BoldMT, came back
+          // light.
           properties: {
             ...(r.sizePt !== undefined ? { fontSizePt: pt(r.sizePt) } : {}),
             ...(r.colorHex !== undefined ? { colorHex: r.colorHex } : {}),
+            ...(r.bold ? { bold: true } : {}),
+            ...(r.italic ? { italic: true } : {}),
           },
           ...(r.href ? { href: r.href } : {}),
         })),

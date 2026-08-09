@@ -110,6 +110,8 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
           sizePt: run.fontSizePt,
           // Black is the default; carrying it would put a colour on every run.
           ...(run.colorHex !== '000000' ? { colorHex: run.colorHex } : {}),
+          ...(run.bold ? { bold: true } : {}),
+          ...(run.italic ? { italic: true } : {}),
           ...(run.href !== undefined ? { href: run.href } : {}),
         });
       }
