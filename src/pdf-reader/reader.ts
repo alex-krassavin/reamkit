@@ -68,6 +68,17 @@ export function readPdf(
   // A placed reconstruction never consults the structure tree: the tree names a
   // reading order, and a reading order is the one thing a placed page does not
   // have. The words go where the glyphs are.
+  // §7.4 — a stream filter nothing here can undo leaves that stream unread.
+  // Reported before anything else: when it is the cross-reference stream, every
+  // page of the file is missing and no other loss explains why.
+  for (const name of file.unknownFilters) {
+    losses.push({
+      severity: 'dropped',
+      feature: FEATURES.text,
+      detail: `PDF stream filter /${name} is not supported; streams using it are unreadable`,
+    });
+  }
+
   const tagged = layout === 'positional' ? undefined : reconstructTaggedPdf(file);
   const reconstruction = tagged ?? reconstructByLayout(file, layout);
   if (!tagged && layout !== 'positional') {

@@ -69,12 +69,15 @@ export class PdfFile {
    * @returns A ready-to-query {@link PdfFile}.
    */
   static parse(bytes: Uint8Array, password = ''): PdfFile {
+    // Filter names met while the cross-reference is being built, before any
+    // PdfFile exists to hold them.
+    const unknownFilters = new Set<string>();
     let xref = new Map<number, XrefEntry>();
     let trailer: PdfDict = new Map();
     try {
       const start = findStartXref(bytes);
       if (start >= 0) {
-        const built = readXrefChain(bytes, start);
+        const built = readXrefChain(bytes, start, unknownFilters);
         xref = built.xref;
         trailer = built.trailer;
       }
@@ -84,7 +87,7 @@ export class PdfFile {
     // Recover when the xref was missing/broken or the trailer has no /Root: scan
     // for every `N G obj` and index any object streams found.
     if (xref.size === 0 || !(trailer.get('Root') instanceof PdfRef)) {
-      const scanned = bruteForceScan(bytes);
+      const scanned = bruteForceScan(bytes, unknownFilters);
       for (const [id, entry] of scanned.xref) if (!xref.has(id)) xref.set(id, entry);
       if (!(trailer.get('Root') instanceof PdfRef) && scanned.root) {
         trailer = new Map(trailer);
@@ -92,6 +95,7 @@ export class PdfFile {
       }
     }
     const file = new PdfFile(bytes, xref, trailer);
+    for (const name of unknownFilters) file.unknownFilters.add(name);
     file.initEncryption(password);
     return file;
   }
@@ -164,7 +168,7 @@ export class PdfFile {
       const dec = this.decryptor.decrypt(stream, streamObj, obj.generation);
       if (dec instanceof PdfStream) stream = dec;
     }
-    const data = inflateStream(stream);
+    const data = inflateStream(stream, this.unknownFilters);
     const first = numOf(this.resolve(stream.dict.get('First') ?? PDF_NULL));
     for (const member of objStmHeader(
       data,
@@ -260,18 +264,50 @@ export class PdfFile {
     const filters: Array<PdfValue> = Array.isArray(filter) ? filter : [filter];
     let flate = false;
     for (const f of filters) {
-      if (f instanceof PdfName && (f.value === 'FlateDecode' || f.value === 'Fl')) {
+      if (!(f instanceof PdfName)) continue;
+      if (f.value === 'FlateDecode' || f.value === 'Fl') {
         try {
           data = unzlibSync(data);
           flate = true;
         } catch {
           // leave undecoded on a malformed stream
         }
+      } else if (!PASSTHROUGH_FILTERS.has(f.value)) {
+        // A filter we cannot undo leaves the bytes as they arrived, and what
+        // the caller then reads is not the stream but its ciphertext. Said
+        // nowhere, that is a document which simply comes out empty:
+        // Brotli-Prototype-FileA.pdf compresses its CROSS-REFERENCE stream with
+        // `/BrotliDecode` (PDF 2.0), so its page tree never resolves and all
+        // twenty-five pages go missing without a word.
+        this.unknownFilters.add(f.value);
       }
     }
     return flate ? applyStreamPredictor(this, stream.dict, data) : data;
   }
+
+  /** Filter names met in this file that nothing here can undo. */
+  readonly unknownFilters = new Set<string>();
 }
+
+// Filters other code undoes (image-decode's own chain) or that need no undoing
+// here — `streamData` leaving them alone is not a failure to report.
+const PASSTHROUGH_FILTERS = new Set([
+  'LZWDecode',
+  'LZW',
+  'RunLengthDecode',
+  'RL',
+  'ASCII85Decode',
+  'A85',
+  'ASCIIHexDecode',
+  'AHx',
+  'DCTDecode',
+  'DCT',
+  'JPXDecode',
+  'JBIG2Decode',
+  'CCITTFaxDecode',
+  'CCF',
+  'Crypt',
+]);
 
 // --- cross-reference table -------------------------------------------------
 
@@ -290,7 +326,7 @@ interface XrefSection {
 
 // Read the section at `offset` (classic table or xref stream), then follow the
 // /Prev chain and any hybrid /XRefStm pointers (newest entries win).
-function readXrefChain(buf: Uint8Array, offset: number): XrefSection {
+function readXrefChain(buf: Uint8Array, offset: number, unknown?: Set<string>): XrefSection {
   const xref = new Map<number, XrefEntry>();
   let trailer: PdfDict = new Map();
   const visited = new Set<number>();
@@ -299,7 +335,7 @@ function readXrefChain(buf: Uint8Array, offset: number): XrefSection {
     const at = queue.shift()!;
     if (at < 0 || at >= buf.length || visited.has(at)) continue;
     visited.add(at);
-    const section = readXrefAt(buf, at);
+    const section = readXrefAt(buf, at, unknown);
     if (!section) continue;
     for (const [id, entry] of section.xref) if (!xref.has(id)) xref.set(id, entry);
     if (trailer.size === 0) trailer = section.trailer;
@@ -313,12 +349,16 @@ function readXrefChain(buf: Uint8Array, offset: number): XrefSection {
 
 // Dispatch by what sits at the offset: the `xref` keyword (a classic table) or an
 // `N G obj` definition (a cross-reference stream).
-function readXrefAt(buf: Uint8Array, offset: number): XrefSection | undefined {
+function readXrefAt(
+  buf: Uint8Array,
+  offset: number,
+  unknown?: Set<string>,
+): XrefSection | undefined {
   const lexer = new Lexer(buf, offset);
   const head = lexer.nextToken();
   if (head.kind === 'keyword' && head.value === 'xref') return readClassicXref(lexer);
   const obj = parseIndirectObject(new Lexer(buf, offset));
-  if (obj && obj.value instanceof PdfStream) return readXrefStream(obj.value);
+  if (obj && obj.value instanceof PdfStream) return readXrefStream(obj.value, unknown);
   return undefined;
 }
 
@@ -349,7 +389,7 @@ function readClassicXref(lexer: Lexer): XrefSection | undefined {
 
 // A cross-reference stream (§7.5.8): /W field widths, /Index subsections, and
 // fixed-width binary rows of (type, field2, field3).
-function readXrefStream(stream: PdfStream): XrefSection | undefined {
+function readXrefStream(stream: PdfStream, unknown?: Set<string>): XrefSection | undefined {
   const dict = stream.dict;
   const wv = dict.get('W');
   if (!Array.isArray(wv) || wv.length < 3) return undefined;
@@ -358,7 +398,7 @@ function readXrefStream(stream: PdfStream): XrefSection | undefined {
   const w2 = numOf(wv[2]);
   const rowLen = w0 + w1 + w2;
   if (rowLen <= 0) return undefined;
-  const data = inflateStream(stream);
+  const data = inflateStream(stream, unknown);
   const size = numOf(dict.get('Size'));
   const indexV = dict.get('Index');
   const index = Array.isArray(indexV) ? indexV.map(numOf) : [0, size];
@@ -400,11 +440,19 @@ function objStmHeader(data: Uint8Array, n: number): Array<{ id: number; off: num
 // FlateDecode + /Predictor, reading the parameters directly from the (directly
 // stored) dict — used while the cross-reference is still being built, so it
 // cannot rely on indirect-reference resolution.
-function inflateStream(stream: PdfStream): Uint8Array {
+function inflateStream(stream: PdfStream, unknown?: Set<string>): Uint8Array {
   let data = stream.data;
   const filter = stream.dict.get('Filter') ?? PDF_NULL;
   const filters: Array<PdfValue> = Array.isArray(filter) ? filter : [filter];
   for (const f of filters) {
+    if (
+      f instanceof PdfName &&
+      !PASSTHROUGH_FILTERS.has(f.value) &&
+      f.value !== 'FlateDecode' &&
+      f.value !== 'Fl'
+    ) {
+      unknown?.add(f.value);
+    }
     if (f instanceof PdfName && (f.value === 'FlateDecode' || f.value === 'Fl')) {
       try {
         data = unzlibSync(data);
@@ -454,7 +502,10 @@ function applyStreamPredictor(file: PdfFile, dict: PdfDict, data: Uint8Array): U
 // Linear recovery: scan for every `N G obj`, recording the latest offset per
 // object number and the first /Catalog; then index any object streams found, so
 // the objects they pack are reachable too.
-function bruteForceScan(buf: Uint8Array): {
+function bruteForceScan(
+  buf: Uint8Array,
+  unknown: Set<string>,
+): {
   xref: Map<number, XrefEntry>;
   root: PdfRef | undefined;
 } {
@@ -493,7 +544,7 @@ function bruteForceScan(buf: Uint8Array): {
     if (!entry || entry.kind !== 'uncompressed') continue;
     const obj = parseIndirectObject(new Lexer(buf, entry.offset));
     if (!obj || !(obj.value instanceof PdfStream)) continue;
-    const data = inflateStream(obj.value);
+    const data = inflateStream(obj.value, unknown);
     const first = numOf(obj.value.dict.get('First') ?? PDF_NULL);
     const n = numOf(obj.value.dict.get('N') ?? PDF_NULL);
     objStmHeader(data, n).forEach((member, index) => {

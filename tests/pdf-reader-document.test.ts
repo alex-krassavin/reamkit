@@ -34,6 +34,46 @@ function tinyPdf(content: Uint8Array, contentDict: PdfDict): Uint8Array {
   return doc.build(catalog);
 }
 
+describe('a filter nothing here can undo says so (§7.4)', () => {
+  it('reports the filter by name instead of returning an empty document', () => {
+    // Brotli-Prototype-FileA.pdf compresses its CROSS-REFERENCE stream with
+    // `/BrotliDecode` (PDF 2.0). Undecoded, the page tree never resolves and
+    // all twenty-five pages go missing — with nothing in the report to say why.
+    const content = 'BT ET';
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R >>',
+      `<< /Filter /BrotliDecode /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    ];
+    let pdf = '%PDF-2.0\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\n`;
+    pdf += `startxref\n${String(xref)}\n%%EOF\n`;
+
+    const file = PdfFile.parse(new TextEncoder().encode(pdf));
+    file.streamData(file.resolve(file.pages()[0]!.dict.get('Contents')!) as never);
+    expect([...file.unknownFilters]).toContain('BrotliDecode');
+  });
+
+  it('says nothing about the filters it does undo, or leaves to others', () => {
+    const raw = zlibSync(new TextEncoder().encode('BT ET'));
+    const file = PdfFile.parse(
+      new TextEncoder().encode('%PDF-1.7\ntrailer\n<< /Size 1 >>\n%%EOF\n'),
+    );
+    file.streamData(stream({ Filter: name('FlateDecode') }, raw));
+    file.streamData(stream({ Filter: name('DCTDecode') }, raw));
+    expect([...file.unknownFilters]).toHaveLength(0);
+  });
+});
+
 describe('PDF document layer — classic xref + page tree (E-PDF EP1)', () => {
   it('reads back a writer-produced PDF: pages, MediaBox, content', () => {
     const body = new TextEncoder().encode('BT /F1 24 Tf 72 60 Td (Hello) Tj ET');
