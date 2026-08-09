@@ -64,7 +64,7 @@ function collectRuns(
   out: Array<TextRun>,
 ): void {
   const result = interpretContent(content, buildFonts(file, resources), baseCtm);
-  out.push(...result.texts);
+  out.push(...result.texts.map((r) => withPatternColour(file, resources, r, visiting)));
   if (depth >= MAX_FORM_DEPTH) return;
   // §9.6.5 — a Type 3 glyph's procedure may show text of its own, and it is
   // text the page shows. ContentStreamCycleType3insideType3.pdf sets a word
@@ -102,6 +102,53 @@ function collectRuns(
       visiting,
       out,
     );
+    visiting.delete(stream);
+  }
+}
+
+/**
+ * §8.6.6.2 — a run whose glyphs the page fills with a tiling PATTERN, given the
+ * pattern's own colour.
+ *
+ * A pattern is a content stream, not a colour, and type cannot be filled with
+ * one here: what a run carries is a single colour. Painting it in whatever was
+ * set before the pattern was is simply wrong — it comes out black where the
+ * page shows magenta. The pattern's first mark says what colour the page meant,
+ * and the glyphs take that. A documented approximation: the shape of the
+ * pattern is lost, its colour is not.
+ *
+ * @param file      The owning file.
+ * @param resources The resources the run was drawn with.
+ * @param run       The run, which may name a fill pattern.
+ * @param visiting  The streams already being interpreted, against a cycle.
+ * @returns The run, its colour taken from the pattern where there is one.
+ */
+function withPatternColour(
+  file: PdfFile,
+  resources: PdfDict | undefined,
+  run: TextRun,
+  visiting: Set<PdfStream>,
+): TextRun {
+  const name = run.fillPatternName;
+  if (name === undefined || !resources) return run;
+  const patterns = file.get(resources, 'Pattern');
+  if (!(patterns instanceof Map)) return run;
+  const stream = file.resolve(patterns.get(name) ?? PDF_NULL);
+  if (!(stream instanceof PdfStream) || visiting.has(stream)) return run;
+  visiting.add(stream);
+  try {
+    const own = file.get(stream.dict, 'Resources');
+    const inner = interpretContent(
+      file.streamData(stream),
+      buildFonts(file, own instanceof Map ? own : resources),
+    );
+    // Whatever the pattern paints first is the colour it paints in: a tile is
+    // one mark or a few, and they are the same colour far more often than not.
+    const colorHex = inner.texts[0]?.colorHex ?? inner.vectors.find((v) => v.fillHex)?.fillHex;
+    return colorHex !== undefined ? { ...run, colorHex } : run;
+  } catch {
+    return run; // A pattern the reader cannot run says nothing about colour.
+  } finally {
     visiting.delete(stream);
   }
 }

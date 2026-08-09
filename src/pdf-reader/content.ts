@@ -90,6 +90,12 @@ export interface TextRun {
   /** §9.8.1 — the face the glyphs were shown in is a bold one. */
   readonly bold?: boolean;
   /**
+   * §8.6.6.2 — the glyphs are filled with a tiling PATTERN, named here for the
+   * caller to resolve: a pattern is a content stream, not a colour, and the
+   * fill colour still standing from before is not what the page shows.
+   */
+  readonly fillPatternName?: string;
+  /**
    * §9.3.6 — the page painted these glyphs NOWHERE: mode 3 shows nothing and
    * mode 7 only adds to the clip. A scanned page carries its recognised words
    * that way, under the picture of the page — so the run is kept, because it
@@ -496,6 +502,7 @@ export function interpretContent(
       ...(state.font.name !== undefined ? { fontName: state.font.name } : {}),
       ...(state.font.type3 ? { type3: true } : {}),
       ...(state.renderMode === 3 || state.renderMode === 7 ? { invisible: true } : {}),
+      ...(state.fillPattern !== undefined ? { fillPatternName: state.fillPattern } : {}),
       // §9.3.6 — modes 1, 2, 5 and 6 stroke the glyphs; the pen is the one the
       // graphics state holds, in the stroking colour.
       ...(strokesText(state.renderMode)

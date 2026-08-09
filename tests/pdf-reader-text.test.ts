@@ -246,6 +246,53 @@ describe('a composite font with no /ToUnicode (§9.10.2)', () => {
   });
 });
 
+/** A page whose text is filled with a tiling pattern that paints magenta. */
+function patternTextPdf(): Uint8Array {
+  const tile = '1 0 1 rg 0 0 5 5 re f';
+  const content = '/Pattern cs /P1 scn BT /F1 24 Tf 20 100 Td (tinted) Tj ET';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+      '/Resources << /Font << /F1 5 0 R >> /Pattern << /P1 6 0 R >> >> >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    '<< /Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] ' +
+      `/XStep 10 /YStep 10 /Resources << >> /Length ${String(tile.length)} >>\n` +
+      `stream\n${tile}\nendstream`,
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
+describe('type filled with a pattern (§8.6.6.2)', () => {
+  it('takes the pattern’s own colour instead of whatever was set before', () => {
+    // ContentStreamCycleType3insideType3.pdf fills its glyphs with a magenta
+    // tiling pattern. A pattern is a content stream, not a colour, and the fill
+    // still standing from before painted the words solid black.
+    const file = PdfFile.parse(patternTextPdf());
+    const run = extractPageText(file, file.pages()[0]!)[0];
+    expect(run?.text).toBe('tinted');
+    expect(run?.fillPatternName).toBe('P1');
+    expect(run?.colorHex).toBe('FF00FF');
+  });
+
+  it('says so, because the pattern’s shape is lost even where its colour is not', () => {
+    const { losses } = reconstructByLayout(PdfFile.parse(patternTextPdf()), 'positional');
+    expect(losses.map((l) => l.severity)).toContain('degraded');
+    expect(losses.some((l) => l.detail.includes('tiling pattern'))).toBe(true);
+  });
+});
+
 describe('the faces a file carries (§9.9)', () => {
   it('lifts the embedded program under the name a run will ask for', () => {
     // A substituted face is never the one the author used: its glyphs are a

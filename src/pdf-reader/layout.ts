@@ -31,7 +31,7 @@ import type { Loss } from '@/core/ir';
 import type { TextRun } from './content';
 import type { PdfFile, PdfPage } from './document';
 import type { Reconstruction, TextSpan } from './flow-build';
-import { ResourceStore, pt } from '@/core/ir';
+import { FEATURES, ResourceStore, pt } from '@/core/ir';
 
 interface Line {
   readonly y: number; // baseline (page space, y-up)
@@ -77,6 +77,15 @@ export function reconstructByLayout(
 
   const resources = new ResourceStore();
   const losses: Array<Loss> = [];
+  // §8.6.6.2 — type filled with a tiling pattern keeps the pattern's colour and
+  // loses its shape: a run carries one colour, not a content stream.
+  if (pageRuns.some((page) => page.some((r) => r.fillPatternName !== undefined))) {
+    losses.push({
+      severity: 'degraded',
+      feature: FEATURES.text,
+      detail: 'text filled with a tiling pattern is drawn in the pattern’s colour, not its pattern',
+    });
+  }
   const body: Array<BodyElement> = [];
   pages.forEach((page, i) => {
     const runs = pageRuns[i]!;
