@@ -78,3 +78,33 @@ describe('content-stream interpreter (E-PDF EP2)', () => {
     expect(runs[0]!.mcid).toBeUndefined();
   });
 });
+
+describe('where a run ends (§9.4.4)', () => {
+  // The reader used to guess at this — half an em per character — and a guess is
+  // what tells a word space from a table column. On 160F-2019.pdf the guess was
+  // out by up to three ems on a long run, which is wider than several of the
+  // gaps it had to judge.
+  it('reports the pen’s position after the last glyph, from the font’s widths', () => {
+    const font: ContentFont = {
+      bytesPerCode: 1,
+      decode: (codes) => codes.map((c) => String.fromCharCode(c)).join(''),
+      width: () => 700, // a wide face: 0.7 em a glyph, not the 0.5 em fallback
+    };
+    const runs = run('BT /F1 10 Tf 100 700 Td (ABCD) Tj ET', new Map([['F1', font]]));
+    expect(runs[0]!.x).toBeCloseTo(100);
+    expect(runs[0]!.endX).toBeCloseTo(128); // 100 + 4 × 0.7 × 10
+  });
+
+  it('counts the kerning a TJ array applies between its pieces', () => {
+    // −500/1000 of an em closes the gap by half a size; the end has to know.
+    const runs = run('BT /F1 10 Tf 0 0 Td [(AB) 500 (CD)] TJ ET');
+    expect(runs[0]!.text).toBe('ABCD');
+    expect(runs[0]!.endX).toBeCloseTo(15); // 4 × 0.5 × 10 − 0.5 × 10
+  });
+
+  it('measures in page space, so a scaling CTM scales the end with it', () => {
+    const runs = run('2 0 0 2 0 0 cm BT /F1 10 Tf 5 0 Td (AB) Tj ET');
+    expect(runs[0]!.x).toBeCloseTo(10);
+    expect(runs[0]!.endX).toBeCloseTo(30); // (5 + 2 × 0.5 × 10) × 2
+  });
+});

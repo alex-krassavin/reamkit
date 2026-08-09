@@ -31,6 +31,36 @@ export interface Reconstruction {
 }
 
 /**
+ * The corner a page's marks are measured from: the left and the TOP of its
+ * `/MediaBox`, in PDF's y-up user space.
+ *
+ * §14.11.2 — a media box is not obliged to start at the origin, and a page that
+ * begins elsewhere is not exotic: 160F-2019.pdf's is
+ * `[-11.96 11.99 583.24 853.67]`. Taking the corner for (0, 0) placed every
+ * anchored mark twelve points up and to the left of where the page drew it,
+ * which on a form is the difference between a label in its box and a label over
+ * the rule above it.
+ */
+export interface PageFrame {
+  /** `/MediaBox` left edge — subtract it to get an offset from the page. */
+  readonly left: number;
+  /** `/MediaBox` top edge — subtract from it to flip into a top-down frame. */
+  readonly top: number;
+}
+
+/**
+ * A page's {@link PageFrame}, taken from its `/MediaBox` whichever way round
+ * the box states its corners.
+ *
+ * @param page The page whose frame is wanted.
+ * @returns Its left and top edges in user space.
+ */
+export function pageFrameOf(page: PdfPage): PageFrame {
+  const [x0, y0, x1, y1] = page.mediaBox;
+  return { left: Math.min(x0, x1), top: Math.max(y0, y1) };
+}
+
+/**
  * Build a paragraph {@link BodyElement} from a single plain-text string,
  * optionally at the given outline (heading) level. Empty text yields a
  * paragraph with no runs. The link-free counterpart of {@link paragraphFromRuns}.
@@ -115,7 +145,7 @@ export function imageBlock(
   image: PdfImage,
   resources: ResourceStore,
   alt?: string,
-  pageHeight?: number,
+  frame?: PageFrame,
   zOrder?: number,
 ): BodyElement {
   const resource = resources.put(image.bytes);
@@ -124,14 +154,14 @@ export function imageBlock(
   // Stacked in flow, 22060_A1_01_Plans.pdf's four floor plans made two pages of
   // a sheet that is one.
   const float: FloatAnchor | undefined =
-    pageHeight !== undefined
+    frame !== undefined
       ? {
           wrap: 'none',
           ...(zOrder !== undefined ? { zOrder } : {}),
-          posH: { relativeFrom: 'page', offsetPt: pt(image.x) },
+          posH: { relativeFrom: 'page', offsetPt: pt(image.x - frame.left) },
           posV: {
             relativeFrom: 'page',
-            offsetPt: pt(Math.max(0, pageHeight - image.y - image.heightPt)),
+            offsetPt: pt(Math.max(0, frame.top - image.y - image.heightPt)),
           },
         }
       : undefined;
@@ -158,16 +188,16 @@ export function imageBlock(
  * artwork is placed absolutely, so text that flows beside it lines up with none
  * of it.
  *
- * @param spans      The line's runs.
- * @param box        Its page-space rectangle (y-up, as PDF measures).
- * @param pageHeight The page height, to flip into the layout's y-down frame.
- * @param zOrder     Its place in the page's painting order.
+ * @param spans  The line's runs.
+ * @param box    Its page-space rectangle (y-up, as PDF measures).
+ * @param frame  The page's own corner, to measure the box off.
+ * @param zOrder Its place in the page's painting order.
  * @returns A shape carrying the text, anchored where the glyphs were.
  */
 export function positionedText(
   spans: ReadonlyArray<TextSpan>,
   box: { x: number; y: number; width: number; height: number },
-  pageHeight: number,
+  frame: PageFrame,
   zOrder: number,
 ): BodyElement {
   const paragraph = paragraphFromRuns(spans);
@@ -177,8 +207,11 @@ export function positionedText(
       float: {
         wrap: 'none',
         zOrder,
-        posH: { relativeFrom: 'page', offsetPt: pt(box.x) },
-        posV: { relativeFrom: 'page', offsetPt: pt(Math.max(0, pageHeight - box.y - box.height)) },
+        posH: { relativeFrom: 'page', offsetPt: pt(box.x - frame.left) },
+        posV: {
+          relativeFrom: 'page',
+          offsetPt: pt(Math.max(0, frame.top - box.y - box.height)),
+        },
       },
       width: pt(Math.max(1, box.width)),
       height: pt(Math.max(1, box.height)),
@@ -211,12 +244,12 @@ export function dedupeLosses(losses: ReadonlyArray<Loss>): Array<Loss> {
  * path-space (bbox-relative, y-down); the shape is sized from the bounding box
  * (plus the stroke thickness). A fill becomes a solid fill, a stroke the outline.
  *
- * Given the page height the shape is ANCHORED where the page drew it, behind
+ * Given the page's frame the shape is ANCHORED where the page drew it, behind
  * the text, rather than taking a place of its own in the flow. A drawing is not
  * a paragraph: 22060_A1_01_Plans.pdf is one A3 sheet of vectors, and stacking
  * its forty-nine paths one under another spilled it onto a second page.
  */
-export function shapeBlock(v: PdfVector, pageHeight?: number, zOrder?: number): BodyElement {
+export function shapeBlock(v: PdfVector, frame?: PageFrame, zOrder?: number): BodyElement {
   const w = v.maxX - v.minX;
   const h = v.maxY - v.minY;
   const fx = (x: number): number => x - v.minX;
@@ -267,12 +300,12 @@ export function shapeBlock(v: PdfVector, pageHeight?: number, zOrder?: number): 
   // `zOrder` carries the order the page painted in, which is the only thing
   // that decides this.
   const float: FloatAnchor | undefined =
-    pageHeight !== undefined
+    frame !== undefined
       ? {
           wrap: 'none',
           ...(zOrder !== undefined ? { zOrder } : {}),
-          posH: { relativeFrom: 'page', offsetPt: pt(v.minX) },
-          posV: { relativeFrom: 'page', offsetPt: pt(Math.max(0, pageHeight - v.maxY)) },
+          posH: { relativeFrom: 'page', offsetPt: pt(v.minX - frame.left) },
+          posV: { relativeFrom: 'page', offsetPt: pt(Math.max(0, frame.top - v.maxY)) },
         }
       : undefined;
   return {

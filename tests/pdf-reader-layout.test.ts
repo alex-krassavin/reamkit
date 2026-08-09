@@ -76,6 +76,38 @@ describe('a multi-page PDF keeps its pages (E-PDF EP4)', () => {
   });
 });
 
+/** A one-page PDF of hand-written objects; `page` is the page dict's body. */
+function onePagePdf(page: string, content: string): Uint8Array {
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    `<< /Type /Page /Parent 2 0 R /Contents 4 0 R ${page} >>`,
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
+/** Two words on one baseline, three hundred points apart — a table row. */
+const twoColumnLinePdf = (): Uint8Array =>
+  onePagePdf('/MediaBox [0 0 400 800]', 'BT /F1 10 Tf 20 700 Td (Left) Tj 300 0 Td (Right) Tj ET');
+
+/** A page whose `/MediaBox` starts twelve points off the origin, as 160F's does. */
+const offsetBoxPdf = (): Uint8Array =>
+  onePagePdf(
+    '/MediaBox [-12 12 388 812]',
+    'BT /F1 10 Tf 20 700 Td (Hello) Tj ET 0 0 1 rg 20 100 50 30 re f',
+  );
+
 describe('placed reconstruction (E-PDF EP4)', () => {
   it('anchors every line where its glyphs stand, instead of flowing them', async () => {
     // A form is a grid of ruled boxes with a label in each: flowed, the labels
@@ -97,6 +129,47 @@ describe('placed reconstruction (E-PDF EP4)', () => {
     // The first line sits higher on the page, so its offset from the top is less.
     const offsets = shapes.map((shape) => shape.float?.posV?.offsetPt ?? 0);
     expect(offsets[0]!).toBeLessThan(offsets[1]!);
+  });
+
+  it('splits a baseline where a column gap opens, so each piece keeps its x', () => {
+    // 160F-2019.pdf sets a line number, a label and a right-hand column on one
+    // baseline. Read as a single line, the right-hand text was dragged left
+    // against its neighbour with one space between: "sous-total: n° dossier:".
+    const placed = reconstructByLayout(PdfFile.parse(twoColumnLinePdf()), 'positional');
+    const shapes = placed.doc.body.filter((b) => b.kind === 'shape').map((b) => b.shape);
+    expect(shapes).toHaveLength(2);
+    const offsets = shapes.map((s) => s.float?.posH?.offsetPt ?? 0).sort((a, b) => a - b);
+    expect(offsets[0]).toBeCloseTo(20, 0);
+    expect(offsets[1]).toBeCloseTo(320, 0);
+    // Both stand on the same baseline, so neither moved vertically.
+    const tops = shapes.map((s) => s.float?.posV?.offsetPt ?? 0);
+    expect(tops[0]).toBeCloseTo(tops[1]!, 5);
+  });
+
+  it('reads one flowing line across the same gap', () => {
+    // A paragraph is meant to be read across: only the placed reading splits.
+    const flowed = reconstructByLayout(PdfFile.parse(twoColumnLinePdf()));
+    const paras = paragraphs(flowed.doc);
+    expect(paras).toHaveLength(1);
+    expect(paras[0]!.paragraph.runs.map((r) => r.text).join('')).toBe('Left Right');
+  });
+
+  it('measures a placed mark off the page’s own corner, not off the origin', () => {
+    // §14.11.2 — a /MediaBox need not start at (0, 0), and 160F-2019.pdf's is
+    // [-11.96 11.99 583.24 853.67]. Taking the corner for the origin put every
+    // line and every rule twelve points up and to the left of the page's own.
+    const placed = reconstructByLayout(PdfFile.parse(offsetBoxPdf()), 'positional');
+    const text = placed.doc.body.find((b) => b.kind === 'shape' && b.shape.text !== undefined);
+    const rule = placed.doc.body.find((b) => b.kind === 'shape' && b.shape.text === undefined);
+    expect(text?.kind).toBe('shape');
+    expect(rule?.kind).toBe('shape');
+    if (text?.kind !== 'shape' || rule?.kind !== 'shape') return;
+    // Text at x 20 on a box whose left edge is −12 stands 32pt in from the page.
+    expect(text.shape.float?.posH?.offsetPt).toBeCloseTo(32, 5);
+    // Baseline 700, box top 812: 812 − (700 − 2.5) − 12.5.
+    expect(text.shape.float?.posV?.offsetPt).toBeCloseTo(102, 5);
+    expect(rule.shape.float?.posH?.offsetPt).toBeCloseTo(32, 5);
+    expect(rule.shape.float?.posV?.offsetPt).toBeCloseTo(682, 5); // 812 − 130
   });
 
   it('still flows by default, so a PDF reads back as a document', async () => {

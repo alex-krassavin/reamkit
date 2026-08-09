@@ -14,6 +14,7 @@ import {
   buildFlowDoc,
   dedupeLosses,
   imageBlock,
+  pageFrameOf,
   paragraphFromRuns,
   positionedText,
   sectionFromPdfPages,
@@ -84,7 +85,7 @@ export function reconstructByLayout(
     // column top-to-bottom, then right column.
     const blocks: Array<{ col: number; top: number; el: BodyElement }> = [];
     const addColumn = (colRuns: ReadonlyArray<TextRun>, col: number): void => {
-      const lines = groupIntoLines(colRuns).filter((l) => l.text.length > 0);
+      const lines = groupIntoLines(colRuns, mode === 'positional').filter((l) => l.text.length > 0);
       if (mode === 'positional') {
         // Every line stands where the page set it. Lines are NOT grouped into
         // paragraphs here: a paragraph is a thing that reflows, and nothing in
@@ -109,7 +110,7 @@ export function reconstructByLayout(
                   width: Math.max(line.width, pageWidth - line.x),
                   height: line.fontSize * 1.25,
                 },
-                pageHeightOf(page),
+                pageFrameOf(page),
                 z,
               ),
           });
@@ -143,7 +144,7 @@ export function reconstructByLayout(
       addColumn(runs, 0);
     }
     const colOf = (centerX: number): number => (gutter !== undefined && centerX >= gutter ? 1 : 0);
-    const pageHeight = pageHeightOf(page);
+    const frame = pageFrameOf(page);
     const imgs = collectPageImages(file, page);
     losses.push(...imgs.losses);
     // Filled vector paths (EP10) are ANCHORED where the page drew them — they
@@ -170,13 +171,13 @@ export function reconstructByLayout(
         key: img.orderKey,
         col: colOf(img.x + img.widthPt / 2),
         top: img.y + img.heightPt,
-        make: (z: number): BodyElement => imageBlock(img, resources, undefined, pageHeight, z),
+        make: (z: number): BodyElement => imageBlock(img, resources, undefined, frame, z),
       })),
       ...vectors.map((v) => ({
         key: v.orderKey,
         col: colOf((v.minX + v.maxX) / 2),
         top: v.maxY,
-        make: (z: number): BodyElement => shapeBlock(v, pageHeight, z),
+        make: (z: number): BodyElement => shapeBlock(v, frame, z),
       })),
       ...placed,
     ].sort((a, b) => compareOrder(a.key, b.key));
@@ -212,9 +213,9 @@ export function reconstructByLayout(
 function detectGutter(runs: ReadonlyArray<TextRun>, pageWidth: number): number | undefined {
   if (runs.length < 30 || pageWidth <= 0) return undefined;
   const fontSize = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
-  const right = (r: TextRun): number =>
-    r.x + Math.max(1, r.text.length) * (r.fontSizePt || fontSize) * 0.5;
-  const intervals = runs.map((r): [number, number] => [r.x, right(r)]).sort((a, b) => a[0] - b[0]);
+  const intervals = runs
+    .map((r): [number, number] => [r.x, Math.max(r.endX, r.x + 1)])
+    .sort((a, b) => a[0] - b[0]);
   const minX = intervals[0]![0];
   const maxX = Math.max(...intervals.map((iv) => iv[1]));
   const span = maxX - minX;
@@ -236,9 +237,23 @@ function detectGutter(runs: ReadonlyArray<TextRun>, pageWidth: number): number |
   return gapMid;
 }
 
+/**
+ * The gap, in ems, past which runs sharing a baseline are not one line of words
+ * but two things the page put in different places.
+ *
+ * Measured on 160F-2019.pdf, whose every row sets a line number, a label and a
+ * right-hand column on one baseline: the gaps between words run 0.00–3.13 em
+ * and the gaps between columns 4.41–43.66 em, with nothing in between. Four ems
+ * sits in that empty band. Only the positional reader splits on it — a flowing
+ * paragraph is meant to be read across.
+ */
+const COLUMN_GAP_EM = 4;
+
 // Cluster runs that share a baseline (within half a line's height) into lines,
 // top of the page first; within a line, order by x and build link-aware spans.
-function groupIntoLines(runs: ReadonlyArray<TextRun>): Array<Line> {
+// With `split`, a cluster is cut wherever a column-wide gap opens, so each piece
+// keeps its own x instead of being dragged left against its neighbour.
+function groupIntoLines(runs: ReadonlyArray<TextRun>, split = false): Array<Line> {
   const sorted = [...runs].sort((a, b) => b.y - a.y || a.x - b.x);
   const clusters: Array<{ y: number; fontSize: number; runs: Array<TextRun> }> = [];
   for (const run of sorted) {
@@ -251,33 +266,40 @@ function groupIntoLines(runs: ReadonlyArray<TextRun>): Array<Line> {
       clusters.push({ y: run.y, fontSize: run.fontSizePt || 10, runs: [run] });
     }
   }
-  return clusters.map((c) => {
+  return clusters.flatMap((c) => {
     const ordered = c.runs.sort((a, b) => a.x - b.x);
     const fontSize = c.fontSize || 10;
-    const spans = lineSpans(ordered, fontSize);
-    const first = ordered[0]!;
-    const last = ordered[ordered.length - 1]!;
-    const x = first.x;
-    // Half an em per glyph, the same estimate `lineSpans` measures gaps by.
-    const width = last.x + last.text.length * (last.fontSizePt || fontSize) * 0.5 - x;
-    return {
-      x,
-      width,
-      y: c.y,
-      fontSize,
-      text: spans
-        .map((s) => s.text)
-        .join('')
-        .replace(/\s+/g, ' ')
-        .trim(),
-      spans,
-    };
+    const pieces: Array<Array<TextRun>> = [[]];
+    for (const run of ordered) {
+      const prev = pieces[pieces.length - 1]!;
+      const last = prev[prev.length - 1];
+      if (split && last && run.x - last.endX > fontSize * COLUMN_GAP_EM) pieces.push([]);
+      pieces[pieces.length - 1]!.push(run);
+    }
+    return pieces.map((piece) => lineOf(piece, c.y, fontSize));
   });
 }
 
+/** One run of runs, left to right on a shared baseline, as a {@link Line}. */
+function lineOf(runs: ReadonlyArray<TextRun>, y: number, fontSize: number): Line {
+  const spans = lineSpans(runs, fontSize);
+  const x = runs[0]!.x;
+  return {
+    x,
+    width: runs[runs.length - 1]!.endX - x,
+    y,
+    fontSize,
+    text: spans
+      .map((s) => s.text)
+      .join('')
+      .replace(/\s+/g, ' ')
+      .trim(),
+    spans,
+  };
+}
+
 // A line's runs as spans, inserting a (link-free) space where a horizontal gap
-// suggests one. Run widths are estimated (half-em per char) — glyph metrics are
-// not kept.
+// suggests one.
 function lineSpans(runs: ReadonlyArray<TextRun>, fontSize: number): Array<TextSpan> {
   const spans: Array<TextSpan> = [];
   let prevEnd: number | undefined;
@@ -295,7 +317,7 @@ function lineSpans(runs: ReadonlyArray<TextRun>, fontSize: number): Array<TextSp
       ...(run.colorHex !== '000000' ? { colorHex: run.colorHex } : {}),
       ...(run.href !== undefined ? { href: run.href } : {}),
     });
-    prevEnd = run.x + run.text.length * (run.fontSizePt || fontSize) * 0.5;
+    prevEnd = run.endX;
   }
   return spans;
 }
@@ -344,9 +366,4 @@ function compareOrder(a: ReadonlyArray<number>, b: ReadonlyArray<number>): numbe
     if (a[i] !== b[i]) return a[i]! - b[i]!;
   }
   return a.length - b.length;
-}
-
-/** The page's height in points — the flip between PDF's y-up frame and ours. */
-function pageHeightOf(page: PdfPage): number {
-  return Math.abs(page.mediaBox[3] - page.mediaBox[1]);
 }

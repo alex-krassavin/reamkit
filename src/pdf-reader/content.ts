@@ -40,6 +40,14 @@ export interface TextRun {
   readonly x: number;
   /** Glyph origin y in page space (points). */
   readonly y: number;
+  /**
+   * Where the pen stood after the last glyph, in page space (§9.4.4). The
+   * interpreter advances the text matrix by the font's own widths, so this is
+   * a measurement, not the half-em-per-character guess the reader used to make
+   * — and the difference between a word space and a table column is exactly
+   * the kind of thing a guess gets wrong.
+   */
+  readonly endX: number;
   readonly fontSizePt: number;
   readonly fontKey: string;
   /** §8.6.8 — the non-stroking colour the glyphs were painted in (6-hex). */
@@ -370,7 +378,7 @@ export function interpretContent(
     return state.font.decode(codes);
   };
 
-  const emitAt = (origin: Matrix, text: string): void => {
+  const emitAt = (origin: Matrix, text: string, end: Matrix): void => {
     if (text.length === 0) return;
     const scaleY = Math.hypot(origin[2], origin[3]) || 1;
     const mcid = mcStack.length > 0 ? mcStack[mcStack.length - 1] : undefined;
@@ -378,6 +386,7 @@ export function interpretContent(
       text,
       x: origin[4],
       y: origin[5],
+      endX: end[4],
       fontSizePt: state.fontSize * scaleY,
       fontKey: state.fontKey,
       colorHex: state.fillColor,
@@ -388,7 +397,8 @@ export function interpretContent(
   // Tj / ' / " — one string at the current origin.
   const showString = (operand: PdfValue): void => {
     const origin = multiply(tm, state.ctm);
-    emitAt(origin, consume(operand));
+    const text = consume(operand);
+    emitAt(origin, text, multiply(tm, state.ctm));
   };
 
   // TJ — an array of strings and kerning adjustments; one run at the start origin.
@@ -402,7 +412,7 @@ export function interpretContent(
         text += consume(el);
       }
     }
-    emitAt(origin, text);
+    emitAt(origin, text, multiply(tm, state.ctm));
   };
 
   const exec = (op: string): void => {

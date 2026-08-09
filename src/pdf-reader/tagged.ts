@@ -10,6 +10,7 @@ import {
   buildFlowDoc,
   dedupeLosses,
   imageBlock,
+  pageFrameOf,
   paragraphBlock,
   paragraphFromRuns,
   sectionFromPdfPages,
@@ -164,21 +165,18 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
     return { kind: 'table', table };
   }
 
-  // A run states where it starts but not how far it reaches. Half an em per
-  // glyph is the rough average of a Latin face, and the only use here is the
-  // right edge of the LAST column — the one place the starts say nothing.
-  const MEAN_GLYPH_EM = 0.5;
-
-  /** The span of page x every glyph under a node covers, estimated. */
+  /**
+   * The span of page x every glyph under a node covers — measured, since the
+   * interpreter advances the text matrix by the font's own widths (§9.4.4).
+   */
   function edgesOf(node: StructNode): { left: number; right: number } | undefined {
     let left: number | undefined;
     let right: number | undefined;
     const visit = (n: StructNode): void => {
       for (const { page, mcid } of n.mcids) {
         for (const run of runsOfMcid(page, mcid)) {
-          const end = run.x + run.text.length * run.fontSizePt * MEAN_GLYPH_EM;
           if (left === undefined || run.x < left) left = run.x;
-          if (right === undefined || end > right) right = end;
+          if (right === undefined || run.endX > right) right = run.endX;
         }
       }
       for (const child of n.children) visit(child);
@@ -222,7 +220,7 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
   // where the page drew them, exactly as the untagged path does — the tree
   // supplies the reading order, the page supplies its own artwork.
   pages.forEach((page, index) => {
-    const pageHeight = Math.abs(page.mediaBox[3] - page.mediaBox[1]);
+    const frame = pageFrameOf(page);
     const covered = (pageImages[index]?.images ?? []).map((img) => ({
       minX: img.x,
       minY: img.y,
@@ -230,7 +228,7 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
       maxY: img.y + img.heightPt,
     }));
     for (const v of collectPageVectors(file, page, covered)) {
-      body.push(shapeBlock(v, pageHeight, zOrder++));
+      body.push(shapeBlock(v, frame, zOrder++));
     }
   });
 
