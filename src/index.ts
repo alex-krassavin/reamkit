@@ -125,6 +125,7 @@ export { svgWriter, writeSvg } from '@/svg/svg-writer';
 export type { SvgWriteOptions } from '@/svg/svg-writer';
 export { htmlWriter, writeHtml } from '@/html/html-writer';
 export { markdownWriter, writeMarkdown } from '@/markdown/markdown-writer';
+export type { StreamFilter, StreamFilters } from '@/pdf-reader/document';
 export type { MarkdownWriteOptions } from '@/markdown/markdown-writer';
 export { docxWriter, writeDocx } from '@/word/docx-writer';
 export { layoutStyledDocument } from '@/layout/styled-layout';

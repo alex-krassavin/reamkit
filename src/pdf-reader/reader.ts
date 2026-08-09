@@ -7,6 +7,7 @@
 import { PdfFile } from './document';
 import { reconstructByLayout } from './layout';
 import { reconstructTaggedPdf } from './tagged';
+import type { StreamFilters } from './document';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss } from '@/core/ir';
@@ -41,6 +42,8 @@ function sniffPdf(bytes: Uint8Array): boolean {
  * @param bytes    The complete PDF file bytes.
  * @param password The user password for an encrypted source; the empty string
  *                 opens permissions-only encryption.
+ * @param filters  Decoders for `/Filter` names this reader does not implement
+ *                 (§7.4); see {@link StreamFilters}.
  * @param layout   `'flow'` reads a re-flowable document out of the page —
  *                 paragraphs and tables in reading order, from the structure
  *                 tree where there is one. `'positional'` keeps the page: every
@@ -52,8 +55,9 @@ export function readPdf(
   bytes: Uint8Array,
   password = '',
   layout: 'flow' | 'positional' = 'flow',
+  filters: StreamFilters = {},
 ): ReadResult<FlowDoc> {
-  const file = PdfFile.parse(bytes, password);
+  const file = PdfFile.parse(bytes, password, filters);
   const losses: Array<Loss> = [];
 
   if (file.encryptionUnsupported) {
@@ -116,5 +120,11 @@ export const pdfReader: DocumentReader<FlowDoc> = {
       bytes,
       typeof opts?.password === 'string' ? opts.password : '',
       opts?.pdfLayout === 'positional' ? 'positional' : 'flow',
+      isFilters(opts?.filters) ? opts.filters : {},
     ),
 };
+
+/** A caller's `filters` option, when it is the shape the reader can use. */
+function isFilters(value: unknown): value is StreamFilters {
+  return typeof value === 'object' && value !== null;
+}

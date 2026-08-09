@@ -63,6 +63,45 @@ describe('a filter nothing here can undo says so (§7.4)', () => {
     expect([...file.unknownFilters]).toContain('BrotliDecode');
   });
 
+  it('uses a decoder the caller supplies, and then has nothing to report', () => {
+    // §7.4 leaves the filter set open. Rather than carry a decoder for every
+    // filter anyone might write — Brotli alone is RFC 7932's context-modelled
+    // Huffman scheme and a 122 KB static dictionary, in every bundle — the
+    // reader takes one from whoever needs the file.
+    const rot13 = (b: Uint8Array): Uint8Array =>
+      b.map((c) =>
+        c >= 65 && c <= 90
+          ? ((c - 65 + 13) % 26) + 65
+          : c >= 97 && c <= 122
+            ? ((c - 97 + 13) % 26) + 97
+            : c,
+      );
+    const file = PdfFile.parse(
+      new TextEncoder().encode('%PDF-1.7\ntrailer\n<< /Size 1 >>\n%%EOF\n'),
+      '',
+      { Rot13Decode: rot13 },
+    );
+    const decoded = file.streamData(
+      stream({ Filter: name('Rot13Decode') }, new TextEncoder().encode('uryyb')),
+    );
+    expect(new TextDecoder().decode(decoded)).toBe('hello');
+    expect([...file.unknownFilters]).toHaveLength(0);
+  });
+
+  it('reports a supplied decoder that throws as one that was never there', () => {
+    const file = PdfFile.parse(
+      new TextEncoder().encode('%PDF-1.7\ntrailer\n<< /Size 1 >>\n%%EOF\n'),
+      '',
+      {
+        Rot13Decode: () => {
+          throw new Error('nope');
+        },
+      },
+    );
+    file.streamData(stream({ Filter: name('Rot13Decode') }, new Uint8Array([1, 2, 3])));
+    expect([...file.unknownFilters]).toContain('Rot13Decode');
+  });
+
   it('says nothing about the filters it does undo, or leaves to others', () => {
     const raw = zlibSync(new TextEncoder().encode('BT ET'));
     const file = PdfFile.parse(

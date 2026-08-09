@@ -24,6 +24,7 @@ import type { Loss } from '@/core/ir';
 import type { DocumentReader } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { SheetDoc } from '@/core/ir/sheet';
+import type { StreamFilters } from '@/pdf-reader/document';
 import type { SignatureOptions, StyledRenderOptions } from '@/pdf';
 import { DEFAULT_READERS, resolveFontsViaChain, toFlowDoc } from '@/core/converter/facade';
 import { flowRenderOptions } from '@/core/converter/project';
@@ -71,6 +72,21 @@ export interface ReamParseOptions {
    * or converted to markdown needs the first.
    */
   readonly pdfLayout?: 'flow' | 'positional';
+  /**
+   * PDF only: decoders for `/Filter` names the reader does not implement
+   * (§7.4). A filter it cannot undo leaves that stream unread — and when the
+   * unread one is the cross-reference, the whole document is missing — so a
+   * caller who needs such a file supplies the decoder rather than the library
+   * carrying one for every filter anyone might write:
+   *
+   * ```ts
+   * import { brotliDecompressSync } from 'node:zlib';
+   * Ream.parse(pdf, { filters: { BrotliDecode: (b) => brotliDecompressSync(b) } });
+   * ```
+   *
+   * Absent, or throwing, the filter is reported unreadable by name.
+   */
+  readonly filters?: StreamFilters;
 }
 
 /**
@@ -215,6 +231,7 @@ export class Ream {
     const { doc, losses } = reader.read(source, {
       password: options.password,
       ...(options.pdfLayout ? { pdfLayout: options.pdfLayout } : {}),
+      ...(options.filters ? { filters: options.filters } : {}),
     });
     // The reader's native tree — a SheetDoc for spreadsheets — is projected to
     // the FlowDoc the render path consumes; the SheetDoc is kept for inspection.

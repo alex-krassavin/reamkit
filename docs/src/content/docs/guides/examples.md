@@ -221,6 +221,24 @@ try {
 }
 ```
 
+## A PDF whose streams use a filter Ream does not carry
+
+§7.4 leaves the filter set open, and PDF 2.0 added Brotli. A stream Ream cannot
+decode is a stream it has not read — and when that stream is the
+cross-reference, the file has no pages at all. Supply the decoder and it does:
+
+```ts
+import { brotliDecompressSync } from 'node:zlib';
+import { Ream } from 'reamkit';
+
+const doc = Ream.parse(pdfBytes, {
+  filters: { BrotliDecode: (bytes) => brotliDecompressSync(bytes) },
+});
+```
+
+In a browser, pass any Brotli implementation you already ship. Without one the
+loss report names the filter, so a document that comes back empty says why.
+
 ## pdf → pdf: a form keeps its form
 
 A PDF reads back as a re-flowable document — paragraphs and tables in reading

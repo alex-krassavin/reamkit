@@ -48,6 +48,20 @@ back. The xlsx round-trip preserves the whole grid surface — cells, styles,
 merges, the print model, conditional formatting, sparklines, tables and embedded
 charts — and is byte-stable across a read↔write loop.
 
+**Stream filters the reader does not implement (§7.4)** — a filter it cannot
+undo leaves that stream unread, and when the unread one is the cross-reference
+the whole document is missing. Rather than carry a decoder for every filter
+anyone might write, `Ream.parse(bytes, { filters })` takes one from the caller:
+
+```ts
+import { brotliDecompressSync } from 'node:zlib';
+Ream.parse(pdf, { filters: { BrotliDecode: (b) => brotliDecompressSync(b) } });
+```
+
+Absent, or throwing, the filter is reported unreadable by name rather than
+producing an empty document silently. FlateDecode, LZW, RunLength, ASCII85,
+ASCIIHex, CCITT, DCT and JPX need nothing supplied.
+
 **Placed PDF reading (`Ream.parse(bytes, { pdfLayout: 'positional' })`)** — a PDF
 is read as a re-flowable document by default: paragraphs and tables in reading
 order, from the structure tree where the file has one. A form or a drawing is
