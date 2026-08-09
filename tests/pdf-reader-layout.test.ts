@@ -101,6 +101,13 @@ function onePagePdf(page: string, content: string): Uint8Array {
 const twoColumnLinePdf = (): Uint8Array =>
   onePagePdf('/MediaBox [0 0 400 800]', 'BT /F1 10 Tf 20 700 Td (Left) Tj 300 0 Td (Right) Tj ET');
 
+/** A word and a footnote mark set a size smaller and three quarters of an em up. */
+const superscriptPdf = (): Uint8Array =>
+  onePagePdf(
+    '/MediaBox [0 0 400 800]',
+    'BT /F1 10 Tf 20 700 Td (Word) Tj /F1 6 Tf 45 7.5 Td (1\\)) Tj ET',
+  );
+
 /** A page whose `/MediaBox` starts twelve points off the origin, as 160F's does. */
 const offsetBoxPdf = (): Uint8Array =>
   onePagePdf(
@@ -155,6 +162,27 @@ describe('placed reconstruction (E-PDF EP4)', () => {
     // Both stand on the same baseline, so neither moved vertically.
     const tops = shapes.map((s) => s.float?.posV?.offsetPt ?? 0);
     expect(tops[0]).toBeCloseTo(tops[1]!, 5);
+  });
+
+  it('keeps a mark set above the line above it, at its own size', () => {
+    // 160F-2019.pdf sets its footnote marks a size smaller and three quarters
+    // of an em up. Read as one line they came down flat onto the words.
+    const placed = reconstructByLayout(PdfFile.parse(superscriptPdf()), 'positional');
+    const shapes = placed.doc.body.filter((b) => b.kind === 'shape').map((b) => b.shape);
+    expect(shapes).toHaveLength(2);
+    const words = (s: (typeof shapes)[number]): string => {
+      const first = s.text?.content[0];
+      return first?.kind === 'paragraph' ? first.paragraph.runs.map((r) => r.text).join('') : '';
+    };
+    const word = shapes.find((s) => words(s) === 'Word');
+    const mark = shapes.find((s) => words(s) === '1)');
+    expect(word).toBeDefined();
+    expect(mark).toBeDefined();
+    // The mark stands higher on the page, so its offset from the top is less.
+    const top = (s: (typeof shapes)[number]): number => s.float?.posV?.offsetPt ?? 0;
+    expect(top(mark!)).toBeLessThan(top(word!));
+    // And it is a six-point mark, not a ten-point one.
+    expect(mark!.height).toBeLessThan(word!.height);
   });
 
   it('reads one flowing line across the same gap', () => {

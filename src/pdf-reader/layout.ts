@@ -318,10 +318,21 @@ function rotation60kOf(angleDeg: number): number | undefined {
   return Math.round((((-angleDeg % 360) + 360) % 360) * 60000);
 }
 
+/**
+ * The step, in ems, past which a run does not share its neighbour's baseline
+ * but stands above or below it — a superscript, or the next row of a form.
+ *
+ * Measured across the readable pdfjs corpus: 123 runs sit exactly on their
+ * line's baseline, three within 0.02 em of it (rounding), one between 0.02 and
+ * 0.05, and thirty at 0.05 em or more. A twentieth of an em sits in that gap.
+ */
+const BASELINE_STEP_EM = 0.05;
+
 // Cluster runs that share a baseline (within half a line's height) into lines,
 // top of the page first; within a line, order by x and build link-aware spans.
-// With `split`, a cluster is cut wherever a column-wide gap opens, so each piece
-// keeps its own x instead of being dragged left against its neighbour.
+// With `split`, a cluster is cut wherever a column-wide gap opens or a baseline
+// steps, so each piece keeps its own x and its own y instead of being dragged
+// against its neighbour.
 function groupIntoLines(runs: ReadonlyArray<TextRun>, split = false): Array<Line> {
   const sorted = [...runs].sort((a, b) => b.y - a.y || a.x - b.x);
   const clusters: Array<{ y: number; fontSize: number; runs: Array<TextRun> }> = [];
@@ -338,14 +349,27 @@ function groupIntoLines(runs: ReadonlyArray<TextRun>, split = false): Array<Line
   return clusters.flatMap((c) => {
     const ordered = c.runs.sort((a, b) => a.x - b.x);
     const fontSize = c.fontSize || 10;
+    if (!split) return [lineOf(ordered, c.y, fontSize)];
     const pieces: Array<Array<TextRun>> = [[]];
     for (const run of ordered) {
       const prev = pieces[pieces.length - 1]!;
       const last = prev[prev.length - 1];
-      if (split && last && run.x - last.endX > fontSize * COLUMN_GAP_EM) pieces.push([]);
+      const size = run.fontSizePt || fontSize;
+      // A gap the page put there is a placement, and so is a step off the
+      // baseline: 160F-2019.pdf sets its footnote marks a size smaller and
+      // three quarters of an em up, and read as one line they came down flat.
+      const steps =
+        last !== undefined &&
+        (run.x - last.endX > size * COLUMN_GAP_EM ||
+          Math.abs(run.y - prev[0]!.y) > size * BASELINE_STEP_EM);
+      if (steps) pieces.push([]);
       pieces[pieces.length - 1]!.push(run);
     }
-    return pieces.map((piece) => lineOf(piece, c.y, fontSize));
+    // Each piece stands on its own baseline, at its own size — a mark lifted
+    // out of a line of eleven-point text is not eleven points tall.
+    return pieces.map((piece) =>
+      lineOf(piece, piece[0]!.y, Math.max(...piece.map((r) => r.fontSizePt || 0)) || fontSize),
+    );
   });
 }
 
