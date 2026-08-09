@@ -12,6 +12,7 @@ import { Ream } from '@/core/converter/ream';
 import { interpretContent } from '@/pdf-reader/content';
 import { PdfFile } from '@/pdf-reader/document';
 import { reconstructByLayout } from '@/pdf-reader/layout';
+import { collectPageVectors } from '@/pdf-reader/vector';
 
 const FONTS = {
   regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
@@ -97,6 +98,60 @@ function fillThenImage(): Uint8Array {
   pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
   return Uint8Array.from([...pdf].map((c) => c.charCodeAt(0)));
 }
+
+/**
+ * A page whose only mark is a WIDGET annotation: nothing in its content stream,
+ * a filled rectangle in the annotation's `/AP` `/N`.
+ */
+function widgetOnlyPdf(): Uint8Array {
+  const ap = '0 0 1 rg 0 0 40 20 re f';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+      '/Annots [<< /Type /Annot /Subtype /Widget /Rect [50 60 90 80] /AP << /N 5 0 R >> >>] >>',
+    '<< /Length 0 >>\nstream\n\nendstream',
+    `<< /Type /XObject /Subtype /Form /BBox [0 0 40 20] /Length ${String(ap.length)} >>\n` +
+      `stream\n${ap}\nendstream`,
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
+describe('annotation appearances (§12.5.5)', () => {
+  it('lifts what a widget draws, and fits it to the annotation’s /Rect', () => {
+    // A form field paints nothing in the page's content stream: its tint, its
+    // border and its value all live in the widget's own appearance. Read only
+    // from the page, 160F-2019.pdf gave a grid with no fields in it.
+    const file = PdfFile.parse(widgetOnlyPdf());
+    const vectors = collectPageVectors(file, file.pages()[0]!);
+    expect(vectors).toHaveLength(1);
+    const [box] = vectors;
+    expect(box!.fillHex).toBe('0000FF');
+    // The appearance is authored at the origin; the /Rect is what places it.
+    expect(box!.minX).toBeCloseTo(50, 1);
+    expect(box!.minY).toBeCloseTo(60, 1);
+    expect(box!.maxX).toBeCloseTo(90, 1);
+    expect(box!.maxY).toBeCloseTo(80, 1);
+  });
+
+  it('paints no annotation the file marks hidden', () => {
+    const hidden = new TextDecoder()
+      .decode(widgetOnlyPdf())
+      .replace('/Subtype /Widget', '/Subtype /Widget /F 2');
+    const file = PdfFile.parse(new TextEncoder().encode(hidden));
+    expect(collectPageVectors(file, file.pages()[0]!)).toHaveLength(0);
+  });
+});
 
 describe('painting order (§8.5.3)', () => {
   it('lays a picture over the path it was drawn after', () => {

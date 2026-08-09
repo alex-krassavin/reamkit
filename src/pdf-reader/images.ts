@@ -9,6 +9,7 @@
 
 import { interpretContent, multiply } from './content';
 import { decodePdfImage } from './image-decode';
+import { collectPageAppearances } from './annots';
 import type { ContentFont, Matrix } from './content';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 import type { Loss } from '@/core/ir';
@@ -149,6 +150,18 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
   };
 
   walk(page.resources, file.pageContent(page), [1, 0, 0, 1, 0, 0], 0, undefined, []);
+  // §12.5.5 — the same for a widget's appearance: a scanned signature or a
+  // field's icon lives there and nowhere in the page's own stream.
+  collectPageAppearances(file, page).forEach((appearance, index) => {
+    walk(
+      appearance.resources ?? page.resources,
+      file.streamData(appearance.stream),
+      appearance.ctm,
+      1,
+      undefined,
+      [Number.MAX_SAFE_INTEGER, index],
+    );
+  });
   return { images, losses: [...lossByDetail.values()] };
 }
 

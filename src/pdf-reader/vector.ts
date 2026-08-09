@@ -8,6 +8,7 @@
 
 import { IDENTITY, interpretContent, multiply } from './content';
 import { buildShadingMap } from './shading';
+import { collectPageAppearances } from './annots';
 import type { ContentFont, ImagePlacement, Matrix, PathSeg, VectorPlacement } from './content';
 import type { ShapeGradient } from '@/core/vector';
 import type { PdfDict } from '@/pdf/objects';
@@ -81,6 +82,17 @@ function paintedVectors(
     }
   };
   walk(page.resources, file.pageContent(page), IDENTITY, 0, []);
+  // §12.5.5 — an annotation's appearance paints OVER the page it sits on, so
+  // its marks sort after every mark of the content stream.
+  collectPageAppearances(file, page).forEach((appearance, index) => {
+    walk(
+      appearance.resources ?? page.resources,
+      file.streamData(appearance.stream),
+      appearance.ctm,
+      1,
+      [Number.MAX_SAFE_INTEGER, index],
+    );
+  });
   return out;
 }
 
