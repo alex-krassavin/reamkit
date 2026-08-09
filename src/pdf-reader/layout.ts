@@ -99,38 +99,44 @@ export function reconstructByLayout(file: PdfFile): Reconstruction {
     }
     const colOf = (centerX: number): number => (gutter !== undefined && centerX >= gutter ? 1 : 0);
     const pageHeight = Math.abs(page.mediaBox[3] - page.mediaBox[1]);
-    // §20.4.2.3 `relativeHeight` — the pictures are placed first and the paths
-    // over them, which is the order this page paints in: a white box backing a
-    // legend comes after the plan it hides.
-    let z = 0;
     const imgs = collectPageImages(file, page);
     losses.push(...imgs.losses);
-    for (const img of imgs.images) {
-      blocks.push({
-        col: colOf(img.x + img.widthPt / 2),
-        top: img.y + img.heightPt,
-        el: imageBlock(img, resources, undefined, pageHeight, z++),
-      });
-    }
     // Filled vector paths (EP10) are ANCHORED where the page drew them — they
     // are artwork, not paragraphs, and a sheet of them has no reading order to
     // take a place in. They still sort by top edge, so their z-order is the
     // order the page painted them in.
-    // The pictures are already placed, and a white box drawn over one of them
-    // is not invisible paint but the thing that hides it.
+    // A white box drawn over a picture is not invisible paint but the thing
+    // that hides it, so the paths are filtered against what is already placed.
     const covered = imgs.images.map((img) => ({
       minX: img.x,
       minY: img.y,
       maxX: img.x + img.widthPt,
       maxY: img.y + img.heightPt,
     }));
-    for (const v of collectPageVectors(file, page, covered)) {
-      blocks.push({
+    const vectors = collectPageVectors(file, page, covered);
+
+    // §20.4.2.3 `relativeHeight` — pictures and paths share one z-order, and
+    // it is the page's own painting order (§8.5.3), not one kind before the
+    // other. 22060_A1_01_Plans.pdf backs a legend with a white box painted over
+    // a floor plan AND draws a key icon over a red swatch: pictures under paths
+    // loses the key, paths under pictures loses the legend.
+    const marks = [
+      ...imgs.images.map((img) => ({
+        key: img.orderKey,
+        col: colOf(img.x + img.widthPt / 2),
+        top: img.y + img.heightPt,
+        make: (z: number): BodyElement => imageBlock(img, resources, undefined, pageHeight, z),
+      })),
+      ...vectors.map((v) => ({
+        key: v.orderKey,
         col: colOf((v.minX + v.maxX) / 2),
         top: v.maxY,
-        el: shapeBlock(v, pageHeight, z++),
-      });
-    }
+        make: (z: number): BodyElement => shapeBlock(v, pageHeight, z),
+      })),
+    ].sort((a, b) => compareOrder(a.key, b.key));
+    marks.forEach((mark, z) => {
+      blocks.push({ col: mark.col, top: mark.top, el: mark.make(z) });
+    });
     blocks.sort((a, b) => a.col - b.col || b.top - a.top);
     for (const block of blocks) body.push(block.el);
   });
@@ -248,4 +254,17 @@ function median(values: ReadonlyArray<number>): number {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[Math.floor(sorted.length / 2)]!;
+}
+
+/**
+ * Compare two painting-order keys (§8.5.3): position by position, and the
+ * shorter one first where they agree — a form's call comes before the marks it
+ * makes inside it.
+ */
+function compareOrder(a: ReadonlyArray<number>, b: ReadonlyArray<number>): number {
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    if (a[i] !== b[i]) return a[i]! - b[i]!;
+  }
+  return a.length - b.length;
 }

@@ -34,6 +34,12 @@ export interface PdfImage {
   readonly y: number;
   /** Enclosing marked-content id, if the placement was inside a `/Figure`. */
   readonly mcid?: number;
+  /**
+   * §8.5.3 — where this was painted, as the chain of positions leading to it.
+   * The same key a lifted path carries, so the two can be ordered against each
+   * other: a picture drawn over a filled box has the larger key.
+   */
+  readonly orderKey: ReadonlyArray<number>;
 }
 
 /** The images lifted off one page plus any losses for images that could not be reconstructed. */
@@ -72,6 +78,7 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
     baseCtm: Matrix,
     depth: number,
     inheritedMcid: number | undefined,
+    prefix: ReadonlyArray<number>,
   ): void => {
     const xobjects = resources ? file.get(resources, 'XObject') : PDF_NULL;
     const xobjDict = xobjects instanceof Map ? xobjects : undefined;
@@ -95,12 +102,15 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
       if (file.get(stream.dict, 'PatternType') !== 1) continue;
       visiting.add(stream);
       const patternRes = file.get(stream.dict, 'Resources');
+      // A pattern paints where its FILL stands, so its marks take the fill's
+      // place in the order.
       walk(
         patternRes instanceof Map ? patternRes : resources,
         file.streamData(stream),
         multiply(matrixOf(file, stream.dict), baseCtm),
         depth + 1,
         inheritedMcid,
+        [...prefix, vector.order],
       );
       visiting.delete(stream);
     }
@@ -114,7 +124,10 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
       if (subtype === 'Image') {
         const decoded = decodePdfImage(file, stream);
         if (decoded.ok) {
-          images.push(geometry(placement.ctm, decoded, mcid));
+          images.push({
+            ...geometry(placement.ctm, decoded, mcid),
+            orderKey: [...prefix, placement.order],
+          });
           if (decoded.degraded) addLoss('degraded', decoded.degraded);
         } else {
           addLoss(decoded.severity, decoded.detail);
@@ -128,13 +141,14 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
           multiply(matrixOf(file, stream.dict), placement.ctm),
           depth + 1,
           mcid,
+          [...prefix, placement.order],
         );
         visiting.delete(stream);
       }
     }
   };
 
-  walk(page.resources, file.pageContent(page), [1, 0, 0, 1, 0, 0], 0, undefined);
+  walk(page.resources, file.pageContent(page), [1, 0, 0, 1, 0, 0], 0, undefined, []);
   return { images, losses: [...lossByDetail.values()] };
 }
 
@@ -142,7 +156,7 @@ function geometry(
   ctm: Matrix,
   decoded: { bytes: Uint8Array; format: 'png' | 'jpeg' | 'jpeg2000' },
   mcid: number | undefined,
-): PdfImage {
+): Omit<PdfImage, 'orderKey'> {
   return {
     bytes: decoded.bytes,
     format: decoded.format,

@@ -4,11 +4,14 @@
 
 import { readFileSync } from 'node:fs';
 
+import { zlibSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
 import { Ream } from '@/core/converter/ream';
 import { interpretContent } from '@/pdf-reader/content';
+import { PdfFile } from '@/pdf-reader/document';
+import { reconstructByLayout } from '@/pdf-reader/layout';
 
 const FONTS = {
   regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
@@ -64,7 +67,51 @@ describe('filled vector paths (E-PDF EP10)', () => {
   });
 });
 
+/**
+ * A one-page PDF that fills a black square and then draws a picture over it —
+ * the shape a legend swatch with an icon on it takes.
+ */
+function fillThenImage(): Uint8Array {
+  const gray = zlibSync(Uint8Array.from([0, 255, 255, 0])); // 2x2 DeviceGray
+  const content = 'q 0 0 0 rg 100 100 200 200 re f 50 0 0 50 150 150 cm /Im Do Q';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 400] ' +
+      '/Resources << /XObject << /Im 5 0 R >> >> /Contents 4 0 R >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    `<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray ` +
+      `/BitsPerComponent 8 /Filter /FlateDecode /Length ${String(gray.length)} >>`,
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\n`;
+    if (i === 4) pdf += `stream\n${String.fromCharCode(...gray)}\nendstream\n`;
+    pdf += 'endobj\n';
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  return Uint8Array.from([...pdf].map((c) => c.charCodeAt(0)));
+}
+
 describe('painting order (§8.5.3)', () => {
+  it('lays a picture over the path it was drawn after', () => {
+    // Pictures under paths loses an icon sitting on its swatch; paths under
+    // pictures loses a white box backing a legend. Only the page's own order
+    // gets both, and 22060_A1_01_Plans.pdf has one of each.
+    const { doc } = reconstructByLayout(PdfFile.parse(fillThenImage()));
+    const shape = doc.body.find((b) => b.kind === 'shape');
+    const image = doc.body.find((b) => b.kind === 'image');
+    expect(shape?.kind).toBe('shape');
+    expect(image?.kind).toBe('image');
+    if (shape?.kind !== 'shape' || image?.kind !== 'image') return;
+    expect(image.image.float?.zOrder).toBeGreaterThan(shape.shape.float?.zOrder ?? 0);
+  });
+
   it('numbers paths and XObject calls in one sequence', () => {
     // Later marks cover earlier ones, and a form is drawn where its `Do`
     // stands. Collected apart, every form ends up on top: 22060_A1_01_Plans.pdf

@@ -31,14 +31,15 @@ function paintedVectors(
   file: PdfFile,
   page: PdfPage,
   shadings: ReadonlyMap<string, ShapeGradient>,
-): Array<VectorPlacement> {
-  const out: Array<VectorPlacement> = [];
+): Array<VectorPlacement & { orderKey: ReadonlyArray<number> }> {
+  const out: Array<VectorPlacement & { orderKey: ReadonlyArray<number> }> = [];
   const visiting = new Set<PdfStream>();
   const walk = (
     resources: PdfDict | undefined,
     content: Uint8Array,
     baseCtm: Matrix,
     depth: number,
+    prefix: ReadonlyArray<number>,
   ): void => {
     if (out.length >= MAX_VECTORS) return;
     const xobjects = resources ? file.get(resources, 'XObject') : PDF_NULL;
@@ -58,7 +59,7 @@ function paintedVectors(
     for (const event of events) {
       if (out.length >= MAX_VECTORS) return;
       if (event.vector) {
-        out.push(event.vector);
+        out.push({ ...event.vector, orderKey: [...prefix, event.order] });
         continue;
       }
       const placement = event.xobject!;
@@ -74,11 +75,12 @@ function paintedVectors(
         file.streamData(stream),
         multiply(formMatrix(file, stream.dict), placement.ctm),
         depth + 1,
+        [...prefix, placement.order],
       );
       visiting.delete(stream);
     }
   };
-  walk(page.resources, file.pageContent(page), IDENTITY, 0);
+  walk(page.resources, file.pageContent(page), IDENTITY, 0, []);
   return out;
 }
 
@@ -97,6 +99,14 @@ function formMatrix(file: PdfFile, dict: PdfDict): Matrix {
  * marked-content id.
  */
 export interface PdfVector {
+  /**
+   * §8.5.3 — where this was painted, as the chain of positions leading to it:
+   * `[4]` is the fifth mark of the page, `[4, 2]` the third mark of the form
+   * that mark called. Compared element by element it is the page's painting
+   * order across forms and patterns alike, which is the only thing that says
+   * what covers what.
+   */
+  readonly orderKey: ReadonlyArray<number>;
   readonly segs: ReadonlyArray<PathSeg>;
   /** Present iff a qualifying solid fill survived (EP10). */
   readonly fillHex?: string;
@@ -184,6 +194,7 @@ export function collectPageVectors(
     if (!filled && !stroked) continue;
     painted.push(b);
     out.push({
+      orderKey: v.orderKey,
       segs: v.segs,
       ...(filled
         ? v.gradient
@@ -236,7 +247,7 @@ function overlaps(a: Box, b: Box): boolean {
  * @param v The painted path as the interpreter saw it.
  * @returns The path to draw, or `undefined` when the clip leaves nothing.
  */
-function clipped(v: VectorPlacement): VectorPlacement | undefined {
+function clipped<T extends VectorPlacement>(v: T): T | undefined {
   const clip = v.clip;
   if (!clip) return v;
   const b = bbox(v.segs);
@@ -248,8 +259,7 @@ function clipped(v: VectorPlacement): VectorPlacement | undefined {
   const pathArea = Math.max(0, b.maxX - b.minX) * Math.max(0, b.maxY - b.minY);
   const clipArea = Math.max(0, clip.maxX - clip.minX) * Math.max(0, clip.maxY - clip.minY);
   if (clipArea >= pathArea) return v;
-  const { clip: _drop, ...rest } = v;
-  return { ...rest, segs: clip.segs };
+  return { ...v, clip: undefined, segs: clip.segs };
 }
 
 function bbox(
