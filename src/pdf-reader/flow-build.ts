@@ -108,6 +108,7 @@ export function imageBlock(
   resources: ResourceStore,
   alt?: string,
   pageHeight?: number,
+  zOrder?: number,
 ): BodyElement {
   const resource = resources.put(image.bytes);
   // §20.4.2.3 — anchored where the page placed it, for the same reason a lifted
@@ -118,6 +119,7 @@ export function imageBlock(
     pageHeight !== undefined
       ? {
           wrap: 'none',
+          ...(zOrder !== undefined ? { zOrder } : {}),
           posH: { relativeFrom: 'page', offsetPt: pt(image.x) },
           posV: {
             relativeFrom: 'page',
@@ -156,7 +158,7 @@ export function dedupeLosses(losses: ReadonlyArray<Loss>): Array<Loss> {
  * a paragraph: 22060_A1_01_Plans.pdf is one A3 sheet of vectors, and stacking
  * its forty-nine paths one under another spilled it onto a second page.
  */
-export function shapeBlock(v: PdfVector, pageHeight?: number): BodyElement {
+export function shapeBlock(v: PdfVector, pageHeight?: number, zOrder?: number): BodyElement {
   const w = v.maxX - v.minX;
   const h = v.maxY - v.minY;
   const fx = (x: number): number => x - v.minX;
@@ -195,12 +197,18 @@ export function shapeBlock(v: PdfVector, pageHeight?: number): BodyElement {
       ? { width: pt(thick), colorHex: v.strokeHex, fill: 'solid' }
       : undefined;
   // §20.4.2.3 — anchored to the PAGE at the position it was drawn at, y flipped
-  // from PDF's upward axis. `behind` so text keeps its place over the artwork.
+  // from PDF's upward axis.
+  //
+  // Not `behind`: a path is not always under the pictures. 22060_A1_01_Plans.pdf
+  // backs its legend with a white box painted OVER a floor plan, and forced
+  // behind it, the plan and the title block read straight through the legend.
+  // `zOrder` carries the order the page painted in, which is the only thing
+  // that decides this.
   const float: FloatAnchor | undefined =
     pageHeight !== undefined
       ? {
           wrap: 'none',
-          behind: true,
+          ...(zOrder !== undefined ? { zOrder } : {}),
           posH: { relativeFrom: 'page', offsetPt: pt(v.minX) },
           posV: { relativeFrom: 'page', offsetPt: pt(Math.max(0, pageHeight - v.maxY)) },
         }

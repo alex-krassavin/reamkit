@@ -8,7 +8,7 @@
 
 import { IDENTITY, interpretContent, multiply } from './content';
 import { buildShadingMap } from './shading';
-import type { ContentFont, Matrix, PathSeg, VectorPlacement } from './content';
+import type { ContentFont, ImagePlacement, Matrix, PathSeg, VectorPlacement } from './content';
 import type { ShapeGradient } from '@/core/vector';
 import type { PdfDict } from '@/pdf/objects';
 
@@ -44,9 +44,25 @@ function paintedVectors(
     const xobjects = resources ? file.get(resources, 'XObject') : PDF_NULL;
     const xobjDict = xobjects instanceof Map ? xobjects : undefined;
     const result = interpretContent(content, NO_FONTS, baseCtm, shadings);
-    out.push(...result.vectors);
-    if (depth >= MAX_FORM_DEPTH) return;
-    for (const placement of result.images) {
+
+    // §8.5.3 — later marks cover earlier ones, and a form is drawn where its
+    // `Do` stands, not after everything around it. Walking the stream first and
+    // its forms afterwards puts every form on top: 22060_A1_01_Plans.pdf backs
+    // its legend with a white box inside a form, and hoisted to the end that box
+    // covered the legend's own words.
+    const events: Array<{ order: number; vector?: VectorPlacement; xobject?: ImagePlacement }> = [
+      ...result.vectors.map((vector) => ({ order: vector.order, vector })),
+      ...result.images.map((xobject) => ({ order: xobject.order, xobject })),
+    ].sort((a, b) => a.order - b.order);
+
+    for (const event of events) {
+      if (out.length >= MAX_VECTORS) return;
+      if (event.vector) {
+        out.push(event.vector);
+        continue;
+      }
+      const placement = event.xobject!;
+      if (depth >= MAX_FORM_DEPTH) continue;
       const stream = xobjDict ? file.resolve(xobjDict.get(placement.name) ?? PDF_NULL) : PDF_NULL;
       if (!(stream instanceof PdfStream) || visiting.has(stream)) continue;
       const subtype = file.get(stream.dict, 'Subtype');
@@ -113,11 +129,19 @@ const MAX_FORM_DEPTH = 12;
  * genuine coloured shapes, lines and gradients without the dot / page-background
  * clutter. Clips and the bare `sh` operator are not captured (a documented loss).
  */
-export function collectPageVectors(file: PdfFile, page: PdfPage): Array<PdfVector> {
+export function collectPageVectors(
+  file: PdfFile,
+  page: PdfPage,
+  occupied: ReadonlyArray<Box> = [],
+): Array<PdfVector> {
   const [px0, py0, px1, py1] = page.mediaBox;
   const pageArea = Math.max(1, Math.abs((px1 - px0) * (py1 - py0)));
   const shadings = buildShadingMap(file, page);
   const out: Array<PdfVector> = [];
+  // What the page has painted so far. White paint is invisible only over white:
+  // over anything else it is the thing that HIDES it, and the caller seeds this
+  // with the pictures it has already placed.
+  const painted: Array<Box> = [...occupied];
   for (const raw of paintedVectors(file, page, shadings)) {
     if (out.length >= MAX_VECTORS) break;
     const v = clipped(raw);
@@ -135,8 +159,17 @@ export function collectPageVectors(file: PdfFile, page: PdfPage): Array<PdfVecto
     // `fillHex` still standing on the placement is whatever colour was set
     // before the pattern was, and painting it covered 22060_A1_01_Plans.pdf's
     // four floor plans with four black rectangles.
+    //
+    // White is dropped as paint that shows nothing — except where something is
+    // already painted under it, which is the one place white is not invisible
+    // but OPAQUE. 22060_A1_01_Plans.pdf backs its legend with a white box over
+    // a floor plan, and dropped it the plan and the title block read straight
+    // through the legend's text.
+    const white = v.fillHex === 'FFFFFF';
     const solidFill =
-      v.patternName === undefined && v.fillHex !== undefined && v.fillHex !== 'FFFFFF';
+      v.patternName === undefined &&
+      v.fillHex !== undefined &&
+      (!white || painted.some((box) => overlaps(box, b)));
     const filled =
       (v.gradient !== undefined || solidFill) &&
       w >= MIN_SIDE &&
@@ -149,6 +182,7 @@ export function collectPageVectors(file: PdfFile, page: PdfPage): Array<PdfVecto
       Math.max(w, h) >= MIN_STROKE_LEN &&
       area <= 0.85 * pageArea;
     if (!filled && !stroked) continue;
+    painted.push(b);
     out.push({
       segs: v.segs,
       ...(filled
@@ -169,6 +203,19 @@ export function collectPageVectors(file: PdfFile, page: PdfPage): Array<PdfVecto
     });
   }
   return out;
+}
+
+/** A page-space rectangle: what something covers. */
+interface Box {
+  readonly minX: number;
+  readonly minY: number;
+  readonly maxX: number;
+  readonly maxY: number;
+}
+
+/** Whether two boxes share any area at all. */
+function overlaps(a: Box, b: Box): boolean {
+  return a.minX < b.maxX && b.minX < a.maxX && a.minY < b.maxY && b.minY < a.maxY;
 }
 
 /**

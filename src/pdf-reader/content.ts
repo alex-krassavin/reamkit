@@ -60,6 +60,8 @@ export interface TextRun {
  * `mcid` links the paint to its structure element (a `/Figure`, E-PDF EP6).
  */
 export interface ImagePlacement {
+  /** Where the `Do` fell in the stream's painting order — see {@link VectorPlacement.order}. */
+  readonly order: number;
   /** XObject resource name (no leading slash). */
   readonly name: string;
   readonly ctm: Matrix;
@@ -132,6 +134,12 @@ export interface ClipRegion {
 }
 
 export interface VectorPlacement {
+  /**
+   * Where this fell in the stream's painting order (§8.5.3): later covers
+   * earlier, and a `Do` of a form is numbered here too, so a caller walking
+   * into that form knows exactly where its marks belong among these.
+   */
+  readonly order: number;
   readonly segs: ReadonlyArray<PathSeg>;
   /** §8.5.4 — the clip in force when it was painted, when there was one. */
   readonly clip?: ClipRegion;
@@ -262,6 +270,7 @@ export function interpretContent(
   let tlm: Matrix = IDENTITY; // line matrix
   let path: Array<PathSeg> = []; // the current path under construction (page space)
   let pendingClip = false; // §8.5.4 `W` seen; the next painting operator installs it
+  let paintOrder = 0; // §8.5.3 the sequence marks are laid down in
   let operands: Array<PdfValue> = [];
   const mcStack: Array<number | undefined> = []; // marked-content (MCID) nesting
 
@@ -304,6 +313,7 @@ export function interpretContent(
     if (path.length >= 2 && (fill || stroke)) {
       const mcid = mcStack.length > 0 ? mcStack[mcStack.length - 1] : undefined;
       vectors.push({
+        order: paintOrder++,
         segs: path,
         ...(state.clip ? { clip: state.clip } : {}),
         ...(fill && state.fillPattern !== undefined ? { patternName: state.fillPattern } : {}),
@@ -482,7 +492,12 @@ export function interpretContent(
         const nm = operands[0];
         if (nm instanceof PdfName) {
           const mcid = mcStack.length > 0 ? mcStack[mcStack.length - 1] : undefined;
-          images.push({ name: nm.value, ctm: state.ctm, ...(mcid !== undefined ? { mcid } : {}) });
+          images.push({
+            order: paintOrder++,
+            name: nm.value,
+            ctm: state.ctm,
+            ...(mcid !== undefined ? { mcid } : {}),
+          });
         }
         break;
       }

@@ -99,24 +99,36 @@ export function reconstructByLayout(file: PdfFile): Reconstruction {
     }
     const colOf = (centerX: number): number => (gutter !== undefined && centerX >= gutter ? 1 : 0);
     const pageHeight = Math.abs(page.mediaBox[3] - page.mediaBox[1]);
+    // §20.4.2.3 `relativeHeight` — the pictures are placed first and the paths
+    // over them, which is the order this page paints in: a white box backing a
+    // legend comes after the plan it hides.
+    let z = 0;
     const imgs = collectPageImages(file, page);
     losses.push(...imgs.losses);
     for (const img of imgs.images) {
       blocks.push({
         col: colOf(img.x + img.widthPt / 2),
         top: img.y + img.heightPt,
-        el: imageBlock(img, resources, undefined, pageHeight),
+        el: imageBlock(img, resources, undefined, pageHeight, z++),
       });
     }
     // Filled vector paths (EP10) are ANCHORED where the page drew them — they
     // are artwork, not paragraphs, and a sheet of them has no reading order to
     // take a place in. They still sort by top edge, so their z-order is the
     // order the page painted them in.
-    for (const v of collectPageVectors(file, page)) {
+    // The pictures are already placed, and a white box drawn over one of them
+    // is not invisible paint but the thing that hides it.
+    const covered = imgs.images.map((img) => ({
+      minX: img.x,
+      minY: img.y,
+      maxX: img.x + img.widthPt,
+      maxY: img.y + img.heightPt,
+    }));
+    for (const v of collectPageVectors(file, page, covered)) {
       blocks.push({
         col: colOf((v.minX + v.maxX) / 2),
         top: v.maxY,
-        el: shapeBlock(v, pageHeight),
+        el: shapeBlock(v, pageHeight, z++),
       });
     }
     blocks.sort((a, b) => a.col - b.col || b.top - a.top);

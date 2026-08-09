@@ -64,6 +64,24 @@ describe('filled vector paths (E-PDF EP10)', () => {
   });
 });
 
+describe('painting order (§8.5.3)', () => {
+  it('numbers paths and XObject calls in one sequence', () => {
+    // Later marks cover earlier ones, and a form is drawn where its `Do`
+    // stands. Collected apart, every form ends up on top: 22060_A1_01_Plans.pdf
+    // backs its legend with a white box inside a form, and hoisted to the end
+    // that box covered the legend's own words.
+    const { vectors, images } = interpretContent(
+      new TextEncoder().encode('0 0 0 rg 0 0 10 10 re f /Fm Do 0 0 20 20 re f'),
+      NO_FONTS,
+    );
+    expect(vectors).toHaveLength(2);
+    expect(images).toHaveLength(1);
+    // The form's call falls BETWEEN the two fills, which is where it paints.
+    expect(vectors[0]!.order).toBeLessThan(images[0]!.order);
+    expect(images[0]!.order).toBeLessThan(vectors[1]!.order);
+  });
+});
+
 describe('tiling patterns (§8.7.3)', () => {
   const fills = (stream: string) =>
     interpretContent(new TextEncoder().encode(stream), NO_FONTS).vectors;
