@@ -28,12 +28,17 @@ describe('content-stream interpreter (E-PDF EP2)', () => {
     expect(runs[0]!.fontSizePt).toBeCloseTo(24);
   });
 
-  it('concatenates a TJ array into one run at its origin', () => {
+  it('emits a TJ array piece by piece, each where it stands', () => {
+    // §9.4.3 — a number between two strings nudges the pen, which is the page
+    // saying that the next piece does not go where the font's widths put it.
+    // Read as one run from the start origin, every adjustment was thrown away.
     const runs = run('BT /F1 12 Tf 10 20 Td [(Wo) -30 (rld)] TJ ET');
-    expect(runs).toHaveLength(1);
-    expect(runs[0]).toMatchObject({ text: 'World' });
+    expect(runs.map((r) => r.text)).toEqual(['Wo', 'rld']);
     expect(runs[0]!.x).toBeCloseTo(10);
     expect(runs[0]!.y).toBeCloseTo(20);
+    // Two glyphs at half an em, then the nudge: 10 + 12 + 30/1000 × 12.
+    expect(runs[1]!.x).toBeCloseTo(22.36);
+    expect(runs[1]!.y).toBeCloseTo(20);
   });
 
   it('advances the line matrix across Td-separated lines', () => {
@@ -95,11 +100,14 @@ describe('where a run ends (§9.4.4)', () => {
     expect(runs[0]!.endX).toBeCloseTo(128); // 100 + 4 × 0.7 × 10
   });
 
-  it('counts the kerning a TJ array applies between its pieces', () => {
-    // −500/1000 of an em closes the gap by half a size; the end has to know.
+  it('sets each TJ piece down past the nudge before it', () => {
+    // 500/1000 of an em closes the gap by half a size, so the second piece
+    // starts half a size short of where the first one ended.
     const runs = run('BT /F1 10 Tf 0 0 Td [(AB) 500 (CD)] TJ ET');
-    expect(runs[0]!.text).toBe('ABCD');
-    expect(runs[0]!.endX).toBeCloseTo(15); // 4 × 0.5 × 10 − 0.5 × 10
+    expect(runs.map((r) => r.text)).toEqual(['AB', 'CD']);
+    expect(runs[0]!.endX).toBeCloseTo(10); // 2 × 0.5 × 10
+    expect(runs[1]!.x).toBeCloseTo(5); // 10 − 0.5 × 10
+    expect(runs[1]!.endX).toBeCloseTo(15);
   });
 
   it('measures in page space, so a scaling CTM scales the end with it', () => {

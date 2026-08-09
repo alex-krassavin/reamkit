@@ -72,7 +72,15 @@ describe('pptx slide text (E-PPTX PX1)', () => {
     const pdf = await Ream.parse(pptx).convert('pdf', { fonts: FONTS });
     const file = PdfFile.parse(pdf);
     const runs = extractPageText(file, file.pages()[0]!);
-    const run = runs.find((r) => r.text.replace(/\s/g, '').includes('Positioned'));
+    // §9.4.3 — the writer kerns, so the word arrives as several pieces; the
+    // first of them is where the box put it.
+    expect(
+      runs
+        .map((r) => r.text)
+        .join('')
+        .replace(/\s/g, ''),
+    ).toContain('Positioned');
+    const run = runs.find((r) => r.text.length > 0 && 'Positioned'.startsWith(r.text));
     expect(run).toBeDefined();
     // The glyph origin sits just inside the box's left edge (144 pt) — not at
     // x≈0 (which would mean the float position was ignored).

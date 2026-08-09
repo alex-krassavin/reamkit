@@ -437,18 +437,22 @@ export function interpretContent(
     emitAt(origin, text, multiply(tm, state.ctm));
   };
 
-  // TJ — an array of strings and kerning adjustments; one run at the start origin.
+  // §9.4.3 TJ — an array of strings with the pen nudged BETWEEN them. Each
+  // string is emitted where it stands, because a nudge is the page saying that
+  // this piece does not go where the font's own widths would put it: read as
+  // one run from the start origin, every adjustment was thrown away and the
+  // error accumulated along the line. 160F-2019.pdf kerns its labels that way,
+  // and "période du" drifted a point and a half by its last letter.
   const showArray = (arr: ReadonlyArray<PdfValue>): void => {
-    const origin = multiply(tm, state.ctm);
-    let text = '';
     for (const el of arr) {
       if (typeof el === 'number') {
         tm = multiply(translation((-el / 1000) * state.fontSize * state.hScale, 0), tm);
       } else if (typeof el === 'string' || el instanceof PdfHexString) {
-        text += consume(el);
+        const origin = multiply(tm, state.ctm);
+        const text = consume(el);
+        emitAt(origin, text, multiply(tm, state.ctm));
       }
     }
-    emitAt(origin, text, multiply(tm, state.ctm));
   };
 
   const exec = (op: string): void => {
