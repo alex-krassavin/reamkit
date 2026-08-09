@@ -49,6 +49,8 @@ export interface TextSpan {
   readonly href?: string;
   /** The size the glyphs were SHOWN at (§9.3.1 Tf), so the run keeps it. */
   readonly sizePt?: number;
+  /** §8.6.8 — the colour they were painted in, when it is not plain black. */
+  readonly colorHex?: string;
 }
 
 /**
@@ -61,15 +63,17 @@ export function paragraphFromRuns(
   spans: ReadonlyArray<TextSpan>,
   outlineLevel?: number,
 ): BodyElement {
-  const merged: Array<{ text: string; href?: string; sizePt?: number }> = [];
+  const merged: Array<{ text: string; href?: string; sizePt?: number; colorHex?: string }> = [];
   for (const s of spans) {
     const last = merged[merged.length - 1];
-    if (last && last.href === s.href && last.sizePt === s.sizePt) last.text += s.text;
-    else
+    if (last && last.href === s.href && last.sizePt === s.sizePt && last.colorHex === s.colorHex) {
+      last.text += s.text;
+    } else
       merged.push({
         text: s.text,
         ...(s.href !== undefined ? { href: s.href } : {}),
         ...(s.sizePt !== undefined ? { sizePt: s.sizePt } : {}),
+        ...(s.colorHex !== undefined ? { colorHex: s.colorHex } : {}),
       });
   }
   const runs = merged
@@ -89,9 +93,13 @@ export function paragraphFromRuns(
         .filter((r) => r.text.length > 0)
         .map((r) => ({
           text: r.text,
-          // §9.3.1 — the size the page showed it at. Dropped, a form set in
-          // 7pt was rebuilt at the 11pt default and grew by half again.
-          properties: r.sizePt !== undefined ? { fontSizePt: pt(r.sizePt) } : {},
+          // §9.3.1/§8.6.8 — the size and colour the page showed it in. Dropped,
+          // a form set in 7pt was rebuilt at the 11pt default and grew by half
+          // again, and its blue field labels and red warning came back black.
+          properties: {
+            ...(r.sizePt !== undefined ? { fontSizePt: pt(r.sizePt) } : {}),
+            ...(r.colorHex !== undefined ? { colorHex: r.colorHex } : {}),
+          },
           ...(r.href ? { href: r.href } : {}),
         })),
     },

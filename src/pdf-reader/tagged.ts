@@ -13,8 +13,10 @@ import {
   paragraphBlock,
   paragraphFromRuns,
   sectionFromPdfPages,
+  shapeBlock,
 } from './flow-build';
 import { collectPageImages } from './images';
+import { collectPageVectors } from './vector';
 import { readStructTree } from './struct-tree';
 import { extractPageText } from './text';
 import type { BodyElement, Table, TableCell, TableRow } from '@/core/document-model';
@@ -105,6 +107,8 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
         spans.push({
           text: run.text,
           sizePt: run.fontSizePt,
+          // Black is the default; carrying it would put a colour on every run.
+          ...(run.colorHex !== '000000' ? { colorHex: run.colorHex } : {}),
           ...(run.href !== undefined ? { href: run.href } : {}),
         });
       }
@@ -207,6 +211,28 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
 
   const body: Array<BodyElement> = [];
   emit(root, body);
+  // Artwork sits UNDER the text the tree placed: `zOrder` starts below zero so
+  // a lifted rule never covers the words it rules off.
+  let zOrder = -1_000_000;
+
+  // A structure tree names the document's WORDS, and says nothing about the
+  // lines drawn around them. 160F-2019.pdf is a form: every rule, every box and
+  // every tinted field is a painted path, and reading the tree alone gave its
+  // text with no form under it at all. Those paths are lifted and anchored
+  // where the page drew them, exactly as the untagged path does — the tree
+  // supplies the reading order, the page supplies its own artwork.
+  pages.forEach((page, index) => {
+    const pageHeight = Math.abs(page.mediaBox[3] - page.mediaBox[1]);
+    const covered = (pageImages[index]?.images ?? []).map((img) => ({
+      minX: img.x,
+      minY: img.y,
+      maxX: img.x + img.widthPt,
+      maxY: img.y + img.heightPt,
+    }));
+    for (const v of collectPageVectors(file, page, covered)) {
+      body.push(shapeBlock(v, pageHeight, zOrder++));
+    }
+  });
 
   // Images not claimed by a /Figure (untagged figures, third-party PDFs) still
   // belong in the document — append them in page + top-down order so nothing is

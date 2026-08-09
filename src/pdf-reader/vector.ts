@@ -127,6 +127,7 @@ const NO_FONTS: ReadonlyMap<string, ContentFont> = new Map();
 const MIN_SIDE = 2; // pt — skip thin filled rules
 const MIN_AREA = 16; // pt² — skip dots / hairlines
 const MIN_STROKE_LEN = 6; // pt — skip stroke specks (tick marks, dots)
+const MIN_RULE_LEN = 6; // pt — a filled rule shorter than this is a speck
 const MAX_VECTORS = 2000; // per-page DoS guard
 const MAX_FORM_DEPTH = 12;
 
@@ -180,12 +181,18 @@ export function collectPageVectors(
       v.patternName === undefined &&
       v.fillHex !== undefined &&
       (!white || painted.some((box) => overlaps(box, b)));
+    // A fill is a BOX when both sides have some size to them, and a RULE when
+    // one side is long and the other barely there. Only boxes were kept, and a
+    // form's lines are not strokes at all: 160F-2019.pdf draws every rule as a
+    // filled rectangle a half point high, so the whole grid — every box, every
+    // line of the certificate — was thrown out as hairline clutter, and its
+    // text arrived with no form under it.
+    const long = Math.max(w, h);
+    const short = Math.min(w, h);
+    const isBox = short >= MIN_SIDE && area >= MIN_AREA;
+    const isRule = long >= MIN_RULE_LEN && short > 0;
     const filled =
-      (v.gradient !== undefined || solidFill) &&
-      w >= MIN_SIDE &&
-      h >= MIN_SIDE &&
-      area >= MIN_AREA &&
-      area <= 0.85 * pageArea;
+      (v.gradient !== undefined || solidFill) && (isBox || isRule) && area <= 0.85 * pageArea;
     const stroked =
       v.strokeHex !== undefined &&
       v.strokeHex !== 'FFFFFF' &&

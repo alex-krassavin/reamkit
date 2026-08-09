@@ -119,6 +119,18 @@ describe('tagged-PDF reconstruction (E-PDF EP3)', () => {
     expect(first!).toBeGreaterThan(second!);
   });
 
+  it('keeps the colour the glyphs were painted in', async () => {
+    // §8.6.8. Dropped, 160F-2019.pdf's blue field labels and its red warning
+    // all came back plain black.
+    const flow = await taggedFlow(
+      '<w:p><w:r><w:rPr><w:color w:val="0000FF"/></w:rPr><w:t>BlueText</w:t></w:r></w:p>',
+    );
+    const colours = flow.body.flatMap((b) =>
+      b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.properties.colorHex) : [],
+    );
+    expect(colours).toContain('0000FF');
+  });
+
   it('keeps the size the glyphs were shown at', async () => {
     // §9.3.1 Tf. Dropped, every run came back at the 11pt default, and a form
     // set in 7pt grew by half again — 160F-2019.pdf rebuilt one page as five.

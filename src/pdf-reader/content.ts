@@ -42,6 +42,8 @@ export interface TextRun {
   readonly y: number;
   readonly fontSizePt: number;
   readonly fontKey: string;
+  /** §8.6.8 — the non-stroking colour the glyphs were painted in (6-hex). */
+  readonly colorHex: string;
   /**
    * The marked-content id of the enclosing `BDC` sequence (§14.6), if any — the
    * link from this text to the structure element that owns it (E-PDF EP3).
@@ -371,6 +373,7 @@ export function interpretContent(
       y: origin[5],
       fontSizePt: state.fontSize * scaleY,
       fontKey: state.fontKey,
+      colorHex: state.fillColor,
       ...(mcid !== undefined ? { mcid } : {}),
     });
   };

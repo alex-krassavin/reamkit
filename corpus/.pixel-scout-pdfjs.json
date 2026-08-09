@@ -5,14 +5,14 @@
   "aligned": false
  },
  {
-  "name": "160F-2019.pdf",
-  "score": 0.1643,
-  "aligned": true
- },
- {
   "name": "Brotli-Prototype-FileA.pdf",
   "score": 0.1546,
   "aligned": false
+ },
+ {
+  "name": "160F-2019.pdf",
+  "score": 0.1353,
+  "aligned": true
  },
  {
   "name": "22060_A1_01_Plans.pdf",

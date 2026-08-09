@@ -183,6 +183,30 @@ describe('clipping paths (§8.5.4)', () => {
   });
 });
 
+describe('filled rules (E-PDF EP10)', () => {
+  const fills = (stream: string) =>
+    interpretContent(new TextEncoder().encode(stream), NO_FONTS).vectors;
+
+  it('keeps a long thin fill — a form draws its lines as rectangles', () => {
+    // 160F-2019.pdf has no stroke operator at all: every rule of the
+    // certificate is a filled rectangle half a point high. Dropped as hairline
+    // clutter, the whole grid went with them and the text arrived with no form
+    // under it.
+    const [rule] = fills('0 0 0 rg 100 100 200 0.5 re f');
+    expect(rule).toBeDefined();
+    expect(rule!.fillHex).toBe('000000');
+  });
+
+  it('still drops a speck thin in BOTH directions', () => {
+    // The rule admits length, not smallness: a dot stays clutter.
+    const painted = fills('0 0 0 rg 100 100 1 1 re f');
+    expect(painted).toHaveLength(1); // the interpreter sees it …
+    // … and `collectPageVectors` is what rejects it; the geometry is the test.
+    const segs = painted[0]!.segs.flatMap((seg) => ('x' in seg ? [seg.x] : []));
+    expect(Math.max(...segs) - Math.min(...segs)).toBeLessThan(6);
+  });
+});
+
 describe('stroked vector paths (E-PDF EP11)', () => {
   it('captures a stroke-only path with its colour and CTM-scaled width', () => {
     const { vectors } = interpretContent(
