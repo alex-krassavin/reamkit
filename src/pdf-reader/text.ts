@@ -5,6 +5,7 @@
 
 import { IDENTITY, interpretContent, multiply } from './content';
 import { buildContentFont } from './font';
+import { collectPageAppearances } from './annots';
 import type { ContentFont, Matrix, TextRun } from './content';
 import type { PdfDict } from '@/pdf/objects';
 import type { PdfFile, PdfPage, Rectangle } from './document';
@@ -27,6 +28,21 @@ const MAX_FORM_DEPTH = 8;
 export function extractPageText(file: PdfFile, page: PdfPage): Array<TextRun> {
   const runs: Array<TextRun> = [];
   collectRuns(file, page.resources, file.pageContent(page), IDENTITY, 0, new Set(), runs);
+  // §12.5.5 — an annotation draws in its own appearance stream, and the words
+  // it draws are the page's words too: a field's value, a button's caption.
+  // Only its ARTWORK was being lifted, so 160F-2019.pdf's reset button arrived
+  // as a tinted rectangle with nothing written on it.
+  for (const appearance of collectPageAppearances(file, page)) {
+    collectRuns(
+      file,
+      appearance.resources ?? page.resources,
+      file.streamData(appearance.stream),
+      appearance.ctm,
+      1,
+      new Set([appearance.stream]),
+      runs,
+    );
+  }
   const links = collectLinks(file, page);
   if (links.length === 0) return runs;
   return runs.map((run) => {
