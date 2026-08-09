@@ -103,11 +103,32 @@ export function paragraphFromRuns(
  * {@link BodyElement} that references them, sized in points from the placement
  * CTM. `alt` becomes the block's alt text when given.
  */
-export function imageBlock(image: PdfImage, resources: ResourceStore, alt?: string): BodyElement {
+export function imageBlock(
+  image: PdfImage,
+  resources: ResourceStore,
+  alt?: string,
+  pageHeight?: number,
+): BodyElement {
   const resource = resources.put(image.bytes);
+  // §20.4.2.3 — anchored where the page placed it, for the same reason a lifted
+  // path is: a picture is not a paragraph and has no turn in a reading order.
+  // Stacked in flow, 22060_A1_01_Plans.pdf's four floor plans made two pages of
+  // a sheet that is one.
+  const float: FloatAnchor | undefined =
+    pageHeight !== undefined
+      ? {
+          wrap: 'none',
+          posH: { relativeFrom: 'page', offsetPt: pt(image.x) },
+          posV: {
+            relativeFrom: 'page',
+            offsetPt: pt(Math.max(0, pageHeight - image.y - image.heightPt)),
+          },
+        }
+      : undefined;
   return {
     kind: 'image',
     image: {
+      ...(float ? { float } : {}),
       resource,
       width: pt(image.widthPt),
       height: pt(image.heightPt),

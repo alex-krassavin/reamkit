@@ -139,6 +139,12 @@ export interface VectorPlacement {
   readonly fillHex?: string;
   /** Shading pattern, present iff filled with one (EP16c). */
   readonly gradient?: ShapeGradient;
+  /**
+   * §8.7.3 — the TILING pattern resource name the path is filled with. Its
+   * content is a stream of its own, so what the fill actually shows is only
+   * known by walking into it; the `fillHex` beside this is not the fill.
+   */
+  readonly patternName?: string;
   /** Stroke colour (6-hex), present iff the path is stroked (`S` / `s` / `B` / `b`) — EP11. */
   readonly strokeHex?: string;
   /** Stroke width in page-space points — EP11. */
@@ -201,6 +207,7 @@ interface TextState {
   strokeColor: string; // current stroking colour (6-hex), graphics state (EP11)
   lineWidth: number; // current line width in user-space units (EP11)
   fillGradient: ShapeGradient | undefined; // current non-stroking shading pattern (EP16c)
+  fillPattern: string | undefined; // §8.7.3 non-stroking TILING pattern resource name
   clip: ClipRegion | undefined; // §8.5.4 the clipping region in force
 }
 
@@ -219,6 +226,7 @@ function initialState(): TextState {
     strokeColor: '000000',
     lineWidth: 1, // §8.4.3.2 default line width
     fillGradient: undefined,
+    fillPattern: undefined,
     clip: undefined,
   };
 }
@@ -298,6 +306,7 @@ export function interpretContent(
       vectors.push({
         segs: path,
         ...(state.clip ? { clip: state.clip } : {}),
+        ...(fill && state.fillPattern !== undefined ? { patternName: state.fillPattern } : {}),
         ...(fill ? { fillHex: state.fillColor } : {}),
         ...(fill && state.fillGradient ? { gradient: state.fillGradient } : {}),
         ...(stroke ? { strokeHex: state.strokeColor, lineWidth: ctmLineWidth() } : {}),
@@ -482,21 +491,32 @@ export function interpretContent(
       case 'rg':
         state.fillColor = rgbHex(num(0), num(1), num(2));
         state.fillGradient = undefined;
+        state.fillPattern = undefined;
         break;
       case 'g':
         state.fillColor = grayHex(num(0));
         state.fillGradient = undefined;
+        state.fillPattern = undefined;
         break;
       case 'k':
         state.fillColor = cmykHex(num(0), num(1), num(2), num(3));
         state.fillGradient = undefined;
+        state.fillPattern = undefined;
         break;
       // §8.6.8 colour in a named space; a /Pattern name selects a shading
       // pattern (EP16c), numeric operands are a solid colour we leave as-is.
       case 'scn':
       case 'sc': {
+        // §8.6.6.2 — in a Pattern colour space the operand is a pattern NAME,
+        // not components. A shading pattern (type 2) resolves to a gradient
+        // here; a tiling one (type 1) is a whole content stream and is named
+        // for the image walk to enter. Neither is a colour, and taking the
+        // fill colour still standing from before painted 22060_A1_01_Plans.pdf's
+        // four floor plans as four black rectangles.
         const last = operands[operands.length - 1];
-        state.fillGradient = last instanceof PdfName ? shadings.get(last.value) : undefined;
+        const named = last instanceof PdfName ? last.value : undefined;
+        state.fillGradient = named !== undefined ? shadings.get(named) : undefined;
+        state.fillPattern = named !== undefined && !state.fillGradient ? named : undefined;
         break;
       }
       // §8.6.8 stroking colour → the current stroke colour (EP11).

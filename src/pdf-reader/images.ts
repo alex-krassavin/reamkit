@@ -75,7 +75,37 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
   ): void => {
     const xobjects = resources ? file.get(resources, 'XObject') : PDF_NULL;
     const xobjDict = xobjects instanceof Map ? xobjects : undefined;
-    for (const placement of interpretContent(content, NO_FONTS, baseCtm).images) {
+    const result = interpretContent(content, NO_FONTS, baseCtm);
+
+    // §8.7.3.1 — a path filled with a TILING pattern shows that pattern's own
+    // content stream, drawn through the pattern's `/Matrix`. It is a call like
+    // a form's, so it is walked like one: 22060_A1_01_Plans.pdf draws all four
+    // of its floor plans this way, as one JPEG apiece inside a pattern, and
+    // nothing else on the page refers to those images at all.
+    const patterns = resources ? file.get(resources, 'Pattern') : PDF_NULL;
+    const patternDict = patterns instanceof Map ? patterns : undefined;
+    for (const vector of result.vectors) {
+      if (vector.patternName === undefined || depth >= MAX_FORM_DEPTH) continue;
+      const stream = patternDict
+        ? file.resolve(patternDict.get(vector.patternName) ?? PDF_NULL)
+        : PDF_NULL;
+      if (!(stream instanceof PdfStream) || visiting.has(stream)) continue;
+      // Type 1 only: a type-2 (shading) pattern is a gradient, and the vector
+      // path already carries it.
+      if (file.get(stream.dict, 'PatternType') !== 1) continue;
+      visiting.add(stream);
+      const patternRes = file.get(stream.dict, 'Resources');
+      walk(
+        patternRes instanceof Map ? patternRes : resources,
+        file.streamData(stream),
+        multiply(matrixOf(file, stream.dict), baseCtm),
+        depth + 1,
+        inheritedMcid,
+      );
+      visiting.delete(stream);
+    }
+
+    for (const placement of result.images) {
       if (images.length >= MAX_IMAGES) return;
       const stream = xobjDict ? file.resolve(xobjDict.get(placement.name) ?? PDF_NULL) : PDF_NULL;
       if (!(stream instanceof PdfStream)) continue;

@@ -98,20 +98,20 @@ export function reconstructByLayout(file: PdfFile): Reconstruction {
       addColumn(runs, 0);
     }
     const colOf = (centerX: number): number => (gutter !== undefined && centerX >= gutter ? 1 : 0);
+    const pageHeight = Math.abs(page.mediaBox[3] - page.mediaBox[1]);
     const imgs = collectPageImages(file, page);
     losses.push(...imgs.losses);
     for (const img of imgs.images) {
       blocks.push({
         col: colOf(img.x + img.widthPt / 2),
         top: img.y + img.heightPt,
-        el: imageBlock(img, resources),
+        el: imageBlock(img, resources, undefined, pageHeight),
       });
     }
     // Filled vector paths (EP10) are ANCHORED where the page drew them — they
     // are artwork, not paragraphs, and a sheet of them has no reading order to
     // take a place in. They still sort by top edge, so their z-order is the
     // order the page painted them in.
-    const pageHeight = Math.abs(page.mediaBox[3] - page.mediaBox[1]);
     for (const v of collectPageVectors(file, page)) {
       blocks.push({
         col: colOf((v.minX + v.maxX) / 2),

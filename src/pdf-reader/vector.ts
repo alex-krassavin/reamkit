@@ -130,7 +130,13 @@ export function collectPageVectors(file: PdfFile, page: PdfPage): Array<PdfVecto
     // A fill (solid or gradient) must be a non-white area larger than a hairline
     // and smaller than a page background; a stroke must be a non-white line
     // longer than a speck.
-    const solidFill = v.fillHex !== undefined && v.fillHex !== 'FFFFFF';
+    // §8.7.3 — a path filled with a TILING pattern shows the pattern, not a
+    // colour: `collectPageImages` walks into it and lifts what it draws. The
+    // `fillHex` still standing on the placement is whatever colour was set
+    // before the pattern was, and painting it covered 22060_A1_01_Plans.pdf's
+    // four floor plans with four black rectangles.
+    const solidFill =
+      v.patternName === undefined && v.fillHex !== undefined && v.fillHex !== 'FFFFFF';
     const filled =
       (v.gradient !== undefined || solidFill) &&
       w >= MIN_SIDE &&

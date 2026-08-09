@@ -64,6 +64,30 @@ describe('filled vector paths (E-PDF EP10)', () => {
   });
 });
 
+describe('tiling patterns (§8.7.3)', () => {
+  const fills = (stream: string) =>
+    interpretContent(new TextEncoder().encode(stream), NO_FONTS).vectors;
+
+  it('names the tiling pattern a path is filled with instead of inventing a colour', () => {
+    // §8.6.6.2 — in a Pattern colour space `scn` takes a NAME. Read as a
+    // colour it left whatever was set before it standing: 22060_A1_01_Plans.pdf
+    // filled four floor plans with a pattern and we painted four black squares.
+    const [painted] = fills('0 0 0 rg /Pat cs /P1 scn 0 0 100 100 re f');
+    expect(painted?.patternName).toBe('P1');
+  });
+
+  it('forgets the pattern when a real colour is set after it', () => {
+    const [painted] = fills('/Pat cs /P1 scn 1 0 0 rg 0 0 100 100 re f');
+    expect(painted?.patternName).toBeUndefined();
+    expect(painted?.fillHex).toBe('FF0000');
+  });
+
+  it('names no pattern for an ordinary colour fill', () => {
+    const [painted] = fills('0 0 1 rg 0 0 100 100 re f');
+    expect(painted?.patternName).toBeUndefined();
+  });
+});
+
 describe('clipping paths (§8.5.4)', () => {
   const clipOf = (stream: string) =>
     interpretContent(new TextEncoder().encode(stream), NO_FONTS).vectors;
