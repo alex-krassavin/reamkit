@@ -10,12 +10,12 @@ import {
   buildFlowDoc,
   dedupeLosses,
   imageBlock,
-  pageFrameOf,
   paragraphBlock,
   paragraphFromRuns,
   sectionFromPdfPages,
   shapeBlock,
 } from './flow-build';
+import { displayOf, placeVectors } from './display';
 import { collectPageImages } from './images';
 import { collectPageVectors } from './vector';
 import { readStructTree } from './struct-tree';
@@ -222,14 +222,16 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
   // where the page drew them, exactly as the untagged path does — the tree
   // supplies the reading order, the page supplies its own artwork.
   pages.forEach((page, index) => {
-    const frame = pageFrameOf(page);
+    // §14.11.1/§14.11.2 — the page as it is SHOWN, corner and turn together.
+    const display = displayOf(page);
+    const frame = { left: 0, top: display.height };
     const covered = (pageImages[index]?.images ?? []).map((img) => ({
       minX: img.x,
       minY: img.y,
       maxX: img.x + img.widthPt,
       maxY: img.y + img.heightPt,
     }));
-    for (const v of collectPageVectors(file, page, covered)) {
+    for (const v of placeVectors(collectPageVectors(file, page, covered), display)) {
       body.push(shapeBlock(v, frame, zOrder++));
     }
   });

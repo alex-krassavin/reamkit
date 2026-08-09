@@ -14,12 +14,12 @@ import {
   buildFlowDoc,
   dedupeLosses,
   imageBlock,
-  pageFrameOf,
   paragraphFromRuns,
   positionedText,
   sectionFromPdfPages,
   shapeBlock,
 } from './flow-build';
+import { displayOf, placeImages, placeRuns, placeVectors } from './display';
 import { collectPageImages } from './images';
 import { extractPageText } from './text';
 import { collectPageVectors } from './vector';
@@ -61,7 +61,10 @@ export function reconstructByLayout(
   mode: 'flow' | 'positional' = 'flow',
 ): Reconstruction {
   const pages = file.pages();
-  const pageRuns = pages.map((page) => extractPageText(file, page));
+  // §14.11.1 — every mark is lifted into the page's SHOWN frame, so nothing
+  // downstream has to know the page was ever turned.
+  const shown = pages.map((page) => displayOf(page));
+  const pageRuns = pages.map((page, i) => placeRuns(extractPageText(file, page), shown[i]!));
   const medianFont =
     median(
       pageRuns
@@ -75,11 +78,11 @@ export function reconstructByLayout(
   const body: Array<BodyElement> = [];
   pages.forEach((page, i) => {
     const runs = pageRuns[i]!;
-    const [px0, , px1] = page.mediaBox;
+    const display = shown[i]!;
     // EP17 — detect a clean two-column split (a central vertical gutter no run
     // crosses); fall back to a single column. Each column is grouped and read
     // independently, then the left column's blocks precede the right's.
-    const pageWidth = Math.abs(px1 - px0);
+    const pageWidth = display.width;
     const gutter = detectGutter(runs, pageWidth);
     // Blocks carry a column key so the final sort reads column-by-column: left
     // column top-to-bottom, then right column.
@@ -106,7 +109,7 @@ export function reconstructByLayout(
               // turned frame, and the blocks are ordered by where they stand.
               top: box.y + box.height,
               make: (z: number): BodyElement =>
-                positionedText(line.spans, box, pageFrameOf(page), z, rotation60kOf(angle)),
+                positionedText(line.spans, box, frame, z, rotation60kOf(angle)),
             });
           }
         }
@@ -140,8 +143,11 @@ export function reconstructByLayout(
       addColumn(runs, 0);
     }
     const colOf = (centerX: number): number => (gutter !== undefined && centerX >= gutter ? 1 : 0);
-    const frame = pageFrameOf(page);
-    const imgs = collectPageImages(file, page);
+    // The shown page has its own corner: the turn has already been applied, so
+    // what is left is a box that starts at the origin.
+    const frame = { left: 0, top: display.height };
+    const raw = collectPageImages(file, page);
+    const imgs = { images: placeImages(raw.images, display), losses: raw.losses };
     losses.push(...imgs.losses);
     // Filled vector paths (EP10) are ANCHORED where the page drew them — they
     // are artwork, not paragraphs, and a sheet of them has no reading order to
@@ -155,7 +161,7 @@ export function reconstructByLayout(
       maxX: img.x + img.widthPt,
       maxY: img.y + img.heightPt,
     }));
-    const vectors = collectPageVectors(file, page, covered);
+    const vectors = placeVectors(collectPageVectors(file, page, covered), display);
 
     // §20.4.2.3 `relativeHeight` — pictures and paths share one z-order, and
     // it is the page's own painting order (§8.5.3), not one kind before the

@@ -24,6 +24,11 @@ export type Rectangle = readonly [number, number, number, number];
 export interface PdfPage {
   readonly dict: PdfDict;
   readonly mediaBox: Rectangle;
+  /**
+   * §14.11.1 `/Rotate` — how far the page turns CLOCKWISE when it is shown,
+   * normalised to 0, 90, 180 or 270 and inherited down the page tree.
+   */
+  readonly rotate: 0 | 90 | 180 | 270;
   readonly resources: PdfDict | undefined;
 }
 
@@ -216,7 +221,11 @@ export class PdfFile {
    */
   private walkPageTree(
     node: PdfDict,
-    inherited: { mediaBox?: Rectangle | undefined; resources?: PdfDict | undefined },
+    inherited: {
+      mediaBox?: Rectangle | undefined;
+      resources?: PdfDict | undefined;
+      rotate?: PdfPage['rotate'] | undefined;
+    },
     out: Array<PdfPage>,
     seen: Set<PdfDict>,
   ): void {
@@ -225,18 +234,26 @@ export class PdfFile {
     const mediaBox = readRectangle(this.get(node, 'MediaBox')) ?? inherited.mediaBox;
     const resourcesVal = this.get(node, 'Resources');
     const resources = resourcesVal instanceof Map ? resourcesVal : inherited.resources;
+    const rotate = readRotate(this.get(node, 'Rotate')) ?? inherited.rotate;
     const type = node.get('Type');
     const kids = this.get(node, 'Kids');
     if (type instanceof PdfName && type.value === 'Pages' && Array.isArray(kids)) {
       for (const kid of kids) {
         const kidNode = this.resolve(kid);
-        if (kidNode instanceof Map) this.walkPageTree(kidNode, { mediaBox, resources }, out, seen);
+        if (kidNode instanceof Map) {
+          this.walkPageTree(kidNode, { mediaBox, resources, rotate }, out, seen);
+        }
         if (out.length >= MAX_PAGES) break;
       }
       return;
     }
     // A leaf /Page (or an untyped node with no kids).
-    out.push({ dict: node, mediaBox: mediaBox ?? DEFAULT_MEDIA_BOX, resources });
+    out.push({
+      dict: node,
+      mediaBox: mediaBox ?? DEFAULT_MEDIA_BOX,
+      rotate: rotate ?? 0,
+      resources,
+    });
   }
 
   /**
@@ -639,6 +656,18 @@ function readRectangle(value: PdfValue): Rectangle | undefined {
   const nums = value.slice(0, 4).map((v) => (typeof v === 'number' ? v : NaN));
   if (nums.some((n) => !Number.isFinite(n))) return undefined;
   return [nums[0]!, nums[1]!, nums[2]!, nums[3]!];
+}
+
+/**
+ * §14.11.1 `/Rotate` — a multiple of 90, and the spec says so, but a file is
+ * free to write −90 or 450 and readers take both. Anything that is not a
+ * quarter turn is no turn at all.
+ */
+function readRotate(value: PdfValue): PdfPage['rotate'] | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  if (value % 90 !== 0) return undefined;
+  const turns = (((value / 90) % 4) + 4) % 4;
+  return ([0, 90, 180, 270] as const)[turns];
 }
 
 function concatWithSpaces(parts: ReadonlyArray<Uint8Array>): Uint8Array {

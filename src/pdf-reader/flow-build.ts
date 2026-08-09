@@ -3,6 +3,7 @@
 // carries a body of paragraphs/tables/images over the empty style sheet, with
 // any lifted image bytes (EP6) in the resource store the writers embed from.
 
+import { displayOf } from './display';
 import type {
   BodyElement,
   CustomPathCmd,
@@ -31,33 +32,18 @@ export interface Reconstruction {
 }
 
 /**
- * The corner a page's marks are measured from: the left and the TOP of its
- * `/MediaBox`, in PDF's y-up user space.
+ * The corner a page's marks are measured from, in the SHOWN page's own y-up
+ * frame — see `./display`, which puts every mark into it.
  *
- * §14.11.2 — a media box is not obliged to start at the origin, and a page that
- * begins elsewhere is not exotic: 160F-2019.pdf's is
- * `[-11.96 11.99 583.24 853.67]`. Taking the corner for (0, 0) placed every
- * anchored mark twelve points up and to the left of where the page drew it,
- * which on a form is the difference between a label in its box and a label over
- * the rule above it.
+ * The shown page starts at its own origin, so `left` is zero and `top` is its
+ * height; the two are kept as a pair because a caller that has not been through
+ * `display` (none, today) would state something else.
  */
 export interface PageFrame {
-  /** `/MediaBox` left edge — subtract it to get an offset from the page. */
+  /** Left edge — subtract it to get an offset from the page. */
   readonly left: number;
-  /** `/MediaBox` top edge — subtract from it to flip into a top-down frame. */
+  /** Top edge — subtract from it to flip into a top-down frame. */
   readonly top: number;
-}
-
-/**
- * A page's {@link PageFrame}, taken from its `/MediaBox` whichever way round
- * the box states its corners.
- *
- * @param page The page whose frame is wanted.
- * @returns Its left and top edges in user space.
- */
-export function pageFrameOf(page: PdfPage): PageFrame {
-  const [x0, y0, x1, y1] = page.mediaBox;
-  return { left: Math.min(x0, x1), top: Math.max(y0, y1) };
 }
 
 /**
@@ -362,10 +348,15 @@ export function shapeBlock(v: PdfVector, frame?: PageFrame, zOrder?: number): Bo
  * `A4`. Returns `undefined` when there is no usable first-page box.
  */
 export function sectionFromPdfPages(pages: ReadonlyArray<PdfPage>): SectionProperties | undefined {
-  const box = pages[0]?.mediaBox;
-  if (!box) return undefined;
-  const width = Math.abs(box[2] - box[0]);
-  const height = Math.abs(box[3] - box[1]);
+  const first = pages[0];
+  if (!first) return undefined;
+  // §14.11.1 — the page as it is SHOWN. A landscape sheet drawn sideways in a
+  // portrait box with `/Rotate 270` is a landscape page, and read as its box
+  // says every one of Brotli-Prototype-FileA.pdf's twenty-five came back
+  // portrait with its words running down the page.
+  const shown = displayOf(first);
+  const width = shown.width;
+  const height = shown.height;
   if (!(width > 0 && height > 0)) return undefined;
   return {
     pageSize: {

@@ -108,6 +108,18 @@ const superscriptPdf = (): Uint8Array =>
     'BT /F1 10 Tf 20 700 Td (Word) Tj /F1 6 Tf 45 7.5 Td (1\\)) Tj ET',
   );
 
+/**
+ * A landscape sheet drawn sideways in a portrait box and stood up by `/Rotate`
+ * — the shape all twenty-five pages of Brotli-Prototype-FileA.pdf take. The
+ * text matrix turns the words a quarter the other way, so the page's own turn
+ * is what sets them level.
+ */
+const turnedPagePdf = (rotate: number): Uint8Array =>
+  onePagePdf(
+    `/MediaBox [0 0 400 800] /Rotate ${String(rotate)}`,
+    'BT /F1 10 Tf 0 -1 1 0 100 600 Tm (Side) Tj ET',
+  );
+
 /** A page whose `/MediaBox` starts twelve points off the origin, as 160F's does. */
 const offsetBoxPdf = (): Uint8Array =>
   onePagePdf(
@@ -191,6 +203,33 @@ describe('placed reconstruction (E-PDF EP4)', () => {
     const paras = paragraphs(flowed.doc);
     expect(paras).toHaveLength(1);
     expect(paras[0]!.paragraph.runs.map((r) => r.text).join('')).toBe('Left Right');
+  });
+
+  it('stands a turned page up, and its words with it (§14.11.1)', () => {
+    // Brotli-Prototype-FileA.pdf is twenty-five landscape sheets drawn sideways
+    // in portrait boxes with /Rotate 270. Read as the box says, every one came
+    // back portrait with its words running down the page.
+    const placed = reconstructByLayout(PdfFile.parse(turnedPagePdf(270)), 'positional');
+    expect(placed.doc.section?.pageSize?.width).toBeCloseTo(800, 5);
+    expect(placed.doc.section?.pageSize?.height).toBeCloseTo(400, 5);
+    expect(placed.doc.section?.pageSize?.orientation).toBe('landscape');
+    const shape = placed.doc.body.find((b) => b.kind === 'shape');
+    expect(shape?.kind).toBe('shape');
+    if (shape?.kind !== 'shape') return;
+    // The matrix turns the words a quarter one way and the page the other, so
+    // what is left is level type.
+    expect(shape.shape.transform?.rotation60k).toBeUndefined();
+    // (100, 600) on a 400×800 box, turned 270°: x = 800 − 600, y = 100.
+    expect(shape.shape.float?.posH?.offsetPt).toBeCloseTo(200, 5);
+  });
+
+  it('leaves a page its box describes exactly where it stands', () => {
+    // The same file with no turn: portrait, and the words still on their side.
+    const placed = reconstructByLayout(PdfFile.parse(turnedPagePdf(0)), 'positional');
+    expect(placed.doc.section?.pageSize?.orientation).toBe('portrait');
+    const shape = placed.doc.body.find((b) => b.kind === 'shape');
+    if (shape?.kind !== 'shape') throw new Error('expected a placed line');
+    expect(shape.shape.transform?.rotation60k).toBe(90 * 60000);
   });
 
   it('measures a placed mark off the page’s own corner, not off the origin', () => {

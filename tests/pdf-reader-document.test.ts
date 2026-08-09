@@ -34,6 +34,44 @@ function tinyPdf(content: Uint8Array, contentDict: PdfDict): Uint8Array {
   return doc.build(catalog);
 }
 
+/** The same tiny page, with `/Rotate` stated where `where` says. */
+function rotatedPdf(where: 'page' | 'pages', rotate: number): Uint8Array {
+  const doc = new PdfDocument();
+  const body = new TextEncoder().encode('BT ET');
+  const contentRef = doc.add(stream({ Length: body.length }, body));
+  const page = dict({ Type: name('Page'), MediaBox: [0, 0, 200, 100], Contents: contentRef });
+  if (where === 'page') page.set('Rotate', rotate);
+  const pageRef = doc.add(page);
+  const pages = dict({ Type: name('Pages'), Kids: [pageRef], Count: 1 });
+  if (where === 'pages') pages.set('Rotate', rotate);
+  const pagesRef = doc.add(pages);
+  page.set('Parent', pagesRef);
+  const catalog = doc.add(dict({ Type: name('Catalog'), Pages: pagesRef }));
+  return doc.build(catalog);
+}
+
+const rotateOf = (where: 'page' | 'pages', r: number): number =>
+  PdfFile.parse(rotatedPdf(where, r)).pages()[0]!.rotate;
+
+describe('how far the page turns when it is shown (§14.11.1)', () => {
+  it('reads /Rotate off the page, and normalises the quarter turns', () => {
+    expect(rotateOf('page', 0)).toBe(0);
+    expect(rotateOf('page', 90)).toBe(90);
+    expect(rotateOf('page', 270)).toBe(270);
+    // A file is free to write the turn the long way round, or the other way.
+    expect(rotateOf('page', -90)).toBe(270);
+    expect(rotateOf('page', 450)).toBe(90);
+  });
+
+  it('inherits it down the page tree, as the spec says it may be', () => {
+    expect(rotateOf('pages', 270)).toBe(270);
+  });
+
+  it('takes anything that is not a quarter turn for no turn at all', () => {
+    expect(rotateOf('page', 45)).toBe(0);
+  });
+});
+
 describe('a filter nothing here can undo says so (§7.4)', () => {
   it('reports the filter by name instead of returning an empty document', () => {
     // Brotli-Prototype-FileA.pdf compresses its CROSS-REFERENCE stream with
