@@ -16,6 +16,7 @@ import {
   shapeBlock,
 } from './flow-build';
 import { displayOf, placeVectors } from './display';
+import { collectEmbeddedFonts } from './embedded-fonts';
 import { collectPageImages } from './images';
 import { collectPageVectors } from './vector';
 import { readStructTree } from './struct-tree';
@@ -110,6 +111,7 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
           sizePt: run.fontSizePt,
           // Black is the default; carrying it would put a colour on every run.
           ...(run.colorHex !== '000000' ? { colorHex: run.colorHex } : {}),
+          ...(run.fontName !== undefined ? { fontName: run.fontName } : {}),
           ...(run.bold ? { bold: true } : {}),
           ...(run.italic ? { italic: true } : {}),
           ...(run.href !== undefined ? { href: run.href } : {}),
@@ -249,7 +251,15 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
   for (const { img } of orphans) body.push(imageBlock(img, resources));
 
   if (body.length === 0) return undefined;
-  return { doc: buildFlowDoc(body, resources, sectionFromPdfPages(pages)), losses: imageLosses };
+  return {
+    doc: buildFlowDoc(
+      body,
+      resources,
+      sectionFromPdfPages(pages),
+      collectEmbeddedFonts(file, pages),
+    ),
+    losses: imageLosses,
+  };
 }
 
 /** A cell before its column span is known: content, the tagged span, its page x. */

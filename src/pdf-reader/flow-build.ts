@@ -14,6 +14,7 @@ import type {
   ShapeLine,
 } from '@/core/document-model';
 import type { FlowDoc } from '@/core/ir/flow';
+import type { FontRegistry } from '@/core/font';
 import type { Loss } from '@/core/ir';
 
 import type { PdfImage } from './images';
@@ -67,6 +68,8 @@ export interface TextSpan {
   readonly sizePt?: number;
   /** §8.6.8 — the colour they were painted in, when it is not plain black. */
   readonly colorHex?: string;
+  /** §9.6.2 — the face's own name, for a document that embeds its programs. */
+  readonly fontName?: string;
   /** §9.8.1 — the face was a bold one. */
   readonly bold?: boolean;
   /** §9.8.1 — the face was a slanted one. */
@@ -88,6 +91,7 @@ export function paragraphFromRuns(
     href?: string;
     sizePt?: number;
     colorHex?: string;
+    fontName?: string;
     bold?: boolean;
     italic?: boolean;
   }> = [];
@@ -98,6 +102,7 @@ export function paragraphFromRuns(
       last.href === s.href &&
       last.sizePt === s.sizePt &&
       last.colorHex === s.colorHex &&
+      last.fontName === s.fontName &&
       last.bold === s.bold &&
       last.italic === s.italic
     ) {
@@ -108,6 +113,7 @@ export function paragraphFromRuns(
         ...(s.href !== undefined ? { href: s.href } : {}),
         ...(s.sizePt !== undefined ? { sizePt: s.sizePt } : {}),
         ...(s.colorHex !== undefined ? { colorHex: s.colorHex } : {}),
+        ...(s.fontName !== undefined ? { fontName: s.fontName } : {}),
         ...(s.bold !== undefined ? { bold: s.bold } : {}),
         ...(s.italic !== undefined ? { italic: s.italic } : {}),
       });
@@ -137,6 +143,9 @@ export function paragraphFromRuns(
           properties: {
             ...(r.sizePt !== undefined ? { fontSizePt: pt(r.sizePt) } : {}),
             ...(r.colorHex !== undefined ? { colorHex: r.colorHex } : {}),
+            // §17.3.2.26 `w:rFonts` — the face by name, which is how the layout
+            // finds a program the document itself carries.
+            ...(r.fontName !== undefined ? { fontFamily: { ascii: r.fontName } } : {}),
             ...(r.bold ? { bold: true } : {}),
             ...(r.italic ? { italic: true } : {}),
           },
@@ -397,12 +406,14 @@ export function buildFlowDoc(
   body: ReadonlyArray<BodyElement>,
   resources: ResourceStore = new ResourceStore(),
   section?: SectionProperties,
+  embeddedFonts?: ReadonlyMap<string, FontRegistry>,
 ): FlowDoc {
   return {
     kind: 'flow',
     body: resolveBodyStyles([...body], EMPTY_STYLE_SHEET),
     sections: [],
     ...(section ? { section } : {}),
+    ...(embeddedFonts && embeddedFonts.size > 0 ? { embeddedFonts } : {}),
     styles: EMPTY_STYLE_SHEET,
     resources,
   };

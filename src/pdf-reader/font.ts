@@ -3,6 +3,7 @@
 // glyph advances from a simple font's /Widths or a composite font's /W array.
 
 import { parseToUnicodeCMap } from './cmap';
+import { embeddedFontName } from './embedded-fonts';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 import type { ContentFont } from './content';
 import type { PdfFile } from './document';
@@ -50,9 +51,11 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
   const width = isType0 ? cidWidths(file, fontDict) : simpleWidths(file, fontDict);
   const bytesPerCode = codeBytes;
   const style = faceStyle(file, fontDict, isType0);
+  const name = embeddedFontName(file, fontDict);
 
   return {
     bytesPerCode,
+    ...(name !== undefined ? { name } : {}),
     // Map each code to Unicode; an unmapped code in a simple font falls back to
     // its Latin-1 character, a composite font's to nothing (no sensible guess).
     decode: (codes) =>

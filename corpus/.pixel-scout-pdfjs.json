@@ -6,7 +6,7 @@
  },
  {
   "name": "160F-2019.pdf",
-  "score": 0.0261,
+  "score": 0.0241,
   "aligned": true
  },
  {
@@ -20,23 +20,23 @@
   "aligned": true
  },
  {
-  "name": "IdentityToUnicodeMap_charCodeOf.pdf",
-  "score": 0.0111,
-  "aligned": true
- },
- {
   "name": "22060_A1_01_Plans.pdf",
   "score": 0.0083,
   "aligned": true
  },
  {
+  "name": "IdentityToUnicodeMap_charCodeOf.pdf",
+  "score": 0.0068,
+  "aligned": true
+ },
+ {
   "name": "Brotli-Prototype-FileA.pdf",
-  "score": 0.0045,
+  "score": 0.0047,
   "aligned": true
  },
  {
   "name": "ArabicCIDTrueType.pdf",
-  "score": 0.0027,
+  "score": 0.0026,
   "aligned": true
  },
  {

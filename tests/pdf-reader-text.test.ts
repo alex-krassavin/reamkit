@@ -9,7 +9,9 @@ import { buildDocxFromBody } from './fixtures/build-docx';
 import { Ream } from '@/core/converter/ream';
 import { parseToUnicodeCMap } from '@/pdf-reader/cmap';
 import { PdfFile } from '@/pdf-reader/document';
+import { collectEmbeddedFonts } from '@/pdf-reader/embedded-fonts';
 import { extractPageText } from '@/pdf-reader/text';
+import { reconstructByLayout } from '@/pdf-reader/layout';
 import { parseTtf } from '@/core/font/ttf-parser';
 
 const FONTS = {
@@ -241,6 +243,32 @@ describe('a composite font with no /ToUnicode (§9.10.2)', () => {
     const file = PdfFile.parse(identityHNoToUnicodePdf('LIVING'));
     const runs = extractPageText(file, file.pages()[0]!);
     expect(runs.map((r) => r.text).join('')).toBe('LIVING');
+  });
+});
+
+describe('the faces a file carries (§9.9)', () => {
+  it('lifts the embedded program under the name a run will ask for', () => {
+    // A substituted face is never the one the author used: its glyphs are a
+    // fraction wider, so every word drifts from where the page put it and the
+    // drift runs on down the line.
+    const file = PdfFile.parse(identityHNoToUnicodePdf('LIVING'));
+    const fonts = collectEmbeddedFonts(file, file.pages());
+    expect([...fonts.keys()]).toEqual(['roboto']);
+    // A one-face registry answers every style request with the face it has.
+    expect(fonts.get('roboto')!.resolveByStyle(false, false).parsed.numGlyphs).toBeGreaterThan(0);
+  });
+
+  it('names that face on the run, which is how the layout finds it', () => {
+    const file = PdfFile.parse(identityHNoToUnicodePdf('LIVING'));
+    const runs = extractPageText(file, file.pages()[0]!);
+    expect(runs[0]!.fontName).toBe('roboto');
+    const { doc } = reconstructByLayout(file, 'positional');
+    expect([...(doc.embeddedFonts ?? new Map()).keys()]).toEqual(['roboto']);
+    const shape = doc.body.find((b) => b.kind === 'shape');
+    if (shape?.kind !== 'shape') throw new Error('expected a placed line');
+    const para = shape.shape.text?.content[0];
+    if (para?.kind !== 'paragraph') throw new Error('expected a paragraph');
+    expect(para.paragraph.runs[0]?.properties.fontFamily?.ascii).toBe('roboto');
   });
 });
 

@@ -20,6 +20,7 @@ import {
   shapeBlock,
 } from './flow-build';
 import { displayOf, placeImages, placeRuns, placeVectors } from './display';
+import { collectEmbeddedFonts } from './embedded-fonts';
 import { collectPageImages } from './images';
 import { extractPageText } from './text';
 import { collectPageVectors } from './vector';
@@ -205,7 +206,12 @@ export function reconstructByLayout(
     for (const block of blocks) body.push(block.el);
   });
   return {
-    doc: buildFlowDoc(body, resources, sectionFromPdfPages(pages)),
+    doc: buildFlowDoc(
+      body,
+      resources,
+      sectionFromPdfPages(pages),
+      collectEmbeddedFonts(file, pages),
+    ),
     losses: dedupeLosses(losses),
   };
 }
@@ -242,16 +248,23 @@ function detectGutter(runs: ReadonlyArray<TextRun>, pageWidth: number): number |
 }
 
 /**
- * The gap, in ems, past which runs sharing a baseline are not one line of words
- * but two things the page put in different places.
+ * The gap, in ems, past which the placed reader cuts a line rather than write a
+ * space across it.
  *
- * Measured on 160F-2019.pdf, whose every row sets a line number, a label and a
- * right-hand column on one baseline: the gaps between words run 0.00–3.13 em
- * and the gaps between columns 4.41–43.66 em, with nothing in between. Four ems
- * sits in that empty band. Only the positional reader splits on it — a flowing
- * paragraph is meant to be read across.
+ * It began at four ems, from a measurement on 160F-2019.pdf: the gaps between
+ * words there run 0.00–3.13 em and the gaps between COLUMNS 4.41–43.66 em, with
+ * nothing in between. That told a column from a word, which was the question at
+ * the time. It is not the question here.
+ *
+ * A placed piece is set down at the x it was measured at, so cutting costs
+ * nothing — and a space costs whatever the page's gap was not. A quarter of an
+ * em of type standing in for one em of pen leaves everything after it three
+ * quarters of an em short, and the error runs on down the line. So the reader
+ * cuts wherever {@link lineSpans} would otherwise write a space, and a placed
+ * page never stands a space in for a gap it measured. Only the placed reader
+ * does this — a flowing paragraph is meant to be read across.
  */
-const COLUMN_GAP_EM = 4;
+const SPACE_GAP_EM = 0.25;
 
 /** Runs by the direction of their baseline, upright first, each angle rounded. */
 function byAngle(runs: ReadonlyArray<TextRun>): Array<[number, Array<TextRun>]> {
@@ -366,9 +379,15 @@ function groupIntoLines(runs: ReadonlyArray<TextRun>, split = false): Array<Line
       // A gap the page put there is a placement, and so is a step off the
       // baseline: 160F-2019.pdf sets its footnote marks a size smaller and
       // three quarters of an em up, and read as one line they came down flat.
+      //
+      // The gap that splits is the one a SPACE would have to stand in for. A
+      // placed piece is set down at its measured x, so cutting costs nothing
+      // and a space costs whatever the page's gap was not: a quarter of an em
+      // of type standing in for one em of pen leaves everything after it three
+      // quarters of an em short, and the error runs on down the line.
       const steps =
         last !== undefined &&
-        (run.x - last.endX > size * COLUMN_GAP_EM ||
+        (run.x - last.endX > size * SPACE_GAP_EM ||
           Math.abs(run.y - prev[0]!.y) > size * BASELINE_STEP_EM);
       if (steps) pieces.push([]);
       pieces[pieces.length - 1]!.push(run);
@@ -416,6 +435,7 @@ function lineSpans(runs: ReadonlyArray<TextRun>, fontSize: number): Array<TextSp
       text: run.text,
       sizePt: run.fontSizePt,
       ...(run.colorHex !== '000000' ? { colorHex: run.colorHex } : {}),
+      ...(run.fontName !== undefined ? { fontName: run.fontName } : {}),
       ...(run.bold ? { bold: true } : {}),
       ...(run.italic ? { italic: true } : {}),
       ...(run.href !== undefined ? { href: run.href } : {}),

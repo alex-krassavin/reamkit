@@ -27,6 +27,8 @@ export interface ContentFont {
   decode: (codes: ReadonlyArray<number>) => string;
   /** Glyph advance for one code, in 1000-unit text space. */
   width: (code: number) => number;
+  /** §9.6.2 — the face's own `/BaseFont` name, for a document that embeds it. */
+  readonly name?: string;
   /** §9.8.1 — the face is a bold one (weight, the ForceBold flag, or its name). */
   readonly bold?: boolean;
   /** §9.8.1 — the face is slanted (`/ItalicAngle`, the Italic flag, or its name). */
@@ -62,6 +64,13 @@ export interface TextRun {
   readonly angleDeg?: number;
   readonly fontSizePt: number;
   readonly fontKey: string;
+  /**
+   * §9.6.2 `/BaseFont` — the face's own name, subset prefix dropped and
+   * lowercased, or absent when the font states none. This is what a rebuilt run
+   * asks for, so a page whose faces the file EMBEDS is re-set in them rather
+   * than in a substitute (see `./embedded-fonts`).
+   */
+  readonly fontName?: string;
   /** §9.8.1 — the face the glyphs were shown in is a bold one. */
   readonly bold?: boolean;
   /** §9.8.1 — the face the glyphs were shown in is a slanted one. */
@@ -413,6 +422,7 @@ export function interpretContent(
       ...(Math.abs(angle) > UPRIGHT_TOLERANCE_DEG ? { angleDeg: angle } : {}),
       fontSizePt: state.fontSize * scaleY,
       fontKey: state.fontKey,
+      ...(state.font.name !== undefined ? { fontName: state.font.name } : {}),
       ...(state.font.bold ? { bold: true } : {}),
       ...(state.font.italic ? { italic: true } : {}),
       colorHex: state.fillColor,
