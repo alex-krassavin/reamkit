@@ -874,6 +874,7 @@ function emitPageContent(
   // font because a `Q` restores text state too: every place that forgets
   // `lastFont` must forget these with it.
   let lastFauxWidth = 0;
+  let lastStroke: string | undefined;
   let lastTz = 100;
   const switchFontIfNeeded = (tok: TextToken) => {
     const fontKey = tok.font.resourceName;
@@ -887,10 +888,30 @@ function emitPageContent(
     // strokes the glyphs as well as filling them, and a line a thirtieth of the
     // em wide is the usual faux-bold. Both the mode and the width are text
     // state, so they ride every emit path the way `Tf` does.
-    const fauxWidth = tok.synthetic?.bold === true ? tok.fontSizePt * 0.03 : 0;
+    //
+    // §21.1.2.3.9 `a:rPr/a:ln` asks for the same thing outright: a line round
+    // the glyphs, in its own colour. Where a run states one it wins, since it
+    // is a line the author drew and not a weight the renderer is inventing.
+    const outline = tok.resolvedRun.textOutline;
+    const fauxWidth =
+      outline !== undefined
+        ? outline.widthPt
+        : tok.synthetic?.bold === true
+          ? tok.fontSizePt * 0.03
+          : 0;
     if (fauxWidth !== lastFauxWidth) {
       out.push(fauxWidth > 0 ? `2 Tr ${formatNumber(fauxWidth)} w` : '0 Tr');
       lastFauxWidth = fauxWidth;
+    }
+    // The stroking colour, which faux bold leaves at the fill's and a stated
+    // outline sets for itself.
+    const strokeHex = outline?.colorHex;
+    if (strokeHex !== lastStroke) {
+      if (strokeHex !== undefined) {
+        const [sr, sg, sb] = hexToRgb01(strokeHex);
+        out.push(`${formatNumber(sr)} ${formatNumber(sg)} ${formatNumber(sb)} RG`);
+      }
+      lastStroke = strokeHex;
     }
     // ISO 32000-1 §9.3.3 — horizontal scaling, which is how a condensed face is
     // drawn when the substitute has no condensed cut. Layout measured through
@@ -958,6 +979,8 @@ function emitPageContent(
       // The shared text state is no longer what the line loop left it.
       lastFont = '';
       lastFauxWidth = 0;
+      lastStroke = undefined;
+      lastStroke = undefined;
       lastTz = 100;
       lastSize = -1;
       lastColor = '';
@@ -1055,6 +1078,7 @@ function emitPageContent(
     // Text state is reset by ET; force re-emit on the next text token.
     lastFont = '';
     lastFauxWidth = 0;
+    lastStroke = undefined;
     lastTz = 100;
     lastSize = -1;
     lastColor = '';
@@ -1094,6 +1118,8 @@ function emitPageContent(
         out.push('Q');
         lastFont = '';
         lastFauxWidth = 0;
+        lastStroke = undefined;
+        lastStroke = undefined;
         lastTz = 100;
         lastSize = -1;
         lastColor = '';
@@ -1113,6 +1139,8 @@ function emitPageContent(
         for (const op of emitVectorShape(shape)) out.push(op);
         lastFont = '';
         lastFauxWidth = 0;
+        lastStroke = undefined;
+        lastStroke = undefined;
         lastTz = 100;
         lastSize = -1;
         lastColor = '';
@@ -1139,6 +1167,7 @@ function emitPageContent(
     );
     lastFont = '';
     lastFauxWidth = 0;
+    lastStroke = undefined;
     lastTz = 100;
     lastSize = -1;
     lastColor = '';
@@ -1154,6 +1183,7 @@ function emitPageContent(
     out.push('Q');
     lastFont = '';
     lastFauxWidth = 0;
+    lastStroke = undefined;
     lastTz = 100;
     lastSize = -1;
     lastColor = '';

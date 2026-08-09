@@ -12,6 +12,7 @@ import type {
   SectionProperties,
   ShapeFill,
   ShapeLine,
+  TextOutline,
 } from '@/core/document-model';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { FontRegistry } from '@/core/font';
@@ -70,6 +71,8 @@ export interface TextSpan {
   readonly colorHex?: string;
   /** §9.6.2 — the face's own name, for a document that embeds its programs. */
   readonly fontName?: string;
+  /** §9.3.6 — a line round the glyphs, when the page asked for one. */
+  readonly outline?: TextOutline;
   /** §9.8.1 — the face was a bold one. */
   readonly bold?: boolean;
   /** §9.8.1 — the face was a slanted one. */
@@ -92,6 +95,7 @@ export function paragraphFromRuns(
     sizePt?: number;
     colorHex?: string;
     fontName?: string;
+    outline?: TextOutline;
     bold?: boolean;
     italic?: boolean;
   }> = [];
@@ -103,6 +107,8 @@ export function paragraphFromRuns(
       last.sizePt === s.sizePt &&
       last.colorHex === s.colorHex &&
       last.fontName === s.fontName &&
+      last.outline?.colorHex === s.outline?.colorHex &&
+      last.outline?.widthPt === s.outline?.widthPt &&
       last.bold === s.bold &&
       last.italic === s.italic
     ) {
@@ -114,6 +120,7 @@ export function paragraphFromRuns(
         ...(s.sizePt !== undefined ? { sizePt: s.sizePt } : {}),
         ...(s.colorHex !== undefined ? { colorHex: s.colorHex } : {}),
         ...(s.fontName !== undefined ? { fontName: s.fontName } : {}),
+        ...(s.outline !== undefined ? { outline: s.outline } : {}),
         ...(s.bold !== undefined ? { bold: s.bold } : {}),
         ...(s.italic !== undefined ? { italic: s.italic } : {}),
       });
@@ -146,6 +153,8 @@ export function paragraphFromRuns(
             // §17.3.2.26 `w:rFonts` — the face by name, which is how the layout
             // finds a program the document itself carries.
             ...(r.fontName !== undefined ? { fontFamily: { ascii: r.fontName } } : {}),
+            // §9.3.6 / §21.1.2.3.9 — the page drew a line round these glyphs.
+            ...(r.outline !== undefined ? { textOutline: r.outline } : {}),
             ...(r.bold ? { bold: true } : {}),
             ...(r.italic ? { italic: true } : {}),
           },

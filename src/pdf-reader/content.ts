@@ -89,6 +89,20 @@ export interface TextRun {
   readonly fontName?: string;
   /** §9.8.1 — the face the glyphs were shown in is a bold one. */
   readonly bold?: boolean;
+  /**
+   * §9.3.6 — the page painted these glyphs NOWHERE: mode 3 shows nothing and
+   * mode 7 only adds to the clip. A scanned page carries its recognised words
+   * that way, under the picture of the page — so the run is kept, because it
+   * is the only text such a document has, and a reader reproducing the page
+   * leaves it to the picture.
+   */
+  readonly invisible?: boolean;
+  /**
+   * §9.3.6 — the colour the glyphs are STROKED in, when the rendering mode
+   * asks for a stroke, and how wide the pen is.
+   */
+  readonly outlineHex?: string;
+  readonly outlineWidthPt?: number;
   /** §9.8.1 — the face the glyphs were shown in is a slanted one. */
   readonly italic?: boolean;
   /**
@@ -282,6 +296,8 @@ interface TextState {
   fontKey: string;
   font: ContentFont;
   fontSize: number;
+  /** §9.3.6 `Tr` — 0 fill, 1 stroke, 2 both, 3 invisible, 4–7 the same plus clip. */
+  renderMode: number;
   charSpacing: number; // Tc, text-space units
   wordSpacing: number; // Tw
   hScale: number; // Tz / 100
@@ -302,6 +318,7 @@ function initialState(): TextState {
     fontKey: '',
     font: FALLBACK_FONT,
     fontSize: 0,
+    renderMode: 0,
     charSpacing: 0,
     wordSpacing: 0,
     hScale: 1,
@@ -478,6 +495,15 @@ export function interpretContent(
       fontKey: state.fontKey,
       ...(state.font.name !== undefined ? { fontName: state.font.name } : {}),
       ...(state.font.type3 ? { type3: true } : {}),
+      ...(state.renderMode === 3 || state.renderMode === 7 ? { invisible: true } : {}),
+      // §9.3.6 — modes 1, 2, 5 and 6 stroke the glyphs; the pen is the one the
+      // graphics state holds, in the stroking colour.
+      ...(strokesText(state.renderMode)
+        ? {
+            outlineHex: state.strokeColor,
+            outlineWidthPt: ctmLineWidth(),
+          }
+        : {}),
       ...(state.font.bold ? { bold: true } : {}),
       ...(state.font.italic ? { italic: true } : {}),
       colorHex: state.fillColor,
@@ -556,6 +582,10 @@ export function interpretContent(
         break;
       case 'Tc':
         state.charSpacing = num(0);
+        break;
+      case 'Tr':
+        // §9.3.6 — how the glyphs are painted, if at all.
+        state.renderMode = num(0);
         break;
       case 'Tw':
         state.wordSpacing = num(0);
@@ -757,6 +787,11 @@ export function interpretContent(
     }
   }
   return { texts: runs, images, vectors, glyphs };
+}
+
+/** §9.3.6 — the rendering modes that put a line round the glyphs. */
+function strokesText(mode: number): boolean {
+  return mode === 1 || mode === 2 || mode === 5 || mode === 6;
 }
 
 /**

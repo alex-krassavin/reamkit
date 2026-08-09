@@ -231,6 +231,9 @@ function mergeRun(base: ResolvedRunProperties, override: RunProperties): Resolve
     ...((override.shadingColorHex ?? base.shadingColorHex) !== undefined
       ? { shadingColorHex: override.shadingColorHex ?? base.shadingColorHex }
       : {}),
+    ...((override.textOutline ?? base.textOutline) !== undefined
+      ? { textOutline: override.textOutline ?? base.textOutline }
+      : {}),
     ...((override.letterSpacingPt ?? base.letterSpacingPt) !== undefined
       ? { letterSpacingPt: override.letterSpacingPt ?? base.letterSpacingPt }
       : {}),

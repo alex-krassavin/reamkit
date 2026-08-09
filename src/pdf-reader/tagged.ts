@@ -112,6 +112,9 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
           // Black is the default; carrying it would put a colour on every run.
           ...(run.colorHex !== '000000' ? { colorHex: run.colorHex } : {}),
           ...(run.fontName !== undefined ? { fontName: run.fontName } : {}),
+          ...(run.outlineHex !== undefined
+            ? { outline: { colorHex: run.outlineHex, widthPt: pt(run.outlineWidthPt ?? 1) } }
+            : {}),
           ...(run.bold ? { bold: true } : {}),
           ...(run.italic ? { italic: true } : {}),
           ...(run.href !== undefined ? { href: run.href } : {}),

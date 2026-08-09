@@ -93,7 +93,15 @@ export function reconstructByLayout(
       // §9.6.5 — a Type 3 run's marks are its glyph PROCEDURES, which the path
       // and picture passes lift. Re-setting its codes in a substitute face
       // would draw a second, smaller copy of a drawing.
-      const colRuns = mode === 'positional' ? allRuns.filter((r) => r.type3 !== true) : allRuns;
+      //
+      // §9.3.6 — and a run the page painted nowhere is not drawn either. Both
+      // are kept for the FLOWING reading, which is a document being read rather
+      // than a page being reproduced: a scanned page's every word lives in its
+      // invisible layer.
+      const colRuns =
+        mode === 'positional'
+          ? allRuns.filter((r) => r.type3 !== true && r.invisible !== true)
+          : allRuns;
       if (mode === 'positional') {
         // Every line stands where the page set it. Lines are NOT grouped into
         // paragraphs here: a paragraph is a thing that reflows, and nothing in
@@ -462,6 +470,9 @@ function lineSpans(runs: ReadonlyArray<TextRun>, fontSize: number): Array<TextSp
       sizePt: run.fontSizePt,
       ...(run.colorHex !== '000000' ? { colorHex: run.colorHex } : {}),
       ...(run.fontName !== undefined ? { fontName: run.fontName } : {}),
+      ...(run.outlineHex !== undefined
+        ? { outline: { colorHex: run.outlineHex, widthPt: pt(run.outlineWidthPt ?? 1) } }
+        : {}),
       ...(run.bold ? { bold: true } : {}),
       ...(run.italic ? { italic: true } : {}),
       ...(run.href !== undefined ? { href: run.href } : {}),

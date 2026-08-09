@@ -87,6 +87,18 @@ export interface RunProperties {
    * (negative tightens). Word states it in twentieths of a point.
    */
   readonly letterSpacingPt?: Pt;
+  /**
+   * §21.1.2.3.9 `a:rPr/a:ln` — a line drawn round the glyphs themselves, which
+   * DrawingML puts on a run and ISO 32000-1 §9.3.6 calls a text rendering mode
+   * that strokes as well as fills.
+   */
+  readonly textOutline?: TextOutline;
+}
+
+/** A line drawn round a run's glyphs: its colour and how wide the pen is. */
+export interface TextOutline {
+  readonly colorHex: string;
+  readonly widthPt: Pt;
 }
 
 /**

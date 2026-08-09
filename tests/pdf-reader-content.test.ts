@@ -84,6 +84,35 @@ describe('content-stream interpreter (E-PDF EP2)', () => {
   });
 });
 
+describe('how the glyphs are painted, if at all (§9.3.6)', () => {
+  it('marks the invisible modes, which is what an OCR layer uses', () => {
+    // A scanned page carries its recognised words under the picture of the
+    // page in mode 3. The run is KEPT — it is the only text such a document
+    // has — and a reader reproducing the page leaves it to the picture.
+    expect(run('BT /F1 12 Tf 0 0 Td 3 Tr (hidden) Tj ET')[0]!.invisible).toBe(true);
+    // Mode 7 adds the glyphs to the clip and paints them no more than 3 does.
+    expect(run('BT /F1 12 Tf 0 0 Td 7 Tr (clip) Tj ET')[0]!.invisible).toBe(true);
+  });
+
+  it('stops marking once the mode goes back', () => {
+    const runs = run('BT /F1 12 Tf 0 0 Td 3 Tr (no) Tj 0 Tr (yes) Tj ET');
+    expect(runs.map((r) => r.invisible)).toEqual([true, undefined]);
+  });
+
+  it('carries the line the stroking modes draw round the glyphs', () => {
+    // ContentStreamCycleType3insideType3.pdf sets `2 Tr` with a blue pen ten
+    // units wide inside a Type 3 glyph.
+    const runs = run('BT /F1 12 Tf 0 0 1 RG 4 w 0 0 Td 2 Tr (out) Tj ET');
+    expect(runs[0]!.outlineHex).toBe('0000FF');
+    expect(runs[0]!.outlineWidthPt).toBeCloseTo(4, 5);
+  });
+
+  it('leaves an ordinary filled run with no line round it', () => {
+    expect(run('BT /F1 12 Tf 0 0 Td (plain) Tj ET')[0]!.outlineHex).toBeUndefined();
+    expect(run('BT /F1 12 Tf 0 0 Td 1 Tr (stroked) Tj ET')[0]!.outlineHex).toBe('000000');
+  });
+});
+
 describe('a right-to-left run comes back in logical order (§9.4)', () => {
   /** A one-byte font mapping each code to the character `chars` gives for it. */
   const mapping = (chars: string): ContentFont => ({
