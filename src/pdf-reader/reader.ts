@@ -41,9 +41,18 @@ function sniffPdf(bytes: Uint8Array): boolean {
  * @param bytes    The complete PDF file bytes.
  * @param password The user password for an encrypted source; the empty string
  *                 opens permissions-only encryption.
+ * @param layout   `'flow'` reads a re-flowable document out of the page —
+ *                 paragraphs and tables in reading order, from the structure
+ *                 tree where there is one. `'positional'` keeps the page: every
+ *                 line stands where its glyphs do, beside the artwork, which is
+ *                 what a form or a drawing needs and what a paragraph cannot be.
  * @returns The reconstructed FlowDoc and its accumulated {@link Loss} report.
  */
-export function readPdf(bytes: Uint8Array, password = ''): ReadResult<FlowDoc> {
+export function readPdf(
+  bytes: Uint8Array,
+  password = '',
+  layout: 'flow' | 'positional' = 'flow',
+): ReadResult<FlowDoc> {
   const file = PdfFile.parse(bytes, password);
   const losses: Array<Loss> = [];
 
@@ -56,9 +65,12 @@ export function readPdf(bytes: Uint8Array, password = ''): ReadResult<FlowDoc> {
     });
   }
 
-  const tagged = reconstructTaggedPdf(file);
-  const reconstruction = tagged ?? reconstructByLayout(file);
-  if (!tagged) {
+  // A placed reconstruction never consults the structure tree: the tree names a
+  // reading order, and a reading order is the one thing a placed page does not
+  // have. The words go where the glyphs are.
+  const tagged = layout === 'positional' ? undefined : reconstructTaggedPdf(file);
+  const reconstruction = tagged ?? reconstructByLayout(file, layout);
+  if (!tagged && layout !== 'positional') {
     losses.push({
       severity: 'degraded',
       feature: FEATURES.text,
@@ -88,5 +100,10 @@ export const pdfReader: DocumentReader<FlowDoc> = {
   produces: 'flow',
   supports: new Set([FEATURES.text, FEATURES.tables, FEATURES.lists, FEATURES.images]),
   sniff: sniffPdf,
-  read: (bytes, opts) => readPdf(bytes, typeof opts?.password === 'string' ? opts.password : ''),
+  read: (bytes, opts) =>
+    readPdf(
+      bytes,
+      typeof opts?.password === 'string' ? opts.password : '',
+      opts?.pdfLayout === 'positional' ? 'positional' : 'flow',
+    ),
 };

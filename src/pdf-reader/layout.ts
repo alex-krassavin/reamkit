@@ -15,6 +15,7 @@ import {
   dedupeLosses,
   imageBlock,
   paragraphFromRuns,
+  positionedText,
   sectionFromPdfPages,
   shapeBlock,
 } from './flow-build';
@@ -25,7 +26,7 @@ import type { BodyElement } from '@/core/document-model';
 import type { Loss } from '@/core/ir';
 
 import type { TextRun } from './content';
-import type { PdfFile } from './document';
+import type { PdfFile, PdfPage } from './document';
 import type { Reconstruction, TextSpan } from './flow-build';
 import { ResourceStore } from '@/core/ir';
 
@@ -34,6 +35,9 @@ interface Line {
   readonly fontSize: number;
   readonly text: string; // joined text, for emptiness/heading checks
   readonly spans: ReadonlyArray<TextSpan>;
+  /** Leftmost glyph origin, and how far the line reaches — placed reconstruction. */
+  readonly x: number;
+  readonly width: number;
 }
 
 /**
@@ -51,7 +55,10 @@ interface Line {
  * @param file The PDF to reconstruct.
  * @returns The reconstructed {@link FlowDoc} plus any read-time losses.
  */
-export function reconstructByLayout(file: PdfFile): Reconstruction {
+export function reconstructByLayout(
+  file: PdfFile,
+  mode: 'flow' | 'positional' = 'flow',
+): Reconstruction {
   const pages = file.pages();
   const pageRuns = pages.map((page) => extractPageText(file, page));
   const medianFont =
@@ -71,12 +78,44 @@ export function reconstructByLayout(file: PdfFile): Reconstruction {
     // EP17 — detect a clean two-column split (a central vertical gutter no run
     // crosses); fall back to a single column. Each column is grouped and read
     // independently, then the left column's blocks precede the right's.
-    const gutter = detectGutter(runs, Math.abs(px1 - px0));
+    const pageWidth = Math.abs(px1 - px0);
+    const gutter = detectGutter(runs, pageWidth);
     // Blocks carry a column key so the final sort reads column-by-column: left
     // column top-to-bottom, then right column.
     const blocks: Array<{ col: number; top: number; el: BodyElement }> = [];
     const addColumn = (colRuns: ReadonlyArray<TextRun>, col: number): void => {
       const lines = groupIntoLines(colRuns).filter((l) => l.text.length > 0);
+      if (mode === 'positional') {
+        // Every line stands where the page set it. Lines are NOT grouped into
+        // paragraphs here: a paragraph is a thing that reflows, and nothing in
+        // a placed page does.
+        for (const line of lines) {
+          placed.push({
+            key: [Number.MAX_SAFE_INTEGER, placed.length],
+            col,
+            top: line.y,
+            make: (z: number): BodyElement =>
+              positionedText(
+                line.spans,
+                {
+                  x: line.x,
+                  // §9.4.4 — a baseline is not a box: the line reaches about a
+                  // fifth of its size below and the rest above.
+                  y: line.y - line.fontSize * 0.25,
+                  // To the page's edge, not to the estimated end of the words.
+                  // The box paints nothing, so its width costs nothing — but a
+                  // width that falls short makes the line WRAP, and a wrapped
+                  // line in a placed page walks down over its neighbours.
+                  width: Math.max(line.width, pageWidth - line.x),
+                  height: line.fontSize * 1.25,
+                },
+                pageHeightOf(page),
+                z,
+              ),
+          });
+        }
+        return;
+      }
       for (const para of groupIntoParagraphs(lines)) {
         blocks.push({
           col,
@@ -85,6 +124,12 @@ export function reconstructByLayout(file: PdfFile): Reconstruction {
         });
       }
     };
+    const placed: Array<{
+      key: ReadonlyArray<number>;
+      col: number;
+      top: number;
+      make: (z: number) => BodyElement;
+    }> = [];
     if (gutter !== undefined) {
       addColumn(
         runs.filter((r) => r.x < gutter),
@@ -98,7 +143,7 @@ export function reconstructByLayout(file: PdfFile): Reconstruction {
       addColumn(runs, 0);
     }
     const colOf = (centerX: number): number => (gutter !== undefined && centerX >= gutter ? 1 : 0);
-    const pageHeight = Math.abs(page.mediaBox[3] - page.mediaBox[1]);
+    const pageHeight = pageHeightOf(page);
     const imgs = collectPageImages(file, page);
     losses.push(...imgs.losses);
     // Filled vector paths (EP10) are ANCHORED where the page drew them — they
@@ -133,6 +178,7 @@ export function reconstructByLayout(file: PdfFile): Reconstruction {
         top: v.maxY,
         make: (z: number): BodyElement => shapeBlock(v, pageHeight, z),
       })),
+      ...placed,
     ].sort((a, b) => compareOrder(a.key, b.key));
     marks.forEach((mark, z) => {
       blocks.push({ col: mark.col, top: mark.top, el: mark.make(z) });
@@ -196,7 +242,14 @@ function groupIntoLines(runs: ReadonlyArray<TextRun>): Array<Line> {
     const ordered = c.runs.sort((a, b) => a.x - b.x);
     const fontSize = c.fontSize || 10;
     const spans = lineSpans(ordered, fontSize);
+    const first = ordered[0]!;
+    const last = ordered[ordered.length - 1]!;
+    const x = first.x;
+    // Half an em per glyph, the same estimate `lineSpans` measures gaps by.
+    const width = last.x + last.text.length * (last.fontSizePt || fontSize) * 0.5 - x;
     return {
+      x,
+      width,
       y: c.y,
       fontSize,
       text: spans
@@ -267,4 +320,9 @@ function compareOrder(a: ReadonlyArray<number>, b: ReadonlyArray<number>): numbe
     if (a[i] !== b[i]) return a[i]! - b[i]!;
   }
   return a.length - b.length;
+}
+
+/** The page's height in points — the flip between PDF's y-up frame and ours. */
+function pageHeightOf(page: PdfPage): number {
+  return Math.abs(page.mediaBox[3] - page.mediaBox[1]);
 }

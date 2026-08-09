@@ -148,6 +148,56 @@ export function imageBlock(
   };
 }
 
+/**
+ * A line of text as an anchored box, standing where the page set it.
+ *
+ * The flowed reconstruction reads a document OUT of a page: paragraphs in
+ * reading order, re-flowable, free to land wherever the next medium puts them.
+ * A form is not that document. 160F-2019.pdf is a grid of ruled boxes with a
+ * label in each, and a label means nothing an inch from the box it labels — the
+ * artwork is placed absolutely, so text that flows beside it lines up with none
+ * of it.
+ *
+ * @param spans      The line's runs.
+ * @param box        Its page-space rectangle (y-up, as PDF measures).
+ * @param pageHeight The page height, to flip into the layout's y-down frame.
+ * @param zOrder     Its place in the page's painting order.
+ * @returns A shape carrying the text, anchored where the glyphs were.
+ */
+export function positionedText(
+  spans: ReadonlyArray<TextSpan>,
+  box: { x: number; y: number; width: number; height: number },
+  pageHeight: number,
+  zOrder: number,
+): BodyElement {
+  const paragraph = paragraphFromRuns(spans);
+  return {
+    kind: 'shape',
+    shape: {
+      float: {
+        wrap: 'none',
+        zOrder,
+        posH: { relativeFrom: 'page', offsetPt: pt(box.x) },
+        posV: { relativeFrom: 'page', offsetPt: pt(Math.max(0, pageHeight - box.y - box.height)) },
+      },
+      width: pt(Math.max(1, box.width)),
+      height: pt(Math.max(1, box.height)),
+      geometry: { kind: 'preset', preset: 'rect' },
+      fill: { kind: 'none' },
+      // A box drawn round a line of a form would be a box the page never had:
+      // the shape is here to place the words, not to be seen.
+      text: {
+        content: [paragraph],
+        insetLeft: pt(0),
+        insetTop: pt(0),
+        insetRight: pt(0),
+        insetBottom: pt(0),
+      },
+      paragraphProperties: {},
+    },
+  };
+}
+
 /** Collapse losses sharing a `detail` message (the same colour space dropped on many pages). */
 export function dedupeLosses(losses: ReadonlyArray<Loss>): Array<Loss> {
   const byDetail = new Map<string, Loss>();

@@ -221,6 +221,23 @@ try {
 }
 ```
 
+## pdf → pdf: a form keeps its form
+
+A PDF reads back as a re-flowable document — paragraphs and tables in reading
+order. A form is not that: its grid is painted at fixed coordinates, and text
+that flows beside the grid sits in none of its boxes. Ask for the page instead
+and every line stands where its glyphs do:
+
+```ts
+import { Ream } from 'reamkit';
+
+const doc = Ream.parse(pdfBytes, { pdfLayout: 'positional' });
+const pdf = await doc.convert('pdf', { fonts });
+```
+
+Keep the default for anything going onward to DOCX, Markdown or HTML — the
+placed reading has no reading order, no paragraphs and no tables to give them.
+
 ## pptx → pdf: render a slide deck
 
 `Ream.parse` also accepts a **PowerPoint** `.pptx`. Each slide becomes a page at

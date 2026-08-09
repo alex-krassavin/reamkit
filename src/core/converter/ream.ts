@@ -62,6 +62,15 @@ export interface ReamParseOptions {
    * encryption (EP14); an encrypted OOXML package always names a password.
    */
   readonly password?: string;
+  /**
+   * PDF only: what to read out of the page. `'flow'` (the default) reconstructs
+   * a re-flowable document — paragraphs and tables in reading order, from the
+   * structure tree where the file has one. `'positional'` keeps the page as a
+   * page: every line stands where its glyphs stand, beside the rules and fills
+   * the page draws. A form or a drawing needs the second; a report to be edited
+   * or converted to markdown needs the first.
+   */
+  readonly pdfLayout?: 'flow' | 'positional';
 }
 
 /**
@@ -203,7 +212,10 @@ export class Ream {
         `Unrecognized document format (readers: ${readers.map((r) => r.id).join(', ')})`,
       );
     }
-    const { doc, losses } = reader.read(source, { password: options.password });
+    const { doc, losses } = reader.read(source, {
+      password: options.password,
+      ...(options.pdfLayout ? { pdfLayout: options.pdfLayout } : {}),
+    });
     // The reader's native tree — a SheetDoc for spreadsheets — is projected to
     // the FlowDoc the render path consumes; the SheetDoc is kept for inspection.
     const sheet = doc.kind === 'sheet' ? doc : undefined;

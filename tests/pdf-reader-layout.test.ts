@@ -35,6 +35,41 @@ const paragraphs = (flow: { body: ReadonlyArray<{ kind: string }> }) =>
     } => b.kind === 'paragraph',
   );
 
+describe('placed reconstruction (E-PDF EP4)', () => {
+  it('anchors every line where its glyphs stand, instead of flowing them', async () => {
+    // A form is a grid of ruled boxes with a label in each: flowed, the labels
+    // land an inch from the boxes they label, because the artwork is placed and
+    // the words are not. 160F-2019.pdf is that document.
+    const docx = buildDocxFromBody(
+      '<w:p><w:r><w:t>FirstLine</w:t></w:r></w:p><w:p><w:r><w:t>SecondLine</w:t></w:r></w:p>',
+    );
+    const pdf = await Ream.parse(docx).convert('pdf', { fonts: FONTS });
+    const placed = reconstructByLayout(PdfFile.parse(pdf), 'positional');
+
+    const shapes = placed.doc.body.filter((b) => b.kind === 'shape').map((b) => b.shape);
+    expect(shapes.length).toBeGreaterThanOrEqual(2);
+    // Each carries its words and an anchor of its own on the page.
+    for (const shape of shapes) {
+      expect(shape.float?.posV?.relativeFrom).toBe('page');
+      expect(shape.text?.content.length).toBeGreaterThan(0);
+    }
+    // The first line sits higher on the page, so its offset from the top is less.
+    const offsets = shapes.map((shape) => shape.float?.posV?.offsetPt ?? 0);
+    expect(offsets[0]!).toBeLessThan(offsets[1]!);
+  });
+
+  it('still flows by default, so a PDF reads back as a document', async () => {
+    // The placed reading is opt-in: it has no reading order, no paragraphs and
+    // no tables — which is exactly what a docx or a markdown conversion needs,
+    // so the default must stay the flowed one.
+    const docx = buildDocxFromBody('<w:p><w:r><w:t>FirstLine</w:t></w:r></w:p>');
+    const pdf = await Ream.parse(docx).convert('pdf', { fonts: FONTS });
+    const flowed = reconstructByLayout(PdfFile.parse(pdf));
+    expect(flowed.doc.body.some((b) => b.kind === 'paragraph')).toBe(true);
+    expect(flowed.doc.body.some((b) => b.kind === 'shape')).toBe(false);
+  });
+});
+
 describe('heuristic layout reconstruction (E-PDF EP4)', () => {
   it('groups untagged text into paragraphs in reading order', async () => {
     const flow = await layoutFlow(

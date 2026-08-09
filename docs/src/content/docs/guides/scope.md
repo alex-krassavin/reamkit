@@ -48,6 +48,15 @@ back. The xlsx round-trip preserves the whole grid surface — cells, styles,
 merges, the print model, conditional formatting, sparklines, tables and embedded
 charts — and is byte-stable across a read↔write loop.
 
+**Placed PDF reading (`Ream.parse(bytes, { pdfLayout: 'positional' })`)** — a PDF
+is read as a re-flowable document by default: paragraphs and tables in reading
+order, from the structure tree where the file has one. A form or a drawing is
+not that document — its rules, boxes and tints are placed absolutely, and text
+that flows beside them lines up with none of it. `'positional'` keeps the page:
+every line stands where its glyphs stand, beside the artwork. It has no reading
+order, no paragraphs and no tables, so use it for re-rendering a page and the
+default for anything converted onward to DOCX, Markdown or HTML.
+
 **Markdown (`convert('md')`)** — GitHub-Flavored Markdown, a flow medium like
 HTML: no pagination, no layout, no fonts, zero I/O. It keeps what a document
 *says* and drops how it *looks*. Kept: headings (from `w:outlineLvl`, falling
