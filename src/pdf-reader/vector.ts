@@ -6,12 +6,73 @@
 // shapes, lines and gradients without the dot / page-background clutter. Clips
 // and the bare `sh` operator are not captured (a documented loss).
 
-import { IDENTITY, interpretContent } from './content';
+import { IDENTITY, interpretContent, multiply } from './content';
 import { buildShadingMap } from './shading';
-import type { ContentFont, PathSeg } from './content';
+import type { ContentFont, Matrix, PathSeg, VectorPlacement } from './content';
 import type { ShapeGradient } from '@/core/vector';
+import type { PdfDict } from '@/pdf/objects';
 
 import type { PdfFile, PdfPage } from './document';
+import { PDF_NULL, PdfName, PdfStream } from '@/pdf/objects';
+
+/**
+ * Every vector the page paints, its FORM XOBJECTS included (§8.8).
+ *
+ * A `Do` of a form is a call: its content stream draws in the caller's space
+ * through the form's own `/Matrix`. Interpreting the page stream alone reads
+ * only what the page drew directly, and a document that puts its artwork in
+ * forms — as every CAD and drawing producer does — comes back with none of it.
+ * 22060_A1_01_Plans.pdf holds eleven, and its floor plans were simply absent.
+ *
+ * The same walk `collectPageImages` already makes, with the same depth and
+ * cycle guards, collecting paths instead of pictures.
+ */
+function paintedVectors(
+  file: PdfFile,
+  page: PdfPage,
+  shadings: ReadonlyMap<string, ShapeGradient>,
+): Array<VectorPlacement> {
+  const out: Array<VectorPlacement> = [];
+  const visiting = new Set<PdfStream>();
+  const walk = (
+    resources: PdfDict | undefined,
+    content: Uint8Array,
+    baseCtm: Matrix,
+    depth: number,
+  ): void => {
+    if (out.length >= MAX_VECTORS) return;
+    const xobjects = resources ? file.get(resources, 'XObject') : PDF_NULL;
+    const xobjDict = xobjects instanceof Map ? xobjects : undefined;
+    const result = interpretContent(content, NO_FONTS, baseCtm, shadings);
+    out.push(...result.vectors);
+    if (depth >= MAX_FORM_DEPTH) return;
+    for (const placement of result.images) {
+      const stream = xobjDict ? file.resolve(xobjDict.get(placement.name) ?? PDF_NULL) : PDF_NULL;
+      if (!(stream instanceof PdfStream) || visiting.has(stream)) continue;
+      const subtype = file.get(stream.dict, 'Subtype');
+      if (!(subtype instanceof PdfName) || subtype.value !== 'Form') continue;
+      visiting.add(stream);
+      const formRes = file.get(stream.dict, 'Resources');
+      walk(
+        formRes instanceof Map ? formRes : resources,
+        file.streamData(stream),
+        multiply(formMatrix(file, stream.dict), placement.ctm),
+        depth + 1,
+      );
+      visiting.delete(stream);
+    }
+  };
+  walk(page.resources, file.pageContent(page), IDENTITY, 0);
+  return out;
+}
+
+/** §8.10.2 `/Matrix` — the form's own space, composed onto the placement CTM. */
+function formMatrix(file: PdfFile, dict: PdfDict): Matrix {
+  const m = file.resolve(dict.get('Matrix') ?? PDF_NULL);
+  if (!Array.isArray(m) || m.length !== 6) return IDENTITY;
+  const n = m.map((v) => (typeof file.resolve(v) === 'number' ? (file.resolve(v) as number) : 0));
+  return [n[0]!, n[1]!, n[2]!, n[3]!, n[4]!, n[5]!];
+}
 
 /**
  * One painted vector path lifted off a page (E-PDF EP10/EP11/EP16c): the path
@@ -41,6 +102,7 @@ const MIN_SIDE = 2; // pt — skip thin filled rules
 const MIN_AREA = 16; // pt² — skip dots / hairlines
 const MIN_STROKE_LEN = 6; // pt — skip stroke specks (tick marks, dots)
 const MAX_VECTORS = 2000; // per-page DoS guard
+const MAX_FORM_DEPTH = 12;
 
 /**
  * Lift the painted vector paths off a page (E-PDF EP10/EP11/EP16c). Runs the
@@ -56,7 +118,7 @@ export function collectPageVectors(file: PdfFile, page: PdfPage): Array<PdfVecto
   const pageArea = Math.max(1, Math.abs((px1 - px0) * (py1 - py0)));
   const shadings = buildShadingMap(file, page);
   const out: Array<PdfVector> = [];
-  for (const v of interpretContent(file.pageContent(page), NO_FONTS, IDENTITY, shadings).vectors) {
+  for (const v of paintedVectors(file, page, shadings)) {
     if (out.length >= MAX_VECTORS) break;
     const b = bbox(v.segs);
     if (!b) continue;

@@ -107,9 +107,17 @@ export function reconstructByLayout(file: PdfFile): Reconstruction {
         el: imageBlock(img, resources),
       });
     }
-    // Filled vector paths (EP10) interleave by their top edge, like images.
+    // Filled vector paths (EP10) are ANCHORED where the page drew them — they
+    // are artwork, not paragraphs, and a sheet of them has no reading order to
+    // take a place in. They still sort by top edge, so their z-order is the
+    // order the page painted them in.
+    const pageHeight = Math.abs(page.mediaBox[3] - page.mediaBox[1]);
     for (const v of collectPageVectors(file, page)) {
-      blocks.push({ col: colOf((v.minX + v.maxX) / 2), top: v.maxY, el: shapeBlock(v) });
+      blocks.push({
+        col: colOf((v.minX + v.maxX) / 2),
+        top: v.maxY,
+        el: shapeBlock(v, pageHeight),
+      });
     }
     blocks.sort((a, b) => a.col - b.col || b.top - a.top);
     for (const block of blocks) body.push(block.el);

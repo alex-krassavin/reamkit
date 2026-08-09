@@ -6,6 +6,7 @@
 import type {
   BodyElement,
   CustomPathCmd,
+  FloatAnchor,
   ParagraphProperties,
   SectionProperties,
   ShapeFill,
@@ -127,10 +128,14 @@ export function dedupeLosses(losses: ReadonlyArray<Loss>): Array<Loss> {
  * Turn a lifted {@link PdfVector} path (filled EP10 / stroked EP11) into a
  * custom-geometry shape {@link BodyElement}. Page-space points (y-up) become
  * path-space (bbox-relative, y-down); the shape is sized from the bounding box
- * (plus the stroke thickness) and placed in flow order by the caller. A fill
- * becomes a solid fill, a stroke becomes the outline.
+ * (plus the stroke thickness). A fill becomes a solid fill, a stroke the outline.
+ *
+ * Given the page height the shape is ANCHORED where the page drew it, behind
+ * the text, rather than taking a place of its own in the flow. A drawing is not
+ * a paragraph: 22060_A1_01_Plans.pdf is one A3 sheet of vectors, and stacking
+ * its forty-nine paths one under another spilled it onto a second page.
  */
-export function shapeBlock(v: PdfVector): BodyElement {
+export function shapeBlock(v: PdfVector, pageHeight?: number): BodyElement {
   const w = v.maxX - v.minX;
   const h = v.maxY - v.minY;
   const fx = (x: number): number => x - v.minX;
@@ -168,9 +173,21 @@ export function shapeBlock(v: PdfVector): BodyElement {
     v.strokeHex !== undefined
       ? { width: pt(thick), colorHex: v.strokeHex, fill: 'solid' }
       : undefined;
+  // §20.4.2.3 — anchored to the PAGE at the position it was drawn at, y flipped
+  // from PDF's upward axis. `behind` so text keeps its place over the artwork.
+  const float: FloatAnchor | undefined =
+    pageHeight !== undefined
+      ? {
+          wrap: 'none',
+          behind: true,
+          posH: { relativeFrom: 'page', offsetPt: pt(v.minX) },
+          posV: { relativeFrom: 'page', offsetPt: pt(Math.max(0, pageHeight - v.maxY)) },
+        }
+      : undefined;
   return {
     kind: 'shape',
     shape: {
+      ...(float ? { float } : {}),
       width: pt(Math.max(w, thick)),
       height: pt(Math.max(h, thick)),
       geometry: { kind: 'custom', custom: { pathWidth: w, pathHeight: h, commands } },

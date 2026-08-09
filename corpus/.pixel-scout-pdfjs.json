@@ -6,8 +6,8 @@
  },
  {
   "name": "22060_A1_01_Plans.pdf",
-  "score": 0.3533,
-  "aligned": false
+  "score": 0.6675,
+  "aligned": true
  },
  {
   "name": "160F-2019.pdf",
@@ -40,13 +40,13 @@
   "aligned": true
  },
  {
-  "name": "Embedded_font.pdf",
-  "score": 0.0057,
+  "name": "90ms_rksj_h_sample.pdf",
+  "score": 0.0009,
   "aligned": true
  },
  {
-  "name": "90ms_rksj_h_sample.pdf",
-  "score": 0.0009,
+  "name": "Embedded_font.pdf",
+  "score": 0.0005,
   "aligned": true
  }
 ]
