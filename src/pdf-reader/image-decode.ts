@@ -15,6 +15,7 @@
 import { unzlibSync } from 'fflate';
 
 import { decodeCcitt } from './ccitt';
+import { decodeJpeg } from './jpeg';
 import { reversePredictor } from './predictor';
 import type { PngColor } from '@/core/png-encode';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
@@ -72,14 +73,19 @@ export function decodePdfImage(file: PdfFile, stream: PdfStream): DecodedImage {
   const filters = filterNames(file, d);
   const last = filters[filters.length - 1];
 
-  // JPEG / JPEG 2000 ride through verbatim — decode only the filters that wrap them.
+  // JPEG rides through verbatim — decode only the filters that wrap it. Unless
+  // it carries an `/SMask`: alpha cannot be attached to a JPEG, so the picture
+  // has to be taken apart and given back as a PNG. §8.9.5.4.
   if (last === 'DCTDecode' || last === 'DCT') {
+    const jpegBytes = applyChainExceptLast(filters, stream.data);
+    const masked = hasSMask(file, d) ? maskedJpeg(file, d, jpegBytes, width, height) : undefined;
+    if (masked) return masked;
     const degraded = hasSMask(file, d)
-      ? 'image transparency dropped (JPEG carries no alpha)'
+      ? 'image transparency dropped (JPEG could not be decoded to attach its mask)'
       : undefined;
     return {
       ok: true,
-      bytes: applyChainExceptLast(filters, stream.data),
+      bytes: jpegBytes,
       format: 'jpeg',
       widthPx: width,
       heightPx: height,
@@ -343,6 +349,44 @@ function unpackSamples(
   return out;
 }
 
+/**
+ * A JPEG with its `/SMask` folded in, as a PNG.
+ *
+ * A JPEG has no alpha channel, so the only way to honour the mask is to decode
+ * the picture, decode the mask, put them together and re-encode. Both are
+ * usually DCT themselves — 22060_A1_01_Plans.pdf stores each floor plan as a
+ * wash and its line work as a grey JPEG mask of the same 2480x2630 — so this
+ * costs a full baseline decode of two images, and is spent only where a mask
+ * actually exists.
+ *
+ * @returns The recomposed PNG, or `undefined` when either image is beyond the
+ *          baseline decoder — the caller then carries the JPEG through as it is.
+ */
+function maskedJpeg(
+  file: PdfFile,
+  d: PdfDict,
+  jpegBytes: Uint8Array,
+  width: number,
+  height: number,
+): DecodedImage | undefined {
+  const image = decodeJpeg(jpegBytes);
+  if (!image) return undefined;
+  const alpha = decodeSMask(file, d, image.width, image.height);
+  if (!alpha) return undefined;
+  const color: RawColor =
+    image.components === 1
+      ? { color: 'gray', samples: image.samples }
+      : { color: 'rgb', samples: image.samples };
+  const { color: pngColor, samples } = combineAlpha(color, alpha);
+  return {
+    ok: true,
+    bytes: encodePng(image.width, image.height, pngColor, samples),
+    format: 'png',
+    widthPx: width,
+    heightPx: height,
+  };
+}
+
 // --- /SMask alpha -----------------------------------------------------------
 
 interface Alpha {
@@ -355,8 +399,14 @@ function decodeSMask(file: PdfFile, d: PdfDict, width: number, height: number): 
   const sw = intOf(file.get(sm.dict, 'Width'));
   const sh = intOf(file.get(sm.dict, 'Height'));
   if (sw <= 0 || sh <= 0) return undefined;
-  const decoded = decodeToSamples(file, sm, filterNames(file, sm.dict), sw, sh);
-  if (typeof decoded === 'string') return undefined;
+  const maskFilters = filterNames(file, sm.dict);
+  const maskLast = maskFilters[maskFilters.length - 1];
+  // A mask is an image like any other and may be a JPEG itself.
+  const decoded =
+    maskLast === 'DCTDecode' || maskLast === 'DCT'
+      ? jpegSamples(applyChainExceptLast(maskFilters, sm.data))
+      : decodeToSamples(file, sm, maskFilters, sw, sh);
+  if (decoded === undefined || typeof decoded === 'string') return undefined;
   const ch = decoded.color === 'rgb' ? 3 : 1;
   // The mask is grayscale; take its first channel and resample to the image grid.
   const gray = new Uint8Array(sw * sh);
@@ -371,6 +421,15 @@ function decodeSMask(file: PdfFile, d: PdfDict, width: number, height: number): 
     }
   }
   return { data: out };
+}
+
+/** A DCT-coded mask decoded to samples, or `undefined` past the baseline decoder. */
+function jpegSamples(bytes: Uint8Array): RawColor | undefined {
+  const decoded = decodeJpeg(bytes);
+  if (!decoded) return undefined;
+  return decoded.components === 1
+    ? { color: 'gray', samples: decoded.samples }
+    : { color: 'rgb', samples: decoded.samples };
 }
 
 function combineAlpha(color: RawColor, alpha: Alpha): { color: PngColor; samples: Uint8Array } {

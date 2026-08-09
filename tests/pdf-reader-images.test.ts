@@ -17,6 +17,35 @@ import { decodePdfImage } from '@/pdf-reader/image-decode';
 import { encodePng } from '@/core/png-encode';
 import { PdfHexString, dict, name, stream } from '@/pdf/objects';
 
+/** The 8x8 flat-tone baseline JPEG the decoder's own test assembles. */
+function flatGrayJpeg(): Uint8Array {
+  const seg = (marker: number, body: ReadonlyArray<number>): Array<number> => [
+    0xff,
+    marker,
+    (body.length + 2) >> 8,
+    (body.length + 2) & 0xff,
+    ...body,
+  ];
+  const table = (tcth: number, symbol: number): Array<number> => [
+    tcth,
+    1,
+    ...new Array<number>(15).fill(0),
+    symbol,
+  ];
+  return new Uint8Array([
+    0xff,
+    0xd8,
+    ...seg(0xdb, [0x00, ...new Array<number>(64).fill(8)]),
+    ...seg(0xc0, [8, 0, 8, 0, 8, 1, 1, 0x11, 0]),
+    ...seg(0xc4, table(0x00, 0x04)),
+    ...seg(0xc4, table(0x10, 0x00)),
+    ...seg(0xda, [1, 1, 0x00, 0x00, 0x3f, 0x00]),
+    0b0111_1011,
+    0xff,
+    0xd9,
+  ]);
+}
+
 const FONTS = {
   regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
   bold: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Bold.ttf')),
@@ -93,6 +122,33 @@ describe('PDF image XObject decode (E-PDF EP6)', () => {
     expect([decoded.widthPx, decoded.heightPx]).toEqual([2, 2]);
     expect(detectImageFormat(decoded.bytes)).toBe('png');
     expect(unzlibSync(prepareImage(decoded.bytes).data)).toEqual(raw);
+  });
+
+  it('takes a JPEG apart to attach the /SMask a JPEG cannot carry', () => {
+    // ISO 32000-1 §8.9.5.4 — the mask is a second image supplying the alpha,
+    // and a JPEG has nowhere to put it. 22060_A1_01_Plans.pdf stores each of
+    // its floor plans this way: the drawing as a JPEG, its line work as a grey
+    // JPEG mask. Carried through unmasked, they render as dark rectangles.
+    const jpeg = flatGrayJpeg();
+    const mask = stream({ Width: 8, Height: 8, Filter: name('DCTDecode') }, jpeg);
+    const xobj = stream(
+      {
+        Width: 8,
+        Height: 8,
+        ColorSpace: name('DeviceGray'),
+        Filter: name('DCTDecode'),
+        SMask: mask,
+      },
+      jpeg,
+    );
+    const decoded = decodePdfImage(file, xobj);
+    expect(decoded.ok).toBe(true);
+    if (!decoded.ok) return;
+    // A PNG now, not the original bytes, and with no loss to report.
+    expect(decoded.format).toBe('png');
+    expect(decoded.degraded).toBeUndefined();
+    const back = prepareImage(decoded.bytes);
+    expect(back.smaskData).toBeDefined();
   });
 
   it('passes a DCTDecode (JPEG) image through verbatim', () => {
