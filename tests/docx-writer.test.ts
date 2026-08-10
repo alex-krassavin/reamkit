@@ -574,6 +574,49 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
   });
 });
 
+describe('the package is a document XML can carry', () => {
+  it('drops the characters XML forbids instead of writing a file nothing opens', () => {
+    // XML 1.0 §2.2 — everything under U+0020 but tab, newline and return is
+    // forbidden, and no escape exists: `&#2;` is as ill-formed as the byte.
+    // They arrive from a subset font that states neither /ToUnicode nor
+    // /Encoding /Differences: a subset's codes start at 1, 2, 3, and the
+    // last-resort Latin-1 reading turns a page of prose into control
+    // characters. TAMReview.pdf did exactly that, and LibreOffice answered
+    // "source file could not be loaded" — the whole conversion lost over it.
+    const { doc: flow } = readDocx(buildDocxFromBody('<w:p><w:r><w:t>x</w:t></w:r></w:p>'));
+    const para = flow.body.find((b) => b.kind === 'paragraph');
+    if (para?.kind !== 'paragraph') throw new Error('expected a paragraph');
+    const run = para.paragraph.runs[0]!;
+    const dirty = {
+      ...flow,
+      body: [
+        {
+          ...para,
+          paragraph: {
+            ...para.paragraph,
+            runs: [{ ...run, text: 'a\u0002b\u0003c\td\u001fe' }],
+          },
+        },
+      ],
+    } as unknown as FlowDoc;
+    const bytes = writeDocx(dirty).bytes;
+    const xml = decode(OpcPackage.open(bytes).getMainDocument().data);
+    expect(xml).toContain('ab');
+    // Checked by code point rather than a pattern: a regular expression that
+    // matches control characters has to contain them.
+    expect(
+      [...xml].some((ch) => {
+        const cp = ch.codePointAt(0)!;
+        return cp < 0x20 && cp !== 0x9 && cp !== 0xa && cp !== 0xd;
+      }),
+    ).toBe(false);
+    // A tab is one of the three XML does admit, and survives.
+    expect(xml).toContain('c\td');
+    // And the package parses as XML, which is the whole point.
+    expect(() => readDocx(bytes)).not.toThrow();
+  });
+});
+
 describe('the package carries no picture the format cannot show', () => {
   it('drops a JPEG 2000 picture and says why, rather than writing a hole', () => {
     // §15.2.14 lists the image parts a WordprocessingML package may carry, and

@@ -1761,8 +1761,60 @@ function colsXml(cols: SectionColumns): string {
 
 const twips = (pt: number): number => Math.round(pt * 20);
 
+/**
+ * XML 1.0 §2.2 — the characters a document may contain at all.
+ *
+ * Everything below U+0020 except tab, newline and return is FORBIDDEN, and no
+ * escape exists for them: `&#2;` is as ill-formed as the byte. A package with
+ * one in it is not a document — LibreOffice says "source file could not be
+ * loaded" and Word says nothing useful either.
+ *
+ * They reach here from the PDF reader. A subset font that states neither a
+ * `/ToUnicode` nor an `/Encoding /Differences` says nothing about what its
+ * codes mean, and the codes of a subset start at 1, 2, 3 — so the last-resort
+ * Latin-1 reading turns a page of text into control characters. Reading it
+ * better is `font.ts`'s business; what this must guarantee is that nothing the
+ * reader believes can produce a package that will not open.
+ *
+ * A lone surrogate is the same case: a half of a pair is not a character.
+ */
+/**
+ * XML 1.0 §2.2 — whether a code point may appear in a document at all.
+ *
+ * Everything below U+0020 except tab, newline and return is forbidden, and no
+ * escape exists for them: `&#2;` is as ill-formed as the byte itself. So is a
+ * lone surrogate — half a pair is not a character — and so are U+FFFE/U+FFFF.
+ */
+function xmlAllows(cp: number): boolean {
+  if (cp === 0x9 || cp === 0xa || cp === 0xd) return true;
+  if (cp < 0x20) return false;
+  if (cp >= 0xd800 && cp <= 0xdfff) return false;
+  if (cp === 0xfffe || cp === 0xffff) return false;
+  return cp <= 0x10ffff;
+}
+
+/**
+ * Escape text for XML, and drop what XML cannot carry.
+ *
+ * The dropping is not fussiness: a package with one control character in it is
+ * not a document. LibreOffice answers "source file could not be loaded" and
+ * Word refuses it too, so the whole conversion is lost over one byte.
+ *
+ * They reach here from the PDF reader. A subset font that states neither a
+ * `/ToUnicode` nor an `/Encoding /Differences` says nothing about what its
+ * codes mean, and a subset's codes start at 1, 2, 3 — so the last-resort
+ * Latin-1 reading turns a page of prose into control characters. Reading such
+ * a font better is `font.ts`'s business; what this guarantees is that nothing
+ * the reader believes can produce a package that will not open.
+ */
 function escapeXml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  let out = '';
+  for (const ch of s) {
+    const cp = ch.codePointAt(0) ?? 0;
+    if (!xmlAllows(cp)) continue;
+    out += ch === '&' ? '&amp;' : ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : ch;
+  }
+  return out;
 }
 
 function escapeAttr(s: string): string {
