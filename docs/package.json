@@ -14,6 +14,8 @@
     "@astrojs/starlight": "^0.39.3",
     "@expressive-code/plugin-line-numbers": "^0.43.1",
     "astro": "^6.3.1",
+    "marked": "^18.0.9",
+    "marked-footnote": "^1.4.0",
     "reamkit": "^1.25.0",
     "sharp": "^0.34.5",
     "starlight-typedoc": "^0.23.0",
