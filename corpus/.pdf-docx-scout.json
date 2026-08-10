@@ -1,0 +1,122 @@
+[
+ {
+  "name": "22060_A1_01_Plans.pdf",
+  "best": 0.2191,
+  "flow": {
+   "score": 0.2191,
+   "note": "pages 4≠1",
+   "pages": [
+    4,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.2191,
+   "note": "pages 4≠1",
+   "pages": [
+    4,
+    1
+   ]
+  }
+ },
+ {
+  "name": "Brotli-Prototype-FileA.pdf",
+  "best": 0.179,
+  "flow": {
+   "score": 0.179,
+   "note": "pages 1≠25",
+   "pages": [
+    1,
+    25
+   ]
+  },
+  "positional": {
+   "score": 0.179,
+   "note": "pages 1≠25",
+   "pages": [
+    1,
+    25
+   ]
+  }
+ },
+ {
+  "name": "160F-2019.pdf",
+  "best": 0.1678,
+  "flow": {
+   "score": 0.1678,
+   "note": "pages 10≠1",
+   "pages": [
+    10,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.189,
+   "note": "pages 11≠1",
+   "pages": [
+    11,
+    1
+   ]
+  }
+ },
+ {
+  "name": "ContentStreamCycleType3insideType3.pdf",
+  "best": 0.0166,
+  "flow": {
+   "score": 0.0166,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0169,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "ArabicCIDTrueType.pdf",
+  "best": 0.0162,
+  "flow": {
+   "score": 0.0162,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0163,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "90ms_rksj_h_sample.pdf",
+  "best": 0.0008,
+  "flow": {
+   "score": 0.0008,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0008,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ }
+]
