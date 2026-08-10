@@ -574,6 +574,34 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
   });
 });
 
+describe('the package carries no picture the format cannot show', () => {
+  it('drops a JPEG 2000 picture and says why, rather than writing a hole', () => {
+    // §15.2.14 lists the image parts a WordprocessingML package may carry, and
+    // JPEG 2000 is not among them. S2.pdf put six of them in a .docx and both
+    // of its plates came back blank — in Word and in LibreOffice alike — with
+    // the loss report saying only "image bytes missing", which they were not.
+    const jp2 = new Uint8Array([
+      0, 0, 0, 0x0c, 0x6a, 0x50, 0x20, 0x20, 0x0d, 0x0a, 0x87, 0x0a, 0, 0, 0, 0,
+    ]);
+    const { doc: flow } = readDocx(buildDocxFromBody('<w:p><w:r><w:t>x</w:t></w:r></w:p>'));
+    const withJp2 = {
+      ...flow,
+      resources: new Map([['r1', jp2]]),
+      body: [
+        {
+          kind: 'image' as const,
+          image: { resource: 'r1', width: 40, height: 20, paragraphProperties: {} },
+        },
+      ],
+    } as unknown as FlowDoc;
+    const { bytes, losses } = writeDocx(withJp2);
+    const pkg = OpcPackage.open(bytes);
+    expect(pkg.listParts().some((path) => path.endsWith('.jp2'))).toBe(false);
+    const dropped = losses.find((l) => l.detail.includes('JPEG 2000'));
+    expect(dropped?.severity).toBe('dropped');
+  });
+});
+
 describe('a drawing that states where it goes is placed there (§20.4.2.3)', () => {
   const floatingShape = (offsetXPt: number, offsetYPt: number) => ({
     width: 40,

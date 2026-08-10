@@ -123,13 +123,33 @@ const CHART_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.drawin
 const EMU_PER_PT = 12700;
 
 // The raster formats the PDF path embeds (detectImageFormat) → media naming.
+//
+// JPEG 2000 is deliberately absent. §15.2.14 lists the image parts a
+// WordprocessingML package may carry and it is not among them: no consumer of a
+// .docx displays one. Written anyway — which it was — the picture is a hole in
+// the page and the file carries the bytes for nothing. S2.pdf put six of them
+// in, and both of its plates came back blank in Word and in LibreOffice alike.
 const RASTER_MEDIA: Readonly<Record<string, { ext: string; contentType: string }>> = {
   png: { ext: 'png', contentType: 'image/png' },
   jpeg: { ext: 'jpeg', contentType: 'image/jpeg' },
-  jpeg2000: { ext: 'jp2', contentType: 'image/jp2' },
   gif: { ext: 'gif', contentType: 'image/gif' },
   bmp: { ext: 'bmp', contentType: 'image/bmp' },
 };
+
+/**
+ * Why an image was not written, in terms of the image — for the loss report,
+ * which used to say "image bytes missing" whatever the reason, including for
+ * bytes that were all there and in a format the format does not admit.
+ */
+function imageRefusal(resource: ResourceId | undefined, state: WriteState): string {
+  const bytes = resource === undefined ? undefined : state.resources.get(resource);
+  if (!bytes) return 'image bytes missing';
+  const format = detectImageFormat(bytes);
+  if (format === 'jpeg2000') {
+    return 'JPEG 2000 picture dropped — §15.2.14 admits no such image part, and no reader of a .docx shows one';
+  }
+  return `picture dropped — ${format ?? 'an unrecognised'} is not an image part a .docx may carry`;
+}
 
 // The writer round-trips a docx; it transfers image bytes verbatim, so it
 // names media files for EVERY OOXML image format — including the vector /
@@ -726,7 +746,11 @@ function floatingDrawingRun(
       el.image.float,
     );
     if (drawing === '') {
-      losses.push({ severity: 'dropped', feature: FEATURES.images, detail: 'image bytes missing' });
+      losses.push({
+        severity: 'dropped',
+        feature: FEATURES.images,
+        detail: imageRefusal(el.image.resource, state),
+      });
       return '';
     }
     return `<w:r>${drawing}</w:r>`;
@@ -774,7 +798,11 @@ function emitBlock(
         `<w:p>${pPrWithSect(el.image.paragraphProperties, closingSectPr)}<w:r>${drawing}</w:r></w:p>`,
       );
     } else {
-      losses.push({ severity: 'dropped', feature: FEATURES.images, detail: 'image bytes missing' });
+      losses.push({
+        severity: 'dropped',
+        feature: FEATURES.images,
+        detail: imageRefusal(el.image.resource, state),
+      });
       if (closingSectPr) out.push(`<w:p><w:pPr>${closingSectPr}</w:pPr></w:p>`);
     }
     return;
