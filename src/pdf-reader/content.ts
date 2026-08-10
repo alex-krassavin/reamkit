@@ -10,6 +10,7 @@
 // font falls back to Latin-1 with a half-em advance so text still surfaces.
 
 import { Lexer } from './lexer';
+import type { ColorSpaceInfo } from './shading';
 import type { ShapeGradient } from '@/core/vector';
 import type { PdfDict, PdfStream, PdfValue } from '@/pdf/objects';
 import { PDF_NULL, PdfHexString, PdfName } from '@/pdf/objects';
@@ -298,6 +299,9 @@ const FALLBACK_FONT: ContentFont = {
 const UPRIGHT_TOLERANCE_DEG = 0.5;
 
 interface TextState {
+  /** §8.6.8 — the space `sc` / `scn` give components in. */
+  fillSpace: ColorSpaceInfo | undefined;
+  strokeSpace: ColorSpaceInfo | undefined;
   ctm: Matrix;
   fontKey: string;
   font: ContentFont;
@@ -320,6 +324,8 @@ interface TextState {
 
 function initialState(): TextState {
   return {
+    fillSpace: undefined,
+    strokeSpace: undefined,
     ctm: IDENTITY,
     fontKey: '',
     font: FALLBACK_FONT,
@@ -355,12 +361,69 @@ function initialState(): TextState {
  * @param alphas     Constant fill alphas by `/ExtGState` name, selected by `gs`.
  * @returns The extracted text runs, image placements and vector paths.
  */
+
+/** §8.6.8 — the space a `cs` / `CS` operand names, if it is one we read. */
+function spaceOf(
+  operands: ReadonlyArray<PdfValue>,
+  spaces: ReadonlyMap<string, ColorSpaceInfo>,
+): ColorSpaceInfo | undefined {
+  const name = operands[operands.length - 1];
+  if (!(name instanceof PdfName)) return undefined;
+  const direct = spaces.get(name.value);
+  if (direct) return direct;
+  // §8.6.3 — the device families may be named inline without a resource entry.
+  switch (name.value) {
+    case 'DeviceGray':
+      return { kind: 'gray', components: 1 };
+    case 'DeviceRGB':
+      return { kind: 'rgb', components: 3 };
+    case 'DeviceCMYK':
+      return { kind: 'cmyk', components: 4 };
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * §8.6.8 — the colour a run of `sc` / `scn` components comes to.
+ *
+ * The space in force decides, and where it was not read the COUNT is the next
+ * best witness: three numbers are RGB and four are CMYK on every device space
+ * there is. One number is the ambiguous case — grey in a device space, but the
+ * strength of a colorant in a Separation, where 1 is the ink at full and reads
+ * dark — so a lone component is only taken where the space said what it means.
+ */
+function componentColor(
+  operands: ReadonlyArray<PdfValue>,
+  space: ColorSpaceInfo | undefined,
+): string | undefined {
+  const nums = operands.filter((o): o is number => typeof o === 'number');
+  if (nums.length === 0) return undefined;
+  const kind = space?.kind ?? (nums.length === 3 ? 'rgb' : nums.length === 4 ? 'cmyk' : undefined);
+  switch (kind) {
+    case 'rgb':
+      return nums.length >= 3 ? rgbHex(nums[0]!, nums[1]!, nums[2]!) : undefined;
+    case 'cmyk':
+      return nums.length >= 4 ? cmykHex(nums[0]!, nums[1]!, nums[2]!, nums[3]!) : undefined;
+    case 'gray':
+      return grayHex(nums[0]!);
+    case 'tint':
+      // §8.6.6.4 — a tint of 1 is the colorant at full strength. Without
+      // running the space's own transform, the honest reading is "this much
+      // ink", which is the inverse of a grey level.
+      return grayHex(1 - Math.max(...nums));
+    default:
+      return undefined;
+  }
+}
+
 export function interpretContent(
   bytes: Uint8Array,
   fonts: ReadonlyMap<string, ContentFont>,
   initialCtm: Matrix = IDENTITY,
   shadings: ReadonlyMap<string, ShapeGradient> = new Map(),
   alphas: ReadonlyMap<string, number> = new Map(),
+  spaces: ReadonlyMap<string, ColorSpaceInfo> = new Map(),
 ): InterpretResult {
   const runs: Array<TextRun> = [];
   const images: Array<ImagePlacement> = [];
@@ -670,8 +733,18 @@ export function interpretContent(
         state.fillGradient = undefined;
         state.fillPattern = undefined;
         break;
+      // §8.6.8 — `cs` / `CS` select the space the next `sc` / `scn` gives
+      // components in. Without it the components mean nothing: this file paints
+      // its page with `/Cs1 cs 1 1 1 sc`, which is WHITE, and left unread the
+      // fill stayed at the black it starts on and covered the whole sheet.
+      case 'cs':
+        state.fillSpace = spaceOf(operands, spaces);
+        break;
+      case 'CS':
+        state.strokeSpace = spaceOf(operands, spaces);
+        break;
       // §8.6.8 colour in a named space; a /Pattern name selects a shading
-      // pattern (EP16c), numeric operands are a solid colour we leave as-is.
+      // pattern (EP16c), numeric operands are components in the current space.
       case 'scn':
       case 'sc': {
         // §8.6.6.2 — in a Pattern colour space the operand is a pattern NAME,
@@ -682,8 +755,25 @@ export function interpretContent(
         // four floor plans as four black rectangles.
         const last = operands[operands.length - 1];
         const named = last instanceof PdfName ? last.value : undefined;
-        state.fillGradient = named !== undefined ? shadings.get(named) : undefined;
-        state.fillPattern = named !== undefined && !state.fillGradient ? named : undefined;
+        if (named !== undefined) {
+          state.fillGradient = shadings.get(named);
+          state.fillPattern = state.fillGradient ? undefined : named;
+          break;
+        }
+        const hex = componentColor(operands, state.fillSpace);
+        if (hex !== undefined) {
+          state.fillColor = hex;
+          state.fillGradient = undefined;
+          state.fillPattern = undefined;
+        }
+        break;
+      }
+      case 'SCN':
+      case 'SC': {
+        const last = operands[operands.length - 1];
+        if (last instanceof PdfName) break;
+        const hex = componentColor(operands, state.strokeSpace);
+        if (hex !== undefined) state.strokeColor = hex;
         break;
       }
       // §8.6.8 stroking colour → the current stroke colour (EP11).

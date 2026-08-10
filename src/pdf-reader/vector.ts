@@ -7,9 +7,10 @@
 // and the bare `sh` operator are not captured (a documented loss).
 
 import { IDENTITY, interpretContent, multiply } from './content';
-import { buildAlphaMap, buildShadingMap } from './shading';
+import { buildAlphaMap, buildColorSpaceMap, buildShadingMap } from './shading';
 import { collectPageAppearances } from './annots';
 import { buildFonts } from './text';
+import type { ColorSpaceInfo } from './shading';
 import type {
   ContentFont,
   ImagePlacement,
@@ -43,6 +44,7 @@ function paintedVectors(
   page: PdfPage,
   shadings: ReadonlyMap<string, ShapeGradient>,
   alphas: ReadonlyMap<string, number>,
+  spaces: ReadonlyMap<string, ColorSpaceInfo>,
 ): Array<VectorPlacement & { orderKey: ReadonlyArray<number> }> {
   const out: Array<VectorPlacement & { orderKey: ReadonlyArray<number> }> = [];
   const visiting = new Set<PdfStream>();
@@ -62,6 +64,7 @@ function paintedVectors(
       baseCtm,
       shadings,
       alphas,
+      spaces,
     );
 
     // §8.5.3 — later marks cover earlier ones, and a form is drawn where its
@@ -219,12 +222,13 @@ export function collectPageVectors(
   const pageArea = Math.max(1, Math.abs((px1 - px0) * (py1 - py0)));
   const shadings = buildShadingMap(file, page);
   const alphas = buildAlphaMap(file, page);
+  const spaces = buildColorSpaceMap(file, page);
   const out: Array<PdfVector> = [];
   // What the page has painted so far. White paint is invisible only over white:
   // over anything else it is the thing that HIDES it, and the caller seeds this
   // with the pictures it has already placed.
   const painted: Array<Box> = [...occupied];
-  const raws = paintedVectors(file, page, shadings, alphas);
+  const raws = paintedVectors(file, page, shadings, alphas, spaces);
   for (const raw of raws) {
     if (out.length >= MAX_VECTORS) break;
     const v = clipped(raw);

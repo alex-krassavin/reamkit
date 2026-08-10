@@ -9,7 +9,7 @@ import type { GradientStop, ShapeGradient } from '@/core/vector';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 
 import type { PdfFile, PdfPage } from './document';
-import { PDF_NULL, PdfStream } from '@/pdf/objects';
+import { PDF_NULL, PdfName, PdfStream } from '@/pdf/objects';
 
 /**
  * Resolve a page's `/Pattern` resources into gradient fills (E-PDF EP16c, ISO
@@ -211,4 +211,80 @@ export function buildAlphaMap(file: PdfFile, page: PdfPage): Map<string, number>
     if (typeof ca === 'number' && ca >= 0 && ca < 1) out.set(name, ca);
   }
   return out;
+}
+
+/**
+ * §8.6 — how many components a colour space takes, and what they mean.
+ *
+ * `sc` / `scn` give bare numbers; only the space in force says whether `1 1 1`
+ * is white or something else, and whether a lone `1` is white (DeviceGray) or
+ * the colorant at full strength (Separation), which is usually black.
+ */
+export interface ColorSpaceInfo {
+  readonly kind: 'gray' | 'rgb' | 'cmyk' | 'tint';
+  readonly components: number;
+}
+
+/** The spaces a page's `/ColorSpace` resources name, by name. */
+export function buildColorSpaceMap(file: PdfFile, page: PdfPage): Map<string, ColorSpaceInfo> {
+  const out = new Map<string, ColorSpaceInfo>();
+  if (!page.resources) return out;
+  const spaces = file.get(page.resources, 'ColorSpace');
+  if (!(spaces instanceof Map)) return out;
+  for (const [name, value] of spaces) {
+    const info = colorSpaceInfo(file, file.resolve(value));
+    if (info) out.set(name, info);
+  }
+  return out;
+}
+
+/** What a colour space object comes to, or `undefined` for one not read. */
+function colorSpaceInfo(file: PdfFile, cs: PdfValue): ColorSpaceInfo | undefined {
+  if (cs instanceof PdfName) return byFamily(cs.value, 0);
+  if (!Array.isArray(cs) || cs.length === 0) return undefined;
+  const head = file.resolve(cs[0]!);
+  if (!(head instanceof PdfName)) return undefined;
+  if (head.value === 'ICCBased') {
+    // §8.6.5.5 — the stream's `/N` is the component count, and that is all this
+    // needs: an ICC profile of three components reads as RGB.
+    const stream = file.resolve(cs[1] ?? PDF_NULL);
+    const n = stream instanceof PdfStream ? file.get(stream.dict, 'N') : undefined;
+    return byFamily('ICCBased', typeof n === 'number' ? n : 3);
+  }
+  if (head.value === 'Indexed') {
+    // §8.6.6.3 — one operand, an index into a table. Reading the table is the
+    // image path's business; a bare `sc` into one is rare and left alone.
+    return undefined;
+  }
+  if (head.value === 'Separation' || head.value === 'DeviceN') {
+    const names = file.resolve(cs[1] ?? PDF_NULL);
+    const n = head.value === 'Separation' ? 1 : Array.isArray(names) ? names.length : 1;
+    return { kind: 'tint', components: n };
+  }
+  return byFamily(head.value, 0);
+}
+
+function byFamily(family: string, n: number): ColorSpaceInfo | undefined {
+  switch (family) {
+    case 'DeviceGray':
+    case 'CalGray':
+    case 'G':
+      return { kind: 'gray', components: 1 };
+    case 'DeviceRGB':
+    case 'CalRGB':
+    case 'Lab':
+    case 'RGB':
+      return { kind: 'rgb', components: 3 };
+    case 'DeviceCMYK':
+    case 'CMYK':
+      return { kind: 'cmyk', components: 4 };
+    case 'ICCBased':
+      return n === 1
+        ? { kind: 'gray', components: 1 }
+        : n === 4
+          ? { kind: 'cmyk', components: 4 }
+          : { kind: 'rgb', components: 3 };
+    default:
+      return undefined;
+  }
 }
