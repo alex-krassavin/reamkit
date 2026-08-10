@@ -159,12 +159,24 @@ always in the clear.
 (cross-reference streams, object streams) or an encrypted one. A tagged PDF (the
 ones Ream writes) is rebuilt from its structure tree — headings, paragraphs,
 tables, lists in reading order; an untagged PDF is reconstructed heuristically
-from glyph positions. **Raster images, hyperlinks and vector shapes come
+from glyph positions. **Raster images, hyperlinks and the page's artwork come
 back too** — images lifted out and sized from their placement, link annotations
 re-attached to the text, filled paths, stroked lines and shading-pattern
-gradients turned into shapes. The result is an ordinary `FlowDoc`, so it
-converts onward like any other source. Clipping paths and clip-bounded (`sh`)
+gradients turned into shapes, the clipping paths that limit them, tiling
+patterns, constant alpha, the appearance an annotation carries, and the Type 3
+glyphs that are drawings rather than letters. The result is an ordinary
+`FlowDoc`, so it converts onward like any other source. Clip-bounded (`sh`)
 shadings are not read (reported as a loss).
+
+A form or a drawing is not a reflowable document, though — its rules and boxes
+are placed absolutely, and a label an inch from the box it labels says nothing.
+Pass `{ pdfLayout: 'positional' }` to keep the page instead, with every line
+where its glyphs stand:
+
+```ts
+const page = Ream.parse(pdfBytes, { pdfLayout: 'positional' });
+const docx = await page.convert('docx'); // the form, not the form's words
+```
 
 ```ts
 import { Ream } from 'reamkit';

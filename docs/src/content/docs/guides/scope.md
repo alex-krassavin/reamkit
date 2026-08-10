@@ -31,11 +31,23 @@ case). A **tagged** PDF (including the ones Ream writes) is rebuilt from
 its structure tree — headings, paragraphs, tables, list items, reading order; an
 **untagged** PDF is reconstructed heuristically from glyph positions (lines by
 baseline, paragraphs by spacing, headings by relative font size, and a clean
-two-column page split at its central gutter), which is approximate. Text comes back via each font's `/ToUnicode` map; **raster images,
-hyperlinks and vector shapes** are lifted back out too (JPEG verbatim, other
-images re-encoded as PNG with soft-mask alpha, `/Link` URIs re-attached to the
-text, filled paths, stroked lines and shading-pattern gradients turned into
-shapes). Clipping paths and clip-bounded (`sh`) shadings are not read.
+two-column page split at its central gutter), which is approximate. Text comes
+back via each font's `/ToUnicode` map, or — where a composite font ships none —
+from the reverse `cmap` of the program it embeds (§9.10.2); the weight and slant
+come from the `/FontDescriptor`, and the embedded font programs themselves are
+carried into the output, so a rebuilt page is set in the type it was set in.
+**Raster images, hyperlinks and vector artwork** are lifted back out too (JPEG
+verbatim, other images re-encoded as PNG with soft-mask alpha, `/Link` URIs
+re-attached to the text, filled paths, stroked lines and shading-pattern
+gradients turned into shapes), along with clipping paths (§8.5.4 `W` / `W*`,
+applied to paths and pictures alike), tiling patterns (§8.7.3 — drawn as a
+picture where they fill a shape, read as a tint at the tile's own density where
+they fill type), constant alpha (§11.6.4.4 `/ca` through the `gs` operator),
+Type 3 glyphs (§9.6.5 — content streams, drawn as the artwork they are),
+annotation appearance streams (§12.5.5, so a form field draws itself), the text
+render modes (§9.3.6 `Tr` — stroked type keeps its outline, and the invisible
+modes an OCR layer uses are marked rather than painted) and the page's own
+`/Rotate` (§14.11.1). Clip-bounded (`sh`) shadings are not read.
 
 **Output** — `convert('pdf')`, `convert('svg')` (a page-stack preview),
 `convert('html')` (flowed, needs no fonts), `convert('md')` (GitHub-Flavored
