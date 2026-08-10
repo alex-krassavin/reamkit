@@ -849,31 +849,77 @@ function xfrmXml(t: ShapeTransform | undefined, cx: number, cy: number): string 
   return `<a:xfrm${rot}${flipH}${flipV}><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>`;
 }
 
+/**
+ * The factor that carries a path into whole units, and the space it lands in.
+ *
+ * §20.1.10.16 — ST_Coordinate is a LONG: a path states its geometry in whole
+ * units, and a fractional one is not a value the attribute admits. Word does
+ * not round it, and does not ignore the shape: it refuses the document, saying
+ * only that it "experienced an error trying to open the file".
+ *
+ * A path space is arbitrary — `a:path w`/`h` declare the coordinate system the
+ * shape's extent is mapped onto — so a path that does not land on whole units
+ * is restated in a finer space rather than rounded where it stands. A path read
+ * off a PDF is in points, and a point split ten thousand ways is finer than any
+ * renderer draws. The factor is bounded so the space stays far inside the
+ * coordinate range whatever the path's own size, and a path already on whole
+ * units is left exactly as it is.
+ */
+const PATH_SPACE = 1e7;
+
+function pathScale(g: NonNullable<ShapeGeometry['custom']>): number {
+  const values = [g.pathWidth, g.pathHeight];
+  for (const c of g.commands) {
+    if (c.cmd === 'move' || c.cmd === 'line') values.push(c.x, c.y);
+    else if (c.cmd === 'cubic') values.push(c.x1, c.y1, c.x2, c.y2, c.x, c.y);
+    else if (c.cmd === 'quad') values.push(c.x1, c.y1, c.x, c.y);
+    else if (c.cmd === 'arc') values.push(c.wR, c.hR);
+  }
+  if (values.every((v) => Number.isInteger(v))) return 1;
+  const span = Math.max(...values.map((v) => (Number.isFinite(v) ? Math.abs(v) : 0)), 1);
+  return Math.max(1, Math.floor(PATH_SPACE / span));
+}
+
 function geomXml(g: ShapeGeometry): string {
   if (g.kind === 'custom' && g.custom) {
+    const k = pathScale(g.custom);
+    // A coordinate that is no number states nothing, and the origin is the one
+    // place a path can start from that draws nothing wrong.
+    const c1 = (v: number): number => (Number.isFinite(v) ? Math.round(v * k) : 0);
     const cmds = g.custom.commands
       .map((c) => {
         switch (c.cmd) {
           case 'move':
-            return `<a:moveTo><a:pt x="${c.x}" y="${c.y}"/></a:moveTo>`;
+            return `<a:moveTo><a:pt x="${c1(c.x)}" y="${c1(c.y)}"/></a:moveTo>`;
           case 'line':
-            return `<a:lnTo><a:pt x="${c.x}" y="${c.y}"/></a:lnTo>`;
+            return `<a:lnTo><a:pt x="${c1(c.x)}" y="${c1(c.y)}"/></a:lnTo>`;
           case 'cubic':
             return (
               '<a:cubicBezTo>' +
-              `<a:pt x="${c.x1}" y="${c.y1}"/><a:pt x="${c.x2}" y="${c.y2}"/><a:pt x="${c.x}" y="${c.y}"/>` +
+              `<a:pt x="${c1(c.x1)}" y="${c1(c.y1)}"/>` +
+              `<a:pt x="${c1(c.x2)}" y="${c1(c.y2)}"/>` +
+              `<a:pt x="${c1(c.x)}" y="${c1(c.y)}"/>` +
               '</a:cubicBezTo>'
             );
           case 'quad':
-            return `<a:quadBezTo><a:pt x="${c.x1}" y="${c.y1}"/><a:pt x="${c.x}" y="${c.y}"/></a:quadBezTo>`;
+            return (
+              `<a:quadBezTo><a:pt x="${c1(c.x1)}" y="${c1(c.y1)}"/>` +
+              `<a:pt x="${c1(c.x)}" y="${c1(c.y)}"/></a:quadBezTo>`
+            );
           case 'arc':
-            return `<a:arcTo wR="${c.wR}" hR="${c.hR}" stAng="${c.stAng}" swAng="${c.swAng}"/>`;
+            // The radii are coordinates and scale with the space; the angles are
+            // in 60000ths of a degree (§20.1.10.3) and do not.
+            return (
+              `<a:arcTo wR="${c1(c.wR)}" hR="${c1(c.hR)}" ` +
+              `stAng="${Math.round(c.stAng)}" swAng="${Math.round(c.swAng)}"/>`
+            );
           case 'close':
             return '<a:close/>';
         }
       })
       .join('');
-    const { pathWidth: w, pathHeight: h } = g.custom;
+    const w = c1(g.custom.pathWidth);
+    const h = c1(g.custom.pathHeight);
     return (
       '<a:custGeom><a:avLst/><a:gdLst/>' +
       `<a:rect l="0" t="0" r="${w}" b="${h}"/>` +
@@ -1262,7 +1308,9 @@ function pPrBody(p: ResolvedParagraphProperties): string {
   if (ind) out.push(ind);
   const spacing = spacingXml(p);
   if (spacing) out.push(spacing);
-  if (p.alignment !== DEFAULT_PARA.alignment) out.push(`<w:jc w:val="${p.alignment}"/>`);
+  if (JC.has(p.alignment) && p.alignment !== DEFAULT_PARA.alignment) {
+    out.push(`<w:jc w:val="${p.alignment}"/>`);
+  }
   return out.join('');
 }
 
@@ -1279,11 +1327,33 @@ function pPrWithSect(p: ParagraphProperties, closingSectPr?: string): string {
   return inner !== '' ? `<w:pPr>${inner}</w:pPr>` : '';
 }
 
+/**
+ * Whether a measurement is one the file can state.
+ *
+ * A property that was COMPUTED rather than read can arrive `NaN` — an
+ * `undefined` that went through arithmetic, a share of a width that was zero —
+ * and `NaN` is not a value ST_SignedTwipsMeasure admits. Word does not ignore
+ * the attribute: it refuses the whole document, with no indication of what it
+ * objected to. `Ream.parse(pdf).convert('docx')` wrote 355 of them on one form.
+ *
+ * So a measurement is written only when there IS one, and a paragraph that
+ * cannot say how it is indented says nothing and inherits, which is what an
+ * absent attribute means (§17.3.1.12).
+ */
+const stated = (pt: number): boolean => Number.isFinite(pt);
+
+/** §17.18.44 ST_Jc — the tokens the attribute admits, so nothing else is written. */
+const JC: ReadonlySet<string> = new Set(['left', 'right', 'center', 'both', 'distribute']);
+
 function indXml(p: ResolvedParagraphProperties): string {
   const attrs: Array<string> = [];
-  if (p.indentLeft !== DEFAULT_PARA.indentLeft) attrs.push(`w:left="${twips(p.indentLeft)}"`);
-  if (p.indentRight !== DEFAULT_PARA.indentRight) attrs.push(`w:right="${twips(p.indentRight)}"`);
-  if (p.indentFirstLine !== DEFAULT_PARA.indentFirstLine) {
+  if (stated(p.indentLeft) && p.indentLeft !== DEFAULT_PARA.indentLeft) {
+    attrs.push(`w:left="${twips(p.indentLeft)}"`);
+  }
+  if (stated(p.indentRight) && p.indentRight !== DEFAULT_PARA.indentRight) {
+    attrs.push(`w:right="${twips(p.indentRight)}"`);
+  }
+  if (stated(p.indentFirstLine) && p.indentFirstLine !== DEFAULT_PARA.indentFirstLine) {
     // A negative first-line indent is a hanging indent (§17.3.1.12).
     if (p.indentFirstLine < 0) attrs.push(`w:hanging="${twips(-p.indentFirstLine)}"`);
     else attrs.push(`w:firstLine="${twips(p.indentFirstLine)}"`);
@@ -1293,10 +1363,10 @@ function indXml(p: ResolvedParagraphProperties): string {
 
 function spacingXml(p: ResolvedParagraphProperties): string {
   const attrs: Array<string> = [];
-  if (p.spacingBefore !== DEFAULT_PARA.spacingBefore) {
+  if (stated(p.spacingBefore) && p.spacingBefore !== DEFAULT_PARA.spacingBefore) {
     attrs.push(`w:before="${twips(p.spacingBefore)}"`);
   }
-  if (p.spacingAfter !== DEFAULT_PARA.spacingAfter) {
+  if (stated(p.spacingAfter) && p.spacingAfter !== DEFAULT_PARA.spacingAfter) {
     attrs.push(`w:after="${twips(p.spacingAfter)}"`);
   }
   if (
@@ -1372,14 +1442,20 @@ function levelXml(level: NumberingLevel): string {
 // no delta-against-defaults (unlike the resolved-body serializer above).
 function rawParaPrXml(p: ParagraphProperties): string {
   const attrs: Array<string> = [];
-  if (p.indentLeft !== undefined) attrs.push(`w:left="${twips(p.indentLeft)}"`);
-  if (p.indentRight !== undefined) attrs.push(`w:right="${twips(p.indentRight)}"`);
-  if (p.indentFirstLine !== undefined) {
+  // `!== undefined` is not enough: `NaN` is defined, and no measurement.
+  if (p.indentLeft !== undefined && stated(p.indentLeft)) {
+    attrs.push(`w:left="${twips(p.indentLeft)}"`);
+  }
+  if (p.indentRight !== undefined && stated(p.indentRight)) {
+    attrs.push(`w:right="${twips(p.indentRight)}"`);
+  }
+  if (p.indentFirstLine !== undefined && stated(p.indentFirstLine)) {
     if (p.indentFirstLine < 0) attrs.push(`w:hanging="${twips(-p.indentFirstLine)}"`);
     else attrs.push(`w:firstLine="${twips(p.indentFirstLine)}"`);
   }
   const ind = attrs.length > 0 ? `<w:ind ${attrs.join(' ')}/>` : '';
-  const jc = p.alignment !== undefined ? `<w:jc w:val="${p.alignment}"/>` : '';
+  const jc =
+    p.alignment !== undefined && JC.has(p.alignment) ? `<w:jc w:val="${p.alignment}"/>` : '';
   return ind || jc ? `<w:pPr>${jc}${ind}</w:pPr>` : '';
 }
 

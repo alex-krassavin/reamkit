@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
 import { buildTinyPng } from './fixtures/build-png';
+import type { FlowDoc } from '@/core/ir/flow';
 import { Ream } from '@/core/converter/ream';
 import { OpcPackage } from '@/core/opc';
 import { writeDocx } from '@/word/docx-writer';
@@ -570,5 +571,94 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     await expect(
       Ream.parse(buildDocxFromBody(IMAGE_BODY)).convert('docx', { strict: true }),
     ).rejects.toThrow();
+  });
+});
+
+describe('an attribute is written only where the schema admits its value', () => {
+  // Word does not ignore an attribute it cannot read and does not round one it
+  // could: it refuses the whole document, saying only that it "experienced an
+  // error trying to open the file". Both of these shipped in output Ream wrote.
+
+  it('leaves out a measurement that is no number', () => {
+    // A property that was COMPUTED rather than read can come out `NaN`, and
+    // `NaN` is not a value ST_SignedTwipsMeasure admits.
+    // `Ream.parse(pdf).convert('docx')` wrote 355 of them on one form, and
+    // `w:jc w:val="undefined"` beside each.
+    const { doc: flow } = readDocx(buildDocxFromBody('<w:p><w:r><w:t>x</w:t></w:r></w:p>'));
+    const para = flow.body.find((b) => b.kind === 'paragraph');
+    if (para?.kind !== 'paragraph') throw new Error('expected a paragraph');
+    const broken = {
+      ...flow,
+      body: [
+        {
+          ...para,
+          paragraph: {
+            ...para.paragraph,
+            properties: {
+              ...para.paragraph.properties,
+              indentLeft: NaN,
+              indentRight: NaN,
+              indentFirstLine: NaN,
+              spacingBefore: NaN,
+              spacingAfter: NaN,
+              alignment: undefined,
+            },
+          },
+        },
+      ],
+    };
+    // The type forbids these values. The point of the test is that a runtime
+    // object carries them anyway, out of arithmetic that had nothing to work on.
+    const xml = decode(
+      OpcPackage.open(writeDocx(broken as unknown as FlowDoc).bytes).getMainDocument().data,
+    );
+    expect(xml).not.toMatch(/NaN/u);
+    expect(xml).not.toMatch(/"undefined"/u);
+  });
+
+  it('states a path in whole units, however finely it was measured', () => {
+    // §20.1.10.16 — ST_Coordinate is a long. A path lifted off a PDF is in
+    // points and lands between them; 160F-2019.pdf carried 1777 fractional
+    // coordinates. A path space is arbitrary, so the path is restated in a
+    // finer one rather than rounded where it stands.
+    const { doc: flow } = readDocx(buildDocxFromBody('<w:p><w:r><w:t>x</w:t></w:r></w:p>'));
+    const para = flow.body.find((b) => b.kind === 'paragraph');
+    if (para?.kind !== 'paragraph') throw new Error('expected a paragraph');
+    const withShape = {
+      ...flow,
+      body: [
+        {
+          kind: 'shape' as const,
+          shape: {
+            width: 100,
+            height: 20,
+            fill: { kind: 'solid' as const, colorHex: '000000' },
+            paragraphProperties: para.paragraph.properties,
+            geometry: {
+              kind: 'custom' as const,
+              custom: {
+                pathWidth: 246.478,
+                pathHeight: 15.024000000000001,
+                commands: [
+                  { cmd: 'move' as const, x: 0, y: 15.024000000000001 },
+                  { cmd: 'line' as const, x: 246.478, y: 15.024000000000001 },
+                  { cmd: 'close' as const },
+                ],
+              },
+            },
+          },
+        },
+      ],
+    };
+    const xml = decode(
+      OpcPackage.open(writeDocx(withShape as unknown as FlowDoc).bytes).getMainDocument().data,
+    );
+    expect(xml).toContain('<a:custGeom>');
+    // No coordinate attribute carries a fraction.
+    expect(xml).not.toMatch(/(?:x|y|w|h|l|t|r|b|cx|cy)="-?\d+\.\d+"/u);
+    // And the shape it describes is still the one measured, to a part in 1e6.
+    const path = /<a:path w="(\d+)" h="(\d+)"/u.exec(xml);
+    expect(path).not.toBeNull();
+    expect(Number(path![1]) / Number(path![2])).toBeCloseTo(246.478 / 15.024, 3);
   });
 });
