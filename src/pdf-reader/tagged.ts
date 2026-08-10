@@ -20,10 +20,11 @@ import { displayOf, placeRuns, placeVectors } from './display';
 import { collectEmbeddedFonts } from './embedded-fonts';
 import { collectPageImages } from './images';
 import { collectPageVectors } from './vector';
+import { markDrawnRules } from './text-rules';
 import { readStructTree } from './struct-tree';
 import { extractPageText } from './text';
 import type { BodyElement, Table, TableCell, TableRow } from '@/core/document-model';
-import type { Pt } from '@/core/ir';
+import type { Loss, Pt } from '@/core/ir';
 
 import type { TextRun } from './content';
 import type { PdfFile } from './document';
@@ -63,8 +64,26 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
   // and it is the only witness of the margins the author set.
   const shown = pages.map((page) => displayOf(page));
   const placedRuns = pages.map((page, i) => placeRuns(extractPageText(file, page), shown[i]!));
+  // A PDF has no underline: it draws a thin bar under the words, and the tree
+  // says nothing about it. Read onto the runs before they are gathered, so it
+  // travels with them, and the bar itself is not placed a second time.
+  const vectorLosses: Array<Loss> = [];
+  const pageVectors = pages.map((page, i) => {
+    // A white box drawn over a picture is what HIDES it, so the paths are
+    // filtered against the pictures already lifted off the same page.
+    const covered = collectPageImages(file, page).images.map((img) => ({
+      minX: img.x,
+      minY: img.y,
+      maxX: img.x + img.widthPt,
+      maxY: img.y + img.heightPt,
+    }));
+    const lifted = collectPageVectors(file, page, covered);
+    vectorLosses.push(...lifted.losses);
+    return placeVectors(lifted.vectors, shown[i]!);
+  });
+  const ruled = placedRuns.map((runs, i) => markDrawnRules(runs, pageVectors[i] ?? []));
   // Per page: MCID → its runs, in show order (runs carry any hyperlink, EP8).
-  const pageRuns = placedRuns.map((runs) => {
+  const pageRuns = ruled.map(({ runs }) => {
     const byMcid = new Map<number, Array<TextRun>>();
     for (const run of runs) {
       if (run.mcid === undefined) continue;
@@ -269,19 +288,14 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
   // text with no form under it at all. Those paths are lifted and anchored
   // where the page drew them, exactly as the untagged path does — the tree
   // supplies the reading order, the page supplies its own artwork.
-  pages.forEach((page, index) => {
+  imageLosses.push(...vectorLosses);
+  pages.forEach((_page, index) => {
     // §14.11.1/§14.11.2 — the page as it is SHOWN, corner and turn together.
-    const display = shown[index]!;
-    const frame = { left: 0, top: display.height };
-    const covered = (pageImages[index]?.images ?? []).map((img) => ({
-      minX: img.x,
-      minY: img.y,
-      maxX: img.x + img.widthPt,
-      maxY: img.y + img.heightPt,
-    }));
-    const lifted = collectPageVectors(file, page, covered);
-    imageLosses.push(...lifted.losses);
-    for (const v of placeVectors(lifted.vectors, display)) {
+    const frame = { left: 0, top: shown[index]!.height };
+    const taken = ruled[index]?.consumed;
+    for (const v of pageVectors[index] ?? []) {
+      // A bar that became a run's underline is not also a bar on the page.
+      if (taken?.has(v) === true) continue;
       body.push(shapeBlock(v, frame, zOrder++));
     }
   });

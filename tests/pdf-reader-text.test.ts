@@ -6,6 +6,8 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
+import type { TextRun } from '@/pdf-reader/content';
+import type { PdfVector } from '@/pdf-reader/vector';
 import { Ream } from '@/core/converter/ream';
 import { parseToUnicodeCMap } from '@/pdf-reader/cmap';
 import { PdfFile } from '@/pdf-reader/document';
@@ -14,6 +16,10 @@ import { textForGlyphName } from '@/pdf-reader/glyph-names';
 import { patternTint } from '@/pdf-reader/pattern-tint';
 import { extractPageText } from '@/pdf-reader/text';
 import { collectPageAppearances } from '@/pdf-reader/annots';
+import { withMeasuredMargins } from '@/pdf-reader/flow-build';
+import { displayOf, placeRuns, placeVectors } from '@/pdf-reader/display';
+import { markDrawnRules } from '@/pdf-reader/text-rules';
+import { collectPageVectors } from '@/pdf-reader/vector';
 import { reconstructByLayout } from '@/pdf-reader/layout';
 import { parseTtf } from '@/core/font/ttf-parser';
 
@@ -523,5 +529,108 @@ describe('text-markup annotations (§12.5.6.10)', () => {
     // The line is still read — it is only no longer claimed by the quad.
     expect(run?.text).toBe('Marked');
     expect(run?.markup).toBeUndefined();
+  });
+});
+
+/**
+ * One line of text with a filled bar drawn near it — the shape a PDF gives an
+ * underline, a strikeout, and also a table's cell border.
+ */
+function ruledTextPdf(bar: string): Uint8Array {
+  const content = `BT /F1 10 Tf 72 720 Td (Underlined) Tj ET ${bar}`;
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ' +
+      '/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /TrueType /BaseFont /Arial /FirstChar 32 /LastChar 255 ' +
+      '/Encoding /WinAnsiEncoding >>',
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\n`;
+  pdf += `startxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
+/** The runs and the paths of a one-page PDF, both placed on the shown page. */
+function pageOf(bytes: Uint8Array): { runs: Array<TextRun>; vectors: Array<PdfVector> } {
+  const file = PdfFile.parse(bytes);
+  const page = file.pages()[0]!;
+  const shown = displayOf(page);
+  return {
+    runs: placeRuns(extractPageText(file, page), shown),
+    vectors: placeVectors(collectPageVectors(file, page, []).vectors, shown),
+  };
+}
+
+describe('the underline a PDF draws rather than states', () => {
+  it('reads a bar under the words onto the run, and takes the bar', () => {
+    // Nothing in ISO 32000-1 says a run is underlined: the page paints a thin
+    // bar beneath it. Anchored where it was drawn it is a dash between two
+    // lines the moment the text re-sets.
+    const { runs, vectors } = pageOf(ruledTextPdf('0 0 0.5 rg 72 718 48 0.7 re f'));
+    const ruled = markDrawnRules(runs, vectors);
+    expect(ruled.runs[0]?.markup).toEqual({ underline: 'single', underlineHex: '000080' });
+    expect(ruled.consumed.size).toBe(1);
+  });
+
+  it('leaves a table’s rule alone, however like an underline it looks', () => {
+    // A cell border begins at the CELL and ends at the cell's other edge,
+    // however short the text stops: TAMReview.pdf rules its tables 86 to 509
+    // across a measure whose text stops well before it, and a proportional
+    // allowance read all fourteen of them as underlines.
+    const { runs, vectors } = pageOf(ruledTextPdf('0 0 0.5 rg 72 718 300 0.7 re f'));
+    const ruled = markDrawnRules(runs, vectors);
+    expect(ruled.runs[0]?.markup).toBeUndefined();
+    expect(ruled.consumed.size).toBe(0);
+  });
+
+  it('does not underline in white, and does not read a seam as a mark', () => {
+    const white = pageOf(ruledTextPdf('1 1 1 rg 72 718 48 0.7 re f'));
+    expect(markDrawnRules(white.runs, white.vectors).consumed.size).toBe(0);
+    const seam = pageOf(ruledTextPdf('0 0 0.5 rg 72 718 48 0.05 re f'));
+    expect(markDrawnRules(seam.runs, seam.vectors).consumed.size).toBe(0);
+  });
+
+  it('reads a bar ACROSS the words as a strikeout', () => {
+    const { runs, vectors } = pageOf(ruledTextPdf('0 0 0 rg 72 723 48 0.7 re f'));
+    expect(markDrawnRules(runs, vectors).runs[0]?.markup?.strike).toBe(true);
+  });
+});
+
+describe('the margins a page\u2019s words say it had', () => {
+  const runAt = (y: number, sizePt: number): TextRun =>
+    ({
+      text: 'x',
+      x: 72,
+      y,
+      endX: 200,
+      endY: y,
+      fontSizePt: sizePt,
+      fontKey: 'F1',
+    }) as TextRun;
+
+  it('measures the top margin to the top of the LINE, not to its baseline', () => {
+    // A run carries a baseline and a margin is to the top of the line, so a
+    // margin measured to the baseline puts every converted PDF a whole
+    // ascender too low: on annotation-stamp.pdf the word "Stamp" slid under
+    // the stamp anchored above it.
+    const section = { pageSize: { width: 612, height: 792 } } as never;
+    const page = [{ width: 612, height: 792 }];
+    const small = withMeasuredMargins(section, page, [[runAt(700, 10)]]);
+    const large = withMeasuredMargins(section, page, [[runAt(700, 30)]]);
+    // The same baseline in a bigger face starts higher up the page, so less
+    // paper is left above it.
+    expect((small?.margins?.top ?? 0) as number).toBeCloseTo(792 - 700 - 8, 3);
+    expect((large?.margins?.top ?? 0) as number).toBeCloseTo(792 - 700 - 24, 3);
   });
 });

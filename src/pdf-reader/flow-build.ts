@@ -466,6 +466,12 @@ export function sectionFromPdfPages(pages: ReadonlyArray<PdfPage>): SectionPrope
  * @returns The section with measured margins, or `section` when nothing is
  *          measurable.
  */
+/** How far a face's ascender stands above its baseline, as a fraction of the size. */
+const ASCENDER = 0.8;
+
+/** And its descender below — the two together are a little over one em. */
+const DESCENDER = 0.22;
+
 export function withMeasuredMargins(
   section: SectionProperties | undefined,
   shown: ReadonlyArray<{ width: number; height: number }>,
@@ -485,20 +491,37 @@ export function withMeasuredMargins(
     let maxX = -Infinity;
     let minY = Infinity;
     let maxY = -Infinity;
+    // The faces of the topmost and bottommost lines, for the room their
+    // ascenders and descenders take beyond the baseline.
+    let topSize = 0;
+    let bottomSize = 0;
     for (const r of runs) {
       if (!Number.isFinite(r.x) || !Number.isFinite(r.y)) continue;
       minX = Math.min(minX, r.x);
       maxX = Math.max(maxX, r.endX);
-      minY = Math.min(minY, r.y);
-      maxY = Math.max(maxY, r.y);
+      if (r.y < minY) {
+        minY = r.y;
+        bottomSize = r.fontSizePt;
+      }
+      if (r.y > maxY) {
+        maxY = r.y;
+        topSize = r.fontSizePt;
+      }
     }
     if (!Number.isFinite(minX) || !Number.isFinite(minY)) return;
     lefts.push(minX);
     rights.push(page.width - maxX);
-    // Runs carry the PDF's own upward y, so the top margin is what is left
-    // above the highest baseline.
-    tops.push(page.height - maxY);
-    bottoms.push(minY);
+    // Runs carry a BASELINE, and a margin is to the top of the LINE.
+    //
+    // Measured to the baseline, every converted PDF came back a whole ascender
+    // too low: on annotation-stamp.pdf the word "Stamp" slid under the stamp
+    // anchored above it, and the same shift put a label inside its own drawing
+    // on four more files of the corpus. The reader cannot know which face the
+    // layout will re-set the line in, so the ascender is estimated at four
+    // fifths of the size — near enough for the faces documents use, and wrong
+    // by a fraction of a line where it is wrong at all, instead of by a line.
+    tops.push(page.height - maxY - topSize * ASCENDER);
+    bottoms.push(minY - bottomSize * DESCENDER);
   });
   if (lefts.length === 0) return section;
   const median = (xs: Array<number>): number => {

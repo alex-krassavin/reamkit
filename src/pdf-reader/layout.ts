@@ -25,6 +25,7 @@ import { collectEmbeddedFonts } from './embedded-fonts';
 import { collectPageImages } from './images';
 import { extractPageText } from './text';
 import { collectPageVectors } from './vector';
+import { markDrawnRules } from './text-rules';
 import { isRightToLeft } from './content';
 import type { BodyElement, SectionProperties } from '@/core/document-model';
 import type { Loss, Pt } from '@/core/ir';
@@ -169,18 +170,6 @@ export function reconstructByLayout(
       top: number;
       make: (z: number) => BodyElement;
     }> = [];
-    if (gutter !== undefined) {
-      addColumn(
-        runs.filter((r) => r.x < gutter),
-        0,
-      );
-      addColumn(
-        runs.filter((r) => r.x >= gutter),
-        1,
-      );
-    } else {
-      addColumn(runs, 0);
-    }
     const colOf = (centerX: number): number => (gutter !== undefined && centerX >= gutter ? 1 : 0);
     // The shown page has its own corner: the turn has already been applied, so
     // what is left is a box that starts at the origin.
@@ -202,7 +191,24 @@ export function reconstructByLayout(
     }));
     const lifted = collectPageVectors(file, page, covered);
     losses.push(...lifted.losses);
-    const vectors = placeVectors(lifted.vectors, display);
+    // A PDF has no underline: it draws a thin bar under the words. Read onto
+    // the runs BEFORE they are grouped, so the mark travels with them and the
+    // bar is not placed a second time where the words no longer are.
+    const placedVectors = placeVectors(lifted.vectors, display);
+    const ruled = markDrawnRules(runs, placedVectors);
+    const vectors = placedVectors.filter((v) => !ruled.consumed.has(v));
+    if (gutter !== undefined) {
+      addColumn(
+        ruled.runs.filter((r) => r.x < gutter),
+        0,
+      );
+      addColumn(
+        ruled.runs.filter((r) => r.x >= gutter),
+        1,
+      );
+    } else {
+      addColumn(ruled.runs, 0);
+    }
 
     // §20.4.2.3 `relativeHeight` — pictures and paths share one z-order, and
     // it is the page's own painting order (§8.5.3), not one kind before the
