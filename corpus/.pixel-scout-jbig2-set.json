@@ -40,17 +40,17 @@
   "aligned": true
  },
  {
-  "name": "bitmap-halftone-refine.pdf",
-  "score": 0.9945,
-  "aligned": true
- },
- {
   "name": "bitmap-composite-and-xnor-refine.pdf",
   "score": 0.9314,
   "aligned": true
  },
  {
   "name": "bitmap-composite-or-xor-replace-refine.pdf",
+  "score": 0.9314,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-refine.pdf",
   "score": 0.9314,
   "aligned": true
  },
@@ -100,83 +100,8 @@
   "aligned": true
  },
  {
-  "name": "bitmap-composite-or-xor-replace-halftone.pdf",
-  "score": 0.5473,
-  "aligned": true
- },
- {
-  "name": "bitmap-halftone-composite.pdf",
-  "score": 0.0886,
-  "aligned": true
- },
- {
   "name": "bitmap-symbol-symhuffrefineone.pdf",
   "score": 0.0762,
-  "aligned": true
- },
- {
-  "name": "bitmap-composite-and-xnor-halftone.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-halftone-10bpp-mmr.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-halftone-10bpp.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-halftone-grid.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-halftone-skip-dummy.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-halftone-skip-grid-template1.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-halftone-skip-grid-template2.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-halftone-skip-grid-template3.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-halftone-skip-grid.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-halftone-template1.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-halftone-template2.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-halftone-template3.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-halftone.pdf",
-  "score": 0.0686,
   "aligned": true
  },
  {
@@ -215,13 +140,28 @@
   "aligned": true
  },
  {
+  "name": "bitmap-halftone-10bpp-mmr.pdf",
+  "score": 0.0664,
+  "aligned": true
+ },
+ {
   "name": "bitmap-symbol-symbolrefine-textrefine.pdf",
   "score": 0.0285,
   "aligned": true
  },
  {
+  "name": "bitmap-halftone-composite.pdf",
+  "score": 0.02,
+  "aligned": true
+ },
+ {
   "name": "bitmap-refine-page-subrect.pdf",
   "score": 0.0139,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-composite-and-xnor-halftone.pdf",
+  "score": 0,
   "aligned": true
  },
  {
@@ -231,6 +171,11 @@
  },
  {
   "name": "bitmap-composite-and-xnor.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-composite-or-xor-replace-halftone.pdf",
   "score": 0,
   "aligned": true
  },
@@ -251,6 +196,61 @@
  },
  {
   "name": "bitmap-customat.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-10bpp.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-grid.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-skip-dummy.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-skip-grid-template1.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-skip-grid-template2.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-skip-grid-template3.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-skip-grid.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-template1.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-template2.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-template3.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone.pdf",
   "score": 0,
   "aligned": true
  },

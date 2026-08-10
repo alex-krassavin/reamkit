@@ -779,6 +779,125 @@ function decodeSymbolDictionary(
   return exported.length > 0 ? exported : newSymbols;
 }
 
+// ------------------------------------------------------ halftone + patterns
+
+/**
+ * §6.7 — a pattern dictionary: the cells a halftone region tiles a picture out
+ * of, from all-white through all-black.
+ *
+ * They are coded as ONE wide generic region — every pattern side by side — and
+ * cut apart afterwards, which is why the first adaptive pixel sits a whole
+ * pattern-width back: it makes each cell predict from the one before it.
+ */
+function decodePatternDictionary(
+  data: Uint8Array,
+  mmr: boolean,
+  template: number,
+  pw: number,
+  ph: number,
+  grayMax: number,
+): Array<Jbig2Bitmap> {
+  const count = grayMax + 1;
+  const width = count * pw;
+  let collective: Jbig2Bitmap;
+  if (mmr) {
+    const packed = decodeCcitt(data, { k: -1, columns: width, rows: ph, byteAlign: false });
+    if (!packed) return [];
+    collective = makeBitmap(width, ph);
+    const rowBytes = (width + 7) >> 3;
+    for (let y = 0; y < ph; y++) {
+      for (let x = 0; x < width; x++) {
+        collective.data[y * width + x] = (packed[y * rowBytes + (x >> 3)]! >> (7 - (x & 7))) & 1;
+      }
+    }
+  } else {
+    collective = decodeGenericRegion(
+      new MQDecoder(data),
+      newContexts(1 << 16),
+      width,
+      ph,
+      template,
+      [
+        { x: -pw, y: 0 },
+        { x: -3, y: -1 },
+        { x: 2, y: -2 },
+        { x: -2, y: -2 },
+      ],
+      false,
+    );
+  }
+  const out: Array<Jbig2Bitmap> = [];
+  for (let i = 0; i < count; i++) {
+    const cell = makeBitmap(pw, ph);
+    for (let y = 0; y < ph; y++) {
+      for (let x = 0; x < pw; x++) {
+        cell.data[y * pw + x] = collective.data[y * width + i * pw + x] ?? 0;
+      }
+    }
+    out.push(cell);
+  }
+  return out;
+}
+
+/**
+ * §C.5 — the grey-scale image a halftone region is built from: one bitmap per
+ * BIT of the value, most significant first, Gray-coded so neighbouring levels
+ * differ in one plane and the planes stay smooth enough to code well.
+ */
+function decodeGrayScale(
+  mq: MQDecoder | undefined,
+  data: Uint8Array,
+  mmr: boolean,
+  template: number,
+  at: ReadonlyArray<At>,
+  width: number,
+  height: number,
+  bits: number,
+  skip: Jbig2Bitmap | undefined,
+): Array<number> {
+  const cx = newContexts(1 << 16);
+  const planes: Array<Jbig2Bitmap> = new Array<Jbig2Bitmap>(bits);
+  // MMR codes every plane into ONE stream, one after another; the arithmetic
+  // form shares a decoder and its contexts the same way.
+  let mmrOffset = 0;
+  const decoder = mq ?? new MQDecoder(data);
+  for (let j = bits - 1; j >= 0; j--) {
+    if (mmr) {
+      const packed = decodeCcitt(data.subarray(mmrOffset), {
+        k: -1,
+        columns: width,
+        rows: height,
+        byteAlign: false,
+      });
+      const plane = makeBitmap(width, height);
+      if (packed) {
+        const rowBytes = (width + 7) >> 3;
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            plane.data[y * width + x] = (packed[y * rowBytes + (x >> 3)]! >> (7 - (x & 7))) & 1;
+          }
+        }
+        mmrOffset += packed.length;
+      }
+      planes[j] = plane;
+    } else {
+      planes[j] = decodeGenericRegion(decoder, cx, width, height, template, at, false, skip);
+    }
+  }
+  // Undo the Gray code from the top plane down, accumulating the value.
+  const values = new Array<number>(width * height).fill(0);
+  for (let i = 0; i < width * height; i++) {
+    let bit = planes[bits - 1]?.data[i] ?? 0;
+    let v = bit;
+    for (let j = bits - 2; j >= 0; j--) {
+      bit ^= planes[j]?.data[i] ?? 0;
+      v = v * 2 + bit;
+    }
+    values[i] = v;
+  }
+  return values;
+}
+
 // ------------------------------------------------------------------ segments
 
 /** §7.2 — one segment's header, and where its data lies in the stream. */
@@ -931,6 +1050,9 @@ export function decodeJbig2(
   // §7.4.3 — what each symbol dictionary segment exported, for the text
   // regions that name it.
   const symbolsBySegment = new Map<number, ReadonlyArray<Jbig2Bitmap>>();
+  // §7.4.4 — what each pattern dictionary segment holds, for the halftone
+  // regions that name it.
+  const patternsBySegment = new Map<number, ReadonlyArray<Jbig2Bitmap>>();
 
   const run = (bytes: Uint8Array): void => {
     for (const seg of parseSegments(bytes)) {
@@ -955,6 +1077,98 @@ export function decodeJbig2(
             page.height = Math.min(ph, height);
           }
           canvas = makeBitmap(width, height, page.defPixel);
+          continue;
+        }
+        // §7.4.4 pattern dictionary — the cells a halftone tiles out of.
+        if (seg.type === 16) {
+          const flags = r.u8();
+          const mmr = (flags & 1) !== 0;
+          const template = (flags >> 1) & 3;
+          const pw = r.u8();
+          const ph = r.u8();
+          const grayMax = r.u32();
+          if (pw <= 0 || ph <= 0 || grayMax > 10000) continue;
+          patternsBySegment.set(
+            seg.number,
+            decodePatternDictionary(
+              bytes.subarray(seg.start + r.pos, seg.end),
+              mmr,
+              template,
+              pw,
+              ph,
+              grayMax,
+            ),
+          );
+          continue;
+        }
+        // §7.4.5 halftone region — a picture rebuilt out of those cells, one
+        // per grid position, chosen by a grey level.
+        if (seg.type === 20 || seg.type === 22 || seg.type === 23) {
+          const info = readRegionInfo(r);
+          const flags = r.u8();
+          const mmr = (flags & 1) !== 0;
+          const template = (flags >> 1) & 3;
+          const enableSkip = (flags & 8) !== 0;
+          const combOp = (flags >> 4) & 7;
+          const defPixel = (flags >> 7) & 1;
+          const gw = r.u32();
+          const gh = r.u32();
+          const gx = r.u32() | 0;
+          const gy = r.u32() | 0;
+          const rx = r.u16();
+          const ry = r.u16();
+          const patterns = seg.referred.flatMap((n) => patternsBySegment.get(n) ?? []);
+          const w = Math.min(info.width, 1 << 16);
+          const h = Math.min(info.height, 1 << 16);
+          if (patterns.length === 0 || w <= 0 || h <= 0) continue;
+          if (gw <= 0 || gh <= 0 || gw * gh > 1 << 24) continue;
+          const bmp = makeBitmap(w, h, defPixel);
+          const pw = patterns[0]!.width;
+          const ph = patterns[0]!.height;
+          // §6.6.5.1 — a cell whose whole footprint falls outside the region is
+          // not coded at all, which is what the skip bitmap says.
+          let skip: Jbig2Bitmap | undefined;
+          if (enableSkip) {
+            skip = makeBitmap(gw, gh);
+            for (let m = 0; m < gh; m++) {
+              for (let n = 0; n < gw; n++) {
+                const x = (gx + m * ry + n * rx) >> 8;
+                const y = (gy + m * rx - n * ry) >> 8;
+                if (x + pw <= 0 || x >= w || y + ph <= 0 || y >= h) skip.data[m * gw + n] = 1;
+              }
+            }
+          }
+          const bits = Math.max(1, Math.ceil(Math.log2(patterns.length)));
+          const gray = decodeGrayScale(
+            undefined,
+            bytes.subarray(seg.start + r.pos, seg.end),
+            mmr,
+            template,
+            [
+              { x: template <= 1 ? 3 : 2, y: -1 },
+              { x: -3, y: -1 },
+              { x: 2, y: -2 },
+              { x: -2, y: -2 },
+            ],
+            gw,
+            gh,
+            bits,
+            skip,
+          );
+          for (let m = 0; m < gh; m++) {
+            for (let n = 0; n < gw; n++) {
+              if (skip?.data[m * gw + n] === 1) continue;
+              const level = Math.min(gray[m * gw + n] ?? 0, patterns.length - 1);
+              const x = (gx + m * ry + n * rx) >> 8;
+              const y = (gy + m * rx - n * ry) >> 8;
+              compose(bmp, patterns[level]!, x, y, combOp);
+            }
+          }
+          if (seg.type === 20) buffers.set(seg.number, bmp);
+          else {
+            compose(canvas, bmp, info.x, info.y, info.combOp);
+            painted.regions++;
+          }
           continue;
         }
         // §7.4.3 symbol dictionary — the shapes, kept for the text regions
