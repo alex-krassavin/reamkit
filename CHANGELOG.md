@@ -3,6 +3,36 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.25.1
+
+Word refused the documents Ream writes, saying only that it "experienced an
+error trying to open the file". LibreOffice opened the same files, which is how
+this went unseen: two values written where the schema admits no such value, and
+Word neither ignores the attribute nor rounds it.
+
+### Fixed
+
+- **A measurement is written only where there is one.** A property computed
+  rather than read can arrive `NaN`, and `NaN` is not a value
+  ST_SignedTwipsMeasure admits — but `p.indentLeft !== DEFAULT.indentLeft` is
+  true of it, so it went out as `w:left="NaN"`, with `w:jc w:val="undefined"`
+  beside it. One reconstructed form carried 355 of each. This was not confined
+  to the PDF path: half of a sixty-document `.docx` round-trip sample carried
+  them too. A paragraph that cannot say how it is indented now says nothing and
+  inherits, which is what an absent attribute means (§17.3.1.12).
+
+- **A path is stated in whole units, however finely it was measured.**
+  §20.1.10.16 — ST_Coordinate is a long, and a path lifted off a PDF is in
+  points and lands between them: 1777 fractional coordinates on the same form.
+  A path space is arbitrary — `a:path w`/`h` declare the coordinate system the
+  shape's extent is mapped onto — so the path is restated in a space fine
+  enough to land on whole units rather than rounded where it stands. A path
+  already on whole units is written exactly as it was.
+
+- **The loss a PDF reports says what is true of it.** It still claimed clipping
+  paths are not reconstructed; they have been since 1.25.0. Only the bare `sh`
+  shadings are not.
+
 ## 1.25.0
 
 A release about reading PDF, and about a sixth thing to write.
