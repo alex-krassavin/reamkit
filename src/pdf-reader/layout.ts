@@ -600,15 +600,16 @@ function groupIntoParagraphs(
 }> {
   const groups: Array<Array<Line>> = [];
   const gaps: Array<number> = [];
-  let prevY: number | undefined;
+  let prev: Line | undefined;
   for (const line of lines) {
-    const gap = prevY !== undefined ? prevY - line.y : 0;
-    if (groups.length === 0 || (prevY !== undefined && gap > line.fontSize * 1.5)) {
+    const gap = prev !== undefined ? prev.y - line.y : 0;
+    const opened = prev !== undefined && gap > line.fontSize * 1.5;
+    if (groups.length === 0 || opened || (prev !== undefined && ended(prev, line, column))) {
       groups.push([]);
-      gaps.push(prevY === undefined ? 0 : gap);
+      gaps.push(prev === undefined ? 0 : gap);
     }
     groups[groups.length - 1]!.push(line);
-    prevY = line.y;
+    prev = line;
   }
   return groups.map((g, i) => {
     const first = g[0]!;
@@ -626,6 +627,37 @@ function groupIntoParagraphs(
       ...alignmentOf(g, column),
     };
   });
+}
+
+/**
+ * Whether a line ENDED a paragraph, rather than wrapping into the next.
+ *
+ * Leading alone cannot tell the two apart: five labels stacked at 15pt with a
+ * 12pt face look exactly like five wrapped lines, and alphatrans.pdf's five are
+ * read as one paragraph and re-wrapped into two. But a wrapping engine pulls
+ * the next word UP — so a line that stops well short of the measure stopped
+ * because its author stopped it, and the line after it begins something new.
+ * The same rule separates two paragraphs set with no extra space between them,
+ * which used to run together for the same reason.
+ *
+ * Only where both lines start at the same edge. Where they do not, the block is
+ * placed rather than set — a centred title's every line is short of the measure
+ * and none of them ends anything.
+ */
+function ended(
+  prev: Line,
+  next: Line,
+  column: { left: number; right: number } | undefined,
+): boolean {
+  if (!column) return false;
+  const width = column.right - column.left;
+  if (!(width > 0)) return false;
+  // A first-line indent is a quarter-inch or so; beyond that the two lines are
+  // not part of one setting.
+  if (Math.abs(prev.x - next.x) > Math.max(prev.fontSize, 4)) return false;
+  // A quarter of the measure: less than that is the ragged edge every
+  // unjustified paragraph has, and breaking on it would cut prose into lines.
+  return column.right - (prev.x + prev.width) > width * 0.25;
 }
 
 /**

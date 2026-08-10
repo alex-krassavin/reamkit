@@ -362,6 +362,22 @@ describe('heuristic layout reconstruction (E-PDF EP4)', () => {
     expect(runs.find((r) => r.text.includes('Plain'))?.properties.bold).toBeFalsy();
   });
 
+  it('ends a paragraph at a line that stops short of the measure', async () => {
+    // Leading alone cannot tell a wrapped line from a finished one: two
+    // paragraphs set with no extra space between them look exactly like one.
+    // But a wrapping engine pulls the next word UP, so a line that stops well
+    // short stopped because its author stopped it. alphatrans.pdf stacks five
+    // short labels at ordinary leading and they came back as one paragraph,
+    // re-wrapped into two lines of run-together text.
+    const body =
+      '<w:p><w:r><w:t>Short one</w:t></w:r></w:p>' +
+      '<w:p><w:r><w:t>Short two</w:t></w:r></w:p>' +
+      '<w:p><w:r><w:t>A much longer line that runs the whole width of the text measure here</w:t></w:r></w:p>';
+    const flow = await layoutFlow(body);
+    const texts = paragraphs(flow).map((p) => p.paragraph.runs.map((r) => r.text).join(''));
+    expect(texts.some((t) => t.startsWith('Short one') && !t.includes('Short two'))).toBe(true);
+  });
+
   it('marks a line far larger than the median as a heading', async () => {
     const big = '<w:p><w:r><w:rPr><w:sz w:val="48"/></w:rPr><w:t>BigTitle</w:t></w:r></w:p>';
     const flow = await layoutFlow(
